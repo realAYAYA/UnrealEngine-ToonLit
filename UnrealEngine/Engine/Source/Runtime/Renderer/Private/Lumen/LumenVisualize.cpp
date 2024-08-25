@@ -18,6 +18,7 @@
 #include "LumenVisualizationData.h"
 #include "MeshCardBuild.h"
 #include "LumenReflections.h"
+#include "InstanceDataSceneProxy.h"
 
 // Must be in sync with VISUALIZE_MODE_* in LumenVisualize.h
 int32 GLumenVisualize = 0;
@@ -26,24 +27,26 @@ FAutoConsoleVariableRef CVarLumenVisualize(
 	GLumenVisualize,
 	TEXT("Lumen scene visualization mode.\n")
 	TEXT("0 - Disable\n")
-	TEXT("1 - Final lighting\n")
-	TEXT("2 - Reflection View\n")
-	TEXT("3 - Surface Cache Coverage\n")
-	TEXT("4 - Overview\n")
-	TEXT("5 - Geometry normals\n")
-	TEXT("6 - Albedo\n")
-	TEXT("7 - Normals\n")
-	TEXT("8 - Emissive\n")
-	TEXT("9 - Opacity (disable alpha masking)\n")
-	TEXT("10 - Card weights\n")
-	TEXT("11 - Direct lighting\n")
-	TEXT("12 - Indirect lighting\n")
-	TEXT("13 - Local Position (hardware ray-tracing only)\n")
-	TEXT("14 - Velocity (hardware ray-tracing only)\n")
-	TEXT("15 - Direct lighting updates\n")
-	TEXT("16 - Indirect lighting updates\n")
-	TEXT("17 - Last used pages\n")
-	TEXT("18 - Last used high res pages"),
+	TEXT("1 - Overview\n")
+	TEXT("2 - Performance Overview\n")
+	TEXT("3 - Lumen Scene\n")
+	TEXT("4 - Reflection View\n")
+	TEXT("5 - Surface Cache Coverage\n")
+	TEXT("6 - Geometry normals\n")
+	TEXT("7 - Dedicated Reflection Rays\n")
+	TEXT("8 - Albedo\n")
+	TEXT("9 - Normals\n")
+	TEXT("10 - Emissive\n")
+	TEXT("11 - Opacity (disable alpha masking)\n")
+	TEXT("12 - Card weights\n")
+	TEXT("13 - Direct lighting\n")
+	TEXT("14 - Indirect lighting\n")
+	TEXT("15 - Local Position (hardware ray-tracing only)\n")
+	TEXT("16 - Velocity (hardware ray-tracing only)\n")
+	TEXT("17 - Direct lighting updates\n")
+	TEXT("18 - Indirect lighting updates\n")
+	TEXT("19 - Last used pages\n")
+	TEXT("20 - Last used high res pages"),
 	ECVF_RenderThreadSafe
 );
 
@@ -253,6 +256,13 @@ FAutoConsoleVariableRef CVarCardInterpolateInfluenceRadius(
 	ECVF_RenderThreadSafe
 	);
 
+static TAutoConsoleVariable<int> CVarVisualizeUseShaderPrintForTraces(
+	TEXT("r.Lumen.Visualize.UseShaderPrintForTraces"),
+	1,
+	TEXT("Whether to use ShaderPrint or custom line renderer for trace visualization."),
+	ECVF_Scalability | ECVF_RenderThreadSafe
+);
+
 bool Lumen::ShouldVisualizeScene(const FEngineShowFlags& ShowFlags)
 {
 	return ShowFlags.VisualizeLumen || GLumenVisualize > 0;
@@ -265,7 +275,7 @@ bool LumenVisualize::UseSurfaceCacheFeedback(const FEngineShowFlags& ShowFlags)
 }
 
 BEGIN_SHADER_PARAMETER_STRUCT(FLumenVisualizeSceneSoftwareRayTracingParameters, )
-	SHADER_PARAMETER_STRUCT_INCLUDE(FLumenVisualizeSceneParameters, CommonParameters)
+	SHADER_PARAMETER_STRUCT_INCLUDE(LumenVisualize::FSceneParameters, CommonParameters)
 	SHADER_PARAMETER(float, VisualizeStepFactor)
 	SHADER_PARAMETER(float, MinTraceDistance)
 	SHADER_PARAMETER(float, MaxTraceDistance)
@@ -281,6 +291,7 @@ class FVisualizeLumenSceneCS : public FGlobalShader
 	SHADER_USE_PARAMETER_STRUCT(FVisualizeLumenSceneCS, FGlobalShader)
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+		SHADER_PARAMETER_STRUCT_INCLUDE(FSceneTextureShaderParameters, SceneTextures)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FLumenCardTracingParameters, TracingParameters)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FLumenMeshSDFGridParameters, MeshSDFGridParameters)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FLumenVisualizeSceneSoftwareRayTracingParameters, VisualizeParameters)
@@ -327,6 +338,7 @@ public:
 		OutEnvironment.SetDefine(TEXT("ENABLE_VISUALIZE_MODE"), 1);
 		OutEnvironment.SetDefine(TEXT("SURFACE_CACHE_FEEDBACK"), 1);
 		OutEnvironment.SetDefine(TEXT("SURFACE_CACHE_HIGH_RES_PAGES"), 1);
+		OutEnvironment.SetDefine(TEXT("VF_SUPPORTS_PRIMITIVE_SCENE_DATA"), 1);
 
 		// Workaround for an internal PC FXC compiler crash when compiling with disabled optimizations
 		if (Parameters.Platform == SP_PCD3D_SM5)
@@ -394,6 +406,37 @@ BEGIN_SHADER_PARAMETER_STRUCT(FVisualizeTraces, )
 	RENDER_TARGET_BINDING_SLOTS()
 END_SHADER_PARAMETER_STRUCT()
 
+class FVisualizeTracesCS : public FGlobalShader
+{
+	DECLARE_GLOBAL_SHADER(FVisualizeTracesCS)
+	SHADER_USE_PARAMETER_STRUCT(FVisualizeTracesCS, FGlobalShader)
+
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
+		SHADER_PARAMETER_STRUCT_INCLUDE(ShaderPrint::FShaderParameters, ShaderPrintUniformBuffer)
+		SHADER_PARAMETER_STRUCT_INCLUDE(LumenVisualize::FTonemappingParameters, TonemappingParameters)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float3>, VisualizeTracesData)
+		SHADER_PARAMETER(uint32, NumTracesToVisualize)
+	END_SHADER_PARAMETER_STRUCT()
+
+	static int32 GetGroupSize()
+	{
+		return 8;
+	}
+
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+	{
+		return DoesPlatformSupportLumenGI(Parameters.Platform);
+	}
+
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
+	{
+		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		OutEnvironment.SetDefine(TEXT("THREADGROUP_SIZE"), GetGroupSize());
+	}
+};
+
+IMPLEMENT_GLOBAL_SHADER(FVisualizeTracesCS, "/Engine/Private/Lumen/LumenVisualize.usf", "VisualizeTracesCS", SF_Compute);
 
 class FVisualizeTracesVertexDeclaration : public FRenderResource
 {
@@ -417,12 +460,87 @@ public:
 
 TGlobalResource<FVisualizeTracesVertexDeclaration> GVisualizeTracesVertexDeclaration;
 
+namespace LumenVisualize
+{
+	FTonemappingParameters GetTonemappingParameters(
+		FRDGBuilder& GraphBuilder,
+		FRDGTextureRef ColorGradingTexture,
+		FRDGBufferRef EyeAdaptationBuffer)
+	{
+		FTonemappingParameters TonemappingParameters;
+		TonemappingParameters.Tonemap = (EyeAdaptationBuffer != nullptr && ColorGradingTexture != nullptr) ? 1 : 0;
+		TonemappingParameters.ColorGradingLUT = ColorGradingTexture;
+		TonemappingParameters.ColorGradingLUTSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
+		TonemappingParameters.EyeAdaptationBuffer = GraphBuilder.CreateSRV(EyeAdaptationBuffer);
+
+		if (!TonemappingParameters.ColorGradingLUT)
+		{
+			TonemappingParameters.ColorGradingLUT = FRDGSystemTextures::Get(GraphBuilder).VolumetricBlack;
+		}
+
+		return TonemappingParameters;
+	}
+};
+
+/**
+ * Render gathered traces using ShaderPrint line rendering.
+ */
+void RenderVisualizeTraces(
+	FRDGBuilder& GraphBuilder,
+	const FViewInfo& View,
+	FRDGTextureRef ColorGradingTexture,
+	FRDGBufferRef EyeAdaptationBuffer)
+{
+	if (CVarVisualizeUseShaderPrintForTraces.GetValueOnRenderThread() == 0)
+	{
+		return;
+	}
+
+	extern void GetReflectionsVisualizeTracesBuffer(TRefCountPtr<FRDGPooledBuffer>&VisualizeTracesData);
+	extern void GetScreenProbeVisualizeTracesBuffer(TRefCountPtr<FRDGPooledBuffer>&VisualizeTracesData);
+
+	TRefCountPtr<FRDGPooledBuffer> PooledVisualizeTracesData;
+	GetReflectionsVisualizeTracesBuffer(PooledVisualizeTracesData);
+	GetScreenProbeVisualizeTracesBuffer(PooledVisualizeTracesData);
+
+	if (PooledVisualizeTracesData.IsValid())
+	{
+		FRDGBufferRef VisualizeTracesData = GraphBuilder.RegisterExternalBuffer(PooledVisualizeTracesData);
+		const int32 NumTraces = LumenScreenProbeGather::GetTracingOctahedronResolution(View) * LumenScreenProbeGather::GetTracingOctahedronResolution(View);
+
+		ShaderPrint::SetEnabled(true);
+		ShaderPrint::RequestSpaceForLines(FMath::Max(NumTraces, 1024));
+
+		FVisualizeTracesCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FVisualizeTracesCS::FParameters>();
+		PassParameters->View = View.ViewUniformBuffer;
+		PassParameters->TonemappingParameters = LumenVisualize::GetTonemappingParameters(GraphBuilder, ColorGradingTexture, EyeAdaptationBuffer);
+		PassParameters->VisualizeTracesData = GraphBuilder.CreateSRV(FRDGBufferSRVDesc(VisualizeTracesData, PF_A32B32G32R32F));
+		PassParameters->NumTracesToVisualize = NumTraces;
+		ShaderPrint::SetParameters(GraphBuilder, View.ShaderPrintData, PassParameters->ShaderPrintUniformBuffer);
+
+		auto ComputeShader = View.ShaderMap->GetShader<FVisualizeTracesCS>();
+
+		const FIntVector GroupCount = FComputeShaderUtils::GetGroupCount(NumTraces, FVisualizeTracesCS::GetGroupSize());
+
+		FComputeShaderUtils::AddPass(
+			GraphBuilder,
+			RDG_EVENT_NAME("VisualizeTraces %d", NumTraces),
+			ComputeShader,
+			PassParameters,
+			GroupCount);
+	}
+}
 
 void RenderVisualizeTraces(
 	FRDGBuilder& GraphBuilder,
 	const FViewInfo& View,
 	const FMinimalSceneTextures& SceneTextures)
 {
+	if (CVarVisualizeUseShaderPrintForTraces.GetValueOnRenderThread() != 0)
+	{
+		return;
+	}
+
 	extern void GetReflectionsVisualizeTracesBuffer(TRefCountPtr<FRDGPooledBuffer>& VisualizeTracesData);
 	extern void GetScreenProbeVisualizeTracesBuffer(TRefCountPtr<FRDGPooledBuffer>& VisualizeTracesData);
 
@@ -470,7 +588,7 @@ void RenderVisualizeTraces(
 
 				SetShaderParameters(RHICmdList, VertexShader, VertexShader.GetVertexShader(), PassParameters->VS);
 				SetShaderParameters(RHICmdList, PixelShader, PixelShader.GetPixelShader(), PassParameters->PS);
-			
+
 				RHICmdList.SetStreamSource(0, nullptr, 0);
 				RHICmdList.DrawPrimitive(0, NumPrimitives, 1);
 			});
@@ -505,8 +623,18 @@ void SetupVisualizeParameters(
 	FLumenVisualizeSceneSoftwareRayTracingParameters& VisualizeParameters)
 {
 	float MaxMeshSDFTraceDistance = GVisualizeLumenSceneMaxMeshSDFTraceDistance >= 0.0f ? GVisualizeLumenSceneMaxMeshSDFTraceDistance : FLT_MAX;
+	if (!View.IsPerspectiveProjection())
+	{
+		const auto CVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.Lumen.Ortho.OverrideMeshDFTraceDistances"));
+		if (CVar && CVar->GetValueOnRenderThread() > 0)
+		{
+			MaxMeshSDFTraceDistance = View.ViewMatrices.GetOrthoDimensions().GetMax();
+		}		
+	}
+
 	float MaxTraceDistance = GVisualizeLumenSceneMaxTraceDistance;
 	uint32 MaxReflectionBounces = 1;
+	uint32 MaxRefractionBounces = LumenReflections::UseTranslucentRayTracing(View) ? 1 : 0;
 
 	// Reflection scene view uses reflection setup
 	if (VisualizeMode == VISUALIZE_MODE_REFLECTION_VIEW)
@@ -515,18 +643,20 @@ void SetupVisualizeParameters(
 		MaxMeshSDFTraceDistance = GLumenGatherCvars.MeshSDFTraceDistance;
 		MaxTraceDistance = Lumen::GetMaxTraceDistance(View);
 		MaxReflectionBounces = LumenReflections::GetMaxReflectionBounces(View);
+		MaxRefractionBounces = LumenReflections::GetMaxRefractionBounces(View);
 	}
 
 	// FLumenVisualizeSceneParameters
 	{
-		FLumenVisualizeSceneParameters& CommonParameters = VisualizeParameters.CommonParameters;
+		LumenVisualize::FSceneParameters& CommonParameters = VisualizeParameters.CommonParameters;
 
+		CommonParameters.TonemappingParameters = LumenVisualize::GetTonemappingParameters(GraphBuilder, ColorGradingTexture, EyeAdaptationBuffer);
 		CommonParameters.VisualizeHiResSurface = GVisualizeLumenSceneHiResSurface ? 1 : 0;
-		CommonParameters.Tonemap = (EyeAdaptationBuffer != nullptr && ColorGradingTexture != nullptr) ? 1 : 0;
 		CommonParameters.VisualizeMode = VisualizeMode;
 		CommonParameters.MaxReflectionBounces = MaxReflectionBounces;
+		CommonParameters.MaxRefractionBounces = MaxRefractionBounces;
 
-		LumenReflections::SetupCompositeParameters(CommonParameters.ReflectionsCompositeParameters);
+		LumenReflections::SetupCompositeParameters(View, CommonParameters.ReflectionsCompositeParameters);
 		CommonParameters.PreIntegratedGF = GSystemTextures.PreintegratedGF->GetRHI();
 		CommonParameters.PreIntegratedGFSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
 
@@ -534,14 +664,6 @@ void SetupVisualizeParameters(
 		CommonParameters.OutputViewOffset = ViewRect.Min;
 		CommonParameters.InputViewSize = ViewRect.Size();
 		CommonParameters.OutputViewSize = ViewRect.Size();
-		CommonParameters.ColorGradingLUT = ColorGradingTexture;
-		CommonParameters.ColorGradingLUTSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
-		CommonParameters.EyeAdaptationBuffer = GraphBuilder.CreateSRV(EyeAdaptationBuffer);
-
-		if (!CommonParameters.ColorGradingLUT)
-		{
-			CommonParameters.ColorGradingLUT = FRDGSystemTextures::Get(GraphBuilder).VolumetricBlack;
-		}
 
 		GetVisualizeTileOutputView(ViewRect, VisualizeTileIndex, CommonParameters.OutputViewOffset, CommonParameters.OutputViewSize);
 	}
@@ -615,6 +737,7 @@ void VisualizeLumenScene(
 	FScreenPassTexture Output,
 	FRDGTextureRef ColorGradingTexture,
 	FRDGBufferRef EyeAdaptationBuffer,
+	FSceneTextureShaderParameters SceneTextures,
 	int32 VisualizeMode,
 	int32 VisualizeTileIndex,
 	bool bLumenGIEnabled)
@@ -686,6 +809,7 @@ void VisualizeLumenScene(
 
 		FVisualizeLumenSceneCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FVisualizeLumenSceneCS::FParameters>();
 		PassParameters->RWSceneColor = SceneColorUAV;
+		PassParameters->SceneTextures = SceneTextures;
 		PassParameters->MeshSDFGridParameters = MeshSDFGridParameters;
 		PassParameters->VisualizeParameters = VisualizeParameters;
 		LumenRadianceCache::GetInterpolationParameters(View, GraphBuilder, RadianceCacheState, RadianceCacheInputs, PassParameters->RadianceCacheParameters);
@@ -729,6 +853,8 @@ FScreenPassTexture AddVisualizeLumenScenePass(FRDGBuilder& GraphBuilder, const F
 
 	if (Lumen::IsLumenFeatureAllowedForView(Scene, View) && bAnyLumenActive)
 	{
+		RenderVisualizeTraces(GraphBuilder, View, Inputs.ColorGradingTexture, Inputs.EyeAdaptationBuffer);
+
 		const bool bVisualizeScene = Lumen::ShouldVisualizeScene(ViewFamily.EngineShowFlags);
 
 		if (bVisualizeScene && (Lumen::ShouldVisualizeHardwareRayTracing(ViewFamily) || Lumen::IsSoftwareRayTracingSupported()))
@@ -743,7 +869,7 @@ FScreenPassTexture AddVisualizeLumenScenePass(FRDGBuilder& GraphBuilder, const F
 			const int32 VisualizeMode = GetLumenVisualizeMode(View);
 
 			// In the overview mode we don't fully overwrite, copy the old Scene Color
-			if (VisualizeMode == VISUALIZE_MODE_OVERVIEW)
+			if (VisualizeMode == VISUALIZE_MODE_OVERVIEW || VisualizeMode == VISUALIZE_MODE_PERFORMANCE_OVERVIEW)
 			{
 				FRHICopyTextureInfo CopyInfo;
 
@@ -768,7 +894,7 @@ FScreenPassTexture AddVisualizeLumenScenePass(FRDGBuilder& GraphBuilder, const F
 				VisualizeTiles[1].Mode = VISUALIZE_MODE_REFLECTION_VIEW;
 				if (Lumen::UseHardwareRayTracing(ViewFamily))
 				{
-					VisualizeTiles[1].Name = LumenReflections::IsHitLightingForceEnabled(View, bLumenGIEnabled) ? TEXT("Reflection View, HWRT with hit lighting") : TEXT("Reflection View, HWRT");
+					VisualizeTiles[1].Name = LumenReflections::UseHitLighting(View, bLumenGIEnabled) ? TEXT("Reflection View, HWRT with hit lighting") : TEXT("Reflection View, HWRT");
 				}
 				else
 				{
@@ -779,7 +905,7 @@ FScreenPassTexture AddVisualizeLumenScenePass(FRDGBuilder& GraphBuilder, const F
 
 				for (int32 TileIndex = 0; TileIndex < LumenVisualize::NumOverviewTilesPerRow; ++TileIndex)
 				{
-					VisualizeLumenScene(Scene, GraphBuilder, ViewFamily.EngineShowFlags, View, FrameTemporaries, Output, Inputs.ColorGradingTexture, Inputs.EyeAdaptationBuffer, VisualizeTiles[TileIndex].Mode, TileIndex, bLumenGIEnabled);	
+					VisualizeLumenScene(Scene, GraphBuilder, ViewFamily.EngineShowFlags, View, FrameTemporaries, Output, Inputs.ColorGradingTexture, Inputs.EyeAdaptationBuffer, Inputs.SceneTextures, VisualizeTiles[TileIndex].Mode, TileIndex, bLumenGIEnabled);
 				}
 
 				AddDrawCanvasPass(GraphBuilder, RDG_EVENT_NAME("LumenVisualizeLabels"), View, FScreenPassRenderTarget(Output, ERenderTargetLoadAction::ELoad),
@@ -801,9 +927,53 @@ FScreenPassTexture AddVisualizeLumenScenePass(FRDGBuilder& GraphBuilder, const F
 					}
 				});
 			}
+			else if (VisualizeMode == VISUALIZE_MODE_PERFORMANCE_OVERVIEW)
+			{
+				struct FVisualizeTile
+				{
+					int32 Mode;
+					FString Name;
+				};
+
+				LumenReflections::FCompositeParameters ReflectionCompositeParameters;
+				LumenReflections::SetupCompositeParameters(View, ReflectionCompositeParameters);
+
+				FVisualizeTile VisualizeTiles[1];
+				VisualizeTiles[0].Mode = VISUALIZE_MODE_DEDICATED_REFLECTION_RAYS;
+				VisualizeTiles[0].Name = FString::Printf(
+					TEXT("Pixels tracing dedicated reflection rays.")
+					TEXT("\nGreen - foliage(Subsurface or Two Sided Foliage shading model). Red - other.")
+					TEXT("\nMaxRoughness: %.2f MaxFoliageRoughness: %.2f"),
+					ReflectionCompositeParameters.MaxRoughnessToTrace,
+					ReflectionCompositeParameters.MaxRoughnessToTraceForFoliage);
+
+				for (int32 TileIndex = 0; TileIndex < UE_ARRAY_COUNT(VisualizeTiles); ++TileIndex)
+				{
+					VisualizeLumenScene(Scene, GraphBuilder, ViewFamily.EngineShowFlags, View, FrameTemporaries, Output, Inputs.ColorGradingTexture, Inputs.EyeAdaptationBuffer, Inputs.SceneTextures, VisualizeTiles[TileIndex].Mode, TileIndex, bLumenGIEnabled);
+				}
+
+				AddDrawCanvasPass(GraphBuilder, RDG_EVENT_NAME("LumenVisualizeLabels"), View, FScreenPassRenderTarget(Output, ERenderTargetLoadAction::ELoad),
+					[&ViewRect = Inputs.SceneColor.ViewRect, &VisualizeTiles](FCanvas& Canvas)
+					{
+						const float DPIScale = Canvas.GetDPIScale();
+						Canvas.SetBaseTransform(FMatrix(FScaleMatrix(DPIScale) * Canvas.CalcBaseTransform2D(Canvas.GetViewRect().Width(), Canvas.GetViewRect().Height())));
+
+						const FLinearColor LabelColor(1, 1, 0);
+
+						for (int32 TileIndex = 0; TileIndex < UE_ARRAY_COUNT(VisualizeTiles); ++TileIndex)
+						{
+							FIntPoint OutputViewSize;
+							FIntPoint OutputViewOffset;
+							GetVisualizeTileOutputView(ViewRect, TileIndex, OutputViewOffset, OutputViewSize);
+
+							FIntPoint LabelLocation(OutputViewOffset.X + 2 * LumenVisualize::OverviewTileMargin, OutputViewOffset.Y + OutputViewSize.Y - 46);
+							Canvas.DrawShadowedString(LabelLocation.X / DPIScale, LabelLocation.Y / DPIScale, *VisualizeTiles[TileIndex].Name, GetStatsFont(), LabelColor);
+						}
+					});
+			}
 			else
 			{
-				VisualizeLumenScene(Scene, GraphBuilder, ViewFamily.EngineShowFlags, View, FrameTemporaries, Output, Inputs.ColorGradingTexture, Inputs.EyeAdaptationBuffer, VisualizeMode, /*VisualizeTileIndex*/ -1, bLumenGIEnabled);
+				VisualizeLumenScene(Scene, GraphBuilder, ViewFamily.EngineShowFlags, View, FrameTemporaries, Output, Inputs.ColorGradingTexture, Inputs.EyeAdaptationBuffer, Inputs.SceneTextures, VisualizeMode, /*VisualizeTileIndex*/ -1, bLumenGIEnabled);
 			}
 		}
 	}
@@ -837,24 +1007,21 @@ void DrawPrimitiveBounds(const FLumenPrimitiveGroup& PrimitiveGroup, FLinearColo
 {
 	const uint8 DepthPriority = SDPG_World;
 
-	for (const FPrimitiveSceneInfo* ScenePrimitiveInfo : PrimitiveGroup.Primitives)
+	for (const FPrimitiveSceneInfo* PrimitiveSceneInfo : PrimitiveGroup.Primitives)
 	{
-		const FMatrix& PrimitiveToWorld = ScenePrimitiveInfo->Proxy->GetLocalToWorld();
-		const TConstArrayView<FInstanceSceneData> InstanceSceneData = ScenePrimitiveInfo->Proxy->GetInstanceSceneData();
-
-		if (InstanceSceneData.Num() > 0)
+		const FMatrix& PrimitiveToWorld = PrimitiveSceneInfo->Proxy->GetLocalToWorld();
+		if (const FInstanceSceneDataBuffers *InstanceData = PrimitiveSceneInfo->GetInstanceSceneDataBuffers())
 		{
-			for (int32 InstanceIndex = 0; InstanceIndex < InstanceSceneData.Num(); ++InstanceIndex)
+			for (int32 InstanceIndex = 0; InstanceIndex < InstanceData->GetNumInstances(); ++InstanceIndex)
 			{
-				const FInstanceSceneData& PrimitiveInstance = InstanceSceneData[InstanceIndex];
-				const FBox LocalBoundingBox = ScenePrimitiveInfo->Proxy->GetInstanceLocalBounds(InstanceIndex).ToBox();
-				FMatrix LocalToWorld = PrimitiveInstance.LocalToPrimitive.ToMatrix() * PrimitiveToWorld;
+				const FBox LocalBoundingBox = InstanceData->GetInstanceLocalBounds(InstanceIndex).ToBox();
+				FMatrix LocalToWorld = InstanceData->GetInstanceToWorld(InstanceIndex);
 				DrawWireBox(&ViewPDI, LocalToWorld, LocalBoundingBox, BoundsColor, DepthPriority);
 			}
 		}
 		else
 		{
-			const FBox LocalBoundingBox = ScenePrimitiveInfo->Proxy->GetLocalBounds().GetBox();
+			const FBox LocalBoundingBox = PrimitiveSceneInfo->Proxy->GetLocalBounds().GetBox();
 			DrawWireBox(&ViewPDI, PrimitiveToWorld, LocalBoundingBox, BoundsColor, DepthPriority);
 		}
 	}

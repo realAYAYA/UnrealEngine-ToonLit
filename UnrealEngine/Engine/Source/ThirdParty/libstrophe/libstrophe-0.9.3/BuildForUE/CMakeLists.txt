@@ -10,6 +10,7 @@ project(libstrophe)
 set(SOCKET_IMPL ../src/sock.c CACHE STRING "Socket implementation")
 option(DISABLE_TLS "Disable TLS support" ON)
 option(DISABLE_SRV_LOOKUP "Disable SRV lookup" OFF)
+option(BUILD_PIC_LIBRARY "Build an addition library with -fPIC" OFF)
 
 set(EXPAT_PATH "" CACHE STRING "Path to expat headers")
 set(OPENSSL_PATH "" CACHE STRING "Path to openssl headers")
@@ -51,5 +52,10 @@ set(SOURCES ../src/auth.c ../src/conn.c ../src/crypto.c ../src/ctx.c
 	../src/resolver.c ../src/sasl.c ../src/scram.c ../src/sha1.c
 	../src/snprintf.c ../src/stanza.c ../src/util.c
 	../src/rand.c ../src/uuid.c ../src/parser_expat.c ${SOCKET_IMPL} ${TLS_IMPL})
-	
+
 add_library(strophe STATIC ${SOURCES})
+
+if(${BUILD_PIC_LIBRARY})
+	add_library(strophe_fPIC STATIC ${SOURCES})
+	set_property(TARGET strophe_fPIC PROPERTY POSITION_INDEPENDENT_CODE ON)
+endif()

@@ -6,7 +6,7 @@
 #include "DMXControlConsoleFaderGroup.h"
 
 
-UDMXControlConsoleFaderGroup* UDMXControlConsoleFaderGroupRow::AddFaderGroup(const int32 Index = 0)
+UDMXControlConsoleFaderGroup* UDMXControlConsoleFaderGroupRow::AddFaderGroup(const int32 Index)
 {
 	if (!ensureMsgf(Index >= 0, TEXT("Invalid index. Cannot add new fader group to '%s' correctly."), *GetName()))
 	{
@@ -122,19 +122,6 @@ void UDMXControlConsoleFaderGroupRow::ClearFaderGroups()
 {
 	FaderGroups.Reset();
 }
-
-#if WITH_EDITOR
-TArray<UDMXControlConsoleFaderGroup*> UDMXControlConsoleFaderGroupRow::GetActiveFaderGroups() const
-{
-	TArray<UDMXControlConsoleFaderGroup*> ActiveFaderGroups = FaderGroups;
-	ActiveFaderGroups.RemoveAll([](const UDMXControlConsoleFaderGroup* FaderGroup)
-		{
-			return FaderGroup && !FaderGroup->IsActive();
-		});
-
-	return ActiveFaderGroups;
-}
-#endif // WITH_EDITOR
 
 int32 UDMXControlConsoleFaderGroupRow::GetRowIndex() const
 {

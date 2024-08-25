@@ -9,24 +9,25 @@
 class UWorld;
 class UWorldPartition;
 class IWorldPartitionCell;
+class FWorldPartitionCookPackageContext;
 struct FWorldPartitionStreamingQuerySource;
 
 struct FWorldPartitionUtils
 {
-	class FSimulateCookedSession
+	class ENGINE_API FSimulateCookedSession
 	{
 	public:
 		FSimulateCookedSession(UWorld* InWorld);
 		~FSimulateCookedSession();
 
-		bool IsValid() const { return bIsValid; }
+		bool IsValid() const { return !!CookContext; }
 		bool ForEachStreamingCells(TFunctionRef<void(const IWorldPartitionCell*)> Func);
 		bool GetIntersectingCells(const TArray<FWorldPartitionStreamingQuerySource>& InSources, TArray<const IWorldPartitionCell*>& OutCells);
 
 	private:
 		bool SimulateCook();
 
-		bool bIsValid;
+		FWorldPartitionCookPackageContext* CookContext;
 		TWeakObjectPtr<UWorldPartition> WorldPartition;
 	};
 };

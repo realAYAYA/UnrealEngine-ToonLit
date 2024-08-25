@@ -40,7 +40,7 @@ SamplerState BilinearClampTextureSampler;
 
 OutputPS DirectComposePS(OutputVS IN)
 {
-	float4 Color = SrcTexture.Sample(BilinearClampTextureSampler, IN.UV);
+	float4 Color = SrcTexture.Sample(BilinearClampTextureSampler, IN.UV.xy);
 	Color.w = 1.0 - Color.w;
 
 	OutputPS Out;
@@ -57,7 +57,7 @@ float GaussianWeight1d(float u, float KernelRadius)
 
 OutputPS BlurPostProcessPS(OutputVS IN)
 {
-	float2 UV = IN.UV;
+	float2 UV = IN.UV.xy;
 	float4 OutColor;
 
 #if BLUR_DILATE

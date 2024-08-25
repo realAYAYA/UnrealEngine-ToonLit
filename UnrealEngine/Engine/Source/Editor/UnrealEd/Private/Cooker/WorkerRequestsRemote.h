@@ -47,7 +47,6 @@ public:
 	virtual void AddEditorActionCallback(FSchedulerCallback&& Callback) override;
 	virtual void AddPublicInterfaceRequest(FFilePlatformRequest&& Request, bool bForceFrontOfQueue) override;
 
-	virtual void ReportAccessedIniSettings(UCookOnTheFlyServer& COTFS, const FConfigFile& Config) override;
 	virtual void ReportDemoteToIdle(UE::Cook::FPackageData& PackageData, ESuppressCookReason Reason) override;
 	virtual void ReportPromoteToSaveComplete(UE::Cook::FPackageData& PackageData) override;
 	virtual void GetInitializeConfigSettings(UCookOnTheFlyServer& COTFS, const FString& OutputOverrideDirectory,

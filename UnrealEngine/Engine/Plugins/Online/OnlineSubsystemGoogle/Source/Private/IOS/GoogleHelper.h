@@ -92,22 +92,19 @@ typedef FOnGoogleSignInComplete::FDelegate FOnGoogleSignInCompleteDelegate;
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnGoogleSignOutComplete, const FGoogleSignOutData& /* SignOutData */);
 typedef FOnGoogleSignOutComplete::FDelegate FOnGoogleSignOutCompleteDelegate;
 
-@interface FGoogleHelper : NSObject<GIDSignInDelegate, GIDSignInUIDelegate>
+@interface FGoogleHelper : NSObject
 {
 	FOnGoogleSignInComplete _OnSignInComplete;
 	FOnGoogleSignOutComplete _OnSignOutComplete;
-	FOnGoogleSignOutComplete _OnDisconnectComplete;
 };
 
-- (id) initwithClientId: (NSString*) inClientId withBasicProfile: (bool) bWithProfile;
-- (void) login: (NSArray*) InScopes;
-- (void) logout;
+- (id)initWithServerClientID:(nullable NSString *)ServerClientId;
+- (void) Login: (NSArray*) InScopes attemptSilentSignIn:(bool) bAttemptSilentSignIn;
+- (void) Logout;
 
 /** Add a listener to the sign in complete event */
 -(FDelegateHandle)AddOnGoogleSignInComplete: (const FOnGoogleSignInCompleteDelegate&) Delegate;
 /** Add a listener to the sign out complete event */
 -(FDelegateHandle)AddOnGoogleSignOutComplete: (const FOnGoogleSignOutCompleteDelegate&) Delegate;
-/** Add a listener to the disconnect complete event */
--(FDelegateHandle)AddOnGoogleDisconnectComplete: (const FOnGoogleSignOutCompleteDelegate&) Delegate;
 
 @end

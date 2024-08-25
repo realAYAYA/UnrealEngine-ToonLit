@@ -369,8 +369,6 @@ bool FEngineAnalyticsSessionSummary::UpdateExternalProcessReporterState(bool bQu
 	}
 	// else -> either CrashReportClientEditor is still running or we already flagged it as dead.
 	return false;
-
-	return false;
 }
 
 bool FEngineAnalyticsSessionSummary::UpdateDebuggerStates()

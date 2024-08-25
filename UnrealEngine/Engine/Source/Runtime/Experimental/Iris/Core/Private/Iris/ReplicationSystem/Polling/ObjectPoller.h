@@ -3,6 +3,7 @@
 #pragma once
 
 #include "Net/Core/NetBitArray.h"
+#include "Iris/Core/NetChunkedArray.h"
 
 // Forward declarations
 class UObjectReplicationBridge;
@@ -17,6 +18,7 @@ namespace UE::Net
 
 		class FReplicationSystemInternal;
 		class FNetRefHandleManager;
+		class FNetStatsContext;
 	}
 }
 
@@ -48,13 +50,22 @@ public:
 
 	const FPreUpdateAndPollStats& GetPollStats() const { return PollStats; }
 
-	/** Poll all the objects whose bit index is set in the array */
-	void PollObjects(const FNetBitArrayView& ObjectsConsideredForPolling);
+	/**
+	 * Call the PreUpdateFunction, generally AActor::PreReplication, on polled objects that need it.
+	 * @param ObjectsConsideredForPolling The list of actors set to be polled this frame
+	 */
+	void PreUpdatePass(const FNetBitArrayView& ObjectsConsideredForPolling);
+
+	/** Poll all the objects whose bit index is set in the array and copy any dirty data into ReplicationState buffers*/
+	void PollAndCopyObjects(const FNetBitArrayView& ObjectsConsideredForPolling);
 
 	/** Poll a single replicated object */
-	void PollSingleObject(FNetRefHandle Handle);
+	void PollAndCopySingleObject(FNetRefHandle Handle);
 
 private:
+
+	/** Calls the PreUpdate function if the object needs it */
+	void CallPreUpdate(FInternalNetRefIndex ObjectIndex);
 
 	/** Polls an object in every circumstance */
 	void ForcePollObject(FInternalNetRefIndex ObjectIndex);
@@ -68,11 +79,12 @@ private:
 	FReplicationSystemInternal* ReplicationSystemInternal;
 
 	FNetRefHandleManager& LocalNetRefHandleManager;
-	const TArray<UObject*>& ReplicatedInstances;
+	FNetStatsContext* NetStatsContext = nullptr;
+	const TNetChunkedArray<TObjectPtr<UObject>>& ReplicatedInstances;
 
 	const FNetBitArrayView AccumulatedDirtyObjects;
 
-	FNetBitArrayView DirtyObjectsToCopy;
+	FNetBitArrayView DirtyObjectsToQuantize;
 	FNetBitArrayView DirtyObjectsThisFrame;
 	FNetBitArrayView GarbageCollectionAffectedObjects;
 

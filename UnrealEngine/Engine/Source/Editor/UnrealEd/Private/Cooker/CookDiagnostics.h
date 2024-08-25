@@ -22,9 +22,10 @@ public:
 	 * are added to the cook using OnlyEditorOnly rules. Silently ignores expected differences, but logs a message
 	 * with diagnostics for unexpected differences.
 	 */
-	static void AnalyzeOnlyEditorOnlySave(UCookOnTheFlyServer& COTFS, FPackageData& PackageData,
+	static void AnalyzeHiddenDependencies(UCookOnTheFlyServer& COTFS, FPackageData& PackageData,
 		TMap<FPackageData*, EInstigator>&& UnsolicitedForPackage, TSet<FPackageData*>& SaveReferences,
-		TConstArrayView<const ITargetPlatform*> ReachablePlatforms);
+		TConstArrayView<const ITargetPlatform*> ReachablePlatforms, bool bOnlyEditorOnlyDebug,
+		bool bHiddenDependenciesDebug);
 
 };
 

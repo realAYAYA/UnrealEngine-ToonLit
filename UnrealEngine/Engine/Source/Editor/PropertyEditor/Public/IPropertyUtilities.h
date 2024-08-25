@@ -21,8 +21,25 @@ public:
 	virtual void CreateColorPickerWindow( const TSharedRef< class FPropertyEditor >& PropertyEditor, bool bUseAlpha ) const = 0;
 	virtual void EnqueueDeferredAction( FSimpleDelegate DeferredAction ) = 0;
 	virtual bool IsPropertyEditingEnabled() const = 0;
+
+	/**
+	 * Force a rebuild of the view, recreating and updating all widgets.
+	 * @note This may run immediately; consider RequestForceRefresh unless you need to ensure invalid references (eg, to deleted objects) are removed.
+	 */
 	virtual void ForceRefresh() = 0;
+
+	/**
+	 * Request a refresh of the view on the next tick, ideally without triggering a full rebuild of all widgets.
+	 * @note This may run immediately or perform a rebuild depending on the implementation.
+	 */
 	virtual void RequestRefresh() = 0;
+
+	/**
+	 * Request a rebuild of the view on the next tick, recreating and updating all widgets.
+	 * @note This may run immediately depending on the implementation.
+	 */
+	virtual void RequestForceRefresh() = 0;
+	
 	virtual TSharedPtr<class FAssetThumbnailPool> GetThumbnailPool() const = 0;
 	virtual void NotifyFinishedChangingProperties(const FPropertyChangedEvent& PropertyChangedEvent) = 0;
 	virtual bool HasClassDefaultObject() const = 0;

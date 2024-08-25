@@ -28,7 +28,7 @@ public class EpicWebHelperTarget : TargetRules
 			var HelperTypes = new List<string>() { "GPU", "Renderer", "Plugin"};
 			foreach( string HelperType in HelperTypes)
 			{
-	            PostBuildSteps.Add(string.Format("cd $(EngineDir)/Binaries/$(TargetPlatform); if [ ! -h \"EpicWebHelper ({0}).app\" ]; then ln -s \"EpicWebHelper.app\" \"EpicWebHelper ({1}).app\"; fi", HelperType, HelperType));
+	            PostBuildSteps.Add(string.Format("cd $(EngineDir)/Binaries/$(TargetPlatform); if [ ! -h \"EpicWebHelper ({0})\" ]; then ln -s \"EpicWebHelper\" \"EpicWebHelper ({1})\"; fi", HelperType, HelperType));
 			}
         }
 
@@ -45,8 +45,16 @@ public class EpicWebHelperTarget : TargetRules
 		// Force all shader formats to be built and included.
 		//bForceBuildShaderFormats = true;
 
-		// CEFSubProcess is  a Windows app (uses WinMain())
-		bIsBuildingConsoleApplication = false;
+        if (Target.Platform == UnrealTargetPlatform.Mac)
+        {
+            // UE-201611 changing EpicWebHelper into a console application on Mac
+            bIsBuildingConsoleApplication = true;
+        }
+        else
+        {
+            // CEFSubProcess is a Windows app (uses WinMain())
+            bIsBuildingConsoleApplication = false;
+        }
 
 		// Disable logging, as the sub processes are spawned often and logging will just slow them down
 		GlobalDefinitions.Add("ALLOW_LOG_FILE=0");

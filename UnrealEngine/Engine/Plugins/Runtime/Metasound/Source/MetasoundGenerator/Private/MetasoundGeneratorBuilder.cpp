@@ -167,7 +167,7 @@ namespace Metasound
 
 		TUniquePtr<Frontend::FGraphAnalyzer> BuildGraphAnalyzer(TMap<FGuid, FDataReferenceCollection>&& InInternalDataReferences, const FMetasoundEnvironment& InEnvironment, const FOperatorSettings& InOperatorSettings)
 		{
-			METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(TEXT("GeneratorBuilder::BuildGraphAnalyzer"));
+			METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE(GeneratorBuilder::BuildGraphAnalyzer);
 			using namespace Frontend;
 
 			const uint64 InstanceID = InEnvironment.GetValue<uint64>(SourceInterface::Environment::TransmitterID);
@@ -176,7 +176,7 @@ namespace Metasound
 
 		FInputVertexInterfaceData BuildGraphOperatorInputs(const FOperatorSettings& InOperatorSettings, FMetasoundGeneratorInitParams& InInitParams)
 		{
-			METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(TEXT("GeneratorBuilder::BuildGraphOperatorInputs"));
+			METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE(GeneratorBuilder::BuildGraphOperatorInputs);
 
 			using namespace Frontend;
 
@@ -193,6 +193,12 @@ namespace Metasound
 						return EDataReferenceAccessType::Write;
 				}
 			};
+
+			if (!InInitParams.Graph)
+			{
+				UE_LOG(LogMetaSound, Error, TEXT("Unable to build graph operator inputs for null graph in MetaSoundSource [%s]"), *InInitParams.MetaSoundName);
+				return FInputVertexInterfaceData();
+			}
 
 			const FInputVertexInterface& InputInterface = InInitParams.Graph->GetVertexInterface().GetInputInterface();
 			FInputVertexInterfaceData InputData(InputInterface);
@@ -248,12 +254,17 @@ namespace Metasound
 
 		FOperatorAndInputs BuildGraphOperator(const FOperatorSettings& InOperatorSettings, FMetasoundGeneratorInitParams& InInitParams, FBuildResults& OutBuildResults)
 		{
-			METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(TEXT("GeneratorBuilder::BuildGraphOperator"));
+			METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE(GeneratorBuilder::BuildGraphOperator);
 
 			// Create inputs to graph operator
 			FOperatorAndInputs OpAndInputs;
 			OpAndInputs.Inputs = BuildGraphOperatorInputs(InOperatorSettings, InInitParams);
 
+			if (!InInitParams.Graph)
+			{
+				UE_LOG(LogMetaSound, Error, TEXT("Unable to build graph operator for null graph in MetaSoundSource [%s]"), *InInitParams.MetaSoundName);
+				return OpAndInputs;
+			}
 			// Create an instance of the new graph operator
 			FBuildGraphOperatorParams BuildParams { *InInitParams.Graph, InOperatorSettings, OpAndInputs.Inputs, InInitParams.Environment };
 			FOperatorBuilder Builder(InInitParams.BuilderSettings);
@@ -264,7 +275,7 @@ namespace Metasound
 
 		FOperatorAndInputs BuildDynamicGraphOperator(const FOperatorSettings& InOperatorSettings, FMetasoundDynamicGraphGeneratorInitParams& InInitParams, const DynamicGraph::FDynamicOperatorUpdateCallbacks& InCallbacks, FBuildResults& OutBuildResults)
 		{
-			METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(TEXT("GeneratorBuilder::BuildDynamicGraphOperator"));
+			METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE(GeneratorBuilder::BuildDynamicGraphOperator);
 
 			FOperatorAndInputs OpAndInputs;
 			OpAndInputs.Inputs = BuildGraphOperatorInputs(InOperatorSettings, InInitParams);
@@ -294,7 +305,7 @@ namespace Metasound
 			using namespace Frontend;
 			using namespace MetasoundGeneratorPrivate;
 
-			METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(TEXT("GeneratorBuilder::BuildGeneratorData"));
+			METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE(GeneratorBuilder::BuildGeneratorData);
 
 			checkf(InGraphOperatorAndInputs.Operator.IsValid(), TEXT("Graph operator must be a valid object"))
 
@@ -339,22 +350,35 @@ namespace Metasound
 			};
 		}
 
-		void ApplyAudioParameters(const FOperatorSettings& InOperatorSettings, TArray<FAudioParameter>&& InParameters, FInputVertexInterfaceData& InInterface)
+		void ResetGraphOperatorInputs(const FOperatorSettings& InOperatorSettings, TArray<FAudioParameter> InParameterOverrides, FInputVertexInterfaceData& InOutInterface)
 		{
-			METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE("GeneratorBuilder::ApplyAudioParameters");
+			METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE(GeneratorBuilder::ResetGraphOperatorInputs);
+
 			Frontend::IDataTypeRegistry& DataTypeRegistry = Frontend::IDataTypeRegistry::Get();
-			for (FAudioParameter& Parameter : InParameters)
+
+			for (MetasoundVertexDataPrivate::FInputBinding& Binding : InOutInterface)
 			{
-				if (const FAnyDataReference* Ref = InInterface.FindDataReference(Parameter.ParamName))
+				if (const FAnyDataReference* Ref = Binding.GetDataReference())
 				{
 					if (EDataReferenceAccessType::Write == Ref->GetAccessType())
 					{
 						Frontend::FLiteralAssignmentFunction LiteralSetter = DataTypeRegistry.GetLiteralAssignmentFunction(Ref->GetDataTypeName());
-
 						if (LiteralSetter)
 						{
-							FLiteral Literal = Frontend::ConvertParameterToLiteral(MoveTemp(Parameter)); 
-							LiteralSetter(InOperatorSettings, Literal, *Ref);
+							auto IsParameterNameEqualToVertexName = [&Name=Binding.GetVertex().VertexName](const FAudioParameter& InParam) -> bool
+							{
+								return Name == InParam.ParamName;
+							};
+
+							if (FAudioParameter* Parameter = InParameterOverrides.FindByPredicate(IsParameterNameEqualToVertexName))
+							{
+								FLiteral Literal = Frontend::ConvertParameterToLiteral(MoveTemp(*Parameter)); 
+								LiteralSetter(InOperatorSettings, Literal, *Ref);
+							}
+							else
+							{
+								LiteralSetter(InOperatorSettings, Binding.GetVertex().GetDefaultLiteral(), *Ref);
+							}
 						}
 					}
 				}

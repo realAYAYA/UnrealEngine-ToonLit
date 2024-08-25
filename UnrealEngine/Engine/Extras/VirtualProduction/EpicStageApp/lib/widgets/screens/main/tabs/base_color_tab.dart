@@ -1,5 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+import 'package:epic_common/preferences.dart';
+import 'package:epic_common/theme.dart';
+import 'package:epic_common/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
@@ -8,14 +11,10 @@ import 'package:streaming_shared_preferences/streaming_shared_preferences.dart';
 import '../../../../models/settings/base_color_tab_settings.dart';
 import '../../../../models/settings/color_wheel_settings.dart';
 import '../../../../models/unreal_types.dart';
-import '../../../../utilities/constants.dart';
-import '../../../../utilities/preferences_bundle.dart';
 import '../../../../utilities/unreal_utilities.dart';
 import '../../../elements/color_grading_wheel.dart';
 import '../../../elements/delta_slider.dart';
-import '../../../elements/dropdown_button.dart';
 import '../../../elements/dropdown_text.dart';
-import '../../../elements/selector_bar.dart';
 
 /// Modes the base color tab can operate in.
 enum BaseColorTabMode {
@@ -169,7 +168,7 @@ class _BaseColorTabState extends State<BaseColorTab> {
     return Provider<BaseColorTabSettings>(
       create: (_) => _tabSettings,
       child: Padding(
-        padding: const EdgeInsets.only(top: sectionMargin),
+        padding: const EdgeInsets.only(top: UnrealTheme.sectionMargin),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
@@ -179,14 +178,14 @@ class _BaseColorTabState extends State<BaseColorTab> {
                 child: Column(children: [
                   colorWheel,
                   Padding(
-                    padding: EdgeInsets.symmetric(horizontal: cardMargin),
+                    padding: EdgeInsets.symmetric(horizontal: UnrealTheme.cardMargin),
                     child: miscPropertyControls,
                   ),
                 ]),
               ),
             ),
 
-            const SizedBox(width: sectionMargin),
+            const SizedBox(width: UnrealTheme.sectionMargin),
 
             // Other properties
             Expanded(
@@ -200,7 +199,7 @@ class _BaseColorTabState extends State<BaseColorTab> {
                   ),
                   Expanded(
                     child: Container(
-                      padding: EdgeInsets.only(left: cardMargin, right: cardMargin, top: 16),
+                      padding: EdgeInsets.only(left: UnrealTheme.cardMargin, right: UnrealTheme.cardMargin, top: 16),
                       color: Theme.of(context).colorScheme.surface,
                       child: widget.rightSideContents,
                     ),
@@ -352,7 +351,8 @@ class _BaseColorTabState extends State<BaseColorTab> {
                   }
 
                   return UnrealDeltaSlider(
-                    buildLabel: (String name) => DrivenDropdownText(
+                    overrideName: _getHighlightsRangeDisplayName(highlightsRangeLimitType),
+                    buildLabel: (String name) => DropdownText(
                       value: highlightsRangeLimitType,
                       items: RangeLimitType.values,
                       makeItemName: (RangeLimitType item) => _getHighlightsRangeDisplayName(item),

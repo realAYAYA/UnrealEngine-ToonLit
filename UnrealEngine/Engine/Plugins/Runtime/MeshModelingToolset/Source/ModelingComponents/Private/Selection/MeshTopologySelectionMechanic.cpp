@@ -130,6 +130,11 @@ void UMeshTopologySelectionMechanic::SetIsEnabled(bool bOn)
 	UpdateMarqueeEnabled();
 }
 
+void UMeshTopologySelectionMechanic::SetMarqueeSelectionUpdateType(EMarqueeSelectionUpdateType InType)
+{
+	MarqueeSelectionUpdateType = InType;
+}
+
 void UMeshTopologySelectionMechanic::SetBasePriority(const FInputCapturePriority &Priority)
 {
 	BasePriority = Priority;
@@ -213,6 +218,17 @@ void UMeshTopologySelectionMechanic::DrawHUD(FCanvas* Canvas, IToolsContextRende
 	MarqueeMechanic->DrawHUD(Canvas, RenderAPI);
 }
 
+void UMeshTopologySelectionMechanic::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+
+	if (MarqueeSelectionUpdateType == EMarqueeSelectionUpdateType::OnTickAndRelease && PendingSelectionFunction)
+	{
+		PendingSelectionFunction();
+		PendingSelectionFunction.Reset();
+	}
+}
+
 void UMeshTopologySelectionMechanic::ClearHighlight()
 {
 	checkf(DrawnTriangleSetComponent != nullptr, TEXT("Initialize() not called on UMeshTopologySelectionMechanic."));
@@ -294,7 +310,47 @@ bool UMeshTopologySelectionMechanic::TopologyHitTest(const FRay& WorldRay, FHitR
 	return true;
 }
 
+void UMeshTopologySelectionMechanic::HandleRectangleChanged(const FCameraRectangle& InRectangle)
+{
+	FGroupTopologySelection RectangleSelection;
 
+	TopoSelector->FindSelectedElement(PreDragTopoSelectorSettings, InRectangle, TargetTransform,
+		RectangleSelection, &TriIsOccludedCache);
+
+	if (ShouldAddToSelectionFunc())
+	{
+		PersistentSelection = PreDragPersistentSelection;
+		if (ShouldRemoveFromSelectionFunc())
+		{
+			PersistentSelection.Toggle(RectangleSelection);
+		}
+		else
+		{
+			PersistentSelection.Append(RectangleSelection);
+		}
+	}
+	else if (ShouldRemoveFromSelectionFunc())
+	{
+		PersistentSelection = PreDragPersistentSelection;
+		PersistentSelection.Remove(RectangleSelection);
+	}
+	else
+	{
+		// Neither key pressed.
+		PersistentSelection = RectangleSelection;
+	}
+
+	// If we modified the currently selected edges/vertices, they will be properly displayed in our
+	// Render() call. However, the mechanic is not responsible for face highlighting, so if we modified
+	// that, we need to notify the user so that they can update the highlighting (since OnSelectionChanged
+	// only gets broadcast at rectangle end).
+	if ((!PersistentSelection.SelectedGroupIDs.IsEmpty() || !LastUpdateRectangleSelection.SelectedGroupIDs.IsEmpty()) // if groups are involved
+		&& PersistentSelection != LastUpdateRectangleSelection)
+	{
+		LastUpdateRectangleSelection = PersistentSelection;
+		OnFaceSelectionPreviewChanged.Broadcast();
+	}
+}
 
 FGroupTopologySelector::FSelectionSettings UMeshTopologySelectionMechanic::GetTopoSelectorSettings(bool bUseOrthoSettings)
 {
@@ -451,6 +507,123 @@ void UMeshTopologySelectionMechanic::SelectAll()
 	ParentTool->GetToolManager()->EndUndoTransaction();
 }
 
+void UMeshTopologySelectionMechanic::GrowSelection()
+{
+	ParentTool->GetToolManager()->BeginUndoTransaction(LOCTEXT("GrowSelectionChange", "Grow Selection"));
+	BeginChange();
+
+	// add the neighbor vertices to the current selection
+	if (Properties->bSelectVertices)
+	{
+		TSet<int32> VerticesToAdd;
+		for (const int32 VertexIndex : PersistentSelection.SelectedCornerIDs)
+		{
+			for (const int32 NeighborIndex : Mesh->VtxVerticesItr(VertexIndex))
+			{
+				if (!PersistentSelection.SelectedCornerIDs.Contains(NeighborIndex))
+				{
+					VerticesToAdd.Add(NeighborIndex);
+				}
+			}	
+		}
+		
+		PersistentSelection.SelectedCornerIDs.Append(VerticesToAdd);
+	}
+
+	if (Properties->bSelectEdges || Properties->bSelectFaces)
+	{
+		// TODO add support for growing edge/face selections if your tool requires it.
+		// growing edge/face selection not yet supported
+		checkNoEntry();
+	}
+
+	SelectionTimestamp++;
+	OnSelectionChanged.Broadcast();
+	EndChangeAndEmitIfModified();
+	ParentTool->GetToolManager()->EndUndoTransaction();
+}
+
+void UMeshTopologySelectionMechanic::ShrinkSelection()
+{
+	ParentTool->GetToolManager()->BeginUndoTransaction(LOCTEXT("ShrinkSelectionChange", "Shrink Selection"));
+	BeginChange();
+
+	// remove border vertices from the current selection
+	if (Properties->bSelectVertices)
+	{
+		TSet<int32> BorderVertices;
+		for (const int32 VertexIndex : PersistentSelection.SelectedCornerIDs)
+		{
+			for (const int32 NeighborIndex : Mesh->VtxVerticesItr(VertexIndex))
+			{
+				if (!PersistentSelection.SelectedCornerIDs.Contains(NeighborIndex))
+				{
+					BorderVertices.Add(VertexIndex);
+					break;
+				}
+			}	
+		}
+		
+		for (const int32 BorderVertex : BorderVertices)
+		{
+			PersistentSelection.SelectedCornerIDs.Remove(BorderVertex);
+		}
+	}
+
+	if (Properties->bSelectEdges || Properties->bSelectFaces)
+	{
+		// TODO add support for shrinking edge/face selections if your tool requires it.
+		// shrinking edge/face selection not yet supported
+		checkNoEntry();
+	}
+
+	SelectionTimestamp++;
+	OnSelectionChanged.Broadcast();
+	EndChangeAndEmitIfModified();
+	ParentTool->GetToolManager()->EndUndoTransaction();
+}
+
+void UMeshTopologySelectionMechanic::FloodSelection()
+{
+	ParentTool->GetToolManager()->BeginUndoTransaction(LOCTEXT("FloodSelectionChange", "Flood Selection"));
+	BeginChange();
+
+	if (Properties->bSelectVertices)
+	{
+		TSet<int32>& SelectedVertices = PersistentSelection.SelectedCornerIDs;
+		TSet<int32> VerticesAddedPrevIteration = PersistentSelection.SelectedCornerIDs;
+		while(!VerticesAddedPrevIteration.IsEmpty())
+		{
+			TSet<int32> VerticesToAddThisIteration;
+			for (const int32 VertexAdded : VerticesAddedPrevIteration)
+			{
+				for (const int32 NeighborIndex : Mesh->VtxVerticesItr(VertexAdded))
+				{
+					if (!SelectedVertices.Contains(NeighborIndex))
+					{
+						VerticesToAddThisIteration.Add(NeighborIndex);
+					}
+				}
+			}
+			
+			SelectedVertices.Append(VerticesToAddThisIteration);
+			VerticesAddedPrevIteration = VerticesToAddThisIteration;
+		}
+	}
+
+	if (Properties->bSelectEdges || Properties->bSelectFaces)
+	{
+		// TODO add support for flooding edge/face selections if your tool requires it.
+		// flooding edge/face selection not yet supported
+		checkNoEntry();
+	}
+
+	SelectionTimestamp++;
+	OnSelectionChanged.Broadcast();
+	EndChangeAndEmitIfModified();
+	ParentTool->GetToolManager()->EndUndoTransaction();
+}
+
 FInputRayHit UMeshTopologySelectionMechanic::IsHitByClick(const FInputDeviceRay& ClickPos)
 {
 	if (!bIsEnabled)
@@ -525,6 +698,7 @@ void UMeshTopologySelectionMechanic::OnUpdateModifierState(int ModifierID, bool 
 void UMeshTopologySelectionMechanic::OnDragRectangleStarted()
 {
 	bCurrentlyMarqueeDragging = true;
+	PendingSelectionFunction.Reset();
 
 	ParentTool->GetToolManager()->BeginUndoTransaction(LOCTEXT("SelectionChange", "Selection"));
 	BeginChange();
@@ -537,48 +711,28 @@ void UMeshTopologySelectionMechanic::OnDragRectangleStarted()
 
 void UMeshTopologySelectionMechanic::OnDragRectangleChanged(const FCameraRectangle& CurrentRectangle)
 {
-	FGroupTopologySelection RectangleSelection;
-
-	TopoSelector->FindSelectedElement(PreDragTopoSelectorSettings, CurrentRectangle, TargetTransform,
-		RectangleSelection, &TriIsOccludedCache);
-
-	if (ShouldAddToSelectionFunc())
+	if (MarqueeSelectionUpdateType == EMarqueeSelectionUpdateType::OnDrag)
 	{
-		PersistentSelection = PreDragPersistentSelection;
-		if (ShouldRemoveFromSelectionFunc())
-		{
-			PersistentSelection.Toggle(RectangleSelection);
-		}
-		else
-		{
-			PersistentSelection.Append(RectangleSelection);
-		}
-	}
-	else if (ShouldRemoveFromSelectionFunc())
-	{
-		PersistentSelection = PreDragPersistentSelection;
-		PersistentSelection.Remove(RectangleSelection);
+		HandleRectangleChanged(CurrentRectangle);
 	}
 	else
 	{
-		// Neither key pressed.
-		PersistentSelection = RectangleSelection;
-	}
-
-	// If we modified the currently selected edges/vertices, they will be properly displayed in our
-	// Render() call. However, the mechanic is not responsible for face highlighting, so if we modified
-	// that, we need to notify the user so that they can update the highlighting (since OnSelectionChanged
-	// only gets broadcast at rectangle end).
-	if ((!PersistentSelection.SelectedGroupIDs.IsEmpty() || !LastUpdateRectangleSelection.SelectedGroupIDs.IsEmpty()) // if groups are involved
-		&& PersistentSelection != LastUpdateRectangleSelection)
-	{
-		LastUpdateRectangleSelection = PersistentSelection;
-		OnFaceSelectionPreviewChanged.Broadcast();
+		// defer the selection on tick or release  
+		PendingSelectionFunction = [this, CurrentRectangle]()
+		{
+			HandleRectangleChanged(CurrentRectangle);
+		};
 	}
 }
 
 void UMeshTopologySelectionMechanic::OnDragRectangleFinished(const FCameraRectangle& Rectangle, bool bCancelled)
 {
+	if (PendingSelectionFunction)
+	{
+		PendingSelectionFunction();
+		PendingSelectionFunction.Reset();
+	}
+	
 	bCurrentlyMarqueeDragging = false;
 
 	TriIsOccludedCache.Reset();

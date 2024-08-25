@@ -28,6 +28,7 @@
 #include "HAL/IConsoleManager.h"
 #include "Iris/Core/IrisProfiler.h"
 #include "Net/Core/Trace/NetDebugName.h"
+#include "Iris/Stats/NetStatsContext.h"
 
 namespace UE::Net::Private
 {
@@ -68,25 +69,26 @@ void FReplicationInstanceOperationsInternal::UnbindInstanceProtocol(FReplication
 	}
 }
 
-uint32 FReplicationInstanceOperationsInternal::CopyObjectStateData(FNetBitStreamWriter& ChangeMaskWriter, FChangeMaskCache& Cache, FNetRefHandleManager& NetRefHandleManager, FNetSerializationContext& SerializationContext, uint32 InternalIndex)
+uint32 FReplicationInstanceOperationsInternal::QuantizeObjectStateData(FNetBitStreamWriter& ChangeMaskWriter, FChangeMaskCache& Cache, FNetRefHandleManager& NetRefHandleManager, FNetSerializationContext& SerializationContext, uint32 InternalIndex)
 {
 	if (NetRefHandleManager.IsScopableIndex(InternalIndex))
 	{
 		FNetRefHandleManager::FReplicatedObjectData& Object = NetRefHandleManager.GetReplicatedObjectDataNoCheck(InternalIndex);
 
-		// We cannot copy state data for zero sized objects or objects that no longer has an instance protocol.
+		// We cannot quantize state data for zero sized objects or objects that no longer has an instance protocol.
 		if (Object.InstanceProtocol && Object.Protocol->InternalTotalSize > 0U)
 		{
 			IRIS_PROFILER_PROTOCOL_NAME(Object.Protocol->DebugName->Name);
+			UE_NET_IRIS_STATS_TIMER(Timer, SerializationContext.GetNetStatsContext());
 
 			// if the object was scopable prev frame we can do partial copy
 			bool bShouldPropagateChangedStates = Object.bShouldPropagateChangedStates;
 
-			// We do a full CopyAndQunatize if the cvar bCVarForceFullCopyAndQuantize is set or that the object is marked as needing a FullCopyAndQuantize
+			// We do a full CopyAndQuantize if the cvar bCVarForceFullCopyAndQuantize is set or that the object is marked as needing a FullCopyAndQuantize
 			const bool bUseFullCopyAndQuantize = bCVarForceFullCopyAndQuantize || Object.bNeedsFullCopyAndQuantize;
 			Object.bNeedsFullCopyAndQuantize = 0U;
 
-			// Copy dirty state
+			// Quantize dirty state
 			{
 				// Add entry to cache
 				FChangeMaskCache::FCachedInfo& Info = Cache.AddChangeMaskForObject(InternalIndex, Object.Protocol->ChangeMaskBitCount);
@@ -97,11 +99,11 @@ uint32 FReplicationInstanceOperationsInternal::CopyObjectStateData(FNetBitStream
 				//UE_LOG(LogIris, Log, TEXT("Copying state data for ( InternalIndex: %u ) with NetRefHandle (Id=%u)"), InternalIndex, Object.RefHandle.GetId());
 				if (bUseFullCopyAndQuantize)
 				{
-					FReplicationInstanceOperations::CopyAndQuantize(SerializationContext, NetRefHandleManager.GetReplicatedObjectStateBufferNoCheck(InternalIndex), &ChangeMaskWriter, Object.InstanceProtocol, Object.Protocol);					
+					FReplicationInstanceOperations::Quantize(SerializationContext, NetRefHandleManager.GetReplicatedObjectStateBufferNoCheck(InternalIndex), &ChangeMaskWriter, Object.InstanceProtocol, Object.Protocol);					
 				}
 				else
 				{
-					FReplicationInstanceOperations::CopyAndQuantizeIfDirty(SerializationContext, NetRefHandleManager.GetReplicatedObjectStateBufferNoCheck(InternalIndex), &ChangeMaskWriter, Object.InstanceProtocol, Object.Protocol);
+					FReplicationInstanceOperations::QuantizeIfDirty(SerializationContext, NetRefHandleManager.GetReplicatedObjectStateBufferNoCheck(InternalIndex), &ChangeMaskWriter, Object.InstanceProtocol, Object.Protocol);
 				}
 
 				Info.bHasDirtyChangeMask = MakeNetBitArrayView(ChangeMaskData, ChangeMaskByteCount * 8U).FindFirstOne() != FNetBitArrayView::InvalidIndex;
@@ -131,6 +133,8 @@ uint32 FReplicationInstanceOperationsInternal::CopyObjectStateData(FNetBitStream
 			{
 				Cache.PopLastEntry();
 			}
+
+			UE_NET_IRIS_STATS_ADD_TIME_AND_COUNT_FOR_OBJECT(Timer, Quantize, InternalIndex);
 
 			return 1U;
 		}
@@ -364,36 +368,6 @@ void FReplicationStateOperationsInternal::CollectReferencesWithMask(FNetSerializ
 		}
 	}
 }
-
-ENetObjectReferenceResolveResult FReplicationStateOperationsInternal::TryToResolveObjectReferences(FNetSerializationContext& Context, uint8* RESTRICT InternalBuffer, const FReplicationStateDescriptor* Descriptor)
-{
-	FNetSerializationContext LocalContext;
-	FNetReferenceCollector Collector;
-
-	if (Descriptor->IsInitState() || Descriptor->MemberChangeMaskDescriptors == nullptr)
-	{
-		const FNetSerializerChangeMaskParam InitStateChangeMaskInfo = { 0 };
-		FReplicationStateOperationsInternal::CollectReferences(LocalContext, Collector, InitStateChangeMaskInfo, InternalBuffer, Descriptor);
-	}
-	else
-	{
-		FReplicationStateOperationsInternal::CollectReferencesWithMask(LocalContext, Collector, 0, InternalBuffer, Descriptor);
-	}
-
-	// Process references
-	const FInternalNetSerializationContext* InternalContext = Context.GetInternalContext();
-	const FNetObjectResolveContext& ResolveContext = InternalContext->ResolveContext;
-	FObjectReferenceCache& ObjectReferenceCache = *InternalContext->ObjectReferenceCache;
-
-	ENetObjectReferenceResolveResult Result = ENetObjectReferenceResolveResult::None;
-	for (const FNetReferenceCollector::FReferenceInfo& Info : MakeArrayView(Collector.GetCollectedReferences()))
-	{
-		UObject* ResolvedObject;
-		Result |= ObjectReferenceCache.ResolveObjectReference(Info.Reference, ResolveContext, ResolvedObject);
-	}
-
-	return Result;
-};
 
 void FReplicationProtocolOperationsInternal::CloneDynamicState(FNetSerializationContext& Context, uint8* RESTRICT DstObjectStateBuffer, const uint8* RESTRICT SrcObjectStateBuffer, const FReplicationProtocol* Protocol)
 {

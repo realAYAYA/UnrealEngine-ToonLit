@@ -106,6 +106,40 @@ FCbObjectId FCbObjectId::NewObjectId()
 	return ObjectId;
 }
 
+FGuid ToGuid(const FCbObjectId& Id)
+{
+	const FCbObjectId::ByteArray& Bytes = Id.GetBytes();
+	uint32 A = static_cast<uint32>(Bytes[0]) << 24 | static_cast<uint32>(Bytes[1]) << 16 | static_cast<uint32>(Bytes[2]) << 8 | static_cast<uint32>(Bytes[3]);
+	uint32 B = static_cast<uint32>(Bytes[4]) << 24 | static_cast<uint32>(Bytes[5]) << 16 | static_cast<uint32>(Bytes[6]) << 8 | static_cast<uint32>(Bytes[7]);
+	uint32 C = static_cast<uint32>(Bytes[8]) << 24 | static_cast<uint32>(Bytes[9]) << 16 | static_cast<uint32>(Bytes[10]) << 8 | static_cast<uint32>(Bytes[11]);
+	uint32 D = (B & 0x0000ff00u) | (C & 0xff000000u);;
+	B = (B & ~0x0000f000u) | 0x00004000u;
+	C = (C & ~0xc0000000u) | 0x80000000u;
+	return FGuid(A, B, C, D);
+}
+
+FCbObjectId FromGuid(const FGuid& Id)
+{
+	uint32 Bits0 = Id.A;
+	uint32 Bits1 = (Id.B & ~0x0000ff00u) | (Id.D & 0x0000ff00u);
+	uint32 Bits2 = (Id.C & ~0xff000000u) | (Id.D & 0xff000000u);
+	FCbObjectId::ByteArray Bytes = {
+		static_cast<uint8>((Bits0 >> 24) & 0xff),
+		static_cast<uint8>((Bits0 >> 16) & 0xff),
+		static_cast<uint8>((Bits0 >> 8) & 0xff),
+		static_cast<uint8>(Bits0 & 0xff),
+		static_cast<uint8>((Bits1 >> 24) & 0xff),
+		static_cast<uint8>((Bits1 >> 16) & 0xff),
+		static_cast<uint8>((Bits1 >> 8) & 0xff),
+		static_cast<uint8>(Bits1 & 0xff),
+		static_cast<uint8>((Bits2 >> 24) & 0xff),
+		static_cast<uint8>((Bits2 >> 16) & 0xff),
+		static_cast<uint8>((Bits2 >> 8) & 0xff),
+		static_cast<uint8>(Bits2 & 0xff)
+	};
+	return FCbObjectId(Bytes);
+}
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 FCbFieldView::FCbFieldView(const void* const Data, ECbFieldType Type)

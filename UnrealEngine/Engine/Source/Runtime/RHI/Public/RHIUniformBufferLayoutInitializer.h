@@ -137,6 +137,7 @@ struct FRHIUniformBufferLayoutInitializer
 		Ar << Ref.Name;
 		Ar << Ref.Hash;
 		Ar << Ref.bNoEmulatedUniformBuffer;
+		Ar << Ref.bUniformView;
 		return Ar;
 	}
 
@@ -185,6 +186,9 @@ public:
 	/** Used for platforms which use emulated ub's, forces a real uniform buffer instead */
 	LAYOUT_FIELD_INITIALIZED(bool, bNoEmulatedUniformBuffer, false);
 
+	/** This struct is a view into uniform buffer object, on platforms that support UBO */
+	LAYOUT_FIELD_INITIALIZED(bool, bUniformView, false);
+	
 	/** Compare two uniform buffer layout initializers. */
 	friend inline bool operator==(const FRHIUniformBufferLayoutInitializer& A, const FRHIUniformBufferLayoutInitializer& B)
 	{

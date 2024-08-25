@@ -2,7 +2,7 @@
 
 #include "EOSAudioDevicePool.h"
 
-#if WITH_EOS_RTC
+#if WITH_EOSVOICECHAT
 
 #include "EOSVoiceChatLog.h"
 
@@ -194,4 +194,4 @@ int32 FEOSAudioDevicePool::GetDefaultOutputDeviceInfoIdx() const
 	return DefaultOutputDeviceInfoIdx;
 }
 
-#endif // WITH_EOS_RTC
+#endif // WITH_EOSVOICECHAT

@@ -91,7 +91,7 @@ float3 SkyLightDiffuse(FGBufferData GBuffer, float AmbientOcclusion, float2 Buff
 	FSkyLightVisibilityData SkyVisData = GetSkyLightVisibilityData(SkyLightingNormal, GBuffer.WorldNormal, GBuffer.GBufferAO, AmbientOcclusion, BentNormal);
 
 	const float3 N = GBuffer.WorldNormal;
-	const float3 V = -normalize(mul(float3(ScreenPosition, 1), LWCToFloat3x3(PrimaryView.ScreenToWorld)).xyz);
+	const float3 V = -normalize(mul(float3(ScreenPosition, 1), DFToFloat3x3(PrimaryView.ScreenToWorld)).xyz);
 	const float NoV = saturate(dot(V, N));
 	const FBxDFEnergyTerms EnergyTerms = ComputeGGXSpecEnergyTerms(GBuffer.Roughness, NoV, GBuffer.SpecularColor);
 	float3 DiffuseWeight = ComputeEnergyPreservation(EnergyTerms);

@@ -14,7 +14,7 @@
 #define LOCTEXT_NAMESPACE "WorldPartition"
 
 FWorldPartitionUtils::FSimulateCookedSession::FSimulateCookedSession(UWorld* InWorld)
-: bIsValid(false)
+	: CookContext(nullptr)
 {
 	UE_CLOG(!InWorld, LogWorldPartition, Error, TEXT("FSimulateCookedSession was given an invalid world."));
 	UE_CLOG(InWorld && !InWorld->IsPartitionedWorld(), LogWorldPartition, Warning, TEXT("FSimulateCookedSession was given a non-partitioned world."));
@@ -22,10 +22,13 @@ FWorldPartitionUtils::FSimulateCookedSession::FSimulateCookedSession(UWorld* InW
 	if (InWorld)
 	{
 		WorldPartition = InWorld->GetWorldPartition();
-		bIsValid = WorldPartition.IsValid() ? SimulateCook() : false;
+		if (WorldPartition.IsValid())
+		{
+			SimulateCook();
+		}
 	}
 
-	UE_CLOG(!bIsValid, LogWorldPartition, Warning, TEXT("FSimulateCookedSession failed to generate streaming."));
+	UE_CLOG(!IsValid(), LogWorldPartition, Warning, TEXT("FSimulateCookedSession failed to generate streaming."));
 }
 
 bool FWorldPartitionUtils::FSimulateCookedSession::SimulateCook()
@@ -40,10 +43,11 @@ bool FWorldPartitionUtils::FSimulateCookedSession::SimulateCook()
 	}
 
 	// Simulate cook
-	FWorldPartitionCookPackageContext CookContext;
-	WorldPartition->BeginCook(CookContext);
+	check(!CookContext);
+	CookContext = new FWorldPartitionCookPackageContext;
+	WorldPartition->BeginCook(*CookContext);
 
-	if (!CookContext.GatherPackagesToCook())
+	if (!CookContext->GatherPackagesToCook())
 	{
 		return false;
 	}
@@ -64,7 +68,7 @@ bool FWorldPartitionUtils::FSimulateCookedSession::SimulateCook()
 
 FWorldPartitionUtils::FSimulateCookedSession::~FSimulateCookedSession()
 {
-	if (WorldPartition.IsValid())
+	if (CookContext)
 	{
 		// Simulate Content Bundles injection
 		TArray<TSharedPtr<FContentBundleEditor>> ContentBundles;
@@ -80,7 +84,10 @@ FWorldPartitionUtils::FSimulateCookedSession::~FSimulateCookedSession()
 			}
 		}
 
+		WorldPartition->EndCook(*CookContext);
 		WorldPartition->FlushStreaming();
+
+		delete CookContext;
 	}
 }
 

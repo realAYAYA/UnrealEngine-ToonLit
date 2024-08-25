@@ -11,6 +11,7 @@
 #include "Iris/Serialization/InternalNetSerializers.h"
 #include "Iris/Serialization/NetSerializers.h"
 #include "Iris/Serialization/InternalNetSerializerUtils.h"
+#include "Iris/Core/IrisProfiler.h"
 
 namespace UE::Net::Private
 {
@@ -33,6 +34,9 @@ FFastArrayReplicationFragmentBase::FFastArrayReplicationFragmentBase(EReplicatio
 		check(EnumHasAnyFlags(InDescriptor->Traits, EReplicationStateTraits::IsFastArrayReplicationState));
 		check(!EnumHasAnyFlags(InDescriptor->Traits, EReplicationStateTraits::IsNativeFastArrayReplicationState));
 	}
+
+	// We do not create temporary states
+	Traits |= EReplicationFragmentTraits::HasPersistentTargetStateBuffer;
 
 	if (EnumHasAnyFlags(InTraits, EReplicationFragmentTraits::CanReplicate))
 	{
@@ -68,6 +72,7 @@ FFastArrayReplicationFragmentBase::FFastArrayReplicationFragmentBase(EReplicatio
 	}
 
 	Traits |= EReplicationFragmentTraits::HasPropertyReplicationState;
+	Traits |= EReplicationFragmentTraits::SupportsPartialDequantizedState;
 
 	// Look up the descriptor of the struct
 	const FReplicationStateDescriptor* FastArrayStructDescriptor = GetFastArrayPropertyStructDescriptor();
@@ -118,36 +123,108 @@ void FFastArrayReplicationFragmentBase::Register(FFragmentRegistrationContext& C
 	Context.RegisterReplicationFragment(this, ReplicationStateDescriptor.GetReference(), ReplicationState ? ReplicationState->GetStateBuffer() : nullptr);
 }
 
+void FFastArrayReplicationFragmentBase::InternalDequantizeFastArray(FNetSerializationContext& Context, uint8* RESTRICT DstExternalBuffer, const uint8* RESTRICT SrcInternalBuffer, const FReplicationStateDescriptor* Descriptor)
+{
+	const FReplicationStateMemberDescriptor* MemberDescriptors = Descriptor->MemberDescriptors;
+	const FReplicationStateMemberSerializerDescriptor* MemberSerializerDescriptors = Descriptor->MemberSerializerDescriptors;
+	const uint32 MemberCount = Descriptor->MemberCount;
+
+	const uint32 ArrayMemberIndex = FFastArrayReplicationFragmentHelper::GetFastArrayStructItemArrayMemberIndex(Descriptor);
+	check(ArrayMemberIndex < MemberCount);
+
+	const FReplicationStateMemberDescriptor& MemberDescriptor = MemberDescriptors[ArrayMemberIndex];
+	const FReplicationStateMemberSerializerDescriptor& MemberSerializerDescriptor = MemberSerializerDescriptors[ArrayMemberIndex];
+	
+	// Dequantize full array
+	FNetDequantizeArgs Args;
+	Args.Version = 0;
+	Args.NetSerializerConfig = MemberSerializerDescriptor.SerializerConfig;
+	Args.Target = reinterpret_cast<NetSerializerValuePointer>(DstExternalBuffer + MemberDescriptor.ExternalMemberOffset);
+	Args.Source = reinterpret_cast<NetSerializerValuePointer>(SrcInternalBuffer + MemberDescriptor.InternalMemberOffset);	
+
+	MemberSerializerDescriptor.Serializer->Dequantize(Context, Args);
+}
+
+void FFastArrayReplicationFragmentBase::InternalPartialDequantizeFastArray(FReplicationStateApplyContext& ApplyContext, uint8* RESTRICT DstExternalBuffer, const uint8* RESTRICT SrcInternalBuffer, const FReplicationStateDescriptor* Descriptor)
+{
+	const FReplicationStateMemberDescriptor* MemberDescriptors = Descriptor->MemberDescriptors;
+	const FReplicationStateMemberSerializerDescriptor* MemberSerializerDescriptors = Descriptor->MemberSerializerDescriptors;
+	const uint32 MemberCount = Descriptor->MemberCount;
+
+	const uint32 ArrayMemberIndex = FFastArrayReplicationFragmentHelper::GetFastArrayStructItemArrayMemberIndex(Descriptor);
+	check(ArrayMemberIndex < MemberCount);
+
+	const FReplicationStateMemberDescriptor& MemberDescriptor = MemberDescriptors[ArrayMemberIndex];
+	const FReplicationStateMemberSerializerDescriptor& MemberSerializerDescriptor = MemberSerializerDescriptors[ArrayMemberIndex];
+	const FReplicationStateMemberChangeMaskDescriptor& MemberChangeMaskDescriptor = ApplyContext.Descriptor->MemberChangeMaskDescriptors[0];
+
+	// Setup changemask
+	FNetBitArrayView MemberChangeMask = MakeNetBitArrayView(ApplyContext.StateBufferData.ChangeMaskData, ApplyContext.Descriptor->ChangeMaskBitCount);
+	ApplyContext.NetSerializationContext->SetChangeMask(&MemberChangeMask);
+
+	FNetDequantizeArgs Args;
+	Args.Version = 0;
+	Args.NetSerializerConfig = MemberSerializerDescriptor.SerializerConfig;
+	Args.Target = reinterpret_cast<NetSerializerValuePointer>(DstExternalBuffer + MemberDescriptor.ExternalMemberOffset);
+	Args.Source = reinterpret_cast<NetSerializerValuePointer>(SrcInternalBuffer + MemberDescriptor.InternalMemberOffset);
+
+	Args.ChangeMaskInfo.BitCount = MemberChangeMaskDescriptor.BitCount;
+	Args.ChangeMaskInfo.BitOffset = MemberChangeMaskDescriptor.BitOffset;
+
+	MemberSerializerDescriptor.Serializer->Dequantize(*ApplyContext.NetSerializationContext, Args);
+}
+
+void FFastArrayReplicationFragmentBase::InternalDequantizeExtraProperties(FNetSerializationContext& Context, uint8* RESTRICT DstExternalBuffer, const uint8* RESTRICT SrcInternalBuffer, const FReplicationStateDescriptor* Descriptor)
+{
+	const uint32 ArrayMemberIndex = FFastArrayReplicationFragmentHelper::GetFastArrayStructItemArrayMemberIndex(Descriptor);
+
+	const FReplicationStateMemberDescriptor* MemberDescriptors = Descriptor->MemberDescriptors;
+	const FReplicationStateMemberSerializerDescriptor* MemberSerializerDescriptors = Descriptor->MemberSerializerDescriptors;
+	const uint32 MemberCount = Descriptor->MemberCount;
+
+	check(ArrayMemberIndex < MemberCount);
+
+	for (uint32 MemberIndex = 0; MemberIndex < MemberCount; ++MemberIndex)
+	{
+		if (MemberIndex == ArrayMemberIndex)
+		{
+			continue;
+		}
+
+		const FReplicationStateMemberDescriptor& MemberDescriptor = MemberDescriptors[MemberIndex];
+		const FReplicationStateMemberSerializerDescriptor& MemberSerializerDescriptor = MemberSerializerDescriptors[MemberIndex];
+
+		FNetDequantizeArgs Args;
+		Args.Version = 0;
+		Args.NetSerializerConfig = MemberSerializerDescriptor.SerializerConfig;
+		Args.Target = reinterpret_cast<NetSerializerValuePointer>(DstExternalBuffer + MemberDescriptor.ExternalMemberOffset);
+		Args.Source = reinterpret_cast<NetSerializerValuePointer>(SrcInternalBuffer + MemberDescriptor.InternalMemberOffset);	
+
+		MemberSerializerDescriptor.Serializer->Dequantize(Context, Args);
+	}
+}
+
 void FFastArrayReplicationFragmentBase::CollectOwner(FReplicationStateOwnerCollector* Owners) const
 {
 	Owners->AddOwner(Owner);
 }
 
-void FFastArrayReplicationFragmentBase::CallRepNotifies(FReplicationStateApplyContext& Context)
+void FFastArrayReplicationFragmentBase::ToString(FStringBuilderBase& StringBuilder, const uint8* StateBuffer, const FReplicationStateDescriptor* Descriptor)
 {
-	IRIS_PROFILER_SCOPE(PropertyReplicationFragment_InvokeRepNotifies);
+	const FProperty** MemberProperties = Descriptor->MemberProperties;
+	const uint32 MemberCount = Descriptor->MemberCount;
 
-	const FPropertyReplicationState ReceivedState(Context.Descriptor, Context.StateBufferData.ExternalStateBuffer);
+	StringBuilder.Appendf(TEXT("FFastArrayReplicationState %s\n"), Descriptor->DebugName->Name);
 
-	if (!Context.bIsInit)
+	FString TempString;
+	for (uint32 MemberIt = 0; MemberIt < MemberCount; ++MemberIt)
 	{
-		ReceivedState.CallRepNotifies(Owner, nullptr, Context.bIsInit);
+		const FProperty* Property = MemberProperties[MemberIt];
+
+		Property->ExportTextItem_Direct(TempString, StateBuffer + Descriptor->MemberDescriptors[MemberIt].ExternalMemberOffset, nullptr, nullptr, PPF_SimpleObjectText);
+		StringBuilder.Appendf(TEXT("%u - %s : %s\n"), MemberIt, *Property->GetName(), ToCStr(TempString));
+		TempString.Reset();
 	}
-	else
-	{
-		// As our default initial states is always treated as all dirty we need to compare against the default before applying initial repnotifies
-		const FPropertyReplicationState DefaultState(Context.Descriptor);
-
-		ReceivedState.CallRepNotifies(Owner, &DefaultState, Context.bIsInit);
-	}
-}
-
-void FFastArrayReplicationFragmentBase::ReplicatedStateToString(FStringBuilderBase& StringBuilder, FReplicationStateApplyContext& Context, EReplicationStateToStringFlags Flags) const
-{
-	const FPropertyReplicationState ReceivedState(Context.Descriptor, Context.StateBufferData.ExternalStateBuffer);
-
-	const bool bIncludeAll = EnumHasAnyFlags(Flags, EReplicationStateToStringFlags::OnlyIncludeDirtyMembers) == false;
-	ReceivedState.ToString(StringBuilder, bIncludeAll);
 }
 
 uint32 FFastArrayReplicationFragmentHelper::GetFastArrayStructItemArrayMemberIndex(const FReplicationStateDescriptor* StructDescriptor)
@@ -280,6 +357,11 @@ void FNativeFastArrayReplicationFragmentBase::CollectOwner(FReplicationStateOwne
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // FFastArrayReplicationFragmentHelper
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+void FFastArrayReplicationFragmentHelper::InternalApplyArrayElement(const FReplicationStateDescriptor* ArrayElementDescriptor, void* RESTRICT Dst, const void* RESTRICT Src)
+{
+	InternalApplyStructProperty(ArrayElementDescriptor, Dst, Src);
+}
+
 void FFastArrayReplicationFragmentHelper::InternalCopyArrayElement(const FReplicationStateDescriptor* ArrayElementDescriptor, void* RESTRICT Dst, const void* RESTRICT Src)
 {
 	InternalCopyStructProperty(ArrayElementDescriptor, Dst, Src);

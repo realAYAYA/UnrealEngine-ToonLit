@@ -7,7 +7,9 @@
 #include "Common.ush"
 #include "DeferredShadingCommon.ush"
 #include "SceneTexturesCommon.ush"
+#if NANITE_COMPOSITE
 #include "Nanite/NaniteDataDecode.ush"
+#endif
 
 // This must match EDownsampleDepthFilter
 #define DOWNSAMPLE_DEPTH_FILTER_POINT		0

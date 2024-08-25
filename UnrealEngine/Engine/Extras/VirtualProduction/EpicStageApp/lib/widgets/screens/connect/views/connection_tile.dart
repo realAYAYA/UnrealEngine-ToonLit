@@ -1,12 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+import 'package:epic_common/theme.dart';
+import 'package:epic_common/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 
-import '../../../../utilities/constants.dart';
 import '../../../../utilities/net_utilities.dart';
-import '../../../../utilities/unreal_colors.dart';
-import '../../../elements/asset_icon.dart';
 import '../mixins/connect_mixin.dart';
 
 /// Connection tile/item used to visually represent available instances of UE connections.
@@ -63,7 +62,7 @@ class _ConnectionTileState extends State<ConnectionTile> with ConnectMixin {
         height: 166,
         padding: EdgeInsets.symmetric(horizontal: 10),
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(cardCornerRadius),
+          borderRadius: BorderRadius.circular(UnrealTheme.cardCornerRadius),
           color: fillColor,
           border: widget.bFilled
               ? null
@@ -77,7 +76,7 @@ class _ConnectionTileState extends State<ConnectionTile> with ConnectMixin {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             AssetIcon(
-              path: 'assets/images/icons/unreal_u.svg',
+              path: 'packages/epic_common/assets/icons/unreal_u.svg',
               size: 50,
               color: widget.bFilled ? UnrealColors.white : UnrealColors.gray75,
             ),

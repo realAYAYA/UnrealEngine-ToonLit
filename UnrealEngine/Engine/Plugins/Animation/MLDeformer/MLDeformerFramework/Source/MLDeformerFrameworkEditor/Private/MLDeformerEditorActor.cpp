@@ -17,18 +17,14 @@ namespace UE::MLDeformer
 		Actor = Settings.Actor;
 		LabelComponent = CreateLabelComponent(Settings.Actor, Settings.LabelColor, Settings.LabelText);
 		bIsTrainingActor = Settings.bIsTrainingActor;
+		ActorTypeInstanceIndex = Settings.ActorTypeInstanceIndex;
 	}
 
 	FMLDeformerEditorActor::~FMLDeformerEditorActor()
 	{
 		if (LabelComponent)
 		{
-			Actor->RemoveOwnedComponent(LabelComponent);
-		}
-
-		if (SkeletalMeshComponent)
-		{
-			Actor->RemoveOwnedComponent(SkeletalMeshComponent);
+			LabelComponent->UnregisterComponent();
 		}
 	}
 

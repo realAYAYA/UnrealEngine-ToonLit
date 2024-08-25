@@ -241,15 +241,39 @@ void SMassArchetypesView::RebuildSelectedView()
 	{
 		// print out entity count and memory totals
 		int32 EntitiesCount = 0;
+		int32 ChunksCount = 0;
 		SIZE_T AllocatedSize = 0;
+		SIZE_T WastedEntityMemory = 0;
+
 		for (const TSharedPtr<FMassDebuggerArchetypeData>& ArchetypeData : DebuggerModel->SelectedArchetypes)
 		{
 			EntitiesCount += ArchetypeData->ArchetypeStats.EntitiesCount;
+			ChunksCount += ArchetypeData->ArchetypeStats.ChunksCount;
 			AllocatedSize += ArchetypeData->ArchetypeStats.AllocatedSize;
+			WastedEntityMemory += ArchetypeData->ArchetypeStats.WastedEntityMemory;
 		}
 
-		const FText TotalDescription = FText::Format(LOCTEXT("ArchetypesSelectionTotalsContent", "EntitiesCount: {0}\nAllocated memory: {1}")
-			, FText::AsNumber(EntitiesCount), FText::AsMemory(AllocatedSize));
+		float ChunkOccupancy = 0.f;
+		for (const TSharedPtr<FMassDebuggerArchetypeData>& ArchetypeData : DebuggerModel->SelectedArchetypes)
+		{
+			if (ArchetypeData->ArchetypeStats.ChunksCount)
+			{
+				const float AverageEntitiesPerChunkActual = float(ArchetypeData->ArchetypeStats.EntitiesCount) / ArchetypeData->ArchetypeStats.ChunksCount;
+				const float Occupancy = AverageEntitiesPerChunkActual / ArchetypeData->ArchetypeStats.EntitiesCountPerChunk;
+				// @todo we're doing a simple proportional accumulation here. Percentiles would work better to avoid
+				// outliers skewing the results. 
+				ChunkOccupancy += Occupancy * ArchetypeData->ArchetypeStats.EntitiesCount / EntitiesCount;
+			}
+		}
+
+		const FText TotalDescription = FText::Format(LOCTEXT("ArchetypesSelectionTotalsContent", "EntitiesCount: {0}\
+				\nAllocated memory: {1}\
+				\nWasted memory: {2} ({3}%)\
+				\nTotal chunks: {4}\
+				\nChunk occupancy: {5}")
+			, FText::AsNumber(EntitiesCount), FText::AsMemory(AllocatedSize)
+			, FText::AsMemory(WastedEntityMemory), FText::AsNumber(float(WastedEntityMemory) * 100.f / AllocatedSize)
+			, FText::AsNumber(ChunksCount), FText::AsNumber(ChunkOccupancy));
 
 		TSharedRef<SVerticalBox> Box = SNew(SVerticalBox);
 		

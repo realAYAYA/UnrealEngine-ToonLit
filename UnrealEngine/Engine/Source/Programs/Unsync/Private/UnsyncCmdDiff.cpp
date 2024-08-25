@@ -2,6 +2,7 @@
 
 #include "UnsyncCmdDiff.h"
 #include "UnsyncFile.h"
+#include "UnsyncTarget.h"
 
 namespace unsync {
 
@@ -10,13 +11,13 @@ CmdDiff(const FCmdDiffOptions& Options)
 {
 	if (!Options.Output.empty())
 	{
-		UNSYNC_VERBOSE(L"Generating patch for '%ls' -> '%ls'", Options.Base.wstring().c_str(), Options.Source.wstring().c_str());
-		UNSYNC_VERBOSE(L"Output file '%ls'", Options.Output.wstring().c_str());
+		UNSYNC_LOG(L"Generating patch for '%ls' -> '%ls'", Options.Base.wstring().c_str(), Options.Source.wstring().c_str());
+		UNSYNC_LOG(L"Output file '%ls'", Options.Output.wstring().c_str());
 	}
 	else
 	{
-		UNSYNC_VERBOSE(L"Comparing base '%ls' and source '%ls'", Options.Base.wstring().c_str(), Options.Source.wstring().c_str());
-		UNSYNC_VERBOSE(L"Dry run mode (no output path given).");
+		UNSYNC_LOG(L"Comparing base '%ls' and source '%ls'", Options.Base.wstring().c_str(), Options.Source.wstring().c_str());
+		UNSYNC_LOG(L"Dry run mode (no output path given).");
 		GDryRun = true;
 	}
 
@@ -34,7 +35,7 @@ CmdDiff(const FCmdDiffOptions& Options)
 		return 1;
 	}
 
-	UNSYNC_VERBOSE(L"Generating patch");
+	UNSYNC_LOG(L"Generating patch");
 	FBuffer PatchData = GeneratePatch(BaseFile.Data(),
 									  BaseFile.Size(),
 									  SourceFile.Data(),
@@ -66,7 +67,7 @@ CmdDiff(const FCmdDiffOptions& Options)
 
 		if (!GDryRun && !Options.Output.empty())
 		{
-			UNSYNC_VERBOSE(L"Writing output file to '%ls'", Options.Output.wstring().c_str());
+			UNSYNC_LOG(L"Writing output file to '%ls'", Options.Output.wstring().c_str());
 			return WriteBufferToFile(Options.Output, PatchData.Data(), PatchData.Size()) ? 0 : 1;
 		}
 	}

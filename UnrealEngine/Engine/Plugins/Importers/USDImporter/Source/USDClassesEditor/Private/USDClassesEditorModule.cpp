@@ -7,21 +7,26 @@
 #include "USDDefaultAssetCacheDialog.h"
 
 #include "AssetToolsModule.h"
-#include "Modules/ModuleManager.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Interfaces/IMainFrameModule.h"
+#include "Modules/ModuleManager.h"
 
 #define LOCTEXT_NAMESPACE "USDClassesEditorModule"
 
 UUsdAssetCache2* IUsdClassesEditorModule::ShowMissingDefaultAssetCacheDialog()
 {
 	UUsdAssetCache2* Result = nullptr;
-	bool bOutUserAccepted = false;
-	ShowMissingDefaultAssetCacheDialog(Result, bOutUserAccepted);
+	EDefaultAssetCacheDialogOption Unused = ShowMissingDefaultAssetCacheDialog(Result);
 	return Result;
 }
 
 void IUsdClassesEditorModule::ShowMissingDefaultAssetCacheDialog(UUsdAssetCache2*& OutCreatedCache, bool& bOutUserAccepted)
+{
+	EDefaultAssetCacheDialogOption Result = ShowMissingDefaultAssetCacheDialog(OutCreatedCache);
+	bOutUserAccepted = Result != EDefaultAssetCacheDialogOption::Cancel;
+}
+
+EDefaultAssetCacheDialogOption IUsdClassesEditorModule::ShowMissingDefaultAssetCacheDialog(UUsdAssetCache2*& OutCreatedCache)
 {
 	TSharedPtr<SWindow> ParentWindow;
 
@@ -33,31 +38,16 @@ void IUsdClassesEditorModule::ShowMissingDefaultAssetCacheDialog(UUsdAssetCache2
 
 	FText WindowTitle = LOCTEXT("WindowTitle", "Set the default USD Asset Cache");
 
-	TSharedRef<SWindow> Window = SNew(SWindow)
-		.Title(WindowTitle)
-		.SizingRule(ESizingRule::Autosized)
-		.AdjustInitialSizeAndPositionForDPIScale(false);
+	TSharedRef<SWindow> Window = SNew(SWindow).Title(WindowTitle).SizingRule(ESizingRule::Autosized).AdjustInitialSizeAndPositionForDPIScale(false);
 
 	TSharedPtr<SUsdDefaultAssetCacheDialog> OptionsWindow;
-	Window->SetContent
-	(
-		SAssignNew(OptionsWindow, SUsdDefaultAssetCacheDialog)
-		.WidgetWindow(Window)
-	);
+	Window->SetContent(SAssignNew(OptionsWindow, SUsdDefaultAssetCacheDialog).WidgetWindow(Window));
 
 	const bool bSlowTaskWindow = false;
 	FSlateApplication::Get().AddModalWindow(Window, ParentWindow, bSlowTaskWindow);
 
-	if (OptionsWindow->UserAccepted())
-	{
-		bOutUserAccepted = true;
-		OutCreatedCache = OptionsWindow->GetCreatedCache();
-	}
-	else
-	{
-		bOutUserAccepted = false;
-		OutCreatedCache = nullptr;
-	}
+	OutCreatedCache = OptionsWindow->GetCreatedCache();
+	return OptionsWindow->GetDialogOutcome();
 }
 
 class FUsdClassesEditorModule : public IUsdClassesEditorModule
@@ -85,7 +75,6 @@ private:
 	TSharedPtr<IAssetTypeActions> AssetCacheAssetActions;
 };
 
-IMPLEMENT_MODULE( FUsdClassesEditorModule, USDClassesEditor );
+IMPLEMENT_MODULE(FUsdClassesEditorModule, USDClassesEditor);
 
 #undef LOCTEXT_NAMESPACE
-

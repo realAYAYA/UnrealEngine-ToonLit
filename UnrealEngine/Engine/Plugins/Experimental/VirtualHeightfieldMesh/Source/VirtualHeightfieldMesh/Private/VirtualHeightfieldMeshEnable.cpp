@@ -67,6 +67,6 @@ namespace VirtualHeightfieldMesh
 
 	bool IsEnabled(FStaticFeatureLevel InFeatureLevel)
 	{
-		return CVarVHMEnable.GetValueOnAnyThread() != 0 && (InFeatureLevel >= ERHIFeatureLevel::SM5) && UseVirtualTexturing(InFeatureLevel);
+		return CVarVHMEnable.GetValueOnAnyThread() != 0 && (InFeatureLevel >= ERHIFeatureLevel::SM5) && UseVirtualTexturing(GetFeatureLevelShaderPlatform(InFeatureLevel));
 	}
 }

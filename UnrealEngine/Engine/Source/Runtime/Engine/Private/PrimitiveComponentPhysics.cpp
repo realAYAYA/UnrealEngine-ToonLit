@@ -3,6 +3,7 @@
 #include "Components/PrimitiveComponent.h"
 #include "AI/NavigationSystemBase.h"
 #include "Collision/CollisionConversions.h"
+#include "Engine/OverlapResult.h"
 #include "EngineLogs.h"
 #include "Logging/MessageLog.h"
 #include "Physics/Experimental/PhysScene_Chaos.h"
@@ -40,6 +41,11 @@ namespace PrimitiveComponentCVars
 
 void UPrimitiveComponent::SetRigidBodyReplicatedTarget(FRigidBodyState& UpdatedState, FName BoneName, int32 ServerFrame, int32 ServerHandle)
 {
+	if (!CanBeUsedInPhysicsReplication(BoneName))
+	{
+		return;
+	}
+
 	if (UWorld* World = GetWorld())
 	{
 		if (FPhysScene* PhysScene = World->GetPhysicsScene())
@@ -168,6 +174,24 @@ void UPrimitiveComponent::AddImpulse(FVector Impulse, FName BoneName, bool bVelC
 		WarnInvalidPhysicsOperations(LOCTEXT("AddImpulse", "AddImpulse"), BI, BoneName);
 		BI->AddImpulse(Impulse, bVelChange);
 	}
+	else if (BoneName == NAME_None)
+	{
+		TArray<Chaos::FPhysicsObjectHandle> PhysicsObjects = GetAllPhysicsObjects();
+		FLockedWritePhysicsObjectExternalInterface Interface = FPhysicsObjectExternalInterface::LockWrite(PhysicsObjects);
+		
+		PhysicsObjects = PhysicsObjects.FilterByPredicate(
+			[&Interface](Chaos::FPhysicsObject* Object) {
+			return !Interface->AreAllDisabled({ &Object, 1 });
+		}
+		);
+		Interface->SetLinearImpulseVelocity(PhysicsObjects, Impulse, bVelChange);
+	}
+	else if (Chaos::FPhysicsObject* Object = GetPhysicsObjectByName(BoneName))
+	{
+		FLockedWritePhysicsObjectExternalInterface Interface = FPhysicsObjectExternalInterface::LockWrite({ &Object, 1 });
+		Interface->SetLinearImpulseVelocity({ &Object, 1 }, Impulse, bVelChange);
+	}
+
 }
 
 void UPrimitiveComponent::AddAngularImpulseInRadians(FVector Impulse, FName BoneName, bool bVelChange)
@@ -277,6 +301,11 @@ FVector UPrimitiveComponent::GetPhysicsLinearVelocity(FName BoneName)
 	{
 		return BI->GetUnrealWorldVelocity();
 	}
+	else if (Chaos::FConstPhysicsObjectHandle Handle = GetPhysicsObjectByName(BoneName))
+	{
+		FLockedReadPhysicsObjectExternalInterface Interface = FPhysicsObjectExternalInterface::LockRead(Handle);
+		return Interface->GetV(Handle);
+	}
 	return FVector(0,0,0);
 }
 
@@ -285,6 +314,11 @@ FVector UPrimitiveComponent::GetPhysicsLinearVelocityAtPoint(FVector Point, FNam
 	if (FBodyInstance* BI = GetBodyInstance(BoneName))
 	{
 		return BI->GetUnrealWorldVelocityAtPoint(Point);
+	}
+	else if (Chaos::FConstPhysicsObjectHandle Handle = GetPhysicsObjectByName(BoneName))
+	{
+		FLockedReadPhysicsObjectExternalInterface Interface = FPhysicsObjectExternalInterface::LockRead(Handle);
+		return Interface->GetVAtPoint(Handle, Point);
 	}
 	return FVector(0, 0, 0);
 }
@@ -314,10 +348,14 @@ void UPrimitiveComponent::SetPhysicsMaxAngularVelocityInRadians(float NewMaxAngV
 
 FVector UPrimitiveComponent::GetPhysicsAngularVelocityInRadians(FName BoneName) const
 {
-	FBodyInstance* const BI = GetBodyInstance(BoneName);
-	if(BI != NULL)
+	if (FBodyInstance* const BI = GetBodyInstance(BoneName))
 	{
 		return BI->GetUnrealWorldAngularVelocityInRadians();
+	}
+	else if (Chaos::FConstPhysicsObjectHandle Handle = GetPhysicsObjectByName(BoneName))
+	{
+		FLockedReadPhysicsObjectExternalInterface Interface = FPhysicsObjectExternalInterface::LockRead(Handle);
+		return Interface->GetW(Handle);
 	}
 	return FVector(0,0,0);
 }
@@ -327,6 +365,11 @@ FVector UPrimitiveComponent::GetCenterOfMass(FName BoneName) const
 	if (FBodyInstance* ComponentBodyInstance = GetBodyInstance(BoneName))
 	{
 		return ComponentBodyInstance->GetCOMPosition();
+	}
+	else if (Chaos::FConstPhysicsObjectHandle Handle = GetPhysicsObjectByName(BoneName))
+	{
+		FLockedReadPhysicsObjectExternalInterface Interface = FPhysicsObjectExternalInterface::LockRead(Handle);
+		return Interface->GetWorldCoM(Handle);
 	}
 
 	return FVector::ZeroVector;
@@ -385,7 +428,7 @@ void UPrimitiveComponent::WakeRigidBody(FName BoneName)
 	}
 	else if (Chaos::FPhysicsObject* Object = GetPhysicsObjectByName(BoneName))
 	{
-		FLockedWritePhysicsObjectExternalInterface Interface = FPhysicsObjectExternalInterface::LockWrite({&Object, 1});
+		FLockedWritePhysicsObjectExternalInterface Interface = FPhysicsObjectExternalInterface::LockWrite({ &Object, 1 });
 		Interface->WakeUp({ &Object, 1 });
 	}
 }
@@ -415,6 +458,26 @@ bool UPrimitiveComponent::IsGravityEnabled() const
 	return false;
 }
 
+void UPrimitiveComponent::SetUpdateKinematicFromSimulation(bool bUpdateKinematicFromSimulation)
+{
+	FBodyInstance* BI = GetBodyInstance();
+	if (BI)
+	{
+		BI->SetUpdateKinematicFromSimulation(bUpdateKinematicFromSimulation);
+	}
+}
+
+bool UPrimitiveComponent::GetUpdateKinematicFromSimulation() const
+{
+	FBodyInstance* BI = GetBodyInstance();
+	if (BI)
+	{
+		return BI->bUpdateKinematicFromSimulation;
+	}
+
+	return false;
+}
+
 void UPrimitiveComponent::SetLinearDamping(float InDamping)
 {
 	FBodyInstance* BI = GetBodyInstance();
@@ -422,6 +485,12 @@ void UPrimitiveComponent::SetLinearDamping(float InDamping)
 	{
 		BI->LinearDamping = InDamping;
 		BI->UpdateDampingProperties();
+	}
+
+	else if (Chaos::FPhysicsObject* Object = GetPhysicsObjectByName(NAME_None))
+	{
+		FLockedWritePhysicsObjectExternalInterface Interface = FPhysicsObjectExternalInterface::LockWrite({ &Object, 1 });
+		Interface->SetLinearEtherDrag({ &Object, 1 }, InDamping);
 	}
 }
 
@@ -444,6 +513,12 @@ void UPrimitiveComponent::SetAngularDamping(float InDamping)
 	{
 		BI->AngularDamping = InDamping;
 		BI->UpdateDampingProperties();
+	}
+
+	else if (Chaos::FPhysicsObject* Object = GetPhysicsObjectByName(NAME_None))
+	{
+		FLockedWritePhysicsObjectExternalInterface Interface = FPhysicsObjectExternalInterface::LockWrite({ &Object, 1 });
+		Interface->SetAngularEtherDrag({ &Object, 1 }, InDamping);
 	}
 }
 
@@ -499,6 +574,23 @@ float UPrimitiveComponent::GetMass() const
 		WarnInvalidPhysicsOperations(LOCTEXT("GetMass", "GetMass"), BI, NAME_None);
 		return BI->GetBodyMass();
 	}
+	else
+	{
+		TArray<Chaos::FPhysicsObject*> PhysicsObjects = GetAllPhysicsObjects();
+		if (!PhysicsObjects.IsEmpty())
+		{
+			FLockedWritePhysicsObjectExternalInterface Interface = FPhysicsObjectExternalInterface::LockWrite(PhysicsObjects);
+
+			// Filter out inactive particles (E.g., inactive children in a geometry collection)
+			PhysicsObjects = PhysicsObjects.FilterByPredicate(
+				[&Interface](Chaos::FPhysicsObject* Object) 
+				{
+					return !Interface->AreAllDisabled({ &Object, 1 });
+				});
+
+			return Interface->GetMass(PhysicsObjects);
+		}
+	}
 
 	return 0.0f;
 }
@@ -538,6 +630,29 @@ float UPrimitiveComponent::CalculateMass(FName)
 		return BodySetup->CalculateMass(this);
 	}
 	return 0.0f;
+}
+
+float UPrimitiveComponent::GetMaxDepenetrationVelocity(FName BoneName)
+{
+	FBodyInstance* BI = GetBodyInstance(BoneName);
+	if (BI)
+	{
+		return BI->GetMaxDepenetrationVelocity();
+	}
+	// @todo: add PhysicsObject support
+
+	// Negative means the config default value will be used
+	return -1.0f;
+}
+
+void UPrimitiveComponent::SetMaxDepenetrationVelocity(FName BoneName, float InMaxDepenetrationVelocity)
+{
+	FBodyInstance* BI = GetBodyInstance(BoneName);
+	if (BI)
+	{
+		BI->SetMaxDepenetrationVelocity(InMaxDepenetrationVelocity);
+	}
+	// @todo: add PhysicsObject support
 }
 
 void UPrimitiveComponent::SetUseCCD(bool bInUseCCD, FName BoneName)
@@ -724,7 +839,7 @@ void UPrimitiveComponent::GetWeldedBodies(TArray<FBodyInstance*> & OutWeldedBodi
 	}
 }
 
-bool UPrimitiveComponent::WeldToImplementation(USceneComponent * InParent, FName ParentSocketName /* = Name_None */, bool bWeldSimulatedChild /* = false */)
+bool UPrimitiveComponent::WeldToImplementation(USceneComponent * InParent, FName ParentSocketName /* = Name_None */, bool bWeldSimulatedChild /* = true */, bool bWeldToKinematicParent /* = false */)
 {
 	SCOPE_CYCLE_COUNTER(STAT_WeldPhysics);
 
@@ -773,7 +888,7 @@ bool UPrimitiveComponent::WeldToImplementation(USceneComponent * InParent, FName
 			//Child always inherits from root
 
 			//if root is kinematic simply set child to be kinematic and we're done
-			if (RootComponent->IsSimulatingPhysics(SocketName) == false)
+			if ((RootComponent->IsSimulatingPhysics(SocketName) == false) && (bWeldToKinematicParent == false))
 			{
 				FPlatformAtomics::InterlockedExchangePtr((void**)&BI->WeldParent, nullptr);
 				SetSimulatePhysics(false);
@@ -791,7 +906,7 @@ bool UPrimitiveComponent::WeldToImplementation(USceneComponent * InParent, FName
 	return false;
 }
 
-void UPrimitiveComponent::WeldTo(USceneComponent* InParent, FName InSocketName /* = NAME_None */)
+void UPrimitiveComponent::WeldTo(USceneComponent* InParent, FName InSocketName /* = NAME_None */, bool bWeldToKinematicParent /* = false */)
 {
 	//automatically attach if needed
 	if (GetAttachParent() != InParent || GetAttachSocketName() != InSocketName)
@@ -799,7 +914,8 @@ void UPrimitiveComponent::WeldTo(USceneComponent* InParent, FName InSocketName /
 		AttachToComponent(InParent, FAttachmentTransformRules::KeepWorldTransform, InSocketName);
 	}
 
-	WeldToImplementation(InParent, InSocketName);
+	const bool bWeldSimulatedChild = true;
+	WeldToImplementation(InParent, InSocketName, bWeldSimulatedChild, bWeldToKinematicParent);
 }
 
 void UPrimitiveComponent::UnWeldFromParent()
@@ -958,16 +1074,16 @@ bool UPrimitiveComponent::IsSimulatingPhysics(FName BoneName) const
 		}
 
 		FLockedReadPhysicsObjectExternalInterface Interface = FPhysicsObjectExternalInterface::LockRead(PhysicsObjects);
-		PhysicsObjects = PhysicsObjects.FilterByPredicate(
-			[&Interface](Chaos::FPhysicsObjectHandle Object) {
-				return !Interface->AreAllDisabled({ &Object, 1 });
-			}
-		);
 
-		return Interface->AreAllDynamic(PhysicsObjects);
+		PhysicsObjects.RemoveAllSwap(
+			[&Interface](Chaos::FPhysicsObjectHandle Object)
+			{
+				return Interface->AreAllDisabled({ &Object, 1 });
+			},
+			EAllowShrinking::No);
+
+		return Interface->AreAllDynamicOrSleeping(PhysicsObjects);
 	}
-
-	return false;
 }
 
 FVector UPrimitiveComponent::GetComponentVelocity() const
@@ -1015,9 +1131,19 @@ void UPrimitiveComponent::SetCollisionResponseToChannels(const FCollisionRespons
 
 void UPrimitiveComponent::SetCollisionEnabled(ECollisionEnabled::Type NewType)
 {
-	if (BodyInstance.GetCollisionEnabled() != NewType)
+	ECollisionEnabled::Type CurrentType = BodyInstance.GetCollisionEnabled();
+
+	if (CurrentType != NewType)
 	{
-		BodyInstance.SetCollisionEnabled(NewType);
+		UE_AUTORTFM_OPEN({
+			BodyInstance.SetCollisionEnabled(NewType);
+		});
+
+		// If we fail set the CollisionEnabled back to the CurrentType
+		UE_AUTORTFM_ONABORT(
+		{
+			BodyInstance.SetCollisionEnabled(CurrentType);
+		});
 
 		EnsurePhysicsStateCreated();
 		OnComponentCollisionSettingsChanged();

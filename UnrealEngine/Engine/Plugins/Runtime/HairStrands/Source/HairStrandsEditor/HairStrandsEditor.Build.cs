@@ -34,6 +34,7 @@ namespace UnrealBuildTool.Rules
 					"LevelSequence",
 					"MovieScene",
 					"MovieSceneTools",
+					"SequencerCore",
 					"Sequencer",
 					"HairCardGeneratorFramework",
 					"CommonMenuExtensions",

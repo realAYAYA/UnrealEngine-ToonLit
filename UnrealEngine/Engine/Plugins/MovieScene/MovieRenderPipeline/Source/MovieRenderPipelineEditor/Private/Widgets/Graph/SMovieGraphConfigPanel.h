@@ -16,6 +16,8 @@ class IDetailsView;
 struct FAssetData;
 class FUICommandList;
 class UMovieGraphNode;
+enum class ECheckBoxState : uint8;
+enum class ENodeEnabledState : uint8;
 
 /**
  * Outermost widget that is used for adding and removing jobs from the Movie Pipeline Queue Subsystem.
@@ -62,7 +64,7 @@ private:
 	void OnConfigUpdatedForJobToPreset(TWeakObjectPtr<UMoviePipelineExecutorJob> InJob, TWeakObjectPtr<UMoviePipelineExecutorShot> InShot, UMoviePipelineConfigBase* InConfig);
 	void OnConfigWindowClosed();
 
-	void OnSelectionChanged(const TArray<UMoviePipelineExecutorJob*>& InSelectedJobs);
+	void OnSelectionChanged(const TArray<UMoviePipelineExecutorJob*>& InSelectedJobs, const TArray<UMoviePipelineExecutorShot*>& InSelectedShots);
 	TArray<UMovieGraphNode*> GetSelectedModelNodes() const;
 
 	TSharedRef<SWidget> OnGenerateSavedQueuesMenu();
@@ -97,6 +99,19 @@ private:
 	bool CanPasteNodes() const;
 	void DuplicateNodes();
 	bool CanDuplicateNodes() const;
+	
+	/** Set the enabled state for the currently selected nodes. */
+	void SetEnabledStateForSelectedNodes(const ENodeEnabledState NewState) const;
+
+	/**
+	 * Attempt to match the given enable state for currently-selected nodes. If StateToCheck matches all selected
+	 * nodes, returns ECheckBoxState::Checked or ECheckBoxState::Unchecked; if there is a mismatch, returns
+	 * ECheckBoxState::Undetermined.
+	 */
+	ECheckBoxState CheckEnabledStateForSelectedNodes(const ENodeEnabledState EnabledStateToCheck) const;
+
+	/** Determines if all of the selected nodes can have their enable/disable state toggled. */
+	bool CanDisableSelectedNodes() const;
 
 	void OnAlignTop();
 	void OnAlignMiddle();

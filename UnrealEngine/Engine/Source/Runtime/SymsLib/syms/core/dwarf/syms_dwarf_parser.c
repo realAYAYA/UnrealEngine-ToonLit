@@ -141,7 +141,7 @@ syms_dw_sid_from_info_offset(SYMS_U64 info_offset)
 }
 
 SYMS_API SYMS_DwAttribClass
-syms_dw_pick_attrib_value_class(SYMS_DwAttribKind attrib, SYMS_DwFormKind form_kind)
+syms_dw_pick_attrib_value_class(SYMS_DwLanguage lang, SYMS_DwVersion ver, SYMS_DwAttribKind attrib, SYMS_DwFormKind form_kind)
 {
   // NOTE(rjf): DWARF's spec specifies two mappings:
   // (SYMS_DwAttribKind) => List(SYMS_DwAttribClass)
@@ -150,8 +150,33 @@ syms_dw_pick_attrib_value_class(SYMS_DwAttribKind attrib, SYMS_DwFormKind form_k
   // This function's purpose is to find the overlapping class between an
   // SYMS_DwAttribKind and SYMS_DwFormKind.
   SYMS_DwAttribClass result = 0;
-  SYMS_DwAttribClass attrib_info = syms_dw_attrib_class_from_attrib_kind(attrib);
-  SYMS_DwAttribClass form_info = syms_dw_attrib_class_from_form_kind(form_kind);
+  SYMS_DwAttribClass attrib_info;
+  SYMS_DwAttribClass form_info;
+
+  switch(ver)
+  {
+    case SYMS_DwVersion_V1: break;
+    case SYMS_DwVersion_V2:
+    {
+      attrib_info = syms_dw_attrib_class_from_attrib_kind_v2(attrib);
+      form_info = syms_dw_attrib_class_from_form_kind_v2(form_kind);
+
+      // rust compiler writes version 5 attributes
+      if(lang == SYMS_DwLanguage_Rust && (attrib_info == 0 || form_info == 0))
+      {
+        attrib_info = syms_dw_attrib_class_from_attrib_kind(attrib);
+        form_info = syms_dw_attrib_class_from_form_kind(form_kind);
+      }
+    } break;
+    case SYMS_DwVersion_V3:
+    case SYMS_DwVersion_V4:
+    case SYMS_DwVersion_V5:
+    {
+      attrib_info = syms_dw_attrib_class_from_attrib_kind(attrib);
+      form_info = syms_dw_attrib_class_from_form_kind(form_kind);
+    } break;
+  }
+
   if(attrib_info != 0 && form_info != 0)
   {
     result = SYMS_DwAttribClass_UNDEFINED;
@@ -165,6 +190,7 @@ syms_dw_pick_attrib_value_class(SYMS_DwAttribKind attrib, SYMS_DwFormKind form_k
       }
     }
   }
+
   return result;
 }
 
@@ -219,7 +245,7 @@ syms_dw_symbol_kind_from_tag_stub(SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_
       SYMS_B32 has_location = syms_false;
       SYMS_B32 has_const_val = syms_false;
       SYMS_DwAttribValue location_value = {SYMS_DwSectionKind_Null};
-      SYMS_DwAttribList attribs = syms_dw_attrib_list_from_stub(scratch.arena, data, dbg, resolve_params.addr_size, stub);
+      SYMS_DwAttribList attribs = syms_dw_attrib_list_from_stub(scratch.arena, data, dbg, resolve_params.language, resolve_params.version, resolve_params.addr_size, stub);
       for(SYMS_DwAttribNode *attrib_n = attribs.first;
           attrib_n != 0;
           attrib_n = attrib_n->next)
@@ -1836,6 +1862,7 @@ syms_dw_attrib_value_resolve_params_from_comp_root(SYMS_DwCompRoot *root)
   SYMS_DwAttribValueResolveParams params;
   syms_memzero_struct(&params);
   params.version                  = root->version;
+  params.language                 = root->language;
   params.addr_size                = root->address_size;
   params.containing_unit_info_off = root->info_off;
   params.debug_addrs_base         = root->addrs_base;
@@ -2066,7 +2093,7 @@ syms_dw_range_list_from_high_low_pc_and_ranges_attrib_value(SYMS_Arena *arena, S
 //~ rjf: Tag Parsing
 
 SYMS_API SYMS_DwAttribListParseResult
-syms_dw_parse_attrib_list_from_info_abbrev_offsets(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_U64 address_size, SYMS_U64 info_off, SYMS_U64 abbrev_off)
+syms_dw_parse_attrib_list_from_info_abbrev_offsets(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_DwLanguage lang, SYMS_DwVersion ver, SYMS_U64 address_size, SYMS_U64 info_off, SYMS_U64 abbrev_off)
 {
   //- rjf: set up prereqs
   void *info_base = syms_dw_sec_base_from_dbg(data, dbg, SYMS_DwSectionKind_Info);
@@ -2096,7 +2123,7 @@ syms_dw_parse_attrib_list_from_info_abbrev_offsets(SYMS_Arena *arena, SYMS_Strin
     //- rjf: extract attrib info from abbrev
     SYMS_DwAttribKind attrib_kind = (SYMS_DwAttribKind)abbrev.id;
     SYMS_DwFormKind form_kind = (SYMS_DwFormKind)abbrev.sub_kind;
-    SYMS_DwAttribClass attrib_class = syms_dw_pick_attrib_value_class(attrib_kind, form_kind);
+    SYMS_DwAttribClass attrib_class = syms_dw_pick_attrib_value_class(lang, ver, attrib_kind, form_kind);
     
     //- rjf: parse the form value from the file
     SYMS_DwAttribValue form_value;
@@ -2141,6 +2168,8 @@ syms_dw_tag_from_info_offset(SYMS_Arena *arena,
                              SYMS_String8 data,
                              SYMS_DwDbgAccel *dbg,
                              SYMS_DwAbbrevTable abbrev_table,
+                             SYMS_DwLanguage lang,
+                             SYMS_DwVersion ver,
                              SYMS_U64 address_size,
                              SYMS_U64 info_offset)
 {
@@ -2185,7 +2214,7 @@ syms_dw_tag_from_info_offset(SYMS_Arena *arena,
   SYMS_DwAttribList attribs = {0};
   if(good_tag_abbrev)
   {
-    SYMS_DwAttribListParseResult attribs_parse = syms_dw_parse_attrib_list_from_info_abbrev_offsets(arena, data, dbg, address_size, info_read_off, abbrev_read_off);
+    SYMS_DwAttribListParseResult attribs_parse = syms_dw_parse_attrib_list_from_info_abbrev_offsets(arena, data, dbg, lang, ver, address_size, info_read_off, abbrev_read_off);
     attribs_info_off = info_read_off;
     attribs_abbrev_off = abbrev_read_off;
     info_read_off = attribs_parse.max_info_off;
@@ -2228,6 +2257,12 @@ syms_dw_stub_from_tag(SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_DwAttribValu
       {
         SYMS_DwAttribValue value = syms_dw_attrib_value_from_form_value(data, dbg, resolve_params, attrib->form_kind, attrib->value_class, attrib->form_value);
         stub.ref = value.v[0];
+        stub.flags |= SYMS_DwTagStubFlag_HasSpecification;
+      }break;
+      case SYMS_DwAttribKind_ABSTRACT_ORIGIN:
+      {
+        SYMS_DwAttribValue value = syms_dw_attrib_value_from_form_value(data, dbg, resolve_params, attrib->form_kind, attrib->value_class, attrib->form_value);
+        stub.abstract_origin = value.v[0];
       }break;
       case SYMS_DwAttribKind_OBJECT_POINTER:       stub.flags |= SYMS_DwTagStubFlag_HasObjectPointerArg; break;
       case SYMS_DwAttribKind_LOCATION:             stub.flags |= SYMS_DwTagStubFlag_HasLocation; break;
@@ -2371,6 +2406,12 @@ syms_dw_comp_root_from_range(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgAcc
     switch(version)
     {
       default: break;
+      case SYMS_DwVersion_V2: {
+        abbrev_base = 0;
+        next_off += syms_based_range_read(info_base, range, next_off, 4, &abbrev_base);
+        next_off += syms_based_range_read(info_base, range, next_off, 1, &address_size);
+        got_unit_kind = syms_true;
+      } break;
       case SYMS_DwVersion_V3:
       case SYMS_DwVersion_V4:
       {
@@ -2407,7 +2448,7 @@ syms_dw_comp_root_from_range(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgAcc
   if(got_unit_kind)
   {
     SYMS_U64 comp_root_tag_off = range.min + next_off;
-    comp_unit_tag = syms_dw_tag_from_info_offset(scratch.arena, data, dbg, abbrev_table, address_size, comp_root_tag_off);
+    comp_unit_tag = syms_dw_tag_from_info_offset(scratch.arena, data, dbg, abbrev_table, SYMS_DwLanguage_NULL, (SYMS_DwVersion)version, address_size, comp_root_tag_off);
     got_comp_unit_tag = syms_true;
   }
   
@@ -2546,7 +2587,7 @@ syms_dw_comp_root_from_range(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgAcc
   {
     unit.dwo_id = gnu_dwo_id;
   }
-  unit.language      = language;
+  unit.language      = (SYMS_DwLanguage)language;
   unit.name_case     = name_case;
   unit.use_utf8      = use_utf8;
   unit.line_off      = line_base;
@@ -3054,6 +3095,7 @@ syms_dw_unit_accel_from_comp_root(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwD
   unit->address_size = comp_root->address_size;
   unit->base_addr    = comp_root->base_addr;
   unit->addrs_base   = comp_root->addrs_base;
+  unit->language     = comp_root->language;
   unit->abbrev_table.count = comp_root->abbrev_table.count;
   unit->abbrev_table.entries = (SYMS_DwAbbrevTableEntry *)syms_push_string_copy(arena, syms_str8((SYMS_U8 *)comp_root->abbrev_table.entries,
                                                                                                  sizeof(SYMS_DwAbbrevTableEntry) * unit->abbrev_table.count)).str;
@@ -3091,7 +3133,7 @@ syms_dw_unit_accel_from_comp_root(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwD
       SYMS_ArenaTemp per_tag_scratch = syms_get_scratch(conflicts, SYMS_ARRAY_SIZE(conflicts));
       
       //- rjf: parse tag
-      SYMS_DwTag *tag = syms_dw_tag_from_info_offset(per_tag_scratch.arena, data, dbg, comp_root->abbrev_table, comp_root->address_size, info_off);
+      SYMS_DwTag *tag = syms_dw_tag_from_info_offset(per_tag_scratch.arena, data, dbg, comp_root->abbrev_table, comp_root->language, comp_root->version, comp_root->address_size, info_off);
       SYMS_B32 good_tag = tag->abbrev_id != 0;
       info_off = tag->info_range.max;
       if(good_tag)
@@ -3339,7 +3381,7 @@ syms_dw_unit_accel_from_comp_root(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwD
   }
   
   //- rjf: log statistics about which tag kinds were cached
-#if RJF_DEBUG
+#if RJF_DEBUG && 0
   {
     SYMS_LogOpen(SYMS_LogFeature_DwarfTags, unit->uid, log);
     SYMS_Log("$tag_profile\n");
@@ -3599,7 +3641,7 @@ syms_dw_tag_stub_from_sid(SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_DwUnitAc
 {
   SYMS_DwTagStub stub = {0};
   SYMS_ArenaTemp scratch = syms_get_scratch(0, 0);
-  SYMS_DwTag *tag = syms_dw_tag_from_info_offset(scratch.arena, data, dbg, unit->abbrev_table, unit->address_size, sid);
+  SYMS_DwTag *tag = syms_dw_tag_from_info_offset(scratch.arena, data, dbg, unit->abbrev_table, unit->language, unit->version, unit->address_size, sid);
   stub = syms_dw_stub_from_tag(data, dbg, unit->resolve_params, tag);
   if(stub.ref == 0)
   {
@@ -3650,7 +3692,7 @@ syms_dw_children_from_tag_stub(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgA
     SYMS_U64 depth = 0;
     for(SYMS_U64 info_off = stub.children_info_off;;)
     {
-      SYMS_DwTag *child_tag = syms_dw_tag_from_info_offset(scratch.arena, data, dbg, unit->abbrev_table, unit->address_size, info_off);
+      SYMS_DwTag *child_tag = syms_dw_tag_from_info_offset(scratch.arena, data, dbg, unit->abbrev_table, unit->language, unit->version, unit->address_size, info_off);
       info_off = child_tag->info_range.max;
       
       if(depth == 0 && child_tag->kind != SYMS_DwTagKind_NULL)
@@ -3681,9 +3723,9 @@ syms_dw_children_from_tag_stub(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgA
 }
 
 SYMS_API SYMS_DwAttribList
-syms_dw_attrib_list_from_stub(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_U64 addr_size, SYMS_DwTagStub *stub)
+syms_dw_attrib_list_from_stub(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_DwLanguage lang, SYMS_DwVersion ver, SYMS_U64 addr_size, SYMS_DwTagStub *stub)
 {
-  SYMS_DwAttribListParseResult parse = syms_dw_parse_attrib_list_from_info_abbrev_offsets(arena, data, dbg, addr_size, stub->attribs_info_off, stub->attribs_abbrev_off);
+  SYMS_DwAttribListParseResult parse = syms_dw_parse_attrib_list_from_info_abbrev_offsets(arena, data, dbg, lang, ver, addr_size, stub->attribs_info_off, stub->attribs_abbrev_off);
   return parse.attribs;
 }
 
@@ -3758,7 +3800,7 @@ syms_dw_mems_accel_from_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgAcce
       idx += 1;
       
       //- rjf: get child attributes
-      SYMS_DwAttribList attribs = syms_dw_attrib_list_from_stub(scratch.arena, data, dbg, unit->address_size, child_stub);
+      SYMS_DwAttribList attribs = syms_dw_attrib_list_from_stub(scratch.arena, data, dbg, unit->language, unit->version, unit->address_size, child_stub);
       
       //- rjf: get info from attributes
       SYMS_String8 name = {0};
@@ -3928,8 +3970,8 @@ syms_dw_mems_accel_from_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgAcce
           
           //- rjf: check for constructor/destructor via best-guess string match
           {
-            SYMS_String8 child_name = syms_dw_file_string_from_sid(data, dbg, unit, child_stub->sid);
-            SYMS_String8 child_ref_name = syms_dw_file_string_from_sid(data, dbg, unit, child_ref_stub.sid);
+            SYMS_String8 child_name = syms_dw_attrib_string_from_sid__unstable(data, dbg, unit, SYMS_DwAttribKind_NAME, child_stub->sid);
+            SYMS_String8 child_ref_name = syms_dw_attrib_string_from_sid__unstable(data, dbg, unit, SYMS_DwAttribKind_NAME, child_ref_stub.sid);
             SYMS_String8 real_child_name = child_name.size ? child_name : child_ref_name;
             SYMS_B32 child_is_destructor = real_child_name.size > 0 && syms_string_match(real_child_name, syms_str8_lit("~"),
                                                                                          SYMS_StringMatchFlag_RightSideSloppy);
@@ -3940,7 +3982,7 @@ syms_dw_mems_accel_from_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgAcce
             }
             real_child_name = syms_string_trunc_symbol_heuristic(real_child_name);
             
-            SYMS_String8 symbol_name = syms_dw_file_string_from_sid(data, dbg, unit, sid);
+            SYMS_String8 symbol_name = syms_dw_attrib_string_from_sid__unstable(data, dbg, unit, SYMS_DwAttribKind_NAME, sid);
             symbol_name = syms_string_trunc_symbol_heuristic(symbol_name);
             if(syms_string_match(symbol_name, real_child_name, 0))
             {
@@ -4052,12 +4094,12 @@ syms_dw_symbol_from_mem_number(SYMS_String8 data, SYMS_DwDbgAccel *dbg,
   return result;
 }
 
-SYMS_API SYMS_EnumInfoArray
-syms_dw_enum_info_array_from_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgAccel *dbg,
-                                 SYMS_DwUnitAccel *unit, SYMS_SymbolID sid)
+SYMS_API SYMS_EnumMemberArray
+syms_dw_enum_member_array_from_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgAccel *dbg,
+                                   SYMS_DwUnitAccel *unit, SYMS_SymbolID sid)
 {
   SYMS_ArenaTemp scratch = syms_get_scratch(&arena, 1);
-  SYMS_EnumInfoArray array;
+  SYMS_EnumMemberArray array;
   syms_memzero_struct(&array);
   
   SYMS_DwTagStub stub = syms_dw_cached_tag_stub_from_sid__parse_fallback(data, dbg, unit, sid);
@@ -4075,7 +4117,7 @@ syms_dw_enum_info_array_from_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDb
       }
     }
     
-    SYMS_EnumInfo *enum_info = syms_push_array_zero(arena, SYMS_EnumInfo, count);
+    SYMS_EnumMember *enum_members = syms_push_array_zero(arena, SYMS_EnumMember, count);
     SYMS_U64 idx = 0;
     for(SYMS_DwTagStubNode *child_n = children.first; child_n != 0; child_n = child_n->next)
     {
@@ -4086,7 +4128,7 @@ syms_dw_enum_info_array_from_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDb
         SYMS_U64 val = 0;
         
         SYMS_ArenaTemp temp = syms_arena_temp_begin(scratch.arena);
-        SYMS_DwAttribList attribs = syms_dw_attrib_list_from_stub(temp.arena, data, dbg, unit->address_size, child_stub);
+        SYMS_DwAttribList attribs = syms_dw_attrib_list_from_stub(temp.arena, data, dbg, unit->language, unit->version, unit->address_size, child_stub);
         SYMS_B32 got_name = syms_false;
         SYMS_B32 got_val = syms_false;
         
@@ -4112,8 +4154,8 @@ syms_dw_enum_info_array_from_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDb
           }
         }
         
-        enum_info[idx].name = syms_push_string_copy(arena, name);
-        enum_info[idx].val = val;
+        enum_members[idx].name = syms_push_string_copy(arena, name);
+        enum_members[idx].val = val;
         
         syms_arena_temp_end(temp);
         idx += 1;
@@ -4121,7 +4163,7 @@ syms_dw_enum_info_array_from_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDb
     }
     
     array.count = count;
-    array.enum_info = enum_info;
+    array.enum_members = enum_members;
   }
   
   syms_release_scratch(scratch);
@@ -4142,11 +4184,19 @@ syms_dw_containing_type_from_sid(SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_D
   return result;
 }
 
+SYMS_API SYMS_String8
+syms_dw_linkage_name_from_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_DwUnitAccel *unit, SYMS_SymbolID sid)
+{
+  SYMS_String8 name = syms_dw_attrib_string_from_sid__unstable_chain(data, dbg, unit, SYMS_DwAttribKind_LINKAGE_NAME, sid);
+  SYMS_String8 result = syms_push_string_copy(arena, name);
+  return result;
+}
+
 ////////////////////////////////
 //~ rjf: Full Symbol Info Parsing
 
 SYMS_API SYMS_String8
-syms_dw_file_string_from_sid(SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_DwUnitAccel *unit, SYMS_SymbolID sid)
+syms_dw_attrib_string_from_sid__unstable(SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_DwUnitAccel *unit, SYMS_DwAttribKind kind, SYMS_SymbolID sid)
 {
   SYMS_String8 name = syms_str8_lit("");
   if(sid == SYMS_DWARF_VOID_TYPE_ID)
@@ -4157,11 +4207,11 @@ syms_dw_file_string_from_sid(SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_DwUni
   {
     SYMS_ArenaTemp scratch = syms_get_scratch(0, 0);
     SYMS_DwTagStub stub = syms_dw_cached_tag_stub_from_sid__parse_fallback(data, dbg, unit, sid);
-    SYMS_DwAttribList attribs = syms_dw_attrib_list_from_stub(scratch.arena, data, dbg, unit->address_size, &stub);
+    SYMS_DwAttribList attribs = syms_dw_attrib_list_from_stub(scratch.arena, data, dbg, unit->language, unit->version, unit->address_size, &stub);
     for(SYMS_DwAttribNode *n = attribs.first; n != 0; n = n->next)
     {
       SYMS_DwAttrib *attrib = &n->attrib;
-      if(attrib->attrib_kind == SYMS_DwAttribKind_NAME)
+      if(attrib->attrib_kind == kind)
       {
         SYMS_DwAttribValue value = syms_dw_attrib_value_from_form_value(data, dbg, unit->resolve_params,
                                                                         attrib->form_kind,
@@ -4176,6 +4226,35 @@ syms_dw_file_string_from_sid(SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_DwUni
   return name;
 }
 
+SYMS_API SYMS_String8
+syms_dw_attrib_string_from_sid__unstable_chain(SYMS_String8 data, SYMS_DwDbgAccel *dbg,
+                                               SYMS_DwUnitAccel *unit,
+                                               SYMS_DwAttribKind kind, SYMS_SymbolID sid)
+{
+  SYMS_String8 result = {0};
+  for(SYMS_SymbolID id = sid; id != 0 && result.size == 0;)
+  {
+    result = syms_dw_attrib_string_from_sid__unstable(data, dbg, unit, kind, id);
+    if(result.size == 0)
+    {
+      SYMS_DwTagStub stub = syms_dw_cached_tag_stub_from_sid__parse_fallback(data, dbg, unit, id);
+      if(stub.ref != 0 && stub.flags & SYMS_DwTagStubFlag_HasSpecification)
+      {
+        id = stub.ref;
+      }
+      else if(stub.abstract_origin != 0)
+      {
+        id = stub.abstract_origin;
+      }
+      else
+      {
+        break;
+      }
+    }
+  }
+  return result;
+}
+
 SYMS_API SYMS_SymbolKind
 syms_dw_symbol_kind_from_sid(SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_DwUnitAccel *unit, SYMS_SymbolID sid)
 {
@@ -4188,12 +4267,7 @@ syms_dw_symbol_kind_from_sid(SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_DwUni
 SYMS_API SYMS_String8
 syms_dw_symbol_name_from_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_DwUnitAccel *unit, SYMS_SymbolID sid)
 {
-  SYMS_String8 name = syms_dw_file_string_from_sid(data, dbg, unit, sid);
-  if(name.size == 0)
-  {
-    SYMS_DwTagStub stub = syms_dw_cached_tag_stub_from_sid__parse_fallback(data, dbg, unit, sid);
-    name = syms_dw_file_string_from_sid(data, dbg, unit, stub.ref);
-  }
+  SYMS_String8 name = syms_dw_attrib_string_from_sid__unstable_chain(data, dbg, unit, SYMS_DwAttribKind_NAME, sid);
   SYMS_String8 result = syms_push_string_copy(arena, name);
   return result;
 }
@@ -4210,7 +4284,7 @@ syms_dw_type_info_from_sid(SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_DwUnitA
     SYMS_SymbolID void_id = syms_dw_sid_from_info_offset(SYMS_DWARF_VOID_TYPE_ID);
     
     //- rjf: get attributes
-    SYMS_DwAttribList attribs = syms_dw_attrib_list_from_stub(scratch.arena, data, dbg, unit->address_size, &stub);
+    SYMS_DwAttribList attribs = syms_dw_attrib_list_from_stub(scratch.arena, data, dbg, unit->language, unit->version, unit->address_size, &stub);
     
     //- rjf: define info from attributes
     SYMS_SymbolID                          type = 0;
@@ -4367,7 +4441,7 @@ syms_dw_type_info_from_sid(SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_DwUnitA
         SYMS_DwTagStub *child = &child_n->stub;
         if(child->kind == SYMS_DwTagKind_SUBRANGE_TYPE)
         {
-          SYMS_DwAttribList child_attribs = syms_dw_attrib_list_from_stub(scratch.arena, data, dbg, unit->address_size, child);
+          SYMS_DwAttribList child_attribs = syms_dw_attrib_list_from_stub(scratch.arena, data, dbg, unit->language, unit->version, unit->address_size, child);
           
           for(SYMS_DwAttribNode *child_attrib_n = child_attribs.first;
               child_attrib_n != 0;
@@ -4406,7 +4480,7 @@ syms_dw_const_info_from_sid(SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_DwUnit
   if(stub.sid != 0)
   {
     //- rjf: get attributes
-    SYMS_DwAttribList attribs = syms_dw_attrib_list_from_stub(scratch.arena, data, dbg, unit->address_size, &stub);
+    SYMS_DwAttribList attribs = syms_dw_attrib_list_from_stub(scratch.arena, data, dbg, unit->language, unit->version, unit->address_size, &stub);
     
     //- rjf: define info from attributes
     SYMS_U64 const_value = 0;
@@ -4455,7 +4529,7 @@ syms_dw_type_from_var_sid(SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_DwUnitAc
   SYMS_DwTagStub stub = syms_dw_cached_tag_stub_from_sid__parse_fallback(data, dbg, unit, id);
   if(stub.sid != 0)
   {
-    SYMS_DwAttribList attribs = syms_dw_attrib_list_from_stub(scratch.arena, data, dbg, unit->address_size, &stub);
+    SYMS_DwAttribList attribs = syms_dw_attrib_list_from_stub(scratch.arena, data, dbg, unit->language, unit->version, unit->address_size, &stub);
     result.uid = unit->uid;
     result.sid = syms_dw_sid_from_info_offset(SYMS_DWARF_VOID_TYPE_ID);
     for(SYMS_DwAttribNode *attrib_n = attribs.first;
@@ -4485,7 +4559,7 @@ syms_dw_voff_from_var_sid(SYMS_String8 data, SYMS_DwDbgAccel *dbg, SYMS_DwUnitAc
   SYMS_DwTagStub stub = syms_dw_cached_tag_stub_from_sid__parse_fallback(data, dbg, unit, sid);
   if(stub.sid != 0)
   {
-    SYMS_DwAttribList attribs = syms_dw_attrib_list_from_stub(scratch.arena, data, dbg, unit->address_size, &stub);
+    SYMS_DwAttribList attribs = syms_dw_attrib_list_from_stub(scratch.arena, data, dbg, unit->language, unit->version, unit->address_size, &stub);
     
     SYMS_DwAttrib *location_attrib = 0;
     for(SYMS_DwAttribNode *attrib_n = attribs.first;
@@ -4577,7 +4651,7 @@ syms_dw_location_from_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgAccel 
   SYMS_DwTagStub stub = syms_dw_cached_tag_stub_from_sid__parse_fallback(data, dbg, unit, sid);
   if(stub.sid != 0)
   {
-    SYMS_DwAttribList attribs = syms_dw_attrib_list_from_stub(scratch.arena, data, dbg, unit->address_size, &stub);
+    SYMS_DwAttribList attribs = syms_dw_attrib_list_from_stub(scratch.arena, data, dbg, unit->language, unit->version, unit->address_size, &stub);
     for(SYMS_DwAttribNode *n = attribs.first; n != 0; n = n->next)
     {
       SYMS_DwAttrib *attrib = &n->attrib;
@@ -4615,7 +4689,7 @@ syms_dw_location_ranges_from_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDb
   SYMS_DwTagStub stub = syms_dw_cached_tag_stub_from_sid__parse_fallback(data, dbg, unit, sid);
   if(stub.sid != 0)
   {
-    SYMS_DwAttribList attribs = syms_dw_attrib_list_from_stub(scratch.arena, data, dbg, unit->address_size, &stub);
+    SYMS_DwAttribList attribs = syms_dw_attrib_list_from_stub(scratch.arena, data, dbg, unit->language, unit->version, unit->address_size, &stub);
     for(SYMS_DwAttribNode *n = attribs.first; n != 0; n = n->next)
     {
       SYMS_DwAttrib *attrib = &n->attrib;
@@ -4782,7 +4856,7 @@ syms_dw_scope_vranges_from_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgA
   //- rjf: get range list
   if(stub.sid != 0)
   {
-    SYMS_DwAttribList attribs = syms_dw_attrib_list_from_stub(scratch.arena, data, dbg, unit->address_size, &stub);
+    SYMS_DwAttribList attribs = syms_dw_attrib_list_from_stub(scratch.arena, data, dbg, unit->language, unit->version, unit->address_size, &stub);
     
     SYMS_U64 low_pc = 0;
     SYMS_U64 high_pc = 0;
@@ -4848,7 +4922,7 @@ syms_dw_sig_info_from_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgAccel 
   SYMS_DwTagStub stub = syms_dw_cached_tag_stub_from_sid__parse_fallback(data, dbg, unit, id);
   if(stub.sid != 0)
   {
-    SYMS_DwAttribList attribs = syms_dw_attrib_list_from_stub(scratch.arena, data, dbg, unit->address_size, &stub);
+    SYMS_DwAttribList attribs = syms_dw_attrib_list_from_stub(scratch.arena, data, dbg, unit->language, unit->version, unit->address_size, &stub);
     
     //- rjf: grab return type
     for(SYMS_DwAttribNode *attrib_n = attribs.first;
@@ -4878,7 +4952,7 @@ syms_dw_sig_info_from_sid(SYMS_Arena *arena, SYMS_String8 data, SYMS_DwDbgAccel 
       SYMS_DwTagStub *child = &child_n->stub;
       if(child->kind == SYMS_DwTagKind_FORMAL_PARAMETER)
       {
-        SYMS_DwAttribList child_attribs = syms_dw_attrib_list_from_stub(scratch.arena, data, dbg, unit->address_size, child);
+        SYMS_DwAttribList child_attribs = syms_dw_attrib_list_from_stub(scratch.arena, data, dbg, unit->language, unit->version, unit->address_size, child);
         SYMS_SymbolID param_type = syms_dw_sid_from_info_offset(SYMS_DWARF_VOID_TYPE_ID);
         for(SYMS_DwAttribNode *child_attrib_n = child_attribs.first;
             child_attrib_n != 0;

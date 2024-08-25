@@ -48,14 +48,14 @@ namespace EpicGames.Horde
 	/// <summary>
 	/// Converter to compact binary objects
 	/// </summary>
-	public sealed class StringIdCbConverter<TValue, TConverter> : CbConverterBase<TValue> where TValue : struct where TConverter : StringIdConverter<TValue>, new()
+	public sealed class StringIdCbConverter<TValue, TConverter> : CbConverter<TValue> where TValue : struct where TConverter : StringIdConverter<TValue>, new()
 	{
 		readonly TConverter _converter = new TConverter();
 
 		/// <inheritdoc/>
 		public override TValue Read(CbField field)
 		{
-			return _converter.FromStringId(new StringId(field.AsString()));
+			return _converter.FromStringId(new StringId(new Utf8String(field.AsString())));
 		}
 
 		/// <inheritdoc/>
@@ -65,7 +65,7 @@ namespace EpicGames.Horde
 		}
 
 		/// <inheritdoc/>
-		public override void WriteNamed(CbWriter writer, Utf8String name, TValue value)
+		public override void WriteNamed(CbWriter writer, CbFieldName name, TValue value)
 		{
 			writer.WriteString(name, _converter.ToStringId(value).ToString());
 		}
@@ -89,7 +89,7 @@ namespace EpicGames.Horde
 		{
 			if (value is string str)
 			{
-				return _converter.FromStringId(new StringId(str));
+				return _converter.FromStringId(new StringId(new Utf8String(str)));
 			}
 			if (value is StringId stringId)
 			{

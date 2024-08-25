@@ -4,7 +4,7 @@
 
 #include "MutableValidationSettings.generated.h"
 
-UCLASS(config = Engine)
+UCLASS(config = Editor)
 class UMutableValidationSettings : public UObject
 {
 	GENERATED_BODY()

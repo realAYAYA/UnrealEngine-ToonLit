@@ -1441,7 +1441,7 @@ void FScopedLogger::Dump(bool bClearPrevious)
 		}
 
 		LogListing->AddMessages(TokenizedMessages);
-		LogListing->NotifyIfAnyMessages(NSLOCTEXT("DatasmithLoggerNotification", "Log", "There was some issues with the import."), EMessageSeverity::Info);
+		LogListing->NotifyIfAnyMessages(NSLOCTEXT("DatasmithLoggerNotification", "Log", "There were issues with the import."), EMessageSeverity::Info);
 		ClearPending();
 	}
 }

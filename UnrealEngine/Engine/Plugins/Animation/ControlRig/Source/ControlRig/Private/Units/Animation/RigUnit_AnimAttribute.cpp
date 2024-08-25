@@ -321,18 +321,18 @@ FString FRigDispatch_AnimAttributeBase::GetNodeTitle(const FRigVMTemplateTypeMap
 }
 #endif
 
-const TArray<FRigVMTemplateArgument>& FRigDispatch_AnimAttributeBase::GetArguments() const
+const TArray<FRigVMTemplateArgumentInfo>& FRigDispatch_AnimAttributeBase::GetArgumentInfos() const
 {
-	if (Arguments.IsEmpty())
+	if (Infos.IsEmpty())
 	{
-		NameArgIndex = Arguments.Emplace(NameArgName, ERigVMPinDirection::Input, RigVMTypeUtils::TypeIndex::FName);
-		BoneNameArgIndex = Arguments.Emplace(BoneNameArgName, ERigVMPinDirection::Input, RigVMTypeUtils::TypeIndex::FName);
+		NameArgIndex = Infos.Emplace(NameArgName, ERigVMPinDirection::Input, RigVMTypeUtils::TypeIndex::FName);
+		BoneNameArgIndex = Infos.Emplace(BoneNameArgName, ERigVMPinDirection::Input, RigVMTypeUtils::TypeIndex::FName);
 
-		CachedBoneNameArgIndex = Arguments.Emplace(CachedBoneNameArgName, ERigVMPinDirection::Hidden, RigVMTypeUtils::TypeIndex::FName);
-		CachedBoneIndexArgIndex = Arguments.Emplace(CachedBoneIndexArgName, ERigVMPinDirection::Hidden, RigVMTypeUtils::TypeIndex::Int32);
+		CachedBoneNameArgIndex = Infos.Emplace(CachedBoneNameArgName, ERigVMPinDirection::Hidden, RigVMTypeUtils::TypeIndex::FName);
+		CachedBoneIndexArgIndex = Infos.Emplace(CachedBoneIndexArgName, ERigVMPinDirection::Hidden, RigVMTypeUtils::TypeIndex::Int32);
 	}
 	
-	return Arguments;
+	return Infos;
 }
 
 #if WITH_EDITOR
@@ -372,23 +372,23 @@ FText FRigDispatch_AnimAttributeBase::GetArgumentTooltip(const FName& InArgument
 
 
 
-const TArray<FRigVMTemplateArgument>& FRigDispatch_GetAnimAttribute::GetArguments() const
+const TArray<FRigVMTemplateArgumentInfo>& FRigDispatch_GetAnimAttribute::GetArgumentInfos() const
 {
 	if (ValueArgIndex == INDEX_NONE)
 	{
-		Arguments = Super::GetArguments(); 
+		Infos = Super::GetArgumentInfos(); 
 
-		FRigVMTemplateArgument::FTypeFilter	TypeFilter;
-		TypeFilter.BindStatic(&FRigDispatch_AnimAttributeBase::IsTypeSupported);
+		// Will be open to any category, but will filter the type through our IsTypeSupported callback
+		// If we reduce this to multiple (more targeted) categories, and any of those categories have common types, bUseCategories will not be true
+		// and the template will not receive notifications of newly added types
+		const TArray<FRigVMTemplateArgument::ETypeCategory> Categories = {FRigVMTemplateArgument::ETypeCategory_SingleAnyValue};
+		DefaultArgIndex = Infos.Emplace(DefaultArgName, ERigVMPinDirection::Input, Categories, [](const TRigVMTypeIndex& Type) { return FRigDispatch_AnimAttributeBase::IsTypeSupported(Type); });
+		ValueArgIndex = Infos.Emplace(ValueArgName, ERigVMPinDirection::Output, Categories, [](const TRigVMTypeIndex& Type) { return FRigDispatch_AnimAttributeBase::IsTypeSupported(Type); });
 		
-		DefaultArgIndex = Arguments.Emplace(DefaultArgName, ERigVMPinDirection::Input, GetValueTypeCategory(), TypeFilter);
-		ValueArgIndex = Arguments.Emplace(ValueArgName, ERigVMPinDirection::Output, GetValueTypeCategory(), TypeFilter);
-		
-		FoundArgIndex = Arguments.Emplace(FoundArgName, ERigVMPinDirection::Output, RigVMTypeUtils::TypeIndex::Bool);
+		FoundArgIndex = Infos.Emplace(FoundArgName, ERigVMPinDirection::Output, RigVMTypeUtils::TypeIndex::Bool);
 	}
 
-	
-	return Arguments;
+	return Infos;
 }
 
 FRigVMTemplateTypeMap FRigDispatch_GetAnimAttribute::OnNewArgumentType(const FName& InArgumentName,
@@ -455,20 +455,22 @@ FRigVMFunctionPtr FRigDispatch_GetAnimAttribute::GetDispatchFunctionImpl(const F
 	return nullptr;
 }
 
-const TArray<FRigVMTemplateArgument>& FRigDispatch_SetAnimAttribute::GetArguments() const
+const TArray<FRigVMTemplateArgumentInfo>& FRigDispatch_SetAnimAttribute::GetArgumentInfos() const
 {
 	if (ValueArgIndex == INDEX_NONE)
 	{
-		Arguments = Super::GetArguments();
+		Infos = Super::GetArgumentInfos();
 
-		FRigVMTemplateArgument::FTypeFilter	TypeFilter;
-		TypeFilter.BindStatic(&FRigDispatch_AnimAttributeBase::IsTypeSupported);
+		// Will be open to any category, but will filter the type through our IsTypeSupported callback
+		// If we reduce this to multiple (more targeted) categories, and any of those categories have common types, bUseCategories will not be true
+		// and the template will not receive notifications of newly added types
+		static const TArray<FRigVMTemplateArgument::ETypeCategory> Categories = {FRigVMTemplateArgument::ETypeCategory_SingleAnyValue};
 		
-		ValueArgIndex = Arguments.Emplace(ValueArgName, ERigVMPinDirection::Input, GetValueTypeCategory(), TypeFilter);
-		SuccessArgIndex = Arguments.Emplace(SuccessArgName, ERigVMPinDirection::Output, RigVMTypeUtils::TypeIndex::Bool);
+		ValueArgIndex = Infos.Emplace(ValueArgName, ERigVMPinDirection::Input, Categories, [](const TRigVMTypeIndex& Type) { return FRigDispatch_AnimAttributeBase::IsTypeSupported(Type); });		
+		SuccessArgIndex = Infos.Emplace(SuccessArgName, ERigVMPinDirection::Output, RigVMTypeUtils::TypeIndex::Bool);
 	}
 	
-	return Arguments;
+	return Infos;
 }
 
 const TArray<FRigVMExecuteArgument>& FRigDispatch_SetAnimAttribute::GetExecuteArguments_Impl(const FRigVMDispatchContext& InContext) const

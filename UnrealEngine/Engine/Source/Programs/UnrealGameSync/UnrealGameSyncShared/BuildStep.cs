@@ -77,7 +77,7 @@ namespace UnrealGameSync
 			EstimatedDuration = Math.Max(obj.GetValue("EstimatedDuration", 1), 1);
 
 			BuildStepType stepType;
-			if(!Enum.TryParse(obj.GetValue("Type", ""), true, out stepType))
+			if (!Enum.TryParse(obj.GetValue("Type", ""), true, out stepType))
 			{
 				stepType = BuildStepType.Other;
 			}
@@ -119,7 +119,7 @@ namespace UnrealGameSync
 
 		public bool IsValid()
 		{
-			switch(Type)
+			switch (Type)
 			{
 				case BuildStepType.Compile:
 					return Target != null && Platform != null && Configuration != null;
@@ -134,13 +134,13 @@ namespace UnrealGameSync
 
 		public static void MergeBuildStepObjects(Dictionary<Guid, ConfigObject> buildStepObjects, IEnumerable<ConfigObject> modifyObjects)
 		{
-			foreach(ConfigObject modifyObject in modifyObjects)
+			foreach (ConfigObject modifyObject in modifyObjects)
 			{
 				Guid uniqueId;
-				if(Guid.TryParse(modifyObject.GetValue(UniqueIdKey, ""), out uniqueId))
+				if (Guid.TryParse(modifyObject.GetValue(UniqueIdKey, ""), out uniqueId))
 				{
 					ConfigObject? defaultObject;
-					if(buildStepObjects.TryGetValue(uniqueId, out defaultObject))
+					if (buildStepObjects.TryGetValue(uniqueId, out defaultObject))
 					{
 						modifyObject.SetDefaults(defaultObject);
 					}
@@ -157,7 +157,7 @@ namespace UnrealGameSync
 			result["StatusText"] = StatusText;
 			result["EstimatedDuration"] = EstimatedDuration.ToString();
 			result["Type"] = Type.ToString();
-			switch(Type)
+			switch (Type)
 			{
 				case BuildStepType.Compile:
 					result["Target"] = Target;
@@ -194,7 +194,7 @@ namespace UnrealGameSync
 			ConfigObject result = new ConfigObject();
 			result[UniqueIdKey] = UniqueId.ToString();
 			result.AddOverrides(ToConfigObject(), defaultObject);
-			return (result.Pairs.Count <= 1)? null : result;
+			return (result.Pairs.Count <= 1) ? null : result;
 		}
 	}
 }

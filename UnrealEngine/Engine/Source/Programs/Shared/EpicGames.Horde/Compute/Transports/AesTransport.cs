@@ -9,13 +9,15 @@ using System.Threading;
 using System.Threading.Tasks;
 using EpicGames.Core;
 
+#pragma warning disable VSTHRD003 // Avoid awaiting or returning a Task representing work that was not started within your context as that can lead to deadlocks.
+
 namespace EpicGames.Horde.Compute.Transports
 {
 	/// <summary>
 	/// Transport layer that adds AES encryption on top of an underlying transport implementation. Key must be exchanged separately
 	/// (eg. via the HTTPS request to negotiate a lease with the server).
 	/// </summary>
-	public sealed class AesTransport : IComputeTransport, IAsyncDisposable
+	public sealed class AesTransport : ComputeTransport
 	{
 		/// <summary>
 		/// Length of the required encrption key. 
@@ -30,7 +32,8 @@ namespace EpicGames.Horde.Compute.Transports
 		const int HeaderLength = sizeof(int); // Unencrypted size of the message
 		const int FooterLength = 16; // 16-byte auth tag for encryption
 
-		readonly IComputeTransport _inner;
+		readonly ComputeTransport _inner;
+		readonly bool _leaveInnerOpen;
 		readonly Pipe _readPipe;
 		readonly AesGcm _aesGcm;
 
@@ -55,7 +58,8 @@ namespace EpicGames.Horde.Compute.Transports
 		/// <param name="inner">The underlying transport implementation</param>
 		/// <param name="key">AES encryption key (256 bits / 32 bytes)</param>
 		/// <param name="nonce">Cryptographic nonce to identify the connection. Must be longer than <see cref="NonceLength"/>.</param>
-		public AesTransport(IComputeTransport inner, ReadOnlySpan<byte> key, ReadOnlySpan<byte> nonce)
+		/// <param name="leaveInnerOpen">Whether inner compute transport should be disposed</param>
+		public AesTransport(ComputeTransport inner, ReadOnlySpan<byte> key, ReadOnlySpan<byte> nonce, bool leaveInnerOpen = false)
 		{
 			if (key.Length != KeyLength)
 			{
@@ -71,19 +75,23 @@ namespace EpicGames.Horde.Compute.Transports
 			_aesGcm = new AesGcm(key);
 			_readNonce = nonce.Slice(0, NonceLength).ToArray();
 			_writeNonce = nonce.Slice(0, NonceLength).ToArray();
-
+			_leaveInnerOpen = leaveInnerOpen;
 			_backgroundReadTask = BackgroundTask.StartNew(BackgroundReadAsync);
 
 			_writeBufferOwner = MemoryPool<byte>.Shared.Rent(WritePacketSize * 2);
 		}
 
 		/// <inheritdoc/>
-		public async ValueTask DisposeAsync()
+		public override async ValueTask DisposeAsync()
 		{
 			await _lastWriteTask;
 			await _backgroundReadTask.DisposeAsync();
 			_writeBufferOwner.Dispose();
 			_aesGcm.Dispose();
+			if (!_leaveInnerOpen)
+			{
+				await _inner.DisposeAsync();
+			}
 		}
 
 		/// <summary>
@@ -100,7 +108,7 @@ namespace EpicGames.Horde.Compute.Transports
 			for (; ; )
 			{
 				// Read more data into the buffer
-				int read = await _inner.ReadPartialAsync(memory.Slice(size), cancellationToken);
+				int read = await _inner.RecvAsync(memory.Slice(size), cancellationToken);
 				if (read == 0)
 				{
 					break;
@@ -143,7 +151,7 @@ namespace EpicGames.Horde.Compute.Transports
 		}
 
 		/// <inheritdoc/>
-		public async ValueTask<int> ReadPartialAsync(Memory<byte> buffer, CancellationToken cancellationToken)
+		public override async ValueTask<int> RecvAsync(Memory<byte> buffer, CancellationToken cancellationToken)
 		{
 			int sizeRead = 0;
 			while (sizeRead == 0)
@@ -167,7 +175,7 @@ namespace EpicGames.Horde.Compute.Transports
 		}
 
 		/// <inheritdoc/>
-		public async ValueTask WriteAsync(ReadOnlySequence<byte> buffer, CancellationToken cancellationToken)
+		public override async ValueTask SendAsync(ReadOnlySequence<byte> buffer, CancellationToken cancellationToken)
 		{
 			while (buffer.Length > 0)
 			{
@@ -185,7 +193,7 @@ namespace EpicGames.Horde.Compute.Transports
 				Position += plainText.Length;
 
 				await _lastWriteTask;
-				_lastWriteTask = _inner.WriteAsync(writeBuffer, cancellationToken).AsTask();
+				_lastWriteTask = _inner.SendAsync(writeBuffer, cancellationToken).AsTask();
 
 				buffer = buffer.Slice(plainText.Length);
 				_writeBufferOffset ^= WritePacketSize;
@@ -212,6 +220,6 @@ namespace EpicGames.Horde.Compute.Transports
 		}
 
 		/// <inheritdoc/>
-		public ValueTask MarkCompleteAsync(CancellationToken cancellationToken) => _inner.MarkCompleteAsync(cancellationToken);
+		public override ValueTask MarkCompleteAsync(CancellationToken cancellationToken) => _inner.MarkCompleteAsync(cancellationToken);
 	}
 }

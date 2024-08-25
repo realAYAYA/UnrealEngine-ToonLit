@@ -5,7 +5,6 @@
 #include "CoreMinimal.h"
 #include "UObject/ObjectMacros.h"
 #include "Tracks/MovieSceneFloatTrack.h"
-#include "Compilation/IMovieSceneTrackTemplateProducer.h"
 #include "MovieSceneSlomoTrack.generated.h"
 
 /**
@@ -14,7 +13,6 @@
 UCLASS(MinimalAPI)
 class UMovieSceneSlomoTrack
 	: public UMovieSceneFloatTrack
-	, public IMovieSceneTrackTemplateProducer
 {
 	GENERATED_BODY()
 
@@ -26,7 +24,6 @@ public:
 
 	virtual bool SupportsType(TSubclassOf<UMovieSceneSection> SectionClass) const override;
 	virtual UMovieSceneSection* CreateNewSection() override;
-	virtual FMovieSceneEvalTemplatePtr CreateTemplateForSection(const UMovieSceneSection& InSection) const override;
 
 #if WITH_EDITORONLY_DATA
 	virtual FText GetDefaultDisplayName() const override;

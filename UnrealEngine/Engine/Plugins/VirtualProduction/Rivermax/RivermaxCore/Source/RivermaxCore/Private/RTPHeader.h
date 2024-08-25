@@ -154,7 +154,7 @@ namespace UE::RivermaxCore::Private
 	};
 
 	/** Returns RTPHeader pointer from a raw ethernet packet skipping 802, IP, UDP headers */
-	uint8* GetRTPHeaderPointer(uint8* InHeader);
+	const uint8* GetRTPHeaderPointer(const uint8* InHeader);
 }
 
 

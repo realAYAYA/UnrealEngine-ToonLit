@@ -131,7 +131,7 @@ namespace AutomationTool.Tasks
 						// Create a brand new workspace
 						P4ClientInfo Client = new P4ClientInfo();
 						Client.Owner = CommandUtils.P4Env.User;
-						Client.Host = Environment.MachineName;
+						Client.Host = Unreal.MachineName;
 						Client.RootPath = Parameters.RootDir.FullName ?? Unreal.RootDirectory.FullName;
 						Client.Name = $"{Parameters.Workspace}_{Regex.Replace(Client.Host, "[^a-zA-Z0-9]", "-")}_{ContentHash.MD5((CommandUtils.P4Env.ServerAndPort ?? "").ToUpperInvariant())}";
 						Client.Options = P4ClientOption.NoAllWrite | P4ClientOption.Clobber | P4ClientOption.NoCompress | P4ClientOption.Unlocked | P4ClientOption.NoModTime | P4ClientOption.RmDir;

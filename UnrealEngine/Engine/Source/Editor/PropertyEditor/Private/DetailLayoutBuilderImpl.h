@@ -32,12 +32,15 @@ public:
 	virtual void GetObjectsBeingCustomized(TArray< TWeakObjectPtr<UObject> >& OutObjects) const override;
 	virtual void GetStructsBeingCustomized(TArray< TSharedPtr<FStructOnScope> >& OutStructs) const override;
 	virtual IDetailCategoryBuilder& EditCategory(FName CategoryName, const FText& NewLocalizedDisplayName = FText::GetEmpty(), ECategoryPriority::Type CategoryType = ECategoryPriority::Default) override;
+	virtual IDetailCategoryBuilder& EditCategoryAllowNone(FName CategoryName, const FText& NewLocalizedDisplayName = FText::GetEmpty(), ECategoryPriority::Type CategoryType = ECategoryPriority::Default) override;
 	virtual void GetCategoryNames(TArray<FName>& OutCategoryNames) const override;
 	virtual IDetailPropertyRow& AddPropertyToCategory(TSharedPtr<IPropertyHandle> InPropertyHandle) override;
 	virtual FDetailWidgetRow& AddCustomRowToCategory(TSharedPtr<IPropertyHandle> InPropertyHandle, const FText& InCustomSearchString, bool bForAdvanced = false) override;
 	virtual TSharedPtr<IPropertyHandle> AddObjectPropertyData(TConstArrayView<UObject*> Objects, FName PropertyName) override;
 	virtual TSharedPtr<IPropertyHandle> AddStructurePropertyData(const TSharedPtr<FStructOnScope>& StructData, FName PropertyName) override;
 	virtual IDetailPropertyRow* EditDefaultProperty(TSharedPtr<IPropertyHandle> InPropertyHandle) override;
+	virtual IDetailPropertyRow* EditPropertyFromRoot(TSharedPtr<IPropertyHandle> InPropertyHandle) override;
+	virtual bool DoesCategoryHaveGeneratedChildren(FName CategoryName) override;
 	virtual TSharedRef<IPropertyHandle> GetProperty(const FName PropertyPath, const UStruct* ClassOutermost, FName InInstanceName) const override;
 	virtual FName GetTopLevelProperty() override;
 	virtual void HideProperty(const TSharedPtr<IPropertyHandle> Property) override;
@@ -55,6 +58,17 @@ public:
 	virtual void SortCategories(const FOnCategorySortOrderFunction& SortFunction) override;
 	virtual void SetPropertyGenerationAllowListPaths(const TSet<FString>& InPropertyGenerationAllowListPaths) override;
 	virtual bool IsPropertyPathAllowed(const FString& InPath) const override;
+
+	/**
+	 * Creates an empty category row if there currently are no categories and one is required for the
+	 * @code TSharedPtr<FComplexPropertyNode> @endcode Node
+	 *
+	 * @param Node The @code TSharedPtr<FComplexPropertyNode> @endcode that we will add an empty category for, if needed
+	 *
+	 * @return true if an empty/stub category was added, else it returns false 
+	 */
+	bool AddEmptyCategoryIfNeeded(TSharedPtr<FComplexPropertyNode> Node);
+
 	/**
 	 * Creates a default category. The SDetails view will generate widgets in default categories
 	 *
@@ -192,6 +206,8 @@ public:
 	* @param InExternalRootNode		The node to remove
 	*/
 	void RemoveExternalRootPropertyNode(TSharedRef<FComplexPropertyNode> InExternalRootNode);
+
+	void ClearExternalRootPropertyNodes();
 
 	/** @return The details view that owns this layout */
 	IDetailsViewPrivate* GetDetailsView() { return DetailsView; }

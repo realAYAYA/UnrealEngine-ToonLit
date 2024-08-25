@@ -20,17 +20,18 @@ namespace UE::MVVM
 {
 namespace Private
 {
-FMVVMViewSourceDebugEntry CreateSourceInstanceEntry(const FMVVMViewSource& ViewSource)
+
+FMVVMViewSourceDebugEntry CreateSourceInstanceEntry(const UMVVMView* View, const FMVVMView_Source& ViewSource)
 {
 	FMVVMViewSourceDebugEntry Result;
-	Result.SourceInstanceName = ViewSource.SourceName;
+	Result.SourceInstanceName = View->GetViewClass()->GetSource(ViewSource.ClassKey).GetName();
 	Result.SourceAsset = ViewSource.Source ? FAssetData(ViewSource.Source->GetClass()) : FAssetData();
 	Result.ViewModelDebugId = FGuid::NewGuid();
 	Result.LiveSource = ViewSource.Source;
 	return Result;
 }
 
-FMVVMViewBindingDebugEntry CreateViewBindingDebugEntry(const UMVVMViewClass* ViewClass, const FMVVMViewClass_CompiledBinding& Binding, int32 Index)
+FMVVMViewBindingDebugEntry CreateViewBindingDebugEntry(const UMVVMViewClass* ViewClass, const FMVVMViewClass_Binding& Binding, int32 Index)
 {
 	FMVVMViewBindingDebugEntry Result;
 #if WITH_EDITOR
@@ -38,11 +39,6 @@ FMVVMViewBindingDebugEntry CreateViewBindingDebugEntry(const UMVVMViewClass* Vie
 #endif
 	if (ViewClass->GetBindingLibrary().IsLoaded())
 	{
-		if (Binding.GetSourceFieldId().IsValid())
-		{
-			TValueOrError<UE::FieldNotification::FFieldId, void> FieldIdValue = ViewClass->GetBindingLibrary().GetFieldId(Binding.GetSourceFieldId());
-			Result.FieldId = FieldIdValue.HasValue() ? FieldIdValue.GetValue().GetName() : FName();
-		}
 		if (Binding.GetBinding().GetSourceFieldPath().IsValid())
 		{
 			TValueOrError<FString, FString> SourceFieldPathValue = ViewClass->GetBindingLibrary().FieldPathToString(Binding.GetBinding().GetSourceFieldPath(), false);
@@ -60,16 +56,6 @@ FMVVMViewBindingDebugEntry CreateViewBindingDebugEntry(const UMVVMViewClass* Vie
 		}
 	}
 	Result.CompiledBindingIndex = Index;
-	return Result;
-}
-
-FMVVMViewSourceDebugEntry CreateViewModelEntry(const FMVVMViewSource& ViewSource)
-{
-	FMVVMViewSourceDebugEntry Result;
-	Result.SourceInstanceName = ViewSource.SourceName;
-	Result.SourceAsset = ViewSource.Source ? FAssetData(ViewSource.Source->GetClass()) : FAssetData();
-	Result.ViewModelDebugId = FGuid::NewGuid();
-	Result.LiveSource = ViewSource.Source;
 	return Result;
 }
 
@@ -125,9 +111,10 @@ TSharedPtr<FDebugSnapshot> FDebugSnapshot::CreateSnapshot()
 			DebugEntry->WorldName = World ? World->GetFName() : FName();
 			DebugEntry->UserWidgetAsset = FAssetData(UserWidget->GetClass());
 		}
-		for (const FMVVMViewSource& ViewSource : View->GetSources())
+
+		for (const FMVVMView_Source& ViewSource : View->GetSources())
 		{
-			DebugEntry->Sources.Add(UE::MVVM::Private::CreateSourceInstanceEntry(ViewSource));
+			DebugEntry->Sources.Add(Private::CreateSourceInstanceEntry(View, ViewSource));
 		}
 		DebugEntry->ViewClassDebugId = Snapshot->FindOrAddViewClassEntry(View->GetViewClass())->ViewClassDebugId;
 		DebugEntry->ViewInstanceDebugId = FGuid::NewGuid();
@@ -151,7 +138,7 @@ TSharedPtr<FDebugSnapshot> FDebugSnapshot::CreateSnapshot()
 		DebugEntry->ViewModelAsset = FAssetData(ViewModel->GetClass());
 		for (const UE::FieldNotification::FFieldMulticastDelegate::FDelegateView& DelegateView : ViewModel->GetNotificationDelegateView())
 		{
-			DebugEntry->FieldBound.Add(UE::MVVM::Private::CreateViewModelFieldBoundDebugEntry(DelegateView));
+			DebugEntry->FieldBound.Add(Private::CreateViewModelFieldBoundDebugEntry(DelegateView));
 		}
 		//DebugEntry.PropertyBag;
 		DebugEntry->ViewModelDebugId = FGuid::NewGuid();
@@ -178,7 +165,7 @@ TSharedRef<FMVVMViewClassDebugEntry> FDebugSnapshot::FindOrAddViewClassEntry(con
 	NewEntry->LiveViewClass = ViewClass;
 
 	int32 Index = 0;
-	for (const FMVVMViewClass_CompiledBinding& Binding : ViewClass->GetCompiledBindings())
+	for (const FMVVMViewClass_Binding& Binding : ViewClass->GetBindings())
 	{
 		NewEntry->Bindings.Add(Private::CreateViewBindingDebugEntry(ViewClass, Binding, Index));
 		++Index;

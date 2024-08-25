@@ -6,11 +6,12 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(SmartObjectHashGrid)
 
-FInstancedStruct USmartObjectHashGrid::Add(const FSmartObjectHandle Handle, const FBox& Bounds)
+void USmartObjectHashGrid::Add(const FSmartObjectHandle Handle, const FBox& Bounds, FInstancedStruct& OutHandle)
 {
 	FSmartObjectHashGridEntryData GridEntryData;
 	GridEntryData.CellLoc = HashGrid.Add(Handle, Bounds);
-	return FInstancedStruct::Make(GridEntryData);
+	
+	OutHandle = FConstStructView::Make(GridEntryData);
 }
 
 void USmartObjectHashGrid::Remove(const FSmartObjectHandle Handle, FStructView EntryData)

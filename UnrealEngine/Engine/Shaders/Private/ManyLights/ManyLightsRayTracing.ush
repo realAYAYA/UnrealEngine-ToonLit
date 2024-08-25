@@ -1,0 +1,130 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "../RayTracing/RayTracingCapsuleLight.ush"
+#include "../RayTracing/RayTracingSphereLight.ush"
+#include "../RayTracing/RayTracingRectLight.ush"
+
+uint2 NumSamplesPerPixelDivideShift;
+
+uint2 SampleCoordToDownsampledScreenCoord(uint2 SampleCoord)
+{
+	// SampleCoord / NumSamplesPerPixel
+	return SampleCoord >> NumSamplesPerPixelDivideShift;
+}
+
+uint2 SampleCoordToScreenCoord(uint2 SampleCoord)
+{
+	uint2 DownsampledScreenCoord = SampleCoordToDownsampledScreenCoord(SampleCoord);
+	return DownsampledScreenCoord * DOWNSAMPLE_FACTOR + GetSampleScreenCoordJitter(DownsampledScreenCoord);
+}
+
+bool GenerateShadowRay(
+	FLightShaderParameters LightParameters,
+	bool bSpotLight,
+	bool bRectLight,
+	float3 TranslatedWorldPosition,
+	float3 WorldNormal,
+	float2 RandSample,
+	out float3 RayOrigin,
+	out float3 RayDirection,
+	out float RayTMin,
+	out float RayTMax)
+{
+	float RayPdf = 0.0;
+	if (bRectLight)
+	{
+		return GenerateRectLightOcclusionRay(
+			LightParameters,
+			TranslatedWorldPosition, WorldNormal,
+			RandSample,
+			/* out */ RayOrigin,
+			/* out */ RayDirection,
+			/* out */ RayTMin,
+			/* out */ RayTMax,
+			/* out */ RayPdf);
+	}
+	else
+	{
+		// point or spot light
+		if (LightParameters.SourceLength > 0.0)
+		{
+			return GenerateCapsuleLightOcclusionRayWithSolidAngleSampling(
+				LightParameters,
+				TranslatedWorldPosition, WorldNormal,
+				RandSample,
+				/* out */ RayOrigin,
+				/* out */ RayDirection,
+				/* out */ RayTMin,
+				/* out */ RayTMax,
+				/* out */ RayPdf);
+		}
+		return GenerateSphereLightOcclusionRayWithSolidAngleSampling(
+			LightParameters,
+			TranslatedWorldPosition, WorldNormal,
+			RandSample,
+			/* out */ RayOrigin,
+			/* out */ RayDirection,
+			/* out */ RayTMin,
+			/* out */ RayTMax,
+			/* out */ RayPdf);
+	}
+}
+
+struct FLightSampleTrace
+{
+	float3 Direction;
+	float Distance;
+};
+
+/**
+ * Compute shadow ray direction and distance for a given reservoir.
+ */
+FLightSampleTrace GetLightSampleTrace(float3 TranslatedWorldPosition, uint LocalLightIndex, uint2 SampleCoord)
+{
+	const float2 LightSampleRandom = BlueNoiseVec2(SampleCoord, ManyLightsStateFrameIndex);
+
+	FLightSampleTrace LightSampleTrace;
+	LightSampleTrace.Direction = 0.0f;
+	LightSampleTrace.Distance = 0.0f;
+
+	if (LocalLightIndex != MAX_LOCAL_LIGHT_INDEX)
+	{
+		const FLocalLightData LocalLightData = GetLocalLightDataNonStereo(LocalLightIndex);
+		const FDeferredLightData LightData = ConvertToDeferredLight(LocalLightData);
+		const FLightShaderParameters LightParameters = ConvertToLightShaderParameters(LightData);
+
+		float3 Unused;
+		float Unused2;
+
+		bool bValid = GenerateShadowRay(
+			LightParameters,
+			LightData.bSpotLight,
+			LightData.bRectLight,
+			TranslatedWorldPosition,
+			float3(0, 0, 0),
+			LightSampleRandom,
+			Unused,
+			LightSampleTrace.Direction,
+			Unused2,
+			LightSampleTrace.Distance);
+	}
+
+	return LightSampleTrace;
+}
+
+uint PackTraceTexel(uint2 SampleCoord)
+{
+	uint PackedTraceTexel = SampleCoord.y & 0xFFFF;
+	PackedTraceTexel |= (SampleCoord.x & 0xFFFF) << 16;
+	return PackedTraceTexel;
+}
+
+uint2 UnpackTraceTexel(uint PackedTraceTexel)
+{
+	uint2 SampleCoord;
+	SampleCoord.x = PackedTraceTexel >> 16;
+	SampleCoord.y = PackedTraceTexel & 0xFFFF;
+	return SampleCoord;
+}

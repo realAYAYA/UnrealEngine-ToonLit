@@ -4,6 +4,7 @@
 
 #include "Scene/SceneCapturePhotoSet.h"
 #include "Sampling/MeshBakerCommon.h"
+#include "Sampling/MeshMapBaker.h"
 #include "Image/ImageInfilling.h"
 #include "Baking/BakingTypes.h"
 #include "DynamicMesh/MeshTangents.h"
@@ -16,8 +17,6 @@ namespace UE
 {
 namespace Geometry
 {
-
-class FMeshMapBaker;
 
 
 
@@ -109,21 +108,21 @@ struct MODELINGCOMPONENTS_API FSceneCaptureConfig
 
 MODELINGCOMPONENTS_API
 void ConfigureSceneCapture(
-	const TUniquePtr<FSceneCapturePhotoSet>& SceneCapture,
+	FSceneCapturePhotoSet& SceneCapture,
 	const TArray<TObjectPtr<AActor>>& Actors,
 	const FSceneCaptureConfig& Config,
 	bool bAllowCancel);
 
 MODELINGCOMPONENTS_API
 FRenderCaptureTypeFlags UpdateSceneCapture(
-	const TUniquePtr<FSceneCapturePhotoSet>& SceneCapture,
+	FSceneCapturePhotoSet& SceneCapture,
 	const TArray<TObjectPtr<AActor>>& Actors,
 	const FSceneCaptureConfig& DesiredConfig,
 	bool bAllowCancel);
 
 MODELINGCOMPONENTS_API
 FSceneCaptureConfig GetSceneCaptureConfig(
-	const TUniquePtr<FSceneCapturePhotoSet>& SceneCapture,
+	const FSceneCapturePhotoSet& SceneCapture,
 	FSceneCapturePhotoSet::ECaptureTypeStatus QueryStatus = FSceneCapturePhotoSet::ECaptureTypeStatus::Computed);
 
 // Return a render capture baker, note the lifetime of all arguments such match the lifetime of the returned baker
@@ -156,7 +155,7 @@ struct MODELINGCOMPONENTS_API FRenderCaptureTextures
 // Note: The source data in the textures is *not* updated by this function
 MODELINGCOMPONENTS_API
 void GetTexturesFromRenderCaptureBaker(
-	const TUniquePtr<FMeshMapBaker>& Baker,
+	FMeshMapBaker& Baker,
 	FRenderCaptureTextures& TexturesOut);
 
 
@@ -171,10 +170,39 @@ void GetTexturesFromRenderCaptureBaker(
 
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// The following is all deprecated 
+// Everything that follows is deprecated 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
+
+UE_DEPRECATED(5.4, "Please use the overload passing SceneCapture by reference. Using smart pointers was an error since ownership semantics were not intended.")
+MODELINGCOMPONENTS_API
+void ConfigureSceneCapture(
+	const TUniquePtr<FSceneCapturePhotoSet>& SceneCapture,
+	const TArray<TObjectPtr<AActor>>& Actors,
+	const FSceneCaptureConfig& Config,
+	bool bAllowCancel);
+
+UE_DEPRECATED(5.4, "Please use the overload passing SceneCapture by reference. Using smart pointers was an error since ownership semantics were not intended.")
+MODELINGCOMPONENTS_API
+FRenderCaptureTypeFlags UpdateSceneCapture(
+	const TUniquePtr<FSceneCapturePhotoSet>& SceneCapture,
+	const TArray<TObjectPtr<AActor>>& Actors,
+	const FSceneCaptureConfig& DesiredConfig,
+	bool bAllowCancel);
+
+UE_DEPRECATED(5.4, "Please use the overload passing SceneCapture by reference. Using smart pointers was an error since ownership semantics were not intended.")
+MODELINGCOMPONENTS_API
+FSceneCaptureConfig GetSceneCaptureConfig(
+	const TUniquePtr<FSceneCapturePhotoSet>& SceneCapture,
+	FSceneCapturePhotoSet::ECaptureTypeStatus QueryStatus = FSceneCapturePhotoSet::ECaptureTypeStatus::Computed);
+
+// Note: The source data in the textures is *not* updated by this function
+UE_DEPRECATED(5.4, "Please use the overload passing Baker by reference. Using smart pointers was an error since ownership semantics were not intended.")
+MODELINGCOMPONENTS_API
+void GetTexturesFromRenderCaptureBaker(
+	const TUniquePtr<FMeshMapBaker>& Baker,
+	FRenderCaptureTextures& TexturesOut);
 
 struct UE_DEPRECATED(5.3, "FRenderCaptureOptions is only used by deprecated functions, see those deprecation notes for more info.") MODELINGCOMPONENTS_API FRenderCaptureOptions
 {

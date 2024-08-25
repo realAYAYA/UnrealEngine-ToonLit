@@ -201,7 +201,7 @@ EOptimusDataTypeUsageFlags FOptimusDataTypeRegistry::GetStructTypeUsageFlag(UScr
         bool bFoundArray = false;
 
 		EOptimusDataTypeUsageFlags ApplicableFlags =
-			EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::Variable | EOptimusDataTypeUsageFlags::AnimAttributes;
+			EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::Variable | EOptimusDataTypeUsageFlags::AnimAttributes | EOptimusDataTypeUsageFlags::DataInterfaceOutput | EOptimusDataTypeUsageFlags::PinType;
     };
 
 	if (FOptimusDataTypeHandle DataType = Get().FindType(Optimus::GetTypeName(InStruct)))
@@ -238,7 +238,7 @@ void FOptimusDataTypeRegistry::RegisterBuiltinTypes()
 		},
 		ConvertPropertyValuePOD<bool, int32>,
 		FName(TEXT("bool")), {},
-	    EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::Variable);
+	    EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::Variable | EOptimusDataTypeUsageFlags::DataInterfaceOutput | EOptimusDataTypeUsageFlags::PinType);
 
 	// int -> int
 	Registry.RegisterType(
@@ -252,7 +252,7 @@ void FOptimusDataTypeRegistry::RegisterBuiltinTypes()
 	    },
 		ConvertPropertyValuePOD<int32, int32>,
 		FName(TEXT("int")), {}, 
-	    EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::Variable | EOptimusDataTypeUsageFlags::AnimAttributes);
+	    EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::Variable | EOptimusDataTypeUsageFlags::AnimAttributes | EOptimusDataTypeUsageFlags::DataInterfaceOutput | EOptimusDataTypeUsageFlags::PinType);
 
 	// FIntPoint -> int2
 	Registry.RegisterType(
@@ -261,7 +261,7 @@ void FOptimusDataTypeRegistry::RegisterBuiltinTypes()
 		FShaderValueType::Get(EShaderFundamentalType::Int, 2),
 		{},
 		bShowElements,
-		EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::Variable);
+		EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::Variable | EOptimusDataTypeUsageFlags::DataInterfaceOutput | EOptimusDataTypeUsageFlags::PinType);
 
 	// FIntVector -> int3
 	Registry.RegisterType(
@@ -270,7 +270,7 @@ void FOptimusDataTypeRegistry::RegisterBuiltinTypes()
 		FShaderValueType::Get(EShaderFundamentalType::Int, 3),
 		{},
 		bShowElements,
-		EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::Variable);
+		EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::Variable | EOptimusDataTypeUsageFlags::DataInterfaceOutput | EOptimusDataTypeUsageFlags::PinType);
 
 	// FIntVector4 -> int4
 	Registry.RegisterType(
@@ -278,7 +278,7 @@ void FOptimusDataTypeRegistry::RegisterBuiltinTypes()
 		FShaderValueType::Get(EShaderFundamentalType::Int, 4),
 		{},
 		bShowElements,
-		EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::Variable);
+		EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::Variable | EOptimusDataTypeUsageFlags::DataInterfaceOutput | EOptimusDataTypeUsageFlags::PinType);
 
 	// uint -> uint
 	Registry.RegisterType(
@@ -292,7 +292,7 @@ void FOptimusDataTypeRegistry::RegisterBuiltinTypes()
 		},
 		ConvertPropertyValuePOD<uint32, uint32>,
 		FName(TEXT("uint")), FLinearColor(0.0275f, 0.733, 0.820f, 1.0f), 
-		EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::Variable);
+		EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::Variable | EOptimusDataTypeUsageFlags::DataInterfaceOutput | EOptimusDataTypeUsageFlags::PinType);
 
 	/* FIXME: Need the corresponding definitions in UObject/Class.h @ line 3537
 	// FIntPoint -> int2
@@ -340,7 +340,7 @@ void FOptimusDataTypeRegistry::RegisterBuiltinTypes()
 	    },
 		ConvertPropertyValuePOD<float, float>,
 		FName(TEXT("real")), {}, 
-	    EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::AnimAttributes);
+	    EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::AnimAttributes | EOptimusDataTypeUsageFlags::DataInterfaceOutput | EOptimusDataTypeUsageFlags::PinType);
 
 	// double -> float 
 	Registry.RegisterType(
@@ -360,7 +360,7 @@ void FOptimusDataTypeRegistry::RegisterBuiltinTypes()
 	    },
 		ConvertPropertyValuePOD<double, float>,
 		FName(TEXT("real")), {}, 
-	    EOptimusDataTypeUsageFlags::Variable);
+	    EOptimusDataTypeUsageFlags::Variable | EOptimusDataTypeUsageFlags::DataInterfaceOutput | EOptimusDataTypeUsageFlags::PinType);
 
 	// FVector2D -> float2
 	Registry.RegisterType(
@@ -369,7 +369,7 @@ void FOptimusDataTypeRegistry::RegisterBuiltinTypes()
 		FShaderValueType::Get(EShaderFundamentalType::Float, 2),
 	    {},
 	    bShowElements,
-	    EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::Variable);
+	    EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::Variable | EOptimusDataTypeUsageFlags::DataInterfaceOutput | EOptimusDataTypeUsageFlags::PinType);
 
 	// FVector -> float3
 	Registry.RegisterType(
@@ -378,7 +378,7 @@ void FOptimusDataTypeRegistry::RegisterBuiltinTypes()
 		FShaderValueType::Get(EShaderFundamentalType::Float, 3),
 		{},
 		bShowElements,
-	    EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::Variable | EOptimusDataTypeUsageFlags::AnimAttributes);
+	    EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::Variable | EOptimusDataTypeUsageFlags::AnimAttributes | EOptimusDataTypeUsageFlags::DataInterfaceOutput | EOptimusDataTypeUsageFlags::PinType);
 
 	// FVector4 -> float4
 	Registry.RegisterType(
@@ -387,7 +387,7 @@ void FOptimusDataTypeRegistry::RegisterBuiltinTypes()
 		FShaderValueType::Get(EShaderFundamentalType::Float, 4),
 	    {},
 	    bShowElements,
-	    EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::Variable);
+	    EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::Variable | EOptimusDataTypeUsageFlags::DataInterfaceOutput | EOptimusDataTypeUsageFlags::PinType);
 	
 	// FLinearColor -> float4
 	Registry.RegisterType(
@@ -395,7 +395,7 @@ void FOptimusDataTypeRegistry::RegisterBuiltinTypes()
 	    FShaderValueType::Get(EShaderFundamentalType::Float, 4),
 	    {},
 	    bShowElements,
-	    EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::Variable);
+	    EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::Variable | EOptimusDataTypeUsageFlags::DataInterfaceOutput | EOptimusDataTypeUsageFlags::PinType);
 
 	// FQuat -> float4
 	Registry.RegisterType(
@@ -403,7 +403,7 @@ void FOptimusDataTypeRegistry::RegisterBuiltinTypes()
 		FShaderValueType::Get(EShaderFundamentalType::Float, 4),
 		{},
 		bShowElements,
-		EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::Variable | EOptimusDataTypeUsageFlags::AnimAttributes);
+		EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::Variable | EOptimusDataTypeUsageFlags::AnimAttributes | EOptimusDataTypeUsageFlags::DataInterfaceOutput | EOptimusDataTypeUsageFlags::PinType);
 
 	// FRotator -> float3x3
 	Registry.RegisterType(
@@ -411,7 +411,7 @@ void FOptimusDataTypeRegistry::RegisterBuiltinTypes()
 	    FShaderValueType::Get(EShaderFundamentalType::Float, 3, 3),
 	    {},
 	    bShowElements,
-	    EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::Variable);
+	    EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::Variable | EOptimusDataTypeUsageFlags::DataInterfaceOutput | EOptimusDataTypeUsageFlags::PinType);
 
 	// FTransform -> float4x4
 	Registry.RegisterType(
@@ -433,7 +433,7 @@ void FOptimusDataTypeRegistry::RegisterBuiltinTypes()
 	    },
 	    {},
 	    bHideElements,
-	    EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::Variable | EOptimusDataTypeUsageFlags::AnimAttributes);
+	    EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::Variable | EOptimusDataTypeUsageFlags::AnimAttributes | EOptimusDataTypeUsageFlags::DataInterfaceOutput | EOptimusDataTypeUsageFlags::PinType);
 
 	// HLSL types
 	Registry.RegisterType(
@@ -443,7 +443,7 @@ void FOptimusDataTypeRegistry::RegisterBuiltinTypes()
 		FName("float3x4"),
 		nullptr,
 		FLinearColor(0.7f, 0.3f, 0.4f, 1.0f),
-		EOptimusDataTypeUsageFlags::Resource);
+		EOptimusDataTypeUsageFlags::Resource | EOptimusDataTypeUsageFlags::DataInterfaceOutput | EOptimusDataTypeUsageFlags::PinType);
 
 	// FIXME: Add type aliases (e.g. "3x4 Float" above should really be "float3x4")
 
@@ -453,8 +453,11 @@ void FOptimusDataTypeRegistry::RegisterBuiltinTypes()
 		UOptimusComponentSourceBinding::StaticClass(),
 		FText::FromString("Component"),
 		FLinearColor(0.3f, 0.3f, 0.4f, 1.0f),
-		EOptimusDataTypeUsageFlags::None
+		EOptimusDataTypeUsageFlags::PinType
 		);
+
+	
+	Registry.TypeWithAtomicSupport = {FIntProperty::StaticClass()->GetFName()};
 }
 
 
@@ -1240,7 +1243,7 @@ TArray<FOptimusDataTypeHandle> FOptimusDataTypeRegistry::GetAllTypes() const
 	TArray<FOptimusDataTypeHandle> Result;
 	for (const FName& TypeName : RegistrationOrder)
 	{
-		Result.Add(RegisteredTypes[TypeName].Handle);
+		Result.Add(RegisteredTypes[TypeName].DataType);
 	}
 	return Result;
 }
@@ -1298,7 +1301,7 @@ FOptimusDataTypeHandle FOptimusDataTypeRegistry::FindType(const UClass& InClassT
 FOptimusDataTypeHandle FOptimusDataTypeRegistry::FindType(FName InTypeName) const
 {
 	const FTypeInfo* InfoPtr = RegisteredTypes.Find(InTypeName);
-	return InfoPtr ? InfoPtr->Handle : FOptimusDataTypeHandle();
+	return InfoPtr ? InfoPtr->DataType : FOptimusDataTypeHandle();
 }
 
 
@@ -1306,7 +1309,7 @@ FOptimusDataTypeHandle FOptimusDataTypeRegistry::FindType(FShaderValueTypeHandle
 {
 	for (const FName& TypeName : RegistrationOrder)
 	{
-		const FOptimusDataTypeHandle Handle = RegisteredTypes[TypeName].Handle;
+		const FOptimusDataTypeHandle Handle = RegisteredTypes[TypeName].DataType;
 		if (Handle->ShaderValueType == InValueType)
 		{
 			return Handle;
@@ -1478,17 +1481,51 @@ UScriptStruct* FOptimusDataTypeRegistry::FindAttributeType(FName InTypeName) con
 		return nullptr;
 	}
 
-	if (ensure(EnumHasAnyFlags(InfoPtr->Handle->UsageFlags, EOptimusDataTypeUsageFlags::AnimAttributes)))
+	if (ensure(EnumHasAnyFlags(InfoPtr->DataType->UsageFlags, EOptimusDataTypeUsageFlags::AnimAttributes)))
 	{
-		return Cast<UScriptStruct>(InfoPtr->Handle->TypeObject);
+		return Cast<UScriptStruct>(InfoPtr->DataType->TypeObject);
 	}
 
 	return nullptr;
 }
 
+TArray<FOptimusDataTypeHandle> FOptimusDataTypeRegistry::GetAllTypesWithAtomicSupport() const
+{
+	TArray<FOptimusDataTypeHandle> Types;
+	for (FName TypeName : TypeWithAtomicSupport)
+	{
+		FOptimusDataTypeHandle Type = FindType(TypeName);
+		if (Type.IsValid())
+		{
+			Types.Add(Type);
+		}
+	}
+
+	return Types;
+}
+
+bool FOptimusDataTypeRegistry::DoesTypeSupportAtomic(FOptimusDataTypeHandle InType)
+{
+	return GetAllTypesWithAtomicSupport().Contains(InType);
+}
+
 FOptimusDataTypeRegistry::FOnDataTypeChanged& FOptimusDataTypeRegistry::GetOnDataTypeChanged()
 {
 	return OnDataTypeChanged;
+}
+
+void FOptimusDataTypeRegistry::AddReferencedObjects(FReferenceCollector& Collector)
+{
+	for (const TTuple<FName, FTypeInfo>& TypeItem: RegisteredTypes)
+	{
+		TSharedPtr<FOptimusDataType> DataType = TypeItem.Value.DataType;
+
+		if (DataType->TypeObject.IsValid())
+		{
+			Collector.AddReferencedObject(DataType->TypeObject);
+		}
+		
+	}
 }
 
 void FOptimusDataTypeRegistry::UnregisterType(FName InTypeName)

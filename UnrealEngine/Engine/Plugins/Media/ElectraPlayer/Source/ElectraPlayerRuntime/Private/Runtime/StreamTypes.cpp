@@ -258,7 +258,7 @@ namespace Electra
 		else if (CodecOTI.StartsWith(TEXT("vp08")))
 		{
 			ElectraDecodersUtil::FMimeTypeVideoCodecInfo ci;
-			if (ElectraDecodersUtil::ParseCodecVP8(ci, CodecOTI, Extras.GetValue(TEXT("vpcC_box")).SafeGetArray()))
+			if (ElectraDecodersUtil::ParseCodecVP8(ci, CodecOTI, Extras.GetValue(StreamCodecInformationOptions::VPccBox).SafeGetArray()))
 			{
 				StreamType = EStreamType::Video;
 				CodecSpecifier = CodecOTI;
@@ -283,7 +283,7 @@ namespace Electra
 		else if (CodecOTI.StartsWith(TEXT("vp09")))
 		{
 			ElectraDecodersUtil::FMimeTypeVideoCodecInfo ci;
-			if (ElectraDecodersUtil::ParseCodecVP9(ci, CodecOTI, Extras.GetValue(TEXT("vpcC_box")).SafeGetArray()))
+			if (ElectraDecodersUtil::ParseCodecVP9(ci, CodecOTI, Extras.GetValue(StreamCodecInformationOptions::VPccBox).SafeGetArray()))
 			{
 				StreamType = EStreamType::Video;
 				CodecSpecifier = CodecOTI;

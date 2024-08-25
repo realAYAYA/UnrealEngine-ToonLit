@@ -13,6 +13,8 @@
 #include "SingleLayerWaterRendering.h"
 #include "VolumetricCloudRendering.h"
 #include "RendererUtils.h"
+#include "PostProcess/PostProcessing.h" // IsPostProcessingWithAlphaChannelSupported
+#include "EnvironmentComponentsFlags.h"
 
 static TAutoConsoleVariable<int32> CVarVolumetricRenderTarget(
 	TEXT("r.VolumetricRenderTarget"), 1,
@@ -161,6 +163,7 @@ FVolumetricRenderTargetViewStateData::FVolumetricRenderTargetViewStateData()
 	: CurrentRT(1)
 	, bFirstTimeUsed(true)
 	, bHistoryValid(false)
+	, PreViewExposure(1.0f)
 	, FullResolution(FIntPoint::ZeroValue)
 	, VolumetricReconstructRTResolution(FIntPoint::ZeroValue)
 	, VolumetricTracingRTResolution(FIntPoint::ZeroValue)
@@ -187,6 +190,7 @@ void FVolumetricRenderTargetViewStateData::Initialise(
 	{
 		bFirstTimeUsed = false;
 		bHistoryValid = false;
+		PreViewExposure = 1.0f;
 		FrameId = 0;
 		NoiseFrameIndex = 0;
 		NoiseFrameIndexModPattern = 0;
@@ -266,6 +270,7 @@ void FVolumetricRenderTargetViewStateData::Reset()
 {
 	bFirstTimeUsed = false;
 	bHistoryValid = false;
+	PreViewExposure = 1.0f;
 	FrameId = 0;
 	NoiseFrameIndex = 0;
 	NoiseFrameIndexModPattern = 0;
@@ -522,6 +527,7 @@ class FReconstructVolumetricRenderTargetPS : public FGlobalShader
 		SHADER_PARAMETER(FUintVector4, PreviousFrameVolumetricTextureValidCoordRect)
 		SHADER_PARAMETER(FVector4f, PreviousFrameVolumetricTextureValidUvRect)
 		SHADER_PARAMETER(float, MinimumDistanceKmToEnableReprojection)
+		SHADER_PARAMETER(float, HistoryPreExposureCorrection)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static FPermutationDomain RemapPermutation(FPermutationDomain PermutationVector)
@@ -613,6 +619,7 @@ void ReconstructVolumetricRenderTarget(
 		PassParameters->VolumetricRenderTargetMode = VolumetricCloudRT.GetMode();
 		PassParameters->HalfResDepthTexture = (VolumetricCloudRT.GetMode() == 0 || VolumetricCloudRT.GetMode() == 3) ? HalfResolutionDepthCheckerboardMinMaxTexture : SceneDepthTexture;
 		PassParameters->MinimumDistanceKmToEnableReprojection = FMath::Max(0.0f, CVarVolumetricRenderTargetMinimumDistanceKmToEnableReprojection.GetValueOnRenderThread());
+		PassParameters->HistoryPreExposureCorrection = ViewInfo.PreExposure / VolumetricCloudRT.GetPrevViewExposure();
 
 		const bool bVisualizeConservativeDensity = ShouldViewVisualizeVolumetricCloudConservativeDensity(ViewInfo, ViewInfo.Family->EngineShowFlags);
 		PassParameters->HalfResDepthTexture = bVisualizeConservativeDensity ?
@@ -633,6 +640,8 @@ void ReconstructVolumetricRenderTarget(
 		FPixelShaderUtils::AddFullscreenPass<FReconstructVolumetricRenderTargetPS>(
 			GraphBuilder, ViewInfo.ShaderMap, RDG_EVENT_NAME("VolumetricReconstruct"), PixelShader, PassParameters,
 			FIntRect(0, 0, DstVolumetricSize.X, DstVolumetricSize.Y));
+
+		VolumetricCloudRT.PostRenderUpdate(ViewInfo.PreExposure);
 	}
 
 }
@@ -646,9 +655,9 @@ class FComposeVolumetricRTOverScenePS : public FGlobalShader
 
 	class FUpsamplingMode : SHADER_PERMUTATION_RANGE_INT("PERMUTATION_UPSAMPLINGMODE", 0, 5);
 	class FRenderUnderWaterBuffer : SHADER_PERMUTATION_BOOL("PERMUTATION_RENDER_UNDERWATER_BUFFER");	// Render into the water scene color buffer (used when rendering from water system)
-	class FRenderCameraUnderWater : SHADER_PERMUTATION_BOOL("PERMUTATION_RENDER_CAMERA_UNDERWATER");	// When water us used and the camera is under water, use that permutation (to handle camera intersection with water and double cloud composition)
+	class FRenderCameraComposeWithWater : SHADER_PERMUTATION_BOOL("PERMUTATION_COMPOSE_WITH_WATER");	// When water us used and the camera is under water, use that permutation (to handle camera intersection with water and double cloud composition)
 	class FMSAASampleCount : SHADER_PERMUTATION_SPARSE_INT("MSAA_SAMPLE_COUNT", 1, 2, 4, 8);
-	using FPermutationDomain = TShaderPermutationDomain<FUpsamplingMode, FRenderUnderWaterBuffer, FRenderCameraUnderWater, FMSAASampleCount>;
+	using FPermutationDomain = TShaderPermutationDomain<FUpsamplingMode, FRenderUnderWaterBuffer, FRenderCameraComposeWithWater, FMSAASampleCount>;
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, ViewUniformBuffer)
@@ -659,6 +668,7 @@ class FComposeVolumetricRTOverScenePS : public FGlobalShader
 		SHADER_PARAMETER_SAMPLER(SamplerState, LinearTextureSampler)
 		SHADER_PARAMETER_SAMPLER(SamplerState, WaterLinearDepthSampler)
 		RENDER_TARGET_BINDING_SLOTS()
+		SHADER_PARAMETER(uint32, ForwardShadingEnable)
 		SHADER_PARAMETER(float, UvOffsetSampleAcceptanceWeight)
 		SHADER_PARAMETER(FVector4f, VolumetricTextureSizeAndInvSize)
 		SHADER_PARAMETER(FVector2f, FullResolutionToVolumetricBufferResolutionScale)
@@ -734,7 +744,7 @@ void ComposeVolumetricRenderTargetOverScene(
 	TArrayView<FViewInfo> Views,
 	FRDGTextureRef SceneColorTexture,
 	FRDGTextureRef SceneDepthTexture,
-	bool bShouldRenderSingleLayerWater,
+	bool bComposeWithWater,
 	const FSceneWithoutWaterTextures& WaterPassData,
 	const FMinimalSceneTextures& SceneTextures)
 {
@@ -747,7 +757,18 @@ void ComposeVolumetricRenderTargetOverScene(
 	RDG_GPU_STAT_SCOPE(GraphBuilder, VolCloudComposeOverScene);
 	SCOPED_NAMED_EVENT(VolCloudComposeOverScene, FColor::Emerald);
 
-	FRHIBlendState* PreMultipliedColorTransmittanceBlend = TStaticBlendState<CW_RGB, BO_Add, BF_One, BF_SourceAlpha, BO_Add, BF_Zero, BF_One>::GetRHI();
+	FRHIBlendState* PreMultipliedColorTransmittanceBlend;
+	const bool bSupportsAlpha = IsPostProcessingWithAlphaChannelSupported();
+	if (bSupportsAlpha)
+	{
+		// When alpha channel is enabled, we always write transmittance to impact other alpha holdout values from sky or fog for instance.
+		// We will run a second pass later accumulating the cloud contribution to hold out
+		PreMultipliedColorTransmittanceBlend = TStaticBlendState<CW_RGBA, BO_Add, BF_One, BF_SourceAlpha, BO_Add, BF_Zero, BF_SourceAlpha>::GetRHI();
+	}
+	else
+	{
+		PreMultipliedColorTransmittanceBlend = TStaticBlendState<CW_RGB, BO_Add, BF_One, BF_SourceAlpha, BO_Add, BF_Zero, BF_One>::GetRHI();
+	}
 
 	for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ViewIndex++)
 	{
@@ -756,6 +777,11 @@ void ComposeVolumetricRenderTargetOverScene(
 		{
 			continue;
 		}
+		if (ViewInfo.CachedViewUniformShaderParameters->RenderingReflectionCaptureMask == 0 && !IsVolumetricCloudRenderedInMain(ViewInfo.CachedViewUniformShaderParameters->EnvironmentComponentsFlags))
+		{
+			continue;
+		}
+
 		FVolumetricRenderTargetViewStateData& VolumetricCloudRT = ViewInfo.ViewState->VolumetricCloudRenderTarget;
 
 		// When reconstructed and back buffer resolution matches, force using a pixel perfect upsampling.
@@ -775,7 +801,7 @@ void ComposeVolumetricRenderTargetOverScene(
 		FComposeVolumetricRTOverScenePS::FPermutationDomain PermutationVector;
 		PermutationVector.Set<FComposeVolumetricRTOverScenePS::FUpsamplingMode>(UpsamplingMode);
 		PermutationVector.Set<FComposeVolumetricRTOverScenePS::FRenderUnderWaterBuffer>(0);
-		PermutationVector.Set<FComposeVolumetricRTOverScenePS::FRenderCameraUnderWater>((bShouldRenderSingleLayerWater && ViewInfo.IsUnderwater()) ? 1 : 0);
+		PermutationVector.Set<FComposeVolumetricRTOverScenePS::FRenderCameraComposeWithWater>((bComposeWithWater && ViewInfo.IsUnderwater()) ? 1 : 0);
 		PermutationVector.Set<FComposeVolumetricRTOverScenePS::FMSAASampleCount>(SceneDepthTexture->Desc.NumSamples);
 		TShaderMapRef<FComposeVolumetricRTOverScenePS> PixelShader(ViewInfo.ShaderMap, PermutationVector);
 
@@ -789,11 +815,12 @@ void ComposeVolumetricRenderTargetOverScene(
 		PassParameters->UvOffsetSampleAcceptanceWeight = GetUvNoiseSampleAcceptanceWeight();
 		PassParameters->FullResolutionToVolumetricBufferResolutionScale = GetCompositionFullResolutionToVolumetricBufferResolutionScale(VRTMode);
 		PassParameters->SceneTextures = SceneTextures.UniformBuffer;
+		PassParameters->ForwardShadingEnable = bForwardShading ? 1 : 0;
 		GetTextureSafeUvCoordBound(PassParameters->VolumetricTexture, PassParameters->VolumetricTextureValidCoordRect, PassParameters->VolumetricTextureValidUvRect);
 
 		PassParameters->WaterLinearDepthTexture = WaterPassData.DepthTexture;
 		PassParameters->WaterLinearDepthSampler = TStaticSamplerState<SF_Point>::GetRHI();
-		if (bShouldRenderSingleLayerWater)
+		if (bComposeWithWater)
 		{
 			const FSceneWithoutWaterTextures::FView& WaterPassViewData = WaterPassData.Views[ViewIndex];
 			PassParameters->FullResolutionToWaterBufferScale = FVector2f(1.0f / WaterPassData.RefractionDownsampleFactor, WaterPassData.RefractionDownsampleFactor);
@@ -851,7 +878,7 @@ void ComposeVolumetricRenderTargetOverSceneUnderWater(
 		FComposeVolumetricRTOverScenePS::FPermutationDomain PermutationVector;
 		PermutationVector.Set<FComposeVolumetricRTOverScenePS::FUpsamplingMode>(UpsamplingMode);
 		PermutationVector.Set<FComposeVolumetricRTOverScenePS::FRenderUnderWaterBuffer>(1);
-		PermutationVector.Set<FComposeVolumetricRTOverScenePS::FRenderCameraUnderWater>(0);
+		PermutationVector.Set<FComposeVolumetricRTOverScenePS::FRenderCameraComposeWithWater>(0);
 		PermutationVector.Set<FComposeVolumetricRTOverScenePS::FMSAASampleCount>(1);
 		TShaderMapRef<FComposeVolumetricRTOverScenePS> PixelShader(ViewInfo.ShaderMap, PermutationVector);
 
@@ -917,7 +944,7 @@ void ComposeVolumetricRenderTargetOverSceneForVisualization(
 		FComposeVolumetricRTOverScenePS::FPermutationDomain PermutationVector;
 		PermutationVector.Set<FComposeVolumetricRTOverScenePS::FUpsamplingMode>(0);
 		PermutationVector.Set<FComposeVolumetricRTOverScenePS::FRenderUnderWaterBuffer>(0);
-		PermutationVector.Set<FComposeVolumetricRTOverScenePS::FRenderCameraUnderWater>(0);
+		PermutationVector.Set<FComposeVolumetricRTOverScenePS::FRenderCameraComposeWithWater>(0);
 		PermutationVector.Set<FComposeVolumetricRTOverScenePS::FMSAASampleCount>(1);
 		TShaderMapRef<FComposeVolumetricRTOverScenePS> PixelShader(ViewInfo.ShaderMap, PermutationVector);
 

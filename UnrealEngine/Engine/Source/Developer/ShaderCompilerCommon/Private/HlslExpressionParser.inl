@@ -42,7 +42,17 @@ namespace CrossCompiler
 
 		void Add(const FString& Type)
 		{
-			Symbols.Add(Type);
+			Symbols.Emplace(Type);
+		}
+
+		void Add(FStringView Type)
+		{
+			Symbols.Emplace(Type);
+		}
+
+		void Add(const TCHAR* Type)
+		{
+			Symbols.Emplace(Type);
 		}
 
 		static bool FindType(const FSymbolScope* Scope, const FString& Type, bool bSearchUpwards = true)
@@ -69,7 +79,7 @@ namespace CrossCompiler
 		{
 			for (auto& Child : Children)
 			{
-				if (!FCString::Strcmp(Child.Name, Namespace))
+				if (Child.Name && FCString::Strcmp(Child.Name, Namespace) == 0)
 				{
 					return &Child;
 				}

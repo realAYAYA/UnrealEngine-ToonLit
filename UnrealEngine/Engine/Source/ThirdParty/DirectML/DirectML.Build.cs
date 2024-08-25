@@ -17,8 +17,6 @@ public class DirectML : ModuleRules
 		string LibFileName = "DirectML";
 		string DllFileName = LibFileName + ".dll";
 		string DllFullPath = Path.Combine(BinDirPath, DllFileName);
-		string DbgDllFileName = LibFileName + ".Debug.dll";
-		string DbgDllFullPath = Path.Combine(BinDirPath, DbgDllFileName);
 
 		// Win64
 		if (Target.Platform == UnrealTargetPlatform.Win64)
@@ -31,14 +29,6 @@ public class DirectML : ModuleRules
 			PublicDefinitions.Add("DML_TARGET_VERSION=0x5100");
 			PublicDefinitions.Add("WITH_DIRECTML");
 			PublicDefinitions.Add("DIRECTML_PATH=DML");
-
-			if (Target.Configuration != UnrealTargetConfiguration.Shipping &&
-				Target.Configuration != UnrealTargetConfiguration.Test)
-			{
-				PublicDefinitions.Add("WITH_DIRECTML_DEBUG");
-				PublicDelayLoadDLLs.Add(DllFileName);
-				RuntimeDependencies.Add("$(TargetOutputDir)/DML/" + DbgDllFileName, DbgDllFullPath);
-			}
 		}
 	}
 }

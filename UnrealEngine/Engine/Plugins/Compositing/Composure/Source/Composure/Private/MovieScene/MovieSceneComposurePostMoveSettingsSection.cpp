@@ -18,30 +18,36 @@ struct FPostMoveSettingsChannelEditorData
 		FText TranslationGroup = NSLOCTEXT("PostMoves", "Translation", "Translation");
 
 		MetaData[0].SetIdentifiers("Pivot.X", FCommonChannelData::ChannelX, PivotGroup);
+		MetaData[0].SubPropertyPath = MetaData[0].Name;
 		MetaData[0].SortOrder = 0;
 		MetaData[0].Color = FCommonChannelData::RedChannelColor;
 		MetaData[0].bCanCollapseToTrack = false;
 
 		MetaData[1].SetIdentifiers("Pivot.Y", FCommonChannelData::ChannelY, PivotGroup);
+		MetaData[1].SubPropertyPath = MetaData[1].Name;
 		MetaData[1].SortOrder = 1;
 		MetaData[1].Color = FCommonChannelData::GreenChannelColor;
 		MetaData[1].bCanCollapseToTrack = false;
 
 		MetaData[2].SetIdentifiers("Translation.X", FCommonChannelData::ChannelX, TranslationGroup);
+		MetaData[2].SubPropertyPath = MetaData[2].Name;
 		MetaData[2].SortOrder = 2;
 		MetaData[2].Color = FCommonChannelData::RedChannelColor;
 		MetaData[2].bCanCollapseToTrack = false;
 
 		MetaData[3].SetIdentifiers("Translation.Y", FCommonChannelData::ChannelY, TranslationGroup);
+		MetaData[3].SubPropertyPath = MetaData[3].Name;
 		MetaData[3].SortOrder = 3;
 		MetaData[3].Color = FCommonChannelData::GreenChannelColor;
 		MetaData[3].bCanCollapseToTrack = false;
 
 		MetaData[4].SetIdentifiers("Rotation", NSLOCTEXT("PostMoves", "Rotation", "Rotation"));
+		MetaData[4].SubPropertyPath = TEXT("RotationAngle");
 		MetaData[4].SortOrder = 4;
 		MetaData[4].bCanCollapseToTrack = false;
 
 		MetaData[5].SetIdentifiers("Scale", NSLOCTEXT("PostMoves", "Scale", "Scale"));
+		MetaData[5].SubPropertyPath = MetaData[5].Name;
 		MetaData[5].SortOrder = 5;
 		MetaData[5].bCanCollapseToTrack = false;
 

@@ -28,6 +28,16 @@ bool FVisualLoggerProvider::ReadVisualLogEntryTimeline(uint64 InObjectId, TFunct
 	return false;
 }
 
+void FVisualLoggerProvider::EnumerateCategories(TFunctionRef<void(const FName&)> Callback) const
+{
+	Session.ReadAccessCheck();
+	
+	for(const FName& Category : Categories)
+	{
+		Callback(Category);
+	}
+}
+
 void  FVisualLoggerProvider::AppendVisualLogEntry(uint64 InObjectId, double InTime, const FVisualLogEntry& Entry)
 {
 	Session.WriteAccessCheck();
@@ -46,6 +56,11 @@ void  FVisualLoggerProvider::AppendVisualLogEntry(uint64 InObjectId, double InTi
 	}
 
 	Timeline->AppendEvent(InTime, Entry);
+	
+	for (const FVisualLogShapeElement& Shape : Entry.ElementsToDraw)
+	{
+		Categories.AddUnique(Shape.Category);
+	}
 }
 
 #undef LOCTEXT_NAMESPACE

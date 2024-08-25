@@ -3,6 +3,7 @@
 #pragma once
 
 #include "Algo/AllOf.h"
+#include "Algo/AnyOf.h"
 #include "Containers/Array.h"
 #include "Containers/ArrayView.h"
 #include "Containers/UnrealString.h"
@@ -81,15 +82,10 @@ struct FMovieSceneWarpCounter
 		{
 			WarpCounts.Add(WarpCount);
 		}
-		else if (WarpCounts.Num() > 0)
+		else
 		{
-			if (WarpCounts.Last() != FMovieSceneTimeWarping::InvalidWarpCount)
-			{
-				WarpCounts.Add(FMovieSceneTimeWarping::InvalidWarpCount);
-			}
+			WarpCounts.Add(FMovieSceneTimeWarping::InvalidWarpCount);
 		}
-		// else: ignore, non-warping sub-sequences have their transforms compressed into a single
-		//       linear transform until the point we meet the first looping sub-sequence.
 	}
 
 	void AddNonWarpingLevel()
@@ -146,9 +142,14 @@ struct FMovieSceneNestedSequenceTransform
 	bool IsIdentity() const { return LinearTransform.IsIdentity() && !IsWarping(); }
 
 	/**
-	 * Returns whether this transform is warping.
+	 * Returns whether this transform is warping. This includes both looping as well as zero-timescale.
 	 */
-	bool IsWarping() const { return Warping.IsValid(); }
+	bool IsWarping() const { return Warping.IsValid() || FMath::IsNearlyZero(LinearTransform.TimeScale); }
+
+	/**
+	 * Returns whether this transform is warping specifically from looping. This doesn't include zero-timescale cases.
+	 */
+	bool IsLooping() const { return Warping.IsValid(); }
 
 	/**
 	 * Linear time transform for this sub-sequence.
@@ -157,7 +158,7 @@ struct FMovieSceneNestedSequenceTransform
 	FMovieSceneTimeTransform LinearTransform;
 
 	/**
-	 * Time warping information for this sub-sequence.
+	 * Time warping information for this sub-sequence used for looping.
 	 */
 	UPROPERTY()
 	FMovieSceneTimeWarping Warping;
@@ -174,11 +175,20 @@ struct FMovieSceneNestedSequenceTransform
 
 	FMovieSceneTimeTransform InverseLinearOnly() const
 	{
+		// We don't support storing both an offset and a zero or infinite timescale in a single nested transform.
+		// These should be stored as separate nested transforms.
+		ensureMsgf(FMath::IsNearlyZero(LinearTransform.Offset.AsDecimal()) || (FMath::IsFinite(LinearTransform.TimeScale) && !FMath::IsNearlyZero(LinearTransform.TimeScale)), TEXT("Error- nested transform with both an offset and a non-deterministic timescale."));
+
 		return LinearTransform.Inverse();
 	}
 
 	FMovieSceneTimeTransform InverseFromWarp(uint32 WarpCount) const
 	{
+		// We don't support storing both an offset and a zero or infinite timescale in a single nested transform.
+		// We also don't support storing a zero or infinite timescale in addition to looping information.
+		// These should be stored as separate nested transforms.
+		ensureMsgf(FMath::IsNearlyZero(LinearTransform.Offset.AsDecimal()) || ((FMath::IsFinite(LinearTransform.TimeScale) && !FMath::IsNearlyZero(LinearTransform.TimeScale))), TEXT("Error- nested transform with both an offset and a non-deterministic timescale."));
+		ensureMsgf(!IsLooping() || (FMath::IsFinite(LinearTransform.TimeScale) && !FMath::IsNearlyZero(LinearTransform.TimeScale)), TEXT("Error- nested transform with both looping and non-deterministic timescale."));
 		return LinearTransform.Inverse() * Warping.InverseFromWarp(WarpCount);
 	}
 };
@@ -250,6 +260,13 @@ struct FMovieSceneSequenceTransform
 		return NestedTransforms.Num() > 0;
 	}
 
+
+	bool IsLooping() const
+	{
+		return NestedTransforms.Num() > 0 &&
+			Algo::AnyOf(NestedTransforms, &FMovieSceneNestedSequenceTransform::IsLooping);
+	}
+
 	/**
 	 * Returns whether this sequence transform is purely linear (i.e. doesn't involve time warping).
 	 */
@@ -301,7 +318,7 @@ struct FMovieSceneSequenceTransform
 			{
 				OutTime = OutTime * NestedTransform.LinearTransform;
 
-				if (NestedTransform.IsWarping())
+				if (NestedTransform.IsLooping())
 				{
 					uint32 WarpIndex;
 					NestedTransform.Warping.TransformTime(OutTime, OutTime, WarpIndex);
@@ -325,7 +342,7 @@ struct FMovieSceneSequenceTransform
 		for (const FMovieSceneNestedSequenceTransform& NestedTransform : NestedTransforms)
 		{
 			Result = Result * NestedTransform.LinearTransform;
-			if (NestedTransform.IsWarping())
+			if (NestedTransform.IsLooping())
 			{
 				Result = NestedTransform.Warping.TransformRangePure(Result);
 			}
@@ -343,7 +360,7 @@ struct FMovieSceneSequenceTransform
 		for (const FMovieSceneNestedSequenceTransform& NestedTransform : NestedTransforms)
 		{
 			Result = Result * NestedTransform.LinearTransform;
-			if (NestedTransform.IsWarping())
+			if (NestedTransform.IsLooping())
 			{
 				Result = NestedTransform.Warping.TransformRangeUnwarped(Result);
 			}
@@ -361,7 +378,7 @@ struct FMovieSceneSequenceTransform
 		for (const FMovieSceneNestedSequenceTransform& NestedTransform : NestedTransforms)
 		{
 			Result = Result * NestedTransform.LinearTransform;
-			if (NestedTransform.IsWarping())
+			if (NestedTransform.IsLooping())
 			{
 				Result = NestedTransform.Warping.TransformRangeConstrained(Result);
 			}
@@ -405,15 +422,49 @@ struct FMovieSceneSequenceTransform
 	/**
 	 * Retrieve the inverse of the linear part of this transform.
 	 */
+	UE_DEPRECATED(5.4, "Please use InverseNoLooping instead.")
 	FMovieSceneTimeTransform InverseLinearOnly() const
 	{
+		ensureMsgf(!FMath::IsNearlyZero(LinearTransform.TimeScale), TEXT("Inverse of a zero timescale transform is undefined in a FMovieSceneTimeTransform. Please use InverseNoLooping for proper behavior."));
 		return LinearTransform.Inverse();
+	}
+
+	/**
+	 * Retrieve the inverse of the linear part of this transform without any looping.
+	 * Note that if nested transforms exist, we will return a sequence transform with nested transforms inverted, but looping information will be lost.
+	 */
+	FMovieSceneSequenceTransform InverseNoLooping() const
+	{
+		ensureMsgf(FMath::IsFinite(LinearTransform.TimeScale) && !FMath::IsNearlyZero(LinearTransform.TimeScale), TEXT("Warning: Sequence LinearTransform has a zero or infinite timescale."));
+		if (NestedTransforms.Num() > 0)
+		{
+			// Start accumulating the inverse transforms in reverse order.
+			FMovieSceneSequenceTransform Result;
+
+			for(int i = NestedTransforms.Num() - 1; i >= 0; --i)
+			{
+				Result.NestedTransforms.Add(NestedTransforms[i].LinearTransform.Inverse());
+			}
+
+			// Add the inverse of the main linear transform as a further nested transform if not identity
+			if (!LinearTransform.IsIdentity())
+			{
+				Result.NestedTransforms.Add(LinearTransform.Inverse());
+			}
+
+			return Result;
+		}
+		else
+		{
+			return LinearTransform.Inverse();
+		}
 	}
 
 	/**
 	 * Retrieve the inverse of this transform assuming the local times would all belong to
 	 * the first warp inside each nested time range.
 	 */
+	UE_DEPRECATED(5.4, "Please use InverseFromAllFirstLoops instead.")
 	FMovieSceneTimeTransform InverseFromAllFirstWarps() const
 	{
 		const size_t NestedTransformsSize = NestedTransforms.Num();
@@ -423,13 +474,36 @@ struct FMovieSceneSequenceTransform
 		}
 		else
 		{
-			TArray<uint32> WarpCounts;
-			WarpCounts.Reserve(NestedTransforms.Num());
+			FMovieSceneSequenceTransform SequenceTransform = InverseFromAllFirstLoops();
+			FMovieSceneTimeTransform ReturnTransform = SequenceTransform.LinearTransform;
+			for (int i = 0; i < SequenceTransform.NestedTransforms.Num(); ++i)
+			{
+				ReturnTransform = ReturnTransform * SequenceTransform.NestedTransforms[i].LinearTransform;
+			}
+			return ReturnTransform;
+		}
+	}
+
+	/**
+	 * Retrieve the inverse of this transform assuming the local times would all belong to the first loop inside each nested time range.
+	 */
+	FMovieSceneSequenceTransform InverseFromAllFirstLoops() const 
+	{
+		const size_t NestedTransformsSize = NestedTransforms.Num();
+		if (NestedTransformsSize == 0)
+		{
+			ensureMsgf(FMath::IsFinite(LinearTransform.TimeScale) && !FMath::IsNearlyZero(LinearTransform.TimeScale), TEXT("Warning: Sequence LinearTransform has a zero or infinite timescale."));
+			return LinearTransform.Inverse();
+		}
+		else
+		{
+			TArray<uint32> LoopCounts;
+			LoopCounts.Reserve(NestedTransforms.Num());
 			for (const FMovieSceneNestedSequenceTransform& NestedTransform : NestedTransforms)
 			{
-				WarpCounts.Add(NestedTransform.IsWarping() ? 0 : FMovieSceneTimeWarping::InvalidWarpCount);
+				LoopCounts.Add(NestedTransform.IsLooping() ? 0 : FMovieSceneTimeWarping::InvalidWarpCount);
 			}
-			return InverseFromWarp(WarpCounts);
+			return InverseFromLoop(LoopCounts);
 		}
 	}
 
@@ -438,9 +512,16 @@ struct FMovieSceneSequenceTransform
 	 * n'th warp inside the time range. As such, this method requires that the warp counts
 	 * in the counter object is equal to the number of nested loops in this transform.
 	 */
+	UE_DEPRECATED(5.4, "Please use InverseFromLoop instead.")
 	FMovieSceneTimeTransform InverseFromWarp(const FMovieSceneWarpCounter& WarpCounter) const
 	{
-		return InverseFromWarp(WarpCounter.WarpCounts);
+		FMovieSceneSequenceTransform SequenceTransform = InverseFromLoop(WarpCounter.WarpCounts);
+		FMovieSceneTimeTransform ReturnTransform = SequenceTransform.LinearTransform;
+		for (int i = 0; i < SequenceTransform.NestedTransforms.Num(); ++i)
+		{
+			ReturnTransform = ReturnTransform * SequenceTransform.NestedTransforms[i].LinearTransform;
+		}
+		return ReturnTransform;
 	}
 
 	/**
@@ -448,6 +529,7 @@ struct FMovieSceneSequenceTransform
 	 * n'th warp inside the time range. As such, this method takes as parameter an array with
 	 * as many items as there currently have nested loops in this transform.
 	 */
+	UE_DEPRECATED(5.4, "Please use InverseFromLoop instead.")
 	FMovieSceneTimeTransform InverseFromWarp(const TArrayView<const uint32>& WarpCounts) const
 	{
 		const size_t NestedTransformsSize = NestedTransforms.Num();
@@ -480,6 +562,117 @@ struct FMovieSceneSequenceTransform
 		}
 	}
 
+	/**
+	 * Retrieve the inverse of this transform assuming the local times would belong to the
+	 * n'th warp inside the time range. As such, this method requires that the warp counts
+	 * in the counter object is equal to the number of nested loops in this transform.
+	 * Correctly handles zero and infinite timescales.
+	 */
+	FMovieSceneSequenceTransform InverseFromLoop(const FMovieSceneWarpCounter& LoopCounter) const
+	{
+		return InverseFromLoop(LoopCounter.WarpCounts);
+	}
+
+	/**
+	 * Retrieve the inverse of this transform assuming the local times would belong to the
+	 * n'th warp inside the time range. As such, this method takes as parameter an array with
+	 * as many items as there currently have nested loops in this transform.
+	 * Correctly handles zero and infinite timescales.
+	 */
+	FMovieSceneSequenceTransform InverseFromLoop(const TArrayView<const uint32>& LoopCounts) const
+	{
+		const size_t NestedTransformsSize = NestedTransforms.Num();
+		check(LoopCounts.Num() == NestedTransformsSize);
+
+		if (NestedTransformsSize > 0)
+		{
+			FMovieSceneSequenceTransform Result;
+			for(int i = NestedTransformsSize - 1; i >=0; --i)
+			{
+				const uint32 CurLoopCount = LoopCounts[i];
+				Result.NestedTransforms.Add(NestedTransforms[i].InverseFromWarp(CurLoopCount));
+			}
+
+			// Add the inverse of the main linear transform as a further nested transform if not identity
+			if (!LinearTransform.IsIdentity())
+			{
+				Result.NestedTransforms.Add(LinearTransform.Inverse());
+			}
+
+			return Result;
+		}
+		else
+		{
+			ensureMsgf(FMath::IsFinite(LinearTransform.TimeScale) && !FMath::IsNearlyZero(LinearTransform.TimeScale), TEXT("Warning: Sequence LinearTransform has a zero or infinite timescale."));
+			return LinearTransform.Inverse();
+		}
+	}
+
+	/**
+	 * Multiply 2 transforms together, resulting in a single transform that gets from RHS parent to LHS space
+	 * @note Transforms apply from right to left
+	 */
+	FMovieSceneSequenceTransform operator*(const FMovieSceneSequenceTransform& RHS) const
+	{
+		if (!IsWarping())
+		{
+			if (!RHS.IsWarping())
+			{
+				// None of the transforms are warping... we can combine them into another linear transform.
+				return FMovieSceneSequenceTransform(LinearTransform * RHS.LinearTransform);
+			}
+			else
+			{
+				// LHS is linear, but RHS is warping. Since transforms are supposed to apply from right to left,
+				// we need to append LHS at the "bottom" of RHS, i.e. add a new nested transform that's LHS. However
+				// if LHS is identity, we have nothing to do, and if both LHS and RHS' deeper transform are linear,
+				// we can combine both.
+				FMovieSceneSequenceTransform Result(RHS);
+				if (!LinearTransform.IsIdentity())
+				{
+					const int32 NumNestedTransforms = RHS.NestedTransforms.Num();
+					check(NumNestedTransforms > 0);
+					const FMovieSceneNestedSequenceTransform& LastNested = RHS.NestedTransforms[NumNestedTransforms - 1];
+					if (LastNested.IsWarping())
+					{
+						Result.NestedTransforms.Add(FMovieSceneNestedSequenceTransform(LinearTransform));
+					}
+					else
+					{
+						Result.NestedTransforms[NumNestedTransforms - 1] = LinearTransform * LastNested.LinearTransform;
+					}
+				}
+				return Result;
+			}
+		}
+		else // LHS is warping
+		{
+			if (!RHS.IsWarping())
+			{
+				// RHS isn't warping, but LHS is, so we combine the linear transform parts and start looping
+				// from there.
+				FMovieSceneSequenceTransform Result;
+				Result.LinearTransform = LinearTransform * RHS.LinearTransform;
+				Result.NestedTransforms = NestedTransforms;
+				return Result;
+			}
+			else
+			{
+				// Both are looping, we need to combine them. Usually, a warping transform doesn't use its linear part,
+				// because whatever linear placement/scaling it has would be in the linear part of the nested transform
+				// struct.
+				FMovieSceneSequenceTransform Result(RHS);
+				const bool bHasOnlyNested = LinearTransform.IsIdentity();
+				if (!bHasOnlyNested)
+				{
+					Result.NestedTransforms.Add(FMovieSceneNestedSequenceTransform(LinearTransform));
+				}
+				Result.NestedTransforms.Append(NestedTransforms);
+				return Result;
+			}
+		}
+	}
+
 	UPROPERTY()
 	FMovieSceneTimeTransform LinearTransform;
 
@@ -505,7 +698,7 @@ inline FFrameTime operator*(FFrameTime InTime, const FMovieSceneSequenceTransfor
 		FFrameTime OutTime = InTime * RHS.LinearTransform;
 		for (const FMovieSceneNestedSequenceTransform& NestedTransform : RHS.NestedTransforms)
 		{
-			if (NestedTransform.IsWarping())
+			if (NestedTransform.IsLooping())
 			{
 				OutTime = OutTime * NestedTransform.LinearTransform * NestedTransform.Warping;
 			}
@@ -541,71 +734,6 @@ TRange<T>& operator*=(TRange<T>& LHS, const FMovieSceneSequenceTransform& RHS)
 {
 	LHS = LHS * RHS;
 	return LHS;
-}
-
-/**
- * Multiply 2 transforms together, resulting in a single transform that gets from RHS parent to LHS space
- * @note Transforms apply from right to left
- */
-inline FMovieSceneSequenceTransform operator*(const FMovieSceneSequenceTransform& LHS, const FMovieSceneSequenceTransform& RHS)
-{
-	if (!LHS.IsWarping())
-	{
-		if (!RHS.IsWarping())
-		{
-			// None of the transforms are warping... we can combine them into another linear transform.
-			return FMovieSceneSequenceTransform(LHS.LinearTransform * RHS.LinearTransform);
-		}
-		else
-		{
-			// LHS is linear, but RHS is warping. Since transforms are supposed to apply from right to left,
-			// we need to append LHS at the "bottom" of RHS, i.e. add a new nested transform that's LHS. However
-			// if LHS is identity, we have nothing to do, and if both LHS and RHS' deeper transform are linear,
-			// we can combine both.
-			FMovieSceneSequenceTransform Result(RHS);
-			if (!LHS.LinearTransform.IsIdentity())
-			{
-				const int32 NumNestedTransforms = RHS.NestedTransforms.Num();
-				check(NumNestedTransforms > 0);
-				const FMovieSceneNestedSequenceTransform& LastNested = RHS.NestedTransforms[NumNestedTransforms - 1];
-				if (LastNested.IsWarping())
-				{
-					Result.NestedTransforms.Add(FMovieSceneNestedSequenceTransform(LHS.LinearTransform));
-				}
-				else
-				{
-					Result.NestedTransforms[NumNestedTransforms - 1] = LHS.LinearTransform * LastNested.LinearTransform;
-				}
-			}
-			return Result;
-		}
-	}
-	else // LHS is warping
-	{
-		if (!RHS.IsWarping())
-		{
-			// RHS isn't warping, but LHS is, so we combine the linear transform parts and start looping
-			// from there.
-			FMovieSceneSequenceTransform Result;
-			Result.LinearTransform = LHS.LinearTransform * RHS.LinearTransform;
-			Result.NestedTransforms = LHS.NestedTransforms;
-			return Result;
-		}
-		else
-		{
-			// Both are looping, we need to combine them. Usually, a warping transform doesn't use its linear part,
-			// because whatever linear placement/scaling it has would be in the linear part of the nested transform
-			// struct.
-			FMovieSceneSequenceTransform Result(RHS);
-			const bool bHasOnlyNested = LHS.LinearTransform.IsIdentity();
-			if (!bHasOnlyNested)
-			{
-				Result.NestedTransforms.Add(FMovieSceneNestedSequenceTransform(LHS.LinearTransform));
-			}
-			Result.NestedTransforms.Append(LHS.NestedTransforms);
-			return Result;
-		}
-	}
 }
 
 /** Convert a FMovieSceneSequenceTransform into a string */

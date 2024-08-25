@@ -776,6 +776,8 @@ namespace Audio
 
 	void FGranularSynth::Generate(float* OutAudiobuffer, const int32 NumFrames)
 	{
+		FMemory::Memzero(OutAudiobuffer, NumFrames * sizeof(float));
+
 		if (SampleBuffer.GetData() == nullptr)
 		{
 			return;

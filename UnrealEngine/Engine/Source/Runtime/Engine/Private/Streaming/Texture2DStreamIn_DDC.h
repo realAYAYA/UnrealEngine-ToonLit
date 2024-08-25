@@ -9,6 +9,7 @@ Texture2DStreamIn_DDC.h: Stream in helper for 2D textures loading DDC files.
 #include "CoreMinimal.h"
 #include "Memory/SharedBuffer.h"
 #include "Texture2DStreamIn.h"
+#include "UObject/WeakObjectPtr.h"
 
 #if WITH_EDITORONLY_DATA
 #include "DerivedDataRequestOwner.h"
@@ -32,6 +33,7 @@ protected:
 
 	TArray<FMipRequestStatus, TInlineAllocator<MAX_TEXTURE_MIP_COUNT> > DDCMipRequestStatus;
 	UE::DerivedData::FRequestOwner DDCRequestOwner;
+	TWeakObjectPtr<UTexture2D> Texture;
 
 	// ****************************
 	// ********* Helpers **********

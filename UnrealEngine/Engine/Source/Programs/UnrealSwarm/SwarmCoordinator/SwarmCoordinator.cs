@@ -55,7 +55,7 @@ namespace SwarmCoordinator
             Coordinator.Init();
 
 			// Set the title bar to include the name of the machine
-			TopLevelControl.Text = "Swarm Coordinator running on " + Environment.MachineName;
+			TopLevelControl.Text = "Swarm Coordinator running on " + System.Net.Dns.GetHostName();
 
             // Display the window
             Show();

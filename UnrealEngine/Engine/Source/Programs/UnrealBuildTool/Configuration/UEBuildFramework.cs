@@ -110,6 +110,7 @@ namespace UnrealBuildTool
 			this.FrameworkDirectory = FrameworkDirectory;
 			this.CopyBundledAssets = CopyBundledAssets;
 			this.bCopyFramework = bCopyFramework;
+			this.bLinkFramework = bLinkFramework;
 			if (this.FrameworkDirectory.FullName.EndsWith(".xcframework"))
 			{
 				XCFrameworkVariants = LoadXCFrameworkVariants(Logger);

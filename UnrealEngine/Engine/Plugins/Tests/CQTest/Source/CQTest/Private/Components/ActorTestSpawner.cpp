@@ -79,7 +79,7 @@ FActorTestSpawner::~FActorTestSpawner() {
 
 UWorld* FActorTestSpawner::CreateWorld()
 {
-	FName WorldName = MakeUniqueObjectName(nullptr, UWorld::StaticClass());
+	FName WorldName = MakeUniqueObjectName(nullptr, UWorld::StaticClass(), NAME_None, EUniqueObjectNameOptions::GloballyUnique);
 	FWorldContext& WorldContext = GEngine->CreateNewWorldContext(EWorldType::Game);
 	UWorld* Result = UWorld::CreateWorld(EWorldType::Game, false, WorldName, GetTransientPackage());
 	check(Result != nullptr);

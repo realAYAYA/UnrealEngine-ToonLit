@@ -73,16 +73,18 @@ namespace EOrientPositionSelector
 }
 
 /**
-* For HMDs that support it, this specifies whether the origin of the tracking universe will be at the floor, or at the user's eye height
+* Specifies the type of tracking space origin we should use.  Be aware that not all devices support all Tracking Origin types. https://registry.khronos.org/OpenXR/specs/1.0/html/xrspec.html#reference-spaces
 */
 UENUM()
 namespace EHMDTrackingOrigin
 {
 	enum Type : int
 	{
-		Floor UMETA(DisplayName = "Floor Level"),
-		Eye UMETA(DisplayName = "Eye Level"),
-		Stage UMETA(DisplayName = "Stage (Centered Around Play Area)")
+		View UMETA(ToolTip = "Previously sometimes used Eye space to query for the view transform, this space is fixed to the HMD, meaning that as the hmd moves this space moves relative to other spaces. This isn't used as a tracking origin.")
+		, LocalFloor UMETA(ToolTip = "For standing stationary experiences. Typically centered around HMDs initial position either at app startup or device startup, with Z 0 set to match the floor as in the Stage Space. Falls back to local.")
+		, Local UMETA(ToolTip = "For seated experiences. Always Supported. Typically centered around the HMDs initial position either at app startup or device startup.  Useful for seated experiences. Previously called Eye Space.  ")
+		, Stage UMETA(ToolTip = "For walking-around experiences.  The origin will be at floor level and typically within a defined play areas who's bounds will be available. Falls back to local.")
+		, CustomOpenXR UMETA(ToolTip = "Custom OpenXR tracking space of some kind. You cannot set this space explictly, it is automatically used by some platform plugin extensions.")
 	};
 }
 

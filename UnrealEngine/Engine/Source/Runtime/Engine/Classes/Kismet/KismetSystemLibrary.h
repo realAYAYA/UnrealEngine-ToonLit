@@ -2,14 +2,15 @@
 
 #pragma once
 
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "CoreMinimal.h"
+#endif // UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "UObject/ObjectMacros.h"
 #include "UObject/Object.h"
 #include "Templates/SubclassOf.h"
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "Engine/EngineTypes.h"
-#endif
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "Engine/HitResult.h"
+#endif // UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "UObject/UnrealType.h"
 #include "UObject/ScriptMacros.h"
 #include "UObject/Interface.h"
@@ -29,6 +30,7 @@ class APlayerController;
 class UPrimitiveComponent;
 class USceneComponent;
 class UTexture2D;
+struct FHitResult;
 
 UENUM(BlueprintType)
 namespace EDrawDebugTrace
@@ -205,9 +207,13 @@ class UKismetSystemLibrary : public UBlueprintFunctionLibrary
 	UFUNCTION(BlueprintPure, Category = "Utilities|Platform")
 	static ENGINE_API FString GetPlatformUserDir();
 
-	/** Checks if this object implements a specific interface, works for both native and blueprint interfacse */
-	UFUNCTION(BlueprintPure, Category="Utilities")
+	/** Checks if the given object implements a specific interface, works for both native and blueprint interfacse */
+	UFUNCTION(BlueprintPure, Category="Utilities", meta=(DisplayName = "Does Object Implement Interface"))
 	static ENGINE_API bool DoesImplementInterface(const UObject* TestObject, TSubclassOf<UInterface> Interface);
+
+	/** Checks if the given class implements a specific interface, works for both native and blueprint interfacse */
+	UFUNCTION(BlueprintPure, Category="Utilities")
+	static ENGINE_API bool DoesClassImplementInterface(const UClass* TestClass, TSubclassOf<UInterface> Interface);
 
 	/** 
 	 * Get the current game time, in seconds. This stops when the game is paused and is affected by slomo. 
@@ -269,9 +275,16 @@ class UKismetSystemLibrary : public UBlueprintFunctionLibrary
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "Cast To Class", DeterminesOutputType = "Class"), Category="Utilities")
 	static ENGINE_API UClass* Conv_ObjectToClass(UObject* Object, TSubclassOf<UObject> Class);
 
-	/** Converts an interfance into an object */
+	/** Converts an interface instance into an object */
 	UFUNCTION(BlueprintPure, meta=(DisplayName = "To Object (Interface)", CompactNodeTitle = "->", BlueprintAutocast), Category="Utilities")
 	static ENGINE_API UObject* Conv_InterfaceToObject(const FScriptInterface& Interface); 
+
+	/** 
+	 * Checks if the interface instance has a valid object for blueprint interface functions.
+	 * This will return true for both natively implemented and blueprint implemented interfaces.
+	 */
+	UFUNCTION(BlueprintPure, Category="Utilities")
+	static bool IsValidInterface(const FScriptInterface& Interface); 
 
 	/** Builds a Soft Object Path struct from a string that contains a full /folder/packagename.object path */
 	UFUNCTION(BlueprintPure, Category = "Utilities", meta = (Keywords = "construct build", NativeMakeFunc, BlueprintThreadSafe, BlueprintAutocast))
@@ -482,7 +495,7 @@ class UKismetSystemLibrary : public UBlueprintFunctionLibrary
 	 * @param	Key				If a non-empty key is provided, the message will replace any existing on-screen messages with the same key.
 	 */
 	UFUNCTION(BlueprintCallable, meta=(WorldContext="WorldContextObject", CallableWithoutWorldContext, Keywords = "log print", AdvancedDisplay = "2", DevelopmentOnly), Category="Development")
-	static ENGINE_API void PrintString(const UObject* WorldContextObject, const FString& InString = FString(TEXT("Hello")), bool bPrintToScreen = true, bool bPrintToLog = true, FLinearColor TextColor = FLinearColor(0.0, 0.66, 1.0), float Duration = 2.f, const FName Key = NAME_None);
+	static ENGINE_API void PrintString(const UObject* WorldContextObject, const FString& InString = FString(TEXT("Hello")), bool bPrintToScreen = true, bool bPrintToLog = true, FLinearColor TextColor = FLinearColor(0.0f, 0.66f, 1.0f), float Duration = 2.f, const FName Key = NAME_None);
 
 	/**
 	 * Prints text to the log, and optionally, to the screen
@@ -497,7 +510,7 @@ class UKismetSystemLibrary : public UBlueprintFunctionLibrary
 	 * @param	Key				If a non-empty key is provided, the message will replace any existing on-screen messages with the same key.
 	 */
 	UFUNCTION(BlueprintCallable, meta=(WorldContext="WorldContextObject", CallableWithoutWorldContext, Keywords = "log", AdvancedDisplay = "2", DevelopmentOnly), Category="Development")
-	static ENGINE_API void PrintText(const UObject* WorldContextObject, const FText InText = INVTEXT("Hello"), bool bPrintToScreen = true, bool bPrintToLog = true, FLinearColor TextColor = FLinearColor(0.0, 0.66, 1.0), float Duration = 2.f, const FName Key = NAME_None);
+	static ENGINE_API void PrintText(const UObject* WorldContextObject, const FText InText = INVTEXT("Hello"), bool bPrintToScreen = true, bool bPrintToLog = true, FLinearColor TextColor = FLinearColor(0.0f, 0.66f, 1.0f), float Duration = 2.f, const FName Key = NAME_None);
 
 	/**
 	 * Prints a warning string to the log and the screen. Meant to be used as a way to inform the user that they misused the node.
@@ -629,12 +642,13 @@ class UKismetSystemLibrary : public UBlueprintFunctionLibrary
 	 * @param Event						Event. Can be a K2 function or a Custom Event.
 	 * @param Time						How long to wait before executing the delegate, in seconds. Setting a timer to <= 0 seconds will clear it if it is set.
 	 * @param bLooping					True to keep executing the delegate every Time seconds, false to execute delegate only once.
+	 * @param bMaxOncePerFrame			For looping timers, whether to execute only once when the timer would otherwise expires multiple times in the current frame.
 	 * @param InitialStartDelay			Initial delay passed to the timer manager, in seconds.
 	 * @param InitialStartDelayVariance	Use this to add some variance to when the timer starts in lieu of doing a random range on the InitialStartDelay input, in seconds. 
 	 * @return							The timer handle to pass to other timer functions to manipulate this timer.
 	 */
 	UFUNCTION(BlueprintCallable, meta=(DisplayName = "Set Timer by Event", ScriptName = "SetTimerDelegate", AdvancedDisplay="InitialStartDelay, InitialStartDelayVariance"), Category="Utilities|Time")
-	static ENGINE_API FTimerHandle K2_SetTimerDelegate(UPARAM(DisplayName="Event") FTimerDynamicDelegate Delegate, float Time, bool bLooping, float InitialStartDelay = 0.f, float InitialStartDelayVariance = 0.f);
+	static ENGINE_API FTimerHandle K2_SetTimerDelegate(UPARAM(DisplayName="Event") FTimerDynamicDelegate Delegate, float Time, bool bLooping, bool bMaxOncePerFrame = false, float InitialStartDelay = 0.f, float InitialStartDelayVariance = 0.f);
 
 	/**
 	 * Set a timer to execute a delegate next tick.
@@ -798,13 +812,14 @@ class UKismetSystemLibrary : public UBlueprintFunctionLibrary
 	 * @param Object					Object that implements the delegate function. Defaults to self (this blueprint)
 	 * @param FunctionName				Delegate function name. Can be a K2 function or a Custom Event.
 	 * @param Time						How long to wait before executing the delegate, in seconds. Setting a timer to <= 0 seconds will clear it if it is set.
-	 * @param bLooping					true to keep executing the delegate every Time seconds, false to execute delegate only once.
+	 * @param bLooping					True to keep executing the delegate every Time seconds, false to execute delegate only once.
+	 * @param bMaxOncePerFrame			For looping timers, whether to execute only once when the timer would otherwise expires multiple times in the current frame.
 	 * @param InitialStartDelay			Initial delay passed to the timer manager to allow some variance in when the timer starts, in seconds.
 	 * @param InitialStartDelayVariance	Use this to add some variance to when the timer starts in lieu of doing a random range on the InitialStartDelay input, in seconds.
 	 * @return							The timer handle to pass to other timer functions to manipulate this timer.
 	 */
 	UFUNCTION(BlueprintCallable, meta=(DisplayName = "Set Timer by Function Name", ScriptName = "SetTimer", DefaultToSelf = "Object", AdvancedDisplay="InitialStartDelay, InitialStartDelayVariance"), Category="Utilities|Time")
-	static ENGINE_API FTimerHandle K2_SetTimer(UObject* Object, FString FunctionName, float Time, bool bLooping, float InitialStartDelay = 0.f, float InitialStartDelayVariance = 0.f);
+	static ENGINE_API FTimerHandle K2_SetTimer(UObject* Object, FString FunctionName, float Time, bool bLooping, bool bMaxOncePerFrame = false, float InitialStartDelay = 0.f, float InitialStartDelayVariance = 0.f);
 
 	/**
 	 * Set a timer to execute a delegate on the next tick.
@@ -1376,7 +1391,7 @@ class UKismetSystemLibrary : public UBlueprintFunctionLibrary
 	* @return				True if there was a hit, false otherwise.
 	*/
 	UFUNCTION(BlueprintCallable, Category = "Collision", meta = (bIgnoreSelf = "true", WorldContext = "WorldContextObject", AutoCreateRefTerm = "ActorsToIgnore", DisplayName = "Line Trace By Profile", AdvancedDisplay = "TraceColor,TraceHitColor,DrawTime", Keywords = "raycast"))
-	static ENGINE_API bool LineTraceSingleByProfile(const UObject* WorldContextObject, const FVector Start, const FVector End, FName ProfileName, bool bTraceComplex, const TArray<AActor*>& ActorsToIgnore, EDrawDebugTrace::Type DrawDebugType, FHitResult& OutHit, bool bIgnoreSelf, FLinearColor TraceColor = FLinearColor::Red, FLinearColor TraceHitColor = FLinearColor::Green, float DrawTime = 5.0f);
+	static ENGINE_API bool LineTraceSingleByProfile(const UObject* WorldContextObject, const FVector Start, const FVector End, UPARAM(Meta=(GetOptions="Engine.KismetSystemLibrary.GetCollisionProfileNames")) FName ProfileName, bool bTraceComplex, const TArray<AActor*>& ActorsToIgnore, EDrawDebugTrace::Type DrawDebugType, FHitResult& OutHit, bool bIgnoreSelf, FLinearColor TraceColor = FLinearColor::Red, FLinearColor TraceHitColor = FLinearColor::Green, float DrawTime = 5.0f);
 
 	/**
 	*  Trace a ray against the world using a specific profile and return overlapping hits and then first blocking hit
@@ -1392,7 +1407,7 @@ class UKismetSystemLibrary : public UBlueprintFunctionLibrary
 	* @return				True if there was a blocking hit, false otherwise.
 	*/
 	UFUNCTION(BlueprintCallable, Category = "Collision", meta = (bIgnoreSelf = "true", WorldContext = "WorldContextObject", AutoCreateRefTerm = "ActorsToIgnore", DisplayName = "Multi Line Trace By Profile", AdvancedDisplay = "TraceColor,TraceHitColor,DrawTime", Keywords = "raycast"))
-	static ENGINE_API bool LineTraceMultiByProfile(const UObject* WorldContextObject, const FVector Start, const FVector End, FName ProfileName, bool bTraceComplex, const TArray<AActor*>& ActorsToIgnore, EDrawDebugTrace::Type DrawDebugType, TArray<FHitResult>& OutHits, bool bIgnoreSelf, FLinearColor TraceColor = FLinearColor::Red, FLinearColor TraceHitColor = FLinearColor::Green, float DrawTime = 5.0f);
+	static ENGINE_API bool LineTraceMultiByProfile(const UObject* WorldContextObject, const FVector Start, const FVector End, UPARAM(Meta=(GetOptions=GetCollisionProfileNames)) FName ProfileName, bool bTraceComplex, const TArray<AActor*>& ActorsToIgnore, EDrawDebugTrace::Type DrawDebugType, TArray<FHitResult>& OutHits, bool bIgnoreSelf, FLinearColor TraceColor = FLinearColor::Red, FLinearColor TraceHitColor = FLinearColor::Green, float DrawTime = 5.0f);
 
 	/**
 	*  Sweep a sphere against the world and return the first blocking hit using a specific profile
@@ -1406,7 +1421,7 @@ class UKismetSystemLibrary : public UBlueprintFunctionLibrary
 	* @return				True if there was a hit, false otherwise.
 	*/
 	UFUNCTION(BlueprintCallable, Category = "Collision", meta = (bIgnoreSelf = "true", WorldContext = "WorldContextObject", AutoCreateRefTerm = "ActorsToIgnore", DisplayName = "Sphere Trace By Profile", AdvancedDisplay = "TraceColor,TraceHitColor,DrawTime", Keywords = "sweep"))
-	static ENGINE_API bool SphereTraceSingleByProfile(const UObject* WorldContextObject, const FVector Start, const FVector End, float Radius, FName ProfileName, bool bTraceComplex, const TArray<AActor*>& ActorsToIgnore, EDrawDebugTrace::Type DrawDebugType, FHitResult& OutHit, bool bIgnoreSelf, FLinearColor TraceColor = FLinearColor::Red, FLinearColor TraceHitColor = FLinearColor::Green, float DrawTime = 5.0f);
+	static ENGINE_API bool SphereTraceSingleByProfile(const UObject* WorldContextObject, const FVector Start, const FVector End, float Radius, UPARAM(Meta=(GetOptions=GetCollisionProfileNames)) FName ProfileName, bool bTraceComplex, const TArray<AActor*>& ActorsToIgnore, EDrawDebugTrace::Type DrawDebugType, FHitResult& OutHit, bool bIgnoreSelf, FLinearColor TraceColor = FLinearColor::Red, FLinearColor TraceHitColor = FLinearColor::Green, float DrawTime = 5.0f);
 
 	/**
 	*  Sweep a sphere against the world and return all initial overlaps using a specific profile, then overlapping hits and then first blocking hit
@@ -1423,7 +1438,7 @@ class UKismetSystemLibrary : public UBlueprintFunctionLibrary
 	* @return				True if there was a blocking hit, false otherwise.
 	*/
 	UFUNCTION(BlueprintCallable, Category = "Collision", meta = (bIgnoreSelf = "true", WorldContext = "WorldContextObject", AutoCreateRefTerm = "ActorsToIgnore", DisplayName = "Multi Sphere Trace By Profile", AdvancedDisplay = "TraceColor,TraceHitColor,DrawTime", Keywords = "sweep"))
-	static ENGINE_API bool SphereTraceMultiByProfile(const UObject* WorldContextObject, const FVector Start, const FVector End, float Radius, FName ProfileName, bool bTraceComplex, const TArray<AActor*>& ActorsToIgnore, EDrawDebugTrace::Type DrawDebugType, TArray<FHitResult>& OutHits, bool bIgnoreSelf, FLinearColor TraceColor = FLinearColor::Red, FLinearColor TraceHitColor = FLinearColor::Green, float DrawTime = 5.0f);
+	static ENGINE_API bool SphereTraceMultiByProfile(const UObject* WorldContextObject, const FVector Start, const FVector End, float Radius, UPARAM(Meta=(GetOptions=GetCollisionProfileNames)) FName ProfileName, bool bTraceComplex, const TArray<AActor*>& ActorsToIgnore, EDrawDebugTrace::Type DrawDebugType, TArray<FHitResult>& OutHits, bool bIgnoreSelf, FLinearColor TraceColor = FLinearColor::Red, FLinearColor TraceHitColor = FLinearColor::Green, float DrawTime = 5.0f);
 
 	/**
 	*  Sweep a box against the world and return the first blocking hit using a specific profile
@@ -1438,7 +1453,7 @@ class UKismetSystemLibrary : public UBlueprintFunctionLibrary
 	* @return				True if there was a hit, false otherwise.
 	*/
 	UFUNCTION(BlueprintCallable, Category = "Collision", meta = (bIgnoreSelf = "true", WorldContext = "WorldContextObject", AutoCreateRefTerm = "ActorsToIgnore", DisplayName = "Box Trace By Profile", AdvancedDisplay = "TraceColor,TraceHitColor,DrawTime", Keywords = "sweep"))
-	static ENGINE_API bool BoxTraceSingleByProfile(const UObject* WorldContextObject, const FVector Start, const FVector End, const FVector HalfSize, const FRotator Orientation, FName ProfileName, bool bTraceComplex, const TArray<AActor*>& ActorsToIgnore, EDrawDebugTrace::Type DrawDebugType, FHitResult& OutHit, bool bIgnoreSelf, FLinearColor TraceColor = FLinearColor::Red, FLinearColor TraceHitColor = FLinearColor::Green, float DrawTime = 5.0f);
+	static ENGINE_API bool BoxTraceSingleByProfile(const UObject* WorldContextObject, const FVector Start, const FVector End, const FVector HalfSize, const FRotator Orientation, UPARAM(Meta=(GetOptions=GetCollisionProfileNames)) FName ProfileName, bool bTraceComplex, const TArray<AActor*>& ActorsToIgnore, EDrawDebugTrace::Type DrawDebugType, FHitResult& OutHit, bool bIgnoreSelf, FLinearColor TraceColor = FLinearColor::Red, FLinearColor TraceHitColor = FLinearColor::Green, float DrawTime = 5.0f);
 
 	/**
 	*  Sweep a box against the world and return all initial overlaps using a specific profile, then overlapping hits and then first blocking hit
@@ -1455,7 +1470,7 @@ class UKismetSystemLibrary : public UBlueprintFunctionLibrary
 	* @return				True if there was a blocking hit, false otherwise.
 	*/
 	UFUNCTION(BlueprintCallable, Category = "Collision", meta = (bIgnoreSelf = "true", WorldContext = "WorldContextObject", AutoCreateRefTerm = "ActorsToIgnore", DisplayName = "Multi Box Trace By Profile", AdvancedDisplay = "TraceColor,TraceHitColor,DrawTime", Keywords = "sweep"))
-	static ENGINE_API bool BoxTraceMultiByProfile(const UObject* WorldContextObject, const FVector Start, const FVector End, FVector HalfSize, const FRotator Orientation, FName ProfileName, bool bTraceComplex, const TArray<AActor*>& ActorsToIgnore, EDrawDebugTrace::Type DrawDebugType, TArray<FHitResult>& OutHits, bool bIgnoreSelf, FLinearColor TraceColor = FLinearColor::Red, FLinearColor TraceHitColor = FLinearColor::Green, float DrawTime = 5.0f);
+	static ENGINE_API bool BoxTraceMultiByProfile(const UObject* WorldContextObject, const FVector Start, const FVector End, FVector HalfSize, const FRotator Orientation, UPARAM(Meta=(GetOptions=GetCollisionProfileNames)) FName ProfileName, bool bTraceComplex, const TArray<AActor*>& ActorsToIgnore, EDrawDebugTrace::Type DrawDebugType, TArray<FHitResult>& OutHits, bool bIgnoreSelf, FLinearColor TraceColor = FLinearColor::Red, FLinearColor TraceHitColor = FLinearColor::Green, float DrawTime = 5.0f);
 
 
 	/**
@@ -1472,7 +1487,7 @@ class UKismetSystemLibrary : public UBlueprintFunctionLibrary
 	* @return				True if there was a hit, false otherwise.
 	*/
 	UFUNCTION(BlueprintCallable, Category = "Collision", meta = (bIgnoreSelf = "true", WorldContext = "WorldContextObject", AutoCreateRefTerm = "ActorsToIgnore", DisplayName = "Capsule Trace By Profile", AdvancedDisplay = "TraceColor,TraceHitColor,DrawTime", Keywords = "sweep"))
-	static ENGINE_API bool CapsuleTraceSingleByProfile(const UObject* WorldContextObject, const FVector Start, const FVector End, float Radius, float HalfHeight, FName ProfileName, bool bTraceComplex, const TArray<AActor*>& ActorsToIgnore, EDrawDebugTrace::Type DrawDebugType, FHitResult& OutHit, bool bIgnoreSelf, FLinearColor TraceColor = FLinearColor::Red, FLinearColor TraceHitColor = FLinearColor::Green, float DrawTime = 5.0f);
+	static ENGINE_API bool CapsuleTraceSingleByProfile(const UObject* WorldContextObject, const FVector Start, const FVector End, float Radius, float HalfHeight, UPARAM(Meta=(GetOptions=GetCollisionProfileNames)) FName ProfileName, bool bTraceComplex, const TArray<AActor*>& ActorsToIgnore, EDrawDebugTrace::Type DrawDebugType, FHitResult& OutHit, bool bIgnoreSelf, FLinearColor TraceColor = FLinearColor::Red, FLinearColor TraceHitColor = FLinearColor::Green, float DrawTime = 5.0f);
 
 	/**
 	*  Sweep a capsule against the world and return all initial overlaps using a specific profile, then overlapping hits and then first blocking hit
@@ -1490,8 +1505,12 @@ class UKismetSystemLibrary : public UBlueprintFunctionLibrary
 	* @return				True if there was a blocking hit, false otherwise.
 	*/
 	UFUNCTION(BlueprintCallable, Category = "Collision", meta = (bIgnoreSelf = "true", WorldContext = "WorldContextObject", AutoCreateRefTerm = "ActorsToIgnore", DisplayName = "Multi Capsule Trace By Profile", AdvancedDisplay = "TraceColor,TraceHitColor,DrawTime", Keywords = "sweep"))
-	static ENGINE_API bool CapsuleTraceMultiByProfile(const UObject* WorldContextObject, const FVector Start, const FVector End, float Radius, float HalfHeight, FName ProfileName, bool bTraceComplex, const TArray<AActor*>& ActorsToIgnore, EDrawDebugTrace::Type DrawDebugType, TArray<FHitResult>& OutHits, bool bIgnoreSelf, FLinearColor TraceColor = FLinearColor::Red, FLinearColor TraceHitColor = FLinearColor::Green, float DrawTime = 5.0f);
+	static ENGINE_API bool CapsuleTraceMultiByProfile(const UObject* WorldContextObject, const FVector Start, const FVector End, float Radius, float HalfHeight, UPARAM(Meta=(GetOptions=GetCollisionProfileNames)) FName ProfileName, bool bTraceComplex, const TArray<AActor*>& ActorsToIgnore, EDrawDebugTrace::Type DrawDebugType, TArray<FHitResult>& OutHits, bool bIgnoreSelf, FLinearColor TraceColor = FLinearColor::Red, FLinearColor TraceHitColor = FLinearColor::Green, float DrawTime = 5.0f);
 
+#if WITH_EDITOR
+	UFUNCTION()
+	static TArray<FName> GetCollisionProfileNames();
+#endif
 
 
 	/**
@@ -1608,9 +1627,10 @@ class UKismetSystemLibrary : public UBlueprintFunctionLibrary
 
 	/**
 	 * Get the clamped state of r.DetailMode, see console variable help (allows for scalability, cannot be used in construction scripts)
-	 * 0: low, show only object with DetailMode low or higher
-	 * 1: medium, show all object with DetailMode medium or higher
-	 * 2: high, show all objects
+	 * 0: low, show objects with DetailMode low
+	 * 1: medium, show objects with DetailMode medium or below
+	 * 2: high, show objects with DetailMode high or below
+	 * 3: epic, show all objects
 	 */
 	UFUNCTION(BlueprintPure, Category="Rendering", meta=(UnsafeDuringActorConstruction = "true"))
 	static ENGINE_API int32 GetRenderingDetailMode();
@@ -1934,7 +1954,7 @@ class UKismetSystemLibrary : public UBlueprintFunctionLibrary
 	 */
     UFUNCTION(BlueprintCallable, CustomThunk, Category = "Utilities", meta=(CustomStructureParam="PropertyValue", BlueprintInternalUseOnly="true"))
     static ENGINE_API bool GetEditorProperty(UObject* Object, const FName PropertyName, int32& PropertyValue);
-	static ENGINE_API bool Generic_GetEditorProperty(const UObject* Object, const FProperty* ObjectProp, void* ValuePtr, const FProperty* ValueProp);
+	static ENGINE_API bool Generic_GetEditorProperty(const UObject* Object, const FName PropertyName, void* ValuePtr, const FProperty* ValueProp);
 	DECLARE_FUNCTION(execGetEditorProperty);
 
 	/**
@@ -1949,8 +1969,20 @@ class UKismetSystemLibrary : public UBlueprintFunctionLibrary
 	 */
     UFUNCTION(BlueprintCallable, CustomThunk, Category = "Utilities", meta=(CustomStructureParam="PropertyValue", AdvancedDisplay="ChangeNotifyMode", BlueprintInternalUseOnly="true"))
     static ENGINE_API bool SetEditorProperty(UObject* Object, const FName PropertyName, const int32& PropertyValue, const EPropertyAccessChangeNotifyMode ChangeNotifyMode);
-	static ENGINE_API bool Generic_SetEditorProperty(UObject* Object, const FProperty* ObjectProp, const void* ValuePtr, const FProperty* ValueProp, const EPropertyAccessChangeNotifyMode ChangeNotifyMode);
+	static ENGINE_API bool Generic_SetEditorProperty(UObject* Object, const FName PropertyName, const void* ValuePtr, const FProperty* ValueProp, const EPropertyAccessChangeNotifyMode ChangeNotifyMode);
 	DECLARE_FUNCTION(execSetEditorProperty);
+
+	/**
+	 * Attempts to reset the value of a named property on the given object so that it matches the value of the archetype.
+	 *
+	 * @param Object The object you want to reset a property value on.
+	 * @param PropertyName The name of the object property to reset the value of.
+	 * @param ChangeNotifyMode When to emit property change notifications.
+	 *
+	 * @return Whether the property value was found and correctly reset.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Utilities", meta=(ScriptMethod))
+	static ENGINE_API bool ResetEditorProperty(UObject* Object, const FName PropertyName, const EPropertyAccessChangeNotifyMode ChangeNotifyMode = EPropertyAccessChangeNotifyMode::Default);
 #endif
 
 	// --- Transactions ------------------------------

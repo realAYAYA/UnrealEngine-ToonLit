@@ -2,8 +2,8 @@
 
 #include "PostProcess/PostProcessVisualizeComplexity.h"
 #include "CanvasTypes.h"
-#include "RenderTargetTemp.h"
 #include "UnrealEngine.h"
+#include "SceneRendering.h"
 #include "SystemTextures.h"
 #include "DataDrivenShaderPlatformInfo.h"
 

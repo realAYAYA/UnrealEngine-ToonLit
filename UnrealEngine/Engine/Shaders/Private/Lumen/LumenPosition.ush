@@ -1,0 +1,94 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	LumenPosition.ush: Various utilities for accessing world position and history screen position
+=============================================================================*/
+
+#pragma once
+
+float3 GetWorldPositionFromScreenUV(float2 ScreenUV, float SceneDepth)
+{
+	float2 ScreenPosition = (ScreenUV - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
+	float3 WorldPosition = mul(float4(GetScreenPositionForProjectionType(ScreenPosition, SceneDepth), SceneDepth, 1), DFHackToFloat(PrimaryView.ScreenToWorld)).xyz;
+	return WorldPosition;
+}
+
+float3 GetTranslatedWorldPositionFromScreenUV(float2 ScreenUV, float SceneDepth)
+{
+	float2 ScreenPosition = (ScreenUV - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
+	return mul(float4(GetScreenPositionForProjectionType(ScreenPosition, SceneDepth), SceneDepth, 1), PrimaryView.ScreenToTranslatedWorld).xyz;
+}
+
+float3 GetPrevTranslatedWorldPosition(float2 HistoryScreenPosition, float HistorySceneDepth)
+{
+	float3 PrevPositionTranslatedWorld = mul(float4(GetScreenPositionForProjectionType(HistoryScreenPosition.xy, HistorySceneDepth), HistorySceneDepth, 1), View.PrevScreenToTranslatedWorld).xyz;
+	float3 PreViewTranslationOffset = DFFastLocalSubtractDemote(PrimaryView.PreViewTranslation, PrimaryView.PrevPreViewTranslation);
+	float3 PrevTranslatedWorldPosition = PrevPositionTranslatedWorld + PreViewTranslationOffset;
+	return PrevTranslatedWorldPosition;
+}
+
+float3 GetPrevTranslatedWorldPosition(float3 HistoryScreenPosition)
+{
+	return GetPrevTranslatedWorldPosition(HistoryScreenPosition.xy, ConvertFromDeviceZ(HistoryScreenPosition.z));
+}
+
+// This version ignores TAA jitter, use when sampling a history texture
+float3 GetHistoryScreenPosition(float2 ScreenPosition, float2 ScreenUV, float DeviceZ)
+{
+	float3 HistoryScreenPosition = float3(ScreenPosition, DeviceZ);
+	bool bIsDynamicPixel = false;
+
+	{
+		float4 ThisClip = float4(HistoryScreenPosition, 1);
+		float4 PrevClip = mul(ThisClip, View.ClipToPrevClip); //<=== doesn't contain AA offsets
+
+		float3 PrevScreen = PrevClip.xyz / PrevClip.w;
+		float3 Velocity = HistoryScreenPosition - PrevScreen;
+		float4 EncodedVelocity = GBufferVelocityTexture.SampleLevel(GlobalPointClampedSampler, ScreenUV, 0);
+		bIsDynamicPixel = EncodedVelocity.x > 0.0;
+
+		if (bIsDynamicPixel)
+		{
+			// Note: overwriting velocity, this only works if DeviceZ matches what's in the depth buffer
+			Velocity = DecodeVelocityFromTexture(EncodedVelocity);
+		}
+
+		HistoryScreenPosition -= Velocity;
+	}
+
+	return HistoryScreenPosition;
+}
+
+float3 GetHistoryScreenPosition(float2 ScreenPosition, float DeviceZ, float ReprojectDeviceZ, float4 EncodedVelocity)
+{
+	float3 HistoryScreenPosition = float3(ScreenPosition, ReprojectDeviceZ);
+	bool bIsDynamicPixel = false;
+
+	{
+		float4 ThisClip = float4(HistoryScreenPosition, 1);
+		//float4 PrevClip = mul(ThisClip, View.ClipToPrevClip); //<=== doesn't contain AA offsets
+		float4 PrevClip = mul(ThisClip, View.ClipToPrevClipWithAA);
+		
+		float3 PrevScreen = PrevClip.xyz / PrevClip.w;
+		float3 Velocity = HistoryScreenPosition - PrevScreen;
+		bIsDynamicPixel = EncodedVelocity.x > 0.0;
+
+		if (bIsDynamicPixel)
+		{
+			float4 ReferencePrevClip = mul(float4(ScreenPosition, DeviceZ, 1), View.ClipToPrevClipWithAA);
+			Velocity += DecodeVelocityFromTexture(EncodedVelocity) - (float3(ScreenPosition, DeviceZ) - ReferencePrevClip.xyz / ReferencePrevClip.w);
+		}
+
+		HistoryScreenPosition -= Velocity;
+	}
+
+	return HistoryScreenPosition;
+}
+
+// This version accounts for TAA jitter, use when comparing positions like calculating world space velocity
+float3 GetHistoryScreenPositionIncludingTAAJitter(float2 ScreenPosition, float2 ScreenUV, float DeviceZ)
+{
+	float3 HistoryScreenPosition = GetHistoryScreenPosition(ScreenPosition - View.TemporalAAJitter.xy, ScreenUV, DeviceZ);
+	HistoryScreenPosition.xy += View.TemporalAAJitter.zw;
+	return HistoryScreenPosition;
+}

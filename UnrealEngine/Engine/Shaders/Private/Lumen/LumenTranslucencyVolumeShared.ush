@@ -9,22 +9,22 @@
 
 // Temp version GUID to force rebuild of shaders using the FLumenTranslucencyLightingParameters
 // uniform buffer, until versioning of uniform buffer structs works properly.
-// GUID = 62C0F6D1-F9BB-46A8-9E0C-9E72345B722A
+#pragma message("UESHADERMETADATA_VERSION F35DABF2-F5F7-4F7C-9056-AF53F2A1DB60")
 
 bool IsLumenTranslucencyGIEnabled()
 {
 	return LumenGIVolumeStruct.TranslucencyGIGridSize.z > 0;
 }
 
-float3 ComputeTranslucencyGIVolumeUV(FLWCVector3 WorldPosition, FLWCInverseMatrix WorldToClip) 
+float3 ComputeTranslucencyGIVolumeUV(FDFVector3 WorldPosition, FDFInverseMatrix WorldToClip) 
 {
-	float4 NDCPosition = LWCMultiply(MakeLWCVector4(WorldPosition, 1.0f), WorldToClip);
+	float4 NDCPosition = DFMultiplyDemote(MakeDFVector(WorldPosition, 1.0f), WorldToClip);
 	NDCPosition.xy /= NDCPosition.w;
 	float NormalizedZSlice = log2(NDCPosition.w * LumenGIVolumeStruct.TranslucencyGIGridZParams.x + LumenGIVolumeStruct.TranslucencyGIGridZParams.y) * LumenGIVolumeStruct.TranslucencyGIGridZParams.z / (float)LumenGIVolumeStruct.TranslucencyGIGridSize.z;
 	return float3(NDCPosition.xy * float2(.5f, -.5f) + .5f, NormalizedZSlice);
 }
 
-FTwoBandSHVectorRGB GetTranslucencyGIVolumeLighting(FLWCVector3 WorldPosition, FLWCInverseMatrix WorldToClip, bool bTemporalFiltered)
+FTwoBandSHVectorRGB GetTranslucencyGIVolumeLighting(FDFVector3 WorldPosition, FDFInverseMatrix WorldToClip, bool bTemporalFiltered)
 {
 	float3 VolumeUV = ComputeTranslucencyGIVolumeUV(WorldPosition, WorldToClip);
 
@@ -65,8 +65,9 @@ bool UseFrontLayerReflection(float2 BufferUV, float SceneDepth)
 	{
 		float SingleLayerDeviceZ = Texture2DSampleLevel(FrontLayerTranslucencyReflectionsStruct.SceneDepth, GlobalPointClampedSampler, BufferUV, 0.0f).x;
 		float DeviceZ = ConvertToDeviceZ(SceneDepth);
-		
-		if (abs(SingleLayerDeviceZ - DeviceZ) < FrontLayerTranslucencyReflectionsStruct.RelativeDepthThreshold)
+
+		// ULP float comparison
+		if (abs(asint(SingleLayerDeviceZ) - asint(DeviceZ)) <= FrontLayerTranslucencyReflectionsStruct.RelativeDepthThreshold)
 		{
 			bValid = true;
 		}
@@ -78,7 +79,7 @@ bool UseFrontLayerReflection(float2 BufferUV, float SceneDepth)
 
 float3 SampleFrontLayerReflection(float2 BufferUV)
 {
-	const float3 Radiance = Texture2DSampleLevel(FrontLayerTranslucencyReflectionsStruct.Radiance, GlobalPointClampedSampler, BufferUV, 0.0f).xyz * View.OneOverPreExposure;
+	const float3 Radiance = Texture2DArraySample(FrontLayerTranslucencyReflectionsStruct.Radiance, GlobalPointClampedSampler, float3(BufferUV, 0.0f)).xyz * View.OneOverPreExposure;
 	
 	// Constrast adjustment with mid-grey as 'anchor' point so that overall exposure don't change
 	return (pow(Radiance * (1.f / 0.18f), FrontLayerTranslucencyReflectionsStruct.Contrast) * 0.18f) * FrontLayerTranslucencyReflectionsStruct.SpecularScale;

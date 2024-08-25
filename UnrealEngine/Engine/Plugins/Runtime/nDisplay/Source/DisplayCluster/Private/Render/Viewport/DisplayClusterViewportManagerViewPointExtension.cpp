@@ -8,24 +8,25 @@
 ///////////////////////////////////////////////////////////////////////////////////////
 // FDisplayClusterViewportManagerViewPointExtension
 ///////////////////////////////////////////////////////////////////////////////////////
-FDisplayClusterViewportManagerViewPointExtension::FDisplayClusterViewportManagerViewPointExtension(const FAutoRegister& AutoRegister, const FDisplayClusterViewportManager* InViewportManager)
+FDisplayClusterViewportManagerViewPointExtension::FDisplayClusterViewportManagerViewPointExtension(const FAutoRegister& AutoRegister, const TSharedRef<FDisplayClusterViewportConfiguration, ESPMode::ThreadSafe>& InConfiguration)
 	: FSceneViewExtensionBase(AutoRegister)
-	, ViewportManagerWeakPtr(InViewportManager->AsShared())
+	, Configuration(InConfiguration)
 { }
-
-FDisplayClusterViewportManagerViewPointExtension::~FDisplayClusterViewportManagerViewPointExtension()
-{
-	ViewportManagerWeakPtr.Reset();
-}
 
 bool FDisplayClusterViewportManagerViewPointExtension::IsActiveThisFrame_Internal(const FSceneViewExtensionContext& Context) const
 {
 	return IsActive() && Context.IsStereoSupported();
 }
 
+/** True, if VE can be used at the moment. */
+bool FDisplayClusterViewportManagerViewPointExtension::IsActive() const
+{
+	return Configuration->GetViewportManager() != nullptr && CurrentStereoViewIndex != INDEX_NONE;
+}
+
 void FDisplayClusterViewportManagerViewPointExtension::SetupViewPoint(APlayerController* Player, FMinimalViewInfo& InOutViewInfo)
 {
-	if (IDisplayClusterViewport* DCViewport = IsActive() ? GetViewportManager()->FindViewport(CurrentStereoViewIndex) : nullptr)
+	if (IDisplayClusterViewport* DCViewport = IsActive() ? Configuration->GetViewportManager()->FindViewport(CurrentStereoViewIndex) : nullptr)
 	{
 		DCViewport->SetupViewPoint(InOutViewInfo);
 	}

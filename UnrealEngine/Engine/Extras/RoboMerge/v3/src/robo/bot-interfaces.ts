@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-import { Branch, BranchArg, BranchGraphInterface, OperationResult, StompVerification } from "./branch-interfaces";
+import { Branch, BranchArg, BranchGraphInterface, OperationResult, StompVerification, UnlockVerification } from "./branch-interfaces";
 import { BlockagePauseInfoMinimal, BranchStatus } from "./status-types"
 import { TickJournal } from "./tick-journal";
 
@@ -29,6 +29,9 @@ export interface NodeBotIPC extends BotIPC {
 
 	verifyStomp(changeCl: number, targetBranchName: string): Promise<StompVerification>
 	stompChanges(owner: string, changeCl: number, targetBranchName: string): Promise<OperationResult>
+
+	verifyUnlock(changeCl: number, targetBranchName: string): Promise<UnlockVerification>
+	unlockChanges(owner: string, changeCl: number, targetBranchName: string): Promise<OperationResult>
 }
 
 

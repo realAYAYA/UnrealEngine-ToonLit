@@ -15,6 +15,7 @@
 	"Hidden": true,
 	"IsBetaVersion": true,
 	"Installed": false,
+	"SupportedPrograms": [ "LiveLinkHub" ],
 	"Modules": [
 		{
 			"Name": "ConcertSyncClient",

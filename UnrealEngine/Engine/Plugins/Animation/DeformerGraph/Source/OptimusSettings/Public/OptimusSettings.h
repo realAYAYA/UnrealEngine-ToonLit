@@ -17,8 +17,8 @@ enum class EOptimusDefaultDeformerMode : uint8
 {
 	/** Never apply the default deformers. */
 	Never,
-	/** Only apply default deformers as replacement for the GPU Skin Cache. */
-	SkinCacheOnly,
+	/** Only apply default deformers if requested. */
+	OptIn,
 	/** Always apply the default deformers. */
 	Always,
 };

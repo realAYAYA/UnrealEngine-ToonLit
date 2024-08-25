@@ -16,6 +16,7 @@
 #include "HAL/ThreadSafeCounter.h"
 #include "Misc/NoopCounter.h"
 #include "Misc/ScopeLock.h"
+#include "Async/ManualResetEvent.h"
 #include "Containers/LockFreeList.h"
 #include "Templates/Function.h"
 #include "Stats/Stats.h"
@@ -24,6 +25,7 @@
 #include "HAL/IConsoleManager.h"
 #include "Misc/App.h"
 #include "Misc/Fork.h"
+#include "Misc/Timeout.h"
 #include "Async/TaskGraphInterfaces.h"
 #include "HAL/LowLevelMemTracker.h"
 #include "HAL/ThreadHeartBeat.h"
@@ -468,7 +470,7 @@ public:
 	/** Constructor, initializes everything to unusable values. Meant to be called from a "main" thread. **/
 	FTaskThreadBase()
 		: ThreadId(ENamedThreads::AnyThread)
-		, PerThreadIDTLSSlot(0xffffffff)
+		, PerThreadIDTLSSlot(FPlatformTLS::InvalidTlsSlot)
 		, OwnerWorker(nullptr)
 	{
 		NewTasks.Reset(128);
@@ -1037,8 +1039,6 @@ private:
 	**/
 	uint64 ProcessTasks()
 	{
-		LLM_SCOPE_BYNAME(TEXT("Tasks/AnyThread/ProcessTasks"));
-
 		TStatId StallStatId;
 		bool bCountAsStall = true;
 		uint64 ProcessedTasks = 0;
@@ -1826,7 +1826,6 @@ class FTaskGraphCompatibilityImplementation final : public FTaskGraphInterface
 	TArray<FWorkerThread> NamedThreads;
 
 	FThreadSafeCounter	ReentrancyCheck;
-	FAAArrayQueue<FBaseGraphTask>	QueuedBackgroundTasks;
 
 	std::atomic<bool> bReserveWorkersEnabled{ false };
 
@@ -1951,8 +1950,6 @@ public:
 private:
 	void QueueTask(class FBaseGraphTask* Task, bool bWakeUpWorker, ENamedThreads::Type InThreadToExecuteOn, ENamedThreads::Type InCurrentThreadIfKnown) override
 	{
-		LLM_SCOPE_BYNAME(TEXT("Tasks/Scheduler/QueueTask"));
-
 		if (ENamedThreads::GetThreadIndex(InThreadToExecuteOn) == ENamedThreads::AnyThread)
 		{
 #if TASKGRAPH_NEW_FRONTEND
@@ -2323,7 +2320,7 @@ private:
 
 		check(GConfig);
 		
-		bool bEnableReserveWorkers = true; // by default
+		bool bEnableReserveWorkers = false; // by default
 		GConfig->GetBool(TEXT("TaskGraph"), TEXT("EnableReserveWorkers"), bEnableReserveWorkers, GEngineIni);
 
 		if (bEnableReserveWorkers)
@@ -2356,6 +2353,11 @@ void FTaskGraphInterface::Startup(int32 NumThreads)
 	{
 		GUseNewTaskBackend = 1;
 	}
+
+	// Limit the total number of threads used
+#if defined(UE_TASKGRAPH_THREAD_LIMIT)
+	NumThreads = FMath::Min(NumThreads, int32(UE_TASKGRAPH_THREAD_LIMIT));
+#endif
 
 	if (GUseNewTaskBackend)
 	{
@@ -2409,8 +2411,6 @@ FGraphEventImplAllocator& GetGraphEventImplAllocator()
 	return Singleton;
 }
 
-FGraphTaskAllocator SmallTaskAllocator;
-
 #else
 
 // Statics and some implementations from FBaseGraphTask and FGraphEvent
@@ -2430,7 +2430,6 @@ static TLockFreeClassAllocator_TLSCache<FGraphEvent, PLATFORM_CACHE_LINE_SIZE>& 
 
 FGraphEventRef FGraphEvent::CreateGraphEvent()
 {
-	LLM_SCOPE_BYNAME(TEXT("Tasks/FGraphEvent/CreateGraphEvent"));
 	FGraphEvent* Instance = new(GetGraphEventAllocator().Allocate()) FGraphEvent{};
 	return Instance;
 }
@@ -2805,3 +2804,108 @@ static FAutoConsoleCommand TaskThreadPriorityCmd(
 	TEXT("Sets the priority of the task threads. Argument is one of belownormal, normal or abovenormal."),
 	FConsoleCommandWithArgsDelegate::CreateStatic(&SetTaskThreadPriority)
 	);
+
+/////////////////////////////////////////////////////////////
+// "any task" support. these functions allocate excessively (per input task plus more)
+// can be reduced to a single alloc if this is a perf issue
+
+int32 WaitForAnyTaskCompleted(const FGraphEventArray& GraphEvents, FTimespan Timeout /*= FTimespan::MaxValue()*/)
+{
+#if TASKGRAPH_NEW_FRONTEND
+	return UE::Tasks::WaitAny(GraphEvents, Timeout);
+#else
+	if (UNLIKELY(GraphEvents.Num() == 0))
+	{
+		return INDEX_NONE;
+	}
+
+	// Avoid memory allocations if any of the events are already completed
+	for (int32 Index = 0; Index < GraphEvents.Num(); ++Index)
+	{
+		if (GraphEvents[Index]->IsComplete())
+		{
+			return Index;
+		}
+	}
+
+	struct FSharedData
+	{
+		UE::FManualResetEvent Event;
+		std::atomic<int32>    CompletedTaskIndex{ 0 };
+	};
+
+	// Shared data usage is important to avoid the variable to go out of scope
+	// before all the task have been run even if we exit after the first event
+	// is triggered.
+	TSharedRef<FSharedData> SharedData = MakeShared<FSharedData>();
+
+	for (int32 Index = 0; Index < GraphEvents.Num(); ++Index)
+	{
+		FFunctionGraphTask::CreateAndDispatchWhenReady(
+			[SharedData, Index]
+			{
+				SharedData->CompletedTaskIndex.store(Index, std::memory_order_relaxed);
+				SharedData->Event.Notify();
+			},
+			TStatId{},
+			GraphEvents[Index],
+			ENamedThreads::AnyHiPriThreadHiPriTask /* Run as soon as possible. */
+		);
+	}
+
+	if (SharedData->Event.WaitFor(UE::FMonotonicTimeSpan::FromMilliseconds(Timeout.GetTotalMilliseconds())))
+	{
+		return SharedData->CompletedTaskIndex.load(std::memory_order_relaxed);
+	}
+
+	return INDEX_NONE;
+#endif
+}
+
+FGraphEventRef AnyTaskCompleted(const FGraphEventArray& GraphEvents)
+{
+	if (UNLIKELY(GraphEvents.Num() == 0))
+	{
+		FGraphEventRef Result = FGraphEvent::CreateGraphEvent();
+		Result->DispatchSubsequents();
+		return Result;
+	}
+
+	struct FSharedData
+	{
+		explicit FSharedData(uint32 InitRefCount)
+			: RefCount(InitRefCount)
+		{
+		}
+
+		FGraphEventRef Event = FGraphEvent::CreateGraphEvent();
+		std::atomic<uint32> RefCount;
+	};
+
+	FSharedData* SharedData = new FSharedData(GraphEvents.Num());
+	// `SharedData` can be destroyed before leaving the scope, cache the result locally
+	FGraphEventRef Result = SharedData->Event;
+
+	for (const FGraphEventRef& GraphEvent : GraphEvents)
+	{
+		FFunctionGraphTask::CreateAndDispatchWhenReady(
+			[SharedData, Num = GraphEvents.Num()]
+			{
+				// cache the local copy as `SharedData` can be concurrently deleted right after decrementing the ref counter
+				FGraphEventRef Event = SharedData->Event;
+				uint32 PrevRefCount = SharedData->RefCount.fetch_sub(1, std::memory_order_acq_rel); // acq_rel to sync between tasks
+				
+				if (UNLIKELY(PrevRefCount == Num))
+				{	// the first completed task
+					Event->DispatchSubsequents();
+				}
+				else if (UNLIKELY(PrevRefCount == 1))
+				{	// the last competed task
+					delete SharedData;
+				}
+			}
+		);
+	}
+
+	return Result;
+}

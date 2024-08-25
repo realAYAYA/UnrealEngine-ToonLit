@@ -53,6 +53,25 @@ void FComponentClassComboEntry::AddReferencedObjects(FReferenceCollector& Collec
 	Collector.AddReferencedObject(IconClass);
 }
 
+bool FComponentClassComboEntry::OnBlueprintGeneratedClassUnloaded(UBlueprintGeneratedClass* BlueprintGeneratedClass)
+{
+	bool bModified = false;
+
+	if (BlueprintGeneratedClass == ComponentClass)
+	{
+		ComponentClass = nullptr;
+		bModified = true;
+	}
+
+	if (BlueprintGeneratedClass == IconClass)
+	{
+		IconClass = nullptr;
+		bModified = true;
+	}
+
+	return bModified;
+}
+
 void SComponentClassCombo::Construct(const FArguments& InArgs)
 {
 	PrevSelectedIndex = INDEX_NONE;

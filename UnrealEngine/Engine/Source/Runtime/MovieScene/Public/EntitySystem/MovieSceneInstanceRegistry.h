@@ -12,7 +12,10 @@
 #include "MovieSceneSequenceID.h"
 
 
+class FMovieSceneEntitySystemRunner;
+class UMovieSceneCompiledDataManager;
 class UMovieSceneEntitySystemLinker;
+class UMovieSceneCompiledDataManager;
 
 namespace UE
 {
@@ -81,9 +84,14 @@ struct FInstanceRegistry
 		return GetInstance(InstanceHandle).GetContext();
 	}
 
-	MOVIESCENE_API FRootInstanceHandle AllocateRootInstance(IMovieScenePlayer* Player);
+	MOVIESCENE_API FRootInstanceHandle AllocateRootInstance(
+			UMovieSceneSequence& InRootSequence,
+			UObject* InPlaybackContext = nullptr,
+			TSharedPtr<FMovieSceneEntitySystemRunner> InRunner = nullptr,
+			UMovieSceneCompiledDataManager* InCompiledDataManager = nullptr);
 
-	MOVIESCENE_API FInstanceHandle AllocateSubInstance(IMovieScenePlayer* Player, FMovieSceneSequenceID SequenceID, FRootInstanceHandle RootInstance, FInstanceHandle ParentInstanceHandle);
+	MOVIESCENE_API FInstanceHandle AllocateSubInstance(
+			FMovieSceneSequenceID SequenceID, FRootInstanceHandle RootInstance, FInstanceHandle ParentInstanceHandle);
 
 	MOVIESCENE_API void DestroyInstance(FInstanceHandle InstanceHandle);
 
@@ -121,6 +129,21 @@ private:
 	TSet<TTuple<FGuid, FInstanceHandle>> InvalidatedObjectBindings;
 };
 
+
+/**
+ * Defines a scope during which a given sequence hierarchy will not be recompiled when changed
+ * even if it was set to volatile.
+ */
+struct MOVIESCENE_API FScopedVolatilityManagerSuppression
+{
+	FScopedVolatilityManagerSuppression(FInstanceRegistry* InInstanceRegistry, FRootInstanceHandle InRootInstanceHandle);
+	~FScopedVolatilityManagerSuppression();
+
+private:
+	FInstanceRegistry* InstanceRegistry;
+	FRootInstanceHandle RootInstanceHandle;
+	TUniquePtr<FCompiledDataVolatilityManager> PreviousVolatilityManager;
+};
 
 } // namespace MovieScene
 } // namespace UE

@@ -315,45 +315,45 @@ void FAbcMeshSample::Reset(const ESampleReadFlags ReadFlags)
 {
 	if (EnumHasAnyFlags(ReadFlags, ESampleReadFlags::Positions))
 	{
-		Vertices.SetNum(0, false);
+		Vertices.SetNum(0, EAllowShrinking::No);
 	}
 
 	if (EnumHasAnyFlags(ReadFlags, ESampleReadFlags::Velocities))
 	{
-		Velocities.SetNum(0, false);
+		Velocities.SetNum(0, EAllowShrinking::No);
 	}
 
 	if (EnumHasAnyFlags(ReadFlags, ESampleReadFlags::Indices))
 	{
-		Indices.SetNum(0, false);
+		Indices.SetNum(0, EAllowShrinking::No);
 	}
 
 	if (EnumHasAnyFlags(ReadFlags, ESampleReadFlags::Normals))
 	{
-		Normals.SetNum(0, false);
-		TangentX.SetNum(0, false);
-		TangentY.SetNum(0, false);
+		Normals.SetNum(0, EAllowShrinking::No);
+		TangentX.SetNum(0, EAllowShrinking::No);
+		TangentY.SetNum(0, EAllowShrinking::No);
 	}
 
 	if (EnumHasAnyFlags(ReadFlags, ESampleReadFlags::UVs))
 	{
 		for (uint32 UVIndex = 0; UVIndex < MAX_TEXCOORDS; ++UVIndex)
 		{
-			UVs[UVIndex].SetNum(0, false);
+			UVs[UVIndex].SetNum(0, EAllowShrinking::No);
 		}
 	}
 
 	if (EnumHasAnyFlags(ReadFlags, ESampleReadFlags::Colors))
 	{
-		Colors.SetNum(0, false);
+		Colors.SetNum(0, EAllowShrinking::No);
 	}
 
 	if (EnumHasAnyFlags(ReadFlags, ESampleReadFlags::MaterialIndices))
 	{
-		MaterialIndices.SetNum(0, false);
+		MaterialIndices.SetNum(0, EAllowShrinking::No);
 	}
 
-	SmoothingGroupIndices.SetNum(0, false);
+	SmoothingGroupIndices.SetNum(0, EAllowShrinking::No);
 	NumSmoothingGroups = 0;
 	NumMaterials = 0;
 	SampleTime = 0.0f;

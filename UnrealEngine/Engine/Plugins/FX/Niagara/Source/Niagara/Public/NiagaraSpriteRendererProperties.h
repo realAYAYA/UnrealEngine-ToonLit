@@ -133,10 +133,11 @@ public:
 	NIAGARA_API virtual FNiagaraRenderer* CreateEmitterRenderer(ERHIFeatureLevel::Type FeatureLevel, const FNiagaraEmitterInstance* Emitter, const FNiagaraSystemInstanceController& InController) override;
 	NIAGARA_API virtual class FNiagaraBoundsCalculator* CreateBoundsCalculator() override;
 	NIAGARA_API virtual void GetUsedMaterials(const FNiagaraEmitterInstance* InEmitter, TArray<UMaterialInterface*>& OutMaterials) const override;
+	NIAGARA_API virtual float GetMaterialStreamingScale() const override { return FMath::Max(FMath::Max(SubImageSize.X, SubImageSize.Y), 1.0f); }
 	NIAGARA_API virtual const FVertexFactoryType* GetVertexFactoryType() const override;
 	virtual bool IsSimTargetSupported(ENiagaraSimTarget InSimTarget) const override { return true; };
 	NIAGARA_API virtual bool PopulateRequiredBindings(FNiagaraParameterStore& InParameterStore)  override;
-	NIAGARA_API virtual void CollectPSOPrecacheData(FPSOPrecacheParamsList& OutParams) override;
+	NIAGARA_API virtual void CollectPSOPrecacheData(const FNiagaraEmitterInstance* InEmitter, FPSOPrecacheParamsList& OutParams) const override;
 #if WITH_EDITOR
 	NIAGARA_API virtual const TArray<FNiagaraVariable>& GetOptionalAttributes() override;
 	NIAGARA_API virtual void GetAdditionalVariables(TArray<FNiagaraVariableBase>& OutArray) const override;
@@ -212,6 +213,13 @@ public:
 	/** Enables frustum culling of individual sprites */
 	UPROPERTY(EditAnywhere, Category = "Visibility")
 	uint8 bEnableCameraDistanceCulling : 1;
+
+	/**
+	When disabled the renderer will not cast shadows.
+	The component controls if shadows are enabled, this flag allows you to disable the renderer casting shadows.
+	*/
+	UPROPERTY(EditAnywhere, Category = "Rendering")
+	uint8 bCastShadows : 1 = 1; //-V570
 
 	/** Sort precision to use when sorting is active. */
 	UPROPERTY(EditAnywhere, Category = "Sorting", meta = (EditCondition = "SortMode != ENiagaraSortMode::None", EditConditionHides))

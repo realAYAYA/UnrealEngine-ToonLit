@@ -18,7 +18,6 @@
 #include "Blueprints/DisplayClusterBlueprint.h"
 #include "Components/DisplayClusterCameraComponent.h"
 #include "Components/DisplayClusterOriginComponent.h"
-#include "Components/DisplayClusterPreviewComponent.h"
 #include "Components/DisplayClusterScreenComponent.h"
 #include "Components/DisplayClusterXformComponent.h"
 
@@ -67,7 +66,9 @@
 #include "Kismet2/DebuggerCommands.h"
 #include "Subsystems/PanelExtensionSubsystem.h"
 #include "ScopedTransaction.h"
-
+#include "Blueprints/DisplayClusterBlueprintGeneratedClass.h"
+#include "Misc/DisplayClusterHelpers.h"
+#include "MPCDI/DisplayClusterConfiguratorMPCDIImporter.h"
 
 #define LOCTEXT_NAMESPACE "DisplayClusterConfiguratorBlueprintEditor"
 
@@ -159,12 +160,6 @@ FDisplayClusterConfiguratorBlueprintEditor::~FDisplayClusterConfiguratorBlueprin
 		}
 	}
 
-	if (ADisplayClusterRootActor* RootActor = Cast<ADisplayClusterRootActor>(GetPreviewActor()))
-	{
-		RootActor->GetOnPreviewGenerated().Unbind();
-		RootActor->GetOnPreviewDestroyed().Unbind();
-	}
-	
 	ShutdownDCSCSEditors();
 
 	FBlueprintEditorUtils::OnRenameVariableReferencesEvent.Remove(RenameVariableHandle);
@@ -494,7 +489,6 @@ void FDisplayClusterConfiguratorBlueprintEditor::ClusterChanged(bool bStructureC
 
 	if (ADisplayClusterRootActor* Actor = Cast<ADisplayClusterRootActor>(GetPreviewActor()))
 	{
-		Actor->UpdatePreviewComponents();
 		FEditorSupportDelegates::ForcePropertyWindowRebuild.Broadcast(Actor->GetClass());
 	}
 
@@ -778,12 +772,12 @@ void FDisplayClusterConfiguratorBlueprintEditor::OnRenameVariable(UBlueprint* Bl
 
 	// Check the configuration's viewports for any matching references to the component variable being renamed, and update those references
 	// to the new variable name
-	if (UDisplayClusterConfigurationData* Config = GetConfig())
+	if (const UDisplayClusterConfigurationData* Config = GetConfig())
 	{
-		for (TPair<FString, UDisplayClusterConfigurationClusterNode*> ClusterNodePair : Config->Cluster->Nodes)
+		for (const TPair<FString, TObjectPtr<UDisplayClusterConfigurationClusterNode>>& ClusterNodePair : Config->Cluster->Nodes)
 		{
 			UDisplayClusterConfigurationClusterNode* ClusterNode = ClusterNodePair.Value;
-			for (TPair<FString, UDisplayClusterConfigurationViewport*> ViewportPair : ClusterNode->Viewports)
+			for (const TPair<FString, TObjectPtr<UDisplayClusterConfigurationViewport>>& ViewportPair : ClusterNode->Viewports)
 			{
 				UDisplayClusterConfigurationViewport* Viewport = ViewportPair.Value;
 
@@ -794,7 +788,7 @@ void FDisplayClusterConfiguratorBlueprintEditor::OnRenameVariable(UBlueprint* Bl
 					TMap<FString, FString> PolicyCopy = Viewport->ProjectionPolicy.Parameters;
 
 					const TSharedPtr<ISinglePropertyView> ProjectPolicyView =
-						DisplayClusterConfiguratorPropertyUtils::GetPropertyView(
+						UE::DisplayClusterConfiguratorPropertyUtils::GetPropertyView(
 							Viewport, GET_MEMBER_NAME_CHECKED(UDisplayClusterConfigurationViewport, ProjectionPolicy));
 					check(ProjectPolicyView);
 					
@@ -809,15 +803,20 @@ void FDisplayClusterConfiguratorBlueprintEditor::OnRenameVariable(UBlueprint* Bl
 					{
 						if (PolicyParameters.Value == OldVariableName.ToString())
 						{
-							DisplayClusterConfiguratorPropertyUtils::RemoveKeyFromMap(MapContainer, ParametersHandle, PolicyParameters.Key);
-							DisplayClusterConfiguratorPropertyUtils::AddKeyValueToMap(MapContainer, ParametersHandle, PolicyParameters.Key, NewVariableName.ToString());
+							UE::DisplayClusterConfiguratorPropertyUtils::RemoveKeyFromMap(MapContainer, ParametersHandle, PolicyParameters.Key);
+							UE::DisplayClusterConfiguratorPropertyUtils::AddKeyValueToMap(MapContainer, ParametersHandle, PolicyParameters.Key, NewVariableName.ToString());
 						}
 					}
 				}
 
 				if (Viewport->Camera == OldVariableName.ToString())
 				{
-					DisplayClusterConfiguratorPropertyUtils::SetPropertyHandleValue(Viewport, GET_MEMBER_NAME_CHECKED(UDisplayClusterConfigurationViewport, Camera), NewVariableName.ToString());
+					UE::DisplayClusterConfiguratorPropertyUtils::SetPropertyHandleValue(Viewport, GET_MEMBER_NAME_CHECKED(UDisplayClusterConfigurationViewport, Camera), NewVariableName.ToString());
+				}
+
+				if (Viewport->DisplayDeviceName == OldVariableName.ToString())
+				{
+					UE::DisplayClusterConfiguratorPropertyUtils::SetPropertyHandleValue(Viewport, GET_MEMBER_NAME_CHECKED(UDisplayClusterConfigurationViewport, DisplayDeviceName), NewVariableName.ToString());
 				}
 			}
 		}
@@ -904,6 +903,8 @@ void FDisplayClusterConfiguratorBlueprintEditor::BindCommands()
 		FCanExecuteAction(),
 		FIsActionChecked::CreateSP(this, &FDisplayClusterConfiguratorBlueprintEditor::IsExportOnSaveSet)
 	);
+
+	ToolkitCommands->MapAction(Commands.ImportMPCDI, FExecuteAction::CreateSP(this, &FDisplayClusterConfiguratorBlueprintEditor::ImportMPCDI_Clicked));
 }
 
 void FDisplayClusterConfiguratorBlueprintEditor::CreateWidgets()
@@ -1070,6 +1071,61 @@ void FDisplayClusterConfiguratorBlueprintEditor::ToggleExportOnSaveSetting()
 	Settings->SaveConfig();
 }
 
+void FDisplayClusterConfiguratorBlueprintEditor::ImportMPCDI_Clicked()
+{
+	const FString MPCDIFileDescription = LOCTEXT("MPCDIFileDescription", "MPCDI file").ToString();
+	const FString MPCDIFileExtension = TEXT("*.mpcdi");
+	const FString FileTypes = FString::Printf(TEXT("%s (%s)|%s"), *MPCDIFileDescription, *MPCDIFileExtension, *MPCDIFileExtension);
+
+	TArray<FString> OpenFileNames;
+	IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
+	bool bFileSelected = false;
+	int32 FilterIndex = -1;
+
+	// Open file dialog
+	if (DesktopPlatform)
+	{
+		const void* ParentWindowHandle = FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr);
+
+		bFileSelected = DesktopPlatform->OpenFileDialog(
+			ParentWindowHandle,
+			LOCTEXT("ImportMPCDIDialogTitle", "Import MPCDI").ToString(),
+			FEditorDirectories::Get().GetLastDirectory(ELastDirectory::GENERIC_IMPORT),
+			TEXT(""),
+			FileTypes,
+			EFileDialogFlags::None,
+			OpenFileNames,
+			FilterIndex
+		);
+	}
+
+	// Load file
+	if (bFileSelected)
+	{
+		if (OpenFileNames.Num() > 0)
+		{
+			const FString& FileName = OpenFileNames[0];
+			FEditorDirectories::Get().SetLastDirectory(ELastDirectory::GENERIC_IMPORT, FileName);
+
+			UDisplayClusterBlueprint* Blueprint = LoadedBlueprint.Get();
+
+			FDisplayClusterConfiguratorMPCDIImporterParams ImportParams {};
+			if (FDisplayClusterConfiguratorMPCDIImporter::ImportMPCDIIntoBlueprint(FileName, Blueprint, ImportParams))
+			{
+				GetEditorData()->MarkPackageDirty();
+				ClusterChanged();
+
+				// Since the blueprint component transforms are edited directly by the importer, we must
+				// fully destroy and recreate the preview actor, as otherwise the engine will not propagate the
+				// new values to the preview since there is now a difference between the preview and blueprint values
+				DestroyPreview();
+				UpdateSubobjectPreview(true);
+				SubobjectEditor->UpdateTree();
+			}
+		}
+	}
+}
+
 TStatId FDisplayClusterConfiguratorBlueprintEditor::GetStatId() const
 {
 	RETURN_QUICK_DECLARE_CYCLE_STAT(FDisplayClusterConfiguratorBlueprintEditor, STATGROUP_Tickables);
@@ -1086,7 +1142,7 @@ void FDisplayClusterConfiguratorBlueprintEditor::OnClose()
 	if (UDisplayClusterConfigurationData* Config = GetConfig())
 	{
 		bool bIsDirty = LoadedBlueprint->GetOutermost()->IsDirty();
-		bool bHostDataRemoved = FDisplayClusterConfiguratorClusterUtils::RemoveUnusedHostDisplayData(Config->Cluster);
+		bool bHostDataRemoved = UE::DisplayClusterConfiguratorClusterUtils::RemoveUnusedHostDisplayData(Config->Cluster);
 
 		// If the blueprint wasn't dirty before, removing the unused host display data will have make it dirty, which is confusing to the user.
 		// In this case, immediately save the host display data removal to the blueprint.

@@ -93,11 +93,11 @@ namespace mu
 		// TODO: Add better shrink policy or let the user decide. Denying shrinking
 		// unconditionally could mean having small meshes that use lots of memory. For now
 		// allow it if no other allocation will be done.  
-		const bool bAllowShrinking = Count == 0;
+		const EAllowShrinking AllowShrinking = (Count == 0) ? EAllowShrinking::Yes : EAllowShrinking::No;
 
 		for (MESH_BUFFER& buf : m_buffers)
 		{
-			buf.m_data.SetNumUninitialized(buf.m_elementSize * Count, bAllowShrinking);
+			buf.m_data.SetNumUninitialized(buf.m_elementSize * Count, AllowShrinking);
 		}
 		
 		m_elementCount = Count;
@@ -215,7 +215,7 @@ namespace mu
 		buf.m_elementSize = FMath::Max(elementSize, int32(minElemSize));
 
 		// Update the buffer data
-		buf.m_data.SetNumUninitialized(buf.m_elementSize * m_elementCount, false);
+		buf.m_data.SetNumUninitialized(buf.m_elementSize * m_elementCount, EAllowShrinking::No);
 	}
 
 	//---------------------------------------------------------------------------------------------

@@ -34,10 +34,11 @@ namespace UE::LevelEditor::Private
 {
 	TArray<FTypedElementHandle> GetElementsIntersectingBox(const AActor* Actor,
 		const FBox& InBox,
-		FLevelEditorViewportClient* Viewport,
+		const FEditorViewportClient* InEditorViewport,
+		const FLevelEditorViewportClient* InLevelViewport,
 		const FWorldSelectionElementArgs& SelectionArgs)
 	{
-		if (Actor && (!Viewport || !Actor->IsA(AVolume::StaticClass()) || !Viewport->IsVolumeVisibleInViewport(*Actor)))
+		if (Actor && (!InEditorViewport || !Actor->IsA(AVolume::StaticClass()) || (InLevelViewport ? !InLevelViewport->IsVolumeVisibleInViewport(*Actor) : false)))
 		{
 			if (FTypedElementHandle ActorHandle = UEngineElementsLibrary::AcquireEditorActorElementHandle(Actor))
 			{
@@ -99,7 +100,7 @@ void FDragTool_ActorBoxSelect::AddDelta( const FVector& InDelta )
 	FDragTool::AddDelta( InDelta );
 
 	FIntPoint MousePos;
-	LevelViewportClient->Viewport->GetMousePos(MousePos);
+	EditorViewportClient->Viewport->GetMousePos(MousePos);
 
 	End = FVector(MousePos); 
 	EndWk = End;
@@ -120,7 +121,7 @@ void FDragTool_ActorBoxSelect::AddDelta( const FVector& InDelta )
 			SelectionSet,
 			ETypedElementSelectionMethod::Primary,
 			FTypedElementSelectionOptions(),
-			&(LevelViewportClient->EngineShowFlags),
+			&(EditorViewportClient->EngineShowFlags),
 			bStrictDragSelection,
 			bGeometryMode
 		};
@@ -137,7 +138,7 @@ void FDragTool_ActorBoxSelect::AddDelta( const FVector& InDelta )
 		for( FActorIterator It(IteratorWorld); It; ++It )
 		{
 			AActor& Actor = **It;
-			const bool bActorHitByBox = !UE::LevelEditor::Private::GetElementsIntersectingBox( &Actor, SelBBox, LevelViewportClient, SeletionArgs ).IsEmpty();
+			const bool bActorHitByBox = !UE::LevelEditor::Private::GetElementsIntersectingBox( &Actor, SelBBox, EditorViewportClient, LevelViewportClient, SeletionArgs ).IsEmpty();
 
 
 			if( bActorHitByBox )
@@ -201,7 +202,7 @@ void FDragTool_ActorBoxSelect::EndDrag()
 	const bool bEditorModeHandledBoxSelection = ModeTools->BoxSelect(SelBBox, bLeftMouseButtonDown);
 
 	// Let the component visualizers try to handle the selection.
-	const bool bComponentVisHandledSelection = !bEditorModeHandledBoxSelection && GUnrealEd->ComponentVisManager.HandleBoxSelect(SelBBox, LevelViewportClient, LevelViewportClient->Viewport);
+	const bool bComponentVisHandledSelection = !bEditorModeHandledBoxSelection && GUnrealEd->ComponentVisManager.HandleBoxSelect(SelBBox, EditorViewportClient, EditorViewportClient->Viewport);
 
 	// If the edit mode didn't handle the selection, try normal actor box selection.
 	if ( !bEditorModeHandledBoxSelection && !bComponentVisHandledSelection )
@@ -221,7 +222,7 @@ void FDragTool_ActorBoxSelect::EndDrag()
 			SelectionSet,
 			ETypedElementSelectionMethod::Primary,
 			ElementSelectionOption,
-			&(LevelViewportClient->EngineShowFlags),
+			&(EditorViewportClient->EngineShowFlags),
 			bStrictDragSelection,
 			bGeometryMode
 		};
@@ -229,7 +230,7 @@ void FDragTool_ActorBoxSelect::EndDrag()
 		// Select all element that are within the selection box area.  Be aware that certain modes do special processing below.	
 		bool bSelectionChanged = false;
 		UWorld* IteratorWorld = GWorld;
-		const TArray<FName>& HiddenLayers = LevelViewportClient->ViewHiddenLayers;
+		const TArray<FName>& HiddenLayers = LevelViewportClient ? LevelViewportClient->ViewHiddenLayers : TArray<FName>();
 		TArray<FTypedElementHandle> Handles;
 
 		for( FActorIterator It(IteratorWorld); It; ++It )
@@ -250,7 +251,7 @@ void FDragTool_ActorBoxSelect::EndDrag()
 			// Select the actor or its child elements
 			if( bActorIsVisible )
 			{
-				Handles.Append( UE::LevelEditor::Private::GetElementsIntersectingBox( Actor, SelBBox, LevelViewportClient, SeletionArgs ) );
+				Handles.Append( UE::LevelEditor::Private::GetElementsIntersectingBox( Actor, SelBBox, EditorViewportClient, LevelViewportClient, SeletionArgs ) );
 			}
 		}
 
@@ -303,12 +304,12 @@ void FDragTool_ActorBoxSelect::Render(const FSceneView* View, FCanvas* Canvas)
 void FDragTool_ActorBoxSelect::CalculateBox( FBox& OutBox )
 {
 	FSceneViewFamilyContext ViewFamily(FSceneViewFamily::ConstructionValues(
-		LevelViewportClient->Viewport,
-		LevelViewportClient->GetScene(),
-		LevelViewportClient->EngineShowFlags)
-		.SetRealtimeUpdate(LevelViewportClient->IsRealtime()));
+		EditorViewportClient->Viewport,
+		EditorViewportClient->GetScene(),
+		EditorViewportClient->EngineShowFlags)
+		.SetRealtimeUpdate(EditorViewportClient->IsRealtime()));
 
-	FSceneView* View = LevelViewportClient->CalcSceneView(&ViewFamily);
+	FSceneView* View = EditorViewportClient->CalcSceneView(&ViewFamily);
 
 	FVector3f StartFloat{ Start };
 	FVector3f EndFloat{ End };
@@ -324,7 +325,7 @@ void FDragTool_ActorBoxSelect::CalculateBox( FBox& OutBox )
 	OutBox += TransformedStart;
 	OutBox += TransformedEnd;
 
-	switch(LevelViewportClient->ViewportType)
+	switch(EditorViewportClient->ViewportType)
 	{
 	case LVT_OrthoXY:
 	case LVT_OrthoNegativeXY:

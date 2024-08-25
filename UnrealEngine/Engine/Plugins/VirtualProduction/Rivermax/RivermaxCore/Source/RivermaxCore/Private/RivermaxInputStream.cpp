@@ -10,6 +10,7 @@
 #include "IRivermaxManager.h"
 #include "Misc/ByteSwap.h"
 #include "RivermaxLog.h"
+#include "RivermaxPTPUtils.h"
 #include "RivermaxTracingUtils.h"
 #include "RivermaxUtils.h"
 #include "RTPHeader.h"
@@ -34,6 +35,28 @@ namespace UE::RivermaxCore::Private
 		1500,
 		TEXT("Expected payload size used to initialize rivermax stream."),
 		ECVF_Default);
+
+	static bool GEnableLargeFirstPacketIntervalLogging = false;
+	FAutoConsoleVariableRef CVarRivermaxEnableLargeFirstPacketIntervalLogging(
+		TEXT("Rivermax.Input.EnableLargeFistPacketIntervalLogging")
+		, UE::RivermaxCore::Private::GEnableLargeFirstPacketIntervalLogging
+		, TEXT("Enables detection and logging of large delta times between frame boundary and first packet reception.")
+		, ECVF_Default);
+
+	static bool GClearFirstPacketIntervalStats = false;
+	FAutoConsoleVariableRef CVarRivermaxClearFirstPacketIntervalStats(
+		TEXT("Rivermax.Input.ClearFistPacketIntervalStats")
+		, UE::RivermaxCore::Private::GClearFirstPacketIntervalStats
+		, TEXT("Clears stats related to first packet interval detection.")
+		, ECVF_Default);
+
+	static int32 GLargeFirstPacketIntervalThresholdMicroSec = 2000;
+	FAutoConsoleVariableRef CVarRivermaxLargeFirstPacketIntervalThreshold(
+		TEXT("Rivermax.Input.LargeFistPacketIntervalThreshold")
+		, UE::RivermaxCore::Private::GLargeFirstPacketIntervalThresholdMicroSec
+		, TEXT("Microseconds required to consider a first packet interval to be large and be logged.")
+		, ECVF_Default);
+
 
 	void FFrameDescriptionTrackingData::ResetSingleFrameTracking()
 	{
@@ -147,101 +170,39 @@ namespace UE::RivermaxCore::Private
 				return;
 			}
 
-			bool bWasSuccessful = false;
-			int32 FlowId = 0; //todo configure
+			// Initialize stream builder
+			CachedAPI->rmx_input_init_stream(&StreamParameters, RMX_INPUT_RAW_PACKET);
 
-			//Configure local IP interface
-			const rmax_in_stream_type StreamType = RMAX_RAW_PACKET;
-			sockaddr_in RivermaxInterface;
-			memset(&RivermaxInterface, 0, sizeof(RivermaxInterface));
-			if (inet_pton(AF_INET, StringCast<ANSICHAR>(*Options.InterfaceAddress).Get(), &RivermaxInterface.sin_addr) != 1)
+			FString ErrorMessage;
+			FNetworkSettings NetworkSettings;
+			bool bWasSuccessful = InitializeNetworkSettings(NetworkSettings, ErrorMessage);
+			if(bWasSuccessful)
 			{
-				UE_LOG(LogRivermax, Warning, TEXT("inet_pton failed to %s"), *Options.InterfaceAddress);
+				bWasSuccessful = InitializeStreamParameters(ErrorMessage);
+
+				if (bWasSuccessful)
+				{
+					bWasSuccessful = FinalizeStreamCreation(NetworkSettings, ErrorMessage);
+				}
+			}
+
+			if (bWasSuccessful)
+			{
+				// Stream creation succeeded, launch reception thread
+				bIsActive = true;
+				RivermaxThread = FRunnableThread::Create(this, TEXT("Rivermax InputStream Thread"), 128 * 1024, TPri_AboveNormal, FPlatformAffinity::GetPoolThreadMask());
+
+				UE_LOG(LogRivermax, Display, TEXT("Input stream started listening to stream %s:%d on interface %s%s")
+					, *Options.StreamAddress
+					, Options.Port
+					, *Options.InterfaceAddress
+					, bIsUsingGPUDirect ? TEXT(" using GPUDirect") : TEXT(""));
 			}
 			else
 			{
-				RivermaxInterface.sin_family = AF_INET;
-
-				//Configure Flow and destination IP (multicast)
-				memset(&FlowAttribute, 0, sizeof(FlowAttribute));
-				FlowAttribute.local_addr.sin_family = AF_INET;
-				FlowAttribute.remote_addr.sin_family = AF_INET;
-
-				FlowAttribute.flow_id = FlowId;
-				if (inet_pton(AF_INET, StringCast<ANSICHAR>(*Options.StreamAddress).Get(), &FlowAttribute.local_addr.sin_addr) != 1)
-				{
-					UE_LOG(LogRivermax, Warning, TEXT("inet_pton failed to %s"), *Options.StreamAddress);
-				}
-				else
-				{
-					RivermaxInterface.sin_port = Options.Port;
-					FlowAttribute.local_addr.sin_port = ByteSwap((uint16)Options.Port);
-
-					rmax_in_buffer_attr_flags_t BufferAttributeFlags = RMAX_IN_BUFFER_ATTER_FLAG_NONE;
-					if (bIsDynamicHeaderEnabled)
-					{
-						BufferAttributeFlags = RMAX_IN_BUFFER_ATTR_BUFFER_RTP_SMPTE_2110_20_DYNAMIC_HDS;
-					}
-					;
-					uint32 BufferElement = 1 << 18;//todo number of packets to allocate memory for
-					rmax_in_buffer_attr BufferAttributes;
-					FMemory::Memset(&BufferAttributes, 0, sizeof(BufferAttributes));
-					BufferAttributes.num_of_elements = BufferElement;
-					BufferAttributes.attr_flags = BufferAttributeFlags;
-
-					FMemory::Memset(&BufferConfiguration.DataMemory, 0, sizeof(BufferConfiguration.DataMemory));
-
-					BufferConfiguration.DataMemory.min_size = ExpectedPayloadSize;
-					BufferConfiguration.DataMemory.max_size = ExpectedPayloadSize;
-					BufferAttributes.data = &BufferConfiguration.DataMemory;
-
-					FMemory::Memset(&BufferConfiguration.HeaderMemory, 0, sizeof(BufferConfiguration.HeaderMemory));
-					BufferConfiguration.HeaderMemory.max_size = BufferConfiguration.HeaderMemory.min_size = BufferConfiguration.HeaderExpectedSize;
-					BufferAttributes.hdr = &BufferConfiguration.HeaderMemory;
-
-
-
-					rmax_status_t Status = CachedAPI->rmax_in_query_buffer_size(StreamType, &RivermaxInterface, &BufferAttributes, &BufferConfiguration.PayloadSize, &BufferConfiguration.HeaderSize);
-					if (Status == RMAX_OK)
-					{
-						AllocateBuffers();
-
-						//Buffers configured, now configure stream and attach flow
-						const rmax_in_timestamp_format TimestampFormat = rmax_in_timestamp_format::RMAX_PACKET_TIMESTAMP_RAW_NANO; //how packets are stamped. counter or nanoseconds
-						const rmax_in_flags InputFlags = rmax_in_flags::RMAX_IN_CREATE_STREAM_INFO_PER_PACKET; //default value for 2110 in example
-						Status = CachedAPI->rmax_in_create_stream(StreamType, &RivermaxInterface, &BufferAttributes, TimestampFormat, InputFlags, &StreamId);
-						if (Status == RMAX_OK)
-						{
-							Status = CachedAPI->rmax_in_attach_flow(StreamId, &FlowAttribute);
-							if (Status == RMAX_OK)
-							{
-								bIsActive = true;
-								RivermaxThread = FRunnableThread::Create(this, TEXT("Rivermax InputStream Thread"), 128 * 1024, TPri_AboveNormal, FPlatformAffinity::GetPoolThreadMask());
-								bWasSuccessful = true;
-
-								UE_LOG(LogRivermax, Display, TEXT("Input stream started listening to stream %s:%d on interface %s%s")
-									, *Options.StreamAddress
-									, Options.Port
-									, *Options.InterfaceAddress
-									, bIsUsingGPUDirect ? TEXT(" using GPUDirect") : TEXT(""));
-							}
-							else
-							{
-								UE_LOG(LogRivermax, Warning, TEXT("Could not attach flow to stream. Status: %d."), Status);
-							}
-						}
-						else
-						{
-							UE_LOG(LogRivermax, Warning, TEXT("Could not create stream. Status: %d."), Status);
-						}
-					}
-					else
-					{
-						UE_LOG(LogRivermax, Warning, TEXT("Could not query buffer size. Status: %d"), Status);
-					}
-				}
+				UE_LOG(LogRivermax, Warning, TEXT("%s"), *ErrorMessage);
 			}
-
+			
 			FRivermaxInputInitializationResult Result;
 			Result.bHasSucceed = bWasSuccessful;
 			Result.bIsGPUDirectSupported = bIsUsingGPUDirect;
@@ -288,14 +249,17 @@ namespace UE::RivermaxCore::Private
 		const size_t MaxChunkSize = 5000;
 		const int Timeout = 0;
 		const int Flags = 0;
-		rmax_in_completion Completion;
-		FMemory::Memset(&Completion, 0, sizeof(Completion));
+		const rmx_input_completion* Completion = nullptr;
 		
 		checkSlow(CachedAPI);
-		rmax_status_t Status = CachedAPI->rmax_in_get_next_chunk(StreamId, MinChunkSize, MaxChunkSize, Timeout, Flags, &Completion);
-		if (Status == RMAX_OK)
+		rmx_status Status = CachedAPI->rmx_input_get_next_chunk(&BufferConfiguration.ChunkHandle);
+		if (Status == RMX_OK)
 		{
-			ParseChunks(Completion);
+			Completion = CachedAPI->rmx_input_get_chunk_completion(&BufferConfiguration.ChunkHandle);
+			if (Completion)
+			{
+				ParseChunks(Completion);
+			}
 		}
 		else
 		{
@@ -321,15 +285,15 @@ namespace UE::RivermaxCore::Private
 		if (StreamId)
 		{
 			checkSlow(CachedAPI);
-			rmax_status_t Status = CachedAPI->rmax_in_detach_flow(StreamId, &FlowAttribute);
-			if (Status != RMAX_OK)
+			rmx_status Status = CachedAPI->rmx_input_detach_flow(StreamId, &FlowAttribute);
+			if (Status != RMX_OK)
 			{
-				UE_LOG(LogRivermax, Warning, TEXT("Failed to detach rivermax flow %d from input stream %d. Status: %d"), FlowAttribute.flow_id, StreamId, Status);
+				UE_LOG(LogRivermax, Warning, TEXT("Failed to detach rivermax flow %d from input stream %d. Status: %d"), FlowTag, StreamId, Status);
 			}
 
-			Status = CachedAPI->rmax_in_destroy_stream(StreamId);
+			Status = CachedAPI->rmx_input_destroy_stream(StreamId);
 
-			if (Status != RMAX_OK)
+			if (Status != RMX_OK)
 			{
 				UE_LOG(LogRivermax, Warning, TEXT("Failed to destroy input stream %d correctly. Status: %d"), StreamId, Status);
 			}
@@ -348,66 +312,119 @@ namespace UE::RivermaxCore::Private
 
 	}
 
-	void FRivermaxInputStream::ParseChunks(const rmax_in_completion& Completion)
+	void FRivermaxInputStream::ParseChunks(const rmx_input_completion* Completion)
 	{
-		for (uint64 StrideIndex = 0; StrideIndex < Completion.chunk_size; ++StrideIndex)
+		const size_t ChunkCount = rmx_input_get_completion_chunk_size(Completion);
+
+		for (uint64 StrideIndex = 0; StrideIndex < ChunkCount; ++StrideIndex)
 		{
 			++StreamStats.ChunksReceived;
-		
-			ensure(Completion.hdr_ptr);
-			if (Completion.hdr_ptr == nullptr)
-			{
-				break;
-			}
 
-			if (FlowAttribute.flow_id && Completion.packet_info_arr[StrideIndex].flow_id != FlowAttribute.flow_id)
-			{
-				UE_LOG(LogRivermax, Error, TEXT("Received data from unexpected FlowId '%d'. Expected '%d'."), Completion.packet_info_arr[StrideIndex].flow_id, FlowAttribute.flow_id);
-			}
+			const uint8* RawHeaderPtr = reinterpret_cast<const uint8_t*>(rmx_input_get_completion_ptr(Completion, BufferConfiguration.HeaderBlockID));
+			const uint8* DataPtr = reinterpret_cast<const uint8_t*>(rmx_input_get_completion_ptr(Completion, BufferConfiguration.DataBlockID));
 
-			uint8* RawHeaderPtr = (uint8*)Completion.hdr_ptr + StrideIndex * (size_t)BufferConfiguration.HeaderMemory.stride_size; 
-			uint8* DataPtr = (uint8*)Completion.data_ptr + StrideIndex * (size_t)BufferConfiguration.DataMemory.stride_size; // The payload is our data
+			RawHeaderPtr += StrideIndex * BufferConfiguration.HeaderStride;
+			DataPtr += StrideIndex * BufferConfiguration.DataStride;
 
-			if (Completion.packet_info_arr[StrideIndex].data_size && RawHeaderPtr && DataPtr)
+			// When using RMX_INPUT_RAW_PACKET, app head is preceded by net header
+			const uint8_t* AppHeader = RawHeaderPtr; // App header. If the stream type is RMX_INPUT_RAW_PACKET then app header is preceded by net header
+
+			const rmx_input_packet_info* PacketInfo = CachedAPI->rmx_input_get_packet_info(&BufferConfiguration.ChunkHandle, StrideIndex);
+			const size_t PacketSize = rmx_input_get_packet_size(PacketInfo, BufferConfiguration.DataBlockID);
+			const size_t HeaderSize = rmx_input_get_packet_size(PacketInfo, BufferConfiguration.HeaderBlockID);
+			if (PacketSize > 0 && HeaderSize > 0)
 			{
+				if (FlowTag)
+				{
+					const uint32 PacketTag = rmx_input_get_packet_flow_tag(PacketInfo);
+					if (PacketTag != FlowTag)
+					{
+						UE_LOG(LogRivermax, Error, TEXT("Received data from unexpected FlowTag '%d'. Expected '%d'."), PacketTag, FlowTag);
+						Listener->OnStreamError();
+						bIsShuttingDown = true;
+						return;
+					}
+				}
+
+				const uint64 PacketTimstamp = rmx_input_get_packet_timestamp(PacketInfo);
+				
+
 				// Get RTPHeader address from the raw net header
 				const FRawRTPHeader& RawRTPHeaderPtr = reinterpret_cast<const FRawRTPHeader&>(*GetRTPHeaderPointer(RawHeaderPtr));
 				if (RawRTPHeaderPtr.Version == 2)
 				{
 					FRTPHeader RTPHeader(RawRTPHeaderPtr);
+					
 					// Add trace for the first packet of a frame to help visualize reception of a full frame in time
 					if (bIsFirstPacketReceived == false)
 					{
 						const uint32 FrameNumber = Utils::TimestampToFrameNumber(RTPHeader.Timestamp, Options.FrameRate);
 						TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*FRivermaxTracingUtils::RmaxInStartingFrameTraceEvents[FrameNumber % 10]);
+
+						IRivermaxCoreModule& RivermaxModule = FModuleManager::LoadModuleChecked<IRivermaxCoreModule>(TEXT("RivermaxCore"));
+						const uint64 CurrentTime = RivermaxModule.GetRivermaxManager()->GetTime();
+
 						bIsFirstPacketReceived = true;
+
+						if (StreamStats.EndOfFrameReceived > 0)
+						{
+							const uint64 FrameBoundary = GetAlignmentPointFromFrameNumber(GetFrameNumber(CurrentTime, Options.FrameRate), Options.FrameRate);
+							const uint64 FirstPacketInterval = CurrentTime - FrameBoundary;
+							StreamStats.MinFirstPacketIntervalNS = FMath::Min(StreamStats.MinFirstPacketIntervalNS, FirstPacketInterval);
+							StreamStats.MaxFirstPacketIntervalNS = FMath::Max(StreamStats.MaxFirstPacketIntervalNS, FirstPacketInterval);
+							
+							constexpr double Alpha = 0.8;
+							StreamStats.FirstPacketIntervalAccumulatorNS = Alpha * FirstPacketInterval + ((1.0 - Alpha) * StreamStats.FirstPacketIntervalAccumulatorNS);
+
+							if (GClearFirstPacketIntervalStats)
+							{
+								GClearFirstPacketIntervalStats = false;
+								StreamStats.MinFirstPacketIntervalNS = TNumericLimits<uint64>::Max();
+								StreamStats.MaxFirstPacketIntervalNS = TNumericLimits<uint64>::Min();
+								StreamStats.FirstPacketIntervalAccumulatorNS = 0;
+							}
+
+							if (GEnableLargeFirstPacketIntervalLogging)
+							{
+								const uint32 IntervalMicroSec = FirstPacketInterval / 1000;
+								if (IntervalMicroSec > (uint32)GLargeFirstPacketIntervalThresholdMicroSec)
+								{
+
+									UE_LOG(LogRivermax, Warning, TEXT("Large First packet interval: %llu. Min: %llu. Max: %llu. Avg: %llu.")
+									, FirstPacketInterval
+									, StreamStats.MinFirstPacketIntervalNS
+									, StreamStats.MaxFirstPacketIntervalNS
+									, StreamStats.FirstPacketIntervalAccumulatorNS);
+								}
+							}
+						}
 					}
 
-					StreamStats.BytesReceived += Completion.packet_info_arr[StrideIndex].data_size + Completion.packet_info_arr[StrideIndex].hdr_size;
+					StreamStats.BytesReceived += PacketSize + HeaderSize;
 					
 					UpdateFrameTracking(RTPHeader);
 
 					switch (State)
 					{
-						case EReceptionState::Receiving:
-						{
-							FrameReceptionState(RTPHeader, DataPtr);
-							break;
-						}
-						case EReceptionState::WaitingForMarker:
-						{
-							WaitForMarkerState(RTPHeader);
-							break;
-						}
-						case EReceptionState::FrameError:
-						{
-							FrameErrorState(RTPHeader);
-							break;
-						}
-						default:
-						{
-							checkNoEntry();
-						}
+					case EReceptionState::Receiving:
+					{
+						FrameReceptionState(RTPHeader, DataPtr);
+						break;
+					}
+					case EReceptionState::WaitingForMarker:
+					{
+						WaitForMarkerState(RTPHeader);
+						break;
+					}
+					case EReceptionState::FrameError:
+					{
+						FrameErrorState(RTPHeader);
+						break;
+					}
+					default:
+					{
+						checkNoEntry();
+					}
 					}
 				}
 				else
@@ -486,8 +503,10 @@ namespace UE::RivermaxCore::Private
 		if (CurrentTime - LastLoggingTimestamp >= LoggingInterval)
 		{
 			LastLoggingTimestamp = CurrentTime;
-			UE_LOG(LogRivermax, Verbose, TEXT("Stream %d stats: FrameCount: %llu, EndOfFrame: %llu, Chunks: %llu, Bytes: %llu, PacketLossInFrame: %llu, TotalPacketLoss: %llu, BiggerFrames: %llu, InvalidFrames: %llu, InvalidHeader: %llu, EmptyCompletion: %llu")
+			UE_LOG(LogRivermax, Verbose, TEXT("Stream %d (%s:%u) stats: FrameCount: %llu, EndOfFrame: %llu, Chunks: %llu, Bytes: %llu, PacketLossInFrame: %llu, TotalPacketLoss: %llu, BiggerFrames: %llu, InvalidFrames: %llu, InvalidHeader: %llu, EmptyCompletion: %llu")
 			, StreamId
+			, *Options.StreamAddress
+			, Options.Port
 			, StreamStats.FramesReceived
 			, StreamStats.EndOfFrameReceived
 			, StreamStats.ChunksReceived
@@ -499,6 +518,15 @@ namespace UE::RivermaxCore::Private
 			, StreamStats.InvalidHeadercount
 			, StreamStats.EmptyCompletionCount
 			);
+
+			UE_LOG(LogRivermax, Verbose, TEXT("Stream %d (%s:%u) first packet interval: - Min: %llu. Max: %llu. Avg: %llu.")
+				, StreamId
+				, *Options.StreamAddress
+				, Options.Port
+				, StreamStats.MinFirstPacketIntervalNS
+				, StreamStats.MaxFirstPacketIntervalNS
+				, StreamStats.FirstPacketIntervalAccumulatorNS);
+
 		}
 	}
 
@@ -513,10 +541,14 @@ namespace UE::RivermaxCore::Private
 		constexpr uint32 CacheLineSize = PLATFORM_CACHE_LINE_SIZE;
 		if (bIsUsingGPUDirect == false)
 		{
-			BufferConfiguration.DataMemory.ptr = FMemory::Malloc(BufferConfiguration.PayloadSize, CacheLineSize);
+			BufferConfiguration.DataMemory->addr = FMemory::Malloc(BufferConfiguration.PayloadSize, CacheLineSize);
 		}
 		
-		BufferConfiguration.HeaderMemory.ptr = FMemory::Malloc(BufferConfiguration.HeaderSize, CacheLineSize);
+		BufferConfiguration.HeaderMemory->addr = FMemory::Malloc(BufferConfiguration.HeaderSize, CacheLineSize);
+
+		constexpr rmx_mkey_id InvalidKey = ((rmx_mkey_id)(-1L));
+		BufferConfiguration.DataMemory->mkey = InvalidKey;
+		BufferConfiguration.HeaderMemory->mkey = InvalidKey;
 	}
 
 	bool FRivermaxInputStream::AllocateGPUBuffers()
@@ -640,7 +672,7 @@ namespace UE::RivermaxCore::Private
 		}
 
 		// Give rivermax input buffer config the pointer to gpu allocated memory
-		BufferConfiguration.DataMemory.ptr = GPUAllocatedMemoryBaseAddress;
+		BufferConfiguration.DataMemory->addr = GPUAllocatedMemoryBaseAddress;
 
 		CallbackPayload = MakeShared<FCallbackPayload>();
 
@@ -984,7 +1016,7 @@ namespace UE::RivermaxCore::Private
 			// No need to provide the new frame and prepare the next one if we are shutting down
 			if (bIsShuttingDown == false)
 			{
-				UE_LOG(LogRivermax, Verbose, TEXT("RmaxRX frame number %u with timestamp %u."), Descriptor.FrameNumber, Descriptor.Timestamp);
+				UE_LOG(LogRivermax, VeryVerbose, TEXT("RmaxRX frame number %u with timestamp %u."), Descriptor.FrameNumber, Descriptor.Timestamp);
 				
 				FRivermaxInputVideoFrameReception NewFrame;
 				NewFrame.VideoBuffer = reinterpret_cast<uint8*>(StreamData.CurrentFrame);
@@ -1110,7 +1142,144 @@ namespace UE::RivermaxCore::Private
 		}
 	}
 
+	bool FRivermaxInputStream::InitializeNetworkSettings(FNetworkSettings& OutSettings, FString& OutErrorMessage)
+	{
+		//Retrieves all network data from string version of device interface and stream address
+
+		memset(&OutSettings.DeviceInterface, 0, sizeof(OutSettings.DeviceInterface));
+		if (inet_pton(AF_INET, StringCast<ANSICHAR>(*Options.InterfaceAddress).Get(), &OutSettings.DeviceInterface.sin_addr) != 1)
+		{
+			OutErrorMessage = FString::Printf(TEXT("Failed to convert Device interface '%s' to network address"), *Options.InterfaceAddress);
+			return false;
+		}
+
+		memset(&OutSettings.DestinationAddress, 0, sizeof(OutSettings.DestinationAddress));
+		FMemory::Memset(&OutSettings.DestinationAddress, 0, sizeof(OutSettings.DestinationAddress));
+		if (inet_pton(AF_INET, StringCast<ANSICHAR>(*Options.StreamAddress).Get(), &OutSettings.DestinationAddress.sin_addr) != 1)
+		{
+			OutErrorMessage = FString::Printf(TEXT("Failed to convert Stream address '%s' to network address"), *Options.StreamAddress);
+			return false;
+		}
+
+		OutSettings.DeviceInterface.sin_family = AF_INET;
+		OutSettings.DestinationAddress.sin_family = AF_INET;
+		OutSettings.DestinationAddress.sin_port = ByteSwap((uint16)Options.Port);
+
+		OutSettings.DeviceAddress.family = AF_INET;
+		OutSettings.DeviceAddress.addr.ipv4 = OutSettings.DeviceInterface.sin_addr;
+		rmx_status Status = CachedAPI->rmx_retrieve_device_iface(&OutSettings.RMXDeviceInterface, &OutSettings.DeviceAddress);
+		if(Status != RMX_OK)
+		{
+			OutErrorMessage = FString::Printf(TEXT("Could not retrieve Rivermax interface for IP '%s'"), *Options.InterfaceAddress);
+			return false;
+		}
+		
+		CachedAPI->rmx_input_set_stream_nic_address(&StreamParameters, reinterpret_cast<sockaddr*>(&OutSettings.DeviceInterface));
+
+		return true;
+	}
+
+	bool FRivermaxInputStream::InitializeStreamParameters(FString& OutErrorMessage)
+	{
+		size_t BufferElement = 1 << 18;
+		CachedAPI->rmx_input_set_mem_capacity_in_packets(&StreamParameters, BufferElement);
+
+		// We always split header and data so we always have two sub blocks (Header + Payload)
+		constexpr size_t SubBlockCount = 2;
+		CachedAPI->rmx_input_set_mem_sub_block_count(&StreamParameters, SubBlockCount);
+		CachedAPI->rmx_input_set_entry_size_range(&StreamParameters, BufferConfiguration.HeaderBlockID, BufferConfiguration.HeaderExpectedSize, BufferConfiguration.HeaderExpectedSize);
+		CachedAPI->rmx_input_set_entry_size_range(&StreamParameters, BufferConfiguration.DataBlockID, ExpectedPayloadSize, ExpectedPayloadSize);
+
+		constexpr rmx_input_option InputOptions = RMX_INPUT_STREAM_CREATE_INFO_PER_PACKET;
+		constexpr rmx_input_timestamp_format TimestampFormat = RMX_INPUT_TIMESTAMP_RAW_NANO;
+		CachedAPI->rmx_input_enable_stream_option(&StreamParameters, InputOptions);
+		CachedAPI->rmx_input_set_timestamp_format(&StreamParameters, TimestampFormat);
+
+		if (bIsDynamicHeaderEnabled)
+		{
+			CachedAPI->rmx_input_enable_stream_option(&StreamParameters, RMX_INPUT_STREAM_RTP_SMPTE_2110_20_DYNAMIC_HDS);
+		}
+
+		const rmx_status Status = CachedAPI->rmx_input_determine_mem_layout(&StreamParameters);
+		if (Status != RMX_OK)
+		{
+			OutErrorMessage = FString::Printf(TEXT("Could not determine memory layout for input stream using IP %d. Status: %d."), *Options.InterfaceAddress, Status);
+			return false;
+		}
+
+		BufferElement = CachedAPI->rmx_input_get_mem_capacity_in_packets(&StreamParameters);
+		BufferConfiguration.DataMemory = CachedAPI->rmx_input_get_mem_block_buffer(&StreamParameters, BufferConfiguration.DataBlockID);
+		BufferConfiguration.HeaderMemory = CachedAPI->rmx_input_get_mem_block_buffer(&StreamParameters, BufferConfiguration.HeaderBlockID);
+
+		if (BufferConfiguration.HeaderMemory->length <= 0)
+		{
+			OutErrorMessage = FString::Printf(TEXT("Header data split not supported for device with IP %d. Can't initialize stream."), *Options.InterfaceAddress);
+			return false;
+		}
+		
+		BufferConfiguration.PayloadSize = BufferConfiguration.DataMemory->length;
+		BufferConfiguration.HeaderSize = BufferConfiguration.HeaderMemory->length;
+
+		AllocateBuffers();
+
+		return true;
+	}
+
+	bool FRivermaxInputStream::FinalizeStreamCreation(const FNetworkSettings& NetworkSettings, FString& OutErrorMessage)
+	{
+		rmx_status Status = CachedAPI->rmx_input_create_stream(&StreamParameters, &StreamId);
+		if (Status != RMX_OK)
+		{
+			OutErrorMessage = FString::Printf(TEXT("Could not create stream. Status: %d."), Status);
+			return false;
+		}
+
+		// Once stream creation is done, retrieve strides it is using
+		BufferConfiguration.DataStride = CachedAPI->rmx_input_get_stride_size(&StreamParameters, BufferConfiguration.DataBlockID);
+		BufferConfiguration.HeaderStride = CachedAPI->rmx_input_get_stride_size(&StreamParameters, BufferConfiguration.HeaderBlockID);
+
+		// Configure how we wnat to consume chunks
+		constexpr size_t MinChunkSize = 0;
+		constexpr size_t MaxChunkSize = 5000;
+		constexpr int Timeout = 0;
+		Status = CachedAPI->rmx_input_set_completion_moderation(StreamId, MinChunkSize, MaxChunkSize, Timeout);
+		if (Status != RMX_OK)
+		{
+			OutErrorMessage = FString::Printf(TEXT("Could not setup expected packet count for stream. Status: %d."), Status);
+			return false;
+		}
+
+		// Finalize stream creation
+		CachedAPI->rmx_input_init_chunk_handle(&BufferConfiguration.ChunkHandle, StreamId);
+		CachedAPI->rmx_input_init_flow(&FlowAttribute);
+		CachedAPI->rmx_input_set_flow_local_addr(&FlowAttribute, reinterpret_cast<const sockaddr*>(&NetworkSettings.DestinationAddress));
+
+		sockaddr_in SourceAddr;
+		memset(&SourceAddr, 0, sizeof(SourceAddr));
+		SourceAddr.sin_family = AF_INET;
+		CachedAPI->rmx_input_set_flow_remote_addr(&FlowAttribute, reinterpret_cast<const sockaddr*>(&SourceAddr));
+		CachedAPI->rmx_input_set_flow_tag(&FlowAttribute, FlowTag);
+
+		Status = CachedAPI->rmx_input_attach_flow(StreamId, &FlowAttribute);
+		if(Status != RMX_OK)
+		{
+			OutErrorMessage = FString::Printf(TEXT("Could not attach flow to stream. Status: %d."), Status);
+
+			// Cleanup stream.
+			Status = CachedAPI->rmx_input_destroy_stream(StreamId);
+
+			if (Status != RMX_OK)
+			{
+				UE_LOG(LogRivermax, Warning, TEXT("Failed to destroy input stream %d correctly. Status: %d"), StreamId, Status);
+			}
+
+			return false;
+		}
+		
+		return true;
+	}
 }
 
+	
 	
 

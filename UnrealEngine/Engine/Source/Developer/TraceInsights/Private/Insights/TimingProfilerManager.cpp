@@ -516,11 +516,36 @@ void FTimingProfilerManager::SetSelectedTimer(uint32 InTimerId)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+void FTimingProfilerManager::ToggleTimingViewMainGraphEventSeries(uint32 InTimerId)
+{
+	FTimerNodePtr NodePtr = GetTimerNode(InTimerId);
+	TSharedPtr<STimingProfilerWindow> Wnd = GetProfilerWindow();
+	if (Wnd && NodePtr)
+	{
+		TSharedPtr<STimersView> TimersView = Wnd->GetTimersView();
+		if (TimersView)
+		{
+			TimersView->ToggleTimingViewMainGraphEventSeries(NodePtr);
+		}
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 void FTimingProfilerManager::OnThreadFilterChanged()
 {
 	UpdateCallersAndCallees();
-	UpdateAggregatedTimerStats();
 	UpdateAggregatedCounterStats();
+
+	TSharedPtr<STimingProfilerWindow> Wnd = GetProfilerWindow();
+	if (Wnd)
+	{
+		TSharedPtr<STimersView> TimersView = Wnd->GetTimersView();
+		if (TimersView)
+		{
+			TimersView->OnTimingViewTrackListChanged();
+		}
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -636,7 +661,12 @@ bool FTimingProfilerManager::Exec(const TCHAR* Cmd, FOutputDevice& Ar)
 		check(FInsightsManager::Get().IsValid() && FInsightsManager::Get()->GetSession().IsValid());
 		Insights::FTimingExporter Exporter(*FInsightsManager::Get()->GetSession().Get());
 		Insights::FTimingExporter::FExportThreadsParams Params; // default
-		Exporter.ExportThreadsAsText(Cmd, Params);
+
+		const bool bUseEscape = true;
+		FString Filename = FParse::Token(Cmd, bUseEscape);
+		Ar.Logf(TEXT("  Filename: %s"), *Filename);
+
+		Exporter.ExportThreadsAsText(Filename, Params);
 		return true;
 	}
 
@@ -646,7 +676,12 @@ bool FTimingProfilerManager::Exec(const TCHAR* Cmd, FOutputDevice& Ar)
 		check(FInsightsManager::Get().IsValid() && FInsightsManager::Get()->GetSession().IsValid());
 		Insights::FTimingExporter Exporter(*FInsightsManager::Get()->GetSession().Get());
 		Insights::FTimingExporter::FExportTimersParams Params; // default
-		Exporter.ExportTimersAsText(Cmd, Params);
+
+		const bool bUseEscape = true;
+		FString Filename = FParse::Token(Cmd, bUseEscape);
+		Ar.Logf(TEXT("  Filename: %s"), *Filename);
+
+		Exporter.ExportTimersAsText(Filename, Params);
 		return true;
 	}
 
@@ -712,14 +747,14 @@ bool FTimingProfilerManager::Exec(const TCHAR* Cmd, FOutputDevice& Ar)
 				}
 				else if (Token.StartsWith(StartTimeToken))
 				{
-					// Default: -startTime=-infinte
+					// Default: -startTime=-infinite
 					// Example: -startTime=10.0
 					Token.RightChopInline(UE_ARRAY_COUNT(StartTimeToken) - 1);
 					Params.IntervalStartTime = atof(TCHAR_TO_ANSI(*Token));
 				}
 				else if (Token.StartsWith(EndTimeToken))
 				{
-					// Default: -endTime=+infinte
+					// Default: -endTime=+infinite
 					// Example: -endTime=20.0
 					Token.RightChopInline(UE_ARRAY_COUNT(EndTimeToken) - 1);
 					Params.IntervalEndTime = atof(TCHAR_TO_ANSI(*Token));
@@ -800,14 +835,14 @@ bool FTimingProfilerManager::Exec(const TCHAR* Cmd, FOutputDevice& Ar)
 				}
 				else if (Token.StartsWith(StartTimeToken))
 				{
-					// Default: -startTime=-infinte
+					// Default: -startTime=-infinite
 					// Example: -startTime=10.0
 					Token.RightChopInline(UE_ARRAY_COUNT(StartTimeToken) - 1);
 					Params.IntervalStartTime = atof(TCHAR_TO_ANSI(*Token));
 				}
 				else if (Token.StartsWith(EndTimeToken))
 				{
-					// Default: -endTime=+infinte
+					// Default: -endTime=+infinite
 					// Example: -endTime=20.0
 					Token.RightChopInline(UE_ARRAY_COUNT(EndTimeToken) - 1);
 					Params.IntervalEndTime = atof(TCHAR_TO_ANSI(*Token));

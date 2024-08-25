@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include "RHI.h"
+#include "RHIShaderParameters.h"
 
 namespace UE::RHICore
 {

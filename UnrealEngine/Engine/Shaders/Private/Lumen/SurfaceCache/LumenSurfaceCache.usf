@@ -120,7 +120,7 @@ void LumenCardCopyPS(
 		#else
 		{
 			float3 Emissive = Texture2DSampleLevel(SourceEmissiveAtlas, GlobalPointClampedSampler, AtlasUV, 0).xyz;
-			OutColor0 = float4(Emissive, 0.0f);
+			OutColor0 = float4(Emissive.xyz, 0.0f);
 		}
 		#endif
 	}

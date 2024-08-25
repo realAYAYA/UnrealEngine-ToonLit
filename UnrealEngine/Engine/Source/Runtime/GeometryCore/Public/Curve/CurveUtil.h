@@ -299,6 +299,75 @@ using namespace UE::Math;
 	}
 
 	/**
+	 * Use the Sutherland–Hodgman algorithm to clip the vertices to the given plane
+	 * Note if the path/polygon is concave, this may leave overlapping edges at the boundary.
+	 * @tparam bLoop				Whether the path is a loop
+	 * @param Vertices				Vertices to clip vs the plane
+	 * @param Plane					Plane to use for clipping
+	 * @param OutClipped			Vertices clipped to the plane
+	 * @param bKeepPositiveSide		Whether to keep the portion of the polygon that is on the positive side of the plane. Otherwise, keeps the negative side.
+	 * @return Whether vertices were clipped
+	 */
+	template<typename RealType, typename VectorType, bool bLoop = true>
+	static bool ClipConvexToPlane(TArray<VectorType>& Vertices, const TPlane<RealType>& Plane, TArray<VectorType>& OutClipped, bool bKeepPositiveSide = false)
+	{
+		OutClipped.Reset(Vertices.Num());
+		bool bWasClipped = false;
+		int32 VertNum = Vertices.Num();
+		int32 StartCur, StartPrev;
+		if constexpr (bLoop)
+		{
+			StartCur = 0;
+			StartPrev = VertNum - 1;
+		}
+		else
+		{
+			StartCur = 1;
+			StartPrev = 0;
+		}
+		RealType SideSign = bKeepPositiveSide ? (RealType)1 : (RealType)-1;
+		RealType PrevDist = Plane.PlaneDot(Vertices[StartPrev]) * RealType(SideSign);
+		if constexpr (!bLoop)
+		{
+			if (PrevDist >= 0)
+			{
+				OutClipped.Add(Vertices[0]);
+			}
+			else
+			{
+				bWasClipped = true;
+			}
+		}
+		for (int32 CurIdx = StartCur, PrevIdx = StartPrev; CurIdx < VertNum; PrevIdx = CurIdx++)
+		{
+			RealType CurDist = Plane.PlaneDot(Vertices[CurIdx]) * RealType(SideSign);
+			if (CurDist >= 0)
+			{
+				if (PrevDist < 0 && CurDist > 0)
+				{
+					RealType T = CurDist / (CurDist - PrevDist);
+					VectorType LerpVec = Lerp(Vertices[CurIdx], Vertices[PrevIdx], T);
+					OutClipped.Add(LerpVec);
+					bWasClipped = true;
+				}
+				OutClipped.Add(Vertices[CurIdx]);
+			}
+			else
+			{
+				bWasClipped = true;
+				if (PrevDist > 0)
+				{
+					RealType T = CurDist / (CurDist - PrevDist);
+					VectorType LerpVec = Lerp(Vertices[CurIdx], Vertices[PrevIdx], T);
+					OutClipped.Add(LerpVec);
+				}
+			}
+			PrevDist = CurDist;
+		}
+		return bWasClipped;
+	}
+
+	/**
 	 * Tests closed, 2D curve for convexity, with an optional tolerance allowing for approximately-collinear points
 	 * Note that tolerance is per vertex angle, so a very-finely-sampled smooth concavity could be reported as convex
 	 * 
@@ -352,6 +421,39 @@ using namespace UE::Math;
 		return !(bSeenNeg && bSeenPos) // curve should only turn one way, and
 			// curve should loop only once, turning 2*Pi radians in that one direction
 			&& int(TMathUtil<RealType>::Round(AngleSum / TMathUtil<RealType>::TwoPi)) == (int)bSeenPos - (int)bSeenNeg;
+	}
+
+	/**
+	 * Project point inside a convex polygon with known orientation
+	 *
+	 * @param ProjPt				Point to project
+	 * @param bReverseOrientation	Whether convex polygon orientation is reversed (i.e., has negative signed area)
+	 * @return						true if the point was projected
+	 */
+	template<typename RealType>
+	bool ProjectPointInsideConvexPolygon(const TArrayView<const TVector2<RealType>> Vertices, TVector2<RealType>& ProjPt, bool bReverseOrientation = false)
+	{
+		bool bProjected = false;
+		const int32 N = Vertices.Num();
+		for (int32 Idx = 0, PrevIdx = N - 1; Idx < N; PrevIdx = Idx++)
+		{
+			const TVector2<RealType>& V1 = Vertices[PrevIdx];
+			const TVector2<RealType>& V2 = Vertices[Idx];
+			TVector2<RealType> ToPt = ProjPt - V1;
+			TVector2<RealType> Normal = PerpCW<RealType>(V2 - V1);
+			RealType Orient = ToPt.Dot(Normal);
+			bool bOutside = bReverseOrientation ? Orient < 0 : Orient > 0;
+			if (bOutside)
+			{
+				RealType SqLen = Normal.SquaredLength();
+				if (SqLen > (RealType)FLT_MIN)
+				{
+					bProjected = true;
+					ProjPt -= Normal * Orient / SqLen;
+				}
+			}
+		}
+		return bProjected;
 	}
 
 

@@ -8,6 +8,7 @@ using System.Text;
 using System.Diagnostics;
 using EpicGames.Core;
 using Microsoft.Extensions.Logging;
+using System.Runtime.CompilerServices;
 
 namespace AutomationTool
 {
@@ -38,7 +39,7 @@ namespace AutomationTool
 		}
 
 		/// <summary>
-		/// Gets the build executable filename for NET Framework projects e.g. msbuild, or xbuild
+		/// Gets the build executable filename for NET Framework projects e.g. msbuild
 		/// </summary>
 		/// <returns></returns>
 		abstract public string GetFrameworkMsbuildExe();

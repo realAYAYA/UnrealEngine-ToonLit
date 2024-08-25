@@ -3,6 +3,9 @@
 import 'dart:async';
 
 import 'package:async/async.dart';
+import 'package:epic_common/preferences.dart';
+import 'package:epic_common/theme.dart';
+import 'package:epic_common/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
@@ -23,19 +26,8 @@ import '../../../../models/unreal_transaction_manager.dart';
 import '../../../../models/unreal_types.dart';
 import '../../../../utilities/constants.dart';
 import '../../../../utilities/guarded_refresh_state.dart';
-import '../../../../utilities/preferences_bundle.dart';
-import '../../../../utilities/transient_preference.dart';
-import '../../../../utilities/unreal_colors.dart';
 import '../../../elements/dropdown_button.dart';
-import '../../../elements/dropdown_list_menu.dart';
-import '../../../elements/empty_placeholder.dart';
-import '../../../elements/epic_icon_button.dart';
-import '../../../elements/layout/card.dart';
-import '../../../elements/list_menu.dart';
-import '../../../elements/modal.dart';
 import '../../../elements/place_actor_menu.dart';
-import '../../../elements/swipe_revealer.dart';
-import '../../../search_bar.dart';
 import '../stage_app_main_screen.dart';
 import 'outliner_filter_menu.dart';
 
@@ -155,7 +147,7 @@ bool _getSelectedActorsVisibility(BuildContext context) {
 
   // If there is exactly one actor on the list.
   if (_genericDataForSelectedActors.length == 1) {
-    return !_genericDataForSelectedActors.first!.bIsHiddenInGame;
+    return _genericDataForSelectedActors.first?.bIsHiddenInGame == false;
     // If there are multiple actors on the list.
   } else if (_genericDataForSelectedActors.isNotEmpty && _genericDataForSelectedActors.length > 1) {
     /// Whether all selected actor have same visibility state.
@@ -257,159 +249,167 @@ class _OutlinerPanelState extends State<OutlinerPanel> {
 
     return Provider<OutlinerPanelSettings>(
       create: (context) => _outlinerSettings,
-      child: SizedBox(
-        width: width.toDouble(),
-        child: Card(
-          child: Column(children: [
-            CardSmallHeader(title: AppLocalizations.of(context)!.outlinerTitle),
+      child: MediaQuery.removePadding(
+        context: context,
+        removeBottom: true,
+        child: SizedBox(
+          width: width.toDouble(),
+          child: Card(
+            child: Column(
+              children: [
+                CardSmallHeader(title: AppLocalizations.of(context)!.outlinerTitle),
 
-            Container(
-              height: sectionMargin,
-              color: Theme.of(context).colorScheme.surfaceVariant,
-            ),
+                Container(
+                  height: UnrealTheme.sectionMargin,
+                  color: Theme.of(context).colorScheme.surfaceVariant,
+                ),
 
-            // Search bar
-            CardSubHeader(
-              height: 52,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: SearchBar(
-                controller: _searchTextController,
-                onChanged: _onFilterTextChanged,
-              ),
-            ),
-
-            // Button bar
-            CardSubHeader(
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const OutlinerFilterButton(),
-                  LightCardVisibilityToggle(bIsVisible: _bIsSelectedActorsVisible),
-                  PreferenceBuilder(
-                    preference: selectedActorSettings.bIsInMultiSelectMode,
-                    builder: (BuildContext context, bool bIsInMultiSelectMode) {
-                      return CardSubHeaderButton(
-                        iconPath: 'assets/images/icons/multi_select.svg',
-                        tooltipMessage: AppLocalizations.of(context)!.toggleMultiselectTooltip,
-                        bIsToggledOn: bIsInMultiSelectMode,
-                        onPressed: () => selectedActorSettings.bIsInMultiSelectMode.setValue(!bIsInMultiSelectMode),
-                      );
-                    },
+                // Search bar
+                CardSubHeader(
+                  height: 52,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: EpicSearchBar(
+                    controller: _searchTextController,
+                    onChanged: _onFilterTextChanged,
                   ),
-                  ModalDropdownButton(
-                    buttonBuilder: (context, state) => Material(
-                      color: Colors.transparent,
-                      child: CardSubHeaderButton(
-                        iconPath: 'assets/images/icons/ellipsis.svg',
-                        tooltipMessage: AppLocalizations.of(context)!.moreActions,
-                        bIsToggledOn: state != ModalDropdownButtonState.closed,
-                        bIsVisualOnly: true,
+                ),
+
+                // Button bar
+                CardSubHeader(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const OutlinerFilterButton(),
+                      LightCardVisibilityToggle(bIsVisible: _bIsSelectedActorsVisible),
+                      PreferenceBuilder(
+                        preference: selectedActorSettings.bIsInMultiSelectMode,
+                        builder: (BuildContext context, bool bIsInMultiSelectMode) {
+                          return CardSubHeaderButton(
+                            iconPath: 'packages/epic_common/assets/icons/multi_select.svg',
+                            tooltipMessage: AppLocalizations.of(context)!.toggleMultiselectTooltip,
+                            bIsToggledOn: bIsInMultiSelectMode,
+                            onPressed: () => selectedActorSettings.bIsInMultiSelectMode.setValue(!bIsInMultiSelectMode),
+                          );
+                        },
                       ),
-                    ),
-                    menuBuilder: (context, originTabBuilder) => TransientPreferenceBuilder(
-                      preference: selectedActorSettings.selectedActors,
-                      builder: (BuildContext context, Set<String> selectedActors) {
-                        final bool bHasSingleTarget = selectedActors.length == 1;
-                        final bool bShowFocus = widget.focusActor != null;
+                      TransientPreferenceBuilder(
+                        preference: selectedActorSettings.selectedActors,
+                        builder: (BuildContext context, Set<String> selectedActors) {
+                          final bool bHasSingleTarget = selectedActors.length == 1;
+                          late final bool bCanFocus;
 
-                        late final bool bCanFocus;
-
-                        if (bShowFocus && bHasSingleTarget) {
-                          if (widget.canFocusActor == null) {
-                            // Assume we can focus any single target
-                            bCanFocus = true;
+                          if (widget.focusActor != null && bHasSingleTarget) {
+                            if (widget.canFocusActor == null) {
+                              // Assume we can focus on any single target
+                              bCanFocus = true;
+                            } else {
+                              // Check that we can focus the current target
+                              final UnrealObject? singleTarget = _actorManager.getActorAtPath(selectedActors.first);
+                              bCanFocus = singleTarget != null && widget.canFocusActor!.call(singleTarget);
+                            }
                           } else {
-                            // Check that we can focus the current target
-                            final UnrealObject? singleTarget = _actorManager.getActorAtPath(selectedActors.first);
-                            bCanFocus = singleTarget != null && widget.canFocusActor!.call(singleTarget);
+                            // No single target/no focus function, so we can never focus
+                            bCanFocus = false;
                           }
-                        } else {
-                          // No single target/no focus function, so we can never focus
-                          bCanFocus = false;
-                        }
 
-                        return DropDownListMenu(
-                          originTabBuilder: originTabBuilder,
-                          children: [
-                            if (bShowFocus)
-                              ListMenuSimpleItem(
-                                iconPath: 'assets/images/icons/focus.svg',
-                                title: AppLocalizations.of(context)!.outlinerFocusSelected,
-                                onTap: () {
-                                  _focusSelectedActor();
-                                  Navigator.of(context).pop();
-                                },
-                                bIsEnabled: bCanFocus,
+                          return ModalDropdownButton(
+                            bDisabled: selectedActors.isEmpty,
+                            buttonBuilder: (context, state) => Material(
+                              color: Colors.transparent,
+                              child: CardSubHeaderButton(
+                                iconPath: 'packages/epic_common/assets/icons/ellipsis.svg',
+                                tooltipMessage: AppLocalizations.of(context)!.moreActions,
+                                bIsToggledOn: state != ModalDropdownButtonState.closed,
+                                bIsVisualOnly: selectedActors.isNotEmpty,
                               ),
-                            ListMenuSimpleItem(
-                              iconPath: 'assets/images/icons/paste.svg',
-                              title: AppLocalizations.of(context)!.outlinerDuplicateSelected,
-                              onTap: () {
-                                _duplicateSelectedActors();
-                                Navigator.of(context).pop();
-                              },
                             ),
-                            ListMenuSimpleItem(
-                              iconPath: 'assets/images/icons/trash.svg',
-                              title: AppLocalizations.of(context)!.outlinerDeleteSelected,
-                              onTap: () {
-                                _deleteSelectedActors();
-                                Navigator.of(context).pop();
-                              },
+                            menuBuilder: (context, originTabBuilder) => DropDownListMenu(
+                              originTabBuilder: originTabBuilder,
+                              children: [
+                                if (bCanFocus)
+                                  ListMenuSimpleItem(
+                                    iconPath: 'packages/epic_common/assets/icons/focus.svg',
+                                    title: AppLocalizations.of(context)!.outlinerFocusSelected,
+                                    onTap: () {
+                                      _focusSelectedActor();
+                                      Navigator.of(context).pop();
+                                    },
+                                    bIsEnabled: bCanFocus,
+                                  ),
+                                ListMenuSimpleItem(
+                                  iconPath: 'packages/epic_common/assets/icons/paste.svg',
+                                  title: AppLocalizations.of(context)!.outlinerDuplicateSelected,
+                                  onTap: () {
+                                    _duplicateSelectedActors();
+                                    Navigator.of(context).pop();
+                                  },
+                                ),
+                                ListMenuSimpleItem(
+                                  iconPath: 'packages/epic_common/assets/icons/trash.svg',
+                                  title: AppLocalizations.of(context)!.outlinerDeleteSelected,
+                                  onTap: () {
+                                    _deleteSelectedActors();
+                                    Navigator.of(context).pop();
+                                  },
+                                ),
+                                if (bHasSingleTarget)
+                                  ListMenuSimpleItem(
+                                    iconPath: 'packages/epic_common/assets/icons/edit.svg',
+                                    title: AppLocalizations.of(context)!.outlinerRenameSelected,
+                                    onTap: () {
+                                      Navigator.of(context).pop();
+                                      _showRenameSelectedActorDialog();
+                                    },
+                                    bIsEnabled: selectedActors.length == 1,
+                                  ),
+                              ],
                             ),
-                            ListMenuSimpleItem(
-                              iconPath: 'assets/images/icons/edit.svg',
-                              title: AppLocalizations.of(context)!.outlinerRenameSelected,
-                              onTap: () {
-                                Navigator.of(context).pop();
-                                _renameSelectedActor();
-                              },
-                              bIsEnabled: selectedActors.length == 1,
-                            ),
-                          ],
-                        );
-                      },
-                    ),
+                          );
+                        },
+                      ),
+                    ],
                   ),
-                ],
-              ),
-            ),
+                ),
 
-            // List of actors or onboarding placeholder
-            Expanded(
-              child: _filteredActors.isNotEmpty
-                  ? ListView.builder(
-                      padding: cardListViewPadding,
-                      itemCount: _filteredActors.length,
-                      itemBuilder: (BuildContext context, int actorIndex) {
-                        final UnrealObject actor = _filteredActors[actorIndex];
+                // List of actors or onboarding placeholder
+                Expanded(
+                  child: _filteredActors.isNotEmpty
+                      ? ListView.builder(
+                          padding: UnrealTheme.cardListViewPadding,
+                          itemCount: _filteredActors.length,
+                          itemBuilder: (BuildContext context, int actorIndex) {
+                            final UnrealObject actor = _filteredActors[actorIndex];
 
-                        return _OutlinerPanelActor(
-                          key: Key(actor.path),
-                          actor: actor,
-                          focusActor: widget.focusActor,
-                          canFocusActor: widget.canFocusActor,
-                          visibilityStateCallback: (state) => setState(() => _bIsSelectedActorsVisible = state),
-                        );
-                      },
-                      controller: _actorListScrollController,
-                    )
-                  : EmptyPlaceholder(
-                      message: AppLocalizations.of(context)!.outlinerEmptyMessage,
-                      button: EpicWideButton(
-                        text: AppLocalizations.of(context)!.addActorButton,
-                        iconPath: 'assets/images/icons/plus.svg',
-                        iconColor: UnrealColors.highlightGreen,
-                        onPressed: () => DropDownListMenu.showAtWidget(
-                          widgetKey: Provider.of<StageAppMainScreenKeys>(context, listen: false).placeActorsButtonKey,
-                          builder: (context) => PlaceActorDropDownMenu(
-                            bIsFromLongPress: false,
+                            return _OutlinerPanelActor(
+                              key: Key(actor.path),
+                              actor: actor,
+                              focusActor: widget.focusActor,
+                              canFocusActor: widget.canFocusActor,
+                              visibilityStateCallback: (state) => setState(() => _bIsSelectedActorsVisible = state),
+                            );
+                          },
+                          controller: _actorListScrollController,
+                        )
+                      : EmptyPlaceholder(
+                          message: AppLocalizations.of(context)!.outlinerEmptyMessage,
+                          button: EpicWideButton(
+                            text: AppLocalizations.of(context)!.addActorButton,
+                            iconPath: 'packages/epic_common/assets/icons/plus.svg',
+                            iconColor: UnrealColors.highlightGreen,
+                            onPressed: () => DropDownListMenu.showAtWidget(
+                              context,
+                              widgetKey:
+                                  Provider.of<StageAppMainScreenKeys>(context, listen: false).placeActorsButtonKey,
+                              builder: (context) => PlaceActorDropDownMenu(
+                                bIsFromLongPress: false,
+                              ),
+                            ),
                           ),
                         ),
-                      ),
-                    ),
+                ),
+              ],
             ),
-          ]),
+          ),
         ),
       ),
     );
@@ -594,16 +594,26 @@ class _OutlinerPanelState extends State<OutlinerPanel> {
     }
   }
 
-  /// Rename the selected actor (if possible, and if only one is selected).
-  void _renameSelectedActor() {
+  /// Show a dialog to rename the selected actor (if possible, and if only one is selected).
+  void _showRenameSelectedActorDialog() {
     final UnrealObject? actor = _getSingleSelectedActor();
 
-    if (actor != null) {
-      GenericModalDialogRoute.showDialog(
-        context: context,
-        builder: (context) => _RenameActorDialog(actor: actor),
-      );
+    if (actor == null) {
+      return;
     }
+
+    GenericModalDialogRoute.showDialog(
+      context: context,
+      builder: (context) => StringTextInputModalDialog(
+        title: AppLocalizations.of(context)!.renameActorModalTitle,
+        initialValue: actor.name,
+        handleResult: (TextInputModalDialogResult<String> result) async {
+          if (result.action == TextInputModalDialogAction.apply) {
+            await _renameActor(context, actor.path, result.value!);
+          }
+        },
+      ),
+    );
   }
 
   /// Get the single selected actor, or null if there isn't one/multiple are selected.
@@ -707,14 +717,14 @@ class _OutlinerPanelActorState extends State<_OutlinerPanelActor> with GuardedRe
           backgroundPadding: const EdgeInsets.only(top: 2),
           onDeleted: () => _deleteActors(context, {widget.actor.path}),
           leftSwipeActionBuilder: (context, onFinished) => CardListTileSwipeAction(
-            iconPath: 'assets/images/icons/trash.svg',
+            iconPath: 'packages/epic_common/assets/icons/trash.svg',
             color: UnrealColors.highlightRed,
             onPressed: () => onFinished(bDeleteItem: true),
           ),
           rightSwipeActionBuilder: (context, onFinished) => CardListTileSwipeAction(
             iconPath: (_actorData?.bIsHiddenInGame == true)
-                ? 'assets/images/icons/hidden_in_game.svg'
-                : 'assets/images/icons/visible_in_game.svg',
+                ? 'packages/epic_common/assets/icons/hidden_in_game.svg'
+                : 'packages/epic_common/assets/icons/visible_in_game.svg',
             color: UnrealColors.gray22,
             onPressed: () {
               if (_actorData != null) {
@@ -801,7 +811,7 @@ class OutlinerToggleButton extends StatelessWidget {
       preference: mainScreenSettings.bIsOutlinerPanelOpen,
       builder: (BuildContext context, bool bIsOutlinerPanelOpen) {
         return EpicIconButton(
-          iconPath: 'assets/images/icons/outliner.svg',
+          iconPath: 'packages/epic_common/assets/icons/outliner.svg',
           tooltipMessage: AppLocalizations.of(context)!.outlinerTitle,
           bIsToggledOn: bIsOutlinerPanelOpen,
           onPressed: bEnabled
@@ -812,112 +822,6 @@ class OutlinerToggleButton extends StatelessWidget {
         );
       },
     );
-  }
-}
-
-/// Modal dialog to directly Rename actor.
-class _RenameActorDialog extends StatefulWidget {
-  const _RenameActorDialog({
-    Key? key,
-    required this.actor,
-  }) : super(key: key);
-
-  /// Selected actor to be renamed.
-  final UnrealObject actor;
-
-  @override
-  State<StatefulWidget> createState() => _RenameActorDialogState();
-}
-
-class _RenameActorDialogState extends State<_RenameActorDialog> {
-  /// Text controller for collecting desired name of actor.
-  final _textController = TextEditingController();
-
-  @override
-  void initState() {
-    super.initState();
-    _textController.text = widget.actor.name;
-    _textController.selection = TextSelection(baseOffset: 0, extentOffset: _textController.text.length);
-  }
-
-  @override
-  void dispose() {
-    _textController.dispose();
-
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    const double buttonWidth = 110;
-
-    return Form(
-      autovalidateMode: AutovalidateMode.onUserInteraction,
-      child: ModalDialogCard(
-        child: IntrinsicHeight(
-          child: IntrinsicWidth(
-            child: Column(
-              children: [
-                ModalDialogTitle(title: AppLocalizations.of(context)!.renameActorModalTitle),
-                ModalDialogSection(
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: SizedBox(
-                          height: 36,
-                          child: TextField(
-                            autofocus: true,
-                            maxLines: 1,
-                            cursorWidth: 1,
-                            controller: _textController,
-                            keyboardAppearance: Brightness.dark,
-                            style: Theme.of(context).textTheme.bodyMedium,
-                            decoration: InputDecoration(hintText: ''),
-                            onEditingComplete: _applyValue,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                ModalDialogSection(
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      EpicLozengeButton(
-                        label: AppLocalizations.of(context)!.menuButtonCancel,
-                        width: buttonWidth,
-                        color: Colors.transparent,
-                        onPressed: _closeModal,
-                      ),
-                      EpicLozengeButton(
-                        label: AppLocalizations.of(context)!.menuButtonOK,
-                        width: buttonWidth,
-                        onPressed: _applyValue,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// Close the modal.
-  void _closeModal() {
-    Navigator.of(context).pop();
-  }
-
-  /// Send a message to the engine requesting to rename a selected/specified actor [widget.actor] with
-  /// the value of [_textController.value.text].
-  void _applyValue() async {
-    if (_textController.value.text != '') {
-      await _renameActor(context, widget.actor.path, _textController.value.text);
-      _closeModal();
-    }
   }
 }
 
@@ -934,20 +838,30 @@ class _LightCardVisibilityToggleState extends State<LightCardVisibilityToggle> w
   /// Whether the button shows the visibility icon or the hidden icon.
   late bool bIsVisible;
 
+  late SelectedActorSettings selectedActorSettings;
+
   @override
   void initState() {
     bIsVisible = widget.bIsVisible;
+    selectedActorSettings = Provider.of<SelectedActorSettings>(context, listen: false);
     super.initState();
   }
 
   @override
   Widget build(BuildContext context) {
     bIsVisible = _getSelectedActorsVisibility(context);
-    return CardSubHeaderButton(
-      iconPath: bIsVisible ? 'assets/images/icons/visible_in_game.svg' : 'assets/images/icons/hidden_in_game.svg',
-      tooltipMessage: AppLocalizations.of(context)!.outlinerToggleVisibility,
-      bIsToggledOn: false,
-      onPressed: () => _toggleVisibility(),
+    return TransientPreferenceBuilder(
+      preference: selectedActorSettings.selectedActors,
+      builder: (BuildContext context, Set<String> selectedActors) {
+        return CardSubHeaderButton(
+          iconPath: bIsVisible
+              ? 'packages/epic_common/assets/icons/visible_in_game.svg'
+              : 'packages/epic_common/assets/icons/hidden_in_game.svg',
+          tooltipMessage: AppLocalizations.of(context)!.outlinerToggleVisibility,
+          bIsToggledOn: false,
+          onPressed: selectedActors.isEmpty ? null : () => _toggleVisibility(),
+        );
+      },
     );
   }
 

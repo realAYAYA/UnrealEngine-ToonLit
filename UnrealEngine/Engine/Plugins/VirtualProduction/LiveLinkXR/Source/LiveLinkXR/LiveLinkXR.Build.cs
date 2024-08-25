@@ -8,13 +8,6 @@ public class LiveLinkXR : ModuleRules
 	{
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 
-		PrivateIncludePaths.AddRange(
-			new string[]
-			{
-				"LiveLinkXROpenXRExt/Private",
-			}
-		);
-
 		PublicDependencyModuleNames.AddRange(
 			new string[]
 			{
@@ -29,10 +22,10 @@ public class LiveLinkXR : ModuleRules
 				"CoreUObject",
 				"Engine",
 				"HeadMountedDisplay",
+				"LiveLinkXROpenXRExt",
+				"OpenXRHMD",
 				"Slate",
 				"SlateCore",
-				"OpenXRHMD",
-				"LiveLinkXROpenXRExt",
 			}
 		);
 	}

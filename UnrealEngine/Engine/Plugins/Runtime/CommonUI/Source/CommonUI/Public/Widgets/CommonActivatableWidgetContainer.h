@@ -3,6 +3,7 @@
 #pragma once
 
 #include "Blueprint/UserWidgetPool.h"
+#include "Slate/SCommonAnimatedSwitcher.h"
 #include "CommonActivatableWidgetContainer.generated.h"
 
 class SCommonAnimatedSwitcher;
@@ -107,6 +108,13 @@ protected:
 	/** The total duration of a single transition between widgets */
 	UPROPERTY(EditAnywhere, Category = Transition)
 	float TransitionDuration = 0.4f;
+
+	/**
+	 * Controls how we will choose another widget if a transitioning widget is removed during the transition.
+	 * Note for Queues and Stacks, ECommonSwitcherTransitionFallbackStrategy::Previous is a good option.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Transition)
+	ECommonSwitcherTransitionFallbackStrategy TransitionFallbackStrategy = ECommonSwitcherTransitionFallbackStrategy::None;
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UCommonActivatableWidget>> WidgetList;

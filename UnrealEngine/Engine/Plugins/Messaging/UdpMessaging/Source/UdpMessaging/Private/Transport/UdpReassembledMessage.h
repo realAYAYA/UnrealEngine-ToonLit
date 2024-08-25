@@ -216,7 +216,7 @@ public:
 		else
 		{
 			Temp.Append(PendingAcknowledgments.GetData(), MaxAckNum);
-			PendingAcknowledgments.RemoveAt(0, MaxAckNum, false);
+			PendingAcknowledgments.RemoveAt(0, MaxAckNum, EAllowShrinking::No);
 		}
 		return Temp;
 	}
@@ -238,6 +238,18 @@ public:
 		bIsDelivered = true;
 	}
 
+
+	/**
+	 * Indicates if the first segment of the data is ready.
+	 **/
+	bool HasFirstSegment() const
+	{
+		if (PendingSegments.Num() > 0)
+		{
+			return PendingSegments[0] == false;
+		}
+		return false;
+	}
 
 	/**
 	 * Reassembles a segment into the specified message.
@@ -305,7 +317,18 @@ public:
 		return ReceivedBytes;
 	}
 
+	TWeakObjectPtr<UScriptStruct> GetMessageTypeInfo() const
+	{
+		return TypeInfo;
+	}
+
+	void SetMessageTypeInfo(TWeakObjectPtr<UScriptStruct> InTypeInfo)
+	{
+		TypeInfo = MoveTemp(InTypeInfo);
+	}
 private:
+	/** Holds the message's type information. */
+	TWeakObjectPtr<UScriptStruct> TypeInfo;
 
 	/** Holds the message protocol version. */
 	uint8 ProtocolVersion;

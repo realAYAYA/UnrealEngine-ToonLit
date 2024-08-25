@@ -189,7 +189,7 @@ void FSubSequencePath::PopGenerations(int32 NumGenerations)
 		}
 
 		// Remove children from the head of the array
-		PathToRoot.RemoveAt(0, NumGenerations, false);
+		PathToRoot.RemoveAt(0, NumGenerations, EAllowShrinking::No);
 	}
 }
 

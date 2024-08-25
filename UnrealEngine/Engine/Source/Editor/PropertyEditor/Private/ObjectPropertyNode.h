@@ -134,7 +134,7 @@ public:
 
 
 	/** Generates a single child from the provided property name.  Any existing children are destroyed */
-	TSharedPtr<FPropertyNode> GenerateSingleChild( FName ChildPropertyName );
+	virtual TSharedPtr<FPropertyNode> GenerateSingleChild( FName ChildPropertyName ) override;
 
 	/**
 	 * @return The hidden categories 

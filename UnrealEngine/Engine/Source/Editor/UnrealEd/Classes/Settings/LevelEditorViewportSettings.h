@@ -99,7 +99,7 @@ struct FLevelEditorViewportInstanceSettings
 		, BufferVisualizationMode()
 		, NaniteVisualizationMode()
 		, LumenVisualizationMode()
-		, StrataVisualizationMode()
+		, SubstrateVisualizationMode()
 		, GroomVisualizationMode()
 		, VirtualShadowMapVisualizationMode()
 		, GPUSkinCacheVisualizationMode()
@@ -111,6 +111,7 @@ struct FLevelEditorViewportInstanceSettings
 		// Show 'lighting needs to be rebuilt' message by default, avoids confusion when artists think lighting is built until they PIE
 		, bShowOnScreenStats(true)
 		, bShowFullToolbar(true)
+		, bAllowCinematicControl(true)
 	{ }
 
 	/** The viewport type */
@@ -151,9 +152,9 @@ struct FLevelEditorViewportInstanceSettings
 	UPROPERTY(config)
 	FName LumenVisualizationMode;
 
-	/** The Strata visualization mode for the viewport. */
+	/** The Substrate visualization mode for the viewport. */
 	UPROPERTY(config)
-	FName StrataVisualizationMode;
+	FName SubstrateVisualizationMode;
 
 	/** The Groom visualization mode for the viewport. */
 	UPROPERTY(config)
@@ -202,6 +203,10 @@ struct FLevelEditorViewportInstanceSettings
 	/** When enabled, the full viewport toolbar will be shown. When disabled, a compact toolbar is used. */
 	UPROPERTY(EditAnywhere, config, Category=LookAndFeel)
 	bool bShowFullToolbar;
+
+	/** Whether or not this viewport is allowed to be possessed by cinematic/scrubbing tools. */
+	UPROPERTY(config)
+	bool bAllowCinematicControl;
 };
 
 
@@ -315,6 +320,10 @@ class ULevelEditorViewportSettings
 	/** If true, viewport will show actor editor context (current level, current data layer(s), current folder) */
 	UPROPERTY(EditAnywhere, config, Category = LookAndFeel, meta=(AdvancedDisplay))
 	uint32 bShowActorEditorContext : 1;
+
+	/** If true, the Edit widget of a transform will display the axis */
+	UPROPERTY(EditAnywhere, config, Category=LookAndFeel, meta=( DisplayName = "Enable Axis drawing for transform Edit Widget" ))
+	uint32 bAllowEditWidgetAxisDisplay:1;
 
 	/** How fast the perspective camera moves when flying through the world. */
 	UPROPERTY(config, meta=(UIMin = "1", UIMax = "8", ClampMin="1", ClampMax="8"))

@@ -15,8 +15,17 @@ FWindowsPlatformFeaturesModule::FWindowsPlatformFeaturesModule()
 
 IVideoRecordingSystem* FWindowsPlatformFeaturesModule::GetVideoRecordingSystem()
 {
-	static FWindowsVideoRecordingSystem VideoRecordingSystem;
-	return &VideoRecordingSystem;
+	if (!VideoRecordingSystem)
+	{
+		VideoRecordingSystem = MakeShared<FWindowsVideoRecordingSystem>();
+	}
+	
+	return VideoRecordingSystem.Get();
+}
+
+void FWindowsPlatformFeaturesModule::RegisterVideoRecordingSystem(TSharedPtr<IVideoRecordingSystem> InVideoRecordingSystem)
+{
+	VideoRecordingSystem = InVideoRecordingSystem;
 }
 
 ISaveGameSystem* FWindowsPlatformFeaturesModule::GetSaveGameSystem()

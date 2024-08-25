@@ -25,8 +25,8 @@ FInstanceBounds GetTranslatedWorldAABBForInstance(uint GPUSceneInstanceIndex)
 {
 	FInstanceSceneData InstanceSceneData = GetInstanceSceneData(GPUSceneInstanceIndex, Scene.GPUScene.InstanceDataSOAStride);
 
-	const FLWCVector3 PreViewTranslation = MakeLWCVector3(-View.TLASViewTilePosition, View.TLASRelativePreViewTranslation);
-	const float4x4 LocalToTranslatedWorld = LWCMultiplyTranslation(InstanceSceneData.LocalToWorld, PreViewTranslation);	
+	const FDFVector3 PreViewTranslation = MakeDFVector3(View.TLASPreViewTranslationHigh, View.TLASPreViewTranslationLow);
+	const float4x4 LocalToTranslatedWorld = DFFastToTranslatedWorld(InstanceSceneData.LocalToWorld, PreViewTranslation);	
 
 	const float3 BoundingBoxCenter = InstanceSceneData.LocalBoundsCenter.xyz;
 	const float3 BoundingBoxExtent = InstanceSceneData.LocalBoundsExtent.xyz;

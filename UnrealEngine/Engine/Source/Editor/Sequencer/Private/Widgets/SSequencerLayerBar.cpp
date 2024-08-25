@@ -16,7 +16,6 @@
 #include "MVVM/ViewModels/ViewModel.h"
 #include "MVVM/Views/STrackAreaView.h"
 
-#include "CommonMovieSceneTools.h"
 #include "SequencerCommonHelpers.h"
 #include "MovieSceneTimeHelpers.h"
 #include "Sequencer.h"
@@ -255,6 +254,26 @@ void SSequencerLayerBar::Construct(const FArguments& InArgs, TWeakPtr<STrackArea
 	];
 }
 
+FVector2D SSequencerLayerBar::ComputeDesiredSize(float LayoutScale) const
+{
+	TViewModelPtr<FLinkedOutlinerExtension> LayerBar = WeakLayerBar.Pin();
+	TViewModelPtr<IOutlinerExtension>  OutlinerItem = LayerBar ? LayerBar->GetLinkedOutlinerItem() : nullptr;
+	TViewModelPtr<ITrackAreaExtension> TrackArea = OutlinerItem.ImplicitCast();
+
+	float Height = 0.f;
+
+	if (TrackArea && OutlinerItem)
+	{
+		FTrackAreaParameters Parameters = TrackArea->GetTrackAreaParameters();
+
+		Height = OutlinerItem->GetOutlinerSizing().GetTotalHeight();
+
+		Height -= Parameters.TrackLanePadding.Top + Parameters.TrackLanePadding.Bottom;
+	}
+
+	return FVector2D(100.f, Height);
+}
+
 TSharedPtr<FLayerBarModel> SSequencerLayerBar::GetLayerBarModel() const
 {
 	return WeakLayerBar.Pin();
@@ -297,11 +316,17 @@ int32 SSequencerLayerBar::OnPaint(const FPaintArgs& Args, const FGeometry& Allot
 	static const FSlateBrush* LayerBarBackgroundBrush = FAppStyle::Get().GetBrush("Sequencer.LayerBar.Background");
 	static const FSlateBrush* SelectedSectionOverlay  = FAppStyle::Get().GetBrush("Sequencer.Section.CollapsedSelectedSectionOverlay");
 
+	TViewModelPtr<FLinkedOutlinerExtension> LayerBar = WeakLayerBar.Pin();
+	TViewModelPtr<IOutlinerExtension>  OutlinerItem = LayerBar ? LayerBar->GetLinkedOutlinerItem() : nullptr;
+	float TotalNodeHeight = OutlinerItem ? OutlinerItem->GetOutlinerSizing().GetTotalHeight() : 0.0f;
 	// Draw the background
 	FSlateDrawElement::MakeBox(
 		OutDrawElements,
 		LayerId,
-		AllottedGeometry.ToPaintGeometry(),
+		AllottedGeometry.ToPaintGeometry(
+			FVector2f(AllottedGeometry.GetLocalSize().X, TotalNodeHeight),
+			FSlateLayoutTransform()
+		),
 		LayerBarBackgroundBrush,
 		DrawEffects
 	);
@@ -334,7 +359,7 @@ int32 SSequencerLayerBar::OnPaint(const FPaintArgs& Args, const FGeometry& Allot
 		FSlateDrawElement::MakeBox(
 			OutDrawElements,
 			LayerId,
-			AllottedGeometry.ToPaintGeometry(AllottedGeometry.GetLocalSize() - FVector2f(2.f,3.f), FSlateLayoutTransform(FVector2f(1.f, 1.f))),
+			AllottedGeometry.ToPaintGeometry(FVector2f(AllottedGeometry.GetLocalSize().X - 2.f, TotalNodeHeight-3.f), FSlateLayoutTransform(FVector2f(1.f, 1.f))),
 			SelectedSectionOverlay,
 			DrawEffects,
 			SelectionColor.CopyWithNewOpacity(0.8f)
@@ -342,7 +367,7 @@ int32 SSequencerLayerBar::OnPaint(const FPaintArgs& Args, const FGeometry& Allot
 		++LayerId;
 	}
 
-	return SCompoundWidget::OnPaint(Args, AllottedGeometry, MyCullingRect, OutDrawElements, LayerId, InWidgetStyle, bParentEnabled);
+	return SCompoundWidget::OnPaint(Args, AllottedGeometry.MakeChild(FVector2f(AllottedGeometry.GetLocalSize().X, TotalNodeHeight), FSlateLayoutTransform()), MyCullingRect, OutDrawElements, LayerId, InWidgetStyle, bParentEnabled);
 }
 
 FReply SSequencerLayerBar::OnMouseButtonDown(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)

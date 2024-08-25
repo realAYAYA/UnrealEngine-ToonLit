@@ -8,6 +8,7 @@
 
 class UWorld;
 class AActor;
+class UActorComponent;
 struct FScopedSlowTask;
 
 namespace UE
@@ -48,11 +49,14 @@ public:
 	FSceneCapturePhotoSet();
 
 	/**
-	 * Set the target World and set of Actors
+	 * Set the target World and set of Actors/Components
 	 * If World != this->World or Actors != this->Actors all existing photo sets are cleared
+	 * Note: The caller must ensure Actors does not contain nullptr
 	 */
 	void SetCaptureSceneActors(UWorld* World, const TArray<AActor*>& Actors);
-	TArray<AActor*> GetCaptureSceneActors();
+	void SetCaptureSceneComponents(UWorld* World, const TArray<UActorComponent*>& Components);
+	void SetCaptureSceneActorsAndComponents(UWorld* World, const TArray<AActor*>& Actors, const TArray<UActorComponent*>& Components);
+
 	UWorld* GetCaptureTargetWorld();
 
 	/**
@@ -111,33 +115,6 @@ public:
 	 * This function the does most of the work.
 	 */
 	void Compute();
-
-	/**
-	 * Add captures at the corners and face centers of the "view box",
-	 * ie the bounding box that contains the view sphere (see AddExteriorCaptures)
-	 */
-	UE_DEPRECATED(5.2, "AddStandardExteriorCapturesFromBoundingBox is deprecated, please use SetSpatialPhotoParams and Compute instead.")
-	void AddStandardExteriorCapturesFromBoundingBox(
-		FImageDimensions PhotoDimensions,
-		double HorizontalFOVDegrees,
-		double NearPlaneDist,
-		bool bFaces,
-		bool bUpperCorners,
-		bool bLowerCorners,
-		bool bUpperEdges,
-		bool bSideEdges);
-
-	/**
-	 * Add captures on the "view sphere", ie a sphere centered/sized such that the target actors
-	 * will be fully contained inside a square image rendered from locations on the sphere, where
-	 * the view direction is towards the sphere center. The Directions array defines the directions.
-	 */
-	UE_DEPRECATED(5.2, "AddExteriorCaptures is deprecated, please use SetSpatialPhotoParams and Compute instead.")
-	void AddExteriorCaptures(
-		FImageDimensions PhotoDimensions,
-		double HorizontalFOVDegrees,
-		double NearPlaneDist,
-		const TArray<FVector3d>& Directions);
 
 	/**
 	 * Post-process the various PhotoSets after capture, to reduce memory usage and sampling cost.
@@ -209,6 +186,36 @@ public:
 		const FVector2d& PhotoCoords,
 		const FSceneSample& DefaultSample) const;
 
+	/**
+	 * FSceneSamples stores samples corresponding to pixels in the DeviceDepth photoset where the values are strictly
+	 * within the viewing frustum, which corresponds to a camera ray intersecting an actor in VisibleActors. All non-null
+	 * containers with Computed capture status will be filled by GetSceneSamples() and will have the same .Num() counts
+	 */
+	struct FSceneSamples
+	{
+		// These are world-space point, normal or oriented point samples
+		// The points are computed from the DeviceDepth channel and normals from the WorldNormal channel
+		// Coordinate frames are located at the world points with Z axis aligned with world normals and arbitrary X/Y axes
+		TArray<FVector3f>* WorldPoint = nullptr;
+		TArray<FVector3f>* WorldNormal = nullptr;
+		TArray<FFrame3f>*  WorldOrientedPoints = nullptr;
+
+		// These are samples of the corresponding capture channels
+		TArray<float>* Metallic = nullptr;
+		TArray<float>* Roughness = nullptr;
+		TArray<float>* Specular = nullptr;
+		TArray<FVector3f>* PackedMRS = nullptr;
+		TArray<FVector3f>* Emissive = nullptr;
+		TArray<FVector3f>* BaseColor = nullptr;
+		TArray<FVector3f>* SubsurfaceColor = nullptr;
+		TArray<float>* Opacity = nullptr;
+	};
+
+	/**
+	 * Fills in the non-null arrays in OutSamples if the status of the needed captures is Computed
+	 */
+	void GetSceneSamples(FSceneSamples& OutSamples);
+
 	const FSpatialPhotoSet3f& GetBaseColorPhotoSet() { return BaseColorPhotoSet; }
 	const FSpatialPhotoSet1f& GetRoughnessPhotoSet() { return RoughnessPhotoSet; }
 	const FSpatialPhotoSet1f& GetSpecularPhotoSet() { return SpecularPhotoSet; }
@@ -248,6 +255,7 @@ public:
 protected:
 	UWorld* TargetWorld = nullptr;
 	TArray<AActor*> VisibleActors;
+	TArray<UActorComponent*> VisibleComponents;
 
 	bool bEnforceVisibilityViaUnregister = false;
 
@@ -267,9 +275,6 @@ protected:
 	TRenderCaptureTypeData<FRenderCaptureConfig> RenderCaptureConfig;
 
 	TArray<FSpatialPhotoParams> PhotoSetParams;
-
-	// This used to unproject the DeviceDepth render capture
-	TArray<FViewMatrices> PhotoViewMatricies;
 
 	bool bWriteDebugImages = false;
 	FString DebugImagesFolderName = TEXT("SceneCapturePhotoSet");
@@ -301,69 +306,73 @@ FVector4f FSceneCapturePhotoSet::ComputeSampleNearest(
 		return FVector4f(BaseColor, 1.f);
 	}
 
-	if constexpr (CaptureType == ERenderCaptureType::Roughness)
+	else if constexpr (CaptureType == ERenderCaptureType::Roughness)
 	{
 		float Roughness = RoughnessPhotoSet.ComputeSampleNearest(PhotoIndex, PhotoCoords, DefaultSample.Roughness);
 		return FVector4f(Roughness, Roughness, Roughness, 1.f);
 	}
 
-	if constexpr (CaptureType == ERenderCaptureType::Specular)
+	else if constexpr (CaptureType == ERenderCaptureType::Specular)
 	{
 		float Specular = SpecularPhotoSet.ComputeSampleNearest(PhotoIndex, PhotoCoords, DefaultSample.Specular);
 		return FVector4f(Specular, Specular, Specular, 1.f);
 	}
 
-	if constexpr (CaptureType == ERenderCaptureType::Metallic)
+	else if constexpr (CaptureType == ERenderCaptureType::Metallic)
 	{
 		float Metallic = MetallicPhotoSet.ComputeSampleNearest(PhotoIndex, PhotoCoords, DefaultSample.Metallic);
 		return FVector4f(Metallic, Metallic, Metallic, 1.f);
 	}
 
-	if constexpr (CaptureType == ERenderCaptureType::CombinedMRS)
+	else if constexpr (CaptureType == ERenderCaptureType::CombinedMRS)
 	{
 		FVector3f MRSValue(DefaultSample.Metallic, DefaultSample.Roughness, DefaultSample.Specular);
 		MRSValue = PackedMRSPhotoSet.ComputeSampleNearest(PhotoIndex, PhotoCoords, MRSValue);
 		return FVector4f(MRSValue, 1.f);
 	}
 
-	if constexpr (CaptureType == ERenderCaptureType::Emissive)
+	else if constexpr (CaptureType == ERenderCaptureType::Emissive)
 	{
 		FVector3f Emissive = EmissivePhotoSet.ComputeSampleNearest(PhotoIndex, PhotoCoords, DefaultSample.Emissive);
 		return FVector4f(Emissive, 1.f);
 	}
 
-	if constexpr (CaptureType == ERenderCaptureType::Opacity)
+	else if constexpr (CaptureType == ERenderCaptureType::Opacity)
 	{
 		float Opacity = OpacityPhotoSet.ComputeSampleNearest(PhotoIndex, PhotoCoords, DefaultSample.Opacity);
 		return FVector4f(Opacity, Opacity, Opacity, 1.f);
 	}
 
-	if constexpr (CaptureType == ERenderCaptureType::SubsurfaceColor)
+	else if constexpr (CaptureType == ERenderCaptureType::SubsurfaceColor)
 	{
 		FVector3f SubsurfaceColor = SubsurfaceColorPhotoSet.ComputeSampleNearest(PhotoIndex, PhotoCoords, DefaultSample.SubsurfaceColor);
 		return FVector4f(SubsurfaceColor, 1.f);
 	}
 
-	if constexpr (CaptureType == ERenderCaptureType::WorldNormal)
+	else if constexpr (CaptureType == ERenderCaptureType::WorldNormal)
 	{
 		FVector3f WorldNormal = WorldNormalPhotoSet.ComputeSampleNearest(PhotoIndex, PhotoCoords, DefaultSample.WorldNormal);
 		return FVector4f(WorldNormal, 1.f);
 	}
 
-	if constexpr (CaptureType == ERenderCaptureType::DeviceDepth)
+	else if constexpr (CaptureType == ERenderCaptureType::DeviceDepth)
 	{
 		float Depth = DeviceDepthPhotoSet.ComputeSampleNearest(PhotoIndex, PhotoCoords, DefaultSample.DeviceDepth);
 		return FVector4f(Depth, Depth, Depth, 1.f);
 	}
 
-	ensure(false);
-	return FVector4f::Zero();
+	else
+	{
+		ensure(false);
+		return FVector4f::Zero();
+	}
 }
 
 MODELINGCOMPONENTS_API
 TArray<FSpatialPhotoParams> ComputeStandardExteriorSpatialPhotoParameters(
-	UWorld* World,
+	UWorld* Unused,
 	const TArray<AActor*>& Actors,
+	const TArray<UActorComponent*>& Components,
 	FImageDimensions PhotoDimensions,
 	double HorizontalFOVDegrees,
 	double NearPlaneDist,

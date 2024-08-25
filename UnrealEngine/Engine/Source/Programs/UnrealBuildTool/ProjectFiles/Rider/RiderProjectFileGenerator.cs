@@ -475,6 +475,11 @@ namespace UnrealBuildTool
 				WriteProjectFiles(PlatformProjectGenerators, Logger);
 			}
 
+			// Generate all necessary .props files for C# projects
+			PrimaryProjectFolder ProgramsFolder = RootFolder.AddSubFolder("Programs");
+			AddRulesModules(Rules.RulesFileType.AutomationModule, "Automation", AutomationProjectFiles, AllGameProjects, RootFolder, ProgramsFolder, Logger);
+			AddRulesModules(Rules.RulesFileType.UbtPlugin, "UnrealBuildTool.Plugins", UbtPluginProjectFiles, AllGameProjects, RootFolder, ProgramsFolder, Logger);
+
 			Logger.LogDebug("Project generation complete ({NumGenerated} generated, {NumImported} imported)", GeneratedProjectFiles.Count,
 				OtherProjectFiles.Count);
 

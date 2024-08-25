@@ -388,7 +388,7 @@ struct FRHIResourceCreateInfo
 		ExtData = InExtData;
 	}
 
-	FName GetTraceClassName() const									{ const static FLazyName FRHIBufferName(TEXT("FRHIBuffer")); return ClassName == NAME_None ? FRHIBufferName : ClassName; }
+	FName GetTraceClassName() const									{ const static FLazyName FRHIBufferName(TEXT("FRHIBuffer")); return (ClassName == NAME_None) ? FRHIBufferName : ClassName; }
 
 	// for CreateTexture calls
 	FResourceBulkDataInterface* BulkData;
@@ -668,6 +668,7 @@ private:
 	{
 		return (Type)(Value & StencilMask);
 	}
+	friend uint32 GetTypeHash(const FExclusiveDepthStencil& Ds);
 };
 
 //
@@ -752,6 +753,12 @@ public:
 	#define RHI_INCLUDE_SHADER_DEBUG_DATA 0
 #endif
 
+#if RHI_INCLUDE_SHADER_DEBUG_DATA
+	#define RHI_IF_SHADER_DEBUG_DATA(...)	__VA_ARGS__
+#else
+	#define RHI_IF_SHADER_DEBUG_DATA(...)
+#endif
+
 class FRHIShader : public FRHIResource
 {
 public:
@@ -782,6 +789,9 @@ public:
 	}
 
 	TArray<FShaderCodeValidationStride> DebugStrideValidationData;
+	TArray<FShaderCodeValidationType> DebugSRVTypeValidationData;
+	TArray<FShaderCodeValidationType> DebugUAVTypeValidationData;
+	TArray<FShaderCodeValidationUBSize> DebugUBSizeValidationData;
 
 #else
 
@@ -794,6 +804,8 @@ public:
 	FRHIShader(ERHIResourceType InResourceType, EShaderFrequency InFrequency)
 		: FRHIResource(InResourceType)
 		, Frequency(InFrequency)
+		, bNoDerivativeOps(false)
+		, bHasShaderBundleUsage(false)
 	{
 	}
 
@@ -802,9 +814,31 @@ public:
 		return Frequency;
 	}
 
+	inline void SetNoDerivativeOps(bool bValue)
+	{
+		bNoDerivativeOps = bValue;
+	}
+
+	inline bool HasNoDerivativeOps() const
+	{
+		return bNoDerivativeOps;
+	}
+
+	inline void SetShaderBundleUsage(bool bValue)
+	{
+		bHasShaderBundleUsage = bValue;
+	}
+
+	inline bool HasShaderBundleUsage() const
+	{
+		return bHasShaderBundleUsage;
+	}
+
 private:
 	FSHAHash Hash;
 	EShaderFrequency Frequency;
+	uint8 bNoDerivativeOps : 1;
+	uint8 bHasShaderBundleUsage : 1;
 };
 
 class FRHIGraphicsShader : public FRHIShader
@@ -880,11 +914,14 @@ public:
 class FRHIComputeShader : public FRHIShader
 {
 public:
-	FRHIComputeShader() : FRHIShader(RRT_ComputeShader, SF_Compute), Stats(nullptr) {}
+	FRHIComputeShader() : FRHIShader(RRT_ComputeShader, SF_Compute)
+	, Stats(nullptr)
+	{
+	}
 	
 	inline void SetStats(struct FPipelineStateStats* Ptr) { Stats = Ptr; }
 	RHI_API void UpdateStats();
-	
+
 private:
 	struct FPipelineStateStats* Stats;
 };
@@ -910,6 +947,7 @@ private:
 	FExclusiveDepthStencil DSMode;
 #endif
 };
+
 class FRHIComputePipelineState : public FRHIResource
 {
 public:
@@ -921,6 +959,7 @@ public:
 private:
 	bool bIsValid = true;
 };
+
 class FRHIRayTracingPipelineState : public FRHIResource
 {
 public:
@@ -1030,6 +1069,9 @@ struct FRHIUniformBufferLayout : public FRHIResource
 
 	/** Used for platforms which use emulated ub's, forces a real uniform buffer instead */
 	const bool bNoEmulatedUniformBuffer;
+
+	/** This struct is a view into uniform buffer object, on platforms that support UBO */
+	const bool bUniformView;
 
 	/** Compare two uniform buffer layouts. */
 	friend inline bool operator==(const FRHIUniformBufferLayout& A, const FRHIUniformBufferLayout& B)
@@ -1621,7 +1663,7 @@ struct FRHITextureCreateDesc : public FRHITextureDesc
 	FRHITextureCreateDesc& SetFastVRAMPercentage(float In)                     { FastVRAMPercentage = uint8(FMath::Clamp(In, 0.f, 1.0f) * 0xFF); return *this; }
 	FRHITextureCreateDesc& SetClassName(const FName& InClassName)			   { ClassName = InClassName;				   return *this; }
 	FRHITextureCreateDesc& SetOwnerName(const FName& InOwnerName)			   { OwnerName = InOwnerName;                  return *this; }
-	FName GetTraceClassName() const											   { const static FLazyName FRHITextureName(TEXT("FRHITexture")); return ClassName == NAME_None ? FRHITextureName : ClassName; }
+	FName GetTraceClassName() const											   { const static FLazyName FRHITextureName(TEXT("FRHITexture")); return (ClassName == NAME_None) ? FRHITextureName : ClassName; }
 
 	/* The RHI access state that the resource will be created in. */
 	ERHIAccess InitialState = ERHIAccess::Unknown;
@@ -1995,33 +2037,6 @@ inline FRHIPooledRenderQuery::~FRHIPooledRenderQuery()
 	ReleaseQuery();
 }
 
-class FRHIComputeFence final : public FRHIResource
-{
-public:
-
-	FRHIComputeFence(FName InName)
-		: FRHIResource(RRT_ComputeFence)
-		, Name(InName)
-	{}
-
-	FORCEINLINE FName GetName() const
-	{
-		return Name;
-	}
-
-	FORCEINLINE bool GetWriteEnqueued() const
-	{
-		return Transition != nullptr;
-	}
-
-private:
-	//debug name of the label.
-	FName Name;
-
-public:
-	const FRHITransition* Transition = nullptr;
-};
-
 class FRHIViewport : public FRHIResource 
 {
 public:
@@ -2294,6 +2309,9 @@ struct FRHIViewDesc
 	{
 		FMemory::Memzero(*this);
 	}
+
+	static const TCHAR* GetBufferTypeString(EBufferType BufferType);
+	static const TCHAR* GetTextureDimensionString(EDimension Dimension);
 
 protected:
 	FRHIViewDesc(EViewType ViewType)
@@ -2763,7 +2781,7 @@ public:
 	bool IsTexture() const { return ViewDesc.IsTexture(); }
 
 #if ENABLE_RHI_VALIDATION
-	RHIValidation::FViewIdentity GetViewIdentity()
+	RHIValidation::FViewIdentity GetViewIdentity() const
 	{
 		return RHIValidation::FViewIdentity(Resource, ViewDesc);
 	}
@@ -2847,7 +2865,16 @@ class FRHIRayTracingGeometry;
 * All instances covered by this descriptor will share shader bindings, but may have different transforms and user data.
 */
 struct FRayTracingGeometryInstance
-{	
+{
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	FRayTracingGeometryInstance() = default;
+	FRayTracingGeometryInstance(const FRayTracingGeometryInstance&) = default;
+	FRayTracingGeometryInstance& operator=(const FRayTracingGeometryInstance&) = default;
+	FRayTracingGeometryInstance(FRayTracingGeometryInstance&&) = default;
+	FRayTracingGeometryInstance& operator=(FRayTracingGeometryInstance&&) = default;
+	~FRayTracingGeometryInstance() = default;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
 	FRHIRayTracingGeometry* GeometryRHI = nullptr;
 
 	// A single physical mesh may be duplicated many times in the scene with different transforms and user data.
@@ -2875,6 +2902,7 @@ struct FRayTracingGeometryInstance
 	TArrayView<const uint32> UserData;
 
 	// Each geometry copy can have one bit to make it individually deactivated (removed from TLAS while maintaining hit group indexing). Useful for culling.
+	UE_DEPRECATED(5.4, "ActivationMask has been deprecated.")
 	TArrayView<const uint32> ActivationMask;
 
 	// Whether local bounds scale and center translation should be applied to the instance transform.
@@ -3094,6 +3122,7 @@ public:
 
 	virtual FRayTracingAccelerationStructureAddress GetAccelerationStructureAddress(uint64 GPUIndex) const = 0;
 	virtual void SetInitializer(const FRayTracingGeometryInitializer& Initializer) = 0;
+	virtual bool IsCompressed() const { return false; }
 
 	const FRayTracingGeometryInitializer& GetInitializer() const
 	{
@@ -3124,6 +3153,22 @@ public:
 	}
 
 	virtual uint32 GetLayerBufferOffset(uint32 LayerIndex) const = 0;
+};
+
+class FRHIShaderBundle : public FRHIResource
+{
+public:
+	// Dispatch XYZ + Padding
+	static constexpr uint32 ArgumentByteStride = sizeof(uint32) * 4u;
+
+	const uint32 NumRecords = 0;
+
+public:
+	FRHIShaderBundle(uint32 InNumRecords)
+		: FRHIResource(RRT_ShaderBundle)
+		, NumRecords(InNumRecords)
+	{
+	}
 };
 
 /* Generic staging buffer class used by FRHIGPUMemoryReadback
@@ -3650,6 +3695,9 @@ enum class ESubpassHint : uint8
 
 	// Mobile defferred shading subpass
 	DeferredShadingSubpass,
+
+	// Mobile MSAA custom resolve subpass. Includes DepthReadSubpass.
+	CustomResolveSubpass,
 };
 
 enum class EConservativeRasterization : uint8
@@ -3710,6 +3758,7 @@ public:
 		, bDepthBounds(false)
 		, MultiViewCount(0)
 		, bHasFragmentDensityAttachment(false)
+		, bAllowVariableRateShading(false)
 		, ShadingRate(EVRSShadingRate::VRSSR_1x1)
 		, Flags(0)
 		, StatePrecachePSOHash(0)
@@ -3745,6 +3794,7 @@ public:
 		bool						bInDepthBounds,
 		uint8						InMultiViewCount,
 		bool						bInHasFragmentDensityAttachment,
+		bool						bInAllowVariableRateShading,
 		EVRSShadingRate				InShadingRate)
 		: BoundShaderState(InBoundShaderState)
 		, BlendState(InBlendState)
@@ -3769,6 +3819,7 @@ public:
 		, bDepthBounds(bInDepthBounds)
 		, MultiViewCount(InMultiViewCount)
 		, bHasFragmentDensityAttachment(bInHasFragmentDensityAttachment)
+		, bAllowVariableRateShading(bInAllowVariableRateShading)
 		, ShadingRate(InShadingRate)
 		, Flags(InFlags)
 		, StatePrecachePSOHash(0)
@@ -3791,6 +3842,7 @@ public:
 			bDepthBounds != rhs.bDepthBounds ||
 			MultiViewCount != rhs.MultiViewCount ||
 			ShadingRate != rhs.ShadingRate ||
+			bAllowVariableRateShading != rhs.bAllowVariableRateShading ||
 			bHasFragmentDensityAttachment != rhs.bHasFragmentDensityAttachment ||
 			RenderTargetsEnabled != rhs.RenderTargetsEnabled ||
 			RenderTargetFormats != rhs.RenderTargetFormats || 
@@ -3885,6 +3937,7 @@ public:
 	bool							bDepthBounds;
 	uint8							MultiViewCount;
 	bool							bHasFragmentDensityAttachment;
+	bool							bAllowVariableRateShading;
 	EVRSShadingRate					ShadingRate;
 	
 	// Note: these flags do NOT affect compilation of this PSO.
@@ -4227,7 +4280,7 @@ struct FRHIRenderPassInfo
 	// Color, no depth, optional resolve, optional mip, optional array slice
 	explicit FRHIRenderPassInfo(FRHITexture* ColorRT, ERenderTargetActions ColorAction, FRHITexture* ResolveRT = nullptr, uint8 InMipIndex = 0, int32 InArraySlice = -1)
 	{
-		check(!ResolveRT || ResolveRT->IsMultisampled());
+		check(!(ResolveRT && ResolveRT->IsMultisampled()));
 		check(ColorRT);
 		ColorRenderTargets[0].RenderTarget = ColorRT;
 		ColorRenderTargets[0].ResolveTarget = ResolveRT;
@@ -4723,9 +4776,9 @@ public:
 
 	// Sets the debug name of the RHI view resources.
 #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
-	RHI_API void SetDebugName(const TCHAR* DebugName);
+	RHI_API void SetDebugName(FRHICommandListBase& RHICmdList, const TCHAR* DebugName);
 #else
-	void SetDebugName(const TCHAR* DebugName) {}
+	void SetDebugName(FRHICommandListBase& RHICmdList, const TCHAR* DebugName) {}
 #endif
 
 private:
@@ -4749,9 +4802,9 @@ public:
 
 	// Sets the debug name of the RHI view resources.
 #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
-	RHI_API void SetDebugName(const TCHAR* DebugName);
+	RHI_API void SetDebugName(FRHICommandListBase& RHICmdList, const TCHAR* DebugName);
 #else
-	void SetDebugName(const TCHAR* DebugName) {}
+	void SetDebugName(FRHICommandListBase& RHICmdList, const TCHAR* DebugName) {}
 #endif
 
 private:

@@ -1,8 +1,5 @@
 ﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Perforce;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Data;
@@ -10,6 +7,9 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using EpicGames.Perforce;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 #nullable enable
 
@@ -55,7 +55,7 @@ namespace UnrealGameSync
 
 		private void UpdateListView()
 		{
-			if(WorkspaceListView.SelectedItems.Count > 0)
+			if (WorkspaceListView.SelectedItems.Count > 0)
 			{
 				_workspaceName = WorkspaceListView.SelectedItems[0].Text;
 			}
@@ -66,9 +66,9 @@ namespace UnrealGameSync
 
 			WorkspaceListView.Items.Clear();
 
-			foreach(ClientsRecord client in _clients.OrderBy(x => x.Name))
+			foreach (ClientsRecord client in _clients.OrderBy(x => x.Name))
 			{
-				if(!OnlyForThisComputer.Checked || String.Equals(client.Host, _info.ClientHost, StringComparison.OrdinalIgnoreCase))
+				if (!OnlyForThisComputer.Checked || String.Equals(client.Host, _info.ClientHost, StringComparison.OrdinalIgnoreCase))
 				{
 					ListViewItem item = new ListViewItem(client.Name);
 					item.SubItems.Add(new ListViewItem.ListViewSubItem(item, client.Host));
@@ -95,7 +95,7 @@ namespace UnrealGameSync
 			}
 
 			using SelectWorkspaceWindow selectWorkspace = new SelectWorkspaceWindow(task.Result.Info, task.Result.Clients, workspaceName);
-			if(selectWorkspace.ShowDialog(owner) == DialogResult.OK)
+			if (selectWorkspace.ShowDialog(owner) == DialogResult.OK)
 			{
 				newWorkspaceName = selectWorkspace._workspaceName;
 				return true;
@@ -119,7 +119,7 @@ namespace UnrealGameSync
 
 		private void OkBtn_Click(object sender, EventArgs e)
 		{
-			if(WorkspaceListView.SelectedItems.Count > 0)
+			if (WorkspaceListView.SelectedItems.Count > 0)
 			{
 				_workspaceName = WorkspaceListView.SelectedItems[0].Text;
 				DialogResult = DialogResult.OK;
@@ -135,7 +135,7 @@ namespace UnrealGameSync
 
 		private void WorkspaceListView_MouseDoubleClick(object sender, MouseEventArgs e)
 		{
-			if(WorkspaceListView.SelectedItems.Count > 0)
+			if (WorkspaceListView.SelectedItems.Count > 0)
 			{
 				_workspaceName = WorkspaceListView.SelectedItems[0].Text;
 				DialogResult = DialogResult.OK;

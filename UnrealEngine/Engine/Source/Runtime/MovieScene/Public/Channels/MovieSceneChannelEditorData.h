@@ -20,6 +20,7 @@ struct FMovieSceneRootEvaluationTemplateInstance;
 
 #if WITH_EDITOR
 
+DECLARE_DELEGATE_RetVal_ThreeParams(FText, FGetMovieSceneTooltipText, IMovieScenePlayer*, FGuid, FMovieSceneSequenceID);
 /**
  * Editor meta data for a channel of data within a movie scene section
  */
@@ -64,10 +65,25 @@ struct FMovieSceneChannelMetaData
 	uint32 SortOrder;
 	/** This channel's unique name */
 	FName Name;
+	/**
+	 * Path representation of a sub property relative to the class property (i.e. topmost property) but NOT including the topmost property itself.
+	 * E.g. for FWidgetTransform, a sub-property path for the first channel would be "Translation.X"
+	 */
+	FName SubPropertyPath;
+	/**
+	 * Path representation of a sub-property relative to a class property (i.e. topmost property) but NOT including the topmost property itself.
+	 * This should be used when a Channel can be used by multiple struct sources and happen to have different property names for these.
+	 * The prime example of this is FTransform vs FEulerTransform. FTransform uses "Translation" vs FEulerTransform uses "Location"
+	 */
+	TMap<FName, FName> SubPropertyPathMap;
 	/** Text to display on this channel's key area node */
 	FText DisplayText;
+	/** Delegate to get a dynamic tooltip for the key area node */
+	FGetMovieSceneTooltipText GetTooltipTextDelegate;
 	/** Name to group this channel with others of the same group name */
 	FText Group;
+	/** Delegate to get a dynamic tooltip for the group */
+	FGetMovieSceneTooltipText GetGroupTooltipTextDelegate;
 	/** Intent name */
 	FText IntentName;
 	/* Optional. If unspecified IKeyArea::CreateCurveEditorModel will create a fallback. */
@@ -142,6 +158,9 @@ struct FCommonChannelData
 	static MOVIESCENE_API const FLinearColor RedChannelColor;
 	static MOVIESCENE_API const FLinearColor GreenChannelColor;
 	static MOVIESCENE_API const FLinearColor BlueChannelColor;
+
+	static MOVIESCENE_API const FName TooltipText;
+	static MOVIESCENE_API const FName GroupDisplayName;
 };
 
 

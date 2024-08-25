@@ -23,10 +23,6 @@
 
 namespace dna {
 
-// Note: JSONStreamReader::status hasn't been initialized deliberately, as it uses the same error codes that were
-// already registered in BinaryStreamReader, and since they are all registered in a single, global error code registry,
-// this would trigger an assert there.
-
 JSONStreamReader::~JSONStreamReader() = default;
 
 JSONStreamReader* JSONStreamReader::create(BoundedIOStream* stream, MemoryResource* memRes) {

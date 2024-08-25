@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "DetailsDisplayManager.h"
 #include "Widgets/SCompoundWidget.h"
 #include "PropertyEditorDelegates.h"
 #include "Framework/Commands/UICommandList.h"
@@ -220,7 +221,12 @@ public:
 	 * Creates a box around the treenode corresponding to Property and scrolls the treenode into view
 	 */
 	virtual void HighlightProperty(const FPropertyPath& Property) = 0;
-	
+
+	/**
+	 * Scrolls the treenode for the specific property into view
+	 */
+	virtual void ScrollPropertyIntoView(const FPropertyPath& Property, bool bExpandProperty = false) = 0;
+
 	/**
 	 * Forces all advanced property sections to be in expanded state:
 	 */
@@ -291,4 +297,20 @@ public:
 
 	/** Sets the minimum width of the detail panel's right column. */
 	virtual void SetRightColumnMinWidth(float InMinWidth) = 0;
+
+	/**
+	* Updates @code FDetailsViewStyleKey& StyleKey @endcode for the current IDetailsView state
+	*/
+	virtual void UpdateStyleKey() = 0;
+
+	/**
+	* Gets the @code FDetailsViewStyleKey& @endcode which provides a Key to the current style for a Details View
+	*/
+	virtual const FDetailsViewStyleKey& GetStyleKey() = 0;
+	
+	/**
+   	* Returns a bool indicating whether the given @code FDetailsViewStyleKey @endcode is the default Details View Style 
+   	*/
+   	virtual bool IsDefaultStyle() const = 0;
+
 };

@@ -6,13 +6,17 @@
 
 #pragma once
 
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "CoreMinimal.h"
+#endif // UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
+#include "Math/Vector.h"
 #include "Stats/Stats.h"
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "Engine/EngineTypes.h"
-#endif
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "Engine/HitResult.h"
+#endif // UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "EngineDefines.h"
+
+struct FHitResult;
 
 /**
  * Collision stats
@@ -80,31 +84,6 @@ public:
 		bHit = (PolyVertices.Num() == 3) ? FindSeparatingAxisTriangle() : FindSeparatingAxisGeneric();
 	}
 
-	/**
-	 *	Legacy constructor for the class (deprecated)
-	 */
-	FSeparatingAxisPointCheck(
-		const FVector& InV0,
-		const FVector& InV1,
-		const FVector& InV2,
-		const FVector& InBoxCenter,
-		const FVector& InBoxExtent,
-		float InBestDist
-		)
-		: HitNormal(FVector::ZeroVector),
-		  BestDist(InBestDist),
-		  PolyVertices(TriangleVertices),
-		  BoxCenter(InBoxCenter),
-		  BoxExtent(InBoxExtent),
-		  bCalcLeastPenetration(true)
-	{
-		TriangleVertices.Empty(3);
-		TriangleVertices[0] = InV0;
-		TriangleVertices[1] = InV1;
-		TriangleVertices[2] = InV2;
-		bHit = FindSeparatingAxisTriangle();
-	}
-
 private:
 
 	/**
@@ -161,9 +140,6 @@ private:
 
 	/** Flag specifying whether the least penetration should be calculated. */
 	bool bCalcLeastPenetration;
-
-	/** Array into which triangle vertices are placed (legacy use only) */
-	static ENGINE_API TArray<FVector> TriangleVertices;
 };
 
 /**
@@ -171,44 +147,5 @@ private:
  *	Algorithm based on "Fast, Minimum Storage Ray/Triangle Intersection"
  *	Returns true if the line segment does hit the triangle
  */
-FORCEINLINE bool LineCheckWithTriangle(FHitResult& Result,const FVector& V1,const FVector& V2,const FVector& V3,const FVector& Start,const FVector& End,const FVector& Direction)
-{
-	FVector	Edge1 = V3 - V1,
-		Edge2 = V2 - V1,
-		P = Direction ^ Edge2;
-	FVector::FReal	Determinant = Edge1 | P;
-
-	if(Determinant < UE_DELTA)
-	{
-		return false;
-	}
-
-	FVector	T = Start - V1;
-	FVector::FReal	U = T | P;
-
-	if(U < 0.0f || U > Determinant)
-	{
-		return false;
-	}
-
-	FVector	Q = T ^ Edge1;
-	FVector::FReal	V = Direction | Q;
-
-	if(V < 0.0f || U + V > Determinant)
-	{
-		return false;
-	}
-
-	FVector::FReal	Time = (Edge2 | Q) / Determinant;
-
-	if(Time < 0.0f || Time > Result.Time)
-	{
-		return false;
-	}
-
-	Result.Normal = ((V3-V2)^(V2-V1)).GetSafeNormal();
-	Result.Time = static_cast<float>(((V1 - Start)|Result.Normal) / (Result.Normal|Direction));							// LWC_TODO: precision loss. Make FHitResult::Time/Distance doubles?
-
-	return true;
-}
+ENGINE_API bool LineCheckWithTriangle(FHitResult& Result,const FVector& V1,const FVector& V2,const FVector& V3,const FVector& Start,const FVector& End,const FVector& Direction);
 

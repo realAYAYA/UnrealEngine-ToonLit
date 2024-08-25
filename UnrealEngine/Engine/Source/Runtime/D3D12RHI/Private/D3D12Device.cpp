@@ -3,12 +3,20 @@
 #include "D3D12RHIPrivate.h"
 #include "D3D12IntelExtensions.h"
 #include "D3D12RayTracing.h"
+#include "D3D12ExplicitDescriptorCache.h"
 
 static TAutoConsoleVariable<int32> CVarD3D12GPUTimeout(
 	TEXT("r.D3D12.GPUTimeout"),
 	1,
 	TEXT("0: Disable GPU Timeout; use with care as it could freeze your PC!\n")
 	TEXT("1: Enable GPU Timeout; operation taking long on the GPU will fail(default)\n"),
+	ECVF_ReadOnly
+);
+
+static TAutoConsoleVariable<int32> CVarD3D12ExtraDiagnosticBufferMemory(
+	TEXT("r.D3D12.DiagnosticBufferExtraMemory"),
+	0,
+	TEXT("Extra allocated memory for diagnostic buffer"),
 	ECVF_ReadOnly
 );
 
@@ -28,6 +36,7 @@ FD3D12Queue::FD3D12Queue(FD3D12Device* Device, ED3D12QueueType QueueType)
 	: Device(Device)
 	, QueueType(QueueType)
 	, BarrierTimestamps(Device, QueueType, D3D12_QUERY_TYPE_TIMESTAMP)
+	, bSupportsTileMapping(FD3D12DynamicRHI::GetD3DRHI()->QueueSupportsTileMapping(QueueType))
 {
 	FD3D12Adapter* Adapter = Device->GetParentAdapter();
 	const bool bFullGPUCrashDebugging = (Adapter->GetGPUCrashDebuggingModes() == ED3D12GPUCrashDebuggingModes::All);
@@ -61,7 +70,7 @@ void FD3D12Queue::SetupAfterDeviceCreation()
 		HRESULT hr = Device->GetDevice()->QueryInterface(IID_PPV_ARGS(D3D12Device3.GetInitReference()));
 		if (SUCCEEDED(hr))
 		{
-			const uint32 ShaderDiagnosticBufferSize = sizeof(FD3D12DiagnosticBufferData);
+			const uint32 ShaderDiagnosticBufferSize = sizeof(FD3D12DiagnosticBufferData) + FMath::Max(0, CVarD3D12ExtraDiagnosticBufferMemory.GetValueOnAnyThread());
 
 			// Allocate persistent CPU readable memory which will still be valid after a device lost and wrap this data in a placed resource
 			// so the GPU command list can write to it
@@ -132,6 +141,18 @@ FD3D12Device::FD3D12Device(FRHIGPUMask InGPUMask, FD3D12Adapter* InAdapter)
 	{
 		Queues.Emplace(this, (ED3D12QueueType)QueueType);
 	}
+
+	// Some hardware is not capable of running tile mapping operations on all queue types.
+	// Direct queue is used as a fallback if tile updates are requested on unsupported queue.
+	TileMappingQueue = Queues[size_t(ED3D12QueueType::Direct)].D3DCommandQueue;
+	VERIFYD3D12RESULT(GetDevice()->CreateFence(
+		0,
+		D3D12_FENCE_FLAG_NONE,
+		IID_PPV_ARGS(TileMappingFence.D3DFence.GetInitReference())
+	));
+#if NAME_OBJECTS
+	TileMappingFence.D3DFence->SetName(TEXT("TileMappingFence"));
+#endif
 }
 
 FD3D12Device::~FD3D12Device()
@@ -139,9 +160,9 @@ FD3D12Device::~FD3D12Device()
 #if D3D12_RHI_RAYTRACING
 	delete RayTracingCompactionRequestHandler;
 	RayTracingCompactionRequestHandler = nullptr;
-
-	DestroyRayTracingDescriptorCache(); // #dxr_todo UE-72158: unify RT descriptor cache with main FD3D12DescriptorCache
 #endif
+
+	DestroyExplicitDescriptorCache(); // #dxr_todo UE-72158: unify RT descriptor cache with main FD3D12DescriptorCache
 
 	// Cleanup the allocator near the end, as some resources may be returned to the allocator or references are shared by multiple GPUs
 	DefaultBufferAllocator.FreeDefaultBufferPools();
@@ -379,9 +400,11 @@ void FD3D12Device::SetupAfterDeviceCreation()
 		GlobalSamplerHeap.Init(GGlobalSamplerHeapSize);
 	}
 
-	if (!bFullyBindlessResources)
 	{
-		OnlineDescriptorManager.Init(GOnlineDescriptorHeapSize, GOnlineDescriptorHeapBlockSize);
+		const uint32 HeapSize = bFullyBindlessResources ? GBindlessOnlineDescriptorHeapSize : GOnlineDescriptorHeapSize;
+		const uint32 BlockSize = bFullyBindlessResources ? GBindlessOnlineDescriptorHeapBlockSize : GOnlineDescriptorHeapBlockSize;
+
+		OnlineDescriptorManager.Init(HeapSize, BlockSize, bFullyBindlessResources);
 	}
 
 	// Make sure we create the default views before the first command context
@@ -406,6 +429,23 @@ void FD3D12Device::SetupAfterDeviceCreation()
 
 	check(!ImmediateCommandContext);
 	ImmediateCommandContext = FD3D12DynamicRHI::GetD3DRHI()->CreateCommandContext(this, ED3D12QueueType::Direct, true);
+}
+
+void FD3D12Device::CleanupResources()
+{
+	for (FD3D12OfflineDescriptorManager& Manager : OfflineDescriptorManagers)
+	{
+		Manager.CleanupResources();
+	}
+	OnlineDescriptorManager.CleanupResources();
+
+#if PLATFORM_SUPPORTS_BINDLESS_RENDERING
+	BindlessDescriptorManager.CleanupResources();
+#endif
+
+#if D3D12_RHI_RAYTRACING
+	CleanupRayTracing();
+#endif
 }
 
 void FD3D12Device::CreateDefaultViews()
@@ -770,3 +810,18 @@ FGPUTimingCalibrationTimestamp FD3D12Device::GetCalibrationTimestamp(ED3D12Queue
 
 	return Result;
 }
+
+void FD3D12Device::InitExplicitDescriptorHeap()
+{
+	check(ExplicitDescriptorHeapCache == nullptr);
+	ExplicitDescriptorHeapCache = new FD3D12ExplicitDescriptorHeapCache(this);
+
+	// Note: ExplicitDescriptorHeapCache is destroyed in ~FD3D12Device, after all deferred deletion is processed
+}
+
+void FD3D12Device::DestroyExplicitDescriptorCache()
+{
+	delete ExplicitDescriptorHeapCache;
+	ExplicitDescriptorHeapCache = nullptr;
+}
+

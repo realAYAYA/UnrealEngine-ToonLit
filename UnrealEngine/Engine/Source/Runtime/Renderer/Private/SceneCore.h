@@ -167,6 +167,8 @@ public:
 	float VolumetricFogDistance;
 	float VolumetricFogStaticLightingScatteringIntensity;
 	bool bOverrideLightColorsWithFogInscatteringColors;
+	bool bHoldout;
+	bool bRenderInMainPass;
 	float VolumetricFogStartDistance;
 	float VolumetricFogNearFadeInDistance;
 

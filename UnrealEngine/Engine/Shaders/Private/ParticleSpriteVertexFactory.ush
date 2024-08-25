@@ -97,8 +97,8 @@ struct FVertexFactoryInterpolantsVSToPS
 
 struct FVertexFactoryIntermediates
 {
-	/** The position of the particle in non-translated world space. */
-	FLWCVector3 ParticleWorldPosition;
+	/** The position of the particle in translated world space. */
+	float3 ParticleTranslatedWorldPosition;
 	/** The position of the vertex in translated world space. */
 	float3 VertexWorldPosition;
 	/** Particle translated world space position and size. */
@@ -220,6 +220,7 @@ FMaterialPixelParameters GetMaterialPixelParameters(FVertexFactoryInterpolantsVS
 
 #if USE_PARTICLE_POSITION
 	Result.Particle.TranslatedWorldPositionAndSize = Interpolants.ParticleTranslatedWorldPositionAndSize;
+	Result.Particle.PrevTranslatedWorldPositionAndSize = Result.Particle.TranslatedWorldPositionAndSize;
 #endif
 
 #if USE_PARTICLE_VELOCITY
@@ -283,6 +284,7 @@ FMaterialVertexParameters GetMaterialVertexParameters(FVertexFactoryInput Input,
 
 #if USE_PARTICLE_POSITION
 	Result.Particle.TranslatedWorldPositionAndSize = Intermediates.TranslatedWorldPositionAndSize;
+	Result.Particle.PrevTranslatedWorldPositionAndSize = Result.Particle.TranslatedWorldPositionAndSize;
 #endif
 
 #if USE_PARTICLE_VELOCITY
@@ -321,6 +323,11 @@ FMaterialVertexParameters GetMaterialVertexParameters(FVertexFactoryInput Input,
 	Result.Particle.SpriteRotation = Intermediates.ParticleSpriteRotation;
 #endif
 
+#if ENABLE_NEW_HLSL_GENERATOR
+	EvaluateVertexMaterialAttributes(Result);
+#endif
+	Result.LWCData = MakeMaterialLWCData(Result);
+
 	return Result;
 }
 
@@ -329,7 +336,7 @@ float3 SafeNormalize(float3 V)
 	return V * rsqrt(max(dot(V,V),0.00000001));
 }
 
-void GetTangents(FLWCVector3 WorldPosition, FLWCVector3 OldWorldPosition, float SpriteRotation, out float3 OutRight, out float3 OutUp)
+void GetTangents(float3 TranslatedWorldPosition, float3 OldTranslatedWorldPosition, float SpriteRotation, out float3 OutRight, out float3 OutUp)
 {
 	// Select camera up/right vectors.
 	float3 ResolvedViewRight = lerp(ResolvedView.ViewRight, ResolvedView.HMDViewNoRollRight, SpriteVF.RemoveHMDRoll);
@@ -339,7 +346,7 @@ void GetTangents(FLWCVector3 WorldPosition, FLWCVector3 OldWorldPosition, float 
 	float3 CameraUp = lerp(-ResolvedViewUp, SpriteVF.AxisLockUp.xyz, SpriteVF.AxisLockUp.w);
 
 	// Determine the vector from the particle to the camera and the particle's movement direction.
-	float3 CameraDirection	= SafeNormalize(LWCToFloat(LWCSubtract(ResolvedView.WorldCameraOrigin, WorldPosition)));
+	float3 CameraDirection = SafeNormalize(ResolvedView.TranslatedWorldCameraOrigin - TranslatedWorldPosition);
 	float3 RightVector = CameraRight.xyz;
 	float3 UpVector = CameraUp.xyz;
 
@@ -349,7 +356,7 @@ void GetTangents(FLWCVector3 WorldPosition, FLWCVector3 OldWorldPosition, float 
 	if (SpriteVF.CameraFacingBlend.x > 0.f)
 	{
 		// Blend between PSA_FacingCamera and PSA_Square over distance
-		float3 CameraVector = LWCToFloat(LWCSubtract(ResolvedView.WorldCameraOrigin, WorldPosition));
+		float3 CameraVector = ResolvedView.TranslatedWorldCameraOrigin - TranslatedWorldPosition;
 		float CameraDistanceSq = dot(CameraVector, CameraVector);
 		float AlignmentMode = saturate(CameraDistanceSq * SpriteVF.CameraFacingBlend.y - SpriteVF.CameraFacingBlend.z);
 
@@ -365,7 +372,7 @@ void GetTangents(FLWCVector3 WorldPosition, FLWCVector3 OldWorldPosition, float 
 		if (LocalTangentSelector.y > 0)
 		{
 			// Tangent vectors for PSA_Velocity.
-			float3 ParticleDirection = SafeNormalize(LWCToFloat(LWCSubtract(WorldPosition, OldWorldPosition)));
+			float3 ParticleDirection = SafeNormalize(TranslatedWorldPosition - OldTranslatedWorldPosition);
 			RightVector	= SafeNormalize(cross(CameraDirection, ParticleDirection));
 			UpVector = -ParticleDirection;
 		}
@@ -404,6 +411,8 @@ float3x3 CalcTangentBasis(FVertexFactoryIntermediates Intermediates)
 	Result[0] = Intermediates.TangentRight;
 	Result[1] = Intermediates.TangentUp;
 
+	float3 ParticleWorldPosition = Intermediates.ParticleTranslatedWorldPosition + DFHackToFloat(ResolvedView.PreViewTranslation);
+
 	// ENM_CameraFacing
 	//@todo - use static branching
 	if (SpriteVF.NormalsType < .5f)
@@ -413,14 +422,14 @@ float3x3 CalcTangentBasis(FVertexFactoryIntermediates Intermediates)
 	// ENM_Spherical
 	else if (SpriteVF.NormalsType < 1.5f)
 	{
-		float3 TangentZ = normalize(LWCHackToFloat(Intermediates.ParticleWorldPosition) - SpriteVF.NormalsSphereCenter.xyz);
+		float3 TangentZ = normalize(ParticleWorldPosition - SpriteVF.NormalsSphereCenter.xyz);
 		Result[2] = TangentZ;	
 	}
 	// ENM_Cylindrical
 	else
 	{
-		float3 ClosestPointOnCylinder = SpriteVF.NormalsSphereCenter.xyz + dot(SpriteVF.NormalsCylinderUnitDirection.xyz, LWCHackToFloat(Intermediates.ParticleWorldPosition) - SpriteVF.NormalsSphereCenter.xyz) * SpriteVF.NormalsCylinderUnitDirection.xyz;
-		float3 TangentZ = normalize(LWCHackToFloat(Intermediates.ParticleWorldPosition) - ClosestPointOnCylinder);
+		float3 ClosestPointOnCylinder = SpriteVF.NormalsSphereCenter.xyz + dot(SpriteVF.NormalsCylinderUnitDirection.xyz, ParticleWorldPosition - SpriteVF.NormalsSphereCenter.xyz) * SpriteVF.NormalsCylinderUnitDirection.xyz;
+		float3 TangentZ = normalize(ParticleWorldPosition - ClosestPointOnCylinder);
 		Result[2] = TangentZ;	
 	}
 
@@ -483,6 +492,7 @@ void ComputeBillboardUVs(FVertexFactoryInput Input, out float2 UVForPosition, ou
 	}
 }
 
+
 FVertexFactoryIntermediates GetVertexFactoryIntermediates(FVertexFactoryInput Input)
 {
 	FVertexFactoryIntermediates Intermediates = (FVertexFactoryIntermediates)0;
@@ -490,15 +500,19 @@ FVertexFactoryIntermediates GetVertexFactoryIntermediates(FVertexFactoryInput In
 
 	// World position.
 	FLWCVector3 LWCTileOffset = MakeLWCVector3(SpriteVF.LWCTile, 0);
-	FLWCVector3 ParticleWorldPosition = LWCAdd(LWCMultiply(Input.Position.xyz, GetPrimitiveDataFromUniformBuffer().LocalToWorld), LWCTileOffset);
-	FLWCVector3 ParticleOldWorldPosition = LWCAdd(LWCMultiply(Input.OldPosition.xyz, GetPrimitiveDataFromUniformBuffer().LocalToWorld), LWCTileOffset);
-	Intermediates.ParticleWorldPosition = ParticleWorldPosition;
+	FLWCMatrix Transform = DFToTileOffset(GetPrimitiveDataFromUniformBuffer().LocalToWorld);
+	FLWCVector3 ParticleWorldPosition = LWCAdd(LWCMultiply(Input.Position.xyz, Transform), LWCTileOffset);
+	FLWCVector3 ParticleOldWorldPosition = LWCAdd(LWCMultiply(Input.OldPosition.xyz, Transform), LWCTileOffset);
+	float3 ParticleTranslatedWorldPosition = LWCToFloat(LWCAdd(ParticleWorldPosition, ResolvedView.TileOffset.PreViewTranslation));
+	float3 ParticleOldTranslatedWorldPosition = LWCToFloat(LWCAdd(ParticleOldWorldPosition, ResolvedView.TileOffset.PreViewTranslation));
+
+	Intermediates.ParticleTranslatedWorldPosition = ParticleTranslatedWorldPosition;
 
 	const float SpriteRotation = Input.SizeRotSubImage.z * SpriteVF.RotationScale + SpriteVF.RotationBias;
 
 	// Tangents.
 	float3 Right,Up;
-	GetTangents(ParticleWorldPosition, ParticleOldWorldPosition, SpriteRotation, Right, Up);
+	GetTangents(ParticleTranslatedWorldPosition, ParticleOldTranslatedWorldPosition, SpriteRotation, Right, Up);
 	Intermediates.TangentUp = Up;
 	Intermediates.TangentRight = Right;
 
@@ -508,7 +522,7 @@ FVertexFactoryIntermediates GetVertexFactoryIntermediates(FVertexFactoryInput In
 	ComputeBillboardUVs(Input, UVForPosition, UVForTexturing, UVForTexturingUnflipped);
 
 	// Vertex position.
-	float4 VertexWorldPosition = float4(LWCToFloat(LWCAdd(ParticleWorldPosition, ResolvedView.PreViewTranslation)), 1);
+	float4 VertexWorldPosition = float4(ParticleTranslatedWorldPosition, 1);
 	float2 Size = abs(Input.SizeRotSubImage.xy);
 	VertexWorldPosition += Size.x * (UVForPosition.x + SpriteVF.PivotOffset.x) * float4(Right,0);
 	VertexWorldPosition += Size.y * (UVForPosition.y + SpriteVF.PivotOffset.y) * float4(Up,0);
@@ -542,7 +556,6 @@ FVertexFactoryIntermediates GetVertexFactoryIntermediates(FVertexFactoryInput In
 
 #if USE_PARTICLE_POSITION
 	float ParticleRadius = .5f * min(Input.SizeRotSubImage.x, Input.SizeRotSubImage.y);
-	float3 ParticleTranslatedWorldPosition = LWCToFloat(LWCAdd(ParticleWorldPosition, ResolvedView.PreViewTranslation));
 	Intermediates.TranslatedWorldPositionAndSize = float4(ParticleTranslatedWorldPosition, ParticleRadius);
 
 #if GENERATE_SPHERICAL_PARTICLE_NORMALS
@@ -555,7 +568,7 @@ FVertexFactoryIntermediates GetVertexFactoryIntermediates(FVertexFactoryInput In
 	if (SpriteVF.UseVelocityForMotionBlur > 0.0f)
 #endif
 	{
-		Intermediates.ParticlePrevToCurrDelta = LWCToFloat(LWCSubtract(ParticleWorldPosition, ParticleOldWorldPosition));
+		Intermediates.ParticlePrevToCurrDelta = ParticleTranslatedWorldPosition - ParticleOldTranslatedWorldPosition;
 	#if USE_PARTICLE_VELOCITY
 		float3 ParticleVelocity = Intermediates.ParticlePrevToCurrDelta * SpriteVF.InvDeltaSeconds;
 		Intermediates.ParticleVelocity.xyz = normalize(ParticleVelocity);
@@ -614,7 +627,7 @@ float3 VertexFactoryGetPositionForVertexLighting(FVertexFactoryInput Input, FVer
 {
 #if SUPPORTS_PARTICLE_CUTOUTS && (TRANSLUCENCY_LIGHTING_VOLUMETRIC_PERVERTEX_DIRECTIONAL || TRANSLUCENCY_LIGHTING_VOLUMETRIC_PERVERTEX_NONDIRECTIONAL)
 	// Do per-vertex lighting with particle position instead of vertex position when we're using SubUV cutouts, since the vertex positions vary per-frame which would cause popping
-	return NumCutoutVerticesPerFrame > 0 ? LWCToFloat(LWCAdd(Intermediates.ParticleWorldPosition, ResolvedView.PreViewTranslation)) : TranslatedWorldPosition;
+	return NumCutoutVerticesPerFrame > 0 ? Intermediates.ParticleTranslatedWorldPosition : TranslatedWorldPosition;
 #else
 	return TranslatedWorldPosition;
 #endif

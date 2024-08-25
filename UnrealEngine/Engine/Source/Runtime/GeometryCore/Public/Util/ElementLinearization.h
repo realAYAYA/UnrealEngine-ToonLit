@@ -125,11 +125,11 @@ public:
 	void SetZero(int32 NumElements)
 	{
 		XVector.Reset(0);
-		XVector.SetNumZeroed(NumElements, false);
+		XVector.SetNumZeroed(NumElements, EAllowShrinking::No);
 		YVector.Reset(0);
-		YVector.SetNumZeroed(NumElements, false);
+		YVector.SetNumZeroed(NumElements, EAllowShrinking::No);
 		ZVector.Reset(0);
-		ZVector.SetNumZeroed(NumElements, false);
+		ZVector.SetNumZeroed(NumElements, EAllowShrinking::No);
 	}
 
 	// Test that all the arrays have the same given size.
@@ -227,9 +227,9 @@ public:
 	void SetZero(int32 NumElements)
 	{
 		XVector.Reset(0);
-		XVector.SetNumZeroed(NumElements, false);
+		XVector.SetNumZeroed(NumElements, EAllowShrinking::No);
 		YVector.Reset(0);
-		YVector.SetNumZeroed(NumElements, false);
+		YVector.SetNumZeroed(NumElements, EAllowShrinking::No);
 	}
 
 	// Test that all the arrays have the same given size.

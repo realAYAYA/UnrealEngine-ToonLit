@@ -13,8 +13,8 @@ namespace UE::PixelStreaming
 		, MaxRange(InMaxRange)
 		, RefValue(InRefValue)
 	{
-		Values.SetNumZeroed(MaxSamples);
-		AvgValues.SetNumZeroed(MaxSamples);
+		Values.SetNumZeroed(InSamples);
+		AvgValues.SetNumZeroed(InSamples);
 	}
 
 	FDebugGraph::FDebugGraph(const FDebugGraph& Other)
@@ -32,6 +32,40 @@ namespace UE::PixelStreaming
 	void FDebugGraph::AddValue(float InValue)
 	{
 		FScopeLock Lock(&CriticalSection);
+
+		if(bFirstValue)
+		{
+			// If it the first value, fill the graph with it
+			for(int i = 0; i < MaxSamples; i++)
+			{
+				AddValueInternal(InValue);
+			}
+			bFirstValue = false;
+		}
+		else
+		{
+			AddValueInternal(InValue);
+		}
+	}
+
+	void FDebugGraph::AddValueInternal(float InValue)
+	{
+		if(InValue > MaxRange)
+		{
+			// Increase max range by 50% larger than this new larger value
+			float NewMax = InValue * 2.0f;
+			float Multiplier = NewMax / MaxRange;
+			float Ratio = 1.0f / Multiplier;
+			MaxRange = NewMax;
+
+			// Increasing the max range means we must adjust all our existing values/averages/sum by the inverse
+			for(int i = 0; i < MaxSamples; i++)
+			{
+				Values[i] *= Ratio;
+				AvgValues[i] *= Ratio;
+			}
+			Sum *= Ratio;
+		}
 
 		InsertIndex = (InsertIndex + 1) % MaxSamples;
 
@@ -91,6 +125,8 @@ namespace UE::PixelStreaming
 			MinValue = FGenericPlatformMath::Min(MinValue, Unnormalized);
 			MaxValue = FGenericPlatformMath::Max(MaxValue, Unnormalized);
 		}
+
+		// todo: should have a function to shrink the min/max range if min/max value is < 50% of range
 
 		FCanvasTextItem TextItem(Position, FText(), FSlateFontInfo(UEngine::GetTinyFont(), 9), FLinearColor(0, 1, 0));
 		TextItem.Text = FText::FromString(FString::Printf(TEXT("%s [%.2f, %.2f]"), *Name.ToString(), MinRange, MaxRange));

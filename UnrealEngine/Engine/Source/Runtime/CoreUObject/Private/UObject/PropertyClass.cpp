@@ -158,15 +158,20 @@ FString FClassProperty::GetCPPType(FString* ExtendedTypeText, uint32 CPPExportFl
 
 FString FClassProperty::GetCPPTypeCustom(FString* ExtendedTypeText, uint32 CPPExportFlags, const FString& InnerNativeTypeName) const
 {
-	if (PropertyFlags & CPF_UObjectWrapper)
+	if (EnumHasAnyFlags(PropertyFlags, CPF_TObjectPtr))
+	{
+		if (!EnumHasAnyFlags((EPropertyExportCPPFlags)CPPExportFlags, CPPF_NoTObjectPtr))
+		{
+			ensure(!InnerNativeTypeName.IsEmpty());
+			return FString::Printf(TEXT("TObjectPtr<%s>"), *InnerNativeTypeName);
+		}
+	}
+	else if (EnumHasAnyFlags(PropertyFlags, CPF_UObjectWrapper))
 	{
 		ensure(!InnerNativeTypeName.IsEmpty());
-		return FString::Printf(TEXT("TSubclassOf<%s> "), *InnerNativeTypeName);
+		return FString::Printf(TEXT("TSubclassOf<%s>"), *InnerNativeTypeName);
 	}
-	else
-	{
-		return TEXT("UClass*");
-	}
+	return TEXT("UClass*");
 }
 
 FString FClassProperty::GetCPPTypeForwardDeclaration() const
@@ -176,6 +181,11 @@ FString FClassProperty::GetCPPTypeForwardDeclaration() const
 
 FString FClassProperty::GetCPPMacroType( FString& ExtendedTypeText ) const
 {
+	if (PropertyFlags & CPF_TObjectPtr)
+	{
+		ExtendedTypeText = FString::Printf(TEXT("TObjectPtr<%s%s>"), PropertyClass->GetPrefixCPP(), *PropertyClass->GetName());
+		return TEXT("OBJECTPTR");
+	}
 	ExtendedTypeText = TEXT("UClass");
 	return TEXT("OBJECT");
 }

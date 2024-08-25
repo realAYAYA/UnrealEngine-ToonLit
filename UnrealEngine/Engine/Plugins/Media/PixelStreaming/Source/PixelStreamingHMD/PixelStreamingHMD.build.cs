@@ -6,12 +6,6 @@ namespace UnrealBuildTool.Rules
 	{
 		public PixelStreamingHMD(ReadOnlyTargetRules Target) : base(Target)
 		{
-			PrivateIncludePaths.AddRange(
-				new string[] {
-					System.IO.Path.Combine(GetModuleDirectory("Renderer"), "Private"),
-				}
-				);
-
 			PrivateDependencyModuleNames.AddRange(
 				new string[]
 				{

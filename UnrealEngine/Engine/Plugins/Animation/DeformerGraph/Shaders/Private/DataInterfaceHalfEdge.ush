@@ -7,6 +7,10 @@ uint {DataInterfaceName}_InputStreamStart;
 StructuredBuffer<int> {DataInterfaceName}_VertexToEdgeBuffer;
 StructuredBuffer<int> {DataInterfaceName}_EdgeToTwinEdgeBuffer;
 
+uint {DataInterfaceName}_bUseBufferFromRenderData;
+StructuredBuffer<int> {DataInterfaceName}_RenderDataVertexToEdgeBuffer;
+StructuredBuffer<int> {DataInterfaceName}_RenderDataEdgeToTwinEdgeBuffer;
+
 uint ReadNumVertices_{DataInterfaceName}()
 {
 	return {DataInterfaceName}_NumVertices;
@@ -19,11 +23,16 @@ uint ReadNumTriangles_{DataInterfaceName}()
 
 int ReadEdge_{DataInterfaceName}(uint VertexIndex)
 {
-	return {DataInterfaceName}_VertexToEdgeBuffer[VertexIndex + {DataInterfaceName}_InputStreamStart] - {DataInterfaceName}_IndexBufferStart;
+	return {DataInterfaceName}_bUseBufferFromRenderData == 0  ?
+		{DataInterfaceName}_VertexToEdgeBuffer[VertexIndex + {DataInterfaceName}_InputStreamStart] - {DataInterfaceName}_IndexBufferStart :
+		{DataInterfaceName}_RenderDataVertexToEdgeBuffer[VertexIndex + {DataInterfaceName}_InputStreamStart] - {DataInterfaceName}_IndexBufferStart;
 }
 
 int ReadTwinEdge_{DataInterfaceName}(uint EdgeIndex)
 {
-	int TwinEdge = {DataInterfaceName}_EdgeToTwinEdgeBuffer[EdgeIndex + {DataInterfaceName}_IndexBufferStart];
+	int TwinEdge = {DataInterfaceName}_bUseBufferFromRenderData == 0 ?
+		{DataInterfaceName}_EdgeToTwinEdgeBuffer[EdgeIndex + {DataInterfaceName}_IndexBufferStart] :
+		{DataInterfaceName}_RenderDataEdgeToTwinEdgeBuffer[EdgeIndex + {DataInterfaceName}_IndexBufferStart];
+	
 	return TwinEdge == -1 ? -1 : TwinEdge - {DataInterfaceName}_IndexBufferStart;
 }

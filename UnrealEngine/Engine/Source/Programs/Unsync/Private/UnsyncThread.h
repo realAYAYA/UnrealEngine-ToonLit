@@ -2,10 +2,18 @@
 
 #pragma once
 
+#include "UnsyncCommon.h"
+
+#include "UnsyncLog.h"
 #include "UnsyncUtil.h"
 
 UNSYNC_THIRD_PARTY_INCLUDES_START
 #include <atomic>
+#include <condition_variable>
+#include <deque>
+#include <functional>
+#include <thread>
+#include <vector>
 #if UNSYNC_USE_CONCRT
 #	include <concrt.h>
 #	include <concurrent_queue.h>
@@ -15,7 +23,6 @@ UNSYNC_THIRD_PARTY_INCLUDES_START
 #	endif
 #else
 #	include <semaphore>
-#	include <thread>
 #	ifdef __APPLE__
 #		define UNSYNC_USE_MACH_SEMAPHORE 1
 #	endif
@@ -67,8 +74,68 @@ struct FThreadElectScope
 	operator bool() const { return bValue; }
 };
 
+struct FThreadLogConfig
+{
+	FThreadLogConfig() : ParentThreadIndent(GLogIndent), bParentThreadVerbose(GLogVerbose) {}
+
+
+	uint32				ParentThreadIndent;
+	bool				bParentThreadVerbose;
+	std::atomic<uint64> NumActiveVerboseLogThreads = {};
+
+	struct FScope
+	{
+		FScope(FThreadLogConfig& Parent)
+		: AllowVerbose(Parent.NumActiveVerboseLogThreads, Parent.bParentThreadVerbose)
+		, VerboseScope(AllowVerbose.bValue)
+		, IndentScope(Parent.ParentThreadIndent, true)
+		{
+		}
+		FThreadElectScope  AllowVerbose;
+		FLogVerbosityScope VerboseScope;
+		FLogIndentScope	   IndentScope;
+	};
+};
+
 void SchedulerSleep(uint32 Milliseconds);
 void SchedulerYield();
+
+class FThreadPool
+{
+public:
+
+	using FTaskFunction = std::function<void()>;
+
+	FThreadPool() = default;
+	~FThreadPool();
+
+	// Launches worker threads until total started worker count reaches NumWorkers.
+	// Does nothing if the number of already launched workers is lower than given value.
+	void StartWorkers(uint32 NumWorkers);
+
+	// Adds a task to the FIFO queue
+	void PushTask(FTaskFunction&& Fun);
+
+	// Try to pop the next task from the queue and execute it on the current thread.
+	// Returns false if queue is empty, which may happen if worker threads have picked up the tasks already.
+	bool TryExecuteTask() { return DoWorkInternal(false); }
+
+private:
+
+	// Try to execute a task and return whether there may be more tasks to run
+	bool DoWorkInternal(bool bWaitForSignal);
+
+	FTaskFunction PopTask(bool bWaitForSignal);
+
+	std::vector<std::thread>  Threads;
+	std::deque<FTaskFunction> Tasks;
+
+	std::mutex				Mutex;
+	std::condition_variable WorkerWakeupCondition;
+	std::atomic<bool>		bShutdown;
+};
+
+extern FThreadPool GThreadPool;
 
 #if UNSYNC_USE_CONCRT
 
@@ -200,5 +267,12 @@ ParallelForEach(IT ItBegin, IT ItEnd, FT F)
 }
 
 #endif	// UNSYNC_USE_CONCRT
+
+template<typename T, typename FT>
+inline void
+ParallelForEach(T& Container, FT F)
+{
+	ParallelForEach(std::begin(Container), std::end(Container), F);
+}
 
 }  // namespace unsync

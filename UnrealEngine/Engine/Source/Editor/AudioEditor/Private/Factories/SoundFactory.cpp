@@ -152,6 +152,8 @@ USoundFactory::USoundFactory(const FObjectInitializer& ObjectInitializer)
 	Formats.Add(TEXT("aiff;Audio Interchange File Format"));
 	Formats.Add(TEXT("ogg;OGG Vorbis bitstream format "));
 	Formats.Add(TEXT("flac;Free Lossless Audio Codec"));
+	Formats.Add(TEXT("opus;OGG OPUS bitstream format"));
+	Formats.Add(TEXT("mp3;MPEG Layer 3 Audio"));
 #endif // WITH_SNDFILE_IO
 
 	bCreateNew = false;
@@ -207,7 +209,7 @@ UObject* USoundFactory::FactoryCreateBinary
 
 		// Convert audio data to a wav file in memory
 		TArray<uint8> RawWaveData;
-		if (Audio::ConvertAudioToWav(RawAudioData, RawWaveData))
+		if (Audio::SoundFileUtils::ConvertAudioToWav(RawAudioData, RawWaveData))
 		{
 			const uint8* Ptr = &RawWaveData[0];
 
@@ -220,9 +222,8 @@ UObject* USoundFactory::FactoryCreateBinary
 
 	if (!SoundObject)
 	{
-		// Unrecognized sound format
-		Warn->Logf(ELogVerbosity::Error, TEXT("Unrecognized sound format '%s' in %s"), FileType, *Name.ToString());
-		GEditor->GetEditorSubsystem<UImportSubsystem>()->BroadcastAssetPostImport(this, nullptr);
+		// Inform user we failed to create the sound wave
+		Warn->Logf(ELogVerbosity::Error, TEXT("Failed to import sound wave %s"), *Name.ToString());
 	}
 
 	return SoundObject;
@@ -287,11 +288,6 @@ UObject* USoundFactory::CreateObject
 		{
 			// Will block internally on audio thread completing outstanding commands
 			AudioDeviceManager->StopSoundsUsingResource(ExistingSound, &ComponentsToRestart);
-
-			// We need to clear out any stale multichannel data on the sound wave in the case this is a reimport from multichannel to mono/stereo
-			ExistingSound->ChannelOffsets.Reset();
-			ExistingSound->ChannelSizes.Reset();
-			ExistingSound->bIsAmbisonics = false;
 
 			// Resource data is required to exist, if it hasn't been loaded yet,
 			// to properly flush compressed data.  This allows the new version
@@ -379,13 +375,14 @@ UObject* USoundFactory::CreateObject
 			return nullptr;
 		}
 
-		if (*WaveInfo.pBitsPerSample != 16)
+		// If we need to change bit depth, or if the format is not something we know, use libsndfile.
+		if (*WaveInfo.pBitsPerSample != 16 || !WaveInfo.IsFormatSupported()) 
 		{
 #if WITH_SNDFILE_IO
-			const uint32 OrigNumSamples = WaveInfo.GetNumSamples();
+			const uint32 OrigNumSamples = Audio::SoundFileUtils::GetNumSamples(RawWaveData);
 
 			// Attempt to convert to 16 bit audio
-			if (Audio::ConvertAudioToWav(RawWaveData, ConvertedRawWaveData))
+			if (Audio::SoundFileUtils::ConvertAudioToWav(RawWaveData, ConvertedRawWaveData))
 			{
 				WaveInfo = FWaveModInfo();				
 				if (!WaveInfo.ReadWaveInfo(ConvertedRawWaveData.GetData(), ConvertedRawWaveData.Num(), &ErrorMessage))
@@ -594,9 +591,18 @@ UObject* USoundFactory::CreateObject
 		}
 		else
 		{
+			// If this sound existed previously, we need to clear out any stale multichannel data on the sound wave in the case this is a reimport from multichannel to mono/stereo
+			if (ExistingSound)
+			{
+				ExistingSound->ChannelOffsets.Reset();
+				ExistingSound->ChannelSizes.Reset();
+				ExistingSound->bIsAmbisonics = false;
+			}
+			
+
 			// For mono and stereo assets, just copy the data into the buffer
-			FSharedBuffer UpdatedBuffer = FSharedBuffer::Clone(Buffer, RawWaveDataBufferSize);
-			Sound->RawData.UpdatePayload(UpdatedBuffer);
+			// Clone directly as a param so that if anyone MoveToUniques it then its a steal not a copy.
+			Sound->RawData.UpdatePayload(FSharedBuffer::Clone(Buffer, RawWaveDataBufferSize));
 
 		}
 
@@ -711,6 +717,12 @@ UObject* USoundFactory::CreateObject
 		Audio::Analytics::RecordEvent_Usage(TEXT("SoundFactory.SoundWaveImported"));
 
 		return Sound;
+	}
+	else
+	{
+		// Unrecognized sound format
+		Warn->Logf(ELogVerbosity::Error, TEXT("Unrecognized sound format '%s' in %s"), FileType, *Name.ToString());
+		GEditor->GetEditorSubsystem<UImportSubsystem>()->BroadcastAssetPostImport(this, nullptr);
 	}
 
 	return nullptr;

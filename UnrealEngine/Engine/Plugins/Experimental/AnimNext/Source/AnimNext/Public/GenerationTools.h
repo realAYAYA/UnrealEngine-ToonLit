@@ -85,18 +85,22 @@ public:
 	// Converts AnimBP pose to AnimNext Pose
 	// This function expects both poses to have the same LOD (number of bones and indexes)
 	// The target pose should be assigned to the correct reference pose prior to this call
-	static void RemapPose(int32 LODLevel
-		, const FPoseContext& SourcePose
-		, const FReferencePose& RefPose
-		, FLODPose& TargetPose); // TODO : see how to deal with heap and stack variants without duplicating functions (and if possible without templating the function)
+	static void RemapPose(const FPoseContext& SourcePose, FLODPose& TargetPose);
 
 	// Converts AnimNext pose to AnimBP Pose
 	// This function expects both poses to have the same LOD (number of bones and indexes)
 	// The target pose should be assigned to the correct reference pose prior to this call
-	static void RemapPose(int32 LODLevel
-		, const FReferencePose& RefPose
-		, const FLODPose& SourcePose
-		, FPoseContext& TargetPose); // TODO : see how to deal with heap and stack variants without duplicating functions (and if possible without templating the function)
+	static void RemapPose(const FLODPose& SourcePose, FPoseContext& TargetPose);
+
+	// Converts AnimNext pose to local space transform array
+	// This function expects the output pose to have the same or a greater number of bones (as it may be being calculated
+	// for a lower LOD)
+	// The target pose should be assigned to the correct reference pose prior to this call, as transforms will not be filled
+	// in by this call if they are not affected by the current LOD.
+	static void RemapPose(const FLODPose& SourcePose, TArrayView<FTransform> TargetTransforms);
+
+	// Converts a local space to component space buffer given a number of required bones
+	static void ConvertLocalSpaceToComponentSpace(TConstArrayView<FBoneIndexType> InParentIndices, TConstArrayView<FTransform> InBoneSpaceTransforms, TConstArrayView<FBoneIndexType> InRequiredBoneIndices, TArrayView<FTransform> OutComponentSpaceTransforms);
 };
 
 } // namespace UE::AnimNext

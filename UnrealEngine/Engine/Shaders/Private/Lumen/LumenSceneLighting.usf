@@ -40,8 +40,9 @@ uint CardPageNum;
 uint MaxDirectLightingTilesToUpdate;
 uint MaxIndirectLightingTilesToUpdate;
 float FirstClipmapWorldExtentRcp;
+uint IndirectLightingHistoryValid;
 uint NumCameraOrigins;
-float4 WorldCameraOrigins[2];
+float4 WorldCameraOrigins[LUMEN_MAX_VIEWS];
 
 float DirectLightingUpdateFactor;
 float IndirectLightingUpdateFactor;
@@ -302,6 +303,13 @@ void BuildCardsUpdateListCS(
 		if (NumCardPageTiles > 0)
 		{
 			bool bUpdatedCardPage = false;
+
+			// On radiosity atlas reset invalidate all history data
+			if (IndirectLightingHistoryValid == 0)
+			{
+				CardPage.LastIndirectLightingUpdateFrameIndex = 0;
+				bUpdatedCardPage = true;
+			}
 
 			if (BuildCardsUpdateList(
 				Card,

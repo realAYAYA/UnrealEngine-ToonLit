@@ -5,11 +5,11 @@
 #include "GeometryTypes.h"
 #include "UObject/NameTypes.h"
 #include "TransformTypes.h"
+#include "BoneWeights.h" // UE::AnimationCore::MaxInlineBoneWeightCount
 
 // Forward declarations
 class FProgressCancel;
 
-namespace UE::AnimationCore { class FBoneWeights; }
 
 namespace UE::Geometry
 {
@@ -151,6 +151,12 @@ public:
 
 	/** If true, will use the intrinsic Delaunay mesh to construct sparse Cotangent Laplacian matrix. */
 	bool bUseIntrinsicLaplacian = false;
+
+	/** 
+	 * During the transfer, only use this number of influences per vertex. Prune the excess with the smallest influences 
+	 * and re-normalize. 
+	 */
+	int32 MaxNumInfluences = UE::AnimationCore::MaxInlineBoneWeightCount;
 
 	/** 
 	 * Optional mask where if ForceInpaint[VertexID] != 0 we want to force the weights for the vertex to be computed  

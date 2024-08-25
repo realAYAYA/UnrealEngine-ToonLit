@@ -52,6 +52,7 @@ LLM_DEFINE_TAG(AssetManager);
 
 DEFINE_LOG_CATEGORY(LogAssetManager);
 
+
 /** Structure defining the current loading state of an asset */
 struct FPrimaryAssetLoadState
 {
@@ -130,10 +131,13 @@ struct FPrimaryAssetTypeData
 	void ShrinkAssets();
 
 	/** In the editor, paths that we need to scan once asset registry is done loading */
-	TArray<FString> DeferredAssetScanPaths;
+	TSet<FString> DeferredAssetScanPaths;
+
+	/** List of paths that were explicitly requested by other systems and not loaded from the default config */
+	TSet<FString> AdditionalAssetScanPaths;
 
 	/** Expanded list of asset scan paths and package names, will not include virtual paths */
-	TArray<FString> RealAssetScanPaths;
+	TSet<FString> RealAssetScanPaths;
 
 	FPrimaryAssetTypeData() {}
 	~FPrimaryAssetTypeData();
@@ -927,7 +931,7 @@ int32 UAssetManager::ScanPathsForPrimaryAssets(FPrimaryAssetType PrimaryAssetTyp
 	// Add path info
 	for (const FString& Path : Paths)
 	{
-		TypeData.Info.AssetScanPaths.AddUnique(Path);
+		InternalAddAssetScanPath(TypeData, Path);
 	}
 
 #if WITH_EDITOR
@@ -938,7 +942,7 @@ int32 UAssetManager::ScanPathsForPrimaryAssets(FPrimaryAssetType PrimaryAssetTyp
 		// Keep track of the paths we asked for so once assets are discovered we will refresh the list
 		for (const FString& Path : Paths)
 		{
-			TypeData.DeferredAssetScanPaths.AddUnique(Path);
+			TypeData.DeferredAssetScanPaths.Add(Path);
 		}
 
 		// Since we are still asynchronously discovering assets, we'll wait until that is done before populating with primary assets
@@ -957,7 +961,7 @@ int32 UAssetManager::ScanPathsForPrimaryAssets(FPrimaryAssetType PrimaryAssetTyp
 	SearchRules.bSkipVirtualPathExpansion = true;
 	for (const FString& Path : SearchRules.AssetScanPaths)
 	{
-		TypeData.RealAssetScanPaths.AddUnique(Path);
+		TypeData.RealAssetScanPaths.Add(Path);
 	}
 
 	TArray<FAssetData> AssetDataList;
@@ -1059,6 +1063,7 @@ void UAssetManager::RemoveScanPathsForPrimaryAssets(FPrimaryAssetType PrimaryAss
 		}
 
 		TypeData.DeferredAssetScanPaths.Remove(Path);
+		TypeData.AdditionalAssetScanPaths.Remove(Path);
 	}
 
 	// Expand paths so we can record them for later
@@ -1066,6 +1071,16 @@ void UAssetManager::RemoveScanPathsForPrimaryAssets(FPrimaryAssetType PrimaryAss
 	for (const FString& Path : RemovedPaths)
 	{
 		TypeData.RealAssetScanPaths.Remove(Path);
+	}
+}
+
+void UAssetManager::InternalAddAssetScanPath(FPrimaryAssetTypeData& TypeData, const FString& AssetScanPath)
+{
+	TypeData.Info.AssetScanPaths.AddUnique(AssetScanPath);
+
+	if (!IsScanningFromInitialConfig())
+	{
+		TypeData.AdditionalAssetScanPaths.Add(AssetScanPath);
 	}
 }
 
@@ -1117,16 +1132,20 @@ bool UAssetManager::RegisterSpecificPrimaryAsset(const FPrimaryAssetId& PrimaryA
 		return false;
 	}
 
-	const TSharedRef<FPrimaryAssetTypeData>* FoundType = AssetTypeMap.Find(PrimaryAssetId.PrimaryAssetType);
+	TSharedRef<FPrimaryAssetTypeData>* FoundType = AssetTypeMap.Find(PrimaryAssetId.PrimaryAssetType);
 	if (!FoundType)
 	{
 		return false;
 	}
 
+	FPrimaryAssetTypeData& TypeData = FoundType->Get();
 	if (!TryUpdateCachedAssetData(PrimaryAssetId, NewAssetData, false))
 	{
 		return false;
 	}
+
+	// Add to the list of scan paths so this will be found on refresh
+	InternalAddAssetScanPath(TypeData, NewAssetData.GetSoftObjectPath().ToString());
 
 	OnObjectReferenceListInvalidated();
 
@@ -1429,8 +1448,7 @@ bool UAssetManager::GetPrimaryAssetData(const FPrimaryAssetId& PrimaryAssetId, F
 
 	if (NameData)
 	{
-		FAssetData CachedAssetData = GetAssetRegistry().GetAssetByObjectPath(NameData->GetARLookupPath(),
-			false /* bIncludeOnlyOnDiskAssets */);
+		FAssetData CachedAssetData = GetAssetRegistry().GetAssetByObjectPath(NameData->GetARLookupPath(), bIncludeOnlyOnDiskAssets);
 
 		if (CachedAssetData.IsValid())
 		{
@@ -1453,8 +1471,7 @@ bool UAssetManager::GetPrimaryAssetDataList(FPrimaryAssetType PrimaryAssetType, 
 
 		for (const TPair<FName, FPrimaryAssetData>& Pair : TypeData.GetAssets())
 		{
-			FAssetData CachedAssetData = Registry.GetAssetByObjectPath(Pair.Value.GetARLookupPath(),
-				false /* bIncludeOnlyOnDiskAssets */);
+			FAssetData CachedAssetData = Registry.GetAssetByObjectPath(Pair.Value.GetARLookupPath(), bIncludeOnlyOnDiskAssets);
 
 			if (CachedAssetData.IsValid())
 			{
@@ -1840,12 +1857,12 @@ TSharedPtr<FStreamableHandle> UAssetManager::ChangeBundleStateForPrimaryAssets(c
 		// Call delegate or bind to meta handle
 		if (ReturnHandle->HasLoadCompleted())
 		{
-			FStreamableHandle::ExecuteDelegate(DelegateToCall);
+			FStreamableHandle::ExecuteDelegate(MoveTemp(DelegateToCall));
 		}
 		else
 		{
 			// Call external callback when completed
-			ReturnHandle->BindCompleteDelegate(DelegateToCall);
+			ReturnHandle->BindCompleteDelegate(MoveTemp(DelegateToCall));
 		}
 	}
 	else if (NewHandles.Num() == 1)
@@ -1856,18 +1873,18 @@ TSharedPtr<FStreamableHandle> UAssetManager::ChangeBundleStateForPrimaryAssets(c
 		// If only one handle, return it and add callback
 		if (ReturnHandle->HasLoadCompleted())
 		{
-			FStreamableHandle::ExecuteDelegate(DelegateToCall);
+			FStreamableHandle::ExecuteDelegate(MoveTemp(DelegateToCall));
 		}
 		else
 		{
 			// Call internal callback and external callback when it finishes
-			ReturnHandle->BindCompleteDelegate(FStreamableDelegate::CreateUObject(this, &UAssetManager::OnAssetStateChangeCompleted, NewAssets[0], ReturnHandle, DelegateToCall));
+			ReturnHandle->BindCompleteDelegate(FStreamableDelegate::CreateUObject(this, &UAssetManager::OnAssetStateChangeCompleted, NewAssets[0], ReturnHandle, MoveTemp(DelegateToCall)));
 		}
 	}
 	else
 	{
 		// Call completion callback, nothing to do
-		FStreamableHandle::ExecuteDelegate(DelegateToCall);
+		FStreamableHandle::ExecuteDelegate(MoveTemp(DelegateToCall));
 	}
 
 	return ReturnHandle;
@@ -2202,7 +2219,7 @@ TSharedPtr<FStreamableHandle> UAssetManager::LoadAssetList(const TArray<FSoftObj
 	if (bShouldUseSynchronousLoad && MissingChunks.Num() == 0)
 	{
 		NewHandle = StreamableManager.RequestSyncLoad(AssetList, false, DebugName);
-		FStreamableHandle::ExecuteDelegate(DelegateToCall);
+		FStreamableHandle::ExecuteDelegate(MoveTemp(DelegateToCall));
 	}
 	else
 	{
@@ -2255,7 +2272,9 @@ bool UAssetManager::FindMissingChunkList(const TArray<FSoftObjectPath>& AssetLis
 	TMap<int32, EChunkLocation::Type> ChunkLocationCache;
 
 	// Grab chunk install
+#if ENABLE_PLATFORM_CHUNK_INSTALL
 	IPlatformChunkInstall* ChunkInstall = FPlatformMisc::GetPlatformChunkInstall();
+#endif
 
 	// Grab pak platform file
 	FPakPlatformFile* Pak = (FPakPlatformFile*)FPlatformFileManager::Get().FindPlatformFile(TEXT("PakFile"));
@@ -2271,7 +2290,11 @@ bool UAssetManager::FindMissingChunkList(const TArray<FSoftObjectPath>& AssetLis
 		{
 			if (!ChunkLocationCache.Contains(PakchunkId))
 			{
+#if ENABLE_PLATFORM_CHUNK_INSTALL
 				EChunkLocation::Type Location = ChunkInstall->GetPakchunkLocation(PakchunkId);
+#else
+				EChunkLocation::Type Location = EChunkLocation::LocalFast;
+#endif
 
 				// If chunk install thinks the chunk is available, we need to double check with the pak system that it isn't
 				// pending decryption
@@ -2342,6 +2365,7 @@ bool UAssetManager::FindMissingChunkList(const TArray<FSoftObjectPath>& AssetLis
 
 void UAssetManager::AcquireChunkList(const TArray<int32>& ChunkList, FAssetManagerAcquireResourceDelegate CompleteDelegate, EChunkPriority::Type Priority, TSharedPtr<FStreamableHandle> StalledHandle)
 {
+#if ENABLE_PLATFORM_CHUNK_INSTALL
 	FPendingChunkInstall* PendingChunkInstall = new(PendingChunkInstalls) FPendingChunkInstall;
 	PendingChunkInstall->ManualCallback = MoveTemp(CompleteDelegate);
 	PendingChunkInstall->RequestedChunks = ChunkList;
@@ -2359,6 +2383,7 @@ void UAssetManager::AcquireChunkList(const TArray<int32>& ChunkList, FAssetManag
 	{
 		ChunkInstall->PrioritizePakchunk(MissingChunk, Priority);
 	}
+#endif
 }
 
 void UAssetManager::AcquireResourcesForAssetList(const TArray<FSoftObjectPath>& AssetList, FAssetManagerAcquireResourceDelegate CompleteDelegate, EChunkPriority::Type Priority)
@@ -2374,13 +2399,13 @@ void UAssetManager::AcquireResourcesForAssetList(const TArray<FSoftObjectPath>& 
 	{
 		// At least one chunk doesn't exist, fail
 		FStreamableDelegate TempDelegate = FStreamableDelegate::CreateLambda([CompleteDelegate = MoveTemp(CompleteDelegate), MissingChunks]() { CompleteDelegate.ExecuteIfBound(false, MissingChunks); });
-		FStreamableHandle::ExecuteDelegate(TempDelegate);
+		FStreamableHandle::ExecuteDelegate(MoveTemp(TempDelegate));
 	}
 	else if (MissingChunks.Num() == 0)
 	{
 		// All here, schedule the callback
 		FStreamableDelegate TempDelegate = FStreamableDelegate::CreateLambda([CompleteDelegate = MoveTemp(CompleteDelegate)]() { CompleteDelegate.ExecuteIfBound(true, TArray<int32>()); });
-		FStreamableHandle::ExecuteDelegate(TempDelegate);
+		FStreamableHandle::ExecuteDelegate(MoveTemp(TempDelegate));
 	}
 	else
 	{
@@ -2445,6 +2470,7 @@ bool UAssetManager::GetResourceAcquireProgress(int32& OutAcquiredCount, int32& O
 
 void UAssetManager::OnChunkDownloaded(uint32 ChunkId, bool bSuccess)
 {
+#if ENABLE_PLATFORM_CHUNK_INSTALL
 	IPlatformChunkInstall* ChunkInstall = FPlatformMisc::GetPlatformChunkInstall();
 
 	// Iterate pending callbacks, in order they were added
@@ -2518,6 +2544,7 @@ void UAssetManager::OnChunkDownloaded(uint32 ChunkId, bool bSuccess)
 			}
 		}
 	}
+#endif
 }
 
 bool UAssetManager::OnAssetRegistryAvailableAfterInitialization(FName InName, FAssetRegistryState& OutNewState)
@@ -2525,7 +2552,7 @@ bool UAssetManager::OnAssetRegistryAvailableAfterInitialization(FName InName, FA
 #if WITH_EDITOR
 	UE_LOG(LogAssetManager, Warning, TEXT("UAssetManager::OnAssetRegistryAvailableAfterInitialization is only supported in cooked builds, but was called from the editor!"));
 	return false;
-#endif
+#else
 
 	bool bLoaded = false;
 	double RegistrationTime = 0.0;
@@ -2616,6 +2643,7 @@ bool UAssetManager::OnAssetRegistryAvailableAfterInitialization(FName InName, FA
 
 	UE_CLOG(bLoaded, LogAssetManager, Log, TEXT("Registered new asset registry '%s' in %.4fs"), *InName.ToString(), RegistrationTime);
 	return bLoaded;
+#endif
 }
 
 FPrimaryAssetData* UAssetManager::GetNameData(const FPrimaryAssetId& PrimaryAssetId, bool bCheckRedirector)
@@ -3294,6 +3322,7 @@ void UAssetManager::ScanPrimaryAssetTypesFromConfig()
 	const UAssetManagerSettings& Settings = GetSettings();
 
 	PushBulkScanning();
+	TGuardValue<bool> ScopeGuard(bScanningFromInitialConfig, true);
 
 	double LastPumpTime = FPlatformTime::Seconds();
 	for (FPrimaryAssetTypeInfo TypeInfo : Settings.PrimaryAssetTypesToScan)
@@ -3603,6 +3632,9 @@ bool UAssetManager::GetPackageManagers(FName PackageName, bool bRecurseToParents
 
 void UAssetManager::StartInitialLoading()
 {
+	// The scan below queries asset registry, so we should make sure the premade registry is finished loading if it exists.
+	GetAssetRegistry().WaitForPremadeAssetRegistry();
+
 	GInitialBulkScan.StartOnce(this);
 
 	ScanPrimaryAssetTypesFromConfig();
@@ -3645,6 +3677,11 @@ bool UAssetManager::IsPathExcludedFromScan(const FString& Path) const
 	}
 
 	return false;
+}
+
+bool UAssetManager::IsScanningFromInitialConfig() const
+{
+	return bScanningFromInitialConfig;
 }
 
 bool UAssetManager::GetContentRootPathFromPackageName(const FString& PackageName, FString& OutContentRootPath)
@@ -3717,9 +3754,16 @@ void UAssetManager::RefreshPrimaryAssetDirectory(bool bForceRefresh)
 {
 	WarningInvalidAssets.Reset();
 
+	// Do not refresh before the initial scan has completed
+	if (!HasInitialScanCompleted())
+	{
+		return;
+	}
+
 	if (bForceRefresh || !bIsPrimaryAssetDirectoryCurrent)
 	{
 		PushBulkScanning();
+		TGuardValue<bool> ScopeGuard(bScanningFromInitialConfig, true);
 
 		for (TPair<FName, TSharedRef<FPrimaryAssetTypeData>>& TypePair : AssetTypeMap)
 		{
@@ -3841,6 +3885,7 @@ EAssetSetManagerResult::Type UAssetManager::ShouldSetManager(const FAssetIdentif
 void UAssetManager::OnAssetRegistryFilesLoaded()
 {
 	PushBulkScanning();
+	TGuardValue<bool> ScopeGuard(bScanningFromInitialConfig, true);
 
 	for (TPair<FName, TSharedRef<FPrimaryAssetTypeData>>& TypePair : AssetTypeMap)
 	{
@@ -3849,7 +3894,7 @@ void UAssetManager::OnAssetRegistryFilesLoaded()
 		if (TypeData.DeferredAssetScanPaths.Num())
 		{
 			// File scan finished, now scan for assets. Maps are sorted so this will be in the order of original scan requests
-			ScanPathsForPrimaryAssets(TypePair.Key, TypeData.DeferredAssetScanPaths, TypeData.Info.AssetBaseClassLoaded, TypeData.Info.bHasBlueprintClasses, TypeData.Info.bIsEditorOnly, false);
+			ScanPathsForPrimaryAssets(TypePair.Key, TypeData.DeferredAssetScanPaths.Array(), TypeData.Info.AssetBaseClassLoaded, TypeData.Info.bHasBlueprintClasses, TypeData.Info.bIsEditorOnly, false);
 
 			TypeData.DeferredAssetScanPaths.Empty();
 		}
@@ -3953,7 +3998,7 @@ void UAssetManager::UpdateManagementDatabase(bool bForceRefresh)
 			}
 
 			Algo::Sort(AssetPackagesReferenced, FNameLexicalLess());
-			AssetPackagesReferenced.SetNum(Algo::Unique(AssetPackagesReferenced), false /* bAllowShrinking */);
+			AssetPackagesReferenced.SetNum(Algo::Unique(AssetPackagesReferenced), EAllowShrinking::No);
 			for (const FName& AssetPackage : AssetPackagesReferenced)
 			{
 				TMultiMap<FAssetIdentifier, FAssetIdentifier>& ManagerMap = Rules.bApplyRecursively ? PriorityManagementMap.FindOrAdd(Rules.Priority) : NoReferenceManagementMap;
@@ -4144,6 +4189,9 @@ void UAssetManager::ModifyCook(TConstArrayView<const ITargetPlatform*> TargetPla
 
 	bool bIncludeDevelopmentAssets = !bOnlyCookProductionAssets || bTargetPlatformsAllowDevelopmentObjects;
 
+	// Some primary assets exist in the transient package. No need to include them in the cook since they are transient.
+	FName TransientPackageName = GetTransientPackage()->GetFName();
+
 	// Uniquely append packages we need that are not already in PackagesToCook and PackagesToNeverCook
 	TSet<FName> PackagesToCookSet(PackagesToCook);
 	TSet<FName> PackagesToNeverCookSet(PackagesToNeverCook);
@@ -4160,7 +4208,7 @@ void UAssetManager::ModifyCook(TConstArrayView<const ITargetPlatform*> TargetPla
 		for (const FPrimaryAssetId& PrimaryAssetId : AssetIdList)
 		{
 			FAssetData AssetData;
-			if (GetPrimaryAssetData(PrimaryAssetId, AssetData))
+			if (GetPrimaryAssetData(PrimaryAssetId, AssetData) && AssetData.PackageName != TransientPackageName)
 			{
 				// If this has an asset data, add that package name
 				AssetPackages.Add(AssetData.PackageName);
@@ -4181,7 +4229,7 @@ void UAssetManager::ModifyCook(TConstArrayView<const ITargetPlatform*> TargetPla
 			}
 		}
 		Algo::Sort(AssetPackages, FNameFastLess());
-		AssetPackages.SetNum(Algo::Unique(AssetPackages), false /* bAllowShrinking */);
+		AssetPackages.SetNum(Algo::Unique(AssetPackages), EAllowShrinking::No);
 
 		for (FName PackageName : AssetPackages)
 		{
@@ -4577,7 +4625,18 @@ bool UAssetManager::GetPrimaryAssetSetChunkIds(const TSet<FPrimaryAssetId>& Prim
 
 void UAssetManager::PreBeginPIE(bool bStartSimulate)
 {
-	RefreshPrimaryAssetDirectory();
+	if (HasInitialScanCompleted())
+	{
+		// If the scan has finished, we need to refresh in case there have been in-editor changes
+		RefreshPrimaryAssetDirectory();
+	}
+	else
+	{
+		// If the scan is still in progress, we need to finish it now which will call PostInitialAssetScan
+		GetAssetRegistry().WaitForCompletion();
+
+		ensure(HasInitialScanCompleted());
+	}
 
 	// Cache asset state
 	GetPrimaryAssetBundleStateMap(PrimaryAssetStateBeforePIE, false);
@@ -4624,12 +4683,17 @@ void UAssetManager::ReinitializeFromConfig()
 	// We specifically do not reset AssetRuleOverrides as those can be set by something other than inis
 	for (TPair<FName, TSharedRef<FPrimaryAssetTypeData>>& Pair : AssetTypeMap)
 	{
-		Pair.Value->ResetAssets(AssetPathMap);
+		if (!Pair.Value->Info.bIsDynamicAsset)
+		{
+			Pair.Value->ResetAssets(AssetPathMap);
+		}
 	}
 	check(AssetPathMap.IsEmpty()); // Should have been emptied by the ResetAssets calls
 	ManagementParentMap.Reset();
 	CachedAssetBundles.Reset();
 	AlreadyScannedDirectories.Reset();
+
+	TMap<FName, TSharedRef<FPrimaryAssetTypeData>> OldAssetTypeMap = MoveTemp(AssetTypeMap);
 	AssetTypeMap.Reset();
 
 	// This code is editor only, so reinitialize globals
@@ -4649,6 +4713,23 @@ void UAssetManager::ReinitializeFromConfig()
 
 	LoadRedirectorMaps();
 	ScanPrimaryAssetTypesFromConfig();
+
+	// Go through old list and restore data that was added after the initial config load
+	for (TPair<FName, TSharedRef<FPrimaryAssetTypeData>>& TypePair : OldAssetTypeMap)
+	{
+		FPrimaryAssetTypeData& TypeData = TypePair.Value.Get();
+
+		if (TypeData.Info.bIsDynamicAsset)
+		{
+			// Restore dynamic assets as they were before
+			AssetTypeMap.Add(TypePair.Key, TypePair.Value);
+		}
+		else if (TypeData.AdditionalAssetScanPaths.Num())
+		{
+			// Rescan any paths added after initial scan
+			ScanPathsForPrimaryAssets(TypePair.Key, TypeData.AdditionalAssetScanPaths.Array(), TypeData.Info.AssetBaseClassLoaded, TypeData.Info.bHasBlueprintClasses, TypeData.Info.bIsEditorOnly, false);
+		}
+	}
 }
 
 void UAssetManager::OnInMemoryAssetCreated(UObject *Object)

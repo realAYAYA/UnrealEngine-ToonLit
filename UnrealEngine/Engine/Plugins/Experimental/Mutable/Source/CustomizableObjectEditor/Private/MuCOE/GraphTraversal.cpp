@@ -77,7 +77,7 @@ TArray<UEdGraphPin*> FollowPinArray(const UEdGraphPin& Pin, bool* bOutCycleDetec
 				const UCustomizableObjectNodeExternalPin* LinkedNode = nullptr;
 				for (TObjectIterator<UCustomizableObjectNodeExternalPin> It; It; ++It)
 				{
-					if ((*It)->GetNodeExposePin() == ExposePinNode)
+					if (IsValid(*It) && (*It)->GetNodeExposePin() == ExposePinNode)
 					{
 						LinkedNode = *It;
 						break;
@@ -295,6 +295,30 @@ UCustomizableObject* GetFullGraphRootObject(UCustomizableObjectNodeObject* Node,
 	}
 
 	return nullptr;
+}
+
+
+UCustomizableObject* GetRootObject(const UCustomizableObjectNode& Node)
+{
+	return CastChecked<UCustomizableObject>(Node.GetGraph()->GetOuter());
+}
+
+
+UCustomizableObject* GetRootObject(UCustomizableObject* ChildObject)
+{
+	// Grab a node to start the search -> Get the root since it should be always present
+	bool bMultipleBaseObjectsFound = false;
+	UCustomizableObjectNodeObject* ObjectRootNode = GetRootNode(ChildObject, bMultipleBaseObjectsFound);
+
+	if (ObjectRootNode && ObjectRootNode->ParentObject)
+	{
+		TArray<UCustomizableObject*> VisitedNodes;
+		return GetFullGraphRootObject(ObjectRootNode, VisitedNodes);
+	}
+
+	// No parent object found, return input as the parent of the graph
+	// This can also mean the ObjectRootNode does not exist because it has not been opened yet (so no nodes have been generated)
+	return ChildObject;
 }
 
 

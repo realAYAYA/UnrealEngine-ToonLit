@@ -21,9 +21,17 @@
 #include "RenderCaptureInterface.h"
 #include "SimpleMeshDrawCommandPass.h"
 #include "StaticMeshBatch.h"
+#include "SceneRendering.h"
+#include "EngineModule.h"
 
 namespace RuntimeVirtualTexture
 {
+	static TAutoConsoleVariable<bool> CVarVTMipColors(
+		TEXT("r.VT.RVT.MipColors"),
+		false,
+		TEXT("Render mip colors to RVT BaseColor."),
+		ECVF_RenderThreadSafe);
+
 	static TAutoConsoleVariable<int32> CVarVTHighQualityPerPixelHeight(
 		TEXT("r.VT.RVT.HighQualityPerPixelHeight"),
 		1,
@@ -82,13 +90,12 @@ namespace RuntimeVirtualTexture
 			Parameters.RGB_DISTANCE_TABLES[6] = FVector4f(-106, -33, 33, 106);
 			Parameters.RGB_DISTANCE_TABLES[7] = FVector4f(-183, -47, 47, 183);
 
-			SetContents(Parameters);
+			SetContentsNoUpdate(Parameters);
 		}
 	};
 
 	const TUniformBufferRef<FEtcParameters>& GetEtcParametersUniformBufferRef()
 	{
-		check(IsInRenderingThread());
 		static TGlobalResource<FEtcParametersUniformBuffer> EtcParametersUniformBuffer;
 		return EtcParametersUniformBuffer.GetUniformBufferRef();
 	}
@@ -131,7 +138,7 @@ namespace RuntimeVirtualTexture
 
 		static bool ShouldCompilePermutation(const FMeshMaterialShaderPermutationParameters& Parameters)
 		{
-			return UseVirtualTexturing(GetMaxSupportedFeatureLevel(Parameters.Platform)) &&
+			return UseVirtualTexturing(Parameters.Platform) &&
 				(Parameters.MaterialParameters.bHasRuntimeVirtualTextureOutput || Parameters.MaterialParameters.bIsDefaultMaterial);
 		}
 
@@ -346,6 +353,7 @@ namespace RuntimeVirtualTexture
 			return GetBlendStateImpl(OutputAttributeMask);
 		}
 	};
+
 	/** Specialization for ERuntimeVirtualTextureMaterialType::WorldHeight */
 	class FMaterialPolicy_WorldHeight
 	{
@@ -353,6 +361,22 @@ namespace RuntimeVirtualTexture
 		static void ModifyCompilationEnvironment(FShaderCompilerEnvironment& OutEnvironment)
 		{
 			OutEnvironment.SetDefine(TEXT("OUT_WORLDHEIGHT"), 1);
+			OutEnvironment.SetRenderTargetOutputFormat(0, PF_R32_FLOAT);
+		}
+
+		static FRHIBlendState* GetBlendState(uint8 OutputAttributeMask)
+		{
+			return TStaticBlendState< CW_RED, BO_Max, BF_One, BF_One, BO_Add, BF_One, BF_One >::GetRHI();
+		}
+	};
+
+	/** Specialization for ERuntimeVirtualTextureMaterialType::Displacement */
+	class FMaterialPolicy_Displacement
+	{
+	public:
+		static void ModifyCompilationEnvironment(FShaderCompilerEnvironment& OutEnvironment)
+		{
+			OutEnvironment.SetDefine(TEXT("OUT_DISPLACEMENT"), 1);
 			OutEnvironment.SetRenderTargetOutputFormat(0, PF_R32_FLOAT);
 		}
 
@@ -416,6 +440,7 @@ namespace RuntimeVirtualTexture
 	IMPLEMENT_VIRTUALTEXTURE_SHADER_TYPE(FMaterialPolicy_BaseColor, BaseColor);
 	IMPLEMENT_VIRTUALTEXTURE_SHADER_TYPE(FMaterialPolicy_BaseColorNormalSpecular, BaseColorNormalSpecular);
 	IMPLEMENT_VIRTUALTEXTURE_SHADER_TYPE(FMaterialPolicy_WorldHeight, WorldHeight);
+	IMPLEMENT_VIRTUALTEXTURE_SHADER_TYPE(FMaterialPolicy_Displacement, Displacement);
 	IMPLEMENT_VIRTUALTEXTURE_SHADER_TYPE(FMaterialPolicy_BaseColorNormalRoughness, BaseColorNormalRoughness);
 
 	/** Structure to localize the setup of our render graph based on the virtual texture setup. */
@@ -451,6 +476,7 @@ namespace RuntimeVirtualTexture
 				AddRenderTargetInfo(PF_B8G8R8A8, RTCreateFlags, RenderTargetsInfo);
 				break;
 			case ERuntimeVirtualTextureMaterialType::WorldHeight:
+			case ERuntimeVirtualTextureMaterialType::Displacement:
 				AddRenderTargetInfo(PF_G16, RTCreateFlags, RenderTargetsInfo);
 				break;
 			}
@@ -680,6 +706,30 @@ namespace RuntimeVirtualTexture
 					OutputAlias0 = CopyTexture0 = GraphBuilder.CreateTexture(FRDGTextureDesc::Create2D(Desc.TextureSize, PF_B8G8R8A8, FClearValueBinding::Black, RTCreateFlags), TEXT("CopyTexture0"));
 				}
 				break;
+			case ERuntimeVirtualTextureMaterialType::Displacement:
+				if (bRenderPass)
+				{
+					OutputAlias0 = RenderTexture0 = GraphBuilder.CreateTexture(FRDGTextureDesc::Create2D(Desc.TextureSize, PF_G16, FClearValueBinding::Black, RTCreateFlags), TEXT("RenderTexture0"));
+				}
+				if (bCompressPass)
+				{
+					if (bDirectAliasing)
+					{
+						CompressTexture0 = GraphBuilder.RegisterExternalTexture(Desc.OutputTargets[0], ERDGTextureFlags::None);
+						CompressTextureUAV0_64bit = GraphBuilder.CreateUAV(FRDGTextureUAVDesc(CompressTexture0, 0, Compressed64BitFormat));
+						OutputAlias0 = nullptr;
+					}
+					else
+					{
+						OutputAlias0 = CompressTexture0 = GraphBuilder.CreateTexture(FRDGTextureDesc::Create2D(Desc.TextureSize / 4, Compressed64BitFormat, FClearValueBinding::None, TexCreate_UAV), TEXT("CompressTexture0"));
+						CompressTextureUAV0_64bit = GraphBuilder.CreateUAV(FRDGTextureUAVDesc(CompressTexture0));
+					}
+				}
+				if (bCopyThumbnailPass)
+				{
+					OutputAlias0 = CopyTexture0 = GraphBuilder.CreateTexture(FRDGTextureDesc::Create2D(Desc.TextureSize, PF_B8G8R8A8, FClearValueBinding::Black, RTCreateFlags), TEXT("CopyTexture0"));
+				}
+				break;
 			}
 		}
 
@@ -741,18 +791,16 @@ namespace RuntimeVirtualTexture
 				{
 				case ERuntimeVirtualTextureMaterialType::BaseColor:
 					return Process<FMaterialPolicy_BaseColor>(MeshBatch, BatchElementMask, StaticMeshId, OutputAttributeMask, PrimitiveSceneProxy, *MaterialRenderProxy, *Material);
-					break;
 				case ERuntimeVirtualTextureMaterialType::BaseColor_Normal_Roughness:
 					return Process<FMaterialPolicy_BaseColorNormalRoughness>(MeshBatch, BatchElementMask, StaticMeshId, OutputAttributeMask, PrimitiveSceneProxy, *MaterialRenderProxy, *Material);
-					break;
 				case ERuntimeVirtualTextureMaterialType::BaseColor_Normal_Specular:
 				case ERuntimeVirtualTextureMaterialType::BaseColor_Normal_Specular_YCoCg:
 				case ERuntimeVirtualTextureMaterialType::BaseColor_Normal_Specular_Mask_YCoCg:
 					return Process<FMaterialPolicy_BaseColorNormalSpecular>(MeshBatch, BatchElementMask, StaticMeshId, OutputAttributeMask, PrimitiveSceneProxy, *MaterialRenderProxy, *Material);
-					break;
 				case ERuntimeVirtualTextureMaterialType::WorldHeight:
 					return Process<FMaterialPolicy_WorldHeight>(MeshBatch, BatchElementMask, StaticMeshId, OutputAttributeMask, PrimitiveSceneProxy, *MaterialRenderProxy, *Material);
-					break;
+				case ERuntimeVirtualTextureMaterialType::Displacement:
+					return Process<FMaterialPolicy_Displacement>(MeshBatch, BatchElementMask, StaticMeshId, OutputAttributeMask, PrimitiveSceneProxy, *MaterialRenderProxy, *Material);
 				default:
 					break;
 				}
@@ -911,6 +959,7 @@ namespace RuntimeVirtualTexture
 				CollectPSOInitializers<FMaterialPolicy_BaseColorNormalRoughness>(VertexFactoryData, Material, MeshFillMode, MeshCullMode, OutputAttributeMask, ERuntimeVirtualTextureMaterialType::BaseColor_Normal_Roughness, PSOInitializers);
 				CollectPSOInitializers<FMaterialPolicy_BaseColorNormalSpecular>(VertexFactoryData, Material, MeshFillMode, MeshCullMode, OutputAttributeMask, ERuntimeVirtualTextureMaterialType::BaseColor_Normal_Specular, PSOInitializers);
 				CollectPSOInitializers<FMaterialPolicy_WorldHeight>(VertexFactoryData, Material, MeshFillMode, MeshCullMode, OutputAttributeMask, ERuntimeVirtualTextureMaterialType::WorldHeight, PSOInitializers);
+				CollectPSOInitializers<FMaterialPolicy_Displacement>(VertexFactoryData, Material, MeshFillMode, MeshCullMode, OutputAttributeMask, ERuntimeVirtualTextureMaterialType::Displacement, PSOInitializers);
 			}
 		}
 
@@ -930,7 +979,7 @@ namespace RuntimeVirtualTexture
 
 
 	/** Collect meshes to draw. */
-	void GatherMeshesToDraw(FDynamicPassMeshDrawListContext* DynamicMeshPassContext, FScene const* Scene, FViewInfo* View, ERuntimeVirtualTextureMaterialType MaterialType, uint32 RuntimeVirtualTextureMask, uint8 vLevel, uint8 MaxLevel)
+	void GatherMeshesToDraw(FDynamicPassMeshDrawListContext* DynamicMeshPassContext, FScene const* Scene, FViewInfo* View, ERuntimeVirtualTextureMaterialType MaterialType, uint32 RuntimeVirtualTextureMask, uint8 vLevel, uint8 MaxLevel, bool bAllowCachedMeshDrawCommands)
 	{
 		// Cached draw command collectors
 		const FCachedPassMeshDrawList& SceneDrawList = Scene->CachedDrawLists[EMeshPass::VirtualTexture];
@@ -983,7 +1032,7 @@ namespace RuntimeVirtualTexture
 			}
 
 			FPrimitiveSceneInfo* RESTRICT PrimitiveSceneInfo = Scene->Primitives[PrimitiveIndex];
-			FMeshDrawCommandPrimitiveIdInfo IdInfo(PrimitiveIndex, PrimitiveSceneInfo->GetInstanceSceneDataOffset());
+			FMeshDrawCommandPrimitiveIdInfo IdInfo = PrimitiveSceneInfo->GetMDCIdInfo();
 
 			// Calculate Lod for current mip
 			const float AreaRatio = 2.f * SphereBounds.W * RcpWorldSize;
@@ -997,10 +1046,10 @@ namespace RuntimeVirtualTexture
 			for (int32 MeshIndex = 0; MeshIndex < PrimitiveSceneInfo->StaticMeshes.Num(); ++MeshIndex)
 			{
 				FStaticMeshBatchRelevance const& StaticMeshRelevance = PrimitiveSceneInfo->StaticMeshRelevances[MeshIndex];
-				if (StaticMeshRelevance.bRenderToVirtualTexture && StaticMeshRelevance.LODIndex == LodIndex && StaticMeshRelevance.RuntimeVirtualTextureMaterialType == (uint32)MaterialType)
+				if (StaticMeshRelevance.bRenderToVirtualTexture && StaticMeshRelevance.GetLODIndex() == LodIndex && StaticMeshRelevance.RuntimeVirtualTextureMaterialType == (uint32)MaterialType)
 				{
 					bool bCachedDraw = false;
-					if (StaticMeshRelevance.bSupportsCachingMeshDrawCommands)
+					if (bAllowCachedMeshDrawCommands && StaticMeshRelevance.bSupportsCachingMeshDrawCommands)
 					{
 						// Use cached draw command
 						const int32 StaticMeshCommandInfoIndex = StaticMeshRelevance.GetStaticMeshCommandInfoIndex(EMeshPass::VirtualTexture);
@@ -1020,7 +1069,9 @@ namespace RuntimeVirtualTexture
 								CachedMeshDrawCommand.MeshFillMode,
 								CachedMeshDrawCommand.MeshCullMode,
 								CachedMeshDrawCommand.Flags,
-								CachedMeshDrawCommand.SortKey);
+								CachedMeshDrawCommand.SortKey,
+								CachedMeshDrawCommand.CullingPayload,
+								EMeshDrawCommandCullingPayloadFlags::NoScreenSizeCull);
 
 							DynamicMeshPassContext->AddVisibleMeshDrawCommand(NewVisibleMeshDrawCommand);
 							bCachedDraw = true;
@@ -1099,6 +1150,7 @@ namespace RuntimeVirtualTexture
 	IMPLEMENT_SHADER_TYPE(template<>, FShader_VirtualTextureCompress_CS< ERuntimeVirtualTextureMaterialType::BaseColor_Normal_Roughness >, TEXT("/Engine/Private/VirtualTextureCompress.usf"), TEXT("CompressBaseColorNormalRoughnessCS"), SF_Compute);
 	IMPLEMENT_SHADER_TYPE(template<>, FShader_VirtualTextureCompress_CS< ERuntimeVirtualTextureMaterialType::BaseColor_Normal_Specular_YCoCg >, TEXT("/Engine/Private/VirtualTextureCompress.usf"), TEXT("CompressBaseColorNormalSpecularYCoCgCS"), SF_Compute);
 	IMPLEMENT_SHADER_TYPE(template<>, FShader_VirtualTextureCompress_CS< ERuntimeVirtualTextureMaterialType::BaseColor_Normal_Specular_Mask_YCoCg >, TEXT("/Engine/Private/VirtualTextureCompress.usf"), TEXT("CompressBaseColorNormalSpecularMaskYCoCgCS"), SF_Compute);
+	IMPLEMENT_SHADER_TYPE(template<>, FShader_VirtualTextureCompress_CS< ERuntimeVirtualTextureMaterialType::Displacement >, TEXT("/Engine/Private/VirtualTextureCompress.usf"), TEXT("CompressDisplacementCS"), SF_Compute);
 
 
 	/** Add the BC compression pass to the graph. */
@@ -1136,6 +1188,9 @@ namespace RuntimeVirtualTexture
 			break;
 		case ERuntimeVirtualTextureMaterialType::BaseColor_Normal_Specular_Mask_YCoCg:
 			AddCompressPass<ERuntimeVirtualTextureMaterialType::BaseColor_Normal_Specular_Mask_YCoCg>(GraphBuilder, FeatureLevel, Parameters, GroupCount);
+			break;
+		case ERuntimeVirtualTextureMaterialType::Displacement:
+			AddCompressPass<ERuntimeVirtualTextureMaterialType::Displacement>(GraphBuilder, FeatureLevel, Parameters, GroupCount);
 			break;
 		}
 	}
@@ -1265,6 +1320,7 @@ namespace RuntimeVirtualTexture
 			AddCopyPass<ERuntimeVirtualTextureMaterialType::BaseColor>(GraphBuilder, FeatureLevel, Parameters, TextureSize);
 			break;
 		case ERuntimeVirtualTextureMaterialType::WorldHeight:
+		case ERuntimeVirtualTextureMaterialType::Displacement:
 			AddCopyPass<ERuntimeVirtualTextureMaterialType::WorldHeight>(GraphBuilder, FeatureLevel, Parameters, TextureSize);
 			break;
 		}
@@ -1301,14 +1357,25 @@ namespace RuntimeVirtualTexture
 		return Scene != nullptr && Scene->GetRenderScene() != nullptr && Scene->GetRenderScene()->GPUScene.IsRendering();
 	}
 
+	FLinearColor GetMipLevelColor(uint32 InLevel)
+	{
+		static const uint32 MipColors[] = {
+			0xC0FFFFFF, 0xC0FFFF00, 0xC000FFFF, 0xC000FF00, 0xC0FF00FF, 0xC0FF0000, 0xC00000FF,
+			0xC0808080, 0xC0808000, 0xC0008080, 0xC0008000, 0xC0800080, 0xC0800000, 0xC0000080 };
+
+		InLevel = FMath::Min<uint32>(InLevel, sizeof(MipColors) / sizeof(MipColors[0]) - 1);
+		return FLinearColor(FColor(MipColors[InLevel]));
+	}
+
 	void RenderPage(
 		FRDGBuilder& GraphBuilder,
 		FScene* Scene,
-		FSceneUniformBuffer& SceneUB,
+		ISceneRenderer* SceneRenderer,
 		uint32 RuntimeVirtualTextureMask,
 		ERuntimeVirtualTextureMaterialType MaterialType,
 		bool bClearTextures,
 		bool bIsThumbnails,
+		bool bAllowCachedMeshDrawCommands,
 		FRHITexture2D* OutputTexture0,		// todo[vt]: Only use IPooledRenderTarget or FRDGTextureRef, not raw RHI textures.
 		IPooledRenderTarget* OutputTarget0,
 		FBox2D const& DestBox0,
@@ -1323,7 +1390,7 @@ namespace RuntimeVirtualTexture
 		FBox2D const& UVRange,
 		uint8 vLevel,
 		uint8 MaxLevel,
-		ERuntimeVirtualTextureDebugType DebugType)
+		FLinearColor const& FixedColor)
 	{
 		RDG_EVENT_SCOPE(GraphBuilder, "VirtualTextureDynamicCache");
 
@@ -1332,7 +1399,8 @@ namespace RuntimeVirtualTexture
 		//todo[vt]: Have specific shader variations and setup for different output texture configs
 		FSceneViewFamily::ConstructionValues ViewFamilyInit(nullptr, Scene, FEngineShowFlags(ESFIM_Game));
 		ViewFamilyInit.SetTime(FGameTime());
-		FSceneViewFamily& ViewFamily = *GraphBuilder.AllocObject<FViewFamilyInfo>(ViewFamilyInit);
+		FViewFamilyInfo& ViewFamily = *GraphBuilder.AllocObject<FViewFamilyInfo>(ViewFamilyInit);
+		ViewFamily.SetSceneRenderer(SceneRenderer);
 
 		FSceneViewInitOptions ViewInitOptions;
 		ViewInitOptions.ViewFamily = &ViewFamily;
@@ -1362,9 +1430,6 @@ namespace RuntimeVirtualTexture
 		const float ZOffset = -NearPlane;
 		ViewInitOptions.ProjectionMatrix = FReversedZOrthoMatrix(OrthoWidth, OrthoHeight, ZScale, ZOffset);
 
-		// Ortho views need to set this to have a ViewOrigin that works with large world coordinates.
-		ViewInitOptions.bUseFauxOrthoViewPos = true;
-
 		const FVector4f MipLevelParameter = FVector4f((float)vLevel, (float)MaxLevel, OrthoWidth / (float)TextureSize.X, OrthoHeight / (float)TextureSize.Y);
 		
 		const float HeightRange = FMath::Max<float>(WorldBounds.Max.Z - WorldBounds.Min.Z, 1.f);
@@ -1382,7 +1447,7 @@ namespace RuntimeVirtualTexture
 		View->SetupUniformBufferParameters(nullptr, 0, *View->CachedViewUniformShaderParameters);
 		View->CachedViewUniformShaderParameters->RuntimeVirtualTextureMipLevel = MipLevelParameter;
 		View->CachedViewUniformShaderParameters->RuntimeVirtualTexturePackHeight = FVector2f(WorldHeightPackParameter);	// LWC_TODO: Precision loss
-		View->CachedViewUniformShaderParameters->RuntimeVirtualTextureDebugParams = FVector4f(DebugType == ERuntimeVirtualTextureDebugType::Debug ? 1.f : 0.f, 0.f, 0.f, 0.f);
+		View->CachedViewUniformShaderParameters->RuntimeVirtualTextureDebugParams = CVarVTMipColors.GetValueOnRenderThread() ? GetMipLevelColor(vLevel) : FixedColor;
 		View->ViewUniformBuffer = TUniformBufferRef<FViewUniformShaderParameters>::CreateUniformBufferImmediate(*View->CachedViewUniformShaderParameters, UniformBuffer_SingleFrame);
 
 		// Build graph
@@ -1401,15 +1466,15 @@ namespace RuntimeVirtualTexture
 			ERenderTargetLoadAction LoadAction = bClearTextures ? ERenderTargetLoadAction::EClear : ERenderTargetLoadAction::ENoAction;
 			FShader_VirtualTextureMaterialDraw::FParameters* PassParameters = GraphBuilder.AllocParameters<FShader_VirtualTextureMaterialDraw::FParameters>();
 			PassParameters->View = View->ViewUniformBuffer;
-			PassParameters->Scene = SceneUB.GetBuffer(GraphBuilder);
+			PassParameters->Scene = SceneRenderer->GetSceneUniformBufferRef(GraphBuilder);
 			PassParameters->RenderTargets[0] = GraphSetup.RenderTexture0 ? FRenderTargetBinding(GraphSetup.RenderTexture0, LoadAction) : FRenderTargetBinding();
 			PassParameters->RenderTargets[1] = GraphSetup.RenderTexture1 ? FRenderTargetBinding(GraphSetup.RenderTexture1, LoadAction) : FRenderTargetBinding();
 			PassParameters->RenderTargets[2] = GraphSetup.RenderTexture2 ? FRenderTargetBinding(GraphSetup.RenderTexture2, LoadAction) : FRenderTargetBinding();
     		
 			AddSimpleMeshPass(GraphBuilder, PassParameters, Scene, *View, nullptr, RDG_EVENT_NAME("VirtualTextureDraw"), View->ViewRect,
-	    	[Scene, View, MaterialType, RuntimeVirtualTextureMask, vLevel, MaxLevel](FDynamicPassMeshDrawListContext* DynamicMeshPassContext)
+	    	[Scene, View, MaterialType, RuntimeVirtualTextureMask, vLevel, MaxLevel, bAllowCachedMeshDrawCommands](FDynamicPassMeshDrawListContext* DynamicMeshPassContext)
 	    	{
-	    		GatherMeshesToDraw(DynamicMeshPassContext, Scene, View, MaterialType, RuntimeVirtualTextureMask, vLevel, MaxLevel);
+	    		GatherMeshesToDraw(DynamicMeshPassContext, Scene, View, MaterialType, RuntimeVirtualTextureMask, vLevel, MaxLevel, bAllowCachedMeshDrawCommands);
 	    	});
 		}
 
@@ -1478,7 +1543,7 @@ namespace RuntimeVirtualTexture
 		}
 	}
 
-	void RenderPagesInternal(FRDGBuilder& GraphBuilder, FRenderPageBatchDesc const& InDesc, FSceneUniformBuffer& SceneUB)
+	void RenderPagesInternal(FRDGBuilder& GraphBuilder, FRenderPageBatchDesc const& InDesc, ISceneRenderer* SceneRenderer, bool bAllowCachedMeshDrawCommands)
 	{
 		check(InDesc.NumPageDescs <= EMaxRenderPageBatch);
 
@@ -1494,11 +1559,12 @@ namespace RuntimeVirtualTexture
 				RenderPage(
 					GraphBuilder,
 					InDesc.Scene,
-					SceneUB,
+					SceneRenderer,
 					InDesc.RuntimeVirtualTextureMask,
 					InDesc.MaterialType,
 					InDesc.bClearTextures,
 					InDesc.bIsThumbnails,
+					bAllowCachedMeshDrawCommands,
 					InDesc.Targets[0].Texture, InDesc.Targets[0].PooledRenderTarget, PageDesc.DestBox[0],
 					InDesc.Targets[1].Texture, InDesc.Targets[1].PooledRenderTarget, PageDesc.DestBox[1],
 					InDesc.Targets[2].Texture, InDesc.Targets[2].PooledRenderTarget, PageDesc.DestBox[2],
@@ -1507,38 +1573,42 @@ namespace RuntimeVirtualTexture
 					PageDesc.UVRange,
 					PageDesc.vLevel,
 					InDesc.MaxLevel,
-					InDesc.DebugType);
+					InDesc.FixedColor);
 			}
 		}
 	}
 
 	void RenderPagesStandAlone(FRDGBuilder& GraphBuilder, FRenderPageBatchDesc const& InDesc)
 	{
-		// This is required to collect dynamic primitives from the views (not used here, but we must provide one).
-		FGPUSceneDynamicContext GPUSceneDynamicContext(InDesc.Scene->GPUScene);
+		check(InDesc.Scene != nullptr);
+		FScenePrimitiveRenderingContextScopeHelper RenderingScope(GetRendererModule().BeginScenePrimitiveRendering(GraphBuilder, *InDesc.Scene));
 
-		InDesc.Scene->UpdateAllPrimitiveSceneInfos(GraphBuilder);
-
-		// Call to let GPU-Scene determine if it is active and record scene primitive count
-		FGPUSceneScopeBeginEndHelper GPUSceneScopeBeginEndHelper(InDesc.Scene->GPUScene, GPUSceneDynamicContext, InDesc.Scene);
-
-		FSceneUniformBuffer SceneUB {};
-		FRDGExternalAccessQueue ExternalAccessQueue;
-		InDesc.Scene->GPUScene.Update(GraphBuilder, SceneUB, *InDesc.Scene, ExternalAccessQueue);
-		ExternalAccessQueue.Submit(GraphBuilder);
-
-		RenderPagesInternal(GraphBuilder, InDesc, SceneUB);
+		// Disable MDC caching because we can't guarantee that primitives associated with the scene have been recreated (e.g. by World->SendAllEndOfFrameUpdates()).
+		const bool bAllowCachedMeshDrawCommands = false;
+		RenderPagesInternal(GraphBuilder, InDesc, RenderingScope.ScenePrimitiveRenderingContext->GetSceneRenderer(), bAllowCachedMeshDrawCommands);
 	}
 
 	void RenderPages(FRDGBuilder& GraphBuilder, FRenderPageBatchDesc const& InDesc)
 	{
+		check(InDesc.Scene != nullptr);
 		if (InDesc.Scene->GPUScene.IsRendering())
 		{
 			// TODO: this should be replaced by piping through a reference to the scene renderer rather than just the scene, such that we can get at the already populated scene UB.
-			FSceneUniformBuffer SceneUB{};
-			InDesc.Scene->GPUScene.FillSceneUniformBuffer(GraphBuilder, SceneUB);
+			class FSimpleRVTRenderer : public FSceneRendererBase
+			{
+			public:
+				FSimpleRVTRenderer(FRDGBuilder& GraphBuilder, FRenderPageBatchDesc const& InDesc)
+					: FSceneRendererBase(*InDesc.Scene)
+				{
+					InitSceneExtensionsRenderers();
 
-			RenderPagesInternal(GraphBuilder, InDesc, SceneUB);
+					InDesc.Scene->GPUScene.FillSceneUniformBuffer(GraphBuilder, GetSceneUniforms());
+					GetSceneExtensionsRenderers().UpdateSceneUniformBuffer(GraphBuilder, GetSceneUniforms());
+			}
+			};
+			FSimpleRVTRenderer SimpleRenderer(GraphBuilder, InDesc);
+			const bool bAllowCachedMeshDrawCommands = true;
+			RenderPagesInternal(GraphBuilder, InDesc, &SimpleRenderer, bAllowCachedMeshDrawCommands);
 		}
 		else
 		{

@@ -20,7 +20,6 @@ namespace UE::MLDeformer
 		// FMLDeformerVizSettingsDetails overrides.
 		virtual bool UpdateMemberPointers(const TArray<TWeakObjectPtr<UObject>>& Objects) override;
 		virtual void AddAdditionalSettings() override;
-		virtual void AddStatistics() override;
 		// ~END FMLDeformerVizSettingsDetails overrides.
 
 	protected:

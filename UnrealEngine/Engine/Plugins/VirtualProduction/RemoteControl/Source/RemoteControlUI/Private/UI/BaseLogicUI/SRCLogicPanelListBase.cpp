@@ -52,10 +52,13 @@ TSharedPtr<SWidget> SRCLogicPanelListBase::GetContextMenuWidget()
 	// 2. Duplicate
 	MenuBuilder.AddMenuEntry(Commands.DuplicateItem);
 
-	// 3. Delete
+	// 3. Update
+	MenuBuilder.AddMenuEntry(Commands.UpdateValue);
+
+	// 4. Delete
 	MenuBuilder.AddMenuEntry(Commands.DeleteEntity);
 
-	// 4. Delete All
+	// 5. Delete All
 	FUIAction Action(FExecuteAction::CreateSP(this, &SRCLogicPanelListBase::RequestDeleteAllItems)
 	, FCanExecuteAction::CreateSP(this, &SRCLogicPanelListBase::CanDeleteAllItems));
 

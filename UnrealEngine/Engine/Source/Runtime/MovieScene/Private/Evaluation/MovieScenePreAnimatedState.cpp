@@ -9,30 +9,8 @@
 #include "Evaluation/PreAnimatedState/MovieScenePreAnimatedCaptureSources.h"
 #include "Evaluation/PreAnimatedState/MovieScenePreAnimatedObjectTokenStorage.h"
 #include "Evaluation/PreAnimatedState/MovieScenePreAnimatedRootTokenStorage.h"
-#include "Evaluation/PreAnimatedState/MovieScenePreAnimatedEntityCaptureSource.h"
 
 DECLARE_CYCLE_STAT(TEXT("Save Pre Animated State"), MovieSceneEval_SavePreAnimatedState, STATGROUP_MovieSceneEval);
-
-namespace UE
-{
-namespace MovieScene
-{
-
-IMovieScenePlayer* FRestoreStateParams::GetTerminalPlayer() const
-{
-	if (Linker && TerminalInstanceHandle.IsValid())
-	{
-		return Linker->GetInstanceRegistry()->GetInstance(TerminalInstanceHandle).GetPlayer();
-	}
-
-	ensureAlways(false);
-	return nullptr;
-}
-
-} // namespace MovieScene
-} // namespace UE
-
-
 
 FMovieScenePreAnimatedState::~FMovieScenePreAnimatedState()
 {
@@ -58,9 +36,6 @@ void FMovieScenePreAnimatedState::Initialize(UMovieSceneEntitySystemLinker* Link
 	}
 
 	bCapturingGlobalPreAnimatedState = false;
-
-	TemplateMetaData = nullptr;
-	EvaluationHookMetaData = nullptr;
 
 	WeakLinker = Linker;
 	InstanceHandle = InInstanceHandle;
@@ -135,19 +110,14 @@ void FMovieScenePreAnimatedState::RestorePreAnimatedState()
 	}
 }
 
-void FMovieScenePreAnimatedState::OnFinishedEvaluating(const FMovieSceneEvaluationKey& Key)
+void FMovieScenePreAnimatedState::DiscardPreAnimatedState()
 {
-	if (TemplateMetaData)
-	{
-		TemplateMetaData->StopTrackingCaptureSource(Key);
-	}
-}
+	using namespace UE::MovieScene;
 
-void FMovieScenePreAnimatedState::OnFinishedEvaluating(const UObject* EvaluationHook, FMovieSceneSequenceID SequenceID)
-{
-	if (EvaluationHookMetaData)
+	UMovieSceneEntitySystemLinker* Linker = WeakLinker.Get();
+	if (Linker)
 	{
-		EvaluationHookMetaData->StopTrackingCaptureSource(EvaluationHook, SequenceID);
+		Linker->PreAnimatedState.DiscardGlobalState(FRestoreStateParams{ Linker, InstanceHandle });
 	}
 }
 

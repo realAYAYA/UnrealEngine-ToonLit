@@ -11,12 +11,53 @@
 
 FGameplayDebuggerCategory_SmartObject::FGameplayDebuggerCategory_SmartObject()
 {
+	SetDataPackReplication<FReplicationData>(&DataPack, EGameplayDebuggerDataPack::Persistent);
+
 	bShowOnlyWithDebugActor = false;
+
+	const FGameplayDebuggerInputHandlerConfig InstanceTagsKeyConfig(TEXT("ToggleInstanceTags"), EKeys::Add.GetFName(), FGameplayDebuggerInputModifier::Shift);
+	BindKeyPress(InstanceTagsKeyConfig, this, &FGameplayDebuggerCategory_SmartObject::ToggleInstanceTags, EGameplayDebuggerInputMode::Replicated);
+
+	const FGameplayDebuggerInputHandlerConfig SlotDetailsKeyConfig(TEXT("ToggleSlotDetails"), EKeys::Multiply.GetFName(), FGameplayDebuggerInputModifier::Shift);
+	BindKeyPress(SlotDetailsKeyConfig, this, &FGameplayDebuggerCategory_SmartObject::ToggleSlotDetails, EGameplayDebuggerInputMode::Replicated);
+
+	const FGameplayDebuggerInputHandlerConfig AnnotationsKeyConfig(TEXT("ToggleAnnotations"), EKeys::Subtract.GetFName(), FGameplayDebuggerInputModifier::Shift);
+	BindKeyPress(AnnotationsKeyConfig, this, &FGameplayDebuggerCategory_SmartObject::ToggleAnnotations, EGameplayDebuggerInputMode::Replicated);
 }
 
 TSharedRef<FGameplayDebuggerCategory> FGameplayDebuggerCategory_SmartObject::MakeInstance()
 {
 	return MakeShareable(new FGameplayDebuggerCategory_SmartObject());
+}
+
+void FGameplayDebuggerCategory_SmartObject::ToggleInstanceTags()
+{
+	DataPack.bDisplayInstanceTags ^= true;
+	MarkRenderStateDirty();
+}
+
+void FGameplayDebuggerCategory_SmartObject::ToggleSlotDetails()
+{
+	DataPack.bDisplaySlotDetails ^= true;
+	if (!DataPack.bDisplaySlotDetails)
+	{
+		// Disabling SlotDetails also disables Annotations
+		DataPack.bDisplayAnnotations = false;
+	}
+
+	MarkRenderStateDirty();
+}
+
+void FGameplayDebuggerCategory_SmartObject::ToggleAnnotations()
+{
+	DataPack.bDisplayAnnotations ^= true;
+	if (DataPack.bDisplayAnnotations)
+	{
+		// Enabling Annotations requires SlotDetails
+		DataPack.bDisplaySlotDetails = true;
+	}
+	
+	MarkRenderStateDirty();
 }
 
 void FGameplayDebuggerCategory_SmartObject::CollectData(APlayerController* OwnerPC, AActor* DebugActor)
@@ -30,57 +71,54 @@ void FGameplayDebuggerCategory_SmartObject::CollectData(APlayerController* Owner
 		AddTextLine(FString::Printf(TEXT("{Red}SmartObjectSubsystem instance is missing")));
 		return;
 	}
-
+	
 	FVector ViewLocation = FVector::ZeroVector;
 	FVector ViewDirection = FVector::ForwardVector;
 	bool bApplyCulling = GetViewPoint(OwnerPC, ViewLocation, ViewDirection);
 
 	FColor DebugColor = FColor::Yellow;
-	const uint32 NumRuntimeObjects = Subsystem->DebugGetNumRuntimeObjects();
-	const uint32 NumRegisteredComponents = Subsystem->DebugGetNumRegisteredComponents();
-
-	const FSmartObjectContainer& SmartObjectContainer = Subsystem->GetSmartObjectContainer();
-	const uint32 NumCollectionEntries = SmartObjectContainer.GetEntries().Num();
-
-	uint32 NumActiveObjects = 0;
-
-	const TMap<FSmartObjectHandle, FSmartObjectRuntime>& SmartObjectInstances = Subsystem->DebugGetRuntimeObjects();
-	for (auto& LookupEntry : SmartObjectInstances)
-	{
-		const FSmartObjectRuntime& Instance = LookupEntry.Value;
-		NumActiveObjects += Instance.IsEnabled() ? 1 : 0;
-
-		FVector Location = Instance.GetTransform().GetLocation();
-		if (bApplyCulling && !IsLocationInViewCone(ViewLocation, ViewDirection, Location))
-		{
-			continue;
-		}
-
-		// Instance tags
-		FString TagsAsString = Instance.GetTags().ToStringSimple();
-		if (!TagsAsString.IsEmpty())
-		{
-			// Using small dummy shape to display tags
-			AddShape(FGameplayDebuggerShape::MakePoint(Location, /*Radius*/ 1.0f, FColorList::White, TagsAsString));
-		}
-	}
-
-
-	AddTextLine(FString::Printf(TEXT("{White}Collection entries = {Green}%d\n{White}Runtime objects (Active / Inactive) = {Green}%s {White}/ {Grey}%s\n{White}Registered components = {Green}%s"),
-		NumCollectionEntries, *LexToString(NumActiveObjects), *LexToString(NumRuntimeObjects-NumActiveObjects),  *LexToString(NumRegisteredComponents)));
-
-	const FColor FreeColor = FColorList::SeaGreen;
+	const FColor FreeColor = FColorList::LimeGreen;
 	const FColor ClaimedColor = FColorList::Gold;
 	const FColor OccupiedColor = FColorList::Red;
 	const FColor SlotDisabledColor = FColorList::LightGrey;
-	const FColor ObjectDisabledColor = FColorList::DimGrey;
+	const FColor ObjectDisabledColor = FColorList::Black;
 
+	uint32 NumActiveObjects = 0;
 	const TMap<FSmartObjectHandle, FSmartObjectRuntime>& RuntimeSmartObjects = Subsystem->DebugGetRuntimeObjects();
-
+	ensureAlways(IsInGameThread() || IsInParallelGameThread());
 	for (auto& RuntimeSmartObjectEntry : RuntimeSmartObjects)
 	{
-		const FSmartObjectHandle SmartObjectHandle = RuntimeSmartObjectEntry.Key;
 		const FSmartObjectRuntime& SmartObjectRuntime = RuntimeSmartObjectEntry.Value;
+		NumActiveObjects += SmartObjectRuntime.IsEnabled() ? 1 : 0;
+
+		// Instance tags or if slot details are not displayed we display a single shape for the whole object
+		if (DataPack.bDisplayInstanceTags || !DataPack.bDisplaySlotDetails)
+		{
+			FVector Location = SmartObjectRuntime.GetTransform().GetLocation();
+			if (!bApplyCulling || IsLocationInViewCone(ViewLocation, ViewDirection, Location))
+			{
+				if (!DataPack.bDisplaySlotDetails)
+				{
+					AddShape(FGameplayDebuggerShape::MakeBox(Location, FVector(50), /*Thickness*/3, DebugColor));
+				}
+
+				if (DataPack.bDisplayInstanceTags)
+				{
+					FString TagsAsString = SmartObjectRuntime.GetTags().ToStringSimple();
+					if (!TagsAsString.IsEmpty())
+					{
+						// Using small dummy shape to display tags
+						AddShape(FGameplayDebuggerShape::MakePoint(Location, /*Radius*/ 1.0f, FColorList::White, TagsAsString));
+					}
+				}	
+			}
+		}
+
+		// Slot details following this point, skip if not displayed
+		if (!DataPack.bDisplaySlotDetails)
+		{
+			continue;
+		}
 
 		for (TConstEnumerateRef<FSmartObjectRuntimeSlot> RuntimeSlot : EnumerateRange(SmartObjectRuntime.GetSlots()))
 		{
@@ -110,7 +148,20 @@ void FGameplayDebuggerCategory_SmartObject::CollectData(APlayerController* Owner
 			FColor StateColor = FColor::Silver;
 			if (!RuntimeSlot->IsEnabled())
 			{
-				StateColor = !SmartObjectRuntime.IsEnabled() ? ObjectDisabledColor : SlotDisabledColor;
+				if (SmartObjectRuntime.IsEnabled())
+				{
+					// Slot is disabled but not the parent object 
+					StateColor = SlotDisabledColor;
+				}
+				else
+				{
+					// Parent is disabled
+					StateColor = ObjectDisabledColor;
+					
+					// Using small dummy shape to display tags
+					FString DisableFlagsAsString(SmartObjectRuntime.DebugGetDisableFlagsString());
+					AddShape(FGameplayDebuggerShape::MakePoint(Pos, /*Radius*/ 1.0f, FColorList::White, DisableFlagsAsString));
+				}
 			}
 			else
 			{
@@ -144,28 +195,33 @@ void FGameplayDebuggerCategory_SmartObject::CollectData(APlayerController* Owner
 			}
 			
 			AddShape(FGameplayDebuggerShape::MakeArrow(Pos, Pos + Dir * 2.0f * SlotSize, DebugArrowHeadSize, DebugArrowThickness, DebugColor));
-			
-			FString TagsAsString = RuntimeSlot->GetTags().ToStringSimple();
-			if (!TagsAsString.IsEmpty())
+
+			if (DataPack.bDisplayInstanceTags)
 			{
-				// Using small dummy shape to display tags
-				AddShape(FGameplayDebuggerShape::MakePoint(Pos, /*Radius*/ 1.0f, FColorList::White, TagsAsString));
+				FString TagsAsString = RuntimeSlot->GetTags().ToStringSimple();
+				if (!TagsAsString.IsEmpty())
+				{
+					// Using small dummy shape to display tags
+					AddShape(FGameplayDebuggerShape::MakePoint(Pos, /*Radius*/ 1.0f, FColorList::White, TagsAsString));
+				}
 			}
 
 			// Let annotations debug draw too
-
-			FSmartObjectAnnotationGameplayDebugContext DebugContext(*this, SmartObjectRuntime.GetDefinition());
-			DebugContext.SmartObjectOwnerActor = SmartObjectRuntime.GetOwnerActor();
-			DebugContext.DebugActor = DebugActor;
-			DebugContext.SlotTransform = SlotTransform;
-			DebugContext.ViewLocation = ViewLocation;
-			DebugContext.ViewDirection = ViewDirection;
-			
-			for (const FInstancedStruct& Data : SlotDefinition.Data)
+			if (DataPack.bDisplayAnnotations)
 			{
-				if (const FSmartObjectSlotAnnotation* Annotation = Data.GetPtr<FSmartObjectSlotAnnotation>())
+				FSmartObjectAnnotationGameplayDebugContext DebugContext(*this, SmartObjectRuntime.GetDefinition());
+				DebugContext.SmartObjectOwnerActor = SmartObjectRuntime.GetOwnerActor();
+				DebugContext.DebugActor = DebugActor;
+				DebugContext.SlotTransform = SlotTransform;
+				DebugContext.ViewLocation = ViewLocation;
+				DebugContext.ViewDirection = ViewDirection;
+			
+				for (const FSmartObjectDefinitionDataProxy& DataProxy : SlotDefinition.DefinitionData)
 				{
-					Annotation->CollectDataForGameplayDebugger(DebugContext);
+					if (const FSmartObjectSlotAnnotation* Annotation = DataProxy.Data.GetPtr<FSmartObjectSlotAnnotation>())
+					{
+						Annotation->CollectDataForGameplayDebugger(DebugContext);
+					}
 				}
 			}
 			
@@ -179,6 +235,47 @@ void FGameplayDebuggerCategory_SmartObject::CollectData(APlayerController* Owner
 			}
 		}
 	}
+
+	const uint32 NumRuntimeObjects = Subsystem->DebugGetNumRuntimeObjects();
+	const uint32 NumRegisteredComponents = Subsystem->DebugGetNumRegisteredComponents();
+	const uint32 NumCollectionEntries = Subsystem->GetSmartObjectContainer().GetEntries().Num();
+
+	AddTextLine(FString::Printf(TEXT(
+		"{White}Collection entries = {Green}%d\n"
+		"{White}Runtime objects (Active / Inactive) = {Green}%s {White}/ {Grey}%s\n"
+		"{White}Registered components = {Green}%s"),
+		NumCollectionEntries,
+		*LexToString(NumActiveObjects), *LexToString(NumRuntimeObjects-NumActiveObjects),
+		*LexToString(NumRegisteredComponents)));
+}
+
+void FGameplayDebuggerCategory_SmartObject::DrawData(APlayerController* OwnerPC, FGameplayDebuggerCanvasContext& CanvasContext)
+{
+	FGameplayDebuggerCategory::DrawData(OwnerPC, CanvasContext);
+
+	CanvasContext.Printf(TEXT("Display:\n"
+								"[{yellow}%s{white}]:{%s}Instance Tags\n"
+								"[{yellow}%s{white}]:{%s}Slots Details\n"
+								"[{yellow}%s{white}]:{%s}Annotations\n"),
+		*GetInputHandlerDescription(0),
+		DataPack.bDisplayInstanceTags
+			? *FGameplayDebuggerCanvasStrings::ColorNameEnabled
+			: *FGameplayDebuggerCanvasStrings::ColorNameDisabled,
+		*GetInputHandlerDescription(1),
+		DataPack.bDisplaySlotDetails
+			? *FGameplayDebuggerCanvasStrings::ColorNameEnabled
+			: *FGameplayDebuggerCanvasStrings::ColorNameDisabled,
+		*GetInputHandlerDescription(2),
+		DataPack.bDisplayAnnotations
+			? *FGameplayDebuggerCanvasStrings::ColorNameEnabled
+			: *FGameplayDebuggerCanvasStrings::ColorNameDisabled);
+}
+
+void FGameplayDebuggerCategory_SmartObject::FReplicationData::Serialize(FArchive& Ar)
+{
+	Ar << bDisplayAnnotations;
+	Ar << bDisplayInstanceTags;
+	Ar << bDisplaySlotDetails;
 }
 
 #endif // WITH_GAMEPLAY_DEBUGGER && WITH_SMARTOBJECT_DEBUG

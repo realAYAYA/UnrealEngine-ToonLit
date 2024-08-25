@@ -54,16 +54,47 @@ struct FModifyContextOptions
 		, bNotifyUserSettings(false)
 	{}
 
-	// If true then any keys that are pressed during the rebuild of control mappings will be ignored until they are released.
+	/**
+	 * If true, then any keys that are "down" or "pressed" during the rebuild of control mappings will
+	 * not be processed by Enhanced Input until after they are "released". 
+	 * 
+	 * For example, if you are adding a mapping context with a key mapping to "X",
+	 * and the player is holding down "X" while that IMC is added, 
+	 * there will not be a "Triggered" event until the player releases "X" and presses it again.
+	 * 
+	 * If this is set to false for the above example, then the "Triggered" would fire immediately 
+	 * as soon as the IMC is finished being added.
+	 *
+	 * Default: True
+	 * 
+	 * Note: This will only do something for keys bound to boolean Input Action types.
+	 * Note: This includes all keys that the player has pressed, not just the keys that are previously mapped in Enhanced Input before
+	 * the call to RebuildControlMappings.
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input")
 	uint8 bIgnoreAllPressedKeysUntilRelease : 1;
 
-	// The mapping changes will be applied synchronously, rather than at the end of the frame, making them available to the input system on the same frame.
+	/**
+	 * The mapping changes will be applied synchronously, rather than at the end of the frame,
+	 * making them available to the input system on the same frame.
+	 * 
+	 * This is not recommended to be set to true if you are adding multiple mapping contexts 
+	 * as it will have poor performance.
+	 *
+	 * Default: False
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input")
 	uint8 bForceImmediately : 1;
 	
-	// If true, then this Mapping Context will be registered or unregistered with the Enhanced Input User Settings on this subsystem,
-	// if they exist.
+	/**
+	 * If true, then this Mapping Context will be registered or unregistered with the
+	 * Enhanced Input User Settings on this subsystem, if they exist.
+	 *
+	 * Default: False
+	 *
+	 * Note: You need to enable and configure your UEnhancedInputUserSettings class in the project
+	 * settings for this to do anything.
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Input")
 	uint8 bNotifyUserSettings : 1;
 };
@@ -138,7 +169,7 @@ public:
 	 * @param Triggers			The triggers to apply to the injected input.
 	 */
 	UFUNCTION(BlueprintCallable, Category="Input", meta=(AutoCreateRefTerm="Modifiers,Triggers"))
-	virtual void InjectInputForPlayerMapping(const FName MappingName, FInputActionValue RawValue, const TArray<UInputModifier*>& Modifiers, const TArray<UInputTrigger*>& Triggers);
+	virtual void InjectInputForPlayerMapping(UPARAM(Meta=(GetOptions="EnhancedInput.PlayerMappableKeySettings.GetKnownMappingNames")) const FName MappingName, FInputActionValue RawValue, const TArray<UInputModifier*>& Modifiers, const TArray<UInputTrigger*>& Triggers);
 	
 	/**
 	 * Input simulation via injection. Runs modifiers and triggers delegates as if the input had come through the underlying input system as FKeys.
@@ -150,7 +181,7 @@ public:
 	 * @param Triggers			The triggers to apply to the injected input.
 	 */
 	UFUNCTION(BlueprintCallable, Category="Input", meta=(AutoCreateRefTerm="Modifiers,Triggers"))
-	virtual void InjectInputVectorForPlayerMapping(const FName MappingName, FVector Value, const TArray<UInputModifier*>& Modifiers, const TArray<UInputTrigger*>& Triggers);
+	virtual void InjectInputVectorForPlayerMapping(UPARAM(Meta=(GetOptions="EnhancedInput.PlayerMappableKeySettings.GetKnownMappingNames")) const FName MappingName, FVector Value, const TArray<UInputModifier*>& Modifiers, const TArray<UInputTrigger*>& Triggers);
 
 	/**
 	 * Starts simulation of input via injection. This injects the given input every tick until it is stopped with StopContinuousInputInjectionForAction.
@@ -172,7 +203,25 @@ public:
 	 * @param Triggers			The triggers to apply to the injected input.
 	 */
 	UFUNCTION(BlueprintCallable, Category="Input", meta=(AutoCreateRefTerm="Modifiers,Triggers"))
-	virtual void StartContinuousInputInjectionForPlayerMapping(const FName MappingName, FInputActionValue RawValue, const TArray<UInputModifier*>& Modifiers, const TArray<UInputTrigger*>& Triggers);
+	virtual void StartContinuousInputInjectionForPlayerMapping(UPARAM(Meta=(GetOptions="EnhancedInput.PlayerMappableKeySettings.GetKnownMappingNames")) const FName MappingName, FInputActionValue RawValue, const TArray<UInputModifier*>& Modifiers, const TArray<UInputTrigger*>& Triggers);
+
+	/**
+	 * Update the value of a continuous input injection, preserving the state of triggers and modifiers.
+	 *
+	 * @param Action	The Input Action to set inject input for
+	 * @param RawValue	The value to set the action to (the type will be controlled by the Action)
+	 */
+	UFUNCTION(BlueprintCallable, Category="Input")
+	virtual void UpdateValueOfContinuousInputInjectionForAction(const UInputAction* Action, FInputActionValue RawValue);
+
+	/**
+	 * Update the value of a continuous input injection for the given player mapping name, preserving the state of triggers and modifiers.
+	 *
+	 * @param MappingName	The name of the player mapping that can be used for look up an associated UInputAction object.
+	 * @param RawValue		The value to set the action to (the type will be controlled by the Action)
+	 */
+	UFUNCTION(BlueprintCallable, Category="Input")
+	virtual void UpdateValueOfContinuousInputInjectionForPlayerMapping(UPARAM(Meta=(GetOptions="EnhancedInput.PlayerMappableKeySettings.GetKnownMappingNames")) const FName MappingName, FInputActionValue RawValue);
 
 	/**
 	 * Stops continuous input injection for the given action.
@@ -188,7 +237,7 @@ public:
 	 * @param MappingName		The name of the player mapping that can be used for look up an associated UInputAction object.
 	 */
 	UFUNCTION(BlueprintCallable, Category="Input")
-	virtual void StopContinuousInputInjectionForPlayerMapping(const FName MappingName);
+	virtual void StopContinuousInputInjectionForPlayerMapping(UPARAM(Meta=(GetOptions="EnhancedInput.PlayerMappableKeySettings.GetKnownMappingNames")) const FName MappingName);
 	
 	/**
 	 * Remove all applied mapping contexts.
@@ -435,6 +484,13 @@ protected:
 
 	// helper function to display debug about mapping context info
 	void ShowMappingContextDebugInfo(UCanvas* Canvas, const UEnhancedPlayerInput* PlayerInput);
+
+	/**
+	 * Pure-virtual getter for the map of inputs that should be injected every frame. These inputs will be injected when 
+	 * ForcedInput is ticked. Any classes that implement this interface should have this function return a managed map to
+	 * avoid GC and unreachibility issues.
+	 */
+	virtual TMap<TObjectPtr<const UInputAction>, FInjectedInput>& GetContinuouslyInjectedInputs() = 0;
 	
 private:
 
@@ -465,9 +521,6 @@ private:
 
 	TMap<TWeakObjectPtr<const UInputAction>, FInputActionValue> ForcedActions;
 	TMap<FKey, FInputActionValue> ForcedKeys;
-
-	/** A map of inputs that should be injected every frame. This inputs will be injected when ForcedInput is ticked. */
-	TMap<TObjectPtr<const UInputAction>, FInjectedInput> ContinuouslyInjectedInputs;
 
 	/**
 	 * A map of input actions with a Chorded trigger, mapped to the action they are dependent on.

@@ -1,0 +1,23 @@
+<?xml version='1.0' ?>
+<BuildGraph xmlns="http://www.epicgames.com/BuildGraph" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../Schema.xsd" >
+
+	<!-- 
+		Performs quick tests on shelved changes before submission.
+			
+		Other options:
+			-set:ProjectPath=<ProjectPath>		Specifies the uproject path to pass as -Project in the compile args (defaults to none)
+			-set:EditorTarget=<TargetName>		Specifies the editor target to be built (defaults to UnrealEditor)
+	-->
+
+	<Option Name="ProjectPath" Restrict="[^ ]*" DefaultValue="" Description="Optional Uproject path to include in the arguments"/>
+	<Option Name="EditorTarget" Restrict="[^ ]+" DefaultValue="UnrealEditor" Description="Name of the editor target to be built"/>
+	
+	<Agent Name="Default Agent" Type="IncrementalWin64;CompileWin64;Win64">
+		<Node Name="Compile $(EditorTarget) Win64" Produces="#EditorBinaries;#TargetInfo">
+			<Compile Target="$(EditorTarget)" Platform="Win64" Configuration="Development" Project="$(ProjectPath)"/>
+		</Node>
+	</Agent>
+	
+	<Aggregate Name="Presubmit Tests" Requires="Compile $(EditorTarget) Win64"/>
+
+</BuildGraph>

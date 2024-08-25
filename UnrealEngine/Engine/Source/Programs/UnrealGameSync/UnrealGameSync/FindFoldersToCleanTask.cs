@@ -1,7 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Perforce;
-using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -9,6 +7,8 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using EpicGames.Perforce;
+using Microsoft.Extensions.Logging;
 
 namespace UnrealGameSync
 {
@@ -36,7 +36,7 @@ namespace UnrealGameSync
 	{
 		class PerforceHaveFolder
 		{
-			public Dictionary<string, PerforceHaveFolder> _nameToSubFolder = new Dictionary<string,PerforceHaveFolder>(StringComparer.OrdinalIgnoreCase);
+			public Dictionary<string, PerforceHaveFolder> _nameToSubFolder = new Dictionary<string, PerforceHaveFolder>(StringComparer.OrdinalIgnoreCase);
 			public Dictionary<string, FStatRecord> _nameToFile = new Dictionary<string, FStatRecord>(StringComparer.OrdinalIgnoreCase);
 		}
 
@@ -65,7 +65,7 @@ namespace UnrealGameSync
 
 		void QueueFolderToPopulate(FolderToClean folder)
 		{
-			if(Interlocked.Increment(ref _remainingFoldersToScan) == 1)
+			if (Interlocked.Increment(ref _remainingFoldersToScan) == 1)
 			{
 				_finishedScan.Reset();
 			}
@@ -74,7 +74,7 @@ namespace UnrealGameSync
 
 		void PopulateFolder(FolderToClean folder)
 		{
-			if(!_abortScan)
+			if (!_abortScan)
 			{
 				try
 				{
@@ -101,18 +101,18 @@ namespace UnrealGameSync
 				}
 			}
 
-			if(Interlocked.Decrement(ref _remainingFoldersToScan) == 0)
+			if (Interlocked.Decrement(ref _remainingFoldersToScan) == 0)
 			{
 				_finishedScan.Set();
 			}
 		}
 
-		void MergeTrees(FolderToClean localFolder, PerforceHaveFolder? perforceFolder, HashSet<string> openClientPaths, string? perforceConfigFile)
+		static void MergeTrees(FolderToClean localFolder, PerforceHaveFolder? perforceFolder, HashSet<string> openClientPaths, string? perforceConfigFile)
 		{
-			if(perforceFolder == null)
+			if (perforceFolder == null)
 			{
 				// Loop through all the local sub-folders
-				foreach(FolderToClean localSubFolder in localFolder._nameToSubFolder.Values)
+				foreach (FolderToClean localSubFolder in localFolder._nameToSubFolder.Values)
 				{
 					MergeTrees(localSubFolder, null, openClientPaths, perforceConfigFile);
 				}
@@ -123,7 +123,7 @@ namespace UnrealGameSync
 			else
 			{
 				// Loop through all the local sub-folders
-				foreach(FolderToClean localSubFolder in localFolder._nameToSubFolder.Values)
+				foreach (FolderToClean localSubFolder in localFolder._nameToSubFolder.Values)
 				{
 					PerforceHaveFolder? perforceSubFolder;
 					perforceFolder._nameToSubFolder.TryGetValue(localSubFolder.Name, out perforceSubFolder);
@@ -131,10 +131,10 @@ namespace UnrealGameSync
 				}
 
 				// Also merge all the Perforce folders that no longer exist
-				foreach(KeyValuePair<string, PerforceHaveFolder> perforceSubFolderPair in perforceFolder._nameToSubFolder)
+				foreach (KeyValuePair<string, PerforceHaveFolder> perforceSubFolderPair in perforceFolder._nameToSubFolder)
 				{
 					FolderToClean? localSubFolder;
-					if(!localFolder._nameToSubFolder.TryGetValue(perforceSubFolderPair.Key, out localSubFolder))
+					if (!localFolder._nameToSubFolder.TryGetValue(perforceSubFolderPair.Key, out localSubFolder))
 					{
 						localSubFolder = new FolderToClean(new DirectoryInfo(Path.Combine(localFolder._directory.FullName, perforceSubFolderPair.Key)));
 						MergeTrees(localSubFolder, perforceSubFolderPair.Value, openClientPaths, perforceConfigFile);
@@ -143,23 +143,23 @@ namespace UnrealGameSync
 				}
 
 				// Find all the files that need to be re-synced
-				foreach(KeyValuePair<string, FStatRecord> filePair in perforceFolder._nameToFile)
+				foreach (KeyValuePair<string, FStatRecord> filePair in perforceFolder._nameToFile)
 				{
 					FileInfo? localFile;
-					if(!localFolder._nameToFile.TryGetValue(filePair.Key, out localFile))
+					if (!localFolder._nameToFile.TryGetValue(filePair.Key, out localFile))
 					{
 						localFolder._filesToSync.Add(new FileInfo(Path.Combine(localFolder._directory.FullName, filePair.Key)));
 					}
-					else if(!IsFileTypeWritable(filePair.Value?.HeadType ?? filePair.Value?.Type) && (localFile.Attributes & FileAttributes.ReadOnly) == 0 && !openClientPaths.Contains(filePair.Value?.ClientFile ?? ""))
+					else if (!IsFileTypeWritable(filePair.Value?.HeadType ?? filePair.Value?.Type) && (localFile.Attributes & FileAttributes.ReadOnly) == 0 && !openClientPaths.Contains(filePair.Value?.ClientFile ?? ""))
 					{
 						localFolder._filesToSync.Add(localFile);
 					}
 				}
 
 				// Find all the files that should be deleted
-				foreach(FileInfo localFileInfo in localFolder._nameToFile.Values)
+				foreach (FileInfo localFileInfo in localFolder._nameToFile.Values)
 				{
-					if(!perforceFolder._nameToFile.ContainsKey(localFileInfo.Name) && !openClientPaths.Contains(localFileInfo.FullName))
+					if (!perforceFolder._nameToFile.ContainsKey(localFileInfo.Name) && !openClientPaths.Contains(localFileInfo.FullName))
 					{
 						localFolder._filesToDelete.Add(localFileInfo);
 					}
@@ -167,7 +167,7 @@ namespace UnrealGameSync
 			}
 
 			// Remove any config files
-			if(perforceConfigFile != null)
+			if (perforceConfigFile != null)
 			{
 				localFolder._filesToDelete.RemoveAll(x => String.Equals(x.Name, perforceConfigFile, StringComparison.OrdinalIgnoreCase));
 			}
@@ -192,9 +192,9 @@ namespace UnrealGameSync
 			return false;
 		}
 
-		void RemoveEmptyFolders(FolderToClean folder)
+		static void RemoveEmptyFolders(FolderToClean folder)
 		{
-			foreach(FolderToClean subFolder in folder._nameToSubFolder.Values)
+			foreach (FolderToClean subFolder in folder._nameToSubFolder.Values)
 			{
 				RemoveEmptyFolders(subFolder);
 			}
@@ -206,7 +206,7 @@ namespace UnrealGameSync
 		{
 			_abortScan = true;
 
-			if(_finishedScan != null)
+			if (_finishedScan != null)
 			{
 				_finishedScan.WaitOne();
 				_finishedScan.Dispose();
@@ -225,18 +225,18 @@ namespace UnrealGameSync
 			_scanError = null;
 
 			// Start enumerating all the files that exist locally
-			foreach(string syncPath in _syncPaths)
+			foreach (string syncPath in _syncPaths)
 			{
 				Debug.Assert(syncPath.StartsWith(_clientRootPath, StringComparison.OrdinalIgnoreCase));
-				if(syncPath.StartsWith(_clientRootPath, StringComparison.OrdinalIgnoreCase))
+				if (syncPath.StartsWith(_clientRootPath, StringComparison.OrdinalIgnoreCase))
 				{
 					string[] fragments = syncPath.Substring(_clientRootPath.Length).Split('/');
 
 					FolderToClean syncFolder = _rootFolderToClean;
-					for(int idx = 0; idx < fragments.Length - 1; idx++)
+					for (int idx = 0; idx < fragments.Length - 1; idx++)
 					{
 						FolderToClean? nextSyncFolder;
-						if(!syncFolder._nameToSubFolder.TryGetValue(fragments[idx], out nextSyncFolder))
+						if (!syncFolder._nameToSubFolder.TryGetValue(fragments[idx], out nextSyncFolder))
 						{
 							nextSyncFolder = new FolderToClean(new DirectoryInfo(Path.Combine(syncFolder._directory.FullName, fragments[idx])));
 							syncFolder._nameToSubFolder[nextSyncFolder.Name] = nextSyncFolder;
@@ -245,15 +245,15 @@ namespace UnrealGameSync
 					}
 
 					string wildcard = fragments[^1];
-					if(wildcard == "...")
+					if (wildcard == "...")
 					{
 						QueueFolderToPopulate(syncFolder);
 					}
 					else
 					{
-						if(syncFolder._directory.Exists)
+						if (syncFolder._directory.Exists)
 						{
-							foreach(FileInfo file in syncFolder._directory.EnumerateFiles(wildcard))
+							foreach (FileInfo file in syncFolder._directory.EnumerateFiles(wildcard))
 							{
 								syncFolder._nameToFile[file.Name] = file;
 							}
@@ -271,12 +271,12 @@ namespace UnrealGameSync
 
 			// Query the have table and build a separate tree from it
 			PerforceHaveFolder rootHaveFolder = new PerforceHaveFolder();
-			foreach(string syncPath in _syncPaths)
+			foreach (string syncPath in _syncPaths)
 			{
 				List<FStatRecord> fileRecords = await perforceClient.FStatAsync($"{syncPath}#have", cancellationToken).ToListAsync(cancellationToken);
-				foreach(FStatRecord fileRecord in fileRecords)
+				foreach (FStatRecord fileRecord in fileRecords)
 				{
-					if(fileRecord.ClientFile == null || !fileRecord.ClientFile.StartsWith(localRootPrefix, StringComparison.InvariantCultureIgnoreCase))
+					if (fileRecord.ClientFile == null || !fileRecord.ClientFile.StartsWith(localRootPrefix, StringComparison.InvariantCultureIgnoreCase))
 					{
 						throw new UserErrorException($"Failed to get have table; file '{fileRecord.ClientFile}' doesn't start with root path ('{_rootFolderToClean._directory.FullName}')");
 					}
@@ -284,10 +284,10 @@ namespace UnrealGameSync
 					string[] tokens = fileRecord.ClientFile.Substring(localRootPrefix.Length).Split('/', '\\');
 
 					PerforceHaveFolder fileFolder = rootHaveFolder;
-					for(int idx = 0; idx < tokens.Length - 1; idx++)
+					for (int idx = 0; idx < tokens.Length - 1; idx++)
 					{
 						PerforceHaveFolder? nextFileFolder;
-						if(!fileFolder._nameToSubFolder.TryGetValue(tokens[idx], out nextFileFolder))
+						if (!fileFolder._nameToSubFolder.TryGetValue(tokens[idx], out nextFileFolder))
 						{
 							nextFileFolder = new PerforceHaveFolder();
 							fileFolder._nameToSubFolder.Add(tokens[idx], nextFileFolder);
@@ -305,7 +305,7 @@ namespace UnrealGameSync
 			HashSet<string> openLocalFiles = new HashSet<string>(StringComparer.InvariantCultureIgnoreCase);
 			foreach (OpenedRecord openFileRecord in openFileRecords)
 			{
-				if(!openFileRecord.ClientFile.StartsWith(_clientRootPath, StringComparison.InvariantCultureIgnoreCase))
+				if (!openFileRecord.ClientFile.StartsWith(_clientRootPath, StringComparison.InvariantCultureIgnoreCase))
 				{
 					throw new UserErrorException($"Failed to get open file list; file '{openFileRecord.ClientFile}' doesn't start with client root path ('{_clientRootPath}')");
 				}

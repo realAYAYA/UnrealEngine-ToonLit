@@ -1,7 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System.Collections.Generic;
-using System.Threading.Tasks;
 using EpicGames.Core;
 using EpicGames.Horde.Storage;
 using EpicGames.Horde.Storage.Nodes;
@@ -10,7 +8,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Horde.Commands.Vcs
 {
-	[Command("vcs", "log", "Print a history of commits")]
+	[Command("vcs", "log", "Print a history of commits", Advertise = false)]
 	class VcsLog : VcsBase
 	{
 		[CommandLine("-Count")]
@@ -27,14 +25,13 @@ namespace Horde.Commands.Vcs
 
 			WorkspaceState workspaceState = await ReadStateAsync(rootDir);
 
-			IStorageClient store = await GetStorageClientAsync();
+			using IStorageClient store = CreateStorageClient();
 
 			using MemoryCache cache = new MemoryCache(new MemoryCacheOptions());
-			BundleReader reader = new BundleReader(store, cache, logger);
 
 			List<CommitNode> commits = new List<CommitNode>();
 
-			CommitNode? tip = await store.TryReadNodeAsync<CommitNode>(workspaceState.Branch);
+			CommitNode? tip = await store.TryReadRefTargetAsync<CommitNode>(workspaceState.Branch);
 			if (tip != null)
 			{
 				for (int idx = 0; idx < Count; idx++)
@@ -46,7 +43,7 @@ namespace Horde.Commands.Vcs
 						break;
 					}
 
-					tip = await tip.Parent.ExpandAsync();
+					tip = await tip.Parent.ReadBlobAsync();
 				}
 			}
 

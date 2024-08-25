@@ -1,4 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
+using System.IO;
 using UnrealBuildTool;
 
 namespace UnrealBuildTool.Rules
@@ -22,7 +23,8 @@ namespace UnrealBuildTool.Rules
 					"RHI",
 					"ElectraPlayerRuntime",
 					"ElectraSamples",
-					"ElectraBase"
+					"ElectraBase",
+					"ElectraDecoders"
 				});
 
 			PrivateIncludePathModuleNames.AddRange(
@@ -35,12 +37,13 @@ namespace UnrealBuildTool.Rules
 				PrivateDependencyModuleNames.Add("Engine");
 			}
 
-			if (Target.Platform == UnrealTargetPlatform.Mac)
+			if (Target.Platform.IsInGroup(UnrealPlatformGroup.Windows))
 			{
-				PrivateDependencyModuleNames.Add("MetalRHI");
+				PrivateDependencyModuleNames.Add("D3D12RHI");
+				AddEngineThirdPartyPrivateStaticDependencies(Target, "DX12");
 			}
 
-			if (Target.Platform == UnrealTargetPlatform.IOS || Target.Platform == UnrealTargetPlatform.TVOS)
+			if (Target.IsInPlatformGroup(UnrealPlatformGroup.Apple))
 			{
 				PrivateDependencyModuleNames.Add("MetalRHI");
 			}

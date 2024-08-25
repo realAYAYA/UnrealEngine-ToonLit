@@ -30,7 +30,7 @@ FAppEventManager* FAppEventManager::GetInstance()
 
 static const TCHAR* GetAppEventName(EAppEventState State)
 {
-	const TCHAR* Names[] = {
+	const TCHAR* Names[APP_EVENT_MAX_EVENTS] = {
 		TEXT("APP_EVENT_STATE_WINDOW_CREATED"),
 		TEXT("APP_EVENT_STATE_WINDOW_RESIZED"),
 		TEXT("APP_EVENT_STATE_WINDOW_CHANGED"),
@@ -46,15 +46,17 @@ static const TCHAR* GetAppEventName(EAppEventState State)
 		TEXT("APP_EVENT_STATE_SAVE_STATE"),
 		TEXT("APP_EVENT_STATE_APP_SUSPENDED"),
 		TEXT("APP_EVENT_STATE_APP_ACTIVATED"),
+		TEXT("APP_EVENT_STATE_SAFE_ZONE_UPDATED"),
 		TEXT("APP_EVENT_RUN_CALLBACK"),
 		};
 
+	static_assert(APP_EVENT_MAX_EVENTS == 17, "You must update this array if more app events are added!");
 
 	if (State == APP_EVENT_STATE_INVALID)
 	{
 		return TEXT("APP_EVENT_STATE_INVALID");
 	}
-	else if (State > APP_EVENT_RUN_CALLBACK || State < 0)
+	else if (State >= APP_EVENT_MAX_EVENTS || State < 0)
 	{
 		return TEXT("UnknownEAppEventStateValue");
 	}
@@ -71,7 +73,7 @@ void FAppEventManager::Tick()
 	while (!Queue.IsEmpty())
 	{
 		FAppEventPacket Event = DequeueAppEvent();
-		FPlatformMisc::LowLevelOutputDebugStringf(TEXT("FAppEventManager::Tick processing, %d"), int(Event.State));
+		STANDALONE_DEBUG_LOGf(LogAndroidEvents, TEXT("FAppEventManager::Tick processing, %d"), int(Event.State));
 
 		switch (Event.State)
 		{
@@ -87,7 +89,7 @@ void FAppEventManager::Tick()
 		case APP_EVENT_STATE_WINDOW_CHANGED:
 			// React on device orientation/windowSize changes only when application has window
 			// In case window was created this tick it should already has correct size
-			// see 'Java_com_epicgames_unreal_GameActivity_nativeOnConfigurationChanged' for event thread/game thread mismatches.
+			// see 'Java_com_epicgames_unreal_GameActivity_nativeOnOrientationChanged' for event thread/game thread mismatches.
 			ExecWindowResized();
 		break;
 		case APP_EVENT_STATE_SAVE_STATE:
@@ -95,7 +97,7 @@ void FAppEventManager::Tick()
 			break;
 		case APP_EVENT_STATE_WINDOW_DESTROYED:
 			bHaveWindow = false;
-			FPlatformMisc::LowLevelOutputDebugStringf(TEXT("APP_EVENT_STATE_WINDOW_DESTROYED, %d, %d, %d"), int(bRunning), int(bHaveWindow), int(bHaveGame));
+			STANDALONE_DEBUG_LOGf(LogAndroidEvents, TEXT("APP_EVENT_STATE_WINDOW_DESTROYED, %d, %d, %d"), int(bRunning), int(bWindowInFocus), int(bHaveGame));
 			break;
 		case APP_EVENT_STATE_ON_START:
 			//doing nothing here
@@ -103,18 +105,20 @@ void FAppEventManager::Tick()
 		case APP_EVENT_STATE_ON_DESTROY:
 			check(bHaveWindow == false);
 			check(IsEngineExitRequested()); //destroy immediately. Game will shutdown.
-			FPlatformMisc::LowLevelOutputDebugStringf(TEXT("APP_EVENT_STATE_ON_DESTROY"));
+			STANDALONE_DEBUG_LOGf(LogAndroidEvents, TEXT("APP_EVENT_STATE_ON_DESTROY"));
 			break;
 		case APP_EVENT_STATE_ON_STOP:
 			bHaveGame = false;
-			ReleaseMicrophone(true);
+			ReleaseMicrophone(false);
 			break;
 		case APP_EVENT_STATE_ON_PAUSE:
 			FAndroidAppEntry::OnPauseEvent();
 			bHaveGame = false;
+			STANDALONE_DEBUG_LOGf(LogAndroidEvents, TEXT("APP_EVENT_STATE_ON_PAUSE, %d, %d, %d"), int(bRunning), int(bWindowInFocus), int(bHaveGame));
 			break;
 		case APP_EVENT_STATE_ON_RESUME:
 			bHaveGame = true;
+			STANDALONE_DEBUG_LOGf(LogAndroidEvents, TEXT("APP_EVENT_STATE_ON_RESUME, %d, %d, %d"), int(bRunning), int(bWindowInFocus), int(bHaveGame));
 			break;
 
 		// window focus events that follow their own hierarchy, and might or might not respect App main events hierarchy
@@ -132,11 +136,14 @@ void FAppEventManager::Tick()
 		}
 		case APP_EVENT_STATE_APP_ACTIVATED:
 			bRunning = true;
-			FPlatformMisc::LowLevelOutputDebugStringf(TEXT("Execution will be resumed!"));
+			STANDALONE_DEBUG_LOGf(LogAndroidEvents, TEXT("Execution will be resumed!"));
 			break;
 		case APP_EVENT_STATE_APP_SUSPENDED:
 			bRunning = false;
-			FPlatformMisc::LowLevelOutputDebugStringf(TEXT("Execution will be paused..."));
+			STANDALONE_DEBUG_LOGf(LogAndroidEvents, TEXT("Execution will be paused..."));
+			break;
+		case APP_EVENT_STATE_SAFE_ZONE_UPDATED:
+			FCoreDelegates::OnSafeFrameChangedEvent.Broadcast();
 			break;
 		default:
 			UE_LOG(LogAndroidEvents, Display, TEXT("Application Event : %u  not handled. "), Event.State);
@@ -150,7 +157,7 @@ void FAppEventManager::Tick()
 				ExecWindowCreated();
 				bCreateWindow = false;
 				bHaveWindow = true;
-				FPlatformMisc::LowLevelOutputDebugStringf(TEXT("ExecWindowCreated, %d, %d, %d"), int(bRunning), int(bHaveWindow), int(bHaveGame));
+				STANDALONE_DEBUG_LOGf(LogAndroidEvents, TEXT("ExecWindowCreated, %d, %d, %d"), int(bRunning), int(bHaveWindow), int(bHaveGame));
 			}
 		}
 	}
@@ -162,9 +169,9 @@ void FAppEventManager::Tick()
 
 	if (!bRunning)
 	{
-		FPlatformMisc::LowLevelOutputDebugStringf(TEXT("FAppEventManager::Tick EventHandlerEvent Wait "));
+		STANDALONE_DEBUG_LOGf(LogAndroidEvents, TEXT("FAppEventManager::Tick EventHandlerEvent Wait "));
 		EventHandlerEvent->Wait();
-		FPlatformMisc::LowLevelOutputDebugStringf(TEXT("FAppEventManager::Tick EventHandlerEvent DONE Wait "));
+		STANDALONE_DEBUG_LOGf(LogAndroidEvents, TEXT("FAppEventManager::Tick EventHandlerEvent DONE Wait "));
 	}
 }
 
@@ -172,7 +179,11 @@ void FAppEventManager::ReleaseMicrophone(bool shuttingDown)
 {
 	if (FModuleManager::Get().IsModuleLoaded("Voice"))
 	{
-		UE_LOG(LogTemp, Log, TEXT("Android release microphone"));
+		UE_LOG(LogAndroidEvents, Log, TEXT("Android release microphone"));
+		if (shuttingDown)
+		{
+			UE_LOG(LogAndroidEvents, Warning, TEXT("Android release microphone - Voice module shutting down - CANNOT RESUME"));
+		}
 		FModuleManager::Get().UnloadModule("Voice", shuttingDown);
 	}
 }
@@ -204,31 +215,44 @@ FAppEventManager::FAppEventManager():
 	CVarScale->SetOnChangedCallback(FConsoleVariableDelegate::CreateStatic(&FAppEventManager::OnScaleFactorChanged));
 
 	IConsoleVariable* CVarResX = IConsoleManager::Get().FindConsoleVariable(TEXT("r.Mobile.DesiredResX"));
-	check(CVarResX);
-	CVarResX->SetOnChangedCallback(FConsoleVariableDelegate::CreateStatic(&FAppEventManager::OnScaleFactorChanged));
+	if (CVarResX != nullptr)
+	{
+		CVarResX->SetOnChangedCallback(FConsoleVariableDelegate::CreateStatic(&FAppEventManager::OnScaleFactorChanged));
+	}
 
 	IConsoleVariable* CVarResY = IConsoleManager::Get().FindConsoleVariable(TEXT("r.Mobile.DesiredResY"));
-	check(CVarResY);
-	CVarResY->SetOnChangedCallback(FConsoleVariableDelegate::CreateStatic(&FAppEventManager::OnScaleFactorChanged));
+	if (CVarResY != nullptr)
+	{
+		CVarResY->SetOnChangedCallback(FConsoleVariableDelegate::CreateStatic(&FAppEventManager::OnScaleFactorChanged));
+	}
 }
 
 void FAppEventManager::OnScaleFactorChanged(IConsoleVariable* CVar)
 {
 	if ((CVar->GetFlags() & ECVF_SetByMask) == ECVF_SetByConsole)
 	{
+		STANDALONE_DEBUG_LOGf(LogAndroidEvents, TEXT("FAppEventManager::OnScaleFactorChanged with flags=0x%x"), CVar->GetFlags());
 		FAppEventManager::GetInstance()->ExecWindowResized();
 	}
+	else
+    {
+		STANDALONE_DEBUG_LOGf(LogAndroidEvents, TEXT("NOOP FAppEventManager::OnScaleFactorChanged with flags=0x%x"), CVar->GetFlags());
+    }
 }
 
 void FAppEventManager::HandleWindowCreated_EventThread(void* InWindow)
 {
+	if (InWindow == nullptr)
+	{
+		FPlatformMisc::LowLevelOutputDebugStringf(TEXT("FAppEventManager::HandleWindowCreated_EventThread was given a NULL window so IGNORE."));
+		return;
+	}
+
 	bool AlreadyInited = FirstInitialized;
 
 	// Make sure window will not be deleted until event is processed
 	// Window could be deleted by OS while event queue stuck at game start-up phase
 	FAndroidWindow::AcquireWindowRef((ANativeWindow*)InWindow);
-
-	check(FAndroidWindow::GetHardwareWindow_EventThread() == NULL);
 	FAndroidWindow::SetHardwareWindow_EventThread(InWindow);
 
 	if (!AlreadyInited)
@@ -241,9 +265,14 @@ void FAppEventManager::HandleWindowCreated_EventThread(void* InWindow)
 
 void FAppEventManager::HandleWindowClosed_EventThread()
 {
-	check(FAndroidWindow::GetHardwareWindow_EventThread());
+	void* ActiveWindow = FAndroidWindow::GetHardwareWindow_EventThread();
+	
+	if(ActiveWindow == nullptr)
+	{
+		return;
+	}
 
-	FAndroidWindow::ReleaseWindowRef((ANativeWindow*)FAndroidWindow::GetHardwareWindow_EventThread());
+	FAndroidWindow::ReleaseWindowRef((ANativeWindow*)ActiveWindow);
 	FAndroidWindow::SetHardwareWindow_EventThread(nullptr);
 
 	EnqueueAppEvent(APP_EVENT_STATE_WINDOW_DESTROYED);
@@ -298,7 +327,7 @@ void FAppEventManager::ExecWindowCreated()
 	// When application launched while device is in sleep mode SystemResolution could be set to opposite orientation values
 	// Force to update SystemResolution to current values whenever we create a new window
 	FPlatformRect ScreenRect = FAndroidWindow::GetScreenRect();
-	FSystemResolution::RequestResolutionChange(ScreenRect.Right, ScreenRect.Bottom, EWindowMode::Fullscreen);
+	FSystemResolution::RequestResolutionChange(ScreenRect.Right - ScreenRect.Left, ScreenRect.Bottom - ScreenRect.Top, EWindowMode::Fullscreen);
 
 	// ReInit with the new window handle
 	FAndroidAppEntry::ReInitWindow();
@@ -320,12 +349,12 @@ void FAppEventManager::PauseAudio()
 {
 	if (!GEngine || !GEngine->IsInitialized())
 	{
-		UE_LOG(LogTemp, Log, TEXT("Engine not initialized, not pausing Android audio"));
+		UE_LOG(LogAndroidEvents, Log, TEXT("Engine not initialized, not pausing Android audio"));
 		return;
 	}
 
 	bAudioPaused = true;
-	UE_LOG(LogTemp, Log, TEXT("Android pause audio"));
+	UE_LOG(LogAndroidEvents, Log, TEXT("Android pause audio"));
 
 	FAudioDeviceHandle AudioDevice = GEngine->GetMainAudioDevice();
 	if (AudioDevice)
@@ -343,12 +372,12 @@ void FAppEventManager::ResumeAudio()
 {
 	if (!GEngine || !GEngine->IsInitialized())
 	{
-		UE_LOG(LogTemp, Log, TEXT("Engine not initialized, not resuming Android audio"));
+		UE_LOG(LogAndroidEvents, Log, TEXT("Engine not initialized, not resuming Android audio"));
 		return;
 	}
 
 	bAudioPaused = false;
-	UE_LOG(LogTemp, Log, TEXT("Android resume audio"));
+	UE_LOG(LogAndroidEvents, Log, TEXT("Android resume audio"));
 
 	FAudioDeviceHandle AudioDevice = GEngine->GetMainAudioDevice();
 	if (AudioDevice)
@@ -376,7 +405,7 @@ void FAppEventManager::EnqueueAppEvent(EAppEventState InState, FAppEventData&& I
 	rc = pthread_mutex_unlock(&QueueMutex);
 	check(rc == 0);
 
-	FPlatformMisc::LowLevelOutputDebugStringf(TEXT("LogAndroidEvents::EnqueueAppEvent : %u, [width=%d, height=%d], tid = %d, %s"), InState, InData.WindowWidth, InData.WindowHeight, gettid(), GetAppEventName(InState));
+	STANDALONE_DEBUG_LOGf(LogAndroidEvents, TEXT("LogAndroidEvents::EnqueueAppEvent : %u, [width=%d, height=%d], tid = %d, %s"), InState, InData.WindowWidth, InData.WindowHeight, gettid(), GetAppEventName(InState));
 }
 
 FAppEventPacket FAppEventManager::DequeueAppEvent()
@@ -404,7 +433,11 @@ bool FAppEventManager::IsGamePaused()
 
 bool FAppEventManager::IsGameInFocus()
 {
+#if USE_ANDROID_STANDALONE
+	return (bWindowInFocus && bHaveWindow && bHaveGame);
+#else
 	return (bWindowInFocus && bHaveWindow);
+#endif
 }
 
 
@@ -457,7 +490,5 @@ bool FAppEventManager::WaitForEventInQueue(EAppEventState InState, double Timeou
 
 	return FoundEvent;
 }
-
-extern volatile bool GEventHandlerInitialized;
 
 #endif

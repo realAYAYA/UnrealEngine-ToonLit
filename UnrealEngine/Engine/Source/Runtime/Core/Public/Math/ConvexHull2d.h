@@ -86,7 +86,7 @@ namespace ConvexHull2D
 			OutIndices[HullIndex++] = SortedIndices[Index - 1];
 		}
 
-		OutIndices.SetNum(HullIndex - 1, false);
+		OutIndices.SetNum(HullIndex - 1, EAllowShrinking::No);
 	}
 
 	/** Returns <0 if C is left of A-B */

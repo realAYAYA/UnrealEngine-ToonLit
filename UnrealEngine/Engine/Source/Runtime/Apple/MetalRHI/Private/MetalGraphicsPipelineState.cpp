@@ -17,9 +17,9 @@
 
 
 // From MetalPipeline.cpp:
-extern FMetalShaderPipeline* GetMTLRenderPipeline(bool const bSync, FMetalGraphicsPipelineState const* State, const FGraphicsPipelineStateInitializer& Init);
-extern void ReleaseMTLRenderPipeline(FMetalShaderPipeline* Pipeline);
+extern FMetalShaderPipelinePtr GetMTLRenderPipeline(bool const bSync, FMetalGraphicsPipelineState const* State, const FGraphicsPipelineStateInitializer& Init);
 
+extern void ReleaseMTLRenderPipeline(FMetalShaderPipelinePtr Pipeline);
 
 //------------------------------------------------------------------------------
 
@@ -28,33 +28,33 @@ extern void ReleaseMTLRenderPipeline(FMetalShaderPipeline* Pipeline);
 
 FMetalGraphicsPipelineState::FMetalGraphicsPipelineState(const FGraphicsPipelineStateInitializer& Init)
 	: Initializer(Init)
-	, PipelineState(nil)
+	, PipelineState(nullptr)
 {
 	// void
 }
 
 bool FMetalGraphicsPipelineState::Compile()
 {
-	check(PipelineState == nil);
-	PipelineState = [GetMTLRenderPipeline(true, this, Initializer) retain];
-	return (PipelineState != nil);
+	check(PipelineState == nullptr);
+	PipelineState = GetMTLRenderPipeline(true, this, Initializer);
+	return (PipelineState != nullptr);
 }
 
 FMetalGraphicsPipelineState::~FMetalGraphicsPipelineState()
 {
-	if (PipelineState != nil)
+	if (PipelineState != nullptr)
 	{
 		ReleaseMTLRenderPipeline(PipelineState);
-		PipelineState = nil;
+		PipelineState = nullptr;
 	}
 }
 
-FMetalShaderPipeline* FMetalGraphicsPipelineState::GetPipeline()
+FMetalShaderPipelinePtr FMetalGraphicsPipelineState::GetPipeline()
 {
-	if (PipelineState == nil)
+	if (PipelineState == nullptr)
 	{
-		PipelineState = [GetMTLRenderPipeline(true, this, Initializer) retain];
-		check(PipelineState != nil);
+		PipelineState = GetMTLRenderPipeline(true, this, Initializer);
+		check(PipelineState != nullptr);
 	}
 
     return PipelineState;

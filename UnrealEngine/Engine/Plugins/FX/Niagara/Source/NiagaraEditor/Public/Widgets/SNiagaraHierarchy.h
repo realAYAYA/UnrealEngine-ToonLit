@@ -206,9 +206,7 @@ private:
 	TOptional<FSearchItem> FocusedSearchResult;
 
 	mutable TWeakPtr<FNiagaraHierarchyItemViewModelBase> SelectedDetailsPanelItemViewModel;
-	
-	FSlateBrush LightBackgroundBrush;
-	FSlateBrush RecessedBackgroundBrush;
+
 private:
 	TObjectPtr<UNiagaraHierarchyRoot> SourceRoot = nullptr;
 	TSharedPtr<FNiagaraHierarchyRootViewModel> SourceRootViewModel;

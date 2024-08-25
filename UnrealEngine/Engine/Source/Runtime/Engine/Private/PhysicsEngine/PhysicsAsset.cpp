@@ -12,6 +12,7 @@
 #include "Serialization/ObjectReader.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "PhysicsEngine/PhysicsConstraintTemplate.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/ReleaseObjectVersion.h"
 #include "UObject/UObjectIterator.h"
 #include "UObject/FortniteSeasonBranchObjectVersion.h"
@@ -496,13 +497,23 @@ int32	UPhysicsAsset::FindControllingBodyIndex(class USkeletalMesh* skelMesh, int
 	return INDEX_NONE; // Shouldn't reach here.
 }
 
-int32 UPhysicsAsset::FindParentBodyIndex(class USkeletalMesh * skelMesh, int32 StartBoneIndex) const
+int32 UPhysicsAsset::FindParentBodyIndex(class USkeletalMesh* skelMesh, int32 StartBoneIndex) const
+{
+	if (skelMesh)
+	{
+		return FindParentBodyIndex(skelMesh->GetRefSkeleton(), StartBoneIndex);
+	}
+
+	return INDEX_NONE;
+}
+
+int32 UPhysicsAsset::FindParentBodyIndex(const FReferenceSkeleton& RefSkeleton, const int32 StartBoneIndex) const
 {
 	int32 BoneIndex = StartBoneIndex;
-	while ((BoneIndex = skelMesh->GetRefSkeleton().GetParentIndex(BoneIndex)) != INDEX_NONE)
+	while ((BoneIndex = RefSkeleton.GetParentIndex(BoneIndex)) != INDEX_NONE)
 	{
-		FName BoneName = skelMesh->GetRefSkeleton().GetBoneName(BoneIndex);
-		int32 BodyIndex = FindBodyIndex(BoneName);
+		const FName BoneName = RefSkeleton.GetBoneName(BoneIndex);
+		const int32 BodyIndex = FindBodyIndex(BoneName);
 
 		if (StartBoneIndex == BoneIndex)
 			return INDEX_NONE;
@@ -577,7 +588,15 @@ int32 UPhysicsAsset::FindMirroredBone(USkeletalMesh* SkelMesh,  int32 BoneIndex)
 
 void UPhysicsAsset::GetBodyIndicesBelow(TArray<int32>& OutBodyIndices, FName InBoneName, USkeletalMesh* SkelMesh, bool bIncludeParent /*= true*/)
 {
-	int32 BaseIndex = SkelMesh->GetRefSkeleton().FindBoneIndex(InBoneName);
+	if (SkelMesh)
+	{
+		GetBodyIndicesBelow(OutBodyIndices, InBoneName, SkelMesh->GetRefSkeleton(), bIncludeParent);
+	}
+}
+
+void UPhysicsAsset::GetBodyIndicesBelow(TArray<int32>& OutBodyIndices, const FName InBoneName, const FReferenceSkeleton& RefSkeleton, const bool bIncludeParent /*= true*/)
+{
+	const int32 BaseIndex = RefSkeleton.FindBoneIndex(InBoneName);
 
 	if (BaseIndex != INDEX_NONE)
 	{
@@ -590,9 +609,9 @@ void UPhysicsAsset::GetBodyIndicesBelow(TArray<int32>& OutBodyIndices, FName InB
 				continue;
 			}
 			FName TestName = BS->BoneName;
-			int32 TestIndex = SkelMesh->GetRefSkeleton().FindBoneIndex(TestName);
+			int32 TestIndex = RefSkeleton.FindBoneIndex(TestName);
 
-			if ((bIncludeParent && TestIndex == BaseIndex) || SkelMesh->GetRefSkeleton().BoneIsChildOf(TestIndex, BaseIndex))
+			if ((bIncludeParent && TestIndex == BaseIndex) || RefSkeleton.BoneIsChildOf(TestIndex, BaseIndex))
 			{
 				OutBodyIndices.Add(i);
 			}
@@ -824,10 +843,17 @@ FString UPhysicsAsset::GetDesc()
 
 void UPhysicsAsset::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
-	OutTags.Add( FAssetRegistryTag("Bodies", FString::FromInt(SkeletalBodySetups.Num()), FAssetRegistryTag::TT_Numerical) );
-	OutTags.Add( FAssetRegistryTag("Constraints", FString::FromInt(ConstraintSetup.Num()), FAssetRegistryTag::TT_Numerical) );
-
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
 	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UPhysicsAsset::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	Context.AddTag( FAssetRegistryTag("Bodies", FString::FromInt(SkeletalBodySetups.Num()), FAssetRegistryTag::TT_Numerical) );
+	Context.AddTag( FAssetRegistryTag("Constraints", FString::FromInt(ConstraintSetup.Num()), FAssetRegistryTag::TT_Numerical) );
+
+	Super::GetAssetRegistryTags(Context);
 }
 
 

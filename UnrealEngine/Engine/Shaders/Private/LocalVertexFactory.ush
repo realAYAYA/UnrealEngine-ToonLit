@@ -100,7 +100,7 @@ struct FVertexFactoryInput
 	// Dynamic instancing related attributes with InstanceIdOffset : ATTRIBUTE13
 	VF_GPUSCENE_DECLARE_INPUT_BLOCK(13)
 
-#if (USE_INSTANCING || USE_INSTANCE_CULLING) && !MANUAL_VERTEX_FETCH && (VF_USE_PRIMITIVE_SCENE_DATA != 2)
+#if USE_INSTANCING && !MANUAL_VERTEX_FETCH
 	float4 InstanceOrigin : ATTRIBUTE8;  // per-instance random in w 
 	half4 InstanceTransform1 : ATTRIBUTE9;  // hitproxy.r + 256 * selected in .w
 	half4 InstanceTransform2 : ATTRIBUTE10; // hitproxy.g in .w
@@ -227,7 +227,7 @@ struct FPositionOnlyVertexFactoryInput
 	// Dynamic instancing related attributes with InstanceIdOffset : ATTRIBUTE1
 	VF_GPUSCENE_DECLARE_INPUT_BLOCK(1)
 
-#if (USE_INSTANCING || USE_INSTANCE_CULLING) && !MANUAL_VERTEX_FETCH && (VF_USE_PRIMITIVE_SCENE_DATA != 2)
+#if USE_INSTANCING && !MANUAL_VERTEX_FETCH
 	float4 InstanceOrigin : ATTRIBUTE8;  // per-instance random in w 
 	half4 InstanceTransform1 : ATTRIBUTE9;  // hitproxy.r + 256 * selected in .w
 	half4 InstanceTransform2 : ATTRIBUTE10; // hitproxy.g in .w
@@ -256,7 +256,7 @@ struct FPositionAndNormalOnlyVertexFactoryInput
 	// Dynamic instancing related attributes with InstanceIdOffset : ATTRIBUTE1
 	VF_GPUSCENE_DECLARE_INPUT_BLOCK(1)
 
-#if (USE_INSTANCING || USE_INSTANCE_CULLING) && !MANUAL_VERTEX_FETCH && (VF_USE_PRIMITIVE_SCENE_DATA != 2)
+#if USE_INSTANCING && !MANUAL_VERTEX_FETCH
 	float4 InstanceOrigin : ATTRIBUTE8;  // per-instance random in w 
 	half4 InstanceTransform1 : ATTRIBUTE9;  // hitproxy.r + 256 * selected in .w
 	half4 InstanceTransform2 : ATTRIBUTE10; // hitproxy.g in .w
@@ -352,14 +352,14 @@ FInstanceSceneData GetInstanceData(FVertexFactoryIntermediates Intermediates)
 
 #if USE_SPLINEDEFORM
 
-#if VF_USE_PRIMITIVE_SCENE_DATA
+#if VF_USE_PRIMITIVE_SCENE_DATA && FEATURE_LEVEL > FEATURE_LEVEL_ES3_1
 
 FSplineMeshShaderParams GetSplineMeshParams(FInstanceSceneData InstanceData)
 {
 	return SplineMeshLoadParamsFromInstancePayload(InstanceData);
 }
 
-#else // !VF_USE_PRIMITIVE_SCENE_DATA
+#else
 
 // These currently still need to be bound loosely when not using GPUScene
 float4 SplineParams[SPLINE_MESH_PARAMS_FLOAT4_SIZE];
@@ -368,7 +368,7 @@ FSplineMeshShaderParams GetSplineMeshParams(FInstanceSceneData InstanceData)
 	return UnpackSplineMeshParams(SplineParams);
 }
 
-#endif // VF_USE_PRIMITIVE_SCENE_DATA
+#endif // VF_USE_PRIMITIVE_SCENE_DATA && FEATURE_LEVEL > FEATURE_LEVEL_ES3_1
 
 #endif // USE_SPLINEDEFORM
 
@@ -541,7 +541,11 @@ FMaterialPixelParameters GetMaterialPixelParameters(FVertexFactoryInterpolantsVS
 	// Required for previewing materials that use ParticleColor
 	Result.Particle.Color = half4(1,1,1,1);
 #if USE_INSTANCING || USE_INSTANCE_CULLING 
-	Result.PerInstanceParams = Interpolants.PerInstanceParams;
+	#if	NEEDS_PER_INSTANCE_PARAMS
+		Result.PerInstanceParams = Interpolants.PerInstanceParams;
+	#else
+		Result.PerInstanceParams = float4(1, 1, 0, 0);
+	#endif
 #endif
 
 	Result.TangentToWorld = AssembleTangentToWorld( TangentToWorld0, TangentToWorld2 );
@@ -568,7 +572,7 @@ FMaterialPixelParameters GetMaterialPixelParameters(FVertexFactoryInterpolantsVS
 	Result.CustomDataCount  = Interpolants.CustomDataCount;
 #endif
 
-#if USES_PER_INSTANCE_RANDOM && VF_USE_PRIMITIVE_SCENE_DATA
+#if NEEDS_PER_INSTANCE_RANDOM_PS
 	Result.PerInstanceRandom = Interpolants.PerInstanceRandom;
 #endif
 
@@ -596,7 +600,7 @@ FMaterialPixelParameters GetMaterialPixelParameters(FVertexFactoryInterpolantsVS
 
 half3x3 CalcTangentToWorldNoScale(FVertexFactoryIntermediates Intermediates, half3x3 TangentToLocal)
 {
-	half3x3 LocalToWorld = LWCToFloat3x3(GetInstanceData(Intermediates).LocalToWorld);
+	half3x3 LocalToWorld = DFToFloat3x3(GetInstanceData(Intermediates).LocalToWorld);
 	half3 InvScale = GetInstanceData(Intermediates).InvNonUniformScale;
 	LocalToWorld[0] *= InvScale.x;
 	LocalToWorld[1] *= InvScale.y;
@@ -625,12 +629,15 @@ FMaterialVertexParameters GetMaterialVertexParameters(FVertexFactoryInput Input,
 
 #if USE_INSTANCING
 	float4x4 InstanceToLocal = GetInstanceTransform(Intermediates);
-	Result.InstanceLocalToWorld = LWCMultiply(InstanceToLocal, PrimitiveData.LocalToWorld);
+	Result.InstanceLocalToWorld = DFMultiply(InstanceToLocal, PrimitiveData.LocalToWorld);
 	Result.InstanceLocalPosition = Input.Position.xyz;
+	#if	NEEDS_PER_INSTANCE_PARAMS
 	Result.PerInstanceParams = Intermediates.PerInstanceParams;
+	#endif
 	Result.InstanceId = GetInstanceId(Input.InstanceId); 
 	Result.InstanceOffset = InstanceOffset;
-	Result.PrevFrameLocalToWorld = LWCMultiply(GetInstancePrevTransform(Intermediates), PrimitiveData.PreviousLocalToWorld);
+	Result.PrevFrameLocalToWorld = DFMultiply(GetInstancePrevTransform(Intermediates), PrimitiveData.PreviousLocalToWorld);
+	Result.PerInstanceRandom = GetInstanceRandom(Intermediates);
 
 	// Calculate derived world to local
 	{
@@ -649,7 +656,7 @@ FMaterialVertexParameters GetMaterialVertexParameters(FVertexFactoryInput Input,
 		LocalToInstance			 = transpose(LocalToInstance);
 		LocalToInstance[3].xyz	 = mul(float4(-InstanceToLocal[3].xyz, 0.0f), LocalToInstance).xyz;
 
-		Result.InstanceWorldToLocal = LWCMultiply(PrimitiveData.WorldToLocal, LocalToInstance);
+		Result.InstanceWorldToLocal = DFMultiply(PrimitiveData.WorldToLocal, LocalToInstance);
 	}
 #else
 	Result.PrevFrameLocalToWorld = InstanceData.PrevLocalToWorld;
@@ -657,19 +664,28 @@ FMaterialVertexParameters GetMaterialVertexParameters(FVertexFactoryInput Input,
 		Result.InstanceLocalPosition = Input.Position.xyz;
 		Result.InstanceLocalToWorld = InstanceData.LocalToWorld;
 		Result.InstanceWorldToLocal = InstanceData.WorldToLocal;
+		#if	NEEDS_PER_INSTANCE_PARAMS
 		Result.PerInstanceParams = Intermediates.PerInstanceParams;
+		#endif
 	#endif
 	#if USES_PER_INSTANCE_CUSTOM_DATA && VF_USE_PRIMITIVE_SCENE_DATA
 		Result.CustomDataOffset = InstanceData.CustomDataOffset;
 		Result.CustomDataCount = InstanceData.CustomDataCount;
 	#endif
-	#if USES_PER_INSTANCE_RANDOM && VF_USE_PRIMITIVE_SCENE_DATA
-		Result.PerInstanceRandom = InstanceData.RandomID;
-	#endif
+	Result.PerInstanceRandom = InstanceData.RandomID;
 #endif
 
 	Result.PreSkinnedPosition = Intermediates.PreSkinPosition.xyz;
-	Result.PreSkinnedNormal = TangentToLocal[2]; //TangentBias(Input.TangentZ.xyz);
+#if SUPPORT_GPUSKIN_PASSTHROUGH
+	if (IsGPUSkinPassThrough())
+	{
+		Result.PreSkinnedNormal = LocalVFLooseParameters.GPUSkinPassThroughPreSkinnedTangentBuffer[Input.VertexId * 2 + 1].xyz;
+	}
+	else
+#endif
+	{
+		Result.PreSkinnedNormal = TangentToLocal[2]; //TangentBias(Input.TangentZ.xyz);
+	}
 
 #if MANUAL_VERTEX_FETCH && NUM_MATERIAL_TEXCOORDS_VERTEX
 		const uint NumFetchTexCoords = LocalVF.VertexFetch_Parameters[VF_NumTexcoords_Index];
@@ -720,17 +736,20 @@ FMaterialVertexParameters GetMaterialVertexParameters(FVertexFactoryInput Input,
 #if ENABLE_NEW_HLSL_GENERATOR
 	EvaluateVertexMaterialAttributes(Result);
 #endif
+
+	Result.LWCData = MakeMaterialLWCData(Result);
+
 	return Result;
 }
 
-float4 CalcWorldPosition(FVertexFactoryIntermediatesCommon Intermediates, float4 Position, FLWCMatrix LocalToWorld)
+float4 CalcWorldPosition(FVertexFactoryIntermediatesCommon Intermediates, float4 Position, FDFMatrix LocalToWorld)
 {
 #if USE_INSTANCING
 	return TransformLocalToTranslatedWorld(mul(Position, GetInstanceTransform(Intermediates)).xyz, LocalToWorld);
 #elif USE_SPLINEDEFORM && !RAYHITGROUPSHADER
 	// NOTE: The #if above does not include raytracing shaders because the cached position already
 	// has the spline deformation baked in.
-	return TransformLocalToTranslatedWorld(SplineMeshDeformLocalPos(Intermediates.SplineMeshParams, Position), LocalToWorld);
+	return TransformLocalToTranslatedWorld(SplineMeshDeformLocalPos(Intermediates.SplineMeshParams, Position.xyz), LocalToWorld);
 #else
 	return TransformLocalToTranslatedWorld(Position.xyz, LocalToWorld);
 #endif
@@ -792,7 +811,7 @@ half3x3 CalcTangentToLocal(FVertexFactoryInput Input, FVertexFactoryIntermediate
 half3x3 CalcTangentToWorld(FVertexFactoryIntermediates Intermediates, half3x3 TangentToLocal)
 {
 #if USE_INSTANCING
-	half3x3 InstanceToWorld = mul(GetInstanceToLocal3x3(Intermediates), LWCToFloat3x3(GetInstanceData(Intermediates).LocalToWorld));
+	half3x3 InstanceToWorld = mul(GetInstanceToLocal3x3(Intermediates), DFToFloat3x3(GetInstanceData(Intermediates).LocalToWorld));
 	// remove scaling
 	InstanceToWorld[0] = normalize(InstanceToWorld[0]);
 	InstanceToWorld[1] = normalize(InstanceToWorld[1]);
@@ -856,6 +875,7 @@ FVertexFactoryIntermediates GetVertexFactoryIntermediates(FVertexFactoryInput In
 	Intermediates.HitProxyId = float4(0.0f, 0.0f, 0.0f, 0.0f);
 #endif // USE_EDITOR_SHADERS
 
+#if NEEDS_PER_INSTANCE_PARAMS
 	{
 		// This repackaging is stupid-seeming but these params are propably packed off to some interpolator or something
 		
@@ -889,6 +909,10 @@ FVertexFactoryIntermediates GetVertexFactoryIntermediates(FVertexFactoryInput In
 			Intermediates.bEvaluateWorldPositionOffset = false;
 		}
 	}
+#else
+	Intermediates.PerInstanceParams = float4(0.f,Intermediates.IsVisible,0.f,0.f);
+#endif // NEEDS_PER_INSTANCE_PARAMS
+
 #endif // USE_INSTANCE_CULLING
 #endif // VF_USE_PRIMITIVE_SCENE_DATA
 
@@ -911,46 +935,49 @@ FVertexFactoryIntermediates GetVertexFactoryIntermediates(FVertexFactoryInput In
 	Intermediates.TangentToWorldSign = TangentSign * GetInstanceData(Intermediates).DeterminantSign;
 
 #if USE_INSTANCING
-	// x = per-instance fade out factor, y = zero or one depending of if it is shown at all, z is dither cutoff 
-
-	// PerInstanceParams.y stores a hide/show flag for this instance
-	float SelectedValue = GetInstanceSelected(Intermediates);
 	// GPUCULL_TODO: This can't be right
 	float3 InstanceTranslatedLocation = TransformLocalToTranslatedWorld(GetInstanceOrigin(Intermediates), PrimitiveData.LocalToWorld).xyz;
 	float InstanceViewDistance = length(InstanceTranslatedLocation);
-	Intermediates.PerInstanceParams.x = 1.0 - saturate((InstanceViewDistance - InstancedVFLooseParameters.InstancingFadeOutParams.x) * InstancedVFLooseParameters.InstancingFadeOutParams.y);
-	// InstancingFadeOutParams.z,w are RenderSelected and RenderDeselected respectively.
-	Intermediates.PerInstanceParams.y = InstancedVFLooseParameters.InstancingFadeOutParams.z * SelectedValue + InstancedVFLooseParameters.InstancingFadeOutParams.w * (1-SelectedValue);
-	#if USE_DITHERED_LOD_TRANSITION
-		float RandomLOD = InstancedVFLooseParameters.InstancingViewZCompareZero.w * InstanceData.RandomID;
-		float ViewZZero = length(InstanceTranslatedLocation - InstancedVFLooseParameters.InstancingTranslatedWorldViewOriginZero.xyz) + RandomLOD;
-		float ViewZOne = length(InstanceTranslatedLocation - InstancedVFLooseParameters.InstancingTranslatedWorldViewOriginOne.xyz) + RandomLOD;
-		Intermediates.PerInstanceParams.z = 
-			dot(float3(ViewZZero.xxx > InstancedVFLooseParameters.InstancingViewZCompareZero.xyz), InstancedVFLooseParameters.InstancingViewZConstant.xyz) * InstancedVFLooseParameters.InstancingTranslatedWorldViewOriginZero.w +
-			dot(float3(ViewZOne.xxx > InstancedVFLooseParameters.InstancingViewZCompareOne.xyz), InstancedVFLooseParameters.InstancingViewZConstant.xyz) * InstancedVFLooseParameters.InstancingTranslatedWorldViewOriginOne.w;
-		Intermediates.PerInstanceParams.y *= abs(Intermediates.PerInstanceParams.z) < .999;
-	#else
-		Intermediates.PerInstanceParams.z = 0;
-	#endif
+	#if	NEEDS_PER_INSTANCE_PARAMS	
+		// x = per-instance fade out factor, y = zero or one depending of if it is shown at all, z is dither cutoff 
+		// PerInstanceParams.y stores a hide/show flag for this instance
+		float SelectedValue = GetInstanceSelected(Intermediates);
+		Intermediates.PerInstanceParams.x = 1.0 - saturate((InstanceViewDistance - InstancedVFLooseParameters.InstancingFadeOutParams.x) * InstancedVFLooseParameters.InstancingFadeOutParams.y);
+		// InstancingFadeOutParams.z,w are RenderSelected and RenderDeselected respectively.
+		Intermediates.PerInstanceParams.y = InstancedVFLooseParameters.InstancingFadeOutParams.z * SelectedValue + InstancedVFLooseParameters.InstancingFadeOutParams.w * (1-SelectedValue);
+		#if USE_DITHERED_LOD_TRANSITION
+			float RandomLOD = InstancedVFLooseParameters.InstancingViewZCompareZero.w * InstanceData.RandomID;
+			float ViewZZero = length(InstanceTranslatedLocation - InstancedVFLooseParameters.InstancingTranslatedWorldViewOriginZero.xyz) + RandomLOD;
+			float ViewZOne = length(InstanceTranslatedLocation - InstancedVFLooseParameters.InstancingTranslatedWorldViewOriginOne.xyz) + RandomLOD;
+			Intermediates.PerInstanceParams.z = 
+				dot(float3(ViewZZero.xxx > InstancedVFLooseParameters.InstancingViewZCompareZero.xyz), InstancedVFLooseParameters.InstancingViewZConstant.xyz) * InstancedVFLooseParameters.InstancingTranslatedWorldViewOriginZero.w +
+				dot(float3(ViewZOne.xxx > InstancedVFLooseParameters.InstancingViewZCompareOne.xyz), InstancedVFLooseParameters.InstancingViewZConstant.xyz) * InstancedVFLooseParameters.InstancingTranslatedWorldViewOriginOne.w;
+			Intermediates.PerInstanceParams.y *= abs(Intermediates.PerInstanceParams.z) < .999;
+		#else
+			Intermediates.PerInstanceParams.z = 0;
+		#endif
 	
-	#if USES_PER_INSTANCE_CUSTOM_DATA
-		// index into instance CustomData
-		Intermediates.PerInstanceParams.w = asfloat(GetInstanceId(Input.InstanceId) + InstanceOffset);
-	#endif
+		#if USES_PER_INSTANCE_CUSTOM_DATA
+			// index into instance CustomData
+			Intermediates.PerInstanceParams.w = asfloat(GetInstanceId(Input.InstanceId) + InstanceOffset);
+		#endif
 
-	// Disable WPO if this instance is not visible for dithered LOD transition or instance fade reasons
-	if (Intermediates.PerInstanceParams.y == 0.0f)
-	{
-		Intermediates.bEvaluateWorldPositionOffset = false;
-	}
+		// Disable WPO if this instance is not visible for dithered LOD transition or instance fade reasons
+		if (Intermediates.PerInstanceParams.y == 0.0f)
+		{
+			Intermediates.bEvaluateWorldPositionOffset = false;
+		}
+	#else
+		Intermediates.PerInstanceParams = float4(1.f,Intermediates.IsVisible,0.f,0.f);
+	#endif // NEEDS_PER_INSTANCE_PARAMS
 
 	const float InstanceViewDistSq = Square(InstanceViewDistance);
 #else
 	// get the "instance" view distance from the primitive bounding center
-	const float InstanceViewDistSq = length2(LWCToFloat(LWCAdd(PrimitiveData.ObjectWorldPosition, ResolvedView.PreViewTranslation)));
+	const float InstanceViewDistSq = length2(DFFastToTranslatedWorld(PrimitiveData.ObjectWorldPosition, ResolvedView.PreViewTranslation));
 #endif // USE_INSTANCING
 
-#if !USE_INSTANCE_CULLING && USES_WORLD_POSITION_OFFSET && !ALWAYS_EVALUATE_WORLD_POSITION_OFFSET
+#if !USE_INSTANCE_CULLING && USES_WORLD_POSITION_OFFSET && !ALWAYS_EVALUATE_WORLD_POSITION_OFFSET && (FEATURE_LEVEL > FEATURE_LEVEL_ES3_1)
 	// In this case, we have to do the WPO disable distance check in the VS because it wasn't done in instance culling
 	if (Intermediates.bEvaluateWorldPositionOffset)
 	{
@@ -1000,7 +1027,7 @@ half3x3 VertexFactoryGetTangentToLocal( FVertexFactoryInput Input, FVertexFactor
 // @return translated world position
 float4 VertexFactoryGetWorldPosition(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates)
 {
-	FLWCMatrix LocalToWorld = GetInstanceData(Intermediates).LocalToWorld;
+	FDFMatrix LocalToWorld = GetInstanceData(Intermediates).LocalToWorld;
 
 	// Scale to zero if not visible, seems a bit wild but whatever
 	return CalcWorldPosition(Intermediates.Common, Input.Position, LocalToWorld) * Intermediates.IsVisible;
@@ -1082,7 +1109,7 @@ FVertexFactoryInterpolantsVSToPS VertexFactoryGetInterpolantsVSToPS(FVertexFacto
 	SetTangents(Interpolants, Intermediates.TangentToWorld[0], Intermediates.TangentToWorld[2], Intermediates.TangentToWorldSign);
 	SetColor(Interpolants, Intermediates.Color);
 
-#if USE_INSTANCING || USE_INSTANCE_CULLING
+#if	NEEDS_PER_INSTANCE_PARAMS
 	Interpolants.PerInstanceParams = Intermediates.PerInstanceParams;
 #endif
 
@@ -1091,8 +1118,12 @@ FVertexFactoryInterpolantsVSToPS VertexFactoryGetInterpolantsVSToPS(FVertexFacto
 	Interpolants.CustomDataCount  = InstanceData.CustomDataCount;
 #endif
 
-#if USES_PER_INSTANCE_RANDOM && VF_USE_PRIMITIVE_SCENE_DATA
-	Interpolants.PerInstanceRandom = InstanceData.RandomID;
+#if NEEDS_PER_INSTANCE_RANDOM_PS
+	#if USE_INSTANCING
+		Interpolants.PerInstanceRandom = GetInstanceRandom(Intermediates);
+	#else
+		Interpolants.PerInstanceRandom = InstanceData.RandomID;
+	#endif
 #endif
 
 #if INSTANCED_STEREO
@@ -1115,7 +1146,7 @@ FVertexFactoryInterpolantsVSToPS VertexFactoryGetInterpolantsVSToPS(FVertexFacto
 float4 VertexFactoryGetWorldPosition(FPositionOnlyVertexFactoryInput Input)
 {
 	FVertexFactoryIntermediatesCommon Intermediates = LOCALVF_GET_COMMON_INTERMEDIATES(Input);
-	FLWCMatrix LocalToWorld = GetInstanceData(Intermediates).LocalToWorld;
+	FDFMatrix LocalToWorld = GetInstanceData(Intermediates).LocalToWorld;
 
 	return CalcWorldPosition(Intermediates, Input.Position, LocalToWorld);
 }
@@ -1124,7 +1155,7 @@ float4 VertexFactoryGetWorldPosition(FPositionOnlyVertexFactoryInput Input)
 float4 VertexFactoryGetWorldPosition(FPositionAndNormalOnlyVertexFactoryInput Input)
 {
 	FVertexFactoryIntermediatesCommon Intermediates = LOCALVF_GET_COMMON_INTERMEDIATES(Input);
-	FLWCMatrix LocalToWorld = GetInstanceData(Intermediates).LocalToWorld;
+	FDFMatrix LocalToWorld = GetInstanceData(Intermediates).LocalToWorld;
 
 	return CalcWorldPosition(Intermediates, Input.Position, LocalToWorld);
 }
@@ -1132,7 +1163,7 @@ float4 VertexFactoryGetWorldPosition(FPositionAndNormalOnlyVertexFactoryInput In
 float3 VertexFactoryGetWorldNormal(FPositionAndNormalOnlyVertexFactoryInput Input)
 {
 	FVertexFactoryIntermediatesCommon Intermediates = LOCALVF_GET_COMMON_INTERMEDIATES(Input);
-	FLWCMatrix LocalToWorld = GetInstanceData(Intermediates).LocalToWorld;
+	FDFMatrix LocalToWorld = GetInstanceData(Intermediates).LocalToWorld;
 	float3 InvScale = GetInstanceData(Intermediates).InvNonUniformScale;
 	float3 Normal = Input.Normal.xyz;
 
@@ -1152,7 +1183,7 @@ float3 VertexFactoryGetWorldNormal(FVertexFactoryInput Input, FVertexFactoryInte
 // @return previous translated world position
 float4 VertexFactoryGetPreviousWorldPosition(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates)
 {
-	FLWCMatrix PreviousLocalToWorld = GetInstanceData(Intermediates).PrevLocalToWorld;
+	FDFMatrix PreviousLocalToWorld = GetInstanceData(Intermediates).PrevLocalToWorld;
 	float4 PrevLocalPosition = Input.Position;
 
 #if SUPPORT_GPUSKIN_PASSTHROUGH
@@ -1177,7 +1208,7 @@ float4 VertexFactoryGetPreviousWorldPosition(FVertexFactoryInput Input, FVertexF
 		PrevLocalPosition = mul(Input.Position, InstanceTransform);
 #elif USE_SPLINEDEFORM && !RAYHITGROUPSHADER
 		// Just like CalcWorldPosition, transform into mesh space
-		PrevLocalPosition = float4(SplineMeshDeformLocalPos(Intermediates.Common.SplineMeshParams, Input.Position), Input.Position.w);
+		PrevLocalPosition = float4(SplineMeshDeformLocalPos(Intermediates.Common.SplineMeshParams, Input.Position.xyz), Input.Position.w);
 #endif
 	}
 
@@ -1230,7 +1261,7 @@ float4 VertexFactoryGetPreviousWorldPosition(FVertexFactoryInput Input, FVertexF
 		O.InterpolantsVSToPS.CustomDataCount  = a.InterpolantsVSToPS.CustomDataCount;
 #endif
 
-#if USES_PER_INSTANCE_RANDOM && VF_USE_PRIMITIVE_SCENE_DATA
+#if NEEDS_PER_INSTANCE_RANDOM_PS
 		O.InterpolantsVSToPS.PerInstanceRandom = a.InterpolantsVSToPS.PerInstanceRandom;
 #endif
 
@@ -1242,7 +1273,7 @@ float4 VertexFactoryGetPreviousWorldPosition(FVertexFactoryInput Input, FVertexF
 	#if INTERPOLATE_VERTEX_COLOR
 		INTERPOLATE_MEMBER(InterpolantsVSToPS.Color);
 	#endif
-	#if USE_INSTANCING || USE_INSTANCE_CULLING
+	#if	NEEDS_PER_INSTANCE_PARAMS
 		INTERPOLATE_MEMBER(InterpolantsVSToPS.PerInstanceParams);
 	#endif
 
@@ -1285,7 +1316,7 @@ float4 VertexFactoryGetInstanceHitProxyId(FVertexFactoryInput Input, FVertexFact
 float4 VertexFactoryGetTranslatedPrimitiveVolumeBounds(FVertexFactoryInterpolantsVSToPS Interpolants)
 {
 	FPrimitiveSceneData PrimitiveData = GetPrimitiveData(GetPrimitiveId(Interpolants));
-	return float4(LWCToFloat(LWCAdd(PrimitiveData.ObjectWorldPosition, ResolvedView.PreViewTranslation)), PrimitiveData.ObjectRadius);
+	return float4(DFFastToTranslatedWorld(PrimitiveData.ObjectWorldPosition, ResolvedView.PreViewTranslation), PrimitiveData.ObjectRadius);
 }
 
 uint VertexFactoryGetPrimitiveId(FVertexFactoryInterpolantsVSToPS Interpolants)

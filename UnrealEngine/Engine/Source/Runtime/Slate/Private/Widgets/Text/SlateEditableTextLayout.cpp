@@ -518,6 +518,13 @@ void FSlateEditableTextLayout::SetLineHeightPercentage(const TAttribute<float>& 
 	OwnerWidget->GetSlateWidget()->Invalidate(EInvalidateWidget::LayoutAndVolatility);
 }
 
+void FSlateEditableTextLayout::SetApplyLineHeightToBottomLine(const TAttribute<bool>& InApplyLineHeightToBottomLine)
+{
+	ApplyLineHeightToBottomLine = InApplyLineHeightToBottomLine;
+
+	OwnerWidget->GetSlateWidget()->Invalidate(EInvalidateWidget::LayoutAndVolatility);
+}
+
 void FSlateEditableTextLayout::SetOverflowPolicy(TOptional<ETextOverflowPolicy> InOverflowPolicy)
 {
 	if(OverflowPolicyOverride != InOverflowPolicy)
@@ -1271,21 +1278,6 @@ FReply FSlateEditableTextLayout::HandleMouseButtonDown(const FGeometry& MyGeomet
 				// should reset the selection range to the caret's position.
 				bWasFocusedByLastMouseDown = true;
 			}
-			else
-			{
-				// On platforms using a virtual keyboard open the virtual keyboard again 
-				if (FPlatformApplicationMisc::RequiresVirtualKeyboard())
-				{
-					if (!OwnerWidget->IsTextReadOnly())
-					{
-						if (OwnerWidget->GetVirtualKeyboardTrigger() == EVirtualKeyboardTrigger::OnAllFocusEvents ||
-							OwnerWidget->GetVirtualKeyboardTrigger() == EVirtualKeyboardTrigger::OnFocusByPointer)
-						{
-							FSlateApplication::Get().ShowVirtualKeyboard(true, InMouseEvent.GetUserIndex(), VirtualKeyboardEntry.ToSharedRef());
-						}
-					}
-				}
-			}
 
 			if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton)
 			{
@@ -1332,6 +1324,26 @@ FReply FSlateEditableTextLayout::HandleMouseButtonUp(const FGeometry& MyGeometry
 	// The mouse must have been captured by either left or right button down before we'll process mouse ups
 	if (OwnerWidget->GetSlateWidget()->HasMouseCapture())
 	{
+		if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton ||
+			InMouseEvent.GetEffectingButton() == EKeys::RightMouseButton)
+		{
+			if (!bWasFocusedByLastMouseDown)
+			{
+				// On platforms using a virtual keyboard open the virtual keyboard again 
+				if (FPlatformApplicationMisc::RequiresVirtualKeyboard())
+				{
+					if (!OwnerWidget->IsTextReadOnly())
+					{
+						if (OwnerWidget->GetVirtualKeyboardTrigger() == EVirtualKeyboardTrigger::OnAllFocusEvents ||
+							OwnerWidget->GetVirtualKeyboardTrigger() == EVirtualKeyboardTrigger::OnFocusByPointer)
+						{
+								FSlateApplication::Get().ShowVirtualKeyboard(true, InMouseEvent.GetUserIndex(), VirtualKeyboardEntry.ToSharedRef());
+						}
+					}
+				}
+			}
+		}
+
 		if (InMouseEvent.GetEffectingButton() == EKeys::LeftMouseButton && bIsDragSelecting)
 		{
 			// No longer drag-selecting
@@ -3584,6 +3596,7 @@ void FSlateEditableTextLayout::CacheDesiredSize(float LayoutScaleMultiplier)
 	TextLayout->SetWrappingPolicy(WrappingPolicy.Get());
 	TextLayout->SetMargin(MarginValue);
 	TextLayout->SetLineHeightPercentage(LineHeightPercentage.Get());
+	TextLayout->SetApplyLineHeightToBottomLine(ApplyLineHeightToBottomLine.Get());
 	TextLayout->SetJustification(Justification.Get());
 	TextLayout->SetVisibleRegion(FVector2D(CachedSize), FVector2D(ScrollOffset) * TextLayout->GetScale());
 	TextLayout->UpdateIfNeeded();
@@ -3609,7 +3622,7 @@ FVector2D FSlateEditableTextLayout::ComputeDesiredSize(float LayoutScaleMultipli
 		MarginValue.Right += CaretWidth;
 
 		const FVector2D HintTextSize = HintTextLayout->ComputeDesiredSize(
-			FSlateTextBlockLayout::FWidgetDesiredSizeArgs(HintText.Get(), FText::GetEmpty(), WrapTextAt.Get(), AutoWrapText.Get(), WrappingPolicy.Get(), ETextTransformPolicy::None, MarginValue, LineHeightPercentage.Get(), Justification.Get()),
+			FSlateTextBlockLayout::FWidgetDesiredSizeArgs(HintText.Get(), FText::GetEmpty(), WrapTextAt.Get(), AutoWrapText.Get(), WrappingPolicy.Get(), ETextTransformPolicy::None, MarginValue, LineHeightPercentage.Get(), ApplyLineHeightToBottomLine.Get(), Justification.Get()),
 			LayoutScaleMultiplier, HintTextStyle
 			);
 

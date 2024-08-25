@@ -14,3 +14,13 @@ FChaosScene* PhysicsObjectPhysicsCoreInterface::GetScene(TArrayView<const Chaos:
 	}
 	return reinterpret_cast<FChaosScene*>(Solver->PhysSceneHack);
 }
+
+FChaosScene* PhysicsObjectPhysicsCoreInterface::GetScene(const Chaos::FConstPhysicsObjectHandle InObject)
+{
+	Chaos::FPBDRigidsSolver* Solver = Chaos::FPhysicsObjectInterface::GetSolver(InObject);
+	if (!Solver)
+	{
+		return nullptr;
+	}
+	return reinterpret_cast<FChaosScene*>(Solver->PhysSceneHack);
+}

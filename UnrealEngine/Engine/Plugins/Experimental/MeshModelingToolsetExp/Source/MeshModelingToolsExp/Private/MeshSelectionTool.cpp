@@ -455,6 +455,7 @@ void UMeshSelectionTool::OnBeginDrag(const FRay& WorldRay)
 		StartStamp = UBaseBrushTool::LastBrushStamp;
 		LastStamp = StartStamp;
 		bStampPending = true;
+		LongTransactions.Open(LOCTEXT("MeshSelectionChange", "Mesh Selection"), GetToolManager());
 	}
 }
 
@@ -751,14 +752,24 @@ void UMeshSelectionTool::UpdateFaceSelection(const FBrushStampData& Stamp, const
 
 void UMeshSelectionTool::OnEndDrag(const FRay& Ray)
 {
+	// Capture brush stroke state prior to invoking Super::OnEndDrag
+	const bool bWasInBrushStroke = IsInBrushStroke();
+	
 	UDynamicMeshBrushTool::OnEndDrag(Ray);
 
 	bInRemoveStroke = false;
 	bStampPending = false;
 
 	// close change record
-	TUniquePtr<FToolCommandChange> Change = EndChange();
-	GetToolManager()->EmitObjectChange(Selection, MoveTemp(Change), LOCTEXT("MeshSelectionChange", "Mesh Selection"));
+	if (bWasInBrushStroke)
+	{
+		TUniquePtr<FToolCommandChange> Change = EndChange();
+		if (Change)
+		{
+			GetToolManager()->EmitObjectChange(Selection, MoveTemp(Change), LOCTEXT("MeshSelectionChange", "Mesh Selection"));
+			LongTransactions.Close(GetToolManager());
+		}
+	}
 }
 
 
@@ -828,7 +839,12 @@ bool UMeshSelectionTool::ExecuteNestedCancelCommand()
 {
 	if (CanCurrentlyNestedCancel())
 	{
-		ClearSelection();
+		// Only actually clear if there's no in-progress change; this just means escape does nothing in the middle of a mouse drag
+		// (We could make esc undo the active change and cancel the drag in this case; not clear if that is worthwhile. In most similar situations, escape just exits the tool.)
+		if (!ActiveSelectionChange)
+		{
+			ClearSelection();
+		}
 		return true;
 	}
 	return false;
@@ -880,7 +896,7 @@ void UMeshSelectionTool::UpdateVisualization(bool bSelectionModified)
 	{
 		if (SelectionProps->FaceColorMode != EMeshFacesColorMode::None)
 		{
-			PreviewMesh->SetOverrideRenderMaterial(ToolSetupUtil::GetSelectionMaterial(GetToolManager()));
+			PreviewMesh->SetOverrideRenderMaterial(ToolSetupUtil::GetVertexColorMaterial(GetToolManager()));
 			PreviewMesh->SetTriangleColorFunction([this](const FDynamicMesh3* Mesh, int TriangleID)
 			{
 				return GetCurrentFaceColor(Mesh, TriangleID);
@@ -1032,7 +1048,6 @@ void UMeshSelectionTool::CancelChange()
 
 TUniquePtr<FToolCommandChange> UMeshSelectionTool::EndChange()
 {
-	check(ActiveSelectionChange);
 	if (ActiveSelectionChange != nullptr)
 	{
 		TUniquePtr<FMeshSelectionChange> Result = MoveTemp(ActiveSelectionChange->Change);
@@ -1369,7 +1384,7 @@ void UMeshSelectionTool::ExpandToConnected()
 
 	while (Queue.Num() > 0)
 	{
-		int32 CurTri = Queue.Pop(false);
+		int32 CurTri = Queue.Pop(EAllowShrinking::No);
 		FIndex3i NbrTris = Mesh->GetTriNeighbourTris(CurTri);
 
 		for (int j = 0; j < 3; ++j)
@@ -1479,7 +1494,7 @@ void UMeshSelectionTool::OptimizeSelection()
 		int32 TID = Selection->Faces[FaceSelIdx];
 		if (!FaceSelection.IsSelected(TID))
 		{
-			Selection->Faces.RemoveAtSwap(FaceSelIdx, 1, false);
+			Selection->Faces.RemoveAtSwap(FaceSelIdx, 1, EAllowShrinking::No);
 			ActiveSelectionChange->Add(TID);
 		}
 	}

@@ -20,6 +20,7 @@ struct OPTIMUSCORE_API FOptimusObjectVersion
 		SetPrimaryBindingName,
 		DataDomainExpansion,
 		KernelDataInterface,
+		KernelParameterBindingToggleAtomic,
 
 		// -----<new versions can be added above this line>-------------------------------------------------
 		VersionPlusOne,

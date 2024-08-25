@@ -45,7 +45,7 @@ void UInheritableComponentHandler::PostLoad()
 						Record.ComponentClass = Record.ComponentTemplate->GetClass();
 					}
 				}
-				
+
 				// Fix up component template name on load, if it doesn't match the original template name. Otherwise, archetype lookups will fail for this template.
 				// For example, this can occur after a component variable rename in a parent BP class, but before a child BP class with an override template is loaded.
 				// Note: If the key maps to an SCS node, the node's variable GUID will be used for the lookup instead of the name below (that's only used for UCS keys).
@@ -149,7 +149,7 @@ UActorComponent* UInheritableComponentHandler::CreateOverridenComponentTemplate(
 		// but if it is, just consign it to oblivion as its purpose is no longer required with the allocation
 		// of an object of the same name
 		UActorComponent* ExistingComp = Cast<UActorComponent>(ExistingObj);
-		if (ensure(ExistingComp) && ensure(UnnecessaryComponents.RemoveSwap(ExistingComp) > 0))
+		if (ensure(ExistingComp) && ensure(UnnecessaryComponents.RemoveSwap(ExistingComp) > 0 || GetPackage()->HasAnyPackageFlags(PKG_ForDiffing)))
 		{
 			ExistingObj->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors | REN_ForceNoResetLoaders);
 			ExistingObj->MarkAsGarbage();
@@ -255,6 +255,20 @@ void UInheritableComponentHandler::ValidateTemplates()
 					if (Record.ComponentTemplate)
 					{
 						Record.ComponentTemplate->SetFlags(RF_Transient);
+#if WITH_EDITOR
+						// in editor, move the component template aside so its name is free:
+						Record.ComponentTemplate->Rename(nullptr, GetTransientPackage(), REN_DoNotDirty | REN_DontCreateRedirectors | REN_ForceNoResetLoaders | REN_NonTransactional);
+						Record.ComponentTemplate->ClearFlags(RF_Standalone);
+						Record.ComponentTemplate->RemoveFromRoot();
+						Record.ComponentTemplate->MarkAsGarbage();
+						// Rename won't invalidate the linker's export, and linker lifetime extends long beyond an actual loadpackage 
+						// invocation. Consequently, if the template object is garbage collected (as we hope it will be) it 
+						// could tragically be recreated by FLinkerLoad unless we invalidate the export. Zen loader has some 
+						// logic to avoid recreating the object, but it is buggy and we want to avoid object recreation when 
+						// not using Zen, anyway. We would not need to invalidate the export if: 1. Rename invalidated the 
+						// export or 2. FLinkerLoad's lifetime were reigned in.
+						FLinkerLoad::InvalidateExport(Record.ComponentTemplate);
+#endif // WITH_EDITOR
 						UnnecessaryComponents.AddUnique(Record.ComponentTemplate);
 					}
 
@@ -504,6 +518,13 @@ void UInheritableComponentHandler::PreloadAll()
 		}
 	}
 	PreloadAllTemplates();
+	// This will get component names up to date - since these component 
+	// templates are used by GetArchetypeFromRequiredInfo we want to have real
+	// names as quickly as possible. The circumstances that require
+	// this are not clear to me, but that the logic exists and occasionally
+	// runs means we should run it ASAP - otherwise we may use the wrong
+	// archetype on construction.
+	ConditionalPostLoad();
 }
 
 FComponentKey UInheritableComponentHandler::FindKey(const FName VariableName) const

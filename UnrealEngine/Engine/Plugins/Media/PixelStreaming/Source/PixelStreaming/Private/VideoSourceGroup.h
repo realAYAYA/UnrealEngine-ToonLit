@@ -8,6 +8,7 @@
 #include "Templates/SharedPointer.h"
 #include "VideoSource.h"
 #include "PixelStreamingVideoInput.h"
+#include "HAL/Event.h"
 
 namespace UE::PixelStreaming
 {
@@ -44,8 +45,8 @@ namespace UE::PixelStreaming
 		class FFrameThread : public FRunnable, public FSingleThreadRunnable
 		{
 		public:
-			FFrameThread(FVideoSourceGroup* InTickGroup)
-				: TickGroup(InTickGroup)
+			FFrameThread(TWeakPtr<FVideoSourceGroup> InVideoSourceGroup)
+				: OuterVideoSourceGroup(InVideoSourceGroup)
 			{
 			}
 			virtual ~FFrameThread() = default;
@@ -63,11 +64,15 @@ namespace UE::PixelStreaming
 
 			virtual void Tick() override;
 
-			void PushFrame();
+			void PushFrame(TSharedPtr<FVideoSourceGroup> VideoSourceGroup);
+			double CalculateSleepOffsetMs(double TargetSubmitMs, uint64 LastCaptureCycles, uint64 CyclesBetweenCaptures, bool& bResetOffset) const;
 
 			bool bIsRunning = false;
-			FVideoSourceGroup* TickGroup = nullptr;
-			uint64 LastTickCycles = 0;
+			TWeakPtr<FVideoSourceGroup> OuterVideoSourceGroup = nullptr;
+			uint64 LastSubmitCycles = 0;
+
+			/* Use this event to signal when we should wake and also how long we should sleep for between transmitting a frame. */
+			FEventRef FrameEvent;
 		};
 
 		bool bRunning = false;

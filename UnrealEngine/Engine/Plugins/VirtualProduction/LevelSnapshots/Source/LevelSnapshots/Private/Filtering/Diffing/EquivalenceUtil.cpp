@@ -325,11 +325,14 @@ bool UE::LevelSnapshots::Private::AreMapPropertiesEquivalent(ULevelSnapshot* Sna
 	{
 		return false;
 	}
+	
+	FScriptMapHelper::FIterator SnapshotMapIterator(SnapshotMap);
+	FScriptMapHelper::FIterator WorldMapIterator(WorldMap);
 
-	for (int32 j = 0; j < SnapshotMap.Num(); ++j)
+	for (; SnapshotMapIterator && WorldMapIterator; ++SnapshotMapIterator, ++WorldMapIterator)
 	{
-		void* const SnapshotPairPtr = SnapshotMap.GetPairPtr(j);
-		void* const WorldPairPtr = WorldMap.GetPairPtr(j);
+		void* const SnapshotPairPtr = SnapshotMap.GetPairPtr(SnapshotMapIterator);
+		void* const WorldPairPtr = WorldMap.GetPairPtr(WorldMapIterator);
 
 		const bool bAreKeysEquivalent = AreSnapshotAndOriginalPropertiesEquivalent(Snapshot, SnapshotMap.KeyProp, SnapshotPairPtr, WorldPairPtr, SnapshotActor, WorldActor);
 		const bool bAreValuesEquivalent = AreSnapshotAndOriginalPropertiesEquivalent(Snapshot, SnapshotMap.ValueProp, SnapshotPairPtr, WorldPairPtr, SnapshotActor, WorldActor);

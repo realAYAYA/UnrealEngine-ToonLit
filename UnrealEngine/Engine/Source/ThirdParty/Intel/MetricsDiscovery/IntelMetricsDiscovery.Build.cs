@@ -4,6 +4,7 @@ using System;
 using System.IO;
 using UnrealBuildTool;
 
+[Obsolete("Deprecated in UE5.4 - No longer used.")]
 public class IntelMetricsDiscovery : ModuleRules
 {
 	public IntelMetricsDiscovery(ReadOnlyTargetRules Target) : base(Target)

@@ -23,6 +23,9 @@ struct FGetBonePoseScratchArea : public TThreadSingleton<FGetBonePoseScratchArea
 	BoneTrackArray AnimScaleRetargetingPairs;
 	BoneTrackArray AnimRelativeRetargetingPairs;
 	BoneTrackArray OrientAndScaleRetargetingPairs;
+
+	// A bit set that specifies whether a compact bone index has its rotation animated by the sequence or not
+	TBitArray<> AnimatedCompactRotations;
 };
 
 void DecompressPose(FCompactPose& OutPose,
@@ -43,17 +46,19 @@ void DecompressPose(FCompactPose& OutPose,
 	const TArray<FTransform>& RetargetTransforms,
 	const FRootMotionReset& RootMotionReset)
 {
+	const int32 NumCompactBones = OutPose.GetNumBones();
 	const FBoneContainer& RequiredBones = OutPose.GetBoneContainer();
 	const int32 NumTracks = CompressedData.CompressedTrackToSkeletonMapTable.Num();
 
 	const USkeleton* TargetSkeleton = RequiredBones.GetSkeletonAsset();
 	const FSkeletonRemapping& SkeletonRemapping = UE::Anim::FSkeletonRemappingRegistry::Get().GetRemapping(DecompressionContext.GetSourceSkeleton(), TargetSkeleton);
 
-	BoneTrackArray& RotationScalePairs = FGetBonePoseScratchArea::Get().RotationScalePairs;
-	BoneTrackArray& TranslationPairs = FGetBonePoseScratchArea::Get().TranslationPairs;
-	BoneTrackArray& AnimScaleRetargetingPairs = FGetBonePoseScratchArea::Get().AnimScaleRetargetingPairs;
-	BoneTrackArray& AnimRelativeRetargetingPairs = FGetBonePoseScratchArea::Get().AnimRelativeRetargetingPairs;
-	BoneTrackArray& OrientAndScaleRetargetingPairs = FGetBonePoseScratchArea::Get().OrientAndScaleRetargetingPairs;
+	FGetBonePoseScratchArea& ScratchArea = FGetBonePoseScratchArea::Get();
+	BoneTrackArray& RotationScalePairs = ScratchArea.RotationScalePairs;
+	BoneTrackArray& TranslationPairs = ScratchArea.TranslationPairs;
+	BoneTrackArray& AnimScaleRetargetingPairs = ScratchArea.AnimScaleRetargetingPairs;
+	BoneTrackArray& AnimRelativeRetargetingPairs = ScratchArea.AnimRelativeRetargetingPairs;
+	BoneTrackArray& OrientAndScaleRetargetingPairs = ScratchArea.OrientAndScaleRetargetingPairs;
 
 	// build a list of desired bones
 	RotationScalePairs.Reset();
@@ -61,6 +66,13 @@ void DecompressPose(FCompactPose& OutPose,
 	AnimScaleRetargetingPairs.Reset();
 	AnimRelativeRetargetingPairs.Reset();
 	OrientAndScaleRetargetingPairs.Reset();
+
+	const bool bIsMeshSpaceAdditive = DecompressionContext.GetAdditiveType() == AAT_RotationOffsetMeshSpace;
+	TBitArray<>& AnimatedCompactRotations = ScratchArea.AnimatedCompactRotations;
+	if (bIsMeshSpaceAdditive)
+	{
+		AnimatedCompactRotations.Init(false, NumCompactBones);
+	}
 
 	// Optimization: assuming first index is root bone. That should always be the case in Skeletons.
 	checkSlow((RequiredBones.GetMeshPoseIndexFromSkeletonPoseIndex(FSkeletonPoseBoneIndex(0)) == FMeshPoseBoneIndex(0)));
@@ -84,6 +96,11 @@ void DecompressPose(FCompactPose& OutPose,
 				if (CompactPoseBoneIndex != INDEX_NONE)
 				{
 					RotationScalePairs.Add(BoneTrackPair(CompactPoseBoneIndex, TrackIndex));
+
+					if (bIsMeshSpaceAdditive)
+					{
+						AnimatedCompactRotations[CompactPoseBoneIndex] = true;
+					}
 
 					// Skip extracting translation component for EBoneTranslationRetargetingMode::Skeleton.
 					switch (TargetSkeleton->GetBoneTranslationRetargetingMode(TargetSkeletonBoneIndex, RequiredBones.GetDisableRetargeting()))
@@ -139,18 +156,11 @@ void DecompressPose(FCompactPose& OutPose,
 			// Retarget the root onto the target skeleton (correcting for differences in rest poses)
 			if (SkeletonRemapping.RequiresReferencePoseRetarget())
 			{
-				const int32 TargetSkeletonBoneIndex = 0;
+				// Root bone does not require fix-up for additive animations as there is no parent delta rotation to account for
+				if (!DecompressionContext.IsAdditiveAnimation())
+				{
+					const int32 TargetSkeletonBoneIndex = 0;
 
-				if (DecompressionContext.IsAdditiveAnimation())
-				{
-					RootAtom.SetRotation(SkeletonRemapping.RetargetAdditiveRotationToTargetSkeleton(TargetSkeletonBoneIndex, RootAtom.GetRotation()));
-					if (TargetSkeleton->GetBoneTranslationRetargetingMode(TargetSkeletonBoneIndex, RequiredBones.GetDisableRetargeting()) != EBoneTranslationRetargetingMode::Skeleton)
-					{
-						RootAtom.SetTranslation(SkeletonRemapping.RetargetAdditiveTranslationToTargetSkeleton(TargetSkeletonBoneIndex, RootAtom.GetTranslation()));
-					}
-				}
-				else
-				{
 					RootAtom.SetRotation(SkeletonRemapping.RetargetBoneRotationToTargetSkeleton(TargetSkeletonBoneIndex, RootAtom.GetRotation()));
 					if (TargetSkeleton->GetBoneTranslationRetargetingMode(TargetSkeletonBoneIndex, RequiredBones.GetDisableRetargeting()) != EBoneTranslationRetargetingMode::Skeleton)
 					{
@@ -176,10 +186,16 @@ void DecompressPose(FCompactPose& OutPose,
 	{
 		if (DecompressionContext.IsAdditiveAnimation())
 		{
-			for (FCompactPoseBoneIndex BoneIndex(bFirstTrackIsRootBone ? 1 : 0); BoneIndex < OutPose.GetNumBones(); ++BoneIndex)
+			for (FCompactPoseBoneIndex BoneIndex(bFirstTrackIsRootBone ? 1 : 0); BoneIndex < NumCompactBones; ++BoneIndex)
 			{
 				const int32 TargetSkeletonBoneIndex = RequiredBones.GetSkeletonIndex(BoneIndex);
-				OutPose[BoneIndex].SetRotation(SkeletonRemapping.RetargetAdditiveRotationToTargetSkeleton(TargetSkeletonBoneIndex, OutPose[BoneIndex].GetRotation()));
+
+				// Mesh space additives do not require fix-up
+				if (DecompressionContext.GetAdditiveType() == AAT_LocalSpaceBase)
+				{
+					OutPose[BoneIndex].SetRotation(SkeletonRemapping.RetargetAdditiveRotationToTargetSkeleton(TargetSkeletonBoneIndex, OutPose[BoneIndex].GetRotation()));
+				}
+
 				if (TargetSkeleton->GetBoneTranslationRetargetingMode(TargetSkeletonBoneIndex, RequiredBones.GetDisableRetargeting()) != EBoneTranslationRetargetingMode::Skeleton)
 				{
 					OutPose[BoneIndex].SetTranslation(SkeletonRemapping.RetargetAdditiveTranslationToTargetSkeleton(TargetSkeletonBoneIndex, OutPose[BoneIndex].GetTranslation()));
@@ -188,7 +204,7 @@ void DecompressPose(FCompactPose& OutPose,
 		}
 		else
 		{
-			for (FCompactPoseBoneIndex BoneIndex(bFirstTrackIsRootBone ? 1 : 0); BoneIndex < OutPose.GetNumBones(); ++BoneIndex)
+			for (FCompactPoseBoneIndex BoneIndex(bFirstTrackIsRootBone ? 1 : 0); BoneIndex < NumCompactBones; ++BoneIndex)
 			{
 				const int32 TargetSkeletonBoneIndex = RequiredBones.GetSkeletonIndex(BoneIndex);
 				OutPose[BoneIndex].SetRotation(SkeletonRemapping.RetargetBoneRotationToTargetSkeleton(TargetSkeletonBoneIndex, OutPose[BoneIndex].GetRotation()));
@@ -241,17 +257,20 @@ void DecompressPose(FCompactPose& OutPose,
 			const FTransform& RefPoseTransform = RequiredBones.GetRefPoseTransform(BoneIndex);
 
 			// Remap the base pose onto the target skeleton so that we are working entirely in target space
-			FTransform BaseTransform = AuthoredOnRefSkeleton[SourceSkeletonBoneIndex];
+			const FTransform& RefBaseTransform = AuthoredOnRefSkeleton[SourceSkeletonBoneIndex];
+			const FTransform* BaseTransform = &RefBaseTransform;
+			FTransform RetargetBaseTransform;
 			if (SkeletonRemapping.RequiresReferencePoseRetarget())
 			{
 				const int32 TargetSkeletonBoneIndex = SkeletonRemapping.GetTargetSkeletonBoneIndex(SourceSkeletonBoneIndex);
-				BaseTransform = SkeletonRemapping.RetargetBoneTransformToTargetSkeleton(TargetSkeletonBoneIndex, BaseTransform);
+				RetargetBaseTransform = SkeletonRemapping.RetargetBoneTransformToTargetSkeleton(TargetSkeletonBoneIndex, RefBaseTransform);
+				BaseTransform = &RetargetBaseTransform;
 			}
 
 			// Apply the retargeting as if it were an additive difference between the current skeleton and the retarget skeleton. 
-			OutPose[BoneIndex].SetRotation(OutPose[BoneIndex].GetRotation() * BaseTransform.GetRotation().Inverse() * RefPoseTransform.GetRotation());
-			OutPose[BoneIndex].SetTranslation(OutPose[BoneIndex].GetTranslation() + (RefPoseTransform.GetTranslation() - BaseTransform.GetTranslation()));
-			OutPose[BoneIndex].SetScale3D(OutPose[BoneIndex].GetScale3D() * (RefPoseTransform.GetScale3D() * BaseTransform.GetSafeScaleReciprocal(BaseTransform.GetScale3D())));
+			OutPose[BoneIndex].SetRotation(OutPose[BoneIndex].GetRotation() * BaseTransform->GetRotation().Inverse() * RefPoseTransform.GetRotation());
+			OutPose[BoneIndex].SetTranslation(OutPose[BoneIndex].GetTranslation() + (RefPoseTransform.GetTranslation() - BaseTransform->GetTranslation()));
+			OutPose[BoneIndex].SetScale3D(OutPose[BoneIndex].GetScale3D() * (RefPoseTransform.GetScale3D() * BaseTransform->GetSafeScaleReciprocal(BaseTransform->GetScale3D())));
 			OutPose[BoneIndex].NormalizeRotation();
 		}
 	}
@@ -265,7 +284,7 @@ void DecompressPose(FCompactPose& OutPose,
 		const TArray<int32>& CompactPoseIndexToOrientAndScaleIndex = RetargetSourceCachedData.CompactPoseIndexToOrientAndScaleIndex;
 
 		// If we have any cached retargeting data.
-		if ((OrientAndScaleDataArray.Num() > 0) && (CompactPoseIndexToOrientAndScaleIndex.Num() == RequiredBones.GetCompactPoseNumBones()))
+		if (OrientAndScaleDataArray.Num() > 0 && CompactPoseIndexToOrientAndScaleIndex.Num() == NumCompactBones)
 		{
 			for (int32 Index = 0; Index < NumBonesToOrientAndScaleRetarget; Index++)
 			{
@@ -285,6 +304,28 @@ void DecompressPose(FCompactPose& OutPose,
 
 					BoneTransform.SetTranslation(NewTranslation);
 				}
+			}
+		}
+	}
+
+	if (bIsMeshSpaceAdditive)
+	{
+		// When an animation is a mesh-space additive, bones that aren't animated will end up with some non-identity
+		// delta relative to the base used to create the additive. This is because the delta is calculated in mesh-space
+		// unlike regular additive animations where bones that aren't animated has an identity delta. For rotations,
+		// this mesh-space delta will be the parent bone rotation.
+		// However, if a bone isn't animated in the sequence but present on the target skeleton, we have no data for it
+		// and the output pose will contain an identity delta which isn't what we want. As such, bones missing from
+		// the sequence have their rotation set to their parent.
+
+		// If the first track is the root, we skip it since it has no parent (its delta value is fine as the identity)
+		for (FCompactPoseBoneIndex CompactBoneIndex(bFirstTrackIsRootBone ? 1 : 0); CompactBoneIndex < NumCompactBones; ++CompactBoneIndex)
+		{
+			if (!AnimatedCompactRotations[CompactBoneIndex.GetInt()])
+			{
+				// This bone wasn't animated in the sequence, fix it up
+				const FCompactPoseBoneIndex CompactParentIndex = RequiredBones.GetParentBoneIndex(CompactBoneIndex);
+				OutPose[CompactBoneIndex].SetRotation(OutPose[CompactParentIndex].GetRotation());
 			}
 		}
 	}

@@ -49,6 +49,9 @@ public:
 DxilPartWriter *NewProgramSignatureWriter(const DxilModule &M, DXIL::SignatureKind Kind);
 DxilPartWriter *NewRootSignatureWriter(const RootSignatureHandle &S);
 DxilPartWriter *NewFeatureInfoWriter(const DxilModule &M);
+// UE Change Begin: Added UserInfo container and check for derivative ops
+DxilPartWriter *NewUserInfoWriter(const DxilModule &M);
+// UE Change End: Added UserInfo container and check for derivative ops
 DxilPartWriter *NewPSVWriter(const DxilModule &M, uint32_t PSVVersion = UINT_MAX);
 DxilPartWriter *NewRDATWriter(const DxilModule &M);
 

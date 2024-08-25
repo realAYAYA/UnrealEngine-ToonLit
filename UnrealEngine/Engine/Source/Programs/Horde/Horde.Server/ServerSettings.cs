@@ -4,29 +4,20 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
-using System.Security.Claims;
-using System.Text.Json.Serialization;
+using System.Net;
 using EpicGames.Core;
 using EpicGames.Horde;
+using EpicGames.Horde.Server;
 using EpicGames.Horde.Storage;
+using EpicGames.Horde.Storage.Bundles;
 using EpicGames.Horde.Storage.Nodes;
+using EpicGames.Horde.Tools;
 using EpicGames.Perforce;
-using Horde.Server.Acls;
-using Horde.Server.Agents;
 using Horde.Server.Agents.Fleet;
-using Horde.Server.Agents.Pools;
-using Horde.Server.Agents.Sessions;
-using Horde.Server.Agents.Software;
-using Horde.Server.Jobs;
-using Horde.Server.Logs;
-using Horde.Server.Projects;
 using Horde.Server.Server;
-using Horde.Server.Storage.Backends;
-using Horde.Server.Streams;
-using Horde.Server.Telemetry;
+using Horde.Server.Storage.ObjectStores;
+using Horde.Server.Telemetry.Sinks;
 using Horde.Server.Tools;
-using Horde.Server.Utilities;
-using Serilog.Events;
 
 namespace Horde.Server
 {
@@ -46,6 +37,11 @@ namespace Horde.Server
 		Aws,
 
 		/// <summary>
+		/// Azure blob store
+		/// </summary>
+		Azure,
+
+		/// <summary>
 		/// In-memory only (for testing)
 		/// </summary>
 		Memory,
@@ -54,8 +50,13 @@ namespace Horde.Server
 	/// <summary>
 	/// Common settings for different storage backends
 	/// </summary>
-	public interface IStorageBackendOptions : IFileSystemStorageOptions, IAwsStorageOptions
+	public interface IStorageBackendOptions : IAwsStorageOptions, IAzureStorageOptions
 	{
+		/// <summary>
+		/// Base directory for filesystem storage
+		/// </summary>
+		string? BaseDir { get; }
+
 		/// <summary>
 		/// The type of storage backend to use
 		/// </summary>
@@ -90,6 +91,12 @@ namespace Horde.Server
 
 		/// <inheritdoc/>
 		public string? AwsRegion { get; set; }
+
+		/// <inheritdoc/>
+		public string? AzureConnectionString { get; set; }
+
+		/// <inheritdoc/>
+		public string? AzureContainerName { get; set; }
 	}
 
 	/// <summary>
@@ -128,27 +135,6 @@ namespace Horde.Server
 	}
 
 	/// <summary>
-	/// Authentication method used for logging users in
-	/// </summary>
-	public enum AuthMethod
-	{
-		/// <summary>
-		/// No authentication enabled, mainly for demo and testing purposes
-		/// </summary>
-		Anonymous,
-
-		/// <summary>
-		/// OpenID Connect authentication, tailored for Okta
-		/// </summary>
-		Okta,
-		
-		/// <summary>
-		/// Generic OpenID Connect authentication, recommended for most
-		/// </summary>
-		OpenIdConnect,
-	}
-
-	/// <summary>
 	/// Type of run mode this process should use. Each carry different types of workloads. 
 	/// More than one mode can be active. But not all modes are not guaranteed to be compatible with each other and will
 	/// raise an error if combined in such a way.
@@ -159,14 +145,14 @@ namespace Horde.Server
 		/// Default no-op value (ASP.NET config will default to this for enums that cannot be parsed)
 		/// </summary> 
 		None,
-		
+
 		/// <summary>
 		/// Handle and respond to incoming external requests, such as HTTP REST and gRPC calls.
 		/// These requests are time-sensitive and short-lived, typically less than 5 secs.
 		/// If processes handling requests are unavailable, it will be very visible for users.
 		/// </summary>
 		Server,
-		
+
 		/// <summary>
 		/// Run non-request facing workloads. Such as background services, processing queues, running work
 		/// based on timers etc. Short periods of downtime or high CPU usage due to bursts are fine for this mode.
@@ -190,11 +176,16 @@ namespace Horde.Server
 		/// Use the Epic telemetry sink
 		/// </summary>
 		Epic,
-		
+
 		/// <summary>
 		/// Use the ClickHouse telemetry sink
 		/// </summary>
 		ClickHouse,
+
+		/// <summary>
+		/// Mongo telemetry
+		/// </summary>
+		Mongo,
 	}
 
 	/// <summary>
@@ -202,11 +193,6 @@ namespace Horde.Server
 	/// </summary>
 	public class BaseTelemetryConfig
 	{
-		/// <summary>
-		/// Unique ID for this sink config (any arbitrary string)
-		/// </summary>
-		public string? Id { get; set; }
-		
 		/// <summary>
 		/// Type of telemetry sink
 		/// </summary>
@@ -234,7 +220,7 @@ namespace Horde.Server
 			return $"{nameof(Url)}={Url} {nameof(AppId)}={AppId}";
 		}
 	}
-	
+
 	/// <summary>
 	/// Configuration for the telemetry sink
 	/// </summary>
@@ -244,16 +230,27 @@ namespace Horde.Server
 		/// Base URL for ClickHouse server
 		/// </summary>
 		public Uri? Url { get; set; }
-		
+
 		/// <inheritdoc />
 		public override string ToString()
 		{
 			return $"{nameof(Url)}={Url}";
 		}
 	}
-	
+
 	/// <summary>
-	/// Feature flags to aid rollout of new features
+	/// Configuration for the telemetry sink
+	/// </summary>
+	public class MongoTelemetryConfig : BaseTelemetryConfig
+	{
+		/// <summary>
+		/// Number of days worth of telmetry events to keep
+		/// </summary>
+		public double RetainDays { get; set; } = 1;
+	}
+
+	/// <summary>
+	/// Feature flags to aid rollout of new features.
 	///
 	/// Once a feature is running in its intended state and is stable, the flag should be removed.
 	/// A name and date of when the flag was created is noted next to it to help encourage this behavior.
@@ -327,17 +324,17 @@ namespace Horde.Server
 		/// Whether OpenTelemetry exporting is enabled
 		/// </summary>
 		public bool Enabled { get; set; } = false;
-		
+
 		/// <summary>
 		/// Service name
 		/// </summary>
 		public string ServiceName { get; set; } = "HordeServer";
-		
+
 		/// <summary>
 		/// Service namespace
 		/// </summary>
 		public string ServiceNamespace { get; set; } = "Horde";
-		
+
 		/// <summary>
 		/// Service version
 		/// </summary>
@@ -347,7 +344,7 @@ namespace Horde.Server
 		/// Whether to enrich and format telemetry to fit presentation in Datadog
 		/// </summary>
 		public bool EnableDatadogCompatibility { get; set; } = false;
-		
+
 		/// <summary>
 		/// Extra attributes to set
 		/// </summary>
@@ -357,7 +354,7 @@ namespace Horde.Server
 		/// Whether to enable the console exporter (for debugging purposes)
 		/// </summary>
 		public bool EnableConsoleExporter { get; set; } = false;
-		
+
 		/// <summary>
 		/// Protocol exporters (key is a unique and arbitrary name) 
 		/// </summary>
@@ -383,17 +380,16 @@ namespace Horde.Server
 	/// <summary>
 	/// Global settings for the application
 	/// </summary>
-	public class ServerSettings : IAclScope
+	public class ServerSettings
 	{
-		/// <inheritdoc/>
-		[JsonIgnore]
-		public IAclScope? ParentScope => null;
+		/// <summary>
+		/// Name of the section containing these settings
+		/// </summary>
+		public const string SectionName = "Horde";
 
-		/// <inheritdoc/>
-		[JsonIgnore]
-		public AclScopeName ScopeName => AclScopeName.Root;
-
-		/// <inheritdoc cref="RunMode" />
+		/// <summary>
+		/// Modes that the server should run in. Runmodes can be used in a multi-server deployment to limit the operations that a particular instance will try to perform.
+		/// </summary>
 		public RunMode[]? RunModes { get; set; } = null;
 
 		/// <summary>
@@ -402,34 +398,37 @@ namespace Horde.Server
 		public string? DataDir { get; set; } = null;
 
 		/// <summary>
-		/// Output level for console
+		/// Whether the server is running in 'installed' mode. In this mode, on Windows, the default data directory will use the common 
+		/// application data folder (C:\ProgramData\Epic\Horde), and configuration data will be read from here and the registry.
+		/// This setting is overridden to false for local builds from appsettings.Local.json.
 		/// </summary>
-		public LogEventLevel ConsoleLogLevel { get; set; } = LogEventLevel.Debug;
+		public bool Installed { get; set; } = true;
 
 		/// <summary>
-		/// Main port for serving HTTP. Uses the default Kestrel port (5000) if not specified.
+		/// Main port for serving HTTP.
 		/// </summary>
 		public int HttpPort { get; set; } = 5000;
 
 		/// <summary>
-		/// Port for serving HTTP with TLS enabled.
+		/// Port for serving HTTP with TLS enabled. Disabled by default.
 		/// </summary>
 		public int HttpsPort { get; set; } = 0;
 
 		/// <summary>
 		/// Dedicated port for serving only HTTP/2.
 		/// </summary>
-		public int Http2Port { get; set; }
+		public int Http2Port { get; set; } = 5002;
 
 		/// <summary>
-		/// Port for listening to compute tunnel initiator requests
+		/// Port to listen on for tunneling compute sockets to agents
 		/// </summary>
-		public int ComputeInitiatorPort { get; set; }
+		public int ComputeTunnelPort { get; set; }
 
 		/// <summary>
-		/// Port for compute remotes to connect to
+		/// What address (host:port) clients should connect to for compute socket tunneling
+		/// Port may differ from <see cref="ComputeTunnelPort" /> if Horde server is behind a reverse proxy/firewall
 		/// </summary>
-		public int ComputeRemotePort { get; set; }
+		public string? ComputeTunnelAddress { get; set; }
 
 		/// <summary>
 		/// MongoDB connection string
@@ -453,6 +452,19 @@ namespace Horde.Server
 		public bool DatabaseReadOnlyMode { get; set; } = false;
 
 		/// <summary>
+		/// Shutdown the current server process if memory usage reaches this threshold (specified in MB)
+		///
+		/// Usually set to 80-90% of available memory to avoid CLR heap using all of it.
+		/// If a memory leak was to occur, it's usually better to restart the process rather than to let the GC
+		/// work harder and harder trying to recoup memory.
+		/// 
+		/// Should only be used when multiple server processes are running behind a load balancer
+		/// and one can be safely restarted automatically by the underlying process handler (Docker, Kubernetes, AWS ECS, Supervisor etc).
+		/// The shutdown behaves similar to receiving a SIGTERM and will wait for outstanding requests to finish.
+		/// </summary>
+		public int? ShutdownMemoryThreshold { get; set; } = null;
+
+		/// <summary>
 		/// Optional PFX certificate to use for encrypting agent SSL traffic. This can be a self-signed certificate, as long as it's trusted by agents.
 		/// </summary>
 		public string? ServerPrivateCert { get; set; }
@@ -463,14 +475,20 @@ namespace Horde.Server
 		public AuthMethod AuthMethod { get; set; } = AuthMethod.Anonymous;
 
 		/// <summary>
-		/// Audience for OIDC validation
+		/// Optional profile name to report through the /api/v1/server/auth endpoint. Allows sharing auth tokens between providers configured through
+		/// the same profile name in OidcToken.exe config files.
 		/// </summary>
-		public string? OidcAudience { get; set; }
-		
+		public string? OidcProfileName { get; set; }
+
 		/// <summary>
 		/// Issuer for tokens from the auth provider
 		/// </summary>
 		public string? OidcAuthority { get; set; }
+
+		/// <summary>
+		/// Audience for validating externally issued tokens
+		/// </summary>
+		public string? OidcAudience { get; set; }
 
 		/// <summary>
 		/// Client id for the OIDC authority
@@ -490,7 +508,10 @@ namespace Horde.Server
 		/// <summary>
 		/// Optional redirect url provided to OIDC login for external tools (typically to a local server)
 		/// </summary>
-		public string[]? OidcLocalRedirectUrls { get; set; }
+		public string[]? OidcLocalRedirectUrls { get; set; } =
+		{
+			"http://localhost:8749/ugs.client"
+		};
 
 		/// <summary>
 		/// OpenID Connect scopes to request when signing in
@@ -518,14 +539,46 @@ namespace Horde.Server
 		public string[] OidcClaimHordePerforceUserMapping { get; set; } = { "preferred_username", "email" };
 
 		/// <summary>
-		/// Name of the issuer in bearer tokens from the server
+		/// Name of this machine 
 		/// </summary>
-		public string? JwtIssuer { get; set; } = null!;
+		public Uri ServerUrl
+		{
+			get => _serverUrl ?? GetDefaultServerUrl();
+			set => _serverUrl = value;
+		}
 
 		/// <summary>
-		/// Secret key used to sign JWTs. This setting is typically only used for development. In prod, a unique secret key will be generated and stored in the DB for each unique server instance.
+		/// Name of the issuer in bearer tokens from the server
 		/// </summary>
-		public string? JwtSecret { get; set; } = null!;
+		public string? JwtIssuer
+		{
+			get => _jwtIssuer ?? ServerUrl.ToString();
+			set => _jwtIssuer = value;
+		}
+
+		Uri? _serverUrl;
+		string? _jwtIssuer;
+
+		Uri GetDefaultServerUrl()
+		{
+			string hostName = Dns.GetHostName();
+			if (HttpsPort == 443)
+			{
+				return new Uri($"https://{hostName}");
+			}
+			else if (HttpsPort != 0)
+			{
+				return new Uri($"https://{hostName}:{HttpsPort}");
+			}
+			else if (HttpPort == 80)
+			{
+				return new Uri($"http://{hostName}");
+			}
+			else
+			{
+				return new Uri($"http://{hostName}:{HttpPort}");
+			}
+		}
 
 		/// <summary>
 		/// Length of time before JWT tokens expire, in hours
@@ -555,7 +608,7 @@ namespace Horde.Server
 		/// <summary>
 		/// Whether to automatically enable new agents by default. If false, new agents must manually be enabled before they can take on work.
 		/// </summary>
-		public bool EnableNewAgentsByDefault { get; set; } = true;
+		public bool EnableNewAgentsByDefault { get; set; } = false;
 
 		/// <summary>
 		/// The number of months to retain test data
@@ -619,7 +672,7 @@ namespace Horde.Server
 		/// Whether to log requests to the UpdateSession and QueryServerState RPC endpoints
 		/// </summary>
 		public bool LogSessionRequests { get; set; } = false;
-		
+
 		/// <summary>
 		/// Whether to enable the hosted LogService running background jobs
 		/// </summary>
@@ -634,12 +687,12 @@ namespace Horde.Server
 		/// Config for the fleet manager (serialized JSON)
 		/// </summary>
 		public string? FleetManagerV2Config { get; set; }
-		
+
 		/// <summary>
-		/// AWS SQS queue URL where lifecycle events from EC2 auto-scaling are received
+		/// AWS SQS queue URLs where lifecycle events from EC2 auto-scaling are received
 		/// <see cref="AwsAutoScalingLifecycleService" />
 		/// </summary>
-		public string? AwsAutoScalingQueueUrl { get; set; }
+		public string[] AwsAutoScalingQueueUrls { get; set; } = Array.Empty<string>();
 
 		/// <summary>
 		/// Whether to run scheduled jobs.
@@ -697,6 +750,11 @@ namespace Horde.Server
 		public string? JobNotificationChannel { get; set; }
 
 		/// <summary>
+		/// Slack channel to send agent related notifications to.
+		/// </summary>
+		public string? AgentNotificationChannel { get; set; }
+
+		/// <summary>
 		/// The URl to use for generating links back to the dashboard.
 		/// </summary>
 		public Uri DashboardUrl { get; set; } = new Uri("https://localhost:3000");
@@ -737,6 +795,16 @@ namespace Horde.Server
 		public int SharedDeviceCheckoutDays { get; set; } = 3;
 
 		/// <summary>
+		/// The number of cooldown minutes for device problems
+		/// </summary>
+		public int DeviceProblemCooldownMinutes { get; set; } = 10;
+
+		/// <summary>
+		/// Channel to send device reports to
+		/// </summary>
+		public string? DeviceReportChannel { get; set; }
+
+		/// <summary>
 		/// Default agent pool sizing strategy for pools that doesn't have one explicitly configured
 		/// </summary>
 		public PoolSizeStrategy DefaultAgentPoolSizeStrategy { get; set; } = PoolSizeStrategy.LeaseUtilization;
@@ -770,9 +838,9 @@ namespace Horde.Server
 		public bool WithAws { get; set; } = false;
 
 		/// <summary>
-		/// Path to the root config file
+		/// Path to the root config file. Relative to the server.json file by default.
 		/// </summary>
-		public string ConfigPath { get; set; } = "Defaults/globals.json";
+		public string ConfigPath { get; set; } = "globals.json";
 
 		/// <summary>
 		/// Perforce connections for use by the Horde server (not agents)
@@ -809,8 +877,20 @@ namespace Horde.Server
 		/// </summary>
 		public bool OpenBrowser { get; set; } = false;
 
-		/// <inheritdoc cref="FeatureFlags" />
-		public FeatureFlagSettings FeatureFlags { get; set; } = new ();
+		/// <summary>
+		/// Directory to use for cache data
+		/// </summary>
+		public string? BundleCacheDir { get; set; }
+
+		/// <summary>
+		/// Maximum size of the storage cache on disk, in megabytes
+		/// </summary>
+		public long BundleCacheSize { get; set; } = 1024;
+
+		/// <summary>
+		/// Experimental features to enable on the server.
+		/// </summary>
+		public FeatureFlagSettings FeatureFlags { get; set; } = new();
 
 		/// <summary>
 		/// Options for the commit service
@@ -820,50 +900,17 @@ namespace Horde.Server
 		/// <summary>
 		/// Settings for sending telemetry events to external services (for example Snowflake, ClickHouse etc)
 		/// </summary>
-		public List<BaseTelemetryConfig> Telemetry { get; set; } = new ();
+		public List<BaseTelemetryConfig> Telemetry { get; set; } = new();
 
 		/// <summary>
-		/// Tools bundled along with the server. Data for each tool can be produced using the 'bundle create' command, and should be stored in the /tools/{id} directory.
+		/// Tools bundled along with the server. Data for each tool can be produced using the 'bundle create' command, and should be stored in the Tools directory.
 		/// </summary>
 		public List<BundledToolConfig> BundledTools { get; set; } = new List<BundledToolConfig>();
-		
+
 		/// <summary>
 		/// Options for OpenTelemetry
 		/// </summary>
 		public OpenTelemetrySettings OpenTelemetry { get; set; } = new OpenTelemetrySettings();
-
-		/// <summary>
-		/// Default pre-baked ACL for authentication of well-known roles
-		/// </summary>
-		[JsonIgnore]
-		public AclConfig? Acl
-		{
-			get
-			{
-				_defaultAcl ??= GetDefaultAcl();
-				return _defaultAcl;
-			}
-		}
-		
-		[JsonIgnore]
-		AclConfig? _defaultAcl;
-
-		/// <summary>
-		/// Create the default ACL for the server, including all predefined roles.
-		/// </summary>
-		/// <returns></returns>
-		static AclConfig GetDefaultAcl()
-		{
-			AclConfig defaultAcl = new AclConfig();
-			defaultAcl.Entries.Add(new AclEntryConfig(new AclClaimConfig(ClaimTypes.Role, "internal:AgentRegistration"), new[] { AgentAclAction.CreateAgent, SessionAclAction.CreateSession }));
-			defaultAcl.Entries.Add(new AclEntryConfig(HordeClaims.AgentRegistrationClaim, new[] { AgentAclAction.CreateAgent, SessionAclAction.CreateSession, AgentAclAction.UpdateAgent, AgentSoftwareAclAction.DownloadSoftware, PoolAclAction.CreatePool, PoolAclAction.UpdatePool, PoolAclAction.ViewPool, PoolAclAction.DeletePool, PoolAclAction.ListPools, StreamAclAction.ViewStream, ProjectAclAction.ViewProject, JobAclAction.ViewJob, ServerAclAction.ViewCosts }));
-			defaultAcl.Entries.Add(new AclEntryConfig(HordeClaims.AgentRoleClaim, new[] { ProjectAclAction.ViewProject, StreamAclAction.ViewStream, LogAclAction.CreateEvent, AgentSoftwareAclAction.DownloadSoftware }));
-			defaultAcl.Entries.Add(new AclEntryConfig(HordeClaims.DownloadSoftwareClaim, new[] { AgentSoftwareAclAction.DownloadSoftware }));
-			defaultAcl.Entries.Add(new AclEntryConfig(HordeClaims.UploadSoftwareClaim, new[] { AgentSoftwareAclAction.UploadSoftware }));
-			defaultAcl.Entries.Add(new AclEntryConfig(HordeClaims.ConfigureProjectsClaim, new[] { ProjectAclAction.CreateProject, ProjectAclAction.UpdateProject, ProjectAclAction.ViewProject, StreamAclAction.CreateStream, StreamAclAction.UpdateStream, StreamAclAction.ViewStream }));
-			defaultAcl.Entries.Add(new AclEntryConfig(HordeClaims.StartChainedJobClaim, new[] { JobAclAction.CreateJob, JobAclAction.ExecuteJob, JobAclAction.UpdateJob, JobAclAction.ViewJob, StreamAclAction.ViewTemplate, StreamAclAction.ViewStream }));
-			return defaultAcl;
-		}
 
 		/// <summary>
 		/// Helper method to check if this process has activated the given mode
@@ -979,7 +1026,12 @@ namespace Horde.Server
 				{
 					settings.UserName = Credentials.UserName;
 				}
-				if (!String.IsNullOrEmpty(Credentials.Password))
+
+				if (!String.IsNullOrEmpty(Credentials.Ticket))
+				{
+					settings.Password = Credentials.Ticket;
+				}
+				else if (!String.IsNullOrEmpty(Credentials.Password))
 				{
 					settings.Password = Credentials.Password;
 				}

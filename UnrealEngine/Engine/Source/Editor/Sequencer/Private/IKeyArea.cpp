@@ -252,9 +252,8 @@ namespace MovieScene
 			TCHAR NextChar = InStr.GetCharArray()[Index + 1];
 			if (CurrentChar == '.' && NextChar == '.')
 			{
-				const bool bAllowShrinking = false;
 				const int32 NumToRemove = 1;
-				InStr.RemoveAt(Index, NumToRemove, bAllowShrinking);
+				InStr.RemoveAt(Index, NumToRemove, EAllowShrinking::No);
 				Index--;
 			}
 		}
@@ -329,6 +328,7 @@ TUniquePtr<FCurveModel> IKeyArea::CreateCurveEditorModel(TSharedRef<ISequencer> 
 			CurveModel->SetLongDisplayName(LongDisplayName);
 			CurveModel->SetIntentionName(IntentName);
 			CurveModel->SetLongIntentionName(LongIntentName);
+			CurveModel->SetChannelName(ChannelHandle.GetMetaData()->Name);
 			if (Color.IsSet())
 			{
 				CurveModel->SetColor(Color.GetValue(),false);

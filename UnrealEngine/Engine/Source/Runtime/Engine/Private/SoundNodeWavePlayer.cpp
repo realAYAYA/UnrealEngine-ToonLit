@@ -32,6 +32,15 @@ void USoundNodeWavePlayer::Serialize(FArchive& Ar)
 	}
 }
 
+bool USoundNodeWavePlayer::ContainsProceduralSoundReference() const
+{
+	if (SoundWave)
+	{
+		return SoundWave->IsA<USoundWaveProcedural>();
+	}
+	return false;
+}
+
 void USoundNodeWavePlayer::LoadAsset(bool bAddToRoot)
 {
 	if (IsAsyncLoadingMultithreaded())
@@ -61,7 +70,14 @@ void USoundNodeWavePlayer::LoadAsset(bool bAddToRoot)
 		if (SoundWave)
 		{
 			SoundWave->AddToCluster(this, true);
-			SoundWave->InitResources();
+			// Don't init resources when running cook, as this can trigger 
+			// registration of a MetaSound and its dependent graphs.
+			// Those will instead be registered when the MetaSound itself is cooked (FMetasoundAssetBase::CookMetaSound)
+			// in a way that does not deal with runtime data like this function does
+			if (!IsRunningCookCommandlet())
+			{
+				SoundWave->InitResources();
+			}
 		}
 	}
 	else
@@ -80,7 +96,14 @@ void USoundNodeWavePlayer::LoadAsset(bool bAddToRoot)
 				SoundWave->AddToRoot();
 			}
 			SoundWave->AddToCluster(this);
-			SoundWave->InitResources();
+			// Don't init resources when running cook, as this can trigger 
+			// registration of a MetaSound and its dependent graphs.
+			// Those will instead be registered when the MetaSound itself is cooked (FMetasoundAssetBase::CookMetaSound)
+			// in a way that does not deal with runtime data like this function does
+			if (!IsRunningCookCommandlet())
+			{
+				SoundWave->InitResources();
+			}
 		}
 	}
 }

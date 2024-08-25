@@ -29,7 +29,6 @@ struct FPredictionKeyNetSerializer
 	struct FQuantizedType
 	{
 		uint16 CurrentKey;
-		uint16 BaseKey;
 		uint16 OwningConnectionId;
 		uint16 bIsServerInitiated : 1;
 	};
@@ -78,10 +77,6 @@ void FPredictionKeyNetSerializer::Serialize(FNetSerializationContext& Context, c
 	if (Writer->WriteBool(bShouldWriteKey))
 	{
 		Writer->WriteBits(Value.CurrentKey, 15U);
-		if (Writer->WriteBool(Value.BaseKey > 0))
-		{
-			Writer->WriteBits(Value.BaseKey, 15U);
-		}
 	}
 }
 
@@ -94,10 +89,6 @@ void FPredictionKeyNetSerializer::Deserialize(FNetSerializationContext& Context,
 	if (Reader->ReadBool())
 	{
 		TempValue.CurrentKey = Reader->ReadBits(15U);
-		if (Reader->ReadBool())
-		{
-			TempValue.BaseKey = Reader->ReadBits(15U);
-		}
 	}
 
 	if (TempValue.CurrentKey > 0 && !TempValue.bIsServerInitiated)
@@ -119,7 +110,6 @@ void FPredictionKeyNetSerializer::Quantize(FNetSerializationContext&, const FNet
 	if (Source.IsValidKey())
 	{
 		Target.CurrentKey = uint16(Source.Current);
-		Target.BaseKey = Source.Base > 0 ? uint16(Source.Base) : uint16(0);
 
 		// The owning connection is only relevant if the key is valid.
 		if (UPackageMapClient* PackageMap = Cast<UPackageMapClient>(reinterpret_cast<UPackageMap*>(Source.GetPredictiveConnectionKey())))
@@ -139,7 +129,6 @@ void FPredictionKeyNetSerializer::Dequantize(FNetSerializationContext& Context, 
 
 	Target.bIsServerInitiated = Source.bIsServerInitiated;
 	Target.Current = int16(Source.CurrentKey);
-	Target.Base = int16(Source.BaseKey);
 	if (Source.OwningConnectionId != 0)
 	{
 		UObject* UserData = Context.GetLocalConnectionUserData(Source.OwningConnectionId);
@@ -161,8 +150,8 @@ bool FPredictionKeyNetSerializer::IsEqual(FNetSerializationContext&, const FNetI
 		const QuantizedType& Value0 = *reinterpret_cast<const QuantizedType*>(Args.Source0);
 		const QuantizedType& Value1 = *reinterpret_cast<const QuantizedType*>(Args.Source1);
 
-		const bool bIsEqual = (Value0.CurrentKey == Value1.CurrentKey) & (Value0.BaseKey == Value1.BaseKey)
-			& (Value0.bIsServerInitiated == Value1.bIsServerInitiated) & (Value0.OwningConnectionId == Value1.OwningConnectionId);
+		const bool bIsEqual = (Value0.CurrentKey == Value1.CurrentKey) & 
+			(Value0.bIsServerInitiated == Value1.bIsServerInitiated) & (Value0.OwningConnectionId == Value1.OwningConnectionId);
 
 		return bIsEqual;
 	}
@@ -177,7 +166,7 @@ bool FPredictionKeyNetSerializer::IsEqual(FNetSerializationContext&, const FNetI
 
 		if (Value0.IsValidKey())
 		{
-			const bool bIsSameKey = (Value0.Current == Value1.Current) & (Value0.Base == Value1.Base) & (Value0.bIsServerInitiated == Value1.bIsServerInitiated);
+			const bool bIsSameKey = (Value0.Current == Value1.Current) & (Value0.bIsServerInitiated == Value1.bIsServerInitiated);
 			if (!bIsSameKey)
 			{
 				return false;

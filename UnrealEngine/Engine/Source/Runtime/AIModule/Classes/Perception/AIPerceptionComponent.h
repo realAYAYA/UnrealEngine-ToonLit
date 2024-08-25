@@ -52,22 +52,25 @@ struct FActorPerceptionInfo
 
 	TArray<FAIStimulus> LastSensedStimuli;
 
-	/** if != MAX indicates the sense that takes precedense over other senses when it comes
+	/** if != MAX indicates the sense that takes precedence over other senses when it comes
 		to determining last stimulus location */
 	FAISenseID DominantSense;
 
 	/** indicates whether this Actor is hostile to perception holder */
 	uint32 bIsHostile : 1;
-	
-	FActorPerceptionInfo(AActor* InTarget = NULL)
-		: Target(InTarget), DominantSense(FAISenseID::InvalidID())
+
+	/** indicates whether this Actor is friendly to perception holder */
+	uint32 bIsFriendly : 1;
+
+	explicit FActorPerceptionInfo(AActor* InTarget = nullptr)
+		: Target(InTarget), DominantSense(FAISenseID::InvalidID()), bIsHostile(false), bIsFriendly(false)
 	{
 		LastSensedStimuli.AddDefaulted(FAISenseID::GetSize());
 	}
 
 	/** Retrieves last known location. Active (last reported as "successful")
 	 *	stimuli are preferred. */
-	FVector GetLastStimulusLocation(float* OptionalAge = NULL) const 
+	FVector GetLastStimulusLocation(float* OptionalAge = nullptr) const 
 	{
 		FVector Location(FAISystem::InvalidLocation);
 		float BestAge = FLT_MAX;
@@ -136,7 +139,7 @@ struct FActorPerceptionInfo
 	*
 	* @return Location of the last sensed stimuli or FAISystem::InvalidLocation if given sense has never registered related Target actor or if last stimuli has expired.
 	*/
-	FORCEINLINE FVector GetStimulusLocation(FAISenseID Sense) const
+	FORCEINLINE FVector GetStimulusLocation(const FAISenseID Sense) const
 	{
 		return LastSensedStimuli.IsValidIndex(Sense) && (LastSensedStimuli[Sense].IsValid() && (LastSensedStimuli[Sense].IsExpired() == false)) ? LastSensedStimuli[Sense].StimulusLocation : FAISystem::InvalidLocation;
 	}
@@ -146,7 +149,7 @@ struct FActorPerceptionInfo
 	*
 	* @return Location of the receiver for the last sensed stimuli or FAISystem::InvalidLocation if given sense has never registered related Target actor or last stimuli has expired.
 	*/
-	FORCEINLINE FVector GetReceiverLocation(FAISenseID Sense) const
+	FORCEINLINE FVector GetReceiverLocation(const FAISenseID Sense) const
 	{
 		return LastSensedStimuli.IsValidIndex(Sense) && (LastSensedStimuli[Sense].IsValid() && (LastSensedStimuli[Sense].IsExpired() == false)) ? LastSensedStimuli[Sense].ReceiverLocation : FAISystem::InvalidLocation;
 	}
@@ -156,7 +159,7 @@ struct FActorPerceptionInfo
 	*
 	* @return True if a target has been registered (even if not currently sensed) for the given sense and the stimuli is not expired.
 	*/
-	FORCEINLINE bool HasKnownStimulusOfSense(FAISenseID Sense) const
+	FORCEINLINE bool HasKnownStimulusOfSense(const FAISenseID Sense) const
 	{
 		return LastSensedStimuli.IsValidIndex(Sense) && (LastSensedStimuli[Sense].IsValid() && (LastSensedStimuli[Sense].IsExpired() == false));
 	}
@@ -166,7 +169,7 @@ struct FActorPerceptionInfo
 	*
 	* @return True if a target is still sensed for the given sense and the stimuli is not expired.
 	*/
-	FORCEINLINE bool IsSenseActive(FAISenseID Sense) const
+	FORCEINLINE bool IsSenseActive(const FAISenseID Sense) const
 	{
 		return LastSensedStimuli.IsValidIndex(Sense) && LastSensedStimuli[Sense].IsActive();
 	}
@@ -189,7 +192,10 @@ struct FActorPerceptionBlueprintInfo
 	UPROPERTY(BlueprintReadWrite, Category = "AI|Perception")
 	uint32 bIsHostile : 1;
 
-	FActorPerceptionBlueprintInfo() : Target(NULL), bIsHostile(false)
+	UPROPERTY(BlueprintReadWrite, Category = "AI|Perception")
+	uint32 bIsFriendly : 1;
+
+	FActorPerceptionBlueprintInfo() : Target(nullptr), bIsHostile(false), bIsFriendly(false)
 	{}
 	FActorPerceptionBlueprintInfo(const FActorPerceptionInfo& Info);
 };
@@ -269,7 +275,7 @@ public:
 	AIMODULE_API const AActor* GetBodyActor() const;
 	AIMODULE_API AActor* GetMutableBodyActor();
 
-	FORCEINLINE const FPerceptionChannelAllowList GetPerceptionFilter() const { return PerceptionFilter; }
+	FORCEINLINE FPerceptionChannelAllowList GetPerceptionFilter() const { return PerceptionFilter; }
 
 	AIMODULE_API FGenericTeamId GetTeamIdentifier() const;
 	FORCEINLINE FPerceptionListenerID GetListenerId() const { return PerceptionListenerId; }
@@ -286,7 +292,7 @@ public:
 	/**	Retrieves all actors in PerceptualData matching the predicate.
 	 *	@return whether dead data (invalid actors) have been found while iterating over PerceptualData
 	 */
-	AIMODULE_API bool GetFilteredActors(TFunctionRef<bool(const FActorPerceptionInfo&)> Predicate, TArray<AActor*>& OutActors) const;
+	AIMODULE_API bool GetFilteredActors(const TFunctionRef<bool(const FActorPerceptionInfo&)>& Predicate, TArray<AActor*>& OutActors) const;
 
 	// @note Will stop on first age 0 stimulus
 	AIMODULE_API const FActorPerceptionInfo* GetFreshestTrace(const FAISenseID Sense) const;
@@ -296,6 +302,20 @@ public:
 	FORCEINLINE TSubclassOf<UAISense> GetDominantSense() const { return DominantSense; }
 	AIMODULE_API UAISenseConfig* GetSenseConfig(const FAISenseID& SenseID);
 	AIMODULE_API const UAISenseConfig* GetSenseConfig(const FAISenseID& SenseID) const;
+
+	template<typename T, typename = std::enable_if_t<std::is_base_of_v<UAISenseConfig, T>>>
+	T* GetSenseConfig() const
+	{
+		for (UAISenseConfig* SenseConfig : SensesConfig)
+		{
+			if (T* SenseConfigType = Cast<T>(SenseConfig))
+			{
+				return SenseConfigType;
+			}
+		}
+		return nullptr;
+	}
+	
 	AIMODULE_API void ConfigureSense(UAISenseConfig& SenseConfig);
 
 	typedef TArray<UAISenseConfig*>::TConstIterator TAISenseConfigConstIterator;
@@ -328,7 +348,7 @@ public:
 	AIMODULE_API float GetYoungestStimulusAge(const AActor& Source) const;
 	AIMODULE_API bool HasAnyActiveStimulus(const AActor& Source) const;
 	AIMODULE_API bool HasAnyCurrentStimulus(const AActor& Source) const;
-	AIMODULE_API bool HasActiveStimulus(const AActor& Source, FAISenseID Sense) const;
+	AIMODULE_API bool HasActiveStimulus(const AActor& Source, const FAISenseID Sense) const;
 
 #if WITH_GAMEPLAY_DEBUGGER_MENU
 	AIMODULE_API virtual void DescribeSelfToGameplayDebugger(FGameplayDebuggerCategory* DebuggerCategory) const;
@@ -364,6 +384,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "AI|Perception")
 	AIMODULE_API void SetSenseEnabled(TSubclassOf<UAISense> SenseClass, const bool bEnable);
 
+	/** Returns if a sense is active. Note that this works only if given sense has been
+	*	already configured for this component instance */
+	UFUNCTION(BlueprintCallable, Category = "AI|Perception")
+	AIMODULE_API bool IsSenseEnabled(TSubclassOf<UAISense> SenseClass) const;
+
 	//////////////////////////////////////////////////////////////////////////
 	// Might want to move these to special "BP_AIPerceptionComponent"
 	//////////////////////////////////////////////////////////////////////////
@@ -383,7 +408,7 @@ public:
 
 	/**
 	 * Notifies all bound objects that perception info has been updated for a given target.
-	 * The notification is broadcasted for any received stimulus or on change of state
+	 * The notification is broadcast for any received stimulus or on change of state
 	 * according to the stimulus configuration.
 	 * 
 	 * Note - This delegate will not be called if source actor is no longer valid 
@@ -398,7 +423,7 @@ public:
 
 	/**
 	 * Notifies all bound objects that perception info has been updated for a given target.
-	 * The notification is broadcasted for any received stimulus or on change of state
+	 * The notification is broadcast for any received stimulus or on change of state
 	 * according to the stimulus configuration.
 	 *
 	 * Note - This delegate will be called even if source actor is no longer valid 
@@ -427,8 +452,8 @@ protected:
 private:
 	friend UAIPerceptionSystem;
 
-	AIMODULE_API void RegisterSenseConfig(UAISenseConfig& SenseConfig, UAIPerceptionSystem& AIPerceptionSys);
-	void StoreListenerId(FPerceptionListenerID InListenerId) { PerceptionListenerId = InListenerId; }
-	AIMODULE_API void SetMaxStimulusAge(FAISenseID SenseId, float MaxAge);
+	AIMODULE_API void RegisterSenseConfig(const UAISenseConfig& SenseConfig, UAIPerceptionSystem& AIPerceptionSys);
+	void StoreListenerId(const FPerceptionListenerID InListenerId) { PerceptionListenerId = InListenerId; }
+	AIMODULE_API void SetMaxStimulusAge(const FAISenseID SenseId, float MaxAge);
 };
 

@@ -3,7 +3,7 @@
 #include "Widgets/SDMXControlConsoleEditorSpinBoxVertical.h"
 
 
-namespace UE::DMX::ControlConsole::SDMXControlConsoleEditorSpinBoxVertical::Private
+namespace UE::DMX::Private
 {
 	float SpinBoxVertComputeExponentSliderFraction(float FractionFilled, float StartFractionFilled, float SliderExponent)
 	{

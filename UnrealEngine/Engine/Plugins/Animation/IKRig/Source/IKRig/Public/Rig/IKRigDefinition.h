@@ -140,7 +140,7 @@ struct IKRIG_API FBoneChain
 		FName InName, 
 		const FName InStartBone,
 		const FName InEndBone,
-		const FName InGoalName)
+		const FName InGoalName = NAME_None)
 		: ChainName(InName)
 		, StartBone(InStartBone)
 		, EndBone(InEndBone)
@@ -160,24 +160,25 @@ struct IKRIG_API FBoneChain
 	FName IKGoalName;
 };
 
-USTRUCT()
+USTRUCT(Blueprintable)
 struct IKRIG_API FRetargetDefinition
 {
 	GENERATED_BODY()
-	
-private:
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category=RetargetRoot)
 	FName RootBone;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category=Chains)
 	TArray<FBoneChain> BoneChains;
 
-	/** read/write access restricted to friends only */
-	FBoneChain* GetEditableBoneChainByName(FName ChainName);
+	// add a bone chain from start bone to end bone and store it in this retarget definition
+	void AddBoneChain(
+		const FName ChainName,
+		const FName StartBone,
+		const FName EndBone,
+		const FName GoalName = NAME_None);
 	
-	friend class UIKRigController;
-	friend class UIKRigDefinition;
+	FBoneChain* GetEditableBoneChainByName(FName ChainName);
 };
 
 UCLASS(Blueprintable)
@@ -214,6 +215,7 @@ public:
 	/** UObject */
 	virtual void PostDuplicate(bool bDuplicateForPIE) override;
 	virtual void Serialize(FArchive& Ar) override;
+	virtual void PostLoad() override;
 	/** END UObject */
 	
 	/** IInterface_PreviewMeshProvider interface */

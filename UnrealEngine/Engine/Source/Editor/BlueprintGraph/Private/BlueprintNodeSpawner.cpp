@@ -13,7 +13,6 @@
 #include "Misc/AssertionMacros.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "Styling/AppStyle.h"
-#include "Templates/ChooseClass.h"
 #include "UObject/Class.h"
 #include "UObject/Package.h"
 #include "UObject/UnrealType.h"

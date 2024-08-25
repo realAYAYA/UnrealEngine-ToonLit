@@ -4,7 +4,7 @@
 
 #include "MuT/NodePrivate.h"
 #include "MuT/NodeImageTable.h"
-#include "MuT/Table.h"
+#include "MuT/TablePrivate.h"
 #include "MuT/AST.h"
 
 
@@ -16,25 +16,36 @@ namespace mu
 	{
 	public:
 
-		MUTABLE_DEFINE_CONST_VISITABLE()
+		static FNodeType s_type;
 
-	public:
-
-		static NODE_TYPE s_type;
-
-		string m_parameterName;
-		TablePtr m_pTable;
-		string m_columnName;
+		FString ParameterName;
+		TablePtr Table;
+		FString ColumnName;
+		uint16 MaxTextureSize = 0;
+		FImageDesc ReferenceImageDesc;
+		bool bNoneOption = false;
+		FString DefaultRowName;
 
 		//!
 		void Serialise( OutputArchive& arch ) const
 		{
-            uint32_t ver = 1;
+            uint32_t ver = 6;
 			arch << ver;
 
-			arch << m_parameterName;
-			arch << m_pTable;
-			arch << m_columnName;
+			arch << ParameterName;
+			arch << Table;
+			arch << ColumnName;
+			arch << MaxTextureSize;
+
+			// FImageDesc
+			{
+				arch << ReferenceImageDesc.m_size;
+				arch << uint8(ReferenceImageDesc.m_format);
+				arch << ReferenceImageDesc.m_lods;
+			}
+
+			arch << bNoneOption;
+			arch << DefaultRowName;
 		}
 
 		//!
@@ -42,13 +53,62 @@ namespace mu
 		{
             uint32_t ver;
 			arch >> ver;
-            check(ver==1);
+			check(ver>=1 && ver<= 6);
 
-			arch >> m_parameterName;
-			arch >> m_pTable;
-			arch >> m_columnName;
+			if (ver == 1)
+			{
+				std::string Temp;
+				arch >> Temp;
+				ParameterName = Temp.c_str();
+			}
+			else
+			{
+				arch >> ParameterName;
+			}
+
+			arch >> Table;
+
+			if (ver == 1)
+			{
+				std::string Temp;
+				arch >> Temp;
+				ColumnName = Temp.c_str();
+			}
+			else
+			{
+				arch >> ColumnName;
+			}
+
+			if (ver >= 3)
+			{
+				arch >> MaxTextureSize;
+			}
+			else
+			{
+				bNoneOption = Table->GetPrivate()->bNoneOption_DEPRECATED;
+			}
+
+			if (ver >= 4)
+			{
+				arch >> ReferenceImageDesc.m_size;
+				
+				uint8 AuxFromat = 0;
+				arch >> AuxFromat;
+				ReferenceImageDesc.m_format = EImageFormat(AuxFromat);
+				
+				arch >> ReferenceImageDesc.m_lods;
+			}
+			
+			if (ver >= 5)
+			{
+				arch >> bNoneOption;
+			}
+
+			if (ver >= 6)
+			{
+				arch >> DefaultRowName;
+			}
 		}
-
 	};
 
 }

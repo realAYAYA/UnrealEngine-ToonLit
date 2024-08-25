@@ -8,8 +8,8 @@
 #include "UObject/SoftObjectPtr.h"
 #include "Animation/MeshDeformer.h"
 #include "Animation/AnimSequence.h"
+#include "MLDeformerAsset.h"
 #include "MLDeformerVizSettings.generated.h"
-
 
 /** The visualization mode, which selects whether you want to view the training data, or test your already trained model. */
 UENUM()
@@ -31,6 +31,21 @@ enum class EMLDeformerHeatMapMode : uint8
 
 	/** Visualize the error versus the ground truth model. Requires a ground truth model to be setup. */
 	GroundTruth
+};
+
+/** A comparison actor. */
+USTRUCT()
+struct MLDEFORMERFRAMEWORK_API FMLDeformerCompareActor
+{
+	GENERATED_BODY()
+
+	/** The name of the comparison actor, which is the label shown above it. */
+	UPROPERTY(EditAnywhere, Category = "Actor Settings")
+	FName Name;
+
+	/** The ML Deformer asset that this actor should use. */
+	UPROPERTY(EditAnywhere, Category = "Actor Settings")
+	TSoftObjectPtr<UMLDeformerAsset> DeformerAsset;
 };
 
 /**
@@ -58,7 +73,7 @@ public:
 	void SetTrainingFrameNumber(int32 FrameNumber)			{ TrainingFrameNumber = FrameNumber; }
 	void SetTestingFrameNumber(int32 FrameNumber)			{ TestingFrameNumber = FrameNumber; }
 	void SetWeight(float InWeight)							{ Weight = InWeight; }
-	void SetQualityLevel(int32 InQualityLevel)				{ QualityLevel = FMath::Max<int32>(InQualityLevel, 0); }
+	void SetTestAnimSequence(UAnimSequence* InAnim)  		{ TestAnimSequence = InAnim; }
 
 	FVector GetMeshSpacingOffsetVector() const				{ return FVector(MeshSpacing, 0.0f, 0.0f); }
 	float GetMeshSpacing() const							{ return MeshSpacing; }
@@ -74,6 +89,8 @@ public:
 	bool GetDrawLinearSkinnedActor() const					{ return bDrawLinearSkinnedActor; }
 	bool GetDrawMLDeformedActor() const						{ return bDrawMLDeformedActor; }
 	bool GetDrawGroundTruthActor() const					{ return bDrawGroundTruthActor; }
+	bool GetDrawMLCompareActors() const						{ return bDrawMLCompareActors; }
+	bool GetDrawDebugActorBounds() const					{ return bDrawDebugActorBounds; }
 	bool GetShowHeatMap() const								{ return bShowHeatMap; }
 	EMLDeformerHeatMapMode GetHeatMapMode() const			{ return HeatMapMode; }
 	float GetHeatMapMax() const								{ return HeatMapMax; }
@@ -82,7 +99,16 @@ public:
 	float GetWeight() const									{ return Weight; }
 	bool GetXRayDeltas() const								{ return bXRayDeltas; }
 	bool GetDrawVertexDeltas() const						{ return bDrawDeltas; }
-	int32 GetQualityLevel() const							{ return QualityLevel; }
+	const TArray<FMLDeformerCompareActor>& GetCompareActors() const { return CompareActors; }
+	TArray<FMLDeformerCompareActor>& GetCompareActors()		{ return CompareActors; }
+	FColor GetDebugBoundsColor() const						{ return DebugBoundsColor; }
+
+
+	UE_DEPRECATED(5.4, "This method will be removed.")
+	void SetQualityLevel(int32 InQualityLevel)				{ QualityLevel_DEPRECATED = FMath::Max<int32>(InQualityLevel, 0); }
+
+	UE_DEPRECATED(5.4, "This method will be removed.")
+	int32 GetQualityLevel() const							{ return QualityLevel_DEPRECATED; }
 
 	// Get property names.
 	static FName GetVisualizationModePropertyName()			{ return GET_MEMBER_NAME_CHECKED(UMLDeformerVizSettings, VisualizationMode); }
@@ -97,6 +123,8 @@ public:
 	static FName GetDrawLinearSkinnedActorPropertyName()	{ return GET_MEMBER_NAME_CHECKED(UMLDeformerVizSettings, bDrawLinearSkinnedActor); }
 	static FName GetDrawMLDeformedActorPropertyName()		{ return GET_MEMBER_NAME_CHECKED(UMLDeformerVizSettings, bDrawMLDeformedActor); }
 	static FName GetDrawGroundTruthActorPropertyName()		{ return GET_MEMBER_NAME_CHECKED(UMLDeformerVizSettings, bDrawGroundTruthActor); }
+	static FName GetDrawMLCompareActorsPropertyName()		{ return GET_MEMBER_NAME_CHECKED(UMLDeformerVizSettings, bDrawMLCompareActors); }
+	static FName GetDrawDebugActorBoundsPropertyName()		{ return GET_MEMBER_NAME_CHECKED(UMLDeformerVizSettings, bDrawDebugActorBounds); }
 	static FName GetShowHeatMapPropertyName()				{ return GET_MEMBER_NAME_CHECKED(UMLDeformerVizSettings, bShowHeatMap); }
 	static FName GetHeatMapModePropertyName()				{ return GET_MEMBER_NAME_CHECKED(UMLDeformerVizSettings, HeatMapMode); }
 	static FName GetHeatMapMaxPropertyName()				{ return GET_MEMBER_NAME_CHECKED(UMLDeformerVizSettings, HeatMapMax); }
@@ -105,7 +133,11 @@ public:
 	static FName GetWeightPropertyName()					{ return GET_MEMBER_NAME_CHECKED(UMLDeformerVizSettings, Weight); }
 	static FName GetXRayDeltasPropertyName()				{ return GET_MEMBER_NAME_CHECKED(UMLDeformerVizSettings, bXRayDeltas); }
 	static FName GetDrawVertexDeltasPropertyName()			{ return GET_MEMBER_NAME_CHECKED(UMLDeformerVizSettings, bDrawDeltas); }
-	static FName GetQualityLevelPropertyName()				{ return GET_MEMBER_NAME_CHECKED(UMLDeformerVizSettings, QualityLevel); }
+	static FName GetCompareActorsPropertyName()				{ return GET_MEMBER_NAME_CHECKED(UMLDeformerVizSettings, CompareActors); }
+	static FName GetDebugBoundsColorPropertyName()			{ return GET_MEMBER_NAME_CHECKED(UMLDeformerVizSettings, DebugBoundsColor); }
+
+	UE_DEPRECATED(5.4, "This method will be removed.")
+	static FName GetQualityLevelPropertyName()				{ return GET_MEMBER_NAME_CHECKED(UMLDeformerVizSettings, QualityLevel_DEPRECATED); }
 #endif
 
 protected:
@@ -116,11 +148,18 @@ protected:
 
 	/** The animation sequence to play on the skeletal mesh. */
 	UPROPERTY(EditAnywhere, Category = "Test Assets")
-	TSoftObjectPtr<UAnimSequence> TestAnimSequence = nullptr;
+	TSoftObjectPtr<UAnimSequence> TestAnimSequence;
 
 	/** The deformer graph to use on the asset editor's deformed test actor. */
 	UPROPERTY(EditAnywhere, Category = "Test Assets")
-	TSoftObjectPtr<UMeshDeformer> DeformerGraph = nullptr;
+	TSoftObjectPtr<UMeshDeformer> DeformerGraph;
+
+	/**
+	 * The model comparison actors. Each will create a skeletal mesh with the selected ML Deformer applied to it.
+	 * This is useful to compare the output of different models side by side. 
+	 */
+	UPROPERTY(EditAnywhere, Category = "Test Assets")
+	TArray<FMLDeformerCompareActor> CompareActors;
 
 	/** The play speed factor of the test anim sequence. */
 	UPROPERTY(EditAnywhere, Category = "Live Settings", meta = (ClampMin = "0.0", ClampMax = "2.0", ForceUnits="Multiplier"))
@@ -150,13 +189,9 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Live Settings", meta = (ClampMin = "0"))
 	int32 TestingFrameNumber = 0;
 
-	/*
-	 * The ML Deformer LOD value. This is a continuous value between 0 and 1, where 0 means maximum quality and 1 means the lowest quality.
-	 * Morph based models will disable certain morph targets when increasing this value, which will lead to lower quality, but better GPU performance.
-	 * Each model can decide how to use this value. Some models might not support this.
-	 */
-	UPROPERTY(EditAnywhere, Transient, Category = "Live Settings", meta = (ClampMin = "0"))
-	int32 QualityLevel = 0;
+	/** Deprecated quality level property, deprecated in 5.4. */
+	UPROPERTY(Transient)
+	int32 QualityLevel_DEPRECATED = 0;
 
 	/** Specify whether the heatmap is enabled or not. */
 	UPROPERTY(EditAnywhere, Category = "Live Settings")
@@ -195,6 +230,21 @@ protected:
 	/** Specifies whether we draw the ground truth model or not. */
 	UPROPERTY(EditAnywhere, Category = "Live Settings")
 	bool bDrawGroundTruthActor = true;
+
+	/** Specifies whether we draw the comparison actors or not. */
+	UPROPERTY(EditAnywhere, Category = "Live Settings", DisplayName = "Draw ML Compare Actors")
+	bool bDrawMLCompareActors = true;
+
+	/** Draw the debug actor's bounds in the PIE viewport? This only renders when PIE is active. */
+	UPROPERTY(EditAnywhere, Category = "Live Settings", DisplayName = "Highlight Debug Actors in PIE")
+	bool bDrawDebugActorBounds = true;
+
+	/** 
+	 * The color of the bounding box rendered inside the PIE viewport.
+	 * Keep in mind that the actor you are currently debugging is always rendered in green.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Live Settings")
+	FColor DebugBoundsColor = FColor::Purple;
 
 	/** The scale factor of the ML deformer deltas being applied on top of the linear skinned results. */
 	UPROPERTY(EditAnywhere, Transient, Category = "Live Settings", meta = (ClampMin = "0.0", ClampMax = "1.0"))

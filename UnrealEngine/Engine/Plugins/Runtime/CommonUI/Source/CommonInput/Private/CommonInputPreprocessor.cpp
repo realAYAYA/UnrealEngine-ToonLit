@@ -119,7 +119,7 @@ bool FCommonInputPreprocessor::HandleMouseButtonDoubleClickEvent(FSlateApplicati
 
 void FCommonInputPreprocessor::SetInputTypeFilter(ECommonInputType InputType, FName InReason, bool InFilter)
 {
-	TMap<FName, bool> Reasons = FilterInputTypeWithReasons[(uint8)InputType];
+	TMap<FName, bool>& Reasons = FilterInputTypeWithReasons[(uint8)InputType];
 	Reasons.Add(InReason, InFilter);
 
 	bool ComputedFilter = false;
@@ -211,7 +211,9 @@ void FCommonInputPreprocessor::RefreshCurrentInputMethod(ECommonInputType InputM
 	InputSubsystem.SetCurrentInputType(InputMethod);
 
 	// Try to auto-detect the type of gamepad
-	if ((InputMethod == ECommonInputType::Gamepad) && UCommonInputPlatformSettings::Get()->CanChangeGamepadType())
+	if (InputMethod == ECommonInputType::Gamepad
+	    && ICommonInputModule::GetSettings().GetEnableAutomaticGamepadTypeDetection()
+	    && UCommonInputPlatformSettings::Get()->CanChangeGamepadType())
 	{
 		if (const FInputDeviceScope* DeviceScope = FInputDeviceScope::GetCurrent())
 		{

@@ -357,7 +357,7 @@ public:
 	virtual bool CheckValidity(bool bAllowNonmanifold, EValidityCheckFailMode FailMode) const override
 	{
 		// just check that the values buffer is big enough
-		if (Parent->MaxVertexID() < 0 || static_cast<size_t>(Parent->MaxVertexID()*AttribDimension) > AttribValues.Num())
+		if (Parent->MaxVertexID() < 0 || static_cast<size_t>(Parent->MaxVertexID())*AttribDimension > AttribValues.Num())
 		{
 			switch (FailMode)
 			{

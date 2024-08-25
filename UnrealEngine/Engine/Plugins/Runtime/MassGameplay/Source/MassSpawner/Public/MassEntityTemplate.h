@@ -182,6 +182,19 @@ struct MASSSPAWNER_API FMassEntityTemplateData
 		Composition.Tags.Add(TagType);
 	}
 
+	template<typename T>
+	void RemoveTag()
+	{
+		static_assert(TIsDerivedFrom<T, FMassTag>::IsDerived, "Given struct doesn't represent a valid mass tag type. Make sure to inherit from FMassTag or one of its child-types.");
+		Composition.Tags.Remove<T>();
+	}
+
+	void RemoveTag(const UScriptStruct& TagType)
+	{
+		checkf(TagType.IsChildOf(FMassTag::StaticStruct()), TEXT("Given struct doesn't represent a valid mass tag type. Make sure to inherit from FMassTag or one of its child-types."));
+		Composition.Tags.Remove(TagType);
+	}
+
 	const FMassTagBitSet& GetTags() const { return Composition.Tags; }
 	FMassTagBitSet& GetMutableTags() { return Composition.Tags; }
 
@@ -277,6 +290,8 @@ struct MASSSPAWNER_API FMassEntityTemplateData
 	 *  @Note that the function can be slow, depending on how elaborate the template is. This function is meant for debugging purposes. */
 	bool SlowIsEquivalent(const FMassEntityTemplateData& Other) const;
 
+	FMassArchetypeCreationParams& GetArchetypeCreationParams() { return CreationParams; }
+	
 protected:
 	FMassArchetypeCompositionDescriptor Composition;
 	FMassArchetypeSharedFragmentValues SharedFragmentValues;
@@ -286,6 +301,8 @@ protected:
 
 	// These functions will be called to initialize entity's UObject-based fragments
 	TArray<FObjectFragmentInitializerFunction> ObjectInitializers;
+
+	FMassArchetypeCreationParams CreationParams;
 
 	FString TemplateName;
 };

@@ -19,7 +19,7 @@ public:
 class FFrontendFilter : public FFilterBase<FAssetFilterType>
 {
 public:
-	FFrontendFilter(TSharedPtr<FFrontendFilterCategory> InCategory) : FFilterBase<FAssetFilterType>(InCategory) {}
+	FFrontendFilter(TSharedPtr<FFrontendFilterCategory> InCategory) : FFilterBase<FAssetFilterType>(MoveTemp(InCategory)) {}
 
 	/** Invoke to set the source filter that is currently used to filter assets in the asset view */
 	virtual void SetCurrentFilter(TArrayView<const FName> InSourcePaths, const FContentBrowserDataFilter& InBaseFilter) { }

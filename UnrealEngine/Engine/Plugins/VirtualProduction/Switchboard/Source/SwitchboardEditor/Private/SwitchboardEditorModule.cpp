@@ -19,28 +19,13 @@
 #include "Misc/ScopeExit.h"
 #include "PropertyEditorModule.h"
 #include "SwitchboardEditorSettings.h"
+#include "SwitchboardListenerAutolaunch.h"
 #include "SwitchboardMenuEntry.h"
 #include "SwitchboardProjectSettings.h"
 #include "SwitchboardSettingsCustomization.h"
 #include "SwitchboardTypes.h"
 
 #include <filesystem>
-
-#if PLATFORM_WINDOWS
-#include "Windows/AllowWindowsPlatformTypes.h"
-THIRD_PARTY_INCLUDES_START
-#include <winreg.h>
-THIRD_PARTY_INCLUDES_END
-#include "Windows/HideWindowsPlatformTypes.h"
-
-static const FString WindowsRunRegKeyPath = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-static const FString ListenerAutolaunchRegValueName = "SwitchboardListener";
-
-FString GetListenerAutolaunchEntry();
-FString GetListenerAutolaunchEntryExecutable();
-bool SetListenerAutolaunchEntry(const FString& NewCommandLine);
-bool RemoveListenerAutolaunchEntry();
-#endif
 
 
 #define LOCTEXT_NAMESPACE "SwitchboardEditorModule"
@@ -140,7 +125,7 @@ void FSwitchboardEditorModule::StartupModule()
 
 	DeferredStartDelegateHandle = FCoreDelegates::OnFEngineLoopInitComplete.AddRaw(this, &FSwitchboardEditorModule::OnEngineInitComplete);
 
-#if SB_LISTENER_AUTOLAUNCH
+#if SWITCHBOARD_LISTENER_AUTOLAUNCH
 	bCachedAutolaunchEnabled = GetListenerAutolaunchEnabled_Internal();
 #endif
 }
@@ -382,7 +367,7 @@ TSharedFuture<FSwitchboardVerifyResult> FSwitchboardEditorModule::GetVerifyResul
 }
 
 
-#if SB_LISTENER_AUTOLAUNCH
+#if SWITCHBOARD_LISTENER_AUTOLAUNCH
 bool FSwitchboardEditorModule::IsListenerAutolaunchEnabled(bool bForceRefreshCache /* = false */)
 {
 	if (bForceRefreshCache)
@@ -396,7 +381,7 @@ bool FSwitchboardEditorModule::IsListenerAutolaunchEnabled(bool bForceRefreshCac
 
 bool FSwitchboardEditorModule::GetListenerAutolaunchEnabled_Internal() const
 {
-	const FString& ExistingCmd = GetListenerAutolaunchEntry().TrimEnd();
+	const FString& ExistingCmd = UE::SwitchboardListener::Autolaunch::GetInvocation(LogSwitchboardPlugin).TrimEnd();
 	const FString& ConfigCmd = GetDefault<USwitchboardEditorSettings>()->GetListenerInvocation().TrimEnd();
 	return ExistingCmd == ConfigCmd;
 }
@@ -409,17 +394,17 @@ bool FSwitchboardEditorModule::SetListenerAutolaunchEnabled(bool bEnabled)
 	if (bEnabled)
 	{
 		const FString CommandLine = GetDefault<USwitchboardEditorSettings>()->GetListenerInvocation();
-		bSucceeded = SetListenerAutolaunchEntry(CommandLine);
+		bSucceeded = UE::SwitchboardListener::Autolaunch::SetInvocation(CommandLine, LogSwitchboardPlugin);
 	}
 	else
 	{
-		bSucceeded = RemoveListenerAutolaunchEntry();
+		bSucceeded = UE::SwitchboardListener::Autolaunch::RemoveInvocation(LogSwitchboardPlugin);
 	}
 
 	bCachedAutolaunchEnabled = GetListenerAutolaunchEnabled_Internal();
 	return bSucceeded;
 }
-#endif // #if SB_LISTENER_AUTOLAUNCH
+#endif // #if SBL_AUTOLAUNCH
 
 
 #if SWITCHBOARD_SHORTCUTS
@@ -477,10 +462,10 @@ void FSwitchboardEditorModule::OnEngineInitComplete()
 
 bool FSwitchboardEditorModule::OnEditorSettingsModified()
 {
-#if SB_LISTENER_AUTOLAUNCH
+#if SWITCHBOARD_LISTENER_AUTOLAUNCH
 	// If the existing entry's listener executable path matches our current engine / path,
 	// then we ensure the command line arguments also stay in sync with our settings.
-	const FString AutolaunchEntryExecutable = GetListenerAutolaunchEntryExecutable();
+	const FString AutolaunchEntryExecutable = UE::SwitchboardListener::Autolaunch::GetInvocationExecutable(LogSwitchboardPlugin);
 	if (!AutolaunchEntryExecutable.IsEmpty())
 	{
 		const FString ConfigExecutable = GetDefault<USwitchboardEditorSettings>()->GetListenerPlatformPath();
@@ -495,7 +480,7 @@ bool FSwitchboardEditorModule::OnEditorSettingsModified()
 				*AutolaunchEntryExecutable, *ConfigExecutable);
 		}
 	}
-#endif // #if SB_LISTENER_AUTOLAUNCH
+#endif // #if SWITCHBOARD_LISTENER_AUTOLAUNCH
 
 	return true;
 }
@@ -514,136 +499,6 @@ void FSwitchboardEditorModule::RunDefaultOSCListener()
 		}
 	}
 }
-
-
-#if PLATFORM_WINDOWS
-HKEY OpenHkcuRunKey()
-{
-	HKEY HkcuRunKey = nullptr;
-	const LSTATUS OpenResult = RegOpenKeyEx(HKEY_CURRENT_USER, *WindowsRunRegKeyPath, 0, KEY_ALL_ACCESS, &HkcuRunKey);
-	if (OpenResult != ERROR_SUCCESS)
-	{
-		UE_LOG(LogSwitchboardPlugin, Log, TEXT("Error opening registry key %s (%08X)"), *WindowsRunRegKeyPath, OpenResult);
-		return nullptr;
-	}
-	return HkcuRunKey;
-}
-
-
-FString GetListenerAutolaunchEntry()
-{
-	HKEY HkcuRunKey = OpenHkcuRunKey();
-	if (!HkcuRunKey)
-	{
-		return FString();
-	}
-
-	ON_SCOPE_EXIT
-	{
-		RegCloseKey(HkcuRunKey);
-	};
-
-	DWORD ValueType;
-	DWORD ValueSizeBytes = 0;
-	const LSTATUS SizeResult = RegQueryValueEx(HkcuRunKey, *ListenerAutolaunchRegValueName, nullptr, &ValueType, nullptr, &ValueSizeBytes);
-	if (SizeResult == ERROR_FILE_NOT_FOUND)
-	{
-		return FString();
-	}
-	else if (SizeResult != ERROR_SUCCESS)
-	{
-		UE_LOG(LogSwitchboardPlugin, Log, TEXT("Error reading registry value %s:\"%s\" (%08X)"), *WindowsRunRegKeyPath, *ListenerAutolaunchRegValueName, SizeResult);
-		return FString();
-	}
-
-	FString Value;
-	TArray<TCHAR, FString::AllocatorType>& CharArray = Value.GetCharArray();
-	const uint32 ValueLenChars = ValueSizeBytes / sizeof(TCHAR);
-	CharArray.SetNumUninitialized(ValueLenChars);
-
-	const LSTATUS QueryResult = RegQueryValueEx(HkcuRunKey, *ListenerAutolaunchRegValueName, nullptr, &ValueType, reinterpret_cast<LPBYTE>(CharArray.GetData()), &ValueSizeBytes);
-	if (QueryResult != ERROR_SUCCESS)
-	{
-		UE_LOG(LogSwitchboardPlugin, Log, TEXT("Error reading registry value %s:\"%s\" (%08X)"), *WindowsRunRegKeyPath, *ListenerAutolaunchRegValueName, QueryResult);
-		return FString();
-	}
-	else if (ValueType != REG_SZ)
-	{
-		UE_LOG(LogSwitchboardPlugin, Log, TEXT("Registry value %s:\"%s\" has wrong type (%u)"), *WindowsRunRegKeyPath, *ListenerAutolaunchRegValueName, ValueType);
-		return FString();
-	}
-
-	if (CharArray[CharArray.Num() - 1] != TEXT('\0'))
-	{
-		CharArray.Add(TEXT('\0'));
-	}
-
-	return Value;
-}
-
-
-FString GetListenerAutolaunchEntryExecutable()
-{
-	FString AutolaunchCommand = GetListenerAutolaunchEntry();
-	if (AutolaunchCommand.IsEmpty())
-	{
-		return FString();
-	}
-
-	TArray<FString> QuoteParts;
-	AutolaunchCommand.ParseIntoArray(QuoteParts, TEXT("\""));
-	return QuoteParts[0];
-}
-
-
-bool SetListenerAutolaunchEntry(const FString& NewCommandLine)
-{
-	HKEY HkcuRunKey = OpenHkcuRunKey();
-	if (!HkcuRunKey)
-	{
-		return false;
-	}
-
-	ON_SCOPE_EXIT
-	{
-		RegCloseKey(HkcuRunKey);
-	};
-
-	const TArray<TCHAR, FString::AllocatorType>& CharArray = NewCommandLine.GetCharArray();
-	const LSTATUS SetResult = RegSetValueEx(HkcuRunKey, *ListenerAutolaunchRegValueName, 0, REG_SZ, reinterpret_cast<const BYTE*>(CharArray.GetData()), CharArray.Num() * sizeof(TCHAR));
-	if (SetResult != ERROR_SUCCESS)
-	{
-		UE_LOG(LogSwitchboardPlugin, Error, TEXT("Error setting registry value %s:\"%s\" (%08X)"), *WindowsRunRegKeyPath, *ListenerAutolaunchRegValueName, SetResult);
-		return false;
-	}
-
-	return true;
-}
-
-
-bool RemoveListenerAutolaunchEntry()
-{
-	HKEY HkcuRunKey = OpenHkcuRunKey();
-	if (!HkcuRunKey)
-	{
-		return true;
-	}
-
-	ON_SCOPE_EXIT
-	{
-		RegCloseKey(HkcuRunKey);
-	};
-
-	const LSTATUS DeleteResult = RegDeleteValue(HkcuRunKey, *ListenerAutolaunchRegValueName);
-	if (DeleteResult != ERROR_SUCCESS)
-	{
-		UE_LOG(LogSwitchboardPlugin, Error, TEXT("Error deleting registry value %s:\"%s\" (%08X)"), *WindowsRunRegKeyPath, *ListenerAutolaunchRegValueName, DeleteResult);
-		return false;
-	}
-
-	return true;
-}
-#endif // #if PLATFORM_WINDOWS
 
 
 IMPLEMENT_MODULE(FSwitchboardEditorModule, SwitchboardEditor);

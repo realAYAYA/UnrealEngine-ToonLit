@@ -5,7 +5,7 @@
 
 #include "DatasmithSceneFactory.h"
 #include "DatasmithSceneExporter.h"
-#include "DatasmithMaxSceneParser.h"
+#include "DatasmithMaxSceneHelper.h"
 #include "DatasmithMaxLogger.h"
 #include "DatasmithExportOptions.h"
 #include "DatasmithMaxSceneExporter.h"
@@ -141,7 +141,7 @@ FString FDatasmithMaxMatWriter::GetActualBitmapPath(BitmapInfo* InBitmapInfo)
 		return FString();
 	}
 
-	FString ActualBitmapPath = FDatasmithMaxSceneExporter::GetActualPath(InBitmapInfo->GetPathEx().GetString());
+	FString ActualBitmapPath = FDatasmithMaxSceneExporter::GetActualPath(InBitmapInfo->GetPathEx().GetCStr());
 	
 	if (ActualBitmapPath.IsEmpty())
 	{

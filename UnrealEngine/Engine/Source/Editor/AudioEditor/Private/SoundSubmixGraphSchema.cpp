@@ -132,14 +132,14 @@ bool USoundSubmixGraphSchema::ConnectionCausesLoop(const UEdGraphPin* InputPin, 
 				return true;
 			}
 
-			if (OutputNode->SoundSubmix->RecurseCheckChild(MasterSubmix))
+			if (SubmixUtils::FindInGraph(MasterSubmix, OutputNode->SoundSubmix, false))
 			{
 				return true;
 			}
 		}
 	}
 
-	return OutputNode->SoundSubmix->RecurseCheckChild(InputNode->SoundSubmix);
+	return SubmixUtils::FindInGraph(OutputNode->SoundSubmix, InputNode->SoundSubmix, false);
 }
 
 void USoundSubmixGraphSchema::GetAssetsGraphHoverMessage(const TArray<FAssetData>& Assets, const UEdGraph* HoverGraph, FString& OutTooltipText, bool& OutOkIcon) const
@@ -226,6 +226,12 @@ const FPinConnectionResponse USoundSubmixGraphSchema::CanCreateConnection(const 
 	// Note- are input pin and output pin swapped here? Am I losing it?
 	USoundSubmixBase* InputSubmix = CastChecked<USoundSubmixGraphNode>(OutputPin->GetOwningNode())->SoundSubmix;
 	USoundSubmixBase* OutputSubmix = CastChecked<USoundSubmixGraphNode>(InputPin->GetOwningNode())->SoundSubmix;
+
+	// Forbid connecting dynamic submixes to other submixes.
+	if (InputSubmix->IsDynamic( false /*bIncludeAncestors*/ ))
+	{
+		return FPinConnectionResponse(CONNECT_RESPONSE_DISALLOW, LOCTEXT("SubmixIsDynamic", "Submix you are trying to connect from is dynamic and shouldn't have any static parents"));
+	}
 
 	// Check to see if this is an endpoint submix.
 	if (!InputSubmix->IsA<USoundSubmixWithParentBase>())

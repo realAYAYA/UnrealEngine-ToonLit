@@ -52,13 +52,10 @@ bool UNiagaraDataInterfaceGrid3DCollectionReader::InitPerInstanceData(void* PerI
 	FGrid3DCollectionRWInstanceData_GameThread* InstanceData = new (PerInstanceData) FGrid3DCollectionRWInstanceData_GameThread();
 	SystemInstancesToProxyData_GT.Emplace(SystemInstance->GetId(), InstanceData);
 
-	TSharedPtr<FNiagaraEmitterInstance, ESPMode::ThreadSafe> RT_EmitterInstance;
-
-	
 	FNiagaraEmitterInstance* EmitterInstanceToUse = nullptr;
-	for (TSharedPtr<FNiagaraEmitterInstance, ESPMode::ThreadSafe> EmitterInstance : SystemInstance->GetEmitters())
+	for (const FNiagaraEmitterInstanceRef& EmitterInstance : SystemInstance->GetEmitters())
 	{
-		UNiagaraEmitter* Emitter = EmitterInstance->GetCachedEmitter().Emitter;
+		const UNiagaraEmitter* Emitter = EmitterInstance->GetEmitter();
 		if (Emitter == nullptr)
 		{
 			continue;
@@ -66,7 +63,7 @@ bool UNiagaraDataInterfaceGrid3DCollectionReader::InitPerInstanceData(void* PerI
 
 		if (EmitterName == Emitter->GetUniqueEmitterName())
 		{
-			EmitterInstanceToUse = EmitterInstance.Get();
+			EmitterInstanceToUse = &EmitterInstance.Get();
 			break;
 		}
 	}
@@ -167,11 +164,12 @@ void UNiagaraDataInterfaceGrid3DCollectionReader::GetEmitterDependencies(UNiagar
 	}
 }
 
-void UNiagaraDataInterfaceGrid3DCollectionReader::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceGrid3DCollectionReader::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	int32 NumFunctionsBefore = OutFunctions.Num();
 
-	Super::GetFunctions(OutFunctions);
+	Super::GetFunctionsInternal(OutFunctions);
 	TSet<FName> FunctionsToRemove = 
 	{
 		ClearCellFunctionName,
@@ -182,8 +180,7 @@ void UNiagaraDataInterfaceGrid3DCollectionReader::GetFunctions(TArray<FNiagaraFu
 		SetVector4ValueFunctionName,
 		SetVector3ValueFunctionName,
 		SetVector2ValueFunctionName,
-		SetFloatValueFunctionName,
-		GetPreviousVector4ValueFunctionName,
+		SetFloatValueFunctionName,		
 		SetVectorValueFunctionName,
 		SetVector2DValueFunctionName,
 		SetNumCellsFunctionName,
@@ -202,6 +199,7 @@ void UNiagaraDataInterfaceGrid3DCollectionReader::GetFunctions(TArray<FNiagaraFu
 		}
 	}	
 }
+#endif
 
 bool UNiagaraDataInterfaceGrid3DCollectionReader::PerInstanceTickPostSimulate(void* PerInstanceData, FNiagaraSystemInstance* SystemInstance, float DeltaSeconds)
 {

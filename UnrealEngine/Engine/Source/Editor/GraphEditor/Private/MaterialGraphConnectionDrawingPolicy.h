@@ -35,7 +35,12 @@ protected:
 public:
 	FMaterialGraphConnectionDrawingPolicy(int32 InBackLayerID, int32 InFrontLayerID, float ZoomFactor, const FSlateRect& InClippingRect, FSlateWindowElementList& InDrawElements, UEdGraph* InGraphObj);
 
+	virtual TSharedPtr<IToolTip> GetConnectionToolTip(const SGraphPanel& GraphPanel, const FGraphSplineOverlapResult& OverlapData) const override;
+	
 	// FConnectionDrawingPolicy interface
 	virtual void DetermineWiringStyle(UEdGraphPin* OutputPin, UEdGraphPin* InputPin, /*inout*/ FConnectionParams& Params) override;
 	// End of FConnectionDrawingPolicy interface
+
+private:
+	FText GetNodePinInfo(const TSharedPtr<SGraphPin>& PinWidget) const;
 };

@@ -46,6 +46,7 @@ struct FAnimTypePreAnimatedStateObjectStorage : TPreAnimatedStateStorage<FPreAni
 {
 	static MOVIESCENE_API TAutoRegisterPreAnimatedStorageID<FAnimTypePreAnimatedStateObjectStorage> StorageID;
 
+	MOVIESCENE_API FPreAnimatedStateEntry FindEntry(UObject* Object, FMovieSceneAnimTypeID AnimTypeID);
 	MOVIESCENE_API FPreAnimatedStateEntry MakeEntry(UObject* Object, FMovieSceneAnimTypeID AnimTypeID);
 };
 

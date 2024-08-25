@@ -445,7 +445,7 @@ void UMovieSceneSequenceExtensions::SetPlaybackEndSeconds(UMovieSceneSequence* S
 	}
 }
 
-void UMovieSceneSequenceExtensions::SetViewRangeStart(UMovieSceneSequence* Sequence, float StartTimeInSeconds)
+void UMovieSceneSequenceExtensions::SetViewRangeStart(UMovieSceneSequence* Sequence, double StartTimeInSeconds)
 {
 	if (!Sequence)
 	{
@@ -462,12 +462,12 @@ void UMovieSceneSequenceExtensions::SetViewRangeStart(UMovieSceneSequence* Seque
 	}
 }
 
-float UMovieSceneSequenceExtensions::GetViewRangeStart(UMovieSceneSequence* Sequence)
+double UMovieSceneSequenceExtensions::GetViewRangeStart(UMovieSceneSequence* Sequence)
 {
 	if (!Sequence)
 	{
 		FFrame::KismetExecutionMessage(TEXT("Cannot call GetViewRangeStart on a null sequence"), ELogVerbosity::Error);
-		return 0.f;
+		return 0;
 	}
 
 	UMovieScene* MovieScene = GetMovieScene(Sequence);
@@ -477,10 +477,10 @@ float UMovieSceneSequenceExtensions::GetViewRangeStart(UMovieSceneSequence* Sequ
 		return MovieScene->GetEditorData().ViewStart;
 #endif
 	}
-	return 0.f;
+	return 0;
 }
 
-void UMovieSceneSequenceExtensions::SetViewRangeEnd(UMovieSceneSequence* Sequence, float EndTimeInSeconds)
+void UMovieSceneSequenceExtensions::SetViewRangeEnd(UMovieSceneSequence* Sequence, double EndTimeInSeconds)
 {
 	if (!Sequence)
 	{
@@ -497,12 +497,12 @@ void UMovieSceneSequenceExtensions::SetViewRangeEnd(UMovieSceneSequence* Sequenc
 	}
 }
 
-float UMovieSceneSequenceExtensions::GetViewRangeEnd(UMovieSceneSequence* Sequence)
+double UMovieSceneSequenceExtensions::GetViewRangeEnd(UMovieSceneSequence* Sequence)
 {
 	if (!Sequence)
 	{
 		FFrame::KismetExecutionMessage(TEXT("Cannot call GetViewRangeEnd on a null sequence"), ELogVerbosity::Error);
-		return 0.f;
+		return 0;
 	}
 
 	UMovieScene* MovieScene = GetMovieScene(Sequence);
@@ -512,10 +512,10 @@ float UMovieSceneSequenceExtensions::GetViewRangeEnd(UMovieSceneSequence* Sequen
 		return MovieScene->GetEditorData().ViewEnd;
 #endif
 	}
-	return 0.f;
+	return 0;
 }
 
-void UMovieSceneSequenceExtensions::SetWorkRangeStart(UMovieSceneSequence* Sequence, float StartTimeInSeconds)
+void UMovieSceneSequenceExtensions::SetWorkRangeStart(UMovieSceneSequence* Sequence, double StartTimeInSeconds)
 {
 	if (!Sequence)
 	{
@@ -532,12 +532,12 @@ void UMovieSceneSequenceExtensions::SetWorkRangeStart(UMovieSceneSequence* Seque
 	}
 }
 
-float UMovieSceneSequenceExtensions::GetWorkRangeStart(UMovieSceneSequence* Sequence)
+double UMovieSceneSequenceExtensions::GetWorkRangeStart(UMovieSceneSequence* Sequence)
 {
 	if (!Sequence)
 	{
 		FFrame::KismetExecutionMessage(TEXT("Cannot call GetWorkRangeStart on a null sequence"), ELogVerbosity::Error);
-		return 0.f;
+		return 0;
 	}
 
 	UMovieScene* MovieScene = GetMovieScene(Sequence);
@@ -547,10 +547,10 @@ float UMovieSceneSequenceExtensions::GetWorkRangeStart(UMovieSceneSequence* Sequ
 		return MovieScene->GetEditorData().WorkStart;
 #endif
 	}
-	return 0.f;
+	return 0;
 }
 
-void UMovieSceneSequenceExtensions::SetWorkRangeEnd(UMovieSceneSequence* Sequence, float EndTimeInSeconds)
+void UMovieSceneSequenceExtensions::SetWorkRangeEnd(UMovieSceneSequence* Sequence, double EndTimeInSeconds)
 {
 	if (!Sequence)
 	{
@@ -567,12 +567,12 @@ void UMovieSceneSequenceExtensions::SetWorkRangeEnd(UMovieSceneSequence* Sequenc
 	}
 }
 
-float UMovieSceneSequenceExtensions::GetWorkRangeEnd(UMovieSceneSequence* Sequence)
+double UMovieSceneSequenceExtensions::GetWorkRangeEnd(UMovieSceneSequence* Sequence)
 {
 	if (!Sequence)
 	{
 		FFrame::KismetExecutionMessage(TEXT("Cannot call GetWorkRangeEnd on a null sequence"), ELogVerbosity::Error);
-		return 0.f;
+		return 0;
 	}
 
 	UMovieScene* MovieScene = GetMovieScene(Sequence);
@@ -582,7 +582,7 @@ float UMovieSceneSequenceExtensions::GetWorkRangeEnd(UMovieSceneSequence* Sequen
 		return MovieScene->GetEditorData().WorkEnd;
 #endif
 	}
-	return 0.f;
+	return 0;
 }
 
 void UMovieSceneSequenceExtensions::SetEvaluationType(UMovieSceneSequence* Sequence, EMovieSceneEvaluationType InEvaluationType)
@@ -680,7 +680,7 @@ FMovieSceneBindingProxy UMovieSceneSequenceExtensions::FindBindingById(UMovieSce
 	UMovieScene* MovieScene = GetMovieScene(Sequence);
 	if (MovieScene)
 	{
-		const FMovieSceneBinding* Binding = Algo::FindBy(MovieScene->GetBindings(), BindingId, &FMovieSceneBinding::GetObjectGuid);
+		const FMovieSceneBinding* Binding = MovieScene->FindBinding(BindingId);
 		if (Binding)
 		{
 			return FMovieSceneBindingProxy(Binding->GetObjectGuid(), Sequence);
@@ -821,21 +821,18 @@ TArray<UObject*> UMovieSceneSequenceExtensions::LocateBoundObjects(UMovieSceneSe
 		return TArray<UObject*>();
 	}
 
-	class FTransientPlayer : public IMovieScenePlayer
-	{
-	public:
-		FMovieSceneRootEvaluationTemplateInstance Template;
-		virtual FMovieSceneRootEvaluationTemplateInstance& GetEvaluationTemplate() override { return Template; }
-		virtual void UpdateCameraCut(UObject* CameraObject, const EMovieSceneCameraCutParams& CameraCutParams) override {}
-		virtual void SetViewportSettings(const TMap<FViewportClient*, EMovieSceneViewportParams>& ViewportParamsMap) override {}
-		virtual void GetViewportSettings(TMap<FViewportClient*, EMovieSceneViewportParams>& ViewportParamsMap) const override {}
-		virtual EMovieScenePlayerStatus::Type GetPlaybackStatus() const { return EMovieScenePlayerStatus::Stopped; }
-		virtual void SetPlaybackStatus(EMovieScenePlayerStatus::Type InPlaybackStatus) override {}
-	} Player;
+	using namespace UE::MovieScene;
 
-	Player.State.AssignSequence(MovieSceneSequenceID::Root, *Sequence, Player);
+	FSharedPlaybackStateCreateParams CreateParams;
+	CreateParams.PlaybackContext = Context;
+	TSharedRef<FSharedPlaybackState> TransientPlaybackState = MakeShared<FSharedPlaybackState>(*Sequence, CreateParams);
 
-	TArrayView<TWeakObjectPtr<>> Objects = Player.FindBoundObjects(InBinding.BindingID, MovieSceneSequenceID::Root);
+	FMovieSceneEvaluationState State;
+	TransientPlaybackState->AddCapabilityRaw(&State);
+	State.AssignSequence(MovieSceneSequenceID::Root, *Sequence, TransientPlaybackState);
+
+	TArrayView<TWeakObjectPtr<>> Objects = State.FindBoundObjects(InBinding.BindingID, MovieSceneSequenceID::Root, TransientPlaybackState);
+
 	TArray<UObject*> Result;
 	for (TWeakObjectPtr<> WeakObject : Objects)
 	{
@@ -1031,7 +1028,7 @@ void UMovieSceneSequenceExtensions::RemoveRootFolderFromSequence(UMovieSceneSequ
 #endif
 }
 
-TArray<FMovieSceneMarkedFrame> UMovieSceneSequenceExtensions::GetMarkedFrames(UMovieSceneSequence* Sequence)
+TArray<FMovieSceneMarkedFrame> UMovieSceneSequenceExtensions::GetMarkedFramesFromSequence(UMovieSceneSequence* Sequence, EMovieSceneTimeUnit TimeUnit)
 {
 	if (!Sequence)
 	{
@@ -1042,13 +1039,25 @@ TArray<FMovieSceneMarkedFrame> UMovieSceneSequenceExtensions::GetMarkedFrames(UM
 	UMovieScene* MovieScene = Sequence->GetMovieScene();
 	if (MovieScene)
 	{
-		return MovieScene->GetMarkedFrames();
+		TArray<FMovieSceneMarkedFrame> MarkedFrames = MovieScene->GetMarkedFrames();
+		if (TimeUnit == EMovieSceneTimeUnit::DisplayRate)
+		{
+			FFrameRate TickResolution = MovieScene->GetTickResolution();
+			FFrameRate DisplayRate = MovieScene->GetDisplayRate();
+
+			for (FMovieSceneMarkedFrame& MarkedFrame : MarkedFrames)
+			{
+				MarkedFrame.FrameNumber = FFrameRate::TransformTime(MarkedFrame.FrameNumber, TickResolution, DisplayRate).RoundToFrame();
+			}
+		}
+
+		return MarkedFrames;
 	}
 
 	return TArray<FMovieSceneMarkedFrame>();
 }
 
-int32 UMovieSceneSequenceExtensions::AddMarkedFrame(UMovieSceneSequence* Sequence, const FMovieSceneMarkedFrame& InMarkedFrame)
+int32 UMovieSceneSequenceExtensions::AddMarkedFrameToSequence(UMovieSceneSequence* Sequence, const FMovieSceneMarkedFrame& InMarkedFrame, EMovieSceneTimeUnit TimeUnit)
 {
 	if (!Sequence)
 	{
@@ -1061,13 +1070,19 @@ int32 UMovieSceneSequenceExtensions::AddMarkedFrame(UMovieSceneSequence* Sequenc
 	{
 		MovieScene->Modify();
 
-		return MovieScene->AddMarkedFrame(InMarkedFrame);
+		FMovieSceneMarkedFrame MarkedFrame(InMarkedFrame);
+		if (TimeUnit == EMovieSceneTimeUnit::DisplayRate)
+		{
+			MarkedFrame.FrameNumber = FFrameRate::TransformTime(MarkedFrame.FrameNumber, MovieScene->GetDisplayRate(), MovieScene->GetTickResolution()).RoundToFrame();
+		}
+
+		return MovieScene->AddMarkedFrame(MarkedFrame);
 	}
 	return INDEX_NONE;
 }
 
 
-void UMovieSceneSequenceExtensions::SetMarkedFrame(UMovieSceneSequence* Sequence, int32 InMarkIndex, FFrameNumber InFrameNumber)
+void UMovieSceneSequenceExtensions::SetMarkedFrameInSequence(UMovieSceneSequence* Sequence, int32 InMarkIndex, FFrameNumber InFrameNumber, EMovieSceneTimeUnit TimeUnit)
 {
 	if (!Sequence)
 	{
@@ -1078,6 +1093,11 @@ void UMovieSceneSequenceExtensions::SetMarkedFrame(UMovieSceneSequence* Sequence
 	UMovieScene* MovieScene = Sequence->GetMovieScene();
 	if (MovieScene)
 	{
+		if (TimeUnit == EMovieSceneTimeUnit::DisplayRate)
+		{
+			InFrameNumber = FFrameRate::TransformTime(InFrameNumber, MovieScene->GetDisplayRate(), MovieScene->GetTickResolution()).RoundToFrame();
+		}
+
 		return MovieScene->SetMarkedFrame(InMarkIndex, InFrameNumber);
 	}
 }
@@ -1148,7 +1168,7 @@ int32 UMovieSceneSequenceExtensions::FindMarkedFrameByLabel(UMovieSceneSequence*
 	return INDEX_NONE;
 }
 
-int32 UMovieSceneSequenceExtensions::FindMarkedFrameByFrameNumber(UMovieSceneSequence* Sequence, FFrameNumber InFrameNumber)
+int32 UMovieSceneSequenceExtensions::FindMarkedFrameByFrameNumberInSequence(UMovieSceneSequence* Sequence, FFrameNumber InFrameNumber, EMovieSceneTimeUnit TimeUnit)
 {
 	if (!Sequence)
 	{
@@ -1159,12 +1179,17 @@ int32 UMovieSceneSequenceExtensions::FindMarkedFrameByFrameNumber(UMovieSceneSeq
 	UMovieScene* MovieScene = Sequence->GetMovieScene();
 	if (MovieScene)
 	{
+		if (TimeUnit == EMovieSceneTimeUnit::DisplayRate)
+		{
+			InFrameNumber = FFrameRate::TransformTime(InFrameNumber, MovieScene->GetDisplayRate(), MovieScene->GetTickResolution()).RoundToFrame();
+		}
+
 		return MovieScene->FindMarkedFrameByFrameNumber(InFrameNumber);
 	}
 	return INDEX_NONE;
 }
 
-int32 UMovieSceneSequenceExtensions::FindNextMarkedFrame(UMovieSceneSequence* Sequence, FFrameNumber InFrameNumber, bool bForward)
+int32 UMovieSceneSequenceExtensions::FindNextMarkedFrameInSequence(UMovieSceneSequence* Sequence, FFrameNumber InFrameNumber, bool bForward, EMovieSceneTimeUnit TimeUnit)
 {
 	if (!Sequence)
 	{
@@ -1175,6 +1200,11 @@ int32 UMovieSceneSequenceExtensions::FindNextMarkedFrame(UMovieSceneSequence* Se
 	UMovieScene* MovieScene = Sequence->GetMovieScene();
 	if (MovieScene)
 	{
+		if (TimeUnit == EMovieSceneTimeUnit::DisplayRate)
+		{
+			InFrameNumber = FFrameRate::TransformTime(InFrameNumber, MovieScene->GetDisplayRate(), MovieScene->GetTickResolution()).RoundToFrame();
+		}
+
 		return MovieScene->FindNextMarkedFrame(InFrameNumber, bForward);
 	}
 	return INDEX_NONE;

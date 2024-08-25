@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 using EpicGames.Core;
 using Microsoft.Extensions.Logging;
@@ -45,7 +45,7 @@ namespace UnrealBuildTool
 		}
 
 		/// <summary>
-		/// Returns true if we're running on Apple architecture (either natively which mono/dotnet will do, or under Rosetta)
+		/// Returns true if we're running on Apple architecture (either natively which dotnet will do, or under Rosetta)
 		/// </summary>
 		/// <returns></returns>
 		public static bool IsRunningOnAppleArchitecture

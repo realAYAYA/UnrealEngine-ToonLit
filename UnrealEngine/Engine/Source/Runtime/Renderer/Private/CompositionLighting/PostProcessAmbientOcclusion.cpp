@@ -10,7 +10,7 @@
 #include "PostProcess/SceneFilterRendering.h"
 #include "SceneTextureParameters.h"
 #include "ScenePrivate.h"
-#include "Strata/Strata.h"
+#include "Substrate/Substrate.h"
 #include "SystemTextures.h"
 #include "ClearQuad.h"
 #include "VariableRateShadingImageManager.h"
@@ -369,7 +369,7 @@ static FSSAOShaderParameters GetSSAOShaderParameters(
 	float Ratio = View.UnscaledViewRect.Width() / (float)View.UnscaledViewRect.Height();
 
 	// Grab this and pass into shader so we can negate the fov influence of projection on the screen pos.
-	float InvTanHalfFov = View.ViewMatrices.GetProjectionMatrix().M[0][0];
+	float InvTanHalfFov = View.ViewMatrices.GetInvTanHalfFov().X;
 
 	float StaticFraction = FMath::Clamp(Settings.AmbientOcclusionStaticFraction, 0.0f, 1.0f);
 
@@ -520,7 +520,7 @@ public:
 		SHADER_PARAMETER(float, ThresholdInverse)
 		SHADER_PARAMETER(FVector2f, InputExtentInverse)
 
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 
 		RENDER_TARGET_BINDING_SLOTS()
 	END_SHADER_PARAMETER_STRUCT();
@@ -564,7 +564,7 @@ FScreenPassTexture AddAmbientOcclusionSetupPass(
 	PassParameters->SSAOParameters = GetSSAOShaderParameters(View, InputViewport, OutputViewport, CommonParameters.SceneTexturesViewport, EAOTechnique::SSAO);
 	PassParameters->ThresholdInverse = ThresholdInverseValue;
 	PassParameters->InputExtentInverse = FVector2f(1.0f) / FVector2f(InputViewport.Extent);
-	PassParameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
+	PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 	PassParameters->RenderTargets[0] = Output.GetRenderTargetBinding();
 
 	TShaderMapRef<FAmbientOcclusionSetupPS> PixelShader(View.ShaderMap);
@@ -665,6 +665,9 @@ BEGIN_SHADER_PARAMETER_STRUCT(FAmbientOcclusionParameters, )
 	SHADER_PARAMETER_STRUCT_INCLUDE(FSSAOShaderParameters, SSAOParameters)
 
 	SHADER_PARAMETER(FVector2f, SSAO_DownsampledAOInverseSize)
+	SHADER_PARAMETER(FVector2f, SSAO_DownsampledAOUVViewportMin)
+	SHADER_PARAMETER(FVector2f, SSAO_DownsampledAOUVViewportMax)
+	SHADER_PARAMETER(FVector2f, SSAO_SvPositionScaleBias)
 
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SSAO_SetupTexture)
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SSAO_NormalsTexture)
@@ -701,7 +704,7 @@ public:
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_STRUCT_INCLUDE(FAmbientOcclusionParameters, SharedParameters)
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 		RENDER_TARGET_BINDING_SLOTS()
 	END_GLOBAL_SHADER_PARAMETER_STRUCT();
 };
@@ -734,7 +737,7 @@ public:
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_STRUCT_INCLUDE(FAmbientOcclusionParameters, SharedParameters)
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D, OutTexture)
 	END_GLOBAL_SHADER_PARAMETER_STRUCT();
 };
@@ -820,13 +823,23 @@ void AddAmbientOcclusionPass(
 	{
 		SharedParameters.SSAO_DownsampledAO = DownsampledAO.Texture;
 		SharedParameters.SSAO_DownsampledAOInverseSize = FVector2f(1.0f) / FVector2f(DownsampledAO.Texture->Desc.Extent);
+
+		const FVector2f ViewportMin(DownsampledAO.ViewRect.Min.X, DownsampledAO.ViewRect.Min.Y);
+		const FVector2f ViewportMax(DownsampledAO.ViewRect.Max.X, DownsampledAO.ViewRect.Max.Y);
+
+		SharedParameters.SSAO_DownsampledAOUVViewportMin = ViewportMin * SharedParameters.SSAO_DownsampledAOInverseSize;
+		SharedParameters.SSAO_DownsampledAOUVViewportMax = ViewportMax * SharedParameters.SSAO_DownsampledAOInverseSize;
 	}
 	else
 	{
 		SharedParameters.SSAO_DownsampledAO = SystemTextures.Black;
 		SharedParameters.SSAO_DownsampledAOInverseSize = FVector2f(1.0f, 1.0f);
+		SharedParameters.SSAO_DownsampledAOUVViewportMin = FVector2f(0.0f, 0.0f);
+		SharedParameters.SSAO_DownsampledAOUVViewportMax = FVector2f(1.0f, 1.0f);
 	}
 
+	SharedParameters.SSAO_SvPositionScaleBias = FVector2f(1, 0);
+	
 	SharedParameters.SSAO_Sampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
 
 	SharedParameters.RandomNormalTexture = GSystemTextures.SSAORandomization->GetRHI();
@@ -840,7 +853,7 @@ void AddAmbientOcclusionPass(
 		// Compute Shader Path
 		FAmbientOcclusionCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FAmbientOcclusionCS::FParameters>();
 		PassParameters->SharedParameters = MoveTemp(SharedParameters);
-		PassParameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
+		PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 		PassParameters->OutTexture = GraphBuilder.CreateUAV(Output.Texture);
 
 		FAmbientOcclusionCS::FPermutationDomain PermutationVector;
@@ -920,7 +933,7 @@ void AddAmbientOcclusionPass(
 		// Pixel Shader Path
 		FAmbientOcclusionPS::FParameters* PassParameters = GraphBuilder.AllocParameters<FAmbientOcclusionPS::FParameters>();
 		PassParameters->SharedParameters = MoveTemp(SharedParameters);
-		PassParameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
+		PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 		PassParameters->RenderTargets[0] = Output.GetRenderTargetBinding();
 		PassParameters->RenderTargets.ShadingRateTexture = GVRSImageManager.GetVariableRateShadingImage(GraphBuilder, View, FVariableRateShadingImageManager::EVRSPassType::SSAO);
 		if (bDepthBoundsTestEnabled)
@@ -1087,7 +1100,7 @@ public:
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneTextureUniformParameters, SceneTextures)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FHZBParameters, HZBParameters)
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 
 		SHADER_PARAMETER_STRUCT_INCLUDE(FSSAOShaderParameters, SSAOParameters)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FGTAOShaderParameters, GTAOParameters)
@@ -1132,7 +1145,7 @@ FGTAOHorizonSearchOutputs AddGTAOHorizonSearchIntegratePass(
 	PassParameters->View = View.ViewUniformBuffer;
 	PassParameters->SceneTextures = CommonParameters.SceneTexturesUniformBuffer;
 	PassParameters->HZBParameters = GetHZBParameters(View, HZBInput, SceneViewport.Extent, EAOTechnique::GTAO);
-	PassParameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
+	PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 	PassParameters->SSAOParameters = GetSSAOShaderParameters(View, SceneViewport, OutputViewport, CommonParameters.SceneTexturesViewport, EAOTechnique::GTAO);
 	PassParameters->GTAOParameters = GetGTAOShaderParameters(View, OutputViewport.Extent);
 
@@ -1178,7 +1191,7 @@ public:
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneTextureUniformParameters, SceneTextures)
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 
 		SHADER_PARAMETER_STRUCT_INCLUDE(FSSAOShaderParameters, SSAOParameters)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FGTAOShaderParameters, GTAOParameters)
@@ -1223,7 +1236,7 @@ FScreenPassTexture AddGTAOInnerIntegratePass(
 
 	PassParameters->View = View.ViewUniformBuffer;
 	PassParameters->SceneTextures = CommonParameters.SceneTexturesUniformBuffer;
-	PassParameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
+	PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 	PassParameters->SSAOParameters = GetSSAOShaderParameters(View, InputViewport, OutputViewport, CommonParameters.SceneTexturesViewport, EAOTechnique::GTAO);
 	PassParameters->GTAOParameters = GetGTAOShaderParameters(View, OutputViewport.Extent);
 
@@ -1275,7 +1288,7 @@ public:
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneTextureUniformParameters, SceneTextures)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FHZBParameters, HZBParameters)
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 
 		SHADER_PARAMETER_STRUCT_INCLUDE(FSSAOShaderParameters, SSAOParameters)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FGTAOShaderParameters, GTAOParameters)
@@ -1304,7 +1317,7 @@ FGTAOHorizonSearchOutputs AddGTAOHorizonSearchPass(
 	PassParameters->View = View.ViewUniformBuffer;
 	PassParameters->SceneTextures = CommonParameters.SceneTexturesUniformBuffer;
 	PassParameters->HZBParameters = GetHZBParameters(View, HZBInput, SceneViewport.Extent, EAOTechnique::GTAO);
-	PassParameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
+	PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 	PassParameters->SSAOParameters = GetSSAOShaderParameters(View, SceneViewport, OutputViewport, CommonParameters.SceneTexturesViewport, EAOTechnique::GTAO);
 	PassParameters->GTAOParameters = GetGTAOShaderParameters(View, OutputViewport.Extent);
 

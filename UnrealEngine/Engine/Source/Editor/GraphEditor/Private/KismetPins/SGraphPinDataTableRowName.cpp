@@ -31,7 +31,6 @@ void SGraphPinDataTableRowName::PreChange(const UDataTable* Changed, FDataTableE
 
 void SGraphPinDataTableRowName::PostChange(const UDataTable* Changed, FDataTableEditorUtils::EDataTableChangeInfo Info)
 {
-	//FSoftObjectPath::InvalidateTag(); // Should be removed after UE-5615 is fixed
 	if (Changed && (Changed == DataTable.Get()) && (FDataTableEditorUtils::EDataTableChangeInfo::RowList == Info))
 	{
 		RefreshNameList();

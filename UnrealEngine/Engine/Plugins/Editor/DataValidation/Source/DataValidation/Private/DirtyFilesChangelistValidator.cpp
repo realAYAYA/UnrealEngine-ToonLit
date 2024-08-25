@@ -2,9 +2,13 @@
 
 #include "DirtyFilesChangelistValidator.h"
 
+#include "AssetRegistry/AssetData.h"
+#include "AssetRegistry/AssetDataToken.h"
+#include "AssetRegistry/AssetRegistryModule.h"
 #include "DataValidationChangelist.h"
 #include "FileHelpers.h"
 #include "ISourceControlModule.h"
+#include "Misc/DataValidation.h"
 #include "Misc/Paths.h"
 #include "Containers/Map.h"
 
@@ -12,30 +16,21 @@
 
 #define LOCTEXT_NAMESPACE "DirtyFilesChangelistValidation"
 
-bool UDirtyFilesChangelistValidator::CanValidateAsset_Implementation(UObject* InAsset) const
+bool UDirtyFilesChangelistValidator::CanValidateAsset_Implementation(const FAssetData& AssetData, UObject* InAsset, FDataValidationContext& InContext) const
 {
+	if (InContext.GetValidationUsecase() == EDataValidationUsecase::Commandlet)
+	{
+		return false;
+	}
 	return (InAsset != nullptr) && (UDataValidationChangelist::StaticClass() == InAsset->GetClass());
 }
 
-EDataValidationResult UDirtyFilesChangelistValidator::ValidateLoadedAsset_Implementation(UObject* InAsset, TArray<FText>& ValidationErrors)
+EDataValidationResult UDirtyFilesChangelistValidator::ValidateLoadedAsset_Implementation(const FAssetData& AssetData, UObject* InAsset, FDataValidationContext& InContext)
 {
-	check(UDataValidationChangelist::StaticClass() == InAsset->GetClass());
+	UDataValidationChangelist* DataValidationChangelist = CastChecked<UDataValidationChangelist>(InAsset);
 
-	UDataValidationChangelist* DataValidationChangelist = Cast<UDataValidationChangelist>(InAsset);
-
-	if ((DataValidationChangelist == nullptr) || (!DataValidationChangelist->Changelist.IsValid()))
-	{
-		return EDataValidationResult::Valid;
-	}
-
-	// Retrieve files contained in the changelist
-	ISourceControlProvider& Provider = ISourceControlModule::Get().GetProvider();
-	FSourceControlChangelistStatePtr ChangelistStatePtr = Provider.GetState(DataValidationChangelist->Changelist.ToSharedRef(), EStateCacheUsage::Use);
-	const TArray<FSourceControlStateRef>& FileStates = ChangelistStatePtr->GetFilesStates();
-	
 	// Retrieve current unsaved packages
 	TArray<UPackage*> DirtyPackages;
-	TMap<FString, const UPackage*> DirtyPackagesPath;
 	FEditorFileUtils::GetDirtyPackages(DirtyPackages, FEditorFileUtils::FShouldIgnorePackage::Default);
 
 	auto Predicate = [](const UPackage* InPackage) -> bool
@@ -55,26 +50,28 @@ EDataValidationResult UDirtyFilesChangelistValidator::ValidateLoadedAsset_Implem
 		return true;
 	};
 
-	auto Transform = [](const UPackage* InPackage) -> TTuple<FString, const UPackage*>
-	{
-		check(InPackage);
-		const FString LocalFullPath(InPackage->GetLoadedPath().GetLocalFullPath());
-		check(!LocalFullPath.IsEmpty());
-		
-		return TTuple<FString, const UPackage*>(FPaths::ConvertRelativePathToFull(LocalFullPath), InPackage);
-	};
-		
-	Algo::TransformIf(DirtyPackages, DirtyPackagesPath, Predicate, Transform);
+	TSet<FName> DirtyPackagesSet;
+	Algo::TransformIf(DirtyPackages, DirtyPackagesSet, Predicate, UE_PROJECTION_MEMBER(UPackage, GetFName));
+
+	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+    IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
 
 	// Check if any of changelist's files is unsaved
-	for (const FSourceControlStateRef& FileState : FileStates)
+	for (FName PackageName : DataValidationChangelist->ModifiedPackageNames)
 	{
-		if (const UPackage** PackagePtr = DirtyPackagesPath.Find(FileState->GetFilename()))
+		if (DirtyPackagesSet.Contains(PackageName))
 		{
-			const UPackage* Package = *PackagePtr;
-			check(Package);
-			FText CurrentError = FText::Format(LOCTEXT("DirtyFilesFound.Changelist.Error", "This changelist contains an unsaved asset {0}. Please save to proceed."), FText::FromString(UDataValidationChangelist::GetPrettyPackageName(Package->GetFName())));
-			AssetFails(InAsset, CurrentError, ValidationErrors);
+			FText CurrentError = LOCTEXT("DirtyFilesFound.Changelist.Error", "This changelist contains an unsaved asset. Please save to proceed.");
+			TSharedRef<FTokenizedMessage> Message = AssetMessage(EMessageSeverity::Error, CurrentError);
+			TArray<FAssetData> PackageAssets;
+			if (AssetRegistry.GetAssetsByPackageName(PackageName, PackageAssets, true))
+			{
+				Message->AddToken(FAssetDataToken::Create(PackageAssets[0]));
+			}
+			else
+			{
+				Message->AddText(FText::FromName(PackageName));
+			}
 		}
 	}
 

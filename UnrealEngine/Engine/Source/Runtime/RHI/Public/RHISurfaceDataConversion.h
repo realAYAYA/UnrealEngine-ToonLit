@@ -13,6 +13,9 @@
 #include "RHI.h"
 #include "RHITypes.h"
 
+namespace
+{
+
 /** Helper for accessing R10G10B10A2 colors. */
 struct FRHIR10G10B10A2
 {
@@ -37,6 +40,7 @@ struct FRHIRG16
 	uint16 R;
 	uint16 G;
 };
+
 
 inline void ConvertRawR16DataToFColor(uint32 Width, uint32 Height, uint8 *In, uint32 SrcPitch, FColor* Out)
 {
@@ -319,7 +323,7 @@ inline void ConvertRawR24G8DataToFColor(uint32 Width, uint32 Height, uint8 *In, 
 	}
 }
 
-inline void ConvertRawR32DataToFColor(uint32 Width, uint32 Height, uint8 *In, uint32 SrcPitch, FColor* Out, FReadSurfaceDataFlags InFlags)
+inline void ConvertRawDepthStencil64DataToFColor(uint32 Width, uint32 Height, uint8 *In, uint32 SrcPitch, FColor* Out, FReadSurfaceDataFlags InFlags)
 {
 	bool bLinearToGamma = InFlags.GetLinearToGamma();
 	for (uint32 Y = 0; Y < Height; Y++)
@@ -394,6 +398,21 @@ inline void ConvertRawR8DataToFColor(uint32 Width, uint32 Height, uint8 *In, uin
 	}
 }
 
+inline void ConvertRawR8G8DataToFColor(uint32 Width, uint32 Height, uint8* In, uint32 SrcPitch, FColor* Out)
+{
+	for (uint32 Y = 0; Y < Height; Y++)
+	{
+		uint8* SrcPtr = (uint8*)(In + Y * SrcPitch);
+		FColor* DestPtr = Out + Y * Width;
+		for (uint32 X = 0; X < Width; X++)
+		{
+			*DestPtr = FColor(*SrcPtr, *(SrcPtr + 1), 0);
+			SrcPtr += 2;
+			++DestPtr;
+		}
+	}
+}
+
 inline void ConvertRawD32S8DataToFColor(uint32 Width, uint32 Height, uint8 *In, uint32 SrcPitch, FColor* Out, FReadSurfaceDataFlags InFlags)
 {
 	bool bLinearToGamma = InFlags.GetLinearToGamma();
@@ -439,7 +458,7 @@ inline void ConvertRawD32S8DataToFColor(uint32 Width, uint32 Height, uint8 *In, 
 
 // Linear functions
 
-inline void ConvertRawR16DataToFLinearColor(uint32 Width, uint32 Height, uint8 *In, uint32 SrcPitch, FLinearColor* Out)
+inline void ConvertRawR16UDataToFLinearColor(uint32 Width, uint32 Height, uint8 *In, uint32 SrcPitch, FLinearColor* Out)
 {
 	// e.g. shadow maps
 	for (uint32 Y = 0; Y < Height; Y++)
@@ -450,7 +469,26 @@ inline void ConvertRawR16DataToFLinearColor(uint32 Width, uint32 Height, uint8 *
 		for (uint32 X = 0; X < Width; X++)
 		{
 			uint16 Value16 = *SrcPtr;
-			float Value = Value16 / (float)(0xffff);
+			float Value = Value16 * (1.f/0xffff);
+
+			*DestPtr = FLinearColor(Value, Value, Value);
+			++SrcPtr;
+			++DestPtr;
+		}
+	}
+}
+
+inline void ConvertRawR16FDataToFLinearColor(uint32 Width, uint32 Height, uint8 *In, uint32 SrcPitch, FLinearColor* Out)
+{
+	// e.g. shadow maps
+	for (uint32 Y = 0; Y < Height; Y++)
+	{
+		FFloat16 * SrcPtr = (FFloat16 *)(In + Y * SrcPitch);
+		FLinearColor* DestPtr = Out + Y * Width;
+
+		for (uint32 X = 0; X < Width; X++)
+		{
+			float Value = SrcPtr->GetFloat();
 
 			*DestPtr = FLinearColor(Value, Value, Value);
 			++SrcPtr;
@@ -468,7 +506,8 @@ inline void ConvertRawR8G8B8A8DataToFLinearColor(uint32 Width, uint32 Height, ui
 		FLinearColor* DestPtr = Out + Y * Width;
 		for (uint32 X = 0; X < Width; X++)
 		{
-			FColor sRGBColor = FColor(SrcPtr->B, SrcPtr->G, SrcPtr->R, SrcPtr->A);
+			FColor sRGBColor = FColor(SrcPtr->B, SrcPtr->G, SrcPtr->R, SrcPtr->A); // swap RB
+			// FLinearColor(FColor) does SRGB -> Linear
 			*DestPtr = FLinearColor(sRGBColor);
 			++SrcPtr;
 			++DestPtr;
@@ -484,8 +523,8 @@ inline void ConvertRawB8G8R8A8DataToFLinearColor(uint32 Width, uint32 Height, ui
 		FLinearColor* DestPtr = Out + Y * Width;
 		for (uint32 X = 0; X < Width; X++)
 		{
-			FColor sRGBColor = FColor(SrcPtr->R, SrcPtr->G, SrcPtr->B, SrcPtr->A);
-			*DestPtr = FLinearColor(sRGBColor);
+			// FLinearColor(FColor) does SRGB -> Linear
+			*DestPtr = FLinearColor(*SrcPtr);
 			++SrcPtr;
 			++DestPtr;
 		}
@@ -576,7 +615,7 @@ inline void ConvertRawR16G16B16A16FDataToFLinearColor(uint32 Width, uint32 Heigh
 }
 
 
-inline void ConvertRawRR11G11B10DataToFLinearColor(uint32 Width, uint32 Height, uint8 *In, uint32 SrcPitch, FLinearColor* Out)
+inline void ConvertRawR11G11B10FDataToFLinearColor(uint32 Width, uint32 Height, uint8 *In, uint32 SrcPitch, FLinearColor* Out)
 {
 	check(sizeof(FFloat3Packed) == sizeof(uint32));
 
@@ -671,7 +710,7 @@ inline void ConvertRawR24G8DataToFLinearColor(uint32 Width, uint32 Height, uint8
 	}
 }
 
-inline void ConvertRawR32DataToFLinearColor(uint32 Width, uint32 Height, uint8 *In, uint32 SrcPitch, FLinearColor* Out, FReadSurfaceDataFlags InFlags)
+inline void ConvertRawDepthStencil64DataToFLinearColor(uint32 Width, uint32 Height, uint8 *In, uint32 SrcPitch, FLinearColor* Out, FReadSurfaceDataFlags InFlags)
 {
 	// Depth stencil
 	for (uint32 Y = 0; Y < Height; Y++)
@@ -731,3 +770,218 @@ inline void ConvertRawR16G16DataToFLinearColor(uint32 Width, uint32 Height, uint
 	}
 }
 
+}; // namespace
+
+static bool ConvertRAWSurfaceDataToFLinearColor(EPixelFormat Format, uint32 Width, uint32 Height, uint8 *In, uint32 SrcPitch, FLinearColor* Out, FReadSurfaceDataFlags InFlags)
+{
+	// InFlags.GetLinearToGamma() is ignored by the FLinearColor reader
+
+	// Flags RCM_MinMax means pass the values out unchanged
+	//	default flags RCM_UNorm rescales them to [0,1] if they were outside that range
+
+	if (Format == PF_G16 || Format == PF_R16_UINT )
+	{
+		ConvertRawR16UDataToFLinearColor(Width, Height, In, SrcPitch, Out);
+		return true;
+	}
+	else if (Format == PF_R16F || Format == PF_R16F_FILTER)
+	{
+		ConvertRawR16FDataToFLinearColor(Width, Height, In, SrcPitch, Out);
+		return true;
+	}
+	else if (Format == PF_R8G8B8A8)
+	{
+		ConvertRawR8G8B8A8DataToFLinearColor(Width, Height, In, SrcPitch, Out);
+		return true;
+	}
+	else if (Format == PF_B8G8R8A8)
+	{
+		ConvertRawB8G8R8A8DataToFLinearColor(Width, Height, In, SrcPitch, Out);
+		return true;
+	}
+	else if (Format == PF_A2B10G10R10)
+	{
+		ConvertRawA2B10G10R10DataToFLinearColor(Width, Height, In, SrcPitch, Out);
+		return true;
+	}
+	else if (Format == PF_FloatRGBA)
+	{
+		ConvertRawR16G16B16A16FDataToFLinearColor(Width, Height, In, SrcPitch, Out, InFlags);
+		return true;
+	}
+	else if (Format == PF_FloatRGB || Format == PF_FloatR11G11B10)
+	{
+		// assume FloatRGB == PF_FloatR11G11B10 always here
+		check( GPixelFormats[Format].BlockBytes == 4 );
+		ConvertRawR11G11B10FDataToFLinearColor(Width, Height, In, SrcPitch, Out);
+		return true;
+	}
+	else if (Format == PF_A32B32G32R32F)
+	{
+		ConvertRawR32G32B32A32DataToFLinearColor(Width, Height, In, SrcPitch, Out, InFlags);
+		return true;
+	}
+	else if ( Format == PF_D24 ||
+		( (Format == PF_X24_G8 || Format == PF_DepthStencil ) && GPixelFormats[Format].BlockBytes == 4 )
+		)
+	{
+		//	see CVarD3D11UseD24/CVarD3D12UseD24
+		ConvertRawR24G8DataToFLinearColor(Width, Height, In, SrcPitch, Out, InFlags);
+		return true;
+	}
+	else if ( (Format == PF_X24_G8 || Format == PF_DepthStencil ) && GPixelFormats[Format].BlockBytes > 4 )
+	{
+		// @@ D3D 11/12 different?
+
+		/**
+		
+		D3D11 and 12 formats are almost the same, one difference :
+
+		DepthStencil formats are interleaved	DepthStencil formats are planar.
+		For example a format of 24 bits of depth, 8 bits of stencil would be
+		stored in the format 24/8/24/8... etc in Direct3D 11, but as 24/24/24...
+		followed by 8/8/8... in Direct3D 12. Note that each plane is its own
+		subresource in D3D12
+
+		**/
+
+		ConvertRawDepthStencil64DataToFLinearColor(Width, Height, In, SrcPitch, Out, InFlags);
+		return true;
+	}
+	else if (Format == PF_A16B16G16R16)
+	{
+		ConvertRawR16G16B16A16DataToFLinearColor(Width, Height, In, SrcPitch, Out);
+		return true;
+	}
+	else if (Format == PF_G16R16)
+	{
+		ConvertRawR16G16DataToFLinearColor(Width, Height, In, SrcPitch, Out);
+		return true;
+	}
+	else if (Format == PF_G16R16F)
+	{
+		// Read the data out of the buffer, converting it to FLinearColor.
+		for (uint32 Y = 0; Y < Height; Y++)
+		{
+			FFloat16 * SrcPtr = (FFloat16*)(In + Y * SrcPitch);
+			FLinearColor* DestPtr = Out + Y * Width;
+			for (uint32 X = 0; X < Width; X++)
+			{
+				*DestPtr = FLinearColor( SrcPtr[0].GetFloat(), SrcPtr[1].GetFloat(), 0.f,1.f);
+				SrcPtr += 2;
+				++DestPtr;
+			}
+		}
+		return true;
+	}
+	else if (Format == PF_G32R32F)
+	{
+		// not doing MinMax/Unorm remap here
+	
+		// Read the data out of the buffer, converting it to FLinearColor.
+		for (uint32 Y = 0; Y < Height; Y++)
+		{
+			float * SrcPtr = (float *)(In + Y * SrcPitch);
+			FLinearColor* DestPtr = Out + Y * Width;
+			for (uint32 X = 0; X < Width; X++)
+			{
+				*DestPtr = FLinearColor( SrcPtr[0], SrcPtr[1], 0.f, 1.f );
+				SrcPtr += 2;
+				++DestPtr;
+			}
+		}
+		return true;
+	}
+	else if (Format == PF_R32_FLOAT)
+	{
+		// not doing MinMax/Unorm remap here
+	
+		// Read the data out of the buffer, converting it to FLinearColor.
+		for (uint32 Y = 0; Y < Height; Y++)
+		{
+			float * SrcPtr = (float *)(In + Y * SrcPitch);
+			FLinearColor* DestPtr = Out + Y * Width;
+			for (uint32 X = 0; X < Width; X++)
+			{
+				*DestPtr = FLinearColor( SrcPtr[0], 0.f, 0.f, 1.f );
+				++SrcPtr;
+				++DestPtr;
+			}
+		}
+		return true;
+	}
+	else
+	{
+		// not supported yet
+		check(0);
+		return false;
+	}
+}
+
+#if defined(DXGI_FORMAT_DEFINED) && DXGI_FORMAT_DEFINED
+
+// switching on platform format
+// could switch on EPixelFormat instead and make this more generic
+// have to be a little careful with that as the mapping is not one to one
+
+/** Convert D3D format type to general pixel format type*/
+static bool ConvertDXGIToFColor(DXGI_FORMAT Format, uint32 Width, uint32 Height, uint8 *In, uint32 SrcPitch, FColor* Out, FReadSurfaceDataFlags InFlags)
+{
+	// todo : use a helper to map all the typeless to unorm before switching here ; see DXGIUtilities
+
+	bool bLinearToGamma = InFlags.GetLinearToGamma();
+	switch (Format)
+	{
+	case DXGI_FORMAT_R16_TYPELESS:
+	case DXGI_FORMAT_R16_UNORM:
+		ConvertRawR16DataToFColor(Width, Height, In, SrcPitch, Out);
+		return true;
+	case DXGI_FORMAT_R8G8B8A8_TYPELESS:
+	case DXGI_FORMAT_R8G8B8A8_UNORM:
+	case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+		ConvertRawR8G8B8A8DataToFColor(Width, Height, In, SrcPitch, Out);
+		return true;
+	case DXGI_FORMAT_B8G8R8A8_TYPELESS:
+	case DXGI_FORMAT_B8G8R8A8_UNORM:
+	case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+		ConvertRawB8G8R8A8DataToFColor(Width, Height, In, SrcPitch, Out);
+		return true;
+	case DXGI_FORMAT_R10G10B10A2_UNORM:
+		ConvertRawR10G10B10A2DataToFColor(Width, Height, In, SrcPitch, Out);
+		return true;
+	case DXGI_FORMAT_R16G16B16A16_FLOAT:
+		ConvertRawR16G16B16A16FDataToFColor(Width, Height, In, SrcPitch, Out, bLinearToGamma);
+		return true;
+	case DXGI_FORMAT_R11G11B10_FLOAT:
+		ConvertRawR11G11B10DataToFColor(Width, Height, In, SrcPitch, Out, bLinearToGamma);
+		return true;
+	case DXGI_FORMAT_R9G9B9E5_SHAREDEXP:
+		ConvertRawR9G9B9E5DataToFColor(Width, Height, In, SrcPitch, Out, bLinearToGamma);
+		return true;
+	case DXGI_FORMAT_R32G32B32A32_FLOAT:
+		ConvertRawR32G32B32A32DataToFColor(Width, Height, In, SrcPitch, Out, bLinearToGamma);
+		return true;
+	case DXGI_FORMAT_R24G8_TYPELESS:
+		ConvertRawR24G8DataToFColor(Width, Height, In, SrcPitch, Out, InFlags);
+		return true;
+	case DXGI_FORMAT_R32G8X24_TYPELESS:
+		ConvertRawDepthStencil64DataToFColor(Width, Height, In, SrcPitch, Out, InFlags);
+		return true;
+	case DXGI_FORMAT_R16G16B16A16_UNORM:
+		ConvertRawR16G16B16A16DataToFColor(Width, Height, In, SrcPitch, Out);
+		return true;
+	case DXGI_FORMAT_R16G16_UNORM:
+		ConvertRawR16G16DataToFColor(Width, Height, In, SrcPitch, Out);
+		return true;
+	case DXGI_FORMAT_R8_UNORM:
+		ConvertRawR8DataToFColor(Width, Height, In, SrcPitch, Out);
+		return true;
+	case DXGI_FORMAT_R8G8_UNORM:
+		ConvertRawR8G8DataToFColor(Width, Height, In, SrcPitch, Out);
+		return true;
+	default:
+		return false;
+	}
+}
+
+#endif // DXGI_FORMAT_DEFINED

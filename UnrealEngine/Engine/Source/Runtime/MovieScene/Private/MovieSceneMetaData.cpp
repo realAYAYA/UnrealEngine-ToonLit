@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "MovieSceneMetaData.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/Package.h"
 #include "Engine/Level.h"
 
@@ -67,11 +68,13 @@ void UMovieSceneMetaData::SetNotes(FString InNotes)
 	Notes = InNotes;
 }
 
-void UMovieSceneMetaData::ExtendAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
+void UMovieSceneMetaData::ExtendAssetRegistryTags(FAssetRegistryTagsContext Context) const
 {
-	OutTags.Emplace(AssetRegistryTag_Author, Author, FAssetRegistryTag::ETagType::TT_Alphabetical, FAssetRegistryTag::TD_None);
-	OutTags.Emplace(AssetRegistryTag_Created, Created.ToString(), FAssetRegistryTag::ETagType::TT_Chronological, FAssetRegistryTag::TD_Date | FAssetRegistryTag::TD_Time);
-	OutTags.Emplace(AssetRegistryTag_Notes, Notes, FAssetRegistryTag::ETagType::TT_Alphabetical, FAssetRegistryTag::TD_None);
+	IMovieSceneMetaDataInterface::ExtendAssetRegistryTags(Context);
+
+	Context.AddTag(FAssetRegistryTag(AssetRegistryTag_Author, Author, FAssetRegistryTag::ETagType::TT_Alphabetical, FAssetRegistryTag::TD_None));
+	Context.AddTag(FAssetRegistryTag(AssetRegistryTag_Created, Created.ToString(), FAssetRegistryTag::ETagType::TT_Chronological, FAssetRegistryTag::TD_Date | FAssetRegistryTag::TD_Time));
+	Context.AddTag(FAssetRegistryTag(AssetRegistryTag_Notes, Notes, FAssetRegistryTag::ETagType::TT_Alphabetical, FAssetRegistryTag::TD_None));
 }
 
 #if WITH_EDITOR

@@ -14,6 +14,7 @@
 #include "MuR/Operations.h"
 #include "Spatial/MeshAABBTree3.h"
 
+#include "MuR/OpMeshSmoothing.h"
 
 
 // TODO: Make the handling of rotations an option. It is more expensive on CPU and memory, and for some
@@ -781,6 +782,123 @@ namespace mu
 		return BindData;
 	}
 
+	inline void GenerateAndAddLaplacianData(Mesh& InOutMesh)
+	{
+		MUTABLE_CPUPROFILER_SCOPE(GenerateLaplacianData);
+
+
+		// Storage for buffers in a format different than the supported one.
+		// Not used if the buffer data is compatible. The data will always be accessed using a 
+		// view regardless of compatibility.
+		TArray<FVector3f> ConvertedVerticesStorage;
+		TArray<uint32>    ConvertedIndicesStorage;
+
+		TArrayView<const FVector3f> VerticesView;
+		{
+			const UntypedMeshBufferIteratorConst PositionBegin(InOutMesh.GetVertexBuffers(), MBS_POSITION);
+			const int32 NumVertices = InOutMesh.GetVertexBuffers().GetElementCount();
+			
+			const bool bIsCompatibleBuffer =
+				PositionBegin.GetElementSize() == sizeof(FVector3f) &&
+				PositionBegin.GetFormat() == MBF_FLOAT32 &&
+				PositionBegin.GetComponents() == 3;
+			
+			const bool bIsAlignmentGood = reinterpret_cast<UPTRINT>(PositionBegin.ptr()) % alignof(FVector3f) == 0;
+
+			if (!bIsCompatibleBuffer || !bIsAlignmentGood)
+			{
+				ConvertedVerticesStorage.SetNumUninitialized(NumVertices);
+				
+				for (int32 VertexIndex = 0; VertexIndex < NumVertices; ++VertexIndex)
+				{
+					ConvertedVerticesStorage[VertexIndex] = (PositionBegin + VertexIndex).GetAsVec3f();
+				}
+
+				VerticesView = TArrayView<const FVector3f>(ConvertedVerticesStorage.GetData(), NumVertices);
+			}
+			else
+			{
+				VerticesView = TArrayView<const FVector3f>(reinterpret_cast<const FVector3f*>(PositionBegin.ptr()), NumVertices);
+			}
+		}
+
+		TArrayView<const uint32> IndicesView;
+		{
+			const UntypedMeshBufferIteratorConst IndicesBegin(InOutMesh.GetIndexBuffers(), MBS_VERTEXINDEX);
+			const int32 NumIndices = InOutMesh.GetIndexBuffers().GetElementCount();
+			
+			const bool bIsCompatibleBuffer =
+				IndicesBegin.GetElementSize() == sizeof(uint32) &&
+				IndicesBegin.GetFormat() == MBF_UINT32 &&
+				IndicesBegin.GetComponents() == 1;
+
+			const bool bIsAlignmentGood = reinterpret_cast<UPTRINT>(IndicesBegin.ptr()) % alignof(uint32) == 0;
+			
+			if (!bIsCompatibleBuffer || !bIsAlignmentGood)
+			{
+				ConvertedIndicesStorage.SetNumUninitialized(NumIndices);
+				for (int32 I = 0; I < NumIndices; ++I)
+				{
+					ConvertedIndicesStorage[I] = (IndicesBegin + I).GetAsUINT32();
+				}
+
+				IndicesView = TArrayView<uint32>(ConvertedIndicesStorage.GetData(), ConvertedIndicesStorage.Num());
+			}
+			else
+			{
+				IndicesView = TArrayView<const uint32>(reinterpret_cast<const uint32*>(IndicesBegin.ptr()), NumIndices);
+			}
+		}
+
+		TArray<int32> UniqueVertexMap = MakeUniqueVertexMap(VerticesView);
+		TArray<TArray<int32, TInlineAllocator<8>>> VertexFaces = BuildVertexFaces(IndicesView, UniqueVertexMap);
+		TMap<uint64, UE::Geometry::FIndex2i> EdgesFaces = BuildEdgesFaces(IndicesView, UniqueVertexMap);
+		
+		TArray<int32> VertexRingsOffsets;
+		TArray<int32> VertexRingsData;
+		Tie(VertexRingsOffsets, VertexRingsData) = BuildVertexRings(IndicesView, UniqueVertexMap, VertexFaces, EdgesFaces);
+
+		FMeshBufferSet MeshLaplacianOffsetsBuffer;
+		MeshLaplacianOffsetsBuffer.SetBufferCount(1);
+		MeshLaplacianOffsetsBuffer.SetElementCount(VertexRingsOffsets.Num());
+
+		FMeshBufferSet MeshLaplacianDataBuffer;
+		MeshLaplacianDataBuffer.SetBufferCount(1);
+		MeshLaplacianDataBuffer.SetElementCount(VertexRingsData.Num());
+
+		// Don't add this to the vertex buffer set for now, it is currently only used for Laplacian smoothing a and it is removed
+		// right away after use.
+		FMeshBufferSet UniqueVertexMapBuffer;
+		UniqueVertexMapBuffer.SetBufferCount(1);
+		UniqueVertexMapBuffer.SetElementCount(UniqueVertexMap.Num());
+
+		const FIntBufferDescriptor BufDesc;
+		MeshLaplacianOffsetsBuffer.SetBuffer(0, BufDesc.ElementSize, BufDesc.Channels, BufDesc.Semantics, BufDesc.SemanticIndices, BufDesc.Formats, BufDesc.Components);
+		MeshLaplacianDataBuffer.SetBuffer(0, BufDesc.ElementSize, BufDesc.Channels, BufDesc.Semantics, BufDesc.SemanticIndices, BufDesc.Formats, BufDesc.Components);
+		UniqueVertexMapBuffer.SetBuffer(0, BufDesc.ElementSize, BufDesc.Channels, BufDesc.Semantics, BufDesc.SemanticIndices, BufDesc.Formats, BufDesc.Components);
+
+		// TODO: Add a way for buffers to steal memory from temporaries, so we can avoid a copy here.
+		FMemory::Memcpy(
+				UniqueVertexMapBuffer.GetBufferData(0), 
+				UniqueVertexMap.GetData(), 
+				UniqueVertexMapBuffer.GetDataSize());
+
+		FMemory::Memcpy(
+				MeshLaplacianOffsetsBuffer.GetBufferData(0), 
+				VertexRingsOffsets.GetData(), 
+				MeshLaplacianOffsetsBuffer.GetDataSize());
+
+		FMemory::Memcpy(
+				MeshLaplacianDataBuffer.GetBufferData(0), 
+				VertexRingsData.GetData(), 
+				MeshLaplacianDataBuffer.GetDataSize());
+
+		InOutMesh.AdditionalBuffers.Emplace(EMeshBufferType::UniqueVertexMap, MoveTemp(UniqueVertexMapBuffer));
+		InOutMesh.AdditionalBuffers.Emplace(EMeshBufferType::MeshLaplacianOffsets, MoveTemp(MeshLaplacianOffsetsBuffer));
+		InOutMesh.AdditionalBuffers.Emplace(EMeshBufferType::MeshLaplacianData, MoveTemp(MeshLaplacianDataBuffer));
+	}
+
+
 	inline TTuple<TArray<FReshapePointBindingData>, TArray<int32>> BindPose(
 			const Mesh* Mesh, FShapeMeshTree& ShapeMeshTree, const TArray<uint16>& BonesToDeform )
 	{
@@ -877,6 +995,7 @@ namespace mu
 		}
 
 		const bool bReshapeVertices = EnumHasAnyFlags(BindFlags, EMeshBindShapeFlags::ReshapeVertices);
+		const bool bApplyLaplacian  = EnumHasAnyFlags(BindFlags, EMeshBindShapeFlags::ApplyLaplacian);
 		const bool bReshapeSkeleton = EnumHasAnyFlags(BindFlags, EMeshBindShapeFlags::ReshapeSkeleton);
 		const bool bReshapePhysics  = EnumHasAnyFlags(BindFlags, EMeshBindShapeFlags::ReshapePhysicsVolumes);
 
@@ -985,12 +1104,17 @@ namespace mu
 			// \TODO: Check that there is no other binding data.
 			// \TODO: Support specifying the binding data channel for multiple binding support.
 			FMeshBufferSet& VB = Result->GetVertexBuffers();
-			int NewBufferIndex = VB.GetBufferCount();
+			int32 NewBufferIndex = VB.GetBufferCount();
 			VB.SetBufferCount(NewBufferIndex + 1);
 
 			FReshapeVertexBindingDataBufferDescriptor BufDesc(BindingDataIndex);
 			VB.SetBuffer(NewBufferIndex, sizeof(FReshapeVertexBindingData), BufDesc.Channels, BufDesc.Semantics, BufDesc.SemanticIndices, BufDesc.Formats, BufDesc.Components);
 			FMemory::Memcpy(VB.GetBufferData(NewBufferIndex), VerticesBindData.GetData(), VerticesBindData.Num() * sizeof(FReshapeVertexBindingData));
+	
+			if (bApplyLaplacian)
+			{
+				GenerateAndAddLaplacianData(*Result);
+			}
 		}
 
 		// Bind the skeleton bones
@@ -1027,7 +1151,7 @@ namespace mu
 			FMemory::Memcpy(SkeletonBuffer.GetBufferData(0), SkeletonBindDataArray.GetData(), NumBonesToDeform * sizeof(FReshapePointBindingData));
 			FMemory::Memcpy(SkeletonBuffer.GetBufferData(1), BoneIndices.GetData(), NumBonesToDeform * sizeof(int32));
 
-			Result->m_AdditionalBuffers.Emplace(EMeshBufferType::SkeletonDeformBinding, MoveTemp(SkeletonBuffer));
+			Result->AdditionalBuffers.Emplace(EMeshBufferType::SkeletonDeformBinding, MoveTemp(SkeletonBuffer));
 		}
 
 		const PhysicsBody* ResultPhysicsBody = Result->m_pPhysicsBody.get();
@@ -1078,9 +1202,9 @@ namespace mu
 			PhysicsBodySelectionOffsetsBuffer.SetBuffer(0, sizeof(int32), IntBufDesc.Channels, IntBufDesc.Semantics, IntBufDesc.SemanticIndices, IntBufDesc.Formats, IntBufDesc.Components, IntBufDesc.Offsets);	
 			FMemory::Memcpy(PhysicsBodySelectionOffsetsBuffer.GetBufferData(0), DeformedBodyIndicesOffsets.GetData(), DeformedBodyIndicesOffsets.Num() * sizeof(int32));
 
-			Result->m_AdditionalBuffers.Emplace(EMeshBufferType::PhysicsBodyDeformBinding, MoveTemp(PhysicsBodyBuffer));
-			Result->m_AdditionalBuffers.Emplace(EMeshBufferType::PhysicsBodyDeformSelection, MoveTemp(PhysicsBodySelectionBuffer));
-			Result->m_AdditionalBuffers.Emplace(EMeshBufferType::PhysicsBodyDeformOffsets, MoveTemp(PhysicsBodySelectionOffsetsBuffer));
+			Result->AdditionalBuffers.Emplace(EMeshBufferType::PhysicsBodyDeformBinding, MoveTemp(PhysicsBodyBuffer));
+			Result->AdditionalBuffers.Emplace(EMeshBufferType::PhysicsBodyDeformSelection, MoveTemp(PhysicsBodySelectionBuffer));
+			Result->AdditionalBuffers.Emplace(EMeshBufferType::PhysicsBodyDeformOffsets, MoveTemp(PhysicsBodySelectionOffsetsBuffer));
 		}	
     }
 

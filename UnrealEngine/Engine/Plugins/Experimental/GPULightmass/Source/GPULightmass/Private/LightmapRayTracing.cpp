@@ -10,8 +10,8 @@ bool IsSupportedVertexFactoryType(const FVertexFactoryType* VertexFactoryType)
 
 #if RHI_RAYTRACING
 
-FLightmapRayTracingMeshProcessor::FLightmapRayTracingMeshProcessor(FRayTracingMeshCommandContext* InCommandContext, FMeshPassProcessorRenderState InPassDrawRenderState)
-	: FRayTracingMeshProcessor(InCommandContext, nullptr, nullptr, InPassDrawRenderState, ERayTracingMeshCommandsMode::LIGHTMAP_TRACING)
+FLightmapRayTracingMeshProcessor::FLightmapRayTracingMeshProcessor(FRayTracingMeshCommandContext* InCommandContext)
+	: FRayTracingMeshProcessor(InCommandContext, nullptr, nullptr, ERayTracingMeshCommandsMode::LIGHTMAP_TRACING)
 {
 	FeatureLevel = GMaxRHIFeatureLevel;
 }

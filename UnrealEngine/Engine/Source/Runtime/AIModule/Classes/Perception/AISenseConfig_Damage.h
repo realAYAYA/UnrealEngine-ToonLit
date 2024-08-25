@@ -16,7 +16,7 @@ class UAISenseConfig_Damage : public UAISenseConfig
 	GENERATED_UCLASS_BODY()
 
 public:
-	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Sense", NoClear, config)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Sense", NoClear, config)
 	TSubclassOf<UAISense_Damage> Implementation;
 
 	AIMODULE_API virtual TSubclassOf<UAISense> GetSenseImplementation() const override;

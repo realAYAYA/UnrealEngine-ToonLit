@@ -9,6 +9,8 @@
 #include "MaterialShared.h"
 #include "MaterialHLSLTree.h"
 #include "MaterialCachedData.h"
+#include "Materials/MaterialInterface.h"
+#include "DataDrivenShaderPlatformInfo.h"
 
 namespace UE::HLSLTree
 {
@@ -83,7 +85,7 @@ bool FExpressionError::PrepareValue(FEmitContext& Context, FEmitScope&, const FR
 
 void FExpressionForward::ComputeAnalyticDerivatives(FTree& Tree, FExpressionDerivatives& OutResult) const
 {
-	return Expression->ComputeAnalyticDerivatives(Tree, OutResult);
+	Expression->ComputeAnalyticDerivatives(Tree, OutResult);
 }
 
 const FExpression* FExpressionForward::ComputePreviousFrame(FTree& Tree, const FRequestedType& RequestedType) const
@@ -99,12 +101,22 @@ bool FExpressionForward::PrepareValue(FEmitContext& Context, FEmitScope& Scope, 
 
 void FExpressionForward::EmitValueShader(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FEmitValueShaderResult& OutResult) const
 {
-	return Expression->EmitValueShader(Context, Scope, RequestedType, OutResult);
+	Expression->EmitValueShader(Context, Scope, RequestedType, OutResult);
 }
 
 void FExpressionForward::EmitValuePreshader(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FEmitValuePreshaderResult& OutResult) const
 {
-	return Expression->EmitValuePreshader(Context, Scope, RequestedType, OutResult);
+	Expression->EmitValuePreshader(Context, Scope, RequestedType, OutResult);
+}
+
+bool FExpressionForward::EmitValueObject(FEmitContext& Context, FEmitScope& Scope, const FName& ObjectTypeName, void* OutObjectBase) const
+{
+	return Expression->EmitValueObject(Context, Scope, ObjectTypeName, OutObjectBase);
+}
+
+const FExpression* FExpressionPreviousFrameSwitch::ComputePreviousFrame(FTree& Tree, const FRequestedType& RequestedType) const
+{
+	return PreviousFrameExpression->ComputePreviousFrame(Tree, RequestedType);
 }
 
 const FExpression* FTree::NewConstant(const Shader::FValue& Value)
@@ -182,7 +194,7 @@ bool FExpressionDefaultValue::PrepareValue(FEmitContext& Context, FEmitScope& Sc
 
 void FExpressionDefaultValue::EmitValuePreshader(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FEmitValuePreshaderResult& OutResult) const
 {
-	const FPreparedType& PreparedType = Context.GetPreparedType(Expression);
+	const FPreparedType& PreparedType = Context.GetPreparedType(Expression, RequestedType);
 	if (!PreparedType.IsVoid())
 	{
 		// If 'Exrpession' is valid, use that
@@ -265,27 +277,42 @@ void FExpressionSetStructField::ComputeAnalyticDerivatives(FTree& Tree, FExpress
 		const Shader::FStructField* DerivativeField = DerivativeStructType->FindFieldByName(Field->Name);
 		check(DerivativeField);
 
-		OutResult.ExpressionDdx = Tree.NewExpression<FExpressionSetStructField>(DerivativeStructType, DerivativeField, StructDerivatives.ExpressionDdx, FieldDerivatives.ExpressionDdx);
-		OutResult.ExpressionDdy = Tree.NewExpression<FExpressionSetStructField>(DerivativeStructType, DerivativeField, StructDerivatives.ExpressionDdy, FieldDerivatives.ExpressionDdy);
+		OutResult.ExpressionDdx = Tree.NewExpression<FExpressionSetStructField>(DerivativeStructType, DerivativeField, StructDerivatives.ExpressionDdx, FieldDerivatives.ExpressionDdx, TestMaterialProperty);
+		OutResult.ExpressionDdy = Tree.NewExpression<FExpressionSetStructField>(DerivativeStructType, DerivativeField, StructDerivatives.ExpressionDdy, FieldDerivatives.ExpressionDdy, TestMaterialProperty);
 	}
 }
 
 const FExpression* FExpressionSetStructField::ComputePreviousFrame(FTree& Tree, const FRequestedType& RequestedType) const
 {
-	FRequestedType RequestedStructType(RequestedType);
-	RequestedStructType.ClearFieldRequested(Field);
+	FRequestedType RequestedStructType = MakeRequestedStructType(Tree.ActiveStructFieldStack, RequestedType);
 	const FExpression* PrevStructExpression = Tree.GetPreviousFrame(StructExpression, RequestedStructType);
 
-	const FRequestedType RequestedFieldType = RequestedType.GetField(Field);
-	const FExpression* PrevFieldExpression = Tree.GetPreviousFrame(FieldExpression, RequestedFieldType);
+	const FRequestedType RequestedFieldType = MakeRequestedFieldType(Tree.ActiveStructFieldStack, RequestedType);
+	if (RequestedFieldType.IsEmpty())
+	{
+		// Ignore the field subtree if not requested
+		return PrevStructExpression;
+	}
 
-	return Tree.NewExpression<FExpressionSetStructField>(StructType, Field, PrevStructExpression, PrevFieldExpression);
+	const FExpression* PrevFieldExpression;
+	{
+		FScopedActiveStructField ScopedActiveField(Tree.ActiveStructFieldStack, Field);
+		PrevFieldExpression = Tree.GetPreviousFrame(FieldExpression, RequestedFieldType);
+	}
+
+	return Tree.NewExpression<FExpressionSetStructField>(StructType, Field, PrevStructExpression, PrevFieldExpression, TestMaterialProperty);
 }
 
 bool FExpressionSetStructField::PrepareValue(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FPrepareValueResult& OutResult) const
 {
-	FRequestedType RequestedStructType(RequestedType);
-	RequestedStructType.ClearFieldRequested(Field);
+	if (!IsStructFieldActive(Context))
+	{
+		// The struct field isn't active so don't touch it and just forward
+		const FPreparedType& PreparedType = Context.PrepareExpression(StructExpression, Scope, RequestedType);
+		return OutResult.SetType(Context, RequestedType, PreparedType);
+	}
+
+	FRequestedType RequestedStructType = MakeRequestedStructType(Context.ActiveStructFieldStack, RequestedType);
 
 	const FPreparedType StructPreparedType = Context.PrepareExpression(StructExpression, Scope, RequestedStructType);
 	if (!StructPreparedType.IsVoid() && StructPreparedType.Type.StructType != StructType)
@@ -298,12 +325,20 @@ bool FExpressionSetStructField::PrepareValue(FEmitContext& Context, FEmitScope& 
 	{
 		ResultType = StructType;
 	}
-	
-	const FRequestedType RequestedFieldType = RequestedType.GetField(Field);
-	if (!RequestedType.IsEmpty())
+
+	const FRequestedType RequestedFieldType = MakeRequestedFieldType(Context.ActiveStructFieldStack, RequestedType);
+	if (!RequestedFieldType.IsEmpty())
 	{
+		FScopedActiveStructField ActiveFieldScope(Context.ActiveStructFieldStack, Field);
+
 		const FPreparedType FieldPreparedType = Context.PrepareExpression(FieldExpression, Scope, RequestedFieldType);
 		ResultType.SetField(Field, FieldPreparedType);
+	}
+
+	if (!RequestedType.IsStruct())
+	{
+		const Shader::FStructField* ActiveField = Context.ActiveStructFieldStack.Last();
+		ResultType = ResultType.GetFieldType(ActiveField);
 	}
 
 	return OutResult.SetType(Context, RequestedType, ResultType);
@@ -311,12 +346,17 @@ bool FExpressionSetStructField::PrepareValue(FEmitContext& Context, FEmitScope& 
 
 void FExpressionSetStructField::EmitValueShader(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FEmitValueShaderResult& OutResult) const
 {
-	FRequestedType RequestedStructType(RequestedType);
-	RequestedStructType.ClearFieldRequested(Field);
+	if (!IsStructFieldActive(Context))
+	{
+		StructExpression->EmitValueShader(Context, Scope, RequestedType, OutResult);
+		return;
+	}
+
+	FRequestedType RequestedStructType = MakeRequestedStructType(Context.ActiveStructFieldStack, RequestedType);
 	const EExpressionEvaluation StructEvaluation = Context.GetEvaluation(StructExpression, Scope, RequestedStructType);
 	check(StructEvaluation != EExpressionEvaluation::None);
 
-	const FRequestedType RequestedFieldType = RequestedType.GetField(Field);
+	const FRequestedType RequestedFieldType = MakeRequestedFieldType(Context.ActiveStructFieldStack, RequestedType);
 	const EExpressionEvaluation FieldEvaluation = Context.GetEvaluation(FieldExpression, Scope, RequestedFieldType);
 	check(FieldEvaluation != EExpressionEvaluation::None);
 
@@ -332,25 +372,39 @@ void FExpressionSetStructField::EmitValueShader(FEmitContext& Context, FEmitScop
 		if (RequestedFieldType.IsEmpty())
 		{
 			OutResult.Code = StructValue;
-			return;
 		}
+		else
+		{
+			FScopedActiveStructField ActiveFieldScope(Context.ActiveStructFieldStack, Field);
 
-		FEmitShaderExpression* FieldValue = FieldExpression->GetValueShader(Context, Scope, RequestedFieldType, Field->Type);
-		OutResult.Code = Context.EmitExpression(Scope, StructType, TEXT("%_Set%(%, %)"),
-			StructType->Name,
-			Field->Name,
-			StructValue,
-			FieldValue);
+			FEmitShaderExpression* FieldValue = FieldExpression->GetValueShader(Context, Scope, RequestedFieldType, Field->Type);
+			OutResult.Code = Context.EmitExpression(Scope, StructType, TEXT("%_Set%(%, %)"),
+				StructType->Name,
+				Field->Name,
+				StructValue,
+				FieldValue);
+		}
+	}
+
+	if (!RequestedType.IsStruct())
+	{
+		const Shader::FStructField* ActiveField = Context.ActiveStructFieldStack.Last();
+		OutResult.Code = Context.EmitInlineExpression(Scope, ActiveField->Type, TEXT("%.%"), OutResult.Code, ActiveField->Name);
 	}
 }
 
 void FExpressionSetStructField::EmitValuePreshader(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FEmitValuePreshaderResult& OutResult) const
 {
-	FRequestedType RequestedStructType(RequestedType);
-	RequestedStructType.ClearFieldRequested(Field);
+	if (!IsStructFieldActive(Context))
+	{
+		StructExpression->EmitValuePreshader(Context, Scope, RequestedType, OutResult);
+		return;
+	}
+	
+	FRequestedType RequestedStructType = MakeRequestedStructType(Context.ActiveStructFieldStack, RequestedType);
 	const EExpressionEvaluation StructEvaluation = Context.GetEvaluation(StructExpression, Scope, RequestedStructType);
 
-	const FRequestedType RequestedFieldType = RequestedType.GetField(Field);
+	const FRequestedType RequestedFieldType = MakeRequestedFieldType(Context.ActiveStructFieldStack, RequestedType);
 	const EExpressionEvaluation FieldEvaluation = Context.GetEvaluation(FieldExpression, Scope, RequestedFieldType);
 
 	OutResult.Type = StructType;
@@ -362,6 +416,9 @@ void FExpressionSetStructField::EmitValuePreshader(FEmitContext& Context, FEmitS
 	else
 	{
 		StructExpression->GetValuePreshader(Context, Scope, RequestedStructType, StructType, OutResult.Preshader);
+
+		FScopedActiveStructField ActiveFieldScope(Context.ActiveStructFieldStack, Field);
+
 		FieldExpression->GetValuePreshader(Context, Scope, RequestedFieldType, Field->Type, OutResult.Preshader);
 
 		check(Context.PreshaderStackPosition > 0);
@@ -369,6 +426,68 @@ void FExpressionSetStructField::EmitValuePreshader(FEmitContext& Context, FEmitS
 
 		OutResult.Preshader.WriteOpcode(Shader::EPreshaderOpcode::SetField).Write(Field->ComponentIndex).Write(Field->GetNumComponents());
 	}
+
+	if (!RequestedType.IsStruct())
+	{
+		const Shader::FStructField* ActiveField = Context.ActiveStructFieldStack.Last();
+		OutResult.Type = ActiveField->Type;
+		OutResult.Preshader.WriteOpcode(Shader::EPreshaderOpcode::GetField).Write(ActiveField->Type).Write(ActiveField->ComponentIndex);
+	}
+}
+
+FRequestedType FExpressionSetStructField::MakeRequestedStructType(const FActiveStructFieldStack& ActiveFieldStack, const FRequestedType& RequestedType) const
+{
+	FRequestedType Result;
+	if (RequestedType.IsStruct())
+	{
+		Result = RequestedType;
+	}
+	else
+	{
+		check(!RequestedType.IsObject() && RequestedType.Type.IsNumericVector());
+		// Due to legacy, it is possible for RequestedType to be numeric instead of a struct type. It implies requesting the material attribute being processed
+		const Shader::FStructField* ActiveField = ActiveFieldStack.Last();
+		Result = FRequestedType(StructType, false);
+		Result.SetFieldRequested(ActiveField, RequestedType);
+	}
+	Result.ClearFieldRequested(Field);
+	return Result;
+}
+
+FRequestedType FExpressionSetStructField::MakeRequestedFieldType(const FActiveStructFieldStack& ActiveFieldStack, const FRequestedType& RequestedType) const
+{
+	if (RequestedType.IsStruct())
+	{
+		return RequestedType.GetField(Field);
+	}
+	else
+	{
+		check(!RequestedType.IsObject() && RequestedType.Type.IsNumericVector());
+		// Due to legacy, it is possible for RequestedType to be numeric instead of a struct type. It implies requesting the material attribute being processed
+		const Shader::FStructField* ActiveField = ActiveFieldStack.Last();
+		return ActiveField == Field ? RequestedType : FRequestedType(RequestedType.Type, false);
+	}
+}
+
+bool FExpressionSetStructField::IsStructFieldActive(FEmitContext& Context) const
+{
+	if (TestMaterialProperty != MP_MAX)
+	{
+		if (Context.MaterialInterface)
+		{
+			return Context.MaterialInterface->IsPropertyActive(TestMaterialProperty);
+		}
+		else if (Context.Material && Context.Material->GetMaterialInterface())
+		{
+			return Context.Material->GetMaterialInterface()->IsPropertyActive(TestMaterialProperty);
+		}
+		else
+		{
+			checkNoEntry();
+			return false;
+		}
+	}
+	return true;
 }
 
 void FExpressionSelect::ComputeAnalyticDerivatives(FTree& Tree, FExpressionDerivatives& OutResult) const
@@ -393,6 +512,11 @@ const FExpression* FExpressionSelect::ComputePreviousFrame(FTree& Tree, const FR
 bool FExpressionSelect::PrepareValue(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FPrepareValueResult& OutResult) const
 {
 	const FPreparedType& ConditionType = Context.PrepareExpression(ConditionExpression, Scope, Shader::EValueType::Bool1);
+	if (ConditionType.IsVoid())
+	{
+		return false;
+	}
+
 	const EExpressionEvaluation ConditionEvaluation = ConditionType.GetEvaluation(Scope, Shader::EValueType::Bool1);
 	if (IsConstantEvaluation(ConditionEvaluation))
 	{
@@ -421,6 +545,10 @@ bool FExpressionSelect::PrepareValue(FEmitContext& Context, FEmitScope& Scope, c
 			return Context.Error(TEXT("Cannot mix numeric vectors with different number of components"));
 		}
 	}
+	else if (LhsType.IsObject() && !IsConstantEvaluation(ConditionEvaluation))
+	{
+		return Context.Error(TEXT("Condition must be constant when selecting between objects"));
+	}
 
 	ResultType.MergeEvaluation(ConditionEvaluation);
 	return OutResult.SetType(Context, RequestedType, ResultType);
@@ -428,7 +556,7 @@ bool FExpressionSelect::PrepareValue(FEmitContext& Context, FEmitScope& Scope, c
 
 void FExpressionSelect::EmitValueShader(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FEmitValueShaderResult& OutResult) const
 {
-	const FPreparedType& ConditionType = Context.GetPreparedType(ConditionExpression);
+	const FPreparedType& ConditionType = Context.GetPreparedType(ConditionExpression, Shader::EValueType::Bool1);
 	const EExpressionEvaluation ConditionEvaluation = ConditionType.GetEvaluation(Scope, Shader::EValueType::Bool1);
 	if (IsConstantEvaluation(ConditionEvaluation))
 	{
@@ -438,11 +566,13 @@ void FExpressionSelect::EmitValueShader(FEmitContext& Context, FEmitScope& Scope
 	}
 	else
 	{
-		const Shader::FType LocalType = Context.GetType(this);
+		const Shader::FType LocalType = Context.GetResultType(this, RequestedType);
+		const bool bIsLWC = LocalType.IsNumericLWC();
+
 		FEmitShaderExpression* TrueValue = TrueExpression->GetValueShader(Context, Scope, RequestedType, LocalType);
 		FEmitShaderExpression* FalseValue = FalseExpression->GetValueShader(Context, Scope, RequestedType, LocalType);
 
-		OutResult.Code = Context.EmitExpression(Scope, LocalType, TEXT("(% ? % : %)"),
+		OutResult.Code = Context.EmitExpression(Scope, LocalType, bIsLWC ? TEXT("LWCSelect(%, %, %)") : TEXT("(% ? % : %)"),
 			ConditionExpression->GetValueShader(Context, Scope, Shader::EValueType::Bool1),
 			TrueValue,
 			FalseValue);
@@ -451,7 +581,7 @@ void FExpressionSelect::EmitValueShader(FEmitContext& Context, FEmitScope& Scope
 
 void FExpressionSelect::EmitValuePreshader(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FEmitValuePreshaderResult& OutResult) const
 {
-	const FPreparedType& ConditionType = Context.GetPreparedType(ConditionExpression);
+	const FPreparedType& ConditionType = Context.GetPreparedType(ConditionExpression, Shader::EValueType::Bool1);
 	const EExpressionEvaluation ConditionEvaluation = ConditionType.GetEvaluation(Scope, Shader::EValueType::Bool1);
 	if (IsConstantEvaluation(ConditionEvaluation))
 	{
@@ -461,7 +591,7 @@ void FExpressionSelect::EmitValuePreshader(FEmitContext& Context, FEmitScope& Sc
 	}
 	else
 	{
-		const Shader::FType ResultType = Context.GetType(this);
+		const Shader::FType ResultType = Context.GetResultType(this, RequestedType);
 		auto ConvertToResultType = [&ResultType](const Shader::FType& Type, Shader::FPreshaderData& Preshader)
 		{
 			if (Type == ResultType)
@@ -487,7 +617,8 @@ void FExpressionSelect::EmitValuePreshader(FEmitContext& Context, FEmitScope& Sc
 		ConditionExpression->GetValuePreshader(Context, Scope, Shader::EValueType::Bool1, OutResult.Preshader);
 
 		check(Context.PreshaderStackPosition > 0);
-		Context.PreshaderStackPosition--;
+		// -1 due to JumpIfFalse consuming condition value. Another -1 due to only one branch is evaluated
+		Context.PreshaderStackPosition -= 2;
 		const Shader::FPreshaderLabel Label0 = OutResult.Preshader.WriteJump(Shader::EPreshaderOpcode::JumpIfFalse);
 
 		const Shader::FType TrueType = TrueExpression->GetValuePreshader(Context, Scope, RequestedType, OutResult.Preshader);
@@ -502,6 +633,14 @@ void FExpressionSelect::EmitValuePreshader(FEmitContext& Context, FEmitScope& Sc
 		OutResult.Preshader.SetLabel(Label1);
 		OutResult.Type = ResultType;
 	}
+}
+
+bool FExpressionSelect::EmitValueObject(FEmitContext& Context, FEmitScope& Scope, const FName& ObjectTypeName, void* OutObjectBase) const
+{
+	// We have already checked that the condition is constant during PrepareValue
+	const bool bCondition = ConditionExpression->GetValueConstant(Context, Scope, Shader::EValueType::Bool1).AsBoolScalar();
+	const FExpression* SelectedExpression = bCondition ? TrueExpression : FalseExpression;
+	return SelectedExpression->GetValueObject(Context, Scope, ObjectTypeName, OutObjectBase);
 }
 
 void FExpressionDerivative::ComputeAnalyticDerivatives(FTree& Tree, FExpressionDerivatives& OutResult) const
@@ -550,7 +689,7 @@ void FExpressionDerivative::EmitValuePreshader(FEmitContext& Context, FEmitScope
 {
 	// Derivative of a constant is 0
 	Context.PreshaderStackPosition++;
-	OutResult.Type = Context.GetType(this);
+	OutResult.Type = Context.GetResultType(this, RequestedType);
 	OutResult.Preshader.WriteOpcode(Shader::EPreshaderOpcode::ConstantZero).Write(OutResult.Type);
 }
 
@@ -643,8 +782,9 @@ void SwizzleEmitValueShader(FEmitContext& Context,
 	const FRequestedType RequestedInputType = Private::GetRequestedSwizzleType(Parameters, RequestedType);
 
 	// Make sure the input is cast to the explicit requested type, this ensures it will have enough components for the swizzle
-	// Alternately, we could avoid the cast, and update the logic to insert 0s for swizzle access to invalid components
-	FEmitShaderExpression* EmitInput = Input->GetValueShader(Context, Scope, RequestedInputType, RequestedInputType.Type);
+	// Alternately, we could avoid the cast, and update the logic to insert 0s for swizzle access to invalid components or
+	// replicate the first component in case the input is scalar
+	FEmitShaderExpression* EmitInput = Input->GetValueShader(Context, Scope, RequestedInputType, RequestedInputType.Type.GetConcreteType());
 
 	const Shader::FValueTypeDescription InputTypeDesc = Shader::GetValueTypeDescription(EmitInput->Type);
 	bool bSkipSwizzle = (InputTypeDesc.NumComponents == Parameters.NumComponents);
@@ -670,7 +810,7 @@ void SwizzleEmitValueShader(FEmitContext& Context,
 		TStringBuilder<256> FormattedCode;
 		if (bIsLWC)
 		{
-			FormattedCode.Appendf(TEXT("LWCSwizzle(%s"), EmitInput->Reference);
+			FormattedCode.Appendf(TEXT("WSSwizzle(%s"), EmitInput->Reference);
 		}
 		else
 		{
@@ -892,6 +1032,11 @@ bool FExpressionAppend::PrepareValue(FEmitContext& Context, FEmitScope& Scope, c
 	}
 
 	const FPreparedType& RhsType = Context.PrepareExpression(Rhs, Scope, RhsRequestedType);
+	if (RhsType.IsVoid())
+	{
+		return false;
+	}
+
 	const Private::FAppendTypes Types = Private::GetAppendTypes(RequestedType, LhsType, RhsType);
 	check(!Types.ResultType.IsNumericScalar()); // Appending 2 values should never result in a scalar
 	if (Types.ResultType.IsVoid())
@@ -907,7 +1052,7 @@ bool FExpressionAppend::PrepareValue(FEmitContext& Context, FEmitScope& Scope, c
 
 void FExpressionAppend::EmitValueShader(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FEmitValueShaderResult& OutResult) const
 {
-	const Private::FAppendTypes Types = Private::GetAppendTypes(RequestedType, Context.GetPreparedType(Lhs), Context.GetPreparedType(Rhs));
+	const Private::FAppendTypes Types = Private::GetAppendTypes(RequestedType, Context.GetPreparedType(Lhs, RequestedType), Context.GetPreparedType(Rhs, RequestedType));
 	const Shader::FType ResultType = Types.ResultType.GetResultType();
 	FEmitShaderExpression* LhsValue = Lhs->GetValueShader(Context, Scope, Types.LhsRequestedType, Types.LhsType);
 
@@ -920,7 +1065,7 @@ void FExpressionAppend::EmitValueShader(FEmitContext& Context, FEmitScope& Scope
 		FEmitShaderExpression* RhsValue = Rhs->GetValueShader(Context, Scope, Types.RhsRequestedType, Types.RhsType);
 		if (Types.bIsLWC)
 		{
-			OutResult.Code = Context.EmitInlineExpression(Scope, ResultType, TEXT("MakeLWCVector(%, %)"),
+			OutResult.Code = Context.EmitInlineExpression(Scope, ResultType, TEXT("MakeWSVector(%, %)"),
 				LhsValue,
 				RhsValue);
 		}
@@ -936,7 +1081,7 @@ void FExpressionAppend::EmitValueShader(FEmitContext& Context, FEmitScope& Scope
 
 void FExpressionAppend::EmitValuePreshader(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FEmitValuePreshaderResult& OutResult) const
 {
-	const Private::FAppendTypes Types = Private::GetAppendTypes(RequestedType, Context.GetPreparedType(Lhs), Context.GetPreparedType(Rhs));
+	const Private::FAppendTypes Types = Private::GetAppendTypes(RequestedType, Context.GetPreparedType(Lhs, RequestedType), Context.GetPreparedType(Rhs, RequestedType));
 	Lhs->GetValuePreshader(Context, Scope, Types.LhsRequestedType, OutResult.Preshader);
 	if (Types.RhsType != Shader::EValueType::Void)
 	{
@@ -948,6 +1093,11 @@ void FExpressionAppend::EmitValuePreshader(FEmitContext& Context, FEmitScope& Sc
 		OutResult.Preshader.WriteOpcode(Shader::EPreshaderOpcode::AppendVector);
 	}
 	OutResult.Type = Types.ResultType.GetResultType();
+}
+
+const FExpression* FTree::NewAppend(const FExpression* Lhs, const FExpression* Rhs)
+{
+	return NewExpression<FExpressionAppend>(Lhs, Rhs);
 }
 
 void FExpressionSwitchBase::ComputeAnalyticDerivatives(FTree& Tree, FExpressionDerivatives& OutResult) const
@@ -1110,6 +1260,68 @@ bool FExpressionShaderStageSwitch::IsInputActive(const FEmitContext& Context, in
 	return (Context.ShaderFrequency == SF_Pixel && Index == 0) || (Context.ShaderFrequency == SF_Vertex && Index == 1);
 }
 
+FExpressionVirtualTextureFeatureSwitch::FExpressionVirtualTextureFeatureSwitch(TConstArrayView<const FExpression*> InInputs)
+	: FExpressionSwitchBase(InInputs)
+{
+	static_assert(MaxInputs >= 2, "FExpressionSwitchBase is too small for FExpressionVirtualTextureFeatureSwitch");
+	check(InInputs.Num() == 2);
+}
+
+bool FExpressionVirtualTextureFeatureSwitch::IsInputActive(const FEmitContext& Context, int32 Index) const
+{
+	if (Context.TargetParameters.IsGenericTarget())
+	{
+		return true;
+	}
+
+	if (UseVirtualTexturing(Context.TargetParameters.ShaderPlatform))
+	{
+		return Index == 0;
+	}
+	else
+	{
+		return Index == 1;
+	}
+}
+
+FExpressionDistanceFieldsRenderingSwitch::FExpressionDistanceFieldsRenderingSwitch(TConstArrayView<const FExpression*> InInputs)
+	: FExpressionSwitchBase(InInputs)
+{
+	static_assert(MaxInputs >= 2, "FExpressionSwitchBase is too small for FExpressionDistanceFieldsRenderingSwitch");
+	check(InInputs.Num() == 2);
+}
+
+bool FExpressionDistanceFieldsRenderingSwitch::IsInputActive(const FEmitContext& Context, int32 Index) const
+{
+	if (Context.TargetParameters.IsGenericTarget())
+	{
+		return true;
+	}
+
+	if (IsMobilePlatform(Context.TargetParameters.ShaderPlatform))
+	{
+		if (IsMobileDistanceFieldEnabled(Context.TargetParameters.ShaderPlatform))
+		{
+			return Index == 0;
+		}
+		else
+		{
+			return Index == 1;
+		}
+	}
+	else
+	{
+		if (IsUsingDistanceFields(Context.TargetParameters.ShaderPlatform))
+		{
+			return Index == 0;
+		}
+		else
+		{
+			return Index == 1;
+		}
+	}
+}
+
 bool FExpressionInlineCustomHLSL::PrepareValue(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FPrepareValueResult& OutResult) const
 {
 	return OutResult.SetType(Context, RequestedType, EExpressionEvaluation::Shader, Shader::FType(ResultType));
@@ -1139,6 +1351,15 @@ bool FExpressionCustomHLSL::PrepareValue(FEmitContext& Context, FEmitScope& Scop
 		}
 
 		Context.MarkInputType(Input.Expression, InputType.Type);
+	}
+
+	FMaterialCachedExpressionData* CachedExpressionData = Context.FindData<Material::FEmitData>().CachedExpressionData;
+	if (CachedExpressionData && CachedExpressionData->EditorOnlyData.IsValid())
+	{
+		for (const FString& IncludeFilePath : IncludeFilePaths)
+		{
+			CachedExpressionData->EditorOnlyData->ExpressionIncludeFilePaths.Add(IncludeFilePath);
+		}
 	}
 
 	return OutResult.SetType(Context, RequestedType, EExpressionEvaluation::Shader, Shader::FType(OutputStructType));
@@ -1208,7 +1429,7 @@ bool FStatementIf::Prepare(FEmitContext& Context, FEmitScope& Scope) const
 void FStatementIf::EmitShader(FEmitContext& Context, FEmitScope& Scope) const
 {
 	FEmitShaderNode* Dependency = nullptr;
-	const FPreparedType& ConditionType = Context.GetPreparedType(ConditionExpression);
+	const FPreparedType& ConditionType = Context.GetPreparedType(ConditionExpression, Shader::EValueType::Bool1);
 	const EExpressionEvaluation ConditionEvaluation = ConditionType.GetEvaluation(Scope, Shader::EValueType::Bool1);
 	if (IsConstantEvaluation(ConditionEvaluation))
 	{

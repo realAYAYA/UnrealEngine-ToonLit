@@ -165,6 +165,9 @@
 # Exception for VP EpicStageApp dart files
 !/Engine/Extras/VirtualProduction/EpicStageApp/**/*.dart
 
+# Exception for VS Workspace patches
+!/Engine/Extras/VisualStudioWorkspace/
+
 # Ignore the automatically created mono symlink
 /Engine/Binaries/ThirdParty/Mono/Mac/bin/mono
 
@@ -208,7 +211,7 @@
 /Engine/Binaries/DotNET/UnrealBuildTool.xml
 /Engine/Binaries/DotNET/AutomationScripts/BuildGraph.Automation.xml
 /Engine/Binaries/DotNET/AutomationScripts/Newtonsoft.Json.xml
-/Engine/Platforms/Hololens/Binaries/DotNET/AutomationTool/AutomationScripts/Platforms/HoloLens/*.xml
+/Engine/Platforms/*/Binaries/DotNET/AutomationTool/AutomationScripts/**/*.xml
 /Engine/Source/Programs/AutomationTool/BuildGraph/BuildGraph.Automation.xml
 
 # Ignore generated files from C# tools

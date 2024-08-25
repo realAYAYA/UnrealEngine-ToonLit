@@ -27,14 +27,15 @@ TAutoConsoleVariable<int32> CVarVSMMaterialVisibility(
 TAutoConsoleVariable<int32> CVarMaxDistantLightsPerFrame(
 	TEXT("r.Shadow.Virtual.MaxDistantUpdatePerFrame"),
 	1,
-	TEXT("Maximum number of distant lights to update each frame."),
+	TEXT("Maximum number of distant lights to update each frame. Invalidated lights that were missed may be updated in a later frame (round-robin)."),
 	ECVF_Scalability | ECVF_RenderThreadSafe
 );
 
 static TAutoConsoleVariable<int32> CVarDistantLightMode(
 	TEXT("r.Shadow.Virtual.DistantLightMode"),
 	1,
-	TEXT("Control whether distant light mode is enabled for local lights.\n0 == Off, \n1 == On (default), \n2 == Force All."),
+	TEXT("Control whether distant light mode is enabled for local lights.\n0 == Off, \n1 == On (default), \n2 == Force All.\n")
+	TEXT("When on, lights with a pixel footprint below the threshold are marked as distant. Updates to distant lights are throttled (force-cached), they use simpler page-table logic and the memory cost is lower."),
 	ECVF_RenderThreadSafe
 );
 
@@ -42,6 +43,7 @@ static TAutoConsoleVariable<float> CVarDistantLightForceCacheFootprintFraction(
 	TEXT("r.Shadow.Virtual.DistantLightForceCacheFootprintFraction"),
 	0.0f,
 	TEXT("Fraction of footprint size below which start force-caching lights that are invalidated (i.e., are moving or re-added)\n")
+	TEXT("  Larger values may improve performance but may also produce more visible artifacts\n")
 	TEXT("  The base footprint is based on the page size.\n")
 	TEXT("  0.0 == Never force-cache (default), 1.0 == Always force-cache."),
 	ECVF_Scalability | ECVF_RenderThreadSafe
@@ -70,14 +72,18 @@ static TAutoConsoleVariable<float> CVarResolutionLodBiasLocal(
 static TAutoConsoleVariable<float> CVarResolutionLodBiasLocalMoving(
 	TEXT("r.Shadow.Virtual.ResolutionLodBiasLocalMoving"),
 	1.0f,
-	TEXT("Bias applied to LOD calculations for moving local lights. -1.0 doubles resolution, 1.0 halves it and so on."),
+	TEXT("Bias applied to LOD calculations for local lights that are moving. -1.0 doubles resolution, 1.0 halves it and so on.\n")
+	TEXT("The bias transitions smoothly back to ResolutionLodBiasLocal as the light transitions to non-moving, see 'r.Shadow.Scene.LightActiveFrameCount'."),
 	ECVF_Scalability | ECVF_RenderThreadSafe
 );
 
 DECLARE_DWORD_COUNTER_STAT(TEXT("VSM Total Raster Bins"), STAT_VSMNaniteBasePassTotalRasterBins, STATGROUP_ShadowRendering);
-DECLARE_DWORD_COUNTER_STAT(TEXT("VSM Total Shading Draws"), STAT_VSMNaniteBasePassTotalShadingDraws, STATGROUP_ShadowRendering);
-
 DECLARE_DWORD_COUNTER_STAT(TEXT("VSM Visible Raster Bins"), STAT_VSMNaniteBasePassVisibleRasterBins, STATGROUP_ShadowRendering);
+
+DECLARE_DWORD_COUNTER_STAT(TEXT("VSM Total Shading Bins"), STAT_VSMNaniteBasePassTotalShadingBins, STATGROUP_ShadowRendering);
+DECLARE_DWORD_COUNTER_STAT(TEXT("VSM Visible Shading Bins"), STAT_VSMNaniteBasePassVisibleShadingBins, STATGROUP_ShadowRendering);
+
+DECLARE_DWORD_COUNTER_STAT(TEXT("VSM Total Shading Draws"), STAT_VSMNaniteBasePassTotalShadingDraws, STATGROUP_ShadowRendering);
 DECLARE_DWORD_COUNTER_STAT(TEXT("VSM Visible Shading Draws"), STAT_VSMNaniteBassPassVisibleShadingDraws, STATGROUP_ShadowRendering);
 
 DECLARE_DWORD_COUNTER_STAT(TEXT("Distant Light Count"), STAT_DistantLightCount, STATGROUP_ShadowRendering);
@@ -100,12 +106,88 @@ float FShadowSceneRenderer::ComputeNaniteShadowsLODScaleFactor()
 	return FMath::Pow(2.0f, -CVarNaniteShadowsLODBias.GetValueOnRenderThread());
 }
 
-static float GetResolutionLODBiasLocal(float LightMobilityFactor)
+namespace
+{
+
+struct FHeapPair
+{
+	int32 Age;
+	TSharedPtr<FVirtualShadowMapPerLightCacheEntry> CacheEntry;
+
+	// Order for a min-heap, we always want to replace the least-old item
+	bool operator <(const FHeapPair& Other) const { return Age < Other.Age; }
+};
+
+}
+
+void FShadowSceneRenderer::BeginRender(FRDGBuilder& GraphBuilder)
+{
+	// Kick off shadow scene updates.
+	ShadowScene.UpdateForRenderedFrame(GraphBuilder);
+
+	// Priority queue of distant lights to update.
+	const int32 MaxToUpdate = CVarMaxDistantLightsPerFrame.GetValueOnRenderThread() < 0 ? INT32_MAX : CVarMaxDistantLightsPerFrame.GetValueOnRenderThread();
+
+	if (MaxToUpdate == 0 || !VirtualShadowMapArray.IsEnabled() || !VirtualShadowMapArray.CacheManager->IsCacheEnabled())
+	{
+		return;
+	}	
+	
+	RendererSetupTask = GraphBuilder.AddSetupTask([this, MaxToUpdate]()
+	{
+		FVirtualShadowMapArrayCacheManager& CacheManager = *VirtualShadowMapArray.CacheManager;
+
+		TArray<FHeapPair> DistantLightUpdateQueue;
+		int32 SceneFrameNumber = int32(Scene.GetFrameNumber());
+		for (auto It = CacheManager.CreateConstEntryIterator(); It; ++It)
+		{
+			TSharedPtr<FVirtualShadowMapPerLightCacheEntry> PerLightCacheEntry = It.Value();
+			if (PerLightCacheEntry->IsFullyCached())
+			{
+				int32 Age = SceneFrameNumber - int32(PerLightCacheEntry->GetLastScheduledFrameNumber());
+				if (DistantLightUpdateQueue.Num() < MaxToUpdate)
+				{
+					DistantLightUpdateQueue.HeapPush(FHeapPair{ Age, PerLightCacheEntry});
+				}
+				else
+				{
+					// Queue is full, but we found an older item
+					if (DistantLightUpdateQueue.HeapTop().Age < Age)
+					{
+						// Replace heap top and restore heap property.
+						DistantLightUpdateQueue[0] = FHeapPair{ Age, PerLightCacheEntry };
+						AlgoImpl::HeapSiftDown(DistantLightUpdateQueue.GetData(), 0, DistantLightUpdateQueue.Num(), FIdentityFunctor(), TLess<FHeapPair>());
+					}
+				}
+			}
+		}
+
+		for (const FHeapPair &HeapPair : DistantLightUpdateQueue)
+		{
+			// Mark frame it was scheduled, this is picked up later in AddLocalLightShadow to trigger invalidation 
+			HeapPair.CacheEntry->Current.ScheduledFrameNumber = SceneFrameNumber;
+		}
+	});
+}
+
+UE::Renderer::Private::IShadowInvalidatingInstances *FShadowSceneRenderer::GetInvalidatingInstancesInterface(const FSceneView *SceneView)
+{
+	// No need to collect invalidations if there is nothing to invalidate.
+	if (Scene.VirtualShadowMapCache && Scene.VirtualShadowMapCache->IsCacheDataAvailable())
+	{
+		// TODO: Make use of the SceneView parameter to register invalidations for view-dependent shadows appropriately.
+		return Scene.VirtualShadowMapCache->GetInvalidatingInstancesInterface();
+	}
+	return nullptr;
+}
+
+
+static float GetResolutionLODBiasLocal(float LightMobilityFactor, float LightLODBias)
 {
 	return FVirtualShadowMapArray::InterpolateResolutionBias(
 		CVarResolutionLodBiasLocal.GetValueOnRenderThread(),
 		CVarResolutionLodBiasLocalMoving.GetValueOnRenderThread(),
-		LightMobilityFactor);
+		LightMobilityFactor) + LightLODBias;
 }
 
 FVirtualShadowMapProjectionShaderData FShadowSceneRenderer::GetLocalLightProjectionShaderData(
@@ -118,26 +200,26 @@ FVirtualShadowMapProjectionShaderData FShadowSceneRenderer::GetLocalLightProject
 
 	int32 VirtualShadowMapId = ProjectedShadowInfo->VirtualShadowMapId + MapIndex;
 	bool bIsSinglePageSM = FVirtualShadowMapArray::IsSinglePage(VirtualShadowMapId);
-	check(VirtualShadowMapId != INDEX_NONE && CacheEntry->Current.bIsDistantLight == bIsSinglePageSM);
+	check(VirtualShadowMapId != INDEX_NONE && CacheEntry->bIsDistantLight == bIsSinglePageSM);
 
-	uint32 Flags = bIsSinglePageSM ? VSM_PROJ_FLAG_CURRENT_DISTANT_LIGHT : 0U;
-	Flags |= CacheEntry->IsUncached() ? VSM_PROJ_FLAG_UNCACHED : 0U;
+	uint32 Flags = CacheEntry->IsUncached() ? VSM_PROJ_FLAG_UNCACHED : 0U;
 
 	const FViewMatrices ViewMatrices = ProjectedShadowInfo->GetShadowDepthRenderingViewMatrices(MapIndex, true);
-	const FLargeWorldRenderPosition PreViewTranslation(ProjectedShadowInfo->PreShadowTranslation);
+	const FDFVector3 PreViewTranslation(ProjectedShadowInfo->PreShadowTranslation);
 
 	FVirtualShadowMapProjectionShaderData Data; 
-	Data.TranslatedWorldToShadowViewMatrix		= FMatrix44f(ViewMatrices.GetTranslatedViewMatrix());	// LWC_TODO: Precision loss?
 	Data.ShadowViewToClipMatrix					= FMatrix44f(ViewMatrices.GetProjectionMatrix());
 	Data.TranslatedWorldToShadowUVMatrix		= FMatrix44f(CalcTranslatedWorldToShadowUVMatrix( ViewMatrices.GetTranslatedViewMatrix(), ViewMatrices.GetProjectionMatrix() ));
 	Data.TranslatedWorldToShadowUVNormalMatrix	= FMatrix44f(CalcTranslatedWorldToShadowUVNormalMatrix( ViewMatrices.GetTranslatedViewMatrix(), ViewMatrices.GetProjectionMatrix() ));
-	Data.PreViewTranslationLWCTile				= PreViewTranslation.GetTile();
-	Data.PreViewTranslationLWCOffset			= PreViewTranslation.GetOffset();
+	Data.PreViewTranslationHigh					= PreViewTranslation.High;
+	Data.PreViewTranslationLow					= PreViewTranslation.Low;
 	Data.LightType								= ProjectedShadowInfo->GetLightSceneInfo().Proxy->GetLightType();
 	Data.LightSourceRadius						= ProjectedShadowInfo->GetLightSceneInfo().Proxy->GetSourceRadius();
 	Data.ResolutionLodBias						= ResolutionLODBiasLocal;
 	Data.LightRadius							= ProjectedShadowInfo->GetLightSceneInfo().Proxy->GetRadius();
+	Data.LightDirection                         = FVector3f(0, 0, 0);	// Unused for local lights
 	Data.Flags									= Flags;
+	Data.TexelDitherScale						= ProjectedShadowInfo->GetLightSceneInfo().Proxy->GetVSMTexelDitherScale();
 
 	return Data;
 }
@@ -151,7 +233,8 @@ TSharedPtr<FVirtualShadowMapPerLightCacheEntry> FShadowSceneRenderer::AddLocalLi
 	LocalLightShadowFrameSetup.ProjectedShadowInfo = ProjectedShadowInfo;
 	LocalLightShadowFrameSetup.LightSceneInfo = LightSceneInfo;
 
-	const float ResolutionLODBiasLocal = GetResolutionLODBiasLocal(ShadowScene.GetLightMobilityFactor(LightSceneInfo->Id));
+	const FLightSceneProxy* LightSceneProxy = ProjectedShadowInfo->GetLightSceneInfo().Proxy;
+	const float ResolutionLODBiasLocal = GetResolutionLODBiasLocal(ShadowScene.GetLightMobilityFactor(LightSceneInfo->Id), LightSceneProxy->GetVSMResolutionLodBias());
 
 	// Single page res, at this point we force the VSM to be single page
 	// TODO: this computation does not match up with page marking logic super-well, particularly for long spot lights,
@@ -170,6 +253,11 @@ TSharedPtr<FVirtualShadowMapPerLightCacheEntry> FShadowSceneRenderer::AddLocalLi
 	LocalLightShadowFrameSetup.PerLightCacheEntry = PerLightCacheEntry;
 	bool bIsCached = PerLightCacheEntry->UpdateLocal(ProjectedShadowInitializer, bIsDistantLight, CacheManager->IsCacheEnabled(), !bShouldForceTimeSliceDistantUpdate);
 
+	if (bIsCached && bIsDistantLight && PerLightCacheEntry->Prev.ScheduledFrameNumber == Scene.GetFrameNumber())
+	{
+		PerLightCacheEntry->Invalidate();
+	}
+
 	// Update info on the ProjectionShadowInfo; eventually this should all move into local data structures here
 	const int32 VirtualShadowMapId = VirtualShadowMapArray.Allocate(bIsDistantLight, NumMaps);
 	ProjectedShadowInfo->VirtualShadowMapId = VirtualShadowMapId;
@@ -185,15 +273,6 @@ TSharedPtr<FVirtualShadowMapPerLightCacheEntry> FShadowSceneRenderer::AddLocalLi
 		VirtualSmCacheEntry.ProjectionData = GetLocalLightProjectionShaderData(ResolutionLODBiasLocal, ProjectedShadowInfo, Index);
 	}
 
-	// Only round-robin those that were not invalidated.
-	if (bIsDistantLight && bIsCached)
-	{
-		// This priority could be calculated based also on whether the light has actually been invalidated or not (currently not tracked on host).
-		// E.g., all things being equal update those with an animated mesh in, for example. Plus don't update those the don't need it at all.
-		int32 FramesSinceLastRender = int32(Scene.GetFrameNumber()) - int32(PerLightCacheEntry->GetLastScheduledFrameNumber());
-		DistantLightUpdateQueue.Add(-FramesSinceLastRender, LocalLightShadowIndex);
-	}
-
 	return PerLightCacheEntry;
 }
 
@@ -205,8 +284,6 @@ void FShadowSceneRenderer::AddDirectionalLightShadow(FProjectedShadowInfo* Proje
 
 void FShadowSceneRenderer::PostInitDynamicShadowsSetup()
 {
-	UpdateDistantLightPriorityRender();
-
 	// Dispatch async Nanite culling job if appropriate
 	if (CVarVSMMaterialVisibility.GetValueOnRenderThread() != 0)
 	{
@@ -232,6 +309,7 @@ void FShadowSceneRenderer::PostInitDynamicShadowsSetup()
 				}
 			}
 		}
+
 		if (!bUnboundedClipmap)
 		{
 			for (const FLocalLightShadowFrameSetup& LocalLightShadowFrameSetup : LocalLights)
@@ -252,9 +330,11 @@ void FShadowSceneRenderer::PostInitDynamicShadowsSetup()
 			if (!NaniteCullingViewsVolumes.IsEmpty())
 			{
 				NaniteVisibilityQuery = Scene.NaniteVisibility[ENaniteMeshPass::BasePass].BeginVisibilityQuery(
+					SceneRenderer.Allocator,
 					Scene,
 					NaniteCullingViewsVolumes,
 					&Scene.NaniteRasterPipelines[ENaniteMeshPass::BasePass],
+					&Scene.NaniteShadingPipelines[ENaniteMeshPass::BasePass],
 					&Scene.NaniteMaterials[ENaniteMeshPass::BasePass]
 				);
 			}
@@ -267,24 +347,36 @@ void FShadowSceneRenderer::RenderVirtualShadowMaps(FRDGBuilder& GraphBuilder, bo
 	TRACE_CPUPROFILER_EVENT_SCOPE(FShadowSceneRenderer::RenderVirtualShadowMaps);
 
 	// Always process an existing query if it exists
-	FNaniteVisibilityResults VisibilityResults;
 	if (NaniteVisibilityQuery != nullptr)
 	{
-		Scene.NaniteVisibility[ENaniteMeshPass::BasePass].FinishVisibilityQuery(NaniteVisibilityQuery, VisibilityResults);
+#if STATS
+		GraphBuilder.AddSetupTask([Query = NaniteVisibilityQuery]
+		{
+			const FNaniteVisibilityResults& VisibilityResults = *Nanite::GetVisibilityResults(Query);
 
-		uint32 TotalRasterBins = 0;
-		uint32 VisibleRasterBins = 0;
-		VisibilityResults.GetRasterBinStats(VisibleRasterBins, TotalRasterBins);
+			uint32 TotalRasterBins = 0;
+			uint32 VisibleRasterBins = 0;
+			VisibilityResults.GetRasterBinStats(VisibleRasterBins, TotalRasterBins);
 
-		uint32 TotalShadingDraws = 0;
-		uint32 VisibleShadingDraws = 0;
-		VisibilityResults.GetShadingDrawStats(VisibleShadingDraws, TotalShadingDraws);
+			uint32 TotalShadingBins = 0;
+			uint32 VisibleShadingBins = 0;
+			VisibilityResults.GetShadingBinStats(VisibleShadingBins, TotalShadingBins);
 
-		SET_DWORD_STAT(STAT_VSMNaniteBasePassTotalRasterBins, TotalRasterBins);
-		SET_DWORD_STAT(STAT_VSMNaniteBasePassTotalShadingDraws, TotalShadingDraws);
+			uint32 TotalShadingDraws = 0;
+			uint32 VisibleShadingDraws = 0;
+			VisibilityResults.GetShadingDrawStats(VisibleShadingDraws, TotalShadingDraws);
 
-		SET_DWORD_STAT(STAT_VSMNaniteBasePassVisibleRasterBins, VisibleRasterBins);
-		SET_DWORD_STAT(STAT_VSMNaniteBassPassVisibleShadingDraws, VisibleShadingDraws);
+			SET_DWORD_STAT(STAT_VSMNaniteBasePassTotalRasterBins, TotalRasterBins);
+			SET_DWORD_STAT(STAT_VSMNaniteBasePassVisibleRasterBins, VisibleRasterBins);
+
+			SET_DWORD_STAT(STAT_VSMNaniteBasePassTotalShadingBins, TotalShadingBins);
+			SET_DWORD_STAT(STAT_VSMNaniteBasePassVisibleShadingBins, VisibleShadingBins);
+
+			SET_DWORD_STAT(STAT_VSMNaniteBasePassTotalShadingDraws, TotalShadingDraws);
+			SET_DWORD_STAT(STAT_VSMNaniteBassPassVisibleShadingDraws, VisibleShadingDraws);
+
+		}, Nanite::GetVisibilityTask(NaniteVisibilityQuery));
+#endif
 	}
 
 
@@ -298,7 +390,7 @@ void FShadowSceneRenderer::RenderVirtualShadowMaps(FRDGBuilder& GraphBuilder, bo
 
 	if (bNaniteEnabled)
 	{
-		VirtualShadowMapArray.RenderVirtualShadowMapsNanite(GraphBuilder, SceneRenderer, bUpdateNaniteStreaming, VisibilityResults, VirtualShadowMapViews, SceneInstanceCullingQuery);
+		VirtualShadowMapArray.RenderVirtualShadowMapsNanite(GraphBuilder, SceneRenderer, bUpdateNaniteStreaming, NaniteVisibilityQuery, VirtualShadowMapViews, SceneInstanceCullingQuery);
 	}
 
 	if (UseNonNaniteVirtualShadowMaps(SceneRenderer.ShaderPlatform, SceneRenderer.FeatureLevel))
@@ -310,40 +402,25 @@ void FShadowSceneRenderer::RenderVirtualShadowMaps(FRDGBuilder& GraphBuilder, bo
 	VirtualShadowMapArray.MergeStaticPhysicalPages(GraphBuilder);
 }
 
-void FShadowSceneRenderer::UpdateDistantLightPriorityRender()
-{
-	int32 UpdateBudgetNumLights = CVarMaxDistantLightsPerFrame.GetValueOnRenderThread() < 0 ? int32(DistantLightUpdateQueue.Num()) : FMath::Min(int32(DistantLightUpdateQueue.Num()), CVarMaxDistantLightsPerFrame.GetValueOnRenderThread());
-	for (int32 Index = 0; Index < UpdateBudgetNumLights; ++Index)
-	{
-		const int32 LocalLightShadowIndex = DistantLightUpdateQueue.Top();
-		const int32 Age = DistantLightUpdateQueue.GetKey(LocalLightShadowIndex);
-		// UE_LOG(LogTemp, Log, TEXT("Index: %d Age: %d"), LocalLightShadowIndex, Age);
-		DistantLightUpdateQueue.Pop();
-
-		FLocalLightShadowFrameSetup& LocalLightShadowFrameSetup = LocalLights[LocalLightShadowIndex];
-		
-		// Force fully cached to be off.
-		LocalLightShadowFrameSetup.ProjectedShadowInfo->bShouldRenderVSM = true;
-		LocalLightShadowFrameSetup.PerLightCacheEntry->Current.ScheduledFrameNumber = Scene.GetFrameNumber();
-		// Should trigger invalidations also.
-		LocalLightShadowFrameSetup.PerLightCacheEntry->Invalidate();
-	}
-}
-
-
 void FShadowSceneRenderer::DispatchVirtualShadowMapViewAndCullingSetup(FRDGBuilder& GraphBuilder, TConstArrayView<FProjectedShadowInfo*> VirtualShadowMapShadows)
 {
 	// Don't want to run this more than once in a given frame.
 	check(SceneInstanceCullingQuery == nullptr);
 
-	// Set up view array and collect culling work at the same time.
-	SceneInstanceCullingQuery = SceneRenderer.SceneCullingRenderer.CreateInstanceQuery(GraphBuilder);
-	VirtualShadowMapViews = VirtualShadowMapArray.CreateVirtualShadowMapNaniteViews(GraphBuilder, SceneRenderer.Views, VirtualShadowMapShadows, ComputeNaniteShadowsLODScaleFactor(), SceneInstanceCullingQuery);
+	// Unconditionally update GPU physical pages (on all GPUs) with new VSM IDs/addresses
+	VirtualShadowMapArray.UpdatePhysicalPageAddresses(GraphBuilder);
 
-	// Dispatch collected query 
-	if (SceneInstanceCullingQuery)
+	if (!VirtualShadowMapShadows.IsEmpty())
 	{
-		SceneInstanceCullingQuery->Dispatch(GraphBuilder);
+		// Set up view array and collect culling work at the same time.
+		SceneInstanceCullingQuery = SceneRenderer.SceneCullingRenderer.CreateInstanceQuery(GraphBuilder);
+		VirtualShadowMapViews = VirtualShadowMapArray.CreateVirtualShadowMapNaniteViews(GraphBuilder, SceneRenderer.Views, VirtualShadowMapShadows, ComputeNaniteShadowsLODScaleFactor(), SceneInstanceCullingQuery);
+
+		// Dispatch collected query 
+		if (SceneInstanceCullingQuery)
+		{
+			SceneInstanceCullingQuery->Dispatch(GraphBuilder);
+		}
 	}
 }
 
@@ -361,7 +438,7 @@ void FShadowSceneRenderer::PostSetupDebugRender()
 			for (const FLocalLightShadowFrameSetup& LightSetup : LocalLights)
 			{			
 				FLinearColor Color = FLinearColor(FColor::Blue);
-				if (LightSetup.PerLightCacheEntry && LightSetup.PerLightCacheEntry->Current.bIsDistantLight)
+				if (LightSetup.PerLightCacheEntry && LightSetup.PerLightCacheEntry->bIsDistantLight)
 				{
 					++NumDistant;
 					int32 FramesSinceLastRender = int32(Scene.GetFrameNumber()) - int32(LightSetup.PerLightCacheEntry->GetLastScheduledFrameNumber());
@@ -434,6 +511,7 @@ void FShadowSceneRenderer::RenderVirtualShadowMapProjectionMaskBits(
 
 			if (HairStrands::HasViewHairStrandsData(View))
 			{
+				// Shadow bits
 				RenderVirtualShadowMapProjectionOnePass(
 					GraphBuilder,
 					SceneTextures,
@@ -441,6 +519,9 @@ void FShadowSceneRenderer::RenderVirtualShadowMapProjectionMaskBits(
 					VirtualShadowMapArray,
 					EVirtualShadowMapProjectionInputType::HairStrands,
 					VirtualShadowMapMaskBitsHairStrands);
+
+				// Transmittance bits
+				HairTransmittanceMaskBits = RenderHairStrandsOnePassTransmittanceMask(GraphBuilder, View, VirtualShadowMapMaskBitsHairStrands, VirtualShadowMapArray).TransmittanceMask;
 			}
 		}
 	}
@@ -448,6 +529,7 @@ void FShadowSceneRenderer::RenderVirtualShadowMapProjectionMaskBits(
 	{
 		VirtualShadowMapMaskBits = nullptr;//Dummy;
 		VirtualShadowMapMaskBitsHairStrands = nullptr;//Dummy;
+		HairTransmittanceMaskBits = nullptr; //Dummy
 	}
 }
 

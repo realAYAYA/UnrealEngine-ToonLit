@@ -1656,7 +1656,6 @@ public:
 
 		// Search Box
 		SAssignNew(SearchBox, SSearchBox)
-		.Visibility(this, &SItemSelector::GetSearchBoxVisibility)
 		.OnTextChanged(this, &SItemSelector::OnSearchTextChanged)
 		.DelayChangeNotificationsWhileTyping(false);
 
@@ -1667,8 +1666,9 @@ public:
 			.AutoHeight()
 			.Padding(0, 0, 0, 5)
 			[
-				SNew(SHorizontalBox)
 				// Wrapped Search Box
+				SNew(SHorizontalBox)
+				.Visibility(this, &SItemSelector::GetSearchBoxVisibility)
 				+ SHorizontalBox::Slot()
 				.FillWidth(1.0f)
 				.VAlign(VAlign_Center)
@@ -1750,18 +1750,25 @@ public:
 	void SetSelectedItems(const TArray<ItemType>& NewSelectedItems, bool bExpandToShow = false)
 	{
 		checkf(OnCompareItemsForEquality.IsBound(), TEXT("OnCompareItemsForEquality event must be handled to use the SetSelectedItems function."));
-		TGuardValue<bool> SelectionGuard(bIsSettingSelection, true);
 		if (NewSelectedItems.Num() == 0)
 		{
 			ItemTree->ClearSelection();
 		}
 		else
 		{
+			TGuardValue<bool> SelectionGuard(bIsSettingSelection, true);
+
 			TArray<TSharedRef<FItemSelectorItemViewModel>> SelectedItemViewModels;
 			ViewModelUtilities->GetItemViewModelsForItems(NewSelectedItems, SelectedItemViewModels);
 			for (TSharedRef<FItemSelectorItemViewModel> SelectedItemViewModel : SelectedItemViewModels)
 			{
 				ItemTree->SetSelection(SelectedItemViewModel);
+				if(SelectedItemViewModel->GetType() == EItemSelectorItemViewModelType::Item)
+				{
+					TSharedRef<FItemSelectorItemContainerViewModel> ItemViewModel = StaticCastSharedRef<FItemSelectorItemContainerViewModel>(SelectedItemViewModel);
+					OnItemSelected.ExecuteIfBound(ItemViewModel->GetItem(), ESelectInfo::Direct);
+				}
+				
 				if (bExpandToShow)
 				{
 					TSharedPtr<FRootViewModel> RootViewModel = ViewModelUtilities->GetRootViewModel();
@@ -1773,8 +1780,8 @@ public:
 					}
 				}
 			}
+			OnSelectionChanged.ExecuteIfBound();
 		}
-		OnSelectionChanged.ExecuteIfBound();
 	}
 
 	void RequestScrollIntoView(const ItemType& Item)

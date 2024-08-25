@@ -92,12 +92,28 @@ FD3D12Resource::FD3D12Resource(FD3D12Device* ParentDevice,
 	, HeapType(InHeapType)
 	, PlaneCount(UE::DXGIUtilities::GetPlaneCount(Desc.Format))
 	, bRequiresResourceStateTracking(true)
+	, bRequiresResidencyTracking(bool(ENABLE_RESIDENCY_MANAGEMENT))
 	, bDepthStencil(false)
 	, bDeferDelete(true)
-	, bBackBuffer(false)
 {
 #if UE_BUILD_DEBUG
 	FPlatformAtomics::InterlockedIncrement(&TotalResourceCount);
+#endif
+
+	D3D12_HEAP_DESC HeapDesc = {};
+	D3D12_HEAP_PROPERTIES* HeapProps = nullptr;
+	if (InHeap)
+	{
+		HeapDesc = InHeap->GetHeapDesc();
+		HeapProps = &HeapDesc.Properties;
+	}
+
+#if ENABLE_RESIDENCY_MANAGEMENT
+	// Residency tracking is only used for GPU-only resources owned by the Engine.
+	// Back buffers may be referenced outside of command lists (during presents), however D3DX12Residency.h library
+	// uses fences tied to command lists to detect when it's safe to evict a resource, which is wrong for back buffers.
+	// External/shared resources may be referenced by command buffers in third-party code.
+	bRequiresResidencyTracking = IsGPUOnly(InHeapType, HeapProps) && !Desc.bExternal && !Desc.bBackBuffer;
 #endif
 
 	// On Windows it's sadly enough not possible to get the GPU virtual address from the resource directly
@@ -119,11 +135,6 @@ FD3D12Resource::FD3D12Resource(FD3D12Device* ParentDevice,
 	}
 #endif
 
-	if (!IsPlacedResource())
-	{
-		ResidencyHandle = MakeUnique<FD3D12ResidencyHandle>();
-	}
-
 	if (Desc.bReservedResource)
 	{
 		checkf(Heap == nullptr, TEXT("Reserved resources are not expected to have a heap"));
@@ -133,10 +144,13 @@ FD3D12Resource::FD3D12Resource(FD3D12Device* ParentDevice,
 
 FD3D12Resource::~FD3D12Resource()
 {
-	if (!IsPlacedResource() && D3DX12Residency::IsInitialized(*ResidencyHandle))
+#if ENABLE_RESIDENCY_MANAGEMENT
+	if (D3DX12Residency::IsInitialized(ResidencyHandle))
 	{
 		D3DX12Residency::EndTrackingObject(GetParentDevice()->GetResidencyManager(), *ResidencyHandle);
 	}
+	delete ResidencyHandle;
+#endif // ENABLE_RESIDENCY_MANAGEMENT
 
 #if NV_AFTERMATH
 	if (GDX12NVAfterMathTrackResources)
@@ -145,27 +159,52 @@ FD3D12Resource::~FD3D12Resource()
 	}
 #endif
 
-	if (bBackBuffer)
+	if (Desc.bBackBuffer)
 	{
 		// Don't make the windows association call and release back buffer at the same time (see notes on critical section)
 		FScopeLock Lock(&FD3D12Viewport::DXGIBackBufferLock);
-		bBackBuffer = false;
 		Resource.SafeRelease();
 	}
 }
 
-void FD3D12Resource::CommitReservedResource()
+struct FD3D12UpdateTileMappingsParams
 {
+	D3D12_TILE_RANGE_FLAGS RangeFlags = D3D12_TILE_RANGE_FLAG_NONE;
+	D3D12_TILED_RESOURCE_COORDINATE Coord = {};
+	D3D12_TILE_REGION_SIZE Size = {};
+	ID3D12Heap* Heap = nullptr;
+	uint32 HeapOffsetInTiles = 0;
+};
+
+void FD3D12Resource::CommitReservedResource(ID3D12CommandQueue* D3DCommandQueue, uint64 RequiredCommitSizeInBytes)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(CommitReservedResource);
+
+	static constexpr uint64 TileSizeInBytes = GRHIGlobals.ReservedResources.TileSizeInBytes;
+	static_assert(TileSizeInBytes == 65536, "Reserved resource tiles are expected to always be 64KB");
+
 	check(Desc.bReservedResource);
 	check(ReservedResourceData.IsValid());
-	checkf(ReservedResourceData->BackingHeaps.IsEmpty(), TEXT("Reserved resource is already committed"));
-	checkf(Desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D, TEXT("CommitReservedResource is currently only implemented for 2D textures"));
-	checkf(Desc.MipLevels == 1, TEXT("CommitReservedResource is currently only implemented for textures without mips"));
 
-	uint32 NumTiles = 0;
+	checkf(GRHIGlobals.ReservedResources.Supported,
+		TEXT("Current RHI does not support reserved resources"));
+
+	if (Desc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D)
+	{
+		checkf(GRHIGlobals.ReservedResources.SupportsVolumeTextures,
+			TEXT("Current RHI does not support reserved volume textures"));
+	}
+
+	if (Desc.Dimension != D3D12_RESOURCE_DIMENSION_BUFFER)
+	{
+		checkf(Desc.MipLevels == 1, TEXT("CommitReservedResource is currently only implemented for textures without mips"));
+	}
+
+	uint32 D3DResourceNumTiles = 0;
 	D3D12_PACKED_MIP_INFO PackedMipDesc = {};
 	D3D12_TILE_SHAPE TileShape = {};
 	const uint32 FirstSubresource = 0;
+	const uint32 NumSubresources = SubresourceCount;
 
 	// We assume that all subresources in a 2D texture array are identical, so only query the tiling config for the first
 	uint32 NumSubresourceTilings = 1;
@@ -174,24 +213,19 @@ void FD3D12Resource::CommitReservedResource()
 	ID3D12Device* D3DDevice = GetParentDevice()->GetDevice();
 	FD3D12Adapter* Adapter = GetParentDevice()->GetParentAdapter();
 
-	D3DDevice->GetResourceTiling(GetResource(), &NumTiles, &PackedMipDesc, &TileShape, &NumSubresourceTilings, FirstSubresource, &SubresourceTiling);
+	D3DDevice->GetResourceTiling(GetResource(), &D3DResourceNumTiles, &PackedMipDesc, &TileShape, &NumSubresourceTilings, FirstSubresource, &SubresourceTiling);
 
-	const uint64 TileSizeInBytes = 65536; // reserved resource tiles are always 64KB
-	const uint64 TotalSize = NumTiles * TileSizeInBytes;
+	const uint64 TotalSize = D3DResourceNumTiles * TileSizeInBytes;
+
+	RequiredCommitSizeInBytes = FMath::Min<uint64>(RequiredCommitSizeInBytes, TotalSize);
+	RequiredCommitSizeInBytes = AlignArbitrary(RequiredCommitSizeInBytes, TileSizeInBytes);
+
 	const uint64 MaxHeapSize = uint64(CVarD3D12ReservedResourceHeapSizeMB.GetValueOnAnyThread()) * 1024 * 1024;
 	const uint64 NumHeaps = FMath::DivideAndRoundUp(TotalSize, MaxHeapSize);
 
-	TArray<TRefCountPtr<ID3D12Heap>>& Heaps = ReservedResourceData->BackingHeaps;
-	Heaps.Reserve(NumHeaps);
+	ReservedResourceData->BackingHeaps.Reserve(NumHeaps);
 
-	const uint32 NumTilesPerHeap = uint32(MaxHeapSize / TileSizeInBytes);
-
-	// NOTE: Accessing the queue from this thread is OK, as D3D12 runtime acquires a lock around all command queue APIs.
-	// https://microsoft.github.io/DirectX-Specs/d3d/CPUEfficiency.html#threading
-	FD3D12Queue& Queue = GetParentDevice()->GetQueue(ED3D12QueueType::Direct);
-	ID3D12CommandQueue* D3DCommandQueue = Queue.D3DCommandQueue.GetReference();
-
-	const D3D12_TILE_MAPPING_FLAGS MappingFlags = D3D12_TILE_MAPPING_FLAG_NONE;
+	const uint32 MaxTilesPerHeap = uint32(MaxHeapSize / TileSizeInBytes);
 
 	// Set high residency priority based on the same heuristics as D3D12 committed resources,
 	// i.e. normal priority unless it's a UAV/RT/DS texture.
@@ -205,66 +239,278 @@ void FD3D12Resource::CommitReservedResource()
 	BackingHeapProps.CreationNodeMask = GetGPUMask().GetNative();
 	BackingHeapProps.VisibleNodeMask = GetVisibilityMask().GetNative();
 
-	const uint32 NumTilesX = SubresourceTiling.WidthInTiles;
-	const uint32 NumTilesY = SubresourceTiling.HeightInTiles;
+	uint32 NumStandardTilesPerSubresource = 0;
+	uint32 NumTotalTiles = 0;
 
-	check(SubresourceTiling.DepthInTiles == 1);
-
-	const uint32 NumTilesPerSubresource = NumTilesX * NumTilesY;
-	const uint32 NumTotalTiles = NumTilesPerSubresource * SubresourceCount;
-
-	uint32 NumMappedTiles = 0;
-
-	while (NumMappedTiles < NumTotalTiles)
+	if (Desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER)
 	{
-		const uint32 NumRemainingTiles = NumTotalTiles - NumMappedTiles;
+		NumTotalTiles = NumStandardTilesPerSubresource = D3DResourceNumTiles;
+		checkf(D3DResourceNumTiles == SubresourceTiling.WidthInTiles,
+			TEXT("Reserved buffers are expected to have trivial tiling configuration: single 1D subresource that contains all tiles."));
+	}
+	else if (PackedMipDesc.NumStandardMips != 0)
+	{
+		NumStandardTilesPerSubresource = SubresourceTiling.WidthInTiles * SubresourceTiling.HeightInTiles * SubresourceTiling.DepthInTiles;
+		NumTotalTiles = NumStandardTilesPerSubresource * NumSubresources;
+	}
+	else // packed mip case
+	{
+		checkf(PackedMipDesc.NumPackedMips != 0, TEXT("It is expected that reserved resources have at least one standard or one packed tile mip level"));
+		NumTotalTiles = PackedMipDesc.NumTilesForPackedMips * NumSubresources;
+	}
 
-		D3D12_TILE_REGION_SIZE RegionSize = {};
-		RegionSize.UseBox = false;
-		RegionSize.NumTiles = FMath::Min(NumTilesPerHeap, NumRemainingTiles);
+	checkf(D3DResourceNumTiles == NumTotalTiles,
+		TEXT("D3D resource size in tiles: %d, computed size in tiles: %d"),
+		D3DResourceNumTiles, NumTotalTiles);
 
-		const uint32 ThisHeapSize = RegionSize.NumTiles * TileSizeInBytes;
-		D3D12_HEAP_DESC NewHeapDesc = {};
-		NewHeapDesc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
-		NewHeapDesc.Flags = D3D12_HEAP_FLAG_DENY_BUFFERS | D3D12_HEAP_FLAG_DENY_RT_DS_TEXTURES;
-		NewHeapDesc.SizeInBytes = ThisHeapSize;
-		NewHeapDesc.Properties = BackingHeapProps;
-		TRefCountPtr<ID3D12Heap> NewHeap;
-		VERIFYD3D12RESULT(D3DDevice->CreateHeap(&NewHeapDesc, IID_PPV_ARGS(NewHeap.GetInitReference())));
+	const uint32 NumRequiredCommitTiles = RequiredCommitSizeInBytes / TileSizeInBytes;
+	const uint32 NumTilesPerSlice = SubresourceTiling.WidthInTiles * SubresourceTiling.HeightInTiles;
 
-		if (bHighPriorityResource)
+	auto GetTiledResourceCoordinate = [SubresourceTiling, NumStandardTilesPerSubresource, NumSubresources, NumTilesPerSlice, MaxTilesPerHeap]
+		(uint32 OffsetInTiles, uint32 NumTiles) -> D3D12_TILED_RESOURCE_COORDINATE 
+	{
+		D3D12_TILED_RESOURCE_COORDINATE ResourceCoordinate = {}; // Coordinates are in tiles, not pixels
+		if (NumStandardTilesPerSubresource)
 		{
-			Adapter->SetResidencyPriority(NewHeap, D3D12_RESIDENCY_PRIORITY_HIGH, GPUIndex);
+			const uint32 TileIndexInSubresource = OffsetInTiles % NumStandardTilesPerSubresource;
+			ResourceCoordinate.X = TileIndexInSubresource % SubresourceTiling.WidthInTiles;
+			ResourceCoordinate.Y = (TileIndexInSubresource / SubresourceTiling.WidthInTiles) % SubresourceTiling.HeightInTiles;
+			ResourceCoordinate.Z = TileIndexInSubresource / NumTilesPerSlice;
+
+			ResourceCoordinate.Subresource = OffsetInTiles / NumStandardTilesPerSubresource;
+			check(ResourceCoordinate.Subresource <= NumSubresources);
+		}
+		else
+		{
+			// Packed mip level case:
+			// - Only simple textures are expected (single subresource, no arrays)
+			// - Entire packed mip level must be covered in one map operation, so mapping origin is always 0
+
+			checkf(NumSubresources == 1,
+			       TEXT("Reserved textures with packed mips and multiple subresources are not supported. Current subresource count: %d"),
+			       NumSubresources);
+
+			checkf(NumTiles <= MaxTilesPerHeap,
+			       TEXT("Reserved texture packed mip level requires tiles: %d, maximum supported tiles: %d. ")
+			       TEXT("Increase d3d12.ReservedResourceHeapSizeMB or avoid packed mips by using a larger texture dimensions."),
+			       NumTiles, MaxTilesPerHeap);
+
+			ResourceCoordinate.Subresource = 0; // Packed mips are currently supported for single subresource textures
+			ResourceCoordinate.X = 0;
+			ResourceCoordinate.Y = 0;
+			ResourceCoordinate.Z = 0;
 		}
 
-		D3D12_TILED_RESOURCE_COORDINATE ResourceCoordinate = {}; // Coordinates are in tiles, not pixels
-		const uint32 TileIndexInSubresource = NumMappedTiles % NumTilesPerSubresource;
-		ResourceCoordinate.Subresource = NumMappedTiles / NumTilesPerSubresource;
-		ResourceCoordinate.X = TileIndexInSubresource % NumTilesX;
-		ResourceCoordinate.Y = (TileIndexInSubresource / NumTilesX) % NumTilesY;
-		ResourceCoordinate.Z = 0; // Only simple 2D / Array2D textures are implemented
+		return ResourceCoordinate;
+	};
 
-		const D3D12_TILE_RANGE_FLAGS RangeFlags = D3D12_TILE_RANGE_FLAG_NONE;
-		const uint32 HeapRangeStartOffsetInTiles = 0;
-		const uint32 RangeTileCount = RegionSize.NumTiles;
+	TArray<FD3D12UpdateTileMappingsParams> MappingParams;
+	TArray<FD3D12ResidencyHandle*> UsedResidencyHandles;
 
-		D3DCommandQueue->UpdateTileMappings(GetResource(), 1,
-			&ResourceCoordinate, &RegionSize, NewHeap.GetReference(),
-			1,
-			&RangeFlags,
-			&HeapRangeStartOffsetInTiles,
-			&RangeTileCount,
-			MappingFlags);
+	if (ReservedResourceData->NumCommittedTiles > NumRequiredCommitTiles)
+	{
+		check(!ReservedResourceData->BackingHeaps.IsEmpty());
 
-	#if NAME_OBJECTS
-		const int32 HeapIndex = Heaps.Num();
-		FString HeapName = FString::Printf(TEXT("%s.Heap[%d]"), DebugName.IsValid() ? *DebugName.ToString() : TEXT("UNKNOWN"), HeapIndex);
-		::SetName(NewHeap, *HeapName);
-	#endif // NAME_OBJECTS
+		// Iterate through heaps in reverse order, unmap ranges and release heaps if they are completely unused
+		while (ReservedResourceData->NumCommittedTiles > NumRequiredCommitTiles)
+		{
+			TRefCountPtr<FD3D12Heap>& LastHeap = ReservedResourceData->BackingHeaps.Last();
+			const uint32 NumTotalTilesInHeap = LastHeap->GetHeapDesc().SizeInBytes / TileSizeInBytes;
 
-		NumMappedTiles += RegionSize.NumTiles;
-		Heaps.Add(MoveTemp(NewHeap));
+			check(ReservedResourceData->NumSlackTiles <= NumTotalTilesInHeap);
+			const uint32 NumUsedTilesInHeap = NumTotalTilesInHeap - ReservedResourceData->NumSlackTiles;
+
+			check(NumUsedTilesInHeap <= ReservedResourceData->NumCommittedTiles);
+			const uint32 HeapFirstTile = ReservedResourceData->NumCommittedTiles - NumUsedTilesInHeap;
+
+			const uint32 RegionEnd = ReservedResourceData->NumCommittedTiles;
+			const uint32 RegionBegin = FMath::Max(HeapFirstTile, NumRequiredCommitTiles);
+
+			D3D12_TILE_REGION_SIZE RegionSize = {};
+			RegionSize.UseBox = false;
+			RegionSize.NumTiles = RegionEnd - RegionBegin;
+
+			// Coordinates are in tiles, not pixels
+			D3D12_TILED_RESOURCE_COORDINATE ResourceCoordinate = GetTiledResourceCoordinate(RegionBegin, RegionSize.NumTiles);
+
+			FD3D12UpdateTileMappingsParams Params = {};
+			Params.RangeFlags = D3D12_TILE_RANGE_FLAG_NULL;
+			Params.Coord = ResourceCoordinate;
+			Params.Size = RegionSize;
+			MappingParams.Add(Params);
+
+			if (HeapFirstTile == RegionBegin)
+			{
+				// All tiles from this heap were unmapped, so it can be dropped
+				DEC_MEMORY_STAT_BY(STAT_D3D12ReservedResourcePhysical, LastHeap->GetHeapDesc().SizeInBytes);
+				LastHeap->DeferDelete();
+				ReservedResourceData->BackingHeaps.Pop();
+				int32 NumResidencyHandles = ReservedResourceData->NumResidencyHandlesPerHeap.Last();
+				ReservedResourceData->NumResidencyHandlesPerHeap.Pop();
+				while (NumResidencyHandles != 0)
+				{
+					ReservedResourceData->ResidencyHandles.Pop();
+					--NumResidencyHandles;
+				}
+
+				ReservedResourceData->NumSlackTiles = 0;
+			}
+			else
+			{
+				// Heap remains referenced, but now contains some free tiles at the end (which we just unmapped)
+				ReservedResourceData->NumSlackTiles += RegionSize.NumTiles;
+				check(ReservedResourceData->NumSlackTiles <= NumTotalTilesInHeap);
+			}
+
+			check(ReservedResourceData->NumCommittedTiles >= RegionSize.NumTiles);
+			ReservedResourceData->NumCommittedTiles -= RegionSize.NumTiles;
+		}
 	}
+	else
+	{
+		while (ReservedResourceData->NumCommittedTiles < NumRequiredCommitTiles)
+		{
+			const uint32 NumRemainingTiles = NumRequiredCommitTiles - ReservedResourceData->NumCommittedTiles;
+
+			ID3D12Heap* D3DHeap = nullptr;
+
+			uint32 HeapRangeStartOffsetInTiles = 0;
+
+			D3D12_TILE_REGION_SIZE RegionSize = {};
+			RegionSize.UseBox = false;
+
+			if (ReservedResourceData->NumSlackTiles)
+			{
+				// Consume any heap slack space before allocating a new heap
+
+				const TRefCountPtr<FD3D12Heap>& LastHeap = ReservedResourceData->BackingHeaps.Last();
+				const uint32 NumTotalTilesInHeap = LastHeap->GetHeapDesc().SizeInBytes / TileSizeInBytes;
+
+				RegionSize.NumTiles = FMath::Min(ReservedResourceData->NumSlackTiles, NumRemainingTiles);
+				HeapRangeStartOffsetInTiles = NumTotalTilesInHeap - ReservedResourceData->NumSlackTiles;
+
+				D3DHeap = LastHeap->GetHeap();
+
+				check(RegionSize.NumTiles <= ReservedResourceData->NumSlackTiles);
+				ReservedResourceData->NumSlackTiles -= RegionSize.NumTiles;
+
+				UsedResidencyHandles.Append(LastHeap->GetResidencyHandles());
+			}
+			else
+			{
+				// Create a new heap to service the commit request
+
+				RegionSize.NumTiles = FMath::Min(MaxTilesPerHeap, NumRemainingTiles);
+				HeapRangeStartOffsetInTiles = 0;
+
+#if NAME_OBJECTS
+				const int32 HeapIndex = ReservedResourceData->BackingHeaps.Num();
+				FString HeapName = FString::Printf(TEXT("%s.Heap[%d]"), DebugName.IsValid() ? *DebugName.ToString() : TEXT("UNKNOWN"), HeapIndex);
+				const TCHAR* HeapNameChars = *HeapName;
+#else
+				const TCHAR* HeapNameChars = TEXT("ReservedResourceBackingHeap");
+#endif // NAME_OBJECTS
+
+				const D3D12_HEAP_FLAGS HeapFlags = Desc.Dimension == D3D12_RESOURCE_DIMENSION_BUFFER
+					? D3D12_HEAP_FLAG_ALLOW_ONLY_BUFFERS
+					: D3D12_HEAP_FLAG_ALLOW_ONLY_NON_RT_DS_TEXTURES;
+
+				static_assert((D3D12_HEAP_FLAG_DENY_BUFFERS | D3D12_HEAP_FLAG_DENY_RT_DS_TEXTURES) == D3D12_HEAP_FLAG_ALLOW_ONLY_NON_RT_DS_TEXTURES);
+
+				const uint32 ThisHeapSize = RegionSize.NumTiles * TileSizeInBytes;
+				D3D12_HEAP_DESC NewHeapDesc = {};
+				NewHeapDesc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
+				NewHeapDesc.Flags = HeapFlags;
+				NewHeapDesc.SizeInBytes = ThisHeapSize;
+				NewHeapDesc.Properties = BackingHeapProps;
+
+				VERIFYD3D12RESULT(D3DDevice->CreateHeap(&NewHeapDesc, IID_PPV_ARGS(&D3DHeap)));
+				INC_MEMORY_STAT_BY(STAT_D3D12ReservedResourcePhysical, NewHeapDesc.SizeInBytes);
+
+				if (bHighPriorityResource)
+				{
+					Adapter->SetResidencyPriority(D3DHeap, D3D12_RESIDENCY_PRIORITY_HIGH, GPUIndex);
+				}
+
+				TRefCountPtr<FD3D12Heap> NewHeap = new FD3D12Heap(GetParentDevice(), GetVisibilityMask());
+				NewHeap->SetHeap(D3DHeap, HeapNameChars, true /*bTrack*/, false /*bForceGetGPUAddress*/);
+				NewHeap->BeginTrackingResidency(ThisHeapSize);
+
+				TConstArrayView<FD3D12ResidencyHandle*> HeapResidencyHandles = NewHeap->GetResidencyHandles();
+				ReservedResourceData->ResidencyHandles.Append(HeapResidencyHandles);
+				ReservedResourceData->NumResidencyHandlesPerHeap.Add(HeapResidencyHandles.Num());
+				ReservedResourceData->BackingHeaps.Add(MoveTemp(NewHeap));
+
+				UsedResidencyHandles.Append(HeapResidencyHandles);
+			}
+
+			// Coordinates are in tiles, not pixels
+			D3D12_TILED_RESOURCE_COORDINATE ResourceCoordinate = GetTiledResourceCoordinate(ReservedResourceData->NumCommittedTiles, RegionSize.NumTiles);
+
+			FD3D12UpdateTileMappingsParams Params = {};
+			Params.RangeFlags = D3D12_TILE_RANGE_FLAG_NONE;
+			Params.Coord = ResourceCoordinate;
+			Params.Size = RegionSize;
+			Params.Heap = D3DHeap;
+			Params.HeapOffsetInTiles = HeapRangeStartOffsetInTiles;
+			MappingParams.Add(Params);
+
+			ReservedResourceData->NumCommittedTiles += RegionSize.NumTiles;
+		}
+	}
+
+#if ENABLE_RESIDENCY_MANAGEMENT
+	FD3D12ResidencyManager& ResidencyManager = GetParentDevice()->GetResidencyManager();
+
+	if (!UsedResidencyHandles.IsEmpty())
+	{
+		HRESULT HR = S_OK;
+
+		FD3D12ResidencySet* ResidencySet = ResidencyManager.CreateResidencySet();
+		HR = ResidencySet->Open();
+		checkf(SUCCEEDED(HR), TEXT("Failed to open residency set. Error code: 0x%08x."), uint32(HR));
+
+		for (FD3D12ResidencyHandle* Handle : UsedResidencyHandles)
+		{
+			if (D3DX12Residency::IsInitialized(Handle))
+			{
+				ResidencySet->Insert(Handle);
+			}
+		}
+
+		HR = ResidencySet->Close();
+		checkf(SUCCEEDED(HR), TEXT("Failed to close residency set. Error code: 0x%08x."), uint32(HR));
+
+		// NOTE: ResidencySet ownership is taken over by the residency manager.
+		// It is destroyed when paging work completes, which may happen async on another thread in some cases.
+		HR = ResidencyManager.MakeResident(D3DCommandQueue, MoveTemp(ResidencySet));
+		checkf(SUCCEEDED(HR), TEXT("Failed to process residency set. Error code: 0x%08x."), uint32(HR));
+	}
+#endif // ENABLE_RESIDENCY_MANAGEMENT
+
+	for (const FD3D12UpdateTileMappingsParams& Params : MappingParams)
+	{
+		D3DCommandQueue->UpdateTileMappings(GetResource(), 1 /*NumRegions*/,
+			&Params.Coord, &Params.Size, Params.Heap,
+			1 /*NumRanges*/,
+			&Params.RangeFlags,
+			&Params.HeapOffsetInTiles,
+			&Params.Size.NumTiles,
+			D3D12_TILE_MAPPING_FLAG_NONE);
+	}
+
+#if ENABLE_RESIDENCY_MANAGEMENT
+	if (!UsedResidencyHandles.IsEmpty())
+	{
+		// Signal the fence for this queue after UpdateTileMappings complete.
+		// This is analogous to executing a command list that references a set of resources.
+		ResidencyManager.SignalFence(D3DCommandQueue);
+	}
+#endif // ENABLE_RESIDENCY_MANAGEMENT
+
+	checkf(ReservedResourceData->NumCommittedTiles == NumRequiredCommitTiles,
+		TEXT("Reserved resource was not fully processed while committing physical memory. Expected to process tiles: %d, actually processed: %d"),
+		D3DResourceNumTiles, ReservedResourceData->NumCommittedTiles);
 }
 
 ID3D12Pageable* FD3D12Resource::GetPageable()
@@ -282,24 +528,26 @@ ID3D12Pageable* FD3D12Resource::GetPageable()
 void FD3D12Resource::StartTrackingForResidency()
 {
 #if ENABLE_RESIDENCY_MANAGEMENT
-	if (bBackBuffer)
+
+	if (!bRequiresResidencyTracking)
 	{
-		// Back buffers may be referenced outside of command lists (during presents), however D3DX12Residency.h library 
-		// uses fences tied to command lists to detect when it's safe to evict a resource, which is wrong for back buffers.
-		// Simply disable residency tracking for back buffers as a workaround (keep them always resident).
 		return;
 	}
 
-	check(IsGPUOnly(HeapType));	// This is checked at a higher level before calling this function.		
-	if (!IsPlacedResource())
+	checkf(IsGPUOnly(HeapType), TEXT("Residency tracking is not expected for CPU-accessible resources"));
+	checkf(!Desc.bBackBuffer, TEXT("Residency tracking is not expected for back buffers"));
+	checkf(!Desc.bExternal, TEXT("Residency tracking is not expected for externally-owned resources"));
+
+	if (!IsPlacedResource() && !IsReservedResource())
 	{
-		check(D3DX12Residency::IsInitialized(*ResidencyHandle) == false);
+		checkf(!ResidencyHandle, TEXT("Residency tracking is already initialzied for this resource"));
+		ResidencyHandle = new FD3D12ResidencyHandle;
 
 		const D3D12_RESOURCE_ALLOCATION_INFO Info = GetParentDevice()->GetResourceAllocationInfoUncached(Desc);
 		D3DX12Residency::Initialize(*ResidencyHandle, Resource.GetReference(), Info.SizeInBytes, this);
 		D3DX12Residency::BeginTrackingObject(GetParentDevice()->GetResidencyManager(), *ResidencyHandle);
 	}
-#endif
+#endif // ENABLE_RESIDENCY_MANAGEMENT
 }
 
 void FD3D12Resource::DeferDelete()
@@ -314,7 +562,6 @@ void FD3D12Resource::DeferDelete()
 FD3D12Heap::FD3D12Heap(FD3D12Device* Parent, FRHIGPUMask VisibleNodes, HeapId InTraceParentHeapId) :
 	FD3D12DeviceChild(Parent),
 	FD3D12MultiNodeGPUObject(Parent->GetGPUMask(), VisibleNodes),
-	ResidencyHandle(),
 	TraceParentHeapId(InTraceParentHeapId)
 {
 }
@@ -340,9 +587,9 @@ FD3D12Heap::~FD3D12Heap()
 #if ENABLE_RESIDENCY_MANAGEMENT
 	if (D3DX12Residency::IsInitialized(ResidencyHandle))
 	{
-		D3DX12Residency::EndTrackingObject(GetParentDevice()->GetResidencyManager(), ResidencyHandle);
-		ResidencyHandle = {};
+		D3DX12Residency::EndTrackingObject(GetParentDevice()->GetResidencyManager(), *ResidencyHandle);
 	}
+	delete ResidencyHandle;
 #endif // ENABLE_RESIDENCY_MANAGEMENT
 
 	// Release actual d3d object
@@ -351,6 +598,9 @@ FD3D12Heap::~FD3D12Heap()
 
 void FD3D12Heap::DeferDelete()
 {
+	// ProcessDeferredDeletionQueue() performs final Release(), but deletion queue itself only holds a raw pointer, so explicit addref is required.
+	AddRef();
+
 	FD3D12DynamicRHI::GetD3DRHI()->DeferredDelete(this);
 }
 
@@ -362,6 +612,10 @@ void FD3D12Heap::SetHeap(ID3D12Heap* HeapIn, const TCHAR* const InName, bool bIn
 	HeapDesc = Heap->GetDesc();
 
 	SetName(HeapIn, InName);
+
+#if ENABLE_RESIDENCY_MANAGEMENT
+	bRequiresResidencyTracking = IsGPUOnly(HeapDesc.Properties.Type, &HeapDesc.Properties);
+#endif // ENABLE_RESIDENCY_MANAGEMENT
 
 	// Create a buffer placed resource on the heap to extract the gpu virtual address
 	// if we are tracking all allocations
@@ -395,12 +649,23 @@ void FD3D12Heap::SetHeap(ID3D12Heap* HeapIn, const TCHAR* const InName, bool bIn
 	}
 }
 
+void FD3D12Heap::DisallowTrackingResidency()
+{
+#if ENABLE_RESIDENCY_MANAGEMENT
+	checkf(ResidencyHandle == nullptr, TEXT("Can't disallow residency tracking after it has started. Call this function instead of BeginTrackingResidency()."));
+	bRequiresResidencyTracking = false;
+#endif // ENABLE_RESIDENCY_MANAGEMENT
+}
+
 void FD3D12Heap::BeginTrackingResidency(uint64 Size)
 {
 #if ENABLE_RESIDENCY_MANAGEMENT
-	D3DX12Residency::Initialize(ResidencyHandle, Heap.GetReference(), Size, this);
-	D3DX12Residency::BeginTrackingObject(GetParentDevice()->GetResidencyManager(), ResidencyHandle);
-#endif
+	checkf(bRequiresResidencyTracking, TEXT("Residency tracking is not expected for this resource"));
+	checkf(!ResidencyHandle, TEXT("Residency tracking is already initialzied for this resource"));
+	ResidencyHandle = new FD3D12ResidencyHandle;
+	D3DX12Residency::Initialize(*ResidencyHandle, Heap.GetReference(), Size, this);
+	D3DX12Residency::BeginTrackingObject(GetParentDevice()->GetResidencyManager(), *ResidencyHandle);
+#endif // ENABLE_RESIDENCY_MANAGEMENT
 }
 
 /////////////////////////////////////////////////////////////////////
@@ -501,11 +766,7 @@ HRESULT FD3D12Adapter::CreateCommittedResource(const FD3D12ResourceDesc& InDesc,
 		// Set a default name (can override later).
 		SetName(*ppOutResource, Name);
 
-		// Only track resources that cannot be accessed on the CPU.
-		if (IsGPUOnly(HeapProps.Type, &HeapProps))
-		{
-			(*ppOutResource)->StartTrackingForResidency();
-		}
+		(*ppOutResource)->StartTrackingForResidency();
 
 		TraceMemoryAllocation(*ppOutResource);
 	}
@@ -538,8 +799,22 @@ HRESULT FD3D12Adapter::CreateReservedResource(const FD3D12ResourceDesc& InDesc, 
 	TRefCountPtr<ID3D12Resource> pResource;
 
 	FD3D12ResourceDesc LocalDesc = InDesc;
-	LocalDesc.Layout = D3D12_TEXTURE_LAYOUT_64KB_UNDEFINED_SWIZZLE;
-	LocalDesc.bReservedResource = true;
+
+	checkf(LocalDesc.bReservedResource,
+		TEXT("FD3D12ResourceDesc is expected to be initialized as a reserved resource. See FD3D12DynamicRHI::GetResourceDesc()."));
+
+	if (LocalDesc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE1D
+		|| LocalDesc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE2D
+		|| LocalDesc.Dimension == D3D12_RESOURCE_DIMENSION_TEXTURE3D)
+	{
+		checkf(LocalDesc.Layout == D3D12_TEXTURE_LAYOUT_64KB_UNDEFINED_SWIZZLE,
+			TEXT("Reserved textures are expected to have layout %d (64KB_UNDEFINED_SWIZZLE), but have %d. See FD3D12DynamicRHI::GetResourceDesc()."),
+			uint32(D3D12_TEXTURE_LAYOUT_64KB_UNDEFINED_SWIZZLE), uint32(LocalDesc.Layout));
+	}
+
+	checkf(LocalDesc.Alignment == 0 || LocalDesc.Alignment == 65536,
+		TEXT("Reserved resources must use either 64KB alignment or 0 (unspecified/default), but have %d. See FD3D12DynamicRHI::GetResourceDesc()."),
+			uint32(LocalDesc.Alignment));
 
 #if D3D12_RHI_RAYTRACING
 	if (InDefaultState == D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE)
@@ -867,7 +1142,6 @@ void FD3D12ResourceLocation::InternalClear()
 	UnderlyingResource = nullptr;
 	MappedBaseAddress = nullptr;
 	GPUVirtualAddress = 0;
-	ResidencyHandle = nullptr;
 	Size = 0;
 	OffsetFromBaseOfResource = 0;
 	FMemory::Memzero(AllocatorData);
@@ -1128,12 +1402,10 @@ void FD3D12ResourceLocation::UpdateStandAloneStats(bool bIncrement)
 void FD3D12ResourceLocation::SetResource(FD3D12Resource* Value)
 {
 	check(UnderlyingResource == nullptr);
-	check(ResidencyHandle == nullptr);
 
 	GPUVirtualAddress = Value->GetGPUVirtualAddress();
 
 	UnderlyingResource = Value;
-	ResidencyHandle = &UnderlyingResource->GetResidencyHandle();
 }
 
 
@@ -1156,7 +1428,7 @@ void FD3D12ResourceLocation::AsStandAlone(FD3D12Resource* Resource, uint64 InSiz
 }
 
 
-bool FD3D12ResourceLocation::OnAllocationMoved(FRHIPoolAllocationData* InNewData)
+bool FD3D12ResourceLocation::OnAllocationMoved(FRHICommandListBase& RHICmdList, FRHIPoolAllocationData* InNewData)
 {
 	// Assume linked list allocated for now - only defragging allocator
 	FRHIPoolAllocationData& AllocationData = GetPoolAllocatorPrivateData().PoolData;
@@ -1233,8 +1505,6 @@ bool FD3D12ResourceLocation::OnAllocationMoved(FRHIPoolAllocationData* InNewData
 		UnderlyingResource = NewResource;
 		GPUVirtualAddress = UnderlyingResource->GetGPUVirtualAddress() + OffsetFromBaseOfResource;
 	}
-	
-	ResidencyHandle = &UnderlyingResource->GetResidencyHandle();
 
 	// Refresh aliases
 	for (FRHIPoolAllocationData* OtherAlias = AllocationData.GetFirstAlias(); OtherAlias; OtherAlias = OtherAlias->GetNext())
@@ -1244,7 +1514,6 @@ bool FD3D12ResourceLocation::OnAllocationMoved(FRHIPoolAllocationData* InNewData
 		OtherResourceLocation->OffsetFromBaseOfResource = OffsetFromBaseOfResource;
 		OtherResourceLocation->UnderlyingResource = UnderlyingResource;
 		OtherResourceLocation->GPUVirtualAddress = GPUVirtualAddress;
-		OtherResourceLocation->ResidencyHandle = ResidencyHandle;
 	}
 
 	// TODO: recreate the aliased UAV resource if we have one. For the time being we just check that we don't get here with such a resource,
@@ -1252,7 +1521,7 @@ bool FD3D12ResourceLocation::OnAllocationMoved(FRHIPoolAllocationData* InNewData
 	check(!CurrentResource->GetDesc().NeedsUAVAliasWorkarounds());
 
 	// Notify all the dependent resources about the change
-	Owner->ResourceRenamed();
+	Owner->ResourceRenamed(RHICmdList);
 
 	return true;
 }

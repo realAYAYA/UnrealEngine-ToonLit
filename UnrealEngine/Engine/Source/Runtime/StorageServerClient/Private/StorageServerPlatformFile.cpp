@@ -1,22 +1,26 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "StorageServerPlatformFile.h"
-#include "StorageServerIoDispatcherBackend.h"
-#include "HAL/IPlatformFileModule.h"
+#include "Algo/Replace.h"
+#include "CookOnTheFly.h"
+#include "CookOnTheFlyPackageStore.h"
 #include "HAL/FileManagerGeneric.h"
+#include "HAL/IPlatformFileModule.h"
+#include "Misc/App.h"
 #include "Misc/CommandLine.h"
+#include "Misc/CoreDelegates.h"
+#include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Misc/ScopeRWLock.h"
-#include "StorageServerConnection.h"
-#include "Modules/ModuleManager.h"
 #include "Misc/StringBuilder.h"
-#include "Algo/Replace.h"
-#include "StorageServerPackageStore.h"
-#include "CookOnTheFlyPackageStore.h"
-#include "Misc/CoreDelegates.h"
 #include "Modules/ModuleManager.h"
-#include "CookOnTheFly.h"
+#include "Modules/ModuleManager.h"
 #include "Serialization/CompactBinarySerialization.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
+#include "StorageServerConnection.h"
+#include "StorageServerIoDispatcherBackend.h"
+#include "StorageServerPackageStore.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogStorageServerPlatformFile, Log, All);
 
@@ -202,22 +206,33 @@ public:
 				FilePos += BytesRead;
 				return true;
 			}
+			return false;
 		}
 
-		if (FilePos < BufferStart || BufferEnd < FilePos + BytesToRead)
+		int64 BytesReadFromBuffer = 0;
+		if (FilePos >= BufferStart && FilePos < BufferEnd)
 		{
-			const int64 BytesRead = Owner.SendReadMessage(Buffer, FileChunkId, FilePos, BufferSize);
-			BufferStart = FilePos;
-			BufferEnd = BufferStart + BytesRead;
+			const int64 BufferOffset = FilePos - BufferStart;
+			check(BufferOffset < BufferSize);
+			BytesReadFromBuffer = FMath::Min(BufferSize - BufferOffset, BytesToRead);
+			FMemory::Memcpy(Destination, Buffer + BufferOffset, BytesReadFromBuffer);
+			if (BytesReadFromBuffer == BytesToRead)
+			{
+				FilePos += BytesReadFromBuffer;
+				return true;
+			}
 		}
 
-		int64 BufferOffset = FilePos - BufferStart;
-		check(BufferEnd > BufferOffset);
-		int64 BytesToReadFromBuffer = FMath::Min(BufferEnd - BufferOffset, BytesToRead);
-		FMemory::Memcpy(Destination, Buffer + BufferOffset, BytesToReadFromBuffer);
-		if (BytesToReadFromBuffer == BytesToRead)
+		const int64 BytesRead = Owner.SendReadMessage(Buffer, FileChunkId, FilePos + BytesReadFromBuffer, BufferSize);
+		BufferStart = FilePos + BytesReadFromBuffer;
+		BufferEnd = BufferStart + BytesRead;
+
+		const int64 BytesToReadFromBuffer = FMath::Min(BytesRead, BytesToRead - BytesReadFromBuffer);
+		FMemory::Memcpy(Destination + BytesReadFromBuffer, Buffer, BytesToReadFromBuffer);
+		BytesReadFromBuffer += BytesToReadFromBuffer;
+		if (BytesReadFromBuffer == BytesToRead)
 		{
-			FilePos += BytesToReadFromBuffer;
+			FilePos += BytesReadFromBuffer;
 			return true;
 		}
 		
@@ -268,7 +283,7 @@ TUniquePtr<FArchive> FStorageServerPlatformFile::TryFindProjectStoreMarkerFile(I
 
 	for (const FString& ProjectStorePath : PotentialProjectStorePaths)
 	{
-		FString ProjectMarkerPath = ProjectStorePath / TEXT(".projectstore");
+		FString ProjectMarkerPath = ProjectStorePath / TEXT("ue.projectstore");
 		if (IFileHandle* ProjectStoreMarkerHandle = Inner->OpenRead(*ProjectMarkerPath); ProjectStoreMarkerHandle != nullptr)
 		{
 			UE_LOG(LogStorageServerPlatformFile, Display, TEXT("Found '%s'"), *ProjectMarkerPath);
@@ -293,25 +308,40 @@ bool FStorageServerPlatformFile::ShouldBeUsed(IPlatformFile* Inner, const TCHAR*
 	TUniquePtr<FArchive> ProjectStoreMarkerReader = TryFindProjectStoreMarkerFile(Inner);
 	if (ProjectStoreMarkerReader != nullptr)
 	{
-		FCbObject ProjectStoreObject = LoadCompactBinary(*ProjectStoreMarkerReader).AsObject();
-
-		if (FCbFieldView ZenServerField = ProjectStoreObject["zenserver"])
+		TSharedPtr<FJsonObject> ProjectStoreObject;
+		TSharedRef<TJsonReader<UTF8CHAR>> Reader = TJsonReaderFactory<UTF8CHAR>::Create(ProjectStoreMarkerReader.Get());
+		if (FJsonSerializer::Deserialize(Reader, ProjectStoreObject) && ProjectStoreObject.IsValid())
 		{
-			if (FUtf8StringView HostName = ZenServerField["hostname"].AsString(); !HostName.IsEmpty())
+			const TSharedPtr<FJsonObject>* ZenServerObjectPtr = nullptr;
+			if (ProjectStoreObject->TryGetObjectField(TEXT("zenserver"), ZenServerObjectPtr) && (ZenServerObjectPtr != nullptr))
 			{
-				HostAddrs.Add(FString(HostName));
-			}
-			FCbArrayView RemoteHostNames = ZenServerField["remotehostnames"].AsArrayView();
-			for (FCbFieldView RemoteHostName : RemoteHostNames)
-			{
-				if (FUtf8StringView HostName = RemoteHostName.AsString(); !HostName.IsEmpty())
+				const TSharedPtr<FJsonObject>& ZenServerObject = *ZenServerObjectPtr;
+#if PLATFORM_DESKTOP
+				FString HostName;
+				if (ZenServerObject->TryGetStringField(TEXT("hostname"), HostName) && !HostName.IsEmpty())
 				{
-					HostAddrs.Add(FString(HostName));
+					HostAddrs.Add(HostName);
 				}
-			}
+#endif
+				const TArray<TSharedPtr<FJsonValue>>* RemoteHostNamesArrayPtr = nullptr;
+				if (ZenServerObject->TryGetArrayField(TEXT("remotehostnames"), RemoteHostNamesArrayPtr) && (RemoteHostNamesArrayPtr != nullptr))
+				{
+					for (TSharedPtr<FJsonValue> RemoteHostName : *RemoteHostNamesArrayPtr)
+					{
+						if (FString RemoteHostNameStr = RemoteHostName->AsString(); !RemoteHostNameStr.IsEmpty())
+						{
+							HostAddrs.Add(RemoteHostNameStr);
+						}
+					}
+				}
 
-			HostPort = ZenServerField["hostport"].AsUInt16(HostPort);
-			UE_LOG(LogStorageServerPlatformFile, Display, TEXT("Using connection settings from .projectstore: HostAddrs='%s' and HostPort='%d'"), *FString::Join(HostAddrs, TEXT("+")), HostPort);
+				uint16 SerializedHostPort = 0;
+				if (ZenServerObject->TryGetNumberField(TEXT("hostport"), SerializedHostPort) && (SerializedHostPort != 0))
+				{
+					HostPort = SerializedHostPort;
+				}
+				UE_LOG(LogStorageServerPlatformFile, Display, TEXT("Using connection settings from ue.projectstore: HostAddrs='%s' and HostPort='%d'"), *FString::Join(HostAddrs, TEXT("+")), HostPort);
+			}
 		}
 	}
 
@@ -341,13 +371,18 @@ bool FStorageServerPlatformFile::Initialize(IPlatformFile* Inner, const TCHAR* C
 		TUniquePtr<FArchive> ProjectStoreMarkerReader = TryFindProjectStoreMarkerFile(Inner);
 		if (ProjectStoreMarkerReader != nullptr)
 		{
-			FCbObject ProjectStoreObject = LoadCompactBinary(*ProjectStoreMarkerReader).AsObject();
-
-			if (FCbFieldView ZenServerField = ProjectStoreObject["zenserver"])
+			TSharedPtr<FJsonObject> ProjectStoreObject;
+			TSharedRef<TJsonReader<UTF8CHAR>> Reader = TJsonReaderFactory<UTF8CHAR>::Create(ProjectStoreMarkerReader.Get());
+			if (FJsonSerializer::Deserialize(Reader, ProjectStoreObject) && ProjectStoreObject.IsValid())
 			{
-				ServerProject = FString(ZenServerField["projectid"].AsString());
-				ServerPlatform = FString(ZenServerField["oplogid"].AsString());
-				UE_LOG(LogStorageServerPlatformFile, Display, TEXT("Using settings from .projectstore: ServerProject='%s' and ServerPlatform='%s'"), *ServerProject, *ServerPlatform);
+				const TSharedPtr<FJsonObject>* ZenServerObjectPtr = nullptr;
+				if (ProjectStoreObject->TryGetObjectField(TEXT("zenserver"), ZenServerObjectPtr) && (ZenServerObjectPtr != nullptr))
+				{
+					const TSharedPtr<FJsonObject>& ZenServerObject = *ZenServerObjectPtr;
+					ServerProject = ZenServerObject->GetStringField(TEXT("projectid"));
+					ServerPlatform = ZenServerObject->GetStringField(TEXT("oplogid"));
+					UE_LOG(LogStorageServerPlatformFile, Display, TEXT("Using settings from ue.projectstore: ServerProject='%s' and ServerPlatform='%s'"), *ServerProject, *ServerPlatform);
+				}
 			}
 		}
 	
@@ -404,7 +439,22 @@ void FStorageServerPlatformFile::InitializeAfterProjectFilePath()
 	}
 	else
 	{
-		UE_LOG(LogStorageServerPlatformFile, Fatal, TEXT("Failed to initialize connection"));
+		if (!FApp::IsUnattended())
+		{
+			FText FailedConnectionTitle = NSLOCTEXT("StorageServer", "StorageServer_ConnectFailedTitle", "Failed to connect");
+			FText FailedConnectionText = FText::Format(NSLOCTEXT("StorageServer", "StorageServer_ConnectFailedText",
+				"Network data streaming failed to connect to any of the following data sources:\n\n{0}\n\n"
+				"This can be due to the sources being offline, the Unreal Zen Storage process not currently running, "
+				"invalid addresses, firewall blocking, or the sources being on a different network from this device. "
+				"Please verify that your Unreal Zen Storage process is running using the ZenDashboard utility. "
+				"If these issues can't be addressed, you can use an installed build without network data streaming by "
+				"building with the '-pak' argument. This process will now exit."),
+				FText::FromString(FString::Join(HostAddrs, TEXT("\n"))));
+			FPlatformMisc::MessageBoxExt(EAppMsgType::Ok, *FailedConnectionText.ToString(), *FailedConnectionTitle.ToString());
+		}
+
+		UE_LOG(LogStorageServerPlatformFile, Error, TEXT("Failed to initialize connection to %s"), *FString::Join(HostAddrs, TEXT("\n")));
+		FPlatformMisc::RequestExit(true);
 	}
 }
 
@@ -526,7 +576,7 @@ bool FStorageServerPlatformFile::IterateDirectory(const TCHAR* Directory, IPlatf
 			bool bConverted = MakeLocalPath(FilenameOrDirectory, LocalPath);
 			check(bConverted);
 			const bool bDirectory = !FileChunkId.IsValid();
-			return Visitor.Visit(*LocalPath, bDirectory);
+			return Visitor.CallShouldVisitAndVisit(*LocalPath, bDirectory);
 		});
 	}
 	else
@@ -563,7 +613,7 @@ bool FStorageServerPlatformFile::IterateDirectoryStat(const TCHAR* Directory, FD
 					true,
 					true);
 			}
-			return Visitor.Visit(*LocalPath, FileStatData);
+			return Visitor.CallShouldVisitAndVisit(*LocalPath, FileStatData);
 		});
 	}
 	else

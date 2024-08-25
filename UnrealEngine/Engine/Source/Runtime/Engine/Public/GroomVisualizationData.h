@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Async/Mutex.h"
 
 class FSceneView;
 
@@ -107,7 +108,10 @@ private:
 	FString ConsoleDocumentationVisualizationMode;
 
 	/** Flag indicating if system is initialized. **/
-	bool bIsInitialized;
+	std::atomic_bool bIsInitialized;
+
+	/** Mutex for initialization. */
+	UE::FMutex Mutex;
 };
 
 ENGINE_API FGroomVisualizationData& GetGroomVisualizationData();

@@ -27,6 +27,9 @@ void FOptimusEditorGraphCommands::RegisterCommands()
 	UI_COMMAND(CollapseNodesToFunction, "Collapse to a Function", "Collapse the selected nodes to a reusable function graph, replacing the selected nodes with a single node.", EUserInterfaceActionType::Button, FInputChord());
 	UI_COMMAND(CollapseNodesToSubGraph, "Collapse to a Sub-Graph", "Collapse the selected nodes to a non-reusable sub-graph, replacing the selected nodes with a single node.", EUserInterfaceActionType::Button, FInputChord());
 	UI_COMMAND(ExpandCollapsedNode, "Expand Collapsed Node", "Replace the selected node with the collapsed nodes from inside the selected function or sub-graph node.", EUserInterfaceActionType::Button, FInputChord());
+	
+	UI_COMMAND(ConvertToFunction, "Convert to a Function", "Convert the selected SubGraph to a reusable Function.", EUserInterfaceActionType::Button, FInputChord());
+	UI_COMMAND(ConvertToSubGraph, "Convert to a SubGraph", "Convert the selected Function to a non-reusable SubGraph.", EUserInterfaceActionType::Button, FInputChord());
 }
 
 #undef LOCTEXT_NAMESPACE

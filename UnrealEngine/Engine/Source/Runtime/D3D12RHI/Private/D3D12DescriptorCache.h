@@ -83,7 +83,7 @@ uint32 GetTypeHash(const D3D12_SAMPLER_DESC& Desc);
 struct FD3D12SamplerArrayDesc
 {
 	uint32 Count;
-	uint16 SamplerID[16];
+	uint16 SamplerID[MAX_SAMPLERS];
 	inline bool operator==(const FD3D12SamplerArrayDesc& rhs) const
 	{
 		check(Count <= UE_ARRAY_COUNT(SamplerID));
@@ -223,7 +223,7 @@ private:
 class FD3D12SubAllocatedOnlineHeap : public FD3D12OnlineHeap
 {
 public:
-	FD3D12SubAllocatedOnlineHeap(FD3D12DescriptorCache& DescriptorCache, FD3D12ContextCommon& Context);
+	FD3D12SubAllocatedOnlineHeap(FD3D12DescriptorCache& DescriptorCache, FD3D12CommandContext& Context);
 
 	// Override FD3D12OnlineHeap functions
 	virtual bool RollOver() final override;
@@ -240,7 +240,7 @@ private:
 	FD3D12OnlineDescriptorBlock* CurrentBlock = nullptr;
 
 	FD3D12DescriptorCache& DescriptorCache;
-	FD3D12ContextCommon& Context;
+	FD3D12CommandContext& Context;
 };
 
 
@@ -344,9 +344,13 @@ public:
 	void SetVertexBuffers(FD3D12VertexBufferCache& Cache);
 	void SetRenderTargets(FD3D12RenderTargetView** RenderTargetViewArray, uint32 Count, FD3D12DepthStencilView* DepthStencilTarget);
 
-	void SetUAVs(EShaderFrequency ShaderStage, const FD3D12RootSignature* RootSignature, FD3D12UnorderedAccessViewCache& Cache, const UAVSlotMask& SlotsNeededMask, uint32 Count, uint32 &HeapSlot);
-	void SetSamplers(EShaderFrequency ShaderStage, const FD3D12RootSignature* RootSignature, FD3D12SamplerStateCache& Cache, const SamplerSlotMask& SlotsNeededMask, uint32 Count, uint32& HeapSlot);
-	void SetSRVs(EShaderFrequency ShaderStage, const FD3D12RootSignature* RootSignature, FD3D12ShaderResourceViewCache& Cache, const SRVSlotMask& SlotsNeededMask, uint32 Count, uint32& HeapSlot);
+	D3D12_GPU_DESCRIPTOR_HANDLE BuildUAVTable(EShaderFrequency ShaderStage, const FD3D12RootSignature* RootSignature, FD3D12UnorderedAccessViewCache& Cache, const UAVSlotMask& SlotsNeededMask, uint32 Count, uint32 &HeapSlot);
+	D3D12_GPU_DESCRIPTOR_HANDLE BuildSamplerTable(EShaderFrequency ShaderStage, const FD3D12RootSignature* RootSignature, FD3D12SamplerStateCache& Cache, const SamplerSlotMask& SlotsNeededMask, uint32 Count, uint32& HeapSlot);
+	D3D12_GPU_DESCRIPTOR_HANDLE BuildSRVTable(EShaderFrequency ShaderStage, const FD3D12RootSignature* RootSignature, FD3D12ShaderResourceViewCache& Cache, const SRVSlotMask& SlotsNeededMask, uint32 Count, uint32& HeapSlot);
+
+	void SetUAVTable(EShaderFrequency ShaderStage, const FD3D12RootSignature* RootSignature, FD3D12UnorderedAccessViewCache& Cache, uint32 SlotsNeeded, const D3D12_GPU_DESCRIPTOR_HANDLE& BindDescriptor);
+	void SetSamplerTable(EShaderFrequency ShaderStage, const FD3D12RootSignature* RootSignature, FD3D12SamplerStateCache& Cache, uint32 SlotsNeeded, const D3D12_GPU_DESCRIPTOR_HANDLE& BindDescriptor);
+	void SetSRVTable(EShaderFrequency ShaderStage, const FD3D12RootSignature* RootSignature, FD3D12ShaderResourceViewCache& Cache, uint32 SlotsNeeded, const D3D12_GPU_DESCRIPTOR_HANDLE& BindDescriptor);
 
 	void SetConstantBufferViews(EShaderFrequency ShaderStage, const FD3D12RootSignature* RootSignature, FD3D12ConstantBufferCache& Cache, CBVSlotMask SlotsNeededMask, uint32 Count, uint32& HeapSlot);
 	void SetRootConstantBuffers(EShaderFrequency ShaderStage, const FD3D12RootSignature* RootSignature, FD3D12ConstantBufferCache& Cache, CBVSlotMask SlotsNeededMask);
@@ -360,6 +364,9 @@ public:
 	bool SwitchToContextLocalViewHeap();
 	bool SwitchToContextLocalSamplerHeap();
 	void SwitchToGlobalSamplerHeap();
+#if PLATFORM_SUPPORTS_BINDLESS_RENDERING
+	void SwitchToNewBindlessResourceHeap(FD3D12DescriptorHeap* InHeap);
+#endif
 
 	void OverrideLastSetHeaps(ID3D12DescriptorHeap* ViewHeap, ID3D12DescriptorHeap* SamplerHeap);
 	void RestoreAfterExternalHeapsSet();
@@ -370,6 +377,28 @@ public:
 	// Sets the current descriptor tables on the command list and marks any descriptor tables as dirty if necessary.
 	// Returns true if one of the heaps actually changed, false otherwise.
 	bool SetDescriptorHeaps(bool bForceHeapChanged = false);
+
+#if PLATFORM_SUPPORTS_BINDLESS_RENDERING
+	void SetBindlessResourcesHeapDirectly(FD3D12DescriptorHeap* InHeap)
+	{
+		BindlessResourcesHeap = InHeap;
+	}
+
+	void SetBindlessSamplersHeapDirectly(FD3D12DescriptorHeap* InHeap)
+	{
+		BindlessSamplersHeap = InHeap;
+	}
+
+	FD3D12DescriptorHeap* GetBindlessResourcesHeap() const
+	{
+		return BindlessResourcesHeap;
+	}
+
+	FD3D12DescriptorHeap* GetBindlessSamplersHeap() const
+	{
+		return BindlessSamplersHeap;
+	}
+#endif
 
 protected:
 	FD3D12CommandContext& Context;
@@ -393,6 +422,7 @@ private:
 
 	TSharedPtr<FD3D12SamplerSet> LocalSamplerSet;
 	bool bHeapsOverridden = false;
+	bool bUsingViewHeap = true;
 
 	uint32 NumLocalViewDescriptors = 0;
 
@@ -400,7 +430,7 @@ private:
 	bool bBindlessResources = false;
 	bool bBindlessSamplers = false;
 
-	FD3D12DescriptorHeap* BindlessResourcesHeap = nullptr;
-	FD3D12DescriptorHeap* BindlessSamplersHeap = nullptr;
+	FD3D12DescriptorHeapPtr BindlessResourcesHeap = nullptr;
+	FD3D12DescriptorHeapPtr BindlessSamplersHeap = nullptr;
 #endif
 };

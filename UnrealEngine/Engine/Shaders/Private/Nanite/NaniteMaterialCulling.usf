@@ -11,8 +11,6 @@
 #define NANITE_MAX_MATERIAL_BINS (NANITE_MAX_MATERIAL_SLOTS / 32u)
 
 Texture2D<UlongType> VisBuffer64;
-ByteAddressBuffer MaterialSlotTable;
-ByteAddressBuffer MaterialDepthTable;
 Texture2D<uint> ShadingMask;
 
 RWBuffer<uint> MaterialIndirectArgs;
@@ -72,6 +70,8 @@ void ClassifyMaterials(uint3 ThreadIndex : SV_GroupThreadID, uint3 GroupID : SV_
 
 			if (UnpackedMask.bIsNanitePixel && ShadingBin != PrevShadingBin) // Skip if it is a shading bin we have already processed
 			{
+// TODO: Get around "hang" state in driver in Vulkan bindless
+#if !VULKAN_PROFILE_SM6 || !ENABLE_BINDLESS_RESOURCES 
 				bool bWrite = false;
 
 				// Scalarize to get rid of duplicate updates that would otherwise result in atomic contention
@@ -86,6 +86,7 @@ void ClassifyMaterials(uint3 ThreadIndex : SV_GroupThreadID, uint3 GroupID : SV_
 				while (ShadingBin != ToScalarMemory(ShadingBin));
 
 				if (bWrite)
+#endif // !VULKAN_PROFILE_SM6
 				{
 					const uint TileBinIndex = ShadingBin >> 5u;
 					const uint TileBinOffset = ShadingBin & 31u;

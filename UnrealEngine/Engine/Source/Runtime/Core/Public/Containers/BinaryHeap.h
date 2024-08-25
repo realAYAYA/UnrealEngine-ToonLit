@@ -6,7 +6,8 @@
 #include "CoreTypes.h"
 #include "HAL/UnrealMemory.h"
 #include "Math/UnrealMathUtility.h"
-#include "Templates/IsSigned.h"
+
+#include <type_traits>
 
 /*-----------------------------------------------------------------------------
 	Binary Heap, used to index another data structure.
@@ -18,7 +19,7 @@ template< typename KeyType, typename IndexType = uint32 >
 class FBinaryHeap
 {
 public:
-	static_assert(!TIsSigned<IndexType>::Value, "FBinaryHeap only supports unsigned index types");
+	static_assert(std::is_unsigned_v<IndexType>, "FBinaryHeap only supports unsigned index types");
 
 				FBinaryHeap();
 				FBinaryHeap( uint32 InHeapSize, uint32 InIndexSize );
@@ -400,3 +401,7 @@ FORCEINLINE void FBinaryHeap< KeyType, IndexType >::ResetInternal()
 	Keys = nullptr;
 	HeapIndexes = nullptr;
 }
+
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
+#include "Templates/IsSigned.h"
+#endif

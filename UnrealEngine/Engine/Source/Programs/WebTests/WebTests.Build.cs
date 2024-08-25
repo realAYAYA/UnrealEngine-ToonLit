@@ -11,8 +11,17 @@ public class WebTests : TestModuleRules
 				"ApplicationCore",
 				"Core",
 				"HTTP",
-				"Chaos",
-				"ChaosUserDataPT"
+				"HTTPServer",
+				"WebSockets",
+				"Json"
 			});
+		
+		UpdateBuildGraphPropertiesFile(new Metadata() { 
+			TestName = "Web", 
+			TestShortName = "Web", 
+			ReportType = "xml", 
+		});
 	}
 }
+
+

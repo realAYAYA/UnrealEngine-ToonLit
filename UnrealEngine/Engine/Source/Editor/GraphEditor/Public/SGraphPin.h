@@ -38,6 +38,7 @@ class SGraphPanel;
 class SGraphPin;
 class SHorizontalBox;
 class SImage;
+class SLevelOfDetailBranchNode;
 class SWidget;
 class SWrapBox;
 struct FGeometry;
@@ -150,6 +151,9 @@ public:
 	virtual void Tick( const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime ) override;
 	virtual TSharedPtr<IToolTip> GetToolTip() override;
 	// End of SWidget interface
+
+	/** Refresh the level of detail applied to the pin name */
+	void RefreshLOD();
 
 public:
 	UEdGraphPin* GetPinObj() const;
@@ -421,4 +425,7 @@ protected:
 
 	/** TRUE if the connections from this pin should be drawn at a lower opacity */
 	bool bFadeConnections;
+
+private:
+	TSharedPtr<SLevelOfDetailBranchNode> PinNameLODBranchNode;
 };

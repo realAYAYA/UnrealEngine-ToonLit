@@ -29,7 +29,7 @@ UClass* UInterchangeDatasmithAreaLightFactory::GetFactoryClass() const
 	return LightShapeBlueprint->GeneratedClass;
 }
 
-UObject* UInterchangeDatasmithAreaLightFactory::ProcessActor(AActor& SpawnedActor, const UInterchangeActorFactoryNode& FactoryNode, const UInterchangeBaseNodeContainer& NodeContainer)
+UObject* UInterchangeDatasmithAreaLightFactory::ProcessActor(AActor& SpawnedActor, const UInterchangeActorFactoryNode& FactoryNode, const UInterchangeBaseNodeContainer& NodeContainer, const FImportSceneObjectsParams& Params)
 {
 	//using namespace UE::Interchange::ActorHelper;
 
@@ -82,5 +82,5 @@ UObject* UInterchangeDatasmithAreaLightFactory::ProcessActor(AActor& SpawnedActo
 #endif //WITH_EDITOR
 	}
 
-	return Super::ProcessActor(SpawnedActor, FactoryNode, NodeContainer);
+	return Super::ProcessActor(SpawnedActor, FactoryNode, NodeContainer, Params);
 };

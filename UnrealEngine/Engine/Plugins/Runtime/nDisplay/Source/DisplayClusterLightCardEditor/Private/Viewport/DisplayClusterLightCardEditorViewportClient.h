@@ -153,6 +153,9 @@ public:
 	/** Moves all selected light cards to the specified pixel position */
 	void MoveSelectedActorsToPixel(const FIntPoint& PixelPos);
 
+	/** Moves all given actors to the specified pixel position */
+	void MoveActorsToPixel(const FIntPoint& PixelPos, const TArray<FDisplayClusterWeakStageActorPtr>& InActors);
+	
 	/** Returns the current input mode */
 	EInputMode GetInputMode() { return InputMode; }
 
@@ -201,10 +204,7 @@ private:
 
 	/** Moves the currently selected actors */
 	void MoveSelectedActors(FViewport* InViewport, EAxisList::Type CurrentAxis);
-
-	/** Moves all given actors to the specified pixel position */
-	void MoveActorsToPixel(const FIntPoint& PixelPos, const TArray<FDisplayClusterWeakStageActorPtr>& InActors);
-
+	
 	/** Moves the currently selected UV actors */
 	void MoveSelectedUVActors(FViewport* InViewport, EAxisList::Type CurrentAxis);
 
@@ -299,12 +299,6 @@ private:
 	
 	/** Update the transforms for the specific proxy */
 	void UpdateProxyTransforms(const FActorProxy& InActorProxy);
-
-	/** Subscribe post process and preview hooks to the root actor */
-	void SubscribeToRootActor();
-	
-	/** Unsubscribe post process and preview hooks from the root actor */
-	void UnsubscribeFromRootActor();
 
 	/** When the time in a sequencer has changed */
 	void OnSequencerTimeChanged(TWeakPtr<class ISequencer> InSequencer);

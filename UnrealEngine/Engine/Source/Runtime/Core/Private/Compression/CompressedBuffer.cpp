@@ -173,7 +173,7 @@ class FDecoder
 {
 public:
 	virtual uint64 GetHeaderSize(const FHeader& Header) const = 0;
-	virtual bool TryDecompressTo(FDecoderContext& Context, const FDecoderSource& Source, const FHeader& Header, FMemoryView HeaderView, uint64 RawOffset, FMutableMemoryView RawView) const = 0;
+	virtual bool TryDecompressTo(FDecoderContext& Context, const FDecoderSource& Source, const FHeader& Header, FMemoryView HeaderView, uint64 RawOffset, FMutableMemoryView RawView, ECompressedBufferDecompressFlags Flags) const = 0;
 	virtual FCompositeBuffer DecompressToComposite(FDecoderContext& Context, const FDecoderSource& Source, const FHeader& Header, const FMemoryView HeaderView, uint64 RawOffset, uint64 RawSize) const = 0;
 };
 
@@ -211,7 +211,8 @@ public:
 		const FHeader& Header,
 		const FMemoryView HeaderView,
 		const uint64 RawOffset,
-		const FMutableMemoryView RawView) const final
+		const FMutableMemoryView RawView,
+		const ECompressedBufferDecompressFlags Flags) const final
 	{
 		if (Header.Method == EMethod::None &&
 			RawOffset <= Header.TotalRawSize &&
@@ -428,7 +429,7 @@ public:
 		return sizeof(FHeader) + sizeof(uint32) * uint64(Header.BlockCount);
 	}
 
-	bool TryDecompressTo(FDecoderContext& Context, const FDecoderSource& Source, const FHeader& Header, FMemoryView HeaderView, uint64 RawOffset, FMutableMemoryView RawView) const final;
+	bool TryDecompressTo(FDecoderContext& Context, const FDecoderSource& Source, const FHeader& Header, FMemoryView HeaderView, uint64 RawOffset, FMutableMemoryView RawView, ECompressedBufferDecompressFlags Flags) const final;
 	FCompositeBuffer DecompressToComposite(FDecoderContext& Context, const FDecoderSource& Source, const FHeader& Header, const FMemoryView HeaderView, uint64 RawOffset, uint64 RawSize) const final;
 
 protected:
@@ -436,7 +437,7 @@ protected:
 
 #if WITH_EDITORONLY_DATA
 private:
-	bool TryParallelDecompressTo(FDecoderContext& Context, const FDecoderSource& Source, const FHeader& Header, FMemoryView HeaderView, uint64 RawOffset, FMutableMemoryView RawView) const;
+	bool TryParallelDecompressTo(FDecoderContext& Context, const FDecoderSource& Source, const FHeader& Header, FMemoryView HeaderView, uint64 RawOffset, FMutableMemoryView RawView, ECompressedBufferDecompressFlags Flags) const;
 #endif
 };
 
@@ -446,7 +447,8 @@ bool FBlockDecoder::TryDecompressTo(
 	const FHeader& Header,
 	const FMemoryView HeaderView,
 	const uint64 RawOffset,
-	const FMutableMemoryView RawView) const
+	const FMutableMemoryView RawView,
+	const ECompressedBufferDecompressFlags Flags) const
 {
 	if (Header.TotalRawSize < RawOffset + RawView.GetSize())
 	{
@@ -459,7 +461,7 @@ bool FBlockDecoder::TryDecompressTo(
 #if WITH_EDITORONLY_DATA
 	if (RawView.GetSize() >= ParallelDecodeMinRawSize && LastBlockIndex - FirstBlockIndex > 1 && Source.SupportsParallelRead())
 	{
-		return TryParallelDecompressTo(Context, Source, Header, HeaderView, RawOffset, RawView);
+		return TryParallelDecompressTo(Context, Source, Header, HeaderView, RawOffset, RawView, Flags);
 	}
 #endif
 
@@ -490,7 +492,7 @@ bool FBlockDecoder::TryDecompressTo(
 			else
 			{
 				FMutableMemoryView RawBlock;
-				if (RawTarget.GetSize() == RawBlockSize)
+				if (RawTarget.GetSize() == RawBlockSize && !EnumHasAnyFlags(Flags, ECompressedBufferDecompressFlags::IntermediateBuffer))
 				{
 					RawBlock = RawTarget;
 				}
@@ -510,7 +512,7 @@ bool FBlockDecoder::TryDecompressTo(
 					return false;
 				}
 
-				if (RawTarget.GetSize() != RawBlockSize)
+				if (RawTarget.GetSize() != RawBlockSize || EnumHasAnyFlags(Flags, ECompressedBufferDecompressFlags::IntermediateBuffer))
 				{
 					RawTarget.CopyFrom(RawBlock.Mid(RawBlockOffset, RawTarget.GetSize()));
 				}
@@ -534,7 +536,8 @@ FORCENOINLINE bool FBlockDecoder::TryParallelDecompressTo(
 	const FHeader& Header,
 	const FMemoryView HeaderView,
 	const uint64 RawOffset,
-	const FMutableMemoryView RawView) const
+	const FMutableMemoryView RawView,
+	const ECompressedBufferDecompressFlags Flags) const
 {
 	if (Header.TotalRawSize < RawOffset + RawView.GetSize())
 	{
@@ -557,7 +560,7 @@ FORCENOINLINE bool FBlockDecoder::TryParallelDecompressTo(
 		CompressedOffsets.Add(CompressedOffsets.Last() + NETWORK_ORDER32(CompressedBlockSizes[BlockIndex]));
 	}
 
-	const auto TryDecompressBlock = [this, &Source, &Header, RawOffset, RawView, CompressedBlockSizes, CompressedOffsets = CompressedOffsets.GetData(), FirstBlockIndex](FDecoderContext& Context, const uint32 BlockIndex)
+	const auto TryDecompressBlock = [this, &Source, &Header, RawOffset, RawView, Flags, CompressedBlockSizes, CompressedOffsets = CompressedOffsets.GetData(), FirstBlockIndex](FDecoderContext& Context, const uint32 BlockIndex)
 	{
 		const auto BlocksToBytes = [&Header](uint64 BlockCount) -> uint64 { return BlockCount << Header.BlockSizeExponent; };
 		const bool bFirstBlock = (BlockIndex == FirstBlockIndex);
@@ -578,7 +581,7 @@ FORCENOINLINE bool FBlockDecoder::TryParallelDecompressTo(
 			else
 			{
 				FMutableMemoryView RawBlock;
-				if (RawTarget.GetSize() == RawBlockSize)
+				if (RawTarget.GetSize() == RawBlockSize && !EnumHasAnyFlags(Flags, ECompressedBufferDecompressFlags::IntermediateBuffer))
 				{
 					RawBlock = RawTarget;
 				}
@@ -598,7 +601,7 @@ FORCENOINLINE bool FBlockDecoder::TryParallelDecompressTo(
 					return false;
 				}
 
-				if (RawTarget.GetSize() != RawBlockSize)
+				if (RawTarget.GetSize() != RawBlockSize || EnumHasAnyFlags(Flags, ECompressedBufferDecompressFlags::IntermediateBuffer))
 				{
 					RawTarget.CopyFrom(RawBlock.Mid(RawBlockOffset, RawTarget.GetSize()));
 				}
@@ -655,7 +658,7 @@ FCompositeBuffer FBlockDecoder::DecompressToComposite(
 	const uint64 RawSize) const
 {
 	FUniqueBuffer Buffer = FUniqueBuffer::Alloc(RawSize);
-	if (TryDecompressTo(Context, Source, Header, HeaderView, RawOffset, Buffer))
+	if (TryDecompressTo(Context, Source, Header, HeaderView, RawOffset, Buffer, ECompressedBufferDecompressFlags::None))
 	{
 		return FCompositeBuffer(Buffer.MoveToShared());
 	}
@@ -888,7 +891,7 @@ static bool TryReadHeader(FDecoderContext& Context, const FCompositeBuffer& Buff
 		{
 			Context.HeaderOffset = 0;
 			Context.HeaderSize = HeaderSize;
-			if (Context.HeaderCrc32 != Header.Crc32)
+			if (Context.HeaderCrc32 != Header.Crc32 || Header.RawHash.IsZero())
 			{
 				Context.HeaderCrc32 = Header.Crc32;
 				Context.RawBlockIndex = MAX_uint32;
@@ -1130,11 +1133,11 @@ bool FCompressedBuffer::TryGetCompressParameters(
 	return false;
 }
 
-bool FCompressedBuffer::TryDecompressTo(const FMutableMemoryView RawView) const
+bool FCompressedBuffer::TryDecompressTo(const FMutableMemoryView RawView, ECompressedBufferDecompressFlags Flags) const
 {
 	if (CompressedData && RawView.GetSize() == GetRawSize())
 	{
-		return FCompressedBufferReader(*this).TryDecompressTo(RawView);
+		return FCompressedBufferReader(*this).TryDecompressTo(RawView, 0, Flags);
 	}
 	return false;
 }
@@ -1274,7 +1277,7 @@ bool FCompressedBufferReader::TryGetCompressParameters(
 	return false;
 }
 
-bool FCompressedBufferReader::TryDecompressTo(const FMutableMemoryView RawView, const uint64 RawOffset)
+bool FCompressedBufferReader::TryDecompressTo(const FMutableMemoryView RawView, const uint64 RawOffset, ECompressedBufferDecompressFlags Flags)
 {
 	using namespace UE::CompressedBuffer::Private;
 	FHeader Header;
@@ -1290,7 +1293,7 @@ bool FCompressedBufferReader::TryDecompressTo(const FMutableMemoryView RawView, 
 					SourceArchive
 						? ImplicitConv<const FDecoderSource&>(FArchiveDecoderSource(*SourceArchive, Context.HeaderOffset))
 						: ImplicitConv<const FDecoderSource&>(FBufferDecoderSource(SourceBuffer->GetCompressed())),
-					Header, HeaderView, RawOffset, RawView))
+					Header, HeaderView, RawOffset, RawView, Flags))
 				{
 					return true;
 				}
@@ -1318,7 +1321,7 @@ FSharedBuffer FCompressedBufferReader::Decompress(const uint64 RawOffset, const 
 					SourceArchive
 						? ImplicitConv<const FDecoderSource&>(FArchiveDecoderSource(*SourceArchive, Context.HeaderOffset))
 						: ImplicitConv<const FDecoderSource&>(FBufferDecoderSource(SourceBuffer->GetCompressed())),
-					Header, HeaderView, RawOffset, RawData))
+					Header, HeaderView, RawOffset, RawData, ECompressedBufferDecompressFlags::None))
 				{
 					return RawData.MoveToShared();
 				}

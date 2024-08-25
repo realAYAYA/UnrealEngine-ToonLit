@@ -166,8 +166,8 @@ public:
 	void ReinsertTrianglesParallel(const TArray<int32>& Triangles, TArray<uint32>& TempBuffer, TArray<bool>& TempFlagBuffer)
 	{
 		int32 NumTriangles = Triangles.Num();
-		TempBuffer.SetNum(NumTriangles, false);
-		TempFlagBuffer.SetNum(NumTriangles, false);
+		TempBuffer.SetNum(NumTriangles, EAllowShrinking::No);
+		TempFlagBuffer.SetNum(NumTriangles, EAllowShrinking::No);
 
 		// can check which triangles need reinsertion in parallel. This will also return which
 		// CellID the triangle is in, which saves time in the Reinsert function
@@ -374,7 +374,7 @@ public:
 		Queue.Add(&Cells[CellRef.CellID]);
 		while (Queue.Num() > 0)
 		{
-			const FSparseOctreeCell* CurCell = Queue.Pop(false);
+			const FSparseOctreeCell* CurCell = Queue.Pop(EAllowShrinking::No);
 
 			// process elements
 			for (int ObjectID : CellObjectLists.Values(CurCell->CellID))
@@ -412,7 +412,7 @@ public:
 
 		while (Queue.Num() > 0)
 		{
-			const FSparseOctreeCell* CurCell = Queue.Pop(false);
+			const FSparseOctreeCell* CurCell = Queue.Pop(EAllowShrinking::No);
 			if (CutSet.CutCellIDs.Contains(CurCell->CellID))
 			{
 				continue;

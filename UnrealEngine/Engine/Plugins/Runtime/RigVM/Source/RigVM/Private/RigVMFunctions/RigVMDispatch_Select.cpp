@@ -23,24 +23,26 @@ FName FRigVMDispatch_SelectInt32::GetArgumentNameForOperandIndex(int32 InOperand
 }
 
 
-const TArray<FRigVMTemplateArgument>& FRigVMDispatch_SelectInt32::GetArguments() const
+const TArray<FRigVMTemplateArgumentInfo>& FRigVMDispatch_SelectInt32::GetArgumentInfos() const
 {
-	static const TArray<FRigVMTemplateArgument::ETypeCategory> ArrayCategories = {
-		FRigVMTemplateArgument::ETypeCategory_ArrayAnyValue,
-		FRigVMTemplateArgument::ETypeCategory_ArrayArrayAnyValue
-	};
-	static const TArray<FRigVMTemplateArgument::ETypeCategory> SingleCategories = {
-		FRigVMTemplateArgument::ETypeCategory_SingleAnyValue,
-		FRigVMTemplateArgument::ETypeCategory_ArrayAnyValue
-	};
-	
-	static const TArray<FRigVMTemplateArgument> Arguments = {
-		FRigVMTemplateArgument(IndexName, ERigVMPinDirection::Input, RigVMTypeUtils::TypeIndex::Int32),
-		FRigVMTemplateArgument(ValuesName, ERigVMPinDirection::Input, ArrayCategories),
-		FRigVMTemplateArgument(ResultName, ERigVMPinDirection::Output, SingleCategories)
-	};
+	static TArray<FRigVMTemplateArgumentInfo> Infos;
+	if (Infos.IsEmpty())
+	{
+		static const TArray<FRigVMTemplateArgument::ETypeCategory> ArrayCategories = {
+			FRigVMTemplateArgument::ETypeCategory_ArrayAnyValue,
+			FRigVMTemplateArgument::ETypeCategory_ArrayArrayAnyValue
+		};
+		static const TArray<FRigVMTemplateArgument::ETypeCategory> SingleCategories = {
+			FRigVMTemplateArgument::ETypeCategory_SingleAnyValue,
+			FRigVMTemplateArgument::ETypeCategory_ArrayAnyValue
+		};
+		
+		Infos.Emplace(IndexName, ERigVMPinDirection::Input, RigVMTypeUtils::TypeIndex::Int32);
+		Infos.Emplace(ValuesName, ERigVMPinDirection::Input, ArrayCategories);
+		Infos.Emplace(ResultName, ERigVMPinDirection::Output, SingleCategories);
+	}
 
-	return Arguments;
+	return Infos;
 }
 
 FRigVMTemplateTypeMap FRigVMDispatch_SelectInt32::OnNewArgumentType(const FName& InArgumentName,
@@ -138,7 +140,7 @@ void FRigVMDispatch_SelectInt32::Execute(FRigVMExtendedExecuteContext& InContext
 	FRigVMMemoryHandle& InputHandle = Handles[1 + Index];
 	if(InputHandle.IsLazy())
 	{
-		InputHandle.ComputeLazyValueIfNecessary(InContext, InContext.GetSlice().GetIndex());
+		InputHandle.ComputeLazyValueIfNecessary(InContext, InContext.GetSliceHash());
 	}
 
 	const uint8* Input = InputHandle.GetData();

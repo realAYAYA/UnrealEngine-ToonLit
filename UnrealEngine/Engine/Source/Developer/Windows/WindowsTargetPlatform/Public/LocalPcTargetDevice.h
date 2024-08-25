@@ -9,7 +9,6 @@
 #include "Interfaces/ITargetDevice.h"
 #include "Interfaces/ITargetPlatform.h"
 
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include <TlHelp32.h>
 

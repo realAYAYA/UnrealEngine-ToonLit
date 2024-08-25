@@ -434,16 +434,6 @@ void FVulkanCommandListContext::RHISetShaderParameters(FRHIComputeShader* Shader
 	);
 }
 
-void FVulkanCommandListContext::RHISetShaderUnbinds(FRHIComputeShader* Shader, TConstArrayView<FRHIShaderParameterUnbind> InUnbinds)
-{
-	UE::RHICore::RHISetShaderUnbindsShared(*this, Shader, InUnbinds);
-}
-
-void FVulkanCommandListContext::RHISetShaderUnbinds(FRHIGraphicsShader* Shader, TConstArrayView<FRHIShaderParameterUnbind> InUnbinds)
-{
-	UE::RHICore::RHISetShaderUnbindsShared(*this, Shader, InUnbinds);
-}
-
 void FVulkanCommandListContext::RHISetStaticUniformBuffers(const FUniformBufferStaticBindings& InUniformBuffers)
 {
 	FMemory::Memzero(GlobalUniformBuffers.GetData(), GlobalUniformBuffers.Num() * sizeof(FRHIUniformBuffer*));
@@ -451,6 +441,55 @@ void FVulkanCommandListContext::RHISetStaticUniformBuffers(const FUniformBufferS
 	for (int32 Index = 0; Index < InUniformBuffers.GetUniformBufferCount(); ++Index)
 	{
 		GlobalUniformBuffers[InUniformBuffers.GetSlot(Index)] = InUniformBuffers.GetUniformBuffer(Index);
+	}
+}
+
+void FVulkanCommandListContext::RHISetStaticUniformBuffer(FUniformBufferStaticSlot InSlot, FRHIUniformBuffer* InBuffer)
+{
+	GlobalUniformBuffers[InSlot] = InBuffer;
+}
+
+void FVulkanCommandListContext::RHISetUniformBufferDynamicOffset(FUniformBufferStaticSlot InSlot, uint32 InOffset)
+{
+	check(IsAligned(InOffset, Device->GetLimits().minUniformBufferOffsetAlignment));
+
+	FVulkanUniformBuffer* UniformBuffer = ResourceCast(GlobalUniformBuffers[InSlot]);
+	const FVulkanGfxPipelineDescriptorInfo& DescriptorInfo = PendingGfxState->CurrentState->GetGfxPipelineDescriptorInfo();
+
+	static const ShaderStage::EStage Stages[2] = 
+	{
+		ShaderStage::Vertex,
+		ShaderStage::Pixel
+	};
+
+	for (int32 i = 0; i < UE_ARRAY_COUNT(Stages); i++)
+	{
+		ShaderStage::EStage Stage = Stages[i];
+		FVulkanShader* Shader = PendingGfxState->CurrentPipeline->VulkanShaders[Stage];
+		if (Shader == nullptr)
+		{
+			continue;
+		}
+
+		const auto& StaticSlots = Shader->StaticSlots;
+
+		for (int32 BufferIndex = 0; BufferIndex < StaticSlots.Num(); ++BufferIndex)
+		{
+			const FUniformBufferStaticSlot Slot = StaticSlots[BufferIndex];
+			if (Slot == InSlot)
+			{
+				uint8 DescriptorSet;
+				uint32 BindingIndex;
+				if (DescriptorInfo.GetDescriptorSetAndBindingIndex(FVulkanShaderHeader::UniformBuffer, Stage, BufferIndex, DescriptorSet, BindingIndex))
+				{
+					// Uniform views always bind max supported range, so make sure Offset+Range is within buffer allocation
+					check((InOffset + PLATFORM_MAX_UNIFORM_BUFFER_RANGE) <= UniformBuffer->Allocation.Size);
+					uint32 DynamicOffset = InOffset + UniformBuffer->GetOffset();
+					PendingGfxState->CurrentState->SetUniformBufferDynamicOffset(DescriptorSet, BindingIndex, DynamicOffset);
+				}
+				break;
+			}
+		}
 	}
 }
 
@@ -646,7 +685,7 @@ void FVulkanCommandListContext::RHIDrawIndexedPrimitive(FRHIBuffer* IndexBufferR
 	}
 }
 
-void FVulkanCommandListContext::RHIDrawIndexedIndirect(FRHIBuffer* IndexBufferRHI, FRHIBuffer* ArgumentsBufferRHI, int32 DrawArgumentsIndex, uint32 NumInstances)
+void FVulkanCommandListContext::RHIDrawIndexedIndirect(FRHIBuffer* IndexBufferRHI, FRHIBuffer* ArgumentsBufferRHI, int32 DrawArgumentsIndex, uint32 /*NumInstances*/)
 {
 #if VULKAN_ENABLE_AGGRESSIVE_STATS
 	SCOPE_CYCLE_COUNTER(STAT_VulkanDrawCallTime);
@@ -665,7 +704,7 @@ void FVulkanCommandListContext::RHIDrawIndexedIndirect(FRHIBuffer* IndexBufferRH
 	VkDeviceSize ArgumentOffset = DrawArgumentsIndex * sizeof(VkDrawIndexedIndirectCommand);
 
 
-	VulkanRHI::vkCmdDrawIndexedIndirect(CmdBuffer, ArgumentBuffer->GetHandle(), ArgumentBuffer->GetOffset() + ArgumentOffset, NumInstances, sizeof(VkDrawIndexedIndirectCommand));
+	VulkanRHI::vkCmdDrawIndexedIndirect(CmdBuffer, ArgumentBuffer->GetHandle(), ArgumentBuffer->GetOffset() + ArgumentOffset, 1, sizeof(VkDrawIndexedIndirectCommand));
 
 	if (FVulkanPlatform::RegisterGPUWork() && IsImmediate())
 	{

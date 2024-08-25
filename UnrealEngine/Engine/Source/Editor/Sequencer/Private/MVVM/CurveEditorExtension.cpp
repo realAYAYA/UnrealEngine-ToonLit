@@ -7,10 +7,13 @@
 #include "Filters/SCurveEditorFilterPanel.h"
 #include "Framework/Docking/TabManager.h"
 #include "IPropertyRowGenerator.h"
+#include "IStructureDetailsView.h"
 #include "MVVM/ViewModels/SequencerEditorViewModel.h"
 #include "SCurveEditorPanel.h"
+#include "SCurveEditorToolProperties.h"
 #include "SCurveKeyDetailPanel.h"
 #include "SSequencerTreeFilterStatusBar.h"
+#include "STemporarilyFocusedSpinBox.h"
 #include "Sequencer.h"
 #include "SequencerCommands.h"
 #include "Toolkits/IToolkitHost.h"
@@ -20,6 +23,7 @@
 #include "Widgets/CurveEditor/SSequencerCurveEditor.h"
 #include "Widgets/CurveEditor/SequencerCurveEditorTimeSliderController.h"
 #include "Widgets/Docking/SDockTab.h"
+#include "Widgets/Input/SButton.h"
 #include "Widgets/Layout/SScrollBorder.h"
 
 #define LOCTEXT_NAMESPACE "SequencerCurveEditorExtension"
@@ -200,6 +204,8 @@ void FCurveEditorExtension::CreateCurveEditor(const FTimeSliderArgs& TimeSliderA
 	// the Curve Editor time slider controller. We want everything else to just pass through though.
 	TSharedRef<ITimeSliderController> CurveEditorTimeSliderController = MakeShared<FSequencerCurveEditorTimeSliderController>(
 			TimeSliderArgs, Sequencer, CurveEditorModel.ToSharedRef());
+	
+	PlayTimeDisplay = StaticCastSharedRef<STemporarilyFocusedSpinBox<double>>(Sequencer->MakePlayTimeDisplay(TimeSliderArgs.NumericTypeInterface.ToSharedRef()));
 
 	CurveEditorTreeView = SNew(SCurveEditorTree, CurveEditorModel);
 	CurveEditorPanel = SNew(SCurveEditorPanel, CurveEditorModel.ToSharedRef())
@@ -221,23 +227,91 @@ void FCurveEditorExtension::CreateCurveEditor(const FTimeSliderArgs& TimeSliderA
 
 			+ SVerticalBox::Slot()
 			[
-				SNew(SScrollBorder, CurveEditorTreeView.ToSharedRef())
+				SNew(SOverlay)
+
+				+ SOverlay::Slot()
 				[
-					CurveEditorTreeView.ToSharedRef()
+					SNew(SScrollBorder, CurveEditorTreeView.ToSharedRef())
+					[
+						CurveEditorTreeView.ToSharedRef()
+					]
+				]
+
+				+ SOverlay::Slot()
+				.VAlign(VAlign_Bottom)
+				[
+					SNew(SHorizontalBox)
+
+					+ SHorizontalBox::Slot()
+					.AutoWidth()
+					[
+						SAssignNew(CurveEditorTreeFilterStatusBar, SCurveEditorTreeFilterStatusBar, CurveEditorModel)
+						.Visibility(EVisibility::Hidden) // Initially hidden, visible on hover of the info button
+					]
 				]
 			]
 
 			+ SVerticalBox::Slot()
 			.AutoHeight()
 			[
-				SNew(SCurveEditorTreeFilterStatusBar, CurveEditorModel)
-			]
+				SNew(SHorizontalBox)
 
-			+ SVerticalBox::Slot()
-			.AutoHeight()
-			.HAlign(HAlign_Center)
-			[
-				Sequencer->MakeTransportControls(true)
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.VAlign(VAlign_Center)
+				.HAlign(HAlign_Left)
+				[
+					SNew(SButton)
+					.VAlign(EVerticalAlignment::VAlign_Center)
+					.ButtonStyle(FAppStyle::Get(), "SimpleButton")
+					.ToolTipText_Lambda([this] { return LOCTEXT("ShowStatus", "Show Status"); })
+					.ContentPadding(FMargin(1, 0))
+					.OnHovered_Lambda([this] { CurveEditorTreeFilterStatusBar->ShowStatusBar(); })
+					.OnUnhovered_Lambda([this] { CurveEditorTreeFilterStatusBar->FadeOutStatusBar(); })
+					.OnClicked_Lambda([this] { CurveEditorTreeFilterStatusBar->HideStatusBar(); return FReply::Handled(); })
+					[
+						SNew(SImage)
+						.ColorAndOpacity(FSlateColor::UseForeground())
+						.Image(FAppStyle::Get().GetBrush("Icons.Info.Small"))
+					]
+				]
+
+				+ SHorizontalBox::Slot()
+				[
+					SNew(SBorder)
+					.BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
+					.HAlign(HAlign_Center)
+					[
+						Sequencer->MakeTransportControls(true)
+					]
+				]
+
+				+ SHorizontalBox::Slot()
+				.AutoWidth()
+				.VAlign(VAlign_Center)
+				.HAlign(HAlign_Right)
+				[
+					SNew(SButton)
+					.VAlign(EVerticalAlignment::VAlign_Center)
+					.ButtonStyle(FAppStyle::Get(), "NoBorder")
+					.ContentPadding(FMargin(1, 0))
+					[
+						SNew(SHorizontalBox)
+
+						+ SHorizontalBox::Slot()
+						.AutoWidth()
+						.VAlign(VAlign_Center)
+						.HAlign(HAlign_Right)
+						.Padding(FMargin(3.f, 0.f, 0.f, 0.f))
+						[
+							SNew(SBorder)
+							.BorderImage(nullptr)
+							[
+								PlayTimeDisplay.ToSharedRef()
+							]
+						]
+					]
+				]
 			]
 		];
 
@@ -246,11 +320,19 @@ void FCurveEditorExtension::CreateCurveEditor(const FTimeSliderArgs& TimeSliderA
 	CurveEditorPanel->GetKeyDetailsView()->GetPropertyRowGenerator()->RegisterInstancedCustomPropertyTypeLayout(
 			"FrameNumber", 
 			FOnGetPropertyTypeCustomizationInstance::CreateStatic(CreateFrameNumberCustomization, WeakSequencer));
+	CurveEditorPanel->GetToolPropertiesPanel()->GetStructureDetailsView()->GetDetailsView()->RegisterInstancedCustomPropertyTypeLayout(
+		"FrameNumber",
+		FOnGetPropertyTypeCustomizationInstance::CreateStatic(CreateFrameNumberCustomization, WeakSequencer));
 
 	// And jump to the Curve Editor tree search if you have the Curve Editor focused
 	CurveEditorModel->GetCommands()->MapAction(
 		FSequencerCommands::Get().QuickTreeSearch,
 		FExecuteAction::CreateLambda([this] { FSlateApplication::Get().SetKeyboardFocus(CurveEditorSearchBox, EFocusCause::SetDirectly); })
+	);
+
+	CurveEditorModel->GetCommands()->MapAction(
+		FSequencerCommands::Get().ToggleShowGotoBox,
+		FExecuteAction::CreateLambda([this] { PlayTimeDisplay->Setup(); FSlateApplication::Get().SetKeyboardFocus(PlayTimeDisplay, EFocusCause::SetDirectly); })
 	);
 
 	CurveEditorWidget = SNew(SSequencerCurveEditor, CurveEditorPanel.ToSharedRef(), Sequencer);

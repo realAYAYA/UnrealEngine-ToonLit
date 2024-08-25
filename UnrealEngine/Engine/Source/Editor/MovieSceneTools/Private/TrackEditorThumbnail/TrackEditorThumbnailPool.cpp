@@ -58,7 +58,7 @@ bool FTrackEditorThumbnailPool::DrawThumbnails()
 		if (ThumbnailsBeingDrawn[ThumbnailIndex]->bHasFinishedDrawing)
 		{
 			ThumbnailsBeingDrawn[ThumbnailIndex]->PlayFade();
-			ThumbnailsBeingDrawn.RemoveAt(ThumbnailIndex, 1, false);
+			ThumbnailsBeingDrawn.RemoveAt(ThumbnailIndex, 1, EAllowShrinking::No);
 			TimeOfLastDraw = CurrentTime;
 		}
 		else
@@ -115,7 +115,7 @@ bool FTrackEditorThumbnailPool::DrawThumbnails()
 
 	if (ThumbnailsDrawn > 0)
 	{
-		ThumbnailsNeedingDraw.RemoveAt(0, ThumbnailsDrawn, false);
+		ThumbnailsNeedingDraw.RemoveAt(0, ThumbnailsDrawn, EAllowShrinking::No);
 
 		// If done drawing thumbnails, refresh actor list
 		if (ThumbnailsNeedingDraw.Num() == 0)

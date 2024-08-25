@@ -17,7 +17,7 @@ FTransform FGLTFBoneUtilities::GetBindTransform(const FReferenceSkeleton& Refere
 
 	while (ParentBoneIndex != INDEX_NONE)
 	{
-		BindTransform = BindTransform * BonePoses[ParentBoneIndex];
+		BindTransform *= BonePoses[ParentBoneIndex];
 		ParentBoneIndex = BoneInfos[ParentBoneIndex].ParentIndex;
 	}
 

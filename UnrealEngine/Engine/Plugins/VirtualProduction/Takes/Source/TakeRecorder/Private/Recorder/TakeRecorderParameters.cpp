@@ -2,6 +2,7 @@
 
 #include "Recorder/TakeRecorderParameters.h"
 #include "Recorder/TakeRecorder.h"
+#include "TakeRecorderDirectoryHelpers.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(TakeRecorderParameters)
 
@@ -30,6 +31,11 @@ FTakeRecorderProjectParameters::FTakeRecorderProjectParameters()
 	, bRecordToPossessable(false)
 	, bShowNotifications(true)
 {}
+
+FString FTakeRecorderProjectParameters::GetTakeAssetPath() const
+{
+	return UE::TakeRecorder::Private::ResolvePathToProject(RootTakeSaveDir.Path) / TakeSaveDir;
+}
 
 FTakeRecorderParameters::FTakeRecorderParameters() 
 	: TakeRecorderMode(ETakeRecorderMode::RecordNewSequence)

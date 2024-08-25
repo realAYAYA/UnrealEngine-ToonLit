@@ -36,6 +36,8 @@
 #include "Misc/Paths.h"
 #include "Misc/ScopedSlowTask.h"
 #include "ObjectTools.h"
+#include "PackageTools.h"
+#include "PhysicsEngine/PhysicsAsset.h"
 #include "StaticMeshResources.h"
 #include "UObject/UnrealType.h"
 
@@ -403,6 +405,10 @@ UObject* UFbxFactory::FactoryCreateFile
 				ImportOptions->bUpdateSkeletonReferencePose = false;
 			}
 		}
+		if (!FbxImporter->CanImportClass(UPhysicsAsset::StaticClass()))
+		{
+			ImportOptions->bCreatePhysicsAsset = false;
+		}
 		
 		if ( !FbxImporter->ImportFromFile( *UFactory::CurrentFilename, Type, true ) )
 		{
@@ -636,9 +642,9 @@ UObject* UFbxFactory::FactoryCreateFile
 				else if ( bCanImportSkeletalMesh && ImportUI->MeshTypeToImport == FBXIT_SkeletalMesh )// skeletal mesh
 				{
 					int32 TotalNumNodes = 0;
-
 					for (int32 i = 0; i < SkelMeshArray.Num() && !bOperationCanceled; i++)
 					{
+						UPackage* Package = (SkelMeshArray.Num() == 1 ? Cast<UPackage>(InParent) : nullptr);
 						USkeletalMesh* BaseSkeletalMesh = nullptr;
 						TArray<FbxNode*> NodeArray = *SkelMeshArray[i];
 					
@@ -700,12 +706,34 @@ UObject* UFbxFactory::FactoryCreateFile
 								}
 							}
 							FSkeletalMeshImportData OutData;
+							bool bMapMorphTargetToTimeZero = false;
 							if (LODIndex == 0 && SkelMeshNodeArray.Num() != 0)
 							{
-								FName OutputName = FbxImporter->MakeNameForMesh(Name.ToString(), SkelMeshNodeArray[0]);
+								FName OutputName = NAME_None;
+								if (Package == nullptr)
+								{
+									FString NewPackageName;
+									OutputName = FbxImporter->MakeNameForMesh(TEXT("None"), SkelMeshNodeArray[0]);
+									if (InParent != nullptr && InParent->GetOutermost() != nullptr)
+									{
+										NewPackageName = FPackageName::GetLongPackagePath(InParent->GetOutermost()->GetName()) + TEXT("/") + OutputName.ToString();
+									}
+									else
+									{
+										FbxImporter->AddTokenizedErrorMessage(FTokenizedMessage::Create(EMessageSeverity::Error, FText::Format(LOCTEXT("ImportSkeletalMesh", "Invalid Parent package when importing {0}.\nThe asset will not be imported."), FText::FromName(OutputName))), FFbxErrors::Generic_ImportingNewObjectFailed);
+										NewPackageName = OutputName.ToString();
+									}
+									NewPackageName = UPackageTools::SanitizePackageName(NewPackageName);
+									Package = CreatePackage(*NewPackageName);
+									Package->FullyLoad();
+								}
+								else
+								{
+									OutputName = FbxImporter->MakeNameForMesh(Name.ToString(), SkelMeshNodeArray[0]);
+								}
 
 								UnFbx::FFbxImporter::FImportSkeletalMeshArgs ImportSkeletalMeshArgs;
-								ImportSkeletalMeshArgs.InParent = InParent;
+								ImportSkeletalMeshArgs.InParent = Package;
 								ImportSkeletalMeshArgs.NodeArray = SkelMeshNodeArray;
 								ImportSkeletalMeshArgs.Name = OutputName;
 								ImportSkeletalMeshArgs.Flags = Flags;
@@ -726,11 +754,12 @@ UObject* UFbxFactory::FactoryCreateFile
 										// We need to remove all scaling from the root node before we set up animation data.
 										// Othewise some of the global transform calculations will be incorrect.
 										FbxImporter->RemoveTransformSettingsFromFbxNode(RootNodeToImport, ImportUI->SkeletalMeshImportData);
-										FbxImporter->SetupAnimationDataFromMesh(BaseSkeletalMesh, InParent, SkelMeshNodeArray, ImportUI->AnimSequenceImportData, OutputName.ToString());
+										FbxImporter->SetupAnimationDataFromMesh(BaseSkeletalMesh, Package, SkelMeshNodeArray, ImportUI->AnimSequenceImportData, OutputName.ToString());
 
 										// Reapply the transforms for the rest of the import
 										FbxImporter->ApplyTransformSettingsToFbxNode(RootNodeToImport, ImportUI->SkeletalMeshImportData);
 									}
+									bMapMorphTargetToTimeZero = ImportSkeletalMeshArgs.bMapMorphTargetToTimeZero;
 									ImportedSuccessfulLodIndex = SuccessfulLodIndex;
 									//Increment the LOD index
 									SuccessfulLodIndex++;
@@ -770,6 +799,7 @@ UObject* UFbxFactory::FactoryCreateFile
 									FSkeletalMeshLODInfo* LODInfo = BaseSkeletalMesh->GetLODInfo(SuccessfulLodIndex);
 									LODInfo->bImportWithBaseMesh = true;
 									LODInfo->SourceImportFilename = FString(TEXT(""));
+									bMapMorphTargetToTimeZero = ImportSkeletalMeshArgs.bMapMorphTargetToTimeZero;
 									ImportedSuccessfulLodIndex = SuccessfulLodIndex;
 									SuccessfulLodIndex++;
 								}
@@ -790,7 +820,7 @@ UObject* UFbxFactory::FactoryCreateFile
 								uint32 bImportTextures = ImportOptions->bImportTextures;
 								ImportOptions->bImportTextures = 0;
 
-								FbxImporter->ImportFbxMorphTarget(SkelMeshNodeArray, BaseSkeletalMesh, ImportedSuccessfulLodIndex, OutData);
+								FbxImporter->ImportFbxMorphTarget(SkelMeshNodeArray, BaseSkeletalMesh, ImportedSuccessfulLodIndex, OutData, bMapMorphTargetToTimeZero);
 								bOperationCanceled |= FbxImporter->GetImportOperationCancelled();
 							
 								ImportOptions->bImportMaterials = !!bImportMaterials;
@@ -1118,7 +1148,7 @@ UObject* UFbxFactory::RecursiveImportNode(UnFbx::FFbxImporter* FbxImporter, void
 
 void UFbxFactory::CleanUp() 
 {
-	UnFbx::FFbxImporter* FFbxImporter = UnFbx::FFbxImporter::GetInstance();
+	UnFbx::FFbxImporter* FFbxImporter = UnFbx::FFbxImporter::GetInstance(true/*bDoNotCreate*/);
 	bDetectImportTypeOnImport = true;
 	bShowOption = true;
 	// load options
@@ -1166,7 +1196,8 @@ TArray<FString> UFbxFactory::GetFbxFormats(const UFactory* Factory)
 {
 	TArray<FString> FormatArray;
 	const IConsoleVariable* CVarFbx = IConsoleManager::Get().FindConsoleVariable(TEXT("Interchange.FeatureFlags.Import.FBX"));
-	const bool bUseLegacyFbx = (!CVarFbx || !CVarFbx->GetBool());
+	const IConsoleVariable* CVarFbxLevel = IConsoleManager::Get().FindConsoleVariable(TEXT("Interchange.FeatureFlags.Import.FBX.ToLevel"));
+	const bool bUseLegacyFbx = (!CVarFbx || !CVarFbx->GetBool()) || (!CVarFbxLevel || !CVarFbxLevel->GetBool());
 	const IConsoleVariable* CVarObj = IConsoleManager::Get().FindConsoleVariable(TEXT("Interchange.FeatureFlags.Import.OBJ"));
 	const bool bUseLegacyObj = (!CVarObj || !CVarObj->GetBool());
 
@@ -1257,7 +1288,7 @@ void UFbxImportUI::ParseFromJson(TSharedRef<class FJsonObject> ImportSettingsJso
 	FJsonObjectConverter::JsonObjectToUStruct(ImportSettingsJson, GetClass(), this, 0, SkipFlags);
 
 	bAutomatedImportShouldDetectType = true;
-	if(ImportSettingsJson->TryGetField("MeshTypeToImport").IsValid())
+	if(ImportSettingsJson->TryGetField(TEXT("MeshTypeToImport")).IsValid())
 	{
 		// Import type was specified by the user if MeshTypeToImport exists
 		bAutomatedImportShouldDetectType = false;
@@ -1876,7 +1907,7 @@ void UFbxImportUI::LoadOptions(UObject* ObjectToLoadOptions)
 		FArrayProperty* Array = CastField<FArrayProperty>(Property);
 		if (Array)
 		{
-			FConfigSection* Sec = GConfig->GetSectionPrivate(*Section, 0, 1, *GEditorPerProjectIni);
+			const FConfigSection* Sec = GConfig->GetSection(*Section, 0, *GEditorPerProjectIni);
 			if (Sec != nullptr)
 			{
 				TArray<FConfigValue> List;
@@ -1969,16 +2000,14 @@ void UFbxImportUI::SaveOptions(UObject* ObjectToSaveOptions)
 		FArrayProperty* Array = CastField<FArrayProperty>(Property);
 		if (Array)
 		{
-			FConfigSection* Sec = GConfig->GetSectionPrivate(*Section, 1, 0, *GEditorPerProjectIni);
-			check(Sec);
-			Sec->Remove(*Key);
+			GConfig->RemoveKeyFromSection(*Section, *Key, GEditorPerProjectIni);
 
 			FScriptArrayHelper_InContainer ArrayHelper(Array, ObjectToSaveOptions);
 			for (int32 i = 0; i < ArrayHelper.Num(); i++)
 			{
 				FString	Buffer;
 				Array->Inner->ExportTextItem_Direct(Buffer, ArrayHelper.GetRawPtr(i), ArrayHelper.GetRawPtr(i), ObjectToSaveOptions, PortFlags);
-				Sec->Add(*Key, *Buffer);
+				GConfig->AddToSection(*Section, *Key, Buffer, GEditorPerProjectIni);
 			}
 		}
 		else

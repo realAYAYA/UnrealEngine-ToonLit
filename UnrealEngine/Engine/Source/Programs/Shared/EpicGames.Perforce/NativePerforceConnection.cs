@@ -272,6 +272,8 @@ namespace EpicGames.Perforce
 		Response? _currentResponse;
 		readonly ManualResetEvent _responseCompleteEvent;
 		readonly Stopwatch _stallTimer = new Stopwatch();
+		readonly HangMonitor _hangMonitor;
+		bool _disposed;
 
 		/// <inheritdoc/>
 		public IPerforceSettings Settings { get; }
@@ -302,6 +304,7 @@ namespace EpicGames.Perforce
 			Logger = logger;
 
 			_uniqueId = Interlocked.Increment(ref s_nextUniqueId);
+			_hangMonitor = new HangMonitor(TimeSpan.FromMinutes(1.0), $"Perforce connection ({_uniqueId})", logger);
 
 			_buffers = new PinnedBuffer[bufferCount];
 			for (int idx = 0; idx < bufferCount; idx++)
@@ -364,6 +367,7 @@ namespace EpicGames.Perforce
 		void GetNextWriteBuffer(NativeWriteBuffer nativeWriteBuffer, int minSize)
 		{
 			_stallTimer.Start();
+			_hangMonitor.Tick();
 
 			PinnedBuffer buffer = _writeBuffers.Take();
 			if (buffer.MaxLength < minSize)
@@ -375,6 +379,7 @@ namespace EpicGames.Perforce
 			nativeWriteBuffer._maxLength = buffer.Data.Length;
 			nativeWriteBuffer._maxCount = Int32.MaxValue;
 
+			_hangMonitor.Tick();
 			_stallTimer.Stop();
 		}
 
@@ -396,24 +401,23 @@ namespace EpicGames.Perforce
 		/// <inheritdoc/>
 		void Dispose(bool disposing)
 		{
-			if (disposing)
+			if (disposing && !_disposed)
 			{
+				using IDisposable scope = _hangMonitor.Start("Disposing");
+
 				Logger.LogTrace("Disposing Perforce connection {ConnectionId}", _uniqueId);
-			}
 
-			if (_backgroundThread != null)
-			{
-				_requests.Add(null);
-				_requests.CompleteAdding();
-
-				if (disposing)
+				if (_backgroundThread != null)
 				{
+					_requests.Add(null);
+					_requests.CompleteAdding();
+
 					_backgroundThread.Join();
 					_backgroundThread = null!;
 				}
-			}
 
-			_requests.Dispose();
+				_requests.Dispose();
+			}
 
 			if (_client != IntPtr.Zero)
 			{
@@ -421,13 +425,21 @@ namespace EpicGames.Perforce
 				_client = IntPtr.Zero;
 			}
 
-			_writeBuffers.Dispose();
-
-			_responseCompleteEvent.Dispose();
-
-			foreach (PinnedBuffer pinnedBuffer in _buffers)
+			if (disposing && !_disposed)
 			{
-				pinnedBuffer.Dispose();
+				using IDisposable scope = _hangMonitor.Start("Disposing");
+
+				_writeBuffers.Dispose();
+
+				_responseCompleteEvent.Dispose();
+
+				foreach (PinnedBuffer pinnedBuffer in _buffers)
+				{
+					pinnedBuffer.Dispose();
+				}
+
+				_hangMonitor.Dispose();
+				_disposed = true;
 			}
 		}
 
@@ -503,22 +515,30 @@ namespace EpicGames.Perforce
 		{
 			for (; ; )
 			{
-				(Action Action, Response Response)? request = _requests.Take();
-				if (request == null)
+				try
 				{
-					break;
+					(Action Action, Response Response)? request = _requests.Take();
+					if (request == null)
+					{
+						break;
+					}
+
+					_currentResponse = request.Value.Response;
+					_responseCompleteEvent.Reset();
+
+					_stallTimer.Reset();
+					request.Value.Action();
+
+					_currentResponse._readBuffers.Writer.TryComplete();
+					_responseCompleteEvent.WaitOne();
+
+					_currentResponse = null;
 				}
-
-				_currentResponse = request.Value.Response;
-				_responseCompleteEvent.Reset();
-
-				_stallTimer.Reset();
-				request.Value.Action();
-
-				_currentResponse._readBuffers.Writer.TryComplete();
-				_responseCompleteEvent.WaitOne();
-
-				_currentResponse = null;
+				catch (Exception ex)
+				{
+					Logger.LogError(ex, "Exception while processing Perforce commands: {Message}", ex.Message);
+					throw;
+				}
 			}
 		}
 
@@ -563,8 +583,21 @@ namespace EpicGames.Perforce
 
 		private void ExecCommand(string command, List<string> args, byte[]? inputData, string? promptResponse, bool interceptIo)
 		{
+			StringBuilder argList = new StringBuilder();
+			for (int idx = 0; idx < args.Count; idx++)
+			{
+				CommandLineArguments.Append(argList, args[idx]);
+				if (argList.Length > 512)
+				{
+					argList.Append($" {{+{args.Count - idx - 1} more}}");
+					break;
+				}
+			}
+
 			Stopwatch timer = Stopwatch.StartNew();
-			Logger.LogTrace("Conn {ConnectionId}: {Command} {Args}", _uniqueId, command, String.Join(" ", args));
+			Logger.LogTrace("Conn {ConnectionId}: {Command} {Args}", _uniqueId, command, argList.ToString());
+
+			using IDisposable scope = _hangMonitor.Start($"{command} {argList}");
 
 			List<IntPtr> nativeArgs = new List<IntPtr>();
 			try

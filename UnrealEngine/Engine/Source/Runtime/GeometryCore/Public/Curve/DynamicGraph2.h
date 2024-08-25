@@ -139,7 +139,7 @@ public:
 	value_iteration<TVector2<T>> Vertices() const
 	{
 		return vertices_refcount.MappedIndices<TVector2<T>>(
-			[=](int vid) {
+			[=, this](int vid) {
 				return vertices.template AsVector2<T>(vid);
 			});
 	}

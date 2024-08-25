@@ -80,7 +80,8 @@ public:
 		, _BorderBackgroundColor(FLinearColor::White)
 		, _UndeterminedString( SNumericEntryBox<NumericType>::DefaultUndeterminedString )
 		, _AllowSpin(false)
-		, _ShiftMouseMovePixelPerDelta(1)
+		, _ShiftMultiplier(10.f)
+		, _CtrlMultiplier(0.1f)
 		, _SupportDynamicSliderMaxValue(false)
 		, _SupportDynamicSliderMinValue(false)
 		, _Delta(NumericType(0))
@@ -127,8 +128,11 @@ public:
 		SLATE_ATTRIBUTE( FSlateFontInfo, Font )
 		/** Whether or not the user should be able to change the value by dragging with the mouse cursor */
 		SLATE_ARGUMENT( bool, AllowSpin )
-		/** How many pixel the mouse must move to change the value of the delta step (only use if there is a spinbox allow) */
-		SLATE_ARGUMENT( int32, ShiftMouseMovePixelPerDelta )
+		SLATE_ATTRIBUTE_DEPRECATED( int32, ShiftMouseMovePixelPerDelta, 5.4, "Shift Mouse Move Pixel Per Delta is deprecated, please use ShiftMultiplier" )
+		/** Multiplier to use when shift is held down */
+		SLATE_ATTRIBUTE( float, ShiftMultiplier )
+		/** Multiplier to use when ctrl is held down */
+		SLATE_ATTRIBUTE( float, CtrlMultiplier )
 		/** If we're an unbounded spinbox, what value do we divide mouse movement by before multiplying by Delta. Requires Delta to be set. */
 		SLATE_ATTRIBUTE( int32, LinearDeltaSensitivity)
 		/** Tell us if we want to support dynamically changing of the max value using ctrl  (only use if there is a spinbox allow) */
@@ -249,7 +253,8 @@ public:
 				.Font(InArgs._Font.IsSet() ? InArgs._Font : InArgs._EditableTextBoxStyle->TextStyle.Font)
 				.Value(this, &SNumericEntryBox<NumericType>::OnGetValueForSpinBox)
 				.Delta(InArgs._Delta)
-				.ShiftMouseMovePixelPerDelta(InArgs._ShiftMouseMovePixelPerDelta)
+				.ShiftMultiplier(InArgs._ShiftMultiplier)
+				.CtrlMultiplier(InArgs._CtrlMultiplier)
 				.LinearDeltaSensitivity(InArgs._LinearDeltaSensitivity)
 				.SupportDynamicSliderMaxValue(InArgs._SupportDynamicSliderMaxValue)
 				.SupportDynamicSliderMinValue(InArgs._SupportDynamicSliderMinValue)

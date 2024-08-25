@@ -78,16 +78,8 @@ public:
 
 	void Reset()
 	{
-		for (int32 ElementIndex = 0; ElementIndex < Elements.Num(); ++ElementIndex)
-		{
-			if (IsAllocated(ElementIndex))
-			{
-				Elements[ElementIndex].~ElementType();
-			}
-		}
-
-		SpanAllocator.Reset();
 		Elements.Reset();
+		SpanAllocator.Reset();
 		AllocatedElementsBitArray.SetNumUninitialized(0);
 	}
 

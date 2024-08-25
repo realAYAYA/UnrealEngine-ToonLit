@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Horde.Server.Agents.Fleet.Providers;
 using Horde.Server.Agents.Pools;
 
 namespace Horde.Server.Agents.Fleet
@@ -18,29 +17,29 @@ namespace Horde.Server.Agents.Fleet
 		/// Default fleet manager
 		/// </summary>
 		Default,
-		
+
 		/// <summary>
-		/// <see cref="NoOpFleetManager" />
+		/// No-op fleet manager.
 		/// </summary>
 		NoOp,
-		
+
 		/// <summary>
-		/// <see cref="AwsFleetManager" />
+		/// Fleet manager for handling AWS EC2 instances. Will create and/or terminate instances from scratch.
 		/// </summary>
 		Aws,
-		
+
 		/// <summary>
-		/// <see cref="AwsReuseFleetManager" />
+		/// Fleet manager for handling AWS EC2 instances. Will start already existing but stopped instances to reuse existing EBS disks.
 		/// </summary>
 		AwsReuse,
-		
+
 		/// <summary>
-		/// <see cref="AwsRecyclingFleetManager" />
+		/// Fleet manager for handling AWS EC2 instances. Will start already existing but stopped instances to reuse existing EBS disks.
 		/// </summary>
 		AwsRecycle,
-		
+
 		/// <summary>
-		/// <see cref="AwsAsgFleetManager" />
+		/// Fleet manager for handling AWS EC2 instances. Uses an EC2 auto-scaling group for controlling the number of running instances.
 		/// </summary>
 		AwsAsg
 	}
@@ -54,17 +53,17 @@ namespace Horde.Server.Agents.Fleet
 		/// Scaling operation completed as intended.
 		/// </summary>
 		Success,
-		
+
 		/// <summary>
 		/// Scaling operation was only partly fulfilled.
 		/// </summary>
 		PartialSuccess,
-		
+
 		/// <summary>
 		/// Scaling operation failed
 		/// </summary>
 		Failure,
-		
+
 		/// <summary>
 		/// No operation took place (disabled or skipped)
 		/// </summary>
@@ -80,17 +79,17 @@ namespace Horde.Server.Agents.Fleet
 		/// Outcome
 		/// </summary>
 		public FleetManagerOutcome Outcome { get; }
-		
+
 		/// <summary>
 		/// Agents added as part of operation
 		/// </summary>
 		public int AgentsAddedCount { get; }
-		
+
 		/// <summary>
 		/// Agents added as part of operation
 		/// </summary>
 		public int AgentsRemovedCount { get; }
-		
+
 		/// <summary>
 		/// Human-readable log message
 		/// </summary>
@@ -120,9 +119,18 @@ namespace Horde.Server.Agents.Fleet
 		/// <inheritdoc/>
 		public override bool Equals(object? obj)
 		{
-			if (ReferenceEquals(null, obj)) { return false; }
-			if (ReferenceEquals(this, obj)) { return true; }
-			if (obj.GetType() != GetType()) { return false; }
+			if (ReferenceEquals(null, obj))
+			{
+				return false;
+			}
+			if (ReferenceEquals(this, obj))
+			{
+				return true;
+			}
+			if (obj.GetType() != GetType())
+			{
+				return false;
+			}
 			return Equals((ScaleResult)obj);
 		}
 
@@ -138,8 +146,7 @@ namespace Horde.Server.Agents.Fleet
 			return $"Outcome={Outcome} Added={AgentsAddedCount} Removed={AgentsRemovedCount}";
 		}
 	}
-	
-	
+
 	/// <summary>
 	/// Service to manage a fleet of machines
 	/// </summary>
@@ -171,7 +178,7 @@ namespace Horde.Server.Agents.Fleet
 		/// <param name="pool">Pool to resize</param>
 		/// <param name="cancellationToken">Cancellation token for the call</param>
 		/// <returns>Async task</returns>
-		Task<int> GetNumStoppedInstancesAsync(IPool pool, CancellationToken cancellationToken = default);
+		Task<int> GetNumStoppedInstancesAsync(IPoolConfig pool, CancellationToken cancellationToken = default);
 	}
 }
 

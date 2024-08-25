@@ -26,7 +26,9 @@ public class SceneOutliner : ModuleRules
 				"EditorWidgets",
 				"ToolWidgets",
 				"UnsavedAssetsTracker",
-				"AssetDefinition"
+				"AssetDefinition",
+				"TypedElementFramework",
+				"TypedElementRuntime",
 			}
 		);
 		

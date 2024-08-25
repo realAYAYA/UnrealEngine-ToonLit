@@ -3,6 +3,7 @@
 #include "StereoRendering.h"
 #include "SceneView.h"
 #include "GeneralProjectSettings.h"
+#include "Misc/CommandLine.h"
 #include "Misc/ConfigCacheIni.h"
 
 

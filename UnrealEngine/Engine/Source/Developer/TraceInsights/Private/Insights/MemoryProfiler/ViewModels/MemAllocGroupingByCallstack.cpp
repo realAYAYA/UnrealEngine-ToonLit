@@ -55,17 +55,25 @@ INSIGHTS_IMPLEMENT_RTTI(FMemAllocGroupingByCallstack)
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-FMemAllocGroupingByCallstack::FMemAllocGroupingByCallstack(bool bInIsInverted, bool bInIsGroupingByFunction)
+FMemAllocGroupingByCallstack::FMemAllocGroupingByCallstack(bool bInIsAllocCallstack, bool bInIsInverted, bool bInIsGroupingByFunction)
 	: FTreeNodeGrouping(
-		bInIsInverted ? LOCTEXT("Grouping_ByCallstack2_ShortName", "Inverted Callstack")
-					  : LOCTEXT("Grouping_ByCallstack1_ShortName", "Callstack"),
-		bInIsInverted ? LOCTEXT("Grouping_ByCallstack2_TitleName", "By Inverted Callstack")
-					  : LOCTEXT("Grouping_ByCallstack1_TitleName", "By Callstack"),
+		bInIsAllocCallstack
+		? (bInIsInverted ? LOCTEXT("Grouping_ByCallstack2_ShortName", "Inverted Alloc Callstack")
+						: LOCTEXT("Grouping_ByCallstack1_ShortName", "Alloc Callstack"))
+		: (bInIsInverted ? LOCTEXT("Grouping_ByCallstack4_ShortName", "Inverted Free Callstack")
+						: LOCTEXT("Grouping_ByCallstack3_ShortName", "Free Callstack")),
+		bInIsAllocCallstack
+		? (bInIsInverted ? LOCTEXT("Grouping_ByCallstack2_TitleName", "By Inverted Alloc Callstack")
+					  : LOCTEXT("Grouping_ByCallstack1_TitleName", "By Alloc Callstack"))
+		: (bInIsInverted ? LOCTEXT("Grouping_ByCallstack4_TitleName", "By Inverted Free Callstack")
+					  : LOCTEXT("Grouping_ByCallstack3_TitleName", "By Free Callstack")),
 		LOCTEXT("Grouping_Callstack_Desc", "Creates a tree based on callstack of each allocation."),
 		TEXT("Icons.Group.TreeItem"),
 		nullptr)
+	, bIsAllocCallstack(bInIsAllocCallstack)
 	, bIsInverted(bInIsInverted)
 	, bIsGroupingByFunction(bInIsGroupingByFunction)
+	, bShouldSkipFilteredFrames(bIsInverted)
 {
 }
 
@@ -79,6 +87,9 @@ FMemAllocGroupingByCallstack::~FMemAllocGroupingByCallstack()
 
 void FMemAllocGroupingByCallstack::GroupNodes(const TArray<FTableTreeNodePtr>& Nodes, FTableTreeNode& ParentGroup, TWeakPtr<FTable> InParentTable, IAsyncOperationProgress& InAsyncOperationProgress) const
 {
+	const bool bLocalIsGroupingByFunction = bIsGroupingByFunction;
+	const bool bLocalShouldSkipFilteredFrames = bShouldSkipFilteredFrames;
+
 	ParentGroup.ClearChildren();
 
 	TArray<FCallstackGroup*> CallstackGroups;
@@ -111,7 +122,7 @@ void FMemAllocGroupingByCallstack::GroupNodes(const TArray<FTableTreeNodePtr>& N
 		const FMemoryAlloc* Alloc = MemAllocNode.GetMemAlloc();
 		if (Alloc)
 		{
-			const TraceServices::FCallstack* Callstack = Alloc->GetCallstack();
+			const TraceServices::FCallstack* Callstack = bIsAllocCallstack ? Alloc->GetAllocCallstack() : Alloc->GetFreeCallstack();
 
 			FCallstackGroup** FoundGroupPtrPtr = GroupMapByCallstack.Find(Callstack);
 			if (FoundGroupPtrPtr)
@@ -128,14 +139,14 @@ void FMemAllocGroupingByCallstack::GroupNodes(const TArray<FTableTreeNodePtr>& N
 					const TraceServices::FStackFrame* Frame = Callstack->Frame(static_cast<uint8>(bIsInverted ? NumFrames - FrameDepth - 1 : FrameDepth));
 					check(Frame != nullptr);
 
-					if (bIsGroupingByFunction)
+					if (bLocalShouldSkipFilteredFrames &&
+						Frame->Symbol->FilterStatus.load() == TraceServices::EResolvedSymbolFilterStatus::Filtered)
 					{
-						// Skip noise for inverted callstack
-						if (bIsInverted && Frame->Symbol->FilterStatus.load() == TraceServices::EResolvedSymbolFilterStatus::Filtered)
-						{
-							continue;
-						}
+						continue;
+					}
 
+					if (bLocalIsGroupingByFunction)
+					{
 						const FName GroupName = GetGroupName(Frame);
 
 						// Merge with parent group, if it has the same name (i.e. same function).
@@ -226,11 +237,11 @@ FName FMemAllocGroupingByCallstack::GetGroupName(const TraceServices::FStackFram
 	}
 	else if (Result == TraceServices::ESymbolQueryResult::Pending)
 	{
-		return FName(FString::Printf(TEXT("%s!0x%X [...]"), Frame->Symbol->Module, Frame->Addr), 0);
+		return FName(FString::Printf(TEXT("%s!0x%llX [...]"), Frame->Symbol->Module, Frame->Addr), 0);
 	}
 	else
 	{
-		return FName(FString::Printf(TEXT("%s!0x%X"), Frame->Symbol->Module, Frame->Addr), 0);
+		return FName(FString::Printf(TEXT("%s!0x%llX"), Frame->Symbol->Module, Frame->Addr), 0);
 	}
 }
 

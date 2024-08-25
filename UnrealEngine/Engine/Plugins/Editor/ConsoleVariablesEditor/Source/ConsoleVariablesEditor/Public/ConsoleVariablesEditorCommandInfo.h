@@ -9,8 +9,6 @@
 #include "Misc/DateTime.h"
 #include "UObject/ObjectMacros.h"
 
-DECLARE_MULTICAST_DELEGATE_OneParam(FOnDetectConsoleObjectUnregistered, FString)
-
 #define LOCTEXT_NAMESPACE "ConsoleVariablesEditor"
 
 struct CONSOLEVARIABLESEDITOR_API FConsoleVariablesEditorCommandInfo
@@ -49,7 +47,6 @@ struct CONSOLEVARIABLESEDITOR_API FConsoleVariablesEditorCommandInfo
 	
 	~FConsoleVariablesEditorCommandInfo()
 	{
-		OnDetectConsoleObjectUnregistered.Remove(OnDetectConsoleObjectUnregisteredHandle);
 		if (!IsEngineExitRequested()) // CrashFix as GetConsoleVariablePtr() returns stale deleted IConsoleVariable during shut down
 		{
 			if (IConsoleVariable* AsVariable = GetConsoleVariablePtr())
@@ -119,14 +116,14 @@ struct CONSOLEVARIABLESEDITOR_API FConsoleVariablesEditorCommandInfo
  
 	bool IsCurrentValueDifferentFromInputValue(const FString& InValueToCompare);
  
+	void OnConsoleVariableChanged(IConsoleVariable* ChangedVariable);
+
 	/** The actual string key or name */
 	UPROPERTY()
 	FString Command;
 	EConsoleObjectType ObjectType = EConsoleObjectType::NullObject;
 	/** This object is periodically refreshed to mitigate the occurrence of stale pointers. */
-	IConsoleObject* ConsoleObjectPtr;
-	FDateTime TimeOfLastConsoleObjectRefresh;
-	double ConsoleObjectRefreshThreshold = 1.0;
+	IConsoleObject* ConsoleObjectPtr = nullptr;
 	
 	/** The value of this variable (if Variable object type) when the module started in this session after it may have been set by an ini file. */
 	FString StartupValueAsString;
@@ -135,11 +132,9 @@ struct CONSOLEVARIABLESEDITOR_API FConsoleVariablesEditorCommandInfo
 	EConsoleVariableFlags StartupSource = ECVF_Default;
 	/** If the variable was last changed by the current preset */
 	bool bSetInCurrentSession = false;
+	bool bHasAttemptedFind = false;
 	/** When variables change, this callback is executed. */
 	FDelegateHandle OnVariableChangedCallbackHandle;
-	/** When commands are unregistered change, this callback is broadcasted. */
-	FOnDetectConsoleObjectUnregistered OnDetectConsoleObjectUnregistered;
-	FDelegateHandle OnDetectConsoleObjectUnregisteredHandle;
 	/** A mapping of SetBy console variable flags to information like the associated display text. */
 	static const inline TArray<FStaticConsoleVariableFlagInfo> SupportedFlags =
 	{

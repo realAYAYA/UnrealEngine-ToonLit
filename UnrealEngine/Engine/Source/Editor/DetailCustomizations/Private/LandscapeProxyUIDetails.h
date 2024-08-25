@@ -23,10 +23,16 @@ private:
 	/** Use MakeInstance to create an instance of this class */
 	FLandscapeProxyUIDetails();
 
-		/** Returns true if SetBounds button is enabled */
+	/** Returns true if SetBounds button is enabled */
 	bool IsCreateRuntimeVirtualTextureVolumeEnabled(ALandscape* InLandscapeActor) const;
+	
 	/** Callback for Set Bounds button */
 	FReply CreateRuntimeVirtualTextureVolume(ALandscape* InLandscapeActor);
 	
 	IDetailLayoutBuilder* DetailLayoutBuilder = nullptr;
+
+	/** Nanite Position Precision Options */
+	TArray<TSharedPtr<FString>> PositionPrecisionOptions;
+	static constexpr int MinNanitePrecision = -6;
+	static constexpr int MaxNanitePrecision = 13;
 };

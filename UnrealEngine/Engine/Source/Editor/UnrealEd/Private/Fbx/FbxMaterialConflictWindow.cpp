@@ -443,8 +443,6 @@ FSlateColor FMaterialConflictData::GetCellColor(bool IsResultData) const
 		//Material is matched
 		return FSlateColor::UseForeground();
 	}
-	//Fallback
-	return FSlateColor::UseForeground();
 }
 
 void SFbxMaterialConflictWindow::FillMaterialListItem()

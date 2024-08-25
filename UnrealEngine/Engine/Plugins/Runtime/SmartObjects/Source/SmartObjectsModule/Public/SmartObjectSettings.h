@@ -31,4 +31,12 @@ public:
 	/** Base world condition class for all new Smart Object definitions. */
 	UPROPERTY(EditAnywhere, config, Category = "SmartObject")
 	TSubclassOf<USmartObjectWorldConditionSchema> DefaultWorldConditionSchemaClass = USmartObjectWorldConditionSchema::StaticClass();
+
+	/**
+	 * Indicates whether or not the pre-conditions should be excluded from serializing SmartObjectDefinitions for client builds.
+	 * This can be useful for example if the preconditions are server only plugins.
+	 * This allows to access the definition data on clients, while the logic is only handled on servers.
+	 */
+	UPROPERTY(EditAnywhere, config, Category = "SmartObject")
+	bool bShouldExcludePreConditionsOnDedicatedClient = false;
 };

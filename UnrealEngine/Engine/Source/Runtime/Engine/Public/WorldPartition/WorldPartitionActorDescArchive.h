@@ -4,16 +4,21 @@
 #if WITH_EDITOR
 #include "CoreMinimal.h"
 #include "Serialization/Archive.h"
+#include "UObject/TopLevelAssetPath.h"
 #include "UObject/FortniteMainBranchObjectVersion.h"
 
 class FWorldPartitionActorDesc;
+struct FWorldPartitionAssetDataPatcher;
 
 class FActorDescArchive : public FArchiveProxy
 {
 public:
 	FActorDescArchive(FArchive& InArchive, FWorldPartitionActorDesc* InActorDesc);
 
+	void Init(const FTopLevelAssetPath InClassPath = FTopLevelAssetPath());
+
 	//~ Begin FArchive Interface
+	virtual FArchive& operator<<(FName& Value) override { FArchiveProxy::operator<<(Value); return *this; }
 	virtual FArchive& operator<<(FText& Value) override { unimplemented(); return *this; }
 	virtual FArchive& operator<<(UObject*& Value) override { unimplemented(); return *this; }
 	virtual FArchive& operator<<(FLazyObjectPtr& Value) override { unimplemented(); return *this; }
@@ -52,7 +57,7 @@ public:
 
 				if (PropertyOffset < ActorDescAr.ClassDescSizeof)
 				{
-					check((PropertyOffset + sizeof(V)) <= ActorDescAr.ClassDescSizeof);
+					check((PropertyOffset + sizeof(V.Value)) <= ActorDescAr.ClassDescSizeof);
 					const DestPropertyType* RefValue = (const DestPropertyType*)(*(UPTRINT*)&ActorDescAr.ClassDesc + PropertyOffset);
 					return RefValue;
 				}
@@ -115,6 +120,30 @@ public:
 	const FWorldPartitionActorDesc* ClassDesc;
 	uint32 ClassDescSizeof;
 	bool bIsMissingClassDesc;
+};
+
+class FActorDescArchivePatcher : public FActorDescArchive
+{
+public:
+	FActorDescArchivePatcher(FArchive& InArchive, FWorldPartitionActorDesc* InActorDesc, FArchive& OutArchive, FWorldPartitionAssetDataPatcher* InAssetDataPatcher)
+		: FActorDescArchive(InArchive, InActorDesc)
+		, OutAr(OutArchive)
+		, AssetDataPatcher(InAssetDataPatcher)
+		, bIsPatching(false)
+	{
+		check(AssetDataPatcher);
+	}
+
+	//~ Begin FArchive Interface
+	virtual FArchive& operator<<(FName& Value) override;
+	virtual FArchive& operator<<(FSoftObjectPath& Value) override;
+	virtual void Serialize(void* V, int64 Length) override;
+	//~ End FArchive Interface
+
+private:
+	FArchive& OutAr;
+	FWorldPartitionAssetDataPatcher* AssetDataPatcher;
+	bool bIsPatching;
 };
 
 template <typename DestPropertyType, typename SourcePropertyType = DestPropertyType>

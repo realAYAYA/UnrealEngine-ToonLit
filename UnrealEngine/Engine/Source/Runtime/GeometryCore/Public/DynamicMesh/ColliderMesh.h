@@ -65,7 +65,12 @@ public:
 
 	GEOMETRYCORE_API void Initialize(const FDynamicMesh3& SourceMesh, const FBuildOptions& BuildOptions = FBuildOptions());
 
-	GEOMETRYCORE_API void Reset(bool bReleaseMemory);
+	GEOMETRYCORE_API void Reset(EAllowShrinking AllowShrinking);
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("Reset")
+	FORCEINLINE void Reset(bool bReleaseMemory)
+	{
+		Reset(bReleaseMemory ? EAllowShrinking::Yes : EAllowShrinking::No);
+	}
 
 	// mesh API required for TMeshAABBTree3
 	bool IsTriangle(int32 TriangleID) const { return TriangleID >= 0 && TriangleID < Triangles.Num(); }

@@ -16,8 +16,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeImageTable::Private::s_type =
-			NODE_TYPE( "TableImage", NodeImage::GetStaticType() );
+	FNodeType NodeImageTable::Private::s_type =
+			FNodeType( "TableImage", NodeImage::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -28,75 +28,68 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	int NodeImageTable::GetInputCount() const
-	{
-		return 0;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	Node* NodeImageTable::GetInputNode( int i ) const
-	{
-		check( i >=0 && i < 0 );
-        (void)i;
-        return 0;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    void NodeImageTable::SetInputNode( int i, NodePtr )
-	{
-		check( i >=0 && i < 0 );
-        (void)i;
-        //m_pD->m_pObject = dynamic_cast<NodeObject*>( pNode.get() );
-	}
-
-
-	//---------------------------------------------------------------------------------------------
 	// Own Interface
 	//---------------------------------------------------------------------------------------------
-	const char* NodeImageTable::GetColumn() const
+	void NodeImageTable::SetColumn( const FString& strName )
 	{
-		return m_pD->m_columnName.c_str();
+		m_pD->ColumnName = strName;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-	void NodeImageTable::SetColumn( const char* strName )
+	void NodeImageTable::SetParameterName( const FString& strName )
 	{
-		if (strName)
-		{
-			m_pD->m_columnName = strName;
-		}
-		else
-		{
-			m_pD->m_columnName = "";
-		}
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeImageTable::SetParameterName( const char* strName )
-	{
-		m_pD->m_parameterName = strName;
+		m_pD->ParameterName = strName;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
 	void NodeImageTable::SetTable( TablePtr pTable )
 	{
-		m_pD->m_pTable = pTable;
+		m_pD->Table = pTable;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
 	TablePtr NodeImageTable::GetTable() const
 	{
-		return m_pD->m_pTable;
+		return m_pD->Table;
 	}
 
+
+	//---------------------------------------------------------------------------------------------
+	void NodeImageTable::SetMaxTextureSize(uint16 MaxTextureSize)
+	{
+		m_pD->MaxTextureSize = MaxTextureSize;
+	}
+
+
+	//---------------------------------------------------------------------------------------------
+	uint16 NodeImageTable::GetMaxTextureSize()
+	{
+		return m_pD->MaxTextureSize;
+	}
+
+	
+	//---------------------------------------------------------------------------------------------
+	void NodeImageTable::SetNoneOption(bool bAddNoneOption)
+	{
+		m_pD->bNoneOption = bAddNoneOption;
+	}
+
+
+	//---------------------------------------------------------------------------------------------
+	void NodeImageTable::SetReferenceImageDescriptor(const FImageDesc& ImageDesc)
+	{
+		m_pD->ReferenceImageDesc = ImageDesc;
+	}
+
+
+	//---------------------------------------------------------------------------------------------
+	void NodeImageTable::SetDefaultRowName(const FString& RowName)
+	{
+		m_pD->DefaultRowName = RowName;
+	}
 
 }
 

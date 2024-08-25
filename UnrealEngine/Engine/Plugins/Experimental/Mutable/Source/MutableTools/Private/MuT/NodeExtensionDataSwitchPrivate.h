@@ -12,11 +12,7 @@ namespace mu
 	{
 	public:
 
-		MUTABLE_DEFINE_CONST_VISITABLE()
-
-	public:
-
-		static NODE_TYPE s_type;
+		static FNodeType s_type;
 
 		NodeScalarPtr Parameter;
 		TArray<NodeExtensionDataPtr> Options;

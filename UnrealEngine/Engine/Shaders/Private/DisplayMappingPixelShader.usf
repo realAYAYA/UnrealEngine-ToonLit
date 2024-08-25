@@ -1,3 +1,4 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 /*=============================================================================
 DisplayMapping.usf: map input texture to output texture color space.

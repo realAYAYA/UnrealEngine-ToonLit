@@ -3,7 +3,7 @@
   <Name>Autodesk FBX SDK 2020.2</Name>
   <Location>/Engine/Source/ThirdParty/FBX</Location>
   <Function>We use it to import fbx file. The fbx file is what we use to import meshes and animation into the editor. This sdk is not use at runtime.</Function>
-  <Eula>/Engine/Source/ThirdParty/Licenses/FBX_SDK_2020-2_License.pdf</Eula>
+  <Eula>/Engine/Source/ThirdParty/Licenses/Autodesk_FBX_SDK_2020-2_License.pdf</Eula>
   <RedistributeTo>
     <EndUserGroup>Licensees</EndUserGroup>
     <EndUserGroup>Git</EndUserGroup>

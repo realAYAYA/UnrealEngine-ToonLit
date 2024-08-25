@@ -219,8 +219,6 @@ namespace MenuExtension_AnimBlueprint
 		FCompilerResultsLog	ResultsLog;
 		ResultsLog.SetSourcePath(AnimBlueprint->GetPathName());
 		ResultsLog.BeginEvent(TEXT("Compile"));
-		ResultsLog.bLogDetailedResults = GetDefault<UBlueprintEditorSettings>()->bShowDetailedCompileResults;
-		ResultsLog.EventDisplayThresholdMs = GetDefault<UBlueprintEditorSettings>()->CompileEventDisplayThresholdMs;
 
 		FKismetEditorUtilities::CompileBlueprint(AnimBlueprint, EBlueprintCompileOptions::None, &ResultsLog);
 		ResultsLog.EndEvent();

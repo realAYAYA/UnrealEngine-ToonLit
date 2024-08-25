@@ -28,6 +28,7 @@
 #include "rtm/impl/compiler_utils.h"
 #include "rtm/scalarf.h"
 #include "rtm/scalard.h"
+#include "rtm/version.h"
 
 #include <cstdint>
 #include <cstring>
@@ -36,6 +37,8 @@ RTM_IMPL_FILE_PRAGMA_PUSH
 
 namespace rtm
 {
+	RTM_IMPL_VERSION_NAMESPACE_BEGIN
+
 	//////////////////////////////////////////////////////////////////////////
 	// Creates a vector4 from all 4 components.
 	//////////////////////////////////////////////////////////////////////////
@@ -44,14 +47,9 @@ namespace rtm
 #if defined(RTM_SSE2_INTRINSICS)
 		return _mm_set_ps(w, z, y, x);
 #elif defined(RTM_NEON_INTRINSICS)
-#if 1
-		float32x2_t V0 = vcreate_f32(((uint64_t)*(const uint32_t*)&x) | ((uint64_t)(*(const uint32_t*)&y) << 32));
-		float32x2_t V1 = vcreate_f32(((uint64_t)*(const uint32_t*)&z) | ((uint64_t)(*(const uint32_t*)&w) << 32));
+		float32x2_t V0 = vset_lane_f32(y, vmov_n_f32(x), 1);
+		float32x2_t V1 = vset_lane_f32(w, vmov_n_f32(z), 1);
 		return vcombine_f32(V0, V1);
-#else
-		float __attribute__((aligned(16))) data[4] = { x, y, z, w };
-		return vld1q_f32(data);
-#endif
 #else
 		return vector4f{ x, y, z, w };
 #endif
@@ -65,14 +63,9 @@ namespace rtm
 #if defined(RTM_SSE2_INTRINSICS)
 		return _mm_set_ps(0.0F, z, y, x);
 #elif defined(RTM_NEON_INTRINSICS)
-#if 1
-		float32x2_t V0 = vcreate_f32(((uint64_t)*(const uint32_t*)&x) | ((uint64_t)(*(const uint32_t*)&y) << 32));
-		float32x2_t V1 = vcreate_f32((uint64_t)*(const uint32_t*)&z);
+		float32x2_t V0 = vset_lane_f32(y, vmov_n_f32(x), 1);
+		float32x2_t V1 = vset_lane_f32(z, vdup_n_f32(0.0F), 0);
 		return vcombine_f32(V0, V1);
-#else
-		float __attribute__((aligned(16))) data[4] = { x, y, z };
-		return vld1q_f32(data);
-#endif
 #else
 		return vector4f{ x, y, z, 0.0f };
 #endif
@@ -607,6 +600,8 @@ namespace rtm
 	{
 		return rtm_impl::vector4d_to_scalard{ input };
 	}
+
+	RTM_IMPL_VERSION_NAMESPACE_END
 }
 
 RTM_IMPL_FILE_PRAGMA_POP

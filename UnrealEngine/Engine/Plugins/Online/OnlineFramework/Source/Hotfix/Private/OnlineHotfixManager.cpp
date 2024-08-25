@@ -6,6 +6,8 @@
 #include "UObject/UObjectIterator.h"
 #include "UObject/Package.h"
 
+#include "HAL/ConsoleManager.h"
+
 #include "Misc/PackageName.h"
 #include "Misc/EngineVersion.h"
 #include "Misc/FileHelper.h"
@@ -22,6 +24,7 @@
 #include "Engine/BlueprintGeneratedClass.h"
 
 #include "Serialization/AsyncLoadingFlushContext.h"
+#include "UObject/PropertyAccessUtil.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(OnlineHotfixManager)
 
@@ -50,6 +53,16 @@ public:
 
 	TArray<FString> Files;
 };
+
+namespace OnlineHotfixManagerCVars
+{
+	static bool bDeferBroadcastCurveTableModified = true;
+	static FAutoConsoleVariableRef DeferBroadcastCurveTableModifiedCVar(
+		TEXT("hotfix.DeferBroadcastCurveTableModified"),
+		bDeferBroadcastCurveTableModified,
+		TEXT("Whether to wait until all asset hotfixes have been applied before broadcasting OnCurveTableChanged delegates, as opposed to broadcasting after each individual modification"),
+		ECVF_Default);
+}
 
 namespace
 {
@@ -163,6 +176,11 @@ UOnlineHotfixManager::UOnlineHotfixManager() :
 	bLogMountedPakContents = FParse::Param(FCommandLine::Get(), TEXT("LogHotfixPakContents"));
 #endif
 	GameContentPath = FString() / FApp::GetProjectName() / TEXT("Content");
+
+	if (!UObject::IsGarbageEliminationEnabled())
+	{
+		FCoreUObjectDelegates::GetPreGarbageCollectDelegate().AddUObject(this, &UOnlineHotfixManager::StopTrackingInvalidHotfixedAssets);
+	}
 }
 
 UOnlineHotfixManager::UOnlineHotfixManager(FVTableHelper& Helper)
@@ -172,6 +190,10 @@ UOnlineHotfixManager::UOnlineHotfixManager(FVTableHelper& Helper)
 
 UOnlineHotfixManager::~UOnlineHotfixManager()
 {
+	if (!UObject::IsGarbageEliminationEnabled())
+	{
+		FCoreUObjectDelegates::GetPreGarbageCollectDelegate().RemoveAll(this);
+	}
 }
 
 UOnlineHotfixManager* UOnlineHotfixManager::Get(UWorld* World)
@@ -626,7 +648,7 @@ void UOnlineHotfixManager::FilterHotfixFiles()
 	{
 		if (!WantsHotfixProcessing(HotfixFileList[Idx]))
 		{
-			HotfixFileList.RemoveAt(Idx, 1, false);
+			HotfixFileList.RemoveAt(Idx, 1, EAllowShrinking::No);
 			Idx--;
 		}
 	}
@@ -738,8 +760,40 @@ EHotfixResult UOnlineHotfixManager::ApplyHotfix()
 	return Result;
 }
 
+#if !UE_BUILD_SHIPPING
+void UOnlineHotfixManager::ApplyLocalTestHotfix(FString Filename)
+{
+	const FString CleanName = FPaths::GetCleanFilename(Filename);
+	FString IniData;
+	if (FFileHelper::LoadFileToString(IniData, *Filename))
+	{
+		if (HotfixIniFile(CleanName, IniData))
+		{
+			UE_LOG(LogHotfixManager, Display, TEXT("Successfully applied test hotfix file %s"), *Filename);
+		}
+		else
+		{
+			UE_LOG(LogHotfixManager, Display, TEXT("Failed to apply test hotfix file %s"), *Filename);
+		}
+	}
+	else
+	{
+		UE_LOG(LogHotfixManager, Warning, TEXT("Unable to read test hotfix file '%s'"), *Filename);
+	}
+}
+#endif
+
 void UOnlineHotfixManager::TriggerHotfixComplete(EHotfixResult HotfixResult)
 {
+#if !UE_BUILD_SHIPPING
+	// Apply this here so it overwrites any downloaded hotfix changes
+	FString IniFilename;
+	if (FParse::Value(FCommandLine::Get(), TEXT("-TestHotfixIniFile="), IniFilename))
+	{
+		ApplyLocalTestHotfix(IniFilename);
+	}
+#endif
+	
 	if (HotfixResult != EHotfixResult::Failed && HotfixResult != EHotfixResult::SuccessNoChange)
 	{
 		PatchAssetsFromIniFiles();
@@ -923,163 +977,9 @@ bool UOnlineHotfixManager::HotfixIniFile(const FString& FileName, const FString&
 	FConfigFileBackup& BackupFile = BackupIniFile(FileName, ConfigFile);
 	// Merge the string into the config file
 	ConfigFile->CombineFromBuffer(IniData, FileName);
-	TArray<UClass*> Classes;
-	TArray<UObject*> PerObjectConfigObjects;
-	int32 StartIndex = 0;
-	int32 EndIndex = 0;
-	TSet<FString> UpdatedSectionNames;
-	// Find the set of object classes that were affected
-	while (StartIndex >= 0 && StartIndex < IniData.Len() && EndIndex >= StartIndex)
-	{
-		// Find the next section header
-		StartIndex = IniData.Find(TEXT("["), ESearchCase::IgnoreCase, ESearchDir::FromStart, StartIndex);
-		if (StartIndex > -1)
-		{
-			// Find the ending section identifier
-			EndIndex = IniData.Find(TEXT("]"), ESearchCase::IgnoreCase, ESearchDir::FromStart, StartIndex);
-			if (EndIndex > StartIndex)
-			{
-				// Ignore square brackets in the middle of string
-				// - per object section starts with new line
-				// - there's no " character between opening bracket and line start
-				const bool bStartsWithNewLine = (StartIndex == 0) || (IniData[StartIndex - 1] == TEXT('\n'));
-				if (!bStartsWithNewLine)
-				{
-					bool bStartsInsideString = false;
-					for (int32 CharIdx = StartIndex - 1; CharIdx >= 0; CharIdx--)
-					{
-						const bool bHasStringMarker = (IniData[CharIdx] == TEXT('"'));
-						if (bHasStringMarker)
-						{
-							bStartsInsideString = true;
-							break;
-						}
 
-						const bool bHasNewLineMarker = (IniData[CharIdx] == TEXT('\n'));
-						if (bHasNewLineMarker)
-						{
-							break;
-						}
-					}
+	ReloadObjectsAffectedByConfigFile(FileName, IniData, ConfigFile->Name.ToString(), BackupFile.ClassesReloaded, false);
 
-					if (bStartsInsideString)
-					{
-						StartIndex = EndIndex;
-						continue;
-					}
-				}
-
-				UpdatedSectionNames.Emplace(IniData.Mid(StartIndex+1, EndIndex - StartIndex - 1));
-
-				int32 PerObjectNameIndex = IniData.Find(TEXT(" "), ESearchCase::IgnoreCase, ESearchDir::FromStart, StartIndex);
-
-				const TCHAR* AssetHotfixIniHACK = TEXT("[AssetHotfix]");
-				if (FCString::Strnicmp(*IniData + StartIndex, AssetHotfixIniHACK, FCString::Strlen(AssetHotfixIniHACK)) == 0)
-				{
-					// HACK - Make AssetHotfix the last element in the ini file so that this parsing isn't affected by it for now
-					break;
-				}
-
-				// Per object config entries will have a space in the name, but classes won't
-				if (PerObjectNameIndex == -1 || PerObjectNameIndex > EndIndex)
-				{
-					const TCHAR* ScriptHeader = TEXT("[/Script/");
-					const TCHAR* GameHeader = TEXT("[/Game/");
-					if (FCString::Strnicmp(*IniData + StartIndex, ScriptHeader, FCString::Strlen(ScriptHeader)) == 0)
-					{
-						const int32 ScriptSectionTag = 9;
-						// Snip the text out and try to find the class for that
-						const FString PackageClassName = IniData.Mid(StartIndex + ScriptSectionTag, EndIndex - StartIndex - ScriptSectionTag);
-						// Find the class for this so we know what to update
-						UClass* Class = FindObject<UClass>(nullptr, *PackageClassName, true);
-						if (Class)
-						{
-							// Add this to the list to check against
-							Classes.Add(Class);
-							BackupFile.ClassesReloaded.AddUnique(Class->GetPathName());
-						}
-					}
-					else if (FCString::Strnicmp(*IniData + StartIndex, GameHeader, FCString::Strlen(GameHeader)) == 0)
-					{
-						const int32 GameSectionTag = 1;
-						// Snip the text out and try to find the class for that
-						const FString PackageClassName = IniData.Mid(StartIndex + GameSectionTag, EndIndex - StartIndex - GameSectionTag);
-						UBlueprintGeneratedClass* BPGeneratedClass = LoadObject<UBlueprintGeneratedClass>(nullptr, *PackageClassName);
-						if (BPGeneratedClass)
-						{
-							// Add this to the list to check against
-							Classes.Add(BPGeneratedClass);
-							BackupFile.ClassesReloaded.AddUnique(BPGeneratedClass->GetPathName());
-						}
-					}
-				}
-				// Handle the per object config case by finding the object for reload
-				else
-				{
-					const int32 ClassNameStart = PerObjectNameIndex + 1;
-					const FString ClassName = IniData.Mid(ClassNameStart, EndIndex - ClassNameStart);
-
-					// Look up the class to search for
-					UClass* ObjectClass = UClass::TryFindTypeSlow<UClass>(ClassName);
-
-					if (ObjectClass)
-					{
-						const int32 Count = PerObjectNameIndex - StartIndex - 1;
-						const FString PerObjectName = IniData.Mid(StartIndex + 1, Count);
-
-						// Explicitly search the transient package (won't update non-transient objects)
-						UObject* PerObject = StaticFindFirstObject(ObjectClass, *PerObjectName, EFindFirstObjectOptions::NativeFirst);
-						if (PerObject != nullptr)
-						{
-							PerObjectConfigObjects.Add(PerObject);
-							BackupFile.ClassesReloaded.AddUnique(ObjectClass->GetPathName());
-						}
-					}
-					else
-					{
-						UE_LOG(LogHotfixManager, Warning, TEXT("Specified per-object class %s was not found"), *ClassName);
-					}
-				}
-				StartIndex = EndIndex;
-			}
-		}
-	}
-
-	int32 NumObjectsReloaded = 0;
-	const double StartTime = FPlatformTime::Seconds();
-	// Now that we have a list of classes to update, we can iterate objects and reload
-	for (UClass* Class : Classes)
-	{
-		if (Class->HasAnyClassFlags(CLASS_Config))
-		{
-			TArray<UObject*> Objects;
-			GetObjectsOfClass(Class, Objects, true, RF_NoFlags);
-			for (UObject* Object : Objects)
-			{
-				if (IsValid(Object))
-				{
-					// Force a reload of the config vars
-					UE_LOG(LogHotfixManager, Verbose, TEXT("Reloading %s"), *Object->GetPathName());
-					Object->ReloadConfig();
-					NumObjectsReloaded++;
-				}
-			}
-		}
-	}
-
-	// Reload any PerObjectConfig objects that were affected
-	for (auto ReloadObject : PerObjectConfigObjects)
-	{
-		UE_LOG(LogHotfixManager, Verbose, TEXT("Reloading %s"), *ReloadObject->GetPathName());
-		ReloadObject->ReloadConfig();
-		NumObjectsReloaded++;
-	}
-
-	const FString ConfigFileName = ConfigFile->Name.ToString();
-	FCoreDelegates::TSOnConfigSectionsChanged().Broadcast(ConfigFileName, UpdatedSectionNames);
-
-	UE_LOG(LogHotfixManager, Log, TEXT("Updating config from %s took %f seconds and reloaded %d objects"),
-		*FileName, FPlatformTime::Seconds() - StartTime, NumObjectsReloaded);
 	return true;
 }
 
@@ -1401,7 +1301,7 @@ void UOnlineHotfixManager::PatchAssetsFromIniFiles()
 	AssetsHotfixedFromIniFiles.Reset();
 
 	// Everything should be under the 'AssetHotfix' section in Game.ini
-	FConfigSection* AssetHotfixConfigSection = GConfig->GetSectionPrivate(TEXT("AssetHotfix"), false, true, GGameIni);
+	const FConfigSection* AssetHotfixConfigSection = GConfig->GetSection(TEXT("AssetHotfix"), false, GGameIni);
 	if (AssetHotfixConfigSection != nullptr)
 	{
 		// These are the asset types we support patching right now
@@ -1414,9 +1314,11 @@ void UOnlineHotfixManager::PatchAssetsFromIniFiles()
 			UCurveLinearColor::StaticClass(),
 		};
 
-		TSet<UDataTable*> ChangedTables;
+		TSet<UDataTable*> ChangedDataTables;
+		TSet<UCurveTable*> ChangedCurveTables;
+		TSet<UCurveTable*>* ChangedCurveTablesPointer = OnlineHotfixManagerCVars::bDeferBroadcastCurveTableModified ? &ChangedCurveTables : nullptr;
 
-		for (FConfigSection::TIterator It(*AssetHotfixConfigSection); It; ++It)
+		for (FConfigSection::TConstIterator It(*AssetHotfixConfigSection); It; ++It)
 		{
 			FMoviePlayerProxy::BlockingTick();
 			++TotalPatchableAssets;
@@ -1452,6 +1354,13 @@ void UOnlineHotfixManager::PatchAssetsFromIniFiles()
 						const FString& AssetPath(Tokens[0]);
 						const FString& HotfixType(Tokens[1]);
 
+						if (!ShouldHotfixAsset(AssetPath))
+						{
+							//Child class says not to hotfix this asset so it shouldn't be included in the total
+							--TotalPatchableAssets;
+							continue;
+						}
+
 						bool bAddAssetToHotfixedList = false;
 
 						// Find or load the asset
@@ -1468,7 +1377,7 @@ void UOnlineHotfixManager::PatchAssetsFromIniFiles()
 								//	+DataTable=<data table path>;RowUpdate;<row name>;<column name>;<new value>
 								//	+CurveTable=<curve table path>;RowUpdate;<row name>;<column name>;<new value>
 								//	+CurveFloat=<curve float path>;RowUpdate;None;<column name>;<new value>
-								HotfixRowUpdate(Asset, AssetPath, Tokens[2], Tokens[3], Tokens[4], ProblemStrings, &ChangedTables);
+								HotfixRowUpdate(Asset, AssetPath, Tokens[2], Tokens[3], Tokens[4], ProblemStrings, &ChangedDataTables, ChangedCurveTablesPointer);
 								bAddAssetToHotfixedList = ProblemStrings.Num() == 0;
 							}
 							else if ((HotfixType == TableUpdate || HotfixType == CurveUpdate) && Tokens.Num() == 3)
@@ -1482,7 +1391,11 @@ void UOnlineHotfixManager::PatchAssetsFromIniFiles()
 
 								// We have to read json data as quoted string because tokenizing it creates extra unwanted characters.
 								FString JsonData;
-								if (FParse::QuotedString(*Tokens[2], JsonData))
+
+								// Json should be read in its entirety, if the whole buffer wasn't read the string is malformed. 
+								int32 ReadLen = 0;
+								int32 InputLen = Tokens[2].Len();
+								if (FParse::QuotedString(*Tokens[2], JsonData, &ReadLen) && ReadLen == InputLen)
 								{
 									HotfixTableUpdate(Asset, AssetPath, JsonData, ProblemStrings);
 									bAddAssetToHotfixedList = ProblemStrings.Num() == 0;
@@ -1537,11 +1450,19 @@ void UOnlineHotfixManager::PatchAssetsFromIniFiles()
 			}
 		}
 
-		for (UDataTable* Table : ChangedTables)
+		for (UDataTable* DataTable : ChangedDataTables)
 		{
-			if (Table != nullptr)
+			if (DataTable != nullptr)
 			{
-				Table->HandleDataTableChanged();
+				DataTable->HandleDataTableChanged();
+			}
+		}
+
+		for (UCurveTable* CurveTable : ChangedCurveTables)
+		{
+			if (CurveTable != nullptr)
+			{
+				CurveTable->OnCurveTableChanged().Broadcast();
 			}
 		}
 	}
@@ -1560,8 +1481,77 @@ void UOnlineHotfixManager::PatchAssetsFromIniFiles()
 	}
 }
 
+void UOnlineHotfixManager::ReloadConfigsFromIniFiles()
+{
+	FlushAsyncLoading();
 
-void UOnlineHotfixManager::HotfixRowUpdate(UObject* Asset, const FString& AssetPath, const FString& RowName, const FString& ColumnName, const FString& NewValue, TArray<FString>& ProblemStrings, TSet<UDataTable*>* ChangedTables)
+	TArray<FString> ClassesToReload;
+
+	for (const FCloudFileHeader& FileHeader : HotfixFileList)
+	{
+		if (FileHeader.FileName.EndsWith(TEXT(".INI")))
+		{
+			const FString ProcessedName = BuildConfigCacheKey(GetStrippedConfigFileName(FileHeader.FileName));
+			for (int32 Index = 0; Index < IniBackups.Num(); Index++)
+			{
+				const FConfigFileBackup& BackupFile = IniBackups[Index];
+				if (IniBackups[Index].IniName == ProcessedName)
+				{
+					ClassesToReload.Append(BackupFile.ClassesReloaded);
+				}
+			}
+		}
+	}
+
+	int32 NumObjectsReloaded = 0;
+	const double StartTime = FPlatformTime::Seconds();
+
+	if (ClassesToReload.Num() > 0)
+	{
+		TArray<UClass*> RestoredClasses;
+		RestoredClasses.Reserve(ClassesToReload.Num());
+		for (int32 Index = 0; Index < ClassesToReload.Num(); Index++)
+		{
+			UClass* Class = FindObject<UClass>(nullptr, *ClassesToReload[Index], true);
+			if (Class != nullptr)
+			{
+				// Add this to the list to check against
+				RestoredClasses.Add(Class);
+			}
+		}
+
+		for (UClass* Class : RestoredClasses)
+		{
+			if (Class->HasAnyClassFlags(CLASS_Config))
+			{
+				TArray<UObject*> Objects;
+				GetObjectsOfClass(Class, Objects, true, RF_NoFlags);
+				for (UObject* Object : Objects)
+				{
+					if (IsValid(Object))
+					{
+						UE_LOG(LogHotfixManager, Verbose, TEXT("Reloading %s"), *Object->GetPathName());
+						Object->ReloadConfig();
+						NumObjectsReloaded++;
+					}
+				}
+			}
+		}
+	}
+
+	UE_LOG(LogHotfixManager, Log, TEXT("Reloading config for %d changed classes took %f seconds reloading %d objects"),
+		ClassesToReload.Num(), FPlatformTime::Seconds() - StartTime, NumObjectsReloaded);
+}
+
+void UOnlineHotfixManager::HotfixRowUpdate(
+	UObject* Asset,
+	const FString& AssetPath,
+	const FString& RowName,
+	const FString& ColumnName,
+	const FString& NewValue,
+	TArray<FString>& ProblemStrings,
+	TSet<UDataTable*>* ChangedDataTables,
+	TSet<UCurveTable*>* ChangedCurveTables)
 {
 	if (AssetPath.IsEmpty())
 	{
@@ -1591,7 +1581,8 @@ void UOnlineHotfixManager::HotfixRowUpdate(UObject* Asset, const FString& AssetP
 	{
 		// Edit the row with the new value.
 		bool bWasDataTableChanged = false;
-		FProperty* DataTableRowProperty = DataTable->GetRowStruct()->FindPropertyByName(FName(*ColumnName));
+
+		FProperty* DataTableRowProperty = PropertyAccessUtil::FindPropertyByName(FName(*ColumnName), DataTable->GetRowStruct());
 		if (DataTableRowProperty)
 		{
 			// See what type of property this is.
@@ -1602,7 +1593,7 @@ void UOnlineHotfixManager::HotfixRowUpdate(UObject* Asset, const FString& AssetP
 
 			// Get the row data by name.
 			static const FString Context = FString(TEXT("UOnlineHotfixManager::PatchAssetsFromIniFiles"));
-			FTableRowBase* DataTableRow = DataTable->FindRow<FTableRowBase>(FName(*RowName), Context);
+			uint8* DataTableRow = DataTable->FindRowUnchecked(FName(*RowName));
 			if (DataTableRow)
 			{
 				uint8* RowData = DataTableRowProperty->ContainerPtrToValuePtr<uint8>(DataTableRow, 0);
@@ -1641,7 +1632,7 @@ void UOnlineHotfixManager::HotfixRowUpdate(UObject* Asset, const FString& AssetP
 							ProblemStrings.Add(Problem);
 						}
 					}
-										// String property
+					// String property
 					else if (StrProp)
 					{
 						const FString OldPropertyValue = StrProp->GetPropertyValue(RowData);
@@ -1671,17 +1662,22 @@ void UOnlineHotfixManager::HotfixRowUpdate(UObject* Asset, const FString& AssetP
 						bWasDataTableChanged = true;
 						UE_LOG(LogHotfixManager, Log, TEXT("Data table %s row %s updated column %s from %s to %s."), *AssetPath, *RowName, *ColumnName, *OldPropertyValue.ToString(), *NewPropertyValue.ToString());
 					}
-					// Not an expected property.
 					else
 					{
-						// we'll make one last attempt here
+						// Evaluate supported property types, i.e. FBoolProperty, and attempt to assign the value
+						const FString OldPropertyValue = DataTableUtils::GetPropertyValueAsString(DataTableRowProperty, (uint8*)DataTableRow, EDataTableExportFlags::UseSimpleText);
 						FString Error = DataTableUtils::AssignStringToProperty(NewValue, DataTableRowProperty, (uint8*)DataTableRow);
 
-						if (Error.Len() > 0)
+						if (Error.IsEmpty())
 						{
-							const FString Problem(FString::Printf(TEXT("The data table row property named %s is not a FNumericProperty, FStrProperty, FNameProperty, or FSoftObjectProperty and it should be."), *ColumnName));
-							ProblemStrings.Add(Problem);
-							ProblemStrings.Add(FString::Printf(TEXT("%s"), *Error));
+							bWasDataTableChanged = true;
+							UE_LOG(LogHotfixManager, Log, TEXT("Data table %s row %s updated column %s from %s to %s."), *AssetPath, *RowName, *ColumnName, *OldPropertyValue, *NewValue);
+						}
+						else
+						{
+							FString Problem(FString::Printf(TEXT("Failed to update data table %s row %s column %s from %s to %s."), *AssetPath, *RowName, *ColumnName, *OldPropertyValue, *NewValue));
+							ProblemStrings.Add(MoveTemp(Problem));
+							ProblemStrings.Add(MoveTemp(Error));
 						}
 					}
 				}
@@ -1708,13 +1704,13 @@ void UOnlineHotfixManager::HotfixRowUpdate(UObject* Asset, const FString& AssetP
 
 		if (bWasDataTableChanged)
 		{
-			if (ChangedTables == nullptr)
+			if (ChangedDataTables == nullptr)
 			{
 				DataTable->HandleDataTableChanged();
 			}
 			else
 			{
-				ChangedTables->Add(DataTable);
+				ChangedDataTables->Add(DataTable);
 			}
 		}
 	}
@@ -1781,7 +1777,14 @@ void UOnlineHotfixManager::HotfixRowUpdate(UObject* Asset, const FString& AssetP
 
 		if (bWasCurveTableChanged)
 		{
-			CurveTable->OnCurveTableChanged().Broadcast();
+			if (ChangedCurveTables == nullptr)
+			{
+				CurveTable->OnCurveTableChanged().Broadcast();
+			}
+			else
+			{
+				ChangedCurveTables->Add(CurveTable);
+			}
 		}
 	}
 	else if (CurveFloat)
@@ -1886,9 +1889,179 @@ FString UOnlineHotfixManager::GetDedicatedServerPrefix() const
 	return TEXT("DedicatedServer");
 }
 
+bool UOnlineHotfixManager::ShouldHotfixAsset(const FString& AssetPath) const
+{
+	return true;
+}
+
 UWorld* UOnlineHotfixManager::GetWorld() const
 {
 	return OwnerWorld.IsValid() ? OwnerWorld.Get() : nullptr;
+}
+
+void UOnlineHotfixManager::StopTrackingInvalidHotfixedAssets()
+{
+	AssetsHotfixedFromIniFiles.RemoveAllSwap([](const UObject* Obj) { return !IsValid(Obj); });
+}
+
+void UOnlineHotfixManager::ReloadObjectsAffectedByConfigFile(const FString& IniDataFileName, const FString& IniData, const FString& ConfigFilename, TArray<FString>& ReloadedClassesPathNames, bool bUseLoadConfig)
+{
+	TArray<UClass*> Classes;
+	TArray<UObject*> PerObjectConfigObjects;
+	int32 StartIndex = 0;
+	int32 EndIndex = 0;
+	TSet<FString> UpdatedSectionNames;
+	// Find the set of object classes that were affected
+	while (StartIndex >= 0 && StartIndex < IniData.Len() && EndIndex >= StartIndex)
+	{
+		// Find the next section header
+		StartIndex = IniData.Find(TEXT("["), ESearchCase::IgnoreCase, ESearchDir::FromStart, StartIndex);
+		if (StartIndex > -1)
+		{
+			// Find the ending section identifier
+			EndIndex = IniData.Find(TEXT("]"), ESearchCase::IgnoreCase, ESearchDir::FromStart, StartIndex);
+			if (EndIndex > StartIndex)
+			{
+				// Ignore square brackets in the middle of string
+				// - per object section starts with new line
+				// - there's no " character between opening bracket and line start
+				const bool bStartsWithNewLine = (StartIndex == 0) || (IniData[StartIndex - 1] == TEXT('\n'));
+				if (!bStartsWithNewLine)
+				{
+					bool bStartsInsideString = false;
+					for (int32 CharIdx = StartIndex - 1; CharIdx >= 0; CharIdx--)
+					{
+						const bool bHasStringMarker = (IniData[CharIdx] == TEXT('"'));
+						if (bHasStringMarker)
+						{
+							bStartsInsideString = true;
+							break;
+						}
+
+						const bool bHasNewLineMarker = (IniData[CharIdx] == TEXT('\n'));
+						if (bHasNewLineMarker)
+						{
+							break;
+						}
+					}
+
+					if (bStartsInsideString)
+					{
+						StartIndex = EndIndex;
+						continue;
+					}
+				}
+
+				UpdatedSectionNames.Emplace(IniData.Mid(StartIndex + 1, EndIndex - StartIndex - 1));
+
+				int32 PerObjectNameIndex = IniData.Find(TEXT(" "), ESearchCase::IgnoreCase, ESearchDir::FromStart, StartIndex);
+
+				const TCHAR* AssetHotfixIniHACK = TEXT("[AssetHotfix]");
+				if (FCString::Strnicmp(*IniData + StartIndex, AssetHotfixIniHACK, FCString::Strlen(AssetHotfixIniHACK)) == 0)
+				{
+					// HACK - Make AssetHotfix the last element in the ini file so that this parsing isn't affected by it for now
+					break;
+				}
+
+				// Per object config entries will have a space in the name, but classes won't
+				if (PerObjectNameIndex == -1 || PerObjectNameIndex > EndIndex)
+				{
+					const TCHAR* ScriptHeader = TEXT("[/Script/");
+					const TCHAR* GameHeader = TEXT("[/Game/");
+					if (FCString::Strnicmp(*IniData + StartIndex, ScriptHeader, FCString::Strlen(ScriptHeader)) == 0)
+					{
+						const int32 ScriptSectionTag = 9;
+						// Snip the text out and try to find the class for that
+						const FString PackageClassName = IniData.Mid(StartIndex + ScriptSectionTag, EndIndex - StartIndex - ScriptSectionTag);
+						// Find the class for this so we know what to update
+						UClass* Class = FindObject<UClass>(nullptr, *PackageClassName, true);
+						if (Class)
+						{
+							// Add this to the list to check against
+							Classes.Add(Class);
+							ReloadedClassesPathNames.AddUnique(Class->GetPathName());
+						}
+					}
+					else if (FCString::Strnicmp(*IniData + StartIndex, GameHeader, FCString::Strlen(GameHeader)) == 0)
+					{
+						const int32 GameSectionTag = 1;
+						// Snip the text out and try to find the class for that
+						const FString PackageClassName = IniData.Mid(StartIndex + GameSectionTag, EndIndex - StartIndex - GameSectionTag);
+						UBlueprintGeneratedClass* BPGeneratedClass = LoadObject<UBlueprintGeneratedClass>(nullptr, *PackageClassName);
+						if (BPGeneratedClass)
+						{
+							// Add this to the list to check against
+							Classes.Add(BPGeneratedClass);
+							ReloadedClassesPathNames.AddUnique(BPGeneratedClass->GetPathName());
+						}
+					}
+				}
+				// Handle the per object config case by finding the object for reload
+				else
+				{
+					const int32 ClassNameStart = PerObjectNameIndex + 1;
+					const FString ClassName = IniData.Mid(ClassNameStart, EndIndex - ClassNameStart);
+
+					// Look up the class to search for
+					UClass* ObjectClass = UClass::TryFindTypeSlow<UClass>(ClassName);
+
+					if (ObjectClass)
+					{
+						const int32 Count = PerObjectNameIndex - StartIndex - 1;
+						const FString PerObjectName = IniData.Mid(StartIndex + 1, Count);
+
+						// Explicitly search the transient package (won't update non-transient objects)
+						UObject* PerObject = StaticFindFirstObject(ObjectClass, *PerObjectName, EFindFirstObjectOptions::NativeFirst);
+						if (PerObject != nullptr)
+						{
+							PerObjectConfigObjects.Add(PerObject);
+							ReloadedClassesPathNames.AddUnique(ObjectClass->GetPathName());
+						}
+					}
+					else
+					{
+						UE_LOG(LogHotfixManager, Warning, TEXT("Specified per-object class %s was not found"), *ClassName);
+					}
+				}
+				StartIndex = EndIndex;
+			}
+		}
+	}
+
+	int32 NumObjectsReloaded = 0;
+	const double StartTime = FPlatformTime::Seconds();
+	// Now that we have a list of classes to update, we can iterate objects and reload
+	for (UClass* Class : Classes)
+	{
+		if (Class->HasAnyClassFlags(CLASS_Config))
+		{
+			TArray<UObject*> Objects;
+			GetObjectsOfClass(Class, Objects, true, RF_NoFlags);
+			for (UObject* Object : Objects)
+			{
+				if (IsValid(Object))
+				{
+					// Force a reload of the config vars
+					UE_LOG(LogHotfixManager, Verbose, TEXT("Reloading %s"), *Object->GetPathName());
+					bUseLoadConfig ? Object->LoadConfig() : Object->ReloadConfig();
+					NumObjectsReloaded++;
+				}
+			}
+		}
+	}
+
+	// Reload any PerObjectConfig objects that were affected
+	for (UObject* ReloadObject : PerObjectConfigObjects)
+	{
+		UE_LOG(LogHotfixManager, Verbose, TEXT("Reloading %s"), *ReloadObject->GetPathName());
+		bUseLoadConfig ? ReloadObject->LoadConfig() : ReloadObject->ReloadConfig();
+		NumObjectsReloaded++;
+	}
+
+	FCoreDelegates::TSOnConfigSectionsChanged().Broadcast(ConfigFilename, UpdatedSectionNames);
+
+	UE_LOG(LogHotfixManager, Log, TEXT("Updating config from %s took %f seconds and reloaded %d objects"),
+		*IniDataFileName, FPlatformTime::Seconds() - StartTime, NumObjectsReloaded);
 }
 
 struct FHotfixManagerExec :

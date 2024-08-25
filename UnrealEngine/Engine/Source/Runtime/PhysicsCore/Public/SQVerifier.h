@@ -50,7 +50,7 @@ void SQPerfComparisonHelper(const FString& TestName, FPhysTestSerializer& Serial
 		{
 			auto ChaosHitBuffer = MakeUnique<ChaosInterface::FSQHitBuffer<ChaosInterface::FSweepHit>>();
 			uint32 StartTime = FPlatformTime::Cycles();
-			SQAccelerator.Sweep(*CapturedSQ.ChaosGeometry, CapturedSQ.StartTM, CapturedSQ.Dir, CapturedSQ.DeltaMag, *ChaosHitBuffer, CapturedSQ.OutputFlags.HitFlags, CapturedSQ.QueryFilterData, *CapturedSQ.FilterCallback);
+			SQAccelerator.Sweep(*CapturedSQ.ChaosImplicitGeometry, CapturedSQ.StartTM, CapturedSQ.Dir, CapturedSQ.DeltaMag, *ChaosHitBuffer, CapturedSQ.OutputFlags.HitFlags, CapturedSQ.QueryFilterData, *CapturedSQ.FilterCallback);
 			ChaosSum += FPlatformTime::Cycles() - StartTime;
 		}
 		break;
@@ -64,7 +64,7 @@ void SQPerfComparisonHelper(const FString& TestName, FPhysTestSerializer& Serial
 		{
 			auto ChaosHitBuffer = MakeUnique<ChaosInterface::FSQHitBuffer<ChaosInterface::FOverlapHit>>();
 			uint32 StartTime = FPlatformTime::Cycles();
-			SQAccelerator.Overlap(*CapturedSQ.ChaosGeometry, CapturedSQ.StartTM, *ChaosHitBuffer, CapturedSQ.QueryFilterData, *CapturedSQ.FilterCallback);
+			SQAccelerator.Overlap(*CapturedSQ.ChaosImplicitGeometry, CapturedSQ.StartTM, *ChaosHitBuffer, CapturedSQ.QueryFilterData, *CapturedSQ.FilterCallback);
 			ChaosSum += FPlatformTime::Cycles() - StartTime;
 		}
 		break;
@@ -245,7 +245,7 @@ bool SQValidityHelper(FPhysTestSerializer& Serializer)
 			ISpatialAccelerationCollection<FAccelerationStructureHandle, FReal, 3>* Accelerator = nullptr;
 			Serializer.GetChaosData()->UpdateExternalAccelerationStructure_External(Accelerator, Empty);
 			FChaosSQAccelerator SQAccelerator(*Accelerator);
-			SQAccelerator.Sweep(*CapturedSQ.ChaosGeometry, CapturedSQ.StartTM, CapturedSQ.Dir, CapturedSQ.DeltaMag, ChaosHitBuffer, CapturedSQ.OutputFlags.HitFlags, CapturedSQ.QueryFilterData, *CapturedSQ.FilterCallback);
+			SQAccelerator.Sweep(*CapturedSQ.ChaosImplicitGeometry, CapturedSQ.StartTM, CapturedSQ.Dir, CapturedSQ.DeltaMag, ChaosHitBuffer, CapturedSQ.OutputFlags.HitFlags, CapturedSQ.QueryFilterData, *CapturedSQ.FilterCallback);
 			
 			const bool bHasBlockingHit = ChaosHitBuffer.HasBlockingHit();
 			const int32 NumHits = ChaosHitBuffer.GetNumHits();
@@ -268,7 +268,7 @@ bool SQValidityHelper(FPhysTestSerializer& Serializer)
 			ISpatialAccelerationCollection<FAccelerationStructureHandle, FReal, 3>* Accelerator = nullptr;
 			Serializer.GetChaosData()->UpdateExternalAccelerationStructure_External(Accelerator, Empty);
 			FChaosSQAccelerator SQAccelerator(*Accelerator);
-			SQAccelerator.Overlap(*CapturedSQ.ChaosGeometry, CapturedSQ.StartTM, ChaosHitBuffer, CapturedSQ.QueryFilterData, *CapturedSQ.FilterCallback);
+			SQAccelerator.Overlap(*CapturedSQ.ChaosImplicitGeometry, CapturedSQ.StartTM, ChaosHitBuffer, CapturedSQ.QueryFilterData, *CapturedSQ.FilterCallback);
 			break;
 		}
 	}

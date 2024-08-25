@@ -4,10 +4,13 @@ import os
 import re
 import shutil
 import unreal
+import subprocess as sp
+from pathlib import Path
 
 #-------------------------------------------------------------------------------
 class Platform(unreal.Platform):
     name = "Android"
+    config_section = "/Script/AndroidRuntimeSettings.AndroidRuntimeSettings"
 
     def _read_env(self):
         version = self.get_version()
@@ -76,12 +79,13 @@ class Platform(unreal.Platform):
             return
 
         for prefix in ("", unreal.Platform.get_sdks_dir()):
-            if os.path.isdir(prefix + out):
-                return prefix + out
+            candidate = Path(prefix) / out
+            if candidate.is_dir():
+                return candidate
 
     def _get_adb(self):
         home_dir = self._get_android_home()
-        return home_dir + "/platform-tools/adb" if home_dir else "adb"
+        return (home_dir / "platform-tools/adb") if home_dir else "adb"
 
     def _get_aapt(self):
         home_dir = self._get_android_home()
@@ -89,15 +93,63 @@ class Platform(unreal.Platform):
             return "aapt"
 
         try:
-            build_tools_dir = home_dir + "/build-tools/"
-            latest = ""
-            for item in os.scandir(build_tools_dir):
-                latest = max(latest, item.name)
-            if latest and os.path.isdir(build_tools_dir):
-                return build_tools_dir + latest + "/aapt"
-        except FileNotFoundError:
+            build_tools_dir = home_dir / "build-tools"
+            latest = max(x.name for x in build_tools_dir.glob("*"))
+            return build_tools_dir / latest / "aapt"
+        except ValueError:
             return
 
     def _get_cook_form(self, target):
         if target == "game":   return "Android_ASTC"
         if target == "client": return "Android_ASTCClient"
+
+    def _get_cook_flavor(self):
+        return "ASTC"
+
+    def _get_package_name(self):
+        config = self.get_unreal_context().get_config()
+        if ret := str(config.get("Engine", Platform.config_section, "PackageName")):
+            return ret
+        raise ValueError(f"Failed querying '{Platform.config_section}/PackageName'")
+
+    def _launch(self, exec_context, stage_dir, binary_path, args):
+        print("!!\n!! NOTE: .run does not currently use locally-built executables\n!!\n")
+
+        package_name = self._get_package_name()
+        intent = package_name + "/com.epicgames.unreal.SplashActivity"
+        print("Package:", package_name)
+        print("Intent: ", intent)
+        print()
+
+        args = "'" + " ".join(x.replace("\"", "\\\"") for x in args) + "'"
+        adb = self._get_adb()
+        cmd = (str(adb), "-d", "shell", "am", "start", "--es", "cmdline", args, intent)
+        print(*cmd)
+
+        # subprocess.run() messes with quotes on Windows so we'll use os.system
+        self._kill()
+        os.system(" ".join(cmd))
+
+        return True
+        """ -- not yet implemented properly --
+        # get device
+        device = None
+        for line in exec_context.create_runnable(adb, "-d", "devices"):
+            if line.endswith("device") and not device:
+                device = line.split()[0]
+        print(device)
+
+        # get pid
+        pid = -1
+        for line in exec_context.create_runnable(adb, "-d", "shell", "run-as", package_name, "ps"):
+            print(line)
+
+        return (device, pid)
+        """
+
+    def _kill(self, target=""):
+        package_name = self._get_package_name()
+        adb = self._get_adb()
+        cmd = (adb, "-d", "shell", "am", "force-stop", str(package_name))
+        print(*cmd)
+        sp.run(cmd)

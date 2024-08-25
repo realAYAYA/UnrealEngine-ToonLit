@@ -3,14 +3,18 @@
 #pragma once
 
 #include "RHIDescriptorAllocator.h"
-#include "MultiGPU.h"
+#include "Containers/List.h"
+#include "Containers/Queue.h"
 #include "D3D12RHI.h"
 #include "D3D12RHICommon.h"
+#include "MultiGPU.h"
+#include "RHIPipeline.h"
 #include "Templates/RefCounting.h"
-#include "Containers/Queue.h"
-#include "Containers/List.h"
+
+class FD3D12View;
 
 struct FD3D12DescriptorHeap;
+struct FD3D12OfflineDescriptor;
 
 inline D3D12_DESCRIPTOR_HEAP_TYPE Translate(ERHIDescriptorHeapType InHeapType)
 {
@@ -24,11 +28,34 @@ inline D3D12_DESCRIPTOR_HEAP_TYPE Translate(ERHIDescriptorHeapType InHeapType)
 	}
 }
 
+enum class ED3D12DescriptorHeapFlags : uint8
+{
+	None       = 0,
+	GpuVisible = 1 << 0,
+	Poolable   = 1 << 1,
+};
+ENUM_CLASS_FLAGS(ED3D12DescriptorHeapFlags)
+
+inline D3D12_DESCRIPTOR_HEAP_FLAGS Translate(ED3D12DescriptorHeapFlags InHeapFlags)
+{
+	if (EnumHasAnyFlags(InHeapFlags, ED3D12DescriptorHeapFlags::GpuVisible))
+	{
+		return D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+	}
+
+	return D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+}
+
 namespace UE::D3D12Descriptors
 {
-	FD3D12DescriptorHeap* CreateDescriptorHeap(FD3D12Device* Device, const TCHAR* DebugName, ERHIDescriptorHeapType HeapType, uint32 NumDescriptors, D3D12_DESCRIPTOR_HEAP_FLAGS Flags, bool bGlobal = false);
-	void CopyDescriptor(FD3D12Device* Device, FD3D12DescriptorHeap* TargetHeap, FRHIDescriptorHandle Handle, D3D12_CPU_DESCRIPTOR_HANDLE SourceCpuHandle);
-	void CopyDescriptors(FD3D12Device* Device, FD3D12DescriptorHeap* TargetHeap, FD3D12DescriptorHeap* SourceHeap, uint32 NumDescriptors);
+	FD3D12DescriptorHeap* CreateDescriptorHeap(FD3D12Device* Device, const TCHAR* DebugName, ERHIDescriptorHeapType HeapType, uint32 NumDescriptors, ED3D12DescriptorHeapFlags Flags, bool bGlobal = false);
+	void CopyDescriptor(FD3D12Device* Device, FD3D12DescriptorHeap* TargetHeap, FRHIDescriptorHandle DstHandle, D3D12_CPU_DESCRIPTOR_HANDLE SrcCpuHandle);
+	void CopyDescriptors(FD3D12Device* Device, FD3D12DescriptorHeap* TargetHeap, FD3D12DescriptorHeap* SourceHeap, uint32 FirstDescriptor, uint32 NumDescriptors);
+	void CopyDescriptors(FD3D12Device* Device, FD3D12DescriptorHeap* TargetHeap, TConstArrayView<FRHIDescriptorHandle> DstHandles, TConstArrayView<FD3D12OfflineDescriptor> SrcOfflineDescriptors);
+
+	FD3D12OfflineDescriptor CreateOfflineCopy(FD3D12Device* Device, D3D12_CPU_DESCRIPTOR_HANDLE InDescriptor, ERHIDescriptorHeapType InType);
+	FD3D12OfflineDescriptor CreateOfflineCopy(FD3D12Device* Device, FD3D12DescriptorHeap* InHeap, FRHIDescriptorHandle InHandle);
+	void FreeOfflineCopy(FD3D12Device* Device, FD3D12OfflineDescriptor& InDescriptor, ERHIDescriptorHeapType InType);
 }
 
 struct FD3D12DescriptorHeap : public FD3D12DeviceChild, public FThreadSafeRefCountedObject
@@ -37,7 +64,7 @@ public:
 	FD3D12DescriptorHeap() = delete;
 
 	// Heap created with its own D3D heap object.
-	FD3D12DescriptorHeap(FD3D12Device* InDevice, ID3D12DescriptorHeap* InHeap, uint32 InNumDescriptors, ERHIDescriptorHeapType InType, D3D12_DESCRIPTOR_HEAP_FLAGS InFlags, bool bInIsGlobal);
+	FD3D12DescriptorHeap(FD3D12Device* InDevice, TRefCountPtr<ID3D12DescriptorHeap>&& InHeap, uint32 InNumDescriptors, ERHIDescriptorHeapType InType, ED3D12DescriptorHeapFlags InFlags, bool bInIsGlobal);
 
 	// Heap created as a suballocation of another heap.
 	FD3D12DescriptorHeap(FD3D12DescriptorHeap* SubAllocateSourceHeap, uint32 InOffset, uint32 InNumDescriptors);
@@ -46,7 +73,7 @@ public:
 
 	inline ID3D12DescriptorHeap*       GetHeap()  const { return Heap; }
 	inline ERHIDescriptorHeapType      GetType()  const { return Type; }
-	inline D3D12_DESCRIPTOR_HEAP_FLAGS GetFlags() const { return Flags; }
+	inline ED3D12DescriptorHeapFlags   GetFlags() const { return Flags; }
 
 	inline uint32 GetOffset()         const { return Offset; }
 	inline uint32 GetNumDescriptors() const { return NumDescriptors; }
@@ -58,6 +85,8 @@ public:
 
 	inline D3D12_CPU_DESCRIPTOR_HANDLE GetCPUSlotHandle(uint32 Slot) const { return CD3DX12_CPU_DESCRIPTOR_HANDLE(CpuBase, Slot, DescriptorSize); }
 	inline D3D12_GPU_DESCRIPTOR_HANDLE GetGPUSlotHandle(uint32 Slot) const { return CD3DX12_GPU_DESCRIPTOR_HANDLE(GpuBase, Slot, DescriptorSize); }
+
+	inline bool CanBePooled() const { return EnumHasAnyFlags(GetFlags(), ED3D12DescriptorHeapFlags::Poolable); }
 
 private:
 	TRefCountPtr<ID3D12DescriptorHeap> Heap;
@@ -75,7 +104,7 @@ private:
 	const uint32 DescriptorSize;
 
 	const ERHIDescriptorHeapType Type;
-	const D3D12_DESCRIPTOR_HEAP_FLAGS Flags;
+	const ED3D12DescriptorHeapFlags Flags;
 
 	// Enabled if this heap is the "global" heap.
 	const bool bIsGlobal;
@@ -93,12 +122,12 @@ public:
 	FD3D12DescriptorManager(FD3D12Device* Device, FD3D12DescriptorHeap* InHeap, TConstArrayView<TStatId> InStats);
 	~FD3D12DescriptorManager();
 
-	void UpdateImmediately(FRHIDescriptorHandle InHandle, D3D12_CPU_DESCRIPTOR_HANDLE InSourceCpuHandle);
+	void UpdateDescriptorImmediately(FRHIDescriptorHandle InHandle, D3D12_CPU_DESCRIPTOR_HANDLE InSourceCpuHandle);
 
 	inline       FD3D12DescriptorHeap* GetHeap()       { return Heap.GetReference(); }
 	inline const FD3D12DescriptorHeap* GetHeap() const { return Heap.GetReference(); }
 
-	inline bool HandlesAllocationWithFlags(ERHIDescriptorHeapType InHeapType, D3D12_DESCRIPTOR_HEAP_FLAGS InHeapFlags) const
+	inline bool HandlesAllocationWithFlags(ERHIDescriptorHeapType InHeapType, ED3D12DescriptorHeapFlags InHeapFlags) const
 	{
 		return HandlesAllocation(InHeapType) && Heap->GetFlags() == InHeapFlags;
 	}
@@ -135,23 +164,24 @@ public:
 	~FD3D12OnlineDescriptorManager();
 
 	// Setup the actual heap
-	void Init(uint32 InTotalSize, uint32 InBlockSize);
+	void Init(uint32 InTotalSize, uint32 InBlockSize, bool bBindlessResources);
+	void CleanupResources();
 
 	// Allocate an available sub heap block from the global heap
 	FD3D12OnlineDescriptorBlock* AllocateHeapBlock();
 	void FreeHeapBlock(FD3D12OnlineDescriptorBlock* InHeapBlock);
 
-	ID3D12DescriptorHeap* GetHeap() { return Heap->GetHeap(); }
-	FD3D12DescriptorHeap* GetDescriptorHeap() { return Heap.GetReference(); }
+	ID3D12DescriptorHeap* GetHeap(ERHIPipeline Pipeline) { return Heaps[Pipeline]->GetHeap(); }
+	FD3D12DescriptorHeap* GetDescriptorHeap(ERHIPipeline Pipeline) { return Heaps[Pipeline].GetReference(); }
 
-	D3D12_CPU_DESCRIPTOR_HANDLE GetCPUSlotHandle(FD3D12OnlineDescriptorBlock* InBlock) const { return Heap->GetCPUSlotHandle(InBlock->BaseSlot); }
-	D3D12_GPU_DESCRIPTOR_HANDLE GetGPUSlotHandle(FD3D12OnlineDescriptorBlock* InBlock) const { return Heap->GetGPUSlotHandle(InBlock->BaseSlot); }
+	D3D12_CPU_DESCRIPTOR_HANDLE GetCPUSlotHandle(ERHIPipeline Pipeline, FD3D12OnlineDescriptorBlock* InBlock) const { return Heaps[Pipeline]->GetCPUSlotHandle(InBlock->BaseSlot); }
+	D3D12_GPU_DESCRIPTOR_HANDLE GetGPUSlotHandle(ERHIPipeline Pipeline, FD3D12OnlineDescriptorBlock* InBlock) const { return Heaps[Pipeline]->GetGPUSlotHandle(InBlock->BaseSlot); }
 	
 	// Called by the EOP task to recycle blocks
 	void Recycle(FD3D12OnlineDescriptorBlock* Block);
 
 private:
-	FD3D12DescriptorHeapPtr Heap;
+	TRHIPipelineArray<FD3D12DescriptorHeapPtr> Heaps;
 
 	TQueue<FD3D12OnlineDescriptorBlock*> FreeBlocks;
 
@@ -206,6 +236,8 @@ public:
 	FD3D12OfflineDescriptor AllocateHeapSlot();
 	void FreeHeapSlot(FD3D12OfflineDescriptor& Descriptor);
 
+	void CleanupResources();
+
 private:
 	void AllocateHeap();
 
@@ -230,14 +262,33 @@ public:
 	void Init(uint32 InNumGlobalResourceDescriptors, uint32 InNumGlobalSamplerDescriptors);
 	void Destroy();
 
-	FD3D12DescriptorHeap* AllocateIndependentHeap(const TCHAR* InDebugName, ERHIDescriptorHeapType InHeapType, uint32 InNumDescriptors, D3D12_DESCRIPTOR_HEAP_FLAGS InHeapFlags);
-	FD3D12DescriptorHeap* AllocateHeap(const TCHAR* InDebugName, ERHIDescriptorHeapType InHeapType, uint32 InNumDescriptors, D3D12_DESCRIPTOR_HEAP_FLAGS InHeapFlags);
+	FD3D12DescriptorHeap* AllocateIndependentHeap(const TCHAR* InDebugName, ERHIDescriptorHeapType InHeapType, uint32 InNumDescriptors, ED3D12DescriptorHeapFlags InHeapFlags);
+	FD3D12DescriptorHeap* AllocateHeap(const TCHAR* InDebugName, ERHIDescriptorHeapType InHeapType, uint32 InNumDescriptors, ED3D12DescriptorHeapFlags InHeapFlags);
 	void DeferredFreeHeap(FD3D12DescriptorHeap* InHeap);
 	void ImmediateFreeHeap(FD3D12DescriptorHeap* InHeap);
 
-	//inline FD3D12DescriptorHeap* GetGlobalHeap() const { return GlobalHeap; }
+	void AddHeapToPool(TRefCountPtr<ID3D12DescriptorHeap>&& InHeap, ERHIDescriptorHeapType InType, uint32 InNumDescriptors, ED3D12DescriptorHeapFlags InFlags);
 
 private:
-	TArray<FD3D12DescriptorManager> GlobalHeaps;
-};
+	TRefCountPtr<ID3D12DescriptorHeap> AcquirePooledHeap(ERHIDescriptorHeapType InType, uint32 InNumDescriptors, ED3D12DescriptorHeapFlags InFlags);
 
+	TArray<FD3D12DescriptorManager> GlobalHeaps;
+
+	struct FPooledHeap
+	{
+		FPooledHeap(TRefCountPtr<ID3D12DescriptorHeap>&& InHeap, ERHIDescriptorHeapType InType, uint32 InNumDescriptors, ED3D12DescriptorHeapFlags InFlags)
+			: Heap(Forward<TRefCountPtr<ID3D12DescriptorHeap>>(InHeap))
+			, NumDescriptors(InNumDescriptors)
+			, Type(InType)
+			, Flags(InFlags)
+		{
+		}
+
+		TRefCountPtr<ID3D12DescriptorHeap> Heap;
+		uint32                             NumDescriptors;
+		ERHIDescriptorHeapType             Type;
+		ED3D12DescriptorHeapFlags          Flags;
+	};
+	TArray<FPooledHeap> PooledHeaps;
+	FCriticalSection PooledHeapsCS;
+};

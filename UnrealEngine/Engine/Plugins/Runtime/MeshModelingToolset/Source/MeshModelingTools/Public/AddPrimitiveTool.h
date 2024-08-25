@@ -50,7 +50,8 @@ UENUM()
 enum class EMakeMeshPlacementType : uint8
 {
 	GroundPlane = 0,
-	OnScene     = 1
+	OnScene     = 1,
+	AtOrigin	= 2
 };
 
 /** Placement Pivot Location */
@@ -86,7 +87,7 @@ public:
 	EMakeMeshPolygroupMode PolygroupMode = EMakeMeshPolygroupMode::PerFace;
 
 	/** How the shape is placed in the scene. */
-	UPROPERTY(EditAnywhere, Category = Positioning)
+	UPROPERTY(EditAnywhere, Category = Positioning, meta = (DisplayName = "Target Position"))
 	EMakeMeshPlacementType TargetSurface = EMakeMeshPlacementType::OnScene;
 
 	/** Location of pivot within the shape */
@@ -516,6 +517,8 @@ protected:
 	UE::Geometry::FFrame3d ShapeFrame;
 
 	void UpdatePreviewMesh() const;
+
+	void UpdateTargetSurface();
 
 	// Used to make the initial placement of the mesh undoable
 	class FStateChange : public FToolCommandChange

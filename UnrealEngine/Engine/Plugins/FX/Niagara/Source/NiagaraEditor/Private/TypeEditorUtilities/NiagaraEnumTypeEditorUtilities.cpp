@@ -3,12 +3,15 @@
 #include "NiagaraEnumTypeEditorUtilities.h"
 #include "SNiagaraParameterEditor.h"
 #include "NiagaraTypes.h"
-#include "NiagaraEditorStyle.h"
 #include "NiagaraEditorCommon.h"
+#include "NiagaraEditorStyle.h"
+#include "NiagaraVariableMetaData.h"
 
 #include "SEnumCombo.h"
+#include "Engine/Texture2D.h"
 #include "Styling/AppStyle.h"
-#include "Widgets/Input/SSpinBox.h"
+#include "Brushes/SlateImageBrush.h"
+#include "Widgets/Input/SSegmentedControl.h"
 
 class SNiagaraEnumParameterEditor : public SNiagaraParameterEditor
 {
@@ -16,32 +19,90 @@ public:
 	SLATE_BEGIN_ARGS(SNiagaraEnumParameterEditor) { }
 	SLATE_END_ARGS();
 
-	void Construct(const FArguments& InArgs, const UEnum* Enum)
+	void Construct(const FArguments& InArgs, const UEnum* Enum, const FNiagaraInputParameterCustomization& WidgetCustomization)
 	{
 		SNiagaraParameterEditor::Construct(SNiagaraParameterEditor::FArguments()
 			.MinimumDesiredWidth(DefaultInputSize)
-			.MaximumDesiredWidth(2 * DefaultInputSize));
+			.MaximumDesiredWidth(3 * DefaultInputSize));
 
-		ChildSlot
-		[
-			SNew(SEnumComboBox, Enum)
-			.CurrentValue(this, &SNiagaraEnumParameterEditor::GetValue)
-			.ContentPadding(FMargin(2, 0))
-			.Font(FAppStyle::Get().GetFontStyle("PropertyWindow.NormalFont"))
-			.OnEnumSelectionChanged(SEnumComboBox::FOnEnumSelectionChanged::CreateSP(this, &SNiagaraEnumParameterEditor::ValueChanged))
-		];
+		if (WidgetCustomization.WidgetType == ENiagaraInputWidgetType::SegmentedButtons)
+		{
+			TSharedRef<SSegmentedControl<int32>> ButtonOptionsPanel =
+			SNew(SSegmentedControl<int32>)
+			.UniformPadding(FMargin(10, 5))
+			.MaxSegmentsPerLine(WidgetCustomization.MaxSegmentsPerRow)
+			.TextStyle(FNiagaraEditorStyle::Get(), "NiagaraEditor.ParameterText")
+			//.Style(FNiagaraEditorStyle::Get(), "NiagaraEditor.Stack.SegmentedControl")
+			.Value(this, &SNiagaraEnumParameterEditor::GetValue)
+			.OnValueChanged(this, &SNiagaraEnumParameterEditor::SegmentedValueChanged);
+
+			TMap<int32, FWidgetSegmentValueOverride> Overrides;
+			for (const FWidgetSegmentValueOverride& WidgetOverride : WidgetCustomization.SegmentValueOverrides)
+			{
+				Overrides.Add(WidgetOverride.EnumIndexToOverride, WidgetOverride);
+			}
+			for (int i = 0; i < Enum->NumEnums() - 1; i++)
+			{
+				if (Enum->HasMetaData(TEXT("Hidden"), i))
+				{
+					continue;
+				}
+				FWidgetSegmentValueOverride* Override = Overrides.Find(i);
+				int32 Value = static_cast<int32>(Enum->GetValueByIndex(i));
+				FText DisplayName = Enum->GetDisplayNameTextByIndex(i);
+				FText TooltipText = Enum->GetToolTipTextByIndex(i);
+				if (TooltipText.IsEmpty())
+				{
+					TooltipText = DisplayName;
+				}
+				
+				if (Override && Override->bOverrideDisplayName)
+				{
+					DisplayName = Override->DisplayNameOverride;
+				}
+
+				SSegmentedControl<int>::FScopedWidgetSlotArguments Slot = ButtonOptionsPanel->AddSlot(Value);
+				Slot
+                  .HAlign(HAlign_Center)
+                  .VAlign(VAlign_Center)
+                  .Text(DisplayName)
+                  .ToolTip(TooltipText);
+
+				if (Override && Override->DisplayIcon)
+				{
+					ImageBrushes.Add(MakeShared<FSlateImageBrush>(Override->DisplayIcon, FVector2D(16.f, 16.f)));
+					Slot.Icon(ImageBrushes.Last().Get());
+				}
+			}
+			
+			ChildSlot
+			[
+				ButtonOptionsPanel
+			];
+		}
+		else
+		{
+			ChildSlot
+			[
+				SNew(SEnumComboBox, Enum)
+				.CurrentValue(this, &SNiagaraEnumParameterEditor::GetValue)
+				.ContentPadding(FMargin(2, 0))
+				.Font(FAppStyle::Get().GetFontStyle("PropertyWindow.NormalFont"))
+				.OnEnumSelectionChanged(SEnumComboBox::FOnEnumSelectionChanged::CreateSP(this, &SNiagaraEnumParameterEditor::ValueChanged))
+			];
+		}
 	}
 
 	virtual void UpdateInternalValueFromStruct(TSharedRef<FStructOnScope> Struct) override
 	{
 		checkf(Struct->GetStruct() == FNiagaraTypeDefinition::GetIntStruct(), TEXT("Struct type not supported."));
-		IntValue = ((FNiagaraInt32*)Struct->GetStructMemory())->Value;
+		IntValue = reinterpret_cast<FNiagaraInt32*>(Struct->GetStructMemory())->Value;
 	}
 
 	virtual void UpdateStructFromInternalValue(TSharedRef<FStructOnScope> Struct) override
 	{
 		checkf(Struct->GetStruct() == FNiagaraTypeDefinition::GetIntStruct(), TEXT("Struct type not supported."));
-		((FNiagaraInt32*)Struct->GetStructMemory())->Value = IntValue;
+		reinterpret_cast<FNiagaraInt32*>(Struct->GetStructMemory())->Value = IntValue;
 	}
 
 private:
@@ -56,8 +117,14 @@ private:
 		ExecuteOnValueChanged();
 	}
 
-private:
-	int32 IntValue;
+	void SegmentedValueChanged(int32 NewValue)
+	{
+		IntValue = NewValue;
+		ExecuteOnValueChanged();
+	}
+
+	int32 IntValue = 0;
+	TArray<TSharedPtr<FSlateImageBrush>> ImageBrushes;
 };
 
 bool FNiagaraEditorEnumTypeUtilities::CanProvideDefaultValue() const
@@ -78,7 +145,7 @@ void FNiagaraEditorEnumTypeUtilities::UpdateVariableWithDefaultValue(FNiagaraVar
 
 TSharedPtr<SNiagaraParameterEditor> FNiagaraEditorEnumTypeUtilities::CreateParameterEditor(const FNiagaraTypeDefinition& ParameterType, EUnit DisplayUnit, const FNiagaraInputParameterCustomization& WidgetCustomization) const
 {
-	return SNew(SNiagaraEnumParameterEditor, ParameterType.GetEnum());
+	return SNew(SNiagaraEnumParameterEditor, ParameterType.GetEnum(), WidgetCustomization);
 }
 
 bool FNiagaraEditorEnumTypeUtilities::CanHandlePinDefaults() const
@@ -93,7 +160,7 @@ FString FNiagaraEditorEnumTypeUtilities::GetPinDefaultStringFromValue(const FNia
 	const UEnum* Enum = AllocatedVariable.GetType().GetEnum();
 	checkf(Enum != nullptr, TEXT("Variable is not an enum type."));
 
-	int64 EnumValue = AllocatedVariable.GetValue<int32>();
+	int32 EnumValue = AllocatedVariable.GetValue<int32>();
 	if(Enum->IsValidEnumValue(EnumValue))
 	{
 		return Enum->GetNameStringByValue(EnumValue);
@@ -113,7 +180,7 @@ bool FNiagaraEditorEnumTypeUtilities::SetValueFromPinDefaultString(const FString
 	checkf(Enum != nullptr, TEXT("Variable is not an enum type."));
 
 	FNiagaraInt32 EnumValue;
-	EnumValue.Value = (int32)Enum->GetValueByNameString(StringValue);
+	EnumValue.Value = static_cast<int32>(Enum->GetValueByNameString(StringValue));
 	if(EnumValue.Value != INDEX_NONE)
 	{
 		Variable.AllocateData();
@@ -146,7 +213,7 @@ bool FNiagaraEditorEnumTypeUtilities::SetValueFromDisplayName(const FText& TextV
 	if (FoundIndex != INDEX_NONE)
 	{
 		FNiagaraInt32 EnumValue;
-		EnumValue.Value = (int32)Enum->GetValueByIndex(FoundIndex);
+		EnumValue.Value = static_cast<int32>(Enum->GetValueByIndex(FoundIndex));
 		Variable.AllocateData();
 		Variable.SetValue<FNiagaraInt32>(EnumValue);
 		return true;

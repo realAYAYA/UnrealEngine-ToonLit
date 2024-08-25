@@ -50,7 +50,7 @@ public:
 
 protected:
 
-	using FPayloadVariableMap = TMap<FName, FString, TInlineSetAllocator<8>>;
+	using FPayloadVariableMap = TMap<FName, FMovieSceneDirectorBlueprintVariableValue, TInlineSetAllocator<8>>;
 
 	/**
 	 * User-interface information for "well-known parameters", i.e. parameters that can be bound
@@ -92,9 +92,10 @@ protected:
 	 * @param RawData			The raw data for which to set the endpoint call payload variable
 	 * @param FieldName			The name of the payload variable to set
 	 * @param NewVariableValue	The string value of the payload variable to set
+	 * @param NewVariableObject	In the case the payload is a UObject, a reference to the UObject
 	 * @return					Whether the payload variable was set
 	 */
-	virtual bool SetPayloadVariable(UObject* EditObject, void* RawData, FName FieldName, const FString& NewVariableValue) = 0;
+	virtual bool SetPayloadVariable(UObject* EditObject, void* RawData, FName FieldName, const FMovieSceneDirectorBlueprintVariableValue& NewVariableValue) = 0;
 
 	/**
 	 * Get the pin names setup with "well-known parameters" for the currently edited objects.

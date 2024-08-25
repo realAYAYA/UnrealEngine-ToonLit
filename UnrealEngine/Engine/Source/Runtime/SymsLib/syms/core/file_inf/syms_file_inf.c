@@ -246,9 +246,9 @@ syms_file_inf_infer_from_file_list(SYMS_Arena *arena, SYMS_FileLoadCtx ctx, SYMS
         
         SYMS_FileFormat expected_dbg_format = SYMS_FileFormat_Null;
         switch (bin_format){
-          case SYMS_FileFormat_PE:   expected_dbg_format = SYMS_FileFormat_PDB; break;
+          case SYMS_FileFormat_PE:     expected_dbg_format = SYMS_FileFormat_PDB;    break;
           case SYMS_FileFormat_ELF:
-          case SYMS_FileFormat_MACH: expected_dbg_format = SYMS_FileFormat_DWARF; break;
+          case SYMS_FileFormat_MACH:   expected_dbg_format = SYMS_FileFormat_DWARF;  break;
         }
         if (dbg_format == expected_dbg_format){
           compatible = syms_true;

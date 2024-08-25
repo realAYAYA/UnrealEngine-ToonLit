@@ -131,30 +131,25 @@ struct FPrimaryAssetRulesExplicitOverride
 	ENGINE_API void OverrideRulesExplicitly(FPrimaryAssetRules& RulesToOverride) const;
 };
 
-/** Structure with publicly exposed information about an asset type. These can be loaded out of a config file. */
+/** Structure with publicly exposed information about an asset type. These can be loaded out of a config file or constructed at runtime */
 USTRUCT()
 struct FPrimaryAssetTypeInfo
 {
 	GENERATED_BODY()
 
-	// Loaded out of ini or set via ScanPathsForPrimaryAssets
-
 	/** The logical name for this type of Primary Asset */
 	UPROPERTY(EditAnywhere, Category = AssetType)
 	FName PrimaryAssetType;
 
-#if WITH_EDITOR
-	const TSoftClassPtr<UObject>& GetAssetBaseClass() const { return AssetBaseClass; }
-	void SetAssetBaseClass(const TSoftClassPtr<UObject>& InAssetBaseClass) { AssetBaseClass = InAssetBaseClass; }
-#endif //if WITH_EDITOR
-
 private:
+	// Use accessors below to modify config data
+
 	/** Base Class of all assets of this type */
 	UPROPERTY(EditAnywhere, Category = AssetType, meta = (AllowAbstract))
 	TSoftClassPtr<UObject> AssetBaseClass;
 
 public:
-	/** Base Class of all assets of this type */
+	/** Runtime cached copy of asset base class, this will only be correct if FillRuntimeData has been called */
 	UPROPERTY(Transient)
 	TObjectPtr<UClass> AssetBaseClassLoaded;
 
@@ -162,18 +157,18 @@ public:
 	UPROPERTY(EditAnywhere, Category = AssetType)
 	bool bHasBlueprintClasses;
 
-	/** True if this type is editor only. Disable this to consider content that is part of the engine or engine plugins. */
+	/**
+	 * If true this type will not cause anything to be cooked; the AssetManager will use instances of this type to
+	 * define chunk assignments and NeverCook rules, but will ignore AlwaysCook rules. Assets labeled by instances
+	 * of this type will need to be reference by another PrimaryAsset, or by something outside the AssetManager,
+	 * to be cooked.
+	 */
 	UPROPERTY(EditAnywhere, Category = AssetType)
 	bool bIsEditorOnly;
 
-#if WITH_EDITOR
-	const TArray<FDirectoryPath>& GetDirectories() const { return Directories; }
-	TArray<FDirectoryPath>& GetDirectories() { return Directories; }
-
-	const TArray<FSoftObjectPath>& GetSpecificAssets() const { return SpecificAssets; }
-#endif //if WITH_EDITOR
-
 private:
+	// Use accessors below to modify config data
+
 	/** Directories to search for this asset type */
 	UPROPERTY(EditAnywhere, Category = AssetType, meta = (RelativeToGameContentDir, LongPackageName))
 	TArray<FDirectoryPath> Directories;
@@ -201,6 +196,7 @@ public:
 
 	FPrimaryAssetTypeInfo() : AssetBaseClass(UObject::StaticClass()), AssetBaseClassLoaded(UObject::StaticClass()), bHasBlueprintClasses(false), bIsEditorOnly(false),  bIsDynamicAsset(false), NumberOfAssets(0) {}
 
+	/** Initializes a runtime version of the struct */
 	FPrimaryAssetTypeInfo(FName InPrimaryAssetType, UClass* InAssetBaseClass, bool bInHasBlueprintClasses, bool bInIsEditorOnly)
 		: PrimaryAssetType(InPrimaryAssetType), AssetBaseClass(InAssetBaseClass), AssetBaseClassLoaded(InAssetBaseClass), bHasBlueprintClasses(bInHasBlueprintClasses), bIsEditorOnly(bInIsEditorOnly), bIsDynamicAsset(false), NumberOfAssets(0)
 	{
@@ -219,11 +215,58 @@ public:
 	{
 	}
 
+	/** Gets the config version of the asset base class */
+	const TSoftClassPtr<UObject>& GetAssetBaseClass() const
+	{
+		return AssetBaseClass;
+	}
+
+	/** Set the base class, only possible before runtime data is filled in */
+	void SetAssetBaseClass(const TSoftClassPtr<UObject>& InAssetBaseClass)
+	{
+		if (ensure(CanModifyConfigData()))
+		{
+			AssetBaseClass = InAssetBaseClass;
+		}
+	}
+
+	/** Access the config version of directories to scan, may be empty for runtime-added types */
+	const TArray<FDirectoryPath>& GetDirectories() const 
+	{
+		return Directories;
+	}
+
+	/** Modify the config version of directories to scan, only possible before runtime data is filled in */
+	TArray<FDirectoryPath>& GetDirectories()
+	{
+		ensure(CanModifyConfigData());
+		return Directories; 
+	}
+
+	/** Access the config version of specific assets to scan, may be empty for runtime-added types */
+	const TArray<FSoftObjectPath>& GetSpecificAssets() const 
+	{
+		return SpecificAssets;
+	}
+	
+	/** Modify the config version of specific assets to scan, only possible before runtime data is filled in */
+	TArray<FSoftObjectPath>& GetSpecificAssets() 
+	{
+		ensure(CanModifyConfigData());
+		return SpecificAssets;
+	}
+
+	/** Returns true if this has valid config data that can be converted into runtime data as needed, this may be false for runtime only info */
+	ENGINE_API bool HasValidConfigData() const;
+
+	/** Returns true if this has valid runtime data because FillRuntimeData was previously called */
+	ENGINE_API bool HasValidRuntimeData() const;
+
+	/** Returns true if it is safe to modify config data as it has not been turned into runtime data yet */
+	ENGINE_API bool CanModifyConfigData() const;
+
 	/** Fills out transient variables based on parsed ones. Sets status bools saying rather data is valid, and rather it had to synchronously load the base class */
 	ENGINE_API void FillRuntimeData(bool& bIsValid, bool& bBaseClassWasLoaded);
-
-	/** Very temporary workaround for the gamefeatures subsystem needing to modify directories **/
-	friend class UGameFeaturesSubsystem;
 };
 
 /** Information about a package chunk, computed by the asset manager or read out of the cooked asset registry */

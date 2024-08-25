@@ -53,7 +53,12 @@
 #define UE_FLOAT_HUGE_DISTANCE		1048576.0				/* Maximum distance representable by a float whilst maintaining precision of at least 0.0625 units (1/16th of a cm) - Precision issues may occur for positions/distances represented by float types that exceed this value */
 #define UE_DOUBLE_HUGE_DISTANCE		562949953421312.0		/* Maximum distance representable by a double whilst maintaining precision of at least 0.0625 units (1/16th of a cm) - Precision issues may occur for positions/distances represented by double types that exceed this value */
 
-#define DEFAULT_ORTHOZOOM			10000.0					/* Default 2D viewport zoom */
+#define MIN_ORTHOZOOM				1.0							/* 2D ortho viewport zoom >= MIN_ORTHOZOOM */
+#define MAX_ORTHOZOOM				1e25						/* 2D ortho viewport zoom <= MAX_ORTHOZOOM */
+#define DEFAULT_ORTHOZOOM			10000.0						/* Default 2D ortho viewport zoom */
+#define DEFAULT_ORTHOWIDTH			1536.0f						/* Default 2D ortho viewport width */
+#define DEFAULT_ORTHONEARPLANE		-DEFAULT_ORTHOWIDTH/2.0f	/* Default 2D ortho viewport nearplane */
+#define DEFAULT_ORTHOFARPLANE		UE_OLD_WORLD_MAX			/* Default 2D ortho viewport farplane */
 
 /** bits needed to store DPG value */
 #define SDPG_NumBits 3

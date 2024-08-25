@@ -13,13 +13,8 @@ namespace UnrealEditor
 	/// Default set of options for testing Editor. Options that tests can configure
 	/// should be public, external command-line driven options should be protected/private
 	/// </summary>
-	public class EditorTestConfig : EngineTestConfig
+	public class EditorTestConfig : UE.AutomationTestConfig
 	{
-		/// <summary>
-		/// Filter or groups of tests to apply
-		/// </summary>
-		public override bool UseEditor { get; set; } = true;
-
 		/// <summary>
 		/// Use Simple Horde Report instead of Unreal Automated Tests
 		/// </summary>
@@ -96,7 +91,7 @@ namespace UnrealEditor
 			{
 				AppConfig.CommandLineParams.Add(string.Format("tracefile={0}", TraceFile));
 				AppConfig.CommandLineParams.Add("tracefiletrunc"); // replace existing
-				AppConfig.CommandLineParams.Add("trace=cpu,counters,stats,gpu,frame,bookmark,log,loadtime,savetime,assetloadtime");
+				AppConfig.CommandLineParams.Add("trace=default,counters,stats,loadtime,savetime,assetloadtime");
 				AppConfig.CommandLineParams.Add("statnamedevents");
 			}
 
@@ -138,7 +133,7 @@ namespace UnrealEditor
 		}
 	}
 
-	public class EditorTests : EngineTestBase<EditorTestConfig>
+	public class EditorTests : UE.AutomationNodeBase<EditorTestConfig>
 	{
 		public EditorTests(UnrealTestContext InContext) : base(InContext)
 		{
@@ -146,10 +141,22 @@ namespace UnrealEditor
 
 		public override EditorTestConfig GetConfiguration()
 		{
+			if (CachedConfig != null)
+			{
+				return CachedConfig;
+			}
 			// just need a single client
 			EditorTestConfig Config = base.GetConfiguration();
 			Config.RequireRole(UnrealTargetRole.Editor);	
 			return Config;
+		}
+
+		protected override string HordeReportTestName
+		{
+			get
+			{
+				return GetConfiguration().RunTest.Replace(".", " ");
+			}
 		}
 	}
 }

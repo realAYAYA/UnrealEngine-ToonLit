@@ -6,15 +6,17 @@
 #include "IChooserParameterBool.h"
 #include "ChooserPropertyAccess.h"
 #include "InstancedStruct.h"
+#include "Serialization/MemoryReader.h"
 #include "BoolColumn.generated.h"
 
 UENUM()
-enum class EBoolColumnCellValue
+enum class EBoolColumnCellValue : uint8
 {
 	MatchFalse = 0,
 	MatchTrue = 1,
 	MatchAny = 2,
 };
+
 
 USTRUCT(DisplayName = "Bool Property Binding")
 struct CHOOSER_API FBoolContextProperty :  public FChooserParameterBoolBase
@@ -40,28 +42,8 @@ public:
 		}
 	}
 	
-
-#if WITH_EDITOR
+	CHOOSER_PARAMETER_BOILERPLATE();
 	
-	static bool CanBind(const FProperty& Property)
-	{
-		static FString BoolTypeName = "bool";
-		return Property.GetCPPType() == BoolTypeName;
-	}
-
-	void SetBinding(const TArray<FBindingChainElement>& InBindingChain)
-	{
-		UE::Chooser::CopyPropertyChain(InBindingChain, Binding);
-	}
-
-	virtual void GetDisplayName(FText& OutName) const override
-	{
-		if (!Binding.PropertyBindingChain.IsEmpty())
-		{
-			OutName = FText::FromName(Binding.PropertyBindingChain.Last());
-		}
-	}
-#endif
 };
 
 USTRUCT()
@@ -85,14 +67,23 @@ struct CHOOSER_API FBoolColumn : public FChooserColumnBase
 	UPROPERTY(EditAnywhere, Category= "Data", DisplayName="RowValues");
 	TArray<EBoolColumnCellValue> RowValuesWithAny; 
 	
-	virtual void Filter(FChooserEvaluationContext& Context, const TArray<uint32>& IndexListIn, TArray<uint32>& IndexListOut) const override;
+	virtual void Filter(FChooserEvaluationContext& Context, const FChooserIndexArray& IndexListIn, FChooserIndexArray& IndexListOut) const override;
 
 #if WITH_EDITOR
-	mutable bool TestValue;
+	mutable bool TestValue = false;
 	virtual bool EditorTestFilter(int32 RowIndex) const override
 	{
 		return RowValuesWithAny.IsValidIndex(RowIndex) && (RowValuesWithAny[RowIndex] == EBoolColumnCellValue::MatchAny || TestValue == static_cast<bool>(RowValuesWithAny[RowIndex]));
 	}
+	
+	virtual void SetTestValue(TArrayView<const uint8> Value) override
+	{
+		FMemoryReaderView Reader(Value);
+		Reader << TestValue;
+	}
+	
+	virtual void AddToDetails(FInstancedPropertyBag& PropertyBag, int32 ColumnIndex, int32 RowIndex) override;
+	virtual void SetFromDetails(FInstancedPropertyBag& PropertyBag, int32 ColumnIndex, int32 RowIndex) override;
 #endif
 
 	virtual void PostLoad() override
@@ -100,7 +91,7 @@ struct CHOOSER_API FBoolColumn : public FChooserColumnBase
 #if WITH_EDITORONLY_DATA
 		if (RowValues_DEPRECATED.Num() > 0)
 		{
-			RowValuesWithAny.SetNum(0,false);
+			RowValuesWithAny.SetNum(0,EAllowShrinking::No);
 			RowValuesWithAny.Reserve(RowValues_DEPRECATED.Num());
 			for(bool Value : RowValues_DEPRECATED)
 			{
@@ -165,7 +156,7 @@ public:
 			InputValueInterface->ConvertToInstancedStruct(Column.InputValue);
 		}
 
-		Column.RowValuesWithAny.SetNum(0,false);
+		Column.RowValuesWithAny.SetNum(0,EAllowShrinking::No);
 		Column.RowValuesWithAny.Reserve(RowValues.Num());
 		for(bool Value : RowValues)
 		{

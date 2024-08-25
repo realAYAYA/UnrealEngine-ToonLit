@@ -9,7 +9,7 @@
 namespace UE::MassCrowd
 {
 	int32 bDebugCrowdVisualType = 0;
-	FAutoConsoleVariableRef CVarDebugVisualType(TEXT("ai.debug.CrowdVisualType"), bDebugCrowdVisualType, TEXT("Debug Crowd Visual Type"), ECVF_Cheat);
+	FAutoConsoleVariableRef CVarDebugVisualType(TEXT("mass.debug.CrowdVisualType"), bDebugCrowdVisualType, TEXT("Debug Crowd Visual Type"), ECVF_Cheat);
 
 	FColor CrowdRepresentationTypesColors[] =
 	{
@@ -78,7 +78,7 @@ void UMassDebugCrowdVisualizationProcessor::Execute(FMassEntityManager& EntityMa
 	{
 		check(World);
 
-		TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("DebugDisplayVisualType"))
+		TRACE_CPUPROFILER_EVENT_SCOPE(DebugDisplayVisualType)
 
 		EntityQuery.ForEachEntityChunk(EntityManager, Context, [this](const FMassExecutionContext& Context)
 		{

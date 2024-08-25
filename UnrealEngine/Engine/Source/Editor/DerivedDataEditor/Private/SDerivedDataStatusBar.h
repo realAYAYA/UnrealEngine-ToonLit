@@ -28,12 +28,14 @@ private:
 	static void ChangeSettings_Clicked();
 	static void ViewCacheStatistics_Clicked();
 	static void ViewResourceUsage_Clicked();
+	static void LaunchZenDashboard_Clicked();
 
 public:
 
 	TSharedPtr< FUICommandInfo > ChangeSettings;
 	TSharedPtr< FUICommandInfo > ViewResourceUsage;
 	TSharedPtr< FUICommandInfo > ViewCacheStatistics;
+	TSharedPtr< FUICommandInfo > LaunchZenDashboard;
 
 	static TSharedRef<FUICommandList> ActionList;
 };

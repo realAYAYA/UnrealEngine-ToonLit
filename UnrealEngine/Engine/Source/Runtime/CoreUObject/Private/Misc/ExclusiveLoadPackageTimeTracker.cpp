@@ -96,7 +96,7 @@ void FExclusiveLoadPackageTimeTracker::InternalPopLoadPackage(UPackage* LoadedPa
 			LoadTimes.Add(Time.TimeName, FLoadTime(Time.TimeName, ClassName, Time.ExclusiveTime, InclusiveTime));
 		}
 
-		TimeStack.RemoveAt(TimeStack.Num() - 1, 1, false);
+		TimeStack.RemoveAt(TimeStack.Num() - 1, 1, EAllowShrinking::No);
 
 		if (TimeStack.Num() > 0)
 		{

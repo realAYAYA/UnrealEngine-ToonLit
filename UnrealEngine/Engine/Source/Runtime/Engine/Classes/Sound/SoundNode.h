@@ -127,6 +127,9 @@ public:
 	/** Returns whether the sound has a sequencer node. */
 	ENGINE_API virtual bool HasConcatenatorNode() const;
 
+	/** Returns whether the sound has an attenuation node. */
+	ENGINE_API virtual bool HasAttenuationNode() const;
+
 	/** Returns true if the sound node is set to play when silent. */
 	ENGINE_API virtual bool IsPlayWhenSilent() const;
 
@@ -232,5 +235,13 @@ public:
 	 * This should only be called by USoundNodeQualityLevel::PostLoad when au.CullSoundWaveHardReferences is 1.
 	 */
 	ENGINE_API virtual void RemoveSoundWaveOnChildWavePlayers();
+
+	/**
+	 * Load wave assets for any wave player sound nodes 
+	 * childed off of this node, taking into account quality nodes
+	 *
+	 * @param bRecurse when true, this will cause all children of child nodes to be loaded as well.
+	 */
+	ENGINE_API virtual void LoadChildWavePlayerAssets(bool bAddToRoot, bool bRecurse);
 };
 

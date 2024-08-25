@@ -1,15 +1,13 @@
 ﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
-using Gauntlet;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using EpicGames.Core;
 using UnrealBuildTool;
+using UnrealBuildBase;
+using AutomationTool;
 
 namespace Gauntlet.SelfTest
 {
@@ -63,14 +61,38 @@ namespace Gauntlet.SelfTest
 		/// </summary>
 		public UnrealTargetConfiguration[] SupportedConfigurations { get; protected set; }
 
+		/// <summary>
+		/// Target Configuration
+		/// </summary>
+		public UnrealTargetConfiguration Configuration { get; protected set; }
+
 		public TestUnrealBase()
 		{
-			ProjectName = "Fortnite";
-			ProjectFile = new FileReference("FortniteGame/FortniteGame.uproject");
+			ProjectName = Gauntlet.Globals.Params.ParseValue("Project", "EngineTest");
+			string ConfigurationString = Gauntlet.Globals.Params.ParseValue("Configuration", "Development"); 
+			BuildPath = Gauntlet.Globals.Params.ParseValue("Build", null);
+			DevkitName = Gauntlet.Globals.Params.ParseValue("Device", "Default");
+			UnrealPath = Unreal.RootDirectory;
 			UsesSharedBuildType = false;
-			DevkitName = "Default";
 
-			string BuildPath = Gauntlet.Globals.Params.ParseValue("Build", null);
+			if (File.Exists(ProjectName))
+			{
+				ProjectFile = new FileReference(ProjectName);
+				ProjectName = ProjectFile.GetFileNameWithoutExtension();
+			}
+			else
+			{
+				if (!string.IsNullOrEmpty(ProjectName))
+				{
+					ProjectFile = ProjectUtils.FindProjectFileFromName(ProjectName);
+
+					if (ProjectFile == null)
+					{
+						throw new AutomationException("Could not find project file for {0}", ProjectName);
+					}
+					ProjectName = ProjectFile.GetFileNameWithoutExtension();
+				}
+			}
 
 			if (BuildHostPlatform.Current.Platform == UnrealTargetPlatform.Win64)
 			{
@@ -85,51 +107,14 @@ namespace Gauntlet.SelfTest
 			}
 
 			SupportedConfigurations = new[] { UnrealTargetConfiguration.Development, UnrealTargetConfiguration.Test };
-		}
 
-		private string FindValidBuild(string GameName)
-		{
-			// if we found a valid build < 1 day ago try to reuse it to avoid needless syncing..
-			string LastBuildFile = Path.Combine(Path.GetTempPath(), "GauntletTestBuild.txt");
-
-			if (File.Exists(LastBuildFile) && (DateTime.Now - File.GetLastWriteTime(LastBuildFile)).TotalDays < 3)
+			object RequestedConfiguration;
+			if (!Enum.TryParse(typeof(UnrealTargetConfiguration), ConfigurationString, true, out RequestedConfiguration))
 			{
-				string LastBuild = File.ReadAllText(LastBuildFile);
-
-				if (Directory.Exists(LastBuild))
-				{
-					return LastBuild;
-				}
+				string AllKeys = string.Join(", ", SupportedConfigurations);
+				throw new AutomationException(string.Format("Unknown Configuration '{0}', it must be one of the values: {1}.", ConfigurationString, AllKeys));
 			}
-
-			string ProjectName = GameName.Replace("Game", "");
-
-			DirectoryInfo Di = new DirectoryInfo(@"P:\Builds\" + ProjectName);
-			string BranchName = string.Format("++{0}+Main", ProjectName);
-
-			// find a build with one or more pak in WindowsClient/Cooked
-			DirectoryInfo BuildDir = Di.GetDirectories()
-				.Where(D =>
-				{
-					if (D.Name.Contains(BranchName))
-					{
-						string PakPath = string.Format(@"WindowsClient\Staged\{0}\Content\Paks", GameName);
-						string WindowsClient = Path.Combine(D.FullName, PakPath);
-
-						if (Directory.Exists(WindowsClient) && Directory.GetFiles(WindowsClient, "*.pak").Length >= 1)
-						{
-							return true;
-						}
-					}
-					return false;
-				})
-				.OrderByDescending(D => D.CreationTimeUtc)
-				.FirstOrDefault();
-
-			// save this build
-			File.WriteAllText(LastBuildFile, BuildDir.FullName);
-			
-			return BuildDir.FullName;
+			Configuration = (UnrealTargetConfiguration)RequestedConfiguration;
 		}
 	}
 }

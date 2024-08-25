@@ -3,8 +3,19 @@
 #include "Horde.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Parse.h"
+#include "Modules/ModuleManager.h"
+#include "Modules/ModuleInterface.h"
 
-#if WITH_EDITOR
+struct FHordeModule : IModuleInterface
+{
+	virtual void StartupModule() override
+	{
+	}
+};
+
+IMPLEMENT_MODULE(FHordeModule, Horde)
+
+// --------------------------------------------------------------------------------
 
 FString FHorde::GetTemplateName()
 {
@@ -52,7 +63,25 @@ FString FHorde::GetJobId()
 
 FString FHorde::GetJobURL()
 {
-	return FString::Printf(TEXT("https://horde.devtools.epicgames.com/job/%s"), *GetJobId());
+	struct FJobUrlInitializer
+	{
+		FString Value;
+
+		FJobUrlInitializer()
+		{
+			if (!FParse::Value(FCommandLine::Get(), TEXT("HordeJobUrl="), Value))
+			{
+				Value = FPlatformMisc::GetEnvironmentVariable(TEXT("UE_HORDE_URL"));
+				if (Value.Len() > 0)
+				{
+					Value /= FString::Printf(TEXT("job/%s"), *GetJobId());
+				}
+			}
+		}
+	};
+
+	static const FJobUrlInitializer JobUrl;
+	return JobUrl.Value;
 }
 
 FString FHorde::GetStepId()
@@ -102,4 +131,16 @@ FString FHorde::GetBatchId()
 	return BatchId;
 } 
 
-#endif
+FString FHorde::GetServerURL()
+{
+	static FString ServerURL;
+
+	if (ServerURL.IsEmpty())
+	{
+		if (false == FParse::Value(FCommandLine::Get(), TEXT("HordeServerUrl="), ServerURL))
+		{
+			ServerURL = FPlatformMisc::GetEnvironmentVariable(TEXT("UE_HORDE_URL"));
+		}
+	}
+	return ServerURL;
+}

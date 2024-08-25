@@ -194,7 +194,8 @@ namespace SkeletalSimplifier
 				         const SimpVertexType& TriVert1,
 				         const SimpVertexType& TriVert2,
 				         const D1VectorType& BasicWeights,
-				         const SparseWeightContainerType& AdditionalWeights);
+				         const SparseWeightContainerType& AdditionalWeights,
+						 const bool bUseLegacyAttrGrad);
 
 
 			TFaceQuadric() = default;
@@ -550,7 +551,8 @@ namespace SkeletalSimplifier
 
 		template <typename SimpVertexType, typename SparseWeightArrayType>
 		TFaceQuadric<SimpVertexType, SparseWeightArrayType>::TFaceQuadric(const SimpVertexType& TriVert0, const SimpVertexType& TriVert1, const SimpVertexType& TriVert2,
-			                                                              const D1VectorType& BasicWeights, const SparseWeightContainerType& AdditionalWeights)
+			                                                              const D1VectorType& BasicWeights, const SparseWeightContainerType& AdditionalWeights,
+																		  const bool bUseLegacyAttrGrad)
 		{
 
 			// Convert point locations to double.
@@ -608,7 +610,8 @@ namespace SkeletalSimplifier
 			InverseGradientProjection  GradientTool(Vert0Pos,
 													Vert1Pos,
 													Vert2Pos,
-													FaceNormal);
+													FaceNormal,
+													bUseLegacyAttrGrad);
 
 			// Accumulate the terms related to the gradient of the Basic Attributes
 			{

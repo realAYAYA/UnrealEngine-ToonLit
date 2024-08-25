@@ -169,9 +169,8 @@ FClothTetherDataPrivate::FClothTetherDataPrivate(TArray<TArray<TPair<float, int3
 			// Order all by distance, smallest first
 			ClosestKinematicNodes.Sort();
 
-			// Shrink the list...
-			constexpr bool bAllowShrinking = false;  // ... but not the array
-			ClosestKinematicNodes.SetNum(MaxNumAttachments, bAllowShrinking);
+			// Shrink the list... but not the array
+			ClosestKinematicNodes.SetNum(MaxNumAttachments, EAllowShrinking::No);
 		}
 		// Finally create the tethers between this dynamic node and the N closests kinematic ones
 		TetherSlots[Index].Reserve(ClosestKinematicNodes.Num());
@@ -281,8 +280,7 @@ void FClothTetherDataPrivate::ComputeKinematicNodeIslands()
 		const int32 NumIslandKinematicNodes = KinematicNodeIslands[IslandIndex].Num();
 		if (!NumIslandKinematicNodes)
 		{
-			constexpr bool bAllowShrinking = false;
-			KinematicNodeIslands.RemoveAtSwap(IslandIndex, 1, bAllowShrinking);
+			KinematicNodeIslands.RemoveAtSwap(IslandIndex, 1, EAllowShrinking::No);
 			// RemoveAtSwap takes the last elements to replace the current one, do not increment the index in this case
 		}
 		else
@@ -335,9 +333,8 @@ void FClothTetherDataPrivate::GenerateEuclideanTethers(const TConstArrayView<FVe
 			// Order all by distance, smallest first
 			ClosestKinematicNodes.Sort();
 
-			// Shrink the list...
-			constexpr bool bAllowShrinking = false;  // ... but not the array
-			ClosestKinematicNodes.SetNum(MaxNumAttachments, bAllowShrinking);
+			// Shrink the list... but not the array
+			ClosestKinematicNodes.SetNum(MaxNumAttachments, EAllowShrinking::No);
 		}
 
 		// Finally create the tethers between this dynamic node and the N closests kinematic ones
@@ -439,7 +436,7 @@ void FClothTetherDataPrivate::GenerateGeodesicTethers(const TConstArrayView<FVec
 		do
 		{
 			int32 ParentNode;
-			Queue.HeapPop(ParentNode, LessPredicate, false);
+			Queue.HeapPop(ParentNode, LessPredicate, EAllowShrinking::No);
 
 			check(VisitedNodes[ParentNode]);
 

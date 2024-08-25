@@ -25,7 +25,6 @@
 #include "ScopedTransaction.h"
 #include "Styling/AppStyle.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SharedPointer.h"
 #include "ToolMenu.h"
 #include "ToolMenuSection.h"
@@ -492,6 +491,11 @@ void UK2Node_DynamicCast::ValidateNodeDuringCompilation(FCompilerResultsLog& Mes
 
 		for (UEdGraphPin* CastInput : SourcePin->LinkedTo)
 		{
+			if (CastInput == nullptr)
+			{
+				continue;
+			}
+
 			const FEdGraphPinType& SourcePinType = CastInput->PinType;
 			if (SourcePinType.PinCategory != UEdGraphSchema_K2::PC_Object)
 			{

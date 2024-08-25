@@ -30,8 +30,7 @@ void FSlateTextBlockLayout::ConditionallyUpdateTextStyle(const FTextBlockStyle& 
 	// Has the style used for this text block changed?
 	if (!IsStyleUpToDate(InTextStyle))
 	{
-		TextLayout->SetDefaultTextStyle(InTextStyle);
-		Marshaller->MakeDirty(); // will regenerate the text using the new default style
+		UpdateTextStyle(InTextStyle);
 	}
 }
 
@@ -40,23 +39,34 @@ void FSlateTextBlockLayout::ConditionallyUpdateTextStyle(const FTextBlockStyle::
 	// Has the style used for this text block changed?
 	if (!IsStyleUpToDate(InNewStyleParams))
 	{
-		FTextBlockStyle ComputedStyle = InNewStyleParams.StyleBase;
-		ComputedStyle.SetFont(InNewStyleParams.Font);
-		if (InNewStyleParams.StrikeBrush)
-		{
-			ComputedStyle.SetStrikeBrush(*InNewStyleParams.StrikeBrush);
-		}
-		ComputedStyle.SetColorAndOpacity(InNewStyleParams.ColorAndOpacity);
-		ComputedStyle.SetShadowOffset(InNewStyleParams.ShadowOffset);
-		ComputedStyle.SetShadowColorAndOpacity(InNewStyleParams.ShadowColorAndOpacity);
-		ComputedStyle.SetHighlightColor(InNewStyleParams.HighlightColor);
-		if (InNewStyleParams.HighlightShape)
-		{
-			ComputedStyle.SetHighlightShape(*InNewStyleParams.HighlightShape);
-		}
-		TextLayout->SetDefaultTextStyle(MoveTemp(ComputedStyle));
-		Marshaller->MakeDirty(); // will regenerate the text using the new default style
+		UpdateTextStyle(InNewStyleParams);
 	}
+}
+
+void FSlateTextBlockLayout::UpdateTextStyle(const FTextBlockStyle& InTextStyle)
+{
+	TextLayout->SetDefaultTextStyle(InTextStyle);
+	Marshaller->MakeDirty(); // will regenerate the text in ComputeDesiredSize()
+}
+
+void FSlateTextBlockLayout::UpdateTextStyle(const FTextBlockStyle::CompareParams& InNewStyleParams)
+{
+	FTextBlockStyle ComputedStyle = InNewStyleParams.StyleBase;
+	ComputedStyle.SetFont(InNewStyleParams.Font);
+	if (InNewStyleParams.StrikeBrush)
+	{
+		ComputedStyle.SetStrikeBrush(*InNewStyleParams.StrikeBrush);
+	}
+	ComputedStyle.SetColorAndOpacity(InNewStyleParams.ColorAndOpacity);
+	ComputedStyle.SetShadowOffset(InNewStyleParams.ShadowOffset);
+	ComputedStyle.SetShadowColorAndOpacity(InNewStyleParams.ShadowColorAndOpacity);
+	ComputedStyle.SetHighlightColor(InNewStyleParams.HighlightColor);
+	if (InNewStyleParams.HighlightShape)
+	{
+		ComputedStyle.SetHighlightShape(*InNewStyleParams.HighlightShape);
+	}
+
+	UpdateTextStyle(ComputedStyle);
 }
 
 
@@ -76,6 +86,7 @@ FVector2D FSlateTextBlockLayout::ComputeDesiredSize(const FWidgetDesiredSizeArgs
 	TextLayout->SetMargin(InWidgetArgs.Margin);
 	TextLayout->SetJustification(InWidgetArgs.Justification);
 	TextLayout->SetLineHeightPercentage(InWidgetArgs.LineHeightPercentage);
+	TextLayout->SetApplyLineHeightToBottomLine(InWidgetArgs.ApplyLineHeightToBottomLine);
 
 	// Has the transform policy changed? If so we need a full refresh as that is destructive to the model text
 	if (PreviousTransformPolicy != TextLayout->GetTransformPolicy())
@@ -149,6 +160,7 @@ FVector2D FSlateTextBlockLayout::ComputeDesiredSize(const FWidgetArgs& InWidgetA
 	TextLayout->SetMargin(InWidgetArgs.Margin.Get());
 	TextLayout->SetJustification(InWidgetArgs.Justification.Get());
 	TextLayout->SetLineHeightPercentage(InWidgetArgs.LineHeightPercentage.Get());
+	TextLayout->SetApplyLineHeightToBottomLine(true);
 
 	// Has the transform policy changed? If so we need a full refresh as that is destructive to the model text
 	if (PreviousTransformPolicy != TextLayout->GetTransformPolicy())

@@ -6,12 +6,6 @@ namespace UnrealBuildTool.Rules
 	{
         public VREditor(ReadOnlyTargetRules Target) : base(Target)
 		{
-			PrivateIncludePaths.AddRange(
-				new string[] {
-					System.IO.Path.Combine(GetModuleDirectory("LevelEditor"), "Private"),
-				}
-			);
-
             PrivateDependencyModuleNames.AddRange(
                 new string[] {
                     "AppFramework",

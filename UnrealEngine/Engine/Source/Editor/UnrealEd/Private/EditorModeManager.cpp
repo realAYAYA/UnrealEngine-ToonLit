@@ -19,23 +19,14 @@
 #include "Framework/Application/SlateApplication.h"
 #include "Framework/Notifications/NotificationManager.h"
 #include "Widgets/Notifications/SNotificationList.h"
-#include "Widgets/Input/SButton.h"
-#include "Engine/LevelStreaming.h"
 #include "Editor/EditorEngine.h"
-#include "UnrealEdGlobals.h"
 #include "Editor/UnrealEdEngine.h"
-#include "Widgets/Docking/SDockTab.h"
-#include "Widgets/Layout/SWidgetSwitcher.h"
-#include "Styling/AppStyle.h"
 #include "Framework/Commands/UICommandList.h"
-#include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "Toolkits/BaseToolkit.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "Subsystems/BrushEditingSubsystem.h"
 #include "Tools/UEdMode.h"
-#include "Widgets/Images/SImage.h"
 #include "InputRouter.h"
-#include "InteractiveGizmoManager.h"
 #include "EdModeInteractiveToolsContext.h"
 #include "Tools/LegacyEdModeInterfaces.h"
 #include "CanvasTypes.h"
@@ -45,12 +36,16 @@
 #include "EngineUtils.h"
 #include "Tools/AssetEditorContextObject.h"
 #include "ContextObjectStore.h"
+#include "EditorInteractiveGizmoManager.h"
+#include "GizmoEdModeInterface.h"
 #include "UObject/GCObjectScopeGuard.h"
 #include "Settings/LevelEditorViewportSettings.h"
 #include "Subsystems/EditorElementSubsystem.h"
 
 #include "Elements/Interfaces/TypedElementWorldInterface.h"
 #include "TextureResource.h"
+#include "EditorGizmos/EditorGizmoStateTarget.h"
+#include "EditorGizmos/EditorTransformGizmoUtil.h"
 #include "Toolkits/ToolkitManager.h"
 
 /*------------------------------------------------------------------------------
@@ -102,6 +97,8 @@ FEditorModeTools::FEditorModeTools()
 		GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OnEditorModeUnregistered().AddRaw(this, &FEditorModeTools::OnModeUnregistered);
 	}
 
+	UE::EditorTransformGizmoUtil::RegisterTransformGizmoContextObject(this);
+
 	FWorldDelegates::OnWorldCleanup.AddRaw(this, &FEditorModeTools::OnWorldCleanup);
 }
 
@@ -119,9 +116,11 @@ FEditorModeTools::~FEditorModeTools()
 	// which would mean that this instances will be garbage
 	if (UObjectInitialized())
 	{
+		UE::EditorTransformGizmoUtil::UnregisterTransformGizmoContextObject(this);
 		InteractiveToolsContext->Deactivate();
 		InteractiveToolsContext->ShutdownContext();
 		InteractiveToolsContext = nullptr;
+		GizmoStateTarget = nullptr;
 	}
 }
 
@@ -130,10 +129,21 @@ void FEditorModeTools::LoadConfig(void)
 	GConfig->GetBool(TEXT("FEditorModeTools"),TEXT("ShowWidget"),bShowWidget,
 		GEditorPerProjectIni);
 
-	const bool bGetRawValue = true;
+	static constexpr bool bGetRawValue = true;
 	int32 CoordSystemAsInt = (int32)GetCoordSystem(bGetRawValue);
 	GConfig->GetInt(TEXT("FEditorModeTools"),TEXT("CoordSystem"), CoordSystemAsInt,
 		GEditorPerProjectIni);
+
+	if (static_cast<ECoordSystem>(CoordSystemAsInt) == COORD_Parent)
+	{
+		// parent mode is only supported with new trs gizmos for now
+		const bool bUseNewGizmo = UEditorInteractiveGizmoManager::UsesNewTRSGizmos();
+		if (!bUseNewGizmo)
+		{
+			CoordSystemAsInt = static_cast<int32>(COORD_Local);
+		}
+	}
+	
 	SetCoordSystem((ECoordSystem)CoordSystemAsInt);
 
 	LoadWidgetSettings();
@@ -143,7 +153,7 @@ void FEditorModeTools::SaveConfig(void)
 {
 	GConfig->SetBool(TEXT("FEditorModeTools"), TEXT("ShowWidget"), bShowWidget, GEditorPerProjectIni);
 
-	const bool bGetRawValue = true;
+	static constexpr bool bGetRawValue = true;
 	GConfig->SetInt(TEXT("FEditorModeTools"), TEXT("CoordSystem"), (int32)GetCoordSystem(bGetRawValue), GEditorPerProjectIni);
 
 	SaveWidgetSettings();
@@ -225,7 +235,7 @@ void FEditorModeTools::RestoreSelection(FName SelectionStoreKey)
 UWorld* FEditorModeTools::GetWorld() const
 {
 	// When in 'Simulate' mode, the editor mode tools will actually interact with the PIE world
-	if( GEditor->bIsSimulatingInEditor )
+	if( GEditor->bIsSimulatingInEditor && GEditor->GetPIEWorldContext() )
 	{
 		return GEditor->GetPIEWorldContext()->World();
 	}
@@ -250,6 +260,11 @@ FEditorViewportClient* FEditorModeTools::GetFocusedViewportClient() const
 bool FEditorModeTools::SelectionHasSceneComponent() const
 {
 	return bSelectionHasSceneComponent;
+}
+
+void FEditorModeTools::SetSelectionHasSceneComponent(bool bHasSceneComponent)
+{
+	bSelectionHasSceneComponent = bHasSceneComponent;
 }
 
 bool FEditorModeTools::IsSelectionAllowed(AActor* InActor, const bool bInSelected) const
@@ -667,16 +682,14 @@ void FEditorModeTools::SetPivotLocation( const FVector& Location, const bool bIn
 	}
 }
 
-ECoordSystem FEditorModeTools::GetCoordSystem(bool bGetRawValue)
+ECoordSystem FEditorModeTools::GetCoordSystem(bool bGetRawValue) const
 {
 	if (!bGetRawValue && (GetWidgetMode() == UE::Widget::WM_Scale))
 	{
 		return COORD_Local;
 	}
-	else
-	{
-		return CoordSystem;
-	}
+	
+	return CoordSystem;
 }
 
 void FEditorModeTools::SetCoordSystem(ECoordSystem NewCoordSystem)
@@ -973,16 +986,18 @@ UTexture2D* FEditorModeTools::GetVertexTexture() const
 	return GEngine->DefaultBSPVertexTexture;
 }
 
-FMatrix FEditorModeTools::GetCustomDrawingCoordinateSystem()
+FMatrix FEditorModeTools::GetCustomDrawingCoordinateSystem() const
 {
 	FMatrix Matrix = FMatrix::Identity;
 
 	switch (GetCoordSystem())
 	{
 		case COORD_Local:
-		{
 			Matrix = GetLocalCoordinateSystem();
-		}
+		break;
+		
+		case COORD_Parent:
+			Matrix = GetParentSpaceCoordinateSystem();
 		break;
 
 		case COORD_World:
@@ -995,12 +1010,38 @@ FMatrix FEditorModeTools::GetCustomDrawingCoordinateSystem()
 	return Matrix;
 }
 
-FMatrix FEditorModeTools::GetCustomInputCoordinateSystem()
+FMatrix FEditorModeTools::GetCustomInputCoordinateSystem() const
 {
 	return GetCustomDrawingCoordinateSystem();
 }
 
-FMatrix FEditorModeTools::GetLocalCoordinateSystem()
+FMatrix FEditorModeTools::GetLocalCoordinateSystem() const
+{
+	return GetCustomCoordinateSystem([](const TTypedElement<ITypedElementWorldInterface>& InElement, FTransform& OutTransform)
+	{
+		InElement.GetWorldTransform(OutTransform);
+	});
+}
+
+FMatrix FEditorModeTools::GetParentSpaceCoordinateSystem() const
+{
+	return GetCustomCoordinateSystem([](const TTypedElement<ITypedElementWorldInterface>& InElement, FTransform& OutTransform)
+	{
+		if (InElement.GetWorldTransform(OutTransform))
+		{
+			FTransform RelativeTransform;
+			if (InElement.GetRelativeTransform(RelativeTransform))
+			{
+				const FTransform ParentWorld = RelativeTransform.Inverse() * OutTransform;
+				OutTransform.SetRotation(ParentWorld.GetRotation());
+			}
+			return true;
+		}
+		return false;
+	});
+}
+
+FMatrix FEditorModeTools::GetCustomCoordinateSystem(TUniqueFunction<void(const TTypedElement<ITypedElementWorldInterface>&, FTransform&)>&& InGetTransformFunc) const
 {
 	FMatrix Matrix = FMatrix::Identity;
 	// Let the current mode have a shot at setting the local coordinate system.
@@ -1016,10 +1057,10 @@ FMatrix FEditorModeTools::GetLocalCoordinateSystem()
 	if (!CustomCoordinateSystemProvided)
 	{
 		TTypedElement<ITypedElementWorldInterface> LastSelected;
-		if (GCurrentLevelEditingViewportClient)
+		if ((this == &GLevelEditorModeTools()) && GCurrentLevelEditingViewportClient)
 		{
 			// Use the cache from the viewport when available
-			 LastSelected = GCurrentLevelEditingViewportClient->GetElementsToManipulate()->GetBottomElement<ITypedElementWorldInterface>();
+			LastSelected = GCurrentLevelEditingViewportClient->GetElementsToManipulate()->GetBottomElement<ITypedElementWorldInterface>();
 		}
 		else
 		{
@@ -1029,9 +1070,9 @@ FMatrix FEditorModeTools::GetLocalCoordinateSystem()
 		
 		if (LastSelected)
 		{
-			FTransform LocalToWorldTransform;
-			LastSelected.GetWorldTransform(LocalToWorldTransform);
-			Matrix = FQuatRotationMatrix(LocalToWorldTransform.GetRotation());
+			FTransform CustomToWorldTransform;
+			InGetTransformFunc(LastSelected, CustomToWorldTransform);
+			Matrix = FQuatRotationMatrix(CustomToWorldTransform.GetRotation());
 		}
 	}
 
@@ -1066,35 +1107,50 @@ bool FEditorModeTools::StartTracking(FEditorViewportClient* InViewportClient, FV
 	bIsTracking = true;
 	CachedLocation = PivotLocation;	// Cache the pivot location
 
-	bool bTransactionHandled = InteractiveToolsContext->StartTracking(InViewportClient, InViewport);
-	ForEachEdMode<ILegacyEdModeViewportInterface>([&bTransactionHandled, InViewportClient, InViewport](ILegacyEdModeViewportInterface* ViewportInterface)
+	bool bTrackingHandled = InteractiveToolsContext->StartTracking(InViewportClient, InViewport);
+
+	// no need to go further if bHasOngoingTransform is true
+	if (!bHasOngoingTransform)
+	{
+		ForEachEdMode<ILegacyEdModeViewportInterface>([&bTrackingHandled, InViewportClient, InViewport](ILegacyEdModeViewportInterface* ViewportInterface)
 		{
-			bTransactionHandled |= ViewportInterface->StartTracking(InViewportClient, InViewport);
+			bTrackingHandled |= ViewportInterface->StartTracking(InViewportClient, InViewport);
 			return true;
 		});
+	}
 
-	return bTransactionHandled;
+	return bTrackingHandled;
 }
 
 /** Mouse tracking interface.  Passes tracking messages to all active modes */
 bool FEditorModeTools::EndTracking(FEditorViewportClient* InViewportClient, FViewport* InViewport)
 {
 	bIsTracking = false;
-	bool bTransactionHandled = InteractiveToolsContext->EndTracking(InViewportClient, InViewport);
 
-	ForEachEdMode<ILegacyEdModeViewportInterface>([&bTransactionHandled, InViewportClient, InViewport](ILegacyEdModeViewportInterface* ViewportInterface)
-		{
-			bTransactionHandled |= ViewportInterface->EndTracking(InViewportClient, InViewport);
-			return true;
-		});
-
-	CachedLocation = PivotLocation;	// Clear the pivot location
+	bool bTrackingHandled = InteractiveToolsContext->EndTracking(InViewportClient, InViewport);
+	// no need to go further if bHasOngoingTransform is true
+	if (!bHasOngoingTransform)
+	{
+		ForEachEdMode<ILegacyEdModeViewportInterface>([&bTrackingHandled, InViewportClient, InViewport](ILegacyEdModeViewportInterface* ViewportInterface)
+		   {
+			   bTrackingHandled |= ViewportInterface->EndTracking(InViewportClient, InViewport);
+			   return true;
+		   });
+	}
 	
-	return bTransactionHandled;
+	CachedLocation = PivotLocation;	// Clear the pivot location
+	bHasOngoingTransform = false;
+	
+	return bTrackingHandled;
 }
 
 bool FEditorModeTools::AllowsViewportDragTool() const
 {
+	if (bHasOngoingTransform)
+	{
+		return false;
+	}
+	
 	bool bCanUseDragTool = false;
 	ForEachEdMode<const ILegacyEdModeViewportInterface>([&bCanUseDragTool](const ILegacyEdModeViewportInterface* LegacyMode)
 		{
@@ -1305,7 +1361,20 @@ bool FEditorModeTools::ProcessCapturedMouseMoves( FEditorViewportClient* InViewp
 /** Notifies all active modes of keyboard input via a viewport client */
 bool FEditorModeTools::InputKey(FEditorViewportClient* InViewportClient, FViewport* Viewport, FKey Key, EInputEvent Event, bool bRouteToToolsContext)
 {
-	const bool bWasHandledByToolsContext = bRouteToToolsContext && InteractiveToolsContext->InputKey(InViewportClient, Viewport, Key, Event);
+	const bool bHadOngoingTransform = bHasOngoingTransform;
+
+	bool bWasHandledByToolsContext = false;
+	if (bRouteToToolsContext)
+	{
+		bWasHandledByToolsContext = InteractiveToolsContext->InputKey(InViewportClient, Viewport, Key, Event);
+	}
+	else
+	{
+		// If we're not routing to the tools context, we still need to let it look at the event so that it can update
+		// its internal memory of which mouse keys are down, to pass the correct mouse state later.
+		InteractiveToolsContext->UpdateStateWithoutRoutingInputKey(InViewportClient, Viewport, Key, Event);
+	}
+
 	if (bWasHandledByToolsContext && !bIsTracking && GetInteractiveToolsContext()->InputRouter->HasActiveMouseCapture())
 	{
 		StartTracking(InViewportClient, Viewport);
@@ -1315,6 +1384,15 @@ bool FEditorModeTools::InputKey(FEditorViewportClient* InViewportClient, FViewpo
 		EndTracking(InViewportClient, Viewport);
 	}
 
+	// no need to go further if bHasOngoingTransform state has changed 
+	// NOTE, this should probably be done comparing HasActiveMouseCapture changes instead as it means that the ITF handled the event
+	// however, as with StartTracking/EndTracking and bTrackingHandled, testing bWasHandledByToolsContext is not reliable as
+	// InteractiveToolsContext->InputKey will return false when the mouse is released, even if there was an ongoing capture before the release event ended it.
+	if (bHasOngoingTransform != bHadOngoingTransform)
+	{
+		return true;
+	}
+	
 	// If the toolkit should process the command, it should not have been handled by ITF, or be tracked elsewhere.
 	const bool bPassToToolkitCommands = bRouteToToolsContext && !bWasHandledByToolsContext;
 	bool bHandled = bWasHandledByToolsContext;
@@ -1338,17 +1416,19 @@ bool FEditorModeTools::InputKey(FEditorViewportClient* InViewportClient, FViewpo
 		}
 
 		return true;
-	});
+		});
 
-	// Finally, pass input to selected actors if nothing else handled the input
+PRAGMA_DISABLE_DEPRECATION_WARNINGS // Begin AActor::EditorKeyPressed
+	// Finally, pass input to selected actors if nothing else handled the input (Deprecated in 5.4)
 	if (!bHandled)
 	{
 		GetEditorSelectionSet()->ForEachSelectedObject<AActor>([Key, Event](AActor* ActorPtr)
-		{
-			ActorPtr->EditorKeyPressed(Key, Event);
-			return true;
-		});
+			{
+				ActorPtr->EditorKeyPressed(Key, Event);
+				return true;
+			});
 	}
+PRAGMA_ENABLE_DEPRECATION_WARNINGS // End AActor::EditorKeyPressed
 	return bHandled;
 }
 
@@ -1670,14 +1750,19 @@ bool FEditorModeTools::PostConvertMouseMovement(FEditorViewportClient* InViewpor
 
 bool FEditorModeTools::GetShowWidget() const
 {
+	if (!bShowWidget)
+	{
+		return false;
+	}
+	
 	bool bDrawModeSupportsWidgetDrawing = false;
 	// Check to see of any active modes support widget drawing
 	ForEachEdMode<ILegacyEdModeWidgetInterface>([&bDrawModeSupportsWidgetDrawing](ILegacyEdModeWidgetInterface* LegacyMode)
 		{
 			bDrawModeSupportsWidgetDrawing |= LegacyMode->ShouldDrawWidget();
-			return true;
+			return !bDrawModeSupportsWidgetDrawing;
 		});
-	return bDrawModeSupportsWidgetDrawing && bShowWidget;
+	return bDrawModeSupportsWidgetDrawing;
 }
 
 /**
@@ -1890,4 +1975,62 @@ bool FEditorModeTools::IsOperationSupportedForCurrentAsset(EAssetOperation InOpe
 UModeManagerInteractiveToolsContext* FEditorModeTools::GetInteractiveToolsContext() const
 {
 	return InteractiveToolsContext;
+}
+
+IGizmoStateTarget* FEditorModeTools::GetGizmoStateTarget()
+{
+	if (!GizmoStateTarget.IsValid())
+	{
+		GizmoStateTarget = UEditorGizmoStateTarget::Construct(
+			this,
+			NSLOCTEXT("UTransformGizmo", "UTransformGizmoTransaction", "Transform"),
+			InteractiveToolsContext->GizmoManager);
+	}
+	return GizmoStateTarget.Get();
+}
+
+bool FEditorModeTools::BeginTransform(const FGizmoState& InState)
+{
+	bool bHandled = false;
+	ForEachEdMode<IGizmoEdModeInterface>([&bHandled, &InState](IGizmoEdModeInterface* GizmoInterface)
+	{
+		bHandled |= GizmoInterface->BeginTransform(InState);
+		return true;
+	});
+
+	// Give the focused VPC an opportunity to open the transform transacting if it has not been handled before 
+	if (!bHandled && FocusedViewportClient)
+	{
+		bHandled = FocusedViewportClient->BeginTransform(InState);
+	}
+
+	bHasOngoingTransform = bHandled;
+	
+	return bHandled;
+}
+
+bool FEditorModeTools::EndTransform(const FGizmoState& InState) const
+{
+	bool bHandled = false;
+	ForEachEdMode<IGizmoEdModeInterface>([&bHandled, &InState](IGizmoEdModeInterface* GizmoInterface)
+	{
+		bHandled |= GizmoInterface->EndTransform(InState);
+		return true;
+	});
+
+	// Give the focused VPC an opportunity to close the transform transacting if it has not been handled before 
+	if (!bHandled && FocusedViewportClient)
+	{
+		bHandled = FocusedViewportClient->EndTransform(InState);
+	}
+
+	// NOTE bHasOngoingTransform is not set to false here but in EndTracking as its needed there.
+	// See header file more more explanations
+	
+	return bHandled;
+}
+
+bool FEditorModeTools::HasOngoingTransform() const
+{
+	return bHasOngoingTransform;
 }

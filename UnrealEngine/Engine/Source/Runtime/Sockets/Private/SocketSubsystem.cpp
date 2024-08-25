@@ -72,7 +72,9 @@ static IModuleInterface* LoadSubsystemModule(const FString& SubsystemName)
 		return ModuleManager.GetModule(ModuleName);
 	}
 
+#if !UE_BUILD_SHIPPING && !UE_BUILD_SHIPPING_WITH_EDITOR
 	return nullptr;
+#endif
 }
 
 FUniqueSocket ISocketSubsystem::CreateUniqueSocket(const FName& SocketType, const FString& SocketDescription, bool bForceUDP)

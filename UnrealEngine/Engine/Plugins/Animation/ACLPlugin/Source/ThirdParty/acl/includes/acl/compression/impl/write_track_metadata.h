@@ -24,6 +24,7 @@
 // SOFTWARE.
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "acl/version.h"
 #include "acl/core/memory_utils.h"
 #include "acl/core/track_desc.h"
 #include "acl/core/impl/compiler_utils.h"
@@ -37,6 +38,8 @@ ACL_IMPL_FILE_PRAGMA_PUSH
 
 namespace acl
 {
+	ACL_IMPL_VERSION_NAMESPACE_BEGIN
+
 	namespace acl_impl
 	{
 		inline uint32_t write_track_list_name(const track_array& tracks, char* out_track_list_name)
@@ -176,43 +179,41 @@ namespace acl
 						float* data = reinterpret_cast<float*>(output_buffer);
 						data[0] = desc.precision;
 						data[1] = desc.shell_distance;
-						data[2] = desc.constant_rotation_threshold_angle;
-						data[3] = desc.constant_translation_threshold;
-						data[4] = desc.constant_scale_threshold;
+
+						rtm::quat_store(desc.default_value.rotation, data + 2);
+						rtm::vector_store3(desc.default_value.translation, data + 6);
+						rtm::vector_store3(desc.default_value.scale, data + 9);
 					}
 
-					output_buffer += sizeof(float) * 5;
+					output_buffer += sizeof(float) * 12;
 				}
 			}
 
 			return safe_static_cast<uint32_t>(output_buffer - output_buffer_start);
 		}
 
-		inline uint32_t write_contributing_error(const clip_context& clip, frame_contributing_error* out_contributing_error)
+		inline uint32_t write_contributing_error(const clip_context& clip, uint8_t* out_contributing_error)
 		{
-			ACL_ASSERT(out_contributing_error == nullptr || clip.num_samples == 0 || out_contributing_error[0].index == 0, "Buffer overrun detected");
+			ACL_ASSERT(out_contributing_error == nullptr || clip.num_samples == 0 || out_contributing_error[0] == 0, "Buffer overrun detected");
 
-			const uint8_t* output_buffer = reinterpret_cast<const uint8_t*>(out_contributing_error);
+			const uint8_t* output_buffer = out_contributing_error;
 			const uint8_t* output_buffer_start = output_buffer;
-			frame_contributing_error* contributing_error = out_contributing_error;
+			keyframe_stripping_metadata_t* contributing_error = reinterpret_cast<keyframe_stripping_metadata_t*>(out_contributing_error);
 
-			// Write the contributing error for each frame by iterating over our segments to retrieve it
-			// Values are thus sorted per segment
-			for (const segment_context& segment : clip.segment_iterator())
+			for (uint32_t frame_index = 0; frame_index < clip.num_samples; ++frame_index)
 			{
-				for (uint32_t frame_index = 0; frame_index < segment.num_samples; ++frame_index)
-				{
-					if (out_contributing_error != nullptr)
-						*contributing_error = segment.contributing_error[frame_index];
+				if (out_contributing_error != nullptr)
+					*contributing_error = clip.contributing_error[frame_index];
 
-					contributing_error++;
-					output_buffer += sizeof(frame_contributing_error);
-				}
+				contributing_error++;
+				output_buffer += sizeof(keyframe_stripping_metadata_t);
 			}
 
 			return safe_static_cast<uint32_t>(output_buffer - output_buffer_start);
 		}
 	}
+
+	ACL_IMPL_VERSION_NAMESPACE_END
 }
 
 ACL_IMPL_FILE_PRAGMA_POP

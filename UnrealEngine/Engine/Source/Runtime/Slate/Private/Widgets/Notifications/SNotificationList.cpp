@@ -4,9 +4,11 @@
 #include "Animation/CurveHandle.h"
 #include "Animation/CurveSequence.h"
 #include "Application/ThrottleManager.h"
+#include "Containers/Ticker.h"
+#include "Framework/Application/SlateApplication.h"
+#include "HAL/PlatformApplicationMisc.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/SOverlay.h"
-#include "Framework/Application/SlateApplication.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Text/STextBlock.h"
@@ -19,6 +21,8 @@
 #include "Styling/StyleColors.h"
 #include "Widgets/Notifications/SNotificationBackground.h"
 
+#define LOCTEXT_NAMESPACE "SNotificationList"
+
 /////////////////////////////////////////////////
 // SNotificationExtendable
 
@@ -26,6 +30,13 @@
 class SNotificationExtendable : public SNotificationItem
 {
 public:
+	SNotificationExtendable()
+	{
+		SetCanTick(false);
+
+		TickDelegateHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateRaw(this, &SNotificationExtendable::Update));
+	}
+
 	virtual ~SNotificationExtendable()
 	{
 		// Just in case, make sure we have left responsive mode when getting cleaned up
@@ -33,6 +44,8 @@ public:
 		{
 			FSlateThrottleManager::Get().LeaveResponsiveMode( ThrottleHandle );
 		}
+
+		FTSTicker::GetCoreTicker().RemoveTicker(TickDelegateHandle);
 	}
 	
 	
@@ -140,7 +153,7 @@ public:
 		FadeOutDuration = Duration;
 	}
 
-	void Tick( const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime ) override
+	bool Update(float InDeltaTime)
 	{
 		bool bIsFadingOut = FadeAnimation.IsInReverse();
 		if (bAutoExpire)
@@ -169,6 +182,8 @@ public:
 			// Leave responsive mode once the intro finishes playing
 			FSlateThrottleManager::Get().LeaveResponsiveMode( ThrottleHandle );
 		}
+
+		return true;
 	}
 
 protected:
@@ -334,6 +349,7 @@ protected:
 
 	/** Handle to a throttle request made to ensure the intro animation is smooth in low FPS situations */
 	FThrottleRequest ThrottleHandle;
+	FTSTicker::FDelegateHandle TickDelegateHandle;
 
 	float InternalTime = 0.0f;
 	bool bAutoExpire = false;
@@ -739,8 +755,36 @@ private:
 	TSharedPtr<INotificationWidget> NotificationWidget;
 };
 
+/////////////////////////////////////////////////
+// FNotificationInfo
+
+void FNotificationInfo::ShowCopyToClipboadHyperlink()
+{
+	HyperlinkText = LOCTEXT("CopyToClipboard", "Copy to Clipboard");
+	Hyperlink = FSimpleDelegate::CreateLambda(
+		[Text = Text, SubText = SubText]()
+		{
+			TStringBuilder<1024> StrBuilder;
+			if (Text.IsSet())
+			{
+				StrBuilder << Text.Get().ToString();
+			}
+			if (SubText.IsSet())
+			{
+				if (StrBuilder.Len() > 0)
+				{
+					StrBuilder << TEXT("\n");
+				}
+				StrBuilder << SubText.Get().ToString();
+			}
+
+			FPlatformApplicationMisc::ClipboardCopy(StrBuilder.ToString());
+		});
+}
+
 ///////////////////////////////////////////////////
 //// SNotificationList
+
 TSharedRef<SNotificationItem> SNotificationList::AddNotification(const FNotificationInfo& Info)
 {
 	TSharedPtr<SNotificationExtendable> NewItem;
@@ -834,3 +878,5 @@ void SNotificationList::Construct(const FArguments& InArgs)
 		SAssignNew(MessageItemBoxPtr, SVerticalBox)
 	];
 }
+
+#undef LOCTEXT_NAMESPACE 

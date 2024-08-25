@@ -30,7 +30,7 @@ DECLARE_DWORD_COUNTER_STAT(TEXT("Active Light Count"), STAT_ActiveLightCount, ST
 FShadowScene::FShadowScene(FScene & InScene)
 	: Scene(InScene)
 {
-	Scene.OnPostLigtSceneInfoUpdate.AddLambda([this](FRDGBuilder& GraphBuilder, const FLightSceneChangeSet& LightSceneChangeSet) { PostLightsUpdate(GraphBuilder, LightSceneChangeSet); });
+	Scene.OnPostLightSceneInfoUpdate.AddLambda([this](FRDGBuilder& GraphBuilder, const FLightSceneChangeSet& LightSceneChangeSet) { PostLightsUpdate(GraphBuilder, LightSceneChangeSet); });
 }
 
 void FShadowScene::PostLightsUpdate(FRDGBuilder& GraphBuilder, const FLightSceneChangeSet& LightSceneChangeSet)

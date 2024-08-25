@@ -8,11 +8,13 @@
 #include "Widgets/Images/SImage.h"
 #include "GraphEditorSettings.h"
 #include "SPropertyAccessChainWidget.h"
+#include "ScopedTransaction.h"
 
 #define LOCTEXT_NAMESPACE "FloatRangeColumnEditor"
 
 namespace UE::ChooserEditor
 {
+
 TSharedRef<SWidget> CreateFloatPropertyWidget(bool bReadOnly, UObject* TransactionObject, void* Value, UClass* ResultBaseClass, FChooserWidgetValueChanged ValueChanged)
 {
 	IHasContextClass* HasContextClass = Cast<IHasContextClass>(TransactionObject);
@@ -21,21 +23,18 @@ TSharedRef<SWidget> CreateFloatPropertyWidget(bool bReadOnly, UObject* Transacti
 
 	return SNew(SPropertyAccessChainWidget).ContextClassOwner(HasContextClass).AllowFunctions(true).BindingColor("FloatPinTypeColor").TypeFilter("double")
 	.PropertyBindingValue(&ContextProperty->Binding)
-	.OnAddBinding_Lambda(
-		[ContextProperty, TransactionObject, ValueChanged](FName InPropertyName, const TArray<FBindingChainElement>& InBindingChain)
-		{
-			const FScopedTransaction Transaction(NSLOCTEXT("ContextPropertyWidget", "Change Property Binding", "Change Property Binding"));
-			TransactionObject->Modify(true);
-			ContextProperty->SetBinding(InBindingChain);
-			ValueChanged.ExecuteIfBound();
-		});
+	.OnValueChanged(ValueChanged);
 }
 	
 TSharedRef<SWidget> CreateFloatRangeColumnWidget(UChooserTable* Chooser, FChooserColumnBase* Column, int Row)
 {
 	FFloatRangeColumn* FloatRangeColumn = static_cast<FFloatRangeColumn*>(Column);
 
-	if (Row < 0)
+	if (Row == ColumnWidget_SpecialIndex_Fallback)
+	{
+		return SNullWidget::NullWidget;
+	}
+	else if (Row == ColumnWidget_SpecialIndex_Header)
 	{
 		// create column header widget
 		TSharedPtr<SWidget> InputValueWidget = nullptr;

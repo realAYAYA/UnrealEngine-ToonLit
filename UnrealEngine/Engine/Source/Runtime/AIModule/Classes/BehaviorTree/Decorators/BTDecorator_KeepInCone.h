@@ -16,7 +16,7 @@ struct FBTKeepInConeDecoratorMemory
 };
 
 /**
- * Cooldown decorator node.
+ * Keep In Cone decorator node.
  * A decorator node that bases its condition on whether the observed position is still inside a cone. The cone's direction is calculated when the node first becomes relevant.
  */
 UCLASS(HideCategories=(Condition), MinimalAPI)
@@ -50,6 +50,8 @@ class UBTDecorator_KeepInCone : public UBTDecorator
 
 	AIMODULE_API virtual void InitializeFromAsset(UBehaviorTree& Asset) override;
 	AIMODULE_API virtual uint16 GetInstanceMemorySize() const override;
+	AIMODULE_API virtual void InitializeMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryInit::Type InitType) const override;
+	AIMODULE_API virtual void CleanupMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryClear::Type CleanupType) const override;
 	AIMODULE_API virtual void DescribeRuntimeValues(const UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTDescriptionVerbosity::Type Verbosity, TArray<FString>& Values) const override;
 	AIMODULE_API virtual FString GetStaticDescription() const override;
 

@@ -15,6 +15,7 @@
 #include "UObject/Package.h"
 #include "UObject/UObjectMarks.h"
 #include "UObject/ObjectPtr.h"
+#include "UObject/SavePackage.h"
 
 // This file contains private utilities shared by UPackage::Save and UPackage::Save2 
 
@@ -160,7 +161,8 @@ struct FEDLCookChecker
 	void AddPackageWithUnknownExports(FName LongPackageName);
 
 	static void StartSavingEDLCookInfoForVerification();
-	static void Verify(bool bFullReferencesExpected);
+	static void Verify(const UE::SavePackageUtilities::FEDLMessageCallback& MessageCallback,
+		bool bFullReferencesExpected);
 	static void MoveToCompactBinaryAndClear(FCbWriter& Writer, bool& bOutHasData);
 	static bool AppendFromCompactBinary(FCbFieldView Field);
 
@@ -190,7 +192,9 @@ public: // FEDLNodeHash is public only so that GetTypeHash can be defined
 		FEDLNodeHash(); // creates an uninitialized node; only use this to provide as an out parameter
 		FEDLNodeHash(const TArray<FEDLNodeData>* InNodes, FEDLNodeID InNodeID, EObjectEvent InObjectEvent);
 		FEDLNodeHash(TObjectPtr<UObject> InObject, EObjectEvent InObjectEvent);
+		FEDLNodeHash(const FEDLNodeHash& Other);
 		bool operator==(const FEDLNodeHash& Other) const;
+		FEDLNodeHash& operator=(const FEDLNodeHash& Other);
 		friend uint32 GetTypeHash(const FEDLNodeHash& A);
 
 		FName GetName() const;

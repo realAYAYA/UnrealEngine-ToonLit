@@ -1,50 +1,62 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
-import { Callout, DirectionalHint, FontWeights, getTheme, mergeStyleSets, Stack, Text } from '@fluentui/react';
+import { Callout, DirectionalHint, FontWeights, mergeStyleSets, Stack, Text } from '@fluentui/react';
 import React, { useState } from 'react';
 import backend from '../backend';
 import { JobData, ChangeSummaryData } from '../backend/Api';
 import { observable, action, makeObservable } from 'mobx';
 import { observer } from 'mobx-react-lite';
 import { Link } from 'react-router-dom';
+import { getHordeTheme } from '../styles/theme';
 
-const theme = getTheme();
-const styles = mergeStyleSets({
-   container: {
-      overflow: 'auto',
-      maxHeight: 600
-   },
-   callout: {
-      maxWidth: 600
-   },
-   header: {
-      padding: '18px 14px 12px'
-   },
-   title: [
-      theme.fonts.mediumPlus,
-      {
-         margin: 0,
-         fontWeight: FontWeights.regular
-      }
-   ],
-   inner: {
-      height: '100%',
-      padding: '0 14px 10px'
 
-   },
-   actions: {
-      position: 'relative',
-      marginTop: 20,
-      width: '100%',
-      whiteSpace: 'nowrap'
-   },
-   subtext: [
-      theme.fonts.medium,
-      {
-         margin: 0,
-         fontWeight: FontWeights.light
-      }
-   ]
-});
+let _styles: any;
+
+const getStyles = () => {
+
+   const theme = getHordeTheme();
+
+   const styles = _styles ?? mergeStyleSets({
+      container: {
+         overflow: 'auto',
+         maxHeight: 600
+      },
+      callout: {
+         maxWidth: 600
+      },
+      header: {
+         padding: '18px 14px 12px'
+      },
+      title: [
+         theme.fonts.mediumPlus,
+         {
+            margin: 0,
+            fontWeight: FontWeights.regular
+         }
+      ],
+      inner: {
+         height: '100%',
+         padding: '0 14px 10px'
+   
+      },
+      actions: {
+         position: 'relative',
+         marginTop: 20,
+         width: '100%',
+         whiteSpace: 'nowrap'
+      },
+      subtext: [
+         theme.fonts.medium,
+         {
+            margin: 0,
+            fontWeight: FontWeights.light
+         }
+      ]
+   });
+
+   _styles = styles;
+   return styles;
+}
+
 
 class CommitCache {
 
@@ -86,6 +98,8 @@ export const ChangeCallout: React.FC<{ job: JobData }> = observer(({ job }) => {
 
    const [visible, setVisible] = useState(false);
    const [searchRef] = useState(React.createRef<HTMLDivElement>());
+
+   const styles = getStyles();
 
    if (!job.change) {
       return <div style={{ paddingTop: 3 }}>Latest</div>;

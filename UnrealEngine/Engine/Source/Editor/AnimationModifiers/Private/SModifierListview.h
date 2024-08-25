@@ -57,6 +57,7 @@ class SModifierListView : public SCompoundWidget
 	SLATE_ARGUMENT(FOnSingleModifier, OnOpenModifier);
 	SLATE_ARGUMENT(FOnSingleModifier, OnMoveUpModifier);
 	SLATE_ARGUMENT(FOnSingleModifier, OnMoveDownModifier);
+	SLATE_EVENT(FOnSingleModifier, OnSelectedModifierChanged);
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs);
@@ -96,6 +97,7 @@ protected:
 	FOnSingleModifier OnOpenModifierDelegate;
 	FOnSingleModifier OnMoveUpModifierDelegate;
 	FOnSingleModifier OnMoveDownModifierDelegate;
+	FOnSingleModifier OnSelectedModifierChangedDelegate;
 	
 	/** Check whether or not selected modifier can moved in either direction */
 	bool CanMoveSelectedItemUp();

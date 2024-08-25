@@ -59,8 +59,8 @@ float3 CompositeReflectionCapturesAndSkylightTWS(
 	#endif
 #endif
 
-		FLWCVector3 CaptureWorldPosition = MakeLWCVector3(GetReflectionTilePosition(CaptureIndex).xyz, GetReflectionPositionAndRadius(CaptureIndex).xyz);
-		float3 CaptureTranslatedWorldPosition = LWCToFloat(LWCAdd(CaptureWorldPosition, ResolvedView.PreViewTranslation));
+		FDFVector3 CaptureWorldPosition = MakeDFVector3(GetReflectionPositionAndRadius(CaptureIndex).xyz, GetReflectionPositionLow(CaptureIndex).xyz);
+		float3 CaptureTranslatedWorldPosition = DFFastAddDemote(CaptureWorldPosition, ResolvedView.PreViewTranslation);
 		float CaptureRadius = GetReflectionPositionAndRadius(CaptureIndex).w;
 
 		float4 CaptureProperties = GetReflectionCaptureProperties(CaptureIndex);
@@ -127,8 +127,8 @@ float3 CompositeReflectionCapturesAndSkylightTWS(
 
 	float3 ProjectedCaptureVector = RayDirection;
 
-	FLWCVector3 SingleCaptureWorldPosition = MakeLWCVector3(GetReflectionTilePosition(SingleCaptureIndex).xyz, GetReflectionPositionAndRadius(SingleCaptureIndex).xyz);
-	float3 SingleCaptureTranslatedWorldPosition = LWCToFloat(LWCAdd(SingleCaptureWorldPosition, ResolvedView.PreViewTranslation));
+	FDFVector3 SingleCaptureWorldPosition = MakeDFVector3(GetReflectionPositionAndRadius(SingleCaptureIndex).xyz, GetReflectionPositionLow(SingleCaptureIndex).xyz);
+	float3 SingleCaptureTranslatedWorldPosition = DFFastAddDemote(SingleCaptureWorldPosition, ResolvedView.PreViewTranslation);
 	float SingleCaptureRadius = GetReflectionPositionAndRadius(SingleCaptureIndex).w;
 
 	float4 SingleCaptureOffsetAndAverageBrightness = GetReflectionCaptureOffsetAndAverageBrightness(SingleCaptureIndex);

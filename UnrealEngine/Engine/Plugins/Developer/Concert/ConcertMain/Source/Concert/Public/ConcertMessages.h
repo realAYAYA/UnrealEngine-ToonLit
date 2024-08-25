@@ -48,6 +48,9 @@ enum class EConcertClientStatus : uint8
 	Disconnected,
 	/** Client state updated */
 	Updated,
+
+	/** Not an actual state - add new entries above. */
+	Count
 };
 
 UENUM()

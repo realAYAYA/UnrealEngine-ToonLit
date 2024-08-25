@@ -6,7 +6,7 @@
 #include "MLDeformerEditorModel.h"
 #include "MLDeformerModel.h"
 #include "MLDeformerCurveReferenceCustomization.h"
-#include "MLDeformerMorphModelQualityLevelCustomization.h"
+#include "MLDeformerGeomCacheTrainingInputAnimCustomize.h"
 #include "SMLDeformerInputWidget.h"
 #include "Modules/ModuleManager.h"
 #include "EditorModeRegistry.h"
@@ -25,7 +25,7 @@ namespace UE::MLDeformer
 		// Register object detail customizations.
 		FPropertyEditorModule& PropertyModule = FModuleManager::GetModuleChecked<FPropertyEditorModule>("PropertyEditor");
 		PropertyModule.RegisterCustomPropertyTypeLayout("MLDeformerCurveReference", FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FMLDeformerCurveReferenceCustomization::MakeInstance) );
-		PropertyModule.RegisterCustomPropertyTypeLayout("MLDeformerMorphModelQualityLevel", FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FMLDeformerMorphModelQualityLevelCustomization::MakeInstance) );
+		PropertyModule.RegisterCustomPropertyTypeLayout("MLDeformerGeomCacheTrainingInputAnim", FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FMLDeformerGeomCacheTrainingInputAnimCustomization::MakeInstance) );
 		PropertyModule.NotifyCustomizationModuleChanged();
 
 		SMLDeformerInputWidget::RegisterCommands();
@@ -34,13 +34,13 @@ namespace UE::MLDeformer
 	void FMLDeformerEditorModule::ShutdownModule()
 	{
 		FEditorModeRegistry::Get().UnregisterMode(FMLDeformerEditorMode::ModeName);
-
+		
 		// Unregister object detail customizations.
 		if (FModuleManager::Get().IsModuleLoaded(TEXT("PropertyEditor")))
 		{
 			FPropertyEditorModule& PropertyModule = FModuleManager::GetModuleChecked<FPropertyEditorModule>(TEXT("PropertyEditor"));
 			PropertyModule.UnregisterCustomPropertyTypeLayout(TEXT("MLDeformerCurveReference"));
-			PropertyModule.UnregisterCustomPropertyTypeLayout(TEXT("MLDeformerMorphModelQualityLevel"));
+			PropertyModule.UnregisterCustomPropertyTypeLayout(TEXT("MLDeformerGeomCacheTrainingInputAnim"));
 			PropertyModule.NotifyCustomizationModuleChanged();
 		}
 	}

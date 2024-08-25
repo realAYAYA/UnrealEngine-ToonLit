@@ -18,7 +18,8 @@ public class AudioFormatOgg : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[] {
 				"Core",
-				"Engine"
+				"Engine",
+				"VorbisAudioDecoder"
 			}
 		);
 

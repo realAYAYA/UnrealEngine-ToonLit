@@ -66,6 +66,14 @@ static FAutoConsoleVariableRef CVarGSupersampleCaptureFactor(
 	ECVF_RenderThreadSafe
 	);
 
+float GSkylightCaptureLODDistanceScale = 1.f;
+static FAutoConsoleVariableRef CVarSkylightCaptureLODDistanceScale(
+	TEXT("r.SkylightCapture.LODDistanceScale"),
+	GSkylightCaptureLODDistanceScale,
+	TEXT("LODDistanceScale for the Sky Light Capture. Default is 1")
+	TEXT("Negative values will be clamped to 1"),
+	ECVF_Scalability);
+
 /** 
  * Mip map used by a Roughness of 0, counting down from the lowest resolution mip (MipCount - 1).  
  * This has been tweaked along with ReflectionCaptureRoughnessMipScale to make good use of the resolution in each mip, especially the highest resolution mips.
@@ -511,10 +519,7 @@ void CaptureSceneToScratchCubemap(
 	// update any resources that needed a deferred update
 	FDeferredUpdateResource::UpdateResources(RHICmdList);
 
-	FRDGBuilder GraphBuilder(RHICmdList, RDG_EVENT_NAME("CubeMapCapture"), FSceneRenderer::GetRDGParalelExecuteFlags(FeatureLevel));
-
-	// We need to execute the pre-render view extensions before we do any view dependent work.
-	FSceneRenderer::ViewExtensionPreRender_RenderThread(GraphBuilder, SceneRenderer);
+	FRDGBuilder GraphBuilder(RHICmdList, RDG_EVENT_NAME("CubeMapCapture"), ERDGBuilderFlags::AllowParallelExecute);
 
 	{
 		RDG_EVENT_SCOPE(GraphBuilder, "CubeMapCapture");
@@ -1331,6 +1336,11 @@ void CaptureSceneIntoScratchCubemap(
 		View->StartFinalPostprocessSettings(CapturePosition);
 		View->EndFinalPostprocessSettings(ViewInitOptions);
 
+		if (bCapturingForSkyLight)
+		{
+			const float SkylightCaptureLODDistanceScale = GSkylightCaptureLODDistanceScale > 0.f ? GSkylightCaptureLODDistanceScale : 1.f;
+			View->LODDistanceFactor *= SkylightCaptureLODDistanceScale;
+		}
 		ViewFamily.Views.Add(View);
 
 		ViewFamily.SetScreenPercentageInterface(new FLegacyScreenPercentageDriver(
@@ -1440,8 +1450,10 @@ void FScene::CaptureOrUploadReflectionCapture(UReflectionCaptureComponent* Captu
 				return;
 			}
 
+			UE::RenderCommandPipe::FSyncScope SyncScope;
+
 			// Prefetch all virtual textures so that we have content available
-			if (UseVirtualTexturing(GetFeatureLevel()))
+			if (UseVirtualTexturing(GetShaderPlatform()))
 			{
 				const ERHIFeatureLevel::Type InFeatureLevel = FeatureLevel;
 				const FVector2D ScreenSpaceSize(ReflectionCaptureSize, ReflectionCaptureSize);
@@ -1460,8 +1472,7 @@ void FScene::CaptureOrUploadReflectionCapture(UReflectionCaptureComponent* Captu
 
 			if (CaptureComponent->ReflectionSourceType == EReflectionSourceType::CapturedScene)
 			{
-				static const auto* AllowStaticLightingVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-				const bool bAllowStaticLighting = (!AllowStaticLightingVar || AllowStaticLightingVar->GetValueOnAnyThread() != 0);
+				const bool bAllowStaticLighting = IsStaticLightingAllowed();
 
 				// Reflection Captures are a form of static lighting, so only capture scene elements that are static
 				// However if the project has static lighting disabled, Reflection Captures can still be made to work by capturing Movable lights
@@ -1714,6 +1725,8 @@ void FScene::UpdateSkyCaptureContents(
 		const bool bSkySpecifiedCubemapUses32bitFloat = SpecifiedCubemapColorScale != nullptr && CaptureComponent->SourceType == SLS_SpecifiedCubemap && CaptureComponent->Cubemap->GetPixelFormat() == PF_A32B32G32R32F;
 
 		TRenderThreadStruct<FReflectionCubemapTexture> ReflectionCubemapTexture(CubemapResolution);
+
+		UE::RenderCommandPipe::FSyncScope SyncScope;
 
 		if (CaptureComponent->SourceType == SLS_CapturedScene)
 		{

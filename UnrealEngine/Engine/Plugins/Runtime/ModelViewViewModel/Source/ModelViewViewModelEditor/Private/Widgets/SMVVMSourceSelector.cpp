@@ -244,11 +244,7 @@ void SBindingContextSelector::Refresh()
 
 			for (const FMVVMBlueprintViewModelContext& ViewModel : ViewModels)
 			{
-				FBindingSource& Source = ViewModelSources.AddDefaulted_GetRef();
-				Source.Class = ViewModel.GetViewModelClass();
-				Source.Name = ViewModel.GetViewModelName();
-				Source.DisplayName = ViewModel.GetDisplayName();
-				Source.ViewModelId = ViewModel.GetViewModelId();
+				ViewModelSources.Add(FBindingSource::CreateForViewModel(WidgetBlueprint.Get(), ViewModel));
 			}
 		}
 	}

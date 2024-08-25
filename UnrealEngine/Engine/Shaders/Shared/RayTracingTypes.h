@@ -16,6 +16,31 @@ namespace UE::HLSL
 {
 #endif
 
+struct FRTLightingData
+{
+	uint   Type;
+	float  IESAtlasIndex;
+	float  RectLightAtlasMaxLevel;
+	uint   LightMissShaderIndex;
+	float3 TranslatedLightPosition;
+	float  InvRadius;
+	float3 Direction;
+	float  FalloffExponent;
+	float3 LightColor;
+	float  SpecularScale;
+	float3 Tangent;
+	float  SourceRadius;
+	float2 SpotAngles;
+	float  SourceLength;
+	float  SoftSourceRadius;
+	float2 DistanceFadeMAD;
+	float  RectLightBarnCosAngle;
+	float  RectLightBarnLength;
+	float2 RectLightAtlasUVOffset;
+	float2 RectLightAtlasUVScale;
+};
+HLSL_STATIC_ASSERT(sizeof(FRTLightingData) == 128, "Ray tracing light structure should be kept as small as possible");
+
 // #dxr_todo: Unify this with FRTLightingData ?
 struct FPathTracingLight {
 	float3  TranslatedWorldPosition;
@@ -24,7 +49,7 @@ struct FPathTracingLight {
 	float3  dPdv;
 	float3  Color;
 	float2  Dimensions; // Radius,Length or RectWidth,RectHeight or Sin(Angle/2),0 depending on light type
-	uint    Shaping;    // Barndoor controls for RectLights, Cone angles for spots lights, encoded as f16x2
+	float2  Shaping;    // Barndoor controls for RectLights, Cone angles for spots lights
 	float   SpecularScale;
 	float   Attenuation;
 	float   FalloffExponent; // for non-inverse square decay lights only
@@ -32,18 +57,16 @@ struct FPathTracingLight {
 	int     IESAtlasIndex;
 	uint    Flags; // see defines PATHTRACER_FLAG_*
 	uint    MissShaderIndex;  // used to implement light functions
-	float3  TranslatedBoundMin;
-	float3  TranslatedBoundMax;
-	uint	RectLightAtlasUVScale;  // Rect. light atlas UV transformation, encoded as f16x2
-	uint	RectLightAtlasUVOffset; // Rect. light atlas UV transformation, encoded as f16x2
+	float2  RectLightAtlasUVScale;  // Rect. light atlas UV transformation
+	float2  RectLightAtlasUVOffset; // Rect. light atlas UV transformation
 };
-HLSL_STATIC_ASSERT(sizeof(FPathTracingLight) == 132, "Path tracing light structure should be kept as small as possible");
+HLSL_STATIC_ASSERT(sizeof(FPathTracingLight) == 120, "Path tracing light structure should be kept as small as possible");
 
 struct FPathTracingPackedPathState {
 	uint      RandSeqSampleIndex;
 	uint      RandSeqSampleSeed;
 	float3    Radiance;
-	float     BackgroundVisibility;
+	float     Alpha;
 	uint3     PackedAlbedoNormal;
 	float3    RayOrigin;
 	float3    RayDirection;
@@ -64,6 +87,7 @@ HLSL_STATIC_ASSERT(sizeof(FRayTracingDecal) == 32, "Ray tracing decal structure 
 #ifdef __cplusplus
 } // namespace UE::HLSL
 
+using FRTLightingData = UE::HLSL::FRTLightingData;
 using FPathTracingLight = UE::HLSL::FPathTracingLight;
 using FPathTracingPackedPathState = UE::HLSL::FPathTracingPackedPathState;
 using FRayTracingDecal = UE::HLSL::FRayTracingDecal;

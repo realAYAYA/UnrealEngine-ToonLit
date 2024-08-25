@@ -795,7 +795,7 @@ void UUVEditorMeshSelectionMechanic::SetTargets(const TArray<TObjectPtr<UUVEdito
 	// Initialize the AABB trees from cached values, or make new ones
 	UnwrapMeshSpatials.Reset();
 	AppliedMeshSpatials.Reset();
-	for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+	for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 	{
 		TSharedPtr<FDynamicMeshAABBTree3> UnwrapTree = TreeStore->Get(Target->UnwrapCanonical.Get());
 		if (!UnwrapTree)
@@ -1102,8 +1102,22 @@ bool UUVEditorMeshSelectionMechanic::GetHitTid(const FInputDeviceRay& ClickPos,
 	int32& TidOut, int32& AssetIDOut, bool bUseUnwrap, int32* ExistingSelectionObjectIndexOut)
 {
 	auto RayCastSpatial = [this, &ClickPos, &TidOut, &AssetIDOut, &bUseUnwrap](int32 AssetID) {
+		FTransform3d TargetTransform;
+		if (bUseUnwrap)
+		{
+			TargetTransform = Targets[AssetID]->UnwrapPreview->PreviewMesh->GetTransform();
+		}
+		else
+		{
+			TargetTransform = Targets[AssetID]->AppliedPreview->PreviewMesh->GetTransform();
+		}
+
+		FRay3d LocalRay(
+			(FVector3d)TargetTransform.InverseTransformPosition(ClickPos.WorldRay.Origin),
+			(FVector3d)TargetTransform.InverseTransformVector(ClickPos.WorldRay.Direction));
+
 		double RayT = 0;
-		if (GetMeshSpatial(AssetID, bUseUnwrap)->FindNearestHitTriangle(ClickPos.WorldRay, RayT, TidOut))
+		if (GetMeshSpatial(AssetID, bUseUnwrap)->FindNearestHitTriangle(LocalRay, RayT, TidOut))
 		{
 			AssetIDOut = AssetID;
 			return true;
@@ -1491,6 +1505,7 @@ bool UUVEditorMeshSelectionMechanic::OnUpdateHover(const FInputDeviceRay& Device
 	}
 	FDynamicMesh3* UnwrapMesh = Targets[AssetID]->UnwrapCanonical.Get();
 	FDynamicMesh3* AppliedMesh = Targets[AssetID]->AppliedCanonical.Get();
+	FTransform3d AppliedTargetTransform = Targets[AssetID]->AppliedPreview->PreviewMesh->GetTransform();
 	FDynamicMesh3* Mesh = bSourceIsLivePreview ? AppliedMesh : UnwrapMesh;
 	FDynamicMeshUVOverlay& UVOverlay = *AppliedMesh->Attributes()->GetUVLayer(Targets[AssetID]->UVLayerIndex);
 
@@ -1513,11 +1528,11 @@ bool UUVEditorMeshSelectionMechanic::OnUpdateHover(const FInputDeviceRay& Device
 	}
 
 
-	auto SetupVertexHighlight = [](TArray<int32>& IDs, FDynamicMesh3& Mesh, UPointSetComponent& PointSet)
+	auto SetupVertexHighlight = [](TArray<int32>& IDs, FDynamicMesh3& Mesh, UPointSetComponent& PointSet, FTransform3d Transform = FTransform3d::Identity)
 	{
 		for (int32 ID : IDs)
 		{
-			const FVector3d& P = Mesh.GetVertexRef(ID);
+			const FVector3d P = Transform.TransformPosition(Mesh.GetVertexRef(ID));
 			const FRenderablePoint PointToRender(P,
 				FUVEditorUXSettings::SelectionHoverTriangleWireframeColor,
 				FUVEditorUXSettings::SelectionPointThickness);
@@ -1526,13 +1541,13 @@ bool UUVEditorMeshSelectionMechanic::OnUpdateHover(const FInputDeviceRay& Device
 		}
 	};
 
-	auto SetupEdgeHighlight = [](TArray<int32>& IDs, FDynamicMesh3& Mesh, ULineSetComponent& LineSet)
+	auto SetupEdgeHighlight = [](TArray<int32>& IDs, FDynamicMesh3& Mesh, ULineSetComponent& LineSet, FTransform3d Transform = FTransform3d::Identity)
 	{
 		for (int32 ID : IDs)
 		{
 			const FIndex2i EdgeVids = Mesh.GetEdgeV(ID);
-			const FVector& A = Mesh.GetVertexRef(EdgeVids.A);
-			const FVector& B = Mesh.GetVertexRef(EdgeVids.B);
+			const FVector A = Transform.TransformPosition(Mesh.GetVertexRef(EdgeVids.A));
+			const FVector B = Transform.TransformPosition(Mesh.GetVertexRef(EdgeVids.B));
 
 			LineSet.AddLine(A, B,
 				FUVEditorUXSettings::SelectionHoverTriangleWireframeColor,
@@ -1541,7 +1556,7 @@ bool UUVEditorMeshSelectionMechanic::OnUpdateHover(const FInputDeviceRay& Device
 		}
 	};
 
-	auto SetupTriangleHighlight = [this, &UnwrapMesh, &Tid](FDynamicMesh3& Mesh, ULineSetComponent& LineSet, UTriangleSetComponent& TriangleSet)
+	auto SetupTriangleHighlight = [this, &UnwrapMesh, &Tid](FDynamicMesh3& Mesh, ULineSetComponent& LineSet, UTriangleSetComponent& TriangleSet, FTransform3d Transform = FTransform3d::Identity)
 	{
 		if (!UnwrapMesh->IsTriangle(Tid))
 		{
@@ -1549,9 +1564,9 @@ bool UUVEditorMeshSelectionMechanic::OnUpdateHover(const FInputDeviceRay& Device
 		}
 
 		const FIndex3i Vids = Mesh.GetTriangle(Tid);
-		const FVector& A = Mesh.GetVertex(Vids[0]);
-		const FVector& B = Mesh.GetVertex(Vids[1]);
-		const FVector& C = Mesh.GetVertex(Vids[2]);
+		const FVector A = Transform.TransformPosition(Mesh.GetVertex(Vids[0]));
+		const FVector B = Transform.TransformPosition(Mesh.GetVertex(Vids[1]));
+		const FVector C = Transform.TransformPosition(Mesh.GetVertex(Vids[2]));
 
 		LineSet.AddLine(A, B, FUVEditorUXSettings::SelectionHoverTriangleWireframeColor,
 			FUVEditorUXSettings::SelectionLineThickness, FUVEditorUXSettings::SelectionHoverWireframeDepthBias);
@@ -1570,19 +1585,19 @@ bool UUVEditorMeshSelectionMechanic::OnUpdateHover(const FInputDeviceRay& Device
 	if (SelectionMode == ESelectionMode::Vertex)
 	{
 		SetupVertexHighlight(Converted2DIDs, *UnwrapMesh, *HoverPointSet);
-		SetupVertexHighlight(Converted3DIDs, *AppliedMesh, *LivePreviewHoverPointSet);
-		SetupVertexHighlight(Unset3DIDs, *AppliedMesh, *LivePreviewHoverPointSet);
+		SetupVertexHighlight(Converted3DIDs, *AppliedMesh, *LivePreviewHoverPointSet, AppliedTargetTransform);
+		SetupVertexHighlight(Unset3DIDs, *AppliedMesh, *LivePreviewHoverPointSet, AppliedTargetTransform);
 	}
 	else if (SelectionMode == ESelectionMode::Edge)
 	{
 		SetupEdgeHighlight(Converted2DIDs, *UnwrapMesh, *HoverLineSet);
-		SetupEdgeHighlight(Converted3DIDs, *AppliedMesh, *LivePreviewHoverLineSet);
-		SetupEdgeHighlight(Unset3DIDs, *AppliedMesh, *LivePreviewHoverLineSet);
+		SetupEdgeHighlight(Converted3DIDs, *AppliedMesh, *LivePreviewHoverLineSet, AppliedTargetTransform);
+		SetupEdgeHighlight(Unset3DIDs, *AppliedMesh, *LivePreviewHoverLineSet, AppliedTargetTransform);
 	}
 	else
 	{
 		SetupTriangleHighlight(*UnwrapMesh, *HoverLineSet, *HoverTriangleSet);
-		SetupTriangleHighlight(*AppliedMesh, *LivePreviewHoverLineSet, *LivePreviewHoverTriangleSet);
+		SetupTriangleHighlight(*AppliedMesh, *LivePreviewHoverLineSet, *LivePreviewHoverTriangleSet, AppliedTargetTransform);
 	}
 
 	return true;

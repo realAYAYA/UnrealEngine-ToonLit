@@ -23,14 +23,10 @@ public:
 		: FDisplayClusterSocketOperations(CreateSocket(InName), DisplayClusterConstants::net::PacketBufferSize, InName)
 	{ }
 
-	virtual ~FDisplayClusterClientBase()
-	{
-		Disconnect();
-	}
-
 public:
 	// Connects to a server
 	virtual bool Connect(const FString& Address, const uint16 Port, const uint32 ConnectRetriesAmount, const uint32 ConnectRetryDelay) override;
+
 	// Terminates current connection
 	virtual void Disconnect() override;
 
@@ -48,6 +44,7 @@ public:
 protected:
 	// Creates client socket
 	FSocket* CreateSocket(const FString& InName);
+
 };
 
 

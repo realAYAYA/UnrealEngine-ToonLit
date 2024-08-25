@@ -1,7 +1,12 @@
 ﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Graph/AnimNextGraph_EdGraphSchema.h"
+
+#include "AnimNextRigVMAsset.h"
+#include "AnimNextRigVMAssetEntry.h"
 #include "Editor.h"
+
+#define LOCTEXT_NAMESPACE "AnimNextGraph_EdGraphSchema"
 
 void UAnimNextGraph_EdGraphSchema::TrySetDefaultValue(UEdGraphPin& InPin, const FString& InNewDefaultValue, bool bMarkAsModified) const
 {
@@ -40,3 +45,16 @@ void UAnimNextGraph_EdGraphSchema::TrySetDefaultValue(UEdGraphPin& InPin, const 
 		}
 	}
 }
+
+void UAnimNextGraph_EdGraphSchema::GetGraphDisplayInformation(const UEdGraph& Graph, /*out*/ FGraphDisplayInfo& DisplayInfo) const
+{
+	Super::GetGraphDisplayInformation(Graph, DisplayInfo);
+	
+	if(UAnimNextRigVMAssetEntry* AssetEntry = Cast<UAnimNextRigVMAssetEntry>(Graph.GetOuter()))
+	{
+		DisplayInfo.DisplayName = FText::Format(LOCTEXT("GraphTabTitleFormat", "{0}: {1}"), FText::FromName(AssetEntry->GetEntryName()), FText::FromName(AssetEntry->GetTypedOuter<UAnimNextRigVMAsset>()->GetFName()));
+		DisplayInfo.Tooltip = FText::Format(LOCTEXT("GraphTabTooltipFormat", "{0} in:\n{1}"), FText::FromName(AssetEntry->GetEntryName()), FText::FromString(AssetEntry->GetTypedOuter<UAnimNextRigVMAsset>()->GetPathName()));
+	}
+}
+
+#undef LOCTEXT_NAMESPACE

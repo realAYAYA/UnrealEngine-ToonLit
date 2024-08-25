@@ -24,12 +24,12 @@ namespace UnrealBuildTool
 			{ UnrealArch.X64,   "-x64" },
 		};
 
-		// sh0rt names for the above suffixes
+		// short names for the above suffixes
 		public static readonly Dictionary<string, string> ShortArchNames = new Dictionary<string, string>()
 		{
 			{ "", "" },
-			{ "arm64", "a8" },
-			{ "x64", "x6" },
+			{ "-arm64", "a8" },
+			{ "-x64", "x6" },
 		};
 
 		public enum ClangSanitizer
@@ -77,12 +77,12 @@ namespace UnrealBuildTool
 
 		private static Dictionary<UnrealArch, string[]> LibrariesToSkip = new() {
 			{ UnrealArch.Arm64, new string[] { "nvToolsExt", "nvToolsExtStub", "vorbisenc", } },
-			{ UnrealArch.X64,   new string[] { "nvToolsExt", "nvToolsExtStub", "oculus", "OVRPlugin", "vrapi", "ovrkernel", "systemutils", "openglloader", "ovrplatformloader", "gpg", "vorbisenc", } }
+			{ UnrealArch.X64,   new string[] { "nvToolsExt", "nvToolsExtStub", "oculus", "OVRPlugin", "vrapi", "ovrkernel", "systemutils", "openglloader", "ovrplatformloader", "vorbisenc", } }
 		};
 
 		private static Dictionary<UnrealArch, string[]> ModulesToSkip = new() {
 			{ UnrealArch.Arm64, new string[] {  } },
-			{ UnrealArch.X64,   new string[] { "OnlineSubsystemOculus", "OculusHMD", "OculusMR", "OnlineSubsystemGooglePlay" } }
+			{ UnrealArch.X64,   new string[] { "OnlineSubsystemOculus", "OculusHMD", "OculusMR" } }
 		};
 
 		private static Dictionary<UnrealArch, string[]> GeneratedModulesToSkip = new() {
@@ -115,6 +115,11 @@ namespace UnrealBuildTool
 			return NDKVersionInt >= 220000;
 		}
 
+		public bool HasEmbeddedHWASanSupport()
+		{
+			return NDKVersionInt >= 260000;
+		}
+
 		public AndroidToolChain(FileReference? InProjectFile, ILogger InLogger)
 			: this(InProjectFile, ClangToolChainOptions.None, InLogger)
 		{
@@ -126,7 +131,7 @@ namespace UnrealBuildTool
 			Options = ToolchainOptions;
 			ProjectFile = InProjectFile;
 
-			string? NDKPath = Environment.GetEnvironmentVariable("NDKROOT");
+			string? NDKPath = AndroidPlatformSDK.GetNDKRoot();
 
 			// don't register if we don't have an NDKROOT specified
 			if (String.IsNullOrEmpty(NDKPath))
@@ -475,12 +480,6 @@ namespace UnrealBuildTool
 		{
 			// @todo the base has PGO options that are a little different than what we want - it would be nice to merge these
 
-			if (CompilerVersionGreaterOrEqual(12, 0, 0))
-			{
-				// We have 'this' vs nullptr comparisons that get optimized away for newer versions of Clang, which is undesirable until we refactor these checks.
-				Arguments.Add("-fno-delete-null-pointer-checks");
-			}
-
 			// optimization level
 			if (!CompileEnvironment.bOptimizeCode)
 			{
@@ -558,6 +557,11 @@ namespace UnrealBuildTool
 			{
 				Arguments.Add("-g2");
 				Arguments.Add("-gdwarf-4");
+
+				if (CompileEnvironment.bDebugLineTablesOnly)
+				{
+					Arguments.Add("-gline-tables-only");
+				}
 			}
 
 			if (!DisableStackProtector())
@@ -596,7 +600,7 @@ namespace UnrealBuildTool
 
 				if (Sanitizer == ClangSanitizer.Address || Sanitizer == ClangSanitizer.HwAddress)
 				{
-					Arguments.Add("-fno-omit-frame-pointer -DRUNNING_WITH_ASAN=1 -DFORCE_ANSI_ALLOCATOR=1");
+					Arguments.Add("-fno-omit-frame-pointer -DFORCE_ANSI_ALLOCATOR=1");
 				}
 			}
 
@@ -753,8 +757,8 @@ namespace UnrealBuildTool
 				string VersionScriptFile = GetVersionScriptFilename(LinkEnvironment);
 				using (StreamWriter Writer = File.CreateText(VersionScriptFile))
 				{
-					// Make all symbols (except ones called from Java) hidden
-					Writer.WriteLine("{ global: Java_*; ANativeActivity_onCreate; JNI_OnLoad; local: *; };");
+					// Make all symbols hidden (except new/delete operators and ones called from Java)
+					Writer.WriteLine("{ global: _Znwm*; _Znam*; _ZdlPv*; _ZdaPv*; Java_*; ANativeActivity_onCreate; JNI_OnLoad; local: *; };");
 				}
 				Result += " -Wl,--version-script=\"" + VersionScriptFile + "\"";
 			}
@@ -821,6 +825,9 @@ namespace UnrealBuildTool
 					Result += " -Wl,--hash-style=gnu";  // generate GNU style hashes, faster lookup and faster startup. Avoids generating old .hash section. Supported on >= Android M
 				}
 			}
+
+			// Enable support for non-4k virtual page sizes
+			Result += " -z max-page-size=65536";
 
 			return Result;
 		}
@@ -922,7 +929,8 @@ namespace UnrealBuildTool
 			{
 				if (ComboName.Key != Arch)
 				{
-					if (Lib.EndsWith(ComboName.Value))
+					string ArchitectureName = ComboName.Key.ToString();
+					if (Lib.EndsWith(ComboName.Value) || Lib.EndsWith(ArchitectureName))
 					{
 						return true;
 					}
@@ -1007,35 +1015,38 @@ namespace UnrealBuildTool
 			return StripPath.Replace("-ar", "-strip");
 		}
 
-		private bool bHasHandledLaunchModule = false;
-		private bool bHasHandledCoreModule = false;
+		private HashSet<UnrealArch> HasHandledLaunchModule = new();
+		private HashSet<UnrealArch> HasHandledCoreModule = new();
 
-		protected override CPPOutput CompileCPPFiles(CppCompileEnvironment CompileEnvironment, List<FileItem> InputFiles, DirectoryReference OutputDir, string ModuleName, IActionGraphBuilder Graph)
+		protected override CPPOutput CompileCPPFiles(CppCompileEnvironment CompileEnvironment, IEnumerable<FileItem> InputFiles, DirectoryReference OutputDir, string ModuleName, IActionGraphBuilder Graph)
 		{
-			if (ShouldSkipModule(ModuleName, CompileEnvironment.Architecture))
+			if (ShouldSkipCompile(CompileEnvironment) || ShouldSkipModule(ModuleName, CompileEnvironment.Architecture))
 			{
 				return new CPPOutput();
 			}
 
+			List<FileItem> ModifiedInputFiles = new(InputFiles);
+
 			// Deal with Launch module special if first time seen
-			if (!bHasHandledLaunchModule && (ModuleName.Equals("Launch") || ModuleName.Equals("AndroidLauncher")))
+			if (!HasHandledLaunchModule.Contains(CompileEnvironment.Architecture) && (ModuleName.Equals("Launch") || ModuleName.Equals("AndroidLauncher")))
 			{
 				// Directly added NDK files for NDK extensions
-				InputFiles.Add(FileItem.GetItemByPath(GetNativeGluePath()));
+				ModifiedInputFiles.Add(FileItem.GetItemByPath(GetNativeGluePath()));
 				// Deal with dynamic modules removed by architecture
-				GenerateEmptyLinkFunctionsForRemovedModules(InputFiles, CompileEnvironment.Architecture, ModuleName, OutputDir, Graph, Logger);
+				GenerateEmptyLinkFunctionsForRemovedModules(ModifiedInputFiles, CompileEnvironment.Architecture, ModuleName, OutputDir, Graph, Logger);
 
-				bHasHandledLaunchModule = true;
+				HasHandledLaunchModule.Add(CompileEnvironment.Architecture);
 			}
 
-			if (!bHasHandledCoreModule && ModuleName.Equals("Core") && (CompileEnvironment.PrecompiledHeaderAction == PrecompiledHeaderAction.None))
+			if (!HasHandledCoreModule.Contains(CompileEnvironment.Architecture) && ModuleName.Equals("Core") && (CompileEnvironment.PrecompiledHeaderAction == PrecompiledHeaderAction.None))
 			{
 				// This is used by Crypto code in Core
-				InputFiles.Add(FileItem.GetItemByPath(GetCpuFeaturesPath()));
-				bHasHandledCoreModule = true;
+				ModifiedInputFiles.Add(FileItem.GetItemByPath(GetCpuFeaturesPath()));
+				HasHandledCoreModule.Add(CompileEnvironment.Architecture);
+				
 			}
 
-			return base.CompileCPPFiles(CompileEnvironment, InputFiles, OutputDir, ModuleName, Graph);
+			return base.CompileCPPFiles(CompileEnvironment, ModifiedInputFiles, OutputDir, ModuleName, Graph);
 		}
 
 		public static string InlineArchName(string Pathname, UnrealArch Arch, bool bUseShortNames = false)
@@ -1063,7 +1074,7 @@ namespace UnrealBuildTool
 			return DirectoryReference.Combine(PathRef, "include", Arch.ToString());
 		}
 
-		public override CPPOutput GenerateISPCHeaders(CppCompileEnvironment CompileEnvironment, List<FileItem> InputFiles, DirectoryReference OutputDir, IActionGraphBuilder Graph)
+		public override CPPOutput GenerateISPCHeaders(CppCompileEnvironment CompileEnvironment, IEnumerable<FileItem> InputFiles, DirectoryReference OutputDir, IActionGraphBuilder Graph)
 		{
 			CPPOutput Result = new CPPOutput();
 
@@ -1191,7 +1202,7 @@ namespace UnrealBuildTool
 			return Result;
 		}
 
-		public override CPPOutput CompileISPCFiles(CppCompileEnvironment CompileEnvironment, List<FileItem> InputFiles, DirectoryReference OutputDir, IActionGraphBuilder Graph)
+		public override CPPOutput CompileISPCFiles(CppCompileEnvironment CompileEnvironment, IEnumerable<FileItem> InputFiles, DirectoryReference OutputDir, IActionGraphBuilder Graph)
 		{
 			CPPOutput Result = new CPPOutput();
 
@@ -1692,7 +1703,7 @@ namespace UnrealBuildTool
 			File.WriteAllLines(FileName, ObjectFileDirectories.Select(x => x.FullName).OrderBy(x => x).ToArray());
 		}
 
-		public override void ModifyBuildProducts(ReadOnlyTargetRules Target, UEBuildBinary Binary, List<string> Libraries, List<UEBuildBundleResource> BundleResources, Dictionary<FileReference, BuildProductType> BuildProducts)
+		public override void ModifyBuildProducts(ReadOnlyTargetRules Target, UEBuildBinary Binary, IEnumerable<string> Libraries, IEnumerable<UEBuildBundleResource> BundleResources, Dictionary<FileReference, BuildProductType> BuildProducts)
 		{
 			// only the .so needs to be in the manifest; we always have to build the apk since its contents depend on the project
 

@@ -146,6 +146,16 @@ uint16 UBTComposite_SimpleParallel::GetInstanceMemorySize() const
 	return sizeof(FBTParallelMemory);
 }
 
+void UBTComposite_SimpleParallel::InitializeMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryInit::Type InitType) const
+{
+	InitializeNodeMemory<FBTParallelMemory>(NodeMemory, InitType);
+}
+
+void UBTComposite_SimpleParallel::CleanupMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryClear::Type CleanupType) const
+{
+	CleanupNodeMemory<FBTParallelMemory>(NodeMemory, CleanupType);
+}
+
 bool UBTComposite_SimpleParallel::CanPushSubtree(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, int32 ChildIdx) const
 {
 	return (ChildIdx != EBTParallelChild::MainTask);

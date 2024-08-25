@@ -1,18 +1,19 @@
-import { Checkbox, CommandBar, CommandBarButton, DefaultButton, getFocusStyle, ICommandBarItemProps, Icon, IconButton, IContextualMenuItem, IContextualMenuItemProps, IContextualMenuProps, IGroup, Label, List, mergeStyleSets, MessageBar, MessageBarType, Modal, Persona, PersonaSize, Pivot, PivotItem, PrimaryButton, Spinner, SpinnerSize, Stack, TagPicker, Text, TextField } from "@fluentui/react";
+import { Checkbox, CommandBar, CommandBarButton, DefaultButton, Dialog, DialogFooter, DialogType, getFocusStyle, ICommandBarItemProps, Icon, IconButton, IContextualMenuItem, IContextualMenuItemProps, IContextualMenuProps, IGroup, Label, List, mergeStyleSets, MessageBar, MessageBarType, Modal, Persona, PersonaSize, Pivot, PivotItem, PrimaryButton, Spinner, SpinnerSize, Stack, TagPicker, Text, TextField } from "@fluentui/react";
 import { action, makeObservable, observable } from 'mobx';
 import { observer } from "mobx-react-lite";
 import moment from "moment";
 import React, { useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import backend from "../backend";
-import { CreateExternalIssueResponse, CreateJobRequest, EventSeverity, GetChangeSummaryResponse, GetExternalIssueProjectResponse, GetExternalIssueResponse, GetIssueResponse, GetIssueSpanResponse, GetIssueStepResponse, GetIssueStreamResponse, GetLogEventResponse, GetTemplateRefResponse, GetThinUserInfoResponse, GetUserResponse, IssueSeverity, UpdateIssueRequest } from "../backend/Api";
+import { CreateExternalIssueResponse, CreateJobRequest, EventSeverity, GetChangeSummaryResponse, GetExternalIssueProjectResponse, GetExternalIssueResponse, GetIssueResponse, GetIssueSpanResponse, GetIssueStepResponse, GetIssueStreamResponse, GetLogEventResponse, GetTemplateRefResponse, GetUserResponse, IssueData, IssueSeverity, UpdateIssueRequest } from "../backend/Api";
 import dashboard, { StatusColor } from "../backend/Dashboard";
 import { projectStore } from "../backend/ProjectStore";
 import templateCache from '../backend/TemplateCache';
 import { Markdown } from '../base/components/Markdown';
 import { useWindowSize } from "../base/utilities/hooks";
 import { displayTimeZone, getHumanTime, getShortNiceTime } from "../base/utilities/timeUtils";
-import { hordeClasses, modeColors, theme } from "../styles/Styles";
+import { getHordeStyling } from "../styles/Styles";
+import { getHordeTheme } from "../styles/theme";
 import { ErrorHandler } from "./ErrorHandler";
 import { useQuery } from "./JobDetailCommon";
 import { renderLine } from "./LogRender";
@@ -20,28 +21,57 @@ import { UserSelect } from "./UserSelect";
 
 const smallThreshhold = 1100;
 
-const customClasses = mergeStyleSets({
-   actionBar: {
-      selectors: {
-         '.ms-Button': {
-            minWidth: 64,
-            height: 32
+let _customClasses: any;
+const getCustomClasses = () => {
 
-         }
-      }
-   },
-   container: {
-      selectors: {
-         '.ms-List-cell:nth-child(even)': {
-            background: "rgb(230, 229, 229)",
+   const theme = getHordeTheme();
+   const { modeColors } = getHordeStyling();
+
+   const background = dashboard.darktheme ? modeColors.background : "#FAF9F9";
+
+   const customClasses = _customClasses ?? mergeStyleSets({
+      actionBar: {
+         backgroundColor: background,
+         fontSize: "12px !important",
+         ':hover': {
+            filter: dashboard.darktheme ? undefined : "brightness(95%)",
          },
-         '.ms-List-cell:nth-child(odd)': {
-            background: "#FFFFFF",
+         selectors: {
+            '.ms-Button': {
+               minWidth: 64,
+               height: 32
+            },
+            '.ms-Icon': {
+               fontSize: "12px !important"
+            },
+            '.ms-Button:hover': {
+               backgroundColor: dashboard.darktheme ? theme.palette.neutralLight : undefined
+            },
+            '.ms-CommandBar': {
+               backgroundColor: background
+            },
+            '.ms-Button--commandBar': {
+               backgroundColor: background
+            },
+         }
+      },
+      container: {
+         selectors: {
+            '.ms-List-cell:nth-child(even)': {
+               background: "rgb(230, 229, 229)",
+            },
+            '.ms-List-cell:nth-child(odd)': {
+               background: "#FFFFFF",
+            }
          }
       }
-   }
 
-});
+   });
+
+   _customClasses = customClasses;
+   return customClasses;
+}
+
 
 type ChangeItem = {
    change: number;
@@ -66,7 +96,13 @@ class IssueDetails {
          return;
       }
 
-      await this.refresh(issueId);
+      try {
+         await this.refresh(issueId);
+      } catch (reason) {
+         this.issueError = reason as string;
+         this.updated();
+      }
+
    }
 
    clear() {
@@ -82,6 +118,7 @@ class IssueDetails {
       this.suspects = undefined;
       this.minTime = undefined;
       this.maxTime = undefined;
+      this.issueError = undefined;
    }
 
    getSuspectSwarmRange(): string | undefined {
@@ -256,21 +293,6 @@ class IssueDetails {
       return name;
    }
 
-
-   isSuspect(authorInfo?: GetThinUserInfoResponse) {
-
-      if (!authorInfo || authorInfo.name === "buildmachine" || authorInfo.name === "svc-p4-hordeproxy-p" || authorInfo.name === "robomerge") {
-         return false;
-      }
-
-      return !!this.suspects?.find(suspect => {
-
-         return suspect.id === authorInfo.id;
-
-      });
-
-   }
-
    resolved(streamId?: string, templateId?: string): boolean {
 
       if (!this.issue) {
@@ -342,20 +364,35 @@ class IssueDetails {
 
    async refresh(issueId: number) {
 
-      const value = await backend.getIssue(issueId);
+      let value: IssueData | undefined;
 
-      if (!value) {
+      try {
+         value = await backend.getIssue(issueId);
+      } catch {
          throw new Error(`Unable to get issue ${issueId}`);
       }
 
       this.issue = value;
 
       if (this.issue.primarySuspectsInfo?.length) {
-         this.suspects = await backend.getUsers({
-            ids: this.issue.primarySuspectsInfo.map(s => s.id),
-            includeClaims: true,
-            includeAvatar: true
-         });
+
+         let squery = [...this.issue.primarySuspectsInfo];
+         this.suspects = [];
+
+         while (squery.length) {
+
+            const results = await backend.getUsers({
+               ids: squery.slice(0, 256).map(s => s.id),
+               includeClaims: true,
+               includeAvatar: true
+            });
+
+            if (results?.length) {
+               this.suspects.push(...results);
+            }
+
+            squery = squery.slice(256)
+         }
       }
 
       this.issueStreams = await backend.getIssueStreams(issueId);
@@ -562,6 +599,8 @@ class IssueDetails {
 
    fakeCLTimes = new Map<number, Date>();
 
+   issueError?: string;
+
    static externalStreamProjects: Map<string, GetExternalIssueProjectResponse[]> = new Map();
 
 }
@@ -611,6 +650,7 @@ const StreamCanvas: React.FC = () => {
 
 
    const colors = dashboard.getStatusColors();
+   const { hordeClasses } = getHordeStyling();
 
    if (!details.issueStreams) {
       return null;
@@ -718,7 +758,11 @@ const StreamCanvas: React.FC = () => {
 
       context.clearRect(0, 0, canvas.width, canvas.height);
 
-      const timeSpan = (maxTime - minTime) / state.zoom;
+      let timeSpan = (maxTime - minTime) / state.zoom;
+
+      if (timeSpan < 1.0) {
+         timeSpan = 1.0;
+      }
 
       minTime = maxTime - timeSpan;
 
@@ -1159,7 +1203,7 @@ const IssueHeader: React.FC<{ items?: SummaryItem[] }> = ({ items }) => {
    const renderSummaryItem = (title: string, text: string | undefined, link?: string, strike?: boolean) => {
 
       if (!text) {
-         return <Stack/>;
+         return <Stack />;
       }
 
       return <Stack horizontal verticalAlign="center" tokens={{ childrenGap: 16 }}>
@@ -1177,7 +1221,7 @@ const IssueHeader: React.FC<{ items?: SummaryItem[] }> = ({ items }) => {
       </Stack>
    }
 
-   let summaryItems:JSX.Element[] | undefined;
+   let summaryItems: JSX.Element[] | undefined;
    if (items?.length) {
       summaryItems = items.map(i => renderSummaryItem(i.title, i.text, i.link, i.strike));
    }
@@ -1195,6 +1239,8 @@ const IssueHeader: React.FC<{ items?: SummaryItem[] }> = ({ items }) => {
 }
 
 const IssueSummaryPanel: React.FC = () => {
+
+   const { hordeClasses } = getHordeStyling();
 
    const issue = details.issue!;
 
@@ -1232,6 +1278,14 @@ const IssueSummaryPanel: React.FC = () => {
          title: "Resolved By",
          text: `${issue.resolvedByInfo?.name ?? "Horde"} on ${getShortNiceTime(issue.resolvedAt, true, true)}`
       })
+
+      if (issue.fixChange) {
+         items.push({
+            title: "Fixed CL",
+            text: `${issue.fixChange}`,
+            link: dashboard.swarmUrl ? `${dashboard.swarmUrl}/changes/${issue.fixChange}` : undefined
+         })
+      }
    }
 
    if (!issue.resolvedAt && issue.acknowledgedAt && issue.ownerInfo) {
@@ -1288,52 +1342,67 @@ const IssueSummaryPanel: React.FC = () => {
    </Stack>
 }
 
-const errorStyles = mergeStyleSets({
-   gutter: [
-      {
-         borderLeftStyle: 'solid',
-         borderLeftColor: "#EC4C47",
-         borderLeftWidth: 6,
-         padding: 0,
-         margin: 0,
-         paddingTop: 8,
-         paddingBottom: 8,
-         paddingRight: 8,
-         marginTop: 0,
-         marginBottom: 0
-      }
-   ],
-   gutterWarning: [
-      {
-         borderLeftStyle: 'solid',
-         borderLeftColor: "rgb(247, 209, 84)",
-         borderLeftWidth: 6,
-         padding: 0,
-         margin: 0,
-         paddingTop: 8,
-         paddingBottom: 8,
-         paddingRight: 8,
-         marginTop: 0,
-         marginBottom: 0
-      }
-   ],
-   itemCell: [
-      getFocusStyle(theme, { inset: -1 }),
-      {
-         selectors: {
-            '&:hover': { background: "rgb(243, 242, 241)" }
-         }
-      }
-   ],
+let _errorStyles: any;
 
-});
+const getErrorStyles = () => {
+
+   const theme = getHordeTheme();
+
+   const errorStyles = _errorStyles ?? mergeStyleSets({
+      gutter: [
+         {
+            borderLeftStyle: 'solid',
+            borderLeftColor: "#EC4C47",
+            borderLeftWidth: 6,
+            padding: 0,
+            margin: 0,
+            paddingTop: 8,
+            paddingBottom: 8,
+            paddingRight: 8,
+            marginTop: 0,
+            marginBottom: 0
+         }
+      ],
+      gutterWarning: [
+         {
+            borderLeftStyle: 'solid',
+            borderLeftColor: "rgb(247, 209, 84)",
+            borderLeftWidth: 6,
+            padding: 0,
+            margin: 0,
+            paddingTop: 8,
+            paddingBottom: 8,
+            paddingRight: 8,
+            marginTop: 0,
+            marginBottom: 0
+         }
+      ],
+      itemCell: [
+         getFocusStyle(theme, { inset: -1 }),
+         {
+            selectors: {
+               '&:hover': { background: theme.palette.neutralLight }
+            }
+         }
+      ],
+   });
+
+   _errorStyles = errorStyles;
+
+   return errorStyles;
+}
+
+
 
 // fixes issue with the lne items in stack doubling up with same key 
 let lineKey = 0;
 
 export const ErrorPane: React.FC<{ events?: GetLogEventResponse[]; onClose?: () => void }> = ({ events }) => {
 
+   const navigate = useNavigate();
    useWindowSize();
+   const { modeColors } = getHordeStyling();
+   const errorStyles = getErrorStyles();
 
    const listEvents = events?.sort((a, b) => {
       if (a.severity === EventSeverity.Warning && b.severity === EventSeverity.Error) {
@@ -1354,7 +1423,7 @@ export const ErrorPane: React.FC<{ events?: GetLogEventResponse[]; onClose?: () 
 
       const url = `/log/${item.logId}?lineindex=${item.lineIndex}`;
 
-      const lines = item.lines.filter(line => line.message?.trim().length).map(line => <Stack key={`errorpane_line_${item.lineIndex}_${lineKey++}`} styles={{ root: { paddingLeft: 8, paddingRight: 8, lineBreak: "normal", whiteSpace: "pre-wrap", lineHeight: 18, fontSize: 10, fontFamily: "Horde Cousine Regular, monospace, monospace" } }}> <Link className="log-link" to={url}>{renderLine(line, undefined, {})}</Link></Stack>);
+      const lines = item.lines.filter(line => line.message?.trim().length).map(line => <Stack key={`errorpane_line_${item.lineIndex}_${lineKey++}`} styles={{ root: { paddingLeft: 8, paddingRight: 8, lineBreak: "normal", whiteSpace: "pre-wrap", lineHeight: 18, fontSize: 10, fontFamily: "Horde Cousine Regular, monospace, monospace" } }}> <Link style={{ color: modeColors.text }} to={url}>{renderLine(navigate, line, undefined, {})}</Link></Stack>);
 
       return (<Stack className={errorStyles.itemCell} style={{ padding: 8 }}><Stack className={item.severity === EventSeverity.Warning ? errorStyles.gutterWarning : errorStyles.gutter} styles={{ root: { padding: 0, margin: 0 } }}>
          <Stack styles={{ root: { paddingLeft: 14 } }}>
@@ -1380,10 +1449,12 @@ const StepPanel: React.FC<{ streamId: string, hstep: GetIssueStepResponse }> = o
 
    if (details.update) { }
 
+   const { hordeClasses } = getHordeStyling();
+   const theme = getHordeTheme();
+
    const statusColors = dashboard.getStatusColors();
    const RED = statusColors.get(StatusColor.Failure);
    const YELLOW = statusColors.get(StatusColor.Warnings);
-
 
    let description = "";
 
@@ -1405,7 +1476,7 @@ const StepPanel: React.FC<{ streamId: string, hstep: GetIssueStepResponse }> = o
       const warning = hstep.severity === IssueSeverity.Warning;
       const success = hstep.severity === IssueSeverity.Unspecified;
 
-      let backgroundColor = "#E9E8E7";
+      let backgroundColor = theme.horde.dividerColor;
 
       let color = RED;
 
@@ -1414,7 +1485,7 @@ const StepPanel: React.FC<{ streamId: string, hstep: GetIssueStepResponse }> = o
       }
 
       if (success) {
-         backgroundColor = "#D9D8D7";
+         backgroundColor = theme.horde.dividerColor;
          color = backgroundColor;
       }
 
@@ -1458,7 +1529,7 @@ const StepPanel: React.FC<{ streamId: string, hstep: GetIssueStepResponse }> = o
 
       return <div style={{ paddingTop: 8, height: "100%" }}>
          <Stack style={{ flexBasis: "52px", flexShrink: 0 }}>
-            <Stack horizontal verticalAlign="center" style={{ backgroundColor: backgroundColor, color: "#FFFFFF", width: "100%", paddingLeft: 8, padding: 12 }}>
+            <Stack horizontal verticalAlign="center" style={{ backgroundColor: backgroundColor, width: "100%", paddingLeft: 8, padding: 12 }}>
                <Stack horizontal verticalAlign="center" tokens={{ childrenGap: 12 }} style={{ width: "100%" }} >
                   <Stack className="horde-no-darktheme" style={{ paddingTop: 2 }}>
                      <Icon style={{ color: color }} iconName="Square" />
@@ -1749,6 +1820,9 @@ const IssueCommandBar: React.FC = () => {
 
    const suspectRange = details.getSuspectSwarmRange();
 
+   const customClasses = getCustomClasses();
+
+
    return <Stack >
       {assignToOtherShown.shown && <AssignToOtherModal defaultUser={assignToOtherShown.defaultUser} onClose={() => { setAssignToOtherShown({}) }} />}
       {markFixedShown && <MarkFixedModal onClose={() => { setMarkFixedShown(false) }} />}
@@ -1759,27 +1833,26 @@ const IssueCommandBar: React.FC = () => {
       {quarantineShown && <IssueQuarantineModal onClose={() => { setQuarantineShown(false) }} />}
       {forceCloseShown && <IssueForceCloseModal onClose={() => { setForceCloseShown(false) }} />}
       {testFixShown && <TestFixModal onClose={() => { setTestFixShown(false) }} />}
-
       <Stack horizontal>
          <Stack>
             <Stack styles={{ root: { paddingBottom: 0, paddingRight: 32 } }}>
-               <Stack className={hordeClasses.commandBarSmall} horizontal verticalAlign="center" tokens={{ childrenGap: 8 }}>
+               <Stack horizontal verticalAlign="center" tokens={{ childrenGap: 8 }}>
                   <Stack horizontal style={{ paddingLeft: 12 }}>
                      <Stack horizontal verticalAlign="center" style={{ paddingRight: 18 }}>
                         {!!suspectRange && <a href={suspectRange} target="blank"> <Stack>
-                           <CommandBarButton className={hordeClasses.commandBarSmall} styles={{ root: { padding: "10px 8px 10px 8px" } }} iconProps={{ iconName: "Locate" }} text="Suspects" />
+                           <CommandBarButton className={customClasses.actionBar} styles={{ root: { padding: "10px 8px 10px 8px" } }} iconProps={{ iconName: "Locate" }} text="Suspects" />
                         </Stack>
                         </a>}
 
                      </Stack>
                      <Stack horizontal verticalAlign="center" verticalFill={true} tokens={{ childrenGap: 18 }}>
                         <Stack>
-                           <CommandBar styles={{ root: { height: 32, padding: 0, paddingRight: 8, paddingLeft: 16, backgroundColor: "unset" } }}
+                           <CommandBar styles={{ root: { height: 32, padding: 0, backgroundColor: "unset" } }}
                               className={customClasses.actionBar}
                               items={commandItems}
                               onReduceData={() => undefined} />
                         </Stack>
-                        {canAck && <Stack className="horde-no-darktheme" style={{ paddingRight: 8 }}>
+                        {canAck && <Stack className="horde-no-darktheme">
                            <PrimaryButton style={{ animationName: "red-pulse", animationDuration: "2s", animationIterationCount: "infinite", backgroundColor: "#FF0000", border: "1px solid #FF0000", padding: 0, paddingLeft: 4, paddingRight: 4, height: 22, fontWeight: "unset", fontSize: 12 }} text="Acknowledge" onClick={() => { setAckShown(true) }}></PrimaryButton>
                         </Stack>}
                         <Stack>
@@ -1817,6 +1890,8 @@ export const IssueModalV2: React.FC<{ popHistoryOnClose: boolean, issueId?: stri
    const [editShown, setEditShown] = useState(false);
    useWindowSize();
 
+   const { hordeClasses, modeColors } = getHordeStyling();
+
    if (details.update) { }
 
    if (!issueId) {
@@ -1834,20 +1909,32 @@ export const IssueModalV2: React.FC<{ popHistoryOnClose: boolean, issueId?: stri
 
    const onClose = () => {
       if (queryId) {
-         if (popHistoryOnClose) {            
+         if (popHistoryOnClose) {
             navigate(-1);
          } else {
             let search = new URLSearchParams(location.search);
             search = new URLSearchParams(Array.from(search.entries()).filter(e => e[0] !== 'issue'));
             location.search = search.toString();
-            navigate(location, {replace: true});
+            navigate(location, { replace: true });
          }
       }
    }
 
    // subscribe
-   if (details.update) { }
+   if (details.update) { }   
 
+   if (details.issueError) {
+      return <Dialog hidden={false} onDismiss={() => { details.clear(); if (onCloseExternal) { onCloseExternal() } else { onClose() } }} dialogContentProps={{
+         type: DialogType.normal,
+         title: 'Error Loading Issue',
+         subText: `Unable to load issue ${issueId}`
+      }}
+         modalProps={{ styles: { main: { width: "640px !important", minWidth: "640px !important", maxWidth: "640px !important" } } }}>
+         <DialogFooter>
+            <PrimaryButton onClick={() => { details.clear();  if (onCloseExternal) { onCloseExternal() } else { onClose() } }} text="Ok" />
+         </DialogFooter>
+      </Dialog>
+   }   
 
    details.set(parseInt(issueId));
 
@@ -1870,7 +1957,7 @@ export const IssueModalV2: React.FC<{ popHistoryOnClose: boolean, issueId?: stri
       </Modal>
    }
 
-   return <Modal isOpen={true} isBlocking={true} topOffsetFixed={true} styles={{ main: { padding: 8, width: 1420, backgroundColor: modeColors.background, hasBeenOpened: false, top: "24px", position: "absolute", height: "95vh" } }} className={hordeClasses.modal} onDismiss={() => { if (onCloseExternal) { onCloseExternal() } else { onClose() } }}>
+   return <Modal isOpen={true} isBlocking={true} topOffsetFixed={true} styles={{ main: { padding: 8, width: 1420, backgroundColor: dashboard.darktheme ? `${modeColors.background} !important` : modeColors.background, hasBeenOpened: false, top: "24px", position: "absolute", height: "95vh" } }} className={hordeClasses.modal} onDismiss={() => { if (onCloseExternal) { onCloseExternal() } else { onClose() } }}>
       {editShown && <EditIssueModal onClose={() => { setEditShown(false) }} />}
       <Stack style={{ height: "93vh" }}>
          <Stack style={{ height: "100%" }}>
@@ -1878,7 +1965,7 @@ export const IssueModalV2: React.FC<{ popHistoryOnClose: boolean, issueId?: stri
                <Stack horizontal styles={{ root: { padding: 8 } }} style={{ padding: 20, paddingBottom: 8 }}>
                   <Stack horizontal style={{ width: 1024 }} tokens={{ childrenGap: 24 }} verticalAlign="center" verticalFill={true}>
                      <Stack >
-                        <Text styles={{ root: { fontWeight: "unset",  maxWidth: 720, wordBreak:"break-word", fontFamily: "Horde Open Sans SemiBold", fontSize: "14px", color: "#087BC4", textDecoration: details.issue?.resolvedAt ? "line-through" : undefined } }}>{title}</Text>
+                        <Text styles={{ root: { fontWeight: "unset", maxWidth: 720, wordBreak: "break-word", fontFamily: "Horde Open Sans SemiBold", fontSize: "14px", textDecoration: details.issue?.resolvedAt ? "line-through" : undefined } }}>{title}</Text>
                      </Stack>
 
                      <Stack onClick={() => { setEditShown(true) }} style={{ cursor: "pointer" }}>
@@ -1912,6 +1999,8 @@ export const IssueModalV2: React.FC<{ popHistoryOnClose: boolean, issueId?: stri
 const AssignToOtherModal: React.FC<{ defaultUser?: GetUserResponse, onClose: () => void }> = ({ defaultUser, onClose }) => {
 
    const [state, setState] = useState<{ error?: string, submitting?: boolean, userId?: string }>({});
+
+   const { hordeClasses } = getHordeStyling();
 
    const issue = details.issue!;
    const issueId = issue.id;
@@ -2010,6 +2099,8 @@ const DeclineIssueModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
    const [state, setState] = useState<{ error?: string, submitting?: boolean }>({});
 
+   const { hordeClasses } = getHordeStyling();
+
    const issue = details.issue!;
    const issueId = issue.id;
 
@@ -2089,6 +2180,8 @@ const AckIssueModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
    const [state, setState] = useState<{ error?: string, submitting?: boolean }>({});
 
+   const { hordeClasses } = getHordeStyling();
+
    const issue = details.issue!;
    const issueId = issue.id;
 
@@ -2149,7 +2242,7 @@ const AckIssueModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       <Stack styles={{ root: { padding: 8 } }}>
          <Stack horizontal tokens={{ childrenGap: 16 }} styles={{ root: { paddingTop: 12, paddingLeft: 8, paddingBottom: 8 } }}>
             <Stack grow />
-            <PrimaryButton text="Acknoweldge" disabled={state.submitting ?? false} onClick={() => { onAck(); }} />
+            <PrimaryButton text="Acknowledge" disabled={state.submitting ?? false} onClick={() => { onAck(); }} />
             <DefaultButton text="Cancel" disabled={false} onClick={() => { close(); }} />
          </Stack>
       </Stack>
@@ -2160,6 +2253,8 @@ const AckIssueModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 const MarkFixedModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
    const [state, setState] = useState<{ error?: string, fixCL?: string, submitting?: boolean }>({});
+
+   const { hordeClasses } = getHordeStyling();
 
    const issue = details.issue!;
    const issueId = issue.id;
@@ -2289,6 +2384,7 @@ const LinkExternalIssueModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
    const issueId = issue.id;
 
    const [state, setState] = useState<{ error?: string, issueKey?: string, submitting?: boolean }>({ issueKey: issue.externalIssueKey });
+   const { hordeClasses } = getHordeStyling();
 
    const externalIssueProvider = dashboard.externalIssueService?.name;
 
@@ -2412,6 +2508,7 @@ const LinkExternalIssueModal: React.FC<{ onClose: () => void }> = ({ onClose }) 
 const CreateExternalIssueModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
    const [state, setState] = useState<{ error?: string, newDesc?: string, newSummary?: string, submitting?: boolean, externalIssue?: CreateExternalIssueResponse, projectName?: string, componentName?: string, issueType?: string }>({ newSummary: details.issue?.summary, newDesc: details.issue!.description });
+   const { hordeClasses, modeColors } = getHordeStyling();
 
    const externalIssueProvider = dashboard.externalIssueService?.name;
    const issue = details.issue!;
@@ -2753,6 +2850,8 @@ const EditIssueModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
    const [state, setState] = useState<{ error?: string, newDesc?: string, newSummary?: string, submitting?: boolean }>({ newSummary: details.issue?.summary, newDesc: details.issue!.description });
    const [showPreview, setShowPreview] = useState(false);
 
+   const { hordeClasses } = getHordeStyling();
+
    const issue = details.issue!;
    const issueId = issue.id;
 
@@ -2881,6 +2980,8 @@ export const IssueQuarantineModal: React.FC<{ onClose: () => void }> = ({ onClos
 
    const [state, setState] = useState<{ submitting?: boolean, quarantine?: boolean, error?: string }>({ quarantine: !!issue.quarantinedByUserInfo });
 
+   const { hordeClasses } = getHordeStyling();
+
    const onSave = async () => {
 
       setState({ ...state, submitting: true });
@@ -2960,6 +3061,8 @@ export const IssueForceCloseModal: React.FC<{ onClose: () => void }> = ({ onClos
    const issueId = issue.id;
 
    const [state, setState] = useState<{ submitting?: boolean, forceClosed?: boolean, error?: string }>({ forceClosed: !!issue.forceClosedByUserInfo });
+
+   const { hordeClasses } = getHordeStyling();
 
    const onSave = async () => {
 
@@ -3042,6 +3145,7 @@ const TestFixModal: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
    const navigate = useNavigate();
    const [state, setState] = useState<{ loadingTemplates?: boolean, templates?: Map<string, GetTemplateRefResponse[]>, error?: string, submitting?: boolean, shelvedCL?: string, baseCL?: string, streamId?: string, templateId?: string, target?: string, updateIssues?: boolean }>({ updateIssues: true });
+   const { hordeClasses } = getHordeStyling();
 
    const issue = details.issue!;
 

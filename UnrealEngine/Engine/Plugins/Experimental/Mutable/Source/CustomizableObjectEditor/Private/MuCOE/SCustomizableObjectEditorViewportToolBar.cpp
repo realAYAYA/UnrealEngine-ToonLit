@@ -21,6 +21,11 @@
 #include "SViewportToolBarComboMenu.h"
 #include "Settings/LevelEditorViewportSettings.h"
 #include "UnrealEdGlobals.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "MuCO/CustomizableObjectInstancePrivate.h"
+#include "MuCO/CustomizableObject.h"
+#include "MuCO/CustomizableObjectPrivate.h"
+#include "MuCO/CustomizableObjectSystem.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SMenuAnchor.h"
 #include "Widgets/Input/SSpinBox.h"
@@ -34,274 +39,15 @@ struct FSlateBrush;
 #define LOCTEXT_NAMESPACE "CustomizableObjectEditorViewportToolBar"
 
 
-//Class definition which represents widget to modify viewport's background color.
-//class SBackgroundColorSettings : public SCompoundWidget
-//{
-//public:
-//
-//	SLATE_BEGIN_ARGS(SBackgroundColorSettings)
-//	{}
-//	SLATE_ARGUMENT(TWeakPtr<SCustomizableObjectEditorViewport>, AnimEditorViewport)
-//		SLATE_END_ARGS()
-//
-//		/** Constructs this widget from its declaration */
-//		void Construct(const FArguments& InArgs)
-//	{
-//		AnimViewportPtr = InArgs._AnimEditorViewport;
-//
-//		TSharedPtr<SWidget> ExtraWidget =
-//			SNew(SBorder)
-//			.BorderImage(UE_MUTABLE_GET_BRUSH("FilledBorder"))
-//			[
-//				SNew(SHorizontalBox)
-//				+ SHorizontalBox::Slot()
-//			.AutoWidth()
-//			.Padding(1)
-//			[
-//				SNew(SColorBlock)
-//				.Color(AnimViewportPtr.Pin().ToSharedRef(), &SCustomizableObjectEditorViewport::GetViewportBackgroundColor)
-//			.IgnoreAlpha(true)
-//			.ToolTipText(LOCTEXT("ColorBlock_ToolTip", "Select background color"))
-//			.OnMouseButtonDown(this, &SBackgroundColorSettings::OnColorBoxClicked)
-//			]
-//			];
-//
-//		this->ChildSlot
-//			[
-//				SNew(SAnimPlusMinusSlider)
-//				.Label(LOCTEXT("BrightNess", "Brightness:"))
-//			.IsEnabled(this, &SBackgroundColorSettings::IsBrightnessSliderEnabled)
-//			.OnMinusClicked(this, &SBackgroundColorSettings::OnDecreaseBrightness)
-//			.MinusTooltip(LOCTEXT("DecreaseBrightness_ToolTip", "Decrease brightness"))
-//			.SliderValue(AnimViewportPtr.Pin().ToSharedRef(), &SCustomizableObjectEditorViewport::GetBackgroundBrightness)
-//			.OnSliderValueChanged(AnimViewportPtr.Pin().ToSharedRef(), &SCustomizableObjectEditorViewport::SetBackgroundBrightness)
-//			.SliderTooltip(LOCTEXT("BackgroundBrightness_ToolTip", "Change background brightness"))
-//			.OnPlusClicked(this, &SBackgroundColorSettings::OnIncreaseBrightness)
-//			.PlusTooltip(LOCTEXT("IncreaseBrightness_ToolTip", "Increase brightness"))
-//			.ExtraWidget(ExtraWidget)
-//			];
-//	}
-//
-//protected:
-//
-//	/** Function to open color picker window when selected from context menu */
-//	FReply OnColorBoxClicked(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
-//	{
-//		if (MouseEvent.GetEffectingButton() != EKeys::LeftMouseButton)
-//		{
-//			return FReply::Unhandled();
-//		}
-//
-//		FSlateApplication::Get().DismissAllMenus();
-//
-//		FLinearColor BackgroundColor = AnimViewportPtr.Pin()->GetViewportBackgroundColor();
-//		TArray<FLinearColor*> LinearColorArray;
-//		LinearColorArray.Add(&BackgroundColor);
-//
-//		FColorPickerArgs PickerArgs;
-//		PickerArgs.bIsModal = true;
-//		PickerArgs.ParentWidget = AnimViewportPtr.Pin();
-//		PickerArgs.bOnlyRefreshOnOk = true;
-//		PickerArgs.DisplayGamma = TAttribute<float>::Create(TAttribute<float>::FGetter::CreateUObject(GEngine, &UEngine::GetDisplayGamma));
-//		PickerArgs.LinearColorArray = &LinearColorArray;
-//		PickerArgs.OnColorCommitted = FOnLinearColorValueChanged::CreateSP(AnimViewportPtr.Pin().ToSharedRef(), &SCustomizableObjectEditorViewport::SetViewportBackgroundColor);
-//
-//		if (OpenColorPicker(PickerArgs))
-//		{
-//			AnimViewportPtr.Pin()->RefreshViewport();
-//		}
-//
-//		return FReply::Handled();
-//	}
-//
-//	/** Callback function for decreasing color brightness */
-//	FReply OnDecreaseBrightness()
-//	{
-//		const float DeltaValue = 0.05f;
-//		AnimViewportPtr.Pin()->SetBackgroundBrightness(AnimViewportPtr.Pin()->GetBackgroundBrightness() - DeltaValue);
-//		return FReply::Handled();
-//	}
-//
-//	/** Callback function for increasing color brightness */
-//	FReply OnIncreaseBrightness()
-//	{
-//		const float DeltaValue = 0.05f;
-//		AnimViewportPtr.Pin()->SetBackgroundBrightness(AnimViewportPtr.Pin()->GetBackgroundBrightness() + DeltaValue);
-//		return FReply::Handled();
-//	}
-//
-//	/** Callback function which determines whether this widget is enabled */
-//	bool IsBrightnessSliderEnabled() const
-//	{
-//		const UAssetViewerSettings* Settings = UAssetViewerSettings::Get();
-//		const UEditorPerProjectUserSettings* PerProjectUserSettings = GetDefault<UEditorPerProjectUserSettings>();
-//		const int32 ProfileIndex = Settings->Profiles.IsValidIndex(PerProjectUserSettings->AssetViewerProfileIndex) ? PerProjectUserSettings->AssetViewerProfileIndex : 0;
-//
-//		ensureMsgf(Settings->Profiles.IsValidIndex(PerProjectUserSettings->AssetViewerProfileIndex), TEXT("Invalid default settings pointer or current profile index"));
-//
-//		return !Settings->Profiles[ProfileIndex].bShowEnvironment;
-//	}
-//
-//protected:
-//
-//	/** The viewport hosting this widget */
-//	TWeakPtr<SCustomizableObjectEditorViewport> AnimViewportPtr;
-//};
-
-//Class definition which represents widget to modify strength of wind for clothing
-//class SClothWindSettings : public SCompoundWidget
-//{
-//public:
-//
-//	SLATE_BEGIN_ARGS(SClothWindSettings)
-//	{}
-//
-//	SLATE_ARGUMENT(TWeakPtr<SCustomizableObjectEditorViewport>, AnimEditorViewport)
-//		SLATE_END_ARGS()
-//
-//		/** Constructs this widget from its declaration */
-//		void Construct(const FArguments& InArgs)
-//	{
-//		AnimViewportPtr = InArgs._AnimEditorViewport;
-//
-//		TSharedPtr<SWidget> ExtraWidget = SNew(STextBlock)
-//			.Text(AnimViewportPtr.Pin().ToSharedRef(), &SCustomizableObjectEditorViewport::GetWindStrengthLabel)
-//			.Font(UE_MUTABLE_GET_FONTSTYLE(TEXT("MenuItem.Font")));
-//
-//		this->ChildSlot
-//			[
-//				SNew(SAnimPlusMinusSlider)
-//				.IsEnabled(this, &SClothWindSettings::IsWindEnabled)
-//			.Label(LOCTEXT("WindStrength", "Wind Strength:"))
-//			.OnMinusClicked(this, &SClothWindSettings::OnDecreaseWindStrength)
-//			.MinusTooltip(LOCTEXT("DecreaseWindStrength_ToolTip", "Decrease Wind Strength"))
-//			.SliderValue(AnimViewportPtr.Pin().ToSharedRef(), &SCustomizableObjectEditorViewport::GetWindStrengthSliderValue)
-//			.OnSliderValueChanged(AnimViewportPtr.Pin().ToSharedRef(), &SCustomizableObjectEditorViewport::SetWindStrength)
-//			.SliderTooltip(LOCTEXT("WindStrength_ToolTip", "Change wind strength"))
-//			.OnPlusClicked(this, &SClothWindSettings::OnIncreaseWindStrength)
-//			.PlusTooltip(LOCTEXT("IncreasetWindStrength_ToolTip", "Increase Wind Strength"))
-//			.ExtraWidget(ExtraWidget)
-//			];
-//	}
-//
-//protected:
-//	/** Callback function for decreasing size */
-//	FReply OnDecreaseWindStrength()
-//	{
-//		const float DeltaValue = 0.1f;
-//		AnimViewportPtr.Pin()->SetWindStrength(AnimViewportPtr.Pin()->GetWindStrengthSliderValue() - DeltaValue);
-//		return FReply::Handled();
-//	}
-//
-//	/** Callback function for increasing size */
-//	FReply OnIncreaseWindStrength()
-//	{
-//		const float DeltaValue = 0.1f;
-//		AnimViewportPtr.Pin()->SetWindStrength(AnimViewportPtr.Pin()->GetWindStrengthSliderValue() + DeltaValue);
-//		return FReply::Handled();
-//	}
-//
-//	/** Callback function which determines whether this widget is enabled */
-//	bool IsWindEnabled() const
-//	{
-//		return AnimViewportPtr.Pin()->IsApplyingClothWind();
-//	}
-//
-//protected:
-//	/** The viewport hosting this widget */
-//	TWeakPtr<SCustomizableObjectEditorViewport> AnimViewportPtr;
-//};
-
-//Class definition which represents widget to modify gravity for preview
-//class SGravitySettings : public SCompoundWidget
-//{
-//public:
-//
-//	SLATE_BEGIN_ARGS(SGravitySettings)
-//	{}
-//
-//	SLATE_ARGUMENT(TWeakPtr<SCustomizableObjectEditorViewport>, AnimEditorViewport)
-//		SLATE_END_ARGS()
-//
-//		void Construct(const FArguments& InArgs)
-//	{
-//		AnimViewportPtr = InArgs._AnimEditorViewport;
-//
-//		TSharedPtr<SWidget> ExtraWidget = SNew(STextBlock)
-//			.Text(AnimViewportPtr.Pin().ToSharedRef(), &SCustomizableObjectEditorViewport::GetGravityScaleLabel)
-//			.Font(UE_MUTABLE_GET_FONTSTYLE(TEXT("MenuItem.Font")));
-//
-//		this->ChildSlot
-//			[
-//				SNew(SAnimPlusMinusSlider)
-//				.Label(LOCTEXT("Gravity Scale", "Gravity Scale Preview:"))
-//			.OnMinusClicked(this, &SGravitySettings::OnDecreaseGravityScale)
-//			.MinusTooltip(LOCTEXT("DecreaseGravitySize_ToolTip", "Decrease Gravity Scale"))
-//			.SliderValue(AnimViewportPtr.Pin().ToSharedRef(), &SCustomizableObjectEditorViewport::GetGravityScaleSliderValue)
-//			.OnSliderValueChanged(AnimViewportPtr.Pin().ToSharedRef(), &SCustomizableObjectEditorViewport::SetGravityScale)
-//			.SliderTooltip(LOCTEXT("GravityScale_ToolTip", "Change Gravity Scale"))
-//			.OnPlusClicked(this, &SGravitySettings::OnIncreaseGravityScale)
-//			.PlusTooltip(LOCTEXT("IncreaseGravityScale_ToolTip", "Increase Gravity Scale"))
-//			.ExtraWidget(ExtraWidget)
-//			];
-//	}
-//
-//protected:
-//	FReply OnDecreaseGravityScale()
-//	{
-//		const float DeltaValue = 0.025f;
-//		AnimViewportPtr.Pin()->SetGravityScale(AnimViewportPtr.Pin()->GetGravityScaleSliderValue() - DeltaValue);
-//		return FReply::Handled();
-//	}
-//
-//	FReply OnIncreaseGravityScale()
-//	{
-//		const float DeltaValue = 0.025f;
-//		AnimViewportPtr.Pin()->SetGravityScale(AnimViewportPtr.Pin()->GetGravityScaleSliderValue() + DeltaValue);
-//		return FReply::Handled();
-//	}
-//
-//protected:
-//	TWeakPtr<SCustomizableObjectEditorViewport> AnimViewportPtr;
-//};
-
-///////////////////////////////////////////////////////////
-// SCustomizableObjectEditorViewportToolBar
-
-
-void SCustomizableObjectEditorViewportToolBar::Construct(const FArguments& InArgs, TSharedPtr<class SCustomizableObjectEditorViewportTabBody> InViewport, TSharedPtr<class SEditorViewport> InRealViewport)
+void SCustomizableObjectEditorViewportToolBar::Construct(const FArguments& InArgs, TSharedPtr<SCustomizableObjectEditorViewportTabBody> InViewport, TSharedPtr<SEditorViewport> InRealViewport)
 {
 	Viewport = InViewport;
 
 	TSharedRef<SCustomizableObjectEditorViewportTabBody> ViewportRef = Viewport.Pin().ToSharedRef();
 
-	//TSharedRef<SCustomizableObjectEditorTransformViewportToolbar> Toolbar = SNew(SCustomizableObjectEditorTransformViewportToolbar)
-	//	.Viewport(InRealViewport.ToSharedRef())
-	//	.ViewportTapBody(ViewportRef);
-
-	//TSharedRef<SHorizontalBox> RightToolbar = SNew(SHorizontalBox)
-	//	+ SHorizontalBox::Slot()
-	//	.AutoWidth()
-	//	.Padding(2.0f, 2.0f)
-	//	[
-	//		Toolbar
-	//	];
-
-	//ViewportRef->SetEditorTransformViewportToolbar(Toolbar);
-
-
+	WeakEditor = ViewportRef->CustomizableObjectEditorPtr;
+	
 	TSharedRef<SHorizontalBox> LeftToolbar = SNew(SHorizontalBox)
-	//	// Generic viewport options
-	//	+ SHorizontalBox::Slot()
-	//	.AutoWidth()
-	//	.Padding(2.0f, 2.0f)
-	//	[
-	//		//Menu
-	//		SNew(SEditorViewportToolbarMenu)
-	//		.ParentToolBar(SharedThis(this))
-	//	.Image("EditorViewportToolBar.MenuDropdown")
-	//	.OnGetMenuContent(this, &SCustomizableObjectEditorViewportToolBar::GenerateViewMenu)
-	//	]
 
 	//// Camera Type (Perspective/Top/etc...)
 	+ SHorizontalBox::Slot()
@@ -334,17 +80,6 @@ void SCustomizableObjectEditorViewportToolBar::Construct(const FArguments& InArg
 		[
 			SNew(SEditorViewportViewMenu, InRealViewport.ToSharedRef(), SharedThis(this))
 		]
-
-	// Show flags menu
-	//+ SHorizontalBox::Slot()
-	//	.AutoWidth()
-	//	.Padding(2.0f, 2.0f)
-	//	[
-	//		SNew(SEditorViewportToolbarMenu)
-	//		.ParentToolBar(SharedThis(this))
-	//	.Label(LOCTEXT("ShowMenu", "Show"))
-	//	.OnGetMenuContent(this, &SCustomizableObjectEditorViewportToolBar::GenerateShowMenu)
-	//	]
 
 	// LOD menu
 	+ SHorizontalBox::Slot()
@@ -379,29 +114,6 @@ void SCustomizableObjectEditorViewportToolBar::Construct(const FArguments& InArg
 		[
 			RTSButtons
 		];
-
-	// Playback speed menu
-	//+ SHorizontalBox::Slot()
-	//	.AutoWidth()
-	//	.Padding(2.0f, 2.0f)
-	//	[
-	//		SNew(SEditorViewportToolbarMenu)
-	//		.ParentToolBar(SharedThis(this))
-	//	.Label(this, &SCustomizableObjectEditorViewportToolBar::GetPlaybackMenuLabel)
-	//	.LabelIcon(UE_MUTABLE_GET_BRUSH("AnimViewportMenu.PlayBackSpeed"))
-	//	.OnGetMenuContent(this, &SCustomizableObjectEditorViewportToolBar::GeneratePlaybackMenu)
-	//	]
-
-	//+ SHorizontalBox::Slot()
-	//	.Padding(3.0f, 1.0f)
-	//	.HAlign(HAlign_Right)
-	//	[
-	//		SNew(STransformViewportToolBar)
-	//		.Viewport(InRealViewport)
-	//	.CommandList(InRealViewport->GetCommandList())
-	//	.Visibility(this, &SCustomizableObjectEditorViewportToolBar::GetTransformToolbarVisibility)
-	//	];
-	//@TODO: Need clipping horizontal box: LeftToolbar->AddWrapButton();
 
 	static const FName DefaultForegroundName("DefaultForeground");
 
@@ -464,143 +176,71 @@ void SCustomizableObjectEditorViewportToolBar::Construct(const FArguments& InArg
 		];
 
 	SViewportToolBar::Construct(SViewportToolBar::FArguments());
-
-	//CompileErrorLayout.Get()->SetVisibility(EVisibility::Hidden);
 }
+
 
 EVisibility SCustomizableObjectEditorViewportToolBar::GetShowCompileErrorOverlay() const
 {
-	if ((Viewport.IsValid()) && (Viewport.Pin().Get() != nullptr) &&
-		Viewport.Pin()->CustomizableObjectEditorPtr.IsValid() &&
-		Viewport.Pin().Get()->GetViewportClient().IsValid() &&
-		(Viewport.Pin().Get()->GetViewportClient().Get() != nullptr))
-	{
-		if (Viewport.Pin()->CustomizableObjectEditorPtr.Pin()->GetAssetRegistryLoaded())
-		{
-			UCustomizableObjectInstance* Instance = Viewport.Pin()->CustomizableObjectEditorPtr.Pin()->GetPreviewInstance();
-
-			if ((Instance != nullptr) && !Instance->bEditorPropertyChanged && !Viewport.Pin().Get()->GetViewportClient()->GetGizmoIsProjectorParameterSelected())
-			{
-				if ((Instance->SkeletalMeshStatus == ESkeletalMeshState::UpdateError) ||
-					(Instance->SkeletalMeshStatus == ESkeletalMeshState::PostUpdateError) ||
-					(Instance->SkeletalMeshStatus == ESkeletalMeshState::AsyncUpdatePending))
-				{
-					return EVisibility::Visible;
-				}
-				else
-				{
-					return EVisibility::Hidden;
-				}
-			}
-
-			if ((Instance == nullptr) &&
-				!Viewport.Pin().Get()->GetViewportClient()->GetGizmoIsProjectorParameterSelected())
-			{
-				return EVisibility::Visible;
-			}
-		}
-		else
-		{
-			return EVisibility::Visible;
-		}
-	}
-
-	return EVisibility::Hidden;
-}
-
-
-EVisibility SCustomizableObjectEditorViewportToolBar::GetShowCompileInfoOverlay() const
-{
-	if ((Viewport.IsValid()) && (Viewport.Pin().Get() != nullptr) &&
-		(Viewport.Pin()->CustomizableObjectEditorPtr.IsValid()) &&
-		Viewport.Pin()->CustomizableObjectEditorPtr.Pin()->GetAssetRegistryLoaded())
-	{
-		if (Viewport.Pin()->CustomizableObjectEditorPtr.Pin()->GetAssetRegistryLoaded())
-		{
-			UCustomizableObjectInstance* Instance = Viewport.Pin()->CustomizableObjectEditorPtr.Pin()->GetPreviewInstance();
-
-			if (Instance != nullptr)
-			{
-				if ((Instance->SkeletalMeshStatus == ESkeletalMeshState::UpdateError) ||
-					(Instance->SkeletalMeshStatus == ESkeletalMeshState::PostUpdateError) ||
-					(Instance->SkeletalMeshStatus == ESkeletalMeshState::AsyncUpdatePending))
-				{
-					return EVisibility::Visible;
-				}
-				else
-				{
-					return EVisibility::Hidden;
-				}
-			}
-		}
-		else
-		{
-			return EVisibility::Visible;
-		}
-	}
-
-	return EVisibility::Hidden;
+	return GetCompileErrorOverlayText().IsEmpty() ? EVisibility::Hidden : EVisibility::Visible;
 }
 
 
 FText SCustomizableObjectEditorViewportToolBar::GetCompileErrorOverlayText() const
 {
-	if ((Viewport.IsValid()) && (Viewport.Pin().Get() != nullptr) &&
-		(Viewport.Pin()->CustomizableObjectEditorPtr.IsValid()))
+	const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = WeakEditor.Pin();
+	if (!Editor)
 	{
-		if (Viewport.Pin()->CustomizableObjectEditorPtr.Pin()->GetAssetRegistryLoaded())
-		{
-			UCustomizableObjectInstance* Instance = Viewport.Pin()->CustomizableObjectEditorPtr.Pin()->GetPreviewInstance();
-
-			if (Instance != nullptr)
-			{
-				if (Instance->SkeletalMeshStatus == ESkeletalMeshState::UpdateError)
-				{
-					return FText::FromString("Error updating skeletal mesh");
-				}
-				else if (Instance->SkeletalMeshStatus == ESkeletalMeshState::PostUpdateError)
-				{
-					return FText::FromString("Post Update Error: check the output log for more information.");
-				}
-				else if (Instance->SkeletalMeshStatus == ESkeletalMeshState::AsyncUpdatePending)
-				{
-					TSharedPtr<FCustomizableObjectEditorViewportClient> viewport = Viewport.Pin()->GetViewportClient();
-					if (viewport.IsValid())
-					{
-						const GizmoRTSProxy& gizmo = viewport->GetGizmoProxy();
-						if (gizmo.AnyGizmoSelected)
-						{
-							if (gizmo.AssignedDataIsFromNode)
-							{
-								return FText::FromString("Changing default projector");
-							}
-							else
-							{
-								return FText::FromString("Changing current projector instance");
-							}
-						}
-					}
-					return FText::FromString("Updating skeletal mesh");
-				}
-			}
-			else
-			{
-				return FText::FromString("No Skeletal Mesh generated");
-			}
-		}
-		else
-		{
-			return FText::FromString("Loading assets");
-		}
+		return {};
 	}
-	return FText::FromString("");
-}
 
+	bool bLoading = false;
 
-EVisibility SCustomizableObjectEditorViewportToolBar::GetTransformToolbarVisibility() const
-{
-	return EVisibility::Hidden;
-	//return Viewport.Pin()->CanUseGizmos() ? EVisibility::Visible : EVisibility::Hidden;
+	const UObject* EditingObject = (*Editor->GetObjectsCurrentlyBeingEdited())[0];
+	if (const UCustomizableObject* CustomizableObject = Cast<UCustomizableObject>(EditingObject))
+	{
+		bLoading = CustomizableObject->GetPrivate()->Status.Get() == FCustomizableObjectStatusTypes::EState::Loading;
+	}
+	else if (const UCustomizableObjectInstance* Instance = Cast<UCustomizableObjectInstance>(EditingObject))
+	{
+		const UCustomizableObject* InstanceCustomizableObject = Instance->GetCustomizableObject();
+		bLoading = InstanceCustomizableObject && InstanceCustomizableObject->GetPrivate()->Status.Get() == FCustomizableObjectStatusTypes::EState::Loading;
+	}
+
+	if (bLoading)
+	{
+		return LOCTEXT("LoadingAssets", "Loading Customizable Object");
+	}
+
+	const UCustomizableObjectInstance* Instance = Editor->GetPreviewInstance();
+	if (!Instance)
+	{
+		return LOCTEXT("NoPreviewInstance", "No Preview Instance");
+	}
+
+	const UCustomizableObjectSystem* System = UCustomizableObjectSystem::GetInstanceChecked();
+	
+	if (System->IsUpdating(Instance))
+	{
+		return LOCTEXT("UpdatingSkeletalMesh", "Updating Skeletal Mesh");
+	}
+
+	const UCustomizableInstancePrivate* PrivateInstance = Instance->GetPrivate();
+	
+	switch (PrivateInstance->SkeletalMeshStatus)
+	{
+	case ESkeletalMeshStatus::NotGenerated:
+		return LOCTEXT("NoSkeletalMeshGenerated", "No Skeletal Mesh Generated");
+				
+	case ESkeletalMeshStatus::Error:
+		return LOCTEXT("ErrorUpdatingSkeletalMesh", "Error Updating Skeletal Mesh");
+
+	case ESkeletalMeshStatus::Success:
+		return {};
+
+	default:
+		unimplemented();
+		return {};
+	}
 }
 
 
@@ -610,257 +250,10 @@ TSharedRef<SWidget> SCustomizableObjectEditorViewportToolBar::GenerateViewMenu()
 
 	const bool bInShouldCloseWindowAfterMenuSelection = true;
 	FMenuBuilder ViewMenuBuilder(bInShouldCloseWindowAfterMenuSelection, Viewport.Pin()->GetCommandList());
-	//{
-	//	ViewMenuBuilder.BeginSection("AnimViewportSceneSetup", LOCTEXT("ViewMenu_SceneSetupLabel", "Scene Setup"));
-	//	{
-	//		ViewMenuBuilder.AddMenuEntry(FCustomizableObjectEditorViewportMenuCommands::Get().PreviewSceneSettings);
-
-	//		// We cant allow animation configuration via the viewport menu in 'old regular' Persona
-	//		if (GetDefault<UPersonaOptions>()->bUseStandaloneAnimationEditors)
-	//		{
-	//			ViewMenuBuilder.AddSubMenu(
-	//				LOCTEXT("SceneSetupLabel", "Scene Setup"),
-	//				LOCTEXT("SceneSetupTooltip", "Set up preview meshes, animations etc."),
-	//				FNewMenuDelegate::CreateRaw(this, &SCustomizableObjectEditorViewportToolBar::GenerateSceneSetupMenu),
-	//				false,
-	//				FSlateIcon(FAppStyle::GetAppStyleSetName(), "AnimViewportMenu.SceneSetup")
-	//			);
-	//		}
-
-	//		ViewMenuBuilder.AddSubMenu(
-	//			LOCTEXT("TurnTableLabel", "Turn Table"),
-	//			LOCTEXT("TurnTableTooltip", "Set up auto-rotation of preview."),
-	//			FNewMenuDelegate::CreateRaw(this, &SCustomizableObjectEditorViewportToolBar::GenerateTurnTableMenu),
-	//			false,
-	//			FSlateIcon(FAppStyle::GetAppStyleSetName(), "AnimViewportMenu.TurnTableSpeed")
-	//		);
-	//	}
-	//	ViewMenuBuilder.EndSection();
-
-	//	ViewMenuBuilder.BeginSection("AnimViewportCamera", LOCTEXT("ViewMenu_CameraLabel", "Camera"));
-	//	{
-	//		ViewMenuBuilder.AddMenuEntry(FCustomizableObjectEditorViewportMenuCommands::Get().CameraFollow);
-	//	}
-	//	ViewMenuBuilder.EndSection();
-	//}
 
 	return ViewMenuBuilder.MakeWidget();
 }
 
-//TSharedRef<SWidget> SCustomizableObjectEditorViewportToolBar::GenerateShowMenu() const
-//{
-//	const FAnimViewportShowCommands& Actions = FAnimViewportShowCommands::Get();
-//
-//	const bool bInShouldCloseWindowAfterMenuSelection = true;
-//	FMenuBuilder ShowMenuBuilder(bInShouldCloseWindowAfterMenuSelection, Viewport.Pin()->GetCommandList());
-//	{
-//		ShowMenuBuilder.BeginSection("AnimViewportFOV", LOCTEXT("Viewport_FOVLabel", "Field Of View"));
-//		{
-//			const float FOVMin = 5.f;
-//			const float FOVMax = 170.f;
-//
-//			TSharedPtr<SWidget> FOVWidget = SNew(SSpinBox<float>)
-//				.Font(UE_MUTABLE_GET_FONTSTYLE(TEXT("MenuItem.Font")))
-//				.MinValue(FOVMin)
-//				.MaxValue(FOVMax)
-//				.Value(this, &SCustomizableObjectEditorViewportToolBar::OnGetFOVValue)
-//				.OnValueChanged(this, &SCustomizableObjectEditorViewportToolBar::OnFOVValueChanged)
-//				.OnValueCommitted(this, &SCustomizableObjectEditorViewportToolBar::OnFOVValueCommitted);
-//
-//			ShowMenuBuilder.AddWidget(FOVWidget.ToSharedRef(), FText());
-//		}
-//		ShowMenuBuilder.EndSection();
-//
-//		ShowMenuBuilder.BeginSection("AnimViewportAudio", LOCTEXT("Viewport_AudioLabel", "Audio"));
-//		{
-//			ShowMenuBuilder.AddMenuEntry(Actions.MuteAudio);
-//		}
-//		ShowMenuBuilder.EndSection();
-//
-//		ShowMenuBuilder.BeginSection("AnimViewportRootMotion", LOCTEXT("Viewport_RootMotionLabel", "Root Motion"));
-//		{
-//			ShowMenuBuilder.AddMenuEntry(Actions.ProcessRootMotion);
-//		}
-//		ShowMenuBuilder.EndSection();
-//
-//		ShowMenuBuilder.BeginSection("AnimViewportMesh", LOCTEXT("ShowMenu_Actions_Mesh", "Mesh"));
-//		{
-//			ShowMenuBuilder.AddMenuEntry(Actions.ShowRetargetBasePose);
-//			ShowMenuBuilder.AddMenuEntry(Actions.ShowBound);
-//			ShowMenuBuilder.AddMenuEntry(Actions.UseInGameBound);
-//			ShowMenuBuilder.AddMenuEntry(Actions.ShowPreviewMesh);
-//			ShowMenuBuilder.AddMenuEntry(Actions.ShowMorphTargets);
-//		}
-//		ShowMenuBuilder.EndSection();
-//
-//		ShowMenuBuilder.BeginSection("AnimViewportAnimation", LOCTEXT("ShowMenu_Actions_Asset", "Asset"));
-//		{
-//			ShowMenuBuilder.AddMenuEntry(Actions.ShowRawAnimation);
-//			ShowMenuBuilder.AddMenuEntry(Actions.ShowNonRetargetedAnimation);
-//			ShowMenuBuilder.AddMenuEntry(Actions.ShowAdditiveBaseBones);
-//			ShowMenuBuilder.AddMenuEntry(Actions.ShowSourceRawAnimation);
-//			ShowMenuBuilder.AddMenuEntry(Actions.ShowBakedAnimation);
-//		}
-//		ShowMenuBuilder.EndSection();
-//
-//		ShowMenuBuilder.BeginSection("AnimViewportPreviewBones", LOCTEXT("ShowMenu_Actions_Bones", "Hierarchy"));
-//		{
-//			ShowMenuBuilder.AddSubMenu(
-//				LOCTEXT("AnimViewportBoneDrawSubMenu", "Bone"),
-//				LOCTEXT("AnimViewportBoneDrawSubMenuToolTip", "Bone Draw Option"),
-//				FNewMenuDelegate::CreateRaw(this, &SCustomizableObjectEditorViewportToolBar::FillShowBoneDrawMenu)
-//			);
-//
-//			ShowMenuBuilder.AddMenuEntry(Actions.ShowSockets);
-//			ShowMenuBuilder.AddMenuEntry(Actions.ShowBoneNames);
-//
-//			ShowMenuBuilder.AddSubMenu(
-//				LOCTEXT("AnimViewportOverlayDrawSubMenu", "Mesh Overlay"),
-//				LOCTEXT("AnimViewportOverlayDrawSubMenuToolTip", "Options"),
-//				FNewMenuDelegate::CreateRaw(this, &SCustomizableObjectEditorViewportToolBar::FillShowOverlayDrawMenu)
-//			);
-//		}
-//		ShowMenuBuilder.EndSection();
-//
-//		ShowMenuBuilder.AddMenuSeparator();
-//		ShowMenuBuilder.AddSubMenu(
-//			LOCTEXT("AnimviewportInfo", "Display Info"),
-//			LOCTEXT("AnimviewportInfoSubMenuToolTip", "Display Mesh Info in Viewport"),
-//			FNewMenuDelegate::CreateRaw(this, &SCustomizableObjectEditorViewportToolBar::FillShowDisplayInfoMenu));
-//
-//
-//		ShowMenuBuilder.AddMenuSeparator();
-//
-//		ShowMenuBuilder.AddSubMenu(
-//			LOCTEXT("AnimViewportSceneSubMenu", "Scene Setup"),
-//			LOCTEXT("AnimViewportSceneSubMenuToolTip", "Options relating to the preview scene"),
-//			FNewMenuDelegate::CreateRaw(this, &SCustomizableObjectEditorViewportToolBar::FillShowSceneMenu));
-//
-//		ShowMenuBuilder.AddSubMenu(
-//			LOCTEXT("AnimViewportAdvancedSubMenu", "Advanced"),
-//			LOCTEXT("AnimViewportAdvancedSubMenuToolTip", "Advanced options"),
-//			FNewMenuDelegate::CreateRaw(this, &SCustomizableObjectEditorViewportToolBar::FillShowAdvancedMenu));
-//	}
-//
-//	return ShowMenuBuilder.MakeWidget();
-//
-//}
-
-//void SCustomizableObjectEditorViewportToolBar::FillShowSceneMenu(FMenuBuilder& MenuBuilder) const
-//{
-//	const FAnimViewportShowCommands& Actions = FAnimViewportShowCommands::Get();
-//
-//	MenuBuilder.BeginSection("AnimViewportAccessory", LOCTEXT("Viewport_AccessoryLabel", "Accessory"));
-//	{
-//		MenuBuilder.AddMenuEntry(Actions.AutoAlignFloorToMesh);
-//	}
-//	MenuBuilder.EndSection();
-//
-//	MenuBuilder.BeginSection("AnimViewportFloorOffset", LOCTEXT("Viewport_FloorOffsetLabel", "Floor Height Offset"));
-//	{
-//		TSharedPtr<SWidget> FloorOffsetWidget = SNew(SNumericEntryBox<float>)
-//			.Font(UE_MUTABLE_GET_FONTSTYLE(TEXT("MenuItem.Font")))
-//			.Value(this, &SCustomizableObjectEditorViewportToolBar::OnGetFloorOffset)
-//			.OnValueChanged(this, &SCustomizableObjectEditorViewportToolBar::OnFloorOffsetChanged)
-//			.ToolTipText(LOCTEXT("FloorOffsetToolTip", "Height offset for the floor mesh (stored per-mesh)"));
-//
-//		MenuBuilder.AddWidget(FloorOffsetWidget.ToSharedRef(), FText());
-//	}
-//	MenuBuilder.EndSection();
-//
-//	MenuBuilder.BeginSection("AnimViewportGrid", LOCTEXT("Viewport_GridLabel", "Grid"));
-//	{
-//		MenuBuilder.AddMenuEntry(Actions.ToggleGrid);
-//	}
-//	MenuBuilder.EndSection();
-//
-//	MenuBuilder.BeginSection("AnimViewportBackground", LOCTEXT("Viewport_BackgroundLabel", "Background"));
-//	{
-//		TSharedPtr<SWidget> BackgroundColorWidget = SNew(SBackgroundColorSettings).AnimEditorViewport(Viewport);
-//		MenuBuilder.AddWidget(BackgroundColorWidget.ToSharedRef(), FText());
-//	}
-//	MenuBuilder.EndSection();
-//}
-
-//void SCustomizableObjectEditorViewportToolBar::FillShowBoneDrawMenu(FMenuBuilder& MenuBuilder) const
-//{
-//	const FAnimViewportShowCommands& Actions = FAnimViewportShowCommands::Get();
-//
-//	MenuBuilder.BeginSection("AnimViewportPreviewHierarchyBoneDraw", LOCTEXT("ShowMenu_Actions_HierarchyAxes", "Hierarchy Local Axes"));
-//	{
-//		MenuBuilder.AddMenuEntry(Actions.ShowBoneDrawAll);
-//		MenuBuilder.AddMenuEntry(Actions.ShowBoneDrawSelected);
-//		MenuBuilder.AddMenuEntry(Actions.ShowBoneDrawNone);
-//	}
-//	MenuBuilder.EndSection();
-//}
-
-//void SCustomizableObjectEditorViewportToolBar::FillShowOverlayDrawMenu(FMenuBuilder& MenuBuilder) const
-//{
-//	const FAnimViewportShowCommands& Actions = FAnimViewportShowCommands::Get();
-//
-//	MenuBuilder.BeginSection("AnimViewportPreviewOverlayDraw", LOCTEXT("ShowMenu_Actions_Overlay", "Overlay Draw"));
-//	{
-//		MenuBuilder.AddMenuEntry(Actions.ShowOverlayNone);
-//		MenuBuilder.AddMenuEntry(Actions.ShowBoneWeight);
-//		MenuBuilder.AddMenuEntry(Actions.ShowMorphTargetVerts);
-//	}
-//	MenuBuilder.EndSection();
-//}
-//
-//void SCustomizableObjectEditorViewportToolBar::FillShowAdvancedMenu(FMenuBuilder& MenuBuilder) const
-//{
-//	const FAnimViewportShowCommands& Actions = FAnimViewportShowCommands::Get();
-//
-//	// Draw UVs
-//	MenuBuilder.BeginSection("UVVisualization", LOCTEXT("UVVisualization_Label", "UV Visualization"));
-//	{
-//		MenuBuilder.AddMenuEntry(FAnimViewportMenuCommands::Get().AnimSetDrawUVs);
-//		MenuBuilder.AddWidget(Viewport.Pin()->UVChannelCombo.ToSharedRef(), FText());
-//	}
-//	MenuBuilder.EndSection();
-//
-//	MenuBuilder.BeginSection("Skinning", LOCTEXT("Skinning_Label", "Skinning"));
-//	{
-//		MenuBuilder.AddMenuEntry(FAnimViewportMenuCommands::Get().SetCPUSkinning);
-//	}
-//	MenuBuilder.EndSection();
-//
-//
-//	MenuBuilder.BeginSection("ShowVertex", LOCTEXT("ShowVertex_Label", "Vertex Normal Visualization"));
-//	{
-//		// Vertex debug flags
-//		MenuBuilder.AddMenuEntry(FAnimViewportMenuCommands::Get().SetShowNormals);
-//		MenuBuilder.AddMenuEntry(FAnimViewportMenuCommands::Get().SetShowTangents);
-//		MenuBuilder.AddMenuEntry(FAnimViewportMenuCommands::Get().SetShowBinormals);
-//	}
-//	MenuBuilder.EndSection();
-//
-//	MenuBuilder.BeginSection("AnimViewportPreviewHierarchyLocalAxes", LOCTEXT("ShowMenu_Actions_HierarchyAxes", "Hierarchy Local Axes"));
-//	{
-//		MenuBuilder.AddMenuEntry(Actions.ShowLocalAxesAll);
-//		MenuBuilder.AddMenuEntry(Actions.ShowLocalAxesSelected);
-//		MenuBuilder.AddMenuEntry(Actions.ShowLocalAxesNone);
-//	}
-//	MenuBuilder.EndSection();
-//}
-//
-//void SCustomizableObjectEditorViewportToolBar::FillShowClothingMenu(FMenuBuilder& MenuBuilder) const
-//{
-//}
-//
-//void SCustomizableObjectEditorViewportToolBar::FillShowDisplayInfoMenu(FMenuBuilder& MenuBuilder) const
-//{
-//	const FAnimViewportShowCommands& Actions = FAnimViewportShowCommands::Get();
-//
-//	// display info levels
-//	{
-//		MenuBuilder.AddMenuEntry(Actions.ShowDisplayInfoBasic);
-//		MenuBuilder.AddMenuEntry(Actions.ShowDisplayInfoDetailed);
-//		MenuBuilder.AddMenuEntry(Actions.ShowDisplayInfoSkelControls);
-//		MenuBuilder.AddMenuEntry(Actions.HideDisplayInfo);
-//	}
-//}
 
 FText SCustomizableObjectEditorViewportToolBar::GetLODMenuLabel() const
 {
@@ -877,6 +270,7 @@ FText SCustomizableObjectEditorViewportToolBar::GetLODMenuLabel() const
 	}
 	return Label;
 }
+
 
 TSharedRef<SWidget> SCustomizableObjectEditorViewportToolBar::GenerateRTSButtons()
 {
@@ -993,68 +387,14 @@ TSharedRef<SWidget> SCustomizableObjectEditorViewportToolBar::GenerateViewportTy
 
 TSharedRef<SWidget> SCustomizableObjectEditorViewportToolBar::GeneratePlaybackMenu() const
 {
-	//const FCustomizableObjectEditorViewportPlaybackCommands& Actions = FCustomizableObjectEditorViewportPlaybackCommands::Get();
-
 	const bool bInShouldCloseWindowAfterMenuSelection = true;
 
 	FMenuBuilder PlaybackMenuBuilder(bInShouldCloseWindowAfterMenuSelection, Viewport.Pin()->GetCommandList());
-	//{
-	//	// View modes
-	//	{
-	//		PlaybackMenuBuilder.BeginSection("AnimViewportPlaybackSpeed", LOCTEXT("PlaybackMenu_SpeedLabel", "Playback Speed"));
-	//		{
-	//			for (int i = 0; i < EAnimationPlaybackSpeeds::NumPlaybackSpeeds; ++i)
-	//			{
-	//				PlaybackMenuBuilder.AddMenuEntry(Actions.PlaybackSpeedCommands[i]);
-	//			}
-	//		}
-	//		PlaybackMenuBuilder.EndSection();
-	//	}
-	//}
-
+	
 	return PlaybackMenuBuilder.MakeWidget();
 
 }
 
-void SCustomizableObjectEditorViewportToolBar::GenerateTurnTableMenu(FMenuBuilder& MenuBuilder) const
-{
-	//const FCustomizableObjectEditorViewportPlaybackCommands& Actions = FCustomizableObjectEditorViewportPlaybackCommands::Get();
-
-	//const bool bInShouldCloseWindowAfterMenuSelection = true;
-
-	//MenuBuilder.BeginSection("AnimViewportTurnTableMode", LOCTEXT("TurnTableMenu_ModeLabel", "Turn Table Mode"));
-	//{
-	//	MenuBuilder.AddMenuEntry(Actions.PersonaTurnTablePlay);
-	//	MenuBuilder.AddMenuEntry(Actions.PersonaTurnTablePause);
-	//	MenuBuilder.AddMenuEntry(Actions.PersonaTurnTableStop);
-	//}
-	//MenuBuilder.EndSection();
-
-	//MenuBuilder.BeginSection("AnimViewportTurnTableSpeed", LOCTEXT("TurnTableMenu_SpeedLabel", "Turn Table Speed"));
-	//{
-	//	for (int i = 0; i < EAnimationPlaybackSpeeds::NumPlaybackSpeeds; ++i)
-	//	{
-	//		MenuBuilder.AddMenuEntry(Actions.TurnTableSpeeds[i]);
-	//	}
-	//}
-	//MenuBuilder.EndSection();
-}
-
-void SCustomizableObjectEditorViewportToolBar::GenerateSceneSetupMenu(FMenuBuilder& MenuBuilder)
-{
-	//FPropertyEditorModule& PropertyEditorModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
-	//FDetailsViewArgs Args(false, false, false, FDetailsViewArgs::HideNameArea, true, nullptr, false, "PersonaPreviewSceneDescription");
-	//Args.bShowScrollBar = false;
-
-	//TSharedRef<IDetailsView> DetailsView = PropertyEditorModule.CreateDetailView(Args);
-
-	//DetailsView->RegisterInstancedCustomPropertyLayout(UPersonaPreviewSceneDescription::StaticClass(), FOnGetDetailCustomizationInstance::CreateSP(this, &SCustomizableObjectEditorViewportToolBar::CustomizePreviewSceneDescription));
-	//PropertyEditorModule.RegisterCustomPropertyTypeLayout(FPreviewMeshCollectionEntry::StaticStruct()->GetFName(), FOnGetPropertyTypeCustomizationInstance::CreateSP(this, &SCustomizableObjectEditorViewportToolBar::CustomizePreviewMeshCollectionEntry), nullptr, DetailsView);
-
-	//DetailsView->SetObject(StaticCastSharedRef<FAnimationEditorPreviewScene>(Viewport.Pin()->GetPreviewScene())->GetPreviewSceneDescription());
-
-	//MenuBuilder.AddWidget(DetailsView, FText(), true);
-}
 
 TSharedRef<SWidget> SCustomizableObjectEditorViewportToolBar::GenerateViewportOptionsMenu() const
 {
@@ -1123,16 +463,6 @@ TSharedRef<SWidget> SCustomizableObjectEditorViewportToolBar::GenerateViewportOp
 }
 
 
-//TSharedRef<class IDetailCustomization> SCustomizableObjectEditorViewportToolBar::CustomizePreviewSceneDescription()
-//{
-//	return MakeShareable(new FPreviewSceneDescriptionCustomization(FAssetData(&Viewport.Pin()->GetSkeletonTree()->GetEditableSkeleton()->GetSkeleton()).GetExportTextName(), Viewport.Pin()->GetPreviewScene()->GetPersonaToolkit()));
-//}
-//
-//TSharedRef<class IPropertyTypeCustomization> SCustomizableObjectEditorViewportToolBar::CustomizePreviewMeshCollectionEntry()
-//{
-//	return MakeShareable(new FPreviewMeshCollectionEntryCustomization(Viewport.Pin()->GetPreviewScene()));
-//}
-
 FSlateColor SCustomizableObjectEditorViewportToolBar::GetFontColor() const
 {
 	const UAssetViewerSettings* Settings = UAssetViewerSettings::Get();
@@ -1166,22 +496,7 @@ FSlateColor SCustomizableObjectEditorViewportToolBar::GetFontColor() const
 
 FText SCustomizableObjectEditorViewportToolBar::GetPlaybackMenuLabel() const
 {
-	FText Label = LOCTEXT("PlaybackError", "Error");
-	//if (Viewport.IsValid())
-	//{
-	//	for (int i = 0; i < EAnimationPlaybackSpeeds::NumPlaybackSpeeds; ++i)
-	//	{
-	//		if (Viewport.Pin()->IsPlaybackSpeedSelected(i))
-	//		{
-	//			Label = FText::FromString(FString::Printf(
-	//				(i == EAnimationPlaybackSpeeds::Quarter || i == EAnimationPlaybackSpeeds::ThreeQuarters) ? TEXT("x%.2f") : TEXT("x%.1f"),
-	//				EAnimationPlaybackSpeeds::Values[i]
-	//			));
-	//			break;
-	//		}
-	//	}
-	//}
-	return Label;
+	return LOCTEXT("PlaybackError", "Error");
 }
 
 FText SCustomizableObjectEditorViewportToolBar::GetCameraMenuLabel() const
@@ -1275,6 +590,7 @@ float SCustomizableObjectEditorViewportToolBar::OnGetFOVValue() const
 	return Viewport.Pin()->GetViewportClient()->ViewFOV;
 }
 
+
 void SCustomizableObjectEditorViewportToolBar::OnFOVValueChanged(float NewValue) const
 {
 	TSharedPtr<FCustomizableObjectEditorViewportClient> ViewportClient = Viewport.Pin()->GetViewportClient();
@@ -1289,10 +605,6 @@ void SCustomizableObjectEditorViewportToolBar::OnFOVValueChanged(float NewValue)
 	ViewportClient->Invalidate();
 }
 
-void SCustomizableObjectEditorViewportToolBar::OnFOVValueCommitted(float NewValue, ETextCommit::Type CommitInfo)
-{
-	//OnFOVValueChanged will be called... nothing needed here.
-}
 
 TOptional<float> SCustomizableObjectEditorViewportToolBar::OnGetFloorOffset() const
 {
@@ -1300,6 +612,7 @@ TOptional<float> SCustomizableObjectEditorViewportToolBar::OnGetFloorOffset() co
 
 	return ViewportClient->GetFloorOffset();
 }
+
 
 void SCustomizableObjectEditorViewportToolBar::OnFloorOffsetChanged(float NewValue)
 {

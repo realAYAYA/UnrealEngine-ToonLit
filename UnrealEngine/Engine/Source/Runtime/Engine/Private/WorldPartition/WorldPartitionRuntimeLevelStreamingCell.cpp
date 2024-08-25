@@ -2,13 +2,18 @@
 
 #include "WorldPartition/WorldPartitionRuntimeLevelStreamingCell.h"
 #include "WorldPartition/WorldPartitionLevelStreamingDynamic.h"
-#include "WorldPartition/WorldPartitionActorDescView.h"
 #include "WorldPartition/WorldPartitionLevelStreamingPolicy.h"
+#include "WorldPartition/WorldPartitionDebugHelper.h"
+#include "WorldPartition/WorldPartitionStreamingGenerationContext.h"
+#include "WorldPartition/WorldPartitionRuntimeHash.h"
+#include "WorldPartition/WorldPartitionStreamingPolicy.h"
 #include "Engine/LevelStreaming.h"
 #include "Engine/Level.h"
 #include "Misc/HierarchicalLogArchive.h"
 #include "Misc/Paths.h"
 #include "AssetRegistry/IAssetRegistry.h"
+#include "UObject/Package.h"
+#include "UObject/AssetRegistryTagsContext.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(WorldPartitionRuntimeLevelStreamingCell)
 
@@ -95,15 +100,20 @@ TArray<FName> UWorldPartitionRuntimeLevelStreamingCell::GetActors() const
 	return Actors;
 }
 
-void UWorldPartitionRuntimeLevelStreamingCell::CreateAndSetLevelStreaming(const FString& InPackageName)
+void UWorldPartitionRuntimeLevelStreamingCell::CreateAndSetLevelStreaming(const FString& InPackageName, const FSoftObjectPath& InWorldAsset)
 {
-	LevelStreaming = CreateLevelStreaming(InPackageName);
+	LevelStreaming = CreateLevelStreaming(InPackageName, InWorldAsset);
 }
 
 bool UWorldPartitionRuntimeLevelStreamingCell::CreateAndSetLevelStreaming(const TSoftObjectPtr<UWorld>& InWorldAsset, const FTransform& InInstanceTransform) const
 {
 	UWorld* OwningWorld = GetOwningWorld();
 	const FName LevelStreamingName = FName(*FString::Printf(TEXT("WorldPartitionLevelStreaming_%s"), *GetName()));
+	if (FindObject<UWorldPartitionLevelStreamingDynamic>(OwningWorld, *LevelStreamingName.ToString()))
+	{
+		UE_LOG(LogWorldPartition, Warning, TEXT("UWorldPartitionRuntimeLevelStreamingCell::CreateAndSetLevelStreaming can't create an already existing UWorldPartitionLevelStreamingDynamic object named %s"), *LevelStreamingName.ToString());
+		return false;
+	}
 	LevelStreaming = NewObject<UWorldPartitionLevelStreamingDynamic>(OwningWorld, UWorldPartitionLevelStreamingDynamic::StaticClass(), LevelStreamingName, RF_NoFlags, NULL);
 
 	// Generate unique Level Instance name assuming cell has a unique name
@@ -128,28 +138,45 @@ bool UWorldPartitionRuntimeLevelStreamingCell::CreateAndSetLevelStreaming(const 
 
 #if WITH_EDITOR
 	LevelStreaming->SetShouldPerformStandardLevelLoading(true);
-#endif
 
 	if (OwningWorld->IsPlayInEditor() && OwningWorld->GetPackage()->HasAnyPackageFlags(PKG_PlayInEditor) && OwningWorld->GetPackage()->GetPIEInstanceID() != INDEX_NONE)
 	{
 		// When renaming for PIE, make sure to keep World's name so that linker can properly remap with Package's instancing context
 		LevelStreaming->RenameForPIE(OwningWorld->GetPackage()->GetPIEInstanceID(), /*bKeepWorldAssetName*/true);
 	}
+#endif
+
 	return true;
 }
 
-UWorldPartitionLevelStreamingDynamic* UWorldPartitionRuntimeLevelStreamingCell::CreateLevelStreaming(const FString& InPackageName) const
+UWorldPartitionLevelStreamingDynamic* UWorldPartitionRuntimeLevelStreamingCell::CreateLevelStreaming(const FString& InPackageName, const FSoftObjectPath& InWorldAsset) const
 {
+	auto GetUniqueLevelStreamingName = [this]()
+	{
+		const UWorld* OuterWorld = GetOuterWorld();
+		TStringBuilder<128> LevelStreamingNameBuilder;
+		LevelStreamingNameBuilder.Appendf(TEXT("WorldPartitionLevelStreaming_%s"), *GetName());
+		if (OuterWorld->IsGameWorld())
+		{
+			FString OuterWorldPackageShortName = FPackageName::GetShortName(OuterWorld->GetPackage());
+#if WITH_EDITOR
+			OuterWorldPackageShortName = UWorld::RemovePIEPrefix(OuterWorldPackageShortName);
+#endif
+			// Include outer world package name to make sure we generate a unique name since we it is 
+			LevelStreamingNameBuilder.Appendf(TEXT("_%s"), *OuterWorldPackageShortName);
+		}
+		return FName(*LevelStreamingNameBuilder);
+	};
+
 	if (HasActors())
 	{
 		UWorld* OuterWorld = GetOuterWorld();
 		UWorld* OwningWorld = GetOwningWorld();
-		const UWorldPartition* WorldPartition = OuterWorld->GetWorldPartition();
-		const FName LevelStreamingName = FName(*FString::Printf(TEXT("WorldPartitionLevelStreaming_%s"), *GetName()));
-
+		
 		// When called by Commandlet (PopulateGeneratedPackageForCook), LevelStreaming's outer is set to Cell/WorldPartition's outer to prevent warnings when saving Cell Levels (Warning: Obj in another map). 
 		// At runtime, LevelStreaming's outer will be properly set to the main world (see UWorldPartitionRuntimeLevelStreamingCell::Activate).
 		UWorld* LevelStreamingOuterWorld = IsRunningCommandlet() ? OuterWorld : OwningWorld;
+		const FName LevelStreamingName = GetUniqueLevelStreamingName();
 		UWorldPartitionLevelStreamingDynamic* NewLevelStreaming = NewObject<UWorldPartitionLevelStreamingDynamic>(LevelStreamingOuterWorld, UWorldPartitionLevelStreamingDynamic::StaticClass(), LevelStreamingName, RF_NoFlags, NULL);
 
 		FName WorldName = OuterWorld->GetFName();
@@ -166,18 +193,31 @@ UWorldPartitionLevelStreamingDynamic* UWorldPartitionRuntimeLevelStreamingCell::
 		FString PackageName = InPackageName;
 #endif
 
-		TSoftObjectPtr<UWorld> WorldAsset(FSoftObjectPath(FString::Printf(TEXT("%s.%s"), *PackageName, *WorldName.ToString())));
-		NewLevelStreaming->SetWorldAsset(WorldAsset);
+		// Set both PackageNameToLoad and WorldAsset (necessary to properly support instancing)
+		NewLevelStreaming->PackageNameToLoad = *PackageName;
+		if (InWorldAsset.IsValid())
+		{
+			NewLevelStreaming->SetWorldAsset(TSoftObjectPtr<UWorld>(InWorldAsset));
+		}
+		else
+		{
+			TSoftObjectPtr<UWorld> WorldAsset(FSoftObjectPath(FString::Printf(TEXT("%s.%s"), *PackageName, *WorldName.ToString())));
+			NewLevelStreaming->SetWorldAsset(WorldAsset);
+		}
+
 		// Transfer WorldPartition's transform to Level
-		NewLevelStreaming->LevelTransform = WorldPartition->GetInstanceTransform();
+		const UWorldPartition* OuterWorldPartition = OuterWorld->GetWorldPartition();
+		NewLevelStreaming->LevelTransform = OuterWorldPartition->GetInstanceTransform();
 		NewLevelStreaming->bClientOnlyVisible = GetClientOnlyVisible();
 		NewLevelStreaming->Initialize(*this);
 
+#if WITH_EDITOR
 		if (OwningWorld->IsPlayInEditor() && OwningWorld->GetPackage()->HasAnyPackageFlags(PKG_PlayInEditor) && OwningWorld->GetPackage()->GetPIEInstanceID() != INDEX_NONE)
 		{
 			// When renaming for PIE, make sure to keep World's name so that linker can properly remap with Package's instancing context
 			NewLevelStreaming->RenameForPIE(OwningWorld->GetPackage()->GetPIEInstanceID(), /*bKeepWorldAssetName*/true);
 		}
+#endif
 
 		return NewLevelStreaming;
 	}
@@ -196,24 +236,41 @@ EStreamingStatus UWorldPartitionRuntimeLevelStreamingCell::GetStreamingStatus() 
 
 FLinearColor UWorldPartitionRuntimeLevelStreamingCell::GetDebugColor(EWorldPartitionRuntimeCellVisualizeMode VisualizeMode) const
 {
+#if !UE_BUILD_SHIPPING
 	switch (VisualizeMode)
 	{
 		case EWorldPartitionRuntimeCellVisualizeMode::StreamingPriority:
 		{
-			return GetDebugStreamingPriorityColor();
+			if (DebugStreamingPriority >= 0.0f && DebugStreamingPriority <= 1.0f)
+			{
+				const float PriorityGradient = FMath::Cube(1.0f - DebugStreamingPriority);
+
+				if (FWorldPartitionDebugHelper::GetRuntimeSpatialHashCellStreamingPriorityMode() == 2)
+				{
+					// Grayscale
+					return FLinearColor(PriorityGradient, PriorityGradient, PriorityGradient, 1.0f);
+				}
+
+				// Heatmap
+				static TArray<FLinearColor, TInlineAllocator<4>> Colors { FLinearColor::Blue, FLinearColor::Green, FLinearColor::Yellow, FLinearColor::Red };
+				const float ColorGrad = FMath::Clamp(PriorityGradient, 0.0f, 1.0f) * (Colors.Num() - 1);
+				return FLinearColor::LerpUsingHSV(
+					Colors[FMath::Min<int32>(ColorGrad, Colors.Num() - 1)],
+					Colors[FMath::Min<int32>(ColorGrad + 1, Colors.Num() - 1)],
+					FMath::Frac(ColorGrad)
+				);
+			}
+			return FLinearColor::Transparent;
 		}
 		case EWorldPartitionRuntimeCellVisualizeMode::StreamingStatus:
 		{
 			// Return streaming status color
-			FLinearColor Color = LevelStreaming ? ULevelStreaming::GetLevelStreamingStatusColor(GetStreamingStatus()) : FLinearColor::Black;
-			Color.A = 0.25f;
-			return Color;
-		}
-		default:
-		{
-			return Super::GetDebugColor(VisualizeMode);
+			return LevelStreaming ? ULevelStreaming::GetLevelStreamingStatusColor(LevelStreaming->GetLevelStreamingStatus()) : FLinearColor::Black;
 		}
 	}
+#endif
+
+	return Super::GetDebugColor(VisualizeMode);
 }
 
 void UWorldPartitionRuntimeLevelStreamingCell::SetIsAlwaysLoaded(bool bInIsAlwaysLoaded)
@@ -226,37 +283,67 @@ void UWorldPartitionRuntimeLevelStreamingCell::SetIsAlwaysLoaded(bool bInIsAlway
 }
 
 #if WITH_EDITOR
-void UWorldPartitionRuntimeLevelStreamingCell::AddActorToCell(const FWorldPartitionActorDescView& ActorDescView, const FActorContainerID& InContainerID, const FTransform& InContainerTransform, const UActorDescContainer* InContainer)
+void UWorldPartitionRuntimeLevelStreamingCell::AddActorToCell(const FStreamingGenerationActorDescView& ActorDescView)
 {
 	check(!ActorDescView.GetActorIsEditorOnly());
 
-	if (!IsRunningCookCommandlet())
-	{
-		for (const FGuid& EditorReferenceGuid : ActorDescView.GetEditorReferences())
-		{
-			const FWorldPartitionActorDesc& ReferenceActorDesc = InContainer->GetActorDescChecked(EditorReferenceGuid);
+	const UActorDescContainerInstance* ContainerInstance = ActorDescView.GetContainerInstance();
+	check(ContainerInstance);
 
-			Packages.Emplace(
-				ReferenceActorDesc.GetActorPackage(), 
-				*ReferenceActorDesc.GetActorSoftPath().ToString(), 
-				InContainerID, 
-				InContainerTransform, 
-				InContainer->GetContainerPackage(), 
-				GetWorld()->GetPackage()->GetFName(), 
-				InContainerID.GetActorGuid(ReferenceActorDesc.GetGuid()),
-				true
-			);
+	const FActorContainerID& ContainerID = ContainerInstance->GetContainerID();
+	const FTransform ContainerTransform = ContainerInstance->GetTransform();
+	const FName ContainerPackage = ContainerInstance->GetContainerPackage();
+
+	for (const FGuid& EditorReferenceGuid : ActorDescView.GetEditorReferences())
+	{
+		FName ReferencePackage;
+		FName ReferencePath;
+		FTopLevelAssetPath ReferenceBaseClass;
+		FTopLevelAssetPath ReferenceNativeClass;
+
+		// Special case where the actor descriptor view has an invalid references, use invalid reference information as the actor guid isn't necessarily in the container instance.
+		if (const FStreamingGenerationActorDescView::FInvalidReference* InvalidReference = ActorDescView.GetInvalidReference(EditorReferenceGuid))
+		{
+			ReferencePackage = InvalidReference->ActorPackage;
+			ReferencePath = *InvalidReference->ActorSoftPath.ToString();
+			ReferenceBaseClass = InvalidReference->BaseClass;
+			ReferenceNativeClass = InvalidReference->NativeClass;
 		}
+		else
+		{
+			const FWorldPartitionActorDescInstance& ReferenceActorDesc = ContainerInstance->GetActorDescInstanceChecked(EditorReferenceGuid);
+			ReferencePackage = ReferenceActorDesc.GetActorPackage();
+			ReferencePath = *ReferenceActorDesc.GetActorSoftPath().ToString();
+			ReferenceBaseClass = ReferenceActorDesc.GetBaseClass();
+			ReferenceNativeClass = ReferenceActorDesc.GetNativeClass();
+		}
+		
+		Packages.Emplace(
+			ReferencePackage,
+			ReferencePath,
+			ReferenceBaseClass,
+			ReferenceNativeClass,
+			ContainerID,
+			ContainerTransform,
+			FTransform::Identity,
+			ContainerPackage,
+			GetWorld()->GetPackage()->GetFName(),
+			ContainerID.GetActorGuid(EditorReferenceGuid),
+			true
+		);
 	}
 
 	Packages.Emplace(
 		ActorDescView.GetActorPackage(), 
 		*ActorDescView.GetActorSoftPath().ToString(), 
-		InContainerID, 
-		InContainerTransform, 
-		InContainer->GetContainerPackage(), 
+		ActorDescView.GetBaseClass(),
+		ActorDescView.GetNativeClass(),
+		ContainerID,
+		ContainerTransform,
+		ActorDescView.GetEditorOnlyParentTransform(),
+		ContainerPackage, 
 		GetWorld()->GetPackage()->GetFName(), 
-		InContainerID.GetActorGuid(ActorDescView.GetGuid()),
+		ContainerID.GetActorGuid(ActorDescView.GetGuid()),
 		false
 	);
 }
@@ -278,20 +365,31 @@ void UWorldPartitionRuntimeLevelStreamingCell::Fixup()
 	}
 }
 
-bool UWorldPartitionRuntimeLevelStreamingCell::PopulateGeneratorPackageForCook(TArray<UPackage*>& OutModifiedPackages)
+FString UWorldPartitionRuntimeLevelStreamingCell::GetPackageNameToCreate() const
+{
+	return UWorldPartitionLevelStreamingPolicy::GetCellPackagePath(GetFName(), GetOuterWorld());
+}
+
+bool UWorldPartitionRuntimeLevelStreamingCell::OnPrepareGeneratorPackageForCook(TArray<UPackage*>& OutModifiedPackages)
 {
 	check(IsAlwaysLoaded());
 
 	if (GetActorCount() > 0)
 	{
-		FWorldPartitionLevelHelper::FPackageReferencer PackageReferencer;
-		const bool bLoadAsync = false;
 		UWorld* OuterWorld = GetOuterWorld();
 		UWorldPartition* WorldPartition = OuterWorld->GetWorldPartition();
 
-		// Don't do SoftObjectPath remapping for PersistentLevel actors because references can end up in different cells
-		const bool bSoftObjectRemappingEnabled = false;
-		verify(FWorldPartitionLevelHelper::LoadActors(OuterWorld, nullptr, Packages, PackageReferencer, [](bool) {}, bLoadAsync, FLinkerInstancingContext(bSoftObjectRemappingEnabled)));
+		FWorldPartitionLevelHelper::FPackageReferencer PackageReferencer;
+		FWorldPartitionLevelHelper::FLoadActorsParams Params = FWorldPartitionLevelHelper::FLoadActorsParams()
+			.SetOuterWorld(OuterWorld)
+			.SetDestLevel(nullptr)
+			.SetActorPackages(Packages)
+			.SetPackageReferencer(&PackageReferencer)
+			.SetCompletionCallback([](bool) {})
+			.SetLoadAsync(false)
+			.SetInstancingContext(FLinkerInstancingContext(false)); // Don't do SoftObjectPath remapping for PersistentLevel actors because references can end up in different cells
+
+		verify(FWorldPartitionLevelHelper::LoadActors(Params));
 
 		FWorldPartitionLevelHelper::MoveExternalActorsToLevel(Packages, OuterWorld->PersistentLevel, OutModifiedPackages);
 
@@ -300,7 +398,7 @@ bool UWorldPartitionRuntimeLevelStreamingCell::PopulateGeneratorPackageForCook(T
 
 		// Make sure Asset Registry tags are updated here synchronously now that Package contains all its actors
 		// ex: AFunctionalTest actors need to be part of the Worlds asset tags once they are not longer external so they can be discovered at runtime
-		IAssetRegistry::Get()->AssetFullyUpdateTags(OuterWorld);
+		IAssetRegistry::Get()->AssetUpdateTags(OuterWorld, EAssetRegistryTagsCaller::Fast);
 
 		// Empty cell's package list (this ensures that no one can rely on cell's content).
 		Packages.Empty();
@@ -325,7 +423,48 @@ bool UWorldPartitionRuntimeLevelStreamingCell::PrepareCellForCook(UPackage* InPa
 	return true;
 }
 
-bool UWorldPartitionRuntimeLevelStreamingCell::PopulateGeneratedPackageForCook(UPackage* InPackage, TArray<UPackage*>& OutModifiedPackage)
+bool UWorldPartitionRuntimeLevelStreamingCell::OnPopulateGeneratorPackageForCook(UPackage* InPackage)
+{
+	return PrepareCellForCook(InPackage);
+}
+
+// Helper used by UWorldPartitionRuntimeLevelStreamingCell::OnPopulateGeneratedPackageForCook
+class FScopedCookingExternalStreamingObject
+{
+private:
+	FScopedCookingExternalStreamingObject(const URuntimeHashExternalStreamingObjectBase* InExternalStreamingObject)
+		: ExternalStreamingObject(const_cast<URuntimeHashExternalStreamingObjectBase*>(InExternalStreamingObject))
+	{
+		check(IsRunningCookCommandlet());
+		if (ExternalStreamingObject)
+		{
+			UWorld* World = ExternalStreamingObject->GetOuterWorld();
+			check(World);
+			UWorldPartition* WorldPartition = World->GetWorldPartition();
+			check(WorldPartition);
+			check(WorldPartition->StreamingPolicy);
+			verify(WorldPartition->StreamingPolicy->InjectExternalStreamingObject(const_cast<URuntimeHashExternalStreamingObjectBase*>(ExternalStreamingObject)));
+		}
+	}
+
+	~FScopedCookingExternalStreamingObject()
+	{
+		if (ExternalStreamingObject)
+		{
+			UWorld* World = ExternalStreamingObject->GetOuterWorld();
+			check(World);
+			UWorldPartition* WorldPartition = World->GetWorldPartition();
+			check(WorldPartition);
+			check(WorldPartition->StreamingPolicy);
+			verify(WorldPartition->StreamingPolicy->RemoveExternalStreamingObject(ExternalStreamingObject));
+		}
+	}
+
+	URuntimeHashExternalStreamingObjectBase* ExternalStreamingObject;
+	friend class UWorldPartitionRuntimeLevelStreamingCell;
+};
+
+bool UWorldPartitionRuntimeLevelStreamingCell::OnPopulateGeneratedPackageForCook(UPackage* InPackage, TArray<UPackage*>& OutModifiedPackages)
 {
 	check(!IsAlwaysLoaded());
 	if (!InPackage)
@@ -346,17 +485,28 @@ bool UWorldPartitionRuntimeLevelStreamingCell::PopulateGeneratedPackageForCook(U
 
 		// Load cell Actors
 		FWorldPartitionLevelHelper::FPackageReferencer PackageReferencer;
-		const bool bLoadAsync = false;
+		FWorldPartitionLevelHelper::FLoadActorsParams Params = FWorldPartitionLevelHelper::FLoadActorsParams()
+			.SetOuterWorld(OuterWorld)
+			.SetDestLevel(nullptr)
+			.SetActorPackages(Packages)
+			.SetPackageReferencer(&PackageReferencer)
+			.SetCompletionCallback([](bool) {})
+			.SetLoadAsync(false)
+			.SetInstancingContext(FLinkerInstancingContext(false)); // Don't do SoftObjectPath remapping for PersistentLevel actors because references can end up in different cells
 
-		// Don't do SoftObjectPath remapping for PersistentLevel actors because references can end up in different cells
-		const bool bSoftObjectRemappingEnabled = false;
-		verify(FWorldPartitionLevelHelper::LoadActors(OuterWorld, nullptr, Packages, PackageReferencer, [](bool) {}, bLoadAsync, FLinkerInstancingContext(bSoftObjectRemappingEnabled)));
+		verify(FWorldPartitionLevelHelper::LoadActors(Params));
 
 		// Create a level and move these actors in it
 		ULevel* NewLevel = FWorldPartitionLevelHelper::CreateEmptyLevelForRuntimeCell(this, OuterWorld, LevelStreaming->GetWorldAsset().ToString(), InPackage);
 		check(NewLevel->GetPackage() == InPackage);
-		FWorldPartitionLevelHelper::MoveExternalActorsToLevel(Packages, NewLevel, OutModifiedPackage);
+		FWorldPartitionLevelHelper::MoveExternalActorsToLevel(Packages, NewLevel, OutModifiedPackages);
 
+		// Push temporarily the cooking ExternalStreamingObject in the policy for RemapLevelSoftObjectPaths to use it to resolve softobjectpaths
+		// Do this only if the ExternalStreamingObject has a valid root external data layer asset, as Content Bundle soft object remapping is not supported at cook time (there is no world package remapping)
+		const URuntimeHashExternalStreamingObjectBase* ExternalStreamingObject = GetTypedOuter<URuntimeHashExternalStreamingObjectBase>();
+		const URuntimeHashExternalStreamingObjectBase* CookingExternalStreamingObject = ExternalStreamingObject && ExternalStreamingObject->GetRootExternalDataLayerAsset() ? ExternalStreamingObject : nullptr;
+		FScopedCookingExternalStreamingObject ScopeCookingExternalStreamingObject(CookingExternalStreamingObject);
+		
 		// Remap Level's SoftObjectPaths
 		FWorldPartitionLevelHelper::RemapLevelSoftObjectPaths(NewLevel, WorldPartition);
 	}
@@ -366,11 +516,6 @@ bool UWorldPartitionRuntimeLevelStreamingCell::PopulateGeneratedPackageForCook(U
 int32 UWorldPartitionRuntimeLevelStreamingCell::GetActorCount() const
 {
 	return Packages.Num();
-}
-
-FString UWorldPartitionRuntimeLevelStreamingCell::GetPackageNameToCreate() const
-{
-	return UWorldPartitionLevelStreamingPolicy::GetCellPackagePath(GetFName(), GetOuterWorld());
 }
 
 void UWorldPartitionRuntimeLevelStreamingCell::DumpStateLog(FHierarchicalLogArchive& Ar) const
@@ -383,9 +528,14 @@ void UWorldPartitionRuntimeLevelStreamingCell::DumpStateLog(FHierarchicalLogArch
 
 	for (const FWorldPartitionRuntimeCellObjectMapping& Mapping : SortedPackages)
 	{
-		Ar.Printf(TEXT("         Actor Path: %s"), *Mapping.Path.ToString());
-		Ar.Printf(TEXT("      Actor Package: %s"), *Mapping.Package.ToString());
-		Ar.Printf(TEXT("Actor Instance Guid: %s"), *Mapping.ActorInstanceGuid.ToString());
+		FHierarchicalLogArchive::FIndentScope ActorIndentScope = Ar.PrintfIndent(TEXT("%s"), *Mapping.Path.ToString());
+		Ar.Printf(TEXT("        Package: %s"), *Mapping.Package.ToString());
+		Ar.Printf(TEXT("    Editor Only: %d"), Mapping.bIsEditorOnly ? 1 : 0);
+		Ar.Printf(TEXT("  Instance Guid: %s"), *Mapping.ActorInstanceGuid.ToString());
+
+		FHierarchicalLogArchive::FIndentScope ContainerIndentScope = Ar.PrintfIndent(TEXT("Container:"));
+		Ar.Printf(TEXT("       ID: %s"), *Mapping.ContainerID.ToString());
+		Ar.Printf(TEXT("Transform: %s"), *Mapping.ContainerTransform.ToString());		
 	}
 }
 #endif
@@ -416,7 +566,7 @@ UWorldPartitionLevelStreamingDynamic* UWorldPartitionRuntimeLevelStreamingCell::
 		{
 			LevelStreaming->Rename(nullptr, OwningWorld, REN_ForceNoResetLoaders);
 		}
-
+		
 		// Transfer WorldPartition's transform to LevelStreaming
 		LevelStreaming->SetLevelTransform(WorldPartition->GetInstanceTransform());
 
@@ -454,18 +604,6 @@ void UWorldPartitionRuntimeLevelStreamingCell::Activate() const
 	{
 		LocalLevelStreaming->Activate();
 	}
-}
-
-bool UWorldPartitionRuntimeLevelStreamingCell::IsAddedToWorld() const
-{
-	return LevelStreaming && LevelStreaming->GetLoadedLevel() && LevelStreaming->GetLoadedLevel()->bIsVisible;
-}
-
-bool UWorldPartitionRuntimeLevelStreamingCell::CanAddToWorld() const
-{
-	return LevelStreaming &&
-		   LevelStreaming->GetLoadedLevel() &&
-		   (LevelStreaming->GetLevelStreamingState() == ELevelStreamingState::MakingVisible);
 }
 
 void UWorldPartitionRuntimeLevelStreamingCell::SetStreamingPriority(int32 InStreamingPriority) const

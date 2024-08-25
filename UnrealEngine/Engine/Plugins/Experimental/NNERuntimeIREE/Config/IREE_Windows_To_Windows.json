@@ -1,0 +1,12 @@
+{
+	"CompilerCommand": [ "${PLUGIN_DIR}/Source/ThirdParty/IREE/Bin/Windows/iree-compile.exe" ],
+	"LinkerCommand": [ "${PLUGIN_DIR}/Source/ThirdParty/IREE/Bin/Windows/lld-link.exe" ],
+	"SharedLibExt": ".dll",
+	"Targets": [
+		{
+			"Architecture": "",
+			"CompilerArguments": "--iree-llvmcpu-target-triple=x86_64-pc-windows-msvc --iree-input-type=auto --iree-hal-target-backends=llvm-cpu --iree-llvmcpu-link-embedded=false --iree-llvmcpu-link-static --output-format=vm-bytecode --iree-llvmcpu-static-library-output-path=${OBJECT_PATH} -o ${VMFB_PATH} ${INPUT_PATH}",
+			"LinkerArguments": "/DLL /NOENTRY /FORCE:UNRESOLVED /OUT:${SHARED_LIB_PATH} ${OBJECT_PATH}"
+		}
+	]
+}

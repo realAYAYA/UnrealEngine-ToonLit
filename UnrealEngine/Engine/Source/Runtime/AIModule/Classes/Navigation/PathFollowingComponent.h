@@ -430,12 +430,18 @@ protected:
 	/** currently traversed custom nav link */
 	FWeakObjectPtr CurrentCustomLinkOb;
 
+	/** the custom link for the next segment if there is one */
+	FWeakObjectPtr MoveSegmentCustomLinkOb;
+
 	/** navigation data for agent described in movement component */
 	UPROPERTY(transient)
 	TObjectPtr<ANavigationData> MyNavData;
 
 	/** requested path */
 	FNavPathSharedPtr Path;
+
+	/** Navigation query filter of the current move request */
+	FSharedConstNavQueryFilter NavigationFilter;
 
 	/** value based on navigation agent's properties that's used for AcceptanceRadius when DefaultAcceptanceRadius is requested */
 	float MyDefaultAcceptanceRadius;
@@ -506,6 +512,11 @@ protected:
 	/** if set, target location will be constantly updated to match goal actor while following last segment of full path */
 	uint8 bMoveToGoalOnLastSegment : 1;
 
+	/** Whether to clamp the goal location to reachable navigation data when trying to track the goal actor (Only used when bMoveToGoalOnLastSegment is true)
+	 *  False: (default) while following the last segment, the path is allowed to adjust through obstacles and off navigation data without checks.
+	 *  True: the last segment's destination will be clamped at the furthest reachable location towards the goal actor. */
+	uint8 bMoveToGoalClampedToNavigation : 1;
+
 	/** if set, movement block detection will be used */
 	uint8 bUseBlockDetection : 1;
 
@@ -526,6 +537,9 @@ protected:
 
 	/** True if pathfollowing is doing deceleration at the end of the path. @see FollowPathSegment(). */
 	uint8 bIsDecelerating : 1;
+
+	/** True if the next segment is a custom link that has its own reach conditions. */
+	uint8 bMoveSegmentIsUsingCustomLinkReachCondition : 1;
 
 	/** detect blocked movement when distance between center of location samples and furthest one (centroid radius) is below threshold */
 	float BlockDetectionDistance;
@@ -605,6 +619,9 @@ protected:
 
 	/** check if moving agent has reached goal defined by cylinder */
 	AIMODULE_API bool HasReachedInternal(const FVector& GoalLocation, float GoalRadius, float GoalHalfHeight, const FVector& AgentLocation, float RadiusThreshold, float AgentRadiusMultiplier) const;
+
+	/** reset the cached information about CustomLinks on the next MoveSegment */
+	AIMODULE_API void ResetMoveSegmentCustomLinkCache();
 
 	/** check if agent is on path */
 	AIMODULE_API virtual bool IsOnPath() const;

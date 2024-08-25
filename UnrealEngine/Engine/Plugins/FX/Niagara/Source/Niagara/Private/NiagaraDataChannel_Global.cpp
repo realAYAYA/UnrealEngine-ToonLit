@@ -66,7 +66,7 @@ void UNiagaraDataChannelHandler_Global::Tick(float DeltaSeconds, ETickingGroup T
 	SCOPE_CYCLE_COUNTER(STAT_DataChannelHandler_Global_Tick);
 	Super::Tick(DeltaSeconds, TickGroup, OwningWorld);
 
-	Data->ConsumePublishRequests(this);
+	Data->ConsumePublishRequests(this, TickGroup);
 }
 
 FNiagaraDataChannelDataPtr UNiagaraDataChannelHandler_Global::FindData(FNiagaraDataChannelSearchParameters SearchParams, ENiagaraResourceAccess AccessType)

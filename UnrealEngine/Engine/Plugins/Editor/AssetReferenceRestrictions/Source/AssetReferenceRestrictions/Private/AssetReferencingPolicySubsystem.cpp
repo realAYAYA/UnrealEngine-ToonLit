@@ -21,6 +21,8 @@ void UAssetReferencingPolicySubsystem::Initialize(FSubsystemCollectionBase& Coll
 
 	DomainDB = MakeShared<FDomainDatabase>();
 	DomainDB->Init();
+
+	FEditorDelegates::OnPreAssetValidation.AddUObject(this, &UAssetReferencingPolicySubsystem::UpdateDBIfNecessary);
 }
 
 void UAssetReferencingPolicySubsystem::Deinitialize()
@@ -33,6 +35,11 @@ void UAssetReferencingPolicySubsystem::Deinitialize()
 TSharedPtr<IAssetReferenceFilter> UAssetReferencingPolicySubsystem::HandleMakeAssetReferenceFilter(const FAssetReferenceFilterContext& Context)
 {
 	return MakeShareable(new FDomainAssetReferenceFilter(Context, GetDomainDB()));
+}
+
+void UAssetReferencingPolicySubsystem::UpdateDBIfNecessary() const
+{
+	DomainDB->UpdateIfNecessary();
 }
 
 TSharedPtr<FDomainDatabase> UAssetReferencingPolicySubsystem::GetDomainDB() const

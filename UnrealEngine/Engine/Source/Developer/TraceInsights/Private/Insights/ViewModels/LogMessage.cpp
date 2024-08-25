@@ -27,7 +27,7 @@ FLogMessageRecord::FLogMessageRecord(const TraceServices::FLogMessageInfo& Trace
 	FString CategoryStr(TraceLogMessage.Category->Name);
 	if (CategoryStr.StartsWith(TEXT("Log")))
 	{
-		CategoryStr.RightChopInline(3, false);
+		CategoryStr.RightChopInline(3, EAllowShrinking::No);
 	}
 	Category = FText::FromString(MoveTemp(CategoryStr));
 

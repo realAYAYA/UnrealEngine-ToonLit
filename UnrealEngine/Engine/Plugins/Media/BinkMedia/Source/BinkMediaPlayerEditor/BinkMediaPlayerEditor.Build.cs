@@ -55,7 +55,7 @@ public class BinkMediaPlayerEditor : ModuleRules
         if (Target.Platform == UnrealTargetPlatform.Mac) 
         {
             PublicDependencyModuleNames.Add("MetalRHI");
-            AddEngineThirdPartyPrivateStaticDependencies(Target, "MTLPP");
+            AddEngineThirdPartyPrivateStaticDependencies(Target, "MetalCPP");
         }
     }
 }

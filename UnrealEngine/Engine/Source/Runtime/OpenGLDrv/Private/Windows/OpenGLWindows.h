@@ -10,7 +10,6 @@
 	#error "OpenGLWindows.h included for a platform other than Windows."
 #endif
 
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 	#include <GL/glcorearb.h>
 	#include <GL/glext.h>

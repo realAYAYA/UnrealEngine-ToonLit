@@ -9,6 +9,10 @@
 #include "RigVMCore/RigVMGraphFunctionHost.h"
 #include "Engine/AssetUserData.h"
 #include "Interfaces/Interface_AssetUserData.h"
+#include "SceneManagement.h"
+#if WITH_EDITOR
+#include "RigVMCore/RigVMDebugInfo.h"
+#endif
 #include "RigVMHost.generated.h"
 
 // set this to something larger than 0 to profile N runs
@@ -26,10 +30,13 @@ public:
 	UFUNCTION(BlueprintCallable, Category = RigVM)
 	static TArray<URigVMHost*> FindRigVMHosts(UObject* Outer, TSubclassOf<URigVMHost> OptionalClass);
 
+	static bool IsGarbageOrDestroyed(const UObject* InObject);
+
 	/** UObject interface */
 	virtual UWorld* GetWorld() const override;
 	virtual void Serialize(FArchive& Ar) override;
 	virtual void PostLoad() override;
+	virtual void PreSave(FObjectPreSaveContext ObjectSaveContext) override;
 	virtual void BeginDestroy() override;
 
 	/** Gets the current absolute time */
@@ -70,7 +77,7 @@ public:
 	/** Initialize things for the RigVM owner */
 	virtual void Initialize(bool bRequestInit = true);
 
-	/** Initialize the VM */
+	/** Initialize this Host VM Instance */
 	virtual bool InitializeVM(const FName& InEventName);
 
 	/** Evaluate at Any Thread */
@@ -137,6 +144,9 @@ public:
 
 	virtual void InvalidateCachedMemory();
 
+	// Regenerates cached handles after a structural change (i.e. new UUserStruct)
+	virtual void RecreateCachedMemory();
+
 	/** Execute */
 	UFUNCTION(BlueprintCallable, Category = "RigVM")
 	virtual bool Execute(const FName& InEventName);
@@ -158,8 +168,13 @@ private:
 
 protected:
 
+	/** Initialize the CDO VM */
+	virtual bool InitializeCDOVM();
+
 	/** ExecuteUnits */
 	virtual bool Execute_Internal(const FName& InEventName);
+
+	static bool DisableExecution();
 
 public:
 
@@ -170,10 +185,10 @@ public:
 	}
 
 	UFUNCTION(BlueprintPure, Category = "RigVM")
-	bool SupportsEvent(const FName& InEventName) const;
+	virtual bool SupportsEvent(const FName& InEventName) const;
 
 	UFUNCTION(BlueprintPure, Category = "RigVM")
-	const TArray<FName>& GetSupportedEvents() const;
+	virtual const TArray<FName>& GetSupportedEvents() const;
 
 	/** Execute a user defined event */
 	UFUNCTION(BlueprintCallable, Category = "RigVM")
@@ -182,6 +197,13 @@ public:
 	/** Requests to perform an init during the next execution */
 	UFUNCTION(BlueprintCallable, Category = "RigVM")
 	virtual void RequestInit();
+
+	/** Returns true if this host requires the VM memory to be initialized */
+	UFUNCTION(BlueprintPure, Category = "RigVM")
+	virtual bool IsInitRequired() const
+	{
+		return bRequiresInitExecution;
+	} 
 
 	/** Requests to run an event once */
 	UFUNCTION(BlueprintCallable, Category = "RigVM")
@@ -215,6 +237,25 @@ public:
 	void SetLog(FRigVMLog* InLog) { RigVMLog = InLog; }
 #endif
 
+	// Returns the compiler generated VM memory storage by type
+	virtual const FRigVMMemoryStorageStruct* GetDefaultMemoryByType(ERigVMMemoryType InMemoryType) const;
+
+	// Returns an instanced VM memory storage by type
+	virtual FRigVMMemoryStorageStruct* GetMemoryByType(ERigVMMemoryType InMemoryType);
+	virtual const FRigVMMemoryStorageStruct* GetMemoryByType(ERigVMMemoryType InMemoryType) const;
+
+	// The instanced mutable work memory
+	FRigVMMemoryStorageStruct* GetWorkMemory() { return GetMemoryByType(ERigVMMemoryType::Work); }
+	const FRigVMMemoryStorageStruct* GetWorkMemory() const { return GetMemoryByType(ERigVMMemoryType::Work); }
+
+	// The default const literal memory
+	FRigVMMemoryStorageStruct* GetLiteralMemory() { return GetMemoryByType(ERigVMMemoryType::Literal); }
+	const FRigVMMemoryStorageStruct* GetLiteralMemory() const { return GetMemoryByType(ERigVMMemoryType::Literal); }
+
+	// The instanced debug watch memory
+	FRigVMMemoryStorageStruct* GetDebugMemory() { return GetMemoryByType(ERigVMMemoryType::Debug); }
+	const FRigVMMemoryStorageStruct* GetDebugMemory() const { return GetMemoryByType(ERigVMMemoryType::Debug); }
+
 	DECLARE_EVENT_TwoParams(URigVM, FRigVMExecutedEvent, class URigVMHost*, const FName&);
 	FRigVMExecutedEvent& OnInitialized_AnyThread() { return InitializedEvent; }
 	FRigVMExecutedEvent& OnExecuted_AnyThread() { return ExecutedEvent; }
@@ -224,6 +265,8 @@ public:
 
 	const FRigVMDrawContainer& GetDrawContainer() const { return DrawContainer; };
 	FRigVMDrawContainer& GetDrawContainer() { return DrawContainer; };
+
+	void DrawIntoPDI(FPrimitiveDrawInterface* PDI, const FTransform& InTransform);
 
 	virtual USceneComponent* GetOwningSceneComponent(); 
 
@@ -241,17 +284,39 @@ public:
 #endif
 
 	/** Provide access to the ExtendedExecuteContext */
-	UFUNCTION(BlueprintCallable, Category = RigVM)
+	UE_DEPRECATED(5.4, "Please, use GetRigVMExtendedExecuteContext")
+	UFUNCTION(BlueprintCallable, Category = RigVM, meta = (DeprecatedFunction, DeprecationMessage = "This function has been deprecated and it is no longer supported."))
 	virtual FRigVMExtendedExecuteContext& GetExtendedExecuteContext()
 	{
-		return ExtendedExecuteContext;
+		static FRigVMExtendedExecuteContext DummyContext;
+		return DummyContext;
 	};
 
 	/** Provide access to the ExtendedExecuteContext */
+	UE_DEPRECATED(5.4, "Please, use GetRigVMExtendedExecuteContext")
 	virtual const FRigVMExtendedExecuteContext& GetExtendedExecuteContext() const
 	{
-		return ExtendedExecuteContext;
+		static FRigVMExtendedExecuteContext DummyContext;
+		return DummyContext;
 	};
+
+	inline void SetRigVMExtendedExecuteContext(FRigVMExtendedExecuteContext* InRigVMExtendedExecuteContext)
+	{
+		RigVMExtendedExecuteContext = InRigVMExtendedExecuteContext;
+	}
+
+	inline FRigVMExtendedExecuteContext& GetRigVMExtendedExecuteContext()
+	{
+		check(RigVMExtendedExecuteContext != nullptr);
+		return *RigVMExtendedExecuteContext;
+	};
+	inline const FRigVMExtendedExecuteContext& GetRigVMExtendedExecuteContext() const
+	{
+		check(RigVMExtendedExecuteContext != nullptr);
+		return *RigVMExtendedExecuteContext;
+	};
+
+	UObject* ResolveUserDefinedTypeById(const FString& InTypeName) const;
 
 protected:
 
@@ -269,7 +334,7 @@ protected:
 	/** true if we should increase the AbsoluteTime */
 	bool bAccumulateTime;
 
-	UPROPERTY()
+	UPROPERTY(Transient)
 	TObjectPtr<URigVM> VM;
 
 #if WITH_EDITOR
@@ -277,9 +342,24 @@ protected:
 	bool bEnableLogging;
 #endif
 
-private:
+	void GenerateUserDefinedDependenciesData(FRigVMExtendedExecuteContext& Context);
+	TArray<const UObject*> GetUserDefinedDependencies(const TArray<const FRigVMMemoryStorageStruct*> InMemory);
+
 	UPROPERTY()
-	FRigVMExtendedExecuteContext ExtendedExecuteContext;
+	TMap<FString, FSoftObjectPath> UserDefinedStructGuidToPathName;
+	UPROPERTY()
+	TMap<FString, FSoftObjectPath> UserDefinedEnumToPathName;
+
+private:
+	UPROPERTY(transient)
+	TSet<TObjectPtr<UObject>> UserDefinedTypesInUse;
+
+#if WITH_EDITORONLY_DATA
+	UPROPERTY()
+	FRigVMExtendedExecuteContext ExtendedExecuteContext_DEPRECATED;
+#endif
+	
+	FRigVMExtendedExecuteContext* RigVMExtendedExecuteContext = nullptr;
 
 protected:
 	
@@ -316,6 +396,9 @@ public:
 	TArray<FName> EventQueueToRun;
 	TMap<FName, int32> EventsToRunOnce;
 
+	/** Returns true if Evaluate_AnyThread is currently executing */
+	bool IsEvaluating() const { return !EventQueueToRun.IsEmpty(); }
+
 	/** Copy the VM from the default object */
 	void InstantiateVMFromCDO();
 	
@@ -325,14 +408,15 @@ public:
 	/** Broadcasts a notification whenever the RigVMHost's memory is initialized. */
 	FRigVMExecutedEvent InitializedEvent;
 
-	/** Broadcasts a notification whenever the RigVMHost is executed / updated. */
+	/** Broadcasts a not
+	 * ification whenever the RigVMHost is executed / updated. */
 	FRigVMExecutedEvent ExecutedEvent;
 
 protected: 
 
 	virtual void InitializeFromCDO();
 
-	static uint32 ComputeAndUpdateCDOHash(URigVMHost* InCDO);
+	virtual void CopyVMMemory(FRigVMExtendedExecuteContext& TargetContext, const FRigVMExtendedExecuteContext& SourceContext);
 
 public:
 	//~ Begin IInterface_AssetUserData Interface
@@ -346,6 +430,14 @@ protected:
 	/** Array of user data stored with the asset */
 	UPROPERTY(EditAnywhere, AdvancedDisplay, Instanced, Category = "Default")
 	TArray<TObjectPtr<UAssetUserData>> AssetUserData;
+
+#if WITH_EDITORONLY_DATA
+	/** Array of user data stored with the asset */
+	UPROPERTY(EditAnywhere, AdvancedDisplay, Instanced, Category = "Default")
+	TArray<TObjectPtr<UAssetUserData>> AssetUserDataEditorOnly;
+#endif
+
+
 
 protected:
 	bool bRequiresInitExecution;
@@ -384,7 +476,9 @@ private:
 
 protected:
 	
+	FRigVMInstructionVisitInfo InstructionVisitInfo;
 	FRigVMDebugInfo DebugInfo;
+	FRigVMProfilingInfo ProfilingInfo;
 	TMap<FString, bool> LoggedMessages;
 	void LogOnce(EMessageSeverity::Type InSeverity, int32 InInstructionIndex, const FString& InMessage);
 	
@@ -392,6 +486,10 @@ public:
 
 	void SetIsInDebugMode(const bool bValue) { bIsInDebugMode = bValue; }
 	bool IsInDebugMode() const { return bIsInDebugMode; }
+	bool IsProfilingEnabled() const
+	{
+		return IsInDebugMode() || VMRuntimeSettings.bEnableProfiling;
+	}
 	
 	/** Adds a breakpoint in the VM at the InstructionIndex for the Node / Subject */
 	void AddBreakpoint(int32 InstructionIndex, UObject* InSubject, uint16 InDepth);
@@ -400,10 +498,21 @@ public:
 	 *  it is applied on the next VM execution */
 	bool ExecuteBreakpointAction(const ERigVMBreakpointAction BreakpointAction);
 
-	const FRigVMBreakpoint& GetHaltedAtBreakpoint() const { return ExtendedExecuteContext.HaltedAtBreakpoint; }
-	void SetBreakpointAction(const ERigVMBreakpointAction& Action) { ExtendedExecuteContext.CurrentBreakpointAction = Action; }
+	const FRigVMBreakpoint& GetHaltedAtBreakpoint() const
+	{
+		return GetDebugInfo().GetHaltedAtBreakpoint();
+	}
+
+	void SetBreakpointAction(const ERigVMBreakpointAction& Action)
+	{
+		GetDebugInfo().SetCurrentBreakpointAction(Action);
+	}
 	
 	FRigVMDebugInfo& GetDebugInfo() { return DebugInfo; }
+	const FRigVMDebugInfo& GetDebugInfo() const { return DebugInfo; }
+
+	FRigVMProfilingInfo& GetProfilingInfo() { return ProfilingInfo; }
+	const FRigVMProfilingInfo& GetProfilingInfo() const { return ProfilingInfo; }
 
 	/** Creates the snapshot VM if required and returns it */
 	URigVM* GetSnapshotVM(bool bCreateIfNeeded = true);
@@ -424,6 +533,7 @@ protected:
 
 	friend class URigVMBlueprint;
 	friend class URigVMBlueprintGeneratedClass;
+	friend class FRigVMCompileSettingsDetails;
 };
 
 class RIGVM_API FRigVMBracketScope

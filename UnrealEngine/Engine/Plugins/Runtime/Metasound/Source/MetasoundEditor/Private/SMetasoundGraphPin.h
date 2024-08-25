@@ -13,6 +13,7 @@
 #include "MetasoundEditorGraphMemberDefaults.h"
 #include "MetasoundEditorGraphNode.h"
 #include "MetasoundFrontendController.h"
+#include "MetasoundPinAudioInspector.h"
 #include "NodeTemplates/MetasoundFrontendNodeTemplateReroute.h"
 #include "SGraphPin.h"
 #include "SGraphNodeKnot.h"
@@ -37,6 +38,8 @@ namespace Metasound
 		class TMetasoundGraphPin : public ParentPinType
 		{
 			TSharedPtr<SMetasoundPinValueInspector> PinInspector;
+
+			TSharedPtr<FMetasoundPinAudioInspector> PinAudioInspector;
 
 		protected:
 			static TWeakPtr<FPinValueInspectorTooltip> OpenPinInspector(UEdGraphPin& InPin, TSharedPtr<SMetasoundPinValueInspector>& OutPinInspector)
@@ -98,6 +101,62 @@ namespace Metasound
 					else
 					{
 						OutPinInspector.Reset();
+					}
+				}
+			}
+
+			static TWeakPtr<FPinValueInspectorTooltip> OpenPinAudioInspector(UEdGraphPin& InPin, TSharedPtr<FMetasoundPinAudioInspector>& OutPinAudioInspector)
+			{
+				TSharedPtr<FMetasoundPinAudioInspector> NewPinAudioInspector = MakeShared<FMetasoundPinAudioInspector>(&InPin);
+				TWeakPtr<FPinValueInspectorTooltip> NewTooltip = FPinValueInspectorTooltip::SummonTooltip(&InPin, NewPinAudioInspector->GetWidget());
+
+				if (NewTooltip.IsValid())
+				{
+					OutPinAudioInspector = NewPinAudioInspector;
+					return NewTooltip;
+				}
+
+				return nullptr;
+			}
+
+			static void UpdatePinAudioInspector(UEdGraphPin& InPin,
+				const bool bIsHoveringPin,
+				TSharedPtr<FMetasoundPinAudioInspector>& OutPinAudioInspector,
+				TWeakPtr<FPinValueInspectorTooltip>& OutInspectorTooltip,
+				TFunctionRef<void(FVector2D&)> InGetTooltipLocation)
+			{
+				const bool bCanInspectPin = FGraphBuilder::CanInspectPin(&InPin);
+
+				if (bIsHoveringPin && bCanInspectPin)
+				{
+					if (!OutPinAudioInspector.IsValid())
+					{
+						OutInspectorTooltip = OpenPinAudioInspector(InPin, OutPinAudioInspector);
+						TSharedPtr<FPinValueInspectorTooltip> NewTooltip = OutInspectorTooltip.Pin();
+						if (NewTooltip.IsValid())
+						{
+							FVector2D TooltipLocation;
+							InGetTooltipLocation(TooltipLocation);
+							NewTooltip->MoveTooltip(TooltipLocation);
+						}
+					}
+				}
+				else if (OutPinAudioInspector.IsValid())
+				{
+					TSharedPtr<FPinValueInspectorTooltip> InspectorTooltip = OutInspectorTooltip.Pin();
+					if (InspectorTooltip.IsValid())
+					{
+						if (InspectorTooltip->TooltipCanClose())
+						{
+							constexpr bool bForceDismiss = true;
+							InspectorTooltip->TryDismissTooltip(bForceDismiss);
+							OutInspectorTooltip.Reset();
+							OutPinAudioInspector.Reset();
+						}
+					}
+					else
+					{
+						OutPinAudioInspector.Reset();
 					}
 				}
 			}
@@ -371,6 +430,32 @@ namespace Metasound
 						{
 							ParentPinType::GetInteractiveTooltipLocation(OutTooltipLocation);
 						});
+
+					// Audio Pin Inspector update
+					if (const UMetasoundEditorSettings* MetasoundSettings = GetDefault<UMetasoundEditorSettings>();
+					    MetasoundSettings && MetasoundSettings->bShowOscilloscopeOnAudioPinMouseOver)
+					{
+						FName DataType;
+						if (GraphPin->Direction == EGPD_Input)
+						{
+							const Metasound::Frontend::FConstInputHandle InputHandle = FGraphBuilder::GetConstInputHandleFromPin(GraphPin);
+							DataType = InputHandle->GetDataType();
+						}
+						else
+						{
+							const Metasound::Frontend::FConstOutputHandle OutputHandle = FGraphBuilder::GetConstOutputHandleFromPin(GraphPin);
+							DataType = OutputHandle->GetDataType();
+						}
+
+						if (DataType == GetMetasoundDataTypeName<FAudioBuffer>())
+						{
+							UpdatePinAudioInspector(*GraphPin, bIsHoveringPin, PinAudioInspector, ParentPinType::ValueInspectorTooltip,
+								[this](FVector2D& OutTooltipLocation)
+								{
+									ParentPinType::GetInteractiveTooltipLocation(OutTooltipLocation);
+								});
+						}
+					}
 				}
 			}
 		};

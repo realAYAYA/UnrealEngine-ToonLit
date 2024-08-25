@@ -35,6 +35,8 @@ namespace UnrealBuildTool.Rules
                 PublicIncludePathModuleNames.Add("GeometryCacheSequencer");
                 DynamicallyLoadedModuleNames.Add("GeometryCacheSequencer");
             }
-        }
-    }
+
+			UnsafeTypeCastWarningLevel = WarningLevel.Error;
+		}
+	}
 }

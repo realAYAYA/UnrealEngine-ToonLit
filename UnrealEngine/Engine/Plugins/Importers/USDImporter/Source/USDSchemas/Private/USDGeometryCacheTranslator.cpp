@@ -9,6 +9,7 @@
 #include "USDAssetUserData.h"
 #include "USDClassesModule.h"
 #include "USDConversionUtils.h"
+#include "USDDrawModeComponent.h"
 #include "USDGroomTranslatorUtils.h"
 #include "USDInfoCache.h"
 #include "USDIntegrationUtils.h"
@@ -37,32 +38,55 @@
 #include "UObject/Package.h"
 
 #include "USDIncludesStart.h"
-	#include "pxr/usd/usd/typed.h"
-	#include "pxr/usd/usdGeom/imageable.h"
-	#include "pxr/usd/usdGeom/mesh.h"
-	#include "pxr/usd/usdGeom/subset.h"
-	#include "pxr/usd/usdShade/materialBindingAPI.h"
+#include "pxr/usd/usd/typed.h"
+#include "pxr/usd/usdGeom/mesh.h"
+#include "pxr/usd/usdGeom/subset.h"
+#include "pxr/usd/usdShade/materialBindingAPI.h"
 #include "USDIncludesEnd.h"
 
 static int32 GUsdGeometryCacheParallelMeshReads = 16;
 static FAutoConsoleVariableRef CVarUsdGeometryCacheParallelMeshReads(
 	TEXT("USD.GeometryCache.Import.ParallelMeshReads"),
 	GUsdGeometryCacheParallelMeshReads,
-	TEXT("Maximum number of mesh to process in parallel"));
+	TEXT("Maximum number of mesh to process in parallel")
+);
 
 static int32 GUsdGeometryCacheParallelFrameReads = 16;
 static FAutoConsoleVariableRef CVarUsdGeometryCacheParallelFrameReads(
 	TEXT("USD.GeometryCache.Import.ParallelFrameReads"),
 	GUsdGeometryCacheParallelFrameReads,
-	TEXT("Maximum number of mesh frames to read in parallel"));
+	TEXT("Maximum number of mesh frames to read in parallel")
+);
+
+static bool GEnableSubdiv = false;
+static FAutoConsoleVariableRef CVarEnableSubdiv(
+	TEXT("USD.GeometryCache.EnableSubdiv"),
+	GEnableSubdiv,
+	TEXT("Whether to subdivide Mesh prim data when parsing GeometryCaches via OpenSubdiv, the same way we subdivide the Mesh data that ends up in "
+		 "StaticMeshes")
+);
 
 namespace UsdGeometryCacheTranslatorImpl
 {
-	bool ProcessGeometryCacheMaterials(const pxr::UsdPrim& UsdPrim, const TArray<UsdUtils::FUsdPrimMaterialAssignmentInfo>& LODIndexToMaterialInfo,
-									   UGeometryCache& GeometryCache, UUsdAssetCache2& AssetCache, FUsdInfoCache* InfoCache, float Time, EObjectFlags Flags)
+	bool ProcessGeometryCacheMaterials(
+		const pxr::UsdPrim& UsdPrim,
+		const TArray<UsdUtils::FUsdPrimMaterialAssignmentInfo>& LODIndexToMaterialInfo,
+		UGeometryCache& GeometryCache,
+		UUsdAssetCache2& AssetCache,
+		FUsdInfoCache* InfoCache,
+		float Time,
+		EObjectFlags Flags,
+		bool bReuseIdenticalAssets
+	)
 	{
 		TMap<const UsdUtils::FUsdPrimMaterialSlot*, UMaterialInterface*> ResolvedMaterials = MeshTranslationImpl::ResolveMaterialAssignmentInfo(
-			UsdPrim, LODIndexToMaterialInfo, AssetCache, *InfoCache, Flags);
+			UsdPrim,
+			LODIndexToMaterialInfo,
+			AssetCache,
+			*InfoCache,
+			Flags,
+			bReuseIdenticalAssets
+		);
 
 		uint32 SlotIndex = 0;
 		bool bMaterialAssignementsHaveChanged = false;
@@ -80,8 +104,14 @@ namespace UsdGeometryCacheTranslatorImpl
 				else
 				{
 					// Warn, but still add a material slot to preserve the materials order
-					UE_LOG(LogUsd, Warning, TEXT("Failed to resolve material '%s' for slot '%d' for geometry cache '%s'"),
-						*Slot.MaterialSource, LODSlotIndex, *UsdToUnreal::ConvertPath(UsdPrim.GetPath()));
+					UE_LOG(
+						LogUsd,
+						Warning,
+						TEXT("Failed to resolve material '%s' for slot '%d' for geometry cache '%s'"),
+						*Slot.MaterialSource,
+						LODSlotIndex,
+						*UsdToUnreal::ConvertPath(UsdPrim.GetPath())
+					);
 				}
 
 				if (!GeometryCache.Materials.IsValidIndex(SlotIndex))
@@ -100,12 +130,21 @@ namespace UsdGeometryCacheTranslatorImpl
 		return bMaterialAssignementsHaveChanged;
 	}
 
-	void LoadMeshDescription(pxr::UsdTyped UsdMesh, FMeshDescription& OutMeshDescription, UsdUtils::FUsdPrimMaterialAssignmentInfo& OutMaterialInfo, const UsdToUnreal::FUsdMeshConversionOptions& Options)
+	void LoadMeshDescription(
+		pxr::UsdTyped UsdMesh,
+		FMeshDescription& OutMeshDescription,
+		UsdUtils::FUsdPrimMaterialAssignmentInfo& OutMaterialInfo,
+		const UsdToUnreal::FUsdMeshConversionOptions& Options
+	)
 	{
 		if (!UsdMesh)
 		{
 			return;
 		}
+
+		// MeshDescriptions are always allocated on the UE allocator as the allocation happens within
+		// another dll, so we need to deallocate them using it too
+		FScopedUnrealAllocs Allocs;
 
 		FMeshDescription TempMeshDescription;
 		UsdUtils::FUsdPrimMaterialAssignmentInfo TempMaterialInfo;
@@ -121,7 +160,12 @@ namespace UsdGeometryCacheTranslatorImpl
 		}
 	}
 
-	void GeometryCacheDataForMeshDescription(FGeometryCacheMeshData& OutMeshData, FMeshDescription& MeshDescription, int32 MaterialIndex, const float SecondsPerFrame);
+	void GeometryCacheDataForMeshDescription(
+		FGeometryCacheMeshData& OutMeshData,
+		FMeshDescription& MeshDescription,
+		int32 MaterialIndex,
+		const float SecondsPerFrame
+	);
 
 	void GetGeometryCacheDataTimeCodeRange(const UE::FUsdStage& Stage, const FString& PrimPath, int32& OutStartFrame, int32& OutEndFrame)
 	{
@@ -173,7 +217,8 @@ namespace UsdGeometryCacheTranslatorImpl
 		FReadMeshDataArgs(const UE::FUsdStage& InStage, const UE::FUsdPrim& InRootPrim)
 			: Stage(InStage)
 			, RootPrim(InRootPrim)
-		{}
+		{
+		}
 
 		UE::FUsdStageWeak Stage;
 		UE::FUsdPrim RootPrim;
@@ -225,13 +270,25 @@ namespace UsdGeometryCacheTranslatorImpl
 		Args.Options.PurposesToLoad = Context->PurposesToLoad;
 		Args.Options.RenderContext = RenderContextToken;
 		Args.Options.MaterialPurpose = MaterialPurposeToken;
-		Args.Options.bMergeIdenticalMaterialSlots = false; // Don't merge because the GeometryCache is processed as unflattened (ie. one track per mesh)
+		Args.Options.bMergeIdenticalMaterialSlots = false;	  // Don't merge because the GeometryCache is processed as unflattened (ie. one track per
+															  // mesh)
+		Args.Options.SubdivisionLevel = GEnableSubdiv ? Context->SubdivisionLevel : 0;
 
 		return Args;
 	}
 
-	bool ReadMeshData(const FReadMeshDataArgs& Args, const UE::FUsdPrim& MeshPrim, int32 MaterialOffset, float Time, FGeometryCacheMeshData& OutMeshData)
+	bool ReadMeshData(
+		const FReadMeshDataArgs& Args,
+		const UE::FUsdPrim& MeshPrim,
+		int32 MaterialOffset,
+		float Time,
+		FGeometryCacheMeshData& OutMeshData
+	)
 	{
+		// MeshDescriptions are always allocated on the UE allocator as the allocation happens within
+		// another dll, so we need to deallocate them using it too
+		FScopedUnrealAllocs Allocs;
+
 		FTransform PropatagedTransform = FTransform::Identity;
 		if (Args.bPropagateTransform)
 		{
@@ -253,7 +310,8 @@ namespace UsdGeometryCacheTranslatorImpl
 			// Compute the normals and tangents for the mesh
 			const float ComparisonThreshold = THRESH_POINTS_ARE_SAME;
 
-			// This function make sure the Polygon Normals Tangents Binormals are computed and also remove degenerated triangle from the render mesh description.
+			// This function make sure the Polygon Normals Tangents Binormals are computed and also remove degenerated triangle from the render mesh
+			// description.
 			FStaticMeshOperations::ComputeTriangleTangentsAndNormals(MeshDescription, ComparisonThreshold);
 
 			// Compute any missing normals or tangents.
@@ -271,10 +329,17 @@ namespace UsdGeometryCacheTranslatorImpl
 		return false;
 	}
 
-	UGeometryCacheTrackUsd* CreateUsdStreamTrack(UGeometryCache* GeometryCache, const FReadMeshDataArgs& Args, const FString& PrimPath, int32 MaterialOffset)
+	UGeometryCacheTrackUsd* CreateUsdStreamTrack(
+		UGeometryCache* GeometryCache,
+		const FReadMeshDataArgs& Args,
+		const FString& PrimPath,
+		int32 MaterialOffset
+	)
 	{
 		// Create and configure a new USDTrack to be added to the GeometryCache
 		UGeometryCacheTrackUsd* UsdTrack = NewObject<UGeometryCacheTrackUsd>(GeometryCache);
+		UsdTrack->MeshConversionOptions = Args.Options;	   // Also pass along the options we'll use for mesh conversion so that we can properly hash
+														   // the prim
 		UsdTrack->Initialize(
 			Args.Stage,
 			PrimPath,
@@ -311,7 +376,7 @@ namespace UsdGeometryCacheTranslatorImpl
 		FString ObjectName = IUsdClassesModule::SanitizeObjectName(FPaths::GetBaseFilename(PrimPath));
 
 		FName CodecName = MakeUniqueObjectName(GeometryCache, UGeometryCacheCodecV1::StaticClass(), FName(ObjectName + FString(TEXT("_Codec"))));
-		UGeometryCacheCodecV1* Codec = NewObject<UGeometryCacheCodecV1>(GeometryCache, CodecName , RF_Public);
+		UGeometryCacheCodecV1* Codec = NewObject<UGeometryCacheCodecV1>(GeometryCache, CodecName, RF_Public);
 
 		// Compression settings for good quality
 		const float VertexQuantizationPrecision = 0.0005f;
@@ -330,9 +395,18 @@ namespace UsdGeometryCacheTranslatorImpl
 		return StreamableTrack;
 	}
 
-	UGeometryCache* CreateGeometryCache(const FString& RootPrimPath, const FMeshDescription& MeshDescription, const TArray<UE::FSdfPath>& MeshPaths, const TArray<int32>& MaterialOffsets,
-										TSharedRef<FUsdSchemaTranslationContext> Context, bool& bOutIsNew, float& StartOffsetTime)
+	UGeometryCache* CreateGeometryCache(
+		const UE::FUsdPrim& RootPrim,
+		const FMeshDescription& MeshDescription,
+		const TArray<UE::FSdfPath>& MeshPaths,
+		const TArray<int32>& MaterialOffsets,
+		TSharedRef<FUsdSchemaTranslationContext> Context,
+		bool& bOutIsNew,
+		float& StartOffsetTime
+	)
 	{
+		FString RootPrimPath = RootPrim.GetPrimPath().GetString();
+
 		// Compute the asset hash from the merged mesh description
 		FSHA1 SHA1;
 		FSHAHash MeshHash = FStaticMeshOperations::ComputeSHAHash(MeshDescription);
@@ -355,22 +429,32 @@ namespace UsdGeometryCacheTranslatorImpl
 
 		FSHAHash GeoCacheHash;
 		SHA1.GetHash(&GeoCacheHash.Hash[0]);
-		UGeometryCache* GeometryCache = Cast<UGeometryCache>(Context->AssetCache->GetCachedAsset(GeoCacheHash.ToString()));
+		const FString PrefixedGeoCacheHash = UsdUtils::GetAssetHashPrefix(RootPrim, Context->bReuseIdenticalAssets) + GeoCacheHash.ToString();
+
+		UGeometryCache* GeometryCache = Cast<UGeometryCache>(Context->AssetCache->GetCachedAsset(PrefixedGeoCacheHash));
 
 		if (!GeometryCache)
 		{
 			bOutIsNew = true;
 
-			const FName AssetName = MakeUniqueObjectName(GetTransientPackage(), UGeometryCache::StaticClass(), *IUsdClassesModule::SanitizeObjectName(FPaths::GetBaseFilename(RootPrimPath)));
-			GeometryCache = NewObject<UGeometryCache>(GetTransientPackage(), AssetName, Context->ObjectFlags | EObjectFlags::RF_Public | RF_Transient);
+			const FName AssetName = MakeUniqueObjectName(
+				GetTransientPackage(),
+				UGeometryCache::StaticClass(),
+				*IUsdClassesModule::SanitizeObjectName(FPaths::GetBaseFilename(RootPrimPath))
+			);
+			GeometryCache = NewObject<UGeometryCache>(
+				GetTransientPackage(),
+				AssetName,
+				Context->ObjectFlags | EObjectFlags::RF_Public | RF_Transient
+			);
 
-			TOptional<FReadMeshDataArgs> Args;
+			FReadMeshDataArgs Args(GetReadMeshDataArgs(Context, RootPrimPath));
 			if (!Context->bIsImporting)
 			{
-				Args = GetReadMeshDataArgs(Context, RootPrimPath);
 				// StartOffsetTime is the offset applied to the GeometryCache section on the sequencer track, so not relevant when importing
-				StartOffsetTime = static_cast<float>(Args->StartFrame) / Args->FramesPerSecond;
+				StartOffsetTime = static_cast<float>(Args.StartFrame) / Args.FramesPerSecond;
 			}
+			GeometryCache->SetFrameStartEnd(Args.StartFrame, Args.EndFrame);
 
 			// Create a track for each mesh to be processed and add it to the GeometryCache
 			for (int32 Index = 0; Index < MeshPaths.Num(); ++Index)
@@ -379,7 +463,7 @@ namespace UsdGeometryCacheTranslatorImpl
 				UGeometryCacheTrack* Track = nullptr;
 				if (!Context->bIsImporting)
 				{
-					Track = CreateUsdStreamTrack(GeometryCache, *Args, PrimPath, MaterialOffsets[Index]);
+					Track = CreateUsdStreamTrack(GeometryCache, Args, PrimPath, MaterialOffsets[Index]);
 				}
 				else
 				{
@@ -397,7 +481,7 @@ namespace UsdGeometryCacheTranslatorImpl
 				Track->SetMatrixSamples(Mats, MatTimes);
 			}
 
-			Context->AssetCache->CacheAsset(GeoCacheHash.ToString(), GeometryCache);
+			Context->AssetCache->CacheAsset(PrefixedGeoCacheHash, GeometryCache);
 		}
 		else
 		{
@@ -407,7 +491,13 @@ namespace UsdGeometryCacheTranslatorImpl
 		return GeometryCache;
 	}
 
-	void FillGeometryCacheTracks(const FString& RootPrimPath, const TArray<UE::FSdfPath>& MeshPrims, const TArray<int32>& MaterialOffsets, TSharedRef<FUsdSchemaTranslationContext> Context, UGeometryCache* GeometryCache)
+	void FillGeometryCacheTracks(
+		const FString& RootPrimPath,
+		const TArray<UE::FSdfPath>& MeshPrims,
+		const TArray<int32>& MaterialOffsets,
+		TSharedRef<FUsdSchemaTranslationContext> Context,
+		UGeometryCache* GeometryCache
+	)
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(UsdGeometryCacheTranslatorImpl::FillGeometryCacheTracks);
 
@@ -421,7 +511,8 @@ namespace UsdGeometryCacheTranslatorImpl
 			{
 				UGeometryCacheTrackStreamable* StreamableTrack = Cast<UGeometryCacheTrackStreamable>(GeometryCache->Tracks[Index]);
 				UE::FUsdPrim MeshPrim = Args.Stage.GetPrimAtPath(MeshPrims[Index]);
-				const bool bConstantTopology = UsdUtils::GetMeshTopologyVariance(pxr::UsdGeomMesh(MeshPrim)) != UsdUtils::EMeshTopologyVariance::Heterogenous;
+				const bool bConstantTopology = UsdUtils::GetMeshTopologyVariance(pxr::UsdGeomMesh(MeshPrim))
+											   != UsdUtils::EMeshTopologyVariance::Heterogenous;
 
 				for (int32 FrameIndex = Args.StartFrame; FrameIndex < Args.EndFrame; ++FrameIndex)
 				{
@@ -464,59 +555,75 @@ namespace UsdGeometryCacheTranslatorImpl
 			}
 
 			// Parallel mesh reads: Meshes can be read independently of each other
-			ParallelFor(NumMeshThreads, [&Args, &MeshPrims, &MaterialOffsets, &SyncEvents, NumMeshThreads, NumFrameThreads, GeometryCache, NumMeshes](int32 MeshThreadIndex)
-			{
-				int32 MeshIndex = MeshThreadIndex;
-
-				while (MeshIndex < NumMeshes)
+			ParallelFor(
+				NumMeshThreads,
+				[&Args, &MeshPrims, &MaterialOffsets, &SyncEvents, NumMeshThreads, NumFrameThreads, GeometryCache, NumMeshes](int32 MeshThreadIndex)
 				{
-					UE::FUsdPrim MeshPrim = Args.Stage.GetPrimAtPath(MeshPrims[MeshIndex]);
-					int32 MaterialOffset = MaterialOffsets[MeshIndex];
-					UGeometryCacheTrackStreamable* StreamableTrack = Cast<UGeometryCacheTrackStreamable>(GeometryCache->Tracks[MeshIndex]);
-					FEvent* FrameWrittenEvent = SyncEvents[MeshThreadIndex];
-					const bool bConstantTopology = UsdUtils::GetMeshTopologyVariance(pxr::UsdGeomMesh(MeshPrim)) != UsdUtils::EMeshTopologyVariance::Heterogenous;
+					int32 MeshIndex = MeshThreadIndex;
 
-					std::atomic<int32> WriteFrameIndex = Args.StartFrame;
-					FCriticalSection Mutex;
-
-					// Parallel frame read: frame data can be read concurrently but have to be processed in order for AddMeshSample
-					ParallelFor(NumFrameThreads, [&Args, &MeshPrim, &FrameWrittenEvent, &WriteFrameIndex, &Mutex, NumFrameThreads, MaterialOffset, StreamableTrack, bConstantTopology](int32 FrameThreadIndex)
+					while (MeshIndex < NumMeshes)
 					{
-						int32 FrameIndex = Args.StartFrame + FrameThreadIndex;
+						UE::FUsdPrim MeshPrim = Args.Stage.GetPrimAtPath(MeshPrims[MeshIndex]);
+						int32 MaterialOffset = MaterialOffsets[MeshIndex];
+						UGeometryCacheTrackStreamable* StreamableTrack = Cast<UGeometryCacheTrackStreamable>(GeometryCache->Tracks[MeshIndex]);
+						FEvent* FrameWrittenEvent = SyncEvents[MeshThreadIndex];
+						const bool bConstantTopology = UsdUtils::GetMeshTopologyVariance(pxr::UsdGeomMesh(MeshPrim))
+													   != UsdUtils::EMeshTopologyVariance::Heterogenous;
 
-						while (FrameIndex < Args.EndFrame)
-						{
-							// Read frame data into memory
-							FGeometryCacheMeshData MeshData;
-							ReadMeshData(Args, MeshPrim, MaterialOffset, FrameIndex, MeshData);
+						std::atomic<int32> WriteFrameIndex = Args.StartFrame;
+						FCriticalSection Mutex;
 
-							// Wait until it's our turn to process this frame.
-							while (WriteFrameIndex < FrameIndex)
+						// Parallel frame read: frame data can be read concurrently but have to be processed in order for AddMeshSample
+						ParallelFor(
+							NumFrameThreads,
+							[&Args,
+							 &MeshPrim,
+							 &FrameWrittenEvent,
+							 &WriteFrameIndex,
+							 &Mutex,
+							 NumFrameThreads,
+							 MaterialOffset,
+							 StreamableTrack,
+							 bConstantTopology](int32 FrameThreadIndex)
 							{
-								const uint32 WaitTimeInMs = 10;
-								FrameWrittenEvent->Wait(WaitTimeInMs);
+								int32 FrameIndex = Args.StartFrame + FrameThreadIndex;
+
+								while (FrameIndex < Args.EndFrame)
+								{
+									// Read frame data into memory
+									FGeometryCacheMeshData MeshData;
+									ReadMeshData(Args, MeshPrim, MaterialOffset, FrameIndex, MeshData);
+
+									// Wait until it's our turn to process this frame.
+									while (WriteFrameIndex < FrameIndex)
+									{
+										const uint32 WaitTimeInMs = 10;
+										FrameWrittenEvent->Wait(WaitTimeInMs);
+									}
+
+									{
+										FScopeLock WriteLock(&Mutex);
+
+										// Add it to the track
+										StreamableTrack
+											->AddMeshSample(MeshData, (FrameIndex - Args.StartFrame) / Args.FramesPerSecond, bConstantTopology);
+
+										// Mark the next frame index as ready for processing.
+										++WriteFrameIndex;
+
+										FrameWrittenEvent->Trigger();
+									}
+
+									// Get new frame index to read for next run cycle
+									FrameIndex += NumFrameThreads;
+								};
 							}
+						);
 
-							{
-								FScopeLock WriteLock(&Mutex);
-
-								// Add it to the track
-								StreamableTrack->AddMeshSample(MeshData, (FrameIndex - Args.StartFrame) / Args.FramesPerSecond, bConstantTopology);
-
-								// Mark the next frame index as ready for processing.
-								++WriteFrameIndex;
-
-								FrameWrittenEvent->Trigger();
-							}
-
-							// Get new frame index to read for next run cycle
-							FrameIndex += NumFrameThreads;
-						};
-					});
-
-					MeshIndex += NumMeshThreads;
+						MeshIndex += NumMeshThreads;
+					}
 				}
-			});
+			);
 
 			for (FEvent* SyncEvent : SyncEvents)
 			{
@@ -537,7 +644,12 @@ namespace UsdGeometryCacheTranslatorImpl
 	}
 
 	// #ueent_todo: Replace MeshDescription with RawMesh and also make it work with StaticMesh
-	void GeometryCacheDataForMeshDescription(FGeometryCacheMeshData& OutMeshData, FMeshDescription& MeshDescription, int32 MaterialIndex, float FramesPerSecond)
+	void GeometryCacheDataForMeshDescription(
+		FGeometryCacheMeshData& OutMeshData,
+		FMeshDescription& MeshDescription,
+		int32 MaterialIndex,
+		float FramesPerSecond
+	)
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(GeometryCacheDataForMeshDescription);
 
@@ -559,14 +671,16 @@ namespace UsdGeometryCacheTranslatorImpl
 
 		FStaticMeshAttributes MeshDescriptionAttributes(MeshDescription);
 
-		TVertexAttributesConstRef< FVector3f > VertexPositions = MeshDescriptionAttributes.GetVertexPositions();
-		TVertexInstanceAttributesConstRef< FVector3f > VertexInstanceNormals = MeshDescriptionAttributes.GetVertexInstanceNormals();
-		TVertexInstanceAttributesConstRef< FVector3f > VertexInstanceTangents = MeshDescriptionAttributes.GetVertexInstanceTangents();
-		TVertexInstanceAttributesConstRef< float > VertexInstanceBinormalSigns = MeshDescriptionAttributes.GetVertexInstanceBinormalSigns();
-		TVertexInstanceAttributesConstRef< FVector4f > VertexInstanceColors = MeshDescriptionAttributes.GetVertexInstanceColors();
-		TVertexInstanceAttributesConstRef< FVector2f > VertexInstanceUVs = MeshDescriptionAttributes.GetVertexInstanceUVs();
+		TVertexAttributesConstRef<FVector3f> VertexPositions = MeshDescriptionAttributes.GetVertexPositions();
+		TVertexInstanceAttributesConstRef<FVector3f> VertexInstanceNormals = MeshDescriptionAttributes.GetVertexInstanceNormals();
+		TVertexInstanceAttributesConstRef<FVector3f> VertexInstanceTangents = MeshDescriptionAttributes.GetVertexInstanceTangents();
+		TVertexInstanceAttributesConstRef<float> VertexInstanceBinormalSigns = MeshDescriptionAttributes.GetVertexInstanceBinormalSigns();
+		TVertexInstanceAttributesConstRef<FVector4f> VertexInstanceColors = MeshDescriptionAttributes.GetVertexInstanceColors();
+		TVertexInstanceAttributesConstRef<FVector2f> VertexInstanceUVs = MeshDescriptionAttributes.GetVertexInstanceUVs();
 
-		TVertexInstanceAttributesConstRef< FVector3f > VertexInstanceVelocities = MeshDescription.VertexInstanceAttributes().GetAttributesRef<FVector3f>(MeshAttribute::VertexInstance::Velocity);
+		TVertexInstanceAttributesConstRef<FVector3f>
+			VertexInstanceVelocities = MeshDescription.VertexInstanceAttributes().GetAttributesRef<FVector3f>(MeshAttribute::VertexInstance::Velocity
+			);
 
 		const bool bHasVelocities = VertexInstanceVelocities.IsValid();
 		OutMeshData.VertexInfo.bHasMotionVectors = bHasVelocities;
@@ -627,7 +741,7 @@ namespace UsdGeometryCacheTranslatorImpl
 						if (bHasVelocities)
 						{
 							FVector3f MotionVector = VertexInstanceVelocities[VertexInstanceID];
-							MotionVector *= (-1.f / FramesPerSecond); // Velocity is per seconds but we need per frame for motion vectors
+							MotionVector *= (-1.f / FramesPerSecond);	 // Velocity is per seconds but we need per frame for motion vectors
 
 							OutMeshData.MotionVectors.Add(MotionVector);
 						}
@@ -648,7 +762,7 @@ namespace UsdGeometryCacheTranslatorImpl
 class FGeometryCacheCreateAssetsTaskChain : public FBuildStaticMeshTaskChain
 {
 public:
-	explicit FGeometryCacheCreateAssetsTaskChain(const TSharedRef< FUsdSchemaTranslationContext >& InContext, const UE::FSdfPath& InPrimPath)
+	explicit FGeometryCacheCreateAssetsTaskChain(const TSharedRef<FUsdSchemaTranslationContext>& InContext, const UE::FSdfPath& InPrimPath)
 		: FBuildStaticMeshTaskChain(InContext, InPrimPath)
 	{
 		SetupTasks();
@@ -665,51 +779,54 @@ void FGeometryCacheCreateAssetsTaskChain::SetupTasks()
 {
 	// Create the mesh description (Async)
 	Do(ESchemaTranslationLaunchPolicy::Async,
-		[this]() -> bool
-		{
-			FScopedUnrealAllocs UnrealAllocs;
+	   [this]() -> bool
+	   {
+		   FScopedUnrealAllocs UnrealAllocs;
 
-			pxr::TfToken RenderContextToken = pxr::UsdShadeTokens->universalRenderContext;
-			if (!Context->RenderContext.IsNone())
-			{
-				RenderContextToken = UnrealToUsd::ConvertToken(*Context->RenderContext.ToString()).Get();
-			}
+		   pxr::TfToken RenderContextToken = pxr::UsdShadeTokens->universalRenderContext;
+		   if (!Context->RenderContext.IsNone())
+		   {
+			   RenderContextToken = UnrealToUsd::ConvertToken(*Context->RenderContext.ToString()).Get();
+		   }
 
-			pxr::TfToken MaterialPurposeToken = pxr::UsdShadeTokens->allPurpose;
-			if (!Context->MaterialPurpose.IsNone())
-			{
-				MaterialPurposeToken = UnrealToUsd::ConvertToken(*Context->MaterialPurpose.ToString()).Get();
-			}
+		   pxr::TfToken MaterialPurposeToken = pxr::UsdShadeTokens->allPurpose;
+		   if (!Context->MaterialPurpose.IsNone())
+		   {
+			   MaterialPurposeToken = UnrealToUsd::ConvertToken(*Context->MaterialPurpose.ToString()).Get();
+		   }
 
-			UsdToUnreal::FUsdMeshConversionOptions Options;
-			Options.TimeCode = UsdUtils::GetEarliestTimeCode();
-			Options.PurposesToLoad = Context->PurposesToLoad;
-			Options.RenderContext = RenderContextToken;
-			Options.MaterialPurpose = MaterialPurposeToken;
-			Options.bMergeIdenticalMaterialSlots = false; // Don't merge because the GeometryCache is processed as unflattened (ie. one track per mesh)
+		   UsdToUnreal::FUsdMeshConversionOptions Options;
+		   Options.TimeCode = UsdUtils::GetEarliestTimeCode();
+		   Options.PurposesToLoad = Context->PurposesToLoad;
+		   Options.RenderContext = RenderContextToken;
+		   Options.MaterialPurpose = MaterialPurposeToken;
+		   Options.bMergeIdenticalMaterialSlots = false;	// Don't merge because the GeometryCache is processed as unflattened (ie. one track per
+															// mesh)
+		   Options.SubdivisionLevel = GEnableSubdiv ? Context->SubdivisionLevel : 0;
 
-			// GeometryCache has only one LOD so add just one MeshDescription and MaterialAssignmentInfo
-			FMeshDescription& AddedMeshDescription = LODIndexToMeshDescription.Emplace_GetRef();
-			UsdUtils::FUsdPrimMaterialAssignmentInfo& AssignmentInfo = LODIndexToMaterialInfo.Emplace_GetRef();
+		   // GeometryCache has only one LOD so add just one MeshDescription and MaterialAssignmentInfo
+		   FMeshDescription& AddedMeshDescription = LODIndexToMeshDescription.Emplace_GetRef();
+		   UsdUtils::FUsdPrimMaterialAssignmentInfo& AssignmentInfo = LODIndexToMaterialInfo.Emplace_GetRef();
 
-			// The collapsed mesh description here will be used to cache the GeometryCache asset, but not to fill it since its content will be unflattened
-			// Bake the prim's transform into the mesh data
-			const bool bSkipRootPrimTransformAndVis = false;
-			UsdToUnreal::ConvertGeomMeshHierarchy(GetPrim(), AddedMeshDescription, AssignmentInfo, Options, bSkipRootPrimTransformAndVis);
+		   // The collapsed mesh description here will be used to cache the GeometryCache asset, but not to fill it since its content will be
+		   // unflattened Bake the prim's transform into the mesh data
+		   const bool bSkipRootPrimTransformAndVis = false;
+		   UsdToUnreal::ConvertGeomMeshHierarchy(GetPrim(), AddedMeshDescription, AssignmentInfo, Options, bSkipRootPrimTransformAndVis);
 
-			// If we have at least one valid LOD, we should proceed to the next step
-			for (const FMeshDescription& MeshDescription : LODIndexToMeshDescription)
-			{
-				if (!MeshDescription.IsEmpty())
-				{
-					return true;
-				}
-			}
-			return false;
-		});
+		   // If we have at least one valid LOD, we should proceed to the next step
+		   for (const FMeshDescription& MeshDescription : LODIndexToMeshDescription)
+		   {
+			   if (!MeshDescription.IsEmpty())
+			   {
+				   return true;
+			   }
+		   }
+		   return false;
+	   });
 
 	// Create the GeometryCache (Main thread)
-	Then(ESchemaTranslationLaunchPolicy::Sync,
+	Then(
+		ESchemaTranslationLaunchPolicy::Sync,
 		[this]() -> bool
 		{
 			{
@@ -756,25 +873,43 @@ void FGeometryCacheCreateAssetsTaskChain::SetupTasks()
 
 			bool bIsNew = true;
 			float StartTimeOffset = 0.0f;
-			const FString PrimPathString = PrimPath.GetString();
-			GeometryCache.Reset(UsdGeometryCacheTranslatorImpl::CreateGeometryCache(PrimPathString, LODIndexToMeshDescription[0], MeshPrimPaths, MaterialOffsets, Context, bIsNew, StartTimeOffset));
+			GeometryCache.Reset(UsdGeometryCacheTranslatorImpl::CreateGeometryCache(
+				GetPrim(),
+				LODIndexToMeshDescription[0],
+				MeshPrimPaths,
+				MaterialOffsets,
+				Context,
+				bIsNew,
+				StartTimeOffset
+			));
 
 			if (GeometryCache)
 			{
-				UUsdMeshAssetUserData* UserData = GeometryCache->GetAssetUserData<UUsdMeshAssetUserData>();
-				if (!UserData)
+				if (UUsdGeometryCacheAssetUserData* UserData = UsdUtils::GetOrCreateAssetUserData<UUsdGeometryCacheAssetUserData>(GeometryCache.Get()
+					))
 				{
-					UserData = NewObject<UUsdMeshAssetUserData>(GeometryCache.Get(), TEXT("UUSDAssetUserData"));
 					UserData->PrimvarToUVIndex = LODIndexToMaterialInfo[0].PrimvarToUVIndex;	// We use the same primvar mapping for all LODs
-					GeometryCache->AddAssetUserData(UserData);
+					UserData->LayerStartOffsetSeconds = StartTimeOffset;
+					UserData->PrimPaths.AddUnique(PrimPath.GetString());
 
-					UUsdAnimSequenceAssetUserData* AnimUserData = NewObject<UUsdAnimSequenceAssetUserData>(GeometryCache.Get(), TEXT("UsdAnimUserData"));
-					AnimUserData->LayerStartOffsetSeconds = StartTimeOffset;
-					GeometryCache->AddAssetUserData(AnimUserData);
+					if (Context->MetadataOptions.bCollectMetadata)
+					{
+						UsdToUnreal::ConvertMetadata(
+							GetPrim(),
+							UserData,
+							Context->MetadataOptions.BlockedPrefixFilters,
+							Context->MetadataOptions.bInvertFilters,
+							Context->MetadataOptions.bCollectFromEntireSubtrees
+						);
+					}
+					else
+					{
+						// Strip the metadata from this prim, so that if we uncheck "Collect Metadata" it actually disappears on the AssetUserData
+						UserData->StageIdentifierToMetadata.Remove(GetPrim().GetStage().GetRootLayer().GetIdentifier());
+					}
+
+					MeshTranslationImpl::RecordSourcePrimsForMaterialSlots(LODIndexToMaterialInfo, UserData);
 				}
-				UserData->PrimPaths.AddUnique(PrimPath.GetString());
-
-				MeshTranslationImpl::RecordSourcePrimsForMaterialSlots(LODIndexToMaterialInfo, UserData);
 
 				if (bIsNew)
 				{
@@ -788,7 +923,8 @@ void FGeometryCacheCreateAssetsTaskChain::SetupTasks()
 						*Context->AssetCache.Get(),
 						Context->InfoCache.Get(),
 						Context->Time,
-						Context->ObjectFlags
+						Context->ObjectFlags,
+						Context->bReuseIdenticalAssets
 					);
 				}
 
@@ -801,25 +937,36 @@ void FGeometryCacheCreateAssetsTaskChain::SetupTasks()
 
 			// Continue with the import steps
 			return Context->bIsImporting && GeometryCache && bIsNew;
-		});
+		}
+	);
 
 	// Fill the GeometryCache tracks with the frame data
-	// It is done Sync to avoid starvation issue because FillGeometryCacheTracks is highly parallelized based on the number of meshes and frames to read
-	// Filling GeometryCaches in parallel could cause deadlocks
-	Then(ESchemaTranslationLaunchPolicy::Sync,
+	// It is done Sync to avoid starvation issue because FillGeometryCacheTracks is highly parallelized based on the number of meshes and frames to
+	// read Filling GeometryCaches in parallel could cause deadlocks
+	Then(
+		ESchemaTranslationLaunchPolicy::Sync,
 		[this]() -> bool
 		{
-			UsdGeometryCacheTranslatorImpl::FillGeometryCacheTracks(PrimPath.GetString(), MeshPrimPaths, MaterialOffsets, Context, GeometryCache.Get());
+			UsdGeometryCacheTranslatorImpl::FillGeometryCacheTracks(
+				PrimPath.GetString(),
+				MeshPrimPaths,
+				MaterialOffsets,
+				Context,
+				GeometryCache.Get()
+			);
 			return true;
-		});
+		}
+	);
 
 	// Finalize the GeometryCache (Main Thread)
-	Then(ESchemaTranslationLaunchPolicy::Sync,
+	Then(
+		ESchemaTranslationLaunchPolicy::Sync,
 		[this]() -> bool
 		{
 			UsdGeometryCacheTranslatorImpl::FinalizeGeometryCache(GeometryCache.Get());
 			return false;
-		});
+		}
+	);
 }
 
 void FUsdGeometryCacheTranslator::CreateAssets()
@@ -832,6 +979,19 @@ void FUsdGeometryCacheTranslator::CreateAssets()
 		return;
 	}
 
+	// Don't bother generating assets if we're going to just draw some bounds for this prim instead
+	EUsdDrawMode DrawMode = UsdUtils::GetAppliedDrawMode(GetPrim());
+	if (DrawMode != EUsdDrawMode::Default)
+	{
+		CreateAlternativeDrawModeAssets(DrawMode);
+		return;
+	}
+
+	if (ShouldSkipSkinnablePrim())
+	{
+		return;
+	}
+
 	// Create the GeometryCache TaskChain
 	TSharedRef<FGeometryCacheCreateAssetsTaskChain> AssetsTaskChain = MakeShared<FGeometryCacheCreateAssetsTaskChain>(Context, PrimPath);
 
@@ -840,23 +1000,32 @@ void FUsdGeometryCacheTranslator::CreateAssets()
 
 USceneComponent* FUsdGeometryCacheTranslator::CreateComponents()
 {
-	TOptional<TSubclassOf<USceneComponent>> ComponentType;
-
 	if (!IsPotentialGeometryCacheRoot())
 	{
 		return Super::CreateComponents();
 	}
 
-	if (!Context->bIsImporting)
+	USceneComponent* SceneComponent = nullptr;
+
+	EUsdDrawMode DrawMode = UsdUtils::GetAppliedDrawMode(GetPrim());
+	if (DrawMode == EUsdDrawMode::Default)
 	{
-		ComponentType = UGeometryCacheUsdComponent::StaticClass();
+		const bool bCheckForComponent = true;
+		if (ShouldSkipSkinnablePrim(bCheckForComponent))
+		{
+			return nullptr;
+		}
+
+		SceneComponent = CreateComponentsEx(
+			{Context->bIsImporting ? UGeometryCacheComponent::StaticClass() : UGeometryCacheUsdComponent::StaticClass()},
+			{}
+		);
 	}
 	else
 	{
-		ComponentType = UGeometryCacheComponent::StaticClass();
+		SceneComponent = CreateAlternativeDrawModeComponents(DrawMode);
 	}
 
-	USceneComponent* SceneComponent = CreateComponentsEx(ComponentType, {});
 	UpdateComponents(SceneComponent);
 
 	if (UGeometryCacheComponent* Component = Cast<UGeometryCacheComponent>(SceneComponent))
@@ -878,7 +1047,8 @@ USceneComponent* FUsdGeometryCacheTranslator::CreateComponents()
 					Context->ObjectFlags,
 					bAllowInterpretingLODs,
 					Context->RenderContext,
-					Context->MaterialPurpose
+					Context->MaterialPurpose,
+					Context->bReuseIdenticalAssets
 				);
 
 				// Check if the prim has the GroomBinding schema and setup the component and assets necessary to bind the groom to the GeometryCache
@@ -888,14 +1058,17 @@ USceneComponent* FUsdGeometryCacheTranslator::CreateComponents()
 						GetPrim(),
 						*Context->AssetCache,
 						*Context->InfoCache,
-						Context->ObjectFlags
+						Context->ObjectFlags,
+						Context->bReuseIdenticalAssets
 					);
 
 					// For the groom binding to work, the GroomComponent must be a child of the SceneComponent
 					// so the Context ParentComponent is set to the SceneComponent temporarily
-					TGuardValue< USceneComponent* > ParentComponentGuard{Context->ParentComponent, SceneComponent};
+					TGuardValue<USceneComponent*> ParentComponentGuard{Context->ParentComponent, SceneComponent};
 					const bool bNeedsActor = false;
-					UGroomComponent* GroomComponent = Cast< UGroomComponent >(CreateComponentsEx(TSubclassOf< USceneComponent >(UGroomComponent::StaticClass()), bNeedsActor));
+					UGroomComponent* GroomComponent = Cast<UGroomComponent>(
+						CreateComponentsEx(TSubclassOf<USceneComponent>(UGroomComponent::StaticClass()), bNeedsActor)
+					);
 					if (GroomComponent)
 					{
 						UpdateComponents(SceneComponent);
@@ -910,7 +1083,15 @@ USceneComponent* FUsdGeometryCacheTranslator::CreateComponents()
 
 void FUsdGeometryCacheTranslator::UpdateComponents(USceneComponent* SceneComponent)
 {
-	if (!IsPotentialGeometryCacheRoot())
+	UGeometryCacheComponent* GeometryCacheComponent = Cast<UGeometryCacheComponent>(SceneComponent);
+
+	const bool bCheckForComponent = true;
+	if (!Cast<UUsdDrawModeComponent>(SceneComponent) && ShouldSkipSkinnablePrim(bCheckForComponent))
+	{
+		return;
+	}
+
+	if (!GeometryCacheComponent || !IsPotentialGeometryCacheRoot())
 	{
 		Super::UpdateComponents(SceneComponent);
 		return;
@@ -922,7 +1103,7 @@ void FUsdGeometryCacheTranslator::UpdateComponents(USceneComponent* SceneCompone
 	}
 
 	// Set the initial GeometryCache on the GeometryCacheComponent
-	if (UGeometryCacheComponent* GeometryCacheComponent = Cast<UGeometryCacheComponent>(SceneComponent))
+	if (GeometryCacheComponent)
 	{
 		UGeometryCache* GeometryCache = nullptr;
 		if (Context->InfoCache)
@@ -973,7 +1154,7 @@ void FUsdGeometryCacheTranslator::UpdateComponents(USceneComponent* SceneCompone
 			float LayerStartOffsetSeconds = 0.0f;
 			if (GeometryCache)
 			{
-				if (UUsdAnimSequenceAssetUserData* UserData = GeometryCache->GetAssetUserData<UUsdAnimSequenceAssetUserData>())
+				if (UUsdGeometryCacheAssetUserData* UserData = GeometryCache->GetAssetUserData<UUsdGeometryCacheAssetUserData>())
 				{
 					LayerStartOffsetSeconds = UserData->LayerStartOffsetSeconds;
 				}
@@ -1020,12 +1201,29 @@ void FUsdGeometryCacheTranslator::UpdateComponents(USceneComponent* SceneCompone
 
 bool FUsdGeometryCacheTranslator::CollapsesChildren(ECollapsingType CollapsingType) const
 {
-	return IsPotentialGeometryCacheRoot() ? true : Super::CollapsesChildren(CollapsingType);
+	// If we have a custom draw mode, it means we should draw bounds/cards/etc. instead
+	// of our entire subtree, which is basically the same thing as collapsing
+	if (IsPotentialGeometryCacheRoot() || UsdUtils::GetAppliedDrawMode(GetPrim()) != EUsdDrawMode::Default)
+	{
+		return true;
+	}
+
+	if (ShouldSkipSkinnablePrim())
+	{
+		return false;
+	}
+
+	return Super::CollapsesChildren(CollapsingType);
 }
 
 bool FUsdGeometryCacheTranslator::CanBeCollapsed(ECollapsingType CollapsingType) const
 {
-	return IsPotentialGeometryCacheRoot() ? false : Super::CanBeCollapsed(CollapsingType);
+	if (IsPotentialGeometryCacheRoot() || ShouldSkipSkinnablePrim())
+	{
+		return false;
+	}
+
+	return Super::CanBeCollapsed(CollapsingType);
 }
 
 TSet<UE::FSdfPath> FUsdGeometryCacheTranslator::CollectAuxiliaryPrims() const
@@ -1038,6 +1236,11 @@ TSet<UE::FSdfPath> FUsdGeometryCacheTranslator::CollectAuxiliaryPrims() const
 	if (!Context->bIsBuildingInfoCache)
 	{
 		return Context->InfoCache->GetAuxiliaryPrims(PrimPath);
+	}
+
+	if (ShouldSkipSkinnablePrim())
+	{
+		return {};
 	}
 
 	TSet<UE::FSdfPath> AuxPrims;
@@ -1061,4 +1264,4 @@ bool FUsdGeometryCacheTranslator::IsPotentialGeometryCacheRoot() const
 	return Context->InfoCache->IsPotentialGeometryCacheRoot(PrimPath);
 }
 
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK

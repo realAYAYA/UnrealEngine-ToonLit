@@ -233,7 +233,7 @@ inline uint32 FResponse::GetSize() const
 ////////////////////////////////////////////////////////////////////////////////
 inline uint8* FResponse::Reserve(uint32 Size)
 {
-	Buffer.SetNumUninitialized(Size, false);
+	Buffer.SetNumUninitialized(Size, EAllowShrinking::No);
 	return Buffer.GetData();
 }
 

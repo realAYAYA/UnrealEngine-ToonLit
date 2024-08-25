@@ -12,7 +12,7 @@ namespace UE::Tasks
 		FExecutableTaskAllocator SmallTaskAllocator;
 		FTaskEventBaseAllocator TaskEventBaseAllocator;
 
-		void FTaskBase::Schedule()
+		void FTaskBase::Schedule(bool& bWakeUpWorker)
 		{
 			TaskTrace::Scheduled(GetTraceId());
 
@@ -42,9 +42,9 @@ namespace UE::Tasks
 			}
 #endif
 
-			LowLevelTasks::FScheduler::Get().TryLaunch(LowLevelTask, LowLevelTasks::EQueuePreference::GlobalQueuePreference, /*bWakeUpWorker=*/ true);
+			bWakeUpWorker |= LowLevelTasks::FSchedulerTls::IsBusyWaiting();
+			bWakeUpWorker |= LowLevelTasks::FScheduler::Get().TryLaunch(LowLevelTask, bWakeUpWorker ? LowLevelTasks::EQueuePreference::GlobalQueuePreference : LowLevelTasks::EQueuePreference::LocalQueuePreference, bWakeUpWorker);
 		}
-
 
 		thread_local uint32 TaskRetractionRecursion = 0;
 
@@ -70,11 +70,11 @@ namespace UE::Tasks
 
 		bool FTaskBase::TryRetractAndExecute(FTimeout Timeout, uint32 RecursionDepth/* = 0*/)
 		{
-			TRACE_CPUPROFILER_EVENT_SCOPE(TaskRetraction);
+			TRACE_CPUPROFILER_EVENT_SCOPE(FTaskBase::TryRetractAndExecute);
 
 			if (!IsAwaitable())
 			{
-				UE_LOG(LogTemp, Fatal, TEXT("Deadlock detected! A task can't be waited here, e.g. because it's being executed by the currect thread"));
+				UE_LOG(LogTemp, Fatal, TEXT("Deadlock detected! A task can't be waited here, e.g. because it's being executed by the current thread"));
 				return false;
 			}
 
@@ -111,7 +111,7 @@ namespace UE::Tasks
 
 				// prerequisites are "consumed" here even if their retraction fails. this means that once prerequisite retraction failed, it won't be performed again. 
 				// this can be potentially improved by using a different container for prerequisites
-				while (FTaskBase* Prerequisite = Prerequisites.Pop())
+				for (FTaskBase* Prerequisite : Prerequisites.PopAll())
 				{
 					// ignore if retraction failed, as this thread still can try to help with other prerequisites instead of being blocked in waiting
 					Prerequisite->TryRetractAndExecute(Timeout, RecursionDepth);
@@ -119,28 +119,26 @@ namespace UE::Tasks
 				}
 			}
 
+			// If we don't have any more prerequisites, let TryUnlock
+			// execute these to avoid any race condition where we could clear
+			// the last reference before TryUnlock finishes and cause a use-after-free.
+			// These are super fast to process anyway so we can just consider them done
+			// for retraction purpose.
+			if (ExtendedPriority == EExtendedTaskPriority::TaskEvent ||
+				ExtendedPriority == EExtendedTaskPriority::Inline)
+			{
+				return true;
+			}
+
+			if (Timeout)
+			{
+				return IsCompleted();
+			}
+
 			{
 				FThreadLocalRetractionScope ThreadLocalRetractionScope;
 
 				// next we try to execute the task, despite we haven't verified that the task is unlocked. trying to obtain execution permission will fail in this case
-
-				if (ExtendedPriority == EExtendedTaskPriority::TaskEvent)
-				{
-					if (!TrySetExecutionFlag())
-					{
-						return false;
-					}
-
-					// task events have nothing to execute, and so can't have nested task, just close it
-					Close();
-					ReleaseInternalReference();
-					return true;
-				}
-
-				if (Timeout)
-				{
-					return IsCompleted();
-				}
 
 				if (!TryExecuteTask())
 				{
@@ -160,7 +158,7 @@ namespace UE::Tasks
 				bool bSucceeded = true;
 				// prerequisites are "consumed" here even if their retraction fails. this means that once prerequisite retraction failed, it won't be performed again. 
 				// this can be potentially improved by using a different container for prerequisites
-				while (FTaskBase* Prerequisite = Prerequisites.Pop())
+				for (FTaskBase* Prerequisite : Prerequisites.PopAll())
 				{
 					if (!Prerequisite->TryRetractAndExecute(Timeout, RecursionDepth))
 					{
@@ -190,13 +188,27 @@ namespace UE::Tasks
 			TaskTrace::FWaitingScope WaitingScope(GetTraceId());
 			TRACE_CPUPROFILER_EVENT_SCOPE(Tasks::Wait);
 
-			// if we are on a named thread, handle waiting in TaskGraph-specific style
-			// (named threads don't support waiting with timeout)
-			if (Timeout == FTimeout::Never() && TryWaitOnNamedThread(*this))
+			return WaitImpl(Timeout);
+		}
+
+		void FTaskBase::WaitWithNamedThreadsSupport()
+		{
+			if (IsCompleted())
 			{
-				return true;
+				return;
 			}
 
+			TRACE_CPUPROFILER_EVENT_SCOPE(FTaskBase::WaitWithNamedThreadsSupport);
+			TaskTrace::FWaitingScope WaitingScope(GetTraceId());
+
+			if (!TryWaitOnNamedThread(*this))
+			{
+				WaitImpl(FTimeout::Never());
+			}
+		}
+
+		bool FTaskBase::WaitImpl(FTimeout Timeout)
+		{
 			// ignore the result as we still have to make sure the task is completed upon returning from this function call
 			TryRetractAndExecute(Timeout);
 
@@ -204,7 +216,7 @@ namespace UE::Tasks
 			const uint32 MaxSpinCount = 40;
 			for (uint32 SpinCount = 0; SpinCount != MaxSpinCount && !IsCompleted() && !Timeout; ++SpinCount)
 			{
-				FPlatformProcess::YieldThread();
+				FPlatformProcess::Yield(); // YieldThread() was much slower on some platforms with low core count and contention for CPU
 			}
 
 			if (IsCompleted() || Timeout)
@@ -218,7 +230,7 @@ namespace UE::Tasks
 			auto WaitingTaskBody = [CompletionEvent] { CompletionEvent->Trigger(); };
 			using FWaitingTask = TExecutableTask<decltype(WaitingTaskBody)>;
 
-			TRefCountPtr<FWaitingTask> WaitingTask{ FWaitingTask::Create(TEXT("Waiting Task"), MoveTemp(WaitingTaskBody), ETaskPriority::Default /* doesn't matter*/, EExtendedTaskPriority::Inline), /*bAddRef=*/ false };
+			TRefCountPtr<FWaitingTask> WaitingTask{ FWaitingTask::Create(TEXT("Waiting Task"), MoveTemp(WaitingTaskBody), ETaskPriority::Default /* doesn't matter*/, EExtendedTaskPriority::Inline, ETaskFlags::None), /*bAddRef=*/ false };
 			WaitingTask->AddPrerequisites(*this);
 
 			if (WaitingTask->TryLaunch(sizeof(WaitingTask)))
@@ -279,7 +291,7 @@ namespace UE::Tasks
 
 				auto TaskBody = [CurrentThread, &TaskGraph] { TaskGraph.RequestReturn(CurrentThread); };
 				using FReturnFromNamedThreadTask = TExecutableTask<decltype(TaskBody)>;
-				FReturnFromNamedThreadTask ReturnTask{ TEXT("ReturnFromNamedThreadTask"), MoveTemp(TaskBody), ETaskPriority::High, ExtendedPriority };
+				FReturnFromNamedThreadTask ReturnTask { TEXT("ReturnFromNamedThreadTask"), MoveTemp(TaskBody), ETaskPriority::High, ExtendedPriority, ETaskFlags::None };
 				ReturnTask.AddPrerequisites(Task);
 				ReturnTask.TryLaunch(sizeof(ReturnTask)); // the result doesn't matter
 

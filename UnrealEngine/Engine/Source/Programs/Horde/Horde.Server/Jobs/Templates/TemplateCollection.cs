@@ -6,12 +6,9 @@ using System.Linq;
 using System.Threading.Tasks;
 using EpicGames.Core;
 using Horde.Server.Server;
-using Horde.Server.Streams;
-using Horde.Server.Utilities;
 using HordeCommon;
 using Microsoft.Extensions.Caching.Memory;
 using MongoDB.Bson;
-using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Driver;
 
@@ -74,7 +71,7 @@ namespace Horde.Server.Jobs.Templates
 				SubmitDescription = config.SubmitDescription;
 				Arguments = config.Arguments ?? new List<string>();
 				Parameters = config.Parameters.ConvertAll(x => x.ToModel());
-			
+
 				// Compute the hash once all other fields have been set
 				Id = ContentHash.SHA1(BsonExtensionMethods.ToBson(this));
 			}

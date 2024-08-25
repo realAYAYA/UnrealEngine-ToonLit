@@ -20,5 +20,5 @@ namespace PackageRestore
 	 *				is possible some packages have been successfully restored. If the user opts the "Skip Restore" option on the dialog, the return code will indicate the user has 
 	 *				declined out of the prompt. This way calling code can distinguish between a decline and a cancel and then proceed as planned, or abort its operation accordingly.
 	 */
-	FEditorFileUtils::EPromptReturnCode PromptToRestorePackages(const TMap<FString, FString>& PackagesToRestore, TArray<FString>* OutFailedPackages = nullptr);
+	FEditorFileUtils::EPromptReturnCode PromptToRestorePackages(const  TMap<FString, TPair<FString, FString>>& PackagesToRestore, TArray<FString>* OutFailedPackages = nullptr);
 }

@@ -60,6 +60,8 @@ public:
 		SLATE_EVENT(FOnGetContent, OnGetMenuContent)
 		/** The foreground color of the content */
 		SLATE_ATTRIBUTE(FSlateColor, ForegroundColor)
+		/** Where the menu is spawned relative to the menu button */
+		SLATE_ARGUMENT_DEFAULT(EMenuPlacement, MenuPlacement) = EMenuPlacement::MenuPlacement_BelowAnchor;
 	SLATE_END_ARGS()
 
 	/**

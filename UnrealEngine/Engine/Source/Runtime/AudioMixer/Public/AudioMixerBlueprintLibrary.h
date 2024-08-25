@@ -379,6 +379,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Audio|Bus", meta = (WorldContext = "WorldContextObject"))
 	static AUDIOMIXER_API bool IsAudioBusActive(const UObject* WorldContextObject, UAudioBus* AudioBus);
 
+	/** Registers an audio bus to a submix so the submix output can be routed to the audiobus. */
+	UFUNCTION(BlueprintCallable, Category = "Audio|Bus", meta = (WorldContext = "WorldContextObject"))
+	static AUDIOMIXER_API void RegisterAudioBusToSubmix(const UObject* WorldContextObject, USoundSubmix* SoundSubmix, UAudioBus* AudioBus);
+
+	/** Unregisters an audio bus that could have been registered to a submix. */
+	UFUNCTION(BlueprintCallable, Category = "Audio|Bus", meta = (WorldContext = "WorldContextObject"))
+	static AUDIOMIXER_API void UnregisterAudioBusFromSubmix(const UObject* WorldContextObject, USoundSubmix* SoundSubmix, UAudioBus* AudioBus);
+
 	/**
 	* Gets information about all audio output devices available in the system
 	* @param OnObtainDevicesEvent - the event to fire when the audio endpoint devices have been retrieved

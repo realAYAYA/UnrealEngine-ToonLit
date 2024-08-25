@@ -16,8 +16,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeScalarTable::Private::s_type =
-			NODE_TYPE( "TableScalar", NodeScalar::GetStaticType() );
+	FNodeType NodeScalarTable::Private::s_type =
+			FNodeType( "TableScalar", NodeScalar::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -28,76 +28,46 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	int NodeScalarTable::GetInputCount() const
-	{
-		return 0;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	Node* NodeScalarTable::GetInputNode( int i ) const
-	{
-		check( i >=0 && i < 0 );
-        (void)i;
-        return 0;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    void NodeScalarTable::SetInputNode( int i, NodePtr )
-	{
-		check( i >=0 && i < 0 );
-        (void)i;
-        //m_pD->m_pObject = dynamic_cast<NodeObject*>( pNode.get() );
-	}
-
-
-	//---------------------------------------------------------------------------------------------
 	// Own Interface
 	//---------------------------------------------------------------------------------------------
-	const char* NodeScalarTable::GetColumn() const
+	void NodeScalarTable::SetColumn( const FString& strName )
 	{
-		return m_pD->m_columnName.c_str();
+		m_pD->ColumnName = strName;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-	void NodeScalarTable::SetColumn( const char* strName )
+	void NodeScalarTable::SetParameterName( const FString& strName )
 	{
-		if (strName)
-		{
-			m_pD->m_columnName = strName;
-		}
-		else
-		{
-			m_pD->m_columnName = "";
-		}
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeScalarTable::SetParameterName( const char* strName )
-	{
-		m_pD->m_parameterName = strName;
+		m_pD->ParameterName = strName;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
 	void NodeScalarTable::SetTable( TablePtr pTable )
 	{
-		m_pD->m_pTable = pTable;
+		m_pD->Table = pTable;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
 	TablePtr NodeScalarTable::GetTable() const
 	{
-		return m_pD->m_pTable;
+		return m_pD->Table;
 	}
 
 
+	//---------------------------------------------------------------------------------------------
+	void NodeScalarTable::SetNoneOption(bool bAddNoneOption)
+	{
+		m_pD->bNoneOption = bAddNoneOption;
+	}
+
+	//---------------------------------------------------------------------------------------------
+	void NodeScalarTable::SetDefaultRowName(const FString& RowName)
+	{
+		m_pD->DefaultRowName = RowName;
+	}
 }
 
 

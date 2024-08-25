@@ -2,6 +2,7 @@
 
 #include "BehaviorTreeGraphNode_CompositeDecorator.h"
 
+#include "BehaviorTreeColors.h"
 #include "BehaviorTree/BTCompositeNode.h"
 #include "BehaviorTree/BTDecorator.h"
 #include "BehaviorTree/BTNode.h"
@@ -61,6 +62,16 @@ FText UBehaviorTreeGraphNode_CompositeDecorator::GetNodeTitle(ENodeTitleType::Ty
 FText UBehaviorTreeGraphNode_CompositeDecorator::GetDescription() const
 {
 	return FText::FromString(CachedDescription);
+}
+
+FText UBehaviorTreeGraphNode_CompositeDecorator::GetTooltipText() const
+{
+	if (ErrorMessage.IsEmpty() == false)
+	{
+		return FText::FromString(ErrorMessage);
+	}
+
+	return LOCTEXT("CompositeTooltip", "This node enables you to set up more advanced conditions using logic gates.");
 }
 
 void UBehaviorTreeGraphNode_CompositeDecorator::PostPlacedNewNode()
@@ -306,6 +317,15 @@ void UBehaviorTreeGraphNode_CompositeDecorator::PostEditChangeProperty(struct FP
 	}
 }
 
+FLinearColor UBehaviorTreeGraphNode_CompositeDecorator::GetBackgroundColor(bool bIsActiveForDebugger) const
+{
+	return bIsActiveForDebugger
+		? BehaviorTreeColors::Debugger::ActiveDecorator
+		: (bInjectedNode || bRootLevel)
+			? BehaviorTreeColors::NodeBody::InjectedSubNode
+			: BehaviorTreeColors::NodeBody::Decorator;
+}
+
 struct FLogicDesc
 {
 	FString OperationDesc;
@@ -322,7 +342,7 @@ void UpdateLogicOpStack(TArray<FLogicDesc>& OpStack, FString& Description, FStri
 		if (OpStack[LastIdx].NumLeft <= 0)
 		{
 			OpStack.RemoveAt(LastIdx);
-			Indent.LeftChopInline(2, false);
+			Indent.LeftChopInline(2, EAllowShrinking::No);
 
 			UpdateLogicOpStack(OpStack, Description, Indent);
 		}

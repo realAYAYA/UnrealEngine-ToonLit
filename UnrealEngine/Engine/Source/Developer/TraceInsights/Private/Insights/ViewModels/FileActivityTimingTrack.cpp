@@ -695,13 +695,13 @@ void FFileActivityTimingTrack::InitTooltip(FTooltipDrawState& InOutTooltip, cons
 
 			if (InEvent.FileHandle != uint64(-1))
 			{
-				const FString Value = FString::Printf(TEXT("0x%X"), InEvent.FileHandle);
+				const FString Value = FString::Printf(TEXT("0x%llX"), InEvent.FileHandle);
 				InOutTooltip.AddNameValueTextLine(TEXT("File Handle:"), Value);
 			}
 
 			if (InEvent.ReadWriteHandle != uint64(-1))
 			{
-				const FString Value = FString::Printf(TEXT("0x%X"), InEvent.ReadWriteHandle);
+				const FString Value = FString::Printf(TEXT("0x%llX"), InEvent.ReadWriteHandle);
 				InOutTooltip.AddNameValueTextLine(TEXT("Read/Write Handle:"), Value);
 			}
 
@@ -876,7 +876,8 @@ void FOverviewFileActivityTimingTrack::BuildDrawState(ITimingEventsTrackDrawStat
 					EventName += TEXT(" [!]");
 				}
 
-				if (Width > EventName.Len() * 4.0f + 32.0f)
+				const float MinWidth = static_cast<float>(EventName.Len()) * 4.0f + 32.0f;
+				if (Width > MinWidth)
 				{
 					const double Duration = Event.EndTime - Event.StartTime; // actual event duration
 					FTimingEventsTrackDrawStateBuilder::AppendDurationToEventName(EventName, Duration);
@@ -950,7 +951,8 @@ void FDetailedFileActivityTimingTrack::BuildDrawState(ITimingEventsTrackDrawStat
 				{
 					FString EventName = Activity->Path;
 
-					if (Width > EventName.Len() * 4.0f + 32.0f)
+					const float MinWidth = static_cast<float>(EventName.Len()) * 4.0f + 32.0f;
+					if (Width > MinWidth)
 					{
 						const double Duration = Activity->EndTime - Activity->StartTime;
 						FTimingEventsTrackDrawStateBuilder::AppendDurationToEventName(EventName, Duration);
@@ -1015,7 +1017,8 @@ void FDetailedFileActivityTimingTrack::BuildDrawState(ITimingEventsTrackDrawStat
 					EventName += "]";
 				}
 
-				if (Width > EventName.Len() * 4.0f + 32.0f)
+				const float MinWidth = static_cast<float>(EventName.Len()) * 4.0f + 32.0f;
+				if (Width > MinWidth)
 				{
 					const double Duration = Event.EndTime - Event.StartTime;
 					FTimingEventsTrackDrawStateBuilder::AppendDurationToEventName(EventName, Duration);

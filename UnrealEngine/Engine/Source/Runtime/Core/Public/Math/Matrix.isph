@@ -176,14 +176,8 @@ inline uniform FVector MatrixGetOrigin(const uniform FMatrix &M)
 	return SetVector(M.M[12], M.M[13], M.M[14]);
 }
 
-inline void MatrixGetScaledAxes(const uniform FMatrix44d &M, uniform FVector3d &X, uniform FVector3d &Y, uniform FVector3d &Z)
-{
-	X = SetVector(M.M[0], M.M[1], M.M[2]);
-	Y = SetVector(M.M[4], M.M[5], M.M[6]);
-	Z = SetVector(M.M[8], M.M[9], M.M[10]);
-}
-
-inline void MatrixGetScaledAxes(const uniform FMatrix44f &M, uniform FVector3f &X, uniform FVector3f &Y, uniform FVector3f &Z)
+template <typename T, typename V>
+inline void MatrixGetScaledAxes(const T& M, V &X, V &Y, V &Z)
 {
 	X = SetVector(M.M[0], M.M[1], M.M[2]);
 	Y = SetVector(M.M[4], M.M[5], M.M[6]);
@@ -271,41 +265,27 @@ inline uniform FMatrix MatrixTranspose(const uniform FMatrix& M)
 // we use __m128 to represent 2x2 matrix as A = | A0  A1 |
 //                                              | A2  A3 |
 // 2x2 row major Matrix multiply A*B
-static inline uniform FVector4d Mat2Mul(const uniform FVector4d& vec1, const uniform FVector4d& vec2)
+template <typename T>
+static inline uniform T Mat2Mul(const uniform T& vec1, const uniform T& vec2)
 {
 	return
 		VectorAdd(VectorMultiply( vec1, VectorSwizzle(vec2, 0,3,0,3)),
 			VectorMultiply(VectorSwizzle(vec1, 1,0,3,2), VectorSwizzle(vec2, 2,1,2,1)));
 }
-static inline uniform FVector4f Mat2Mul(const uniform FVector4f& vec1, const uniform FVector4f& vec2)
-{
-	return
-		VectorAdd(VectorMultiply( vec1, VectorSwizzle(vec2, 0,3,0,3)),
-			VectorMultiply(VectorSwizzle(vec1, 1,0,3,2), VectorSwizzle(vec2, 2,1,2,1)));
-}
+
 // 2x2 row major Matrix adjugate multiply (A#)*B
-static inline uniform FVector4d Mat2AdjMul(const uniform FVector4d& vec1, const uniform FVector4d& vec2)
+template <typename T>
+static inline uniform T Mat2AdjMul(const uniform T& vec1, const uniform T& vec2)
 {
 	return
 		VectorSubtract(VectorMultiply(VectorSwizzle(vec1, 3,3,0,0), vec2),
 			VectorMultiply(VectorSwizzle(vec1, 1,1,2,2), VectorSwizzle(vec2, 2,3,0,1)));
 
 }
-static inline uniform FVector4f Mat2AdjMul(const uniform FVector4f& vec1, const uniform FVector4f& vec2)
-{
-	return
-		VectorSubtract(VectorMultiply(VectorSwizzle(vec1, 3,3,0,0), vec2),
-			VectorMultiply(VectorSwizzle(vec1, 1,1,2,2), VectorSwizzle(vec2, 2,3,0,1)));
 
-}
 // 2x2 row major Matrix multiply adjugate A*(B#)
-static inline uniform FVector4d Mat2MulAdj(const uniform FVector4d& vec1, const uniform FVector4d& vec2)
-{
-	return
-		VectorSubtract(VectorMultiply( vec1, VectorSwizzle(vec2, 3,0,3,0)),
-			VectorMultiply(VectorSwizzle(vec1, 1,0,3,2), VectorSwizzle(vec2, 2,1,2,1)));
-}
-static inline uniform FVector4f Mat2MulAdj(const uniform FVector4f& vec1, const uniform FVector4f& vec2)
+template <typename T>
+static inline uniform T Mat2MulAdj(const uniform T& vec1, const uniform T& vec2)
 {
 	return
 		VectorSubtract(VectorMultiply( vec1, VectorSwizzle(vec2, 3,0,3,0)),
@@ -572,57 +552,10 @@ inline uniform FMatrix44f MatrixInverse(const uniform FMatrix44f& M)
 	return Result;
 }
 
-inline uniform FVector4d VectorTransformVector(const uniform FVector4d &VecP, const uniform FMatrix44d &M)
+template <typename T, typename V>
+inline T VectorTransformVector(const T& VecP, const V& M)
 {
-	uniform FVector4d VTempX, VTempY, VTempZ, VTempW;
-
-	// Splat x,y,z and w
-	VTempX = VectorReplicate(VecP, 0);
-	VTempY = VectorReplicate(VecP, 1);
-	VTempZ = VectorReplicate(VecP, 2);
-	VTempW = VectorReplicate(VecP, 3);
-
-	// Mul by the matrix
-	VTempX = VectorMultiply(VTempX, SetVector4(M.M[0], M.M[1], M.M[2], M.M[3]));
-	VTempY = VectorMultiply(VTempY, SetVector4(M.M[4], M.M[5], M.M[6], M.M[7]));
-	VTempZ = VectorMultiply(VTempZ, SetVector4(M.M[8], M.M[9], M.M[10], M.M[11]));
-	VTempW = VectorMultiply(VTempW, SetVector4(M.M[12], M.M[13], M.M[14], M.M[15]));
-
-	// Add them all together
-	VTempX = VectorAdd(VTempX, VTempY);
-	VTempZ = VectorAdd(VTempZ, VTempW);
-	VTempX = VectorAdd(VTempX, VTempZ);
-
-	return VTempX;
-}
-
-inline uniform FVector4f VectorTransformVector(const uniform FVector4f &VecP, const uniform FMatrix44f &M)
-{
-	uniform FVector4f VTempX, VTempY, VTempZ, VTempW;
-
-	// Splat x,y,z and w
-	VTempX = VectorReplicate(VecP, 0);
-	VTempY = VectorReplicate(VecP, 1);
-	VTempZ = VectorReplicate(VecP, 2);
-	VTempW = VectorReplicate(VecP, 3);
-
-	// Mul by the matrix
-	VTempX = VectorMultiply(VTempX, SetVector4(M.M[0], M.M[1], M.M[2], M.M[3]));
-	VTempY = VectorMultiply(VTempY, SetVector4(M.M[4], M.M[5], M.M[6], M.M[7]));
-	VTempZ = VectorMultiply(VTempZ, SetVector4(M.M[8], M.M[9], M.M[10], M.M[11]));
-	VTempW = VectorMultiply(VTempW, SetVector4(M.M[12], M.M[13], M.M[14], M.M[15]));
-
-	// Add them all together
-	VTempX = VectorAdd(VTempX, VTempY);
-	VTempZ = VectorAdd(VTempZ, VTempW);
-	VTempX = VectorAdd(VTempX, VTempZ);
-
-	return VTempX;
-}
-
-inline FVector4 VectorTransformVector(const FVector4 &VecP, const FMatrix &M)
-{
-	FVector4 VTempX, VTempY, VTempZ, VTempW;
+	T VTempX, VTempY, VTempZ, VTempW;
 
 	// Splat x,y,z and w
 	VTempX = VectorReplicate(VecP, 0);
@@ -715,6 +648,30 @@ inline FVector3f MatrixTransformPosition(const FVector3f &P, const uniform FMatr
 	return VTempX;
 }
 
+// Calculate homogeneous transform. W component assumed to be 1.0
+inline uniform FVector3f MatrixTransformPosition(const uniform FVector3f& P, const uniform FMatrix44f& M)
+{
+	uniform FVector3f VTempX, VTempY, VTempZ;
+
+	// Splat x,y,z
+	VTempX = SetVector(P.V[0], P.V[0], P.V[0]);
+	VTempY = SetVector(P.V[1], P.V[1], P.V[1]);
+	VTempZ = SetVector(P.V[2], P.V[2], P.V[2]);
+
+	// Mul by the matrix
+	VTempX = VTempX * SetVector(M.M[0], M.M[1], M.M[2]);
+	VTempY = VTempY * SetVector(M.M[4], M.M[5], M.M[6]);
+	VTempZ = VTempZ * SetVector(M.M[8], M.M[9], M.M[10]);
+	const uniform FVector3f VTempW = SetVector(M.M[12], M.M[13], M.M[14]);
+
+	// Add them all together
+	VTempX = VTempX + VTempY;
+	VTempZ = VTempZ + VTempW;
+	VTempX = VTempX + VTempZ;
+
+	return VTempX;
+}
+
 // Calculate homogeneous transform. W component assumed to be 0.0
 inline FVector MatrixTransformVector(const FVector &P, const FMatrix &M)
 {
@@ -746,17 +703,8 @@ inline uniform FVector3f MatrixInverseTransformVector(const uniform FMatrix44f &
 	return SetVector(VectorTransformVector(SetVector4(V, FLOAT_ZERO), InvSelf));
 }
 
-inline uniform FMatrix44d MatrixReduceAdd(const varying FMatrix44d &M)
-{
-	return SetMatrix(
-		SetVector4(reduce_add(M.M[0]), reduce_add(M.M[1]), reduce_add(M.M[2]), reduce_add(M.M[3])),
-		SetVector4(reduce_add(M.M[4]), reduce_add(M.M[5]), reduce_add(M.M[6]), reduce_add(M.M[7])),
-		SetVector4(reduce_add(M.M[8]), reduce_add(M.M[9]), reduce_add(M.M[10]), reduce_add(M.M[11])),
-		SetVector4(reduce_add(M.M[12]), reduce_add(M.M[13]), reduce_add(M.M[14]), reduce_add(M.M[15]))
-		);
-}
-
-inline uniform FMatrix44f MatrixReduceAdd(const varying FMatrix44f &M)
+template <typename T>
+inline uniform T MatrixReduceAdd(const varying T& M)
 {
 	return SetMatrix(
 		SetVector4(reduce_add(M.M[0]), reduce_add(M.M[1]), reduce_add(M.M[2]), reduce_add(M.M[3])),

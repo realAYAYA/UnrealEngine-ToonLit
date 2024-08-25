@@ -149,10 +149,16 @@ public:
 
 	/**
 	 * Returns the line set color.
-	 * If bRandomColors == true  LineSetIndex is used to return a random color
+	 * If bRandomColors == true  LineSetIndex is used to choose the color
 	 * If bRandomColors == false LineSetIndex is ignored and this->Color is returned
 	 */
 	FColor GetLineSetColor(int32 LineSetIndex = 0) const;
+
+	/** @return The color used for solid rendering. Currently uses the same colors as the lines. */
+	FColor GetTriangleSetColor(int32 TriangleSetIndex = 0) const
+	{
+		return GetLineSetColor(TriangleSetIndex);
+	}
 
 	UMaterialInterface* GetLineMaterial() const
 	{
@@ -160,18 +166,30 @@ public:
 		ensure(LineMaterialShowingHidden);
 		return bShowHidden ? LineMaterialShowingHidden : LineMaterial;
 	}
+
+	/** @return the material to use for triangle rendering, when bShowSolid is true */
+	UMaterialInterface* GetSolidMaterial() const
+	{
+		ensure(TriangleMaterial);
+		return TriangleMaterial;
+	}
 	
 	/** Show/hide collision geometry */
 	UPROPERTY(EditAnywhere, Category = "Collision Visualization",
 		meta = (EditCondition = "bEnableShowCollision", EditConditionHides, HideEditConditionToggle))
 	bool bShowCollision = true;
 
+	/** Whether to show solid shapes in addition to wireframes */
+	UPROPERTY(EditAnywhere, Category = "Collision Visualization", 
+		meta = (EditCondition = "bEnableShowSolid", EditConditionHides, HideEditConditionToggle))
+	bool bShowSolid = false;
+
 	/** Thickness of lines used to visualize collision shapes */
 	UPROPERTY(EditAnywhere, Category = "Collision Visualization")
 	float LineThickness = 3.0f;
 
 	/** Show occluded parts of the collision geometry, rendered with dashed lines */
-	UPROPERTY(EditAnywhere, Category = "Collision Visualization")
+	UPROPERTY(EditAnywhere, DisplayName = "Show Hidden Lines", Category = "Collision Visualization")
 	bool bShowHidden = false;
 
 	/** Render each collision geometry with a randomly-chosen color */
@@ -191,9 +209,17 @@ public:
 	UPROPERTY(Transient, meta=(TransientToolProperty))
 	TObjectPtr<UMaterialInterface> LineMaterialShowingHidden = nullptr;
 
+	//~Used if bShowHidden is false
+	UPROPERTY(Transient, meta = (TransientToolProperty))
+	TObjectPtr<UMaterialInterface> TriangleMaterial = nullptr;
+
 	//~Some tools will want showing collision geometry to be non-optional
 	UPROPERTY(Transient, meta=(TransientToolProperty))
 	bool bEnableShowCollision = true;
+
+	//~Some tools will not want the 'show solid' option
+	UPROPERTY(Transient, meta = (TransientToolProperty))
+	bool bEnableShowSolid = true;
 
 	bool bVisualizationDirty = false;
 };

@@ -66,7 +66,7 @@ namespace LumenScene
 	float GetCardTexelDensity();
 	float GetFarFieldCardTexelDensity();
 	float GetFarFieldCardMaxDistance();
-	int32 GetCardMinResolution();
+	int32 GetCardMinResolution(bool bOrthographicCamera);
 
 	void GPUDrivenUpdate(FRDGBuilder& GraphBuilder, const FScene* Scene, TArray<FViewInfo>& Views, const FLumenSceneFrameTemporaries& FrameTemporaries);
 };

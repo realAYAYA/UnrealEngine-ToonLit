@@ -8,6 +8,7 @@
 #include "Styling/SlateStyleRegistry.h"
 
 #define IMAGE_BRUSH(RelativePath, ...) FSlateImageBrush(RootToContentDir(RelativePath, TEXT(".png")), __VA_ARGS__)
+#define IMAGE_BRUSH_SVG( RelativePath, ... ) FSlateVectorImageBrush( RootToContentDir( RelativePath, TEXT(".svg") ), __VA_ARGS__ )
 
 /**
  * Implements the visual style of the Groom asset editor UI.
@@ -33,8 +34,12 @@ public:
 //		Set("HairToolsManagerCommands.BeginAddPrimitiveTool", new IMAGE_BRUSH("HairSpray128", Icon40x40));
 		Set("GroomEditor.SimulationOptions", new IMAGE_BRUSH("S_SimulationOptions_40x", Icon40x40));
 		Set("GroomEditor.SimulationOptions.Small", new IMAGE_BRUSH("S_SimulationOptions_40x", Icon20x20));
-
-		FSlateStyleRegistry::RegisterSlateStyle(*this);
+		Set("GroomEditor.GroomCardGenerator", new IMAGE_BRUSH_SVG("S_GroomCardGenerator", Icon16x16));
+		// Set("GroomEditor.GroomCardGenerator", new IMAGE_BRUSH("S_GroomCardGenerator_128", Icon16x16));
+		if (FSlateStyleRegistry::FindSlateStyle(GetStyleName()) == nullptr)
+		{
+			FSlateStyleRegistry::RegisterSlateStyle(*this);
+		}
 	}
 
 	/** Return the name of this style */

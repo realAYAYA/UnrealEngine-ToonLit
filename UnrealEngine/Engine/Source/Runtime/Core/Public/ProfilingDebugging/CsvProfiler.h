@@ -24,7 +24,6 @@
 #include "ProfilingDebugging/CsvProfilerConfig.h"
 #include "ProfilingDebugging/CsvProfilerTrace.h"
 #include "ProfilingDebugging/MiscTrace.h"
-#include "Templates/AndOrNot.h"
 #include "Templates/IsArrayOrRefOfTypeByPredicate.h"
 #include "Templates/IsValidVariadicFunctionArg.h"
 #include "Templates/RefCounting.h"
@@ -66,6 +65,14 @@ struct FCsvDeclaredStat;
 #define CSV_SCOPED_TIMING_STAT_EXCLUSIVE_CONDITIONAL(StatName,Condition) \
 	TRACE_CSV_PROFILER_INLINE_STAT_EXCLUSIVE(#StatName); \
 	FScopedCsvStatExclusiveConditional _ScopedCsvStatExclusive_ ## StatName (#StatName,Condition, "CSV_"#StatName);
+#define CSV_SCOPED_TIMING_STAT_RECURSIVE(Category,StatName) \
+	TRACE_CSV_PROFILER_INLINE_STAT(#StatName, CSV_CATEGORY_INDEX(Category)); \
+	static thread_local int32 _ScopedCsvStatRecursive_EntryCount_ ## StatName = 0; \
+	FScopedCsvStatRecursive _ScopedCsvStatRecursive_ ## StatName (_ScopedCsvStatRecursive_EntryCount_ ## StatName, #StatName, CSV_CATEGORY_INDEX(Category), "CSV_"#StatName);
+#define CSV_SCOPED_TIMING_STAT_RECURSIVE_CONDITIONAL(Category,StatName,Condition) \
+	TRACE_CSV_PROFILER_INLINE_STAT(#StatName, CSV_CATEGORY_INDEX(Category)); \
+	static thread_local int32 _ScopedCsvStatRecursive_EntryCount_ ## StatName = 0; \
+	FScopedCsvStatRecursiveConditional _ScopedCsvStatRecursive_ ## StatName (_ScopedCsvStatRecursive_EntryCount_ ## StatName, #StatName, CSV_CATEGORY_INDEX(Category), Condition, "CSV_"#StatName);
 
 #define CSV_SCOPED_WAIT(WaitTime)							FScopedCsvWaitConditional _ScopedCsvWait(WaitTime>0 && FCsvProfiler::IsWaitTrackingEnabledOnCurrentThread());
 #define CSV_SCOPED_WAIT_CONDITIONAL(Condition)				FScopedCsvWaitConditional _ScopedCsvWait(Condition);
@@ -117,6 +124,8 @@ struct FCsvDeclaredStat;
   #define CSV_SCOPED_TIMING_STAT_GLOBAL(StatName)					
   #define CSV_SCOPED_TIMING_STAT_EXCLUSIVE(StatName)
   #define CSV_SCOPED_TIMING_STAT_EXCLUSIVE_CONDITIONAL(StatName,Condition)
+  #define CSV_SCOPED_TIMING_STAT_RECURSIVE(Category,StatName)
+  #define CSV_SCOPED_TIMING_STAT_RECURSIVE_CONDITIONAL(Category,StatName,Condition)
   #define CSV_SCOPED_WAIT(WaitTime)
   #define CSV_SCOPED_WAIT_CONDITIONAL(Condition)
   #define CSV_SCOPED_SET_WAIT_STAT(StatName)
@@ -165,7 +174,7 @@ struct FCsvCategory;
 
 struct FCsvDeclaredStat
 {
-	FCsvDeclaredStat(TCHAR* InNameString, uint32 InCategoryIndex) 
+	FCsvDeclaredStat(const TCHAR* InNameString, uint32 InCategoryIndex) 
 		: Name(InNameString)
 		, CategoryIndex(InCategoryIndex) 
 	{
@@ -360,6 +369,7 @@ public:
 	CORE_API static void RecordCustomStat(const FName& StatName, uint32 CategoryIndex, int32 Value, const ECsvCustomStatOp CustomStatOp);
 
 	CORE_API static void RecordEvent(int32 CategoryIndex, const FString& EventText);
+	CORE_API static void RecordEventAtFrameStart(int32 CategoryIndex, const FString& EventText);
 	CORE_API static void RecordEventAtTimestamp(int32 CategoryIndex, const FString& EventText, uint64 Cycles64);
 
 	/** Metadata values set with this function will persist between captures. */
@@ -374,7 +384,7 @@ public:
 	FORCEINLINE static void RecordEventf(int32 CategoryIndex, const FmtType& Fmt, Types... Args)
 	{
 		static_assert(TIsArrayOrRefOfTypeByPredicate<FmtType, TIsCharEncodingCompatibleWithTCHAR>::Value, "Formatting string must be a TCHAR array.");
-		static_assert(TAnd<TIsValidVariadicFunctionArg<Types>...>::Value, "Invalid argument(s) passed to FCsvProfiler::RecordEventf");
+		static_assert((TIsValidVariadicFunctionArg<Types>::Value && ...), "Invalid argument(s) passed to FCsvProfiler::RecordEventf");
 		RecordEventfInternal(CategoryIndex, (const TCHAR*)Fmt, Args...);
 	}
 
@@ -489,6 +499,7 @@ private:
 	int32 CaptureOnEventFrameCount;
 
 	bool bInsertEndFrameAtFrameStart;
+	bool bNamedEventsWasEnabled;
 
 	uint64 LastEndFrameTimestamp;
 	uint32 CaptureEndFrameCount;
@@ -576,6 +587,68 @@ public:
 	}
 	const char * StatName;
 	bool bCondition;
+};
+
+class FScopedCsvStatRecursive
+{
+	const char* StatName;
+	uint32 CategoryIndex;
+	int32& EntryCounter;
+public:
+	FScopedCsvStatRecursive(int32& InEntryCounter, const char* InStatName, uint32 InCategoryIndex, const char* InNamedEventName = nullptr)
+		: StatName(InStatName)
+		, CategoryIndex(InCategoryIndex)
+		, EntryCounter(InEntryCounter)
+	{
+		++EntryCounter; // this needs to happen before BeginStat in case BeginStat causes reentry
+		if (EntryCounter == 1)
+		{
+			FCsvProfiler::BeginStat(StatName, CategoryIndex, InNamedEventName);
+		}
+	}
+	~FScopedCsvStatRecursive()
+	{
+		if (EntryCounter == 1)
+		{
+			FCsvProfiler::EndStat(StatName, CategoryIndex);
+		}
+		--EntryCounter;
+	}
+};
+
+class FScopedCsvStatRecursiveConditional
+{
+	const char* StatName;
+	uint32 CategoryIndex;
+	int32& EntryCounter;
+	bool bCondition;
+public:
+	FScopedCsvStatRecursiveConditional(int32& InEntryCounter, const char* InStatName, uint32 InCategoryIndex, bool bInCondition, const char* InNamedEventName = nullptr)
+		: StatName(InStatName)
+		, CategoryIndex(InCategoryIndex)
+		, EntryCounter(InEntryCounter)
+		, bCondition(bInCondition)
+	{
+		if (bCondition)
+		{
+			++EntryCounter; // this needs to happen before BeginStat in case BeginStat causes reentry
+			if (EntryCounter == 1)
+			{
+				FCsvProfiler::BeginStat(StatName, CategoryIndex, InNamedEventName);
+			}
+		}
+	}
+	~FScopedCsvStatRecursiveConditional()
+	{
+		if (bCondition)
+		{
+			if (EntryCounter == 1)
+			{
+				FCsvProfiler::EndStat(StatName, CategoryIndex);
+			}
+			--EntryCounter;
+		}
+	}
 };
 
 class FScopedCsvWaitConditional

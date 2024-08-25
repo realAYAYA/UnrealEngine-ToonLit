@@ -41,6 +41,7 @@
 #include "Serialization/EditorBulkData.h"
 #include "Texture/InterchangeBlockedTexturePayloadInterface.h"
 #include "Texture/InterchangeJPGTranslator.h"
+#include "Texture/InterchangeUEJPEGTranslator.h"
 #include "Texture/InterchangeSlicedTexturePayloadInterface.h"
 #include "Texture/InterchangeTextureLightProfilePayloadInterface.h"
 #include "Texture/InterchangeTexturePayloadInterface.h"
@@ -205,7 +206,7 @@ namespace UE::Interchange::Private::InterchangeTextureFactory
 
 	FTextureFactoryNodeVariant GetAsTextureFactoryNodeVariant(UInterchangeFactoryBaseNode* AssetNode, UClass* SupportedFactoryNodeClass)
 	{
-		static_assert(TVariantSize<FTextureFactoryNodeVariant>::Value == 7, "Please update the code below and this assert to reflect the change to the variant type.");
+		static_assert(TVariantSize_V<FTextureFactoryNodeVariant> == 7, "Please update the code below and this assert to reflect the change to the variant type.");
 
 		if (AssetNode)
 		{
@@ -246,10 +247,10 @@ namespace UE::Interchange::Private::InterchangeTextureFactory
 		}
 
 		ensureMsgf(false
-			, TEXT("Unknow factory node class (%s). To add support for a new texture type either update this factory or register a new factory to interchange.\n\
-				If the factory node class is used to add functions for some custom attributes of a pipeline please don't do that.\n\
-				Use some static functions libraries or use some helper structs/objects instead.\n\
-				Here is exemple of what this could look like in c++:\n\n\
+			, TEXT("Unknown factory node class (%s). To add support for a new texture type, either update this factory or register a new factory to Interchange.\n\
+				However, if the factory node class is used to add functions for some custom attributes of a pipeline,\n\
+				use static function libraries or use helper structs/objects instead.\n\
+				Here is an example of what this could look like in C++:\n\n\
 				\tif (UCustomAttributeInterface::HasInterface(TextureFactoryNode))\n\
 				\t{\n\
 					\t\tFString MyPath = UCustomAttributeInterface::GetCustomPath(TextureFactoryNode);\n\
@@ -269,7 +270,7 @@ namespace UE::Interchange::Private::InterchangeTextureFactory
 
 	UInterchangeTextureFactoryNode* GetTextureFactoryNodeFromVariant(const FTextureFactoryNodeVariant& FactoryNodeVariant)
 	{
-		static_assert(TVariantSize<FTextureFactoryNodeVariant>::Value == 7, "Please update the code below and this assert to reflect the change to the variant type.");
+		static_assert(TVariantSize_V<FTextureFactoryNodeVariant> == 7, "Please update the code below and this assert to reflect the change to the variant type.");
 
 		if (UInterchangeTexture2DFactoryNode* const* TextureFactoryNode = FactoryNodeVariant.TryGet<UInterchangeTexture2DFactoryNode*>())
 		{
@@ -314,9 +315,9 @@ namespace UE::Interchange::Private::InterchangeTextureFactory
 
 	FTextureNodeVariant GetTextureNodeVariantFromFactoryVariant(const FTextureFactoryNodeVariant& FactoryVariant, const UInterchangeBaseNodeContainer* NodeContainer)
 	{
-		static_assert(TVariantSize<FTextureFactoryNodeVariant>::Value == 7, "Please update the code below and this assert to reflect the change to the variant type.");
+		static_assert(TVariantSize_V<FTextureFactoryNodeVariant> == 7, "Please update the code below and this assert to reflect the change to the variant type.");
 
-		static_assert(TVariantSize<FTextureNodeVariant>::Value == 7, "Please update the code below and this assert to reflect the change to the variant type.");
+		static_assert(TVariantSize_V<FTextureNodeVariant> == 7, "Please update the code below and this assert to reflect the change to the variant type.");
 
 		FString TextureNodeUniqueID;
 
@@ -383,7 +384,7 @@ namespace UE::Interchange::Private::InterchangeTextureFactory
 
 	bool HasPayloadKey(const FTextureNodeVariant& TextureNodeVariant)
 	{
-		static_assert(TVariantSize<FTextureNodeVariant>::Value == 7, "Please update the code below and this assert to reflect the change to the variant type.");
+		static_assert(TVariantSize_V<FTextureNodeVariant> == 7, "Please update the code below and this assert to reflect the change to the variant type.");
 
 		if (const UInterchangeTexture2DNode* const* TextureNode =  TextureNodeVariant.TryGet<const UInterchangeTexture2DNode*>())
 		{
@@ -420,7 +421,7 @@ namespace UE::Interchange::Private::InterchangeTextureFactory
 
 	TOptional<FString> GetPayloadKey(const FTextureNodeVariant& TextureNodeVariant)
 	{
-		static_assert(TVariantSize<FTextureNodeVariant>::Value == 7, "Please update the code below and this assert to reflect the change to the variant type.");
+		static_assert(TVariantSize_V<FTextureNodeVariant> == 7, "Please update the code below and this assert to reflect the change to the variant type.");
 
 		if (const UInterchangeTexture2DNode* const* TextureNode =  TextureNodeVariant.TryGet<const UInterchangeTexture2DNode*>())
 		{
@@ -576,7 +577,7 @@ namespace UE::Interchange::Private::InterchangeTextureFactory
 
 			if (bMismatchedGammaSpace || bMismatchedFormats)
 			{
-				UE_LOG(LogInterchangeImport, Warning, TEXT("Mismatched UDIM image %s, converting all to %s/%s ..."), bMismatchedGammaSpace ? TEXT("gamma spaces") : TEXT("pixel formats"),
+				UE_LOG(LogInterchangeImport, Display, TEXT("Mismatched UDIM image %s. Converting all to %s/%s ..."), bMismatchedGammaSpace ? TEXT("gamma spaces") : TEXT("pixel formats"),
 					ERawImageFormat::GetName(FImageCoreUtils::ConvertToRawImageFormat(BlockedImage.Format)), BlockedImage.bSRGB ? TEXT("sRGB") : TEXT("Linear"));
 
 				for (UE::Interchange::FImportImage& Image : Images)
@@ -599,7 +600,7 @@ namespace UE::Interchange::Private::InterchangeTextureFactory
 
 						if ( Image.NumMips != 1 )
 						{
-							UE_LOG(LogInterchangeImport, Warning, TEXT("UDIM Image had existing mips; they were discarded in format change") );
+							UE_LOG(LogInterchangeImport, Warning, TEXT("UDIM Image had existing mips. They were discarded in the format change.") );
 							Image.NumMips = 1; // discard imported mips, they won't be used in UDIM VT anyway
 							Image.MipGenSettings.Reset();
 						}
@@ -619,7 +620,7 @@ namespace UE::Interchange::Private::InterchangeTextureFactory
 
 				if ( ! BlockedImage.InitBlockFromImage(BlockX, BlockY, Images[Index]) )
 				{
-					UE_LOG(LogInterchangeImport, Warning, TEXT("UDIM InitBlockFromImage failed") );
+					UE_LOG(LogInterchangeImport, Warning, TEXT("UDIM InitBlockFromImage failed.") );
 					return { };
 				}
 
@@ -631,7 +632,7 @@ namespace UE::Interchange::Private::InterchangeTextureFactory
 
 			if (! BlockedImage.MigrateDataFromImagesToRawData(Images) )
 			{
-				UE_LOG(LogInterchangeImport, Warning, TEXT("UDIM MigrateDataFromImagesToRawData failed") );
+				UE_LOG(LogInterchangeImport, Warning, TEXT("UDIM MigrateDataFromImagesToRawData failed.") );
 				return { };
 			}
 			
@@ -652,11 +653,11 @@ namespace UE::Interchange::Private::InterchangeTextureFactory
 
 	FTexturePayloadVariant GetTexturePayload(const UInterchangeSourceData* SourceData, const FString& PayloadKey, const FTextureNodeVariant& TextureNodeVariant, const FTextureFactoryNodeVariant& FactoryNodeVariant, const UInterchangeTranslatorBase* Translator, TOptional<FString>& AlternateTexturePath)
 	{
-		static_assert(TVariantSize<FTextureFactoryNodeVariant>::Value == 7, "Please update the code below and this assert to reflect the change to the variant type.");
+		static_assert(TVariantSize_V<FTextureFactoryNodeVariant> == 7, "Please update the code below and this assert to reflect the change to the variant type.");
 
-		static_assert(TVariantSize<FTexturePayloadVariant>::Value == 5, "Please update the code below and this assert to reflect the change to the variant type.");
+		static_assert(TVariantSize_V<FTexturePayloadVariant> == 5, "Please update the code below and this assert to reflect the change to the variant type.");
 
-		static_assert(TVariantSize<FTextureNodeVariant>::Value == 7, "Please update the code below and this assert to reflect the change to the variant type.");
+		static_assert(TVariantSize_V<FTextureNodeVariant> == 7, "Please update the code below and this assert to reflect the change to the variant type.");
 
 		// Standard texture 2D payload
 		if (const UInterchangeTexture2DNode* const* TextureNode =  TextureNodeVariant.TryGet<const UInterchangeTexture2DNode*>())
@@ -678,13 +679,14 @@ namespace UE::Interchange::Private::InterchangeTextureFactory
 			{
 				if (BlockAndSourceDataFiles.IsEmpty())
 				{
-					if (Translator->GetClass() == UInterchangeJPGTranslator::StaticClass())
+					if (Translator->GetClass() == UInterchangeJPGTranslator::StaticClass() 
+						|| Translator->GetClass() == UInterchangeUEJPEGTranslator::StaticClass())
 					{
 						// Honor setting from TextureImporter.RetainJpegFormat in Editor.ini if it exists (ideally we should deprecate this as it is confusing and probably not thread safe)
 						const bool bShouldImportRawCache = bShoudImportCompressedImage;
 						if (GConfig->GetBool(TEXT("TextureImporter"), TEXT("RetainJpegFormat"), bShoudImportCompressedImage, GEditorIni) && bShouldImportRawCache != bShoudImportCompressedImage)
 						{
-							UE_LOG(LogInterchangeImport, Log, TEXT("JPEG file [%s]: Pipeline setting 'bPreferCompressedSourceData' has been overridden by Editor setting 'RetainJpegFormat'"), *SourceData->GetFilename());
+							UE_LOG(LogInterchangeImport, Log, TEXT("JPEG file [%s]: Pipeline setting 'bPreferCompressedSourceData' has been overridden by Editor setting 'RetainJpegFormat'."), *SourceData->GetFilename());
 						}
 					}
 
@@ -747,7 +749,8 @@ namespace UE::Interchange::Private::InterchangeTextureFactory
 		if (!bIsReimport)
 		{
 			Texture->CompressionSettings = Image.CompressionSettings;
-			Texture->SRGB = Image.bSRGB;
+			
+			Texture->SRGB = UE::TextureUtilitiesCommon::GetDefaultSRGB(Image.CompressionSettings,Image.Format,Image.bSRGB);
 
 			//If the MipGenSettings was set by the translator, we must apply it before the build
 			if (Image.MipGenSettings.IsSet())
@@ -773,7 +776,9 @@ namespace UE::Interchange::Private::InterchangeTextureFactory
 			if (!bIsReimport)
 			{
 				Texture2D->CompressionSettings = BlockedImage.CompressionSettings;
-				Texture2D->SRGB = BlockedImage.bSRGB;
+				
+				Texture2D->SRGB = UE::TextureUtilitiesCommon::GetDefaultSRGB(BlockedImage.CompressionSettings,BlockedImage.Format,BlockedImage.bSRGB);
+
 				Texture2D->VirtualTextureStreaming = true;
 
 				if (BlockedImage.MipGenSettings.IsSet())
@@ -816,7 +821,8 @@ namespace UE::Interchange::Private::InterchangeTextureFactory
 		if (!bIsReimport)
 		{
 			Texture->CompressionSettings = SlicedImage.CompressionSettings;
-			Texture->SRGB = SlicedImage.bSRGB;
+			
+			Texture->SRGB = UE::TextureUtilitiesCommon::GetDefaultSRGB(SlicedImage.CompressionSettings,SlicedImage.Format,SlicedImage.bSRGB);
 
 			if (SlicedImage.MipGenSettings.IsSet())
 			{
@@ -828,7 +834,7 @@ namespace UE::Interchange::Private::InterchangeTextureFactory
 
 	bool CanSetupTextureCubeSourceData(FTexturePayloadVariant& TexturePayload)
 	{
-		static_assert(TVariantSize<FTexturePayloadVariant>::Value == 5, "Please update the code below and this assert to reflect the change to the variant type.");
+		static_assert(TVariantSize_V<FTexturePayloadVariant> == 5, "Please update the code below and this assert to reflect the change to the variant type.");
 
 		if (TOptional<FImportSlicedImage>* SlicedImage = TexturePayload.TryGet<TOptional<FImportSlicedImage>>())
 		{
@@ -895,7 +901,7 @@ namespace UE::Interchange::Private::InterchangeTextureFactory
 
 	bool CanSetupTextureCubeArraySourceData(FTexturePayloadVariant& TexturePayload)
 	{
-		static_assert(TVariantSize<FTexturePayloadVariant>::Value == 5, "Please update the code below and this assert to reflect the change to the variant type.");
+		static_assert(TVariantSize_V<FTexturePayloadVariant> == 5, "Please update the code below and this assert to reflect the change to the variant type.");
 
 		if (TOptional<FImportSlicedImage>* SlicedImage = TexturePayload.TryGet<TOptional<FImportSlicedImage>>())
 		{
@@ -961,7 +967,7 @@ namespace UE::Interchange::Private::InterchangeTextureFactory
 
 	bool CanSetupTexture2DArraySourceData(FTexturePayloadVariant& TexturePayload)
 	{
-		static_assert(TVariantSize<FTexturePayloadVariant>::Value == 5, "Please update the code below and this assert to reflect the change to the variant type.");
+		static_assert(TVariantSize_V<FTexturePayloadVariant> == 5, "Please update the code below and this assert to reflect the change to the variant type.");
 
 		if (TOptional<FImportSlicedImage>* SlicedImage = TexturePayload.TryGet<TOptional<FImportSlicedImage>>())
 		{
@@ -1024,7 +1030,7 @@ namespace UE::Interchange::Private::InterchangeTextureFactory
 
 	bool CanSetupVolumeTextureSourceData(FTexturePayloadVariant& TexturePayload)
 	{
-		static_assert(TVariantSize<FTexturePayloadVariant>::Value == 5, "Please update the code below and this assert to reflect the change to the variant type.");
+		static_assert(TVariantSize_V<FTexturePayloadVariant> == 5, "Please update the code below and this assert to reflect the change to the variant type.");
 
 		if (TOptional<FImportSlicedImage>* SlicedImage = TexturePayload.TryGet<TOptional<FImportSlicedImage>>())
 		{
@@ -1189,10 +1195,11 @@ namespace UE::Interchange::Private::InterchangeTextureFactory
 
 		return TasksToDo;
 	}
-#else // WITH_EDITOR
+#else // !WITH_EDITOR
 	void SetupTexture2DSourceDataFromBulkData_Runtime(UTexture2D* Texture2D, const FImportImage& ImportImage, UE::Serialization::FEditorBulkData::FSharedBufferWithID&& BufferAndId)
 	{
-		Texture2D->SRGB = ImportImage.bSRGB;
+		Texture2D->SRGB = UE::TextureUtilitiesCommon::GetDefaultSRGB(Texture2D->CompressionSettings,ImportImage.Format,ImportImage.bSRGB);
+		
 		ERawImageFormat::Type PixelFormatRawFormat;
 		const EPixelFormat PixelFormat = FImageCoreUtils::GetPixelFormatForRawImageFormat(FImageCoreUtils::ConvertToRawImageFormat(ImportImage.Format), &PixelFormatRawFormat);
 
@@ -1200,9 +1207,9 @@ namespace UE::Interchange::Private::InterchangeTextureFactory
 		BulkData.UpdatePayload(MoveTemp(BufferAndId));
 		TFuture<FSharedBuffer> Payload = BulkData.GetPayload();
 
-		const EGammaSpace GammaSpace = ImportImage.bSRGB ? EGammaSpace::sRGB : EGammaSpace::Linear;
+		const EGammaSpace SourceGammaSpace = ImportImage.bSRGB ? EGammaSpace::sRGB : EGammaSpace::Linear;
 		constexpr int32 NumSlices = 1;
-		FImageView SourceImageView(const_cast<void*>(Payload.Get().GetData()), ImportImage.SizeX, ImportImage.SizeY, NumSlices, PixelFormatRawFormat, GammaSpace);
+		FImageView SourceImageView(const_cast<void*>(Payload.Get().GetData()), ImportImage.SizeX, ImportImage.SizeY, NumSlices, PixelFormatRawFormat, SourceGammaSpace);
 
 		FImage DecompressedSourceImage;
 		if (ImportImage.RawDataCompressionFormat != TSCF_None)
@@ -1233,11 +1240,21 @@ namespace UE::Interchange::Private::InterchangeTextureFactory
 
 			Texture2D->bNotOfflineProcessed = true;
 
+			EGammaSpace MipGammaSpace;
+			if ( Texture2D->SRGB && ERawImageFormat::GetFormatNeedsGammaSpace(PixelFormatRawFormat) )
+			{
+				MipGammaSpace = EGammaSpace::sRGB;
+			}
+			else
+			{
+				MipGammaSpace = EGammaSpace::Linear;
+			}
+
 			uint8* MipData = static_cast<uint8*>(Texture2D->GetPlatformData()->Mips[0].BulkData.Lock(LOCK_READ_WRITE));
 			check(MipData != nullptr);
 			int64 MipDataSize = Texture2D->GetPlatformData()->Mips[0].BulkData.GetBulkDataSize();
 
-			FImageView MipImageView(MipData, ImportImage.SizeX, ImportImage.SizeY, NumSlices, PixelFormatRawFormat, GammaSpace);
+			FImageView MipImageView(MipData, ImportImage.SizeX, ImportImage.SizeY, NumSlices, PixelFormatRawFormat, MipGammaSpace);
 
 			// copy into texture and convert if necessary :
 			FImageCore::CopyImage(SourceImageView, MipImageView);
@@ -1251,7 +1268,7 @@ namespace UE::Interchange::Private::InterchangeTextureFactory
 
 	FSharedBuffer MoveRawDataToSharedBuffer(FTexturePayloadVariant& TexturePayload)
 	{
-		static_assert(TVariantSize<FTexturePayloadVariant>::Value == 5, "Please update the code below and this assert to reflect the change to the variant type.");
+		static_assert(TVariantSize_V<FTexturePayloadVariant> == 5, "Please update the code below and this assert to reflect the change to the variant type.");
 
 		if (TOptional<FImportBlockedImage>* BlockedImage = TexturePayload.TryGet<TOptional<FImportBlockedImage>>())
 		{
@@ -1333,7 +1350,7 @@ namespace UE::Interchange::Private::InterchangeTextureFactory
 
 	bool CanSetupTexture2DSourceData(FTexturePayloadVariant& TexturePayload)
 	{
-		static_assert(TVariantSize<FTexturePayloadVariant>::Value == 5, "Please update the code below and this assert to reflect the change to the variant type.");
+		static_assert(TVariantSize_V<FTexturePayloadVariant> == 5, "Please update the code below and this assert to reflect the change to the variant type.");
 
 #if WITH_EDITOR
 		if (TOptional<FImportBlockedImage>* BlockedImage = TexturePayload.TryGet<TOptional<FImportBlockedImage>>())
@@ -1490,28 +1507,31 @@ namespace UE::Interchange::Private::InterchangeTextureFactory
 
 #if WITH_EDITORONLY_DATA
 		// At some point, these decisions should be left to the pipeline
-		if (!Texture->Source.IsPowerOfTwo())
+		if ( Texture->Source.GetNumBlocks() == 1 && !Texture->Source.IsBlockPowerOfTwo(0))
 		{
 			// try to set some better default options for non-pow2 textures
 
 			// if Texture is not pow2 , change to TMGS_NoMipMaps (if it was default)
 			//   this used to be done by Texture2d.cpp ; it is now optional
 			//	 you can set it back to having mips if you want
-			if (Texture->MipGenSettings == TMGS_FromTextureGroup)
+			if (Texture->MipGenSettings == TMGS_FromTextureGroup && Texture->GetTextureClass() == ETextureClass::TwoD )
 			{
 				Texture->MipGenSettings = TMGS_NoMipmaps;
 			}
 
-			// if Texture is not multiple of 4, change TC to EditorIcon ("UserInterface2D")
-			//	if you do not do this, you might see "Texture forced to uncompressed because size is not a multiple of 4"
-			//  this needs to match the logic in Texture.cpp : GetDefaultTextureFormatName
-			const int32 SizeX = Texture->Source.GetSizeX();
-			const int32 SizeY = Texture->Source.GetSizeY();
-			if ((SizeX & 3) != 0 || (SizeY & 3) != 0)
+			if ( ! Texture->Source.IsLongLatCubemap() )
 			{
-				if (Texture->CompressionSettings == TC_Default) // AutoDXT/BC1
+				// if Texture is not multiple of 4, change TC to EditorIcon ("UserInterface2D")
+				//	if you do not do this, you might see "Texture forced to uncompressed because size is not a multiple of 4"
+				//  this needs to match the logic in Texture.cpp : GetDefaultTextureFormatName
+				const int32 SizeX = Texture->Source.GetSizeX();
+				const int32 SizeY = Texture->Source.GetSizeY();
+				if ((SizeX & 3) != 0 || (SizeY & 3) != 0)
 				{
-					Texture->CompressionSettings = TC_EditorIcon; // "UserInterface2D"
+					if (Texture->CompressionSettings == TC_Default) // AutoDXT/BC1
+					{
+						Texture->CompressionSettings = TC_EditorIcon; // "UserInterface2D"
+					}
 				}
 			}
 		}
@@ -1529,6 +1549,7 @@ UClass* UInterchangeTextureFactory::GetFactoryClass() const
 
 UInterchangeFactoryBase::FImportAssetResult UInterchangeTextureFactory::BeginImportAsset_GameThread(const FImportAssetObjectParams& Arguments)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(UInterchangeTextureFactory::BeginImportAsset_GameThread);
 	using namespace  UE::Interchange::Private::InterchangeTextureFactory;
 	FImportAssetResult ImportAssetResult;
 	UTexture* Texture = nullptr;
@@ -1553,7 +1574,7 @@ UInterchangeFactoryBase::FImportAssetResult UInterchangeTextureFactory::BeginImp
 	const UClass* TextureClass = Arguments.AssetNode->GetObjectClass();
 	if (!TextureClass || !TextureClass->IsChildOf(UTexture::StaticClass()))
 	{
-		CouldNotCreateTextureLog(LOCTEXT("TextureFactory_NodeClassMissmatch", "Asset node parameter class doesnt derive from UTexture."));
+		CouldNotCreateTextureLog(LOCTEXT("TextureFactory_NodeClassMissmatch", "Asset node parameter class doesn't derive from UTexture."));
 		return ImportAssetResult;
 	}
 
@@ -1568,7 +1589,7 @@ UInterchangeFactoryBase::FImportAssetResult UInterchangeTextureFactory::BeginImp
 	FTextureNodeVariant TextureNodeVariant = GetTextureNodeVariantFromFactoryVariant(GetAsTextureFactoryNodeVariant(Arguments.AssetNode, SupportedFactoryNodeClass), Arguments.NodeContainer);
 	if (TextureNodeVariant.IsType<FEmptyVariantState>())
 	{
-		FText Info = FText::Format(LOCTEXT("TextureFactory_InvalidTextureTranslated", "Asset factory node (%s) do not reference a valid texture translated node.")
+		FText Info = FText::Format(LOCTEXT("TextureFactory_InvalidTextureTranslated", "Asset factory node (%s) doesn't reference a valid texture translated node.")
 			, FText::FromString(SupportedFactoryNodeClass->GetAuthoredName()));
 		CouldNotCreateTextureLog(Info);
 		return ImportAssetResult;
@@ -1576,7 +1597,7 @@ UInterchangeFactoryBase::FImportAssetResult UInterchangeTextureFactory::BeginImp
 
 	if (!HasPayloadKey(TextureNodeVariant))
 	{
-		CouldNotCreateTextureLog(LOCTEXT("TextureFactory_InvalidPayloadKey", "Texture translated node doesnt have a payload key."));
+		CouldNotCreateTextureLog(LOCTEXT("TextureFactory_InvalidPayloadKey", "Texture translated node doesn't have a payload key."));
 		return ImportAssetResult;
 	}
 
@@ -1621,7 +1642,7 @@ UInterchangeFactoryBase::FImportAssetResult UInterchangeTextureFactory::BeginImp
 
 	if (!Texture)
 	{
-		CouldNotCreateTextureLog(LOCTEXT("TextureFactory_TextureCreateFail", "Texture creation fail."));
+		CouldNotCreateTextureLog(LOCTEXT("TextureFactory_TextureCreateFail", "Texture creation failed."));
 		return ImportAssetResult;
 	}
 
@@ -1656,7 +1677,7 @@ UInterchangeFactoryBase::FImportAssetResult UInterchangeTextureFactory::ImportAs
 	const UClass* TextureClass = Arguments.AssetNode->GetObjectClass();
 	if (!TextureClass || !TextureClass->IsChildOf(UTexture::StaticClass()))
 	{
-		ImportTextureErrorLog(LOCTEXT("TextureFactory_Async_MissMatchClass", "UInterchangeTextureFactory: Asset node parameter class doesnt derive from UTexture."));
+		ImportTextureErrorLog(LOCTEXT("TextureFactory_Async_MissMatchClass", "UInterchangeTextureFactory: Asset node parameter class doesn't derive from UTexture."));
 		return ImportAssetResult;
 	}
 
@@ -1685,7 +1706,7 @@ UInterchangeFactoryBase::FImportAssetResult UInterchangeTextureFactory::ImportAs
 	FTextureNodeVariant TextureNodeVariant = GetTextureNodeVariantFromFactoryVariant(TextureFactoryNodeVariant, Arguments.NodeContainer);
 	if (TextureNodeVariant.IsType<FEmptyVariantState>())
 	{
-		FText Info = FText::Format(LOCTEXT("TextureFactory_Async_InvalidTextureTranslated", "UInterchangeTextureFactory: Asset factory node (%s) do not reference a valid texture translated node.")
+		FText Info = FText::Format(LOCTEXT("TextureFactory_Async_InvalidTextureTranslated", "UInterchangeTextureFactory: Asset factory node (%s) doesn't reference a valid texture translated node.")
 			, FText::FromString(SupportedFactoryNodeClass->GetAuthoredName()));
 		ImportTextureErrorLog(Info);
 		return ImportAssetResult;
@@ -1694,7 +1715,7 @@ UInterchangeFactoryBase::FImportAssetResult UInterchangeTextureFactory::ImportAs
 	const TOptional<FString>& PayLoadKey = GetPayloadKey(TextureNodeVariant);
 	if (!PayLoadKey.IsSet())
 	{
-		ImportTextureErrorLog(LOCTEXT("TextureFactory_Async_InvalidPayloadKey", "UInterchangeTextureFactory: Texture translated node (UInterchangeTexture2DNode) doesnt have a payload key."));
+		ImportTextureErrorLog(LOCTEXT("TextureFactory_Async_InvalidPayloadKey", "UInterchangeTextureFactory: Texture translated node (UInterchangeTexture2DNode) doesn't have a payload key."));
 		return ImportAssetResult;
 	}
 
@@ -1703,7 +1724,7 @@ UInterchangeFactoryBase::FImportAssetResult UInterchangeTextureFactory::ImportAs
 
 	if(TexturePayload.IsType<FEmptyVariantState>())
 	{
-		ImportTextureErrorLog(LOCTEXT("TextureFactory_Async_CannotRetrievePayload", "UInterchangeTextureFactory: Invalid translator couldn't retrive a payload."));
+		ImportTextureErrorLog(LOCTEXT("TextureFactory_Async_CannotRetrievePayload", "UInterchangeTextureFactory: Invalid translator couldn't retrieve a payload."));
 		return ImportAssetResult;
 	}
 
@@ -1783,7 +1804,7 @@ UInterchangeFactoryBase::FImportAssetResult UInterchangeTextureFactory::ImportAs
 /* This function is call in the completion task on the main thread, use it to call main thread post creation step for your assets*/
 void UInterchangeTextureFactory::SetupObject_GameThread(const FSetupObjectParams& Arguments)
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE(UInterchangeTextureFactory::BeginPreCompletedCallback);
+	TRACE_CPUPROFILER_EVENT_SCOPE(UInterchangeTextureFactory::SetupObject_GameThread);
 
 	check(IsInGameThread());
 
@@ -1862,7 +1883,8 @@ void UInterchangeTextureFactory::SetupObject_GameThread(const FSetupObjectParams
 																						 , Arguments.SourceData
 																						 , Arguments.NodeUniqueID
 																						 , Arguments.NodeContainer
-																						 , Arguments.OriginalPipelines);
+																						 , Arguments.OriginalPipelines
+																						 , Arguments.Translator);
 		SetImportAssetDataParameters.SourceFiles = MoveTemp(SourceFiles);
 
 		Texture->AssetImportData = UE::Interchange::FFactoryCommon::SetImportAssetData(SetImportAssetDataParameters);
@@ -1879,6 +1901,7 @@ void UInterchangeTextureFactory::SetupObject_GameThread(const FSetupObjectParams
 
 void UInterchangeTextureFactory::CheckForInvalidResolutions(UE::Interchange::Private::InterchangeTextureFactory::FTexturePayloadVariant& InPayloadVariant, const UInterchangeSourceData* SourceData, const UInterchangeTextureFactoryNode* TextureFactoryNode)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(UInterchangeTextureFactory::CheckForInvalidResolutions);
 	using namespace UE::Interchange;
 
 	auto AddErrorMessage = [this, &TextureFactoryNode](FString&& InSourceAssetName, const FText& ErrorMessage) -> UInterchangeResultError_Generic*
@@ -1895,7 +1918,7 @@ void UInterchangeTextureFactory::CheckForInvalidResolutions(UE::Interchange::Pri
 	bool bAllowNonPowerOfTwo = false;
 	TextureFactoryNode->GetCustomAllowNonPowerOfTwo(bAllowNonPowerOfTwo);
 
-	static_assert(TVariantSize<Private::InterchangeTextureFactory::FTexturePayloadVariant>::Value == 5, "Please update the code below and this assert to reflect the change to the variant type.");
+	static_assert(TVariantSize_V<Private::InterchangeTextureFactory::FTexturePayloadVariant> == 5, "Please update the code below and this assert to reflect the change to the variant type.");
 
 	FText ErrorMessage;
 	if (TOptional<FImportBlockedImage>* BlockedImagePtr = InPayloadVariant.TryGet<TOptional<FImportBlockedImage>>())

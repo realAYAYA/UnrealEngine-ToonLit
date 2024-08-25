@@ -31,7 +31,7 @@ export class UGS {
 		}
 
 		const data: IntegrationIssue = {
-			Project: bot[0].toUpperCase() + bot.substr(1).toLowerCase(),// slight hack: capitalise bot name to match UGS game projects
+			Project: bot[0].toUpperCase() + bot.substring(1).toLowerCase(),// slight hack: capitalise bot name to match UGS game projects
 			Summary, Owner: blockage.owner
 		}
 		const responseStr = await Badge.postWithRetry({

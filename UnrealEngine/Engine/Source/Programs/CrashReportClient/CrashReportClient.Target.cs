@@ -1,24 +1,32 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using UnrealBuildTool;
+using System.Collections.Generic;
 
 [SupportedPlatforms("Win64", "Mac", "Linux", "LinuxArm64")]
 [SupportedConfigurations(UnrealTargetConfiguration.Debug, UnrealTargetConfiguration.Development, UnrealTargetConfiguration.Shipping)]
 public class CrashReportClientTarget : TargetRules
 {
+	// Default crash reporting url. This is the default value. Overrideable per project.
+	[ConfigFile(ConfigHierarchyType.Engine, "CrashReportClientBuildSettings", "DefaultUrl")]
+	public string DefaultUrl;
+		
+	// Default company name displayed in the UX. Overrideable per project
+	[ConfigFile(ConfigHierarchyType.Engine, "CrashReportClientBuildSettings", "DefaultCompanyName")]
+	public string DefaultCompanyName;
+	
+	// Url for telemetry. (Not used by licensees)
 	[ConfigFile(ConfigHierarchyType.Engine, "CrashReportClientBuildSettings", "TelemetryUrl")]
 	public string TelemetryUrl;
 
-	[ConfigFile(ConfigHierarchyType.Engine, "CrashReportClientBuildSettings", "TelemetryKey_Dev")]
-	public string TelemetryKey_Dev;
+	// Key used by telemetry (Not used by licensees)
+	[ConfigFile(ConfigHierarchyType.Engine, "CrashReportClientBuildSettings", "TelemetryKey")]
+	public string TelemetryKey;
 
-	[ConfigFile(ConfigHierarchyType.Engine, "CrashReportClientBuildSettings", "TelemetryKey_Release")]
-	public string TelemetryKey_Release;
+	public CrashReportClientTarget(TargetInfo Target) : this(Target, true)
+	{}
 
-	public CrashReportClientTarget(TargetInfo Target) : base(Target)
+	protected CrashReportClientTarget(TargetInfo Target, bool bSetConfiguredDefinitions) : base(Target)
 	{
 		Type = TargetType.Program;
 		LinkType = TargetLinkType.Monolithic;
@@ -53,22 +61,47 @@ public class CrashReportClientTarget : TargetRules
 		// Need to disable the bundled version of dbghelp so that CrashDebugHelper can load dbgeng.dll.
 		WindowsPlatform.bUseBundledDbgHelp = false;
 
-		// Add the definitions from config files
-		if(!string.IsNullOrWhiteSpace(TelemetryUrl))
-		{
-			AddConfigMacro("CRC_TELEMETRY_URL=", string.Format("\"{0}\"", TelemetryUrl));
-		}
-		AddConfigMacro("CRC_TELEMETRY_KEY_DEV=", string.Format("\"{0}\"", TelemetryKey_Dev));
-		AddConfigMacro("CRC_TELEMETRY_KEY_RELEASE=", string.Format("\"{0}\"", TelemetryKey_Release));
+		// Set the maximum number of cores used
+		GlobalDefinitions.Add("UE_TASKGRAPH_THREAD_LIMIT=5");
 
 		GlobalDefinitions.Add("NOINITCRASHREPORTER=1");
+
+		// Since we can't use virtual calls in the constructor allow, any inheriting type to opt out
+		// of setting these configured definitions
+		if (bSetConfiguredDefinitions)
+		{
+			GlobalDefinitions.AddRange(SetupConfiguredDefines(
+				 DefaultUrl, DefaultCompanyName, TelemetryUrl, TelemetryKey));
+		}
 	}
 
-	void AddConfigMacro(string Prefix, string Value)
+	protected static List<string> SetupConfiguredDefines(
+		string DefaultUrl, 
+		string DefaultCompanyName, 
+		string TelemetryUrl, 
+		string TelemetryKey)
 	{
-		if (!string.IsNullOrEmpty(Value) && !GlobalDefinitions.Any(x => x.StartsWith(Prefix, StringComparison.Ordinal)))
+		var Definitions = new List<string>();
+		if (!string.IsNullOrEmpty(DefaultUrl))
 		{
-			GlobalDefinitions.Add(Prefix + Value);
+			Definitions.Add($"CRC_DEFAULT_URL=\"{DefaultUrl}\"");
 		}
+
+		if (!string.IsNullOrEmpty(DefaultCompanyName))
+		{
+			Definitions.Add($"CRC_DEFAULT_COMPANY_NAME=\"{DefaultCompanyName}\"");
+		}
+
+		if(!string.IsNullOrWhiteSpace(TelemetryUrl))
+		{
+			Definitions.Add($"CRC_TELEMETRY_URL=\"{TelemetryUrl}\"");
+		}
+
+		if (!string.IsNullOrWhiteSpace(TelemetryKey))
+		{
+			Definitions.Add($"CRC_TELEMETRY_KEY=\"{TelemetryKey}\"");
+		}
+
+		return Definitions;
 	}
 }

@@ -7,6 +7,7 @@ import hashlib
 import marshal
 import flow.describe
 import subprocess as sp
+from pathlib import Path
 
 #-------------------------------------------------------------------------------
 class _Log(object):
@@ -47,8 +48,15 @@ def _http_get(url, dest_dir, progress_cb=None):
     import re
     from urllib.request import urlopen
 
+    # Try and get the certifi CA file
+    try:
+        import certifi
+        cafile_path = certifi.where()
+    except ImportError:
+        cafile_path = None
+
     # Fire up an http client to get the url.
-    client = urlopen(url)
+    client = urlopen(url, cafile=cafile_path)
     if (client.status // 100) != 2:
         assert False, f"Error creating HTTP client for {url}"
 
@@ -85,13 +93,6 @@ def _http_get(url, dest_dir, progress_cb=None):
 
 
 #-------------------------------------------------------------------------------
-def _extract_zip(payload, dest_dir):
-    import zipfile
-    zip_file = zipfile.ZipFile(payload, "r")
-    zip_file.extractall(dest_dir)
-    zip_file.close()
-
-#-------------------------------------------------------------------------------
 def _extract_tar(payload, dest_dir):
     cmd = ("tar", "-x", "-C", dest_dir, "-f", payload)
     ret = sp.run(cmd, stdout=sp.DEVNULL)
@@ -102,7 +103,7 @@ def _tool_extract_method(self, src_path, dest_dir):
     extractors = {
         ".tar.gz"   : _extract_tar,
         ".tgz"      : _extract_tar,
-        ".zip"      : _extract_zip,
+        ".zip"      : _extract_tar, # Windows comes with tar as standard now
     }
 
     was_archive = False
@@ -146,9 +147,9 @@ def _acquire_tool(name, tool, target_dir, progress_cb):
         _log.write("Bundle", bundle_name)
         fetch_dir = temp_dir + bundle_name + "/"
         os.mkdir(fetch_dir)
-        for payload in bundle._payloads:
-            _log.write("Payload", *payload)
-            payload, ftype = payload
+        for payload, ftype in bundle._payloads:
+            payload = payload.replace("$VERSION", tool._version)
+            _log.write("Payload", payload, ftype)
             payload_dest = _http_get(payload, fetch_dir, inner_progress_cb)
             payload_i += 1
             if ftype:
@@ -209,7 +210,8 @@ def _acquire_tool(name, tool, target_dir, progress_cb):
 def _manifest_tool(name, tool):
     bundles = {}
     for bundle_name, bundle in tool._bundles.items():
-        bundles[bundle_name] = tuple(x[0] for x in bundle._payloads)
+        urls = (x[0] for x in bundle._payloads)
+        bundles[bundle_name] = tuple(x.replace("$VERSION", tool._version) for x in urls)
 
     return {
         "sha1"      : 0,
@@ -291,14 +293,6 @@ def _validate_command(channel_src_dir, name, command):
         assert False, f"Command '{name}' missing source '{command._py_path}'"
 
 #-------------------------------------------------------------------------------
-def _validate_extension(channel_src_dir, name, extension):
-    assert extension._name, f"Extension '{name}' invalid/missing call to mount()"
-    assert extension._extendable, f"Extension '{name}' missing call to mount()"
-    assert extension._py_path, f"Extension '{name}' missing call to source()"
-    if not os.path.isfile(channel_src_dir + extension._py_path):
-        assert False, f"Extension '{name}' missing source '{extension._py_path}'"
-
-#-------------------------------------------------------------------------------
 def _select_update_type():
     version_path = os.path.abspath(__file__ + "/../../version")
     input_deps = (
@@ -365,21 +359,13 @@ class _UpdateImpl(_Action):
             command._path = command._path or (name)
             command._path = (command._prefix, *command._path)
 
-        # Extensions
-        extensions = [x for x in read_items_by_type(flow.describe.Extension)]
-
-        for name, extension in extensions:
-            _validate_extension(self._input_path, name, extension)
-
         # Build manifest
         manifest = {}
         manifest["name"] = self._name
         manifest["path"] = self._input_path
         manifest["parent"] = channel._parent or "flow.core"
-        manifest["extendables"] = tuple(channel._extendables)
         manifest["tools"] = tools_manifest
         manifest["commands"] = tuple(v.__dict__ for k,v in commands)
-        manifest["extensions"] = tuple(v.__dict__ for k,v in extensions)
 
         # Success. Write the action's output
         with open(out_dir + "manifest", "wb") as x:
@@ -421,29 +407,6 @@ def _plant_cmd_tree(channels):
     return cmd_tree
 
 #-------------------------------------------------------------------------------
-def _mount_extensions(channel):
-    py_dir = channel["name"] + "/"
-    for extension in channel["extensions"]:
-        extendable = extension["_extendable"]
-        host = channel
-        while True:
-            if extendable in host["extendables"]:
-                ext_desc = (
-                    channel["index"],
-                    extension["_py_path"],
-                    extension["_py_class"],
-                )
-                out = host["extendables"][extendable]
-                out = out.setdefault(extension["_name"], [])
-                out.append(ext_desc)
-                break
-
-            host = host["parent"]
-            if not host:
-                extension_name = extension["_name"]
-                assert False, f"Unable to find extendable '{extendable}' for '{py_dir}{extension_name}'"
-
-#-------------------------------------------------------------------------------
 def _carve_channels(channels):
     out = [None] * len(channels)
     for channel in channels:
@@ -454,7 +417,6 @@ def _carve_channels(channels):
             "name" : channel["name"],
             "path" : channel["path"],
             "parent" : parent_index,
-            "extendables" : channel["extendables"],
             "tools" : tools,
         }
 
@@ -532,11 +494,6 @@ class _Finalise(_Action):
         manifests = topo_manifests
         _log.write("Channels;", *(x["name"] for x in manifests.values()))
 
-        # Prepare extendables and mount extensions
-        for manifest in manifests.values():
-            manifest["extendables"] = {x:{} for x in manifest["extendables"]}
-            _mount_extensions(manifest)
-
         # Collect various paths for each channel
         pylib_dirs = []
         for manifest in manifests.values():
@@ -571,9 +528,9 @@ class _Prune(_Action):
 
 
 #-------------------------------------------------------------------------------
-def impl(working_dir, *channels_dirs):
-    channels_dirs = [os.path.abspath(x) for x in channels_dirs if x]
-    working_dir = os.path.abspath(working_dir)
+def impl(working_dir:Path, *channels_dirs:Path):
+    channels_dirs = [str(x.resolve()) for x in channels_dirs if x.is_dir()]
+    working_dir = str(working_dir.resolve())
 
     def _read_channels(dir, depth=0):
         for item in fsutils.read_dirs(dir):

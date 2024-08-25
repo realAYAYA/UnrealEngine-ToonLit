@@ -176,7 +176,7 @@ bool ParseTakeName(const FString& InTakeName, FString& OutActorName, FString& Ou
 	if (Splits.Num() > 0)
 	{
 		OutTakeNumber = FCString::Atoi(*Splits[Splits.Num()-1]);
-		Splits.Pop(true);
+		Splits.Pop(EAllowShrinking::Yes);
 		bHasTakeNumber = true;
 	}
 
@@ -184,7 +184,7 @@ bool ParseTakeName(const FString& InTakeName, FString& OutActorName, FString& Ou
 	if (Splits.Num() > 0 && OutSessionName.IsEmpty())
 	{
 		OutSessionName = Splits[Splits.Num()-1];
-		Splits.Pop(true);
+		Splits.Pop(EAllowShrinking::Yes);
 	}
 
 	// The rest is the actor name

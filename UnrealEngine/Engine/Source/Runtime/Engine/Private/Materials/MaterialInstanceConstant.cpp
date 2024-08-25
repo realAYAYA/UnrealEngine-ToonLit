@@ -7,7 +7,6 @@
 #include "Materials/MaterialInstanceConstant.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialInstanceSupport.h"
-#include "ProfilingDebugging/CookStats.h"
 #include "MaterialCachedData.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MaterialInstanceConstant)
@@ -15,21 +14,6 @@
 #if WITH_EDITOR
 #include "MaterialCachedHLSLTree.h"
 #include "ObjectCacheEventSink.h"
-#endif
-
-#if ENABLE_COOK_STATS
-#include "ProfilingDebugging/ScopedTimers.h"
-namespace MaterialInstanceCookStats
-{
-static double MaterialInstanceUpdateCachedExpressionDataSec = 0.0;
-
-static FCookStatsManager::FAutoRegisterCallback RegisterCookStats([](FCookStatsManager::AddStatFuncRef AddStat)
-	{
-		AddStat(TEXT("Material"), FCookStatsManager::CreateKeyValueArray(
-			TEXT("MaterialInstanceUpdateCachedExpressionDataSec"), MaterialInstanceUpdateCachedExpressionDataSec
-		));
-	});
-}
 #endif
 
 UMaterialInstanceConstant::UMaterialInstanceConstant(const FObjectInitializer& ObjectInitializer)
@@ -187,8 +171,6 @@ void FMaterialInstanceCachedData::InitializeForConstant(const FMaterialLayersFun
 
 void UMaterialInstanceConstant::UpdateCachedData()
 {
-	COOK_STAT(FScopedDurationTimer BlockingTimer(MaterialInstanceCookStats::MaterialInstanceUpdateCachedExpressionDataSec));
-
 	// Don't need to rebuild cached data if it was serialized
 	if (!bLoadedCachedData)
 	{
@@ -215,7 +197,7 @@ void UMaterialInstanceConstant::UpdateCachedData()
 		TUniquePtr<FMaterialCachedExpressionData> LocalCachedExpressionData;
 		TUniquePtr<FMaterialCachedHLSLTree> LocalCachedTree;
 
-		// If we have overriden material layers, need to create a local cached expression data
+		// If we have overridden material layers, need to create a local cached expression data
 		// Otherwise we can leave it as null, and use cached data from our parent
 		const FStaticParameterSet& LocalStaticParameters = GetStaticParameters();
 		if (LocalStaticParameters.bHasMaterialLayers)
@@ -242,9 +224,64 @@ void UMaterialInstanceConstant::UpdateCachedData()
 
 		if (bUsingNewHLSLGenerator && bHasStaticPermutationResource)
 		{
+			// Find the values of all overridden parameters including those overridden by parent instances. This is needed
+			// for correct HLSL tree preparation where static parameter values can affect the final result. We cannot call
+			// GetStaticParameterValues() here because it uses CachedExpressionData which is not ready yet
+			FStaticParameterSet OverriddenStaticParameters;
+#if WITH_EDITORONLY_DATA
+			{
+				OverriddenStaticParameters.EditorOnly.TerrainLayerWeightParameters = LocalStaticParameters.EditorOnly.TerrainLayerWeightParameters;
+
+				FMaterialInheritanceChain InstanceChain;
+				GetMaterialInheritanceChain(InstanceChain);
+
+				// Maps a layer in parent to a layer in this instance
+				TArray<int32, TInlineAllocator<16>> LayerIndexRemap;
+				LayerIndexRemap.Empty(GetCachedInstanceData().ParentLayerIndexRemap.Num());
+				for (int32 LayerIndex = 0; LayerIndex < GetCachedInstanceData().ParentLayerIndexRemap.Num(); ++LayerIndex)
+				{
+					LayerIndexRemap.Add(LayerIndex);
+				}
+
+				TMap<FMaterialParameterInfo, FMaterialParameterMetadata> OverriddenStaticParametersMap[2];
+				TSet<FMaterialParameterInfo> SeenParameters[2];
+				for (int32 InstanceIndex = 0; InstanceIndex < InstanceChain.MaterialInstances.Num(); ++InstanceIndex)
+				{
+					const UMaterialInstance* Instance = InstanceChain.MaterialInstances[InstanceIndex];
+					const bool bSetOverride = InstanceIndex == 0;
+
+					if (InstanceIndex > 0)
+					{
+						const UMaterialInstance* ChildInstance = InstanceChain.MaterialInstances[InstanceIndex - 1];
+						const int32 NumLayers = Instance->GetCachedInstanceData().ParentLayerIndexRemap.Num();
+						RemapLayersForParent(LayerIndexRemap, NumLayers, ChildInstance->GetCachedInstanceData().ParentLayerIndexRemap);
+					}
+
+					const FStaticParameterSet& InstanceStaticParameters = Instance->GetStaticParameters();
+					GameThread_ApplyParameterOverrides(
+						InstanceStaticParameters.StaticSwitchParameters,
+						LayerIndexRemap,
+						bSetOverride,
+						SeenParameters[0],
+						OverriddenStaticParametersMap[0],
+						true);
+					GameThread_ApplyParameterOverrides(
+						InstanceStaticParameters.EditorOnly.StaticComponentMaskParameters,
+						LayerIndexRemap,
+						bSetOverride,
+						SeenParameters[1],
+						OverriddenStaticParametersMap[1],
+						true);
+				}
+
+				OverriddenStaticParameters.AddParametersOfType(EMaterialParameterType::StaticSwitch, OverriddenStaticParametersMap[0]);
+				OverriddenStaticParameters.AddParametersOfType(EMaterialParameterType::StaticComponentMask, OverriddenStaticParametersMap[1]);
+			}
+#endif // WITH_EDITORONLY_DATA
+
 			check(!LocalCachedExpressionData);
 			LocalCachedExpressionData.Reset(new FMaterialCachedExpressionData());
-			LocalCachedExpressionData->UpdateForCachedHLSLTree(GetCachedHLSLTree(), &LocalStaticParameters);
+			LocalCachedExpressionData->UpdateForCachedHLSLTree(GetCachedHLSLTree(), &OverriddenStaticParameters, this);
 		}
 
 		CachedExpressionData = MoveTemp(LocalCachedExpressionData);

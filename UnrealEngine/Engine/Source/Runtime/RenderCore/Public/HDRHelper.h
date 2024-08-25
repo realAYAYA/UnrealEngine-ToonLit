@@ -44,6 +44,7 @@ struct FACESTonemapParams
 	, ACESCoefsLow_4(1.84773231f)
 	, ACESCoefsHigh_4(3.0f)
 	, ACESSceneColorMultiplier(1.5f)
+	, ACESGamutCompression(0.0f)
 	{
 
 	}
@@ -54,6 +55,7 @@ struct FACESTonemapParams
 	float ACESCoefsLow_4;
 	float ACESCoefsHigh_4;
 	float ACESSceneColorMultiplier;
+	float ACESGamutCompression;
 };
 
 UE_DEPRECATED(all, "For internal use only.")
@@ -73,4 +75,5 @@ inline void GetACESTonemapParameters(FACESTonemapParametersType& ACESTonemapPara
 	ACESTonemapParameters.ACESCoefsLow_4 = TonemapperParams.ACESCoefsLow_4;
 	ACESTonemapParameters.ACESCoefsHigh_4 = TonemapperParams.ACESCoefsHigh_4;
 	ACESTonemapParameters.ACESSceneColorMultiplier = TonemapperParams.ACESSceneColorMultiplier;
+	ACESTonemapParameters.ACESGamutCompression = FMath::Clamp(TonemapperParams.ACESGamutCompression, 0.0f, 1.0f);
 }

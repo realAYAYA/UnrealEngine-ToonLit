@@ -7,6 +7,8 @@
 #include "Math/MathFwd.h"
 #include "Misc/EnumClassFlags.h"
 #include "RenderGraphFwd.h"
+#include "Engine/EngineTypes.h"
+#include "PrimitiveComponentId.h"
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
 #include "CoreMinimal.h"
@@ -26,7 +28,6 @@ class FMaterial;
 class FMaterialShaderMap;
 class FName;
 class FOutputDevice;
-class FPrimitiveComponentId;
 class FPrimitiveSceneInfo;
 class FRDGBuilder;
 class FRDGExternalAccessQueue;
@@ -66,6 +67,13 @@ struct FLightRenderParameters;
 struct FPersistentPrimitiveIndex;
 template<int32 MaxSHOrder> class TSHVectorRGB;
 using FSHVectorRGB3 = TSHVectorRGB<3>;
+struct FCustomPrimitiveData;
+class FSceneViewFamily;
+
+
+struct FPrimitiveSceneDesc;
+struct FInstancedStaticMeshSceneDesc;
+struct FLightSceneDesc;
 
 enum EBasePassDrawListType
 {
@@ -84,7 +92,10 @@ enum class EUpdateAllPrimitiveSceneInfosAsyncOps
 	// Light primitive interactions are created asynchronously.
 	CreateLightPrimitiveInteractions = 1 << 1,
 
-	All = CacheMeshDrawCommands | CreateLightPrimitiveInteractions
+	// Material uniform expressions are cached asynchronously.
+	CacheMaterialUniformExpressions = 1 << 2,
+
+	All = CacheMeshDrawCommands | CreateLightPrimitiveInteractions | CacheMaterialUniformExpressions
 };
 ENUM_CLASS_FLAGS(EUpdateAllPrimitiveSceneInfosAsyncOps);
 
@@ -132,6 +143,8 @@ public:
 	 */
 	virtual void UpdatePrimitiveTransform(UPrimitiveComponent* Primitive) = 0;
 	virtual void UpdatePrimitiveOcclusionBoundsSlack(UPrimitiveComponent* Primitive, float NewSlack) = 0;
+	virtual void UpdatePrimitiveDrawDistance(UPrimitiveComponent* Primitive, float MinDrawDistance, float MaxDrawDistance, float VirtualTextureMaxDrawDistance) = 0;
+	virtual void UpdateInstanceCullDistance(UPrimitiveComponent* Primitive, float StartCullDistance, float EndCullDistance) = 0;
 	/** Updates primitive attachment state. */
 	virtual void UpdatePrimitiveAttachment(UPrimitiveComponent* Primitive) = 0;
 
@@ -254,6 +267,7 @@ public:
 	virtual void AllocateAndCaptureFrameSkyEnvMap(FRDGBuilder& GraphBuilder, FSceneRenderer& SceneRenderer, FViewInfo& MainView, bool bShouldRenderSkyAtmosphere, bool bShouldRenderVolumetricCloud, FInstanceCullingManager& InstanceCullingManager, FRDGExternalAccessQueue& ExternalAccessQueue) {}
 	virtual void ValidateSkyLightRealTimeCapture(FRDGBuilder& GraphBuilder, const FViewInfo& View, FRDGTextureRef SceneColorTexture) {}
 
+	UE_DEPRECATED(5.4, "This method has been refactored to be a proper visualization post process. It should have never been added on the FSceneInterface in the first place.")
 	ENGINE_API virtual void ProcessAndRenderIlluminanceMeter(FRDGBuilder& GraphBuilder, TArrayView<FViewInfo> Views, FRDGTextureRef SceneColorTexture);
 
 	virtual void AddPlanarReflection(class UPlanarReflectionComponent* Component) {}
@@ -351,17 +365,17 @@ public:
 	 *
 	 * @param FogProxy - fog proxy to add
 	 */
-	virtual void AddLocalHeightFog(class FLocalHeightFogSceneProxy* FogProxy) = 0;
+	virtual void AddLocalFogVolume(class FLocalFogVolumeSceneProxy* FogProxy) = 0;
 	/**
 	 * Removes a local height fog component from the scene
 	 *
 	 * @param FogProxy - fog proxy to remove
 	 */
-	virtual void RemoveLocalHeightFog(class FLocalHeightFogSceneProxy* FogProxy) = 0;
+	virtual void RemoveLocalFogVolume(class FLocalFogVolumeSceneProxy* FogProxy) = 0;
 	/**
 	 * @return True if there are any local height fog potentially enabled in the scene
 	 */
-	virtual bool HasAnyLocalHeightFog() const = 0;
+	virtual bool HasAnyLocalFogVolume() const = 0;
 
 	/**
 	 * Adds the unique volumetric cloud component to the scene
@@ -513,6 +527,21 @@ public:
 	virtual void UpdateLumenSceneCardTransform(class ULumenSceneCardComponent* LumenSceneCardComponent) {};
 	virtual void RemoveLumenSceneCard(class ULumenSceneCardComponent* LumenSceneCardComponent) {};
 
+	// FPrimtiveDesc version for primitive/light scene interactions
+	virtual void AddPrimitive(FPrimitiveSceneDesc* Primitive) = 0;
+	virtual void RemovePrimitive(FPrimitiveSceneDesc* Primitive) = 0;
+	virtual void ReleasePrimitive(FPrimitiveSceneDesc* Primitive) = 0;
+	virtual void UpdatePrimitiveTransform(FPrimitiveSceneDesc* Primitive) = 0;
+
+	virtual void BatchAddPrimitives(TArrayView<FPrimitiveSceneDesc*> InPrimitives) = 0;
+	virtual void BatchRemovePrimitives(TArrayView<FPrimitiveSceneDesc*> InPrimitives) = 0;
+	virtual void BatchReleasePrimitives(TArrayView<FPrimitiveSceneDesc*> InPrimitives) = 0;
+	
+	virtual void UpdateCustomPrimitiveData(FPrimitiveSceneDesc* Primitive, const FCustomPrimitiveData& CustomPrimitiveData) = 0;
+
+	virtual void UpdatePrimitiveInstances(FInstancedStaticMeshSceneDesc* Primitive) = 0;	
+
+
 	/**
 	 * Release this scene and remove it from the rendering thread
 	 */
@@ -608,6 +637,8 @@ public:
 
 	virtual bool IsEditorScene() const { return false; }
 
+	virtual void UpdateEarlyZPassMode() {}
+
 	ERHIFeatureLevel::Type GetFeatureLevel() const { return FeatureLevel; }
 
 	ENGINE_API EShaderPlatform GetShaderPlatform() const;
@@ -658,7 +689,25 @@ public:
 	virtual bool RequestGPUSceneUpdate(FPrimitiveSceneInfo& PrimitiveSceneInfo, EPrimitiveDirtyState PrimitiveDirtyState) { return false; }
 	virtual bool RequestUniformBufferUpdate(FPrimitiveSceneInfo& PrimitiveSceneInfo) { return false; }
 
-	virtual void RefreshNaniteRasterBins(FPrimitiveSceneInfo& PrimitiveSceneInfo) { }
+	virtual void RefreshNaniteRasterBins(FPrimitiveSceneInfo& PrimitiveSceneInfo) {}
+	virtual void ReloadNaniteFixedFunctionBins() {}
+
+	/** Contains settings used to construct scene view for custom render pass during the renderer construction. */
+	struct FCustomRenderPassRendererInput
+	{
+		/** Data used to construct scene view for the custom render pass. */
+		FVector ViewLocation;
+		FMatrix ViewRotationMatrix;
+		FMatrix ProjectionMatrix;
+		TSet<FPrimitiveComponentId> HiddenPrimitives;
+		TOptional<TSet<FPrimitiveComponentId>> ShowOnlyPrimitives;
+		const AActor* ViewActor = nullptr;
+
+		class FCustomRenderPassBase* CustomRenderPass = nullptr;
+	};
+
+	/** Enqueues a new custom render pass to execute the next time this scene is rendered by ANY scene renderer. It will be immediately removed from the scene afterwards. */
+	virtual bool AddCustomRenderPass(const FSceneViewFamily* ViewFamily, const FCustomRenderPassRendererInput& CustomRenderPassInput) { return false; }
 
 protected:
 	virtual ~FSceneInterface() {}

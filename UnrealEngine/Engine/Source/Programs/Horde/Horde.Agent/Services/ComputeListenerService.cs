@@ -1,16 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
-using System;
-using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
-using System.Threading;
-using System.Threading.Tasks;
+using EpicGames.Core;
+using EpicGames.Horde.Compute.Clients;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using EpicGames.Horde.Compute.Clients;
 
 namespace Horde.Agent.Services
 {
@@ -22,7 +18,7 @@ namespace Horde.Agent.Services
 		class WaitingClient : IDisposable
 		{
 			TcpClient? _tcpClient;
-			readonly TaskCompletionSource _takenTaskSource = new TaskCompletionSource();
+			readonly TaskCompletionSource _takenTaskSource = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
 			public WaitingClient(TcpClient tcpClient)
 			{
@@ -34,7 +30,7 @@ namespace Horde.Agent.Services
 				TcpClient? tcpClient = _tcpClient;
 				if (Interlocked.CompareExchange(ref _tcpClient, null, tcpClient) == tcpClient)
 				{
-					Task.Run(() => _takenTaskSource.SetResult()); // Run continuations on another thread since we may be in a lock
+					_takenTaskSource.SetResult();
 					return tcpClient;
 				}
 				return null;
@@ -91,7 +87,7 @@ namespace Horde.Agent.Services
 					return waitingClientInfo.TakeClient();
 				}
 
-				waitingLease = new TaskCompletionSource<TcpClient?>();
+				waitingLease = new TaskCompletionSource<TcpClient?>(TaskCreationOptions.RunContinuationsAsynchronously);
 				_waitingLeases.Add(nonce, waitingLease);
 			}
 

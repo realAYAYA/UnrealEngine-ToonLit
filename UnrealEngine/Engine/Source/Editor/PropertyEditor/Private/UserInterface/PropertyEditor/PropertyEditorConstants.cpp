@@ -6,6 +6,7 @@
 #include "Styling/AppStyle.h"
 #include "Styling/ISlateStyle.h"
 #include "UObject/NameTypes.h"
+#include "Internationalization/Text.h"
 
 const FName PropertyEditorConstants::PropertyFontStyle( TEXT("PropertyWindow.NormalFont") );
 const FName PropertyEditorConstants::CategoryFontStyle( TEXT("DetailsView.CategoryFontStyle") );
@@ -13,6 +14,8 @@ const FName PropertyEditorConstants::CategoryFontStyle( TEXT("DetailsView.Catego
 const FName PropertyEditorConstants::MD_Bitmask( TEXT("Bitmask") );
 const FName PropertyEditorConstants::MD_BitmaskEnum( TEXT("BitmaskEnum") );
 const FName PropertyEditorConstants::MD_UseEnumValuesAsMaskValuesInEditor( TEXT("UseEnumValuesAsMaskValuesInEditor") );
+
+const FText PropertyEditorConstants::DefaultUndeterminedText(NSLOCTEXT("PropertyEditor", "MultipleValues", "Multiple Values"));
 
 const FSlateBrush* PropertyEditorConstants::GetOverlayBrush(const TSharedRef<class FPropertyEditor> PropertyEditor )
 {

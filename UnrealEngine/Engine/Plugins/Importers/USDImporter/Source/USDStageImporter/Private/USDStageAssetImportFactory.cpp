@@ -4,20 +4,17 @@
 
 #include "USDAssetImportData.h"
 #include "USDAssetUserData.h"
+#include "USDConversionUtils.h"
 #include "USDErrorUtils.h"
-#include "USDLog.h"
 #include "USDStageImporter.h"
 #include "USDStageImporterModule.h"
 #include "USDStageImportOptions.h"
 
-#include "ActorFactories/ActorFactoryStaticMesh.h"
 #include "AssetImportTask.h"
 #include "Editor.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/StaticMesh.h"
-#include "JsonObjectConverter.h"
 #include "Misc/Paths.h"
-#include "ProfilingDebugging/ScopedTimers.h"
 
 #define LOCTEXT_NAMESPACE "USDStageAssetImportFactory"
 
@@ -36,10 +33,7 @@ UUsdStageAssetImportFactory::UUsdStageAssetImportFactory(const FObjectInitialize
 	bEditorImport = true;
 	bText = false;
 
-	for ( const FString& Extension : UnrealUSDWrapper::GetNativeFileFormats() )
-	{
-		Formats.Add(FString::Printf(TEXT("%s; Universal Scene Description files"), *Extension));
-	}
+	UnrealUSDWrapper::AddUsdImportFileFormatDescriptions(Formats);
 }
 
 bool UUsdStageAssetImportFactory::DoesSupportClass(UClass* Class)
@@ -52,24 +46,33 @@ UClass* UUsdStageAssetImportFactory::ResolveSupportedClass()
 	return UStaticMesh::StaticClass();
 }
 
-UObject* UUsdStageAssetImportFactory::FactoryCreateFile(UClass* InClass, UObject* InParent, FName InName, EObjectFlags Flags, const FString& Filename, const TCHAR* Parms, FFeedbackContext* Warn, bool& bOutOperationCanceled)
+UObject* UUsdStageAssetImportFactory::FactoryCreateFile(
+	UClass* InClass,
+	UObject* InParent,
+	FName InName,
+	EObjectFlags Flags,
+	const FString& Filename,
+	const TCHAR* Parms,
+	FFeedbackContext* Warn,
+	bool& bOutOperationCanceled
+)
 {
 	UObject* ImportedObject = nullptr;
 
-	if ( AssetImportTask && IsAutomatedImport() )
+	if (AssetImportTask && IsAutomatedImport())
 	{
-		ImportContext.ImportOptions = Cast<UUsdStageImportOptions>( AssetImportTask->Options );
+		ImportContext.ImportOptions = Cast<UUsdStageImportOptions>(AssetImportTask->Options);
 	}
 
 	// When importing from file we don't want to use any opened stage
 	ImportContext.bReadFromStageCache = false;
 
-	const FString InitialPackagePath = InParent ? InParent->GetName() : TEXT( "/Game/" );
+	const FString InitialPackagePath = InParent ? InParent->GetName() : TEXT("/Game/");
 	const bool bIsReimport = false;
 	const bool bAllowActorImport = false;
 	if (ImportContext.Init(InName.ToString(), Filename, InitialPackagePath, Flags, IsAutomatedImport(), bIsReimport, bAllowActorImport))
 	{
-		GEditor->GetEditorSubsystem<UImportSubsystem>()->BroadcastAssetPreImport( this, InClass, InParent, InName, Parms );
+		GEditor->GetEditorSubsystem<UImportSubsystem>()->BroadcastAssetPreImport(this, InClass, InParent, InName, Parms);
 
 		FScopedUsdMessageLog ScopedMessageLog;
 
@@ -91,11 +94,11 @@ UObject* UUsdStageAssetImportFactory::FactoryCreateFile(UClass* InClass, UObject
 
 bool UUsdStageAssetImportFactory::FactoryCanImport(const FString& Filename)
 {
-	const FString Extension = FPaths::GetExtension( Filename );
+	const FString Extension = FPaths::GetExtension(Filename);
 
-	for ( const FString& SupportedExtension : UnrealUSDWrapper::GetAllSupportedFileFormats() )
+	for (const FString& SupportedExtension : UnrealUSDWrapper::GetAllSupportedFileFormats())
 	{
-		if ( SupportedExtension.Equals( Extension, ESearchCase::IgnoreCase ) )
+		if (SupportedExtension.Equals(Extension, ESearchCase::IgnoreCase))
 		{
 			return true;
 		}
@@ -114,8 +117,20 @@ bool UUsdStageAssetImportFactory::CanReimport(UObject* Obj, TArray<FString>& Out
 {
 	if (UAssetImportData* ImportData = UsdUtils::GetAssetImportData(Obj))
 	{
-		OutFilenames.Add(ImportData->GetFirstFilename());
-		return true;
+		const FString FileName = ImportData->GetFirstFilename();
+		const FString FileExtension = FPaths::GetExtension(FileName);
+
+		// Reimporting from here means opening FileName as a USD stage and trying to re-read the same prims,
+		// so make sure we only claim we can reimport something if that would work. Otherwise we may intercept
+		// some other formats like .vdb files and then fail to open them as stages
+		for (const FString& Extension : UnrealUSDWrapper::GetNativeFileFormats())
+		{
+			if (Extension == FileExtension)
+			{
+				OutFilenames.Add(ImportData->GetFirstFilename());
+				return true;
+			}
+		}
 	}
 
 	return false;
@@ -138,10 +153,7 @@ EReimportResult::Type UUsdStageAssetImportFactory::Reimport(UObject* Obj)
 {
 	if (!Obj)
 	{
-		FUsdLogManager::LogMessage(
-			EMessageSeverity::Error,
-			LOCTEXT("ReimportErrorInvalidAsset", "Failed to reimport asset as it is invalid!")
-		);
+		FUsdLogManager::LogMessage(EMessageSeverity::Error, LOCTEXT("ReimportErrorInvalidAsset", "Failed to reimport asset as it is invalid!"));
 		return EReimportResult::Failed;
 	}
 
@@ -171,10 +183,7 @@ EReimportResult::Type UUsdStageAssetImportFactory::Reimport(UObject* Obj)
 		FUsdLogManager::LogMessage(
 			EMessageSeverity::Error,
 			FText::Format(
-				LOCTEXT(
-					"ReimportErrorNoImportData",
-					"Failed to reimport asset '{0}' as it doesn't seem to have valid USD import data or user data!"
-				),
+				LOCTEXT("ReimportErrorNoImportData", "Failed to reimport asset '{0}' as it doesn't seem to have valid USD import data or user data!"),
 				FText::FromName(Obj->GetFName())
 			)
 		);
@@ -193,15 +202,7 @@ EReimportResult::Type UUsdStageAssetImportFactory::Reimport(UObject* Obj)
 
 	const bool bIsReimport = true;
 	const bool bAllowActorImport = false;
-	if (!ImportContext.Init(
-			Obj->GetName(),
-			ReimportFilePath,
-			Obj->GetName(),
-			Obj->GetFlags(),
-			IsAutomatedImport(),
-			bIsReimport,
-			bAllowActorImport
-		))
+	if (!ImportContext.Init(Obj->GetName(), ReimportFilePath, Obj->GetName(), Obj->GetFlags(), IsAutomatedImport(), bIsReimport, bAllowActorImport))
 	{
 		FUsdLogManager::LogMessage(
 			EMessageSeverity::Error,

@@ -83,25 +83,6 @@ static TAutoConsoleVariable<int32> CVarHairStrandsVisibilityComputeRaster_Contin
 	ECVF_RenderThreadSafe);
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-// Hair strands instance ref. counting for debug purpose only
-uint32 FHairStrandsInstance::GetRefCount() const
-{
-	return RefCount;
-}
-
-uint32 FHairStrandsInstance::AddRef() const
-{
-	return ++RefCount;
-}
-
-uint32 FHairStrandsInstance::Release() const
-{
-	check(RefCount > 0);
-	uint32 LocalRefCount = --RefCount;
-	return LocalRefCount;
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Import/export utils function for hair resources
 void FRDGExternalBuffer::Release()
 {
@@ -188,11 +169,7 @@ bool IsHairStrandsSupported(EHairStrandsShaderType Type, EShaderPlatform Platfor
 {
 	if (!IsGroomEnabled()) return false;
 
-	// Important:
-	// EHairStrandsShaderType::All: Mobile is excluded as we don't need any interpolation/simulation code for this. It only do rigid transformation. 
-	//                              The runtime setting in these case are r.HairStrands.Binding=0 & r.HairStrands.Simulation=0
 	const bool Cards_Meshes_All = true;
-	const bool bIsMobile = IsMobilePlatform(Platform);
 
 	switch (Type)
 	{
@@ -200,7 +177,7 @@ bool IsHairStrandsSupported(EHairStrandsShaderType Type, EShaderPlatform Platfor
 	case EHairStrandsShaderType::Cards:	  return Cards_Meshes_All;
 	case EHairStrandsShaderType::Meshes:  return Cards_Meshes_All;
 	case EHairStrandsShaderType::Tool:	  return (IsD3DPlatform(Platform) || IsVulkanPlatform(Platform)) && IsPCPlatform(Platform) && IsFeatureLevelSupported(Platform, ERHIFeatureLevel::SM5);
-	case EHairStrandsShaderType::All:	  return Cards_Meshes_All && !bIsMobile;
+	case EHairStrandsShaderType::All:	  return Cards_Meshes_All;
 	}
 	return false;
 }
@@ -210,10 +187,6 @@ bool IsHairStrandsEnabled(EHairStrandsShaderType Type, EShaderPlatform Platform)
 	const bool HairStrandsGlobalEnable = IsGroomEnabled();
 	if (!HairStrandsGlobalEnable) return false;
 
-	// Important:
-	// EHairStrandsShaderType::All: Mobile is excluded as we don't need any interpolation/simulation code for this. It only do rigid transformation. 
-	//                              The runtime setting in these case are r.HairStrands.Binding=0 & r.HairStrands.Simulation=0
-	const bool bIsMobile = Platform != EShaderPlatform::SP_NumPlatforms ? IsMobilePlatform(Platform) : false;
 	const int32 HairStrandsEnable = CVarHairStrandsEnable.GetValueOnAnyThread();
 	const int32 HairCardsEnable   = CVarHairCardsEnable.GetValueOnAnyThread();
 	const int32 HairMeshesEnable  = CVarHairMeshesEnable.GetValueOnAnyThread();
@@ -227,7 +200,7 @@ bool IsHairStrandsEnabled(EHairStrandsShaderType Type, EShaderPlatform Platform)
 #else
 	case EHairStrandsShaderType::Tool:		return false;
 #endif
-	case EHairStrandsShaderType::All :		return HairStrandsGlobalEnable && (HairCardsEnable > 0 || HairMeshesEnable > 0 || HairStrandsEnable > 0) && !bIsMobile;
+	case EHairStrandsShaderType::All :		return HairStrandsGlobalEnable && (HairCardsEnable > 0 || HairMeshesEnable > 0 || HairStrandsEnable > 0);
 	}
 	return false;
 }
@@ -358,19 +331,24 @@ bool IsHairVisibilityComputeRasterContinuousLODEnabled()
 	return IsHairStrandContinuousDecimationReorderingEnabled() && IsHairVisibilityComputeRasterEnabled() && (CVarHairStrandsVisibilityComputeRaster_ContinuousLOD.GetValueOnAnyThread() > 0);
 }
 
-uint32 FHairGroupPublicData::GetActiveStrandsPointCount() const
+uint32 FHairGroupPublicData::GetActiveStrandsPointCount(bool bPrevious) const
 {
-	return ContinuousLODPointCount;
+	return bPrevious ? ContinuousLODPreviousPointCount : ContinuousLODPointCount;
 }
 
-uint32 FHairGroupPublicData::GetActiveStrandsCurveCount() const
+uint32 FHairGroupPublicData::GetActiveStrandsCurveCount(bool bPrevious) const
 {
-	return ContinuousLODCurveCount;
+	return bPrevious ? ContinuousLODPreviousCurveCount : ContinuousLODCurveCount;
 }
 
 float FHairGroupPublicData::GetActiveStrandsCoverageScale() const
 {
 	return ContinuousLODCoverageScale; 
+}
+
+float FHairGroupPublicData::GetActiveStrandsRadiusScale() const
+{
+	return ContinuousLODRadiusScale; 
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -400,41 +378,43 @@ void RunHairStrandsBookmark(EHairStrandsBookmark Bookmark, FHairStrandsBookmarkP
 	}
 }
 
-void CreateHairStrandsBookmarkParameters(FScene* Scene, FViewInfo& View, FHairStrandsBookmarkParameters& Out)
+void CreateHairStrandsBookmarkParameters(FScene* Scene, FViewInfo& View, FHairStrandsBookmarkParameters& Out, bool bComputeVisibleInstances)
 {
-	const int32 ActiveInstanceCount = Scene->HairStrandsSceneData.RegisteredProxies.Num();
-	Out.InstancesVisibility.Init(false, ActiveInstanceCount);
-
-	// 1. Strands - Add all visible strands instances
-	Out.VisibleStrands.Reserve(View.HairStrandsMeshElements.Num());
-	for (const FMeshBatchAndRelevance& MeshBatch : View.HairStrandsMeshElements)
+	// Only compute visible instances when required as this is expensive.
+	if (bComputeVisibleInstances)
 	{
-		check(MeshBatch.PrimitiveSceneProxy && MeshBatch.PrimitiveSceneProxy->ShouldRenderInMainPass());
-		if (MeshBatch.Mesh && MeshBatch.Mesh->Elements.Num() > 0)
+		const int32 ActiveInstanceCount = Scene->HairStrandsSceneData.RegisteredProxies.Num();
+		Out.InstancesVisibilityType.Init(EHairInstanceVisibilityType::NotVisible, ActiveInstanceCount);
+	
+		// 1. Strands - Add all visible strands instances
+		Out.VisibleStrands.Reserve(View.HairStrandsMeshElements.Num());
+		for (const FMeshBatchAndRelevance& MeshBatch : View.HairStrandsMeshElements)
 		{
-			FHairGroupPublicData* HairData = HairStrands::GetHairData(MeshBatch.Mesh);
-			if (HairData && HairData->Instance)
+			check(MeshBatch.PrimitiveSceneProxy && MeshBatch.PrimitiveSceneProxy->ShouldRenderInMainPass());
+			if (MeshBatch.Mesh && MeshBatch.Mesh->Elements.Num() > 0)
 			{
-				Out.VisibleStrands.Add(HairData->Instance);
-				Out.InstancesVisibility[HairData->Instance->RegisteredIndex] = true;
-				Out.InstanceCountPerType[uint32(EHairInstanceCount::StrandsPrimaryView)]++;
+				FHairGroupPublicData* HairData = HairStrands::GetHairData(MeshBatch.Mesh);
+				if (HairData && HairData->Instance)
+				{
+					Out.VisibleStrands.Add(HairData->Instance);
+					Out.InstancesVisibilityType[HairData->Instance->RegisteredIndex] = EHairInstanceVisibilityType::StrandsPrimaryView;
+				}
 			}
 		}
-	}
-
-	// 2. Cards/Meshes - Add all visible cards instances
-	Out.VisibleCardsOrMeshes_Primary.Reserve(View.HairStrandsMeshElements.Num());
-	for (const FMeshBatchAndRelevance& MeshBatch : View.HairCardsMeshElements)
-	{
-		check(MeshBatch.PrimitiveSceneProxy && MeshBatch.PrimitiveSceneProxy->ShouldRenderInMainPass());
-		if (MeshBatch.Mesh && MeshBatch.Mesh->Elements.Num() > 0)
+	
+		// 2. Cards/Meshes - Add all visible cards instances
+		Out.VisibleCardsOrMeshes_Primary.Reserve(View.HairCardsMeshElements.Num());
+		for (const FMeshBatchAndRelevance& MeshBatch : View.HairCardsMeshElements)
 		{
-			FHairGroupPublicData* HairData = HairStrands::GetHairData(MeshBatch.Mesh);
-			if (HairData && HairData->Instance)
+			check(MeshBatch.PrimitiveSceneProxy && MeshBatch.PrimitiveSceneProxy->ShouldRenderInMainPass());
+			if (MeshBatch.Mesh && MeshBatch.Mesh->Elements.Num() > 0)
 			{
-				Out.VisibleCardsOrMeshes_Primary.Add(HairData->Instance);
-				Out.InstancesVisibility[HairData->Instance->RegisteredIndex] = true;
-				Out.InstanceCountPerType[uint32(EHairInstanceCount::CardsOrMeshesPrimaryView)]++;
+				FHairGroupPublicData* HairData = HairStrands::GetHairData(MeshBatch.Mesh);
+				if (HairData && HairData->Instance)
+				{
+					Out.VisibleCardsOrMeshes_Primary.Add(HairData->Instance);
+					Out.InstancesVisibilityType[HairData->Instance->RegisteredIndex] = EHairInstanceVisibilityType::CardsOrMeshesPrimaryView;
+				}
 			}
 		}
 	}
@@ -446,7 +426,9 @@ void CreateHairStrandsBookmarkParameters(FScene* Scene, FViewInfo& View, FHairSt
 	Out.ViewRect				= View.ViewRect;
 	Out.ViewUniqueID			= View.ViewState ? View.ViewState->UniqueID : ~0;
 	Out.SceneColorTexture		= nullptr;
+	Out.SceneDepthTexture		= nullptr;
 	Out.Scene					= Scene;
+	Out.TransientResources		= Scene->HairStrandsSceneData.TransientResources;
 }
 
 void UpdateHairStrandsBookmarkParameters(FScene* Scene, TArray<FViewInfo>& Views, FHairStrandsBookmarkParameters& Out)
@@ -466,19 +448,19 @@ void UpdateHairStrandsBookmarkParameters(FScene* Scene, TArray<FViewInfo>& Views
 			const bool bCardsOrMeshes = Instance->GetHairGeometry() == EHairGeometryType::Cards || Instance->GetHairGeometry() == EHairGeometryType::Meshes;
 			const bool bCompatible = bStrands || bCardsOrMeshes;
 
-			if (Instance->RegisteredIndex >= 0 && Instance->RegisteredIndex < ActiveInstanceCount && !Out.InstancesVisibility[Instance->RegisteredIndex] && bCompatible)
+			if (Out.InstancesVisibilityType.IsValidIndex(Instance->RegisteredIndex) && Out.InstancesVisibilityType[Instance->RegisteredIndex] == EHairInstanceVisibilityType::NotVisible && bCompatible)
 			{
 				if (IsHairStrandsVisibleInShadows(Views[0], *Instance))
 				{
 					if (bStrands) 		
 					{ 
 						Out.VisibleStrands.Add(Instance);
-						Out.InstanceCountPerType[uint32(EHairInstanceCount::StrandsShadowView)]++; 
+						Out.InstancesVisibilityType[Instance->RegisteredIndex] = EHairInstanceVisibilityType::StrandsShadowView;
 					}
 					else if (bCardsOrMeshes) 
 					{ 
 						Out.VisibleCardsOrMeshes_Shadow.Add(Instance);
-						Out.InstanceCountPerType[uint32(EHairInstanceCount::CardsOrMeshesShadowView)]++; 
+						Out.InstancesVisibilityType[Instance->RegisteredIndex] = EHairInstanceVisibilityType::CardsOrMeshesShadowView;
 					}
 				}
 			}
@@ -486,9 +468,9 @@ void UpdateHairStrandsBookmarkParameters(FScene* Scene, TArray<FViewInfo>& Views
 	}
 }
 
-void CreateHairStrandsBookmarkParameters(FScene* Scene, TArray<FViewInfo>& Views, TArray<const FSceneView*>& AllFamilyViews, FHairStrandsBookmarkParameters& Out)
+void CreateHairStrandsBookmarkParameters(FScene* Scene, TArray<FViewInfo>& Views, TArray<const FSceneView*>& AllFamilyViews, FHairStrandsBookmarkParameters& Out, bool bComputeVisibleInstances)
 {
-	CreateHairStrandsBookmarkParameters(Scene, Views[0], Out);
+	CreateHairStrandsBookmarkParameters(Scene, Views[0], Out, bComputeVisibleInstances);
 	Out.AllViews = AllFamilyViews;
 }
 
@@ -522,14 +504,14 @@ bool IsHairCompatible(const FMeshBatch* Mesh)
 	return IsHairStrandsVF(Mesh) || IsHairCardsVF(Mesh);
 }
 
-bool IsHairVisible(const FMeshBatchAndRelevance& MeshBatch)
+bool IsHairVisible(const FMeshBatchAndRelevance& MeshBatch, bool bCheckLengthScale)
 {
 	if (MeshBatch.Mesh && MeshBatch.PrimitiveSceneProxy && MeshBatch.PrimitiveSceneProxy->ShouldRenderInMainPass())
 	{
 		const FHairGroupPublicData* Data = HairStrands::GetHairData(MeshBatch.Mesh);
 		switch (Data->VFInput.GeometryType)
 		{
-		case EHairGeometryType::Strands: return Data->VFInput.Strands.Common.LengthScale > 0;
+		case EHairGeometryType::Strands: return bCheckLengthScale ? Data->VFInput.Strands.Common.LengthScale > 0 : true;
 		case EHairGeometryType::Cards: return true;
 		case EHairGeometryType::Meshes: return true;
 		}

@@ -8,7 +8,6 @@
 #include "LightCardTemplates/DisplayClusterLightCardTemplate.h"
 
 #include "Components/DisplayClusterCameraComponent.h"
-#include "Components/DisplayClusterPreviewComponent.h"
 #include "Components/DisplayClusterScreenComponent.h"
 #include "DisplayClusterConfigurationTypes.h"
 #include "DisplayClusterLightCardActor.h"
@@ -23,6 +22,8 @@
 #include "Settings/DisplayClusterLightCardEditorSettings.h"
 
 #include "IDisplayClusterLightCardExtenderModule.h"
+
+#include "Render/Viewport/IDisplayClusterViewportManager.h"
 
 #include "AudioDevice.h"
 #include "CameraController.h"
@@ -144,7 +145,6 @@ FDisplayClusterLightCardEditorViewportClient::~FDisplayClusterLightCardEditorVie
 	IDisplayClusterScenePreview::Get().DestroyRenderer(PreviewRendererId);
 
 	EndTransaction();
-	UnsubscribeFromRootActor();
 
 	IDisplayClusterLightCardExtenderModule& LightCardExtenderModule = IDisplayClusterLightCardExtenderModule::Get();
 	LightCardExtenderModule.GetOnSequencerTimeChanged().RemoveAll(this);
@@ -173,27 +173,6 @@ void FDisplayClusterLightCardEditorViewportClient::Tick(float DeltaSeconds)
 	else
 	{
 		PreviewScene->GetWorld()->Tick(IsRealtime() ? LEVELTICK_ViewportsOnly : LEVELTICK_TimeOnly, DeltaSeconds);
-	}
-
-	if (RootActorProxy.IsValid() && RootActorLevelInstance.IsValid())
-	{
-		// Pass the preview render targets from the level instance root actor to the preview root actor
-		UDisplayClusterConfigurationData* Config = RootActorLevelInstance->GetConfigData();
-
-		for (const TPair<FString, TObjectPtr<UDisplayClusterConfigurationClusterNode>>& NodePair : Config->Cluster->Nodes)
-		{
-			const UDisplayClusterConfigurationClusterNode* Node = NodePair.Value;
-			for (const TPair<FString, TObjectPtr<UDisplayClusterConfigurationViewport>>& ViewportPair : Node->Viewports)
-			{
-				UDisplayClusterPreviewComponent* LevelInstancePreviewComp = RootActorLevelInstance->GetPreviewComponent(NodePair.Key, ViewportPair.Key);
-				UDisplayClusterPreviewComponent* PreviewComp = RootActorProxy->GetPreviewComponent(NodePair.Key, ViewportPair.Key);
-
-				if (PreviewComp && LevelInstancePreviewComp)
-				{
-					PreviewComp->SetOverrideTexture(LevelInstancePreviewComp->GetRenderTargetTexturePostProcess());
-				}
-			}
-		}
 	}
 
 	// EditorViewportClient sets the cursor settings based on the state of the built in FWidget, which isn't being used here, so
@@ -1234,26 +1213,6 @@ void FDisplayClusterLightCardEditorViewportClient::UpdateProxyTransforms(const F
 	}
 }
 
-void FDisplayClusterLightCardEditorViewportClient::SubscribeToRootActor()
-{
-	if (RootActorLevelInstance.IsValid())
-	{
-		const uint8* GenericThis = reinterpret_cast<uint8*>(this);
-		RootActorLevelInstance->SubscribeToPostProcessRenderTarget(GenericThis);
-		RootActorLevelInstance->AddPreviewEnableOverride(GenericThis);
-	}
-}
-
-void FDisplayClusterLightCardEditorViewportClient::UnsubscribeFromRootActor()
-{
-	if (RootActorLevelInstance.IsValid())
-	{
-		const uint8* GenericThis = reinterpret_cast<uint8*>(this);
-		RootActorLevelInstance->UnsubscribeFromPostProcessRenderTarget(GenericThis);
-		RootActorLevelInstance->RemovePreviewEnableOverride(GenericThis);
-	}
-}
-
 void FDisplayClusterLightCardEditorViewportClient::OnSequencerTimeChanged(TWeakPtr<ISequencer> InSequencer)
 {
 	UpdateProxyTransforms();
@@ -1563,6 +1522,8 @@ void FDisplayClusterLightCardEditorViewportClient::UpdatePreviewActor(ADisplayCl
 {
 	DECLARE_SCOPE_CYCLE_COUNTER(TEXT("FDisplayClusterLightCardEditorViewportClient::UpdatePreviewActor"), STAT_UpdatePreviewActor, STATGROUP_NDisplayLightCardEditor);
 	
+	check(IsInGameThread());
+
 	if (!StageActor && ((!bForce && RootActor == RootActorLevelInstance.GetEvenIfUnreachable()) ||
 		(ProxyTypesRefreshing.Contains(ProxyType) || ProxyTypesRefreshing.Contains(EDisplayClusterLightCardEditorProxyType::All))))
 	{
@@ -1600,7 +1561,6 @@ void FDisplayClusterLightCardEditorViewportClient::UpdatePreviewActor(ADisplayCl
 	if (RootActor == nullptr)
 	{
 		DestroyProxies(ProxyType);
-		UnsubscribeFromRootActor();
 		RootActorLevelInstance.Reset();
 		
 		Finalize();
@@ -1641,28 +1601,29 @@ void FDisplayClusterLightCardEditorViewportClient::UpdatePreviewActor(ADisplayCl
 				return;
 			}
 
-			if (RootActorLevelInstance.IsValid() && RootActorLevelInstance.Get() != RootActor)
-			{
-				UnsubscribeFromRootActor();
-			}
-			
 			RootActorLevelInstance = RootActorPtr;
-
-			SubscribeToRootActor();
 
 			TArray<TObjectPtr<AActor>> ActorProxiesCreated;
 			
 			if (ProxyType == EDisplayClusterLightCardEditorProxyType::All ||
 				ProxyType == EDisplayClusterLightCardEditorProxyType::RootActor)
 			{
+				if (!RootActorProxy.IsValid())
 				{
 					FObjectDuplicationParameters DupeActorParameters(RootActorPtr.Get(), PreviewWorld->GetCurrentLevel());
 					DupeActorParameters.FlagMask = RF_AllFlags & ~(RF_ArchetypeObject | RF_Transactional); // Keeps archetypes correct in config data.
 					DupeActorParameters.PortFlags = PPF_DuplicateVerbatim;
-			
+
 					RootActorProxy = CastChecked<ADisplayClusterRootActor>(StaticDuplicateObjectEx(DupeActorParameters));
 				}
-			
+
+				// Use root actor from scene to render
+				if (IDisplayClusterViewportManager* ViewportManager = RootActorProxy.IsValid() ? RootActorProxy->GetOrCreateViewportManager() : nullptr)
+				{
+					// Using DCRA from the scene for rendering
+					ViewportManager->GetConfiguration().SetRootActor(EDisplayClusterRootActorType::Scene | EDisplayClusterRootActorType::Configuration, RootActorPtr.Get());
+				}
+
 				PreviewWorld->GetCurrentLevel()->AddLoadedActor(RootActorProxy.Get());
 
 				// Draw the geometry map for the proxy stage actor immediately to avoid a race condition where the geometry map could render
@@ -1675,12 +1636,19 @@ void FDisplayClusterLightCardEditorViewportClient::UpdatePreviewActor(ADisplayCl
 
 				ProjectionOriginComponent = FindProjectionOriginComponent(RootActorProxy.Get());
 
-				RootActorProxy->UpdatePreviewComponents();
-				RootActorProxy->EnableEditorRender(false);
-
 				ProjectionHelper->SetLevelInstanceRootActor(*RootActorLevelInstance);
 				ProjectionHelper->SetEditorViewportClient(AsShared());
 
+				// Setup custom preview settings for proxy DCRA:
+				RootActorProxy->bPreviewICVFXFrustums = false;
+				RootActorProxy->bEnablePreviewTechvis = false;
+				RootActorProxy->bPreviewEnablePostProcess = true;
+				RootActorProxy->bPreviewEnableOverlayMaterial = false;
+				RootActorProxy->bPreviewEnable = true;
+				RootActorProxy->bPreviewICVFXFrustums = false;
+
+				//@Todo: In the case when RootActorProxy is not recreated each time it is changed:
+				// the DCRA  Copy cfg from RootActorLevelInstance to RootActorProxy every tick (do not recreate local DCRA)
 				if (UDisplayClusterConfigurationData* ProxyConfig = RootActorProxy->GetConfigData())
 				{
 					// Disable lightcards so that it doesn't try to update the ones in the level instance world.
@@ -1741,22 +1709,24 @@ void FDisplayClusterLightCardEditorViewportClient::UpdatePreviewActor(ADisplayCl
 			for (const TObjectPtr<AActor>& ActorProxy : ActorProxiesCreated)
 			{
 				// Hack - CL 23230783 sets CCW meshes to hidden which causes problems with selection, so always add CCWs to the renderer.
-				bool bIsCCW = false;
+				// Updating to include all stage actors now that CCRs are also supported.
+				bool bIsStageActor = false;
 				for (const UClass* Class = ActorProxy->GetClass(); Class && (UObject::StaticClass() != Class); Class = Class->GetSuperClass())
 				{
-					if (Class->GetName() == TEXT("ColorCorrectionWindow"))
+					if (Class->ImplementsInterface(UDisplayClusterStageActor::StaticClass()))
 					{
-						bIsCCW = true;
+						bIsStageActor = true;
 						break;
 					}
 				}
 				
-				IDisplayClusterScenePreview::Get().AddActorToRenderer(PreviewRendererId, ActorProxy, [this, ActorProxy, bIsCCW](const UPrimitiveComponent* PrimitiveComponent)
+				IDisplayClusterScenePreview::Get().AddActorToRenderer(PreviewRendererId,
+					ActorProxy, [this, ActorProxy, bIsStageActor](const UPrimitiveComponent* PrimitiveComponent)
 				{
 					// Always add the light card mesh component to the renderer's scene even if it is marked hidden in game, since UV light cards will purposefully
 					// hide the light card mesh since it isn't supposed to exist in 3D space. The light card mesh will be appropriately filtered when the scene is
 					// rendered based on the projection mode
-					if (PrimitiveComponent->GetFName() == TEXT("LightCard") || bIsCCW)
+					if (PrimitiveComponent->GetFName() == TEXT("LightCard") || bIsStageActor)
 					{
 						return true;
 					}
@@ -2161,6 +2131,31 @@ void FDisplayClusterLightCardEditorViewportClient::MoveSelectedActorsToPixel(con
 	MoveActorsToPixel(PixelPos, SelectedActors);
 }
 
+void FDisplayClusterLightCardEditorViewportClient::MoveActorsToPixel(const FIntPoint& PixelPos, const TArray<FDisplayClusterWeakStageActorPtr>& InActors)
+{
+	FSceneViewFamilyContext ViewFamily(FSceneViewFamily::ConstructionValues(
+		Viewport,
+		GetScene(),
+		EngineShowFlags)
+		.SetRealtimeUpdate(IsRealtime())
+	);
+
+	FSceneView* View = CalcSceneView(&ViewFamily);
+
+	ProjectionHelper->MoveActorsToPixel(InActors, PixelPos, *View);
+
+	// Update each light card with the delta coordinates; the flush constraint is applied by MoveActorTo, ensuring the light card is always flush to screens
+	for (const FDisplayClusterWeakStageActorPtr& LightCard : InActors)
+	{
+		if (LightCard.IsValid() &&
+			((LightCard->IsUVActor() && ProjectionMode == EDisplayClusterMeshProjectionType::UV) ||
+			(!LightCard->IsUVActor() && ProjectionMode != EDisplayClusterMeshProjectionType::UV)))
+		{
+			PropagateActorTransform(LightCard);
+		}
+	}
+}
+
 void FDisplayClusterLightCardEditorViewportClient::BeginTransaction(const FText& Description)
 {
 	GEditor->BeginTransaction(Description);
@@ -2541,31 +2536,6 @@ void FDisplayClusterLightCardEditorViewportClient::MoveSelectedActors(FViewport*
 	else
 	{
 		DesiredLookAtLocation.Reset();
-	}
-}
-
-void FDisplayClusterLightCardEditorViewportClient::MoveActorsToPixel(const FIntPoint& PixelPos, const TArray<FDisplayClusterWeakStageActorPtr>& InActors)
-{
-	FSceneViewFamilyContext ViewFamily(FSceneViewFamily::ConstructionValues(
-		Viewport,
-		GetScene(),
-		EngineShowFlags)
-		.SetRealtimeUpdate(IsRealtime())
-	);
-
-	FSceneView* View = CalcSceneView(&ViewFamily);
-
-	ProjectionHelper->MoveActorsToPixel(SelectedActors, PixelPos, *View);
-
-	// Update each light card with the delta coordinates; the flush constraint is applied by MoveActorTo, ensuring the light card is always flush to screens
-	for (const FDisplayClusterWeakStageActorPtr& LightCard : InActors)
-	{
-		if (LightCard.IsValid() &&
-			((LightCard->IsUVActor() && ProjectionMode == EDisplayClusterMeshProjectionType::UV) ||
-			(!LightCard->IsUVActor() && ProjectionMode != EDisplayClusterMeshProjectionType::UV)))
-		{
-			PropagateActorTransform(LightCard);
-		}
 	}
 }
 

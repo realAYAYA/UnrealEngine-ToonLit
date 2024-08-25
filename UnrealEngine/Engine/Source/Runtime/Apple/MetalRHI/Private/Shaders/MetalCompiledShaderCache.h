@@ -7,6 +7,7 @@
 #pragma once
 
 #include "Misc/ScopeRWLock.h"
+#include "MetalRHIPrivate.h"
 
 struct FMetalCompiledShaderCache
 {
@@ -21,34 +22,34 @@ public:
 		// VOID
 	}
 
-	mtlpp::Function FindRef(FMetalCompiledShaderKey const& Key)
+	MTLFunctionPtr FindRef(FMetalCompiledShaderKey const& Key)
 	{
 		FRWScopeLock ScopedLock(Lock, SLT_ReadOnly);
-		mtlpp::Function Func = Cache.FindRef(Key);
+        MTLFunctionPtr Func = Cache.FindRef(Key);
 		return Func;
 	}
 
-	mtlpp::Library FindLibrary(mtlpp::Function const& Function)
+	MTLLibraryPtr FindLibrary(MTLFunctionPtr Function)
 	{
 		FRWScopeLock ScopedLock(Lock, SLT_ReadOnly);
-		mtlpp::Library Lib = LibCache.FindRef(Function.GetPtr());
+        MTLLibraryPtr Lib = LibCache.FindRef(Function->functionType());
 		return Lib;
 	}
 
-	void Add(FMetalCompiledShaderKey Key, mtlpp::Library const& Lib, mtlpp::Function const& Function)
+	void Add(FMetalCompiledShaderKey Key, MTLLibraryPtr Lib, MTLFunctionPtr Function)
 	{
 		FRWScopeLock ScopedLock(Lock, SLT_Write);
-		if (Cache.FindRef(Key) == nil)
+		if (Cache.FindRef(Key).get() == nullptr)
 		{
 			Cache.Add(Key, Function);
-			LibCache.Add(Function.GetPtr(), Lib);
+			LibCache.Add(Function->functionType(), Lib);
 		}
 	}
 
 private:
 	FRWLock Lock;
-	TMap<FMetalCompiledShaderKey, mtlpp::Function> Cache;
-	TMap<mtlpp::Function::Type, mtlpp::Library> LibCache;
+	TMap<FMetalCompiledShaderKey, MTLFunctionPtr> Cache;
+	TMap<MTL::FunctionType, MTLLibraryPtr> LibCache;
 };
 
 extern FMetalCompiledShaderCache& GetMetalCompiledShaderCache();

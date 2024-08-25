@@ -25,7 +25,7 @@ namespace Audio
 		FWasapiStreamManager(FWasapiStreamManager&& InOther) = delete;
 		FWasapiStreamManager(const FWasapiStreamManager& InOther) = delete;
 
-		virtual ~FWasapiStreamManager();
+		virtual ~FWasapiStreamManager() {}
 
 		FWasapiStreamManager& operator=(FWasapiStreamManager&& InOther) = delete;
 		FWasapiStreamManager& operator=(const FWasapiStreamManager& InOther) = delete;
@@ -100,9 +100,6 @@ namespace Audio
 			STREAM_STOPPING,
 			STREAM_CAPTURING
 		};
-
-		/** Indicates if FWindowsPlatformMisc::CoInitialize() was successfull. */
-		bool bCoInitialized = false;
 
 		/** Current state of the state machine. */
 		EStreamState State = EStreamState::STREAM_CLOSED;

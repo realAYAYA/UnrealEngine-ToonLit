@@ -29,6 +29,7 @@ public:
 	void OnItemSelectionChanged(const FVisualLoggerDBRow& BDRow, int32 ItemIndex);
 
 	virtual void IterateDebugShapes(TFunction<void(const FTimelineDebugShapes&) > Callback) override;
+	virtual bool MatchCategoryFilters(const FName& CategoryName, ELogVerbosity::Type Verbosity) const override;
 private:
 	void OnFiltersChanged();
 

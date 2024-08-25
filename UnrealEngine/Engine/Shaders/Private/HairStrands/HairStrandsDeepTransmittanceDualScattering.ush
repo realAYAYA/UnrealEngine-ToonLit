@@ -146,32 +146,6 @@ FHairTransmittanceData GetHairTransmittance(
 	return Out;
 }
 
-FHairTransmittanceData GetHairTransmittance(
-	const float3 V,
-	const float3 L,
-	FGBufferData GBuffer,
-	const uint SampleOffset,
-	const uint HairTransmittanceBufferMaxCount,
-	Buffer<uint> HairTransmittanceBuffer,
-	Texture3D<float4> HairLUTTexture,
-	SamplerState HairLUTSampler,
-	const uint HairComponents)
-{
-	FHairTransmittanceMask TransmittanceMask = InitHairTransmittanceMask();
-	if (SampleOffset < HairTransmittanceBufferMaxCount)
-	{
-		TransmittanceMask = UnpackTransmittanceMask(HairTransmittanceBuffer[SampleOffset]);
-	}
-	return GetHairTransmittance(
-		V,
-		L,
-		GBuffer,
-		TransmittanceMask,
-		HairLUTTexture,
-		HairLUTSampler,
-		HairComponents);
-}
-
 float3 GetHairTransmittanceOnly(FHairTransmittanceMask TransmittanceMask, FGBufferData GBuffer, float SinLightAngle, Texture3D<float4> InHairScatteringLUTTexture, SamplerState InHairLUTSampler)
 {
 	// Always shift the hair count by one to remove self-occlusion/shadow aliasing and have smoother transition

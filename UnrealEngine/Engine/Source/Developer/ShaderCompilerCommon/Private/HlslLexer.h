@@ -278,6 +278,7 @@ namespace CrossCompiler
 		PackOffset,
 
 		Identifier,
+		Operator, // HLSL2021
 		Literal,
 		BoolConstant,
 		StringConstant,	// C-style "string"

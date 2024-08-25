@@ -212,7 +212,7 @@ struct WORLDCONDITIONS_API FWorldConditionQueryDefinition
 	FText GetDescription() const;
 #endif
 
-	const TSharedPtr<FWorldConditionQuerySharedDefinition> GetSharedDefinitionPtr() const { return SharedDefinition; }
+	TSharedPtr<FWorldConditionQuerySharedDefinition> GetSharedDefinitionPtr() const { return SharedDefinition; }
 	
 private:
 	/**
@@ -339,6 +339,7 @@ struct WORLDCONDITIONS_API FWorldConditionQueryState
 
 	FWorldConditionQueryState()
 		: bIsInitialized(false)
+		, bAreConditionsActivated(false)
 	{
 	}
 
@@ -371,6 +372,18 @@ struct WORLDCONDITIONS_API FWorldConditionQueryState
 	 * as it is used to traverse the structure in memory.
 	 */
 	void Free();
+
+	/** @return True if the conditions were activated. */
+	bool AreConditionsActivated() const
+	{
+		return bAreConditionsActivated;
+	}
+
+	/** Sets the status of the conditions for this state. */
+	void SetConditionsActivated(const bool bConditionsActivated)
+	{
+		bAreConditionsActivated = bConditionsActivated;
+	}
 
 	/** @return cached result stored in the state. */
 	EWorldConditionResultValue GetCachedResult() const
@@ -446,7 +459,7 @@ struct WORLDCONDITIONS_API FWorldConditionQueryState
 	static constexpr int32 CachedResultOffset = 0;
 
 	/** Offset in state memory where condition items are. */
-	static constexpr int32 ItemsOffset = Align(sizeof(EWorldConditionResultValue), alignof(FWorldConditionItem));
+	static constexpr int32 ItemsOffset = static_cast<int32>(Align(sizeof(EWorldConditionResultValue), alignof(FWorldConditionItem)));
  
 private:
 
@@ -454,6 +467,7 @@ private:
 
 	uint8 NumConditions = 0;
 	uint8 bIsInitialized : 1;
+	uint8 bAreConditionsActivated : 1;
 	TSharedPtr<uint8> Memory = nullptr;
 	TSharedPtr<FWorldConditionQuerySharedDefinition> SharedDefinition = nullptr;
 
@@ -484,6 +498,7 @@ struct WORLDCONDITIONS_API FWorldConditionQuery
 
 	/**
 	 * Activates the world conditions in the query.
+	 * @param Owner Owner of any objects created during Activate().
 	 * @param ContextData ContextData that matches the schema of the query.
 	 * @return true of the activation succeeded, or false if failed. Failed queries will return false when IsTrue() is called.
 	 */

@@ -72,7 +72,7 @@ void UFractureToolConvex::DeleteConvexFromSelected()
 	{
 		FGeometryCollection& Collection = *FractureContext.GetGeometryCollection();
 
-		if (!Collection.HasAttribute("ConvexHull", "Convex") ||
+		if (!Collection.HasAttribute(FGeometryCollection::ConvexHullAttribute, FGeometryCollection::ConvexGroup) ||
 			!Collection.HasAttribute("TransformToConvexIndices", FGeometryCollection::TransformGroup))
 		{
 			continue;
@@ -109,7 +109,7 @@ void UFractureToolConvex::PromoteChildren()
 	{
 		FGeometryCollection& Collection = *FractureContext.GetGeometryCollection();
 
-		if (!Collection.HasAttribute("ConvexHull", "Convex") ||
+		if (!Collection.HasAttribute(FGeometryCollection::ConvexHullAttribute, FGeometryCollection::ConvexGroup) ||
 			!Collection.HasAttribute("TransformToConvexIndices", FGeometryCollection::TransformGroup))
 		{
 			continue;
@@ -250,12 +250,10 @@ void UFractureToolConvex::AddConvexHullVizualizationData(const Chaos::FConvex& C
 
 void UFractureToolConvex::AddVisualizationData(FGeometryCollection& Collection, const FTransform& OuterTransform, int32 TransformIdx, bool bUseExternalCollision, bool bIsUnionOfHulls)
 {
-	using FImplicitGeom = TSharedPtr<Chaos::FImplicitObject, ESPMode::ThreadSafe>;
-
 	const TManagedArray<int32>* HasCustomConvex = FGeometryCollectionConvexUtility::GetCustomConvexFlags(&Collection, false);
 	const TManagedArray<TSet<int32>>* TransformToConvexIndices = Collection.FindAttribute<TSet<int32>>("TransformToConvexIndices", FTransformCollection::TransformGroup);
-	const TManagedArray<TUniquePtr<Chaos::FConvex>>* ConvexHull = Collection.FindAttribute<TUniquePtr<Chaos::FConvex>>("ConvexHull", "Convex");
-	const TManagedArray<FImplicitGeom>* ExternalCollisions = Collection.FindAttribute<FImplicitGeom>("ExternalCollisions", FGeometryCollection::TransformGroup);
+	const TManagedArray<Chaos::FConvexPtr>* ConvexHull = Collection.FindAttribute<Chaos::FConvexPtr>(FGeometryCollection::ConvexHullAttribute, FGeometryCollection::ConvexGroup);
+	const TManagedArray<Chaos::FImplicitObjectPtr>* ExternalCollisions = Collection.FindAttribute<Chaos::FImplicitObjectPtr>(FGeometryCollection::ExternalCollisionsAttribute, FGeometryCollection::TransformGroup);
 
 	const FTransform ComponentSpaceTransform = GeometryCollectionAlgo::GlobalMatrix(Collection.Transform, Collection.Parent, TransformIdx);
 	const FTransform WorldSpaceTransform = ComponentSpaceTransform * OuterTransform;

@@ -50,6 +50,9 @@ public:
 	/** Sets the object to view/edit on the widget */
 	virtual void SetObject( UObject* InObject ) = 0;
 
+	/** Sets the struct to view/edit on the widget */
+	virtual void SetStruct( const TSharedPtr<class IStructureDataProvider>& InStruct) = 0;
+
 	/** Sets a delegate called when the property value changes */
 	virtual void SetOnPropertyValueChanged( FSimpleDelegate& InOnPropertyValueChanged ) = 0;
 

@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
 
@@ -30,6 +30,9 @@ struct REMOTECONTROLLOGIC_API FRCRangeMapInput
 
 	/** Returns the Step value from the virtual property, safely*/
 	bool GetInputValue(double& OutValue) const;
+
+	/** Set the Step value for the virtual property, return true if successful */
+	bool SetInputValue(double InValue) const;
 };
 
 /**
@@ -55,11 +58,11 @@ public:
 	//~ Begin URCBehaviour interface
 	virtual void Initialize() override;
 
-	/** Executes the Behaviour */
-	virtual void Execute() override;
-
 	/** Duplicates an Action belonging to us into a given target behaviour*/
 	virtual URCAction* DuplicateAction(URCAction* InAction, URCBehaviour* InBehaviour) override;
+
+	/** Called when an action value changed */
+	virtual void NotifyActionValueChanged(URCAction* InChangedAction) override;
 	//~ End URCBehaviour interface
 
 	/** Refresh function being called whenever either the Controller or the Properties of the Behaviour Details Panel change */
@@ -76,6 +79,12 @@ public:
 
 	/** Returns the Step value associated with a given Action*/
 	bool GetValueForAction(const URCAction* InAction, double& OutValue);
+
+protected:
+	//~ Begin URCBehaviour interface
+	/** Execute all the action if not provided a valid Action otherwise will only execute the given action */
+	virtual void ExecuteInternal(const TSet<TObjectPtr<URCAction>>& InActionsToExecute) override;
+	//~ End URCBehaviour interface
 
 private:
 	/** Minimum Value which the Range has */
@@ -95,10 +104,10 @@ private:
 	bool GetNearestActionByThreshold(TTuple<URCAction*, bool>& OutTuple);
 
 	/** Returns a Map of Numeric Actions, mapped by a double value, bound to a given FieldId */
-	void GetLerpActions(TMap<FGuid, TArray<URCAction*>>& OutNumericActionsByField);
+	void GetLerpActions(TMap<FGuid, TArray<URCAction*>>& OutNumericActionsByField, const TSet<TObjectPtr<URCAction>>& InActionsToExecute);
 	
 	/** Gives out all pairs per Unique Exposed Field, which are applicable for Lerp. */
-	bool GetRangeValuePairsForLerp(TMap<FGuid, TTuple<URCAction*, URCAction*>>& OutPairs);
+	bool GetRangeValuePairsForLerp(TMap<FGuid, TTuple<URCAction*, URCAction*>>& OutPairs, const TSet<TObjectPtr<URCAction>>& InActionsToExecute);
 
 	/** Gives out all Actions which do not fall under as being able to Lerp. Used for Executing them based on Threshold and Distance */
 	TMap<double, URCAction*> GetNonLerpActions();

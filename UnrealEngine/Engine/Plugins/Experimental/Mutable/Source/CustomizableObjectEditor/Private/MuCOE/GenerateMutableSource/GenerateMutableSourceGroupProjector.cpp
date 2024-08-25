@@ -69,6 +69,11 @@ mu::NodeImagePtr GenerateMutableGroupProjection(const int32 NodeLOD, const int32
 		if (!GroupProjectionReferenceTexture)
 		{
 			GroupProjectionReferenceTexture = ProjectorTempData.CustomizableObjectNodeGroupProjectorParameter->ReferenceTexture;
+			
+			if (GroupProjectionReferenceTexture)
+			{
+				GenerationContext.AddParticipatingObject(*GroupProjectionReferenceTexture);
+			}
 		}
 
 		const bool bProjectToImage = [&]
@@ -172,101 +177,13 @@ mu::NodeImagePtr GenerateMutableGroupProjection(const int32 NodeLOD, const int32
 
 			ImageNode->SetMesh(MeshSwitchNode);
 			ImageNode->SetProjector(ProjectorTempData.NodeProjectorParameterPtr);
+			ImageNode->SetImage(ProjectorTempData.NodeImagePtr);
 
-			mu::NodeImagePtr ImageToProject = ProjectorTempData.NodeImagePtr;
-			{
-				// Apply LODBias to the images to project
-				const UCustomizableObjectNodeMaterial* NodeMaterial = TypedNodeMat ? TypedNodeMat : ParentMaterial;
-				const int32 MaxTextureSize = GroupProjectionReferenceTexture ? GroupProjectionReferenceTexture->MaxTextureSize : 0;
-				if (const int32 LODBias =  ComputeLODBias(GenerationContext, GroupProjectionReferenceTexture, MaxTextureSize, NodeMaterial, ImageIndex);
-					LODBias > 0)
-				{
-					mu::NodeImageResizePtr ResizeImage = new mu::NodeImageResize();
-					ResizeImage->SetBase(ImageToProject.get());
-					ResizeImage->SetRelative(true);
-					float factor = FMath::Pow(0.5f, LODBias);
-					ResizeImage->SetSize(factor, factor);
-					ImageToProject = ResizeImage;
-				}
-			}
-
-			ImageNode->SetImage(ImageToProject);
-
-			TextureSize = [&]
-			{
-				if (const int32 Size = ProjectorTempData.CustomizableObjectNodeGroupProjectorParameter->ProjectionTextureSize;
-					Size <= 0 || !FMath::IsPowerOfTwo(Size))
-				{
-					// \todo: closest power of 2 bigger than the set value?
-					return 512;
-				}
-				else
-				{
-					return Size;
-				}
-			}();
+			TextureSize = ProjectorTempData.TextureSize;
 			ImageNode->SetImageSize( FUintVector2(TextureSize, TextureSize) );
 
 			ImageNodes.Add(ImageNode);
 			ImageNodes_ProjectorTempData.Add(ProjectorTempData);
-
-			// Generate the projection mask-out texture cache
-			const FString& MaskName = ProjectorTempData.CustomizableObjectNodeGroupProjectorParameter->MaskedOutAreaMaterialChannelName;
-
-			if (!MaskName.IsEmpty())
-			{
-				const UMaterialInterface* MaskMaterial = TypedNodeMat ? TypedNodeMat->Material : ParentMaterial->Material;
-				if (MaskMaterial)
-				{
-					UTexture* MaskTexture = nullptr;
-
-					if (MaskMaterial->GetTextureParameterValue(FName(*MaskName), MaskTexture))
-					{
-						UTexture2D* MaskTexture2D = Cast<UTexture2D>(MaskTexture);
-
-						if (MaskTexture2D && MaskTexture2D->Source.GetNumMips() > 0)
-						{
-							TArray64<uint8> TempData;
-							verify( MaskTexture2D->Source.GetMipData(TempData, 0, 0, 0) );
-							uint32 TotalTexels = MaskTexture2D->Source.GetSizeX() * MaskTexture2D->Source.GetSizeY();
-
-							ETextureSourceFormat PixelFormat = MaskTexture2D->Source.GetFormat();
-							int32 BytesPerPixel = MaskTexture2D->Source.GetBytesPerPixel();
-							ensure((PixelFormat == TSF_BGRA8 && BytesPerPixel == 4) || BytesPerPixel == 1);
-
-							{
-								uint32 DataSize = TotalTexels * MaskTexture2D->Source.GetBytesPerPixel();
-								FString MaskTexture2DPath = MaskTexture2D->GetPathName();
-
-								if (!GenerationContext.MaskOutTextureCache.Find(MaskTexture2DPath) && DataSize > 1024) // Discard default or too small textures to have any mask detail
-								{
-									FMaskOutTexture& CachedTexture = GenerationContext.MaskOutTextureCache.Add(MaskTexture2DPath);
-									
-									CachedTexture.SetTextureSize(MaskTexture2D->Source.GetSizeX(), MaskTexture2D->Source.GetSizeY());
-
-									for (size_t p = 0; p < DataSize / BytesPerPixel; ++p)
-									{
-										if (BytesPerPixel == 4)
-										{
-											CachedTexture.GetTexelReference(p) = TempData[p * 4 + 3] > 0; // Copy alpha channel of PF_R8G8B8A8
-										}
-										else if (BytesPerPixel == 1)
-										{
-											CachedTexture.GetTexelReference(p) = TempData[p] > 0;
-										}
-										else
-										{
-											check(false);
-										}
-									}
-								}
-
-								GenerationContext.MaskOutMaterialCache.Add(MaskMaterial->GetPathName(), MaskTexture2DPath);
-							}
-						}
-					}
-				}
-			}
 		}
 	}
 
@@ -277,11 +194,6 @@ mu::NodeImagePtr GenerateMutableGroupProjection(const int32 NodeLOD, const int32
 	
 	mu::NodeColourConstantPtr ZeroColorNode = new mu::NodeColourConstant();
 	ZeroColorNode->SetValue(FVector4f(0.f, 0.f, 0.f, 1.0f));
-
-	if (TextureSize <= 0 || !FMath::IsPowerOfTwo(TextureSize))
-	{
-		TextureSize = 512;
-	}
 
 	mu::NodeImagePlainColourPtr ZeroPlainColourNode = new mu::NodeImagePlainColour;
 	ZeroPlainColourNode->SetSize(TextureSize, TextureSize);
@@ -414,8 +326,15 @@ bool GenerateMutableSourceGroupProjector(const UEdGraphPin* Pin, FMutableGraphGe
 
 		if (GroupProjectorTempData.NodeProjectorParameterPtr)
 		{
-			// Use the projector parameter uid + suffix to identify parameters derived from this node
-			FString ProjectorParamUid = GroupProjectorTempData.NodeProjectorParameterPtr->GetUid();
+			// Use the projector parameter uid + num to identify parameters derived from this node
+			FGuid NumLayersParamUid = Node->NodeGuid;
+			NumLayersParamUid.D += 1;
+			FGuid SelectedPoseParamUid = Node->NodeGuid;
+			SelectedPoseParamUid.D += 2;
+			FGuid OpacityParamUid = Node->NodeGuid;
+			OpacityParamUid.D += 3;
+			FGuid SelectedImageParamUid = Node->NodeGuid;
+			SelectedImageParamUid.D += 4;
 
 			// Add to UCustomizableObjectNodeGroupProjectorParameter::OptionImages those textures that are present in
 			// UCustomizableObjectNodeGroupProjectorParameter::OptionImagesDataTable avoiding any repeated element
@@ -432,8 +351,8 @@ bool GenerateMutableSourceGroupProjector(const UEdGraphPin* Pin, FMutableGraphGe
 
 			mu::NodeScalarParameterPtr NodeScalarParam = new mu::NodeScalarParameter;
 			FString NodeScalarParamName = ProjParamNode->ParameterName + FMultilayerProjector::NUM_LAYERS_PARAMETER_POSTFIX;
-			NodeScalarParam->SetName(StringCast<ANSICHAR>(*(NodeScalarParamName)).Get());
-			NodeScalarParam->SetUid(StringCast<ANSICHAR>(*(ProjectorParamUid + FString("_NL"))).Get());
+			NodeScalarParam->SetName(NodeScalarParamName);
+			NodeScalarParam->SetUid(NumLayersParamUid.ToString());
 			GenerationContext.AddParameterNameUnique(originalGroup, NodeScalarParamName);
 			NodeScalarParam->SetDefaultValue(0.f);
 
@@ -451,8 +370,8 @@ bool GenerateMutableSourceGroupProjector(const UEdGraphPin* Pin, FMutableGraphGe
 			
 			mu::NodeScalarEnumParameterPtr PoseEnumParameterNode = new mu::NodeScalarEnumParameter;
 			FString PoseNodeEnumParamName = ProjParamNode->ParameterName + FMultilayerProjector::POSE_PARAMETER_POSTFIX;
-			PoseEnumParameterNode->SetName(StringCast<ANSICHAR>(*(PoseNodeEnumParamName)).Get());
-			PoseEnumParameterNode->SetUid(StringCast<ANSICHAR>(*(ProjectorParamUid + FString("_SP"))).Get());
+			PoseEnumParameterNode->SetName(PoseNodeEnumParamName);
+			PoseEnumParameterNode->SetUid(SelectedPoseParamUid.ToString());
 			GenerationContext.AddParameterNameUnique(originalGroup, PoseNodeEnumParamName);
 			PoseEnumParameterNode->SetValueCount(ProjParamNode->OptionPoses.Num() + 1);
 			PoseEnumParameterNode->SetDefaultValueIndex(0);
@@ -465,8 +384,8 @@ bool GenerateMutableSourceGroupProjector(const UEdGraphPin* Pin, FMutableGraphGe
 
 			mu::NodeScalarParameterPtr OpacityParameterNode = new mu::NodeScalarParameter;
 			FString OpacityParameterNodeName = ProjParamNode->ParameterName + FMultilayerProjector::OPACITY_PARAMETER_POSTFIX;
-			OpacityParameterNode->SetName(StringCast<ANSICHAR>(*(OpacityParameterNodeName)).Get());
-			OpacityParameterNode->SetUid(StringCast<ANSICHAR>(*(ProjectorParamUid + FString("_O"))).Get());
+			OpacityParameterNode->SetName(OpacityParameterNodeName);
+			OpacityParameterNode->SetUid(OpacityParamUid.ToString());
 			GenerationContext.AddParameterNameUnique(originalGroup, OpacityParameterNodeName);
 			OpacityParameterNode->SetDefaultValue(0.75f);
 			OpacityParameterNode->SetRangeCount(1);
@@ -485,35 +404,45 @@ bool GenerateMutableSourceGroupProjector(const UEdGraphPin* Pin, FMutableGraphGe
 				FString msg = FString::Printf(TEXT("The group projection node must have at least one option image connected to a texture or at least one valid element in Option Images Data Table."));
 				GenerationContext.Compiler->CompilerLog(FText::FromString(msg), ProjParamNode, EMessageSeverity::Error, true);
 				return false;
-			}
+			}			
 
-			PoseEnumParameterNode->SetValue(0, 0.f, "Default pose");
-
-			for (int PoseIndex = 0; PoseIndex < ProjParamNode->OptionPoses.Num(); ++PoseIndex)
+			if (GenerationContext.ComponentInfos.IsValidIndex(0))
 			{
-				PoseEnumParameterNode->SetValue(PoseIndex + 1, (float)PoseIndex + 1.f, StringCast<ANSICHAR>(*ProjParamNode->OptionPoses[PoseIndex].PoseName).Get());
+				// Poses will only affect component 0 of the CO,
+				// TODO UE-206803
+				int32 OldCurrentMeshComponent = GenerationContext.CurrentMeshComponent;
+				GenerationContext.CurrentMeshComponent = 0;
 
-				TArray<FString> ArrayBoneName;
-				TArray<FTransform> ArrayTransform;
-				UPoseAsset* PoseAsset = ProjParamNode->OptionPoses[PoseIndex].OptionPose;
-				if (PoseAsset == nullptr) // Check if the slot has a selected pose. Could be left empty by the user
+				PoseEnumParameterNode->SetValue(0, 0.f, "Default pose");
+
+				for (int32 PoseIndex = 0; PoseIndex < ProjParamNode->OptionPoses.Num(); ++PoseIndex)
 				{
-					FString msg = FString::Printf(TEXT("The group projection node must have a pose assigned on each Option Poses element."));
-					GenerationContext.Compiler->CompilerLog(FText::FromString(msg), ProjParamNode, EMessageSeverity::Error, true);
-					return false;
+					PoseEnumParameterNode->SetValue(PoseIndex + 1, (float)PoseIndex + 1.f, ProjParamNode->OptionPoses[PoseIndex].PoseName);
+
+					TArray<FString> ArrayBoneName;
+					TArray<FTransform> ArrayTransform;
+					UPoseAsset* PoseAsset = ProjParamNode->OptionPoses[PoseIndex].OptionPose;
+
+					if (PoseAsset == nullptr) // Check if the slot has a selected pose. Could be left empty by the user
+					{
+						FString msg = FString::Printf(TEXT("The group projection node must have a pose assigned on each Option Poses element."));
+						GenerationContext.Compiler->CompilerLog(FText::FromString(msg), ProjParamNode, EMessageSeverity::Error, true);
+						return false;
+					}
+
+					check(GroupProjectorTempData.PoseBoneDataArray.Num() == PoseIndex);
+					GroupProjectorTempData.PoseBoneDataArray.AddDefaulted(1);
+					UCustomizableObjectNodeAnimationPose::StaticRetrievePoseInformation(PoseAsset, GenerationContext.GetCurrentComponentInfo().RefSkeletalMesh,
+						GroupProjectorTempData.PoseBoneDataArray[PoseIndex].ArrayBoneName, GroupProjectorTempData.PoseBoneDataArray[PoseIndex].ArrayTransform);
 				}
 
-				check(GroupProjectorTempData.PoseBoneDataArray.Num() == PoseIndex);
-				GroupProjectorTempData.PoseBoneDataArray.AddDefaulted(1);
-				UCustomizableObjectNodeAnimationPose::StaticRetrievePoseInformation(PoseAsset, GenerationContext.GetCurrentComponentInfo().RefSkeletalMesh,
-					GroupProjectorTempData.PoseBoneDataArray[PoseIndex].ArrayBoneName, GroupProjectorTempData.PoseBoneDataArray[PoseIndex].ArrayTransform);
+				GenerationContext.CurrentMeshComponent = OldCurrentMeshComponent;
 			}
-
 		
 			mu::NodeScalarEnumParameterPtr EnumParameterNode = new mu::NodeScalarEnumParameter;
 			FString NodeEnumParamName = ProjParamNode->ParameterName + FMultilayerProjector::IMAGE_PARAMETER_POSTFIX;
-			EnumParameterNode->SetName(StringCast<ANSICHAR>(*NodeEnumParamName).Get());
-			EnumParameterNode->SetUid(StringCast<ANSICHAR>(*(ProjectorParamUid + FString("_SI"))).Get());
+			EnumParameterNode->SetName(NodeEnumParamName);
+			EnumParameterNode->SetUid(SelectedImageParamUid.ToString());
 			GenerationContext.AddParameterNameUnique(originalGroup, NodeEnumParamName);
 			EnumParameterNode->SetValueCount(ArrayOptionImage.Num());
 			EnumParameterNode->SetDefaultValueIndex(0);
@@ -526,7 +455,7 @@ bool GenerateMutableSourceGroupProjector(const UEdGraphPin* Pin, FMutableGraphGe
 
 			for (int ImageIndex = 0; ImageIndex < ArrayOptionImage.Num(); ++ImageIndex)
 			{
-				EnumParameterNode->SetValue(ImageIndex, (float)ImageIndex, StringCast<ANSICHAR>(*ArrayOptionImage[ImageIndex].OptionName).Get());
+				EnumParameterNode->SetValue(ImageIndex, (float)ImageIndex, ArrayOptionImage[ImageIndex].OptionName);
 
 				FMutableParamUIMetadata optionMetadata = ParameterUIData.ParamUIMetadata;
 				optionMetadata.UIThumbnail = ArrayOptionImage[ImageIndex].OptionImage;
@@ -541,27 +470,36 @@ bool GenerateMutableSourceGroupProjector(const UEdGraphPin* Pin, FMutableGraphGe
 			SwitchNode->SetParameter(EnumParameterNode);
 			SwitchNode->SetOptionCount(ArrayOptionImage.Num());
 
-			bool bFoundUnlinkedPin = false; 
-
-			for (int SelectorIndex = 0; SelectorIndex < ArrayOptionImage.Num(); ++SelectorIndex)
+			const uint32 AdditionalLODBias = GenerationContext.Options.bUseLODAsBias ? GenerationContext.FirstLODAvailable : 0;
+			for (int32 SelectorIndex = 0; SelectorIndex < ArrayOptionImage.Num(); ++SelectorIndex)
 			{
-				if (ArrayOptionImage[SelectorIndex].OptionImage)
+				if (const TObjectPtr<UTexture2D>& Texture = ArrayOptionImage[SelectorIndex].OptionImage)
 				{
+					mu::Ptr<mu::Image> ImageConstant = GenerateImageConstant(ArrayOptionImage[SelectorIndex].OptionImage, GenerationContext, false);
+
 					mu::NodeImageConstantPtr ImageNode = new mu::NodeImageConstant();
-					GenerationContext.ArrayTextureUnrealToMutableTask.Add(FTextureUnrealToMutableTask(ImageNode, ArrayOptionImage[SelectorIndex].OptionImage, ProjParamNode));
-					SwitchNode->SetOption(SelectorIndex, ImageNode);
+					ImageNode->SetValue(ImageConstant.get());
+
+					const uint32 MipsToSkip = ComputeLODBiasForTexture(GenerationContext, *Texture, ProjParamNode->ReferenceTexture) + AdditionalLODBias;
+					SwitchNode->SetOption(SelectorIndex, ResizeTextureByNumMips(ImageNode, MipsToSkip));
 				}
 				else
 				{
-					bFoundUnlinkedPin = true;
+					FString msg = FString::Printf(TEXT("The group projection node must have a texture for all the options. Please set a texture for all the options."));
+					GenerationContext.Compiler->CompilerLog(FText::FromString(msg), ProjParamNode);
 				}
 			}
 
-			if (bFoundUnlinkedPin)
+			int32 TextureSize = ProjParamNode->ProjectionTextureSize > 0 ? ProjParamNode->ProjectionTextureSize : 512;
+
+			// If TextureSize is not power of two, round up to the next power of two 
+			if (!FMath::IsPowerOfTwo(TextureSize))
 			{
-				FString msg = FString::Printf(TEXT("The group projection node must have a texture for all the options. Please set a texture for all the options."));
-				GenerationContext.Compiler->CompilerLog(FText::FromString(msg), ProjParamNode);
+				TextureSize = FMath::RoundUpToPowerOfTwo(TextureSize);
 			}
+
+			// Apply additional LODBias if necessary
+			GroupProjectorTempData.TextureSize = FMath::Max(TextureSize >> AdditionalLODBias, 1);
 
 			GroupProjectorTempData.NodeImagePtr = SwitchNode;
 

@@ -12,6 +12,7 @@ FSlatePostProcessResource::FSlatePostProcessResource(int32 InRenderTargetCount)
 	, RenderTargetSize(FIntPoint::ZeroValue)
 	, RenderTargetCount(InRenderTargetCount)
 {
+	FrameUsed = GFrameCounter;
 }
 
 FSlatePostProcessResource::~FSlatePostProcessResource()
@@ -31,6 +32,7 @@ void FSlatePostProcessResource::Update(const FIntPoint& NewSize, EPixelFormat Re
 		FIntPoint NewMaxSize(FMath::Max(NewSize.X, RenderTargetSize.X), FMath::Max(NewSize.Y, RenderTargetSize.Y));
 		ResizeTargets(NewMaxSize, RequestedPixelFormat);
 	}
+	FrameUsed = GFrameCounter;
 }
 
 void FSlatePostProcessResource::ResizeTargets(const FIntPoint& NewSize, EPixelFormat RequestedPixelFormat)

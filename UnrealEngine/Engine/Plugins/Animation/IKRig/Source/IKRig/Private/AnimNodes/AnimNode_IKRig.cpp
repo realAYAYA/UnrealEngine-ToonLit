@@ -12,6 +12,9 @@
 #include "Animation/AnimStats.h"
 #include "Algo/ForEach.h"
 #include "SceneManagement.h"
+#include "Engine/SkeletalMesh.h"
+#include "Logging/LogVerbosity.h"
+#include "VisualLogger/VisualLogger.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AnimNode_IKRig)
 
@@ -179,12 +182,8 @@ void FAnimNode_IKRig::Initialize_AnyThread(const FAnimationInitializeContext& Co
 
 	// Initial update of the node, so we dont have a frame-delay on setup
 	GetEvaluateGraphExposedInputs().Execute(Context);
-
-	// ensure there is always a processor available
-	if (!IKRigProcessor && IsInGameThread())
-	{
-		IKRigProcessor = NewObject<UIKRigProcessor>(Context.AnimInstanceProxy->GetSkelMeshComponent());	
-	}
+	
+	CreateIKRigProcessorIfNeeded(Context.AnimInstanceProxy->GetSkelMeshComponent());
 
 	InitializeProperties(Context.GetAnimInstanceObject(), GetTargetClass());
 }
@@ -198,13 +197,13 @@ void FAnimNode_IKRig::Update_AnyThread(const FAnimationUpdateContext& Context)
 	// alpha handlers
 	switch (AlphaInputType)
 	{
-	case EAnimAlphaInputType::Float : 
+	case EAnimAlphaInputType::Float:
 		ActualAlpha = AlphaScaleBias.ApplyTo(AlphaScaleBiasClamp.ApplyTo(Alpha, Context.GetDeltaTime()));
 		break;
-	case EAnimAlphaInputType::Bool :
+	case EAnimAlphaInputType::Bool:
 		ActualAlpha = AlphaBoolBlend.ApplyTo(bAlphaBoolEnabled, Context.GetDeltaTime());
 		break;
-	case EAnimAlphaInputType::Curve :
+	case EAnimAlphaInputType::Curve:
 		if (UAnimInstance* AnimInstance = Cast<UAnimInstance>(Context.AnimInstanceProxy->GetAnimInstanceObject()))
 		{
 			ActualAlpha = AlphaScaleBiasClamp.ApplyTo(AnimInstance->GetCurveValue(AlphaCurveName), Context.GetDeltaTime());
@@ -216,9 +215,31 @@ void FAnimNode_IKRig::Update_AnyThread(const FAnimationUpdateContext& Context)
 	ActualAlpha = FMath::Clamp<float>(ActualAlpha, 0.f, 1.f);
 
 	PropagateInputProperties(Context.AnimInstanceProxy->GetAnimInstanceObject());
-	
+
 	FAnimNode_Base::Update_AnyThread(Context);
 	Source.Update(Context);
+
+#if ENABLE_VISUAL_LOG
+#if WITH_EDITORONLY_DATA
+	// is node setup?
+	if (IKRigProcessor && IKRigProcessor->IsInitialized() && FVisualLogger::IsRecording())
+	{
+		static const FBox UnitBox(FVector(-1, -1, -1), FVector(1, 1, 1));
+
+		const TArray<FIKRigGoal>& ProcessorGoals = IKRigProcessor->GetGoalContainer().GetGoalArray();
+		for (const FIKRigGoal& Goal : ProcessorGoals)
+		{
+			FTransform GoalTransform(Goal.FinalBlendedRotation, Goal.FinalBlendedPosition, FVector(DebugScale, DebugScale, DebugScale));
+			GoalTransform = GoalTransform * Context.AnimInstanceProxy->GetComponentTransform();
+			UE_VLOG_OBOX(Context.AnimInstanceProxy->GetAnimInstanceObject(), "IKRig", Display, UnitBox, GoalTransform.ToMatrixWithScale(), FColor::Yellow, TEXT(""));
+			UE_VLOG_LOCATION(Context.AnimInstanceProxy->GetAnimInstanceObject(), "IKRig", Verbose, GoalTransform.GetTranslation(), 0.f, FColor::White, TEXT("%ls"), ToCStr(Goal.Name.ToString()));
+		}
+	}
+#endif
+#endif
+
+	TRACE_ANIM_NODE_VALUE(Context, TEXT("Name"), RigDefinitionAsset ? ToCStr(RigDefinitionAsset->GetName()) : TEXT(""));
+	TRACE_ANIM_NODE_VALUE(Context, TEXT("Asset"), RigDefinitionAsset);
 }
 
 void FAnimNode_IKRig::PreUpdate(const UAnimInstance* InAnimInstance)
@@ -230,7 +251,7 @@ void FAnimNode_IKRig::PreUpdate(const UAnimInstance* InAnimInstance)
 	
 	if (!IsValid(IKRigProcessor))
 	{
-		IKRigProcessor = NewObject<UIKRigProcessor>(InAnimInstance->GetOwningComponent());	
+		CreateIKRigProcessorIfNeeded(InAnimInstance->GetOwningComponent());
 	}
 	
 	// initialize the IK Rig (will only try once on the current version of the rig asset)
@@ -281,6 +302,20 @@ void FAnimNode_IKRig::SetProcessorNeedsInitialized()
 	}
 }
 
+void FAnimNode_IKRig::CreateIKRigProcessorIfNeeded(UObject* Outer)
+{
+	// ensure there is always a processor available
+	if (!IKRigProcessor && IsInGameThread())
+	{
+		IKRigProcessor = NewObject<UIKRigProcessor>(Outer);	
+	}
+}
+
+UIKRigProcessor* FAnimNode_IKRig::GetIKRigProcessor()
+{
+	return IKRigProcessor;
+}
+
 void FAnimNode_IKRig::CacheBones_AnyThread(const FAnimationCacheBonesContext& Context)
 {
 	FAnimNode_Base::CacheBones_AnyThread(Context);
@@ -292,26 +327,15 @@ void FAnimNode_IKRig::CacheBones_AnyThread(const FAnimationCacheBonesContext& Co
 		return;
 	}
 	
-	if (!RigDefinitionAsset)
-	{
-		return;
-	}
-
-	if (!IKRigProcessor)
-	{
-		return;
-	}
-
-	if (!IKRigProcessor->IsInitialized())
-	{
-		return;
-	}
-
-	// fill up node names, mapping the anim graph bone indices to the IK Rig bones
+	// fill up node names, mapping the anim graph bone indices to the indices used by the IK Rig
 	CompactPoseToRigIndices.Reset();
 	const TArray<FBoneIndexType>& RequiredBonesArray = RequiredBones.GetBoneIndicesArray();
-	const FReferenceSkeleton& RefSkeleton = RequiredBones.GetReferenceSkeleton();
-	const FIKRigSkeleton& IKRigSkeleton = IKRigProcessor->GetSkeleton();
+	const USkeletalMesh* SkeletalMesh = RequiredBones.GetSkeletalMeshAsset();
+	if (!ensure(SkeletalMesh))
+	{
+		return;
+	}
+	const FReferenceSkeleton& MeshRefSkeleton = SkeletalMesh->GetRefSkeleton();
 	const int32 NumBones = RequiredBonesArray.Num();
 	for (uint16 Index = 0; Index < NumBones; ++Index)
 	{
@@ -322,9 +346,12 @@ void FAnimNode_IKRig::CacheBones_AnyThread(const FAnimationCacheBonesContext& Co
 		}
 		
 		FCompactPoseBoneIndex CPIndex = RequiredBones.MakeCompactPoseIndex(FMeshPoseBoneIndex(MeshBone));
-		const FName Name = RefSkeleton.GetBoneName(MeshBone);
-		CompactPoseToRigIndices.Add(CPIndex) = IKRigSkeleton.GetBoneIndexFromName(Name);
+		const FName Name = MeshRefSkeleton.GetBoneName(MeshBone);
+		CompactPoseToRigIndices.Add(CPIndex) = MeshRefSkeleton.FindBoneIndex(Name);
 	}
+
+	// must reinitialize if bone count changes
+	IKRigProcessor->SetNeedsInitialized();
 }
 
 void FAnimNode_IKRig::InitializeProperties(const UObject* InSourceInstance, UClass* InTargetClass)

@@ -24,7 +24,7 @@
 UMassOffLODNavigationProcessor::UMassOffLODNavigationProcessor()
 	: EntityQuery_Conditional(*this)
 {
-	ExecutionFlags = (int32)EProcessorExecutionFlags::All;
+	ExecutionFlags = (int32)EProcessorExecutionFlags::AllNetModes;
 	ExecutionOrder.ExecuteInGroup = UE::Mass::ProcessorGroupNames::Movement;
 	ExecutionOrder.ExecuteAfter.Add(UE::Mass::ProcessorGroupNames::Avoidance); // @todo: remove this direct dependency
 }
@@ -73,7 +73,7 @@ void UMassOffLODNavigationProcessor::Execute(FMassEntityManager& EntityManager,
 UMassNavigationSmoothHeightProcessor::UMassNavigationSmoothHeightProcessor()
 	: EntityQuery(*this)
 {
-	ExecutionFlags = (int32)EProcessorExecutionFlags::All;
+	ExecutionFlags = (int32)EProcessorExecutionFlags::AllNetModes;
 	ExecutionOrder.ExecuteAfter.Add(UE::Mass::ProcessorGroupNames::Movement);
 }
 
@@ -163,7 +163,7 @@ void UMassMoveTargetFragmentInitializer::Execute(FMassEntityManager& EntityManag
 //----------------------------------------------------------------------//
 UMassNavigationObstacleGridProcessor::UMassNavigationObstacleGridProcessor()
 {
-	ExecutionFlags = (int32)EProcessorExecutionFlags::All;
+	ExecutionFlags = (int32)EProcessorExecutionFlags::AllNetModes;
 	ExecutionOrder.ExecuteAfter.Add(UE::Mass::ProcessorGroupNames::Movement);
 }
 
@@ -283,7 +283,7 @@ UMassNavigationObstacleRemoverProcessor::UMassNavigationObstacleRemoverProcessor
 {
 	ObservedType = FMassNavigationObstacleGridCellLocationFragment::StaticStruct();
 	Operation = EMassObservedOperation::Remove;
-	ExecutionFlags = (int32)(EProcessorExecutionFlags::All);
+	ExecutionFlags = (int32)EProcessorExecutionFlags::AllNetModes;
 }
 
 void UMassNavigationObstacleRemoverProcessor::ConfigureQueries()

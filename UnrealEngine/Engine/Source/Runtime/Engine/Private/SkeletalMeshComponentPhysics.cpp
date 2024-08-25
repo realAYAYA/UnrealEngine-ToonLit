@@ -7,6 +7,7 @@
 #include "ClothCollisionSource.h"
 #include "Components/InstancedStaticMeshComponent.h"
 #include "SkeletalMeshSceneProxy.h"
+#include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 #include "Modules/ModuleManager.h"
 #include "Physics/Experimental/PhysScene_Chaos.h"
@@ -14,6 +15,7 @@
 #include "AnimationRuntime.h"
 #include "ClothCollisionData.h"
 #include "ClothingSimulationInteractor.h"
+#include "Rendering/RenderCommandPipes.h"
 
 #include "Logging/MessageLog.h"
 #include "CollisionDebugDrawingPublic.h"
@@ -222,7 +224,7 @@ void USkeletalMeshComponent::SetSimulatePhysics(bool bSimulate)
 				{
 					if (PhysAssetBodySetup->PhysicsType == EPhysicsType::PhysType_Default)
 					{
-						BodyInst->SetInstanceSimulatePhysics(bSimulate);
+						BodyInst->SetInstanceSimulatePhysics(bSimulate, false, true);
 					}
 				}
 			}
@@ -463,7 +465,7 @@ void USkeletalMeshComponent::ApplyDeltaToAllPhysicsTransforms(const FVector& Del
 		{
 			// move the root body
 			FTransform RootBodyTM = RootBI->GetUnrealWorldTransform();
-			RootBodyTM.SetRotation(RootBodyTM.GetRotation() * DeltaRotation);
+			RootBodyTM.SetRotation(DeltaRotation * RootBodyTM.GetRotation());
 			RootBodyTM.SetTranslation(RootBodyTM.GetTranslation() + DeltaLocation);
 			RootBI->SetBodyTransform(RootBodyTM, ETeleportType::TeleportPhysics);
 
@@ -476,7 +478,7 @@ void USkeletalMeshComponent::ApplyDeltaToAllPhysicsTransforms(const FVector& Del
 					check(BI);
 
 					FTransform BodyTM = BI->GetUnrealWorldTransform();
-					BodyTM.SetRotation(BodyTM.GetRotation() * DeltaRotation);
+					BodyTM.SetRotation(DeltaRotation * BodyTM.GetRotation());
 					BodyTM.SetTranslation(BodyTM.GetTranslation() + DeltaLocation);
 					BI->SetBodyTransform( BodyTM, ETeleportType::TeleportPhysics );
 				}
@@ -1090,7 +1092,7 @@ void USkeletalMeshComponent::SetAllBodiesSimulatePhysics(bool bNewSimulate)
 {
 	for(int32 i=0; i<Bodies.Num(); i++)
 	{
-		Bodies[i]->SetInstanceSimulatePhysics(bNewSimulate);
+		Bodies[i]->SetInstanceSimulatePhysics(bNewSimulate, false, true);
 	}
 
 	SetRootBodyIndex(RootBodyData.BodyIndex);	//Update the root body data cache in case animation has moved root body relative to root joint
@@ -1166,7 +1168,7 @@ void USkeletalMeshComponent::SetAllBodiesBelowSimulatePhysics( const FName& InBo
 {
 	int32 NumBodiesFound = ForEachBodyBelow(InBoneName, bIncludeSelf, /*bSkipCustomPhysicsType=*/ false, [bNewSimulate](FBodyInstance* BI)
 	{
-		BI->SetInstanceSimulatePhysics(bNewSimulate);
+		BI->SetInstanceSimulatePhysics(bNewSimulate, false, true);
 	});
 
 	if (NumBodiesFound)
@@ -1181,6 +1183,22 @@ void USkeletalMeshComponent::SetAllBodiesBelowSimulatePhysics( const FName& InBo
 	}
 }
 
+void USkeletalMeshComponent::SetBodySimulatePhysics(const FName& InBoneName, bool bSimulate)
+{
+	FBodyInstance* BI = GetBodyInstance(InBoneName);
+	if (BI)
+	{
+		BI->SetInstanceSimulatePhysics(bSimulate, false, true);
+
+		if (IsSimulatingPhysics())
+		{
+			SetRootBodyIndex(RootBodyData.BodyIndex);	//Update the root body data cache in case animation has moved root body relative to root joint
+		}
+
+		UpdateEndPhysicsTickRegisteredState();
+		UpdateClothTickRegisteredState();
+	}
+}
 
 void USkeletalMeshComponent::SetAllMotorsAngularPositionDrive(bool bEnableSwingDrive, bool bEnableTwistDrive, bool bSkipCustomPhysicsType)
 {
@@ -1374,11 +1392,11 @@ void USkeletalMeshComponent::ResetAllBodiesSimulatePhysics()
 			{
 				if (BodyInstSetup->PhysicsType == PhysType_Simulated)
 				{
-					BodyInst->SetInstanceSimulatePhysics(true);
+					BodyInst->SetInstanceSimulatePhysics(true, false, true);
 				}
 				else
 				{
-					BodyInst->SetInstanceSimulatePhysics(false);
+					BodyInst->SetInstanceSimulatePhysics(false, false, true);
 				}
 			}
 		}
@@ -1659,8 +1677,8 @@ void USkeletalMeshComponent::SendRenderDebugPhysics(FPrimitiveSceneProxy* Overri
 			}
 		}
 
-		ENQUEUE_RENDER_COMMAND(SkeletalMesh_SendRenderDebugPhysics)(
-			[UseSceneProxy, DebugMassData](FRHICommandListImmediate& RHICmdList)
+		ENQUEUE_RENDER_COMMAND(SkeletalMesh_SendRenderDebugPhysics)(UE::RenderCommandPipe::SkeletalMesh,
+			[UseSceneProxy, DebugMassData]
 			{
 				UseSceneProxy->SetDebugMassData(DebugMassData);
 			}
@@ -1714,7 +1732,7 @@ void USkeletalMeshComponent::UpdateMeshForBrokenConstraints()
 						if( !ChildBodyInst->IsInstanceSimulatingPhysics() )
 						{
 							DEBUGBROKENCONSTRAINTUPDATE(UE_LOG(LogSkeletalMesh, Log, TEXT("      Unfixing body."));)
-							ChildBodyInst->SetInstanceSimulatePhysics(true);
+							ChildBodyInst->SetInstanceSimulatePhysics(true, false, true);
 						}
 					}
 
@@ -1762,6 +1780,25 @@ FName USkeletalMeshComponent::FindConstraintBoneName( int32 ConstraintIndex )
 	return PhysicsAsset ? PhysicsAsset->FindConstraintBoneName(ConstraintIndex) : NAME_None;
 }
 
+bool USkeletalMeshComponent::IsSimulatingPhysics(FName BoneName) const
+{
+	// If no bone name is specified, then we respond referring to the component.
+	// If the component is not set to follow physics, then the component is not controlled by simulation.
+	if (BoneName == NAME_None && 
+		PhysicsTransformUpdateMode == EPhysicsTransformUpdateMode::ComponentTransformIsKinematic)
+	{
+		return false;
+	}
+
+	// We respond based on either the body (if a bone is specified), or the root body (if no bone is
+	// specified, and the component is controlled by simulation).
+	FBodyInstance* BI = GetBodyInstance(BoneName);
+	if (BI)
+	{
+		return BI->IsInstanceSimulatingPhysics();
+	}
+	return false;
+}
 
 FBodyInstance* USkeletalMeshComponent::GetBodyInstance(FName BoneName, bool, int32) const
 {
@@ -1773,7 +1810,7 @@ FBodyInstance* USkeletalMeshComponent::GetBodyInstance(FName BoneName, bool, int
 		// A name of NAME_None indicates 'root body'
 		if(BoneName == NAME_None)
 		{
-			if(Bodies.IsValidIndex(RootBodyData.BodyIndex))
+			if (Bodies.IsValidIndex(RootBodyData.BodyIndex))
 			{
 				BodyInst = Bodies[RootBodyData.BodyIndex];
 			}
@@ -2004,7 +2041,7 @@ void USkeletalMeshComponent::BreakConstraint(FVector Impulse, FVector HitLocatio
 	if( Body != NULL && !Body->IsInstanceSimulatingPhysics() )
 	{
 		// Unfix body so it can be broken.
-		Body->SetInstanceSimulatePhysics(true);
+		Body->SetInstanceSimulatePhysics(true, false, true);
 	}
 
 	// Break Constraint
@@ -2039,7 +2076,7 @@ void USkeletalMeshComponent::SetAngularLimits(FName InBoneName, float Swing1Limi
 	if (Body != NULL && Body->IsInstanceSimulatingPhysics())
 	{
 		// Unfix body so it can be broken.
-		Body->SetInstanceSimulatePhysics(true);
+		Body->SetInstanceSimulatePhysics(true, false, true);
 	}
 
 	// update limits

@@ -26,7 +26,7 @@ UMassSimpleMovementProcessor::UMassSimpleMovementProcessor()
 	: EntityQuery(*this)
 {
 	bAutoRegisterWithProcessingPhases = true;
-	ExecutionFlags = (int32)EProcessorExecutionFlags::All;
+	ExecutionFlags = (int32)EProcessorExecutionFlags::AllNetModes;
 	ExecutionOrder.ExecuteInGroup = UE::Mass::ProcessorGroupNames::Avoidance;
 }
 

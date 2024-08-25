@@ -622,7 +622,14 @@ ConstantFoldingRule FoldFPUnaryOp(UnaryScalarFoldingRule scalar_rule) {
       // Build the constant object and return it.
       std::vector<uint32_t> ids;
       for (const analysis::Constant* member : results_components) {
-        ids.push_back(const_mgr->GetDefiningInstruction(member)->result_id());
+        // UE Change Begin: Handle null pointer from GetDefiningInstruction()
+        if (Instruction* member_inst =
+                const_mgr->GetDefiningInstruction(member)) {
+          ids.push_back(member_inst->result_id());
+		} else {
+          return nullptr;
+		}
+        // UE Change End: Handle null pointer from GetDefiningInstruction()
       }
       return const_mgr->GetConstant(vector_type, ids);
     } else {
@@ -668,7 +675,14 @@ const analysis::Constant* FoldFPBinaryOp(
     // Build the constant object and return it.
     std::vector<uint32_t> ids;
     for (const analysis::Constant* member : results_components) {
-      ids.push_back(const_mgr->GetDefiningInstruction(member)->result_id());
+      // UE Change Begin: Handle null pointer from GetDefiningInstruction()
+      if (Instruction* member_inst =
+              const_mgr->GetDefiningInstruction(member)) {
+        ids.push_back(const_mgr->GetDefiningInstruction(member)->result_id());
+      } else {
+        return nullptr;
+	  }
+      // UE Change End: Handle null pointer from GetDefiningInstruction()
     }
     return const_mgr->GetConstant(vector_type, ids);
   } else {

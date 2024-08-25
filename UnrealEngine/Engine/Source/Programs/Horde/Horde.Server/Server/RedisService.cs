@@ -2,8 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
-using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
@@ -22,7 +20,7 @@ namespace Horde.Server.Server
 	/// <summary>
 	/// Manages the lifetime of a bundled Redis instance
 	/// </summary>
-	public sealed class RedisService : IHealthCheck, IDisposable
+	public sealed class RedisService : IHealthCheck, IAsyncDisposable
 	{
 		/// <summary>
 		/// Default Redis port
@@ -30,55 +28,18 @@ namespace Horde.Server.Server
 		const int RedisPort = 6379;
 
 		/// <summary>
-		/// The managed process group containing the Redis server
-		/// </summary>
-		ManagedProcessGroup? _redisProcessGroup;
-
-		/// <summary>
-		/// The server process
-		/// </summary>
-		ManagedProcess? _redisProcess;
-
-		/// <summary>
-		/// Connection multiplexer
-		/// </summary>
-		private readonly ConnectionMultiplexer _multiplexer;
-
-		/// <summary>
-		/// The database interface.
-		/// If possible, use ConnectionPool instead. 
-		/// </summary>
-		public IDatabase DatabaseSingleton { get; }
-
-		/// <summary>
 		/// Connection pool
 		/// </summary>
 		public RedisConnectionPool ConnectionPool { get; }
 
-		/// <summary>
-		/// Logger factory
-		/// </summary>
-		readonly ILoggerFactory _loggerFactory;
-
-		/// <summary>
-		/// Logging instance
-		/// </summary>
+		RedisProcess? _redisProcess;
 		readonly ILogger<RedisService> _logger;
-
-		/// <summary>
-		/// Hack to initialize RedisService early enough to use data protection
-		/// </summary>
-		/// <param name="settings"></param>
-		public RedisService(ServerSettings settings)
-			: this(Options.Create(settings), new Serilog.Extensions.Logging.SerilogLoggerFactory(Serilog.Log.Logger))
-		{
-		}
 
 		/// <summary>
 		/// Constructor
 		/// </summary>
-		public RedisService(IOptions<ServerSettings> options, ILoggerFactory loggerFactory)
-			: this(options.Value.RedisConnectionConfig, -1, loggerFactory)
+		public RedisService(IOptions<ServerSettings> options, ILogger<RedisService> logger)
+			: this(options.Value.RedisConnectionConfig, -1, logger)
 		{
 		}
 
@@ -87,30 +48,27 @@ namespace Horde.Server.Server
 		/// </summary>
 		/// <param name="connectionString">Redis connection string. If null, we will start a temporary redis instance on the local machine.</param>
 		/// <param name="dbNum">Override for the database to use. Set to -1 to use the default from the connection string.</param>
-		/// <param name="loggerFactory"></param>
-		public RedisService(string? connectionString, int dbNum, ILoggerFactory loggerFactory)
+		/// <param name="logger"></param>
+		public RedisService(string? connectionString, int dbNum, ILogger<RedisService> logger)
 		{
-			_loggerFactory = loggerFactory;
-			_logger = loggerFactory.CreateLogger<RedisService>();
+			_logger = logger;
 
 			if (connectionString == null)
 			{
 				if (IsRunningOnDefaultPort())
 				{
-					connectionString = $"localhost:{RedisPort}";
+					connectionString = $"127.0.0.1:{RedisPort}";
 				}
-				else if (TryStartRedisServer())
+				else if (TryStartRedisProcess())
 				{
-					connectionString = $"localhost:{RedisPort}";
+					connectionString = $"127.0.0.1:{_redisProcess!.Port},allowAdmin=true";
 				}
 				else
 				{
-					throw new Exception($"Unable to connect to Redis. Please set {nameof(ServerSettings.RedisConnectionConfig)} in {Program.UserConfigFile}");
+					throw new Exception($"Unable to connect to Redis. Please set {nameof(ServerSettings.RedisConnectionConfig)} in {ServerApp.ServerConfigFile}");
 				}
 			}
 
-			_multiplexer = ConnectionMultiplexer.Connect(connectionString);
-			DatabaseSingleton = _multiplexer.GetDatabase(dbNum);
 			ConnectionPool = new RedisConnectionPool(20, connectionString, dbNum);
 		}
 
@@ -129,6 +87,16 @@ namespace Horde.Server.Server
 		}
 
 		/// <summary>
+		/// Get the least-loaded Redis connection from the pool
+		/// Don't store the returned object and try to resolve this as late as possible to ensure load is balanced.
+		/// </summary>
+		/// <returns>A Redis connection multiplexer</returns>
+		public IConnectionMultiplexer GetConnection()
+		{
+			return ConnectionPool.GetConnection();
+		}
+
+		/// <summary>
 		/// Get the least-loaded Redis database from the connection pool
 		/// Don't store the returned object and try to resolve this as late as possible to ensure load is balanced.
 		/// </summary>
@@ -139,19 +107,20 @@ namespace Horde.Server.Server
 		}
 
 		/// <inheritdoc/>
-		public void Dispose()
+		public async ValueTask DisposeAsync()
 		{
-			_multiplexer.Dispose();
+			if (_redisProcess != null)
+			{
+				_logger.LogInformation("Sending shutdown command...");
+				ConnectionPool.GetConnection().GetServers().FirstOrDefault()?.Shutdown();
+			}
+
+			ConnectionPool.Dispose();
 
 			if (_redisProcess != null)
 			{
-				_redisProcess.Dispose();
+				await _redisProcess.DisposeAsync();
 				_redisProcess = null;
-			}
-			if (_redisProcessGroup != null)
-			{
-				_redisProcessGroup.Dispose();
-				_redisProcessGroup = null;
 			}
 		}
 
@@ -176,67 +145,21 @@ namespace Horde.Server.Server
 		/// Attempts to start a local instance of Redis
 		/// </summary>
 		/// <returns></returns>
-		bool TryStartRedisServer()
+		bool TryStartRedisProcess()
 		{
+			if (_redisProcess != null)
+			{
+				return true;
+			}
 			if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
 			{
 				return false;
 			}
 
-			FileReference redisExe = FileReference.Combine(Program.AppDir, "ThirdParty", "Redis", "redis-server.exe");
-			if (!FileReference.Exists(redisExe))
-			{
-				_logger.LogDebug("Redis executable does not exist at {ExePath}", redisExe);
-				return false;
-			}
-
-			DirectoryReference redisDir = DirectoryReference.Combine(Program.DataDir, "Redis");
-			DirectoryReference.CreateDirectory(redisDir);
-
-			FileReference redisConfigFile = FileReference.Combine(redisDir, "redis.conf");
-			if (!FileReference.Exists(redisConfigFile))
-			{
-				using (StreamWriter writer = new StreamWriter(redisConfigFile.FullName))
-				{
-					writer.WriteLine("# redis.conf");
-				}
-			}
-
-			_redisProcessGroup = new ManagedProcessGroup();
-			try
-			{
-				_redisProcess = new ManagedProcess(_redisProcessGroup, redisExe.FullName, "", null, null, ProcessPriorityClass.Normal);
-				_redisProcess.StdIn.Close();
-				Task.Run(() => RelayRedisOutput());
-				return true;
-			}
-			catch (Exception ex)
-			{
-				_logger.LogWarning(ex, "Unable to start Redis server process");
-				return false;
-			}
-		}
-
-		/// <summary>
-		/// Copies output from the redis process to the logger
-		/// </summary>
-		/// <returns></returns>
-		async Task RelayRedisOutput()
-		{
-			ILogger redisLogger = _loggerFactory.CreateLogger("Redis");
-			for (; ; )
-			{
-				string? line = await _redisProcess!.ReadLineAsync();
-				if (line == null)
-				{
-					break;
-				}
-				if (line.Length > 0)
-				{
-					redisLogger.Log(LogLevel.Information, "{Output}", line);
-				}
-			}
-			redisLogger.LogInformation("Exit code {ExitCode}", _redisProcess.ExitCode);
+			FileReference redisConfigFile = FileReference.Combine(RedisProcess.RedisExe.Directory, "redis.conf");
+			_redisProcess = new RedisProcess(_logger);
+			_redisProcess.Start($"\"{redisConfigFile}\"");
+			return true;
 		}
 
 		/// <summary>
@@ -247,7 +170,7 @@ namespace Horde.Server.Server
 		/// <param name="flags">Flags for the request</param>
 		public Task PublishAsync(RedisChannel channel, RedisValue message, CommandFlags flags = CommandFlags.None)
 		{
-			return ConnectionPool.GetDatabase().PublishAsync(channel, message, flags);
+			return GetDatabase().PublishAsync(channel, message, flags);
 		}
 
 		/// <summary>
@@ -259,7 +182,7 @@ namespace Horde.Server.Server
 		/// <param name="flags">Flags for the request</param>
 		public Task PublishAsync<T>(RedisChannel<T> channel, T message, CommandFlags flags = CommandFlags.None)
 		{
-			return ConnectionPool.GetDatabase().PublishAsync(channel, message, flags);
+			return GetDatabase().PublishAsync(channel, message, flags);
 		}
 
 		/// <inheritdoc cref="SubscribeAsync{T}(RedisChannel{T}, Action{RedisChannel{T}, T})"/>
@@ -276,7 +199,7 @@ namespace Horde.Server.Server
 		/// <returns>Subscription object</returns>
 		public async Task<RedisSubscription> SubscribeAsync(RedisChannel channel, Action<RedisChannel, RedisValue> callback)
 		{
-			IConnectionMultiplexer connection = ConnectionPool.GetConnection();
+			IConnectionMultiplexer connection = GetConnection();
 			return await connection.SubscribeAsync(channel, callback);
 		}
 
@@ -289,7 +212,7 @@ namespace Horde.Server.Server
 		/// <returns>Subscription object</returns>
 		public async Task<RedisSubscription> SubscribeAsync<T>(RedisChannel<T> channel, Action<RedisChannel<T>, T> callback)
 		{
-			IConnectionMultiplexer connection = ConnectionPool.GetConnection();
+			IConnectionMultiplexer connection = GetConnection();
 			return await connection.SubscribeAsync(channel, callback);
 		}
 	}

@@ -92,6 +92,7 @@ BEGIN_SHADER_PARAMETER_STRUCT(FDeviceEncodingACESTonemapShaderParameters, )
 	SHADER_PARAMETER(float, ACESCoefsLow_4)
 	SHADER_PARAMETER(float, ACESCoefsHigh_4)
 	SHADER_PARAMETER(float, ACESSceneColorMultiplier)
+	SHADER_PARAMETER(float, ACESGamutCompression)
 END_SHADER_PARAMETER_STRUCT()
 
 BEGIN_SHADER_PARAMETER_STRUCT(FDeviceEncodingOnlyParameters, )

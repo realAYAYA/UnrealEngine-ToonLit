@@ -12,11 +12,18 @@ namespace UnrealBuildTool.Rules
 				"Core",
 				"CoreUObject",
 				"Engine",
+				"UnrealEd",
 				"LogVisualizer",
 				"TraceAnalysis",
 				"TraceServices",
 				"TraceInsights",
-				"RewindDebuggerInterface"
+				"RewindDebuggerInterface",
+				"GameplayInsights",
+				"Slate",
+				"SlateCore",
+				"ToolWidgets",
+				"ToolMenus",
+				"DeveloperSettings",
 			});
 		}
 	}

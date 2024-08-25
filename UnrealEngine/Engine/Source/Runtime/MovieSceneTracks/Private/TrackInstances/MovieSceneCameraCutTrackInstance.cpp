@@ -1,18 +1,30 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "TrackInstances/MovieSceneCameraCutTrackInstance.h"
+
+#include "Camera/CameraComponent.h"
 #include "ContentStreaming.h"
+#include "Engine/Engine.h"
 #include "Engine/World.h"
-#include "Evaluation/MovieSceneEvaluation.h"
-#include "GameFramework/Actor.h"
-#include "Generators/MovieSceneEasingCurves.h"
-#include "IMovieScenePlayer.h"
-#include "MovieSceneTimeHelpers.h"
-#include "Sections/MovieSceneCameraCutSection.h"
-#include "Tracks/MovieSceneCameraCutTrack.h"
+#include "EngineGlobals.h"
 #include "EntitySystem/MovieSceneEntitySystemLinker.h"
 #include "EntitySystem/MovieSceneInstanceRegistry.h"
+#include "EntitySystem/MovieSceneSharedPlaybackState.h"
+#include "EntitySystem/TrackInstance/MovieSceneTrackInstanceSystem.h"
+#include "Evaluation/CameraCutPlaybackCapability.h"
+#include "Evaluation/MovieSceneEvaluation.h"
+#include "Evaluation/PreAnimatedState/MovieScenePreAnimatedCaptureSource.h"
+#include "GameFramework/Actor.h"
+#include "GameFramework/PlayerController.h"
+#include "Generators/MovieSceneEasingCurves.h"
+#include "IMovieScenePlayer.h"
 #include "MovieSceneCommonHelpers.h"
+#include "MovieSceneTimeHelpers.h"
+#include "Sections/MovieSceneCameraCutSection.h"
+#include "TrackInstances/MovieSceneCameraCutEditorHandler.h"
+#include "TrackInstances/MovieSceneCameraCutGameHandler.h"
+#include "TrackInstances/MovieSceneCameraCutViewportPreviewer.h"
+#include "Tracks/MovieSceneCameraCutTrack.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MovieSceneCameraCutTrackInstance)
 
@@ -23,190 +35,333 @@ namespace UE
 namespace MovieScene
 {
 
-	/** Information about a camera cut's easing (in or out) */
-	struct FBlendedCameraCutEasingInfo
+FCameraCutPlaybackCapabilityCompatibilityWrapper::FCameraCutPlaybackCapabilityCompatibilityWrapper(const FSequenceInstance& SequenceInstance)
+{
+	TSharedRef<FSharedPlaybackState> PlaybackState = SequenceInstance.GetSharedPlaybackState();
+	CameraCutCapability = PlaybackState->FindCapability<FCameraCutPlaybackCapability>();
+	Player = SequenceInstance.GetPlayer();
+}
+
+bool FCameraCutPlaybackCapabilityCompatibilityWrapper::ShouldUpdateCameraCut()
+{
+	if (CameraCutCapability)
 	{
-		float RootBlendTime = -1.f;
-		TOptional<EMovieSceneBuiltInEasing> BlendType;
-
-		FBlendedCameraCutEasingInfo() {}
-		FBlendedCameraCutEasingInfo(float InRootBlendTime, const TScriptInterface<IMovieSceneEasingFunction>& EasingFunction)
-		{
-			RootBlendTime = InRootBlendTime;
-
-			// If it's a built-in easing function, get the curve type. We'll try to convert it to what the
-			// player controller knows later, in the movie scene player.
-			const UObject* EaseInScript = EasingFunction.GetObject();
-			if (const UMovieSceneBuiltInEasingFunction* BuiltInEaseIn = Cast<UMovieSceneBuiltInEasingFunction>(EaseInScript))
-			{
-				BlendType = BuiltInEaseIn->Type;
-			}
-		}
-	};
-
-	/** Camera cut info struct. */
-	struct FBlendedCameraCut
+		return CameraCutCapability->ShouldUpdateCameraCut();
+	}
+	else if (Player)
 	{
-		FInstanceHandle InstanceHandle;
-		TObjectPtr<UMovieSceneSection> Section;
-
-		FMovieSceneObjectBindingID CameraBindingID;
-		FMovieSceneSequenceID OperandSequenceID;
-
-		FFrameNumber LocalStartTime;
-		FFrameNumber LocalEaseInEndTime;
-		FFrameTime LocalContextTime;
-		FFrameNumber LocalEaseOutStartTime;
-		FFrameNumber LocalEndTime;
-
-		FBlendedCameraCutEasingInfo EaseIn;
-		FBlendedCameraCutEasingInfo EaseOut;
-		bool bLockPreviousCamera = false;
-
-		FMovieSceneObjectBindingID PreviousCameraBindingID;
-		FMovieSceneSequenceID PreviousOperandSequenceID;
-
-		float PreviewBlendFactor = -1.f;
-		bool bCanBlend = false;
-
-		FBlendedCameraCut()
-		{}
-		FBlendedCameraCut(const FMovieSceneTrackInstanceInput& InInput, FMovieSceneObjectBindingID InCameraBindingID, FMovieSceneSequenceID InOperandSequenceID) 
-			: InstanceHandle(InInput.InstanceHandle)
-			, Section(InInput.Section)
-			, CameraBindingID(InCameraBindingID)
-			, OperandSequenceID(InOperandSequenceID)
-		{}
-	};
-
-	/** Pre-roll camera cut info struct. */
-	struct FPreRollCameraCut
-	{
-		FInstanceHandle InstanceHandle;
-		FMovieSceneObjectBindingID CameraBindingID;
-		FTransform CutTransform;
-		bool bHasCutTransform;
-	};
-
-	/** A movie scene pre-animated token that stores a pre-animated camera cut */
-	struct FCameraCutPreAnimatedToken : IMovieScenePreAnimatedGlobalToken
-	{
-		static FMovieSceneAnimTypeID GetAnimTypeID()
-		{
-			return TMovieSceneAnimTypeID<FCameraCutPreAnimatedToken>();
-		}
-
-		virtual void RestoreState(const FRestoreStateParams& RestoreParams) override
-		{
-			IMovieScenePlayer* Player = RestoreParams.GetTerminalPlayer();
-			if (!ensure(Player))
-			{
-				return;
-			}
-			
-			EMovieSceneCameraCutParams Params;
-			Player->UpdateCameraCut(nullptr, Params);
-		}
-	};
-
-	/** The producer class for the pre-animated token above */
-	struct FCameraCutPreAnimatedTokenProducer : IMovieScenePreAnimatedGlobalTokenProducer
-	{
-		virtual IMovieScenePreAnimatedGlobalTokenPtr CacheExistingState() const override
-		{
-			return FCameraCutPreAnimatedToken();
-		}
-	};
-
-	struct FCameraCutAnimator
-	{
-		static UObject* FindBoundObject(FMovieSceneObjectBindingID BindingID, FMovieSceneSequenceID SequenceID, IMovieScenePlayer& Player)
-		{
-			TArrayView<TWeakObjectPtr<>> Objects = BindingID.ResolveBoundObjects(SequenceID, Player);
-			if (Objects.Num() > 0)
-			{
-				return Objects[0].Get();
-			}
-			return nullptr;
-		}
-
-		static bool MatchesCameraCutCache(UObject* CameraActor, const FBlendedCameraCut& Params, const UMovieSceneCameraCutTrackInstance::FCameraCutCache& CameraCutCache)
-		{
-			return CameraActor == CameraCutCache.LastLockedCamera.Get() &&
-				Params.InstanceHandle == CameraCutCache.LastInstanceHandle &&
-				Params.Section == CameraCutCache.LastSection;
-		}
-
-		static void UpdateCameraCutCache(UObject* CameraActor, const FBlendedCameraCut& Params, UMovieSceneCameraCutTrackInstance::FCameraCutCache& OutCameraCutCache)
-		{
-			OutCameraCutCache.LastLockedCamera = CameraActor;
-			OutCameraCutCache.LastInstanceHandle = Params.InstanceHandle;
-			OutCameraCutCache.LastSection = Params.Section;
-		}
-
-		static void AnimatePreRoll(const FPreRollCameraCut& Params, const FMovieSceneContext& Context, const FMovieSceneSequenceID& SequenceID, IMovieScenePlayer& Player)
-		{
-			if (Params.bHasCutTransform)
-			{
-				FVector Location = Params.CutTransform.GetLocation();
-				IStreamingManager::Get().AddViewLocation(Location);
-			}
-			else
-			{
-				UObject* CameraObject = FindBoundObject(Params.CameraBindingID, SequenceID, Player);
-
-				if (AActor* Actor = Cast<AActor>(CameraObject))
-				{
-					FVector Location = Actor->GetActorLocation();
-					IStreamingManager::Get().AddViewLocation(Location);
-				}
-			}
-		}
-
-		static bool AnimateBlendedCameraCut(const FBlendedCameraCut& Params, UMovieSceneCameraCutTrackInstance::FCameraCutCache& CameraCutCache, const FMovieSceneContext& Context, IMovieScenePlayer& Player)
-		{
-			UObject* CameraActor = FindBoundObject(Params.CameraBindingID, Params.OperandSequenceID, Player);
-
-			EMovieSceneCameraCutParams CameraCutParams;
-			CameraCutParams.bJumpCut = Context.HasJumped();
-			CameraCutParams.BlendTime = Params.EaseIn.RootBlendTime;
-			CameraCutParams.BlendType = Params.EaseIn.BlendType;
-			CameraCutParams.bLockPreviousCamera = Params.bLockPreviousCamera;
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
+		return Player->CanUpdateCameraCut();
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	}
+	return true;
+}
 
 #if WITH_EDITOR
-			UObject* PreviousCameraActor = FindBoundObject(Params.PreviousCameraBindingID, Params.PreviousOperandSequenceID, Player);
-			CameraCutParams.PreviousCameraObject = PreviousCameraActor;
-			CameraCutParams.PreviewBlendFactor = Params.PreviewBlendFactor;
-			CameraCutParams.bCanBlend = Params.bCanBlend;
+bool FCameraCutPlaybackCapabilityCompatibilityWrapper::ShouldRestoreEditorViewports()
+{
+	if (CameraCutCapability)
+	{
+		return CameraCutCapability->ShouldRestoreEditorViewports();
+	}
+	return true;
+}
 #endif
 
-			static const FMovieSceneAnimTypeID CameraAnimTypeID = FMovieSceneAnimTypeID::Unique();
+void FCameraCutPlaybackCapabilityCompatibilityWrapper::OnCameraCutUpdated(const FOnCameraCutUpdatedParams& Params)
+{
+	if (CameraCutCapability)
+	{
+		CameraCutCapability->OnCameraCutUpdated(Params);
+	}
+	else if (Player)
+	{
+		// Not quite correct?
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
+		Player->UpdateCameraCut(Params.ViewTarget, nullptr, Params.bIsJumpCut);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	}
+}
 
-			const bool bMatchesCache = MatchesCameraCutCache(CameraActor, Params, CameraCutCache);
-			if (!bMatchesCache)
-			{
-				Player.SavePreAnimatedState(CameraAnimTypeID, FCameraCutPreAnimatedTokenProducer());
+/** Information about a camera cut's easing (in or out) */
+struct FBlendedCameraCutEasingInfo
+{
+	float RootBlendTime = -1.f;
+	TOptional<EMovieSceneBuiltInEasing> BlendType;
 
-				CameraCutParams.UnlockIfCameraObject = CameraCutCache.LastLockedCamera.Get();
-				Player.UpdateCameraCut(CameraActor, CameraCutParams);
-				UpdateCameraCutCache(CameraActor, Params, CameraCutCache);
-				return true;
-			}
-			else if (CameraActor || CameraCutParams.BlendTime > 0.f)
-			{
-				Player.SavePreAnimatedState(CameraAnimTypeID, FCameraCutPreAnimatedTokenProducer());
+	FBlendedCameraCutEasingInfo() {}
+	FBlendedCameraCutEasingInfo(float InRootBlendTime, const TScriptInterface<IMovieSceneEasingFunction>& EasingFunction)
+	{
+		RootBlendTime = InRootBlendTime;
+
+		// If it's a built-in easing function, get the curve type. We'll try to convert it to what the
+		// player controller knows later, in the movie scene player.
+		const UObject* EaseInScript = EasingFunction.GetObject();
+		if (const UMovieSceneBuiltInEasingFunction* BuiltInEaseIn = Cast<UMovieSceneBuiltInEasingFunction>(EaseInScript))
+		{
+			BlendType = BuiltInEaseIn->Type;
+		}
+	}
+};
+
+/** Camera cut info struct. */
+struct FBlendedCameraCut
+{
+	FMovieSceneTrackInstanceInput Input;
+
+	FMovieSceneObjectBindingID CameraBindingID;
+	FMovieSceneSequenceID OperandSequenceID;
+
+	FFrameNumber LocalStartTime;
+	FFrameNumber LocalEaseInEndTime;
+	FFrameTime LocalContextTime;
+	FFrameNumber LocalEaseOutStartTime;
+	FFrameNumber LocalEndTime;
+
+	FBlendedCameraCutEasingInfo EaseIn;
+	FBlendedCameraCutEasingInfo EaseOut;
+	bool bLockPreviousCamera = false;
+
+	FMovieSceneObjectBindingID PreviousCameraBindingID;
+	FMovieSceneSequenceID PreviousOperandSequenceID;
+
+	float PreviewBlendFactor = -1.f;
+	bool bCanBlend = false;
+
+	FBlendedCameraCut()
+	{}
+	FBlendedCameraCut(const FMovieSceneTrackInstanceInput& InInput, FMovieSceneObjectBindingID InCameraBindingID, FMovieSceneSequenceID InOperandSequenceID) 
+		: Input(InInput)
+		, CameraBindingID(InCameraBindingID)
+		, OperandSequenceID(InOperandSequenceID)
+	{}
+};
+
+/** Pre-roll camera cut info struct. */
+struct FPreRollCameraCut
+{
+	FInstanceHandle InstanceHandle;
+	FMovieSceneObjectBindingID CameraBindingID;
+	FTransform CutTransform;
+	bool bHasCutTransform;
+};
+
+/** Utility class for executing camera cuts */
+struct FCameraCutAnimator
+{
+	using FCameraCutCache = UMovieSceneCameraCutTrackInstance::FCameraCutCache;
+
+public:
+
+	static UObject* FindBoundObject(FMovieSceneObjectBindingID BindingID, FMovieSceneSequenceIDRef SequenceID, TSharedRef<const FSharedPlaybackState> SharedPlaybackState)
+	{
+		TArrayView<TWeakObjectPtr<>> Objects = BindingID.ResolveBoundObjects(SequenceID, SharedPlaybackState);
+		if (Objects.Num() > 0)
+		{
+			return Objects[0].Get();
+		}
+		return nullptr;
+	}
+
+	static bool MatchesCameraCutCache(UObject* CameraActor, const FBlendedCameraCut& Params, const FCameraCutCache& CameraCutCache)
+	{
+		return CameraActor == CameraCutCache.LastLockedCamera.Get() &&
+			Params.Input.IsSameInput(CameraCutCache.LastInput);
+	}
+
+	static void UpdateCameraCutCache(UObject* CameraActor, const FBlendedCameraCut& Params, FCameraCutCache& OutCameraCutCache)
+	{
+		OutCameraCutCache.LastLockedCamera = CameraActor;
+		OutCameraCutCache.LastInput = Params.Input;
+	}
 	
-				Player.UpdateCameraCut(CameraActor, CameraCutParams);
-				return true;
-			}
+public:
 
+	FCameraCutCache& CameraCutCache;
+#if WITH_EDITOR
+	FCameraCutViewportPreviewer* ViewportPreviewer = nullptr;
+#endif
+
+	FCameraCutAnimator(FCameraCutCache& InCameraCutCache)
+		: CameraCutCache(InCameraCutCache)
+	{
+	}
+
+#if WITH_EDITOR
+	void SetViewportPreviewer(FCameraCutViewportPreviewer* InViewportPreviewer)
+	{
+		ViewportPreviewer = InViewportPreviewer;
+	}
+#endif
+
+public:
+
+	void AnimatePreRoll(const FPreRollCameraCut& Params, const FSequenceInstance& SequenceInstance)
+	{
+		if (Params.bHasCutTransform)
+		{
+			FVector Location = Params.CutTransform.GetLocation();
+			IStreamingManager::Get().AddViewLocation(Location);
+		}
+		else
+		{
+			UObject* CameraObject = FindBoundObject(Params.CameraBindingID, SequenceInstance.GetSequenceID(), SequenceInstance.GetSharedPlaybackState());
+
+			if (AActor* Actor = Cast<AActor>(CameraObject))
+			{
+				FVector Location = Actor->GetActorLocation();
+				IStreamingManager::Get().AddViewLocation(Location);
+			}
+		}
+	}
+
+	bool AnimateBlendedCameraCut(
+			const FBlendedCameraCut& Params, 
+			UMovieSceneEntitySystemLinker* Linker,
+			const FSequenceInstance& SequenceInstance)
+	{
+		const FMovieSceneContext& Context = SequenceInstance.GetContext();
+
+		UObject* CameraActor = FindBoundObject(Params.CameraBindingID, Params.OperandSequenceID, SequenceInstance.GetSharedPlaybackState());
+		if (Params.CameraBindingID.IsValid() && CameraActor == nullptr)
+		{
+			// We have an unresolved or incorrect binding.
 			return false;
 		}
-	};
+
+		// Save pre-animated state only now, because we don't want to start tracking this camera cut
+		// unless we know it actually resolves to a camera actor (see above) and will actually do something.
+		FScopedPreAnimatedCaptureSource CaptureSource(Linker, Params.Input);
+		FCameraCutGameHandler::CachePreAnimatedValue(Linker, SequenceInstance);
+#if WITH_EDITOR
+		FCameraCutEditorHandler::CachePreAnimatedValue(Linker, SequenceInstance);
+#endif
+
+		FMovieSceneCameraCutParams CameraCutParams;
+		CameraCutParams.bJumpCut = Context.HasJumped();
+		CameraCutParams.BlendTime = Params.EaseIn.RootBlendTime;
+		CameraCutParams.BlendType = Params.EaseIn.BlendType;
+		CameraCutParams.bLockPreviousCamera = Params.bLockPreviousCamera;
+
+#if WITH_EDITOR
+		UObject* PreviousCameraActor = FindBoundObject(Params.PreviousCameraBindingID, Params.PreviousOperandSequenceID, SequenceInstance.GetSharedPlaybackState());
+		CameraCutParams.PreviousCameraObject = PreviousCameraActor;
+		CameraCutParams.PreviewBlendFactor = Params.PreviewBlendFactor;
+		CameraCutParams.bCanBlend = Params.bCanBlend;
+#endif
+
+		const bool bMatchesCache = MatchesCameraCutCache(CameraActor, Params, CameraCutCache);
+		if (!bMatchesCache)
+		{
+			CameraCutParams.UnlockIfCameraObject = CameraCutCache.LastLockedCamera.Get();
+			SetCameraCut(CameraActor, CameraCutParams, Linker, SequenceInstance);
+			UpdateCameraCutCache(CameraActor, Params, CameraCutCache);
+			return true;
+		}
+		else if (CameraActor || CameraCutParams.BlendTime > 0.f)
+		{
+			SetCameraCut(CameraActor, CameraCutParams, Linker, SequenceInstance);
+			return true;
+		}
+
+		return false;
+	}
+
+	void SetCameraCut(
+			UObject* CameraObject, 
+			const FMovieSceneCameraCutParams& CameraCutParams, 
+			UMovieSceneEntitySystemLinker* Linker,
+			const FSequenceInstance& SequenceInstance)
+	{
+		FCameraCutGameHandler GameHandler(Linker, SequenceInstance);
+		GameHandler.SetCameraCut(CameraObject, CameraCutParams);
+
+#if WITH_EDITOR
+		FCameraCutEditorHandler EditorHandler(Linker, SequenceInstance, *ViewportPreviewer);
+		EditorHandler.SetCameraCut(CameraObject, CameraCutParams);
+#endif
+	}
+};
 
 }  // namespace MovieScene
 }  // namespace UE
 
+#if WITH_EDITOR
+
+void UMovieSceneCameraCutTrackInstance::ToggleCameraCutLock(UMovieSceneEntitySystemLinker* Linker, bool bEnableCameraCuts, bool bRestoreViewports)
+{
+	using namespace UE::MovieScene;
+
+	auto ForceEditorPreAnimatedStorageOperation = [](UMovieSceneCameraCutTrackInstance* This, UE::MovieScene::EForcedCameraCutPreAnimatedStorageOperation Operation)
+	{
+		using namespace UE::MovieScene;
+
+		UMovieSceneEntitySystemLinker* Linker = This->GetLinker();
+		const FInstanceRegistry* InstanceRegistry = Linker->GetInstanceRegistry();
+		for (const FCameraCutInputInfo& InputInfo : This->SortedInputInfos)
+		{
+			FScopedPreAnimatedCaptureSource CaptureSource(Linker, InputInfo.Input);
+			const FSequenceInstance& SequenceInstance = InstanceRegistry->GetInstance(InputInfo.Input.InstanceHandle);
+			FCameraCutEditorHandler::ForcePreAnimatedValueOperation(Linker, SequenceInstance, Operation);
+		}
+	};
+
+	// Find the camera cut track instance and forcibly manage its pre-animated state for the editor 
+	// viewports depending on what we want to do with them.
+	UMovieSceneTrackInstanceInstantiator* TrackInstanceSystem = Linker->FindSystem<UMovieSceneTrackInstanceInstantiator>();
+	if (TrackInstanceSystem)
+	{
+		UMovieSceneCameraCutTrackInstance* CameraCutTrackInstance = nullptr;
+		for (auto It = TrackInstanceSystem->GetTrackInstances().CreateConstIterator(); It; ++It)
+		{
+			CameraCutTrackInstance = Cast<UMovieSceneCameraCutTrackInstance>(It->TrackInstance.Get());
+			if (CameraCutTrackInstance != nullptr)
+			{
+				break;
+			}
+		}
+
+		if (CameraCutTrackInstance)
+		{
+			if (bEnableCameraCuts)
+			{
+				// We locked the viewport to the cinematic... re-cache the viewport's position as the
+				// new pre-animated state if we intend to restore it later. Otherwise, don't cache it,
+				// so that we don't have any state to restore if we scrub/play out of the camera cut
+				// section.
+				if (bRestoreViewports)
+				{
+					ForceEditorPreAnimatedStorageOperation(CameraCutTrackInstance, EForcedCameraCutPreAnimatedStorageOperation::Cache);
+				}
+			}
+			else
+			{
+				// We unlocked the viewport... if we want to restore the original viewport position, 
+				// let's restore this position, which we saved as pre-animated value. If we want to stay
+				// in the same position as the cinematic camera, we can simply not do anything. But we in
+				// fact discard the pre-animated state altogether, because we don't want it to also come
+				// back when we scrub/play out of the camera cut section.
+				if (bRestoreViewports)
+				{
+					ForceEditorPreAnimatedStorageOperation(CameraCutTrackInstance, EForcedCameraCutPreAnimatedStorageOperation::Restore);
+				}
+				else
+				{
+					ForceEditorPreAnimatedStorageOperation(CameraCutTrackInstance, EForcedCameraCutPreAnimatedStorageOperation::Discard);
+				}
+			}
+		}
+	}
+}
+
+#endif // WITH_EDITOR
+
+void UMovieSceneCameraCutTrackInstance::OnInitialize()
+{
+#if WITH_EDITOR
+	ViewportPreviewer = MakeUnique<UE::MovieScene::FCameraCutViewportPreviewer>();
+#endif
+}
 
 void UMovieSceneCameraCutTrackInstance::OnAnimate()
 {
@@ -215,14 +370,15 @@ void UMovieSceneCameraCutTrackInstance::OnAnimate()
 	// Gather active camera cuts, and triage pre-rolls from actual cuts.
 	TArray<FPreRollCameraCut> CameraCutPreRolls;
 	TArray<FBlendedCameraCut> CameraCutParams;
-	const FInstanceRegistry* InstanceRegistry = GetLinker()->GetInstanceRegistry();
+
+	UMovieSceneEntitySystemLinker* Linker = GetLinker();
+	const FInstanceRegistry* InstanceRegistry = Linker->GetInstanceRegistry();
 
 	for (const FCameraCutInputInfo& InputInfo : SortedInputInfos)
 	{
 		const FMovieSceneTrackInstanceInput& Input = InputInfo.Input;
 		const FSequenceInstance& SequenceInstance = InstanceRegistry->GetInstance(Input.InstanceHandle);
 		const FMovieSceneContext& Context = SequenceInstance.GetContext();
-		IMovieScenePlayer* Player = SequenceInstance.GetPlayer();
 
 		const UMovieSceneCameraCutSection* Section = Cast<const UMovieSceneCameraCutSection>(Input.Section);
 		const FMovieSceneObjectBindingID CameraBindingID = Section->GetCameraBindingID();
@@ -247,7 +403,7 @@ void UMovieSceneCameraCutTrackInstance::OnAnimate()
 		else
 		{
 			const UMovieSceneCameraCutTrack* Track = Section->GetTypedOuter<UMovieSceneCameraCutTrack>();
-			const FMovieSceneTimeTransform SequenceToRootTransform = Context.GetSequenceToRootTransform();
+			const FMovieSceneSequenceTransform SequenceToRootTransform = Context.GetSequenceToRootSequenceTransform();
 
 			FBlendedCameraCut Params(Input, CameraBindingID, SequenceInstance.GetSequenceID());
 			Params.bCanBlend = Track->bCanBlend;
@@ -264,13 +420,13 @@ void UMovieSceneCameraCutTrackInstance::OnAnimate()
 			if (Section->HasStartFrame() && Section->Easing.GetEaseInDuration() > 0)
 			{
 				Params.LocalEaseInEndTime = Params.LocalStartTime + Section->Easing.GetEaseInDuration();
-				const float RootEaseInTime = SequenceToRootTransform.TimeScale * Context.GetFrameRate().AsSeconds(FFrameNumber(Section->Easing.GetEaseInDuration()));
+				const float RootEaseInTime = SequenceToRootTransform.GetTimeScale() * Context.GetFrameRate().AsSeconds(FFrameNumber(Section->Easing.GetEaseInDuration()));
 				Params.EaseIn = FBlendedCameraCutEasingInfo(RootEaseInTime, Section->Easing.EaseIn);
 			}
 			if (Section->HasEndFrame() && Section->Easing.GetEaseOutDuration() > 0)
 			{
 				Params.LocalEaseOutStartTime = Params.LocalEndTime - Section->Easing.GetEaseOutDuration();
-				const float RootEaseOutTime = SequenceToRootTransform.TimeScale * Context.GetFrameRate().AsSeconds(FFrameNumber(Section->Easing.GetEaseOutDuration()));
+				const float RootEaseOutTime = SequenceToRootTransform.GetTimeScale() * Context.GetFrameRate().AsSeconds(FFrameNumber(Section->Easing.GetEaseOutDuration()));
 				Params.EaseOut = FBlendedCameraCutEasingInfo(RootEaseOutTime, Section->Easing.EaseOut);
 			}
 
@@ -285,15 +441,17 @@ void UMovieSceneCameraCutTrackInstance::OnAnimate()
 		}
 	}
 
+	FCameraCutAnimator Animator(CameraCutCache);
+#if WITH_EDITOR
+	Animator.SetViewportPreviewer(ViewportPreviewer.Get());
+#endif
+
 	// For now we only support one pre-roll.
 	if (CameraCutPreRolls.Num() > 0)
 	{
 		FPreRollCameraCut& CameraCutPreRoll = CameraCutPreRolls.Last();
 		const FSequenceInstance& SequenceInstance = InstanceRegistry->GetInstance(CameraCutPreRoll.InstanceHandle);
-		const FMovieSceneContext& Context = SequenceInstance.GetContext();
-		IMovieScenePlayer* Player = SequenceInstance.GetPlayer();
-		const FMovieSceneSequenceID SequenceID = SequenceInstance.GetSequenceID();
-		FCameraCutAnimator::AnimatePreRoll(CameraCutPreRoll, Context, SequenceID, *Player);
+		Animator.AnimatePreRoll(CameraCutPreRoll, SequenceInstance);
 	}
 
 	// For now we only support 2 active camera cuts at most (with blending between them).
@@ -375,50 +533,8 @@ void UMovieSceneCameraCutTrackInstance::OnAnimate()
 
 	if (CameraCutParams.Num() > 0)
 	{
-		const FSequenceInstance& SequenceInstance = InstanceRegistry->GetInstance(FinalCameraCut.InstanceHandle);
-		const FMovieSceneContext& Context = SequenceInstance.GetContext();
-		IMovieScenePlayer* Player = SequenceInstance.GetPlayer();
-		if (FCameraCutAnimator::AnimateBlendedCameraCut(FinalCameraCut, CameraCutCache, Context, *Player))
-		{
-			// Track whether this ever evaluated to take control. If so, we'll want to remove control in OnDestroyed.
-			if (FCameraCutUseData* PlayerUseCount = PlayerUseCounts.Find(Player))
-			{
-				PlayerUseCount->bValid = true;
-				// Remember whether we had blending support the last time we took control of the viewport. This is also
-				// for OnDestroyed.
-				PlayerUseCount->bCanBlend = FinalCameraCut.bCanBlend;
-			}
-		}
-	}
-}
-
-void UMovieSceneCameraCutTrackInstance::OnInputAdded(const FMovieSceneTrackInstanceInput& InInput)
-{
-	using namespace UE::MovieScene;
-
-	const FInstanceRegistry* InstanceRegistry = GetLinker()->GetInstanceRegistry();
-	const FSequenceInstance& SequenceInstance = InstanceRegistry->GetInstance(InInput.InstanceHandle);
-	IMovieScenePlayer* Player = SequenceInstance.GetPlayer();
-
-	int32& UseCount = PlayerUseCounts.FindOrAdd(Player, FCameraCutUseData()).UseCount;
-	++UseCount;
-}
-
-void UMovieSceneCameraCutTrackInstance::OnInputRemoved(const FMovieSceneTrackInstanceInput& InInput)
-{
-	using namespace UE::MovieScene;
-
-	const FInstanceRegistry* InstanceRegistry = GetLinker()->GetInstanceRegistry();
-	const FSequenceInstance& SequenceInstance = InstanceRegistry->GetInstance(InInput.InstanceHandle);
-	IMovieScenePlayer* Player = SequenceInstance.GetPlayer();
-
-	if (FCameraCutUseData* PlayerUseCount = PlayerUseCounts.Find(Player))
-	{
-		PlayerUseCount->UseCount--;
-		if (PlayerUseCount->UseCount == 0)
-		{
-			PlayerUseCounts.Remove(Player);
-		}
+		const FSequenceInstance& SequenceInstance = InstanceRegistry->GetInstance(FinalCameraCut.Input.InstanceHandle);
+		Animator.AnimateBlendedCameraCut(FinalCameraCut, Linker, SequenceInstance);
 	}
 }
 
@@ -449,9 +565,9 @@ void UMovieSceneCameraCutTrackInstance::OnEndUpdateInputs()
 		else
 		{
 			const FSequenceInstance& SequenceInstance = InstanceRegistry->GetInstance(Input.InstanceHandle);
-			IMovieScenePlayer* Player = SequenceInstance.GetPlayer();
+			TSharedRef<const FSharedPlaybackState> SharedPlaybackState = SequenceInstance.GetSharedPlaybackState();
 
-			if (UObject* PlaybackContext = Player->GetPlaybackContext())
+			if (UObject* PlaybackContext = SharedPlaybackState->GetPlaybackContext())
 			{
 				if (UWorld* World = PlaybackContext->GetWorld())
 				{
@@ -490,71 +606,10 @@ void UMovieSceneCameraCutTrackInstance::OnEndUpdateInputs()
 
 void UMovieSceneCameraCutTrackInstance::OnDestroyed()
 {
-	using namespace UE::MovieScene;
-
-	const FInstanceRegistry* InstanceRegistry = GetLinker()->GetInstanceRegistry();
-
-	bool bRestoreCamera = false;
-	for (const FCameraCutInputInfo& InputInfo : SortedInputInfos)
-	{
-		const FMovieSceneTrackInstanceInput& Input = InputInfo.Input;
-		const FMovieSceneContext& Context = InstanceRegistry->GetInstance(Input.InstanceHandle).GetContext();
-
-		const UMovieSceneCameraCutSection* Section = Cast<const UMovieSceneCameraCutSection>(Input.Section);
-		if (Context.IsPreRoll())
-		{
-			continue;
-		}
-
-		EMovieSceneCompletionMode CompletionMode = EMovieSceneCompletionMode::KeepState;
-
-		if (Section->EvalOptions.CompletionMode == EMovieSceneCompletionMode::ProjectDefault)
-		{
-			if (const UMovieSceneSequence* OuterSequence = Section->GetTypedOuter<const UMovieSceneSequence>())
-			{
-				CompletionMode = OuterSequence->DefaultCompletionMode;
-			}
-		}
-		else
-		{
-			CompletionMode = Section->EvalOptions.CompletionMode;
-		}
-
-		if (CompletionMode == EMovieSceneCompletionMode::RestoreState)
-		{
-			bRestoreCamera = true;
-			break;
-		}
-	}
-
-	if (bRestoreCamera)
-	{
-		// All sequencer players actually point to the same player controller and view target in a given world,
-		// so we only need to restore the pre-animated state on one sequencer player, like, say, the first one
-		// we still have in use. And we only do that when we have no more inputs active (if we still have some
-		// inputs active, regardless of what sequencer player they belong to, they still have control of the
-		// player controller's view target, so we don't want to mess that up).
-		//
-		// TODO-ludovic: when we have proper splitscreen support, this should be changed heavily.
-		//
-		for (const TPair<IMovieScenePlayer*, FCameraCutUseData>& PlayerUseCount : PlayerUseCounts)
-		{
-			// Restore only if we ever took control
-			if (PlayerUseCount.Value.bValid)
-			{
-				EMovieSceneCameraCutParams Params;
 #if WITH_EDITOR
-				Params.bCanBlend = PlayerUseCount.Value.bCanBlend;
+	// Make sure we don't have any viewport modifiers registered anymore.
+	ViewportPreviewer->ToggleViewportPreviewModifiers(false);
+	ViewportPreviewer.Reset();
 #endif
-				if (PlayerUseCount.Key)
-				{
-					PlayerUseCount.Key->UpdateCameraCut(nullptr, Params);
-				}
-				break;  // Only do it on the first one.
-			}
-		}
-	}
-
-	PlayerUseCounts.Reset();
 }
 

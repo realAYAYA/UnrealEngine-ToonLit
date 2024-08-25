@@ -76,18 +76,16 @@ namespace Metasound
 			return InStream.RandRange(InMin, InMax);
 		}
 
-		static TDataReadReference<int32> CreateMinValueRef(const FDataReferenceCollection& InputCollection, const FInputVertexInterface& InputInterface, const FOperatorSettings& InOperatorSettings)
+		static TDataReadReference<int32> CreateMinValueRef(const FInputVertexInterfaceData& InputData, const FOperatorSettings& InOperatorSettings)
 		{
 			using namespace RandomNodeNames; 
-
-			return InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<int32>(InputInterface, METASOUND_GET_PARAM_NAME(InputMin), InOperatorSettings);
+			return InputData.GetOrCreateDefaultDataReadReference<int32>(METASOUND_GET_PARAM_NAME(InputMin), InOperatorSettings);
 		}
 
-		static TDataReadReference<int32> CreateMaxValueRef(const FDataReferenceCollection& InputCollection, const FInputVertexInterface& InputInterface, const FOperatorSettings& InOperatorSettings)
+		static TDataReadReference<int32> CreateMaxValueRef(const FInputVertexInterfaceData& InputData, const FOperatorSettings& InOperatorSettings)
 		{
 			using namespace RandomNodeNames; 
-
-			return InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<int32>(InputInterface, METASOUND_GET_PARAM_NAME(InputMax), InOperatorSettings);
+			return InputData.GetOrCreateDefaultDataReadReference<int32>(METASOUND_GET_PARAM_NAME(InputMax), InOperatorSettings);
 		}
 	};
 
@@ -129,18 +127,16 @@ namespace Metasound
 			return InStream.FRandRange(InMin, InMax);
 		}
 
-		static TDataReadReference<float> CreateMinValueRef(const FDataReferenceCollection& InputCollection, const FInputVertexInterface& InputInterface, const FOperatorSettings& InOperatorSettings)
+		static TDataReadReference<float> CreateMinValueRef(const FInputVertexInterfaceData& InputData, const FOperatorSettings& InOperatorSettings)
 		{
 			using namespace RandomNodeNames;
-
-			return InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputMin), InOperatorSettings);
+			return InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputMin), InOperatorSettings);
 		}
 
-		static TDataReadReference<float> CreateMaxValueRef(const FDataReferenceCollection& InputCollection, const FInputVertexInterface& InputInterface, const FOperatorSettings& InOperatorSettings)
+		static TDataReadReference<float> CreateMaxValueRef(const FInputVertexInterfaceData& InputData, const FOperatorSettings& InOperatorSettings)
 		{
 			using namespace RandomNodeNames;
-			
-			return InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputMax), InOperatorSettings);
+			return InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputMax), InOperatorSettings);
 		}
 	};
 
@@ -182,12 +178,12 @@ namespace Metasound
 			return (bool)InStream.RandRange(0, 1);
 		}
 
-		static TDataReadReference<bool> CreateMinValueRef(const FDataReferenceCollection&, const FInputVertexInterface&, const FOperatorSettings&)
+		static TDataReadReference<bool> CreateMinValueRef(const FInputVertexInterfaceData&, const FOperatorSettings&)
 		{
 			return TDataReadReference<bool>::CreateNew();
 		}
 
-		static TDataReadReference<bool> CreateMaxValueRef(const FDataReferenceCollection&, const FInputVertexInterface&, const FOperatorSettings&)
+		static TDataReadReference<bool> CreateMaxValueRef(const FInputVertexInterfaceData&, const FOperatorSettings&)
 		{
 			return TDataReadReference<bool>::CreateNew();
 		}
@@ -233,18 +229,16 @@ namespace Metasound
 			return FTime(Seconds);
 		}
 
-		static TDataReadReference<FTime> CreateMinValueRef(const FDataReferenceCollection& InputCollection, const FInputVertexInterface& InputInterface, const FOperatorSettings& InOperatorSettings)
+		static TDataReadReference<FTime> CreateMinValueRef(const FInputVertexInterfaceData& InputData, const FOperatorSettings& InOperatorSettings)
 		{
 			using namespace RandomNodeNames; 
-
-			return InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<FTime>(InputInterface, METASOUND_GET_PARAM_NAME(InputMin), InOperatorSettings);
+			return InputData.GetOrCreateDefaultDataReadReference<FTime>(METASOUND_GET_PARAM_NAME(InputMin), InOperatorSettings);
 		}
 
-		static TDataReadReference<FTime> CreateMaxValueRef(const FDataReferenceCollection& InputCollection, const FInputVertexInterface& InputInterface, const FOperatorSettings& InOperatorSettings)
+		static TDataReadReference<FTime> CreateMaxValueRef(const FInputVertexInterfaceData& InputData, const FOperatorSettings& InOperatorSettings)
 		{
 			using namespace RandomNodeNames;
-
-			return InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<FTime>(InputInterface, METASOUND_GET_PARAM_NAME(InputMax), InOperatorSettings);
+			return InputData.GetOrCreateDefaultDataReadReference<FTime>(METASOUND_GET_PARAM_NAME(InputMax), InOperatorSettings);
 		}
 	};
 
@@ -320,21 +314,21 @@ namespace Metasound
 			return Info;
 		}
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, TArray<TUniquePtr<IOperatorBuildError>>& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
- 			const FInputVertexInterface& InputInterface = InParams.Node.GetVertexInterface().GetInputInterface();
- 			const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
+ 			const FInputVertexInterfaceData& InputData = InParams.InputData;
+ 			
 			using namespace RandomNodeNames;
 
- 			FTriggerReadRef InNextTrigger = InputCollection.GetDataReadReferenceOrConstruct<FTrigger>(METASOUND_GET_PARAM_NAME(InputNextTrigger), InParams.OperatorSettings);
-			FTriggerReadRef InResetTrigger = InputCollection.GetDataReadReferenceOrConstruct<FTrigger>(METASOUND_GET_PARAM_NAME(InputResetTrigger), InParams.OperatorSettings);
-			FInt32ReadRef InSeedValue = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<int32>(InputInterface, METASOUND_GET_PARAM_NAME(InputSeed), InParams.OperatorSettings);
+ 			FTriggerReadRef InNextTrigger = InputData.GetOrConstructDataReadReference<FTrigger>(METASOUND_GET_PARAM_NAME(InputNextTrigger), InParams.OperatorSettings);
+			FTriggerReadRef InResetTrigger = InputData.GetOrConstructDataReadReference<FTrigger>(METASOUND_GET_PARAM_NAME(InputResetTrigger), InParams.OperatorSettings);
+			FInt32ReadRef InSeedValue = InputData.GetOrCreateDefaultDataReadReference<int32>(METASOUND_GET_PARAM_NAME(InputSeed), InParams.OperatorSettings);
 
 			// note: random bool does not have a range
 			if (TRandomNodeSpecialization<ValueType>::HasRange())
 			{
-				TDataReadReference<ValueType> InMinValue = TRandomNodeSpecialization<ValueType>::CreateMinValueRef(InputCollection, InputInterface, InParams.OperatorSettings);
-				TDataReadReference<ValueType> InMaxValue = TRandomNodeSpecialization<ValueType>::CreateMaxValueRef(InputCollection, InputInterface, InParams.OperatorSettings);
+				TDataReadReference<ValueType> InMinValue = TRandomNodeSpecialization<ValueType>::CreateMinValueRef(InputData, InParams.OperatorSettings);
+				TDataReadReference<ValueType> InMaxValue = TRandomNodeSpecialization<ValueType>::CreateMaxValueRef(InputData, InParams.OperatorSettings);
 
 				return MakeUnique<TRandomNodeOperator<ValueType>>(InParams.OperatorSettings, InNextTrigger, InResetTrigger, InSeedValue, InMinValue, InMaxValue);
 			}

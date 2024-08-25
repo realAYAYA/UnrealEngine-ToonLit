@@ -7,12 +7,12 @@
 #pragma pack(push, 8)
 
 /**
-  * Arbitrary data that is a unique local identifier for
-  * a single remote client or peer.
-  *
-  * Typically this is a pointer to an object describing the
-  * player, but it can be anything that is locally unique.
-  */
+ * Arbitrary data that is a unique local identifier for
+ * a single remote client or peer.
+ *
+ * Typically this is a pointer to an object describing the
+ * player, but it can be anything that is locally unique.
+ */
 EXTERN_C typedef void* EOS_AntiCheatCommon_ClientHandle;
 
 /** Flags describing the type of a remote client */
@@ -151,7 +151,9 @@ EOS_ENUM(EOS_EAntiCheatCommonEventParamType,
 	/** EOS_AntiCheatCommon_Vec3f */
 	EOS_ACCEPT_Vector3f = 7,
 	/** EOS_AntiCheatCommon_Quat */
-	EOS_ACCEPT_Quat = 8
+	EOS_ACCEPT_Quat = 8,
+	/** float */
+	EOS_ACCEPT_Float = 9
 );
 
 /** Details of a player's movement state */
@@ -328,6 +330,7 @@ EOS_STRUCT(EOS_AntiCheatCommon_LogEventParamPair, (
 		int64_t Int64;
 		EOS_AntiCheatCommon_Vec3f Vec3f;
 		EOS_AntiCheatCommon_Quat Quat;
+		float Float;
 	} ParamValue;
 ));
 EOS_STRUCT(EOS_AntiCheatCommon_LogEventOptions, (
@@ -395,15 +398,15 @@ EOS_STRUCT(EOS_AntiCheatCommon_LogPlayerReviveOptions, (
 	EOS_AntiCheatCommon_ClientHandle ReviverPlayerHandle;
 ));
 
-#define EOS_ANTICHEATCOMMON_LOGPLAYERTICK_API_LATEST 2
+#define EOS_ANTICHEATCOMMON_LOGPLAYERTICK_API_LATEST 3
 EOS_STRUCT(EOS_AntiCheatCommon_LogPlayerTickOptions, (
 	/** API Version: Set this to EOS_ANTICHEATCOMMON_LOGPLAYERTICK_API_LATEST. */
 	int32_t ApiVersion;
 	/** Locally unique value used in RegisterClient/RegisterPeer */
 	EOS_AntiCheatCommon_ClientHandle PlayerHandle;
-	/** Player's current world position as a 3D vector */
+	/** Player character's current world position as a 3D vector. This should be the center of the character. */
 	EOS_AntiCheatCommon_Vec3f* PlayerPosition;
-	/** Player's view rotation as a quaternion */
+	/** Player camera's current world rotation as a quaternion. */
 	EOS_AntiCheatCommon_Quat* PlayerViewRotation;
 	/** True if the player's view is zoomed (e.g. using a sniper rifle), otherwise false */
 	EOS_Bool bIsPlayerViewZoomed;
@@ -411,6 +414,8 @@ EOS_STRUCT(EOS_AntiCheatCommon_LogPlayerTickOptions, (
 	float PlayerHealth;
 	/** Any movement state applicable */
 	EOS_EAntiCheatCommonPlayerMovementState PlayerMovementState;
+	/** Player camera's current world position as a 3D vector. */
+	EOS_AntiCheatCommon_Vec3f* PlayerViewPosition;
 ));
 
 #define EOS_ANTICHEATCOMMON_LOGPLAYERUSEWEAPON_API_LATEST 2
@@ -450,21 +455,21 @@ EOS_STRUCT(EOS_AntiCheatCommon_LogPlayerUseAbilityOptions, (
 	uint32_t AbilityCooldownMs;
 ));
 
-#define EOS_ANTICHEATCOMMON_LOGPLAYERTAKEDAMAGE_API_LATEST 3
+#define EOS_ANTICHEATCOMMON_LOGPLAYERTAKEDAMAGE_API_LATEST 4
 EOS_STRUCT(EOS_AntiCheatCommon_LogPlayerTakeDamageOptions, (
 	/** API Version: Set this to EOS_ANTICHEATCOMMON_LOGPLAYERTAKEDAMAGE_API_LATEST. */
 	int32_t ApiVersion;
 	/** Locally unique value used in RegisterClient/RegisterPeer */
 	EOS_AntiCheatCommon_ClientHandle VictimPlayerHandle;
-	/** Victim player's current world position as a 3D vector */
+	/** Victim player character's world position as a 3D vector. This should be the center of the character. */
 	EOS_AntiCheatCommon_Vec3f* VictimPlayerPosition;
-	/** Victim player's view rotation as a quaternion */
+	/** Victim player camera's world rotation as a quaternion. */
 	EOS_AntiCheatCommon_Quat* VictimPlayerViewRotation;
-	/** Locally unique value used in RegisterClient/RegisterPeer */
+	/** Locally unique value used in RegisterClient/RegisterPeer if applicable, otherwise 0. */
 	EOS_AntiCheatCommon_ClientHandle AttackerPlayerHandle;
-	/** Attacker player's current world position as a 3D vector */
+	/** Attacker player character's world position as a 3D vector if applicable, otherwise NULL. */
 	EOS_AntiCheatCommon_Vec3f* AttackerPlayerPosition;
-	/** Attacker player's view rotation as a quaternion */
+	/** Attacker player camera's world rotation as a quaternion if applicable, otherwise NULL. */
 	EOS_AntiCheatCommon_Quat* AttackerPlayerViewRotation;
 	/**
 	 * True if the damage was applied instantly at the time of attack from the game
@@ -477,7 +482,7 @@ EOS_STRUCT(EOS_AntiCheatCommon_LogPlayerTakeDamageOptions, (
 	 * the way. For some situations like melee or hitscan weapons this is trivially
 	 * true, for others like projectiles with simulated physics it may not be e.g. a player
 	 * could fire a slow moving projectile and then move behind cover before it strikes.
-	 * 
+	 *
 	 * This can be an estimate, or can simply be always set to true if it is not feasible
 	 * to compute in your game.
 	 */
@@ -502,6 +507,8 @@ EOS_STRUCT(EOS_AntiCheatCommon_LogPlayerTakeDamageOptions, (
 	uint32_t TimeSincePlayerUseWeaponMs;
 	/** World position where damage hit the victim as a 3D vector if available, otherwise NULL */
 	EOS_AntiCheatCommon_Vec3f* DamagePosition;
+	/** Attacker player camera's world position as a 3D vector if applicable, otherwise NULL */
+	EOS_AntiCheatCommon_Vec3f* AttackerPlayerViewPosition;
 ));
 
 #pragma pack(pop)

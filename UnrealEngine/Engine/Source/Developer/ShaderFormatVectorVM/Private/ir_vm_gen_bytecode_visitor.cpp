@@ -1688,14 +1688,11 @@ class ir_gen_vvm_visitor : public ir_hierarchical_visitor
 				{			
 					float val = constant->value.f[0];
 					float otherval = other->value.f[0];
-					if (!FMath::IsNaN(val) && FMath::IsFinite(val))
+					if ( FMath::IsFinite(val) && FMath::IsFinite(otherval) )
 					{
 						return val == otherval;
 					}
-					else
-					{
-						return FMath::IsNaN(val) == FMath::IsNaN(otherval) && FMath::IsFinite(val) == FMath::IsFinite(otherval);
-					}
+					return FMath::IsFinite(val) == FMath::IsFinite(otherval) && FMath::IsNaN(val) == FMath::IsNaN(otherval);
 				}
 				case GLSL_TYPE_INT: return constant->value.i[0] == other->value.i[0];
 				case GLSL_TYPE_BOOL: return constant->value.b[0] == other->value.b[0];

@@ -106,7 +106,8 @@ PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		.FrontPadScrolling(FrontPadScrolling)
 		.AnimateWheelScrolling(bAnimateWheelScrolling)
 		.WheelScrollMultiplier(WheelScrollMultiplier)
-		.OnUserScrolled(BIND_UOBJECT_DELEGATE(FOnUserScrolled, SlateHandleUserScrolled));
+		.OnUserScrolled(BIND_UOBJECT_DELEGATE(FOnUserScrolled, SlateHandleUserScrolled))
+		.OnScrollBarVisibilityChanged(BIND_UOBJECT_DELEGATE(FOnScrollBarVisibilityChanged, SlateHandleScrollBarVisibilityChanged));
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	for ( UPanelSlot* PanelSlot : Slots )
 	{
@@ -488,16 +489,16 @@ float UScrollBox::GetNavigationScrollPadding() const
 
 void UScrollBox::SetAllowRightClickDragScrolling(bool bShouldAllowRightClickDragScrolling)
 {
-	AlwaysShowScrollbarTrack = bShouldAllowRightClickDragScrolling;
+	bAllowRightClickDragScrolling = bShouldAllowRightClickDragScrolling;
 	if (MyScrollBox)
 	{
-		MyScrollBox->SetScrollBarRightClickDragAllowed(AlwaysShowScrollbarTrack);
+		MyScrollBox->SetScrollBarRightClickDragAllowed(bAllowRightClickDragScrolling);
 	}
 }
 
 bool UScrollBox::IsAllowRightClickDragScrolling() const
 {
-	return AlwaysShowScrollbarTrack;
+	return bAllowRightClickDragScrolling;
 }
 
 bool UScrollBox::IsFrontPadScrolling() const
@@ -532,6 +533,11 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 void UScrollBox::SlateHandleUserScrolled(float CurrentOffset)
 {
 	OnUserScrolled.Broadcast(CurrentOffset);
+}
+
+void UScrollBox::SlateHandleScrollBarVisibilityChanged(EVisibility NewVisibility)
+{
+	OnScrollBarVisibilityChanged.Broadcast(ConvertRuntimeToSerializedVisibility(NewVisibility));
 }
 
 #if WITH_EDITOR

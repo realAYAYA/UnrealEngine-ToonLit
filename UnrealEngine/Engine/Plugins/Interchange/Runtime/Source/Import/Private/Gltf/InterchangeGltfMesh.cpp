@@ -73,19 +73,8 @@ namespace UE::Interchange::Gltf::Private
 
 	bool GetSkeletalMeshDescriptionForPayLoadKey(const GLTF::FAsset& GltfAsset, const FString& PayLoadKey, const FTransform& MeshGlobalTransform, FMeshDescription& MeshDescription, TArray<FString>* OutJointUniqueNames)
 	{
-		TArray<FString> BakingAndPayloadKey;
-		PayLoadKey.ParseIntoArray(BakingAndPayloadKey, TEXT(";"));
-
-		bool bBakeSkinJointTransform = false;
-		if (BakingAndPayloadKey.Num() == 2)
-		{
-			LexFromString(bBakeSkinJointTransform, *BakingAndPayloadKey[0]);
-		}
-
-		FString PayloadKeyToParse = BakingAndPayloadKey.Num() == 2 ? BakingAndPayloadKey[1] : PayLoadKey;
-
 		TArray<FString> PayLoadKeys;
-		PayloadKeyToParse.ParseIntoArray(PayLoadKeys, TEXT(":"));
+		PayLoadKey.ParseIntoArray(PayLoadKeys, TEXT(":"));
 		TMap<int32, TArray<int32>> MeshIndexToSkinIndicesMap;
 
 		int32 MeshIndex = 0;
@@ -139,27 +128,6 @@ namespace UE::Interchange::Gltf::Private
 				continue;
 			}
 			const GLTF::FSkinInfo& Skin = GltfAsset.Skins[SkinIndex];
-			FStaticMeshAttributes StaticMeshAttributes(SkinnedMeshDescription);
-
-			//for instanced meshes we need to bake the transforms of the joints:
-			if ((bBakeSkinJointTransform || SkinIndices.Num() > 1) && GltfAsset.Skins[SkinIndex].Joints.Num() > 0)
-			{
-				FTransform TransformLocalToWorld3d(FTransform::Identity);
-
-				CalculateJointTransformations(GltfAsset.Nodes, GetRootNodeIndex(GltfAsset, GltfAsset.Skins[SkinIndex].Joints), TransformLocalToWorld3d);
-
-				FTransform3f TransformLocalToWorld(TransformLocalToWorld3d);
-				TVertexAttributesRef<FVector3f> VertexPositions = StaticMeshAttributes.GetVertexPositions();
-				FVertexArray VertexIndices = SkinnedMeshDescription.Vertices();
-				for (FVertexID VertexID : SkinnedMeshDescription.Vertices().GetElementIDs())
-				{
-					FVector3f VertexPosition = VertexPositions[VertexID];
-
-					VertexPosition = TransformLocalToWorld.TransformPosition(VertexPosition);
-
-					VertexPositions[VertexID] = VertexPosition;
-				}
-			}
 
 			FSkeletalMeshAttributes SkeletalMeshAttributes(SkinnedMeshDescription);
 			SkeletalMeshAttributes.Register();

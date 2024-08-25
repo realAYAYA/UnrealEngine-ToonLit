@@ -82,18 +82,42 @@ void UExtractCollisionGeometryTool::Setup()
 	Settings = NewObject<UExtractCollisionToolProperties>(this);
 	Settings->RestoreProperties(this);
 	AddToolPropertySource(Settings);
-	Settings->WatchProperty(Settings->CollisionType, [this](EExtractCollisionOutputType NewValue) { bResultValid = false; });
+	// Update input mesh visibility w/ logic that toggles it off when the complex preview is shown
+	auto UpdateInputMeshVisibility = [this]()
+	{
+		bool bShowInput = Settings->bShowInputMesh && (Settings->CollisionType != EExtractCollisionOutputType::Complex || !Settings->bShowPreview);
+		UE::ToolTarget::SetSourceObjectVisible(Target, bShowInput);
+	};
+	Settings->WatchProperty(Settings->CollisionType, [this, UpdateInputMeshVisibility](EExtractCollisionOutputType NewValue) { UpdateInputMeshVisibility(); });
 	Settings->WatchProperty(Settings->bWeldEdges, [this](bool bNewValue) { bResultValid = false; });
-	Settings->WatchProperty(Settings->bShowPreview, [this](bool bNewValue) { PreviewMesh->SetVisible(bNewValue); });
+	Settings->WatchProperty(Settings->bShowPreview, [this, UpdateInputMeshVisibility](bool bNewValue)
+	{
+		PreviewMesh->SetVisible(bNewValue); 
+		UpdateInputMeshVisibility();
+	});
 	PreviewMesh->SetVisible(Settings->bShowPreview);
-	Settings->WatchProperty(Settings->bShowInputMesh, [this](bool bNewValue) { UE::ToolTarget::SetSourceObjectVisible(Target, bNewValue); });
-	UE::ToolTarget::SetSourceObjectVisible(Target, Settings->bShowInputMesh);
+	Settings->WatchProperty(Settings->bShowInputMesh, [this, UpdateInputMeshVisibility](bool bNewValue) { UpdateInputMeshVisibility(); });
+	UpdateInputMeshVisibility();
 
 	VizSettings = NewObject<UCollisionGeometryVisualizationProperties>(this);
+	VizSettings->bEnableShowSolid = false; // This solid visualization is redundant to the 'show preview' option in the general settings section of this tool
 	VizSettings->RestoreProperties(this);
 	AddToolPropertySource(VizSettings);
 	VizSettings->Initialize(this);
-	VizSettings->bEnableShowCollision = false; // This tool always shows collision geometry
+
+	// Enable simple collision visualization and related settings only when extracting simple collision
+	VizSettings->bEnableShowCollision = false;
+	Settings->WatchProperty(Settings->CollisionType, [this](EExtractCollisionOutputType NewValue)
+	{
+		bResultValid = false;
+		SetToolPropertySourceEnabled(VizSettings, NewValue == EExtractCollisionOutputType::Simple);
+		VizSettings->bShowCollision = NewValue == EExtractCollisionOutputType::Simple;
+		VizSettings->bVisualizationDirty = true;
+		NotifyOfPropertyChangeByTool(VizSettings);
+	});
+	SetToolPropertySourceEnabled(VizSettings, Settings->CollisionType == EExtractCollisionOutputType::Simple);
+	VizSettings->bShowCollision = Settings->CollisionType == EExtractCollisionOutputType::Simple;
+	NotifyOfPropertyChangeByTool(VizSettings);
 	
 
 	UBodySetup* BodySetup = UE::ToolTarget::GetPhysicsBodySetup(Target);
@@ -104,8 +128,8 @@ void UExtractCollisionGeometryTool::Setup()
 
 		PreviewElements = NewObject<UPreviewGeometry>(this);
 		FTransform TargetTransform = (FTransform)UE::ToolTarget::GetLocalToWorldTransform(Target);
-		//PhysicsInfo->ExternalScale3D = TargetTransform.GetScale3D();
-		//TargetTransform.SetScale3D(FVector::OneVector);
+		PhysicsInfo->ExternalScale3D = TargetTransform.GetScale3D();
+		TargetTransform.SetScale3D(FVector::OneVector);
 		PreviewElements->CreateInWorld(UE::ToolTarget::GetTargetActor(Target)->GetWorld(), TargetTransform);
 
 		UE::PhysicsTools::InitializeCollisionGeometryVisualization(PreviewElements, VizSettings, *PhysicsInfo);
@@ -172,7 +196,7 @@ void UExtractCollisionGeometryTool::OnShutdown(EToolShutdownType ShutdownType)
 				FAxisAlignedBox3d Bounds = MeshPart.GetBounds();
 				MeshTransforms::Translate(MeshPart, -Bounds.Center());
 				FTransform3d CenterTransform = ActorTransform;
-				CenterTransform.SetTranslation(CenterTransform.GetTranslation() + Bounds.Center());
+				CenterTransform.SetTranslation(CenterTransform.GetTranslation() + ActorTransform.TransformVector(Bounds.Center()));
 				FString NewName = FString::Printf(TEXT("%s_Collision%d"), *TargetName, k);
 				EmitNewMesh(MoveTemp(MeshPart), CenterTransform, NewName);
 			}
@@ -233,7 +257,9 @@ void UExtractCollisionGeometryTool::RecalculateMesh_Simple()
 		FTransformSequence3d(), SphereResolution, true, true,
 		[&](int32 ElemType, const FDynamicMesh3& ElemMesh) {
 			CurrentMeshParts.Add(MakeShared<FDynamicMesh3>(ElemMesh));
-		});
+		},
+		false /*bApproximateLevelSetWithCubes*/,
+		PhysicsInfo->ExternalScale3D);
 
 	for ( int32 k = 0; k < CurrentMeshParts.Num(); ++k)
 	{
@@ -241,6 +267,9 @@ void UExtractCollisionGeometryTool::RecalculateMesh_Simple()
 		FMeshNormals::InitializeMeshToPerTriangleNormals(&MeshPart);
 	}
 
+	FTransform LocalToWorldUnscaled = (FTransform)UE::ToolTarget::GetLocalToWorldTransform(Target);
+	LocalToWorldUnscaled.SetScale3D(FVector::OneVector);
+	PreviewMesh->SetTransform(LocalToWorldUnscaled);
 	PreviewMesh->UpdatePreview(&CurrentMesh);
 
 	if (CurrentMeshParts.Num() == 0)
@@ -263,9 +292,10 @@ void UExtractCollisionGeometryTool::RecalculateMesh_Complex()
 	if (CollisionProvider)
 	{
 		FTransformSequence3d Transform;
-		UE::Geometry::ConvertComplexCollisionToMeshes(CollisionProvider, CurrentMesh, FTransformSequence3d(), bMeshErrors, true, true);
+		UE::Geometry::ConvertComplexCollisionToMeshes(CollisionProvider, CurrentMesh, FTransformSequence3d(), bMeshErrors, Settings->bWeldEdges, true);
 	}
 
+	PreviewMesh->SetTransform((FTransform)UE::ToolTarget::GetLocalToWorldTransform(Target));
 	PreviewMesh->UpdatePreview(&CurrentMesh);
 
 	if (CurrentMesh.TriangleCount() == 0)

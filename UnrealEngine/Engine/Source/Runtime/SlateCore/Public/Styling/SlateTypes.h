@@ -82,6 +82,9 @@ enum class ETextOverflowPolicy : uint8
 
 	/** Overflowing text will be replaced with an ellipsis */
 	Ellipsis,
+
+	/** Overflowing text will be replaced with an ellipsis. A partially clipped line on the vertical axis will be totally clipped, and ellipsis displayed on previous line */
+	MultilineEllipsis,
 };
 
 

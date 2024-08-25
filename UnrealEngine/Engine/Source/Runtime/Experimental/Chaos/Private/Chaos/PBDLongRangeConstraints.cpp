@@ -48,7 +48,8 @@ void FPBDLongRangeConstraints::SetProperties(
 	}
 }
 
-void FPBDLongRangeConstraints::Apply(FSolverParticles& Particles, const FSolverReal /*Dt*/) const
+template<typename SolverParticlesOrRange>
+void FPBDLongRangeConstraints::Apply(SolverParticlesOrRange& Particles, const FSolverReal /*Dt*/) const
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FPBDLongRangeConstraints_Apply);
 	SCOPE_CYCLE_COUNTER(STAT_PBD_LongRange);
@@ -200,5 +201,7 @@ void FPBDLongRangeConstraints::Apply(FSolverParticles& Particles, const FSolverR
 		}
 	}
 }
+template CHAOS_API void FPBDLongRangeConstraints::Apply(FSolverParticles& Particles, const FSolverReal /*Dt*/) const;
+template CHAOS_API void FPBDLongRangeConstraints::Apply(FSolverParticlesRange& Particles, const FSolverReal /*Dt*/) const;
 
 }  // End namespace Chaos::Softs

@@ -22,6 +22,9 @@ public:
 	void AddWidget(UWidget* InWidget);
 
 	UFUNCTION(BlueprintCallable, Category = Group)
+	void AddWidgets(const TArray<UWidget*>& Widgets);
+
+	UFUNCTION(BlueprintCallable, Category = Group)
 	void RemoveWidget(UWidget* InWidget);
 
 	UFUNCTION(BlueprintCallable, Category = Group)

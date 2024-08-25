@@ -413,7 +413,7 @@ FLogTemplate* FLogTemplate::CreateLocalized(const TCHAR* TextNamespace, const TC
 	const FLogTemplateOp Ops[]{{FLogTemplateOp::OpLocText}, {FLogTemplateOp::OpEnd}};
 	const uint32 TotalSize = sizeof(FTextFormat) + sizeof(FLogTemplate) + Algo::TransformAccumulate(Ops, FLogTemplateOp::SaveSize, 0);
 	FTextFormat* NewTextFormat = new(FMemory::Malloc(TotalSize, uint32(FPlatformMath::Max(alignof(FTextFormat), alignof(FLogTemplate))))) FTextFormat(MoveTemp(TextFormat));
-	FLogTemplate* const Template = new(NewTextFormat + 1) FLogTemplate(Format);
+	FLogTemplate* const Template = new(NewTextFormat + 1) FLogTemplate(Format); //-V752
 	uint8* Data = Template->GetOpData();
 	for (const FLogTemplateOp& Op : Ops)
 	{
@@ -887,7 +887,6 @@ void FatalLogWithFieldArray(const FLogCategoryBase& Category, const FStaticLogRe
 	Record.FormatMessageTo(Message);
 
 	StaticFailDebug(TEXT("Fatal error:"), "", Log.File, Log.Line, /*bIsEnsure*/ false, PLATFORM_RETURN_ADDRESS(), TEXT("%s"), *Message);
-	FDebug::AssertFailed("", Log.File, Log.Line, TEXT("%s"), *Message);
 
 	UE_DEBUG_BREAK_AND_PROMPT_FOR_REMOTE();
 	FDebug::ProcessFatalError(PLATFORM_RETURN_ADDRESS());
@@ -911,7 +910,6 @@ void FatalLogWithFieldArray(const FLogCategoryBase& Category, const FStaticLocal
 	Record.FormatMessageTo(Message);
 
 	StaticFailDebug(TEXT("Fatal error:"), "", Log.File, Log.Line, /*bIsEnsure*/ false, PLATFORM_RETURN_ADDRESS(), TEXT("%s"), *Message);
-	FDebug::AssertFailed("", Log.File, Log.Line, TEXT("%s"), *Message);
 
 	UE_DEBUG_BREAK_AND_PROMPT_FOR_REMOTE();
 	FDebug::ProcessFatalError(PLATFORM_RETURN_ADDRESS());

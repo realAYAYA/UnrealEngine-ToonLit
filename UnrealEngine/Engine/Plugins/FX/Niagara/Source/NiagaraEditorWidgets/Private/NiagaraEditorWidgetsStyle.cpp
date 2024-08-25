@@ -116,6 +116,7 @@ void FNiagaraEditorWidgetsStyle::InitColors()
 
 	Set("NiagaraEditor.Stack.IconColor.System", FLinearColor(FColor(1, 202, 252)));
 	Set("NiagaraEditor.Stack.IconColor.Emitter", FLinearColor(FColor(241, 99, 6)));
+	Set("NiagaraEditor.Stack.IconColor.StatelessEmitter", FLinearColor(FColor(255, 41, 2)));
 	Set("NiagaraEditor.Stack.IconColor.Particle", FLinearColor(FColor(131, 218, 9)));
 	Set("NiagaraEditor.Stack.IconColor.Render", FLinearColor(FColor(230, 102, 102)));
 	Set("NiagaraEditor.Stack.IconColor.VersionUpgrade", FLinearColor(FColor(255, 181, 0)));
@@ -517,6 +518,17 @@ void FNiagaraEditorWidgetsStyle::InitStackTextStyles()
 		.SetFont(CategoryFont);
 
 	Set("NiagaraEditor.Stack.ItemText", StackItemText);
+
+	FSlateFontInfo StackItemHeaderValueLabelFont = FAppStyle::Get().GetFontStyle(TEXT("PropertyWindow.NormalFont"));
+	FTextBlockStyle StackItemHeaderValueLabelText = FTextBlockStyle(NormalText)
+		.SetFont(StackItemHeaderValueLabelFont);
+	Set("NiagaraEditor.Stack.ItemHeaderValueLabelText", StackItemHeaderValueLabelText);
+
+	FSlateFontInfo StackItemHeaderValueFont = FAppStyle::Get().GetFontStyle(TEXT("PropertyWindow.NormalFont"));
+	FTextBlockStyle StackItemHeaderValueText = FTextBlockStyle(NormalText)
+		.SetFont(StackItemHeaderValueFont)
+		.SetColorAndOpacity(FLinearColor(1.f, 1.f, 1.f, 1.f));
+	Set("NiagaraEditor.Stack.ItemHeaderValueText", StackItemHeaderValueText);
 	
 	FTextBlockStyle OverviewStackItemText = FTextBlockStyle(CategoryText)
 		.SetFont(NormalFont);
@@ -644,5 +656,7 @@ void FNiagaraEditorWidgetsStyle::InitMisc()
 	);
 
 	Set("NiagaraEditor.Stack.SearchResult", new BOX_BRUSH("Icons/SearchResultBorder", FMargin(1.f/8.f)));
+
+	Set("NiagaraEditor.Stack.ItemHeaderValue.BackgroundBrush", new FSlateRoundedBoxBrush(FStyleColors::Panel, 6));
 }
 

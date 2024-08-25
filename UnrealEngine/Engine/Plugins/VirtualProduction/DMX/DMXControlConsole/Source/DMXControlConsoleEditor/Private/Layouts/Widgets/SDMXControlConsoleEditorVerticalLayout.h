@@ -5,16 +5,16 @@
 #include "Layouts/Widgets/SDMXControlConsoleEditorLayout.h"
 
 struct EVisibility;
-class FReply;
-class SDMXControlConsoleEditorFaderGroupView;
 class SScrollBox;
 class SVerticalBox;
-class UDMXControlConsoleFaderGroup;
+class UDMXControlConsoleFaderGroupController;
 
 
-namespace UE::DMXControlConsoleEditor::Layout::Private
+namespace UE::DMX::Private
 { 
-	/** Model for control console grid layout */
+	class SDMXControlConsoleEditorFaderGroupControllerView;
+
+	/** Draws the fader groups of a control console vertically */
 	class SDMXControlConsoleEditorVerticalLayout
 		: public SDMXControlConsoleEditorLayout
 	{
@@ -25,7 +25,7 @@ namespace UE::DMXControlConsoleEditor::Layout::Private
 		SLATE_END_ARGS()
 
 		/** Constructs the widget */
-		void Construct(const FArguments& InArgs, UDMXControlConsoleEditorGlobalLayoutBase* InLayout);
+		void Construct(const FArguments& InArgs, UDMXControlConsoleEditorGlobalLayoutBase* InLayout, UDMXControlConsoleEditorModel* InEditorModel);
 
 	protected:
 		//~ Begin SDMXControlConsoleEditorLayout interface
@@ -35,28 +35,22 @@ namespace UE::DMXControlConsoleEditor::Layout::Private
 		//~ End SDMXControlConsoleEditorLayout interface
 
 	private:
-		/** Checks if FaderGroups array contains a reference to the given */
-		bool IsFaderGroupContained(UDMXControlConsoleFaderGroup* FaderGroup);
+		/** Checks if the Fader Group Controllers array contains a reference to the given Controller */
+		bool IsFaderGroupControllerContained(UDMXControlConsoleFaderGroupController* FaderGroupController);
 
-		/** Called when the first fader group should be added */
-		FReply OnAddFirstFaderGroup();
+		/** Called when a Fader Group Controller view needs to be scrolled into view */
+		void OnScrollIntoView(const UDMXControlConsoleFaderGroupController* FaderGroupController);
 
-		/** Called when a FaderGroupView needs to be scrolled into view */
-		void OnScrollIntoView(const UDMXControlConsoleFaderGroup* FaderGroup);
+		/** Gets the visibility for each Fader Group Controller view in this layout */
+		EVisibility GetFaderGroupControllerViewVisibility(TWeakObjectPtr<UDMXControlConsoleFaderGroupController> FaderGroupController) const;
 
-		/** Gets the visibility for each FaderGroupView widget in this row */
-		EVisibility GetFaderGroupViewVisibility(TWeakObjectPtr<UDMXControlConsoleFaderGroup> FaderGroup) const;
-
-		/** Gets the add button visibility */
-		EVisibility GetAddButtonVisibility() const;
-
-		/** The widget containing the FaderGroupViews */
-		TSharedPtr<SVerticalBox> FaderGroupsVerticalBox;
+		/** The widget containing the Fader Group Controller views */
+		TSharedPtr<SVerticalBox> FaderGroupControllersVerticalBox;
 
 		/** The vertical ScrollBox widget */
 		TSharedPtr<SScrollBox> VerticalScrollBox;
 
-		/** Array of weak references to the Fader Group widgets */
-		TArray<TWeakPtr<SDMXControlConsoleEditorFaderGroupView>> FaderGroupViews;
+		/** Array of weak references to the Fader Group Controller views */
+		TArray<TWeakPtr<SDMXControlConsoleEditorFaderGroupControllerView>> FaderGroupControllerViews;
 	};
 }

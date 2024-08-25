@@ -1,14 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System;
-using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
-using System.Text;
 
 namespace EpicGames.BuildGraph
 {
@@ -63,7 +61,7 @@ namespace EpicGames.BuildGraph
 		public object? Get(string name, object? defaultValue)
 		{
 			object? value;
-			if(!Properties.TryGetValue(name, out value))
+			if (!Properties.TryGetValue(name, out value))
 			{
 				value = defaultValue;
 			}
@@ -119,11 +117,11 @@ namespace EpicGames.BuildGraph
 	{
 		class PropertySetter
 		{
-			protected readonly PropertyInfo _property;
+			protected PropertyInfo Property { get; }
 
-			public PropertySetter(PropertyInfo property) => _property = property;
+			public PropertySetter(PropertyInfo property) => Property = property;
 
-			public virtual void SetValue(object instance, object? value) => _property.SetValue(instance, ConvertValue(value, _property.PropertyType));
+			public virtual void SetValue(object instance, object? value) => Property.SetValue(instance, ConvertValue(value, Property.PropertyType));
 		}
 
 		class CollectionPropertySetter<TElement> : PropertySetter
@@ -135,11 +133,11 @@ namespace EpicGames.BuildGraph
 
 			public override void SetValue(object instance, object? value)
 			{
-				ICollection<TElement>? list = (ICollection<TElement>?)_property.GetValue(instance)!;
+				ICollection<TElement>? list = (ICollection<TElement>?)Property.GetValue(instance)!;
 				if (list == null)
 				{
-					list = (ICollection<TElement>)Activator.CreateInstance(_property.PropertyType)!;
-					_property.SetValue(instance, list);
+					list = (ICollection<TElement>)Activator.CreateInstance(Property.PropertyType)!;
+					Property.SetValue(instance, list);
 				}
 
 				IEnumerable<object> elements = (IEnumerable<object>)value!;

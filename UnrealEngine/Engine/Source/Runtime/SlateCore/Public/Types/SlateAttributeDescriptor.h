@@ -41,7 +41,9 @@ public:
 		friend FSlateAttributeDescriptor;
 
 		using Arg1Type = const class SWidget&;
-		DECLARE_DELEGATE_RetVal_OneParam(EInvalidateWidgetReason, FGetter, Arg1Type);
+		// using "not checked" delegate to disable race detection. This delegate is used in a static (FSlateWidgetClassData) and will be destructed after the tls array used in the race detection code (which will result in a use after free).
+		using FGetter = TDelegate<EInvalidateWidgetReason(Arg1Type), FNotThreadSafeNotCheckedDelegateUserPolicy>;
+
 
 		FInvalidateWidgetReasonAttribute(const FInvalidateWidgetReasonAttribute&) = default;
 		FInvalidateWidgetReasonAttribute(FInvalidateWidgetReasonAttribute&&) = default;
@@ -84,8 +86,8 @@ public:
 		FGetter Getter;
 	};
 
-	/** */
-	DECLARE_DELEGATE_OneParam(FAttributeValueChangedDelegate, SWidget& /*Widget*/);
+	// using "not checked" delegate to disable race detection. This delegate is used in a static (FSlateWidgetClassData) and will be destructed after the tls array used in the race detection code (which will result in a use after free).
+	using FAttributeValueChangedDelegate = TDelegate<void(SWidget&), FNotThreadSafeNotCheckedDelegateUserPolicy>;
 
 	/** */
 	enum class ECallbackOverrideType

@@ -4,15 +4,10 @@
 
 #include "Common.ush"
 #include "HairShadingCommon.ush" // Used for FHairTransmittanceData
+#include "/Engine/Shared/LightDefinitions.h"
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Defines
-// TODO: This is clearly not the right place for these defines! Ideally ought to be exposed from engine somehow...
-#define LIGHT_TYPE_DIRECTIONAL		0 
-#define LIGHT_TYPE_POINT			1 
-#define LIGHT_TYPE_SPOT				2 
-#define LIGHT_TYPE_RECT				3 
-#define LIGHT_TYPE_MAX				4 
 
 #define LIGHTING_CHANNEL_MASK		0x7
 
@@ -49,7 +44,7 @@ FRectLightData UnpackRectLightData(uint In0, uint In1, uint In2)
 	Out.AtlasData.AtlasUVOffset	= half2(f16tof32(In0 & 0xFFFF), f16tof32(In0 >> 16));
 	Out.AtlasData.AtlasUVScale	= half2(f16tof32(In1 & 0xFFFF), f16tof32(In1 >> 16));
 	Out.BarnLength				= f16tof32(In2 & 0xFFFF);			// 16 bits
-	Out.BarnCosAngle			= ((In2 >> 16) & 0x3FF) / 1024.f;	// 10 bits
+	Out.BarnCosAngle			= UnpackUnorm10(In2 >> 16);			// 10 bits
 	Out.AtlasData.AtlasMaxLevel = half(In2 >> 26);					//  6 bits
 	return Out;
 }
@@ -65,6 +60,9 @@ struct FDirectionalLightData
 	float3 DirectionalLightColor;
 	float3 DirectionalLightDirection;
 	float  DirectionalLightSourceRadius;
+	float  DirectionalLightSoftSourceRadius;
+	float  DirectionalLightSpecularScale;
+	uint  LightFunctionAtlasLightIndex;
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -77,16 +75,19 @@ struct FLocalLightData
 	float4 SpotAnglesAndSourceRadiusPacked;
 	float4 LightDirectionAndShadowMask;
 	float4 LightTangentAndIESDataAndSpecularScale;
-	float4 RectDataAndVirtualShadowMapId;
+	float3 RectData;
 
 	// Derived terms after unpacking
 	/** Flag is true if clustered deferred is supported for this light. They are always first / together.*/
 	bool bClusteredDeferredSupported;
-	bool bLumenLightSupported;
+	// True if Many Lights is supported for this light.
+	bool bManyLightsSupported;
 	/** Flag is true if it is a simple light. They are always first / together.*/
 	bool bIsSimpleLight;
-	/** Virtual shadow map ID or INDEX_NONE if not present. */
+	/** Virtual shadow map ID or INDEX_NONE if not present. Only valid if MANY_LIGHTS is NOT defined. */
 	int  VirtualShadowMapId;
+	/** Previous frame LocalLightIndex or INDEX_NONE if not present. Only valid if MANY_LIGHTS is defined. */
+	int  PrevLocalLightIndex;
 	/** Index into GPUScene lights */
 	int LightSceneId;
 };
@@ -128,6 +129,7 @@ struct FLightShaderParameters
 	float2 RectLightAtlasUVScale;
 	float  RectLightAtlasMaxLevel;
 	float  IESAtlasIndex;
+	uint  LightFunctionAtlasLightIndex;
 };
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -175,6 +177,8 @@ struct FDeferredLightData
 	FRectLightData RectLightData;
 	/** IES data. */
 	float  IESAtlasIndex;
+	// Light function atlas index 
+	uint  LightFunctionAtlasLightIndex;
 	/** Hair transmittance data. */
 	FHairTransmittanceData HairTransmittance;
 };
@@ -219,6 +223,28 @@ uint UnpackLightType(uint InShadowMapChannelMaskPacked)
 bool UnpackCastShadow(uint InShadowMapChannelMaskPacked)
 {
 	return ((InShadowMapChannelMaskPacked >> 18) & 0x1) != 0;
+}
+
+bool UnpackHasLightFunction(uint InShadowMapChannelMaskPacked)
+{
+	return ((InShadowMapChannelMaskPacked >> 19) & 0x1) != 0;
+}
+
+bool UnpackHasLightFunction(FLocalLightData In)
+{
+	const uint LightTypeAndPackedShadowMapChannelMask = asuint(In.LightDirectionAndShadowMask.w);
+	return UnpackHasLightFunction(LightTypeAndPackedShadowMapChannelMask);
+}
+
+uint UnpackLightFunctionAtlasIndex(uint InShadowMapChannelMaskPacked)
+{
+	return ((InShadowMapChannelMaskPacked >> 20) & 0xFF);
+}
+
+uint UnpackLightFunctionAtlasIndex(FLocalLightData In)
+{
+	const uint LightTypeAndPackedShadowMapChannelMask = asuint(In.LightDirectionAndShadowMask.w);
+	return UnpackLightFunctionAtlasIndex(LightTypeAndPackedShadowMapChannelMask);
 }
 
 float UnpackVolumetricScatteringIntensity(FLocalLightData In)
@@ -302,10 +328,11 @@ FDeferredLightData ConvertToDeferredLight(
 	Out.bRectLight				= LightType == LIGHT_TYPE_RECT;
 	Out.HairTransmittance		= InitHairTransmittanceData();
 	Out.RectLightData			= UnpackRectLightData(
-									asuint(In.RectDataAndVirtualShadowMapId.x),
-									asuint(In.RectDataAndVirtualShadowMapId.y),
-									asuint(In.RectDataAndVirtualShadowMapId.w));
+									asuint(In.RectData.x),
+									asuint(In.RectData.y),
+									asuint(In.RectData.z));
 	Out.IESAtlasIndex			= UnpackLigthIESAtlasIndex(In);
+	Out.LightFunctionAtlasLightIndex = UnpackLightFunctionAtlasIndex(In);
 
 	// Shadow
 	// * Static shadowing uses ShadowMapChannel, 
@@ -385,10 +412,12 @@ FLightShaderParameters ConvertFromLocal(const FLocalLightData In)
 	Out.SoftSourceRadius		= UnpackLightSoftSourceRadius(In);
 	Out.SourceLength			= UnpackLightSourceLength(In);
 
+	Out.LightFunctionAtlasLightIndex = UnpackLightFunctionAtlasIndex(In);
+
 	const FRectLightData RectLightData = UnpackRectLightData(
-									asuint(In.RectDataAndVirtualShadowMapId.x),
-									asuint(In.RectDataAndVirtualShadowMapId.y),
-									asuint(In.RectDataAndVirtualShadowMapId.w));
+									asuint(In.RectData.x),
+									asuint(In.RectData.y),
+									asuint(In.RectData.z));
 	Out.RectLightBarnCosAngle	= RectLightData.BarnCosAngle;
 	Out.RectLightBarnLength		= RectLightData.BarnLength;
 	Out.RectLightAtlasUVOffset	= RectLightData.AtlasData.AtlasUVOffset;
@@ -411,10 +440,12 @@ FDeferredLightData ConvertToDeferredLight(
 	Out.Direction			= In.DirectionalLightDirection;
 	Out.DistanceFadeMAD		= In.DirectionalLightDistanceFadeMAD;
 	Out.bRadialLight		= false;
-	Out.SpecularScale		= InSpecularScale;
+	Out.SpecularScale		= In.DirectionalLightSpecularScale * InSpecularScale;
 	Out.ShadowedBits		= (In.DirectionalLightShadowMapChannelMask & 0xFF) != 0 ? 1 : 0;
 	Out.HairTransmittance	= InitHairTransmittanceData();
 	Out.SourceRadius		= In.DirectionalLightSourceRadius;
+	Out.SoftSourceRadius	= In.DirectionalLightSoftSourceRadius;
+	Out.LightFunctionAtlasLightIndex = In.LightFunctionAtlasLightIndex;
 
 	// Shadow
 	// * Static shadowing uses ShadowMapChannel, 
@@ -427,6 +458,74 @@ FDeferredLightData ConvertToDeferredLight(
 	OutPreviewShadowMapChannelMask	= UnpackShadowMapChannelMask(In.DirectionalLightShadowMapChannelMask >> 4);
 	OutLightingChannelMask			= UnpackLightingChannelMask(In.DirectionalLightShadowMapChannelMask);
 
+	return Out;
+}
+
+// Helper function for converting FLightSceneData into FDeferredLightData
+FDeferredLightData ConvertToDeferredLight(FLightSceneData In)
+{
+	FDeferredLightData Out = (FDeferredLightData)0;
+
+	const uint LightType = UnpackLightType(In.LightTypeAndShadowMapChannelMaskPacked);
+
+	Out.TranslatedWorldPosition = DFFastAddDemote(In.WorldPosition, PrimaryView.PreViewTranslation);
+	Out.InvRadius				= In.InvRadius;
+	Out.Color					= In.Color.xyz;
+	Out.FalloffExponent			= In.FalloffExponent;
+	Out.Direction				= In.Direction;
+	Out.SpotAngles				= In.SpotAngles;
+	Out.SourceRadius			= In.SourceRadius;
+	Out.SourceLength			= In.SourceLength;
+	Out.Tangent					= In.Tangent;
+	Out.SoftSourceRadius		= In.SoftSourceRadius;
+	Out.bInverseSquared			= In.FalloffExponent == 0;
+	Out.SpecularScale			= In.SpecularScale;
+	Out.bRadialLight			= true;
+	Out.bSpotLight				= LightType == LIGHT_TYPE_SPOT;
+	Out.bRectLight				= LightType == LIGHT_TYPE_RECT;
+	Out.HairTransmittance		= InitHairTransmittanceData();
+
+	Out.RectLightData.BarnCosAngle = In.RectLightBarnCosAngle;
+	Out.RectLightData.BarnLength = In.RectLightBarnLength;
+	Out.RectLightData.AtlasData.AtlasMaxLevel = In.RectLightAtlasMaxLevel;
+	Out.RectLightData.AtlasData.AtlasUVOffset = In.RectLightAtlasUVOffset;
+	Out.RectLightData.AtlasData.AtlasUVScale = In.RectLightAtlasUVScale;
+
+	Out.IESAtlasIndex					= In.IESAtlasIndex;
+	Out.LightFunctionAtlasLightIndex	= UnpackLightFunctionAtlasIndex(In.LightTypeAndShadowMapChannelMaskPacked);
+
+	// Shadow
+	// * Static shadowing uses ShadowMapChannel, 
+	// * Dynamic shadows are packed into light attenuation using PreviewShadowMapChannel
+	// Data Layout on [10:0] with:
+	// * ShadowMapChannelMask	= [3:0]
+	// * PreviewShadowMapChannel= [7:4] 
+	// * LightingChannelMask    = [8:10] 
+	Out.ShadowedBits				= (In.LightTypeAndShadowMapChannelMaskPacked & 0xFF) != 0 ? 1 : 0;
+	Out.ShadowMapChannelMask		= UnpackShadowMapChannelMask(In.LightTypeAndShadowMapChannelMaskPacked);
+	return Out;
+}
+
+// Helper function for converting FLightSceneData into FLightShaderParameters
+FLightShaderParameters ConvertToLightShaderParameters(FLightSceneData In)
+{
+	FLightShaderParameters Out;
+	Out.TranslatedWorldPosition	= DFFastAddDemote(In.WorldPosition, PrimaryView.PreViewTranslation);
+	Out.InvRadius				= In.InvRadius;
+	Out.Color					= In.Color.xyz;
+	Out.FalloffExponent			= In.FalloffExponent;
+	Out.Direction				= In.Direction;
+	Out.Tangent					= In.Tangent;
+	Out.SpotAngles				= In.SpotAngles;
+	Out.SpecularScale			= 1.0f;
+	Out.SourceRadius			= In.SourceRadius;
+	Out.SoftSourceRadius		= In.SoftSourceRadius;
+	Out.SourceLength			= In.SourceLength;
+	Out.RectLightBarnCosAngle	= In.RectLightBarnCosAngle;
+	Out.RectLightBarnLength		= In.RectLightBarnLength;
+	Out.RectLightAtlasUVOffset	= In.RectLightAtlasUVOffset;
+	Out.RectLightAtlasUVScale	= In.RectLightAtlasUVScale;
+	Out.RectLightAtlasMaxLevel	= In.RectLightAtlasMaxLevel;
 	return Out;
 }
 

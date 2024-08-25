@@ -18,16 +18,16 @@ namespace UnrealGameSync
 		public string CueBanner
 		{
 			get => _cueBannerValue;
-			set 
-			{ 
-				_cueBannerValue = value; 
+			set
+			{
+				_cueBannerValue = value;
 				UpdateCueBanner();
 			}
 		}
 
 		private void UpdateCueBanner()
 		{
-			if(IsHandleCreated)
+			if (IsHandleCreated)
 			{
 				SendMessage(Handle, EmSetcuebanner, (IntPtr)1, _cueBannerValue);
 			}

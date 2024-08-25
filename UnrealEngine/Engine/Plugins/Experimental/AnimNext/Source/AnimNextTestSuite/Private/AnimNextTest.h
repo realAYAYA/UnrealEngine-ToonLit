@@ -13,3 +13,14 @@ struct FAnimNextTestData
 	float A = 0.f;
 	float B = 0.f;
 };
+
+namespace UE::AnimNext::Tests
+{
+
+struct FUtils
+{
+	// Clean up after tests. Clears transaction buffer, collects garbage
+	static void CleanupAfterTests();
+};
+
+}

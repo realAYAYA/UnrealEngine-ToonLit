@@ -1628,6 +1628,35 @@ void FLandscapeEditDataInterface::GetHeightDataFast(const int32 X1, const int32 
 	}
 }
 
+bool ULandscapeComponent::DeleteLayerIfAllZero(const FGuid& InEditLayerGuid, const uint8* const TexDataPtr, int32 TexSize, int32 LayerIdx, bool bShouldDirtyPackage)
+{
+	if (TexDataPtr == nullptr)
+	{
+		return false;
+	}
+	
+	// Check the data for the entire component and to see if it's all zero
+	for (int32 TexY = 0; TexY < TexSize; TexY++)
+	{
+		for (int32 TexX = 0; TexX < TexSize; TexX++)
+		{
+			const int32 TexDataIndex = 4 * (TexX + TexY * TexSize);
+
+			// Stop the first time we see any non-zero data
+			uint8 Weight = TexDataPtr[TexDataIndex];
+			if (Weight != 0)
+			{
+				return false;
+			}
+		}
+	}
+
+	DeleteLayerAllocation(InEditLayerGuid, LayerIdx, bShouldDirtyPackage);
+	MarkRenderStateDirty();
+
+	return true;
+}
+
 void ULandscapeComponent::DeleteLayer(ULandscapeLayerInfoObject* LayerInfo, FLandscapeEditDataInterface& LandscapeEdit)
 {
 	FGuid EditLayerGuid = this->GetEditingLayerGUID();
@@ -2484,30 +2513,6 @@ namespace
 	}
 };
 
-bool DeleteLayerIfAllZero(ULandscapeComponent* const Component, const FGuid& InEditLayerGuid, const uint8* const TexDataPtr, int32 TexSize, int32 LayerIdx, bool bShouldDirtyPackage)
-{
-	// Check the data for the entire component and to see if it's all zero
-	for (int32 TexY = 0; TexY < TexSize; TexY++)
-	{
-		for (int32 TexX = 0; TexX < TexSize; TexX++)
-		{
-			const int32 TexDataIndex = 4 * (TexX + TexY * TexSize);
-
-			// Stop the first time we see any non-zero data
-			uint8 Weight = TexDataPtr[TexDataIndex];
-			if (Weight != 0)
-			{
-				return false;
-			}
-		}
-	}
-
-	Component->DeleteLayerAllocation(InEditLayerGuid, LayerIdx, bShouldDirtyPackage);
-
-	return true;
-}
-
-
 inline bool FLandscapeEditDataInterface::IsLayerAllowed(const ULandscapeLayerInfoObject* const LayerInfo, const int32 ComponentIndexX, const int32 SubIndexX, const int32 SubX, const int32 ComponentIndexY, const int32 SubIndexY, const int32 SubY)
 {
 	// left / right
@@ -3193,7 +3198,7 @@ void FLandscapeEditDataInterface::SetAlphaData(ULandscapeLayerInfoObject* const 
 			{
 				if (LayerEditDataAllZero[LayerIdx])
 				{
-					bool bLayerDeleted = DeleteLayerIfAllZero(Component, GetEditLayer(), LayerDataPtrs[LayerIdx], TexSize, LayerIdx, GetShouldDirtyPackage());
+					bool bLayerDeleted = Component->DeleteLayerIfAllZero(GetEditLayer(), LayerDataPtrs[LayerIdx], TexSize, LayerIdx, GetShouldDirtyPackage());
 
 					if (bLayerDeleted)
 					{
@@ -3482,7 +3487,7 @@ void FLandscapeEditDataInterface::SetAlphaData(const TSet<ULandscapeLayerInfoObj
 			{
 				if (LayerEditDataAllZero[LayerIdx])
 				{
-					bool bLayerDeleted = DeleteLayerIfAllZero(Component, GetEditLayer(), LayerDataInfos[LayerIdx].TexDataPtr, TexSize, LayerIdx, GetShouldDirtyPackage());
+					bool bLayerDeleted = Component->DeleteLayerIfAllZero(GetEditLayer(), LayerDataInfos[LayerIdx].TexDataPtr, TexSize, LayerIdx, GetShouldDirtyPackage());
 
 					if (bLayerDeleted)
 					{
@@ -4278,10 +4283,10 @@ void FLandscapeEditDataInterface::GetWeightDataTempl(ULandscapeLayerInfoObject* 
 			ComponentSizeX, ComponentSizeY, CornerValues,
 			NoBorderY1, NoBorderY2, ComponentDataExist, StoreData );
 		// Update valid region
-		ValidX1 = FMath::Max<int32>(X1, ValidX1);
-		ValidX2 = FMath::Min<int32>(X2, ValidX2);
-		ValidY1 = FMath::Max<int32>(Y1, ValidY1);
-		ValidY2 = FMath::Min<int32>(Y2, ValidY2);
+		ValidX1 = FMath::Min<int32>(X1, ValidX1);
+		ValidX2 = FMath::Max<int32>(X2, ValidX2);
+		ValidY1 = FMath::Min<int32>(Y1, ValidY1);
+		ValidY2 = FMath::Max<int32>(Y2, ValidY2);
 	}
 	else
 	{
@@ -4359,12 +4364,18 @@ void FLandscapeTextureDataInterface::CopyTextureChannel(UTexture2D* Dest, int32 
 
 	for( int32 MipIdx=0;MipIdx<DestDataInfo->NumMips();MipIdx++ )
 	{
-		uint8* DestTextureData = (uint8*)DestDataInfo->GetMipData(MipIdx) + ChannelOffsets[DestChannel];
-		uint8* SrcTextureData = (uint8*)SrcDataInfo->GetMipData(MipIdx) + ChannelOffsets[SrcChannel];
+		uint8* DestTextureData = (uint8*)DestDataInfo->GetMipData(MipIdx);
+		uint8* SrcTextureData = (uint8*)SrcDataInfo->GetMipData(MipIdx);
 
-		for( int32 i=0;i<FMath::Square(MipSize);i++ )
+		if (DestTextureData && SrcTextureData)
 		{
-			DestTextureData[i*4] = SrcTextureData[i*4];
+			DestTextureData += ChannelOffsets[DestChannel];
+			SrcTextureData += ChannelOffsets[SrcChannel];
+
+			for (int32 i = 0; i < FMath::Square(MipSize); i++)
+			{
+				DestTextureData[i * 4] = SrcTextureData[i * 4];
+			}
 		}
 
 		DestDataInfo->AddMipUpdateRegion(MipIdx, 0, 0, MipSize-1, MipSize-1);

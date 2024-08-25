@@ -42,6 +42,7 @@
 #define USE_HAIR_COMPLEX_TRANSMITTANCE 1
 
 #include "../Common.ush"
+#include "/Engine/Shared/HairStrandsDefinitions.h"
 #include "HairStrandsCommon.ush"
 #include "../DeferredShadingCommon.ush"  
 #include "../BRDF.ush"
@@ -101,7 +102,7 @@ float3 GetPrecomputedIndirectLighting(float3 AbsoluteWorldPosition, float3 Diffu
 	float3 OutDiffuseLighting = 0;
 
 	#if PRECOMPUTED_IRRADIANCE_VOLUME_LIGHTING
-	const float3 VolumetricLightmapBrickTextureUVs = ComputeVolumetricLightmapBrickTextureUVs(LWCHackToFloat(AbsoluteWorldPosition));
+	const float3 VolumetricLightmapBrickTextureUVs = ComputeVolumetricLightmapBrickTextureUVs(AbsoluteWorldPosition);
 	FThreeBandSHVectorRGB IrradianceSH = GetVolumetricLightmapSH3(VolumetricLightmapBrickTextureUVs);
 	
 	// Diffuse convolution
@@ -146,7 +147,7 @@ float3 GatherRadiance(float3 RayDirection, float Roughness, uint2 PixelPosition,
 {
 #if PERMUTATION_LUMEN
 	// Lumen probe
-	const float3 AbsoluteWorldPosition = TranslatedWorldPosition + LWCHackToFloat(PrimaryView.WorldCameraOrigin); // HAIR_LWC
+	const float3 AbsoluteWorldPosition = TranslatedWorldPosition + DFHackToFloat(PrimaryView.WorldCameraOrigin); // HAIR_LWC
 	FRadianceCacheCoverage Coverage = GetRadianceCacheCoverage(AbsoluteWorldPosition, RayDirection, .5f); // HAIR_LWC
 	if (Coverage.bValid)
 	{
@@ -259,7 +260,6 @@ FHairTraversalResult InternalComputeHairCountVoxel(
 	TraversalSettings.bDebugEnabled = bDebugEnabled;
 	TraversalSettings.SteppingScale = VirtualVoxel.SteppingScale_Environment;
 	TraversalSettings.PixelRadius = PixelRadius;
-	TraversalSettings.bUseOccupancy = false;
 
 	return ComputeHairCountVirtualVoxel(
 		TranslatedWorldPosition,
@@ -267,7 +267,6 @@ FHairTraversalResult InternalComputeHairCountVoxel(
 		CommonDesc,
 		NodeDesc,
 		VirtualVoxel.PageIndexBuffer,
-		VirtualVoxel.PageIndexOccupancyBuffer,
 		VirtualVoxel.PageTexture,
 		TraversalSettings);
 }
@@ -289,11 +288,11 @@ float MaxComponent3(float3 In)
 
 float3 ReflectionEnvironment(FGBufferData GBuffer, float2 ScreenPosition, float2 SvPosition, uint ControlPointId, uint MacroGroupId)
 {
-	const float3 TranslatedWorldPosition = mul(float4(ScreenPosition * GBuffer.Depth, GBuffer.Depth, 1), PrimaryView.ScreenToTranslatedWorld).xyz;
-	const float3 CameraToPixel = normalize(TranslatedWorldPosition - PrimaryView.TranslatedWorldCameraOrigin);
+	const float3 TranslatedWorldPosition = mul(float4(GetScreenPositionForProjectionType(ScreenPosition, GBuffer.Depth), GBuffer.Depth, 1), PrimaryView.ScreenToTranslatedWorld).xyz;
+	const float3 CameraToPixel = GetCameraVectorFromTranslatedWorldPosition(TranslatedWorldPosition);
 	const uint2  PixelPosition = SvPosition - ResolvedView.ViewRectMin.xy;
 	const float  PixelSceneDepth = GBuffer.Depth;
-	const float  PixelRadius = VirtualVoxel.HairCoveragePixelRadiusAtDepth1 * PixelSceneDepth;
+	const float  PixelRadius = ConvertGivenDepthRadiusForProjectionType(VirtualVoxel.HairCoveragePixelRadiusAtDepth1, PixelSceneDepth);
 
 	const uint ControlPointIdMod8 = (ControlPointId % 8);
 	const float3 VoxelOffset =  GetHairVoxelJitter(SvPosition, View.StateFrameIndexMod8 + ControlPointIdMod8, VirtualVoxel.JitterMode);
@@ -606,11 +605,11 @@ float3 ReflectionEnvironmentUniformSampling(
 	uint MacroGroupId,
 	bool bDebugEnabled)
 {
-	const float3 TranslatedWorldPosition = mul(float4(ScreenPosition * GBuffer.Depth, GBuffer.Depth, 1), PrimaryView.ScreenToTranslatedWorld).xyz;
-	const float3 CameraToPixel = normalize(TranslatedWorldPosition - PrimaryView.TranslatedWorldCameraOrigin);
+	const float3 TranslatedWorldPosition = mul(float4(GetScreenPositionForProjectionType(ScreenPosition, GBuffer.Depth), GBuffer.Depth, 1), PrimaryView.ScreenToTranslatedWorld).xyz;
+	const float3 CameraToPixel = GetCameraVectorFromTranslatedWorldPosition(TranslatedWorldPosition);
 	const uint2  PixelPosition = SvPosition - ResolvedView.ViewRectMin.xy;
 	const float  PixelSceneDepth = GBuffer.Depth;
-	const float  PixelRadius = VirtualVoxel.HairCoveragePixelRadiusAtDepth1 * PixelSceneDepth;
+	const float  PixelRadius = ConvertGivenDepthRadiusForProjectionType(VirtualVoxel.HairCoveragePixelRadiusAtDepth1, PixelSceneDepth);
 
 	const float3 V = -CameraToPixel;
 	const float3 T = GBuffer.WorldNormal;
@@ -707,9 +706,9 @@ float3 ReflectionEnvironmentSH(
 	uint MacroGroupId,
 	bool bDebugEnabled)
 {
-	const float3 TranslatedWorldPosition = mul(float4(ScreenPosition * GBuffer.Depth, GBuffer.Depth, 1), PrimaryView.ScreenToTranslatedWorld).xyz;
-	const float3 AbsoluteWorldPosition = TranslatedWorldPosition + LWCHackToFloat(PrimaryView.WorldCameraOrigin);
-	const float3 CameraToPixel = normalize(TranslatedWorldPosition - PrimaryView.TranslatedWorldCameraOrigin);
+	const float3 TranslatedWorldPosition = mul(float4(GetScreenPositionForProjectionType(ScreenPosition, GBuffer.Depth), GBuffer.Depth, 1), PrimaryView.ScreenToTranslatedWorld).xyz;
+	const float3 AbsoluteWorldPosition = TranslatedWorldPosition + DFHackToFloat(PrimaryView.WorldCameraOrigin);
+	const float3 CameraToPixel = GetCameraVectorFromTranslatedWorldPosition(TranslatedWorldPosition);
 	const float3 V = -CameraToPixel;
 
 #if PERMUTATION_LUMEN
@@ -773,8 +772,8 @@ Texture2D<float4> SceneColorTexture;
 
 float3 ComputeThinTransmission(FGBufferData GBuffer, float2 ScreenPosition, float2 SvPosition, uint HairControlPointId)
 {
-	const float3 TranslatedWorldPosition = mul(float4(ScreenPosition * GBuffer.Depth, GBuffer.Depth, 1), PrimaryView.ScreenToTranslatedWorld).xyz;
-	const float3 CameraToPixel = normalize(TranslatedWorldPosition - PrimaryView.TranslatedWorldCameraOrigin);
+	const float3 TranslatedWorldPosition = mul(float4(GetScreenPositionForProjectionType(ScreenPosition, GBuffer.Depth), GBuffer.Depth, 1), PrimaryView.ScreenToTranslatedWorld).xyz;
+	const float3 CameraToPixel = GetCameraVectorFromTranslatedWorldPosition(TranslatedWorldPosition);
 	const uint2  PixelPosition = SvPosition - ResolvedView.ViewRectMin.xy;
 
 	const float3 V = -CameraToPixel;
@@ -809,9 +808,8 @@ void MainVS(
 	nointerpolation out uint OutNodeCount : DISPATCH_NODECOUNT,
 	nointerpolation out uint2 OutResolution : DISPATCH_RESOLUTION)
 {
-	OutNodeCount = HairStrands.HairSampleCount.Load(uint3(0, 0, 0));
-	OutResolution.x = ceil(sqrt(OutNodeCount));
-	OutResolution.y = OutResolution.x;
+	OutNodeCount = HairStrands.HairSampleCount[0];
+	OutResolution = GetHairSampleResolution(OutNodeCount);
 
 	const float2 ClipCoord = ((OutResolution + 0.5f) / float2(HairStrands.HairSampleViewportResolution)) * 2;
 
@@ -836,7 +834,7 @@ void MainPS(
 
 	const uint2 InCoord = uint2(SVPos.xy);
 	const uint LocalOffset = InCoord.x + InCoord.y * Resolution.x;
-	const uint MaxVisibilityNodeCount = HairStrands.HairSampleCount.Load(uint3(0, 0, 0));
+	const uint MaxVisibilityNodeCount = HairStrands.HairSampleCount[0];
 	if (LocalOffset >= NodeCount)
 	{
 		return;
@@ -857,10 +855,11 @@ void MainPS(
 	const bool bDebugEnabled = false;
 #endif
 
+	const bool bScatterSceneLighting = HasHairFlags(Sample.Flags, HAIR_FLAGS_SCATTER_SCENE_LIGHT);
 #if PERMUTATION_INTEGRATION_TYPE == INTEGRATION_SCENECOLOR
-	if (Sample.bScatterSceneLighting)
+	if (bScatterSceneLighting)
 #else
-	if (!Sample.bScatterSceneLighting)
+	if (!bScatterSceneLighting)
 #endif
 	{
 		const float3 SkyLighting =

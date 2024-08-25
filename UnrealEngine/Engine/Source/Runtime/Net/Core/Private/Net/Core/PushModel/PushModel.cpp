@@ -387,6 +387,25 @@ namespace UEPushModelPrivate
 			return sizeof(*this) + Ar.GetMem();
 		}
 
+		bool HasHandlesAssigned() const
+		{
+			return !ObjectKeyToInternalId.IsEmpty();
+		}
+
+		void PrintAssignedHandles() const
+		{
+			UE_LOG(LogPushModel, Display, TEXT("Starting print of %u objects currently assigned a PushModel handle"), ObjectKeyToInternalId.Num());
+			for (auto It=ObjectKeyToInternalId.CreateConstIterator(); It; ++It)
+			{
+				const FObjectKey& Key = It.Key();
+				const FNetLegacyPushObjectId& Value = It.Value();
+
+				UObject* ObjPtr = Key.ResolveObjectPtrEvenIfUnreachable();
+				
+				UE_LOG(LogPushModel, Display, TEXT("Object: %s (%s) | PushObjectId: 0x%x"), *GetNameSafe(ObjPtr), IsValid(ObjPtr)?TEXT("Valid"):TEXT("Invalid"), Value);
+			}
+		}
+
 	private:
 		int32 NewObjectLookupPosition = 0;
 		TMap<FObjectKey, FNetLegacyPushObjectId> ObjectKeyToInternalId;
@@ -424,6 +443,12 @@ namespace UEPushModelPrivate
 		TEXT("Net.MakeBpPropertiesPushModel"),
 		bMakeBpPropertiesPushModel,
 		TEXT("Whether or not properties declared in Blueprints will be forced to used Push Model")
+	);
+
+	FAutoConsoleCommand PushModelPrintHandles(
+		TEXT("Net.PushModelPrintHandles"),
+		TEXT("Prints the list of replicated objects relevant to a specific connection"),
+		FConsoleCommandDelegate::CreateLambda([]() { PushObjectManager.PrintAssignedHandles(); })
 	);
 
 #if UE_WITH_IRIS
@@ -531,6 +556,24 @@ namespace UEPushModelPrivate
 
 		Ar.Logf(TEXT("  Push Model Memory: %u"), Count);
 	}
-}
+
+	bool bAllowHandleCreation = true;
+	bool IsHandleCreationAllowed()
+	{
+		return bAllowHandleCreation;
+	}
+
+	void SetHandleCreationAllowed(bool bAllow)
+	{
+		UE_LOG(LogPushModel, Log, TEXT("PushModel HandleCreation is now %s"), bAllow ? TEXT("enabled") : TEXT("disabled"));
+		bAllowHandleCreation = bAllow;
+
+		if (!bAllow && PushObjectManager.HasHandlesAssigned())
+		{
+			PushObjectManager.PrintAssignedHandles();
+			ensureMsgf(!PushObjectManager.HasHandlesAssigned(), TEXT("PushModel Handle creation is disabled but there are already handles allocated. See logs for details on the assigned handles"));
+		}
+	}
+} // end namespace UEPushModelPrivate
 
 #endif // WITH_PUSH_MODEL

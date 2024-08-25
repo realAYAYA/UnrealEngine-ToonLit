@@ -698,12 +698,12 @@ void FPackedVectorNetSerializerBase::Dequantize(uint32 ScaleBitCount, FNetSerial
 
 			if constexpr (std::is_same<SourceType, FVector3f>::value)
 			{
-				memcpy(&Target.X, &Components[0], 3U*sizeof(float));
+				memcpy(&Target.X, &Components[0], 3U*sizeof(float)); //-V512
 			}
 			else
 			{
 				FVector3f Vector;
-				memcpy(&Vector.X, &Components[0], 3U*sizeof(float));
+				memcpy(&Vector.X, &Components[0], 3U*sizeof(float)); //-V512
 				Target = SourceType(Vector);
 			}
 		}

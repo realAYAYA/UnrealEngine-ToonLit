@@ -89,7 +89,57 @@ namespace Gauntlet
 
 		IAppInstance Run(IAppInstall App);
 
-		string GetPackagedExecutableLocation() { return null; }
+		/// Begin new flow ///
+
+		/// <summary>
+		/// Fully cleans the device by deleting
+		///	 - Artifacts and other loose files associated with UE processes
+		///	 - Staged/Packaged builds
+		/// </summary>
+		void FullClean();
+
+		/// <summary>
+		/// Deletes artifacts and other loose files associated with UE processes
+		/// </summary>
+		void CleanArtifacts();
+
+		/// <summary>
+		/// Installs a build to the device
+		/// </summary>
+		/// <param name="AppConfiguration">The configuration containing the build to install</param>
+		void InstallBuild(UnrealAppConfig AppConfiguration);
+
+		/// <summary>
+		/// Create an IAppInstall that is configured by the provided AppConfiguration
+		/// </summary>
+		/// <param name="AppConfiguration">The configuration used to create the IAppInstall</param>
+		/// <returns>An AppInstall handle which can be used to run the process</returns>
+		IAppInstall CreateAppInstall(UnrealAppConfig AppConfiguration);
+
+		/// <summary>
+		/// Copies any additional files to the device
+		/// </summary>
+		/// <param name="FilesToCopy">The collection of files to copy</param>
+		void CopyAdditionalFiles(IEnumerable<UnrealFileToCopy> FilesToCopy);
+
+		/// End new flow ///
+
+		/// <summary>
+		/// Path to the crash dumps on a device
+		/// </summary>
+		string CrashDumpPath
+		{
+			get
+			{
+				return Path.Combine(Globals.TempDir, "CrashDumps", Platform.ToString() + "_" + Name);
+			}
+		}
+
+		/// <summary>
+		/// Ensures the crash dump copy has occurred already - and does the copy if it hasn't happened yet
+		/// Returns true if there were any crash dumps for the run, and false otherwise
+		/// </summary>
+		bool CopyCrashDumps() { return false; }
 	};
 
 	/// <summary>

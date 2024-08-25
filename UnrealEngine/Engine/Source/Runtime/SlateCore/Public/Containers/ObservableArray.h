@@ -299,35 +299,45 @@ public:
 		}
 	}
 
-	SizeType RemoveSingle(const ElementType& Item, bool bAllowShrinking = true)
+	SizeType RemoveSingle(const ElementType& Item, EAllowShrinking AllowShrinking = EAllowShrinking::Yes)
 	{
 		SizeType Index = Array.Find(Item);
 		if (Index == INDEX_NONE)
 		{
 			return 0;
 		}
-		RemoveAt(Index, 1, bAllowShrinking);
+		RemoveAt(Index, 1, AllowShrinking);
 		return 1;
 	}
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("RemoveSingle")
+	FORCEINLINE SizeType RemoveSingle(const ElementType& Item, bool bAllowShrinking)
+	{
+		return RemoveSingle(Item, bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
+	}
 
-	SizeType RemoveSingleSwap(const ElementType& Item, bool bAllowShrinking = true)
+	SizeType RemoveSingleSwap(const ElementType& Item, EAllowShrinking AllowShrinking = EAllowShrinking::Yes)
 	{
 		SizeType Index = Array.Find(Item);
 		if (Index == INDEX_NONE)
 		{
 			return 0;
 		}
-		RemoveAtSwap(Index, 1, bAllowShrinking);
+		RemoveAtSwap(Index, 1, AllowShrinking);
 		return 1;
+	}
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("RemoveSingleSwap")
+	FORCEINLINE SizeType RemoveSingleSwap(const ElementType& Item, bool bAllowShrinking)
+	{
+		return RemoveSingleSwap(Item, bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
 	}
 
 	void RemoveAt(SizeType Index)
 	{
-		RemoveAt(Index, 1, true);
+		RemoveAt(Index, 1, EAllowShrinking::Yes);
 	}
 
 	template <typename CountType>
-	void RemoveAt(SizeType Index, CountType NumToRemove = 1, bool bAllowShrinking = true)
+	void RemoveAt(SizeType Index, CountType NumToRemove = 1, EAllowShrinking AllowShrinking = EAllowShrinking::Yes)
 	{
 		static_assert(!std::is_same_v<CountType, bool>, "TObservableArray::RemoveAt: unexpected bool passed as the Count argument");
 		check((NumToRemove > 0) & (Index >= 0) & (Index + NumToRemove <= Num()));
@@ -336,7 +346,7 @@ public:
 			if (NumToRemove == 1)
 			{
 				ElementType RemovedElement = MoveTemp(Array[Index]);
-				Array.RemoveAt(Index, NumToRemove, bAllowShrinking);
+				Array.RemoveAt(Index, NumToRemove, AllowShrinking);
 				ArrayChangedDelegate.Broadcast(ObservableArrayChangedArgsType::MakeRemoveAction({ &RemovedElement, 1 }, Index));
 			}
 			else
@@ -350,19 +360,24 @@ public:
 					RemovedElements.Add(MoveTemp(Array[RemoveIndex + Index]));
 				}
 				
-				Array.RemoveAt(Index, NumToRemove, bAllowShrinking);
+				Array.RemoveAt(Index, NumToRemove, AllowShrinking);
 				ArrayChangedDelegate.Broadcast(ObservableArrayChangedArgsType::MakeRemoveAction({ RemovedElements.GetData(), NumToRemove }, Index));
 			}
 		}
 	}
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("RemoveAt")
+	FORCEINLINE void RemoveAt(SizeType Index, SizeType NumToRemove, bool bAllowShrinking)
+	{
+		RemoveAt(Index, NumToRemove, bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
+	}
 
 	void RemoveAtSwap(SizeType Index)
 	{
-		RemoveAtSwap(Index, 1, true);
+		RemoveAtSwap(Index, 1, EAllowShrinking::Yes);
 	}
 	
 	template <typename CountType>
-	void RemoveAtSwap(SizeType Index, CountType NumToRemove = 1, bool bAllowShrinking = true)
+	void RemoveAtSwap(SizeType Index, CountType NumToRemove = 1, EAllowShrinking AllowShrinking = EAllowShrinking::Yes)
 	{
 		static_assert(!std::is_same_v<CountType, bool>, "TObservableArray::RemoveAtSwap: unexpected bool passed as the Count argument");
 		check((NumToRemove > 0) & (Index >= 0) & (Index + NumToRemove <= Num()));
@@ -374,7 +389,7 @@ public:
 			{
 				ElementType RemovedElement = MoveTemp(Array[Index]);
 				
-				Array.RemoveAtSwap(Index, NumToRemove, bAllowShrinking);
+				Array.RemoveAtSwap(Index, NumToRemove, AllowShrinking);
 				ArrayChangedDelegate.Broadcast(ObservableArrayChangedArgsType::MakeRemoveSwapAction({ &RemovedElement, 1 }, Index, PreviousNum - SwapAmount));
 			}
 			else
@@ -388,10 +403,15 @@ public:
 					RemovedElements.Add(MoveTemp(Array[RemoveIndex + Index]));
 				}
 
-				Array.RemoveAtSwap(Index, NumToRemove, bAllowShrinking);
+				Array.RemoveAtSwap(Index, NumToRemove, AllowShrinking);
 				ArrayChangedDelegate.Broadcast(ObservableArrayChangedArgsType::MakeRemoveSwapAction({ RemovedElements.GetData(), NumToRemove }, Index, PreviousNum - SwapAmount));
 			}
 		}
+	}
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("RemoveAtSwap")
+	FORCEINLINE void RemoveAtSwap(SizeType Index, SizeType NumToRemove, bool bAllowShrinking)
+	{
+		RemoveAtSwap(Index, NumToRemove, bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
 	}
 
 	void Swap(SizeType FirstIndexToSwap, SizeType SecondIndexToSwap)
@@ -484,9 +504,16 @@ public:
 	}
 
 	template <typename InPredicate>
+	UE_DEPRECATED(5.4, "IndexByPredicate is deprecated. Use IndexOfByPredicate instead")
 	SizeType IndexByPredicate(InPredicate Pred) const
 	{
-		return Array.IndexByPredicate(Pred);
+		return Array.IndexOfByPredicate(Pred);
+	}
+
+	template <typename InPredicate>
+	SizeType IndexOfByPredicate(InPredicate Pred) const
+	{
+		return Array.IndexOfByPredicate(Pred);
 	}
 
 public:

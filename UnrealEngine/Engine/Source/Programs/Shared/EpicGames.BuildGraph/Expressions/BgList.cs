@@ -243,7 +243,7 @@ namespace EpicGames.BuildGraph.Expressions
 
 			return new BgListConstantExpr<T>(items);
 		}
-//		=> new BgListConstantExpr<T>(((IEnumerable<object>)value).Select(x => BgType.Constant<T>(x)).ToList());
+		//		=> new BgListConstantExpr<T>(((IEnumerable<object>)value).Select(x => BgType.Constant<T>(x)).ToList());
 
 		/// <inheritdoc/>
 		public override BgList<T> Wrap(BgExpr expr) => new BgListWrappedExpr<T>(expr);
@@ -348,8 +348,8 @@ namespace EpicGames.BuildGraph.Expressions
 
 	class BgListElementExpr<T> : BgExpr where T : BgExpr
 	{
-		public BgList<T> List;
-		public BgInt Index;
+		public BgList<T> List { get; }
+		public BgInt Index { get; }
 
 		public BgListElementExpr(BgList<T> list, BgInt index)
 			: base(BgExprFlags.None)
@@ -583,27 +583,27 @@ namespace EpicGames.BuildGraph.Expressions
 		{
 			BgObject<BgListOptionDef> option = BgObject<BgListOptionDef>.Empty;
 			option = option.Set(x => x.Name, Name);
-			if (!(Label is null))
+			if (Label is not null)
 			{
 				option = option.Set(x => x.Label, Label);
 			}
-			if (!(Description is null))
+			if (Description is not null)
 			{
 				option = option.Set(x => x.Description, Description);
 			}
-			if (!(DefaultValue is null))
+			if (DefaultValue is not null)
 			{
 				option = option.Set(x => x.DefaultValue, DefaultValue);
 			}
-			if (!(Style is null))
+			if (Style is not null)
 			{
 				option = option.Set(x => x.Style, Style);
 			}
-			if (!(Values is null))
+			if (Values is not null)
 			{
 				option = option.Set(x => x.Values, Values);
 			}
-			if (!(ValueDescriptions is null))
+			if (ValueDescriptions is not null)
 			{
 				option = option.Set(x => x.ValueDescriptions, ValueDescriptions);
 			}

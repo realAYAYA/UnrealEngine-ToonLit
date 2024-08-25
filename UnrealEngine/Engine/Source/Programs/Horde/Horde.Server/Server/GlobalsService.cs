@@ -1,17 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System;
-using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations;
-using System.Linq;
 using System.Net;
 using System.Security.Cryptography;
 using System.Threading;
 using System.Threading.Tasks;
-using EpicGames.Horde.Common;
-using EpicGames.Perforce;
-using Horde.Server.Acls;
-using Horde.Server.Configuration;
 using Horde.Server.Utilities;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
@@ -37,13 +30,17 @@ namespace Horde.Server.Server
 			public ObjectId InstanceId { get; set; }
 			public string ConfigRevision { get; set; } = String.Empty;
 			public byte[]? JwtSigningKey { get; set; }
+			public RSAParameters? RsaParameters { get; set; }
 			public int? SchemaVersion { get; set; }
 
 			[BsonIgnore]
 			string IGlobals.JwtIssuer => _owner._jwtIssuer;
 
 			[BsonIgnore]
-			SymmetricSecurityKey IGlobals.JwtSigningKey => new SymmetricSecurityKey(_owner._fixedJwtSecret ?? JwtSigningKey);
+			SecurityKey IGlobals.JwtSigningKey => new SymmetricSecurityKey(JwtSigningKey!);
+
+			[BsonIgnore]
+			RsaSecurityKey IGlobals.RsaSigningKey => new RsaSecurityKey(RsaParameters!.Value) { KeyId = InstanceId.ToString() };
 
 			public Globals()
 			{
@@ -59,11 +56,17 @@ namespace Horde.Server.Server
 			{
 				JwtSigningKey = RandomNumberGenerator.GetBytes(128);
 			}
+
+			public void RotateRsaParameters()
+			{
+				using RSACryptoServiceProvider rsaProvider = new RSACryptoServiceProvider(2048);
+				rsaProvider.PersistKeyInCsp = false;
+				RsaParameters = rsaProvider.ExportParameters(true);
+			}
 		}
 
 		readonly MongoService _mongoService;
 		readonly string _jwtIssuer;
-		readonly byte[]? _fixedJwtSecret;
 
 		/// <summary>
 		/// Constructor
@@ -82,28 +85,38 @@ namespace Horde.Server.Server
 			{
 				_jwtIssuer = settings.Value.JwtIssuer;
 			}
-
-			if (!String.IsNullOrEmpty(settings.Value.JwtSecret))
-			{
-				_fixedJwtSecret = Convert.FromBase64String(settings.Value.JwtSecret);
-			}
 		}
 
 		/// <summary>
 		/// Gets the current globals instance
 		/// </summary>
 		/// <returns>Globals instance</returns>
-		public async ValueTask<IGlobals> GetAsync()
+		public async ValueTask<IGlobals> GetAsync(CancellationToken cancellationToken)
 		{
-			Globals globals = await _mongoService.GetSingletonAsync<Globals>(() => CreateGlobals());
-			globals._owner = this;
-			return globals;
+			for (; ; )
+			{
+				Globals globals = await _mongoService.GetSingletonAsync<Globals>(() => CreateGlobals(), cancellationToken);
+				globals._owner = this;
+
+				if (globals.RsaParameters != null)
+				{
+					return globals;
+				}
+
+				globals.RotateRsaParameters();
+
+				if (await _mongoService.TryUpdateSingletonAsync<Globals>(globals, cancellationToken))
+				{
+					return globals;
+				}
+			}
 		}
 
 		static Globals CreateGlobals()
 		{
 			Globals globals = new Globals();
 			globals.RotateSigningKey();
+			globals.RotateRsaParameters();
 			return globals;
 		}
 
@@ -112,15 +125,16 @@ namespace Horde.Server.Server
 		/// </summary>
 		/// <param name="globals">The current options value</param>
 		/// <param name="configRevision"></param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns></returns>
-		public async ValueTask<IGlobals?> TryUpdateAsync(IGlobals globals, string? configRevision)
+		public async ValueTask<IGlobals?> TryUpdateAsync(IGlobals globals, string? configRevision, CancellationToken cancellationToken)
 		{
 			Globals concreteGlobals = ((Globals)globals).Clone();
 			if (configRevision != null)
 			{
 				concreteGlobals.ConfigRevision = configRevision;
 			}
-			if (!await _mongoService.TryUpdateSingletonAsync(concreteGlobals))
+			if (!await _mongoService.TryUpdateSingletonAsync(concreteGlobals, cancellationToken))
 			{
 				return null;
 			}

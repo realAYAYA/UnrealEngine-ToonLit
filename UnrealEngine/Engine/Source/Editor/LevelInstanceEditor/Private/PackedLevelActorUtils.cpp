@@ -135,10 +135,7 @@ void FPackedLevelActorUtils::PackAllLoadedActors()
 		return;
 	}
 
-	if (GEditor)
-	{
-		GEditor->SelectNone(true, true);
-	}
+	GEditor->SelectNone(true, true);
 
 	FScopedSlowTask SlowTask(Count, (LOCTEXT("TaskPackLevels", "Packing Levels")));
 	SlowTask.MakeDialog();

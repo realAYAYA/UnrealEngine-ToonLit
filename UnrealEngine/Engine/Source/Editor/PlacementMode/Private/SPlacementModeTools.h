@@ -125,6 +125,9 @@ private:
 	/** Requests a refresh of placeable assets in the All Classes category */
 	void RequestRefreshAllClasses();
 
+	/** Called when the placement module performs a category refresh */
+	void OnCategoryRefresh(FName CategoryName);
+
 	/** Refreshes the list of placement categories */
 	void UpdatePlacementCategories();
 

@@ -4,6 +4,7 @@
 
 #include "IPixelCaptureInputFrame.h"
 #include "IPixelCaptureOutputFrame.h"
+#include "HAL/ThreadSafeCounter64.h"
 
 namespace UE::PixelCapture
 {
@@ -130,6 +131,7 @@ private:
 	int32 ExpectedInputWidth = 0;
 	int32 ExpectedInputHeight = 0;
 
+	FThreadSafeCounter64 FrameId;
 	uint64 StartTime;
 	uint64 CPUStartTime;
 	uint64 GPUEnqueueTime;

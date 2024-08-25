@@ -42,8 +42,10 @@ private:
 
 private:
 	
+	using FPropertyScaledInstanceKey = TTuple<UE::MovieScene::FRootInstanceHandle, FMovieSceneSequenceID>;
+
 	using FPropertyScaleEntityIDs = TArray<UE::MovieScene::FMovieSceneEntityID, TInlineAllocator<2>>;
-	TMap<UE::MovieScene::FInstanceHandle, FPropertyScaleEntityIDs> PropertyScaledInstances;
+	TMap<FPropertyScaledInstanceKey, FPropertyScaleEntityIDs> PropertyScaledInstances;
 
 	int32 FloatScaleUseCount = 0;
 	int32 TransformScaleUseCount = 0;
@@ -58,7 +60,7 @@ public:
 
 	UTemplateSequencePropertyScalingEvaluatorSystem(const FObjectInitializer& ObjInit);
 
-	using FPropertyScaleKey = TTuple<UE::MovieScene::FInstanceHandle, FGuid, FName>;
+	using FPropertyScaleKey = TTuple<UE::MovieScene::FRootInstanceHandle, FMovieSceneSequenceID, FGuid, FName>;
 	using FPropertyScaleValue = TTuple<ETemplateSectionPropertyScaleType, float>;
 
 	using FPropertyScaleValueArray = TArray<FPropertyScaleValue, TInlineAllocator<2>>;

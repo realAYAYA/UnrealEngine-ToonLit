@@ -16,6 +16,7 @@ namespace Horde.Server.Logs
 		/// <summary>
 		/// Stack item for traversing the tree
 		/// </summary>
+		[StructLayout(LayoutKind.Auto)]
 		struct StackItem
 		{
 			/// <summary>
@@ -157,7 +158,7 @@ namespace Horde.Server.Logs
 							stack[depth + 1]._index++;
 						}
 					}
-					else if(depth + 1 < stack.Length)
+					else if (depth + 1 < stack.Length)
 					{
 						// Move down the tree
 						depth++;

@@ -3,6 +3,7 @@
 
 #include "BindableProperty.h"
 #include "CoreMinimal.h"
+#include "IRewindDebuggerTrackCreator.h"
 #include "Framework/Commands/UICommandList.h"
 #include "IRewindDebuggerView.h"
 #include "RewindDebuggerCommands.h"
@@ -36,6 +37,7 @@ public:
 		SLATE_ARGUMENT(DebugTargetInitializer, DebugTargetActor);
 		SLATE_ARGUMENT(TBindablePropertyInitializer<double>, TraceTime);
 		SLATE_ARGUMENT(TBindablePropertyInitializer<float>, RecordingDuration);
+		SLATE_ATTRIBUTE(TArrayView<RewindDebugger::FRewindDebuggerTrackType>, TrackTypes);
 		SLATE_ATTRIBUTE(double, ScrubTime);
 		SLATE_ATTRIBUTE(bool, IsPIESimulating);
 		SLATE_EVENT( FOnScrubPositionChanged, OnScrubPositionChanged);
@@ -69,7 +71,9 @@ private:
 	void SetViewRange(TRange<double> NewRange);
 
 	void MainFrameCreationFinished(TSharedPtr<SWindow> InRootWindow, bool bIsNewProjectWindow);
-
+	
+	void ToggleHideTrackType(const FName& TrackType);
+	bool ShouldHideTrackType(const FName& TrackType) const;
 	void ToggleDisplayEmptyTracks();
 	bool ShouldDisplayEmptyTracks() const;
 	
@@ -80,6 +84,7 @@ private:
 	TAttribute<double> ScrubTimeAttribute;
 	TAttribute<bool> IsPIESimulating;
 	TAttribute<bool> TrackScrubbingAttribute;
+	TAttribute<TArrayView<RewindDebugger::FRewindDebuggerTrackType>> TrackTypesAttribute;
 	FOnScrubPositionChanged OnScrubPositionChanged;
 	FOnViewRangeChanged OnViewRangeChanged;
 	TRange<double> ViewRange;
@@ -114,7 +119,8 @@ private:
 	TSharedPtr<SWidget> OnContextMenuOpening();
 	
 	TSharedPtr<SSearchBox> TrackFilterBox;
-	
+
+	bool bInExpansionChanged = false;
 	bool bInSelectionChanged = false;
 	bool bDisplayEmptyTracks = false;
 

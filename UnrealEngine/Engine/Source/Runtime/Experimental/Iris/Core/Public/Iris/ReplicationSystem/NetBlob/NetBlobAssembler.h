@@ -36,6 +36,9 @@ public:
 	/** Returns true if all parts of the split blob have been added and is ready to be assembled. */
 	bool IsReadyToAssemble() const { return bIsReadyToAssemble; }
 
+	/** Returns true if the sequence order is broken. */
+	bool IsSequenceBroken() const { return bIsBrokenSequence; }
+
 	/**
 	 * Assemble all parts of the split blob.
 	 * @param Context FNetSerializationContext for error reporting. Call HasError() on it afterwards to check whether something went wrong.
@@ -50,11 +53,16 @@ private:
 	TArray<uint32> Payload;
 	FNetBitStreamWriter BitWriter;
 	FNetRefHandle RefHandle;
+	const USequentialPartialNetBlobHandlerConfig* PartialNetBlobHandlerConfig = nullptr;
 	uint32 NextPartIndex = 0;
-	uint32 PartCount = 0;
+	// Initialized to an arbitrary number. If we receive the first part of a sequence it doesn't matter. If the next received blob isn't the first part it's a broken sequence.
+	uint32 NextSequenceSumber = 0U;
+	// The sequence number of the last part expected to be received before being ready to assemble.
+	uint32 LastPartSequenceNumber = ~0U;
 	uint32 FirstPayloadBitCount = 0;
 	bool bIsReadyToAssemble = false;
-	const USequentialPartialNetBlobHandlerConfig* PartialNetBlobHandlerConfig = nullptr;
+	bool bIsBrokenSequence = false;
+	bool bIsProcessingReliable = false;
 };
 
 }

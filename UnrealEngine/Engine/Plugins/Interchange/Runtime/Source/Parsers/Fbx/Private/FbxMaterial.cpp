@@ -37,6 +37,16 @@ namespace UE
 
 			const UInterchangeTexture2DNode* FFbxMaterial::CreateTexture2DNode(UInterchangeBaseNodeContainer& NodeContainer, const FString& TextureFilePath)
 			{
+				if (TextureFilePath.IsEmpty())
+				{
+					return nullptr;
+				}
+				FString NormalizeFilePath = TextureFilePath;
+				FPaths::NormalizeFilename(NormalizeFilePath);
+				if (!FPaths::FileExists(NormalizeFilePath))
+				{
+					return nullptr;
+				}
 				const FString TextureName = FPaths::GetBaseFilename(TextureFilePath);
 				const FString TextureNodeID = UInterchangeTextureNode::MakeNodeUid(TextureName);
 
@@ -45,17 +55,16 @@ namespace UE
 					return TextureNode;
 				}
 
-				UInterchangeTexture2DNode* NewTextureNode = UInterchangeTexture2DNode::Create(&NodeContainer, TextureName);
+				UInterchangeTexture2DNode* NewTextureNode = UInterchangeTexture2DNode::Create(&NodeContainer, TextureNodeID);
+				NewTextureNode->SetDisplayLabel(TextureName);
 
 				//All texture translator expect a file as the payload key
-				FString NormalizeFilePath = TextureFilePath;
-				FPaths::NormalizeFilename(NormalizeFilePath);
 				NewTextureNode->SetPayLoadKey(NormalizeFilePath);
 
 				return NewTextureNode;
 			}
 
-			const UInterchangeShaderNode* FFbxMaterial::CreateTextureSampler(FbxFileTexture* FbxTexture, UInterchangeBaseNodeContainer& NodeContainer, const FString& ShaderUniqueID)
+			const UInterchangeShaderNode* FFbxMaterial::CreateTextureSampler(FbxFileTexture* FbxTexture, UInterchangeBaseNodeContainer& NodeContainer, const FString& ShaderUniqueID, const FString& InputName)
 			{
 				using namespace Materials::Standard::Nodes;
 
@@ -65,8 +74,7 @@ namespace UE
 				}
 
 				const FString TextureFilename = FbxTexture ? UTF8_TO_TCHAR(FbxTexture->GetFileName()) : TEXT("");
-				const FString TextureName = FPaths::GetBaseFilename(TextureFilename);
-				const FString NodeName = TEXT("Sampler_") + TextureName;
+				const FString NodeName = TEXT("Sampler_") + InputName;
 
 				// Return already created node if applicable.
 				const FString SamplerNodeUid = UInterchangeShaderNode::MakeNodeUid(NodeName, ShaderUniqueID);
@@ -76,16 +84,19 @@ namespace UE
 				}
 
 				UInterchangeShaderNode* TextureSampleShader = UInterchangeShaderNode::Create(&NodeContainer, NodeName, ShaderUniqueID);
-				TextureSampleShader->SetDisplayLabel(TextureName);
+				TextureSampleShader->SetDisplayLabel(InputName);
 				TextureSampleShader->SetCustomShaderType(TextureSample::Name.ToString());
 
 				// Return incomplete texture sampler if texture file does not exist
 				if (TextureFilename.IsEmpty() || !FPaths::FileExists(TextureFilename))
 				{
 					const UInterchangeBaseNode* ShaderGraphNode = NodeContainer.GetNode(ShaderUniqueID);
-					UInterchangeResultTextureWarning_TextureFileDoNotExist* Message = Parser.AddMessage<UInterchangeResultTextureWarning_TextureFileDoNotExist>();
-					Message->TextureName = TextureFilename;
-					Message->MaterialName = ShaderGraphNode ? ShaderGraphNode->GetDisplayLabel() : TEXT("Unknown");
+					if(!GIsAutomationTesting)
+					{
+						UInterchangeResultTextureWarning_TextureFileDoNotExist* Message = Parser.AddMessage<UInterchangeResultTextureWarning_TextureFileDoNotExist>();
+						Message->TextureName = TextureFilename;
+						Message->MaterialName = ShaderGraphNode ? ShaderGraphNode->GetDisplayLabel() : TEXT("Unknown");
+					}
 
 					return TextureSampleShader;
 				}
@@ -96,7 +107,7 @@ namespace UE
 
 				if (!FMath::IsNearlyEqual(FbxTexture->GetScaleU(), 1.0) || !FMath::IsNearlyEqual(FbxTexture->GetScaleV(), 1.0))
 				{
-					UInterchangeShaderNode* TextureCoordinateShader = UInterchangeShaderNode::Create(&NodeContainer, TextureName + TEXT("_Coordinate"), ShaderUniqueID);
+					UInterchangeShaderNode* TextureCoordinateShader = UInterchangeShaderNode::Create(&NodeContainer, InputName + TEXT("_Coordinate"), ShaderUniqueID);
 					TextureCoordinateShader->SetCustomShaderType(TextureCoordinate::Name.ToString());
 
 					TextureCoordinateShader->AddFloatAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(TextureCoordinate::Inputs::UTiling.ToString()), (float)FbxTexture->GetScaleU());
@@ -109,7 +120,7 @@ namespace UE
 			}
 
 			bool FFbxMaterial::ConvertPropertyToShaderNode(UInterchangeBaseNodeContainer& NodeContainer, UInterchangeShaderGraphNode* ShaderGraphNode, FbxProperty& Property, float Factor, FName InputName,
-				TVariant<FLinearColor, float> DefaultValue, bool bInverse)
+														   const TVariant<FLinearColor, float>& DefaultValue, bool bInverse)
 			{
 				using namespace Materials::Standard::Nodes;
 
@@ -160,7 +171,6 @@ namespace UE
 					InputToConnectTo = OneMinus::Inputs::Input.ToString();
 				}
 
-				if (!FMath::IsNearlyEqual(Factor, 1.f))
 				{
 					FString LerpNodeName = InputName.ToString() + TEXT("Lerp");
 					UInterchangeShaderNode* LerpNode = UInterchangeShaderNode::Create(&NodeContainer, LerpNodeName, ShaderGraphNode->GetUniqueID());
@@ -174,9 +184,15 @@ namespace UE
 					{
 						LerpNode->AddLinearColorAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(Lerp::Inputs::B.ToString()), DefaultValue.Get<FLinearColor>());
 					}
+					
+					const FString WeightNodeName = InputName.ToString() + TEXT("MapWeight");
+					UInterchangeShaderNode* WeightNode = UInterchangeShaderNode::Create(&NodeContainer, WeightNodeName, LerpNode->GetUniqueID());
+					WeightNode->SetCustomShaderType(ScalarParameter::Name.ToString());
 
 					const float InverseFactor = 1.f - Factor; // We lerp from A to B and prefer to put the strongest input in A so we need to flip the lerp factor
-					LerpNode->AddFloatAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(Lerp::Inputs::Factor.ToString()), InverseFactor);
+					WeightNode->AddFloatAttribute(UInterchangeShaderPortsAPI::MakeInputParameterKey(ScalarParameter::Attributes::DefaultValue.ToString()), InverseFactor);
+
+					UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(LerpNode, Lerp::Inputs::Factor.ToString() , WeightNode->GetUniqueID());
 
 					UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(NodeToConnectTo, InputToConnectTo, LerpNode->GetUniqueID());
 
@@ -186,15 +202,18 @@ namespace UE
 
 				// Handles max one texture per property.
 				FbxFileTexture* FbxTexture = Property.GetSrcObject<FbxFileTexture>(0);
-				if (const UInterchangeShaderNode* TextureSampleShader = CreateTextureSampler(FbxTexture, NodeContainer, ShaderGraphNode->GetUniqueID()))
+				if (const UInterchangeShaderNode* TextureSampleShader = CreateTextureSampler(FbxTexture, NodeContainer, ShaderGraphNode->GetUniqueID(), InputName.ToString() + TEXT("Map")))
 				{
 					UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(NodeToConnectTo, InputToConnectTo, TextureSampleShader->GetUniqueID());
 				}
 				else
 				{
-					UInterchangeResultTextureWarning_TextureFileDoNotExist* Message = Parser.AddMessage<UInterchangeResultTextureWarning_TextureFileDoNotExist>();
-					Message->TextureName = FbxTexture ? UTF8_TO_TCHAR(FbxTexture->GetFileName()) : TEXT("Undefined");
-					Message->MaterialName = ShaderGraphNode->GetDisplayLabel();
+					if (!GIsAutomationTesting)
+					{
+						UInterchangeResultTextureWarning_TextureFileDoNotExist* Message = Parser.AddMessage<UInterchangeResultTextureWarning_TextureFileDoNotExist>();
+						Message->TextureName = FbxTexture ? UTF8_TO_TCHAR(FbxTexture->GetFileName()) : TEXT("Undefined");
+						Message->MaterialName = ShaderGraphNode->GetDisplayLabel();
+					}
 
 					return false;
 				}
@@ -219,7 +238,7 @@ namespace UE
 				if (MaterialProperty.GetSrcObjectCount<FBXSDK_NAMESPACE::FbxTexture>() > 0)
 				{
 					FbxFileTexture* FbxTexture = MaterialProperty.GetSrcObject<FbxFileTexture>(0);
-					if (const UInterchangeShaderNode* TextureSampleShader = CreateTextureSampler(FbxTexture, NodeContainer, ShaderGraphNode->GetUniqueID()))
+					if (const UInterchangeShaderNode* TextureSampleShader = CreateTextureSampler(FbxTexture, NodeContainer, ShaderGraphNode->GetUniqueID(), TEXT("ShininessMap")))
 					{
 						FString MultiplyNodeName = Phong::Parameters::Shininess.ToString() + TEXT("_Multiply");
 						UInterchangeShaderNode* MultiplyNode = UInterchangeShaderNode::Create(&NodeContainer, MultiplyNodeName, ShaderGraphNode->GetUniqueID());
@@ -348,23 +367,26 @@ namespace UE
 							if (FbxFileTexture* FbxTexture = MaterialProperty.GetSrcObject<FbxFileTexture>(0))
 							{
 								const FString TexturePath = FbxTexture->GetFileName();
-
-								if (const UInterchangeTexture2DNode* TextureNode = CreateTexture2DNode(NodeContainer, TexturePath))
+								if (!TexturePath.IsEmpty() && FPaths::FileExists(TexturePath))
 								{
-									const FString TextureName = FPaths::GetBaseFilename(TexturePath);
+									if (const UInterchangeTexture2DNode* TextureNode = CreateTexture2DNode(NodeContainer, TexturePath))
+									{
+										const FString TextureName = FPaths::GetBaseFilename(TexturePath);
 
-									// NormalFromHeightmap needs TextureObject(not just a sample as it takes multiple samples from it)
-									UInterchangeShaderNode* TextureObjectNode = UInterchangeShaderNode::Create(&NodeContainer, TextureName, ShaderGraphNode->GetUniqueID());
-									TextureObjectNode->SetCustomShaderType(TextureObject::Name.ToString());
-									TextureObjectNode->AddStringAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(TextureObject::Inputs::Texture.ToString()), TextureNode->GetUniqueID());
+										// NormalFromHeightmap needs TextureObject(not just a sample as it takes multiple samples from it)
+										UInterchangeShaderNode* TextureObjectNode = UInterchangeShaderNode::Create(&NodeContainer, TEXT("NormalMap"), ShaderGraphNode->GetUniqueID());
+										TextureObjectNode->SetDisplayLabel(TEXT("NormalMap"));
+										TextureObjectNode->SetCustomShaderType(TextureObject::Name.ToString());
+										TextureObjectNode->AddStringAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(TextureObject::Inputs::Texture.ToString()), TextureNode->GetUniqueID());
 
-									UInterchangeShaderNode* HeightMapNode = UInterchangeShaderNode::Create(&NodeContainer, NormalFromHeightMap::Name.ToString(), ShaderGraphNode->GetUniqueID());
-									HeightMapNode->SetCustomShaderType(NormalFromHeightMap::Name.ToString());
+										UInterchangeShaderNode* HeightMapNode = UInterchangeShaderNode::Create(&NodeContainer, NormalFromHeightMap::Name.ToString(), ShaderGraphNode->GetUniqueID());
+										HeightMapNode->SetCustomShaderType(NormalFromHeightMap::Name.ToString());
 
-									UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(HeightMapNode, NormalFromHeightMap::Inputs::HeightMap.ToString(), TextureObjectNode->GetUniqueID());
-									HeightMapNode->AddFloatAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(NormalFromHeightMap::Inputs::Intensity.ToString()), Factor);
+										UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(HeightMapNode, NormalFromHeightMap::Inputs::HeightMap.ToString(), TextureObjectNode->GetUniqueID());
+										HeightMapNode->AddFloatAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(NormalFromHeightMap::Inputs::Intensity.ToString()), Factor);
 
-									UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(ShaderGraphNode, Materials::Common::Parameters::Normal.ToString(), HeightMapNode->GetUniqueID());
+										UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(ShaderGraphNode, Materials::Common::Parameters::Normal.ToString(), HeightMapNode->GetUniqueID());
+									}
 								}
 							}
 						}
@@ -443,6 +465,12 @@ namespace UE
 					//Only import texture that exist on disk
 					if (!FPaths::FileExists(TextureFilename))
 					{
+						if (!GIsAutomationTesting)
+						{
+							UInterchangeResultTextureWarning_TextureFileDoNotExist* Message = Parser.AddMessage<UInterchangeResultTextureWarning_TextureFileDoNotExist>();
+							Message->TextureName = TextureFilename;
+							Message->MaterialName.Empty();
+						}
 						continue;
 					}
 					//Create a texture node and make it child of the material node
@@ -458,12 +486,22 @@ namespace UE
 			void FFbxMaterial::AddAllNodeMaterials(UInterchangeSceneNode* SceneNode, FbxNode* ParentFbxNode, UInterchangeBaseNodeContainer& NodeContainer)
 			{
 				int32 MaterialCount = ParentFbxNode->GetMaterialCount();
+				TMap<FbxSurfaceMaterial*, int32> UniqueSlotNames;
+				UniqueSlotNames.Reserve(MaterialCount);
 				for (int32 MaterialIndex = 0; MaterialIndex < MaterialCount; ++MaterialIndex)
 				{
 					if (FbxSurfaceMaterial* SurfaceMaterial = ParentFbxNode->GetMaterial(MaterialIndex))
 					{
 						const UInterchangeShaderGraphNode* ShaderGraphNode = AddShaderGraphNode(SurfaceMaterial, NodeContainer);
-						SceneNode->SetSlotMaterialDependencyUid(Parser.GetFbxHelper()->GetFbxObjectName(SurfaceMaterial), ShaderGraphNode->GetUniqueID());
+						
+						int32& SlotMaterialCount = UniqueSlotNames.FindOrAdd(SurfaceMaterial);
+						FString MaterialSlotName = Parser.GetFbxHelper()->GetFbxObjectName(SurfaceMaterial);
+						if (SlotMaterialCount > 0)
+						{
+							MaterialSlotName += TEXT("_Section") + FString::FromInt(SlotMaterialCount);
+						}
+						SceneNode->SetSlotMaterialDependencyUid(MaterialSlotName, ShaderGraphNode->GetUniqueID());
+						SlotMaterialCount++;
 					}
 				}
 			}

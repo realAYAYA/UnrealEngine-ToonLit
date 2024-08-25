@@ -14,27 +14,56 @@
 
 bool FOnlineExternalUIGoogle::ShowLoginUI(const int ControllerIndex, bool bShowOnlineOnly, bool bShowSkipButton, const FOnLoginUIClosedDelegate& Delegate)
 {
-	bool bStarted = false;
 	FString ErrorStr;
+	bool bStarted = false;
 	if (ControllerIndex >= 0 && ControllerIndex < MAX_LOCAL_PLAYERS)
 	{
 		FOnlineIdentityGooglePtr IdentityInt = StaticCastSharedPtr<FOnlineIdentityGoogle>(GoogleSubsystem->GetIdentityInterface());
 		if (IdentityInt.IsValid())
 		{
-			const FGoogleLoginURL& URLDetails = IdentityInt->GetLoginURLDetails();
-			if (URLDetails.IsValid())
-			{
-				const FString RequestedURL = URLDetails.GetURL();
-				bool bShouldContinueLoginFlow = false;
-				FOnLoginRedirectURL OnRedirectURLDelegate = FOnLoginRedirectURL::CreateRaw(this, &FOnlineExternalUIGoogle::OnLoginRedirectURL);
-				FOnLoginFlowComplete OnExternalLoginFlowCompleteDelegate = FOnLoginFlowComplete::CreateRaw(this, &FOnlineExternalUIGoogle::OnExternalLoginFlowComplete, ControllerIndex, Delegate);
-				TriggerOnLoginFlowUIRequiredDelegates(RequestedURL, OnRedirectURLDelegate, OnExternalLoginFlowCompleteDelegate, bShouldContinueLoginFlow);
-				bStarted = bShouldContinueLoginFlow;
-			}
-			else
-			{
-				ErrorStr = TEXT("ShowLoginUI: Url Details not properly configured");
-			}
+			IdentityInt->RetrieveDiscoveryDocument([this, ControllerIndex, Delegate](bool bWasSuccessful)
+				{
+					FString ErrorStr;
+					if (bWasSuccessful)
+					{
+						FOnlineIdentityGooglePtr IdentityInt = StaticCastSharedPtr<FOnlineIdentityGoogle>(GoogleSubsystem->GetIdentityInterface());
+						IdentityInt->UpdateLoginURLWithEndpointData();
+						const FGoogleLoginURL& URLDetails = IdentityInt->GetLoginURLDetails();
+						if (URLDetails.IsValid())
+						{
+							const FString RequestedURL = URLDetails.GetURL();
+							bool bShouldContinueLoginFlow = false;
+							FOnLoginRedirectURL OnRedirectURLDelegate = FOnLoginRedirectURL::CreateRaw(this, &FOnlineExternalUIGoogle::OnLoginRedirectURL);
+							FOnLoginFlowComplete OnExternalLoginFlowCompleteDelegate = FOnLoginFlowComplete::CreateRaw(this, &FOnlineExternalUIGoogle::OnExternalLoginFlowComplete, ControllerIndex, Delegate);
+							TriggerOnLoginFlowUIRequiredDelegates(RequestedURL, OnRedirectURLDelegate, OnExternalLoginFlowCompleteDelegate, bShouldContinueLoginFlow);
+							if (bShouldContinueLoginFlow)
+							{
+								return;
+							}
+							else
+							{
+								ErrorStr = TEXT("ShowLoginUI: Login Flow interrupted");
+							}
+						}
+						else
+						{
+							ErrorStr = TEXT("ShowLoginUI: Url Details not properly configured");
+						}
+					}
+					else
+					{
+						ErrorStr = TEXT("ShowLoginUI: Could not retrieve Discovery Document");
+					}
+
+					FOnlineError Error;
+					Error.SetFromErrorCode(TEXT(""));
+
+					GoogleSubsystem->ExecuteNextTick([ControllerIndex, Delegate, Error = MoveTemp(Error)]()
+						{
+							Delegate.ExecuteIfBound(nullptr, ControllerIndex, Error);
+						});
+				});
+				bStarted = true;
 		}
 		else
 		{
@@ -55,7 +84,7 @@ bool FOnlineExternalUIGoogle::ShowLoginUI(const int ControllerIndex, bool bShowO
 
 		GoogleSubsystem->ExecuteNextTick([ControllerIndex, Delegate, Error = MoveTemp(Error)]()
 		{
-			Delegate.ExecuteIfBound(nullptr, ControllerIndex, FOnlineError(EOnlineErrorResult::Unknown));
+			Delegate.ExecuteIfBound(nullptr, ControllerIndex, Error);
 		});
 	}
 
@@ -102,49 +131,55 @@ FLoginFlowResult FOnlineExternalUIGoogle::OnLoginRedirectURL(const FString& Redi
 				}
 
 				const FString* State = ParamsMap.Find(GOOGLE_STATE_TOKEN);
-				if (State)
+				if ((URLDetails.State.IsEmpty() && !State) ||
+					(!URLDetails.State.IsEmpty() && State && URLDetails.State == *State))
 				{
-					if (URLDetails.State == *State)
+					const FString* AccessToken = ParamsMap.Find(GOOGLE_ACCESS_TOKEN);
+					if (AccessToken)
 					{
-						const FString* AccessToken = ParamsMap.Find(GOOGLE_ACCESS_TOKEN);
-						if (AccessToken)
+						Result.Error.bSucceeded = true;
+						Result.Token = *AccessToken;
+					}
+					else
+					{
+						const FString* ErrorCode = ParamsMap.Find(GOOGLE_ERRORCODE_TOKEN);
+						if (ErrorCode)
 						{
-							Result.Error.bSucceeded = true;
-							Result.Token = *AccessToken;
-						}
-						else
-						{
-							const FString* ErrorCode = ParamsMap.Find(GOOGLE_ERRORCODE_TOKEN);
-							if (ErrorCode)
+							if (*ErrorCode == GOOGLE_ERRORCODE_DENY)
 							{
-								if (*ErrorCode == GOOGLE_ERRORCODE_DENY)
-								{
-									Result.Error.ErrorRaw = LOGIN_CANCELLED;
-									Result.Error.ErrorMessage = FText::FromString(LOGIN_CANCELLED);
-									Result.Error.ErrorCode = LOGIN_CANCELLED;
-									Result.Error.ErrorMessage = NSLOCTEXT("GoogleAuth", "GoogleAuthDeny", "Google Auth Denied");
-									Result.NumericErrorCode = -1;
-								}
-								else
-								{
-									Result.Error.ErrorRaw = RedirectURL;
-									Result.Error.ErrorCode = *ErrorCode;
-									// there is no descriptive error text
-									Result.Error.ErrorMessage = NSLOCTEXT("GoogleAuth", "GoogleAuthError", "Google Auth Error");
-									// there is no error code
-									Result.NumericErrorCode = 0;
-								}
+								Result.Error.ErrorRaw = LOGIN_CANCELLED;
+								Result.Error.ErrorMessage = FText::FromString(LOGIN_CANCELLED);
+								Result.Error.ErrorCode = LOGIN_CANCELLED;
+								Result.Error.ErrorMessage = NSLOCTEXT("GoogleAuth", "GoogleAuthDeny", "Google Auth Denied");
+								Result.NumericErrorCode = -1;
 							}
 							else
 							{
-								// Set some default in case parsing fails
-								Result.Error.ErrorRaw = LOGIN_ERROR_UNKNOWN;
-								Result.Error.ErrorMessage = FText::FromString(LOGIN_ERROR_UNKNOWN);
-								Result.Error.ErrorCode = LOGIN_ERROR_UNKNOWN;
-								Result.NumericErrorCode = -2;
+								Result.Error.ErrorRaw = RedirectURL;
+								Result.Error.ErrorCode = *ErrorCode;
+								// there is no descriptive error text
+								Result.Error.ErrorMessage = NSLOCTEXT("GoogleAuth", "GoogleAuthError", "Google Auth Error");
+								// there is no error code
+								Result.NumericErrorCode = 0;
 							}
 						}
+						else
+						{
+							// Set some default in case parsing fails
+							Result.Error.ErrorRaw = LOGIN_ERROR_UNKNOWN;
+							Result.Error.ErrorMessage = FText::FromString(LOGIN_ERROR_UNKNOWN);
+							Result.Error.ErrorCode = LOGIN_ERROR_UNKNOWN;
+							Result.NumericErrorCode = -2;
+						}
 					}
+				}
+				else
+				{
+					// Set some default in case parsing fails
+					Result.Error.ErrorRaw = LOGIN_ERROR_UNKNOWN;
+					Result.Error.ErrorMessage = FText::FromString(LOGIN_ERROR_UNKNOWN);
+					Result.Error.ErrorCode = LOGIN_ERROR_UNKNOWN;
+					Result.NumericErrorCode = -2;
 				}
 			}
 		}

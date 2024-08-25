@@ -2,6 +2,7 @@
 
 #include "IBuildManifestSet.h"
 #include "Algo/Accumulate.h"
+#include "Algo/Transform.h"
 
 #include "BuildPatchSettings.h"
 
@@ -29,10 +30,10 @@ namespace BuildPatchServices
 	class FBuildPatchManifestSet : public IBuildManifestSet
 	{
 		// Lookup for data references.
-		typedef TTuple<FChunkInfo const* const, FBuildPatchAppManifest const * const> FDataReference;
+		typedef TTuple<FChunkInfo const* const, FBuildPatchAppManifest const * const, FBuildPatchInstallerAction const * const> FDataReference;
 		TMap<FGuid, FDataReference> DataLookup;
 		// Lookup for file references.
-		typedef TTuple<FFileManifest const* const, FBuildPatchAppManifest const * const> FFileReference;
+		typedef TTuple<FFileManifest const* const, FBuildPatchAppManifest const * const, FBuildPatchInstallerAction const * const> FFileReference;
 		TMap<FString, FFileReference> CurrentFileLookup;
 		TMap<FString, FFileReference> NewFileLookup;
 	public:
@@ -46,14 +47,14 @@ namespace BuildPatchServices
 				{
 					for (const TPair<FGuid, const BuildPatchServices::FChunkInfo*>& ChunkInfoPair : Manifest.ChunkInfoLookup)
 					{
-						DataLookup.Add(ChunkInfoPair.Key, FDataReference{ ChunkInfoPair.Value, &Manifest });
+						DataLookup.Add(ChunkInfoPair.Key, FDataReference{ ChunkInfoPair.Value, &Manifest, &InstallerAction });
 					}
 				}
 				if (!InstallerAction.IsInstall())
 				{
 					for (const TPair<FStringView, const BuildPatchServices::FFileManifest*>& FileManifestPair : InstallerAction.GetCurrentManifest().FileManifestLookup)
 					{
-						CurrentFileLookup.Add(FString(FileManifestPair.Key), FFileReference{ FileManifestPair.Value, InstallerAction.TryGetCurrentManifest() });
+						CurrentFileLookup.Add(InstallerAction.GetInstallSubdirectory() / FString(FileManifestPair.Key), FFileReference{ FileManifestPair.Value, InstallerAction.TryGetCurrentManifest(), &InstallerAction });
 					}
 				}
 			}
@@ -63,19 +64,30 @@ namespace BuildPatchServices
 			for (int32 Idx = InstallerActions.Num() - 1; Idx >= 0; --Idx)
 			{
 				FBuildPatchInstallerAction& InstallerAction = InstallerActions[Idx];
-				if (!InstallerAction.IsUninstall())
-				{
-					InstallerAction.SetTaggedFiles(InstallerAction.GetTaggedFiles().Difference(VisitedFiles));
-					VisitedFiles.Append(InstallerAction.GetTaggedFiles());
-				}
+				const bool bIsUninstall = InstallerAction.IsUninstall();
+				TSet<FString> FilesToFilter;
 				// Ensure that all tagged files, have their new file manifest in the lookup, and current equiv in the lookup in case of multiple file references.
 				for (const FString& TaggedFile : InstallerAction.GetTaggedFiles())
 				{
-					NewFileLookup.Add(TaggedFile, FFileReference{ InstallerAction.GetInstallManifest().FileManifestLookup[TaggedFile], InstallerAction.TryGetInstallManifest() });
+					FString FullFilename = InstallerAction.GetInstallSubdirectory() / TaggedFile;
+					if (!bIsUninstall)
+					{
+						bool bDuplicateFilename = false;
+						VisitedFiles.Add(FullFilename, &bDuplicateFilename);
+						if (bDuplicateFilename)
+						{
+							FilesToFilter.Add(TaggedFile);
+						}
+					}
 					if (!InstallerAction.IsInstall() && InstallerAction.GetCurrentManifest().FileManifestLookup.Contains(TaggedFile))
 					{
-						CurrentFileLookup.Add(TaggedFile, FFileReference{ InstallerAction.GetCurrentManifest().FileManifestLookup[TaggedFile], InstallerAction.TryGetCurrentManifest() });
+						CurrentFileLookup.Add(FullFilename, FFileReference{ InstallerAction.GetCurrentManifest().FileManifestLookup[TaggedFile], InstallerAction.TryGetCurrentManifest(), &InstallerAction });
 					}
+					NewFileLookup.Add(MoveTemp(FullFilename), FFileReference{ InstallerAction.GetInstallManifest().FileManifestLookup[TaggedFile], InstallerAction.TryGetInstallManifest(), &InstallerAction });
+				}
+				if (FilesToFilter.Num() > 0)
+				{
+					InstallerAction.SetTaggedFiles(InstallerAction.GetTaggedFiles().Difference(FilesToFilter));
 				}
 			}
 		}
@@ -97,17 +109,14 @@ namespace BuildPatchServices
 
 		virtual void GetInstallResumeIdsForFile(const FString& BuildFile, TSet<FString>& ResumeIds, bool bIncludeLegacy) const
 		{
-			for (const FBuildPatchInstallerAction& InstallerAction : InstallerActions)
+			const FFileReference* LookupResult = NewFileLookup.Find(BuildFile);
+			if (LookupResult)
 			{
-				if (InstallerAction.GetTaggedFiles().Contains(BuildFile))
+				if (bIncludeLegacy)
 				{
-					if (bIncludeLegacy)
-					{
-						ResumeIds.Add(InstallerAction.GetInstallManifest().GetAppName() + InstallerAction.GetInstallManifest().GetVersionString());
-					}
-					ResumeIds.Add(InstallerAction.GetInstallManifest().GetBuildId());
-					return;
+					ResumeIds.Add(LookupResult->Get<2>()->GetInstallManifest().GetAppName() + LookupResult->Get<2>()->GetInstallManifest().GetVersionString());
 				}
+				ResumeIds.Add(LookupResult->Get<2>()->GetInstallManifest().GetBuildId());
 			}
 		}
 
@@ -149,12 +158,12 @@ namespace BuildPatchServices
 			return false;
 		}
 
-		virtual FString GetDataFilename(const FString& RootDirectory, const FGuid& DataGuid) const override
+		virtual FString GetDataFilename(const FGuid& DataGuid) const override
 		{
 			FDataReference const * const LookupResult = DataLookup.Find(DataGuid);
 			if (LookupResult)
 			{
-				return FBuildPatchUtils::GetDataFilename(*LookupResult->Get<1>(), RootDirectory, DataGuid);
+				return LookupResult->Get<2>()->GetCloudSubdirectory() / FBuildPatchUtils::GetDataFilename(*LookupResult->Get<1>(), DataGuid);
 			}
 			return FString();
 		}
@@ -175,11 +184,14 @@ namespace BuildPatchServices
 
 		virtual void GetOutdatedFiles(const FString& InstallDirectory, TSet<FString>& OutdatedFiles) const override
 		{
+			TSet<FString> TempFileSet;
 			for (const FBuildPatchInstallerAction& InstallerAction : InstallerActions)
 			{
 				if (!InstallerAction.IsUninstall())
 				{
-					InstallerAction.GetInstallManifest().GetOutdatedFiles(InstallerAction.TryGetCurrentManifest(), InstallDirectory, InstallerAction.GetTaggedFiles(), OutdatedFiles);
+					TempFileSet.Reset();
+					InstallerAction.GetInstallManifest().GetOutdatedFiles(InstallerAction.TryGetCurrentManifest(), InstallDirectory / InstallerAction.GetInstallSubdirectory(), InstallerAction.GetTaggedFiles(), TempFileSet);
+					Algo::Transform(TempFileSet, OutdatedFiles, [&](const FString& Filename) { return InstallerAction.GetInstallSubdirectory() / Filename; });
 				}
 			}
 		}
@@ -194,9 +206,10 @@ namespace BuildPatchServices
 				{
 					for (const FString& TrackedFile : Manifest.GetBuildFileList())
 					{
-						if (!NewFileLookup.Contains(TrackedFile))
+						const FString FullFilename = InstallerAction.GetInstallSubdirectory() / TrackedFile;
+						if (!NewFileLookup.Contains(FullFilename))
 						{
-							FilesToRemove.Add(TrackedFile);
+							FilesToRemove.Add(FullFilename);
 						}
 					}
 				}
@@ -254,7 +267,7 @@ namespace BuildPatchServices
 						PreInfo.AppName = Manifest.GetAppName();
 						PreInfo.Args = Manifest.GetPrereqArgs();
 						PreInfo.Name = Manifest.GetPrereqName();
-						PreInfo.Path = Manifest.GetPrereqPath();
+						PreInfo.Path = InstallerAction.GetInstallSubdirectory() / Manifest.GetPrereqPath();
 						PreInfo.VersionString = Manifest.GetVersionString();
 						PreInfo.bIsRepair = InstallerAction.IsRepair();
 					}
@@ -264,23 +277,21 @@ namespace BuildPatchServices
 
 		virtual void GetFilesTaggedForRepair(TSet<FString>& Filenames) const override
 		{
-			for (const FBuildPatchInstallerAction& InstallerAction : InstallerActions)
+			for (const TPair<FString, FFileReference>& NewFileReference : NewFileLookup)
 			{
-				if (InstallerAction.IsRepair())
+				if (NewFileReference.Value.Get<2>()->IsRepair())
 				{
-					Filenames.Append(InstallerAction.GetTaggedFiles());
+					Filenames.Add(NewFileReference.Key);
 				}
 			}
 		}
 
 		virtual bool IsFileRepairAction(const FString& Filename) const override
 		{
-			for (const FBuildPatchInstallerAction& InstallerAction : InstallerActions)
+			FFileReference const * const LookupResult = NewFileLookup.Find(Filename);
+			if (LookupResult)
 			{
-				if (InstallerAction.IsRepair() && InstallerAction.GetTaggedFiles().Contains(Filename))
-				{
-					return true;
-				}
+				return LookupResult->Get<2>()->IsRepair();
 			}
 			return false;
 		}

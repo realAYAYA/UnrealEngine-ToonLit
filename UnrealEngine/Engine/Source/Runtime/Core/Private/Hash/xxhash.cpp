@@ -11,7 +11,7 @@
 
 THIRD_PARTY_INCLUDES_START
 #define XXH_INLINE_ALL
-#include "ThirdParty/xxhash/xxhash.h"
+#include <xxhash.h>
 THIRD_PARTY_INCLUDES_END
 
 template <typename HashType>

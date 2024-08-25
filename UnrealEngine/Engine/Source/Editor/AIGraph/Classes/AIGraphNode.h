@@ -100,6 +100,12 @@ class AIGRAPH_API UAIGraphNode : public UEdGraphNode
 	/** updates ClassData from node instance */
 	virtual void UpdateNodeClassData();
 
+	/**
+	 * Checks for any errors in this node and updates ErrorMessage with any resulting message
+	 * Called every time the graph is serialized (i.e. loaded, saved, execution index changed, etc)
+	 */
+	virtual void UpdateErrorMessage();
+
 	/** Check if node instance uses blueprint for its implementation */
 	bool UsesBlueprint() const;
 

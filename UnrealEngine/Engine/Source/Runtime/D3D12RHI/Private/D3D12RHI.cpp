@@ -7,6 +7,7 @@
 #include "D3D12RHIPrivate.h"
 #include "RHIStaticStates.h"
 #include "OneColorShader.h"
+#include "DataDrivenShaderPlatformInfo.h"
 
 #include "D3D12AmdExtensions.h"
 #include "D3D12IntelExtensions.h"
@@ -206,6 +207,8 @@ FD3D12DynamicRHI::FD3D12DynamicRHI(const TArray<TSharedPtr<FD3D12Adapter>>& Chos
 	GMaxShadowDepthBufferSizeY = GMaxTextureDimensions;
 	GRHISupportsArrayIndexFromAnyShader = true;
 
+	GMaxTextureSamplers = FMath::Min<int32>(MAX_SAMPLERS, (GetAdapter().GetResourceBindingTier() >= D3D12_RESOURCE_BINDING_TIER_2 ? D3D12_MAX_SHADER_VISIBLE_SAMPLER_HEAP_SIZE : D3D12_COMMONSHADER_SAMPLER_REGISTER_COUNT));
+
 	GRHIMaxDispatchThreadGroupsPerDimension.X = D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION;
 	GRHIMaxDispatchThreadGroupsPerDimension.Y = D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION;
 	GRHIMaxDispatchThreadGroupsPerDimension.Z = D3D12_CS_DISPATCH_MAX_THREAD_GROUPS_PER_DIMENSION;
@@ -255,13 +258,17 @@ FD3D12DynamicRHI::FD3D12DynamicRHI(const TArray<TSharedPtr<FD3D12Adapter>>& Chos
 	GRHISupportsFrameCyclesBubblesRemoval = true;
 	GRHISupportsGPUTimestampBubblesRemoval = true;
 	GRHISupportsRHIOnTaskThread = true;
+
+	GRHIGlobals.NeedsShaderUnbinds = true;
 }
 
 void FD3D12DynamicRHI::PostInit()
 {
-	if (GRHISupportsRayTracing)
+	for (TSharedPtr<FD3D12Adapter>& Adapter : ChosenAdapters)
 	{
-		for (TSharedPtr<FD3D12Adapter>& Adapter : ChosenAdapters)
+		Adapter->InitializeExplicitDescriptorHeap();
+
+		if (GRHISupportsRayTracing)
 		{
 			Adapter->InitializeRayTracing();
 		}
@@ -845,6 +852,52 @@ void FD3D12DynamicRHI::HandleGpuTimeout(FD3D12Payload* Payload, double SecondsSi
 		, GetD3DCommandQueueTypeName(Payload->Queue.QueueType)
 		, SecondsSinceSubmission
 	);
+}
+
+void FD3D12DynamicRHI::SetupD3D12Debug()
+{
+	// Use a debug device if specified on the command line.
+	if (FParse::Param(FCommandLine::Get(), TEXT("d3ddebug")) ||
+		FParse::Param(FCommandLine::Get(), TEXT("d3debug")) ||
+		FParse::Param(FCommandLine::Get(), TEXT("dxdebug")))
+	{
+		GD3D12DebugCvar->Set(1, ECVF_SetByCommandline);
+	}
+	if (FParse::Param(FCommandLine::Get(), TEXT("d3dlogwarnings")))
+	{
+		GD3D12DebugCvar->Set(2, ECVF_SetByCommandline);
+	}
+	if (FParse::Param(FCommandLine::Get(), TEXT("d3dbreakonwarning")))
+	{
+		GD3D12DebugCvar->Set(3, ECVF_SetByCommandline);
+	}
+	if (FParse::Param(FCommandLine::Get(), TEXT("d3dcontinueonerrors")))
+	{
+		GD3D12DebugCvar->Set(4, ECVF_SetByCommandline);
+	}
+	GRHIGlobals.IsDebugLayerEnabled = (GD3D12DebugCvar.GetValueOnAnyThread() > 0);
+
+}
+
+void FD3D12DynamicRHI::RHIRunOnQueue(ED3D12RHIRunOnQueueType QueueType, TFunction<void(ID3D12CommandQueue*)>&& CodeToRun, bool bWaitForSubmission)
+{
+	FGraphEventRef SubmissionEvent;
+
+	FD3D12Payload* Payload = new FD3D12Payload(GetRHIDevice(0), (QueueType == ED3D12RHIRunOnQueueType::Graphics) ?  ED3D12QueueType::Direct : ED3D12QueueType::Copy);
+	Payload->PreExecuteCallback = MoveTemp(CodeToRun);
+
+	if (bWaitForSubmission)
+	{
+		SubmissionEvent = FGraphEvent::CreateGraphEvent();
+		Payload->SubmissionEvent = SubmissionEvent;
+	}
+
+	SubmitPayloads(MakeArrayView(&Payload, 1));
+
+	if (SubmissionEvent && !SubmissionEvent->IsComplete())
+	{
+		SubmissionEvent->Wait();
+	}
 }
 
 const TCHAR* LexToString(DXGI_FORMAT Format)

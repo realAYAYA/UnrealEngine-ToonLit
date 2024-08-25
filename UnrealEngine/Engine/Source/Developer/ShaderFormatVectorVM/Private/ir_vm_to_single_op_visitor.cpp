@@ -45,7 +45,7 @@ public:
 	{
 	}
 
-	virtual ir_visitor_status visit_enter(ir_swizzle* swiz)
+	virtual ir_visitor_status visit_enter(ir_swizzle* swiz) override
 	{
 		expression_stack.Push(swiz);
 		swiz->val->accept(this);
@@ -61,7 +61,7 @@ public:
 		return visit_continue_with_parent;
 	}
 
-	virtual ir_visitor_status visit_enter(ir_expression* expr)
+	virtual ir_visitor_status visit_enter(ir_expression* expr) override
 	{
 		check(base_ir->next && base_ir->prev);
 		assign_has_expressions = true;
@@ -96,7 +96,7 @@ public:
 		return visit_continue_with_parent;
 	}
 
-	virtual ir_visitor_status visit_enter(ir_assignment* assign)
+	virtual ir_visitor_status visit_enter(ir_assignment* assign) override
 	{
 		check(base_ir->next && base_ir->prev);
 		assign_has_expressions = false;
@@ -118,7 +118,7 @@ public:
 		return visit_continue_with_parent;
 	}
 
-	virtual ir_visitor_status visit_enter(ir_call* call)
+	virtual ir_visitor_status visit_enter(ir_call* call) override
 	{
 		check(base_ir->next && base_ir->prev);
 		assign_has_expressions = true;

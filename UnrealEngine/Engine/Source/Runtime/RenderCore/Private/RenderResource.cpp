@@ -18,11 +18,6 @@
 /** Whether to enable mip-level fading or not: +1.0f if enabled, -1.0f if disabled. */
 float GEnableMipLevelFading = 1.0f;
 
-bool GFreeStructuresOnRHIBufferCreation = true;
-FAutoConsoleVariableRef CVarFreeStructuresOnRHIBufferCreation(
-	TEXT("r.FreeStructuresOnRHIBufferCreation"),
-	GFreeStructuresOnRHIBufferCreation,
-	TEXT("Toggles experimental method for freeing helper structures that own the resource arrays after submitting to RHI instead of in the callback sink."));
 
 class FRenderResourceList
 {
@@ -56,7 +51,7 @@ public:
 		}
 		else
 		{
-			Index = FreeIndexList.Pop(false);
+			Index = FreeIndexList.Pop(EAllowShrinking::No);
 			ResourceList[Index] = Resource;
 		}
 		Mutex.Unlock();
@@ -164,7 +159,7 @@ void FRenderResource::ChangeFeatureLevel(ERHIFeatureLevel::Type NewFeatureLevel)
 	});
 }
 
-FRHICommandListBase& FRenderResource::GetCommandList()
+FRHICommandListBase& FRenderResource::GetImmediateCommandList()
 {
 	check(IsInRenderingThread());
 	return FRHICommandListExecutor::GetImmediateCommandList();
@@ -256,16 +251,16 @@ FRenderResource::~FRenderResource()
 
 bool FRenderResource::ShouldFreeResourceObject(void* ResourceObject, FResourceArrayInterface* ResourceArray)
 {
-	return GFreeStructuresOnRHIBufferCreation && ResourceObject && (!ResourceArray || !ResourceArray->GetResourceDataSize());
+	return ResourceObject && (!ResourceArray || !ResourceArray->GetResourceDataSize());
 }
 
 FBufferRHIRef FRenderResource::CreateRHIBufferInternal(
+	FRHICommandListBase& RHICmdList,
 	const TCHAR* InDebugName,
 	const FName& InOwnerName,
 	uint32 ResourceCount,
 	EBufferUsageFlags InBufferUsageFlags,
 	FResourceArrayInterface* ResourceArray,
-	bool bRenderThread,
 	bool bWithoutNativeResource)
 {
 	const uint32 SizeInBytes = ResourceArray ? ResourceArray->GetResourceDataSize() : 0;
@@ -274,16 +269,7 @@ FBufferRHIRef FRenderResource::CreateRHIBufferInternal(
 	CreateInfo.OwnerName = InOwnerName;
 	CreateInfo.bWithoutNativeResource = bWithoutNativeResource;
 
-	FBufferRHIRef Buffer;
-	if (bRenderThread)
-	{
-		Buffer = FRHICommandListImmediate::Get().CreateVertexBuffer(SizeInBytes, InBufferUsageFlags, CreateInfo);
-	}
-	else
-	{
-		FRHIAsyncCommandList CommandList;
-		Buffer = CommandList->CreateBuffer(SizeInBytes, InBufferUsageFlags | EBufferUsageFlags::VertexBuffer, 0, ERHIAccess::SRVMask, CreateInfo);
-	}
+	FBufferRHIRef Buffer = RHICmdList.CreateBuffer(SizeInBytes, InBufferUsageFlags | EBufferUsageFlags::VertexBuffer, 0, ERHIAccess::VertexOrIndexBuffer | ERHIAccess::SRVMask, CreateInfo);
 
 	Buffer->SetOwnerName(InOwnerName);
 	return Buffer;
@@ -305,19 +291,19 @@ FName FRenderResource::GetOwnerName() const
 #endif
 }
 
-void BeginInitResource(FRenderResource* Resource)
+void BeginInitResource(FRenderResource* Resource, FRenderCommandPipe* RenderCommandPipe)
 {
-	ENQUEUE_RENDER_COMMAND(InitCommand)(
-		[Resource](FRHICommandListImmediate& RHICmdList)
+	ENQUEUE_RENDER_COMMAND(InitCommand)(RenderCommandPipe,
+		[Resource](FRHICommandListBase& RHICmdList)
 		{
 			Resource->InitResource(RHICmdList);
 		});
 }
 
-void BeginUpdateResourceRHI(FRenderResource* Resource)
+void BeginUpdateResourceRHI(FRenderResource* Resource, FRenderCommandPipe* RenderCommandPipe)
 {
-	ENQUEUE_RENDER_COMMAND(UpdateCommand)(
-		[Resource](FRHICommandListImmediate& RHICmdList)
+	ENQUEUE_RENDER_COMMAND(UpdateCommand)(RenderCommandPipe,
+		[Resource](FRHICommandListBase& RHICmdList)
 		{
 			Resource->UpdateRHI(RHICmdList);
 		});
@@ -381,15 +367,15 @@ void EndBatchedRelease()
 	GBatchedReleaseIsActive = false;
 }
 
-void BeginReleaseResource(FRenderResource* Resource)
+void BeginReleaseResource(FRenderResource* Resource, FRenderCommandPipe* RenderCommandPipe)
 {
 	if (GBatchedReleaseIsActive && IsInGameThread())
 	{
 		GBatchedRelease.Add(Resource);
 		return;
 	}
-	ENQUEUE_RENDER_COMMAND(ReleaseCommand)(
-		[Resource](FRHICommandList& RHICmdList)
+	ENQUEUE_RENDER_COMMAND(ReleaseCommand)(RenderCommandPipe,
+		[Resource]
 		{
 			Resource->ReleaseResource();
 		});
@@ -572,6 +558,11 @@ FString FVertexBuffer::GetFriendlyName() const
 	return TEXT("FVertexBuffer");
 }
 
+void FVertexBuffer::SetRHI(const FBufferRHIRef& BufferRHI)
+{
+	VertexBufferRHI = BufferRHI;
+}
+
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // FVertexBufferWithSRV
 
@@ -601,6 +592,10 @@ FString FIndexBuffer::GetFriendlyName() const
 	return TEXT("FIndexBuffer");
 }
 
+void FIndexBuffer::SetRHI(const FBufferRHIRef& BufferRHI)
+{
+	IndexBufferRHI = BufferRHI;
+}
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // FBufferWithRDG
 

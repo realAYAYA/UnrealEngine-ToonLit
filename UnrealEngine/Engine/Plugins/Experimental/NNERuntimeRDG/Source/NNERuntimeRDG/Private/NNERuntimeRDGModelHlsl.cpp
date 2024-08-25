@@ -13,13 +13,13 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 namespace ModelUtils
 {
 
-FOperatorHlsl* OpCreate(const FString& OpName, TConstArrayView<NNE::FTensorDesc> InputTensorDescs, TConstArrayView<NNE::FTensorDesc> OutputTensorDescs, const NNE::FAttributeMap& AttributeMap)
+FOperatorHlsl* OpCreate(const FOperatorDesc& OpDesc, TConstArrayView<NNE::FTensorDesc> InputTensorDescs, TConstArrayView<NNE::FTensorDesc> OutputTensorDescs, const NNE::FAttributeMap& AttributeMap)
 {
-	FOperatorRegistryHlsl::OperatorCreateFunc CreateFn = FOperatorRegistryHlsl::Get()->OpFind(OpName);
+	FOperatorRegistryHlsl::OperatorCreateFunc CreateFn = FOperatorRegistryHlsl::Get()->OpFind(OpDesc);
 
 	if (!CreateFn)
 	{
-		UE_LOG(LogNNE, Warning, TEXT("Hlsl MLOperatorRegistry failed to find operator:%s"), *OpName);
+		UE_LOG(LogNNE, Warning, TEXT("Hlsl MLOperatorRegistry failed to find operator: %s"), *OpDesc.GetFullName());
 		return nullptr;
 	}
 
@@ -27,7 +27,7 @@ FOperatorHlsl* OpCreate(const FString& OpName, TConstArrayView<NNE::FTensorDesc>
 
 	if (!Op->Initialize(InputTensorDescs, OutputTensorDescs, AttributeMap))
 	{
-		UE_LOG(LogNNE, Warning, TEXT("Hlsl runtime: Error initializing operator:%s"), *OpName);
+		UE_LOG(LogNNE, Warning, TEXT("Hlsl runtime: Error initializing operator: %s"), *OpDesc.GetFullName());
 		delete Op;
 		return nullptr;
 	}
@@ -73,8 +73,8 @@ bool FModelInstance::PrepareModelRDG(FRDGBuilder& RDGBuilder)
 		{
 			if (!PooledBuffer.IsValid())
 			{
-				FRDGBufferDesc BufferDesc = FRDGBufferDesc::CreateBufferDesc(Tensor.GetElemByteSize(), Tensor.GetVolume());
-				const FRDGBufferRef TransientRDGBuffer = RDGBuilder.CreateBuffer(BufferDesc, *Tensor.GetName(), ERDGBufferFlags::None);
+				FRDGBufferDesc BufferDesc = FRDGBufferDesc::CreateBufferDesc(Tensor.GetElementByteSize(), Tensor.GetVolume());
+				const FRDGBufferRef TransientRDGBuffer = RDGBuilder.CreateBuffer(BufferDesc, TEXT("NNE.Tensor.Intermediate.Constant"), ERDGBufferFlags::None);
 				const uint8* TensorData = Tensor.GetPreparedData<uint8>().GetData();
 				PooledBuffer = RDGBuilder.ConvertToExternalBuffer(TransientRDGBuffer);
 
@@ -104,6 +104,15 @@ bool FModelInstance::PrepareModelRDG(FRDGBuilder& RDGBuilder)
 	return true;
 }
 
+FModelInstance::~FModelInstance()
+{
+	for (FOperatorHlsl* Operator : Operators)
+	{
+		delete Operator;
+	}
+	Operators.Empty();
+}
+
 bool FModelInstance::Init(TConstArrayView<uint8> ModelData)
 {
 	check(ModelData.Num() > 0);
@@ -123,7 +132,7 @@ bool FModelInstance::Init(TConstArrayView<uint8> ModelData)
 	// Loop over all operators in the model and create them
 	for (int32 Idx = 0; Idx < Format.Operators.Num(); ++Idx)
 	{
-		const FString TypeName = Format.Operators[Idx].TypeName;
+		const FOperatorDesc OperatorDesc {{Format.Operators[Idx].TypeName, Format.Operators[Idx].DomainName}, Format.Operators[Idx].Version};
 		Inputs.Reset();
 		Outputs.Reset();
 		InputsAsWeights.Reset();
@@ -145,11 +154,11 @@ bool FModelInstance::Init(TConstArrayView<uint8> ModelData)
 			AttributeMap.SetAttribute(Desc.Name, Desc.Value);
 		}
 
-		FOperatorHlsl* Op = ModelUtils::OpCreate(TypeName, Inputs, Outputs, AttributeMap);
+		FOperatorHlsl* Op = ModelUtils::OpCreate(OperatorDesc, Inputs, Outputs, AttributeMap);
 
 		if (!Op) //Op.Shader.IsNull())
 		{
-			UE_LOG(LogNNE, Warning, TEXT("Failed to create operator:%s"), *TypeName);
+			UE_LOG(LogNNE, Warning, TEXT("Failed to create operator:%s"), *OperatorDesc.GetFullName());
 
 			//Note: Need to cleanup operators
 			return false;
@@ -261,14 +270,14 @@ int FModelInstance::PrepareTensorShapesAndData()
 			checkCode(AllInitializedTensors[i] = true);
 		}
 
-		const FOperatorHlsl* Op = Operators[Idx];
+		FOperatorHlsl* Op = Operators[Idx];
 
 		if (Op->PrepareOutputs(InputTensors, OutputTensors) != 0)
 		{
 			//Operator could not prepare the output tensors, meaning we can't allocate
 			//output buffer before running the model. This runtime does not support this.
 			UE_LOG(LogNNE, Warning, TEXT("Could not deduce tensor shapes for this model during shape inference, HLSL runtime wont support the model as it need to precompute all shapes for performance reasons."));
-			AllTensorRDGRefs.Reset(AllSymbolicTensorDescs.Num());
+			AllTensorRDGRefs.Reset();
 			return -1;
 		}
 	}
@@ -276,7 +285,7 @@ int FModelInstance::PrepareTensorShapesAndData()
 	checkCode(
 		for (int i = 0; i < AllInitializedTensors.Num(); ++i)
 		{
-			checkf(AllInitializedTensors[i], TEXT("Tensor at index %d, was not initialized by model preparation."));
+			checkf(AllInitializedTensors[i], TEXT("Tensor at index %d, was not initialized by model preparation."), i);
 		};
 	);
 
@@ -326,8 +335,8 @@ void EnqueueTensorUpload(TArray<TRefCountPtr<FRDGPooledBuffer>>& OutExternalRDGR
 					if (Tensor.HasPreparedData())
 					{
 
-						FRDGBufferDesc BufferDesc = FRDGBufferDesc::CreateBufferDesc(Tensor.GetElemByteSize(), Tensor.GetVolume());
-						const FRDGBufferRef TransientRDGBuffer = RDGBuilder.CreateBuffer(BufferDesc, *Tensor.GetName(), ERDGBufferFlags::None);
+						FRDGBufferDesc BufferDesc = FRDGBufferDesc::CreateBufferDesc(Tensor.GetElementByteSize(), Tensor.GetVolume());
+						const FRDGBufferRef TransientRDGBuffer = RDGBuilder.CreateBuffer(BufferDesc, TEXT("NNE.Tensor.Weights"), ERDGBufferFlags::None);
 						const uint8* TensorData = Tensor.GetPreparedData<uint8>().GetData();
 
 						OutExternalRDGResources[i] = RDGBuilder.ConvertToExternalBuffer(TransientRDGBuffer);
@@ -364,20 +373,21 @@ bool FModelInstance::PrepareWeights()
 	return true;
 }
 
-TUniquePtr<UE::NNE::IModelInstanceRDG> FModel::CreateModelInstance()
+TSharedPtr<NNE::IModelInstanceRDG> FModel::CreateModelInstanceRDG()
 {
 	FModelInstance* ModelInstance = new FModelInstance();
 
-	if (!ModelInstance->Init(ModelData))
+	check(ModelData.IsValid());
+	if (!ModelInstance->Init(ModelData->GetView()))
 	{
 		delete ModelInstance;
-		return TUniquePtr<UE::NNE::IModelInstanceRDG>();
+		return TSharedPtr<NNE::IModelInstanceRDG>();
 	}
 
-	UE::NNE::IModelInstanceRDG* IModelInstance = static_cast<UE::NNE::IModelInstanceRDG*>(ModelInstance);
-	return TUniquePtr<UE::NNE::IModelInstanceRDG>(IModelInstance);
+	NNE::IModelInstanceRDG* IModelInstance = static_cast<NNE::IModelInstanceRDG*>(ModelInstance);
+	return TSharedPtr<NNE::IModelInstanceRDG>(IModelInstance);
 }
 
-FModel::FModel(TConstArrayView<uint8> InModelData) : ModelData(InModelData) {}
+FModel::FModel(const TSharedPtr<UE::NNE::FSharedModelData>& InModelData) : ModelData(InModelData) {}
 
 } // namespace UE::NNERuntimeRDG::Private::Hlsl

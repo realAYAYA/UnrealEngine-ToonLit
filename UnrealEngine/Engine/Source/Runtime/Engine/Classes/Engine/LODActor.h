@@ -131,9 +131,6 @@ public:
 	ENGINE_API void AddInstances(const UStaticMesh* InStaticMesh, const UMaterialInterface* InMaterial, const TArray<FTransform>& InTransforms);
 	ENGINE_API void AddInstances(const UStaticMesh* InStaticMesh, const UMaterialInterface* InMaterial, const TArray<FTransform>& InTransforms, const TArray<FCustomPrimitiveData>& InCustomPrimitiveData);
 
-	UE_DEPRECATED(4.27, "Use AddInstances() instead. ")
-	ENGINE_API void SetupImposters(const UMaterialInterface* InImposterMaterial, UStaticMesh* InStaticMesh, const TArray<FTransform>& InTransforms);
-
 	/** Clear all instances stored in this LODActor. */
 	ENGINE_API void ClearInstances();
 
@@ -268,12 +265,7 @@ public:
 	ENGINE_API virtual bool Modify(bool bAlwaysMarkDirty = true) override;
 	ENGINE_API virtual void PreEditChange(FProperty* PropertyThatWillChange) override;
 	ENGINE_API virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
-
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS // Suppress compiler warning on override of deprecated function
-	UE_DEPRECATED(5.0, "Use version that takes FObjectPreSaveContext instead.")
-	ENGINE_API virtual void PreSave(const class ITargetPlatform* TargetPlatform) override;
-	ENGINE_API PRAGMA_ENABLE_DEPRECATION_WARNINGS
-	virtual void PreSave(FObjectPreSaveContext ObjectSaveContext) override;
+	ENGINE_API virtual void PreSave(FObjectPreSaveContext ObjectSaveContext) override;
 #endif // WITH_EDITOR	
 
 	
@@ -323,9 +315,6 @@ public:
 
 	/** Returns instanced static mesh components that represents the imposters found in this LODActor. */
 	TArray<UInstancedStaticMeshComponent*> GetInstancedStaticMeshComponents() const { TArray<typename TDecay<decltype(InstancedStaticMeshComponents[FHLODInstancingKey()])>::Type> ISM; InstancedStaticMeshComponents.GenerateValueArray(ISM); return ISM; }
-
-	UE_DEPRECATED(4.27, "Use GetInstancedStaticMeshComponents() instead. ")
-	TArray<UInstancedStaticMeshComponent*> GetImpostersStaticMeshComponents() const { return GetInstancedStaticMeshComponents(); }
 
 	/** Returns an array of distances that are used to override individual LOD actors min draw distances. */
 	static ENGINE_API const TArray<float>& GetHLODDistanceOverride();

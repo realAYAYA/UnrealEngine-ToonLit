@@ -36,8 +36,29 @@ void UBTTaskNode::SetNextTickTime(uint8* NodeMemory, float RemainingTime) const
 
 EBTNodeResult::Type UBTTaskNode::WrappedExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory) const
 {
-	const UBTNode* NodeOb = bCreateNodeInstance ? GetNodeInstance(OwnerComp, NodeMemory) : this;
-	return NodeOb ? ((UBTTaskNode*)NodeOb)->ExecuteTask(OwnerComp, NodeMemory) : EBTNodeResult::Failed;
+	EBTNodeResult::Type Result = EBTNodeResult::Failed;
+
+	if (const UBTNode* NodeOb = bCreateNodeInstance ? GetNodeInstance(OwnerComp, NodeMemory) : this)
+	{
+		Result = ((UBTTaskNode*)NodeOb)->ExecuteTask(OwnerComp, NodeMemory);
+
+		// Now that the task was executed we need to adjust times when using tick intervals
+		// since `WrappedTickTask` uses `DeltaSeconds` which is accumulated time + current frame DT.
+		// We don't want to pass previously accumulated time to the new task to execute.
+		if (bTickIntervals)
+		{
+			const float AccumulatedDeltaTime = OwnerComp.GetAccumulatedTickDeltaTime();
+			FBTTaskMemory* TaskMemory = GetSpecialNodeMemory<FBTTaskMemory>(NodeMemory);
+
+			// Add accumulated time to `NextTickRemainingTime` set by the task to compensate for the next decrement in `WrappedTickTask`
+			TaskMemory->NextTickRemainingTime += AccumulatedDeltaTime;
+
+			// Assign task accumulated DT to negative current accumulated time/ for the next increment in `WrappedTickTask`
+			TaskMemory->AccumulatedDeltaTime = -AccumulatedDeltaTime;
+		}
+	}
+
+	return Result;
 }
 
 EBTNodeResult::Type UBTTaskNode::WrappedAbortTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory) const

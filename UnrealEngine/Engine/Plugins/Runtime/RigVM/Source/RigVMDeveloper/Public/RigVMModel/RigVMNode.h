@@ -240,6 +240,9 @@ public:
 	// returns true if a control flow block requires slicing
 	virtual const bool IsControlFlowBlockSliced(const FName& InBlockName) const;
 
+	// returns true if the node is within a loop
+	virtual bool IsWithinLoop() const;
+
 	// returns true if the node can be upgraded
 	UFUNCTION(BlueprintPure, Category = RigVMNode)
 	virtual bool CanBeUpgraded() const { return GetUpgradeInfo().IsValid(); }
@@ -308,6 +311,20 @@ public:
 	TSharedPtr<FStructOnScope> GetDecoratorInstance(const FName& InName, bool bUseDefaultValueFromPin = true) const;
 
 	TSharedPtr<FStructOnScope> GetDecoratorInstance(const URigVMPin* InDecoratorPin, bool bUseDefaultValueFromPin = true) const;
+
+	UScriptStruct* GetDecoratorScriptStruct(const FName& InName) const;
+
+	UScriptStruct* GetDecoratorScriptStruct(const URigVMPin* InDecoratorPin) const;
+	
+	virtual bool IsOutDated() const
+	{
+		return false;
+	}
+	
+	virtual FString GetDeprecatedMetadata() const
+	{
+		return FString();
+	}
 
 private:
 

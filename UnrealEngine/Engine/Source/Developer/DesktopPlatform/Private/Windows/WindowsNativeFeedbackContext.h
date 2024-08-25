@@ -4,7 +4,6 @@
 
 #include "CoreMinimal.h"
 #include "Misc/FeedbackContext.h"
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include <CommCtrl.h>
 

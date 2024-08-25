@@ -2,7 +2,6 @@
 
 #include "OpenXREditorModule.h"
 #include "OpenXRAssetDirectory.h"
-#include "OpenXRInputSettings.h"
 #include "OpenXRHMDSettings.h"
 
 #include "ISettingsModule.h"
@@ -21,12 +20,6 @@ void FOpenXREditorModule::StartupModule()
 
 	if (SettingsModule != nullptr)
 	{
-		SettingsModule->RegisterSettings("Project", "Plugins", "OpenXR",
-			LOCTEXT("OpenXRInputSettingsName", "OpenXR Input"),
-			LOCTEXT("OpenXRInputSettingsDescription", "Project settings for OpenXR plugin"),
-			GetMutableDefault<UOpenXRInputSettings>()
-		);
-
 		SettingsModule->RegisterSettings("Project", "Plugins", "OpenXRHMD",
 			LOCTEXT("OpenXRHMDSettingsName", "OpenXR Settings"),
 			LOCTEXT("OpenXRHMDSettingsDescription", "Project settings for OpenXR plugin"),

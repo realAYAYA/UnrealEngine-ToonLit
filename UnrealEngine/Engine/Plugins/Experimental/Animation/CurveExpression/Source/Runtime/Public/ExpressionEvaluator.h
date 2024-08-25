@@ -224,15 +224,13 @@ private:
 		);
 	
 	/** For now we just have built-in functions */
-	friend struct FInitializeBuiltinFunctions;
+	friend struct FBuiltinFunctions;
 	using FunctionType = TFunction<float(TArrayView<const float>)>;
 	struct FFunctionInfo
 	{
 		int32 ArgumentCount;
 		FunctionType FunctionPtr;
 	};
-	static TMap<FName, int32> FunctionNameIndex;
-	static TArray<FFunctionInfo> Functions;
 };
 
 }

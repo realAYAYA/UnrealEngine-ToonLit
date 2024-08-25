@@ -17,8 +17,8 @@ namespace CrossCompiler
 		SHADER_STAGE_VERTEX = 0,
 		SHADER_STAGE_PIXEL,
 		SHADER_STAGE_GEOMETRY,
-		SHADER_STAGE_HULL,
-		SHADER_STAGE_DOMAIN,
+		SHADER_STAGE_MESH,
+        SHADER_STAGE_AMPLIFICATION,
 		NUM_NON_COMPUTE_SHADER_STAGES,
 		SHADER_STAGE_COMPUTE = NUM_NON_COMPUTE_SHADER_STAGES,
 		NUM_SHADER_STAGES,
@@ -79,12 +79,10 @@ namespace CrossCompiler
 		case SHADER_STAGE_VERTEX:	return 'v';
 		case SHADER_STAGE_PIXEL:	return 'p';
 		case SHADER_STAGE_GEOMETRY:	return 'g';
-		case SHADER_STAGE_HULL:		return 'h';
-		case SHADER_STAGE_DOMAIN:	return 'd';
 		case SHADER_STAGE_COMPUTE:	return 'c';
 		default: break;
 		}
-		checkf(0, TEXT("invalid value: ShaderStageIndexToTypeName(ShaderStage = '%c')"), (ANSICHAR)ShaderStage);
+		checkf(0, TEXT("invalid value: ShaderStageIndexToTypeName(ShaderStage = '%u')"), ShaderStage);
 		return 0;
 	}
 
@@ -109,6 +107,7 @@ namespace CrossCompiler
 	{
 		switch (ArrayName)
 		{
+		case 0: // Fallthrough; Used for bindless on some platforms
 		case PACKED_TYPENAME_HIGHP:		return PACKED_TYPEINDEX_HIGHP;
 		case PACKED_TYPENAME_MEDIUMP:	return PACKED_TYPEINDEX_MEDIUMP;
 		case PACKED_TYPENAME_LOWP:		return PACKED_TYPEINDEX_LOWP;

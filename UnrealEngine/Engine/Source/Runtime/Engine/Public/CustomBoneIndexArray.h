@@ -103,8 +103,8 @@ using TTypedIndexArrayView = TTypedIndexRange<IndexType, TArrayView<TArrayViewAr
 
 } // namespace UE::Anim
 
-template<typename ElementType, typename BoneIndexType>
-using TCustomBoneIndexArray = UE::Anim::TTypedIndexRange<BoneIndexType, TArray<ElementType>>;
+template<typename ElementType, typename BoneIndexType, typename InAllocatorType = typename TArray<ElementType>::AllocatorType>
+using TCustomBoneIndexArray = UE::Anim::TTypedIndexRange<BoneIndexType, TArray<ElementType, InAllocatorType>>;
 
 template<typename ElementType, typename BoneIndexType>
 using TCustomBoneIndexArrayView = UE::Anim::TTypedIndexRange<BoneIndexType, TArrayView<ElementType>>;

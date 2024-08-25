@@ -1293,7 +1293,7 @@ bool FParse::SchemeNameFromURI(const TCHAR* URI, FString& OutSchemeName)
 		{
 			if(Idx > 0 && URI[Idx] == TEXT(':'))
 			{
-				OutSchemeName = FString(Idx, URI);
+				OutSchemeName = FString::ConstructFromPtrSize(URI, Idx);
 				return true;
 			}
 			return false;

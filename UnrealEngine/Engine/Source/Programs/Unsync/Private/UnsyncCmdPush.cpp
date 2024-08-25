@@ -40,9 +40,14 @@ CmdPush(const FCmdPushOptions& Options)
 	AlgorithmOptions.WeakHashAlgorithmId   = EWeakHashAlgorithmID::BuzHash;
 	AlgorithmOptions.StrongHashAlgorithmId = EStrongHashAlgorithmID::Blake3_128;
 
+	FComputeBlocksParams ComputeBlocksParams;
+	ComputeBlocksParams.Algorithm		 = AlgorithmOptions;
+	ComputeBlocksParams.BlockSize		 = BlockSize;
+	ComputeBlocksParams.bNeedMacroBlocks = true;
+
 	FDirectoryManifest Manifest;
 	FPath			   ManifestPath	  = Options.Input / ".unsync" / "manifest.bin";	 // TODO: allow manifest path override
-	bool			   bManifestValid = LoadOrCreateDirectoryManifest(Manifest, Options.Input, BlockSize, AlgorithmOptions);
+	bool			   bManifestValid = LoadOrCreateDirectoryManifest(Manifest, Options.Input, ComputeBlocksParams);
 
 	if (!bManifestValid)
 	{
@@ -51,7 +56,7 @@ CmdPush(const FCmdPushOptions& Options)
 	}
 
 	FDirectoryManifestInfo ManifestInfo			= GetManifestInfo(Manifest);
-	FHash160			   ManifestSignature	= ToHash160(ManifestInfo.Signature);
+	FHash160			   ManifestSignature	= ToHash160(ManifestInfo.StableSignature);
 	std::string			   ManifestSignatureStr = BytesToHexString(ManifestSignature.Data, sizeof(ManifestSignature.Data));
 
 	LogManifestInfo(ELogLevel::Debug, ManifestInfo);
@@ -70,9 +75,7 @@ CmdPush(const FCmdPushOptions& Options)
 
 		const bool bUseTls = Options.Remote.bTlsEnable;
 
-		FTlsClientSettings TlsSettings;
-		TlsSettings.Subject			   = Options.Remote.HostAddress.c_str();
-		TlsSettings.bVerifyCertificate = Options.Remote.bTlsVerifyCertificate;
+		FTlsClientSettings TlsSettings = Options.Remote.GetTlsClientSettings();
 
 		if (Options.Remote.StorageNamespace.empty())
 		{
@@ -116,7 +119,7 @@ CmdPush(const FCmdPushOptions& Options)
 
 		if (bPushComplete)
 		{
-			UNSYNC_VERBOSE(L"Push completed successfully", MaxAttempts);
+			UNSYNC_LOG(L"Push completed successfully", MaxAttempts);
 		}
 		else
 		{

@@ -378,7 +378,6 @@ namespace AJA
 			{
 				return Device->GetCard()->GetOutputVerticalInterruptCount(OutCount, Channel);
 			}
-			return false;
 		}
 
 		bool SyncChannelImpl::GetVideoFormat(NTV2VideoFormat& OutVideoFormat)

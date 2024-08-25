@@ -115,7 +115,7 @@ void FOpenGLShaderResourceView::UpdateView()
 		auto const Info = ViewDesc.Texture.SRV.GetViewInfo(Texture);
 
 		Target = Texture->Target;
-		LimitMip = Info.MipRange.First;
+		LimitMip = Info.MipRange.Num == 1 ? Info.MipRange.First : -1;
 
 		ensureMsgf(Info.MipRange.ExclusiveLast() == Texture->GetDesc().NumMips, TEXT("OpenGL RHI does not currently implement creation of SRVs that don't include all mips in the mip tail."));
 		ensureMsgf(Info.bAllSlices, TEXT("SRV array slice selection is currently unimplemented in OpenGL RHI."));

@@ -1,8 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Pch.h"
-#include "StoreSettings.h"
+#include "InstanceInfo.h"
+#include "Lifetime.h"
+#include "Logging.h"
 #include "StoreService.h"
+#include "StoreSettings.h"
 #include "Utils.h"
 #include "Version.h"
 
@@ -13,11 +16,13 @@
 #endif
 
 #if TS_USING(TS_PLATFORM_LINUX) || TS_USING(TS_PLATFORM_MAC)
-#	include <pwd.h>
-#	include <semaphore.h>
-#	include <sched.h>
-#	include <signal.h>
 #	include <cstdarg>
+#	include <ctime>
+#	include <pthread.h>
+#	include <pwd.h>
+#	include <sched.h>
+#	include <semaphore.h>
+#	include <signal.h>
 #	include <sys/file.h>
 #	include <sys/mman.h>
 #	include <sys/stat.h>
@@ -32,6 +37,9 @@
 #else
 #	define TS_DAEMON_THREAD TS_OFF
 #endif
+
+// Check for legacy lock files on Linux and Mac 
+#define TS_LEGACY_LOCK_FILE TS_ON
 
 // {{{1 misc -------------------------------------------------------------------
 
@@ -127,260 +135,176 @@ static void GetUnrealTraceHome(FPath& Out, bool Make=false)
 	}
 }
 
-
-
-
-// {{{1 logging ----------------------------------------------------------------
-
-////////////////////////////////////////////////////////////////////////////////
-#define TS_LOG(Format, ...) \
-	do { FLogging::Log(Format "\n", ##__VA_ARGS__); } while (false)
-
-////////////////////////////////////////////////////////////////////////////////
-class FLogging
-{
-public:
-	static void			Initialize();
-	static void			Shutdown();
-	static void			Log(const char* Format, ...);
-
-private:
-						FLogging();
-						~FLogging();
-						FLogging(const FLogging&) = delete;
-						FLogging(FLogging&&) = default;
-	void				LogImpl(const char* String) const;
-	static FLogging*	Instance;
-	FILE*				File = nullptr;
-};
-
-////////////////////////////////////////////////////////////////////////////////
-FLogging* FLogging::Instance = nullptr;
-
-////////////////////////////////////////////////////////////////////////////////
-FLogging::FLogging()
-{
-	// Find where the logs should be written to. Make sure it exists.
-	FPath LogDir;
-	GetUnrealTraceHome(LogDir, true);
-
-	// Fetch all existing logs.
-	struct FExistingLog
-	{
-		FPath	Path;
-		uint32					Index;
-
-		int32 operator < (const FExistingLog& Rhs) const
-		{
-			return Index < Rhs.Index;
-		}
-	};
-	std::vector<FExistingLog> ExistingLogs;
-	if (std::filesystem::is_directory(LogDir))
-	{
-		for (const auto& DirItem : std::filesystem::directory_iterator(LogDir))
-		{
-			int32 Index = -1;
-			std::string StemUtf8 = DirItem.path().stem().string();
-			sscanf(StemUtf8.c_str(), "Server_%d", &Index);
-			if (Index >= 0)
-			{
-				ExistingLogs.push_back({DirItem.path(), uint32(Index)});
-			}
-		}
-	}
-
-	// Sort and try and tidy up old logs.
-	static int32 MaxLogs = 12; // plus one new one
-	std::sort(ExistingLogs.begin(), ExistingLogs.end());
-	for (int32 i = 0, n = int32(ExistingLogs.size() - MaxLogs); i < n; ++i)
-	{
-		std::error_code ErrorCode;
-		std::filesystem::remove(ExistingLogs[i].Path, ErrorCode);
-	}
-
-
-	// Open the log file (note; can race other instances)
-	uint32 LogIndex = ExistingLogs.empty() ? 0 : ExistingLogs.back().Index;
-	for (uint32 n = LogIndex + 10; File == nullptr && LogIndex < n;)
-	{
-		++LogIndex;
-		char LogName[128];
-		snprintf(LogName, TS_ARRAY_COUNT(LogName), "Server_%d.log", LogIndex);
-		FPath LogPath = LogDir / LogName;
-
-#if TS_USING(TS_PLATFORM_WINDOWS)
-		File = _wfopen(LogPath.c_str(), L"wbxN");
-#else
-		File = fopen(LogPath.c_str(), "wbx");
-#endif
-	}
-}
-
-////////////////////////////////////////////////////////////////////////////////
-FLogging::~FLogging()
-{
-	if (File != nullptr)
-	{
-		fclose(File);
-	}
-}
-
-////////////////////////////////////////////////////////////////////////////////
-void FLogging::Initialize()
-{
-	if (Instance != nullptr)
-	{
-		return;
-	}
-
-	Instance = new FLogging();
-}
-
-////////////////////////////////////////////////////////////////////////////////
-void FLogging::Shutdown()
-{
-	if (Instance == nullptr)
-	{
-		return;
-	}
-
-	delete Instance;
-	Instance = nullptr;
-}
-
-////////////////////////////////////////////////////////////////////////////////
-void FLogging::LogImpl(const char* String) const
-{
-	if (File != nullptr)
-	{
-		fputs(String, File);
-		fflush(File);
-	}
-
-	fputs(String, stdout);
-}
-
-////////////////////////////////////////////////////////////////////////////////
-void FLogging::Log(const char* Format, ...)
-{
-	va_list VaList;
-	va_start(VaList, Format);
-
-	char Buffer[320];
-	vsnprintf(Buffer, TS_ARRAY_COUNT(Buffer), Format, VaList);
-	Buffer[TS_ARRAY_COUNT(Buffer) - 1] = '\0';
-
-	Instance->LogImpl(Buffer);
-
-	va_end(VaList);
-}
-
-
-
-////////////////////////////////////////////////////////////////////////////////
-struct FLoggingScope
-{
-	FLoggingScope()		{ FLogging::Initialize(); }
-	~FLoggingScope()	{ FLogging::Shutdown(); }
-};
-
-
-
 // {{{1 store ------------------------------------------------------------------
 
-////////////////////////////////////////////////////////////////////////////////
-static void ParseOptions(int ArgC, char** ArgV, FStoreSettings* Settings)
-{
-	cxxopts::Options Options("UnrealTraceServer", "Unreal Trace Server");
-	Options.add_options()
-		("storedir", "Default store directory", cxxopts::value<std::string>()->default_value(""))
-		("port",	"TCP port to serve the store on",			cxxopts::value<int>()->default_value("0"))
-		("recport",	"TCP port for the recorder to listen on",	cxxopts::value<int>()->default_value("0"))
-		;
-
-	auto Parsed = Options.parse(ArgC, ArgV);
-
-	if (int Value = Parsed["port"].as<int>())
-	{
-		Settings->StorePort = Value;
-	}
-
-	if (int Value = Parsed["recport"].as<int>())
-	{
-		Settings->RecorderPort = Value;
-	}
-
-	std::string Value = Parsed["storedir"].as<std::string>();
-	if (!Value.empty())
-	{
-		Settings->StoreDir = Value;
-	}
-
-}
-
-
-
-// {{{1 instance-info ----------------------------------------------------------
-
-////////////////////////////////////////////////////////////////////////////////
-struct FInstanceInfo
+struct FOptions 
 {
 public:
-	static const uint32	CurrentVersion =
-#if TS_USING(TS_BUILD_DEBUG)
-		0x8000'0000 |
-#endif
-		((TS_VERSION_PROTOCOL & 0xffff) << 16) | (TS_VERSION_MINOR & 0xffff);
 
-	void				Set();
-	void				WaitForReady() const;
-	bool				IsOlder() const;
-	std::atomic<uint32> Published;
-	uint32				Version;
-	uint32				Pid;
-};
+	enum ParseResults : int {
+		Result_Continue = 0,
+		Result_MissingCommandError,
+		Result_HelpRequested,
+	};
 
-////////////////////////////////////////////////////////////////////////////////
-void FInstanceInfo::Set()
-{
-	Version = CurrentVersion;
-#if TS_USING(TS_PLATFORM_WINDOWS)
-	Pid = GetCurrentProcessId();
-#elif TS_USING(TS_PLATFORM_LINUX) || TS_USING(TS_PLATFORM_MAC)
-	Pid = getpid();
-#endif
-	Published.fetch_add(1, std::memory_order_release);
-}
-
-////////////////////////////////////////////////////////////////////////////////
-void FInstanceInfo::WaitForReady() const
-{
-	// Spin until this instance info is published (by another process)
-#if TS_USING(TS_PLATFORM_WINDOWS)
-	for (;; Sleep(0))
-#else
-	for (;; sched_yield())
-#endif
+	FOptions()
+		: Options("UnrealTraceServer", "Unreal Trace Server"
+			"\n\nUnrealTraceServer acts as a hub between runtimes that are tracing performance "
+			"instrumentation and tools like Unreal Insights that consume and present that "
+			"data for analysis. TCP ports 1981 and 1989 are used, where the former receives "
+			"trace data, and the latter is used by tools to query the server's store.\n")
+		, CurrentCommand(nullptr)
 	{
-		if (Published.load(std::memory_order_acquire))
+		// Positional arguments
+		Options.add_options()
+			("command", "Command to execute", cxxopts::value<std::string>()->default_value(""))
+			;
+		Options.parse_positional({ "command" });
+		Options.positional_help("<cmd>");
+
+		Options.add_options()
+			("help", "Prints help message for each command");
+
+		// Fork and daemon options
+		Options.add_options("settings")
+			("storedir", "Default store directory", cxxopts::value<std::string>()->default_value(""))
+			("port", "TCP port to serve the store on", cxxopts::value<int>()->default_value("0"))
+			("recport", "TCP port for the recorder to listen on", cxxopts::value<int>()->default_value("0"))
+			;
+
+		// AddProc options
+		Options.add_options("sponsor")
+			("sponsor", "Pid to add as sponsor. Required if running in sponsored mode.", cxxopts::value<uint32>()->default_value("0"))
+			;
+	}
+
+	ParseResults Parse(int ArgC, char** ArgV)
+	{
+		Parsed = MoveTemp(Options.parse(ArgC, ArgV));
+		const bool bCommandOk = Parsed["command"].count() == 1;
+		const bool bHelp = Parsed["help"].count() > 0;
+
+		// Check for valid command
+		std::string ParsedCommand = Parsed["command"].as<std::string>();
+		for (FCommandHelp* CommandIt = CommandHelp; CommandIt->Command != nullptr; ++CommandIt)
 		{
-			break;
+			if (strcmp(ParsedCommand.c_str(), CommandIt->Command) == 0)
+			{
+				CurrentCommand = CommandIt;
+				break;
+			}
+		}
+
+		// Update current command help
+		if (!CurrentCommand)
+		{
+			std::stringstream CurrentCommandHelp;
+			CurrentCommandHelp << "<Command>\n\nCommands:\n";
+			for (FCommandHelp* CommandIt = CommandHelp; CommandIt->Command != nullptr; ++CommandIt)
+			{
+				CurrentCommandHelp << "  " << CommandIt->Command << "\t" << CommandIt->ShortText << "\n";
+			}
+			Options.positional_help(CurrentCommandHelp.str());
+		}
+		else
+		{
+			std::stringstream CurrentCommandHelp;
+			CurrentCommandHelp << CurrentCommand->Command << "\n\nCommand:\n  "
+				<< CurrentCommand->ShortText << CurrentCommand->LongText << "\n";
+			Options.positional_help(CurrentCommandHelp.str());
+		}
+
+		if (!bCommandOk)
+		{
+			fputs("Error, unknown command specified. Note that command matching is case sensitive.\n", stderr);
+			PrintHelp();
+			return Result_MissingCommandError;
+		}
+		else if (bHelp)
+		{
+			PrintHelp();
+			return Result_HelpRequested;
+		}
+		
+		return Result_Continue;
+	}
+
+	void ApplyToSettings(FStoreSettings* Settings) const
+	{
+		check(Settings);
+
+		if (int Value = Parsed["port"].as<int>())
+		{
+			Settings->StorePort = Value;
+		}
+
+		if (int Value = Parsed["recport"].as<int>())
+		{
+			Settings->RecorderPort = Value;
+		}
+
+		if (std::string Value = Parsed["storedir"].as<std::string>(); !Value.empty())
+		{
+			Settings->StoreDir = Value;
 		}
 	}
-}
 
-////////////////////////////////////////////////////////////////////////////////
-bool FInstanceInfo::IsOlder() const
-{
-	// Decide which is older; this compiled code or the instance we have a
-	// pointer to.
-	bool bIsOlder = false;
-	bIsOlder |= (Version < FInstanceInfo::CurrentVersion);
-	return bIsOlder;
-}
+	bool GetSponsorPid(uint32& OutSponsorPid) const
+	{
+		if (uint32 Value = Parsed["sponsor"].as<uint32>())
+		{
+			OutSponsorPid = Value;
+			return true;
+		}
+		return false;
+	}
+
+	void PrintHelp() const
+	{
+		std::string HelpText;
+		if (!CurrentCommand)
+		{
+			HelpText = Options.help({"dummy"});
+		}
+		else
+		{
+			std::vector<std::string> HelpGroups;
+			for (auto Group : CurrentCommand->HelpGroups)
+			{
+				HelpGroups.push_back(Group);
+			}
+			HelpText = Options.help(HelpGroups);
+		}
+
+		fputs(HelpText.c_str(), stdout);
+	}
 
 
+private:
+	cxxopts::Options Options;
+	cxxopts::ParseResult Parsed;
+	
+	static struct FCommandHelp
+	{
+		const char* Command;
+		const char* ShortText;
+		const char* LongText;
+		std::vector<const char*> HelpGroups;
+	} CommandHelp[];
+
+	const FCommandHelp* CurrentCommand;
+};
+
+FOptions::FCommandHelp FOptions::CommandHelp[] = {
+	"fork", "	Starts a background server, upgrading any existing instance. ", 
+				"Checks if there is an existing instance running. If the running version is the same "
+				"version or newer that instance is used. If a sponsor pid is specified that pid is added "
+				"to the running instance.", {"settings", "sponsor"},
+	"daemon", "The mode that a background server runs in. ", "", {"sponsor"},
+	"kill", "	Shuts down a currently running instance. ", "", {},
+	"test", "	Run tests. ", "", {},
+	nullptr, nullptr, nullptr, {}
+};
 
 // {{{1 return codes -----------------------------------------------------------
 
@@ -404,6 +328,8 @@ enum : int
 	Result_ReadFailPid,
 	Result_LockClaimFail,
 	Result_UnexpectedError,
+	Result_InvalidArgError,
+	Result_SponsorAddFail,
 };
 
 
@@ -573,9 +499,9 @@ static bool LaunchUnelevated(const wchar_t* Binary, wchar_t* CommandLine)
 ////////////////////////////////////////////////////////////////////////////////
 static const wchar_t*	GIpcName					= L"Local\\UnrealTraceInstance";
 static const int32		GIpcSize					= 4 << 10;
-static const wchar_t*	GQuitEventName				= L"Local\\UnrealTraceEvent";
+const wchar_t*			GQuitEventName				= L"Local\\UnrealTraceEvent";
 static const wchar_t*	GBegunEventName				= L"Local\\UnrealTraceEventBegun";
-static int				MainDaemon(int, char**);
+static int				MainDaemon(int, char**, const FOptions&);
 void					AddToSystemTray(FStoreService&);
 void					RemoveFromSystemTray();
 
@@ -621,7 +547,7 @@ static int MainKillImpl(int ArgC, char** ArgV, const FInstanceInfo* InstanceInfo
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-static int MainKill(int ArgC, char** ArgV)
+static int MainKill(int ArgC, char** ArgV, const FOptions& Options)
 {
 	// Find if an existing instance is already running.
 	FWinHandle IpcHandle = OpenFileMappingW(FILE_MAP_ALL_ACCESS, false, GIpcName);
@@ -641,7 +567,7 @@ static int MainKill(int ArgC, char** ArgV)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-static int MainFork(int ArgC, char** ArgV)
+static int MainFork(int ArgC, char** ArgV, const FOptions& Options)
 {
 	// Check for an existing instance that is already running.
 	TS_LOG("Opening exist instance's shared memory");
@@ -651,7 +577,7 @@ static int MainFork(int ArgC, char** ArgV)
 		void* IpcPtr = MapViewOfFile(IpcHandle, FILE_MAP_ALL_ACCESS, 0, 0, GIpcSize);
 		FMmapScope MmapScope(IpcPtr);
 
-		const auto* InstanceInfo = MmapScope.As<const FInstanceInfo>();
+		auto* InstanceInfo = MmapScope.As<FInstanceInfo>();
 		InstanceInfo->WaitForReady();
 #if TS_USING(TS_BUILD_DEBUG)
 		if (false)
@@ -660,6 +586,36 @@ static int MainFork(int ArgC, char** ArgV)
 #endif
 		{
 			TS_LOG("Existing instance is the same age or newer");
+
+			// If a parent pid was specified, add to the list of sponsor processes.
+			if (uint32 PidToAdd = 0; Options.GetSponsorPid(PidToAdd))
+			{
+				bool bSuccess = false;
+				while (!bSuccess)
+				{
+					for (auto& Pid : InstanceInfo->SponsorPids)
+					{
+						uint32 Expected = 0;
+						if (Pid.compare_exchange_strong(Expected, PidToAdd))
+						{
+							bSuccess = true;
+							break;
+						}
+					}
+					if (!bSuccess)
+					{
+						TS_LOG("Sponsor slots full, relax a second...");
+						Sleep(1000);
+					}
+				}
+
+				if (!bSuccess)
+				{
+					TS_LOG("Failed to add sponsor process in existing instance.");
+					return Result_SponsorAddFail;
+				}
+			}
+
 			return Result_Ok;
 		}
 
@@ -762,14 +718,29 @@ static int MainFork(int ArgC, char** ArgV)
 	// For debugging ease and consistency we will daemonize in this process
 	// instead of spawning a second one.
 #if TS_USING(TS_DAEMON_THREAD)
-	std::thread DaemonThread([=] () { MainDaemon(ArgC, ArgV); });
+	std::thread DaemonThread([=] () { MainDaemon(ArgC, ArgV, Options); });
 #else
 	std::wstring CommandLine = L"UnrealTraceServer.exe daemon";
+
+	auto ContainsSpace = [](LPCWSTR Arg) -> bool {
+		for (uint32 c = 0, Len = (uint32)wcslen(Arg); c < Len; ++c)
+		{
+			if (iswspace(Arg[c]))
+			{
+				return true;
+			}
+		}
+		return false;
+	};
+
 	for (int i = 1; i < ArgC; ++i)
 	{
-		CommandLine += L"\"";
+		FWinApiStr Arg(ArgV[i]);
+		const bool bContainsSpace = ContainsSpace(Arg);
+		CommandLine += L" ";
+		if (bContainsSpace) CommandLine += L"\"";
 		CommandLine += FWinApiStr(ArgV[i]);
-		CommandLine += L"\"";
+		if (bContainsSpace) CommandLine += L"\"";
 	}
 	if (!LaunchUnelevated(DestPath.c_str(), CommandLine.data()))
 	{
@@ -816,7 +787,7 @@ static int MainFork(int ArgC, char** ArgV)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-static int MainDaemon(int ArgC, char** ArgV)
+static int MainDaemon(int ArgC, char** ArgV, const FOptions& Options)
 {
 	// Move the working directory to be where this binary is located.
 	TS_LOG("Setting working directory");
@@ -859,44 +830,40 @@ static int MainDaemon(int ArgC, char** ArgV)
 
 	// Fill out the Ipc details and publish.
 	void* IpcPtr = MapViewOfFile(IpcHandle, FILE_MAP_ALL_ACCESS, 0, 0, GIpcSize);
-	{
-		TS_LOG("Writing shared instance info");
-		FMmapScope MmapScope(IpcPtr);
-		auto* InstanceInfo = MmapScope.As<FInstanceInfo>();
-		InstanceInfo->Set();
-	}
+	
+	TS_LOG("Writing shared instance info");
+	FMmapScope MmapScope(IpcPtr);
+	auto* InstanceInfo = MmapScope.As<FInstanceInfo>();
+	InstanceInfo->Set();
+	
 
 	// Set locale for std function application wide.
 	std::setlocale(LC_ALL, ".UTF-8");
+	
+	TS_LOG("Starting the store");
+	FPath HomeDir;
+	GetUnrealTraceHome(HomeDir);
+
+	// Read settings from configuration file
+	FStoreSettings* Settings = new FStoreSettings();
+	Settings->ReadFromSettings(HomeDir);
+	// Override with command line arguments.
+	Options.ApplyToSettings(Settings);
+	// Display final settings to user
+	Settings->PrintToLog();
+
+	// Read other arguments
+	uint32 ParentPid = 0;
+	if (Settings->Sponsored && !Options.GetSponsorPid(ParentPid))
+	{
+		TS_LOG("Error: Deamon is configured to run in sponsored mode, but no sponsor pid has been specified.");
+		return Result_InvalidArgError;
+	}
+	InstanceInfo->AddSponsor(ParentPid);
 
 	// Fire up the store
-	FStoreSettings* Settings = new FStoreSettings();
-	FStoreService* StoreService = nullptr;
-	{
-		 TS_LOG("Starting the store");
-		 FPath HomeDir;
-		 GetUnrealTraceHome(HomeDir);
-
-		 // Read settings from configuration file
-		 Settings->ReadFromSettings(HomeDir);
-
-		 // Override with command line arguments.
-		 ParseOptions(ArgC, ArgV, Settings);
-
-		 TS_LOG("Creating store with settings:");
-		 TS_LOG(" - Directory: '%s'", Settings->StoreDir.string().c_str());
-		 TS_LOG(" - Store port: %u", Settings->StorePort);
-		 TS_LOG(" - Recorder port: %u", Settings->RecorderPort);
-		 if (Settings->AdditionalWatchDirs.Num())
-		 {
-			 for (const auto& Dir : Settings->AdditionalWatchDirs)
-			 {
-				 TS_LOG(" - Additional watch directory: '%s'", Dir.string().c_str());
-			 }
-		 }
-
-		 StoreService = FStoreService::Create(Settings);
-	}
+	FStoreService* StoreService = FStoreService::Create(Settings, InstanceInfo);
+	OnScopeExit([StoreService]() { delete StoreService; });
 
 	// Let every one know we've started.
 	{
@@ -916,7 +883,8 @@ static int MainDaemon(int ArgC, char** ArgV)
 
 	// Clean up. We are done here.
 	RemoveFromSystemTray();
-	delete StoreService;
+
+	TS_LOG("Daemon is exiting without errors.");
 	return Result_Ok;
 }
 
@@ -959,17 +927,67 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
 #if TS_USING(TS_PLATFORM_LINUX) || TS_USING(TS_PLATFORM_MAC)
 
 ////////////////////////////////////////////////////////////////////////////////
-static int MainDaemon(int, char**, pid_t);
+static int MainDaemonImpl(int, char**, pid_t, const FOptions& Options);
 
 ////////////////////////////////////////////////////////////////////////////////
+#if TS_USING(TS_LEGACY_LOCK_FILE)
+
+static int MainKillImpl(int ArgC, char** ArgV, pid_t DaemonPid);
+
 static FPath GetLockFilePath()
 {
 	return "/tmp/UnrealTraceServer.pid";
 }
 
+static int LegacyLockFile()
+{
+	// Open the pid file to detect an existing instance
+	FPath DotPidPath = GetLockFilePath();
+	TS_LOG("Checking for a '%s' lock file", DotPidPath.c_str());
+	for (int DotPidFd = open(DotPidPath.c_str(), O_RDONLY); DotPidFd >= 0; )
+	{
+		OnScopeExit([DotPidFd] () { close(DotPidFd); });
+
+		// If we can claim a write lock then the lock file is orphaned
+		struct flock FileLock = { .l_type = F_WRLCK };
+		int Result = fcntl(DotPidFd, F_GETLK, &FileLock);
+		if (Result != 0 || FileLock.l_type == F_UNLCK)
+		{
+			TS_LOG("Lock file appears to be orphaned. Unlinking it");
+			std::error_code ErrorCode;
+			std::filesystem::remove(DotPidPath, ErrorCode);
+			break;
+		}
+
+		// An instance running with pid file is by definition older than us
+		TS_LOG("Killing an older instance that is already running");
+		int KillRet = MainKillImpl(0, nullptr, FileLock.l_pid);
+		if (KillRet == Result_NoQuitEvent)
+		{
+			// If no quit event was found then we shall assume that another new
+			// store instance beat us to it.
+			TS_LOG("Looks like someone else has already taken care of the upgrade");
+			return Result_Ok;
+		}
+
+		if (KillRet != Result_Ok)
+		{
+			TS_LOG("Kill attempt failed (ret=%d)", KillRet);
+			return KillRet;
+		}
+	}
+	return Result_Ok;
+}
+#endif
+
 ////////////////////////////////////////////////////////////////////////////////
 static int MainKillImpl(int ArgC, char** ArgV, pid_t DaemonPid)
 {
+	if (DaemonPid == 0)
+	{
+		return Result_NoQuitEvent;
+	}
+
 	// Issue the terminate signal
 	TS_LOG("Sending SIGTERM to %d", DaemonPid);
 	if (kill(DaemonPid, SIGTERM) < 0)
@@ -1008,85 +1026,26 @@ static int MainKillImpl(int ArgC, char** ArgV, pid_t DaemonPid)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-static int MainKill(int ArgC, char** ArgV)
+static int MainKill(int ArgC, char** ArgV, const FOptions& Options)
 {
-	// Open the pid file to detect an existing instance
-	FPath DotPidPath = GetLockFilePath();
-	TS_LOG("Checking for a '%s' lock file", DotPidPath.c_str());
-	int DotPidFd = open(DotPidPath.c_str(), O_RDONLY);
-	if (DotPidFd < 0)
+	TS_LOG("Opening shared memory");
+	int Fd = shm_open("/UnrealTraceServer", O_RDONLY | O_CLOEXEC, 0666);
+	if (Fd > 0)
 	{
-		if (errno == ENOENT)
+		void* BufferPtr = mmap(nullptr, sizeof(FInstanceInfo), PROT_READ, MAP_SHARED, Fd, 0);
+		if (!BufferPtr)
 		{
-			TS_LOG("All good. Ain't nuffin' running me ol' mucker.");
-			return Result_Ok;
+			TS_LOG("Unable to map shared memory");
+			return Result_SharedMemFail;
 		}
 
-		TS_LOG("Unable to open lock file (%s, errno=%d)", DotPidPath.c_str(), errno);
-		return Result_OpenFailPid;
-	}
-	OnScopeExit([DotPidFd] { close(DotPidFd); });
-
-	// If we can claim the write lock then lock file is orphaned.
-	struct flock FileLock = { .l_type = F_WRLCK };
-	int Result = fcntl(DotPidFd, F_GETLK, &FileLock);
-	if (Result != 0 || FileLock.l_type == F_UNLCK)
-	{
-		TS_LOG("Lock file appears to be orphaned. Removing");
-		std::error_code ErrorCode;
-		std::filesystem::remove(DotPidPath, ErrorCode);
-		return Result_Ok;
-	}
-
-	return MainKillImpl(ArgC, ArgV, FileLock.l_pid);
-}
-
-////////////////////////////////////////////////////////////////////////////////
-static int MainFork(int ArgC, char** ArgV)
-{
-	// Open the pid file to detect an existing instance
-	FPath DotPidPath = GetLockFilePath();
-	TS_LOG("Checking for a '%s' lock file", DotPidPath.c_str());
-	for (int DotPidFd = open(DotPidPath.c_str(), O_RDONLY); DotPidFd >= 0; )
-	{
-		OnScopeExit([DotPidFd] () { close(DotPidFd); });
-
-		// If we can claim a write lock then the lock file is orphaned
-		struct flock FileLock = { .l_type = F_WRLCK };
-		int Result = fcntl(DotPidFd, F_GETLK, &FileLock);
-		if (Result != 0 || FileLock.l_type == F_UNLCK)
-		{
-			TS_LOG("Lock file appears to be orphaned. Unlinking it");
-			std::error_code ErrorCode;
-			std::filesystem::remove(DotPidPath, ErrorCode);
-			break;
-		}
-
-		// Get the instance info from the buffer
-		char DotPidBuffer[sizeof(FInstanceInfo)];
-		Result = read(DotPidFd, DotPidBuffer, sizeof(DotPidBuffer));
-		if (Result < sizeof(FInstanceInfo))
-		{
-			TS_LOG("Failed to read the .pid lock file (errno=%d)", errno);
-			return Result_ReadFailPid;
-		}
-		const auto* InstanceInfo = (const FInstanceInfo*)DotPidBuffer;
-
-		// Old enough for this fine establishment?
-		if (!InstanceInfo->IsOlder())
-		{
-			TS_LOG("Existing instance is the same age or newer");
-			return Result_Ok;
-		}
-
-		// If we've got this far then there's an instance running that is old
-		TS_LOG("Killing an older instance that is already running");
-		int KillRet = MainKillImpl(0, nullptr, FileLock.l_pid);
+		FMmapScope Buffer(BufferPtr);
+		FInstanceInfo* InstanceInfo = Buffer.As<FInstanceInfo>();
+		
+		int KillRet = MainKillImpl(0, nullptr, InstanceInfo->Pid);
 		if (KillRet == Result_NoQuitEvent)
 		{
-			// If no quit event was found then we shall assume that another new
-			// store instance beat us to it.
-			TS_LOG("Looks like someone else has already taken care of the upgrade");
+			TS_LOG("Looks like someone else has already taken care of stopping");
 			return Result_Ok;
 		}
 
@@ -1096,13 +1055,109 @@ static int MainFork(int ArgC, char** ArgV)
 			return KillRet;
 		}
 	}
+#if TS_USING(TS_LEGACY_LOCK_FILE)
+	else
+	{
+		TS_LOG("Shared memory doesn't exist, checking legacy lock file");
+		return LegacyLockFile(); 
+	}
+#endif
+
+	return Result_Ok;
+}
+
+
+////////////////////////////////////////////////////////////////////////////////
+static int MainFork(int ArgC, char** ArgV, const FOptions& Options)
+{
+	TS_LOG("Opening shared memory");
+	int Fd = shm_open("/UnrealTraceServer", O_RDWR | O_CLOEXEC, 0666);
+	if (Fd > 0)
+	{
+		void* BufferPtr = mmap(nullptr, sizeof(FInstanceInfo), PROT_READ | PROT_WRITE, MAP_SHARED, Fd, 0);
+		if (!BufferPtr)
+		{
+			TS_LOG("Unable to map shared memory");
+			return Result_SharedMemFail;
+		}
+
+		FMmapScope Buffer(BufferPtr);
+		FInstanceInfo* InstanceInfo = Buffer.As<FInstanceInfo>();
+
+		// Old enough for this fine establishment?
+		bool bExists = kill(InstanceInfo->Pid, 0) == 0;
+		if (bExists && !InstanceInfo->IsOlder())
+		{
+			TS_LOG("Existing instance is the same age or newer");
+
+			if (uint32 PidToAdd = 0; Options.GetSponsorPid(PidToAdd))
+			{
+				bool bSuccess = false;
+				while (!bSuccess)
+				{
+					for (auto& Pid : InstanceInfo->SponsorPids)
+					{
+						uint32 Expected = 0;
+						if (Pid.compare_exchange_strong(Expected, PidToAdd))
+						{
+							bSuccess = true;
+							break;
+						}
+					}
+					if (!bSuccess)
+					{
+						TS_LOG("Sponsor slots full, relax a second...");
+						sleep(1);
+					}
+				}
+
+				if (!bSuccess)
+				{
+					TS_LOG("Failed to add sponsor process in existing instance.");
+					return Result_SponsorAddFail;
+				}
+			}
+
+			return Result_Ok;
+		}
+
+		// If we've got this far then there's an instance running that is old
+		if (bExists)
+		{
+			TS_LOG("Killing an older instance (pid %u) that is already running", InstanceInfo->Pid);
+			int KillRet = MainKillImpl(0, nullptr, InstanceInfo->Pid);
+			if (KillRet == Result_NoQuitEvent)
+			{
+				// If no quit event was found then we shall assume that another new
+				// store instance beat us to it.
+				TS_LOG("Looks like someone else has already taken care of the upgrade");
+				return Result_Ok;
+			}
+
+			if (KillRet != Result_Ok)
+			{
+				TS_LOG("Kill attempt failed (ret=%d)", KillRet);
+				return KillRet;
+			}
+		}
+	}
+#if TS_USING(TS_LEGACY_LOCK_FILE)
+	else
+	{
+		TS_LOG("Shared memory doesn't exist, checking legacy lock file");
+		if (int Result = LegacyLockFile(); Result != Result_Ok)
+		{
+			return Result;
+		}
+	}
+#endif
 
 	// Launch a daemonized version of ourselves. For debugging ease and
 	// consistency we will daemonize in this process instead of spawning
 	// a second one.
 	pid_t DaemonPid = -1;
-#if TS_USING(TS_BUILD_DEBUG)
-	std::thread DaemonThread([=] () { MainDaemon(ArgC, ArgV, 0); });
+#if TS_USING(TS_DAEMON_THREAD)
+	std::thread DaemonThread([=] () { MainDaemonImpl(ArgC, ArgV, 0, Options); });
 #else
 	TS_LOG("Forking process");
 	pid_t ParentPid = getpid();
@@ -1114,13 +1169,13 @@ static int MainFork(int ArgC, char** ArgV)
 	}
 	else if (DaemonPid == 0)
 	{
-		return MainDaemon(ArgC, ArgV, ParentPid);
+		return MainDaemonImpl(ArgC, ArgV, ParentPid, Options);
 	}
 #endif // TS_BUILD_DEBUG
 
 	// Wait for the daemon to indicate that it has started the store.
 	int Ret = Result_Ok;
-#if TS_USING(TS_BUILD_DEBUG)
+#if TS_USING(TS_DAEMON_THREAD)
 	DaemonThread.join();
 #else
 	TS_LOG("Wait until we know the daemon has started.");
@@ -1166,59 +1221,92 @@ static int MainFork(int ArgC, char** ArgV)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-static int MainDaemon(int ArgC, char** ArgV, pid_t ParentPid)
+static int MainDaemonImpl(int ArgC, char** ArgV, pid_t ParentPid, const FOptions& Options)
 {
-	// We expect that there is no lock file on disk if we've got this far.
-	FPath DotPidPath = GetLockFilePath();
-	TS_LOG("Opening the lock file '%s'", DotPidPath.c_str());
-	int DotPidFd = open(DotPidPath.c_str(), O_CREAT|O_WRONLY, 0666);
-	if (DotPidFd < 0)
+	TS_LOG("Opening shared memory");
+	int Fd = shm_open("/UnrealTraceServer", O_RDWR | O_CREAT | O_CLOEXEC, 0666);
+	if (Fd < 0)
 	{
-		TS_LOG("Failed to open lock file (errno=%d)", errno);
-		return Result_OpenFailPid;
+		TS_LOG("Unable to create shared memory: %u", errno);
+		return Result_SharedMemFail;
 	}
-	fchmod(DotPidFd, 0666);
-	OnScopeExit([DotPidFd] () { close(DotPidFd); });
+	OnScopeExit([]() { shm_unlink("/UnrealTraceServer"); });
 
-	// Lock the lock file
-	struct flock FileLock = { .l_type = F_WRLCK };
-	int Result = fcntl(DotPidFd, F_SETLK, &FileLock);
-	if (Result < 0)
+	// Set the size of the file. Note that MacOS allows only setting the size only once.
+#if TS_USING(TS_PLATFORM_MAC)
+	struct stat Stat;
+	if (fstat(Fd,&Stat) == 0)
 	{
-		TS_LOG("Unable to claim lock file (errno=%d)", errno);
-		return Result_LockClaimFail;
+		if (Stat.st_size == 0)
+		{
+			if(ftruncate(Fd, sizeof(FInstanceInfo)) != 0)
+			{
+				TS_LOG("Unable to size shared memory: %d", errno);
+				return Result_SharedMemFail;
+			}
+		}
+		else 
+		{
+			TS_LOG("Shared memory sized: %u", Stat.st_size);
+		}
 	}
+	else 
+	{
+		TS_LOG("Cannot read shared memory stats: %d", errno);
+	}
+#else
+	if (ftruncate(Fd, sizeof(FInstanceInfo)))
+	{
+		TS_LOG("Unable to size shared memory: %d", errno);
+		return Result_SharedMemFail;
+	}
+#endif
+
+	void* BufferPtr = mmap(nullptr, sizeof(FInstanceInfo), PROT_READ | PROT_WRITE, MAP_SHARED, Fd, 0);
+	if (!BufferPtr)
+	{
+		TS_LOG("Unable to map shared memory");
+		return Result_SharedMemFail;
+	}
+
+	FMmapScope Buffer(BufferPtr);
+	FInstanceInfo* InstanceInfo = Buffer.As<FInstanceInfo>();
 
 	// Fire up the store
 	TS_LOG("Starting the store");
 	FStoreSettings* Settings = new FStoreSettings();
 	FStoreService* StoreService = nullptr;
+	
+	FPath HomeDir;
+	GetUnrealTraceHome(HomeDir);
+
+	// Read settings from configuration file
+	Settings->ReadFromSettings(HomeDir);
+
+	// Override with command line arguments
+	Options.ApplyToSettings(Settings);
+	// Display final settings to user
+	Settings->PrintToLog();
+
+	// Get sponsor pid
+	uint32 SponsorPid = 0;
+	if (Settings->Sponsored && !Options.GetSponsorPid(SponsorPid))
 	{
-		FPath HomeDir;
-		GetUnrealTraceHome(HomeDir);
-
-		// Read settings from configuration file
-		Settings->ReadFromSettings(HomeDir);
-
-		// Override with command line arguments
-		ParseOptions(ArgC, ArgV, Settings);
-
-		StoreService = FStoreService::Create(Settings);
+		TS_LOG("Error: Deamon is configured to run in sponsored mode, but no sponsor pid has been specified.");
+		return Result_InvalidArgError;
 	}
+	// Add given sponsor pid regardless, in case we suddenly enable
+	// sponsor mode 
+	InstanceInfo->AddSponsor(SponsorPid);
+
+	StoreService = FStoreService::Create(Settings, InstanceInfo);
 	OnScopeExit([StoreService] () { delete StoreService; });
 
-	// Fill out the lock file with details about this instance
-	FInstanceInfo InstanceInfo;
-	InstanceInfo.Set();
-	if (write(DotPidFd, &InstanceInfo, sizeof(InstanceInfo)) != sizeof(InstanceInfo))
-	{
-		TS_LOG("Unable to write instance info to lock file (errno=%d)", errno);
-		return Result_UnexpectedError;
-	}
-	fsync(DotPidFd);
+	// Fill out the shared memory with details about this instance
+	InstanceInfo->Set();
 
 	// Detach from our parent and from any controlling terminal
-	for (Result = setsid(); Result < 0;)
+	for (int Result = setsid(); Result < 0;)
 	{
 		if (errno == EPERM)
 		{
@@ -1243,12 +1331,13 @@ static int MainDaemon(int ArgC, char** ArgV, pid_t ParentPid)
 	sigaction(SIGTERM, &SigAction, nullptr);
 	sigaction(SIGINT, &SigAction, nullptr);
 
-	TS_LOG("Entering signal wait loop...");
+	// Create and set a signal handler
 	sigset_t SignalSet;
 	sigemptyset(&SignalSet);
 	sigaddset(&SignalSet, SIGTERM);
 	sigaddset(&SignalSet, SIGKILL);
 	sigaddset(&SignalSet, SIGINT);
+
 	while (true)
 	{
 		int Signal = -1;
@@ -1259,21 +1348,14 @@ static int MainDaemon(int ArgC, char** ArgV, pid_t ParentPid)
 			break;
 		}
 	}
-
-	// Clean up. We are done here.
-	std::error_code ErrorCode;
-	std::filesystem::remove(DotPidPath, ErrorCode);
-
-	FileLock.l_type = F_UNLCK;
-	fcntl(DotPidFd, F_SETLK, &FileLock);
-
+	TS_LOG("Daemon is exiting without errors.");
 	return Result_Ok;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-static int MainDaemon(int ArgC, char** ArgV)
+static int MainDaemon(int ArgC, char** ArgV, const FOptions& Options)
 {
-	return MainDaemon(ArgC, ArgV, 0);
+	return MainDaemonImpl(ArgC, ArgV, 0, Options);
 }
 
 #endif // TS_PLATFORM_LINUX/MAC
@@ -1283,7 +1365,7 @@ static int MainDaemon(int ArgC, char** ArgV)
 // {{{1 main -------------------------------------------------------------------
 
 ////////////////////////////////////////////////////////////////////////////////
-int MainTest(int ArgC, char** ArgV)
+int MainTest(int ArgC, char** ArgV, const FOptions& Options)
 {
 	extern void TestCbor();
 	TestCbor();
@@ -1293,36 +1375,15 @@ int MainTest(int ArgC, char** ArgV)
 ////////////////////////////////////////////////////////////////////////////////
 int main(int ArgC, char** ArgV)
 {
-	if (ArgC < 2)
+	FOptions Options;
+	if (auto ExitReason = Options.Parse(ArgC, ArgV); ExitReason)
 	{
-		printf("UnrealTraceServer v%d.%d / Unreal Engine / Epic Games\n\n", TS_VERSION_PROTOCOL, TS_VERSION_MINOR);
-		puts(  "Usage; <cmd>");
-		puts(  "Commands;");
-		puts(  "  fork   Starts a background server, upgrading any existing instance");
-		puts(  "  daemon The mode that a background server runs in");
-		puts(  "  kill   Shuts down a currently running instance");
-		puts("");
-		puts(  "UnrealTraceServer acts as a hub between runtimes that are tracing performance");
-		puts(  "instrumentation and tools like Unreal Insights that consume and present that");
-		puts(  "data for analysis. TCP ports 1981 and 1989 are used, where the former receives");
-		puts(  "trace data, and the latter is used by tools to query the server's store.");
-
-		FPath HomeDir;
-		GetUnrealTraceHome(HomeDir);
-		HomeDir.make_preferred();
-		std::string HomeDirU8 = HomeDir.string();
-		printf("\nStore path; %s\n", HomeDirU8.c_str());
-
-		return 127;
+		return ExitReason == FOptions::Result_HelpRequested ? Result_Ok : Result_InvalidArgError;
 	}
-
-#ifdef TS_WITH_MUSL
-	printf("Using musl\n");
-#endif
 
 	struct {
 		const char*	Verb;
-		int			(*Entry)(int, char**);
+		int			(*Entry)(int, char**, const FOptions&);
 	} Dispatches[] = {
 		"fork",		MainFork,
 		"daemon",	MainDaemon,
@@ -1334,13 +1395,19 @@ int main(int ArgC, char** ArgV)
 	{
 		if (strcmp(ArgV[1], Dispatch.Verb) == 0)
 		{
-			FLoggingScope LoggingScope;
-			return (Dispatch.Entry)(ArgC - 1, ArgV + 1);
+			FPath LogDir;
+			GetUnrealTraceHome(LogDir, true);
+			FLoggingScope LoggingScope(LogDir);
+
+#ifdef TS_WITH_MUSL
+			TS_LOG("Using musl");
+#endif
+			return (Dispatch.Entry)(ArgC - 1, ArgV + 1, Options);
 		}
 	}
 
 	printf("Unknown command '%s'\n", ArgV[1]);
-	return 126;
+	return Result_InvalidArgError;
 }
 
 /* vim: set noexpandtab foldlevel=1 : */

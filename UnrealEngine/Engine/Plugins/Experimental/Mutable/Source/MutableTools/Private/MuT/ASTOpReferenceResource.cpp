@@ -2,9 +2,9 @@
 
 #include "MuT/ASTOpReferenceResource.h"
 
+#include "MuT/ASTOpConstantResource.h"
 #include "Containers/Array.h"
 #include "HAL/PlatformMath.h"
-#include "Hash/CityHash.h"
 #include "Misc/AssertionMacros.h"
 #include "MuR/Types.h"
 #include "MuT/StreamsPrivate.h"
@@ -21,9 +21,10 @@ namespace mu
 	//-------------------------------------------------------------------------------------------------
 	bool ASTOpReferenceResource::IsEqual(const ASTOp& otherUntyped) const
 	{
-		if (const ASTOpReferenceResource* other = dynamic_cast<const ASTOpReferenceResource*>(&otherUntyped))
+		if (otherUntyped.GetOpType() == GetOpType())
 		{
-			return type == other->type && ID == other->ID;
+			const ASTOpReferenceResource* other = static_cast<const ASTOpReferenceResource*>(&otherUntyped);
+			return type == other->type && ID == other->ID && bForceLoad == other->bForceLoad && ImageDesc == other->ImageDesc;
 		}
 		return false;
 	}
@@ -35,6 +36,8 @@ namespace mu
 		Ptr<ASTOpReferenceResource> n = new ASTOpReferenceResource();
 		n->type = type;
 		n->ID = ID;
+		n->bForceLoad = bForceLoad;
+		n->ImageDesc = ImageDesc;
 		return n;
 	}
 
@@ -52,10 +55,12 @@ namespace mu
 	void ASTOpReferenceResource::Link(FProgram& program, FLinkerOptions* Options)
 	{
 		if (!linkedAddress)
-		{			
+		{
 			OP::ResourceReferenceArgs Args;
 			FMemory::Memset(&Args, 0, sizeof(Args));
 			Args.ID = ID;
+			Args.ForceLoad = bForceLoad ? 1 : 0;
+			Args.ImageDesc = ImageDesc;
 
 			linkedAddress = (OP::ADDRESS)program.m_opAddress.Num();
 			program.m_opAddress.Add((uint32)program.m_byteCode.Num());
@@ -68,8 +73,7 @@ namespace mu
 	//-------------------------------------------------------------------------------------------------
 	FImageDesc ASTOpReferenceResource::GetImageDesc(bool, class FGetImageDescContext*) const
 	{
-		FImageDesc res;
-		return res;
+		return ImageDesc;
 	}
 
 
@@ -120,18 +124,47 @@ namespace mu
 
 
 	//-------------------------------------------------------------------------------------------------
-	ASTOpReferenceResource::~ASTOpReferenceResource()
-	{
-	}
-
-
-	//-------------------------------------------------------------------------------------------------
 	mu::Ptr<ImageSizeExpression> ASTOpReferenceResource::GetImageSizeExpression() const
 	{
 		Ptr<ImageSizeExpression> pRes = new ImageSizeExpression;
 		pRes->type = ImageSizeExpression::ISET_UNKNOWN;
 
 		return pRes;
+	}
+
+
+	Ptr<ASTOp> ASTOpReferenceResource::OptimiseSemantic(const FModelOptimizationOptions& options, int32 Pass) const
+	{
+		mu::Ptr<ASTOp> NewOp;
+
+		//switch (type)
+		//{
+
+		//case OP_TYPE::IM_REFERENCE:
+		//{
+		//	// If we are in reference resolution stage
+		//	if (Pass>=2 && bForceLoad)
+		//	{
+		//		MUTABLE_CPUPROFILER_SCOPE(ResolveReference);
+
+		//		check(options.ReferencedResourceProvider);
+
+		//		TFuture<Ptr<Image>> ConstantImageFuture = options.ReferencedResourceProvider(ID);
+		//		Ptr<Image> ConstantImage = ConstantImageFuture.Get();
+
+		//		Ptr<ASTOpConstantResource> ConstantOp = new ASTOpConstantResource;
+		//		ConstantOp->type = OP_TYPE::IM_CONSTANT;
+		//		ConstantOp->SetValue( ConstantImage.get(), options.bUseDiskCache );
+		//		NewOp = ConstantOp;
+		//	}
+		//	break;
+		//}
+
+		//default:
+		//	checkf(false, TEXT("Instruction not supported"));
+		//}
+
+		return NewOp;
 	}
 
 }

@@ -8,6 +8,11 @@
 
 class USmartObjectComponent;
 
+namespace UE::SmartObject
+{
+uint16 GetMaskForEnabledReasonTag(const FGameplayTag Tag);
+}
+
 /** Delegate fired when a given tag is added or removed. Tags on smart object are not using reference counting so count will be 0 or 1 */
 UE_DEPRECATED(5.2, "Tag changes are now broadcasted using FOnSmartObjectEvent.")
 DECLARE_DELEGATE_TwoParams(FOnSmartObjectTagChanged, const FGameplayTag, int32);
@@ -27,6 +32,17 @@ enum class ESmartObjectSlotState : uint8
 	Occupied,
 	/** Slot can no longer be claimed or used since the parent object and its slot are disabled (e.g. instance tags) */
 	Disabled UE_DEPRECATED(5.2, "Use IsEnabled() instead."),
+};
+
+/**
+ * Indicates if the subsystem should try to spawn the actor associated to the smartobject
+ * if it is currently owned by an instanced actor.
+ */
+UENUM()
+enum class ETrySpawnActorIfDehydrated : uint8
+{
+	No,
+	Yes
 };
 
 /**
@@ -78,11 +94,11 @@ struct SMARTOBJECTSMODULE_API FSmartObjectClaimHandle
 	static const FSmartObjectClaimHandle InvalidHandle;
 
 	/** Handle to the Smart Object where the claimed slot belongs to.  */
-	UPROPERTY(EditAnywhere, Transient, Category="Default")
+	UPROPERTY(BlueprintReadOnly, EditAnywhere, Transient, Category="Default")
 	FSmartObjectHandle SmartObjectHandle;
 
 	/** Handle of the claimed slot. */
-	UPROPERTY(EditAnywhere, Transient, Category="Default")
+	UPROPERTY(BlueprintReadOnly, EditAnywhere, Transient, Category="Default")
 	FSmartObjectSlotHandle SlotHandle;
 
 	/** Handle describing the user which claimed the slot. */
@@ -143,8 +159,23 @@ public:
 	/** @return Current claim state of the slot. */
 	ESmartObjectSlotState GetState() const { return State; }
 
-	/** @return True if the slot can be claimed. */
-	bool CanBeClaimed() const { return IsEnabled() && State == ESmartObjectSlotState::Free; }
+	UE_DEPRECATED(5.4, "Use CanBeClaimed() with priority instead.")
+	bool CanBeClaimed() const
+	{
+		return CanBeClaimed(ESmartObjectClaimPriority::Normal);
+	}
+
+	/**
+	 * Sets the slot claimed.
+	 * @param ClaimPriority Claim priority, a slot claimed at lower priority can be claimed by higher priority (unless already in use).
+	 * @return True if the slot can be claimed. */
+	bool CanBeClaimed(ESmartObjectClaimPriority ClaimPriority) const
+	{
+		return IsEnabled()
+			&& (State == ESmartObjectSlotState::Free
+				|| (State == ESmartObjectSlotState::Claimed
+					&& ClaimedPriority < ClaimPriority));
+	}
 
 	/** @return the runtime gameplay tags of the slot. */
 	const FGameplayTagContainer& GetTags() const { return Tags; }
@@ -155,15 +186,27 @@ public:
 	/** @return User data struct that can be associated to the slot when claimed or used. */
 	FConstStructView GetUserData() const { return UserData; }
 
-	FInstancedStructContainer& GetMutableStateData() { return StateData; };
-	const FInstancedStructContainer& GetStateData() const { return StateData; };
-	
+	FInstancedStructContainer& GetMutableStateData() { return StateData; }
+	const FInstancedStructContainer& GetStateData() const { return StateData; }
+
+	/** Indicates if preconditions were successfully initialized. */
+	bool ArePreconditionsInitialized() const
+	{
+		return PreconditionState.IsInitialized();
+	}
+
 protected:
 	/** Struct could have been nested inside the subsystem but not possible with USTRUCT */
 	friend class USmartObjectSubsystem;
 	friend struct FSmartObjectRuntime;
 
-	bool Claim(const FSmartObjectUserHandle& InUser);
+	UE_DEPRECATED(5.4, "Use Claim() with priority instead.")
+	bool Claim(const FSmartObjectUserHandle& InUser)
+	{
+		return Claim(InUser, ESmartObjectClaimPriority::Normal);
+	}
+
+	bool Claim(const FSmartObjectUserHandle& InUser, ESmartObjectClaimPriority ClaimPriority);
 	bool Release(const FSmartObjectClaimHandle& ClaimHandle, const bool bAborted);
 
 	friend FString LexToString(const FSmartObjectRuntimeSlot& Slot)
@@ -172,12 +215,15 @@ protected:
 	}
 
 	/** Offset of the slot relative to the Smart Object. */
+	UPROPERTY(Transient, VisibleAnywhere, Category=SmartObjects)
 	FVector3f Offset = FVector3f::ZeroVector;
 
 	/** Rotation of the slot relative to the Smart Object. */
+	UPROPERTY(Transient, VisibleAnywhere, Category=SmartObjects)
 	FRotator3f Rotation = FRotator3f::ZeroRotator;
 	
 	/** Runtime tags associated with this slot. */
+	UPROPERTY(Transient, VisibleAnywhere, Category=SmartObjects)
 	FGameplayTagContainer Tags;
 
 	/** Struct used to store contextual data of the user when claiming or using a slot. */
@@ -190,6 +236,7 @@ protected:
 	FOnSlotInvalidated OnSlotInvalidatedDelegate;
 
 	/** Handle to the user that reserves or uses the slot */
+	UPROPERTY(Transient, VisibleAnywhere, Category=SmartObjects)
 	FSmartObjectUserHandle User;
 
 	/** World condition runtime state. */
@@ -197,12 +244,18 @@ protected:
 	mutable FWorldConditionQueryState PreconditionState;
 
 	/** Current availability state of the slot */
+	UPROPERTY(Transient, VisibleAnywhere, Category=SmartObjects)
 	ESmartObjectSlotState State = ESmartObjectSlotState::Free;
 
+	UPROPERTY(Transient, VisibleAnywhere, Category=SmartObjects)
+	ESmartObjectClaimPriority ClaimedPriority = ESmartObjectClaimPriority::None;
+	
 	/** True if the slot is enabled */
+	UPROPERTY(Transient, VisibleAnywhere, Category=SmartObjects)
 	uint8 bSlotEnabled : 1;
 
 	/** True if the parent smart object is enabled */
+	UPROPERTY(Transient, VisibleAnywhere, Category=SmartObjects)
 	uint8 bObjectEnabled : 1;
 };
 
@@ -219,7 +272,7 @@ struct FSmartObjectRuntime
 public:
 	/* Provide default constructor to be able to compile template instantiation 'UScriptStruct::TCppStructOps<FSmartObjectRuntime>' */
 	/* Also public to pass void 'UScriptStruct::TCppStructOps<FSmartObjectRuntime>::ConstructForTests(void *)' */
-	FSmartObjectRuntime() : bEnabled(true) {}
+	FSmartObjectRuntime() {}
 
 	FSmartObjectHandle GetRegisteredHandle() const { return RegisteredHandle; }
 	const FTransform& GetTransform() const { return Transform; }
@@ -234,22 +287,50 @@ PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FOnSmartObjectTagChanged& GetTagChangedDelegate() { return OnTagChangedDelegate; }
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
-
 	/** @return reference to the Smart Object event delegate. */
 	const FOnSmartObjectEvent& GetEventDelegate() const { return OnEvent; }
 
 	/** @return mutable reference to the Smart Object event delegate. */
 	FOnSmartObjectEvent& GetMutableEventDelegate() { return OnEvent; }
-	
-	/** Indicates that this instance is still part of the simulation (space partition) but should not be considered valid by queries */
-	UE_DEPRECATED(5.1, "Use IsEnabled instead.")
-	bool IsDisabled() const { return !bEnabled; }
 
-	/** @return True of the Smart Object is enabled. */
-	bool IsEnabled() const { return bEnabled; }
+	/**
+	 * Indicates if the Smart Object is enabled regardless of the reason.
+	 * @return True of the Smart Object is enabled.
+	 */
+	bool IsEnabled() const
+	{
+		return DisableFlags == 0;
+	}
 
-	/** @return Pointer to owner actor if present. */
-	AActor* GetOwnerActor() const;
+	/**
+	 * Indicates if the Smart Object is enabled based on a specific reason.
+	 * @param ReasonTag Valid Tag to specify the reason for changing the enabled state of the object. Method will ensure if not valid (i.e. None).
+	 * @return True of the Smart Object is enabled.
+	 */
+	bool IsEnabledForReason(FGameplayTag ReasonTag) const;
+
+	/**
+	 * Enables or disables the entire smart object.
+	 * @param ReasonTag Valid Tag to specify the reason for changing the enabled state of the object. Method will ensure if not valid (i.e. None).
+	 * @param bEnabled Flag indicating if the object should be enable or not.
+	 */
+	void SetEnabled(FGameplayTag ReasonTag, bool bEnabled);
+
+	/**
+	 * Returns the actor associated to the smart object instance.
+	 * @param TrySpawnActorIfDehydrated Indicates if the instance should try to spawn the actor/component
+	 *        associated to the smartobject if it is currently owned by an instanced actor.
+	 * @return Pointer to owner actor if present.
+	 */
+	AActor* GetOwnerActor(ETrySpawnActorIfDehydrated TrySpawnActorIfDehydrated = ETrySpawnActorIfDehydrated::No) const;
+
+	/**
+	 * Returns the actor associated to the smart object instance.
+	 * @param TrySpawnActorIfDehydrated Indicates if the instance should try to spawn the actor/component
+	 *        associated to the smartobject if it is currently owned by an instanced actor.
+	 * @return Pointer to owning component if present.
+	 */
+	USmartObjectComponent* GetOwnerComponent(ETrySpawnActorIfDehydrated TrySpawnActorIfDehydrated = ETrySpawnActorIfDehydrated::No) const;
 
 	/** @return handle of the specified slot. */
 	const FSmartObjectRuntimeSlot& GetSlot(const int32 Index) const
@@ -273,6 +354,16 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		return {};
 	}
 
+	/** Indicates if preconditions were successfully initialized. */
+	bool ArePreconditionsInitialized() const
+	{
+		return PreconditionState.IsInitialized();
+	}
+
+#if WITH_SMARTOBJECT_DEBUG
+	FString DebugGetDisableFlagsString() const;
+#endif // WITH_SMARTOBJECT_DEBUG
+
 private:
 	/** Struct could have been nested inside the subsystem but not possible with USTRUCT */
 	friend class USmartObjectSubsystem;
@@ -282,6 +373,19 @@ private:
 	void SetTransform(const FTransform& Value) { Transform = Value; }
 
 	void SetRegisteredHandle(const FSmartObjectHandle Value) { RegisteredHandle = Value; }
+
+	/**
+	 * Enables or disables the entire smart object using the bit mask from a reason tag.
+	 * @param bEnabled Flag indicating if the object should be enable or not. 
+	 * @param ReasonMask Bit mask associated to the reason for disabling the object.
+	 */
+	void SetEnabled(bool bEnabled, uint16 ReasonMask);
+
+	/**
+	 * Creates full actor from instanced actor owner, if any.
+	 * That actor will register its SmartObjectComponents that will then update OwnerComponent.
+	 */
+	bool ResolveOwnerActor() const;
 
 	/** World condition runtime state. */
 	UPROPERTY(Transient)
@@ -298,11 +402,16 @@ private:
 	/** Component that owns the Smart Object. May be empty if the parent Actor is not loaded. */
 	UPROPERTY()
 	TWeakObjectPtr<USmartObjectComponent> OwnerComponent;
+
+	/** Struct used to store contextual data of the owner of that SmartObject. */
+	FInstancedStruct OwnerData;
 	
 	/** Instance specific transform */
+	UPROPERTY(Transient, VisibleAnywhere, Category=SmartObjects)
 	FTransform Transform;
 
 	/** Tags applied to the current instance */
+	UPROPERTY(Transient, VisibleAnywhere, Category=SmartObjects)
 	FGameplayTagContainer Tags;
 
 	/** Delegate fired whenever a new tag is added or an existing one gets removed */
@@ -314,6 +423,7 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	FOnSmartObjectEvent OnEvent;
 
 	/** RegisteredHandle != FSmartObjectHandle::Invalid when registered with SmartObjectSubsystem */
+	UPROPERTY(Transient, VisibleAnywhere, Category=SmartObjects)
 	FSmartObjectHandle RegisteredHandle;
 
 	/** Spatial representation data associated to the current instance */
@@ -324,8 +434,15 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	FBox Bounds = FBox(EForceInit::ForceInit);
 #endif
 
-	/** Each slot has its own disable state but keeping it also in the parent instance allow faster validation in some cases. */
-	uint8 bEnabled : 1;
+	/** 
+	 * Each slot has its own enabled state but the parent instance also have a more high level state that could be split into different reasons.
+	 * Note: The enabled state is stored as disable bits to make it easier to check for "is the object disabled for a given or any reason".
+	 */
+	UPROPERTY(Transient, VisibleAnywhere, Category=SmartObjects)
+	uint16 DisableFlags = 0;
+
+public:
+	static constexpr int32 MaxNumDisableFlags = sizeof(DisableFlags) * 8;
 };
 
 USTRUCT()
@@ -426,19 +543,8 @@ public:
 	template<typename T>
 	const T& GetDefinitionData() const
 	{
-		static_assert(TIsDerivedFrom<T, FSmartObjectSlotDefinitionData>::IsDerived,
-					"Given struct doesn't represent a valid definition data type. Make sure to inherit from FSmartObjectSlotDefinitionData or one of its child-types.");
-
 		const FSmartObjectSlotDefinition& SlotDefinition = GetDefinition();
-		for (const FInstancedStruct& Data : SlotDefinition.Data)
-		{
-			if (Data.GetScriptStruct()->IsChildOf(T::StaticStruct()))
-			{
-				return Data.Get<T>();
-			}
-		}
-
-		return nullptr;
+		return SlotDefinition.template GetDefinitionData<T>();
 	}
 
 	/**
@@ -448,19 +554,8 @@ public:
 	template<typename T>
 	const T* GetDefinitionDataPtr() const
 	{
-		static_assert(TIsDerivedFrom<T, FSmartObjectSlotDefinitionData>::IsDerived,
-					"Given struct doesn't represent a valid definition data type. Make sure to inherit from FSmartObjectSlotDefinitionData or one of its child-types.");
-
 		const FSmartObjectSlotDefinition& SlotDefinition = GetDefinition();
-		for (const FInstancedStruct& Data : SlotDefinition.Data)
-		{
-			if (Data.GetScriptStruct()->IsChildOf(T::StaticStruct()))
-			{
-				return Data.GetPtr<T>();
-			}
-		}
-
-		return nullptr;
+		return SlotDefinition.template GetDefinitionDataPtr<T>();
 	}
 
 	/** @return the claim state of the slot. */
@@ -470,13 +565,26 @@ public:
 		return Slot->GetState();
 	}
 
-	/** @return true of the slot can be claimed. */
+	UE_DEPRECATED(5.4, "Use CanBeClaimed() with priority instead.")
 	bool CanBeClaimed() const
 	{
-		checkf(Slot, TEXT("Claim can only be accessed through a valid SlotView"));
-		return Slot->CanBeClaimed();
+		return CanBeClaimed(ESmartObjectClaimPriority::Normal);
 	}
 
+	/** @return true of the slot can be claimed. */
+	bool CanBeClaimed(ESmartObjectClaimPriority ClaimPriority) const
+	{
+		checkf(Slot, TEXT("Claim can only be accessed through a valid SlotView"));
+		return Slot->CanBeClaimed(ClaimPriority);
+	}
+
+	/** @return true if the slot and the object is enabled. */
+	bool IsEnabled() const
+	{
+		checkf(Slot, TEXT("Enabled can only be accessed through a valid SlotView"));
+		return Slot->IsEnabled();
+	}
+	
 	/** @return runtime gameplay tags of the slot. */
 	const FGameplayTagContainer& GetTags() const
 	{

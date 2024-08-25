@@ -41,7 +41,7 @@ enum class EInterchangeTextureFilterMode : uint8
 	Default
 };
 
-UCLASS(BlueprintType, Abstract, Experimental)
+UCLASS(BlueprintType, Abstract)
 class INTERCHANGENODES_API UInterchangeTextureNode : public UInterchangeBaseNode
 {
 	GENERATED_BODY()
@@ -56,14 +56,14 @@ public:
 	}
 
 	/**
-	 * Return the node type name of the class, we use this when reporting error
+	 * Return the node type name of the class. This is used when reporting errors.
 	 */
 	virtual FString GetTypeName() const override
 	{
 		const FString TypeName = TEXT("TextureNode");
 		return TypeName;
 	}
-
+#if WITH_EDITOR
 	virtual FString GetKeyDisplayName(const UE::Interchange::FAttributeKey& NodeAttributeKey) const override
 	{
 		FString KeyDisplayName = NodeAttributeKey.ToString();
@@ -73,6 +73,7 @@ public:
 		}
 		return Super::GetKeyDisplayName(NodeAttributeKey);
 	}
+#endif //WITH_EDITOR
 
 	virtual FGuid GetHash() const override
 	{

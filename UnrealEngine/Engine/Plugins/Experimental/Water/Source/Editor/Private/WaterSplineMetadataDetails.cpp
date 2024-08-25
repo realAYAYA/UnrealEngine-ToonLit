@@ -94,50 +94,40 @@ void FWaterSplineMetadataDetails::Update(USplineComponent* InSplineComponent, co
 		}
 	}
 }
+
 template<class T>
-void SetValues(FWaterSplineMetadataDetails& Details, TArray<FInterpCurvePoint<T>>& Points, const T& NewValue)
+void SetValues(FWaterSplineMetadataDetails& Details, TArray<FInterpCurvePoint<T>>& Points, const T& NewValue, ETextCommit::Type CommitInfo, const FText& TransactionText)
 {
-	Details.SplineComp->GetSplinePointsMetadata()->Modify();
-	for (int32 Index : Details.SelectedKeys)
+	// Scope the transaction to only include the value change and none of the derived data changes that might arise from NotifyPropertyModified
 	{
-		Points[Index].OutVal = NewValue;
+		const FScopedTransaction Transaction(TransactionText);
+		Details.SplineComp->GetSplinePointsMetadata()->Modify();
+		for (int32 Index : Details.SelectedKeys)
+		{
+			Points[Index].OutVal = NewValue;
+		}
 	}
 
 	Details.SplineComp->UpdateSpline();
 	Details.SplineComp->bSplineHasBeenEdited = true;
 	static FProperty* SplineCurvesProperty = FindFProperty<FProperty>(USplineComponent::StaticClass(), GET_MEMBER_NAME_CHECKED(USplineComponent, SplineCurves));
-	FComponentVisualizer::NotifyPropertyModified(Details.SplineComp, SplineCurvesProperty);
+	EPropertyChangeType::Type PropertyChangeType = CommitInfo == ETextCommit::OnEnter ? EPropertyChangeType::ValueSet : EPropertyChangeType::Interactive;
+	FComponentVisualizer::NotifyPropertyModified(Details.SplineComp, SplineCurvesProperty, PropertyChangeType);
 	Details.Update(Details.SplineComp, Details.SelectedKeys);
 
 	GEditor->RedrawLevelEditingViewports(true);
 }
 
-void SetVectorValues(FWaterSplineMetadataDetails& Details, TArray<FInterpCurvePointVector>& Points, float NewValue, int32 Axis)
+template <typename T>
+bool CheckIfDifferent(const FWaterSplineMetadataDetails& Details, const TArray<FInterpCurvePoint<T>>& Points, const T& NewValue)
 {
-	Details.SplineComp->GetSplinePointsMetadata()->Modify();
+	bool bIsModified = false;
 	for (int32 Index : Details.SelectedKeys)
 	{
-		if (Axis == 0)
-		{
-			Points[Index].OutVal.X = NewValue;
-		}
-		else if (Axis == 1)
-		{
-			Points[Index].OutVal.Y = NewValue;
-		}
-		else
-		{
-			Points[Index].OutVal.Z = NewValue;
-		}
+		bIsModified |= Points[Index].OutVal != NewValue;
 	}
 
-	Details.SplineComp->UpdateSpline();
-	Details.SplineComp->bSplineHasBeenEdited = true;
-	static FProperty* SplineCurvesProperty = FindFProperty<FProperty>(USplineComponent::StaticClass(), GET_MEMBER_NAME_CHECKED(USplineComponent, SplineCurves));
-	FComponentVisualizer::NotifyPropertyModified(Details.SplineComp, SplineCurvesProperty);
-	Details.Update(Details.SplineComp, Details.SelectedKeys);
-
-	GEditor->RedrawLevelEditingViewports(true);
+	return bIsModified;
 }
 
 void FWaterSplineMetadataDetails::OnBeginSliderMovement()
@@ -154,14 +144,16 @@ UWaterSplineMetadata* FWaterSplineMetadataDetails::GetMetadata() const
 {
 	UWaterSplineMetadata* Metadata = SplineComp ? Cast<UWaterSplineMetadata>(SplineComp->GetSplinePointsMetadata()) : nullptr;
 	return Metadata;
-	}
+}
 
 void FWaterSplineMetadataDetails::OnSetDepth(float NewValue, ETextCommit::Type CommitInfo)
 {
 	if (UWaterSplineMetadata* Metadata = GetMetadata())
 	{
-		const FScopedTransaction Transaction(LOCTEXT("SetSplineDepth", "Set spline point water depth"));
-		SetValues<float>(*this, Metadata->Depth.Points, NewValue);
+		if (CheckIfDifferent(*this, Metadata->Depth.Points, NewValue))
+		{
+			SetValues(*this, Metadata->Depth.Points, NewValue, CommitInfo, LOCTEXT("SetSplineDepth", "Set spline point water depth"));
+		}
 	}
 }
 
@@ -169,8 +161,10 @@ void FWaterSplineMetadataDetails::OnSetRiverWidth(float NewValue, ETextCommit::T
 {
 	if (UWaterSplineMetadata* Metadata = GetMetadata())
 	{
-		const FScopedTransaction Transaction(LOCTEXT("SetSplineWaterWidth", "Set spline point river width"));
-		SetValues<float>(*this, Metadata->RiverWidth.Points, NewValue);
+		if (CheckIfDifferent(*this, Metadata->RiverWidth.Points, NewValue))
+		{
+			SetValues(*this, Metadata->RiverWidth.Points, NewValue, CommitInfo, LOCTEXT("SetSplineWaterWidth", "Set spline point river width"));
+		}
 	}
 }
 
@@ -178,8 +172,10 @@ void FWaterSplineMetadataDetails::OnSetVelocity(float NewValue, ETextCommit::Typ
 {
 	if (UWaterSplineMetadata* Metadata = GetMetadata())
 	{
-		const FScopedTransaction Transaction(LOCTEXT("SetSplineWaterVelocity", "Set spline point water velocity"));
-		SetValues(*this, Metadata->WaterVelocityScalar.Points, NewValue);
+		if (CheckIfDifferent(*this, Metadata->WaterVelocityScalar.Points, NewValue))
+		{
+			SetValues(*this, Metadata->WaterVelocityScalar.Points, NewValue, CommitInfo, LOCTEXT("SetSplineWaterVelocity", "Set spline point water velocity"));
+		}
 	}
 }
 
@@ -187,25 +183,27 @@ void FWaterSplineMetadataDetails::OnSetAudioIntensity(float NewValue, ETextCommi
 {
 	if (UWaterSplineMetadata* Metadata = GetMetadata())
 	{
-		const FScopedTransaction Transaction(LOCTEXT("SetSpline point audio intensity", "Set spline point audio intensity"));
-		SetValues(*this, Metadata->AudioIntensity.Points, NewValue);
+		if (CheckIfDifferent(*this, Metadata->AudioIntensity.Points, NewValue))
+		{
+			SetValues(*this, Metadata->AudioIntensity.Points, NewValue, CommitInfo, LOCTEXT("SetSpline point audio intensity", "Set spline point audio intensity"));
+		}
 	}
-	}
+}
 
 EVisibility FWaterSplineMetadataDetails::IsDepthVisible() const
-	{
+{
 	UWaterSplineMetadata* Metadata = GetMetadata();
 	return (Metadata && Metadata->CanEditDepth()) ? IsEnabled() : EVisibility::Collapsed;
 }
 
 EVisibility FWaterSplineMetadataDetails::IsRiverWidthVisible() const
-	{
+{
 	UWaterSplineMetadata* Metadata = GetMetadata();
 	return (Metadata && Metadata->CanEditRiverWidth()) ? IsEnabled() : EVisibility::Collapsed;
-	}
+}
 
 EVisibility FWaterSplineMetadataDetails::IsVelocityVisible() const
-	{
+{
 	UWaterSplineMetadata* Metadata = GetMetadata();
 	return (Metadata && Metadata->CanEditVelocity()) ? IsEnabled() : EVisibility::Collapsed;
 }
@@ -222,6 +220,7 @@ void FWaterSplineMetadataDetails::GenerateChildContent(IDetailGroup& DetailGroup
 		[
 			SNew(STextBlock)
 			.Text(LOCTEXT("Depth", "Depth"))
+			.ToolTipText(LOCTEXT("RiverDepth_Tooltip", "The depth of the river at this spline point. Affects the terrain carving and collision"))
 			.Font(IDetailLayoutBuilder::GetDetailFont())
 		]
 		.ValueContent()
@@ -256,6 +255,7 @@ void FWaterSplineMetadataDetails::GenerateChildContent(IDetailGroup& DetailGroup
 			SNew(STextBlock)
 			.Text(LOCTEXT("RiverWidth", "River Width"))
 			.Font(IDetailLayoutBuilder::GetDetailFont())
+			.ToolTipText(LOCTEXT("RiverWidth_Tooltip", "The width of the river at this spline point. Affects the visuals, terrain carving, and collision."))
 		]
 		.ValueContent()
 		.MinDesiredWidth(125.0f)
@@ -288,6 +288,7 @@ void FWaterSplineMetadataDetails::GenerateChildContent(IDetailGroup& DetailGroup
 		[
 			SNew(STextBlock)
 			.Text(LOCTEXT("Velocity", "Velocity"))
+			.ToolTipText(LOCTEXT("RiverVelocity_Tooltip", "The river flow velocity at this spline point. Affects the visuals of the flowing water."))
 			.Font(IDetailLayoutBuilder::GetDetailFont())
 		]
 		.ValueContent()
@@ -319,6 +320,7 @@ void FWaterSplineMetadataDetails::GenerateChildContent(IDetailGroup& DetailGroup
 		[
 			SNew(STextBlock)
 			.Text(LOCTEXT("AudioIntensity", "Audio Intensity"))
+			.ToolTipText(LOCTEXT("SplineAudioIntensity_Tooltip", "The audio intensity of the water at this spline point."))
 			.Font(IDetailLayoutBuilder::GetDetailFont())
 		]
 		.ValueContent()

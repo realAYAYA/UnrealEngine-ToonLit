@@ -5,6 +5,7 @@
 #include "Containers/Array.h"
 #include "CoreMinimal.h"
 #include "Framework/Commands/Commands.h"
+#include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "HAL/Platform.h"
 #include "Internationalization/Internationalization.h"
 #include "Styling/AppStyle.h"
@@ -104,6 +105,13 @@ public:
 	// Find references
 	TSharedPtr< FUICommandInfo > FindReferences;
 	GRAPHEDITOR_API TSharedPtr< FUICommandInfo > GetFindReferences() const { return FindReferences; }
+
+	// Find references options that appear by context like for functions and variables
+	TSharedPtr< FUICommandInfo > FindReferencesByNameLocal;
+	TSharedPtr< FUICommandInfo > FindReferencesByNameGlobal;
+	TSharedPtr< FUICommandInfo > FindReferencesByClassMemberLocal;
+	TSharedPtr< FUICommandInfo > FindReferencesByClassMemberGlobal;
+	
 	TSharedPtr< FUICommandInfo > FindAndReplaceReferences;
 
 	// Jumps to the definition of the selected node (or otherwise focuses something interesting about that node, e.g., the inner graph for a collapsed graph)
@@ -124,6 +132,9 @@ public:
 
 	//create a comment node
 	TSharedPtr< FUICommandInfo > CreateComment;
+	
+	// Create a custom event node
+	TSharedPtr< FUICommandInfo > CreateCustomEvent;
 
 	// Zoom in and out on the graph editor
 	TSharedPtr< FUICommandInfo > ZoomIn;
@@ -152,6 +163,9 @@ public:
 	static void Register();
 
 	static const FGraphEditorCommandsImpl& Get();
+	
+	/** Build "Find References" submenu when a context allows for it */
+	static void BuildFindReferencesMenu(FMenuBuilder& MenuBuilder);
 
 	static void Unregister();
 };

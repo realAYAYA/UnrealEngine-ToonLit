@@ -25,7 +25,9 @@ namespace EpicGames.Core
 		/// <summary>
 		/// Event which indicates whether the queue is empty.
 		/// </summary>
+#pragma warning disable CA2213 // Disposable fields should be disposed
 		ManualResetEvent? _emptyEvent = new(true);
+#pragma warning restore CA2213 // Disposable fields should be disposed
 
 		/// <summary>
 		/// Exceptions which occurred while executing tasks
@@ -44,12 +46,21 @@ namespace EpicGames.Core
 		/// </summary>
 		public void Dispose()
 		{
-			if (_emptyEvent != null)
+			if (_emptyEvent != null) // Check we haven't disposed already
 			{
-				Wait();
+				// Ensure the event state is in sync with the counter before we wait on it. Its state can lag behind the _numOutstandingJobs
+				// field because we only acquire the lock and update it after modifying _numOutstandingJobs.
+				SetEventState();
+				_emptyEvent.WaitOne();
 
-				_emptyEvent?.Dispose();
-				_emptyEvent = null;
+				// Acquire the lock before disposing in case any background threads are about to execute SetEventState.
+				lock (_lockObject)
+				{
+					_emptyEvent.Dispose();
+					_emptyEvent = null;
+				}
+
+				RethrowExceptions();
 			}
 		}
 
@@ -100,11 +111,24 @@ namespace EpicGames.Core
 		}
 
 		/// <summary>
+		/// Atomically read the contents of <see cref="_emptyEvent"/>, throwing an exception if it's already null (indicating that the object has been disposed)
+		/// </summary>
+		ManualResetEvent GetEmptyEvent()
+		{
+			ManualResetEvent? emptyEvent = _emptyEvent;
+			if (emptyEvent == null)
+			{
+				throw new ObjectDisposedException(typeof(ThreadPoolWorkQueue).Name);
+			}
+			return emptyEvent;
+		}
+
+		/// <summary>
 		/// Waits for all queued tasks to finish
 		/// </summary>
 		public void Wait()
 		{
-			_emptyEvent?.WaitOne();
+			GetEmptyEvent().WaitOne();
 			RethrowExceptions();
 		}
 
@@ -125,7 +149,7 @@ namespace EpicGames.Core
 		/// <returns>True if the queue completed, false if the timeout elapsed</returns>
 		public bool Wait(TimeSpan timeout)
 		{
-			bool bResult = _emptyEvent?.WaitOne(timeout) ?? false;
+			bool bResult = GetEmptyEvent().WaitOne(timeout);
 			if (bResult)
 			{
 				RethrowExceptions();
@@ -153,13 +177,16 @@ namespace EpicGames.Core
 		{
 			lock (_lockObject)
 			{
-				if (_numOutstandingJobs > 0)
+				if (_emptyEvent != null)
 				{
-					_emptyEvent?.Reset();
-				}
-				else
-				{
-					_emptyEvent?.Set();
+					if (Interlocked.CompareExchange(ref _numOutstandingJobs, 0, 0) > 0)
+					{
+						_emptyEvent.Reset();
+					}
+					else
+					{
+						_emptyEvent.Set();
+					}
 				}
 			}
 		}

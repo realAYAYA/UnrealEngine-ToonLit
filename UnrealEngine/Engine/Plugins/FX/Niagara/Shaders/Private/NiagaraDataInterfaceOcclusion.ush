@@ -10,9 +10,10 @@ SamplerState		{ParameterName}_CloudVolumetricTextureSampler;
 void QueryOcclusionFactorWithRectangleGPU_{ParameterName}(in float3 In_SampleCenterWorldPos, in float In_SampleWindowWidthWorld, in float In_SampleWindowHeightWorld, in float In_SampleSteps, out float Out_VisibilityFraction, out float Out_SampleFraction)
 {
 	FLWCVector3 LwcSamplePos = MakeLWCVector3({ParameterName}_SystemLWCTile, In_SampleCenterWorldPos);
-	float CameraDistance = LWCToFloat(LWCAbs(LWCDot(LWCSubtract(LwcSamplePos, PrimaryView.WorldViewOrigin), View.ViewForward.xyz)));
+	float3 ResolvedLwcSamplePos = DFFastToTranslatedWorld(DFFromTileOffset_Hack(LwcSamplePos), PrimaryView.PreViewTranslation);
+	const float3 TranslatedWorldViewOrigin = DFFastToTranslatedWorld(PrimaryView.WorldViewOrigin, PrimaryView.PreViewTranslation);
+	float CameraDistance = abs(dot(ResolvedLwcSamplePos - TranslatedWorldViewOrigin, View.ViewForward.xyz));
 
-	float3 ResolvedLwcSamplePos = LWCToFloat(LWCAdd(LwcSamplePos, PrimaryView.PreViewTranslation));
 	float4 SamplePosition = float4(ResolvedLwcSamplePos, 1);
 	float4 ClipPosition = mul(SamplePosition, PrimaryView.TranslatedWorldToClip);
 	float2 ScreenPosition = ClipPosition.xy / ClipPosition.w;
@@ -65,9 +66,10 @@ void QueryOcclusionFactorWithCircleGPU_{ParameterName}(in float3 In_SampleCenter
 	const float PI = 3.14159265;
 	const float SPIRAL_TURN = 2 * PI * 0.61803399; // use golden ratio to rotate sample pattern each ring so we get a spiral
 	FLWCVector3 LwcSamplePos = MakeLWCVector3({ParameterName}_SystemLWCTile, In_SampleCenterWorldPos);
-	float CameraDistance = LWCToFloat(LWCAbs(LWCDot(LWCSubtract(LwcSamplePos, PrimaryView.WorldViewOrigin), View.ViewForward.xyz)));
+	float3 ResolvedLwcSamplePos = DFFastToTranslatedWorld(DFFromTileOffset_Hack(LwcSamplePos), PrimaryView.PreViewTranslation);
+	const float3 TranslatedWorldViewOrigin = DFFastToTranslatedWorld(PrimaryView.WorldViewOrigin, PrimaryView.PreViewTranslation);
+	float CameraDistance = abs(dot(ResolvedLwcSamplePos - TranslatedWorldViewOrigin, View.ViewForward.xyz));
 
-	float3 ResolvedLwcSamplePos = LWCToFloat(LWCAdd(LwcSamplePos, PrimaryView.PreViewTranslation));
 	float4 SamplePosition = float4(ResolvedLwcSamplePos, 1);
 	float4 ClipPosition = mul(SamplePosition, PrimaryView.TranslatedWorldToClip);
 	float2 ScreenPosition = ClipPosition.xy / ClipPosition.w;
@@ -133,12 +135,13 @@ void QueryOcclusionFactorWithCircle_{ParameterName}(float3 WorldPosition, float 
 	const float SPIRAL_TURN = 2.0f * PI * 0.61803399; // use golden ratio to rotate sample pattern each ring so we get a spiral
 
 	const FLWCVector3 LWCWorldPosition = MakeLWCVector3({ParameterName}_SystemLWCTile, WorldPosition);
-	const float SampleDepth = LWCToFloat(LWCAbs(LWCDot(LWCSubtract(LWCWorldPosition, PrimaryView.WorldViewOrigin), View.ViewForward.xyz)));
-
-	const float3 PreViewPosition = LWCToFloat(LWCAdd(LWCWorldPosition, PrimaryView.PreViewTranslation));
+	const float3 PreViewPosition = DFFastToTranslatedWorld(DFFromTileOffset_Hack(LWCWorldPosition), PrimaryView.PreViewTranslation);
+	const float3 TranslatedWorldViewOrigin = DFFastToTranslatedWorld(PrimaryView.WorldViewOrigin, PrimaryView.PreViewTranslation);
+	const float SampleDepth = abs(dot(PreViewPosition - TranslatedWorldViewOrigin, View.ViewForward.xyz));
+	
 	const float4 ClipPosition = mul(float4(PreViewPosition, 1), PrimaryView.TranslatedWorldToClip);
 	const float2 ScreenPosition = ClipPosition.xy / ClipPosition.w;
-	const float2 ScreenUV = (ScreenPosition * float2(0.5f, -0.5f)) + 0.5f;
+	const float2 ScreenUV = (ScreenPosition * PrimaryView.ScreenPositionScaleBias.xy) + PrimaryView.ScreenPositionScaleBias.wz;
 
 	int TotalSamples = 0;
 	int UnoccludedSamples = 0;
@@ -158,7 +161,7 @@ void QueryOcclusionFactorWithCircle_{ParameterName}(float3 WorldPosition, float 
 	// Take ring taps
 	if ( NumberOfRings > 0 && SamplesPerRing > 0 )
 	{
-		const float WorldDepth = dot(LWCToFloat(LWCSubtract(LWCWorldPosition, PrimaryView.WorldCameraOrigin)), PrimaryView.ViewForward);
+		const float WorldDepth = dot(PreViewPosition - PrimaryView.TranslatedWorldCameraOrigin, PrimaryView.ViewForward);
 		const float2 ScreenRadiusUV = (WorldDiameter * 0.5f) / (GetTanHalfFieldOfView() * 2.0f * WorldDepth);
 
 		const float RadStep = 2.0f * PI / float(SamplesPerRing + 1);
@@ -192,8 +195,7 @@ void QueryCloudOcclusionWithCircle_{ParameterName}(float3 WorldPosition, float W
 	const float SPIRAL_TURN = 2.0f * PI * 0.61803399; // use golden ratio to rotate sample pattern each ring so we get a spiral
 
 	const FLWCVector3 LWCWorldPosition = MakeLWCVector3({ParameterName}_SystemLWCTile, WorldPosition);
-
-	const float3 PreViewPosition = LWCToFloat(LWCAdd(LWCWorldPosition, PrimaryView.PreViewTranslation));
+	const float3 PreViewPosition = DFFastToTranslatedWorld(DFFromTileOffset_Hack(LWCWorldPosition), PrimaryView.PreViewTranslation);
 	const float4 ClipPosition = mul(float4(PreViewPosition, 1), PrimaryView.TranslatedWorldToClip);
 	const float2 ScreenPosition = ClipPosition.xy / ClipPosition.w;
 	const float2 ScreenUV = (ScreenPosition * float2(0.5f, -0.5f)) + 0.5f;
@@ -215,7 +217,8 @@ void QueryCloudOcclusionWithCircle_{ParameterName}(float3 WorldPosition, float W
 	// Take ring taps
 	if ( NumberOfRings > 0 && SamplesPerRing > 0 )
 	{
-		const float WorldDepth = dot(LWCToFloat(LWCSubtract(LWCWorldPosition, PrimaryView.WorldCameraOrigin)), PrimaryView.ViewForward);
+		const float3 TranslatedWorldViewOrigin = DFFastToTranslatedWorld(PrimaryView.WorldViewOrigin, PrimaryView.PreViewTranslation);
+		const float WorldDepth = dot(PreViewPosition - TranslatedWorldViewOrigin, View.ViewForward.xyz);
 		const float2 ScreenRadiusUV = (WorldDiameter * 0.5f) / (GetTanHalfFieldOfView() * 2.0f * WorldDepth);
 
 		const float RadStep = 2.0f * PI / float(SamplesPerRing + 1);
@@ -247,7 +250,7 @@ void QueryCloudOcclusionWithCircle_{ParameterName}(float3 WorldPosition, float W
 	{
 		const float3 RayDirection = normalize(PreViewPosition);
 
-		const float3 PlanetCenterToTranslatedWorldPos = (LWCToFloat(LWCAdd(LWCWorldPosition, PrimaryView.PreViewTranslation)) - PrimaryView.SkyPlanetTranslatedWorldCenterAndViewHeight.xyz) * CM_TO_SKY_UNIT;
+		const float3 PlanetCenterToTranslatedWorldPos = (PreViewPosition - PrimaryView.SkyPlanetTranslatedWorldCenterAndViewHeight.xyz) * CM_TO_SKY_UNIT;
 		AtmosphereTransmittance = GetAtmosphereTransmittance(
 			PlanetCenterToTranslatedWorldPos,
 			RayDirection,

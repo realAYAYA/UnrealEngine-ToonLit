@@ -54,7 +54,7 @@ public:
 
 		uint32 bytes = Stream.GetNumBytes();
 		uint32 originalBytes = sizeof(float) * NumValues;
-		float rate = originalBytes / (float)bytes;
+		float rate = static_cast<float>(originalBytes) / static_cast<float>(bytes);
 	}
 
 	/**
@@ -287,8 +287,8 @@ void IntegerTest()
 
 	for (int32 Index = 0; Index < NumValues; Index++)
 	{
-		float f = Index / 1024.0f;
-		float sf = sin(f);
+		float f = static_cast<float>(Index) / 1024.0f;
+		float sf = static_cast<float>(sin(f));
 		IntValues[Index] = (uint32)((sf*0.5 + 0.5) * 3999);
 	}
 
@@ -347,7 +347,7 @@ void FloatTest()
 
 	for (int32 Index = 0; Index < NumValues; Index++)
 	{
-		Values[Index] = (float)sin(Index / 1024.0f);
+		Values[Index] = static_cast<float>(sin(static_cast<float>(Index) / 1024.0f));
 	}
 
 	// lossless mode

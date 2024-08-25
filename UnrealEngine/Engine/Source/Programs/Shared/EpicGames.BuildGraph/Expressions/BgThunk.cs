@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq.Expressions;
 using System.Reflection;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace EpicGames.BuildGraph.Expressions
@@ -144,6 +143,6 @@ namespace EpicGames.BuildGraph.Expressions
 		public BgThunk(MethodCallExpression expr)
 			: base(expr)
 		{
-		}	
+		}
 	}
 }

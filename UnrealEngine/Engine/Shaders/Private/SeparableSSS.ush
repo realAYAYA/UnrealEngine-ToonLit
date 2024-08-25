@@ -177,10 +177,10 @@ float3 SSSSTransmittance(float translucency, float sssWidth, float3 worldPositio
 }
 
 //-----------------------------------------------------------------------------
-// Query the kernel for both strata and the SSS profile
+// Query the kernel for both Substrate and the SSS profile
 struct FSeparableFilterParameters
 {
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 	float3 D3D;
 	float ScatterRadius;
 	float WorldUnitScale;
@@ -188,8 +188,8 @@ struct FSeparableFilterParameters
 	uint SubsurfaceProfileInt;
 };
 
-#if STRATA_ENABLED
-void FillBurleyParameters(FStrataSubsurfaceData SSSData,
+#if SUBSTRATE_ENABLED
+void FillBurleyParameters(FSubstrateSubsurfaceData SSSData,
 	inout FSeparableFilterParameters Parameters)
 {
 	const FBurleyParameter BurleyParameter = GetBurleyParameters(SSSData);
@@ -204,7 +204,7 @@ void FillBurleyParameters(FStrataSubsurfaceData SSSData,
 half4 GetSubsurfaceProfileKernel(uint index, FSeparableFilterParameters Parameters)
 {
 	half4 Kernel = (half4)0.0f;
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 	if (Parameters.SubsurfaceProfileInt == SSS_PROFILE_ID_PERPIXEL)
 	{
 		Kernel = GetSubsurfaceProfileKernel(index, Parameters.D3D, 
@@ -267,10 +267,10 @@ float4 SSSSBlurPS(uint2 BufferPos, float2 BufferUV, float2 dir, bool initStencil
     
 	FSeparableFilterParameters SeparableFilterParameters;
 
-#if STRATA_ENABLED
-	const FStrataSubsurfaceData SSSData = LoadStrataSSSData(BufferUV);
+#if SUBSTRATE_ENABLED
+	const FSubstrateSubsurfaceData SSSData = LoadSubstrateSSSData(BufferUV);
 	// For SSS_PROFILE_ID_PERPIXEL is managed throught the burley passes
-	const uint SubsurfaceProfileInt = StrataSubSurfaceHeaderGetIsProfile(SSSData.Header) ? StrataSubSurfaceHeaderGetProfileId(SSSData.Header) : SSS_PROFILE_ID_PERPIXEL;
+	const uint SubsurfaceProfileInt = SubstrateSubSurfaceHeaderGetIsProfile(SSSData.Header) ? SubstrateSubSurfaceHeaderGetProfileId(SSSData.Header) : SSS_PROFILE_ID_PERPIXEL;
 	SeparableFilterParameters.SubsurfaceProfileInt = SubsurfaceProfileInt;
 	FillBurleyParameters(SSSData, SeparableFilterParameters);
 #else

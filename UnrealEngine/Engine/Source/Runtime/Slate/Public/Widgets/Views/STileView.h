@@ -58,6 +58,7 @@ public:
 		, _ScrollbarDragFocusCause(EFocusCause::Mouse)
 		, _AllowOverscroll(EAllowOverscroll::Yes)
 		, _ScrollBarStyle(&FAppStyle::Get().GetWidgetStyle<FScrollBarStyle>("ScrollBar"))
+		, _ScrollbarDisabledVisibility(EVisibility::Collapsed)
 		, _ConsumeMouseWheel(EConsumeMouseWheel::WhenScrollingPossible)
 		, _WheelScrollMultiplier(GetGlobalScrollAmount())
 		, _HandleGamepadEvents(true)
@@ -115,6 +116,8 @@ public:
 		SLATE_ARGUMENT( EAllowOverscroll, AllowOverscroll );
 
 		SLATE_STYLE_ARGUMENT( FScrollBarStyle, ScrollBarStyle );
+
+		SLATE_ARGUMENT( EVisibility, ScrollbarDisabledVisibility );
 
 		SLATE_ARGUMENT( EConsumeMouseWheel, ConsumeMouseWheel );
 
@@ -209,6 +212,7 @@ public:
 			{
 				this->ScrollBar->SetDragFocusCause(InArgs._ScrollbarDragFocusCause);
 				this->ScrollBar->SetUserVisibility(InArgs._ScrollbarVisibility);
+				this->ScrollBar->SetScrollbarDisabledVisibility(InArgs._ScrollbarDisabledVisibility);
 			}
 			this->AddMetadata(MakeShared<TTableViewMetadata<ItemType>>(this->SharedThis(this)));
 		}

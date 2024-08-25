@@ -52,7 +52,7 @@ bool UMVVMSubsystem::DoesWidgetTreeContainedWidget(const UWidgetTree* WidgetTree
 namespace UE::MVVM::Private
 {
 
-	FMVVMAvailableBinding GetAvailableBinding(const UFunction* Function, bool bHasNotify, bool bCanAccessPrivate, bool bCanAccessProtected)
+	FMVVMAvailableBinding GetAvailableBinding(const UFunction* Function, bool bHasNotify, bool bCanAccessPrivate, bool bCanAccessProtected, const bool bIsBindingToEvent)
 	{
 		// N.B. A function can be private/protected and can still be use when it's a BlueprintGetter/BlueprintSetter.
 		//But we bind to the property not the function.
@@ -76,7 +76,15 @@ namespace UE::MVVM::Private
 
 		const bool bIsReadable = BindingHelper::IsValidForSourceBinding(Function);
 		const bool bIsWritable = BindingHelper::IsValidForDestinationBinding(Function);
-		if (bIsReadable || bIsWritable || bHasNotify)
+		const bool bIsForEvent = BindingHelper::IsValidForEventBinding(Function);
+		if (bIsBindingToEvent)
+		{
+			if (bIsForEvent)
+			{
+				return FMVVMAvailableBinding(FMVVMBindingName(Function->GetFName()), bIsReadable, true, bHasNotify && bIsReadable);
+			}
+		}
+		else if (bIsReadable || bIsWritable || bHasNotify)
 		{
 			return FMVVMAvailableBinding(FMVVMBindingName(Function->GetFName()), bIsReadable, bIsWritable, bHasNotify && bIsReadable);
 		}
@@ -111,7 +119,7 @@ namespace UE::MVVM::Private
 		return FMVVMAvailableBinding();
 	}
 
-	TArray<FMVVMAvailableBinding> GetAvailableBindings(const UStruct* Container, const UClass* AccessorType, const UE::FieldNotification::IClassDescriptor* ClassDescriptor)
+	TArray<FMVVMAvailableBinding> GetAvailableBindings(const UStruct* Container, const UClass* AccessorType, const UE::FieldNotification::IClassDescriptor* ClassDescriptor, const bool bIsBindingToEvent)
 	{
 		TSet<FName> FieldDescriptors;
 		if (ClassDescriptor)
@@ -137,7 +145,7 @@ namespace UE::MVVM::Private
 				check(Function);
 
 				const bool bHasNotify = FieldDescriptors.Contains(Function->GetFName());
-				FMVVMAvailableBinding Binding = GetAvailableBinding(Function, bHasNotify, bCanAccessPrivateMember, bCanAccessProtectedMember);
+				FMVVMAvailableBinding Binding = GetAvailableBinding(Function, bHasNotify, bCanAccessPrivateMember, bCanAccessProtectedMember, bIsBindingToEvent);
 				if (Binding.IsValid())
 				{
 					Result.Add(Binding);
@@ -195,22 +203,22 @@ namespace UE::MVVM::Private
 		return Result;
 	}
 
-	TArray<FMVVMAvailableBinding> GetAvailableBindings(const UClass* InSubClass, const UClass* InAccessor)
+	TArray<FMVVMAvailableBinding> GetAvailableBindings(const UClass* InSubClass, const UClass* InAccessor, const bool bIsBindingToEvent)
 	{
 		if (InSubClass && InSubClass->ImplementsInterface(UNotifyFieldValueChanged::StaticClass()))
 		{
 			TScriptInterface<INotifyFieldValueChanged> DefaultObject = InSubClass->GetDefaultObject();
 			const UE::FieldNotification::IClassDescriptor& ClassDescriptor = DefaultObject->GetFieldNotificationDescriptor();
-			return GetAvailableBindings(InSubClass, InAccessor, &ClassDescriptor);
+			return GetAvailableBindings(InSubClass, InAccessor, &ClassDescriptor, bIsBindingToEvent);
 		}
 		else
 		{
-			return GetAvailableBindings(InSubClass, InAccessor, nullptr);
+			return GetAvailableBindings(InSubClass, InAccessor, nullptr, bIsBindingToEvent);
 		}
 	}
 
 
-	FMVVMAvailableBinding GetAvailableBinding(FMVVMConstFieldVariant FieldVariant, const UClass* AccessorType, const UE::FieldNotification::IClassDescriptor* ClassDescriptor)
+	FMVVMAvailableBinding GetAvailableBinding(FMVVMConstFieldVariant FieldVariant, const UClass* AccessorType, const UE::FieldNotification::IClassDescriptor* ClassDescriptor, const bool bIsBindingToEvent)
 	{
 		bool bHasNotify = false;
 		if (ClassDescriptor)
@@ -228,29 +236,29 @@ namespace UE::MVVM::Private
 		}
 		else if (FieldVariant.IsFunction())
 		{
-			return GetAvailableBinding(FieldVariant.GetFunction(), bHasNotify, bCanAccessPrivateMember, bCanAccessProtectedMember);
+			return GetAvailableBinding(FieldVariant.GetFunction(), bHasNotify, bCanAccessPrivateMember, bCanAccessProtectedMember, bIsBindingToEvent);
 		}
 
 		return FMVVMAvailableBinding();
 	}
 
 
-	FMVVMAvailableBinding GetAvailableBinding(FMVVMConstFieldVariant FieldVariant, const UClass* InAccessor)
+	FMVVMAvailableBinding GetAvailableBinding(FMVVMConstFieldVariant FieldVariant, const UClass* InAccessor, const bool bIsBindingToEvent)
 	{
 		const UClass* OwnerClass = Cast<UClass>(FieldVariant.GetOwner());
 		if (OwnerClass && OwnerClass->ImplementsInterface(UNotifyFieldValueChanged::StaticClass()))
 		{
 			TScriptInterface<INotifyFieldValueChanged> DefaultObject = OwnerClass->GetDefaultObject();
 			const UE::FieldNotification::IClassDescriptor& ClassDescriptor = DefaultObject->GetFieldNotificationDescriptor();
-			return GetAvailableBinding(FieldVariant, InAccessor, &ClassDescriptor);
+			return GetAvailableBinding(FieldVariant, InAccessor, &ClassDescriptor, bIsBindingToEvent);
 		}
 		else
 		{
-			return GetAvailableBinding(FieldVariant, InAccessor, nullptr);
+			return GetAvailableBinding(FieldVariant, InAccessor, nullptr, bIsBindingToEvent);
 		}
 	}
 
-	FMVVMAvailableBinding GetAvailableBinding(FMVVMBindingName BindingName, const UClass* InSubClass, const UClass* InAccessor)
+	FMVVMAvailableBinding GetAvailableBinding(FMVVMBindingName BindingName, const UClass* InSubClass, const UClass* InAccessor, const bool bIsBindingToEvent)
 	{
 		if (!BindingName.IsValid())
 		{
@@ -258,7 +266,7 @@ namespace UE::MVVM::Private
 		}
 
 		FMVVMConstFieldVariant FieldVariant = UE::MVVM::BindingHelper::FindFieldByName(InSubClass, BindingName);
-		return GetAvailableBinding(FieldVariant, InAccessor);
+		return GetAvailableBinding(FieldVariant, InAccessor, bIsBindingToEvent);
 	}
 } //namespace
 
@@ -271,15 +279,19 @@ TArray<FMVVMAvailableBinding> UMVVMSubsystem::K2_GetAvailableBindings(const UCla
 
 TArray<FMVVMAvailableBinding> UMVVMSubsystem::GetAvailableBindings(const UClass* Class, const UClass* Accessor)
 {
-	return UE::MVVM::Private::GetAvailableBindings(Class, Accessor);
+	return UE::MVVM::Private::GetAvailableBindings(Class, Accessor, false);
 }
 
 
 TArray<FMVVMAvailableBinding> UMVVMSubsystem::GetAvailableBindingsForStruct(const UScriptStruct* Struct)
 {
-	return UE::MVVM::Private::GetAvailableBindings(Struct, nullptr, nullptr);
+	return UE::MVVM::Private::GetAvailableBindings(Struct, nullptr, nullptr, false);
 }
 
+TArray<FMVVMAvailableBinding> UMVVMSubsystem::GetAvailableBindingsForEvent(const UClass* Class, const UClass* Accessor)
+{
+	return UE::MVVM::Private::GetAvailableBindings(Class, Accessor, true);
+}
 
 FMVVMAvailableBinding UMVVMSubsystem::K2_GetAvailableBinding(const UClass* Class, FMVVMBindingName BindingName, const UClass* Accessor) const
 {
@@ -289,15 +301,24 @@ FMVVMAvailableBinding UMVVMSubsystem::K2_GetAvailableBinding(const UClass* Class
 
 FMVVMAvailableBinding UMVVMSubsystem::GetAvailableBinding(const UClass* Class, FMVVMBindingName BindingName, const UClass* Accessor)
 {
-	return UE::MVVM::Private::GetAvailableBinding(BindingName, Class, Accessor);
+	return UE::MVVM::Private::GetAvailableBinding(BindingName, Class, Accessor, false);
 }
 
 
 FMVVMAvailableBinding UMVVMSubsystem::GetAvailableBindingForField(UE::MVVM::FMVVMConstFieldVariant FieldVariant, const UClass* Accessor)
 {
-	return UE::MVVM::Private::GetAvailableBinding(FieldVariant, Accessor);
+	return UE::MVVM::Private::GetAvailableBinding(FieldVariant, Accessor, false);
 }
 
+FMVVMAvailableBinding UMVVMSubsystem::GetAvailableBindingForEvent(UE::MVVM::FMVVMConstFieldVariant FieldVariant, const UClass* Accessor)
+{
+	return UE::MVVM::Private::GetAvailableBinding(FieldVariant, Accessor, true);
+}
+
+FMVVMAvailableBinding UMVVMSubsystem::GetAvailableBindingForEvent(const UClass* Class, FMVVMBindingName BindingName, const UClass* Accessor)
+{
+	return UE::MVVM::Private::GetAvailableBinding(BindingName, Class, Accessor, true);
+}
 
 UMVVMViewModelCollectionObject* UMVVMSubsystem::GetGlobalViewModelCollection() const
 {

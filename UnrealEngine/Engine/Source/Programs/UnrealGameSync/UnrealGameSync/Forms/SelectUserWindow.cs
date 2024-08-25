@@ -1,14 +1,14 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Perforce;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using EpicGames.Perforce;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 #nullable enable
 
@@ -26,7 +26,7 @@ namespace UnrealGameSync
 
 		private int _selectedUserIndex;
 		private readonly List<UsersRecord> _users;
-		
+
 		private SelectUserWindow(List<UsersRecord> users, int selectedUserIndex)
 		{
 			InitializeComponent();
@@ -41,27 +41,27 @@ namespace UnrealGameSync
 
 		private void MoveSelection(int delta)
 		{
-			if(UserListView.Items.Count > 0)
+			if (UserListView.Items.Count > 0)
 			{
 				int currentIndex = -1;
-				if(UserListView.SelectedIndices.Count > 0)
+				if (UserListView.SelectedIndices.Count > 0)
 				{
 					currentIndex = UserListView.SelectedIndices[0];
 				}
 
 				int nextIndex = currentIndex + delta;
-				if(nextIndex < 0)
+				if (nextIndex < 0)
 				{
 					nextIndex = 0;
 				}
-				else if(nextIndex >= UserListView.Items.Count)
+				else if (nextIndex >= UserListView.Items.Count)
 				{
 					nextIndex = UserListView.Items.Count - 1;
 				}
 
-				if(currentIndex != nextIndex)
+				if (currentIndex != nextIndex)
 				{
-					if(currentIndex != -1)
+					if (currentIndex != -1)
 					{
 						UserListView.Items[currentIndex].Selected = false;
 					}
@@ -74,12 +74,12 @@ namespace UnrealGameSync
 
 		protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
 		{
-			if(keyData == Keys.Up)
+			if (keyData == Keys.Up)
 			{
 				MoveSelection(-1);
 				return true;
 			}
-			else if(keyData == Keys.Down)
+			else if (keyData == Keys.Down)
 			{
 				MoveSelection(+1);
 				return true;
@@ -89,9 +89,9 @@ namespace UnrealGameSync
 
 		private static bool IncludeInFilter(UsersRecord user, string[] filterWords)
 		{
-			foreach(string filterWord in filterWords)
+			foreach (string filterWord in filterWords)
 			{
-				if(!user.UserName.Contains(filterWord, StringComparison.OrdinalIgnoreCase) 
+				if (!user.UserName.Contains(filterWord, StringComparison.OrdinalIgnoreCase)
 					&& !user.FullName.Contains(filterWord, StringComparison.OrdinalIgnoreCase)
 					&& !user.Email.Contains(filterWord, StringComparison.OrdinalIgnoreCase))
 				{
@@ -108,11 +108,11 @@ namespace UnrealGameSync
 
 			int selectedItemIndex = -1;
 
-			string[] filter = FilterTextBox.Text.Split(new char[]{' '}, StringSplitOptions.RemoveEmptyEntries);
-			for(int idx = 0; idx < _users.Count; idx++)
+			string[] filter = FilterTextBox.Text.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+			for (int idx = 0; idx < _users.Count; idx++)
 			{
 				UsersRecord user = _users[idx];
-				if(IncludeInFilter(user, filter))
+				if (IncludeInFilter(user, filter))
 				{
 					ListViewItem item = new ListViewItem(user.UserName);
 					item.SubItems.Add(new ListViewItem.ListViewSubItem(item, user.FullName));
@@ -120,7 +120,7 @@ namespace UnrealGameSync
 					item.Tag = (int)idx;
 					UserListView.Items.Add(item);
 
-					if(selectedItemIndex == -1 && idx >= _selectedUserIndex)
+					if (selectedItemIndex == -1 && idx >= _selectedUserIndex)
 					{
 						selectedItemIndex = UserListView.Items.Count - 1;
 						item.Selected = true;
@@ -128,13 +128,13 @@ namespace UnrealGameSync
 				}
 			}
 
-			if(selectedItemIndex == -1 && UserListView.Items.Count > 0)
+			if (selectedItemIndex == -1 && UserListView.Items.Count > 0)
 			{
 				selectedItemIndex = UserListView.Items.Count - 1;
 				UserListView.Items[selectedItemIndex].Selected = true;
 			}
 
-			if(selectedItemIndex != -1)
+			if (selectedItemIndex != -1)
 			{
 				UserListView.EnsureVisible(selectedItemIndex);
 			}
@@ -149,14 +149,14 @@ namespace UnrealGameSync
 			ILogger<SelectUserWindow> logger = serviceProvider.GetRequiredService<ILogger<SelectUserWindow>>();
 
 			ModalTask<List<UsersRecord>>? usersTask = PerforceModalTask.Execute(owner, "Finding users", "Finding users, please wait...", perforceSettings, EnumerateUsersTask.RunAsync, logger);
-			if(usersTask == null || !usersTask.Succeeded)
+			if (usersTask == null || !usersTask.Succeeded)
 			{
 				selectedUserName = null;
 				return false;
 			}
 
 			using SelectUserWindow selectUser = new SelectUserWindow(usersTask.Result, 0);
-			if(selectUser.ShowDialog(owner) == DialogResult.OK)
+			if (selectUser.ShowDialog(owner) == DialogResult.OK)
 			{
 				selectedUserName = usersTask.Result[selectUser._selectedUserIndex].UserName;
 				return true;
@@ -180,7 +180,7 @@ namespace UnrealGameSync
 
 		private void OkBtn_Click(object sender, EventArgs e)
 		{
-			if(UserListView.SelectedItems.Count > 0)
+			if (UserListView.SelectedItems.Count > 0)
 			{
 				_selectedUserIndex = (int)UserListView.SelectedItems[0].Tag;
 				DialogResult = DialogResult.OK;

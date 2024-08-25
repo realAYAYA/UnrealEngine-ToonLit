@@ -87,7 +87,7 @@ UE_NET_TEST_FIXTURE(FTestReliableNetBlobQueue, CanSendMoreReliableBlobsThanRelia
 			Server->SendTo(Client);
 			Server->PostSendUpdate();
 
-			const uint32 NewPacketCount = ConnectionInfo.WrittenPackets.Count();
+			const SIZE_T NewPacketCount = ConnectionInfo.WrittenPackets.Count();
 			if (NewPacketCount == PacketCount)
 			{
 				break;

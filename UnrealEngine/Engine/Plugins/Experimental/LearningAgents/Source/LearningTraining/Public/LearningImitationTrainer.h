@@ -6,7 +6,6 @@
 #include "LearningLog.h"
 #include "LearningTrainer.h"
 #include "LearningSharedMemory.h"
-#include "LearningNeuralNetwork.h" // Included for EActivationFunction::ELU
 
 #include "Commandlets/Commandlet.h"
 #include "Templates/SharedPointer.h"
@@ -15,6 +14,7 @@
 
 class FSocket;
 class FMonitoredProcess;
+class ULearningNeuralNetworkData;
 
 UCLASS()
 class LEARNINGTRAINING_API ULearningSocketImitationTrainerServerCommandlet : public UCommandlet
@@ -29,28 +29,6 @@ class LEARNINGTRAINING_API ULearningSocketImitationTrainerServerCommandlet : pub
 
 namespace UE::Learning
 {
-	/**
-	* Settings for the network used for training. These settings must match the Neural Network
-	* objects passed to ImitationTrainer::Train.
-	*/
-	struct FImitationTrainerNetworkSettings
-	{
-		/** Minimum action noise used by the policy */
-		float PolicyActionNoiseMin = 0.25f;
-
-		/** Maximum action noise used by the policy */
-		float PolicyActionNoiseMax = 0.25f;
-
-		/** Total layers for policy network including input, hidden, and output layers */
-		int32 PolicyLayerNum = 3;
-
-		/** Number of neurons in each hidden layer of the policy network */
-		int32 PolicyHiddenLayerSize = 128;
-
-		/** Activation function to use on hidden layers of the policy network */
-		EActivationFunction PolicyActivationFunction = EActivationFunction::ELU;
-	};
-
 	struct FImitationTrainerTrainingSettings
 	{
 		// Number of iterations to train the network for. Controls the overall training time.
@@ -58,19 +36,33 @@ namespace UE::Learning
 		// closer to 1000000 iterations or more is required for an exhaustively trained network.
 		uint32 IterationNum = 1000000;
 
-		// Learning rate of the actor network. Typical values are between 0.001f and 0.0001f
-		float LearningRateActor = 0.0001f;
+		// Learning rate of the training network. Typical values are between 0.001f and 0.0001f
+		float LearningRate = 0.001f;
 
-		// Ratio by which to decay the learning rate every 1000 iterations.
-		float LearningRateDecay = 0.99f;
+		// Amount by which to multiply the learning rate every 1000 iterations.
+		float LearningRateDecay = 1.0f;
 
 		// Amount of weight decay to apply to the network. Larger values encourage network 
 		// weights to be smaller.
-		float WeightDecay = 0.001f;
+		float WeightDecay = 0.0001f;
 
 		// Batch size to use for training. Smaller values tend to produce better results 
 		// at the cost of slowing down training.
 		uint32 BatchSize = 128;
+
+		// The number of consecutive steps of observations and actions over which to train the policy. Increasing this value 
+		// will encourage the policy to use its memory effectively. Too large and training can become unstable. Given
+		// we don't know the memory state during imitation learning it is better this is slightly larger than when we 
+		// are doing reinforcement learning.
+		uint32 Window = 64;
+
+		// Weight used to regularize actions. Larger values will encourage smaller actions but too large
+		// will cause actions to become always zero.
+		float ActionRegularizationWeight = 0.001f;
+
+		// Weighting used for the entropy bonus. Larger values encourage larger action 
+		// noise and therefore greater exploration but can make actions very noisy.
+		float ActionEntropyWeight = 0.0f;
 
 		// Random seed to use for training
 		uint32 Seed = 1234;
@@ -85,20 +77,10 @@ namespace UE::Learning
 		// for this version of Python by going to your Unreal Editor Python Binaries directory 
 		// (e.g. "\Engine\Binaries\ThirdParty\Python3\Win64") and running `python -m pip install tensorboard`. 
 		bool bUseTensorboard = false;
-	};
 
-	/**
-	* ImitationTrainer flags controlling some aspects of the process of communication with the trainer
-	*/
-	enum class EImitationTrainerFlags : uint8
-	{
-		None = 0,
-
-		// If to send over the initial provided policy network rather than reinitialize it from random weights at 
-		// the start of training. Use this if you want to start from a network which has already been trained.
-		UseInitialPolicyNetwork = 1 << 0,
+		// If to save snapshots of the trained networks every 1000 iterations
+		bool bSaveSnapshots = false;
 	};
-	ENUM_CLASS_FLAGS(EImitationTrainerFlags)
 
 	/**
 	* Interface for an object which can train a policy from experience using imitation learning.
@@ -145,7 +127,37 @@ namespace UE::Learning
 		* @returns				Trainer response
 		*/
 		virtual ETrainerResponse RecvPolicy(
-			FNeuralNetwork& OutNetwork,
+			ULearningNeuralNetworkData& OutNetwork,
+			const float Timeout = Trainer::DefaultTimeout,
+			FRWLock* NetworkLock = nullptr,
+			const ELogSetting LogSettings = Trainer::DefaultLogSettings) = 0;
+
+		/**
+		* Wait for the trainer and pull an updated encoder.
+		*
+		* @param OutNetwork		Network to update
+		* @param Timeout		Timeout to wait in seconds
+		* @param NetworkLock	Lock to use when updating network
+		* @param LogSettings	Log settings
+		* @returns				Trainer response
+		*/
+		virtual ETrainerResponse RecvEncoder(
+			ULearningNeuralNetworkData& OutNetwork,
+			const float Timeout = Trainer::DefaultTimeout,
+			FRWLock* NetworkLock = nullptr,
+			const ELogSetting LogSettings = Trainer::DefaultLogSettings) = 0;
+
+		/**
+		* Wait for the trainer and pull an updated decoder.
+		*
+		* @param OutNetwork		Network to update
+		* @param Timeout		Timeout to wait in seconds
+		* @param NetworkLock	Lock to use when updating network
+		* @param LogSettings	Log settings
+		* @returns				Trainer response
+		*/
+		virtual ETrainerResponse RecvDecoder(
+			ULearningNeuralNetworkData& OutNetwork,
 			const float Timeout = Trainer::DefaultTimeout,
 			FRWLock* NetworkLock = nullptr,
 			const ELogSetting LogSettings = Trainer::DefaultLogSettings) = 0;
@@ -160,7 +172,37 @@ namespace UE::Learning
 		* @returns				Trainer response
 		*/
 		virtual ETrainerResponse SendPolicy(
-			const FNeuralNetwork& Network,
+			const ULearningNeuralNetworkData& Network,
+			const float Timeout = Trainer::DefaultTimeout,
+			FRWLock* NetworkLock = nullptr,
+			const ELogSetting LogSettings = Trainer::DefaultLogSettings) = 0;
+
+		/**
+		* Wait for the training process to be ready and push an updated encoder to the shared memory.
+		*
+		* @param Network		Network to push
+		* @param Timeout		Timeout to wait in seconds
+		* @param NetworkLock	Lock to use when pushing network
+		* @param LogSettings	Log settings
+		* @returns				Trainer response
+		*/
+		virtual ETrainerResponse SendEncoder(
+			const ULearningNeuralNetworkData& Network,
+			const float Timeout = Trainer::DefaultTimeout,
+			FRWLock* NetworkLock = nullptr,
+			const ELogSetting LogSettings = Trainer::DefaultLogSettings) = 0;
+
+		/**
+		* Wait for the training process to be ready and push an updated decoder to the shared memory.
+		*
+		* @param Network		Network to push
+		* @param Timeout		Timeout to wait in seconds
+		* @param NetworkLock	Lock to use when pushing network
+		* @param LogSettings	Log settings
+		* @returns				Trainer response
+		*/
+		virtual ETrainerResponse SendDecoder(
+			const ULearningNeuralNetworkData& Network,
 			const float Timeout = Trainer::DefaultTimeout,
 			FRWLock* NetworkLock = nullptr,
 			const ELogSetting LogSettings = Trainer::DefaultLogSettings) = 0;
@@ -168,15 +210,19 @@ namespace UE::Learning
 		/**
 		* Push experience to the trainer.
 		*
-		* @param ObservationVectors		Set of observation vectors
-		* @param ActionVectors			Set of action vectors
-		* @param Timeout				Timeout to wait in seconds
-		* @param LogSettings			Log settings
-		* @returns						Trainer response
+		* @param EpisodeStartsExperience	Array of offsets where episodes start
+		* @param EpisodeLengthsExperience	Array of episode lengths
+		* @param ObservationsExperience		Set of observation vectors
+		* @param ActionsExperience			Set of action vectors
+		* @param Timeout					Timeout to wait in seconds
+		* @param LogSettings				Log settings
+		* @returns							Trainer response
 		*/
 		virtual ETrainerResponse SendExperience(
-			const TLearningArrayView<2, const float> ObservationVectors,
-			const TLearningArrayView<2, const float> ActionVectors,
+			const TLearningArrayView<1, const int32> EpisodeStartsExperience,
+			const TLearningArrayView<1, const int32> EpisodeLengthsExperience,
+			const TLearningArrayView<2, const float> ObservationsExperience,
+			const TLearningArrayView<2, const float> ActionsExperience,
 			const float Timeout = Trainer::DefaultTimeout,
 			const ELogSetting LogSettings = Trainer::DefaultLogSettings) = 0;
 	};
@@ -189,31 +235,46 @@ namespace UE::Learning
 		/**
 		* Create a new imitation trainer sub-process
 		*
-		* @param TaskName				Name of the training task - used to help identify the logs, snapshots, and other files generated by training
-		* @param PythonExecutablePath	Path to the python executable used for training
-		* @param SitePackagesPath		Path to the site-packages shipped with the PythonFoundationPackages plugin
-		* @param PythonContentPath		Path to the Python Content folder provided by the Learning plugin
-		* @param IntermediatePath		Path to the intermediate folder to write temporary files, logs, and snapshots to
-		* @param MaxSampleNum			Maximum number of samples in the training data
-		* @param ObservationDimNum		Number of dimensions in the observation vector
-		* @param ActionDimNum			Number of dimensions in the action vector
-		* @param TrainingSettings		Trainer Training settings
-		* @param NetworkSettings		Trainer Network settings
-		* @param TrainingProcessFlags	Training subprocess flags
-		* @param LogSettings			Logging settings to use
+		* @param TaskName					Name of the training task - used to help identify the logs, snapshots, and other files generated by training
+		* @param PythonExecutablePath		Path to the python executable used for training
+		* @param ExtraSitePackagesPath		Path to additional site-packages if required otherwise empty string
+		* @param PythonContentPath			Path to the Python Content folder provided by the Learning plugin
+		* @param IntermediatePath			Path to the intermediate folder to write temporary files, logs, and snapshots to
+		* @param MaxEpisodeNum				Maximum number of episodes in the training data
+		* @param MaxStepNum					Maximum number of steps in the training data
+		* @param ObservationDimNum			Number of dimensions in the observation vector
+		* @param ActionDimNum				Number of dimensions in the action vector
+		* @param MemoryStateDimNum			Number of dimensions in the memory state vector
+		* @param PolicyNetwork				Policy Network to use
+		* @param EncoderNetwork				Encoder Network to use
+		* @param DecoderNetwork				Decoder Network to use
+		* @param ObservationSchema			Schema used for Observations
+		* @param ObservationSchemaElement	Schema Observation Element
+		* @param ActionSchema				Schema used for Actions
+		* @param ActionSchemaElement		Schema Action Element
+		* @param TrainingSettings			Trainer Training settings
+		* @param TrainingProcessFlags		Training subprocess flags
+		* @param LogSettings				Logging settings to use
 		*/
 		FSharedMemoryImitationTrainer(
 			const FString& TaskName,
 			const FString& PythonExecutablePath,
-			const FString& SitePackagesPath,
+			const FString& ExtraSitePackagesPath,
 			const FString& PythonContentPath,
 			const FString& IntermediatePath,
-			const int32 MaxSampleNum,
+			const int32 MaxEpisodeNum,
+			const int32 MaxStepNum,
 			const int32 ObservationDimNum,
 			const int32 ActionDimNum,
+			const int32 MemoryStateDimNum,
+			const ULearningNeuralNetworkData& PolicyNetwork,
+			const ULearningNeuralNetworkData& EncoderNetwork,
+			const ULearningNeuralNetworkData& DecoderNetwork,
+			const Observation::FSchema& ObservationSchema,
+			const Observation::FSchemaElement& ObservationSchemaElement,
+			const Action::FSchema& ActionSchema,
+			const Action::FSchemaElement& ActionSchemaElement,
 			const FImitationTrainerTrainingSettings& TrainingSettings = FImitationTrainerTrainingSettings(),
-			const FImitationTrainerNetworkSettings& NetworkSettings = FImitationTrainerNetworkSettings(),
-			const EImitationTrainerFlags TrainerFlags = EImitationTrainerFlags::None,
 			const ESubprocessFlags TrainingProcessFlags = ESubprocessFlags::None,
 			const ELogSetting LogSettings = ELogSetting::Normal);
 
@@ -228,20 +289,46 @@ namespace UE::Learning
 		virtual bool HasPolicyOrCompleted() override final;
 
 		virtual ETrainerResponse RecvPolicy(
-			FNeuralNetwork& OutNetwork,
+			ULearningNeuralNetworkData& OutNetwork,
+			const float Timeout = Trainer::DefaultTimeout,
+			FRWLock* NetworkLock = nullptr,
+			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
+
+		virtual ETrainerResponse RecvEncoder(
+			ULearningNeuralNetworkData& OutNetwork,
+			const float Timeout = Trainer::DefaultTimeout,
+			FRWLock* NetworkLock = nullptr,
+			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
+
+		virtual ETrainerResponse RecvDecoder(
+			ULearningNeuralNetworkData& OutNetwork,
 			const float Timeout = Trainer::DefaultTimeout,
 			FRWLock* NetworkLock = nullptr,
 			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
 
 		virtual ETrainerResponse SendPolicy(
-			const FNeuralNetwork& Network,
+			const ULearningNeuralNetworkData& Network,
+			const float Timeout = Trainer::DefaultTimeout,
+			FRWLock* NetworkLock = nullptr,
+			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
+
+		virtual ETrainerResponse SendEncoder(
+			const ULearningNeuralNetworkData& Network,
+			const float Timeout = Trainer::DefaultTimeout,
+			FRWLock* NetworkLock = nullptr,
+			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
+
+		virtual ETrainerResponse SendDecoder(
+			const ULearningNeuralNetworkData& Network,
 			const float Timeout = Trainer::DefaultTimeout,
 			FRWLock* NetworkLock = nullptr,
 			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
 
 		virtual ETrainerResponse SendExperience(
-			const TLearningArrayView<2, const float> ObservationVectors,
-			const TLearningArrayView<2, const float> ActionVectors,
+			const TLearningArrayView<1, const int32> EpisodeStartsExperience,
+			const TLearningArrayView<1, const int32> EpisodeLengthsExperience,
+			const TLearningArrayView<2, const float> ObservationsExperience,
+			const TLearningArrayView<2, const float> ActionsExperience,
 			const float Timeout = Trainer::DefaultTimeout,
 			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
 
@@ -255,7 +342,11 @@ namespace UE::Learning
 		// Shared memory
 
 		UE::Learning::TSharedMemoryArrayView<1, uint8> Policy;
+		UE::Learning::TSharedMemoryArrayView<1, uint8> Encoder;
+		UE::Learning::TSharedMemoryArrayView<1, uint8> Decoder;
 		UE::Learning::TSharedMemoryArrayView<1, volatile int32> Controls; // Mark as volatile to avoid compiler optimizing away reads without writes etc.
+		UE::Learning::TSharedMemoryArrayView<1, int32> EpisodeStarts;
+		UE::Learning::TSharedMemoryArrayView<1, int32> EpisodeLengths;
 		UE::Learning::TSharedMemoryArrayView<2, float> Observations;
 		UE::Learning::TSharedMemoryArrayView<2, float> Actions;
 
@@ -278,7 +369,7 @@ namespace UE::Learning
 		* Creates a training server as a subprocess
 		*
 		* @param PythonExecutablePath		Path to the python executable used for training. In general should be the python shipped with Unreal Editor.
-		* @param SitePackagesPath			Path to the site-packages shipped with the PythonFoundationPackages plugin
+		* @param ExtraSitePackagesPath		Path to additional site-packages if required otherwise empty string
 		* @param PythonContentPath			Path to the Python Content folder provided by the Learning plugin
 		* @param IntermediatePath			Path to the intermediate folder to write temporary files, logs, and snapshots to
 		* @param IpAddress					Ip address to bind the listening socket to. For a local server you will want to use 127.0.0.1
@@ -288,7 +379,7 @@ namespace UE::Learning
 		*/
 		FSocketImitationTrainerServerProcess(
 			const FString& PythonExecutablePath,
-			const FString& SitePackagesPath,
+			const FString& ExtraSitePackagesPath,
 			const FString& PythonContentPath,
 			const FString& IntermediatePath,
 			const TCHAR* IpAddress = Trainer::DefaultIp,
@@ -332,28 +423,42 @@ namespace UE::Learning
 		*
 		* @param OutResponse				Response to the initial connection
 		* @param TaskName					Name of the training task - used to help identify the logs, snapshots, and other files generated by training
-		* @param MaxSampleNum			Maximum number of samples in the training data
-		* @param ObservationDimNum		Number of dimensions in the observation vector
-		* @param ActionDimNum			Number of dimensions in the action vector
+		* @param MaxEpisodeNum				Maximum number of episodes in the training data
+		* @param MaxStepNum					Maximum number of steps in the training data
+		* @param ObservationDimNum			Number of dimensions in the observation vector
+		* @param ActionDimNum				Number of dimensions in the action vector
+		* @param MemoryStateDimNum			Number of dimensions in the memory state vector
+		* @param PolicyNetwork				Policy Network to use
+		* @param EncoderNetwork				Encoder Network to use
+		* @param DecoderNetwork				Decoder Network to use
+		* @param ObservationSchema			Schema used for Observations
+		* @param ObservationSchemaElement	Schema Observation Element
+		* @param ActionSchema				Schema used for Actions
+		* @param ActionSchemaElement		Schema Action Element
 		* @param IpAddress					Server Ip address
 		* @param Port						Server Port
 		* @param Timeout					Timeout to wait in seconds for connection and initial data transfer
 		* @param TrainingSettings			Trainer Training settings
-		* @param NetworkSettings			Trainer Network settings
-		* @param TrainerFlags				Flags for the trainer
 		*/
 		FSocketImitationTrainer(
 			ETrainerResponse& OutResponse,
 			const FString& TaskName,
-			const int32 MaxSampleNum,
+			const int32 MaxEpisodeNum,
+			const int32 MaxStepNum,
 			const int32 ObservationDimNum,
 			const int32 ActionDimNum,
+			const int32 MemoryStateDimNum,
+			const ULearningNeuralNetworkData& PolicyNetwork,
+			const ULearningNeuralNetworkData& EncoderNetwork,
+			const ULearningNeuralNetworkData& DecoderNetwork,
+			const Observation::FSchema& ObservationSchema,
+			const Observation::FSchemaElement& ObservationSchemaElement,
+			const Action::FSchema& ActionSchema,
+			const Action::FSchemaElement& ActionSchemaElement,
 			const TCHAR* IpAddress = Trainer::DefaultIp,
 			const uint32 Port = Trainer::DefaultPort,
 			const float Timeout = Trainer::DefaultTimeout,
-			const FImitationTrainerTrainingSettings& TrainingSettings = FImitationTrainerTrainingSettings(),
-			const FImitationTrainerNetworkSettings& NetworkSettings = FImitationTrainerNetworkSettings(),
-			const EImitationTrainerFlags TrainerFlags = EImitationTrainerFlags::None);
+			const FImitationTrainerTrainingSettings& TrainingSettings = FImitationTrainerTrainingSettings());
 
 		~FSocketImitationTrainer();
 
@@ -366,26 +471,54 @@ namespace UE::Learning
 		virtual bool HasPolicyOrCompleted() override final;
 
 		virtual ETrainerResponse RecvPolicy(
-			FNeuralNetwork& OutNetwork,
+			ULearningNeuralNetworkData& OutNetwork,
+			const float Timeout = Trainer::DefaultTimeout,
+			FRWLock* NetworkLock = nullptr,
+			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
+
+		virtual ETrainerResponse RecvEncoder(
+			ULearningNeuralNetworkData& OutNetwork,
+			const float Timeout = Trainer::DefaultTimeout,
+			FRWLock* NetworkLock = nullptr,
+			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
+
+		virtual ETrainerResponse RecvDecoder(
+			ULearningNeuralNetworkData& OutNetwork,
 			const float Timeout = Trainer::DefaultTimeout,
 			FRWLock* NetworkLock = nullptr,
 			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
 
 		virtual ETrainerResponse SendPolicy(
-			const FNeuralNetwork& Network,
+			const ULearningNeuralNetworkData& Network,
+			const float Timeout = Trainer::DefaultTimeout,
+			FRWLock* NetworkLock = nullptr,
+			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
+
+		virtual ETrainerResponse SendEncoder(
+			const ULearningNeuralNetworkData& Network,
+			const float Timeout = Trainer::DefaultTimeout,
+			FRWLock* NetworkLock = nullptr,
+			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
+
+		virtual ETrainerResponse SendDecoder(
+			const ULearningNeuralNetworkData& Network,
 			const float Timeout = Trainer::DefaultTimeout,
 			FRWLock* NetworkLock = nullptr,
 			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
 
 		virtual ETrainerResponse SendExperience(
-			const TLearningArrayView<2, const float> ObservationVectors,
-			const TLearningArrayView<2, const float> ActionVectors,
+			const TLearningArrayView<1, const int32> EpisodeStartsExperience,
+			const TLearningArrayView<1, const int32> EpisodeLengthsExperience,
+			const TLearningArrayView<2, const float> ObservationsExperience,
+			const TLearningArrayView<2, const float> ActionsExperience,
 			const float Timeout = Trainer::DefaultTimeout,
 			const ELogSetting LogSettings = Trainer::DefaultLogSettings) override final;
 
 	private:
 
-		TLearningArray<1, uint8> NetworkBuffer;
+		TLearningArray<1, uint8> PolicyBuffer;
+		TLearningArray<1, uint8> EncoderBuffer;
+		TLearningArray<1, uint8> DecoderBuffer;
 		FSocket* Socket = nullptr;
 	};
 
@@ -395,25 +528,39 @@ namespace UE::Learning
 		* Train a policy using experience already gathered from example episodes
 		*
 		* @param Trainer							Trainer
-		* @param Network							Policy network
-		* @param ObservationVectors					Observation Data
-		* @param ActionVectors						Action Data
-		* @param TrainerFlags						Flags for the trainer, should match what was used to initialize the Trainer object.
+		* @param PolicyNetwork						Policy network
+		* @param EncoderNetwork						Encoder network
+		* @param DecoderNetwork						Decoder network
+		* @param EpisodeStartsExperience			Array of offsets where episodes start
+		* @param EpisodeLengthsExperience			Array of episode lengths
+		* @param ObservationsExperience				Set of observation vectors
+		* @param ActionsExperience					Set of action vectors
 		* @param bRequestTrainingStopSignal			Optional signal that can be raised to indicate training should be stopped
-		* @param NetworkLock						Optional Lock to use when updating the policy network
-		* @param bNetworkUpdatedSignal				Optional signal that will be raised when the policy network is updated
+		* @param PolicyNetworkLock					Optional Lock to use when updating the policy network
+		* @param EncoderNetworkLock					Optional Lock to use when updating the encoder network
+		* @param DecoderNetworkLock					Optional Lock to use when updating the decoder network
+		* @param bPolicyNetworkUpdatedSignal		Optional signal that will be raised when the policy network is updated
+		* @param bEncoderNetworkUpdatedSignal		Optional signal that will be raised when the encoder network is updated
+		* @param bDecoderNetworkUpdatedSignal		Optional signal that will be raised when the decoder network is updated
 		* @param LogSettings						Logging settings
 		* @returns									Trainer response in case of errors during communication otherwise Success
 		*/
 		LEARNINGTRAINING_API ETrainerResponse Train(
 			IImitationTrainer& Trainer,
-			FNeuralNetwork& Network,
-			const TLearningArrayView<2, const float> ObservationVectors,
-			const TLearningArrayView<2, const float> ActionVectors,
-			const EImitationTrainerFlags TrainerFlags = EImitationTrainerFlags::None,
+			ULearningNeuralNetworkData& PolicyNetwork,
+			ULearningNeuralNetworkData& EncoderNetwork,
+			ULearningNeuralNetworkData& DecoderNetwork,
+			const TLearningArrayView<1, const int32> EpisodeStartsExperience,
+			const TLearningArrayView<1, const int32> EpisodeLengthsExperience,
+			const TLearningArrayView<2, const float> ObservationsExperience,
+			const TLearningArrayView<2, const float> ActionsExperience,
 			TAtomic<bool>* bRequestTrainingStopSignal = nullptr,
-			FRWLock* NetworkLock = nullptr,
-			TAtomic<bool>* bNetworkUpdatedSignal = nullptr,
+			FRWLock* PolicyNetworkLock = nullptr,
+			FRWLock* EncoderNetworkLock = nullptr,
+			FRWLock* DecoderNetworkLock = nullptr,
+			TAtomic<bool>* bPolicyNetworkUpdatedSignal = nullptr,
+			TAtomic<bool>* bEncoderNetworkUpdatedSignal = nullptr,
+			TAtomic<bool>* bDecoderNetworkUpdatedSignal = nullptr,
 			const ELogSetting LogSettings = ELogSetting::Normal);
 	}
 

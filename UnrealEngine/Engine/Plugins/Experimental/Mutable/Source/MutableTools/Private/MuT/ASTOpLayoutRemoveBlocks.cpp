@@ -42,8 +42,9 @@ namespace mu
 
 	bool ASTOpLayoutRemoveBlocks::IsEqual(const ASTOp& otherUntyped) const
 	{
-		if (const ASTOpLayoutRemoveBlocks* other = dynamic_cast<const ASTOpLayoutRemoveBlocks*>(&otherUntyped))
+		if (otherUntyped.GetOpType()==GetOpType())
 		{
+			const ASTOpLayoutRemoveBlocks* other = static_cast<const ASTOpLayoutRemoveBlocks*>(&otherUntyped);
 			return Source == other->Source && ReferenceLayout == other->ReferenceLayout;
 		}
 		return false;

@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #include "Chaos/Island/IslandManager.h"
+#include "Chaos/ChaosDebugDraw.h"
 #include "Chaos/ParticleHandle.h"
 #include "Chaos/ParticleIterator.h"
 #include "Chaos/PBDConstraintContainer.h"
@@ -39,25 +40,45 @@ namespace Chaos::CVars
 	extern int32 ChaosSolverCollisionPositionShockPropagationIterations;
 	extern int32 ChaosSolverCollisionVelocityShockPropagationIterations;
 	extern bool bChaosSolverPersistentGraph;
+	extern FRealSingle SmoothedPositionLerpRate;
 
 	bool bChaosConstraintGraphValidate = (CHAOS_CONSTRAINTGRAPH_CHECK_ENABLED != 0);
 	FAutoConsoleVariableRef CVarChaosConstraintGraphValidate(TEXT("p.Chaos.ConstraintGraph.Validate"), bChaosConstraintGraphValidate, TEXT("Enable per-tick ConstraintGraph validation checks/assertions"));
 
 	/** Cvar to enable/disable the island sleeping */
 	bool bChaosSolverSleepEnabled = true;
-	FAutoConsoleVariableRef CVarChaosSolverSleepEnabled(TEXT("p.Chaos.Solver.SleepEnabled"), bChaosSolverSleepEnabled, TEXT(""));
+	FAutoConsoleVariableRef CVarChaosSolverSleepEnabled(TEXT("p.Chaos.Solver.Sleep.Enabled"), bChaosSolverSleepEnabled, TEXT(""));
 
 	/** Cvar to override the sleep counter threshold if necessary */
 	int32 ChaosSolverCollisionDefaultSleepCounterThreshold = 20;
-	FAutoConsoleVariableRef CVarChaosSolverCollisionDefaultSleepCounterThreshold(TEXT("p.ChaosSolverCollisionDefaultSleepCounterThreshold"), ChaosSolverCollisionDefaultSleepCounterThreshold, TEXT("Default counter threshold for sleeping.[def:20]"));
+	FAutoConsoleVariableRef CVarChaosSolverCollisionDefaultSleepCounterThreshold(TEXT("p.Chaos.Solver.Sleep.Defaults.SleepCounterThreshold"), ChaosSolverCollisionDefaultSleepCounterThreshold, TEXT("Default counter threshold for sleeping.[def:20]"));
 
 	/** Cvar to override the sleep linear threshold if necessary */
 	FRealSingle ChaosSolverCollisionDefaultLinearSleepThreshold = 0.001f; // .001 unit mass cm
-	FAutoConsoleVariableRef CVarChaosSolverCollisionDefaultLinearSleepThreshold(TEXT("p.ChaosSolverCollisionDefaultLinearSleepThreshold"), ChaosSolverCollisionDefaultLinearSleepThreshold, TEXT("Default linear threshold for sleeping.[def:0.001]"));
+	FAutoConsoleVariableRef CVarChaosSolverCollisionDefaultLinearSleepThreshold(TEXT("p.Chaos.Solver.Sleep.Defaults.LinearSleepThreshold"), ChaosSolverCollisionDefaultLinearSleepThreshold, TEXT("Default linear threshold for sleeping.[def:0.001]"));
 
 	/** Cvar to override the sleep angular threshold if necessary */
 	FRealSingle ChaosSolverCollisionDefaultAngularSleepThreshold = 0.0087f;  //~1/2 unit mass degree
-	FAutoConsoleVariableRef CVarChaosSolverCollisionDefaultAngularSleepThreshold(TEXT("p.ChaosSolverCollisionDefaultAngularSleepThreshold"), ChaosSolverCollisionDefaultAngularSleepThreshold, TEXT("Default angular threshold for sleeping.[def:0.0087]"));
+	FAutoConsoleVariableRef CVarChaosSolverCollisionDefaultAngularSleepThreshold(TEXT("p.Chaos.Solver.Sleep.Defaults.AngularSleepThreshold"), ChaosSolverCollisionDefaultAngularSleepThreshold, TEXT("Default angular threshold for sleeping.[def:0.0087]"));
+
+	/** The size of object for which the angular sleep threshold is defined. Large objects reduce the threshold propertionally. 0 means do not apply size scale. */
+	// E.g., if ChaosSolverCollisionAngularSleepThresholdSize=100, an objects with a bounds of 500 will have 1/5x the sleep threshold.
+	// We are effectively converting the angular threshold into a linear threshold calculated at the object extents.
+	// @todo(chaos): male this a project setting or something
+	FRealSingle ChaosSolverCollisionAngularSleepThresholdSize = 0;
+	FAutoConsoleVariableRef CVarChaosSolverCollisionAngularSleepThresholdSize(TEXT("p.Chaos.Solver.Sleep.AngularSleepThresholdSize"), ChaosSolverCollisionAngularSleepThresholdSize, TEXT("Scales the angular threshold based on size (0 to disable size based scaling)"));
+
+	/* Cvar to increase the sleep counter threshold for floating particles */
+	int32 IsolatedParticleSleepCounterThresholdMultiplier = 1;
+	FAutoConsoleVariableRef CVarChaosSolverIsolatedParticleSleepCounterThresholdMultiplier(TEXT("p.Chaos.Solver.Sleep.IsolatedParticle.CounterMultiplier"), IsolatedParticleSleepCounterThresholdMultiplier, TEXT("A multiplier applied to SleepCounterThreshold for floating particles"));
+
+	/* Cvar to adjust the sleep linear threshold for floating particles */
+	FRealSingle IsolatedParticleSleepLinearThresholdMultiplier = 1.0f;
+	FAutoConsoleVariableRef CVarChaosSolverIsolatedParticleSleepLinearThresholdMultiplier(TEXT("p.Chaos.Solver.Sleep.IsolatedParticle.LinearMultiplier"), IsolatedParticleSleepLinearThresholdMultiplier, TEXT("A multiplier applied to SleepLinearThreshold for floating particles"));
+
+	/* Cvar to adjust the sleep angular threshold for floating particles */
+	FRealSingle IsolatedParticleSleepAngularThresholdMultiplier = 1.0f;
+	FAutoConsoleVariableRef CVarChaosSolverIsolatedParticleSleepAngularThresholdMultiplier(TEXT("p.Chaos.Solver.Sleep.IsolatedParticle.AngularMultiplier"), IsolatedParticleSleepAngularThresholdMultiplier, TEXT("A multiplier applied to SleepAngularThreshold for floating particles"));
 }
 
 
@@ -104,11 +125,11 @@ namespace Chaos::Private
 				const FKinematicTarget& KinematicTarget = Kinematic->KinematicTarget();
 				if (KinematicTarget.GetMode() == EKinematicTargetMode::Position)
 				{
-					bIsStationary = (Kinematic->X() - KinematicTarget.GetTargetPosition()).IsZero() && (Kinematic->R() * KinematicTarget.GetTargetRotation().Inverse()).IsIdentity();
+					bIsStationary = (Kinematic->GetX() - KinematicTarget.GetTargetPosition()).IsZero() && (Kinematic->GetR() * KinematicTarget.GetTargetRotation().Inverse()).IsIdentity();
 				}
 				else
 				{
-					bIsStationary = Kinematic->V().IsZero() && Kinematic->W().IsZero();
+					bIsStationary = Kinematic->GetV().IsZero() && Kinematic->GetW().IsZero();
 				}
 			}
 			else
@@ -124,7 +145,7 @@ namespace Chaos::Private
 		return (Particle != nullptr) && (Particle->SyncState() != ESyncState::InSync);
 	}
 
-	bool GetParticleSleepThresholds(
+	bool GetIslandParticleSleepThresholds(
 		const FGeometryParticleHandle* Particle,
 		const TArrayCollectionArray<TSerializablePtr<FChaosPhysicsMaterial>>* PhysicsMaterials,
 		const TArrayCollectionArray<TUniquePtr<FChaosPhysicsMaterial>>* PerParticlePhysicsMaterials,
@@ -140,19 +161,58 @@ namespace Chaos::Private
 		const FPBDRigidParticleHandle* Rigid = Particle->CastToRigidParticle();
 		if ((Rigid != nullptr) && (Rigid->SleepType() != ESleepType::NeverSleep))
 		{
+			const FRealSingle ParticleSleepThresholdMultiplier = Rigid->SleepThresholdMultiplier();
+
 			const FChaosPhysicsMaterial* PhysicsMaterial = Private::GetFirstPhysicsMaterial(Rigid, PhysicsMaterials, PerParticlePhysicsMaterials, SimMaterials);
 			if (PhysicsMaterial != nullptr)
 			{
-				OutSleepLinearThreshold = FRealSingle(PhysicsMaterial->SleepingLinearThreshold);
-				OutSleepAngularThreshold = FRealSingle(PhysicsMaterial->SleepingAngularThreshold);
+				OutSleepLinearThreshold = ParticleSleepThresholdMultiplier * FRealSingle(PhysicsMaterial->SleepingLinearThreshold);
+				OutSleepAngularThreshold = ParticleSleepThresholdMultiplier * FRealSingle(PhysicsMaterial->SleepingAngularThreshold);
 				OutSleepCounterThreshold = PhysicsMaterial->SleepCounterThreshold;
 			}
 			else
 			{
-				OutSleepLinearThreshold = CVars::ChaosSolverCollisionDefaultLinearSleepThreshold;
-				OutSleepAngularThreshold = CVars::ChaosSolverCollisionDefaultAngularSleepThreshold;
+				OutSleepLinearThreshold = ParticleSleepThresholdMultiplier * CVars::ChaosSolverCollisionDefaultLinearSleepThreshold;
+				OutSleepAngularThreshold = ParticleSleepThresholdMultiplier * CVars::ChaosSolverCollisionDefaultAngularSleepThreshold;
 				OutSleepCounterThreshold = CVars::ChaosSolverCollisionDefaultSleepCounterThreshold;
 			}
+
+			// Adjust angular threshold for size. It is equivalent to converting the angular threshold into a linear
+			// movement threshold at the extreme points on the particle.
+			const FRealSingle AngularSleepThresholdSize = CVars::ChaosSolverCollisionAngularSleepThresholdSize;
+			if ((AngularSleepThresholdSize > 0) && Rigid->HasBounds())
+			{
+				const FRealSingle RigidSize = FRealSingle(Rigid->LocalBounds().Extents().GetMax());
+				if (RigidSize > AngularSleepThresholdSize)
+				{
+					const FRealSingle ThresholdScale = AngularSleepThresholdSize / RigidSize;
+					OutSleepAngularThreshold *= ThresholdScale;
+				}
+			}
+
+			return true;
+		}
+
+		return false;
+	}
+
+	bool GetIsolatedParticleSleepThresholds(
+		const FGeometryParticleHandle* Particle,
+		const TArrayCollectionArray<TSerializablePtr<FChaosPhysicsMaterial>>* PhysicsMaterials,
+		const TArrayCollectionArray<TUniquePtr<FChaosPhysicsMaterial>>* PerParticlePhysicsMaterials,
+		const THandleArray<FChaosPhysicsMaterial>* SimMaterials,
+		FRealSingle& OutSleepLinearThreshold,
+		FRealSingle& OutSleepAngularThreshold,
+		int& OutSleepCounterThreshold)
+	{
+		if (GetIslandParticleSleepThresholds(Particle, PhysicsMaterials, PerParticlePhysicsMaterials, SimMaterials, OutSleepLinearThreshold, OutSleepAngularThreshold, OutSleepCounterThreshold))
+		{
+			// Sleep thresholds are tuned to hide minor collision jitter which isn't a problem for floating particles
+			// so we scale the thesholds to make sleeping harder. E.g., to avoid going to sleep at the apex of an
+			// upwards ballistic trajectory, or when a floating oscillating body reverses rotation, etc.
+			OutSleepCounterThreshold *= FMath::Max(1, CVars::IsolatedParticleSleepCounterThresholdMultiplier);
+			OutSleepLinearThreshold *= FMath::Max(0.0f, CVars::IsolatedParticleSleepLinearThresholdMultiplier);
+			OutSleepAngularThreshold *= FMath::Max(0.0f, CVars::IsolatedParticleSleepAngularThresholdMultiplier);
 
 			return true;
 		}
@@ -186,6 +246,28 @@ namespace Chaos::Private
 		return false;
 	}
 
+	template<typename TRigidParticleHandle>
+	void InitParticleSleepMetrics(TRigidParticleHandle& Rigid, FReal Dt)
+	{
+		if (Dt > UE_SMALL_NUMBER)
+		{
+			Rigid.SetVSmooth(Rigid.GetV());
+			Rigid.SetWSmooth(Rigid.GetW());
+		}
+	}
+
+	template<typename TRigidParticleHandle>
+	void UpdateParticleSleepMetrics(TRigidParticleHandle& Rigid, FReal Dt)
+	{
+		if (Dt > UE_SMALL_NUMBER)
+		{
+			const FReal SmoothRate = FMath::Clamp(CVars::SmoothedPositionLerpRate, 0.0f, 1.0f);
+			const FVec3 VImp = FVec3::CalculateVelocity(Rigid.GetX(), Rigid.GetP(), Dt);
+			const FVec3 WImp = FRotation3::CalculateAngularVelocity(Rigid.GetR(), Rigid.GetQ(), Dt);
+			Rigid.SetVSmooth(FMath::Lerp(Rigid.VSmooth(), VImp, SmoothRate));
+			Rigid.SetWSmooth(FMath::Lerp(Rigid.WSmooth(), WImp, SmoothRate));
+		}
+	}
 
 	//////////////////////////////////////////////////////////////////////////////////////////////////
 	//////////////////////////////////////////////////////////////////////////////////////////////////
@@ -291,6 +373,9 @@ namespace Chaos::Private
 		if (Constraint != nullptr)
 		{
 			Constraint->SetConstraintGraphEdge(this);
+
+			// Initialize edge state to match constraint state
+			Flags.bIsSleeping = Constraint->IsSleeping();
 		}
 	}
 
@@ -461,7 +546,7 @@ namespace Chaos::Private
 	{
 		if (ConstraintContainers.Num() < Container.GetContainerId() + 1)
 		{
-			ConstraintContainers.SetNumZeroed(Container.GetContainerId() + 1, false);
+			ConstraintContainers.SetNumZeroed(Container.GetContainerId() + 1, EAllowShrinking::No);
 		}
 		ConstraintContainers[Container.GetContainerId()] = &Container;
 	}
@@ -654,26 +739,72 @@ namespace Chaos::Private
 		return IslandConstraints;
 	}
 
+	void FPBDIslandManager::WakeParticleIslands(FGeometryParticleHandle* Particle)
+	{
+		// We want to wake for at least one frame (i.e., prevent re-sleeping this frame)
+		const bool bIsSleepAllowed = false;
+
+		// When we explicitly wake we reset sleep counters etc
+		if (FPBDIslandParticle* Node = GetGraphNode(Particle))
+		{
+			// Make sure the node sleep state matches the particle state
+			Node->Flags.bIsSleeping = FConstGenericParticleHandle(Particle)->IsSleeping();
+
+			// NOTE: We could check Flags.bIsDynamic here, but checking the Island pointer means we 
+			// are automatically handling the case where a kinematic with constraints on it 
+			// was made dynamic right before calling WakeParticleIsland
+			if (Node->Island != nullptr)
+			{
+				// This is a dynamic particle and we know its island
+				EnqueueIslandCheckSleep(Node->Island, bIsSleepAllowed);
+			}
+			else
+			{
+				// This is a kinematic particle, visit our edges to find the islands we are in
+				for (const FPBDIslandConstraint* Edge : Node->Edges)
+				{
+					EnqueueIslandCheckSleep(Edge->Island, bIsSleepAllowed);
+				}
+			}
+		}
+
+		// If we are an isolated particle we keep our own sleep counter
+		// NOTE: We won't even be in the graph if we are dynamic but have no constraints
+		if (FPBDRigidParticleHandle* Rigid = Particle->CastToRigidParticle())
+		{
+			Rigid->SetSleepCounter(0);
+		}
+	}
+
+	void FPBDIslandManager::SleepParticle(FGeometryParticleHandle* Particle)
+	{
+		// When we explicitly sleep we must check the island for sleeping before we update constraints
+		// so that constraint sleep state matched their particles' sleep state.
+		const bool bIsSleepAllowed = true;
+		if (FPBDIslandParticle* Node = GetGraphNode(Particle))
+		{
+			Node->Flags.bIsSleeping = true;
+
+			if ((Node->Island != nullptr) && !Node->Island->Flags.bIsSleeping)
+			{
+				// Set the checksleep flag for processing in See UpdateParticlesCheckSleep
+				EnqueueIslandCheckSleep(Node->Island, bIsSleepAllowed);
+			}
+		}
+	}
+
 	void FPBDIslandManager::AddParticle(FGeometryParticleHandle* Particle)
 	{
+		// Particles get auto-added via AddConstraint (see CreateGraphEdge, GetOrCreateGraphNode)
+		// But must be explicitly removed when destroyed.
 	}
 
 	void FPBDIslandManager::RemoveParticle(FGeometryParticleHandle* Particle)
 	{
 		if (FPBDIslandParticle* Node = GetGraphNode(Particle))
 		{
-			// Wake the island(s) we are being removed from
-			if (Node->Flags.bIsDynamic)
-			{
-				EnqueueIslandCheckSleep(Node->Island, false);
-			}
-			else
-			{
-				for (FPBDIslandConstraint* Edge : Node->Edges)
-				{
-					EnqueueIslandCheckSleep(Edge->Island, false);
-				}
-			}
+			// Islands are awakened when we disable a particle in it
+			WakeNodeIslands(Node);
 
 			// Remove all the constraints attached to the particle
 			RemoveParticleConstraints(Particle);
@@ -692,8 +823,6 @@ namespace Chaos::Private
 	void FPBDIslandManager::UpdateParticles()
 	{
 		SCOPE_CYCLE_COUNTER(STAT_IslandManager_UpdateParticles);
-
-		const int32 VisitEpoch = GetNextVisitEpoch();
 
 		// Process state changed from registered particles.
 		// To reduce cache-misses it would be nice to iterate over transient particle handles 
@@ -750,6 +879,10 @@ namespace Chaos::Private
 		{
 			FPBDIslandParticle* Node0 = Edge->Nodes[0];
 			FPBDIslandParticle* Node1 = Edge->Nodes[1];
+
+			// Wake the island when we remove a constraint
+			const bool bIsSleepAllowed = true;
+			EnqueueIslandCheckSleep(Edge->Island, bIsSleepAllowed);
 
 			// Remove edge from the island
 			RemoveEdgeFromIsland(Edge);
@@ -814,16 +947,12 @@ namespace Chaos::Private
 		}
 	}
 
-	void FPBDIslandManager::SetParticleIslandIsSleeping(FGeometryParticleHandle* Particle, const bool bInIsSleeping)
+	void FPBDIslandManager::WakeConstraintIsland(FConstraintHandle* Constraint)
 	{
-		if (FPBDIslandParticle* Node = GetGraphNode(Particle))
+		if (FPBDIslandConstraint* Edge = GetGraphEdge(Constraint))
 		{
-			if ((Node->Island != nullptr) && (Node->Island->Flags.bIsSleeping != bInIsSleeping))
-			{
-				Node->Island->Flags.bIsSleeping = bInIsSleeping;
-				Node->Island->SleepCounter = 0;
-				PropagateIslandSleep(Node->Island);
-			}
+			const bool bIsSleepAllowed = false;
+			EnqueueIslandCheckSleep(Edge->Island, bIsSleepAllowed);
 		}
 	}
 
@@ -832,9 +961,9 @@ namespace Chaos::Private
 		ProcessIslands();
 	}
 
-	void FPBDIslandManager::UpdateSleep()
+	void FPBDIslandManager::UpdateSleep(const FReal Dt)
 	{
-		ProcessSleep();
+		ProcessSleep(FRealSingle(Dt));
 	}
 
 	void FPBDIslandManager::UpdateDisable(TFunctionRef<void(FPBDRigidParticleHandle*)> ParticleDisableFunctor)
@@ -1036,7 +1165,7 @@ namespace Chaos::Private
 				check(Node->Edges[ArrayIndex] == Edge);
 
 				// Remove the edge from the node
-				Node->Edges.RemoveAtSwap(ArrayIndex, 1, false);
+				Node->Edges.RemoveAtSwap(ArrayIndex, 1, EAllowShrinking::No);
 				Edge->Nodes[NodeIndex] = nullptr;
 				Edge->NodeArrayIndices[NodeIndex] = INDEX_NONE;
 
@@ -1066,7 +1195,7 @@ namespace Chaos::Private
 			FRealSingle SleepLinearThreshold, SleepAngularThreshold;
 			FRealSingle DisableLinearThreshold, DisableAngularThreshold;
 			int32 SleepCounterThreshold;
-			GetParticleSleepThresholds(Node->Particle, PhysicsMaterials, PerParticlePhysicsMaterials, SimMaterials, SleepLinearThreshold, SleepAngularThreshold, SleepCounterThreshold);
+			GetIslandParticleSleepThresholds(Node->Particle, PhysicsMaterials, PerParticlePhysicsMaterials, SimMaterials, SleepLinearThreshold, SleepAngularThreshold, SleepCounterThreshold);
 			GetParticleDisableThresholds(Node->Particle, PhysicsMaterials, PerParticlePhysicsMaterials, SimMaterials, DisableLinearThreshold, DisableAngularThreshold);
 
 			Node->SleepLinearThresholdSq = FMath::Square(SleepLinearThreshold);
@@ -1236,7 +1365,7 @@ namespace Chaos::Private
 			const int32 ArrayIndex = Node->IslandArrayIndex;
 			check(Island->Nodes[ArrayIndex] == Node);
 
-			Island->Nodes.RemoveAtSwap(ArrayIndex, 1, false);
+			Island->Nodes.RemoveAtSwap(ArrayIndex, 1, EAllowShrinking::No);
 			if (ArrayIndex < Island->Nodes.Num())
 			{
 				Island->Nodes[ArrayIndex]->IslandArrayIndex = ArrayIndex;
@@ -1246,6 +1375,27 @@ namespace Chaos::Private
 
 			Node->Island = nullptr;
 			Node->IslandArrayIndex = INDEX_NONE;
+		}
+	}
+
+	void FPBDIslandManager::DestroyIslandNodes(FPBDIsland* Island)
+	{
+		// Destroy any nodes left in the island
+		for (int32 IslandNodeIndex = Island->Nodes.Num() - 1; IslandNodeIndex >= 0; --IslandNodeIndex)
+		{
+			FPBDIslandParticle* Node = Island->Nodes[IslandNodeIndex];
+			check(Node->Edges.IsEmpty());
+
+			// If there was a dynamic particle left in the island, we need to transfer the island 
+			// sleep state to it for use in ProcessParticlesSleep()
+			// @todo(chaos): not great - can we clean this up?
+			if (FPBDRigidParticleHandle* Rigid = Node->GetParticle()->CastToRigidParticle())
+			{
+				Rigid->SetSleepCounter(int8(Island->SleepCounter));
+			}
+
+			RemoveNodeFromIsland(Node);
+			DestroyGraphNode(Node);
 		}
 	}
 
@@ -1277,7 +1427,7 @@ namespace Chaos::Private
 			const int32 EdgeIndex = Edge->IslandArrayIndex;
 			check(Island->ContainerEdges[ContainerIndex][EdgeIndex] == Edge);
 
-			Island->ContainerEdges[ContainerIndex].RemoveAtSwap(EdgeIndex, 1, false);
+			Island->ContainerEdges[ContainerIndex].RemoveAtSwap(EdgeIndex, 1, EAllowShrinking::No);
 			if (EdgeIndex < Island->ContainerEdges[ContainerIndex].Num())
 			{
 				Island->ContainerEdges[ContainerIndex][EdgeIndex]->IslandArrayIndex = EdgeIndex;
@@ -1288,6 +1438,28 @@ namespace Chaos::Private
 
 			Edge->Island = nullptr;
 			Edge->IslandArrayIndex = INDEX_NONE;
+		}
+	}
+
+	void FPBDIslandManager::WakeNodeIslands(const FPBDIslandParticle* Node)
+	{
+		check(Node != nullptr);
+
+		// We want to wake up this tick, regardless of sleep thresholds etc
+		const bool bIsSleepAllowed = false;
+
+		// Dynamic nodes are in one island, kinematic nodes may be in many
+		// and we must vist their edges to discover them
+		if (Node->Flags.bIsDynamic)
+		{
+			EnqueueIslandCheckSleep(Node->Island, bIsSleepAllowed);
+		}
+		else
+		{
+			for (FPBDIslandConstraint* Edge : Node->Edges)
+			{
+				EnqueueIslandCheckSleep(Edge->Island, bIsSleepAllowed);
+			}
 		}
 	}
 
@@ -1421,7 +1593,7 @@ namespace Chaos::Private
 
 			// Remove from the list of islands to merge
 			const int32 IslandIndex = Island->MergeSetIslandIndex;
-			MergeSet->Islands.RemoveAtSwap(IslandIndex, 1, false);
+			MergeSet->Islands.RemoveAtSwap(IslandIndex, 1, EAllowShrinking::No);
 			if (IslandIndex < MergeSet->Islands.Num())
 			{
 				MergeSet->Islands[IslandIndex]->MergeSetIslandIndex = IslandIndex;
@@ -1680,7 +1852,7 @@ namespace Chaos::Private
 				// Populate the island with all connected nodes and edges
 				while (!NodeQueue.IsEmpty())
 				{
-					FPBDIslandParticle* NextNode = NodeQueue.Pop(false);
+					FPBDIslandParticle* NextNode = NodeQueue.Pop(EAllowShrinking::No);
 
 					// Visit all the edges connected to the current node
 					for (FPBDIslandConstraint* Edge : NextNode->Edges)
@@ -1878,22 +2050,9 @@ namespace Chaos::Private
 			// so that we wake nodes the have been left on their own after all other nodes were removed.
 			if (Island->NumEdges == 0)
 			{
-				// Destroy any nodes left in the island
-				for (int32 IslandNodeIndex = Island->Nodes.Num() - 1; IslandNodeIndex >= 0; --IslandNodeIndex)
-				{
-					FPBDIslandParticle* Node = Island->Nodes[IslandNodeIndex];
-					check(Node->Edges.IsEmpty());
-
-					// If there was a dynamic particle left in the island, we need to transfer the island 
-					// sleep state to it for use in ProcessParticlesSleep()
-					if (FPBDRigidParticleHandle* Rigid = Node->GetParticle()->CastToRigidParticle())
-					{
-						Rigid->SetSleepCounter(int8(Island->SleepCounter));
-					}
-
-					RemoveNodeFromIsland(Node);
-					DestroyGraphNode(Node);
-				}
+				// Destroy nodes that are left in the island
+				// NOTE: also copies back any island state needed by the particle (sleep counter)
+				DestroyIslandNodes(Island);
 
 				DestroyIsland(Island);
 				continue;
@@ -1918,7 +2077,53 @@ namespace Chaos::Private
 		Validate();
 	}
 
-	void FPBDIslandManager::ProcessSleep()
+	void FPBDIslandManager::UpdateExplicitSleep()
+	{
+		// UpdateExplicitSleep should be called after processing physics inputs that may change the sleep/wake status of particles. 
+		// It is required so that the Particle/Constraint/Island sleep states are in sync when we Integrate and Detection Collisions.
+		// E.g., If we do not do this and a particle was explicitly put to sleep, it will not be integrated and no collisions will 
+		// be detected. If that particle is in an island with other awake particles it will be woken immediately but will not have 
+		// moved or have any collisions.
+
+		const auto ShouldIslandSleep = [](FPBDIsland * Island) -> bool
+		{
+			for (FPBDIslandParticle* Node : Island->GetParticles())
+			{
+				const bool bIsDynamic = IsParticleDynamic(Node->GetParticle());
+				const bool bIsSleeping = IsParticleSleeping(Node->GetParticle());
+				if (bIsDynamic && !bIsSleeping)
+				{
+					return false;
+				}
+			}
+			return true;
+		};
+
+		// If we have explicitly made some particles go to sleep (as opposed to them naturally sleeping based on low movement)
+		// we must check to see if the whole island can go to sleep. This is primarily to address the issue that we do not
+		// update collisions for sleeping particles and destroy collisions in awake islands that are not updated this tick.
+		for (FPBDIsland* Island : Islands)
+		{
+			if (!!Island->Flags.bCheckSleep)
+			{
+				const bool bIslandShouldSleep = !!Island->Flags.bIsSleepAllowed && ShouldIslandSleep(Island);
+				if (bIslandShouldSleep != Island->Flags.bIsSleeping)
+				{
+					Island->Flags.bIsSleeping = bIslandShouldSleep;
+					Island->SleepCounter = 0;
+				}
+
+				// NOTE: we only get here if particle sleep state was changed. We need to ensure that
+				// constraint sleep state matches the particle sleep state. Ideally we would only
+				// do this if we know that they don't match, but that's hard to determine.
+				PropagateIslandSleep(Island);
+
+				Island->Flags.bCheckSleep = false;
+			}
+		}
+	}
+
+	void FPBDIslandManager::ProcessSleep(const FRealSingle Dt)
 	{
 		if (!CVars::bChaosSolverSleepEnabled)
 		{
@@ -1926,7 +2131,7 @@ namespace Chaos::Private
 		}
 
 		// Isloated particles are not kept in any island and need to be handled separately.
-		ProcessParticlesSleep();
+		ProcessParticlesSleep(Dt);
 
 		// @todo(chaos): can go wide except for PropagateSleepState
 		for (FPBDIsland* Island : Islands)
@@ -1934,7 +2139,7 @@ namespace Chaos::Private
 			if (!Island->Flags.bIsSleeping && !!Island->Flags.bIsSleepAllowed && !Island->Flags.bIsUsingCache)
 			{
 				// Update the sleep state based on particle movement etc
-				ProcessIslandSleep(Island);
+				ProcessIslandSleep(Island, Dt);
 
 				if (Island->Flags.bIsSleeping)
 				{
@@ -1947,28 +2152,28 @@ namespace Chaos::Private
 		}
 	}
 
-	void FPBDIslandManager::ProcessParticlesSleep()
+	void FPBDIslandManager::ProcessParticlesSleep(const FRealSingle Dt)
 	{
-		// We only need to process particles that have zero gravity because under gravity
-		// the particles will only sleep when held in place by a constraint and that will
-		// be handled in ProcessIslandSleep.
-		// @todo(chaos): keep track of particles with zero gravity? There usually are very few
-		// so it's a shame to have to visit all isolated particles here
+		// Check the sleepiness of particles that are not in any islands.
+		// @todo(chaos): this is very expensive because we have to search for a material in GetParticleSleepThresholds.
+		// We should probably cache a particle's sleep (and disable) thresholds somewhere.
 		TArray<FGeometryParticleHandle*> SleptParticles;
 		TArray<FGeometryParticleHandle*> DisabledParticles;
 		for (FTransientPBDRigidParticleHandle& Rigid : Particles.GetActiveDynamicMovingKinematicParticlesView())
 		{
 			if (Rigid.IsDynamic() && !Rigid.IsInConstraintGraph())
 			{
-				// @todo(chaos): this is very expensive because we have to search for a material
-				// We should probably cache a particle's sleep (and disable) thresholds somewhere.
 				FRealSingle SleepLinearThreshold, SleepAngularThreshold;
 				int32 SleepCounterThreshold;
-				GetParticleSleepThresholds(Rigid.Handle(), PhysicsMaterials, PerParticlePhysicsMaterials, SimMaterials, SleepLinearThreshold, SleepAngularThreshold, SleepCounterThreshold);
+				GetIsolatedParticleSleepThresholds(Rigid.Handle(), PhysicsMaterials, PerParticlePhysicsMaterials, SimMaterials, SleepLinearThreshold, SleepAngularThreshold, SleepCounterThreshold);
 
 				// Check for sleep
 				if ((SleepLinearThreshold > 0) || (SleepAngularThreshold > 0))
 				{
+					// NOTE: We do not use smoothed velocity for isolated particles (smoothed velocity is used to hide
+					// minor collision/joint jitter and that won't be present) so we reset it for isolated particles
+					InitParticleSleepMetrics(Rigid, Dt);
+
 					int32 SleepCounter = 0;
 					if (SleepCounterThreshold < TNumericLimits<int32>::Max())
 					{
@@ -2003,7 +2208,7 @@ namespace Chaos::Private
 		}
 	}
 
-	void FPBDIslandManager::ProcessIslandSleep(FPBDIsland* Island)
+	void FPBDIslandManager::ProcessIslandSleep(FPBDIsland* Island, const FRealSingle Dt)
 	{
 		bool bWithinSleepThreshold = true;
 		int32 SleepCounterThreshold = 0;
@@ -2017,14 +2222,24 @@ namespace Chaos::Private
 			}
 
 			// Check the particle state against the thresholds
-			FConstGenericParticleHandle P = Node->GetParticle();
+			FPBDRigidParticleHandle* Rigid = Node->GetParticle()->CastToRigidParticle();
+			if (Rigid == nullptr)
+			{
+				continue;
+			}
+			
+			UpdateParticleSleepMetrics(*Rigid, Dt);
 
 			// Did we exceed the velocity threshold?
-			if ((P->VSmooth().SizeSquared() > Node->SleepLinearThresholdSq) 
-				|| (P->WSmooth().SizeSquared() > Node->SleepAngularThresholdSq))
+			if ((Rigid->VSmooth().SizeSquared() > Node->SleepLinearThresholdSq)
+				|| (Rigid->WSmooth().SizeSquared() > Node->SleepAngularThresholdSq))
 			{
 				bWithinSleepThreshold = false;
-				break;
+
+				// NOTE: We will not sleep if any particle exceeds the threshold, so we could "break" here.
+				// However we still want to update the SleepMetrics for all particles because we want to
+				// update the smoothed velocity based on current state, so we must continue to remaining particles
+				continue;
 			}
 
 			// Take the longest sleep time
@@ -2046,6 +2261,12 @@ namespace Chaos::Private
 	}
 
 	void FPBDIslandManager::PropagateIslandSleep(FPBDIsland* Island)
+	{
+		PropagateIslandSleepToParticles(Island);
+		PropagateIslandSleepToConstraints(Island);
+	}
+
+	void FPBDIslandManager::PropagateIslandSleepToParticles(FPBDIsland* Island)
 	{
 		bool bRebuildViews = false;
 		for (FPBDIslandParticle* IslandNode : Island->Nodes)
@@ -2088,7 +2309,10 @@ namespace Chaos::Private
 		{
 			Particles.RebuildViews();
 		}
+	}
 
+	void FPBDIslandManager::PropagateIslandSleepToConstraints(FPBDIsland* Island)
+	{
 		// Set the constraint sleep state to match
 		for (TArray<FPBDIslandConstraint*>& IslandEdges : Island->ContainerEdges)
 		{
@@ -2187,8 +2411,8 @@ namespace Chaos::Private
 				int32 DisableCounter = 0;
 
 				// Did we exceed the velocity thresholds?
-				const FReal VSq = Particle->V().SizeSquared();
-				const FReal WSq = Particle->W().SizeSquared();
+				const FReal VSq = Particle->GetV().SizeSquared();
+				const FReal WSq = Particle->GetW().SizeSquared();
 				if ((VSq < Node->DisableLinearThresholdSq) && (WSq < Node->DisableAngularThresholdSq))
 				{
 					// We are within the velocity thresholds, so see if we should disable
@@ -2350,5 +2574,68 @@ namespace Chaos::Private
 
 		return true;
 	}
+
+#if CHAOS_DEBUG_DRAW
+	void FPBDIslandManager::DebugDrawSleepState(const DebugDraw::FChaosDebugDrawSettings* DebugDrawSettings) const
+	{
+		// Loop over isolated particles
+		for (FTransientPBDRigidParticleHandle& Rigid : Particles.GetActiveDynamicMovingKinematicParticlesView())
+		{
+			if (Rigid.IsDynamic() && !Rigid.IsInConstraintGraph())
+			{
+				FColor Color = FColor(128, 128, 128);
+
+				if (!Rigid.IsSleeping())
+				{
+					FRealSingle SleepLinearThreshold, SleepAngularThreshold;
+					int32 SleepCounterThreshold;
+					GetIsolatedParticleSleepThresholds(Rigid.Handle(), PhysicsMaterials, PerParticlePhysicsMaterials, SimMaterials, SleepLinearThreshold, SleepAngularThreshold, SleepCounterThreshold);
+
+					// Check for sleep
+					if ((SleepLinearThreshold > 0) || (SleepAngularThreshold > 0))
+					{
+						if (SleepCounterThreshold < TNumericLimits<int32>::Max())
+						{
+							// Isolated particles have a max sleep counter of 127 (to reduce counter space in the particle)
+							SleepCounterThreshold = FMath::Min(SleepCounterThreshold, TNumericLimits<int8>::Max());
+
+							// Did we exceed the velocity threshold?
+							const bool bIsParticlePreventingSleep = ((Rigid.VSmooth().SizeSquared() > FMath::Square(SleepLinearThreshold)) || (Rigid.WSmooth().SizeSquared() > FMath::Square(SleepAngularThreshold)));
+							Color = (bIsParticlePreventingSleep) ? FColor::Red : FColor::Green;
+						}
+					}
+				}
+
+				DebugDraw::DrawParticleShapes(FRigidTransform3::Identity, Rigid.Handle(), Color, DebugDrawSettings);
+			}
+		}
+
+		// Loop over particles in islands
+		for (FPBDIsland* Island : Islands)
+		{
+			for (FPBDIslandParticle* Node : Island->GetParticles())
+			{
+				FColor Color = FColor(128, 128, 128);
+
+				if (!Island->Flags.bIsSleeping)
+				{
+					// All zeroes means never sleep/disable
+					if ((Node->SleepLinearThresholdSq > 0) || (Node->SleepAngularThresholdSq > 0))
+					{
+						// Check the particle state against the thresholds
+						if (FPBDRigidParticleHandle* Rigid = Node->GetParticle()->CastToRigidParticle())
+						{
+							// Did we exceed the velocity threshold?
+							const bool bIsParticlePreventingSleep = ((Rigid->VSmooth().SizeSquared() > Node->SleepLinearThresholdSq) || (Rigid->WSmooth().SizeSquared() > Node->SleepAngularThresholdSq));
+							Color = (bIsParticlePreventingSleep) ? FColor::Red : FColor::Green;
+						}
+					}
+				}
+
+				DebugDraw::DrawParticleShapes(FRigidTransform3::Identity, Node->GetParticle(), Color, DebugDrawSettings);
+			}
+		}
+	}
+#endif
 
 } // namsepace Chaos::Private

@@ -95,6 +95,12 @@
 	#define USING_ADDRESS_SANITISER 0
 #endif
 
+#if defined(__has_feature) && __has_feature(hwaddress_sanitizer)
+	#define USING_HW_ADDRESS_SANITISER 1
+#else
+	#define USING_HW_ADDRESS_SANITISER 0
+#endif
+
 #if defined(__has_feature) && __has_feature(thread_sanitizer)
 	#define USING_THREAD_SANITISER 1
 #else

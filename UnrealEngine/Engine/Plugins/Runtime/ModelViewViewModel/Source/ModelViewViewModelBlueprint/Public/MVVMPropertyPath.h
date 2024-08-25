@@ -9,6 +9,7 @@
 #include "MVVMPropertyPath.generated.h"
 
 class UBlueprint;
+class UWidgetBlueprint;
 
 /**
  * A single item in a Property Path
@@ -73,6 +74,18 @@ private:
 };
 
 /**
+ * 
+ */
+UENUM()
+enum class EMVVMBlueprintFieldPathSource : uint8
+{
+	None,
+	Widget,
+	ViewModel,
+	SelfContext,
+};
+
+/**
  * Base path to properties for MVVM view models and widgets.
  * 
  * Used to associate properties within MVVM bindings in editor & during MVVM compilation
@@ -93,12 +106,18 @@ private:
 	UPROPERTY(VisibleAnywhere, Category = "MVVM")
 	FGuid ContextId;
 
+	UPROPERTY(VisibleAnywhere, Category = "MVVM")
+	EMVVMBlueprintFieldPathSource Source = EMVVMBlueprintFieldPathSource::None;
+
 #if WITH_EDITORONLY_DATA
 	// Use the Paths. BindingReference and BindingKind are deprecated.
 	UPROPERTY()
 	FMemberReference BindingReference_DEPRECATED;
 	UPROPERTY()
 	EBindingKind BindingKind_DEPRECATED = EBindingKind::Function;
+	// Is the deprecation source done.
+	UPROPERTY()
+	bool bDeprecatedSource = false;
 #endif
 
 public:
@@ -112,15 +131,27 @@ public:
 		return Paths;
 	}
 
-	/** Get the binding names, resolves reference deprecation / redirectors / etc before returning */
+	/**
+	 * Get the binding names. Resolves reference deprecation / redirectors.
+	 * Returns Field.SubProperty.SubProperty from ViewModel.Field.SubProperty.SubProperty
+	 */
 	MODELVIEWVIEWMODELBLUEPRINT_API TArray<FName> GetFieldNames(const UClass* SelfContext) const;
 
-	/** Get the binding fields, resolves reference deprecation / redirectors / etc before returning */
+	/**
+	 * Get the binding fields. Resolves reference deprecation / redirectors.
+	 * Returns Field.SubProperty.SubProperty from ViewModel.Field.SubProperty.SubProperty
+	 */
 	MODELVIEWVIEWMODELBLUEPRINT_API TArray<UE::MVVM::FMVVMConstFieldVariant> GetFields(const UClass* SelfContext) const;
 
 	/**
+	 * Get the binding fields. Resolves reference deprecation / redirectors.
+	 * Returns Viewmodel.Field.SubProperty.SubProperty from ViewModel.Field.SubProperty.SubProperty
+	 */
+	MODELVIEWVIEWMODELBLUEPRINT_API TArray<UE::MVVM::FMVVMConstFieldVariant> GetCompleteFields(const UBlueprint* SelfContext) const;
+
+	/**
 	 * Get the full path without the first property name.
-	 * returns Field.SubProperty.SubProperty from ViewModel.Field.SubProeprty.SubProperty
+	 * Returns Field.SubProperty.SubProperty from ViewModel.Field.SubProeprty.SubProperty
 	 */
 	MODELVIEWVIEWMODELBLUEPRINT_API FString GetPropertyPath(const UClass* SelfContext) const;
 
@@ -152,15 +183,28 @@ public:
 
 	void ResetSource()
 	{
+		Source = EMVVMBlueprintFieldPathSource::None;
 		ContextId = FGuid();
 		WidgetName = FName();
+		bDeprecatedSource = true;
 	}
 
+	EMVVMBlueprintFieldPathSource GetSource(const UBlueprint* InContext) const
+	{
+		if (!bDeprecatedSource)
+		{
+			const_cast<FMVVMBlueprintPropertyPath*>(this)->DeprecationUpdateSource(InContext);
+		}
+		return Source;
+	}
+
+	UE_DEPRECATED(5.4, "Use GetSource instead.")
 	bool IsFromWidget() const
 	{
 		return !WidgetName.IsNone();
 	}
 
+	UE_DEPRECATED(5.4, "Use GetSource instead.")
 	bool IsFromViewModel() const
 	{
 		return ContextId.IsValid();
@@ -173,8 +217,9 @@ public:
 
 	void SetViewModelId(FGuid InViewModelId)
 	{
-		WidgetName = FName();
+		ResetSource();
 		ContextId = InViewModelId;
+		Source = EMVVMBlueprintFieldPathSource::ViewModel;
 	}
 
 	FName GetWidgetName() const
@@ -184,20 +229,36 @@ public:
 
 	void SetWidgetName(FName InWidgetName)
 	{
-		ContextId = FGuid();
+		ResetSource();
 		WidgetName = InWidgetName;
+		Source = EMVVMBlueprintFieldPathSource::Widget;
 	}
 
+	void SetSelfContext()
+	{
+		ResetSource();
+		Source = EMVVMBlueprintFieldPathSource::SelfContext;
+	}
+
+	bool IsValid() const
+	{
+		bool bHasValidSource = bDeprecatedSource && Source != EMVVMBlueprintFieldPathSource::None;
+		bool bHasValidDeprecatedSource = !bDeprecatedSource && (!WidgetName.IsNone() || ContextId.IsValid());
+		return bHasValidSource || bHasValidDeprecatedSource;
+	}
+
+	UE_DEPRECATED(5.4, "Use IsValid  instead.")
 	bool IsEmpty() const
 	{
-		return !IsFromWidget() && !IsFromViewModel() && BindingReference_DEPRECATED.GetMemberName() == FName();
+		return !IsValid();
 	}
 
 	bool operator==(const FMVVMBlueprintPropertyPath& Other) const
 	{
-		return WidgetName == Other.WidgetName && 
-			ContextId == Other.ContextId && 
-			Paths == Other.Paths;
+		return WidgetName == Other.WidgetName
+			&& ContextId == Other.ContextId
+			&& Source == Other.Source
+			&& Paths == Other.Paths;
 	}
 
 	bool operator!=(const FMVVMBlueprintPropertyPath& Other) const
@@ -216,6 +277,13 @@ public:
 			}
 		}
 	}
+
+public:
+	FText ToText(const UWidgetBlueprint* Blueprint, bool bUseDisplayName) const;
+	FString ToString(const UWidgetBlueprint* Blueprint, bool bUseDisplayName, bool bIncludeMetaData) const;
+
+private:
+	MODELVIEWVIEWMODELBLUEPRINT_API void DeprecationUpdateSource(const UBlueprint* InContext);
 };
 
 template<>

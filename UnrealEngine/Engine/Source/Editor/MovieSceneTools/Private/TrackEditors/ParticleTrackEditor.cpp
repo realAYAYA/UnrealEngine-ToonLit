@@ -14,15 +14,15 @@
 #include "Tracks/MovieSceneParticleTrack.h"
 #include "ISectionLayoutBuilder.h"
 #include "Sections/MovieSceneParticleSection.h"
-#include "CommonMovieSceneTools.h"
 #include "Particles/ParticleLODLevel.h"
 #include "Particles/ParticleModuleRequired.h"
-
+#include "TimeToPixel.h"
+#include "MVVM/ViewModels/ViewDensity.h"
 
 namespace AnimatableParticleEditorConstants
 {
 	// @todo Sequencer Allow this to be customizable
-	const uint32 ParticleTrackHeight = 20;
+	const uint32 ParticleTrackHeight = 28;
 }
 
 
@@ -46,9 +46,9 @@ UMovieSceneSection* FParticleSection::GetSectionObject()
 	return &Section;
 }
 
-float FParticleSection::GetSectionHeight() const
+float FParticleSection::GetSectionHeight(const UE::Sequencer::FViewDensityInfo& ViewDensity) const
 {
-	return (float)AnimatableParticleEditorConstants::ParticleTrackHeight;
+	return ViewDensity.UniformHeight.Get(AnimatableParticleEditorConstants::ParticleTrackHeight);
 }
 
 int32 FParticleSection::OnPaintSection( FSequencerSectionPainter& InPainter ) const

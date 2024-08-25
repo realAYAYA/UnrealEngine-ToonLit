@@ -13,7 +13,7 @@ FExternalSpatialAccelerationPayload::FExternalSpatialAccelerationPayload()
 {
 }
 
-void FExternalSpatialAccelerationPayload::Initialize(UPrimitiveComponent* InComponent, int32 InBoneId)
+void FExternalSpatialAccelerationPayload::Initialize(TObjectKey<UPrimitiveComponent> InComponent, int32 InBoneId)
 {
 	Component = InComponent;
 	BoneId = InBoneId;
@@ -24,9 +24,18 @@ void FExternalSpatialAccelerationPayload::Initialize(UPrimitiveComponent* InComp
 	}
 }
 
+
+void FExternalSpatialAccelerationPayload::Initialize(TObjectKey<UPrimitiveComponent> InComponent, int32 InBoneId, const Chaos::FUniqueIdx& UniqueIdx)
+{
+	Component = InComponent;
+	BoneId = InBoneId;
+	CachedUniqueIdx = UniqueIdx;
+}
+
+
 Chaos::FGeometryParticle* FExternalSpatialAccelerationPayload::GetExternalGeometryParticle_ExternalThread() const
 {
-	if (UPrimitiveComponent* ValidComponent = Component.Get())
+	if (UPrimitiveComponent* ValidComponent = Component.ResolveObjectPtr())
 	{
 		if (!ValidComponent->HasValidPhysicsState())
 		{
@@ -66,7 +75,7 @@ void FExternalSpatialAccelerationPayload::DebugDraw(const bool bExternal, const 
 
 uint32 GetTypeHash(const FExternalSpatialAccelerationPayload& Payload)
 {
-	const uint32 ComponentHash = Payload.Component.GetWeakPtrTypeHash();
+	const uint32 ComponentHash = GetTypeHash(Payload.Component);
 	const uint32 BoneIdHash = GetTypeHash(Payload.BoneId);
 	return HashCombine(ComponentHash, BoneIdHash);
 }

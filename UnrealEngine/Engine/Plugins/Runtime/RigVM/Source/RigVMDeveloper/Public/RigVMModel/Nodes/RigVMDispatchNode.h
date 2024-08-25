@@ -47,8 +47,8 @@ public:
 	virtual FRigVMStructUpgradeInfo GetUpgradeInfo() const override;
 
 	const FRigVMDispatchFactory* GetFactory() const;
-	bool IsDeprecated() const;
-	FString GetDeprecatedMetadata() const;
+	virtual bool IsOutDated() const override;
+	virtual FString GetDeprecatedMetadata() const override;
 
 	FRigVMDispatchContext GetDispatchContext() const;
 

@@ -30,6 +30,7 @@
 #include "Components/ReflectionCaptureComponent.h"
 #include "ReflectionEnvironment.h"
 #include "RHIStaticStates.h"
+#include "InstancedStaticMeshSceneProxyDesc.h"
 
 #define LOCTEXT_NAMESPACE "StaticLightingSystem"
 
@@ -1012,17 +1013,19 @@ void FScene::AddGeometryInstanceFromComponent(UInstancedStaticMeshComponent* InC
 		}
 	}
 
-	InComponent->FlushInstanceUpdateCommands(true);
-
 	FInstanceGroupRenderState InstanceRenderState;
 	InstanceRenderState.ComponentUObject = Instance->ComponentUObject;
 	InstanceRenderState.RenderData = Instance->ComponentUObject->GetStaticMesh()->GetRenderData();
-	InstanceRenderState.InstancedRenderData = MakeUnique<FInstancedStaticMeshRenderData>(Instance->ComponentUObject, FeatureLevel);
+	FInstancedStaticMeshSceneProxyDesc ProxyDesc(Instance->ComponentUObject);
+	InstanceRenderState.InstancedRenderData = MakeUnique<FInstancedStaticMeshRenderData>(&ProxyDesc, FeatureLevel);
+	InstanceRenderState.InstanceDataSceneProxy = ProxyDesc.InstanceDataSceneProxy;
 	InstanceRenderState.LocalToWorld = InComponent->GetRenderMatrix();
 	InstanceRenderState.WorldBounds = InComponent->Bounds;
 	InstanceRenderState.ActorPosition = InComponent->GetActorPositionForRenderer();
 	InstanceRenderState.LocalBounds = InComponent->CalcBounds(FTransform::Identity);
 	InstanceRenderState.bCastShadow = InComponent->CastShadow && InComponent->bCastStaticShadow;
+
+	InstanceRenderState.ComponentUObject->SetBakedLightingDataChangedAll();
 
 	for (int32 LODIndex = 0; LODIndex < Instance->LODLightmaps.Num(); LODIndex++)
 	{
@@ -1042,8 +1045,15 @@ void FScene::AddGeometryInstanceFromComponent(UInstancedStaticMeshComponent* InC
 			RelevantPointLightsToAddOnRenderThread,
 			RelevantSpotLightsToAddOnRenderThread,
 			RelevantRectLightsToAddOnRenderThread
-		](FRHICommandListImmediate&) mutable
+		](FRHICommandListImmediate& RHICmdList) mutable
 	{
+		InstanceRenderState.InstancedRenderData->BindBuffersToVertexFactories(RHICmdList, nullptr);
+		if (FInstanceDataUpdateTaskInfo *TaskInfo = InstanceRenderState.InstanceDataSceneProxy->GetUpdateTaskInfo())
+		{
+			TaskInfo->WaitForUpdateCompletion();
+		}
+		InstanceRenderState.InstanceSceneDataBuffers = &InstanceRenderState.InstanceDataSceneProxy->GetData();
+		InstanceRenderState.NumInstances = InstanceRenderState.InstanceSceneDataBuffers->GetNumInstances();
 
 		FInstanceGroupRenderStateRef InstanceRenderStateRef = RenderState.InstanceGroupRenderStates.Emplace(MoveTemp(InstanceRenderState));
 
@@ -1112,7 +1122,7 @@ void FScene::RemoveGeometryInstanceFromComponent(UInstancedStaticMeshComponent* 
 		HISMC->BuildTreeIfOutdated(false, true);
 	}
 
-	InComponent->FlushInstanceUpdateCommands(true);
+	InComponent->SetBakedLightingDataChangedAll();
 
 	ENQUEUE_RENDER_COMMAND(RenderThreadRemove)(
 		[ElementId, &RenderState = RenderState](FRHICommandListImmediate&) mutable
@@ -1240,6 +1250,7 @@ void FScene::AddGeometryInstanceFromComponent(ULandscapeComponent* InComponent)
 	Initializer.HeightmapScaleBias         = (FVector4f)InComponent->HeightmapScaleBias;
 	Initializer.WeightmapScaleBias         = (FVector4f)InComponent->WeightmapScaleBias;
 	Initializer.WeightmapSubsectionOffset  = InComponent->WeightmapSubsectionOffset;
+	Initializer.InvLODBlendRange           = 1.0f / FMath::Max(InComponent->GetLandscapeProxy()->LODBlendRange, 0.01f);
 
 	TArray<int32> RelevantPointLightsToAddOnRenderThread = AddAllPossiblyRelevantLightsToGeometry(LightScene.PointLights, Instance);
 	TArray<int32> RelevantSpotLightsToAddOnRenderThread = AddAllPossiblyRelevantLightsToGeometry(LightScene.SpotLights, Instance);
@@ -1268,7 +1279,7 @@ void FScene::AddGeometryInstanceFromComponent(ULandscapeComponent* InComponent)
 			FLandscapeComponentSceneProxy::SharedBuffersMap.Add(InstanceRenderState.SharedBuffersKey, InstanceRenderState.SharedBuffers);
 
 			FLandscapeFixedGridVertexFactory* LandscapeVertexFactory = new FLandscapeFixedGridVertexFactory(LocalFeatureLevel);
-			LandscapeVertexFactory->Data.PositionComponent = FVertexStreamComponent(InstanceRenderState.SharedBuffers->VertexBuffer, 0, sizeof(FLandscapeVertex), VET_Float4);
+			LandscapeVertexFactory->Data.PositionComponent = FVertexStreamComponent(InstanceRenderState.SharedBuffers->VertexBuffer, 0, sizeof(FLandscapeVertex), VET_UByte4);
 			LandscapeVertexFactory->InitResource(RHICmdList);
 			InstanceRenderState.SharedBuffers->FixedGridVertexFactory = LandscapeVertexFactory;
 		}
@@ -1291,7 +1302,7 @@ void FScene::AddGeometryInstanceFromComponent(ULandscapeComponent* InComponent)
 				0.f,
 				(float)((InstanceRenderStateRef->SubsectionSizeVerts >> LodIndex) - 1),
 				1.f / (float)((InstanceRenderStateRef->SubsectionSizeVerts >> LodIndex) - 1));
-			InstanceRenderStateRef->LandscapeFixedGridUniformShaderParameters[LodIndex].SetContents(Parameters);
+			InstanceRenderStateRef->LandscapeFixedGridUniformShaderParameters[LodIndex].SetContents(RHICmdList, Parameters);
 		}
 
 		{
@@ -1319,6 +1330,7 @@ void FScene::AddGeometryInstanceFromComponent(ULandscapeComponent* InComponent)
 			LandscapeParams.HeightmapUVScaleBias = Initializer.HeightmapScaleBias;
 			LandscapeParams.WeightmapUVScaleBias = Initializer.WeightmapScaleBias;
 			LandscapeParams.LocalToWorldNoScaling = FMatrix44f(InstanceRenderState.LocalToWorldNoScaling);				// LWC_TODO: Precision loss
+			LandscapeParams.InvLODBlendRange = Initializer.InvLODBlendRange;
 
 			LandscapeParams.LandscapeLightmapScaleBias = FVector4f(
 				LightmapScaleX,
@@ -1355,8 +1367,8 @@ void FScene::AddGeometryInstanceFromComponent(ULandscapeComponent* InComponent)
 			LandscapeParams.XYOffsetmapTextureSampler = GBlackTexture->SamplerStateRHI;
 
 			InstanceRenderStateRef->LandscapeUniformShaderParameters = MakeUnique<TUniformBuffer<FLandscapeUniformShaderParameters>>();
+			InstanceRenderStateRef->LandscapeUniformShaderParameters->SetContents(RHICmdList, LandscapeParams);
 			InstanceRenderStateRef->LandscapeUniformShaderParameters->InitResource(RHICmdList);
-			InstanceRenderStateRef->LandscapeUniformShaderParameters->SetContents(LandscapeParams);
 		}
 
 		for (int32 LODIndex = 0; LODIndex < InstanceLightmapRenderStateInitializers.Num(); LODIndex++)
@@ -1503,7 +1515,7 @@ void FScene::BackgroundTick()
 	
 	if (GPULightmass->LightBuildNotification.IsValid())
 	{
-		bool bIsViewportNonRealtime = GCurrentLevelEditingViewportClient && !GCurrentLevelEditingViewportClient->IsRealtime();
+		const bool bIsViewportNonRealtime = !FGPULightmassModule::IsRealtimeOn();
 		if (bIsViewportNonRealtime)
 		{
 			if (GPULightmass->Settings->Mode == EGPULightmassMode::FullBake)
@@ -1665,7 +1677,7 @@ void FSceneRenderState::BackgroundTick()
 	LightmapRenderer->BackgroundTick();
 
 	// If we're in background baking mode, schedule VLM work to be after surface lightmaps
-	bool bIsViewportNonRealtime = GCurrentLevelEditingViewportClient && !GCurrentLevelEditingViewportClient->IsRealtime();
+	const bool bIsViewportNonRealtime = !FGPULightmassModule::IsRealtimeOn();
 	if (!bIsViewportNonRealtime || (bIsViewportNonRealtime && bHaveFinishedSurfaceLightmaps))
 	{
 		VolumetricLightmapRenderer->BackgroundTick();
@@ -1863,7 +1875,7 @@ void FScene::ApplyFinishedLightmapsToWorld()
 	UWorld* World = GPULightmass->World;
 
 	static const auto CVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.VirtualTexturedLightmaps"));
-	const bool bUseVirtualTextures = (CVar->GetValueOnAnyThread() != 0) && UseVirtualTexturing(World->GetFeatureLevel());
+	const bool bUseVirtualTextures = (CVar->GetValueOnAnyThread() != 0) && UseVirtualTexturing(GetFeatureLevelShaderPlatform(World->GetFeatureLevel()));
 
 	bool bHasSkyShadowing = LightScene.SkyLight.IsSet() && LightScene.SkyLight->CastsStationaryShadow();
 	
@@ -2308,7 +2320,7 @@ void FScene::ApplyFinishedLightmapsToWorld()
 								// The rendering thread reads from LODData and IrrelevantLights, therefore
 								// the component must have finished detaching from the scene on the rendering
 								// thread before it is safe to continue.
-								check(StaticMeshComponent->AttachmentCounter.GetValue() == 0);
+								check(StaticMeshComponent->GetSceneData().AttachmentCounter.GetValue() == 0);
 
 								// Ensure LODData has enough entries in it, free not required.
 								const bool bLODDataCountChanged = StaticMeshComponent->SetLODDataCount(LODIndex + 1, StaticMeshComponent->GetStaticMesh()->GetNumLODs());

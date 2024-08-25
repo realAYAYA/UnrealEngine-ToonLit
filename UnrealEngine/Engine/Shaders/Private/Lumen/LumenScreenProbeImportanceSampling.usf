@@ -348,7 +348,7 @@ void ScreenProbeComputeLightingProbabilityDensityFunctionCS(
 
 						if (NeighborHistoryDepth >= 0)
 						{
-							float3 NeighborWorldPosition = HistoryScreenProbeTranslatedWorldPosition[NeighborHistoryScreenProbeCoord] - LWCHackToFloat(PrimaryView.PrevPreViewTranslation);
+							float3 NeighborWorldPosition = HistoryScreenProbeTranslatedWorldPosition[NeighborHistoryScreenProbeCoord] - DFHackToFloat(PrimaryView.PrevPreViewTranslation);
 							float PlaneDistance = abs(dot(float4(NeighborWorldPosition, -1), ScenePlane));
 							float RelativeDepthDifference = PlaneDistance / SceneDepth;
 							float PositionWeight = exp2(-10000.0f * (RelativeDepthDifference * RelativeDepthDifference)) > .1f ? 1.0f : 0.0f;

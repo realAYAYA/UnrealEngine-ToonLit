@@ -12,7 +12,7 @@ namespace CSVInfo
 {
     class Version
     {
-        private static string VersionString = "1.06";
+        private static string VersionString = "1.07";
 
         public static string Get() { return VersionString; }
     };
@@ -73,6 +73,8 @@ namespace CSVInfo
                 "Format: \n" +
                 "  <csvfilename>\n"+
 				"  [-showaverages] Output stat averages.\n" +
+				"  [-showmin] Output stat min values.\n" +
+				"  [-showmax] Output stat max values.\n" +
 				"  [-showTotals] Output stat totals.\n" +
 				"  [-showAllStats] Output stat values from all frames.\n" +
 				"  [-showEvents] Output CSV Events and the frame they occured on.\n" +
@@ -94,12 +96,15 @@ namespace CSVInfo
             ReadCommandLine(args);
 
             bool showAverages = GetBoolArg("showAverages");
+            bool showMin = GetBoolArg("showMin");
+            bool showMax = GetBoolArg("showMax");
 			bool showTotals= GetBoolArg("showTotals");
 			bool showAllStats = GetBoolArg("showAllStats");
 			bool showEvents = GetBoolArg("showEvents");
 			string jsonFilename = GetArg("toJson",false);
 			string statFilterString = GetArg("statFilters",false);
-			bool bReadJustHeader = !GetBoolArg("forceFullRead") && !showAverages && !showTotals && (statFilterString.Length == 0);
+			bool bReadJustHeader = !GetBoolArg("forceFullRead") && !showAverages && !showTotals && !showMin && !showMax
+			                       && (statFilterString.Length == 0);
 
 			string[] statFilters = statFilterString.Length > 0 ? statFilterString.Split(',') : null;
 
@@ -158,7 +163,7 @@ namespace CSVInfo
 				}
 				statLines.Sort();
 
-				if (showTotals || showAverages || showAllStats)
+				if (showTotals || showAverages || showMin || showMax || showAllStats)
 				{
 					jsonLines.Add("  \"stats\": {");
 					for (int i=0; i<statLines.Count; i++)
@@ -172,6 +177,14 @@ namespace CSVInfo
 						if (showAverages)
 						{
 							entries.Add("\"average\":" + csvStats.GetStat(statName).average);
+						}
+						if (showMin)
+						{
+							entries.Add("\"min\":" + csvStats.GetStat(statName).ComputeMinValue());
+						}
+						if (showMax)
+						{
+							entries.Add("\"max\":" + csvStats.GetStat(statName).ComputeMaxValue());
 						}
 						if (showAllStats)
 						{
@@ -210,6 +223,14 @@ namespace CSVInfo
 					if (showTotals)
 					{
 						statLine += " (Total: " + stat.total.ToString()+") ";
+					}
+					if (showMin)
+					{
+						statLine += " (Min: " + stat.ComputeMinValue().ToString()+") ";
+					}
+					if (showMax)
+					{
+						statLine += " (Max: " + stat.ComputeMaxValue().ToString()+") ";
 					}
 					if (showAllStats)
 					{

@@ -44,6 +44,11 @@ URCAction* FRCBehaviourConditionalModel::AddAction(const TSharedRef<const FRemot
 	return NewAction;
 }
 
+bool FRCBehaviourConditionalModel::HasBehaviourDetailsWidget()
+{
+	return true;
+}
+
 void FRCBehaviourConditionalModel::CreateComparandInputField()
 {
 	if (URCBehaviourConditional* ConditionalBehaviour = GetConditionalBehaviour())

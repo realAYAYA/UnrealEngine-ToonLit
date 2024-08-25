@@ -1,12 +1,14 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "OpenXRInput.h"
-#include "OpenXRInputSettings.h"
-#include "OpenXRHMD.h"
+#include "EnhancedInputDeveloperSettings.h"
+#include "IOpenXRHMD.h"
+#include "IXRTrackingSystem.h"
 #include "OpenXRCore.h"
 #include "UObject/UObjectIterator.h"
 #include "GameFramework/InputSettings.h"
 #include "IOpenXRExtensionPlugin.h"
+#include "IOpenXRExtensionPluginDelegates.h"
 #include "HeadMountedDisplayFunctionLibrary.h"
 
 #include "EnhancedInputLibrary.h"
@@ -16,6 +18,7 @@
 #include "InputMappingContext.h"
 #include "PlayerMappableInputConfig.h"
 #include "GenericPlatform/GenericPlatformInputDeviceMapper.h"
+#include "Engine/Engine.h"
 
 #if WITH_EDITOR
 #include "Editor/EditorEngine.h"
@@ -29,6 +32,7 @@
 
 namespace OpenXRSourceNames
 {
+	static const FName Head("Head");
 	static const FName AnyHand("AnyHand");
 	static const FName Left("Left");
 	static const FName Right("Right");
@@ -74,37 +78,25 @@ FOpenXRInputPlugin::~FOpenXRInputPlugin()
 {
 }
 
-FOpenXRHMD* FOpenXRInputPlugin::GetOpenXRHMD() const
-{
-	static FName SystemName(TEXT("OpenXR"));
-	if (GEngine->XRSystem.IsValid() && (GEngine->XRSystem->GetSystemName() == SystemName))
-	{
-		return static_cast<FOpenXRHMD*>(GEngine->XRSystem.Get());
-	}
-
-	return nullptr;
-}
-
 void FOpenXRInputPlugin::StartupModule()
 {
 	IOpenXRInputPlugin::StartupModule();
 
-	FOpenXRHMD* OpenXRHMD = GetOpenXRHMD();
-	// Note: OpenXRHMD may be null, for example in the editor.  But we still need the input device to enumerate sources.
-	InputDevice = MakeShared<FOpenXRInput>(OpenXRHMD);
+	// Note: XRSystem may be null, for example in the editor.  But we still need the input device to enumerate sources.
+	InputDevice = MakeShared<FOpenXRInput>(GEngine->XRSystem.Get());
 }
 
 FOpenXRInputPlugin::FOpenXRAction::FOpenXRAction(XrActionSet InActionSet,
 	XrActionType InActionType, const FName& InName, const FString& InLocalizedName,
-	const TArray<XrPath>& InSubactionPaths, const TObjectPtr<const UInputAction>& InObject)
-	: FOpenXRAction(InActionSet, InActionType, InName, InLocalizedName, InSubactionPaths)
+	const TArray<XrPath>& InSubactionPaths, const TObjectPtr<const UInputAction>& InObject, IOpenXRHMD* OpenXRHMD)
+	: FOpenXRAction(InActionSet, InActionType, InName, InLocalizedName, InSubactionPaths, OpenXRHMD)
 {
 	Object = InObject;
 }
 
 FOpenXRInputPlugin::FOpenXRAction::FOpenXRAction(XrActionSet InActionSet,
 	XrActionType InActionType, const FName& InName, const FString& InLocalizedName,
-	const TArray<XrPath>& InSubactionPaths)
+	const TArray<XrPath>& InSubactionPaths, IOpenXRHMD* OpenXRHMD)
 	: Set(InActionSet)
 	, Type(InActionType)
 	, Name(InName)
@@ -130,19 +122,35 @@ FOpenXRInputPlugin::FOpenXRAction::FOpenXRAction(XrActionSet InActionSet,
 		FCStringAnsi::Strcpy(Info.localizedActionName, XR_MAX_LOCALIZED_ACTION_NAME_SIZE, ActionName);
 	}
 
+	if (OpenXRHMD)
+	{
+		for (IOpenXRExtensionPlugin* Plugin : OpenXRHMD->GetExtensionPlugins())
+		{
+			Info.next = Plugin->OnCreateAction(Info, Info.next);
+		}
+	}
+
 	XR_ENSURE(xrCreateAction(Set, &Info, &Handle));
+
+	if (OpenXRHMD)
+	{
+		for (IOpenXRExtensionPlugin* Plugin : OpenXRHMD->GetExtensionPlugins())
+		{
+			Plugin->PostCreateAction(Handle);
+		}
+	}
 }
 
 FOpenXRInputPlugin::FOpenXRActionSet::FOpenXRActionSet(XrInstance InInstance,
 	const FName& InName, const FString& InLocalizedName, uint32 InPriority,
-	const TObjectPtr<const UInputMappingContext>& InObject)
-	: FOpenXRActionSet(InInstance, InName, InLocalizedName, InPriority)
+	const TObjectPtr<const UInputMappingContext>& InObject, IOpenXRHMD* OpenXRHMD)
+	: FOpenXRActionSet(InInstance, InName, InLocalizedName, InPriority, OpenXRHMD)
 {
 	Object = InObject;
 }
 
 FOpenXRInputPlugin::FOpenXRActionSet::FOpenXRActionSet(XrInstance InInstance,
-	const FName& InName, const FString& InLocalizedName, uint32 InPriority)
+	const FName& InName, const FString& InLocalizedName, uint32 InPriority, IOpenXRHMD* OpenXRHMD)
 	: Handle(XR_NULL_HANDLE)
 	, Name(InName)
 	, LocalizedName(InLocalizedName)
@@ -165,7 +173,25 @@ FOpenXRInputPlugin::FOpenXRActionSet::FOpenXRActionSet(XrInstance InInstance,
 		FCStringAnsi::Strcpy(Info.localizedActionSetName, XR_MAX_LOCALIZED_ACTION_SET_NAME_SIZE, ActionName);
 	}
 	Info.priority = InPriority;
+
+	if (OpenXRHMD)
+	{
+		for (IOpenXRExtensionPlugin* Plugin : OpenXRHMD->GetExtensionPlugins())
+		{
+			Info.next = Plugin->OnCreateActionSet(Info, Info.next);
+		}
+	}
+
 	XR_ENSURE(xrCreateActionSet(InInstance, &Info, &Handle));
+
+	if (OpenXRHMD)
+	{
+		for (IOpenXRExtensionPlugin* Plugin : OpenXRHMD->GetExtensionPlugins())
+		{
+			Plugin->PostCreateActionSet(Handle);
+		}
+	}
+
 }
 
 FOpenXRInputPlugin::FOpenXRController::FOpenXRController(XrActionSet InActionSet, XrPath InUserPath, const char* InName)
@@ -209,7 +235,7 @@ FOpenXRInputPlugin::FOpenXRController::FOpenXRController(XrActionSet InActionSet
 	XR_ENSURE(xrCreateAction(ActionSet, &Info, &VibrationAction));
 }
 
-void FOpenXRInputPlugin::FOpenXRController::AddTrackedDevices(FOpenXRHMD* HMD)
+void FOpenXRInputPlugin::FOpenXRController::AddTrackedDevices(IOpenXRHMD* HMD)
 {
 	if (HMD)
 	{
@@ -226,8 +252,9 @@ FOpenXRInputPlugin::FInteractionProfile::FInteractionProfile(XrPath InProfile, b
 {
 }
 
-FOpenXRInputPlugin::FOpenXRInput::FOpenXRInput(FOpenXRHMD* HMD)
-	: OpenXRHMD(HMD)
+FOpenXRInputPlugin::FOpenXRInput::FOpenXRInput(IXRTrackingSystem* InTrackingSystem)
+	: TrackingSystem(InTrackingSystem)
+	, OpenXRHMD(InTrackingSystem ? InTrackingSystem->GetIOpenXRHMD() : nullptr)
 	, Instance(XR_NULL_HANDLE)
 	, ControllerActionSet()
 	, ActionSets()
@@ -236,7 +263,7 @@ FOpenXRInputPlugin::FOpenXRInput::FOpenXRInput(FOpenXRHMD* HMD)
 	, EnhancedActions()
 	, Controllers()
 	, MotionSourceToControllerHandMap()
-	, MappableInputConfig(nullptr)
+	, InputMappingContextToPriorityMap()
 	, bActionsAttached(false)
 	, bDirectionalBindingSupported(false)
 	, bPalmPoseSupported(false)
@@ -244,7 +271,7 @@ FOpenXRInputPlugin::FOpenXRInput::FOpenXRInput(FOpenXRHMD* HMD)
 	, MessageHandler(new FGenericApplicationMessageHandler())
 {
 	IModularFeatures::Get().RegisterModularFeature(GetModularFeatureName(), this);
-	
+
 	// If there is no HMD then this module is not active, but it still needs to exist so we can EnumerateMotionSources from it.
 	if (OpenXRHMD)
 	{
@@ -375,17 +402,25 @@ bool FOpenXRInputPlugin::FOpenXRInput::BuildActions(XrSession Session)
 	}
 
 	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	if (!MappableInputConfig)
+	// Attempt to load the default input config from the OpenXR input settings.
+	const UEnhancedInputDeveloperSettings* InputSettings = GetDefault<UEnhancedInputDeveloperSettings>();
+	if (InputSettings)
 	{
-		// Attempt to load the default input config from the OpenXR input settings.
-		UOpenXRInputSettings* InputSettings = GetMutableDefault<UOpenXRInputSettings>();
-		if (InputSettings && InputSettings->MappableInputConfig.IsValid())
+		for (const auto& Context : InputSettings->DefaultMappingContexts)
 		{
-			SetPlayerMappableInputConfig((UPlayerMappableInputConfig*)InputSettings->MappableInputConfig.TryLoad());
+			if (Context.InputMappingContext)
+			{
+				TStrongObjectPtr<const UInputMappingContext> Obj(Context.InputMappingContext.LoadSynchronous());
+				InputMappingContextToPriorityMap.Add(Obj, Context.Priority);
+			}
+			else
+			{
+				UE_LOG(LogHMD, Warning, TEXT("Default Mapping Contexts contains an Input Mapping Context set to \"None\", ignoring while building OpenXR actions."));
+			}
 		}
 	}
 
-	if (MappableInputConfig)
+	if (!InputMappingContextToPriorityMap.IsEmpty())
 	{
 		BuildEnhancedActions(Profiles);
 	}
@@ -405,6 +440,16 @@ bool FOpenXRInputPlugin::FOpenXRInput::BuildActions(XrSession Session)
 		// An exception is made for the Simple Controller Profile which is always bound as a fallback
 		if (Profile.Bindings.Num() > 0)
 		{
+			// Add bindings from the extension plugins
+			for (IOpenXRExtensionPlugin* Plugin : OpenXRHMD->GetExtensionPlugins())
+			{
+				TArray<XrActionSuggestedBinding> PluginBindings;
+				if (Plugin->GetSuggestedBindings(Profile.Path, PluginBindings))
+				{
+					Profile.Bindings.Append(PluginBindings);
+				}
+			}
+
 			// Add the bindings for the controller pose and haptics
 			Profile.Bindings.Add(XrActionSuggestedBinding{
 				Controllers[EControllerHand::Left].GripAction, FOpenXRPath("/user/hand/left/input/grip/pose")
@@ -455,6 +500,11 @@ bool FOpenXRInputPlugin::FOpenXRInput::BuildActions(XrSession Session)
 			InteractionProfile.countSuggestedBindings = Profile.Bindings.Num();
 			InteractionProfile.suggestedBindings = Profile.Bindings.GetData();
 
+			for (IOpenXRExtensionPlugin* Plugin : OpenXRHMD->GetExtensionPlugins())
+			{
+				InteractionProfile.next = Plugin->OnSuggestBindings(Profile.Path, InteractionProfile.next);
+			}
+
 			XR_ENSURE(xrSuggestInteractionProfileBindings(Instance, &InteractionProfile));
 		}
 	}
@@ -494,7 +544,16 @@ bool FOpenXRInputPlugin::FOpenXRInput::BuildActions(XrSession Session)
 	SessionActionSetsAttachInfo.next = nullptr;
 	SessionActionSetsAttachInfo.countActionSets = AttachArray.Num();
 	SessionActionSetsAttachInfo.actionSets = AttachArray.GetData();
+
+	for (IOpenXRExtensionPlugin* Plugin : OpenXRHMD->GetExtensionPlugins())
+	{
+		SessionActionSetsAttachInfo.next = Plugin->OnActionSetAttach(SessionActionSetsAttachInfo, SessionActionSetsAttachInfo.next);
+	}
+
 	bActionsAttached = XR_ENSURE(xrAttachSessionActionSets(Session, &SessionActionSetsAttachInfo));
+	// NOTE: xrAttachSessionActionSets may fail with XR_ERROR_HANDLE_INVALID when using the Meta openxr runtime because the VivePort eye tracking openxr layer is incompatible with that runtime.
+	// Not sure what to do about that at the moment.  Perhaps we could simply log a warning when the layer is seen indicating that uninstalling it might fix problems?  
+	// But to help consumers that would need to pop up a UI or something.
 
 	return bActionsAttached;
 }
@@ -555,9 +614,9 @@ void FOpenXRInputPlugin::FOpenXRInput::BuildEnhancedActions(TMap<FString, FInter
 	}
 
 	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	for (const TPair<TObjectPtr<UInputMappingContext>, int32> MappingContext : MappableInputConfig->GetMappingContexts())
+	for (const auto& MappingContext : InputMappingContextToPriorityMap)
 	{
-		FOpenXRActionSet ActionSet(Instance, MappingContext.Key->GetFName(), MappingContext.Key->ContextDescription.ToString(), ToXrPriority(MappingContext.Value), MappingContext.Key);
+		FOpenXRActionSet ActionSet(Instance, MappingContext.Key->GetFName(), MappingContext.Key->ContextDescription.ToString(), MappingContext.Value, MappingContext.Key.Get());
 		TMap<FName, int32> ActionMap;
 
 		for (const FEnhancedActionKeyMapping& Mapping : MappingContext.Key->GetMappings())
@@ -744,7 +803,7 @@ void FOpenXRInputPlugin::FOpenXRInput::OnDestroySession()
 	{
 		// If the session shut down, clean up.
 		bActionsAttached = false;
-		MappableInputConfig = nullptr;
+		InputMappingContextToPriorityMap.Reset();
 	}
 }
 
@@ -1165,7 +1224,7 @@ bool FOpenXRInputPlugin::FOpenXRInput::GetControllerOrientationAndPosition(const
 		if (Result >= XR_SUCCESS && State.isActive)
 		{
 			FQuat Orientation;
-			OpenXRHMD->GetCurrentPose(GetDeviceIDForMotionSource(MotionSource), Orientation, OutPosition);
+			TrackingSystem->GetCurrentPose(GetDeviceIDForMotionSource(MotionSource), Orientation, OutPosition);
 			OutOrientation = FRotator(Orientation);
 			return true;
 		}
@@ -1232,15 +1291,15 @@ bool FOpenXRInputPlugin::FOpenXRInput::GetControllerOrientationAndPositionForTim
 	State.type = XR_TYPE_ACTION_STATE_POSE;
 	State.next = nullptr;
 	XrResult Result = xrGetActionStatePose(Session, &GetInfo, &State);
+	bool bPoseFetched = false;
 	if (Result >= XR_SUCCESS && State.isActive)
 	{
 		FQuat Orientation;
-		OpenXRHMD->GetPoseForTime(GetDeviceIDForMotionSource(MotionSource), Time, OutTimeWasUsed, Orientation, OutPosition, OutbProvidedLinearVelocity, OutLinearVelocity, OutbProvidedAngularVelocity, OutAngularVelocityAsAxisAndLength, OutbProvidedLinearAcceleration, OutLinearAcceleration, WorldToMetersScale);
+		bPoseFetched = OpenXRHMD->GetPoseForTime(GetDeviceIDForMotionSource(MotionSource), Time, OutTimeWasUsed, Orientation, OutPosition, OutbProvidedLinearVelocity, OutLinearVelocity, OutbProvidedAngularVelocity, OutAngularVelocityAsAxisAndLength, OutbProvidedLinearAcceleration, OutLinearAcceleration, WorldToMetersScale);
 		OutOrientation = FRotator(Orientation);
-		return true;
 	}
 
-	return false;
+	return bPoseFetched;
 }
 
 ETrackingStatus FOpenXRInputPlugin::FOpenXRInput::GetControllerTrackingStatus(const int32 ControllerIndex, const FName MotionSource) const
@@ -1306,6 +1365,7 @@ void FOpenXRInputPlugin::FOpenXRInput::EnumerateSources(TArray<FMotionController
 {
 	check(IsInGameThread());
 
+	SourcesOut.Add(OpenXRSourceNames::Head);
 	SourcesOut.Add(OpenXRSourceNames::AnyHand);
 	SourcesOut.Add(OpenXRSourceNames::Left);
 	SourcesOut.Add(OpenXRSourceNames::Right);
@@ -1381,7 +1441,7 @@ void FOpenXRInputPlugin::FOpenXRInput::SetHapticFeedbackValues(int32 ControllerI
 				FOpenXRExtensionChainStructPtrs ScopedExtensionChainStructs;
 				if (Values.HapticBuffer != nullptr)
 				{
-					OpenXRHMD->GetApplyHapticFeedbackAddChainStructsDelegate().Broadcast(&HapticValue, ScopedExtensionChainStructs, Values.HapticBuffer);
+					OpenXRHMD->GetIOpenXRExtensionPluginDelegates().GetApplyHapticFeedbackAddChainStructsDelegate().Broadcast(&HapticValue, ScopedExtensionChainStructs, Values.HapticBuffer);
 				}
 				XR_ENSURE(xrApplyHapticFeedback(Session, &HapticActionInfo, (const XrHapticBaseHeader*)&HapticValue));
 
@@ -1412,9 +1472,26 @@ bool FOpenXRInputPlugin::FOpenXRInput::SetPlayerMappableInputConfig(TObjectPtr<c
 		return false;
 	}
 
-	MappableInputConfig = TStrongObjectPtr<class UPlayerMappableInputConfig>(InputConfig);
-	return true;
+	TSet<TObjectPtr<UInputMappingContext>> MappingContexts;
+	InputConfig->GetMappingContexts().GetKeys(MappingContexts);
+	return AttachInputMappingContexts(MappingContexts);
 }
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+bool FOpenXRInputPlugin::FOpenXRInput::AttachInputMappingContexts(const TSet<TObjectPtr<UInputMappingContext>>& MappingContexts)
+{
+	if (bActionsAttached)
+	{
+		UE_LOG(LogHMD, Error, TEXT("Attempted to attach input mapping contexts when action sets are already attached for the current session."));
+
+		return false;
+	}
+
+	for (const auto& Context : MappingContexts)
+	{
+		InputMappingContextToPriorityMap.Add(TStrongObjectPtr<UInputMappingContext>(Context), 0);
+	}
+	return true;
+}
 
 #undef LOCTEXT_NAMESPACE // "OpenXRInputPlugin"

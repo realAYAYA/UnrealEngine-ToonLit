@@ -3,29 +3,50 @@
 #pragma once
 
 #include "IO/IoDispatcherBackend.h"
-#include "Templates/SharedPointer.h"
+#include "Templates/UniquePtr.h"
 
-#define UE_API IOSTOREONDEMAND_API
+class IIasCache;
+struct FAnalyticsEventAttribute;
 
-class IIoCache;
-
-namespace UE
+namespace UE::IO::IAS
 {
 
-enum class EOnDemandEndpointType
+struct FDistributedEndpointUrl
 {
-	CDN = 1,
-	ZEN
+	FString EndpointUrl;
+	FString FallbackUrl;
+
+	bool IsValid() const
+	{
+		return !EndpointUrl.IsEmpty();
+	}
+
+	bool HasFallbackUrl() const
+	{
+		return !FallbackUrl.IsEmpty();
+	}
+
+	void Reset()
+	{
+		EndpointUrl.Empty();
+		FallbackUrl.Empty();
+	}
 };
 
 struct FOnDemandEndpoint
 {
-	EOnDemandEndpointType EndpointType;
 	FString DistributionUrl;
-	FString ServiceUrl;
+	FString FallbackUrl;
+
+	TArray<FString> ServiceUrls;
 	FString TocPath;
 
-	bool IsValid() const { return (DistributionUrl.Len() > 0 || ServiceUrl.Len() > 0) && TocPath.Len() > 0; }
+	bool bForceTocDownload = false;
+
+	bool IsValid() const
+	{
+		return (DistributionUrl.Len() > 0 || ServiceUrls.Num() > 0) && TocPath.Len() > 0;
+	}
 };
 
 class IOnDemandIoDispatcherBackend
@@ -33,11 +54,15 @@ class IOnDemandIoDispatcherBackend
 {
 public:
 	virtual ~IOnDemandIoDispatcherBackend() = default;
+
 	virtual void Mount(const FOnDemandEndpoint& Endpoint) = 0;
+	virtual void SetBulkOptionalEnabled(bool bInEnabled) = 0;
+	virtual void SetEnabled(bool bInEnabled) = 0;
+	virtual bool IsEnabled() const = 0;
+	virtual void AbandonCache() = 0;
+	virtual void ReportAnalytics(TArray<FAnalyticsEventAttribute>& OutAnalyticsArray) const = 0;
 };
 
-UE_API TSharedPtr<IOnDemandIoDispatcherBackend> MakeOnDemandIoDispatcherBackend(TSharedPtr<IIoCache> Cache);
+TSharedPtr<IOnDemandIoDispatcherBackend> MakeOnDemandIoDispatcherBackend(TUniquePtr<IIasCache>&& Cache);
 
-} // namespace UE
-
-#undef UE_API
+} // namespace UE::IO::IAS

@@ -56,8 +56,9 @@ namespace UnrealBuildTool
 		/// <param name="Configuration"></param>
 		/// <param name="bIsDataDeploy"></param>
 		/// <param name="bSkipGradleBuild"></param>
+		/// <param name="bIsArchive"></param>
 		/// <returns></returns>
-		bool PrepForUATPackageOrDeploy(FileReference ProjectFile, string ProjectName, DirectoryReference ProjectDirectory, string ExecutablePath, string EngineDirectory, bool bForDistribution, string CookFlavor, UnrealTargetConfiguration Configuration, bool bIsDataDeploy, bool bSkipGradleBuild);
+		bool PrepForUATPackageOrDeploy(FileReference ProjectFile, string ProjectName, DirectoryReference ProjectDirectory, string ExecutablePath, string EngineDirectory, bool bForDistribution, string CookFlavor, UnrealTargetConfiguration Configuration, bool bIsDataDeploy, bool bSkipGradleBuild, bool bIsArchive);
 
 		/// <summary>
 		/// 
@@ -114,6 +115,31 @@ namespace UnrealBuildTool
 		{
 			AndroidToolChain ToolChain = new AndroidToolChain(null, Logger);
 			ToolChain.StripSymbols(SourceFile, TargetFile, Logger);
+		}
+
+		/// <summary>
+		/// 
+		/// </summary>
+		/// <param name="ProjectFile"></param>
+		/// <param name="bForceDontBundleLibrariesInAPK"></param>
+		/// <param name="Configuration"></param>
+		/// <param name="bIsArchive"></param>
+		/// <param name="bFromMSBuild"></param>
+		/// <param name="bIsFromUAT"></param>
+		/// <param name="Logger"></param>
+		public static bool GetDontBundleLibrariesInAPK(FileReference? ProjectFile, bool? bForceDontBundleLibrariesInAPK, UnrealTargetConfiguration Configuration, bool bIsArchive, bool bFromMSBuild, bool bIsFromUAT, ILogger? Logger)
+		{
+			return UEDeployAndroid.GetDontBundleLibrariesInAPK(ProjectFile, bForceDontBundleLibrariesInAPK, Configuration, bIsArchive, bFromMSBuild, bIsFromUAT, Logger);
+		}
+
+		/// <summary>
+		/// 
+		/// </summary>
+		/// <param name="Target"></param>
+		/// <param name="Logger"></param>
+		public static string GetAFSExecutable(UnrealTargetPlatform Target, ILogger Logger)
+		{
+			return UEDeployAndroid.GetAFSExecutable(Target, Logger);
 		}
 	}
 }

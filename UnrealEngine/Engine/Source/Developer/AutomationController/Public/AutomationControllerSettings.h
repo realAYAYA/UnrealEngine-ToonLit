@@ -7,6 +7,7 @@
 #include "Containers/UnrealString.h"
 #include "CoreMinimal.h"
 #include "HAL/Platform.h"
+#include "IAutomationReport.h"
 #include "UObject/Object.h"
 #include "UObject/ObjectMacros.h"
 #include "UObject/SoftObjectPath.h"
@@ -15,21 +16,23 @@
 #include "AutomationControllerSettings.generated.h"
 
 /*
-* Describes a filter for a test group.
+* Describes a base filter for a test group.
 */
 USTRUCT()
-struct FAutomatedTestFilter
+struct FAutomatedTestFilterBase
 {
-	GENERATED_USTRUCT_BODY()
+	GENERATED_BODY()
 
 public:
 
-	FAutomatedTestFilter(FString InContains, bool InMatchFromStart = false, bool InMatchFromEnd = false)
+	FAutomatedTestFilterBase(FString InContains, bool InMatchFromStart = false, bool InMatchFromEnd = false)
 		: Contains(InContains), MatchFromStart(InMatchFromStart), MatchFromEnd(InMatchFromEnd)
 	{
 	}
 
-	FAutomatedTestFilter() : FAutomatedTestFilter(TEXT("")) {}
+	FAutomatedTestFilterBase() : FAutomatedTestFilterBase(TEXT("")) {}
+
+	virtual ~FAutomatedTestFilterBase() {}
 
 	/** String that the test must contain */
 	UPROPERTY(Config)
@@ -41,7 +44,72 @@ public:
 
 	/** If true start matching from the end of the string, else anywhere */
 	UPROPERTY(Config)
-		bool MatchFromEnd;	
+		bool MatchFromEnd;
+
+	virtual bool PassesFilter(const TSharedPtr< IAutomationReport >& InReport) const
+	{
+		bool bMeetsMatch = true;
+
+		if (MatchFromStart || MatchFromEnd)
+		{
+			if (MatchFromStart)
+			{
+				bMeetsMatch = InReport->GetFullTestPath().StartsWith(Contains);
+			}
+
+			if (MatchFromEnd && bMeetsMatch)
+			{
+				bMeetsMatch = InReport->GetFullTestPath().EndsWith(Contains);
+			}
+		}
+		else
+		{
+			bMeetsMatch = InReport->GetFullTestPath().Contains(Contains);
+		}
+
+		return bMeetsMatch;
+	}
+};
+
+/*
+* Describes a filter for a test group with exclude option.
+*/
+USTRUCT()
+struct FAutomatedTestFilter : public FAutomatedTestFilterBase
+{
+	GENERATED_BODY()
+
+public:
+
+	FAutomatedTestFilter(FString InContains, bool InMatchFromStart = false, bool InMatchFromEnd = false)
+		: FAutomatedTestFilterBase(InContains, InMatchFromStart, InMatchFromEnd)
+	{
+	}
+
+	FAutomatedTestFilter() : FAutomatedTestFilter(TEXT("")) {}
+
+	/** List of filters to exclude */
+	UPROPERTY(Config)
+		TArray<FAutomatedTestFilterBase> Exclude;
+
+	virtual bool PassesFilter(const TSharedPtr< IAutomationReport >& InReport) const override
+	{
+		bool bMeetsMatch = Super::PassesFilter(InReport);
+
+		if (bMeetsMatch && !Exclude.IsEmpty())
+		{
+			// Apply exclusion rules
+			for (const FAutomatedTestFilterBase& Filter : Exclude)
+			{
+				if (Filter.PassesFilter(InReport))
+				{
+					return false;
+				}
+			}
+		}
+
+		return bMeetsMatch;
+	}
 };
 
 /*

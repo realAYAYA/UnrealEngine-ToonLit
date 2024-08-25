@@ -5,6 +5,9 @@
 #include "CoreMinimal.h"
 #include "Modules/ModuleInterface.h"
 
+
+
+class FPhysicsControlOperatorEditor;
 class FPhysicsControlProfileAssetActions;
 
 /**
@@ -19,7 +22,10 @@ public:
 	void ShutdownModule() override;
 
 private:
+
 	TArray<FName> VisualizersToUnregisterOnShutdown;
 	TSharedPtr<FPhysicsControlProfileAssetActions> PhysicsControlProfileAssetActions;
+
+	FPhysicsControlOperatorEditor* EditorInterface = nullptr;
 };
 

@@ -28,7 +28,7 @@ class FDisplayClusterViewportManagerProxy
 	, public TSharedFromThis<FDisplayClusterViewportManagerProxy, ESPMode::ThreadSafe>
 {
 public:
-	FDisplayClusterViewportManagerProxy();
+	FDisplayClusterViewportManagerProxy(const FDisplayClusterViewportManager& InViewportManager);
 	virtual ~FDisplayClusterViewportManagerProxy();
 
 public:
@@ -43,7 +43,11 @@ public:
 		return AsShared();
 	}
 
-	virtual EDisplayClusterRenderFrameMode GetRenderMode() const override;
+	/** Get viewport manager proxy configuration interface. */
+	virtual const IDisplayClusterViewportConfigurationProxy& GetConfigurationProxy() const override
+	{
+		return *ConfigurationProxy;
+	}
 
 	virtual IDisplayClusterViewportProxy* FindViewport_RenderThread(const FString& InViewportId) const override
 	{
@@ -64,6 +68,10 @@ public:
 	virtual bool ResolveFrameTargetToBackBuffer_RenderThread(FRHICommandListImmediate& RHICmdList, const uint32 InContextNum, const int32 DestArrayIndex, FRHITexture2D* DestTexture, FVector2D WindowSize) const override;
 	//~~IDisplayClusterViewportManagerProxy
 
+
+	/** Release all textures on render thread. */
+	void ReleaseTextures_RenderThread();
+
 	/** Custom cross-GPU implementation for mGPU. Applyed for viewports with bOverrideCrossGPUTransfer=true. */
 	void DoCrossGPUTransfers_RenderThread(FRHICommandListImmediate& RHICmdList) const;
 
@@ -71,7 +79,13 @@ public:
 	void UpdateDeferredResources_RenderThread(FRHICommandListImmediate& RHICmdList) const;
 
 	/** Apply WarpBlend and resolve to frame resources. */
-	void UpdateFrameResources_RenderThread(FRHICommandListImmediate& RHICmdList, bool bWarpBlendEnabled) const;
+	void UpdateFrameResources_RenderThread(FRHICommandListImmediate& RHICmdList) const;
+
+	/** Called at the end of the frame, after all callbacks.
+	* At the end, some resources may be filled with black, etc.
+	* This is useful because the resources are reused and the image from the previous frame goes into the new one.
+	*/
+	void CleanupResources_RenderThread(FRHICommandListImmediate& RHICmdList) const;
 
 	/** Release all referenced objects and resources. */
 	void Release_RenderThread();
@@ -82,19 +96,9 @@ public:
 	/** Unregister exist viewport proxy. */
 	void DeleteViewport_RenderThread(const TSharedPtr<FDisplayClusterViewportProxy, ESPMode::ThreadSafe>& InViewportProxy);
 
-	/** Reset all references to InDeletedResourcePtr for all viewport proxies and delete the resource. */
-	void DeleteResource_RenderThread(FDisplayClusterViewportResource* InDeletedResourcePtr);
-
-	/** Initialize ViewportManagerProxy from ViewportManager. */
-	void Initialize(FDisplayClusterViewportManager& InViewportManager);
-
 	/** Get LightCardManager proxy object. */
 	inline TSharedPtr<FDisplayClusterViewportLightCardManagerProxy, ESPMode::ThreadSafe> GetLightCardManagerProxy_RenderThread() const
 	{ return LightCardManagerProxy; }
-
-	/** Get RenderFrameSettings on render thread. */
-	inline  const FDisplayClusterRenderFrameSettings& GetRenderFrameSettings_RenderThread() const
-	{ return RenderFrameSettings; }
 
 	/** Geting the viewport proxies of the current rendering frame. (viewports from the current node or from a special named list) */
 	inline const TArray<TSharedPtr<FDisplayClusterViewportProxy, ESPMode::ThreadSafe>>& ImplGetCurrentRenderFrameViewportProxies_RenderThread() const
@@ -110,12 +114,11 @@ public:
 	/** Find viewport and context index by StereoViewIndex. */
 	FDisplayClusterViewportProxy* ImplFindViewportProxy_RenderThread(const int32 StereoViewIndex, uint32* OutContextNum = nullptr) const;
 
-	/** Copy RenderFrameSettings from game to render thread. */
-	void ImplUpdateRenderFrameSettings(const FDisplayClusterRenderFrameSettings& InRenderFrameSettings,
-		const TSharedPtr<FDisplayClusterViewportManagerViewExtension, ESPMode::ThreadSafe>& InViewportManagerViewExtension);
-
 	/** Sending viewport data from the game stream to the viewport proxy that is in the rendering stream. */
 	void ImplUpdateViewportProxies_GameThread(const TArray<TSharedPtr<FDisplayClusterViewport, ESPMode::ThreadSafe>>& InCurrentRenderFrameViewports);
+
+	/** Sending viewport manager data from the game stream to the viewport manager proxy that is in the rendering stream. */
+	void ImplUpdateViewportManagerProxy_GameThread(const FDisplayClusterViewportManager& InViewportManager);
 
 	/** Rendering the final frame of nDisplay. Called after all viewports have been rendered in RTT. */
 	void ImplRenderFrame_GameThread(FViewport* InViewport);
@@ -127,19 +130,20 @@ private:
 	/** Update ClusterNodeViewportProxies from ViewportProxies for the current cluster node. */
 	void ImplUpdateClusterNodeViewportProxies_RenderThread();
 
-private:
+public:
+	// Configuration for proxy
+	const TSharedRef<FDisplayClusterViewportConfigurationProxy, ESPMode::ThreadSafe> ConfigurationProxy;
+
 	// RenderTarget manager object. Used to remove related objects in order.
-	TSharedPtr<FDisplayClusterRenderTargetManager, ESPMode::ThreadSafe>        RenderTargetManager;
+	const TSharedRef<FDisplayClusterRenderTargetManager, ESPMode::ThreadSafe> RenderTargetManager;
 
 	// PostProcess manager object. Used to remove related objects in order.
-	TSharedPtr<FDisplayClusterViewportPostProcessManager, ESPMode::ThreadSafe> PostProcessManager;
+	const TSharedRef<FDisplayClusterViewportPostProcessManager, ESPMode::ThreadSafe> PostProcessManager;
 
 	// LightCard manager proxy object.
-	TSharedPtr<FDisplayClusterViewportLightCardManagerProxy, ESPMode::ThreadSafe> LightCardManagerProxy;
+	const TSharedRef<FDisplayClusterViewportLightCardManagerProxy, ESPMode::ThreadSafe> LightCardManagerProxy;
 
-	// Copy of RenderFrameSettings for the render thread.
-	FDisplayClusterRenderFrameSettings RenderFrameSettings;
-
+private:
 	// Viewport proxies of the entire cluster.
 	TArray<TSharedPtr<FDisplayClusterViewportProxy, ESPMode::ThreadSafe>> EntireClusterViewportProxies;
 

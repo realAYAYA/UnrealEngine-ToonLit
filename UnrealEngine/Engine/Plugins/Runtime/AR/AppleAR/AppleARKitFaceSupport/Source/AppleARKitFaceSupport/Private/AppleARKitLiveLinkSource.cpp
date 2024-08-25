@@ -8,7 +8,6 @@
 #include "UObject/ObjectMacros.h"
 #include "ARSystem.h"
 #include "ARBlueprintLibrary.h"
-#include "AppleARKitModule.h"
 #include "Features/IModularFeatures.h"
 #include "Misc/FileHelper.h"
 
@@ -17,6 +16,7 @@
 #include "Sockets.h"
 
 #include "AppleARKitSettings.h"
+#include "AppleARKitLiveLinkConnectionSettings.h"
 #include "ARTrackable.h"
 
 #include "ILiveLinkClient.h"
@@ -55,18 +55,21 @@ TSharedPtr<ILiveLinkSourceARKit> FAppleARKitLiveLinkSourceFactory::CreateLiveLin
 	return TSharedPtr<ILiveLinkSourceARKit>();
 }
 
-void FAppleARKitLiveLinkSourceFactory::CreateLiveLinkRemoteListener()
+TSharedPtr<ILiveLinkSourceARKit> FAppleARKitLiveLinkSourceFactory::CreateLiveLinkSource(const FAppleARKitLiveLinkConnectionSettings& ConnectionSettings)
 {
-	static FAppleARKitLiveLinkRemoteListener* Listener = nullptr;
-	if (Listener == nullptr)
+	IModularFeatures& ModularFeatures = IModularFeatures::Get();
+
+	if (ModularFeatures.IsModularFeatureAvailable(ILiveLinkClient::ModularFeatureName))
 	{
-		Listener = new FAppleARKitLiveLinkRemoteListener();
-		if (!Listener->InitReceiveSocket())
-		{
-			delete Listener;
-			Listener = nullptr;
-		}
+		ILiveLinkClient* LiveLinkClient = &IModularFeatures::Get().GetModularFeature<ILiveLinkClient>(ILiveLinkClient::ModularFeatureName);
+		TSharedPtr<FAppleARKitLiveLinkSource> Source = MakeShared<FAppleARKitLiveLinkSource>(ConnectionSettings);
+		Source->InitializeRemoteListener();
+		
+		LiveLinkClient->AddSource(Source);
+
+		return Source;
 	}
+	return TSharedPtr<ILiveLinkSourceARKit>();
 }
 
 TSharedPtr<IARKitBlendShapePublisher, ESPMode::ThreadSafe> FAppleARKitLiveLinkSourceFactory::CreateLiveLinkRemotePublisher(const FString& RemoteAddr)
@@ -110,16 +113,42 @@ TSharedPtr<IARKitBlendShapePublisher, ESPMode::ThreadSafe> FAppleARKitLiveLinkSo
 	return LocalFileWriter;
 }
 
-FAppleARKitLiveLinkSource::FAppleARKitLiveLinkSource() :
-	Client(nullptr)
+FAppleARKitLiveLinkSource::FAppleARKitLiveLinkSource() 
+	: Client(nullptr)
 	, LastFramePublished(0)
 {
+}
+
+FAppleARKitLiveLinkSource::FAppleARKitLiveLinkSource(FAppleARKitLiveLinkConnectionSettings InConnectionSettings)
+	: Client(nullptr)
+	, LastFramePublished(0)
+	, ConnectionSettings(MoveTemp(InConnectionSettings))
+{
+}
+
+void FAppleARKitLiveLinkSource::InitializeRemoteListener()
+{
+	// LiveLink listener needs to be created here so that we can receive remote publishing events
+#if PLATFORM_DESKTOP || PLATFORM_ANDROID
+	RemoteListener = MakeUnique<FAppleARKitLiveLinkRemoteListener>(AsShared());
+	if (!RemoteListener->InitReceiveSocket(ConnectionSettings.Port))
+	{
+		RemoteListener.Reset();
+		UE_LOG(LogAppleARKitFace, Warning, TEXT("Could not start AppleARKit remote listener on port %d"), ConnectionSettings.Port);
+	}
+#endif
 }
 
 void FAppleARKitLiveLinkSource::ReceiveClient(ILiveLinkClient* InClient, FGuid InSourceGuid)
 {
 	Client = InClient;
 	SourceGuid = InSourceGuid;
+}
+
+void FAppleARKitLiveLinkSource::InitializeSettings(ULiveLinkSourceSettings* Settings)
+{
+	FAppleARKitLiveLinkConnectionSettings::StaticStruct()->ExportText(Settings->ConnectionString, &ConnectionSettings, nullptr, nullptr, PPF_None, nullptr);
+	Settings->Factory = UAppleARKitLiveLinkSourceFactory::StaticClass();
 }
 
 bool FAppleARKitLiveLinkSource::IsSourceStillValid() const
@@ -130,6 +159,7 @@ bool FAppleARKitLiveLinkSource::IsSourceStillValid() const
 bool FAppleARKitLiveLinkSource::RequestSourceShutdown()
 {
 	Client = nullptr;
+	RemoteListener.Reset();
 	return true;
 }
 
@@ -145,7 +175,10 @@ FText FAppleARKitLiveLinkSource::GetSourceStatus() const
 
 FText FAppleARKitLiveLinkSource::GetSourceType() const
 {
-	return NSLOCTEXT( "AppleARKitLiveLink", "AppleARKitLiveLinkSourceType", "Apple AR Face Tracking" );
+	FNumberFormattingOptions Options;
+	Options.UseGrouping = false;
+
+	return FText::Format(NSLOCTEXT("AppleARKitLiveLink", "AppleARKitLiveLinkSourceType", "ARKit Port: {0}"), FText::AsNumber(ConnectionSettings.Port, &Options));
 }
 
 static FName ParseEnumName(FName EnumName)
@@ -352,8 +385,9 @@ void FAppleARKitLiveLinkRemotePublisher::PublishBlendShapes(FName SubjectName, c
 	}
 }
 
-FAppleARKitLiveLinkRemoteListener::FAppleARKitLiveLinkRemoteListener() :
-	RecvSocket(nullptr)
+FAppleARKitLiveLinkRemoteListener::FAppleARKitLiveLinkRemoteListener(const TSharedPtr<ILiveLinkSourceARKit>& ArkitSource)
+	: RecvSocket(nullptr)
+	, Source(ArkitSource)
 {
 	RecvBuffer.AddUninitialized(MAX_BLEND_SHAPE_PACKET_SIZE);
 }
@@ -372,14 +406,12 @@ FAppleARKitLiveLinkRemoteListener::~FAppleARKitLiveLinkRemoteListener()
 	}
 }
 
-bool FAppleARKitLiveLinkRemoteListener::InitReceiveSocket()
+bool FAppleARKitLiveLinkRemoteListener::InitReceiveSocket(int32 Port)
 {
 	ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get();
 	TSharedRef<FInternetAddr> Addr = SocketSubsystem->GetLocalBindAddr(*GLog);
-	int32 LiveLinkPort = 0;
-	// Have to read this value manually since it happens before UObjects are alive
-	GConfig->GetInt(TEXT("/Script/AppleARKit.AppleARKitSettings"), TEXT("LiveLinkPublishingPort"), LiveLinkPort, GEngineIni);
-	Addr->SetPort(LiveLinkPort);
+
+	Addr->SetPort(Port);
 
 	RecvSocket = SocketSubsystem->CreateSocket(NAME_DGram, TEXT("FAppleARKitLiveLinkRemoteListener socket"), Addr->GetProtocolType());
 	if (RecvSocket != nullptr)
@@ -397,14 +429,6 @@ bool FAppleARKitLiveLinkRemoteListener::InitReceiveSocket()
 		}
 	}
 	return RecvSocket != nullptr;
-}
-
-void FAppleARKitLiveLinkRemoteListener::InitLiveLinkSource()
-{
-	if (!Source.IsValid() || !Source->IsSourceStillValid())
-	{
-		Source = FAppleARKitLiveLinkSourceFactory::CreateLiveLinkSource();
-	}
 }
 
 void FAppleARKitLiveLinkRemoteListener::Tick(float DeltaTime)
@@ -461,10 +485,12 @@ void FAppleARKitLiveLinkRemoteListener::Tick(float DeltaTime)
 			// All of the data was valid, so publish it
 			if (!FromBuffer.HasOverflow())
 			{
-				InitLiveLinkSource();
-				if (Source.IsValid() && Source->IsSourceStillValid())
+				if (TSharedPtr<ILiveLinkSourceARKit> ArkitSource = Source.Pin())
 				{
-					Source->PublishBlendShapes(SubjectName, FrameTime, BlendShapes, DeviceId);
+					if (ArkitSource->IsSourceStillValid())
+					{
+						ArkitSource->PublishBlendShapes(SubjectName, FrameTime, BlendShapes, DeviceId);
+					}
 				}
 			}
 			else

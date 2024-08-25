@@ -139,7 +139,8 @@ void UNiagaraDataInterfaceGBuffer::PostInitProperties()
 	}
 }
 
-void UNiagaraDataInterfaceGBuffer::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceGBuffer::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	using namespace NiagaraDataInterfaceGBufferLocal;
 
@@ -151,9 +152,7 @@ void UNiagaraDataInterfaceGBuffer::GetFunctions(TArray<FNiagaraFunctionSignature
 	{
 		FNiagaraFunctionSignature& Signature = OutFunctions.AddDefaulted_GetRef();
 		Signature.Name = Attribute.ScreenUVFunctionName;
-#if WITH_EDITORONLY_DATA
 		Signature.Description = Attribute.Description;
-#endif
 		Signature.bMemberFunction = true;
 		Signature.bRequiresContext = false;
 		Signature.bSupportsCPU = false;
@@ -163,11 +162,10 @@ void UNiagaraDataInterfaceGBuffer::GetFunctions(TArray<FNiagaraFunctionSignature
 		Signature.Inputs.Add_GetRef(FNiagaraVariable(FNiagaraTypeDefinition::GetBoolDef(), TEXT("ApplyViewportOffset"))).SetValue(true);
 		Signature.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetBoolDef(), TEXT("IsValid")));
 		Signature.Outputs.Add(FNiagaraVariable(Attribute.TypeDef, Attribute.AttributeName));
-#if WITH_EDITORONLY_DATA
 		Signature.FunctionVersion = EDIFunctionVersion::LatestVersion;
-#endif
 	}
 }
+#endif
 
 void UNiagaraDataInterfaceGBuffer::BuildShaderParameters(FNiagaraShaderParametersBuilder& ShaderParametersBuilder) const
 {

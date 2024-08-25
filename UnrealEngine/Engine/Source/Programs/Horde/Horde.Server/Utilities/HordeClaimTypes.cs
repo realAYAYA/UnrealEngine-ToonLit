@@ -1,7 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System.Linq;
 using System.Security.Claims;
+using EpicGames.Horde.Accounts;
+using EpicGames.Horde.Users;
 using Horde.Server.Users;
 
 namespace Horde.Server.Utilities
@@ -12,19 +13,44 @@ namespace Horde.Server.Utilities
 	public static class HordeClaimTypes
 	{
 		/// <summary>
+		/// Version number for auth claims. Can be updated to force a re-login.
+		/// </summary>
+		public const string CurrentVersion = "1";
+
+		/// <summary>
 		/// Base URI for all Horde claims.
 		/// </summary>
 		const string Prefix = "http://epicgames.com/ue/horde/";
 
 		/// <summary>
-		/// Claim for a particular role.
+		/// Version number for the auth header
+		/// </summary>
+		public const string Version = Prefix + "version";
+
+		/// <summary>
+		/// Claim for a particular role. This is reserved for well-known roles defined by Horde itself.
 		/// </summary>
 		public const string Role = Prefix + "role";
+
+		/// <summary>
+		/// Claim type reserved for a particular group within the Horde account system. Values are user defined.
+		/// </summary>
+		public const string Group = Prefix + "group";
 
 		/// <summary>
 		/// Claim for a particular agent
 		/// </summary>
 		public const string Agent = Prefix + "agent";
+
+		/// <summary>
+		/// Claim for an agent's enrollment key
+		/// </summary>
+		public const string AgentEnrollmentKey = Prefix + "agent-enrollment-key";
+
+		/// <summary>
+		/// Claim for a particular account id
+		/// </summary>
+		public const string AccountId = Prefix + "account-id";
 
 		/// <summary>
 		/// Claim for a particular session
@@ -70,11 +96,6 @@ namespace Horde.Server.Utilities
 		/// Claim allowing a certain namespace and/or path to be written to. Value may be a namespace name, or a subpath (eg. ns:a/b will only allow blobs and refs with an a/b prefix to be written).
 		/// </summary>
 		public const string WriteNamespace = Prefix + "write-namespace";
-
-		/// <summary>
-		/// Claim allowing a certain ref to be written
-		/// </summary>
-		public const string WriteRef = Prefix + "write-ref";
 	}
 
 	/// <summary>
@@ -83,6 +104,24 @@ namespace Horde.Server.Utilities
 	public static class HordeClaimExtensions
 	{
 		/// <summary>
+		/// Gets the Horde account id from a principal
+		/// </summary>
+		/// <param name="principal"></param>
+		/// <returns></returns>
+		public static AccountId? GetAccountId(this ClaimsPrincipal principal)
+		{
+			string? idValue = principal.FindFirstValue(HordeClaimTypes.AccountId);
+			if (idValue == null)
+			{
+				return null;
+			}
+			else
+			{
+				return AccountId.Parse(idValue);
+			}
+		}
+
+		/// <summary>
 		/// Gets the Horde user id from a principal
 		/// </summary>
 		/// <param name="principal"></param>
@@ -90,7 +129,7 @@ namespace Horde.Server.Utilities
 		public static UserId? GetUserId(this ClaimsPrincipal principal)
 		{
 			string? idValue = principal.FindFirstValue(HordeClaimTypes.UserId);
-			if(idValue == null)
+			if (idValue == null)
 			{
 				return null;
 			}
@@ -98,41 +137,6 @@ namespace Horde.Server.Utilities
 			{
 				return UserId.Parse(idValue);
 			}
-		}
-
-		/// <summary>
-		/// Gets the Horde user name from a principal
-		/// </summary>
-		/// <param name="principal"></param>
-		/// <returns></returns>
-		public static string? GetUserName(this ClaimsPrincipal principal)
-		{
-			return principal.FindFirstValue(HordeClaimTypes.User) ?? principal.FindFirstValue(ClaimTypes.Name);
-		}
-
-		/// <summary>
-		/// Get the email for the given user
-		/// </summary>
-		/// <param name="user">The user to query the email for</param>
-		/// <returns>The user's email address or null if not found</returns>
-		public static string? GetEmail(this ClaimsPrincipal user)
-		{
-			return user.Claims.FirstOrDefault(x => x.Type == ClaimTypes.Email)?.Value;
-		}
-
-		/// <summary>
-		/// Gets the perforce username for the given principal
-		/// </summary>
-		/// <param name="user">The principal to get the Perforce user for</param>
-		/// <returns>Perforce user name</returns>
-		public static string? GetPerforceUser(this ClaimsPrincipal user)
-		{
-			Claim? claim = user.FindFirst(HordeClaimTypes.PerforceUser);
-			if (claim == null)
-			{
-				return null;
-			}
-			return claim.Value;
 		}
 
 		/// <summary>

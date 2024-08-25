@@ -33,9 +33,11 @@
 #include "MuCOE/Nodes/CustomizableObjectNodeGroupProjectorParameter.h"
 #include "MuCOE/Nodes/CustomizableObjectNodeLayoutBlocks.h"
 #include "MuCOE/Nodes/CustomizableObjectNodeMaterialVariation.h"
+#include "MuCOE/Nodes/CustomizableObjectNodeMaterialSwitch.h"
 #include "MuCOE/Nodes/CustomizableObjectNodeMeshClipDeform.h"
 #include "MuCOE/Nodes/CustomizableObjectNodeMeshClipMorph.h"
 #include "MuCOE/Nodes/CustomizableObjectNodeMeshClipWithMesh.h"
+#include "MuCOE/Nodes/CustomizableObjectNodeModifierClipWithUVMask.h"
 #include "MuCOE/Nodes/CustomizableObjectNodeMeshGeometryOperation.h"
 #include "MuCOE/Nodes/CustomizableObjectNodeMeshMorph.h"
 #include "MuCOE/Nodes/CustomizableObjectNodeMeshMorphStackApplication.h"
@@ -70,6 +72,7 @@
 #include "MuCOE/Nodes/CustomizableObjectNodeTextureTransform.h"
 #include "MuCOE/Nodes/CustomizableObjectNodeTextureSaturate.h"
 #include "MuCOE/Nodes/CustomizableObjectNodeTextureVariation.h"
+#include "MuCOE/Nodes/CustomizableObjectNodePassThroughTextureVariation.h"
 #include "ScopedTransaction.h"
 #include "Settings/EditorStyleSettings.h"
 #include "ToolMenu.h"
@@ -228,73 +231,6 @@ const FName UEdGraphSchema_CustomizableObject::PC_MaterialAsset("materialAsset")
 const FName UEdGraphSchema_CustomizableObject::PC_Wildcard("wildcard");
 
 
-UEdGraphSchema_CustomizableObject::UEdGraphSchema_CustomizableObject()
-{
-	NodeTypes.Add(UCustomizableObjectNodeAnimationPose::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeColorArithmeticOp::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeColorConstant::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeColorFromFloats::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeColorParameter::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeColorSwitch::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeColorVariation::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeCopyMaterial::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeCurve::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeEditMaterial::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeEnumParameter::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeExtendMaterial::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeFloatConstant::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeFloatParameter::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeFloatSwitch::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeFloatVariation::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeGroupProjectorParameter::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeMaterial::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeMaterialVariation::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeMeshClipDeform::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeMeshClipMorph::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeMeshClipWithMesh::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeMeshGeometryOperation::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeMeshMorph::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeMeshMorphStackApplication::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeMeshMorphStackDefinition::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeMeshReshape::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeMeshSwitch::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeMeshVariation::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeMorphMaterial::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeObject::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeObjectGroup::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeProjectorConstant::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeProjectorParameter::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeRemoveMesh::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeRemoveMeshBlocks::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeSkeletalMesh::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeStaticMesh::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeTable::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeTexture::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeTextureBinarise::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeTextureColourMap::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeTextureFromChannels::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeTextureInterpolate::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeTextureInvert::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeTextureLayer::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeTextureParameter::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeTextureProject::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeTextureSample::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeTextureSaturate::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeTextureSwitch::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeTextureToChannels::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeTextureTransform::StaticClass());
-	NodeTypes.Add(UCustomizableObjectNodeTextureVariation::StaticClass());
-
-	NodeTypes.Sort([](UClass& A, UClass& B) -> bool
-	{
-		const UCustomizableObjectNode* NodeA = CastChecked<UCustomizableObjectNode>(A.GetDefaultObject());
-		const UCustomizableObjectNode* NodeB = CastChecked<UCustomizableObjectNode>(B.GetDefaultObject());
-		
-		return NodeA->GetNodeTitle(ENodeTitleType::ListView).CompareTo(NodeB->GetNodeTitle(ENodeTitleType::ListView)) < 0;
-	});
-}
-
-
 TSharedPtr<FCustomizableObjectSchemaAction_NewNode> UEdGraphSchema_CustomizableObject::AddNewNodeAction(FGraphActionListBuilderBase& ContextMenuBuilder, const FString& Category, const FText& MenuDesc, const FText& Tooltip, const int32 Grouping, const FString& Keywords)
 {
 	TSharedPtr<FCustomizableObjectSchemaAction_NewNode> NewActionNode = TSharedPtr<FCustomizableObjectSchemaAction_NewNode>(new FCustomizableObjectSchemaAction_NewNode(Category, MenuDesc, Tooltip, Grouping, FText::FromString(Keywords)));
@@ -405,7 +341,7 @@ void UEdGraphSchema_CustomizableObject::GetGraphContextActions(FGraphContextMenu
 			[&Filter](UCustomizableObjectNode* TemplateNode, FGraphContextMenuBuilder& ContextMenuBuilder) -> bool
 			{
 				// Only let user add a base node if there isn't one in the graph
-				for (TObjectPtr<UEdGraphNode> AuxNode : ContextMenuBuilder.CurrentGraph->Nodes)
+				for (const TObjectPtr<UEdGraphNode>& AuxNode : ContextMenuBuilder.CurrentGraph->Nodes)
 				{
 					UCustomizableObjectNodeObject* CustomizableObjectNodeObject = Cast<UCustomizableObjectNodeObject>(AuxNode);
 
@@ -439,11 +375,13 @@ void UEdGraphSchema_CustomizableObject::GetGraphContextActions(FGraphContextMenu
 			ContextMenuBuilder.CreateTemplateNode<UCustomizableObjectNodeRemoveMeshBlocks>(),
 			ContextMenuBuilder.CreateTemplateNode<UCustomizableObjectNodeEditMaterial>(),
 			ContextMenuBuilder.CreateTemplateNode<UCustomizableObjectNodeMaterialVariation>(),
+			ContextMenuBuilder.CreateTemplateNode<UCustomizableObjectNodeMaterialSwitch>(),
 			ContextMenuBuilder.CreateTemplateNode<UCustomizableObjectNodeMorphMaterial>(),
 			ContextMenuBuilder.CreateTemplateNode<UCustomizableObjectNodeCopyMaterial>(),
 			ContextMenuBuilder.CreateTemplateNode<UCustomizableObjectNodeMeshClipMorph>(),
 			ContextMenuBuilder.CreateTemplateNode<UCustomizableObjectNodeMeshClipWithMesh>(),
 			ContextMenuBuilder.CreateTemplateNode<UCustomizableObjectNodeMeshClipDeform>(),
+			ContextMenuBuilder.CreateTemplateNode<UCustomizableObjectNodeModifierClipWithUVMask>(),
 			ContextMenuBuilder.CreateTemplateNode<UCustomizableObjectNodeTable>(),
 		};
 
@@ -488,6 +426,7 @@ void UEdGraphSchema_CustomizableObject::GetGraphContextActions(FGraphContextMenu
 			ContextMenuBuilder.CreateTemplateNode<UCustomizableObjectNodeTextureSwitch>(),
 			ContextMenuBuilder.CreateTemplateNode<UCustomizableObjectNodePassThroughTextureSwitch>(),
 			ContextMenuBuilder.CreateTemplateNode<UCustomizableObjectNodeTextureVariation>(),
+			ContextMenuBuilder.CreateTemplateNode<UCustomizableObjectNodePassThroughTextureVariation>(),
 			ContextMenuBuilder.CreateTemplateNode<UCustomizableObjectNodeTextureToChannels>(),
 			ContextMenuBuilder.CreateTemplateNode<UCustomizableObjectNodeTextureFromChannels>(),
 			ContextMenuBuilder.CreateTemplateNode<UCustomizableObjectNodeTextureFromColor>(),
@@ -553,7 +492,7 @@ void UEdGraphSchema_CustomizableObject::GetGraphContextActions(FGraphContextMenu
 
 	{
 		// External Pin Nodes
-		TArray<FName> PinTypes({ PC_Material, PC_Mesh, PC_Image, PC_Projector, PC_GroupProjector, PC_Color, PC_Float, PC_Bool, PC_Enum, PC_Stack, PC_PassThroughImage });
+		TArray<FName> PinTypes({ PC_Material, PC_Mesh, PC_Image, PC_Projector, PC_GroupProjector, PC_Color, PC_Float, PC_Bool, PC_Enum, PC_Stack, PC_PassThroughImage, PC_MaterialAsset });
 
 		// Add pin types from extensions
 		for (const FRegisteredCustomizableObjectPinType& PinType : ICustomizableObjectModule::Get().GetExtendedPinTypes())
@@ -586,7 +525,7 @@ void UEdGraphSchema_CustomizableObject::GetGraphContextActions(FGraphContextMenu
 	for (TObjectIterator<UCustomizableObjectNode> It(RF_NoFlags); It; ++It)
 	{
 		const UCustomizableObjectNode* Node = *It;
-		if (!Node->HasAllFlags(RF_ClassDefaultObject) || Node->GetClass()->HasAnyClassFlags(CLASS_Abstract))
+		if (!IsValid(Node) || !Node->HasAllFlags(RF_ClassDefaultObject) || Node->GetClass()->HasAnyClassFlags(CLASS_Abstract))
 		{
 			// Only interested in non-abstract CDOs
 			continue;
@@ -793,6 +732,33 @@ bool UEdGraphSchema_CustomizableObject::ShouldHidePinDefaultValue(UEdGraphPin* P
 void UEdGraphSchema_CustomizableObject::GetContextMenuActionsReconstructAllChildNodes(UToolMenu* Menu, TWeakObjectPtr<UGraphNodeContextMenuContext> WeakContext) const
 {
 	FToolMenuSection& SubSection = Menu->AddSection("Section");
+
+	TArray<UClass*> NodeTypes;
+
+	for (TObjectIterator<UCustomizableObjectNode> It(RF_NoFlags); It; ++It)
+	{
+		const UCustomizableObjectNode* Node = *It;
+		if (!IsValid(Node) || !Node->HasAllFlags(RF_ClassDefaultObject))
+		{
+			continue; // Only interested in CDOs
+		}
+
+		UClass* Class = Node->GetClass();
+		if (Class->HasAnyClassFlags(CLASS_Abstract))
+		{
+			continue;
+		}
+		
+		NodeTypes.Add(Class);
+	}
+	
+	NodeTypes.Sort([](UClass& A, UClass& B) -> bool
+	{
+		const UCustomizableObjectNode* NodeA = CastChecked<UCustomizableObjectNode>(A.GetDefaultObject());
+		const UCustomizableObjectNode* NodeB = CastChecked<UCustomizableObjectNode>(B.GetDefaultObject());
+		
+		return NodeA->GetNodeTitle(ENodeTitleType::ListView).CompareTo(NodeB->GetNodeTitle(ENodeTitleType::ListView)) < 0;
+	});
 	
 	for (UClass* NodeType : NodeTypes)
 	{
@@ -806,7 +772,7 @@ void UEdGraphSchema_CustomizableObject::GetContextMenuActionsReconstructAllChild
 				return;
 			}
 
-			UCustomizableObjectNode* Node = Cast<UCustomizableObjectNode>(Context->Node);
+			UCustomizableObjectNode* Node = const_cast<UCustomizableObjectNode*>(Cast<UCustomizableObjectNode>(Context->Node));
 			if (!Node)
 			{
 				return;
@@ -898,10 +864,10 @@ void UEdGraphSchema_CustomizableObject::GetContextMenuActions(UToolMenu* Menu, U
 	}
 	else // On Pin right click
 	{
-		UCustomizableObjectNodeTable* TableNode = Cast<UCustomizableObjectNodeTable>(Context->Node);
+		const UCustomizableObjectNodeTable* TableNode = Cast<UCustomizableObjectNodeTable>(Context->Node);
 		UEdGraphPin* TexturePin = (UEdGraphPin*)Context->Pin;
 
-		if (TableNode && TexturePin && !TableNode->IsImageArrayPin(TexturePin) && !TexturePin->LinkedTo.Num() && (TexturePin->PinType.PinCategory == PC_Image || TexturePin->PinType.PinCategory == PC_PassThroughImage))
+		if (TableNode && TexturePin && !TableNode->IsNotTexture2DPin(TexturePin) && !TexturePin->LinkedTo.Num() && (TexturePin->PinType.PinCategory == PC_Image || TexturePin->PinType.PinCategory == PC_PassThroughImage))
 		{
 			FText ActionText = FText::Format(LOCTEXT("ChangeTexturePinMode_Label", 
 				"Set as {0} texture"), Context->Pin->PinType.PinCategory == PC_PassThroughImage ? FText::FromString("Mutable") : FText::FromString("Pass Through"));
@@ -915,7 +881,7 @@ void UEdGraphSchema_CustomizableObject::GetContextMenuActions(UToolMenu* Menu, U
 			Section.AddMenuEntry
 			(
 				"ChangeTexturePinMode", ActionText, ToolTipText, FSlateIcon(),
-				FUIAction(FExecuteAction::CreateLambda([TableNode, TexturePin]()
+				FUIAction(FExecuteAction::CreateLambda([TableNode = const_cast<UCustomizableObjectNodeTable*>(TableNode), TexturePin]()
 					{
 						TableNode->ChangeImagePinMode(TexturePin);
 					}))
@@ -929,7 +895,7 @@ void UEdGraphSchema_CustomizableObject::GetContextMenuActions(UToolMenu* Menu, U
 					LOCTEXT("SetTexturePinModeDefault_Label","Set pin as default."),
 					LOCTEXT("SetTexturePinModeDefault_Tooltip","Set the selected texture pin to use the default node mode."),
 					FSlateIcon(),
-					FUIAction(FExecuteAction::CreateLambda([TableNode, TexturePin]()
+					FUIAction(FExecuteAction::CreateLambda([TableNode = const_cast<UCustomizableObjectNodeTable*>(TableNode), TexturePin]()
 						{
 							TableNode->ChangeImagePinMode(TexturePin, true);
 						}))
@@ -1296,9 +1262,9 @@ FText UEdGraphSchema_CustomizableObject::GetPinCategoryName(const FName& PinCate
 	}
 	else if (PinCategory == UEdGraphSchema_CustomizableObject::PC_MaterialAsset)
 	{
-		return LOCTEXT("Material_Asset_Pin_Category", "materialAsset");
+		return LOCTEXT("Material_Asset_Pin_Category", "Table Material");
 	}
-	else if (PinCategory == UEdGraphSchema_CustomizableObject::PC_MaterialAsset)
+	else if (PinCategory == UEdGraphSchema_CustomizableObject::PC_Wildcard)
 	{
 		return LOCTEXT("Wildcard_Pin_Category", "Wildcard");
 	}

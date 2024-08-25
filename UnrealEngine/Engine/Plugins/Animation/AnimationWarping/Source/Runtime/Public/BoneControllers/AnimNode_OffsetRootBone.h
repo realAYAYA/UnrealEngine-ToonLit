@@ -10,6 +10,26 @@ struct FAnimationInitializeContext;
 struct FComponentSpacePoseContext;
 struct FNodeDebugData;
 
+namespace UE::AnimationWarping
+{
+class FRootOffsetProvider : public UE::Anim::IGraphMessage
+{
+	DECLARE_ANIMGRAPH_MESSAGE(FRootOffsetProvider);
+
+public:
+
+	FRootOffsetProvider(const FTransform& InRootTransform)
+		: RootTransform(InRootTransform)
+	{
+	}
+	
+	const FTransform& GetRootTransform() const { return RootTransform; } 
+
+private:
+	FTransform RootTransform;
+};
+}
+
 UENUM(BlueprintType)
 enum class EOffsetRootBoneMode : uint8
 {
@@ -30,10 +50,24 @@ enum class EOffsetRootBoneMode : uint8
 	Release,
 };
 
+UENUM(BlueprintType)
+enum class EOffsetRootBone_CollisionTestingMode : uint8
+{
+	// No Collision testing
+	Disabled,
+	// Reduce effective Max Translation offset to prevent penetration with nearby obstacles
+	ShrinkMaxTranslation,
+	// Slide along a plane based on shape cast contact point
+	PlanarCollision,
+};
+
 USTRUCT(BlueprintInternalUseOnly, Experimental)
-struct ANIMATIONWARPINGRUNTIME_API FAnimNode_OffsetRootBone : public FAnimNode_SkeletalControlBase
+struct ANIMATIONWARPINGRUNTIME_API FAnimNode_OffsetRootBone : public FAnimNode_Base
 {
 	GENERATED_BODY();
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Links, meta = (DisplayPriority = 0))
+	FPoseLink Source;
 
 #if WITH_EDITORONLY_DATA
 	UPROPERTY(EditAnywhere, Category = Evaluation, meta=(FoldProperty))
@@ -96,19 +130,25 @@ struct ANIMATIONWARPINGRUNTIME_API FAnimNode_OffsetRootBone : public FAnimNode_S
 	// For procedural values, consider adjusting the input by delta time.
 	UPROPERTY(EditAnywhere, Category = Evaluation, meta = (FoldProperty, PinHiddenByDefault))
 	FRotator RotationDelta = FRotator::ZeroRotator;
+
+
+	UPROPERTY(EditAnywhere, Category = CollisionTesting, meta = (FoldProperty, PinHiddenByDefault))
+	EOffsetRootBone_CollisionTestingMode CollisionTestingMode = EOffsetRootBone_CollisionTestingMode::Disabled;
+	UPROPERTY(EditAnywhere, Category = CollisionTesting, meta = (EditCondition = "CollisionTestingMode != ECollisionTestingMode::Disabled", DisplayAfter="CollisionTestingMode", FoldProperty, PinHiddenByDefault))
+	float CollisionTestShapeRadius = 30;
+	UPROPERTY(EditAnywhere, Category = CollisionTesting, meta = (EditCondition = "CollisionTestingMode != ECollisionTestingMode::Disabled", DisplayAfter="CollisionTestingMode", FoldProperty, PinHiddenByDefault))
+	FVector CollisionTestShapeOffset = {0,0,60};
+			
 #endif
 
 public:
 	// FAnimNode_Base interface
 	virtual void GatherDebugData(FNodeDebugData& DebugData) override;
-	virtual void UpdateInternal(const FAnimationUpdateContext& Context) override;
-	// End of FAnimNode_Base interface
-
-	// FAnimNode_SkeletalControlBase interface
+	virtual void Update_AnyThread(const FAnimationUpdateContext& Context) override;
+	virtual void Evaluate_AnyThread(FPoseContext& Output) override;
 	virtual void Initialize_AnyThread(const FAnimationInitializeContext& Context) override;
-	virtual void EvaluateSkeletalControl_AnyThread(FComponentSpacePoseContext& Output, TArray<FBoneTransform>& OutBoneTransforms) override;
-	virtual bool IsValidToEvaluate(const USkeleton* Skeleton, const FBoneContainer& RequiredBones) override;
-	// End of FAnimNode_SkeletalControlBase interface
+	virtual void CacheBones_AnyThread(const FAnimationCacheBonesContext& Context) override;
+	// End of FAnimNode_Base interface
 
 	// Folded property accesors
 	EWarpingEvaluationMode GetEvaluationMode() const;
@@ -124,6 +164,16 @@ public:
 	bool GetClampToRotationVelocity() const;
 	float GetTranslationSpeedRatio() const;
 	float GetRotationSpeedRatio() const;
+	EOffsetRootBone_CollisionTestingMode GetCollisionTestingMode() const;
+	float GetCollisionTestShapeRadius() const;
+	const FVector& GetCollisionTestShapeOffset() const;
+
+	// get the current simulated root transform
+	void GetOffsetRootTransform(FTransform& OutTransform)
+	{
+		OutTransform.SetRotation(SimulatedRotation);
+		OutTransform.SetTranslation(SimulatedTranslation);
+	}
 
 private:
 
@@ -143,6 +193,8 @@ private:
 	// Offset = ComponentTransform - SimulatedTransform
 	FVector SimulatedTranslation = FVector::ZeroVector;
 	FQuat SimulatedRotation = FQuat::Identity;
+
+	FVector LastNonZeroRootMotionDirection = FVector::ZeroVector;
 
 	FGraphTraversalCounter UpdateCounter;
 };

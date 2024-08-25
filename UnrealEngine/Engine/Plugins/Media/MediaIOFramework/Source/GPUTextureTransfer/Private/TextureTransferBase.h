@@ -6,9 +6,7 @@
 
 #if DVP_SUPPORTED_PLATFORM
 #include "Windows/AllowWindowsPlatformTypes.h"
-#include "Windows/PreWindowsApi.h"
 #include "DVPAPI.h"
-#include "Windows/PostWindowsApi.h"
 #include "Windows/HideWindowsPlatformTypes.h"
 
 class FRHITexture;

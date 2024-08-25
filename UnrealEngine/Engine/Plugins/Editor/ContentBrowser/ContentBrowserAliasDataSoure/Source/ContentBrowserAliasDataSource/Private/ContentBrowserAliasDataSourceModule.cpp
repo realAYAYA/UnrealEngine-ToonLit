@@ -10,9 +10,26 @@ void FContentBrowserAliasDataSourceModule::StartupModule()
 	AliasDataSource->Initialize();
 }
 
-void FContentBrowserAliasDataSourceModule::ShutdownModule()
+void FContentBrowserAliasDataSourceModule::PreUnloadCallback()
 {
 	AliasDataSource.Reset();
+}
+
+UContentBrowserAliasDataSource* FContentBrowserAliasDataSourceModule::TryGetAliasDataSource()
+{
+	// GExitPurge guard required because crash inspecting object after GExitPurge
+	if (!GExitPurge)
+	{
+		if (UContentBrowserAliasDataSource* Obj = AliasDataSource.Get())
+		{
+			if (IsValid(Obj))
+			{
+				return Obj;
+			}
+		}
+	}
+
+	return nullptr;
 }
 
 IMPLEMENT_MODULE(FContentBrowserAliasDataSourceModule, ContentBrowserAliasDataSource);

@@ -7,32 +7,22 @@
 #define LOCTEXT_NAMESPACE "CustomizableObjectEditor"
 
 
-void UCustomizableObjectNodeFloatSwitch::Serialize(FArchive& Ar)
+void UCustomizableObjectNodeFloatSwitch::BackwardsCompatibleFixup()
 {
-	Super::Serialize(Ar);
+	Super::BackwardsCompatibleFixup();
 
-	if (Ar.CustomVer(FCustomizableObjectCustomVersion::GUID) < FCustomizableObjectCustomVersion::BugPinsSwitch)
+	const int32 CustomizableObjectCustomVersion = GetLinkerCustomVersion(FCustomizableObjectCustomVersion::GUID);
+
+	if (CustomizableObjectCustomVersion < FCustomizableObjectCustomVersion::BugPinsSwitch)
 	{
 		OutputPinReference = FindPin(TEXT("Float"));	
 	}
 }
 
 
-FString UCustomizableObjectNodeFloatSwitch::GetOutputPinName() const
-{
-	return TEXT("Float");
-}
-
-
 FName UCustomizableObjectNodeFloatSwitch::GetCategory() const
 {
 	return UEdGraphSchema_CustomizableObject::PC_Float;
-}
-
-
-FString UCustomizableObjectNodeFloatSwitch::GetPinPrefix() const
-{
-	return TEXT("Float ");
 }
 
 

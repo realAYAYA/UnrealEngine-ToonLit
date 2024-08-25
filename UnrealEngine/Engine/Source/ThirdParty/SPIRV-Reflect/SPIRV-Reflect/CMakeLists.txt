@@ -51,7 +51,7 @@ if (SPIRV_REFLECT_BUILD_TESTS)
                              $<$<CXX_COMPILER_ID:MSVC>:_CRT_SECURE_NO_WARNINGS>)
   target_link_libraries(test-spirv-reflect gtest_main)
   target_include_directories(test-spirv-reflect PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-  add_custom_command(TARGET test-spirv-reflect POST_BUILD
-                     COMMAND ${CMAKE_COMMAND} -E copy_directory
+  add_custom_command(TARGET test-spirv-reflect POST_BUILD
+                     COMMAND ${CMAKE_COMMAND} -E copy_directory
                      ${CMAKE_CURRENT_SOURCE_DIR}/tests ${CMAKE_CURRENT_BINARY_DIR}/tests)
-endif()
+endif()

@@ -27,7 +27,6 @@
 #endif // WITH_FREETYPE
 
 #if PLATFORM_WINDOWS
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 namespace TTFConstants
 {
@@ -1514,7 +1513,7 @@ void* UTrueTypeFontFactory::LoadFontFace( void* FTLibrary, int32 Height, FFeedba
 
 	// Create the Windows font
 	HFONT FontHandle =
-		CreateFont(
+		CreateFontW(
 			-Height,
 			0,
 			0,
@@ -1534,7 +1533,7 @@ void* UTrueTypeFontFactory::LoadFontFace( void* FTLibrary, int32 Height, FFeedba
 	{
 		TCHAR ErrorBuffer[1024];
 		Warn->Logf(ELogVerbosity::Error, TEXT("CreateFont failed: %s"), FPlatformMisc::GetSystemErrorMessage(ErrorBuffer, 1024, 0) );
-		return false;
+		return nullptr;
 	}
 
 	// Create DC
@@ -1543,7 +1542,7 @@ void* UTrueTypeFontFactory::LoadFontFace( void* FTLibrary, int32 Height, FFeedba
 	{
 		TCHAR ErrorBuffer[1024];
 		Warn->Logf(ELogVerbosity::Error, TEXT("GetDC failed: %s"), FPlatformMisc::GetSystemErrorMessage(ErrorBuffer, 1024, 0) );
-		return false;
+		return nullptr;
 	}
 
 	HDC DCHandle = CreateCompatibleDC( DeviceDCHandle );
@@ -1551,7 +1550,7 @@ void* UTrueTypeFontFactory::LoadFontFace( void* FTLibrary, int32 Height, FFeedba
 	{
 		TCHAR ErrorBuffer[1024];
 		Warn->Logf(ELogVerbosity::Error, TEXT("CreateDC failed: %s"), FPlatformMisc::GetSystemErrorMessage(ErrorBuffer, 1024, 0) );
-		return false;
+		return nullptr;
 	}
 
 	SelectObject( DCHandle, FontHandle );
@@ -2053,6 +2052,7 @@ bool UTrueTypeFontFactory::CreateFontTexture(
 				FontY = FMath::RoundToInt(FontY / (float)ImportOptions->Data.DistanceFieldScaleFactor);
 				FontWidth = FMath::RoundToInt(FontWidth / (float)ImportOptions->Data.DistanceFieldScaleFactor);
 				FontHeight = FMath::RoundToInt(FontHeight / (float)ImportOptions->Data.DistanceFieldScaleFactor);
+				VerticalOffset = FMath::RoundToInt(VerticalOffset / (float)ImportOptions->Data.DistanceFieldScaleFactor);
 			}
 			NewCharacterRef.StartU =
 				FMath::Clamp<int32>( FontX - ImportOptions->Data.ExtendBoxLeft,
@@ -2072,9 +2072,9 @@ bool UTrueTypeFontFactory::CreateFontTexture(
 			const int32 DestDataPitch = BitmapWidth * BitmapBytesPerPixel;
 
 			// Draw character into font and advance.
-			for( int32 SourceY = 0; SourceY < Glyph->bitmap.rows; ++SourceY )
+			for( uint32 SourceY = 0; SourceY < Glyph->bitmap.rows; ++SourceY )
 			{
-				for( int32 SourceX = 0; SourceX < Glyph->bitmap.width; ++SourceX )
+				for( uint32 SourceX = 0; SourceX < Glyph->bitmap.width; ++SourceX )
 				{
 					uint8 Opacity = Glyph->bitmap.buffer[ SourceY * Glyph->bitmap.width + SourceX ];
 

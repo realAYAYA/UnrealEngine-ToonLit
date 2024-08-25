@@ -1,0 +1,68 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "Common.ush"
+#include "SceneTexturesCommon.ush"
+
+// Returns distance along ray that the first hit occurred, or negative on miss
+float CastScreenSpaceShadowRay(
+	float3 RayOriginTranslatedWorld, float3 RayDirection, float RayLength, int NumSteps,
+	float Dither, float CompareToleranceScale, bool bHairNoShadowLight,
+	out float2 HitUV)
+{
+	float4 RayStartClip = mul(float4(RayOriginTranslatedWorld, 1), View.TranslatedWorldToClip);
+	float4 RayDirClip = mul(float4(RayDirection * RayLength, 0), View.TranslatedWorldToClip);
+	float4 RayEndClip = RayStartClip + RayDirClip;
+
+	float3 RayStartScreen = RayStartClip.xyz / RayStartClip.w;
+	float3 RayEndScreen = RayEndClip.xyz / RayEndClip.w;
+
+	float3 RayStepScreen = RayEndScreen - RayStartScreen;
+
+	float3 RayStartUVz = float3(RayStartScreen.xy * View.ScreenPositionScaleBias.xy + View.ScreenPositionScaleBias.wz, RayStartScreen.z);
+	float3 RayStepUVz = float3(RayStepScreen.xy * View.ScreenPositionScaleBias.xy, RayStepScreen.z);
+
+	float4 RayDepthClip = RayStartClip + mul(float4(0, 0, RayLength, 0), View.ViewToClip);
+	float3 RayDepthScreen = RayDepthClip.xyz / RayDepthClip.w;
+
+	const float StepOffset = Dither - 0.5f;
+	const float Step = 1.0 / NumSteps;
+
+	const float CompareTolerance = abs(RayDepthScreen.z - RayStartScreen.z) * Step * CompareToleranceScale;
+
+	float SampleTime = StepOffset * Step + Step;
+
+	float FirstHitTime = -1.0;
+
+	const float StartDepth = LookupDeviceZ(RayStartUVz.xy);
+
+	UNROLL
+	for (int i = 0; i < NumSteps; i++)
+	{
+		float3 SampleUVz = RayStartUVz + RayStepUVz * SampleTime;
+		float SampleDepth = LookupDeviceZ(SampleUVz.xy);
+
+		// Avoid self-intersection with the start pixel (exact comparison due to point sampling depth buffer)
+		// Exception is made for hair for occluding transmitted light with non-shadow casting light
+		if (SampleDepth != StartDepth || bHairNoShadowLight)
+		{
+			float DepthDiff = SampleUVz.z - SampleDepth;
+			bool Hit = abs(DepthDiff + CompareTolerance) < CompareTolerance;
+
+			if (Hit)
+			{
+				HitUV = SampleUVz.xy;
+
+				// Off screen masking
+				bool bValidUV = all(and (0.0 < SampleUVz.xy, SampleUVz.xy < 1.0));
+
+				return bValidUV ? (RayLength * SampleTime) : -1.0;
+			}
+		}
+
+		SampleTime += Step;
+	}
+
+	return -1;
+}

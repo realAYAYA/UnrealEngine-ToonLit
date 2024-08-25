@@ -1,7 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+using System.Linq;
 using System.Text;
 using EpicGames.UHT.Types;
+using EpicGames.UHT.Utils;
 
 namespace EpicGames.UHT.Exporters.CodeGen
 {
@@ -19,9 +21,6 @@ namespace EpicGames.UHT.Exporters.CodeGen
 
 		public static string EnableDeprecationWarnings = "PRAGMA_ENABLE_DEPRECATION_WARNINGS";
 		public static string DisableDeprecationWarnings = "PRAGMA_DISABLE_DEPRECATION_WARNINGS";
-
-		public static string BeginEditorOnlyGuard = "#if WITH_EDITOR\r\n";
-		public static string EndEditorOnlyGuard = "#endif //WITH_EDITOR\r\n"; //COMPATIBILITY-TODO - This does not match UhtMacroBlockEmitter
 
 		public readonly UhtCodeGenerator CodeGenerator;
 		public readonly UhtPackage Package;
@@ -76,28 +75,6 @@ namespace EpicGames.UHT.Exporters.CodeGen
 		}
 
 		/// <summary>
-		/// Return the cross reference for an object
-		/// </summary>
-		/// <param name="obj">The object in question.</param>
-		/// <param name="registered">If true, return the registered cross reference.  Otherwise return the unregistered.</param>
-		/// <returns>Cross reference</returns>
-		public string GetCrossReference(UhtObject obj, bool registered)
-		{
-			return CodeGenerator.GetCrossReference(obj, registered);
-		}
-
-		/// <summary>
-		/// Return the cross reference for an object
-		/// </summary>
-		/// <param name="objectIndex">The object in question.</param>
-		/// <param name="registered">If true, return the registered cross reference.  Otherwise return the unregistered.</param>
-		/// <returns>Cross reference</returns>
-		public string GetCrossReference(int objectIndex, bool registered)
-		{
-			return CodeGenerator.GetCrossReference(objectIndex, registered);
-		}
-
-		/// <summary>
 		/// Test to see if the given field is a delegate function
 		/// </summary>
 		/// <param name="field">Field to be tested</param>
@@ -145,22 +122,37 @@ namespace EpicGames.UHT.Exporters.CodeGen
 		#endregion
 	}
 
-	internal static class UhtPackageCodeGeneratorStringBuilderExtensions
+	/// <summary>
+	/// Helper formatting methods
+	/// </summary>
+	public static class UhtPackageCodeGeneratorExtensions
 	{
-		public static StringBuilder AppendBeginEditorOnlyGuard(this StringBuilder builder, bool enable = true)
+		/// <summary>
+		/// Append the meta data declaration
+		/// </summary>
+		/// <param name="builder">Destination builder</param>
+		/// <param name="type">Source type containing the meta data</param>
+		/// <param name="propertyContext">Context for formatting properties</param>
+		/// <param name="properties">Optional collection of properties to output</param>
+		/// <param name="name">Name</param>
+		/// <param name="tabs">Number of tabs to indent</param>
+		/// <returns>Destination builder</returns>
+		public static StringBuilder AppendMetaDataDecl(this StringBuilder builder, UhtType type, IUhtPropertyMemberContext? propertyContext, UhtUsedDefineScopes<UhtProperty>? properties, string name, int tabs)
 		{
-			if (enable)
+			UhtStruct? structObj = type as UhtStruct;
+			if (!type.MetaData.IsEmpty() || (properties != null && properties.Instances.Any(x => !x.MetaData.IsEmpty())))
 			{
-				builder.Append(UhtPackageCodeGenerator.BeginEditorOnlyGuard);
-			}
-			return builder;
-		}
-
-		public static StringBuilder AppendEndEditorOnlyGuard(this StringBuilder builder, bool enable = true)
-		{
-			if (enable)
-			{
-				builder.Append(UhtPackageCodeGenerator.EndEditorOnlyGuard);
+				builder.Append("#if WITH_METADATA\r\n");
+				builder.AppendMetaDataDecl(type, null, name, null, null, tabs);
+				if (propertyContext != null && properties != null)
+				{
+					builder.AppendInstances(properties, UhtDefineScopeNames.Standard,
+						(builder, property) =>
+						{
+							builder.AppendMetaDataDecl(property, propertyContext, property.EngineName, "", tabs);
+						});
+				}
+				builder.Append("#endif // WITH_METADATA\r\n");
 			}
 			return builder;
 		}

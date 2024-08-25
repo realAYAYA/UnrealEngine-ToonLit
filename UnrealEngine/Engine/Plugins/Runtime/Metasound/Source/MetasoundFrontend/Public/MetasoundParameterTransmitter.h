@@ -123,6 +123,9 @@ namespace Metasound
 		UE_DEPRECATED(5.2, "Use ResetParameters() or OnDeleteActiveSound() instead depending on use case.")
 		bool Reset() override;
 		
+		void AddAvailableParameter(FName InName);
+		void RemoveAvailableParameter(FName InName);
+
 		/** Sets parameters using array of AudioParameter structs
 		 *
 		 * @param InParameter - Parameter to set.
@@ -139,6 +142,13 @@ namespace Metasound
 		bool SetParameterWithLiteral(FName InParameterName, const FLiteral& InValue);
 
 	private:
+		/** Set parameters when virtualized
+		 * 
+		 *  @return true if all non trigger parameters are set on the parameter base
+		 *	(trigger parameters are removed on virtualized sounds 
+		 *	and parameters are not actually set on the MetaSound until realization)
+		 */
+		bool SetVirtualizedParameters(TArray<FAudioParameter>&& InParameters);
 
 		uint64 InstanceID;
 		FName DebugMetaSoundName;

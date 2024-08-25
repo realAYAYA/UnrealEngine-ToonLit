@@ -3,7 +3,7 @@
 #include "NiagaraCommon.h"
 
 #include "DataDrivenShaderPlatformInfo.h"
-#include "LocalVertexFactory.h"
+#include "RenderUtils.h"
 #include "Misc/StringBuilder.h"
 #include "NiagaraComponent.h"
 #include "NiagaraConstants.h"
@@ -20,6 +20,7 @@
 #include "String/ParseTokens.h"
 #include "UObject/Class.h"
 #include "UObject/UObjectIterator.h"
+#include "FXSystem.h"
 
 DECLARE_CYCLE_STAT(TEXT("Niagara - Utilities - PrepareRapidIterationParameters"), STAT_Niagara_Utilities_PrepareRapidIterationParameters, STATGROUP_Niagara);
 
@@ -87,6 +88,16 @@ void FNiagaraSystemUpdateContext::CommitUpdate()
 		}
 	}
 	SystemSimsToDestroy.Empty();
+
+	for (UNiagaraComponent* Comp : ComponentsToDestroyInstance)
+	{
+		if (Comp)
+		{
+			Comp->DestroyInstanceNotComponent();
+			PostWork.ExecuteIfBound(Comp);
+		}
+	}
+	ComponentsToDestroyInstance.Empty();
 
 	bool bNeedsWaitOnGpu = true;
 	for (UNiagaraSystem* NiagaraSystem : SystemSimsToRecache)
@@ -285,9 +296,18 @@ void FNiagaraSystemUpdateContext::AddInternal(UNiagaraComponent* Comp, bool bReI
 		// Otherwise, they will hold reference and bind or remain bound to a system simulation that has been abandoned by the world manager
 		if (FNiagaraSystemInstanceControllerConstPtr SystemInstanceController = Comp->GetSystemInstanceController())
 		{
-			if (!SystemInstanceController->IsSolo() && SystemInstanceController->HasValidSimulation())
+			if (SystemInstanceController->HasValidSimulation())
 			{
-				ComponentsToNotifySimDestroy.Add(Comp);
+				if (!SystemInstanceController->IsSolo())
+				{
+					ComponentsToNotifySimDestroy.AddUnique(Comp);
+				}
+				// solo systems still need to be reinitialized because we don't want them to try to use stale data either (like if a compilation
+				// has changed the script data)
+				else
+				{
+					ComponentsToDestroyInstance.AddUnique(Comp);
+				}
 				return;
 			}
 		}
@@ -362,10 +382,9 @@ float FNiagaraStatDatabase::GetRuntimeStat(FName StatName, ENiagaraScriptUsage U
 		{
 			if (MinimalNameToName(StatEntry.Key->Name) == StatName)
 			{
-				ValueCount = StatEntry.Value.CapturedTimings.Num();
-				for (int i = 0; i < ValueCount; i++)
+				ValueCount += StatEntry.Value.CapturedTimings.Num();
+				for (const float& Value : StatEntry.Value.CapturedTimings)
 				{
-					float Value = StatEntry.Value.CapturedTimings[i];
 					Max = FMath::Max(Max, Value);
 					Sum += Value;
 				}
@@ -933,8 +952,7 @@ bool FNiagaraUtilities::AllowComputeShaders(EShaderPlatform ShaderPlatform)
 
 bool FNiagaraUtilities::AllowGPUSorting(EShaderPlatform ShaderPlatform)
 {
-	static const IConsoleVariable* AllowGPUSortingCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("FX.AllowGPUSorting"));
-	return ensure(AllowGPUSortingCVar) && (AllowGPUSortingCVar->GetInt() != 0);
+	return FXConsoleVariables::bAllowGPUSorting != 0;
 }
 
 bool FNiagaraUtilities::AllowGPUCulling(EShaderPlatform ShaderPlatform)
@@ -944,7 +962,7 @@ bool FNiagaraUtilities::AllowGPUCulling(EShaderPlatform ShaderPlatform)
 
 bool FNiagaraUtilities::AreBufferSRVsAlwaysCreated(EShaderPlatform ShaderPlatform)
 {
-	return RHISupportsManualVertexFetch(ShaderPlatform) || FLocalVertexFactory::IsGPUSkinPassThroughSupported(ShaderPlatform);
+	return RHISupportsManualVertexFetch(ShaderPlatform) || IsGPUSkinPassThroughSupported(ShaderPlatform);
 }
 
 ENiagaraCompileUsageStaticSwitch FNiagaraUtilities::ConvertScriptUsageToStaticSwitchUsage(ENiagaraScriptUsage ScriptUsage)
@@ -1071,12 +1089,14 @@ bool FNiagaraScriptDataInterfaceInfo::IsUserDataInterface() const
 {
 	TStringBuilder<128> NameBuilder;
 	Name.ToString(NameBuilder);
-	return FCString::Strnicmp(NameBuilder.ToString(), TEXT("user."), 5) == 0;
+	return FCString::Strnicmp(NameBuilder.ToString(), PARAM_MAP_USER_STR, 5) == 0;
 }
 
 bool FNiagaraScriptResolvedDataInterfaceInfo::NeedsPerInstanceBinding() const
 {
-	return ResolvedVariable.GetName().ToString().StartsWith(TEXT("User."));
+	FNameBuilder NameBuilder;
+	ResolvedVariable.GetName().ToString(NameBuilder);
+	return NameBuilder.ToView().StartsWith(PARAM_MAP_USER_STR);
 }
 
 bool FNiagaraScriptDataInterfaceCompileInfo::CanExecuteOnTarget(ENiagaraSimTarget SimTarget) const
@@ -1114,11 +1134,18 @@ UNiagaraDataInterface* FNiagaraScriptDataInterfaceCompileInfo::GetDefaultDataInt
 
 bool FNiagaraScriptDataInterfaceCompileInfo::NeedsPerInstanceBinding()const
 {
-	if (Name.ToString().StartsWith(TEXT("User.")))
+	FNameBuilder NameBuilder;
+	Name.ToString(NameBuilder);
+	if (NameBuilder.ToView().StartsWith(TEXT("User.")))
+	{
 		return true;
+	}
+
 	UNiagaraDataInterface* Obj = GetDefaultDataInterface();
 	if (Obj && Obj->PerInstanceDataSize() > 0)
+	{
 		return true;
+	}
 	return false;
 }
 
@@ -1565,16 +1592,17 @@ void FNiagaraUtilities::PrepareRapidIterationParameters(const TArray<UNiagaraScr
 	}
 }
 
-bool FNiagaraUtilities::AreTypesAssignable(const FNiagaraTypeDefinition& TypeA, const FNiagaraTypeDefinition& TypeB)
+bool FNiagaraUtilities::AreTypesAssignable(const FNiagaraTypeDefinition& FromType, const FNiagaraTypeDefinition& ToType)
 {
 	const UNiagaraSettings* Settings = GetDefault<UNiagaraSettings>();
+	bool bStrictAssignable = (FromType == ToType) || (FromType.IsStatic() && !ToType.IsStatic() && FromType == ToType.ToStaticDef());
 	if (Settings->bEnforceStrictStackTypes)
 	{
-		return TypeA == TypeB;
+		return bStrictAssignable;
 	}
-	return (TypeA == TypeB)
-		|| (TypeA == FNiagaraTypeDefinition::GetPositionDef() && TypeB == FNiagaraTypeDefinition::GetVec3Def())
-		|| (TypeB == FNiagaraTypeDefinition::GetPositionDef() && TypeA == FNiagaraTypeDefinition::GetVec3Def());
+	return bStrictAssignable
+		|| (FromType == FNiagaraTypeDefinition::GetPositionDef() && ToType == FNiagaraTypeDefinition::GetVec3Def())
+		|| (ToType == FNiagaraTypeDefinition::GetPositionDef() && FromType == FNiagaraTypeDefinition::GetVec3Def());
 }
 
 #endif
@@ -1624,6 +1652,7 @@ const FString FNiagaraCompileOptions::GpuScriptDefine = TEXT("GPUComputeSim");
 const FString FNiagaraCompileOptions::EventSpawnDefine = TEXT("EventSpawn");
 const FString FNiagaraCompileOptions::EventSpawnInitialAttribWritesDefine = TEXT("EventSpawnInitialAttribWrites");
 const FString FNiagaraCompileOptions::ExperimentalVMDisabled = TEXT("ExperimentalVMDisabled");
+const FString FNiagaraCompileOptions::AccurateQuatInterpolation = TEXT("AccurateQuatInterpolation");
 
 FSynchronizeWithParameterDefinitionsArgs::FSynchronizeWithParameterDefinitionsArgs()
 	: SpecificDefinitionsUniqueIds(TArray<FGuid>())

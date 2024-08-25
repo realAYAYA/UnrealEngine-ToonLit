@@ -19,6 +19,9 @@ public:
 	TArray<TSharedRef<FAccountInfo>> GetAllAccountInfo(TFunction<bool(const TSharedRef<FAccountInfo>&)> Predicate) const;
 
 protected:
+	TSharedPtr<FAccountInfo> FindNoLock(FPlatformUserId PlatformUserId) const;
+	TSharedPtr<FAccountInfo> FindNoLock(FAccountId AccountId) const;
+
 	virtual void DoRegister(const TSharedRef<FAccountInfo>& AccountInfo);
 	virtual void DoUnregister(const TSharedRef<FAccountInfo>& AccountInfo);
 

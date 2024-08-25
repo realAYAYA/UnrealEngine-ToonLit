@@ -152,7 +152,7 @@ int32 FMovieSceneChannelData::MoveKeyInternal(int32 KeyIndex, FFrameNumber InNew
 
 		// We have to remove the key and re-add it in the right place
 		// This could probably be done better by just shuffling up/down the items that need to move, without ever changing the size of the array
-		Times->RemoveAt(KeyIndex, 1, false);
+		Times->RemoveAt(KeyIndex, 1, EAllowShrinking::No);
 		Times->Insert(InNewTime, NewIndex);
 
 		if (KeyHandles)

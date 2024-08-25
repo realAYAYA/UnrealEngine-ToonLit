@@ -84,6 +84,17 @@ namespace EUserPrivileges
 	};
 }
 
+/** Whether to show UI to resolve the privilege if there is no access when GetUserPrivilege */
+enum class EShowPrivilegeResolveUI : uint8
+{
+	/** Use default behavior, which preserved the behaviour prior to the introduction of this. */
+	Default,
+	/** Show UI to resolve privilege */
+	Show,
+	/** Not show UI to resolve privilege */
+	NotShow
+};
+
 /**
  * This struct will be broadcast with the FOnControllerPairingChanged event. This event is not broadcast on all OnlineIdentity platforms.
  * There will be a struct for the previous user on the controller and for the new user on the controller.
@@ -488,8 +499,9 @@ public:
 	 * @param LocalUserId the unique id of the user to query
 	 * @param Privilege the privilege you want to know about
 	 * @param Delegate delegate to execute when the async task completes
+	 * @param ShowResolveUI whether to show UI to resolve if user don't have the privilege
 	 */
-	virtual void GetUserPrivilege(const FUniqueNetId& LocalUserId, EUserPrivileges::Type Privilege, const FOnGetUserPrivilegeCompleteDelegate& Delegate) = 0;
+	virtual void GetUserPrivilege(const FUniqueNetId& LocalUserId, EUserPrivileges::Type Privilege, const FOnGetUserPrivilegeCompleteDelegate& Delegate, EShowPrivilegeResolveUI ShowResolveUI = EShowPrivilegeResolveUI::Default) = 0;
 
 	/**
 	 * Converts from an online unique id to a PlatformUserId used by application code

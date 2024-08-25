@@ -37,7 +37,7 @@ struct FMovieSceneBinding;
 *					}
 *	
 *					UMovieSceneCameraCutSection* CameraCutSection = CastChecked<UMovieSceneCameraCutSection>(Section);
-*					TRange<FFrameNumber> RootCameraRange = TRange<FFrameNumber>::Intersection(LocalSpace.RootClampRange, CameraCutSection->GetRange() * LocalSpace.RootToSequenceTransform.InverseLinearOnly());
+*					TRange<FFrameNumber> RootCameraRange = TRange<FFrameNumber>::Intersection(LocalSpace.RootClampRange, CameraCutSection->GetRange() * LocalSpace.RootToSequenceTransform.InverseNoLooping());
 *					if (!RootCameraRange.IsEmpty())
 *					{
 *						CameraCutTree.Add(RootCameraRange, MakeTuple(CameraCutSection, LocalSpace.SequenceID, LocalSpace.HierarchicalBias));

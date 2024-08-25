@@ -59,7 +59,10 @@ void ISaveGameSystem::SaveGameAsync(bool bAttemptToUseUI, const TCHAR* Name, FPl
 					}
 				);
 			}
-		}
+		},
+		UE::Tasks::ETaskPriority::Default,
+		UE::Tasks::EExtendedTaskPriority::None,
+		UE::Tasks::ETaskFlags::DoNotRunInsideBusyWait // it's a long running task
 	);
 }
 

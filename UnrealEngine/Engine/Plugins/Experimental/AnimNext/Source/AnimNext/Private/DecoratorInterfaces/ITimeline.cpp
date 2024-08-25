@@ -6,7 +6,7 @@
 
 namespace UE::AnimNext
 {
-	double ITimeline::GetPlayRate(FExecutionContext& Context, const TDecoratorBinding<ITimeline>& Binding) const
+	float ITimeline::GetPlayRate(const FExecutionContext& Context, const TDecoratorBinding<ITimeline>& Binding) const
 	{
 		TDecoratorBinding<ITimeline> SuperBinding;
 		if (Context.GetInterfaceSuper(Binding, SuperBinding))
@@ -14,6 +14,26 @@ namespace UE::AnimNext
 			return SuperBinding.GetPlayRate(Context);
 		}
 
-		return 1.0;
+		return 1.0f;
+	}
+
+	float ITimeline::AdvanceBy(const FExecutionContext& Context, const TDecoratorBinding<ITimeline>& Binding, float DeltaTime) const
+	{
+		TDecoratorBinding<ITimeline> SuperBinding;
+		if (Context.GetInterfaceSuper(Binding, SuperBinding))
+		{
+			return SuperBinding.AdvanceBy(Context, DeltaTime);
+		}
+
+		return 0.0f;
+	}
+
+	void ITimeline::AdvanceToRatio(const FExecutionContext& Context, const TDecoratorBinding<ITimeline>& Binding, float ProgressRatio) const
+	{
+		TDecoratorBinding<ITimeline> SuperBinding;
+		if (Context.GetInterfaceSuper(Binding, SuperBinding))
+		{
+			SuperBinding.AdvanceToRatio(Context, ProgressRatio);
+		}
 	}
 }

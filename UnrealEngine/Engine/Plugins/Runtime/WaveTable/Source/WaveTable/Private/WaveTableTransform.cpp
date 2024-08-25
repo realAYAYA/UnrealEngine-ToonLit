@@ -445,6 +445,7 @@ void FWaveTableTransform::CreateWaveTable(FWaveTableData& InOutTableData, bool b
 		default:
 		{
 			CopyToWaveTable(InOutTableData, bInBipolar);
+			InOutTableData.SetFinalValue(TableData.GetFinalValue());
 		}
 		break;
 	}

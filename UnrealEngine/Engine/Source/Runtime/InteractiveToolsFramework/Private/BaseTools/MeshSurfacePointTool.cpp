@@ -3,6 +3,7 @@
 #include "BaseTools/MeshSurfacePointTool.h"
 #include "BaseBehaviors/MouseHoverBehavior.h"
 #include "BaseBehaviors/ClickDragBehavior.h"
+#include "Engine/HitResult.h"
 #include "InteractiveToolManager.h"
 #include "ToolBuilderUtil.h"
 
@@ -184,7 +185,7 @@ void UMeshSurfacePointTool::OnClickRelease(const FInputDeviceRay& ReleasePos)
 
 void UMeshSurfacePointTool::OnTerminateDragSequence()
 {
-	OnEndDrag(LastWorldRay);
+	OnCancelDrag();
 }
 
 

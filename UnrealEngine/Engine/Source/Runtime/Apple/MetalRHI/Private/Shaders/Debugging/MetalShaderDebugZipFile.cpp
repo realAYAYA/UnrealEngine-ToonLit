@@ -7,7 +7,7 @@
 #include "CoreMinimal.h"
 
 THIRD_PARTY_INCLUDES_START
-#include "mtlpp.hpp"
+#include "MetalInclude.h"
 THIRD_PARTY_INCLUDES_END
 
 
@@ -222,9 +222,9 @@ FMetalShaderDebugZipFile::~FMetalShaderDebugZipFile()
 	}
 }
 
-ns::String FMetalShaderDebugZipFile::GetShaderCode(uint32 ShaderSrcLen, uint32 ShaderSrcCRC)
+NS::String* FMetalShaderDebugZipFile::GetShaderCode(uint32 ShaderSrcLen, uint32 ShaderSrcCRC)
 {
-	ns::String Source;
+    NS::String* OutString = nullptr;
 	FScopeLock Lock(&Mutex);
 	FString Name = FString::Printf(TEXT("%u_%u.metal"), ShaderSrcLen, ShaderSrcCRC);
 	for (auto const& Entry : Files)
@@ -237,14 +237,15 @@ ns::String FMetalShaderDebugZipFile::GetShaderCode(uint32 ShaderSrcLen, uint32 S
 				Data.AddZeroed(Entry.Length+1);
 				if (File->Read(Data.GetData(), Entry.Length))
 				{
-					Source = [NSString stringWithUTF8String:(char const*)Data.GetData()];
+                    OutString = NS::String::string((char const*)Data.GetData(), NS::UTF8StringEncoding);
 				}
 			}
 
 			break;
 		}
 	}
-	return Source;
+    
+    return OutString;
 }
 
 #endif // !UE_BUILD_SHIPPING

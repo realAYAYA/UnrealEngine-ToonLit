@@ -38,18 +38,11 @@ struct FAsyncPhysicsInputRewindCallback : public Chaos::IRewindCallback
 		{
 			if (APlayerController* PC = World->GetFirstPlayerController())
 			{
-				if (Chaos::FPhysicsSolverBase::IsNetworkPhysicsPredictionEnabled())
+				ensure(Chaos::FPhysicsSolverBase::IsNetworkPhysicsPredictionEnabled());
+				if (PC->GetNetworkPhysicsTickOffsetAssigned())
 				{
-					const int32 LocalToServerOffset = PC->GetLocalToServerAsyncPhysicsTickOffset();
+					const int32 LocalToServerOffset = PC->GetNetworkPhysicsTickOffset();
 					ServerFrame = PhysicsStep + LocalToServerOffset;
-				}
-				else
-				{
-					APlayerController::FClientFrameInfo& ClientFrameInfo = PC->GetClientFrameInfo();
-                    if (ClientFrameInfo.LastProcessedInputFrame != INDEX_NONE)
-                    {
-                    	ServerFrame = PhysicsStep - ClientFrameInfo.GetLocalFrameOffset();
-                    }
 				}
 			}
 		}
@@ -79,17 +72,12 @@ struct FAsyncPhysicsInputRewindCallback : public Chaos::IRewindCallback
 				// -----------------------------------------------------------------
 				// Calculate latest frame offset to map server frame to local frame
 				// -----------------------------------------------------------------
-				APlayerController::FClientFrameInfo& ClientFrameInfo = PC->GetClientFrameInfo();
 
-				if (Chaos::FPhysicsSolverBase::IsNetworkPhysicsPredictionEnabled())
+				ensure(Chaos::FPhysicsSolverBase::IsNetworkPhysicsPredictionEnabled());
+				if (PC->GetNetworkPhysicsTickOffsetAssigned())
 				{
-					const int32 LocalToServerOffset = PC->GetLocalToServerAsyncPhysicsTickOffset();
+					const int32 LocalToServerOffset = PC->GetNetworkPhysicsTickOffset();
 					CachedServerFrame = PhysicsStep + LocalToServerOffset;
-				}
-				else if (ClientFrameInfo.LastProcessedInputFrame != INDEX_NONE)
-				{
-					const int32 FrameOffset = ClientFrameInfo.GetLocalFrameOffset();
-					CachedServerFrame = PhysicsStep - FrameOffset; // Local = Server + Offset
 				}
 			}
 		}

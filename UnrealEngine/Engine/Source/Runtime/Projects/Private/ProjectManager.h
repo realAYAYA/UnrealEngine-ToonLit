@@ -20,6 +20,7 @@ public:
 	virtual bool LoadProjectFile( const FString& ProjectFile ) override;
 	virtual bool LoadModulesForProject( const ELoadingPhase::Type LoadingPhase ) override;
 	virtual FLoadingModulesForPhaseEvent& OnLoadingPhaseComplete() override { return OnLoadingPhaseCompleteEvent; }
+	virtual bool SubstituteModule(const FString& OriginalModuleName, const FString& NewModuleName) override;
 #if !IS_MONOLITHIC
 	virtual bool CheckModuleCompatibility( TArray<FString>& OutIncompatibleModules ) override;
 #endif

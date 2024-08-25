@@ -2,8 +2,9 @@
 
 #pragma once
 
-#include "CoreTypes.h"
-#include "MLDeformerTrainingModel.h"
+#include "MLDeformerGeomCacheTrainingModel.h"
+#include "NearestNeighborGeomCacheSampler.h"
+
 #include "NearestNeighborTrainingModel.generated.h"
 
 namespace UE::NearestNeighborModel
@@ -11,72 +12,69 @@ namespace UE::NearestNeighborModel
 	class FNearestNeighborEditorModel;
 }
 
+class UAnimSequence;
+class UMLDeformerModel;
+class UNearestNeighborKMeansData;
 class UNearestNeighborModel;
+class UNearestNeighborStatsData;
 class UNearestNeighborModelInstance;
 
 UCLASS(Blueprintable)
 class NEARESTNEIGHBORMODELEDITOR_API UNearestNeighborTrainingModel
-	: public UMLDeformerTrainingModel
+	: public UMLDeformerGeomCacheTrainingModel
 {
 	GENERATED_BODY()
 
 public:
+	virtual ~UNearestNeighborTrainingModel();
 	virtual void Init(UE::MLDeformer::FMLDeformerEditorModel* InEditorModel) override;
 
-	/** Main training function, with implementation in python. */
 	UFUNCTION(BlueprintImplementableEvent, Category = "Python")
 	int32 Train() const;
 
-	friend class UE::NearestNeighborModel::FNearestNeighborEditorModel;
-
-protected:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Python")
 	int32 UpdateNearestNeighborData();
 
 	UFUNCTION(BlueprintImplementableEvent, Category = "Python")
-	int32 KmeansClusterPoses(const int32 PartId) const;
+	int32 KmeansClusterPoses(const UNearestNeighborKMeansData* KMeansData);
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Training Data")
-	TArray<float> PartSampleDeltas;
+	UFUNCTION(BlueprintImplementableEvent, Category = "Python")
+	bool GetNeighborStats(const UNearestNeighborStatsData* StatsData);
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Training Data")
-	TArray<int32> KmeansResults;
+protected:
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Python")
+	TArray<float> CustomSamplerBoneRotations;
+	
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Python")
+	TArray<float> CustomSamplerDeltas;
 
 private:
 	UFUNCTION(BlueprintPure, Category = "Python")
+	int32 GetNumFramesAnimSequence(const UAnimSequence* Anim) const;
+
+	UFUNCTION(BlueprintPure, Category = "Python")
+	int32 GetNumFramesGeometryCache(const UGeometryCache* GeometryCache) const;
+	
+	UFUNCTION(BlueprintPure, Category = "Python")
+	const USkeleton* GetModelSkeleton(const UMLDeformerModel* Model) const;
+	
+	UFUNCTION(BlueprintPure, Category = "Python")
 	UNearestNeighborModel* GetNearestNeighborModel() const;
 
-	UE::NearestNeighborModel::FNearestNeighborEditorModel* GetNearestNeighborEditorModel() const;
-
-	UFUNCTION(BlueprintPure, Category = "Python")
-	const TArray<int32> GetPartVertexMap(const int32 PartId) const;
+	UFUNCTION(BlueprintCallable, Category = "Python")
+	bool SetCustomSamplerData(UAnimSequence* Anim, UGeometryCache* Cache = nullptr);
 
 	UFUNCTION(BlueprintCallable, Category = "Python")
-	int32 SetSamplerPartData(const int32 PartId);
-
-	UFUNCTION(BlueprintPure, Category = "Python")
-	int32 GetPartNumNeighbors(const int32 PartId) const;
+	bool CustomSample(int32 Frame);
 
 	UFUNCTION(BlueprintCallable, Category = "Python")
-	bool SampleKmeansAnim(const int32 SkeletonId);
-
-	UFUNCTION(BlueprintCallable, Category = "Python")
-	bool SampleKmeansFrame(const int32 Frame);
+	bool SetCustomSamplerDataFromSection(int32 SectionIndex);
 
 	UFUNCTION(BlueprintPure, Category = "Python")
-	int32 GetKmeansNumAnims() const;
+	TArray<float> GetUnskinnedVertexPositions();
 
 	UFUNCTION(BlueprintPure, Category = "Python")
-	int32 GetKmeansAnimNumFrames(const int32 SkeletonId) const;
-
-	UFUNCTION(BlueprintPure, Category = "Python")
-	int32 GetKmeansNumClusters() const;
-
-	UFUNCTION(BlueprintPure, Category = "Python")
-	const TArray<float> GetUnskinnedVertexPositions() const;
-
-	UFUNCTION(BlueprintPure, Category = "Python")
-	const TArray<int32> GetMeshIndexBuffer() const;
+	TArray<int32> GetMeshIndexBuffer();
 
 	UFUNCTION(BlueprintCallable, Category = "Python")
 	UNearestNeighborModelInstance* CreateModelInstance();
@@ -84,5 +82,9 @@ private:
 	UFUNCTION(BlueprintCallable, Category = "Python")
 	void DestroyModelInstance(UNearestNeighborModelInstance* ModelInstance);
 
-	UNearestNeighborModel* NearestNeighborModel = nullptr;
+	void SetNewCustomSampler();
+	UNearestNeighborModel* GetCastModel() const;
+	UE::NearestNeighborModel::FNearestNeighborEditorModel* GetCastEditorModel() const;
+
+	TUniquePtr<UE::NearestNeighborModel::FNearestNeighborGeomCacheSampler> CustomSampler;
 };

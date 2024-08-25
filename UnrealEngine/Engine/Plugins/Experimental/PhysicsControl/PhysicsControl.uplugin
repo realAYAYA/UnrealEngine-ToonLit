@@ -22,6 +22,11 @@
 			"LoadingPhase": "Default"
 		},
 		{
+			"Name": "PhysicsControlUncookedOnly",
+			"Type": "UncookedOnly",
+			"LoadingPhase": "Default"
+		},
+		{
 			"Name": "PhysicsControlEditor",
 			"Type": "Editor",
 			"LoadingPhase": "PostEngineInit"

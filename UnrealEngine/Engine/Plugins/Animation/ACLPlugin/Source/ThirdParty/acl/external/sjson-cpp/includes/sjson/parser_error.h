@@ -24,10 +24,14 @@
 // SOFTWARE.
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "sjson/version.h"
+
 #include <cstdint>
 
 namespace sjson
 {
+	SJSON_CPP_IMPL_VERSION_NAMESPACE_BEGIN
+
 	struct ParserError
 	{
 		enum : uint32_t
@@ -106,4 +110,6 @@ namespace sjson
 			}
 		}
 	};
+
+	SJSON_CPP_IMPL_VERSION_NAMESPACE_END
 }

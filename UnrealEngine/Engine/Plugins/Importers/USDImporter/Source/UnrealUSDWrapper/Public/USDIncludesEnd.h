@@ -2,6 +2,8 @@
 
 // HEADER_UNIT_SKIP - Special include
 
+// clang-format off
+
 #if USE_USD_SDK
 
 #pragma warning(pop)
@@ -24,3 +26,5 @@
 THIRD_PARTY_INCLUDES_END
 
 #endif // #if USE_USD_SDK
+
+// clang-format on

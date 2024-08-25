@@ -2,10 +2,10 @@
 
 #pragma once
 
-#include "CoreMinimal.h"
+#include "DMXControlConsole.h"
+#include "UObject/WeakObjectPtrTemplates.h"
 
 struct FDMXOutputConsoleFaderDescriptor;
-class UDMXControlConsole;
 class UDMXControlConsoleData;
 class UDMXControlConsoleFaderGroup;
 class UDMXControlConsoleRawFader;

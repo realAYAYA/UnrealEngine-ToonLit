@@ -86,14 +86,18 @@ void UConsoleVariablesAsset::ReplaceSavedCommands(const TArray<FConsoleVariables
 }
 
 bool UConsoleVariablesAsset::FindSavedDataByCommandString(
-	const FString InCommandString, FConsoleVariablesEditorAssetSaveData& OutValue, const ESearchCase::Type SearchCase) const
+	const FString& InCommandString, FConsoleVariablesEditorAssetSaveData& OutValue, const ESearchCase::Type SearchCase) const
 {
-	for (const FConsoleVariablesEditorAssetSaveData& Command : SavedCommands)
+	if (!SavedCommands.IsEmpty())
 	{
-		if (Command.CommandName.TrimStartAndEnd().Equals(InCommandString.TrimStartAndEnd(), SearchCase))
+		const FStringView InCommandTrimmed = FStringView(InCommandString).TrimStartAndEnd();
+		for (const FConsoleVariablesEditorAssetSaveData& Command : SavedCommands)
 		{
-			OutValue = Command;
-			return true;
+			if (FStringView(Command.CommandName).TrimStartAndEnd().Equals(InCommandTrimmed, SearchCase))
+			{
+				OutValue = Command;
+				return true;
+			}
 		}
 	}
 	
@@ -115,7 +119,7 @@ void UConsoleVariablesAsset::AddOrSetConsoleObjectSavedData(const FConsoleVariab
 	}
 }
 
-bool UConsoleVariablesAsset::RemoveConsoleVariable(const FString InCommandString)
+bool UConsoleVariablesAsset::RemoveConsoleVariable(const FString& InCommandString)
 {
 	FConsoleVariablesEditorAssetSaveData ExistingData;
 	int32 RemoveCount = 0;

@@ -50,7 +50,7 @@ void FUVSpaceAllocator::Clear()
 
 void FUVSpaceAllocator::CopyRuns(TArray<FRun>& Runs, const TArray<FRun>& OtherRuns, int32 MaxSize)
 {
-	Runs.SetNum(OtherRuns.Num(), false);
+	Runs.SetNum(OtherRuns.Num(), EAllowShrinking::No);
 
 	MaxSize = FMath::Min(Runs.Num(), MaxSize);
 
@@ -546,7 +546,7 @@ void FUVSpaceAllocator::CreateUsedSegments()
 {
 	check(Mode == EMode::UsedSegments);
 
-	SortedRowsIndex.SetNum(RasterHeight, false);
+	SortedRowsIndex.SetNum(RasterHeight, EAllowShrinking::No);
 
 	uint64* BitsData = Bits.GetData();
 
@@ -621,7 +621,7 @@ void FUVSpaceAllocator::CreateUsedSegments()
 	SortedRowsIndex.Sort([this](uint32 a, uint32 b) { return Rows[b].LongestSegment < Rows[a].LongestSegment;});
 
 	// Create segments along the Y axis for each columns
-	SortedColumnsIndex.SetNum(RasterWidth, false);
+	SortedColumnsIndex.SetNum(RasterWidth, EAllowShrinking::No);
 	
 	for ( uint32 x = 0; x < RasterWidth; ++x )
 	{

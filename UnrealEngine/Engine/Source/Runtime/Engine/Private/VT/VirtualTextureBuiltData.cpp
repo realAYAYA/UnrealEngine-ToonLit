@@ -499,7 +499,7 @@ bool FVirtualTextureBuiltData::ValidateData(FStringView const& InDDCDebugContext
 						{
 							const uint32 CompressedTileSize = NextTileOffset - TileOffset;
 
-							UncompressedResult.SetNumUninitialized(PackedOutputSize, false);
+							UncompressedResult.SetNumUninitialized(PackedOutputSize, EAllowShrinking::No);
 							const bool bUncompressResult = FCompression::UncompressMemory(NAME_Zlib, UncompressedResult.GetData(), PackedOutputSize, static_cast<const uint8*>(ChunkData) + TileOffset, CompressedTileSize);
 							if (!bUncompressResult)
 							{

@@ -1,15 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using Microsoft.VisualStudio.TestTools.UnitTesting;
-using System;
 using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Text;
-using System.Text.Json;
-using OpenTracing;
-using EpicGames.BuildGraph.Expressions;
-using System.Collections.Immutable;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace EpicGames.BuildGraph.Tests
 {

@@ -47,6 +47,25 @@ struct FKLevelSetElem : public FKShapeElem
 		Transform = InTransform;
 	}
 
+	// Get the tranform of the center of the level set. In contrast, GetTransform() gets a transform relative to the corner.
+	FTransform GetCenteredTransform() const
+	{
+		return FTransform(
+			Transform.GetRotation(),
+			Transform.GetLocation() + Transform.TransformVector(UntransformedAABB().GetCenter()),
+			Transform.GetScale3D());
+	}
+
+	// Set the tranform of the center of the level set. In contrast, SetTransform() sets a transform relative to the corner.
+	void SetCenteredTransform(const FTransform& CenteredTransform)
+	{
+		ensure(CenteredTransform.IsValid());
+		Transform = FTransform(
+			CenteredTransform.GetRotation(),
+			CenteredTransform.GetLocation() - CenteredTransform.TransformVector(UntransformedAABB().GetCenter()),
+			CenteredTransform.GetScale3D());
+	}
+
 	ENGINE_API void ScaleElem(FVector DeltaSize, float MinSize);
 
 	// Draw helpers

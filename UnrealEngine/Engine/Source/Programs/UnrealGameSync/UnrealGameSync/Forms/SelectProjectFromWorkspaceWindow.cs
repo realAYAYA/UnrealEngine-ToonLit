@@ -1,8 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Perforce;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Data;
@@ -14,6 +11,9 @@ using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using EpicGames.Perforce;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 #nullable enable
 
@@ -40,7 +40,7 @@ namespace UnrealGameSync
 				}
 
 				List<FStatRecord> fileRecords = new List<FStatRecord>();
-				foreach(string pattern in Patterns)
+				foreach (string pattern in Patterns)
 				{
 					string filter = String.Format("//{0}/{1}", clientName, pattern);
 
@@ -57,9 +57,9 @@ namespace UnrealGameSync
 				}
 
 				List<string> paths = new List<string>();
-				foreach(FStatRecord fileRecord in fileRecords)
+				foreach (FStatRecord fileRecord in fileRecords)
 				{
-					if(fileRecord.ClientFile != null && fileRecord.ClientFile.StartsWith(clientPrefix, StringComparison.OrdinalIgnoreCase))
+					if (fileRecord.ClientFile != null && fileRecord.ClientFile.StartsWith(clientPrefix, StringComparison.OrdinalIgnoreCase))
 					{
 						paths.Add(fileRecord.ClientFile.Substring(clientRoot.Length).Replace(Path.DirectorySeparatorChar, '/'));
 					}
@@ -90,7 +90,7 @@ namespace UnrealGameSync
 				Name = fullName.Substring(slashIdx + 1);
 			}
 		}
-		
+
 		public SelectProjectFromWorkspaceWindow(string workspaceName, List<string> projectFiles, string selectedProjectFile)
 		{
 			InitializeComponent();
@@ -103,12 +103,12 @@ namespace UnrealGameSync
 			IntPtr folderIconPtr;
 			ExtractIconEx("imageres.dll", 3, IntPtr.Zero, out folderIconPtr, 1);
 
-			Icon[] icons = new Icon[]{ Icon.FromHandle(folderIconPtr), Properties.Resources.Icon };
+			Icon[] icons = new Icon[] { Icon.FromHandle(folderIconPtr), Properties.Resources.Icon };
 
 			Bitmap typeImageListBitmap = new Bitmap(icons.Length * 16, 16, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-			using(Graphics graphics = Graphics.FromImage(typeImageListBitmap))
+			using (Graphics graphics = Graphics.FromImage(typeImageListBitmap))
 			{
-				for(int iconIdx = 0; iconIdx < icons.Length; iconIdx++)
+				for (int iconIdx = 0; iconIdx < icons.Length; iconIdx++)
 				{
 					graphics.DrawIcon(icons[iconIdx], new Rectangle(iconIdx * 16, 0, 16, 16));
 				}
@@ -137,8 +137,8 @@ namespace UnrealGameSync
 			rootNode.Nodes.Clear();
 
 			// Filter the project files
-			List<string> filteredProjectFiles = new List<string>(_projectFiles); 
-			if(!ShowProjectDirsFiles.Checked)
+			List<string> filteredProjectFiles = new List<string>(_projectFiles);
+			if (!ShowProjectDirsFiles.Checked)
 			{
 				filteredProjectFiles.RemoveAll(x => x.EndsWith(".uprojectdirs", StringComparison.OrdinalIgnoreCase));
 			}
@@ -148,13 +148,13 @@ namespace UnrealGameSync
 
 			// Add the folders for each project
 			TreeNode[] projectParentNodes = new TreeNode[projectNodes.Count];
-			for(int idx = 0; idx < projectNodes.Count; idx++)
+			for (int idx = 0; idx < projectNodes.Count; idx++)
 			{
 				TreeNode parentNode = rootNode;
-				if(projectNodes[idx].Folder.Length > 0)
+				if (projectNodes[idx].Folder.Length > 0)
 				{
-					string[] fragments = projectNodes[idx].Folder.Split(new char[]{ '/' }, StringSplitOptions.RemoveEmptyEntries);
-					foreach(string fragment in fragments)
+					string[] fragments = projectNodes[idx].Folder.Split(new char[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+					foreach (string fragment in fragments)
 					{
 						parentNode = FindOrAddChildNode(parentNode, fragment, 0);
 					}
@@ -163,15 +163,15 @@ namespace UnrealGameSync
 			}
 
 			// Add the actual project nodes themselves
-			for(int idx = 0; idx < projectNodes.Count; idx++)
+			for (int idx = 0; idx < projectNodes.Count; idx++)
 			{
 				TreeNode node = FindOrAddChildNode(projectParentNodes[idx], projectNodes[idx].Name, 1);
 				node.Tag = projectNodes[idx].FullName;
 
-				if(String.Equals(projectNodes[idx].FullName, _selectedProjectFile, StringComparison.OrdinalIgnoreCase))
+				if (String.Equals(projectNodes[idx].FullName, _selectedProjectFile, StringComparison.OrdinalIgnoreCase))
 				{
 					ProjectTreeView.SelectedNode = node;
-					for(TreeNode parentNode = node.Parent; parentNode != rootNode; parentNode = parentNode.Parent)
+					for (TreeNode parentNode = node.Parent; parentNode != rootNode; parentNode = parentNode.Parent)
 					{
 						parentNode.Expand();
 					}
@@ -181,9 +181,9 @@ namespace UnrealGameSync
 
 		static TreeNode FindOrAddChildNode(TreeNode parentNode, string text, int imageIndex)
 		{
-			foreach(TreeNode? childNode in parentNode.Nodes)
+			foreach (TreeNode? childNode in parentNode.Nodes)
 			{
-				if(childNode != null && String.Equals(childNode.Text, text, StringComparison.OrdinalIgnoreCase))
+				if (childNode != null && String.Equals(childNode.Text, text, StringComparison.OrdinalIgnoreCase))
 				{
 					return childNode;
 				}
@@ -203,14 +203,14 @@ namespace UnrealGameSync
 			ILogger logger = serviceProvider.GetRequiredService<ILogger<SelectProjectFromWorkspaceWindow>>();
 
 			ModalTask<List<string>>? pathsTask = PerforceModalTask.Execute(owner, "Finding Projects", "Finding projects, please wait...", perforce, (p, c) => EnumerateWorkspaceProjectsTask.RunAsync(p, workspaceName, c), logger);
-			if(pathsTask == null || !pathsTask.Succeeded)
+			if (pathsTask == null || !pathsTask.Succeeded)
 			{
 				newWorkspacePath = null;
 				return false;
 			}
 
 			using SelectProjectFromWorkspaceWindow selectProjectWindow = new SelectProjectFromWorkspaceWindow(workspaceName, pathsTask.Result, workspacePath);
-			if(selectProjectWindow.ShowDialog() == DialogResult.OK && !String.IsNullOrEmpty(selectProjectWindow._selectedProjectFile))
+			if (selectProjectWindow.ShowDialog() == DialogResult.OK && !String.IsNullOrEmpty(selectProjectWindow._selectedProjectFile))
 			{
 				newWorkspacePath = selectProjectWindow._selectedProjectFile;
 				return true;
@@ -229,7 +229,7 @@ namespace UnrealGameSync
 
 		private void OkBtn_Click(object sender, EventArgs e)
 		{
-			if(ProjectTreeView.SelectedNode != null && ProjectTreeView.SelectedNode.Tag != null)
+			if (ProjectTreeView.SelectedNode != null && ProjectTreeView.SelectedNode.Tag != null)
 			{
 				_selectedProjectFile = (string)ProjectTreeView.SelectedNode.Tag;
 				DialogResult = DialogResult.OK;

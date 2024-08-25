@@ -31,7 +31,6 @@ LLM_DEFINE_TAG(NetObjReplicator, NAME_None, TEXT("Networking"), GET_STATFNAME(ST
 
 DECLARE_CYCLE_STAT(TEXT("Custom Delta Property Rep Time"), STAT_NetReplicateCustomDeltaPropTime, STATGROUP_Game);
 DECLARE_CYCLE_STAT(TEXT("ReceiveRPC"), STAT_NetReceiveRPC, STATGROUP_Game);
-DECLARE_CYCLE_STAT(TEXT("ReceiveRPC_ProcessRemoteFunction"), STAT_NetReceiveRPC_ProcessRemoteFunction, STATGROUP_Game);
 
 static TAutoConsoleVariable<int32> CVarMaxRPCPerNetUpdate(
 	TEXT("net.MaxRPCPerNetUpdate"),
@@ -323,6 +322,7 @@ FObjectReplicator::FObjectReplicator()
 	, bOpenAckCalled(false)
 	, bForceUpdateUnmapped(false)
 	, bHasReplicatedProperties(false)
+	, bSentSubObjectCreation(false)
 	, bSupportsFastArrayDelta(false)
 	, bCanUseNonDirtyOptimization(false)
 	, bDirtyForReplay(true)
@@ -399,7 +399,16 @@ void FObjectReplicator::InitRecentProperties(uint8* Source)
 	// If acting as a server and are IsInternalAck, that means we're recording.
 	// In that case, we don't need to create any receiving state, as no one will be sending data to us.
 	ECreateRepStateFlags Flags = (Connection->IsInternalAck() && bIsServer) ? ECreateRepStateFlags::SkipCreateReceivingState : ECreateRepStateFlags::None;
-	RepState = LocalRepLayout.CreateRepState(Source, RepChangedPropertyTracker, Flags);
+	UE_AUTORTFM_OPEN(
+	{
+		RepState = LocalRepLayout.CreateRepState(Source, RepChangedPropertyTracker, Flags);
+	});
+
+	// RepState not valid at the start of this function so just go back to being a nullptr, and let the memory be cleaned up 
+	UE_AUTORTFM_ONABORT(
+	{
+		RepState = nullptr;
+	});
 
 	if (!bCreateSendingState)
 	{
@@ -602,6 +611,7 @@ void FObjectReplicator::CleanUp()
 	Connection					= nullptr;
 	RemoteFunctions				= nullptr;
 	bHasReplicatedProperties	= false;
+	bSentSubObjectCreation		= false;
 	bOpenAckCalled				= false;
 
 	RepState = nullptr;
@@ -959,6 +969,7 @@ bool FObjectReplicator::ReceivedBunch(FNetBitReader& Bunch, const FReplicationFl
 
 	const bool bIsServer = ConnectionNetDriver->IsServer();
 	const bool bCanDelayRPCs = (CVarDelayUnmappedRPCs.GetValueOnGameThread() > 0) && !bIsServer;
+    const uint32 DriverReplicationFrame = ConnectionNetDriver->ReplicationFrame;
 
 	const FClassNetCache* const ClassCache = ConnectionNetDriver->NetCache->GetClassNetCache(ObjectClass);
 
@@ -1155,7 +1166,7 @@ bool FObjectReplicator::ReceivedBunch(FNetBitReader& Bunch, const FReplicationFl
 			else if (bDelayFunction)
 			{
 				// This invalidates Reader's buffer
-				PendingLocalRPCs.Emplace(FieldCache, RepFlags, Reader, UnmappedGuids);
+				PendingLocalRPCs.Emplace(FieldCache, RepFlags, Reader, DriverReplicationFrame, UnmappedGuids);
 				bOutHasUnmapped = true;
 				bGuidsChanged = true;
 				bForceUpdateUnmapped = true;
@@ -1351,28 +1362,13 @@ bool FObjectReplicator::ReceivedRPC(FNetBitReader& Reader, const FReplicationFla
 		else
 		{
 			AActor* OwningActor = OwningChannel->Actor;
+			UObject* const SubObject = Object != OwningChannel->Actor ? Object : nullptr;
 
-			if (Connection->Driver->ShouldForwardFunction(OwningActor, Function, Parms))
-			{
-				FWorldContext* const Context = GEngine->GetWorldContextFromWorld(Connection->Driver->GetWorld());
-				if (Context != nullptr)
-				{
-					UObject* const SubObject = Object != OwningChannel->Actor ? Object : nullptr;
-
-					for (FNamedNetDriver& Driver : Context->ActiveNetDrivers)
-					{
-						if (Driver.NetDriver != nullptr && (Driver.NetDriver != Connection->Driver) && Driver.NetDriver->ShouldReplicateFunction(OwningActor, Function))
-						{
-							SCOPE_CYCLE_COUNTER(STAT_NetReceiveRPC_ProcessRemoteFunction);
-							Driver.NetDriver->ProcessRemoteFunction(OwningActor, Function, Parms, nullptr, nullptr, SubObject);
-						}
-					}
-				}
-			}
+			// Forward the function call.
+			Connection->Driver->ForwardRemoteFunction(OwningActor, SubObject, Function, Parms);
 
 			// Reset errors from replay driver
 			RPC_ResetLastFailedReason();
-
 
 			{
 				UE::Net::FScopedNetContextRPC CallingRPC;
@@ -1592,7 +1588,7 @@ void FObjectReplicator::ReplicateCustomDeltaProperties( FNetBitWriter & Bunch, F
 	};
 
 	// Initialize a map of which conditions are valid
-	const TStaticBitArray<COND_Max> ConditionMap = FSendingRepState::BuildConditionMapFromRepFlags(RepFlags);
+	const TStaticBitArray<COND_Max> ConditionMap = UE::Net::BuildConditionMapFromRepFlags(RepFlags);
 
 	// Make sure net field export group is registered
 	FNetFieldExportGroup* NetFieldExportGroup = OwningChannel->GetOrCreateNetFieldExportGroupForClassNetCache( Object );
@@ -1767,6 +1763,9 @@ bool FObjectReplicator::CanSkipUpdate(FReplicationFlags RepFlags)
 	const FRepChangelistState& RepChangelistState = *ChangelistMgr->GetRepChangelistState();
 
 	bool bCanSkip = true;
+
+	// Is the pushmodel handle properly assigned.
+	bCanSkip = bCanSkip && RepChangelistState.HasValidPushModelHandle();
 
 	// Have the RepFlags changed ?
 	bCanSkip = bCanSkip && SendingRepState.RepFlags.Value == RepFlags.Value; 
@@ -2361,6 +2360,8 @@ void FObjectReplicator::UpdateUnmappedObjects(bool & bOutHasMoreUnmapped)
 
 	check(RepLayout);
 
+	const uint32 CurrentReplicationFrame = Connection->GetDriver()->ReplicationFrame;
+
 	const FRepLayout& LocalRepLayout = *RepLayout;
 
 	FNetSerializeCB NetSerializeCB(Connection->Driver);
@@ -2470,7 +2471,17 @@ void FObjectReplicator::UpdateUnmappedObjects(bool & bOutHasMoreUnmapped)
 			}
 			else
 			{
-				// We executed, remove this one and continue;
+				// Track RPCs delayed multiple frames
+				const uint32 DelayedFrames = (CurrentReplicationFrame >= Pending.FrameQueuedAt) ? (CurrentReplicationFrame - Pending.FrameQueuedAt) : 0u;
+				if (DelayedFrames > 0)
+				{
+					UE_LOG(LogNet, Verbose, TEXT("FObjectReplicator::UpdateUnmappedObjects: RPC %s on Object %s was finally executed after being delayed for %u frames (~%f ms)"),
+						*FunctionName, *Object->GetFullName(), DelayedFrames, 
+						DelayedFrames*(1000.f / ((GEngine->GetMaxTickRate(0.0f, true) > 0.0f) ? GEngine->GetMaxTickRate(0.0f, true) : 30.f)));
+					Connection->TotalDelayedRPCs++;
+					Connection->TotalDelayedRPCsFrameCount += DelayedFrames;
+				}
+				// We executed, remove this one and continue
 				PendingLocalRPCs.RemoveAt(RPCIndex);
 				RPCIndex--;
 			}

@@ -130,7 +130,7 @@ float3 ApplyClipping(float3 Position)
 	{
 		for (uint i = 0; i < NumClippingVolumes; i++)
 		{
-			float3 DeltaPosition = LWCToFloat(TransformLocalToWorld(Position)).xyz - ClippingVolume[i][0].xyz;
+			float3 DeltaPosition = DFDemote(TransformLocalToWorld(Position)).xyz - ClippingVolume[i][0].xyz;
 			bool bInsideClippingBox = abs(dot(DeltaPosition, ClippingVolume[i][1].xyz)) <= ClippingVolume[i][1].w && abs(dot(DeltaPosition, ClippingVolume[i][2].xyz)) <= ClippingVolume[i][2].w && abs(dot(DeltaPosition, ClippingVolume[i][3].xyz)) <= ClippingVolume[i][3].w;
 
 			if (ClippingVolume[i][0][3] == 1)
@@ -238,7 +238,7 @@ float CalcSpriteSize(float3 Position)
 			float3 CenterRelativeLocation = Position - NodeCenter;
 			uint ChildNodeIndex = (CenterRelativeLocation.x > 0 ? 4 : 0) + (CenterRelativeLocation.y > 0 ? 2 : 0) + (CenterRelativeLocation.z > 0);
 
-			if ((ChildrenBitmask & (1 << ChildNodeIndex)) == 0)
+			if ((ChildrenBitmask & (1u << ChildNodeIndex)) == 0)
 			{
 				break;
 			}
@@ -251,7 +251,7 @@ float CalcSpriteSize(float3 Position)
 					break;
 				}
 
-				if ((ChildrenBitmask & (1 << i)) != 0)
+				if ((ChildrenBitmask & (1u << i)) != 0)
 				{
 					Idx++;
 				}
@@ -424,7 +424,7 @@ float3 VertexFactoryGetWorldNormal(FVertexFactoryInput Input, FVertexFactoryInte
 // @return previous translated world position
 float4 VertexFactoryGetPreviousWorldPosition(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates)
 {
-    return mul(float4(Intermediates.Position, 1), LWCMultiplyTranslation(Intermediates.SceneData.InstanceData.PrevLocalToWorld, ResolvedView.PrevPreViewTranslation));
+    return mul(float4(Intermediates.Position, 1), DFMultiplyTranslationDemote(Intermediates.SceneData.InstanceData.PrevLocalToWorld, ResolvedView.PrevPreViewTranslation));
 }
 
 /** Converts from vertex factory specific input to a FMaterialVertexParameters, which is used by vertex shader material inputs. */
@@ -441,6 +441,8 @@ FMaterialVertexParameters GetMaterialVertexParameters(FVertexFactoryInput Input,
 #if NUM_MATERIAL_TEXCOORDS_VERTEX
 	Result.TexCoords[0] = PrecomputedUV_Quad[Input.VertexId % 4];
 #endif
+
+	Result.LWCData = MakeMaterialLWCData(Result);
 
     return Result;
 }
@@ -473,7 +475,7 @@ float4 VertexFactoryGetInstanceHitProxyId(FVertexFactoryInput Input, FVertexFact
 float4 VertexFactoryGetTranslatedPrimitiveVolumeBounds(FVertexFactoryInterpolantsVSToPS Interpolants)
 {
 	FPrimitiveSceneData PrimitiveData = GetPrimitiveDataFromUniformBuffer();
-	return float4(LWCToFloat(LWCAdd(PrimitiveData.ObjectWorldPosition, ResolvedView.PreViewTranslation)), PrimitiveData.ObjectRadius);
+	return float4(DFFastToTranslatedWorld(PrimitiveData.ObjectWorldPosition, ResolvedView.PreViewTranslation), PrimitiveData.ObjectRadius);
 }
 
 #if NEEDS_VERTEX_FACTORY_INTERPOLATION

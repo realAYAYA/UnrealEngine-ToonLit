@@ -13,13 +13,15 @@
 	"EnabledByDefault" : true,
 	"CanContainContent" : false,
 	"IsBetaVersion" : false,
-	"Installed" : false,
+	"Installed": false,
+	"SupportedPrograms":  ["LiveLinkHub"],
 	"Modules" :
 	[
 		{
-			"Name" : "ContentBrowserAssetDataSource",
-			"Type" : "Editor",
-			"LoadingPhase" : "Default"
+			"Name": "ContentBrowserAssetDataSource",
+			"Type": "Editor",
+			"LoadingPhase": "Default",
+			"ProgramAllowlist": [ "LiveLinkHub" ]
 		}
 	]
 }

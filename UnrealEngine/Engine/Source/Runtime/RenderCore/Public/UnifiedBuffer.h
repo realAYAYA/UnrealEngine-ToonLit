@@ -87,7 +87,7 @@ public:
 	enum
 	UE_DEPRECATED(5.3, "Use PRIMITIVE_SCENE_DATA_STRIDE in SceneDefinitions.h instead.")
 	{
-		PrimitiveDataStrideInFloat4s = 41
+		PrimitiveDataStrideInFloat4s = 42
 	};
 
 	FByteAddressBuffer ScatterBuffer;

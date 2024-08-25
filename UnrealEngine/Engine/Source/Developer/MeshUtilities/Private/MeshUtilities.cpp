@@ -194,11 +194,36 @@ void CalculateTriangleTangentInternal(const FVector3f& VertexPosA, const FVector
 			FPlane4f(0, 0, 0, 1)
 		);
 
-		// Use InverseSlow to catch singular matrices.  Inverse can miss this sometimes.
-		const FMatrix44f TextureToLocal = ParameterToTexture.Inverse() * ParameterToLocal;
+		if (!FMath::IsNearlyZero(ParameterToTexture.Determinant()))
+		{
+			// Use InverseSlow to catch singular matrices.  Inverse can miss this sometimes.
+			const FMatrix44f TextureToLocal = ParameterToTexture.Inverse() * ParameterToLocal;
 
-		OutTangents[0] = (TextureToLocal.TransformVector(FVector3f(1, 0, 0)).GetSafeNormal());
-		OutTangents[1] = (TextureToLocal.TransformVector(FVector3f(0, 1, 0)).GetSafeNormal());
+			OutTangents[0] = (TextureToLocal.TransformVector(FVector3f(1, 0, 0)).GetSafeNormal());
+			OutTangents[1] = (TextureToLocal.TransformVector(FVector3f(0, 1, 0)).GetSafeNormal());
+		}
+		else
+		{
+			// Use the Duff & Frisvad algorithm (see Duff 2017 in JCGT) to construct a consistent tangent from a
+			// single normal vector. 
+			if (Normal.Z < 0.0f)
+			{
+				const float A = 1.0f / (1.0f - Normal.Z);
+				const float B = Normal.X * Normal.Y * A;
+
+				OutTangents[0] = FVector3f(1.0f - Normal.X * Normal.X * A, -B, Normal.X);
+				OutTangents[1] = FVector3f(B, Normal.Y * Normal.Y * A - 1.0f, -Normal.Y);
+			}
+			else
+			{
+				const float A = 1.0f / (1.0f + Normal.Z);
+				const float B = -Normal.X * Normal.Y * A;
+
+				OutTangents[0] = FVector3f(1.0f - Normal.X * Normal.X * A, B, -Normal.X);
+				OutTangents[1] = FVector3f(B, 1.0f - Normal.Y * Normal.Y * A, -Normal.Y);
+			}
+		}
+
 		OutTangents[2] = (Normal);
 
 		FVector3f::CreateOrthonormalBasis(
@@ -2390,7 +2415,7 @@ void FMeshUtilities::BuildStaticMeshVertexAndIndexBuffers(
 	}
 
 	// Remove working vertex
-	OutVertices.Pop(false);
+	OutVertices.Pop(EAllowShrinking::No);
 }
 
 void FMeshUtilities::CacheOptimizeVertexAndIndexBuffer(
@@ -3474,7 +3499,7 @@ public:
 			FaceAdded[FaceIndex] = true;
 			while (TriangleQueue.Num() > 0)
 			{
-				int32 CurrentTriangleIndex = TriangleQueue.Pop(false);
+				int32 CurrentTriangleIndex = TriangleQueue.Pop(EAllowShrinking::No);
 				FaceIndexToPatchIndex[CurrentTriangleIndex] = PatchIndex;
 				AddAdjacentFace(BuildData, FaceAdded, VertexIndexToAdjacentFaces, CurrentTriangleIndex, TriangleQueue, bConnectByEdge);
 			}
@@ -3855,17 +3880,17 @@ public:
 				CornerNormal[CornerIndex].Normalize();
 				if (!bUseMikktSpace)
 				{
-					CornerTangentX[CornerIndex].Normalize();
-					CornerTangentY[CornerIndex].Normalize();
-
-					// Gram-Schmidt orthogonalization
-					CornerTangentY[CornerIndex] -= CornerTangentX[CornerIndex] * (CornerTangentX[CornerIndex] | CornerTangentY[CornerIndex]);
-					CornerTangentY[CornerIndex].Normalize();
-
-					CornerTangentX[CornerIndex] -= CornerNormal[CornerIndex] * (CornerNormal[CornerIndex] | CornerTangentX[CornerIndex]);
-					CornerTangentX[CornerIndex].Normalize();
-					CornerTangentY[CornerIndex] -= CornerNormal[CornerIndex] * (CornerNormal[CornerIndex] | CornerTangentY[CornerIndex]);
-					CornerTangentY[CornerIndex].Normalize();
+					// If Skeletal_ComputeTriangleTangents somehow didn't manage to create any tangents for this point and its neighbors,
+					// just feed the orthonormal basis computation something. 
+					if (CornerTangentX[CornerIndex].IsNearlyZero())
+					{
+						CornerTangentX[CornerIndex] = FVector3f::XAxisVector;
+					}
+					if (CornerTangentY[CornerIndex].IsNearlyZero())
+					{
+						CornerTangentY[CornerIndex] = FVector3f::YAxisVector;
+					}
+					FVector3f::CreateOrthonormalBasis(CornerTangentX[CornerIndex], CornerTangentY[CornerIndex], CornerNormal[CornerIndex]);
 				}
 			}
 
@@ -5931,22 +5956,23 @@ void FMeshUtilities::GenerateRuntimeSkinWeightData(
 	}
 }
 
-void FMeshUtilities::CreateImportDataFromLODModel(USkeletalMesh* SkeletalMesh) const
+void FMeshUtilities::CreateImportDataFromLODModel(USkeletalMesh* SkeletalMesh, bool bInResetReductionAsNeeded) const
 {
 	check(IsInGameThread());
 
 	for (int32 LodIndex = 0; LodIndex < SkeletalMesh->GetLODNum(); LodIndex++)
 	{
-		const FSkeletalMeshLODInfo* ThisLODInfo = SkeletalMesh->GetLODInfo(LodIndex);
+		FSkeletalMeshLODInfo* ThisLODInfo = SkeletalMesh->GetLODInfo(LodIndex);
 
 		check(ThisLODInfo);
-		const bool bRawDataEmpty = SkeletalMesh->IsLODImportedDataEmpty(LodIndex);
-		const bool bRawBuildDataAvailable = SkeletalMesh->IsLODImportedDataBuildAvailable(LodIndex);
-		if (!bRawDataEmpty && bRawBuildDataAvailable)
+		if (SkeletalMesh->HasMeshDescription(LodIndex))
 		{
 			//No need to create import data if we already have some
 			continue;
 		}
+
+		// If the mesh was not pulled out of the reduction data, we need to reset the LOD settings
+		// so that the mesh doesn't get reduced again if it gets regenerated.
 		const bool bReductionActive = SkeletalMesh->IsReductionActive(LodIndex);
 		const bool bInlineReduction = (ThisLODInfo->ReductionSettings.BaseLOD == LodIndex);
 		if (bReductionActive && !bInlineReduction)
@@ -6004,6 +6030,10 @@ void FMeshUtilities::CreateImportDataFromLODModel(USkeletalMesh* SkeletalMesh) c
 					ExistingMorphTarget->PopulateDeltas(MorphTargetDeltas, LodIndex, ToUpdateLODModel.Sections, ThisLODInfo->BuildSettings.bRecomputeNormals, false, ThisLODInfo->BuildSettings.MorphThresholdPosition);
 				}
 			}
+			
+			// The model got pulled out of the reduction storage, don't reset the LOD reduction settings,
+			// since we may want to regenerate the mesh to those settings.
+			bInResetReductionAsNeeded = false;
 		}
 
 		FSkeletalMeshLODModel* LODModel = &(SkeletalMesh->GetImportedModel()->LODModels[LodIndex]);
@@ -6015,12 +6045,9 @@ void FMeshUtilities::CreateImportDataFromLODModel(USkeletalMesh* SkeletalMesh) c
 		}
 
 		FSkeletalMeshImportData ImportData;
-		ImportData.bDiffPose = false;
 		ImportData.bHasNormals = true;
 		ImportData.bHasTangents = true;
-		ImportData.bUseT0AsRefPose = false;
 		ImportData.bHasVertexColors = SkeletalMesh->GetHasVertexColors();
-		ImportData.bKeepSectionsSeparate = false;
 
 		TArray<FSkeletalMaterial>& SKMaterials = SkeletalMesh->GetMaterials();
 		ImportData.Materials.Reserve(SkeletalMesh->GetMaterials().Num());
@@ -6225,9 +6252,24 @@ void FMeshUtilities::CreateImportDataFromLODModel(USkeletalMesh* SkeletalMesh) c
 			}
 		}
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		SkeletalMesh->SaveLODImportedData(LodIndex, ImportData);
-		SkeletalMesh->SetLODImportedDataVersions(LodIndex, ESkeletalMeshGeoImportVersions::LatestVersion, ESkeletalMeshSkinningImportVersions::LatestVersion);
-		UE_ASSET_LOG(LogSkeletalMesh, Display, SkeletalMesh, TEXT("FMeshUtilities::CreateImportDataFromLODModel: ImportData created for LOD %d"), LodIndex);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+		
+		if (bInResetReductionAsNeeded)
+		{
+			FSkeletalMeshOptimizationSettings& ReductionSettings = ThisLODInfo->ReductionSettings;
+			
+			//Remove the reduction settings
+			ReductionSettings.NumOfTrianglesPercentage = 1.0f;
+			ReductionSettings.NumOfVertPercentage = 1.0f;
+			ReductionSettings.MaxNumOfTrianglesPercentage = MAX_uint32;
+			ReductionSettings.MaxNumOfVertsPercentage = MAX_uint32;
+			ReductionSettings.TerminationCriterion = SMTC_NumOfTriangles;
+			ThisLODInfo->bHasBeenSimplified = false;
+		}
+		
+		UE_ASSET_LOG(LogSkeletalMesh, Display, SkeletalMesh, TEXT("Import data converted for LOD %d"), LodIndex);
 	}
 }
 

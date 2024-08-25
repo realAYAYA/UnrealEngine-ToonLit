@@ -8,6 +8,7 @@
 #include "Debugger/StateTreeTraceTypes.h"
 #include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
+#include "StateTreeDelegates.h"
 #include "StateTreeModule.h"
 #include "Trace/StoreClient.h"
 #include "TraceServices/AnalysisService.h"
@@ -77,10 +78,21 @@ FStateTreeDebugger::FStateTreeDebugger()
 	: StateTreeModule(FModuleManager::GetModuleChecked<IStateTreeModule>("StateTreeModule"))
 	, ScrubState(EventCollections)
 {
+	TracingStateChangedHandle = UE::StateTree::Delegates::OnTracingStateChanged.AddLambda([this](const bool bTracesEnabled)
+		{
+			// StateTree traces got enabled in the current process so let's analyse it if not already analysing something.
+			if (bTracesEnabled && !IsAnalysisSessionActive())
+			{
+				RequestAnalysisOfLatestTrace();
+			}
+		});
 }
 
 FStateTreeDebugger::~FStateTreeDebugger()
 {
+	UE::StateTree::Delegates::OnTracingStateChanged.Remove(TracingStateChangedHandle);
+	TracingStateChangedHandle.Reset();
+
 	StopSessionAnalysis();
 }
 
@@ -101,7 +113,7 @@ void FStateTreeDebugger::Tick(const float DeltaTime)
 	
 	UpdateInstances();
 
-	if (bSessionAnalysisPaused == false)
+	if (bSessionAnalysisPaused == false && StateTreeAsset.IsValid())
 	{
 		SyncToCurrentSessionDuration();
 	}
@@ -202,30 +214,19 @@ void FStateTreeDebugger::UpdateInstances()
 bool FStateTreeDebugger::RequestAnalysisOfEditorSession()
 {
 	// Get snapshot of current trace to help identify the next live one
-	LastLiveSessionId = INDEX_NONE;
 	TArray<FTraceDescriptor> TraceDescriptors;
 	GetLiveTraces(TraceDescriptors);
+	LastLiveSessionId = TraceDescriptors.Num() ? TraceDescriptors.Last().TraceId : INDEX_NONE;
 
 	// 0 is the invalid value used for Trace Id
 	constexpr int32 InvalidTraceId = 0;
 	int32 ActiveTraceId = InvalidTraceId;
 
-	// StartTraces returns true if a new connection was created. In this case
-	// we try to start an analysis on that new connection as soon as possible.
-	// Otherwise it might have been able to use an active connection in which
-	// case it was returned in the output parameter.
+	// StartTraces returns true if a new connection was created. In this case we will receive OnTracingStateChanged
+	// and we'll try to start an analysis on that new connection as soon as possible.
+	// Otherwise it might have been able to use an active connection in which case it was returned in the output parameter.
 	if (StateTreeModule.StartTraces(ActiveTraceId))
 	{
-		// Invalidate our current active session
-		ActiveSessionTraceDescriptor = FTraceDescriptor();
-
-		// Stop current analysis if any
-		StopSessionAnalysis();
-
-		LastLiveSessionId = TraceDescriptors.Num() ? TraceDescriptors.Last().TraceId : INDEX_NONE;
-
-		// This won't succeed yet but will schedule our next retry
-		TryStartNewLiveSessionAnalysis(1.0f);
 		return true;
 	}
 
@@ -243,6 +244,19 @@ bool FStateTreeDebugger::RequestAnalysisOfEditorSession()
 
 	return false;
 }
+
+void FStateTreeDebugger::RequestAnalysisOfLatestTrace()
+{
+	// Invalidate our current active session
+	ActiveSessionTraceDescriptor = FTraceDescriptor();
+
+	// Stop current analysis if any
+	StopSessionAnalysis();
+
+	// This might not succeed immediately but will schedule next retry if necessary
+	TryStartNewLiveSessionAnalysis(1.0f);
+}
+
 
 bool FStateTreeDebugger::TryStartNewLiveSessionAnalysis(const float RetryPollingDuration)
 {
@@ -266,7 +280,6 @@ bool FStateTreeDebugger::TryStartNewLiveSessionAnalysis(const float RetryPolling
 	}
 	
 	RetryLoadNextLiveSessionTimer = RetryPollingDuration;
-	ensure(RetryLoadNextLiveSessionTimer > 0);
 	UE_CLOG(RetryLoadNextLiveSessionTimer > 0, LogStateTree, Log, TEXT("Unable to start analysis for the most recent live session."));
 
 	return false;
@@ -345,7 +358,7 @@ void FStateTreeDebugger::SetScrubStateCollectionIndex(const int32 EventCollectio
 {
 	ScrubState.SetEventCollectionIndex(EventCollectionIndex);
 
-	OnScrubStateChanged.Execute(ScrubState);
+	OnScrubStateChanged.ExecuteIfBound(ScrubState);
 
 	RefreshActiveStates();
 }
@@ -450,7 +463,7 @@ void FStateTreeDebugger::SetScrubTime(const double ScrubTime)
 {
 	if (ScrubState.SetScrubTime(ScrubTime))
 	{
-		OnScrubStateChanged.Execute(ScrubState);
+		OnScrubStateChanged.ExecuteIfBound(ScrubState);
 
 		RefreshActiveStates();
 	}
@@ -494,7 +507,7 @@ FText FStateTreeDebugger::DescribeInstance(const UE::StateTreeDebugger::FInstanc
 	return FText::FromString(LexToString(InstanceDesc));
 }
 
-void FStateTreeDebugger::SetActiveStates(const TConstArrayView<FStateTreeStateHandle> NewActiveStates)
+void FStateTreeDebugger::SetActiveStates(const FStateTreeTraceActiveStates& NewActiveStates)
 {
 	ActiveStates = NewActiveStates;
 	OnActiveStatesChanged.ExecuteIfBound(ActiveStates);
@@ -502,16 +515,16 @@ void FStateTreeDebugger::SetActiveStates(const TConstArrayView<FStateTreeStateHa
 
 void FStateTreeDebugger::RefreshActiveStates()
 {
-	TArray<FStateTreeStateHandle> NewActiveStates;
-
 	if (ScrubState.IsPointingToValidActiveStates())
 	{
 		const UE::StateTreeDebugger::FInstanceEventCollection& EventCollection = EventCollections[ScrubState.GetEventCollectionIndex()];
 		const int32 EventIndex = EventCollection.ActiveStatesChanges[ScrubState.GetActiveStatesIndex()].EventIndex;
-		NewActiveStates = EventCollection.Events[EventIndex].Get<FStateTreeTraceActiveStatesEvent>().ActiveStates;
+		SetActiveStates(EventCollection.Events[EventIndex].Get<FStateTreeTraceActiveStatesEvent>().ActiveStates);
 	}
-
-	SetActiveStates(NewActiveStates);
+	else
+	{
+		SetActiveStates(FStateTreeTraceActiveStates());	
+	}
 }
 
 bool FStateTreeDebugger::CanStepBackToPreviousStateWithEvents() const

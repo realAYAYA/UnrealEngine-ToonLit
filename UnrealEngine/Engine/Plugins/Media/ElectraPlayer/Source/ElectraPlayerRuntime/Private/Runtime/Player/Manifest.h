@@ -272,15 +272,29 @@ namespace Electra
 		 */
 		virtual FTimeRange GetSeekableTimeRange() const = 0;
 
+		enum class EPlaybackRangeType
+		{
+			/**
+			 * Initial playback range as may be defined using `#t=s,e` URL fragment parameter.
+			 * This is used only on first playstart and is canceled when a Seek() is performed.
+			 */
+			TemporaryPlaystartRange,
+			/**
+			 * Fixed playback range that may be defined using `#r=s,e` URL fragment parameter.
+			 * This is a non-standard parameter. The specified range will be locked in place
+			 * and any Seek() can only be performed inside this range.
+			 */
+			LockedPlaybackRange
+		};
 		/**
 		 * Returns the playback range on the timeline, which is a subset of the total
 		 * time range. This may be set through manifest internal means or by URL fragment
 		 * parameters where permissable (eg. example.mp4#t=22,50).
 		 * If start or end are not specified they will be set to invalid.
-		 * 
+		 *
 		 * @return Optionally set time range to which playback is restricted.
 		 */
-		virtual FTimeRange GetPlaybackRange() const = 0;
+		virtual FTimeRange GetPlaybackRange(EPlaybackRangeType InRangeType) const = 0;
 
 		/**
 		 * Returns the timestamps of the segments from the video or audio track (if no video is present).
@@ -307,6 +321,17 @@ namespace Electra
 		 * Clears the internal default start time so it will not be used again.
 		 */
 		virtual void ClearDefaultStartTime() = 0;
+
+		/**
+		 * Returns the playback end time as defined by the presentation itself.
+		 * If the presentation has no preferred end time an invalid value is returned.
+		 */
+		virtual FTimeValue GetDefaultEndTime() const = 0;
+
+		/**
+		 * Clears the internal default end time so it will not be used again.
+		 */
+		virtual void ClearDefaultEndTime() = 0;
 
 		//! Returns track metadata. For period based presentations the streams can be different per period in which case the metadata of the first period is returned.
 		virtual void GetTrackMetadata(TArray<FTrackMetadata>& OutMetadata, EStreamType StreamType) const = 0;
@@ -545,7 +570,7 @@ namespace Electra
 		{
 			return ValidFrom;
 		}
-		
+
 		TSharedPtrTS<UtilsMP4::FMetadataParser> GetMetadata() const
 		{
 			return Metadata;

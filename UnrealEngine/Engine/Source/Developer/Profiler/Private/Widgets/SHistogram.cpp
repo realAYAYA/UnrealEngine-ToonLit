@@ -59,7 +59,7 @@ int32 SHistogram::OnPaint( const FPaintArgs& Args, const FGeometry& AllottedGeom
 	const float LabelBuffer = 25.0f;
 
 	// draw the grid lines
-	uint32 CountX = (uint32)((AllottedGeometry.Size.X-LabelBuffer*2.0f) / Description.GetBinCount());
+	uint32 CountX = (uint32)((AllottedGeometry.Size.X-LabelBuffer*2.0f) / (float)Description.GetBinCount());
 	float StartX = LabelBuffer;
 	static const FLinearColor GridColor = FLinearColor(0.0f,0.0f,0.0f, 0.25f);
 	static const FLinearColor GridTextColor = FLinearColor(1.0f,1.0f,1.0f, 0.25f);
@@ -69,11 +69,11 @@ int32 SHistogram::OnPaint( const FPaintArgs& Args, const FGeometry& AllottedGeom
 	TArray<FVector2D> LinePoints;
 
 	// draw the histogram box
-	LinePoints.Add( FVector2D(StartX-1, LabelBuffer-1) );
-	LinePoints.Add( FVector2D(StartX + Description.GetBinCount()*CountX+1, LabelBuffer-1) );
-	LinePoints.Add( FVector2D(StartX + Description.GetBinCount()*CountX+1, AllottedGeometry.GetLocalSize().Y - LabelBuffer+1) );
-	LinePoints.Add( FVector2D(StartX-1, AllottedGeometry.Size.Y - LabelBuffer+1) );
-	LinePoints.Add( FVector2D(StartX-1, LabelBuffer-1) );
+	LinePoints.Add( FVector2D(StartX - 1, LabelBuffer - 1) );
+	LinePoints.Add( FVector2D(StartX + (float)Description.GetBinCount() * (float)CountX + 1, LabelBuffer - 1) );
+	LinePoints.Add( FVector2D(StartX + (float)Description.GetBinCount() * (float)CountX + 1, AllottedGeometry.GetLocalSize().Y - LabelBuffer + 1) );
+	LinePoints.Add( FVector2D(StartX - 1, AllottedGeometry.Size.Y - LabelBuffer + 1) );
+	LinePoints.Add( FVector2D(StartX - 1, LabelBuffer - 1) );
 	FSlateDrawElement::MakeLines(
 		OutDrawElements,
 		LayerId,
@@ -88,7 +88,7 @@ int32 SHistogram::OnPaint( const FPaintArgs& Args, const FGeometry& AllottedGeom
 	// draw the vertical lines
 	for (int32 Index = 0; Index < Description.GetBinCount(); ++Index)
 	{
-		float MarkerPosX = StartX + Index * CountX;
+		float MarkerPosX = StartX + (float)(Index * CountX);
 		LinePoints.Add( FVector2D(MarkerPosX, LabelBuffer-1) );
 		LinePoints.Add( FVector2D(MarkerPosX, AllottedGeometry.GetLocalSize().Y - LabelBuffer+1) );
 		FSlateDrawElement::MakeLines(
@@ -102,7 +102,7 @@ int32 SHistogram::OnPaint( const FPaintArgs& Args, const FGeometry& AllottedGeom
 		LinePoints.Empty();
 
 		// Bottom - X-Axes numbers, starting from MinValue
-		const FString XLabel = FString::Printf(TEXT("%.0f"), Description.MinValue + Index*Description.Interval);
+		const FString XLabel = FString::Printf(TEXT("%.0f"), Description.MinValue + (float)Index * Description.Interval);
 		float FontCharWidth = static_cast<float>(FontMeasureService->Measure(XLabel, SummaryFont).X);
 		FSlateDrawElement::MakeText(
 			OutDrawElements, 
@@ -122,9 +122,9 @@ int32 SHistogram::OnPaint( const FPaintArgs& Args, const FGeometry& AllottedGeom
 	float StartY = LabelBuffer;
 	for (int32 Index = 0; Index < 5; ++Index)
 	{
-		float MarkerPosY = StartY + Index * CountY;
+		float MarkerPosY = StartY + (float)Index * CountY;
 		LinePoints.Add( FVector2D(StartX, MarkerPosY) );
-		LinePoints.Add( FVector2D(StartX + Description.GetBinCount()*CountX, MarkerPosY) );
+		LinePoints.Add( FVector2D(StartX + (float)(Description.GetBinCount() * CountX), MarkerPosY) );
 		FSlateDrawElement::MakeLines(
 			OutDrawElements,
 			LayerId,
@@ -154,7 +154,7 @@ int32 SHistogram::OnPaint( const FPaintArgs& Args, const FGeometry& AllottedGeom
 
 	for (int32 Index = 0; Index < Description.GetBinCount(); ++Index)
 	{
-		float MarkerPosX = StartX + Index * CountX;
+		float MarkerPosX = StartX + (float)(Index * CountX);
 		float SizeY = (float)Description.GetCount(Index) / (float)Description.GetTotalCount() * ((float)AllottedGeometry.GetLocalSize().Y - LabelBuffer*2.0f);
 		FSlateDrawElement::MakeBox(
 			OutDrawElements,

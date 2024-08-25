@@ -21,6 +21,11 @@
 #include <cstdint>
 #include <numeric>
 #ifdef _MSC_VER
+#if (_MSC_VER >= 1900)
+#include <span>
+#endif
+#endif
+#ifdef _MSC_VER
     #pragma warning(pop)
 #endif
 
@@ -91,7 +96,7 @@ void RigInstanceImpl::setGUIControlValues(const float* values) {
     #if (defined(_MSC_VER) && _MSC_VER >= 1900)
         std::copy(values,
                   values + guiControlCount,
-                  stdext::make_checked_array_iterator(guiControlBuffer.data(), guiControlBuffer.size()));
+                  std::span{guiControlBuffer.data(), guiControlBuffer.size()}.begin());
     #else
         std::copy(values, values + guiControlCount, guiControlBuffer.begin());
     #endif
@@ -123,7 +128,7 @@ void RigInstanceImpl::setRawControlValues(const float* values) {
     #if (defined(_MSC_VER) && _MSC_VER >= 1900)
         std::transform(values,
                        values + rawControlCount,
-                       stdext::make_checked_array_iterator(inputBuffer.data(), inputBuffer.size()),
+                       std::span{inputBuffer.data(), inputBuffer.size()}.begin(),
                        clamper);
     #else
         std::transform(values, values + rawControlCount, inputBuffer.begin(), clamper);

@@ -57,11 +57,12 @@ struct STATETREEMODULE_API FStateTreeReference
 	/**
 	 * Enforce self parameters to be compatible with those exposed by the selected StateTree asset.
 	 */
-	void SyncParameters() { SyncParametersToMatchStateTree(Parameters); }
+	void SyncParameters();
 
 	/**
 	 * Sync provided parameters to be compatible with those exposed by the selected StateTree asset.
 	 */
+	UE_DEPRECATED(5.4, "Use SyncParameters() instead.")
 	void SyncParametersToMatchStateTree(FInstancedPropertyBag& ParametersToSync) const;
 
 	/**
@@ -72,14 +73,43 @@ struct STATETREEMODULE_API FStateTreeReference
 
 	/** Sync parameters to match the asset if required. */
 	void ConditionallySyncParameters() const;
-	
+
+	/** @return true if the property of specified ID is overridden. */
+	bool IsPropertyOverridden(const FGuid PropertyID) const
+	{
+		return PropertyOverrides.Contains(PropertyID);
+	}
+
+	/** Sets the override status of specified property by ID. */
+	void SetPropertyOverridden(const FGuid PropertyID, const bool bIsOverridden);
+
+	bool Serialize(FStructuredArchive::FSlot Slot);
+	void PostSerialize(const FArchive& Ar);
+
 protected:
 	UPROPERTY(EditAnywhere, Category = "")
 	TObjectPtr<UStateTree> StateTree = nullptr;
 
 	UPROPERTY(EditAnywhere, Category = "", meta = (FixedLayout))
 	FInstancedPropertyBag Parameters;
+
+	/** Array of overridden properties. Non-overridden properties will inherit the values from the StateTree default parameters. */
+	UPROPERTY(EditAnywhere, Category = "")
+	TArray<FGuid> PropertyOverrides;
+
+	friend class FStateTreeReferenceDetails;
 };
+
+template<>
+struct TStructOpsTypeTraits<FStateTreeReference> : public TStructOpsTypeTraitsBase2<FStateTreeReference>
+{
+	enum
+	{
+		WithStructuredSerializer = true,
+		WithPostSerialize = true,
+	};
+};
+
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
 #include "StateTreeTypes.h"

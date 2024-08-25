@@ -8,6 +8,8 @@ void SaveDefaultPlatformFile();
 void UsePlatformFileStubIfRequired();
 void UseDefaultPlatformFile();
 
+void SetProjectNameAndDirectory();
+
 void InitAllThreadPoolsEditorEx(bool MultiThreaded);
 
 void InitOutputDevicesEx();

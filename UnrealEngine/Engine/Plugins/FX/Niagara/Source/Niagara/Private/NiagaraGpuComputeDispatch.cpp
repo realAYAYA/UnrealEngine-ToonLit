@@ -246,10 +246,10 @@ void FNiagaraGpuComputeDispatch::AddGpuComputeProxy(FNiagaraSystemGpuComputeProx
 	ComputeProxy->ComputeDispatchIndex = ProxiesPerStage[TickStage].Num();
 	ProxiesPerStage[TickStage].Add(ComputeProxy);
 
-	NumProxiesThatRequireDistanceFieldData	+= ComputeProxy->RequiresDistanceFieldData() ? 1 : 0;
-	NumProxiesThatRequireDepthBuffer		+= ComputeProxy->RequiresDepthBuffer() ? 1 : 0;
-	NumProxiesThatRequireEarlyViewData		+= ComputeProxy->RequiresEarlyViewData() ? 1 : 0;
-	NumProxiesThatRequireRayTracingScene	+= ComputeProxy->RequiresRayTracingScene() ? 1 : 0;
+	NumProxiesThatRequireGlobalDistanceField	+= ComputeProxy->RequiresGlobalDistanceField() ? 1 : 0;
+	NumProxiesThatRequireDepthBuffer			+= ComputeProxy->RequiresDepthBuffer() ? 1 : 0;
+	NumProxiesThatRequireEarlyViewData			+= ComputeProxy->RequiresEarlyViewData() ? 1 : 0;
+	NumProxiesThatRequireRayTracingScene		+= ComputeProxy->RequiresRayTracingScene() ? 1 : 0;
 }
 
 void FNiagaraGpuComputeDispatch::RemoveGpuComputeProxy(FNiagaraSystemGpuComputeProxy* ComputeProxy)
@@ -267,10 +267,10 @@ void FNiagaraGpuComputeDispatch::RemoveGpuComputeProxy(FNiagaraSystemGpuComputeP
 	}
 	ComputeProxy->ComputeDispatchIndex = INDEX_NONE;
 
-	NumProxiesThatRequireDistanceFieldData	-= ComputeProxy->RequiresDistanceFieldData() ? 1 : 0;
-	NumProxiesThatRequireDepthBuffer		-= ComputeProxy->RequiresDepthBuffer() ? 1 : 0;
-	NumProxiesThatRequireEarlyViewData		-= ComputeProxy->RequiresEarlyViewData() ? 1 : 0;
-	NumProxiesThatRequireRayTracingScene	-= ComputeProxy->RequiresRayTracingScene() ? 1 : 0;
+	NumProxiesThatRequireGlobalDistanceField	-= ComputeProxy->RequiresGlobalDistanceField() ? 1 : 0;
+	NumProxiesThatRequireDepthBuffer			-= ComputeProxy->RequiresDepthBuffer() ? 1 : 0;
+	NumProxiesThatRequireEarlyViewData			-= ComputeProxy->RequiresEarlyViewData() ? 1 : 0;
+	NumProxiesThatRequireRayTracingScene		-= ComputeProxy->RequiresRayTracingScene() ? 1 : 0;
 
 #if NIAGARA_COMPUTEDEBUG_ENABLED
 	if (FNiagaraGpuComputeDebug* GpuComputeDebug = GpuComputeDebugPtr.Get())
@@ -406,7 +406,6 @@ void FNiagaraGpuComputeDispatch::ProcessPendingTicksFlush(FRHICommandListImmedia
 			FSceneViewFamilyContext ViewFamily(
 				FSceneViewFamily::ConstructionValues(nullptr, GetSceneInterface(), FEngineShowFlags(ESFIM_Game))
 				.SetTime(CachedViewInitOptions.GameTime)
-				.SetGammaCorrection(CachedViewInitOptions.GammaCorrection)
 			);
 
 			FSceneViewInitOptions ViewInitOptions;
@@ -828,16 +827,14 @@ void FNiagaraGpuComputeDispatch::PrepareTicksForProxy(FRHICommandListImmediate& 
 
 			//-OPT: Do we need this test?  Can remove in favor of MaxUpdateIterations
 			bool bFirstStage = true;
-			for (int32 SimStageIndex=0; SimStageIndex < ComputeContext->SimStageInfo.Num(); ++SimStageIndex)
+			for (const FNiagaraComputeInstanceData::FPerStageInfo& PerStageInfo : InstanceData.PerStageInfo)
 			{
-				const FSimulationStageMetaData& SimStageMetaData = ComputeContext->SimStageInfo[SimStageIndex];
-				if (InstanceData.PerStageInfo[SimStageIndex].ShouldRunStage() == false)
-				{
-					continue;
-				}
+				const int32 SimStageIndex = PerStageInfo.SimStageIndex;
+				const FSimulationStageMetaData& SimStageMetaData = ComputeContext->SimStageExecData->SimStageMetaData[SimStageIndex];
 
 				FNiagaraDataInterfaceProxyRW* IterationInterface = InstanceData.FindIterationInterface(SimStageIndex);
-				for ( int32 IterationIndex=0; IterationIndex < InstanceData.PerStageInfo[SimStageIndex].NumIterations; ++IterationIndex )
+				const int32 NumIterations = PerStageInfo.NumIterations;
+				for ( int32 IterationIndex=0; IterationIndex < NumIterations; ++IterationIndex )
 				{
 					// Build SimStage data
 					FNiagaraGpuDispatchGroup& DispatchGroup = GpuDispatchList.DispatchGroups[iInstanceCurrDispatchGroup++];
@@ -845,8 +842,11 @@ void FNiagaraGpuComputeDispatch::PrepareTicksForProxy(FRHICommandListImmediate& 
 					FNiagaraSimStageData& SimStageData = DispatchInstance.SimStageData;
 					SimStageData.bFirstStage = bFirstStage;
 					SimStageData.StageIndex = SimStageIndex;
+					SimStageData.NumIterations = NumIterations;
 					SimStageData.IterationIndex = IterationIndex;
-					SimStageData.DispatchArgs.ElementCount = InstanceData.PerStageInfo[SimStageIndex].ElementCountXYZ;
+					SimStageData.NumLoops = PerStageInfo.NumLoops;
+					SimStageData.LoopIndex = PerStageInfo.LoopIndex;
+					SimStageData.DispatchArgs.ElementCount = PerStageInfo.ElementCountXYZ;
 					SimStageData.StageMetaData = &SimStageMetaData;
 					SimStageData.AlternateIterationSource = IterationInterface;
 
@@ -1083,22 +1083,24 @@ void FNiagaraGpuComputeDispatch::ExecuteTicks(FRDGBuilder& GraphBuilder, TConstS
 	// Setup Parameters that can be read from data interfaces
 	SimulationSceneViews = Views;
 
-	if (FSceneInterface::GetShadingPath(FeatureLevel) == EShadingPath::Deferred)
+	if (GetFeatureLevelShadingPath(FeatureLevel) == EShadingPath::Deferred)
 	{
 		SceneTexturesUniformParams = UE::FXRenderingUtils::GetOrCreateSceneTextureUniformBuffer(GraphBuilder, SimulationSceneViews, FeatureLevel, ESceneTextureSetupMode::SceneVelocity);
 	}
-	else if (FSceneInterface::GetShadingPath(FeatureLevel) == EShadingPath::Mobile)
+	else if (GetFeatureLevelShadingPath(FeatureLevel) == EShadingPath::Mobile)
 	{
 		MobileSceneTexturesUniformParams = UE::FXRenderingUtils::GetOrCreateMobileSceneTextureUniformBuffer(GraphBuilder, SimulationSceneViews, EMobileSceneTextureSetupMode::None);
 	}
 
-	StrataPublicGlobalUniformParams = ::Strata::GetPublicGlobalUniformBuffer(GraphBuilder, *GetScene());
+	SubstratePublicGlobalUniformParams = ::Substrate::GetPublicGlobalUniformBuffer(GraphBuilder, *GetScene());
 
 	// Loop over dispatches
 	for ( const FNiagaraGpuDispatchGroup& DispatchGroup : DispatchList.DispatchGroups )
 	{
 		const bool bIsFirstGroup = &DispatchGroup == &DispatchList.DispatchGroups[0];
 		const bool bIsLastGroup = &DispatchGroup == &DispatchList.DispatchGroups.Last();
+
+		bIsExecutingFirstDispatchGroup = bIsFirstGroup;
 
 		// Consume per tick data from the game thread
 		//-TODO: This does not work currently as some senders assume the data will not be deferred processed
@@ -1386,7 +1388,8 @@ void FNiagaraGpuComputeDispatch::ExecuteTicks(FRDGBuilder& GraphBuilder, TConstS
 	SimulationSceneViews = TConstStridedView<FSceneView>();
 	SceneTexturesUniformParams = nullptr;
 	MobileSceneTexturesUniformParams = nullptr;
-	StrataPublicGlobalUniformParams = nullptr;
+	SubstratePublicGlobalUniformParams = nullptr;
+	bIsExecutingFirstDispatchGroup = false;
 
 	CurrentPassExternalAccessQueue.Submit(GraphBuilder);
 }
@@ -1559,8 +1562,7 @@ void FNiagaraGpuComputeDispatch::DispatchStage(FRDGBuilder& GraphBuilder, const 
 	// Z = Iteration Index
 	// W = Num Iterations
 	{
-		DispatchParameters->SimulationStageIterationInfo = FIntVector4(INDEX_NONE, -1, 0, 0);
-		DispatchParameters->SimulationStageNormalizedIterationIndex = 0.0f;
+		DispatchParameters->SimulationStageIterationInfo = FUintVector4(INDEX_NONE, 0, 0, 0);
 		switch (SimStageData.StageMetaData->IterationSourceType)
 		{
 			case ENiagaraIterationSource::Particles:
@@ -1580,11 +1582,11 @@ void FNiagaraGpuComputeDispatch::DispatchStage(FRDGBuilder& GraphBuilder, const 
 				break;
 		}
 
-		const int32 NumIterations = InstanceData.PerStageInfo[SimStageData.StageIndex].NumIterations;
-		const int32 IterationIndex = SimStageData.IterationIndex;
-		DispatchParameters->SimulationStageIterationInfo.Z = IterationIndex;
-		DispatchParameters->SimulationStageIterationInfo.W = NumIterations;
-		DispatchParameters->SimulationStageNormalizedIterationIndex = NumIterations > 1 ? float(IterationIndex) / float(NumIterations - 1) : 1.0f;
+		DispatchParameters->SimulationStageIterationInfo.Z  = uint32(SimStageData.NumIterations) << 16;
+		DispatchParameters->SimulationStageIterationInfo.Z |= uint32(SimStageData.IterationIndex);
+
+		DispatchParameters->SimulationStageIterationInfo.W  = uint32(SimStageData.NumLoops) << 16;
+		DispatchParameters->SimulationStageIterationInfo.W |= uint32(SimStageData.LoopIndex);
 	}
 
 	// Set particle iteration state info
@@ -1649,7 +1651,7 @@ void FNiagaraGpuComputeDispatch::DispatchStage(FRDGBuilder& GraphBuilder, const 
 	}
 	DispatchParameters->SceneTextures.SceneTextures			= SceneTexturesUniformParams;
 	DispatchParameters->SceneTextures.MobileSceneTextures	= MobileSceneTexturesUniformParams;
-	DispatchParameters->StrataPublic						= StrataPublicGlobalUniformParams;
+	DispatchParameters->SubstratePublic						= SubstratePublicGlobalUniformParams;
 
 	// Indirect Gpu Dispatch
 	if (SimStageData.StageMetaData->bGpuIndirectDispatch)
@@ -2026,7 +2028,6 @@ void FNiagaraGpuComputeDispatch::PostRenderOpaque(FRDGBuilder& GraphBuilder, TCo
 		if (const FSceneViewFamily* ViewFamily = Views[0].Family)
 		{
 			CachedViewInitOptions.GameTime			= ViewFamily->Time;
-			CachedViewInitOptions.GammaCorrection	= ViewFamily->GammaCorrection;
 		}
 
 		CachedViewInitOptions.ViewRect				= UE::FXRenderingUtils::GetRawViewRectUnsafe(Views[0]);
@@ -2082,6 +2083,8 @@ void FNiagaraGpuComputeDispatch::PostRenderOpaque(FRDGBuilder& GraphBuilder, TCo
 		);
 	}
 	bRequiresReadback = false;
+
+	OnPostRenderEvent.Broadcast(GraphBuilder);
 
 	if (FNiagaraGpuComputeDispatchLocal::CsvStatsEnabled())
 	{
@@ -2153,7 +2156,7 @@ void FNiagaraGpuComputeDispatch::ProcessDebugReadbacks(FRHICommandListImmediate&
 
 bool FNiagaraGpuComputeDispatch::UsesGlobalDistanceField() const
 {
-	return NumProxiesThatRequireDistanceFieldData > 0;
+	return NumProxiesThatRequireGlobalDistanceField > 0;
 }
 
 bool FNiagaraGpuComputeDispatch::UsesDepthBuffer() const
@@ -2173,6 +2176,8 @@ bool FNiagaraGpuComputeDispatch::RequiresRayTracingScene() const
 
 void FNiagaraGpuComputeDispatch::PreRender(FRDGBuilder& GraphBuilder, TConstStridedView<FSceneView> Views, FSceneUniformBuffer &SceneUniformBuffer, bool bAllowGPUParticleUpdate)
 {
+	OnPreRenderEvent.Broadcast(GraphBuilder);
+
 	if (!FNiagaraUtilities::AllowGPUParticles(GetShaderPlatform()))
 	{
 		return;
@@ -2187,9 +2192,10 @@ void FNiagaraGpuComputeDispatch::OnDestroy()
 	FFXSystemInterface::OnDestroy();
 }
 
-bool FNiagaraGpuComputeDispatch::AddSortedGPUSimulation(FNiagaraGPUSortInfo& SortInfo)
+bool FNiagaraGpuComputeDispatch::AddSortedGPUSimulation(FRHICommandListBase& RHICmdList, FNiagaraGPUSortInfo& SortInfo)
 {
-	if (GPUSortManager && GPUSortManager->AddTask(SortInfo.AllocationInfo, SortInfo.ParticleCount, SortInfo.SortFlags))
+	UE::TScopeLock Lock(AddSortedGPUSimulationMutex);
+	if (GPUSortManager && GPUSortManager->AddTask(RHICmdList, SortInfo.AllocationInfo, SortInfo.ParticleCount, SortInfo.SortFlags))
 	{
 		// It's not worth currently to have a map between SortInfo.AllocationInfo.SortBatchId and the relevant indices in SimulationsToSort
 		// because the number of batches is expect to be very small (1 or 2). If this change, it might be worth reconsidering.
@@ -2287,9 +2293,9 @@ void FNiagaraGpuComputeDispatch::GenerateSortKeys(FRHICommandListImmediate& RHIC
 			Params.MeshIndex = SortInfo.MeshIndex;
 			Params.MeshIndexAttributeOffset = SortInfo.MeshIndexAttributeOffset;
 			Params.CullDistanceRangeSquared = SortInfo.DistanceCullRange * SortInfo.DistanceCullRange;
+			Params.LODScreenSize = SortInfo.LODScreenSize;
 			Params.LocalBoundingSphere = FVector4f((FVector3f)SortInfo.LocalBSphere.Center, SortInfo.LocalBSphere.W);
 			Params.CullingWorldSpaceOffset = (FVector3f)SortInfo.CullingWorldSpaceOffset;
-			Params.SystemLWCTile = SortInfo.SystemLWCTile;
 
 			Params.NumCullPlanes = 0;
 			for (const FPlane& Plane : SortInfo.CullPlanes)

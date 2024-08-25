@@ -56,10 +56,6 @@ public:
 	/** Gets the DNA asset embedded in the mesh */
 	static UDNAAsset* GetMeshDNA(USkeletalMesh* InSkelMesh);
 
-	/** Updates source skeleton data for the purpose of character cooking and export.  */
-	static void UpdateSourceData(USkeletalMesh* InSkelMesh);
-	/** Updates ImportData structs for SkeletalMesh in non destructive way to preserve the original mesh */
-	static void UpdateSourceData(USkeletalMesh* InSkelMesh, class IDNAReader* InDNAReader, class FDNAToSkelMeshMap* InDNAToSkelMeshMap);
 #endif // WITH_EDITORONLY_DATA
 	/** Converts DNA vertex coordinates to UE4 coordinate system **/
 	inline static FVector ConvertDNAVertexToUE4CoordSystem(FVector InVertexPositionInDNA)

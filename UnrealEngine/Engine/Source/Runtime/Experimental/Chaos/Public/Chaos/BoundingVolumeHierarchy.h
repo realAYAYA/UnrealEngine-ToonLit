@@ -67,6 +67,7 @@ class TBoundingVolumeHierarchy final : public ISpatialAcceleration<int32, T,d>
 
 	TBoundingVolumeHierarchy()
 		: MObjects(nullptr)
+		, MMaxLevels(DefaultMaxLevels)
 	{
 	}
 

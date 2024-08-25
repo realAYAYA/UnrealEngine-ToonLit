@@ -5,7 +5,6 @@
 #include "ControlRigGizmoActor.h"
 #include "TransformableRegistry.h"
 #include "Modules/ModuleManager.h"
-#include "Sequencer/ControlRigObjectSpawner.h"
 #include "ILevelSequenceModule.h"
 #include "ControlRigObjectVersion.h"
 #include "Constraints/ControlRigTransformableHandle.h"
@@ -19,9 +18,6 @@ FDevVersionRegistration GRegisterControlRigObjectVersion(FControlRigObjectVersio
 
 void FControlRigModule::StartupModule()
 {
-	ILevelSequenceModule& LevelSequenceModule = FModuleManager::LoadModuleChecked<ILevelSequenceModule>("LevelSequence");
-	OnCreateMovieSceneObjectSpawnerHandle = LevelSequenceModule.RegisterObjectSpawner(FOnCreateMovieSceneObjectSpawner::CreateStatic(&FControlRigObjectSpawner::CreateObjectSpawner));
-
 	ManipulatorMaterial = LoadObject<UMaterial>(nullptr, TEXT("/ControlRig/M_Manip.M_Manip"));
 
 	RegisterTransformableCustomization();
@@ -29,11 +25,6 @@ void FControlRigModule::StartupModule()
 
 void FControlRigModule::ShutdownModule()
 {
-	ILevelSequenceModule* LevelSequenceModule = FModuleManager::GetModulePtr<ILevelSequenceModule>("LevelSequence");
-	if (LevelSequenceModule)
-	{
-		LevelSequenceModule->UnregisterObjectSpawner(OnCreateMovieSceneObjectSpawnerHandle);
-	}
 }
 
 void FControlRigModule::RegisterTransformableCustomization() const
@@ -43,11 +34,11 @@ void FControlRigModule::RegisterTransformableCustomization() const
 	FModuleManager::Get().LoadModule(ConstraintsModuleName);
 	
 	// register UControlRig and AControlRigShapeActor
-	auto CreateControlHandle = [](UObject* Outer, UObject* InObject, const FName& InControlName)->UTransformableHandle*
+	auto CreateControlHandle = [](UObject* InObject, const FName& InControlName)->UTransformableHandle*
 	{
 		if (const UControlRig* ControlRig = Cast<UControlRig>(InObject))
 		{
-			return ControlRig->CreateTransformableControlHandle(Outer, InControlName);
+			return ControlRig->CreateTransformableControlHandle(InControlName);
 		}
 		return nullptr;
 	};
@@ -61,11 +52,11 @@ void FControlRigModule::RegisterTransformableCustomization() const
 		return 0;
 	};
 	
-	auto CreateControlHandleFromActor = [CreateControlHandle](UObject* Outer, UObject* InObject, const FName&)->UTransformableHandle*
+	auto CreateControlHandleFromActor = [CreateControlHandle](UObject* InObject, const FName&)->UTransformableHandle*
 	{
 		if (const AControlRigShapeActor* ControlActor = Cast<AControlRigShapeActor>(InObject))
 		{
-			return CreateControlHandle(Outer, ControlActor->ControlRig.Get(), ControlActor->ControlName);
+			return CreateControlHandle(ControlActor->ControlRig.Get(), ControlActor->ControlName);
 		}
 		return nullptr;
 	};

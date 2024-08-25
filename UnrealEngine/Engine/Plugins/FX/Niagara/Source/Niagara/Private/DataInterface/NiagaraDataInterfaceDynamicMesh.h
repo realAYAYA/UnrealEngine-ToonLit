@@ -48,7 +48,7 @@ struct FNiagaraDynamicMeshMaterial
 	}
 };
 
-/** Data Interface allowing sampling of a texture */
+/** Data Interface that can create mesh geometry at runtime from triangle data (e.g. to render a custom generated mesh per particle) */
 UCLASS(Experimental, EditInlineNew, Category = "Mesh", CollapseCategories, meta = (DisplayName = "Dynamic Mesh"), MinimalAPI)
 class UNiagaraDataInterfaceDynamicMesh : public UNiagaraDataInterface, public INiagaraRenderableMeshInterface
 {
@@ -95,7 +95,6 @@ public:
 	//UObject Interface End
 
 	//UNiagaraDataInterface Interface
-	NIAGARA_API virtual void GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions) override;
 	NIAGARA_API virtual void GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction &OutFunc) override;
 	virtual bool CanExecuteOnTarget(ENiagaraSimTarget Target) const override { return true; }
 
@@ -156,4 +155,9 @@ public:
 	static NIAGARA_API void VMSetVertexData(FVectorVMExternalFunctionContext& Context);
 
 	static NIAGARA_API void VMAppendTriangle(FVectorVMExternalFunctionContext& Context);
+
+protected:
+#if WITH_EDITORONLY_DATA
+	NIAGARA_API virtual void GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const override;
+#endif
 };

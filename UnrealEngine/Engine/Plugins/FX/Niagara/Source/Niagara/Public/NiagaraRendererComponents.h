@@ -65,7 +65,7 @@ private:
 	static NIAGARA_API void TickPropertyBindings(
 		const UNiagaraComponentRendererProperties* Properties,
 		USceneComponent* Component,
-		FNiagaraDataSet& Data,
+		const FNiagaraDataSet& Data,
 		int32 ParticleIndex,
 		FComponentPoolEntry& PoolEntry,
 		const FNiagaraLWCConverter& LwcConverter);

@@ -116,7 +116,7 @@ bool FStructDeserializer::Deserialize( void* OutStruct, UStruct& TypeInfo, IStru
 					return false;
 				}
 
-				CurrentState = StateStack.Pop(/*bAllowShrinking*/ false);
+				CurrentState = StateStack.Pop(EAllowShrinking::No);
 			}
 			break;
 
@@ -309,7 +309,7 @@ bool FStructDeserializer::Deserialize( void* OutStruct, UStruct& TypeInfo, IStru
 					return true;
 				}
 
-				CurrentState = StateStack.Pop(/*bAllowShrinking*/ false);
+				CurrentState = StateStack.Pop(EAllowShrinking::No);
 			}
 			break;
 
@@ -496,7 +496,7 @@ bool FStructDeserializer::DeserializeElement(void* OutAddress, UStruct& OwnerInf
 				return false;
 			}
 
-			CurrentState = StateStack.Pop(/*bAllowShrinking*/ false);
+			CurrentState = StateStack.Pop(EAllowShrinking::No);
 		}
 		break;
 
@@ -570,10 +570,11 @@ bool FStructDeserializer::DeserializeElement(void* OutAddress, UStruct& OwnerInf
 				// handle set element
 				FSetProperty* SetProperty = CastField<FSetProperty>(CurrentState.Property);
 				FScriptSetHelper SetHelper(SetProperty, CurrentState.Data);
-				FProperty* Property = SetProperty->ElementProp;
-				if (SetHelper.IsValidIndex(CurrentState.ArrayIndex))
+				const int32 InternalIndex = SetHelper.FindInternalIndex(CurrentState.ArrayIndex);
+				if (InternalIndex != INDEX_NONE)
 				{
-					uint8* ElementPtr = SetHelper.GetElementPtr(CurrentState.ArrayIndex);
+					uint8* ElementPtr = SetHelper.GetElementPtr(InternalIndex);
+					FProperty* Property = SetProperty->ElementProp;
 					constexpr int32 ReadIndex = 0; //Pointer is offset so reading index is 0
 					if (!Backend.ReadProperty(Property, CurrentState.Property, ElementPtr, ReadIndex))
 					{
@@ -594,12 +595,13 @@ bool FStructDeserializer::DeserializeElement(void* OutAddress, UStruct& OwnerInf
 				// handle map element
 				FMapProperty* MapProperty = CastField<FMapProperty>(CurrentState.Property);
 				FScriptMapHelper MapHelper(MapProperty, CurrentState.Data);
-				FProperty* Property = MapProperty->ValueProp;
 
 				//When written as array, maps won't include the key, only values
-				if (MapHelper.IsValidIndex(CurrentState.ArrayIndex))
+				const int32 InternalIndex = MapHelper.FindInternalIndex(CurrentState.ArrayIndex);
+				if (InternalIndex != INDEX_NONE)
 				{
-					uint8* PairPtr = MapHelper.GetPairPtr(CurrentState.ArrayIndex);
+					uint8* PairPtr = MapHelper.GetPairPtr(InternalIndex);
+					FProperty* Property = MapProperty->ValueProp;
 					constexpr int32 ReadIndex = 0; //Pointer is offset so reading index is 0
 					if (!Backend.ReadProperty(Property, CurrentState.Property, PairPtr, ReadIndex))
 					{
@@ -694,12 +696,13 @@ bool FStructDeserializer::DeserializeElement(void* OutAddress, UStruct& OwnerInf
 						FScriptSetHelper SetHelper(SetProperty, SetProperty->ContainerPtrToValuePtr<void>(CurrentState.Data));
 
 						//If a specific index is asked and it's not valid, skip the property
-						if (SetHelper.IsValidIndex(CurrentState.ArrayIndex))
+						const int32 InternalIndex = SetHelper.FindInternalIndex(CurrentState.ArrayIndex);
+						if (InternalIndex != INDEX_NONE)
 						{
 							Property = SetProperty->ElementProp;
 
 							//Offset the pointer directly and give index 0 to be read so no offsetting is done during deserialization
-							CurrentState.Data = SetHelper.GetElementPtr(CurrentState.ArrayIndex);
+							CurrentState.Data = SetHelper.GetElementPtr(InternalIndex);
 							CurrentState.ArrayIndex = 0;
 
 							if (!Backend.ReadProperty(Property, nullptr, CurrentState.Data, CurrentState.ArrayIndex))
@@ -724,12 +727,13 @@ bool FStructDeserializer::DeserializeElement(void* OutAddress, UStruct& OwnerInf
 						FScriptMapHelper MapHelper(MapProperty, MapProperty->ContainerPtrToValuePtr<void>(CurrentState.Data));
 
 						//If a specific index is asked and it's not valid, skip the property
-						if (MapHelper.IsValidIndex(CurrentState.ArrayIndex))
+						const int32 InternalIndex = MapHelper.FindInternalIndex(CurrentState.ArrayIndex);
+						if (InternalIndex != INDEX_NONE)
 						{
 							Property = MapProperty->ValueProp;
 
 							//Offset the pointer directly and give index 0 to be read so no offsetting is done during deserialization
-							CurrentState.Data = MapHelper.GetPairPtr(CurrentState.ArrayIndex);
+							CurrentState.Data = MapHelper.GetPairPtr(InternalIndex);
 							CurrentState.ArrayIndex = 0;
 
 							if (!Backend.ReadProperty(Property, nullptr, CurrentState.Data, CurrentState.ArrayIndex))
@@ -813,7 +817,7 @@ bool FStructDeserializer::DeserializeElement(void* OutAddress, UStruct& OwnerInf
 				return true;
 			}
 
-			CurrentState = StateStack.Pop(/*bAllowShrinking*/ false);
+			CurrentState = StateStack.Pop(EAllowShrinking::No);
 		}
 		break;
 
@@ -834,10 +838,11 @@ bool FStructDeserializer::DeserializeElement(void* OutAddress, UStruct& OwnerInf
 				if (FSetProperty* SetProperty = CastField<FSetProperty>(CurrentState.Property))
 				{
 					FScriptSetHelper SetHelper(SetProperty, CurrentState.Data);
-					if (SetHelper.IsValidIndex(CurrentState.ArrayIndex))
+					const int32 InternalIndex = SetHelper.FindInternalIndex(CurrentState.ArrayIndex);
+					if (InternalIndex != INDEX_NONE)
 					{
 						NewState.Property = SetProperty->ElementProp;
-						NewState.Data = SetHelper.GetElementPtr(CurrentState.ArrayIndex);
+						NewState.Data = SetHelper.GetElementPtr(InternalIndex);
 						NewState.ArrayIndex = 0;
 						++CurrentState.ArrayIndex;
 					}
@@ -852,10 +857,11 @@ bool FStructDeserializer::DeserializeElement(void* OutAddress, UStruct& OwnerInf
 				else if (FMapProperty* MapProperty = CastField<FMapProperty>(CurrentState.Property))
 				{
 					FScriptMapHelper MapHelper(MapProperty, CurrentState.Data);
-					if (MapHelper.IsValidIndex(CurrentState.ArrayIndex))
+					const int32 InternalIndex = MapHelper.FindInternalIndex(CurrentState.ArrayIndex);
+					if (InternalIndex != INDEX_NONE)
 					{
 						NewState.Property = MapProperty->ValueProp;
-						NewState.Data = MapHelper.GetValuePtr(CurrentState.ArrayIndex);
+						NewState.Data = MapHelper.GetValuePtr(InternalIndex);
 						NewState.ArrayIndex = 0;
 						++CurrentState.ArrayIndex;
 					}
@@ -931,14 +937,15 @@ bool FStructDeserializer::DeserializeElement(void* OutAddress, UStruct& OwnerInf
 					if (FStructProperty* SetStructProperty = CastField<FStructProperty>(MapProperty->ValueProp))
 					{
 						FScriptMapHelper MapHelper(MapProperty, MapProperty->ContainerPtrToValuePtr<void>(CurrentState.Data));
-
+						
 						//If a specific index is asked and it's not valid, skip the property
-						if (MapHelper.IsValidIndex(CurrentState.ArrayIndex))
+						const int32 InternalIndex = MapHelper.FindInternalIndex(CurrentState.ArrayIndex);
+						if (InternalIndex != INDEX_NONE)
 						{
 							//We're skipping a level directly so CurrentState becomes the outer (set) and NewState the inner (Element prop)
 							CurrentState.Property = NewState.Property;
 							NewState.Property = SetStructProperty;
-							NewState.Data = MapHelper.GetValuePtr(CurrentState.ArrayIndex);
+							NewState.Data = MapHelper.GetValuePtr(InternalIndex);
 							NewState.ArrayIndex = 0;
 						}
 						else
@@ -956,14 +963,15 @@ bool FStructDeserializer::DeserializeElement(void* OutAddress, UStruct& OwnerInf
 					if (FStructProperty* SetStructProperty = CastField<FStructProperty>(SetProperty->ElementProp))
 					{
 						FScriptSetHelper SetHelper(SetProperty, SetProperty->ContainerPtrToValuePtr<void>(CurrentState.Data));
+						const int32 InternalIndex = SetHelper.FindInternalIndex(CurrentState.ArrayIndex);
 
 						//If a specific index is asked and it's not valid, skip the property
-						if (SetHelper.IsValidIndex(CurrentState.ArrayIndex))
+						if (InternalIndex != INDEX_NONE)
 						{
 							//We're skipping a level directly so CurrentState becomes the outer (set) and NewState the inner (Element prop)
 							CurrentState.Property = NewState.Property;
 							NewState.Property = SetProperty->ElementProp;
-							NewState.Data = SetHelper.GetElementPtr(CurrentState.ArrayIndex);
+							NewState.Data = SetHelper.GetElementPtr(InternalIndex);
 							NewState.ArrayIndex = 0;
 						}
 						else

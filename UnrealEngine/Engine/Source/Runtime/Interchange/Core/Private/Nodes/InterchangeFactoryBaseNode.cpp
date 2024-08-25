@@ -50,14 +50,14 @@ UInterchangeFactoryBaseNode::UInterchangeFactoryBaseNode()
 	RegisterAttribute<uint8>(UE::Interchange::FFactoryBaseNodeStaticData::ReimportStrategyFlagsKey(), static_cast<uint8>(EReimportStrategyFlags::ApplyNoProperties));
 }
 
-
+#if WITH_EDITOR
 FString UInterchangeFactoryBaseNode::GetKeyDisplayName(const UE::Interchange::FAttributeKey& NodeAttributeKey) const
 {
 	FString KeyDisplayName = NodeAttributeKey.ToString();
 	const FString OriginalKeyName = KeyDisplayName;
 	if (NodeAttributeKey == Macro_CustomSubPathKey)
 	{
-		KeyDisplayName = TEXT("Import Sub-Path");
+		KeyDisplayName = TEXT("Asset Sub-Path");
 	}
 	else if (OriginalKeyName.Equals(UE::Interchange::FFactoryBaseNodeStaticData::FactoryDependenciesBaseKey()))
 	{
@@ -76,6 +76,14 @@ FString UInterchangeFactoryBaseNode::GetKeyDisplayName(const UE::Interchange::FA
 	else if (NodeAttributeKey == UE::Interchange::FFactoryBaseNodeStaticData::ReimportStrategyFlagsKey())
 	{
 		KeyDisplayName = TEXT("Re-Import Strategy");
+	}
+	else if (NodeAttributeKey == UE::Interchange::FFactoryBaseNodeStaticData::SkipNodeImportKey())
+	{
+		KeyDisplayName = TEXT("Skip Node Import");
+	}
+	else if (NodeAttributeKey == UE::Interchange::FFactoryBaseNodeStaticData::ForceNodeReimportKey())
+	{
+		KeyDisplayName = TEXT("Force Node Reimport");
 	}
 	else
 	{
@@ -98,6 +106,40 @@ FString UInterchangeFactoryBaseNode::GetAttributeCategory(const UE::Interchange:
 	}
 }
 
+bool UInterchangeFactoryBaseNode::ShouldHideAttribute(const UE::Interchange::FAttributeKey& NodeAttributeKey) const
+{
+	if (UserInterfaceContext == EInterchangeNodeUserInterfaceContext::Preview)
+	{
+		const FString KeyDisplayName = NodeAttributeKey.ToString();
+		if (KeyDisplayName.Equals(UE::Interchange::FFactoryBaseNodeStaticData::FactoryDependenciesBaseKey()))
+		{
+			return true;
+		}
+		else if (KeyDisplayName.StartsWith(UE::Interchange::FFactoryBaseNodeStaticData::FactoryDependenciesBaseKey()))
+		{
+			return true;
+		}
+		else if (NodeAttributeKey == UE::Interchange::FFactoryBaseNodeStaticData::ReimportStrategyFlagsKey())
+		{
+			return true;
+		}
+		else if (NodeAttributeKey == UE::Interchange::FFactoryBaseNodeStaticData::SkipNodeImportKey())
+		{
+			return true;
+		}
+		else if (NodeAttributeKey == UE::Interchange::FFactoryBaseNodeStaticData::ForceNodeReimportKey())
+		{
+			return true;
+		}
+		else if (NodeAttributeKey == Macro_CustomReferenceObjectKey)
+		{
+			return true;
+		}
+	}
+
+	return Super::ShouldHideAttribute(NodeAttributeKey);
+}
+#endif //WITH_EDITOR
 
 UClass* UInterchangeFactoryBaseNode::GetObjectClass() const
 {

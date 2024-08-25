@@ -201,12 +201,23 @@ namespace EpicGames.Core
 		}
 
 		/// <summary>
-		/// Reads a GUID from the memory buffer
+		/// Reads a GUID from the memory buffer using NET-ordered serialization.
 		/// </summary>
 		/// <param name="reader">Reader to deserialize from</param>
-		public static Guid ReadGuid(this IMemoryReader reader)
+		public static Guid ReadGuidNetOrder(this IMemoryReader reader)
 		{
 			Guid guid = new Guid(reader.GetMemory(16).Slice(0, 16).Span);
+			reader.Advance(16);
+			return guid;
+		}
+
+		/// <summary>
+		/// Reads a GUID from the memory buffer using UE-ordered serialization.
+		/// </summary>
+		/// <param name="reader">Reader to deserialize from</param>
+		public static Guid ReadGuidUnrealOrder(this IMemoryReader reader)
+		{
+			Guid guid = GuidUtils.ReadGuidUnrealOrder(reader.GetSpan(16));
 			reader.Advance(16);
 			return guid;
 		}
@@ -249,17 +260,28 @@ namespace EpicGames.Core
 		/// Reads a variable length list
 		/// </summary>
 		/// <param name="reader">Reader to deserialize from</param>
+		/// <param name="list">List to receive the items that were read</param>
 		/// <param name="readItem">Delegate to write an individual item</param>
-		public static List<T> ReadList<T>(this IMemoryReader reader, Func<T> readItem)
+		public static void ReadList<T>(this IMemoryReader reader, List<T> list, Func<T> readItem)
 		{
 			int length = (int)reader.ReadUnsignedVarInt();
+			list.EnsureCapacity(list.Count + length);
 
-			List<T> list = new List<T>(length);
 			for (int idx = 0; idx < length; idx++)
 			{
 				list.Add(readItem());
 			}
+		}
 
+		/// <summary>
+		/// Reads a variable length list
+		/// </summary>
+		/// <param name="reader">Reader to deserialize from</param>
+		/// <param name="readItem">Delegate to write an individual item</param>
+		public static List<T> ReadList<T>(this IMemoryReader reader, Func<T> readItem)
+		{
+			List<T> list = new List<T>();
+			ReadList(reader, list, readItem);
 			return list;
 		}
 

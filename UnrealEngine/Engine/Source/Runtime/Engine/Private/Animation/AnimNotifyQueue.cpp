@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Animation/AnimNotifyQueue.h"
+
+#include "Animation/AnimEventsFilterScope.h"
 #include "Animation/AnimInstanceProxy.h"
 #include "Components/SkeletalMeshComponent.h"
 
@@ -58,9 +60,15 @@ void FAnimNotifyQueue::AddAnimNotifiesToDest(bool bSrcIsLeader, const TArray<FAn
 			const bool bPassesDedicatedServerCheck = Notify->bTriggerOnDedicatedServer || !IsRunningDedicatedServer();
 			if (bPassesDedicatedServerCheck && Notify->TriggerWeightThreshold <= InstanceWeight && PassesFiltering(Notify) && PassesChanceOfTriggering(Notify))
 			{
-				// Only add unique AnimNotifyState instances just once. We can get multiple triggers if looping over an animation.
-				// It is the same state, so just report it once.
-				Notify->NotifyStateClass ? DestArray.AddUnique(NotifyRef) : DestArray.Add(NotifyRef);
+				const UE::Anim::IAnimEventsFilterContext* ContextData = Notify->bCanBeFilteredViaRequest ? NotifyRef.GetContextData<UE::Anim::IAnimEventsFilterContext>() : nullptr;
+				const bool bPassedScopeFilter = ContextData ? !ContextData->ShouldFilterNotify(NotifyRef) : true;
+
+				if (bPassedScopeFilter)
+				{
+					// Only add unique AnimNotifyState instances just once. We can get multiple triggers if looping over an animation.
+					// It is the same state, so just report it once.
+					Notify->NotifyStateClass ? DestArray.AddUnique(NotifyRef) : DestArray.Add(NotifyRef);	
+				}
 			}
 		}
 	}

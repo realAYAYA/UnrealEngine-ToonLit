@@ -317,7 +317,7 @@ void UpdatePublishedSettings(UWorld* World, FNamedOnlineSession* Session)
 	// Generate the tag data first, due to its small size
 	for (FSteamSessionKeyValuePairs::TConstIterator It(ViaOnlineServicePairs); It; ++It)
 	{
-		UE_LOG_ONLINE_SESSION(Verbose, TEXT("Master Server Game Tags (%s, %s)"), *It.Key(), *It.Value());
+		UE_LOG_ONLINE_SESSION(Verbose, TEXT("Server List Game Tags (%s, %s)"), *It.Key(), *It.Value());
 		FString NewKey = FString::Printf(TEXT(",%s:%s"), *It.Key(), *It.Value());
 		if (GameTagsString.Len() + NewKey.Len() < k_cbMaxGameServerTags)
 		{
@@ -343,7 +343,7 @@ void UpdatePublishedSettings(UWorld* World, FNamedOnlineSession* Session)
 	FString GameDataString;
 	for (FSteamSessionKeyValuePairs::TConstIterator It(ViaOnlineServicePairs); It; ++It)
 	{
-		UE_LOG_ONLINE_SESSION(Verbose, TEXT("Master Server Game Data (%s, %s)"), *It.Key(), *It.Value());
+		UE_LOG_ONLINE_SESSION(Verbose, TEXT("Server List Game Data (%s, %s)"), *It.Key(), *It.Value());
 		FString NewKey = FString::Printf(TEXT("%s:%s"), *It.Key(), *It.Value());
 
 		if (GameDataString.Len() + NewKey.Len() < k_cbMaxGameServerGameData)
@@ -363,14 +363,14 @@ void UpdatePublishedSettings(UWorld* World, FNamedOnlineSession* Session)
 		SteamGameServerPtr->SetGameTags(TCHAR_TO_UTF8(*GameTagsString));
 	}
 
-	// Large and searchable game data (never returned, used to filter things on the master server)
+	// Large and searchable game data (never returned, used to filter things on the server list)
 	if (GameDataString.Len() > 0 && GameDataString.Len() < k_cbMaxGameServerGameData)
 	{
 		UE_LOG_ONLINE_SESSION(Verbose, TEXT("SetGameData(%s)"), *GameDataString);
 		SteamGameServerPtr->SetGameData(TCHAR_TO_UTF8(*GameDataString));
 	}
 
-	// Set the advertised filter keys (these can not be filtered at master-server level, only client side via talking to the server)
+	// Set the advertised filter keys (these can not be filtered at server list level, only client side via talking to the server)
 	SteamGameServerPtr->ClearAllKeyValues();
 
 	// Push all the filters in for the KeyValue data.
@@ -440,8 +440,11 @@ void FOnlineAsyncTaskSteamCreateServer::Tick()
 	}
 	else
 	{
+		float AsyncTimeout = ASYNC_TASK_TIMEOUT;
+		GConfig->GetFloat(TEXT("OnlineSubsystemSteam"), TEXT("OnlineAsyncTaskSteamCreateServerTimeout"), AsyncTimeout, GEngineIni);
+		
 		// Fallback timeout in case we don't hear from Steam
-		if (GetElapsedTime() >= ASYNC_TASK_TIMEOUT)
+		if (GetElapsedTime() >= AsyncTimeout)
 		{
 			bIsComplete = true;
 			bWasSuccessful = false;
@@ -570,7 +573,7 @@ void FOnlineAsyncTaskSteamUpdateServer::Tick()
 		{
 			UWorld* World = GetWorldForOnline(Subsystem->GetInstanceName());
 
-			// Master server update
+			// Server list update
 			UpdatePublishedSettings(World, Session);
 		}
 
@@ -613,7 +616,7 @@ void FOnlineAsyncTaskSteamLogoffServer::Tick()
 	if (!bInit)
 	{
 		// @TODO ONLINE Listen Servers need to unset rich presence
-		//SteamFriends()->SetRichPresence("connect", ""); for master server sessions
+		//SteamFriends()->SetRichPresence("connect", ""); for listed sessions
 		SteamGameServer()->SetAdvertiseServerActive(false);  // renamed EnableHeartbeats to SetAdvertiseServerActive in 1.53
 		SteamGameServer()->LogOff();
 		bInit = true;
@@ -629,7 +632,10 @@ void FOnlineAsyncTaskSteamLogoffServer::Tick()
 	else
 	{
 		// Fallback timeout in case we don't hear from Steam
-		if (GetElapsedTime() >= ASYNC_TASK_TIMEOUT)
+		float AsyncTimeout = ASYNC_TASK_TIMEOUT;
+		GConfig->GetFloat(TEXT("OnlineSubsystemSteam"), TEXT("OnlineAsyncTaskSteamLogoffServerTimeout"), AsyncTimeout, GEngineIni);
+		
+		if (GetElapsedTime() >= AsyncTimeout)
 		{
 			SessionInt->bSteamworksGameServerConnected = false;
 			SessionInt->GameServerSteamId = NULL;
@@ -851,7 +857,7 @@ void FPendingSearchResultSteam::CancelQuery()
 #endif
 
 /**
- *  Create the proper query for the master server based on the given search settings
+ *  Create the proper query for the server list based on the given search settings
  *
  * @param OutFilter Steam structure containing the proper filters
  * @param NumFilters number of filters contained in the array above
@@ -929,7 +935,7 @@ void FOnlineAsyncTaskSteamFindServerBase::CreateQuery(MatchMakingKeyValuePair_t*
 
 	// TEMP!!!!
 	return;
-
+#if 0
 	/**
 	 * "full"		- not full
 	 * "empty"		- not empty
@@ -1018,6 +1024,7 @@ void FOnlineAsyncTaskSteamFindServerBase::CreateQuery(MatchMakingKeyValuePair_t*
 			}
 		}
 	}
+#endif
 }
 
 #ifdef _MSC_VER
@@ -1154,7 +1161,10 @@ void FOnlineAsyncTaskSteamFindServerBase::Tick()
 	// Cancel query when we've reached our requested limit
 	bool bReachedSearchLimit = (SearchSettings->SearchResults.Num() >= SearchSettings->MaxSearchResults) ? true : false;
 	// Check for activity timeout
-	bool bTimedOut = (ElapsedTime >= ASYNC_TASK_TIMEOUT) ? true : false;
+	float AsyncTimeout = ASYNC_TASK_TIMEOUT;
+	GConfig->GetFloat(TEXT("OnlineSubsystemSteam"), TEXT("OnlineAsyncTaskSteamFindServerBaseTimeout"), AsyncTimeout, GEngineIni);
+	
+	bool bTimedOut = (ElapsedTime >= AsyncTimeout) ? true : false;
 	// Check for proper completion
 	bool bServerSearchComplete = (bServerRefreshComplete && PendingSearchResults.Num() == 0) ? true : false;
 	if ( bReachedSearchLimit || bTimedOut || bServerSearchComplete)

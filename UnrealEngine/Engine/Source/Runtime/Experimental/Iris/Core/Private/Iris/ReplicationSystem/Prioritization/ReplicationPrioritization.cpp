@@ -4,6 +4,7 @@
 #include "Iris/IrisConstants.h"
 #include "Iris/Core/IrisLog.h"
 #include "Iris/Core/IrisProfiler.h"
+#include "Net/Core/Misc/NetCVars.h"
 #include "Net/Core/NetBitArray.h"
 #include "Iris/ReplicationSystem/NetRefHandleManager.h"
 #include "Iris/ReplicationSystem/ReplicationConnections.h"
@@ -18,6 +19,8 @@ namespace UE::Net::Private
 
 static_assert(InvalidNetObjectPrioritizerHandle == ~FNetObjectPrioritizerHandle(0), "ObjectIndexToPrioritizer code needs attention. Contact the UE Networking team.");
 static constexpr uint8 FReplicationPrioritization_InvalidNetObjectPrioritizerIndex = 0xFF;
+
+static const FName NAME_DefaultPrioritizer(TEXT("DefaultPrioritizer"));
 
 /**
  * Most logic in here revolves around batches. As such we need access to the Chunks.
@@ -38,8 +41,7 @@ public:
 
 			constexpr int32 Index = 0;
 			constexpr int32 Count = 1;
-			constexpr bool bAllowShrinking = false;
-			Super::Chunks.RemoveAt(Index, Count, bAllowShrinking);
+			Super::Chunks.RemoveAt(Index, Count, EAllowShrinking::No);
 		}
 	}
 
@@ -298,18 +300,18 @@ void FReplicationPrioritization::Init(FReplicationPrioritizationInitParams& Para
 
 	MaxObjectCount = Params.MaxObjectCount;
 
-	constexpr bool bAllowShrinking = false;
+	constexpr EAllowShrinking AllowShrinking = EAllowShrinking::No;
 
 	// $IRIS TODO: This can be quite wasteful in terms of memory assuming many objects will use a static priority. Need object pool!
-	NetObjectPrioritizationInfos.SetNumUninitialized(Params.MaxObjectCount, bAllowShrinking);
+	NetObjectPrioritizationInfos.SetNumUninitialized(Params.MaxObjectCount, AllowShrinking);
 
 	{
-		ObjectIndexToPrioritizer.SetNumUninitialized(Params.MaxObjectCount, bAllowShrinking);
+		ObjectIndexToPrioritizer.SetNumUninitialized(Params.MaxObjectCount, AllowShrinking);
 		FMemory::Memset(ObjectIndexToPrioritizer.GetData(), FReplicationPrioritization_InvalidNetObjectPrioritizerIndex, Params.MaxObjectCount*sizeof(decltype(ObjectIndexToPrioritizer)::ElementType));
 	}
 	
 	{
-		DefaultPriorities.SetNumUninitialized(Params.MaxObjectCount, bAllowShrinking);
+		DefaultPriorities.SetNumUninitialized(Params.MaxObjectCount, AllowShrinking);
 		float* Priorities = DefaultPriorities.GetData();
 		for (SIZE_T PrioIt = 0, PrioEndIt = Params.MaxObjectCount; PrioIt != PrioEndIt; ++PrioIt)
 		{
@@ -424,7 +426,7 @@ FNetObjectPrioritizerHandle FReplicationPrioritization::GetPrioritizerHandle(con
 		++Handle;
 	}
 
-	if (PrioritizerName == NAME_Default)
+	if (PrioritizerName == UE::Net::Private::NAME_DefaultPrioritizer)
 	{
 		return DefaultSpatialNetObjectPrioritizerHandle;
 	}
@@ -557,7 +559,7 @@ void FReplicationPrioritization::AddConnection(uint32 ConnectionId)
 {
 	if (ConnectionId >= (uint32)ConnectionInfos.Num())
 	{
-		ConnectionInfos.SetNum(ConnectionId + 1U, false);
+		ConnectionInfos.SetNum(ConnectionId + 1U, EAllowShrinking::No);
 	}
 
 	++ConnectionCount;
@@ -596,8 +598,8 @@ void FReplicationPrioritization::UpdatePrioritiesForNewAndDeletedObjects()
 {
 	IRIS_PROFILER_SCOPE(FReplicationPrioritization_UpdatePrioritiesForNewAndDeletedObjects);
 
-	const FNetBitArray& PrevScopedIndices = NetRefHandleManager->GetPrevFrameScopableInternalIndices();
-	const FNetBitArray& ScopedIndices = NetRefHandleManager->GetScopableInternalIndices();
+	const FNetBitArrayView PrevScopedIndices = NetRefHandleManager->GetPrevFrameScopableInternalIndices();
+	const FNetBitArrayView ScopedIndices = NetRefHandleManager->GetCurrentFrameScopableInternalIndices();
 
 	auto ForEachRemovedObject = [this](uint32 ObjectIndex)
 	{
@@ -628,7 +630,7 @@ void FReplicationPrioritization::UpdatePrioritiesForNewAndDeletedObjects()
 		NewIndices.Reserve(FMath::Min(1024U, MaxObjectCount));
 	}
 
-	FNetBitArray::ForAllExclusiveBits(ScopedIndices, PrevScopedIndices, ForEachNewObject, ForEachRemovedObject);
+	FNetBitArrayView::ForAllExclusiveBits(ScopedIndices, PrevScopedIndices, ForEachNewObject, ForEachRemovedObject);
 
 	if (HasNewObjectsWithStaticPriority)
 	{
@@ -677,7 +679,6 @@ void FReplicationPrioritization::PrioritizeForConnection(uint32 ConnId, FPriorit
 	{
 		PrioParameters.Priorities = ConnInfo.Priorities.GetData();
 		PrioParameters.PrioritizationInfos = NetObjectPrioritizationInfos.GetData();
-		PrioParameters.StateBuffers = NetRefHandleManager->GetReplicatedObjectStateBuffers().GetData();
 		PrioParameters.ConnectionId = ConnId;
 		PrioParameters.View = Connections->GetReplicationView(ConnId);
 	}
@@ -734,6 +735,40 @@ void FReplicationPrioritization::PrioritizeForConnection(uint32 ConnId, FPriorit
 		checkf(false, TEXT("Unexpected BatchProcessStatus %u"), ProcessStatus);
 		break;
 	}
+
+	// Optionally force very high priority on view targets
+	if (CVar_ForceConnectionViewerPriority > 0)
+	{
+		SetHighPriorityOnViewTargets(MakeArrayView(ConnInfo.Priorities), PrioParameters.View);
+	}
+}
+
+void FReplicationPrioritization::SetHighPriorityOnViewTargets(const TArrayView<float>& Priorities, const FReplicationView& ReplicationView)
+{
+	using namespace UE::Net::Private;
+
+	// We allow a view target to appear multiple times. It will get the same priority regardless.
+	TArray<FNetHandle, TInlineAllocator<16>> ViewTargets;
+	for (const FReplicationView::FView& View : ReplicationView.Views)
+	{
+		if (View.Controller.IsValid())
+		{
+			ViewTargets.Add(View.Controller);
+		}
+		if (View.ViewTarget != View.Controller && View.ViewTarget.IsValid())
+		{
+			ViewTargets.Add(View.ViewTarget);
+		}
+	}
+
+	for (FNetHandle NetHandle : ViewTargets)
+	{
+		const FInternalNetRefIndex ViewTargetInternalIndex = NetRefHandleManager->GetInternalIndexFromNetHandle(NetHandle);
+		if (ViewTargetInternalIndex != FNetRefHandleManager::InvalidInternalIndex)
+		{
+			Priorities[ViewTargetInternalIndex] = ViewTargetHighPriority;
+		}
+	}
 }
 
 /**
@@ -766,7 +801,7 @@ void FReplicationPrioritization::BatchNotifyPrioritizersOfDirtyObjects(FUpdateDi
 	BatchHelper.PrepareBatch(ObjectIndices, ObjectCount, ObjectIndexToPrioritizer.GetData());
 
 	FNetObjectPrioritizerUpdateParams UpdateParameters;
-	UpdateParameters.StateBuffers = NetRefHandleManager->GetReplicatedObjectStateBuffers().GetData();
+	UpdateParameters.StateBuffers = &NetRefHandleManager->GetReplicatedObjectStateBuffers();
 	UpdateParameters.PrioritizationInfos = NetObjectPrioritizationInfos.GetData();
 
 	for (const FUpdateDirtyObjectsBatchHelper::FPerPrioritizerInfo& PerPrioritizerInfo : BatchHelper.PerPrioritizerInfos)

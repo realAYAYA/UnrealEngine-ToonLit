@@ -6,6 +6,7 @@
 #include "Features/IModularFeature.h"
 
 class AActor;
+class UActorComponent;
 class UStaticMesh;
 class UMaterial;
 class UMaterialInterface;
@@ -88,7 +89,24 @@ public:
 	enum class ETextureSizePolicy : uint8
 	{
 		TextureSize = 0,
-		TexelDensity = 1
+		TexelDensity = 1,
+		CustomTextureSize = 2
+	};
+
+	enum class ENaniteFallbackTarget : uint8
+	{
+		Auto,
+		PercentTriangles,
+		RelativeError
+	};
+
+	/**
+	 * Input to approximate, as actors and/or components
+	 */
+	struct FInput
+	{
+		TArray<AActor*>				Actors;
+		TArray<UActorComponent*>	Components;
 	};
 
 
@@ -178,16 +196,22 @@ public:
 		UMaterialInterface* BakeMaterial = nullptr;		// if null, will use /MeshModelingToolsetExp/Materials/FullMaterialBakePreviewMaterial_PackedMRS instead
 		FName BaseColorTexParamName = FName("BaseColor");
 		bool bBakeBaseColor = true;
+		int32 CustomTextureSizeBaseColor = 1024;
 		FName RoughnessTexParamName = FName("Roughness");
 		bool bBakeRoughness = true;
+		int32 CustomTextureSizeRoughness = 1024;
 		FName MetallicTexParamName = FName("Metallic");
 		bool bBakeMetallic = true;
+		int32 CustomTextureSizeMetallic = 1024;
 		FName SpecularTexParamName = FName("Specular");
 		bool bBakeSpecular = true;
+		int32 CustomTextureSizeSpecular = 1024;
 		FName EmissiveTexParamName = FName("Emissive");
 		bool bBakeEmissive = true;
+		int32 CustomTextureSizeEmissive = 1024;
 		FName NormalTexParamName = FName("NormalMap");
 		bool bBakeNormalMap = true;
+		int32 CustomTextureSizeNormalMap = 1024;
 		
 		bool bUsePackedMRS = true;
 		FName PackedMRSTexParamName = FName("PackedMRS");
@@ -208,8 +232,14 @@ public:
 		// Whether to generate a nanite-enabled mesh
 		bool bGenerateNaniteEnabledMesh = false;
 
-		// Percentage of triangles to retain for the nanite coarse mesh
-		float NaniteProxyTrianglePercent = 100;
+		/** Which heuristic to use when generating the fallback mesh. */
+		ENaniteFallbackTarget NaniteFallbackTarget = ENaniteFallbackTarget::Auto;
+	
+		/** Percentage of triangles to keep from source mesh for fallback. 1.0 = no reduction, 0.0 = no triangles. */
+		float NaniteFallbackPercentTriangles = 1.0f;
+
+		/** Reduce until at least this amount of error is reached relative to size of the mesh */
+		float NaniteFallbackRelativeError = 1.0f;
 
 		// Whether ray tracing will be supported on this mesh. Disable this to save memory if the generated mesh will only be rendered in the distance
 		bool bSupportRayTracing = true;
@@ -275,9 +305,9 @@ public:
 	}
 
 	/**
-	 * Top-level driver function that clients call to generate the approximation for a set of input Actors.
+	 * Top-level driver function that clients call to generate the approximation for a set of input Actors or Components.
 	 */
-	virtual void ApproximateActors(const TArray<AActor*>& Actors, const FOptions& Options, FResults& ResultsOut) 
+	virtual void ApproximateActors(const FInput& Input, const FOptions& Options, FResults& ResultsOut) 
 	{
 		check(false);		// not implemented in base class
 	}

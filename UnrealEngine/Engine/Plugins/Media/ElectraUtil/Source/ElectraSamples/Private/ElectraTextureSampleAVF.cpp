@@ -18,8 +18,12 @@
 #include "Containers/Array.h"
 #endif
 
+THIRD_PARTY_INCLUDES_START
+#include "MetalInclude.h"
+THIRD_PARTY_INCLUDES_END
+
 #if WITH_ENGINE
-extern void SafeReleaseMetalObject(id Object);
+extern void SafeReleaseMetalObject(NS::Object* Object);
 #endif
 
 // ------------------------------------------------------------------------------------------------------
@@ -39,7 +43,7 @@ FElectraMediaTexConvApple::~FElectraMediaTexConvApple()
 	if (MetalTextureCache)
 	{
 		CVMetalTextureCacheRef TextureCacheCopy = MetalTextureCache;
-		SafeReleaseMetalObject((id)TextureCacheCopy);
+		SafeReleaseMetalObject((__bridge NS::Object*)TextureCacheCopy);
 	}
 #endif
 }
@@ -153,7 +157,7 @@ public:
 } // namespace anonymous
 
 
-void FElectraMediaTexConvApple::ConvertTexture(FTexture2DRHIRef & InDstTexture, CVImageBufferRef InImageBufferRef, bool bFullRange, EMediaTextureSampleFormat Format, const FMatrix44f& YUVMtx, const FMatrix44f& GamutToXYZMtx, UE::Color::EEncoding EncodingType, float NormalizationFactor)
+void FElectraMediaTexConvApple::ConvertTexture(FTexture2DRHIRef & InDstTexture, CVImageBufferRef InImageBufferRef, bool bFullRange, EMediaTextureSampleFormat Format, const FMatrix44f& YUVMtx, const FMatrix44d& GamutToXYZMtx, UE::Color::EEncoding EncodingType, float NormalizationFactor)
 {
 	FRHICommandListImmediate& RHICmdList = FRHICommandListImmediate::Get();
 
@@ -161,15 +165,13 @@ void FElectraMediaTexConvApple::ConvertTexture(FTexture2DRHIRef & InDstTexture, 
 	const int32 FrameWidth = CVPixelBufferGetWidth(InImageBufferRef);
 	const int32 FrameStride = CVPixelBufferGetBytesPerRow(InImageBufferRef);
 
-	TRefCountPtr<FRHITexture2D> ShaderResource;
-
 	// We have to support Metal for this object now
 	check(COREVIDEO_SUPPORTS_METAL);
 	check(IsMetalPlatform(GMaxRHIShaderPlatform));
 	{
 		if (!MetalTextureCache)
 		{
-			id<MTLDevice> Device = (id<MTLDevice>)GDynamicRHI->RHIGetNativeDevice();
+            id<MTLDevice> Device = (__bridge id<MTLDevice>)GDynamicRHI->RHIGetNativeDevice();
 			check(Device);
 
 			CVReturn Return = CVMetalTextureCacheCreate(kCFAllocatorDefault, nullptr, Device, nullptr, &MetalTextureCache);
@@ -207,12 +209,14 @@ void FElectraMediaTexConvApple::ConvertTexture(FTexture2DRHIRef & InDstTexture, 
 			const FRHITextureCreateDesc YDesc =
 				FRHITextureCreateDesc::Create2D(TEXT("YTex"), YWidth, YHeight, bIs8Bit ? PF_G8 : PF_G16)
 				.SetFlags(ETextureCreateFlags::Dynamic | ETextureCreateFlags::NoTiling | ETextureCreateFlags::ShaderResource)
-				.SetBulkData(new FTexConvTexResourceWrapper(YTextureRef));
+				.SetBulkData(new FTexConvTexResourceWrapper(YTextureRef))
+				.SetInitialState(ERHIAccess::SRVMask);
 
 			const FRHITextureCreateDesc UVDesc =
 				FRHITextureCreateDesc::Create2D(TEXT("UVTex"), UVWidth, UVHeight, bIs8Bit ? PF_R8G8 : PF_G16R16)
 				.SetFlags(ETextureCreateFlags::Dynamic | ETextureCreateFlags::NoTiling | ETextureCreateFlags::ShaderResource)
-				.SetBulkData(new FTexConvTexResourceWrapper(UVTextureRef));
+				.SetBulkData(new FTexConvTexResourceWrapper(UVTextureRef))
+				.SetInitialState(ERHIAccess::SRVMask);
 
 			TRefCountPtr<FRHITexture> YTex = RHICreateTexture(YDesc);
 			TRefCountPtr<FRHITexture> UVTex = RHICreateTexture(UVDesc);
@@ -221,7 +225,8 @@ void FElectraMediaTexConvApple::ConvertTexture(FTexture2DRHIRef & InDstTexture, 
 				// configure media shaders
 				auto GlobalShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
 
-				FRHIRenderPassInfo RPInfo(InDstTexture, ERenderTargetActions::Load_Store);
+				RHICmdList.Transition(FRHITransitionInfo(InDstTexture, ERHIAccess::SRVMask, ERHIAccess::RTV));
+				FRHIRenderPassInfo RPInfo(InDstTexture, ERenderTargetActions::DontLoad_Store);
 				RHICmdList.BeginRenderPass(RPInfo, TEXT("AvfMediaSampler"));
 				{
 					FGraphicsPipelineStateInitializer GraphicsPSOInit;
@@ -235,7 +240,7 @@ void FElectraMediaTexConvApple::ConvertTexture(FTexture2DRHIRef & InDstTexture, 
 
 					// Setup conversion from Rec2020 to current working color space
 					const UE::Color::FColorSpace& Working = UE::Color::FColorSpace::GetWorking();
-					FMatrix44f ColorSpaceMtx = UE::Color::Transpose<float>(Working.GetXYZToRgb()) * GamutToXYZMtx;
+					FMatrix44f ColorSpaceMtx = FMatrix44f(Working.GetXYZToRgb().GetTransposed() * GamutToXYZMtx);
 					ColorSpaceMtx = ColorSpaceMtx.ApplyScale(NormalizationFactor);
 
 					if (Format == EMediaTextureSampleFormat::CharNV12)
@@ -282,7 +287,7 @@ void FElectraMediaTexConvApple::ConvertTexture(FTexture2DRHIRef & InDstTexture, 
 					RHICmdList.DrawPrimitive(0, 2, 1);
 				}
 				RHICmdList.EndRenderPass();
-				RHICmdList.Transition(FRHITransitionInfo(ShaderResource, ERHIAccess::RTV, ERHIAccess::SRVMask));
+				RHICmdList.Transition(FRHITransitionInfo(InDstTexture, ERHIAccess::RTV, ERHIAccess::SRVMask));
 			}
 			CFRelease(YTextureRef);
 			CFRelease(UVTextureRef);

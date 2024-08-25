@@ -13,20 +13,38 @@ namespace EpicGames.Core
 	public static class LogValueType
 	{
 #pragma warning disable CS1591
-		public static readonly Utf8String Asset = "Asset";
-		public static readonly Utf8String SourceFile = "SourceFile";
-		public static readonly Utf8String Object = "Object"; // Arbitrary structured object
-		public static readonly Utf8String Channel = "Channel";
-		public static readonly Utf8String Severity = "Severity";
-		public static readonly Utf8String Message = "Message";
-		public static readonly Utf8String LineNumber = "Line";
-		public static readonly Utf8String ColumnNumber = "Column";
-		public static readonly Utf8String Symbol = "Symbol";
-		public static readonly Utf8String ErrorCode = "ErrorCode";
-		public static readonly Utf8String ToolName = "ToolName";
-		public static readonly Utf8String ScreenshotTest = "ScreenshotTest";
-		public static readonly Utf8String DepotPath = "DepotPath";
+		public static readonly Utf8String Asset = new Utf8String("Asset");
+		public static readonly Utf8String SourceFile = new Utf8String("SourceFile");
+		public static readonly Utf8String Object = new Utf8String("Object"); // Arbitrary structured object
+		public static readonly Utf8String Channel = new Utf8String("Channel");
+		public static readonly Utf8String Severity = new Utf8String("Severity");
+		public static readonly Utf8String Message = new Utf8String("Message");
+		public static readonly Utf8String LineNumber = new Utf8String("Line");
+		public static readonly Utf8String ColumnNumber = new Utf8String("Column");
+		public static readonly Utf8String Symbol = new Utf8String("Symbol");
+		public static readonly Utf8String ErrorCode = new Utf8String("ErrorCode");
+		public static readonly Utf8String ToolName = new Utf8String("ToolName");
+		public static readonly Utf8String ScreenshotTest = new Utf8String("ScreenshotTest");
+		public static readonly Utf8String DepotPath = new Utf8String("DepotPath");
+		public static readonly Utf8String Link = new Utf8String("Link");
 #pragma warning restore CS1591
+	}
+
+	/// <summary>
+	/// Attribute indicating that a type should be tagged in log output
+	/// </summary>
+	[AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct)]
+	public sealed class LogValueTypeAttribute : Attribute
+	{
+		/// <summary>
+		/// Name to use for the type tag
+		/// </summary>
+		public string? Name { get; }
+		
+		/// <summary>
+		/// Constructor
+		/// </summary>
+		public LogValueTypeAttribute(string? name = null) => Name = name;
 	}
 
 	/// <summary>
@@ -67,10 +85,28 @@ namespace EpicGames.Core
 		/// </summary>
 		/// <param name="file">Source file to reference</param>
 		/// <param name="text">Display text for the fiel</param>
-		/// <returns>New log value instance</returns>
 		public static LogValue SourceFile(FileReference file, string text)
 		{
 			return new LogValue(LogValueType.SourceFile, text, new Dictionary<Utf8String, object> { [LogEventPropertyName.File] = file.FullName });
+		}
+
+		/// <summary>
+		/// Constructs a value which contains a hyperlink to an external page
+		/// </summary>
+		/// <param name="target">Target URL</param>
+		public static LogValue Link(Uri target)
+		{
+			return Link(target, target.ToString());
+		}
+
+		/// <summary>
+		/// Constructs a value which contains a hyperlink to an external page
+		/// </summary>
+		/// <param name="target">Target URL</param>
+		/// <param name="text">Text to render for the link</param>
+		public static LogValue Link(Uri target, string text)
+		{
+			return new LogValue(LogValueType.Link, text, new Dictionary<Utf8String, object> { [LogEventPropertyName.Target] = target.ToString() });
 		}
 
 		/// <summary>
@@ -98,7 +134,7 @@ namespace EpicGames.Core
 				{
 					string name = propertyInfo.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name ?? propertyInfo.Name;
 					properties ??= new Dictionary<Utf8String, object>();
-					properties[name] = propertyInfo.GetValue(obj)!;
+					properties[new Utf8String(name)] = propertyInfo.GetValue(obj)!;
 				}
 			}
 

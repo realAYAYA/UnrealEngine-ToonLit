@@ -302,10 +302,31 @@ void FGroomCustomAssetEditorToolkit::InitPreviewComponents()
 
 void FGroomCustomAssetEditorToolkit::OnClose() 
 {
-	//FCoreUObjectDelegates::OnObjectPropertyChanged.Remove(PropertyListenDelegate);
-	if (GroomAsset.IsValid() && PropertyListenDelegate.IsValid())
+	// Remove all delegates
+	if (GroomAsset.IsValid() && PropertyListenDelegatesResourceChanged.Num() > 0)
 	{
-		GroomAsset->GetOnGroomAssetResourcesChanged().Remove(PropertyListenDelegate);
+		if(PropertyListenDelegatesResourceChanged.Num() > 0)
+		{
+			for (FDelegateHandle Handle : PropertyListenDelegatesResourceChanged)
+			{
+				if (Handle.IsValid())
+				{
+					GroomAsset->GetOnGroomAssetResourcesChanged().Remove(Handle);
+				}
+			}
+			PropertyListenDelegatesResourceChanged.Empty();
+		}
+		if (PropertyListenDelegatesAssetChanged.Num() > 0)
+        {
+         	for (FDelegateHandle Handle : PropertyListenDelegatesAssetChanged)
+         	{
+         		if (Handle.IsValid())
+         		{
+         			GroomAsset->GetOnGroomAssetChanged().Remove(Handle);
+         		}
+         	}
+         	PropertyListenDelegatesAssetChanged.Empty();
+        }
 	}
 
 	PropertiesTab.Reset();
@@ -430,6 +451,7 @@ void FGroomCustomAssetEditorToolkit::InitCustomAssetEditor(const EToolkitMode::T
 
 	ViewportTab = SNew(SGroomEditorViewport);
 	ThumbnailPool = MakeShared<FAssetThumbnailPool>(64);
+	GroomEditorStyle = MakeShareable(new FGroomEditorStyle());
 
 	// Automatically affect the first skelal mesh compatible with the groom asset
 	#if 0
@@ -646,16 +668,18 @@ void FGroomCustomAssetEditorToolkit::InitCustomAssetEditor(const EToolkitMode::T
 		FGroomCustomAssetEditorToolkit* LocalToolKit = this;
 		auto InvalidateDetailViews = [LocalToolKit]()
 		{
-			LocalToolKit->DetailView_LODProperties->ForceRefresh();
-			LocalToolKit->DetailView_InterpolationProperties->ForceRefresh();
-			LocalToolKit->DetailView_RenderingProperties->ForceRefresh();
-			LocalToolKit->DetailView_PhysicsProperties->ForceRefresh();
-			LocalToolKit->DetailView_CardsProperties->ForceRefresh();
-			LocalToolKit->DetailView_MeshesProperties->ForceRefresh();
-			LocalToolKit->DetailView_MaterialProperties->ForceRefresh();
-			LocalToolKit->DetailView_BindingProperties->ForceRefresh();
+			if (LocalToolKit->DetailView_LODProperties)				{ LocalToolKit->DetailView_LODProperties->ForceRefresh(); }
+			if (LocalToolKit->DetailView_InterpolationProperties)	{ LocalToolKit->DetailView_InterpolationProperties->ForceRefresh(); }
+			if (LocalToolKit->DetailView_RenderingProperties)		{ LocalToolKit->DetailView_RenderingProperties->ForceRefresh(); }
+			if (LocalToolKit->DetailView_PhysicsProperties)			{ LocalToolKit->DetailView_PhysicsProperties->ForceRefresh(); }
+			if (LocalToolKit->DetailView_CardsProperties)			{ LocalToolKit->DetailView_CardsProperties->ForceRefresh(); }
+			if (LocalToolKit->DetailView_MeshesProperties)			{ LocalToolKit->DetailView_MeshesProperties->ForceRefresh(); }
+			if (LocalToolKit->DetailView_MaterialProperties)		{ LocalToolKit->DetailView_MaterialProperties->ForceRefresh(); }
+			if (LocalToolKit->DetailView_BindingProperties)			{ LocalToolKit->DetailView_BindingProperties->ForceRefresh(); }
 		};
-		PropertyListenDelegate = GroomAsset->GetOnGroomAssetResourcesChanged().AddLambda(InvalidateDetailViews);
+
+		PropertyListenDelegatesResourceChanged.Add(GroomAsset->GetOnGroomAssetResourcesChanged().AddLambda(InvalidateDetailViews));
+		PropertyListenDelegatesAssetChanged.Add(GroomAsset->GetOnGroomAssetChanged().AddLambda(InvalidateDetailViews));
 	}
 }
 
@@ -982,6 +1006,11 @@ void FGroomCustomAssetEditorToolkit::PreviewBinding(int32 BindingIndex)
 int32 FGroomCustomAssetEditorToolkit::GetActiveBindingIndex() const
 {
 	return ActiveGroomBindingIndex;
+}
+
+FGroomEditorStyle* FGroomCustomAssetEditorToolkit::GetSlateStyle() const 
+{ 
+	return GroomEditorStyle.Get();
 }
 
 #undef LOCTEXT_NAMESPACE

@@ -2,8 +2,13 @@
 
 import 'dart:async';
 import 'dart:isolate';
-import 'dart:ui';
 
+import 'package:epic_common/localizations.dart';
+import 'package:epic_common/logging.dart';
+import 'package:epic_common/preferences.dart';
+import 'package:epic_common/theme.dart';
+import 'package:epic_common/utilities/version.dart';
+import 'package:epic_common/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
@@ -12,8 +17,10 @@ import 'package:provider/provider.dart';
 import 'package:streaming_shared_preferences/streaming_shared_preferences.dart';
 
 import 'models/engine_connection.dart';
+import 'models/engine_passphrase_manager.dart';
 import 'models/navigator_keys.dart';
 import 'models/preview_render_manager.dart';
+import 'models/settings/connection_settings.dart';
 import 'models/settings/delta_widget_settings.dart';
 import 'models/settings/main_screen_settings.dart';
 import 'models/settings/recent_actor_settings.dart';
@@ -21,30 +28,39 @@ import 'models/settings/selected_actor_settings.dart';
 import 'models/settings/stage_map_settings.dart';
 import 'models/unreal_actor_creator.dart';
 import 'models/unreal_actor_manager.dart';
+import 'models/unreal_dockable_tab_manager.dart';
 import 'models/unreal_property_manager.dart';
 import 'models/unreal_transaction_manager.dart';
 import 'routes.dart';
-import 'utilities/constants.dart';
-import 'utilities/logging.dart';
-import 'utilities/preferences_bundle.dart';
-import 'utilities/transient_preference.dart';
-import 'utilities/unreal_colors.dart';
-import 'widgets/elements/epic_scroll_view.dart';
 import 'widgets/screens/connect/connect.dart';
 import 'widgets/screens/eula/eula_screen.dart';
 
 final _log = Logger('Main');
 
 void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-
-  Logging.instance.initialize();
+  Logging.instance.initialize('epic_stage_app');
 
   final asyncLog = Logger('Async');
+
+  // Catch any asynchronous errors
+  runZonedGuarded(
+    () => initAndRunApp(),
+    (error, stack) {
+      asyncLog.severe(error, error, stack);
+    },
+  );
+}
+
+/// Set up the app and run it. Encapsulated so we can wrap it in [runZonedGuarded] in [main] for better error handling.
+void initAndRunApp() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  _log.info(await getVerbosePackageVersion());
+
   final flutterLog = Logger('Flutter');
   final isolateLog = Logger('Isolate');
 
-  preloadShaders();
+  await preloadShaders();
 
   // Catch any errors originating from or otherwise passed on by Flutter
   FlutterError.onError = (FlutterErrorDetails details) {
@@ -59,21 +75,13 @@ void main() async {
   // Load user settings
   final preferences = await StreamingSharedPreferences.instance;
 
-  // Catch any asynchronous errors
-  runZonedGuarded(() {
-    // Run the app itself
-    runApp(EpicStageApp(preferences: preferences));
-  }, (error, stack) {
-    asyncLog.severe(error, error, stack);
-  });
+  // Run the app itself
+  runApp(EpicStageApp(preferences: preferences));
 }
 
-void preloadShaders() async {
-  await EpicScrollView.preloadShaders();
-}
-
-void unloadShaders() {
-  EpicScrollView.unloadShaders();
+/// Preload any shaders we expect to use regularly.
+Future preloadShaders() async {
+  await EpicCommonWidgets.preloadShaders();
 }
 
 class EpicStageApp extends StatefulWidget {
@@ -152,64 +160,11 @@ class _EpicStageAppState extends State<EpicStageApp> with TickerProviderStateMix
       routes['/'] = routes[ConnectScreen.route]!;
     }
 
-    const colorScheme = ColorScheme.dark(
-      primary: UnrealColors.highlightBlue,
-      secondary: Color(0xff575757),
-      onPrimary: UnrealColors.white,
-      onSecondary: UnrealColors.white,
-      background: UnrealColors.gray06,
-      surfaceVariant: UnrealColors.gray10,
-      surface: UnrealColors.gray14,
-      surfaceTint: UnrealColors.gray18,
-      onSurface: UnrealColors.gray75,
-      shadow: Colors.transparent,
-    );
-
-    const textTheme = const TextTheme(
-      bodyMedium: TextStyle(
-        color: UnrealColors.gray75,
-        decorationColor: UnrealColors.gray75,
-        fontVariations: [FontVariation('wght', 400)],
-        fontSize: 14,
-      ),
-      displayLarge: TextStyle(
-        color: UnrealColors.white,
-        decorationColor: UnrealColors.white,
-        fontVariations: [FontVariation('wght', 700)],
-        fontSize: 14,
-      ),
-      displayMedium: TextStyle(
-        color: UnrealColors.white,
-        decorationColor: UnrealColors.white,
-        fontVariations: [FontVariation('wght', 400)],
-        fontSize: 14,
-      ),
-      headlineSmall: TextStyle(
-        color: UnrealColors.gray75,
-        decorationColor: UnrealColors.gray75,
-        fontVariations: [FontVariation('wght', 600)],
-        letterSpacing: 0.25,
-        fontSize: 14,
-      ),
-      titleLarge: TextStyle(
-        color: UnrealColors.gray90,
-        decorationColor: UnrealColors.gray90,
-        fontVariations: [FontVariation('wght', 700)],
-        letterSpacing: 1,
-        fontSize: 12,
-      ),
-      labelMedium: TextStyle(
-        color: UnrealColors.gray56,
-        decorationColor: UnrealColors.gray56,
-        fontVariations: [FontVariation('wght', 400)],
-        letterSpacing: 0.5,
-        fontSize: 12,
-      ),
-    );
-
     return MultiProvider(
       providers: [
+        Provider<EnginePassphraseManager>(create: (_) => EnginePassphraseManager()),
         Provider<PreferencesBundle>(create: (_) => _preferenceBundle),
+        Provider<ConnectionSettings>(create: (_) => ConnectionSettings(_preferenceBundle)),
         Provider<SelectedActorSettings>(create: (_) => SelectedActorSettings(_preferenceBundle)),
         Provider<StageMapSettings>(create: (_) => StageMapSettings(_preferenceBundle)),
         Provider<RecentActorSettings>(create: (_) => RecentActorSettings(_preferenceBundle)),
@@ -230,100 +185,17 @@ class _EpicStageAppState extends State<EpicStageApp> with TickerProviderStateMix
           create: (context) => UnrealActorCreator(context),
           dispose: (context, value) => value.dispose(),
         ),
+        Provider<UnrealDockableTabManager>(
+          create: (context) => UnrealDockableTabManager(context),
+          dispose: (context, value) => value.dispose(),
+        )
       ],
       child: MaterialApp(
-        theme: ThemeData(
-          fontFamily: 'Inter',
-
-          textTheme: textTheme,
-          colorScheme: colorScheme,
-
-          // Disable Material "ink" splash effects
-          splashFactory: NoSplash.splashFactory,
-
-          scaffoldBackgroundColor: UnrealColors.gray10,
-          hoverColor: Colors.transparent,
-          highlightColor: Colors.transparent,
-
-          textButtonTheme: TextButtonThemeData(
-            style: ButtonStyle(
-              overlayColor: MaterialStateProperty.all(Colors.transparent),
-            ),
-          ),
-
-          checkboxTheme: CheckboxThemeData(
-            overlayColor: MaterialStateProperty.all(Colors.transparent),
-          ),
-
-          appBarTheme: const AppBarTheme(
-            shadowColor: Colors.transparent,
-          ),
-
-          tooltipTheme: const TooltipThemeData(
-            waitDuration: Duration(milliseconds: 700),
-            decoration: BoxDecoration(
-              image: DecorationImage(
-                image: AssetImage('assets/images/decoration/tooltip.png'),
-                centerSlice: Rect.fromLTRB(4, 4, 60, 60),
-              ),
-            ),
-          ),
-
-          textSelectionTheme: const TextSelectionThemeData(
-            cursorColor: UnrealColors.white,
-          ),
-
-          inputDecorationTheme: InputDecorationTheme(
-            filled: true,
-            outlineBorder: BorderSide.none,
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(4),
-              borderSide: BorderSide.none,
-            ),
-            enabledBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(4),
-              borderSide: BorderSide.none,
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(4),
-              borderSide: BorderSide.none,
-            ),
-            errorBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(4),
-              borderSide: BorderSide.none,
-            ),
-            fillColor: colorScheme.background,
-            hoverColor: colorScheme.background,
-            contentPadding: const EdgeInsets.symmetric(
-              horizontal: 12,
-            ),
-            hintStyle: textTheme.bodyMedium!.copyWith(color: UnrealColors.gray56),
-          ),
-
-          listTileTheme: const ListTileThemeData(
-            textColor: UnrealColors.gray75,
-            iconColor: UnrealColors.gray75,
-            selectedColor: UnrealColors.white,
-            selectedTileColor: UnrealColors.highlightBlue,
-          ),
-
-          scrollbarTheme: const ScrollbarThemeData(
-            thumbColor: MaterialStatePropertyAll(UnrealColors.gray22),
-            thickness: MaterialStatePropertyAll(8),
-            radius: Radius.circular(4),
-            mainAxisMargin: cardCornerRadius,
-            crossAxisMargin: cardCornerRadius,
-          ),
-
-          cardTheme: CardTheme(
-            color: UnrealColors.gray10,
-            clipBehavior: Clip.antiAlias,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(cardCornerRadius)),
-            margin: EdgeInsets.zero,
-            shadowColor: Colors.transparent,
-          ),
-        ),
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        theme: UnrealTheme.makeThemeData(),
+        localizationsDelegates: [
+          ...AppLocalizations.localizationsDelegates,
+          ...EpicCommonLocalizations.localizationsDelegates,
+        ],
         supportedLocales: AppLocalizations.supportedLocales,
         navigatorKey: rootNavigatorKey,
         onGenerateTitle: (context) => AppLocalizations.of(context)!.appTitle,

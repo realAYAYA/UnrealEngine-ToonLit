@@ -36,11 +36,13 @@ int32 USavePackageUtilitiesCommandlet::Main(const FString& Params)
 		FString Filename = FPaths::CreateTempFilename(*FPaths::ProjectSavedDir());
 
 		// CookData should only be nonzero if we are cooking.
+		TOptional<FArchiveCookContext> CookContext;
 		TOptional<FArchiveCookData> CookData;
-		FArchiveCookContext CookContext(Package, FArchiveCookContext::ECookTypeUnknown, FArchiveCookContext::ECookingDLCUnknown);
 		if (TargetPlatform != nullptr)
 		{
-			CookData.Emplace(*TargetPlatform, CookContext);
+			CookContext.Emplace(Package, UE::Cook::ECookType::Unknown,
+				UE::Cook::ECookingDLC::Unknown, TargetPlatform);
+			CookData.Emplace(*TargetPlatform, *CookContext);
 		}
 
 		FSavePackageArgs SaveArgs;

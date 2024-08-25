@@ -11,10 +11,15 @@
 #include "Factories/RCDefaultValueFactories.h"
 #include "Factories/RemoteControlMaskingFactories.h"
 #include "Features/IModularFeatures.h"
+#include "PropertyIdHandler/BasePropertyIdHandler.h"
+#include "PropertyIdHandler/EnumPropertyIdHandler.h"
+#include "PropertyIdHandler/ObjectPropertyIdHandler.h"
+#include "PropertyIdHandler/StructPropertyIdHandler.h"
 #include "IRemoteControlInterceptionFeature.h"
 #include "IRemoteControlModule.h"
 #include "IStructDeserializerBackend.h"
 #include "IStructSerializerBackend.h"
+#include "Kismet/KismetSystemLibrary.h"
 #include "Misc/ScopeExit.h"
 #include "RCPropertyUtilities.h"
 #include "RCVirtualProperty.h"
@@ -108,28 +113,185 @@ namespace RemoteControlUtil
 		return Function;
 	}
 
-	bool IsPropertyAllowed(const FProperty* InProperty, ERCAccess InAccessType, bool bObjectInGamePackage)
+	/** Returns whether the access is a write access regardless of if it generates a transaction. */
+	bool IsWriteAccess(ERCAccess Access)
 	{
+		return Access == ERCAccess::WRITE_ACCESS || Access == ERCAccess::WRITE_TRANSACTION_ACCESS || Access == ERCAccess::WRITE_MANUAL_TRANSACTION_ACCESS;
+	}
+
+	/** Returns whether the access is a read access. */
+	bool IsReadAccess(ERCAccess Access)
+	{
+		return Access == ERCAccess::READ_ACCESS;
+	}
+
+	bool PropertyModificationShouldUseSetter(const UObject* Object, FProperty* Property)
+	{
+		if (!Property || !Object)
+		{
+			return false;
+		}
+
+		return Property->HasSetter() || !!RemoteControlPropertyUtilities::FindSetterFunction(Property, Object->GetClass());
+	}
+
+	bool IsPropertyAllowed(const FProperty* InProperty, ERCAccess InAccessType, const UObject* InObject, bool bObjectInGamePackage, FString* OutError)
+	{
+		FTextBuilder Error;
+		FText PreError;
+		if (IsWriteAccess(InAccessType))
+		{
+			PreError = LOCTEXT("RCWritingAccess", "Property is not writeable because");
+		}
+		else if (IsReadAccess(InAccessType))
+		{
+			PreError = LOCTEXT("RCReadingAccess", "Property is not readable because");
+		}
+		else
+		{
+			PreError = LOCTEXT("RCNoAccess", "Property");
+		}
 #if WITH_EDITOR
 		URemoteControlSettings* RCSettings = GetMutableDefault<URemoteControlSettings>();
 		// Override this flag to false if we are running in Editor Mode with -game flag.
 		bObjectInGamePackage = false;
 #endif
 		// The property is allowed to be accessed if it exists...
-		return InProperty &&
-				// it doesn't have exposed getter/setter that should be used instead
+		const bool bPropertyIsValid = InProperty != nullptr;
+		if (!bPropertyIsValid)
+		{
+			if (OutError)
+			{
+				Error.AppendLine(FText::Format(LOCTEXT("RCPropertyNotValid", "{0} is not valid."), PreError));
+				*OutError = Error.ToText().ToString();
+			}
+
+			return false;
+		}
 #if WITH_EDITOR
-				(!InProperty->HasMetaData(RemoteControlUtil::NAME_BlueprintGetter) || !InProperty->HasMetaData(RemoteControlUtil::NAME_BlueprintSetter) || RCSettings->bIgnoreGetterSetterCheck) &&
-				// it isn't private or protected, except if AllowPrivateAccess is true and if only for Protected whenever it should be ignored
-				(!InProperty->HasAnyPropertyFlags(CPF_NativeAccessSpecifierPrivate) || InProperty->GetBoolMetaData(RemoteControlUtil::NAME_AllowPrivateAccess)) &&
-				(!InProperty->HasAnyPropertyFlags(CPF_NativeAccessSpecifierProtected) || RCSettings->bIgnoreProtectedCheck || InProperty->GetBoolMetaData(RemoteControlUtil::NAME_AllowPrivateAccess)) &&	
+		// it doesn't have exposed getter AND setter that should be used instead or if it should ignore them
+		const bool bHasBlueprintGetterOrSetterOrIgnored = !InProperty->HasMetaData(RemoteControlUtil::NAME_BlueprintGetter) ||
+												 		  !InProperty->HasMetaData(RemoteControlUtil::NAME_BlueprintSetter) ||
+												 		  RCSettings->bIgnoreGetterSetterCheck;
+		if (!bHasBlueprintGetterOrSetterOrIgnored)
+		{
+			Error.AppendLine(FText::Format(LOCTEXT("RCBlueprintHasGetterSetterOrNotIgnored", "{0} has blueprint getter and setter to use.\nEnable in the RemoteControl settings IgnoreGetterSetterCheck if you want to ignore it."), PreError));
+		}
+
+		// it isn't private or protected, except if AllowPrivateAccess is true and if only for Protected whenever it should be ignored
+		const bool bAllowPrivateAccessForPrivate =  !InProperty->HasAnyPropertyFlags(CPF_NativeAccessSpecifierPrivate) ||
+													InProperty->GetBoolMetaData(RemoteControlUtil::NAME_AllowPrivateAccess);
+
+		const bool bAllowPrivateAccessForProtected = !InProperty->HasAnyPropertyFlags(CPF_NativeAccessSpecifierProtected) ||
+													 RCSettings->bIgnoreProtectedCheck ||
+													 InProperty->GetBoolMetaData(RemoteControlUtil::NAME_AllowPrivateAccess);
+
 #endif
-				// it isn't blueprint private
-				!InProperty->HasAnyPropertyFlags(CPF_DisableEditOnInstance) &&
-				// and it's either blueprint visible if in game or editable if in editor and it isn't read only if the access type is write
-				(bObjectInGamePackage
-					? InProperty->HasAnyPropertyFlags(CPF_BlueprintVisible) && (InAccessType == ERCAccess::READ_ACCESS || !InProperty->HasAnyPropertyFlags(CPF_BlueprintReadOnly))
-					: InAccessType == ERCAccess::READ_ACCESS || (InProperty->HasAnyPropertyFlags(CPF_Edit) && !InProperty->HasAnyPropertyFlags(CPF_EditConst)));
+
+		const bool bPropertyHasSetterToUse = IsWriteAccess(InAccessType)? PropertyModificationShouldUseSetter(InObject, const_cast<FProperty*>(InProperty)) : true;
+
+		const bool bPropertyHasGetterToUse = IsReadAccess(InAccessType)? InProperty->HasGetter() : true;
+
+		bool bAppendSettingInformation = false;
+		if (!bPropertyHasSetterToUse)
+		{
+#if WITH_EDITOR
+			if (!bAllowPrivateAccessForPrivate)
+			{
+				Error.AppendLine(FText::Format(LOCTEXT("RCPropertyPrivateWithoutSetter", "{0} is private without the AllowPrivateAccess specifier set to true or a setter assigned."), PreError));
+			}
+
+			if (!bAllowPrivateAccessForProtected)
+			{
+				Error.AppendLine(FText::Format(LOCTEXT("RCPropertyProtectedWithoutSetterOrIgnored", "{0} is protected without the AllowPrivateAccess specifier set to true or a setter assigned."), PreError));
+				bAppendSettingInformation = true;
+			}
+#else
+			Error.AppendLine(FText::Format(LOCTEXT("RCPropertyNoSetter", "{0} it doesn't have a setter specifier assigned to it."), PreError));
+#endif
+			
+		}
+
+		if (!bPropertyHasGetterToUse)
+		{
+#if WITH_EDITOR
+			if (!bAllowPrivateAccessForPrivate)
+			{
+				Error.AppendLine(FText::Format(LOCTEXT("RCPropertyPrivateWithoutGetter", "{0} is private without the AllowPrivateAccess specifier set to true or a getter assigned."), PreError));
+			}
+
+			if (!bAllowPrivateAccessForProtected)
+			{
+				Error.AppendLine(FText::Format(LOCTEXT("RCPropertyProtectedWithoutGetterOrIgnored", "{0} is protected without the AllowPrivateAccess specifier set to true or a getter assigned."), PreError));
+				bAppendSettingInformation = true;
+			}
+#else
+			Error.AppendLine(FText::Format(LOCTEXT("RCPropertyNoGetter", "{0} doesn't have a getter specifier assigned to it."), PreError));
+#endif
+		}
+
+#if WITH_EDITOR
+		if (bAppendSettingInformation)
+		{
+			Error.AppendLine(LOCTEXT("RCSettingsIgnoreProtected","You can enable the RemoteControl setting IgnoreProtectedCheck to ignore it for protected properties."));
+		}
+#endif
+		// it isn't blueprint private
+		const bool bIsBlueprintPublic = !InProperty->HasAnyPropertyFlags(CPF_DisableEditOnInstance);
+
+		if (!bIsBlueprintPublic)
+		{
+			Error.AppendLine(FText::Format(LOCTEXT("RCBlueprintPropertyPrivate", "{0} has flag DisableEditOnInstance.\nEnable the InstanceEditable flag of the property in the blueprint editor."), PreError));
+		}
+
+		// and it's either blueprint visible if in game or editable if in editor and it isn't read only if the access type is write
+		bool bIsAccessibleInGamePackage;
+		bool bIsAccessibleInNonGamePackage;
+
+		if (bObjectInGamePackage)
+		{
+			bIsAccessibleInGamePackage = InProperty->HasAnyPropertyFlags(CPF_BlueprintVisible) &&
+										 (InAccessType == ERCAccess::READ_ACCESS ||
+										 !InProperty->HasAnyPropertyFlags(CPF_BlueprintReadOnly));
+
+			if (!bIsAccessibleInGamePackage)
+			{
+				Error.AppendLine(FText::Format(LOCTEXT("RCBlueprintNotAccessibleInGamePackage", "{0} doesn't have the BlueprintVisible flag and/or you are trying to write to it but it has the BlueprintReadOnly flag."), PreError));
+			}
+			// set this to true since it will not be evaluated in GamePackage
+			bIsAccessibleInNonGamePackage = true;
+		}
+		else
+		{
+			bIsAccessibleInNonGamePackage = InAccessType == ERCAccess::READ_ACCESS ||
+											(InProperty->HasAnyPropertyFlags(CPF_Edit) &&
+											!InProperty->HasAnyPropertyFlags(CPF_EditConst));
+
+			if (!bIsAccessibleInNonGamePackage)
+			{
+				Error.AppendLine(FText::Format(LOCTEXT("RCBlueprintNotAccessibleInNonGamePackage", "{0} has the EditConst flag."), PreError));
+			}
+			// set this to true since it will not be evaluated in NON GamePackage
+			bIsAccessibleInGamePackage = true;
+		}
+
+		const bool bIsAccessible = bObjectInGamePackage? bIsAccessibleInGamePackage : bIsAccessibleInNonGamePackage;
+
+		// Assign the error to be propagated after this call in case it failed
+		if (OutError)
+		{
+			*OutError = Error.ToText().ToString();
+		}
+
+		return (bPropertyIsValid &&
+#if WITH_EDITOR
+			bHasBlueprintGetterOrSetterOrIgnored &&
+			bAllowPrivateAccessForPrivate &&
+			bAllowPrivateAccessForProtected &&
+#endif
+			bIsBlueprintPublic &&
+			bIsAccessible) ||
+			(bPropertyHasGetterToUse && bPropertyHasSetterToUse);
 	};
 
 	FARFilter GetBasePresetFilter()
@@ -201,12 +363,6 @@ namespace RemoteControlUtil
 		}
 
 		return Id;
-	}
-
-	/** Returns whether the access is a write access regardless of if it generates a transaction. */
-	bool IsWriteAccess(ERCAccess Access)
-	{
-		return Access == ERCAccess::WRITE_ACCESS || Access == ERCAccess::WRITE_TRANSACTION_ACCESS || Access == ERCAccess::WRITE_MANUAL_TRANSACTION_ACCESS;
 	}
 
 	/** Helper function to check if a value is 0 without always calling FMath::IsNearlyZero, since that results in an ambiguous call for non-float values. */
@@ -640,6 +796,11 @@ void FRemoteControlModule::StartupModule()
 
 	// Register Masking Factories
 	RegisterMaskingFactories();
+
+	// Register PropertyIdHandler
+	RegisterPropertyIdHandler();
+
+	PopulateDisallowedFunctions();
 }
 
 void FRemoteControlModule::ShutdownModule()
@@ -742,6 +903,7 @@ void FRemoteControlModule::UnregisterEmbeddedPreset(FName Name)
 	// Check the cached preset ids and remove it if our name matches the stored id
 	TWeakObjectPtr<URemoteControlPreset>* FoundPreset = EmbeddedPresets.Find(Name);
 
+	// Remark: the weak ptr will be invalid during GC and the object will not be unregistered.
 	if (FoundPreset && FoundPreset->IsValid())
 	{
 		UnregisterEmbeddedPreset(FoundPreset->Get());
@@ -755,26 +917,35 @@ void FRemoteControlModule::UnregisterEmbeddedPreset(URemoteControlPreset* Preset
 		return;
 	}
 
-	FName PresetName = Preset->GetPresetName();
+	// Remark: the PresetName is unreliable. When unregistering during the garbage collection,
+	// the name can be "None". In that case we can recover the name from CachedPresetNamesById
+	// by using the PresetId.
+	// The other case is when the package has been renamed (save level as), in that case
+	// the PresetName is the renamed one, but both CachedPresetNamesById and EmbeddedPresets
+	// still have the old name.
+	const FName PresetName = Preset->GetPresetName();
+	bool bPresetRemoved = false;
 
-	if (PresetName == NAME_None)
+	if (PresetName != NAME_None)
 	{
-		return;
+		// Attempt to remove with current name (may not work if the package has been renamed).
+		bPresetRemoved = (EmbeddedPresets.Remove(PresetName) > 0) ? true : false;
 	}
-
-	FGuid PresetId = Preset->GetPresetId();
-
+	
+	const FGuid PresetId = Preset->GetPresetId();
+	
 	if (PresetId.IsValid())
 	{
-		FName* FoundPresetName = CachedPresetNamesById.Find(PresetId);
-
-		if (FoundPresetName && *FoundPresetName == PresetName)
+		if (!bPresetRemoved)
 		{
-			CachedPresetNamesById.Remove(PresetId);
+			if (const FName* FoundPresetName = CachedPresetNamesById.Find(PresetId))
+			{
+				// Attempt to remove from recovered the name from the id.
+				EmbeddedPresets.Remove(*FoundPresetName);
+			}
 		}
+		CachedPresetNamesById.Remove(PresetId);
 	}
-
-	EmbeddedPresets.Remove(PresetName);
 }
 
 bool FRemoteControlModule::CanResetToDefaultValue(UObject* InObject, const FRCResetToDefaultArgs& InArgs) const
@@ -936,7 +1107,8 @@ bool FRemoteControlModule::ResolveCall(const FString& ObjectPath, const FString&
 					ErrorText = FString::Printf(TEXT("Function: %s does not exist on object: %s"), *FunctionName, *ObjectPath);
 					bSuccess = false;
 				}
-				else if ((!Function->HasAllFunctionFlags(FUNC_BlueprintCallable | FUNC_Public) && !Function->HasAllFunctionFlags(FUNC_BlueprintEvent))
+				else if (!IsFunctionAllowed(Function)
+						|| (!Function->HasAllFunctionFlags(FUNC_BlueprintCallable | FUNC_Public) && !Function->HasAllFunctionFlags(FUNC_BlueprintEvent))
 	#if WITH_EDITOR
 						|| Function->HasMetaData(RemoteControlUtil::NAME_DeprecatedFunction)
 						|| Function->HasMetaData(RemoteControlUtil::NAME_ScriptNoExport)
@@ -1152,15 +1324,12 @@ bool FRemoteControlModule::ResolveObjectProperty(ERCAccess AccessType, UObject* 
 				{
 					FProperty* ResolvedProperty = PropertyPath.GetResolvedData().Field;
 
-					// When resolving a property for writing, resolve successfully if it should use a setter since it will end up using it. 
-					if ((RemoteControlUtil::IsWriteAccess(AccessType) && PropertyModificationShouldUseSetter(Object, ResolvedProperty))
-						|| RemoteControlUtil::IsPropertyAllowed(ResolvedProperty, AccessType, bObjectInGame))
+					if (RemoteControlUtil::IsPropertyAllowed(ResolvedProperty, AccessType, Object, bObjectInGame, &ErrorText))
 					{
 						OutObjectRef = FRCObjectReference{AccessType, Object, MoveTemp(PropertyPath)};
 					}
 					else
 					{
-						ErrorText = FString::Printf(TEXT("Object property: %s is unavailable remotely on object: %s"), *PropertyPath.GetFieldName().ToString(), *Object->GetPathName());
 						bSuccess = false;
 					}
 				}
@@ -1190,11 +1359,11 @@ bool FRemoteControlModule::ResolveObjectProperty(ERCAccess AccessType, UObject* 
 	if (!bSuccess && !ErrorText.IsEmpty())
 	{
 		IRemoteControlModule::BroadcastError(ErrorText);
-	}
 
-	if (OutErrorText && !ErrorText.IsEmpty())
-	{
-		*OutErrorText = MoveTemp(ErrorText);
+		if (OutErrorText != nullptr)
+		{
+			*OutErrorText = MoveTemp(ErrorText);
+		}
 	}
 
 	return bSuccess;
@@ -1229,7 +1398,15 @@ bool FRemoteControlModule::GetObjectProperties(const FRCObjectReference& ObjectA
 			bool bObjectInGame = !GIsEditor || Object->GetOutermost()->HasAnyPackageFlags(PKG_PlayInEditor);
 			Policies.PropertyFilter = [&ObjectAccess, bObjectInGame](const FProperty* CurrentProp, const FProperty* ParentProp)
 			{
-				return RemoteControlUtil::IsPropertyAllowed(CurrentProp, ObjectAccess.Access, bObjectInGame) || ParentProp != nullptr;
+				FString ErrorText;
+				const bool bIsPropertyAllowed =	RemoteControlUtil::IsPropertyAllowed(CurrentProp, ObjectAccess.Access, ObjectAccess.Object.Get(), bObjectInGame, &ErrorText);
+				if (bIsPropertyAllowed || ParentProp != nullptr)
+				{
+					return true;
+				}
+
+				IRemoteControlModule::BroadcastError(ErrorText + TEXT("\nAlso parent property is not valid."));
+				return false;
 			};
 		}
 
@@ -1382,7 +1559,7 @@ bool FRemoteControlModule::SetObjectProperties(const FRCObjectReference& ObjectA
 	if (InPayload.Num() != 0 && ObjectAccess.Object.IsValid())
 	{
 		// Convert raw property modifications to setter function calls if necessary.
-		if (PropertyModificationShouldUseSetter(ObjectAccess.Object.Get(), ObjectAccess.Property.Get()))
+		if (RemoteControlUtil::PropertyModificationShouldUseSetter(ObjectAccess.Object.Get(), ObjectAccess.Property.Get()))
 		{
 			FRCCall Call;
 			FRCInterceptionPayload InterceptionPayload;
@@ -1416,8 +1593,11 @@ bool FRemoteControlModule::SetObjectProperties(const FRCObjectReference& ObjectA
 
 		// If a setter wasn't used, verify if the property should be allowed.
 		bool bObjectInGame = !GIsEditor;
-		if (!RemoteControlUtil::IsPropertyAllowed(ObjectAccess.Property.Get(), ObjectAccess.Access, bObjectInGame))
+		FString ErrorText;
+
+		if (!RemoteControlUtil::IsPropertyAllowed(ObjectAccess.Property.Get(), ObjectAccess.Access, ObjectAccess.Object.Get() ,bObjectInGame, &ErrorText))
 		{
+			IRemoteControlModule::BroadcastError(ErrorText);
 			return false;
 		}
 
@@ -1451,7 +1631,7 @@ bool FRemoteControlModule::SetObjectProperties(const FRCObjectReference& ObjectA
 	}
 
 	// Convert raw property modifications to setter function calls if necessary.
-	if (PropertyModificationShouldUseSetter(ObjectAccess.Object.Get(), ObjectAccess.Property.Get()))
+	if (RemoteControlUtil::PropertyModificationShouldUseSetter(ObjectAccess.Object.Get(), ObjectAccess.Property.Get()))
 	{
 		FRCCall Call;
 		RemoteControlSetterUtils::FConvertToFunctionCallArgs Args(ObjectAccess, Backend, Call);
@@ -1511,7 +1691,15 @@ bool FRemoteControlModule::SetObjectProperties(const FRCObjectReference& ObjectA
 			bool bObjectInGame = !GIsEditor || MutableObjectReference.Object->GetOutermost()->HasAnyPackageFlags(PKG_PlayInEditor);
 			Policies.PropertyFilter = [&MutableObjectReference, bObjectInGame](const FProperty* CurrentProp, const FProperty* ParentProp)
 			{
-				return RemoteControlUtil::IsPropertyAllowed(CurrentProp, MutableObjectReference.Access, bObjectInGame) || ParentProp != nullptr;
+				FString ErrorText;
+				const bool bIsPropertyAllowed =	RemoteControlUtil::IsPropertyAllowed(CurrentProp, MutableObjectReference.Access, MutableObjectReference.Object.Get(), bObjectInGame, &ErrorText);
+				if (bIsPropertyAllowed || ParentProp != nullptr)
+				{
+					return true;
+				}
+
+				IRemoteControlModule::BroadcastError(ErrorText + TEXT("\nAlso parent property is not valid."));
+				return false;
 			};
 		}
 
@@ -2074,7 +2262,46 @@ void FRemoteControlModule::UnregisterDefaultEntityMetadata(FName MetadataKey)
 bool FRemoteControlModule::PropertySupportsRawModificationWithoutEditor(FProperty* Property, UClass* OwnerClass) const
 {
 	constexpr bool bInGameOrPackage = true;
-	return Property && (RemoteControlUtil::IsPropertyAllowed(Property, ERCAccess::WRITE_ACCESS, bInGameOrPackage) || !!RemoteControlPropertyUtilities::FindSetterFunction(Property, OwnerClass));
+	return Property && (RemoteControlUtil::IsPropertyAllowed(Property, ERCAccess::WRITE_ACCESS, nullptr, bInGameOrPackage, nullptr) || !!RemoteControlPropertyUtilities::FindSetterFunction(Property, OwnerClass));
+}
+
+bool FRemoteControlModule::PropertySupportsRawModification(FProperty* InProperty, const UObject* InObject, const bool bInWithEditor, FString* OutError) const
+{
+	FString ErrorTextSet;
+	FString ErrorTextGet;
+	const bool bCheckPackaged = !bInWithEditor;
+	if (!InProperty)
+	{
+		return false;
+	}
+
+	const bool bIsPropertyAllowedToSet = RemoteControlUtil::IsPropertyAllowed(InProperty, ERCAccess::WRITE_ACCESS, InObject, bCheckPackaged, &ErrorTextSet);
+	const bool bIsPropertyAllowedToRead = RemoteControlUtil::IsPropertyAllowed(InProperty, ERCAccess::READ_ACCESS, InObject, bCheckPackaged, &ErrorTextGet);
+
+	if (bIsPropertyAllowedToSet && bIsPropertyAllowedToRead)
+	{
+		return true;
+	}
+
+	if (OutError)
+	{
+		if (!bIsPropertyAllowedToSet)
+		{
+			if (!bIsPropertyAllowedToRead)
+			{
+				*OutError = FString::Printf(TEXT("%s\n\n%s"), *ErrorTextSet, *ErrorTextGet);
+			}
+			else
+			{
+				*OutError = ErrorTextSet;
+			}
+		}
+		else if (!bIsPropertyAllowedToRead)
+		{
+			*OutError = ErrorTextGet;
+		}
+	}
+	return false;
 }
 
 void FRemoteControlModule::RegisterEntityFactory(const FName InFactoryName, const TSharedRef<IRemoteControlPropertyFactory>& InFactory)
@@ -2162,6 +2389,23 @@ bool FRemoteControlModule::CanBeAccessedRemotely(UObject* Object) const
 	}
 
 	return true;
+}
+
+TSharedPtr<IPropertyIdHandler> FRemoteControlModule::GetPropertyIdHandlerFor(FProperty* InProperty)
+{
+	for (TSharedPtr<IPropertyIdHandler> Handler : PropertyIdPropertyHandlers)
+	{
+		if (Handler->IsPropertySupported(InProperty))
+		{
+			return Handler;
+		}
+	}
+	return nullptr;
+}
+
+void FRemoteControlModule::RegisterPropertyIdPropertyHandlerImpl(const TSharedRef<IPropertyIdHandler>& InPropertyIdPropertyHandler)
+{
+	PropertyIdPropertyHandlers.Add(InPropertyIdPropertyHandler);
 }
 
 void FRemoteControlModule::CachePresets() const
@@ -2277,11 +2521,11 @@ void FRemoteControlModule::OnAssetRenamed(const FAssetData& AssetData, const FSt
 				// If it's not valid or doesn't have a valid id, search for it and remove it.
 				if (!bRemovedId)
 				{
-					for (const auto& PairInner : CachedPresetNamesById)
+					for (auto It = CachedPresetNamesById.CreateIterator(); It; ++It)
 					{
-						if (PairInner.Value == Pair.Key)
+						if (It.Value() == Pair.Key)
 						{
-							CachedPresetNamesById.Remove(PairInner.Key);
+							It.RemoveCurrent();
 						}
 					}
 				}
@@ -2351,16 +2595,6 @@ bool FRemoteControlModule::DestroyTransientPreset(URemoteControlPreset* Preset)
 	}
 
 	return false;
-}
-
-bool FRemoteControlModule::PropertyModificationShouldUseSetter(UObject* Object, FProperty* Property)
-{
-	if (!Property || !Object)
-	{
-		return false;
-	}
-
-	return Property->HasSetter() || !!RemoteControlPropertyUtilities::FindSetterFunction(Property, Object->GetClass());
 }
 
 bool FRemoteControlModule::DeserializeDeltaModificationData(const FRCObjectReference& ObjectAccess, IStructDeserializerBackend& Backend, ERCModifyOperation Operation, TArray<uint8>& OutData)
@@ -2477,10 +2711,28 @@ void FRemoteControlModule::RegisterMaskingFactories()
 	RegisterMaskingFactoryForType(TBaseStructure<FLinearColor>::Get(), FLinearColorMaskingFactory::MakeInstance());
 }
 
+void FRemoteControlModule::RegisterPropertyIdHandler()
+{
+	RegisterPropertyIdPropertyHandler<FBasePropertyIdHandler>();
+	RegisterPropertyIdPropertyHandler<FStructPropertyIdHandler>();
+	RegisterPropertyIdPropertyHandler<FEnumPropertyIdHandler>();
+	RegisterPropertyIdPropertyHandler<FObjectPropertyIdHandler>();
+}
+
+void FRemoteControlModule::PopulateDisallowedFunctions()
+{
+	FunctionDisallowList.Add(GetDefault<UKismetSystemLibrary>()->FindFunction(GET_FUNCTION_NAME_CHECKED(UKismetSystemLibrary, LaunchURL)));
+}
+
 bool FRemoteControlModule::CanInterceptFunction(const FRCCall& RCCall) const
 {
 	if (RCCall.IsValid())
 	{
+		if (!RCCall.CallRef.Function.IsValid())
+		{
+			return false;
+		}
+
 		for (TFieldIterator<FProperty> It(RCCall.CallRef.Function.Get()); It; ++It)
 		{
 			// At the moment interceptors do not support return values.
@@ -2492,7 +2744,7 @@ bool FRemoteControlModule::CanInterceptFunction(const FRCCall& RCCall) const
 #else
 				FString FunctionName = RCCall.CallRef.Function->GetName();
 #endif
-				REMOTE_CONTROL_LOG_ONCE(Warning, TEXT("Function \"%s\" on object \"%s\" could not be intercepted because it contains out parameters."), *FunctionName, *RCCall.CallRef.Object->GetName());
+				REMOTE_CONTROL_LOG_ONCE(Log, TEXT("Function \"%s\" on object \"%s\" could not be intercepted because it contains out parameters."), *FunctionName, *RCCall.CallRef.Object->GetName());
 				return false;
 			}
 		}
@@ -2626,6 +2878,11 @@ bool FRemoteControlModule::ModifyArrayProperty(const FRCObjectReference& ObjectA
 	}
 
 	return false;
+}
+
+bool FRemoteControlModule::IsFunctionAllowed(UFunction* Function)
+{
+	return !FunctionDisallowList.Contains(Function);
 }
 
 #if WITH_EDITOR

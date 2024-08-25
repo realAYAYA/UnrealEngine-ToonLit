@@ -80,6 +80,13 @@ void FSequencerSelection::PreBroadcastChangeEvent()
 		if (OldNode)
 		{
 			OldNode->ToggleSelectionState(EOutlinerSelectionState::HasSelectedKeys | EOutlinerSelectionState::HasSelectedTrackAreaItems, false);
+
+			OldNode = OldNode.AsModel()->FindAncestorOfType<IOutlinerExtension>();
+			while (OldNode)
+			{
+				OldNode->ToggleSelectionState(EOutlinerSelectionState::DescendentHasSelectedTrackAreaItems | EOutlinerSelectionState::DescendentHasSelectedKeys, false);
+				OldNode = OldNode.AsModel()->FindAncestorOfType<IOutlinerExtension>();
+			}
 		}
 	}
 
@@ -95,6 +102,13 @@ void FSequencerSelection::PreBroadcastChangeEvent()
 			ParentOutlinerNode->ToggleSelectionState(EOutlinerSelectionState::HasSelectedTrackAreaItems, true);
 			NodesWithKeysOrSections.Add(ParentOutlinerNode);
 		}
+
+		ParentOutlinerNode = ParentOutlinerNode.AsModel()->FindAncestorOfType<IOutlinerExtension>();
+		while (ParentOutlinerNode)
+		{
+			ParentOutlinerNode->ToggleSelectionState(EOutlinerSelectionState::DescendentHasSelectedTrackAreaItems, true);
+			ParentOutlinerNode = ParentOutlinerNode.AsModel()->FindAncestorOfType<IOutlinerExtension>();
+		}
 	}
 
 	// Gather selection states from selected keys
@@ -106,6 +120,13 @@ void FSequencerSelection::PreBroadcastChangeEvent()
 		{
 			ParentOutlinerNode->ToggleSelectionState(EOutlinerSelectionState::HasSelectedKeys, true);
 			NodesWithKeysOrSections.Add(ParentOutlinerNode);
+		}
+
+		ParentOutlinerNode = ParentOutlinerNode.AsModel()->FindAncestorOfType<IOutlinerExtension>();
+		while (ParentOutlinerNode)
+		{
+			ParentOutlinerNode->ToggleSelectionState(EOutlinerSelectionState::DescendentHasSelectedKeys, true);
+			ParentOutlinerNode = ParentOutlinerNode.AsModel()->FindAncestorOfType<IOutlinerExtension>();
 		}
 	}
 

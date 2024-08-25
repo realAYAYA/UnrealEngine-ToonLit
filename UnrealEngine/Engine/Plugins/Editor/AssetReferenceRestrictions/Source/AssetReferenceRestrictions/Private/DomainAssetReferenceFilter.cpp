@@ -46,7 +46,7 @@ void FDomainAssetReferenceFilter::DetermineReferencingDomain()
 
 	while (!PendingAssets.IsEmpty())
 	{
-		const FAssetData TestAsset = PendingAssets.Pop(/*bAllowShrinking=*/ false);
+		const FAssetData TestAsset = PendingAssets.Pop(EAllowShrinking::No);
 
 		if (AssetsConsidered.Contains(TestAsset))
 		{

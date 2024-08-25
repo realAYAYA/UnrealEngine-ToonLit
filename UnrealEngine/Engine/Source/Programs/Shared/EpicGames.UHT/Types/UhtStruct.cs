@@ -426,7 +426,7 @@ namespace EpicGames.UHT.Types
 					}
 
 					// all sparse properties should have EditDefaultsOnly
-					if (!property.PropertyFlags.HasAllFlags(EPropertyFlags.Edit | EPropertyFlags.DisableEditOnInstance))
+					if (!property.PropertyFlags.HasFlag(EPropertyFlags.Deprecated) && !property.PropertyFlags.HasAllFlags(EPropertyFlags.Edit | EPropertyFlags.DisableEditOnInstance))
 					{
 						property.LogError($"Sparse class data types must be VisibleDefaultsOnly or EditDefaultsOnly. Type '{sparseScriptStruct.EngineName}' Property '{property.SourceName}'");
 					}

@@ -1,3 +1,18 @@
+1.84.3.6
+* Prefix encrypted Perforce server port address with "ssl:"
+
+1.84.3.5
+* Fix null reference exception when setting command line for C# project without a Properties directory
+
+1.84.3.4
+* Bug fix for incorrect paths when compiling a single file
+* Open .asm after generating assembly
+* Disable remaining compile single buttons if a valid file isn't selected
+* Bug fix to show additional .target.cs files
+
+1.84.3.3
+* Bug fix for low level test projects - do not auto prefix project path in command line
+
 1.84.3.2
 * Bug fix for compiling a single file when us
 

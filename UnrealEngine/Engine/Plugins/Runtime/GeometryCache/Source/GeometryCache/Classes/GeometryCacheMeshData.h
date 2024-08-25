@@ -96,7 +96,11 @@ struct GEOMETRYCACHE_API FGeometryCacheMeshData
 {
 	GENERATED_USTRUCT_BODY()
 
-	FGeometryCacheMeshData() : Hash(0) {}
+	FGeometryCacheMeshData()
+	: BoundingBox(EForceInit::ForceInitToZero)
+	, Hash(0)
+	{}
+
 	~FGeometryCacheMeshData()
 	{
 		Positions.Empty();

@@ -213,6 +213,16 @@ namespace EpicGames.UHT.Types
 		}
 
 		/// <inheritdoc/>
+		public override StringBuilder AppendMetaDataDecl(StringBuilder builder, IUhtPropertyMemberContext context, string name, string nameSuffix, int tabs)
+		{
+			if (UnderlyingProperty != null)
+			{
+				builder.AppendMetaDataDecl(UnderlyingProperty, context, name, GetNameSuffix(nameSuffix, "_Underlying"), tabs);
+			}
+			return base.AppendMetaDataDecl(builder, context, name, nameSuffix, tabs);
+		}
+
+		/// <inheritdoc/>
 		public override StringBuilder AppendMemberDecl(StringBuilder builder, IUhtPropertyMemberContext context, string name, string nameSuffix, int tabs)
 		{
 			if (UnderlyingProperty != null)
@@ -238,7 +248,7 @@ namespace EpicGames.UHT.Types
 			}
 			else
 			{
-				AppendMemberDefStart(builder, context, name, nameSuffix, offset, tabs, "FBytePropertyParams", "UECodeGen_Private::EPropertyGenFlags::Byte", true, true);
+				AppendMemberDefStart(builder, context, name, nameSuffix, offset, tabs, "FBytePropertyParams", "UECodeGen_Private::EPropertyGenFlags::Byte");
 				AppendMemberDefRef(builder, context, Enum, true);
 				AppendMemberDefEnd(builder, context, name, nameSuffix);
 			}

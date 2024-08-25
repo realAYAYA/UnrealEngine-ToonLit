@@ -9,6 +9,7 @@
 #include "Widgets/Views/SListView.h"
 #include "Rigs/RigHierarchy.h"
 #include "ControlRigBlueprint.h"
+#include "EditorUndoClient.h"
 
 //////////////////////////////////////////////////////////////////////////
 // FDisplayedRigCurveInfo
@@ -121,7 +122,7 @@ private:
 //////////////////////////////////////////////////////////////////////////
 // SRigCurveContainer
 
-class SRigCurveContainer : public SCompoundWidget
+class SRigCurveContainer : public SCompoundWidget, public FEditorUndoClient
 {
 public:
 	SLATE_BEGIN_ARGS( SRigCurveContainer )
@@ -200,6 +201,10 @@ public:
 
 	// When a name is committed after being edited in the list
 	virtual void OnNameCommitted(const FText& NewName, ETextCommit::Type CommitType, FDisplayedRigCurveInfoPtr Item);
+
+	// FEditorUndoClient
+	virtual void PostUndo(bool bSuccess) override;
+	virtual void PostRedo(bool bSuccess) override;
 
 private:
 

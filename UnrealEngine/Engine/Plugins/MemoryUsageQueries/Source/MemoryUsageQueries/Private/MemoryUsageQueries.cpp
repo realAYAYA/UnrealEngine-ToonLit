@@ -1437,10 +1437,9 @@ class FPackageDependenciesLazyDatabase final
 		Stack.Add(RootPackageId);
 		bool bAddedSuccessfully = false;
 
-		const bool bShouldShrink = false;
 		while (!Stack.IsEmpty())
 		{
-			const FPackageId PackageId = Stack.Pop(bShouldShrink);
+			const FPackageId PackageId = Stack.Pop(EAllowShrinking::No);
 
 			if (Dependencies.Contains(PackageId) || Leafs.Contains(PackageId))
 			{
@@ -1449,7 +1448,8 @@ class FPackageDependenciesLazyDatabase final
 			}
 
 			FPackageStoreEntry PackageEntry;
-			const EPackageStoreEntryStatus Status = FPackageStore::Get().GetPackageStoreEntry(PackageId, PackageEntry);
+			const EPackageStoreEntryStatus Status = FPackageStore::Get().GetPackageStoreEntry(PackageId, NAME_None,
+				PackageEntry);
 			if (Status == EPackageStoreEntryStatus::Ok)
 			{
 				// add package dependencies
@@ -1525,11 +1525,10 @@ public:
 			return false;
 		}
 
-		const bool bShouldShrink = false;
 		TArray<FPackageId, TInlineAllocator<2048>> Stack(ChildrenSet->Array());
 		while (!Stack.IsEmpty())
 		{
-			FPackageId Child = Stack.Pop(bShouldShrink);
+			FPackageId Child = Stack.Pop(EAllowShrinking::No);
 
 			if (!OutDependencies.Contains(Child))
 			{

@@ -9,6 +9,7 @@
 #include "Components/BillboardComponent.h"
 #include "HAL/FileManager.h"
 #include "Misc/FileHelper.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/ConstructorHelpers.h"
 #include "ProfilingDebugging/ProfilingHelpers.h"
 #include "Misc/AutomationTest.h"
@@ -122,6 +123,7 @@ AFunctionalTest::AFunctionalTest( const FObjectInitializer& ObjectInitializer )
 	, bIsEnabled(true)
 	, LogErrorHandling(EFunctionalTestLogHandling::ProjectDefault)
 	, LogWarningHandling(EFunctionalTestLogHandling::ProjectDefault)
+	, bShouldDelayGarbageCollection(true)
 	, Result(EFunctionalTestResult::Invalid)
 	, PreparationTimeLimit(15.0f)
 	, TimeLimit(60.0f)
@@ -140,6 +142,7 @@ AFunctionalTest::AFunctionalTest( const FObjectInitializer& ObjectInitializer )
 	PrimaryActorTick.bTickEvenWhenPaused = true;
 	
 	SetCanBeDamaged(false);
+	bEnableAutoLODGeneration = false;
 
 	SpriteComponent = CreateDefaultSubobject<UBillboardComponent>(TEXT("Sprite"));
 	if (SpriteComponent)
@@ -255,6 +258,11 @@ bool AFunctionalTest::RunTest(const TArray<FString>& Params)
 	{
 		FunctionalTest->SetLogErrorAndWarningHandling(bSuppressErrors, bSuppressWarnings, bWarningsAreErrors);
 		FunctionalTest->SetFunctionalTestRunning(TestLabel);
+		if (FAutomationTestFramework::NeedLogBPTestMetadata() && GIsAutomationTesting)
+		{
+			AddInfo(FString::Printf(TEXT("[Owner] %s"), *Author));
+			AddInfo(FString::Printf(TEXT("[Description] %s"), *Description));
+		}
 	}
 
 	FailureMessage = TEXT("");
@@ -295,12 +303,6 @@ void AFunctionalTest::StartTest()
 	StartFrame = GFrameNumber;
 	StartTime = (float)GetWorld()->GetTimeSeconds();
 
-	if (FAutomationTestFramework::NeedLogBPTestMetadata() && GIsAutomationTesting)
-	{
-		AddInfo(FString::Printf(TEXT("[Owner] %s"), *Author));
-		AddInfo(FString::Printf(TEXT("[Description] %s"), *Description));
-	}
-
 	ReceiveStartTest();
 	OnTestStart.Broadcast();
 }
@@ -332,8 +334,12 @@ void AFunctionalTest::Tick(float DeltaSeconds)
 	}
 	SCOPE_CYCLE_COUNTER(STAT_FunctionalTest_TickTest);
 	
-	//Do not collect garbage during the test. We force GC at the end.
-	GEngine->DelayGarbageCollection();
+	//Allow Functional Tests to configure if GC is delayed until the end. 
+	if (bShouldDelayGarbageCollection)
+	{
+		//Do not collect garbage during the test. We force GC at the end.
+		GEngine->DelayGarbageCollection();
+	}
 
 	TotalTime += DeltaSeconds;
 
@@ -589,13 +595,20 @@ void AFunctionalTest::PostEditChangeProperty( struct FPropertyChangedEvent& Prop
 
 void AFunctionalTest::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
 	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void AFunctionalTest::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	Super::GetAssetRegistryTags(Context);
 
 	if (IsPackageExternal() && IsEnabled())
 	{
 		const FString TestActor = GetActorLabel() + TEXT("|") + GetName();
 		const TCHAR* TestCategory = IsEditorOnlyObject(this) ? TEXT("TestNameEditor") : TEXT("TestName");
-		OutTags.Add(UObject::FAssetRegistryTag(TestCategory, TestActor, UObject::FAssetRegistryTag::TT_Hidden));
+		Context.AddTag(UObject::FAssetRegistryTag(TestCategory, TestActor, UObject::FAssetRegistryTag::TT_Hidden));
 	}
 }
 
@@ -861,6 +874,20 @@ bool AFunctionalTest::AssertNotEqual_Transform(const FTransform& Actual, const F
 bool AFunctionalTest::AssertEqual_Rotator(FRotator Actual, FRotator Expected, const FString& What, const float Tolerance, const UObject* ContextObject)
 {
 	if ( !Expected.Equals(Actual, Tolerance) )
+	{
+		LogStep(ELogVerbosity::Error, FString::Printf(TEXT("Expected '%s' to be {%s} but it was {%s} within tolerance {%f} for context '%s'"), *What, *Expected.ToString(), *Actual.ToString(), Tolerance, ContextObject ? *ContextObject->GetName() : TEXT("")));
+		return false;
+	}
+	else
+	{
+		LogStep(ELogVerbosity::Log, FString::Printf(TEXT("Rotator assertion passed (%s)"), *What));
+		return true;
+	}
+}
+
+bool AFunctionalTest::AssertEqual_RotatorOrientation(FRotator Actual, FRotator Expected, const FString& What, float Tolerance, const UObject* ContextObject)
+{
+	if ( !Expected.EqualsOrientation(Actual, Tolerance) )
 	{
 		LogStep(ELogVerbosity::Error, FString::Printf(TEXT("Expected '%s' to be {%s} but it was {%s} within tolerance {%f} for context '%s'"), *What, *Expected.ToString(), *Actual.ToString(), Tolerance, ContextObject ? *ContextObject->GetName() : TEXT("")));
 		return false;
@@ -1704,7 +1731,7 @@ void FConsoleVariableBPSetter::Set(const FString& Value)
 			OriginalValue = ConsoleVariable->GetString();
 		}
 
-		ConsoleVariable->AsVariable()->SetWithCurrentPriority(Value.GetCharArray().GetData());
+		ConsoleVariable->AsVariable()->SetWithCurrentPriority(*Value);
 	}
 }
 
@@ -1727,7 +1754,7 @@ void FConsoleVariableBPSetter::Restore()
 		IConsoleVariable* ConsoleVariable = IConsoleManager::Get().FindConsoleVariable(*ConsoleVariableName);
 		if (ensure(ConsoleVariable))
 		{
-			ConsoleVariable->AsVariable()->SetWithCurrentPriority(OriginalValue.GetCharArray().GetData());
+			ConsoleVariable->AsVariable()->SetWithCurrentPriority(*OriginalValue);
 		}
 
 		bModified = false;

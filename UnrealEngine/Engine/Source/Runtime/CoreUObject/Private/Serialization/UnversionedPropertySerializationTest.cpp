@@ -54,9 +54,17 @@ struct FUnversionedPropertyTest : public FUnversionedPropertyTestInput
 			return *this;
 		}
 
+		
+		virtual FArchive& operator<<(FObjectPtr& Value) override
+		{
+			InnerArchive << reinterpret_cast<UPTRINT&>(Value);
+			return *this;
+		}
+
 		virtual FArchive& operator<<(UObject*& Value) override
 		{
-			return InnerArchive << reinterpret_cast<UPTRINT&>(Value);
+			InnerArchive << reinterpret_cast<UPTRINT&>(Value);
+			return *this;
 		}
 
 		virtual FArchive& operator<<(FLazyObjectPtr& Value) override { return FArchiveUObject::SerializeLazyObjectPtr(*this, Value); }
@@ -173,7 +181,7 @@ struct FUnversionedPropertyTest : public FUnversionedPropertyTestInput
 	// FProperty::Identical() flavor suited to comparing loaded instances
 	static bool Equals(const FProperty* Property, const void* A, const void* B, FPropertyDiff& OutDiff)
 	{
-		if (Property->GetPropertyFlags() & (CPF_EditorOnly | CPF_Transient))
+		if (Property->GetPropertyFlags() & (CPF_EditorOnly | CPF_Transient | CPF_NonNullable))
 		{
 			return true;
 		}
@@ -244,17 +252,14 @@ struct FUnversionedPropertyTest : public FUnversionedPropertyTestInput
 			return false;
 		}
 
-		for (int32 Num = HelperA.Num(), IndexA = 0; IndexA < Num; ++IndexA)
+		for (FScriptSetHelper::FIterator It(HelperA); It; ++It)
 		{
-			if (HelperA.IsValidIndex(IndexA))
+			const uint8* ElemA = HelperA.GetElementPtr(It);
+			const uint8* ElemB = FindElementPtr(HelperB, ElemA, OutDiff);
+
+			if (!ElemB)
 			{
-				const uint8* ElemA = HelperA.GetElementPtr(IndexA);
-				const uint8* ElemB = FindElementPtr(HelperB, ElemA, OutDiff);
-		
-				if (!ElemB)
-				{
-					return false;
-				} 
+				return false;
 			}
 		}
 
@@ -283,22 +288,19 @@ struct FUnversionedPropertyTest : public FUnversionedPropertyTestInput
 			return false;
 		}
 		
-		for (int32 Num = HelperA.Num(), IndexA = 0; IndexA < Num; ++IndexA)
+		for (FScriptMapHelper::FIterator It(HelperA); It; ++It)
 		{
-			if (HelperA.IsValidIndex(IndexA))
-			{
-				const uint8* PairA = HelperA.GetPairPtr(IndexA);
-				const uint8* PairB = FindPairPtr(HelperB, PairA, OutDiff);
-		
-				if (!PairB)
-				{
-					return false;
-				} 
+			const uint8* PairA = HelperA.GetPairPtr(It);
+			const uint8* PairB = FindPairPtr(HelperB, PairA, OutDiff);
 
-				if (!Equals(ValueProp, PairA + ValueOffset, PairB + ValueOffset, OutDiff))
-				{
-					return false;
-				}
+			if (!PairB)
+			{
+				return false;
+			}
+
+			if (!Equals(ValueProp, PairA + ValueOffset, PairB + ValueOffset, OutDiff))
+			{
+				return false;
 			}
 		}
 
@@ -426,7 +428,7 @@ struct FUnversionedPropertyTest : public FUnversionedPropertyTestInput
 		FSaveResult VersionedSaved = Save(EPath::Versioned);
 		FSaveResult UnversionedSaved = Save(EPath::Unversioned);	
 
-		check(ExcludeEditorOnlyProperties(VersionedSaved.Properties) == UnversionedSaved.Properties);
+		check(VersionedSaved.Properties == UnversionedSaved.Properties || ExcludeEditorOnlyProperties(VersionedSaved.Properties) == UnversionedSaved.Properties);
 
 		FTestInstance VersionedLoaded = Load(VersionedSaved);
 		FTestInstance UnversionedLoaded = Load(UnversionedSaved);

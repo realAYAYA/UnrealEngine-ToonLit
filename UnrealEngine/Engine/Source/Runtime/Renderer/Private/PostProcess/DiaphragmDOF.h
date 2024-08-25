@@ -22,14 +22,38 @@ namespace DiaphragmDOF
 // Whether DOF is enabled for the requested view.
 bool IsEnabled(const FViewInfo& View);
 
-float ComputeFocalLengthFromFov(const FSceneView& View);
 FVector4f CircleDofHalfCoc(const FViewInfo& View);
 
 /** Physically based circle of confusion computation model. */
 struct FPhysicalCocModel
 {
-	// Unclamped resolution less background coc radius.
+	// Size of the sensor, in unreal unit.
+	float SensorWidth;
+	float SensorHeight;
+
+	// Aspect ratio of the croped frame being rendered.
+	float RenderingAspectRatio;
+
+	// Focal length of the lens in unreal unit.
+	float VerticalFocalLength;
+	// float HorizontalFocalLength = VerticalFocalLength / Squeeze;
+
+	// Apperture diameter in fstop
+	float FStops; // = VerticalFocalLength / ApartureDiameter.
+
+	// Unclamped background vertical coc radius, in horizontal ViewportUV unit.
 	float InfinityBackgroundCocRadius;
+	// HorizontalInfinityBackgroundCocRadius = InfinityBackgroundCocRadius / Squeeze
+	// VerticalInfinityBackgroundCocRadius = InfinityBackgroundCocRadius
+
+	/** Indicates whether a dynamic offset dependent on scene depth should be computed for every pixel */
+	bool bEnableDynamicOffset;
+
+	/** When dynamic offset is enabled, this is the coc radius at which objects will be perfectly sharp */
+	float InFocusRadius;
+
+	/** Radius offset lookup table */
+	FRHITexture2D* DynamicRadiusOffsetLUT;
 
 	// Resolution less minimal foreground coc radius < 0.
 	float MinForegroundCocRadius;
@@ -37,7 +61,7 @@ struct FPhysicalCocModel
 	// Resolution less maximal background coc radius.
 	float MaxBackgroundCocRadius;
 
-	// Focus distance.
+	// Focus distance in unreal unit.
 	float FocusDistance;
 
 	// SqueezeFactor = VerticalFocalDistance / HorizontalFocalDistance
@@ -50,6 +74,9 @@ struct FPhysicalCocModel
 	/** Compile the coc model from a view. */
 	void Compile(const FViewInfo& View);
 	
+	/** Returns the lens radius in unreal unit from which the path traced ray should be traced from. */
+	FVector2f GetLensRadius() const;
+
 	/** Returns the CocRadius in half res pixels for given scene depth (in world unit).
 	 *
 	 * Notes: Matches Engine/Shaders/Private/DiaphragmDOF/Common.ush's SceneDepthToCocRadius().
@@ -59,6 +86,7 @@ struct FPhysicalCocModel
 	/** Returns limit(SceneDepthToCocRadius) for SceneDepth -> Infinity. */
 	FORCEINLINE float ComputeViewMaxBackgroundCocRadius(float HorizontalResolution) const
 	{
+		// Dynamic CoC offset is designed to go to zero at infinite distance, so we don't need to factor it into the max background radius
 		return FMath::Min(FMath::Max(InfinityBackgroundCocRadius, MaxDepthBlurRadius), MaxBackgroundCocRadius) * HorizontalResolution;
 	}
 	
@@ -70,6 +98,10 @@ struct FPhysicalCocModel
 	{
 		return DepthToResCocRadius(GNearClippingPlane, HorizontalResolution);
 	}
+
+private:
+	/** Gets the offset to the circle of confusion to apply for the specified radius */
+	float GetCocOffset(float CocRadius) const;
 };
 
 
@@ -121,11 +153,12 @@ struct FBokehModel
 RENDERER_API bool IsSupported(const FStaticShaderPlatform ShaderPlatform);
 
 /** Wire all DOF's passes according to view settings and cvars to convolve the scene color. */
-RENDERER_API FRDGTextureRef AddPasses(
+RENDERER_API bool AddPasses(
 	FRDGBuilder& GraphBuilder,
 	const FSceneTextureParameters& SceneTextures,
 	const FViewInfo& View,
 	FRDGTextureRef InputSceneColor,
-	const FTranslucencyPassResources& TranslucencyViewResources);
+	const FTranslucencyPassResources& TranslucencyViewResources,
+	FRDGTextureRef& OutputColor);
 
 } // namespace DiaphragmDOF

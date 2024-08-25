@@ -6,10 +6,6 @@
 #if WITH_EDITORONLY_DATA
 #include "Engine/SkeletalMesh.h"
 #include "Rendering/SkeletalMeshModel.h"
-// @third party code - Epic Games Begin
-#include "Interfaces/ITargetPlatform.h"
-#include "PlatformInfo.h"
-// @third party code - Epic Games End
 
 #include "ACLImpl.h"
 
@@ -26,27 +22,30 @@ THIRD_PARTY_INCLUDES_END
 
 UAnimBoneCompressionCodec_ACL::UAnimBoneCompressionCodec_ACL(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
+#if WITH_EDITORONLY_DATA
+	, KeyframeStrippingProportion(0.0f)		// Strip nothing by default since it is destructive
+	, KeyframeStrippingThreshold(0.0f)		// Strip nothing by default since it is destructive
+#endif
 {
 }
 
 #if WITH_EDITORONLY_DATA
-// @third party code - Epic Games Begin
-void UAnimBoneCompressionCodec_ACL::GetCompressionSettings(acl::compression_settings& OutSettings, const ITargetPlatform* TargetPlatform) const
-// @third party code - Epic Games End
+void UAnimBoneCompressionCodec_ACL::GetCompressionSettings(const class ITargetPlatform* TargetPlatform, acl::compression_settings& OutSettings) const
 {
 	OutSettings = acl::get_default_compression_settings();
 
 	OutSettings.level = GetCompressionLevel(CompressionLevel);
+
+	OutSettings.keyframe_stripping.proportion = ACL::Private::GetPerPlatformFloat(KeyframeStrippingProportion, TargetPlatform);
+	OutSettings.keyframe_stripping.threshold = ACL::Private::GetPerPlatformFloat(KeyframeStrippingThreshold, TargetPlatform);
 }
 
-// @third party code - Epic Games Begin
 void UAnimBoneCompressionCodec_ACL::PopulateDDCKey(const UE::Anim::Compression::FAnimDDCKeyArgs& KeyArgs, FArchive& Ar)
 {
 	Super::PopulateDDCKey(KeyArgs, Ar);
 
 	acl::compression_settings Settings;
-	GetCompressionSettings(Settings, KeyArgs.TargetPlatform);
-// @third party code - Epic Games End
+	GetCompressionSettings(KeyArgs.TargetPlatform, Settings);
 
 	uint32 ForceRebuildVersion = 1;
 	uint32 SettingsHash = Settings.get_hash();
@@ -76,6 +75,18 @@ void UAnimBoneCompressionCodec_ACL::DecompressPose(FAnimSequenceDecompressionCon
 	::DecompressPose(DecompContext, ACLContext, RotationPairs, TranslationPairs, ScalePairs, OutAtoms);
 }
 
+void UAnimBoneCompressionCodec_ACL::DecompressPose(FAnimSequenceDecompressionContext& DecompContext, const UE::Anim::FAnimPoseDecompressionData& DecompressionData) const
+{
+	const FACLCompressedAnimData& AnimData = static_cast<const FACLCompressedAnimData&>(DecompContext.CompressedAnimData);
+	const acl::compressed_tracks* CompressedClipData = AnimData.GetCompressedTracks();
+	check(CompressedClipData != nullptr && CompressedClipData->is_valid(false).empty());
+
+	acl::decompression_context<UE4DefaultDecompressionSettings> ACLContext;
+	ACLContext.initialize(*CompressedClipData);
+
+	::DecompressPose(DecompContext, ACLContext, DecompressionData);
+}
+
 void UAnimBoneCompressionCodec_ACL::DecompressBone(FAnimSequenceDecompressionContext& DecompContext, int32 TrackIndex, FTransform& OutAtom) const
 {
 	const FACLCompressedAnimData& AnimData = static_cast<const FACLCompressedAnimData&>(DecompContext.CompressedAnimData);
@@ -87,4 +98,3 @@ void UAnimBoneCompressionCodec_ACL::DecompressBone(FAnimSequenceDecompressionCon
 
 	::DecompressBone(DecompContext, ACLContext, TrackIndex, OutAtom);
 }
-

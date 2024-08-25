@@ -32,7 +32,7 @@ public:
 	DECLARE_MULTICAST_DELEGATE_OneParam(FLightComponentBasedSignature, ULightComponentBase* /*InComponent*/);
 	DECLARE_MULTICAST_DELEGATE_TwoParams(FStationaryLightChannelReassignmentSignature, ULightComponentBase* /*InComponent*/, int32 /*NewShadowMapChannel*/);
 	DECLARE_MULTICAST_DELEGATE(FLightmassImportanceVolumeModifiedSignature);
-	DECLARE_MULTICAST_DELEGATE_OneParam(FMaterialInvalidationSignature, FMaterialRenderProxy* /*Material*/);
+	DECLARE_TS_MULTICAST_DELEGATE_OneParam(FMaterialInvalidationSignature, FMaterialRenderProxy* /*Material*/);
 
 	static ENGINE_API FPrimitiveComponentBasedSignature OnPrimitiveComponentRegistered;
 	static ENGINE_API FPrimitiveComponentBasedSignature OnPrimitiveComponentUnregistered;

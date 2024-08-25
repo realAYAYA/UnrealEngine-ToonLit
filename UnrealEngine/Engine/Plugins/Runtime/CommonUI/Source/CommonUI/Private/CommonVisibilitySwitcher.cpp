@@ -114,6 +114,8 @@ UWidget* UCommonVisibilitySwitcher::GetWidgetAtIndex(int32 Index) const
 
 void UCommonVisibilitySwitcher::SetActiveWidgetIndex_Internal(int32 Index, bool bBroadcastChange /*= true*/)
 {
+	TGuardValue<bool> bCurrentlySwitchingGuard(bCurrentlySwitching, true);
+
 	if (Slots.IsValidIndex(ActiveWidgetIndex))
 	{
 		if (UCommonVisibilitySwitcherSlot* OldActiveSlot = Cast<UCommonVisibilitySwitcherSlot>(Slots[ActiveWidgetIndex]))

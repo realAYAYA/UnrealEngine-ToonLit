@@ -35,11 +35,18 @@ struct FAssetActionSupportCondition
 
 	/**
 	 * This is the failure reason to reply to the user with if the condition above fails.
-	 * If you leave this blank, we will hide the option.  If fill in the reason, will show the option but give the reason
-	 * it is disabled.
+	 * If you fill in the reason, it will override the default failure text in the tooltip for the function menu option.
 	 */
 	UPROPERTY(EditAnywhere, Category=Condition, meta=(MultiLine=true))
 	FString FailureReason;
+
+	/**
+	 * If this filter does not pass, show the corresponding functions from the menu anyways.
+	 * If true, the menu option will display with the error tooltip, but be disabled.
+	 * If false, the menu options will be removed entirely.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category = "Asset Support")
+	bool bShowInMenuIfFilterFails = true;
 };
 
 /** 
@@ -63,9 +70,10 @@ public:
 
 	/**
 	 * Returns whether or not this action is designed to work specifically on Blueprints (true) or on all assets (false).
-	 * If true, GetSupportedClass() is treated as a filter against the Parent Class of selected Blueprint assets
+	 * If true, GetSupportedClass() is treated as a filter against the Parent Class of selected Blueprint assets.
+	 * @note Returns the value of bIsActionForBlueprints by default.
 	 */
-	UFUNCTION(BlueprintPure, BlueprintImplementableEvent, Category="Assets")
+	UFUNCTION(BlueprintPure, BlueprintNativeEvent, Category="Assets")
 	bool IsActionForBlueprints() const;
 
 	/**
@@ -77,13 +85,23 @@ public:
 
 public:
 	// Begin UObject
+	virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 	// End UObject
 
 protected:
 	/**
+	 * Is this action designed to work specifically on Blueprints (true) or on all assets (false).
+	 * If true, SupportedClasses is treated as a filter against the Parent Class of selected Blueprint assets.
+	 */
+	UPROPERTY(EditDefaultsOnly, Category="Asset Support")
+	bool bIsActionForBlueprints = false;
+
+	/**
 	 * The supported classes controls the list of classes that may be operated on by all of the asset functions in this
 	 * utility class.
+	 * @note When bIsActionForBlueprints is true, this will compare against the generated class of any Blueprint assets.
 	 */
 	UPROPERTY(EditDefaultsOnly, Category="Asset Support", meta=(AllowAbstract))
 	TArray<TSoftClassPtr<UObject>> SupportedClasses;

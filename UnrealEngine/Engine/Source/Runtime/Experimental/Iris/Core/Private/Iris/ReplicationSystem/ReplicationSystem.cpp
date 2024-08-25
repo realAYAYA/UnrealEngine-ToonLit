@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Iris/ReplicationSystem/ReplicationSystem.h"
+#include "Iris/Core/IrisCsv.h"
 #include "Iris/Core/IrisDebugging.h"
 #include "Iris/Core/IrisLog.h"
 #include "Iris/Core/IrisMemoryTracker.h"
@@ -16,6 +17,7 @@
 #include "Iris/ReplicationSystem/ReplicationOperationsInternal.h"
 #include "Iris/ReplicationSystem/ReplicationReader.h"
 #include "Iris/ReplicationSystem/ReplicationSystemInternal.h"
+#include "Iris/ReplicationSystem/ReplicationSystemTypes.h"
 #include "Iris/ReplicationSystem/ReplicationTypes.h"
 #include "Iris/ReplicationSystem/ReplicationWriter.h"
 #include "Iris/Serialization/InternalNetSerializationContext.h"
@@ -28,10 +30,13 @@
 
 namespace ReplicationSystemCVars
 {
-#if !UE_BUILD_SHIPPING
+
 static bool bForcePruneBeforeUpdate = false;
 static FAutoConsoleVariableRef CVarForcePruneBeforeUpdate(TEXT("net.Iris.ForcePruneBeforeUpdate"), bForcePruneBeforeUpdate, TEXT("Verify integrity of all tracked instances at the start of every update."));
-#endif
+
+static bool bAllowAttachmentSendPolicyFlags = true;
+static FAutoConsoleVariableRef CVarAllowAttachmentSendPolicyFlags(TEXT("net.Iris.Attachments.AllowSendPolicyFlags"), bAllowAttachmentSendPolicyFlags, TEXT("Allow use of ENetObjectAttachmentSendPolicyFlags to specify behavior of RPCs."));
+
 }
 
 namespace UE::Net::Private
@@ -40,13 +45,19 @@ namespace UE::Net::Private
 class FReplicationSystemImpl
 {
 public:
+	TMap<FObjectKey, ENetObjectAttachmentSendPolicyFlags> AttachmentSendPolicyFlags;
 	UReplicationSystem* ReplicationSystem;
 	FReplicationSystemInternal ReplicationSystemInternal;
 	uint64 IrisDebugHelperDummy = 0U;
+	FNetObjectGroupHandle NotReplicatedNetObjectGroupHandle;
+	FNetObjectGroupHandle NetGroupOwnerNetObjectGroupHandle;
+	FNetObjectGroupHandle NetGroupReplayNetObjectGroupHandle;
+	FNetBitArray ConnectionsPendingPostTickDispatchSend;
+	EReplicationSystemSendPass CurrentSendPass = EReplicationSystemSendPass::Invalid;
 
 	explicit FReplicationSystemImpl(UReplicationSystem* InReplicationSystem, const UReplicationSystem::FReplicationSystemParams& Params)
 	: ReplicationSystem(InReplicationSystem)
-	, ReplicationSystemInternal(FReplicationSystemInternalInitParams({ InReplicationSystem->GetId(), Params.MaxReplicatedObjectCount }))
+	, ReplicationSystemInternal(FReplicationSystemInternalInitParams({ InReplicationSystem->GetId(), Params.MaxReplicatedObjectCount, Params.PreAllocatedReplicatedObjectCount, Params.MaxReplicatedWriterObjectCount }))
 	{
 	}
 
@@ -56,16 +67,16 @@ public:
 
 	void InitDefaultFilteringGroups()
 	{
-		FNetObjectGroupHandle LocalNotReplicatedGroupHande = ReplicationSystem->CreateGroup();
-		check(LocalNotReplicatedGroupHande == NotReplicatedNetObjectGroupHandle);
-		ReplicationSystem->AddGroupFilter(NotReplicatedNetObjectGroupHandle);
+		NotReplicatedNetObjectGroupHandle = ReplicationSystem->CreateGroup();
+		check(NotReplicatedNetObjectGroupHandle.IsNotReplicatedNetObjectGroup());
+		ReplicationSystem->AddExclusionFilterGroup(NotReplicatedNetObjectGroupHandle);
 		
 		// Setup SubObjectFiltering groups
-		FNetObjectGroupHandle LocalNetGroupOwnerNetObjectGroupHandle = ReplicationSystem->GetOrCreateSubObjectFilter(UE::Net::NetGroupOwner);
-		check(LocalNetGroupOwnerNetObjectGroupHandle == NetGroupOwnerNetObjectGroupHandle);
+		NetGroupOwnerNetObjectGroupHandle = ReplicationSystem->GetOrCreateSubObjectFilter(UE::Net::NetGroupOwner);
+		check(NetGroupOwnerNetObjectGroupHandle.IsNetGroupOwnerNetObjectGroup());
 
-		FNetObjectGroupHandle LocalNetGroupReplayNetObjectGroupHandle = ReplicationSystem->GetOrCreateSubObjectFilter(UE::Net::NetGroupReplay);
-		check(LocalNetGroupReplayNetObjectGroupHandle == NetGroupReplayNetObjectGroupHandle);
+		NetGroupReplayNetObjectGroupHandle = ReplicationSystem->GetOrCreateSubObjectFilter(UE::Net::NetGroupReplay);
+		check(NetGroupReplayNetObjectGroupHandle.IsNetGroupReplayNetObjectGroup());
 	}
 
 	void Init(const UReplicationSystem::FReplicationSystemParams& Params)
@@ -82,17 +93,19 @@ public:
 
 		const uint32 MaxObjectCount =  NetRefHandleManager.GetMaxActiveObjectCount();
 
-		// $IRIS TODO: Need object ID range. Currently abusing hardcoded values from FNetRefHandleManager
-		FDirtyNetObjectTracker& DirtyNetObjectTracker = ReplicationSystemInternal.GetDirtyNetObjectTracker();
-		FDirtyNetObjectTrackerInitParams DirtyNetObjectTrackerInitParams;
+		// DirtyNetObjectTracking is only needed when object replication is allowed
+		if (Params.bAllowObjectReplication)
 		{
+			// $IRIS TODO: Need object ID range. Currently abusing hardcoded values from FNetRefHandleManager
+			FDirtyNetObjectTrackerInitParams DirtyNetObjectTrackerInitParams;
+
 			DirtyNetObjectTrackerInitParams.NetRefHandleManager = &NetRefHandleManager;
 			DirtyNetObjectTrackerInitParams.ReplicationSystemId = ReplicationSystemId;
 			DirtyNetObjectTrackerInitParams.MaxObjectCount = MaxObjectCount;
 			DirtyNetObjectTrackerInitParams.NetObjectIndexRangeStart = 1;
 			DirtyNetObjectTrackerInitParams.NetObjectIndexRangeEnd = MaxObjectCount - 1U;
 
-			DirtyNetObjectTracker.Init(DirtyNetObjectTrackerInitParams);
+			ReplicationSystemInternal.InitDirtyNetObjectTracker(DirtyNetObjectTrackerInitParams);
 		}
 
 		FReplicationStateStorage& StateStorage = ReplicationSystemInternal.GetReplicationStateStorage();
@@ -109,6 +122,7 @@ public:
 		FNetObjectGroups& Groups = ReplicationSystemInternal.GetGroups();
 		{
 			FNetObjectGroupInitParams InitParams = {};
+			InitParams.NetRefHandleManager = &NetRefHandleManager;
 			InitParams.MaxObjectCount = MaxObjectCount;
 			InitParams.MaxGroupCount = Params.MaxNetObjectGroupCount;
 
@@ -216,6 +230,20 @@ public:
 			InitParams.bSendAttachmentsWithObject = ReplicationSystem->IsServer();
 			BlobManager.Init(InitParams);
 		}
+
+		if (Params.ForwardNetRPCCallDelegate.IsBound())
+		{
+			ReplicationSystemInternal.GetForwardNetRPCCallMulticastDelegate().Add(Params.ForwardNetRPCCallDelegate);
+		}
+
+		ConnectionsPendingPostTickDispatchSend.Init(ReplicationSystemInternal.GetConnections().GetMaxConnectionCount());
+
+		FNetTypeStats& NetStats = ReplicationSystemInternal.GetNetTypeStats();
+		{
+			FNetTypeStats::FInitParams InitParams;
+			InitParams.NetRefHandleManager = &NetRefHandleManager;
+			NetStats.Init(InitParams);
+		}
 	}
 
 	void Deinit()
@@ -233,6 +261,43 @@ public:
 		}
 	}
 
+	void StartPreSendUpdate()
+	{
+		// Block unsupported operations until SendUpdate is finished
+		ReplicationSystemInternal.SetBlockFilterChanges(true);
+
+		// Tell systems we are starting PreSendUpdate
+		ReplicationSystemInternal.GetReplicationBridge()->OnStartPreSendUpdate();
+
+		// Sync the state of the world at the beginning of PreSendUpdate.
+		ReplicationSystemInternal.GetNetRefHandleManager().OnPreSendUpdate();
+	}
+
+	void CallPreSendUpdate(float DeltaSeconds)
+	{
+		ReplicationSystemInternal.GetReplicationBridge()->CallPreSendUpdate(DeltaSeconds);
+	}
+
+	void EndPostSendUpdate()
+	{
+		// Unblock operations
+		ReplicationSystemInternal.SetBlockFilterChanges(false);
+
+		ReplicationSystemInternal.GetChangeMaskCache().ResetCache();
+
+		// Store the scope list for the next SendUpdate.
+		ReplicationSystemInternal.GetNetRefHandleManager().OnPostSendUpdate();
+
+		// Update handles pending tear-off
+		ReplicationSystemInternal.GetReplicationBridge()->UpdateHandlesPendingTearOff();
+
+		// Reset baseline invalidation
+		ReplicationSystemInternal.GetDeltaCompressionBaselineInvalidationTracker().PostSendUpdate();
+
+		// Tell systems we finished PostSendUpdate
+		ReplicationSystemInternal.GetReplicationBridge()->OnPostSendUpdate();
+	}
+
 	void UpdateDirtyObjectList()
 	{
 		ReplicationSystemInternal.GetDirtyNetObjectTracker().UpdateDirtyNetObjects();
@@ -246,6 +311,10 @@ public:
 	void UpdateWorldLocations()
 	{
 		IRIS_PROFILER_SCOPE(FReplicationSystem_UpdateWorldLocations);
+
+		// Reset dirty object info before updating.
+		FWorldLocations& WorldLocations = ReplicationSystemInternal.GetWorldLocations();
+		WorldLocations.ResetObjectsWithDirtyInfo();
 
 		ReplicationSystemInternal.GetReplicationBridge()->CallUpdateInstancesWorldLocation();
 	}
@@ -261,24 +330,31 @@ public:
 
 	void UpdateFilterPostPoll()
 	{
-		IRIS_PROFILER_SCOPE(FReplicationSystem_UpdateFilterPostPoll);
 		LLM_SCOPE_BYTAG(Iris);
 
 		FReplicationFiltering& Filtering = ReplicationSystemInternal.GetFiltering();
-		Filtering.FilterPostPoll();
 
-		// Iterate over all valid connections and propagate updated scopes
-		FReplicationConnections& Connections = ReplicationSystemInternal.GetConnections();
-		
-		auto UpdateConnectionScope = [&Filtering, &Connections](uint32 ConnectionId)
 		{
-			FReplicationConnection* Conn = Connections.GetConnection(ConnectionId);
-			const FNetBitArrayView ObjectsInScope = Filtering.GetRelevantObjectsInScope(ConnectionId);
-			Conn->ReplicationWriter->UpdateScope(ObjectsInScope);
-		};
+			IRIS_PROFILER_SCOPE(FReplicationSystem_UpdateFilterPostPoll);
+			Filtering.FilterPostPoll();
+		}
 
-		const FNetBitArray& ValidConnections = Connections.GetValidConnections();
-		ValidConnections.ForAllSetBits(UpdateConnectionScope);
+		{
+			IRIS_PROFILER_SCOPE(FReplicationSystem_UpdateConnectionsScope);
+		
+			// Iterate over all valid connections and propagate updated scopes
+			FReplicationConnections& Connections = ReplicationSystemInternal.GetConnections();
+		
+			auto UpdateConnectionScope = [&Filtering, &Connections](uint32 ConnectionId)
+			{
+				FReplicationConnection* Conn = Connections.GetConnection(ConnectionId);
+				const FNetBitArrayView ObjectsInScope = Filtering.GetRelevantObjectsInScope(ConnectionId);
+				Conn->ReplicationWriter->UpdateScope(ObjectsInScope);
+			};
+
+			const FNetBitArray& ValidConnections = Connections.GetValidConnections();
+			ValidConnections.ForAllSetBits(UpdateConnectionScope);
+		}
 	}
 
 	// Can run at any time between scoping and replication.
@@ -293,6 +369,9 @@ public:
 	// Runs after filtering
 	void UpdatePrioritization(const FNetBitArrayView& ReplicatingConnections)
 	{
+#if UE_NET_IRIS_CSV_STATS
+		CSV_SCOPED_TIMING_STAT(Iris, ReplicationSystem_UpdatePrioritization);
+#endif
 		IRIS_PROFILER_SCOPE(FReplicationSystem::FImpl::UpdatePrioritization);
 		LLM_SCOPE_BYTAG(Iris);
 
@@ -326,15 +405,15 @@ public:
 		ValidConnections.ForAllSetBits(UpdateDirtyChangeMasks);
 	}
 
-	void CopyDirtyStateData()
+	void QuantizeDirtyStateData()
 	{
-		IRIS_PROFILER_SCOPE(FReplicationSystem_CopyDirtyStateData);
+		IRIS_PROFILER_SCOPE(FReplicationSystem_QuantizeDirtyStateData);
 		LLM_SCOPE_BYTAG(IrisState);
 
 		FNetRefHandleManager& NetRefHandleManager = ReplicationSystemInternal.GetNetRefHandleManager();
 		FChangeMaskCache& Cache = ReplicationSystemInternal.GetChangeMaskCache();
 
-		uint32 CopiedObjectCount = 0;
+		uint32 QuantizedObjectCount = 0;
 		
 		// Prepare cache
 		constexpr uint32 ReservedIndexCount = 2048;
@@ -349,20 +428,21 @@ public:
 		FInternalNetSerializationContext InternalContext(ReplicationSystem);
 
 		SerializationContext.SetInternalContext(&InternalContext);
+		SerializationContext.SetNetStatsContext(ReplicationSystemInternal.GetNetTypeStats().GetNetStatsContext());
 
 		// Copy the state data of objects that were dirty this frame.
-		FNetBitArrayView DirtyObjectsToCopy = NetRefHandleManager.GetDirtyObjectsToCopy();
+		FNetBitArrayView DirtyObjectsToQuantize = NetRefHandleManager.GetDirtyObjectsToQuantize();
 
-		auto CopyFunction = [&ChangeMaskWriter, &Cache, &NetRefHandleManager, &CopiedObjectCount, &SerializationContext](uint32 DirtyIndex)
+		auto QuantizeFunction = [&ChangeMaskWriter, &Cache, &NetRefHandleManager, &QuantizedObjectCount, &SerializationContext](uint32 DirtyIndex)
 		{
-			CopiedObjectCount += FReplicationInstanceOperationsInternal::CopyObjectStateData(ChangeMaskWriter, Cache, NetRefHandleManager, SerializationContext, DirtyIndex);
+			QuantizedObjectCount += FReplicationInstanceOperationsInternal::QuantizeObjectStateData(ChangeMaskWriter, Cache, NetRefHandleManager, SerializationContext, DirtyIndex);
 		};
 
-		DirtyObjectsToCopy.ForAllSetBits(CopyFunction);
-		DirtyObjectsToCopy.Reset();
+		DirtyObjectsToQuantize.ForAllSetBits(QuantizeFunction);
+		DirtyObjectsToQuantize.Reset();
 
 		const uint32 ReplicationSystemId = ReplicationSystem->GetId();
-		UE_NET_TRACE_FRAME_STATSCOUNTER(ReplicationSystemId, ReplicationSystem.CopiedObjectCount, CopiedObjectCount, ENetTraceVerbosity::Trace);
+		UE_NET_TRACE_FRAME_STATSCOUNTER(ReplicationSystemId, ReplicationSystem.QuantizedObjectCount, QuantizedObjectCount, ENetTraceVerbosity::Trace);
 	}
 
 	void ResetObjectStateDirtiness()
@@ -371,17 +451,16 @@ public:
 
 		FNetRefHandleManager& NetRefHandleManager = ReplicationSystemInternal.GetNetRefHandleManager();
 
-		// Clean the objects that got polled this frame
-		const FNetBitArrayView ObjectsToClean = NetRefHandleManager.GetPolledObjectsInternalIndices();
+		// Clear the objects that got polled this frame
+		const FNetBitArrayView PolledObjects = NetRefHandleManager.GetPolledObjectsInternalIndices();
 
 		// Reset object dirtyness
-		ObjectsToClean.ForAllSetBits([&NetRefHandleManager](uint32 DirtyIndex)
+		PolledObjects.ForAllSetBits([&NetRefHandleManager](uint32 DirtyIndex)
 		{
 			FReplicationInstanceOperationsInternal::ResetObjectStateDirtiness(NetRefHandleManager, DirtyIndex);
 		});
 
-		// Reset cleaned objects in the tracker
-		ReplicationSystemInternal.GetDirtyNetObjectTracker().ClearDirtyNetObjects(ObjectsToClean);
+		ReplicationSystemInternal.GetDirtyNetObjectTracker().ReconcilePolledList(PolledObjects);
 	}
 
 	void ProcessNetObjectAttachmentSendQueue(FNetBlobManager::EProcessMode ProcessMode)
@@ -392,15 +471,18 @@ public:
 		NetBlobManager.ProcessNetObjectAttachmentSendQueue(ProcessMode);
 	}
 
+	void ProcessOOBNetObjectAttachmentSendQueue()
+	{
+		IRIS_PROFILER_SCOPE(FReplicationSystem_ProcessOOBNetObjectAttachmentSendQueue);
+
+		FNetBlobManager& NetBlobManager = ReplicationSystemInternal.GetNetBlobManager();
+		NetBlobManager.ProcessOOBNetObjectAttachmentSendQueue(ConnectionsPendingPostTickDispatchSend);
+	}
+
 	void ResetNetObjectAttachmentSendQueue()
 	{
 		FNetBlobManager& NetBlobManager = ReplicationSystemInternal.GetNetBlobManager();
 		NetBlobManager.ResetNetObjectAttachmentSendQueue();
-	}
-
-	// send data
-	void SendUpdate()
-	{
 	}
 
 	void AddConnection(uint32 ConnectionId)
@@ -418,13 +500,17 @@ public:
 			Params.PacketSendWindowSize = 256;
 			Params.ConnectionId = ConnectionId;
 			Params.MaxActiveReplicatedObjectCount = ReplicationSystemInternal.GetNetRefHandleManager().GetMaxActiveObjectCount();
+			Params.PreAllocatedReplicatedObjectCount = ReplicationSystemInternal.GetNetRefHandleManager().GetPreAllocatedObjectCount();
+			Params.MaxReplicatedWriterObjectCount = ReplicationSystemInternal.GetInitParams().MaxReplicatedWriterObjectCount;
+
 			/** 
 			  * Currently we expect all objects to be replicated from server to client.
 			  * That means we will have to support sending attachments such as RPCs from
 			  * the client to the server, if the RPC is allowed to be sent in the first place.
 			  */
 			Params.bAllowSendingAttachmentsToObjectsNotInScope = !ReplicationSystem->IsServer();
-			Params.bAllowReceivingAttachmentsFromRemoteObjectsNotInScope = !Params.bAllowSendingAttachmentsToObjectsNotInScope;
+			Params.bAllowReceivingAttachmentsFromRemoteObjectsNotInScope = true;
+
 			// Delaying attachments with unresolved references on the server could cause massive queues of RPCs, potentially an OOM situation.
 			Params.bAllowDelayingAttachmentsWithUnresolvedReferences = !ReplicationSystem->IsServer();
 
@@ -535,6 +621,8 @@ void UReplicationSystem::Shutdown()
 	Impl->Deinit();
 	Impl.Reset();
 
+	// Destroy bridge
+	ReplicationBridge->MarkAsGarbage();
 	ReplicationBridge = nullptr;
 }
 
@@ -552,133 +640,187 @@ const UE::Net::Private::FReplicationSystemInternal* UReplicationSystem::GetRepli
 	return &Impl->ReplicationSystemInternal;
 }
 
-void UReplicationSystem::PreSendUpdate(float DeltaSeconds)
+void UReplicationSystem::PreSendUpdate(const FSendUpdateParams& Params)
 {
 	using namespace UE::Net;
 	using namespace UE::Net::Private;
 
 	IRIS_PROFILER_SCOPE(FReplicationSystem_PreSendUpdate);
 
-	ElapsedTime += DeltaSeconds;
-
-#if !UE_BUILD_SHIPPING
-	// Force a integrity check of all replicated instances
-	if (bDoCollectGarbage || ReplicationSystemCVars::bForcePruneBeforeUpdate)
-	{
-		CollectGarbage();
-	}
-#endif
+	ensureAlways(Impl->CurrentSendPass == EReplicationSystemSendPass::Invalid);
+	Impl->CurrentSendPass = Params.SendPass;
 
 	FReplicationSystemInternal& InternalSys = Impl->ReplicationSystemInternal;
 
-	// $IRIS TODO. There may be some throttling of connections to tick that we should take into account.
-	const FNetBitArrayView& ReplicatingConnections = MakeNetBitArrayView(Impl->ReplicationSystemInternal.GetConnections().GetValidConnections());
-
-#if UE_NET_IRIS_CSV_STATS && CSV_PROFILER
+	// Most systems are only updated during the normal TickFlush
+	if (Impl->CurrentSendPass ==  EReplicationSystemSendPass::TickFlush)
 	{
-		FNetSendStats& SendStats = InternalSys.GetSendStats();
-		SendStats.Reset();
-		SendStats.SetNumberOfReplicatingConnections(ReplicatingConnections.CountSetBits());
-	}
-#endif
+		ElapsedTime += Params.DeltaSeconds;
 
-	if (bAllowObjectReplication)
-	{
-		UE_NET_TRACE_FRAME_STATSCOUNTER(GetId(), ReplicationSystem.ReplicatedObjectCount, InternalSys.GetNetRefHandleManager().GetActiveObjectCount(), ENetTraceVerbosity::Verbose);
+		// $IRIS TODO. There may be some throttling of connections to tick that we should take into account.
+		const FNetBitArrayView& ReplicatingConnections = MakeNetBitArrayView(Impl->ReplicationSystemInternal.GetConnections().GetValidConnections());
 
-		// Refresh the dirty objects we were told about.
-		Impl->UpdateDirtyObjectList();
-
-		// Update world locations. We need this to happen before both filtering and prioritization.
-		Impl->UpdateWorldLocations();
-
-		// Filters to reduce the top-level scoped object list
-		Impl->UpdateFilterPrePoll();
-
-		// Invoke any operations we need to do before copying state data
-		InternalSys.GetReplicationBridge()->CallPreSendUpdate(DeltaSeconds);
-
-		// Finalize the dirty list with objects set dirty during the poll phase
-		Impl->UpdateDirtyListPostPoll();
-
-		// Update conditionals
-		Impl->UpdateConditionals();
-
-		// Copy dirty state data. We need this to happen before both filtering and prioritization
-		Impl->CopyDirtyStateData();
-
-		// We must process all attachments to objects going out of scope before we update the scope
-		Impl->ProcessNetObjectAttachmentSendQueue(FNetBlobManager::EProcessMode::ProcessObjectsGoingOutOfScope);
-
-		// Update filtering and scope for all connections
-		Impl->UpdateFilterPostPoll();
-
-		// Propagate dirty changes to all connections
-		Impl->PropagateDirtyChanges();
-	}
-
-	// Forward attachments to the connections after scope update
-	Impl->ProcessNetObjectAttachmentSendQueue(FNetBlobManager::EProcessMode::ProcessObjectsInScope);
-	Impl->ResetNetObjectAttachmentSendQueue();
-
-	if (bAllowObjectReplication)
-	{
-		// Update object priorities
-		Impl->UpdatePrioritization(ReplicatingConnections);
-
-		// Delta compression preparations before send
+#if UE_NET_IRIS_CSV_STATS
 		{
-			FDeltaCompressionBaselineManagerPreSendUpdateParams UpdateParams;
-			UpdateParams.ChangeMaskCache = &InternalSys.GetChangeMaskCache();
-			InternalSys.GetDeltaCompressionBaselineManager().PreSendUpdate(UpdateParams);
+			FNetSendStats& SendStats = InternalSys.GetSendStats();
+			SendStats.Reset();
+			SendStats.SetNumberOfReplicatingConnections(ReplicatingConnections.CountSetBits());
+		}
+#endif
+	
+		// Force a integrity check of all replicated instances
+		if (bDoCollectGarbage || ReplicationSystemCVars::bForcePruneBeforeUpdate)
+		{
+			CollectGarbage();
+		}
+
+		if (bAllowObjectReplication)
+		{
+			UE_NET_TRACE_FRAME_STATSCOUNTER(GetId(), ReplicationSystem.ReplicatedObjectCount, InternalSys.GetNetRefHandleManager().GetActiveObjectCount(), ENetTraceVerbosity::Verbose);
+
+			// Tell systems we are starting PreSendUpdate
+			Impl->StartPreSendUpdate();
+
+			// Refresh the dirty objects we were told about.
+			Impl->UpdateDirtyObjectList();
+
+			// Update world locations. We need this to happen before both filtering and prioritization.
+			Impl->UpdateWorldLocations();
+
+			// Update filters, reduce the top-level scoped object list and set each connection's scope.
+			Impl->UpdateFilterPrePoll();
+
+			// Invoke any operations we need to do before copying state data
+			Impl->CallPreSendUpdate(Params.DeltaSeconds);
+
+			// Finalize the dirty list with objects set dirty during the poll phase
+			Impl->UpdateDirtyListPostPoll();
+
+			// Update conditionals
+			Impl->UpdateConditionals();
+
+			// Quantize dirty state data. We need this to happen before both filtering and prioritization
+			Impl->QuantizeDirtyStateData();
+
+			// We must process all attachments to objects going out of scope before we update the scope
+			Impl->ProcessNetObjectAttachmentSendQueue(FNetBlobManager::EProcessMode::ProcessObjectsGoingOutOfScope);
+
+			// Update filtering and scope for all connections
+			Impl->UpdateFilterPostPoll();
+
+			// Propagate dirty changes to all connections
+			Impl->PropagateDirtyChanges();
+		}
+
+		// Forward attachments to the connections after scope update
+		Impl->ProcessNetObjectAttachmentSendQueue(FNetBlobManager::EProcessMode::ProcessObjectsInScope);
+		Impl->ResetNetObjectAttachmentSendQueue();
+
+		if (bAllowObjectReplication)
+		{
+			// Update object priorities
+			Impl->UpdatePrioritization(ReplicatingConnections);
+
+			// Delta compression preparations before send
+			{
+				FDeltaCompressionBaselineManagerPreSendUpdateParams UpdateParams;
+				UpdateParams.ChangeMaskCache = &InternalSys.GetChangeMaskCache();
+				InternalSys.GetDeltaCompressionBaselineManager().PreSendUpdate(UpdateParams);
+			}
+		}
+
+		// Destroy objects pending destroy
+		{
+			Impl->UpdateUnresolvableReferenceTracking();
+			InternalSys.GetNetRefHandleManager().DestroyObjectsPendingDestroy();
 		}
 	}
-
-	// Destroy objects pending destroy
+	else if (Impl->CurrentSendPass == EReplicationSystemSendPass::PostTickDispatch)
 	{
-		Impl->UpdateUnresolvableReferenceTracking();
-		InternalSys.GetNetRefHandleManager().DestroyObjectsPendingDestroy();
+		// Forward attachments scheduled to use the OOBChannel and mark connetions needing immediate send
+		Impl->ProcessOOBNetObjectAttachmentSendQueue();
 	}
 }
 
-void UReplicationSystem::SendUpdate()
+void UReplicationSystem::PreSendUpdate(float DeltaSeconds)
 {
-	Impl->SendUpdate();
+	PreSendUpdate(FSendUpdateParams {.SendPass = UE::Net::EReplicationSystemSendPass::TickFlush, .DeltaSeconds = DeltaSeconds });
+}
+
+IRISCORE_API void UReplicationSystem::SendUpdate(TFunctionRef<void(TArrayView<uint32>)> SendFunction)
+{
+	using namespace UE::Net;
+	using namespace UE::Net::Private;
+
+	if (!ensure(Impl->CurrentSendPass != EReplicationSystemSendPass::Invalid))
+	{
+		return;
+	}
+
+	UE::Net::Private::FReplicationConnections& Connections = Impl->ReplicationSystemInternal.GetConnections();
+	const FNetBitArray& ReplicatingConnections = Connections.GetValidConnections();
+
+	TArray<uint32, TInlineAllocator<128>> ConnectionToUpdate;
+	
+	if (Impl->CurrentSendPass == EReplicationSystemSendPass::TickFlush)
+	{
+		// This is currently handled when ticking NetDriver->NetConnection->Channels.
+
+		ConnectionToUpdate.SetNum(ReplicatingConnections.CountSetBits());
+		Connections.GetValidConnections().GetSetBitIndices(0U, ~0U, ConnectionToUpdate.GetData(), ConnectionToUpdate.Num());
+	}
+	else if (Impl->CurrentSendPass == EReplicationSystemSendPass::PostTickDispatch)
+	{
+		// We only need to send data to connections that has data to send in PostTickDispatch
+
+		FNetBitArray::ForAllSetBits(Impl->ConnectionsPendingPostTickDispatchSend, ReplicatingConnections, FNetBitArray::AndOp, [&ConnectionToUpdate](uint32 ConnId) { ConnectionToUpdate.Add(ConnId);});
+		Impl->ConnectionsPendingPostTickDispatchSend.Reset();
+	}
+
+	SendFunction(MakeArrayView(ConnectionToUpdate));
 }
 
 void UReplicationSystem::PostSendUpdate()
 {
+	using namespace UE::Net;
 	using namespace UE::Net::Private;
 
 	IRIS_PROFILER_SCOPE(FReplicationSystem_PostSendUpdate);
-	
-	FReplicationSystemInternal& InternalSys = Impl->ReplicationSystemInternal;
 
-	Impl->ResetObjectStateDirtiness();
-
-	InternalSys.GetChangeMaskCache().ResetCache();
-
-	// Store the state of the previous frames scopable objects
-	InternalSys.GetNetRefHandleManager().SetPrevFrameScopableInternalIndicesToCurrent();
-
-	// Update handles pending tear-off
-	InternalSys.GetReplicationBridge()->UpdateHandlesPendingTearOff();
-
-	// Reset baseline invalidation
-	InternalSys.GetDeltaCompressionBaselineInvalidationTracker().PostSendUpdate();
-
-	if (bAllowObjectReplication)
+	if (!ensure(Impl->CurrentSendPass != EReplicationSystemSendPass::Invalid))
 	{
-		FDeltaCompressionBaselineManagerPostSendUpdateParams UpdateParams;
-		InternalSys.GetDeltaCompressionBaselineManager().PostSendUpdate(UpdateParams);
+		return;
 	}
 
-#if UE_NET_IRIS_CSV_STATS && CSV_PROFILER
+	// Most systems are only updated during the normal TickFlush
+	if (Impl->CurrentSendPass == EReplicationSystemSendPass::TickFlush)
 	{
-		UE::Net::FNetSendStats& SendStats = InternalSys.GetSendStats();
-		SendStats.ReportCsvStats();
-	}
+		if (bAllowObjectReplication)
+		{
+			Impl->ResetObjectStateDirtiness();
+		}
+
+		Impl->EndPostSendUpdate();
+
+		if (bAllowObjectReplication)
+		{
+			FDeltaCompressionBaselineManagerPostSendUpdateParams UpdateParams;
+			Impl->ReplicationSystemInternal.GetDeltaCompressionBaselineManager().PostSendUpdate(UpdateParams);
+		}
+
+#if UE_NET_IRIS_CSV_STATS
+		{
+			FNetSendStats& SendStats = Impl->ReplicationSystemInternal.GetSendStats();
+			SendStats.ReportCsvStats();
+
+			FNetTypeStats& TypeStats = Impl->ReplicationSystemInternal.GetNetTypeStats();
+			TypeStats.ReportCSVStats();
+		}
 #endif
+
+	}
+
+	Impl->CurrentSendPass = EReplicationSystemSendPass::Invalid;
 }
 
 void UReplicationSystem::PostGarbageCollection()
@@ -699,7 +841,7 @@ void UReplicationSystem::CollectGarbage()
 
 void UReplicationSystem::ResetGameWorldState()
 {
-	Impl->ReplicationSystemInternal.GetReplicationBridge()->RemoveDestructionInfosForGroup(UE::Net::InvalidNetObjectGroupHandle);
+	Impl->ReplicationSystemInternal.GetReplicationBridge()->RemoveDestructionInfosForGroup(UE::Net::FNetObjectGroupHandle());
 }
 
 void UReplicationSystem::NotifyStreamingLevelUnload(const UObject* Level)
@@ -803,8 +945,41 @@ bool UReplicationSystem::QueueNetObjectAttachment(uint32 ConnectionId, const UE:
 
 bool UReplicationSystem::SendRPC(const UObject* Object, const UObject* SubObject, const UFunction* Function, const void* Parameters)
 {
+	UE::Net::ENetObjectAttachmentSendPolicyFlags SendFlags = UE::Net::ENetObjectAttachmentSendPolicyFlags::None;
+	if (ReplicationSystemCVars::bAllowAttachmentSendPolicyFlags)
+	{
+		if (UE::Net::ENetObjectAttachmentSendPolicyFlags* Flags = Impl->AttachmentSendPolicyFlags.Find(FObjectKey(Function)))
+		{
+			SendFlags = *Flags;
+		}
+	}
+
 	UE::Net::Private::FNetBlobManager& NetBlobManager = Impl->ReplicationSystemInternal.GetNetBlobManager();
-	return NetBlobManager.SendRPC(Object, SubObject, Function, Parameters);
+	return NetBlobManager.SendRPC(Object, SubObject, Function, Parameters, SendFlags);
+}
+
+bool UReplicationSystem::SetRPCSendPolicyFlags(const UFunction* Function, UE::Net::ENetObjectAttachmentSendPolicyFlags SendFlags)
+{
+	if (!Function)
+	{	
+		return false;
+	}
+
+	if (EnumHasAnyFlags(SendFlags, UE::Net::ENetObjectAttachmentSendPolicyFlags::SendImmediate) && (Function->FunctionFlags & FUNC_NetReliable))
+	{
+		ensureAlwaysMsgf(false, TEXT("ENetObjectAttachmentSendPolicyFlags::SendImmediate is not allowed to use on Reliable RPC: %s"), *GetNameSafe(Function));
+		return false;
+	}
+
+	UE_LOG(LogIris, Verbose, TEXT("SetRPCSendPolicyFlags %s::%s => %s "), *GetNameSafe(Function->GetOuterUClass()), *GetNameSafe(Function), LexToString(SendFlags));
+		
+	Impl->AttachmentSendPolicyFlags.Add(FObjectKey(Function), SendFlags);
+	return true;
+}
+
+void UReplicationSystem::ResetRPCSendPolicyFlags()
+{
+	Impl->AttachmentSendPolicyFlags.Reset();
 }
 
 bool UReplicationSystem::SendRPC(uint32 ConnectionId, const UObject* Object, const UObject* SubObject, const UFunction* Function, const void* Parameters)
@@ -869,12 +1044,27 @@ const UE::Net::FReplicationProtocol* UReplicationSystem::GetReplicationProtocol(
 	return NetRefHandleManager.GetReplicatedObjectDataNoCheck(ObjectInternalIndex).Protocol;
 }
 
+const UE::Net::FNetDebugName* UReplicationSystem::GetDebugName(FNetRefHandle Handle) const
+{
+	using namespace UE::Net;
+	
+	const FReplicationProtocol* Protocol = GetReplicationProtocol(Handle);
+	return Protocol ? Protocol->DebugName : nullptr;
+}
+
 void UReplicationSystem::SetOwningNetConnection(FNetRefHandle Handle, uint32 ConnectionId)
 {
 	using namespace UE::Net::Private;
 
 	FNetRefHandleManager& NetRefHandleManager = Impl->ReplicationSystemInternal.GetNetRefHandleManager();
 	const FInternalNetRefIndex ObjectInternalIndex = NetRefHandleManager.GetInternalIndex(Handle);
+
+	if (Impl->ReplicationSystemInternal.AreFilterChangesBlocked())
+	{
+		ensureMsgf(false, TEXT("Setting filter conditions is not yet supported during this operation. Filter condition on %s (%s) failed."), *GetNameSafe(NetRefHandleManager.GetReplicatedObjectInstance(ObjectInternalIndex)), *Handle.ToString());
+		return;
+	}
+
 	if (ObjectInternalIndex == FNetRefHandleManager::InvalidInternalIndex)
 	{
 		return;
@@ -899,7 +1089,7 @@ uint32 UReplicationSystem::GetOwningNetConnection(FNetRefHandle Handle) const
 	return Filtering.GetOwningConnection(ObjectInternalIndex);
 }
 
-bool UReplicationSystem::SetFilter(FNetRefHandle Handle, UE::Net::FNetObjectFilterHandle Filter)
+bool UReplicationSystem::SetFilter(FNetRefHandle Handle, UE::Net::FNetObjectFilterHandle Filter, FName FilterConfigProfile /*= NAME_None*/)
 {
 	using namespace UE::Net::Private;
 
@@ -910,8 +1100,14 @@ bool UReplicationSystem::SetFilter(FNetRefHandle Handle, UE::Net::FNetObjectFilt
 		return false;
 	}
 
+	if (Impl->ReplicationSystemInternal.AreFilterChangesBlocked())
+	{
+		ensureMsgf(false, TEXT("Setting filter conditions is not yet supported during this operation. Filter condition on %s (%s) failed."), *GetNameSafe(NetRefHandleManager.GetReplicatedObjectInstance(ObjectInternalIndex)), *Handle.ToString());
+		return false;
+	}
+
 	FReplicationFiltering& Filtering = Impl->ReplicationSystemInternal.GetFiltering();
-	return Filtering.SetFilter(ObjectInternalIndex, Filter);
+	return Filtering.SetFilter(ObjectInternalIndex, Filter, FilterConfigProfile);
 }
 
 UE::Net::FNetObjectFilterHandle UReplicationSystem::GetFilterHandle(const FName FilterName) const
@@ -936,6 +1132,13 @@ bool UReplicationSystem::SetConnectionFilter(FNetRefHandle Handle, const TBitArr
 
 	FNetRefHandleManager& NetRefHandleManager = Impl->ReplicationSystemInternal.GetNetRefHandleManager();
 	const FInternalNetRefIndex ObjectInternalIndex = NetRefHandleManager.GetInternalIndex(Handle);
+
+	if (Impl->ReplicationSystemInternal.AreFilterChangesBlocked())
+	{
+		ensureMsgf(false, TEXT("Setting filter conditions is not yet supported during this operation. Filter condition on %s (%s) failed."), *GetNameSafe(NetRefHandleManager.GetReplicatedObjectInstance(ObjectInternalIndex)), *Handle.ToString());
+		return false;
+	}
+
 	if (ObjectInternalIndex == FNetRefHandleManager::InvalidInternalIndex)
 	{
 		return false;
@@ -954,14 +1157,14 @@ UE::Net::FNetObjectGroupHandle UReplicationSystem::GetOrCreateSubObjectFilter(FN
 	FReplicationFiltering& Filtering = Impl->ReplicationSystemInternal.GetFiltering();
 
 	FNetObjectGroupHandle GroupHandle = Groups.GetNamedGroupHandle(GroupName);
-	if (GroupHandle != InvalidNetObjectGroupHandle)
+	if (GroupHandle.IsValid())
 	{
 		check(Filtering.IsSubObjectFilterGroup(GroupHandle));
 		return GroupHandle;
 	}
 
 	GroupHandle = Groups.CreateNamedGroup(GroupName);
-	if (GroupHandle != InvalidNetObjectGroupHandle)
+	if (GroupHandle.IsValid())
 	{
 		Filtering.AddSubObjectFilter(GroupHandle);
 	}
@@ -977,14 +1180,14 @@ UE::Net::FNetObjectGroupHandle UReplicationSystem::GetSubObjectFilterGroupHandle
 	FReplicationFiltering& Filtering = Impl->ReplicationSystemInternal.GetFiltering();
 
 	FNetObjectGroupHandle GroupHandle = Groups.GetNamedGroupHandle(GroupName);
-	if (GroupHandle != InvalidNetObjectGroupHandle)
+	if (GroupHandle.IsValid())
 	{
 		if (ensureAlwaysMsgf(Filtering.IsSubObjectFilterGroup(GroupHandle), TEXT("UReplicationSystem::GetSubObjectFilterGroupHandle Trying to lookup NetObjectGroupHandle for NetGroup %s that is not a subobject filter"), *GroupName.ToString()))
 		{
 			return GroupHandle;
 		}
 	}
-	return InvalidNetObjectGroupHandle;
+	return FNetObjectGroupHandle();
 }
 
 void UReplicationSystem::SetSubObjectFilterStatus(FName GroupName, uint32 ConnectionId, UE::Net::ENetFilterStatus ReplicationStatus)
@@ -998,8 +1201,14 @@ void UReplicationSystem::SetSubObjectFilterStatus(FName GroupName, uint32 Connec
 		return;
 	}
 
+	if (Impl->ReplicationSystemInternal.AreFilterChangesBlocked())
+	{
+		ensureMsgf(false, TEXT("Setting filter conditions is not yet supported during this operation."));
+		return;
+	}
+
 	FNetObjectGroupHandle GroupHandle = GetSubObjectFilterGroupHandle(GroupName);
-	if (GroupHandle != InvalidNetObjectGroupHandle)
+	if (GroupHandle.IsValid())
 	{
 		FReplicationFiltering& Filtering = Impl->ReplicationSystemInternal.GetFiltering();
 		Filtering.SetSubObjectFilterStatus(GroupHandle, ConnectionId, ReplicationStatus);
@@ -1011,11 +1220,17 @@ void UReplicationSystem::RemoveSubObjectFilter(FName GroupName)
 	using namespace UE::Net;
 	using namespace UE::Net::Private;
 
+	if (Impl->ReplicationSystemInternal.AreFilterChangesBlocked())
+	{
+		ensureMsgf(false, TEXT("Setting filter conditions is not yet supported during this operation."));
+		return;
+	}
+
 	FNetObjectGroups& Groups = Impl->ReplicationSystemInternal.GetGroups();
 	FReplicationFiltering& Filtering = Impl->ReplicationSystemInternal.GetFiltering();
 
 	FNetObjectGroupHandle GroupHandle = GetSubObjectFilterGroupHandle(GroupName);
-	if (GroupHandle != InvalidNetObjectGroupHandle)
+	if (GroupHandle.IsValid())
 	{
 		Filtering.RemoveSubObjectFilter(GroupHandle);
 		Groups.DestroyGroup(GroupHandle);
@@ -1031,38 +1246,65 @@ UE::Net::FNetObjectGroupHandle UReplicationSystem::CreateGroup()
 
 void UReplicationSystem::AddToGroup(FNetObjectGroupHandle GroupHandle, FNetRefHandle Handle)
 {
+	// Early out if this is invalid group
+	if (!ensure(IsValidGroup(GroupHandle)))
+	{
+		return;
+	}
+
 	LLM_SCOPE_BYTAG(Iris);
 
 	using namespace UE::Net::Private;
 
-	FNetObjectGroups& Groups = Impl->ReplicationSystemInternal.GetGroups();
 	FNetRefHandleManager& NetRefHandleManager = Impl->ReplicationSystemInternal.GetNetRefHandleManager();
-	FReplicationFiltering& Filtering = Impl->ReplicationSystemInternal.GetFiltering();	
-
 	const FInternalNetRefIndex ObjectInternalIndex = NetRefHandleManager.GetInternalIndex(Handle);
 
-	if (GroupHandle && ObjectInternalIndex)
+	if (Impl->ReplicationSystemInternal.AreFilterChangesBlocked())
 	{
-		Groups.AddToGroup(GroupHandle, ObjectInternalIndex);
-		Filtering.NotifyObjectAddedToGroup(GroupHandle, ObjectInternalIndex);
+		ensureMsgf(false, TEXT("Setting filter conditions is not yet supported during this operation. Filter condition on %s (%s) failed."), *GetNameSafe(NetRefHandleManager.GetReplicatedObjectInstance(ObjectInternalIndex)), *Handle.ToString());
+		return;
 	}
+
+	if (ObjectInternalIndex == FNetRefHandleManager::InvalidInternalIndex)
+	{
+		return;
+	}
+	
+	FNetObjectGroups& Groups = Impl->ReplicationSystemInternal.GetGroups();
+	FReplicationFiltering& Filtering = Impl->ReplicationSystemInternal.GetFiltering();	
+
+	Groups.AddToGroup(GroupHandle, ObjectInternalIndex);
+	Filtering.NotifyObjectAddedToGroup(GroupHandle, ObjectInternalIndex);
 }
 
 void UReplicationSystem::RemoveFromGroup(FNetObjectGroupHandle GroupHandle, FNetRefHandle Handle)
-{	
+{
+	// Early out if this is invalid group
+	if (!ensure(IsValidGroup(GroupHandle)))
+	{
+		return;
+	}
+
 	using namespace UE::Net::Private;
 
 	FNetRefHandleManager& NetRefHandleManager = Impl->ReplicationSystemInternal.GetNetRefHandleManager();
-
 	const FInternalNetRefIndex ObjectInternalIndex = NetRefHandleManager.GetInternalIndex(Handle);
-	if (GroupHandle && ObjectInternalIndex)
+	if (Impl->ReplicationSystemInternal.AreFilterChangesBlocked())
 	{
-		FNetObjectGroups& Groups = Impl->ReplicationSystemInternal.GetGroups();
-		FReplicationFiltering& Filtering = Impl->ReplicationSystemInternal.GetFiltering();	
-
-		Groups.RemoveFromGroup(GroupHandle, ObjectInternalIndex);
-		Filtering.NotifyObjectRemovedFromGroup(GroupHandle, ObjectInternalIndex);
+		ensureMsgf(false, TEXT("Setting filter conditions is not yet supported during this operation. Filter condition on %s (%s) failed."), *GetNameSafe(NetRefHandleManager.GetReplicatedObjectInstance(ObjectInternalIndex)), *Handle.ToString());
+		return;
 	}
+
+	if (ObjectInternalIndex == FNetRefHandleManager::InvalidInternalIndex)
+	{
+		return;
+	}
+
+	FNetObjectGroups& Groups = Impl->ReplicationSystemInternal.GetGroups();
+	FReplicationFiltering& Filtering = Impl->ReplicationSystemInternal.GetFiltering();
+
+	Groups.RemoveFromGroup(GroupHandle, ObjectInternalIndex);
+	Filtering.NotifyObjectRemovedFromGroup(GroupHandle, ObjectInternalIndex);
 }
 
 void UReplicationSystem::RemoveFromAllGroups(FNetRefHandle Handle)
@@ -1073,8 +1315,15 @@ void UReplicationSystem::RemoveFromAllGroups(FNetRefHandle Handle)
 	FNetObjectGroups& Groups = Impl->ReplicationSystemInternal.GetGroups();
 	FReplicationFiltering& Filtering = Impl->ReplicationSystemInternal.GetFiltering();
 
-	uint32 NumGroupMemberShips;
+	uint32 NumGroupMemberShips = 0;
 	const FInternalNetRefIndex ObjectInternalIndex = NetRefHandleManager.GetInternalIndex(Handle);
+
+	if (Impl->ReplicationSystemInternal.AreFilterChangesBlocked())
+	{
+		ensureMsgf(false, TEXT("Setting filter conditions is not yet supported during this operation. Filter condition on %s (%s) failed."), *GetNameSafe(NetRefHandleManager.GetReplicatedObjectInstance(ObjectInternalIndex)), *Handle.ToString());
+		return;
+	}
+
 	if (const FNetObjectGroupHandle* GroupHandles = Groups.GetGroupMemberships(ObjectInternalIndex, NumGroupMemberShips))
 	{
 		// We copy the membership array as it is modified during removal
@@ -1089,6 +1338,12 @@ void UReplicationSystem::RemoveFromAllGroups(FNetRefHandle Handle)
 
 bool UReplicationSystem::IsInGroup(FNetObjectGroupHandle GroupHandle, FNetRefHandle Handle) const
 {
+	// Early out if this is invalid group
+	if (!IsValidGroup(GroupHandle))
+	{
+		return false;
+	}
+
 	using namespace UE::Net::Private;
 
 	const FNetObjectGroups& Groups = Impl->ReplicationSystemInternal.GetGroups();
@@ -1103,20 +1358,19 @@ bool UReplicationSystem::IsValidGroup(FNetObjectGroupHandle GroupHandle) const
 {
 	const UE::Net::Private::FNetObjectGroups& Groups = Impl->ReplicationSystemInternal.GetGroups();
 
-	return GroupHandle && Groups.IsValidGroup(GroupHandle);
+	return GroupHandle.IsValid() && Groups.IsValidGroup(GroupHandle);
 }
 
 void UReplicationSystem::DestroyGroup(FNetObjectGroupHandle GroupHandle)
 {
-	using namespace UE::Net;
-	using namespace UE::Net::Private;
-
-	// We do not allow client code to remove reserved groups
-	if (IsReservedNetObjectGroupHandle(GroupHandle))
+	// Early out if this is invalid or reserved group
+	if (!ensure(IsValidGroup(GroupHandle) || GroupHandle.IsReservedNetObjectGroup()))
 	{
-		check(false);
 		return;
 	}
+
+	using namespace UE::Net;
+	using namespace UE::Net::Private;
 
 	FReplicationFiltering& Filtering = Impl->ReplicationSystemInternal.GetFiltering();	
 	FNetObjectGroups& Groups = Impl->ReplicationSystemInternal.GetGroups();
@@ -1127,32 +1381,125 @@ void UReplicationSystem::DestroyGroup(FNetObjectGroupHandle GroupHandle)
 	Groups.DestroyGroup(GroupHandle);
 }
 
-void UReplicationSystem::AddGroupFilter(FNetObjectGroupHandle GroupHandle)
+UE::Net::FNetObjectGroupHandle UReplicationSystem::GetNotReplicatedNetObjectGroup() const
 {
+	return Impl->NotReplicatedNetObjectGroupHandle;
+}
+
+UE::Net::FNetObjectGroupHandle UReplicationSystem::GetNetGroupOwnerNetObjectGroup() const
+{
+	return Impl->NetGroupOwnerNetObjectGroupHandle;
+}
+
+UE::Net::FNetObjectGroupHandle UReplicationSystem::GetNetGroupReplayNetObjectGroup() const
+{
+	return Impl->NetGroupReplayNetObjectGroupHandle;
+}
+
+bool UReplicationSystem::AddExclusionFilterGroup(FNetObjectGroupHandle GroupHandle)
+{
+	// Early out if this is invalid group
+	if (!ensure(IsValidGroup(GroupHandle)))
+	{
+		return false;
+	}
+
+	if (Impl->ReplicationSystemInternal.AreFilterChangesBlocked())
+	{
+		ensureMsgf(false, TEXT("Setting filter conditions is not yet supported during this operation."));
+		return false;
+	}
+
 	UE::Net::Private::FReplicationFiltering& Filtering = Impl->ReplicationSystemInternal.GetFiltering();	
-	Filtering.AddGroupFilter(GroupHandle);
+	return Filtering.AddExclusionFilterGroup(GroupHandle);
+}
+
+bool UReplicationSystem::AddInclusionFilterGroup(FNetObjectGroupHandle GroupHandle)
+{
+	// Early out if this is invalid group
+	if (!ensure(IsValidGroup(GroupHandle)))
+	{
+		return false;
+	}
+
+	if (Impl->ReplicationSystemInternal.AreFilterChangesBlocked())
+	{
+		ensureMsgf(false, TEXT("Setting filter conditions is not yet supported during this operation."));
+		return false;
+	}
+
+	UE::Net::Private::FReplicationFiltering& Filtering = Impl->ReplicationSystemInternal.GetFiltering();	
+	return Filtering.AddInclusionFilterGroup(GroupHandle);
 }
 
 void UReplicationSystem::RemoveGroupFilter(FNetObjectGroupHandle GroupHandle)
 {
+	// Early out if this is invalid group
+	if (!ensure(IsValidGroup(GroupHandle)))
+	{
+		return;
+	}
+
+	if (Impl->ReplicationSystemInternal.AreFilterChangesBlocked())
+	{
+		ensureMsgf(false, TEXT("Setting filter conditions is not yet supported during this operation."));
+		return;
+	}
+
 	UE::Net::Private::FReplicationFiltering& Filtering = Impl->ReplicationSystemInternal.GetFiltering();	
 	Filtering.RemoveGroupFilter(GroupHandle);
 }
 
 void UReplicationSystem::SetGroupFilterStatus(FNetObjectGroupHandle GroupHandle, uint32 ConnectionId, UE::Net::ENetFilterStatus ReplicationStatus)
 {
+	// Early out if this is invalid group
+	if (!ensure(IsValidGroup(GroupHandle)))
+	{
+		return;
+	}
+
+	if (Impl->ReplicationSystemInternal.AreFilterChangesBlocked())
+	{
+		ensureMsgf(false, TEXT("Setting filter conditions is not yet supported during this operation."));
+		return;
+	}
+
 	UE::Net::Private::FReplicationFiltering& Filtering = Impl->ReplicationSystemInternal.GetFiltering();	
 	Filtering.SetGroupFilterStatus(GroupHandle, ConnectionId, ReplicationStatus);
 }
 
 void UReplicationSystem::SetGroupFilterStatus(FNetObjectGroupHandle GroupHandle, const UE::Net::FNetBitArray& Connections, UE::Net::ENetFilterStatus ReplicationStatus)
 {
+	// Early out if this is invalid group
+	if (!ensure(IsValidGroup(GroupHandle)))
+	{
+		return;
+	}
+
+	if (Impl->ReplicationSystemInternal.AreFilterChangesBlocked())
+	{
+		ensureMsgf(false, TEXT("Setting filter conditions is not yet supported during this operation."));
+		return;
+	}
+
 	UE::Net::Private::FReplicationFiltering& Filtering = Impl->ReplicationSystemInternal.GetFiltering();	
 	Filtering.SetGroupFilterStatus(GroupHandle, UE::Net::MakeNetBitArrayView(Connections), ReplicationStatus);
 }
 
 void UReplicationSystem::SetGroupFilterStatus(FNetObjectGroupHandle GroupHandle, UE::Net::ENetFilterStatus ReplicationStatus)
 {
+	// Early out if this is invalid group
+	if (!ensure(IsValidGroup(GroupHandle)))
+	{
+		return;
+	}
+
+	if (Impl->ReplicationSystemInternal.AreFilterChangesBlocked())
+	{
+		ensureMsgf(false, TEXT("Setting filter conditions is not yet supported during this operation."));
+		return;
+	}
+
 	UE::Net::Private::FReplicationFiltering& Filtering = Impl->ReplicationSystemInternal.GetFiltering();	
 	Filtering.SetGroupFilterStatus(GroupHandle, ReplicationStatus);
 }
@@ -1165,6 +1512,12 @@ bool UReplicationSystem::SetReplicationConditionConnectionFilter(FNetRefHandle H
 	const FInternalNetRefIndex ObjectInternalIndex = NetRefHandleManager.GetInternalIndex(Handle);
 	if (ObjectInternalIndex == FNetRefHandleManager::InvalidInternalIndex)
 	{
+		return false;
+	}
+
+	if (Impl->ReplicationSystemInternal.AreFilterChangesBlocked())
+	{
+		ensureMsgf(false, TEXT("Setting filter conditions is not yet supported during this operation. Filter condition on %s (%s) failed."), *GetNameSafe(NetRefHandleManager.GetReplicatedObjectInstance(ObjectInternalIndex)), *Handle.ToString());
 		return false;
 	}
 
@@ -1196,6 +1549,12 @@ void UReplicationSystem::SetDeltaCompressionStatus(FNetRefHandle Handle, UE::Net
 	const FInternalNetRefIndex ObjectInternalIndex = NetRefHandleManager.GetInternalIndex(Handle);
 	if (ObjectInternalIndex == FNetRefHandleManager::InvalidInternalIndex)
 	{
+		return;
+	}
+
+	if (Impl->ReplicationSystemInternal.AreFilterChangesBlocked())
+	{
+		ensureMsgf(false, TEXT("Setting delta compression is not yet supported during this operation. Filter condition on %s (%s) failed."), *GetNameSafe(NetRefHandleManager.GetReplicatedObjectInstance(ObjectInternalIndex)), *Handle.ToString());
 		return;
 	}
 
@@ -1294,6 +1653,25 @@ float UReplicationSystem::GetCullDistanceSqrOverride(FNetRefHandle Handle, float
 	return Impl->ReplicationSystemInternal.GetNetCullDistanceOverrides().GetCullDistanceSqr(ObjectInternalIndex, DefaultValue);
 }
 
+void UReplicationSystem::ReportProtocolMismatch(uint64 NetRefHandleId, uint32 ConnectionId)
+{
+	using namespace UE::Net::Private;
+	const FNetRefHandle NetRefHandle = FNetRefHandleManager::MakeNetRefHandle(NetRefHandleId, GetId());
+
+	Impl->ReplicationSystemInternal.GetReplicationBridge()->OnProtocolMismatchReported(NetRefHandle, ConnectionId);
+}
+
+void UReplicationSystem::ReportErrorWithNetRefHandle(uint32 ErrorType, uint64 NetRefHandleId, uint32 ConnectionId)
+{
+	using namespace UE::Net::Private;
+	const FNetRefHandle NetRefHandle = FNetRefHandleManager::MakeNetRefHandle(NetRefHandleId, GetId());
+
+	Impl->ReplicationSystemInternal.GetReplicationBridge()->OnErrorWithNetRefHandleReported(ErrorType, NetRefHandle, ConnectionId);
+}
+
+
+#pragma region ReplicationSystemFactory
+
 namespace UE::Net
 {
 
@@ -1338,6 +1716,8 @@ UReplicationSystem* FReplicationSystemFactory::CreateReplicationSystem(const URe
 			MaxReplicationSystemId = ReplicationSystemId;
 		}
 
+		UE_LOG(LogIris, Display, TEXT("Iris ReplicationSystem[%i] is created"), ReplicationSystemId);
+
 		ReplicationSystem->Init(ReplicationSystemId, Params);
 
 		if (GetReplicationSystemCreatedDelegate().IsBound())
@@ -1360,6 +1740,9 @@ void FReplicationSystemFactory::DestroyReplicationSystem(UReplicationSystem* Sys
 	}
 
 	const uint32 Id = System->GetId();
+
+	UE_LOG(LogIris, Display, TEXT("Iris ReplicationSystem[%i] is about to be destroyed"), Id);
+
 	if (Id < MaxReplicationSystemCount)
 	{
 		ReplicationSystems[Id] = nullptr;
@@ -1390,4 +1773,6 @@ TArrayView<UReplicationSystem*> FReplicationSystemFactory::GetAllReplicationSyst
 	return MakeArrayView(ReplicationSystems, MaxReplicationSystemId + 1);
 }
 
-}
+} //end namespace UE::Net
+
+#pragma endregion

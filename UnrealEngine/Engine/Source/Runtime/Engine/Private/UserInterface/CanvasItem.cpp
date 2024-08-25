@@ -1235,9 +1235,9 @@ void FCanvasTextItem::DrawStringInternal_RuntimeCache(FCanvas* InCanvas, const F
 				FontTexture = SlateFontTexture->GetEngineTexture();
 				check(FontTexture);
 
-				const bool bIsGrayscale = SlateFontTexture->IsGrayscale();
-				FontTextureBlendMode = bIsGrayscale ? BlendMode : SE_BLEND_Translucent;
-				FontColor = bIsGrayscale ? InColor : FLinearColor::White;
+				const ESlateFontAtlasContentType ContentType = SlateFontTexture->GetContentType();
+				FontTextureBlendMode = ContentType == ESlateFontAtlasContentType::Color ? SE_BLEND_Translucent : BlendMode;
+				FontColor = ContentType == ESlateFontAtlasContentType::Color ? FLinearColor::White : InColor;
 
 				FBatchedElementParameters* BatchedElementParams = nullptr;
 				BatchedElements = InCanvas->GetBatchedElements(FCanvas::ET_Triangle, BatchedElementParams, FontTexture, FontTextureBlendMode, FontRenderInfo.GlowInfo, false);
@@ -1421,9 +1421,9 @@ void FCanvasShapedTextItem::DrawStringInternal(FCanvas* InCanvas, const FVector2
 					FontTexture = SlateFontTexture->GetEngineTexture();
 					check(FontTexture);
 
-					const bool bIsGrayscale = SlateFontTexture->IsGrayscale();
-					FontTextureBlendMode = bIsGrayscale ? BlendMode : SE_BLEND_Translucent;
-					FontColor = bIsGrayscale ? InColor : FLinearColor::White;
+					const ESlateFontAtlasContentType ContentType = SlateFontTexture->GetContentType();
+					FontTextureBlendMode = ContentType == ESlateFontAtlasContentType::Color ? SE_BLEND_Translucent : BlendMode;
+					FontColor = ContentType == ESlateFontAtlasContentType::Color ? FLinearColor::White : InColor;
 
 					FBatchedElementParameters* BatchedElementParams = nullptr;
 					BatchedElements = InCanvas->GetBatchedElements(FCanvas::ET_Triangle, BatchedElementParams, FontTexture, FontTextureBlendMode, FontRenderInfo.GlowInfo);

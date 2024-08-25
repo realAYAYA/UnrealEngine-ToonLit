@@ -20,6 +20,7 @@ namespace FAndroidProfileSelectorSourceProperties
 	static FName SRC_Chipset(TEXT("SRC_Chipset"));
 	static FName SRC_HMDSystemName(TEXT("SRC_HMDSystemName"));
 	static FName SRC_TotalPhysicalGB(TEXT("SRC_TotalPhysicalGB"));
+	static FName SRC_SM5Available(TEXT("SRC_SM5Available"));
 };
 
 class ANDROIDDEVICEPROFILESELECTOR_API FAndroidDeviceProfileSelector

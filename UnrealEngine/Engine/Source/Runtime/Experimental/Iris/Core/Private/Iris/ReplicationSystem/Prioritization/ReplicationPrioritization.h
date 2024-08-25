@@ -53,6 +53,7 @@ private:
 
 	void UpdatePrioritiesForNewAndDeletedObjects();
 	void PrioritizeForConnection(uint32 ConnId, FPrioritizerBatchHelper& BatchHelper, FNetBitArrayView Objects);
+	void SetHighPriorityOnViewTargets(const TArrayView<float>& Priorities, const FReplicationView& View);
 	void NotifyPrioritizersOfDirtyObjects(const FNetBitArrayView& DirtyObjectsThisFrame);
 	void BatchNotifyPrioritizersOfDirtyObjects(FUpdateDirtyObjectsBatchHelper& BatchHelper, uint32* ObjectIndices, uint32 ObjectCount);
 	void InitPrioritizers();
@@ -75,6 +76,7 @@ private:
 	};
 
 	static constexpr float DefaultPriority = 1.0f;
+	static constexpr float ViewTargetHighPriority = 1.0E7f;
 
 	TObjectPtr<const UReplicationSystem> ReplicationSystem;
 	FReplicationConnections* Connections = nullptr;

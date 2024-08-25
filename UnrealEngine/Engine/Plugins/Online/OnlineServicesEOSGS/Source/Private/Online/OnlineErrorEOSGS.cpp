@@ -68,7 +68,7 @@ FOnlineError MapCommonEOSError(FOnlineError&& Error, EOS_EResult Result)
 	case EOS_EResult::EOS_VersionMismatch:		return Errors::IncompatibleVersion(MoveTemp(Error));
 	case EOS_EResult::EOS_LimitExceeded:		return Errors::TooManyRequests(MoveTemp(Error));
 	case EOS_EResult::EOS_TimedOut:				return Errors::Timeout(MoveTemp(Error));
-	default:									return Errors::Unknown(MoveTemp(Error));
+	default:									return MoveTemp(Error);
 	}
 }
 

@@ -6,6 +6,7 @@
 
 #include "Containers/Ticker.h"
 #include "INetworkingWebSocket.h"
+#include "IRemoteControlModule.h"
 #include "IWebRemoteControlModule.h"
 #include "IWebSocketServer.h"
 #include "RemoteControlRoute.h"
@@ -114,7 +115,12 @@ public:
 	/** Callback when a socket is closed */
 	FOnWebSocketConnectionClosed& OnConnectionClosed() { return OnConnectionClosedDelegate; }
 
+	/** Set the compression mode for a client by its GUID. */
+	void SetClientCompressionMode(const FGuid& ClientId, ERCWebSocketCompressionMode Mode);
+
 private:
+	class FWebSocketConnection;
+
 	bool Tick(float DeltaTime);
 
 	/** Handles a new client connecting. */
@@ -124,6 +130,12 @@ private:
 	void ReceivedRawPacket(void* Data, int32 Size, FGuid ClientId, TSharedPtr<FInternetAddr> PeerAddress);
 
 	void OnSocketClose(INetworkingWebSocket* Socket);
+
+	/** Given a client ID, find the corresponding client, or null if it's not connected to this server. */
+	FWebSocketConnection* GetClientById(const FGuid& Id);
+
+	/** Send a message on a specific connection */
+	void SendOnConnection(FWebSocketConnection& Connection, const TArray<uint8>& InUTF8Payload);
 	
 	/** Handle rejecting the websocket connection if it doesn't respect the user's CORS policy. */
 	EWebsocketConnectionFilterResult FilterConnection(FString OriginHeader, FString ClientIP) const;
@@ -177,9 +189,10 @@ private:
 
 		/** IP Address of the client. */
 		TSharedPtr<FInternetAddr> PeerAddress;
+		
+		/** Compression mode to use for this client. */
+		ERCWebSocketCompressionMode CompressionMode = ERCWebSocketCompressionMode::NONE;
 	};
-
-
 
 private:
 	/** Handle to the tick delegate. */

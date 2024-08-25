@@ -6,7 +6,7 @@
 
 bool FAnimNode_StateResult::SerializeFromMismatchedTag(const FPropertyTag& Tag, FStructuredArchive::FSlot Slot)
 {
-	if(Tag.Type == NAME_StructProperty && Tag.StructName == FAnimNode_Root::StaticStruct()->GetFName())
+	if (Tag.GetType().IsStruct(FAnimNode_Root::StaticStruct()->GetFName()))
 	{
 		FAnimNode_Root OldValue;
 		FAnimNode_Root::StaticStruct()->SerializeItem(Slot, &OldValue, nullptr);

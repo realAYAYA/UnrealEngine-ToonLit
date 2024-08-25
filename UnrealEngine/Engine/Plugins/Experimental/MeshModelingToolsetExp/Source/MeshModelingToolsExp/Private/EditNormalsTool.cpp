@@ -142,31 +142,31 @@ void UEditNormalsTool::Setup()
 			FTransform ApplyTransform = UE::ToolTarget::GetLocalToWorldTransform(Targets[0]);
 
 			// Compute group topology if the selection has Polygroup topology, and do nothing otherwise
-			FGroupTopology GroupTopology(OriginalDynamicMeshes[0].Get(),
-				ActiveGroupSet.IsValid() ? ActiveGroupSet->PolygroupAttrib : nullptr,
-				InputGeometrySelection.TopologyType == EGeometryTopologyType::Polygroup);
-			
-			// Special case handling for edge and vertex element selections
-			bool bComputeTriangleVertexGeometrySelection = 
-				InputGeometrySelection.ElementType == EGeometryElementType::Vertex ||
-				InputGeometrySelection.ElementType == EGeometryElementType::Edge;
-			if (bComputeTriangleVertexGeometrySelection)
-			{
-				// Convert to a Triangle+Vertex selection and operate on that. If the input selection has Edge elements then
-				// we do this because users will expect this to behave similarly to a vertex selection containing the
-				// touched vertices. If the input selection has Vertex elements then we do this to simplify the
-				// implementation (the reason being that we'd want to use EnumeratePolygroupSelectionVertices but this
-				// visits all vertices in any group touching the corner, which isn't what we want for building the overlay
-				// selection from a Polygroup Topology)
+			// Currently it is only possible to make a polygroup geometry selection using polygroup set stored directly in the mesh
+			FGroupTopology GroupTopology(OriginalDynamicMeshes[0].Get(), InputGeometrySelection.TopologyType == EGeometryTopologyType::Polygroup);
 
-				TriangleVertexGeometrySelection.InitializeTypes(EGeometryElementType::Vertex, EGeometryTopologyType::Triangle);
-				bool bSuccess = ConvertSelection(
+			// Compute the overlay selection and a proxy triangle vertex selection used to make edge selections behave like
+			// vertex selections. TODO if we added Triangle/Vertex ROI visualization (or overlay element visualization) it
+			// would be clearer to users how those selection types affect different overlay elements and maybe we can remove
+			// this conversion, see also :EdgeSelectionsBehaveLikeVertexSelections
+			if (InputGeometrySelection.TopologyType == EGeometryTopologyType::Polygroup)
+			{
+				ConvertPolygroupSelectionToIncidentOverlaySelection(
 					*OriginalDynamicMeshes[0],
-					&GroupTopology, // This argument is ignored if InputGeometrySelection has Triangle topology
+					GroupTopology,
 					InputGeometrySelection,
-					TriangleVertexGeometrySelection);
-				ensure(bSuccess == true);
-				ensure(!TriangleVertexGeometrySelection.IsEmpty());
+					EditTriangles,
+					EditVertices,
+					&TriangleVertexGeometrySelection);
+			}
+			else
+			{
+				ConvertTriangleSelectionToOverlaySelection(
+					*OriginalDynamicMeshes[0],
+					InputGeometrySelection,
+					EditTriangles,
+					EditVertices,
+					&TriangleVertexGeometrySelection);
 			}
 
 			GeometrySelectionViz = NewObject<UPreviewGeometry>(this);
@@ -177,8 +177,7 @@ void UEditNormalsTool::Setup()
 				*OriginalDynamicMeshes[0],
 				InputGeometrySelection,
 				&GroupTopology,
-				bComputeTriangleVertexGeometrySelection ? &TriangleVertexGeometrySelection : nullptr);
-
+				!TriangleVertexGeometrySelection.IsEmpty() ? &TriangleVertexGeometrySelection : nullptr);
 		}
 	}
 
@@ -287,6 +286,8 @@ TUniquePtr<FDynamicMeshOperator> UEditNormalsOperatorFactory::MakeNewOperator()
 	NormalsOp->bAllowSharpVertices = Tool->BasicProperties->bAllowSharpVertices;
 	NormalsOp->NormalCalculationMethod = Tool->BasicProperties->NormalCalculationMethod;
 	NormalsOp->NormalSplitThreshold = Tool->BasicProperties->SharpEdgeAngleThreshold;
+	NormalsOp->EditTriangles = Tool->EditTriangles;
+	NormalsOp->EditVertices = Tool->EditVertices;
 
 	const FTransform LocalToWorld = (FTransform) UE::ToolTarget::GetLocalToWorldTransform(Tool->Targets[ComponentIndex]);
 	NormalsOp->OriginalMesh = Tool->OriginalDynamicMeshes[ComponentIndex];
@@ -295,47 +296,6 @@ TUniquePtr<FDynamicMeshOperator> UEditNormalsOperatorFactory::MakeNewOperator()
 	if (ComponentIndex == 0 && Tool->OriginalDynamicMeshes.Num() == 1 && Tool->ActiveGroupSet.IsValid())
 	{
 		NormalsOp->MeshPolygroups = Tool->ActiveGroupSet;
-	}
-
-	if (!Tool->InputGeometrySelection.IsEmpty())
-	{
-		ensure(ComponentIndex == 0 && Tool->Targets.Num() == 1); // Sanity checks
-
-		if (Tool->InputGeometrySelection.ElementType == EGeometryElementType::Face)
-		{
-			if (Tool->InputGeometrySelection.TopologyType == EGeometryTopologyType::Polygroup)
-			{
-				const FPolygroupSet GroupSet = NormalsOp->MeshPolygroups.IsValid()
-						? *NormalsOp->MeshPolygroups
-						: FPolygroupSet(NormalsOp->OriginalMesh.Get());
-
-				EnumeratePolygroupSelectionTriangles(Tool->InputGeometrySelection, *NormalsOp->OriginalMesh, GroupSet,
-					[&NormalsOp](int32 ValidTid)
-				{
-					NormalsOp->EditTriangles.Add(ValidTid);
-					const FIndex3i Verts = NormalsOp->OriginalMesh->GetTriangle(ValidTid);
-					NormalsOp->EditVertices.Add(Verts.A);
-					NormalsOp->EditVertices.Add(Verts.B);
-					NormalsOp->EditVertices.Add(Verts.C);
-				});
-			}
-			else
-			{
-				UE::Geometry::ConvertTriangleSelectionToOverlaySelection(
-					*NormalsOp->OriginalMesh,
-					Tool->InputGeometrySelection,
-					NormalsOp->EditTriangles,
-					NormalsOp->EditVertices);
-			}
-		}
-		else
-		{
-			UE::Geometry::ConvertTriangleSelectionToOverlaySelection(
-				*NormalsOp->OriginalMesh,
-				Tool->TriangleVertexGeometrySelection,
-				NormalsOp->EditTriangles,
-				NormalsOp->EditVertices);
-		}
 	}
 
 	NormalsOp->SetTransform(LocalToWorld);

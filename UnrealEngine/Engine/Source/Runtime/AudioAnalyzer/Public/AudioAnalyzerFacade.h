@@ -29,7 +29,7 @@ namespace Audio
 			/**
 			 * Analyze the audio buffer.
 			 */
-			AUDIOANALYZER_API TUniquePtr<IAnalyzerResult> AnalyzeAudioBuffer(const TArray<float>& InAudioBuffer, int32 InNumChannels, float InSampleRate);
+			AUDIOANALYZER_API TUniquePtr<IAnalyzerResult> AnalyzeAudioBuffer(const TArray<float>& InAudioBuffer, int32 InNumChannels, float InSampleRate, TSharedPtr<IAnalyzerControls> InControls);
 
 		private:
 

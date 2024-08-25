@@ -29,7 +29,11 @@ void URigVMGraph::PostLoad()
 	{
 		URigVMPin* SourcePin = Link->GetSourcePin();
 		URigVMPin* TargetPin = Link->GetTargetPin();
-		check((SourcePin == nullptr) == (TargetPin == nullptr));
+		if ((SourcePin == nullptr) != (TargetPin == nullptr))
+		{
+			static constexpr TCHAR Format[] = TEXT("Cannot add link %s in package %s.");
+			UE_LOG(LogRigVMDeveloper, Warning, Format, *Link->GetPinPathRepresentation(), *GetPackage()->GetPathName());
+		}
 		
 		if(SourcePin)
 		{
@@ -516,6 +520,22 @@ void URigVMGraph::PrepareCycleChecking(URigVMPin* InPin, bool bAsInput)
 	if (InPin)
 	{
 		LinksToSkip = InPin->GetLinks();
+
+		// since execute output pins also only allow one link we need to ignore links
+		// on other output links. this is so that cycle checking doesn't kick in irregularly.
+		if(InPin->IsExecuteContext() && InPin->GetDirection() == ERigVMPinDirection::Output)
+		{
+			for(const URigVMPin* OtherPin : InPin->GetNode()->GetPins())
+			{
+				if(OtherPin != InPin)
+				{
+					if(OtherPin->IsExecuteContext() && OtherPin->GetDirection() == ERigVMPinDirection::Output)
+					{
+						LinksToSkip.Append(OtherPin->GetLinks());
+					}
+				}
+			}
+		}
 	}
 
 	GetDiagnosticsAST(false, LinksToSkip)->PrepareCycleChecking(InPin);

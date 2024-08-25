@@ -318,7 +318,7 @@ public:
 
 			FORCEINLINE ElementIDType operator*() const
 			{
-				return Iterator ? ElementIDType(Iterator.GetIndex()) : INDEX_NONE;
+				return ElementIDType{Iterator ? Iterator.GetIndex() : INDEX_NONE};
 			}
 
 			friend FORCEINLINE bool operator==(const TConstIterator& Lhs, const TConstIterator& Rhs)

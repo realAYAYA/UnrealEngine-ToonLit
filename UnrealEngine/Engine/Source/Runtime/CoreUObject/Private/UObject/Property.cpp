@@ -1,33 +1,27 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-/*=============================================================================
-	Property.cpp: FProperty implementation
-=============================================================================*/
+#include "UObject/UnrealType.h"
 
-#include "CoreMinimal.h"
 #include "Hash/Blake3.h"
+#include "Math/Box2D.h"
+#include "Math/InterpCurvePoint.h"
+#include "Math/RandomStream.h"
+#include "Math/Ray.h"
+#include "Math/Sphere.h"
 #include "Misc/AsciiSet.h"
 #include "Misc/Guid.h"
 #include "Misc/StringBuilder.h"
-#include "Math/RandomStream.h"
-#include "Logging/LogScopedCategoryAndVerbosityOverride.h"
-#include "UObject/CoreNetTypes.h"
-#include "UObject/ObjectMacros.h"
-#include "UObject/UObjectGlobals.h"
-#include "UObject/Class.h"
-#include "Templates/Casts.h"
-#include "UObject/UnrealType.h"
-#include "UObject/UnrealTypePrivate.h"
-#include "UObject/PropertyHelper.h"
-#include "UObject/CoreRedirects.h"
-#include "UObject/SoftObjectPath.h"
-#include "Math/Box2D.h"
-#include "Math/Ray.h"
-#include "Math/Sphere.h"
-#include "Math/InterpCurvePoint.h"
-#include "UObject/Package.h"
-#include "UObject/ReleaseObjectVersion.h"
 #include "Serialization/TestUndeclaredScriptStructObjectReferences.h"
+#include "Templates/Casts.h"
+#include "UObject/Class.h"
+#include "UObject/CoreNetTypes.h"
+#include "UObject/CoreRedirects.h"
+#include "UObject/Package.h"
+#include "UObject/PropertyHelper.h"
+#include "UObject/PropertyTypeName.h"
+#include "UObject/SoftObjectPath.h"
+#include "UObject/UnrealTypePrivate.h"
+#include "UObject/UObjectGlobals.h"
 
 DEFINE_LOG_CATEGORY(LogProperty);
 
@@ -44,6 +38,7 @@ struct TVector3StructOpsTypeTraits : public TStructOpsTypeTraitsBase2<T>
 		WithNetSharedSerialization = true,
 		WithStructuredSerializer = true,
 		WithStructuredSerializeFromMismatchedTag = true,
+		WithSerializer = true,
 	};
 	static constexpr EPropertyObjectReferenceType WithSerializerObjectReferences = EPropertyObjectReferenceType::None;
 };
@@ -294,6 +289,7 @@ struct TStructOpsTypeTraits<FLinearColor> : public TStructOpsTypeTraitsBase2<FLi
 		WithNoInitConstructor = true,
 		WithZeroConstructor = true,
 		WithStructuredSerializer = true,
+		WithSerializer = true,
 	};
 	static constexpr EPropertyObjectReferenceType WithSerializerObjectReferences = EPropertyObjectReferenceType::None;
 };
@@ -996,6 +992,7 @@ bool FProperty::PassCPPArgsByRef() const
 }
 
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 void FProperty::ExportCppDeclaration(FOutputDevice& Out, EExportedDeclaration::Type DeclarationType, const TCHAR* ArrayDimOverride, uint32 AdditionalExportCPPFlags
 	, bool bSkipParameterName, const FString* ActualCppType, const FString* ActualExtendedType, const FString* ActualParameterName) const
 {
@@ -1135,6 +1132,7 @@ void FProperty::ExportCppDeclaration(FOutputDevice& Out, EExportedDeclaration::T
 		}
 	}
 }
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 bool FProperty::ExportText_Direct
 	(
@@ -1337,7 +1335,7 @@ EConvertFromTypeResult FProperty::ConvertFromType(const FPropertyTag& Tag, FStru
 
 namespace UE::CoreUObject::Private
 {
-	[[noreturn]] void OnInvalidPropertySize(uint32 InvalidPropertySize, const FProperty* Prop)
+	[[noreturn]] void OnInvalidPropertySize(uint32 InvalidPropertySize, const FProperty* Prop) //-V1082
 	{
 		UE_LOG(LogProperty, Fatal, TEXT("Invalid property size %u when linking property %s of size %d"), InvalidPropertySize, *Prop->GetFullName(), Prop->GetSize());
 		for (;;);
@@ -1521,7 +1519,7 @@ void FProperty::PerformOperationWithGetter(void* OutContainer, const void* Direc
  * @param	Warn			the output device to send errors/warnings to
  * @return	the array index for this defaultproperties line.  INDEX_NONE if this line doesn't contains an array specifier, or 0 if there was an error parsing the specifier.
  */
-static const int32 ReadArrayIndex(UStruct* ObjectStruct, const TCHAR*& Str, FOutputDevice* Warn)
+static const int32 ReadArrayIndex(const UStruct* ObjectStruct, const TCHAR*& Str, FOutputDevice* Warn)
 {
 	const TCHAR* Start = Str;
 	int32 Index = INDEX_NONE;
@@ -1614,7 +1612,7 @@ static bool IsPropertyValueSpecified( const TCHAR* Buffer )
 	return Buffer && *Buffer && *Buffer != TCHAR(',') && *Buffer != TCHAR(')');
 }
 
-const TCHAR* FProperty::ImportSingleProperty( const TCHAR* Str, void* DestData, UStruct* ObjectStruct, UObject* SubobjectOuter, int32 PortFlags,
+const TCHAR* FProperty::ImportSingleProperty( const TCHAR* Str, void* DestData, const UStruct* ObjectStruct, UObject* SubobjectOuter, int32 PortFlags,
 											FOutputDevice* Warn, TArray<FDefinedProperty>& DefinedProperties )
 {
 	check(ObjectStruct);
@@ -2000,6 +1998,7 @@ const TCHAR* FProperty::ImportSingleProperty( const TCHAR* Str, void* DestData, 
 						TArray<FString> ImportErrors;
 						ImportError.ParseIntoArray(ImportErrors, LINE_TERMINATOR, true);
 
+						Warn->Logf(ELogVerbosity::Warning, TEXT("While importing text for property '%s' in '%s':"), *Property->GetName(), *ObjectStruct->GetName());
 						for ( int32 ErrorIndex = 0; ErrorIndex < ImportErrors.Num(); ErrorIndex++ )
 						{
 							Warn->Logf(ELogVerbosity::Warning, TEXT("%s"), *ImportErrors[ErrorIndex]);
@@ -2021,7 +2020,7 @@ const TCHAR* FProperty::ImportSingleProperty( const TCHAR* Str, void* DestData, 
 	return Str;
 }
 
-FName FProperty::FindRedirectedPropertyName(UStruct* ObjectStruct, FName OldName)
+FName FProperty::FindRedirectedPropertyName(const UStruct* ObjectStruct, FName OldName)
 {
 	DECLARE_SCOPE_CYCLE_COUNTER(TEXT("FProperty::FindRedirectedPropertyName"), STAT_LinkerLoad_FindRedirectedPropertyName, STATGROUP_LoadTimeVerbose);
 
@@ -2100,10 +2099,31 @@ UPropertyWrapper* FProperty::GetUPropertyWrapper()
 }
 #endif //  WITH_EDITORONLY_DATA
 
+bool FProperty::UseBinaryOrNativeSerialization(const FArchive& Ar) const
+{
+	return Ar.WantBinaryPropertySerialization();
+}
+
+bool FProperty::LoadTypeName(UE::FPropertyTypeName Type, const FPropertyTag* Tag)
+{
+	return ensureMsgf(GetID() == Type.GetName(),
+		TEXT("Failed to load property '%s' of type '%s' from type name '%s'"),
+		*WriteToString<64>(GetFName()), *WriteToString<64>(GetID()), *WriteToString<64>(Type.GetName()));
+}
+
+void FProperty::SaveTypeName(UE::FPropertyTypeNameBuilder& Type) const
+{
+	Type.AddName(GetID());
+}
+
+bool FProperty::CanSerializeFromTypeName(UE::FPropertyTypeName Type) const
+{
+	return Type.GetName() == GetID();
+}
 
 FProperty* UStruct::FindPropertyByName(FName InName) const
 {
-	for (FProperty* Property = PropertyLink; Property != NULL; Property = Property->PropertyLinkNext)
+	for (FProperty* Property = PropertyLink; Property != nullptr; Property = Property->PropertyLinkNext)
 	{
 		if (Property->GetFName() == InName)
 		{
@@ -2111,5 +2131,5 @@ FProperty* UStruct::FindPropertyByName(FName InName) const
 		}
 	}
 
-	return NULL;
+	return nullptr;
 }

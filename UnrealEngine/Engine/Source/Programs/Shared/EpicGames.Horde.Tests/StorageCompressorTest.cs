@@ -1,13 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Horde.Storage;
-using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace EpicGames.Horde.Tests
 {
@@ -18,7 +17,7 @@ namespace EpicGames.Horde.Tests
 	public class FakeStorageCompressor
 	{
 		private readonly byte[] _prefix = Encoding.UTF8.GetBytes("FAKECOMP-");
-		
+
 		public async Task CompressAsync(Stream input, Stream output, CancellationToken cancellationToken = default)
 		{
 			await output.WriteAsync(_prefix, cancellationToken);
@@ -42,16 +41,16 @@ namespace EpicGames.Horde.Tests
 	public class FakeStorageCompressorTest
 	{
 		[TestMethod]
-		public async Task CompressAndDecompress()
+		public async Task CompressAndDecompressAsync()
 		{
-			FakeStorageCompressor compressor = new ();
+			FakeStorageCompressor compressor = new();
 			byte[] uncompressedData = { 0x41, 0x42, 0x43 };
 			using MemoryStream input = new(uncompressedData);
 			using MemoryStream output = new();
 			await compressor.CompressAsync(input, output);
 			byte[] compressedData = output.ToArray();
 			Assert.IsFalse(compressedData.SequenceEqual(uncompressedData));
-			
+
 			using MemoryStream input2 = new(compressedData);
 			using MemoryStream output2 = new();
 			await compressor.DecompressAsync(input2, output2);

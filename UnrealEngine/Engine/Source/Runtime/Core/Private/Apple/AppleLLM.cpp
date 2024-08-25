@@ -34,7 +34,7 @@ static id AllocWithZoneInterposer(id Obj, SEL Sel, struct _NSZone * Zone)
 	
 	if (Result)
 	{
-		LLM(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Default, Result, class_getInstanceSize([Result class]), (ELLMTag)ELLMTagApple::ObjectiveC, ELLMAllocType::System));
+		LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Default, Result, class_getInstanceSize([Result class]), (ELLMTag)ELLMTagApple::ObjectiveC, ELLMAllocType::System));
 	}
 	
 	return Result;
@@ -44,7 +44,7 @@ static void DeallocInterposer(id Obj, SEL Sel)
 {
 	if (Obj)
 	{
-		LLM(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Default, Obj, ELLMAllocType::System));
+		LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Default, Obj, ELLMAllocType::System));
 	}
 	DeallocOriginal(Obj, Sel);
 }
@@ -56,7 +56,7 @@ id NSAllocateObjectPtrInterposer(Class aClass, NSUInteger extraBytes, NSZone *zo
 	id Result = NSAllocateObjectPtr(aClass, extraBytes, zone);
 	if (Result)
 	{
-		LLM(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Default, Result, class_getInstanceSize([Result class]), (ELLMTag)ELLMTagApple::ObjectiveC, ELLMAllocType::System));
+		LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Default, Result, class_getInstanceSize([Result class]), (ELLMTag)ELLMTagApple::ObjectiveC, ELLMAllocType::System));
 	}
 	
 	return Result;
@@ -68,7 +68,7 @@ id _os_object_alloc_realizedInterposer(Class aClass, size_t size)
 	id Result = _os_object_alloc_realizedPtr(aClass, size);
 	if (Result)
 	{
-		LLM(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Default, Result, class_getInstanceSize([Result class]), (ELLMTag)ELLMTagApple::ObjectiveC, ELLMAllocType::System));
+		LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Default, Result, class_getInstanceSize([Result class]), (ELLMTag)ELLMTagApple::ObjectiveC, ELLMAllocType::System));
 	}
 	
 	return Result;
@@ -80,7 +80,7 @@ void NSDeallocateObjectInterposer(id Obj)
 {
 	if (Obj)
 	{
-		LLM(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Default, Obj, ELLMAllocType::System));
+		LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Default, Obj, ELLMAllocType::System));
 	}
 	NSDeallocateObjectPtr(Obj);
 }

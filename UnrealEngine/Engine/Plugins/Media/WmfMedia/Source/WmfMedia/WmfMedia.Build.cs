@@ -51,8 +51,6 @@ namespace UnrealBuildTool.Rules
 				PublicDelayLoadDLLs.Add("mfplay.dll");
 				PublicDelayLoadDLLs.Add("shlwapi.dll");
 			}
-			
-			PublicDefinitions.Add("WMFMEDIA_PLAYER_VERSION=2");
 		}
 	}
 }

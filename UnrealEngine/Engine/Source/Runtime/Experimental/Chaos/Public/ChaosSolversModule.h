@@ -40,19 +40,16 @@ public:
 	{
 		return false;
 	}
-	virtual bool GetPhysicsResimulationEnabled() const 
-	{
-		return false;
-	}
+
 	virtual float GetResimulationErrorThreshold() const
 	{
 		return 0;
 	}
+
 	virtual int32 GetPhysicsHistoryCount() const
 	{
 		return 0;
 	}
-	
 }; 
 
 namespace Chaos

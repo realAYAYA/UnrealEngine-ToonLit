@@ -14,14 +14,18 @@ public class MetalRHI : ModuleRules
 				"Engine",
 				"RHI",
 				"RHICore",
-				"RenderCore",
+				"RenderCore"
 			}
 			);
 
 		AddEngineThirdPartyPrivateStaticDependencies(Target,
-			"MTLPP"
+			"MetalCPP"
 		);
-			
+
+        AddEngineThirdPartyPrivateStaticDependencies(Target,
+            "MetalShaderConverter"
+        );   
+		
 		PublicWeakFrameworks.Add("Metal");
 
 		if (Target.Platform == UnrealTargetPlatform.Mac)

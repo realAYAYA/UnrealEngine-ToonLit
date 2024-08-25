@@ -95,6 +95,10 @@ public:
 	FName GetCurrentCollectionFilter() const;
 	void SetCurrentCollectionFilter(FName NewFilter);
 
+	TArray<FName> GetCurrentPluginFilter() const;
+	void SetCurrentPluginFilter(TArray<FName> NewFilter);
+	TArray<FName> GetEncounteredPluginsAmongNodes() const;
+
 	/* Delegate type to notify when the assets or NodeInfos have changed as opposed to when the filters changed */
 	FSimpleMulticastDelegate& OnAssetsChanged() { return OnAssetsChangedDelegate; }
 
@@ -147,9 +151,16 @@ private:
 
 	/** Returns true if filtering is enabled and we have a valid collection */
 	bool ShouldFilterByCollection() const;
+	
+	/** Returns true if filtering is enabled and we have a valid plugin name filter set */
+	bool ShouldFilterByPlugin() const;
+	
+	void GetUnfilteredGraphPluginNamesRecursive(bool bReferencers, const FAssetIdentifier& InAssetIdentifier, int32 InCurrentDepth, int32 InMaxDepth, const FAssetManagerDependencyQuery& Query, TSet<FAssetIdentifier>& OutAssetIdentifiers);
+	void GetUnfilteredGraphPluginNames(TArray<FAssetIdentifier> RootIdentifiers, TArray<FName>& OutPluginNames);
 
 	void GetSortedLinks(const TArray<FAssetIdentifier>& Identifiers, bool bReferencers, const FAssetManagerDependencyQuery& Query, TMap<FAssetIdentifier, EDependencyPinCategory>& OutLinks) const;
 	bool IsPackageIdentifierPassingFilter(const FAssetIdentifier& InAssetIdentifier) const;
+	bool IsPackageIdentifierPassingPluginFilter(const FAssetIdentifier& InAssetIdentifier) const;
 	bool IsAssetPassingSearchTextFilter(const FAssetIdentifier& InAssetIdentifier) const;
 
 	UEdGraphNode_Reference* FindPath(const FAssetIdentifier& RootId, const FAssetIdentifier& TargetId);
@@ -172,6 +183,12 @@ private:
 
 	/** Current collection filter. NAME_None for no filter */
 	FName CurrentCollectionFilter;
+
+	/** Current plugin filter. Empty for no filter. */
+	TArray<FName> CurrentPluginFilter;
+
+	/** Plugin names found among unfiltered nodes. Chose among these when filtering for plugins. */
+	TArray<FName> EncounteredPluginsAmongNodes;
 
 	/** A set of the unique class types referenced */
 	TSet<FTopLevelAssetPath> CurrentClasses;

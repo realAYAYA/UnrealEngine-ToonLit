@@ -176,12 +176,11 @@ namespace MeshCut
 			while (FaceVertices.Num() > 0)
 			{
 				int TID = -1, PtIdx = -1;
-				// hacky way to pop one element -- TODO: this seems gross!? do it better?
-				for (TPair<int, int> TIDToPtIdx : FaceVertices)
+				// use an iterator to get a single element
 				{
-					TID = TIDToPtIdx.Key;
-					PtIdx = TIDToPtIdx.Value;
-					break;
+					const auto TIDToPtIdxItr = FaceVertices.CreateConstIterator();
+					TID = TIDToPtIdxItr.Key();
+					PtIdx = TIDToPtIdxItr.Value();
 				}
 				PtIndices.Reset();
 				FaceVertices.MultiFind(TID, PtIndices);
@@ -240,12 +239,11 @@ namespace MeshCut
 			while (EdgeVertices.Num() > 0)
 			{
 				int EID = -1, PtIdx = -1;
-				// hacky way to pop one element -- TODO: this seems gross!? do it better?
-				for (TPair<int, int> EIDToPtIdx : EdgeVertices)
+				// use an iterator to get a single element
 				{
-					EID = EIDToPtIdx.Key;
-					PtIdx = EIDToPtIdx.Value;
-					break;
+					const auto EIDToPtIdxItr = EdgeVertices.CreateConstIterator();
+					EID = EIDToPtIdxItr.Key();
+					PtIdx = EIDToPtIdxItr.Value();
 				}
 				PtIndices.Reset();
 				EdgeVertices.MultiFind(EID, PtIndices);

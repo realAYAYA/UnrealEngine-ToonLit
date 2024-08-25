@@ -13,6 +13,9 @@
 #include "EdGraph/RigVMEdGraph.h"
 #include "EdGraph/RigVMEdGraphSchema.h"
 #include "RigVMSettings.h"
+#if WITH_EDITOR
+#include "HAL/CriticalSection.h"
+#endif
 
 #include "RigVMBlueprint.generated.h"
 
@@ -22,8 +25,9 @@ class URigVMBlueprintGeneratedClass;
 class IRigVMEditorModule;
 #endif
 struct FEndLoadPackageContext;
+struct FRigVMMemoryStorageStruct;
 
-DECLARE_EVENT_TwoParams(URigVMBlueprint, FOnRigVMCompiledEvent, UObject*, URigVM*);
+DECLARE_EVENT_ThreeParams(URigVMBlueprint, FOnRigVMCompiledEvent, UObject*, URigVM*, FRigVMExtendedExecuteContext&);
 DECLARE_EVENT_OneParam(URigVMBlueprint, FOnRigVMRefreshEditorEvent, URigVMBlueprint*);
 DECLARE_EVENT_FourParams(URigVMBlueprint, FOnRigVMVariableDroppedEvent, UObject*, FProperty*, const FVector2D&, const FVector2D&);
 DECLARE_EVENT_OneParam(URigVMBlueprint, FOnRigVMExternalVariablesChanged, const TArray<FRigVMExternalVariable>&);
@@ -37,7 +41,8 @@ DECLARE_DELEGATE_RetVal_OneParam(bool, FRigVMOnBreakLinksDialogRequestedDelegate
 DECLARE_DELEGATE_RetVal_OneParam(TRigVMTypeIndex, FRigVMOnPinTypeSelectionRequestedDelegate, const TArray<TRigVMTypeIndex>&);
 DECLARE_EVENT(URigVMBlueprint, FOnRigVMBreakpointAdded);
 DECLARE_EVENT_OneParam(URigVMBlueprint, FOnRigVMRequestInspectObject, const TArray<UObject*>& );
-DECLARE_DELEGATE_RetVal(URigVMGraph*, FRigVMBlueprintGetFocusedGraph);
+DECLARE_EVENT_OneParam(URigVMBlueprint, FOnRigVMRequestInspectMemoryStorage, const TArray<FRigVMMemoryStorageStruct*>&);
+//DECLARE_DELEGATE_RetVal(URigVMGraph*, FRigVMBlueprintGetFocusedGraph);
 
 USTRUCT()
 struct RIGVMDEVELOPER_API FRigVMPythonSettings
@@ -62,6 +67,7 @@ struct RIGVMDEVELOPER_API FRigVMEdGraphDisplaySettings
 		, MinMicroSeconds(0.0)
 		, MaxMicroSeconds(1.0)
 		, TotalMicroSeconds(0.0)
+		, AverageFrames(64)
 		, bAutoDetermineRange(true)
 		, LastMinMicroSeconds(0.0)
 		, LastMaxMicroSeconds(1.0)
@@ -109,6 +115,14 @@ struct RIGVMDEVELOPER_API FRigVMEdGraphDisplaySettings
 	UPROPERTY(VisibleAnywhere, Category = "Graph Display Settings", transient)
 	double TotalMicroSeconds;
 
+	// If you set this to more than 1 the results will be averaged across multiple frames
+	UPROPERTY(EditAnywhere, Category = "Graph Display Settings", meta = (UIMin=1, UIMax=256))
+	int32 AverageFrames;
+
+	TArray<double> MinMicroSecondsFrames;
+	TArray<double> MaxMicroSecondsFrames;
+	TArray<double> TotalMicroSecondsFrames;
+
 	UPROPERTY(EditAnywhere, Category = "Graph Display Settings")
 	bool bAutoDetermineRange;
 
@@ -125,9 +139,14 @@ struct RIGVMDEVELOPER_API FRigVMEdGraphDisplaySettings
 	// The color of the slowest instruction / node
 	UPROPERTY(EditAnywhere, Category = "Graph Display Settings")
 	FLinearColor MaxDurationColor;
+
+	void SetTotalMicroSeconds(double InTotalMicroSeconds);
+	void SetLastMinMicroSeconds(double InMinMicroSeconds);
+	void SetLastMaxMicroSeconds(double InMaxMicroSeconds);
+	double AggregateAverage(TArray<double>& InFrames, double InPrevious, double InNext) const;
 };
 
-enum class ERigVMBlueprintLoadType : uint8
+enum class UE_DEPRECATED(5.4, "Pease, use ERigVMLoadType") ERigVMBlueprintLoadType : uint8
 {
 	PostLoad,
 	CheckUserDefinedStructs
@@ -269,6 +288,7 @@ public:
 	virtual void PreSave(const class ITargetPlatform* TargetPlatform) override;
 	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	virtual void PreSave(FObjectPreSaveContext ObjectSaveContext) override;
+	virtual void PostSaveRoot(FObjectPostSaveRootContext ObjectSaveContext) override;
 	virtual void PostLoad() override;
 #if WITH_EDITORONLY_DATA
 	static void DeclareConstructClasses(TArray<FTopLevelAssetPath>& OutConstructClasses, const UClass* SpecificSubclass);
@@ -278,6 +298,8 @@ public:
 	virtual void ReplaceDeprecatedNodes() override;
 	virtual void PreDuplicate(FObjectDuplicationParameters& DupParams) override;
 	virtual void PostDuplicate(bool bDuplicateForPIE) override;
+	virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 
 	virtual bool SupportsGlobalVariables() const override { return true; }
@@ -296,95 +318,102 @@ public:
 	virtual void PostEditChangeChainProperty(struct FPropertyChangedChainEvent& PropertyChangedEvent) override;
 	virtual void PostRename(UObject* OldOuter, const FName OldName) override;
 	/** Called during cooking. Must return all objects that will be Preload()ed when this is serialized at load time. */
-	void GetPreloadDependencies(TArray<UObject*>& OutDeps) override;
+	virtual void GetPreloadDependencies(TArray<UObject*>& OutDeps) override;
 
-	// IRigVMClientHost interface
+	//  --- IRigVMClientHost interface Start---
 	virtual FRigVMClient* GetRigVMClient() override;
 	virtual const FRigVMClient* GetRigVMClient() const override;
 	virtual IRigVMGraphFunctionHost* GetRigVMGraphFunctionHost() override;
 	virtual const IRigVMGraphFunctionHost* GetRigVMGraphFunctionHost() const override;
 	virtual UObject* GetEditorObjectForRigVMGraph(URigVMGraph* InVMGraph) const override;
+	virtual URigVMGraph* GetRigVMGraphForEditorObject(UObject* InObject) const override;
 	virtual void HandleRigVMGraphAdded(const FRigVMClient* InClient, const FString& InNodePath) override;
 	virtual void HandleRigVMGraphRemoved(const FRigVMClient* InClient, const FString& InNodePath) override;
 	virtual void HandleRigVMGraphRenamed(const FRigVMClient* InClient, const FString& InOldNodePath, const FString& InNewNodePath) override;
 	virtual void HandleConfigureRigVMController(const FRigVMClient* InClient, URigVMController* InControllerToConfigure) override;
-
-	FOnRigVMRequestInspectObject& OnRequestInspectObject() { return OnRequestInspectObjectEvent; }
-	void RequestInspectObject(const TArray<UObject*>& InObjects) { OnRequestInspectObjectEvent.Broadcast(InObjects); }
-
-#endif	// #if WITH_EDITOR
-
-	FRigVMBlueprintGetFocusedGraph& OnGetFocusedGraph() { return OnGetFocusedGraphDelegate; }
-
-	virtual bool ShouldBeMarkedDirtyUponTransaction() const override { return false; }
+	virtual UObject* ResolveUserDefinedTypeById(const FString& InTypeName) const override;
 
 	UFUNCTION(BlueprintCallable, Category = "RigVM Blueprint")
-	void RecompileVM();
-
+	virtual void RecompileVM() override;
 	UFUNCTION(BlueprintCallable, Category = "RigVM Blueprint")
-	void RecompileVMIfRequired();
-	
+	virtual void RecompileVMIfRequired() override;
 	UFUNCTION(BlueprintCallable, Category = "RigVM Blueprint")
-	void RequestAutoVMRecompilation();
-
+	virtual void RequestAutoVMRecompilation() override;
 	UFUNCTION(BlueprintCallable, Category = "RigVM Blueprint")
-	void SetAutoVMRecompile(bool bAutoRecompile) { bAutoRecompileVM = bAutoRecompile; }
-
+	virtual void SetAutoVMRecompile(bool bAutoRecompile) override { bAutoRecompileVM = bAutoRecompile; }
 	UFUNCTION(BlueprintPure, Category = "RigVM Blueprint")
-	bool GetAutoVMRecompile() const { return bAutoRecompileVM; }
+	virtual bool GetAutoVMRecompile() const override { return bAutoRecompileVM; }
 
-	void IncrementVMRecompileBracket();
-	void DecrementVMRecompileBracket();
+	virtual void IncrementVMRecompileBracket() override;
+	virtual void DecrementVMRecompileBracket() override;
 
 	// this is needed since even after load
 	// model data can change while the RigVM BP is not opened
 	// for example, if a user defined struct changed after BP load,
 	// any pin that references the struct needs to be regenerated
-	void RefreshAllModels(ERigVMBlueprintLoadType InLoadType = ERigVMBlueprintLoadType::PostLoad);
+	virtual void RefreshAllModels(ERigVMLoadType InLoadType = ERigVMLoadType::PostLoad) override;
 
 	// RigVMRegistry changes can be triggered when new user defined types(structs/enums) are added/removed
 	// in which case we have to refresh the model
-	void OnRigVMRegistryChanged();
+	virtual void OnRigVMRegistryChanged() override;
+
+	UFUNCTION(BlueprintCallable, Category = "RigVM Blueprint")
+	virtual void RequestRigVMInit() override;
+
+	UFUNCTION(BlueprintCallable, Category = "RigVM Blueprint")
+	virtual URigVMGraph* GetModel(const UEdGraph* InEdGraph = nullptr) const override;
+	virtual URigVMGraph* GetModel(const FString& InNodePath) const override;
+
+	UFUNCTION(BlueprintCallable, Category = "RigVM Blueprint")
+	virtual URigVMGraph* GetDefaultModel() const override;
+
+	UFUNCTION(BlueprintCallable, Category = "RigVM Blueprint")
+	virtual TArray<URigVMGraph*> GetAllModels() const override;
+
+	UFUNCTION(BlueprintCallable, Category = "RigVM Blueprint")
+	virtual URigVMFunctionLibrary* GetLocalFunctionLibrary() const override;
+
+	UFUNCTION(BlueprintCallable, Category = "RigVM Blueprint")
+	virtual URigVMGraph* AddModel(FString InName = TEXT("Rig Graph"), bool bSetupUndoRedo = true, bool bPrintPythonCommand = true) override;
+
+	UFUNCTION(BlueprintCallable, Category = "RigVM Blueprint")
+	virtual bool RemoveModel(FString InName = TEXT("Rig Graph"), bool bSetupUndoRedo = true, bool bPrintPythonCommand = true) override;
+
+	virtual FRigVMGetFocusedGraph& OnGetFocusedGraph() override;
+	virtual const FRigVMGetFocusedGraph& OnGetFocusedGraph() const override;
+
+	UFUNCTION(BlueprintCallable, Category = "RigVM Blueprint")
+	virtual URigVMGraph* GetFocusedModel() const override;
+
+	UFUNCTION(BlueprintCallable, Category = "RigVM Blueprint")
+	virtual URigVMController* GetController(const URigVMGraph* InGraph = nullptr) const override;
+
+	UFUNCTION(BlueprintCallable, Category = "RigVM Blueprint")
+	virtual URigVMController* GetControllerByName(const FString InGraphName = TEXT("")) const override;
+
+	UFUNCTION(BlueprintCallable, Category = "RigVM Blueprint")
+	virtual URigVMController* GetOrCreateController(URigVMGraph* InGraph = nullptr) override;
+
+	virtual URigVMController* GetController(const UEdGraph* InEdGraph) const override;
+	virtual URigVMController* GetOrCreateController(const UEdGraph* InGraph) override;
+
+	UFUNCTION(BlueprintCallable, Category = "RigVM Blueprint")
+	virtual TArray<FString> GeneratePythonCommands(const FString InNewBlueprintName) override;
+
+	//  --- IRigVMClientHost interface End ---
+
+
+	FOnRigVMRequestInspectObject& OnRequestInspectObject() { return OnRequestInspectObjectEvent; }
+	void RequestInspectObject(const TArray<UObject*>& InObjects) { OnRequestInspectObjectEvent.Broadcast(InObjects); }
+
+	FOnRigVMRequestInspectMemoryStorage& OnRequestInspectMemoryStorage() { return OnRequestInspectMemoryStorageEvent; }
+	void RequestInspectMemoryStorage(const TArray<FRigVMMemoryStorageStruct*>& InMemoryStorageStructs) { OnRequestInspectMemoryStorageEvent.Broadcast(InMemoryStorageStructs); }
+
+#endif	// #if WITH_EDITOR
+
 	
-	UFUNCTION(BlueprintCallable, Category = "RigVM Blueprint")
-	void RequestRigVMInit();
 
-	UFUNCTION(BlueprintCallable, Category = "RigVM Blueprint")
-	URigVMGraph* GetModel(const UEdGraph* InEdGraph = nullptr) const;
-	URigVMGraph* GetModel(const FString& InNodePath) const;
-
-	UFUNCTION(BlueprintCallable, Category = "RigVM Blueprint")
-	URigVMGraph* GetDefaultModel() const;
-
-	UFUNCTION(BlueprintCallable, Category = "RigVM Blueprint")
-	TArray<URigVMGraph*> GetAllModels() const;
-
-	UFUNCTION(BlueprintCallable, Category = "RigVM Blueprint")
-	URigVMFunctionLibrary* GetLocalFunctionLibrary() const;
-
-	UFUNCTION(BlueprintCallable, Category = "RigVM Blueprint")
-	URigVMGraph* AddModel(FString InName = TEXT("Rig Graph"), bool bSetupUndoRedo = true, bool bPrintPythonCommand = true);
-
-	UFUNCTION(BlueprintCallable, Category = "RigVM Blueprint")
-	bool RemoveModel(FString InName = TEXT("Rig Graph"), bool bSetupUndoRedo = true, bool bPrintPythonCommand = true);
-
-	UFUNCTION(BlueprintCallable, Category = "RigVM Blueprint")
-	URigVMGraph* GetFocusedModel() const;
-
-	UFUNCTION(BlueprintCallable, Category = "RigVM Blueprint")
-	URigVMController* GetController(const URigVMGraph* InGraph = nullptr) const;
-
-	UFUNCTION(BlueprintCallable, Category = "RigVM Blueprint")
-	URigVMController* GetControllerByName(const FString InGraphName = TEXT("")) const;
-
-	UFUNCTION(BlueprintCallable, Category = "RigVM Blueprint")
-	URigVMController* GetOrCreateController(URigVMGraph* InGraph = nullptr);
-
-	URigVMController* GetController(const UEdGraph* InEdGraph) const;
-	URigVMController* GetOrCreateController(const UEdGraph* InGraph);
-
-	UFUNCTION(BlueprintCallable, Category = "RigVM Blueprint")
-	virtual TArray<FString> GeneratePythonCommands(const FString InNewBlueprintName);
+	virtual bool ShouldBeMarkedDirtyUponTransaction() const override { return false; }
 
 	URigVMGraph* GetTemplateModel(bool bIsFunctionLibrary = false);
 	URigVMController* GetTemplateController(bool bIsFunctionLibrary = false);
@@ -429,6 +458,12 @@ public:
 
 	UPROPERTY(EditAnywhere, Category = "Python Log Settings")
 	FRigVMPythonSettings PythonLogSettings;
+
+	UPROPERTY()
+	TMap<FString, FSoftObjectPath> UserDefinedStructGuidToPathName;
+
+	UPROPERTY(transient)
+	TSet<TObjectPtr<UObject>> UserDefinedTypesInUse;
 
 protected:
 
@@ -493,6 +528,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "VM")
 	URigVMHost* CreateRigVMHost();
+
+	UFUNCTION(BlueprintCallable, Category = "VM")
+	URigVMHost* GetDebuggedRigVMHost() { return Cast<URigVMHost>(GetObjectBeingDebugged()); }
 
 	UFUNCTION(BlueprintCallable, Category = "VM")
 	virtual TArray<UStruct*> GetAvailableRigVMStructs() const;
@@ -581,6 +619,7 @@ protected:
 
 public:
 	void PropagateRuntimeSettingsFromBPToInstances();
+	void InitializeArchetypeInstances();
 
 private:
 
@@ -590,6 +629,10 @@ private:
 protected:
 	
 	virtual void HandlePackageDone();
+
+	/** Our currently running rig vm instance */
+	UPROPERTY(transient)
+	TObjectPtr<URigVMHost> EditorHost = nullptr;
 
 private:
 	
@@ -602,9 +645,18 @@ private:
 	// this function removes those deprecated class.
 	// new classes should be created by RecompileVM and parented to the Package
 	// during PostLoad
-	void RemoveDeprecatedVMMemoryClass() const;
+	void RemoveDeprecatedVMMemoryClass();
+
+#if WITH_EDITORONLY_DATA
+	// During load, we do not want the GC to destroy the generator classes until all URigVMMemoryStorage objects
+	// are loaded, so we need to keep a pointer to the classes. These pointers will be removed on PreSave so that the
+	// GC can do its work.
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<URigVMMemoryStorageGeneratorClass>> OldMemoryStorageGeneratorClasses;
+
 #endif
 
+#endif
 #if WITH_EDITOR
 
 public:
@@ -682,12 +734,15 @@ private:
 	TArray<URigVMNode*> RigVMBreakpointNodes;
 
 	FOnRigVMRequestInspectObject OnRequestInspectObjectEvent;
-	FRigVMBlueprintGetFocusedGraph OnGetFocusedGraphDelegate;
+	FOnRigVMRequestInspectMemoryStorage OnRequestInspectMemoryStorageEvent;
 		
 public:
 
 	/** Sets the execution mode. In Release mode the rig will ignore all breakpoints. */
-	void SetDebugMode(const bool bValue) { bCompileInDebugMode = bValue; }
+	void SetDebugMode(const bool bValue);
+
+	/** Returns the execution mode */
+	bool IsInDebugMode() const { return bCompileInDebugMode; }
 
 	/** Removes all the breakpoints from the blueprint and the VM */
 	void ClearBreakpoints();
@@ -738,6 +793,20 @@ private:
 	bool bErrorsDuringCompilation;
 	bool bSuspendPythonMessagesForRigVMClient;
 	bool bMarkBlueprintAsStructurallyModifiedPending;
+
+#if WITH_EDITOR
+
+public:
+
+	static void QueueCompilerMessageDelegate(const FOnRigVMReportCompilerMessage::FDelegate& InDelegate);
+	static void ClearQueuedCompilerMessageDelegates();
+	
+private:
+
+	static FCriticalSection QueuedCompilerMessageDelegatesMutex;
+	static TArray<FOnRigVMReportCompilerMessage::FDelegate> QueuedCompilerMessageDelegates;
+
+#endif
 
 	friend class FRigVMBlueprintCompilerContext;
 	friend class FRigVMEditor;

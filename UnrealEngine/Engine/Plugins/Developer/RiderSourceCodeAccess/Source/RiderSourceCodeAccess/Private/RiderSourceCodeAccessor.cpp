@@ -18,6 +18,7 @@
 #include "Dialogs/SOutputLogDialog.h"
 #include "Framework/Notifications/NotificationManager.h"
 #include "Misc/MessageDialog.h"
+#include "Style/RiderSourceCodeAccessStyleSet.h"
 #include "Widgets/Notifications/SNotificationList.h"
 
 #define LOCTEXT_NAMESPACE "RiderSourceCodeAccessor"
@@ -266,6 +267,21 @@ bool FRiderSourceCodeAccessor::OpenSourceFiles(const TArray<FString>& AbsoluteSo
 bool FRiderSourceCodeAccessor::SaveAllOpenDocuments() const
 {
 	return false;
+}
+
+FName FRiderSourceCodeAccessor::GetOpenIconName() const
+{
+	return FRiderSourceCodeAccessStyleSet::RiderIconName;
+}
+
+FName FRiderSourceCodeAccessor::GetRefreshIconName() const
+{
+	return FRiderSourceCodeAccessStyleSet::RiderRefreshIconName;
+}
+
+FName FRiderSourceCodeAccessor::GetStyleSet() const
+{
+	return FRiderSourceCodeAccessStyleSet::StyleName;
 }
 
 void FRiderSourceCodeAccessor::Init(const FInstallInfo& Info, EProjectModel ProjectModel, EAccessType Type)

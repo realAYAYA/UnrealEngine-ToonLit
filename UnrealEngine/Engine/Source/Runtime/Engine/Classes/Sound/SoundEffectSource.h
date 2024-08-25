@@ -19,6 +19,11 @@ UCLASS(config = Engine, abstract, editinlinenew, BlueprintType, MinimalAPI)
 class USoundEffectSourcePreset : public USoundEffectPreset
 {
 	GENERATED_BODY()
+
+public:
+	static constexpr int32 DefaultSupportedChannels = 2;
+
+	virtual int32 GetMaxSupportedChannels() const { return DefaultSupportedChannels; }
 };
 
 USTRUCT(BlueprintType)
@@ -55,6 +60,11 @@ public:
 	uint32 bPlayEffectChainTails : 1;
 
 	ENGINE_API void AddReferencedEffects(FReferenceCollector& Collector);
+
+	/**  Get the number of channels this chain supports, which is the lowest channel count of all effects in the chain */
+	int32 ENGINE_API GetSupportedChannelCount() const;
+
+	bool ENGINE_API SupportsChannelCount(const int32 InNumChannels) const;
 
 protected:
 

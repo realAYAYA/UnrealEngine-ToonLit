@@ -1,24 +1,25 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "NiagaraDataInterfaceEmitterBinding.h"
+#include "NiagaraConstants.h"
 #include "NiagaraEmitterInstance.h"
 #include "NiagaraSystem.h"
 #include "NiagaraSystemInstance.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(NiagaraDataInterfaceEmitterBinding)
 
-FNiagaraEmitterInstance* FNiagaraDataInterfaceEmitterBinding::Resolve(FNiagaraSystemInstance* SystemInstance, UNiagaraDataInterface* DataInterface)
+FNiagaraEmitterInstance* FNiagaraDataInterfaceEmitterBinding::Resolve(const FNiagaraSystemInstance* SystemInstance, const UNiagaraDataInterface* DataInterface) const
 {
 	if (BindingMode == ENiagaraDataInterfaceEmitterBindingMode::Self)
 	{
 		// If we came from a particle script our outer will be a UNiagaraEmitter
 		if (UNiagaraEmitter* OwnerEmitter = DataInterface->GetTypedOuter<UNiagaraEmitter>())
 		{
-			for (TSharedPtr<FNiagaraEmitterInstance, ESPMode::ThreadSafe> EmitterInstance : SystemInstance->GetEmitters())
+			for (const FNiagaraEmitterInstanceRef& EmitterInstance : SystemInstance->GetEmitters())
 			{
-				if (EmitterInstance->GetCachedEmitter().Emitter == OwnerEmitter)
+				if (EmitterInstance->GetEmitter() == OwnerEmitter)
 				{
-					return EmitterInstance.Get();
+					return &EmitterInstance.Get();
 				}
 			}
 		}
@@ -43,13 +44,13 @@ FNiagaraEmitterInstance* FNiagaraDataInterfaceEmitterBinding::Resolve(FNiagaraSy
 
 			if (SourceEmitterName.IsEmpty() == false)
 			{
-				for (TSharedPtr<FNiagaraEmitterInstance, ESPMode::ThreadSafe> EmitterInstance : SystemInstance->GetEmitters())
+				for (const FNiagaraEmitterInstanceRef& EmitterInstance : SystemInstance->GetEmitters())
 				{
-					if (const UNiagaraEmitter* CachedEmitter = EmitterInstance->GetCachedEmitter().Emitter)
+					if (const UNiagaraEmitter* CachedEmitter = EmitterInstance->GetEmitter())
 					{
 						if (CachedEmitter->GetUniqueEmitterName() == SourceEmitterName)
 						{
-							return EmitterInstance.Get();
+							return &EmitterInstance.Get();
 						}
 					}
 				}
@@ -75,14 +76,14 @@ FNiagaraEmitterInstance* FNiagaraDataInterfaceEmitterBinding::Resolve(FNiagaraSy
 		EmitterName.ToString(EmitterNameString);
 		FStringView EmitterNameStringView = EmitterNameString.ToView();
 
-		for (TSharedPtr<FNiagaraEmitterInstance, ESPMode::ThreadSafe> EmitterInstance : SystemInstance->GetEmitters())
+		for (const FNiagaraEmitterInstanceRef& EmitterInstance : SystemInstance->GetEmitters())
 		{
-			if (const UNiagaraEmitter* CachedEmitter = EmitterInstance->GetCachedEmitter().Emitter)
+			if (const UNiagaraEmitter* CachedEmitter = EmitterInstance->GetEmitter())
 			{
 				//-TODO: UniqueEmitterName should probably be a FName?
-				if (EmitterNameStringView.Equals(CachedEmitter->GetUniqueEmitterName()) )
+				if (EmitterNameStringView.Equals(CachedEmitter->GetUniqueEmitterName(), ESearchCase::IgnoreCase) )
 				{
-					return EmitterInstance.Get();
+					return &EmitterInstance.Get();
 				}
 			}
 		}
@@ -95,27 +96,75 @@ FNiagaraEmitterInstance* FNiagaraDataInterfaceEmitterBinding::Resolve(FNiagaraSy
 	return nullptr;
 }
 
-UNiagaraEmitter* FNiagaraDataInterfaceEmitterBinding::Resolve(UNiagaraSystem* NiagaraSystem)
+const FNiagaraEmitterHandle* FNiagaraDataInterfaceEmitterBinding::ResolveHandle(const UNiagaraDataInterface* DataInterface) const
 {
-	if ( BindingMode == ENiagaraDataInterfaceEmitterBindingMode::Other )
+	UNiagaraSystem* OwnerSystem = DataInterface->GetTypedOuter<UNiagaraSystem>();
+	if (OwnerSystem == nullptr)
 	{
-		if (EmitterName.IsNone())
-		{
-			return nullptr;
-		}
+		return nullptr;
+	}
 
-		FNameBuilder EmitterNameString;
-		EmitterName.ToString(EmitterNameString);
-		FStringView EmitterNameStringView = EmitterNameString.ToView();
-
-		for ( const FNiagaraEmitterHandle& EmitterHandle : NiagaraSystem->GetEmitterHandles() )
+	if (BindingMode == ENiagaraDataInterfaceEmitterBindingMode::Self)
+	{
+		if (UNiagaraEmitter* OwnerEmitter = DataInterface->GetTypedOuter<UNiagaraEmitter>())
 		{
-			if (UNiagaraEmitter* NiagaraEmitter = EmitterHandle.GetInstance().Emitter)
+			for (const FNiagaraEmitterHandle& EmitterHandle : OwnerSystem->GetEmitterHandles())
 			{
-				//-TODO: UniqueEmitterName should probably be a FName?
-				if (EmitterNameStringView.Equals(NiagaraEmitter->GetUniqueEmitterName()))
+				if (OwnerEmitter == EmitterHandle.GetInstance().Emitter)
 				{
-					return NiagaraEmitter;
+					return &EmitterHandle;
+				}
+			}
+		}
+		else
+		{
+			for (const FNiagaraEmitterHandle& EmitterHandle : OwnerSystem->GetEmitterHandles())
+			{
+				FVersionedNiagaraEmitterData* EmitterData = EmitterHandle.GetEmitterData();
+				if (EmitterHandle.GetIsEnabled() && EmitterData)
+				{
+					bool bFoundDI = false;
+					bool bIsEmitterNamespace = false;
+					EmitterData->ForEachScript(
+						[DataInterface, &bFoundDI, &bIsEmitterNamespace](const UNiagaraScript* Script)
+						{
+							for (const FNiagaraScriptResolvedDataInterfaceInfo& ResolvedDI : Script->GetResolvedDataInterfaces())
+							{
+								if (ResolvedDI.ResolvedDataInterface == DataInterface)
+								{
+									bFoundDI = true;
+									bIsEmitterNamespace = FNiagaraVariableBase::IsInNameSpace(FNiagaraConstants::EmitterNamespaceString, ResolvedDI.CompileName);
+									return;
+								}
+							}
+						}
+					);
+
+					if (bFoundDI)
+					{
+						return bIsEmitterNamespace ? &EmitterHandle : nullptr;
+					}
+				}
+			}
+		}
+	}
+	else if (BindingMode == ENiagaraDataInterfaceEmitterBindingMode::Other)
+	{
+		if (!EmitterName.IsNone())
+		{
+			FNameBuilder EmitterNameString;
+			EmitterName.ToString(EmitterNameString);
+			FStringView EmitterNameStringView = EmitterNameString.ToView();
+
+			for (const FNiagaraEmitterHandle& EmitterHandle : OwnerSystem->GetEmitterHandles())
+			{
+				if (UNiagaraEmitter* NiagaraEmitter = EmitterHandle.GetInstance().Emitter)
+				{
+					//-TODO: UniqueEmitterName should probably be a FName?
+					if (EmitterNameStringView.Equals(NiagaraEmitter->GetUniqueEmitterName(), ESearchCase::IgnoreCase))
+					{
+						return &EmitterHandle;
+					}
 				}
 			}
 		}
@@ -123,3 +172,28 @@ UNiagaraEmitter* FNiagaraDataInterfaceEmitterBinding::Resolve(UNiagaraSystem* Ni
 	return nullptr;
 }
 
+UNiagaraEmitter* FNiagaraDataInterfaceEmitterBinding::Resolve(const UNiagaraDataInterface* DataInterface) const
+{
+	const FNiagaraEmitterHandle* EmitterHandle = ResolveHandle(DataInterface);
+	return EmitterHandle ? EmitterHandle->GetInstance().Emitter : nullptr;
+}
+
+FString FNiagaraDataInterfaceEmitterBinding::ResolveUniqueName(const UNiagaraDataInterface* DataInterface) const
+{
+	if (UNiagaraEmitter* ResolvedEmitter = Resolve(DataInterface))
+	{
+		return ResolvedEmitter->GetUniqueEmitterName();
+	}
+	else
+	{
+		if (BindingMode == ENiagaraDataInterfaceEmitterBindingMode::Self)
+		{
+			return FString(TEXT("Self"));
+		}
+		else if (BindingMode == ENiagaraDataInterfaceEmitterBindingMode::Other)
+		{
+			return EmitterName.ToString();
+		}
+	}
+	return FString();
+}

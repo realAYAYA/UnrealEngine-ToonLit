@@ -137,14 +137,14 @@ public:
 			ManifestsToRemove.Append(FoundManifests);
 			return true;
 		}
-		auto ChunkIDField = Manifest->GetCustomField("ChunkID");
+		auto ChunkIDField = Manifest->GetCustomField(TEXT("ChunkID"));
 		if (!ChunkIDField.IsValid())
 		{
 			//Something is wrong, suggests corruption so mark the folder for delete
 			ManifestsToRemove.Append(FoundManifests);
 			return true;
 		}
-		auto ChunkPatchField = Manifest->GetCustomField("bIsPatch");
+		auto ChunkPatchField = Manifest->GetCustomField(TEXT("bIsPatch"));
 		bool bIsPatch = ChunkPatchField.IsValid() ? ChunkPatchField->AsString() == TEXT("true") : false;
 		uint32 ChunkID = (uint32)ChunkIDField->AsInteger();
 
@@ -280,7 +280,7 @@ public:
 			//Something is wrong, suggests corruption so ignore
 			return true;
 		}
-		auto ChunkIDField = Manifest->GetCustomField("ChunkID");
+		auto ChunkIDField = Manifest->GetCustomField(TEXT("ChunkID"));
 		if (!ChunkIDField.IsValid())
 		{
 			//Something is wrong, suggests corruption so ignore
@@ -300,7 +300,7 @@ public:
 		{
 			return true;
 		}
-		auto PakReadOrderField = Manifest->GetCustomField("PakReadOrdering");
+		auto PakReadOrderField = Manifest->GetCustomField(TEXT("PakReadOrdering"));
 		uint32 PakReadOrder = PakReadOrderField.IsValid() ? (uint32)PakReadOrderField->AsInteger() : 0;
 		for (const auto& PakPath : FoundPaks)
 		{

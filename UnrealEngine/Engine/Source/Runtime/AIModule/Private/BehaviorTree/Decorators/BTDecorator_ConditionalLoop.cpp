@@ -59,6 +59,16 @@ uint16 UBTDecorator_ConditionalLoop::GetInstanceMemorySize() const
 	return sizeof(FBTConditionalLoopDecoratorMemory);
 }
 
+void UBTDecorator_ConditionalLoop::InitializeMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryInit::Type InitType) const
+{
+	InitializeNodeMemory<FBTConditionalLoopDecoratorMemory>(NodeMemory, InitType);
+}
+
+void UBTDecorator_ConditionalLoop::CleanupMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryClear::Type CleanupType) const
+{
+	CleanupNodeMemory<FBTConditionalLoopDecoratorMemory>(NodeMemory, CleanupType);
+}
+
 #if WITH_EDITOR
 
 FName UBTDecorator_ConditionalLoop::GetNodeIconName() const

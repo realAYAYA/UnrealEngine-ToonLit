@@ -43,7 +43,7 @@ public:
 
 	/** Attaches the actor to a FirstPersonCharacter */
 	UFUNCTION(BlueprintCallable, Category="Weapon")
-	void AttachWeapon(ATP_FirstPersonCharacter* TargetCharacter);
+	bool AttachWeapon(ATP_FirstPersonCharacter* TargetCharacter);
 
 	/** Make the weapon Fire a Projectile */
 	UFUNCTION(BlueprintCallable, Category="Weapon")

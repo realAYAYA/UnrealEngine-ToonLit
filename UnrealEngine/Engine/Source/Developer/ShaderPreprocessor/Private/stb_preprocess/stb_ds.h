@@ -392,6 +392,7 @@ CREDITS
 #define arraddnptr stbds_arraddnptr
 #define arraddnindex stbds_arraddnindex
 #define arrsetlen stbds_arrsetlen
+#define arrsetlennocap stbds_arrsetlennocap
 #define arrinitlen stbds_arrinitlen
 #define arrlast stbds_arrlast
 #define arrins stbds_arrins
@@ -400,6 +401,7 @@ CREDITS
 #define arrdeln stbds_arrdeln
 #define arrdelswap stbds_arrdelswap
 #define arrcap stbds_arrcap
+#define arrcapnonull stbds_arrcapnonull
 #define arrsetcap stbds_arrsetcap
 
 #define hmput stbds_hmput
@@ -471,6 +473,8 @@ extern "C"
 	// Everything below here is implementation details
 	//
 
+	extern void* stbds_arrinlinef(size_t* buf, size_t elemsize, size_t elemcount);
+	extern void* stbds_arrinline_suballocf(void* a, size_t min_capacity);
 	extern void* stbds_arrgrowf(void* a, size_t elemsize, size_t addlen, size_t min_cap);
 	extern void stbds_hmfree_func(void* p, size_t elemsize);
 	extern void* stbds_hmget_key(void* a, size_t elemsize, void* key, size_t keysize, int mode);
@@ -514,10 +518,52 @@ extern "C"
 #define stbds_temp(t) stbds_header(t)->temp
 #define stbds_temp_key(t) (*(char**)stbds_header(t)->hash_table)
 
-#define stbds_arrsetcap(a, n) (stbds_arrgrow(a, 0, n))
+// Macro to reserve inline stack memory storage for an array
+#define stbds_arrinline(a, a_type, n) \
+	size_t __buf ## a[(sizeof(stbds_array_header) + n * sizeof(a_type) + sizeof(size_t) - 1) / sizeof(size_t)];		\
+	((stbds_array_header*)(&__buf ## a[0]))->length = 0;															\
+	((stbds_array_header*)(&__buf ## a[0]))->capacity = n;															\
+	((stbds_array_header*)(&__buf ## a[0]))->hash_table = 0;														\
+	((stbds_array_header*)(&__buf ## a[0]))->temp = 0;																\
+	((stbds_array_header*)(&__buf ## a[0]))->elemsize = sizeof(a_type);												\
+	((stbds_array_header*)(&__buf ## a[0]))->inlinealloc = 1;														\
+	a = (a_type*)(((stbds_array_header*)(&__buf ## a[0])) + 1)
+
+// Allow a single inline storage buffer to be used for multiple sub-allocations.  Trims current allocation to what's used and returns a new allocation with the remainder if enough capacity exists.
+#define stbds_arrinline_suballoc(a, a_type, min_capacity) \
+	a = (a_type*)stbds_arrinline_suballocf(a, min_capacity)
+
+// Inline simplified version of above that only works on character type.  Avoids elemsize multiply/divide math and call overhead.
+#define stbds_arrinline_suballoc_char(a, min_capacity) \
+	if (a && stbds_header(a)->inlinealloc)														\
+	{																							\
+		stbds_array_header* h = stbds_header(a);												\
+		char* used_end = a + ((h->length + sizeof(size_t) - 1) & ~(sizeof(size_t) - 1));		\
+		char* capacity_end = a + h->capacity;													\
+		h->capacity = h->length;																\
+		if (capacity_end - used_end < sizeof(stbds_array_header) + min_capacity)				\
+		{																						\
+			a = 0;																				\
+		}																						\
+		else																					\
+		{																						\
+			stbds_array_header* h_suballoc = (stbds_array_header*)used_end;						\
+			h_suballoc->length = 0;																\
+			h_suballoc->capacity = ((capacity_end - used_end) - sizeof(stbds_array_header));	\
+			h_suballoc->hash_table = 0;															\
+			h_suballoc->temp = 0;																\
+			h_suballoc->elemsize = 1;															\
+			h_suballoc->inlinealloc = 1;														\
+			a = (char*)(h_suballoc + 1);														\
+		}}   (void)0
+
+
+#define stbds_arrsetcap(a, n) ((!(a) || (n) > stbds_header(a)->capacity) ? (stbds_arrgrow(a, 0, n), 0) : 0)
 #define stbds_arrsetlen(a, n) ((stbds_arrcap(a) < (size_t)(n) ? stbds_arrsetcap((a), (size_t)(n)), 0 : 0), (a) ? stbds_header(a)->length = (size_t)(n) : 0)
+#define stbds_arrsetlennocap(a, n) (stbds_header(a)->length = n)
 #define stbds_arrinitlen(a, n) ((stbds_arrsetcap((a), (size_t)(n)), stbds_header(a)->length = (size_t)(n)))
 #define stbds_arrcap(a) ((a) ? stbds_header(a)->capacity : 0)
+#define stbds_arrcapnonull(a) (stbds_header(a)->capacity)
 #define stbds_arrlen(a) ((a) ? (ptrdiff_t)stbds_header(a)->length : 0)
 #define stbds_arrlennonull(a) ((ptrdiff_t)stbds_header(a)->length)
 #define stbds_arrlenu(a) ((a) ? stbds_header(a)->length : 0)
@@ -529,7 +575,7 @@ extern "C"
 #define stbds_arraddnoff(a, n) (stbds_arrmaybegrow(a, n), stbds_header(a)->length += (n), stbds_header(a)->length - (n))
 #define stbds_arraddnindex(a, n) stbds_arraddnoff(a, n)
 #define stbds_arrlast(a) ((a)[stbds_header(a)->length - 1])
-#define stbds_arrfree(a) ((void)((a) ? STB_COMMON_FREE(stbds_header(a)) : (void)0), (a) = NULL)
+#define stbds_arrfree(a) ((void)((a) && !stbds_header(a)->inlinealloc ? STB_COMMON_FREE(stbds_header(a)) : (void)0), (a) = NULL)
 #define stbds_arrdel(a, i) stbds_arrdeln(a, i, 1)
 #define stbds_arrdeln(a, i, n) (memmove(&(a)[i], &(a)[(i) + (n)], sizeof *(a) * (stbds_header(a)->length - (n) - (i))), stbds_header(a)->length -= (n))
 #define stbds_arrdelswap(a, i) ((a)[i] = stbds_arrlast(a), stbds_header(a)->length -= 1)
@@ -617,10 +663,12 @@ extern "C"
 
 typedef struct
 {
-	size_t length;
-	size_t capacity;
+	int elemsize;
+	int inlinealloc;		// Allocated inline, don't free!
 	void* hash_table;
 	ptrdiff_t temp;
+	int capacity;
+	int length;
 } stbds_array_header;
 
 typedef struct stbds_string_block

@@ -5,13 +5,14 @@
 template <typename T>
 struct TObjectPtr;
 
+template <typename T> constexpr bool TIsTObjectPtr_V                               = false;
+template <typename T> constexpr bool TIsTObjectPtr_V<               TObjectPtr<T>> = true;
+template <typename T> constexpr bool TIsTObjectPtr_V<const          TObjectPtr<T>> = true;
+template <typename T> constexpr bool TIsTObjectPtr_V<      volatile TObjectPtr<T>> = true;
+template <typename T> constexpr bool TIsTObjectPtr_V<const volatile TObjectPtr<T>> = true;
+
 template <typename T>
 struct TIsTObjectPtr
 {
-	enum { Value = false };
+	static constexpr bool Value = TIsTObjectPtr_V<T>;
 };
-
-template <typename T> struct TIsTObjectPtr<               TObjectPtr<T>> { enum { Value = true }; };
-template <typename T> struct TIsTObjectPtr<const          TObjectPtr<T>> { enum { Value = true }; };
-template <typename T> struct TIsTObjectPtr<      volatile TObjectPtr<T>> { enum { Value = true }; };
-template <typename T> struct TIsTObjectPtr<const volatile TObjectPtr<T>> { enum { Value = true }; };

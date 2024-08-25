@@ -16,8 +16,8 @@ public:
 	{
 		if (FIOSTargetPlatform::IsUsable())
 		{
-			TargetPlatforms.Add(new FIOSTargetPlatform(false, false));
-			TargetPlatforms.Add(new FIOSTargetPlatform(false, true));
+			TargetPlatforms.Add(new FIOSTargetPlatform(false, false, false));
+			TargetPlatforms.Add(new FIOSTargetPlatform(false, false, true));
 		}
 	}
 

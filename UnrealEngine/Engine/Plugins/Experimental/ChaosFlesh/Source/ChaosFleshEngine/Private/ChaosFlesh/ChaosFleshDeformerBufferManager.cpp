@@ -286,7 +286,7 @@ bool FChaosFleshDeformableGPUManager::FBindingsBuffer::InitData(
 	}
 	Chaos::Softs::Private::InitBuffer(VerticesBuffer, &SparseVertices, Chaos::Softs::Private::NullFloatBuffer);
 
-#ifdef WITH_EDITOR
+#if WITH_EDITOR
 	if (Local::CVarParams.bTestSparseMappings)
 	{
 		TMap<int32, int32> DenseToSparseIndices;

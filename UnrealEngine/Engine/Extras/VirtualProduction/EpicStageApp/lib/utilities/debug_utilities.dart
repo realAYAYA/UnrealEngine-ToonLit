@@ -1,9 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+import 'package:epic_common/widgets.dart';
 import 'package:logging/logging.dart';
 
 import '../models/navigator_keys.dart';
-import '../widgets/elements/modal.dart';
 
 final _log = Logger('DebugAlert');
 
@@ -14,5 +14,5 @@ void showDebugAlert(String message) {
   }
 
   _log.info(message);
-  InfoModalDialog.show(message);
+  InfoModalDialog.show(rootNavigatorKey.currentContext!, message);
 }

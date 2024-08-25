@@ -4,9 +4,8 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(SoundSubmixSend)
 
-FSoundSubmixSendInfo::FSoundSubmixSendInfo()
+FSoundSubmixSendInfoBase::FSoundSubmixSendInfoBase()
 	: SendLevelControlMethod(ESendLevelControlMethod::Manual)
-	, SendStage(ESubmixSendStage::PostDistanceAttenuation)
 	, SoundSubmix(nullptr)
 	, SendLevel(1.0f)
 	, DisableManualSendClamp(false)
@@ -14,6 +13,6 @@ FSoundSubmixSendInfo::FSoundSubmixSendInfo()
 	, MaxSendLevel(1.0f)
 	, MinSendDistance(100.0f)
 	, MaxSendDistance(1000.0f)
-	{
-	}
+{
+}
 

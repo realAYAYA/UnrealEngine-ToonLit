@@ -146,7 +146,7 @@ namespace UnrealBuildTool
 				// Create a makefile for the target
 				TimingLogger TimingLogger = new(Logger);
 				UEBuildTarget Target = UEBuildTarget.Create(TargetDescriptor, BuildConfiguration, TimingLogger);
-				UEToolChain TargetToolChain = Target.CreateToolchain(Target.Platform);
+				UEToolChain TargetToolChain = Target.CreateToolchain(Target.Platform, TimingLogger);
 
 				CppCompileEnvironment GlobalCompileEnvironment = Target.CreateCompileEnvironmentForProjectFiles(TimingLogger);
 				foreach (UEBuildBinary Binary in Target.Binaries)

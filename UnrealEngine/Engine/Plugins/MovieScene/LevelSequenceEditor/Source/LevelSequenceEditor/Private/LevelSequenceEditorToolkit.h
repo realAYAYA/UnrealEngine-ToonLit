@@ -120,26 +120,14 @@ private:
 
 	void ExtendSequencerToolbar(FName InToolMenuName);
 
-	/** Callback for executing the Add Component action. */
-	void HandleAddComponentActionExecute(UActorComponent* Component);
-
-	/** Create a new binding for the specified skeletal mesh component's animation instance. */
-	void BindAnimationInstance(USkeletalMeshComponent* SkeletalComponent, UAnimInstance* AnimInstance);
-
 	/** Callback for map changes. */
 	void HandleMapChanged(UWorld* NewWorld, EMapChangeType MapChangeType);
 
 	/** Callback for when a sequence with shots is created. */
 	void HandleLevelSequenceWithShotsCreated(UObject* LevelSequenceWithShotsAsset);
 
-	/** Callback for the menu extensibility manager. */
-	TSharedRef<FExtender> HandleMenuExtensibilityGetExtender(const TSharedRef<FUICommandList> CommandList, const TArray<UObject*> ContextSensitiveObjects);
-
 	/** Callback for spawning tabs. */
 	TSharedRef<SDockTab> HandleTabManagerSpawnTab(const FSpawnTabArgs& Args);
-
-	/** Callback for the track menu extender. */
-	void HandleTrackMenuExtensionAddTrack(FMenuBuilder& AddTrackMenuBuilder, TArray<UObject*> ContextObjects);
 
 	/** Callback for actor added to sequencer. */
 	void HandleActorAddedToSequencer(AActor* Actor, const FGuid Binding);
@@ -157,8 +145,6 @@ private:
 
 	/** The sequencer used by this editor. */
 	TSharedPtr<ISequencer> Sequencer;
-
-	FDelegateHandle SequencerExtenderHandle;
 
 	/** Pointer to the style set to use for toolkits. */
 	TSharedRef<ISlateStyle> Style;

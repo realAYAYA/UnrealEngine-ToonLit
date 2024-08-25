@@ -24,6 +24,8 @@
 // SOFTWARE.
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "acl/version.h"
+
 #include <rtm/impl/compiler_utils.h>
 
 #include <type_traits>
@@ -39,14 +41,31 @@
 // compilation flags used. However, in some cases, certain options must be forced.
 // To do this, every header is wrapped in two macros to push and pop the necessary
 // pragmas.
+//
+// Options we use:
+//    - Disable fast math, it can hurt precision for little to no performance gain due to the high level of hand tuned optimizations.
 //////////////////////////////////////////////////////////////////////////
 #if defined(RTM_COMPILER_MSVC)
 	#define ACL_IMPL_FILE_PRAGMA_PUSH \
-		/* Disable fast math, it can hurt precision for little to no performance gain due to the high level of hand tuned optimizations. */ \
 		__pragma(float_control(precise, on, push))
 
 	#define ACL_IMPL_FILE_PRAGMA_POP \
 		__pragma(float_control(pop))
+#elif defined(RTM_COMPILER_CLANG) && 0
+	// For some reason, clang doesn't appear to support disabling fast-math through pragmas
+	// See: https://github.com/llvm/llvm-project/issues/55392
+	#define ACL_IMPL_FILE_PRAGMA_PUSH \
+		_Pragma("float_control(precise, on, push)")
+
+	#define ACL_IMPL_FILE_PRAGMA_POP \
+		_Pragma("float_control(pop)")
+#elif defined(RTM_COMPILER_GCC)
+	#define ACL_IMPL_FILE_PRAGMA_PUSH \
+		_Pragma("GCC push_options") \
+		_Pragma("GCC optimize (\"no-fast-math\")")
+
+	#define ACL_IMPL_FILE_PRAGMA_POP \
+		_Pragma("GCC pop_options")
 #else
 	#define ACL_IMPL_FILE_PRAGMA_PUSH
 	#define ACL_IMPL_FILE_PRAGMA_POP
@@ -54,6 +73,8 @@
 
 namespace acl
 {
+	ACL_IMPL_VERSION_NAMESPACE_BEGIN
+
 	//////////////////////////////////////////////////////////////////////////
 	// The version of the STL shipped with versions of GCC older than 5.1 are missing a number of type traits and functions,
 	// such as std::is_trivially_default_constructible.
@@ -77,6 +98,8 @@ namespace acl
 		using is_trivially_default_constructible = std::has_trivial_default_constructor<Type>;
 #endif
 	}
+
+	ACL_IMPL_VERSION_NAMESPACE_END
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -92,3 +115,8 @@ namespace acl
 #else
 	#define ACL_SWITCH_CASE_FALLTHROUGH_INTENTIONAL (void)0
 #endif
+
+// When enabled, constant sub-tracks will use the weighted average of every sample instead of the first sample
+// Disabled by default, most clips have no measurable gain but some clips suffer greatly, needs to be investigated, possibly a bug somewhere
+// Note: Code has been removed in the pull request that closes: https://github.com/nfrechette/acl/issues/353
+//#define ACL_IMPL_ENABLE_WEIGHTED_AVERAGE_CONSTANT_SUB_TRACKS

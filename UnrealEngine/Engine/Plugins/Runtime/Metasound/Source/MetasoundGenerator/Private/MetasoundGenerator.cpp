@@ -9,6 +9,7 @@
 #include "MetasoundOperatorBuilder.h"
 #include "MetasoundOperatorInterface.h"
 #include "MetasoundOutputNode.h"
+#include "MetasoundOperatorCache.h"
 #include "MetasoundParameterTransmitter.h"
 #include "MetasoundRouter.h"
 #include "MetasoundTrace.h"
@@ -25,13 +26,15 @@
 #define ENABLE_METASOUNDGENERATOR_INVALID_SAMPLE_VALUE_LOGGING !UE_BUILD_SHIPPING
 #endif
 
+CSV_DECLARE_CATEGORY_MODULE_EXTERN(METASOUNDGRAPHCORE_API, Audio_Metasound);
+
 namespace Metasound
 {
 	namespace ConsoleVariables
 	{
 		static bool bEnableAsyncMetaSoundGeneratorBuilder = true;
-		static bool bEnableExperimentalOneShotOperatorCache = false;
-		static bool bEnableExperimentalOperatorCache = false;
+		static bool bEnableExperimentalAutoCachingForOneShotOperators = false;
+		static bool bEnableExperimentalAutoCachingForAllOperators = false;
 #if ENABLE_METASOUNDGENERATOR_INVALID_SAMPLE_VALUE_LOGGING
 		static bool bEnableMetaSoundGeneratorNonFiniteLogging = false;
 		static bool bEnableMetaSoundGeneratorInvalidSampleValueLogging = false;
@@ -80,7 +83,6 @@ namespace Metasound
 		}
 #endif // if ENABLE_METASOUNDGENERATOR_INVALID_SAMPLE_VALUE_LOGGING
 
-#if ENABLE_METASOUND_GENERATOR_RENDER_TIMING
 		struct FRenderTimer
 		{
 			FRenderTimer(const FOperatorSettings& InSettings, double InAnalysisDuration)
@@ -96,16 +98,12 @@ namespace Metasound
 				SecondsOfAudioProducedPerBlock = static_cast<double>(InSettings.GetNumFramesPerBlock()) / FMath::Max(1., static_cast<double>(InSettings.GetSampleRate()));
 			}
 
-			double GetCPUCoreUtilization() const
+			double UpdateCPUCoreUtilization()
 			{
-				return CPUCoreUtilization;
-			}
-
-			void UpdateCPUCoreUtilization(double InCPUSecondsToRenderBlock)
-			{
-				if (InCPUSecondsToRenderBlock > 0.0)
+				double CPUSecondsToRenderBlock = FPlatformTime::ToSeconds64(AccumulatedCycles);
+				if (CPUSecondsToRenderBlock > 0.0)
 				{
-					double NewCPUUtil = InCPUSecondsToRenderBlock / SecondsOfAudioProducedPerBlock;
+					double NewCPUUtil = CPUSecondsToRenderBlock / SecondsOfAudioProducedPerBlock;
 					if (CPUCoreUtilization >= 0.0)
 					{
 						CPUCoreUtilization = SmoothingAlpha * NewCPUUtil + (1. - SmoothingAlpha) * CPUCoreUtilization;
@@ -115,9 +113,17 @@ namespace Metasound
 						CPUCoreUtilization = NewCPUUtil;
 					}
 				}
+				AccumulatedCycles = 0;
+				return CPUCoreUtilization;
+			}
+
+			FORCEINLINE void AccumulateCycles(uint64 Cycles)
+			{
+				AccumulatedCycles += Cycles;
 			}
 
 		private:
+			uint64 AccumulatedCycles = 0;
 			double CPUCoreUtilization = -1.0;
 			double SmoothingAlpha = 1.0;
 			double SecondsOfAudioProducedPerBlock = 0.0;
@@ -125,8 +131,8 @@ namespace Metasound
 
 		struct FBlockRenderScope
 		{
-			FBlockRenderScope(FRenderTimer& InTimer)
-			: Timer(&InTimer)
+			FBlockRenderScope(FRenderTimer* InTimer)
+			: Timer(InTimer)
 			{
 				StartCycle = FPlatformTime::Cycles64();
 			}
@@ -134,17 +140,16 @@ namespace Metasound
 			~FBlockRenderScope()
 			{
 				uint64 EndCycle = FPlatformTime::Cycles64();
-				if (EndCycle > StartCycle)
+				if (Timer)
 				{
-					Timer->UpdateCPUCoreUtilization(FPlatformTime::ToSeconds64(EndCycle - StartCycle));
+					Timer->AccumulateCycles(EndCycle - StartCycle);
 				}
 			}
+			
 		private:
 			uint64 StartCycle = 0;
 			FRenderTimer* Timer = nullptr;
 		};
-
-#endif // if ENABLE_METASOUND_GENERATOR_RENDER_TIMING
 
 #ifndef ENABLE_METASOUND_CONSTANT_OUTPUT_VERTEX_ERROR_LOG
 #define ENABLE_METASOUND_CONSTANT_OUTPUT_VERTEX_ERROR_LOG DO_CHECK
@@ -183,7 +188,7 @@ namespace Metasound
 		{
 		}
 #endif
-	}
+	}	
 }
 
 FAutoConsoleVariableRef CVarMetaSoundEnableAsyncGeneratorBuilder(
@@ -193,17 +198,19 @@ FAutoConsoleVariableRef CVarMetaSoundEnableAsyncGeneratorBuilder(
 	TEXT("Default: true"),
 	ECVF_Default);
 
-FAutoConsoleVariableRef CVarMetaSoundEnableExperimentalOneShotOperatorCache(
-	TEXT("au.MetaSound.Experimental.EnableOneShotOperatorCache"),
-	Metasound::ConsoleVariables::bEnableExperimentalOneShotOperatorCache,
-	TEXT("Enables caching of MetaSound operators using the OneShot source interface.\n")
+FAutoConsoleVariableRef CVarMetaSoundEnableExperimentalAutoCachingForOneShotOperators(
+	TEXT("au.MetaSound.Experimental.EnableAutoCachingForOneShotOperators"),
+	Metasound::ConsoleVariables::bEnableExperimentalAutoCachingForOneShotOperators,
+	TEXT("Enables auto-caching of MetaSound operators using the OneShot source interface.\n")
+	TEXT("(see MetasoundOperatorCacheSubsystem.h for manual path).\n")
 	TEXT("Default: false"),
 	ECVF_Default);
 
-FAutoConsoleVariableRef CVarMetaSoundEnableExperimentalOperatorCache(
-	TEXT("au.MetaSound.Experimental.EnableOperatorCache"),
-	Metasound::ConsoleVariables::bEnableExperimentalOperatorCache,
-	TEXT("Enables caching of all MetaSound operators.\n")
+FAutoConsoleVariableRef CVarMetaSoundEnableExperimentalAutoCachingForAllOperators(
+	TEXT("au.MetaSound.Experimental.EnableAutoCachingForAllOperators"),
+	Metasound::ConsoleVariables::bEnableExperimentalAutoCachingForAllOperators,
+	TEXT("Enables auto-caching of all MetaSound operators.\n")
+	TEXT("(see MetasoundOperatorCacheSubsystem.h for manual path).\n")
 	TEXT("Default: false"),
 	ECVF_Default);
 
@@ -244,7 +251,6 @@ namespace Metasound
 
 	void FMetasoundGeneratorInitParams::Reset(FMetasoundGeneratorInitParams& InParams)
 	{
-		InParams.Graph.Reset();
 		InParams.Environment = {};
 		InParams.MetaSoundName = {};
 		InParams.AudioOutputNames = {};
@@ -260,6 +266,9 @@ namespace Metasound
 
 	FMetasoundGenerator::FMetasoundGenerator(const FOperatorSettings& InOperatorSettings)
 		: OperatorSettings(InOperatorSettings)
+#if ENABLE_METASOUND_GENERATOR_INSTANCE_COUNTING
+		, InstanceCounter(FModuleManager::GetModuleChecked<FMetasoundGeneratorModule>("MetasoundGenerator").GetOperatorInstanceCounterManager())
+#endif // if ENABLE_METASOUND_GENERATOR_INSTANCE_COUNTING
 		, bIsFinishTriggered(false)
 		, bIsFinished(false)
 		, bPendingGraphTrigger(true)
@@ -269,10 +278,12 @@ namespace Metasound
 		, NumFramesPerExecute(InOperatorSettings.GetNumFramesPerBlock())
 		, NumSamplesPerExecute(0)
 		, OnFinishedTriggerRef(FTriggerWriteRef::CreateNew(InOperatorSettings))
+		, RenderTime(0.0)
 #if ENABLE_METASOUND_GENERATOR_RENDER_TIMING
-		, RenderTimer(MakeUnique<MetasoundGeneratorPrivate::FRenderTimer>(InOperatorSettings, 1. /* AnalysisPeriod */))
+		, bDoRuntimeRenderTiming(true)
+#else
+		, bDoRuntimeRenderTiming(false)
 #endif // if ENABLE_METASOUND_GENERATOR_RENDER_TIMING
-
 	{
 	}
 
@@ -299,6 +310,10 @@ namespace Metasound
 		MetasoundName = InInitParams.MetaSoundName;
 		NumChannels = InInitParams.AudioOutputNames.Num();
 		NumSamplesPerExecute = NumChannels * NumFramesPerExecute;
+
+#if ENABLE_METASOUND_GENERATOR_INSTANCE_COUNTING
+		InstanceCounter.Init(MetasoundName);
+#endif // if ENABLE_METASOUND_GENERATOR_INSTANCE_COUNTING
 
 		// Data channels
 		ParameterQueue = InInitParams.DataChannel;
@@ -420,6 +435,7 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		bIsWaitingForFirstGraph = false;
 		OnSetGraph.Broadcast();
+		bVertexInterfaceHasChanged.store(true);
 	}
 
 	TUniquePtr<IOperator> FMetasoundGenerator::ReleaseGraphOperator()
@@ -441,6 +457,8 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		GraphAnalyzer.Reset();
 		ParameterSetters.Reset();
 		ParameterPackSetters.Reset();
+
+		bVertexInterfaceHasChanged.store(true);
 	}
 
 	void FMetasoundGenerator::QueueParameterPack(TSharedPtr<FMetasoundParameterPackStorage> ParameterPack)
@@ -521,7 +539,9 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	int32 FMetasoundGenerator::OnGenerateAudio(float* OutAudio, int32 NumSamplesRemaining)
 	{
+		METASOUND_LLM_SCOPE;
 		METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*FString::Printf(TEXT("MetasoundGenerator::OnGenerateAudio %s"), *MetasoundName));
+		CSV_SCOPED_TIMING_STAT(Audio_Metasound, OnGenerateAudio);
 
 		// Defer finishing the metasound generator one block
 		if (bIsFinishTriggered)
@@ -536,10 +556,13 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		UpdateGraphIfPending();
 
+		HandleRenderTimingEnableDisable();
+
 		// Output silent audio if we're still building a graph
 		if (bIsWaitingForFirstGraph)
 		{
 			METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*FString::Printf(TEXT("MetasoundGenerator::OnGenerateAudio::MissedRenderDeadline %s"), *MetasoundName));
+			CSV_CUSTOM_STAT(Audio_Metasound, WaitingForGraphBuildOnPlaybackCount, 1, ECsvCustomStatOp::Accumulate);
 			FMemory::Memset(OutAudio, 0, sizeof(float)* NumSamplesRemaining);
 			return NumSamplesRemaining;
 		}
@@ -569,63 +592,81 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		if (NumSamplesWritten > 0)
 		{
 			NumSamplesRemaining -= NumSamplesWritten;
-			OverflowBuffer.RemoveAtSwap(0 /* Index */, NumSamplesWritten /* Count */, false /* bAllowShrinking */);
+			OverflowBuffer.RemoveAtSwap(0 /* Index */, NumSamplesWritten /* Count */, EAllowShrinking::No);
 		}
 
 		while (NumSamplesRemaining > 0)
 		{
-			ApplyPendingUpdatesToInputs();
-
+			// Create a scoped timed section for the bulk of the processing...
 			{
-#if ENABLE_METASOUND_GENERATOR_RENDER_TIMING
-				// Time how long the root executer takes.
-				MetasoundGeneratorPrivate::FBlockRenderScope BlockRenderScope(*RenderTimer);
-#endif // if ENABLE_METASOUND_GENERATOR_RENDER_TIMING
+				MetasoundGeneratorPrivate::FBlockRenderScope RuntimelBlockRenderScope(RenderTimer.Get());
+
+				ApplyPendingUpdatesToInputs();
 
 				// Call metasound graph operator.
 				RootExecuter.Execute();
+				
+				// Check if generated finished during this execute call
+				if (*OnFinishedTriggerRef)
+				{
+					FinishSample = ((*OnFinishedTriggerRef)[0] * NumChannels);
+				}
+
+				// Interleave audio because ISoundGenerator interface expects interleaved audio.
+				InterleaveGeneratedAudio();
+
+
+				// Add audio generated during graph execution to the output buffer.
+				int32 ThisLoopNumSamplesWritten = FillWithBuffer(InterleavedAudioBuffer, &OutAudio[NumSamplesWritten], NumSamplesRemaining);
+
+				NumSamplesRemaining -= ThisLoopNumSamplesWritten;
+				NumSamplesWritten += ThisLoopNumSamplesWritten;
+
+				// If not all the samples were written, then we have to save the 
+				// additional samples to the overflow buffer.
+				if (ThisLoopNumSamplesWritten < InterleavedAudioBuffer.Num())
+				{
+					int32 OverflowCount = InterleavedAudioBuffer.Num() - ThisLoopNumSamplesWritten;
+
+					OverflowBuffer.Reset();
+					OverflowBuffer.AddUninitialized(OverflowCount);
+
+					FMemory::Memcpy(OverflowBuffer.GetData(), &InterleavedAudioBuffer.GetData()[ThisLoopNumSamplesWritten], OverflowCount * sizeof(float));
+				}
+
+				// Execute the output analyzers
+				for (const TUniquePtr<Frontend::IVertexAnalyzer>& Analyzer : OutputAnalyzers)
+				{
+					Analyzer->Execute();
+				}
 			}
+
+			// Don't time the graph analyzer. It is only used for graph visualization.
 
 			if (GraphAnalyzer.IsValid())
 			{
 				GraphAnalyzer->Execute();
 			}
 
-			// Execute the output analyzers
-			for (const TUniquePtr<Frontend::IVertexAnalyzer>& Analyzer : OutputAnalyzers)
+			// Create a scoped timed section for the post processing...
 			{
-				Analyzer->Execute();
+				MetasoundGeneratorPrivate::FBlockRenderScope RuntimelBlockRenderScope(RenderTimer.Get());
+				RootExecuter.PostExecute();
 			}
 
-			// Check if generated finished during this execute call
-			if (*OnFinishedTriggerRef)
+			// Update timer if there is one...
+			if (RenderTimer)
 			{
-				FinishSample = ((*OnFinishedTriggerRef)[0] * NumChannels);
+				RenderTime = RenderTimer->UpdateCPUCoreUtilization();
 			}
+		}
 
-			// Interleave audio because ISoundGenerator interface expects interleaved audio.
-			InterleaveGeneratedAudio();
-
-
-			// Add audio generated during graph execution to the output buffer.
-			int32 ThisLoopNumSamplesWritten = FillWithBuffer(InterleavedAudioBuffer, &OutAudio[NumSamplesWritten], NumSamplesRemaining);
-
-			NumSamplesRemaining -= ThisLoopNumSamplesWritten;
-			NumSamplesWritten += ThisLoopNumSamplesWritten;
-
-			// If not all the samples were written, then we have to save the 
-			// additional samples to the overflow buffer.
-			if (ThisLoopNumSamplesWritten < InterleavedAudioBuffer.Num())
+		// If the vertex interface changed, notify listeners
+		{
+			if (bVertexInterfaceHasChanged.exchange(false))
 			{
-				int32 OverflowCount = InterleavedAudioBuffer.Num() - ThisLoopNumSamplesWritten;
-
-				OverflowBuffer.Reset();
-				OverflowBuffer.AddUninitialized(OverflowCount);
-
-				FMemory::Memcpy(OverflowBuffer.GetData(), &InterleavedAudioBuffer.GetData()[ThisLoopNumSamplesWritten], OverflowCount * sizeof(float));
+				OnVertexInterfaceDataUpdated.Broadcast(VertexInterfaceData);
 			}
-
-			RootExecuter.PostExecute();
 		}
 
 		return NumSamplesWritten;
@@ -641,12 +682,10 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		return bIsFinished;
 	}
 
-#if ENABLE_METASOUND_GENERATOR_RENDER_TIMING
 	double FMetasoundGenerator::GetCPUCoreUtilization() const
 	{
-		return RenderTimer->GetCPUCoreUtilization();
+		return RenderTime;
 	}
-#endif // if ENABLE_METASOUND_GENERATOR_RENDER_TIMING
 
 	int32 FMetasoundGenerator::FillWithBuffer(const Audio::FAlignedFloatBuffer& InBuffer, float* OutAudio, int32 MaxNumOutputSamples)
 	{
@@ -756,6 +795,19 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		}
 	}
 
+	void FMetasoundGenerator::HandleRenderTimingEnableDisable()
+	{
+		if (bDoRuntimeRenderTiming && !RenderTimer)
+		{
+			RenderTimer = MakeUnique<MetasoundGeneratorPrivate::FRenderTimer>(OperatorSettings, 1. /* AnalysisPeriod */);
+		}
+		else if (!bDoRuntimeRenderTiming && RenderTimer)
+		{
+			RenderTimer = nullptr;
+			RenderTime = 0.0;
+		}
+	}
+
 	FMetasoundConstGraphGenerator::FMetasoundConstGraphGenerator(FMetasoundGeneratorInitParams&& InInitParams)
 	: FMetasoundGenerator(InInitParams.OperatorSettings)
 	{
@@ -767,23 +819,26 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 	}
 
+	static FThreadSafeCounter NumActiveConstGraphs;
 	void FMetasoundConstGraphGenerator::Init(FMetasoundGeneratorInitParams&& InParams)
 	{
+		NumActiveConstGraphs.Increment();
+		CSV_CUSTOM_STAT(Audio_Metasound, NumActiveConstGraphs, NumActiveConstGraphs.GetValue(), ECsvCustomStatOp::Set);
+
 		InitBase(InParams);
 		// attempt to use operator cache instead of building a new operator.
 		bool bDidUseCachedOperator = false;
-		const bool bIsOperatorCacheEnabled = ConsoleVariables::bEnableExperimentalOneShotOperatorCache || ConsoleVariables::bEnableExperimentalOperatorCache;
+		const bool bIsOperatorPoolEnabled = ConsoleVariables::bEnableExperimentalAutoCachingForOneShotOperators || ConsoleVariables::bEnableExperimentalAutoCachingForAllOperators;
 		// Dynamic operators cannot use the operator cache because they can change their internal structure. 
 		// The operator cache assumes that the operator is unchanged from it's original structure. 
-		if (bIsOperatorCacheEnabled)
+		if (bIsOperatorPoolEnabled)
 		{
-			bUseOperatorCache = ConsoleVariables::bEnableExperimentalOperatorCache || MetasoundGeneratorPrivate::HasOneShotInterface(InParams.Graph->GetVertexInterface());
-
-			if (bUseOperatorCache)
-			{
-				bDidUseCachedOperator = TryUseCachedOperator(InParams, true /* bTriggerGenerator */);
-			}
+			bUseOperatorPool = ConsoleVariables::bEnableExperimentalAutoCachingForAllOperators || MetasoundGeneratorPrivate::HasOneShotInterface(InParams.Graph->GetVertexInterface());
 		}
+
+		// check the cache for manually pre-cached operators
+		// even if the cvars disable automatic cache population.
+		bDidUseCachedOperator = TryUseCachedOperator(InParams, true /* bTriggerGenerator */);
 
 		if (!bDidUseCachedOperator)
 		{
@@ -793,13 +848,16 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	FMetasoundConstGraphGenerator::~FMetasoundConstGraphGenerator()
 	{
+		NumActiveConstGraphs.Decrement();
+		CSV_CUSTOM_STAT(Audio_Metasound, NumActiveConstGraphs, NumActiveConstGraphs.GetValue(), ECsvCustomStatOp::Set);
+
 		if (BuilderTask.IsValid())
 		{
 			BuilderTask->EnsureCompletion();
 			BuilderTask = nullptr;
 		}
 
-		if (bUseOperatorCache)
+		if (bUseOperatorPool)
 		{
 			ReleaseOperatorToCache();
 		}
@@ -811,23 +869,25 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE(FMetasoundConstGraphGenerator::TryUseCachedOperator);
 
 		FMetasoundGeneratorModule& Module = FModuleManager::GetModuleChecked<FMetasoundGeneratorModule>("MetasoundGenerator");
-		TSharedPtr<FOperatorCache> OperatorCache = Module.GetOperatorCache();
-		if (OperatorCache.IsValid())
+		TSharedPtr<FOperatorPool> OperatorPool = Module.GetOperatorPool();
+		if (OperatorPool.IsValid())
 		{
 			// See if the cache has an operator with matching OperatorID
 			OperatorID = InInitParams.Graph->GetInstanceID();
-			FOperatorAndInputs GraphOperatorAndInputs = OperatorCache->ClaimCachedOperator(OperatorID);
+			FOperatorAndInputs GraphOperatorAndInputs = OperatorPool->ClaimOperator(OperatorID);
 			if (GraphOperatorAndInputs.Operator.IsValid())
 			{
-				UE_LOG(LogMetasoundGenerator, VeryVerbose, TEXT("Using cached operator %s for MetaSound %s"), *LexToString(OperatorID), *InInitParams.MetaSoundName); 
+				UE_LOG(LogMetasoundGenerator, VeryVerbose, TEXT("Using cached operator %s for MetaSound %s"), *LexToString(OperatorID), *InInitParams.MetaSoundName);
+				bUseOperatorPool = true; // raise this flag to make sure we put the operator back in the pool (regardless of CVAR state)
 
 				// Apply and default inputs to the operator.
-				GeneratorBuilder::ApplyAudioParameters(OperatorSettings, MoveTemp(InInitParams.DefaultParameters), GraphOperatorAndInputs.Inputs);
+				GeneratorBuilder::ResetGraphOperatorInputs(OperatorSettings, MoveTemp(InInitParams.DefaultParameters), GraphOperatorAndInputs.Inputs);
 
 				// Reset operator internal state before playing it.
 				if (IOperator::FResetFunction Reset = GraphOperatorAndInputs.Operator->GetResetFunction())
 				{
-					IOperator::FResetParams ResetParams {OperatorSettings, InInitParams.Environment};
+					EnvironmentPtr = MakeUnique<FMetasoundEnvironment>(InInitParams.Environment);
+					IOperator::FResetParams ResetParams {OperatorSettings, *EnvironmentPtr};
 					Reset(GraphOperatorAndInputs.Operator.Get(), ResetParams);
 				}
 				
@@ -851,17 +911,27 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		if (OperatorID.IsValid())
 		{
 			FMetasoundGeneratorModule& Module = FModuleManager::GetModuleChecked<FMetasoundGeneratorModule>("MetasoundGenerator");
-			TSharedPtr<FOperatorCache> OperatorCache = Module.GetOperatorCache();
-			if (OperatorCache.IsValid())
-			{
-				TUniquePtr<IOperator> GraphOperator = ReleaseGraphOperator();
+			TSharedPtr<FOperatorPool> OperatorPool = Module.GetOperatorPool();
+			TUniquePtr<IOperator> GraphOperator = ReleaseGraphOperator();
 
-				if (GraphOperator.IsValid())
+			if (OperatorPool.IsValid() && GraphOperator.IsValid())
+			{
+				// Release graph operator and input data to the cache
+				UE_LOG(LogMetasoundGenerator, VeryVerbose, TEXT("Caching operator %s"), *LexToString(OperatorID));
+
+				// give the operator a chance to reduce its memory footprint before being cached
+				// in the future this should be a conanical phase of an operator's lifecycle (i.e. Reset, Execute, Hybernate)
+				if (EnvironmentPtr.IsValid())
 				{
-					// Release graph operator and input data to the cache
-					UE_LOG(LogMetasoundGenerator, VeryVerbose, TEXT("Caching operator %s"), *LexToString(OperatorID));
-					OperatorCache->AddOperatorToCache(OperatorID, MoveTemp(GraphOperator), ReleaseInputVertexData());
+					if (IOperator::FResetFunction Reset = GraphOperator->GetResetFunction())
+					{
+						IOperator::FResetParams ResetParams {OperatorSettings, *EnvironmentPtr.Get()};
+						Reset(GraphOperator.Get(), ResetParams);
+					}
 				}
+
+				OperatorPool->AddOperator(OperatorID, MoveTemp(GraphOperator), ReleaseInputVertexData());
+
 			}
 		}
 
@@ -894,17 +964,24 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 	}
 
+	static FThreadSafeCounter NumActiveDynamicGraphs;
 	FMetasoundDynamicGraphGenerator::~FMetasoundDynamicGraphGenerator()
 	{
+		NumActiveDynamicGraphs.Decrement();
+		CSV_CUSTOM_STAT(Audio_Metasound, NumActiveDynamicGraphs, NumActiveDynamicGraphs.GetValue(), ECsvCustomStatOp::Set);
+
 		if (BuilderTask.IsValid())
 		{
 			BuilderTask->EnsureCompletion();
 			BuilderTask = nullptr;
 		}
 	}
-
+	
 	void FMetasoundDynamicGraphGenerator::Init(FMetasoundDynamicGraphGeneratorInitParams&& InParams)
 	{
+		NumActiveDynamicGraphs.Increment();
+		CSV_CUSTOM_STAT(Audio_Metasound, NumActiveDynamicGraphs, NumActiveDynamicGraphs.GetValue(), ECsvCustomStatOp::Set);
+
 		InitBase(InParams);
 		AudioOutputNames = InParams.AudioOutputNames;
 		BuildGraph(MoveTemp(InParams));
@@ -935,6 +1012,8 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		// Update vertex data and set parameters. 
 		VertexInterfaceData.GetInputs() = InGraphInputs;
 		GeneratorBuilder::AddParameterSetterIfWritable(InVertexName, VertexInterfaceData.GetInputs(), ParameterSetters, ParameterPackSetters);
+
+		bVertexInterfaceHasChanged.store(true);
 	}
 
 	void FMetasoundDynamicGraphGenerator::OnInputRemoved(const FVertexName& InVertexName, const FInputVertexInterfaceData& InGraphInputs)
@@ -942,6 +1021,7 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		VertexInterfaceData.GetInputs() = InGraphInputs;
 		ParameterSetters.Remove(InVertexName);
 		ParameterPackSetters.Remove(InVertexName);
+		bVertexInterfaceHasChanged.store(true);
 	}
 
 	void FMetasoundDynamicGraphGenerator::OnOutputAdded(const FVertexName& InVertexName, const FOutputVertexInterfaceData& InGraphOutputs)
@@ -953,6 +1033,7 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		{
 			OnFinishedTriggerRef = InGraphOutputs.GetDataReadReference<FTrigger>(InVertexName);
 		}
+		bVertexInterfaceHasChanged.store(true);
 	}
 
 	void FMetasoundDynamicGraphGenerator::OnOutputUpdated(const FVertexName& InVertexName, const FOutputVertexInterfaceData& InGraphOutputs)
@@ -970,6 +1051,8 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		{
 			OnFinishedTriggerRef = InGraphOutputs.GetDataReadReference<FTrigger>(InVertexName);
 		}
+		
+		bVertexInterfaceHasChanged.store(true);
 	}
 
 	void FMetasoundDynamicGraphGenerator::OnOutputRemoved(const FVertexName& InVertexName, const FOutputVertexInterfaceData& InGraphOutputs)
@@ -977,6 +1060,7 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		MetasoundGeneratorPrivate::LogErrorIfIsAudioVertex(InVertexName, TEXT("The MetaSound Generator cannot dynamically remove audio outputs"));
 
 		VertexInterfaceData.GetOutputs() = InGraphOutputs;
+		bVertexInterfaceHasChanged.store(true);
 	}
 
 	TUniquePtr<IOperator> FMetasoundDynamicGraphGenerator::ReleaseGraphOperator()

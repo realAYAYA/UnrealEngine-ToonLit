@@ -264,8 +264,6 @@ void FNiagaraPrecompileData::FinishPrecompile(
 			Builder.BuildParameterMaps(FoundOutputNode, true);
 			Builder.EndUsage();
 
-			ensure(Builder.Histories.Num() <= 1);
-
 			int HistoryIdx = 0;
 			for (FParameterMapHistory& History : Builder.Histories)
 			{
@@ -427,6 +425,15 @@ void FNiagaraPrecompileData::FinishPrecompile(
 		}
 	}
 
+	{
+		auto VariableLess = [](const FNiagaraVariableBase& Lhs, const FNiagaraVariableBase& Rhs) -> bool
+		{
+			return Lhs.GetName().LexicalLess(Rhs.GetName());
+		};
+
+		StaticVariables.StableSort(VariableLess);
+	}
+
 	if (NumSimStageNodes)
 	{
 		CompileSimStageData.Reserve(NumSimStageNodes);
@@ -479,12 +486,6 @@ void FNiagaraPrecompileData::CollectBakedRapidIterationParameters(const FNiagara
 	}
 }
 
-
-const TMap<FName, UNiagaraDataInterface*>& FNiagaraCompilationCopyData::GetObjectNameMap()
-{
-	return InstantiatedGraph->CachedDataInterfaceInstanceDuplicates;
-}
-
 UNiagaraDataInterface* FNiagaraCompilationCopyData::GetDuplicatedDataInterfaceCDOForClass(UClass* Class) const
 {
 	if (UNiagaraDataInterface* ClassDefault = AggregatedDataInterfaceCDODuplicates.FindRef(Class))
@@ -498,17 +499,17 @@ UNiagaraDataInterface* FNiagaraCompilationCopyData::GetDuplicatedDataInterfaceCD
 	return nullptr;
 }
 
-void FNiagaraCompilationCopyData::InstantiateCompilationCopy(const FNiagaraCompilationGraph& SourceGraph, const FNiagaraPrecompileData* PrecompileData, ENiagaraScriptUsage InUsage, FNiagaraFixedConstantResolver ConstantResolver)
+void FNiagaraCompilationCopyData::InstantiateCompilationCopy(const FNiagaraCompilationGraphDigested& SourceGraph, const FNiagaraPrecompileData* PrecompileData, ENiagaraScriptUsage InUsage, const FNiagaraFixedConstantResolver& ConstantResolver)
 {
 	InstantiatedGraph = SourceGraph.Instantiate(PrecompileData, this, ValidUsages, ConstantResolver);
 
 	if (InstantiatedGraph)
 	{
-		AggregatedDataInterfaceCDODuplicates.Append(InstantiatedGraph->CachedDataInterfaceCDODuplicates);
+		SourceGraph.CollectReferencedDataInterfaceCDO(AggregatedDataInterfaceCDODuplicates);
 	}
 }
 
-void FNiagaraCompilationCopyData::CreateParameterMapHistory(const FNiagaraSystemCompilationTask& CompilationTask, const TArray<FNiagaraVariable>& EncounterableVariables, const TArray<FNiagaraVariable>& InStaticVariables, FNiagaraFixedConstantResolver ConstantResolver, TConstArrayView<FNiagaraSimulationStageInfo> SimStages)
+void FNiagaraCompilationCopyData::CreateParameterMapHistory(const FNiagaraSystemCompilationTask& CompilationTask, const TArray<FNiagaraVariable>& EncounterableVariables, const TArray<FNiagaraVariable>& InStaticVariables, const FNiagaraFixedConstantResolver& ConstantResolver, TConstArrayView<FNiagaraSimulationStageInfo> SimStages)
 {
 	FNiagaraEditorModule& NiagaraEditorModule = FModuleManager::GetModuleChecked<FNiagaraEditorModule>("NiagaraEditor");
 	PrecompiledHistories.Empty();
@@ -558,8 +559,6 @@ void FNiagaraCompilationCopyData::CreateParameterMapHistory(const FNiagaraSystem
 			Builder.EnableScriptAllowList(true, FoundOutputNode->Usage);
 			Builder.BuildParameterMaps(FoundOutputNode, true);
 			Builder.EndUsage();
-
-			ensure(Builder.Histories.Num() <= 1);
 
 			for (FParameterMapHistory& History : Builder.Histories)
 			{

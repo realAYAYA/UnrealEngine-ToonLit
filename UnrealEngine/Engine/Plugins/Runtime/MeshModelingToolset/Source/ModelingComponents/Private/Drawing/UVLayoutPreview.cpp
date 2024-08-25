@@ -100,7 +100,6 @@ void UUVLayoutPreview::SetVisible(bool bVisible)
 {
 	PreviewMesh->SetVisible(bVisible);
 	MeshElementsVisualizer->Settings->bVisible = bVisible;
-	MeshElementsVisualizer->Settings->SilentUpdateWatched();
 }
 
 

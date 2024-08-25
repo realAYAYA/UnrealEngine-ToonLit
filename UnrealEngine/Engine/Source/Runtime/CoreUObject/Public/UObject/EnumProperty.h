@@ -64,6 +64,7 @@ public:
 	// FProperty interface
 	COREUOBJECT_API virtual FString GetCPPMacroType( FString& ExtendedTypeText ) const  override;
 	COREUOBJECT_API virtual FString GetCPPType( FString* ExtendedTypeText, uint32 CPPExportFlags ) const override;
+	UE_DEPRECATED(5.4, "UnrealHeaderTool only API.  No replacement available.")
 	COREUOBJECT_API virtual FString GetCPPTypeForwardDeclaration() const override;
 	COREUOBJECT_API virtual void LinkInternal(FArchive& Ar) override;
 	COREUOBJECT_API virtual bool Identical( const void* A, const void* B, uint32 PortFlags ) const override;
@@ -77,6 +78,9 @@ public:
 #if WITH_EDITORONLY_DATA
 	COREUOBJECT_API virtual void AppendSchemaHash(FBlake3& Builder, bool bSkipEditorOnly) const override;
 #endif
+	COREUOBJECT_API virtual bool LoadTypeName(UE::FPropertyTypeName Type, const FPropertyTag* Tag = nullptr) override;
+	COREUOBJECT_API virtual void SaveTypeName(UE::FPropertyTypeNameBuilder& Type) const override;
+	COREUOBJECT_API virtual bool CanSerializeFromTypeName(UE::FPropertyTypeName Type) const override;
 	// End of FProperty interface
 
 	/**

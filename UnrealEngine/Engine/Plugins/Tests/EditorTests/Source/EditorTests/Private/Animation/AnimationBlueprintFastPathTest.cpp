@@ -44,8 +44,6 @@ DEFINE_LATENT_AUTOMATION_COMMAND_ONE_PARAMETER(FCheckFastPathLatentCommand, FChe
 
 bool FCheckFastPathLatentCommand::Update()
 {
-	bool bIsStructTest = Payload.Filename.Contains(TEXT("SubStruct"));
-
 	UAnimBlueprint* AnimBlueprint = LoadObject<UAnimBlueprint>(nullptr, *Payload.Filename);
 	if (AnimBlueprint != nullptr)
 	{
@@ -62,29 +60,34 @@ bool FCheckFastPathLatentCommand::Update()
 						FAnimNode_Base* AnimNode = Property->ContainerPtrToValuePtr<FAnimNode_Base>(DefaultAnimInstance);
 						if (AnimNode)
 						{
-							if (Payload.bCheckEnabled)
+							if (AnimNode->GetEvaluateGraphExposedInputs().GetHandlerStruct() == FAnimNodeExposedValueHandler_PropertyAccess::StaticStruct())
 							{
-								if (AnimNode->GetEvaluateGraphExposedInputs().BoundFunction != NAME_None)
+								const FAnimNodeExposedValueHandler_PropertyAccess* Handler = static_cast<const FAnimNodeExposedValueHandler_PropertyAccess*>(AnimNode->GetEvaluateGraphExposedInputs().GetHandler());
+
+								if (Payload.bCheckEnabled)
 								{
-									UE_LOG(LogAnimBlueprintFastPathTests, Error, TEXT("Found blueprint VM call (%s) in fast-path Anim Blueprint (%s)"), *AnimNode->GetEvaluateGraphExposedInputs().BoundFunction.ToString(), *AnimBlueprint->GetName());
-								}
-								for (const FExposedValueCopyRecord& CopyRecord : AnimNode->GetEvaluateGraphExposedInputs().CopyRecords)
-								{
-									if (CopyRecord.CopyIndex == INDEX_NONE)
+									if (Handler->BoundFunction != NAME_None)
 									{
-										UE_LOG(LogAnimBlueprintFastPathTests, Error, TEXT("Anim blueprint has an invalid copy index (%s)"), *AnimBlueprint->GetName());
+										UE_LOG(LogAnimBlueprintFastPathTests, Error, TEXT("Found blueprint VM call (%s) in fast-path Anim Blueprint (%s)"), *Handler->BoundFunction.ToString(), *AnimBlueprint->GetName());
+									}
+									for (const FExposedValueCopyRecord& CopyRecord : Handler->CopyRecords)
+									{
+										if (CopyRecord.CopyIndex == INDEX_NONE)
+										{
+											UE_LOG(LogAnimBlueprintFastPathTests, Error, TEXT("Anim blueprint has an invalid copy index (%s)"), *AnimBlueprint->GetName());
+										}
 									}
 								}
-							}
-							else
-							{
-								if (AnimNode->GetEvaluateGraphExposedInputs().BoundFunction == NAME_None)
+								else
 								{
-									UE_LOG(LogAnimBlueprintFastPathTests, Error, TEXT("No function bound for node evaluation (%s)"), *AnimBlueprint->GetName());
-								}
-								if (AnimNode->GetEvaluateGraphExposedInputs().CopyRecords.Num() > 0)
-								{
-									UE_LOG(LogAnimBlueprintFastPathTests, Error, TEXT("Found copy records in non-fast-path node evaluator (%s)"), *AnimBlueprint->GetName());
+									if (Handler->BoundFunction == NAME_None)
+									{
+										UE_LOG(LogAnimBlueprintFastPathTests, Error, TEXT("No function bound for node evaluation (%s)"), *AnimBlueprint->GetName());
+									}
+									if (Handler->CopyRecords.Num() > 0)
+									{
+										UE_LOG(LogAnimBlueprintFastPathTests, Error, TEXT("Found copy records in non-fast-path node evaluator (%s)"), *AnimBlueprint->GetName());
+									}
 								}
 							}
 						}

@@ -4237,6 +4237,12 @@ void Compiler::ActiveBuiltinHandler::handle_builtin(const SPIRType &type, BuiltI
 	{
 		if (decoration_flags.get(DecorationInvariant))
 			compiler.position_invariant = true;
+		// UE Change Begin: Allow precise semantic outputs  
+		// When the output semantic is mark as precise add it in the list for post declaration.
+		// Ex; out precise float4 gl_position, will be post declare as precise gl_position;
+		if (decoration_flags.get(DecorationNoContraction))
+			compiler.precise_outputs.push_back(builtin);
+		// UE Change End: Allow precise semantic outputs  
 	}
 }
 
@@ -4754,6 +4760,13 @@ const SmallVector<std::string> &Compiler::get_declared_extensions() const
 {
 	return ir.declared_extensions;
 }
+
+// UE Change Begin: Allow precise semantic outputs  
+const SmallVector<spv::BuiltIn>& Compiler::get_precise_outputs() const
+{
+	return precise_outputs;
+}
+// UE Change End: Allow precise semantic outputs  
 
 std::string Compiler::get_remapped_declared_block_name(VariableID id) const
 {

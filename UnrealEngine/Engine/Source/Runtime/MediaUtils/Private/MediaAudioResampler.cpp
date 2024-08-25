@@ -2,7 +2,7 @@
 
 #include "MediaAudioResampler.h"
 #include "MediaUtilsPrivate.h"
-
+#include "DSP/FloatArrayMath.h"
 #include "Algo/Reverse.h"
 #include "IMediaAudioSample.h"
 
@@ -547,12 +547,10 @@ bool FMediaAudioResampler::SetInput(const TSharedPtr<IMediaAudioSample, ESPMode:
 			break;
 
 		case EMediaAudioSampleFormat::Int16:
-			while (FloatData < FloatDataEnd)
-			{
-				*FloatData++ = (float)(*(const int16*)Buffer / 32768.0f);
-				Buffer += sizeof(int16);
-			}
+		{
+			Audio::ArrayPcm16ToFloat(MakeArrayView((const int16*)Buffer, NumSamples), MakeArrayView(FloatData, NumSamples));
 			break;
+		}
 
 		case EMediaAudioSampleFormat::Int32:
 			while (FloatData < FloatDataEnd)

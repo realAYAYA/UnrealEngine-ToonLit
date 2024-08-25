@@ -2,30 +2,42 @@
 
 #pragma once
 
-#include "EngineDefines.h"
-#include "Engine/EngineTypes.h"
-#include "Engine/CollisionProfile.h"
 #include "CollisionShape.h"
-#include "GameplayTagContainer.h"
-#include "Math/Box.h"
-#include "InstancedStruct.h"
-#include "StructView.h"
 #include "Containers/ArrayView.h"
+#include "Engine/ActorInstanceHandle.h"
+#include "Engine/CollisionProfile.h"
+#include "Engine/EngineTypes.h"
+#include "EngineDefines.h"
+#include "GameplayTagContainer.h"
+#include "InstancedStruct.h"
+#include "Math/Box.h"
+#include "StructView.h"
 #include "SmartObjectTypes.generated.h"
 
 class FDebugRenderSceneProxy;
 class UNavigationQueryFilter;
 class USmartObjectSlotValidationFilter;
+class USmartObjectComponent;
+class UWorld;
 
 #define WITH_SMARTOBJECT_DEBUG (!(UE_BUILD_SHIPPING || UE_BUILD_SHIPPING_WITH_EDITOR || UE_BUILD_TEST) && 1)
 
 SMARTOBJECTSMODULE_API DECLARE_LOG_CATEGORY_EXTERN(LogSmartObject, Warning, All);
 
-namespace UE::SmartObjects
+/** Delegate called when Smart Object or Slot is changed. */
+DECLARE_MULTICAST_DELEGATE_OneParam(FOnSmartObjectEvent, const FSmartObjectEventData& /*Event*/);
+
+
+namespace UE::SmartObject
 {
 #if WITH_EDITORONLY_DATA
 	inline const FName WithSmartObjectTag = FName("WithSmartObject");
 #endif // WITH_EDITORONLY_DATA
+}
+
+namespace UE::SmartObject::EnabledReason
+{
+SMARTOBJECTSMODULE_API extern FGameplayTag Gameplay;
 }
 
 /** Indicates how Tags from slots and parent object are combined to be evaluated by a TagQuery from a find request. */
@@ -62,6 +74,22 @@ enum class ESmartObjectSlotNavigationLocationType : uint8
 	
 	/** Find a location to exit the slot. */
 	Exit,
+};
+
+/** Enum indicating the claim priority of a Smart Object slot. */
+UENUM(BlueprintType)
+enum class ESmartObjectClaimPriority : uint8
+{
+	None UMETA(Hidden),
+
+	Low,
+	BelowNormal,
+	Normal,
+	AboveNormal,
+	High,
+
+	MIN = None UMETA(Hidden),
+	MAX = High UMETA(Hidden)
 };
 
 /**
@@ -222,11 +250,13 @@ protected:
  * This is the base struct to inherit from to store custom definition data within the main slot definition
  */
 USTRUCT(meta=(Hidden))
-struct SMARTOBJECTSMODULE_API FSmartObjectSlotDefinitionData
+struct SMARTOBJECTSMODULE_API FSmartObjectDefinitionData
 {
 	GENERATED_BODY()
-	virtual ~FSmartObjectSlotDefinitionData() {}
+	virtual ~FSmartObjectDefinitionData() {}
 };
+
+using FSmartObjectSlotDefinitionData UE_DEPRECATED(5.4, "Deprecated struct. Please use FSmartObjectDefinitionData instead.") = FSmartObjectDefinitionData;
 
 /**
  * This is the base struct to inherit from to store custom state data associated to a slot
@@ -256,13 +286,17 @@ class SMARTOBJECTSMODULE_API USmartObjectSpacePartition : public UObject
 
 public:
 	virtual void SetBounds(const FBox& Bounds) {}
-	virtual FInstancedStruct Add(const FSmartObjectHandle Handle, const FBox& Bounds) { return FInstancedStruct(); }
+	
+	virtual void Add(const FSmartObjectHandle Handle, const FBox& Bounds, FInstancedStruct& OutHandle) {}
 	virtual void Remove(const FSmartObjectHandle Handle, FStructView EntryData) {}
 	virtual void Find(const FBox& QueryBox, TArray<FSmartObjectHandle>& OutResults) {}
 
 #if UE_ENABLE_DEBUG_DRAWING
 	virtual void Draw(FDebugRenderSceneProxy* DebugProxy) {}
 #endif
+
+	UE_DEPRECATED(5.4, "Use version of the Add that takes the instanced struct as parameter.")
+	virtual FInstancedStruct Add(const FSmartObjectHandle Handle, const FBox& Bounds) final { return FInstancedStruct(); }
 };
 
 
@@ -407,11 +441,27 @@ struct SMARTOBJECTSMODULE_API FSmartObjectAnnotationCollider
 };
 
 /** Struct defining Smart Object user capsule size. */
-USTRUCT()
+USTRUCT(BlueprintType)
 struct SMARTOBJECTSMODULE_API FSmartObjectUserCapsuleParams
 {
 	GENERATED_BODY()
 
+	FSmartObjectUserCapsuleParams() = default;
+	FSmartObjectUserCapsuleParams(const float InRadius, const float InHeight, const float InStepHeight)
+		: Radius(InRadius)
+		, Height(InHeight)
+		, StepHeight(InStepHeight)
+	{
+	}
+
+	/** Invalid capsule. */
+	static const FSmartObjectUserCapsuleParams Invalid;
+	
+	bool IsValid() const
+	{
+		return Radius > 0.f && Height > 0.f && StepHeight > 0.f;
+	}
+	
 	/**
 	 * Returns the capsule as an annotation collider at specified world location and rotation.
 	 * The capsule is placed so that Z-axis of the rotation is considered up.
@@ -422,15 +472,15 @@ struct SMARTOBJECTSMODULE_API FSmartObjectUserCapsuleParams
 	FSmartObjectAnnotationCollider GetAsCollider(const FVector& Location, const FQuat& Rotation) const;
 	
 	/** Radius of the capsule */
-	UPROPERTY(EditAnywhere, Category = "Default", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Default", meta = (ClampMin = "0.0"))
 	float Radius = 35.0f;
 
 	/** Full height of the capsule */
-	UPROPERTY(EditAnywhere, Category = "Default", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Default", meta = (ClampMin = "0.0"))
 	float Height = 180.0f;
 
 	/** Step up height. This space is ignored when testing collisions. */
-	UPROPERTY(EditAnywhere, Category = "Default", meta = (ClampMin = "0.0"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Default", meta = (ClampMin = "0.0"))
 	float StepHeight = 50.0f;
 };
 
@@ -454,6 +504,9 @@ public:
 
 	/** @return trace parameters for testing if there are collision transitioning from navigation location to slot location. */
 	const FSmartObjectTraceParams& GetTransitionTraceParameters() const { return TransitionTraceParameters; }
+
+	/** @return reference to user capsule parameters. */
+	const FSmartObjectUserCapsuleParams& GetUserCapsule() const { return UserCapsule; }
 
 	/**
 	 * Selects between specified NavigationCapsule size and capsule size defined in the params based on bUseNavigationCapsuleSize.
@@ -498,8 +551,11 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Default")
 	bool bUseNavigationCapsuleSize = false;
 
-	/** Dimensions of the capsule used for testing if user can fit into a specific location. */
-	UPROPERTY(EditAnywhere, Category = "Default", meta = (EditCondition = "bTestUserOverlapOnEntrance == true && bUseNavigationCapsuleSize == false", EditConditionHides))
+	/**
+	 * Dimensions of the capsule used for testing if user can fit into a specific location.
+	 * If bUseNavigationCapsuleSize is set, the capsule size from the Actor navigation settings is used if the actor is present (otherwise we fallback to the UserCapsule). 
+	 */
+	UPROPERTY(EditAnywhere, Category = "Default")
 	FSmartObjectUserCapsuleParams UserCapsule;
 };
 
@@ -577,11 +633,15 @@ enum class ESmartObjectChangeReason : uint8
 	/** Object was enabled. */
 	OnObjectEnabled,
 	/** Object was disabled. */
-	OnObjectDisabled
+	OnObjectDisabled,
+	/** Related Smart Object Component is bound to simulation. */
+	OnComponentBound,
+	/** Related Smart Object Component is unbound from simulation. */
+	OnComponentUnbound,
 };
 
 /**
- * Strict describing a change in Smart Object or Slot. 
+ * Struct describing a change in Smart Object or Slot. 
  */
 USTRUCT(BlueprintType)
 struct SMARTOBJECTSMODULE_API FSmartObjectEventData
@@ -656,5 +716,32 @@ struct SMARTOBJECTSMODULE_API FSmartObjectActorUserData
 	TWeakObjectPtr<const AActor> UserActor = nullptr;
 };
 
-/** Delegate called when Smart Object or Slot is changed. */
-DECLARE_MULTICAST_DELEGATE_OneParam(FOnSmartObjectEvent, const FSmartObjectEventData& /*Event*/);
+/**
+ * Struct that can be used to pass data related to the owner of a created SmartObject.
+ * It identifies an instanced actor that could be in its lightweight representation or a normal actor.
+ */
+USTRUCT()
+struct SMARTOBJECTSMODULE_API FSmartObjectActorOwnerData
+{
+	GENERATED_BODY()
+
+	FSmartObjectActorOwnerData() = default;
+	explicit FSmartObjectActorOwnerData(AActor* Actor): Handle(Actor)
+	{
+	}
+	explicit FSmartObjectActorOwnerData(const FActorInstanceHandle& Handle) : Handle(Handle)
+	{
+	}
+
+	UPROPERTY()
+	FActorInstanceHandle Handle;
+};
+
+/**
+ * Struct used as a friend to FSmartObjectHandle that is the only caller allowed to create a handle from a uint64.
+ */
+struct FSmartObjectHandleFactory
+{
+	static FSmartObjectHandle CreateHandleForDynamicObject();
+	static FSmartObjectHandle CreateHandleForComponent(const UWorld& World, const USmartObjectComponent& Component);
+};

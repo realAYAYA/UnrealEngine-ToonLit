@@ -169,7 +169,7 @@ namespace AudioModulation
 				CreatePatchForBus();
 			}
 
-			if (AudioBusPatch.IsValid() && !AudioBusPatch->IsInputStale())
+			if (AudioBusPatch.IsValid())
 			{
 				const int32 NumSamples = AudioBusPatch->GetNumSamplesAvailable();
 				const int32 NumFrames = NumSamples / EnvelopeFollower.GetNumChannels();
@@ -212,10 +212,11 @@ namespace AudioModulation
 					FAudioDevice* AudioDevice = DeviceManager->GetAudioDeviceRaw(AudioDeviceId);
 					if (Audio::FMixerDevice* MixerDevice = static_cast<Audio::FMixerDevice*>(AudioDevice))
 					{
-						UAudioBusSubsystem* AudioBusSubsystem = MixerDevice->GetSubsystem<UAudioBusSubsystem>();
-						check(AudioBusSubsystem);
-						AudioBusPatch = AudioBusSubsystem->AddPatchOutputForAudioBus(Audio::FAudioBusKey(BusId), MixerDevice->GetNumOutputFrames(), EnvelopeFollower.GetNumChannels(), Gain);
-						bBusRequiresPatch = false;
+						if (UAudioBusSubsystem* AudioBusSubsystem = MixerDevice->GetSubsystem<UAudioBusSubsystem>())
+						{
+							AudioBusPatch = AudioBusSubsystem->AddPatchOutputForAudioBus(Audio::FAudioBusKey(BusId), MixerDevice->GetNumOutputFrames(), EnvelopeFollower.GetNumChannels(), Gain);
+							bBusRequiresPatch = false;
+						}
 					}
 				}
 			}

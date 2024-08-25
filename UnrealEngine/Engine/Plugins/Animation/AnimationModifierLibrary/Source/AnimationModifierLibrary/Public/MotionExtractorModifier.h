@@ -8,6 +8,7 @@
 enum class EMotionExtractor_Axis : uint8;
 enum class EMotionExtractor_MathOperation : uint8;
 enum class EMotionExtractor_MotionType : uint8;
+enum class EMotionExtractor_Space : uint8;
 
 /** Extracts motion from a bone in the animation and bakes it into a curve */
 UCLASS()
@@ -20,6 +21,10 @@ public:
 	/** Bone we are going to generate the curve from */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Settings)
 	FName BoneName;
+
+	/** Bone which we'll use as the reference frame to generate this curve from. Space must be RelativeToBone to use this. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Settings, meta=(EditCondition="Space == EMotionExtractor_Space::RelativeToBone"))
+	FName RelativeToBoneName;
 
 	/** Type of motion to extract */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Settings)
@@ -39,9 +44,13 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Settings)
 	bool bRelativeToFirstFrame;
 
-	/** Whether to extract the bone pose in component space or local space */
+	/** Reference frame/space to use when extracting the bone pose. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Settings)
-	bool bComponentSpace;
+	EMotionExtractor_Space Space;
+
+	/** Whether to extract the bone pose in component space or local space. */
+	UPROPERTY()
+	bool bComponentSpace_DEPRECATED;
 
 	/** Whether to convert the final value to absolute (positive) */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Settings)
@@ -81,6 +90,8 @@ public:
 
 	/** Returns the desired value from the extracted poses */
 	float GetDesiredValue(const FTransform& BoneTransform, const FTransform& LastBoneTransform, float DeltaTime) const;
+
+	virtual void PostLoad() override;
 };
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2

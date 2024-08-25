@@ -172,12 +172,12 @@ void FRPCDoSAnalyticsData::SendAnalytics()
 
 			if (!CurRPC.WithinMinAnalyticsThreshold())
 			{
-				RPCTrackingAnalytics.RemoveAt(RPCIdx, 1, false);
+				RPCTrackingAnalytics.RemoveAt(RPCIdx, 1, EAllowShrinking::No);
 			}
 			else if (!WithinAnalyticsConfigThresholds(CurRPC))
 			{
 				FilteredRPCs.Add(RPCTrackingAnalytics[RPCIdx]);
-				RPCTrackingAnalytics.RemoveAt(RPCIdx, 1, false);
+				RPCTrackingAnalytics.RemoveAt(RPCIdx, 1, EAllowShrinking::No);
 			}
 		}
 

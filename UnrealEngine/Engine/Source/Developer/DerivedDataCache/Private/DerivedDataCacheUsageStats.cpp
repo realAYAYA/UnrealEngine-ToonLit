@@ -99,6 +99,16 @@ void GatherDerivedDataCacheResourceStats(TArray<FDerivedDataCacheResourceStat>& 
 	{
 		DDCResourceStats.Add(Stat);
 	}
+
+	// Accumulate Totals
+	FDerivedDataCacheResourceStat StatTotal(TEXT("Total"));
+
+	for (const FDerivedDataCacheResourceStat& Stat : DDCResourceStats)
+	{
+		StatTotal += Stat;
+	}
+
+	DDCResourceStats.Emplace(StatTotal);
 #endif
 }
 

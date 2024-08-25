@@ -37,6 +37,7 @@ namespace UnrealBuildTool.Rules
 					"ContentBrowser",
 					"EditorWidgets",
 					"SourceControl",
+					"SequencerCore",
 					"Sequencer",
 					"MovieSceneTools",
 					"MovieScene",

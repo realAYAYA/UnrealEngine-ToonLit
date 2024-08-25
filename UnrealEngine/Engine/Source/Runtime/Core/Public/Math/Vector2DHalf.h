@@ -64,6 +64,12 @@ public:
 	void SetTruncate( const FVector2f& Vector2D );
 	void SetTruncate( const FVector2d& Vector2D );
 
+	FORCEINLINE uint32 AsUInt32()
+	{
+		uint32 PackedData = (X.Encoded & 0xFFFFFFFF) | (Y.Encoded << 16);
+		return PackedData;
+	}
+
 public:
 
 	/**

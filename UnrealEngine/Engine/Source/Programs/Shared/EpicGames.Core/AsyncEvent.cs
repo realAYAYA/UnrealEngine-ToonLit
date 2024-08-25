@@ -13,7 +13,7 @@ namespace EpicGames.Core
 		/// <summary>
 		/// Completion source to wait on
 		/// </summary>
-		TaskCompletionSource<bool> _source = new TaskCompletionSource<bool>();
+		TaskCompletionSource<bool> _source = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
 		/// <summary>
 		/// Legacy name for <see cref="Pulse"/>.
@@ -33,7 +33,7 @@ namespace EpicGames.Core
 					// The task source is latched or has been set from another thread. Either way behaves identically wrt the contract of this method.
 					break;
 				}
-				if (Interlocked.CompareExchange(ref _source, new TaskCompletionSource<bool>(), prevSource) == prevSource)
+				if (Interlocked.CompareExchange(ref _source, new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously), prevSource) == prevSource)
 				{
 					prevSource.TrySetResult(true);
 					break;
@@ -53,7 +53,7 @@ namespace EpicGames.Core
 				{
 					break;
 				}
-				else if (Interlocked.CompareExchange(ref _source, new TaskCompletionSource<bool>(), prevSource) == prevSource)
+				else if (Interlocked.CompareExchange(ref _source, new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously), prevSource) == prevSource)
 				{
 					break;
 				}

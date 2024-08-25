@@ -319,8 +319,8 @@ public:
 	// ~FPolicyParameterInfo
 
 private:
-	/** Prompts user to select a file. */
-	FString OpenSelectFileDialogue();
+	/* Prompts user to select a file. */
+	void OpenSelectFileDialogue();
 	FReply OnChangePathClicked();
 
 private:

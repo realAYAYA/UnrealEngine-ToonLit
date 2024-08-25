@@ -60,6 +60,15 @@ UMovieSceneSequenceTickManager::UMovieSceneSequenceTickManager(const FObjectInit
 	PendingActorOperations = nullptr;
 }
 
+void UMovieSceneSequenceTickManager::AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector)
+{
+	UMovieSceneSequenceTickManager* This = CastChecked<UMovieSceneSequenceTickManager>(InThis);
+	for (FLinkerGroup& Group : This->LinkerGroups)
+	{
+		Collector.AddReferencedObject(Group.Linker);
+	}
+}
+
 UMovieSceneEntitySystemLinker* UMovieSceneSequenceTickManager::GetLinker(const FMovieSceneSequenceTickInterval& TickInterval)
 {
 	const int32 RoundedTickIntervalMs = TickInterval.RoundTickIntervalMs();

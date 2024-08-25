@@ -8,7 +8,7 @@
 #include "ISequencerSection.h"
 #include "SequencerSectionPainter.h"
 #include "Misc/PackageName.h"
-#include "SequencerUtilities.h"
+#include "MVVM/Views/ViewUtilities.h"
 #include "CustomizableSequencerTracksStyle.h"
 
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -238,13 +238,7 @@ TSharedPtr<SWidget> FSequencerTrackBPEditor::BuildOutlinerEditWidget(const FGuid
 			return MenuBuilder.MakeWidget();
 		};
 
-		return SNew(SHorizontalBox)
-			+ SHorizontalBox::Slot()
-			.AutoWidth()
-			.VAlign(VAlign_Center)
-			[
-				FSequencerUtilities::MakeAddButton(LOCTEXT("AddSectionText", "Section"), FOnGetContent::CreateLambda(SubMenuCallback), Params.NodeIsHovered, GetSequencer())
-			];
+		return UE::Sequencer::MakeAddButton(LOCTEXT("AddSectionText", "Section"), FOnGetContent::CreateLambda(SubMenuCallback), Params.ViewModel);
 	}
 
 

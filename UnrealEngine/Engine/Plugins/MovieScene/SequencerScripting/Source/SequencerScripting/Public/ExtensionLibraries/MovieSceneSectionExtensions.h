@@ -9,7 +9,7 @@ class UMovieSceneScriptingChannel;
 class UMovieSceneSequence;
 class UMovieSceneSubSection;
 struct FSequencerScriptingRange;
-
+struct FMovieSceneChannel;
 class UMovieSceneSection;
 
 /**
@@ -225,6 +225,19 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Sequencer|Section", meta = (ScriptMethod, DeterminesOutputType="TrackType", DevelopmentOnly))
 	static TArray<UMovieSceneScriptingChannel*> GetChannelsByType(UMovieSceneSection* Section, TSubclassOf<UMovieSceneScriptingChannel> ChannelType);
 
+
+
+	/**
+	* Get channel from specified section and channel name
+	*
+	* @param Section        The section to use.
+	* @param ChannelName	The name of the channel.
+	* @return The channel if it exists 
+	*/
+	UFUNCTION(BlueprintCallable, Category = "Sequencer|Section", meta = (ScriptMethod, DeterminesOutputType = "TrackType", DevelopmentOnly))
+	static UMovieSceneScriptingChannel* GetChannel(UMovieSceneSection* Section, const FName& ChannelName);
+
+
 	/**
 	 * Get the frame in the space of its parent sequence
 	 *
@@ -235,6 +248,14 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Sequencer|Section", meta = (ScriptMethod))
 	static int32 GetParentSequenceFrame(UMovieSceneSubSection* Section, int32 InFrame, UMovieSceneSequence* ParentSequence);
+
+public:
+	/**
+	* Utility function to get channel from a section and a name
+	*/
+	static SEQUENCERSCRIPTING_API FMovieSceneChannel* GetMovieSceneChannel(UMovieSceneSection* InSection, const FName& InName);
+
+
 };
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2

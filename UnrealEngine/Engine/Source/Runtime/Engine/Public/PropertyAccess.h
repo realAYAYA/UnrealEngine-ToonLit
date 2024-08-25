@@ -77,6 +77,9 @@ namespace PropertyAccess
 
 	UE_DEPRECATED(5.0, "Property Access Events are no longer supported")
 	ENGINE_API extern int32 GetEventId(const UClass* InClass, TArrayView<const FName> InPath);
+
+	/** Gets the property and address of the specified access, minimally-resolving all compiled-in indirections */
+	ENGINE_API extern void GetAccessAddress(UObject* InObject, const FPropertyAccessLibrary& InLibrary, int32 InAccessIndex, TFunctionRef<void(const FProperty*, void*)> InFunction);
 }
 
 // The type of an indirection

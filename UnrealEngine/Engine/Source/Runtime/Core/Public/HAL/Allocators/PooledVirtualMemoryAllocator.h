@@ -84,6 +84,8 @@ struct FPooledVirtualMemoryAllocator
 	/** Update memory stats (does nothing in that implementation) */
 	void UpdateStats() {}
 
+	void DumpAllocatorStats(class FOutputDevice& Ar);
+
 private:
 
 	enum Limits

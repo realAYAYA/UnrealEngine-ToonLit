@@ -15,6 +15,7 @@
 class UTexture;
 struct FPropertyChangedEvent;
 enum EMaterialSamplerType : int;
+enum EShaderPlatform : uint16;
 
 UCLASS(abstract, hidecategories=Object, MinimalAPI)
 class UMaterialExpressionTextureBase : public UMaterialExpression 
@@ -40,7 +41,7 @@ class UMaterialExpressionTextureBase : public UMaterialExpression
 	//~ Begin UMaterialExpression Interface
 #if WITH_EDITOR
 	ENGINE_API virtual FString GetDescription() const override;
-
+	ENGINE_API virtual bool MatchesSearchQuery(const TCHAR* SearchQuery) override;
 	ENGINE_API virtual FText GetPreviewOverlayText() const override;
 #endif
 	//~ End UMaterialExpression Interface
@@ -74,7 +75,7 @@ class UMaterialExpressionTextureBase : public UMaterialExpression
 	 * @param OutErrorMessage - If 'false' is returned, will contain a message describing the error
 	 */
 	static ENGINE_API bool VerifySamplerType(
-		ERHIFeatureLevel::Type FeatureLevel,
+		EShaderPlatform ShaderPlatform,
 		const ITargetPlatform* TargetPlatform,
 		const UTexture* Texture,
 		EMaterialSamplerType SamplerType,

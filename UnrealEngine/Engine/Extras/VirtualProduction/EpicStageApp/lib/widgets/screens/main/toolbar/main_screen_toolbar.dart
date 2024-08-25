@@ -1,10 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+import 'package:epic_common/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 
 import '../../../elements/control_lock.dart';
-import '../../../elements/epic_icon_button.dart';
 import '../../../elements/place_actor_menu.dart';
 import '../../../elements/sensitivity_slider.dart';
 import '../sidebar/outliner_panel.dart';
@@ -75,7 +75,7 @@ class SettingsButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return EpicIconButton(
       tooltipMessage: AppLocalizations.of(context)!.menuSettings,
-      iconPath: 'assets/images/icons/settings.svg',
+      iconPath: 'packages/epic_common/assets/icons/settings.svg',
       onPressed: SettingsDialog.show,
     );
   }

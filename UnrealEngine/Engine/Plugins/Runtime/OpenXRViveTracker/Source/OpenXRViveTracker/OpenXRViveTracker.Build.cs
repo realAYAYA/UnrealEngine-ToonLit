@@ -16,12 +16,6 @@ namespace UnrealBuildTool.Rules
 				}
 			 );
 
-			PrivateIncludePaths.AddRange(
-				new string[] {
-					Path.Combine(GetModuleDirectory("OpenXRHMD"), "Private"), // TODO: Adding private include path from other module
-				}
-			);
-
 			PrivateDependencyModuleNames.AddRange(
 				new string[]
 				{

@@ -158,6 +158,8 @@ private:
 	TSharedPtr<SWidget> StatusBarWidget;
 
 	SVerticalBox::FSlot* ToolbarSlot;
+
+	TObjectPtr<UTypedElementCommonActions> CommonActions;
 };
 
 

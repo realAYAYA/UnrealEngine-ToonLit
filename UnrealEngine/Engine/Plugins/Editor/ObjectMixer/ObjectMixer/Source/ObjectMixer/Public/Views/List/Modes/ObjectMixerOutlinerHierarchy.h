@@ -5,7 +5,7 @@
 #include "ISceneOutlinerHierarchy.h"
 
 class FObjectMixerOutlinerMode;
-class FWorldPartitionActorDesc;
+class FWorldPartitionActorDescInstance;
 class UActorFolder;
 class ULevelInstanceSubsystem;
 class UWorldPartition;
@@ -68,7 +68,7 @@ protected:
 	void OnLoadedActorAdded(AActor& InActor);
 	void OnLoadedActorRemoved(AActor& InActor);
 
-	void OnActorDescRemoved(FWorldPartitionActorDesc* ActorDesc);
+	void OnActorDescInstanceRemoved(FWorldPartitionActorDescInstance* ActorDescInstance);
 	
 	void OnComponentsUpdated();
 

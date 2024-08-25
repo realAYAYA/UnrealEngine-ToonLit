@@ -1,7 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "OpenXRAR.h"
-#include "OpenXRHMD.h"
+#include "IXRTrackingSystem.h"
+#include "IOpenXRHMD.h"
 #include "IOpenXRExtensionPlugin.h"
 #include "MRMeshComponent.h"
 #include "ARLifeCycleComponent.h"
@@ -36,17 +37,14 @@ FOpenXRARSystem::~FOpenXRARSystem()
 	UARLifeCycleComponent::OnSpawnARActorDelegate.Remove(SpawnARActorDelegateHandle);
 }
 
-void FOpenXRARSystem::SetTrackingSystem(TSharedPtr<FXRTrackingSystemBase, ESPMode::ThreadSafe> InTrackingSystem)
+void FOpenXRARSystem::SetTrackingSystem(IXRTrackingSystem& InTrackingSystem)
 {
-	static FName SystemName(TEXT("OpenXR"));
-	if (InTrackingSystem->GetSystemName() == SystemName)
-	{
-		TrackingSystem = static_cast<FOpenXRHMD*>(InTrackingSystem.Get());
-	}
+	TrackingSystem = &InTrackingSystem;
+	check(TrackingSystem);
+	OpenXRHMD = TrackingSystem->GetIOpenXRHMD();
+	check(OpenXRHMD);
 
-	check(TrackingSystem != nullptr);
-
-	for (auto Plugin : TrackingSystem->GetExtensionPlugins())
+	for (auto Plugin : OpenXRHMD->GetExtensionPlugins())
 	{
 		if (CustomAnchorSupport == nullptr)
 		{
@@ -108,7 +106,7 @@ void FOpenXRARSystem::OnStartARSession(UARSessionConfig* InSessionConfig)
 
 	SessionStatus.Status = EARSessionStatus::Running;
 
-	for (auto Plugin : TrackingSystem->GetExtensionPlugins())
+	for (auto Plugin : OpenXRHMD->GetExtensionPlugins())
 	{
 		Plugin->OnStartARSession(InSessionConfig);
 	}
@@ -116,7 +114,7 @@ void FOpenXRARSystem::OnStartARSession(UARSessionConfig* InSessionConfig)
 
 void FOpenXRARSystem::OnStopARSession() 
 {
-	for (auto Plugin : TrackingSystem->GetExtensionPlugins())
+	for (auto Plugin : OpenXRHMD->GetExtensionPlugins())
 	{
 		Plugin->OnStopARSession();
 	}
@@ -131,7 +129,7 @@ void FOpenXRARSystem::OnStopARSession()
 
 void FOpenXRARSystem::OnPauseARSession() 
 {
-	for (auto Plugin : TrackingSystem->GetExtensionPlugins())
+	for (auto Plugin : OpenXRHMD->GetExtensionPlugins())
 	{
 		Plugin->OnPauseARSession();
 	}
@@ -245,15 +243,15 @@ UARPin* FOpenXRARSystem::OnPinComponent(USceneComponent* ComponentToPin, const F
 	{
 		if (CustomAnchorSupport != nullptr)
 		{
-			XrSession Session = TrackingSystem->GetSession();
+			XrSession Session = OpenXRHMD->GetSession();
 			XrTime DisplayTime = 0;
-			if (TrackingSystem->IsFocused())
+			if (OpenXRHMD->IsFocused())
 			{
 				// If the tracking system is not focused we will try to pin with time zero.
 				// The locate should fail, but we will still setup the pin so it will work when the tracking system is working.
-				DisplayTime = TrackingSystem->GetDisplayTime();
+				DisplayTime = OpenXRHMD->GetDisplayTime();
 			}
-			XrSpace TrackingSpace = TrackingSystem->GetTrackingSpace();
+			XrSpace TrackingSpace = OpenXRHMD->GetTrackingSpace();
 			float WorldToMetersScale = TrackingSystem->GetWorldToMetersScale();
 			if (!CustomAnchorSupport->OnPinComponent(NewPin, Session, TrackingSpace, DisplayTime, WorldToMetersScale))
 			{
@@ -292,11 +290,11 @@ void FOpenXRARSystem::UpdateAnchors()
 
 	if (CustomAnchorSupport != nullptr)
 	{
-		if (TrackingSystem->IsFocused())
+		if (OpenXRHMD->IsFocused())
 		{
-			XrSession Session = TrackingSystem->GetSession();
-			XrTime DisplayTime = TrackingSystem->GetDisplayTime();
-			XrSpace TrackingSpace = TrackingSystem->GetTrackingSpace();
+			XrSession Session = OpenXRHMD->GetSession();
+			XrTime DisplayTime = OpenXRHMD->GetDisplayTime();
+			XrSpace TrackingSpace = OpenXRHMD->GetTrackingSpace();
 			float WorldToMetersScale = TrackingSystem->GetWorldToMetersScale();
 			for (UARPin* Pin : Pins)
 			{
@@ -322,7 +320,7 @@ void FOpenXRARSystem::LoadARPins(TMap<FName, UARPin*>& LoadedPins)
 {
 	if (!IsLocalPinSaveSupported()) { return; }
 
-	CustomAnchorSupport->LoadARPins(TrackingSystem->GetSession(),
+	CustomAnchorSupport->LoadARPins(OpenXRHMD->GetSession(),
 		[&, this](FName Name)
 		{
 			check(IsInGameThread());
@@ -349,21 +347,21 @@ bool FOpenXRARSystem::SaveARPin(FName InName, UARPin* InPin)
 {
 	if (!IsLocalPinSaveSupported()) { return false; }
 
-	return CustomAnchorSupport->SaveARPin(TrackingSystem->GetSession(), InName, InPin);
+	return CustomAnchorSupport->SaveARPin(OpenXRHMD->GetSession(), InName, InPin);
 }
 
 void FOpenXRARSystem::RemoveSavedARPin(FName InName)
 {
 	if (!IsLocalPinSaveSupported()) { return; }
 
-	CustomAnchorSupport->RemoveSavedARPin(TrackingSystem->GetSession(), InName);
+	CustomAnchorSupport->RemoveSavedARPin(OpenXRHMD->GetSession(), InName);
 }
 
 void FOpenXRARSystem::RemoveAllSavedARPins()
 {
 	if (!IsLocalPinSaveSupported()) { return; }
 
-	CustomAnchorSupport->RemoveAllSavedARPins(TrackingSystem->GetSession());
+	CustomAnchorSupport->RemoveAllSavedARPins(OpenXRHMD->GetSession());
 }
 
 
@@ -1018,7 +1016,7 @@ IARSystemSupport* OpenXRARModuleImpl::CreateARSystem()
 	return ARSystemPtr;
 }
 
-void OpenXRARModuleImpl::SetTrackingSystem(TSharedPtr<FXRTrackingSystemBase, ESPMode::ThreadSafe> InTrackingSystem)
+void OpenXRARModuleImpl::SetTrackingSystem(IXRTrackingSystem& InTrackingSystem)
 {
 	ARSystem->SetTrackingSystem(InTrackingSystem);
 }

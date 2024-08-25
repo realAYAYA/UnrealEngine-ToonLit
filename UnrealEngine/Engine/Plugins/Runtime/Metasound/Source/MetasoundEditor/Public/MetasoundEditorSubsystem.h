@@ -3,6 +3,7 @@
 
 #include "AssetRegistry/AssetData.h"
 #include "EditorSubsystem.h"
+#include "Framework/MultiBox/MultiBoxExtender.h"
 #include "MetasoundDocumentInterface.h"
 #include "UObject/ScriptInterface.h"
 
@@ -38,7 +39,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Audio|MetaSound|Builder|Editor", meta = (ExpandEnumAsExecs = "OutResult"))
 	void SetNodeLocation(
 		UPARAM(DisplayName = "Builder") UMetaSoundBuilderBase * InBuilder,
-		UPARAM(DisplayName = "Node") const FMetaSoundNodeHandle& InNode,
+		UPARAM(DisplayName = "Node Handle") const FMetaSoundNodeHandle& InNode,
 		UPARAM(DisplayName = "Location") const FVector2D& InLocation,
 		EMetaSoundBuilderResult& OutResult);
 	
@@ -54,13 +55,25 @@ public:
 	// referencing graphs open in editors)
 	void RegisterGraphWithFrontend(UObject& InMetaSound, bool bInForceViewSynchronization = false);
 
+	// Register toolbar extender that will be displayed in the MetaSound Asset Editor.
+	void RegisterToolbarExtender(TSharedRef<FExtender> InExtender);
+
+	// Unregisters toolbar extender that is displayed in the MetaSound Asset Editor.
+	bool UnregisterToolbarExtender(TSharedRef<FExtender> InExtender);
+
 	// Get the default author for a MetaSound asset
 	const FString GetDefaultAuthor();
 
+	// Returns all currently toolbar extenders registered to be displayed within the MetaSound Asset Editor.
+	const TArray<TSharedRef<FExtender>>& GetToolbarExtenders() const;
+
 	static UMetaSoundEditorSubsystem& GetChecked();
-	static const UMetaSoundEditorSubsystem& GetConstChecked(); 
+	static const UMetaSoundEditorSubsystem& GetConstChecked();
 
 private:
-	// Copy over sound wave settings such as attenuation, modulation, and sound class from the template sound wave to the MetaSound 
+	// Copy over sound wave settings such as attenuation, modulation, and sound class from the template sound wave to the MetaSound
 	void SetSoundWaveSettingsFromTemplate(USoundWave& NewMetasound, const USoundWave& TemplateSoundWave) const;
+
+	// Editor Toolbar Extenders
+	TArray<TSharedRef<FExtender>> EditorToolbarExtenders;
 };

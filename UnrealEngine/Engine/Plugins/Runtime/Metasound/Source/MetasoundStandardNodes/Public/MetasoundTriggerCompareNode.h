@@ -92,17 +92,16 @@ namespace Metasound
 			return Metadata;
 		}
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, TArray<TUniquePtr<IOperatorBuildError>>& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
 			using namespace TriggerCompareVertexNames;
+			
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 
-			const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
-			const FInputVertexInterface& InputInterface = GetDefaultInterface().GetInputInterface();
-
-			FTriggerReadRef InOnTriggerCompare = InputCollection.GetDataReadReferenceOrConstruct<FTrigger>(METASOUND_GET_PARAM_NAME(InputCompare), InParams.OperatorSettings);
-			TDataReadReference<ValueType> InValueA = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<ValueType>(InputInterface, METASOUND_GET_PARAM_NAME(InputParamA), InParams.OperatorSettings);
-			TDataReadReference<ValueType> InValueB = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<ValueType>(InputInterface, METASOUND_GET_PARAM_NAME(InputParamB), InParams.OperatorSettings);
-			FEnumTriggerComparisonTypeReadRef InComparison = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<FEnumTriggerComparisonType>(InputInterface, METASOUND_GET_PARAM_NAME(InputCompareType), InParams.OperatorSettings);
+			FTriggerReadRef InOnTriggerCompare = InputData.GetOrConstructDataReadReference<FTrigger>(METASOUND_GET_PARAM_NAME(InputCompare), InParams.OperatorSettings);
+			TDataReadReference<ValueType> InValueA = InputData.GetOrCreateDefaultDataReadReference<ValueType>(METASOUND_GET_PARAM_NAME(InputParamA), InParams.OperatorSettings);
+			TDataReadReference<ValueType> InValueB = InputData.GetOrCreateDefaultDataReadReference<ValueType>(METASOUND_GET_PARAM_NAME(InputParamB), InParams.OperatorSettings);
+			FEnumTriggerComparisonTypeReadRef InComparison = InputData.GetOrCreateDefaultDataReadReference<FEnumTriggerComparisonType>(METASOUND_GET_PARAM_NAME(InputCompareType), InParams.OperatorSettings);
 
 			return MakeUnique<TTriggerCompareNodeOperator<ValueType>>(InParams.OperatorSettings, InOnTriggerCompare, InValueA, InValueB, InComparison);
 

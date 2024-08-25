@@ -33,6 +33,7 @@ protected:
 	{ return true; };
 
 	virtual bool Present(int32& InOutSyncInterval) override;
+	virtual void PostPresent() override;
 	virtual void OnBackBufferResize() override;
 
 protected:

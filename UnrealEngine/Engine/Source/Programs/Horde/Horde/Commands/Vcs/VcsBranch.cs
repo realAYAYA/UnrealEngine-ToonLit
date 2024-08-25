@@ -1,13 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System.Threading.Tasks;
 using EpicGames.Core;
 using EpicGames.Horde.Storage;
 using Microsoft.Extensions.Logging;
 
 namespace Horde.Commands.Vcs
 {
-	[Command("vcs", "branch", "Switch to a new branch")]
+	[Command("vcs", "branch", "Switch to a new branch", Advertise = false)]
 	class VcsBranch : VcsBase
 	{
 		[CommandLine(Prefix = "-Name=", Required = true)]
@@ -24,10 +23,10 @@ namespace Horde.Commands.Vcs
 
 			WorkspaceState workspaceState = await ReadStateAsync(rootDir);
 
-			IStorageClient store = await GetStorageClientAsync();
+			using IStorageClient store = CreateStorageClient();
 
 			RefName branchName = new RefName(Name);
-			if (await store.HasRefAsync(branchName))
+			if (await store.RefExistsAsync(branchName))
 			{
 				logger.LogError("Branch {BranchName} already exists - use checkout instead.", branchName);
 				return 1;

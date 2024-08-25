@@ -8,6 +8,7 @@
 #include "Misc/Guid.h"
 #include "Engine/Engine.h"
 #include "Misc/Paths.h"
+#include "MovieSceneBindingReferences.h"
 #include "LevelSequenceBindingReference.generated.h"
 
 class UWorld;
@@ -33,6 +34,7 @@ struct FLevelSequenceBindingReference
 	/**
 	 * Construct a new binding reference from an object, and a given context (expected to be either a UWorld, or an AActor)
 	 */
+	UE_DEPRECATED(5.4, "This class is now deprecated. Please convert your code to use the more generic FMovieSceneBindingReferences.")
 	LEVELSEQUENCE_API FLevelSequenceBindingReference(UObject* InObject, UObject* InContext);
 
 	/**
@@ -40,6 +42,7 @@ struct FLevelSequenceBindingReference
 	 */
 	struct FResolveBindingParams
 	{
+		UE_DEPRECATED(5.4, "This class is now deprecated. Please convert your code to use the more generic FMovieSceneBindingReferences.")
 		FResolveBindingParams() : WorldPartitionResolveData(nullptr), StreamingWorld(nullptr) {}
 
 		// The path to the streamed level asset that contains the level sequence actor playing back the sequence. 'None' for any non - instance - level setups.
@@ -59,23 +62,18 @@ struct FLevelSequenceBindingReference
 	 * @param	InResolveBindingParams   The struct containing additional resolving params.
 	 * @return	The object (usually an Actor or an ActorComponent).
 	 */
+	UE_DEPRECATED(5.4, "This class is now deprecated. Please convert your code to use the more generic FMovieSceneBindingReferences.")
 	LEVELSEQUENCE_API UObject* Resolve(UObject* InContext, const FResolveBindingParams& InResolveBindingParams) const;
-		
-	UE_DEPRECATED(5.3, "Use Resolve taking FLevelSequenceBindingReference::FResolveBindingParams param instead")
-	UObject* Resolve(UObject* InContext, const FTopLevelAssetPath& StreamedLevelAssetPath) const
-	{
-		return nullptr;
-	}
 	
 	/**
 	 * Check whether this binding reference is equal to the specified object
 	 */
+	UE_DEPRECATED(5.4, "This class is now deprecated. Please convert your code to use the more generic FMovieSceneBindingReferences.")
 	LEVELSEQUENCE_API bool operator==(const FLevelSequenceBindingReference& Other) const;
 
 	/** Handles ExternalObjectPath fixup */
 	void PostSerialize(const FArchive& Ar);
 
-private:
 
 	/** Replaced by ExternalObjectPath */
 	UPROPERTY()
@@ -112,6 +110,24 @@ struct FLevelSequenceBindingReferenceArray
 	TArray<FLevelSequenceBindingReference> References;
 };
 
+USTRUCT()
+struct FUpgradedLevelSequenceBindingReferences : public FMovieSceneBindingReferences
+{
+	GENERATED_BODY()
+
+	void AddBinding(const FGuid& ObjectId, UObject* InObject, UObject* InContext);
+
+	bool SerializeFromMismatchedTag(const FPropertyTag& Tag, FStructuredArchive::FSlot Slot);
+};
+
+template<>
+struct TStructOpsTypeTraits<FUpgradedLevelSequenceBindingReferences> : public TStructOpsTypeTraitsBase2<FUpgradedLevelSequenceBindingReferences>
+{
+	enum
+	{
+		WithStructuredSerializeFromMismatchedTag = true,
+	};
+};
 
 /**
  * Structure that stores a one to many mapping from object binding ID, to object references that pertain to that ID.
@@ -120,94 +136,6 @@ USTRUCT()
 struct FLevelSequenceBindingReferences
 {
 	GENERATED_BODY()
-
-	/**
-	 * Check whether this map has a binding for the specified object id
-	 * @return true if this map contains a binding for the id, false otherwise
-	 */
-	bool HasBinding(const FGuid& ObjectId) const;
-
-	/**
-	 * Remove a binding for the specified ID
-	 *
-	 * @param ObjectId	The ID to remove
-	 */
-	void RemoveBinding(const FGuid& ObjectId);
-
-	/**
-	 * Remove specific object references
-	 *
-	 * @param ObjectId	The ID to remove
-	 * @param InObjects The objects to remove
-	 * @param InContext A context in which InObject resides (either a UWorld, or an AActor)
-	 */
-	void RemoveObjects(const FGuid& ObjectId, const TArray<UObject*>& InObjects, UObject *InContext);
-
-	/**
-	 * Remove specific object references that do not resolve
-	 *
-	 * @param ObjectId	The ID to remove
-	 * @param InContext A context in which InObject resides (either a UWorld, or an AActor)
-	 */
-	void RemoveInvalidObjects(const FGuid& ObjectId, UObject *InContext);
-
-	/**
-	 * Add a binding for the specified ID
-	 *
-	 * @param ObjectId	The ID to associate the object with
-	 * @param InObject	The object to associate
-	 * @param InContext	A context in which InObject resides (either a UWorld, or an AActor)
-	 */
-	void AddBinding(const FGuid& ObjectId, UObject* InObject, UObject* InContext);
-
-	UE_DEPRECATED(5.3, "Use ResolveBinding taking FLevelSequenceBindingReference::FResolveBindingParams param instead.")
-	void ResolveBinding(const FGuid& ObjectId, UObject* InContext, const FTopLevelAssetPath& StreamedLevelAssetPath, TArray<UObject*, TInlineAllocator<1>>& OutObjects) const { }
-		
-	/**
-	 * Resolve a binding for the specified ID using a given context
-	 *
-	 * @param ObjectId					The ID to associate the object with
-	 * @param InContext					A context in which InObject resides
-	 * @oaram InResolveBindingParams    Struct containing additional resolving params
-	 * @param OutObjects				Array to populate with resolved object bindings
-	 */
-	void ResolveBinding(const FGuid& ObjectId, UObject* InContext, const FLevelSequenceBindingReference::FResolveBindingParams& InResolveBindingParams, TArray<UObject*, TInlineAllocator<1>>& OutObjects) const;
-
-
-	/**
-	 * Resolve a binding for the specified ID using a given context
-	 *
-	 * @param ObjectId					The ID to associate the object with
-	 * @param InContext					A context in which InObject resides
-	 * @oaram StreamedLevelAssetPath    The path to the streamed level asset that contains the level sequence actor playing back the sequence. 'None' for any non-instance-level setups.
-	 * @param OutObjects				Array to populate with resolved object bindings
-	 */
-	FGuid FindBindingFromObject(UObject* InObject, UObject* InContext) const;
-
-	/**
-	 * Const accessor for the currently bound anim instance IDs
-	 */
-	const TSet<FGuid>& GetBoundAnimInstances() const
-	{
-		return AnimSequenceInstances;
-	}
-
-	/**
-	 * Const accessor for the currently bound post process instance IDs
-	 */
-	const TSet<FGuid>& GetBoundPostProcessInstances() const
-	{
-		return PostProcessInstances;
-	}
-
-	/**
-	 * Filter out any bindings that do not match the specified set of GUIDs
-	 *
-	 * @param ValidBindingIDs A set of GUIDs that are considered valid. Anything references not matching these will be removed.
-	 */
-	void RemoveInvalidBindings(const TSet<FGuid>& ValidBindingIDs);
-
-private:
 
 	/** The map from object binding ID to an array of references that pertain to that ID */
 	UPROPERTY()
@@ -221,3 +149,5 @@ private:
 	UPROPERTY()
 	TSet<FGuid> PostProcessInstances;
 };
+
+

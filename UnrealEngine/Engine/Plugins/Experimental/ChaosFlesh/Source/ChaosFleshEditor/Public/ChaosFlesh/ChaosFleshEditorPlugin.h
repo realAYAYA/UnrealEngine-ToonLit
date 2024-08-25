@@ -56,7 +56,6 @@ private:
 	TArray<IConsoleObject*> EditorCommands;
 
 	// Asset actions for new asset types
-	FAssetTypeActions_FleshAsset* FleshAssetActions;
 	FAssetTypeActions_ChaosDeformableSolver* ChaosDeformableSolverAssetActions;
 
 	// Styleset for flesh tool brushes/fonts etc.

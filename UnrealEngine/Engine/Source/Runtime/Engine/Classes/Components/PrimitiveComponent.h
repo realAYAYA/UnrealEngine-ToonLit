@@ -15,6 +15,7 @@
 #include "Engine/EngineTypes.h"
 #include "Engine/ScopedMovementUpdate.h"
 #include "Components/SceneComponent.h"
+#include "Components/ActorPrimitiveComponentInterface.h"
 #include "RenderCommandFence.h"
 #include "GameFramework/Actor.h"
 #include "CollisionQueryParams.h"
@@ -30,9 +31,8 @@
 #include "HLOD/HLODLevelExclusion.h"
 #include "Stats/Stats2.h"
 #include "PSOPrecache.h"
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "Engine/OverlapInfo.h"
-#endif
+#include "MeshDrawCommandStatsDefines.h"
+#include "PrimitiveSceneInfoData.h"
 #include "PrimitiveComponent.generated.h"
 
 DECLARE_CYCLE_STAT_EXTERN(TEXT("BeginComponentOverlap"), STAT_BeginComponentOverlap, STATGROUP_Game, ENGINE_API);
@@ -74,26 +74,6 @@ enum ECanBeCharacterBase : int
 	ECB_Owner UMETA(DisplayName="(Owner)"),
 	ECB_MAX,
 };
-
-/** Determines if a primitive component contains custom collision for navigation/AI */
-UENUM()
-namespace EHasCustomNavigableGeometry
-{
-	enum Type : int
-	{
-		/** Primitive doesn't have custom navigation geometry, if collision is enabled then its convex/trimesh collision will be used for generating the navmesh */
-		No,
-
-		/** If primitive would normally affect navmesh, DoCustomNavigableGeometryExport() should be called to export this primitive's navigable geometry */
-		Yes,
-
-		/** DoCustomNavigableGeometryExport() should be called even if the mesh is non-collidable and wouldn't normally affect the navmesh */
-		EvenIfNotCollidable,
-
-		/** Don't export navigable geometry even if primitive is relevant for navigation (can still add modifiers) */
-		DontExport,
-	};
-}
 
 /** Information about the sprite category, used for visualization in the editor */
 USTRUCT()
@@ -435,8 +415,8 @@ public:
 	UPROPERTY(EditAnywhere, AdvancedDisplay, BlueprintReadOnly, Category=Rendering)
 	uint8 bReceivesDecals:1;
 
-	/** If this is True, this primitive will render black with an alpha of 0, but all secondary effects (shadows, reflections, indirect lighting) remain. This feature is currently only implemented in the Path Tracer. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = PathTracing, Interp)
+	/** If this is True, this primitive will render black with an alpha of 0, but all secondary effects (shadows, reflections, indirect lighting) remain. This feature required the project setting "Enable alpha channel support in post processing". */
+	UPROPERTY(EditAnywhere, AdvancedDisplay, BlueprintReadOnly, Category = Rendering, Interp)
 	uint8 bHoldout : 1;
 
 	/** If this is True, this component won't be visible when the view actor is the component's owner, directly or indirectly. */
@@ -673,6 +653,7 @@ protected:
 		ToolTip = "When false, the underlying physics body will contain all sim data (mass, inertia tensor, etc) even if mobility is not set to Moveable"))
 	uint8 bStaticWhenNotMoveable:1;
 
+#if UE_WITH_PSO_PRECACHING
 	/** Helper flag to check if PSOs have been precached already */
 	uint8 bPSOPrecacheCalled : 1;
 
@@ -684,6 +665,7 @@ protected:
 
 	/** Graph event used to track all the PSO precache events */
 	FGraphEventRef PSOPrecacheCompileEvent;
+#endif
 
 	uint8 bIgnoreBoundsForEditorFocus : 1;
 #if WITH_EDITOR
@@ -842,38 +824,10 @@ public:
 	virtual ERuntimeVirtualTextureMainPassType GetVirtualTextureRenderPassType() const { return VirtualTextureRenderPassType; }
 	/** Get the max draw distance to use in the main pass when also rendering to a runtime virtual texture. This is combined with the other max draw distance settings. */
 	virtual float GetVirtualTextureMainPassMaxDrawDistance() const { return 0.f; }
-
-	/** Used by the renderer, to identify a component across re-registers. */
-	FPrimitiveComponentId ComponentId;
-
-	/**
-	* Identifier used to track the time that this component was registered with the world / renderer.
-	* Updated to unique incremental value each time OnRegister() is called. The value of 0 is unused.
-	* */
-	int32 RegistrationSerialNumber = -1;
-
-	/**
-	* Incremented by the main thread before being attached to the scene, decremented
-	* by the rendering thread after removal. This counter exists to assert that 
-	* operations are safe in order to help avoid race conditions.
-	*
-	*           *** Runtime logic should NEVER rely on this value. ***
-	*
-	* The only safe assertions to make are:
-	*
-	*     AttachmentCounter == 0: The primitive is not exposed to the rendering
-	*                             thread, it is safe to modify shared members.
-	*                             This assertion is valid ONLY from the main thread.
-	*
-	*     AttachmentCounter >= 1: The primitive IS exposed to the rendering
-	*                             thread and therefore shared members must not
-	*                             be modified. This assertion may be made from
-	*                             any thread. Note that it is valid and expected
-	*                             for AttachmentCounter to be larger than 1, e.g.
-	*                             during reattachment.
-	*/
-	FThreadSafeCounter AttachmentCounter;
-
+	
+	/** Used by the renderer, to identify a component across re-registers. */	
+	FPrimitiveComponentId GetPrimitiveSceneId() const { return SceneData.PrimitiveSceneId; }
+	
 	/** Used to detach physics objects before simulation begins. This is needed because at runtime we can't have simulated objects inside the attachment hierarchy */
 	ENGINE_API virtual void BeginPlay() override;
 
@@ -884,13 +838,12 @@ protected:
 	/** Last time we checked AreAllCollideableDescendantsRelative(), so we can throttle those tests since it rarely changes once false. */
 	float LastCheckedAllCollideableDescendantsTime;
 
-	/** Next id to be used by a component. */
-	static ENGINE_API FThreadSafeCounter NextComponentId;
-
-	/** Next registration serial number to be assigned to a component when it is registered. */
-	static ENGINE_API FThreadSafeCounter NextRegistrationSerialNumber;
+private:
+	
+	float OcclusionBoundsSlack;
 
 public:
+
 	/** 
 	 * Scales the bounds of the object.
 	 * This is useful when using World Position Offset to animate the vertices of the object outside of its bounds. 
@@ -900,25 +853,24 @@ public:
 	UPROPERTY(EditAnywhere, AdvancedDisplay, Category=Rendering, meta=(UIMin = "1", UIMax = "10.0"))
 	float BoundsScale;
 
-	/** Last time the component was submitted for rendering (called FScene::AddPrimitive). */
-	float LastSubmitTime;
+	UE_DECLARE_COMPONENT_ACTOR_INTERFACE(PrimitiveComponent)
 
 private:
-	/**
-	 * The value of WorldSettings->TimeSeconds for the frame when this component was last rendered.  This is written
-	 * from the render thread, which is up to a frame behind the game thread, so you should allow this time to
-	 * be at least a frame behind the game thread's world time before you consider the actor non-visible.
-	 */
-	mutable float LastRenderTime;
+	
+	FPrimitiveSceneInfoData SceneData;
 
-	/** Same as LastRenderTime but only updated if the component is on screen. Used by the texture streamer. */
-	mutable float LastRenderTimeOnScreen;
-
-	float OcclusionBoundsSlack;
+#if MESH_DRAW_COMMAND_STATS
+	/** Optional category name for this component in the mesh draw stat collection. */
+	FName MeshDrawCommandStatsCategory;
+#endif
 
 	friend class FPrimitiveSceneInfo;
+	friend struct FPrimitiveSceneInfoAdapter;
 
-public:
+public:	
+
+	FPrimitiveSceneInfoData& GetSceneData() { return SceneData; }
+
 	ENGINE_API int32 GetRayTracingGroupId() const;
 
 	/**
@@ -932,8 +884,15 @@ public:
 	ENGINE_API bool WasRecentlyRendered(float Tolerance = 0.2f) const;
 
 	ENGINE_API void SetLastRenderTime(float InLastRenderTime);
-	float GetLastRenderTime() const { return LastRenderTime; }
-	float GetLastRenderTimeOnScreen() const { return LastRenderTimeOnScreen; }
+	float GetLastRenderTime() const { return SceneData.LastRenderTime; }
+	float GetLastRenderTimeOnScreen() const { return SceneData.LastRenderTimeOnScreen; }
+
+#if MESH_DRAW_COMMAND_STATS
+	ENGINE_API void SetMeshDrawCommandStatsCategory(FName StatsCategory);
+	FName GetMeshDrawCommandStatsCategory() const;
+#else
+	void SetMeshDrawCommandStatsCategory(FName StatsCategory) {}
+#endif
 
 	/**
 	 * Setup the parameter struct used to precache the PSOs used by this component. 
@@ -944,18 +903,10 @@ public:
 	/**
 	 * Collect all the data required for PSO precaching 
 	 */
-	struct FComponentPSOPrecacheParams
-	{
-		EPSOPrecachePriority Priority = EPSOPrecachePriority::Medium;
-		UMaterialInterface* MaterialInterface = nullptr;
-		FPSOPrecacheVertexFactoryDataList VertexFactoryDataList;
-		FPSOPrecacheParams PSOPrecacheParams;
-	};
-	typedef TArray<FComponentPSOPrecacheParams, TInlineAllocator<2> > FComponentPSOPrecacheParamsList;
-	virtual void CollectPSOPrecacheData(const FPSOPrecacheParams& BasePrecachePSOParams, FComponentPSOPrecacheParamsList& OutParams) {}
+	virtual void CollectPSOPrecacheData(const FPSOPrecacheParams& BasePrecachePSOParams, FMaterialInterfacePSOPrecacheParamsList& OutParams) {}
 
 	/** Precache all PSOs which can be used by the primitive component */
-	ENGINE_API virtual void PrecachePSOs();
+	ENGINE_API virtual void PrecachePSOs() override;
 
 	/** Schedule task to mark render state dirty when the PSO precaching tasks are done */
 	ENGINE_API void RequestRecreateRenderStateWhenPSOPrecacheFinished(const FGraphEventArray& PSOPrecacheCompileEvents);
@@ -971,6 +922,23 @@ public:
 	 * Returns true if the PSOs are still precaching.
 	 */
 	ENGINE_API bool CheckPSOPrecachingAndBoostPriority();
+
+protected:
+
+	/**
+	 * Examines the used materials (GetUsedMaterials) and returns a descriptor. This may be called when there is no proxy created
+	 * which can be useful. But will use the information in the proxy if it is present.
+	 */
+	ENGINE_API FPrimitiveMaterialPropertyDescriptor GetUsedMaterialPropertyDesc(ERHIFeatureLevel::Type FeatureLevel) const;
+
+	/**
+	 * Returns true if this component opts in to participate in the render proxy delay mechanism that kicks in
+	 * if PSO precaching hasn't finished. Otherwise, PSO precaching will still be active but the render proxy
+	 * will be created as normal.
+	 */
+	ENGINE_API virtual bool UsePSOPrecacheRenderProxyDelay() const;
+
+public:
 
 	/**
 	 * Set of actors to ignore during component sweeps in MoveComponent().
@@ -1048,6 +1016,9 @@ public:
 	/** Get the mask filter we use when moving. */
 	FMaskFilter GetMoveIgnoreMask() const { return MoveIgnoreMask; }
 
+	/** Should the hit result be ignored based on this component */
+	ENGINE_API bool ShouldComponentIgnoreHitResult(FHitResult const& TestHit, EMoveComponentFlags MoveFlags);
+
 	/** Set the mask filter checked when others move into us. */
 	void SetMaskFilterOnBodyInstance(FMaskFilter InMaskFilter) { BodyInstance.SetMaskFilter(InMaskFilter); }
 
@@ -1108,6 +1079,9 @@ public:
 	 */
 	const FCustomPrimitiveData& GetCustomPrimitiveData() const { return CustomPrimitiveDataInternal; }
 
+	/** Reset the custom primitive data of this primitive to the optional user defined default */
+	ENGINE_API void ResetCustomPrimitiveData();
+
 	/**
 	 * Set a scalar parameter for default custom primitive data. This will be serialized and is useful in construction scripts.
 	 * @param	ParameterName	The parameter name of the custom primitive
@@ -1153,9 +1127,6 @@ public:
 #endif
 
 protected:
-
-	/** Reset the custom primitive data of this primitive to the optional user defined default */
-	ENGINE_API void ResetCustomPrimitiveData();
 
 	/** Insert an array of floats into the CustomPrimitiveData, starting at the given index */
 	ENGINE_API void SetCustomPrimitiveDataInternal(int32 DataIndex, const TArray<float>& Values);
@@ -1360,7 +1331,7 @@ public:
 	/**
 	 *	Event called when physics state is created or destroyed for this component
 	 */
-	UPROPERTY(BlueprintAssignable, Category = "Physics")
+	UPROPERTY(BlueprintAssignable, Category = "Physics", TextExportTransient)
 	FComponentPhysicsStateChanged OnComponentPhysicsStateChanged;
 
 	/** Event called when the mouse cursor is moved over this component and mouse over events are enabled in the player controller */
@@ -1422,6 +1393,23 @@ public:
 	{ 
 		return GetMaterial(ElementIndex);
 	}
+
+	UFUNCTION(BlueprintCallable, Category = "Rendering|Material")
+	ENGINE_API virtual int32 GetMaterialIndex(FName MaterialSlotName) const;
+
+	UFUNCTION(BlueprintCallable, Category = "Rendering|Material")
+	ENGINE_API virtual TArray<FName> GetMaterialSlotNames() const;
+
+	UFUNCTION(BlueprintCallable, Category = "Rendering|Material")
+	ENGINE_API virtual bool IsMaterialSlotNameValid(FName MaterialSlotName) const;
+
+	/**
+	* Returns the material used by the element in the slot with the specified name.
+	* @param MaterialSlotName - The slot name to access the material of.
+	* @return the material used in the slot specified, or null if none exists or the slot name is not found.
+	*/
+	UFUNCTION(BlueprintCallable, Category = "Rendering|Material")
+	ENGINE_API virtual class UMaterialInterface* GetMaterialByName(FName MaterialSlotName) const;
 
 	/**
 	 * Changes the material applied to an element of the mesh.
@@ -1948,9 +1936,12 @@ public:
 	 */
 	static ENGINE_API uint32 GlobalOverlapEventsCounter;
 
-	/** The primitive's scene info. */
+	/** The old primitive's scene info ptr, now superceded by the ptr in SceneData, but it's still here due to pervasive usage. */
 	FPrimitiveSceneProxy* SceneProxy;
-	
+
+	FPrimitiveSceneProxy* GetSceneProxy() const { check(SceneProxy == SceneData.SceneProxy); return SceneData.SceneProxy; }
+	void ReleaseSceneProxy() { check(SceneProxy == SceneData.SceneProxy); SceneProxy = nullptr;  SceneData.SceneProxy = nullptr; }
+
 	/** A fence to track when the primitive is detached from the scene in the rendering thread. */
 	FRenderCommandFence DetachFence;
 
@@ -2205,6 +2196,17 @@ public:
 		return NULL;
 	}
 
+#if WITH_EDITOR
+	/**
+	 * Creates a HHitProxy to represent the component at SectionIndex / MaterialIndex
+	 * @return The proxy object.
+	 */
+	ENGINE_API virtual HHitProxy* CreateMeshHitProxy(int32 SectionIndex, int32 MaterialIndex) const
+	{
+		return nullptr;
+	}
+#endif
+
 	/**
 	 * Determines whether the proxy for this primitive type needs to be recreated whenever the primitive moves.
 	 * @return true to recreate the proxy when UpdateTransform is called.
@@ -2231,14 +2233,23 @@ public:
 	*	Welding allows the child physics object to become physically connected to its parent. This is useful for creating compound rigid bodies with correct mass distribution.
 	*   @param InParent the component to be physically attached to
 	*   @param InSocketName optional socket to attach component to
+	*	@param bWeldToKinematicParent if true, children will be welded onto the parent even if the parent is kinematic (default false)
+	*
+	* By default if the root is kinematic then the welded bodies are set to kinematic rather than actually welded. This is beneficial if
+	* the actor is not moved very often or only contains a few welded shapes. However it can be expensive to move a kinematic actor
+	* that contains a large number of (unwelded) kinematic children, in which case you can setting bWeldToKinematicParent to true to generate
+	* a welded kinematic actor. There is no real benefit to welding if the actor does not move and, since the initial weld cost is fairly high,
+	* you generally would not enable welding on all kinematics in the world if you have a lot of them.
 	*/
-	ENGINE_API virtual void WeldTo(class USceneComponent* InParent, FName InSocketName = NAME_None);
+	ENGINE_API virtual void WeldTo(class USceneComponent* InParent, FName InSocketName = NAME_None, bool bWeldToKinematicParent = false);
 
 	/**
 	*	Does the actual work for welding.
+	*	@param bWeldSimulatedChild if true, simulated children will be welded onto the parent (default true)
+	*	@param bWeldToKinematicParent if true, children will be welded onto the parent even if the parent is kinematic (default false)
 	*	@return true if did a true weld of shapes, meaning body initialization is not needed
 	*/
-	ENGINE_API virtual bool WeldToImplementation(USceneComponent * InParent, FName ParentSocketName = NAME_None, bool bWeldSimulatedChild = true);
+	ENGINE_API virtual bool WeldToImplementation(USceneComponent * InParent, FName ParentSocketName = NAME_None, bool bWeldSimulatedChild = true, bool bWeldToKinematicParent = false);
 
 	/**
 	*   UnWelds this component from its parent component. Attachment is maintained (DetachFromParent automatically unwelds)
@@ -2356,6 +2367,7 @@ public:
 #endif
 
 	//~ Begin UActorComponent Interface
+	using Super::SendRenderDynamicData_Concurrent;
 	ENGINE_API virtual void CreateRenderState_Concurrent(FRegisterComponentContext* Context) override;
 	ENGINE_API virtual void SendRenderTransform_Concurrent() override;
 	ENGINE_API virtual void OnRegister()  override;
@@ -2388,6 +2400,9 @@ protected:
 
 	/**  Go through attached primitive components and call MarkRenderStateDirty */
 	ENGINE_API void MarkChildPrimitiveComponentRenderStateDirty();
+
+	/** Conditionally notify streamers that this primitive has updated its render state */
+	ENGINE_API void ConditionalNotifyStreamingPrimitiveUpdated_Concurrent() const;
 public:
 
 	//~ Begin UObject Interface.
@@ -2523,6 +2538,13 @@ public:
 	/** Returns whether this component is still being compiled or dependent on other objects being compiled. */
 	virtual bool IsCompiling() const { return false; }
 
+	ENGINE_API virtual void GetPrimitiveStats(FPrimitiveStats& PrimitiveStats) const;
+
+#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+	/** Sends primitive color updates to the render thread */
+	ENGINE_API void PushPrimitiveColorToProxy(const FLinearColor& InPrimitiveColor);
+#endif
+
 #if WITH_EDITOR
 	/** Returns mask that represents in which views this primitive is hidden */
 	ENGINE_API virtual uint64 GetHiddenEditorViews() const;
@@ -2596,6 +2618,14 @@ public:
 	UFUNCTION(BlueprintPure, Category="Physics")
 	ENGINE_API virtual bool IsGravityEnabled() const;
 
+	/** Enables/disables whether this component should be updated by simulation when it is kinematic. This is needed if (for example) its velocity needs to be accessed. */
+	UFUNCTION(BlueprintCallable, Category="Physics")
+	ENGINE_API virtual void SetUpdateKinematicFromSimulation(bool bUpdateKinematicFromSimulation);
+
+	/** Returns whether this component should be updated by simulation when it is kinematic. */
+	UFUNCTION(BlueprintPure, Category="Physics")
+	ENGINE_API virtual bool GetUpdateKinematicFromSimulation() const;
+
 	/** Sets the linear damping of this component. */
 	UFUNCTION(BlueprintCallable, Category="Physics")
 	ENGINE_API virtual void SetLinearDamping(float InDamping);
@@ -2646,6 +2676,24 @@ public:
 
 	/** Returns the calculated mass in kg. This is not 100% exactly the mass physx will calculate, but it is very close ( difference < 0.1kg ). */
 	ENGINE_API virtual float CalculateMass(FName BoneName = NAME_None);
+
+	/**
+	 * The maximum velocity used to depenetrate this object from others when spawned or teleported with initial overlaps (does not affect overlaps as a result of normal movement).
+	 * A value of zero will allow objects that are spawned overlapping to go to sleep without moving rather than pop out of each other. E.g., use zero if you spawn dynamic rocks
+	 * partially embedded in the ground and want them to be interactive but not pop out of the ground when touched.
+	 * A negative value means that the config setting CollisionInitialOverlapDepenetrationVelocity will be used.
+	*/
+	UFUNCTION(BlueprintCallable, Category = "Physics")
+	ENGINE_API virtual float GetMaxDepenetrationVelocity(FName BoneName = NAME_None);
+
+	/**
+	 * The maximum velocity used to depenetrate this object from others when spawned or teleported with initial overlaps (does not affect overlaps as a result of normal movement).
+	 * A value of zero will allow objects that are spawned overlapping to go to sleep without moving rather than pop out of each other. E.g., use zero if you spawn dynamic rocks
+	 * partially embedded in the ground and want them to be interactive but not pop out of the ground when touched.
+	 * A negative value means that the config setting CollisionInitialOverlapDepenetrationVelocity will be used.
+	*/
+	UFUNCTION(BlueprintCallable, Category = "Physics")
+	ENGINE_API virtual void SetMaxDepenetrationVelocity(FName BoneName = NAME_None, float InMaxDepenetrationVelocity = -1.0f);
 
 	/** Set whether this component should use Continuous Collision Detection */
 	UFUNCTION(BlueprintCallable, Category = "Physics")
@@ -2716,6 +2764,11 @@ public:
 	 * NeedsUpdate flag will be removed from UpdatedState after all velocity corrections are finished
 	 */
 	ENGINE_API void SetRigidBodyReplicatedTarget(FRigidBodyState& UpdatedState, const FName BoneName = NAME_None, int32 ServerFrame = 0, int32 ServerHandle = 0);
+
+protected:
+	ENGINE_API virtual bool CanBeUsedInPhysicsReplication(const FName BoneName = NAME_None) const { return true; }
+
+public:
 
 	/** 
 	 *	Get the state of the rigid body responsible for this Actor's physics, and fill in the supplied FRigidBodyState struct based on it.
@@ -2914,20 +2967,23 @@ public:
 	ENGINE_API virtual void GetNavigationData(FNavigationRelevantData& OutData) const override;
 	ENGINE_API virtual FBox GetNavigationBounds() const override;
 	ENGINE_API virtual bool IsNavigationRelevant() const override;
-	//~ End INavRelevantInterface Interface
+	ENGINE_API virtual UBodySetup* GetNavigableGeometryBodySetup() override final; // marked as final since PrimitiveComponent derived classes relies on GetBodySetup()
+	ENGINE_API virtual FTransform GetNavigableGeometryTransform() const override final; // marked as final since PrimitiveComponent derived classes relies on GetComponentTransform()
 
 	/** If true then DoCustomNavigableGeometryExport will be called to collect navigable geometry of this component. */
-	FORCEINLINE EHasCustomNavigableGeometry::Type HasCustomNavigableGeometry() const { return bHasCustomNavigableGeometry; }
+	ENGINE_API virtual EHasCustomNavigableGeometry::Type HasCustomNavigableGeometry() const override;
+
+	/** Collects custom navigable geometry of component.
+	 *	@return true if regular navigable geometry exporting should be run as well
+	 */
+	ENGINE_API virtual bool DoCustomNavigableGeometryExport(FNavigableGeometryExport& GeomExport) const override;
+	//~ End INavRelevantInterface Interface
 
 	// Returns true if we should check the GetGenerateOverlapEvents() flag when gathering overlaps, otherwise we'll always just do it.
 	ENGINE_API FORCEINLINE_DEBUGGABLE bool ShouldCheckOverlapFlagToQueueOverlaps(const UPrimitiveComponent& ThisComponent) const;
 
 	/** Set value of HasCustomNavigableGeometry */
 	ENGINE_API void SetCustomNavigableGeometry(const EHasCustomNavigableGeometry::Type InType);
-
-	/** Collects custom navigable geometry of component.
-	*	@return true if regular navigable geometry exporting should be run as well */
-	virtual bool DoCustomNavigableGeometryExport(FNavigableGeometryExport& GeomExport) const { return true; }
 
 	static ENGINE_API void DispatchMouseOverEvents(UPrimitiveComponent* CurrentComponent, UPrimitiveComponent* NewComponent);
 	static ENGINE_API void DispatchTouchOverEvents(ETouchIndex::Type FingerIndex, UPrimitiveComponent* CurrentComponent, UPrimitiveComponent* NewComponent);

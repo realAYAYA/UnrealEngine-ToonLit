@@ -25,12 +25,15 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "sjson/parser_error.h"
+#include "sjson/version.h"
 
 #include <cstdlib>
 #include <cstdint>
 
 namespace sjson
 {
+	SJSON_CPP_IMPL_VERSION_NAMESPACE_BEGIN
+
 	struct ParserState
 	{
 		ParserState(const char* input, size_t input_length)
@@ -49,4 +52,6 @@ namespace sjson
 
 		ParserError error;
 	};
+
+	SJSON_CPP_IMPL_VERSION_NAMESPACE_END
 }

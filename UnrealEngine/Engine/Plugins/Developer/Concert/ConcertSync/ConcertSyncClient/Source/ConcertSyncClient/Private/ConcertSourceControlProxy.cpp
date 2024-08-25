@@ -238,16 +238,24 @@ const FDateTime& FConcertSourceControlChangelistStateProxy::GetTimeStamp() const
 	return ActualState.IsValid() ? ActualState->GetTimeStamp() : DummyTime;
 }
 
-const TArray<FSourceControlStateRef>& FConcertSourceControlChangelistStateProxy::GetFilesStates() const
+const TArray<FSourceControlStateRef> FConcertSourceControlChangelistStateProxy::GetFilesStates() const
 {
-	static const TArray<FSourceControlStateRef> DummyResult;
-	return ActualState.IsValid() ? ActualState->GetFilesStates() : DummyResult;
+	return ActualState.IsValid() ? ActualState->GetFilesStates() : TArray<FSourceControlStateRef>();
 }
 
-const TArray<FSourceControlStateRef>& FConcertSourceControlChangelistStateProxy::GetShelvedFilesStates() const
+int32 FConcertSourceControlChangelistStateProxy::GetFilesStatesNum() const
 {
-	static const TArray<FSourceControlStateRef> DummyResult;
-	return ActualState.IsValid() ? ActualState->GetShelvedFilesStates() : DummyResult;
+	return ActualState.IsValid() ? ActualState->GetFilesStates().Num() : 0;
+}
+
+const TArray<FSourceControlStateRef> FConcertSourceControlChangelistStateProxy::GetShelvedFilesStates() const
+{
+	return ActualState.IsValid() ? ActualState->GetShelvedFilesStates() : TArray<FSourceControlStateRef>();
+}
+
+int32 FConcertSourceControlChangelistStateProxy::GetShelvedFilesStatesNum() const
+{
+	return ActualState.IsValid() ? ActualState->GetShelvedFilesStates().Num() : 0;
 }
 
 FSourceControlChangelistRef FConcertSourceControlChangelistStateProxy::GetChangelist() const

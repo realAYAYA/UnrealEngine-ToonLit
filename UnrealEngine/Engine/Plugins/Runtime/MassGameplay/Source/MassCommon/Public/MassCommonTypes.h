@@ -13,21 +13,6 @@
 class UStaticMesh;
 class UMaterialInterface;
 
-#if WITH_MASSGAMEPLAY_DEBUG
-namespace UE::Mass::Debug
-{
-	MASSCOMMON_API extern bool HasDebugEntities();
-	/**
-	 * Populates OutBegin and OutEnd with entity index ranges as set by ai.debug.mass.SetDebugEntityRange or
-	 * ai.debug.mass.DebugEntity console commands.
-	 * @return whether any range has been configured.
-	 */
-	MASSCOMMON_API extern bool GetDebugEntitiesRange(int32& OutBegin, int32& OutEnd);
-	MASSCOMMON_API extern bool IsDebuggingEntity(FMassEntityHandle Entity, FColor* OutEntityColor = nullptr);
-	MASSCOMMON_API extern FColor GetEntityDebugColor(FMassEntityHandle Entity);
-} // namespace UE::Mass::Debug
-#endif // WITH_MASSGAMEPLAY_DEBUG
-
 namespace UE::Mass::ProcessorGroupNames
 {
 	const FName UpdateWorldFromMass = FName(TEXT("UpdateWorldFromMass"));

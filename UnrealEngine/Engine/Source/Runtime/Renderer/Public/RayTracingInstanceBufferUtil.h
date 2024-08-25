@@ -8,6 +8,8 @@
 #if RHI_RAYTRACING
 
 class FGPUScene;
+struct FRayTracingCullingParameters;
+struct FDFVector3;
 
 /*
 * 
@@ -86,8 +88,7 @@ RENDERER_API void FillRayTracingInstanceUploadBuffer(
 RENDERER_API void BuildRayTracingInstanceBuffer(
 	FRHICommandList& RHICmdList,
 	const FGPUScene* GPUScene,
-	FVector3f ViewTilePosition,
-	FVector3f RelativePreViewTranslation,
+	const FDFVector3& PreViewTranslation,
 	FUnorderedAccessViewRHIRef InstancesUAV,
 	FShaderResourceViewRHIRef InstanceUploadSRV,
 	FShaderResourceViewRHIRef AccelerationStructureAddressesSRV,
@@ -95,6 +96,7 @@ RENDERER_API void BuildRayTracingInstanceBuffer(
 	uint32 NumNativeGPUSceneInstances,
 	uint32 NumNativeCPUInstances,
 	TConstArrayView<FRayTracingGPUInstance> GPUInstances,
+	const FRayTracingCullingParameters* CullingParameters,
 	FUnorderedAccessViewRHIRef DebugInstanceGPUSceneIndexUAV);
 
 #endif // RHI_RAYTRACING

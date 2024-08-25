@@ -30,6 +30,19 @@ static FAutoConsoleVariableRef GCVarGlobalAxisConfigMode(
 	TEXT("Whether or not to apply Global Axis Config settings. 0 = Default (Mouse Only), 1 = All, 2 = None")
 );
 
+template<typename T>
+void DeepCopyPtrArray(const TArray<T*>& From, TArray<T*>& To)
+{
+	To.Empty(From.Num());
+	for (T* ToDuplicate : From)
+	{
+		if (ToDuplicate)
+		{
+			To.Add(DuplicateObject<T>(ToDuplicate, nullptr));
+		}
+	}
+}
+
 void IEnhancedInputSubsystemInterface::InitalizeUserSettings()
 {
 	// Not every implementer of the EI subsystem wants user settings, so leave it up to them to determine if they want it or not
@@ -95,11 +108,11 @@ void IEnhancedInputSubsystemInterface::InjectInputForPlayerMapping(const FName M
 
 void IEnhancedInputSubsystemInterface::StartContinuousInputInjectionForAction(const UInputAction* Action, FInputActionValue RawValue, const TArray<UInputModifier*>& Modifiers, const TArray<UInputTrigger*>& Triggers)
 {
-	FInjectedInput& Injection = ContinuouslyInjectedInputs.FindOrAdd(Action);
-	
+	FInjectedInput& Injection = GetContinuouslyInjectedInputs().FindOrAdd(Action);
+
 	Injection.RawValue = RawValue;
-	Injection.Modifiers = Modifiers;
-	Injection.Triggers = Triggers;
+	DeepCopyPtrArray<UInputModifier>(Modifiers, Injection.Modifiers);
+	DeepCopyPtrArray<UInputTrigger>(Triggers, Injection.Triggers);
 }
 
 void IEnhancedInputSubsystemInterface::StartContinuousInputInjectionForPlayerMapping(const FName MappingName, FInputActionValue RawValue, const TArray<UInputModifier*>& Modifiers, const TArray<UInputTrigger*>& Triggers)
@@ -121,9 +134,36 @@ void IEnhancedInputSubsystemInterface::StartContinuousInputInjectionForPlayerMap
 	}
 }
 
+void IEnhancedInputSubsystemInterface::UpdateValueOfContinuousInputInjectionForAction(const UInputAction* Action, FInputActionValue RawValue)
+{
+	FInjectedInput& Injection = GetContinuouslyInjectedInputs().FindOrAdd(Action);
+	Injection.RawValue = RawValue;
+
+	// Do NOT update the triggers/modifiers here to preserve their state
+}
+
+void IEnhancedInputSubsystemInterface::UpdateValueOfContinuousInputInjectionForPlayerMapping(const FName MappingName, FInputActionValue RawValue)
+{
+	if (const UEnhancedInputUserSettings* UserSettings = GetUserSettings())
+	{
+		if (const UInputAction* Action = UserSettings->FindInputActionForMapping(MappingName))
+		{
+			UpdateValueOfContinuousInputInjectionForAction(Action, RawValue);
+		}
+		else
+		{
+			UE_LOG(LogEnhancedInput, Warning, TEXT("Could not find a Input Action for mapping name '%s'"), *MappingName.ToString());
+		}
+	}
+	else
+	{
+		UE_LOG(LogEnhancedInput, Warning, TEXT("Could not find a valid UEnhancedInputUserSettings object, is it enabled in the project settings?"));
+	}
+}
+
 void IEnhancedInputSubsystemInterface::StopContinuousInputInjectionForAction(const UInputAction* Action)
 {
-	ContinuouslyInjectedInputs.Remove(Action);
+	GetContinuouslyInjectedInputs().Remove(Action);
 }
 
 void IEnhancedInputSubsystemInterface::StopContinuousInputInjectionForPlayerMapping(const FName MappingName)
@@ -725,19 +765,6 @@ void IEnhancedInputSubsystemInterface::RemovePlayerMappableConfig(const UPlayerM
 
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
-template<typename T>
-void DeepCopyPtrArray(const TArray<T*>& From, TArray<T*>& To)
-{
-	To.Empty(From.Num());
-	for (T* ToDuplicate : From)
-	{
-		if (ToDuplicate)
-		{
-			To.Add(DuplicateObject<T>(ToDuplicate, nullptr));
-		}
-	}
-}
-
 // TODO: This should be a delegate (along with InjectChordBlockers), moving chording out of the underlying subsystem and enabling implementation of custom mapping handlers.
 /**
  * Reorder the given UnordedMappings such that chording mappings > chorded mappings > everything else.
@@ -854,7 +881,7 @@ void IEnhancedInputSubsystemInterface::RebuildControlMappings()
 	{
 		TMap<TObjectPtr<const UInputMappingContext>, TObjectPtr<const UInputMappingContext>> ContextRedirects;
 		PlatformSettings->GetAllMappingContextRedirects(ContextRedirects);
-		for (const TPair<TObjectPtr<const UInputMappingContext>, TObjectPtr<const UInputMappingContext>> Pair : ContextRedirects)
+		for (const TPair<TObjectPtr<const UInputMappingContext>, TObjectPtr<const UInputMappingContext>>& Pair : ContextRedirects)
 		{
 			if (!Pair.Key || !Pair.Value)
 			{
@@ -1106,6 +1133,7 @@ void IEnhancedInputSubsystemInterface::TickForcedInput(float DeltaTime)
 	}
 
 	// Any continuous input injection needs to be added each frame until its stopped
+	TMap<TObjectPtr<const UInputAction>, FInjectedInput>& ContinuouslyInjectedInputs = GetContinuouslyInjectedInputs();
 	for (TPair<TObjectPtr<const UInputAction>, FInjectedInput>& ContinuousInjection : ContinuouslyInjectedInputs)
 	{
 		TObjectPtr<const UInputAction>& Action = ContinuousInjection.Key;

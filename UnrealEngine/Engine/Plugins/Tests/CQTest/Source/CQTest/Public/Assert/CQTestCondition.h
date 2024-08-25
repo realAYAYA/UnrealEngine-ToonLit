@@ -2,6 +2,8 @@
 #pragma once
 
 #include "Containers/UnrealString.h"
+#include "Math/Transform.h"
+#include "Math/Vector.h"
 #include "UObject/NameTypes.h"
 
 namespace CQTestCondition

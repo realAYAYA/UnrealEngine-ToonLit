@@ -2,13 +2,13 @@
 
 #include "MuT/ASTOpMeshMorph.h"
 
-#include "HAL/PlatformMath.h"
+#include "MuT/StreamsPrivate.h"
+#include "MuT/ASTOpMeshAddTags.h"
 #include "MuR/ModelPrivate.h"
 #include "MuR/RefCounted.h"
 #include "MuR/Types.h"
-#include "MuT/StreamsPrivate.h"
+#include "HAL/PlatformMath.h"
 
-#include <memory>
 
 namespace mu
 {
@@ -31,8 +31,9 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	bool ASTOpMeshMorph::IsEqual(const ASTOp& otherUntyped) const
 	{
-		if (const ASTOpMeshMorph* other = dynamic_cast<const ASTOpMeshMorph*>(&otherUntyped))
+		if (otherUntyped.GetOpType() == GetOpType())
 		{
+			const ASTOpMeshMorph* other = static_cast<const ASTOpMeshMorph*>(&otherUntyped);
 			return Factor == other->Factor && Base == other->Base && Target == other->Target;
 		}
 		return false;
@@ -95,7 +96,66 @@ namespace mu
 	//-------------------------------------------------------------------------------------------------
 	mu::Ptr<ASTOp> ASTOpMeshMorph::OptimiseSink(const FModelOptimizationOptions&, FOptimizeSinkContext&) const
 	{
-		return nullptr;
+		Ptr<ASTOp> NewOp;
+
+		if (!Base.child())
+		{
+			return nullptr;
+		}
+
+		// Base optimizations
+		OP_TYPE BaseType = Base.child()->GetOpType();
+		switch (BaseType)
+		{
+
+		case OP_TYPE::ME_ADDTAGS:
+		{
+			// Add the base tags after morphing
+			Ptr<ASTOpMeshAddTags> NewAddTags = mu::Clone<ASTOpMeshAddTags>(Base.child());
+
+			if (NewAddTags->Source)
+			{
+				Ptr<ASTOpMeshMorph> New = mu::Clone<ASTOpMeshMorph>(this);
+				New->Base = NewAddTags->Source.child();
+				NewAddTags->Source = New;
+			}
+
+			NewOp = NewAddTags;
+			break;
+		}
+
+		default:
+			break;
+
+		}
+
+		// If not optimized yet
+		if (!NewOp)
+		{
+			// Target optimizations
+			OP_TYPE MorphType = Target.child()->GetOpType();
+			switch (MorphType)
+			{
+
+			case OP_TYPE::ME_ADDTAGS:
+			{
+				// Ignore the morph target tags
+				const ASTOpMeshAddTags* AddTags = static_cast<const ASTOpMeshAddTags*>(Target.child().get());
+
+				Ptr<ASTOpMeshMorph> New = mu::Clone<ASTOpMeshMorph>(this);
+				New->Target = AddTags->Source.child();
+				NewOp = New;
+
+				break;
+			}
+
+			default:
+				break;
+
+			}
+		}
+
+		return NewOp;
 	}
 
 }

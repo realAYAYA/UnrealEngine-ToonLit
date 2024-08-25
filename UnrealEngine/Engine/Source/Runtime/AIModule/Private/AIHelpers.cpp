@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "AIHelpers.h"
+#include "GameFramework/Actor.h"
 
 namespace FAISystem
 {

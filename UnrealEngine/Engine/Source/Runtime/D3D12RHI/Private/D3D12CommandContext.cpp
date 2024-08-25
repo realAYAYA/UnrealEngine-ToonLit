@@ -175,7 +175,7 @@ void FD3D12CommandContext::RHIPopEvent()
 		// need to look for unbalanced push/pop
 		if (GPUEventStack.Num() > 0)
 		{
-			GPUEventStack.Pop(false);
+			GPUEventStack.Pop(EAllowShrinking::No);
 		}
 	}
 
@@ -284,6 +284,20 @@ FD3D12QueryLocation FD3D12ContextCommon::InsertTimestamp(ED3D12Units Units, uint
 	return Location;
 }
 
+void FD3D12ContextCommon::SetReservedBufferCommitSize(FD3D12Buffer* Buffer, uint64 CommitSizeInBytes)
+{
+	if (IsOpen())
+	{
+		CloseCommandList();
+	}
+
+	FD3D12CommitReservedResourceDesc CommitDesc;
+	CommitDesc.Resource = Buffer->GetResource();
+	CommitDesc.CommitSizeInBytes = CommitSizeInBytes;
+
+	GetPayload(EPhase::UpdateReservedResources)->ReservedResourcesToCommit.Add(CommitDesc);
+}
+
 void FD3D12ContextCommon::OpenCommandList()
 {
 	LLM_SCOPE_BYNAME(TEXT("RHIMisc/OpenCommandList"));
@@ -381,6 +395,25 @@ void FD3D12ContextCommon::Finalize(TArray<FD3D12Payload*>& OutPayloads)
 	// Move the list of payloads out of this context
 	OutPayloads.Append(MoveTemp(Payloads));
 }
+
+void FD3D12CommandContext::Finalize(TArray<FD3D12Payload*>& OutPayloads)
+{
+#if PLATFORM_SUPPORTS_BINDLESS_RENDERING
+	GetParentDevice()->GetBindlessDescriptorManager().FinalizeContext(*this);
+#endif
+
+	FD3D12ContextCommon::Finalize(OutPayloads);
+}
+
+#if PLATFORM_SUPPORTS_BINDLESS_RENDERING
+FD3D12DescriptorHeap* FD3D12CommandContext::GetBindlessResourcesHeap()
+{
+	// We require the descriptor cache to be setup correctly before it can have a valid bindless heap.
+	OpenIfNotAlready();
+
+	return StateCache.GetDescriptorCache()->GetBindlessResourcesHeap();
+}
+#endif
 
 FD3D12QueryLocation FD3D12QueryAllocator::Allocate(ED3D12QueryType Type, void* Target)
 {
@@ -652,13 +685,22 @@ void FD3D12ContextCommon::ConditionalSplitCommandList()
 	}
 }
 
+void FD3D12DynamicRHI::RHIBeginFrame(FRHICommandListImmediate& RHICmdList)
+{
+	RHICmdList.EnqueueLambda([](FRHICommandListBase& ExecutingCmdList)
+	{
+		for (uint32 GPUIndex : FRHIGPUMask::All())
+		{
+			FD3D12CommandContext& Context = FD3D12CommandContext::Get(ExecutingCmdList, GPUIndex);
+			Context.Device->GetGPUProfiler().BeginFrame();
+			Context.Device->GetDefaultBufferAllocator().BeginFrame(ExecutingCmdList);
+			Context.Device->GetTextureAllocator().BeginFrame(ExecutingCmdList);
+		}
+	});
+}
+
 void FD3D12CommandContext::RHIBeginFrame()
 {
-	Device->GetGPUProfiler().BeginFrame();
-
-	Device->GetDefaultBufferAllocator().BeginFrame();
-	Device->GetTextureAllocator().BeginFrame();
-
 	bTrackingEvents = IsDefaultContext() && Device->GetGPUProfiler().bTrackingEvents;
 
 #if D3D12_RHI_RAYTRACING
@@ -682,29 +724,29 @@ void FD3D12CommandContext::ClearState(EClearStateMode Mode)
 	}
 }
 
-void FD3D12CommandContext::ConditionalClearShaderResource(FD3D12ResourceLocation* Resource)
+void FD3D12CommandContext::ConditionalClearShaderResource(FD3D12ResourceLocation* Resource, EShaderParameterTypeMask ShaderParameterTypeMask)
 {
 	check(Resource);
 
 	for (int32 Index = 0; Index < SF_NumStandardFrequencies; Index++)
 	{
-		StateCache.ClearShaderResourceViews(static_cast<EShaderFrequency>(Index), Resource);
+		StateCache.ClearResourceViewCaches(static_cast<EShaderFrequency>(Index), Resource, ShaderParameterTypeMask);
 	}
 }
 
-void FD3D12CommandContext::ClearShaderResources(FD3D12UnorderedAccessView* UAV)
+void FD3D12CommandContext::ClearShaderResources(FD3D12UnorderedAccessView* UAV, EShaderParameterTypeMask ShaderParameterTypeMask)
 {
 	if (UAV)
 	{
-		ConditionalClearShaderResource(UAV->GetResourceLocation());
+		ConditionalClearShaderResource(UAV->GetResourceLocation(), ShaderParameterTypeMask);
 	}
 }
 
-void FD3D12CommandContext::ClearShaderResources(FD3D12BaseShaderResource* Resource)
+void FD3D12CommandContext::ClearShaderResources(FD3D12BaseShaderResource* Resource, EShaderParameterTypeMask ShaderParameterTypeMask)
 {
 	if (Resource)
 	{
-		ConditionalClearShaderResource(&Resource->ResourceLocation);
+		ConditionalClearShaderResource(&Resource->ResourceLocation, ShaderParameterTypeMask);
 	}
 }
 
@@ -810,14 +852,12 @@ void FD3D12CommandContextBase::UpdateMemoryStats()
 
 void FD3D12CommandContext::RHIBeginScene()
 {
-	ensure(!bDrawingScene);
-	bDrawingScene = true;
+	// Nothing to do
 }
 
 void FD3D12CommandContext::RHIEndScene()
 {
-	ensure(bDrawingScene);
-	bDrawingScene = false;
+	// Nothing to do
 }
 
 IRHIComputeContext* FD3D12DynamicRHI::RHIGetCommandContext(ERHIPipeline Pipeline, FRHIGPUMask GPUMask)

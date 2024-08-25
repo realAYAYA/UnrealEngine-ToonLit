@@ -106,7 +106,7 @@
 #include "../BRDF.ush"
 #include "../MonteCarlo.ush"
 #include "../SceneTextureParameters.ush"
-#include "../Strata/Strata.ush"
+#include "../Substrate/Substrate.ush"
 
 //------------------------------------------------------- PARAMETERS
 
@@ -227,15 +227,11 @@ uint2 ComputeRandomSeed(uint2 PixelPosition)
 float3 ComputeL(float3 N, float2 E)
 {
 	float3x3 TangentBasis = GetTangentBasis(N);
-	
-	float3 L;
-	L.xy = UniformSampleDiskConcentric( E );
-	L.z = sqrt( 1 - dot( L.xy, L.xy ) );
-	L = mul( L, TangentBasis );
-
-	return L;
-
+#if 1	
+	float3 TangentL = CosineSampleHemisphereConcentric(E).xyz;
+#else
 	float3 TangentL = CosineSampleHemisphere(E).xyz;
+#endif
 	return mul(TangentL, TangentBasis);
 }
 
@@ -273,17 +269,17 @@ void MainCS(
 			float2 FullResPixelPosition = 0;
 			UpdateLane2DCoordinateInformations(PixelPosition, /* out */ BufferUV, /* out */ ScreenPos, /* out */ FullResPixelPosition);
 	
-		#if STRATA_ENABLED
-			const FStrataTopLayerData TopLayerData = StrataUnpackTopLayerData(Strata.TopLayerTexture.Load(uint3(FullResPixelPosition, 0)));
+		#if SUBSTRATE_ENABLED
+			const FSubstrateTopLayerData TopLayerData = SubstrateUnpackTopLayerData(Substrate.TopLayerTexture.Load(uint3(FullResPixelPosition, 0)));
 			const float Roughness = TopLayerData.Roughness;
 			const float3 WorldNormal = TopLayerData.WorldNormal;
-			const bool bIsValid = IsStrataMaterial(TopLayerData);
-		#else // STRATA_ENABLED
+			const bool bIsValid = IsSubstrateMaterial(TopLayerData);
+		#else // SUBSTRATE_ENABLED
 			FGBufferData GBuffer = GetGBufferDataFromSceneTextures(BufferUV);
 			const float Roughness = GBuffer.Roughness;
 			const float3 WorldNormal = GBuffer.WorldNormal;
 			const bool bIsValid = GBuffer.ShadingModelID != SHADINGMODELID_UNLIT;
-		#endif // STRATA_ENABLED
+		#endif // SUBSTRATE_ENABLED
 
 			float DeviceZ = SceneDepthTexture.SampleLevel(SceneDepthTextureSampler, BufferUV, 0).r;
 
@@ -402,7 +398,7 @@ void MainCS(
 			UpdateLane2DCoordinateInformations(PixelPosition, /* out */ BufferUV, /* out */ ScreenPos, /* out */ FullResPixelPosition); 
 	
 			float3 PositionTranslatedWorld = mul(float4(GetScreenPositionForProjectionType(ScreenPos, SceneDepth), SceneDepth, 1), View.ScreenToTranslatedWorld).xyz;
-			float3 V = normalize(View.TranslatedWorldCameraOrigin - PositionTranslatedWorld);
+			float3 V = -GetCameraVectorFromTranslatedWorldPosition(PositionTranslatedWorld);
 
 			float StepOffset = InterleavedGradientNoise(PixelPosition + 0.5, View.StateFrameIndexMod8);
 	

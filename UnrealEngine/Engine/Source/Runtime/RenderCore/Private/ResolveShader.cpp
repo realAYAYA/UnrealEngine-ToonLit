@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "ResolveShader.h"
+#include "ShaderCompilerCore.h"
 #include "ShaderParameterUtils.h"
 #include "DataDrivenShaderPlatformInfo.h"
 #include "StereoRenderUtils.h"
@@ -29,6 +30,11 @@ FResolveDepthPS::FResolveDepthPS(const ShaderMetaType::CompiledShaderInitializer
 void FResolveDepthPS::ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 {
 	FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+
+	if (FDataDrivenShaderPlatformInfo::GetRequiresBindfulUtilityShaders(Parameters.Platform))
+	{
+		OutEnvironment.CompilerFlags.Add(CFLAG_ForceBindful);
+	}
 }
 
 void FResolveDepthPS::SetParameters(FRHIBatchedShaderParameters& BatchedParameters, FParameter)

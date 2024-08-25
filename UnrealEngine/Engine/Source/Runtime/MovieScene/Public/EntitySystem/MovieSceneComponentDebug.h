@@ -38,6 +38,7 @@ enum class EComponentDebugType
 	SequenceID,
 	EntityID,
 	Name,
+	GroupID,
 	BlendChannelID,
 };
 

@@ -250,7 +250,20 @@ public:
 	
 	SLATECORE_API static void MakeCustomVerts(FSlateWindowElementList& ElementList, uint32 InLayer, const FSlateResourceHandle& InRenderResourceHandle, const TArray<FSlateVertex>& InVerts, const TArray<SlateIndex>& InIndexes, ISlateUpdatableInstanceBuffer* InInstanceData, uint32 InInstanceOffset, uint32 InNumInstances, ESlateDrawEffect InDrawEffects = ESlateDrawEffect::None);
 
+	UE_DEPRECATED(5.4, "MakePostProcessPass has been deprecated. If you need to make a blur please call MakePostProcessBlur.")
 	SLATECORE_API static void MakePostProcessPass(FSlateWindowElementList& ElementList, uint32 InLayer, const FPaintGeometry& PaintGeometry, const FVector4f& Params, int32 DownsampleAmount, const FVector4f CornerRadius = FVector4f(0.0f));
+
+	/**
+	 * Creates an element that performs a blur pass
+	 *
+	 * @param ElementList			The list in which to add elements
+	 * @param InLayer				The layer to draw the element on
+	 * @param PaintGeometry			DrawSpace position and dimensions; see FPaintGeometry
+	 * @param Params				Shader params for blur, should be tuple of KernelSize, Strength, Width, & Height
+	 * @param DownSampleAmount		Amount we can downsample for the blur based on kernel size / strength
+	 * @param CornerRadius			Amount pixels will be weighted in any direction
+	 */
+	SLATECORE_API static void MakePostProcessBlur(FSlateWindowElementList& ElementList, uint32 InLayer, const FPaintGeometry& PaintGeometry, const FVector4f& Params, int32 DownsampleAmount, const FVector4f CornerRadius = FVector4f(0.0f));
 
 	FSlateDrawElement();
 

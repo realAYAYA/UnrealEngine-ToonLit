@@ -176,17 +176,14 @@ public:
 
 	bool PushDrawTile(const FBox2D& InBounds, const FVector2D& A, const FVector2D& B, const FVector2D& C, const FVector2D& D, const FLinearColor& InColor)
 	{
-		if (!InBounds.IsInside(A) ||
-			!InBounds.IsInside(B) ||
-			!InBounds.IsInside(C) ||
-			!InBounds.IsInside(D))
+		const FBox2D ClipBox = InBounds.Overlap(FBox2D({ A, B, C, D}));
+		if (ClipBox.bIsValid)
 		{
-			return false;
+			FWorldPartitionCanvasBoxItem Box(ClipBox.Min, FVector2D(ClipBox.Max.X, ClipBox.Min.Y), ClipBox.Max, FVector2D(ClipBox.Min.X, ClipBox.Max.Y), InColor);
+			CanvasItems.AddBox(Box);
+			return true;
 		}
-
-		FWorldPartitionCanvasBoxItem Box(A, B, C, D, InColor);
-		CanvasItems.AddBox(Box);
-		return true;
+		return false;
 	};
 
 	bool PushDrawText(FWorldPartitionCanvasMultiLineTextItem& InMultiLineText)
@@ -194,6 +191,34 @@ public:
 		CanvasItems.AddText(InMultiLineText);
 		return true;
 	}
+
+	template <class WorldToScreenFunc>
+	void LocalDrawTile(const FBox2D& GridScreenBounds, const FVector2D& Min, const FVector2D& Size, const FLinearColor& Color, WorldToScreenFunc WorldToScreen)
+	{
+		FVector2D A = WorldToScreen(Min);
+		FVector2D B = WorldToScreen(Min + FVector2D(Size.X, 0));
+		FVector2D C = WorldToScreen(Min + Size);
+		FVector2D D = WorldToScreen(Min + FVector2D(0, Size.Y));
+		PushDrawTile(GridScreenBounds, A, B, C, D, Color);
+	};
+
+	template <class WorldToScreenFunc>
+	void LocalDrawBox(const FBox2D& GridScreenBounds, const FVector2D& Min, const FVector2D& Size, const FLinearColor& Color, float LineThickness, WorldToScreenFunc WorldToScreen)
+	{
+		FVector2D A = WorldToScreen(Min);
+		FVector2D B = WorldToScreen(Min + FVector2D(Size.X, 0));
+		FVector2D C = WorldToScreen(Min + Size);
+		FVector2D D = WorldToScreen(Min + FVector2D(0, Size.Y));
+		PushDrawBox(GridScreenBounds, A, B, C, D, Color, LineThickness);
+	};
+
+	template <class WorldToScreenFunc>
+	void LocalDrawSegment(const FBox2D& GridScreenBounds, const FVector2D& Start, const FVector2D& End, const FLinearColor& Color, float LineThickness, WorldToScreenFunc WorldToScreen)
+	{
+		FVector2D A = WorldToScreen(Start);
+		FVector2D B = WorldToScreen(End);
+		PushDrawSegment(GridScreenBounds, A, B, Color, LineThickness);
+	};
 
 	const FWorldPartitionCanvasItems& GetCanvasItems() const { return CanvasItems; }
 

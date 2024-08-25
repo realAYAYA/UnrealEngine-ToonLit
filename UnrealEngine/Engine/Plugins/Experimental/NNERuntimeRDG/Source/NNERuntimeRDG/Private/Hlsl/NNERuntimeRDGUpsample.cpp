@@ -1,10 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "NNERuntimeRDGUpsample.h"
+#include "NNERuntimeRDGAttributes.h"
 #include "NNEHlslShadersUpsampleCS.h"
 #include "NNERuntimeRDGHlslHelper.h"
-#include "NNETypes.h"
 #include "NNETensor.h"
+#include "NNETypes.h"
 
 namespace UE::NNERuntimeRDG::Private::Hlsl
 {
@@ -20,14 +21,18 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 		FUpsample() {}
 		virtual ~FUpsample() = default;
 
+	private:
+
+		FString Mode = AttrValue::Nearest;
+
 	public:
 
-		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) const override
+		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) override
 		{
 			check(InputTensors.Num() == 2);
 			check(OutputTensors.Num() == 1);
 
-			const NNE::Internal::FTensor& X = *InputTensors[0];
+			const NNE::Internal::FTensor& Input = *InputTensors[0];
 			const NNE::Internal::FTensor& Scales = *InputTensors[1];
 			
 			if (!Scales.HasPreparedData())
@@ -38,17 +43,32 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 
 			TConstArrayView<float> ScalesData = Scales.GetPreparedData<float>();
 
-			if (ScalesData.Num() != X.GetShape().Rank())
+			if (ScalesData.Num() != Input.GetShape().Rank())
 			{
-				UE_LOG(LogNNE, Warning, TEXT("Upsample input 'Scale' (name: %s) have %d elements. While it should be the same as the rank of input 'X' (name : %s) witch is %d"), *Scales.GetName(), ScalesData.Num(), *X.GetName(), X.GetShape().Rank());
+				UE_LOG(LogNNE, Warning, TEXT("Upsample input 'Scale' (name: %s) have %d elements. While it should be the same as the rank of input 'X' (name : %s) witch is %d"), *Scales.GetName(), ScalesData.Num(), *Input.GetName(), Input.GetShape().Rank());
 				return -1;
 			}
 
+			for (int32 i = 0; i < ScalesData.Num(); i++)
+			{
+				if (ScalesData[i] < 1.0f)
+				{
+					UE_LOG(LogNNE, Warning, TEXT("Upsample input 'Scale' takes values greater than or equal to 1."));
+					return -1;
+				}
+
+				if (Mode.Equals(AttrValue::Linear) && i < ScalesData.Num() - 3 && ScalesData[i] > 1.0f)
+				{
+					UE_LOG(LogNNE, Warning, TEXT("Upsample in 'Linear mode' only support up to trilinear interpolation, meaning input 'Scale' values for the outermost dimensions (Rank - 3) are 1."));
+					return -1;
+				}
+			}
+
 			TArray<uint32> OutputShapeData;
-			for (int32 i = 0; i < X.GetShape().Rank(); ++i)
+			for (int32 i = 0; i < Input.GetShape().Rank(); ++i)
 			{
 				
-				OutputShapeData.Emplace(FMath::FloorToInt32(X.GetShape().GetData()[i] * ScalesData[i]));
+				OutputShapeData.Emplace(FMath::FloorToInt32(Input.GetShape().GetData()[i] * ScalesData[i]));
 			}
 
 			NNE::FTensorShape OutputShape = NNE::FTensorShape::Make(OutputShapeData);
@@ -61,6 +81,8 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 		{
 			check(InputTensorDescs.Num() == 2);
 			check(OutputTensorDescs.Num() == 1);
+
+			Mode = Attributes.GetValueOrDefault<FString>(AttrName::Mode, Mode);
 
 			return true;
 		}
@@ -93,13 +115,20 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 			FillTensorStrideShaderParameters(Input, Params->TensorInfo, 0);
 			FillTensorStrideShaderParameters(Output, Params->TensorInfo, 1);
 			FillTensorSizeShaderParameters(Input, Params->TensorInfo, 2);
-			FillTensorSizeShaderParameters(Output, Params->TensorInfo, 3);
+			for (int32 i = 0; i < Input.GetShape().Rank(); ++i)
+			{
+				Params->TensorInfo[i][3] = FMath::CeilToInt32(ScalesData[i]);
+			}
 			Params->Num = Output.GetVolume();
 			Params->ThreadCountX = ThreadGroupCount.X * FUpsampleConstants::NUM_GROUP_THREADS;
 
-			FUpsampleCS::FPermutationDomain PermutationVector;
+			const EUpsampleMode UpsampleMode = Mode.Equals(AttrValue::Linear) ?
+				((ScalesData.Num() < 3 || ScalesData[ScalesData.Num() - 3] == 1.0f) ? EUpsampleMode::Bilinear : EUpsampleMode::Trilinear) :
+				EUpsampleMode::Nearest;
 
+			FUpsampleCS::FPermutationDomain PermutationVector;
 			PermutationVector.Set<FUpsampleCS::FUpsampleNumDimensions>(Output.GetShape().Rank());
+			PermutationVector.Set<FUpsampleCS::FUpsampleMode>(UpsampleMode);
 
 			TShaderMapRef<FUpsampleCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel), PermutationVector);
 
@@ -121,13 +150,13 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 		bool bIsValid = true;
 
 		FAttributeValidator AttributeValidator;
-		AttributeValidator.AddOptional(TEXT("mode"), ENNEAttributeDataType::String);
+		AttributeValidator.AddOptional(AttrName::Mode, ENNEAttributeDataType::String);
 		bIsValid &= AttributeValidator.Validate(AttributeMap);
 		
-		FString Mode = AttributeMap.GetValueOrDefault<FString>(TEXT("mode"), TEXT("nearest"));
-		if (!Mode.Equals(TEXT("nearest")))
+		FString Mode = AttributeMap.GetValueOrDefault<FString>(AttrName::Mode, AttrValue::Nearest);
+		if (!Mode.Equals(AttrValue::Nearest) && !Mode.Equals(AttrValue::Linear))
 		{
-			UE_LOG(LogNNE, Warning, TEXT("Upsample HLSL operator only supports nearest mode for now"));
+			UE_LOG(LogNNE, Warning, TEXT("Upsample HLSL operator only supports %s or %s as value for attribute %s"), AttrValue::Nearest, AttrValue::Linear, AttrName::Mode);
 			return false;
 		}
 
@@ -147,7 +176,8 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 
 	bool RegisterUpsampleOperator(FOperatorRegistryHlsl& Registry)
 	{
-		Registry.OpAdd(TEXT("Upsample"), CreateUpsampleOperator, ValidateUpsampleOperator);
+		// Note: support of a particular version is partial with respect to tensor data types (only the most typical ones are usually supported).
+		Registry.OpAdd({{TEXT("Upsample"), TEXT("Onnx")}, 9}, CreateUpsampleOperator, ValidateUpsampleOperator);
 		return true;
 	}
 } // UE::NNERuntimeRDG::Private::Hlsl

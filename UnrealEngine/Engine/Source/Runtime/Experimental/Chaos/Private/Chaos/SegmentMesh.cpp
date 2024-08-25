@@ -97,7 +97,7 @@ namespace Chaos
 			for(int32 i = 0; i < MElements.Num(); i++)
 			{
 				const TVec2<int32>& edge = MElements[i];
-				lengths[i] = (InParticles.X(edge[0]) - InParticles.X(edge[1])).SizeSquared();
+				lengths[i] = (InParticles.GetX(edge[0]) - InParticles.GetX(edge[1])).SizeSquared();
 			}
 		}
 		else
@@ -105,7 +105,7 @@ namespace Chaos
 			for(int32 i = 0; i < MElements.Num(); i++)
 			{
 				const TVec2<int32>& edge = MElements[i];
-				lengths[i] = (InParticles.X(edge[0]) - InParticles.X(edge[1])).Size();
+				lengths[i] = (InParticles.GetX(edge[0]) - InParticles.GetX(edge[1])).Size();
 			}
 		}
 		return lengths;

@@ -305,6 +305,7 @@ namespace EpicGames.UHT.Utils
 					if (!String.IsNullOrEmpty(message))
 					{
 						Session.Logger.LogInformation("{Message}", message);
+						Session.SignalError();
 						lock (ReferenceErrorMessages)
 						{
 							ReferenceErrorMessages.Add(message, true);
@@ -776,6 +777,12 @@ namespace EpicGames.UHT.Utils
 		/// </summary>
 		public UhtScriptStruct? FInstancedStruct { get; set; } = null;
 
+		/// <summary>
+		/// After headers are parsed, returns the FStateTreePropertyRef script struct.
+		/// There is no requirement for FStateTreePropertyRef to be defined. May be null.
+		/// </summary>
+		public UhtScriptStruct? FStateTreePropertyRef { get; set; } = null;
+
 		private readonly List<UhtPackage> _packages = new();
 		private readonly List<UhtHeaderFile> _headerFiles = new();
 		private readonly List<UhtHeaderFile> _sortedHeaderFiles = new();
@@ -996,21 +1003,21 @@ namespace EpicGames.UHT.Utils
 		{
 			if (FileManager == null)
 			{
-				Interlocked.Increment(ref _errorCount);
+				SignalError();
 				Logger.LogError("No file manager supplied, aborting.");
 				return;
 			}
 
 			if (Config == null)
 			{
-				Interlocked.Increment(ref _errorCount);
+				SignalError();
 				Logger.LogError("No configuration supplied, aborting.");
 				return;
 			}
 
 			if (Tables == null)
 			{
-				Interlocked.Increment(ref _errorCount);
+				SignalError();
 				Logger.LogError("No parsing tables supplied, aborting.");
 				return;
 			}
@@ -1530,7 +1537,7 @@ namespace EpicGames.UHT.Utils
 			{
 				case UhtMessageType.Error:
 				case UhtMessageType.Ice:
-					Interlocked.Increment(ref _errorCount);
+					SignalError();
 					break;
 
 				case UhtMessageType.Warning:
@@ -1546,6 +1553,14 @@ namespace EpicGames.UHT.Utils
 		#endregion
 
 		/// <summary>
+		/// Register than an error has happened
+		/// </summary>
+		public void SignalError()
+		{
+			Interlocked.Increment(ref _errorCount);
+		}
+
+		/// <summary>
 		/// Log all the collected messages to the log/console.  If messages aren't being
 		/// cached, then this just waits until the flush task has completed.  If messages
 		/// are being cached, they are sorted by file name and line number to ensure the 
@@ -1558,10 +1573,7 @@ namespace EpicGames.UHT.Utils
 			{
 				messageTask = _messageTask;
 			}
-			if (messageTask != null)
-			{
-				messageTask.Wait();
-			}
+			messageTask?.Wait();
 
 			foreach (UhtMessage message in FetchOrderedMessages())
 			{
@@ -1781,10 +1793,7 @@ namespace EpicGames.UHT.Utils
 			{
 				case UhtException uhtException:
 					UhtMessage message = uhtException.UhtMessage;
-					if (message.MessageSource == null)
-					{
-						message.MessageSource = messageSource;
-					}
+					message.MessageSource ??= messageSource;
 					AddMessage(message);
 					break;
 
@@ -1985,11 +1994,14 @@ namespace EpicGames.UHT.Utils
 				{
 					foreach (UhtPackage package in _packages)
 					{
-						foreach (UhtHeaderFile headerFile in package.Children)
+						foreach (UhtType type in package.Children)
 						{
-							if (headerFile != noExportTypes)
+							if (type is UhtHeaderFile headerFile)
 							{
-								headerFile.AddReferencedHeader(noExportTypes);
+								if (headerFile != noExportTypes)
+								{
+									headerFile.AddReferencedHeader(noExportTypes);
+								}
 							}
 						}
 					}
@@ -2040,6 +2052,7 @@ namespace EpicGames.UHT.Utils
 				AActor = (UhtClass?)FindType(null, UhtFindOptions.SourceName | UhtFindOptions.Class, "AActor");
 				INotifyFieldValueChanged = (UhtClass?)FindType(null, UhtFindOptions.SourceName | UhtFindOptions.Class, "INotifyFieldValueChanged");
 				FInstancedStruct = (UhtScriptStruct?)FindType(null, UhtFindOptions.SourceName | UhtFindOptions.ScriptStruct, "FInstancedStruct");
+				FStateTreePropertyRef = (UhtScriptStruct?)FindType(null, UhtFindOptions.SourceName | UhtFindOptions.ScriptStruct, "FStateTreePropertyRef");
 			});
 		}
 

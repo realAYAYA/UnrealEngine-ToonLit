@@ -362,8 +362,9 @@ void SPacketView::UpdateState()
 								const uint32 EndPos = ~0U;
 								uint32 EndNetIdMatchPos = ~0U;
 								uint32 EndEventTypeMatchPos = ~0U;
+								uint32 LastMatchingLevel = ~0U;
 
-								NetProfilerProvider->EnumeratePacketContentEventsByPosition(ConnectionIndex, ConnectionMode, PacketIndex - 1, StartPos, EndPos, [this, &bFilterMatch, &bOldEventMatchesFilter, &Filter, NetProfilerProvider, &FilterMatchAggregatedEventSizeInBits,&FilterMatchMaxEventSizeBits,  &FilterMatchEventTypeIndex, &EndNetIdMatchPos, &EndEventTypeMatchPos](const TraceServices::FNetProfilerContentEvent& Event)
+								NetProfilerProvider->EnumeratePacketContentEventsByPosition(ConnectionIndex, ConnectionMode, PacketIndex - 1, StartPos, EndPos, [this, &LastMatchingLevel, &bFilterMatch, &bOldEventMatchesFilter, &Filter, NetProfilerProvider, &FilterMatchAggregatedEventSizeInBits,&FilterMatchMaxEventSizeBits,  &FilterMatchEventTypeIndex, &EndNetIdMatchPos, &EndEventTypeMatchPos](const TraceServices::FNetProfilerContentEvent& Event)
 								{
 									if (!bFilterMatch || (Filter.AggregationMode != TraceServices::ENetProfilerAggregationMode::None))
 									{
@@ -403,12 +404,13 @@ void SPacketView::UpdateState()
 										}
 
 										// Check if all conditions are fulfilled but only aggregate stats for top-level event.
-										const bool bEventMatchesFilter = (!Filter.bByNetId || EndNetIdMatchPos != ~0U) && (!Filter.bByEventType || EndEventTypeMatchPos != ~0U);
-										if (bEventMatchesFilter && !bOldEventMatchesFilter)
+										const bool bEventMatchesFilter = (!Filter.bByNetId || EndNetIdMatchPos != ~0U) && (!Filter.bByEventType || EndEventTypeMatchPos != ~0U);										
+										if (bEventMatchesFilter && (!bOldEventMatchesFilter || LastMatchingLevel == Event.Level))
 										{
 											const uint32 EventSize = static_cast<uint32>(Event.EndPos - Event.StartPos);
 											FilterMatchAggregatedEventSizeInBits += EventSize;
 											FilterMatchMaxEventSizeBits = FMath::Max(FilterMatchMaxEventSizeBits, EventSize);
+											LastMatchingLevel = Event.Level;
 
 											if (!bFilterMatch)
 											{
@@ -891,10 +893,10 @@ int32 SPacketView::OnPaint(const FPaintArgs& Args, const FGeometry& AllottedGeom
 			}
 
 			const float Y = 10.0f;
-			const float H = 2.0f + 13.0f * NumLines;
-			DrawContext.DrawBox(CX - W2, Y, 2 * W2, H, WhiteBrush, FLinearColor(0.7, 0.7, 0.7, TooltipOpacity));
+			const float H = 2.0f + 13.0f * static_cast<float>(NumLines);
+			DrawContext.DrawBox(CX - W2, Y, 2 * W2, H, WhiteBrush, FLinearColor(0.7f, 0.7f, 0.7f, TooltipOpacity));
 			DrawContext.LayerId++;
-			DrawContext.DrawText(CX - W2 + DX, Y + 1.0f, Text, SummaryFont, FLinearColor(0.0, 0.0, 0.0, TooltipOpacity));
+			DrawContext.DrawText(CX - W2 + DX, Y + 1.0f, Text, SummaryFont, FLinearColor(0.0f, 0.0f, 0.0f, TooltipOpacity));
 			DrawContext.LayerId++;
 		}
 
@@ -916,10 +918,10 @@ int32 SPacketView::OnPaint(const FPaintArgs& Args, const FGeometry& AllottedGeom
 
 		DrawContext.LayerId++;
 
-		DrawContext.DrawBox(DbgX - 2.0f, DbgY - 2.0f, DbgW, DbgH, WhiteBrush, FLinearColor(1.0, 1.0, 1.0, 0.9));
+		DrawContext.DrawBox(DbgX - 2.0f, DbgY - 2.0f, DbgW, DbgH, WhiteBrush, FLinearColor(1.0f, 1.0f, 1.0f, 0.9f));
 		DrawContext.LayerId++;
 
-		FLinearColor DbgTextColor(0.0, 0.0, 0.0, 0.9);
+		FLinearColor DbgTextColor(0.0f, 0.0f, 0.0f, 0.9f);
 
 		// Time interval since last OnPaint call.
 		const uint64 CurrentTime = FPlatformTime::Cycles64();

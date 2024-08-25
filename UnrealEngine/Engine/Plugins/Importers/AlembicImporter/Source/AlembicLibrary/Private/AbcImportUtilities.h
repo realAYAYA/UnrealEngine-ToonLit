@@ -6,7 +6,6 @@
 
 #if PLATFORM_WINDOWS
 #include "Math/Matrix.h"
-#include "Windows/WindowsHWrapper.h"
 #include "UObject/ObjectMacros.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 #endif
@@ -298,11 +297,11 @@ namespace AbcImporterUtilities
 
 	/** Generates the delta frame data for the given average and frame vertex data */
 	void GenerateDeltaFrameDataMatrix(const TArray<FVector3f>& FrameVertexData, const TArray<FVector3f>& FrameNormalData, const TArray<FVector3f>& AverageVertexData, const TArray<FVector3f>& AverageNormalData,
-		const int32 SampleIndex, const int32 AverageVertexOffset, const int32 AverageIndexOffset, const FVector& SamplePositionOffset, TArray<float>& OutGeneratedMatrix, TArray<float>& OutGeneratedNormalsMatrix);
+		const int32 SampleIndex, const int32 AverageVertexOffset, const int32 AverageIndexOffset, const FVector& SamplePositionOffset, TArray64<float>& OutGeneratedMatrix, TArray64<float>& OutGeneratedNormalsMatrix);
 
 	/** Populates compressed data structure from the result PCA compression bases and weights */
 	void GenerateCompressedMeshData(FCompressedAbcData& CompressedData, const uint32 NumUsedSingularValues, const uint32 NumSamples,
-		const TArrayView<float>& BasesMatrix, const TArrayView<float>& NormalsBasesMatrix, const TArray<float>& BasesWeights, const float SampleTimeStep, const float StartTime);
+		const TArrayView64<float>& BasesMatrix, const TArrayView64<float>& NormalsBasesMatrix, const TArray64<float>& BasesWeights, const float SampleTimeStep, const float StartTime);
 
 	void CalculateNewStartAndEndFrameIndices(const float FrameStepRatio, int32& InOutStartFrameIndex, int32& InOutEndFrameIndex );
 
@@ -338,7 +337,7 @@ namespace AbcImporterUtilities
 	 * @param SecondsPerFrame		The time step of the Abc file
 	 * @param bUseVelocitiesAsMotionVectors		Converts the AbcPolyMesh velocities to motion vectors
 	 * @param PolyMeshes			The PolyMeshes to merge, which will be sampled at FrameIndex
-	 * @param UniqueFaceSetNames	The array of unique face set names of the PolyMeshes
+	 * @param LookupMaterialSlot	Mapping from original face set index (index in flattened list of facesets to import) to material slot (one for each unique faceset name)
 	 * @param FrameTime				The frame time that corresponds to FrameIndex
 	 * @param MeshData				The GeometryCacheMeshData where to output the merged PolyMeshes
 	 * @param PreviousNumVertices	The number of vertices in the merged PolyMeshes, used to determine if its topology is constant between 2 frames
@@ -346,7 +345,9 @@ namespace AbcImporterUtilities
 	 * @param bStoreImportedVertexNumbers Set to true when we want to store the original dcc vertex numbers for each vertex.
 	 */
 	void MergePolyMeshesToMeshData(int32 FrameIndex, int32 FrameStart, float SecondsPerFrame, bool bUseVelocitiesAsMotionVectors,
-		const TArray<FAbcPolyMesh*>& PolyMeshes, const TArray<FString>& UniqueFaceSetNames, float& FrameTime,
+		const TArray<FAbcPolyMesh*>& PolyMeshes, 
+		const TArray<int32> LookupMaterialSlot,
+		float& FrameTime,
 		FGeometryCacheMeshData& MeshData, int32& PreviousNumVertices, bool& bConstantTopology, bool bStoreImportedVertexNumbers);
 
 	/** Retrieves a material from an AbcFile according to the given name and resaves it into the parent package */

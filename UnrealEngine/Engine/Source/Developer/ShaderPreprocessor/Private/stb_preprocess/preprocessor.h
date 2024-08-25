@@ -75,23 +75,45 @@ typedef void (*freefile_callback_func)(const char* filename, const char* loaded_
 // note: returned resolved paths must remain valid for the lifetime of a single preprocessor execution
 typedef const char* (*resolveinclude_callback_func)(const char* path, unsigned int path_len, const char* parent, void* custom_context);
 
+// Callback functions for custom macros.  Custom macros return their own substitution text, which is then further preprocessed.
+// The substitution text must include 15 bytes of padding past the null terminator, as the preprocessor uses SSE reads which may
+// read past the null terminator.  The text passed to the callback includes the macro identifier and its arguments, with backslashes
+// removed.  A function is called when entering the macro, and again when complete, allowing stateful logic based on whether
+// parsing is inside a certain custom macro.  Any custom macro will automatically be disabled inside itself, with the idea that
+// this allows a singleton buffer for the substitution text, as there's no concern about nested calls.  If text is dynamically
+// allocated, the caller is responsible for freeing it.  It's also valid to return the original text passed in as the substitution
+// text, if you just want to set some state inside the context, and not actually change the macro text -- since the macro is
+// disabled, it will then be echoed as non-macro text.
+typedef const char* (*custommacro_begin_callback_func)(const char* original_text, void* custom_context);
+typedef void (*custommacro_end_callback_func)(const char* original_text, void* custom_context, const char* substitution_text);
+
 // init function must be called once before any invocations of preprocess_file
 STB_PP_DEF void init_preprocessor(
 	loadfile_callback_func load_callback,
 	freefile_callback_func free_callback,
-	resolveinclude_callback_func resolve_callback);
+	resolveinclude_callback_func resolve_callback,
+	custommacro_begin_callback_func custommacro_begin_callback,
+	custommacro_end_callback_func custommacro_end_callback);
 
 // main preprocessing execution function; returns the preprocessed string and sets any diagnostic messages
 // in the pd array (setting num_pd to the diagnostic count). preprocessor_file_free should be called for 
 // each invocation to free any allocated memory.
 STB_PP_DEF char* preprocess_file(
-	char* output_storage,
 	const char* filename,
 	void* custom_context,
 	struct macro_definition** predefined_macros,
 	int num_predefined_macros,
 	pp_diagnostic** pd,
-	int* num_pd);
+	int* num_pd,
+	char* output_inlinebuffer,
+	size_t output_inlinebuffersize);
+
+STB_PP_DEF int preprocessor_file_size(char* text);
+STB_PP_DEF int preprocessor_file_capacity(char* text);
+
+// Append text to the end of a file generated with preprocess_file.  Can save reallocation overhead relative
+// to appending the text later, as there will usually be slack space available.
+STB_PP_DEF void preprocessor_file_append(char* text, const char* appended_text, int appended_text_len);
 
 // frees memory allocated by preprocess_file (preprocessed results and diagnostic messages)
 STB_PP_DEF void preprocessor_file_free(char* text, pp_diagnostic* pd);
@@ -99,6 +121,10 @@ STB_PP_DEF void preprocessor_file_free(char* text, pp_diagnostic* pd);
 // constructs a preprocessor definition, allocating on the given arena. "def" should be in the format:
 // DEFINE_NAME DEFINE_VALUE
 STB_PP_DEF struct macro_definition* pp_define(struct stb_arena* a, const char* def);
+
+// specifies a custom macro name, with substitution to be handled by the custom macro callback functions.  If "preprocess_args_first" is set,
+// args of macro are preprocessed before begin callback (and again afterwards).
+STB_PP_DEF struct macro_definition* pp_define_custom_macro(struct stb_arena* a, const char* identifier, unsigned char preprocess_args_first);
 
 // override behaviour of a particular error result (can be used to, for instance, downgrade
 // an error to a warning or a "no warning" i.e. valid case).

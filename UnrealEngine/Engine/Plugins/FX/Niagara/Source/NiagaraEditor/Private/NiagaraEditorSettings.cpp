@@ -66,6 +66,7 @@ UNiagaraEditorSettings::UNiagaraEditorSettings(const FObjectInitializer& ObjectI
 	bResetDependentSystemsWhenEditingEmitters = false;
 	SetupNamespaceMetadata();
 	TrackedUsageBaseClasses = { UNiagaraNode::StaticClass(), UNiagaraDataInterface::StaticClass(), UNiagaraRendererProperties::StaticClass() };
+	bForceSilentLoadingOfCachedAssets = false;
 }
 
 #define LOCTEXT_NAMESPACE "NamespaceMetadata"
@@ -389,6 +390,20 @@ void UNiagaraEditorSettings::SetShowMemoryInfo(bool bInShowInfo)
 	}
 }
 
+bool UNiagaraEditorSettings::IsShowStatelessInfo() const
+{
+	return ViewportSettings.bShowStatelessInfo;
+}
+
+void UNiagaraEditorSettings::SetShowStatelessInfo(bool bInShowInfo)
+{
+	if (ViewportSettings.bShowStatelessInfo != bInShowInfo)
+	{
+		ViewportSettings.bShowStatelessInfo = bInShowInfo;
+		SaveConfig();
+	}
+}
+
 TArray<float> UNiagaraEditorSettings::GetPlaybackSpeeds() const
 {
 	if(!CachedPlaybackSpeeds.IsSet())
@@ -511,22 +526,6 @@ bool UNiagaraEditorSettings::GetDisplayAffectedAssetStats() const
 int32 UNiagaraEditorSettings::GetAssetStatsSearchLimit() const
 {
 	return AffectedAssetSearchLimit;
-}
-
-FNiagaraNewAssetDialogConfig UNiagaraEditorSettings::GetNewAssetDailogConfig(FName InDialogConfigKey) const
-{
-	const FNiagaraNewAssetDialogConfig* Config = NewAssetDialogConfigMap.Find(InDialogConfigKey);
-	if (Config != nullptr)
-	{
-		return *Config;
-	}
-	return FNiagaraNewAssetDialogConfig();
-}
-
-void UNiagaraEditorSettings::SetNewAssetDialogConfig(FName InDialogConfigKey, const FNiagaraNewAssetDialogConfig& InNewAssetDialogConfig)
-{
-	NewAssetDialogConfigMap.Add(InDialogConfigKey, InNewAssetDialogConfig);
-	SaveConfig();
 }
 
 FNiagaraNamespaceMetadata UNiagaraEditorSettings::GetDefaultNamespaceMetadata() const
@@ -675,34 +674,39 @@ UNiagaraEditorSettings::FOnNiagaraEditorSettingsChanged& UNiagaraEditorSettings:
 	return GetMutableDefault<UNiagaraEditorSettings>()->SettingsChangedDelegate;
 }
 
-void UNiagaraEditorSettings::SetOnIsClassAllowed(const FOnIsClassAllowed& InOnIsClassAllowed)
+void UNiagaraEditorSettings::SetOnIsClassVisible(const FOnIsClassAllowed& InOnIsClassAllowed)
 {
-	OnIsClassAllowedDelegate = InOnIsClassAllowed;
+	OnIsClassVisibleDelegate = InOnIsClassAllowed;
 }
 
-void UNiagaraEditorSettings::SetOnIsClassPathAllowed(const FOnIsClassPathAllowed& InOnIsClassPathAllowed)
+void UNiagaraEditorSettings::SetOnIsClassReferenceable(const FOnIsClassAllowed& InOnIsClassAllowed)
 {
-	OnIsClassPathAllowedDelegate = InOnIsClassPathAllowed;
+	OnIsClassReferenceableDelegate = InOnIsClassAllowed;
 }
 
-void UNiagaraEditorSettings::SetOnShouldFilterAssetByClassUsage(const FOnShouldFilterAssetByClassUsage& InOnShouldFilterAssetByClassUsage)
+void UNiagaraEditorSettings::SetOnShouldFilterAssetByClassUsage(const FOnShouldFilterAsset& InOnShouldFilterAssetByClassUsage)
 {
 	OnShouldFilterAssetByClassUsage = InOnShouldFilterAssetByClassUsage;
 }
 
-bool UNiagaraEditorSettings::IsAllowedClass(const UClass* InClass) const
+void UNiagaraEditorSettings::SetOnShouldFilterAssetInNiagaraAssetBrowser(const FOnShouldFilterAsset& InOnShouldFilterAssetInNiagaraAssetBrowser)
 {
-	return OnIsClassAllowedDelegate.IsBound() == false || OnIsClassAllowedDelegate.Execute(InClass);
+	OnShouldFilterAssetInNiagaraAssetBrowser = InOnShouldFilterAssetInNiagaraAssetBrowser;
 }
 
-bool UNiagaraEditorSettings::IsAllowedClassPath(const FTopLevelAssetPath& InClassPath) const
+bool UNiagaraEditorSettings::IsVisibleClass(const UClass* InClass) const
 {
-	return OnIsClassPathAllowedDelegate.IsBound() == false || OnIsClassPathAllowedDelegate.Execute(InClassPath);
+	return OnIsClassVisibleDelegate.IsBound() == false || OnIsClassVisibleDelegate.Execute(InClass);
 }
 
-bool UNiagaraEditorSettings::IsAllowedTypeDefinition(const FNiagaraTypeDefinition& InTypeDefinition) const
+bool UNiagaraEditorSettings::IsReferenceableClass(const UClass* InClass) const
 {
-	return InTypeDefinition.GetClass() == nullptr || IsAllowedClass(InTypeDefinition.GetClass());
+	return OnIsClassReferenceableDelegate.IsBound() == false || OnIsClassReferenceableDelegate.Execute(InClass);
+}
+
+bool UNiagaraEditorSettings::IsVisibleTypeDefinition(const FNiagaraTypeDefinition& InTypeDefinition) const
+{
+	return InTypeDefinition.GetClass() == nullptr || IsVisibleClass(InTypeDefinition.GetClass());
 }
 
 const FName ClassUsageListTagName = "ClassUsageList";
@@ -734,6 +738,7 @@ UObject::FAssetRegistryTag UNiagaraEditorSettings::CreateClassUsageAssetRegistry
 				ClassPaths.Add(ObjectInPackage->GetClass()->GetClassPathName().ToString());
 			}
 		}
+		ClassPaths.Sort([](const FString& A, const FString& B) { return A < B; });
 		ClassUsageList = FString::Join(ClassPaths, TEXT("\n"));
 	}
 	else
@@ -752,7 +757,7 @@ bool UNiagaraEditorSettings::IsAllowedAssetObjectByClassUsageInternal(const UObj
 	GetObjectsWithPackage(AssetObject.GetOutermost(), ObjectsInPackage);
 	for (UObject* ObjectInPackage : ObjectsInPackage)
 	{
-		if (ShouldTrackClassUsage(ObjectInPackage->GetClass()) && IsAllowedClass(ObjectInPackage->GetClass()) == false)
+		if (ShouldTrackClassUsage(ObjectInPackage->GetClass()) && IsReferenceableClass(ObjectInPackage->GetClass()) == false)
 		{
 			if (GbLogFoundButNotAllowedAssets)
 			{
@@ -788,7 +793,7 @@ bool UNiagaraEditorSettings::IsAllowedObjectByClassUsageInternal(const UObject& 
 	
 	for (const UObject* ObjectInPackage : ObjectsWithOuter)
 	{
-		if (ShouldTrackClassUsage(ObjectInPackage->GetClass()) && IsAllowedClass(ObjectInPackage->GetClass()) == false)
+		if (ShouldTrackClassUsage(ObjectInPackage->GetClass()) && IsReferenceableClass(ObjectInPackage->GetClass()) == false)
 		{
 			if (GbLogFoundButNotAllowedAssets)
 			{
@@ -818,7 +823,7 @@ bool UNiagaraEditorSettings::IsAllowedObjectByClassUsageInternal(const UObject& 
 bool UNiagaraEditorSettings::IsAllowedAssetByClassUsage(const FAssetData& InAssetData) const
 {
 	if (OnShouldFilterAssetByClassUsage.IsBound() == false ||
-		OnIsClassAllowedDelegate.IsBound() == false ||
+		OnIsClassVisibleDelegate.IsBound() == false ||
 		OnShouldFilterAssetByClassUsage.Execute(FTopLevelAssetPath(InAssetData.GetObjectPathString())) == false)
 	{
 		return true;
@@ -844,7 +849,7 @@ bool UNiagaraEditorSettings::IsAllowedAssetByClassUsage(const FAssetData& InAsse
 			{
 				FTopLevelAssetPath ClassPath(ClassUsageListLine);
 				UClass* UsedClass = FindObject<UClass>(ClassPath);
-				if (UsedClass == nullptr || (ShouldTrackClassUsage(UsedClass) && IsAllowedClass(UsedClass) == false))
+				if (UsedClass == nullptr || (ShouldTrackClassUsage(UsedClass) && IsVisibleClass(UsedClass) == false))
 				{
 					bInvalidClassFound = true;
 					if (GbLogFoundButNotAllowedAssets)
@@ -874,19 +879,29 @@ bool UNiagaraEditorSettings::IsAllowedAssetByClassUsage(const FAssetData& InAsse
 bool UNiagaraEditorSettings::IsAllowedAssetObjectByClassUsage(const UObject& InAssetObject) const
 {
 	TSet<const UObject*> CheckedAssetObjects;
-	if (OnIsClassAllowedDelegate.IsBound() && InAssetObject.IsAsset() == false)
+	if (OnIsClassVisibleDelegate.IsBound() && InAssetObject.IsAsset() == false)
 	{
 		return IsAllowedObjectByClassUsageInternal(InAssetObject, CheckedAssetObjects);
 	}
 	
 	if (OnShouldFilterAssetByClassUsage.IsBound() == false ||
-		OnIsClassAllowedDelegate.IsBound() == false ||
+		OnIsClassVisibleDelegate.IsBound() == false ||
 		OnShouldFilterAssetByClassUsage.Execute(FTopLevelAssetPath(InAssetObject.GetPathName())) == false)
 	{
 		return true;
 	}
 
 	return IsAllowedAssetObjectByClassUsageInternal(InAssetObject, CheckedAssetObjects);
+}
+
+bool UNiagaraEditorSettings::IsAllowedAssetInNiagaraAssetBrowser(const FAssetData& InAssetData) const
+{
+	if(OnShouldFilterAssetInNiagaraAssetBrowser.IsBound())
+	{
+		return OnShouldFilterAssetInNiagaraAssetBrowser.Execute(FTopLevelAssetPath(InAssetData.GetObjectPathString())) == false;
+	}
+
+	return true;
 }
 
 bool UNiagaraEditorSettings::GetUpdateStackValuesOnCommitOnly() const

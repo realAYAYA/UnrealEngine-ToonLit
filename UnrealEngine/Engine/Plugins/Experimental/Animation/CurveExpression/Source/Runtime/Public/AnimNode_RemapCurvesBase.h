@@ -79,6 +79,8 @@ private:
 	// Serialized data.
 	UPROPERTY()
 	TArray<FName> CachedConstantNames;
+
+	mutable TSharedPtr<const FExpressionData> CachedAssetExpressionData;
 	
 	TMap<FName, CurveExpression::Evaluator::FExpressionObject> CachedExpressions;
 	TOptional<int32> ExpressionMapHash;

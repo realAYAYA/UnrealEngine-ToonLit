@@ -10,7 +10,7 @@
 #include "ShaderCore.h"
 
 // Enable this to log the parameters of each compiled permutation
-constexpr static bool bLogPermutations = false;
+inline constexpr bool bLogPermutations = false;
 
 struct FShaderCompilerEnvironment;
 

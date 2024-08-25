@@ -6,7 +6,7 @@ OutputVS WarpVS(InputVS IN)
 	OutputVS OUT;
 
 #if MESH_WARP
-	OUT.PFMPosition = mul(float4(IN.Position.xyz, 1.f), MeshToStageProjectionMatrix);
+	OUT.PFMPosition = mul(float4(IN.Position.xyz, 1.f), MeshToStageProjectionMatrix).xyz;
 	OUT.UV_Chromakey = float4(IN.UV_Chromakey, 0.f, 1.f);
 	float4 ScreenPosition = float4(IN.UV.xy, 0, 1);
 #else

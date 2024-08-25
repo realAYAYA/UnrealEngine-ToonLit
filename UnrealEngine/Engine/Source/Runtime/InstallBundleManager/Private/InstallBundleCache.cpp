@@ -22,6 +22,7 @@ void FInstallBundleCache::AddOrUpdateBundle(EInstallBundleSourceType Source, con
 
 	FPerSourceBundleCacheInfo& Info = PerSourceCacheInfo.FindOrAdd(AddInfo.BundleName).FindOrAdd(Source);
 	Info.FullInstallSize = AddInfo.FullInstallSize;
+	Info.InstallOverheadSize = AddInfo.InstallOverheadSize;
 	Info.CurrentInstallSize = AddInfo.CurrentInstallSize;
 	Info.TimeStamp = AddInfo.TimeStamp;
 	Info.AgeScalar = FMath::Clamp(AddInfo.AgeScalar, 0.1, 1.0);
@@ -55,6 +56,7 @@ TOptional<FInstallBundleCacheBundleInfo> FInstallBundleCache::GetBundleInfo(FNam
 		FInstallBundleCacheBundleInfo& OutInfo = Ret.Emplace();
 		OutInfo.BundleName = BundleName;
 		OutInfo.FullInstallSize = Info->FullInstallSize;
+		OutInfo.InstallOverheadSize = Info->InstallOverheadSize;
 		OutInfo.CurrentInstallSize = Info->CurrentInstallSize;
 		OutInfo.TimeStamp = Info->TimeStamp;
 		OutInfo.AgeScalar = Info->AgeScalar;
@@ -76,6 +78,7 @@ TOptional<FInstallBundleCacheBundleInfo> FInstallBundleCache::GetBundleInfo(EIns
 			FInstallBundleCacheBundleInfo& OutInfo = Ret.Emplace();
 			OutInfo.BundleName = BundleName;
 			OutInfo.FullInstallSize = SourceInfo->FullInstallSize;
+			OutInfo.InstallOverheadSize = SourceInfo->InstallOverheadSize;
 			OutInfo.CurrentInstallSize = SourceInfo->CurrentInstallSize;
 			OutInfo.TimeStamp = SourceInfo->TimeStamp;
 			OutInfo.AgeScalar = SourceInfo->AgeScalar;
@@ -144,16 +147,11 @@ FInstallBundleCacheReserveResult FInstallBundleCache::Reserve(FName BundleName)
 		return Result;
 	}
 
-	if (BundleInfo->FullInstallSize <= BundleInfo->CurrentInstallSize)
-	{
-		BundleInfo->State = ECacheState::Reserved;
-		Result.Result = EInstallBundleCacheReserveResult::Success;
-		return Result;
-	}
-
-	const uint64 SizeNeeded = BundleInfo->FullInstallSize - BundleInfo->CurrentInstallSize;
+	const uint64 SizeNeeded = (BundleInfo->FullInstallSize <= BundleInfo->CurrentInstallSize) ?
+		BundleInfo->InstallOverheadSize :
+		BundleInfo->InstallOverheadSize + (BundleInfo->FullInstallSize - BundleInfo->CurrentInstallSize);
 	const uint64 UsedSize = GetUsedSize();
-	if(TotalSize >= UsedSize + SizeNeeded)
+	if (TotalSize >= UsedSize + SizeNeeded)
 	{
 		BundleInfo->State = ECacheState::Reserved;
 		Result.Result = EInstallBundleCacheReserveResult::Success;
@@ -208,7 +206,7 @@ FInstallBundleCacheReserveResult FInstallBundleCache::Reserve(FName BundleName)
 	}
 
 #if INSTALLBUNDLE_CACHE_DUMP_INFO
-	GetStats(true);
+	GetStats(EInstallBundleCacheDumpToLog::Default, true);
 #endif // INSTALLBUNDLE_CACHE_DUMP_INFO
 
 	return Result;
@@ -244,7 +242,7 @@ FInstallBundleCacheFlushResult FInstallBundleCache::Flush(EInstallBundleSourceTy
 	}
 
 #if INSTALLBUNDLE_CACHE_DUMP_INFO
-	GetStats(true);
+	GetStats(EInstallBundleCacheDumpToLog::Default, true);
 #endif // INSTALLBUNDLE_CACHE_DUMP_INFO
 
 	return Result;
@@ -261,6 +259,17 @@ bool FInstallBundleCache::Contains(EInstallBundleSourceType Source, FName Bundle
 	if (SourcesMap)
 	{
 		return SourcesMap->Contains(Source);
+	}
+
+	return false;
+}
+
+bool FInstallBundleCache::IsReserved(FName BundleName) const
+{
+	const FBundleCacheInfo* BundleInfo = CacheInfo.Find(BundleName);
+	if (BundleInfo)
+	{
+		return BundleInfo->State == ECacheState::Reserved;
 	}
 
 	return false;
@@ -417,6 +426,7 @@ FInstallBundleCacheStats FInstallBundleCache::GetStats(EInstallBundleCacheDumpTo
 	{ \
 		UE_LOG(LogInstallBundleManager, Verbosity, TEXT("* \tbundle %s"), *BundleName.ToString()) \
 		UE_LOG(LogInstallBundleManager, Verbosity, TEXT("* \t\tfull size: %" UINT64_FMT), Info.FullInstallSize) \
+		UE_LOG(LogInstallBundleManager, Verbosity, TEXT("* \t\toverhead size: %" UINT64_FMT), Info.InstallOverheadSize) \
 		UE_LOG(LogInstallBundleManager, Verbosity, TEXT("* \t\tcurrent size: %" UINT64_FMT), Info.CurrentInstallSize) \
 		UE_LOG(LogInstallBundleManager, Verbosity, TEXT("* \t\treserved: %s"), (Info.State == ECacheState::Reserved) ? TEXT("true") : TEXT("false")) \
 		UE_LOG(LogInstallBundleManager, Verbosity, TEXT("* \t\ttimestamp: %s"), *Info.TimeStamp.ToString()) \
@@ -424,7 +434,7 @@ FInstallBundleCacheStats FInstallBundleCache::GetStats(EInstallBundleCacheDumpTo
 	}
 
 #define INSTALLBUNDLECACHE_CSV_HEADER_LOG(Verbosity) \
-	UE_LOG(LogInstallBundleManager, Verbosity, TEXT("* \tbundle, full size, current size, diff, reserved, timestamp, age scale"))
+	UE_LOG(LogInstallBundleManager, Verbosity, TEXT("* \tbundle, full size, overhead size, current size, diff, reserved, timestamp, age scale"))
 
 #define INSTALLBUNDLECACHE_CSV_LOG(Verbosity) \
 	if (Info.CurrentInstallSize > 0 || Info.State != ECacheState::Released) \
@@ -432,7 +442,7 @@ FInstallBundleCacheStats FInstallBundleCache::GetStats(EInstallBundleCacheDumpTo
 		const TCHAR* Diff = TEXT("="); \
 		if (Info.FullInstallSize > Info.CurrentInstallSize) Diff = TEXT(">"); \
 		else if(Info.FullInstallSize < Info.CurrentInstallSize) Diff = TEXT("<"); \
-		UE_LOG(LogInstallBundleManager, Verbosity, TEXT("* \t%s, %" UINT64_FMT ", %" UINT64_FMT ", %s, %s, %s, %f"), *BundleName.ToString(), Info.FullInstallSize, Info.CurrentInstallSize, Diff, (Info.State == ECacheState::Reserved) ? TEXT("true") : TEXT("false"), *Info.TimeStamp.ToString(), Info.AgeScalar) \
+		UE_LOG(LogInstallBundleManager, Verbosity, TEXT("* \t%s, %" UINT64_FMT ", %" UINT64_FMT ", %" UINT64_FMT ", %s, %s, %s, %f"), *BundleName.ToString(), Info.FullInstallSize, Info.InstallOverheadSize, Info.CurrentInstallSize, Diff, (Info.State == ECacheState::Reserved) ? TEXT("true") : TEXT("false"), *Info.TimeStamp.ToString(), Info.AgeScalar) \
 	}
 
 	auto DumpToLog_Default = [](FName BundleName, const FBundleCacheInfo& Info)
@@ -552,11 +562,14 @@ void FInstallBundleCache::UpdateCacheInfoFromSourceInfo(FName BundleName)
 	FDateTime TimeStamp = FDateTime::MinValue();
 	double AgeScalar = 1.0;
 	uint64 FullInstallSize = 0;
+	uint64 InstallOverheadSize = 0;
 	uint64 CurrentInstallSize = 0;
 	for (const TPair<EInstallBundleSourceType, FPerSourceBundleCacheInfo>& Pair : *SourcesMap)
 	{
 		FullInstallSize += Pair.Value.FullInstallSize;
+		InstallOverheadSize += Pair.Value.InstallOverheadSize;
 		CurrentInstallSize += Pair.Value.CurrentInstallSize;
+
 		if (Pair.Value.CurrentInstallSize > 0)
 		{
 			if (Pair.Value.TimeStamp > TimeStamp)
@@ -575,6 +588,7 @@ void FInstallBundleCache::UpdateCacheInfoFromSourceInfo(FName BundleName)
 	checkf(BundleCacheInfo.FullInstallSize == FullInstallSize || BundleCacheInfo.State != ECacheState::Reserved, TEXT("Bundle %s: FullInstallSize should not be updated while a bundle is Reserved!"), *BundleName.ToString());
 
 	BundleCacheInfo.FullInstallSize = FullInstallSize;
+	BundleCacheInfo.InstallOverheadSize = InstallOverheadSize;
 	BundleCacheInfo.CurrentInstallSize = CurrentInstallSize;
 	BundleCacheInfo.TimeStamp = TimeStamp;
 	BundleCacheInfo.AgeScalar = AgeScalar;

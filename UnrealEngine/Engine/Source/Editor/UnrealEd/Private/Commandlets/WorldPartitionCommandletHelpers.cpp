@@ -13,7 +13,7 @@
 
 namespace WorldPartitionCommandletHelpers
 {
-	DEFINE_LOG_CATEGORY(LogWorldParitionCommandletUtils)
+	DEFINE_LOG_CATEGORY(LogWorldPartitionCommandletUtils)
 
 	UWorld* LoadAndInitWorld(const FString& LevelToLoad)
 	{
@@ -34,21 +34,21 @@ namespace WorldPartitionCommandletHelpers
 		TRACE_CPUPROFILER_EVENT_SCOPE(UWorldPartitionConvertCommandlet::LoadWorld);
 
 		SET_WARN_COLOR(COLOR_WHITE);
-		UE_LOG(LogWorldParitionCommandletUtils, Log, TEXT("Loading level %s."), *LevelToLoad);
+		UE_LOG(LogWorldPartitionCommandletUtils, Log, TEXT("Loading level %s."), *LevelToLoad);
 		CLEAR_WARN_COLOR();
 
 		// This will convert incomplete package name to a fully qualified path, avoiding calling it several times (takes ~50s)
 		FString FullLevelToLoadPath;
 		if (!FPackageName::SearchForPackageOnDisk(LevelToLoad, &FullLevelToLoadPath))
 		{
-			UE_LOG(LogWorldParitionCommandletUtils, Error, TEXT("Unknown level '%s'"), *LevelToLoad);
+			UE_LOG(LogWorldPartitionCommandletUtils, Error, TEXT("Unknown level '%s'"), *LevelToLoad);
 			return nullptr;
 		}
 
 		UPackage* MapPackage = LoadPackage(nullptr, *FullLevelToLoadPath, LOAD_None);
 		if (!MapPackage)
 		{
-			UE_LOG(LogWorldParitionCommandletUtils, Error, TEXT("Error loading %s."), *FullLevelToLoadPath);
+			UE_LOG(LogWorldPartitionCommandletUtils, Error, TEXT("Error loading %s."), *FullLevelToLoadPath);
 			return nullptr;
 		}
 
@@ -60,7 +60,7 @@ namespace WorldPartitionCommandletHelpers
 		TRACE_CPUPROFILER_EVENT_SCOPE(UWorldPartitionConvertCommandlet::InitWorld);
 
 		SET_WARN_COLOR(COLOR_WHITE);
-		UE_LOG(LogWorldParitionCommandletUtils, Log, TEXT("Initializing level %s."), *World->GetName());
+		UE_LOG(LogWorldPartitionCommandletUtils, Log, TEXT("Initializing level %s."), *World->GetName());
 		CLEAR_WARN_COLOR();
 
 		// Setup the world.
@@ -91,7 +91,7 @@ namespace WorldPartitionCommandletHelpers
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(CheckoutPackages);
 
-		UE_LOG(LogWorldParitionCommandletUtils, Log, TEXT("Checking out %d Packages."), PackagesToCheckout.Num());
+		UE_LOG(LogWorldPartitionCommandletUtils, Log, TEXT("Checking out %d Packages."), PackagesToCheckout.Num());
 		for (UPackage* Package : PackagesToCheckout)
 		{
 			if (!Checkout(Package, SCHelper))
@@ -105,7 +105,7 @@ namespace WorldPartitionCommandletHelpers
 
 	bool Checkout(UPackage* PackagesToCheckout, FPackageSourceControlHelper& SCHelper)
 	{
-		UE_LOG(LogWorldParitionCommandletUtils, Verbose, TEXT("Checking out Package %s."), *SourceControlHelpers::PackageFilename(PackagesToCheckout));
+		UE_LOG(LogWorldPartitionCommandletUtils, Verbose, TEXT("Checking out Package %s."), *SourceControlHelpers::PackageFilename(PackagesToCheckout));
 
 		FString PackageFileName = SourceControlHelpers::PackageFilename(PackagesToCheckout);
 		if (FPlatformFileManager::Get().GetPlatformFile().FileExists(*PackageFileName))
@@ -123,7 +123,7 @@ namespace WorldPartitionCommandletHelpers
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(SavePackages);
 
-		UE_LOG(LogWorldParitionCommandletUtils, Log, TEXT("Saving %d packages."), PackagesToSave.Num());
+		UE_LOG(LogWorldPartitionCommandletUtils, Log, TEXT("Saving %d packages."), PackagesToSave.Num());
 		for (UPackage* PackageToSave : PackagesToSave)
 		{
 			if (!Save(PackagesToSave))
@@ -141,7 +141,7 @@ namespace WorldPartitionCommandletHelpers
 		FSavePackageArgs SaveArgs;
 		SaveArgs.TopLevelFlags = RF_Standalone;
 
-		UE_LOG(LogWorldParitionCommandletUtils, Verbose, TEXT("Saving Package %s."), *PackageFileName);
+		UE_LOG(LogWorldPartitionCommandletUtils, Verbose, TEXT("Saving Package %s."), *PackageFileName);
 		return UPackage::SavePackage(PackageToSave, nullptr, *PackageFileName, SaveArgs);
 	}
 
@@ -162,7 +162,7 @@ namespace WorldPartitionCommandletHelpers
 
 	bool AddToSourceControl(UPackage* PackageToAdd, FPackageSourceControlHelper& SCHelper)
 	{
-		UE_LOG(LogWorldParitionCommandletUtils, Verbose, TEXT("Adding Package %s."), *SourceControlHelpers::PackageFilename(PackageToAdd));
+		UE_LOG(LogWorldPartitionCommandletUtils, Verbose, TEXT("Adding Package %s."), *SourceControlHelpers::PackageFilename(PackageToAdd));
 
 		return SCHelper.AddToSourceControl(PackageToAdd);
 	}
@@ -176,7 +176,7 @@ namespace WorldPartitionCommandletHelpers
 
 	bool Delete(UPackage* PackageToDelete, FPackageSourceControlHelper& SCHelper)
 	{
-		UE_LOG(LogWorldParitionCommandletUtils, Verbose, TEXT("Deleting Package %s."), *SourceControlHelpers::PackageFilename(PackageToDelete));
+		UE_LOG(LogWorldPartitionCommandletUtils, Verbose, TEXT("Deleting Package %s."), *SourceControlHelpers::PackageFilename(PackageToDelete));
 
 		return SCHelper.Delete(PackageToDelete);
 	}

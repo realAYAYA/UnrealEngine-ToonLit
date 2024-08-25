@@ -1151,6 +1151,28 @@ const UGameplayEffect* UAbilitySystemBlueprintLibrary::GetGameplayEffectFromActi
 	return nullptr;
 }
 
+const FGameplayTagContainer& UAbilitySystemBlueprintLibrary::GetGameplayEffectAssetTags(TSubclassOf<UGameplayEffect> EffectClass)
+{
+	if (const UGameplayEffect* DefaultGE = EffectClass.GetDefaultObject())
+	{
+		return DefaultGE->GetAssetTags();
+	}
+
+	static const FGameplayTagContainer Empty{};
+	return Empty;
+}
+
+const FGameplayTagContainer& UAbilitySystemBlueprintLibrary::GetGameplayEffectGrantedTags(TSubclassOf<UGameplayEffect> EffectClass)
+{
+	if (const UGameplayEffect* DefaultGE = EffectClass.GetDefaultObject())
+	{
+		return DefaultGE->GetGrantedTags();
+	}
+
+	static const FGameplayTagContainer Empty{};
+	return Empty;
+}
+
 const UGameplayAbility* UAbilitySystemBlueprintLibrary::GetGameplayAbilityFromSpecHandle(UAbilitySystemComponent* AbilitySystem, const FGameplayAbilitySpecHandle& AbilitySpecHandle, bool& bIsInstance)
 {
 	// validate the ASC

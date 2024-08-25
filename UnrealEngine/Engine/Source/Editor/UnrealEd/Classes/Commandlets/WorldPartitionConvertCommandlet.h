@@ -28,7 +28,7 @@ struct FHLODLayerActorMapping
 	TSoftClassPtr<AActor> ActorClass;
 
 	UPROPERTY()
-	FString HLODLayer;
+	FTopLevelAssetPath HLODLayer;
 };
 
 UCLASS(Config = Engine, MinimalAPI)
@@ -69,7 +69,6 @@ protected:
 
 	UNREALED_API void SetupHLOD();
 	UNREALED_API void SetupHLODLayerAssets();
-	UNREALED_API UHLODLayer* CreateHLODLayerFromINI(const FString& InHLODLayerName);
 
 	UNREALED_API void SetActorGuid(AActor* Actor, const FGuid& NewGuid);
 	UNREALED_API void CreateWorldMiniMapTexture(UWorld* World);
@@ -117,22 +116,13 @@ protected:
 	FVector WorldExtent;
 
 	UPROPERTY(Config)
-	FString HLODLayerAssetsPath;
-
-	UPROPERTY(Config)
-	FString DefaultHLODLayerName;
-
-	UPROPERTY(Config)
-	FString DefaultHLODLayerAsset;
+	FTopLevelAssetPath DefaultHLODLayerAsset;
 
 	UPROPERTY(Config)
 	FString FoliageTypePath;
 
 	UPROPERTY(Config)
 	TArray<FHLODLayerActorMapping> HLODLayersForActorClasses;
-
-	UPROPERTY(Transient)
-	TMap<FString, TObjectPtr<UHLODLayer>> HLODLayers;
 
 	UPROPERTY(Config)
 	uint32 LandscapeGridSize;

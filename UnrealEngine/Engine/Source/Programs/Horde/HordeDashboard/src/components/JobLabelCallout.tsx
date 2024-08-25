@@ -150,7 +150,7 @@ export const JobLabelCallout: React.FC<{ controller: CalloutController }> = obse
             <Link to={stepUrl} onClick={(ev) => { ev.stopPropagation(); }}><div style={{ cursor: "pointer" }}>
                <Stack horizontal>
                   <StepStatusIcon step={step} style={{ fontSize: 10 }} />
-                  <Text styles={{ root: { fontSize: 10, color: "#000000", paddingRight: 4, paddingTop: 0, userSelect: "none" } }}>{`${stepName}`}</Text>
+                  <Text styles={{ root: { fontSize: 10, paddingRight: 4, paddingTop: 0, userSelect: "none" } }}>{`${stepName}`}</Text>
                </Stack>
             </div></Link>
          </Stack>

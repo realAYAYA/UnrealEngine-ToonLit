@@ -22,6 +22,7 @@ namespace UnrealBuildTool.Rules
 					"InputCore",
 					"PropertyEditor",
 					"RigVM",
+					"RigVMEditor",
 					"RigVMDeveloper",
 					"ControlRig",
 					"ControlRigDeveloper",
@@ -32,11 +33,14 @@ namespace UnrealBuildTool.Rules
 					"AssetDefinition",
 					"SourceControl", 
 					"KismetWidgets",
+					"StructUtils",
 					"StructUtilsEditor",
 					"BlueprintGraph",	// For K2 Schema
 					"DesktopWidgets",
 					"ContentBrowserFileDataSource",
 					"SubobjectEditor",
+					"Settings",
+					"EditorWidgets",
 				}
 			);
 		}

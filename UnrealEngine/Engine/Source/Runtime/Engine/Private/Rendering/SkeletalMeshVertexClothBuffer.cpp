@@ -75,20 +75,20 @@ void FSkeletalMeshVertexClothBuffer::ClearMetaData()
 	NumVertices = 0;
 }
 
-template <bool bRenderThread>
-FBufferRHIRef FSkeletalMeshVertexClothBuffer::CreateRHIBuffer_Internal()
+FBufferRHIRef FSkeletalMeshVertexClothBuffer::CreateRHIBuffer(FRHICommandListBase& RHICmdList)
 {
-	return CreateRHIBuffer<bRenderThread>(VertexData, NumVertices, BUF_Static | BUF_ShaderResource, TEXT("FSkeletalMeshVertexClothBuffer"));
+	return FRenderResource::CreateRHIBuffer(RHICmdList, VertexData, NumVertices, BUF_Static | BUF_ShaderResource, TEXT("FSkeletalMeshVertexClothBuffer"));
 }
 
 FBufferRHIRef FSkeletalMeshVertexClothBuffer::CreateRHIBuffer_RenderThread()
 {
-	return CreateRHIBuffer_Internal<true>();
+	return CreateRHIBuffer(FRHICommandListImmediate::Get());
 }
 
 FBufferRHIRef FSkeletalMeshVertexClothBuffer::CreateRHIBuffer_Async()
 {
-	return CreateRHIBuffer_Internal<false>();
+	FRHIAsyncCommandList CommandList;
+	return CreateRHIBuffer(*CommandList);
 }
 
 void FSkeletalMeshVertexClothBuffer::InitRHIForStreaming(FRHIBuffer* IntermediateBuffer, FRHIResourceUpdateBatcher& Batcher)
@@ -114,7 +114,7 @@ void FSkeletalMeshVertexClothBuffer::InitRHI(FRHICommandListBase& RHICmdList)
 {
 	SCOPED_LOADTIMER(FSkeletalMeshVertexClothBuffer_InitRHI);
 
-	VertexBufferRHI = CreateRHIBuffer_RenderThread();
+	VertexBufferRHI = CreateRHIBuffer(RHICmdList);
 	if (VertexBufferRHI)
 	{
 		VertexBufferSRV = RHICmdList.CreateShaderResourceView(VertexBufferRHI, 16, PF_A32B32G32R32F);
@@ -145,7 +145,7 @@ FArchive& operator<<(FArchive& Ar, FSkeletalMeshVertexClothBuffer& VertexBuffer)
 		VertexBuffer.AllocateData();
 	}
 
-	if (!StripFlags.IsDataStrippedForServer() || Ar.IsCountingMemory())
+	if (!StripFlags.IsAudioVisualDataStripped() || Ar.IsCountingMemory())
 	{
 		if (VertexBuffer.VertexData != NULL)
 		{

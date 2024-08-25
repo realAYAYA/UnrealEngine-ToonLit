@@ -20,11 +20,10 @@ namespace BuildPatchServices
 	{
 	public:
 		FDownloadServiceStatistics(ISpeedRecorder* SpeedRecorder, IDataSizeProvider* DataSizeProvider, IInstallerAnalytics* InstallerAnalytics);
-		~FDownloadServiceStatistics();
 
 		// IDownloadServiceStat interface begin.
 		virtual void OnDownloadStarted(int32 RequestId, const FString& Uri) override;
-		virtual void OnDownloadProgress(int32 RequestId, int32 BytesReceived) override;
+		virtual void OnDownloadProgress(int32 RequestId, uint64 BytesReceived) override;
 		virtual void OnDownloadComplete(const FDownloadRecord& DownloadRecord) override;
 		// IDownloadServiceStat interface end.
 
@@ -39,19 +38,21 @@ namespace BuildPatchServices
 		// IDownloadServiceStatistics interface end.
 
 	private:
-		ISpeedRecorder* SpeedRecorder;
+		ISpeedRecorder* SpeedRecorder; // AddRecord is safe, but SpeedRecorder is ticked
 		IDataSizeProvider* DataSizeProvider;
 		IInstallerAnalytics* InstallerAnalytics;
-		FThreadSafeInt64 TotalBytesReceived;
-		FThreadSafeInt32 NumSuccessfulDownloads;
-		FThreadSafeInt32 NumFailedDownloads;
+		
+		std::atomic<uint64> TotalBytesReceived;
+		std::atomic<int32> NumSuccessfulDownloads;
+		std::atomic<int32> NumFailedDownloads;
 
-		typedef TTuple<FString, int32> FDownloadTuple;
+		typedef TTuple<FString, uint64> FDownloadTuple;
 		TMap<int32, FDownloadTuple> Downloads;
+		mutable FCriticalSection DownloadsCriticalSection;
+
 		double AccumulatedRequestSpeed;
 		uint32 AverageSpeedSampleCount;
-		FCriticalSection AverageSpeedCriticalSection;
-		
+		mutable FCriticalSection AverageSpeedCriticalSection;
 	};
 
 	FDownloadServiceStatistics::FDownloadServiceStatistics(ISpeedRecorder* InSpeedRecorder, IDataSizeProvider* InDataSizeProvider, IInstallerAnalytics* InInstallerAnalytics)
@@ -61,91 +62,109 @@ namespace BuildPatchServices
 		, TotalBytesReceived(0)
 		, NumSuccessfulDownloads(0)
 		, NumFailedDownloads(0)
+		, AccumulatedRequestSpeed(0.0)
 		, AverageSpeedSampleCount(0U)
-	{
-	}
-
-	FDownloadServiceStatistics::~FDownloadServiceStatistics()
 	{
 	}
 
 	void FDownloadServiceStatistics::OnDownloadStarted(int32 RequestId, const FString& Uri)
 	{
-		checkSlow(IsInGameThread());
+		FScopeLock Lock(&DownloadsCriticalSection);
 		FDownloadTuple& DownloadTuple = Downloads.FindOrAdd(RequestId);
 		DownloadTuple.Get<0>() = Uri;
 		DownloadTuple.Get<1>() = 0;
 	}
 
-	void FDownloadServiceStatistics::OnDownloadProgress(int32 RequestId, int32 BytesReceived)
+	void FDownloadServiceStatistics::OnDownloadProgress(int32 RequestId, uint64 BytesReceived)
 	{
-		checkSlow(IsInGameThread());
+		FScopeLock Lock(&DownloadsCriticalSection);
 		FDownloadTuple& DownloadTuple = Downloads.FindOrAdd(RequestId);
 		DownloadTuple.Get<1>() = BytesReceived;
 	}
 
 	void FDownloadServiceStatistics::OnDownloadComplete(const FDownloadRecord& DownloadRecord)
 	{
-		checkSlow(IsInGameThread());
-		Downloads.Remove(DownloadRecord.RequestId);
+		{
+			FScopeLock Lock(&DownloadsCriticalSection);
+			Downloads.Remove(DownloadRecord.RequestId);
+		}
+
 		if (DownloadRecord.bSuccess && EHttpResponseCodes::IsOk(DownloadRecord.ResponseCode))
 		{
-			TotalBytesReceived.Add(DownloadRecord.SpeedRecord.Size);
-			NumSuccessfulDownloads.Increment();
+			TotalBytesReceived += DownloadRecord.SpeedRecord.Size;
+			NumSuccessfulDownloads++;
 			SpeedRecorder->AddRecord(DownloadRecord.SpeedRecord);
+
+			// update average speed
 			const uint64 Cycles = DownloadRecord.SpeedRecord.CyclesEnd - DownloadRecord.SpeedRecord.CyclesStart;
 			double Speed = Cycles > 0U ? DownloadRecord.SpeedRecord.Size / FStatsCollector::CyclesToSeconds(Cycles) : 0.0;
 			FScopeLock Lock(&AverageSpeedCriticalSection);
-			AccumulatedRequestSpeed +=  Speed;
+			AccumulatedRequestSpeed += Speed;
 			AverageSpeedSampleCount += 1;
 		}
 		else
 		{
-			NumFailedDownloads.Increment();
+			NumFailedDownloads++;
 			InstallerAnalytics->RecordChunkDownloadError(DownloadRecord.Uri, DownloadRecord.ResponseCode, TEXT("DownloadFail"));
 		}
 	}
 
 	uint64 FDownloadServiceStatistics::GetBytesDownloaded() const
 	{
-		return TotalBytesReceived.GetValue();
+		return TotalBytesReceived;
 	}
 
 	int32 FDownloadServiceStatistics::GetNumSuccessfulChunkDownloads() const
 	{
-		return NumSuccessfulDownloads.GetValue();
+		return NumSuccessfulDownloads;
 	}
 
 	int32 FDownloadServiceStatistics::GetNumFailedChunkDownloads() const
 	{
-		return NumFailedDownloads.GetValue();
+		return NumFailedDownloads;
 	}
 
 	int32 FDownloadServiceStatistics::GetNumCurrentDownloads() const
 	{
+		FScopeLock Lock(&DownloadsCriticalSection);
 		return Downloads.Num();
 	}
 
 	TArray<FDownload> FDownloadServiceStatistics::GetCurrentDownloads() const
 	{
-		checkSlow(IsInGameThread());
+		TArray<FString> DownloadData;
+		TArray<uint64> DownloadSizes;
 		TArray<FDownload> Result;
-		Result.Empty(Downloads.Num());
-		for (const TPair<int32, FDownloadTuple>& Download : Downloads)
+
 		{
-			Result.AddDefaulted();
-			FDownload& Element = Result.Last();
-			Element.Data = FPaths::GetCleanFilename(Download.Value.Get<0>());
-			Element.Size = DataSizeProvider->GetDownloadSize(Element.Data);
-			Element.Received = Download.Value.Get<1>();
+			FScopeLock Lock(&DownloadsCriticalSection);
+			DownloadData.Empty(Downloads.Num());
+			Result.Empty(Downloads.Num());
+			for (const TPair<int32, FDownloadTuple>& Download : Downloads)
+			{
+				DownloadData.Emplace(FPaths::GetCleanFilename(Download.Value.Get<0>()));
+
+				Result.AddDefaulted();
+				FDownload& Element = Result.Last();
+				Element.Received = Download.Value.Get<1>();
+			}
+		}
+
+		DataSizeProvider->GetDownloadSize(DownloadData, DownloadSizes);
+		check(DownloadSizes.Num() == Result.Num());
+
+		for (int32 Index = 0; FDownload& Element : Result)
+		{
+			Element.Data = MoveTemp(DownloadData[Index]);
+			Element.Size = DownloadSizes[Index];
+
+			++Index;
 		}
 		return Result;
 	}
 
 	TPair<double, uint32> FDownloadServiceStatistics::GetImmediateAverageSpeedPerRequest(uint32 MinCount)
 	{
-		double Average = 0.0L;
-		double OverallAverage = 0.0L;
 		uint32 Count = 0U;
 		double Result = 0.0L;
 		FScopeLock Lock(&AverageSpeedCriticalSection);
@@ -164,13 +183,19 @@ namespace BuildPatchServices
 		checkSlow(IsInGameThread());
 
 		TotalBytesReceived = 0;
-		NumSuccessfulDownloads.Set(0);
-		NumFailedDownloads.Set(0);
-		Downloads.Empty();
+		NumSuccessfulDownloads = 0;
+		NumFailedDownloads = 0;
 
-		FScopeLock Lock(&AverageSpeedCriticalSection);
-		AccumulatedRequestSpeed = 0;
-		AverageSpeedSampleCount = 0;
+		{
+			FScopeLock Lock(&DownloadsCriticalSection);
+			Downloads.Empty();
+		}
+
+		{
+			FScopeLock Lock(&AverageSpeedCriticalSection);
+			AccumulatedRequestSpeed = 0;
+			AverageSpeedSampleCount = 0;
+		}
 	}
 
 	IDownloadServiceStatistics* FDownloadServiceStatisticsFactory::Create(ISpeedRecorder* SpeedRecorder, IDataSizeProvider* DataSizeProvider, IInstallerAnalytics* InstallerAnalytics)

@@ -43,7 +43,7 @@ class UK2Node_StructOperation : public UK2Node_Variable
 	//virtual bool DrawNodeAsVariable() const override { return true; }
 	virtual bool ShouldShowNodeProperties() const override { return true; }
 	virtual void ValidateNodeDuringCompilation(class FCompilerResultsLog& MessageLog) const override;
-	virtual FString GetFindReferenceSearchString() const override;
+	virtual FString GetFindReferenceSearchString_Impl(EGetFindReferenceSearchStringFlags InFlags) const override;
 	virtual bool IsActionFilteredOut(class FBlueprintActionFilter const& Filter) override;
 	//~ End UK2Node Interface
 

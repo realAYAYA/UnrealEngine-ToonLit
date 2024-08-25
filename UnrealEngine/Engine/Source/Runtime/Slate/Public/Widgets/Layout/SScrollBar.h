@@ -21,6 +21,7 @@ DECLARE_DELEGATE_OneParam(
 	FOnUserScrolled,
 	float );	/** ScrollOffset as a fraction between 0 and 1 */
 
+DECLARE_DELEGATE_OneParam(FOnScrollBarVisibilityChanged, EVisibility);	/** changed scroll bar visibility */
 
 class SScrollBarTrack;
 
@@ -48,6 +49,7 @@ public:
 		/** The style to use for this scrollbar */
 		SLATE_STYLE_ARGUMENT( FScrollBarStyle, Style )
 		SLATE_EVENT( FOnUserScrolled, OnUserScrolled )
+		SLATE_EVENT( FOnScrollBarVisibilityChanged, OnScrollBarVisibilityChanged )
 		SLATE_ARGUMENT( bool, AlwaysShowScrollbar )
 		SLATE_ARGUMENT( bool, AlwaysShowScrollbarTrack )
 		SLATE_ARGUMENT( bool, HideWhenNotInUse )
@@ -73,6 +75,13 @@ public:
 	 * @param InHandler   Method to execute when the user scrolls the scrollbar
 	 */
 	SLATE_API void SetOnUserScrolled( const FOnUserScrolled& InHandler );
+
+	/**
+	 * Set the handler to be invoked when scroll bar visibility changes.
+	 *
+	 * @param InHandler   Method to execute when scroll bar visibility changed
+	 */
+	SLATE_API void SetOnScrollBarVisibilityChanged( const FOnScrollBarVisibilityChanged& InHandler );
 
 	/**
 	 * Set the offset and size of the track's thumb.
@@ -136,6 +145,9 @@ public:
 	/** Set ScrollBarTrackAlwaysVisible attribute */
 	SLATE_API void SetScrollBarTrackAlwaysVisible(bool InAlwaysVisible);
 
+	/** Set the visibility of the ScrollBar when it is not needed. The default value is EVisibility::Collapsed. */
+	SLATE_API void SetScrollbarDisabledVisibility(EVisibility InVisibility);
+
 	/** Returns True when the scrollbar should always be shown, else False */
 	SLATE_API bool AlwaysShowScrollbar() const;
 
@@ -171,12 +183,14 @@ protected:
 	bool bDraggingThumb;
 	TSharedPtr<SScrollBarTrack> Track;
 	FOnUserScrolled OnUserScrolled;
+	FOnScrollBarVisibilityChanged OnScrollBarVisibilityChanged;
 	float DragGrabOffset;
 	EOrientation Orientation;
 	bool bAlwaysShowScrollbar;
 	bool bAlwaysShowScrollbarTrack;
 	EFocusCause DragFocusCause;
 	bool bHideWhenNotInUse;
+	EVisibility ScrollbarDisabledVisibility = EVisibility::Collapsed;
 	/*
 	 * Holds whether or not to prevent throttling during mouse capture
 	 * When true, the viewport will be updated with every single change to the value during dragging

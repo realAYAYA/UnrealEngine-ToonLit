@@ -884,8 +884,22 @@ void MainCS(
 			OutputColor3.rgb = OutputColor3.rgb * PostMotionBlurTranslucency3.a + PostMotionBlurTranslucency3.rgb;
 		}
 		#endif
+		
+		// Ensure that alpha values that are expected to be opaque (but are only close to opaque) are forced to be opaque.
+		// (0.995 chosen to accommodate handling of 254/255)
+		#if POST_PROCESS_ALPHA
+		{
+			OutputColor0[3] = select(OutputColor0[3] > mb_half(0.995), mb_half(1.0), OutputColor0[3]);
+			OutputColor1[3] = select(OutputColor1[3] > mb_half(0.995), mb_half(1.0), OutputColor1[3]);
+			OutputColor2[3] = select(OutputColor2[3] > mb_half(0.995), mb_half(1.0), OutputColor2[3]);
+			OutputColor3[3] = select(OutputColor3[3] > mb_half(0.995), mb_half(1.0), OutputColor3[3]);
 
-		#if !POST_PROCESS_ALPHA
+			OutputColor0[3] = select(OutputColor0[3] < mb_half(0.005), mb_half(0.0), OutputColor0[3]);
+			OutputColor1[3] = select(OutputColor1[3] < mb_half(0.005), mb_half(0.0), OutputColor1[3]);
+			OutputColor2[3] = select(OutputColor2[3] < mb_half(0.005), mb_half(0.0), OutputColor2[3]);
+			OutputColor3[3] = select(OutputColor3[3] < mb_half(0.005), mb_half(0.0), OutputColor3[3]);
+		}
+		#else
 		{
 			OutputColor0.a = 0;
 			OutputColor1.a = 0;
@@ -926,6 +940,10 @@ void MainCS(
 			QuarterResOutput = 0.0;
 		}
 		
+		// Needed to avoid crash in shader compiler of Xclipse driver
+		#if !POST_PROCESS_ALPHA
+			QuarterResOutput.a = 0;
+		#endif
 		bool bIsValid = all(OutputPixelCoord < mb_short2(Color_ViewportMax));
 		mb_short2 OutputPixelCoord0Mip0 = (bIsValid) ? OutputPixelCoord : mb_short(~0).xx;
 		mb_short2 OutputPixelCoord1Mip0 = (bIsValid) ? OutputPixelCoord1 : mb_short(~0).xx;
@@ -995,7 +1013,14 @@ void MainCS(
 		}
 		#endif
 
-		#if !POST_PROCESS_ALPHA
+		// Ensure that alpha values that are expected to be opaque (but are only close to opaque) are forced to be opaque.
+		// (0.995 chosen to accommodate handling of 254/255)
+		#if POST_PROCESS_ALPHA
+		{
+			OutputColor[3] = select(OutputColor[3] > mb_half(0.995), mb_half(1.0), OutputColor[3]);
+			OutputColor[3] = select(OutputColor[3] < mb_half(0.005), mb_half(0.0), OutputColor[3]);
+		}
+		#else
 		{
 			OutputColor.a = 0;
 		}
@@ -1029,6 +1054,10 @@ void MainCS(
 			HalfResOutput = 0.0;
 		}
 		
+		// Needed to avoid crash in shader compiler of Xclipse driver
+		#if !POST_PROCESS_ALPHA
+			HalfResOutput.a = 0;
+		#endif
 		mb_half4 QuarterResOutput;
 		BRANCH
 		if (OutputMip2)
@@ -1057,6 +1086,10 @@ void MainCS(
 			QuarterResOutput = 0.0;
 		}
 
+		// Needed to avoid crash in shader compiler of Xclipse driver
+		#if !POST_PROCESS_ALPHA
+			QuarterResOutput.a = 0;
+		#endif
 		bool bIsValid = all(OutputPixelCoord < mb_short2(Color_ViewportMax));
 		mb_short2 OutputPixelCoordMip0 = (bIsValid) ? OutputPixelCoord : mb_short(~0).xx;
 		mb_short2 OutputPixelCoordMip1 = select(and(bIsValid, and(OutputMip1 != 0, (OutputPixelCoordMip0 & 0x1) == 0)), (OutputPixelCoord >> mb_short(1)), mb_short(~0).xx);

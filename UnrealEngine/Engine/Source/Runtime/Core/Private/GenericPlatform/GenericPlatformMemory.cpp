@@ -184,7 +184,7 @@ void FGenericPlatformMemory::SetupMemoryPools()
 		BackupOOMMemoryPool = FPlatformMemory::BinnedAllocFromOS(FPlatformMemory::GetBackMemoryPoolSize());
 
 		MemoryTrace_Alloc((uint64)BackupOOMMemoryPool, FPlatformMemory::GetBackMemoryPoolSize(), alignof(void*), EMemoryTraceRootHeap::SystemMemory);
-		LLM(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Default, BackupOOMMemoryPool, FPlatformMemory::GetBackMemoryPoolSize()));
+		LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Default, BackupOOMMemoryPool, FPlatformMemory::GetBackMemoryPoolSize()));
 	}
 }
 
@@ -219,26 +219,28 @@ void FGenericPlatformMemory::OnOutOfMemory(uint64 Size, uint32 Alignment)
 		FPlatformMemoryStats PlatformMemoryStats = FPlatformMemory::GetStats();
 		if (BackupOOMMemoryPool)
 		{
-			FPlatformMemory::BinnedFreeToOS(BackupOOMMemoryPool, FPlatformMemory::GetBackMemoryPoolSize());
-			UE_LOG(LogMemory, Warning, TEXT("Freeing %d bytes from backup pool to handle out of memory."), FPlatformMemory::GetBackMemoryPoolSize());
+			const uint32 BackupPoolSize = FPlatformMemory::GetBackMemoryPoolSize();
+			FPlatformMemory::BinnedFreeToOS(BackupOOMMemoryPool, BackupPoolSize);
+			UE_LOG(LogMemory, Warning, TEXT("Freeing %d bytes (%.1f MiB) from backup pool to handle out of memory."), BackupPoolSize, double(BackupPoolSize) / (1024 * 1024));
         
-			LLM(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Default, BackupOOMMemoryPool));
+			LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Default, BackupOOMMemoryPool));
 			MemoryTrace_Free((uint64)BackupOOMMemoryPool, EMemoryTraceRootHeap::SystemMemory);
 		}
 
 		UE_LOG(LogMemory, Warning, TEXT("MemoryStats:"
-			"\n\tAvailablePhysical %llu"
-			"\n\t AvailableVirtual %llu"
-			"\n\t     UsedPhysical %llu"
-			"\n\t PeakUsedPhysical %llu"
-			"\n\t      UsedVirtual %llu"
-			"\n\t  PeakUsedVirtual %llu"),
-			(uint64)PlatformMemoryStats.AvailablePhysical,
-			(uint64)PlatformMemoryStats.AvailableVirtual,
-			(uint64)PlatformMemoryStats.UsedPhysical,
-			(uint64)PlatformMemoryStats.PeakUsedPhysical,
-			(uint64)PlatformMemoryStats.UsedVirtual,
-			(uint64)PlatformMemoryStats.PeakUsedVirtual);
+			"\n\tAvailablePhysical %llu (%.2f GiB)"
+			"\n\t AvailableVirtual %llu (%.2f GiB)"
+			"\n\t     UsedPhysical %llu (%.2f GiB)"
+			"\n\t PeakUsedPhysical %llu (%.2f GiB)"
+			"\n\t      UsedVirtual %llu (%.2f GiB)"
+			"\n\t  PeakUsedVirtual %llu (%.2f GiB)"),
+			(uint64)PlatformMemoryStats.AvailablePhysical, double(PlatformMemoryStats.AvailablePhysical) / (1024 * 1024 * 1024),
+			(uint64)PlatformMemoryStats.AvailableVirtual, double(PlatformMemoryStats.AvailableVirtual) / (1024 * 1024 * 1024),
+			(uint64)PlatformMemoryStats.UsedPhysical, double(PlatformMemoryStats.UsedPhysical) / (1024 * 1024 * 1024),
+			(uint64)PlatformMemoryStats.PeakUsedPhysical, double(PlatformMemoryStats.PeakUsedPhysical) / (1024 * 1024 * 1024),
+			(uint64)PlatformMemoryStats.UsedVirtual, double(PlatformMemoryStats.UsedVirtual) / (1024 * 1024 * 1024),
+			(uint64)PlatformMemoryStats.PeakUsedVirtual, double(PlatformMemoryStats.PeakUsedVirtual) / (1024 * 1024 * 1024)
+		);
 		if (GWarn)
 		{
 			GMalloc->DumpAllocatorStats(*GWarn);
@@ -248,7 +250,7 @@ void FGenericPlatformMemory::OnOutOfMemory(uint64 Size, uint32 Alignment)
 		FCoreDelegates::GetOutOfMemoryDelegate().Broadcast();
 
 		// ErrorMsg might be unrelated to OoM error in some cases as the code that calls OnOutOfMemory could have called other system functions that modified errno
-		UE_LOG(LogMemory, Fatal, TEXT("Ran out of memory allocating %llu bytes with alignment %u. Last error msg: %s."), Size, Alignment, ErrorMsg);
+		UE_LOG(LogMemory, Fatal, TEXT("Ran out of memory allocating %llu (%.1f MiB) bytes with alignment %u. Last error msg: %s."), Size, double(Size) / (1024 * 1024), Alignment, ErrorMsg);
 	};
 	
 	UE_CALL_ONCE(HandleOOM);
@@ -272,6 +274,11 @@ FPlatformMemoryStats FGenericPlatformMemory::GetStats()
 {
 	UE_LOG(LogMemory, Warning, TEXT("FGenericPlatformMemory::GetStats not implemented on this platform"));
 	return FPlatformMemoryStats();
+}
+
+FPlatformMemoryStats FGenericPlatformMemory::GetStatsRaw()
+{
+	return FPlatformMemory::GetStats();
 }
 
 void FGenericPlatformMemory::GetStatsForMallocProfiler( FGenericMemoryStats& out_Stats )

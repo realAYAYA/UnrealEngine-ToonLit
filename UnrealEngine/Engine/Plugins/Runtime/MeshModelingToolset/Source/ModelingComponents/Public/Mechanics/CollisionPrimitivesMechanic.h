@@ -11,6 +11,7 @@
 #include "ToolContextInterfaces.h" //FViewCameraState
 #include "IntVectorTypes.h"
 #include "BoxTypes.h"
+#include "TransactionUtil.h"
 
 #include "CollisionPrimitivesMechanic.generated.h"
 
@@ -255,4 +256,6 @@ protected:
 		int32 ChangeStamp;	
 	};
 
+private:
+	UE::TransactionUtil::FLongTransactionTracker LongTransactions;
 };

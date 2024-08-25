@@ -98,6 +98,9 @@ struct FDirtyClusterUnionParticleData
 {
 	FUniqueIdx ParticleIdx;
 	FRigidTransform3 ChildToParent;
+	IPhysicsProxyBase* Proxy = nullptr;
+	void* CachedOwner = nullptr;
+	int32 BoneId = INDEX_NONE;
 };
 
 struct FDirtyClusterUnionData : public TBasePullData<FClusterUnionPhysicsProxy, FClusterUnionProxyTimestamp>
@@ -106,10 +109,23 @@ struct FDirtyClusterUnionData : public TBasePullData<FClusterUnionPhysicsProxy, 
 	FQuat R;
 	FVec3 V;
 	FVec3 W;
-	EObjectStateType ObjectState;
+	FRealSingle Mass;
+	FVec3f Inertia;
+	EObjectStateType ObjectState = EObjectStateType::Dynamic;
 	bool bIsAnchored = false;
 	TArray<FDirtyClusterUnionParticleData> ChildParticles;
-	TSharedPtr<FImplicitObject, ESPMode::ThreadSafe> SharedGeometry;
+	Chaos::FImplicitObjectPtr Geometry = nullptr;
+
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	FDirtyClusterUnionData(){}
+	FDirtyClusterUnionData(const FDirtyClusterUnionData&) = default;
+	~FDirtyClusterUnionData() = default;
+	Chaos::FDirtyClusterUnionData& operator =(const Chaos::FDirtyClusterUnionData &) = default;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+	UE_DEPRECATED(5.4, "Please use Geometry instead")
+	TSharedPtr<FImplicitObject, ESPMode::ThreadSafe> SharedGeometry = nullptr;
+	
 	TArray<FCollisionData> CollisionData;
 	TArray<FCollisionFilterData> QueryData;
 	TArray<FCollisionFilterData> SimData;
@@ -146,7 +162,7 @@ class FPullPhysicsData
 {
 public:
 	TArray<FDirtyRigidParticleData> DirtyRigids;
-	TMap<const FSingleParticlePhysicsProxy*, FDirtyRigidParticleReplicationErrorData> DirtyRigidErrors;
+	TMap<const IPhysicsProxyBase*, FDirtyRigidParticleReplicationErrorData> DirtyRigidErrors;
 	TArray<FDirtyGeometryCollectionData> DirtyGeometryCollections;
 	TArray<FDirtyClusterUnionData> DirtyClusterUnions;
 	TArray<FDirtyJointConstraintData> DirtyJointConstraints;

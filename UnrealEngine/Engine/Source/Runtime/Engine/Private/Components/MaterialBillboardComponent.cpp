@@ -9,11 +9,10 @@
 #include "SceneInterface.h"
 #include "SceneManagement.h"
 #include "Engine/Engine.h"
-#include "Engine/LevelStreaming.h"
-#include "LevelUtils.h"
 #include "PrimitiveSceneProxy.h"
 #include "StaticMeshResources.h"
 #include "PSOPrecache.h"
+#include "DataDrivenShaderPlatformInfo.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MaterialBillboardComponent)
 
@@ -63,19 +62,6 @@ public:
 	, BaseColor(FColor::White)
 	, VertexFactory(GetScene().GetFeatureLevel(), "FMaterialSpriteSceneProxy")
 	{
-		AActor* Owner = InComponent->GetOwner();
-		if (Owner)
-		{
-			// Level colorization
-			ULevel* Level = Owner->GetLevel();
-			ULevelStreaming* LevelStreaming = FLevelUtils::FindStreamingLevel( Level );
-			if ( LevelStreaming )
-			{
-				// Selection takes priority over level coloration.
-				SetLevelColor(LevelStreaming->LevelColor);
-			}
-		}
-
 		for (int32 ElementIndex = 0; ElementIndex < Elements.Num(); ElementIndex++)
 		{
 			UMaterialInterface* Material = Elements[ElementIndex].Material;
@@ -84,10 +70,6 @@ public:
 				MaterialRelevance |= Material->GetRelevance_Concurrent(GetScene().GetFeatureLevel());
 			}
 		}
-
-		FColor NewPropertyColor;
-		GEngine->GetPropertyColorationColor( (UObject*)InComponent, NewPropertyColor );
-		SetPropertyColor(NewPropertyColor);
 
 		StaticMeshVertexBuffers.PositionVertexBuffer.Init(1);
 		StaticMeshVertexBuffers.StaticMeshVertexBuffer.Init(1, 1);
@@ -107,7 +89,7 @@ public:
 			Self->StaticMeshVertexBuffers.StaticMeshVertexBuffer.BindPackedTexCoordVertexBuffer(&Self->VertexFactory, Data);
 			Self->StaticMeshVertexBuffers.StaticMeshVertexBuffer.BindLightMapVertexBuffer(&Self->VertexFactory, Data, 0);
 			Self->StaticMeshVertexBuffers.ColorVertexBuffer.BindColorVertexBuffer(&Self->VertexFactory, Data);
-			Self->VertexFactory.SetData(Data);
+			Self->VertexFactory.SetData(RHICmdList, Data);
 
 			Self->VertexFactory.InitResource(RHICmdList);
 		});
@@ -238,24 +220,19 @@ public:
 			}
 
 			FLocalVertexFactory* VertexFactoryPtr = &VertexFactory;
-			const FMaterialSpriteSceneProxy* Self = this;
-			ENQUEUE_RENDER_COMMAND(FMaterialSpriteSceneProxyLegacyInit)(
-				[VertexFactoryPtr, Self](FRHICommandListImmediate& RHICmdList)
-			{
-				Self->StaticMeshVertexBuffers.PositionVertexBuffer.UpdateRHI(RHICmdList);
-				Self->StaticMeshVertexBuffers.StaticMeshVertexBuffer.UpdateRHI(RHICmdList);
-				Self->StaticMeshVertexBuffers.ColorVertexBuffer.UpdateRHI(RHICmdList);
+			FRHICommandListBase& RHICmdList = Collector.GetRHICommandList();
 
-				FLocalVertexFactory::FDataType Data;
-				Self->StaticMeshVertexBuffers.PositionVertexBuffer.BindPositionVertexBuffer(VertexFactoryPtr, Data);
-				Self->StaticMeshVertexBuffers.StaticMeshVertexBuffer.BindTangentVertexBuffer(VertexFactoryPtr, Data);
-				Self->StaticMeshVertexBuffers.StaticMeshVertexBuffer.BindPackedTexCoordVertexBuffer(VertexFactoryPtr, Data);
-				Self->StaticMeshVertexBuffers.StaticMeshVertexBuffer.BindLightMapVertexBuffer(VertexFactoryPtr, Data, 0);
-				Self->StaticMeshVertexBuffers.ColorVertexBuffer.BindColorVertexBuffer(VertexFactoryPtr, Data);
-				VertexFactoryPtr->SetData(Data);
+			StaticMeshVertexBuffers.PositionVertexBuffer.UpdateRHI(RHICmdList);
+			StaticMeshVertexBuffers.StaticMeshVertexBuffer.UpdateRHI(RHICmdList);
+			StaticMeshVertexBuffers.ColorVertexBuffer.UpdateRHI(RHICmdList);
 
-				VertexFactoryPtr->UpdateRHI(RHICmdList);
-			});
+			FLocalVertexFactory::FDataType Data;
+			StaticMeshVertexBuffers.PositionVertexBuffer.BindPositionVertexBuffer(VertexFactoryPtr, Data);
+			StaticMeshVertexBuffers.StaticMeshVertexBuffer.BindTangentVertexBuffer(VertexFactoryPtr, Data);
+			StaticMeshVertexBuffers.StaticMeshVertexBuffer.BindPackedTexCoordVertexBuffer(VertexFactoryPtr, Data);
+			StaticMeshVertexBuffers.StaticMeshVertexBuffer.BindLightMapVertexBuffer(VertexFactoryPtr, Data, 0);
+			StaticMeshVertexBuffers.ColorVertexBuffer.BindColorVertexBuffer(VertexFactoryPtr, Data);
+			VertexFactoryPtr->SetData(RHICmdList, Data);
 		}
 	}
 
@@ -377,7 +354,9 @@ void UMaterialBillboardComponent::PostLoad()
 {
 	Super::PostLoad();
 
-	if (IsComponentPSOPrecachingEnabled())
+	if (IsComponentPSOPrecachingEnabled()
+		// FIXME: need to collect an actual vertex declaration for non-MVF path
+		&& RHISupportsManualVertexFetch(GMaxRHIShaderPlatform))
 	{
 		FPSOPrecacheParams PrecachePSOParams;
 		SetupPrecachePSOParams(PrecachePSOParams);

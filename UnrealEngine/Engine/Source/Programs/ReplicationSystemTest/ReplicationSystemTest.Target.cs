@@ -39,7 +39,7 @@ public class ReplicationSystemTestTarget : TargetRules
 		bWithPushModel = true;		
 		bUseIris = true;
 
-		GlobalDefinitions.Add("UE_TRACE_ENABLED=1");
+		bEnableTrace = true;
 		GlobalDefinitions.Add("UE_NET_TEST_FAKE_REP_TAGS=1");
 	}
 }

@@ -167,14 +167,16 @@ public:
 	virtual IDetailCategoryBuilder& InitiallyCollapsed(bool bShouldBeInitiallyCollapsed) override;
 	virtual IDetailCategoryBuilder& OnExpansionChanged(FOnBooleanValueChanged InOnExpansionChanged) override;
 	virtual IDetailCategoryBuilder& RestoreExpansionState(bool bRestore) override;
-	virtual IDetailCategoryBuilder& HeaderContent(TSharedRef<SWidget> InHeaderContent) override;
+	virtual IDetailCategoryBuilder& HeaderContent(TSharedRef<SWidget> InHeaderContent, bool bWholeRowContent = false) override;
 	virtual IDetailPropertyRow& AddProperty(FName PropertyPath, UClass* ClassOuter = nullptr, FName InstanceName = NAME_None, EPropertyLocation::Type Location = EPropertyLocation::Default) override;
 	virtual IDetailPropertyRow& AddProperty(TSharedPtr<IPropertyHandle> PropertyHandle, EPropertyLocation::Type Location = EPropertyLocation::Default) override;
 	virtual IDetailPropertyRow* AddExternalObjects(const TArray<UObject*>& Objects, EPropertyLocation::Type Location = EPropertyLocation::Default, const FAddPropertyParams& Params = FAddPropertyParams()) override;
 	virtual IDetailPropertyRow* AddExternalObjectProperty(const TArray<UObject*>& Objects, FName PropertyName, EPropertyLocation::Type Location = EPropertyLocation::Default, const FAddPropertyParams& Params = FAddPropertyParams()) override;
 	virtual IDetailPropertyRow* AddExternalStructure(TSharedPtr<FStructOnScope> StructData, EPropertyLocation::Type Location = EPropertyLocation::Default) override;
 	virtual IDetailPropertyRow* AddExternalStructureProperty(TSharedPtr<FStructOnScope> StructData, FName PropertyName, EPropertyLocation::Type Location = EPropertyLocation::Default, const FAddPropertyParams& Params = FAddPropertyParams()) override;
+	virtual IDetailPropertyRow* AddExternalStructureProperty(TSharedPtr<IStructureDataProvider> StructData, FName PropertyName, EPropertyLocation::Type Location = EPropertyLocation::Default, const FAddPropertyParams& Params = FAddPropertyParams()) override;
 	virtual TArray<TSharedPtr<IPropertyHandle>> AddAllExternalStructureProperties(TSharedRef<FStructOnScope> StructData, EPropertyLocation::Type Location = EPropertyLocation::Default, TArray<IDetailPropertyRow*>* OutPropertiesRow = nullptr) override;
+	virtual TArray<TSharedPtr<IPropertyHandle>> AddAllExternalStructureProperties(TSharedPtr<IStructureDataProvider> StructProvider, EPropertyLocation::Type Location, TArray<IDetailPropertyRow*>* OutPropertiesRow = nullptr) override;
 	virtual bool IsParentLayoutValid() const override { return DetailLayoutBuilder.IsValid(); }
 	virtual IDetailLayoutBuilder& GetParentLayout() const override { return *DetailLayoutBuilder.Pin(); }
 	virtual FDetailWidgetRow& AddCustomRow(const FText& FilterString, bool bForAdvanced = false) override;
@@ -208,9 +210,14 @@ public:
 	virtual bool ShouldBeExpanded() const override;
 	virtual ENodeVisibility GetVisibility() const override;
 	virtual void FilterNode(const FDetailFilter& DetailFilter) override;
-	virtual void Tick(float DeltaTime) override {}
+	virtual void Tick(float DeltaTime) override;
 	virtual bool ShouldShowOnlyChildren() const override { return bShowOnlyChildren; }
 	virtual FName GetNodeName() const override { return GetCategoryName(); }
+
+	/**
+	 * Returns the name of the object which populates this Category
+	 */
+	FName GetObjectName() const;
 
 	/**
 	 * Gets all generated children with options for ignoring current child visibility or advanced dropdowns
@@ -322,6 +329,18 @@ public:
 	bool GetShouldBeInitiallyCollapsed() const { return bShouldBeInitiallyCollapsed; }
 
 	FDetailLayoutCustomization* GetDefaultCustomization(TSharedRef<FPropertyNode> PropertyNode);
+	
+	/**
+    * If true, this Category should have no UProperty data associated with it, and will be shown as an empty stub
+    * with no expansion arrow
+    */
+	virtual bool IsEmpty() const override;
+	
+	/**
+	 * Sets whether this Category is "Empty" ~ that is, should have no UProperty data associated with it, and will be shown
+	 * as an empty stub with no expansion arrow
+	 */
+	virtual void SetIsEmpty(bool bInIsEmpty) override;
 
 private:
 	virtual void OnItemExpansionChanged(bool bIsExpanded, bool bShouldSaveState) override;
@@ -392,6 +411,16 @@ private:
 	 */
 	bool IsParentEnabled() const;
 
+	/**
+	 * Does the work of refreshing the tree (this is triggered from RefreshTree)
+	 *
+	 * @param bRefilterCategory True if the category should be refiltered
+	 */
+	void RefreshTreeInternal(bool bRefilterCategory);
+
+	/** Initialize the name of the Category  */
+	void InitializeObjectName();
+
 private:
 	/** Layouts that appear in this category category */
 	FDetailLayoutMap LayoutMap;
@@ -409,6 +438,8 @@ private:
 	FString CategoryPathName;
 	/** Custom header content displayed to the right of the category name */
 	TSharedPtr<SWidget> HeaderContentWidget;
+	/** True if the HeaderContentWidget should span the whole row (hides the category label)  */
+	bool bHeaderContentWholeRowContent = false;
 	/** A property node that is displayed in the header row to the right of the category name. */
 	TSharedPtr<FDetailTreeNode> InlinePropertyNode;
 	/** The parent detail builder */
@@ -416,6 +447,8 @@ private:
 	/** Delegate handling pasting an optionally tagged text snippet */
 	TSharedPtr<FOnPasteFromText> PasteFromTextDelegate;
 
+	/** The name of the object that this category is being defined by */
+	FName ObjectName;
 	/** The category identifier */
 	FName CategoryName;
 	/** The sort order of this category (amongst all categories) */
@@ -438,4 +471,12 @@ private:
 	bool bFavoriteCategory : 1;
 	bool bShowOnlyChildren : 1;
 	bool bHasVisibleAdvanced : 1;
+	bool bPendingRefresh : 1;
+	bool bPendingRefreshNeedsRefilter : 1;
+
+	/**
+	* If true, this Category should have no UProperty data associated with it, and will be shown as an empty stub
+	* with no expansion arrow
+	*/
+	bool bIsEmpty 	: 1;
 };

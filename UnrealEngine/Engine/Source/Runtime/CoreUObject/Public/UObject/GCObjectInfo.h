@@ -108,9 +108,7 @@ public:
 
 	bool IsGarbage() const
 	{
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		return HasAnyInternalFlags(EInternalObjectFlags::Garbage | EInternalObjectFlags::PendingKill);
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+		return HasAnyInternalFlags(EInternalObjectFlags::Garbage);
 	}
 
 	int32 GetOwnerIndex() const
@@ -126,9 +124,7 @@ public:
 
 	bool IsValid() const
 	{
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		return !HasAnyInternalFlags(EInternalObjectFlags::Garbage | EInternalObjectFlags::PendingKill);
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+		return !HasAnyInternalFlags(EInternalObjectFlags::Garbage);
 	}
 
 	bool IsDisregardForGC() const

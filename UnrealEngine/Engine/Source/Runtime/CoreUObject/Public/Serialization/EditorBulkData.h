@@ -259,6 +259,8 @@ public:
 		FSharedBufferWithID(const FSharedBufferWithID&) = delete;
 		FSharedBufferWithID& operator=(const FSharedBufferWithID&) = delete;
 
+		FSharedBuffer GetPayload() { return Payload; }
+
 	private:
 		friend FEditorBulkData;
 

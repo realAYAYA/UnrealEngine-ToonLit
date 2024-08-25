@@ -69,6 +69,9 @@ namespace Metasound
 			FGraphHandle GetRootGraph() override;
 			FConstGraphHandle GetRootGraph() const override;
 
+			FDocumentAccessPtr GetDocumentPtr() override;
+			const FDocumentAccessPtr GetDocumentPtr() const override;
+
 			/** Returns an array of all subgraphs for this document. */
 			TArray<FGraphHandle> GetSubgraphHandles() override;
 

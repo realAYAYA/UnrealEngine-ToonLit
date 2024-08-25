@@ -391,10 +391,22 @@ public:
 			, SlateIcon(InSlateIcon)
 		{}
 
+		FCustomMenuData(const FName InEntryName, const FUIAction& InAction, const FText& InName, const FText& InTooltip, const FSlateIcon& InSlateIcon)
+			: EntryName(InEntryName)
+			, Action(InAction)
+			, Name(InName)
+			, Tooltip(InTooltip)
+			, SlateIcon(InSlateIcon)
+		{}
+
+		const FName EntryName;
 		const FUIAction Action;
 		const FText Name;
 		const FText Tooltip;
 		const FSlateIcon SlateIcon;
+
+		/** Returns the EntryName if specified, otherwise derive from Name. */
+		const FName GetEntryName() const;
 	};
 	/** Custom Action on this row */
 	TArray<FCustomMenuData> CustomMenuItems;

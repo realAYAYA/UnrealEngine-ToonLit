@@ -4,23 +4,15 @@
 #define SYMS_DATA_STRUCTURES_C
 
 ////////////////////////////////
-//~ NOTE(allen): Syms String Cons
-
-SYMS_API SYMS_StringCons
-syms_string_cons_alloc(SYMS_Arena *arena, SYMS_U64 bucket_count){
-  SYMS_StringCons result = {0};
-  result.bucket_count = bucket_count;
-  result.buckets = syms_push_array_zero(arena, SYMS_StringConsNode*, bucket_count);
-  return(result);
-}
+//~ allen: Syms String Cons
 
 SYMS_API SYMS_String8
 syms_string_cons(SYMS_Arena *arena, SYMS_StringCons *cons, SYMS_String8 string){
   SYMS_ProfBegin("syms_string_cons");
   SYMS_String8 result = {0};
-  if (cons->bucket_count > 0 && string.size > 0){
+  if (SYMS_STRING_CONS_BUCKET_COUNT > 0 && string.size > 0){
     SYMS_U64 hash = syms_hash_djb2(string);
-    SYMS_U64 bucket_index = hash%cons->bucket_count;
+    SYMS_U64 bucket_index = hash%SYMS_STRING_CONS_BUCKET_COUNT;
     for (SYMS_StringConsNode *node = cons->buckets[bucket_index];
          node != 0;
          node = node->next){
@@ -91,7 +83,7 @@ syms_data_idx_cons(SYMS_Arena *arena, SYMS_DataIdxCons *cons, SYMS_String8 data)
 
 
 ////////////////////////////////
-//~ NOTE(allen): U64 Set
+//~ allen: U64 Set
 
 SYMS_API SYMS_U64Set
 syms_u64_set_alloc(SYMS_Arena *arena, SYMS_U64 cap){
@@ -173,7 +165,7 @@ syms_u64_set_erase(SYMS_U64Set *set, SYMS_U64 x){
 
 
 ////////////////////////////////
-//~ NOTE(allen): Syms Spatial Mapping
+//~ allen: Syms Spatial Mapping
 
 //- lookups into spatial maps
 SYMS_API SYMS_U64
@@ -692,7 +684,7 @@ SYMS_API SYMS_String8
 syms_file_id_2_name_map_name_from_id(SYMS_FileID2NameMap *buckets, SYMS_UnitID uid, SYMS_FileID file_id){
   SYMS_ProfBegin("syms_file_id_2_name_map_name_from_id");
   SYMS_U64 hash = syms_file_id_2_name_map_hash(uid, file_id);
-  SYMS_U64 bucket_index = hash%buckets->bucket_count;
+  SYMS_U64 bucket_index = hash%SYMS_FILE_ID_TO_NAME_MAP_BUCKET_COUNT;
   SYMS_String8 result = {0};
   for (SYMS_FileID2NameNode *node = buckets->buckets[bucket_index];
        node != 0;
@@ -712,10 +704,11 @@ syms_file_id_2_name_map_name_from_id(SYMS_FileID2NameMap *buckets, SYMS_UnitID u
 //- copying file id buckets
 SYMS_API SYMS_FileID2NameMap
 syms_file_id_2_name_map_copy(SYMS_Arena *arena, SYMS_StringCons *cons, SYMS_FileID2NameMap *map){
+  SYMS_FileID2NameMap result = {0};
+  
   //- allocate
-  SYMS_U64 bucket_count = map->bucket_count;
   SYMS_U64 count = map->count;
-  SYMS_FileID2NameNode **dst_buckets = syms_push_array(arena, SYMS_FileID2NameNode*, bucket_count);
+  SYMS_FileID2NameNode **dst_buckets = result.buckets;
   SYMS_FileID2NameNode *nodes = syms_push_array(arena, SYMS_FileID2NameNode, count);
   
   //- fill memory
@@ -723,7 +716,7 @@ syms_file_id_2_name_map_copy(SYMS_Arena *arena, SYMS_StringCons *cons, SYMS_File
     SYMS_FileID2NameNode *dst_node = nodes;
     SYMS_FileID2NameNode **dst_bucket = dst_buckets;
     SYMS_FileID2NameNode **src_bucket = map->buckets;
-    SYMS_FileID2NameNode **opl = src_bucket + bucket_count;
+    SYMS_FileID2NameNode **opl = src_bucket + SYMS_FILE_ID_TO_NAME_MAP_BUCKET_COUNT;
     for (; src_bucket < opl; dst_bucket += 1, src_bucket += 1){
       SYMS_FileID2NameNode **chain_ptr = dst_bucket;
       for (SYMS_FileID2NameNode *node = *src_bucket;
@@ -750,9 +743,6 @@ syms_file_id_2_name_map_copy(SYMS_Arena *arena, SYMS_StringCons *cons, SYMS_File
   }
   
   //- fill result
-  SYMS_FileID2NameMap result = {0};
-  result.buckets = dst_buckets;
-  result.bucket_count = bucket_count;
   result.count = count;
   
   return(result);
@@ -760,35 +750,25 @@ syms_file_id_2_name_map_copy(SYMS_Arena *arena, SYMS_StringCons *cons, SYMS_File
 
 //- constructing file id buckets
 
-SYMS_API SYMS_FileID2NameMap
-syms_file_id_2_name_map_alloc(SYMS_Arena *arena, SYMS_U64 bucket_count){
-  SYMS_FileID2NameMap result = {0};
-  result.bucket_count = bucket_count;
-  result.buckets = syms_push_array_zero(arena, SYMS_FileID2NameNode*, bucket_count);
-  return(result);
-}
-
 SYMS_API void
 syms_file_id_2_name_map_insert(SYMS_Arena *arena, SYMS_FileID2NameMap *map,
                                SYMS_UnitID uid, SYMS_FileID file_id, SYMS_String8 name){
   SYMS_ProfBegin("syms_file_id_2_name_map_insert");
-  if (map->bucket_count > 0){
-    SYMS_U64 hash = syms_file_id_2_name_map_hash(uid, file_id);
-    SYMS_U64 bucket_index = hash%map->bucket_count;
-    
-    SYMS_FileID2NameNode *new_node = syms_push_array(arena, SYMS_FileID2NameNode, 1);
-    new_node->uid = uid;
-    new_node->file_id = file_id;
-    new_node->name = name;
-    SYMS_StackPush(map->buckets[bucket_index], new_node);
-    map->count += 1;
-  }
+  SYMS_U64 hash = syms_file_id_2_name_map_hash(uid, file_id);
+  SYMS_U64 bucket_index = hash%SYMS_FILE_ID_TO_NAME_MAP_BUCKET_COUNT;
+  
+  SYMS_FileID2NameNode *new_node = syms_push_array(arena, SYMS_FileID2NameNode, 1);
+  new_node->uid = uid;
+  new_node->file_id = file_id;
+  new_node->name = name;
+  SYMS_StackPush(map->buckets[bucket_index], new_node);
+  map->count += 1;
   SYMS_ProfEnd();
 }
 
 
 ////////////////////////////////
-//~ NOTE(allen): Mapping Functions (String -> {UnitID,FileID})
+//~ allen: Mapping Functions (String -> {UnitID,FileID})
 
 //- copying file maps
 
@@ -909,7 +889,7 @@ syms_name_2_file_id_map_loose_push(SYMS_Arena *arena, SYMS_Name2FileIDMapLoose *
 
 
 ////////////////////////////////
-//~ NOTE(allen): ID Mapping Functions
+//~ allen: ID Mapping Functions
 
 //- copying id maps
 
@@ -1016,7 +996,7 @@ syms_id_map_insert(SYMS_Arena *arena, SYMS_IDMap *map, SYMS_U64 key, void *val){
 
 
 ////////////////////////////////
-//~ NOTE(allen): Symbol Name Mapping Structure (String -> Array(USID))
+//~ allen: Symbol Name Mapping Structure (String -> Array(SID))
 
 //- lookups into symbol name map
 
@@ -1024,16 +1004,14 @@ SYMS_API SYMS_SymbolIDArray
 syms_symbol_name_map_array_from_string(SYMS_SymbolNameMap *map, SYMS_String8 string){
   SYMS_ProfBegin("syms_symbol_name_map_array_from_string");
   SYMS_SymbolIDArray result = {0};
-  if (map->bucket_count > 0){
-    SYMS_U64 hash = syms_hash_djb2(string);
-    SYMS_U64 bucket_index = hash%map->bucket_count;
-    for (SYMS_SymbolNameNode *node = map->buckets[bucket_index];
-         node != 0;
-         node = node->next_bucket){
-      if (node->hash == hash && syms_string_match(node->name, string, 0)){
-        result = node->sid_array;
-        break;
-      }
+  SYMS_U64 hash = syms_hash_djb2(string);
+  SYMS_U64 bucket_index = hash%SYMS_SYMBOL_NAME_MAP_BUCKET_COUNT;
+  for (SYMS_SymbolNameNode *node = map->buckets[bucket_index];
+       node != 0;
+       node = node->next_bucket){
+    if (node->hash == hash && syms_string_match(node->name, string, 0)){
+      result = node->sid_array;
+      break;
     }
   }
   SYMS_ProfEnd();
@@ -1042,52 +1020,44 @@ syms_symbol_name_map_array_from_string(SYMS_SymbolNameMap *map, SYMS_String8 str
 
 //- constructing symbol name maps
 
-SYMS_API SYMS_SymbolNameMapLoose
-syms_symbol_name_map_begin(SYMS_Arena *arena, SYMS_U64 bucket_count){
-  SYMS_SymbolNameMapLoose result = {0};
-  result.bucket_count = bucket_count;
-  result.buckets = syms_push_array_zero(arena, SYMS_SymbolNameNodeLoose*, bucket_count);
-  return(result);
-}
-
 SYMS_API void
 syms_symbol_name_map_push(SYMS_Arena *arena, SYMS_SymbolNameMapLoose *map,
                           SYMS_String8 name, SYMS_SymbolID sid){
   SYMS_ProfBegin("syms_symbol_name_map_push");
-  if (map->bucket_count > 0){
-    SYMS_U64 hash = syms_hash_djb2(name);
-    SYMS_U64 bucket_index = hash%map->bucket_count;
-    
-    // find existing node
-    SYMS_SymbolNameNodeLoose *node = 0;
-    for (SYMS_SymbolNameNodeLoose *bucket = map->buckets[bucket_index];
-         bucket != 0;
-         bucket = bucket->next_bucket){
-      if (bucket->hash == hash &&
-          syms_string_match(name, bucket->name, 0)){
-        node = bucket;
-        break;
-      }
-    }
-    
-    // create node
-    if (node == 0){
-      node = syms_push_array_zero(arena, SYMS_SymbolNameNodeLoose, 1);
-      SYMS_StackPush_N(map->buckets[bucket_index], node, next_bucket);
-      SYMS_QueuePush(map->first, map->last, node);
-      map->node_count += 1;
-      node->name = syms_push_string_copy(arena, name);
-      node->hash = hash;
-    }
-    
-    // insert sid
-    {
-      SYMS_SymbolIDNode *sid_node = syms_push_array_zero(arena, SYMS_SymbolIDNode, 1);
-      SYMS_QueuePush(node->sid_list.first, node->sid_list.last, sid_node);
-      node->sid_list.count += 1;
-      sid_node->id = sid;
+  
+  SYMS_U64 hash = syms_hash_djb2(name);
+  SYMS_U64 bucket_index = hash%SYMS_SYMBOL_NAME_MAP_BUCKET_COUNT;
+  
+  // find existing node
+  SYMS_SymbolNameNodeLoose *node = 0;
+  for (SYMS_SymbolNameNodeLoose *bucket = map->buckets[bucket_index];
+       bucket != 0;
+       bucket = bucket->next_bucket){
+    if (bucket->hash == hash &&
+        syms_string_match(name, bucket->name, 0)){
+      node = bucket;
+      break;
     }
   }
+  
+  // create node
+  if (node == 0){
+    node = syms_push_array_zero(arena, SYMS_SymbolNameNodeLoose, 1);
+    SYMS_StackPush_N(map->buckets[bucket_index], node, next_bucket);
+    SYMS_QueuePush(map->first, map->last, node);
+    map->node_count += 1;
+    node->name = syms_push_string_copy(arena, name);
+    node->hash = hash;
+  }
+  
+  // insert sid
+  {
+    SYMS_SymbolIDNode *sid_node = syms_push_array_zero(arena, SYMS_SymbolIDNode, 1);
+    SYMS_QueuePush(node->sid_list.first, node->sid_list.last, sid_node);
+    node->sid_list.count += 1;
+    sid_node->id = sid;
+  }
+  
   SYMS_ProfEnd();
 }
 
@@ -1095,12 +1065,12 @@ SYMS_API SYMS_SymbolNameMap
 syms_symbol_name_map_bake(SYMS_Arena *arena, SYMS_SymbolNameMapLoose *loose){
   SYMS_ProfBegin("syms_symbol_name_map_bake");
   
+  SYMS_SymbolNameMap result = {0};
+  SYMS_SymbolNameNode **buckets = result.buckets;
+  
   //- allocate map memory
   SYMS_U64 node_count = loose->node_count;
   SYMS_SymbolNameNode *nodes = syms_push_array(arena, SYMS_SymbolNameNode, node_count);
-  
-  SYMS_U64 bucket_count = node_count*3/2;
-  SYMS_SymbolNameNode **buckets = syms_push_array_zero(arena, SYMS_SymbolNameNode*, bucket_count);
   
   //- fill map from loose
   SYMS_SymbolNameNode *node_ptr = nodes;
@@ -1128,7 +1098,7 @@ syms_symbol_name_map_bake(SYMS_Arena *arena, SYMS_SymbolNameMapLoose *loose){
     }
     
     // insert node to bucket
-    SYMS_U64 bucket_index = hash%bucket_count;
+    SYMS_U64 bucket_index = hash%SYMS_SYMBOL_NAME_MAP_BUCKET_COUNT;
     SYMS_StackPush_N(buckets[bucket_index], node_ptr, next_bucket);
     
     // fill node ptr
@@ -1139,9 +1109,6 @@ syms_symbol_name_map_bake(SYMS_Arena *arena, SYMS_SymbolNameMapLoose *loose){
   }
   
   //- assemble result
-  SYMS_SymbolNameMap result = {0};
-  result.buckets = buckets;
-  result.bucket_count = bucket_count;
   result.nodes = nodes;
   result.node_count = node_count;
   
@@ -1151,7 +1118,7 @@ syms_symbol_name_map_bake(SYMS_Arena *arena, SYMS_SymbolNameMapLoose *loose){
 
 
 ////////////////////////////////
-//~ NOTE(allen): Line Tables
+//~ allen: Line Tables
 
 //- lookups into line tables
 
@@ -1278,7 +1245,287 @@ syms_line_table_with_indexes_from_parse(SYMS_Arena *arena, SYMS_LineParseOut *pa
 
 
 ////////////////////////////////
-//~ NOTE(allen): Copies & Operators for Other Data Structures
+//~ allen: Line To Addr Map
+
+SYMS_API SYMS_FileToLineToAddrMap
+syms_line_to_addr_map_from_line_table(SYMS_Arena *arena, SYMS_LineTable *line_table){
+  SYMS_ArenaTemp scratch = syms_get_scratch(0, 0);
+  
+  //- setup loose map
+  SYMS_FileToLineToAddrLoose loose = {0};
+  
+  //- last-used cache for file nodes
+  SYMS_FileToLineToAddrLooseFile *cached_file_node = 0;
+  SYMS_U64 cached_file_id = 0;
+  
+  //- read lines
+  SYMS_U64 *seq_idx_ptr = line_table->sequence_index_array;
+  SYMS_U64 seq_count = line_table->sequence_count;
+  for (SYMS_U64 i = 0; i < seq_count; i += 1){
+    // get sequence range & inc
+    SYMS_U64 first = *seq_idx_ptr;
+    seq_idx_ptr += 1;
+    SYMS_U64 opl = *seq_idx_ptr;
+    
+    // iterate lines
+    if (first < opl){
+      SYMS_Line *line_ptr = line_table->line_array + first;
+      SYMS_U64 last = opl - 1;
+      for (SYMS_U64 j = first; j < last; j += 1, line_ptr += 1){
+        // grab line data
+        SYMS_U64 line_file_id = line_ptr->src_coord.file_id;
+        SYMS_U32 line_number = line_ptr->src_coord.line;
+        
+        // get file node
+        SYMS_FileToLineToAddrLooseFile *file_node = 0;
+        if (line_file_id == cached_file_id){
+          file_node = cached_file_node;
+        }
+        else{
+          for (SYMS_FileToLineToAddrLooseFile *node = loose.first;
+               node != 0;
+               node = node->next){
+            if (node->file_id == line_file_id){
+              file_node = node;
+              break;
+            }
+          }
+        }
+        if (file_node == 0){
+          file_node = syms_push_array_zero(scratch.arena, SYMS_FileToLineToAddrLooseFile, 1);
+          SYMS_QueuePush(loose.first, loose.last, file_node);
+          loose.count += 1;
+          file_node->file_id = line_file_id;
+        }
+        
+        // update the file node cache slot
+        cached_file_id = line_file_id;
+        cached_file_node = file_node;
+        
+        // get line node
+        SYMS_FileToLineToAddrLooseLine *line_node = 0;
+        for (SYMS_FileToLineToAddrLooseLine *node = file_node->first;
+             node != 0;
+             node = node->next){
+          if (node->line == line_number){
+            line_node = node;
+            break;
+          }
+        }
+        if (line_node == 0){
+          line_node = syms_push_array_zero(scratch.arena, SYMS_FileToLineToAddrLooseLine, 1);
+          SYMS_QueuePush(file_node->first, file_node->last, line_node);
+          file_node->line_count += 1;
+          line_node->line = line_number;
+        }
+        
+        // push range
+        SYMS_U64Range range = syms_make_u64_range(line_ptr->voff, (line_ptr + 1)->voff);
+        syms_u64_range_list_push(scratch.arena, &line_node->ranges, range);
+        file_node->range_count += 1;
+      }
+    }
+  }
+  
+  //- convert loose to buckets & maps
+  SYMS_U64 bucket_count = 0;
+  if (loose.count > 0){
+    bucket_count = ((loose.count + 1)*3/2) | 1;
+  }
+  
+  SYMS_FileToLineToAddrNode **buckets = syms_push_array_zero(arena, SYMS_FileToLineToAddrNode*, bucket_count);
+  for (SYMS_FileToLineToAddrLooseFile *loose_file_node = loose.first;
+       loose_file_node != 0;
+       loose_file_node = loose_file_node->next){
+    SYMS_ArenaTemp temp = syms_arena_temp_begin(scratch.arena);
+    
+    // grab counts
+    SYMS_U64 line_count = loose_file_node->line_count;
+    SYMS_U64 range_count = loose_file_node->range_count;
+    
+    // create sorted node array
+    SYMS_FileToLineToAddrLooseLine **array = syms_push_array(scratch.arena, SYMS_FileToLineToAddrLooseLine*,
+                                                             line_count);
+    {
+      SYMS_FileToLineToAddrLooseLine **line_ptr = array;
+      for (SYMS_FileToLineToAddrLooseLine *loose_line_node = loose_file_node->first;
+           loose_line_node != 0;
+           loose_line_node = loose_line_node->next, line_ptr += 1){
+        *line_ptr = loose_line_node;
+      }
+    }
+    syms_line_to_addr_line_sort(array, line_count);
+    
+    // fill line map arrays
+    SYMS_U64Range *ranges = syms_push_array(arena, SYMS_U64Range, range_count);
+    SYMS_U32 *line_range_indexes = syms_push_array(arena, SYMS_U32, line_count + 1);
+    SYMS_U32 *line_numbers = syms_push_array(arena, SYMS_U32, line_count);
+    
+    SYMS_U32 line_range_index = 0;
+    SYMS_U32 *line_range_index_ptr = line_range_indexes;
+    SYMS_U32 *line_number_ptr = line_numbers;
+    
+    {
+      SYMS_FileToLineToAddrLooseLine **line_ptr = array;
+      for (SYMS_U64 i = 0; i < line_count; i += 1, line_ptr += 1){
+        // fills
+        *line_number_ptr = (**line_ptr).line;
+        *line_range_index_ptr = line_range_index;
+        SYMS_U64Range *first_range_ptr = ranges + line_range_index;
+        SYMS_U64Range *range_ptr = first_range_ptr;
+        for (SYMS_U64RangeNode *node = (**line_ptr).ranges.first;
+             node != 0;
+             node = node->next, range_ptr += 1){
+          *range_ptr = node->range;
+        }
+        
+        // incs
+        line_number_ptr += 1;
+        line_range_index_ptr += 1;
+        line_range_index += (SYMS_U64)(range_ptr - first_range_ptr);
+      }
+      
+      // fill ender index
+      *line_range_index_ptr = line_range_index;
+    }
+    
+    // assemble the line map
+    SYMS_LineToAddrMap *new_map = syms_push_array(arena, SYMS_LineToAddrMap, 1);
+    new_map->ranges = ranges;
+    new_map->line_range_indexes = line_range_indexes;
+    new_map->line_numbers = line_numbers;
+    new_map->line_count = line_count;
+    
+    // insert bucket
+    SYMS_FileToLineToAddrNode *new_file_node = syms_push_array(arena, SYMS_FileToLineToAddrNode, 1);
+    new_file_node->file_id = loose_file_node->file_id;
+    new_file_node->map = new_map;
+    SYMS_U64 bucket_index = loose_file_node->file_id%bucket_count;
+    SYMS_StackPush(buckets[bucket_index], new_file_node);
+    
+    syms_arena_temp_end(temp);
+  }
+  
+  syms_release_scratch(scratch);
+  
+  //- build result
+  SYMS_FileToLineToAddrMap result = {0};
+  result.buckets = buckets;
+  result.bucket_count = bucket_count;
+  
+  return(result);
+}
+
+SYMS_API SYMS_LineToAddrMap*
+syms_line_to_addr_map_lookup_file_id(SYMS_FileToLineToAddrMap *map, SYMS_FileID file_id){
+  SYMS_LineToAddrMap *result = &syms_line_to_addr_map_nil;
+  if (map->bucket_count > 0){
+    SYMS_U64 bucket_index = file_id%map->bucket_count;
+    for (SYMS_FileToLineToAddrNode *node = map->buckets[bucket_index];
+         node != 0;
+         node = node->next){
+      if (node->file_id == file_id){
+        result = node->map;
+        break;
+      }
+    }
+  }
+  return(result);
+}
+
+SYMS_API SYMS_U64RangeArray
+syms_line_to_addr_map_lookup_nearest_line_number(SYMS_LineToAddrMap *map, SYMS_U32 line,
+                                                 SYMS_U32 *actual_line_out){
+  SYMS_U64 count = map->line_count;
+  SYMS_U32 *numbers = map->line_numbers;
+  SYMS_U64 index = syms_index_from_n__u32__binary_search_round_up(numbers, count, line);
+  if (count > 0 && index >= count){
+    index = count - 1;
+  }
+  SYMS_U64RangeArray result = {0};
+  if (index < count){
+    SYMS_U32 *range_indexes = map->line_range_indexes;
+    result.ranges = map->ranges + range_indexes[index];
+    result.count = range_indexes[index + 1] - range_indexes[index];
+    *actual_line_out = numbers[index];
+  }
+  return(result);
+}
+
+
+SYMS_API void
+syms_line_to_addr_line_sort(SYMS_FileToLineToAddrLooseLine **array, SYMS_U64 count){
+  SYMS_ProfBegin("syms_line_to_addr_line_sort");
+  syms_line_to_addr_line_sort__rec(array, count);
+  SYMS_ProfEnd();
+}
+
+SYMS_API void
+syms_line_to_addr_line_sort__rec(SYMS_FileToLineToAddrLooseLine **array, SYMS_U64 count){
+  if (count > 4){
+    SYMS_U64 last = count - 1;
+    
+    // swap
+    SYMS_U64 mid = count/2;
+    SYMS_Swap(SYMS_FileToLineToAddrLooseLine*, array[mid], array[last]);
+    
+    // partition
+    SYMS_U64 key = array[last]->line;
+    SYMS_U64 j = 0;
+    for (SYMS_U64 i = 0; i < last; i += 1){
+      if (array[i]->line < key){
+        if (j != i){
+          SYMS_Swap(SYMS_FileToLineToAddrLooseLine*, array[i], array[j]);
+        }
+        j += 1;
+      }
+    }
+    
+    SYMS_Swap(SYMS_FileToLineToAddrLooseLine*, array[j], array[last]);
+    
+    // recurse
+    SYMS_U64 pivot = j;
+    syms_line_to_addr_line_sort__rec(array, pivot);
+    syms_line_to_addr_line_sort__rec(array + pivot + 1, (count - pivot - 1));
+  }
+  else if (count == 2){
+    if (array[0]->line > array[1]->line){
+      SYMS_Swap(SYMS_FileToLineToAddrLooseLine*, array[0], array[1]);
+    }
+  }
+  else if (count == 3){
+    if (array[0]->line > array[1]->line){
+      SYMS_Swap(SYMS_FileToLineToAddrLooseLine*, array[0], array[1]);
+    }
+    if (array[1]->line > array[2]->line){
+      SYMS_Swap(SYMS_FileToLineToAddrLooseLine*, array[1], array[2]);
+      if (array[0]->line > array[1]->line){
+        SYMS_Swap(SYMS_FileToLineToAddrLooseLine*, array[0], array[1]);
+      }
+    }
+  }
+  else if (count == 4){
+    if (array[0]->line > array[1]->line){
+      SYMS_Swap(SYMS_FileToLineToAddrLooseLine*, array[0], array[1]);
+    }
+    if (array[2]->line > array[3]->line){
+      SYMS_Swap(SYMS_FileToLineToAddrLooseLine*, array[2], array[3]);
+    }
+    if (array[0]->line > array[2]->line){
+      SYMS_Swap(SYMS_FileToLineToAddrLooseLine*, array[0], array[2]);
+    }
+    if (array[1]->line > array[3]->line){
+      SYMS_Swap(SYMS_FileToLineToAddrLooseLine*, array[1], array[3]);
+    }
+    if (array[1]->line > array[2]->line){
+      SYMS_Swap(SYMS_FileToLineToAddrLooseLine*, array[1], array[2]);
+    }
+  }
+}
+
+
+////////////////////////////////
+//~ allen: Copies & Operators for Other Data Structures
 
 SYMS_API SYMS_String8Array
 syms_string_array_copy(SYMS_Arena *arena, SYMS_StringCons *cons, SYMS_String8Array *array){
@@ -1313,7 +1560,6 @@ syms_string_array_copy(SYMS_Arena *arena, SYMS_StringCons *cons, SYMS_String8Arr
   return(result);
 }
 
-
 SYMS_API SYMS_LinkNameRecArray
 syms_link_name_record_copy(SYMS_Arena *arena, SYMS_LinkNameRecArray *array){
   SYMS_ProfBegin("syms_link_name_record_copy");
@@ -1328,6 +1574,44 @@ syms_link_name_record_copy(SYMS_Arena *arena, SYMS_LinkNameRecArray *array){
     dst->voff = src->voff;
   }
   
+  SYMS_ProfEnd();
+  return(result);
+}
+
+////////////////////////////////
+//~ allen: Binary Search Functions
+
+SYMS_API SYMS_U64
+syms_index_from_n__u32__binary_search_round_up(SYMS_U32 *v, SYMS_U64 count, SYMS_U32 n){
+  SYMS_ProfBegin("syms_index_from_n__u32__binary_search_round_up");
+  SYMS_U64 result = SYMS_U64_MAX;
+  if (count > 0 && n <= v[count - 1]){
+    //- binary search:
+    //   minimum index s.t. v[index] >= n
+    //  in this one we assume:
+    //   (i != j) implies (v[i] != v[j])
+    //   thus if (v[index] == n) then index already satisfies the requirement
+    SYMS_U64 first = 0;
+    SYMS_U64 opl = count;
+    for (;;){
+      SYMS_U64 mid = (first + opl - 1)/2;
+      SYMS_U64 w = v[mid];
+      if (w < n){
+        first = mid + 1;
+      }
+      else if (w > n){
+        opl = mid + 1;
+      }
+      else{
+        first = mid;
+        break;
+      }
+      if (first + 1 >= opl){
+        break;
+      }
+    }
+    result = first;
+  }
   SYMS_ProfEnd();
   return(result);
 }

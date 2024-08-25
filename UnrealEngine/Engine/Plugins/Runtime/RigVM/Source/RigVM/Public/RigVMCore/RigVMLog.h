@@ -5,6 +5,17 @@
 #include "CoreMinimal.h"
 #include "Logging/TokenizedMessage.h"
 
+struct RIGVM_API FRigVMLogSettings
+{
+	FRigVMLogSettings(EMessageSeverity::Type InSeverity, bool InLogOnce = true)
+		: Severity(InSeverity)
+		, bLogOnce(InLogOnce)
+	{}
+
+	EMessageSeverity::Type Severity;
+	bool bLogOnce;
+};
+
 struct RIGVM_API FRigVMLog
 {
 public:
@@ -34,5 +45,9 @@ public:
 #endif
 
 	virtual void Reset();
-	virtual void Report(EMessageSeverity::Type InSeverity, const FName& InFunctionName, int32 InInstructionIndex, const FString& InMessage);
+	virtual void Report(const FRigVMLogSettings& InLogSettings, const FName& InFunctionName, int32 InInstructionIndex, const FString& InMessage);
+
+#if WITH_EDITOR
+	void RemoveRedundantEntries();
+#endif
 };

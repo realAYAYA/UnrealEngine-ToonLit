@@ -55,6 +55,14 @@ APlayerController* UCheatManagerExtension::GetPlayerController() const
 	return GetOuterUCheatManager()->GetPlayerController();
 }
 
+void UCheatManagerExtension::AddedToCheatManager_Implementation()
+{
+}
+
+void UCheatManagerExtension::RemovedFromCheatManager_Implementation()
+{
+}
+
 void UCheatManagerExtension::DoExtensionSpecificBugItLog(FOutputDevice& OutputFile)
 {
 }
@@ -115,7 +123,10 @@ bool UCheatManager::ProcessConsoleExec(const TCHAR* Cmd, FOutputDevice& Ar, UObj
 
 				if ((Function != nullptr) && Function->HasAnyFunctionFlags(FUNC_BlueprintAuthorityOnly))
 				{
-					MyPC->ServerExec(Cmd);
+					if(ensureMsgf(GAllowActorScriptExecutionInEditor == false, TEXT("GAllowActorScriptExecutionInEditor must be false when executing commands.")))
+					{
+						MyPC->ServerExec(Cmd);
+					}
 					return true;
 				}
 			}
@@ -136,10 +147,18 @@ bool UCheatManager::ProcessConsoleExec(const TCHAR* Cmd, FOutputDevice& Ar, UObj
 
 void UCheatManager::FreezeFrame(float delay)
 {
-	FCanUnpause DefaultCanUnpause;
-	DefaultCanUnpause.BindUObject( GetOuterAPlayerController(), &APlayerController::DefaultCanUnpause );
-	GetWorld()->GetAuthGameMode()->SetPause(GetOuterAPlayerController(),DefaultCanUnpause);
-	GetWorld()->PauseDelay = GetWorld()->TimeSeconds + delay;
+	if (UWorld* World = GetWorld())
+	{
+		if (AGameModeBase* GameMode = World->GetAuthGameMode())
+		{
+			check(GetOuterAPlayerController() != NULL);
+
+			FCanUnpause DefaultCanUnpause;
+			DefaultCanUnpause.BindUObject(GetOuterAPlayerController(), &APlayerController::DefaultCanUnpause);
+			GameMode->SetPause(GetOuterAPlayerController(), DefaultCanUnpause);
+			World->PauseDelay = World->TimeSeconds + delay;
+		}
+	}
 }
 
 void UCheatManager::Teleport()
@@ -623,8 +642,7 @@ void UCheatManager::StreamLevelOut(FName PackageName)
 
 void UCheatManager::ToggleDebugCamera()
 {
-	ADebugCameraController* const DCC = Cast<ADebugCameraController>(GetOuter());
-	if (DCC)
+	if (IsDebugCameraActive())
 	{
 		DisableDebugCamera();
 	}
@@ -632,6 +650,11 @@ void UCheatManager::ToggleDebugCamera()
 	{
 		EnableDebugCamera();
 	}
+}
+
+bool UCheatManager::IsDebugCameraActive() const
+{
+	return GetOuter() ? GetOuter()->IsA<ADebugCameraController>() : false;
 }
 
 void UCheatManager::EnableDebugCamera()
@@ -1207,7 +1230,7 @@ void UCheatManager::CheatScript(FString ScriptName)
 	UConsole* ConsoleToDisplayResults = (LocalPlayer && LocalPlayer->ViewportClient) ? LocalPlayer->ViewportClient->ViewportConsole : nullptr;
 
 	// Run commands from the ini
-	FConfigSection const* const CommandsToRun = GConfig->GetSectionPrivate(*FString::Printf(TEXT("CheatScript.%s"), *ScriptName), 0, 1, GGameIni);
+	const FConfigSection* CommandsToRun = GConfig->GetSection(*FString::Printf(TEXT("CheatScript.%s"), *ScriptName), 0, GGameIni);
 
 	if (CommandsToRun)
 	{

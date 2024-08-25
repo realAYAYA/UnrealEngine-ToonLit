@@ -1,9 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #pragma once
 
-#include "EOSShared.h"
+#include "EOSVoiceChat.h"
 
-#if WITH_EOS_RTC
+#if WITH_EOSVOICECHAT
 
 #include "VoiceChatResult.h"
 
@@ -13,4 +13,4 @@ enum class EOS_EResult : int32_t;
 
 FVoiceChatResult ResultFromEOSResult(const EOS_EResult EosResult);
 
-#endif // WITH_EOS_RTC
+#endif // WITH_EOSVOICECHAT

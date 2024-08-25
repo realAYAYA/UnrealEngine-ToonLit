@@ -139,7 +139,8 @@ public:
 	UFUNCTION(exec)
 	ENGINE_API virtual void SetConsoleTarget(int32 PlayerIndex);
 
-	/** Sets the widget to use fore the cursor. */
+	/** Add a Widget to use for specified cursor type*/
+	UE_DEPRECATED(5.4, "AddCursorWidget is deprecated, use SetSoftwareCursorWidget instead.")
 	ENGINE_API void AddCursorWidget(EMouseCursor::Type Cursor, class UUserWidget* CursorWidget);
 
 	/** Returns a relative world context for this viewport.	 */
@@ -660,8 +661,8 @@ protected:
 	void SetCurrentLumenVisualizationMode(FName NewLumenVisualizationMode) { CurrentLumenVisualizationMode = NewLumenVisualizationMode; }
 	FName GetCurrentLumenVisualizationMode() const { return CurrentLumenVisualizationMode; }
 
-	void SetCurrentStrataVisualizationMode(FName NewStrataVisualizationMode) { CurrentStrataVisualizationMode = NewStrataVisualizationMode; }
-	FName GetCurrentStrataVisualizationMode() const { return CurrentStrataVisualizationMode; }
+	void SetCurrentSubstrateVisualizationMode(FName NewSubstrateVisualizationMode) { CurrentSubstrateVisualizationMode = NewSubstrateVisualizationMode; }
+	FName GetCurrentSubstrateVisualizationMode() const { return CurrentSubstrateVisualizationMode; }
 
 	void SetCurrentGroomVisualizationMode(FName NewGroomVisualizationMode) { CurrentGroomVisualizationMode = NewGroomVisualizationMode; }
 	FName GetCurrentGroomVisualizationMode() const { return CurrentGroomVisualizationMode; }
@@ -858,13 +859,21 @@ public:
 	 */
 	ENGINE_API bool SetDisplayConfiguration( const FIntPoint* Dimensions, EWindowMode::Type WindowMode);
 
+	UE_DEPRECATED(5.4, "SetVirtualCursorWidget is deprecated, use SetSoftwareCursorWidget instead.")
 	ENGINE_API void SetVirtualCursorWidget(EMouseCursor::Type Cursor, class UUserWidget* Widget);
 
-	/** Add a cursor to the set based on the enum and a slate widget */
+	/** Add a Widget to use for specified cursor type*/
+	UE_DEPRECATED(5.4, "AddSoftwareCursorFromSlateWidget is deprecated, use SetSoftwareCursorWidget instead.")
 	ENGINE_API void AddSoftwareCursorFromSlateWidget(EMouseCursor::Type InCursorType, TSharedPtr<SWidget> CursorWidgetPtr);
 
-	/** Adds a cursor to the set based on the enum and the class reference to it. */
+	UE_DEPRECATED(5.4, "AddSoftwareCursor is deprecated, use SetSoftwareCursorWidget instead and pass the Created Widget instead of the UserWidget Class.")
 	ENGINE_API void AddSoftwareCursor(EMouseCursor::Type Cursor, const FSoftClassPath& CursorClass);
+
+	/** Add a Widget to use for specified cursor type*/
+	ENGINE_API void SetSoftwareCursorWidget(EMouseCursor::Type InCursorType, class UUserWidget* Widget);
+
+	/** Add a Widget to use for specified cursor type*/
+	ENGINE_API void SetSoftwareCursorWidget(EMouseCursor::Type InCursorType, TSharedPtr<SWidget> CursorWidgetPtr);
 
 	/** Get the slate widget of the current software cursor */
 	ENGINE_API TSharedPtr<SWidget> GetSoftwareCursorWidget(EMouseCursor::Type Cursor) const;
@@ -879,6 +888,9 @@ public:
 private:
 	/** Resets the platform type shape to nullptr, to restore it to the OS default. */
 	ENGINE_API void ResetHardwareCursorStates();
+
+	/** Set the Software Cursor from the class path. This should stay private to make sure error reporting on loading is done by the caller. */
+	void SetSoftwareCursorFromClassPath(EMouseCursor::Type Cursor, const FSoftClassPath& CursorClass);
 
 	/**
 	 * Set a specific stat to either enabled or disabled (returns the number of remaining enabled stats)
@@ -980,8 +992,8 @@ private:
 	/** Current Lumen visualization mode for this game viewport */
 	FName CurrentLumenVisualizationMode;
 
-	/** Current Strata visualization mode for this game viewport */
-	FName CurrentStrataVisualizationMode;
+	/** Current Substrate visualization mode for this game viewport */
+	FName CurrentSubstrateVisualizationMode;
 
 	/** Current Groom visualization mode for this game viewport */
 	FName CurrentGroomVisualizationMode;

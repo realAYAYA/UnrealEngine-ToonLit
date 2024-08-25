@@ -37,7 +37,7 @@ void AddVoxelToBlock( uint BlockOffset, uint3 Voxel )
 {
 	uint VoxelIndex = Voxel.x + Voxel.y * 4 + Voxel.z * 16;
 	uint HighInt = VoxelIndex >= 32;
-	uint VoxelMask = 1 << ( VoxelIndex - HighInt * 32 );
+	uint VoxelMask = 1u << ( VoxelIndex - HighInt * 32 );
 	RWBlockBuffer.InterlockedOr( 8 * BlockOffset + 4 * HighInt, VoxelMask );
 }
 
@@ -176,7 +176,7 @@ void FillBlocks( uint2 PixelPos : SV_DispatchThreadID )
 
 		uint3 Block = ( Voxel.xyz >> 2 ) & 3;
 		uint VoxelIndex = Block.x + Block.y * 4 + Block.z * 16;
-		uint VoxelMask = 1 << ( VoxelIndex & 31 );
+		uint VoxelMask = 1u << ( VoxelIndex & 31 );
 
 		uint2 RootBlock = RWBlockBuffer.Load2( 8 * Brick.BlockOffset );
 

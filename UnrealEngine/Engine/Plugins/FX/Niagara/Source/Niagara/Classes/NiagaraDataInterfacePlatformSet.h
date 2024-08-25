@@ -23,7 +23,6 @@ public:
 	//UObject Interface End
 
 	// UNiagaraDataInterface interface
-	NIAGARA_API virtual void GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)override;
 	NIAGARA_API virtual void GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction& OutFunc) override;
 	virtual bool CanExecuteOnTarget(ENiagaraSimTarget Target)const override { return Target == ENiagaraSimTarget::CPUSim; }
 
@@ -35,6 +34,9 @@ protected:
 	//~ UNiagaraDataInterface interface
 
 public:
+#if WITH_EDITORONLY_DATA
+	NIAGARA_API virtual void GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const override;
+#endif
 	NIAGARA_API void IsActive(FVectorVMExternalFunctionContext& Context);
 };
 

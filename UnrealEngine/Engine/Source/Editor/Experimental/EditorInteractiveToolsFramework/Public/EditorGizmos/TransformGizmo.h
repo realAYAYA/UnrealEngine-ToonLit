@@ -5,7 +5,6 @@
 #include "BaseBehaviors/BehaviorTargetInterfaces.h"
 #include "BaseGizmos/GizmoElementHitTargets.h"
 #include "BaseGizmos/GizmoViewContext.h"
-#include "BaseGizmos/StateTargets.h"
 #include "BaseGizmos/TransformProxy.h"
 #include "Containers/EnumAsByte.h"
 #include "CoreMinimal.h"
@@ -13,7 +12,6 @@
 #include "InputState.h"
 #include "InteractiveGizmo.h"
 #include "InteractiveToolChange.h"
-#include "InteractiveToolObjects.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "Math/Axis.h"
 #include "Math/Color.h"
@@ -36,7 +34,7 @@ class IGizmoStateTarget;
 class IGizmoTransformSource;
 class IToolContextTransactionProvider;
 class IToolsContextRenderAPI;
-class UClickDragInputBehavior;
+class UMultiButtonClickDragBehavior;
 class UGizmoConstantFrameAxisSource;
 class UGizmoElementArrow;
 class UGizmoElementBase;
@@ -84,7 +82,6 @@ enum class ETransformGizmoPartIdentifier
 	RotateZAxis,
 	RotateScreenSpace,
 	RotateArcball,
-	RotateArcballInnerCircle,
 	ScaleAll,
 	ScaleXAxis,
 	ScaleYAxis,
@@ -94,6 +91,30 @@ enum class ETransformGizmoPartIdentifier
 	ScaleXZPlanar,
 	ScaleUniform, 
 	Max
+};
+
+UENUM()
+namespace EAxisRotateMode
+{
+	enum Type
+	{
+		Pull,
+		Arc
+	};
+}
+
+USTRUCT()
+struct FGizmosParameters
+{
+	GENERATED_BODY()
+
+	/** Rotate mode used when manipulating axis rotation handles. */
+	UPROPERTY(EditAnywhere, Category = NewTRSGizmo)
+	TEnumAsByte<EAxisRotateMode::Type> RotateMode = EAxisRotateMode::Arc;
+	
+	/** Property used to define whether the Y axis is indirectly controlled via CTRL+MMB or CTRL+RMB (and Z via CTRL+RMB or CTRL+LMB+RMB). */
+	UPROPERTY(EditAnywhere, Category = NewTRSGizmo)
+	bool bCtrlMiddleDoesY = true;
 };
 
 /**
@@ -118,8 +139,6 @@ public:
 	static constexpr float TranslateScreenSpaceHandleSize = 14.0f;
 
 	// Rotate constants
-	static constexpr float RotateArcballInnerRadius = 8.0f;
-	static constexpr float RotateArcballOuterRadius = 10.0f;
 	static constexpr float RotateArcballSphereRadius = 70.0f;
 	static constexpr float RotateAxisOuterRadius = 73.0f;
 	static constexpr float RotateAxisInnerRadius = 1.25f;
@@ -148,7 +167,7 @@ public:
 
 	static constexpr FLinearColor RotateScreenSpaceCircleColor = WhiteColor;
 	static constexpr FLinearColor RotateOuterCircleColor = GreyColor;
-	static constexpr FLinearColor RotateArcballCircleColor = WhiteColor;
+	static constexpr FLinearColor RotateArcballCircleColor = FLinearColor(0.50f, 0.50f, 0.50f, 0.1f);
 
 	static constexpr float LargeOuterAlpha = 0.5f;
 
@@ -166,7 +185,7 @@ public:
 	// UInteractiveGizmo overrides
 	virtual void Setup() override;
 	virtual void Shutdown() override;
-	virtual void Render(IToolsContextRenderAPI* RenderAPI);
+	virtual void Render(IToolsContextRenderAPI* RenderAPI) override;
 	virtual void Tick(float DeltaTime) override;
 
 	// IHoverBehaviorTarget implementation
@@ -186,6 +205,7 @@ public:
 	 * Set the active target object for the Gizmo
 	 * @param Target active target
 	 * @param TransactionProvider optional IToolContextTransactionProvider implementation to use - by default uses GizmoManager
+	 * @param InStateTarget optional IGizmoStateTarget implementation to use - will create a new UGizmoObjectModifyStateTarget none provided
 	 */
 	virtual void SetActiveTarget(UTransformProxy* Target, IToolContextTransactionProvider* TransactionProvider = nullptr, IGizmoStateTarget* InStateTarget = nullptr);
 
@@ -209,6 +229,16 @@ public:
 	 * Set customization function for this Gizmo
 	 */
 	void SetCustomizationFunction(const TFunction<const FGizmoCustomization()>& InFunction);
+
+	/**
+	 * Handle widget mode changed.
+	 */
+	void HandleWidgetModeChanged(UE::Widget::EWidgetMode InWidgetMode);
+
+	/**
+	 * Handle user parameters changes
+	 */
+	void OnParametersChanged(const FGizmosParameters& InParameters);
 	
 public:
 
@@ -220,9 +250,9 @@ public:
 	UPROPERTY()
 	TObjectPtr<UGizmoElementHitMultiTarget> HitTarget;
 
-	/** The mouse click behavior of the gizmo is accessible so that it can be modified to use different mouse keys. */
+	/** The multi button mouse click behavior is accessible so that it can be modified to use different mouse keys. */
 	UPROPERTY()
-	TObjectPtr<UClickDragInputBehavior> MouseBehavior;
+	TObjectPtr<UMultiButtonClickDragBehavior> MultiIndirectClickDragBehavior;
 
 	/** Transform Gizmo Source */
 	UPROPERTY()
@@ -269,6 +299,14 @@ public:
 	 */
 	UPROPERTY()
 	bool bSnapToWorldRotGrid = false;
+
+	/** Broadcast at the end of a SetActiveTarget call. */
+	DECLARE_MULTICAST_DELEGATE_TwoParams(FOnSetActiveTarget, UTransformGizmo*, UTransformProxy*);
+	FOnSetActiveTarget OnSetActiveTarget;
+	
+	/** Broadcast at the beginning of a ClearActiveTarget call, when the ActiveTarget is not yet disconnected. */
+	DECLARE_MULTICAST_DELEGATE_TwoParams(FOnClearActiveTarget, UTransformGizmo*, UTransformProxy*);
+	FOnClearActiveTarget OnAboutToClearActiveTarget;
 
 protected:
 
@@ -320,13 +358,9 @@ protected:
 	UPROPERTY()
 	TObjectPtr<UGizmoElementCircle> RotateOuterCircleElement;
 
-	/** Rotate arcball outer circle */
-	UPROPERTY()
-	TObjectPtr<UGizmoElementCircle> RotateArcballOuterElement;
-
 	/** Rotate arcball inner circle */
 	UPROPERTY()
-	TObjectPtr<UGizmoElementCircle> RotateArcballInnerElement;
+	TObjectPtr<UGizmoElementCircle> RotateArcballElement;
 
 	/** Rotate screen space circle */
 	UPROPERTY()
@@ -384,6 +418,9 @@ protected:
 
 	/** Setup behaviors */
 	virtual void SetupBehaviors();
+
+	/** Setup indirect behaviors */
+	void SetupIndirectBehaviors();
 
 	/** Setup materials */
 	virtual void SetupMaterials();
@@ -448,11 +485,23 @@ protected:
 	virtual bool GetRayParamIntersectionWithInteractionPlane(const FInputDeviceRay& InRay, float& OutHitParam);
 
 	/** Update hover state for given part id */
-	virtual void UpdateHoverState(bool bInHover, ETransformGizmoPartIdentifier InPartId);
+	virtual void UpdateHoverState(const bool bInHover, const ETransformGizmoPartIdentifier InPartId);
+
+	/** Reset all hover states related to the transform mode to false */
+	void ResetHoverStates(const EGizmoTransformMode InMode);
 
 	/** Update interacting state for given part id */
-	virtual void UpdateInteractingState(bool bInInteracting, ETransformGizmoPartIdentifier InPartId);
+	virtual void UpdateInteractingState(const bool bInInteracting, const ETransformGizmoPartIdentifier InPartId, const bool bIdOnly = false);
 
+	/** Reset all interacting states related to the transform mode to false */
+	void ResetInteractingStates(const EGizmoTransformMode InMode);
+
+	/** Called at the start of a sequence of gizmo transform edits */
+	virtual void BeginTransformEditSequence();
+
+	/** Called at the end of a sequence of gizmo transform edits. */
+	virtual void EndTransformEditSequence();
+	
 	/**
 	 * Translate axis click-drag handling methods 
 	 */ 
@@ -521,25 +570,32 @@ protected:
 	 */
 
 	/** Handle click press for rotate X axis */
-	virtual void OnClickPressRotateXAxis(const FInputDeviceRay& PressPos);
+	virtual void OnClickPressRotateXAxis(const FInputDeviceRay& InPressPos);
 
 	/** Handle click press for rotate Y axis */
-	virtual void OnClickPressRotateYAxis(const FInputDeviceRay& PressPos);
+	virtual void OnClickPressRotateYAxis(const FInputDeviceRay& InPressPos);
 
 	/** Handle click press for rotate Z axis */
-	virtual void OnClickPressRotateZAxis(const FInputDeviceRay& PressPos);
+	virtual void OnClickPressRotateZAxis(const FInputDeviceRay& InPressPos);
+
+	/** Handle click press for any rotate axis */
+	void OnClickPressRotateAxis(const FInputDeviceRay& InPressPos);
 
 	/** Handle click drag for rotate axis */
-	virtual void OnClickDragRotateAxis(const FInputDeviceRay& DragPos);
+	virtual void OnClickDragRotateAxis(const FInputDeviceRay& InDragPos);
 
 	/** Handle click release for rotate axes */
-	virtual void OnClickReleaseRotateAxis(const FInputDeviceRay& ReleasePos);
+	virtual void OnClickReleaseRotateAxis(const FInputDeviceRay& InReleasePos);
 
 	/** Get screen-space axis for rotation drag */
-	FVector2D GetScreenRotateAxisDir(const FVector& InAxis0, const FVector& InAxis1);
+	FVector2D GetScreenRotateAxisDir(const FInputDeviceRay& InPressPos);
 
 	/** Compute rotate delta based on screen-space start/end positions */
 	virtual FQuat ComputeAxisRotateDelta(const FVector2D& InStartPos, const FVector2D& InEndPos);
+
+	/** Prepares data for arc rotation. This will return false if this is not possible (the rotate handle is perpendicular to the view) */
+	bool OnClickPressRotateArc( const FInputDeviceRay& InPressPos,
+		const FVector& InPlaneNormal, const FVector& InPlaneAxis1, const FVector& InPlaneAxis2);
 
 	/**
 	 * Screen-space rotate interaction methods
@@ -556,7 +612,26 @@ protected:
 
 	/** Compute rotate delta based on start/end angles */
 	virtual FQuat ComputeAngularRotateDelta(double InStartAngle, double InEndAngle);
+	
+	/**
+	 * Arc ball rotate interaction methods
+	 */
 
+	/** Handle click press for arc ball rotate */
+	virtual void OnClickPressArcBallRotate(const FInputDeviceRay& PressPos);
+
+	/** Handle click drag for arc ball rotate */
+	virtual void OnClickDragArcBallRotate(const FInputDeviceRay& DragPos);
+
+	/** Handle click release for arc ball rotate */
+	virtual void OnClickReleaseArcBallRotate(const FInputDeviceRay& ReleasePos);
+
+	/** Get the arc ball sphere world radius */
+	float GetWorldRadius(const float InRadius) const;
+
+	/** */
+	float GetSizeCoefficient() const;
+	
 	/**
 	* Scale click-drag handling methods
 	*/
@@ -614,7 +689,7 @@ protected:
 	 */
 
 	/** Returns 2D vector projection of input axis onto input view plane */
-	FVector2D GetScreenProjectedAxis(const UGizmoViewContext* View, const FVector& InLocalAxis, const FTransform& InLocalToWorld = FTransform::Identity) const;
+	static FVector2D GetScreenProjectedAxis(const UGizmoViewContext* View, const FVector& InLocalAxis, const FTransform& InLocalToWorld = FTransform::Identity);
 
 	/**
 	 * Apply transform delta methods
@@ -639,6 +714,12 @@ protected:
 	// Verify part identifier is within recognized range of transform gizmo part ids
 	virtual bool VerifyPartIdentifier(uint32 InPartIdentifier) const;
 
+	// Returns whether the gizmo is visible in the viewport.
+	bool IsVisible() const;
+
+	// Returns whether the gizmo can interact. Note that this can be true even if the gizmo is not visible to support indirect manipulation.
+	bool CanInteract() const;
+	
 protected:
 
 	/** Materials and colors to be used when drawing the items for each axis */
@@ -670,12 +751,6 @@ protected:
 	/** Array of function pointers, indexed by gizmo part id, to handle click release behavior */
 	TArray<TFunction<void(UTransformGizmo* TransformGizmo, const FInputDeviceRay& ReleasePos)> > OnClickReleaseFunctions;
 
-	/** Array of function pointers, indexed by gizmo part id, to handle update hovering state */
-	TArray<TFunction<void(UTransformGizmo* TransformGizmo, bool bInHover, uint32 InHitParts)> > OnUpdateHoverFunctions;
-
-	/** Array of function pointers, indexed by gizmo part id, to handle update interacting state */
-	TArray<TFunction<void(UTransformGizmo* TransformGizmo, bool bInInteracting, uint32 InHitPart)> > OnUpdateInteractingFunctions;
-
 	/** Customization function (to override default material or increment gizmo size for example) */
 	TFunction<const FGizmoCustomization()> CustomizationFunction;
 
@@ -699,6 +774,12 @@ protected:
 	UPROPERTY()
 	ETransformGizmoPartIdentifier LastHitPart = ETransformGizmoPartIdentifier::Default;
 
+	/** Last hit part per mode */
+	ETransformGizmoPartIdentifier LastHitPartPerMode[static_cast<uint8>(EGizmoTransformMode::Max)];
+	
+	ETransformGizmoPartIdentifier GetCurrentModeLastHitPart() const;
+	void SetModeLastHitPart(const EGizmoTransformMode InMode, const ETransformGizmoPartIdentifier InIdentifier);
+	
 	//
 	// The values below are used in the context of a single click-drag interaction, ie if bInInteraction = true
 	// They otherwise should be considered uninitialized
@@ -732,6 +813,10 @@ protected:
 	UPROPERTY()
 	FVector InteractionPlanarNormal;
 
+	/** Active normal to remove from axis translation (only valid between state target BeginModify/EndModify) */
+	UPROPERTY()
+	FVector NormalToRemove;
+
 	/** Active world space axis X used for planar (only valid between state target BeginModify/EndModify) */
 	UPROPERTY()
 	FVector InteractionPlanarAxisX;
@@ -760,6 +845,10 @@ protected:
 	UPROPERTY()
 	FVector2D InteractionScreenAxisDirection;
 
+	/** Active normal projection to remove from drag when rotating */
+	UPROPERTY()
+	FVector2D NormalProjectionToRemove;
+
 	/** Active interaction screen start pos (only valid between state target BeginModify/EndModify) */
 	UPROPERTY()
 	FVector2D InteractionScreenStartPos;
@@ -772,4 +861,46 @@ protected:
 	UPROPERTY()
 	FVector2D InteractionScreenCurrPos;
 
+	/** Active interaction arc ball start point */
+	UPROPERTY()
+	FVector InteractionArcBallStartPoint;
+
+	/** Active interaction arc ball current point */
+	UPROPERTY()
+	FVector InteractionArcBallCurrPoint;
+
+	/** Arc ball start rotation */
+	UPROPERTY()
+	FQuat StartRotation = FQuat::Identity;
+
+	/** Arc ball current rotation */
+	FQuat CurrentRotation = FQuat::Identity;
+
+	/** Indirect manipulation */
+	UPROPERTY()
+	bool bIndirectManipulation;
+
+	/** Defer drag function on tick to avoid firing too many drag moves */
+	UPROPERTY()
+	bool bDeferDrag = true;
+
+	/** Pending drag function to be called if bDeferDrag is true */
+	TFunction<void()> PendingDragFunction;
+
+	/** Use Ctrl + MMB to do indirect manipulation on the Y axis */
+	UPROPERTY()
+	bool bCtrlMiddleDoesY = true;
+
+	/** Default rotate mode used when using axis rotation handles. */
+	UPROPERTY()
+	TEnumAsByte<EAxisRotateMode::Type> DefaultRotateMode = EAxisRotateMode::Arc;
+
+	/** Actual rotate mode used (based on view dependant information). */
+	TEnumAsByte<EAxisRotateMode::Type> RotateMode = EAxisRotateMode::Arc;
+
+private:
+	/** Debug attributes to display the pull direction */
+	bool bDebugRotate = false;
+	FVector DebugDirection = FVector::ZeroVector;
+	FVector DebugClosest = FVector::ZeroVector;
 };

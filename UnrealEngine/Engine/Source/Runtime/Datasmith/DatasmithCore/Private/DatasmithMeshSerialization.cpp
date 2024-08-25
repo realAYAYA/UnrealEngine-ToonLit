@@ -5,6 +5,7 @@
 
 #include "Compression/OodleDataCompression.h"
 #include "HAL/FileManager.h"
+#include "Misc/Compression.h"
 #include "Serialization/MemoryReader.h"
 #include "Serialization/MemoryWriter.h"
 #include "StaticMeshAttributes.h"
@@ -84,7 +85,7 @@ bool CompressInline(TArray<uint8>& UncompressedData, ECompressionMethod Method)
 		auto Level = FOodleDataCompression::ECompressionLevel::VeryFast;
 		if (int64 ActualCompressedSize = FOodleDataCompression::CompressParallel(CompressedData.GetData() + HeaderSize, CompressedSize, UncompressedData.GetData(), UncompressedSize, Compressor, Level))
 		{
-			CompressedData.SetNum(ActualCompressedSize + HeaderSize, true);
+			CompressedData.SetNum(ActualCompressedSize + HeaderSize, EAllowShrinking::Yes);
 			UncompressedData = MoveTemp(CompressedData);
 
 			return true;
@@ -95,7 +96,7 @@ bool CompressInline(TArray<uint8>& UncompressedData, ECompressionMethod Method)
 		if (FCompression::CompressMemory(MethodName, CompressedData.GetData() + HeaderSize, CompressedSize, UncompressedData.GetData(), UncompressedSize))
 		{
 
-			CompressedData.SetNum(CompressedSize + HeaderSize, true);
+			CompressedData.SetNum(CompressedSize + HeaderSize, EAllowShrinking::Yes);
 			UncompressedData = MoveTemp(CompressedData);
 
 			return true;
@@ -314,6 +315,7 @@ TArray<FDatasmithMeshModels> GetDatasmithMeshFromMeshPath_Legacy(FArchive* Archi
 		MemoryReader.ArIgnoreClassRef = false;
 		MemoryReader.ArIgnoreArchetypeRef = false;
 		MemoryReader.SetWantBinaryPropertySerialization(true);
+		MemoryReader.SetUEVer(FPackageFileVersion::CreateUE4Version(EUnrealEngineObjectUE4Version::VER_UE4_AUTOMATIC_VERSION));
 		DatasmithMesh->Serialize( MemoryReader );
 
 		FDatasmithMeshModels& MeshInternal = Result.AddDefaulted_GetRef();

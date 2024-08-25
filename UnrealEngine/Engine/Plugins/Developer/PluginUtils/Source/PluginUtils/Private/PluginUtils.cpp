@@ -68,7 +68,7 @@ namespace PluginUtils
 		return PackageName;
 	}
 
-	bool CopyPluginTemplateFolder(const TCHAR* DestinationDirectory, const TCHAR* Source, const FString& PluginName, TArray<FCoreRedirect>& InOutCoreRedirectList, TArray<FString>& InOutFilePathsWritten, FText* OutFailReason = nullptr)
+	bool CopyPluginTemplateFolder(const TCHAR* DestinationDirectory, const TCHAR* Source, const FString& PluginName, const FString& NameToReplace, TArray<FCoreRedirect>& InOutCoreRedirectList, TArray<FString>& InOutFilePathsWritten, FText* OutFailReason = nullptr)
 	{
 		check(DestinationDirectory);
 		check(Source);
@@ -108,6 +108,7 @@ namespace PluginUtils
 			const TCHAR* SourceRoot;
 			const TCHAR* DestRoot;
 			const FString& PluginName;
+			const FString& NameToReplace;
 			TArray<FString> NameReplacementFileTypes;
 			TArray<FString> IgnoredFileTypes;
 			TArray<FString> CopyUnmodifiedFileTypes;
@@ -115,11 +116,12 @@ namespace PluginUtils
 			FText* FailReason;
 			TArray<FCoreRedirect>& CoreRedirectList;
 
-			FCopyPluginFilesAndDirs(IPlatformFile& InPlatformFile, const TCHAR* InSourceRoot, const TCHAR* InDestRoot, const FString& InPluginName, TArray<FString>& InFilePathsWritten, TArray<FCoreRedirect>& CoreRedirectList, FText* InFailReason)
+			FCopyPluginFilesAndDirs(IPlatformFile& InPlatformFile, const TCHAR* InSourceRoot, const TCHAR* InDestRoot, const FString& InPluginName, const FString& InNameToReplace, TArray<FString>& InFilePathsWritten, TArray<FCoreRedirect>& CoreRedirectList, FText* InFailReason)
 				: PlatformFile(InPlatformFile)
 				, SourceRoot(InSourceRoot)
 				, DestRoot(InDestRoot)
 				, PluginName(InPluginName)
+				, NameToReplace(InNameToReplace)
 				, FilePathsWritten(InFilePathsWritten)
 				, FailReason(InFailReason)
 				, CoreRedirectList(CoreRedirectList)
@@ -147,7 +149,7 @@ namespace PluginUtils
 				FString NewName(FilenameOrDirectory);
 				// change the root and rename paths/files
 				NewName.RemoveFromStart(SourceRoot);
-				NewName = NewName.Replace(*PLUGIN_NAME, *PluginName, ESearchCase::CaseSensitive);
+				NewName = NewName.Replace(*PLUGIN_NAME, *NameToReplace, ESearchCase::CaseSensitive);
 				NewName = FPaths::Combine(DestRoot, *NewName);
 
 				if (bIsDirectory)
@@ -175,12 +177,12 @@ namespace PluginUtils
 							FString CopyToPath = FPaths::GetPath(NewName);
 
 							NewName = FPaths::Combine(CopyToPath, CleanFilename);
-						}
 
-						// Redirect the template package name to the generated package name to fix up internal references.
-						FString SourcePackageName = ConstructPackageName(SourceRoot, FilenameOrDirectory);
-						FString DestPackageName = ConstructPackageName(DestRoot, *NewName);
-						CoreRedirectList.Add(FCoreRedirect(ECoreRedirectFlags::Type_Package, SourcePackageName, DestPackageName));
+							// Redirect the template package name to the generated package name to fix up internal references.
+							FString SourcePackageName = ConstructPackageName(SourceRoot, FilenameOrDirectory);
+							FString DestPackageName = ConstructPackageName(DestRoot, *NewName);
+							CoreRedirectList.Add(FCoreRedirect(ECoreRedirectFlags::Type_Package, SourcePackageName, DestPackageName));
+						}
 
 						if (PlatformFile.FileExists(*NewName))
 						{
@@ -201,14 +203,14 @@ namespace PluginUtils
 								return false;
 							}
 
-							OutFileContents = OutFileContents.Replace(*PLUGIN_NAME, *PluginName, ESearchCase::CaseSensitive);
+							OutFileContents = OutFileContents.Replace(*PLUGIN_NAME, *NameToReplace, ESearchCase::CaseSensitive);
 
 							// For some content, we also want to export a PLUGIN_NAME_API text macro, which requires that the plugin name
 							// be all capitalized
 
-							FString PluginNameAPI = PluginName + TEXT("_API");
+							FString ReplaceNameAPI = NameToReplace + TEXT("_API");
 
-							OutFileContents = OutFileContents.Replace(*PluginNameAPI, *PluginNameAPI.ToUpper(), ESearchCase::CaseSensitive);
+							OutFileContents = OutFileContents.Replace(*ReplaceNameAPI, *ReplaceNameAPI.ToUpper(), ESearchCase::CaseSensitive);
 
 							// Special case the .uplugin as we may be copying a real plugin and the filename will not be named PLUGIN_NAME
 							// as it needs to be loaded by the editor. Ensure the new plugin name is used.
@@ -248,13 +250,13 @@ namespace PluginUtils
 		};
 
 		// copy plugin files and directories visitor
-		FCopyPluginFilesAndDirs CopyFilesAndDirs(PlatformFile, *SourceDir, *DestDir, PluginName, InOutFilePathsWritten, InOutCoreRedirectList, OutFailReason);
+		FCopyPluginFilesAndDirs CopyFilesAndDirs(PlatformFile, *SourceDir, *DestDir, PluginName, NameToReplace, InOutFilePathsWritten, InOutCoreRedirectList, OutFailReason);
 
 		// create all files subdirectories and files in subdirectories!
 		return PlatformFile.IterateDirectoryRecursively(*SourceDir, CopyFilesAndDirs);
 	}
 
-	void FixupPluginTemplateAssets(const FString& PluginName, TMap<FString, FString>& OutModifiedAssetPaths)
+	void FixupPluginTemplateAssets(const FString& PluginName, const FString& NameToReplace, TMap<FString, FString>& OutModifiedAssetPaths)
 	{
 		IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
 
@@ -263,14 +265,14 @@ namespace PluginUtils
 		struct FFixupPluginAssets : public IPlatformFile::FDirectoryVisitor
 		{
 			IPlatformFile& PlatformFile;
-			const FString& PluginName;
+			const FString& NameToReplace;
 			const FString& PluginBaseDir;
 
 			TArray<FString> FilesToScan;
 
-			FFixupPluginAssets(IPlatformFile& InPlatformFile, const FString& InPluginName, const FString& InPluginBaseDir)
+			FFixupPluginAssets(IPlatformFile& InPlatformFile, const FString& InNameToReplace, const FString& InPluginBaseDir)
 				: PlatformFile(InPlatformFile)
-				, PluginName(InPluginName)
+				, NameToReplace(InNameToReplace)
 				, PluginBaseDir(InPluginBaseDir)
 			{
 			}
@@ -317,8 +319,8 @@ namespace PluginUtils
 
 						for (FAssetData AssetData : Assets)
 						{
-							const FString AssetName = AssetData.AssetName.ToString().Replace(*PLUGIN_NAME, *PluginName, ESearchCase::CaseSensitive);
-							const FString AssetPath = AssetData.PackagePath.ToString().Replace(*PLUGIN_NAME, *PluginName, ESearchCase::CaseSensitive);
+							const FString AssetName = AssetData.AssetName.ToString().Replace(*PLUGIN_NAME, *NameToReplace, ESearchCase::CaseSensitive);
+							const FString AssetPath = AssetData.PackagePath.ToString().Replace(*PLUGIN_NAME, *NameToReplace, ESearchCase::CaseSensitive);
 
 							// When the new name and old name are an exact match the on disk asset will be missing. This is because the clean up step of RenameAssetsWithDialog deletes the old file and no new file will be created. 
 							// This behaviour is not supported by the existing editor workflows. Rather than change the functionality, the rename step can instead be skipped.
@@ -371,7 +373,7 @@ namespace PluginUtils
 		if (Plugin.IsValid())
 		{
 			const FString PluginBaseDir = Plugin->GetBaseDir();
-			FFixupPluginAssets FixupPluginAssets(PlatformFile, PluginName, PluginBaseDir);
+			FFixupPluginAssets FixupPluginAssets(PlatformFile, NameToReplace, PluginBaseDir);
 			PlatformFile.IterateDirectoryRecursively(*PluginBaseDir, FixupPluginAssets);
 			FixupPluginAssets.PerformFixup(OutModifiedAssetPaths);
 		}
@@ -565,6 +567,7 @@ TSharedPtr<IPlugin> FPluginUtils::CreateAndLoadNewPlugin(const FString& PluginNa
 	ExCreationParams.Descriptor.EnabledByDefault = CreationParams.EnabledByDefault;
 	ExCreationParams.Descriptor.bExplicitlyLoaded = CreationParams.bExplicitelyLoaded;
 	ExCreationParams.Descriptor.VersePath = CreationParams.VersePath;
+	ExCreationParams.Descriptor.VerseVersion = CreationParams.VerseVersion;
 	ExCreationParams.Descriptor.bEnableVerseAssetReflection = CreationParams.bEnableVerseAssetReflection;
 
 	if (CreationParams.bHasModules)
@@ -576,6 +579,11 @@ TSharedPtr<IPlugin> FPluginUtils::CreateAndLoadNewPlugin(const FString& PluginNa
 }
 
 TSharedPtr<IPlugin> FPluginUtils::CreateAndLoadNewPlugin(const FString& PluginName, const FString& PluginLocation, const FNewPluginParamsWithDescriptor& CreationParams, FLoadPluginParams& LoadParams)
+{
+	return CreateAndLoadNewPlugin(PluginName, PluginName, PluginLocation, CreationParams, LoadParams);
+}
+
+TSharedPtr<IPlugin> FPluginUtils::CreateAndLoadNewPlugin(const FString& PluginName, const FString& NameToReplace, const FString& PluginLocation, const FNewPluginParamsWithDescriptor& CreationParams, FLoadPluginParams& LoadParams)
 {
 	// Early validations on new plugin params
 	if (PluginName.IsEmpty())
@@ -679,7 +687,7 @@ TSharedPtr<IPlugin> FPluginUtils::CreateAndLoadNewPlugin(const FString& PluginNa
 			GWarn->BeginSlowTask(LOCTEXT("CopyingPluginTemplate", "Copying plugin template files..."), /*ShowProgressDialog*/ true, /*bShowCancelButton*/ false);
 			for (const FString& TemplateFolder : CreationParams.TemplateFolders)
 			{
-				if (!PluginUtils::CopyPluginTemplateFolder(*PluginFolder, *TemplateFolder, PluginName, CoreRedirectList, NewFilePaths, LoadParams.OutFailReason))
+				if (!PluginUtils::CopyPluginTemplateFolder(*PluginFolder, *TemplateFolder, PluginName, NameToReplace, CoreRedirectList, NewFilePaths, LoadParams.OutFailReason))
 				{
 					if (LoadParams.OutFailReason)
 					{
@@ -753,7 +761,7 @@ TSharedPtr<IPlugin> FPluginUtils::CreateAndLoadNewPlugin(const FString& PluginNa
 		{	
 			GWarn->BeginSlowTask(LOCTEXT("LoadingContent", "Loading Content..."), /*ShowProgressDialog*/ true, /*bShowCancelButton*/ false);
 			TMap<FString, FString> ModifiedAssetPaths;
-			PluginUtils::FixupPluginTemplateAssets(PluginName, ModifiedAssetPaths);
+			PluginUtils::FixupPluginTemplateAssets(PluginName, NameToReplace, ModifiedAssetPaths);
 
 			for (FString& CopiedFilePath : NewFilePaths)
 			{

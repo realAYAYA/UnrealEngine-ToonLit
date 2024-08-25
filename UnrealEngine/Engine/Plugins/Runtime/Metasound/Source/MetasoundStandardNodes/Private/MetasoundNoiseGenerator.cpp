@@ -46,7 +46,7 @@ namespace Metasound
 	public:
 		static constexpr int32 DefaultSeed = INDEX_NONE;
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors);
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults);
 		static const FNodeClassMetadata& GetNodeInfo();
 		static FVertexInterface DeclareVertexInterface();
 
@@ -238,20 +238,18 @@ namespace Metasound
 		: FNoiseNode(InInitData.InstanceName, InInitData.InstanceID, FNoiseOperator::DefaultSeed)
 	{}
 
-	TUniquePtr<IOperator> FNoiseOperator::CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+	TUniquePtr<IOperator> FNoiseOperator::CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 	{
 		using namespace NoiseGeneratorVertexNames; 
 
-		const FNoiseNode& Node = static_cast<const FNoiseNode&>(InParams.Node);
-		const FDataReferenceCollection& InputCol = InParams.InputDataReferences;
 		const FOperatorSettings& Settings = InParams.OperatorSettings;
-		const FInputVertexInterface& InputInterface = InParams.Node.GetVertexInterface().GetInputInterface();
+		const FInputVertexInterfaceData& InputData = InParams.InputData;
 
 		// Static property pin, only used for factory.
-		FEnumNoiseTypeReadRef Type = InputCol.GetDataReadReferenceOrConstructWithVertexDefault<FEnumNoiseType>(InputInterface, METASOUND_GET_PARAM_NAME(InputType), Settings);
+		FEnumNoiseTypeReadRef Type = InputData.GetOrCreateDefaultDataReadReference<FEnumNoiseType>(METASOUND_GET_PARAM_NAME(InputType), Settings);
 
 		// Seed.
-		FInt32ReadRef Seed = InputCol.GetDataReadReferenceOrConstructWithVertexDefault<int32>(InputInterface, METASOUND_GET_PARAM_NAME(InputSeed), Settings);
+		FInt32ReadRef Seed = InputData.GetOrCreateDefaultDataReadReference<int32>(METASOUND_GET_PARAM_NAME(InputSeed), Settings);
 
 		switch (*Type)
 		{
@@ -261,8 +259,6 @@ namespace Metasound
 		case ENoiseType::Pink:
 			return MakeUnique<FNoiseOperator_Pink>(InParams.OperatorSettings, MoveTemp(Seed), MoveTemp(Type));
 		}
-		checkNoEntry();
-		return nullptr;
 	}
 
 	METASOUND_REGISTER_NODE(FNoiseNode);

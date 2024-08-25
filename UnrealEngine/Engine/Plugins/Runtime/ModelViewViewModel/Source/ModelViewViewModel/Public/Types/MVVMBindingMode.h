@@ -19,9 +19,9 @@ enum class EMVVMBindingMode : uint8
 
 namespace UE::MVVM
 {
-	UE_NODISCARD MODELVIEWVIEWMODEL_API bool IsForwardBinding(EMVVMBindingMode Mode);
-	UE_NODISCARD MODELVIEWVIEWMODEL_API bool IsBackwardBinding(EMVVMBindingMode Mode);
-	UE_NODISCARD MODELVIEWVIEWMODEL_API bool IsOneTimeBinding(EMVVMBindingMode Mode);
+	[[nodiscard]] MODELVIEWVIEWMODEL_API bool IsForwardBinding(EMVVMBindingMode Mode);
+	[[nodiscard]] MODELVIEWVIEWMODEL_API bool IsBackwardBinding(EMVVMBindingMode Mode);
+	[[nodiscard]] MODELVIEWVIEWMODEL_API bool IsOneTimeBinding(EMVVMBindingMode Mode);
 }
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2

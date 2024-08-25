@@ -384,7 +384,7 @@ namespace UnrealBuildTool
 			return NormalizeCommandLinePath(Item.Location);
 		}
 
-		public override CPPOutput GenerateISPCHeaders(CppCompileEnvironment CompileEnvironment, List<FileItem> InputFiles, DirectoryReference OutputDir, IActionGraphBuilder Graph)
+		public override CPPOutput GenerateISPCHeaders(CppCompileEnvironment CompileEnvironment, IEnumerable<FileItem> InputFiles, DirectoryReference OutputDir, IActionGraphBuilder Graph)
 		{
 			CPPOutput Result = new CPPOutput();
 
@@ -529,7 +529,7 @@ namespace UnrealBuildTool
 			return Result;
 		}
 
-		public override CPPOutput CompileISPCFiles(CppCompileEnvironment CompileEnvironment, List<FileItem> InputFiles, DirectoryReference OutputDir, IActionGraphBuilder Graph)
+		public override CPPOutput CompileISPCFiles(CppCompileEnvironment CompileEnvironment, IEnumerable<FileItem> InputFiles, DirectoryReference OutputDir, IActionGraphBuilder Graph)
 		{
 			CPPOutput Result = new CPPOutput();
 
@@ -564,6 +564,12 @@ namespace UnrealBuildTool
 			GlobalArguments.Add($"--arch={ISPCArch}");
 			GlobalArguments.Add($"--target={TargetString}");
 			GlobalArguments.Add($"--emit-{PlatformObjectFileFormat}");
+
+			string? CpuTarget = GetISPCCpuTarget(CompileEnvironment.Platform);
+			if (!String.IsNullOrEmpty(CpuTarget))
+			{
+				GlobalArguments.Add($"--cpu={CpuTarget}");
+			}
 
 			bool bByteCodeOutput = (PlatformObjectFileFormat == "llvm");
 

@@ -21,7 +21,6 @@ enum class ERayTracingMode : uint8
 
 ENGINE_API ERayTracingMode GetRayTracingMode();
 
-ENGINE_API bool GetSupportsRayTracingProceduralPrimitive(EShaderPlatform InShaderPlatform);
 ENGINE_API bool GetSupportsCustomDepthRendering();
 
 }

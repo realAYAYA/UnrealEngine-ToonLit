@@ -14,11 +14,12 @@
 
 class USceneComponent;
 
-
 namespace UE
 {
 namespace MovieScene
 {
+
+struct FObjectComponent;
 
 struct FVectorPropertyMetaData
 {
@@ -221,6 +222,9 @@ MOVIESCENETRACKS_API void ConvertOperationalProperty(const FDoubleIntermediateVe
 MOVIESCENETRACKS_API void ConvertOperationalProperty(const FVector2d& In, FDoubleIntermediateVector& Out);
 MOVIESCENETRACKS_API void ConvertOperationalProperty(const FVector3d& In, FDoubleIntermediateVector& Out);
 MOVIESCENETRACKS_API void ConvertOperationalProperty(const FVector4d& In, FDoubleIntermediateVector& Out);
+
+MOVIESCENETRACKS_API void ConvertOperationalProperty(const FObjectComponent& In, UObject*& Out);
+MOVIESCENETRACKS_API void ConvertOperationalProperty(UObject* In, FObjectComponent& Out);
 
 } // namespace MovieScene
 } // namespace UE

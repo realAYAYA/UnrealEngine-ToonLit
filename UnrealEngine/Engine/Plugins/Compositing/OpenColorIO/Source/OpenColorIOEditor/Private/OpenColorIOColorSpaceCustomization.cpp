@@ -81,11 +81,13 @@ void FOpenColorIODisplayViewCustomization::CustomizeHeader(TSharedRef<IPropertyH
 
 		TArray<void*> RawData;
 		CachedProperty->AccessRawData(RawData);
-
 		check(RawData.Num() == 1);
-		FOpenColorIODisplayView* DisplayViewValue = reinterpret_cast<FOpenColorIODisplayView*>(RawData[0]);
-
+		
+		const FOpenColorIODisplayView* DisplayViewValue = reinterpret_cast<const FOpenColorIODisplayView*>(RawData[0]);
 		check(DisplayViewValue);
+
+		const FString DisplayViewName = DisplayViewValue->ToString();
+		
 		TSharedPtr<IPropertyUtilities> PropertyUtils = CustomizationUtils.GetPropertyUtilities();
 
 		HeaderRow
@@ -102,9 +104,8 @@ void FOpenColorIODisplayViewCustomization::CustomizeHeader(TSharedRef<IPropertyH
 				.VAlign(VAlign_Center)
 				[
 					SNew(STextBlock)
-					.Text(MakeAttributeLambda([DisplayViewValue] {
-							const FString DisplayViewName = DisplayViewValue->ToString();
-							
+					.Text(MakeAttributeLambda([DisplayViewName]
+						{
 							if(!DisplayViewName.IsEmpty())
 							{
 								return FText::FromString(DisplayViewName);

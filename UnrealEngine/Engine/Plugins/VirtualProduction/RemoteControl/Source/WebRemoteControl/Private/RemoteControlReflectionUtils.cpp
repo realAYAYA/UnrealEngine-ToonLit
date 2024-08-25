@@ -79,14 +79,34 @@ void UE::WebRCReflectionUtils::SetStringPropertyValue(FName PropertyName, const 
 void UE::WebRCReflectionUtils::CopyPropertyValue(FName PropertyName, const FStructOnScope& TargetStruct, const FRCObjectReference& SourceObject)
 {
 	FProperty* TargetValueProp = TargetStruct.GetStruct()->FindPropertyByName(PropertyName);
-	FProperty* SourceValueProp = SourceObject.Property.Get();
+	const FProperty* SourceValueProp = SourceObject.Property.Get();
 
 	if (TargetValueProp && SourceValueProp && TargetValueProp->GetClass() == SourceValueProp->GetClass() && TargetValueProp->GetSize() == SourceValueProp->GetSize())
 	{
 		void* DestPtr = TargetValueProp->ContainerPtrToValuePtr<void>((void*)TargetStruct.GetStructMemory());
-		void* SrcPtr = SourceObject.Property->ContainerPtrToValuePtr<void>(SourceObject.ContainerAdress);
+		if (!DestPtr)
+		{
+			checkNoEntry();
+			return;
+		}
 
-		if (DestPtr && SrcPtr)
+		if (SourceValueProp->HasGetter() && SourceObject.Object.IsValid())
+		{
+			SourceObject.Property->PerformOperationWithGetter(SourceObject.Object.Get(), nullptr,
+				[TargetValueProp, DestPtr](const void* InValuePtr)
+				{
+					if (InValuePtr)
+					{
+						TargetValueProp->CopyCompleteValue(DestPtr, InValuePtr);
+						return;
+					}
+					checkNoEntry();
+				});
+			return;
+		}
+
+		const void* SrcPtr = SourceObject.Property->ContainerPtrToValuePtr<void>(SourceObject.ContainerAdress);
+		if (SrcPtr)
 		{
 			TargetValueProp->CopyCompleteValue(DestPtr, SrcPtr);
 			return;

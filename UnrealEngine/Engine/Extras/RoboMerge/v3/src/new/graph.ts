@@ -4,6 +4,7 @@ import { setDefault, sortBy } from '../common/helper';
 import { ContextualLogger } from '../common/logger';
 import { PerforceContext } from '../common/perforce';
 import { Branch, BranchGraphInterface } from '../robo/branch-interfaces';
+import { Status } from '../robo/status';
 
 export type TargetName = string & { __targetBrand: any }
 export type Stream = string & { __streamBrand: any }
@@ -151,11 +152,7 @@ export class Graph {
 		return this.targetNames.get(name)
 	}
 
-	getEdgesBySource(src: Node, ...flags: EdgeFlag[]) {
-		const edges = this.edgesBySource.get(src)
-		if (!edges)
-			return new Set<Edge>()
-
+	private static filterEdgesByFlags(edges: Set<Edge>, flags: EdgeFlag[]) {
 		if (flags.length === 0)
 			return edges
 
@@ -166,6 +163,20 @@ export class Graph {
 			}
 			return true
 		}))
+	}
+
+	getEdgesBySource(src: Node, ...flags: EdgeFlag[]) {
+		return Graph.filterEdgesByFlags(this.edgesBySource.get(src) || new Set<Edge>, flags)
+	}
+
+	getEdgesByTarget(target: Node, ...flags: EdgeFlag[]) {
+		return Graph.filterEdgesByFlags(this.edgesByTarget.get(target) || new Set<Edge>, flags)
+	}
+
+	getEdgesForNode(node: Node, ...flags: EdgeFlag[]) {
+		const srcEdges = this.edgesBySource.get(node) || new Set<Edge>()
+		const targetEdges = this.edgesByTarget.get(node) || new Set<Edge>()
+		return Graph.filterEdgesByFlags(new Set([...srcEdges, ...targetEdges]), flags)
 	}
 
 	computeReachable(result: Set<Node>, src: Node, ...flags: EdgeFlag[]) {
@@ -193,10 +204,21 @@ export class Graph {
 		return result
 	}
 
-	dump() {
+	dump(tags?: Set<string>, logger?: ContextualLogger) {
+
+		let validBots: string[] = []
+		if (tags) {
+			validBots = Array.from(this.branchGraphAliases)
+			                 .filter(([_,v]) => Status.includeBranch(v.config.visibility, tags, logger))
+			                 .map(([k,_]) => k)
+		}
+
 		const nodeNames = new Map<Node, TargetName[]>()
 		for (const [name, node] of this.targetNames) {
-			setDefault(nodeNames, node, []).push(name)
+			const botName = name.substring(0,name.search(':'))
+			if (!tags || validBots.includes(botName)) {
+				setDefault(nodeNames, node, []).push(name)
+			}
 		}
 
 		const orderedNodes = [...nodeNames.keys()]
@@ -208,7 +230,9 @@ export class Graph {
 			info.aliases.sort()
 
 			for (const edge of this.getEdgesBySource(node)) {
-				info.edges.push({target: edge.target.debugName, flags: [...edge.flags].join(', ')})
+				if (!tags || validBots.includes(edge.bot)) {
+					info.edges.push({target: edge.target.debugName, flags: [...edge.flags].join(', ')})
+				}
 			}
 			result.push([node.debugName, info])
 		}
@@ -670,7 +694,7 @@ function parseTargetsAndFlagsImpl(tokens: string[], logger: ContextualLogger, fo
 		const prefix = token.charAt(0)
 		if (prefix === '#' || prefix === '$') { // $ provided as alternative, but not used as far as I know
 			// set the flag and continue the loop
-			const flagname = FLAGMAP[tokenLower.substr(1)]
+			const flagname = FLAGMAP[tokenLower.substring(1)]
 			if (flagname) {
 				flags.add(flagname)
 			}
@@ -684,7 +708,7 @@ function parseTargetsAndFlagsImpl(tokens: string[], logger: ContextualLogger, fo
 		let mergeMode = forcedMode || 'normal'
 		if (prefix === '!' || prefix === '-')
 		{
-			targetName = token.substr(1)
+			targetName = token.substring(1)
 			mergeMode = prefix === '!' ? 'null' : 'skip'
 		}
 
@@ -824,11 +848,11 @@ export class Trace {
 		if (outEdges.size === 0)
 			return 'CHANGE_WILL_NOT_REACH_TARGET'
 
-// will have to check if the source node is served by multiple bots, and if so, calculate targets for each of them
-// for now, just pick one
-const arbitraryEdge = outEdges.values().next().value
-const botname = arbitraryEdge.bot
-const isDefaultBot = arbitraryEdge.flags.has('general')
+		// will have to check if the source node is served by multiple bots, and if so, calculate targets for each of them
+		// for now, just pick one
+		const arbitraryEdge = outEdges.values().next().value
+		const botname = arbitraryEdge.bot
+		const isDefaultBot = arbitraryEdge.flags.has('general')
 
 		const relevantTokens = tokensAndBots
 			.filter(([_, bot]) => (bot === botname || isDefaultBot && bot === 'default'))

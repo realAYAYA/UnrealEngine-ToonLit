@@ -14,4 +14,8 @@ USTRUCT(meta = (DisplayName = "Selected"))
 struct FTypedElementSelectionColumn final : public FTypedElementDataStorageColumn
 {
 	GENERATED_BODY()
+
+	// The selection set this row belongs to, empty = default selection set
+	UPROPERTY()
+	FName SelectionSet;
 };

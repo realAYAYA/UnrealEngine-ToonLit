@@ -1,0 +1,934 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#if SUBSTRATE_ENABLED
+
+// This is used to evaluate some precomputed lighting data while we pack out Substrate material.
+// It is also used to remove reference to unwanted resourced when not needed.
+#ifndef MATERIAL_SUBSTRATE_OPAQUE_PRECOMPUTED_LIGHTING
+#error MATERIAL_SUBSTRATE_OPAQUE_PRECOMPUTED_LIGHTING must be defined before including SubstrateExport.ush
+#endif
+
+#ifndef SUBSTRATE_MATERIALCONTAINER_IS_VIEWRESOURCE
+#error SUBSTRATE_MATERIALCONTAINER_IS_VIEWRESOURCE must be defined from Substrate.ush before including SubstrateExport.ush
+#endif
+
+#if MATERIAL_SUBSTRATE_OPAQUE_PRECOMPUTED_LIGHTING
+
+// Forward declaration
+FShadingOcclusion ApplyBentNormal(
+	in float3 CameraVector,
+	in float3 WorldNormal,
+	in float3 WorldBentNormal0,
+	in float Roughness,
+	in float MaterialAO);
+
+void GetPrecomputedIndirectLightingAndSkyLight(
+	FMaterialPixelParameters MaterialParameters,
+	FVertexFactoryInterpolantsVSToPS Interpolants,
+	FBasePassInterpolantsVSToPS BasePassInterpolants,
+	VTPageTableResult LightmapVTPageTableResult,
+	bool bEvaluateBackface,
+	float3 DiffuseDir,
+	float3 VolumetricLightmapBrickTextureUVs,
+	out float3 OutDiffuseLighting,
+	out float3 OutSubsurfaceLighting,
+	out float OutIndirectIrradiance);
+
+float3 SubstrateGetBSDFPrecomputedLighting(
+	in FSubstrateIntegrationSettings Settings,
+	in FSubstratePixelHeader SubstratePixelHeader,
+	in FSubstrateBSDF CurrentBSDF,
+	in float3 V,
+	in float3 WorldBentNormal0,
+	in FMaterialPixelParameters MaterialParameters,
+	in FVertexFactoryInterpolantsVSToPS Interpolants,
+	in FBasePassInterpolantsVSToPS BasePassInterpolants,
+	in VTPageTableResult LightmapVTPageTableResult,
+	in float3 VolumetricLightmapBrickTextureUVs,
+	inout float2 SpecMultiBounceAO_IndirectIrradiance)
+{
+	FSubstrateAddressing NullSubstrateAddressing = (FSubstrateAddressing)0;
+	FSubstrateBSDFContext SubstrateBSDFContext = SubstrateCreateBSDFContext(SubstratePixelHeader, CurrentBSDF, NullSubstrateAddressing, V);
+
+	// Evaluate shading occlusion data and bent normal
+	FShadingOcclusion ShadingOcclusion = ApplyBentNormal(
+		V,
+		SubstrateBSDFContext.N,
+		WorldBentNormal0,
+		SubstrateGetBSDFRoughness(CurrentBSDF),
+		SubstratePixelHeader.IrradianceAO.MaterialAO);
+
+	// Update a context specific for environment lighting
+	FSubstrateBSDFContext EnvBSDFContext = SubstrateBSDFContext;
+	EnvBSDFContext.N = ShadingOcclusion.BentNormal;
+	EnvBSDFContext.SubstrateUpdateBSDFContext(EnvBSDFContext.L);
+
+	// For diffuse, we specify a perpendicular to the surface light direction for the transmittance to light to not be view dependent.
+	float DiffuseEnvLightingNoL = 1.0f;
+	float3 LuminanceWeightFinal = LuminanceWeight(DiffuseEnvLightingNoL, CurrentBSDF);
+
+	// Evaluate material environment ligthing parameters
+	const bool bEnableSpecular = false;
+	FSubstrateEnvLightResult SubstrateEnvLight = SubstrateEvaluateForEnvLight(EnvBSDFContext, bEnableSpecular, Settings);
+
+	// Fetch precomputed lighting
+	float3 DiffuseLighting = 0.0f;
+	float3 SubsurfaceLighting = 0.0f;
+	float  IndirectIrradiance = 0.0f;
+	const bool bEvaluateBackface = any(SubstrateEnvLight.DiffuseBackFaceWeight > 0.0);	// With Substrate we have no other way to know if backface lighting will be needed
+	GetPrecomputedIndirectLightingAndSkyLight(MaterialParameters, Interpolants, BasePassInterpolants, LightmapVTPageTableResult, bEvaluateBackface, SubstrateEnvLight.DiffuseNormal, VolumetricLightmapBrickTextureUVs,
+		DiffuseLighting, SubsurfaceLighting, IndirectIrradiance);
+
+	const float3 DiffMultiBounceAO = AOMultiBounce(SubstrateEnvLight.DiffuseColor, ShadingOcclusion.DiffOcclusion);
+	SpecMultiBounceAO_IndirectIrradiance.x = AOMultiBounce(Luminance(SubstrateEnvLight.SpecularColor), ShadingOcclusion.SpecOcclusion).g;
+	SpecMultiBounceAO_IndirectIrradiance.y = IndirectIrradiance;
+
+	// Evaluate precomputed lighting according to material parameters matching environment lighting.
+	float3 OutLuminance = (DiffuseLighting * SubstrateEnvLight.DiffuseWeight + SubsurfaceLighting * SubstrateEnvLight.DiffuseBackFaceWeight) * LuminanceWeightFinal * DiffMultiBounceAO;
+
+	return OutLuminance;
+}
+
+#endif // MATERIAL_SUBSTRATE_OPAQUE_PRECOMPUTED_LIGHTING
+
+// If this is changed, please update the compiler side material size evaluation in SubstrateMaterial.cpp
+void PackSubstrateOut(
+	inout FRWSubstrateMaterialContainer SubstrateBuffer,
+#if SUBSTRATE_MATERIALCONTAINER_IS_VIEWRESOURCE
+	RWTexture2DArray<uint> ExtraMaterialDataUAV,
+#endif
+	float Dither,
+	FSubstrateIntegrationSettings Settings,
+	FSubstrateAddressing SubstrateAddressing,
+	FSubstratePixelHeader SubstratePixelHeader,
+	FSubstrateData Substrate,
+	float3 V,
+	float3 WorldBentNormal0,
+	inout bool bSubstrateSubsurfaceEnable,
+	inout float3 EmissiveColor,
+	inout FSubstrateSubsurfaceData SSSData,
+	inout FSubstrateTopLayerData TopLayerData,
+	inout FSubstrateOpaqueRoughRefractionData OpaqueRoughRefractionData
+#if MATERIAL_SUBSTRATE_OPAQUE_PRECOMPUTED_LIGHTING
+	,
+	in FMaterialPixelParameters MaterialParameters,
+	in FVertexFactoryInterpolantsVSToPS Interpolants,
+	in FBasePassInterpolantsVSToPS BasePassInterpolants,
+	in VTPageTableResult LightmapVTPageTableResult,
+	in float3 VolumetricLightmapBrickTextureUVs
+#endif
+)
+{
+	// This only exists with inline shading and when we are going to write out BSDFs (UpdateAllXXX functions needs to be defined)
+#if SUBSTRATE_INLINE_SHADING && SUBSTRATE_CLAMPED_CLOSURE_COUNT > 0
+
+	bSubstrateSubsurfaceEnable = false;
+	EmissiveColor = 0.0f;
+
+	const float FullyRough = 1.0f;
+
+	// While packing Substrate layer data, Classification/SSS/TopLayer data are extracted & stored for dedicated passes
+	// This avoid to run a post-basepass which would re-read all the material data
+	SSSData = (FSubstrateSubsurfaceData)0;
+	TopLayerData = (FSubstrateTopLayerData)0;
+	OpaqueRoughRefractionData = (FSubstrateOpaqueRoughRefractionData)0;
+
+	uint BSDFVisibleCount = 0;
+	
+	if (SubstratePixelHeader.SubstrateTree.BSDFCount > 0)
+	{
+		// Update tree (coverage/transmittance/luminace weights)
+		SubstratePixelHeader.SubstrateUpdateTree(V, Settings);
+
+		const uint RootOperatorIndex = Substrate.OperatorIndex;
+
+	#if SUBSTRATE_ADVANCED_DEBUG_ENABLED && SUBSTRATE_MATERIALCONTAINER_IS_VIEWRESOURCE
+		if (Settings.SliceStoringDebugSubstrateTreeData > -1)
+		{
+			SubstratePackOutSubstrateTree(ExtraMaterialDataUAV, RootOperatorIndex, SubstratePixelHeader.SubstrateTree, Settings.SliceStoringDebugSubstrateTreeData);
+		}
+	#endif
+
+		// Process the rough refraction data (this code is only used, and not culled out, if effectively used in base pass for instance)
+		{
+			const FSubstrateOperator RootOperator = SubstratePixelHeader.SubstrateTree.Operators[Substrate.OperatorIndex];
+			OpaqueRoughRefractionData.Coverage = RootOperator.OpaqueRoughRefractCoverage;
+
+			const float StandardDeviationCm = sqrt(GetVarianceFromRoughness(RootOperator.OpaqueRoughRefractTopRoughness));
+			const float StandardDeviationCmForThickness = StandardDeviationCm * RootOperator.OpaqueRoughRefractThicknessCm;
+			OpaqueRoughRefractionData.VarianceCm = StandardDeviationCmForThickness * StandardDeviationCmForThickness;
+		}
+
+		uint OptimisedLegacyMode = SINGLE_OPTLEGACYMODE_NONE;
+		bool bIsSimpleMaterial = true;
+		bool bIsSingleMaterial = true;
+		bool bIsOnlySlab = true;
+		int OneBSDFMaterial_Index = 0; // Use for simple and single material modes. Represent the last visible BSDF index.
+		float TopLayerTotalWeight = 0.0f;
+		
+		{
+			SUBSTRATE_UNROLL_N(SUBSTRATE_CLAMPED_CLOSURE_COUNT)
+			for (int BSDFIdx = 0; BSDFIdx < SubstratePixelHeader.SubstrateTree.BSDFCount; ++BSDFIdx)
+			{
+			#define BSDF SubstratePixelHeader.SubstrateTree.BSDFs[BSDFIdx]
+
+				const bool bIsVisible = SubstrateIsBSDFVisible(BSDF);
+
+				if (bIsVisible)
+				{
+					BSDFVisibleCount++;
+
+					switch (BSDF_GETTYPE(BSDF))
+					{
+					case SUBSTRATE_BSDF_TYPE_SLAB:
+					{
+						EmissiveColor += BSDF_GETEMISSIVE(BSDF) * BSDF.LuminanceWeightV;
+
+						// Simple and single bsdf do not allow weights other than 1
+						const bool LuminanceWeightEqualOne = all(BSDF.LuminanceWeightV == 1.0f);
+
+						#if SUBSTRATE_COMPLEXSPECIALPATH
+						const bool bForceComplexSpecialPath = (SUBSTRATE_SPECPROFILE_ENABLED && BSDF_GETHASSPECPROFILE(BSDF)) || (SUBSTRATE_GLINTS_ENABLED && BSDF_GETHASGLINT(BSDF));
+						#else
+						const bool bForceComplexSpecialPath = false;
+						#endif
+						const bool bForceComplexMaterial = BSDF_GETHASANISOTROPY(BSDF) || bForceComplexSpecialPath;
+
+						// Update simple material compatibility
+						bIsSimpleMaterial = bIsSimpleMaterial && IsSubstrateSlabFastPathCompatible(BSDF) && LuminanceWeightEqualOne && !bForceComplexMaterial;
+
+						// Update single material compatibility. For now, single materials don't support anisotropy, 
+						// they use the complex pass, as the toplayer data does not contain the full frame basis, only the top normal.
+						bIsSingleMaterial = bIsSingleMaterial && LuminanceWeightEqualOne && !bForceComplexMaterial;
+
+						TopLayerTotalWeight += BSDF.TopLayerDataWeight;
+						float TopLayerRoughnessContribution = BSDF.TopLayerDataWeight * SLAB_ROUGHNESS(BSDF);
+						float3 TopLayerBaseColorContribution = BSDF.TopLayerDataWeight * SubstrateGetBSDFBaseColor(BSDF);
+						if (BSDF_GETHASHAZINESS(BSDF))
+						{
+							FHaziness Haziness = UnpackHaziness(SLAB_HAZINESS(BSDF));
+							if (Haziness.bSimpleClearCoat)
+							{
+								TopLayerRoughnessContribution = BSDF.TopLayerDataWeight * lerp(SLAB_ROUGHNESS(BSDF), Haziness.Roughness, Haziness.Weight);
+								TopLayerBaseColorContribution = BSDF.TopLayerDataWeight * lerp(0.0, 0.04f, F0RGBToMetallic(0.04f));
+							}
+						}
+						TopLayerData.Roughness += TopLayerRoughnessContribution;
+						TopLayerData.BaseColor += TopLayerBaseColorContribution;
+
+						TopLayerData.Material = TOP_LAYER_MATERIAL_VALID;
+
+						const bool bHasSSS = BSDF_GETSSSTYPE(BSDF) != SSS_TYPE_INVALID;
+						const bool bIsSimpleVolume = BSDF_GETSSSTYPE(BSDF) == SSS_TYPE_SIMPLEVOLUME;
+						bSubstrateSubsurfaceEnable = bSubstrateSubsurfaceEnable || (bHasSSS && BSDF.Coverage > 0.0f && !bIsSimpleVolume); // Should it be coverage>0 or any(LuminanceWeight>0) ?
+
+						const bool bSSSMask = BSDF.bIsBottom;	// SSS and Thin can only be on the bottom layer, so ignoring bIsSimpleVolume here.
+						SubstratePixelHeader.SetHasSubsurface(bSSSMask && bHasSSS && !bIsSimpleVolume);
+
+						SubstratePixelHeader.SetIsComplexSpecialMaterial(bForceComplexSpecialPath);
+						break;
+					}
+
+					case SUBSTRATE_BSDF_TYPE_HAIR:
+					{
+						bIsOnlySlab = false;
+						bIsSimpleMaterial = false;
+						bIsSingleMaterial = false;
+						EmissiveColor += BSDF_GETEMISSIVE(BSDF) * BSDF.LuminanceWeightV;
+
+						TopLayerTotalWeight += BSDF.TopLayerDataWeight;
+						TopLayerData.Roughness += BSDF.TopLayerDataWeight * FullyRough;
+						TopLayerData.BaseColor += BSDF.TopLayerDataWeight * SubstrateGetBSDFBaseColor(BSDF);
+
+						TopLayerData.Material = TOP_LAYER_MATERIAL_VALID;
+
+						SubstratePixelHeader.SetMaterialMode(HEADER_MATERIALMODE_HAIR);
+						break;
+					}
+
+					case SUBSTRATE_BSDF_TYPE_EYE:
+					{
+						bIsOnlySlab = false;
+						bIsSimpleMaterial = false;
+						bIsSingleMaterial = false;
+
+						TopLayerTotalWeight += BSDF.TopLayerDataWeight;
+						TopLayerData.Roughness += BSDF.TopLayerDataWeight * FullyRough;
+
+						TopLayerData.Material = TOP_LAYER_MATERIAL_VALID;
+
+						const bool bHasSSS = BSDF_GETSSSTYPE(BSDF) == SSS_TYPE_DIFFUSION_PROFILE;
+						SubstratePixelHeader.SetHasSubsurface(bHasSSS);
+						SubstratePixelHeader.SetMaterialMode(HEADER_MATERIALMODE_EYE);
+						break;
+					}
+
+					case SUBSTRATE_BSDF_TYPE_SINGLELAYERWATER:
+					{
+						bIsOnlySlab = false;
+						bIsSimpleMaterial = false;
+						bIsSingleMaterial = false;
+						EmissiveColor += BSDF_GETEMISSIVE(BSDF) * BSDF.LuminanceWeightV;
+
+						TopLayerTotalWeight += BSDF.TopLayerDataWeight;
+						TopLayerData.Roughness += BSDF.TopLayerDataWeight * SLW_ROUGHNESS(BSDF);
+						TopLayerData.BaseColor += BSDF.TopLayerDataWeight * SubstrateGetBSDFBaseColor(BSDF);
+
+						TopLayerData.Material = TOP_LAYER_MATERIAL_SLWATER;
+
+						SubstratePixelHeader.SetMaterialMode(HEADER_MATERIALMODE_SLWATER);
+						break;
+					}
+					}
+
+					float3x3 TangentBasis = SubstrateGetBSDFSharedBasis_InlineShading(SubstratePixelHeader, BSDF);
+					float3 N = TangentBasis[2];
+					TopLayerData.WorldNormal += N * BSDF.TopLayerDataWeight;
+
+					OneBSDFMaterial_Index = BSDFIdx;
+
+					// Notify that the BSDF is at the top for SSR to only affect reflection there and not on the lower layers
+					BSDF_SETISTOPLAYER(BSDF, BSDF.bIsTop ? 1 : 0);
+				}
+		
+		
+			#undef BSDF
+			}
+		}
+
+		// Finalize top layer data
+		TopLayerData.WorldNormal= TopLayerTotalWeight > 0.0f	? normalize(TopLayerData.WorldNormal)			: 0.0f;
+		TopLayerData.Roughness	= TopLayerTotalWeight > 0.0f	? TopLayerData.Roughness / TopLayerTotalWeight	: 0.0f;
+		TopLayerData.BaseColor	= TopLayerTotalWeight > 0.0f	? TopLayerData.BaseColor / TopLayerTotalWeight	: 0.0f;
+
+		// Set storage layout as either: fast(0), single(1), or complex(2)
+		// We check BSDFVisibleCount to make sure we do not set a MATERIALMODE that would enforce a BSDFVisibleCount==1.
+		if (bIsOnlySlab && BSDFVisibleCount > 0)
+		{
+			bIsSimpleMaterial = bIsSimpleMaterial && BSDFVisibleCount == 1;
+			bIsSingleMaterial = bIsSingleMaterial && BSDFVisibleCount == 1;
+			SubstratePixelHeader.SetMaterialMode(bIsSimpleMaterial ? HEADER_MATERIALMODE_SLAB_SIMPLE : bIsSingleMaterial ? HEADER_MATERIALMODE_SLAB_SINGLE : HEADER_MATERIALMODE_SLAB_COMPLEX);
+
+			if (bIsSingleMaterial)
+			{
+			#define BSDF SubstratePixelHeader.SubstrateTree.BSDFs[0]
+				const uint SingleHasHaziness		= 0x01;
+				const uint SingleHasClearCoat		= 0x02;
+				const uint SingleHasCloth			= 0x04;
+				const uint SingleIsThin				= 0x08;
+				const uint SingleIsSimpleVolume		= 0x10;
+				const uint SingleIsWrap				= 0x20;
+				const uint SingleIsSSSProfile		= 0x40;
+				const uint SingleIsWrapThin			= SingleIsThin | SingleIsWrap;
+				// No need to add anisotropy since it is not supported by the simple mode.
+
+				uint OptimisedModeMask = 0;
+				if (BSDF_GETHASHAZINESS(BSDF))
+				{
+					OptimisedModeMask |= SingleHasHaziness; // Regular haziness should disable non haziness/clearcoat fast path
+
+					FHaziness Haziness = UnpackHaziness(SLAB_HAZINESS(BSDF));
+					if (Haziness.bSimpleClearCoat)
+					{
+						OptimisedModeMask |= SingleHasClearCoat;
+					}
+				}
+				if (BSDF_GETHASFUZZ(BSDF) && SLAB_ROUGHNESS(BSDF) == SLAB_FUZZ_ROUGHNESS(BSDF))
+				{
+					OptimisedModeMask |= SingleHasCloth;
+				}
+				if (BSDF_GETISTHIN(BSDF))
+				{
+					OptimisedModeMask |= SingleIsThin;
+				}
+				if (BSDF_GETSSSTYPE(BSDF) == SSS_TYPE_SIMPLEVOLUME)
+				{
+					OptimisedModeMask |= SingleIsSimpleVolume;
+				}
+				if (BSDF_GETSSSTYPE(BSDF) == SSS_TYPE_WRAP)
+				{
+					OptimisedModeMask |= SingleIsWrap;
+				}
+				if (BSDF_GETSSSTYPE(BSDF) == SSS_TYPE_DIFFUSION_PROFILE)
+				{
+					OptimisedModeMask |= SingleIsSSSProfile;
+				}
+
+				if (((OptimisedModeMask & SingleHasClearCoat) == SingleHasClearCoat) || ((OptimisedModeMask & SingleHasClearCoat) == (SingleHasHaziness | SingleHasClearCoat)))
+				{
+					OptimisedLegacyMode = SINGLE_OPTLEGACYMODE_CLEARCOAT;
+				}
+				else if ((OptimisedModeMask & SingleHasCloth) == SingleHasCloth && BSDF_GETSSSTYPE(BSDF) == SSS_TYPE_INVALID)
+				{
+					OptimisedLegacyMode = SINGLE_OPTLEGACYMODE_CLOTH;
+				}				
+				else if ((OptimisedModeMask & SingleIsWrapThin) == SingleIsWrapThin)
+				{
+					OptimisedLegacyMode = SINGLE_OPTLEGACYMODE_SSSWRAP_THIN;
+					SSSData.Header.Bytes = 0; // Force to skip SSSData writing
+				}
+				else if ((OptimisedModeMask & SingleIsWrap) == SingleIsWrap)
+				{
+					OptimisedLegacyMode = SINGLE_OPTLEGACYMODE_SSSWRAP;
+					SSSData.Header.Bytes = 0; // Force to skip SSSData writing
+				}
+				else if ((OptimisedModeMask & (SingleIsSSSProfile|SingleIsThin)) == SingleIsSSSProfile) // Force to skip SINGLE_OPTLEGACYMODE_SSSPROFILE when set to ThinSurface
+				{
+					// SingleIsSSSProfile appears critically after SingleIsWrapThin because thin will disable subsurface profile.
+					OptimisedLegacyMode = SINGLE_OPTLEGACYMODE_SSSPROFILE;
+					SSSData.Header.Bytes = 0; // Force to skip SSSData writing
+				}
+			#undef BSDF
+			}
+		}
+
+		// Now evaluate Specular Occlusion and Indirect Irradiance.
+		#if MATERIAL_SUBSTRATE_OPAQUE_PRECOMPUTED_LIGHTING
+		if(BSDFVisibleCount > 0)
+		{
+			float BSDFCount = 0;
+			float2 SpecMultiBounceAO_IndirectIrradiance_Acc = 0.0f;
+			SUBSTRATE_UNROLL_N(SUBSTRATE_CLAMPED_CLOSURE_COUNT)
+			for (int BSDFIdx = 0; BSDFIdx < SubstratePixelHeader.SubstrateTree.BSDFCount; ++BSDFIdx)
+			{
+			#define BSDF SubstratePixelHeader.SubstrateTree.BSDFs[BSDFIdx]
+
+				const bool bIsVisible = SubstrateIsBSDFVisible(BSDF);
+
+				// Only write visible BSDF
+				BRANCH
+				if (bIsVisible)
+				{
+					// Convert BSDF to data ready to evaluate precomputed lighting
+					float2 SpecMultiBounceAO_IndirectIrradiance = 0.0f;
+					EmissiveColor += SubstrateGetBSDFPrecomputedLighting(
+						Settings,
+						SubstratePixelHeader,
+						BSDF,
+						V,
+						WorldBentNormal0,
+						MaterialParameters,
+						Interpolants,
+						BasePassInterpolants,
+						LightmapVTPageTableResult,
+						VolumetricLightmapBrickTextureUVs,
+						SpecMultiBounceAO_IndirectIrradiance);
+					SpecMultiBounceAO_IndirectIrradiance_Acc += SpecMultiBounceAO_IndirectIrradiance;
+
+					// Stop writing if above budget.
+					BSDFCount++;
+				}
+
+			#undef BSDF
+			}
+
+			// Write the combined SpecMultiBounceAO for all BSDFs as a single AO value. This is a trade off to have a mix of all the interactions, and it is correct for a single BSDF.
+			float2 SpecMultiBounceAO_IndirectIrradiance = SpecMultiBounceAO_IndirectIrradiance_Acc * rcp(max(1.0f, BSDFCount));
+			SubstratePixelHeader.IrradianceAO.MaterialAO			= SpecMultiBounceAO_IndirectIrradiance.x;
+			SubstratePixelHeader.IrradianceAO.IndirectIrradiance	= SpecMultiBounceAO_IndirectIrradiance.y;
+		}
+		#endif
+		
+		// Store irradiance and AO into the state bits of the header so that they can be written later as part of the common header state bits.
+	#if SUBSTRATE_INLINE_SHADING
+		HEADER_SETIRRADIANCE_AO(SubstratePixelHeader.State, SubstratePackIrradianceAndOcclusion(SubstratePixelHeader.IrradianceAO, 0));
+	#endif
+
+		// Now write out Substrate data
+
+		///////////////////////////////////////////////////////////////////////////
+		// 3 types of encodings
+		// * A. Layout0: Simple encoding	(use top layer normal)
+		// * B. Layout1: Single encoding	(use top layer normal)
+		// * C. Eye    : Custom encoding	(use top layer normal)
+		// * D. Hair   : Custom encoding	(use top layer normal)
+		// * E. Layout2: Complex encoding	(use basis)
+		const bool bHasFastEncoding = SubstratePixelHeader.IsSimpleMaterial();
+		const bool bHasFastWaterEncoding = SubstratePixelHeader.IsSingleLayerWater();
+		const bool bHasSingleEncoding = SubstratePixelHeader.IsSingleMaterial();
+		const bool bCustomEncoding = SubstratePixelHeader.IsHair() || SubstratePixelHeader.IsEye();
+
+		// (Layout2)
+		if (!bHasFastEncoding && !bHasSingleEncoding && !bCustomEncoding && !bHasFastWaterEncoding)
+		{
+			// 1. the header (Regular/Complex encoding)
+			const uint PackedHeader = PackSubstrateHeader(BSDFVisibleCount, SubstratePixelHeader);
+			SUBSTRATE_STORE_UINT1(PackedHeader);
+
+			// 1.1 tangent basis (Regular/Complex encoding)
+		#if SUBSTRATE_INLINE_SHADING
+			UNROLL
+			for (uint i = 0; i < SubstratePixelHeader.SharedLocalBases.Count; ++i)
+			{
+				const uint BasisType = SubstrateGetSharedLocalBasisType(SubstratePixelHeader.SharedLocalBases.Types, i);
+				if (BasisType == SUBSTRATE_BASIS_TYPE_NORMAL)
+				{
+					SUBSTRATE_STORE_UINT1(SubstratePackNormal(SubstratePixelHeader.SharedLocalBases.Normals[i]));
+				}
+				else // if (BasisType == SUBSTRATE_BASIS_TYPE_TANGENT)
+				{
+					SUBSTRATE_STORE_UINT1(SubstratePackNormalAndTangent(SubstratePixelHeader.SharedLocalBases.Normals[i], SubstratePixelHeader.SharedLocalBases.Tangents[i]));
+				}
+			}
+		#endif
+		}
+
+		{
+			int BSDFCount = 0;
+			SUBSTRATE_UNROLL_N(SUBSTRATE_CLAMPED_CLOSURE_COUNT)
+			for (int BSDFIdx = 0; BSDFIdx < SubstratePixelHeader.SubstrateTree.BSDFCount; ++BSDFIdx)
+			{
+			#define BSDF SubstratePixelHeader.SubstrateTree.BSDFs[BSDFIdx]
+
+				const bool bIsVisible = SubstrateIsBSDFVisible(BSDF);
+
+				// Only write visible BSDF
+				BRANCH
+				if (bIsVisible)
+				{
+					const uint GreyScaleThroughputV = SubstrateHasGreyScaleWeight(BSDF.LuminanceWeightV) ? 1 : 0;
+					BSDF_SETHASGREYWEIGHT_V(BSDF, GreyScaleThroughputV);
+
+					const bool bTransmittanceAboveAlongNRequired = any(BSDF.TransmittanceAboveAlongN < 1.0f);
+					BSDF_SETHASTRANSABOVE(BSDF, bTransmittanceAboveAlongNRequired);
+
+					// A. Layout0 - Simple encoding (aka. fast-path): store header & data
+					const bool bFastEncodedBSDF = bHasFastEncoding && BSDFIdx == OneBSDFMaterial_Index;
+					if (bFastEncodedBSDF)
+					{
+						// Now we pack diffuse and F0 in a special way: both encoded as R7G7B6 with gamma 2.0. The low bit cound will be hidden by dithering and TAA.
+						// We pack 32 bits in the first uint and the remaining bits are pack is the lowest significant bit of the second uint.
+						const uint PackedDiffuse20Bits = PackR7G7B6Gamma2(SLAB_DIFFUSEALBEDO(BSDF), Dither);
+						const uint PackedDiffuse12Bits = PackedDiffuse20Bits & 0xFFF;
+						const uint PackedDiffuse8Bits = (PackedDiffuse20Bits >> 12) & 0xFF;
+						const uint PackedF020Bits = PackR7G7B6Gamma2(SLAB_F0(BSDF), Dither);
+						const uint PackedRoughness8bits = PackR8(SLAB_ROUGHNESS(BSDF));
+
+						// Data0 (Header_State|Header_AO|Roughness|Diffuse8bits)
+						{
+							uint Out = 0;
+							HEADER_SETCOMMONSTATES(Out, SubstratePixelHeader.State);
+
+							uint Packed16 = (PackedDiffuse8Bits << 8) | PackedRoughness8bits;
+							Out = (Out & HEADER_FASTENCODING_MASK) | (Packed16 << HEADER_FASTENCODING_BIT_COUNT);
+							SUBSTRATE_STORE_UINT1(Out);
+
+						#if (HEADER_FASTENCODING_BIT_COUNT + 16) > 32
+						#error Substrate fast path header is > 32bits
+						#endif
+						}
+						// Data1 (F0|Diffuse12bits)
+						{
+							uint Out = PackedF020Bits | (PackedDiffuse12Bits << 20);
+							SUBSTRATE_STORE_UINT1(Out);
+						}
+						// Ensure the rest of the BSDF is not stored with the regular path
+						BSDF.State = 0;
+					}
+					// B. Layout1 - Simple encoding: single BSDF, whose header & BSDF state are merged
+					else if (bHasSingleEncoding && BSDFIdx == OneBSDFMaterial_Index)
+					{
+						// Enforce BSDF to be flagged as 'top', since it is single-encoded (which ensure there is a single visible slab).
+						// This is needed when material contains other slabs which are dynamically culled based on coverage
+						BSDF_SETISTOPLAYER(BSDF, 1);
+
+						// Data0 (Header_State|Header_AO|Header_BSDFTypes|BSDF_State)
+						uint Out = 0;
+						HEADER_SETCOMMONSTATES(Out, SubstratePixelHeader.State);
+
+						Out = Out & HEADER_SINGLEENCODING_MASK;
+						Out = Out | ((OptimisedLegacyMode & HEADER_SINGLE_OPTLEGACYMODE_BIT_MASK)	<< (HEADER_SINGLEENCODING_BIT_COUNT));
+
+						BRANCH
+						if (OptimisedLegacyMode == SINGLE_OPTLEGACYMODE_NONE)
+						{
+							Out = Out | ((BSDF.State & BSDF_SINGLEENCODING_MASK) << (HEADER_SINGLEENCODING_BIT_COUNT + HEADER_SINGLE_OPTLEGACYMODE_BIT_COUNT));
+							SUBSTRATE_STORE_UINT1(Out);
+						}
+						// With this special path, there is 32-8-8-3= 13bits available for packing on the header.
+						// Because we use 3 UINT MRT, this means that a total of 13+32+32 = 77 bits.
+						else if(OptimisedLegacyMode == SINGLE_OPTLEGACYMODE_CLEARCOAT)
+						{
+							const uint PackedDiffuse20Bits	= PackR7G7B6Gamma2(SLAB_DIFFUSEALBEDO(BSDF), Dither);
+							const uint PackedF024Bits		= PackRGBA8(float4(SLAB_F0(BSDF), 0.0f));
+							const uint PackedClearCoat16Bits= SLAB_HAZINESS(BSDF);
+							const uint PackedRoughness8Bits = PackR8(SLAB_ROUGHNESS(BSDF));
+
+							// MRT0 
+							#if (32 - (HEADER_SINGLEENCODING_BIT_COUNT + HEADER_SINGLE_OPTLEGACYMODE_BIT_COUNT)) < 8
+							#error Not Enough space to store roughness in Slab - Single - Header.
+							#endif
+							SUBSTRATE_STORE_UINT1(Out					| ((PackedRoughness8Bits & 0xFF) << 24));
+							// MRT1 20 PackedDiffuse and 8 high bits from PackedClearCoat
+							SUBSTRATE_STORE_UINT1(PackedDiffuse20Bits	| ((PackedClearCoat16Bits & 0xFF00) << 12));
+							// MRT2 24 PackedF0      and 8 low  bits from PackedClearCoat
+							SUBSTRATE_STORE_UINT1(PackedF024Bits		| (PackedClearCoat16Bits << 24));
+
+							// Ensure the rest of the BSDF is not stored with the regular path
+							BSDF.State = 0;
+						}
+						else if (OptimisedLegacyMode == SINGLE_OPTLEGACYMODE_CLOTH)
+						{
+							const uint PackedDiffuse20Bits	= PackR7G7B6Gamma2(	SLAB_DIFFUSEALBEDO(BSDF)	, Dither);
+							const uint PackedF020Bits		= PackR7G7B6Gamma2(	SLAB_F0(BSDF)				, Dither);
+							const uint PackedFuzzColor20bits= PackR7G7B6Gamma2(	SLAB_FUZZ_COLOR(BSDF)		, Dither);
+							const uint PackedFuzzAmount8bits= PackR8(			SLAB_FUZZ_AMOUNT(BSDF));
+							// Roughness is stored in the TopLayer texture. Fuzz roughness is identical to slab roughness in this path.
+
+							// MRT0 
+							#if (32 - (HEADER_SINGLEENCODING_BIT_COUNT + HEADER_SINGLE_OPTLEGACYMODE_BIT_COUNT)) < 8
+							#error Not Enough space to store fuzz amount in slab in Slab - Single - Header.
+							#endif
+							SUBSTRATE_STORE_UINT1(Out					| ((PackedFuzzAmount8bits & 0xFF) << (HEADER_SINGLEENCODING_BIT_COUNT + HEADER_SINGLE_OPTLEGACYMODE_BIT_COUNT)));
+							// MRT1 20 PackedDiffuse and 8 high bits from PackedClearCoat
+							SUBSTRATE_STORE_UINT1(PackedDiffuse20Bits	| ((PackedFuzzColor20bits & 0xFFC00) << 10));
+							// MRT2 24 PackedF0      and 8 low  bits from PackedClearCoat
+							SUBSTRATE_STORE_UINT1(PackedF020Bits		| ((PackedFuzzColor20bits & 0x3FF) << 20));
+
+							// Ensure the rest of the BSDF is not stored with the regular path
+							BSDF.State = 0;
+						}
+						else if (OptimisedLegacyMode == SINGLE_OPTLEGACYMODE_SSSWRAP || OptimisedLegacyMode == SINGLE_OPTLEGACYMODE_SSSWRAP_THIN)
+						{
+							const float SSSWOpacity = SubstrateSubSurfaceGetWrapOpacityFromAnisotropy(SLAB_SSSPHASEANISOTROPY(BSDF));
+
+							const uint PackedDiffuse20Bits		= PackR7G7B6Gamma2(	SLAB_DIFFUSEALBEDO(BSDF)	, Dither);
+							const uint PackedF020Bits			= PackR7G7B6Gamma2(	SLAB_F0(BSDF)				, Dither);
+							const uint PackedSSSWOpacity7bits	= PackR7(			SSSWOpacity					, 0.5);	// We should not dither here because it would have a large scale effect.
+							const uint PackedSSSMFP30bits		= PackR10G10B10F(	SLAB_SSSMFP(BSDF));
+							// Roughness is stored in the TopLayer texture.
+
+							const uint PackedSSSMFP12BitsA = (PackedSSSMFP30bits      ) & 0xFFF; // 12 lower bits
+							const uint PackedSSSMFP12BitsB = (PackedSSSMFP30bits >> 12) & 0xFFF; // next 12 lower bits
+							const uint PackedSSSMFP6BitsC  = (PackedSSSMFP30bits >> 24) & 0x03F; // 6 higher bits
+
+							// MRT0 
+							#if (32 - (HEADER_SINGLEENCODING_BIT_COUNT + HEADER_SINGLE_OPTLEGACYMODE_BIT_COUNT)) < (7+6)
+							#error Not Enough space to store wrapped SSS opacity in slab in Slab - Single - Header.
+							#endif
+							SUBSTRATE_STORE_UINT1(Out					| ((PackedSSSWOpacity7bits & 0x7F) << (HEADER_SINGLEENCODING_BIT_COUNT + HEADER_SINGLE_OPTLEGACYMODE_BIT_COUNT)) | (PackedSSSMFP6BitsC << (7 + HEADER_SINGLEENCODING_BIT_COUNT + HEADER_SINGLE_OPTLEGACYMODE_BIT_COUNT)));
+							// MRT1 20 PackedDiffuse and 8 high bits from PackedClearCoat
+							SUBSTRATE_STORE_UINT1(PackedDiffuse20Bits  | (PackedSSSMFP12BitsA << 20));
+							// MRT2 24 PackedF0      and 8 low  bits from PackedClearCoat
+							SUBSTRATE_STORE_UINT1(PackedF020Bits		| (PackedSSSMFP12BitsB << 20));
+
+							// Ensure the rest of the BSDF is not stored with the regular path
+							BSDF.State = 0;
+						}
+						else if (OptimisedLegacyMode == SINGLE_OPTLEGACYMODE_SSSPROFILE)
+						{
+							const uint PackedDiffuse20Bits		= PackR7G7B6Gamma2(	SLAB_DIFFUSEALBEDO(BSDF)	, Dither);
+							const uint PackedF020Bits			= PackR7G7B6Gamma2(	SLAB_F0(BSDF)				, Dither);
+
+							// MRT0 
+							SUBSTRATE_STORE_UINT1(Out					| (PackR8(SLAB_ROUGHNESS(BSDF)) << 24));
+							// MRT1 20 PackedDiffuse and Profile radius scale
+							SUBSTRATE_STORE_UINT1(PackedDiffuse20Bits  | (PackR8(SLAB_SSSPROFILERADIUSSCALE(BSDF)) << 24));
+							// MRT2 24 PackedF0      and Profile ID
+							SUBSTRATE_STORE_UINT1(PackedF020Bits		| (PackR8(SLAB_SSSPROFILEID(BSDF)) << 24));
+
+							// Ensure the rest of the BSDF is not stored with the regular path
+							BSDF.State = 0;
+						}
+
+						#if (HEADER_SIMPLEENCODING_BIT_COUNT) > 32
+						#error Substrate fast path header is > 32bits
+						#endif
+					}
+					// C. Layout X (Eye)
+					else if (SubstratePixelHeader.IsEye())
+					{
+						// Data0 (Header_State|Header_AO|Data)
+						uint Out = 0;
+						HEADER_SETCOMMONSTATES(Out, SubstratePixelHeader.State);
+						Out = Out & HEADER_EYEENCODING_MASK;
+						Out = Out | PackRGBA8(float4(0, 0, EYE_IRISMASK(BSDF), EYE_IRISDISTANCE(BSDF)));
+						SUBSTRATE_STORE_UINT1(Out);
+
+						#if (HEADER_EYEENCODING_BIT_COUNT) > 32
+						#error Substrate eye path header is > 32bits
+						#endif
+					}
+					// D. Layout X (Hair)
+					else if (SubstratePixelHeader.IsHair())
+					{
+						// Data0 (Header_State|Header_AO|Data)
+						uint Out = 0;
+						HEADER_SETCOMMONSTATES(Out, SubstratePixelHeader.State);
+						Out = Out & HEADER_HAIRENCODING_MASK;
+						SUBSTRATE_STORE_UINT1(Out);
+
+						#if (HEADER_HAIRENCODING_BIT_COUNT) > 32
+						#error Substrate hair path header is > 32bits
+						#endif
+					}
+					// E. Layout X (SingleLayerWater)
+					else if (bHasFastWaterEncoding)
+					{
+						#if (HEADER_SLWENCODING_BIT_COUNT) > 16
+						#error Substrate single layer water header is > 16bits
+						#endif
+
+						// Now we pack diffuse and F0 in a special way: both encoded as R7G7B6 with gamma 2.0. The low bit cound will be hidden by dithering and TAA.
+						// We pack 8 of the 32 bits in the first header uint and the remaining bits are pack is the lowest significant bit of the second uint.
+						const uint PackedBaseColor20Bits = PackR7G7B6Gamma2(SLW_BASECOLOR(BSDF), Dither);
+						const uint PackedBaseColor12Bits = PackedBaseColor20Bits & 0xFFF;
+						const uint PackedBaseColor8Bits = (PackedBaseColor20Bits >> 12) & 0xFF;
+
+						// Packed into the header
+						const uint Roughness8Bits = PackR8(SLW_ROUGHNESS(BSDF));
+						const uint PackedOpacityMetalSpec20Bits = PackR7G7B6Linear(float3(SLW_TOPMATERIALOPACITY(BSDF), SLW_METALLIC(BSDF), SLW_SPECULAR(BSDF)), Dither);
+
+						// UINT0 (Header_State|Header_AO|BaseColor8bits|Roughness)
+						{
+							uint Out = 0;
+							HEADER_SETCOMMONSTATES(Out, SubstratePixelHeader.State);
+
+							uint Packed16 = (PackedBaseColor8Bits << 8) | Roughness8Bits;
+							Out = (Out & HEADER_SLWENCODING_MASK) | (Packed16 << HEADER_SLWENCODING_BIT_COUNT);
+							SUBSTRATE_STORE_UINT1(Out);
+						}
+						// UINT1 (BaseColor12bits|Opacity|Metallic|Specular)
+						{
+							uint Out = (PackedBaseColor12Bits << 20) | PackedOpacityMetalSpec20Bits;
+							SUBSTRATE_STORE_UINT1(Out);
+						}
+						// Ensure the rest of the BSDF is not stored with the regular path
+						BSDF.State = 0;
+
+					}
+					// F. Layout2 - Weight for Regular/Complex path
+					else if (GreyScaleThroughputV > 0)
+					{
+						BSDF_SETWEIGHT10F(BSDF, Pack10F(BSDF.LuminanceWeightV.x));
+						SUBSTRATE_STORE_UINT1(BSDF.State);
+					}
+					else
+					{
+						SUBSTRATE_STORE_UINT1(BSDF.State);
+						SUBSTRATE_STORE_UINT1(PackR11G11B10F(BSDF.LuminanceWeightV));
+					}
+
+					// Layout1 & Layout2
+					if (!bFastEncodedBSDF && !bHasFastWaterEncoding && OptimisedLegacyMode == SINGLE_OPTLEGACYMODE_NONE)
+					{
+						const uint BSDFType = BSDF_GETTYPE(BSDF);
+						switch (BSDF_GETTYPE(BSDF))
+						{
+						case SUBSTRATE_BSDF_TYPE_SLAB:
+						{
+							// Now we pack diffuse and F0 in a special way: both encoded as R7G7B6 with gamma 2.0. The low bit cound will be hidden by dithering and TAA.
+							// We pack 32 bits in the first uint and the remaining bits are pack is the lowest significant bit of the second uint.
+							const uint PackedDiffuse20Bits = PackR7G7B6Gamma2(SLAB_DIFFUSEALBEDO(BSDF), Dither);
+							const uint PackedF020Bits = PackR7G7B6Gamma2(SLAB_F0(BSDF), Dither);
+							const uint PackedData32Bits = ((PackedDiffuse20Bits << 12) & 0xFFFFF000) | (PackedF020Bits & 0xFFF);
+							const uint PackedData8Bits = (PackedF020Bits >> 12) & 0xFF;
+
+							SUBSTRATE_STORE_UINT1(PackedData32Bits);
+							SUBSTRATE_STORE_UINT1(PackedData8Bits | PackRGBA8(float4(0.0f, SLAB_ROUGHNESS(BSDF), (SLAB_ANISOTROPY(BSDF) + 1.f) * 0.5f, (SLAB_SSSPHASEANISOTROPY(BSDF) + 1.f) * 0.5f)));
+
+							if (BSDF_GETHASF90(BSDF) || BSDF_GETHASHAZINESS(BSDF))
+							{
+								// What is important is to maintain the hue and saturation, so we scale the color by the maximum of its components
+								float3 F90 = saturate(SLAB_F90(BSDF));
+								const float Divisor = max(F90.r, max(F90.g, F90.b));
+								F90 = Divisor > 0.0f ? F90 / Divisor : 1.0f;
+								float3 F90YCoCg = LinearRGB_2_NormalisedYCoCg(F90);
+
+								uint F90Data = PackRGBA8(float4(F90YCoCg.y, F90YCoCg.z, 0, 0));
+								uint HazinessData = SLAB_HAZINESS(BSDF);
+								SUBSTRATE_STORE_UINT1(HazinessData << 16 | F90Data);
+							}
+
+							if (BSDF_GETSSSTYPE(BSDF) != SSS_TYPE_INVALID)
+							{
+								// All SSS types store side data (SSSHeader/SSSData), apart from SIMPLEVOLUME
+								if (BSDF_GETSSSTYPE(BSDF) != SSS_TYPE_SIMPLEVOLUME)
+								{
+									SubstrateSubSurfaceHeaderSetSSSType(SSSData.Header, BSDF_GETSSSTYPE(BSDF));
+									if (BSDF_GETSSSTYPE(BSDF) == SSS_TYPE_WRAP)
+									{
+										SubstrateSubSurfaceHeaderSetWrap(SSSData.Header, SLAB_SSSPHASEANISOTROPY(BSDF));
+									}
+									else if (BSDF_GETSSSTYPE(BSDF) == SSS_TYPE_DIFFUSION_PROFILE)
+									{
+										SubstrateSubSurfaceHeaderSetProfile(SSSData.Header, SLAB_SSSPROFILERADIUSSCALE(BSDF), SubstrateSubsurfaceProfileIdTo8bits(SLAB_SSSPROFILEID(BSDF)));
+									}
+									else
+									{
+										SubstrateSubSurfaceHeaderSetNonProfile(SSSData.Header, SLAB_SSSMFP(BSDF));
+									}
+
+									SubstrateSubsurfaceExtrasSetBaseColor(SSSData.Extras, SLAB_DIFFUSEALBEDO(BSDF));
+								}
+
+								if (BSDF_GETSSSTYPE(BSDF) == SSS_TYPE_DIFFUSION_PROFILE)
+								{
+									// Simple volume overrides SSS profile because it takes over for when not at the bottom of the BSDF layer, or during forward rendering.
+									// Note: Since it is a profile, we can't rescale its MFP value. So we store the 'thin' thickness value for computing the correct transmission during evaluation
+									SUBSTRATE_STORE_UINT1(PackSSSProfile(SLAB_SSSPROFILEID(BSDF), SLAB_SSSPROFILERADIUSSCALE(BSDF), BSDF_GETTHICKNESSCM(BSDF)));
+								}
+								else
+								{
+									// If using non-profile SSS diffusion, rescale SSS so that we take into account the slab thickness. 
+									// Note: This is done 'after' storing the SSSHeader/SSSData, as the original MFP needs to be preserved for correct post-process diffusion.
+									//       This rescaled MFP value is only used for transmission evaluation, not the diffusion
+									if (BSDF_GETISTHIN(BSDF) && BSDF_GETSSSTYPE(BSDF) == SSS_TYPE_DIFFUSION)
+									{
+										SLAB_SSSMFP(BSDF)= RescaleMFPToComputationSpace(SLAB_SSSMFP(BSDF), BSDF_GETTHICKNESSCM(BSDF), SUBSTRATE_SIMPLEVOLUME_THICKNESS_CM);
+									}
+
+									// Path used for bottom most layer SSS, simple volume and two sided lighting.
+									SUBSTRATE_STORE_UINT1(PackR11G11B10F(SLAB_SSSMFP(BSDF)));
+								}
+							}
+
+							if (BSDF_GETHASFUZZ(BSDF))
+							{
+								SUBSTRATE_STORE_UINT1(PackFuzz(SLAB_FUZZ_COLOR(BSDF), SLAB_FUZZ_AMOUNT(BSDF), SLAB_FUZZ_ROUGHNESS(BSDF), Dither));
+							}
+
+							if (BSDF_GETHASTRANSABOVE(BSDF))
+							{
+								SUBSTRATE_STORE_UINT1(PackColorLinearToGamma2AlphaLinear(float4(BSDF.TransmittanceAboveAlongN, BSDF.CoverageAboveAlongN)));
+							}
+
+							#if SUBSTRATE_COMPLEXSPECIALPATH
+							#if SUBSTRATE_GLINTS_ENABLED
+							if (BSDF_GETHASGLINT(BSDF))
+							{
+								const uint2 PackedGlintData = PackGlints(SLAB_GLINT_VALUE(BSDF), SLAB_GLINT_UV(BSDF));
+								SUBSTRATE_STORE_UINT1(PackedGlintData.x);
+								SUBSTRATE_STORE_UINT1(PackedGlintData.y);
+
+								// We have to store derivative when rasterizing the mesh. 
+								// That cannot be reconstructed in a deferred fashion (e.g. edge of a mesh overlaping with backgroud would look wrongly aliased)
+								SUBSTRATE_STORE_UINT1(PackFloat2ToUInt(SLAB_GLINT_UVDDX(BSDF)));
+								SUBSTRATE_STORE_UINT1(PackFloat2ToUInt(SLAB_GLINT_UVDDY(BSDF)));
+							}
+							#endif // SUBSTRATE_GLINTS_ENABLED
+							#if SUBSTRATE_SPECPROFILE_ENABLED
+							if (BSDF_GETHASSPECPROFILE(BSDF))
+							{
+								SUBSTRATE_STORE_UINT1(PackSpecularProfile(SLAB_SPECPROFILEID(BSDF)));
+							}
+							#endif // SUBSTRATE_SPECPROFILE_ENABLED
+							#endif // SUBSTRATE_COMPLEXSPECIALPATH
+
+							// 8-28 bytes
+						}
+						break;
+						case SUBSTRATE_BSDF_TYPE_HAIR:
+						{
+							SUBSTRATE_STORE_UINT1(PackColorLinearToGamma2AlphaLinear(float4(HAIR_BASECOLOR(BSDF), HAIR_ROUGHNESS(BSDF))));
+							SUBSTRATE_STORE_UINT1(PackRGBA8(float4(HAIR_SCATTER(BSDF), HAIR_SPECULAR(BSDF), HAIR_BACKLIT(BSDF), HAIR_COMPLEXTRANSMITTANCE(BSDF))));
+							// 8 bytes
+						}
+						break;
+						case SUBSTRATE_BSDF_TYPE_EYE:
+						{
+							const float2 EncodedIrisNormal = UnitVectorToOctahedron(EYE_IRISNORMAL(BSDF));
+							const float2 EncodedIrisPlaneNormal = UnitVectorToOctahedron(EYE_IRISPLANENORMAL(BSDF));
+							SUBSTRATE_STORE_UINT1(PackColorLinearToGamma2AlphaLinear(float4(EYE_DIFFUSEALBEDO(BSDF), EYE_ROUGHNESS(BSDF))));
+							SUBSTRATE_STORE_UINT1(PackRGBA8(float4(EncodedIrisNormal * 0.5f + 0.5f, EncodedIrisPlaneNormal * 0.5f + 0.5f)));
+							// 8 bytes
+
+							// Note: we don't store the SSS profile ID into the Eye data, as it is not needed there. The profile is only stored into the SSS data.
+							const bool bHasSSS = BSDF_GETSSSTYPE(BSDF) == SSS_TYPE_DIFFUSION_PROFILE;
+							if (bHasSSS)
+							{
+								SubstrateSubSurfaceHeaderSetSSSType(SSSData.Header, SSS_TYPE_DIFFUSION_PROFILE);
+								SubstrateSubSurfaceHeaderSetProfile(SSSData.Header, 1.0f, SubstrateSubsurfaceProfileIdTo8bits(EYE_SSSPROFILEID(BSDF)));
+								SubstrateSubsurfaceExtrasSetBaseColor(SSSData.Extras, EYE_DIFFUSEALBEDO(BSDF));
+							}
+						}
+						break;
+						//case SUBSTRATE_BSDF_TYPE_SINGLELAYERWATER: 
+						//{
+						//	// SLW always use the path defined by bHasFastWaterEncoding.
+						//}
+						//break;
+						}
+					}
+
+					// Stop writing if above budget.
+					BSDFCount++;
+				}
+
+			#undef BSDF
+			}
+
+			checkSlow(BSDFCount == BSDFVisibleCount);
+		}
+
+		FinalizeWrites(SubstrateBuffer, SubstrateAddressing);
+	}
+#endif // SUBSTRATE_INLINE_SHADING && SUBSTRATE_CLAMPED_CLOSURE_COUNT > 0
+
+}
+
+#ifndef SUBSTRATE_GPU_LIGHTMASS
+#define SUBSTRATE_GPU_LIGHTMASS 0
+#endif
+
+#if SUBSTRATE_MATERIAL_EXPORT_TYPE > 0 || SUBSTRATE_GPU_LIGHTMASS > 0
+
+void SubstrateMaterialExportOut(
+	in FSubstrateIntegrationSettings Settings,
+	in FSubstratePixelHeader SubstratePixelHeader,
+	in FSubstrateData SubstrateData,
+	in float3 SurfaceWorldNormal,
+	inout float  OutCoverage, 
+	inout float3 OutTransmittancePreCoverage, 
+	inout float3 OutBaseColorPostCoverage, 
+	inout float3 OutWorldNormal,
+	inout float3 OutEmissiveLuminance)
+{
+	// Align V with N to not have any view dependent effect when exporting material data.
+	const float3 FakeV = SurfaceWorldNormal;
+
+	OutCoverage = 0.0f;
+	OutTransmittancePreCoverage = 0.0f;
+	OutBaseColorPostCoverage = 0.0f;
+	OutWorldNormal = 0.0f;
+	OutEmissiveLuminance = 0.0f;
+	
+	if (SubstratePixelHeader.SubstrateTree.BSDFCount > 0)
+	{
+		// Update tree (coverage/transmittance/luminace weights)
+		SubstratePixelHeader.SubstrateUpdateTree(SubstrateData, FakeV, Settings, OutCoverage, OutTransmittancePreCoverage); 
+
+		//
+		// Forward lighting
+		//
+		SUBSTRATE_UNROLL_N(SUBSTRATE_CLAMPED_CLOSURE_COUNT)
+		for (int BSDFIdx = 0; BSDFIdx < SubstratePixelHeader.SubstrateTree.BSDFCount; ++BSDFIdx)
+		{
+		#define CurrentBSDF SubstratePixelHeader.SubstrateTree.BSDFs[BSDFIdx]
+
+			if (SubstrateIsBSDFVisible(CurrentBSDF))
+			{
+				const float3x3 TangentBasis = SubstrateGetBSDFSharedBasis_InlineShading(SubstratePixelHeader, CurrentBSDF);
+				const float3 N = TangentBasis[2];
+
+				const float GreyScaleWeight = dot(CurrentBSDF.LuminanceWeightV * CurrentBSDF.TransmittanceAboveAlongN, (1.0/3.0).xxx);
+
+				// Simply sum all BaseColors according to transmittance and coverage.
+				OutBaseColorPostCoverage += SubstrateGetBSDFBaseColor(CurrentBSDF) * CurrentBSDF.LuminanceWeightV * CurrentBSDF.TransmittanceAboveAlongN;
+
+				OutWorldNormal += N * GreyScaleWeight;
+
+				OutEmissiveLuminance += BSDF_GETEMISSIVE(CurrentBSDF) * CurrentBSDF.LuminanceWeightV;
+			}
+		#undef CurrentBSDF
+		}
+
+		OutWorldNormal = all(OutWorldNormal == 0) ? float3(0.0, 0.0, 0.0) : normalize(OutWorldNormal);
+	}
+}
+
+#endif // SUBSTRATE_MATERIAL_EXPORT_TYPE
+
+#endif // SUBSTRATE_ENABLED

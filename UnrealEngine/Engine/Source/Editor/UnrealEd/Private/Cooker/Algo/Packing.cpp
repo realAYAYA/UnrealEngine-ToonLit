@@ -18,7 +18,7 @@ void ScheduleValues(TConstArrayView<int32> Values, int32 NumBuckets, TConstArray
 	int32 NumValues = Values.Num();
 	TArray<TArray<int32>>& Buckets = OutBucketsIndices;
 	check(NumBuckets > 0);
-	Buckets.SetNum(NumBuckets, false /* bAllowShrinking */);
+	Buckets.SetNum(NumBuckets, EAllowShrinking::No);
 	for (TArray<int32>& BucketIndices : Buckets)
 	{
 		BucketIndices.Reset();

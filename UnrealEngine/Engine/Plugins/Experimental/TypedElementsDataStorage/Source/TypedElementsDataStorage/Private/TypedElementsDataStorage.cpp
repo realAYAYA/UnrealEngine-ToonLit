@@ -10,9 +10,21 @@
 #include "TypedElementDatabase.h"
 #include "TypedElementDatabaseCompatibility.h"
 #include "TypedElementDatabaseUI.h"
+#include "Elements/Common/TypedElementDataStorageLog.h"
 #include "UObject/UObjectGlobals.h"
 
 #define LOCTEXT_NAMESPACE "FTypedElementsDataStorageModule"
+
+namespace Private
+{
+	static bool GEnableTEDS = false;
+	static FAutoConsoleVariableRef CVarEnableTEDS(
+		TEXT("TEDS.Enable"),
+		GEnableTEDS,
+		TEXT("Enable TypedElementDataStorage"),
+		ECVF_ReadOnly
+		);
+} // namespace Private
 
 // MASS uses CDO in a few places, making it a difficult to consistently register Type Element's Columns and Tags
 // as they may have not been set up to impersonate MASS' Fragments and Tags yet. There are currently no longer
@@ -48,6 +60,19 @@ void ImpersonateMassTagsAndFragments()
 
 void FTypedElementsDataStorageModule::StartupModule()
 {
+	if (!Private::GEnableTEDS)
+	{
+		UE_LOG(LogTypedElementDataStorage, Log, TEXT("Disabled by TEDS.Enable CVar"));
+		return;
+	}
+
+	UE_LOG(LogTypedElementDataStorage, Log, TEXT("Enabled by TEDS.Enable CVar"));
+
+	
+	// Load the dependent TypedElementFramework module (holding TypedElementRegistry) here so that it is guaranteed to be available in Shutdown
+	// and it is shutdown AFTER FTypedElementsDataStorageModule
+	FModuleManager::Get().LoadModule(TEXT("TypedElementFramework"));
+	
 	ImpersonateMassTagsAndFragments();
 
 	FCoreDelegates::OnAllModuleLoadingPhasesComplete.AddLambda(
@@ -55,6 +80,8 @@ void FTypedElementsDataStorageModule::StartupModule()
 		{
 			if (!bInitialized)
 			{
+				UE_LOG(LogTypedElementDataStorage, Log, TEXT("Initializing"));
+				
 				Database = NewObject<UTypedElementDatabase>();
 				Database->Initialize();
 
@@ -63,6 +90,12 @@ void FTypedElementsDataStorageModule::StartupModule()
 
 				DatabaseUi = NewObject<UTypedElementDatabaseUi>();
 				DatabaseUi->Initialize(Database.Get(), DatabaseCompatibility.Get());
+
+				MementoSystem = NewObject<UTypedElementMementoSystem>();
+				MementoSystem->Initialize(*Database.Get());
+
+				ObjectReinstancingManager = NewObject<UTypedElementObjectReinstancingManager>();
+				ObjectReinstancingManager->Initialize(*Database, *DatabaseCompatibility, *MementoSystem);
 
 				// Register the various database instances.
 				UTypedElementRegistry* Registry = UTypedElementRegistry::GetInstance();
@@ -75,36 +108,34 @@ void FTypedElementsDataStorageModule::StartupModule()
 				// Allow any factories to register their content.
 				TArray<UClass*> FactoryClasses;
 				GetDerivedClasses(UTypedElementDataStorageFactory::StaticClass(), FactoryClasses);
-				
+
+				Database->SetFactories(FactoryClasses);
 				TArray<UTypedElementDataStorageFactory*> Factories;
 				Factories.Reserve(FactoryClasses.Num());
-				for (UClass* Factory : FactoryClasses)
-				{
-					if (Factory->HasAnyClassFlags(CLASS_Abstract))
-					{
-						continue;
-					}
-					Factories.Add(GetMutableDefault<UTypedElementDataStorageFactory>(Factory));
-				}
-				Factories.StableSort(
-					[](const UTypedElementDataStorageFactory& Lhs, const UTypedElementDataStorageFactory& Rhs)
-					{
-						return Lhs.GetOrder() < Rhs.GetOrder();
-					});
 
 				// First pass to call all registration without dependencies.
-				for (UTypedElementDataStorageFactory* Factory : Factories)
+				for (UTypedElementDatabase::FactoryIterator Iterator = Database->CreateFactoryIterator(); Iterator; ++Iterator)
 				{
+					UTypedElementDataStorageFactory* Factory = *Iterator;
+					
 					Factory->RegisterTables(*Database);
+					Factory->RegisterTables(*Database, *DatabaseCompatibility);
 					Factory->RegisterTickGroups(*Database);
+					Factory->RegisterRegistrationFilters(*DatabaseCompatibility);
+					Factory->RegisterDealiaser(*DatabaseCompatibility);
 					Factory->RegisterWidgetPurposes(*DatabaseUi);
 				}
+
 				// Second pass to call all registration that would benefit or need the registration in the previous pass.
-				for (UTypedElementDataStorageFactory* Factory : Factories)
+				for (UTypedElementDatabase::FactoryIterator Iterator = Database->CreateFactoryIterator(); Iterator; ++Iterator)
 				{
+					UTypedElementDataStorageFactory* Factory = *Iterator;
+					
 					Factory->RegisterQueries(*Database);
 					Factory->RegisterWidgetConstructors(*Database, *DatabaseUi);
 				}
+				
+				UE_LOG(LogTypedElementDataStorage, Log, TEXT("Initialized"));
 
 				bInitialized = true;
 			}
@@ -116,6 +147,10 @@ void FTypedElementsDataStorageModule::ShutdownModule()
 {
 	if (bInitialized)
 	{
+		UE_LOG(LogTypedElementDataStorage, Log, TEXT("Deinitializing"));
+
+		Database->ResetFactories();
+
 		UTypedElementRegistry* Registry = UTypedElementRegistry::GetInstance();
 		if (Registry) // If the registry has already been destroyed there's no point in clearing the reference.
 		{
@@ -126,6 +161,8 @@ void FTypedElementsDataStorageModule::ShutdownModule()
 
 		if (UObjectInitialized())
 		{
+			ObjectReinstancingManager->Deinitialize();
+			MementoSystem->Deinitialize();
 			DatabaseUi->Deinitialize();
 			DatabaseCompatibility->Deinitialize();
 			Database->Deinitialize();
@@ -142,6 +179,8 @@ void FTypedElementsDataStorageModule::AddReferencedObjects(FReferenceCollector& 
 		Collector.AddReferencedObject(Database);
 		Collector.AddReferencedObject(DatabaseCompatibility);
 		Collector.AddReferencedObject(DatabaseUi);
+		Collector.AddReferencedObject(MementoSystem);
+		Collector.AddReferencedObject(ObjectReinstancingManager);
 	}
 }
 

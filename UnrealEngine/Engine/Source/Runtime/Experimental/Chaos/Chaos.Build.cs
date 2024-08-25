@@ -22,8 +22,13 @@ namespace UnrealBuildTool.Rules
 				"GeometryCore"
 				}
             );
+			PrivateDependencyModuleNames.AddRange(
+				new string[] {
+				"Eigen"
+				}
+			);
 
-            PublicDefinitions.Add("COMPILE_WITHOUT_UNREAL_SUPPORT=0");
+			PublicDefinitions.Add("COMPILE_WITHOUT_UNREAL_SUPPORT=0");
 			PrivateDefinitions.Add("CHAOS_INCLUDE_LEVEL_1=1");
 
 			if (Target.bUseChaosMemoryTracking == true)

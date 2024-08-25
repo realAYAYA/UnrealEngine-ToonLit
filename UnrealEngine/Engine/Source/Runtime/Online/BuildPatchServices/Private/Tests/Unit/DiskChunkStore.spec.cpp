@@ -7,6 +7,7 @@
 #include "Tests/Mock/ChunkDataSerialization.mock.h"
 #include "Tests/Mock/DiskChunkStoreStat.mock.h"
 #include "Installer/DiskChunkStore.h"
+#include "Installer/InstallerSharedContext.h"
 #include "BuildPatchHash.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
@@ -14,6 +15,7 @@
 BEGIN_DEFINE_SPEC(FDiskChunkStoreSpec, "BuildPatchServices.Unit", EAutomationTestFlags::ProductFilter | EAutomationTestFlags::ApplicationContextMask)
 // Unit
 TUniquePtr<BuildPatchServices::IDiskChunkStore> DiskChunkStore;
+TUniquePtr<BuildPatchServices::FBuildInstallerSharedContext> InstallerSharedContext;
 // Mock
 TUniquePtr<BuildPatchServices::FFakeFileSystem> FakeFileSystem;
 TUniquePtr<BuildPatchServices::FMockChunkDataSerialization> MockChunkDataSerialization;
@@ -47,6 +49,7 @@ void FDiskChunkStoreSpec::Define()
 	// Specs.
 	BeforeEach([this]()
 	{
+		InstallerSharedContext.Reset(new FBuildInstallerSharedContext(TEXT("DiskChunkStoreSpec")));
 		FakeFileSystem.Reset(new FFakeFileSystem());
 		MockChunkDataSerialization.Reset(new FMockChunkDataSerialization());
 		MockDiskChunkStoreStat.Reset(new FMockDiskChunkStoreStat());
@@ -364,6 +367,7 @@ void FDiskChunkStoreSpec::MakeUnit()
 {
 	using namespace BuildPatchServices;
 	FDiskChunkStoreConfig DiskChunkStoreConfig(StoreRootPath);
+	DiskChunkStoreConfig.SharedContext = InstallerSharedContext.Get();
 	DiskChunkStoreConfig.MaxRetryTime = 0.01;
 	DiskChunkStore.Reset(FDiskChunkStoreFactory::Create(
 		FakeFileSystem.Get(),

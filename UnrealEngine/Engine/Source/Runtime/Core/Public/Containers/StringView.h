@@ -101,13 +101,13 @@ public:
 
 	/** Construct a view of the null-terminated string pointed to by InData. */
 	template <
-		typename OtherCharType,
-		std::enable_if_t<
+		typename OtherCharType
+		UE_REQUIRES(
 			TAnd<
 				TIsCharType<OtherCharType>,
 				TIsCharEncodingCompatibleWith<OtherCharType, CharType>
 			>::Value
-		>* = nullptr
+		)
 	>
 	constexpr inline TStringView(const OtherCharType* InData UE_LIFETIMEBOUND)
 		: DataPtr((const CharType*)InData)
@@ -117,13 +117,13 @@ public:
 
 	/** Construct a view of InSize characters beginning at InData. */
 	template <
-		typename OtherCharType,
-		std::enable_if_t<
+		typename OtherCharType
+		UE_REQUIRES(
 			TAnd<
 				TIsCharType<OtherCharType>,
 				TIsCharEncodingCompatibleWith<OtherCharType, CharType>
 			>::Value
-		>* = nullptr
+		)
 	>
 	constexpr inline TStringView(const OtherCharType* InData UE_LIFETIMEBOUND, int32 InSize)
 		: DataPtr((const CharType*)InData)
@@ -132,8 +132,9 @@ public:
 	}
 
 	/** Construct a view from a contiguous range of characters, such as FString or TStringBuilder. */
-	template <typename CharRangeType,
-		std::enable_if_t<
+	template <
+		typename CharRangeType
+		UE_REQUIRES(
 			TAnd<
 				TIsContiguousContainer<CharRangeType>,
 				TIsCharType<TElementType_T<CharRangeType>>,
@@ -141,7 +142,8 @@ public:
 			>::Value &&
 			!std::is_array_v<std::remove_reference_t<CharRangeType>> &&
 			!std::is_same_v<CharRangeType, ViewType>
-		>* = nullptr>
+		)
+	>
 	constexpr inline TStringView(const CharRangeType& InRange UE_LIFETIMEBOUND)
 		: DataPtr((const CharType*)UE::Core::Private::StringViewGetData(InRange))
 		, Size(IntCastChecked<int32>(GetNum(InRange)))
@@ -242,9 +244,14 @@ public:
 	 * @param Other        A string that is comparable with the character type of this view.
 	 * @param SearchCase Whether the comparison should ignore case.
 	 */
-	template <typename OtherCharType,
-		std::enable_if_t<TIsCharType<OtherCharType>::Value>* = nullptr>
-	[[nodiscard]] inline bool Equals(const OtherCharType* Other, ESearchCase::Type SearchCase = ESearchCase::CaseSensitive) const;
+	template <
+		typename OtherCharType
+		UE_REQUIRES(TIsCharType_V<OtherCharType>)
+	>
+	[[nodiscard]] inline bool Equals(const OtherCharType* Other, ESearchCase::Type SearchCase = ESearchCase::CaseSensitive) const
+	{
+		return PrivateEquals(Other, SearchCase);
+	}
 
 	/**
 	 * Compare this view with a character range.
@@ -266,9 +273,14 @@ public:
 	 * @param SearchCase   Whether the comparison should ignore case.
 	 * @return 0 is equal, negative if this view is less, positive if this view is greater.
 	 */
-	template <typename OtherCharType,
-		std::enable_if_t<TIsCharType<OtherCharType>::Value>* = nullptr>
-		[[nodiscard]] inline int32 Compare(TStringView<OtherCharType> Other, ESearchCase::Type SearchCase = ESearchCase::CaseSensitive) const;
+	template <
+		typename OtherCharType
+		UE_REQUIRES(TIsCharType_V<OtherCharType>)
+	>
+	[[nodiscard]] inline int32 Compare(TStringView<OtherCharType> Other, ESearchCase::Type SearchCase = ESearchCase::CaseSensitive) const
+	{
+		return PrivateCompare(Other, SearchCase);
+	}
 
 	/**
 	 * Compare this view with a null-terminated string.
@@ -297,19 +309,21 @@ public:
 	 *
 	 * @param Search          The string to search for. Comparison is lexicographic.
 	 * @param StartPosition   The character position to start searching from.
+	 * @param SearchCase      Indicates whether the search is case sensitive or not
 	 * @return The index of the first occurrence of the search string if found, otherwise INDEX_NONE.
 	 */
-	[[nodiscard]] inline int32 Find(ViewType Search, int32 StartPosition = 0) const;
+	[[nodiscard]] inline int32 Find(ViewType Search, int32 StartPosition = 0, ESearchCase::Type SearchCase = ESearchCase::CaseSensitive) const;
 
 	/**
 	 * Returns whether this view contains the specified substring.
 	 *
-	 * @param Search   Text to search for
+	 * @param Search          Text to search for
+	 * @param SearchCase      Indicates whether the search is case sensitive or not
 	 * @return True if the view contains the search string, otherwise false.
 	 */
-	[[nodiscard]] inline bool Contains(ViewType Search) const
+	[[nodiscard]] inline bool Contains(ViewType Search, ESearchCase::Type SearchCase = ESearchCase::CaseSensitive) const
 	{
-		return Find(Search) != INDEX_NONE;
+		return Find(Search, 0, SearchCase) != INDEX_NONE;
 	}
 
 	/**
@@ -337,7 +351,7 @@ public:
 	 *
 	 * @returns True if index is valid. False otherwise.
 	 */
-	UE_NODISCARD FORCEINLINE bool IsValidIndex(int32 Index) const
+	[[nodiscard]] FORCEINLINE bool IsValidIndex(int32 Index) const
 	{
 		return Index >= 0 && Index < Len();
 	}
@@ -346,6 +360,12 @@ private:
 	static bool PrivateEquals(TStringView Lhs, const CharType* Rhs);
 	static bool PrivateEquals(TStringView Lhs, TStringView Rhs);
 	static bool PrivateLess(TStringView Lhs, TStringView Rhs);
+
+	template <typename OtherCharType>
+	inline bool PrivateEquals(const OtherCharType* Other, ESearchCase::Type SearchCase) const;
+
+	template <typename OtherCharType>
+	inline int32 PrivateCompare(TStringView<OtherCharType> Other, ESearchCase::Type SearchCase) const;
 
 public:
 	friend constexpr inline auto GetNum(TStringView String)
@@ -605,9 +625,8 @@ inline TStringView<CharType> TStringView<CharType>::TrimEnd() const
 }
 
 template <typename CharType>
-template <typename OtherCharType,
-	std::enable_if_t<TIsCharType<OtherCharType>::Value>*>
-inline bool TStringView<CharType>::Equals(const OtherCharType* const Other, ESearchCase::Type SearchCase) const
+template <typename OtherCharType>
+inline bool TStringView<CharType>::PrivateEquals(const OtherCharType* const Other, ESearchCase::Type SearchCase) const
 {
 	if (IsEmpty())
 	{
@@ -625,9 +644,8 @@ inline bool TStringView<CharType>::Equals(const OtherCharType* const Other, ESea
 }
 
 template <typename CharType>
-template <typename OtherCharType,
-	std::enable_if_t<TIsCharType<OtherCharType>::Value>*>
-inline int32 TStringView<CharType>::Compare(TStringView<OtherCharType> OtherView, ESearchCase::Type SearchCase) const
+template <typename OtherCharType>
+inline int32 TStringView<CharType>::PrivateCompare(TStringView<OtherCharType> OtherView, ESearchCase::Type SearchCase) const
 {
 	const int32 SelfLen = Len();
 	const int32 OtherLen = OtherView.Len();
@@ -697,9 +715,9 @@ inline bool TStringView<CharType>::EndsWith(ViewType Suffix, ESearchCase::Type S
 }
 
 template <typename CharType>
-inline int32 TStringView<CharType>::Find(const ViewType Search, const int32 StartPosition) const
+inline int32 TStringView<CharType>::Find(const ViewType Search, const int32 StartPosition, ESearchCase::Type SearchCase) const
 {
-	const int32 Index = UE::String::FindFirst(RightChop(StartPosition), Search);
+	const int32 Index = UE::String::FindFirst(RightChop(StartPosition), Search, SearchCase);
 	return Index == INDEX_NONE ? INDEX_NONE : Index + StartPosition;
 }
 

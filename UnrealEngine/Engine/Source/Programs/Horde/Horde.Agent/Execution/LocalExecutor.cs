@@ -1,17 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
-using System.Net.Http;
-using System.Reflection;
-using System.Threading;
-using System.Threading.Tasks;
 using EpicGames.Core;
-using EpicGames.Horde.Storage;
-using Horde.Agent.Services;
-using Horde.Agent.Utility;
-using HordeCommon.Rpc;
 using HordeCommon.Rpc.Messages;
-using HordeCommon.Rpc.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -22,7 +12,7 @@ namespace Horde.Agent.Execution
 		private readonly LocalExecutorSettings _settings;
 		private readonly DirectoryReference _localWorkspaceDir;
 
-		public LocalExecutor(JobExecutorOptions options, LocalExecutorSettings settings, ILogger logger) 
+		public LocalExecutor(JobExecutorOptions options, LocalExecutorSettings settings, ILogger logger)
 			: base(options, logger)
 		{
 			_settings = settings;
@@ -40,25 +30,25 @@ namespace Horde.Agent.Execution
 		{
 			const string HordeSlnRelativePath = "Engine/Source/Programs/Horde/Horde.sln";
 
-			FileReference executableFile = new FileReference(Assembly.GetExecutingAssembly().Location);
-			for (DirectoryReference? directory = executableFile.Directory; directory != null; directory = directory.ParentDirectory)
+			DirectoryReference executableFileDir = new(AppContext.BaseDirectory);
+			for (DirectoryReference? directory = executableFileDir; directory != null; directory = directory.ParentDirectory)
 			{
-				FileReference HordeSln = FileReference.Combine(directory, HordeSlnRelativePath);
-				if (FileReference.Exists(HordeSln))
+				FileReference hordeSln = FileReference.Combine(directory, HordeSlnRelativePath);
+				if (FileReference.Exists(hordeSln))
 				{
 					return directory;
 				}
 			}
 
-			throw new Exception($"Unable to find workspace root directory (looking for '{HordeSlnRelativePath}' in a parent directory of '{executableFile.Directory}'");
+			throw new Exception($"Unable to find workspace root directory (looking for '{HordeSlnRelativePath}' in a parent directory of '{executableFileDir}'");
 		}
 
-		protected override Task<bool> SetupAsync(BeginStepResponse step, ILogger logger, CancellationToken cancellationToken)
+		protected override Task<bool> SetupAsync(JobStepInfo step, ILogger logger, CancellationToken cancellationToken)
 		{
 			return SetupAsync(step, _localWorkspaceDir, null, null, logger, cancellationToken);
 		}
 
-		protected override Task<bool> ExecuteAsync(BeginStepResponse step, ILogger logger, CancellationToken cancellationToken)
+		protected override Task<bool> ExecuteAsync(JobStepInfo step, ILogger logger, CancellationToken cancellationToken)
 		{
 			if (_settings.RunSteps)
 			{

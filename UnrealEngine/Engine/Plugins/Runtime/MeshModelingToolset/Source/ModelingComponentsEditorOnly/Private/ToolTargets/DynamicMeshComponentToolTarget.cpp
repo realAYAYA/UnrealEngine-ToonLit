@@ -230,6 +230,7 @@ bool UDynamicMeshComponentToolTargetFactory::CanBuildTarget(UObject* SourceObjec
 		&& !Component->IsUnreachable() 
 		&& Component->IsValidLowLevel() 
 		&& Component->GetDynamicMesh()
+		&& Component->IsEditable()
 		&& Requirements.AreSatisfiedBy(UDynamicMeshComponentToolTarget::StaticClass());
 }
 

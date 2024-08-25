@@ -54,7 +54,7 @@ public:
 
 		SLATE_ARGUMENT(TWeakPtr<FBlueprintEditor>, Kismet2)
 		SLATE_ARGUMENT(TWeakPtr<SMyBlueprint>, MyBlueprintWidget)
-		SLATE_ARGUMENT( bool, ShowPublicViewControl )
+		SLATE_ATTRIBUTE( bool, ShowPublicViewControl )
 		SLATE_ARGUMENT( bool, HideNameArea )
 		SLATE_ARGUMENT( FIsPropertyEditingEnabled, IsPropertyEditingEnabledDelegate )
 		SLATE_ARGUMENT( FOnFinishedChangingProperties::FDelegate, OnFinishedChangingProperties )
@@ -160,7 +160,7 @@ protected:
 	TSharedPtr<SBorder> ContextualEditingBorderWidget;
 
 	/** If true show the public view control */
-	bool bShowPublicView;
+	TAttribute<bool> bShowPublicView;
 
 	/** If true show the kismet inspector title widget */
 	bool bShowTitleArea;

@@ -163,7 +163,8 @@ void UNiagaraDataInterfaceColorCurve::GetCurveData(TArray<FCurveData>& OutCurveD
 	OutCurveData.Add(FCurveData(&AlphaCurve, TEXT("Alpha"), FLinearColor(0.2f, 0.2f, 0.2f)));
 }
 
-void UNiagaraDataInterfaceColorCurve::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceColorCurve::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	FNiagaraFunctionSignature Sig;
 	Sig.Name = SampleCurveName;
@@ -181,7 +182,6 @@ void UNiagaraDataInterfaceColorCurve::GetFunctions(TArray<FNiagaraFunctionSignat
 // the HLSL in the spirit of a static switch
 // TODO: need a way to identify each specific function here
 // 
-#if WITH_EDITORONLY_DATA
 void UNiagaraDataInterfaceColorCurve::SyncCurvesToAsset()
 {
 	if (UCurveLinearColor* ColorCurve = Cast<UCurveLinearColor>(CurveAsset))

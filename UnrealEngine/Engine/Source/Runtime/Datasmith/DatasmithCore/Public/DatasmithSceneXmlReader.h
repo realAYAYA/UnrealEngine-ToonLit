@@ -33,7 +33,7 @@ private:
 	bool ParseXmlFile(TSharedRef< IDatasmithScene >& OutScene, bool bInAppend = false);
 	void PatchUpVersion(TSharedRef< IDatasmithScene >& OutScene) const;
 
-	UE_NODISCARD FString UnsanitizeXMLText(const FString& InString) const;
+	[[nodiscard]] FString UnsanitizeXMLText(const FString& InString) const;
 
 	template<typename T> T ValueFromString(const FString& InString) const = delete;
 	FVector VectorFromNode(FXmlNode* InNode, const TCHAR* XName, const TCHAR* YName, const TCHAR* ZName) const;

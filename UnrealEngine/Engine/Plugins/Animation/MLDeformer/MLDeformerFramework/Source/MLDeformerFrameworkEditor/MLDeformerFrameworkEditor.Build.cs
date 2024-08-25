@@ -11,7 +11,6 @@ namespace UnrealBuildTool.Rules
 			PrivateIncludePaths.AddRange(
 				new string[] 
 				{
-					System.IO.Path.Combine(GetModuleDirectory("Persona"), "Private"),
 				}
 			);
 
@@ -53,7 +52,8 @@ namespace UnrealBuildTool.Rules
 					"TimeManagement",
 					"RenderCore",
 					"RHI",
-					"AssetDefinition"
+					"AssetDefinition",
+					"SkeletalMeshDescription",
 				}
 			);
 

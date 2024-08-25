@@ -1,7 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "CurveExpressionModule.h"
+
 #include "Modules/ModuleManager.h"
+
 
 namespace UE::CurveExpression
 {

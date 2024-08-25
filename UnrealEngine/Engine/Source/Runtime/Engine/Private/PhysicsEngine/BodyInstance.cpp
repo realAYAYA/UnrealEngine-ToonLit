@@ -9,6 +9,7 @@
 #include "Components/ShapeComponent.h"
 #include "GameFramework/Actor.h"
 #include "Engine/CollisionProfile.h"
+#include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 #include "SceneManagement.h"
 #include "Collision.h"
@@ -78,6 +79,29 @@ TAutoConsoleVariable<int32> CVarIgnoreAnalyticCollisionsOverride(
 	ECVF_ReadOnly
 );
 
+bool bPreventInvalidBodyInstanceTransforms = true;
+FAutoConsoleVariableRef CVarbPreventInvalidBodyInstanceTransforms(
+	TEXT("p.PreventInvalidBodyInstanceTransforms"), 
+	bPreventInvalidBodyInstanceTransforms, 
+	TEXT("If true, an attempt to create a BodyInstance with an invalid transform will fail with a warning"));
+
+bool bEnableOverrideSolverDeltaTime = true;
+FAutoConsoleVariableRef CVarbEnableOverrideSolverDeltaTime(
+	TEXT("p.EnableOverrideSolverDeltaTime"),
+	bEnableOverrideSolverDeltaTime,
+	TEXT("If true, setting for override solver delta time can be used.  False will disable this feature."));
+
+bool bSkipShapeCreationForEmptyBodySetup = false;
+FAutoConsoleVariableRef CVarSkipShapeCreationForEmptyBodySetup(
+	TEXT("p.SkipShapeCreationForEmptyBodySetup"),
+	bSkipShapeCreationForEmptyBodySetup,
+	TEXT("If true, CreateShapesAndActors will not try to create actors and shapes for all instances if the body setup doesn't have any geometry."));
+
+float SensitiveSleepThresholdMultiplier = 1.0f/20.0f;
+FAutoConsoleVariableRef CVarSensitiveSleepThresholdMultiplier(
+	TEXT("p.SensitiveSleepThresholdMultiplier"),
+	SensitiveSleepThresholdMultiplier,
+	TEXT("The sleep threshold multiplier to use for bodies using the Sensitive sleep family."));
 
 using namespace PhysicsInterfaceTypes;
 
@@ -312,6 +336,7 @@ FBodyInstance::FBodyInstance()
 	, SleepFamily(ESleepFamily::Normal)
 	, DOFMode(0)
 	, bUseCCD(false)
+	, bUseMACD(false)
 	, bIgnoreAnalyticCollisions(false)
 	, bNotifyRigidBodyCollision(false)
 	, bContactModification(false)
@@ -329,7 +354,10 @@ FBodyInstance::FBodyInstance()
 	, bOverrideWalkableSlopeOnInstance(false)
 	, bInterpolateWhenSubStepping(true)
 	, bPendingCollisionProfileSetup(false)
-	, bInertiaConditioning(true)
+	, bInertiaConditioning(true)	
+	, bOneWayInteraction(false)
+	, bOverrideSolverAsyncDeltaTime(false)
+	, SolverAsyncDeltaTime(1.f / 60)
 	, Scale3D(1.0f)
 	, CollisionProfileName(UCollisionProfile::CustomCollisionProfileName)
 	, PositionSolverIterationCount(8)
@@ -449,36 +477,35 @@ void FBodyInstance::UpdateTriMeshVertices(const TArray<FVector> & NewPositions)
 				if (FPhysicsInterface::GetShapeType(Shape) == ECollisionShapeType::Trimesh)
 				{
 					using namespace Chaos;
-					const Chaos::FImplicitObject* ShapeImplicit = Shape.Shape->GetGeometry().Get();
+					const Chaos::FImplicitObject* ShapeImplicit = Shape.Shape->GetGeometry();
 					EImplicitObjectType Type = ShapeImplicit->GetType();
 
 					// Cast to derived implicit, copy trianglemesh.
 					FVec3 Scale(1, 1, 1);
-					TUniquePtr<FTriangleMeshImplicitObject> TriMeshCopy = nullptr;
+					FImplicitObjectPtr TriMeshCopy = nullptr;
 					if (IsInstanced(Type))
 					{
 						const TImplicitObjectInstanced<FTriangleMeshImplicitObject>& InstancedImplicit = ShapeImplicit->GetObjectChecked<TImplicitObjectInstanced<FTriangleMeshImplicitObject>>();
 						const FTriangleMeshImplicitObject* TriangleMesh = InstancedImplicit.GetInstancedObject();
-						TriMeshCopy = TriangleMesh->CopySlow();
+						TriMeshCopy = TriangleMesh->DeepCopyGeometry();
 					}
 					else if (IsScaled(Type))
 					{
 						const TImplicitObjectScaled<FTriangleMeshImplicitObject>& ScaledImplicit = ShapeImplicit->GetObjectChecked<TImplicitObjectScaled<FTriangleMeshImplicitObject>>();
 						const FTriangleMeshImplicitObject* TriangleMesh = ScaledImplicit.GetUnscaledObject();
 						Scale = ScaledImplicit.GetScale();
-						TriMeshCopy = TriangleMesh->CopySlow();
+						TriMeshCopy = TriangleMesh->DeepCopyGeometry();
 					}
 					else
 					{
 						const FTriangleMeshImplicitObject& TriangleMesh = ShapeImplicit->GetObjectChecked<FTriangleMeshImplicitObject>();
-						TriMeshCopy = TriangleMesh.CopySlow();
+						TriMeshCopy = TriangleMesh.DeepCopyGeometry();
 					}
-
-					TriMeshCopy->GetObjectChecked<FTriangleMeshImplicitObject>().UpdateVertices(NewPositions);
+					FTriangleMeshImplicitObjectPtr TriMeshCopyPtr(TriMeshCopy->GetObject<FTriangleMeshImplicitObject>());
+					TriMeshCopyPtr->UpdateVertices(NewPositions);
 					if (Scale != FVec3(1, 1, 1))
 					{
-						TSharedPtr<FTriangleMeshImplicitObject, ESPMode::ThreadSafe> SharedPtrForRefCount(nullptr); // Not instanced, no shared trimesh to ref count.
-						TUniquePtr<FImplicitObject> Scaled = MakeUnique<TImplicitObjectScaled<FTriangleMeshImplicitObject, /*bInstanced=*/false>>(MoveTemp(TriMeshCopy), SharedPtrForRefCount, Scale);
+						Chaos::FImplicitObjectPtr Scaled = MakeImplicitObjectPtr<TImplicitObjectScaled<FTriangleMeshImplicitObject, /*bInstanced=*/false>>(MoveTemp(TriMeshCopyPtr), Scale);
 						FPhysicsInterface::SetGeometry(Shape, MoveTemp(Scaled));
 					}
 					else
@@ -1083,13 +1110,7 @@ TSharedPtr<TArray<ANSICHAR>> GetDebugDebugName(const UPrimitiveComponent* Primit
 
 	if (PrimitiveComp)
 	{
-#if WITH_EDITOR
-		if (PrimitiveComp->GetOwner())
-		{
-			DebugName += FString::Printf(TEXT("Actor: '%s' "), *PrimitiveComp->GetOwner()->GetActorLabel(false));
-		}
-#endif
-		DebugName += FString::Printf(TEXT("Component: '%s' "), *PrimitiveComp->GetPathName());
+		DebugName += FString::Printf(TEXT("%s %s "), *AActor::GetDebugName(PrimitiveComp->GetOwner()), *PrimitiveComp->GetName());
 	}
 
 	if (BodySetup->BoneName != NAME_None)
@@ -1176,7 +1197,6 @@ void FInitBodiesHelperBase::CreateActor_AssumesLocked(FBodyInstance* Instance, c
 	SCOPE_CYCLE_COUNTER(STAT_CreatePhysicsActor);
 	checkSlow(!FPhysicsInterface::IsValid(Instance->ActorHandle));
 	const ECollisionEnabled::Type CollisionType = Instance->GetCollisionEnabled();
-	const bool bDisableSim = !CollisionEnabledHasPhysics(CollisionType) && DisableQueryOnlyActors;
 
 	FActorCreationParams ActorParams;
 	ActorParams.InitialTM = Transform;
@@ -1200,13 +1220,14 @@ void FInitBodiesHelperBase::CreateActor_AssumesLocked(FBodyInstance* Instance, c
 	{
 		FPhysicsInterface::CreateActor(ActorParams, Instance->ActorHandle);
 		FPhysicsInterface::SetCcdEnabled_AssumesLocked(Instance->ActorHandle, Instance->bUseCCD);
+		FPhysicsInterface::SetMACDEnabled_AssumesLocked(Instance->ActorHandle, Instance->bUseMACD);
 		FPhysicsInterface::SetIsKinematic_AssumesLocked(Instance->ActorHandle, !Instance->ShouldInstanceSimulatingPhysics());
 
 		FPhysicsInterface::SetMaxLinearVelocity_AssumesLocked(Instance->ActorHandle, TNumericLimits<float>::Max());
 		FPhysicsInterface::SetSmoothEdgeCollisionsEnabled_AssumesLocked(Instance->ActorHandle, Instance->bSmoothEdgeCollisions);
 		FPhysicsInterface::SetInertiaConditioningEnabled_AssumesLocked(Instance->ActorHandle, Instance->bInertiaConditioning);
 
-		// Set sleep even notification
+		// Set sleep event notification
 		FPhysicsInterface::SetSendsSleepNotifies_AssumesLocked(Instance->ActorHandle, Instance->bGenerateWakeEvents);
 	}
 }
@@ -1247,6 +1268,63 @@ UBodySetup* FBodyInstance::GetBodySetup() const
 	return nullptr;
 }
 
+const FString& GetBodyInstanceDebugName(FInitBodiesHelperBase& InitHelper)
+{
+	static FString NullName = TEXT("<NoName>");
+
+#if USE_BODYINSTANCE_DEBUG_NAMES
+	if (InitHelper.DebugName.IsValid())
+	{
+		return *InitHelper.DebugName.Get();
+	}
+#endif
+	return NullName;
+}
+
+bool ValidateTransformScale(const FTransform& Transform, const FString& DebugName)
+{
+	if (Transform.GetScale3D().IsNearlyZero())
+	{
+		UE_LOG(LogPhysics, Warning, TEXT("Initialising Body : Scale3D is (nearly) zero: %s"), *DebugName);
+		return false;
+	}
+
+	return true;
+}
+
+bool ValidateTransformMirror(const FTransform& Transform, const FString& DebugName, bool bGenerateMirroredCollision, bool bGenerateNonMirroredCollision)
+{
+	// Check we support mirroring/non-mirroring
+	const float TransformDet = Transform.GetDeterminant();
+	if (TransformDet < 0.f && !bGenerateMirroredCollision)
+	{
+		UE_LOG(LogPhysics, Warning, TEXT("Initialising Body : Body is mirrored but bGenerateMirroredCollision == false: %s"), *DebugName);
+		return false;
+	}
+
+	if (TransformDet > 0.f && !bGenerateNonMirroredCollision)
+	{
+		UE_LOG(LogPhysics, Warning, TEXT("Initialising Body : Body is not mirrored but bGenerateNonMirroredCollision == false: %s"), *DebugName);
+		return false;
+	}
+
+	return true;
+}
+
+bool ValidateTransformNaN(const FTransform& Transform, const FString& DebugName, const FName& BoneName)
+{
+#if !(UE_BUILD_SHIPPING)
+	if (Transform.ContainsNaN())
+	{
+		UE_LOG(LogPhysics, Warning, TEXT("Initialising Body : Bad transform - %s %s\n%s"), *DebugName, *BoneName.ToString(), *Transform.ToString());
+		return false;
+	}
+#endif
+
+	return true;
+}
+
+
 // Takes actor ref arrays.
 // #PHYS2 this used to return arrays of low-level physics bodies, which would be added to scene in InitBodies. Should it still do that, rather then later iterate over BodyInstances to get phys actor refs?
 bool FInitBodiesHelperBase::CreateShapesAndActors()
@@ -1258,17 +1336,48 @@ bool FInitBodiesHelperBase::CreateShapesAndActors()
 	// Ensure we have the AggGeom inside the body setup so we can calculate the number of shapes
 	BodySetup->CreatePhysicsMeshes();
 
+	if (bSkipShapeCreationForEmptyBodySetup)
+	{
+		if (BodySetup->TriMeshGeometries.IsEmpty() && BodySetup->AggGeom.GetElementCount() == 0)
+		{
+#if WITH_EDITOR
+			// In the editor we may have ended up here because of world trace ignoring our EnableCollision.
+			// Since we can't get at the data in that function we check for it here
+			if (PrimitiveComp && PrimitiveComp->IsCollisionEnabled())
+#endif
+			{
+				UE_LOG(LogPhysics, Log, TEXT("Init of %d instances of Primitive Component %s failed. Does it have collision data available?"),
+					NumBodies, PrimitiveComp ? *PrimitiveComp->GetReadableName() : TEXT("null"));
+			}
+
+			return false;
+		}
+	}
+
 	for (int32 BodyIdx = NumBodies - 1; BodyIdx >= 0; BodyIdx--)   // iterate in reverse since list might shrink
 	{
 		FBodyInstance* Instance = Bodies[BodyIdx];
 		const FTransform& Transform = Transforms[BodyIdx];
 
-#if !USE_BODYINSTANCE_DEBUG_NAMES
-		FString DebugName;
-		FBodyInstance::ValidateTransform(Transform, DebugName, BodySetup);
-#else
-		FBodyInstance::ValidateTransform(Transform, *DebugName, BodySetup);
-#endif
+		// Log some warnings for unexpected transforms, but treat NaNs as errors
+		const FString& SafeDebugName = GetBodyInstanceDebugName(*this);
+		ValidateTransformScale(Transform, SafeDebugName);
+		ValidateTransformMirror(Transform, SafeDebugName, BodySetup->bGenerateMirroredCollision, BodySetup->bGenerateNonMirroredCollision);
+		const bool bValidTransform = ValidateTransformNaN(Transform, SafeDebugName, BodySetup->BoneName);
+		if (!bValidTransform)
+		{
+			if (bPreventInvalidBodyInstanceTransforms)
+			{
+				// NaNs are errors and we don't create the physics state
+				UE_LOG(LogPhysics, Error, TEXT("Rejecting BodyInstance %d on %s with an invalid transform"), BodyIdx , *SafeDebugName);
+				return false;
+			}
+			else
+			{
+				// NaNs are errors but we still create the physics state. This will almost certainly cause problems later
+				UE_LOG(LogPhysics, Error, TEXT("Creating a BodyInstance %d on %s with an invalid transform which will likely lead to severe performance and behavioural problems in Physics"), BodyIdx , *SafeDebugName);
+			}
+		}
 
 		Instance->OwnerComponent = PrimitiveComp;
 		Instance->BodySetup = BodySetup;
@@ -1429,6 +1538,12 @@ void FInitBodiesHelperBase::InitBodies()
 						}
 					}
 				}
+			}
+
+			// set solver async delta time if any bodies are overriding the sim delta time
+			for (FBodyInstance* BI : Bodies)
+			{				
+				BI->UpdateSolverAsyncDeltaTime();			
 			}
 
 			// Set up dynamic instance data
@@ -1896,7 +2011,7 @@ bool FBodyInstance::UpdateBodyScale(const FVector& InScale3D, bool bForceUpdate)
 
 		UpdatedScale3D = AdjustedScale3D;
 
-		TArray<TUniquePtr<FImplicitObject>> NewGeometry;
+		TArray<Chaos::FImplicitObjectPtr> NewGeometry;
 		NewGeometry.Reserve(Shapes.Num());
 
 
@@ -1953,7 +2068,7 @@ bool FBodyInstance::UpdateBodyScale(const FVector& InScale3D, bool bForceUpdate)
 			{
 				case ImplicitObjectType::Sphere:
 				{
-					if (!CHAOS_ENSURE(!bIsInstanced && !bIsScaled))
+					if (!ShapeElem || !CHAOS_ENSURE(!bIsInstanced && !bIsScaled))
 					{
 						// No support for Instanced, Scaled not supported as we bake the scale below
 						break;
@@ -1964,7 +2079,7 @@ bool FBodyInstance::UpdateBodyScale(const FVector& InScale3D, bool bForceUpdate)
 
 					FReal Radius = FMath::Max<FReal>(SphereElem->Radius * AdjustedScale3DAbs.X, FCollisionShape::MinSphereRadius());
 					FVec3 Center = RelativeTM.TransformPosition(SphereElem->Center) * InScale3D;
-					TUniquePtr<TSphere<FReal, 3>> NewSphere = MakeUnique<TSphere<FReal, 3>>(Center, Radius);
+					Chaos::FImplicitObjectPtr NewSphere = MakeImplicitObjectPtr<TSphere<FReal, 3>>(Center, Radius);
 
 					NewGeometry.Emplace(MoveTemp(NewSphere));
 					bSuccess = true;
@@ -1973,7 +2088,7 @@ bool FBodyInstance::UpdateBodyScale(const FVector& InScale3D, bool bForceUpdate)
 				}
 				case ImplicitObjectType::Box:
 				{
-					if (!CHAOS_ENSURE(!bIsScaled && !bIsInstanced))
+					if (!ShapeElem || !CHAOS_ENSURE(!bIsScaled && !bIsInstanced))
 					{
 						// No support for ScaledImplicit Box yet or Instanced, scale is baked below
 						break;
@@ -1998,8 +2113,8 @@ bool FBodyInstance::UpdateBodyScale(const FVector& InScale3D, bool bForceUpdate)
 						const FVec3 Min = -HalfExtents;
 						const FVec3 Max =  HalfExtents;
 
-						TUniquePtr<TBox<FReal, 3>> NewBox = MakeUnique<TBox<FReal, 3>>(Min, Max);
-						TUniquePtr<TImplicitObjectTransformed<FReal, 3>> NewTransformedBox = MakeUnique<TImplicitObjectTransformed<FReal, 3>>(MoveTemp(NewBox), LocalTransform);
+						Chaos::FImplicitObjectPtr NewBox = MakeImplicitObjectPtr<TBox<FReal, 3>>(Min, Max);
+						Chaos::FImplicitObjectPtr NewTransformedBox = MakeImplicitObjectPtr<TImplicitObjectTransformed<FReal, 3>>(MoveTemp(NewBox), LocalTransform);
 						NewGeometry.Emplace(MoveTemp(NewTransformedBox));
 					}
 					else
@@ -2008,7 +2123,7 @@ bool FBodyInstance::UpdateBodyScale(const FVector& InScale3D, bool bForceUpdate)
 						const FVec3 Min = LocalTransform.GetLocation() - HalfExtents;
 						const FVec3 Max = LocalTransform.GetLocation() + HalfExtents;
 
-						TUniquePtr<TBox<FReal, 3>> NewBox = MakeUnique<TBox<FReal, 3>>(Min, Max);
+						Chaos::FImplicitObjectPtr NewBox = MakeImplicitObjectPtr<TBox<FReal, 3>>(Min, Max);
 						NewGeometry.Emplace(MoveTemp(NewBox));
 					}
 
@@ -2018,7 +2133,7 @@ bool FBodyInstance::UpdateBodyScale(const FVector& InScale3D, bool bForceUpdate)
 				}
 				case ImplicitObjectType::Capsule:
 				{
-					if (!CHAOS_ENSURE(!bIsInstanced && !bIsScaled))
+					if (!ShapeElem || !CHAOS_ENSURE(!bIsInstanced && !bIsScaled))
 					{
 						// No support for Instanced
 						break;
@@ -2070,7 +2185,7 @@ bool FBodyInstance::UpdateBodyScale(const FVector& InScale3D, bool bForceUpdate)
 					const FVec3 X1 = Center - HalfLength * Axis;
 					const FVec3 X2 = Center + HalfLength * Axis;
 
-					TUniquePtr<FCapsule> NewCapsule =  MakeUnique<FCapsule>(X1, X2, Radius);
+					Chaos::FImplicitObjectPtr NewCapsule =  MakeImplicitObjectPtr<FCapsule>(X1, X2, Radius);
 					NewGeometry.Emplace(MoveTemp(NewCapsule));
 
 					bSuccess = true;
@@ -2079,30 +2194,30 @@ bool FBodyInstance::UpdateBodyScale(const FVector& InScale3D, bool bForceUpdate)
 				}
 				case ImplicitObjectType::Convex:
 				{
-					if(!CHAOS_ENSURE(bIsInstanced || bIsScaled))
+					if (!ShapeElem || !CHAOS_ENSURE(bIsInstanced || bIsScaled))
 					{
 						// Expecting instanced or scaled.
 						break;
 					}
 
 					FKConvexElem* ConvexElem = ShapeElem->GetShapeCheck<FKConvexElem>();
-					const TSharedPtr<Chaos::FConvex, ESPMode::ThreadSafe>& ConvexImplicit = ConvexElem->GetChaosConvexMesh();
+					const Chaos::FConvexPtr& ConvexImplicit = ConvexElem->GetChaosConvexMesh();
 
-					TUniquePtr<FImplicitObject> NewConvex = nullptr;
+					Chaos::FImplicitObjectPtr NewConvex = nullptr;
 					if (AdjustedScale3D == FVector(1.0f, 1.0f, 1.0f))
 					{
-						NewConvex = MakeUnique<TImplicitObjectInstanced<FConvex>>(ConvexImplicit);
+						NewConvex = MakeImplicitObjectPtr<TImplicitObjectInstanced<FConvex>>(ConvexImplicit);
 					}
 					else
 					{
-						NewConvex = MakeUnique<TImplicitObjectScaled<FConvex>>(ConvexImplicit, AdjustedScale3D);
+						NewConvex = MakeImplicitObjectPtr<TImplicitObjectScaled<FConvex>>(ConvexImplicit, AdjustedScale3D);
 					}
 
 					if(RelativeTM.GetRotation() != FQuat::Identity || RelativeTM.GetTranslation() != FVector::ZeroVector)
 					{
 						FTransform AdjustedTransform = RelativeTM;
 						AdjustedTransform.SetTranslation(RelativeTM.GetTranslation() * AdjustedScale3D);
-						NewConvex = MakeUnique<TImplicitObjectTransformed<FReal, 3>>(MoveTemp(NewConvex), AdjustedTransform);
+						NewConvex = MakeImplicitObjectPtr<TImplicitObjectTransformed<FReal, 3>>(MoveTemp(NewConvex), AdjustedTransform);
 					}
 					
 					NewGeometry.Emplace(MoveTemp(NewConvex));
@@ -2119,15 +2234,15 @@ bool FBodyInstance::UpdateBodyScale(const FVector& InScale3D, bool bForceUpdate)
 						break;
 					}
 
-					auto CreateTriGeomAuto = [](auto InObject, TArray<TUniquePtr<FImplicitObject>>& OutGeoArray, const FVec3& InScale) -> TUniquePtr<FImplicitObject>
+					auto CreateTriGeomAuto = [](auto InObject, TArray<Chaos::FImplicitObjectPtr>& OutGeoArray, const FVec3& InScale) -> Chaos::FImplicitObjectPtr
 					{
 						if(InScale == Chaos::FVec3(1.0f, 1.0f, 1.0f))
 						{
-							return MakeUnique<Chaos::TImplicitObjectInstanced<Chaos::FTriangleMeshImplicitObject>>(InObject);
+							return MakeImplicitObjectPtr<Chaos::TImplicitObjectInstanced<Chaos::FTriangleMeshImplicitObject>>(InObject);
 						}
 						else
 						{
-							return MakeUnique<Chaos::TImplicitObjectScaled<Chaos::FTriangleMeshImplicitObject>>(MoveTemp(InObject), InScale);
+							return MakeImplicitObjectPtr<Chaos::TImplicitObjectScaled<Chaos::FTriangleMeshImplicitObject>>(MoveTemp(InObject), InScale);
 						}
 					};
 
@@ -2137,17 +2252,16 @@ bool FBodyInstance::UpdateBodyScale(const FVector& InScale3D, bool bForceUpdate)
 						TrimeshContainer = static_cast<const TImplicitObjectTransformed<FReal, 3>*>(TrimeshContainer)->GetTransformedObject();
 					}
 
-					TSharedPtr<FTriangleMeshImplicitObject, ESPMode::ThreadSafe> InnerTriangleMesh = nullptr;
+					FTriangleMeshImplicitObjectPtr InnerTriangleMesh = nullptr;
 					if (bIsScaled)
 					{
 						const TImplicitObjectScaled<FTriangleMeshImplicitObject>* ScaledTriangleMesh = (static_cast<const TImplicitObjectScaled<FTriangleMeshImplicitObject>*>(TrimeshContainer));
-						InnerTriangleMesh = ScaledTriangleMesh->GetSharedObject();
+						InnerTriangleMesh = ScaledTriangleMesh->Object();
 
 						if(!InnerTriangleMesh)
 						{
 							// While a body setup will instantiate the triangle mesh as a shared geometry, other methods might not (e.g. retopologized landscape)
-							TImplicitObjectScaled<FTriangleMeshImplicitObject>::ObjectType InnerObject = ScaledTriangleMesh->Object();
-							NewGeometry.Emplace(MakeUnique<Chaos::TImplicitObjectScaled<Chaos::FTriangleMeshImplicitObject>>(ScaledTriangleMesh->Object(), InnerTriangleMesh, AdjustedScale3D));
+							NewGeometry.Emplace(MakeImplicitObjectPtr<Chaos::TImplicitObjectScaled<Chaos::FTriangleMeshImplicitObject>>(ScaledTriangleMesh->Object(), AdjustedScale3D));
 						}
 					}
 					else if (bIsInstanced)
@@ -2163,14 +2277,14 @@ bool FBodyInstance::UpdateBodyScale(const FVector& InScale3D, bool bForceUpdate)
 
 					if(InnerTriangleMesh)
 					{
-						TUniquePtr<FImplicitObject> NewTrimesh = CreateTriGeomAuto(MoveTempIfPossible(InnerTriangleMesh), NewGeometry, AdjustedScale3D);
+						Chaos::FImplicitObjectPtr NewTrimesh = CreateTriGeomAuto(MoveTempIfPossible(InnerTriangleMesh), NewGeometry, AdjustedScale3D);
 
 						// If we have a transform - wrap the trimesh
 						if(RelativeTM.GetRotation() != FQuat::Identity || RelativeTM.GetTranslation() != FVector::ZeroVector)
 						{
 							FTransform AdjustedTransform = RelativeTM;
 							AdjustedTransform.SetTranslation(RelativeTM.GetTranslation() * AdjustedScale3D);
-							NewTrimesh = MakeUnique<TImplicitObjectTransformed<FReal, 3>>(MoveTemp(NewTrimesh), AdjustedTransform);
+							NewTrimesh = MakeImplicitObjectPtr<TImplicitObjectTransformed<FReal, 3>>(MoveTemp(NewTrimesh), AdjustedTransform);
 						}
 
 						NewGeometry.Emplace(MoveTemp(NewTrimesh));
@@ -2178,6 +2292,11 @@ bool FBodyInstance::UpdateBodyScale(const FVector& InScale3D, bool bForceUpdate)
 
 					bSuccess = true;
 
+					break;
+				}
+				case ImplicitObjectType::HeightField:
+				{
+					// HeightField is only used by Landscape, which does different code path from other primitives
 					break;
 				}
 				default:
@@ -2192,7 +2311,7 @@ bool FBodyInstance::UpdateBodyScale(const FVector& InScale3D, bool bForceUpdate)
 		// Only follow through with update if all shapes succeeded.
 		if (CHAOS_ENSURE(NewGeometry.Num() == Shapes.Num()))
 		{
-			ActorHandle->GetGameThreadAPI().SetGeometry(MakeUnique<Chaos::FImplicitObjectUnion>(MoveTemp(NewGeometry)));
+			ActorHandle->GetGameThreadAPI().SetGeometry(MakeImplicitObjectPtr<Chaos::FImplicitObjectUnion>(MoveTemp(NewGeometry)));
 			FPhysicsInterface::WakeUp_AssumesLocked(ActorHandle);
 		}
 		else
@@ -2236,6 +2355,7 @@ void FBodyInstance::UpdateInstanceSimulatePhysics()
 		bInitialized = true;
 		FPhysicsInterface::SetIsKinematic_AssumesLocked(Actor, !bUseSimulate);
 		FPhysicsInterface::SetCcdEnabled_AssumesLocked(Actor, bUseCCD);
+		FPhysicsInterface::SetMACDEnabled_AssumesLocked(Actor, bUseMACD);
 
 		if(bSimulatePhysics)
 		{
@@ -2495,6 +2615,27 @@ FVector FBodyInstance::GetUnrealWorldVelocity() const
 	});
 
 	return OutVelocity;
+}
+
+FTransform FBodyInstance::GetKinematicTarget_AssumesLocked() const
+{
+	FTransform TM;
+	if (FPhysicsInterface::IsValid(ActorHandle))
+	{
+		TM = FPhysicsInterface::GetKinematicTarget_AssumesLocked(ActorHandle);
+	}
+	return TM;
+}
+
+FTransform FBodyInstance::GetKinematicTarget() const
+{
+	FTransform TM;
+	FPhysicsCommand::ExecuteRead(ActorHandle, [&](const FPhysicsActorHandle& Actor)
+		{
+			TM = FPhysicsInterface::GetKinematicTarget_AssumesLocked(Actor);
+		});
+
+	return TM;
 }
 
 FVector FBodyInstance::GetUnrealWorldVelocity_AssumesLocked() const
@@ -3122,7 +3263,7 @@ float FBodyInstance::GetSleepThresholdMultiplier() const
 {
 	if (SleepFamily == ESleepFamily::Sensitive)
 	{
-		return 1 / 20.0f;
+		return SensitiveSleepThresholdMultiplier;
 	}
 	else if (SleepFamily == ESleepFamily::Custom)
 	{
@@ -3199,16 +3340,33 @@ void FBodyInstance::SetMaxAngularVelocityInRadians(float NewMaxAngVel, bool bAdd
 	}
 }
 
-void FBodyInstance::SetMaxDepenetrationVelocity(float MaxVelocity)
+void FBodyInstance::SetOverrideMaxDepenetrationVelocity(bool bInEnabled)
 {
-	MaxDepenetrationVelocity = MaxVelocity;
+	bOverrideMaxDepenetrationVelocity = bInEnabled;
 
-	FPhysicsCommand::ExecuteWrite(ActorHandle, [&](const FPhysicsActorHandle& Actor)
-	{
-		FPhysicsInterface::SetMaxDepenetrationVelocity_AssumesLocked(Actor, MaxDepenetrationVelocity);
-	});
+	UpdateMaxDepenetrationVelocity();
 }
 
+void FBodyInstance::SetMaxDepenetrationVelocity(float MaxVelocity)
+{
+	bOverrideMaxDepenetrationVelocity = true;
+	MaxDepenetrationVelocity = MaxVelocity;
+
+	UpdateMaxDepenetrationVelocity();
+}
+
+void FBodyInstance::UpdateMaxDepenetrationVelocity()
+{
+	// Negative values mean do not use max depenetration velocity (equivalent to large number)
+	const float UsedMaxDepenetrationVelocity = (bOverrideMaxDepenetrationVelocity) ? MaxDepenetrationVelocity : -1.0f;
+
+	// NOTE: FBodyInstance::MaxDepentrationVelocity now means initial depenetration velocity, 
+	// and not the general solver depentration velocity limit (which will probably be removed)
+	FPhysicsCommand::ExecuteWrite(ActorHandle, [this, UsedMaxDepenetrationVelocity](const FPhysicsActorHandle& Actor)
+	{
+		FPhysicsInterface::SetMaxDepenetrationVelocity_AssumesLocked(Actor, UsedMaxDepenetrationVelocity);
+	});
+}
 
 void FBodyInstance::AddCustomPhysics(FCalculateCustomPhysics& CalculateCustomPhysics)
 {
@@ -3232,7 +3390,7 @@ void FBodyInstance::ApplyAsyncPhysicsCommand(FAsyncPhysicsTimestamp TimeStamp, c
 			OwnerComponent->GetWorld() ? OwnerComponent->GetWorld()->GetFirstPlayerController() : nullptr;
 		if (LocalController)
 		{
-			TimeStamp.LocalFrame = TimeStamp.ServerFrame - LocalController->GetLocalToServerAsyncPhysicsTickOffset();
+			TimeStamp.LocalFrame = TimeStamp.ServerFrame - LocalController->GetNetworkPhysicsTickOffset();
 			LocalController->ExecuteAsyncPhysicsCommand(TimeStamp, OwnerComponent.Get(), Command);
 		}
 	}
@@ -3291,15 +3449,27 @@ void FBodyInstance::ClearForces(bool bAllowSubstepping)
 	});
 }
 
-void FBodyInstance::SetOneWayInteraction(bool InOneWayInteraction /*= true*/)
+void FBodyInstance::SetOneWayInteraction(bool bInOneWayInteraction)
 {
-	FPhysicsCommand::ExecuteWrite(ActorHandle, [&](const FPhysicsActorHandle& Actor)
+	if (bOneWayInteraction != bInOneWayInteraction)
+	{
+		bOneWayInteraction = bInOneWayInteraction;
+
+		UpdateOneWayInteraction();
+	}
+}
+
+void FBodyInstance::UpdateOneWayInteraction()
+{
+	const bool bCurrentOneWayInteraction = bOneWayInteraction;
+
+	FPhysicsCommand::ExecuteWrite(ActorHandle, [bCurrentOneWayInteraction](const FPhysicsActorHandle& Actor)
+	{
+		if (FPhysicsInterface::IsRigidBody(Actor) && !IsRigidBodyKinematic_AssumesLocked(Actor))
 		{
-			if (FPhysicsInterface::IsRigidBody(Actor) && !IsRigidBodyKinematic_AssumesLocked(Actor))
-			{
-				FPhysicsInterface::SetOneWayInteraction_AssumesLocked(Actor, InOneWayInteraction);
-			}
-		});
+			FPhysicsInterface::SetOneWayInteraction_AssumesLocked(Actor, bCurrentOneWayInteraction);
+		}
+	});
 }
 
 void FBodyInstance::AddTorqueInRadians(const FVector& Torque, bool bAllowSubstepping, bool bAccelChange, const FAsyncPhysicsTimestamp TimeStamp, APlayerController* PlayerController)
@@ -3491,7 +3661,6 @@ void FBodyInstance::SetSmoothEdgeCollisionsEnabled(bool bNewSmoothEdgeCollisions
 	}
 }
 
-
 void FBodyInstance::SetUseCCD(bool bInUseCCD)
 {
 	if (bUseCCD != bInUseCCD)
@@ -3507,6 +3676,22 @@ void FBodyInstance::SetUseCCD(bool bInUseCCD)
 		});
 		// And update collision filter data
 		UpdatePhysicsFilterData();
+	}
+}
+
+void FBodyInstance::SetUseMACD(bool bInUseMACD)
+{
+	if (bUseMACD != bInUseMACD)
+	{
+		bUseMACD = bInUseMACD;
+
+		FPhysicsCommand::ExecuteWrite(ActorHandle, [this, bInUseMACD](const FPhysicsActorHandle& Actor)
+			{
+				if (FPhysicsInterface::IsValid(Actor) && FPhysicsInterface::IsRigidBody(Actor))
+				{
+					FPhysicsInterface::SetCcdEnabled_AssumesLocked(Actor, bInUseMACD);
+				}
+			});
 	}
 }
 
@@ -3965,35 +4150,9 @@ void FBodyInstance::ApplyMaterialToInstanceShapes_AssumesLocked(UPhysicalMateria
 
 bool FBodyInstance::ValidateTransform(const FTransform &Transform, const FString& DebugName, const UBodySetup* Setup)
 {
-	if(Transform.GetScale3D().IsNearlyZero())
-	{
-		UE_LOG(LogPhysics, Warning, TEXT("Initialising Body : Scale3D is (nearly) zero: %s"), *DebugName);
-		return false;
-	}
-
-	// Check we support mirroring/non-mirroring
-	const float TransformDet = Transform.GetDeterminant();
-	if(TransformDet < 0.f && !Setup->bGenerateMirroredCollision)
-	{
-		UE_LOG(LogPhysics, Warning, TEXT("Initialising Body : Body is mirrored but bGenerateMirroredCollision == false: %s"), *DebugName);
-		return false;
-	}
-
-	if(TransformDet > 0.f && !Setup->bGenerateNonMirroredCollision)
-	{
-		UE_LOG(LogPhysics, Warning, TEXT("Initialising Body : Body is not mirrored but bGenerateNonMirroredCollision == false: %s"), *DebugName);
-		return false;
-	}
-
-#if !(UE_BUILD_SHIPPING)
-	if(Transform.ContainsNaN())
-	{
-		UE_LOG(LogPhysics, Warning, TEXT("Initialising Body : Bad transform - %s %s\n%s"), *DebugName, *Setup->BoneName.ToString(), *Transform.ToString());
-		return false;
-	}
-#endif
-
-	return true;
+	return ValidateTransformScale(Transform, DebugName) 
+		&& ValidateTransformMirror(Transform, DebugName, Setup->bGenerateMirroredCollision, Setup->bGenerateNonMirroredCollision)
+		&& ValidateTransformNaN(Transform, DebugName, Setup->BoneName);
 }
 
 void FBodyInstance::InitDynamicProperties_AssumesLocked()
@@ -4021,7 +4180,8 @@ void FBodyInstance::InitDynamicProperties_AssumesLocked()
 			UpdateMassProperties();
 			UpdateDampingProperties();
 			SetMaxAngularVelocityInRadians(GetMaxAngularVelocityInRadians(), false, false);
-			SetMaxDepenetrationVelocity(bOverrideMaxDepenetrationVelocity ? MaxDepenetrationVelocity : UPhysicsSettings::Get()->MaxDepenetrationVelocity);
+			UpdateMaxDepenetrationVelocity();
+			UpdateOneWayInteraction();
 		}
 		else
 		{
@@ -4048,6 +4208,9 @@ void FBodyInstance::InitDynamicProperties_AssumesLocked()
 			FPhysicsInterface::SetLinearVelocity_AssumesLocked(ActorHandle, InitialLinVel);
 		}
 
+		FPhysicsInterface::SetSleepThresholdMultiplier_AssumesLocked(ActorHandle, GetSleepThresholdMultiplier());
+
+		// @todo: implement sleep energy threshold
 		float SleepEnergyThresh = FPhysicsInterface::GetSleepEnergyThreshold_AssumesLocked(ActorHandle);
 		SleepEnergyThresh *= GetSleepThresholdMultiplier();
 		FPhysicsInterface::SetSleepEnergyThreshold_AssumesLocked(ActorHandle, SleepEnergyThresh);
@@ -4175,8 +4338,8 @@ void FBodyInstance::BuildBodyFilterData(FBodyCollisionFilterData& OutFilterData,
 		FCollisionFilterData SimFilterData;
 		FCollisionFilterData SimpleQueryData;
 
-			uint32 ActorID = Owner ? Owner->GetUniqueID() : 0;
-			uint32 CompID = (OwnerComponentInst != nullptr) ? OwnerComponentInst->GetUniqueID() : 0;
+		uint32 ActorID = Owner ? Owner->GetUniqueID() : 0;
+		uint32 CompID = (OwnerComponentInst != nullptr) ? OwnerComponentInst->GetUniqueID() : 0;
 		CreateShapeFilterData(UseChannel, MaskFilter, ActorID, UseResponse, CompID, InstanceBodyIndex, SimpleQueryData, SimFilterData, bRootCCD && !bPhysicsStatic, bUseNotifyRBCollision, bPhysicsStatic, bUseContactModification);
 
 		FCollisionFilterData ComplexQueryData = SimpleQueryData;
@@ -4259,6 +4422,46 @@ void FBodyInstance::BuildBodyCollisionFlags(FBodyCollisionFlags& OutFlags, EColl
 			{
 				OutFlags.bEnableSimCollisionComplex = true;
 			}
+		}
+	}
+}
+
+inline void FBodyInstance::SetSolverAsyncDeltaTime(const float NewSolverAsyncDeltaTime)
+{
+	bOverrideSolverAsyncDeltaTime = true;
+	SolverAsyncDeltaTime = NewSolverAsyncDeltaTime;
+	UpdateSolverAsyncDeltaTime();
+}
+
+void FBodyInstance::UpdateSolverAsyncDeltaTime()
+{
+	if (bOverrideSolverAsyncDeltaTime && !bEnableOverrideSolverDeltaTime)
+	{
+		UE_LOG(LogPhysics, Warning, TEXT("FBodyInstance::SolverAsyncDeltaTime : Ignoring parameter because overriden by p.EnableOverrideSolverDeltaTime"));
+		return;
+	}
+
+	if (bOverrideSolverAsyncDeltaTime)
+	{
+		if (SolverAsyncDeltaTime < 0.f)
+		{
+			UE_LOG(LogPhysics, Error, TEXT("FBodyInstance::SolverAsyncDeltaTime : Value must be greater than 0"));			
+			return;
+		}
+
+		Chaos::FPhysicsSolverBase* Solver = ActorHandle->GetSolverBase();
+
+		if (!Solver->IsUsingAsyncResults())
+		{
+			UE_LOG(LogPhysics, Warning, TEXT("FBodyInstance::SolverAsyncDeltaTime : Ignoring parameter because solver is not setup to use async results"));
+			return;
+		}
+		else
+		{
+			float OldAsyncDeltaTime = Solver->GetAsyncDeltaTime();
+
+			// set async delta time to minimum of delta time and what this body wants
+			Solver->EnableAsyncMode(FMath::Min<float>(Solver->GetAsyncDeltaTime(), SolverAsyncDeltaTime));
 		}
 	}
 }

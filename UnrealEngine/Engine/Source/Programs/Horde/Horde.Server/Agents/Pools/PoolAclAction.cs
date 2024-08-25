@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using Horde.Server.Acls;
+using EpicGames.Horde.Acls;
 
 namespace Horde.Server.Agents.Pools
 {
@@ -12,26 +12,26 @@ namespace Horde.Server.Agents.Pools
 		/// <summary>
 		/// Create a global pool of agents
 		/// </summary>
-		public static readonly AclAction CreatePool = new AclAction("CreatePool");
+		public static AclAction CreatePool { get; } = new AclAction("CreatePool");
 
 		/// <summary>
 		/// Modify an agent pool
 		/// </summary>
-		public static readonly AclAction UpdatePool = new AclAction("UpdatePool");
+		public static AclAction UpdatePool { get; } = new AclAction("UpdatePool");
 
 		/// <summary>
 		/// Delete an agent pool
 		/// </summary>
-		public static readonly AclAction DeletePool = new AclAction("DeletePool");
+		public static AclAction DeletePool { get; } = new AclAction("DeletePool");
 
 		/// <summary>
 		/// Ability to view a pool
 		/// </summary>
-		public static readonly AclAction ViewPool = new AclAction("ViewPool");
+		public static AclAction ViewPool { get; } = new AclAction("ViewPool");
 
 		/// <summary>
 		/// View all the available agent pools
 		/// </summary>
-		public static readonly AclAction ListPools = new AclAction("ListPools");
+		public static AclAction ListPools { get; } = new AclAction("ListPools");
 	}
 }

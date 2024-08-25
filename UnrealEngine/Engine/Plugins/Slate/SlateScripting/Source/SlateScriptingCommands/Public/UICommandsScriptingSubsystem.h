@@ -196,7 +196,7 @@ public:
 	 * Registers a command list in the given context. Optionally registering the context itself if it does not exist
 	 * Note the context should already be existing and registered through the binding manager.
 	 * 
-	 * This should be called by modules and tools looking to expose there command lists to the subsystem
+	 * This should be called by modules and tools looking to expose their command lists to the subsystem.
 	 * 
 	 * @param	ContextName		The context name as defined in the binding manager
 	 * @param	CommandList		The command list to register in this context

@@ -68,8 +68,7 @@ FString FBase64::Encode(const uint8* Source, uint32 Length, EBase64Mode Mode)
 
 	TArray<TCHAR, FString::AllocatorType>& OutCharArray = OutBuffer.GetCharArray();
 	OutCharArray.SetNum(ExpectedLength + 1);
-	int64 EncodedLength = Encode(Source, Length, OutCharArray.GetData(), Mode);
-	verify(EncodedLength == OutBuffer.Len());
+	Encode(Source, Length, OutCharArray.GetData(), Mode);
 
 	return OutBuffer;
 }
@@ -78,15 +77,67 @@ template<typename CharType> uint32 FBase64::Encode(const uint8* Source, uint32 L
 {
 	check(Mode == EBase64Mode::Standard || Mode == EBase64Mode::UrlSafe);
 
-	CharType* EncodedBytes = Dest;
 	const uint8* const EncodingAlphabet = (Mode == EBase64Mode::UrlSafe ? GBase64UrlSafeEncodingAlphabet : GBase64EncodingAlphabet);
 
-	// Loop through the buffer converting 3 bytes of binary data at a time
-	while (Length >= 3)
+	const uint32 PaddingLength = Length % 3;
+	const uint32 ExpectedLength = GetEncodedDataSize(Length);
+	CharType* EncodedBytes = Dest + ExpectedLength;
+
+	// Add a null terminator
+	*EncodedBytes = CHARTEXT(CharType, '\0');
+	
+	if (Length == 0)
 	{
-		uint8 A = *Source++;
-		uint8 B = *Source++;
-		uint8 C = *Source++;
+		return 0;
+	}
+
+	const uint8* ReversedSource = Source + Length;
+
+	// Since this algorithm operates on blocks, we may need to pad the last chunks
+	if (PaddingLength > 0)
+	{
+		EncodedBytes -= 4;
+
+		uint8 A = 0;
+		uint8 B = 0;
+		uint8 C = 0;
+		// Grab the second character if it is a 2 uint8 finish
+		if (PaddingLength == 2)
+		{
+			B = *--ReversedSource;
+		}
+		A = *--ReversedSource;
+
+		uint32 ByteTriplet = A << 16 | B << 8 | C;
+		// Pad with = to make a 4 uint8 chunk
+		EncodedBytes[3] = CHARTEXT(CharType, '=');
+		ByteTriplet >>= 6;
+		// If there's only one 1 uint8 left in the source, then you need 2 pad chars
+		if (PaddingLength == 1)
+		{
+			EncodedBytes[2] = CHARTEXT(CharType, '=');
+		}
+		else
+		{
+			EncodedBytes[2] = EncodingAlphabet[ByteTriplet & 0x3F];
+		}
+		// Now encode the remaining bits the same way
+		ByteTriplet >>= 6;
+		EncodedBytes[1] = EncodingAlphabet[ByteTriplet & 0x3F];
+		ByteTriplet >>= 6;
+		EncodedBytes[0] = EncodingAlphabet[ByteTriplet & 0x3F];
+	}
+	
+	Length -= PaddingLength;
+
+	// Loop through the buffer converting 3 bytes of binary data at a time
+	while (Length > 0)
+	{
+		EncodedBytes -= 4;
+
+		uint8 C = *--ReversedSource;
+		uint8 B = *--ReversedSource;
+		uint8 A = *--ReversedSource;
 		Length -= 3;
 
 		// The algorithm takes 24 bits of data (3 bytes) and breaks it into 4 6bit chunks represented as ascii
@@ -100,48 +151,11 @@ template<typename CharType> uint32 FBase64::Encode(const uint8* Source, uint32 L
 		EncodedBytes[1] = EncodingAlphabet[ByteTriplet & 0x3F];
 		ByteTriplet >>= 6;
 		EncodedBytes[0] = EncodingAlphabet[ByteTriplet & 0x3F];
-
-		// Now we can append this buffer to our destination string
-		EncodedBytes += 4;
 	}
 
-	// Since this algorithm operates on blocks, we may need to pad the last chunks
-	if (Length > 0)
-	{
-		uint8 A = *Source++;
-		uint8 B = 0;
-		uint8 C = 0;
-		// Grab the second character if it is a 2 uint8 finish
-		if (Length == 2)
-		{
-			B = *Source;
-		}
-		uint32 ByteTriplet = A << 16 | B << 8 | C;
-		// Pad with = to make a 4 uint8 chunk
-		EncodedBytes[3] = '=';
-		ByteTriplet >>= 6;
-		// If there's only one 1 uint8 left in the source, then you need 2 pad chars
-		if (Length == 1)
-		{
-			EncodedBytes[2] = '=';
-		}
-		else
-		{
-			EncodedBytes[2] = EncodingAlphabet[ByteTriplet & 0x3F];
-		}
-		// Now encode the remaining bits the same way
-		ByteTriplet >>= 6;
-		EncodedBytes[1] = EncodingAlphabet[ByteTriplet & 0x3F];
-		ByteTriplet >>= 6;
-		EncodedBytes[0] = EncodingAlphabet[ByteTriplet & 0x3F];
+	verify(EncodedBytes == Dest);
 
-		EncodedBytes += 4;
-	}
-
-	// Add a null terminator
-	*EncodedBytes = 0;
-
-	return UE_PTRDIFF_TO_UINT32(EncodedBytes - Dest);
+	return ExpectedLength;
 }
 
 template CORE_API uint32 FBase64::Encode<ANSICHAR>(const uint8* Source, uint32 Length, ANSICHAR* Dest, EBase64Mode Mode);

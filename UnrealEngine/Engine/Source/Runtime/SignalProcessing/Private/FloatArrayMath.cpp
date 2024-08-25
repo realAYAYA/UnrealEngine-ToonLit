@@ -35,6 +35,12 @@ namespace Audio
 		const float Loge10 = FMath::Loge(10.f);
 		const int32 SimdMask = 0xFFFFFFFC;
 		const int32 NotSimdMask = 0x00000003;
+
+		const int32 Simd8Mask = 0xFFFFFFF8;
+		const int32 NotSimd8Mask = 0x00000007;
+
+		const int32 Simd16Mask = 0xFFFFFFF0;
+		const int32 NotSimd16Mask = 0x0000000F;
 	}
 
 	void ArraySum(TArrayView<const float> InValues, float& OutSum)
@@ -731,6 +737,35 @@ namespace Audio
 		}
 	}
 	
+	void ArrayMax(const TArrayView<const float>& InView1, const TArrayView<const float>& InView2, const TArrayView<float>& OutView)
+	{
+		check(InView1.Num() == InView2.Num());
+		check(InView1.Num() == OutView.Num());
+
+		CSV_SCOPED_TIMING_STAT(Audio_Dsp, ArrayMax);
+		const int32 Num = InView1.Num();
+		const int32 NumToSimd = Num & MathIntrinsics::SimdMask;
+		const int32 NumNotToSimd = Num & MathIntrinsics::NotSimdMask;
+
+		if (NumToSimd)
+		{
+			for (int32 i = 0; i < NumToSimd; i += AUDIO_NUM_FLOATS_PER_VECTOR_REGISTER)
+			{
+				VectorRegister4Float Input1 = VectorLoad(&InView1[i]);
+				VectorRegister4Float Input2 = VectorLoad(&InView2[i]);
+				VectorStore(VectorMax(Input1, Input2), &OutView[i]);
+			}
+		}
+
+		if (NumNotToSimd)
+		{
+			for (int32 i = NumToSimd; i < Num; ++i)
+			{
+				OutView[i] = FMath::Max(InView1[i], InView2[i]);
+			}
+		}
+	}
+
 	float ArrayMaxAbsValue(const TArrayView<const float> InView)
 	{
 		CSV_SCOPED_TIMING_STAT(Audio_Dsp, ArrayMaxAbsValue);
@@ -1983,6 +2018,80 @@ namespace Audio
 		}
 	}
 
+	void ArrayFade(TArrayView<const float> InBuffer, const float InStartValue, const float InEndValue, TArrayView<float> OutBuffer)
+	{
+		CSV_SCOPED_TIMING_STAT(Audio_Dsp, ArrayFade);
+		
+		const int32 Num = InBuffer.Num();
+		check(Num <= OutBuffer.Num());
+
+		const float* InFloatBuffer = InBuffer.GetData();
+		float* OutFloatBuffer = OutBuffer.GetData();
+
+		// case 1: no fade
+		if (FMath::IsNearlyEqual(InStartValue, InEndValue))
+		{
+			if (InStartValue == 0.0f)
+			{
+				// No need to do anything if start and end values are both 0.0
+				FMemory::Memset(OutFloatBuffer, 0, sizeof(float) * Num);
+			}
+			else
+			{
+				// no fade, just scale the output
+				ArrayMultiplyByConstant(InBuffer, InStartValue, OutBuffer);
+			}
+
+			return;
+		}
+
+		// case 2: fade w/ ISPC
+#if INTEL_ISPC
+		if (bAudio_FloatArrayMath_ISPC_Enabled)
+		{
+			ispc::ArrayFade2(InFloatBuffer, Num, InStartValue, InEndValue, OutFloatBuffer);
+			return;
+		}
+#endif
+
+
+		// case 3: fade w/ our vectorization abstraction
+		const int32 NumToSimd = Num & MathIntrinsics::SimdMask;
+		const int32 NumNotToSimd = Num & MathIntrinsics::NotSimdMask;
+
+		const float DeltaValue = ((InEndValue - InStartValue) / Num);
+
+		if (NumToSimd)
+		{
+			constexpr VectorRegister4Float VectorFour = MakeVectorRegisterFloatConstant(4.f, 4.f, 4.f, 4.f);
+			VectorRegister4Float Accumulator = MakeVectorRegisterFloat(0.f, 1.f, 2.f, 3.f);
+			VectorRegister4Float Delta = VectorLoadFloat1(&DeltaValue);
+			VectorRegister4Float Start = VectorLoadFloat1(&InStartValue);
+
+			for (int32 i = 0; i < NumToSimd; i += AUDIO_NUM_FLOATS_PER_VECTOR_REGISTER)
+			{
+				VectorRegister4Float Gain = VectorMultiplyAdd(Accumulator, Delta, Start);
+				VectorRegister4Float Input = VectorLoad(&InFloatBuffer[i]);
+				VectorRegister4Float Output = VectorMultiply(Input, Gain);
+
+				Accumulator = VectorAdd(Accumulator, VectorFour);
+				VectorStore(Output, &OutFloatBuffer[i]);
+			}
+		}
+
+		if (NumNotToSimd)
+		{
+			float Gain = (NumToSimd * DeltaValue) + InStartValue;
+
+			// Do a fade from start to end
+			for (int32 i = NumToSimd; i < Num; ++i)
+			{
+				OutFloatBuffer[i] = InFloatBuffer[i] * Gain;
+				Gain += DeltaValue;
+			}
+		}
+	}
+
 	void ArrayMixIn(TArrayView<const float> InFloatBuffer, TArrayView<float> BufferToSumTo, const float Gain)
 	{
 		CSV_SCOPED_TIMING_STAT(Audio_Dsp, ArrayMixIn);
@@ -2001,28 +2110,24 @@ namespace Audio
 		}
 		else
 		{
-			const int32 NumToSimd = Num & MathIntrinsics::SimdMask;
-			const int32 NumNotToSimd = Num & MathIntrinsics::NotSimdMask;
-
-			if (NumToSimd)
+			VectorRegister4Float GainVector = VectorLoadFloat1(&Gain);
+			int32 i = 0;
+			const int32 SimdNum = Num & MathIntrinsics::Simd16Mask;
+			for (; i < SimdNum; i += 16)
 			{
-				VectorRegister4Float GainVector = VectorLoadFloat1(&Gain);
-
-				for (int32 i = 0; i < NumToSimd; i += AUDIO_NUM_FLOATS_PER_VECTOR_REGISTER)
-				{
-					VectorRegister4Float Output = VectorLoad(&InOutData[i]);
-					VectorRegister4Float Input = VectorLoad(&InData[i]);
-					Output = VectorMultiplyAdd(Input, GainVector, Output);
-					VectorStore(Output, &InOutData[i]);
-				}
+				// manually unrolling the loop produces a bit faster code
+				VectorRegister4x4Float Input = VectorLoad16(&InData[i]);
+				VectorRegister4x4Float Output = VectorLoad16(&InOutData[i]);
+				Output.val[0] = VectorMultiplyAdd(Input.val[0], GainVector, Output.val[0]);
+				Output.val[1] = VectorMultiplyAdd(Input.val[1], GainVector, Output.val[1]);
+				Output.val[2] = VectorMultiplyAdd(Input.val[2], GainVector, Output.val[2]);
+				Output.val[3] = VectorMultiplyAdd(Input.val[3], GainVector, Output.val[3]);
+				VectorStore16(Output, &InOutData[i]);
 			}
 
-			if (NumNotToSimd)
+			for (; i < Num; ++i)
 			{
-				for (int32 i = NumToSimd; i < Num; ++i)
-				{
-					InOutData[i] += InData[i] * Gain;
-				}
+				InOutData[i] += InData[i] * Gain;
 			}
 		}
 	}
@@ -2045,26 +2150,23 @@ namespace Audio
 		}
 		else
 		{
-			const int32 NumToSimd = Num & MathIntrinsics::SimdMask;
-			const int32 NumNotToSimd = Num & MathIntrinsics::NotSimdMask;
-
-			if (NumToSimd)
+			int32 i = 0;
+			const int32 SimdNum = Num & MathIntrinsics::Simd16Mask;
+			for (; i < SimdNum; i += 16)
 			{
-				for (int32 i = 0; i < NumToSimd; i += AUDIO_NUM_FLOATS_PER_VECTOR_REGISTER)
-				{
-					VectorRegister4Float Output = VectorLoad(&InOutData[i]);
-					VectorRegister4Float Input = VectorLoad(&InData[i]);
-					Output = VectorAdd(Input, Output);
-					VectorStore(Output, &InOutData[i]);
-				}
+				// manually unrolling the loop produces a bit faster code
+				VectorRegister4x4Float Input = VectorLoad16(&InData[i]);
+				VectorRegister4x4Float Output = VectorLoad16(&InOutData[i]);
+				Output.val[0] = VectorAdd(Input.val[0], Output.val[0]);
+				Output.val[1] = VectorAdd(Input.val[1], Output.val[1]);
+				Output.val[2] = VectorAdd(Input.val[2], Output.val[2]);
+				Output.val[3] = VectorAdd(Input.val[3], Output.val[3]);
+				VectorStore16(Output, &InOutData[i]);
 			}
 
-			if (NumNotToSimd)
+			for (; i < Num; ++i)
 			{
-				for (int32 i = NumToSimd; i < Num; ++i)
-				{
-					InOutData[i] += InData[i];
-				}
+				InOutData[i] += InData[i];
 			}
 		}
 	}
@@ -2185,43 +2287,48 @@ namespace Audio
 	{
 		CSV_SCOPED_TIMING_STAT(Audio_Dsp, ArrayFloatToPcm16);
 
-		check(InView.Num() == OutView.Num());
+		check(OutView.Num() >= InView.Num());
 
 		const int32 Num = InView.Num();
-		
-		const int32 NumToSimd = Num & MathIntrinsics::SimdMask;
-		const int32 NumNotToSimd = Num & MathIntrinsics::NotSimdMask;
 
 		const float* InputPtr = InView.GetData();
 		int16* OutPtr = OutView.GetData();
 
 		constexpr float ConversionValue = static_cast<float>(TNumericLimits<int16>::Max());
-
-		if(NumToSimd)
+		const VectorRegister4Float Multiplier = VectorSetFloat1(ConversionValue);
+		int32 i = 0;
+#if PLATFORM_ENABLE_VECTORINTRINSICS_NEON
+		const int32 SimdNum = Num & MathIntrinsics::Simd8Mask;
+		for (; i < SimdNum; i += 8)
 		{
-			const VectorRegister4Float ConversionVector = VectorSetFloat1(ConversionValue);
-
-			for (int32 i = 0; i < NumToSimd; i += AUDIO_NUM_FLOATS_PER_VECTOR_REGISTER)
-			{
-				const VectorRegister4Float InVector = VectorLoad(&InputPtr[i]);
-				const VectorRegister4Float ScaledVector = VectorMultiply(InVector, ConversionVector);
-				const VectorRegister4Int IntVector = VectorFloatToInt(ScaledVector);
-
-				const AlignedFloat4 ScaledFloatArray(ScaledVector);
-
-				OutPtr[i] =		(int16)ScaledFloatArray[0];
-				OutPtr[i + 1] =	(int16)ScaledFloatArray[1];
-				OutPtr[i + 2] =	(int16)ScaledFloatArray[2];
-				OutPtr[i + 3] =	(int16)ScaledFloatArray[3];
-			}
+			const float32x4x2_t InVector = vld1q_f32_x2(&InputPtr[i]);
+			const VectorRegister4Float ScaledVector1 = VectorMultiply(InVector.val[0], Multiplier);
+			const VectorRegister4Float ScaledVector2 = VectorMultiply(InVector.val[1], Multiplier);
+			const VectorRegister4Int IntVector1 = VectorFloatToInt(ScaledVector1);
+			const VectorRegister4Int IntVector2 = VectorFloatToInt(ScaledVector2);
+			const int16x8_t Result = vmovn_high_s32(vmovn_u32(IntVector1), IntVector2);
+			vst1q_s16(&OutPtr[i], Result);
 		}
-
-		if(NumNotToSimd)
+#else
+		const int32 SimdNum = Num & MathIntrinsics::SimdMask;
+		for (; i < SimdNum; i += AUDIO_NUM_FLOATS_PER_VECTOR_REGISTER)
 		{
-			for (int32 i = NumToSimd; i < Num; i++)
-			{
-				OutPtr[i] = (int16)(InputPtr[i] * ConversionValue);
-			}
+			const VectorRegister4Float InVector = VectorLoad(&InputPtr[i]);
+			const VectorRegister4Float ScaledVector = VectorMultiply(InVector, Multiplier);
+			const VectorRegister4Int IntVector = VectorFloatToInt(ScaledVector);
+
+			const AlignedFloat4 ScaledFloatArray(ScaledVector);
+
+			OutPtr[i + 0] = (int16)ScaledFloatArray[0];
+			OutPtr[i + 1] = (int16)ScaledFloatArray[1];
+			OutPtr[i + 2] = (int16)ScaledFloatArray[2];
+			OutPtr[i + 3] = (int16)ScaledFloatArray[3];
+		}
+#endif //~PLATFORM_ENABLE_VECTORINTRINSICS_NEON
+
+		for (; i < Num; i++)
+		{
+			OutPtr[i] = (int16)(InputPtr[i] * ConversionValue);
 		}
 	}
 	
@@ -2229,43 +2336,49 @@ namespace Audio
 	{
 		CSV_SCOPED_TIMING_STAT(Audio_Dsp, ArrayPcm16ToFloat);
 
-		check(InView.Num() == OutView.Num());
+		check(OutView.Num() >= InView.Num());
 
 		const int32 Num = InView.Num();
-		
-		const int32 NumToSimd = Num & MathIntrinsics::SimdMask;
-		const int32 NumNotToSimd = Num & MathIntrinsics::NotSimdMask;
 
 		const int16* InputPtr = InView.GetData();
 		float* OutPtr = OutView.GetData();
 
 		constexpr float ConversionValue = 1.f / static_cast<float>(TNumericLimits<int16>::Max());
+		const VectorRegister4Float Multiplier = VectorSetFloat1(ConversionValue);
 
-		if(NumToSimd)
+		int32 i = 0;
+#if PLATFORM_ENABLE_VECTORINTRINSICS_NEON
+		const int32 SimdNum = Num & MathIntrinsics::Simd8Mask;
+		for (; i < SimdNum; i += 8)
 		{
-			const VectorRegister4Float ConversionVector = VectorSetFloat1(ConversionValue);
-			AlignedFloat4 FloatArray(GlobalVectorConstants::FloatZero);
-
-			for (int32 i = 0; i < NumToSimd; i += AUDIO_NUM_FLOATS_PER_VECTOR_REGISTER)
-			{
-				FloatArray[0] = (float)InputPtr[i];
-				FloatArray[1] = (float)InputPtr[i + 1];
-				FloatArray[2] = (float)InputPtr[i + 2];
-				FloatArray[3] = (float)InputPtr[i + 3];
-
-				const VectorRegister4Float InVector = FloatArray.ToVectorRegister();
-				const VectorRegister4Float ScaledVector = VectorMultiply(InVector, ConversionVector);
-			
-				VectorStore(ScaledVector, &OutPtr[i]);
-			}
+			int16x8_t Data = vld1q_s16(&InputPtr[i]);
+			int32x4_t VecA = vmovl_s16(vget_low_s16(Data));
+			int32x4_t VecB = vmovl_high_s16(Data);
+			float32x4x2_t FloatVec;
+			FloatVec.val[0] = VectorMultiply(vcvtq_f32_s32(VecA), Multiplier);
+			FloatVec.val[1] = VectorMultiply(vcvtq_f32_s32(VecB), Multiplier);
+			vst1q_f32_x2(&OutPtr[i], FloatVec);
 		}
-
-		if(NumNotToSimd)
+#else
+		AlignedFloat4 FloatArray(GlobalVectorConstants::FloatZero);
+		const int32 SimdNum = Num & MathIntrinsics::SimdMask;
+		for (; i < SimdNum; i += AUDIO_NUM_FLOATS_PER_VECTOR_REGISTER)
 		{
-			for (int32 i = NumToSimd; i < Num; i++)
-			{
-				OutPtr[i] = (float)InputPtr[i] * ConversionValue;
-			}
+			FloatArray[0] = (float)InputPtr[i];
+			FloatArray[1] = (float)InputPtr[i + 1];
+			FloatArray[2] = (float)InputPtr[i + 2];
+			FloatArray[3] = (float)InputPtr[i + 3];
+
+			const VectorRegister4Float InVector = FloatArray.ToVectorRegister();
+			const VectorRegister4Float ScaledVector = VectorMultiply(InVector, Multiplier);
+
+			VectorStore(ScaledVector, &OutPtr[i]);
+		}
+#endif //~PLATFORM_ENABLE_VECTORINTRINSICS_NEON
+
+		for (; i < Num; i++)
+		{
+			OutPtr[i] = (float)InputPtr[i] * ConversionValue;
 		}
 	}
 	
@@ -2294,16 +2407,18 @@ namespace Audio
 		ArrayInterleave(InBufferPtr, OutBuffer.GetData(), NumFrames, NumChannels);
 	}
 
-	void ArrayInterleave(const float** RESTRICT InBuffers, float* RESTRICT OutBuffer, const int32 InFrames, const int32 InChannels)
+	void ArrayInterleave(const float* const* RESTRICT InBuffers, float* RESTRICT OutBuffer, const int32 InFrames, const int32 InChannels)
 	{
 		CSV_SCOPED_TIMING_STAT(Audio_Dsp, ArrayInterleave);
 		for(int32 ChannelIdx = 0; ChannelIdx < InChannels; ChannelIdx++)
 		{
-			const float* InBuffer = InBuffers[ChannelIdx];
+			const float* InPtr = InBuffers[ChannelIdx];
+			float* OutPtr = &OutBuffer[ChannelIdx];
 			
 			for(int32 SampleIdx = 0; SampleIdx < InFrames; SampleIdx++)
 			{
-				OutBuffer[ChannelIdx + (SampleIdx * InChannels)] = InBuffer[SampleIdx];
+				*OutPtr = *InPtr++;
+				OutPtr += InChannels;
 			}
 		}
 	}
@@ -2332,17 +2447,102 @@ namespace Audio
 		ArrayDeinterleave(InBuffer.GetData(), OutBufferPtr, NumFrames, InChannels);
 	}
 
-	void ArrayDeinterleave(const float* RESTRICT InBuffer, float** RESTRICT OutBuffers, const int32 InFrames, const int32 InChannels)
+	void ArrayDeinterleave(const float* RESTRICT InBuffer, float* const* RESTRICT OutBuffers, const int32 InFrames, const int32 InChannels)
 	{
 		CSV_SCOPED_TIMING_STAT(Audio_Dsp, ArrayDeinterleave);
 
 		for(int32 ChannelIdx = 0; ChannelIdx < InChannels; ChannelIdx++)
 		{
-			float* OutBuffer = OutBuffers[ChannelIdx];
+			const float* InPtr = &InBuffer[ChannelIdx];
+			float* OutPtr = OutBuffers[ChannelIdx];
 			
 			for(int32 SampleIdx = 0; SampleIdx < InFrames; SampleIdx++)
 			{
-				OutBuffer[SampleIdx] = InBuffer[ChannelIdx + (SampleIdx * InChannels)];
+				*OutPtr++ = *InPtr;
+				InPtr += InChannels;
+			}
+		}
+	}
+
+	void ArrayInterpolate(const float* InBuffer, float* OutBuffer, const int32 NumInSamples, const int32 NumOutSamples)
+	{
+		if (NumOutSamples <= 0 || NumInSamples <= 0)
+		{
+			return;
+		}
+
+		const float SampleStride = (float)NumInSamples / (float)NumOutSamples;
+
+		const int32 NumToSimd = NumOutSamples & MathIntrinsics::SimdMask;
+		const int32 NumNotToSimd = NumOutSamples & MathIntrinsics::NotSimdMask;
+
+		if (NumToSimd)
+		{
+			VectorRegister4Float Strides = VectorSet(
+				4.f * SampleStride,
+				4.f * SampleStride,
+				4.f * SampleStride,
+				4.f * SampleStride
+			);
+
+			VectorRegister4Float Indeces = VectorSet(
+				0.f * SampleStride,
+				1.f * SampleStride,
+				2.f * SampleStride,
+				3.f * SampleStride
+			);
+
+			for (int32 OutputIndex = 0; OutputIndex < NumToSimd; OutputIndex += AUDIO_NUM_FLOATS_PER_VECTOR_REGISTER)
+			{
+				alignas(16) int32 LeftIndecesRaw[4];
+				alignas(16) int32 RightIndecesRaw[4];
+
+				VectorRegister4Float LeftIndeces = VectorFloor(Indeces);
+				VectorRegister4Float Fractions = VectorSubtract(Indeces, LeftIndeces);
+				VectorRegister4Float InvFractions = VectorSubtract(GlobalVectorConstants::FloatOne, Fractions);
+
+				VectorRegister4Int LeftIndecesInt = VectorFloatToInt(LeftIndeces);
+
+				// Lookup samples for interpolation
+				VectorIntStoreAligned(LeftIndecesInt, LeftIndecesRaw);
+				VectorIntStoreAligned(VectorIntAdd(LeftIndecesInt, GlobalVectorConstants::IntOne), RightIndecesRaw);
+
+				VectorRegister4Float LowerSamples = VectorSet(
+					InBuffer[LeftIndecesRaw[0]],
+					InBuffer[LeftIndecesRaw[1]],
+					InBuffer[LeftIndecesRaw[2]],
+					InBuffer[LeftIndecesRaw[3]]
+				);
+				VectorRegister4Float UpperSamples = VectorSet(
+					InBuffer[RightIndecesRaw[0]],
+					InBuffer[RightIndecesRaw[1]],
+					InBuffer[RightIndecesRaw[2]],
+					InBuffer[RightIndecesRaw[3]]
+				);
+
+				VectorRegister4Float VOut = VectorMultiplyAdd(
+					LowerSamples,
+					Fractions,
+					VectorMultiply(UpperSamples, InvFractions));
+				VectorStore(VOut, &OutBuffer[OutputIndex]);
+
+				Indeces = VectorAdd(Indeces, Strides);
+			}
+		}
+
+		if (NumNotToSimd)
+		{
+			float SampleIndex = (float)(NumToSimd)*SampleStride;
+
+			for (int32 OutputIndex = NumToSimd; OutputIndex < NumOutSamples; OutputIndex++)
+			{
+				const int32 LeftSample = FMath::FloorToInt32(SampleIndex);
+				int32 RightSample = FMath::CeilToInt32(SampleIndex);
+
+				const float Frac = SampleIndex - LeftSample;
+				OutBuffer[OutputIndex] = (Frac * InBuffer[LeftSample]) + ((1.f - Frac) * InBuffer[RightSample]);
+
+				SampleIndex += SampleStride;
 			}
 		}
 	}

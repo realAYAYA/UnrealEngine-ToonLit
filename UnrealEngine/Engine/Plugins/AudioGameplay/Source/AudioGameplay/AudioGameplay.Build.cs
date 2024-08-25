@@ -11,10 +11,9 @@ public class AudioGameplay : ModuleRules
 		PublicDependencyModuleNames.AddRange(
 			new string[]
 			{
+				"AudioExtensions",
 				"Core",
-				"AudioExtensions",
 				"GameplayTags",
-				"AudioExtensions",
 			}
 			);
 			

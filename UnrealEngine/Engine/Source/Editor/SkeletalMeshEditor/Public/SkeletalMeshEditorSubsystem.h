@@ -218,4 +218,28 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Editor Scripting | SkeletalMesh")
 	static UPhysicsAsset* CreatePhysicsAsset(USkeletalMesh* SkeletalMesh);
+
+	/**
+	 * Checks whether a physics asset is compatible with the given SkeletalMesh
+	 *
+	 * @param TargetMesh The mesh to test for compatibility
+	 * @param PhysicsAsset The PhysicsAsset to test for compatibility
+	 *
+	 * @return Whether the physics asset is compatible with the target SkeletalMesh
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Editor Scripting | SkeletalMesh")
+	static bool IsPhysicsAssetCompatible(USkeletalMesh* TargetMesh, UPhysicsAsset* PhysicsAsset);
+
+	/**
+	 * Assigns a PhysicsAsset to the given SkeletalMesh if it is compatible. Passing
+	 * nullptr / None as the physics asset will always succeed and will clear the
+	 * physics asset assignment for the target SkeletalMesh
+	 *
+	 * @param TargetMesh The mesh to attempt to assign the PhysicsAsset to
+	 * @param PhysicsAsset The physics asset to assign to the provided mesh (or nullptr/None)
+	 *
+	 * @return Whether the physics asset was successfully assigned to the mesh
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Editor Scripting | SkeletalMesh")
+	static bool AssignPhysicsAsset(USkeletalMesh* TargetMesh, UPhysicsAsset* PhysicsAsset);
 };

@@ -113,6 +113,9 @@ public:
 	/** */
 	UMG_API float GetWidthOverride() const;
 
+	/** */
+	UMG_API bool IsWidthOverride() const;
+
 	/** When specified, ignore the content's desired size and report the WidthOverride as the Box's desired width. */
 	UFUNCTION(BlueprintCallable, Category="Layout|Size Box")
 	UMG_API void SetWidthOverride(float InWidthOverride);
@@ -122,6 +125,9 @@ public:
 
 	/** */
 	UMG_API float GetHeightOverride() const;
+
+	/** */
+	UMG_API bool IsHeightOverride() const;
 
 	/** When specified, ignore the content's desired size and report the HeightOverride as the Box's desired height. */
 	UFUNCTION(BlueprintCallable, Category="Layout|Size Box")
@@ -133,6 +139,9 @@ public:
 	/** */
 	UMG_API float GetMinDesiredWidth() const;
 
+	/** */
+	UMG_API bool IsMinDesiredWidthOverride() const;
+
 	/** When specified, will report the MinDesiredWidth if larger than the content's desired width. */
 	UFUNCTION(BlueprintCallable, Category="Layout|Size Box")
 	UMG_API void SetMinDesiredWidth(float InMinDesiredWidth);
@@ -142,6 +151,9 @@ public:
 
 	/** */
 	UMG_API float GetMinDesiredHeight() const;
+
+	/** */
+	UMG_API bool IsMinDesiredHeightOverride() const;
 
 	/** When specified, will report the MinDesiredHeight if larger than the content's desired height. */
 	UFUNCTION(BlueprintCallable, Category="Layout|Size Box")
@@ -153,6 +165,9 @@ public:
 	/** */
 	UMG_API float GetMaxDesiredWidth() const;
 
+	/** */
+	UMG_API bool IsMaxDesiredWidthOverride() const;
+
 	/** When specified, will report the MaxDesiredWidth if smaller than the content's desired width. */
 	UFUNCTION(BlueprintCallable, Category="Layout|Size Box")
 	UMG_API void SetMaxDesiredWidth(float InMaxDesiredWidth);
@@ -162,6 +177,9 @@ public:
 
 	/** */
 	UMG_API float GetMaxDesiredHeight() const;
+
+	/** */
+	UMG_API bool IsMaxDesiredHeightOverride() const;
 
 	/** When specified, will report the MaxDesiredHeight if smaller than the content's desired height. */
 	UFUNCTION(BlueprintCallable, Category="Layout|Size Box")
@@ -173,6 +191,9 @@ public:
 	/** */
 	UMG_API float GetMinAspectRatio() const;
 
+	/** */
+	UMG_API bool IsMinAspectRatioOverride() const;
+
 	UFUNCTION(BlueprintCallable, Category="Layout|Size Box")
 	UMG_API void SetMinAspectRatio(float InMinAspectRatio);
 
@@ -181,6 +202,9 @@ public:
 
 	/** */
 	UMG_API float GetMaxAspectRatio() const;
+
+	/** */
+	UMG_API bool IsMaxAspectRatioOverride() const;
 
 	UFUNCTION(BlueprintCallable, Category="Layout|Size Box")
 	UMG_API void SetMaxAspectRatio(float InMaxAspectRatio);

@@ -46,6 +46,11 @@ FRCRangeMapBehaviourModel::FRCRangeMapBehaviourModel(URCRangeMapBehaviour* Range
 	}
 }
 
+bool FRCRangeMapBehaviourModel::HasBehaviourDetailsWidget()
+{
+	return true;
+}
+
 TSharedRef<SWidget> FRCRangeMapBehaviourModel::GetBehaviourDetailsWidget()
 {
 	return SNew(SRCBehaviourRangeMap, SharedThis(this));

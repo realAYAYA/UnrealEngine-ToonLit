@@ -48,6 +48,11 @@ bool FContentBrowserItemData::IsFile() const
 	return EnumHasAnyFlags(ItemFlags, EContentBrowserItemFlags::Type_File);
 }
 
+bool FContentBrowserItemData::IsPlugin() const
+{
+	return EnumHasAnyFlags(ItemFlags, EContentBrowserItemFlags::Category_Plugin);
+}
+
 bool FContentBrowserItemData::IsSupported() const
 {
 	return !EnumHasAnyFlags(ItemFlags, EContentBrowserItemFlags::Misc_Unsupported);

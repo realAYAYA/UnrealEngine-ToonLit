@@ -47,34 +47,21 @@ namespace mu
 		// Node Interface
 		//-----------------------------------------------------------------------------------------
 
-        
-
-        const NODE_TYPE* GetType() const override;
-		static const NODE_TYPE* GetStaticType();
-
-        int GetInputCount() const override;
-        Node* GetInputNode( int i ) const override;
-        void SetInputNode( int i, NodePtr pNode ) override;
+        const FNodeType* GetType() const override;
+		static const FNodeType* GetStaticType();
 
 		//-----------------------------------------------------------------------------------------
 		// Own Interface
 		//-----------------------------------------------------------------------------------------
 
-		//! Get the name of the parameter. It will be exposed in the final compiled data.
-		const char* GetName() const;
-		void SetName( const char* );
+		//! Set the name of the parameter. It will be exposed in the final compiled data.
+		void SetName( const FString& );
 
-		//! Get the uid of the parameter. It will be exposed in the final compiled data.
-		const char* GetUid() const;
-		void SetUid( const char* );
+		//! Set the uid of the parameter. It will be exposed in the final compiled data.
+		void SetUid( const FString& );
 
-		//! Get the default value of the parameter.
-		const char* GetDefaultValue() const;
-		void SetDefaultValue( const char* v );
-
-		//! Get the additional information about the type
-		PARAMETER_DETAILED_TYPE GetDetailedType() const ;
-		void SetDetailedType( PARAMETER_DETAILED_TYPE type );
+		//! Set the default value of the parameter.
+		void SetDefaultValue( const FString& );
 
         //! Set the number of ranges (dimensions) for this parameter.
         //! By default a parameter has 0 ranges, meaning it only has one value.

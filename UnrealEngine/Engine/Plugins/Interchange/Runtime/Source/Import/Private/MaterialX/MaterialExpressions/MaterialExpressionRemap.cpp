@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #include "MaterialExpressionRemap.h"
 #include "MaterialCompiler.h"
+#include "MaterialHLSLGenerator.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MaterialExpressionRemap)
 
@@ -49,6 +50,32 @@ int32 UMaterialExpressionMaterialXRemap::Compile(FMaterialCompiler* Compiler, in
 	const int32 Delta = Compiler->Div(TargetDelta, InputDelta);
 
 	return Compiler->Add(TargetLowIndex, Compiler->Mul(Compiler->Sub(Input.Compile(Compiler), InputLowIndex), Delta));
+}
+
+bool UMaterialExpressionMaterialXRemap::GenerateHLSLExpression(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope, int32 OutputIndex, UE::HLSLTree::FExpression const*& OutExpression) const
+{
+	using namespace UE::HLSLTree;
+
+	if (!Input.GetTracedInput().Expression)
+	{
+		return Generator.Errorf(TEXT("Missing remap input"));
+	}
+
+	// Min2 + (Input - Min1) x (Max2 - Min2) / (Max1 - Min1)
+	const FExpression* InputLowExpression = InputLow.AcquireHLSLExpressionOrConstant(Generator, Scope, InputLowDefault);
+	const FExpression* InputHighExpression = InputHigh.AcquireHLSLExpressionOrConstant(Generator, Scope, InputHighDefault);
+
+	const FExpression* TargetLowExpression = TargetLow.AcquireHLSLExpressionOrConstant(Generator, Scope, TargetLowDefault);
+	const FExpression* TargetHighExpression = TargetHigh.AcquireHLSLExpressionOrConstant(Generator, Scope, TargetHighDefault);
+
+	const FExpression* InputDeltaExpression = Generator.GetTree().NewSub(InputHighExpression, InputLowExpression);
+	const FExpression* TargetDeltaExpression = Generator.GetTree().NewSub(TargetHighExpression, TargetLowExpression);
+	const FExpression* ScaleExpression = Generator.GetTree().NewDiv(TargetDeltaExpression, InputDeltaExpression);
+
+	const FExpression* InputExpression = Input.AcquireHLSLExpression(Generator, Scope);
+
+	OutExpression = Generator.GetTree().NewAdd(TargetLowExpression, Generator.GetTree().NewMul(Generator.GetTree().NewSub(InputExpression, InputLowExpression), ScaleExpression));
+	return true;
 }
 
 void UMaterialExpressionMaterialXRemap::GetCaption(TArray<FString>& OutCaptions) const

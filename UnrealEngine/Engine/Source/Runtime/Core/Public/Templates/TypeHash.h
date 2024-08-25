@@ -112,6 +112,7 @@ inline uint32 GetTypeHash(ScalarType Value)
 		else
 		{
 			static_assert(sizeof(ScalarType) == 0, "Unsupported integral type");
+			return 0;
 		}
 	}
 	else if constexpr (std::is_floating_point_v<ScalarType>)
@@ -127,6 +128,7 @@ inline uint32 GetTypeHash(ScalarType Value)
 		else
 		{
 			static_assert(sizeof(ScalarType) == 0, "Unsupported floating point type");
+			return 0;
 		}
 	}
 	else if constexpr (std::is_enum_v<ScalarType>)
@@ -143,6 +145,7 @@ inline uint32 GetTypeHash(ScalarType Value)
 	else
 	{
 		static_assert(sizeof(ScalarType) == 0, "Unsupported scalar type");
+		return 0;
 	}
 }
 

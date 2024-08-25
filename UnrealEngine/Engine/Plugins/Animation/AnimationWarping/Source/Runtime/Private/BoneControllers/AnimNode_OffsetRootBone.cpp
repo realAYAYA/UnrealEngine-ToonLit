@@ -1,10 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "BoneControllers/AnimNode_OffsetRootBone.h"
+
 #include "Animation/AnimInstanceProxy.h"
 #include "Animation/AnimNodeFunctionRef.h"
 #include "Animation/AnimRootMotionProvider.h"
 #include "HAL/IConsoleManager.h"
+#include "VisualLogger/VisualLogger.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AnimNode_OffsetRootBone)
 
@@ -16,6 +18,7 @@ TAutoConsoleVariable<int32> CVarAnimNodeOffsetRootBoneEnable(TEXT("a.AnimNode.Of
 TAutoConsoleVariable<int32> CVarAnimNodeOffsetRootBoneModifyBone(TEXT("a.AnimNode.OffsetRootBone.ModifyBone"), 1, TEXT("Toggle whether the transform is applied to the bone"));
 #endif
 
+IMPLEMENT_ANIMGRAPH_MESSAGE(UE::AnimationWarping::FRootOffsetProvider);
 
 namespace UE::Anim::OffsetRootBone
 {
@@ -44,20 +47,28 @@ void FAnimNode_OffsetRootBone::GatherDebugData(FNodeDebugData& DebugData)
 	DebugLine += FString::Printf(TEXT("\n - Rotation Halflife: (%.3fd)"), GetRotationHalfLife());
 #endif
 	DebugData.AddDebugItem(DebugLine);
-	ComponentPose.GatherDebugData(DebugData);
 }
 
 void FAnimNode_OffsetRootBone::Initialize_AnyThread(const FAnimationInitializeContext& Context)
 {
-	FAnimNode_SkeletalControlBase::Initialize_AnyThread(Context);
+	Super::Initialize_AnyThread(Context);
 	AnimInstanceProxy = Context.AnimInstanceProxy;
+	Source.Initialize(Context);
 	Reset(Context);
 }
 
-void FAnimNode_OffsetRootBone::UpdateInternal(const FAnimationUpdateContext& Context)
+void FAnimNode_OffsetRootBone::CacheBones_AnyThread(const FAnimationCacheBonesContext& Context)
 {
-	FAnimNode_SkeletalControlBase::UpdateInternal(Context);
+	Super::CacheBones_AnyThread(Context);
+	Source.CacheBones(Context);
+}
+
+void FAnimNode_OffsetRootBone::Update_AnyThread(const FAnimationUpdateContext& Context)
+{
+	Super::Update_AnyThread(Context);
 	CachedDeltaTime = Context.GetDeltaTime();
+
+	GetEvaluateGraphExposedInputs().Execute(Context);
 
 	// If we just became relevant and haven't been initialized yet, then reset.
 	if (!bIsFirstUpdate && UpdateCounter.HasEverBeenUpdated() && !UpdateCounter.WasSynchronizedCounter(Context.AnimInstanceProxy->GetUpdateCounter()))
@@ -65,12 +76,25 @@ void FAnimNode_OffsetRootBone::UpdateInternal(const FAnimationUpdateContext& Con
 		Reset(Context);
 	}
 	UpdateCounter.SynchronizeWith(Context.AnimInstanceProxy->GetUpdateCounter());
+	
+	UE::Anim::TScopedGraphMessage<UE::AnimationWarping::FRootOffsetProvider> ScopedMessage(Context, FTransform(SimulatedRotation, SimulatedTranslation));
+	
+	Source.Update(Context);
 }
 
-void FAnimNode_OffsetRootBone::EvaluateSkeletalControl_AnyThread(FComponentSpacePoseContext& Output, TArray<FBoneTransform>& OutBoneTransforms)
+void FAnimNode_OffsetRootBone::Evaluate_AnyThread(FPoseContext& Output)
 {
 	SCOPE_CYCLE_COUNTER(STAT_OffsetRootBone_Eval);
-	check(OutBoneTransforms.Num() == 0);
+
+	Super::Evaluate_AnyThread(Output);
+	Source.Evaluate(Output);
+
+#if ENABLE_ANIM_DEBUG
+	if (CVarAnimNodeOffsetRootBoneEnable.GetValueOnAnyThread() == 0)
+	{
+		return;
+	}
+#endif
 
 	bool bGraphDriven = false;
 	const UE::Anim::IAnimRootMotionProvider* RootMotionProvider = UE::Anim::IAnimRootMotionProvider::Get();
@@ -82,7 +106,7 @@ void FAnimNode_OffsetRootBone::EvaluateSkeletalControl_AnyThread(FComponentSpace
 	}
 
 	const FCompactPoseBoneIndex TargetBoneIndex(0);
-	const FTransform InputBoneTransform = Output.Pose.GetComponentSpaceTransform(TargetBoneIndex);
+	const FTransform InputBoneTransform = Output.Pose[TargetBoneIndex];
 
 	const FTransform LastComponentTransform = ComponentTransform;
 	ComponentTransform = AnimInstanceProxy->GetComponentTransform();
@@ -104,6 +128,53 @@ void FAnimNode_OffsetRootBone::EvaluateSkeletalControl_AnyThread(FComponentSpace
 		// Apply the offset as is (component space) in manual mode
 		RootMotionTransformDelta = FTransform(GetRotationDelta(), GetTranslationDelta());
 	}
+	float MaxTranslationOffset = GetMaxTranslationError();
+
+	bool bCollisionDetected = false;
+	FVector CollisionPoint;
+	FVector CollisionNormal;
+
+	if (GetCollisionTestingMode() != EOffsetRootBone_CollisionTestingMode::Disabled && MaxTranslationOffset > 0)
+	{
+		const FCollisionShape CollisionShape = FCollisionShape::MakeSphere(GetCollisionTestShapeRadius());
+		
+		FVector TraceDirectionCS = FVector(0,1,0);
+		if (RootMotionTransformDelta.GetTranslation().Length() > 0.1f)
+		{
+			TraceDirectionCS = LastNonZeroRootMotionDirection = RootMotionTransformDelta.GetTranslation().GetUnsafeNormal();
+		}
+		else if (LastNonZeroRootMotionDirection.SquaredLength() > UE_SMALL_NUMBER)
+		{
+			TraceDirectionCS = LastNonZeroRootMotionDirection;
+		}
+		const FVector TraceDirectionWS = SimulatedRotation.RotateVector(TraceDirectionCS);
+		
+		const FVector TraceStart = ComponentTransform.GetTranslation() + GetCollisionTestShapeOffset();
+		const FVector TraceEnd = TraceStart + (MaxTranslationOffset * TraceDirectionWS);
+    
+		FCollisionQueryParams QueryParams;
+		// Ignore self and all attached components
+		QueryParams.AddIgnoredActor(AnimInstanceProxy->GetSkelMeshComponent()->GetOwner());
+    
+		const ECollisionChannel CollisionChannel = UEngineTypes::ConvertToCollisionChannel(TraceTypeQuery1);
+    
+		FHitResult HitResult;
+		const bool bHit = AnimInstanceProxy->GetSkelMeshComponent()->GetWorld()->SweepSingleByChannel(
+			HitResult, TraceStart, TraceEnd, FQuat::Identity, CollisionChannel, CollisionShape, QueryParams);
+    
+		if (bHit && HitResult.Distance < MaxTranslationOffset)
+		{
+			if (GetCollisionTestingMode() == EOffsetRootBone_CollisionTestingMode::ShrinkMaxTranslation)
+			{
+				MaxTranslationOffset = HitResult.Distance;
+			}
+			
+			bCollisionDetected = true;
+			CollisionPoint = HitResult.ImpactPoint;
+			CollisionNormal = HitResult.ImpactNormal;
+		}
+	}
+	
 
 	FTransform ConsumedRootMotionDelta;
 
@@ -143,7 +214,7 @@ void FAnimNode_OffsetRootBone::EvaluateSkeletalControl_AnyThread(FComponentSpace
 	// Simulated translation should stay the same along the approach direction
 	SimulatedTranslation = FVector::PointPlaneProject(SimulatedTranslation, ComponentTransform.GetLocation(), GravityDirCS);
 
-	const FBoneContainer& RequiredBones = Output.Pose.GetPose().GetBoneContainer();
+	const FBoneContainer& RequiredBones = Output.Pose.GetBoneContainer();
 
 	bool bModifyBone = true;
 #if ENABLE_ANIM_DEBUG
@@ -169,6 +240,25 @@ void FAnimNode_OffsetRootBone::EvaluateSkeletalControl_AnyThread(FComponentSpace
 				TranslationOffsetDelta = MaxDelta * TranslationOffsetDelta.GetSafeNormal2D();
 			}
 		}
+
+		if (bCollisionDetected && GetCollisionTestingMode() == EOffsetRootBone_CollisionTestingMode::PlanarCollision)
+		{
+			float B = FVector::DotProduct(TranslationOffsetDelta, CollisionNormal);
+			if (B > UE_KINDA_SMALL_NUMBER)
+			{
+				FVector OffsetCollisionPoint = CollisionPoint + CollisionNormal * GetCollisionTestShapeRadius();
+				float CollisionParam = FVector::DotProduct((OffsetCollisionPoint - SimulatedTranslation), CollisionNormal) / B;
+				if (CollisionParam >=0 && CollisionParam < 1)
+				{
+					FVector TranslationToPlane = TranslationOffsetDelta * CollisionParam;
+					FVector TranslationAlongPlane = TranslationOffsetDelta - TranslationToPlane;
+					TranslationAlongPlane = TranslationAlongPlane - FVector::DotProduct(TranslationAlongPlane, CollisionNormal);
+
+					TranslationOffsetDelta = TranslationToPlane + TranslationAlongPlane;
+				}
+			}
+		}
+		
 
 		SimulatedTranslation = SimulatedTranslation + TranslationOffsetDelta;
 	}
@@ -204,13 +294,13 @@ void FAnimNode_OffsetRootBone::EvaluateSkeletalControl_AnyThread(FComponentSpace
 		SimulatedRotation = RotationOffsetDelta * SimulatedRotation;
 	}
 
-	if (GetMaxTranslationError() >= 0.0f)
+	if (MaxTranslationOffset >= 0.0f)
 	{
 		FVector TranslationOffset = ComponentTransform.GetLocation() - SimulatedTranslation;
 		const float TranslationOffsetSize = TranslationOffset.Size();
-		if (TranslationOffsetSize > GetMaxTranslationError())
+		if (TranslationOffsetSize > MaxTranslationOffset)
 		{
-			TranslationOffset = TranslationOffset.GetClampedToMaxSize(GetMaxTranslationError());
+			TranslationOffset = TranslationOffset.GetClampedToMaxSize(MaxTranslationOffset);
 			SimulatedTranslation = ComponentTransform.GetLocation() - TranslationOffset;
 		}
 	}
@@ -241,10 +331,45 @@ void FAnimNode_OffsetRootBone::EvaluateSkeletalControl_AnyThread(FComponentSpace
 	FTransform TargetBoneTransform = SimulatedTransform * ComponentTransform.Inverse();
 	// Accumulate the input bone transform to keep the offset independent from any previous adjustments to the root
 	TargetBoneTransform.Accumulate(InputBoneTransform);
-	if (bModifyBone)
+
+	Output.Pose[TargetBoneIndex] = TargetBoneTransform;
+
+#if ENABLE_VISUAL_LOG
+	if (FVisualLogger::IsRecording())
 	{
-		OutBoneTransforms.Add(FBoneTransform(TargetBoneIndex, TargetBoneTransform));
+		static const TCHAR* LogName = TEXT("OffsetRootBone");
+		const float InnerCircleRadius = 40.0f;
+		const uint16 CircleThickness = 2;
+		const FVector CircleOffset(0,0,1);
+
+		const FTransform TargetBoneInitialTransformWorld = InputBoneTransform * ComponentTransform;
+		const FTransform TargetBoneTransformWorld = TargetBoneTransform * ComponentTransform;
+		UObject* LogOwner = AnimInstanceProxy->GetAnimInstanceObject();
+
+		if (MaxTranslationOffset >= 0.0f)
+		{
+			const float OuterCircleRadius = MaxTranslationOffset + InnerCircleRadius;
+			UE_VLOG_CIRCLE_THICK(AnimInstanceProxy->GetAnimInstanceObject(), TEXT("OffsetRootBone"), Display, ComponentTransform.GetLocation() + CircleOffset, FVector::UpVector, OuterCircleRadius, FColor::Red, CircleThickness, TEXT(""));
+			
+			if (bCollisionDetected)
+			{
+				UE_VLOG_CIRCLE_THICK(LogOwner, LogName, Display, CollisionPoint, CollisionNormal, GetCollisionTestShapeRadius(), FColor::Red, CircleThickness, TEXT(""));
+			}
+		}
+		
+		UE_VLOG_CIRCLE_THICK(LogOwner, LogName, Display, ComponentTransform.GetLocation() + CircleOffset, FVector::UpVector, InnerCircleRadius, FColor::Blue, CircleThickness, TEXT(""));
+		UE_VLOG_ARROW(LogOwner, LogName, Display,
+			ComponentTransform.GetLocation() + CircleOffset,
+			ComponentTransform.GetLocation() + InnerCircleRadius * ComponentTransform.GetRotation().GetRightVector() + CircleOffset,
+			FColor::Blue, TEXT(""));
+		
+		UE_VLOG_CIRCLE_THICK(LogOwner, LogName, Display, TargetBoneTransformWorld.GetLocation() + CircleOffset, FVector::UpVector, InnerCircleRadius, FColor::Green, CircleThickness, TEXT(""));
+		UE_VLOG_ARROW(LogOwner, LogName, Display,
+		 	TargetBoneTransformWorld.GetLocation() + CircleOffset,
+		 	TargetBoneTransformWorld.GetLocation() + InnerCircleRadius * TargetBoneTransformWorld.GetRotation().GetRightVector() + CircleOffset,
+			FColor::Green, TEXT(""));
 	}
+#endif
 
 #if ENABLE_ANIM_DEBUG
 	bool bDebugging = CVarAnimNodeOffsetRootBoneDebug.GetValueOnAnyThread() == 1;
@@ -257,9 +382,9 @@ void FAnimNode_OffsetRootBone::EvaluateSkeletalControl_AnyThread(FComponentSpace
 		const FTransform TargetBoneInitialTransformWorld = InputBoneTransform * ComponentTransform;
 		const FTransform TargetBoneTransformWorld = TargetBoneTransform * ComponentTransform;
 
-		if (GetMaxTranslationError() >= 0.0f)
+		if (MaxTranslationOffset >= 0.0f)
 		{
-			const float OuterCircleRadius = GetMaxTranslationError() + InnerCircleRadius;
+			const float OuterCircleRadius = MaxTranslationOffset + InnerCircleRadius;
 			AnimInstanceProxy->AnimDrawDebugCircle(ComponentTransform.GetLocation(), OuterCircleRadius, 36, FColor::Red,
 				FVector::UpVector, false, -1.0f, SDPG_World, CircleThickness);
 		}
@@ -297,18 +422,6 @@ void FAnimNode_OffsetRootBone::EvaluateSkeletalControl_AnyThread(FComponentSpace
 	}
 
 	bIsFirstUpdate = false;
-}
-
-bool FAnimNode_OffsetRootBone::IsValidToEvaluate(const USkeleton* Skeleton, const FBoneContainer& RequiredBones)
-{
-#if ENABLE_ANIM_DEBUG
-	if (CVarAnimNodeOffsetRootBoneEnable.GetValueOnAnyThread() == 0)
-	{
-		return false;
-	}
-#endif
-
-	return true;
 }
 
 EWarpingEvaluationMode FAnimNode_OffsetRootBone::GetEvaluationMode() const
@@ -374,6 +487,21 @@ float FAnimNode_OffsetRootBone::GetTranslationSpeedRatio() const
 float FAnimNode_OffsetRootBone::GetRotationSpeedRatio() const
 {
 	return GET_ANIM_NODE_DATA(float, RotationSpeedRatio);
+}
+
+EOffsetRootBone_CollisionTestingMode FAnimNode_OffsetRootBone::GetCollisionTestingMode() const
+{
+	return GET_ANIM_NODE_DATA(EOffsetRootBone_CollisionTestingMode, CollisionTestingMode);
+}
+
+float FAnimNode_OffsetRootBone::GetCollisionTestShapeRadius() const
+{
+	return GET_ANIM_NODE_DATA(float, CollisionTestShapeRadius);
+}
+
+const FVector& FAnimNode_OffsetRootBone::GetCollisionTestShapeOffset() const
+{
+	return GET_ANIM_NODE_DATA(FVector, CollisionTestShapeOffset);
 }
 
 void FAnimNode_OffsetRootBone::Reset(const FAnimationBaseContext& Context)

@@ -69,6 +69,9 @@ namespace Chaos
 	FAutoConsoleVariableRef CVarChaos_Collision_EnableManifoldReplace(TEXT("p.Chaos.Collision.EnableManifoldGJKReplace"), bChaos_Collision_EnableManifoldGJKReplace, TEXT(""));
 	FAutoConsoleVariableRef CVarChaos_Collision_EnableManifoldInject(TEXT("p.Chaos.Collision.EnableManifoldGJKInject"), bChaos_Collision_EnableManifoldGJKInject, TEXT(""));
 
+	bool bChaos_Manifold_EnableGjkWarmStart = true;
+	FAutoConsoleVariableRef CVarChaos_Manifold_EnableGjkWarmStart(TEXT("p.Chaos.Collision.Manifold.EnableGjkWarmStart"), bChaos_Manifold_EnableGjkWarmStart, TEXT(""));
+
 	// See GJKContactPointMargin for comments on why these matter
 	// LWC_TODO: These needs to be a larger values for float builds (1.e-3f)
 	FRealSingle Chaos_Collision_GJKEpsilon = 1.e-6f;
@@ -81,6 +84,31 @@ namespace Chaos
 	FRealSingle Chaos_Collision_EdgePrunePlaneDistance = 3.0;
 	FAutoConsoleVariableRef CVarChaos_Collision_EnableEdgePrune(TEXT("p.Chaos.Collision.EnableEdgePrune"), bChaos_Collision_EnableEdgePrune, TEXT(""));
 	FAutoConsoleVariableRef CVarChaos_Collision_EdgePrunePlaneDistance(TEXT("p.Chaos.Collision.EdgePrunePlaneDistance"), Chaos_Collision_EdgePrunePlaneDistance, TEXT(""));
+
+	bool bChaos_Collision_EnableLargeMeshManifolds = 1;
+	FAutoConsoleVariableRef CVarChaos_Collision_EnableLargeMeshManifolds(TEXT("p.Chaos.Collision.EnableLargeMeshManifolds"), bChaos_Collision_EnableLargeMeshManifolds, TEXT("Whether to allow large mesh manifolds for collisions against meshes (required for good behaviour)"));
+
+	FRealSingle Chaos_Collision_MeshContactNormalThreshold = 0.998f;	// ~3deg
+	FAutoConsoleVariableRef CVarChaos_Collision_MeshContactNormalThreshold(TEXT("p.Chaos.Collision.MeshContactNormalThreshold"), Chaos_Collision_MeshContactNormalThreshold, TEXT("Treat contact with a dot product between the normal and the triangle face greater than this as face collisions"));
+
+	FRealSingle Chaos_Collision_MeshContactNormalRejectionThreshold = 0.7f;	// ~45deg
+	FAutoConsoleVariableRef CVarChaos_Collision_MeshContactNormalRejectionThreshold(TEXT("p.Chaos.Collision.MeshContactNormalRejectionThreshold"), Chaos_Collision_MeshContactNormalRejectionThreshold, TEXT("Don't correct edge and vertex normals if they are beyond the valid range by more than this"));
+
+	bool bChaos_Collision_MeshManifoldSortByDistance = false;
+	FAutoConsoleVariableRef CVarChaos_Collision_LargeMeshManifoldSortByDistance(TEXT("p.Chaos.Collision.SortMeshManifoldByDistance"), bChaos_Collision_MeshManifoldSortByDistance, TEXT("Sort large mesh manifold points by |RxN| for improved solver stability (less rotation in first iteration)"));
+
+	int32 Chaos_Collision_MeshManifoldHashSize = 256;
+	FAutoConsoleVariableRef CVarChaos_Collision_MeshManifoldHashSize(TEXT("p.Chaos.Collision.MeshManifoldHashSize"), Chaos_Collision_MeshManifoldHashSize, TEXT("Hash table size to use in vertex and edge maps in convex-mesh collision"));
+
+	// @todo(chaos): Temp while we test the new convex-mesh collision optimizations
+	bool bChaos_Collision_EnableMeshManifoldOptimizedLoop = true;
+	bool bChaos_Collision_EnableMeshManifoldOptimizedLoop_TriMesh = true;
+	FAutoConsoleVariableRef CVarChaos_Collision_EnableMeshManifoldOptimizedLoop(TEXT("p.Chaos.Collision.EnableMeshManifoldOptimizedLoop"), bChaos_Collision_EnableMeshManifoldOptimizedLoop, TEXT(""));
+	FAutoConsoleVariableRef CVarChaos_Collision_EnableMeshManifoldOptimizedLoop_TriMesh(TEXT("p.Chaos.Collision.EnableMeshManifoldOptimizedLoopTriMesh"), bChaos_Collision_EnableMeshManifoldOptimizedLoop_TriMesh, TEXT(""));
+
+	// MACD uses the non-MACD path when the shape is outside the triangle plane
+	bool bChaos_Collision_EnableMACDFallback = false;
+	FAutoConsoleVariableRef CVarChaos_Collision_EnableMACDFallback(TEXT("p.Chaos.Collision.EnableMACDFallback"), bChaos_Collision_EnableMACDFallback, TEXT(""));
 
 	// Whether to use the new index-less GJK. 
 	// @todo(chaos): This should be removed once soaked for a bit (enabled 7 June 2022)
@@ -439,13 +467,13 @@ namespace Chaos
 					ContactPointCount = 0;
 					break;
 				}
-				else if ((Dist0 > PlaneTolerance) && (Dist1 < 0))
+				else if ((Dist0 > PlaneTolerance) && (Dist1 < PlaneTolerance))
 				{
 					// First point is outside, second inside
 					const FReal Alpha = Dist1 / (Dist1 - Dist0);
 					VertexBuffer[0] = VertexBuffer[1] + Alpha * (VertexBuffer[0] - VertexBuffer[1]);
 				}
-				else if ((Dist1 > PlaneTolerance) && (Dist0 < 0))
+				else if ((Dist1 > PlaneTolerance) && (Dist0 < PlaneTolerance))
 				{
 					// Second point is outside, first inside
 					const FReal Alpha = Dist0 / (Dist0 - Dist1);
@@ -778,9 +806,7 @@ namespace Chaos
 			const FReal Margin2 = Constraint.GetCollisionMargin1();
 			const FRigidTransform3 Convex2ToConvex1Transform = Convex2Transform.GetRelativeTransformNoScale(Convex1Transform);
 
-			const bool bEnableNetworkPhysicsResim = FPhysicsSolverBase::IsNetworkPhysicsPredictionEnabled() && FPhysicsSolverBase::IsPhysicsResimulationEnabled();
-			
-			if (bEnableNetworkPhysicsResim)
+			if (!bChaos_Manifold_EnableGjkWarmStart)
 			{
 				Constraint.GetGJKWarmStartData().Reset();
 			}
@@ -1145,7 +1171,7 @@ namespace Chaos
 				// but only if the cylinder is not standing vertically on the face
 				const FReal CapsuleCylinderTolerance = FReal(0.707);	// about 45 deg
 				const FReal CapsuleAxisDotConvexNormal = FVec3::DotProduct(ConvexPlaneNormal, CapsuleAxisSegment.GetAxis());
-				if (CapsuleAxisDotConvexNormal < CapsuleCylinderTolerance)
+				if (FMath::Abs(CapsuleAxisDotConvexNormal) < CapsuleCylinderTolerance)
 				{
 					// The line segment on the surface of the cylinder closest to the contact
 					const FVec3 CapsuleCylinderNormal = (ConvexPlaneNormal - CapsuleAxisDotConvexNormal * CapsuleAxisSegment.GetAxis()).GetUnsafeNormal();
@@ -1203,7 +1229,7 @@ namespace Chaos
 				ContactPoint.ShapeContactNormal = -GJKContactPoint.ShapeContactNormal;
 				ContactPoint.Phi = GJKContactPoint.Phi;
 				ContactPoint.FaceIndex = INDEX_NONE;
-				ContactPoint.ContactType = EContactPointType::EdgeEdge;
+				ContactPoint.ContactType = bIsConvexPlaneContact ? EContactPointType::VertexPlane : EContactPointType::EdgeEdge;
 				OutContactPoints.Add(ContactPoint);
 				return;
 			}

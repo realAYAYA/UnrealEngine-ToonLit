@@ -12,9 +12,6 @@
 #include "UObject/Object.h"
 #include "Animation/AnimLinkableElement.h"
 #include "Animation/AnimTypes.h"
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "Animation/BlendProfile.h"
-#endif
 #include "Animation/AnimationAsset.h"
 #include "AlphaBlend.h"
 #include "Animation/AnimCompositeBase.h"
@@ -196,6 +193,8 @@ DECLARE_DELEGATE_TwoParams( FOnMontageEnded, class UAnimMontage*, bool /*bInterr
  */
 DECLARE_DELEGATE_TwoParams( FOnMontageBlendingOutStarted, class UAnimMontage*, bool /*bInterrupted*/) 
 
+DECLARE_DELEGATE_OneParam(FOnMontageBlendedInEnded, class UAnimMontage*)
+
 /**
 	Helper struct to sub step through Montages when advancing time.
 	These require stopping at sections and branching points to potential jumps and loops.
@@ -337,6 +336,7 @@ struct FAnimMontageInstance
 	// delegates
 	FOnMontageEnded OnMontageEnded;
 	FOnMontageBlendingOutStarted OnMontageBlendingOutStarted;
+	FOnMontageBlendedInEnded OnMontageBlendedInEnded;
 
 	UPROPERTY()
 	bool bPlaying;
@@ -615,6 +615,7 @@ class UAnimMontage : public UAnimCompositeBase
 	GENERATED_UCLASS_BODY()
 
 	friend struct FAnimMontageInstance;
+	friend class UAnimMontageFactory;
 	
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = BlendOption)
 	EMontageBlendMode BlendModeIn;
@@ -718,6 +719,12 @@ class UAnimMontage : public UAnimCompositeBase
 
 	/** return true if valid slot */
 	ENGINE_API bool IsValidSlot(FName InSlotName) const;
+
+	UFUNCTION(BlueprintPure, Category = "Montage")
+	ENGINE_API bool IsDynamicMontage() const;
+
+	UFUNCTION(BlueprintPure, Category = "Montage")
+	ENGINE_API UAnimSequenceBase* GetFirstAnimReference() const;
 
 public:
 	//~ Begin UObject Interface

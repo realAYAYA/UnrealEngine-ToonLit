@@ -13,7 +13,7 @@ class USkeletalMeshComponent;
 
 /**
  * Node to handle re-targeting of Hand IK bone chain.
- * It looks at position in Mesh Space of Left and Right IK bones, and moves Left and Right IK bones to those.
+ * It looks at position in Mesh Space of Left and Right FK bones, and moves Left and Right IK bones to those.
  * based on HandFKWeight. (0 = favor left hand, 1 = favor right hand, 0.5 = equal weight).
  * This is used so characters of different proportions can handle the same props.
  */
@@ -42,6 +42,10 @@ struct FAnimNode_HandIKRetargeting : public FAnimNode_SkeletalControlBase
 	/** IK Bones to move. */
 	UPROPERTY(EditAnywhere, Category = "HandIKRetargeting")
 	TArray<FBoneReference> IKBonesToMove;
+
+	// Alpha values per axis to apply on the resulting retargeting translation
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HandIKRetargeting", meta = (PinHiddenByDefault))
+	FVector PerAxisAlpha;
 
 	/** Which hand to favor. 0.5 is equal weight for both, 1 = right hand, 0 = left hand. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HandIKRetargeting", meta = (PinShownByDefault))

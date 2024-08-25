@@ -762,8 +762,6 @@ bool UTimecodeSynchronizer::Tick_TestTimecode()
 
 		return SynchronizationState == ETimecodeProviderSynchronizationState::Synchronized;
 	}
-
-	return true;
 }
 
 void UTimecodeSynchronizer::TickPreRolling_WaitGenlockTimecodeProvider()

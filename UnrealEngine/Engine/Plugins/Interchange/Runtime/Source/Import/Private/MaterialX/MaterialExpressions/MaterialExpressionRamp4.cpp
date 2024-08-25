@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #include "MaterialExpressionRamp4.h"
 #include "MaterialCompiler.h"
+#include "MaterialHLSLGenerator.h"
+#include "MaterialHLSLTree.h"
 
 #define LOCTEXT_NAMESPACE "MaterialExpressionMaterialXRamp4"
 
@@ -69,6 +71,34 @@ void UMaterialExpressionMaterialXRamp4::GetCaption(TArray<FString>& OutCaptions)
 void UMaterialExpressionMaterialXRamp4::GetExpressionToolTip(TArray<FString>& OutToolTip)
 {
 	ConvertToMultilineToolTip(TEXT("A 4-corner bilinear value ramp."), 40, OutToolTip);
+}
+
+bool UMaterialExpressionMaterialXRamp4::GenerateHLSLExpression(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope, int32 OutputIndex, UE::HLSLTree::FExpression const*& OutExpression) const
+{
+	using namespace UE::HLSLTree;
+
+	const FExpression* ExpressionA = A.AcquireHLSLExpression(Generator, Scope);
+	const FExpression* ExpressionB = B.AcquireHLSLExpression(Generator, Scope);
+	const FExpression* ExpressionC = C.AcquireHLSLExpression(Generator, Scope);
+	const FExpression* ExpressionD = D.AcquireHLSLExpression(Generator, Scope);
+	const FExpression* ExpressionCoordinates = Coordinates.AcquireHLSLExpressionOrExternalInput(Generator, Scope, Material::MakeInputTexCoord(ConstCoordinate));
+
+	if(!ExpressionA || !ExpressionB || !ExpressionC || !ExpressionD || !ExpressionCoordinates)
+	{
+		return false;
+	}
+
+	FTree& Tree = Generator.GetTree();
+
+	const FExpression* ExpressionCoordinatesClamped = Tree.NewSaturate(ExpressionCoordinates);
+	const FExpression* ExpressionCoordinatesU = Tree.NewSwizzle(FSwizzleParameters(0), ExpressionCoordinatesClamped);
+	const FExpression* ExpressionCoordinatesV = Tree.NewSwizzle(FSwizzleParameters(1), ExpressionCoordinatesClamped);
+
+	OutExpression = Tree.NewLerp(Tree.NewLerp(ExpressionC, ExpressionD, ExpressionCoordinatesU),
+								 Tree.NewLerp(ExpressionA, ExpressionB, ExpressionCoordinatesU),
+								 ExpressionCoordinatesV);
+
+	return true;
 }
 #endif
 

@@ -2,25 +2,56 @@
 
 #pragma once
 
-#include "CoreMinimal.h"
+#include "UObject/WeakInterfacePtr.h"
 #include "ActorInstanceHandle.generated.h"
 
-// Handle to a unique object. This may specify a full weigh actor or it may only specify the light weight instance that represents the same object.
+class USceneComponent;
+class AActor;
+class UActorInstanceManager;
+class IActorInstanceManagerInterface;
+class ULevel;
+
+using FActorInstanceManagerInterface = TWeakInterfacePtr<IActorInstanceManagerInterface>;
+
+/**
+ * Handle to a unique object. This may specify a full weigh actor or it may only specify the actor instance that represents the same object.
+ * 
+ * @note The handle has game thread constraints related to UObjects and should be used carefully from other threads.
+ * 
+ *	Can only be used on the game thread
+ *	-	all constructors 
+ *	-	all getters (GetXYZ, FetchActor, IsActorValid, DoesRepresent) *	
+ *	-	comparison operators against live AActor pointer
+ *	
+ *	Can be used on any thread
+ *	-	MakeActorHandleToResolve to create a handle that will be lazily resolved on the game thread
+ *		since it only stores a weak object ptr without any access to the live object
+ *	-	handle validity and comparison operators against another handle (i.e. IsValid(), operator==|!=(const FActorInstanceHandle& Other))
+ */
 USTRUCT(BlueprintType)
 struct FActorInstanceHandle
 {
 	GENERATED_BODY()
 
-	friend struct FLightWeightInstanceSubsystem;
-	friend class ALightWeightInstanceManager;
-	friend class UActorInstanceHandleInterface;
-
-	ENGINE_API FActorInstanceHandle();
+	ENGINE_API FActorInstanceHandle() = default;
 
 	ENGINE_API explicit FActorInstanceHandle(AActor* InActor);
-	ENGINE_API explicit FActorInstanceHandle(class ALightWeightInstanceManager* Manager, int32 InInstanceIndex);
-
+	ENGINE_API FActorInstanceHandle(const UPrimitiveComponent* RelevantComponent, int32 CollisionInstanceIndex);
+	ENGINE_API FActorInstanceHandle(AActor* InActor, const UPrimitiveComponent* RelevantComponent, int32 CollisionInstanceIndex);
+	ENGINE_API FActorInstanceHandle(FActorInstanceManagerInterface InManagerInterface, int32 InstanceIndex);
 	ENGINE_API FActorInstanceHandle(const FActorInstanceHandle& Other);
+
+	/** 
+	 * A path dedicated to creation of handles while converting actor to a dehydrated representation. This path ensures
+	 * an actor won't be spawned as a side effect of looking for the actor given Manager/Index represents
+	 */
+	static ENGINE_API FActorInstanceHandle MakeDehydratedActorHandle(UObject& Manager, int32 InInstanceIndex);
+
+	/** 
+	 * A path dedicated to creation of handles from any threads.
+	 * This path marks the handle as need resolving once it gets accessed from the game thread.
+	 */
+	static ENGINE_API FActorInstanceHandle MakeActorHandleToResolve(const TWeakObjectPtr<UPrimitiveComponent>& WeakComponent, int32 CollisionInstanceIndex);
 
 	ENGINE_API bool IsValid() const;
 
@@ -30,7 +61,7 @@ struct FActorInstanceHandle
 	bool DoesRepresent() const;
 
 	ENGINE_API UClass* GetRepresentedClass() const;
-
+	ENGINE_API ULevel* GetLevel() const;
 	ENGINE_API FVector GetLocation() const;
 	ENGINE_API FRotator GetRotation() const;
 	ENGINE_API FTransform GetTransform() const;
@@ -46,14 +77,15 @@ struct FActorInstanceHandle
 
 	/** Returns the actor specified by this handle. This may require loading and creating the actor object. */
 	ENGINE_API AActor* FetchActor() const;
+
 	template <typename T>
 	T* FetchActor() const;
 
+	ENGINE_API AActor* GetCachedActor() const;
+	ENGINE_API void SetCachedActor(AActor* InActor) const;
+
 	/* Returns the index used internally by the manager */
 	FORCEINLINE int32 GetInstanceIndex() const { return InstanceIndex; }
-
-	/* Returns the index used by rendering and collision */
-	ENGINE_API int32 GetRenderingInstanceIndex() const;
 
 	FActorInstanceHandle& operator=(const FActorInstanceHandle& Other) = default;
 	FActorInstanceHandle& operator=(FActorInstanceHandle&& Other) = default;
@@ -65,35 +97,63 @@ struct FActorInstanceHandle
 	ENGINE_API bool operator==(const AActor* OtherActor) const;
 	ENGINE_API bool operator!=(const AActor* OtherActor) const;
 
+	explicit operator bool() const { return IsValid(); }
+
 	friend ENGINE_API uint32 GetTypeHash(const FActorInstanceHandle& Handle);
 
 	friend ENGINE_API FArchive& operator<<(FArchive& Ar, FActorInstanceHandle& Handle);
 
-	uint32 GetInstanceUID() const { return InstanceUID; }
+	FActorInstanceManagerInterface GetManagerInterface() const { return ManagerInterface; }
+
+	template<typename T>
+	T* GetManager() const 
+	{
+		return Cast<T>(ManagerInterface.GetObject());
+	}
 
 private:
+	friend struct FActorInstanceHandleInternalHelper;
+
 	/**
 	 * helper functions that let us treat the actor pointer as a UObject in templated functions
 	 * these do NOT fetch the actor so they will return nullptr if we don't have a full actor representation
 	 */
-	ENGINE_API UObject* GetActorAsUObject();
-	ENGINE_API const UObject* GetActorAsUObject() const;
+	UObject* GetActorAsUObject();
+	const UObject* GetActorAsUObject() const;
 
 	/** Returns true if Actor is not null and not pending kill */
-	ENGINE_API bool IsActorValid() const;
+	bool IsActorValid() const;
 
-	/** this is cached here for convenience */
+	void ResolveHandle() const;
+	
+	/**
+	 * Weak UObject pointer used for two purposes:
+	 *  - a resolved handle uses it to store the AActor
+	 *  - a handle to be resolved uses it to store the UPrimitiveComponent provided by MakeActorHandleToResolve 
+	 */
 	UPROPERTY()
-		mutable TWeakObjectPtr<AActor> Actor;
+	mutable TWeakObjectPtr<UObject> ReferenceObject;
 
-	/** Identifies the light weight instance manager to use */
-	TWeakObjectPtr<ALightWeightInstanceManager> Manager;
+	/** Identifies the actor instance manager to use */
+	FActorInstanceManagerInterface ManagerInterface;
 
 	/** Identifies the instance within the manager */
-	int32 InstanceIndex;
+	int32 InstanceIndex = INDEX_NONE;
 
-	/** Unique identifier for instances represented by the handle */
-	uint32 InstanceUID;
+	/**
+	 * Enum to keep track of the resolution status of the handle.
+	 * It is only possible to safely resolve the handle on the game thread so
+	 * other threads should use MakeActorHandleToResolve to safely create one. 
+	 */
+	enum class EResolutionStatus : uint8
+	{
+		Invalid,
+		Resolved, /* ManagerInterface and InstanceIndex are set or an Actor pointer is stored in ReferenceObject */
+		NeedsResolving /* Component pointer is stored in ReferenceObject and InstanceIndex might hold a CollisionInstanceIndex */
+	};
+
+	/** Indicates if the handle is resolved, needs to be resolved (extract Actor|ManagerInterface) */
+	EResolutionStatus ResolutionStatus = EResolutionStatus::Invalid;
 };
 
 template<typename T>

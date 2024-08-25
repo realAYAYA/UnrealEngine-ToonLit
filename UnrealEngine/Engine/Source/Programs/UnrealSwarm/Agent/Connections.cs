@@ -1112,7 +1112,7 @@ namespace Agent
 			{
 				// Update our state and ping the coordinator, if this is an instigating connection
 				CurrentState = AgentState.Working;
-				WorkingFor = Environment.MachineName;
+				WorkingFor = System.Net.Dns.GetHostName();
 				PingCoordinator( true );
 			}
 
@@ -1227,7 +1227,7 @@ namespace Agent
 
 						Hashtable RequestedConfiguration = new Hashtable();
 						RequestedConfiguration["Version"] = new Version( 0, 0, 0, 0 );
-						RequestedConfiguration["RequestingAgentName"] = Environment.MachineName;
+						RequestedConfiguration["RequestingAgentName"] = System.Net.Dns.GetHostName();
 						List<AgentInfo> PotentialRemoteAgents = Coordinator.GetAvailableAgents( RequestedConfiguration );
 						foreach( AgentInfo NextAgentInfo in PotentialRemoteAgents )
 						{
@@ -1484,7 +1484,7 @@ namespace Agent
 					// Send the connection handle and the machine name that will
 					// be used to construct the return URL for bi-directional
 					// connection
-					if( WrappedRemoteAgentInterface.OpenRemoteConnection( Environment.MachineName, NewConnectionHandle, LoggingFlags, IsAssigned, AssignedTimestamp ) >= 0 )
+					if( WrappedRemoteAgentInterface.OpenRemoteConnection(System.Net.Dns.GetHostName(), NewConnectionHandle, LoggingFlags, IsAssigned, AssignedTimestamp ) >= 0 )
 					{
 						// Successful confirmation, double check that the connection has moved
 						if( PendingConnections.ContainsKey( NewConnectionHandle ) == false )
@@ -1802,8 +1802,8 @@ namespace Agent
 					Hashtable RequestedConfiguration = new Hashtable();
 					RequestedConfiguration["Version"] = CurrentVersion;
 					RequestedConfiguration["GroupName"] = AgentApplication.Options.AllowedRemoteAgentGroup;
-					RequestedConfiguration["RequestingAgentName"] = Environment.MachineName;
-					RequestedConfiguration["RequestAssignmentFor"] = Environment.MachineName;
+					RequestedConfiguration["RequestingAgentName"] = System.Net.Dns.GetHostName();
+					RequestedConfiguration["RequestAssignmentFor"] = System.Net.Dns.GetHostName();
 					PotentialRemoteAgents = Coordinator.GetAvailableAgents( RequestedConfiguration );
 				}
 				catch( Exception )
@@ -1820,7 +1820,7 @@ namespace Agent
 					foreach( AgentInfo Info in PotentialRemoteAgents )
 					{
 						bool WorkerAlreadyConnectedOrDisallowed = false;
-						if( ( Info.Name == Environment.MachineName ) ||
+						if( ( Info.Name == System.Net.Dns.GetHostName()) ||
 							( !AgentNamePassesAllowedAgentsFilter( Info.Name ) ) )
 						{
 							// Trivial case
@@ -1882,7 +1882,7 @@ namespace Agent
 				bool IsAssigned = false;
 				DateTime AssignedTimestamp = DateTime.MinValue;
 				if( ( NextRemoteAgent.Configuration.ContainsKey( "AssignedTo" ) ) &&
-					( ( NextRemoteAgent.Configuration["AssignedTo"] as string ) == Environment.MachineName ) )
+					( ( NextRemoteAgent.Configuration["AssignedTo"] as string ) == System.Net.Dns.GetHostName()) )
 				{
 					IsAssigned = true;
 					AssignedTimestamp = ( DateTime )NextRemoteAgent.Configuration["AssignedTime"];
@@ -2015,7 +2015,7 @@ namespace Agent
 					Hashtable RequestedConfiguration = new Hashtable();
 					RequestedConfiguration["Version"] = CurrentVersion;
 					RequestedConfiguration["GroupName"] = AgentGroupName;
-					RequestedConfiguration["RequestingAgentName"] = Environment.MachineName;
+					RequestedConfiguration["RequestingAgentName"] = System.Net.Dns.GetHostName();
 					PotentialRemoteAgents = Coordinator.GetAvailableAgents( RequestedConfiguration );
 					PrintSimpleAgentList( PotentialRemoteAgents );
 				}
@@ -2043,7 +2043,7 @@ namespace Agent
 					Hashtable RequestedConfiguration = new Hashtable();
 					RequestedConfiguration["Version"] = new Version( 0, 0, 0, 0 );
 					RequestedConfiguration["GroupName"] = AgentGroupName;
-					RequestedConfiguration["RequestingAgentName"] = Environment.MachineName;
+					RequestedConfiguration["RequestingAgentName"] = System.Net.Dns.GetHostName();
 
 					// Start by getting the current state of the agents in the group we care about
 					List<AgentInfo> RemoteAgentsInGroupBefore = Coordinator.GetAvailableAgents( RequestedConfiguration );

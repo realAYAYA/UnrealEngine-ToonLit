@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "DerivedDataCacheStats.h"
+#include "DerivedDataLegacyCacheStore.h"
 
 #include "Algo/BinarySearch.h"
 
@@ -94,7 +95,7 @@ void FTimeAveragedStat::Add(FMonotonicTimePoint StartTime, FMonotonicTimePoint E
 			const int32 EndIndex = Algo::LowerBoundBy(ActiveRanges, EndTime, &FRange::StartTime);
 			StartRange.EndTime = FMath::Max(EndTime, ActiveRanges[EndIndex - 1].EndTime);
 
-			ActiveRanges.RemoveAt(StartIndex + 1, EndIndex - StartIndex - 1, /*bAllowShrinking*/ false);
+			ActiveRanges.RemoveAt(StartIndex + 1, EndIndex - StartIndex - 1, EAllowShrinking::No);
 		}
 	}
 
@@ -148,7 +149,7 @@ void FTimeAveragedStat::Update(FMonotonicTimePoint Time)
 		++AccumulatedValueCount;
 		++StartCount;
 	}
-	StartValues.RemoveAt(0, StartCount, /*bAllowShrinking*/ false);
+	StartValues.RemoveAt(0, StartCount, EAllowShrinking::No);
 
 	// Remove values exiting the current period.
 	int32 EndCount = 0;
@@ -162,7 +163,7 @@ void FTimeAveragedStat::Update(FMonotonicTimePoint Time)
 		--AccumulatedValueCount;
 		++EndCount;
 	}
-	EndValues.RemoveAt(0, EndCount, /*bAllowShrinking*/ false);
+	EndValues.RemoveAt(0, EndCount, EAllowShrinking::No);
 
 	// Remove ranges before the current period.
 	int32 RangeCount = 0;
@@ -174,7 +175,7 @@ void FTimeAveragedStat::Update(FMonotonicTimePoint Time)
 		}
 		++RangeCount;
 	}
-	ActiveRanges.RemoveAt(0, RangeCount, /*bAllowShrinking*/ false);
+	ActiveRanges.RemoveAt(0, RangeCount, EAllowShrinking::No);
 
 	// Accumulate active time in the current period.
 	FMonotonicTimeSpan ActiveTime;
@@ -274,6 +275,8 @@ void FCacheStoreStats::AddRequest(const FCacheStoreRequestStats& Stats)
 
 	if (!Stats.Latency.IsInfinity())
 	{
+		UE_LOG(LogDerivedDataCache, VeryVerbose, TEXT("%s: Adding request latency of %.2fms from %s on %s with status %s"),
+			*Name, Stats.Latency.ToMilliseconds(), LexToString(Stats.Op), LexToString(Stats.Type), *WriteToString<32>(Stats.Status));
 		AverageLatency.Add(Stats.StartTime, Stats.EndTime, Stats.Latency.ToSeconds());
 	}
 
@@ -296,6 +299,28 @@ void FCacheStoreStats::AddRequest(const FCacheStoreRequestStats& Stats)
 	CallStats.Accumulate(HitOrMiss, EStatType::Cycles, int64(Stats.OtherThreadTime.ToSeconds() / FPlatformTime::GetSecondsPerCycle64()), /*bIsInGameThread*/ false);
 	CallStats.Accumulate(HitOrMiss, EStatType::Bytes, bIsGet ? Stats.PhysicalReadSize : Stats.PhysicalWriteSize, bIsInGameThread);
 #endif
+}
+
+void FCacheStoreStats::AddLatency(FMonotonicTimePoint StartTime, FMonotonicTimePoint EndTime, FMonotonicTimeSpan Latency)
+{
+	if (!Latency.IsInfinity())
+	{
+		UE_LOG(LogDerivedDataCache, VeryVerbose, TEXT("%s: Adding non-request latency of %.2fms"),
+			*Name, Latency.ToMilliseconds());
+		AverageLatency.Add(StartTime, EndTime, Latency.ToSeconds());
+	}
+}
+
+double FCacheStoreStats::GetAverageLatency()
+{
+	TUniqueLock Lock(Mutex);
+	return AverageLatency.GetValue(FMonotonicTimePoint::Now());
+}
+
+void FCacheStoreStats::SetTotalPhysicalSize(uint64 InTotalPhysicalSize)
+{
+	TUniqueLock Lock(Mutex);
+	TotalPhysicalSize = InTotalPhysicalSize;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////

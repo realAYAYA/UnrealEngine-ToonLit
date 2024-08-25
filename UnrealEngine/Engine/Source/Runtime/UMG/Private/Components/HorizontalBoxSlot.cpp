@@ -131,7 +131,7 @@ bool UHorizontalBoxSlot::NudgeByDesigner(const FVector2D& NudgeDirection, const 
 	}
 
 	ParentHorizontalBox->Modify();
-	ParentHorizontalBox->ShiftChild(CurrentIndex + ClampedDirection.X, Content);
+	ParentHorizontalBox->ShiftChild(CurrentIndex + FMath::TruncToInt32(ClampedDirection.X), Content);
 
 	return true;
 }

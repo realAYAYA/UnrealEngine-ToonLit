@@ -13,5 +13,4 @@ void RenderHairStrandsDebugInfo(
 	FRDGBuilder& GraphBuilder,
 	FScene* Scene, 
 	TArrayView<FViewInfo> Views,
-	FRDGTextureRef SceneColorTexture, 
-	FRDGTextureRef SceneDepthTexture);
+	FHairStrandsBookmarkParameters& Parameters);

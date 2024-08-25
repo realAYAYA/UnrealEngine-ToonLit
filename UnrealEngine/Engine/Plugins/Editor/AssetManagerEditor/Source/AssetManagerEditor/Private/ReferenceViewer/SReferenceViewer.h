@@ -123,10 +123,15 @@ private:
 
 	void OnEnableCollectionFilterChanged(ECheckBoxState NewState);
 	ECheckBoxState IsEnableCollectionFilterChecked() const;
-	TSharedRef<SWidget> GenerateCollectionFilterItem(TSharedPtr<FName> InItem);
-	void UpdateCollectionsComboList();
-	void HandleCollectionFilterChanged(TSharedPtr<FName> Item, ESelectInfo::Type SelectInfo);
-	FText GetCollectionFilterText() const;
+	void CollectionFilterAddMenuEntry(FMenuBuilder& MenuBuilder, const FName& CollectionName);
+	TSharedRef<SWidget> BuildCollectionFilterMenu();
+	FText GetCollectionComboButtonText() const;
+
+	void OnEnablePluginFilterChanged(ECheckBoxState NewState);
+	ECheckBoxState IsEnablePluginFilterChecked() const;
+	void PluginFilterAddMenuEntry(FMenuBuilder& MenuBuilder, const FName& PluginName);
+	TSharedRef<SWidget> BuildPluginFilterMenu();
+	FText GetPluginComboButtonText() const;
 
 	void OnShowSoftReferencesChanged();
 	bool IsShowSoftReferencesChecked() const;
@@ -141,6 +146,9 @@ private:
 
 	void OnCompactModeChanged();
 	bool IsCompactModeChecked() const;
+
+	void OnShowExternalReferencersChanged();
+	bool IsShowExternalReferencersChecked() const;
 
 	void OnShowDuplicatesChanged();
 	bool IsShowDuplicatesChecked() const;
@@ -246,6 +254,8 @@ private:
 	int32 FixAndHideSearchBreadthLimit;
 	/** Whether to visually show to the user the option of "Collection Filter" */
 	bool bShowCollectionFilter;
+	/** Whether to visually show to the user the option of "Plugin Filter" */
+	bool bShowPluginFilter;
 	/** Whether to visually show to the user the options of "Show Soft/Hard/Management References" */
 	bool bShowShowReferencesOptions;
 	/** Whether to visually show to the user the option of "Show Searchable Names" */

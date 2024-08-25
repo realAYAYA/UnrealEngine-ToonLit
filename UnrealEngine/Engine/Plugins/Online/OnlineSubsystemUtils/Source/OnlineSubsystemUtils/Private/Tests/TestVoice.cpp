@@ -216,7 +216,7 @@ void FTestVoice::GenerateData(USoundWaveProcedural* InProceduralWave, int32 Samp
 		if (AvailableSamples >= SamplesRequired)
 		{
 			InProceduralWave->QueueAudio(UncompressedDataQueue.GetData(), AvailableSamples * SampleSize);
-			UncompressedDataQueue.RemoveAt(0, AvailableSamples * SampleSize, false);
+			UncompressedDataQueue.RemoveAt(0, AvailableSamples * SampleSize, EAllowShrinking::No);
 			CurrentUncompressedDataQueueSize -= (AvailableSamples * SampleSize);
 		}
 	}

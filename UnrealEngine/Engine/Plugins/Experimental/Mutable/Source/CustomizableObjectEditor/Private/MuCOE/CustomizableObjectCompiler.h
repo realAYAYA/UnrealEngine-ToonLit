@@ -3,6 +3,7 @@
 #pragma once
 
 #include "AssetRegistry/AssetData.h"
+#include "MuCO/CustomizableObjectPrivate.h"
 #include "MuCOE/CompilationMessageCache.h"
 #include "MuCOE/GenerateMutableSource/GenerateMutableSource.h"
 #include "MuCOE/CustomizableObjectEditorLogger.h"
@@ -31,22 +32,11 @@ public:
 	/** Check for pending compilation process. Returns true if an object has been updated. */
 	CUSTOMIZABLEOBJECTEDITOR_API virtual bool Tick() override;
 
-	/** In case Mutable Compile is disabled, fake the compilation process */
-	CUSTOMIZABLEOBJECTEDITOR_API void MutableIsDisabledCase(UCustomizableObject* Object);
-
-	/** Provided a CO object it provides the root CO it is connected. In other words : it returns the root of the entire
-	 * mutable graph.
-	 * @param InObject Customizable object whose root CO we are asking for.
-	 * @return The CO that is the root of the provided Customizable Object. It can be equal to InObject if the provided
-	 * object does not have any parent.
-	 */
-	virtual UCustomizableObject* GetRootObject(UCustomizableObject* InObject) override;
-
 	/** Generate the Mutable Graph from the Unreal Graph. */
-	mu::NodePtr Export(UCustomizableObject* Object, const FCompilationOptions& Options);
+	mu::NodePtr Export(UCustomizableObject* Object, const FCompilationOptions& Options, TArray<TSoftObjectPtr<UTexture>>& OutRuntimeReferencedTextures, TArray<TSoftObjectPtr<UTexture>>& OutCompilerReferencedTextures);
 
-	void CompilerLog(const FText& Message, const TArray<const UCustomizableObjectNode*>& ArrayNode, const EMessageSeverity::Type MessageSeverity = EMessageSeverity::Warning, const bool bAddBaseObjectInfo = true, const ELoggerSpamBin SpamBin = ELoggerSpamBin::ShowAll);
-	void CompilerLog(const FText& Message, const UCustomizableObjectNode* Node = nullptr, const EMessageSeverity::Type MessageSeverity = EMessageSeverity::Warning, const bool bAddBaseObjectInfo = true, const ELoggerSpamBin SpamBin = ELoggerSpamBin::ShowAll);
+	void CompilerLog(const FText& Message, const TArray<const UObject*>& UObject, const EMessageSeverity::Type MessageSeverity = EMessageSeverity::Warning, const bool bAddBaseObjectInfo = true, const ELoggerSpamBin SpamBin = ELoggerSpamBin::ShowAll);
+	void CompilerLog(const FText& Message, const UObject* Context = nullptr, const EMessageSeverity::Type MessageSeverity = EMessageSeverity::Warning, const bool bAddBaseObjectInfo = true, const ELoggerSpamBin SpamBin = ELoggerSpamBin::ShowAll);
 	void NotifyCompilationErrors() const;
 
 	void FinishCompilation();
@@ -108,7 +98,7 @@ private:
 
 	static void PreloadingReferencerAssetsCallback(UCustomizableObject* Object, FCustomizableObjectCompiler* CustomizableObjectCompiler, const FCompilationOptions Options, bool bAsync);
 	
-	void ProcessChildObjectsRecursively(UCustomizableObject* Object, class FAssetRegistryModule& AssetRegistryModule, struct FMutableGraphGenerationContext &GenerationContext);
+	void ProcessChildObjectsRecursively(UCustomizableObject* Object, FMutableGraphGenerationContext &GenerationContext);
 
 	//
 	FCompilationOptions Options;
@@ -129,7 +119,7 @@ private:
 	ECustomizableObjectNumBoneInfluences CustomizableObjectNumBoneInfluences = ECustomizableObjectNumBoneInfluences::Four;
 
 	// Protected from GC with FCustomizableObjectCompiler::AddReferencedObjects
-	UCustomizableObject* CurrentObject = nullptr;
+	TObjectPtr<UCustomizableObject> CurrentObject = nullptr;
 
 	/** Array where to put the names of the already processed child in ProcessChildObjectsRecursively */
 	TArray<FName> ArrayAlreadyProcessedChild;
@@ -170,16 +160,13 @@ private:
 	/** Launches the compile task in another thread when compiling a CO in the editor
 	* @param bShowNotification [in] whether to show the compiling CO notification or not
 	* @return nothing */
-	void LaunchMutableCompile(bool bShowNotification);
+	void LaunchMutableCompile();
 
 	/** Launches the save derived data task in another thread after compiling a CO in the
 	* editor
 	* @param bShowNotification [in] whether to show the saving DD notification or not
 	* @return nothing */
-	void SaveCODerivedData(bool bShowNotification);
-
-	/** When compiling a CO in the editor, flag to know when the Unreal textures have been converted to Mutable textures */
-	bool PendingTexturesToLoad;
+	void SaveCODerivedData();
 
 	/** When compiling a CO in the editor, flag to know if there's a mutable task pending to be launched through LaunchMutableCompile */
 	bool CompilationLaunchPending;
@@ -197,13 +184,6 @@ private:
 	* @param PackageName [in] package name to find in ArrayAssetData
 	* @return pointer to element if any found, nullptr otherwise */
 	FAssetData* GetCachedAssetData(const FString& PackageName);
-
-	/** When compiling a CO, performs the texture conversion from Unreal to Mutable. If in editor, this method is called in
-	* FCustomizableObjectCompiler::Tick with time limit, otherwise it is called in FCustomizableObjectCompiler::Compile with
-	* no time limit to convert all textures in a row
-	* @param UseTimeLimit [in] if true, the method will return after TimeLimit seconds have been used to convert textures, if false, all textures will be processed in a row
-	* @return nothing */
-	void UpdatePendingTextureConversion(bool UseTimeLimit);
 
 	/** Helper function to compute the value for Unreal Engine variable s.AsyncLoadingTimeLimit while asynchronous loading is used.
 	* Also assigned to MaxConvertToMutableTextureTime
@@ -227,20 +207,14 @@ private:
 	/** Copy of GAsyncLoadingTimeLimit while assets are loaded, previous value is restored after asset load */
 	float CurrentGAsyncLoadingTimeLimit;
 
-	/** Array with the textures that need to be asynchronously converted from Unreal to Mutable */
-	TArray<FTextureUnrealToMutableTask> ArrayTextureUnrealToMutableTask;
-
 	/** Counter to know how many of the textures in ArrayTextureUnrealToMutableTask have been converted from Unreal to Mutable */
 	int32 CompletedUnrealToMutableTask;
 
-	/** Time threshold used in UpdatePendingTextureConversion to stop converting textures from Unreal to Mutable until next tick */
+	/** Time threshold used to prevent doing too much work in one tick */
 	float MaxConvertToMutableTextureTime;
 
 	// Stores the only option of an Int Param that should be compiled
 	TMap<FString, FString> ParamNamesToSelectedOptions;
-
-	// List of nodes used during generation, so that they can be found when processing mutable runtime error messages.
-	TMap<const void*, const UCustomizableObjectNode*> GeneratedNodes;
 
 	/** Pointer to the Asynchronous Preloading process call back */
 	TSharedPtr<struct FStreamableHandle> AsynchronousStreamableHandlePtr;

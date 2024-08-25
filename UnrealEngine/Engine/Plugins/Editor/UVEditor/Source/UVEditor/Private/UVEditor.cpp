@@ -27,6 +27,17 @@ void UUVEditor::Initialize(const TArray<TObjectPtr<UObject>>& InObjects)
 	// The asset editor toolkit will do the rest of the necessary initialization inside its PostInitAssetEditor.
 	UAssetEditor::Initialize();
 }
+void UUVEditor::Initialize(const TArray<TObjectPtr<UObject>>& InObjects, const TArray<FTransform3d>& InTransforms)
+{
+	check(InTransforms.Num() == InObjects.Num());
+	ObjectWorldspaceOffsets = InTransforms;
+	Initialize(InObjects);
+}
+
+void UUVEditor::GetWorldspaceRelativeTransforms(TArray<FTransform3d>& OutTransforms)
+{
+	OutTransforms.Append(ObjectWorldspaceOffsets);
+}
 
 IAssetEditorInstance* UUVEditor::GetInstanceInterface() 
 { 

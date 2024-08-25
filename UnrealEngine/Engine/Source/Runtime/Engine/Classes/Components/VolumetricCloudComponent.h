@@ -39,9 +39,13 @@ class UVolumetricCloudComponent : public USceneComponent
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, interp, Category = "Layer", meta = (UIMin = 0.1f, UIMax = 20.0f, ClampMin = 0.1, SliderExponent = 2.0))
 	float LayerHeight;
 
-	/** The maximum distance of the volumetric surface before which we will accept to start tracing. (kilometers) */
+	/** The maximum distance of the volumetric surface, i.e. cloud layer upper and lower bound, before which we will accept to start tracing. (kilometers) */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, interp, Category = "Layer", meta = (UIMin = 100.0f, UIMax = 500.0f, ClampMin = 1.0f, SliderExponent = 2.0))
 	float TracingStartMaxDistance;
+
+	/** The distance from which the tracing will start. This is useful when the camera for instance is inside the layer of cloud. (kilometers) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, interp, Category = "Layer", meta = (UIMin = 0.0f, UIMax = 100.0f, ClampMin = 0.0f, SliderExponent = 3.0))
+	float TracingStartDistanceFromCamera;
 
 	/** Mode to select how the tracing max distance should be interpreted. DistanceFromPointOfView is useful to avoid the top of the cloud layer to be clipped when TracingMaxDistance is shorten for performance. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, interp, Category = "Layer")
@@ -69,7 +73,7 @@ class UVolumetricCloudComponent : public USceneComponent
 	/** Whether to apply atmosphere transmittance per sample, instead of using the light global transmittance. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cloud Tracing")
 	uint32 bUsePerSampleAtmosphericLightTransmittance : 1; 
-	// bUsePerSampleAtmosphericLightTransmittance is there on the cloud component and not on the light because otherwise we would need optimisation permutations of the cloud shader.
+	// bUsePerSampleAtmosphericLightTransmittance is there on the cloud component and not on the light because otherwise we would need optimization permutations of the cloud shader.
 	// And this for the two atmospheric lights ON or OFF. Keeping it simple for now because this changes the look of the cloud, so it is an art/look decision.
 
 	/** Occlude the sky light contribution at the bottom of the cloud layer. This is a fast approximation to sky lighting being occluded by cloud without having to trace rays or sample AO texture. Ignored if the cloud material explicitely sets the ambient occlusion value. */
@@ -122,19 +126,26 @@ class UVolumetricCloudComponent : public USceneComponent
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Cloud Tracing", meta = (UIMin = "0.0", UIMax = "1.0", ClampMin = "0.0", ClampMax = "1.0", SliderExponent = 5.0))
 	float StopTracingTransmittanceThreshold;
 	
-	
 	/** Specify the aerial perspective start distance on cloud for Rayleigh scattering only. (kilometers) */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, interp, Category = "Art Direction", AdvancedDisplay, meta = (UIMin = 0.0, UIMax = 100.0, ClampMin = 0.0, SliderExponent = 2.0))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, interp, Category = "Art Direction", meta = (UIMin = 0.0, UIMax = 100.0, ClampMin = 0.0, SliderExponent = 2.0))
 	float AerialPespectiveRayleighScatteringStartDistance;
-	/** Specify the distance over which the Rayleigh scattering will linearly ramp up to ful leffect. (kilometers) */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, interp, Category = "Art Direction", AdvancedDisplay, meta = (UIMin = 0.0, UIMax = 100.0, ClampMin = 0.0, SliderExponent = 2.0))
+	/** Specify the distance over which the Rayleigh scattering will linearly ramp up to full effect. (kilometers) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, interp, Category = "Art Direction", meta = (UIMin = 0.0, UIMax = 100.0, ClampMin = 0.0, SliderExponent = 2.0))
 	float AerialPespectiveRayleighScatteringFadeDistance;
 	/** Specify the aerial perspective start distance on cloud for Mie scattering only. (kilometers) */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, interp, Category = "Art Direction", AdvancedDisplay, meta = (UIMin = 0.0, UIMax = 100.0, ClampMin = 0.0, SliderExponent = 2.0))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, interp, Category = "Art Direction", meta = (UIMin = 0.0, UIMax = 100.0, ClampMin = 0.0, SliderExponent = 2.0))
 	float AerialPespectiveMieScatteringStartDistance;
-	/** Specify the distance over which the Rayleigh scattering will linearly ramp up to ful leffect. (kilometers) */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, interp, Category = "Art Direction", AdvancedDisplay, meta = (UIMin = 0.0, UIMax = 100.0, ClampMin = 0.0, SliderExponent = 2.0))
+	/** Specify the distance over which the Rayleigh scattering will linearly ramp up to full effect. (kilometers) */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, interp, Category = "Art Direction", meta = (UIMin = 0.0, UIMax = 100.0, ClampMin = 0.0, SliderExponent = 2.0))
 	float AerialPespectiveMieScatteringFadeDistance;
+
+	/** If this is True, this primitive will render black with an alpha of 0, but all secondary effects (shadows, reflections, indirect lighting) remain. This feature required the project setting "Enable alpha channel support in post processing". */
+	UPROPERTY(EditAnywhere, AdvancedDisplay, BlueprintReadOnly, Category = Rendering, Interp)
+	uint8 bHoldout : 1;
+
+	/** If true, this component will be rendered in the main pass (basepass, transparency) */
+	UPROPERTY(EditAnywhere, AdvancedDisplay, BlueprintReadOnly, Category = Rendering)
+	uint8 bRenderInMainPass : 1;
 
 
 	UFUNCTION(BlueprintCallable, Category = "Rendering")
@@ -143,6 +154,8 @@ class UVolumetricCloudComponent : public USceneComponent
 	ENGINE_API void SetLayerHeight(float NewValue);
 	UFUNCTION(BlueprintCallable, Category = "Rendering")
 	ENGINE_API void SetTracingStartMaxDistance(float NewValue);
+	UFUNCTION(BlueprintCallable, Category = "Rendering")
+	ENGINE_API void SetTracingStartDistanceFromCamera(float NewValue);
 	UFUNCTION(BlueprintCallable, Category = "Rendering")
 	ENGINE_API void SetTracingMaxDistance(float NewValue);
 	UFUNCTION(BlueprintCallable, Category = "Rendering")
@@ -168,6 +181,8 @@ class UVolumetricCloudComponent : public USceneComponent
 	UFUNCTION(BlueprintCallable, Category = "Rendering")
 	ENGINE_API void SetMaterial(UMaterialInterface* NewValue);
 
+	ENGINE_API UMaterialInterface* GetMaterial() const { return Material; }
+
 	// Deprecated functions but still valid because they forward data correctly.
 	UE_DEPRECATED(5.0, "This function has been replaced by SetReflectionViewSampleCountScale.")
 	UFUNCTION(BlueprintCallable, Category = "Rendering", meta = (DeprecatedFunction, DeprecationMessage = "This function has been replaced by SetReflectionViewSampleCountScale."))
@@ -175,6 +190,12 @@ class UVolumetricCloudComponent : public USceneComponent
 	UE_DEPRECATED(5.0, "This function has been replaced by SetShadowReflectionViewSampleCountScale.")
 	UFUNCTION(BlueprintCallable, Category = "Rendering", meta = (DeprecatedFunction, DeprecationMessage = "This function has been replaced by SetShadowReflectionViewSampleCountScale."))
 	ENGINE_API void SetShadowReflectionSampleCountScale(float NewValue);
+
+	UFUNCTION(BlueprintCallable, Category = "Rendering")
+	ENGINE_API void SetHoldout(bool bNewHoldout);
+
+	UFUNCTION(BlueprintCallable, Category = "Rendering")
+	ENGINE_API void SetRenderInMainPass(bool bValue);
 
 
 protected:
@@ -228,7 +249,7 @@ private:
 	TObjectPtr<class UVolumetricCloudComponent> VolumetricCloudComponent;
 
 #if WITH_EDITOR
-	virtual bool IsDataLayerTypeSupported(TSubclassOf<UDataLayerInstance> DataLayerType) const override { return true; }
+	virtual bool ActorTypeSupportsDataLayer() const override { return true; }
 #endif
 
 };

@@ -1,60 +1,106 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System.ComponentModel;
+using System.Diagnostics;
 using EpicGames.Core;
-using EpicGames.Perforce;
-using EpicGames.Perforce.Managed;
+using EpicGames.Horde.Storage;
+using EpicGames.Horde.Storage.Backends;
+using EpicGames.Horde.Storage.Bundles;
+using EpicGames.Horde.Storage.Clients;
+using EpicGames.Horde.Storage.Nodes;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace Horde.Commands.Workspace
 {
-	[Command("workspace", "sync", "Syncs the files for a particular stream and changelist")]
-	class WorkspaceSync : WorkspaceBase
+	using Workspace = EpicGames.Horde.Storage.Workspace;
+
+	[Command("workspace", "sync", "Extracts an archive into the workspace")]
+	class WorkspaceSync : StorageCommandBase
 	{
-		[CommandLine("-Client=", Required = true)]
-		[Description("Name of the client to sync. Will be created if it does not exist.")]
-		public string ClientName { get; set; } = null!;
+		[CommandLine("-Root=")]
+		[Description("Root directory for the managed workspace.")]
+		public DirectoryReference? RootDir { get; set; }
 
-		[CommandLine("-Stream=", Required = true)]
-		[Description("The stream to sync")]
-		public string StreamName { get; set; } = null!;
+		[CommandLine("-File=")]
+		[Description("Path to a text file containing the node to extract to this workspace.")]
+		public FileReference? File { get; set; }
 
-		[CommandLine("-Change=")]
-		[Description("The change to sync. May be a changelist number, or 'Latest'")]
-		public string Change { get; set; } = "Latest";
+		[CommandLine("-Ref=")]
+		[Description("Name of a ref to extract to this workspace.")]
+		public string? Ref { get; set; }
 
-		[CommandLine("-Preflight=")]
-		[Description("The change to unshelve into the workspace")]
-		public int PreflightChange { get; set; } = -1;
+		[CommandLine("-Node=")]
+		[Description("Locator for a node to extract to this workspace.")]
+		public string? Node { get; set; }
 
-		[CommandLine]
-		[Description("Optional path to a cache file used to store workspace metadata. Using a location on a network share allows multiple machines syncing the same CL to only query Perforce state once.")]
-		FileReference? CacheFile { get; set; } = null;
+		[CommandLine("-Layer=")]
+		[Description("Name of the layer to extract to.")]
+		public WorkspaceLayerId LayerId { get; set; } = WorkspaceLayerId.Default;
 
-		[CommandLine("-Filter=")]
-		[Description("Filters for the files to sync, in P4 syntax (eg. /Engine/...)")]
-		public List<string> Filters { get; set; } = new List<string>();
+		[CommandLine("-Stats")]
+		[Description("Outputs stats for the extraction operation.")]
+		public bool Stats { get; set; }
 
-		[CommandLine("-Incremental")]
-		[Description("Performs an incremental sync, without removing intermediates")]
-		public bool IncrementalSync { get; set; } = false;
-
-		[CommandLine("-FakeSync")]
-		[Description("Simulates the sync without actually fetching any files")]
-		public bool FakeSync { get; set; } = false;
-
-		protected override async Task ExecuteAsync(IPerforceConnection perforce, ManagedWorkspace repo, ILogger logger)
+		public WorkspaceSync(HttpStorageClientFactory storageClientFactory, BundleCache bundleCache, IOptions<CmdConfig> config)
+			: base(storageClientFactory, bundleCache, config)
 		{
-			int changeNumber = ParseChangeNumberOrLatest(Change);
-			List<string> expandedFilters = ExpandFilters(Filters);
+		}
 
-			using IPerforceConnection perforceClient = await perforce.WithClientAsync(ClientName);
-			await repo.SyncAsync(perforceClient, StreamName, changeNumber, expandedFilters, !IncrementalSync, FakeSync, CacheFile, CancellationToken.None);
-
-			if (PreflightChange != -1)
+		public override async Task<int> ExecuteAsync(ILogger logger)
+		{
+			if (File != null)
 			{
-				await repo.UnshelveAsync(perforceClient, PreflightChange, CancellationToken.None);
+				using IStorageClient store = BundleStorageClient.CreateFromDirectory(File.Directory, BundleCache, logger);
+				IBlobHandle handle = store.CreateBlobHandle(await FileStorageBackend.ReadRefAsync(File));
+				return await ExecuteInternalAsync(store, handle, logger);
 			}
+			else if (Ref != null)
+			{
+				using IStorageClient store = CreateStorageClient();
+				IBlobHandle handle = await store.ReadRefAsync(new RefName(Ref));
+				return await ExecuteInternalAsync(store, handle, logger);
+			}
+			else if (Node != null)
+			{
+				using IStorageClient store = CreateStorageClient();
+				IBlobHandle handle = store.CreateBlobHandle(new BlobLocator(Node));
+				return await ExecuteInternalAsync(store, handle, logger);
+			}
+			else
+			{
+				throw new CommandLineArgumentException("Either -File=... or -Ref=... must be specified");
+			}
+		}
+
+		async Task<int> ExecuteInternalAsync(IStorageClient store, IBlobHandle handle, ILogger logger)
+		{
+			RootDir ??= DirectoryReference.GetCurrentDirectory();
+			CancellationToken cancellationToken = CancellationToken.None;
+
+			Workspace? workspace = await Workspace.TryOpenAsync(RootDir, logger, cancellationToken);
+			if (workspace == null)
+			{
+				logger.LogError("No workspace has been initialized in {RootDir}. Use 'workspace init' to create a new workspace.", RootDir);
+				return 1;
+			}
+
+			Stopwatch timer = Stopwatch.StartNew();
+			logger.LogInformation("Syncing into layer '{LayerId}'...", LayerId);
+
+			DirectoryNode contents = await handle.ReadBlobAsync<DirectoryNode>();
+			await workspace.SyncAsync(LayerId, contents, cancellationToken);
+			await workspace.SaveAsync(cancellationToken);
+
+			logger.LogInformation("Elapsed: {Time}s", timer.Elapsed.TotalSeconds);
+
+			if (Stats)
+			{
+				StorageStats stats = store.GetStats();
+				stats.Print(logger);
+			}
+
+			return 0;
 		}
 	}
 }

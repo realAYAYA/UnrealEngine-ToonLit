@@ -17,22 +17,6 @@
 
 #define LOCTEXT_NAMESPACE "DMXPixelMappingLayoutViewModel"
 
-UDMXPixelMappingLayoutViewModel::UDMXPixelMappingLayoutViewModel()
-{
-	if (GEditor)
-	{
-		GEditor->RegisterForUndo(this);
-	}
-}
-
-UDMXPixelMappingLayoutViewModel::~UDMXPixelMappingLayoutViewModel()
-{
-	if (GEditor)
-	{
-		GEditor->UnregisterForUndo(this);
-	}
-}
-
 void UDMXPixelMappingLayoutViewModel::PreEditChange(FProperty* PropertyAboutToChange)
 {
 	Super::PreEditChange(PropertyAboutToChange);
@@ -65,7 +49,7 @@ void UDMXPixelMappingLayoutViewModel::SetToolkit(const TSharedRef<FDMXPixelMappi
 	if (DesignerSettings.bApplyLayoutScriptWhenLoaded)
 	{
 		FScopedTransaction ApplyLayoutScriptTransactionDirect(LOCTEXT("ApplyLayoutScriptTransactionDirect", "Apply Layout Script"));
-		ApplyLayoutScripts();
+		ForceApplyLayoutScript();
 	}
 
 	InToolkit->GetOnSelectedComponentsChangedDelegate().AddUObject(this, &UDMXPixelMappingLayoutViewModel::OnSelectedComponentsChanged);
@@ -96,15 +80,15 @@ TArray<UObject*> UDMXPixelMappingLayoutViewModel::GetLayoutScriptsObjectsSlow() 
 {
 	TArray<UObject*> Result;
 
-	const EDMXPixelMappingLayoutViewModelMode LayoutType = GetMode();
-	if (LayoutType == EDMXPixelMappingLayoutViewModelMode::LayoutRendererComponentChildren)
+	const EDMXPixelMappingLayoutViewModelMode LayoutMode = GetMode();
+	if (LayoutMode == EDMXPixelMappingLayoutViewModelMode::LayoutRendererComponentChildren)
 	{
 		if (RendererComponent.IsValid())
 		{
 			Result.Add(RendererComponent->LayoutScript);
 		}
 	}
-	else if (LayoutType == EDMXPixelMappingLayoutViewModelMode::LayoutFixtureGroupComponentChildren)
+	else if (LayoutMode == EDMXPixelMappingLayoutViewModelMode::LayoutFixtureGroupComponentChildren)
 	{
 		for (TWeakObjectPtr<UDMXPixelMappingFixtureGroupComponent> FixtureGroup : FixtureGroupComponents)
 		{
@@ -114,7 +98,7 @@ TArray<UObject*> UDMXPixelMappingLayoutViewModel::GetLayoutScriptsObjectsSlow() 
 			}
 		}
 	}
-	else if (LayoutType == EDMXPixelMappingLayoutViewModelMode::LayoutMatrixComponentChildren)
+	else if (LayoutMode == EDMXPixelMappingLayoutViewModelMode::LayoutMatrixComponentChildren)
 	{
 		for (TWeakObjectPtr<UDMXPixelMappingMatrixComponent> Matrix : MatrixComponents)
 		{
@@ -128,53 +112,100 @@ TArray<UObject*> UDMXPixelMappingLayoutViewModel::GetLayoutScriptsObjectsSlow() 
 	return Result;
 }
 
-void UDMXPixelMappingLayoutViewModel::RequestApplyLayoutScripts()
+bool UDMXPixelMappingLayoutViewModel::CanApplyLayoutScript() const
+{
+	const EDMXPixelMappingLayoutViewModelMode LayoutMode = GetMode();
+	return 
+		LayoutScriptClass.IsValid() &&
+		LayoutMode != EDMXPixelMappingLayoutViewModelMode::LayoutNone;
+}
+
+void UDMXPixelMappingLayoutViewModel::RequestApplyLayoutScript()
 {
 	if (!ApplyLayoutScriptTimerHandle.IsValid())
 	{
-		ApplyLayoutScriptTimerHandle = GEditor->GetTimerManager()->SetTimerForNextTick(FTimerDelegate::CreateUObject(this, &UDMXPixelMappingLayoutViewModel::ApplyLayoutScripts));
+		ApplyLayoutScriptTimerHandle = GEditor->GetTimerManager()->SetTimerForNextTick(FTimerDelegate::CreateUObject(this, &UDMXPixelMappingLayoutViewModel::ForceApplyLayoutScript));
 	}
+}
+
+void UDMXPixelMappingLayoutViewModel::ForceApplyLayoutScript()
+{
+	ApplyLayoutScriptTimerHandle.Invalidate();
+
+	const EDMXPixelMappingLayoutViewModelMode LayoutMode = GetMode();
+	if (LayoutMode == EDMXPixelMappingLayoutViewModelMode::LayoutRendererComponentChildren)
+	{
+		LayoutRendererComponentChildren();
+	}
+	else if (LayoutMode == EDMXPixelMappingLayoutViewModelMode::LayoutFixtureGroupComponentChildren)
+	{
+		LayoutFixtureGroupComponentChildren();
+	}
+	else if (LayoutMode == EDMXPixelMappingLayoutViewModelMode::LayoutMatrixComponentChildren)
+	{
+		LayoutMatrixComponentChildren();
+	}
+	else
+	{
+		ensureAlwaysMsgf(LayoutMode == EDMXPixelMappingLayoutViewModelMode::LayoutNone, TEXT("Unhandled Layout Type, layout cannot be applied"));
+	}
+}
+
+UDMXPixelMappingOutputComponent* UDMXPixelMappingLayoutViewModel::GetParentComponent() const
+{
+	// Some ensures here to make sure we rely on the same conditions as what we assume the specific mode means (should correspond to GetMode);
+	const EDMXPixelMappingLayoutViewModelMode LayoutMode = GetMode();
+	if (LayoutMode == EDMXPixelMappingLayoutViewModelMode::LayoutRendererComponentChildren)
+	{
+		if (!ensureMsgf(RendererComponent.IsValid(), TEXT("GetMode no longer matches assumed conditions.")))
+		{
+			return nullptr;
+		}
+
+		return RendererComponent.Get();
+	}
+	else if (LayoutMode == EDMXPixelMappingLayoutViewModelMode::LayoutFixtureGroupComponentChildren)
+	{
+		if (!ensureMsgf(FixtureGroupComponents.Num() == 1 && ScreenComponents.IsEmpty(), TEXT("GetMode no longer matches assumed conditions.")))
+		{
+			return nullptr;
+		}
+
+		return FixtureGroupComponents[0].Get();
+	}
+	else if (LayoutMode == EDMXPixelMappingLayoutViewModelMode::LayoutMatrixComponentChildren)
+	{
+		if (!ensureMsgf(MatrixComponents.Num() == 1 && FixtureGroupComponents.IsEmpty(), TEXT("GetMode no longer matches assumed conditions.")))
+		{
+			return nullptr;
+		}
+
+		return MatrixComponents[0].Get();
+	}
+
+	return nullptr;
 }
 
 void UDMXPixelMappingLayoutViewModel::PostUndo(bool bSuccess)
 {
 	RefreshComponents();
 	RefreshLayoutScriptClass();
+
+	OnModelChanged.Broadcast();
 }
 
 void UDMXPixelMappingLayoutViewModel::PostRedo(bool bSuccess)
 {
 	RefreshComponents();
 	RefreshLayoutScriptClass();
-}
 
-void UDMXPixelMappingLayoutViewModel::ApplyLayoutScripts()
-{
-	ApplyLayoutScriptTimerHandle.Invalidate();
-
-	const EDMXPixelMappingLayoutViewModelMode LayoutType = GetMode();
-	if (LayoutType == EDMXPixelMappingLayoutViewModelMode::LayoutRendererComponentChildren)
-	{
-		LayoutRendererComponentChildren();
-	}
-	else if (LayoutType == EDMXPixelMappingLayoutViewModelMode::LayoutFixtureGroupComponentChildren)
-	{
-		LayoutFixtureGroupComponentChildren();
-	}
-	else if (LayoutType == EDMXPixelMappingLayoutViewModelMode::LayoutMatrixComponentChildren)
-	{
-		LayoutMatrixComponentChildren();
-	}
-	else
-	{
-		ensureAlwaysMsgf(LayoutType == EDMXPixelMappingLayoutViewModelMode::LayoutNone, TEXT("Unhandled Layout Type, layout cannot be applied"));
-	}
+	OnModelChanged.Broadcast();
 }
 
 void UDMXPixelMappingLayoutViewModel::LayoutRendererComponentChildren()
 {
-	const EDMXPixelMappingLayoutViewModelMode LayoutType = GetMode();
-	if (!ensureMsgf(LayoutType == EDMXPixelMappingLayoutViewModelMode::LayoutRendererComponentChildren, TEXT("Trying to layout children of Renderer Components, but the current selection does not support this.")))
+	const EDMXPixelMappingLayoutViewModelMode LayoutMode = GetMode();
+	if (!ensureMsgf(LayoutMode == EDMXPixelMappingLayoutViewModelMode::LayoutRendererComponentChildren, TEXT("Trying to layout children of Renderer Components, but the current selection does not support this.")))
 	{
 		return;
 	}
@@ -205,8 +236,8 @@ void UDMXPixelMappingLayoutViewModel::LayoutRendererComponentChildren()
 
 void UDMXPixelMappingLayoutViewModel::LayoutFixtureGroupComponentChildren()
 {
-	const EDMXPixelMappingLayoutViewModelMode LayoutType = GetMode();
-	if (!ensureMsgf(!FixtureGroupComponents.IsEmpty() && LayoutType == EDMXPixelMappingLayoutViewModelMode::LayoutFixtureGroupComponentChildren, TEXT("Trying to layout children of Fixture Group Components, but the current selection does not support this.")))
+	const EDMXPixelMappingLayoutViewModelMode LayoutMode = GetMode();
+	if (!ensureMsgf(!FixtureGroupComponents.IsEmpty() && LayoutMode == EDMXPixelMappingLayoutViewModelMode::LayoutFixtureGroupComponentChildren, TEXT("Trying to layout children of Fixture Group Components, but the current selection does not support this.")))
 	{
 		return;
 	}
@@ -219,6 +250,10 @@ void UDMXPixelMappingLayoutViewModel::LayoutFixtureGroupComponentChildren()
 			{
 				continue;
 			}
+
+			// Tokens expect unrotated space
+			const double RestoreRotation = FixtureGroupComponent->GetRotation();
+			FixtureGroupComponent->SetRotation(0.0);
 
 			InitializeLayoutScript(FixtureGroupComponent, FixtureGroupComponent->LayoutScript);
 
@@ -237,14 +272,16 @@ void UDMXPixelMappingLayoutViewModel::LayoutFixtureGroupComponentChildren()
 			FixtureGroupComponent->PreEditChange(UDMXPixelMappingFixtureGroupComponent::StaticClass()->FindPropertyByName(GET_MEMBER_NAME_CHECKED(UDMXPixelMappingFixtureGroupComponent, LayoutScript)));
 			ApplyLayoutTokens(OutLayoutTokens);
 			FixtureGroupComponent->PostEditChange();
+
+			FixtureGroupComponent->SetRotation(RestoreRotation);
 		}
 	}
 }
 
 void UDMXPixelMappingLayoutViewModel::LayoutMatrixComponentChildren()
 {
-	const EDMXPixelMappingLayoutViewModelMode LayoutType = GetMode();
-	if (!ensureMsgf(!MatrixComponents.IsEmpty() && LayoutType == EDMXPixelMappingLayoutViewModelMode::LayoutMatrixComponentChildren, TEXT("Trying to layout children of Fixture Group Components, but the current selection does not support this.")))
+	const EDMXPixelMappingLayoutViewModelMode LayoutMode = GetMode();
+	if (!ensureMsgf(!MatrixComponents.IsEmpty() && LayoutMode == EDMXPixelMappingLayoutViewModelMode::LayoutMatrixComponentChildren, TEXT("Trying to layout children of Fixture Group Components, but the current selection does not support this.")))
 	{
 		return;
 	}
@@ -257,6 +294,10 @@ void UDMXPixelMappingLayoutViewModel::LayoutMatrixComponentChildren()
 			{
 				continue;
 			}
+
+			// Tokens expect unrotated space
+			const double RestoreRotation = MatrixComponent->GetRotation();
+			MatrixComponent->SetRotation(0.0);
 
 			InitializeLayoutScript(MatrixComponent, MatrixComponent->LayoutScript);
 
@@ -275,31 +316,33 @@ void UDMXPixelMappingLayoutViewModel::LayoutMatrixComponentChildren()
 			MatrixComponent->PreEditChange(UDMXPixelMappingMatrixComponent::StaticClass()->FindPropertyByName(GET_MEMBER_NAME_CHECKED(UDMXPixelMappingMatrixComponent, LayoutScript)));
 			ApplyLayoutTokens(OutLayoutTokens);
 			MatrixComponent->PostEditChange();
+
+			MatrixComponent->SetRotation(RestoreRotation);
 		}
 	}
 }
 
 void UDMXPixelMappingLayoutViewModel::ApplyLayoutTokens(const TArray<FDMXPixelMappingLayoutToken>& LayoutTokens) const
 {
-
 	for (const FDMXPixelMappingLayoutToken& LayoutToken : LayoutTokens)
 	{
 		if (UDMXPixelMappingOutputComponent* OutputComponent = LayoutToken.Component.Get())
 		{
-			if (LayoutToken.SizeX < 1.f || LayoutToken.SizeY < 1.f)
+			FVector2D Size(LayoutToken.SizeX, LayoutToken.SizeY);
+			if (LayoutToken.SizeX <= 0.f || LayoutToken.SizeY <= 0.f)
 			{
-				UE_LOG(LogDMXPixelMappingEditor, Warning, TEXT("Trying to apply layout script. But layout defines a component size < 1. This is not supported."));
-			}
-
-			if (OutputComponent->GetParent())
-			{
-				OutputComponent->GetParent()->Modify();
+				UE_LOG(LogDMXPixelMappingEditor, Warning, TEXT("Trying to apply layout script. But layout defines a component size <= 0. This is not supported. Setting a small size instead."));
+				Size.X = FMath::Max(UE_SMALL_NUMBER, LayoutToken.SizeX);
+				Size.Y = FMath::Max(UE_SMALL_NUMBER, LayoutToken.SizeY);
 			}
 
 			OutputComponent->Modify();
 
 			OutputComponent->SetPosition(FVector2D(LayoutToken.PositionX, LayoutToken.PositionY));
-			OutputComponent->SetSize(FVector2D(LayoutToken.SizeX, LayoutToken.SizeY));
+			OutputComponent->SetSize(Size);
+
+			// Parent rotation was set to 0 before initialized. Hence the relative rotation is the current rotation.
+			OutputComponent->SetRotation(LayoutToken.RelativeRotation);
 		}
 	}
 }
@@ -317,7 +360,7 @@ void UDMXPixelMappingLayoutViewModel::OnLayoutScriptClassChanged()
 	const FDMXPixelMappingDesignerSettings& DesignerSettings = GetDefault<UDMXPixelMappingEditorSettings>()->DesignerSettings;
 	if (DesignerSettings.bApplyLayoutScriptWhenLoaded && LayoutScriptClass)
 	{
-		ApplyLayoutScripts();
+		ForceApplyLayoutScript();
 	}
 }
 
@@ -338,8 +381,8 @@ void UDMXPixelMappingLayoutViewModel::InstantiateLayoutScripts()
 	}
 
 	UClass* StrongLayoutScriptClass = LayoutScriptClass.Get();
-	const EDMXPixelMappingLayoutViewModelMode LayoutType = GetMode();
-	if (LayoutType == EDMXPixelMappingLayoutViewModelMode::LayoutRendererComponentChildren)
+	const EDMXPixelMappingLayoutViewModelMode LayoutMode = GetMode();
+	if (LayoutMode == EDMXPixelMappingLayoutViewModelMode::LayoutRendererComponentChildren)
 	{
 		if (RendererComponent.IsValid() && 
 		   (!RendererComponent->LayoutScript ||	RendererComponent->LayoutScript->GetClass() != StrongLayoutScriptClass))
@@ -356,7 +399,7 @@ void UDMXPixelMappingLayoutViewModel::InstantiateLayoutScripts()
 			}
 		}
 	}
-	else if (LayoutType == EDMXPixelMappingLayoutViewModelMode::LayoutFixtureGroupComponentChildren)
+	else if (LayoutMode == EDMXPixelMappingLayoutViewModelMode::LayoutFixtureGroupComponentChildren)
 	{
 		for (TWeakObjectPtr<UDMXPixelMappingFixtureGroupComponent> FixtureGroupComponent : FixtureGroupComponents)
 		{
@@ -376,7 +419,7 @@ void UDMXPixelMappingLayoutViewModel::InstantiateLayoutScripts()
 			}
 		}
 	}
-	else if (LayoutType == EDMXPixelMappingLayoutViewModelMode::LayoutMatrixComponentChildren)
+	else if (LayoutMode == EDMXPixelMappingLayoutViewModelMode::LayoutMatrixComponentChildren)
 	{
 		for (TWeakObjectPtr<UDMXPixelMappingMatrixComponent> MatrixComponent : MatrixComponents)
 		{
@@ -398,7 +441,7 @@ void UDMXPixelMappingLayoutViewModel::InstantiateLayoutScripts()
 	}
 	else
 	{
-		ensureMsgf(LayoutType == EDMXPixelMappingLayoutViewModelMode::LayoutNone, TEXT("Unhandled Layout Type, layout cannot be applied"));
+		ensureMsgf(LayoutMode == EDMXPixelMappingLayoutViewModelMode::LayoutNone, TEXT("Unhandled Layout Type, layout cannot be applied"));
 	}
 }
 
@@ -412,6 +455,7 @@ void UDMXPixelMappingLayoutViewModel::InitializeLayoutScript(UDMXPixelMappingOut
 	LayoutScript->SetNumTokens(OutputComponent->GetChildren().Num());
 	LayoutScript->SetParentComponentPosition(OutputComponent->GetPosition());
 	LayoutScript->SetParentComponentSize(OutputComponent->GetSize());
+	LayoutScript->SetParentComponentRotation(OutputComponent->GetRotation());
 	LayoutScript->SetTextureSize(OutputComponent->GetRendererComponent()->GetSize());
 }
 
@@ -478,15 +522,15 @@ void UDMXPixelMappingLayoutViewModel::RefreshLayoutScriptClass()
 {
 	LayoutScriptClass = nullptr;
 
-	const EDMXPixelMappingLayoutViewModelMode LayoutType = GetMode();
-	if (LayoutType == EDMXPixelMappingLayoutViewModelMode::LayoutRendererComponentChildren)
+	const EDMXPixelMappingLayoutViewModelMode LayoutMode = GetMode();
+	if (LayoutMode == EDMXPixelMappingLayoutViewModelMode::LayoutRendererComponentChildren)
 	{
 		if (RendererComponent.IsValid() && RendererComponent->LayoutScript)
 		{
 			LayoutScriptClass =RendererComponent->LayoutScript->GetClass();
 		}
 	}
-	else if (LayoutType == EDMXPixelMappingLayoutViewModelMode::LayoutFixtureGroupComponentChildren)
+	else if (LayoutMode == EDMXPixelMappingLayoutViewModelMode::LayoutFixtureGroupComponentChildren)
 	{
 		for (TWeakObjectPtr<UDMXPixelMappingFixtureGroupComponent> FixtureGroup : FixtureGroupComponents)
 		{
@@ -507,7 +551,7 @@ void UDMXPixelMappingLayoutViewModel::RefreshLayoutScriptClass()
 			}
 		}
 	}
-	else if (LayoutType == EDMXPixelMappingLayoutViewModelMode::LayoutMatrixComponentChildren)
+	else if (LayoutMode == EDMXPixelMappingLayoutViewModelMode::LayoutMatrixComponentChildren)
 	{
 		for (TWeakObjectPtr<UDMXPixelMappingMatrixComponent> Matrix : MatrixComponents)
 		{
@@ -530,7 +574,7 @@ void UDMXPixelMappingLayoutViewModel::RefreshLayoutScriptClass()
 	}
 	else
 	{
-		ensureMsgf(LayoutType == EDMXPixelMappingLayoutViewModelMode::LayoutNone, TEXT("Unhandled Layout Type, layout cannot be applied"));
+		ensureMsgf(LayoutMode == EDMXPixelMappingLayoutViewModelMode::LayoutNone, TEXT("Unhandled Layout Type, layout cannot be applied"));
 	}
 }
 

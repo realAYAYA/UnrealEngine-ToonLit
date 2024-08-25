@@ -4,6 +4,7 @@
 #include "Misc/AutomationTest.h"
 
 #include "Async/Fundamental/Scheduler.h"
+#include "Async/ManualResetEvent.h"
 #include "Experimental/Async/AwaitableTask.h"
 #include "Experimental/Coroutine/CoroEvent.h"
 #include "Experimental/Coroutine/CoroParallelFor.h"
@@ -478,6 +479,59 @@ namespace Tasks2Tests
 		}
 		return true;
 	}
+
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTasksLocalGlobalPriorities, "System.Core.LowLevelTasks.LocalGlobalPriorities", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::EngineFilter);
+	bool FTasksLocalGlobalPriorities::RunTest(const FString& Parameters)
+	{
+		using namespace LowLevelTasks;
+
+		FTask RootTask;
+		FTask LocalTask;
+		FTask GlobalTask;
+
+		std::atomic_bool GlobalRun{ false };
+		std::atomic_bool LocalRun{ false };
+
+		UE::FManualResetEvent FinishEvent;
+
+		// This test launch 2 tasks
+		// One global that is high prio and supposed to run before the local
+		// One local that is normal prio which is supposed to run after the global one
+
+		LocalTask.Init(TEXT("LocalTask"), ETaskPriority::BackgroundNormal,
+			[&]()
+			{ 
+				LocalRun = true; 
+				verify(GlobalRun == true);
+				FinishEvent.Notify();
+			}
+		);
+
+		GlobalTask.Init(TEXT("GlobalTask"), ETaskPriority::BackgroundHigh, 
+			[&]()
+			{ 
+				GlobalRun = true;
+				verify(LocalRun == false);
+			}
+		);
+
+		RootTask.Init(
+			TEXT("RootTask"), ETaskPriority::BackgroundNormal,
+			[&]()
+			{
+				// Both task are launched from inside a worker with no addition wake up so that both task should end up being run in the same worker
+				verify(TryLaunch(LocalTask, EQueuePreference::LocalQueuePreference, false /*bWakeUpWorker*/));
+				verify(TryLaunch(GlobalTask, EQueuePreference::GlobalQueuePreference, false /*bWakeUpWorker*/));
+			});
+
+		TryLaunch(RootTask);
+
+		verify(FinishEvent.WaitFor(UE::FMonotonicTimeSpan::FromSeconds(1)));
+		verify(GlobalRun == true);
+		verify(LocalRun == true);
+
+		return true;
+	};
 
 	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTasksUnitTests2, "System.Core.LowLevelTasks.UnitTests", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::EngineFilter);
 	bool FTasksUnitTests2::RunTest(const FString& Parameters)

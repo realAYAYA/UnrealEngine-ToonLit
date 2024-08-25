@@ -2,7 +2,10 @@
 
 #pragma once
 
+#include "IOptimusComputeKernelDataInterface.h"
+#include "OptimusComponentSource.h"
 #include "OptimusComputeDataInterface.h"
+#include "OptimusConstant.h"
 #include "OptimusDataType.h"
 #include "ComputeFramework/ComputeDataProvider.h"
 
@@ -13,14 +16,14 @@ class UOptimusComponentSource;
 class UOptimusComponentSourceBinding;
 
 UCLASS(Category = ComputeFramework)
-class OPTIMUSCORE_API UOptimusCustomComputeKernelDataInterface : public UComputeDataInterface
+class OPTIMUSCORE_API UOptimusCustomComputeKernelDataInterface :
+	public UComputeDataInterface,
+	public IOptimusComputeKernelDataInterface
 {
 	GENERATED_BODY()
 
 public:
 	static const FString NumThreadsReservedName;
-	
-	void InitFromKernelNode(const UOptimusNode_CustomComputeKernel* InKernelNode);
 	
 	//~ Begin UComputeDataInterface Interface
 	TCHAR const* GetClassName() const override { return TEXT("CustomComputeKernelData"); }
@@ -32,6 +35,11 @@ public:
 	void GetHLSL(FString& OutHLSL, FString const& InDataInterfaceName) const override;
 	UComputeDataProvider* CreateDataProvider(TObjectPtr<UObject> InBinding, uint64 InInputMask, uint64 InOutputMask) const override;
 	//~ End UComputeDataInterface Interface
+
+	//~ Begin IOptimusComputeKernelDataInterface Interface
+	void SetExecutionDomain(const FString& InExecutionDomain) override;
+	void SetComponentBinding(const UOptimusComponentSourceBinding* InBinding) override;
+	//~ End IOptimusComputeKernelDataInterface Interface
 	
 	UPROPERTY()
 	TWeakObjectPtr<const UOptimusComponentSourceBinding> ComponentSourceBinding;
@@ -39,12 +47,14 @@ public:
 	UPROPERTY()
 	FString NumThreadsExpression;
 
-protected:
+	UPROPERTY()
+	FOptimusConstantIdentifier ExecutionDomainConstantIdentifier_DEPRECATED;
 };
 
 /** Compute Framework Data Provider for each custom compute kernel. */
 UCLASS()
-class UOptimusCustomComputeKernelDataProvider : public UComputeDataProvider
+class UOptimusCustomComputeKernelDataProvider :
+	public UComputeDataProvider
 {
 	GENERATED_BODY()
 

@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreTypes.h"
+#include "Misc/OutputDevice.h"
 #include "HAL/CriticalSection.h"
 #include "HAL/PlatformMemory.h"
 
@@ -70,6 +71,11 @@ struct TCachedOSPageAllocator : private FCachedOSPageAllocator
 	bool IsOSAllocation(SIZE_T Size)
 	{
 		return FCachedOSPageAllocator::IsOSAllocation(Size, CachedByteLimit);
+	}
+
+	void DumpAllocatorStats(class FOutputDevice& Ar)
+	{
+		Ar.Logf(TEXT("CachedOSPageAllocator = %fkb"), (double)GetCachedFreeTotal() / 1024.0);
 	}
 
 private:

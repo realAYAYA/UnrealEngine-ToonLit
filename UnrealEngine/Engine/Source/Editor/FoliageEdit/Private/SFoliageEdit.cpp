@@ -587,11 +587,11 @@ void SFoliageEdit::CustomizeToolBarPalette(FToolBarBuilder& ToolBarBuilder)
 
 	// Move To Current Level
 	ToolBarBuilder.AddToolBarButton(
-		FExecuteAction::CreateSP(this, &SFoliageEdit::OnMoveSelectedInstancesToCurrentLevel),
+		FExecuteAction::CreateSP(this, &SFoliageEdit::OnMoveSelectedInstancesToActorEditorContext),
 		NAME_None,
-		LOCTEXT("FoliageMoveToCurrentLevel", "Move"),
-		LOCTEXT("FoliageMoveToCurrentLevelTooltip", "Move the Selected Foliage to the Current Level"),
-		FSlateIcon(FAppStyle::GetAppStyleSetName(), "FoliageEditMode.MoveToCurrentLevel")
+		LOCTEXT("FoliageMoveToCurrentContext", "Move"),
+		LOCTEXT("FoliageMoveToCurrentContextTooltip", "Move the Selected Foliage to the Current Context"),
+		FSlateIcon(FAppStyle::GetAppStyleSetName(), "FoliageEditMode.MoveToActorEditorContext")
 	);
 
 }
@@ -709,6 +709,11 @@ void SFoliageEdit::RefreshFullList()
 void SFoliageEdit::NotifyFoliageTypeMeshChanged(UFoliageType* FoliageType)
 {
 	FoliagePalette->UpdateThumbnailForType(FoliageType);
+}
+
+void SFoliageEdit::ReflectSelectionInPalette()
+{
+	FoliagePalette->ReflectSelectionInPalette();
 }
 
 bool SFoliageEdit::IsFoliageEditorEnabled() const
@@ -971,13 +976,20 @@ void SFoliageEdit::OnDeselectAllInstances()
 	});
 }
 
-void SFoliageEdit::OnMoveSelectedInstancesToCurrentLevel()
+void SFoliageEdit::OnMoveSelectedInstancesToActorEditorContext()
 {
 	if (UWorld* World = FoliageEditMode->GetWorld())
 	{
-		if (ULevel* CurrentLevel = World->GetCurrentLevel())
+		if (!World->IsPartitionedWorld())
 		{
-			FoliageEditMode->MoveSelectedFoliageToLevel(CurrentLevel);
+			if (ULevel* CurrentLevel = World->GetCurrentLevel())
+			{
+				FoliageEditMode->MoveSelectedFoliageToLevel(CurrentLevel);
+			}
+		}
+		else
+		{
+			FoliageEditMode->MoveSelectedFoliageToActorEditorContext();
 		}
 	}
 }

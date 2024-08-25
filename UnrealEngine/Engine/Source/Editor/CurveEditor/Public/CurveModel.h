@@ -384,6 +384,16 @@ public:
 		return LongIntentionName;
 	}
 
+	FORCEINLINE void SetChannelName(const FName& InChannelName)
+	{
+		ChannelName = InChannelName;
+	}
+
+	FORCEINLINE FName GetChannelName() const
+	{
+		return ChannelName;
+	}
+
 	/**
 	 */
 	FORCEINLINE void SetColor(const FLinearColor& InColor, bool bInModify = true)
@@ -435,6 +445,11 @@ protected:
 	* Long intention names have priority in copy/paste over short intention names, but we fall back to short intention if it's unclear what the user is trying to do.
 	*/
 	FString LongIntentionName;
+
+	/**
+	* The original channel name, used mostly to make sure names match with BP/Scripting
+	*/
+	FName ChannelName;
 
 	/** This curve's display color */
 	FLinearColor Color;

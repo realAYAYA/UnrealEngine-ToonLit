@@ -7,6 +7,7 @@
 #include "HAL/Platform.h"
 #include "HAL/PlatformCrt.h"
 #include "Misc/Optional.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/NameTypes.h"
 #include "UObject/Object.h"
 
@@ -30,12 +31,13 @@ namespace Utils
 
 	void ExtractSourceFilePaths(UObject* Object, TArray<FString>& OutSourceFiles)
 	{
-		TArray<UObject::FAssetRegistryTag> TagList;
+		FAssetRegistryTagsContextData TagList(Object, EAssetRegistryTagsCaller::Uncategorized);
 		Object->GetAssetRegistryTags(TagList);
 
 		const FName TagName = UObject::SourceFileTagName();
-		for (const auto& Tag : TagList)
+		for (const TPair<FName, UObject::FAssetRegistryTag>& Pair : TagList.Tags)
 		{
+			const UObject::FAssetRegistryTag& Tag = Pair.Value;
 			if (Tag.Name == TagName)
 			{
 				int32 PreviousNum = OutSourceFiles.Num();

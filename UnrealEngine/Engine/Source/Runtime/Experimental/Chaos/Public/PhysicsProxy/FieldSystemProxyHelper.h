@@ -37,6 +37,10 @@ namespace Chaos
 		EFieldObjectType& PrevObjectType,
 		EFieldPositionType& PrevPositionType)
 	{
+		if(!LocalProxy || !RigidSolver)
+		{
+			return false;
+		}
 		const EFieldResolutionType ResolutionType =
 			FieldCommand.HasMetaData(FFieldSystemMetaData::EMetaType::ECommandData_ProcessingResolution) ?
 			FieldCommand.GetMetaDataAs<FFieldSystemMetaDataProcessingResolution>( 
@@ -74,9 +78,9 @@ namespace Chaos
 			PrevObjectType = ObjectType;
 			PrevPositionType = PositionType;
 
-			ExecutionDatas.SamplePositions.SetNum(FilteredHandles.Num(),false);
-			ExecutionDatas.SampleIndices.SetNum(FilteredHandles.Num(),false);
-			InsideHandles.SetNum(FilteredHandles.Num(),false);
+			ExecutionDatas.SamplePositions.SetNum(FilteredHandles.Num(), EAllowShrinking::No);
+			ExecutionDatas.SampleIndices.SetNum(FilteredHandles.Num(), EAllowShrinking::No);
+			InsideHandles.SetNum(FilteredHandles.Num(), EAllowShrinking::No);
 
 			auto FillExecutionDatas = [&ExecutionDatas,&FieldCommand,&InsideHandles](FVec3 SamplePosition, Chaos::FGeometryParticleHandle* ParticleHandle, int32& HandleIndex)
 			{
@@ -91,7 +95,7 @@ namespace Chaos
 						{
 							if (ParentHandle->Disabled() == false)
 							{
-								const FRigidTransform3 ParentWorldTM(ParentHandle->P(), ParentHandle->Q());
+								const FRigidTransform3 ParentWorldTM(ParentHandle->GetP(), ParentHandle->GetQ());
 								const FRigidTransform3 ChildFrame = ClusterHandle->ChildToParent() * ParentWorldTM;
 								SamplePosition = ChildFrame.GetTranslation();
 							}
@@ -114,8 +118,7 @@ namespace Chaos
 			{
 				for (int32 Idx = 0; Idx < FilteredHandles.Num(); ++Idx)
 				{
-					Chaos::FPBDRigidParticleHandle* RigidHandle = FilteredHandles[Idx]->CastToRigidParticle();
-					if (RigidHandle)
+					if (Chaos::FPBDRigidParticleHandle* RigidHandle = FilteredHandles[Idx]->CastToRigidParticle())
 					{
 						const FVec3 SamplePosition = FParticleUtilities::GetCoMWorldPosition(RigidHandle);
 						FillExecutionDatas(SamplePosition, RigidHandle, HandleIndex);
@@ -126,17 +129,16 @@ namespace Chaos
 			{
 				for (int32 Idx = 0; Idx < FilteredHandles.Num(); ++Idx)
 				{
-					Chaos::FGeometryParticleHandle* FilteredHandle = FilteredHandles[Idx];
-					if (FilteredHandle)
+					if (Chaos::FGeometryParticleHandle* FilteredHandle = FilteredHandles[Idx])
 					{
-						const FVec3& SamplePosition = FilteredHandle->X();
+						const FVec3& SamplePosition = FilteredHandle->GetX();
 						FillExecutionDatas(SamplePosition, FilteredHandle, HandleIndex);
 					}
 				}
 			}
-			ExecutionDatas.SamplePositions.SetNum(HandleIndex,false);
-			ExecutionDatas.SampleIndices.SetNum(HandleIndex,false);
-			InsideHandles.SetNum(HandleIndex,false);
+			ExecutionDatas.SamplePositions.SetNum(HandleIndex, EAllowShrinking::No);
+			ExecutionDatas.SampleIndices.SetNum(HandleIndex, EAllowShrinking::No);
+			InsideHandles.SetNum(HandleIndex, EAllowShrinking::No);
 		}
 		return InsideHandles.Num() > 0;
 	}
@@ -235,8 +237,8 @@ namespace Chaos
 
 			if (FieldState == Chaos::EObjectStateType::Kinematic || FieldState == Chaos::EObjectStateType::Static)
 			{
-				RigidHandle->SetV(Chaos::FVec3(0));
-				RigidHandle->SetW(Chaos::FVec3(0));
+				RigidHandle->SetVf(Chaos::FVec3f(0));
+				RigidHandle->SetWf(Chaos::FVec3f(0));
 			}
 			else if (FieldState == Chaos::EObjectStateType::Dynamic)
 			{
@@ -452,12 +454,12 @@ namespace Chaos
 						if (TargetedParticles.Contains(Index.Sample))
 						{
 							const int32 ConstraintIndex = TargetedParticles[Index.Sample];
-							PositionTarget.Replace(ConstraintIndex, ParticleHandles[Index.Sample]->X());
+							PositionTarget.Replace(ConstraintIndex, ParticleHandles[Index.Sample]->GetX());
 						}
 						else
 						{
 							const int32 ConstraintIndex = PositionTarget.NumConstraints();
-							PositionTarget.AddConstraint(RigidHandle, RigidHandle->X());
+							PositionTarget.AddConstraint(RigidHandle, RigidHandle->GetX());
 							TargetedParticles.Add(Index.Sample, ConstraintIndex);
 						}
 					}
@@ -601,7 +603,7 @@ namespace Chaos
 					Chaos::FPBDRigidParticleHandle* RigidHandle = ParticleHandles[Index.Sample]->CastToRigidParticle();
 					if (RigidHandle && RigidHandle->ObjectState() == Chaos::EObjectStateType::Dynamic)
 					{
-						RigidHandle->V() += ResultsView[Index.Result];
+						RigidHandle->SetV(RigidHandle->GetV() + ResultsView[Index.Result]);
 					}
 				}
 			}
@@ -633,7 +635,7 @@ namespace Chaos
 					Chaos::FPBDRigidParticleHandle* RigidHandle = ParticleHandles[Index.Sample]->CastToRigidParticle();
 					if (RigidHandle && RigidHandle->ObjectState() == Chaos::EObjectStateType::Dynamic)
 					{
-						RigidHandle->W() += ResultsView[Index.Result];
+						RigidHandle->SetW(RigidHandle->GetW() + ResultsView[Index.Result]);
 					}
 				}
 			}

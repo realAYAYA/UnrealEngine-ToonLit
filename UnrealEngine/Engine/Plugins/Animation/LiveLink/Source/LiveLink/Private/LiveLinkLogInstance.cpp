@@ -385,7 +385,7 @@ TSharedPtr<FTokenizedMessage> FLiveLinkLogInstance::CreateTokenizedMessage(EMess
 				{
 					Token->AddToken(FTextToken::Create(FText::FromString(Message.Left(SubjectIndex))));
 					Token->AddToken(FTextToken::Create(FText::FromString(SubjectKey.SubjectName.ToString())));
-					Message.RemoveAt(0, SubjectIndex+2, false);
+					Message.RemoveAt(0, SubjectIndex+2, EAllowShrinking::No);
 					SubjectIndex = Message.Find(TEXT("@@"));
 				}
 				if (Message.Len() > 0)

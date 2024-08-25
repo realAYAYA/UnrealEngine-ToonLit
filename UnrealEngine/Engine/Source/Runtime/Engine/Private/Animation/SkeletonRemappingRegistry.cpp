@@ -66,30 +66,39 @@ void FSkeletonRemappingRegistry::Destroy()
 
 const FSkeletonRemapping& FSkeletonRemappingRegistry::GetRemapping(const USkeleton* InSourceSkeleton, const USkeleton* InTargetSkeleton)
 {
-	if(InSourceSkeleton == InTargetSkeleton)
+	if (InSourceSkeleton == InTargetSkeleton)
 	{
 		return DefaultMapping;
 	}
 	
 	const FWeakSkeletonPair Pair(InSourceSkeleton, InTargetSkeleton);
+	const uint32 PairHash = GetTypeHash(Pair);
 
 	{
 		FRWScopeLock ReadLock(MappingsLock, SLT_ReadOnly);
-		const TSharedPtr<FSkeletonRemapping>* ExistingMapping = Mappings.Find(Pair);
-		if(ExistingMapping && ExistingMapping->IsValid())
+
+		const TSharedPtr<FSkeletonRemapping>* ExistingMapping = Mappings.FindByHash(PairHash, Pair);
+		if (ExistingMapping && ExistingMapping->IsValid())
 		{
-			return *(*ExistingMapping).Get();
+			return *ExistingMapping->Get();
 		}
 	}
 
-	// No existing, so create a new mapping
+	// No valid mapping was found, so create a new one
 	TSharedPtr<FSkeletonRemapping> NewMapping = MakeShared<FSkeletonRemapping>(InSourceSkeleton, InTargetSkeleton);
 	
 	{
 		FRWScopeLock WriteLock(MappingsLock, SLT_Write);
 
+		// First check if another thread grabbed the write lock before us to do the same mapping
+		const TSharedPtr<FSkeletonRemapping>* ExistingMapping = Mappings.FindByHash(PairHash, Pair);
+		if (ExistingMapping && ExistingMapping->IsValid())
+		{
+			return *ExistingMapping->Get();
+		}
+
 		// Add to global mapping
-		Mappings.Add(Pair, NewMapping);
+		Mappings.AddByHash(PairHash, Pair, NewMapping);
 
 		// Add to per-skeleton mappings
 		PerSkeletonMappings.Add(InSourceSkeleton, NewMapping);
@@ -99,7 +108,7 @@ const FSkeletonRemapping& FSkeletonRemappingRegistry::GetRemapping(const USkelet
 	}
 }
 
-void FSkeletonRemappingRegistry::RefreshMappings(USkeleton* InSkeleton)
+void FSkeletonRemappingRegistry::RefreshMappings(const USkeleton* InSkeleton)
 {
 	TArray<TSharedPtr<FSkeletonRemapping>> ExistingMappings;
 	{

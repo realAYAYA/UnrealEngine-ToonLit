@@ -150,6 +150,7 @@ protected:
 		virtual void OnSignallingSessionDescription(FPixelStreamingPlayerId PlayerId, webrtc::SdpType Type, const FString& Sdp) override {}
 		virtual void OnSignallingRemoteIceCandidate(FPixelStreamingPlayerId PlayerId, const FString& SdpMid, int SdpMLineIndex, const FString& Sdp) override {}
 		virtual void OnSignallingStreamerList(const TArray<FString>& StreamerList) override;
+		virtual void OnPlayerRequestsBitrate(FPixelStreamingPlayerId PlayerId, int MinBitrate, int MaxBitrate) override;
 
 	private:
 		TObjectPtr<UPixelStreamingSignallingComponent> Parent;

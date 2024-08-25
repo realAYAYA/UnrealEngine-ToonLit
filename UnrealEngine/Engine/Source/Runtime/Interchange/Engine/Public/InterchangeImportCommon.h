@@ -14,6 +14,7 @@ class UInterchangeBaseNodeContainer;
 class UInterchangeFactoryBaseNode;
 class UInterchangePipelineBase;
 class UInterchangeSourceData;
+class UInterchangeTranslatorBase;
 class UObject;
 template <typename FuncType> class TFunctionRef;
 
@@ -35,13 +36,15 @@ namespace UE::Interchange
 			FString NodeUniqueID;
 			UInterchangeBaseNodeContainer* NodeContainer;
 			const TArray<UObject*> Pipelines;
+			const UInterchangeTranslatorBase* Translator;
 
 			INTERCHANGEENGINE_API FUpdateImportAssetDataParameters(UObject* InAssetImportDataOuter
 																, UAssetImportData* InAssetImportData
 																, const UInterchangeSourceData* InSourceData
 																, FString InNodeUniqueID
 																, UInterchangeBaseNodeContainer* InNodeContainer
-																, const TArray<UObject*>& InPipelines);
+																, const TArray<UObject*>& InPipelines
+																, const UInterchangeTranslatorBase* InTranslator);
 		};
 
 		/**
@@ -70,7 +73,8 @@ namespace UE::Interchange
 				, const UInterchangeSourceData* InSourceData
 				, FString InNodeUniqueID
 				, UInterchangeBaseNodeContainer* InNodeContainer
-				, const TArray<UObject*>& InPipelines);
+				, const TArray<UObject*>& InPipelines
+				, const UInterchangeTranslatorBase* InTranslator);
 		};
 
 		/**
@@ -110,10 +114,10 @@ namespace UE::Interchange
 		 * If the ReimportObject is a UInterchangeSceneImportAsset, returns the UObject which asset path
 		 * is //PackageName.AssetName[:SubPathString].
 		 * Returns ReimportObject otherwise.
-		 * @oaram ReimportObject: Original object to reimport
-		 * @oaram PackageName: Package path of the actual object to reimport
-		 * @oaram AssetName: Asset name of the actual object to reimport
-		 * @oaram SubPathString: Optional subobject name
+		 * @param ReimportObject: Original object to reimport
+		 * @param PackageName: Package path of the actual object to reimport
+		 * @param AssetName: Asset name of the actual object to reimport
+		 * @param SubPathString: Optional subobject name
 		 */
 		static 	INTERCHANGEENGINE_API UObject* GetObjectToReimport(UObject* ReimportObject, const UInterchangeFactoryBaseNode& FactoryNode, const FString& PackageName, const FString& AssetName, const FString& SubPathString = FString());
 
@@ -121,10 +125,10 @@ namespace UE::Interchange
 		 * If the ReimportObject is a UInterchangeSceneImportAsset, returns the factory node
 		 * associated with the asset which path is //PackageName.AssetName[:SubPathString].
 		 * Returns nullptr otherwise.
-		 * @oaram ReimportObject: Original object to reimport
-		 * @oaram PackageName: Package path of the actual object to reimport
-		 * @oaram AssetName: Asset name of the actual object to reimport
-		 * @oaram SubPathString: Optional subobject name
+		 * @param ReimportObject: Original object to reimport
+		 * @param PackageName: Package path of the actual object to reimport
+		 * @param AssetName: Asset name of the actual object to reimport
+		 * @param SubPathString: Optional subobject name
 		 */
 		static 	INTERCHANGEENGINE_API const UInterchangeFactoryBaseNode* GetFactoryNode(UObject* ReimportObject, const FString& PackageName, const FString& AssetName, const FString& SubPathString = FString());
 		

@@ -127,11 +127,11 @@ const FExpression* FTree::NewCross(const FExpression* Lhs, const FExpression* Rh
 	//c_P[0] = v_A[1] * v_B[2] - v_A[2] * v_B[1];
 	//c_P[1] = -(v_A[0] * v_B[2] - v_A[2] * v_B[0]);
 	//c_P[2] = v_A[0] * v_B[1] - v_A[1] * v_B[0];
-	const FExpression* Lhs0 = NewSwizzle(FSwizzleParameters(1, 0, 0), Lhs);
-	const FExpression* Lhs1 = NewSwizzle(FSwizzleParameters(2, 2, 1), Lhs);
-	const FExpression* Rhs0 = NewSwizzle(FSwizzleParameters(2, 2, 1), Rhs);
-	const FExpression* Rhs1 = NewSwizzle(FSwizzleParameters(1, 0, 0), Rhs);
-	return NewSub(NewMul(NewMul(Lhs0, Rhs0), NewConstant(FVector3f(1.0f, -1.0f, 1.0f))), NewMul(Lhs1, Rhs1));
+	const FExpression* Lhs0 = NewSwizzle(FSwizzleParameters(1, 2, 0), Lhs);
+	const FExpression* Lhs1 = NewSwizzle(FSwizzleParameters(2, 0, 1), Lhs);
+	const FExpression* Rhs0 = NewSwizzle(FSwizzleParameters(2, 0, 1), Rhs);
+	const FExpression* Rhs1 = NewSwizzle(FSwizzleParameters(1, 2, 0), Rhs);
+	return NewSub(NewMul(Lhs0, Rhs0), NewMul(Lhs1, Rhs1));
 }
 
 FExpressionOperation::FExpressionOperation(EOperation InOp, TConstArrayView<const FExpression*> InInputs) : Op(InOp)
@@ -195,6 +195,14 @@ FOperationRequestedTypes GetOperationRequestedTypes(EOperation Op, const FReques
 		Types.InputType[0] = Shader::EValueType::Float4x4;
 		Types.InputType[1] = Shader::EValueType::Float3;
 		break;
+	case EOperation::Less:
+	case EOperation::Greater:
+	case EOperation::LessEqual:
+	case EOperation::GreaterEqual:
+		// inputs for comparisons are some numeric type
+		Types.InputType[0] = Shader::EValueType::Numeric1;
+		Types.InputType[1] = Shader::EValueType::Numeric1;
+		break;
 	default:
 		break;
 	}
@@ -231,12 +239,14 @@ FOperationTypes GetOperationTypes(EOperation Op, TConstArrayView<FPreparedType> 
 				Types.InputType[0] = Shader::EValueType::Float3;
 				Types.InputType[1] = Shader::EValueType::Double4x4;
 				Types.ResultType = FPreparedType(Shader::EValueType::Double3, IntermediateComponent);
+				Types.bIsLWC = true;
 				break;
 			case Shader::EValueType::DoubleInverse4x4:
 				// FLWCVector3 * FLWCInverseMatrix -> float3
 				Types.InputType[0] = Shader::EValueType::Double3;
 				Types.InputType[1] = Shader::EValueType::DoubleInverse4x4;
 				Types.ResultType = FPreparedType(Shader::EValueType::Float3, IntermediateComponent);
+				Types.bIsLWC = true;
 				break;
 			default:
 				// float3 * float4x4 -> float3
@@ -317,6 +327,14 @@ FOperationTypes GetOperationTypes(EOperation Op, TConstArrayView<FPreparedType> 
 		case EOperation::Frac:
 		case EOperation::Step:
 		case EOperation::SmoothStep:
+			if (Types.bIsLWC)
+			{
+				// LWCSmoothStep requires all inputs have the same type
+				for (int32 InputIndex = 0; InputIndex < InputPreparedType.Num(); ++InputIndex)
+				{
+					Types.InputType[InputIndex] = IntermediateType.Type.ValueType;
+				}
+			}
 			for (int32 Index = 0; Index < Types.ResultType.PreparedComponents.Num(); ++Index)
 			{
 				Types.ResultType.SetComponentBounds(Index, Shader::FComponentBounds(Shader::EComponentBound::Zero, Shader::EComponentBound::One));
@@ -659,7 +677,7 @@ bool FExpressionOperation::PrepareValue(FEmitContext& Context, FEmitScope& Scope
 	{
 		if (Context.bMarkLiveValues)
 		{
-			InputPreparedType[Index] = Context.GetPreparedType(Inputs[Index]);
+			InputPreparedType[Index] = Context.GetPreparedType(Inputs[Index], RequestedTypes.InputType[Index]);
 			bMarkLiveInput[Index] = true;
 		}
 		else
@@ -737,13 +755,14 @@ bool FExpressionOperation::PrepareValue(FEmitContext& Context, FEmitScope& Scope
 void FExpressionOperation::EmitValueShader(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FEmitValueShaderResult& OutResult) const
 {
 	const FOperationDescription OpDesc = GetOperationDescription(Op);
+	const Private::FOperationRequestedTypes RequestedTypes = Private::GetOperationRequestedTypes(Op, RequestedType);
+
 	FPreparedType InputPreparedType[MaxInputs];
 	for (int32 Index = 0; Index < OpDesc.NumInputs; ++Index)
 	{
-		InputPreparedType[Index] = Context.GetPreparedType(Inputs[Index]);
+		InputPreparedType[Index] = Context.GetPreparedType(Inputs[Index], RequestedTypes.InputType[Index]);
 	}
 
-	const Private::FOperationRequestedTypes RequestedTypes = Private::GetOperationRequestedTypes(Op, RequestedType);
 	const Private::FOperationTypes Types = Private::GetOperationTypes(Op, MakeArrayView(InputPreparedType, OpDesc.NumInputs));
 	FEmitShaderExpression* InputValue[MaxInputs] = { nullptr };
 	for (int32 Index = 0; Index < OpDesc.NumInputs; ++Index)
@@ -757,64 +776,71 @@ void FExpressionOperation::EmitValueShader(FEmitContext& Context, FEmitScope& Sc
 	switch (Op)
 	{
 	// Unary Ops
-	case EOperation::Abs: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCAbs(%)") : TEXT("abs(%)"), InputValue[0]); break;
+	case EOperation::Abs: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSAbs(%)") : TEXT("abs(%)"), InputValue[0]); break;
 	case EOperation::Neg:
 		if (Types.bIsLWC)
 		{
-			OutResult.Code = Context.EmitExpression(Scope, ResultType, TEXT("LWCNegate(%)"), InputValue[0]);
+			OutResult.Code = Context.EmitExpression(Scope, ResultType, TEXT("WSNegate(%)"), InputValue[0]);
 		}
 		else
 		{
 			OutResult.Code = Context.EmitInlineExpression(Scope, ResultType, TEXT("(-%)"), InputValue[0]);
 		}
 		break;
-	case EOperation::Rcp: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCRcp(%)") : TEXT("rcp(%)"), InputValue[0]); break;
-	case EOperation::Sqrt: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCSqrt(%)") : TEXT("sqrt(%)"), InputValue[0]); break;
-	case EOperation::Rsqrt: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCRsqrt(%)") : TEXT("rsqrt(%)"), InputValue[0]); break;
+	case EOperation::Rcp: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSRcpDemote(%)") : TEXT("rcp(%)"), InputValue[0]); break;
+	case EOperation::Sqrt: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSSqrtDemote(%)") : TEXT("sqrt(%)"), InputValue[0]); break;
+	case EOperation::Rsqrt: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSRsqrtDemote(%)") : TEXT("rsqrt(%)"), InputValue[0]); break;
 	case EOperation::Log: OutResult.Code = Context.EmitExpression(Scope, ResultType, TEXT("log(%)"), InputValue[0]); break;
 	case EOperation::Log2: OutResult.Code = Context.EmitExpression(Scope, ResultType, TEXT("log2(%)"), InputValue[0]); break;
 	case EOperation::Exp: OutResult.Code = Context.EmitExpression(Scope, ResultType, TEXT("exp(%)"), InputValue[0]); break;
 	case EOperation::Exp2: OutResult.Code = Context.EmitExpression(Scope, ResultType, TEXT("exp2(%)"), InputValue[0]); break;
-	case EOperation::Frac: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCFrac(%)") : TEXT("frac(%)"), InputValue[0]); break;
-	case EOperation::Floor: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCFloor(%)") : TEXT("floor(%)"), InputValue[0]); break;
-	case EOperation::Ceil: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCCeil(%)") : TEXT("ceil(%)"), InputValue[0]); break;
-	case EOperation::Round: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCRound(%)") : TEXT("round(%)"), InputValue[0]); break;
-	case EOperation::Trunc: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCTrunc(%)") : TEXT("trunc(%)"), InputValue[0]); break;
-	case EOperation::Saturate: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCSaturate(%)") : TEXT("saturate(%)"), InputValue[0]); break;
-	case EOperation::Sign: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCSign(%)") : TEXT("sign(%)"), InputValue[0]); break;
-	case EOperation::Length: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCLength(%)") : TEXT("length(%)"), InputValue[0]); break;
-	case EOperation::Normalize: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCNormalize(%)") : TEXT("normalize(%)"), InputValue[0]); break;
-	case EOperation::Sum: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCVectorSum(%)") : TEXT("VectorSum(%)"), InputValue[0]); break;
-	case EOperation::Sin: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCSin(%)") : TEXT("sin(%)"), InputValue[0]); break;
-	case EOperation::Cos: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCCos(%)") : TEXT("cos(%)"), InputValue[0]); break;
-	case EOperation::Tan: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCTan(%)") : TEXT("tan(%)"), InputValue[0]); break;
-	case EOperation::Asin: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCAsin(%)") : TEXT("asin(%)"), InputValue[0]); break;
-	case EOperation::AsinFast: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCAsin(%)") : TEXT("asinFast(%)"), InputValue[0]); break;
-	case EOperation::Acos: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCAcos(%)") : TEXT("acos(%)"), InputValue[0]); break;
-	case EOperation::AcosFast: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCAcos(%)") : TEXT("acosFast(%)"), InputValue[0]); break;
-	case EOperation::Atan: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCAtan(%)") : TEXT("atan(%)"), InputValue[0]); break;
-	case EOperation::AtanFast: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCAtan(%)") : TEXT("atanFast(%)"), InputValue[0]); break;
+	case EOperation::Frac: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSFracDemote(%)") : TEXT("frac(%)"), InputValue[0]); break;
+	case EOperation::Floor: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSFloor(%)") : TEXT("floor(%)"), InputValue[0]); break;
+	case EOperation::Ceil: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSCeil(%)") : TEXT("ceil(%)"), InputValue[0]); break;
+	case EOperation::Round: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSRound(%)") : TEXT("round(%)"), InputValue[0]); break;
+	case EOperation::Trunc: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSTrunc(%)") : TEXT("trunc(%)"), InputValue[0]); break;
+	case EOperation::Saturate: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSSaturateDemote(%)") : TEXT("saturate(%)"), InputValue[0]); break;
+	case EOperation::Sign: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSSign(%)") : TEXT("sign(%)"), InputValue[0]); break;
+	case EOperation::Length: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSLength(%)") : TEXT("length(%)"), InputValue[0]); break;
+	case EOperation::Normalize: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSNormalizeDemote(%)") : TEXT("normalize(%)"), InputValue[0]); break;
+	case EOperation::Sum: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSVectorSum(%)") : TEXT("VectorSum(%)"), InputValue[0]); break;
+	case EOperation::Sin: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSSin(%)") : TEXT("sin(%)"), InputValue[0]); break;
+	case EOperation::Cos: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSCos(%)") : TEXT("cos(%)"), InputValue[0]); break;
+	case EOperation::Tan: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSTan(%)") : TEXT("tan(%)"), InputValue[0]); break;
+	case EOperation::Asin: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSAsin(%)") : TEXT("asin(%)"), InputValue[0]); break;
+	case EOperation::AsinFast: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSAsin(%)") : TEXT("asinFast(%)"), InputValue[0]); break;
+	case EOperation::Acos: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSAcos(%)") : TEXT("acos(%)"), InputValue[0]); break;
+	case EOperation::AcosFast: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSAcos(%)") : TEXT("acosFast(%)"), InputValue[0]); break;
+	case EOperation::Atan: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSAtan(%)") : TEXT("atan(%)"), InputValue[0]); break;
+	case EOperation::AtanFast: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSAtan(%)") : TEXT("atanFast(%)"), InputValue[0]); break;
 	
 	// Binary Ops
-	case EOperation::Add: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCAdd(%, %)") : TEXT("(% + %)"), InputValue[0], InputValue[1]); break;
-	case EOperation::Sub: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCSubtract(%, %)") : TEXT("(% - %)"), InputValue[0], InputValue[1]); break;
-	case EOperation::Mul: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCMultiply(%, %)") : TEXT("(% * %)"), InputValue[0], InputValue[1]); break;
-	case EOperation::Div: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCDivide(%, %)") : TEXT("(% / %)"), InputValue[0], InputValue[1]); break;
-	case EOperation::Fmod: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCFmod(%, %)") : TEXT("fmod(%, %)"), InputValue[0], InputValue[1]); break;
-	case EOperation::Step: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCStep(%, %)") : TEXT("step(%, %)"), InputValue[0], InputValue[1]); break;
+	case EOperation::Add: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSAdd(%, %)") : TEXT("(% + %)"), InputValue[0], InputValue[1]); break;
+	case EOperation::Sub: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSSubtract(%, %)") : TEXT("(% - %)"), InputValue[0], InputValue[1]); break;
+	case EOperation::Mul: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSMultiply(%, %)") : TEXT("(% * %)"), InputValue[0], InputValue[1]); break;
+	case EOperation::Div: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSDivide(%, %)") : TEXT("(% / %)"), InputValue[0], InputValue[1]); break;
+	case EOperation::Fmod: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSFmodDemote(%, %)") : TEXT("fmod(%, %)"), InputValue[0], InputValue[1]); break;
+	case EOperation::Step: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSStep(%, %)") : TEXT("step(%, %)"), InputValue[0], InputValue[1]); break;
 	case EOperation::PowPositiveClamped: OutResult.Code = Context.EmitExpression(Scope, ResultType, TEXT("PositiveClampedPow(%, %)"), InputValue[0], InputValue[1]); break;
 	case EOperation::Atan2: OutResult.Code = Context.EmitExpression(Scope, ResultType, TEXT("atan2(%, %)"), InputValue[0], InputValue[1]); break;
 	case EOperation::Atan2Fast: OutResult.Code = Context.EmitExpression(Scope, ResultType, TEXT("atan2Fast(%, %)"), InputValue[0], InputValue[1]); break;
-	case EOperation::Min: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCMin(%, %)") : TEXT("min(%, %)"), InputValue[0], InputValue[1]); break;
-	case EOperation::Max: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCMax(%, %)") : TEXT("max(%, %)"), InputValue[0], InputValue[1]); break;
-	case EOperation::Less: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCLess(%, %)") : TEXT("(% < %)"), InputValue[0], InputValue[1]); break;
-	case EOperation::Greater: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCGreater(%, %)") : TEXT("(% > %)"), InputValue[0], InputValue[1]); break;
-	case EOperation::LessEqual: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCLessEqual(%, %)") : TEXT("(% <= %)"), InputValue[0], InputValue[1]); break;
-	case EOperation::GreaterEqual: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCGreaterEqual(%, %)") : TEXT("(% >= %)"), InputValue[0], InputValue[1]); break;
+	case EOperation::Min: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSMin(%, %)") : TEXT("min(%, %)"), InputValue[0], InputValue[1]); break;
+	case EOperation::Max: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSMax(%, %)") : TEXT("max(%, %)"), InputValue[0], InputValue[1]); break;
+	case EOperation::Less: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSLess(%, %)") : TEXT("(% < %)"), InputValue[0], InputValue[1]); break;
+	case EOperation::Greater: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSGreater(%, %)") : TEXT("(% > %)"), InputValue[0], InputValue[1]); break;
+	case EOperation::LessEqual: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSLessEqual(%, %)") : TEXT("(% <= %)"), InputValue[0], InputValue[1]); break;
+	case EOperation::GreaterEqual: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSGreaterEqual(%, %)") : TEXT("(% >= %)"), InputValue[0], InputValue[1]); break;
 	case EOperation::VecMulMatrix3:
 		if (Types.bIsLWC)
 		{
-			OutResult.Code = Context.EmitExpression(Scope, ResultType, TEXT("LWCMultiply(%, %)"), InputValue[0], InputValue[1]);
+			if (RequestedType.GetValueComponentType() == Shader::EValueComponentType::Double)
+			{
+				OutResult.Code = Context.EmitExpression(Scope, ResultType, TEXT("WSMultiply(%, %)"), InputValue[0], InputValue[1]);
+			}
+			else
+			{
+				OutResult.Code = Context.EmitExpression(Scope, ResultType, TEXT("WSMultiplyDemote(%, %)"), InputValue[0], InputValue[1]);
+			}
 		}
 		else
 		{
@@ -824,11 +850,19 @@ void FExpressionOperation::EmitValueShader(FEmitContext& Context, FEmitScope& Sc
 	case EOperation::VecMulMatrix4:
 		if (Types.bIsLWC)
 		{
-			OutResult.Code = Context.EmitExpression(Scope, ResultType, TEXT("LWCMultiply(%, %)"), InputValue[0], InputValue[1]);
+			if (RequestedType.GetValueComponentType() == Shader::EValueComponentType::Double)
+			{
+				OutResult.Code = Context.EmitExpression(Scope, ResultType, TEXT("WSMultiply(%, %)"), InputValue[0], InputValue[1]);
+			}
+			else
+			{
+				OutResult.Code = Context.EmitExpression(Scope, ResultType, TEXT("WSMultiplyDemote(%, %)"), InputValue[0], InputValue[1]);
+			}
 		}
 		else
 		{
-			OutResult.Code = Context.EmitExpression(Scope, ResultType, TEXT("mul(%, %)"), InputValue[0], InputValue[1]);
+			// Append 1.f because VecMulMatrix4 implies position but we request float3 for the vector
+			OutResult.Code = Context.EmitExpression(Scope, ResultType, TEXT("mul(float4(%, 1.f), %).xyz"), InputValue[0], InputValue[1]);
 		}
 		break;
 	case EOperation::Matrix3MulVec:
@@ -839,7 +873,7 @@ void FExpressionOperation::EmitValueShader(FEmitContext& Context, FEmitScope& Sc
 		break;
 
 	// Ternary Ops
-	case EOperation::SmoothStep: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("LWCSmoothStep(%, %, %)") : TEXT("smoothstep(%, %, %)"), InputValue[0], InputValue[1], InputValue[2]); break;
+	case EOperation::SmoothStep: OutResult.Code = Context.EmitExpression(Scope, ResultType, Types.bIsLWC ? TEXT("WSSmoothStep(%, %, %)") : TEXT("smoothstep(%, %, %)"), InputValue[0], InputValue[1], InputValue[2]); break;
 
 	default:
 		checkNoEntry();
@@ -850,13 +884,14 @@ void FExpressionOperation::EmitValueShader(FEmitContext& Context, FEmitScope& Sc
 void FExpressionOperation::EmitValuePreshader(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FEmitValuePreshaderResult& OutResult) const
 {
 	const FOperationDescription OpDesc = GetOperationDescription(Op);
+	const Private::FOperationRequestedTypes RequestedTypes = Private::GetOperationRequestedTypes(Op, RequestedType);
+
 	FPreparedType InputPreparedType[MaxInputs];
 	for (int32 Index = 0; Index < OpDesc.NumInputs; ++Index)
 	{
-		InputPreparedType[Index] = Context.GetPreparedType(Inputs[Index]);
+		InputPreparedType[Index] = Context.GetPreparedType(Inputs[Index], RequestedTypes.InputType[Index]);
 	}
 
-	const Private::FOperationRequestedTypes RequestedTypes = Private::GetOperationRequestedTypes(Op, RequestedType);
 	const Private::FOperationTypes Types = Private::GetOperationTypes(Op, MakeArrayView(InputPreparedType, OpDesc.NumInputs));
 	check(OpDesc.PreshaderOpcode != Shader::EPreshaderOpcode::Nop);
 

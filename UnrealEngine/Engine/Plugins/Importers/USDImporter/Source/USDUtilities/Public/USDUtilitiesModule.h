@@ -7,5 +7,4 @@
 class IUsdUtilitiesModule : public IModuleInterface
 {
 public:
-
 };

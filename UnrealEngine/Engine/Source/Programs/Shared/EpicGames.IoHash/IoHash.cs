@@ -5,11 +5,11 @@ using System.Buffers;
 using System.Buffers.Binary;
 using System.ComponentModel;
 using System.Globalization;
-using System.Text.Json.Serialization;
-using System.Text.Json;
 using System.IO;
-using System.Threading.Tasks;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace EpicGames.Core
 {
@@ -29,6 +29,11 @@ namespace EpicGames.Core
 		/// Length of the hash in bits
 		/// </summary>
 		public const int NumBits = NumBytes * 8;
+
+		/// <summary>
+		/// Threshold size at which to use multiple threads for hashing
+		/// </summary>
+		const int MultiThreadedSize = 1_000_000;
 
 		readonly ulong _a;
 		readonly ulong _b;
@@ -77,7 +82,18 @@ namespace EpicGames.Core
 		public static IoHash Compute(ReadOnlySpan<byte> data)
 		{
 			Span<byte> output = stackalloc byte[32];
-			Blake3.Hasher.Hash(data, output);
+			using (Blake3.Hasher hasher = Blake3.Hasher.New())
+			{
+				if (data.Length < MultiThreadedSize)
+				{
+					hasher.Update(data);
+				}
+				else
+				{
+					hasher.UpdateWithJoin(data);
+				}
+				hasher.Finalize(output);
+			}
 			return new IoHash(output);
 		}
 
@@ -97,7 +113,14 @@ namespace EpicGames.Core
 			{
 				foreach (ReadOnlyMemory<byte> segment in sequence)
 				{
-					hasher.Update(segment.Span);
+					if (segment.Length < MultiThreadedSize)
+					{
+						hasher.Update(segment.Span);
+					}
+					else
+					{
+						hasher.UpdateWithJoin(segment.Span);
+					}
 				}
 				return FromBlake3(hasher);
 			}
@@ -113,11 +136,13 @@ namespace EpicGames.Core
 			using (Blake3.Hasher hasher = Blake3.Hasher.New())
 			{
 				Span<byte> buffer = stackalloc byte[16384];
+
 				int length;
 				while ((length = stream.Read(buffer)) > 0)
 				{
 					hasher.Update(buffer.Slice(0, length));
 				}
+
 				return FromBlake3(hasher);
 			}
 		}
@@ -126,6 +151,7 @@ namespace EpicGames.Core
 		/// Creates the IoHash for a stream asynchronously. 
 		/// </summary>
 		/// <param name="stream">Data to compute the hash for</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>New content hash instance containing the hash of the data</returns>
 		public static async Task<IoHash> ComputeAsync(Stream stream, CancellationToken cancellationToken = default) => await ComputeAsync(stream, -1, cancellationToken);
 
@@ -251,11 +277,34 @@ namespace EpicGames.Core
 		/// <inheritdoc/>
 		public override int GetHashCode() => (int)_a;
 
-		/// <inheritdoc/>
-		public Utf8String ToUtf8String() => StringUtils.FormatUtf8HexString(ToByteArray());
+		/// <summary>
+		/// Format the hash as a utf8 string
+		/// </summary>
+		public Utf8String ToUtf8String()
+		{
+			Span<byte> buffer = stackalloc byte[IoHash.NumBytes];
+			CopyTo(buffer);
+			return StringUtils.FormatUtf8HexString(buffer);
+		}
+
+		/// <summary>
+		/// Formats the hash as a utf8 string
+		/// </summary>
+		/// <param name="chars">Output buffer for the converted string</param>
+		public void ToUtf8String(Span<byte> chars)
+		{
+			Span<byte> buffer = stackalloc byte[IoHash.NumBytes];
+			CopyTo(buffer);
+			StringUtils.FormatUtf8HexString(buffer, chars);
+		}
 
 		/// <inheritdoc/>
-		public override string ToString() => StringUtils.FormatHexString(ToByteArray());
+		public override string ToString()
+		{
+			Span<byte> buffer = stackalloc byte[IoHash.NumBytes];
+			CopyTo(buffer);
+			return StringUtils.FormatHexString(buffer);
+		}
 
 		/// <summary>
 		/// Convert this hash to a byte array

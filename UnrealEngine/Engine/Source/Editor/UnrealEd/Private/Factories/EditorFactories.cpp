@@ -111,6 +111,7 @@
 #include "Factories/StringTableFactory.h"
 #include "Factories/SubsurfaceProfileFactory.h"
 #include "Factories/SpecularProfileFactory.h"
+#include "Factories/NeuralProfileFactory.h"
 #include "Factories/Texture2dFactoryNew.h"
 #include "Engine/Texture.h"
 #include "Factories/TextureFactory.h"
@@ -147,6 +148,7 @@
 #include "GameFramework/DefaultPhysicsVolume.h"
 #include "Engine/SubsurfaceProfile.h"
 #include "Engine/SpecularProfile.h"
+#include "Engine/NeuralProfile.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/FeedbackContext.h"
 #include "GameFramework/WorldSettings.h"
@@ -199,6 +201,8 @@
 #include "AssetToolsModule.h"
 #include "IAssetTools.h"
 #include "WorldPartition/ContentBundle/ContentBundleActivationScope.h"
+#include "WorldPartition/DataLayer/ExternalDataLayerAsset.h"
+#include "ActorEditorContext/ScopedActorEditorContextSetExternalDataLayerAsset.h"
 
 #include "DDSFile.h"
 #include "IESConverter.h"
@@ -916,6 +920,11 @@ UObject* ULevelFactory::FactoryCreateText
 				FParse::Value(Str, TEXT("ActorContentBundleGuid="), ActorContentBundleGuid);
 				FContentBundleActivationScope Scope(ActorContentBundleGuid);
 
+				FString ExternalDataLayerAssetPathStr;
+				FParse::Value(Str, TEXT("ExternalDataLayerAsset="), ExternalDataLayerAssetPathStr);
+				UExternalDataLayerAsset* ExternalDataLayerAsset = Cast<UExternalDataLayerAsset>(FSoftObjectPath(ExternalDataLayerAssetPathStr).TryLoad());
+				FScopedActorEditorContextSetExternalDataLayerAsset EDLScope(ExternalDataLayerAsset);
+
 				// If we're pasting from a class that belongs to a map we need to duplicate the class and use that instead
 				if (FBlueprintEditorUtils::IsAnonymousBlueprintClass(TempClass))
 				{
@@ -1078,7 +1087,7 @@ UObject* ULevelFactory::FactoryCreateText
 								{
 									ExistingToNewMap.Add(Found, NewActor);
 								}
-								else if (!ExportedActorFullName.IsEmpty())
+								if (!ExportedActorFullName.IsEmpty())
 								{
 									ExistingToNewMap.Add(ExportedActorFullName, NewActor);
 								}
@@ -1265,9 +1274,19 @@ UObject* ULevelFactory::FactoryCreateText
 			const FString&	PropText = ActorMapElement.Value;
 			if ( Actor->ShouldImport(FStringView(PropText), bIsMoveToStreamingLevel) )
 			{
+				const FName OldPath = Actor->GetFolderPath();
+
 				Actor->PreEditChange(nullptr);
 				ImportObjectProperties( (uint8*)Actor, *PropText, Actor->GetClass(), Actor, Actor, Warn, 0, INDEX_NONE, NULL, &ExistingToNewMap );
 				bActorChanged = true;
+
+				// Path might have been set through OnLevelActorAdded (i.e. by UActorEditorContextSubsystem).
+				// If that's the case, then let's restore it here, as ImportObjectProperties might have
+				// overridden that with an imported value that we'd like to discard.
+				if (!OldPath.IsNone())
+				{
+					Actor->SetFolderPath(OldPath);
+				}
 
 				if (GWorld == World)
 				{
@@ -2930,7 +2949,7 @@ bool UTextureFactory::ImportImage(const uint8* Buffer, int64 Length, FFeedbackCo
 			// branch for JPEG, if retaining the jpeg compressed data
 			// this is inside the DecompressImage branch even though we don't use the LoadedImage at all
 			//	 just to ensure that the jpeg will decode successfully
-			if (ImageFormat == EImageFormat::JPEG)
+			if (ImageFormat == EImageFormat::JPEG || ImageFormat == EImageFormat::UEJPEG)
 			{
 				// unusual loader, retains jpeg
 				bool bRetainJpegFormat = false;
@@ -2942,7 +2961,7 @@ bool UTextureFactory::ImportImage(const uint8* Buffer, int64 Length, FFeedbackCo
 				if ( bRetainJpegFormat)
 				{
 					// does not decode jpeg, just to get width/height :
-					TSharedPtr<IImageWrapper> JpegImageWrapper = ImageWrapperModule.CreateImageWrapper(EImageFormat::JPEG);
+					TSharedPtr<IImageWrapper> JpegImageWrapper = ImageWrapperModule.CreateImageWrapper(ImageFormat);
 					if (JpegImageWrapper.IsValid() && JpegImageWrapper->SetCompressed(Buffer, Length))
 					{
 						check( JpegImageWrapper->GetWidth() == LoadedImage.SizeX );
@@ -2961,9 +2980,17 @@ bool UTextureFactory::ImportImage(const uint8* Buffer, int64 Length, FFeedbackCo
 						);
 
 						OutImage.RawData.Append(Buffer, Length);
-						OutImage.RawDataCompressionFormat = ETextureSourceCompressionFormat::TSCF_JPEG;
 
-						UE_LOG(LogEditorFactories,Display,TEXT("JPEG imported and retained as JPEG in uasset."));
+						if (ImageFormat == EImageFormat::JPEG) 
+						{
+							OutImage.RawDataCompressionFormat = ETextureSourceCompressionFormat::TSCF_JPEG;
+							UE_LOG(LogEditorFactories,Display,TEXT("JPEG imported and retained as JPEG in uasset."));
+						}
+						else
+						{
+							OutImage.RawDataCompressionFormat = ETextureSourceCompressionFormat::TSCF_UEJPEG;
+							UE_LOG(LogEditorFactories,Display,TEXT("UEJPEG imported and retained as UEJPEG in uasset."));
+						}
 
 						return true;
 					}
@@ -3039,6 +3066,9 @@ bool UTextureFactory::ImportImage(const uint8* Buffer, int64 Length, FFeedbackCo
 				if ( OutImage.CompressionSettings == TC_Grayscale && TGA->ImageTypeCode == 3)
 				{
 					// default grayscales to linear as they wont get compression otherwise and are commonly used as masks
+					// -> this is wrong way to do this
+					//	Image.SRGB should be the setting of the import image data
+					//	not contain information about how we want the texture platform data to be set up
 					OutImage.SRGB = false;
 				}
 			}
@@ -3333,7 +3363,7 @@ UTexture* UTextureFactory::ImportTextureUDIM(UClass* Class, UObject* InParent, F
 
 	if (ColorSpaceMode == ETextureSourceColorSpace::Auto)
 	{
-		Texture->SRGB = bSRGB;
+		Texture->SRGB = UE::TextureUtilitiesCommon::GetDefaultSRGB(TCSettings,Format,bSRGB);
 	}
 	else if (ColorSpaceMode == ETextureSourceColorSpace::Linear)
 	{
@@ -3531,7 +3561,7 @@ UTexture * UTextureFactory::ImportDDS(const uint8* Buffer,int64 Length,UObject* 
 		check( bSRGB == false );
 	}
 
-	Texture->SRGB = bSRGB;
+	Texture->SRGB = UE::TextureUtilitiesCommon::GetDefaultSRGB(Texture->CompressionSettings,TSFormat,bSRGB);
 	
 	if ( MipCount > 1)
 	{
@@ -3754,29 +3784,21 @@ UTexture* UTextureFactory::ImportTexture(UClass* Class, UObject* InParent, FName
 
 			Texture->CompressionSettings = Image.CompressionSettings;
 
-			// check Texture Format before setting SRGB
-			if ( ERawImageFormat::GetFormatNeedsGammaSpace( FImageCoreUtils::ConvertToRawImageFormat(Image.Format) ) )
+			if (ColorSpaceMode == ETextureSourceColorSpace::Auto)
 			{
-				if (ColorSpaceMode == ETextureSourceColorSpace::Auto)
-				{
-					Texture->SRGB = Image.SRGB;
-				}
-				else if (ColorSpaceMode == ETextureSourceColorSpace::Linear)
-				{
-					Texture->SRGB = false;
-				}
-				else if (ColorSpaceMode == ETextureSourceColorSpace::SRGB)
-				{
-					Texture->SRGB = true;
-				}
-				else
-				{
-					check(0);
-				}
+				Texture->SRGB = UE::TextureUtilitiesCommon::GetDefaultSRGB(Image.CompressionSettings,Image.Format,Image.SRGB);
+			}
+			else if (ColorSpaceMode == ETextureSourceColorSpace::Linear)
+			{
+				Texture->SRGB = false;
+			}
+			else if (ColorSpaceMode == ETextureSourceColorSpace::SRGB)
+			{
+				Texture->SRGB = true;
 			}
 			else
 			{
-				Texture->SRGB = false;
+				check(0);
 			}
 		}
 		return Texture;
@@ -4039,6 +4061,8 @@ UObject* UTextureFactory::FactoryCreateBinary
 	if (ExistingTexture2D)
 	{
 		// Update with new settings, which should disable streaming...
+		// -> pretty sure this is unnecessary
+		//	the combination of WaitForPendingInitOrStreaming and PreEditChange do all the waiting necessary
 		ExistingTexture2D->UpdateResource();
 	}
 	if(ExistingTexture)
@@ -4046,11 +4070,8 @@ UObject* UTextureFactory::FactoryCreateBinary
 		// Wait for InitRHI() to complete before the FTextureReferenceReplacer calls ReleaseRHI() to follow the workflow.
 		// Static texture needs to avoid having pending InitRHI() before enqueuing ReleaseRHI() to safely track access of the PlatformData on the renderthread.
 		ExistingTexture->WaitForPendingInitOrStreaming();
-	}
 
-	// Make sure the changes are part of the transaction when reimporting over an existing texture
-	if (ExistingTexture)
-	{
+		// Make sure the changes are part of the transaction when reimporting over an existing texture
 		ExistingTexture->PreEditChange(nullptr);
 	}
 
@@ -4077,7 +4098,7 @@ UObject* UTextureFactory::FactoryCreateBinary
 		if (ExistingTexture)
 		{
 			// We failed to import over the existing texture. Make sure the resource is ready in the existing texture.
-			ExistingTexture->UpdateResource();
+			ExistingTexture->PostEditChange();
 		}
 
 		Warn->Logf(ELogVerbosity::Error, TEXT("Texture import failed") );
@@ -4085,6 +4106,8 @@ UObject* UTextureFactory::FactoryCreateBinary
 		return nullptr;
 	}
 
+	// this is automatic now and redundant;
+	//	Source.Init does UseHashAsGuid
 	if (bUseHashAsGuid)
 	{
 		Texture->Source.UseHashAsGuid();
@@ -4141,6 +4164,7 @@ UObject* UTextureFactory::FactoryCreateBinary
 	Texture->bDoScaleMipsForAlphaCoverage	= bDoScaleMipsForAlphaCoverage;
 	Texture->AlphaCoverageThresholds		= AlphaCoverageThresholds;
 	Texture->bUseNewMipFilter				= bUseNewMipFilter;
+	// these get changed by SetModernSettingsForNewOrChangedTexture anyway
 
 	if(Texture->MipGenSettings == TMGS_FromTextureGroup)
 	{
@@ -4150,28 +4174,31 @@ UObject* UTextureFactory::FactoryCreateBinary
 	
 	Texture->bPreserveBorder		= bPreserveBorder;
 
-	if ( ! Texture->Source.IsPowerOfTwo() )
+	if ( Texture->Source.GetNumBlocks() == 1 && ! Texture->Source.IsBlockPowerOfTwo(0) )
 	{
 		// try to set some better default options for non-pow2 textures
 
 		// if Texture is not pow2 , change to TMGS_NoMipMaps (if it was default)
 		//   this used to be done by Texture2d.cpp ; it is now optional
 		//	 you can set it back to having mips if you want
-		if ( Texture->MipGenSettings == TMGS_FromTextureGroup )
+		if ( Texture->MipGenSettings == TMGS_FromTextureGroup && Texture->GetTextureClass() == ETextureClass::TwoD )
 		{
 			Texture->MipGenSettings = TMGS_NoMipmaps;		
 		}
 		
-		// if Texture is not multiple of 4, change TC to EditorIcon ("UserInterface2D")
-		//	if you do not do this, you might see "Texture forced to uncompressed because size is not a multiple of 4"
-		//  this needs to match the logic in Texture.cpp : GetDefaultTextureFormatName
-		int32 SizeX = Texture->Source.GetSizeX();
-		int32 SizeY = Texture->Source.GetSizeY();
-		if ( (SizeX&3) != 0 || (SizeY&3) != 0 )
+		if ( ! Texture->Source.IsLongLatCubemap() )
 		{
-			if ( Texture->CompressionSettings == TC_Default ) // AutoDXT/BC1
+			// if Texture is not multiple of 4, change TC to EditorIcon ("UserInterface2D")
+			//	if you do not do this, you might see "Texture forced to uncompressed because size is not a multiple of 4"
+			//  this needs to match the logic in Texture.cpp : GetDefaultTextureFormatName
+			int32 SizeX = Texture->Source.GetSizeX();
+			int32 SizeY = Texture->Source.GetSizeY();
+			if ( (SizeX&3) != 0 || (SizeY&3) != 0 )
 			{
-				Texture->CompressionSettings = TC_EditorIcon; // "UserInterface2D"
+				if ( Texture->CompressionSettings == TC_Default ) // AutoDXT/BC1
+				{
+					Texture->CompressionSettings = TC_EditorIcon; // "UserInterface2D"
+				}
 			}
 		}
 	}
@@ -4279,7 +4306,8 @@ UObject* UTextureFactory::FactoryCreateBinary
 
 	if (!bUsingExistingSettings)
 	{
-		if (UE::NormalMapIdentification::HandleAssetPostImport(Texture))
+		FTextureSource::FMipLock LockedMip(FTextureSource::ELockState::ReadOnly, &Texture->Source, 0);
+		if (LockedMip.IsValid() && UE::NormalMapIdentification::HandleAssetPostImport(Texture, LockedMip.Image))
 		{
 			UE_LOG(LogEditorFactories,Display,TEXT("Auto-detected normal map"));
 
@@ -4694,7 +4722,14 @@ bool UTextureExporterDDS::SupportsObject(UObject* Object) const
 	
 	if ( !Texture->Source.IsValid() )
 	{
-		return false;
+		if ( Texture->GetTextureClass() == ETextureClass::RenderTarget )
+		{
+			return true;
+		}
+		else
+		{
+			return false;
+		}
 	}
 
 	if ( Texture->Source.GetFormat() == TSF_BGRE8 )
@@ -4715,31 +4750,50 @@ bool UTextureExporterDDS::ExportBinary( UObject* Object, const TCHAR* Type, FArc
 {
 	UTexture * Texture = GetExportTexture( Object );
 	check( Texture != nullptr );
-	
-	// FileIndex for layers for VT :
-	
-	int NumBlocks = Texture->Source.GetNumBlocks();
-	int NumLayers = Texture->Source.GetNumLayers();
 
-	int NumFiles = NumBlocks * NumLayers;
-	check( FileIndex < NumFiles );
-	int BlockIndex = FileIndex / NumLayers;
-	int LayerIndex = FileIndex % NumLayers; 
-
-	UE_LOG(LogEditorFactories, Display, TEXT("Exporting DDS from Layer %d/%d Block %d/%d"), LayerIndex,NumLayers, BlockIndex,NumBlocks);
-
-	// Type == Image extension
+	UTextureRenderTarget * RT = Cast<UTextureRenderTarget>(Texture);
 	
-	TArray64<uint8> OutArray;
-	if ( ! FImageUtils::ExportTextureSourceToDDS(OutArray,Texture,BlockIndex,LayerIndex) )
+	if ( RT != nullptr )
 	{
-		Warn->Logf(ELogVerbosity::Error, TEXT("ExportTextureSourceToDDS failed"));
-		return false;
+		TArray64<uint8> OutArray;
+		if ( ! FImageUtils::ExportRenderTargetToDDS(OutArray,RT) )
+		{
+			Warn->Logf(ELogVerbosity::Error, TEXT("ExportRenderTargetToDDS failed"));
+			return false;
+		}
+
+		Ar.Serialize(OutArray.GetData(),OutArray.Num());
+
+		return true;		
 	}
+	else
+	{
 
-	Ar.Serialize(OutArray.GetData(),OutArray.Num());
+		// FileIndex for layers for VT :
+	
+		int NumBlocks = Texture->Source.GetNumBlocks();
+		int NumLayers = Texture->Source.GetNumLayers();
 
-	return true;
+		int NumFiles = NumBlocks * NumLayers;
+		check( FileIndex < NumFiles );
+		int BlockIndex = FileIndex / NumLayers;
+		int LayerIndex = FileIndex % NumLayers; 
+
+		UE_LOG(LogEditorFactories, Display, TEXT("Exporting DDS from Layer %d/%d Block %d/%d"), LayerIndex,NumLayers, BlockIndex,NumBlocks);
+
+		// Type == Image extension
+	
+		TArray64<uint8> OutArray;
+		if ( ! FImageUtils::ExportTextureSourceToDDS(OutArray,Texture,BlockIndex,LayerIndex) )
+		{
+			Warn->Logf(ELogVerbosity::Error, TEXT("ExportTextureSourceToDDS failed"));
+			return false;
+		}
+
+		Ar.Serialize(OutArray.GetData(),OutArray.Num());
+
+		return true;
+	}
 }
 
 UVirtualTextureBuilderExporterDDS::UVirtualTextureBuilderExporterDDS(const FObjectInitializer& ObjectInitializer)
@@ -4851,14 +4905,22 @@ int32 UTextureExporterGeneric::GetFileCount(UObject* Object) const
 	UTexture* Texture = GetExportTexture(Object);
 	check(Texture != nullptr);
 
-	// standard textures will have NumBlocks == NumLayers == 1
-	// VT can have them > 1
-	// UDIM gives you NumBlocks
-	int NumBlocks = Texture->Source.GetNumBlocks();
-	int NumLayers = Texture->Source.GetNumLayers();
-	int FileCount = NumBlocks * NumLayers;
-	check( FileCount > 0 );
-	return FileCount;
+	if ( Texture->Source.IsValid() )
+	{
+		// standard textures will have NumBlocks == NumLayers == 1
+		// VT can have them > 1
+		// UDIM gives you NumBlocks
+		int NumBlocks = Texture->Source.GetNumBlocks();
+		int NumLayers = Texture->Source.GetNumLayers();
+		int FileCount = NumBlocks * NumLayers;
+		check( FileCount > 0 );
+		return FileCount;
+	}
+	else
+	{
+		// eg. render targets
+		return 1;
+	}
 }
 
 FString UTextureExporterGeneric::GetUniqueFilename( UObject* Object, const TCHAR* Filename, int32 FileIndex, int32 FileCount ) const
@@ -5058,6 +5120,16 @@ URenderTargetExporterPNG::URenderTargetExporterPNG(const FObjectInitializer& Obj
 	FormatDescription.Add(TEXT("PNG"));
 }
 
+static int GetBitsPerComponent(EPixelFormat Format)
+{
+	if ( Format == PF_A2B10G10R10 ) return 10; // doesn't handle heterogenous bit counts well
+
+	const FPixelFormatInfo & Info = GPixelFormats[Format];
+	// rounds down
+	int BitsPerComponent = ( Info.BlockBytes * 8 ) / ( Info.BlockSizeX * Info.BlockSizeY * Info.BlockSizeZ * Info.NumComponents );
+	return BitsPerComponent;
+}
+
 bool URenderTargetExporterPNG::SupportsObject(UObject* Object) const
 {
 	if (Super::SupportsObject(Object))
@@ -5068,7 +5140,7 @@ bool URenderTargetExporterPNG::SupportsObject(UObject* Object) const
 		{
 			EPixelFormat PixelFormat = TexRT2D->GetFormat();
 
-			return PixelFormat == PF_B8G8R8A8;
+			return GetBitsPerComponent(PixelFormat) <= 8;
 		}
 	}
 	return false;
@@ -5097,8 +5169,8 @@ bool URenderTargetExporterEXR::SupportsObject(UObject* Object) const
 		if (TexRT2D)
 		{
 			EPixelFormat PixelFormat = TexRT2D->GetFormat();
-
-			return PixelFormat == PF_FloatRGBA;
+			
+			return GetBitsPerComponent(PixelFormat) > 8;
 		}
 	}
 	return false;
@@ -5192,7 +5264,7 @@ bool UTextureExporterJPEG::SupportsObject(UObject* Object) const
 			}
 
 			// Check it has JPEG BulkData :
-			if ( Texture->Source.GetSourceCompression() == TSCF_JPEG &&
+			if ( (Texture->Source.GetSourceCompression() == TSCF_JPEG || Texture->Source.GetSourceCompression() == TSCF_UEJPEG) &&
 				Texture->Source.GetSizeOnDisk() > 0 )
 			{
 				ETextureSourceFormat TSF = Texture->Source.GetFormat();
@@ -5206,12 +5278,12 @@ bool UTextureExporterJPEG::SupportsObject(UObject* Object) const
 	return false;
 }
 
-bool UTextureExporterJPEG::ExportBinary( UObject* Object, const TCHAR* Type, FArchive& Ar, FFeedbackContext* Warn, int32 FileIndex, uint32 PortFlags )
+bool UTextureExporterJPEG::ExportBinary(UObject* Object, const TCHAR* Type, FArchive& Ar, FFeedbackContext* Warn, int32 FileIndex, uint32 PortFlags)
 {
 	UTexture2D* Texture = Cast<UTexture2D>(Object);
-	check( Texture != nullptr );
+	check(Texture != nullptr);
 
-	check( Texture->Source.GetSourceCompression() == TSCF_JPEG &&
+	check((Texture->Source.GetSourceCompression() == TSCF_JPEG || Texture->Source.GetSourceCompression() == TSCF_UEJPEG) &&
 			Texture->Source.GetSizeOnDisk() > 0 );
 
 	// just write the JPEG data we already have :
@@ -5219,12 +5291,83 @@ bool UTextureExporterJPEG::ExportBinary( UObject* Object, const TCHAR* Type, FAr
 	UE_LOG(LogEditorFactories, Display, TEXT("Exporting Texture as JPEG stored bits (no lossy decompress or recompress)."));
 
 	Texture->Source.OperateOnLoadedBulkData( [&](const FSharedBuffer& BulkDataBuffer) {
-		Ar.Serialize( const_cast<void *>(BulkDataBuffer.GetData()), BulkDataBuffer.GetSize());
+		if (Texture->Source.GetSourceCompression() == TSCF_JPEG)
+		{
+			Ar.Serialize(const_cast<void*>(BulkDataBuffer.GetData()), BulkDataBuffer.GetSize());
+		}
+		else
+		{
+			IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
+			TSharedPtr<IImageWrapper> ImageWrapper = ImageWrapperModule.CreateImageWrapper(EImageFormat::UEJPEG);
+			ImageWrapper->SetCompressed(BulkDataBuffer.GetData(), BulkDataBuffer.GetSize());
+			TArray64<uint8> ExportData = ImageWrapper->GetExportData();
+			Ar.Serialize(ExportData.GetData(), ExportData.Num());
+		}
 	} );
-
 	return true;
 }
 
+//-------------
+// UTextureExporterUEJPEG does not let you compress data to UEJPEG
+//	it only writes out existing UEJPEG data
+// do NOT use UTextureExporterGeneric here, that would go to ImageWrapper and compress to UEJPEG
+// note: does not support UDIM blocks like UTextureExporterGeneric
+
+UTextureExporterUEJPEG::UTextureExporterUEJPEG(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+{
+	SupportedClass = UTexture2D::StaticClass();
+	PreferredFormatIndex = 0;
+	FormatExtension.Add(TEXT("UEJ"));
+	FormatDescription.Add(TEXT("UE-JPEG original imported into uasset"));
+}
+
+bool UTextureExporterUEJPEG::SupportsObject(UObject* Object) const
+{
+	if (Super::SupportsObject(Object))
+	{
+		UTexture2D* Texture = Cast<UTexture2D>(Object);
+
+		if (Texture)
+		{
+			// we do NOT do lossy recompression
+			
+			if (Texture->Source.GetNumBlocks() > 1 )
+			{
+				// does not support UDIM
+				return false;
+			}
+
+			// Check it has JPEG BulkData :
+			if ( Texture->Source.GetSourceCompression() == TSCF_UEJPEG && Texture->Source.GetSizeOnDisk() > 0 )
+			{
+				ETextureSourceFormat TSF = Texture->Source.GetFormat();
+				ERawImageFormat::Type RawFormat = FImageCoreUtils::ConvertToRawImageFormat(TSF);
+				check( RawFormat == ERawImageFormat::G8 || RawFormat == ERawImageFormat::BGRA8 );
+
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+bool UTextureExporterUEJPEG::ExportBinary(UObject* Object, const TCHAR* Type, FArchive& Ar, FFeedbackContext* Warn, int32 FileIndex, uint32 PortFlags)
+{
+	UTexture2D* Texture = Cast<UTexture2D>(Object);
+	check(Texture != nullptr);
+
+	check(Texture->Source.GetSourceCompression() == TSCF_UEJPEG && Texture->Source.GetSizeOnDisk() > 0 );
+
+	// just write the JPEG data we already have :
+	
+	UE_LOG(LogEditorFactories, Display, TEXT("Exporting Texture as UE-JPEG stored bits (no lossy decompress or recompress)."));
+
+	Texture->Source.OperateOnLoadedBulkData( [&](const FSharedBuffer& BulkDataBuffer) {
+		Ar.Serialize(const_cast<void*>(BulkDataBuffer.GetData()), BulkDataBuffer.GetSize());
+	} );
+	return true;
+}
 /*------------------------------------------------------------------------------
 	UTextureExporterTGA implementation.
 ------------------------------------------------------------------------------*/
@@ -6453,10 +6596,10 @@ EReimportResult::Type UReimportFbxSkeletalMeshFactory::Reimport( UObject* Obj, i
 	ReimportUI->SkeletalMeshImportData = ImportData;
 	const FSkeletalMeshModel* SkeletalMeshModel = SkeletalMesh->GetImportedModel();
 
-	bool bIsBuildAvailable = SkeletalMesh->IsLODImportedDataBuildAvailable(0);
+	const bool bUserDefinedGeometryExists = SkeletalMesh->HasMeshDescription(0);
 	
 	//Manage the content type from the source file index
-	ReimportUI->bAllowContentTypeImport = SkeletalMeshModel && SkeletalMeshModel->LODModels.Num() > 0 && !SkeletalMesh->IsLODImportedDataEmpty(0);
+	ReimportUI->bAllowContentTypeImport = SkeletalMeshModel && SkeletalMeshModel->LODModels.Num() > 0 && bUserDefinedGeometryExists;
 	if (!ReimportUI->bAllowContentTypeImport)
 	{
 		//No content type allow reimport All (legacy)
@@ -6557,7 +6700,7 @@ EReimportResult::Type UReimportFbxSkeletalMeshFactory::Reimport( UObject* Obj, i
 		{
 			const FSkeletalMeshLODModel& LODModel = SkeletalMesh->GetImportedModel()->LODModels[0];
 			
-			if (bIsBuildAvailable)
+			if (bUserDefinedGeometryExists)
 			{
 				//Set the build settings
 				LODInfo->BuildSettings.bComputeWeightedNormals = SKImportData->bComputeWeightedNormals;
@@ -6998,7 +7141,7 @@ UObject* UBlueprintFactory::FactoryCreateNew(UClass* Class, UObject* InParent, F
 	{
 		FFormatNamedArguments Args;
 		Args.Add( TEXT("ClassName"), (ParentClass != nullptr) ? FText::FromString( ParentClass->GetName() ) : LOCTEXT("Null", "(null)") );
-		FMessageDialog::Open( EAppMsgType::Ok, FText::Format( LOCTEXT("CannotCreateBlueprintFromClass", "Cannot create a blueprint based on the class '{0}'."), Args ) );
+		FMessageDialog::Open( EAppMsgType::Ok, FText::Format( LOCTEXT("CannotCreateBlueprintFromClass", "Cannot create a blueprint based on the class '{ClassName}'."), Args ) );
 		return nullptr;
 	}
 	else
@@ -7066,7 +7209,7 @@ UObject* UBlueprintMacroFactory::FactoryCreateNew(UClass* Class, UObject* InPare
 	{
 		FFormatNamedArguments Args;
 		Args.Add( TEXT("ClassName"), (ParentClass != nullptr) ? FText::FromString( ParentClass->GetName() ) : LOCTEXT("Null", "(null)") );
-		FMessageDialog::Open( EAppMsgType::Ok, FText::Format( LOCTEXT("CannotCreateBlueprintFromClass", "Cannot create a blueprint based on the class '{0}'."), Args ) );
+		FMessageDialog::Open( EAppMsgType::Ok, FText::Format( LOCTEXT("CannotCreateBlueprintFromClass", "Cannot create a blueprint based on the class '{ClassName}'."), Args ) );
 		return nullptr;
 	}
 	else
@@ -7129,7 +7272,7 @@ UObject* UBlueprintFunctionLibraryFactory::FactoryCreateNew(UClass* Class, UObje
 	{
 		FFormatNamedArguments Args;
 		Args.Add(TEXT("ClassName"), (ParentClass != nullptr) ? FText::FromString(ParentClass->GetName()) : LOCTEXT("Null", "(null)"));
-		FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("CannotCreateBlueprintFromClass", "Cannot create a blueprint based on the class '{0}'."), Args));
+		FMessageDialog::Open(EAppMsgType::Ok, FText::Format(LOCTEXT("CannotCreateBlueprintFromClass", "Cannot create a blueprint based on the class '{ClassName}'."), Args));
 		return nullptr;
 	}
 	else
@@ -7195,7 +7338,7 @@ UObject* UBlueprintInterfaceFactory::FactoryCreateNew(UClass* Class, UObject* In
 	{
 		FFormatNamedArguments Args;
 		Args.Add( TEXT("ClassName"), (ParentClass != nullptr) ? FText::FromString( ParentClass->GetName() ) : LOCTEXT("Null", "(null)") );
-		FMessageDialog::Open( EAppMsgType::Ok, FText::Format( LOCTEXT("CannotCreateBlueprintFromClass", "Cannot create a blueprint based on the class '{0}'."), Args ) );
+		FMessageDialog::Open( EAppMsgType::Ok, FText::Format( LOCTEXT("CannotCreateBlueprintFromClass", "Cannot create a blueprint based on the class '{ClassName}'."), Args ) );
 		return nullptr;
 	}
 	else
@@ -7880,6 +8023,25 @@ USpecularProfileFactory::USpecularProfileFactory(const FObjectInitializer& Objec
 UObject* USpecularProfileFactory::FactoryCreateNew(UClass* InClass, UObject* InParent, FName InName, EObjectFlags Flags, UObject* Context, FFeedbackContext* Warn)
 {
 	USpecularProfile* Object = NewObject<USpecularProfile>(InParent, InName, Flags);	
+	Object->Guid = FGuid::NewGuid();
+	return Object;
+}
+
+/*-----------------------------------------------------------------------------
+	UNeuralProfileFactory implementation.
+	-----------------------------------------------------------------------------*/
+UNeuralProfileFactory::UNeuralProfileFactory(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+{
+	SupportedClass = UNeuralProfile::StaticClass();
+	bCreateNew = true;
+	bEditorImport = false;
+	bEditAfterNew = true;
+}
+
+UObject* UNeuralProfileFactory::FactoryCreateNew(UClass* Class, UObject* InParent, FName InName, EObjectFlags Flags, UObject* Context, FFeedbackContext* Warn)
+{
+	UNeuralProfile* Object = NewObject<UNeuralProfile>(InParent, InName, Flags);
 	Object->Guid = FGuid::NewGuid();
 	return Object;
 }

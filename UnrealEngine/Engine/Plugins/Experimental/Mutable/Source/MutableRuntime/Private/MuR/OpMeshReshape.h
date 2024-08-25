@@ -15,6 +15,7 @@
 #include "Spatial/MeshAABBTree3.h"
 #include "Distance/DistPoint3Triangle3.h"
 #include "LineTypes.h"
+#include "OpMeshSmoothing.h"
 
 #include "Algo/AnyOf.h" 
 
@@ -63,7 +64,7 @@ namespace mu
 		FVector3f CurrentShapeNormal = ((Shape.Positions[Triangle.B] - Shape.Positions[Triangle.A]) ^ 
 										(Shape.Positions[Triangle.C] - Shape.Positions[Triangle.A])).GetSafeNormal();
 
-		Rotation = FQuat4f::FindBetween(Binding.ShapeNormal, CurrentShapeNormal);
+		Rotation = FQuat4f::FindBetween(Binding.ShapeNormal.GetSafeNormal(), CurrentShapeNormal);
 	}
 
 	inline void GetDeform( const FShapeMeshDescriptorApply& Shape, const FReshapePointBindingData& Binding, FVector3f& NewPosition)
@@ -225,7 +226,7 @@ namespace mu
 
 		// Geometric linear regression of top, bottom and rings centroids.
 		FVector3f Centroid = FVector3f::Zero();
-		for (const FVector3f& C : Centroids)
+		for (const FVector3f& C : Centroids) //-V1078
 		{
 			Centroid += C;
 		}
@@ -233,7 +234,7 @@ namespace mu
 		constexpr float OneOverNumCentroids = 1.0f / static_cast<float>(NumCentroids);
 		Centroid *= OneOverNumCentroids;
 		
-		for (FVector3f& C : Centroids)
+		for (FVector3f& C : Centroids) //-V1078
 		{
 			C -= Centroid;
 		}
@@ -243,7 +244,7 @@ namespace mu
 		for (int32 Iter = 0; Iter < NumIters; ++Iter)
 		{
 			FVector3f IterDirRefinement = Direction;
-			for (const FVector3f& C : Centroids)
+			for (const FVector3f& C : Centroids) //-V1078
 			{
 				IterDirRefinement += C * FVector3f::DotProduct(Direction, C);
 			}
@@ -252,7 +253,7 @@ namespace mu
 		}
 
 		// Project centroids to the line described by Direction and Centroid.
-		for (FVector3f& C : Centroids)
+		for (FVector3f& C : Centroids) //-V1078
 		{
 			C = Centroid + Direction * FVector3f::DotProduct(C, Direction);
 		}
@@ -311,7 +312,7 @@ namespace mu
 	
 		// Geometric linear regression of top, bottom and ring centroids.
 		FVector3f Centroid = FVector3f::Zero();
-		for (const FVector3f& C : Centroids)
+		for (const FVector3f& C : Centroids) //-V1078
 		{
 			Centroid += C;
 		}
@@ -319,7 +320,7 @@ namespace mu
 		constexpr float OneOverNumCentroids = 1.0f / static_cast<float>(NumCentroids);
 		Centroid *= OneOverNumCentroids;
 		
-		for (FVector3f& C : Centroids)
+		for (FVector3f& C : Centroids) //-V1078
 		{
 			C -= Centroid;
 		}
@@ -329,7 +330,7 @@ namespace mu
 		for (int32 Iter = 0; Iter < NumIters; ++Iter)
 		{
 			FVector3f IterDirRefinement = Direction;
-			for (const FVector3f& C : Centroids)
+			for (const FVector3f& C : Centroids) //-V1078
 			{
 				IterDirRefinement += C * FVector3f::DotProduct(Direction, C);
 			}
@@ -338,7 +339,7 @@ namespace mu
 		}
 
 		// Project centroids to the line described by Direction and Centroid.
-		for (FVector3f& C : Centroids)
+		for (FVector3f& C : Centroids) //-V1078
 		{
 			C = Centroid + Direction * FVector3f::DotProduct(C, Direction);
 		}
@@ -388,6 +389,7 @@ namespace mu
 		UntypedMeshBufferIterator ItPosition(Mesh->GetVertexBuffers(), MBS_POSITION);
 		UntypedMeshBufferIterator ItNormal(Mesh->GetVertexBuffers(), MBS_NORMAL);
 		UntypedMeshBufferIterator ItTangent(Mesh->GetVertexBuffers(), MBS_TANGENT);
+		UntypedMeshBufferIterator ItBinormal(Mesh->GetVertexBuffers(), MBS_BINORMAL);
 
 #if DO_CHECK
 		// checking if the Base shape has more triangles than the target shape
@@ -417,18 +419,17 @@ namespace mu
 			{
 				GetDeform(Shape, Binding, NewPosition, TangentSpaceCorrection);
 
-				FVector3f OldPosition = ItPosition.GetAsVec3f();
-				
+				const FVector3f OldPosition = ItPosition.GetAsVec3f();
+				FVector3f Displacement = NewPosition - OldPosition;
+
 				if (!FMath::IsNearlyEqual(Binding.Weight, 1.0f))
 				{
-					// Zero weighted vertices are already discarded at the binding phase so there is no gain
-					// checking here.
-					NewPosition = FMath::Lerp(OldPosition, NewPosition, Binding.Weight);
-					TangentSpaceCorrection = FQuat4f::Slerp(FQuat4f::Identity, TangentSpaceCorrection, Binding.Weight).GetNormalized();
+					Displacement *= Binding.Weight;
+					TangentSpaceCorrection = FQuat4f::Slerp(FQuat4f::Identity, TangentSpaceCorrection, Binding.Weight);
 				}
 				
 				// Non rigid vertices will not rotate since are attached to themselves 
-				NewPosition = TangentSpaceCorrection.RotateVector(OldPosition - Binding.AttachmentPoint) + NewPosition;
+				NewPosition = TangentSpaceCorrection.RotateVector(OldPosition - Binding.AttachmentPoint) + (OldPosition + Displacement);
 				
 				ItPosition.SetFromVec3f(NewPosition);
 					
@@ -445,6 +446,13 @@ namespace mu
 					FVector3f NewTangent = TangentSpaceCorrection.RotateVector(OldTangent);
 					ItTangent.SetFromVec3f(NewTangent);
 				}
+
+				if (ItBinormal.ptr())
+				{
+					FVector3f OldBinormal = ItBinormal.GetAsVec3f();
+					FVector3f NewBinormal = TangentSpaceCorrection.RotateVector(OldBinormal);
+					ItBinormal.SetFromVec3f(NewBinormal);
+				}
 			}
 			
 			++ItPosition;
@@ -458,8 +466,12 @@ namespace mu
 			{
 				++ItTangent;
 			}
+
+			if (ItBinormal.ptr())
+			{
+				++ItBinormal;
+			}
 		}
-		
 	}
 
 	inline void ApplyToPose(Mesh* Result, 
@@ -719,6 +731,7 @@ namespace mu
 		const bool bReshapeVertices = EnumHasAnyFlags(BindFlags, EMeshBindShapeFlags::ReshapeVertices);
 		const bool bReshapeSkeleton = EnumHasAnyFlags(BindFlags, EMeshBindShapeFlags::ReshapeSkeleton);
 		const bool bReshapePhysicsVolumes = EnumHasAnyFlags(BindFlags, EMeshBindShapeFlags::ReshapePhysicsVolumes);
+		const bool bApplyLaplacian = EnumHasAnyFlags(BindFlags, EMeshBindShapeFlags::ApplyLaplacian);
 
 		// Early out if nothing will be modified and the vertices discarted.
 		const bool bSkeletonModification = BaseMesh->GetSkeleton() && bReshapeSkeleton;
@@ -731,26 +744,35 @@ namespace mu
 		}
 	
 		// \TODO: Multiple binding data support
-		int BindingDataIndex = 0;
+		int32 BindingDataIndex = 0;
 
 		// If the base mesh has no binding data, just clone it.
-		int BarycentricDataBuffer = 0;
-		int BarycentricDataChannel = 0;
+		int32 BarycentricDataBuffer = 0;
+		int32 BarycentricDataChannel = 0;
 		const FMeshBufferSet& VB = BaseMesh->GetVertexBuffers();
 		VB.FindChannel(MBS_BARYCENTRICCOORDS, BindingDataIndex, &BarycentricDataBuffer, &BarycentricDataChannel);
 		
+		Ptr<Mesh> TempMesh = nullptr;
+		Mesh* VerticesReshapeMesh = Result;
+		
+		if (bApplyLaplacian)
+		{
+			TempMesh = new Mesh();
+			VerticesReshapeMesh = TempMesh.get();
+		}
+
 		// Copy Without VertexBuffers or AdditionalBuffers
 		constexpr EMeshCopyFlags CopyFlags = ~(EMeshCopyFlags::WithVertexBuffers | EMeshCopyFlags::WithAdditionalBuffers);
-		Result->CopyFrom(*BaseMesh, CopyFlags);
+		VerticesReshapeMesh->CopyFrom(*BaseMesh, CopyFlags);
 	
-		FMeshBufferSet& ResultBuffers = Result->GetVertexBuffers();
+		FMeshBufferSet& ResultBuffers = VerticesReshapeMesh->GetVertexBuffers();
 
 		check(ResultBuffers.m_buffers.Num() == 0);
 
 		// Copy buffers skipping binding data. 
 		ResultBuffers.m_elementCount = VB.m_elementCount;
 		// Remove one element to the number of buffers if BarycentricDataBuffer found. 
-		ResultBuffers.m_buffers.SetNum( FMath::Max( 0, VB.m_buffers.Num() - int32(BarycentricDataBuffer >= 0) ) );
+		ResultBuffers.m_buffers.SetNum(FMath::Max(0, VB.m_buffers.Num() - int32(BarycentricDataBuffer >= 0)));
 		
 		for (int32 B = 0, R = 0; B < VB.m_buffers.Num(); ++B)
 		{
@@ -761,8 +783,8 @@ namespace mu
 		}
 
 		// Copy the additional buffers skipping binding data.
-		Result->m_AdditionalBuffers.Reserve( BaseMesh->m_AdditionalBuffers.Num() );
-		for (const TPair<EMeshBufferType, FMeshBufferSet>& A : BaseMesh->m_AdditionalBuffers)
+		VerticesReshapeMesh->AdditionalBuffers.Reserve(BaseMesh->AdditionalBuffers.Num());
+		for (const TPair<EMeshBufferType, FMeshBufferSet>& A : BaseMesh->AdditionalBuffers)
 		{	
 			const bool bIsBindOpBuffer = 
 					A.Key == EMeshBufferType::SkeletonDeformBinding || 
@@ -772,7 +794,7 @@ namespace mu
 	
 			if (!bIsBindOpBuffer)
 			{
-				Result->m_AdditionalBuffers.Add(A);
+				VerticesReshapeMesh->AdditionalBuffers.Add(A);
 			}
 		}
 		if (!ShapeMesh)
@@ -837,16 +859,26 @@ namespace mu
 
 		if (bReshapeVertices && BarycentricDataBuffer >= 0)
 		{
-			MUTABLE_CPUPROFILER_SCOPE(ReshapeVertices);
-			// \TODO: More checks
-			check(BarycentricDataChannel == 0);
-			check(VB.GetElementSize(BarycentricDataBuffer) == (int)sizeof(FReshapeVertexBindingData));
+			{
+				MUTABLE_CPUPROFILER_SCOPE(ReshapeVertices);
+				// \TODO: More checks
+				check(BarycentricDataChannel == 0);
+				check(VB.GetElementSize(BarycentricDataBuffer) == (int)sizeof(FReshapeVertexBindingData));
 
-			TArrayView<const FReshapeVertexBindingData> VerticesBindingData(
-					(const FReshapeVertexBindingData*)VB.GetBufferData(BarycentricDataBuffer),
-					VB.GetElementCount());
+				TArrayView<const FReshapeVertexBindingData> VerticesBindingData(
+						(const FReshapeVertexBindingData*)VB.GetBufferData(BarycentricDataBuffer),
+						VB.GetElementCount());
 
-			ApplyToVertices(Result, VerticesBindingData, ShapeDescriptor);
+				ApplyToVertices(VerticesReshapeMesh, VerticesBindingData, ShapeDescriptor);
+			}
+
+			if (bApplyLaplacian)
+			{
+				check(Result && VerticesReshapeMesh);
+				// check result is empty at this point.
+				check(Result->GetVertexCount() == 0 && Result->GetIndexCount() == 0); 
+				SmoothMeshLaplacian(*Result, *VerticesReshapeMesh);
+			}
 		}
 	
 		if (bReshapeSkeleton)
@@ -855,7 +887,7 @@ namespace mu
 
 			// If the base mesh has no binding data for the skeleton don't do anything.
 			const FMeshBufferSet* SkeletonBindBuffer = nullptr;
-			for ( const TPair<EMeshBufferType, FMeshBufferSet>& A : BaseMesh->m_AdditionalBuffers )
+			for ( const TPair<EMeshBufferType, FMeshBufferSet>& A : BaseMesh->AdditionalBuffers )
 			{
 				if ( A.Key == EMeshBufferType::SkeletonDeformBinding )
 				{
@@ -900,13 +932,13 @@ namespace mu
 			MUTABLE_CPUPROFILER_SCOPE(ReshapePhysicsBodies);
 			
 			using BufferEntryType = TPair<EMeshBufferType, FMeshBufferSet>;
-			const BufferEntryType* FoundPhysicsBindBuffer = BaseMesh->m_AdditionalBuffers.FindByPredicate(
+			const BufferEntryType* FoundPhysicsBindBuffer = BaseMesh->AdditionalBuffers.FindByPredicate(
 					[](BufferEntryType& E){ return E.Key == EMeshBufferType::PhysicsBodyDeformBinding; });
 
-			const BufferEntryType* FoundPhysicsBindSelectionBuffer = BaseMesh->m_AdditionalBuffers.FindByPredicate(
+			const BufferEntryType* FoundPhysicsBindSelectionBuffer = BaseMesh->AdditionalBuffers.FindByPredicate(
 					[](BufferEntryType& E){ return E.Key == EMeshBufferType::PhysicsBodyDeformSelection; });
 	
-			const BufferEntryType* FoundPhysicsBindOffsetsBuffer = BaseMesh->m_AdditionalBuffers.FindByPredicate(
+			const BufferEntryType* FoundPhysicsBindOffsetsBuffer = BaseMesh->AdditionalBuffers.FindByPredicate(
 					[](BufferEntryType& E){ return E.Key == EMeshBufferType::PhysicsBodyDeformOffsets; });
 
 			BarycentricDataBuffer = -1;

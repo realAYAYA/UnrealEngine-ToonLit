@@ -34,9 +34,15 @@ if [ -f "$VERSION_FILE" ]; then
 fi
 
 TVOS_VERSION="0.1"
-VERSION_FILE="$1/Build/TVOS/TVOSPRODUCT_NAME.PackageVersionCounter"
+VERSION_FILE="$1/Build/TVOS/$PRODUCT_NAME.PackageVersionCounter"
 if [ -f "$VERSION_FILE" ]; then
 	TVOS_VERSION=$(cat "$VERSION_FILE")
+fi
+
+VISIONOS_VERSION="0.1"
+VERSION_FILE="$1/Build/VisionOS/$PRODUCT_NAME.PackageVersionCounter"
+if [ -f "$VERSION_FILE" ]; then
+	VISIONOS_VERSION=$(cat "$VERSION_FILE")
 fi
 
 # now write out an xcconfig containing all platform build versions relative to the project
@@ -46,4 +52,5 @@ mkdir -p "$1/Intermediate/Build"
 echo "UE_MAC_BUILD_VERSION = $MAC_VERSION" > "$XCCONFIG_FILE"
 echo "UE_IOS_BUILD_VERSION = $IOS_VERSION" >> "$XCCONFIG_FILE"
 echo "UE_TVOS_BUILD_VERSION = $TVOS_VERSION" >> "$XCCONFIG_FILE"
+echo "UE_VISIONOS_BUILD_VERSION = $VISIONOS_VERSION" >> "$XCCONFIG_FILE"
 

@@ -399,7 +399,7 @@ TSharedPtr<IAccessibleWidget> FSlateAccessibleWindow::GetChildAtPosition(int32 X
 
 			while (ToProcess.Num() > 0)
 			{
-				const TSharedPtr<IAccessibleWidget> Current = ToProcess.Pop(false);
+				const TSharedPtr<IAccessibleWidget> Current = ToProcess.Pop(EAllowShrinking::No);
 				// Because children are weak pointers, Current could be invalid in the case where the SWidget and all
 				// shared pointers were deleted while in the middle of FSlateAccessibleMessageHandler refreshing the data.
 				if (Current.IsValid() && !Current->IsHidden() && Current->GetBounds().IsInside(FVector2D((float)X, (float)Y)))

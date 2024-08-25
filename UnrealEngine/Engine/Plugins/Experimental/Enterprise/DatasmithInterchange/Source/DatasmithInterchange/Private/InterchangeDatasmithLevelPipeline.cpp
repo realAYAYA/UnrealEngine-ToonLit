@@ -6,8 +6,7 @@
 #include "InterchangeDatasmithAreaLightNode.h"
 #include "InterchangeDatasmithUtils.h"
 
-
-#include "InterchangeAnimationTrackSetFactoryNode.h"
+#include "InterchangeLevelSequenceFactoryNode.h"
 #include "InterchangeAnimationTrackSetNode.h"
 #include "InterchangeMaterialFactoryNode.h"
 #include "InterchangeMeshActorFactoryNode.h"
@@ -18,12 +17,13 @@
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshActor.h"
 #include "Materials/MaterialInterface.h"
+#include "Misc/PackageName.h"
 
-void UInterchangeDatasmithLevelPipeline::ExecutePipeline(UInterchangeBaseNodeContainer* NodeContainer, const TArray<UInterchangeSourceData*>& InSourceDatas)
+void UInterchangeDatasmithLevelPipeline::ExecutePipeline(UInterchangeBaseNodeContainer* NodeContainer, const TArray<UInterchangeSourceData*>& InSourceDatas, const FString& ContentBasePath)
 {
 	using namespace UE::DatasmithInterchange;
 
-	Super::ExecutePipeline(NodeContainer, InSourceDatas);
+	Super::ExecutePipeline(NodeContainer, InSourceDatas, ContentBasePath);
 
 	// Add material factory dependencies for mesh actors where all overrides are filled with the same material
 	for (UInterchangeMeshActorFactoryNode* MeshActorFactoryNode : NodeUtils::GetNodes<UInterchangeMeshActorFactoryNode>(NodeContainer))
@@ -101,7 +101,7 @@ void UInterchangeDatasmithLevelPipeline::ExecutePostImportPipeline(const UInterc
 	}
 
 	// If a ULevelSequence is referencing a ADatasmithAreaLightActor, update its mobility property
-	if (const UInterchangeAnimationTrackSetFactoryNode* FactoryNode = Cast<UInterchangeAnimationTrackSetFactoryNode>(NodeContainer->GetFactoryNode(FactoryNodeKey)))
+	if (const UInterchangeLevelSequenceFactoryNode* FactoryNode = Cast<UInterchangeLevelSequenceFactoryNode>(NodeContainer->GetFactoryNode(FactoryNodeKey)))
 	{
 		FSoftObjectPath FactoryNodeReferenceObject;
 		FactoryNode->GetCustomReferenceObject(FactoryNodeReferenceObject);
@@ -178,9 +178,9 @@ void UInterchangeDatasmithLevelPipeline::SetUpFactoryNode(UInterchangeActorFacto
 	}\
 
 /**
-* Only modifies the attribute if a condition is satisfied
-* Condition should an expression evaluated to a boolean.
-*/
+ * Only modifies the attribute if a condition is satisfied
+ * Condition should an expression evaluated to a boolean.
+ */
 #define APPLY_FACTORY_ATTRIBUTE_WITH_VALIDATION(AttributeName, AttributeType, Condition) \
 	AttributeType AttributeName;\
 	if (TranslatedNode->GetCustom##AttributeName(AttributeName))\

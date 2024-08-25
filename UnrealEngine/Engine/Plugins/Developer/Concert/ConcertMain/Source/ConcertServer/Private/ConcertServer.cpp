@@ -565,7 +565,7 @@ void FConcertServer::RecoverSessions(const FConcertServerSessionRepository& InRe
 				{
 					ArchivedSessionsToKeep.Add(ArchivedSessionInfos[SortedSessions[SortedSessionIndex].Key]);
 				}
-				SortedSessions.RemoveAt(FirstSortedSessionIndexToKeep, Settings->NumSessionsToKeep, /*bAllowShrinking*/false);
+				SortedSessions.RemoveAt(FirstSortedSessionIndexToKeep, Settings->NumSessionsToKeep, EAllowShrinking::No);
 			}
 
 			// Remove the oldest sessions

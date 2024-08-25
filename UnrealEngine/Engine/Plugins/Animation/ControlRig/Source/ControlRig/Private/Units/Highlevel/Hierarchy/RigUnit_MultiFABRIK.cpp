@@ -272,12 +272,12 @@ FRigUnit_MultiFABRIK_Execute()
 			    , ParentIndex(INDEX_NONE)
 				{
 					FRigBaseElement* BoneElement = InHierarchy->Get(InBoneIndex);
-					BoneName = BoneElement->GetName();
+					BoneName = BoneElement->GetFName();
 					BoneIndex = BoneElement->GetIndex();
 
 					if(FRigBaseElement* ParentBoneElement = InHierarchy->GetFirstParent(BoneElement))
 					{
-						ParentBoneName = ParentBoneElement->GetName();
+						ParentBoneName = ParentBoneElement->GetFName();
 						ParentIndex = ParentBoneElement->GetIndex();
 					}
 				}

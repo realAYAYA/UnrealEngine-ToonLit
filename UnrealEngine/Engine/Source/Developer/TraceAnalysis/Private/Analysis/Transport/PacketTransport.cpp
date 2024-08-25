@@ -3,6 +3,8 @@
 #include "PacketTransport.h"
 #include "HAL/UnrealMemory.h"
 
+#include "TraceAnalysisDebug.h"
+
 #include <initializer_list>
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -54,6 +56,12 @@ void FPacketTransport::Advance(uint32 BlockSize)
 	{
 		ActiveList->Cursor += BlockSize;
 	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+bool FPacketTransport::IsEmpty() const
+{
+	return (ActiveList == nullptr) || (ActiveList->Cursor + 1 > ActiveList->Size);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -177,5 +185,26 @@ bool FPacketTransport::GetNextBatch()
 	return true;
 }
 
+////////////////////////////////////////////////////////////////////////////////
+void FPacketTransport::DebugBegin()
+{
+#if UE_TRACE_ANALYSIS_DEBUG
+	UE_TRACE_ANALYSIS_DEBUG_LOG("FPacketTransport::DebugBegin()");
+#endif // UE_TRACE_ANALYSIS_DEBUG
+}
+
+////////////////////////////////////////////////////////////////////////////////
+void FPacketTransport::DebugEnd()
+{
+#if UE_TRACE_ANALYSIS_DEBUG
+	if (!IsEmpty())
+	{
+		UE_TRACE_ANALYSIS_DEBUG_LOG("Error: FPacketTransport is not empty!");
+	}
+	UE_TRACE_ANALYSIS_DEBUG_LOG("FPacketTransport::DebugEnd()");
+#endif // UE_TRACE_ANALYSIS_DEBUG
+}
+
+////////////////////////////////////////////////////////////////////////////////
 } // namespace Trace
 } // namespace UE

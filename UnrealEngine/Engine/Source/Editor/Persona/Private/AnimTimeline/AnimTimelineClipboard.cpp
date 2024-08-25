@@ -25,7 +25,7 @@ FAnimationCurveIdentifier UAnimCurveBaseCopyObject::GetAnimationCurveIdentifier(
 
 bool UAnimTimelineClipboardContent::AreAllCurvesOfTrackType(const ERawCurveTrackTypes Type) const
 {
-	for (const TObjectPtr<UAnimCurveBaseCopyObject> CurveCopyObj : Curves)
+	for (const TObjectPtr<UAnimCurveBaseCopyObject>& CurveCopyObj : Curves)
 	{
 		if (CurveCopyObj->CurveType != Type)
 		{
@@ -262,7 +262,7 @@ void FAnimTimelineClipboardUtilities::OverwriteOrAddCurvesFromClipboardContent(c
 	if (ClipboardContent->Curves.Num())
 	{
 		IAnimationDataController::FScopedBracket ScopedBracket(Controller, NSLOCTEXT("AnimTimelineClipboardUtilities", "PasteCurves_Bracket", "Paste Animation Curves"));
-	    for (TObjectPtr<UAnimCurveBaseCopyObject> InCurveCopyObj : ClipboardContent->Curves)
+	    for (const TObjectPtr<UAnimCurveBaseCopyObject>& InCurveCopyObj : ClipboardContent->Curves)
 	    {
 		    // Exit on types not supported by animation controller
 		    if (InCurveCopyObj->CurveType != ERawCurveTrackTypes::RCT_Float && InCurveCopyObj->CurveType != ERawCurveTrackTypes::RCT_Transform)

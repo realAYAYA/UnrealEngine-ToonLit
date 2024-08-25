@@ -27,7 +27,7 @@ public:
 		WriteLine(InLine, false);
 	}
 
-	UE_NODISCARD FIndentScope PrintIndent(const TCHAR* InLine)
+	[[nodiscard]] FIndentScope PrintIndent(const TCHAR* InLine)
 	{
 		WriteLine(InLine, true);
 		return FIndentScope(this);
@@ -40,7 +40,7 @@ public:
 	}
 
 	template <typename FmtType, typename... Types>
-	UE_NODISCARD FIndentScope PrintfIndent(const FmtType& Fmt, Types... Args)
+	[[nodiscard]] FIndentScope PrintfIndent(const FmtType& Fmt, Types... Args)
 	{
 		WriteLine(FString::Printf(Fmt, Args...), true);
 		return FIndentScope(this);

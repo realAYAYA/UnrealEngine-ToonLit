@@ -320,7 +320,7 @@ public:
 			}
 		}
 
-		float fBufferWidth = ExactBandWidth * CellSize;
+		float fBufferWidth = float(ExactBandWidth) * CellSize;
 		if (ComputeMode == EComputeModes::NarrowBand_SpatialFloodFill)
 		{
 			fBufferWidth = (float)FMath::Max(fBufferWidth, float(NarrowBandMaxDistance));
@@ -980,7 +980,7 @@ private:
 					// flood fill from the seeds within the block.  if flood fill exits the block, mark the locations in the NextCanidateGrid for the next pass.
 					while(SeedLocalCoords.Num() > 0)
 					{
-						const FVector3i Seed = SeedLocalCoords.Pop(false);
+						const FVector3i Seed = SeedLocalCoords.Pop(EAllowShrinking::No);
 						for (const FVector3i& idx_offset : IndexUtil::GridOffsets26)
 						{
 							const FVector3i LocalCoords = Seed + idx_offset;

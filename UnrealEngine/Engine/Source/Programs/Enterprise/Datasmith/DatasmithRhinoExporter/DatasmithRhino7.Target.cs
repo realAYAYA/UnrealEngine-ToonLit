@@ -17,7 +17,7 @@ public class DatasmithRhino7Target : DatasmithRhinoBaseTarget
 	{
 		try
 		{
-			return Microsoft.Win32.Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\McNeel\Rhinoceros\7.0\Install", "Path", "") as string;
+			return OperatingSystem.IsWindows() ? Microsoft.Win32.Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\McNeel\Rhinoceros\7.0\Install", "Path", "") as string : null;
 		}
 		catch(Exception)
 		{

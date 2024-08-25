@@ -199,3 +199,15 @@ enum class EDisplayClusterConfigurationViewportLightcardOCIOMode : uint8
 	/** None. */
 	None UMETA(DisplayName = "None"),
 };
+
+/** Determines where the data for RootActor GetPreviewSettings() will come from: */
+UENUM()
+enum class EDisplayClusterConfigurationRootActorPreviewSettingsSource : uint8
+{
+	// The preview settings will be obtained from the RootActor properties.
+	RootActor,
+
+	// The preview settings will be retrieved from DC ViewportManagerConfiguration.
+	// This option is used when the preview settings need to be customized in a different way, but not to change the RootActor properties.
+	Configuration
+};

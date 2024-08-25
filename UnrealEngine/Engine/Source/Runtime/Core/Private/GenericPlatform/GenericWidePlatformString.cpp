@@ -1,12 +1,18 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "GenericPlatform/GenericWidePlatformString.h"
-#include "HAL/UnrealMemory.h"
-#include "Templates/UnrealTemplate.h"
-#include "Logging/LogCategory.h"
-#include "Logging/LogMacros.h"
 
 #if PLATFORM_USE_GENERIC_STRING_IMPLEMENTATION
+
+#include "HAL/UnrealMemory.h"
+#include "Logging/LogCategory.h"
+#include "Logging/LogMacros.h"
+#include "Templates/UnrealTemplate.h"
+
+#if WITH_LOW_LEVEL_TESTS
+#include "TestHarness.h"
+#include <catch2/generators/catch_generators.hpp>
+#endif
 
 DEFINE_LOG_CATEGORY_STATIC(LogStandardPlatformString, Log, All);
 
@@ -220,8 +226,8 @@ int iswspace(wint_t wc)
 #endif
 
 
-#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
-static const int OUTPUT_SIZE = 256;
+#if WITH_LOW_LEVEL_TESTS
+constexpr int OUTPUT_SIZE = 256;
 int32 TestGetVarArgs(WIDECHAR* OutputString, const WIDECHAR* Format, ...)
 {
 	va_list ArgPtr;
@@ -231,49 +237,56 @@ int32 TestGetVarArgs(WIDECHAR* OutputString, const WIDECHAR* Format, ...)
 	return Result;
 }
 
-void RunGetVarArgsTests()
+TEST_CASE("Core::PlatformString::GetVarArgs", "[Core][String][Smoke]")
 {
 	WIDECHAR OutputString[OUTPUT_SIZE];
 
 	TestGetVarArgs(OutputString, TEXT("Test A|%-20s|%20s|%10.2f|%-10.2f|"), TEXT("LEFT"), TEXT("RIGHT"), 33.333333, 66.666666);
-	checkf(FString(OutputString) == FString(TEXT("Test A|LEFT                |               RIGHT|     33.33|66.67     |")), OutputString);
+	CHECK_MESSAGE(OutputString, FString(OutputString) == FString(TEXT("Test A|LEFT                |               RIGHT|     33.33|66.67     |")));
 
 	TestGetVarArgs(OutputString, TEXT("Test B|Percents:%%%%%%%d|"), 3);
-	checkf(FString(OutputString) == FString(TEXT("Test B|Percents:%%%3|")), OutputString);
+	CHECK_MESSAGE(OutputString, FString(OutputString) == FString(TEXT("Test B|Percents:%%%3|")));
 
 	TestGetVarArgs(OutputString, TEXT("Test C|%d|%i|%X|%x|%u|"), 12345, 54321, 0x123AbC, 15, 99);
-	checkf(FString(OutputString) == FString(TEXT("Test C|12345|54321|123ABC|f|99|")), OutputString);
+	CHECK_MESSAGE(OutputString, FString(OutputString) == FString(TEXT("Test C|12345|54321|123ABC|f|99|")));
 
 	TestGetVarArgs(OutputString, TEXT("Test D|%p|"), 0x12345);
 #ifdef _MSC_VER
 	// MSVC's standard library formats pointers differently
-	checkf(FString(OutputString) == FString(TEXT("Test D|0000000000012345|")), OutputString);
+	CHECK_MESSAGE(OutputString, FString(OutputString) == FString(TEXT("Test D|0000000000012345|")));
 #else
-	checkf(FString(OutputString) == FString(TEXT("Test D|0x12345|")), OutputString);
+	// Pointer format (which we get from snprintf) varies from platform to platform.
+	// Call it to make sure it puts the output in the proper place, but don't test for the exact format
+//	CHECK_MESSAGE(OutputString, FString(OutputString) == FString(TEXT("Test D|0x12345|")));
+	{
+		FString OutputStringStr(OutputString);
+		CHECK_MESSAGE(OutputString, OutputStringStr.StartsWith(TEXT("Test D|"))
+			&& OutputStringStr.EndsWith(TEXT("|")) && OutputStringStr.Len() < TEXTVIEW("Test D||").Len() + 20);
+	}
 #endif
 
 	TestGetVarArgs(OutputString, TEXT("Test E|%" INT64_FMT "|"), int64(12345678912345LL));
-	checkf(FString(OutputString) == FString(TEXT("Test E|12345678912345|")), OutputString);
+	CHECK_MESSAGE(OutputString, FString(OutputString) == FString(TEXT("Test E|12345678912345|")));
 
 	TestGetVarArgs(OutputString, TEXT("Test F|%f|%e|%g|"), 123.456, 123.456, 123.456);
-	checkf(FString(OutputString) == FString(TEXT("Test F|123.456000|1.234560e+02|123.456|")), OutputString);
+	CHECK_MESSAGE(OutputString, FString(OutputString) == FString(TEXT("Test F|123.456000|1.234560e+02|123.456|")));
 
 	TestGetVarArgs(OutputString, TEXT("Test G|%" UPTRINT_X_FMT"|"), UPTRINT(49374));
-	checkf(FString(OutputString) == FString(TEXT("Test G|C0DE|")), OutputString);
+	CHECK_MESSAGE(OutputString, FString(OutputString) == FString(TEXT("Test G|C0DE|")));
 
 	TestGetVarArgs(OutputString, TEXT("Test H|%" UPTRINT_x_FMT "|"), UPTRINT(49374));
-	checkf(FString(OutputString) == FString(TEXT("Test H|c0de|")), OutputString);
+	CHECK_MESSAGE(OutputString, FString(OutputString) == FString(TEXT("Test H|c0de|")));
 
 	TestGetVarArgs(OutputString, TEXT("Test I|%" UINT64_FMT "|"), MAX_uint64);
-	checkf(FString(OutputString) == FString(TEXT("Test I|18446744073709551615|")), OutputString);
+	CHECK_MESSAGE(OutputString, FString(OutputString) == FString(TEXT("Test I|18446744073709551615|")));
 
 	TestGetVarArgs(OutputString, TEXT("Test J|%*c|"), 10, 'J');
-	checkf(FString(OutputString) == FString(TEXT("Test J|         J|")), OutputString);
+	CHECK_MESSAGE(OutputString, FString(OutputString) == FString(TEXT("Test J|         J|")));
 
 	TestGetVarArgs(OutputString, TEXT("Test K|%-5c|"), 'K');
-	checkf(FString(OutputString) == FString(TEXT("Test K|K    |")), OutputString);
+	CHECK_MESSAGE(OutputString, FString(OutputString) == FString(TEXT("Test K|K    |")));
 }
-#endif
+#endif // WITH_LOW_LEVEL_TESTS
 
 namespace
 {
@@ -402,15 +415,6 @@ int32 FGenericWidePlatformString::GetVarArgs( WIDECHAR* Dest, SIZE_T DestSize, c
 	unimplemented();
 #else
 	static_assert(sizeof(TCHAR) == 2, "TCHAR is expected to be 16-bit");
-#endif
-
-#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
-	static bool bTested = false;
-	if(!bTested)
-	{
-		bTested = true;
-		RunGetVarArgsTests();
-	}
 #endif
 
 	if (Fmt == nullptr)
@@ -888,7 +892,7 @@ int32 FGenericWidePlatformString::GetVarArgs( WIDECHAR* Dest, SIZE_T DestSize, c
 			case 'S':
 			{
 				// The %S format represents a string which is the opposite of %s - wide if TCHAR is narrow, or narrow if TCHAR is wide
-				using OtherCharType = TChooseClass<std::is_same_v<TCHAR, ANSICHAR>, WIDECHAR, ANSICHAR>::Result;
+				using OtherCharType = std::conditional_t<std::is_same_v<TCHAR, ANSICHAR>, WIDECHAR, ANSICHAR>;
 
 				ProcessStringArg<OtherCharType>(DestIter, Src, FieldLen, PrecisionLen, ArgPtr);
 				if (!DestIter)
@@ -909,4 +913,4 @@ int32 FGenericWidePlatformString::GetVarArgs( WIDECHAR* Dest, SIZE_T DestSize, c
 	return Result;
 }
 
-#endif
+#endif // PLATFORM_USE_GENERIC_STRING_IMPLEMENTATION

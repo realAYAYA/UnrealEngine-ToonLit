@@ -62,6 +62,11 @@ FDBufferTexturesDesc GetDBufferTexturesDesc(FIntPoint Extent, EShaderPlatform Sh
 			// This significantly reduces bandwidth for clearing, writing and reading on some GPUs.
 			// While a smaller format, such as R8_UINT, will use less video memory, it will result in slower clears and higher bandwidth requirements.
 			check(Desc.Format == PF_B8G8R8A8);
+			// On mobile platforms using PF_B8G8R8A8 has no benefits over R8.
+			if (IsMobilePlatform(ShaderPlatform))
+			{
+				Desc.Format = PF_R8;
+			}
 			Desc.Flags = TexCreate_ShaderResource | TexCreate_RenderTargetable;
 			Desc.ClearValue = FClearValueBinding::Transparent;
 			DBufferTexturesDesc.DBufferMaskDesc = Desc;

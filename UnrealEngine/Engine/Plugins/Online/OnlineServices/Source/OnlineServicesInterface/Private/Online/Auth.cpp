@@ -19,7 +19,7 @@ const FName ExternalAuth = TEXT("ExternalAuth");
 namespace ExternalLoginType
 {
 const FName Epic = TEXT("Epic");
-const FName SteamAppTicket = TEXT("SteamAppTicket");
+const FName SteamSessionTicket = TEXT("SteamSessionTicket");
 const FName PsnIdToken = TEXT("PsnIdToken");
 const FName XblXstsToken = TEXT("XblXstsToken");
 const FName DiscordAccessToken = TEXT("DiscordAccessToken");

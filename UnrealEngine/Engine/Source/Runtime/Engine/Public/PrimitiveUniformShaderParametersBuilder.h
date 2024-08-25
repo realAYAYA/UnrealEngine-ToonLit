@@ -59,14 +59,17 @@ public:
 		bHoldout									= false;
 		bDisableMaterialInvalidations				= false;
 		bSplineMesh									= false;
+		bAllowInstanceCullingOcclusionQueries		= false;
+		bHasPixelAnimation                          = false;
+		bRayTracingFarField							= false;
+		bRayTracingHasGroupId						= false;
 
 		Parameters.MaxWPOExtent						= 0.0f;
 		Parameters.MinMaterialDisplacement			= 0.0f;
 		Parameters.MaxMaterialDisplacement			= 0.0f;
 
 		// Default colors
-		Parameters.WireframeColor					= FVector3f(1.0f, 1.0f, 1.0f);
-		Parameters.LevelColor						= FVector3f(1.0f, 1.0f, 1.0f);
+		Parameters.WireframeAndPrimitiveColor			= FVector2f(FMath::AsFloat(0xFFFFFF00), FMath::AsFloat(0xFFFFFF00));
 
 		// Invalid indices
 		Parameters.LightmapDataIndex				= 0;
@@ -124,7 +127,11 @@ public:
 	PRIMITIVE_UNIFORM_BUILDER_FLAG_METHOD(bool,			Holdout);
 	PRIMITIVE_UNIFORM_BUILDER_FLAG_METHOD(bool,			DisableMaterialInvalidations);
 	PRIMITIVE_UNIFORM_BUILDER_FLAG_METHOD(bool,			SplineMesh);
+	PRIMITIVE_UNIFORM_BUILDER_FLAG_METHOD(bool,			AllowInstanceCullingOcclusionQueries);
 	PRIMITIVE_UNIFORM_BUILDER_FLAG_METHOD(bool,			HasAlwaysEvaluateWPOMaterials);
+	PRIMITIVE_UNIFORM_BUILDER_FLAG_METHOD(bool,			HasPixelAnimation);
+	PRIMITIVE_UNIFORM_BUILDER_FLAG_METHOD(bool,			RayTracingFarField);
+	PRIMITIVE_UNIFORM_BUILDER_FLAG_METHOD(bool,			RayTracingHasGroupId);
 
 	PRIMITIVE_UNIFORM_BUILDER_METHOD(uint32,			InstanceSceneDataOffset);
 	PRIMITIVE_UNIFORM_BUILDER_METHOD(uint32,			NumInstanceSceneDataEntries);
@@ -222,10 +229,11 @@ public:
 		return *this;
 	}
 
-	inline FPrimitiveUniformShaderParametersBuilder& EditorColors(const FLinearColor& InWireframeColor, const FLinearColor& InLevelColor)
+	inline FPrimitiveUniformShaderParametersBuilder& EditorColors(const FLinearColor& InWireframeColor, const FLinearColor& InPrimitiveColor)
 	{
-		Parameters.WireframeColor = FVector3f(InWireframeColor.R, InWireframeColor.G, InWireframeColor.B);
-		Parameters.LevelColor = FVector3f(InLevelColor.R, InLevelColor.G, InLevelColor.B);
+		FColor WireframeColor = InWireframeColor.QuantizeRound();
+		FColor PrimitiveColor = InPrimitiveColor.QuantizeRound();
+		Parameters.WireframeAndPrimitiveColor = FVector2f(FMath::AsFloat(WireframeColor.ToPackedRGBA()), FMath::AsFloat(PrimitiveColor.ToPackedRGBA()));
 		return *this;
 	}
 
@@ -300,16 +308,18 @@ public:
 
 	inline const FPrimitiveUniformShaderParameters& Build()
 	{
-		const FLargeWorldRenderPosition AbsoluteWorldPosition(AbsoluteLocalToWorld.GetOrigin());
-		const FVector TilePositionOffset = AbsoluteWorldPosition.GetTileOffset();
+		const FDFVector3 AbsoluteWorldPosition(AbsoluteLocalToWorld.GetOrigin());
+		const FVector PositionHigh(AbsoluteWorldPosition.High);
 
-		Parameters.TilePosition = AbsoluteWorldPosition.GetTile();
+		Parameters.PositionHigh = AbsoluteWorldPosition.High;
 
 		{
 			// Inverse on FMatrix44f can generate NaNs if the source matrix contains large scaling, so do it in double precision.
 			// Also use double precision to calculate WorldToPreviousWorld to prevent precision issues at far distances
-			FMatrix LocalToRelativeWorld = FLargeWorldRenderScalar::MakeToRelativeWorldMatrixDouble(TilePositionOffset, AbsoluteLocalToWorld);
-			FMatrix PrevLocalToRelativeWorld = FLargeWorldRenderScalar::MakeClampedToRelativeWorldMatrixDouble(TilePositionOffset, AbsolutePreviousLocalToWorld);
+
+			FMatrix LocalToRelativeWorld = FDFMatrix::MakeToRelativeWorldMatrixDouble(PositionHigh, AbsoluteLocalToWorld);
+			FMatrix PrevLocalToRelativeWorld = FDFMatrix::MakeClampedToRelativeWorldMatrixDouble(PositionHigh, AbsolutePreviousLocalToWorld);
+
 			FMatrix RelativeWorldToLocal = LocalToRelativeWorld.Inverse();
 
 			Parameters.LocalToRelativeWorld = FMatrix44f(LocalToRelativeWorld);
@@ -328,9 +338,27 @@ public:
 			}
 		}
 
-		Parameters.ActorRelativeWorldPosition = FVector3f(AbsoluteActorWorldPosition - TilePositionOffset);	//LWC_TODO: Precision loss
-		const FVector3f ObjectRelativeWorldPositionAsFloat = FVector3f(AbsoluteObjectWorldPosition - TilePositionOffset);
-		Parameters.ObjectRelativeWorldPositionAndRadius = FVector4f(ObjectRelativeWorldPositionAsFloat, ObjectRadius);
+		static TConsoleVariableData<int32>* CVarPrimitiveHasTileOffsetData = nullptr;
+		CVarPrimitiveHasTileOffsetData = CVarPrimitiveHasTileOffsetData ? CVarPrimitiveHasTileOffsetData : IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.PrimitiveHasTileOffsetData")); // null at first
+		const bool bPrimitiveHasTileOffsetData = CVarPrimitiveHasTileOffsetData ? (CVarPrimitiveHasTileOffsetData->GetValueOnAnyThread() != 0) : false;
+		if (bPrimitiveHasTileOffsetData)
+		{
+			const FLargeWorldRenderPosition AbsoluteActorWorldPositionTO { AbsoluteActorWorldPosition };
+			Parameters.ActorWorldPositionHigh = AbsoluteActorWorldPositionTO.GetTile();
+			Parameters.ActorWorldPositionLow = AbsoluteActorWorldPositionTO.GetOffset();
+			const FLargeWorldRenderPosition ObjectWorldPositionTO { AbsoluteObjectWorldPosition };
+			Parameters.ObjectWorldPositionHighAndRadius = FVector4f(ObjectWorldPositionTO.GetTile(), ObjectRadius);
+			Parameters.ObjectWorldPositionLow = ObjectWorldPositionTO.GetOffset();
+		}
+		else
+		{
+			const FDFVector3 AbsoluteActorWorldPositionDF { AbsoluteActorWorldPosition };
+			Parameters.ActorWorldPositionHigh = AbsoluteActorWorldPositionDF.High;
+			Parameters.ActorWorldPositionLow = AbsoluteActorWorldPositionDF.Low;
+			const FDFVector3 ObjectWorldPosition { AbsoluteObjectWorldPosition };
+			Parameters.ObjectWorldPositionHighAndRadius = FVector4f(ObjectWorldPosition.High, ObjectRadius);
+			Parameters.ObjectWorldPositionLow = ObjectWorldPosition.Low;
+		}
 
 		if (!bHasInstanceLocalBounds)
 		{
@@ -393,6 +421,10 @@ public:
 		Parameters.Flags |= bHoldout ? PRIMITIVE_SCENE_DATA_FLAG_HOLDOUT : 0u;
 		Parameters.Flags |= bDisableMaterialInvalidations ? PRIMITIVE_SCENE_DATA_FLAG_DISABLE_MATERIAL_INVALIDATIONS : 0u;
 		Parameters.Flags |= bSplineMesh ? PRIMITIVE_SCENE_DATA_FLAG_SPLINE_MESH : 0u;
+		Parameters.Flags |= bAllowInstanceCullingOcclusionQueries ? PRIMITIVE_SCENE_DATA_FLAG_INSTANCE_CULLING_OCCLUSION_QUERIES: 0u;
+		Parameters.Flags |= bHasPixelAnimation ? PRIMITIVE_SCENE_DATA_FLAG_HAS_PIXEL_ANIMATION : 0u;
+		Parameters.Flags |= bRayTracingFarField ? PRIMITIVE_SCENE_DATA_FLAG_RAYTRACING_FAR_FIELD : 0u;
+		Parameters.Flags |= bRayTracingHasGroupId ? PRIMITIVE_SCENE_DATA_FLAG_RAYTRACING_HAS_GROUPID : 0u;
 		
 		Parameters.VisibilityFlags = 0;
 		Parameters.VisibilityFlags |= bCastHiddenShadow ? PRIMITIVE_VISIBILITY_FLAG_CAST_HIDDEN_SHADOW : 0u;
@@ -455,4 +487,8 @@ private:
 	uint32 bHoldout : 1;
 	uint32 bDisableMaterialInvalidations : 1;
 	uint32 bSplineMesh : 1;
+	uint32 bAllowInstanceCullingOcclusionQueries : 1;
+	uint32 bHasPixelAnimation : 1;
+	uint32 bRayTracingFarField : 1;
+	uint32 bRayTracingHasGroupId : 1;
 };

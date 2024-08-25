@@ -2,6 +2,9 @@
 
 #include "CoreTypes.h"
 #include "HAL/LowLevelMemTracker.h"
+#include "HAL/PlatformProcess.h"
+#include "Math/UnrealMathUtility.h"
+#include "Misc/Paths.h"
 #include "ProfilingDebugging/ModuleDiagnostics.h"
 #include "ProfilingDebugging/MemoryTrace.h"
 #include "ProfilingDebugging/MetadataTrace.h"

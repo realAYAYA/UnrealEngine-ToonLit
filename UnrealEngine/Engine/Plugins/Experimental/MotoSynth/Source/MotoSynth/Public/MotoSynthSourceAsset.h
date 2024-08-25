@@ -10,11 +10,6 @@
 
 class USoundWave;
 struct FPropertyChangedEvent;
-
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "AudioDevice.h"
-#endif
-
 class UMotoSynthSource;
 
 USTRUCT()
@@ -52,7 +47,8 @@ public:
 	bool IsDone() const { return CurrentFrame >= AudioFileBuffer.Num(); }
 
 	// ISubmixBufferListener
-	void OnNewSubmixBuffer(const USoundSubmix* OwningSubmix, float* AudioData, int32 NumSamples, int32 NumChannels, const int32 SampleRate, double AudioClock) override;
+	virtual void OnNewSubmixBuffer(const USoundSubmix* OwningSubmix, float* AudioData, int32 NumSamples, int32 NumChannels, const int32 SampleRate, double AudioClock) override;
+	virtual const FString& GetListenerName() const override;
 	// ~ISubmixBufferListener
 
 private:
@@ -244,7 +240,7 @@ protected:
 	TArray<FGrainTableEntry> GrainTable;
 
 #if WITH_EDITORONLY_DATA
-	FRPMEstimationPreviewTone MotoSynthSineToneTest;
+	TSharedPtr<FRPMEstimationPreviewTone, ESPMode::ThreadSafe> MotoSynthSineToneTest;
 #endif
 
 	// Data ID used to track the source data with the data manager

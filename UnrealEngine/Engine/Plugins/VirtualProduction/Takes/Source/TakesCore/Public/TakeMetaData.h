@@ -64,7 +64,9 @@ public:
 	/**
 	 * Extend the default ULevelSequence asset registry tags
 	 */
-	virtual void ExtendAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
+	virtual void ExtendAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
+	virtual void ExtendAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override {}
 
 	/**
 	 * Extend the default ULevelSequence asset registry tag meta-data

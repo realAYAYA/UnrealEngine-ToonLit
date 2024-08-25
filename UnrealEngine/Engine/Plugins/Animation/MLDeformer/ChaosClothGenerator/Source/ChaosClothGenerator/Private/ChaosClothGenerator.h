@@ -54,8 +54,6 @@ namespace UE::Chaos::ClothGenerator
 
 		TStrongObjectPtr<UClothGeneratorProperties> Properties;
 		EClothGeneratorActions PendingAction = EClothGeneratorActions::NoAction;
-		TUniquePtr<FTaskResource> TaskResource;
-
-		
+		TUniquePtr<FTaskResource> TaskResource;	
 	};
 };

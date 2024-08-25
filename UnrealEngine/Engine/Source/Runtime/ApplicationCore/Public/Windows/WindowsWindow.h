@@ -6,7 +6,6 @@
 
 #include "GenericPlatform/GenericWindow.h"
 #include "Templates/SharedPointer.h"
-#include "Windows/WindowsHWrapper.h"
 
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include <Ole2.h>

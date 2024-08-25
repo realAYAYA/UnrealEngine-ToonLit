@@ -40,6 +40,7 @@ public:
 	FBasePIENetworkComponent& StartWhen(TCHAR* Description, TFunction<bool()> Query, FTimespan Timeout = FTimespan::FromSeconds(10));
 
 protected:
+	void StopPie();
 	void StartPie();
 	bool CollectPieWorlds();
 	bool AwaitConnections();

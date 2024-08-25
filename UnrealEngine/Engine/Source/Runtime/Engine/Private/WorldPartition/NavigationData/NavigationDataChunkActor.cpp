@@ -13,13 +13,6 @@
 ANavigationDataChunkActor::ANavigationDataChunkActor(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
-	if (!IsTemplate())
-	{
-		USceneComponent* Root = CreateDefaultSubobject<USceneComponent>(USceneComponent::GetDefaultSceneRootVariableName());
-		Root->SetMobility(EComponentMobility::Static);
-		SetRootComponent(Root);
-	}
-
 	SetCanBeDamaged(false);
 	SetActorEnableCollision(false);
 }

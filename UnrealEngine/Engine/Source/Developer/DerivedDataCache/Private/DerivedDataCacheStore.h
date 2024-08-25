@@ -120,6 +120,22 @@ enum class ECacheStoreRequestType : uint8
 	Value,
 };
 
+inline const TCHAR* LexToString(ECacheStoreRequestType CacheStoreRequestType)
+{
+	switch (CacheStoreRequestType)
+	{
+	case ECacheStoreRequestType::None:
+		return TEXT("None");
+	case ECacheStoreRequestType::Record:
+		return TEXT("Record");
+	case ECacheStoreRequestType::Value:
+		return TEXT("Value");
+	}
+
+	checkNoEntry();
+	return TEXT("Unknown value! (Update LexToString!)");
+}
+
 /**
  * The operation performed by the request.
  */
@@ -130,6 +146,24 @@ enum class ECacheStoreRequestOp : uint8
 	Get,
 	GetChunk,
 };
+
+inline const TCHAR* LexToString(ECacheStoreRequestOp CacheStoreRequestOp)
+{
+	switch (CacheStoreRequestOp)
+	{
+	case ECacheStoreRequestOp::None:
+		return TEXT("None");
+	case ECacheStoreRequestOp::Put:
+		return TEXT("Put");
+	case ECacheStoreRequestOp::Get:
+		return TEXT("Get");
+	case ECacheStoreRequestOp::GetChunk:
+		return TEXT("GetChunk");
+	}
+
+	checkNoEntry();
+	return TEXT("Unknown value! (Update LexToString!)");
+}
 
 enum class ECacheStoreFlags : uint32
 {
@@ -162,10 +196,19 @@ public:
 	virtual void SetFlags(ILegacyCacheStore* CacheStore, ECacheStoreFlags Flags) = 0;
 	virtual void RemoveNotSafe(ILegacyCacheStore* CacheStore) = 0;
 
+	/** Returns true if the combined flags of the owned cache stores contain all of these flags. */
+	virtual bool HasAllFlags(ECacheStoreFlags Flags) const = 0;
+
 	virtual ICacheStoreStats* CreateStats(ILegacyCacheStore* CacheStore, ECacheStoreFlags Flags, FStringView Type, FStringView Name, FStringView Path = {}) = 0;
 	virtual void DestroyStats(ICacheStoreStats* Stats) = 0;
 
 	virtual void LegacyResourceStats(TArray<FDerivedDataCacheResourceStat>& OutStats) const = 0;
+};
+
+class ICacheStoreGraph
+{
+public:
+	virtual ILegacyCacheStore* FindOrCreate(const TCHAR* Name) = 0;
 };
 
 enum class ECacheStoreStatusCode : uint8
@@ -262,6 +305,14 @@ public:
 
 	/** Adds stats for a single request that was processed by the associated cache store. */
 	virtual void AddRequest(const FCacheStoreRequestStats& Stats) = 0;
+
+	/** Adds stats for latency for a measurement that was done for the associated cache store. */
+	virtual void AddLatency(FMonotonicTimePoint StartTime, FMonotonicTimePoint EndTime, FMonotonicTimeSpan Latency) = 0;
+
+	/** Gets the average latency value for the current time in seconds. */
+	virtual double GetAverageLatency() = 0;
+
+	virtual void SetTotalPhysicalSize(uint64 TotalPhysicalSize) = 0;
 };
 
 template <typename RequestRangeType, typename OnCompleteType>

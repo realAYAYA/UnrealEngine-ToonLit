@@ -37,15 +37,25 @@
 	}
 	else if ([[NSFileManager defaultManager]fileExistsAtPath:filename] )
 	{
-		NSURL* BundleURL = [[NSRunningApplication currentApplication]bundleURL];
+		NSURL* BundleURL = [[NSRunningApplication currentApplication] bundleURL];
 
-		NSDictionary* Configuration = [NSDictionary dictionaryWithObject : [NSArray arrayWithObject : filename] forKey : NSWorkspaceLaunchConfigurationArguments];
+		NSWorkspaceOpenConfiguration* Configuration = [NSWorkspaceOpenConfiguration configuration];
+		[Configuration setCreatesNewApplicationInstance:YES];
+		[Configuration setPromptsUserIfNeeded:YES];
+		[Configuration setArguments:[NSArray arrayWithObject: filename]];
 
-		NSError* Error = nil;
+		[[NSWorkspace sharedWorkspace]
+			openApplicationAtURL: BundleURL
+			configuration: Configuration
+			completionHandler:^(NSRunningApplication * _Nullable app, NSError * _Nullable error)
+			{
+				if (error) {
+					NSLog(@"Failed to run the app: %@", error.localizedDescription);
+				}
+			}
+		];
 
-		NSRunningApplication* NewInstance = [[NSWorkspace sharedWorkspace]launchApplicationAtURL:BundleURL options : (NSWorkspaceLaunchOptions)(NSWorkspaceLaunchAsync | NSWorkspaceLaunchNewInstance) configuration : Configuration error : &Error];
-
-		return (NewInstance != nil);
+		return YES;
 	}
 	else
 	{

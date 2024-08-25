@@ -249,17 +249,17 @@ namespace EpicGames.Perforce
 			{
 				if (value is string str)
 				{
-					record.Rows.Add(new KeyValuePair<Utf8String, PerforceValue>(name, new PerforceValue(str)));
+					record.Rows.Add(new KeyValuePair<Utf8String, PerforceValue>(new Utf8String(name), new PerforceValue(str)));
 				}
 				else if (value is List<string> list)
 				{
 					if (numberedListElements)
 					{
-						record.Rows.AddRange(Enumerable.Range(0, list.Count).Select(x => new KeyValuePair<Utf8String, PerforceValue>($"{name}{x}", new PerforceValue(list[x]))));
+						record.Rows.AddRange(Enumerable.Range(0, list.Count).Select(x => new KeyValuePair<Utf8String, PerforceValue>(new Utf8String($"{name}{x}"), new PerforceValue(list[x]))));
 					}
 					else
 					{
-						record.Rows.AddRange(list.Select(x => new KeyValuePair<Utf8String, PerforceValue>(name, new PerforceValue(x))));
+						record.Rows.AddRange(list.Select(x => new KeyValuePair<Utf8String, PerforceValue>(new Utf8String(name), new PerforceValue(x))));
 					}
 				}
 				else

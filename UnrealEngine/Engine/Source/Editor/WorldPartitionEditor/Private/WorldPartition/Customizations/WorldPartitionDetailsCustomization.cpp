@@ -183,8 +183,7 @@ void FWorldPartitionDetails::HandleWorldPartitionRuntimeHashClassChanged(const U
 	if (WorldPartition.IsValid() && (!WorldPartition->RuntimeHash || WorldPartition->RuntimeHash->GetClass() != RuntimeHashClass))
 	{
 		WorldPartition->Modify();
-		WorldPartition->RuntimeHash = NewObject<UWorldPartitionRuntimeHash>(WorldPartition.Get(), RuntimeHashClass, NAME_None, RF_Transactional);
-		WorldPartition->RuntimeHash->SetDefaultValues();
+		WorldPartition->RuntimeHash = UWorldPartitionRuntimeHash::ConvertWorldPartitionHash(WorldPartition->RuntimeHash, RuntimeHashClass);
 
 		DetailBuilder->ForceRefreshDetails();
 	}

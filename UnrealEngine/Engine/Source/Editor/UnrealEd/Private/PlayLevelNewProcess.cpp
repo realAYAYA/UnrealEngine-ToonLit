@@ -178,12 +178,21 @@ void UEditorEngine::LaunchNewProcess(const FRequestPlaySessionParams& InParams, 
 		CommandLine += TEXT(" -vulkan -faketouches -featureleveles31");
 	}
 
-	// If they're trying to launch a new process (from the editor) in VR, this will fail because the editor
-	// owns the HMD resource, so we warn, and then fall back. They will need to use single-process for VR preview.
+	// VRPreview handling
 	if (InParams.SessionPreviewTypeOverride.Get(EPlaySessionPreviewType::NoPreview) == EPlaySessionPreviewType::VRPreview)
 	{
-		CommandLine += TEXT(" -nohmd");
-		GLog->CategorizedLogf(FName("LogHMD"), ELogVerbosity::Warning, TEXT("Standalone Game VR not supported, please use VR Preview."));
+		if (!InParams.EditorPlaySettings->IsOneHeadsetEachProcess())
+		{
+			// If they're trying to launch a new process (from the editor) in VR, this will fail because the editor
+			// owns the HMD resource, so we warn, and then fall back. They will need to use single-process for VR preview.
+			CommandLine += TEXT(" -nohmd");
+			UE_LOG(LogPlayLevel, Warning, TEXT("Standalone Game VR not supported, please use VR Preview. Launching separate process PIE with -nohmd."));
+		}
+		else if (InInstanceNum != 0) // PIE instance 0 is normally run in the editor process, so we may not see it here. That instance get the real HMD, so no simulator argument is passed.
+		{
+			CommandLine += TEXT(" -HMDSimulator");
+			UE_LOG(LogPlayLevel, Log, TEXT("Launching separate process PIE with -HMDSimulator. See bOneHeadsetEachProcess editor preference tooltip for more information about this."));
+		}
 	}
 
 	// if we had -emulatestereo on the commandline, also pass it to the new process

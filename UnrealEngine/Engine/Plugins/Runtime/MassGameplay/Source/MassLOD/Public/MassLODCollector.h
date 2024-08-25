@@ -16,6 +16,10 @@
 template <typename FLODLogic = FLODDefaultLogic >
 struct TMassLODCollector : public FMassLODBaseLogic
 {
+	TMassLODCollector()
+		: FMassLODBaseLogic(/*bShouldBuildFrustumData=*/FLODLogic::bDoVisibilityLogic)
+	{}
+
 	/**
 	 * Prepares execution for the current frame, needed to be called before every execution
 	 * @Param Viewers is the array of all the known viewers
@@ -126,7 +130,7 @@ void TMassLODCollector<FLODLogic>::CollectLODInfo(FMassExecutionContext& Context
 				}
 				SetDistanceToViewerSq<bCollectDistancePerViewer>(EntityInfoPerViewer, ViewerIdx, DistanceToViewerSq);
 
-				if (bCollectDistanceToFrustum)
+				if constexpr (bCollectDistanceToFrustum)
 				{
 					const float DistanceToFrustum = Viewer.Frustum.DistanceTo(EntityLocation);
 					SetDistanceToFrustum<bCollectDistanceToFrustumPerViewer>(EntityInfoPerViewer, ViewerIdx, DistanceToFrustum);

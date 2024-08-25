@@ -1,0 +1,8 @@
+// This file exists for backwards compatibility with older server versions. New installations should directly include the default.global.json file.
+{
+	"include": [
+		{
+			"path": "default.global.json"
+		}
+	]
+}

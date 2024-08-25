@@ -8,6 +8,7 @@
 #include "Misc/Paths.h"
 #include "Modules/ModuleInterface.h"
 #include "Modules/ModuleManager.h"
+#include "SwitchboardListenerAutolaunch.h"
 #include "SwitchboardShortcuts.h"
 #include "SwitchboardScriptInterop.h"
 #include "SwitchboardTypes.h"
@@ -83,7 +84,7 @@ public:
 
 	TSharedFuture<FSwitchboardVerifyResult> GetVerifyResult(bool bForceRefresh = false);
 
-#if SB_LISTENER_AUTOLAUNCH
+#if SWITCHBOARD_LISTENER_AUTOLAUNCH
 	/**
 	 * Returns whether (this engine's) SwitchboardListener is configured to run automatically.
 	 * Defaults to returning a cached value to avoid hitting the registry.
@@ -127,7 +128,7 @@ private:
 	FString VerifyPath;
 	TSharedFuture<FSwitchboardVerifyResult> VerifyResult;
 
-#if SB_LISTENER_AUTOLAUNCH
+#if SWITCHBOARD_LISTENER_AUTOLAUNCH
 	bool GetListenerAutolaunchEnabled_Internal() const;
 
 	bool bCachedAutolaunchEnabled;

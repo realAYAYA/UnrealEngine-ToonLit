@@ -24,7 +24,7 @@ public:
 	 *
 	 * @Note - This function will sort out the SourceData and call ImportCustomLodAsync and wait until the result is available.
 	 */
-	static INTERCHANGEENGINE_API TFuture<bool> ImportCustomLodAsync(UObject* MeshObject, const int32 LodIndex);
+	static INTERCHANGEENGINE_API TFuture<bool> ImportCustomLod(UObject* MeshObject, const int32 LodIndex);
 
 
 	/**
@@ -38,11 +38,11 @@ public:
 	 * @Note - Since this is the async version, the SourceData parameter is required.
 	 * @Note - This function will search for an available interchange asset factory that can do the job for the MeshObject class
 	 */
-	static INTERCHANGEENGINE_API TFuture<bool> ImportCustomLodAsync(UObject* MeshObject, const int32 LodIndex, const UInterchangeSourceData* SourceData);
+	static INTERCHANGEENGINE_API TFuture<bool> ImportCustomLod(UObject* MeshObject, const int32 LodIndex, const UInterchangeSourceData* SourceData);
 
 private:
 
-	static TFuture<bool> InternalImportCustomLodAsync(TSharedPtr<TPromise<bool>> Promise, UObject* MeshObject, const int32 LodIndex, const UInterchangeSourceData* SourceData);
+	static TFuture<bool> InternalImportCustomLod(TSharedPtr<TPromise<bool>> Promise, UObject* MeshObject, const int32 LodIndex, const UInterchangeSourceData* SourceData);
 };
 
 

@@ -20,10 +20,23 @@ struct VkAllocationCallbacks;
 
 // by default, we enable debugging in Development builds, unless the platform says not to
 #ifndef VULKAN_SHOULD_DEBUG_IN_DEVELOPMENT
-	#define VULKAN_SHOULD_DEBUG_IN_DEVELOPMENT 1
+	#define VULKAN_SHOULD_DEBUG_IN_DEVELOPMENT					1
 #endif
 
-#define VULKAN_HAS_DEBUGGING_ENABLED							(UE_BUILD_DEBUG || (UE_BUILD_DEVELOPMENT && VULKAN_SHOULD_DEBUG_IN_DEVELOPMENT))
+#ifndef VULKAN_HAS_DEBUGGING_ENABLED
+	#define VULKAN_HAS_DEBUGGING_ENABLED						(!IS_PROGRAM && (UE_BUILD_DEBUG || (UE_BUILD_DEVELOPMENT && VULKAN_SHOULD_DEBUG_IN_DEVELOPMENT)))
+#endif
+
+// default value of r.Vulkan.EnableValidation
+// 0 - disable validation layers
+// 1 - enable errors
+// 2 - enable errors & warnings
+// 3 - enable errors, warnings & performance warnings
+// 4 - enable errors, warnings, performance & information messages
+// 5 - enable all messages
+#ifndef VULKAN_VALIDATION_DEFAULT_VALUE
+	#define VULKAN_VALIDATION_DEFAULT_VALUE						(UE_BUILD_DEBUG ? 2 : 0)
+#endif
 
 #ifndef VULKAN_SHOULD_ENABLE_DRAW_MARKERS
 	#define VULKAN_SHOULD_ENABLE_DRAW_MARKERS					0
@@ -123,10 +136,6 @@ struct VkAllocationCallbacks;
 	#define VULKAN_USE_CREATE_WIN32_SURFACE						0
 #endif
 
-#ifndef VULKAN_USE_REAL_RENDERPASS_COMPATIBILITY
-	#define VULKAN_USE_REAL_RENDERPASS_COMPATIBILITY			1
-#endif
-
 #ifndef VULKAN_USE_DIFFERENT_POOL_CMDBUFFERS
 	#define VULKAN_USE_DIFFERENT_POOL_CMDBUFFERS				1
 #endif
@@ -161,10 +170,6 @@ struct VkAllocationCallbacks;
 	#define VULKAN_SUPPORTS_GPU_CRASH_DUMPS						(VULKAN_SUPPORTS_AMD_BUFFER_MARKER || VULKAN_SUPPORTS_NV_DIAGNOSTIC_CONFIG)
 #endif
 
-#ifndef VULKAN_SUPPORTS_DEBUG_UTILS
-	#define VULKAN_SUPPORTS_DEBUG_UTILS							1
-#endif
-
 #ifndef VULKAN_SUPPORTS_SCALAR_BLOCK_LAYOUT
 	#define VULKAN_SUPPORTS_SCALAR_BLOCK_LAYOUT					1
 #endif
@@ -184,6 +189,14 @@ struct VkAllocationCallbacks;
 
 #ifndef VULKAN_SUPPORTS_QCOM_RENDERPASS_TRANSFORM
 	#define VULKAN_SUPPORTS_QCOM_RENDERPASS_TRANSFORM			0
+#endif
+
+#ifndef VULKAN_SUPPORTS_QCOM_RENDERPASS_SHADER_RESOLVE
+	#ifdef VK_QCOM_render_pass_shader_resolve
+		#define VULKAN_SUPPORTS_QCOM_RENDERPASS_SHADER_RESOLVE	1
+	#else
+		#define VULKAN_SUPPORTS_QCOM_RENDERPASS_SHADER_RESOLVE	0
+	#endif
 #endif
 
 #ifndef VULKAN_SUPPORTS_FULLSCREEN_EXCLUSIVE
@@ -207,14 +220,6 @@ struct VkAllocationCallbacks;
 		#define VULKAN_SUPPORTS_RENDERPASS2 1
 	#else
 		#define VULKAN_SUPPORTS_RENDERPASS2 0
-	#endif
-#endif
-
-#ifndef VULKAN_SUPPORTS_MULTIVIEW
-	#ifdef VK_KHR_multiview
-		#define VULKAN_SUPPORTS_MULTIVIEW						1
-	#else
-		#define VULKAN_SUPPORTS_MULTIVIEW						0
 	#endif
 #endif
 

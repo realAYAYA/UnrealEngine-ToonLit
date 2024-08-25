@@ -122,7 +122,7 @@ namespace CustomActionManaged
 		{
 			try
 			{
-				string[] MajorVersions = new string[] { "26", "25", "24", "23", };
+				string[] MajorVersions = new string[] { "27", "26", "25", "24", "23", };
 
 				string[] MinorVersions = new string[] { "0", };
 

@@ -2,15 +2,19 @@
 
 #pragma once
 
+#include "MVVMBlueprintFunctionReference.h"
 #include "MVVMBlueprintPin.h"
 #include "MVVMBlueprintView.h"
 #include "Engine/MemberReference.h"
+#include "UObject/WeakObjectPtrTemplates.h"
 
 #include "MVVMBlueprintViewConversionFunction.generated.h"
 
 class UK2Node;
 class UEdGraphPin;
 class UEdGraph;
+
+struct FEdGraphEditAction;
 
 /**
  *
@@ -21,38 +25,50 @@ class MODELVIEWVIEWMODELBLUEPRINT_API UMVVMBlueprintViewConversionFunction : pub
 	GENERATED_BODY()
 
 public:
+	static bool IsValidConversionFunction(const UBlueprint* WidgetBlueprint, const UFunction* Function);
+	static bool IsValidConversionNode(const UBlueprint* WidgetBlueprint, const TSubclassOf<UK2Node> Function);
+
+public:
 	/** @return the conversion function uses at runtime. The wrapper function if complex or GetFunction is simple. */
 	const UFunction* GetCompiledFunction(const UClass* SelfContext) const;
 
 	/** @return the conversion function uses at runtime. The wrapper function if complex or GetFunction is simple. */
-	FName GetCompiledFunctionName() const;
+	FName GetCompiledFunctionName(const UClass* SelfContext) const;
 
 	/** @return the conversion function. */
-	TVariant<const UFunction*, TSubclassOf<UK2Node>> GetConversionFunction(const UClass* SelfContext) const;
+	UE_DEPRECATED(5.4, "GetConversionFunction that returns a variant is deprecated.")
+	TVariant<const UFunction*, TSubclassOf<UK2Node>> GetConversionFunction(const UBlueprint* SelfContext) const;
 
-	/** Set the function. Generate a Graph is the conversion function is complex. */
-	void InitFromFunction(UBlueprint* SelfContext, const UFunction* Function);
+	/** @return the conversion function. */
+	FMVVMBlueprintFunctionReference GetConversionFunction() const;
 
-	/** Set the function. Generate a Graph is the conversion function is complex. */
-	void InitFromFunction(UBlueprint* SelfContext, const UFunction* Function, FName GraphName);
+	/** Set the function. Generate a Graph. */
+	void Initialize(UBlueprint* SelfContext, FName GraphName, FMVVMBlueprintFunctionReference Function);
+	
+	/** Set the function. Generate a Graph. */
+	void InitializeFromFunction(UBlueprint* SelfContext, FName GraphName, const UFunction* Function);
 
 	// For deprecation
-	void InitializeFromWrapperGraph(UBlueprint* SelfContext, UEdGraph* Graph);
+	void Deprecation_InitializeFromWrapperGraph(UBlueprint* SelfContext, UEdGraph* Graph);
 
 	// For deprecation
-	void InitializeFromMemberReference(UBlueprint* SelfContext, FMemberReference MemberReference);
+	void Deprecation_InitializeFromMemberReference(UBlueprint* SelfContext, FName GraphName, FMemberReference MemberReference, const FMVVMBlueprintPropertyPath& Source);
+
+	// For deprecation
+	void Deprecation_SetWrapperGraphName(UBlueprint* Context, FName GraphName, const FMVVMBlueprintPropertyPath& Source);
+
+	/**
+	 * The conversion is valid.
+	 * The function was valid when created but may not be anymore.
+	 * It doesn't check if the source and destination are valid.
+	 */
+	bool IsValid(const UBlueprint* SelfContext) const;
 
 	/** The function has more than one argument and requires a wrapper or it uses a FunctionNode. */
-	bool NeedsWrapperGraph() const
-	{
-		return !GraphName.IsNone();
-	}
+	bool NeedsWrapperGraph(const UBlueprint* SelfContext) const;
 
-	/** The wrapper Graph is generated on domains and is not saved. */
-	bool IsWrapperGraphTransient() const
-	{
-		return NeedsWrapperGraph()  && bWrapperGraphTransient;
-	}
+	/** The wrapper Graph is generated on load/compile and is not saved. */
+	bool IsWrapperGraphTransient() const;
 
 	/** Return the wrapper graph, if it exists. */
 	UEdGraph* GetWrapperGraph() const
@@ -65,19 +81,14 @@ public:
 		return GraphName;
 	}
 
-	UK2Node* GetWrapperNode() const
-	{
-		return CachedWrapperNode;
-	}
-
 	/**
 	 * If needed, create the graph and all the nodes for that graph when compiling.
 	 * Returns the existing one, if one was created from GetOrCreateWrapperGraph.
 	 */
-	UEdGraph* GetOrCreateIntermediateWrapperGraph(FKismetCompilerContext& Context) const;
+	UEdGraph* GetOrCreateIntermediateWrapperGraph(FKismetCompilerContext& Context);
 
 	/** If needed, create the graph and all the nodes for that graph. */
-	UEdGraph* GetOrCreateWrapperGraph(UBlueprint* Blueprint) const;
+	UEdGraph* GetOrCreateWrapperGraph(UBlueprint* Blueprint);
 
 	/**
 	 * The conversion function is going to be removed from the Blueprint.
@@ -89,40 +100,45 @@ public:
 	 * Returns the pin from the graph.
 	 * Create the graph and all the nodes for that graph if the graph doesn't exist and it's needed.
 	 */
-	UEdGraphPin* GetOrCreateGraphPin(UBlueprint* Blueprint, FName PinName) const;
+	UEdGraphPin* GetOrCreateGraphPin(UBlueprint* Blueprint, const FMVVMBlueprintPinId& PinId);
 
-	TArrayView<const FMVVMBlueprintPin> GetPins() const
+	const TArrayView<const FMVVMBlueprintPin> GetPins() const
 	{
 		return SavedPins;
 	}
 
 	/** */
-	void SetGraphPin(UBlueprint* Blueprint, FName PinName, const FMVVMBlueprintPropertyPath& Path);
+	void SetGraphPin(UBlueprint* Blueprint, const FMVVMBlueprintPinId& PinId, const FMVVMBlueprintPropertyPath& Value);
 
 	/** Generates SavedPins from the wrapper graph, if it exists. */
 	void SavePinValues(UBlueprint* Blueprint);
+	/** Keep the orphaned pins. Add the missing pins. */
+	void UpdatePinValues(UBlueprint* Blueprint);
+	/** Keep the orphaned pins. Add the missing pins. */
+	bool HasOrphanedPin() const;
+
+	FSimpleMulticastDelegate OnWrapperGraphModified;
+
+	virtual void PostLoad() override;
 
 private:
-	UEdGraph* GetOrCreateWrapperGraphInternal(FKismetCompilerContext& Context, const UFunction* Function) const;
-	UEdGraph* GetOrCreateWrapperGraphInternal(UBlueprint* Blueprint, const UFunction* Function) const;
-	void LoadPinValuesInternal(UBlueprint* Blueprint) const;
+	void HandleGraphChanged(const FEdGraphEditAction& Action, TWeakObjectPtr<UBlueprint> Context);
+	void HandleUserDefinedPinRenamed(UK2Node* InNode, FName OldPinName, FName NewPinName, TWeakObjectPtr<UBlueprint> WeakBlueprint);
+	void SetCachedWrapperGraph(UBlueprint* Blueprint, UEdGraph* CachedGraph, UK2Node* CachedNode);
+	UEdGraph* GetOrCreateWrapperGraphInternal(FKismetCompilerContext& Context);
+	UEdGraph* GetOrCreateWrapperGraphInternal(UBlueprint* Blueprint);
+	bool NeedsWrapperGraphInternal(const UClass* SkeletalSelfContext) const;
+	void LoadPinValuesInternal(UBlueprint* Blueprint);
+	void CreateWrapperGraphName();
 	void Reset();
 
 private:
 	/**
-	 * The conversion UFunction when simple or when it's complex.
-	 * @note Only one of FunctionReference or the GraphNode can be valid.
+	 * Conversion reference. It can be simple, complex or a K2Node.
+	 * @note The conversion is complex
 	 */
 	UPROPERTY(VisibleAnywhere, Category = "Viewmodel")
-	FMemberReference FunctionReference;
-	
-	/**
-	 * The conversion K2Node the graph is generated for.
-	 * @note Only one of FunctionReference or the GraphNode can be valid.
-	 * @note The conversion is complex.
-	 */
-	UPROPERTY(VisibleAnywhere, Category = "Viewmodel")
-	TSubclassOf<UK2Node> FunctionNode;
+	FMVVMBlueprintFunctionReference ConversionFunction;
 
 	/** Name of the generated graph if a wrapper is needed. */
 	UPROPERTY(VisibleAnywhere, Category = "Viewmodel")
@@ -143,4 +159,13 @@ private:
 	
 	UPROPERTY(Transient, DuplicateTransient)
 	mutable TObjectPtr<UK2Node> CachedWrapperNode;
+
+	FDelegateHandle OnGraphChangedHandle;
+	FDelegateHandle OnUserDefinedPinRenamedHandle;
+	bool bLoadingPins = false;
+
+	UPROPERTY()
+	FMemberReference FunctionReference_DEPRECATED;
+	UPROPERTY()
+	TSubclassOf<UK2Node> FunctionNode_DEPRECATED;
 };

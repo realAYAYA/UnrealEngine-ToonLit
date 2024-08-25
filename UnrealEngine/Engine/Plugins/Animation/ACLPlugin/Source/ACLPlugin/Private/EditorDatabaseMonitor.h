@@ -2,11 +2,12 @@
 #pragma once
 
 // Copyright 2021 Nicholas Frechette. All Rights Reserved.
+
 #include "CoreMinimal.h"
 
 #if WITH_EDITORONLY_DATA
 
-#include "AnimationCompressionLibraryDatabase.h"
+class UAnimationCompressionLibraryDatabase;
 
 /** A central database monitor that ensures database instances have their mappings up to date. */
 namespace EditorDatabaseMonitor

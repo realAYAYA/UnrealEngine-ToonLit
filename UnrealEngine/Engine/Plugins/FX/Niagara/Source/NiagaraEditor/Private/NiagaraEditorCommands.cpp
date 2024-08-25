@@ -27,9 +27,10 @@ void FNiagaraEditorCommands::RegisterCommands()
 	UI_COMMAND(ToggleEmitterExecutionOrder, "Emitter Execution Order", "Display Emitter Execution Order", EUserInterfaceActionType::ToggleButton, FInputChord());
 	UI_COMMAND(ToggleGpuTickInformation, "Gpu Tick Information", "Display Gpu Tick Information", EUserInterfaceActionType::ToggleButton, FInputChord());
 	UI_COMMAND(ToggleMemoryInfo, "Memory", "Show approximate memory usage", EUserInterfaceActionType::ToggleButton, FInputChord());
+	UI_COMMAND(ToggleStatelessInfo, "Lightweight", "Show information about lightweight emitters and execution path", EUserInterfaceActionType::ToggleButton, FInputChord());
 	UI_COMMAND(TogglePreviewBackground, "Background", "Toggles the preview pane's background.", EUserInterfaceActionType::ToggleButton, FInputChord());
 	UI_COMMAND(ToggleUnlockToChanges, "Lock/Unlock To Changes", "Toggles whether or not changes in the source asset get pulled into this asset automatically.", EUserInterfaceActionType::Button, FInputChord());
-	UI_COMMAND(ToggleStatPerformance, "Performance", "Show runtime performance for particle scripts.", EUserInterfaceActionType::ToggleButton, FInputChord());
+	UI_COMMAND(ToggleStatPerformance, "Performance", "Show runtime performance for particle scripts. Not supported for optimized VM byte code.", EUserInterfaceActionType::ToggleButton, FInputChord());
 	UI_COMMAND(ToggleStatPerformanceGPU, "GPU Profiling", "Measure gpu runtime cost of scripts. Can be expensive for simulation stages with lots of iterations.", EUserInterfaceActionType::ToggleButton, FInputChord());
 	UI_COMMAND(ClearStatPerformance, "Clear Stats", "Clear all existing stat captures.", EUserInterfaceActionType::Button, FInputChord());
 	UI_COMMAND(ToggleStatPerformanceTypeAvg, "Display Average", "Displays the average of captured stats.", EUserInterfaceActionType::ToggleButton, FInputChord());
@@ -46,7 +47,7 @@ void FNiagaraEditorCommands::RegisterCommands()
 	UI_COMMAND(ToggleResetSimulationOnChange, "Reset on change", "Toggles whether or not the simulation is reset whenever a change is made in the asset editor.", EUserInterfaceActionType::ToggleButton, FInputChord());
 	UI_COMMAND(ToggleResimulateOnChangeWhilePaused, "Resimulate when paused", "Toggles whether or not the simulation is rerun to the current time when making changes while paused.", EUserInterfaceActionType::ToggleButton, FInputChord());
 	UI_COMMAND(ToggleResetDependentSystems, "Reset Dependent Systems", "Toggles whether or not to reset all systems that include this emitter when it is reset by the user.", EUserInterfaceActionType::ToggleButton, FInputChord());
-	UI_COMMAND(CollapseStackToHeaders, "Collapse to Headers", "Expands all headsers and collapse all items.", EUserInterfaceActionType::Button, FInputChord(EModifierKey::Control, EKeys::O));
+	UI_COMMAND(CollapseStackToHeaders, "Collapse to Headers", "Expands all headers and collapse all items.", EUserInterfaceActionType::Button, FInputChord(EModifierKey::Control, EKeys::O));
 
 	UI_COMMAND(IsolateSelectedEmitters, "Isolate selected emitters", "Isolate all currently selected emitters.", EUserInterfaceActionType::Button, FInputChord(EKeys::S));
 	UI_COMMAND(DisableSelectedEmitters, "Disable selected emitters", "Disables all currently selected emitters and recompiles the system.", EUserInterfaceActionType::Button, FInputChord(EKeys::D));

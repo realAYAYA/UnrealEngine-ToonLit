@@ -10,11 +10,6 @@ struct FFrameNumber;
 struct FMovieSceneSegment;
 template <typename ElementType> class TRange;
 
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "Evaluation/MovieSceneSegment.h"
-#include "MovieSceneTrack.h"
-#endif
-
 namespace MovieSceneSegmentCompiler
 {
 	MOVIESCENE_API TOptional<FMovieSceneSegment> EvaluateNearestSegment(const TRange<FFrameNumber>& Range, const FMovieSceneSegment* PreviousSegment, const FMovieSceneSegment* NextSegment);

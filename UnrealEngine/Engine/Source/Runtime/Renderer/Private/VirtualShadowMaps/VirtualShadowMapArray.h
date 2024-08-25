@@ -8,6 +8,7 @@
 
 struct FMinimalSceneTextures;
 struct FSortedLightSetSceneInfo;
+struct FNaniteVisibilityQuery;
 class FViewInfo;
 class FProjectedShadowInfo;
 class FVisibleLightInfo;
@@ -83,36 +84,38 @@ private:
 // as well as cached shadow maps
 struct FVirtualShadowMapProjectionShaderData
 {
-	/**
-	 * Transform from shadow-pre-translated world space to shadow view space, example use: (WorldSpacePos + ShadowPreViewTranslation) * TranslatedWorldToShadowViewMatrix
-	 * TODO: Why don't we call it a rotation and store in a 3x3? Does it ever have translation in?
-	 */
-	FMatrix44f TranslatedWorldToShadowViewMatrix;
 	FMatrix44f ShadowViewToClipMatrix;
 	FMatrix44f TranslatedWorldToShadowUVMatrix;
 	FMatrix44f TranslatedWorldToShadowUVNormalMatrix;
 
-	FVector3f PreViewTranslationLWCTile;
+	FVector3f LightDirection;
 	uint32 LightType = ELightComponentType::LightType_Directional;
-	FVector3f PreViewTranslationLWCOffset;
-	float LightSourceRadius;						// This should live in shared light structure...
+
+	FVector3f PreViewTranslationHigh;
+	float LightRadius;
+	
+	FVector3f PreViewTranslationLow;
+	// Slightly different meaning for clipmaps (includes camera pixel size scaling stuff) and local lights (raw bias)
+	float ResolutionLodBias = 0.0f;
 	
 	// TODO: There are more local lights than directional
 	// We should move the directional-specific stuff out to its own structure.
 	FVector3f NegativeClipmapWorldOriginLWCOffset;	// Shares the LWCTile with PreViewTranslation
-	// Slightly different meaning for clipmaps (includes camera pixel size scaling stuff) and local lights (raw bias)
-	float ResolutionLodBias = 0.0f;
+	float LightSourceRadius;
 
 	FIntPoint ClipmapCornerRelativeOffset = FIntPoint(0, 0);
-	int32 ClipmapLevel = 0;					// "Absolute" level, can be negative
-	int32 ClipmapLevelCountRemaining = 0;	// Remaining levels, relative to this one
+	int32 ClipmapLevel = MAX_int32;			// "Absolute" level, can be negative. Max_int32 if not a clipmap.
+	int32 ClipmapLevelCountRemaining = -1;	// Remaining levels, relative to this one. Negative if not a clipmap.
 
 	uint32 Flags = 0U;
-	float LightRadius;
+	// This clipmap level should allow WPO if this value is less than InstanceWPODisableDistanceSquared
+	float ClipmapLevelWPODistanceDisableThresholdSquared = 0.0f;
+	float TexelDitherScale;
+	
 	// Seems the FMatrix forces 16-byte alignment
-	float Padding[2];
+	float Padding;
 };
-static_assert((sizeof(FVirtualShadowMapProjectionShaderData) % 16) == 0, "FVirtualShadowMapProjectionShaderData size should be a multiple of 16-bytes for alignment.");
+static_assert(sizeof(FVirtualShadowMapProjectionShaderData) == (16*18), "FVirtualShadowMapProjectionShaderData does not match size in shader. See VirtualShadowMapProjectionStructs.ush.");
 
 struct FVirtualShadowMapHZBMetadata
 {
@@ -134,7 +137,7 @@ BEGIN_GLOBAL_SHADER_PARAMETER_STRUCT(FVirtualShadowMapUniformParameters, )
 	SHADER_PARAMETER(uint32, PackedShadowMaskMaxLightCount)
 	SHADER_PARAMETER(FVector4f, RecPhysicalPoolSize)
 	SHADER_PARAMETER(FIntPoint, PhysicalPoolSize)
-	SHADER_PARAMETER(FIntPoint, PhysicalPoolSizePages)	
+	SHADER_PARAMETER(FIntPoint, PhysicalPoolSizePages)
 
 	// Set to 1 if r.Shadow.Virtual.NonNanite.IncludeInCoarsePages is set to 0 in order to signal that we want to use the legacy path for just excluding non-nanite
 	SHADER_PARAMETER(uint32, bExcludeNonNaniteFromCoarsePages)
@@ -142,11 +145,24 @@ BEGIN_GLOBAL_SHADER_PARAMETER_STRUCT(FVirtualShadowMapUniformParameters, )
 	SHADER_PARAMETER(float, CoarsePagePixelThresholdStatic)
 	SHADER_PARAMETER(float, CoarsePagePixelThresholdDynamicNanite)
 
+	// For shadow page age calculations
+	SHADER_PARAMETER(uint32, SceneFrameNumber)
+
+	SHADER_PARAMETER(uint32, bClipmapGreedyLevelSelection)
+	SHADER_PARAMETER(float, GlobalResolutionLodBias)
+
 	SHADER_PARAMETER_RDG_BUFFER_SRV(ByteAddressBuffer, ProjectionData)
 	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, PageTable)
 	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, PageFlags)
 	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint4>, PageRectBounds)
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2DArray<uint>, PhysicalPagePool)
+
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, CachePrimitiveAsDynamic)
+
+	// Light grid with only the lights that have VSMs present
+	// Still references the original indices from the global light grid
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer< uint >, LightGridData)
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer< uint >, NumCulledLightsGrid)
 END_GLOBAL_SHADER_PARAMETER_STRUCT()
 
 BEGIN_SHADER_PARAMETER_STRUCT(FVirtualShadowMapSamplingParameters, )
@@ -208,7 +224,11 @@ public:
 	FVirtualShadowMapArray(FScene& InScene);
 	~FVirtualShadowMapArray();
 
-	void Initialize(FRDGBuilder& GraphBuilder, FVirtualShadowMapArrayCacheManager* InCacheManager, bool bInEnabled, bool bIsSceneCapture);
+	void Initialize(
+		FRDGBuilder& GraphBuilder,
+		FVirtualShadowMapArrayCacheManager* InCacheManager,
+		bool bInEnabled,
+		const FEngineShowFlags& EngineShowFlags);
 
 	// Returns true if virtual shadow maps are enabled
 	bool IsEnabled() const
@@ -268,11 +288,12 @@ public:
 
 	void MergeStaticPhysicalPages(FRDGBuilder& GraphBuilder);
 
+	void UpdatePhysicalPageAddresses(FRDGBuilder& GraphBuilder);
+
 	void BuildPageAllocations(
 		FRDGBuilder& GraphBuilder,
 		const FMinimalSceneTextures& SceneTextures,
 		const TConstArrayView<FViewInfo> &Views,
-		const FEngineShowFlags& EngineShowFlags,
 		const FSortedLightSetSceneInfo& SortedLights, 
 		const TConstArrayView<FVisibleLightInfo>& VisibleLightInfos,
 		const FSingleLayerWaterPrePassResult* SingleLayerWaterPrePassResult,
@@ -295,7 +316,7 @@ public:
 	/**
 	 * Draw Nanite geometry into the VSMs.
 	 */
-	void RenderVirtualShadowMapsNanite(FRDGBuilder& GraphBuilder, FSceneRenderer& SceneRenderer, bool bUpdateNaniteStreaming, const FNaniteVisibilityResults& VisibilityResults, Nanite::FPackedViewArray* VirtualShadowMapViews, FSceneInstanceCullingQuery* SceneInstanceCullingQuery);
+	void RenderVirtualShadowMapsNanite(FRDGBuilder& GraphBuilder, FSceneRenderer& SceneRenderer, bool bUpdateNaniteStreaming, const FNaniteVisibilityQuery* VisibilityQuery, Nanite::FPackedViewArray* VirtualShadowMapViews, FSceneInstanceCullingQuery* SceneInstanceCullingQuery);
 
 	/**
 	 * Draw Non-Nanite geometry into the VSMs.
@@ -337,6 +358,11 @@ public:
 	 */
 	static float InterpolateResolutionBias(float BiasNonMoving, float BiasMoving, float LightMobilityFactor);
 
+	/**
+	* Helper function to create and clear an indirect args buffer
+	*/
+	static FRDGBufferRef CreateAndInitializeDispatchIndirectArgs1D(FRDGBuilder& GraphBuilder, ERHIFeatureLevel::Type FeatureLevel, const TCHAR* Name);
+
 	// We keep a reference to the cache manager that was used to initialize this frame as it owns some of the buffers
 	FVirtualShadowMapArrayCacheManager* CacheManager = nullptr;
 
@@ -373,8 +399,6 @@ public:
 	FRDGBufferRef DirtyPageFlagsRDG = nullptr; // Dirty flags that are cleared after render passes
 	bool bHZBBuiltThisFrame = false;
 
-	FRDGBufferRef StaticInvalidatingPrimitivesRDG = nullptr;
-
 	// See Engine\Shaders\Private\VirtualShadowMaps\VirtualShadowMapStats.ush for definitions of the different stat indexes
 	static constexpr uint32 NumStats = 32;
 	static constexpr uint32 MaxPageAreaDiagnosticSlots = 32;
@@ -386,6 +410,8 @@ public:
 	// Debug visualization
 	TArray<FRDGTextureRef> DebugVisualizationOutput;
 	TArray<FVirtualShadowMapVisualizeLightSearch> VisualizeLight;
+	bool bEnableVisualization = false;
+	bool bEnableNaniteVisualization = false;
 
 private:
 	void UpdateVisualizeLight(
@@ -396,7 +422,7 @@ private:
 
 	void AppendPhysicalPageList(FRDGBuilder& GraphBuilder, bool bEmptyToAvailable);
 
-	uint32 AddRenderViews(const TSharedPtr<FVirtualShadowMapClipmap>& Clipmap, float LODScaleFactor, bool bSetHzbParams, bool bUpdateHZBMetaData, const FVector &CullingViewOrigin, TArray<Nanite::FPackedView, SceneRenderingAllocator>& OutVirtualShadowViews);
+	uint32 AddRenderViews(const TSharedPtr<FVirtualShadowMapClipmap>& Clipmap, const FViewInfo* CullingView, float LODScaleFactor, bool bSetHzbParams, bool bUpdateHZBMetaData, TArray<Nanite::FPackedView, SceneRenderingAllocator>& OutVirtualShadowViews);
 
 	TRDGUniformBufferRef<FVirtualShadowMapUniformParameters> GetUncachedUniformBuffer(FRDGBuilder& GraphBuilder) const;
 	void UpdateCachedUniformBuffer(FRDGBuilder& GraphBuilder);

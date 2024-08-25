@@ -2,15 +2,12 @@
 
 #include "OptimusEditorModule.h"
 
-#include "Actions/OptimusResourceActions.h"
-#include "Algo/Transform.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetToolsModule.h"
 #include "AssetViewUtils.h"
 #include "EdGraphUtilities.h"
 #include "IAssetTools.h"
-#include "IOptimusExecutionDomainProvider.h"
-#include "ObjectTools.h"
+#include "OptimusExecutionDomain.h"
 #include "OptimusBindingTypes.h"
 #include "OptimusComponentSource.h"
 #include "OptimusDataType.h"
@@ -142,7 +139,7 @@ void FOptimusEditorModule::PreChange(const UUserDefinedStruct* Changed,
 			if (Asset.IsInstanceOf(UOptimusDeformer::StaticClass()))
 			{
 				// Only care about loaded assets, which may have active instances
-				if (UOptimusDeformer* DeformerAsset = CastChecked<UOptimusDeformer>(Asset.FastGetAsset(false)))
+				if (UOptimusDeformer* DeformerAsset = Cast<UOptimusDeformer>(Asset.FastGetAsset(false)))
 				{
 					DeformerAsset->SetAllInstancesCanbeActive(false);
 				}
@@ -179,7 +176,7 @@ void FOptimusEditorModule::PostChange(const UUserDefinedStruct* Changed,
 				if (Asset.IsInstanceOf(UOptimusDeformer::StaticClass()))
 				{
 					// Only care about loaded assets, which may have active instances
-					if (UOptimusDeformer* DeformerAsset = CastChecked<UOptimusDeformer>(Asset.FastGetAsset(false)))
+					if (UOptimusDeformer* DeformerAsset = Cast<UOptimusDeformer>(Asset.FastGetAsset(false)))
 					{
 						DeformerAsset->Compile();
 						DeformerAsset->SetAllInstancesCanbeActive(true);

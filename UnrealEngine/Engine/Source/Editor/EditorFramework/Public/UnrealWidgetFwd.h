@@ -10,6 +10,7 @@ enum ECoordSystem
 	COORD_None = -1,
 	COORD_World,
 	COORD_Local,
+	COORD_Parent,
 	COORD_Max,
 };
 

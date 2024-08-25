@@ -3,19 +3,12 @@
 #pragma once
 
 #include "Components/SceneComponent.h"
+
 #include "MuCO/CustomizableObjectInstance.h"
 
 #include "CustomizableSkeletalComponent.generated.h"
 
-class AActor;
-class FObjectPreSaveContext;
-class UCustomizableSkeletalComponent;
-class UObject;
-class USkeletalMesh;
-struct FFrame;
-enum class EUpdateResult : uint8;
 
-DECLARE_DELEGATE_TwoParams(FCustomizableSkeletalComponentPreUpdateDelegate, UCustomizableSkeletalComponent* Component, USkeletalMesh* NextMesh);
 DECLARE_DELEGATE(FCustomizableSkeletalComponentUpdatedDelegate);
 
 UCLASS(Blueprintable, BlueprintType, ClassGroup = (CustomizableObject), meta = (BlueprintSpawnableComponent))
@@ -24,7 +17,11 @@ class CUSTOMIZABLEOBJECT_API UCustomizableSkeletalComponent : public USceneCompo
 public:
 	GENERATED_BODY()
 
-	UCustomizableSkeletalComponent();
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = CustomizableSkeletalMesh)
+	TObjectPtr<UCustomizableObjectInstance> CustomizableObjectInstance;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = CustomizableSkeletalMesh)
+	int32 ComponentIndex;
 
 	// Used to replace the SkeletalMesh of the parent component by the ReferenceSkeletalMesh or the generated SkeletalMesh 
 	bool bPendingSetSkeletalMesh = false;
@@ -32,16 +29,6 @@ public:
 	// Used to avoid replacing the SkeletalMesh of the parent component by the ReferenceSkeletalMesh if bPendingSetSkeletalMesh is true
 	bool bSkipSetReferenceSkeletalMesh = false;
 
-	UPROPERTY(Transient)
-	float SkippedLastRenderTime;
-
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = CustomizableSkeletalMesh)
-	TObjectPtr<UCustomizableObjectInstance> CustomizableObjectInstance;
-
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = CustomizableSkeletalMesh)
-	int32 ComponentIndex;
-
-	FCustomizableSkeletalComponentPreUpdateDelegate PreUpdateDelegate;
 	FCustomizableSkeletalComponentUpdatedDelegate UpdatedDelegate;
 
 	/** Common end point of all updates. Even those which failed. */
@@ -58,14 +45,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	void UpdateSkeletalMeshAsyncResult(FInstanceUpdateDelegate Callback, bool bIgnoreCloseDist = false, bool bForceHighPriority = false);
 
-	void SetSkeletalMesh(USkeletalMesh* SkeletalMesh, bool bReinitPose=true, bool bForceClothReset=true);
+	void SetSkeletalMesh(USkeletalMesh* SkeletalMesh);
 	void SetPhysicsAsset(class UPhysicsAsset* PhysicsAsset);
 	void UpdateDistFromComponentToPlayer(const AActor* const Pawn, bool bForceEvenIfNotBegunPlay = false);
 
 	void SetVisibilityOfSkeletalMeshSectionWithMaterialName(bool bVisible, const FString& MaterialName, int32 LOD);
-
-	// USceneComponent interface
-	virtual void BeginDestroy() override;
 
 #if WITH_EDITOR
 	// Used to generate instances outside the CustomizableObject editor and PIE
@@ -74,8 +58,13 @@ public:
 #endif
 
 private:
-	void TickComponent(float DeltaTime, enum ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
-	void OnAttachmentChanged() override;
+	UPROPERTY(Transient)
+	TObjectPtr<UCustomizableObjectInstanceUsage> CustomizableObjectInstanceUsage;
 
+	void OnAttachmentChanged() override;
+	void CreateCustomizableObjectInstanceUsage();
+
+protected:
+	virtual void PostInitProperties() override;
 };
 

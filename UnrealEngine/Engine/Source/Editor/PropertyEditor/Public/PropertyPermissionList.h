@@ -58,15 +58,15 @@ public:
 	void UnregisterOwner(const FName Owner);
 
 	/** Add a specific property to a UStruct's AllowList */
-	void AddToAllowList(TSoftObjectPtr<UStruct> Struct, const FName PropertyName, const FName Owner = NAME_None);
+	void AddToAllowList(TSoftObjectPtr<UStruct> Struct, const FName PropertyName, const FName Owner);
 	/** Add a list of properties to a UStruct's AllowList */
-	void AddToAllowList(TSoftObjectPtr<UStruct> Struct, const TArray<FName>& PropertyNames, const FName Owner = NAME_None);
+	void AddToAllowList(TSoftObjectPtr<UStruct> Struct, const TArray<FName>& PropertyNames, const FName Owner);
 	/** Remove a specific property from a UStruct's AllowList */
-	void RemoveFromAllowList(TSoftObjectPtr<UStruct> Struct, const FName PropertyName, const FName Owner = NAME_None);
+	void RemoveFromAllowList(TSoftObjectPtr<UStruct> Struct, const FName PropertyName, const FName Owner);
 	/** Add a specific property to a UStruct's DenyList */
-	void AddToDenyList(TSoftObjectPtr<UStruct> Struct, const FName PropertyName, const FName Owner = NAME_None);
+	void AddToDenyList(TSoftObjectPtr<UStruct> Struct, const FName PropertyName, const FName Owner);
 	/** Remove a specific property from a UStruct's DenyList */
-    void RemoveFromDenyList(TSoftObjectPtr<UStruct> Struct, const FName PropertyName, const FName Owner = NAME_None);
+    void RemoveFromDenyList(TSoftObjectPtr<UStruct> Struct, const FName PropertyName, const FName Owner);
 
 	/** When the PermissionList or DenyList for any struct was added to or removed from. */
     FPermissionListUpdated PermissionListUpdatedDelegate;
@@ -91,6 +91,9 @@ public:
 	 * This should be relatively fast as it maintains a flattened cache of all inherited PermissionLists for every UStruct (which is generated lazily).
 	 */
 	bool DoesPropertyPassFilter(const UStruct* ObjectStruct, FName PropertyName) const;
+
+	/** */
+	bool HasSpecificList(const UStruct* ObjectStruct) const;
 
 	/** Check whether a property exists on the PermissionList for a specific Struct - this will return false if the property is AllowListed on a parent Struct */
 	bool IsSpecificPropertyAllowListed(const UStruct* ObjectStruct, FName PropertyName) const;

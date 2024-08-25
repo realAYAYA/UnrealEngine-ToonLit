@@ -72,7 +72,6 @@ public:
 	virtual FMovieSceneRootEvaluationTemplateInstance& GetEvaluationTemplate() override { return RootTemplateInstance; }
 	UMG_API virtual UMovieSceneEntitySystemLinker* ConstructEntitySystemLinker() override;
 	virtual UObject* AsUObject() override { return this; }
-	virtual void UpdateCameraCut(UObject* CameraObject, const EMovieSceneCameraCutParams& CameraCutParams) override {}
 	virtual void SetViewportSettings(const TMap<FViewportClient*, EMovieSceneViewportParams>& ViewportParamsMap) override {}
 	virtual void GetViewportSettings(TMap<FViewportClient*, EMovieSceneViewportParams>& ViewportParamsMap) const override {}
 	UMG_API virtual EMovieScenePlayerStatus::Type GetPlaybackStatus() const override;

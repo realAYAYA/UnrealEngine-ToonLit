@@ -2,15 +2,17 @@
 #pragma once
 
 #if WITH_EDITOR
-
 #include "CoreMinimal.h"
 #include "Hash/CityHash.h"
 #include "Misc/Paths.h"
 #include "WorldPartition/WorldPartitionLog.h"
 #include "UObject/Package.h"
+#endif
 
 struct FWorldPartitionCookPackage
 {
+#if WITH_EDITOR
+
 	enum class EType
 	{
 		Unknown,
@@ -52,7 +54,7 @@ struct FWorldPartitionCookPackage
 		TStringBuilderWithBuffer<TCHAR, NAME_SIZE> FullPath;
 		FullPath += TEXT("/");
 		FullPath += InRoot;
-		FullPath += TEXT("/_GENERATED_/");
+		FullPath += GeneratedFolder;
 		FullPath += InRelativeFilename;
 
 		return FPaths::RemoveDuplicateSlashes(*FullPath);
@@ -74,6 +76,11 @@ struct FWorldPartitionCookPackage
 	const FString RelativePath;
 	const IDType PackageId;
 	const EType Type;
-};
-
 #endif
+
+	/** Returns "_Generated_" */
+	static FStringView GetGeneratedFolderName() { return FStringView(&GeneratedFolder[1], GeneratedFolder.Len() - 2); }
+
+private:
+	static constexpr FStringView GeneratedFolder = TEXTVIEW("/_Generated_/");
+};

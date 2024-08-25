@@ -19,10 +19,12 @@ struct FOptimusCDIPinDefinition
 	// Singleton value read/write. The context name is implied as Optimus::ContextName::Singleton.
 	FOptimusCDIPinDefinition(
 		const FName InPinName,
-		const FString InDataFunctionName
+		const FString InDataFunctionName,
+		const bool bInMutable = true
 		) :
 		PinName(InPinName),
-		DataFunctionName(InDataFunctionName)
+		DataFunctionName(InDataFunctionName),
+		bMutable(bInMutable)
 	{ }
 
 	// A single level context lookup.
@@ -30,11 +32,13 @@ struct FOptimusCDIPinDefinition
 		const FName InPinName,
 		const FString InDataFunctionName,
 		const FName InContextName,
-		const FString InCountFunctionName
+		const FString InCountFunctionName,
+		const bool bInMutable = true
 		) :
 		PinName(InPinName),
 		DataFunctionName(InDataFunctionName),
-		DataDimensions{{InContextName, InCountFunctionName}}
+		DataDimensions{{InContextName, InCountFunctionName}},
+		bMutable(bInMutable)
 	{ }
 
 	FOptimusCDIPinDefinition(
@@ -42,21 +46,25 @@ struct FOptimusCDIPinDefinition
 		const FString InDataFunctionName,
 		const FName InContextName,
 		const int32 InMultiplier,
-		const FString InCountFunctionName
+		const FString InCountFunctionName,
+		const bool bInMutable = true
 		) :
 		PinName(InPinName),
 		DataFunctionName(InDataFunctionName),
 		DataDimensions{{InContextName, InCountFunctionName}},
-		DomainMultiplier(FMath::Max(1, InMultiplier))
+		DomainMultiplier(FMath::Max(1, InMultiplier)),
+		bMutable(bInMutable)
 	{ }
 	
 	FOptimusCDIPinDefinition(
 		const FName InPinName,
 		const FString InDataFunctionName,
-		const std::initializer_list<FDimensionInfo> InContexts
+		const std::initializer_list<FDimensionInfo> InContexts,
+		const bool bInMutable = true
 		) :
 		PinName(InPinName),
-		DataFunctionName(InDataFunctionName)
+		DataFunctionName(InDataFunctionName),
+		bMutable(bInMutable)
 	{
 		for (FDimensionInfo ContextInfo: InContexts)
 		{
@@ -110,6 +118,8 @@ struct FOptimusCDIPinDefinition
 
 	// For single-level domains, how many values per element of that dimension's range. 
 	int32 DomainMultiplier = 1;
+
+	bool bMutable = true;
 };
 
 

@@ -1,6 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Perforce;
 using System;
 using System.Collections.Generic;
 using System.Data;
@@ -9,6 +8,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using EpicGames.Perforce;
 
 namespace UnrealGameSync
 {
@@ -101,22 +101,22 @@ namespace UnrealGameSync
 				}
 
 				List<IssueData> newIssues = newSortedIssues.Values.Reverse().ToList();
-				_mainThreadSynchronizationContext.Post((o) => 
-				{ 
-					if (!_disposed) 
-					{ 
-						FetchIssuesSuccess(newMaxResults, newIssues); 
-					} 
+				_mainThreadSynchronizationContext.Post((o) =>
+				{
+					if (!_disposed)
+					{
+						FetchIssuesSuccess(newMaxResults, newIssues);
+					}
 				}, null);
 			}
-			catch(Exception ex)
+			catch (Exception ex)
 			{
-				_mainThreadSynchronizationContext.Post((o) => 
-				{ 
-					if (!_disposed) 
-					{ 
-						FetchIssuesFailure(ex); 
-					} 
+				_mainThreadSynchronizationContext.Post((o) =>
+				{
+					if (!_disposed)
+					{
+						FetchIssuesFailure(ex);
+					}
 				}, null);
 			}
 		}
@@ -142,7 +142,7 @@ namespace UnrealGameSync
 
 		void CheckToStartBackgroundThread()
 		{
-			if(_pendingMaxResults != _maxResults)
+			if (_pendingMaxResults != _maxResults)
 			{
 				StartBackgroundThread();
 			}
@@ -150,7 +150,7 @@ namespace UnrealGameSync
 
 		void StartBackgroundThread()
 		{
-			if(_backgroundTask == null)
+			if (_backgroundTask == null)
 			{
 				int newMaxResultsCopy = _pendingMaxResults;
 				_backgroundTask = Task.Run(() => FetchIssues(newMaxResultsCopy, CancellationToken.None));
@@ -177,13 +177,13 @@ namespace UnrealGameSync
 			// Update the table
 			int itemIdx = 0;
 			IssueListView.BeginUpdate();
-			foreach(IssueData issue in _issues)
+			foreach (IssueData issue in _issues)
 			{
-				if(filter(issue))
+				if (filter(issue))
 				{
-					for(;;)
+					for (; ; )
 					{
-						if(itemIdx == IssueListView.Items.Count)
+						if (itemIdx == IssueListView.Items.Count)
 						{
 							IssueList_InsertItem(itemIdx, issue, midnight);
 							break;
@@ -191,12 +191,12 @@ namespace UnrealGameSync
 
 						ListViewItem existingItem = IssueListView.Items[itemIdx];
 						IssueData existingIssue = (IssueData)existingItem.Tag;
-						if(existingIssue == null || existingIssue.Id < issue.Id)
+						if (existingIssue == null || existingIssue.Id < issue.Id)
 						{
 							IssueList_InsertItem(itemIdx, issue, midnight);
 							break;
 						}
-						else if(existingIssue.Id == issue.Id)
+						else if (existingIssue.Id == issue.Id)
 						{
 							IssueList_UpdateItem(existingItem, issue, midnight);
 							break;
@@ -210,7 +210,7 @@ namespace UnrealGameSync
 					itemIdx++;
 				}
 			}
-			while(itemIdx < IssueListView.Items.Count)
+			while (itemIdx < IssueListView.Items.Count)
 			{
 				IssueListView.Items.RemoveAt(itemIdx);
 			}
@@ -218,17 +218,17 @@ namespace UnrealGameSync
 
 			// Update the maximum number of results
 			string filterText = "";
-			if(!String.IsNullOrEmpty(_filterName))
+			if (!String.IsNullOrEmpty(_filterName))
 			{
 				filterText = String.Format(" matching filter '{0}'", _filterName);
 			}
-			StatusLabel.Text = (IssueListView.Items.Count == _issues.Count)? String.Format("Showing {0} results{1}.", _issues.Count, filterText) : String.Format("Showing {0}/{1} results{2}.", IssueListView.Items.Count, _issues.Count, filterText);
+			StatusLabel.Text = (IssueListView.Items.Count == _issues.Count) ? String.Format("Showing {0} results{1}.", _issues.Count, filterText) : String.Format("Showing {0}/{1} results{2}.", IssueListView.Items.Count, _issues.Count, filterText);
 		}
 
 		void IssueList_InsertItem(int itemIdx, IssueData issue, DateTime midnight)
 		{
 			ListViewItem item = new ListViewItem("");
-			for(int idx = 0; idx < IssueListView.Columns.Count - 1; idx++)
+			for (int idx = 0; idx < IssueListView.Columns.Count - 1; idx++)
 			{
 				item.SubItems.Add("");
 			}
@@ -249,7 +249,7 @@ namespace UnrealGameSync
 
 		static string FormatIssueDateTime(DateTime dateTime, DateTime midnight)
 		{
-			if(dateTime > midnight)
+			if (dateTime > midnight)
 			{
 				return dateTime.ToShortTimeString();
 			}
@@ -264,7 +264,7 @@ namespace UnrealGameSync
 		public static void Show(Form owner, IssueMonitor issueMonitor, IPerforceSettings perforceSettings, TimeSpan? serverTimeOffset, IServiceProvider serviceProvider, string? currentStream, Dictionary<string, Func<IssueData, bool>> customFilters, string? defaultFilter)
 		{
 			IssueBrowserWindow? window = s_existingWindows.FirstOrDefault(x => x._issueMonitor == issueMonitor);
-			if(window == null)
+			if (window == null)
 			{
 				window = new IssueBrowserWindow(issueMonitor, perforceSettings, serverTimeOffset, serviceProvider, currentStream, customFilters, defaultFilter);
 				window.Owner = owner;
@@ -295,7 +295,7 @@ namespace UnrealGameSync
 		private void IssueListView_MouseDoubleClick(object sender, MouseEventArgs e)
 		{
 			ListViewHitTestInfo hitTest = IssueListView.HitTest(e.Location);
-			if(hitTest.Item != null)
+			if (hitTest.Item != null)
 			{
 				IssueData issue = (IssueData)hitTest.Item.Tag;
 				ShowIssue(issue);
@@ -305,7 +305,7 @@ namespace UnrealGameSync
 		private void FilterBtn_Click(object sender, EventArgs e)
 		{
 			int separatorIdx = FilterMenu.Items.IndexOf(FilterMenu_Separator);
-			while(FilterMenu.Items.Count > separatorIdx + 1)
+			while (FilterMenu.Items.Count > separatorIdx + 1)
 			{
 				FilterMenu.Items.RemoveAt(separatorIdx + 1);
 			}
@@ -318,10 +318,10 @@ namespace UnrealGameSync
 				{
 					ToolStripMenuItem item = new ToolStripMenuItem(customFilter.Key);
 					item.Checked = (_filterName == customFilter.Key);
-					item.Click += (s, e) => 
-					{ 
-						_filterName = customFilter.Key; 
-						UpdateIssueList(); 
+					item.Click += (s, e) =>
+					{
+						_filterName = customFilter.Key;
+						UpdateIssueList();
 					};
 					FilterMenu.Items.Add(item);
 				}
@@ -343,10 +343,10 @@ namespace UnrealGameSync
 				{
 					ToolStripMenuItem item = new ToolStripMenuItem(stream);
 					item.Checked = (_filterName == stream);
-					item.Click += (s, e) => 
-					{ 
-						_filterName = stream; 
-						UpdateIssueList(); 
+					item.Click += (s, e) =>
+					{
+						_filterName = stream;
+						UpdateIssueList();
 					};
 					FilterMenu.Items.Add(item);
 				}
@@ -388,7 +388,7 @@ namespace UnrealGameSync
 				{
 					backgroundColor = SystemColors.Window;//Color.FromArgb(248, 254, 246);
 				}
-				else if(issue.FixChange > 0)
+				else if (issue.FixChange > 0)
 				{
 					backgroundColor = Color.FromArgb(245, 245, 245);
 				}
@@ -418,7 +418,7 @@ namespace UnrealGameSync
 			IssueData issue = (IssueData)e.Item.Tag;
 			if (e.ColumnIndex == IconHeader.Index)
 			{
-				if(!issue.ResolvedAt.HasValue && issue.FixChange == 0)
+				if (!issue.ResolvedAt.HasValue && issue.FixChange == 0)
 				{
 					IssueListView.DrawIcon(e.Graphics, e.Bounds, WorkspaceControl.BadBuildIcon);
 				}

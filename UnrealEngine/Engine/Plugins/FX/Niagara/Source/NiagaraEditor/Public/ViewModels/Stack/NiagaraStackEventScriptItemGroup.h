@@ -57,7 +57,7 @@ protected:
 private:
 	NIAGARAEDITOR_API void EventHandlerPropertiesChanged();
 
-	NIAGARAEDITOR_API void SelectEmitterStackObjectRootTreeNodes(TArray<TSharedRef<IDetailTreeNode>> Source, TArray<TSharedRef<IDetailTreeNode>>* Selected);
+	NIAGARAEDITOR_API void FilterEmitterStackObjectRootTreeNodes(const TArray<TSharedRef<IDetailTreeNode>>& InSourceNodes, TArray<TSharedRef<IDetailTreeNode>>& OutFilteredNodes);
 
 	NIAGARAEDITOR_API bool HasBaseEventHandler() const;
 

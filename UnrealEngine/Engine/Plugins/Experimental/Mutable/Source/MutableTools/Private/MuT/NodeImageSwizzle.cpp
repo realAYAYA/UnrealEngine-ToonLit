@@ -15,8 +15,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeImageSwizzle::Private::s_type =
-			NODE_TYPE( "ImageSwizzle", NodeImage::GetStaticType() );
+	FNodeType NodeImageSwizzle::Private::s_type =
+			FNodeType( "ImageSwizzle", NodeImage::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -24,37 +24,6 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 
 	MUTABLE_IMPLEMENT_NODE( NodeImageSwizzle, EType::Swizzle, Node, Node::EType::Image)
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	int NodeImageSwizzle::GetInputCount() const
-	{
-		return (int)m_pD->m_sources.Num();
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	Node* NodeImageSwizzle::GetInputNode( int i ) const
-	{
-		check( i>=0 && i<GetInputCount() );
-
-		Node* pResult = 0;
-
-		pResult = m_pD->m_sources[i].get();
-
-		return pResult;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeImageSwizzle::SetInputNode( int i, NodePtr pNode )
-	{
-		check( i>=0 && i<GetInputCount() );
-
-		m_pD->m_sources[i] = dynamic_cast<NodeImage*>(pNode.get());
-	}
 
 
 	//---------------------------------------------------------------------------------------------

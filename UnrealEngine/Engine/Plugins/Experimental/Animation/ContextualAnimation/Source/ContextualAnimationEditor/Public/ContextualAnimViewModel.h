@@ -131,6 +131,7 @@ public:
 	bool CanMakeEdits() const;
 
 	void CacheWarpPoints();
+	void UpdateRoles();
 
 private:
 

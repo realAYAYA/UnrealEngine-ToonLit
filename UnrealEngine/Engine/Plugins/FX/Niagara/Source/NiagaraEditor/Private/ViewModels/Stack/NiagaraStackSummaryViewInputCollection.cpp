@@ -13,13 +13,17 @@
 #include "ViewModels/NiagaraSystemViewModel.h"
 #include "ViewModels/NiagaraScriptViewModel.h"
 #include "ViewModels/HierarchyEditor/NiagaraSummaryViewViewModel.h"
+#include "ViewModels/Stack/NiagaraStackEmitterPropertiesGroup.h"
+#include "ViewModels/Stack/NiagaraStackEmitterSettingsGroup.h"
 #include "ViewModels/Stack/NiagaraStackEventScriptItemGroup.h"
 #include "ViewModels/Stack/NiagaraStackGraphUtilities.h"
 #include "ViewModels/Stack/NiagaraStackFunctionInputCollection.h"
 #include "ViewModels/Stack/NiagaraStackInputCategory.h"
 #include "ViewModels/Stack/NiagaraStackModuleItem.h"
+#include "ViewModels/Stack/NiagaraStackObject.h"
 #include "ViewModels/Stack/NiagaraStackPropertyRow.h"
 #include "ViewModels/Stack/NiagaraStackRendererItem.h"
+#include "ViewModels/Stack/NiagaraStackRenderersOwner.h"
 #include "ViewModels/Stack/NiagaraStackSimulationStageGroup.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(NiagaraStackSummaryViewInputCollection)
@@ -80,6 +84,11 @@ void UNiagaraStackSummaryViewCollection::RefreshForAdvancedToggle()
 	}
 }
 
+bool UNiagaraStackSummaryViewCollection::GetShouldShowInStack() const
+{
+	return true;
+}
+
 void UNiagaraStackSummaryViewCollection::RefreshChildrenInternal(const TArray<UNiagaraStackEntry*>& CurrentChildren, TArray<UNiagaraStackEntry*>& NewChildren, TArray<FStackIssue>& NewIssues)
 {	
 	TSharedPtr<FNiagaraEmitterViewModel> ViewModel = GetEmitterViewModel();
@@ -88,6 +97,12 @@ void UNiagaraStackSummaryViewCollection::RefreshChildrenInternal(const TArray<UN
 
 	const UNiagaraHierarchyRoot* Root = ViewModel->GetEditorData().GetSummaryRoot();
 	TSharedPtr<FNiagaraHierarchyRootViewModel> RootViewModel = ViewModel->GetSummaryHierarchyViewModel()->GetHierarchyRootViewModel();
+	//-TODO:Stateless: Do we need stateless support here?
+	if (RootViewModel == nullptr)
+	{
+		return;
+	}
+
 	// we make sure to sync view models to data before refreshing in order to get rid of possibly removed entries
 	RootViewModel->SyncViewModelsToData();
 
@@ -105,17 +120,23 @@ void UNiagaraStackSummaryViewCollection::RefreshChildrenInternal(const TArray<UN
 	for(TSharedPtr<FNiagaraHierarchyItemViewModelBase> HierarchyViewModel : AllChildrenViewModels)
 	{
 		UNiagaraHierarchyItemBase* Data = HierarchyViewModel->GetDataMutable();
+		TOptional<FGuid> FunctionCallGuid;
 		if(UNiagaraHierarchyModuleInput* ModuleInput = Cast<UNiagaraHierarchyModuleInput>(Data))
 		{
-			UsedFunctionCallNodes.Add(State.NodeGuidToModuleNodeMap[ModuleInput->GetPersistentIdentity().Guids[0]]);
+			FunctionCallGuid = ModuleInput->GetPersistentIdentity().Guids[0];
 		}
 		else if(UNiagaraHierarchyAssignmentInput* AssignmentInput = Cast<UNiagaraHierarchyAssignmentInput>(Data))
 		{
-			UsedFunctionCallNodes.Add(State.NodeGuidToModuleNodeMap[AssignmentInput->GetPersistentIdentity().Guids[0]]);
+			FunctionCallGuid = AssignmentInput->GetPersistentIdentity().Guids[0];
 		}
 		else if(UNiagaraHierarchyModule* Module = Cast<UNiagaraHierarchyModule>(Data))
 		{
-			UsedFunctionCallNodes.Add(State.NodeGuidToModuleNodeMap[Module->GetPersistentIdentity().Guids[0]]);
+			FunctionCallGuid = Module->GetPersistentIdentity().Guids[0];
+		}
+
+		if(FunctionCallGuid.IsSet() && State.NodeGuidToModuleNodeMap.Contains(FunctionCallGuid.GetValue()))
+		{
+			UsedFunctionCallNodes.Add(State.NodeGuidToModuleNodeMap[FunctionCallGuid.GetValue()]);
 		}
 	}
 	
@@ -321,11 +342,24 @@ void UNiagaraStackSummaryViewCollection::RefreshChildrenInternal(const TArray<UN
 				if (StackRenderer == nullptr)
 				{
 					StackRenderer = NewObject<UNiagaraStackRendererItem>(this);
-					StackRenderer->Initialize(CreateDefaultChildRequiredData(), *MatchingRendererProperties);
+					StackRenderer->Initialize(CreateDefaultChildRequiredData(), FNiagaraStackRenderersOwnerStandard::CreateShared(GetEmitterViewModel().ToSharedRef()), *MatchingRendererProperties);
 				}
 			
 				NewChildren.Add(StackRenderer);	
 			}
+		}
+		else if(UNiagaraHierarchyEmitterProperties* EmitterProperties = Cast<UNiagaraHierarchyEmitterProperties>(Data))
+		{
+			UNiagaraStackEmitterPropertiesItem* StackEmitterPropertiesItem = FindCurrentChildOfTypeByPredicate<UNiagaraStackEmitterPropertiesItem>(CurrentChildren,
+			[&](UNiagaraStackEmitterPropertiesItem* CurrentEmitterProperties) { return CurrentEmitterProperties->GetEmitterViewModel()->GetEmitter().Emitter->GetUniqueEmitterName() == EmitterProperties->GetPersistentIdentity().Names[0]; });
+	
+			if (StackEmitterPropertiesItem == nullptr)
+			{
+				StackEmitterPropertiesItem = NewObject<UNiagaraStackEmitterPropertiesItem>(this);
+				StackEmitterPropertiesItem->Initialize(CreateDefaultChildRequiredData());
+			}
+		
+			NewChildren.Add(StackEmitterPropertiesItem);	
 		}
 		else if(UNiagaraHierarchyEventHandler* EventHandler = Cast<UNiagaraHierarchyEventHandler>(Data))
 		{
@@ -468,23 +502,39 @@ void UNiagaraStackSummaryViewCollection::RefreshChildrenInternal(const TArray<UN
 			if(ObjectsForProperties.Contains(ObjectGuid))
 			{
 				UObject* Object = ObjectsForProperties[ObjectProperty->GetPersistentIdentity().Guids[0]];
-				TArray<TSharedRef<IDetailTreeNode>> RootNodes = GetEmitterViewModel()->GetSummaryHierarchyViewModel()->RequestDetailTreeNodesForObject(Object);
-				
-				for(TSharedRef<IDetailTreeNode>& RootNode : RootNodes)
-				{
-					TArray<TSharedRef<IDetailTreeNode>> ChildrenNodes;
-					RootNode->GetChildren(ChildrenNodes);
 
-					for(TSharedRef<IDetailTreeNode> ChildNode : ChildrenNodes)
+				UNiagaraStackObject* StackObjectWithProperty = FindCurrentChildOfTypeByPredicate<UNiagaraStackObject>(CurrentChildren,
+				[&](UNiagaraStackObject* StackObjectCandidate)
+				{
+					return StackObjectCandidate->GetObject() == Object && StackObjectCandidate->GetCustomName() == ObjectProperty->GetPersistentIdentity().Names[0];
+				});
+
+				if(StackObjectWithProperty == nullptr)
+				{
+					StackObjectWithProperty = NewObject<UNiagaraStackObject>(this);
+					bool bIsInTopLevelObject = false;
+					bool bHideTopLevelCategories = false;
+					StackObjectWithProperty->Initialize(CreateDefaultChildRequiredData(), Object, bIsInTopLevelObject, bHideTopLevelCategories, GetStackEditorDataKey(), nullptr);
+					StackObjectWithProperty->SetCustomName(ObjectProperty->GetPersistentIdentity().Names[0]);
+					StackObjectWithProperty->SetOnFilterDetailNodes(FNiagaraStackObjectShared::FOnFilterDetailNodes::CreateLambda([PropertyName = ObjectProperty->GetPersistentIdentity().Names[0]](const TArray<TSharedRef<IDetailTreeNode>>& InSourceNodes, TArray<TSharedRef<IDetailTreeNode>>& OutFilteredNodes)
 					{
-						if(ChildNode->GetNodeName() == ObjectProperty->GetPersistentIdentity().Names[0])
+						for(const TSharedRef<IDetailTreeNode>& SourceNode : InSourceNodes)
 						{
-							UNiagaraStackPropertyRow* PropertyRow = NewObject<UNiagaraStackPropertyRow>(this);
-							PropertyRow->Initialize(CreateDefaultChildRequiredData(), ChildNode, false, GetOwnerStackItemEditorDataKey(), GetOwnerStackItemEditorDataKey(), nullptr);
-							NewChildren.Add(PropertyRow);
+							TArray<TSharedRef<IDetailTreeNode>> ChildrenNodes;
+							SourceNode->GetChildren(ChildrenNodes);
+							
+							for(TSharedRef<IDetailTreeNode> ChildNode : ChildrenNodes)
+							{
+								if(ChildNode->GetNodeName() == PropertyName)
+								{
+									OutFilteredNodes.Add(ChildNode);
+								}
+							}
 						}
-					}
+					}));
 				}
+				
+				NewChildren.Add(StackObjectWithProperty);
 			}
 		}
 	}
@@ -502,6 +552,9 @@ void UNiagaraStackSummaryViewCollection::RefreshChildrenInternal(const TArray<UN
 			EmtpySummaryMessage = NewObject<UNiagaraStackItemTextContent>(this);
 			EmtpySummaryMessage->Initialize(CreateDefaultChildRequiredData(), EmptyAssignmentNodeMessageText, GetStackEditorDataKey());
 		}
+		
+		EmtpySummaryMessage->SetIsHidden(!GetShouldShowInStack());
+		
 		NewChildren.Add(EmtpySummaryMessage);	
 	}
 }

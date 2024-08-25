@@ -432,14 +432,14 @@ public:
 				{
 					return;
 				}
-				RecentAssets.RemoveAt(k, 1, false);
+				RecentAssets.RemoveAt(k, 1, EAllowShrinking::No);
 			}
 		}
 		RecentAssets.Insert(NewAsset, 0);
 		
 		if (RecentAssets.Num() > 10)
 		{
-			RecentAssets.SetNum(10, false);
+			RecentAssets.SetNum(10, EAllowShrinking::No);
 		}
 	}
 };

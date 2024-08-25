@@ -26,7 +26,7 @@ if [ "$(uname)" = "Linux" ]; then
 	source "$BASE_PATH/Linux/SetupEnvironment.sh" $EnvironmentType "$BASE_PATH/Linux"
 fi
 
-if [[ "$*" != *-SkipUBTBuild* ]]; then
+if [[ "$*" != *-SkipUBTBuild* && ! -f "$BASE_PATH/../InstalledBuild.txt" ]]; then
   if [ -f "$BASE_PATH/../../Source/Programs/UnrealBuildTool/UnrealBuildTool.csproj" ]; then 
     echo "Building UBT..."
     "$BASE_PATH/BuildUBT.sh"

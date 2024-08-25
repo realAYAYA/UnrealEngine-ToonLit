@@ -123,9 +123,9 @@ namespace
 					{
 						return EPixelStreamingCodec::VP9;
 					}
-					else if (absl::EqualsIgnoreCase(Codec.name, cricket::kH265CodecName))
+					else if (absl::EqualsIgnoreCase(Codec.name, cricket::kAv1CodecName))
 					{
-						return EPixelStreamingCodec::H265;
+						return EPixelStreamingCodec::AV1;
 					}
 					else if (absl::EqualsIgnoreCase(Codec.name, cricket::kH264CodecName))
 					{
@@ -209,46 +209,46 @@ namespace
 } // namespace
 
 // self registering/deregistering object for polling stats
-class FPeerWebRTCStatsSource : public UE::PixelStreaming::IStatsSource
+class FPeerWebRTCStatsSource : public IPixelStreamingStatsSource, public TSharedFromThis<FPeerWebRTCStatsSource, ESPMode::ThreadSafe>
 {
 public:
-	FPeerWebRTCStatsSource(rtc::scoped_refptr<webrtc::PeerConnectionInterface>& InPeerConnectionPtr)
-		: PeerConnection(InPeerConnectionPtr)
+	FPeerWebRTCStatsSource(rtc::scoped_refptr<webrtc::PeerConnectionInterface> InPC, rtc::scoped_refptr<webrtc::RTCStatsCollectorCallback> InCallback)
+		: PeerConnection(InPC)
+		, WebRTCStatsCallback(InCallback)
 	{
-		UE::PixelStreaming::FStats::Get()->AddWebRTCStatsSource(this);
+	}
+
+	void BindToStatsPollEvent()
+	{
+		if (UE::PixelStreaming::FStats* PSStats = UE::PixelStreaming::FStats::Get())
+		{
+			Handle = PSStats->OnStatsPolled.AddSP(this, &FPeerWebRTCStatsSource::PollStats);
+		}
 	}
 
 	virtual ~FPeerWebRTCStatsSource()
 	{
-		UE::PixelStreaming::FStats::Get()->RemoveWebRTCStatsSource(this);
-	}
-
-	virtual void PollWebRTCStats() const
-	{
-		if (PeerConnection && WebRTCStatsCallback)
+		if (UE::PixelStreaming::FStats* PSStats = UE::PixelStreaming::FStats::Get())
 		{
-			std::vector<rtc::scoped_refptr<webrtc::RtpTransceiverInterface>> Transceivers = PeerConnection->GetTransceivers();
-			for (rtc::scoped_refptr<webrtc::RtpTransceiverInterface> Transceiver : Transceivers)
-			{
-				if (Transceiver->media_type() == cricket::MediaType::MEDIA_TYPE_VIDEO)
-				{
-					const webrtc::RtpTransceiverDirection TransceiverDirection = Transceiver->direction();
-					if (TransceiverDirection == webrtc::RtpTransceiverDirection::kSendRecv || TransceiverDirection == webrtc::RtpTransceiverDirection::kSendOnly)
-					{
-						PeerConnection->GetStats(Transceiver->sender(), WebRTCStatsCallback);
-					}
-
-					if (TransceiverDirection == webrtc::RtpTransceiverDirection::kSendRecv || TransceiverDirection == webrtc::RtpTransceiverDirection::kRecvOnly)
-					{
-						PeerConnection->GetStats(Transceiver->receiver(), WebRTCStatsCallback);
-					}
-				}
-			}
+			PSStats->OnStatsPolled.Remove(Handle);
 		}
 	}
 
-	rtc::scoped_refptr<webrtc::PeerConnectionInterface>& PeerConnection;
+	virtual void PollStats() const
+	{
+		if (PeerConnection && WebRTCStatsCallback)
+		{
+			// Use the top-level PeerConnection::GetStats call as this gets us stats for video, audio, transports, datachannels etc
+			// https://w3c.github.io/webrtc-pc/#mandatory-to-implement-stats
+			// Note: For the avoidance of doubt, this GetStats() call is posted onto the WebRTC signaling thread internally.
+			PeerConnection->GetStats(WebRTCStatsCallback.get());
+		}
+	}
+
+private:
+	rtc::scoped_refptr<webrtc::PeerConnectionInterface> PeerConnection;
 	rtc::scoped_refptr<webrtc::RTCStatsCollectorCallback> WebRTCStatsCallback;
+	FDelegateHandle Handle;
 };
 
 TUniquePtr<rtc::Thread> FPixelStreamingPeerConnection::SignallingThread = nullptr;
@@ -348,6 +348,8 @@ void FPixelStreamingPeerConnection::CreateAnswer(EReceiveMediaOption ReceiveOpti
 
 void FPixelStreamingPeerConnection::ReceiveOffer(const FString& Sdp, const VoidCallback& SuccessCallback, const ErrorCallback& ErrorCallback)
 {
+	RefreshStreamBitrate();
+	
 	webrtc::SdpParseError Error;
 	std::unique_ptr<webrtc::SessionDescriptionInterface> SessionDesc = webrtc::CreateSessionDescription(webrtc::SdpType::kOffer, UE::PixelStreaming::ToString(Sdp), &Error);
 	if (SessionDesc)
@@ -366,6 +368,8 @@ void FPixelStreamingPeerConnection::ReceiveOffer(const FString& Sdp, const VoidC
 
 void FPixelStreamingPeerConnection::ReceiveAnswer(const FString& Sdp, const VoidCallback& SuccessCallback, const ErrorCallback& ErrorCallback)
 {
+	RefreshStreamBitrate();
+
 	webrtc::SdpParseError Error;
 	std::unique_ptr<webrtc::SessionDescriptionInterface> SessionDesc = webrtc::CreateSessionDescription(webrtc::SdpType::kAnswer, ToString(Sdp), &Error);
 	if (SessionDesc)
@@ -454,6 +458,18 @@ void FPixelStreamingPeerConnection::SetVideoSource(rtc::scoped_refptr<webrtc::Vi
 
 	VideoSource = InVideoSource;
 
+	const bool bTransmitUEVideo = !Settings::CVarPixelStreamingWebRTCDisableTransmitVideo.GetValueOnAnyThread();
+
+	webrtc::RtpTransceiverDirection VideoTransceiverDirection;
+	if (bTransmitUEVideo)
+	{
+		VideoTransceiverDirection = webrtc::RtpTransceiverDirection::kSendOnly;
+	}
+	else
+	{
+		VideoTransceiverDirection = webrtc::RtpTransceiverDirection::kInactive;
+	}
+
 	// Create video track
 	rtc::scoped_refptr<webrtc::VideoTrackInterface> VideoTrack = PeerConnectionFactory->CreateVideoTrack(ToString(VideoTrackLabel), VideoSource.get());
 	VideoTrack->set_enabled(true);
@@ -485,7 +501,7 @@ void FPixelStreamingPeerConnection::SetVideoSource(rtc::scoped_refptr<webrtc::Vi
 			Sender->SetTrack(VideoTrack);
 #endif
 			Sender->SetStreams({ GetVideoStreamID() });
-			SetTransceiverDirection(*Transceiver, webrtc::RtpTransceiverDirection::kSendOnly);
+			SetTransceiverDirection(*Transceiver, VideoTransceiverDirection);
 			webrtc::RtpParameters ExistingParams = Sender->GetParameters();
 			ExistingParams.degradation_preference = Settings::GetDegradationPreference();
 		}
@@ -496,15 +512,23 @@ void FPixelStreamingPeerConnection::SetVideoSource(rtc::scoped_refptr<webrtc::Vi
 	{
 		webrtc::RtpTransceiverInit TransceiverOptions;
 		TransceiverOptions.stream_ids = { GetVideoStreamID() };
-		TransceiverOptions.direction = webrtc::RtpTransceiverDirection::kSendOnly;
+		TransceiverOptions.direction = VideoTransceiverDirection;
 		TransceiverOptions.send_encodings = CreateRTPEncodingParams(IsSFU);
 
 		webrtc::RTCErrorOr<rtc::scoped_refptr<webrtc::RtpTransceiverInterface>> Result = PeerConnection->AddTransceiver(VideoTrack, TransceiverOptions);
 		checkf(Result.ok(), TEXT("Failed to add Video transceiver to PeerConnection. Msg=%s"), *FString(Result.error().message()));
-		SetTransceiverDirection(*Result.value(), webrtc::RtpTransceiverDirection::kSendOnly);
+		SetTransceiverDirection(*Result.value(), VideoTransceiverDirection);
 		webrtc::RtpParameters ExistingParams = Result.value()->sender()->GetParameters();
 		ExistingParams.degradation_preference = Settings::GetDegradationPreference();
 	}
+}
+
+void FPixelStreamingPeerConnection::RefreshStreamBitrate()
+{
+	webrtc::BitrateSettings bitrateSettings;
+	bitrateSettings.min_bitrate_bps = Settings::CVarPixelStreamingWebRTCMinBitrate.GetValueOnAnyThread();
+	bitrateSettings.max_bitrate_bps = Settings::CVarPixelStreamingWebRTCMaxBitrate.GetValueOnAnyThread();
+	PeerConnection->SetBitrate(bitrateSettings);
 }
 
 void FPixelStreamingPeerConnection::SetAudioSource(rtc::scoped_refptr<webrtc::AudioSourceInterface> InAudioSource)
@@ -624,6 +648,19 @@ void FPixelStreamingPeerConnection::SetAudioSink(TSharedPtr<IPixelStreamingAudio
 	}
 }
 
+void FPixelStreamingPeerConnection::ForEachTransceiver(const TFunction<void(rtc::scoped_refptr<webrtc::RtpTransceiverInterface>)>& Func)
+{
+	if(!PeerConnection)
+	{
+		return;
+	}
+
+	for (auto& Transceiver : PeerConnection->GetTransceivers())
+	{
+		Func(Transceiver);
+	}
+}
+
 void FPixelStreamingPeerConnection::AddRemoteIceCandidate(const FString& SdpMid, int SdpMLineIndex, const FString& Sdp)
 {
 	webrtc::SdpParseError Error;
@@ -657,11 +694,9 @@ TSharedPtr<FPixelStreamingDataChannel> FPixelStreamingPeerConnection::CreateData
 
 void FPixelStreamingPeerConnection::SetWebRTCStatsCallback(rtc::scoped_refptr<webrtc::RTCStatsCollectorCallback> InCallback)
 {
-	if (!StatsSource)
-	{
-		StatsSource = std::make_unique<FPeerWebRTCStatsSource>(PeerConnection);
-	}
-	StatsSource->WebRTCStatsCallback = InCallback;
+	TSharedPtr<FPeerWebRTCStatsSource> NewStatsSource = MakeShared<FPeerWebRTCStatsSource>(PeerConnection, InCallback);
+	NewStatsSource->BindToStatsPollEvent();
+	StatsSource = NewStatsSource;
 }
 
 rtc::scoped_refptr<webrtc::AudioSourceInterface> FPixelStreamingPeerConnection::GetApplicationAudioSource()
@@ -837,7 +872,7 @@ void FPixelStreamingPeerConnection::CreateSDP(ESDPType SDPType, EReceiveMediaOpt
 	bool voice_activity_detection = false;
 	bool ice_restart = true;
 	bool use_rtp_mux = true;
-
+	
 	webrtc::PeerConnectionInterface::RTCOfferAnswerOptions SDPOption{
 		offer_to_receive_video,
 		offer_to_receive_audio,
@@ -868,13 +903,12 @@ void FPixelStreamingPeerConnection::RemoveAudioInput(TSharedPtr<IPixelStreamingA
 	AudioMixer->DisconnectInput(StaticCastSharedPtr<FAudioInput>(AudioInput));
 }
 
-
 void InitializeFieldTrials()
 {
 	FString FieldTrials = Settings::CVarPixelStreamingWebRTCFieldTrials.GetValueOnAnyThread();
 
 	// Set the WebRTC-FrameDropper/Disabled/ if the CVar is set
-	if(Settings::CVarPixelStreamingWebRTCDisableFrameDropper.GetValueOnAnyThread())
+	if (Settings::CVarPixelStreamingWebRTCDisableFrameDropper.GetValueOnAnyThread())
 	{
 		FieldTrials += TEXT("WebRTC-FrameDropper/Disabled/");
 	}
@@ -884,16 +918,16 @@ void InitializeFieldTrials()
 		float OutPacingFactor = -1.0f;
 		float OutPacingMaxDelayMs = -1.0f;
 		bool bVideoPacingFieldTrial = Settings::GetVideoPacing(OutPacingFactor, OutPacingMaxDelayMs);
-		if(bVideoPacingFieldTrial)
+		if (bVideoPacingFieldTrial)
 		{
 			FString VideoPacingFieldTrialStr = TEXT("WebRTC-Video-Pacing/");
 			bool bHasPacingFactor = OutPacingFactor >= 0.0f;
-			if(bHasPacingFactor)
+			if (bHasPacingFactor)
 			{
 				VideoPacingFieldTrialStr += FString::Printf(TEXT("factor:%.1f"), OutPacingFactor);
 			}
 			bool bHasMaxDelay = OutPacingMaxDelayMs >= 0.0f;
-			if(bHasMaxDelay)
+			if (bHasMaxDelay)
 			{
 				VideoPacingFieldTrialStr += bHasPacingFactor ? TEXT(",") : TEXT("");
 				VideoPacingFieldTrialStr += FString::Printf(TEXT("max_delay:%.0f"), OutPacingMaxDelayMs);
@@ -903,8 +937,9 @@ void InitializeFieldTrials()
 		}
 	}
 
-	if (!FieldTrials.IsEmpty()) {
-		//Pass the field trials string to WebRTC. String must never be destroyed.
+	if (!FieldTrials.IsEmpty())
+	{
+		// Pass the field trials string to WebRTC. String must never be destroyed.
 		TStringConversion<TStringConvert<TCHAR, ANSICHAR>> Str = StringCast<ANSICHAR>(*FieldTrials);
 		int length = Str.Length() + 1;
 		char* WRTCFieldTrials = (char*)FMemory::SystemMalloc(length);

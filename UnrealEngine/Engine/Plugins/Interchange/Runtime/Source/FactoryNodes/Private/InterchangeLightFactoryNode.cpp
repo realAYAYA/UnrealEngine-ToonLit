@@ -88,6 +88,36 @@ bool UInterchangeLightFactoryNode::SetCustomIESTexture(const FString& AttributeV
 	IMPLEMENT_NODE_ATTRIBUTE_SETTER_NODELEGATE(IESTexture, FString)
 }
 
+bool UInterchangeLightFactoryNode::GetCustomUseIESBrightness(bool& AttributeValue) const
+{
+	IMPLEMENT_NODE_ATTRIBUTE_GETTER(UseIESBrightness, bool);
+}
+
+bool UInterchangeLightFactoryNode::SetCustomUseIESBrightness(const bool& AttributeValue, bool bAddApplyDelegate)
+{
+	IMPLEMENT_NODE_ATTRIBUTE_SETTER_NODELEGATE(UseIESBrightness, bool);
+}
+
+bool UInterchangeLightFactoryNode::GetCustomIESBrightnessScale(float& AttributeValue) const
+{
+	IMPLEMENT_NODE_ATTRIBUTE_GETTER(IESBrightnessScale, float);
+}
+
+bool UInterchangeLightFactoryNode::SetCustomIESBrightnessScale(const float& AttributeValue, bool bAddApplyDelegate)
+{
+	IMPLEMENT_NODE_ATTRIBUTE_SETTER_NODELEGATE(IESBrightnessScale, float);
+}
+
+bool UInterchangeLightFactoryNode::GetCustomRotation(FRotator& AttributeValue) const
+{
+	IMPLEMENT_NODE_ATTRIBUTE_GETTER(Rotation, FRotator);
+}
+
+bool UInterchangeLightFactoryNode::SetCustomRotation(const FRotator& AttributeValue, bool bAddApplyDelegate)
+{
+	IMPLEMENT_NODE_ATTRIBUTE_SETTER_NODELEGATE(Rotation, FRotator);
+}
+
 void UInterchangeLightFactoryNode::CopyWithObject(const UInterchangeFactoryBaseNode* SourceNode, UObject* Object)
 {
 	Super::CopyWithObject(SourceNode, Object);

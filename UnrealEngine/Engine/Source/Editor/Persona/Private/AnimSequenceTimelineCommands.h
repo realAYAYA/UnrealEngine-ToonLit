@@ -45,6 +45,8 @@ public:
 
 	TSharedPtr<FUICommandInfo> ShowCurveKeys;
 
+	TSharedPtr<FUICommandInfo> UseTreeView;
+
 	TSharedPtr<FUICommandInfo> AddMetadata;
 
 	TSharedPtr<FUICommandInfo> ConvertCurveToMetaData;
@@ -72,6 +74,8 @@ public:
 	TSharedPtr<FUICommandInfo> SnapToMontageSections;
 
 	TSharedPtr<FUICommandInfo> SnapToCompositeSegments;
+
+	TSharedPtr<FUICommandInfo> AddComment;
 public:
 	virtual void RegisterCommands() override;
 };

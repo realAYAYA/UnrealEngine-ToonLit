@@ -119,7 +119,9 @@ void USoundControlBus::BeginDestroy()
 			{
 				FAudioModulationManager* Modulation = static_cast<FAudioModulationManager*>(ModulationInterface);
 				check(Modulation);
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS
 				Modulation->DeactivateBus(*this);
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			}
 		}
 	}
@@ -146,7 +148,10 @@ TSharedPtr<Audio::IProxyData> USoundControlBus::CreateProxyData(const Audio::FPr
 
 const Audio::FModulationParameter& USoundControlBus::GetOutputParameter() const
 {
-	const FString Breadcrumb = FString::Format(TEXT("{0} '{1}'"), { *GetClass()->GetName(), *GetName() });
-	return AudioModulation::GetOrRegisterParameter(Parameter, Breadcrumb);
+#if !UE_BUILD_SHIPPING
+	return AudioModulation::GetOrRegisterParameter(Parameter, GetName(), GetClass()->GetName());
+#else
+	return AudioModulation::GetOrRegisterParameter(Parameter, FString(), FString());
+#endif
 }
 

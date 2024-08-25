@@ -65,10 +65,8 @@ FVector RevolutionsToRads(const FVector Revolutions)
 	return Revolutions * 2.f * UE_PI;
 }
 
-#if WITH_EDITORONLY_DATA
-
 /** Returns the 'To' bone's transform relative to the 'From' bone. */
-FTransform CalculateRelativeBoneTransform(const FName ToBoneName, const FName FromBoneName, FReferenceSkeleton& ReferenceSkeleton)
+FTransform CalculateRelativeBoneTransform(const FName ToBoneName, const FName FromBoneName, const FReferenceSkeleton& ReferenceSkeleton)
 {
 	FTransform RelativeBoneTransform = FTransform::Identity;
 
@@ -112,8 +110,6 @@ FTransform CalculateRelativeBoneTransform(const FName ToBoneName, const FName Fr
 
 	return RelativeBoneTransform;
 }
-
-#endif // WITH_EDITORONLY_DATA
 
 #if WITH_EDITOR
 void FConstraintProfileProperties::SyncChangedConstraintProperties(FPropertyChangedChainEvent& PropertyChangedEvent)
@@ -426,29 +422,25 @@ void FConstraintInstance::SetDisableCollision(bool InDisableCollision)
 float ComputeAverageMass_AssumesLocked(Chaos::FPhysicsObject* Body1, Chaos::FPhysicsObject* Body2)
 {
 	float AverageMass = 0;
-
-	float TotalMass = 0;
 	int NumDynamic = 0;
 
 	Chaos::FReadPhysicsObjectInterface_External Interface = FPhysicsObjectExternalInterface::GetRead_AssumesLocked();
 
 	if (Interface.AreAllRigidBody({ &Body1, 1 }))
 	{
-		TotalMass += Interface.GetMass({ &Body1, 1 });
+		AverageMass += Interface.GetMass({ &Body1, 1 });
 		++NumDynamic;
 	}
 
 	if (Interface.AreAllRigidBody({ &Body2, 1 }))
 	{
-		TotalMass += Interface.GetMass({ &Body2, 1 });
+		AverageMass += Interface.GetMass({ &Body2, 1 });
 		++NumDynamic;
 	}
 
-	check(NumDynamic);
-
-	if(NumDynamic > 0) // Some builds not taking the assumption from the check above and warn of zero divide
+	if(NumDynamic > 1)
 	{
-		AverageMass = TotalMass / NumDynamic; //-V609
+		AverageMass = AverageMass / NumDynamic; //-V609
 	}
 
 	return AverageMass;
@@ -561,6 +553,7 @@ void FConstraintProfileProperties::UpdateConstraintFlags_AssumesLocked(const FPh
 
 void FConstraintInstance::UpdateAverageMass_AssumesLocked(Chaos::FPhysicsObject* Body1, Chaos::FPhysicsObject* Body2)
 {
+	// @todo(chaos): Average mass isn't required by anything any more. We should probably remove this
 	AverageMass = ComputeAverageMass_AssumesLocked(Body1, Body2);
 }
 
@@ -1027,6 +1020,31 @@ void FConstraintInstance::SetAngularOrientationTarget(const FQuat& InOrientation
 	FPhysicsInterface::SetDriveOrientation(ConstraintHandle, InOrientationTarget);
 }
 
+void FConstraintInstance::SetDriveParams(
+	const FVector& InLinearSpring, const FVector& InLinearDamping, const FVector& InForceLimit,
+	const FVector& InAngularSpring, const FVector& InAngularDamping, const FVector& InTorqueLimit,
+	EAngularDriveMode::Type InAngularDriveMode)
+{
+	ProfileInstance.LinearDrive.SetDriveParams(InLinearSpring, InLinearDamping, InForceLimit);
+	ProfileInstance.LinearDrive.SetLinearPositionDrive(
+		InLinearSpring.X != 0, InLinearSpring.Y != 0, InLinearSpring.Z != 0);
+	ProfileInstance.LinearDrive.SetLinearVelocityDrive(
+		InLinearDamping.X != 0, InLinearDamping.Y != 0, InLinearDamping.Z != 0);
+
+	ProfileInstance.AngularDrive.SetDriveParams(InAngularSpring, InAngularDamping, InTorqueLimit);
+	ProfileInstance.AngularDrive.SetAngularDriveMode(InAngularDriveMode);
+	ProfileInstance.AngularDrive.SetOrientationDriveTwistAndSwing(InAngularSpring.Y != 0, InAngularSpring.X != 0);
+	ProfileInstance.AngularDrive.SetOrientationDriveSLERP(InAngularSpring.Z != 0);
+	ProfileInstance.AngularDrive.SetAngularVelocityDriveTwistAndSwing(InAngularDamping.Y != 0, InAngularDamping.X != 0);
+	ProfileInstance.AngularDrive.SetAngularVelocityDriveSLERP(InAngularDamping.Z != 0);
+
+	FPhysicsInterface::ExecuteOnUnbrokenConstraintReadWrite(ConstraintHandle, [this](const FPhysicsConstraintHandle& InUnbrokenConstraint)
+	{
+		FPhysicsInterface::UpdateLinearDrive_AssumesLocked(InUnbrokenConstraint, ProfileInstance.LinearDrive);
+		FPhysicsInterface::UpdateAngularDrive_AssumesLocked(InUnbrokenConstraint, ProfileInstance.AngularDrive);
+	});
+}
+
 float FConstraintInstance::GetCurrentSwing1() const
 {
 	return FPhysicsInterface::GetCurrentSwing1(ConstraintHandle);
@@ -1343,22 +1361,22 @@ void FConstraintInstance::DisableProjection()
 
 void FConstraintInstance::EnableParentDominates()
 {
-	ProfileInstance.bParentDominates = true;
-	
-	FPhysicsCommand::ExecuteWrite(ConstraintHandle, [&](const FPhysicsConstraintHandle& Constraint)
-	{
-		FPhysicsInterface::SetParentDominates_AssumesLocked(Constraint, true);
-	});
+	SetParentDominates(true);
 }
 
 void FConstraintInstance::DisableParentDominates()
 {
-	ProfileInstance.bParentDominates = false;
-	
-	FPhysicsCommand::ExecuteWrite(ConstraintHandle, [&](const FPhysicsConstraintHandle& Constraint)
-	{
-		FPhysicsInterface::SetParentDominates_AssumesLocked(Constraint, false);
-	});
+	SetParentDominates(false);
+}
+
+void FConstraintInstance::SetParentDominates(bool bParentDominates)
+{
+	ProfileInstance.bParentDominates = bParentDominates;
+
+	FPhysicsCommand::ExecuteWrite(ConstraintHandle, [this, bParentDominates](const FPhysicsConstraintHandle& Constraint)
+		{
+			FPhysicsInterface::SetParentDominates_AssumesLocked(Constraint, bParentDominates);
+		});
 }
 
 void FConstraintInstance::EnableMassConditioning()

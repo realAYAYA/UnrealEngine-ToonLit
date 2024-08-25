@@ -26,7 +26,7 @@ public:
 	const UMaterialInterface* ResolveProxy(const UMaterialInterface* Material) const;
 	void ResolveProxies(TArray<const UMaterialInterface*>& Materials) const;
 
-	FIntPoint GetBakeSizeForMaterialProperty(const UMaterialInterface* Material, EGLTFMaterialPropertyGroup PropertyGroup) const;
+	FGLTFMaterialBakeSize GetBakeSizeForMaterialProperty(const UMaterialInterface* Material, EGLTFMaterialPropertyGroup PropertyGroup) const;
 	TextureFilter GetBakeFilterForMaterialProperty(const UMaterialInterface* Material, EGLTFMaterialPropertyGroup PropertyGroup) const;
 	TextureAddress GetBakeTilingForMaterialProperty(const UMaterialInterface* Material, EGLTFMaterialPropertyGroup PropertyGroup) const;
 

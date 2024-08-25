@@ -123,6 +123,9 @@ public:
 	// Creates the label for the tab
 	UNREALED_API virtual TAttribute<FText> ConstructTabName(const FWorkflowTabSpawnInfo& Info) const;
 
+	// Creates the label suffix for the tab
+	UNREALED_API virtual TAttribute<FText> ConstructTabLabelSuffix(const FWorkflowTabSpawnInfo& Info) const;
+
 	/** Returns TRUE if the payload is valid */
 	virtual bool IsPayloadValid(TSharedRef<FTabPayload> Payload) const { return false; }
 
@@ -134,7 +137,7 @@ protected:
 	UNREALED_API virtual TSharedRef<SDockTab> OnSpawnTab(const FSpawnTabArgs& SpawnArgs, TWeakPtr<FTabManager> WeakTabManager) const;
 
 	/** Callback function for checking to see if a tab can/should be spawned */
-	UNREALED_API bool CanSpawnTab(const FSpawnTabArgs& SpawnArgs, TWeakPtr<FTabManager> WeakTabManager) const;
+	UNREALED_API virtual bool CanSpawnTab(const FSpawnTabArgs& SpawnArgs, TWeakPtr<FTabManager> WeakTabManager) const;
 
 public:
 	// Creates the widget that will be the body of the new tab

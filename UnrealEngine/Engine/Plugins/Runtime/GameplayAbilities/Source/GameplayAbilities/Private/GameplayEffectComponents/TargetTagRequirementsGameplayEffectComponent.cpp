@@ -116,8 +116,9 @@ void UTargetTagRequirementsGameplayEffectComponent::OnTagChanged(const FGameplay
 		return;
 	}
 
+	// It's possible for this to return nullptr if it was in the process of being removed (IsPendingRemove)
 	const FActiveGameplayEffect* ActiveGE = Owner->GetActiveGameplayEffect(ActiveGEHandle);
-	if (ensure(ActiveGE) && !ActiveGE->IsPendingRemove)
+	if (ActiveGE)
 	{
 		FGameplayTagContainer OwnedTags;
 		Owner->GetOwnedGameplayTags(OwnedTags);
@@ -134,7 +135,7 @@ void UTargetTagRequirementsGameplayEffectComponent::OnTagChanged(const FGameplay
 			// See if we should be inhibiting the execution
 			constexpr bool bInvokeCuesIfStateChanged = true;
 			const bool bOngoingRequirementsMet = OngoingTagRequirements.IsEmpty() || OngoingTagRequirements.RequirementsMet(OwnedTags);
-			Owner->InhibitActiveGameplayEffect(ActiveGEHandle, !bOngoingRequirementsMet, bInvokeCuesIfStateChanged);
+			Owner->SetActiveGameplayEffectInhibit(MoveTemp(ActiveGEHandle), !bOngoingRequirementsMet, bInvokeCuesIfStateChanged);
 		}
 	}
 }

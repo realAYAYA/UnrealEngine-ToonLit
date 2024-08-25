@@ -16,6 +16,7 @@
 #include "RenderResource.h"
 #include "RendererInterface.h"
 #include "Templates/RefCounting.h"
+#include "Async/RecursiveMutex.h"
 
 class FOutputDevice;
 class FRHICommandList;
@@ -95,9 +96,19 @@ class FRenderTargetPool : public FRenderResource
 public:
 	FRenderTargetPool() = default;
 
-	RENDERCORE_API TRefCountPtr<IPooledRenderTarget> FindFreeElement(FRHITextureCreateInfo Desc, const TCHAR* Name);
+	RENDERCORE_API TRefCountPtr<IPooledRenderTarget> FindFreeElement(FRHICommandListBase& RHICmdList, FRHITextureCreateInfo Desc, const TCHAR* Name);
 
-	RENDERCORE_API bool FindFreeElement(const FRHITextureCreateInfo& Desc, TRefCountPtr<IPooledRenderTarget>& Out, const TCHAR* Name);
+	RENDERCORE_API bool FindFreeElement(FRHICommandListBase& RHICmdList, const FRHITextureCreateInfo& Desc, TRefCountPtr<IPooledRenderTarget>& Out, const TCHAR* Name);
+
+	TRefCountPtr<IPooledRenderTarget> FindFreeElement(FRHITextureCreateInfo Desc, const TCHAR* Name)
+	{
+		return FindFreeElement(FRHICommandListImmediate::Get(), Desc, Name);
+	}
+
+	bool FindFreeElement(const FRHITextureCreateInfo& Desc, TRefCountPtr<IPooledRenderTarget>& Out, const TCHAR* Name)
+	{
+		return FindFreeElement(FRHICommandListImmediate::Get(), Desc, Out, Name);
+	}
 
 	/**
 	 * @param DebugName must not be 0, we only store the pointer
@@ -106,12 +117,12 @@ public:
 	 * @return true if the old element was still valid, false if a new one was assigned
 	 */
 	bool FindFreeElement(
-		FRHICommandList& RHICmdList,
+		FRHICommandListBase& RHICmdList,
 		const FPooledRenderTargetDesc& Desc,
 		TRefCountPtr<IPooledRenderTarget>& Out,
 		const TCHAR* InDebugName)
 	{
-		return FindFreeElement(Translate(Desc), Out, InDebugName);
+		return FindFreeElement(RHICmdList, Translate(Desc), Out, InDebugName);
 	}
 
 	RENDERCORE_API void CreateUntrackedElement(const FPooledRenderTargetDesc& Desc, TRefCountPtr<IPooledRenderTarget>& Out, const FSceneRenderTargetItem& Item);
@@ -146,6 +157,8 @@ public:
 
 private:
 	RENDERCORE_API void FreeElementAtIndex(int32 Index);
+
+	mutable UE::FRecursiveMutex Mutex;
 
 	/** Elements can be 0, we compact the buffer later. */
 	TArray<uint32> PooledRenderTargetHashes;

@@ -8,7 +8,6 @@
 #include "ScopedTransaction.h"
 #include "DetailLayoutBuilder.h"
 #include "ControlRigBlueprint.h"
-#include "ControlRig.h"
 
 void SControlRigShapeNameList::Construct(const FArguments& InArgs, FRigControlElement* ControlElement, UControlRigBlueprint* InBlueprint)
 {
@@ -57,8 +56,8 @@ void SControlRigShapeNameList::ConstructCommon()
 {
 	SBox::Construct(SBox::FArguments());
 
-	TSharedPtr<FString> InitialSelected;
-	for (TSharedPtr<FString> Item : GetNameList())
+	TSharedPtr<FRigVMStringWithTag> InitialSelected;
+	for (TSharedPtr<FRigVMStringWithTag> Item : GetNameList())
 	{
 		if (Item->Equals(GetNameListText().ToString()))
 		{
@@ -86,7 +85,7 @@ void SControlRigShapeNameList::ConstructCommon()
 	);
 }
 
-const TArray<TSharedPtr<FString>>& SControlRigShapeNameList::GetNameList() const
+const TArray<TSharedPtr<FRigVMStringWithTag>>& SControlRigShapeNameList::GetNameList() const
 {
 	if (OnGetNameListContent.IsBound())
 	{
@@ -146,18 +145,18 @@ void SControlRigShapeNameList::SetNameListText(const FText& NewTypeInValue, ETex
 	}
 }
 
-TSharedRef<SWidget> SControlRigShapeNameList::MakeNameListItemWidget(TSharedPtr<FString> InItem)
+TSharedRef<SWidget> SControlRigShapeNameList::MakeNameListItemWidget(TSharedPtr<FRigVMStringWithTag> InItem)
 {
-	return 	SNew(STextBlock).Text(FText::FromString(*InItem));// .Font(FAppStyle::GetFontStyle(TEXT("PropertyWindow.NormalFont")));
+	return 	SNew(STextBlock).Text(FText::FromString(InItem->GetString()));// .Font(FAppStyle::GetFontStyle(TEXT("PropertyWindow.NormalFont")));
 }
 
-void SControlRigShapeNameList::OnNameListChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo)
+void SControlRigShapeNameList::OnNameListChanged(TSharedPtr<FRigVMStringWithTag> NewSelection, ESelectInfo::Type SelectInfo)
 {
 	if (SelectInfo != ESelectInfo::Direct)
 	{
 		if (NewSelection.IsValid())
 		{
-			FString NewValue = *NewSelection.Get();
+			const FString& NewValue = NewSelection->GetString();
 			SetNameListText(FText::FromString(NewValue), ETextCommit::OnEnter);
 		}
 		else
@@ -169,8 +168,8 @@ void SControlRigShapeNameList::OnNameListChanged(TSharedPtr<FString> NewSelectio
 
 void SControlRigShapeNameList::OnNameListComboBox()
 {
-	TSharedPtr<FString> CurrentlySelected;
-	for (TSharedPtr<FString> Item : GetNameList())
+	TSharedPtr<FRigVMStringWithTag> CurrentlySelected;
+	for (TSharedPtr<FRigVMStringWithTag> Item : GetNameList())
 	{
 		if (Item->Equals(GetNameListText().ToString()))
 		{

@@ -180,89 +180,104 @@ void FMeshSimplifier::CalcEdgeQuadric( uint32 EdgeIndex )
 	EdgeQuadricsValid[ EdgeIndex ] = true;
 }
 
-void FMeshSimplifier::GatherAdjTris( const FVector3f& Position, uint32 Flag, TArray< uint32, TInlineAllocator<16> >& AdjTris, int32& VertDegree, uint32& FlagsUnion )
-{
-	struct FWedgeVert
-	{
-		uint32 VertIndex;
-		uint32 AdjTriIndex;
-	};
-	TArray< FWedgeVert, TInlineAllocator<16> > WedgeVerts;
-
-	ForAllCorners( Position,
-		[ this, &AdjTris, &WedgeVerts, &VertDegree, Flag, &FlagsUnion ]( uint32 Corner )
-		{
-			VertDegree++;
-			
-			{
-				uint8& RESTRICT CornerFlag = CornerFlags[ Corner ];
-				FlagsUnion |= CornerFlag;
-				CornerFlag |= Flag;
-			}
-			
-			uint32 TriIndex = Corner / 3;
-			uint32 AdjTriIndex;
-			bool bNewTri = true;
-			
-			uint8& RESTRICT FirstCornerFlag = CornerFlags[ TriIndex * 3 ];
-			if( ( FirstCornerFlag & AdjTriMask ) == 0 )
-			{
-				FirstCornerFlag |= AdjTriMask;
-				AdjTriIndex = AdjTris.Add( TriIndex );
-				WedgeDisjointSet.AddDefaulted();
-			}
-			else
-			{
-				// Should only happen 2 times per collapse on average
-				AdjTriIndex = AdjTris.Find( TriIndex );
-				bNewTri = false;
-			}
-
-			uint32 VertIndex = Indexes[ Corner ];
-			uint32 OtherAdjTriIndex = ~0u;
-			for( FWedgeVert& WedgeVert : WedgeVerts )
-			{
-				if( VertIndex == WedgeVert.VertIndex )
-				{
-					OtherAdjTriIndex = WedgeVert.AdjTriIndex;
-					break;
-				}
-			}
-			if( OtherAdjTriIndex == ~0u )
-			{
-				WedgeVerts.Add( { VertIndex, AdjTriIndex } );
-			}
-			else
-			{
-				if( bNewTri )
-					WedgeDisjointSet.UnionSequential( AdjTriIndex, OtherAdjTriIndex );
-				else
-					WedgeDisjointSet.Union( AdjTriIndex, OtherAdjTriIndex );
-			}
-		} );
-}
-
 float FMeshSimplifier::EvaluateMerge( const FVector3f& Position0, const FVector3f& Position1, bool bMoveVerts )
 {
 	//check( Position0 != Position1 );
 	if( Position0 == Position1 )
 		return 0.0f;
 
+	WedgeDisjointSet.Reset();
+
 	// Find unique adjacent triangles
 	TArray< uint32, TInlineAllocator<16> > AdjTris;
 
-	WedgeDisjointSet.Reset();
+	struct FWedgeVert
+	{
+		uint32 VertIndex;
+		uint32 AdjTriIndex;
+	};
+	TArray< FWedgeVert, TInlineAllocator<16> > WedgeVerts[2];
 
 	int32 VertDegree = 0;
+
+	auto GatherAdjTris = [ this, &AdjTris, &WedgeVerts, &VertDegree ]( const FVector3f& Position, uint32 Index, uint32& FlagsUnion )
+	{
+		ForAllCorners( Position,
+			[ this, &AdjTris, &WedgeVerts, &VertDegree, Index, &FlagsUnion ]( uint32 Corner )
+			{
+				VertDegree++;
+				
+				{
+					uint8& RESTRICT CornerFlag = CornerFlags[ Corner ];
+					FlagsUnion |= CornerFlag;
+					CornerFlag |= 1 << Index;
+				}
+				
+				uint32 TriIndex = Corner / 3;
+				uint32 AdjTriIndex;
+				bool bNewTri = true;
+				
+				uint8& RESTRICT FirstCornerFlag = CornerFlags[ TriIndex * 3 ];
+				if( ( FirstCornerFlag & AdjTriMask ) == 0 )
+				{
+					FirstCornerFlag |= AdjTriMask;
+					AdjTriIndex = AdjTris.Add( TriIndex );
+					WedgeDisjointSet.AddDefaulted();
+				}
+				else
+				{
+					// Should only happen 2 times per collapse on average
+					AdjTriIndex = AdjTris.Find( TriIndex );
+					bNewTri = false;
+				}
+		
+				uint32 VertIndex = Indexes[ Corner ];
+				uint32 OtherAdjTriIndex = ~0u;
+				for( FWedgeVert& WedgeVert : WedgeVerts[ Index ] )
+				{
+					if( VertIndex == WedgeVert.VertIndex )
+					{
+						OtherAdjTriIndex = WedgeVert.AdjTriIndex;
+						break;
+					}
+				}
+				if( OtherAdjTriIndex == ~0u )
+				{
+					WedgeVerts[ Index ].Add( { VertIndex, AdjTriIndex } );
+				}
+				else
+				{
+					if( bNewTri )
+						WedgeDisjointSet.UnionSequential( AdjTriIndex, OtherAdjTriIndex );
+					else
+						WedgeDisjointSet.Union( AdjTriIndex, OtherAdjTriIndex );
+				}
+			} );
+	};
 
 	uint32 FlagsUnion0 = 0;
 	uint32 FlagsUnion1 = 0;
 
-	GatherAdjTris( Position0, 1, AdjTris, VertDegree, FlagsUnion0 );
-	GatherAdjTris( Position1, 2, AdjTris, VertDegree, FlagsUnion1 );
+	GatherAdjTris( Position0, 0, FlagsUnion0 );
+	GatherAdjTris( Position1, 1, FlagsUnion1 );
 
 	if( VertDegree == 0 )
 	{
+		return 0.0f;
+	}
+
+	// This would mean this collapse will remove all remaining triangles.
+	if( VertDegree == RemainingNumTris * 2 )
+	{
+		// Clean up corner flags
+		check( AdjTris.Num() > 0 );
+		for( uint32 TriIndex : AdjTris )
+		{
+			for( uint32 CornerIndex = 0; CornerIndex < 3; CornerIndex++ )
+			{
+				CornerFlags[ TriIndex * 3 + CornerIndex ] &= ~( MergeMask | AdjTriMask );
+			}
+		}
 		return 0.0f;
 	}
 
@@ -448,13 +463,39 @@ float FMeshSimplifier::EvaluateMerge( const FVector3f& Position0, const FVector3
 	WedgeAttributes.Reset();
 	WedgeAttributes.AddUninitialized( NumWedges * NumAttributes );
 
-	float Error = 0.0f;
 #if SIMP_REBASE
-	float EdgeError = EdgeQuadric.Evaluate( NewPosition - Position0 );
+	FVector3f NewPositionRebase = NewPosition - Position0;
 #else
-	float EdgeError = EdgeQuadric.Evaluate( NewPosition );
+	FVector3f& NewPositionRebase = NewPosition;
 #endif
+
+	float Error = 0.0f;
+	float EdgeError = EdgeQuadric.Evaluate( NewPositionRebase );
 	float SurfaceArea = 0.0f;
+
+	if( bLocked0 != bLocked1 || bZeroWeights )
+	{
+		const float DistSqr0 = FVector3f::DistSquared( NewPosition, Position0 );
+		const float DistSqr1 = FVector3f::DistSquared( NewPosition, Position1 );
+	
+		// Start with farthest so that the second pass with closest will overwrite any verts from the same wedge.
+		// Can't do only the closest since there may be wedges only present in the farthest.
+		uint32 Farthest = DistSqr0 > DistSqr1 ? 0 : 1;
+
+		for( uint32 j = 0; j < 2; j++ )
+		{
+			for( FWedgeVert& WedgeVert : WedgeVerts[ ( Farthest + j ) & 1 ] )
+			{
+				int32 WedgeIndex = WedgeIDs.Find( WedgeDisjointSet[ WedgeVert.AdjTriIndex ] );
+
+				float* RESTRICT NewAttributes = &WedgeAttributes[ WedgeIndex * NumAttributes ];
+				float* RESTRICT OldAttributes = GetAttributes( WedgeVert.VertIndex );
+
+				for( uint32 i = 0; i < NumAttributes; i++ )
+					NewAttributes[i] = OldAttributes[i];
+			}
+		}
+	}
 
 	for( int32 WedgeIndex = 0; WedgeIndex < NumWedges; WedgeIndex++ )
 	{
@@ -463,16 +504,20 @@ float FMeshSimplifier::EvaluateMerge( const FVector3f& Position0, const FVector3
 		FQuadricAttr& RESTRICT WedgeQuadric = GetWedgeQuadric( WedgeIndex );
 		if( WedgeQuadric.a > 1e-8 )
 		{
-			// calculate vert attributes from the new position
-#if SIMP_REBASE
-			float WedgeError = WedgeQuadric.CalcAttributesAndEvaluate( NewPosition - Position0, NewAttributes, AttributeWeights, NumAttributes );
-#else
-			float WedgeError = WedgeQuadric.CalcAttributesAndEvaluate( NewPosition, NewAttributes, AttributeWeights, NumAttributes );
-#endif
-			
-			// Correct after eval. Normal length is unimportant for error but can bias the calculation.
-			if( CorrectAttributes != nullptr )
-				CorrectAttributes( NewAttributes );
+			float WedgeError;
+			if( bLocked0 != bLocked1 )
+			{
+				WedgeError = WedgeQuadric.Evaluate( NewPositionRebase, NewAttributes, AttributeWeights, NumAttributes );
+			}
+			else
+			{
+				// calculate vert attributes from the new position
+				WedgeError = WedgeQuadric.CalcAttributesAndEvaluate( NewPositionRebase, NewAttributes, AttributeWeights, NumAttributes );
+				
+				// Correct after eval. Normal length is unimportant for error but can bias the calculation.
+				if( CorrectAttributes != nullptr )
+					CorrectAttributes( NewAttributes );
+			}
 
 			if( bLimitErrorToSurfaceArea )
 				WedgeError = FMath::Min( WedgeError, WedgeQuadric.a );
@@ -499,9 +544,29 @@ float FMeshSimplifier::EvaluateMerge( const FVector3f& Position0, const FVector3
 		// Limit error to be no greater than the size of the triangles it could affect.
 		Error = FMath::Min( Error, SurfaceArea );
 		
-		// Collapsing with completely remove this surface area. The position merged to is irrelevant.
+		// Collapsing will completely remove this surface area. The position merged to is irrelevant.
 		if( bIsDisjoint )
 			Error = SurfaceArea;
+	}
+
+	// Check to set error based on edge length
+	if( MaxEdgeLengthFactor > 0.0f )
+	{
+		for( uint32 TriIndex : AdjTris )
+		{
+			uint32 IndexMoved = CornerIndexMoved( TriIndex );
+
+			if( IndexMoved < 3 )
+			{
+				uint32 Corner = TriIndex * 3 + IndexMoved;
+
+				const FVector3f& p1 = GetPosition( Indexes[ Cycle3( Corner ) ] );
+				const FVector3f& p2 = GetPosition( Indexes[ Cycle3( Corner, 2 ) ] );
+
+				Error = FMath::Max( Error, ( NewPosition - p1 ).SizeSquared() / ( MaxEdgeLengthFactor * MaxEdgeLengthFactor ) );
+				Error = FMath::Max( Error, ( NewPosition - p2 ).SizeSquared() / ( MaxEdgeLengthFactor * MaxEdgeLengthFactor ) );
+			}
+		}
 	}
 
 	if( bMoveVerts )
@@ -883,6 +948,15 @@ float FMeshSimplifier::Simplify(
 	check( TargetNumVerts >= LimitNumVerts );
 	check( TargetNumTris >= LimitNumTris );
 	check( TargetError <= LimitError );
+
+	for( uint32 i = 0; i < NumAttributes; i++ )
+	{
+		if( AttributeWeights[i] == 0.0f )
+		{
+			bZeroWeights = true;
+			break;
+		}
+	}
 
 	const SIZE_T QuadricSize = sizeof( FQuadricAttr ) + NumAttributes * 4 * sizeof( QScalar );
 

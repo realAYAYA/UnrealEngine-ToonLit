@@ -268,8 +268,7 @@ void ReadString(FNetBitStreamReader* Reader, FString& OutString)
 			return;
 		}
 
-		constexpr bool bAllowShrinking = false;
-		OutString.GetCharArray().SetNumUninitialized(ConvertedLength, bAllowShrinking);
+		OutString.GetCharArray().SetNumUninitialized(ConvertedLength, EAllowShrinking::No);
 	}
 	else
 	{

@@ -1,0 +1,138 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+VirtualShadowMapCacheInvalidation.ush:
+=============================================================================*/
+#pragma once
+
+#include "../Common.ush"
+#include "../SceneData.ush"
+#include "VirtualShadowMapProjectionCommon.ush"
+#include "VirtualShadowMapPageOverlap.ush"
+#include "VirtualShadowMapPageCacheCommon.ush"
+#include "../ScreenSpaceDenoise/SSDDefinitions.ush"		// For LIGHT_TYPE's
+#include "../Nanite/NaniteHZBCull.ush"
+
+RWStructuredBuffer<FPhysicalPageMetaData> PhysicalPageMetaDataOut;
+
+bool IsValidInstanceAndCastShadows(uint InstanceId)
+{
+	FInstanceSceneData InstanceSceneData = GetInstanceSceneData(InstanceId, Scene.GPUScene.InstanceDataSOAStride);
+	if (!InstanceSceneData.ValidInstance)
+	{
+		return false;
+	}
+
+	const bool bCastShadows = (GetPrimitiveData(InstanceSceneData.PrimitiveId).Flags & PRIMITIVE_SCENE_DATA_FLAG_CAST_SHADOWS) != 0U;
+
+	// TODO: test the flag on the instance instead once it is updated correctly InstanceSceneData.CastShadows
+	return bCastShadows;
+}
+
+void InvalidateInstancePages(int VirtualShadowMapId, uint InstanceId, bool bForceInvalidateStaticPage)
+{
+	FInstanceSceneData InstanceSceneData = GetInstanceSceneData(InstanceId, Scene.GPUScene.InstanceDataSOAStride);
+
+	const bool bIsNanite = InstanceSceneData.NaniteRuntimeResourceID != 0xFFFFFFFFu;
+
+	FVirtualShadowMapProjectionShaderData ProjectionData = GetVirtualShadowMapProjectionData(VirtualShadowMapId);
+	const bool bDirectionalLight = (ProjectionData.LightType == LIGHT_TYPE_DIRECTIONAL);
+
+	// NOTE: This is the *shadow view*'s translated world, not primary view
+	float4x4 LocalToTranslatedWorld = DFMultiplyTranslationDemote(InstanceSceneData.LocalToWorld, ProjectionData.PreViewTranslation);
+
+	// distance cull invalidations for local lights
+	if (!bDirectionalLight)
+	{
+		float InstanceRadius = length(InstanceSceneData.LocalBoundsExtent * InstanceSceneData.NonUniformScale.xyz);
+		float3 TranslatedWorldCenter = mul(float4(InstanceSceneData.LocalBoundsCenter, 1.0f), LocalToTranslatedWorld).xyz;
+		if (length2(TranslatedWorldCenter) > Square(ProjectionData.LightRadius + InstanceRadius))
+		{
+			return;
+		}
+	}
+
+	// Go back to clip space
+	float4x4 UVToClip;
+	UVToClip[0] = float4(2, 0, 0, 0);
+	UVToClip[1] = float4(0, -2, 0, 0);
+	UVToClip[2] = float4(0, 0, 1, 0);
+	UVToClip[3] = float4(-1, 1, 0, 1);
+
+	const bool bIsOrtho = bDirectionalLight;
+	const bool bNearClip = !bDirectionalLight;
+
+	FFrustumCullData Cull = BoxCullFrustum(
+		InstanceSceneData.LocalBoundsCenter,
+		InstanceSceneData.LocalBoundsExtent,
+		LocalToTranslatedWorld,
+		mul(ProjectionData.TranslatedWorldToShadowUVMatrix, UVToClip),
+		ProjectionData.ShadowViewToClipMatrix, bIsOrtho, bNearClip, false);
+
+	float PixelEstRadius = CalcClipSpaceRadiusEstimate(bIsOrtho, InstanceSceneData, LocalToTranslatedWorld, ProjectionData.ShadowViewToClipMatrix) * float(VSM_VIRTUAL_MAX_RESOLUTION_XY);
+
+	if (Cull.bIsVisible)
+	{
+		bool bAllowWPO = VirtualShadowMapIsWPOAllowed(GetPrimitiveData(InstanceSceneData.PrimitiveId), VirtualShadowMapId);
+		bool bShouldCacheAsStatic = ShouldCacheInstanceAsStatic(InstanceId, ProjectionData.bUnCached, bAllowWPO);
+		bool bInvalidateStaticPage = bShouldCacheAsStatic || bForceInvalidateStaticPage;
+		uint InvalidationFlags = (bInvalidateStaticPage ? VSM_STATIC_UNCACHED_FLAG : VSM_DYNAMIC_UNCACHED_FLAG) << VSM_PHYSICAL_PAGE_INVALIDATION_FLAGS_SHIFT;
+
+		// 2. figure out overlap and all that
+		// case #1 mip-map VSM - loop all mip levels, case #2 clipmap, just one 'mip level'
+		int NumMipLevels = (ProjectionData.ClipmapLevelCountRemaining <= 0) ? VSM_MAX_MIP_LEVELS : 1;
+		{
+			for (int MipLevel = 0; MipLevel < NumMipLevels; ++MipLevel)
+			{
+				int ViewDim = int(uint(VSM_VIRTUAL_MAX_RESOLUTION_XY) >> MipLevel);
+				FScreenRect Rect = GetScreenRect(int4(0, 0, ViewDim, ViewDim), Cull, 4);
+
+				// Add a small epsilon to the HZB depth test
+				// This is to handle the rare case where an object that is fully parallel to the 
+				// light's near plane might self-occlude the HZB test due to minor precision differences
+				// in the computation. While rare, this can come up with things like point lights and
+				// axis aligned boxes.
+				Rect.Depth += 1e-8f;
+
+				uint4 RectPages = GetPageRect(Rect, ProjectionData.VirtualShadowMapId, MipLevel);
+
+				uint FlagMask = VSM_ALLOCATED_FLAG | GetDetailGeometryFlagMaskForCulling(bInvalidateStaticPage, bIsNanite, PixelEstRadius);
+				PixelEstRadius *= 0.5f;
+
+				// Use Hierarchical mip test to speed up (allows skipping invalidating areas that don't have any flags anyway)
+				if (OverlapsAnyValidPage(ProjectionData.VirtualShadowMapId, MipLevel, RectPages, FlagMask))
+				{
+#if USE_HZB_OCCLUSION
+					FPageTestScreenRect HZBTestRect = SetupPageHZBRect(Rect, ProjectionData.VirtualShadowMapId, MipLevel);
+#endif // USE_HZB_OCCLUSION
+
+					// 3. do invalidation
+					FVirtualSMLevelOffset PageTableLevelOffset = CalcPageTableLevelOffset(ProjectionData.VirtualShadowMapId, MipLevel);
+					for (uint y = RectPages.y; y <= RectPages.w; y++)
+					{
+						for (uint x = RectPages.x; x <= RectPages.z; x++)
+						{
+							uint PageFlagOffset = CalcPageOffset(PageTableLevelOffset, MipLevel, uint2(x, y));
+							uint PageFlag = VirtualShadowMap.PageFlags[PageFlagOffset];
+
+							if ((PageFlag & FlagMask) == FlagMask)
+							{
+#if USE_HZB_OCCLUSION
+								if (!IsPageVisibleHZB(uint2(x, y), PageFlagOffset, HZBTestRect))
+								{
+									continue;
+								}
+#endif // USE_HZB_OCCLUSION
+								// Accumulate static/dynamic invalidation flags
+								// TODO: Wave version
+								uint2 PhysicalAddress = ShadowGetPhysicalPage(PageFlagOffset).PhysicalAddress;
+								uint PhysicalPageIndex = VSMPhysicalPageAddressToIndex(PhysicalAddress);
+								InterlockedOr(PhysicalPageMetaDataOut[PhysicalPageIndex].Flags, InvalidationFlags);
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

@@ -148,6 +148,7 @@ protected:
 		TArray<FString> ContentPaths;
 		TArray<FString> AdditionalRootDirs;
 		TSet<FString> NonUFSShaderLibPaths;
+		bool bContainsChunks = false;
 	};
 
 	friend struct FBundleInfo;
@@ -392,6 +393,9 @@ protected:
 
 		EInstallBundleCacheReserveResult LastCacheReserveResult = EInstallBundleCacheReserveResult::Success;
 
+		// how many results we are expected to have in the SourceRequestResults array
+		int RequiredSourceRequestResultsCount = 0;
+		// completion results from each bundle source
 		TMap<EInstallBundleSourceType, FInstallBundleSourceUpdateContentResultInfo> SourceRequestResults;
 		FText OptionalErrorText;
 		FString OptionalErrorCode;
@@ -473,7 +477,12 @@ protected:
 public:
 	typedef TFunction<TSharedPtr<IInstallBundleSource>(EInstallBundleSourceType)> FInstallBundleSourceFactoryFunction;
 
-	FDefaultInstallBundleManager(const TCHAR* InConfigBaseName = nullptr, FInstallBundleSourceFactoryFunction InBundleSourceFactory = nullptr);
+	UE_DEPRECATED(5.4, "GInstallBundleManagerIni is deprecated, use InstallBundle.ini hierarchy instead.")
+	FDefaultInstallBundleManager(const TCHAR* InConfigBaseName, FInstallBundleSourceFactoryFunction InBundleSourceFactory = nullptr)
+		: FDefaultInstallBundleManager(InBundleSourceFactory)
+	{}
+
+	FDefaultInstallBundleManager(FInstallBundleSourceFactoryFunction InBundleSourceFactory = nullptr);
 	FDefaultInstallBundleManager(const FDefaultInstallBundleManager& Other) = delete;
 	FDefaultInstallBundleManager& operator=(const FDefaultInstallBundleManager& Other) = delete;
 
@@ -629,7 +638,7 @@ public:
 	virtual void CancelAllGetInstallStateRequestsForTag(FName RequestTag) override;
 	virtual void CancelAllGetInstallStateRequests(FDelegateHandle Handle) override;
 
-	virtual TValueOrError<FInstallBundleRequestInfo, EInstallBundleResult> RequestReleaseContent(TArrayView<const FName> ReleaseNames, EInstallBundleReleaseRequestFlags Flags, TArrayView<const FName> KeepNames = TArrayView<const FName>(), ELogVerbosity::Type LogVerbosityOverride = ELogVerbosity::NoLogging) override;
+	virtual TValueOrError<FInstallBundleReleaseRequestInfo, EInstallBundleResult> RequestReleaseContent(TArrayView<const FName> ReleaseNames, EInstallBundleReleaseRequestFlags Flags, TArrayView<const FName> KeepNames = TArrayView<const FName>(), ELogVerbosity::Type LogVerbosityOverride = ELogVerbosity::NoLogging) override;
 	
 	virtual EInstallBundleResult FlushCache(FInstallBundleSourceOrCache SourceOrCache, FInstallBundleManagerFlushCacheCompleteDelegate Callback, ELogVerbosity::Type LogVerbosityOverride = ELogVerbosity::NoLogging) override;
 
@@ -652,6 +661,8 @@ public:
 
 	virtual EInstallBundleRequestFlags GetModifyableContentRequestFlags() const override;
 	virtual void UpdateContentRequestFlags(TArrayView<const FName> BundleNames, EInstallBundleRequestFlags AddFlags, EInstallBundleRequestFlags RemoveFlags) override;
+
+	virtual void SetCacheSize(FName CacheName, uint64 CacheSize) override;
 
 	virtual void StartPatchCheck() override;
 	virtual void AddEnvironmentWantsPatchCheckBackCompatDelegate(FName Tag, FInstallBundleManagerEnvironmentWantsPatchCheck Delegate) override;
@@ -677,6 +688,9 @@ protected:
 	void PersistentTimingStatsBegin(TSharedRef<FContentRequest> ContentRequest, InstallBundleUtil::PersistentStats::ETimingStatNames TimerStatName);
 	void PersistentTimingStatsEnd(TSharedRef<FContentRequest> ContentRequest, InstallBundleUtil::PersistentStats::ETimingStatNames TimerStatName);
 	
+	TArray<TSharedPtr<IInstallBundleSource>> GetEnabledBundleSourcesForRequest(FContentRequestRef Request) const;
+	virtual TArray<TSharedPtr<IInstallBundleSource>> GetEnabledBundleSourcesForRequest(const FBundleInfo& BundleInfo) const;
+
 	// Initialization state machine
 protected:
 	EInstallBundleManagerInitResult Init_DefaultBundleSources();
@@ -712,6 +726,7 @@ protected:
 
 	TMap<FName, TSharedRef<FInstallBundleCache>> BundleCaches;
 	TMap<EInstallBundleSourceType, FName> BundleSourceCaches;
+	TMap<FName, uint64> BundleCacheSizeOverrides;
 
 	TMap<TTuple<EInstallBundleSourceType, FName>, TArray<FCacheEvictionRequestorRef>> PendingCacheEvictions; // (Source, Bundle) -> List of requestors
 	TMap<TTuple<FName, FName>, TArray<EInstallBundleSourceType>> CachesPendingEvictToSources; // (Cache, Bundle) -> List of Sources

@@ -24,17 +24,30 @@
 			"Name": "MultiUserClientLibrary",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "MultiUserReplicationEditor",
+			"Type": "Editor",
+			"LoadingPhase": "PostDefault"
 		}
 	],
 	"Plugins": [
 		{
-			"Name": "ConcertSyncClient",
+			"Name": "ConcertClientSharedSlate",
+			"Enabled": true
+		},
+		{
+			"Name": "ConcertReplicationScripting",
 			"Enabled": true
 		},
         {
           "Name": "ConcertSharedSlate",
           "Enabled": true
         },
+		{
+			"Name": "ConcertSyncClient",
+			"Enabled": true
+		},
 		{
 			"Name": "MultiUserTakes",
 			"Enabled": true

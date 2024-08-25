@@ -3,10 +3,13 @@
 #include "IoStoreUtilities.h"
 
 #include "IoStoreLooseFiles.h"
+#include "Algo/TopologicalSort.h"
 #include "Async/AsyncWork.h"
+#include "CookMetadata.h"
 #include "HAL/FileManager.h"
 #include "HAL/PlatformFileManager.h"
 #include "Hash/CityHash.h"
+#include "Hash/xxhash.h"
 #include "Interfaces/ITargetPlatformManagerModule.h"
 #include "Interfaces/ITargetPlatform.h"
 #include "IO/IoDispatcher.h"
@@ -23,8 +26,10 @@
 #include "Misc/WildcardString.h"
 #include "Modules/ModuleManager.h"
 #include "Serialization/Archive.h"
+#include "Serialization/BulkData.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
 #include "Serialization/BufferWriter.h"
 #include "Serialization/LargeMemoryWriter.h"
 #include "Serialization/MemoryReader.h"
@@ -72,6 +77,7 @@
 #include "Misc/PathViews.h"
 #include "HAL/FileManagerGeneric.h"
 #include "Serialization/CompactBinarySerialization.h"
+#include "Serialization/ZenPackageHeader.h"
 
 IMPLEMENT_MODULE(FDefaultModuleImpl, IoStoreUtilities);
 
@@ -83,27 +89,56 @@ TRACE_DECLARE_MEMORY_COUNTER(IoStoreUsedFileBufferMemory, TEXT("IoStore/UsedFile
 // Helper to format numbers with comma separators to help readability: 1,234 vs 1234.
 static FString NumberString(uint64 N) { return FText::AsNumber(N).ToString(); }
 
+// Used for tracking how the chunk will get deployed and thus what classification its size is.
+struct FIoStoreChunkSource
+{
+	FIoStoreTocChunkInfo ChunkInfo;
+	UE::Cook::EPluginSizeTypes SizeType;
+
+};
+
 static const FName DefaultCompressionMethod = NAME_Zlib;
 static const uint64 DefaultCompressionBlockSize = 64 << 10;
 static const uint64 DefaultCompressionBlockAlignment = 64 << 10;
 static const uint64 DefaultMemoryMappingAlignment = 16 << 10;
 
 static TUniquePtr<FIoStoreReader> CreateIoStoreReader(const TCHAR* Path, const FKeyChain& KeyChain);
-bool UploadIoStoreContainerFiles(const UE::FIoStoreUploadParams& UploadParams, TConstArrayView<FString> ContainerFiles, const FKeyChain& KeyChain);
+bool UploadIoStoreContainerFiles(const UE::IO::IAS::FIoStoreUploadParams& UploadParams, TConstArrayView<FString> ContainerFiles, const FKeyChain& KeyChain);
 
+/*
+* Provides access to previously compressed chunks to the iostore writer, allowing
+* a) avoiding recompressing things and b) tweaks to compressors dont cause massive patches.
+*/
 class FIoStoreChunkDatabase : public IIoStoreWriterReferenceChunkDatabase
 {
 public:
+	static const uint8 IoChunkTypeCount = (uint8)EIoChunkType::MAX;
 
 	TArray<TUniquePtr<FIoStoreReader>> Readers;
 	struct FReaderChunks
 	{
 		int32 ReaderIndex;
-		TMap<FIoChunkHash, FIoChunkId> Chunks;
+		TMap<FIoChunkHash, FIoStoreTocChunkInfo> Chunks;
+		TSet<FIoChunkId> ChunkIds;
+
+		std::atomic_uint64_t ChangedChunkCount[IoChunkTypeCount];
+		std::atomic_uint64_t NewChunkCount[IoChunkTypeCount];
+		std::atomic_uint64_t UsedChunkCount[IoChunkTypeCount];
 	};
 
-	TMap<FIoContainerId, FReaderChunks> ChunkDatabase;
-	int32 RequestCount = 0;
+	struct FMissingContainerInfo
+	{
+		std::atomic_uint64_t RequestedChunkCount[IoChunkTypeCount];
+	};
+
+	TMap<FIoContainerId, TUniquePtr<FMissingContainerInfo>> MissingContainerIds;
+
+	TMap<FIoContainerId, FString> ContainerNameMap;
+
+	TMap<FIoContainerId, TUniquePtr<FReaderChunks>> ChunkDatabase;
+
+
+	std::atomic_int32_t RequestCount = 0;
 	int32 FulfillCount = 0;
 	int32 ContainerNotFound = 0;
 	int64 FulfillBytes = 0;
@@ -133,7 +168,7 @@ public:
 		}
 
 		CompressionBlockSize = 0;
-		int64 IoChunkCount = 0;		
+		int64 IoChunkCount = 0;
 		for (const FString& ContainerFilePath : ContainerFilePaths)
 		{
 			TUniquePtr<FIoStoreReader> Reader = CreateIoStoreReader(*ContainerFilePath, InDecryptionKeychain);
@@ -142,11 +177,22 @@ public:
 				UE_LOG(LogIoStore, Error, TEXT("Failed to open reference chunk container %s"), *ContainerFilePath);
 				return false;
 			}
-			FReaderChunks& ReaderChunks = ChunkDatabase.FindOrAdd(Reader->GetContainerId());
 
-			Reader->EnumerateChunks([&ReaderChunks](const FIoStoreTocChunkInfo& ChunkInfo)
+			if (ChunkDatabase.Contains(Reader->GetContainerId()))
 			{
-				ReaderChunks.Chunks.Add(TPair<FIoChunkHash, FIoChunkId>(ChunkInfo.Hash, ChunkInfo.Id));
+				UE_LOG(LogIoStore, Error, TEXT("Duplicate container id found in reference chunk container directory %s"), *ContainerFilePath);
+				UE_LOG(LogIoStore, Error, TEXT("is duplicate of %s"), *ContainerNameMap[Reader->GetContainerId()]);
+				return false;
+			}
+
+			TUniquePtr<FReaderChunks> ReaderChunks(new FReaderChunks());
+
+			ContainerNameMap.Add(Reader->GetContainerId(), *ContainerFilePath);
+
+			Reader->EnumerateChunks([ReaderChunks = ReaderChunks.Get()](FIoStoreTocChunkInfo&& ChunkInfo)
+			{
+				ReaderChunks->ChunkIds.Add(ChunkInfo.Id);
+				ReaderChunks->Chunks.Add(TPair<FIoChunkHash, FIoStoreTocChunkInfo>(ChunkInfo.Hash, MoveTemp(ChunkInfo)));
 				return true;
 			});
 
@@ -160,13 +206,26 @@ public:
 				return false;
 			}
 
-			IoChunkCount += ReaderChunks.Chunks.Num();
-			ReaderChunks.ReaderIndex = Readers.Num();
+			IoChunkCount += ReaderChunks->Chunks.Num();
+			ReaderChunks->ReaderIndex = Readers.Num();
+			ChunkDatabase.Add(Reader->GetContainerId(), MoveTemp(ReaderChunks));
 			Readers.Add(MoveTemp(Reader));
+
+			
 		}
 
 		UE_LOG(LogIoStore, Display, TEXT("Block reference loaded %d containers and %s chunks, in %.1f seconds"), Readers.Num(), *FText::AsNumber(IoChunkCount).ToString(), FPlatformTime::Seconds() - StartTime);
 		return true;
+	}
+
+	virtual void NotifyAddedToWriter(const FIoContainerId& InContainerId) override
+	{
+		// If we don't have this container in our chunk database, add it to a tracking
+		// structure so we can see how many chunks we're missing.
+		if (ChunkDatabase.Contains(InContainerId) == false)
+		{
+			MissingContainerIds.Add(InContainerId, MakeUnique<FMissingContainerInfo>());
+		}
 	}
 
 	virtual uint32 GetCompressionBlockSize() const override
@@ -174,25 +233,49 @@ public:
 		return CompressionBlockSize;
 	}
 
-	virtual bool ChunkExists(const TPair<FIoContainerId, FIoChunkHash>& InChunkKey, uint32& OutNumChunkBlocks)
+	// Returns whether we expect to be able to load the chunk from the reference chunk database.
+	// This can be called from any thread, though in the presence of existing hashes it's single threaded.
+	virtual bool ChunkExists(const TPair<FIoContainerId, FIoChunkHash>& InChunkKey, const FIoChunkId& InChunkId, uint32& OutNumChunkBlocks)
 	{
-		FReaderChunks* ReaderChunks = ChunkDatabase.Find(InChunkKey.Key);
+		RequestCount.fetch_add(1, std::memory_order_relaxed);
+
+		TUniquePtr<FReaderChunks>* ReaderChunks = ChunkDatabase.Find(InChunkKey.Key);
 		if (ReaderChunks == nullptr)
 		{
-			// Container doesn't exist - likely provided the path to a different project. Mark this
-			// error as happening once so we can log at the end.
+			// Container doesn't exist - likely provided the path to a different project.
+			TUniquePtr<FMissingContainerInfo>* MissingContainerHitCount = MissingContainerIds.Find(InChunkKey.Key);
+
+			if (MissingContainerHitCount == nullptr)
+			{
+				UE_LOG(LogIoStore, Warning, TEXT("We got a container id that was never added! id = %llu"), InChunkKey.Key.Value());
+			}
+			else
+			{
+				MissingContainerHitCount[0]->RequestedChunkCount[(uint8)InChunkId.GetChunkType()].fetch_add(1, std::memory_order_relaxed);
+			}
+
 			ContainerNotFound++;
 			return false;
 		}
 
-		FIoChunkId* ChunkId = ReaderChunks->Chunks.Find(InChunkKey.Value);
-		if (ChunkId == nullptr)
+		FIoStoreTocChunkInfo* ChunkInfo = ReaderChunks[0]->Chunks.Find(InChunkKey.Value);
+		if (ChunkInfo == nullptr)
 		{
-			// No exact chunk data match - this is a normal exit condition for a changed block.
+			// No exact chunk data match - this is a normal exit condition for a changed block or
+			// a new block.
+			bool bChangedBlock = ReaderChunks[0]->ChunkIds.Contains(InChunkId);
+			if (bChangedBlock)
+			{
+				ReaderChunks[0]->ChangedChunkCount[(uint8)InChunkId.GetChunkType()].fetch_add(1, std::memory_order_relaxed);
+			}
+			else
+			{
+				ReaderChunks[0]->NewChunkCount[(uint8)InChunkId.GetChunkType()].fetch_add(1, std::memory_order_relaxed);
+			}
 			return false;
 		}
 
-		OutNumChunkBlocks = Readers[ReaderChunks->ReaderIndex]->GetChunkInfo(*ChunkId).ValueOrDie().NumCompressedBlocks;
+		OutNumChunkBlocks = ChunkInfo->NumCompressedBlocks;
 		return true;
 	}
 
@@ -200,28 +283,28 @@ public:
 	// Not thread safe, called from the BeginCompress dispatch thread.
 	virtual bool RetrieveChunk(const TPair<FIoContainerId, FIoChunkHash>& InChunkKey, TUniqueFunction<void(TIoStatusOr<FIoStoreCompressedReadResult>)> InCompleteCallback)
 	{
-		RequestCount++;
-
-		FReaderChunks* ReaderChunks = ChunkDatabase.Find(InChunkKey.Key);
+		TUniquePtr<FReaderChunks>* ReaderChunks = ChunkDatabase.Find(InChunkKey.Key);
 		if (ReaderChunks == nullptr)
 		{
-			// Container doesn't exist - likely provided the path to a different project. Mark this
-			// error as happening once so we can log at the end.
-			ContainerNotFound++;
+			// This should never happen now as we wrap this in a ChunkExists call.
+			UE_LOG(LogIoStore, Warning, TEXT("RetrieveChunk can't find the container - invariant violated!"));
 			return false;
 		}
 
-		FIoChunkId* ChunkId = ReaderChunks->Chunks.Find(InChunkKey.Value);
-		if (ChunkId == nullptr)
+		FIoStoreTocChunkInfo* ChunkInfo = ReaderChunks[0]->Chunks.Find(InChunkKey.Value);
+		if (ChunkInfo == nullptr)
 		{
-			// No exact chunk data match - this is a normal exit condition for a changed block.
+			// This should never happen now as we wrap this in a ChunkExists call.
+			UE_LOG(LogIoStore, Warning, TEXT("RetrieveChunk can't find the chunnk - invariant violated!"));
 			return false;
 		}
+
+		ReaderChunks[0]->UsedChunkCount[(uint8)ChunkInfo->Id.GetChunkType()].fetch_add(1, std::memory_order_relaxed);
 
 		uint64 TotalCompressedSize = 0;
 		uint64 TotalUncompressedSize = 0;
 		uint32 CompressedBlockCount = 0;
-		Readers[ReaderChunks->ReaderIndex]->EnumerateCompressedBlocksForChunk(*ChunkId, [&TotalUncompressedSize, &CompressedBlockCount, &TotalCompressedSize](const FIoStoreTocCompressedBlockInfo& BlockInfo)
+		Readers[ReaderChunks[0]->ReaderIndex]->EnumerateCompressedBlocksForChunk(ChunkInfo->Id, [&TotalUncompressedSize, &CompressedBlockCount, &TotalCompressedSize](const FIoStoreTocCompressedBlockInfo& BlockInfo)
 		{			
 			TotalCompressedSize += BlockInfo.CompressedSize;
 			TotalUncompressedSize += BlockInfo.UncompressedSize;
@@ -229,16 +312,16 @@ public:
 			return true;
 		});
 
-		FulfillBytesPerChunk[(int8)ChunkId->GetChunkType()] += TotalCompressedSize;
+		FulfillBytesPerChunk[(int8)ChunkInfo->ChunkType] += TotalCompressedSize;
 		FulfillBytes += TotalCompressedSize;
 		FulfillCount++;
 
 		//
 		// At this point we know we can use the block so we can go async.
 		//
-		FFunctionGraphTask::CreateAndDispatchWhenReady([this, ChunkId, ReaderIndex = ReaderChunks->ReaderIndex, CompleteCallback = MoveTemp(InCompleteCallback)]()
+		FFunctionGraphTask::CreateAndDispatchWhenReady([this, Id = ChunkInfo->Id, ReaderIndex = ReaderChunks[0]->ReaderIndex, CompleteCallback = MoveTemp(InCompleteCallback)]()
 		{
-			TIoStatusOr<FIoStoreCompressedReadResult> Result = Readers[ReaderIndex]->ReadCompressed(*ChunkId, FIoReadOptions());
+			TIoStatusOr<FIoStoreCompressedReadResult> Result = Readers[ReaderIndex]->ReadCompressed(Id, FIoReadOptions());
 			CompleteCallback(Result);
 		}, TStatId(), nullptr, ENamedThreads::AnyHiPriThreadNormalTask);
 
@@ -821,6 +904,11 @@ public:
 		return ZenStoreClient.IsValid();
 	}
 
+	TFuture<TIoStatusOr<FCbObject>> GetChunkInfos()
+	{
+		return ZenStoreClient->GetChunkInfos();
+	}
+
 	TIoStatusOr<uint64> GetChunkSize(const FIoChunkId& ChunkId)
 	{
 		return ZenStoreClient->GetChunkSize(ChunkId);
@@ -945,6 +1033,7 @@ struct FIoStoreArguments
 	bool bFileRegions = false;
 	bool bUpload = false;
 	EAssetRegistryWritebackMethod WriteBackMetadataToAssetRegistry = EAssetRegistryWritebackMethod::Disabled;
+	bool bWritePluginSizeSummaryJsons = false; // Only valid if WriteBackMetadataToAssetRegistry != Disabled.
 
 	FOodleDataCompression::ECompressor ShaderOodleCompressor = FOodleDataCompression::ECompressor::Mermaid;
 	FOodleDataCompression::ECompressionLevel ShaderOodleLevel = FOodleDataCompression::ECompressionLevel::Normal;
@@ -958,6 +1047,7 @@ struct FIoStoreArguments
 struct FContainerTargetSpec
 {
 	FIoContainerId ContainerId;
+	FIoContainerId OptionalSegmentContainerId;
 	FIoContainerHeader Header;
 	FIoContainerHeader OptionalSegmentHeader;
 	FName Name;
@@ -1336,7 +1426,7 @@ static void AssignPackagesDiskOrder(
 			int64 ClusterBytes = 0;
 			while (ProcessStack.Num())
 			{
-				FCookedPackage* PackageToProcess = ProcessStack.Pop(false);
+				FCookedPackage* PackageToProcess = ProcessStack.Pop(EAllowShrinking::No);
 				if (!AssignedPackages.Contains(PackageToProcess))
 				{
 					AssignedPackages.Add(PackageToProcess);
@@ -2117,7 +2207,49 @@ static bool ConvertToIoStoreShaderLibrary(
 	return true;
 }
 
-static void ProcessShaderLibraries(const FIoStoreArguments& Arguments, TArray<FContainerTargetSpec*>& ContainerTargets, TArray<FShaderInfo*> OutShaders)
+// Carries association between shaders and packages from shader processing to size assignment.
+struct FShaderAssociationInfo
+{
+	struct FShaderChunkInfo
+	{
+		enum EType 
+		{
+			// This shader is referenced by one or more packages and can assign its size to
+			// those packages
+			Package, 
+			// This shader is needed by the baseline engine in some manner and is a flat
+			// size cost.
+			Global, 
+			// This shader isn't global or referenced by packages - theoretically shouldn't
+			// exist.
+			Orphan
+		};
+
+		EType Type;
+		TArray<FName> ReferencedByPackages;
+		uint32 CompressedSize = 0;
+		UE::Cook::EPluginSizeTypes SizeType;
+
+		// If we are shared across plugins, this is our pseudo plugin name. This is generated during size assignment.
+		FString SharedPluginName;
+	};
+	
+	struct FShaderChunkInfoKey
+	{
+		FName PakChunkName;
+		FIoChunkId IoChunkId;
+
+		friend uint32 GetTypeHash(const FShaderChunkInfoKey& Key) { return GetTypeHash(Key.IoChunkId); }
+		friend bool operator == (const FShaderChunkInfoKey& LHS, const FShaderChunkInfoKey& RHS) { return LHS.PakChunkName == RHS.PakChunkName && LHS.IoChunkId == RHS.IoChunkId; }
+	};
+
+	TMap<FShaderChunkInfoKey, FShaderChunkInfo> ShaderChunkInfos;
+
+	// The list of shaders referenced by each package. This can be used to look up in to ContainerShaderInfos.
+	TMap<FName /* PackageName */, TArray<FShaderChunkInfoKey>> PackageShaderMap;
+};
+
+static void ProcessShaderLibraries(const FIoStoreArguments& Arguments, TArray<FContainerTargetSpec*>& ContainerTargets, TArray<FShaderInfo*> OutShaders, FShaderAssociationInfo& OutAssocInfo)
 {
 	IOSTORE_CPU_SCOPE(ProcessShaderLibraries);
 
@@ -2284,25 +2416,67 @@ static void ProcessShaderLibraries(const FIoStoreArguments& Arguments, TArray<FC
 						}
 					}
 				}
+
 				for (FShaderInfo* ShaderInfo : *FindContainerShaderLibraryShaders)
 				{
+					FShaderAssociationInfo::FShaderChunkInfoKey ShaderChunkInfoKey = { ContainerTarget->Name, ShaderInfo->ChunkId };
+					FShaderAssociationInfo::FShaderChunkInfo& ShaderChunkInfo = OutAssocInfo.ShaderChunkInfos.Add(ShaderChunkInfoKey);
+
 					FShaderInfo::EShaderType* ShaderType = ShaderInfo->TypeInContainer.Find(ContainerTarget);
 					check(ShaderType);
 					if (*ShaderType == FShaderInfo::Global)
 					{
 						ContainerTarget->GlobalShaders.Add(ShaderInfo);
+						ShaderChunkInfo.Type = FShaderAssociationInfo::FShaderChunkInfo::Global;
 					}
 					else if (*ShaderType == FShaderInfo::Inline)
 					{
 						ContainerTarget->InlineShaders.Add(ShaderInfo);
+
+						ShaderChunkInfo.Type = FShaderAssociationInfo::FShaderChunkInfo::Package;
+						checkf(ShaderInfo->ReferencedByPackages.Num() == 1, TEXT("Inline shader chunks must be referenced by 1 package only, but shader chunk %s is referenced by %d"),
+							*LexToString(ShaderInfo->ChunkId), ShaderInfo->ReferencedByPackages.Num());
+
+						ShaderChunkInfo.ReferencedByPackages.Add(ShaderInfo->ReferencedByPackages[FSetElementId::FromInteger(0)]->PackageName);
 					}
 					else if (ShaderInfo->ReferencedByPackages.Num() > 1)
 					{
 						ContainerTarget->SharedShaders.Add(ShaderInfo);
+
+						ShaderChunkInfo.Type = FShaderAssociationInfo::FShaderChunkInfo::Package;
+						
+						for (FCookedPackage* Package : ShaderInfo->ReferencedByPackages)
+						{
+							ShaderChunkInfo.ReferencedByPackages.Add(Package->PackageName);
+
+							TArray<FShaderAssociationInfo::FShaderChunkInfoKey>& PackageShaders = OutAssocInfo.PackageShaderMap.FindOrAdd(Package->PackageName);
+							PackageShaders.Add(ShaderChunkInfoKey);
+						}
 					}
 					else
 					{
-						// If there are unreferenced shaders they will go in here and be sorted last
+						//
+						// Note that we can get here with shaders that get split off in to another container (e.g. sm6 shaders). 
+						// Since they are in a different pakChunk they can't get inlined or shared. However, they still "belong" to
+						// the referencing packages for association purposes.
+						//
+						if (ShaderInfo->ReferencedByPackages.Num())
+						{
+							ShaderChunkInfo.Type = FShaderAssociationInfo::FShaderChunkInfo::Package;
+
+							for (FCookedPackage* Package : ShaderInfo->ReferencedByPackages)
+							{
+								ShaderChunkInfo.ReferencedByPackages.Add(Package->PackageName);
+
+								TArray<FShaderAssociationInfo::FShaderChunkInfoKey>& PackageShaders = OutAssocInfo.PackageShaderMap.FindOrAdd(Package->PackageName);
+								PackageShaders.Add(ShaderChunkInfoKey);
+							}
+						}
+						else
+						{
+							ShaderChunkInfo.Type = FShaderAssociationInfo::FShaderChunkInfo::Orphan;
+						}
+
 						ContainerTarget->UniqueShaders.Add(ShaderInfo);
 					}
 					AddShaderTargetFile(ShaderInfo);
@@ -2451,7 +2625,43 @@ void InitializeContainerTargetsAndPackages(
 		return true;
 	};
 
+	struct FChunkListItem
+	{
+		FIoHash RawHash;
+		uint64 RawSize;
+	};
+
+	TMap<FIoChunkId, FChunkListItem> ChunkList;
+	if (Arguments.PackageStore->HasZenStoreClient())
+	{
+		double StartChunkInfoTime = FPlatformTime::Seconds();
+
+		TIoStatusOr<FCbObject> Chunks = Arguments.PackageStore->GetChunkInfos().Get();
+		if (!Chunks.IsOk())
+		{
+			UE_LOG(LogIoStore, Error, TEXT("Failed to retrieve chunk list"));
+			return;
+		}
+
+		FCbObject ChunksObj = Chunks.ConsumeValueOrDie();
+		for (FCbField& ChunkEntry : ChunksObj["chunkinfos"])
+		{
+			FCbObject ChunkObj = ChunkEntry.AsObject();
+			FIoChunkId ChunkId;
+			if (!LoadFromCompactBinary(ChunkObj["id"], ChunkId))
+			{
+				UE_LOG(LogIoStore, Warning, TEXT("Received invalid chunk id, skipping."));
+				continue;
+			}
+			ChunkList.Add(ChunkId, { ChunkObj["rawhash"].AsHash(), ChunkObj["rawsize"].AsUInt64() });
+		}
+
+		UE_LOG(LogIoStore, Display, TEXT("Fetched '%d' chunk infos in %f seconds"), ChunkList.Num(), FPlatformTime::Seconds() - StartChunkInfoTime);
+
+	}
+
 	auto CreateTargetFileFromZen = [
+		&ChunkList,
 		&Arguments,
 		&Packages,
 		&PackageNameMap,
@@ -2482,13 +2692,13 @@ void InitializeContainerTargetsAndPackages(
 			return false;
 		}
 		OutTargetFile.ChunkId = ChunkInfo->ChunkId;
-		TIoStatusOr<uint64> ChunkSize = PackageStore.GetChunkSize(OutTargetFile.ChunkId);
-		if (!ChunkSize.IsOk())
+		FChunkListItem* ChunkListItem = ChunkList.Find(OutTargetFile.ChunkId);
+		if (!ChunkListItem)
 		{
 			UE_LOG(LogIoStore, Warning, TEXT("Chunk size not found for: '%s'"), *SourceFile.NormalizedPath);
 			return false;
 		}
-		OutTargetFile.SourceSize = ChunkSize.ValueOrDie();
+		OutTargetFile.SourceSize = ChunkListItem->RawSize;
 
 		if (ChunkInfo->PackageName.IsNone())
 		{
@@ -2615,12 +2825,6 @@ void InitializeContainerTargetsAndPackages(
 				ContainerTarget->TargetFiles.Emplace(MoveTemp(TargetFile));
 			}
 
-			if (EnumHasAnyFlags(ContainerTarget->ContainerFlags, EIoContainerFlags::OnDemand) &&
-				!EnumHasAnyFlags(ContainerTarget->ContainerFlags, EIoContainerFlags::Encrypted))
-			{
-				UE_LOG(LogIoStore, Warning, TEXT("Container '%s' set as on demand but is not encrypted, please revisit encryption strategy before publisihing to public CDN's"), *ContainerSource.Name.ToString());
-			}
-
 			if (bHasOptionalSegmentPackages)
 			{
 				if (ContainerSource.OptionalOutputPath.IsEmpty())
@@ -2633,7 +2837,15 @@ void InitializeContainerTargetsAndPackages(
 					ContainerTarget->OptionalSegmentOutputPath = FPaths::Combine(ContainerSource.OptionalOutputPath, FPaths::GetCleanFilename(ContainerTarget->OutputPath) + FPackagePath::GetOptionalSegmentExtensionModifier());
 				}
 
-				UE_LOG(LogIoStore, Display, TEXT("Saving optional container to: '%s'"), *ContainerTarget->OptionalSegmentOutputPath);
+				// The IoContainerId is the hash of the name of the container, which gets returned in the results
+				// as the output path we provide with the extension removed, which for optional containers means
+				// that it contains the .o in the name - so make sure we have a separate id for this.
+				ContainerTarget->OptionalSegmentContainerId = FIoContainerId::FromName(*FPaths::GetCleanFilename(ContainerTarget->OptionalSegmentOutputPath));
+
+				UE_LOG(LogIoStore, Display, TEXT("Saving optional container to: '%s', id: 0x%llx (base container id: 0x%llx)"),
+					*ContainerTarget->OptionalSegmentOutputPath,
+					ContainerTarget->OptionalSegmentContainerId.Value(),
+					ContainerTarget->ContainerId.Value());
 			}
 		}
 	}
@@ -2646,24 +2858,33 @@ void InitializeContainerTargetsAndPackages(
 
 void LogWriterResults(const TArray<FIoStoreWriterResult>& Results)
 {
-	UE_LOG(LogIoStore, Display, TEXT("--------------------------------------------------- IoDispatcher --------------------------------------------------------"));
+	struct FContainerStats
+	{
+		uint64 TocCount = 0;
+		uint64 TocSize = 0;
+		uint64 UncompressedContainerSize = 0;
+		uint64 CompressedContainerSize = 0;
+		uint64 PaddingSize = 0;
+	};
+
 	UE_LOG(LogIoStore, Display, TEXT(""));
-	UE_LOG(LogIoStore, Display, TEXT("%-30s %10s %15s %15s %15s %25s"),
-		TEXT("Container"), TEXT("Flags"), TEXT("TOC Size (KB)"), TEXT("TOC Entries"), TEXT("Size (MB)"), TEXT("Compressed (MB)"));
-	UE_LOG(LogIoStore, Display, TEXT("-------------------------------------------------------------------------------------------------------------------------"));
-	uint64 TotalTocSize = 0;
-	uint64 TotalTocEntryCount = 0;
-	uint64 TotalUncompressedContainerSize = 0;
-	uint64 TotalPaddingSize = 0;
+	UE_LOG(LogIoStore, Display, TEXT("Container Summary"));
+	UE_LOG(LogIoStore, Display, TEXT("=================="));
+	UE_LOG(LogIoStore, Display, TEXT(""));
+	UE_LOG(LogIoStore, Display, TEXT("%-50s %10s %15s %15s %20s %20s"),
+		TEXT("Container"), TEXT("Flags"), TEXT("Chunk(s) #"), TEXT("TOC (KiB)"), TEXT("Raw Size (MiB)"), TEXT("Size (MiB)"));
+	UE_LOG(LogIoStore, Display, TEXT("----------------------------------------------------------------------------------------------------------------------------------------------"));
+
+	FContainerStats TotalStats;
+	FContainerStats OnDemandStats;
 	for (const FIoStoreWriterResult& Result : Results)
 	{
 		FString CompressionInfo = TEXT("-");
 
 		if (Result.CompressionMethod != NAME_None)
 		{
-			double Procentage = (double(Result.UncompressedContainerSize - Result.CompressedContainerSize) / double(Result.UncompressedContainerSize)) * 100.0;
-			CompressionInfo = FString::Printf(TEXT("%.2lf (%.2lf%% %s)"),
-				(double)Result.CompressedContainerSize / 1024.0 / 1024.0,
+			const double Procentage = (double(Result.UncompressedContainerSize - Result.CompressedContainerSize) / double(Result.UncompressedContainerSize)) * 100.0;
+			CompressionInfo = FString::Printf(TEXT("(%.2lf%% %s)"),
 				Procentage,
 				*Result.CompressionMethod.ToString());
 		}
@@ -2675,48 +2896,76 @@ void LogWriterResults(const TArray<FIoStoreWriterResult>& Results)
 			EnumHasAnyFlags(Result.ContainerFlags, EIoContainerFlags::Indexed) ? TEXT("I") : TEXT("-"),
 			EnumHasAnyFlags(Result.ContainerFlags, EIoContainerFlags::OnDemand) ? TEXT("O") : TEXT("-"));
 
-		UE_LOG(LogIoStore, Display, TEXT("%-30s %10s %15.2lf %15llu %15.2lf %25s"),
+		UE_LOG(LogIoStore, Display, TEXT("%-50s %10s %15llu %15.2lf %20.2lf %20.2lf %s"),
 			*Result.ContainerName,
 			*ContainerSettings,
-			(double)Result.TocSize / 1024.0,
 			Result.TocEntryCount,
+			(double)Result.TocSize / 1024.0,
 			(double)Result.UncompressedContainerSize / 1024.0 / 1024.0,
+			(double)Result.CompressedContainerSize / 1024.0 / 1024.0,
 			*CompressionInfo);
 
+		if (EnumHasAnyFlags(Result.ContainerFlags, EIoContainerFlags::OnDemand))
+		{
+			OnDemandStats.TocCount += Result.TocEntryCount;
+			OnDemandStats.TocSize += Result.TocSize;
+			OnDemandStats.UncompressedContainerSize += Result.UncompressedContainerSize;
+			OnDemandStats.CompressedContainerSize += Result.CompressedContainerSize;
+		}
 
-		TotalTocSize += Result.TocSize;
-		TotalTocEntryCount += Result.TocEntryCount;
-		TotalUncompressedContainerSize += Result.UncompressedContainerSize;
-		TotalPaddingSize += Result.PaddingSize;
+		TotalStats.TocCount += Result.TocEntryCount;
+		TotalStats.TocSize += Result.TocSize;
+		TotalStats.UncompressedContainerSize += Result.UncompressedContainerSize;
+		TotalStats.CompressedContainerSize += Result.CompressedContainerSize;
+		TotalStats.PaddingSize += Result.PaddingSize;
+	}
+	UE_LOG(LogIoStore, Display, TEXT("----------------------------------------------------------------------------------------------------------------------------------------------"));
+
+
+	if (OnDemandStats.TocCount > 0)
+	{
+		UE_LOG(LogIoStore, Display, TEXT("%-50s %10s %15llu %15.2lf %20.2lf %20.2lf"),
+			TEXT("Total On Demand"),
+			TEXT(""),
+			OnDemandStats.TocCount,
+			(double)OnDemandStats.TocSize / 1024.0,
+			(double)OnDemandStats.UncompressedContainerSize / 1024.0 / 1024.0,
+			(double)OnDemandStats.CompressedContainerSize / 1024.0 / 1024.0);
 	}
 
-	UE_LOG(LogIoStore, Display, TEXT("%-30s %10s %15.2lf %15llu %15.2lf %25s"),
-		TEXT("TOTAL"),
+	UE_LOG(LogIoStore, Display, TEXT("%-50s %10s %15llu %15.2lf %20.2lf %20.2lf"),
+		TEXT("Total"),
 		TEXT(""),
-		(double)TotalTocSize / 1024.0,
-		TotalTocEntryCount,
-		(double)TotalUncompressedContainerSize / 1024.0 / 1024.0,
-		TEXT("-"));
+		TotalStats.TocCount,
+		(double)TotalStats.TocSize / 1024.0,
+		(double)TotalStats.UncompressedContainerSize / 1024.0 / 1024.0,
+		(double)TotalStats.CompressedContainerSize / 1024.0 / 1024.0);
 
 	UE_LOG(LogIoStore, Display, TEXT(""));
 	UE_LOG(LogIoStore, Display, TEXT("** Flags: (C)ompressed / (E)ncrypted / (S)igned) / (I)ndexed) / (O)nDemand **"));
 	UE_LOG(LogIoStore, Display, TEXT(""));
-	UE_LOG(LogIoStore, Display, TEXT("Compression block padding: %8.2lf MB"), (double)TotalPaddingSize / 1024.0 / 1024.0);
+	UE_LOG(LogIoStore, Display, TEXT("Compression block padding: %8.2lf MiB"), (double)TotalStats.PaddingSize / 1024.0 / 1024.0);
 	UE_LOG(LogIoStore, Display, TEXT(""));
 
-	UE_LOG(LogIoStore, Display, TEXT("-------------------------------------------- Container Directory Index --------------------------------------------------"));
-	UE_LOG(LogIoStore, Display, TEXT("%-30s %15s"), TEXT("Container"), TEXT("Size (KB)"));
+	UE_LOG(LogIoStore, Display, TEXT("Container Directory Index"));
+	UE_LOG(LogIoStore, Display, TEXT("=========================="));
+	UE_LOG(LogIoStore, Display, TEXT(""));
+	UE_LOG(LogIoStore, Display, TEXT("%-45s %15s"), TEXT("Container"), TEXT("Size (KiB)"));
+	UE_LOG(LogIoStore, Display, TEXT("----------------------------------------------------------------------------------------------------------------------------------------------"));
 	for (const FIoStoreWriterResult& Result : Results)
 	{
-		UE_LOG(LogIoStore, Display, TEXT("%-30s %15.2lf"), *Result.ContainerName, double(Result.DirectoryIndexSize) / 1024.0);
+		UE_LOG(LogIoStore, Display, TEXT("%-45s %15.2lf"), *Result.ContainerName, double(Result.DirectoryIndexSize) / 1024.0);
 	}
 
 	UE_LOG(LogIoStore, Display, TEXT(""));
-	UE_LOG(LogIoStore, Display, TEXT("---------------------------------------------- Container Patch Report ---------------------------------------------------"));
-	UE_LOG(LogIoStore, Display, TEXT("%-30s %16s %16s %16s %16s %16s"), TEXT("Container"), TEXT("Total (count)"), TEXT("Modified (count)"), TEXT("Added (count)"), TEXT("Modified (MB)"), TEXT("Added (MB)"));
+	UE_LOG(LogIoStore, Display, TEXT("Container Patch Report"));
+	UE_LOG(LogIoStore, Display, TEXT("========================"));
+	UE_LOG(LogIoStore, Display, TEXT(""));
+	UE_LOG(LogIoStore, Display, TEXT("%-44s %16s %16s %16s %16s %16s"), TEXT("Container"), TEXT("Total #"), TEXT("Modified #"), TEXT("Added #"), TEXT("Modified (MiB)"), TEXT("Added (MiB)"));
+	UE_LOG(LogIoStore, Display, TEXT("----------------------------------------------------------------------------------------------------------------------------------------------"));
 	for (const FIoStoreWriterResult& Result : Results)
 	{
-		UE_LOG(LogIoStore, Display, TEXT("%-30s %16d %16d %16d %16.2lf %16.2lf"), *Result.ContainerName, Result.TocEntryCount, Result.ModifiedChunksCount, Result.AddedChunksCount, Result.ModifiedChunksSize / 1024.0 / 1024.0, Result.AddedChunksSize / 1024.0 / 1024.0);
+		UE_LOG(LogIoStore, Display, TEXT("%-44s %16d %16d %16d %16.2lf %16.2lf"), *Result.ContainerName, Result.TocEntryCount, Result.ModifiedChunksCount, Result.AddedChunksCount, Result.ModifiedChunksSize / 1024.0 / 1024.0, Result.AddedChunksSize / 1024.0 / 1024.0);
 	}
 }
 
@@ -2727,15 +2976,15 @@ void LogContainerPackageInfo(const TArray<FContainerTargetSpec*>& ContainerTarge
 	uint64 TotalLocalizedPackageCount = 0;
 
 	UE_LOG(LogIoStore, Display, TEXT(""));
+	UE_LOG(LogIoStore, Display, TEXT("PackageStore"));
+	UE_LOG(LogIoStore, Display, TEXT("============="));
 	UE_LOG(LogIoStore, Display, TEXT(""));
-	UE_LOG(LogIoStore, Display, TEXT("--------------------------------------------------- PackageStore (KB) ---------------------------------------------------"));
-	UE_LOG(LogIoStore, Display, TEXT(""));
-	UE_LOG(LogIoStore, Display, TEXT("%-30s %20s %20s %20s"),
+	UE_LOG(LogIoStore, Display, TEXT("%-45s %15s %15s %15s"),
 		TEXT("Container"),
-		TEXT("Store Size"),
-		TEXT("Packages"),
-		TEXT("Localized"));
-	UE_LOG(LogIoStore, Display, TEXT("-------------------------------------------------------------------------------------------------------------------------"));
+		TEXT("Size (KiB)"),
+		TEXT("Packages #"),
+		TEXT("Localized #"));
+	UE_LOG(LogIoStore, Display, TEXT("----------------------------------------------------------------------------------------------------------------------------------------------"));
 
 	for (const FContainerTargetSpec* ContainerTarget : ContainerTargets)
 	{
@@ -2743,7 +2992,7 @@ void LogContainerPackageInfo(const TArray<FContainerTargetSpec*>& ContainerTarge
 		uint64 PackageCount = ContainerTarget->Packages.Num();
 		uint64 LocalizedPackageCount = ContainerTarget->Header.LocalizedPackages.Num();
 
-		UE_LOG(LogIoStore, Display, TEXT("%-30s %20.0lf %20llu %20llu"),
+		UE_LOG(LogIoStore, Display, TEXT("%-45s %15.0lf %15llu %15llu"),
 			*ContainerTarget->Name.ToString(),
 			(double)StoreSize / 1024.0,
 			PackageCount,
@@ -2753,8 +3002,9 @@ void LogContainerPackageInfo(const TArray<FContainerTargetSpec*>& ContainerTarge
 		TotalPackageCount += PackageCount;
 		TotalLocalizedPackageCount += LocalizedPackageCount;
 	}
-	UE_LOG(LogIoStore, Display, TEXT("%-30s %20.0lf %20llu %20llu"),
-		TEXT("TOTAL"),
+	UE_LOG(LogIoStore, Display, TEXT("----------------------------------------------------------------------------------------------------------------------------------------------"));
+	UE_LOG(LogIoStore, Display, TEXT("%-45s %15.0lf %15llu %15llu"),
+		TEXT("Total"),
 		(double)TotalStoreSize / 1024.0,
 		TotalPackageCount,
 		TotalLocalizedPackageCount);
@@ -3157,7 +3407,988 @@ public:
 	static constexpr uint64 BufferMemoryLimit = 2ull << 30;
 };
 
-static void AddChunkInfoToAssetRegistry(TMap<FPackageId, TArray<FIoStoreTocChunkInfo, TInlineAllocator<2>>>&& PackageToChunks, FAssetRegistryState& AssetRegistry, uint64 TotalCompressedSize)
+static bool WriteUtf8StringView(FUtf8StringView InView, const FString& InFilename)
+{
+	TUniquePtr<FArchive> Ar(IFileManager::Get().CreateFileWriter(*InFilename, 0));
+	if (!Ar)
+	{
+		return false;
+	}
+	UTF8CHAR UTF8BOM[] = { (UTF8CHAR)0xEF, (UTF8CHAR)0xBB, (UTF8CHAR)0xBF };
+	Ar->Serialize(&UTF8BOM, sizeof(UTF8BOM));
+	Ar->Serialize((void*)InView.GetData(), InView.Len() * sizeof(UTF8CHAR));
+	Ar->Close();
+	return true;
+}
+
+// When we emit plugin size information, we emit one json for each class of sizes we
+// are monitoring.
+enum class EPluginGraphSizeClass : uint8
+{
+	All,
+	Texture,
+	StaticMesh,
+	SoundWave,
+	SkeletalMesh,
+	Shader,
+	Level, 
+	Animation,
+	Niagara,
+	Material,
+	Blueprint,
+	Geometry,
+	Other,
+	COUNT
+};
+
+static const UTF8CHAR* PluginGraphEntryClassNames[] = 
+{
+	UTF8TEXT("all"),
+	UTF8TEXT("texture"),
+	UTF8TEXT("staticmesh"),
+	UTF8TEXT("soundwave"),
+	UTF8TEXT("skeletalmesh"),
+	UTF8TEXT("shader"),
+	UTF8TEXT("level"),
+	UTF8TEXT("animation"),
+	UTF8TEXT("niagara"),
+	UTF8TEXT("material"),
+	UTF8TEXT("blueprint"),
+	UTF8TEXT("geometry"),
+	UTF8TEXT("other")
+};
+
+static_assert( UE_ARRAY_COUNT(PluginGraphEntryClassNames) == (size_t)EPluginGraphSizeClass::COUNT, "Must have a name for each plugin graph size class!");
+
+struct FPluginGraphEntry
+{
+	uint16 IndexInEnabledPlugins = 0;
+
+	FString Name;
+
+	TSet<FPluginGraphEntry*> DirectDependencies;
+	TSet<FPluginGraphEntry*> TotalDependencies;
+	TSet<FPluginGraphEntry*> Roots;
+
+	// Only valid if bIsRoot
+	TSet<FPluginGraphEntry*> UniqueDependencies;
+
+	uint32 DirectRefcount = 0;
+	bool bIsRoot = false;
+
+	static constexpr uint8 ClassCount = (uint8)EPluginGraphSizeClass::COUNT;
+	UE::Cook::FPluginSizeInfo ExclusiveSizes[ClassCount];
+	UE::Cook::FPluginSizeInfo InclusiveSizes[ClassCount];
+	UE::Cook::FPluginSizeInfo UniqueSizes[ClassCount];
+
+	uint64 ExclusiveCounts[ClassCount] = {};
+	uint64 InclusiveCounts[ClassCount] = {};
+	uint64 UniqueCounts[ClassCount] = {};
+};
+
+struct FPluginGraph
+{
+	TArray<FPluginGraphEntry> Plugins;
+
+	TMap<FStringView, FPluginGraphEntry*> NameToPlugin;
+	TArray<FPluginGraphEntry*> TopologicallySortedPlugins;
+	TArray<FPluginGraphEntry*> RootPlugins;
+
+	// Plugins that can't trace a route between a plugin with bIsRoot==true and themselves.
+	TSet<FPluginGraphEntry*> UnrootedPlugins;
+};
+
+
+// Rework the hierarchy in to a graph where we have output edges resolved to pointers so we can pass to
+// library functions.
+static void GeneratePluginGraph(const UE::Cook::FCookMetadataPluginHierarchy& InPluginHierarchy, FPluginGraph& OutPluginGraph)
+{
+	double GeneratePluginGraphStart = FPlatformTime::Seconds();
+
+	// Allocate up front so our pointer remains stable.
+	OutPluginGraph.Plugins.Reserve(InPluginHierarchy.PluginsEnabledAtCook.Num());
+	uint16 PluginIndex = 0;
+	for (const UE::Cook::FCookMetadataPluginEntry& Plugin : InPluginHierarchy.PluginsEnabledAtCook)
+	{
+		FPluginGraphEntry& OurEntry = OutPluginGraph.Plugins.AddDefaulted_GetRef();
+		OurEntry.IndexInEnabledPlugins = PluginIndex;
+		OurEntry.Name = Plugin.Name;
+
+		// Can store pointer since we reserved as a batch..
+		OutPluginGraph.NameToPlugin.Add(OurEntry.Name, &OurEntry);
+		PluginIndex++;
+	}
+
+	OutPluginGraph.RootPlugins.Reserve(InPluginHierarchy.RootPlugins.Num());
+	for (uint16 RootIndex : InPluginHierarchy.RootPlugins)
+	{
+		FPluginGraphEntry* Root = OutPluginGraph.NameToPlugin[InPluginHierarchy.PluginsEnabledAtCook[RootIndex].Name];
+		Root->bIsRoot = true;
+		OutPluginGraph.RootPlugins.Add(Root);
+	}
+
+	for (FPluginGraphEntry& PluginEntry : OutPluginGraph.Plugins)
+	{
+		const UE::Cook::FCookMetadataPluginEntry& Plugin = InPluginHierarchy.PluginsEnabledAtCook[PluginEntry.IndexInEnabledPlugins];
+
+		for (uint32 DependencyIndex = Plugin.DependencyIndexStart; DependencyIndex < Plugin.DependencyIndexEnd; DependencyIndex++)
+		{
+			const UE::Cook::FCookMetadataPluginEntry& DependentPlugin = InPluginHierarchy.PluginsEnabledAtCook[InPluginHierarchy.PluginDependencies[DependencyIndex]];
+			PluginEntry.DirectDependencies.Add(OutPluginGraph.NameToPlugin[DependentPlugin.Name]);
+		}
+	}
+	
+	// From here on out we can operate entirely on our own data - no cook metadata structures - 
+	// and we generate the various structures we need.
+
+	// Sort the plugins topologically. This means that when we iterate linearly,
+	// we know that when we hit a plugin, we've already processed the dependencies.
+	// This takes some memory to track edges but is a depth first search
+	// and not anything quadratic or worse.	
+	double TopologicalSortStart = FPlatformTime::Seconds();
+	{
+		OutPluginGraph.TopologicallySortedPlugins.Reserve(OutPluginGraph.Plugins.Num());
+		for (FPluginGraphEntry& Plugin : OutPluginGraph.Plugins)
+		{
+			OutPluginGraph.TopologicallySortedPlugins.Add(&Plugin);
+		}
+
+		auto GetElementDependencies = [&OutPluginGraph](const FPluginGraphEntry* PluginEntry) -> const TSet<FPluginGraphEntry*>&
+		{
+			return OutPluginGraph.NameToPlugin[PluginEntry->Name]->DirectDependencies;
+		};
+
+		Algo::TopologicalSort(OutPluginGraph.TopologicallySortedPlugins, GetElementDependencies);
+	}
+
+
+	// Gather the set of all dependencies. This ends up being technically
+	// O(N^2) in the worst case. It's highly unlikely our plugin DAG will cause that, but we track the times
+	// just so we can keep an eye on it if it ends up taking measurable amounts of time.
+	double InclusiveComputeStart = FPlatformTime::Seconds();
+	for (FPluginGraphEntry* Plugin : OutPluginGraph.TopologicallySortedPlugins)
+	{
+		for (FPluginGraphEntry* Dependency : Plugin->DirectDependencies)
+		{
+			Plugin->TotalDependencies.Add(Dependency);
+			Dependency->DirectRefcount++;
+		
+			// In the worse case this is another O(N) iteration, which makes us overall O(N^2)
+			for (FPluginGraphEntry* TotalDependencyEntry : Dependency->TotalDependencies)
+			{
+				Plugin->TotalDependencies.Add(TotalDependencyEntry);
+			}
+		}
+	}
+	double InclusiveComputeEnd = FPlatformTime::Seconds();
+
+	// Generate the unique dependencies for the root plugins. This is the set of dependencies that only
+	// belong to the root plugin and not to another. These dependencies could be referred to by another 
+	// plugin within the unique set - the only requirement is that there exists no path from _another_
+	// root to the dependency.
+	for (FPluginGraphEntry* RootPlugin : OutPluginGraph.RootPlugins)
+	{
+		// Add us as a root entry for all our total dependencies so all plugins know which root they are in.
+		for (FPluginGraphEntry* Dependency : RootPlugin->TotalDependencies)
+		{
+			OutPluginGraph.NameToPlugin[Dependency->Name]->Roots.Add(RootPlugin);
+		}
+
+		// Duplicate the TotalDependencies and then remove any dependency that
+		// exists for another root.
+		RootPlugin->UniqueDependencies = RootPlugin->TotalDependencies;
+		for (FPluginGraphEntry* InnerRootPlugin : OutPluginGraph.RootPlugins)
+		{
+			if (RootPlugin == InnerRootPlugin)
+			{
+				continue;
+			}
+
+			for (FPluginGraphEntry* InnerRootDependency : InnerRootPlugin->TotalDependencies)
+			{
+				RootPlugin->UniqueDependencies.Remove(InnerRootDependency);
+			}
+		}
+	}
+
+	double UniqueEnd = FPlatformTime::Seconds();
+
+	// Generate the unrooted set. These plugins can not trace a path from _any_ root plugin
+	// to themselves. For projects with no root plugins, this will be all plugins.
+	{
+		for (FPluginGraphEntry* Plugin : OutPluginGraph.TopologicallySortedPlugins)
+		{
+			OutPluginGraph.UnrootedPlugins.Add(Plugin);
+		}
+
+		for (FPluginGraphEntry* Plugin : OutPluginGraph.RootPlugins)
+		{
+			OutPluginGraph.UnrootedPlugins.Remove(Plugin);
+			for (FPluginGraphEntry* Dependency : Plugin->TotalDependencies)
+			{
+				OutPluginGraph.UnrootedPlugins.Remove(Plugin);
+			}
+		}
+	}
+	double GeneratePluginGraphEnd = FPlatformTime::Seconds();
+
+	UE_LOG(LogIoStore, Log, TEXT("Generated plugin graph with %d nodes. Times: %.02f total %.02f setup, %.02f sort %.02f inclusive %.02f unique %.02f unrooted."),
+		OutPluginGraph.TopologicallySortedPlugins.Num(),
+		GeneratePluginGraphEnd - GeneratePluginGraphStart,
+		TopologicalSortStart - GeneratePluginGraphStart,
+		InclusiveComputeStart - TopologicalSortStart,
+		InclusiveComputeEnd - InclusiveComputeStart,
+		UniqueEnd - InclusiveComputeEnd,
+		GeneratePluginGraphEnd - UniqueEnd);
+}
+
+static void InsertShadersInPluginHierarchy(UE::Cook::FCookMetadataState& InCookMetadata, FPluginGraph& InPluginGraph, FShaderAssociationInfo& InShaderAssociationInfo)
+{
+	const UE::Cook::FCookMetadataPluginHierarchy& PluginHierarchy = InCookMetadata.GetPluginHierarchy();
+
+	//
+	// Create any shader plugins we need. These are pseudo plugins that we create to hold the size information
+	// when the packages that reference a plugin cross the plugin boundary. We name them based on their dependencies
+	// so it's consistent across builds. These will exist whenever GFPs aren't placed entirely in their own pak chunk.
+	//
+	// The combinatorics are such that doing this for _all_ plugins isn't tenable. However, for product tracking we
+	// actually only care about root GFPs. So instead of gathering all of the plugins entirely, we gather all of the
+	// root plugins.
+	//
+	// The difficulty is that we don't necessarily _have_ any root plugins if the project hasn't defined any, so we 
+	// artificially stuff such plugins under "Unrooted".
+	//
+	// It should be noted that the entire point of root GFPs is to separate the data entirely - so if we have any
+	// of these pseudo plugins then there is a content bug as there exists a shared dependency between two "modes".
+	//
+	TMap<FString, TArray<FShaderAssociationInfo::FShaderChunkInfoKey>> ShaderPseudoPlugins;
+	TMap<FString, TArray<FString>> PluginDependenciesOnShaders;
+
+	TSet<FString> ShaderRootPossibles;
+	ShaderRootPossibles.Add(TEXT("Unrooted"));
+
+	for (TPair<FShaderAssociationInfo::FShaderChunkInfoKey, FShaderAssociationInfo::FShaderChunkInfo>& ShaderChunkInfo : InShaderAssociationInfo.ShaderChunkInfos)
+	{
+		// Only Normal shaders can be assigned
+		if (ShaderChunkInfo.Value.Type != FShaderAssociationInfo::FShaderChunkInfo::Package)
+		{
+			continue;
+		}
+
+		TSet<FString> ShaderPlugins;
+		for (FName PackageName : ShaderChunkInfo.Value.ReferencedByPackages)
+		{
+			FString PackageNameStr = PackageName.ToString();
+			FStringView Plugin = FPackageName::SplitPackageNameRoot(PackageNameStr, nullptr);
+			ShaderPlugins.Add(FString(Plugin));
+		}
+
+		if (ShaderPlugins.Num() == 1)
+		{
+			// We can assign the size to this plugin when the time comes - no pseudo plugin needed.
+			continue;
+		}
+
+		bool bAllReferencingPluginsAreRooted = true;
+		TSet<FString> ShaderRootPlugins;
+		for (FString& ReferencingPluginName : ShaderPlugins)
+		{
+			bool bReferencingPluginIsRooted = false;
+			FPluginGraphEntry** ReferencingPlugin = InPluginGraph.NameToPlugin.Find(ReferencingPluginName);
+			if (ReferencingPlugin)
+			{
+				for (FPluginGraphEntry* RootForReferencingPlugin : (*ReferencingPlugin)->Roots)
+				{
+					ShaderRootPlugins.Add(RootForReferencingPlugin->Name);
+					bReferencingPluginIsRooted = true;
+				}
+			}
+				
+			if (bReferencingPluginIsRooted == false)
+				bAllReferencingPluginsAreRooted = false;
+		}
+
+		if (ShaderRootPlugins.Num() == 0 || bAllReferencingPluginsAreRooted == false)
+		{
+			// Place in the unrooted list.
+			ShaderRootPlugins.Add(TEXT("Unrooted"));
+		}
+
+		TStringBuilder<256> PseudoPluginName;
+		PseudoPluginName.Append(TEXT("ShaderPlugin"));
+
+		TStringBuilder<256> NameConcatenation;
+
+		// We can't just concat the names because it'll get too long when we use the name as a filename, which is unfortunate. That being said, we
+		// only expect this to happen in degenerate cases - so if it's not too long we list the names for convenience
+		// otherwise we hash it.
+		for (FString& ReferencingPlugin : ShaderRootPlugins)
+		{
+			NameConcatenation.Append(TEXT("_"));
+			NameConcatenation.Append(ReferencingPlugin);
+		}
+
+		if (NameConcatenation.Len() > 100) // arbitrary length here just to try and avoid hitting MAX_PATH (260)
+		{
+			FXxHash64 NameHash = FXxHash64::HashBuffer(NameConcatenation.GetData(), NameConcatenation.Len());
+			uint8 HashBytes[8];
+			NameHash.ToByteArray(HashBytes);
+
+			PseudoPluginName.Append(TEXT("_"));
+			UE::String::BytesToHexLower(MakeArrayView(HashBytes), PseudoPluginName);
+		}
+		else
+		{
+			PseudoPluginName.Append(NameConcatenation);
+		}
+
+		FString PseudoPluginNameStr = PseudoPluginName.ToString();
+		for (FString& ReferencingPlugin : ShaderRootPlugins)
+		{
+			PluginDependenciesOnShaders.FindOrAdd(ReferencingPlugin).Add(PseudoPluginNameStr);
+		}
+
+		ShaderPseudoPlugins.FindOrAdd(PseudoPluginNameStr).Add(ShaderChunkInfo.Key);
+
+		ShaderChunkInfo.Value.SharedPluginName = MoveTemp(PseudoPluginNameStr);
+	}
+
+	// We have the list of pseudo plugins we need to make... we need to copy and append to the list
+	// of plugins in the cook metadata, after stripping out any previous run's pseudo plugins.
+	TArray<UE::Cook::FCookMetadataPluginEntry> PluginEntries = PluginHierarchy.PluginsEnabledAtCook;
+	for (int32 PluginIndex = 0; PluginIndex < PluginEntries.Num(); PluginIndex++)
+	{
+		if (PluginEntries[PluginIndex].Type == UE::Cook::ECookMetadataPluginType::Unassigned)
+		{
+			UE_LOG(LogIoStore, Warning, TEXT("Found unassigned plugin type in cook metadata! %s"), *PluginEntries[PluginIndex].Name);
+		}
+		if (PluginEntries[PluginIndex].Type == UE::Cook::ECookMetadataPluginType::ShaderPseudo)
+		{
+			// We can do a swap because we insert these at the end in a group so there shouldn't
+			// by anything else after us.
+			PluginEntries.RemoveAtSwap(PluginIndex);
+			PluginIndex--;
+		}
+	}
+
+	for (const TPair< FString, TArray<FShaderAssociationInfo::FShaderChunkInfoKey>>& ShaderPP : ShaderPseudoPlugins)
+	{
+		UE::Cook::FCookMetadataPluginEntry& ShaderPluginEntry = PluginEntries.AddDefaulted_GetRef();
+		ShaderPluginEntry.Name = ShaderPP.Key;
+		ShaderPluginEntry.Type = UE::Cook::ECookMetadataPluginType::ShaderPseudo;
+	}
+
+	// We have to redo the dependency tree as well to add the shaders as dependencies.
+	TMap<FString, int32> PluginNameToIndex;
+	int32 CurrentIndex = 0;
+	for (UE::Cook::FCookMetadataPluginEntry& Entry : PluginEntries)
+	{
+		PluginNameToIndex.Add(Entry.Name, CurrentIndex);
+		CurrentIndex++;
+	}
+
+	if (IntFitsIn<uint16>(PluginEntries.Num()) == false)
+	{
+		UE_LOG(LogIoStore, Warning, TEXT("Post shared shader plugin count is > 65535 (%d)  - not updating cook metadata!"), PluginEntries.Num());
+		return;
+	}
+
+	TArray<uint16> DependencyList;
+	for (UE::Cook::FCookMetadataPluginEntry& Entry : PluginEntries)
+	{
+		// Add the normal dependencies. Since we didn't reorder anything we can
+		// use the old dependency list
+		uint32 StartIndex = (uint32)DependencyList.Num();
+		for (uint32 DependencyIndex = Entry.DependencyIndexStart; DependencyIndex < Entry.DependencyIndexEnd; DependencyIndex++)
+		{
+			const UE::Cook::FCookMetadataPluginEntry& DependentPlugin = PluginHierarchy.PluginsEnabledAtCook[PluginHierarchy.PluginDependencies[DependencyIndex]];
+			if (DependentPlugin.Type == UE::Cook::ECookMetadataPluginType::ShaderPseudo)
+			{
+				// If we are rerunning stage then we might already have added shader plugins
+				// as dependencies, which we've removed so they won't exist in the lookup
+				// (and we want to redo them anyway).
+				continue;
+			}
+			int32* PluginIndex = PluginNameToIndex.Find(DependentPlugin.Name);
+			if (PluginIndex)
+			{
+				DependencyList.Add(*PluginIndex);
+			}
+			else
+			{
+				UE_LOG(LogIoStore, Warning, TEXT("Couldn't find plugin %s when re-adding dependencies."), *DependentPlugin.Name);
+			}
+		}
+
+		// However we also need to check for shaders
+		TArray<FString>* DependenciesOnShader = PluginDependenciesOnShaders.Find(Entry.Name);
+		if (DependenciesOnShader)
+		{
+			for (FString& ShaderPluginName : (*DependenciesOnShader))
+			{
+				int32* PluginIndex = PluginNameToIndex.Find(ShaderPluginName);
+				if (PluginIndex)
+				{
+					DependencyList.Add(*PluginIndex);
+				}
+				else
+				{
+					UE_LOG(LogIoStore, Warning, TEXT("Couldn't find shader pseudo plugin %s when adding dependencies."), *ShaderPluginName);
+				}
+			}
+		}
+
+		Entry.DependencyIndexStart = StartIndex;
+		Entry.DependencyIndexEnd = (uint32)DependencyList.Num();
+	}
+
+	// Now blast the old one away and replace.
+	UE::Cook::FCookMetadataPluginHierarchy& MutablePluginHierarchy = InCookMetadata.GetMutablePluginHierarchy();
+	MutablePluginHierarchy.PluginDependencies = MoveTemp(DependencyList);
+	MutablePluginHierarchy.PluginsEnabledAtCook = PluginEntries;
+
+	// Sanity check we assigned plugin types
+	for (UE::Cook::FCookMetadataPluginEntry& Entry : MutablePluginHierarchy.PluginsEnabledAtCook)
+	{
+		if (Entry.Type == UE::Cook::ECookMetadataPluginType::Unassigned)
+		{
+			UE_LOG(LogIoStore, Warning, TEXT("We caused an unassigned plugin type in shader pseudo plugin generation! %s"), *Entry.Name);
+		}
+	}
+}
+
+/**
+*	Use the name of the package to assign sizes so that we can track build size at a per-plugin level,
+*	and write out jsons files for each plugin in to the cooked metadata directory.
+* 
+*	Plugins insert themselves in to the package's path at the top level. Content that is unassigned
+*	to a plugin has either /Engine or /Game as it's top level path and will be assigned to a pseudo
+*	plugin.
+*/
+static void UpdatePluginMetadataAndWriteJsons(
+	const FString& InAssetRegistryFileName, 
+	TMap<FPackageId, TArray<FIoStoreChunkSource, TInlineAllocator<2>>>& PackageToChunks, 
+	FAssetRegistryState& AssetRegistry, 
+	UE::Cook::FCookMetadataState& CookMetadata, 
+	FShaderAssociationInfo* InShaderAssociationInfo)
+{
+	double WritePluginStart = FPlatformTime::Seconds();
+
+	FPluginGraph PluginGraph;
+	GeneratePluginGraph(CookMetadata.GetPluginHierarchy(), PluginGraph);
+
+	if (InShaderAssociationInfo)
+	{
+		InsertShadersInPluginHierarchy(CookMetadata, PluginGraph, *InShaderAssociationInfo);
+
+		// Generate the graph aggain after we've inserted the new "plugins".
+		PluginGraph = FPluginGraph();
+		GeneratePluginGraph(CookMetadata.GetPluginHierarchy(), PluginGraph);
+	}
+
+	double GeneratePluginGraphEnd = FPlatformTime::Seconds();
+
+	TSet<FString> LoggedPluginNames;
+
+	FTopLevelAssetPath Texture2DPath(TEXT("/Script/Engine.Texture2D"));
+	FTopLevelAssetPath Texture2DArrayPath(TEXT("/Script/Engine.Texture2DArray"));
+	FTopLevelAssetPath Texture3DPath(TEXT("/Script/Engine.Texture3D"));
+	FTopLevelAssetPath TextureCubePath(TEXT("/Script/Engine.TextureCube"));
+	FTopLevelAssetPath TextureCubeArrayPath(TEXT("/Script/Engine.TextureCubeArray"));
+	FTopLevelAssetPath VirtualTextureBuilderPath(TEXT("/Script/Engine.VirtualTextureBuilder"));
+	FTopLevelAssetPath StaticMeshPath(TEXT("/Script/Engine.StaticMesh"));
+	FTopLevelAssetPath SoundWavePath(TEXT("/Script/Engine.SoundWave"));
+	FTopLevelAssetPath SkeletalMeshPath(TEXT("/Script/Engine.SkeletalMesh"));
+	FTopLevelAssetPath LevelPath(TEXT("/Script/Engine.World"));
+	FTopLevelAssetPath BlueprintPath(TEXT("/Script/Engine.BlueprintGeneratedClass"));
+	FTopLevelAssetPath AnimationSequencePath(TEXT("/Script/Engine.AnimSequence"));
+	FTopLevelAssetPath GeometryCollectionPath(TEXT("/Script/GeometryCollectionEngine.GeometryCollection"));
+	FTopLevelAssetPath NiagaraSystemPath(TEXT("/Script/Niagara.NiagaraSystem"));
+	FTopLevelAssetPath MaterialInstancePath(TEXT("/Script/Engine.MaterialInstanceConstant"));
+	
+	if (InShaderAssociationInfo)
+	{
+		//
+		// Create a bunch of "Assets" that we can iterate over in the same manner as a normal
+		// asset and find its containing "plugin" for the purposes of assigning its size.
+		//
+		TArray<UE::Cook::FCookMetadataShaderPseudoAsset> ShaderPseudoAssets;
+
+		TMap<FName, TArray<int32>> PackageDependencyMap;
+
+		// All package shaders should now either be able to be assigned to:
+		// 1. a single package (i.e. plugin)
+		// 2. shared between packages in 1 plugin (i.e. a plugin)
+		// 3. shared between packages across plugins (i.e. assignable to a pseudo plugin we created earlier).
+		//
+		uint64 CrossPluginShaderSize = 0;
+		uint64 SinglePluginShaderSize = 0;
+		uint64 InlineShaderSize = 0;
+		uint64 GlobalShaderSize = 0;
+		uint64 OrphanShaderSize = 0;
+		for (TPair<FShaderAssociationInfo::FShaderChunkInfoKey, FShaderAssociationInfo::FShaderChunkInfo>& ShaderChunkInfo : InShaderAssociationInfo->ShaderChunkInfos)
+		{
+			if (ShaderChunkInfo.Value.Type == FShaderAssociationInfo::FShaderChunkInfo::Orphan)
+			{
+				OrphanShaderSize += ShaderChunkInfo.Value.CompressedSize;
+				continue;
+			}
+			if (ShaderChunkInfo.Value.Type == FShaderAssociationInfo::FShaderChunkInfo::Global)
+			{
+				GlobalShaderSize += ShaderChunkInfo.Value.CompressedSize;
+				continue;
+			}
+
+			check(ShaderChunkInfo.Value.Type == FShaderAssociationInfo::FShaderChunkInfo::Package);
+
+			TStringBuilder<128> PackageName;
+			if (ShaderChunkInfo.Value.SharedPluginName.Len())
+			{
+				// We know we belong to this plugin.
+				PackageName.Append(ShaderChunkInfo.Value.SharedPluginName);
+				CrossPluginShaderSize += ShaderChunkInfo.Value.CompressedSize;
+			}
+			else
+			{
+				// We know all the plugin prefixes are the same for all referrers
+				if (ShaderChunkInfo.Value.ReferencedByPackages.Num() == 1)
+				{
+					InlineShaderSize += ShaderChunkInfo.Value.CompressedSize;
+				}
+				else
+				{
+					SinglePluginShaderSize += ShaderChunkInfo.Value.CompressedSize;
+				}
+
+				FString PackageNameStr = ShaderChunkInfo.Value.ReferencedByPackages[0].ToString();
+				FStringView Plugin = FPackageName::SplitPackageNameRoot(PackageNameStr, nullptr);
+				PackageName.Append(Plugin);
+			}
+
+			FPluginGraphEntry** PluginEntryPtr = PluginGraph.NameToPlugin.Find(PackageName.ToString());
+			if (PluginEntryPtr)
+			{
+				PluginEntryPtr[0]->ExclusiveSizes[(uint8)EPluginGraphSizeClass::All][ShaderChunkInfo.Value.SizeType] += ShaderChunkInfo.Value.CompressedSize;
+				PluginEntryPtr[0]->ExclusiveSizes[(uint8)EPluginGraphSizeClass::Shader][ShaderChunkInfo.Value.SizeType] += ShaderChunkInfo.Value.CompressedSize;
+			}
+			else
+			{
+				FString AllocatedPluginName(PackageName.ToString());
+				bool bAlreadyLogged = false;
+				LoggedPluginNames.Add(AllocatedPluginName, &bAlreadyLogged);
+				if (bAlreadyLogged == false)
+				{
+					UE_LOG(LogIoStore, Warning, TEXT("Plugin for shader not found: %s"), *AllocatedPluginName);
+				}
+			}
+
+
+			// What to name our package? Needs to be unique. We just concat everything so a human
+			// can trace where it came from.
+			PackageName.Append(TEXT("/ShaderPseudoAsset_"));
+
+			PackageName.Append(ShaderChunkInfo.Key.PakChunkName.ToString());
+			PackageName.Append(TEXT("_"));
+
+			// shader hash (iochunkid)
+			UE::String::BytesToHexLower(MakeArrayView(ShaderChunkInfo.Key.IoChunkId.GetData(), sizeof(FIoChunkId)), PackageName);
+
+			ShaderPseudoAssets.Add({PackageName.ToString(), ShaderChunkInfo.Value.CompressedSize});
+
+			// Track who depends on this shader by index.
+			for (FName ReferencingPackage : ShaderChunkInfo.Value.ReferencedByPackages)
+			{
+				TArray<int32>& PackageDependencies = PackageDependencyMap.FindOrAdd(ReferencingPackage);
+				PackageDependencies.Add(ShaderPseudoAssets.Num() - 1);
+			}
+		}
+
+		TMap<FName, TPair<int32, int32>> FinalizedDependencyMap;
+
+		// Now convert the package dependency map in to array ranges.
+		TArray<int32> DependencyByIndex;
+		for (TPair<FName, TArray<int32>>& Dependencies : PackageDependencyMap)
+		{
+			TPair<int32, int32>& Entry = FinalizedDependencyMap.Add(Dependencies.Key);
+			Entry.Key = DependencyByIndex.Num();
+			DependencyByIndex.Append(Dependencies.Value);
+			Entry.Value = DependencyByIndex.Num();
+		}
+
+		// Move the new info over to the cook metadata.
+		UE::Cook::FCookMetadataShaderPseudoHierarchy PSH;
+		PSH.ShaderAssets = MoveTemp(ShaderPseudoAssets);
+		PSH.PackageShaderDependencyMap = MoveTemp(FinalizedDependencyMap);
+		PSH.DependencyList = MoveTemp(DependencyByIndex);
+		CookMetadata.SetShaderPseudoHieararchy(MoveTemp(PSH));
+
+		double TotalShaderSize = (double)(InlineShaderSize + CrossPluginShaderSize + SinglePluginShaderSize + GlobalShaderSize + OrphanShaderSize);
+		UE_LOG(LogIoStore, Display, TEXT("Shader total sizes: %s single package (%.0f%%), %s single root GFP (%.0f%%), %s cross root GFP (%.0f%%), %s global (%.0f%%), %s orphan (%.0f%%) - %s assigned (%.0f%%)"),
+			*NumberString(InlineShaderSize), 100.0 * InlineShaderSize / TotalShaderSize,
+			*NumberString(SinglePluginShaderSize), 100.0 * SinglePluginShaderSize / TotalShaderSize,
+			*NumberString(CrossPluginShaderSize), 100.0 * CrossPluginShaderSize / TotalShaderSize,
+			*NumberString(GlobalShaderSize), 100.0 * GlobalShaderSize / TotalShaderSize,
+			*NumberString(OrphanShaderSize), 100.0 * OrphanShaderSize / TotalShaderSize,
+			*NumberString(InlineShaderSize + SinglePluginShaderSize + CrossPluginShaderSize), 100.0 * (InlineShaderSize + SinglePluginShaderSize + CrossPluginShaderSize) / TotalShaderSize
+		);
+	}
+
+	double AssetPackageMapStart = FPlatformTime::Seconds();
+	const TMap<FName, const FAssetPackageData*> AssetPackageMap = AssetRegistry.GetAssetPackageDataMap();
+	for (const TPair<FName, const FAssetPackageData*>& AssetPackage : AssetPackageMap)
+	{
+		if (AssetPackage.Value->DiskSize < 0)
+		{
+			// No data on disk!
+			continue;
+		}
+
+		// Grab the most important asset out and use it to track largest asset classes for the plugin.
+		// This might be null!
+		const FAssetData* AssetData = UE::AssetRegistry::GetMostImportantAsset(AssetRegistry.GetAssetsByPackageName(AssetPackage.Key), UE::AssetRegistry::EGetMostImportantAssetFlags::IgnoreSkipClasses);
+		
+		const TArray<FIoStoreChunkSource, TInlineAllocator<2>>* PackageChunks = PackageToChunks.Find(FPackageId::FromName(AssetPackage.Key));
+		if (PackageChunks == nullptr)
+		{
+			// This happens when the package has been stripped by UAT prior to staging by e.g. PakDenyList.
+			continue;
+		}
+
+		UE::Cook::FPluginSizeInfo PackageSizes;
+		for (const FIoStoreChunkSource& ChunkInfo : *PackageChunks)
+		{
+			PackageSizes[ChunkInfo.SizeType] += ChunkInfo.ChunkInfo.CompressedSize;
+		}
+
+		// Assign the size to the package's plugin.
+		{
+			TStringBuilder<FName::StringBufferSize> PackageNameStr(InPlace, AssetPackage.Key);
+			FStringView PackageName(PackageNameStr);
+
+			FStringView PluginName = FPackageName::SplitPackageNameRoot(PackageName, nullptr);
+			FPluginGraphEntry** PluginEntryPtr = PluginGraph.NameToPlugin.Find(PluginName);
+			if (PluginEntryPtr)
+			{
+				FPluginGraphEntry* PluginEntry = *PluginEntryPtr;
+				PluginEntry->ExclusiveSizes[(uint8)EPluginGraphSizeClass::All].Add(PackageSizes);
+
+				// If we have asset class info and it's a top contender, track it also.
+				if (AssetData != nullptr)
+				{
+					EPluginGraphSizeClass AssetSizeClass = EPluginGraphSizeClass::Other;
+					if (AssetData->AssetClassPath == Texture2DPath ||
+						AssetData->AssetClassPath == Texture3DPath ||
+						AssetData->AssetClassPath == TextureCubePath ||
+						AssetData->AssetClassPath == TextureCubeArrayPath ||
+						AssetData->AssetClassPath == Texture2DArrayPath || 
+						AssetData->AssetClassPath == VirtualTextureBuilderPath)
+					{
+						AssetSizeClass = EPluginGraphSizeClass::Texture;
+					}
+					else if (AssetData->AssetClassPath == StaticMeshPath)
+					{
+						AssetSizeClass = EPluginGraphSizeClass::StaticMesh;
+					}
+					else if (AssetData->AssetClassPath == SoundWavePath)
+					{
+						AssetSizeClass = EPluginGraphSizeClass::SoundWave;
+					}
+					else if (AssetData->AssetClassPath == SkeletalMeshPath)
+					{
+						AssetSizeClass = EPluginGraphSizeClass::SkeletalMesh;
+					}
+					else if (AssetData->AssetClassPath == AnimationSequencePath)
+					{
+						AssetSizeClass = EPluginGraphSizeClass::Animation;
+					}
+					else if (AssetData->AssetClassPath == NiagaraSystemPath)
+					{
+						AssetSizeClass = EPluginGraphSizeClass::Niagara;
+					}
+					else if (AssetData->AssetClassPath == MaterialInstancePath)
+					{
+						AssetSizeClass = EPluginGraphSizeClass::Material;
+					}
+					else if (AssetData->AssetClassPath == LevelPath)
+					{
+						AssetSizeClass = EPluginGraphSizeClass::Level;
+					}
+					else if (AssetData->AssetClassPath == BlueprintPath)
+					{
+						AssetSizeClass = EPluginGraphSizeClass::Blueprint;
+					}
+					else if (AssetData->AssetClassPath == GeometryCollectionPath)
+					{
+						AssetSizeClass = EPluginGraphSizeClass::Geometry;
+					}
+					
+					// Note that we can't get shaders here so we don't need to handle ::Shader.
+
+					PluginEntry->ExclusiveSizes[(uint8)AssetSizeClass].Add(PackageSizes);
+					PluginEntry->ExclusiveCounts[(uint8)AssetSizeClass]++;
+				}
+			}
+			else
+			{
+				FString AllocatedPluginName(PluginName);
+				bool bAlreadyLogged = false;
+				LoggedPluginNames.Add(MoveTemp(AllocatedPluginName), &bAlreadyLogged);
+				if (bAlreadyLogged == false)
+				{
+					UE_LOG(LogIoStore, Display, TEXT("Plugin for package not found: %s (%.*s)"), PackageNameStr.GetData(), PluginName.Len(), PluginName.GetData());
+				}
+			}
+		}
+	}
+
+	// Inclusive is the sum of us plus all our dependencies.
+	for (FPluginGraphEntry* PluginEntry : PluginGraph.TopologicallySortedPlugins)
+	{
+		for (uint8 ClassIndex = 0; ClassIndex < FPluginGraphEntry::ClassCount; ClassIndex++)
+		{
+			PluginEntry->InclusiveSizes[ClassIndex] = PluginEntry->ExclusiveSizes[ClassIndex];
+			PluginEntry->InclusiveCounts[ClassIndex] = PluginEntry->ExclusiveCounts[ClassIndex];
+		}
+
+		for (FPluginGraphEntry* Dependency : PluginEntry->TotalDependencies)
+		{
+			for (uint8 ClassIndex = 0; ClassIndex < FPluginGraphEntry::ClassCount; ClassIndex++)
+			{
+				PluginEntry->InclusiveSizes[ClassIndex].Add(Dependency->ExclusiveSizes[ClassIndex]);
+				PluginEntry->InclusiveCounts[ClassIndex] += Dependency->ExclusiveCounts[ClassIndex];
+			}			
+		}
+	}
+
+	// Now we need to find the unique size for each root plugin. This is the size of dependencies that only
+	// belong to the root plugin and not to another. Conceptually this is the "assuming all other roots are
+	// installed, this is the size cost to add this plugin to the install".
+	for (FPluginGraphEntry* RootPlugin : PluginGraph.RootPlugins)
+	{
+		for (FPluginGraphEntry* UniqueDependency : RootPlugin->UniqueDependencies)
+		{
+			for (uint8 ClassIndex = 0; ClassIndex < FPluginGraphEntry::ClassCount; ClassIndex++)
+			{
+				RootPlugin->UniqueSizes[ClassIndex].Add(UniqueDependency->ExclusiveSizes[ClassIndex]);
+				RootPlugin->UniqueCounts[ClassIndex] += UniqueDependency->ExclusiveCounts[ClassIndex];
+			}
+		}
+	}
+	
+	// Find the total size of all plugins that aren't rooted in the root set.
+	UE::Cook::FPluginSizeInfo UnrootedTotal;
+	for (FPluginGraphEntry* Plugin : PluginGraph.UnrootedPlugins)
+	{		
+		UnrootedTotal.Add(Plugin->ExclusiveSizes[(uint8)EPluginGraphSizeClass::All]);
+	}
+
+	double WriteBegin = FPlatformTime::Seconds();
+
+	UE::Cook::FCookMetadataPluginHierarchy& MutablePluginHierarchy = CookMetadata.GetMutablePluginHierarchy();
+
+	auto GeneratePluginJson = [&MutablePluginHierarchy](TUtf8StringBuilder<4096>& OutPluginMetadataJson, FStringView InName, const FPluginGraphEntry& InGraphEntry, EPluginGraphSizeClass InSizeClass)
+	{
+		OutPluginMetadataJson.Reset();
+
+		uint8 SizeClass = (uint8)InSizeClass;
+
+		if (InGraphEntry.InclusiveSizes[SizeClass].TotalSize()== 0)
+		{
+			// Asset type or its dependencies do not contribute to the record.
+			return;
+		}
+		
+		OutPluginMetadataJson << "{\n";
+		OutPluginMetadataJson << "\t\"name\":\"" << InName << "\",\n";
+
+		OutPluginMetadataJson << "\t\"schema_version\":4,\n";
+
+		OutPluginMetadataJson << "\t\"is_root_plugin\":" << (InGraphEntry.bIsRoot ? TEXTVIEW("true") : TEXTVIEW("false")) << ",\n";
+		OutPluginMetadataJson << "\t\"asset_sizes_class\":\"" << PluginGraphEntryClassNames[SizeClass] << "\",\n";
+		OutPluginMetadataJson << "\t\"exclusive_asset_class_count\":" << InGraphEntry.ExclusiveCounts[SizeClass] << ",\n";
+
+		OutPluginMetadataJson << "\t\"exclusive_installed\":" << InGraphEntry.ExclusiveSizes[SizeClass][UE::Cook::EPluginSizeTypes::Installed] << ",\n";
+		OutPluginMetadataJson << "\t\"exclusive_optional\":" << InGraphEntry.ExclusiveSizes[SizeClass][UE::Cook::EPluginSizeTypes::Optional] << ",\n";
+		OutPluginMetadataJson << "\t\"exclusive_ias\":" << InGraphEntry.ExclusiveSizes[SizeClass][UE::Cook::EPluginSizeTypes::Streaming] << ",\n";
+		OutPluginMetadataJson << "\t\"exclusive_optionalsegment\":" << InGraphEntry.ExclusiveSizes[SizeClass][UE::Cook::EPluginSizeTypes::OptionalSegment] << ",\n";
+		
+		OutPluginMetadataJson << "\t\"inclusive_installed\":" << InGraphEntry.InclusiveSizes[SizeClass][UE::Cook::EPluginSizeTypes::Installed] << ",\n";
+		OutPluginMetadataJson << "\t\"inclusive_optional\":" << InGraphEntry.InclusiveSizes[SizeClass][UE::Cook::EPluginSizeTypes::Optional] << ",\n";
+		OutPluginMetadataJson << "\t\"inclusive_ias\":" << InGraphEntry.InclusiveSizes[SizeClass][UE::Cook::EPluginSizeTypes::Streaming] << ",\n";
+		OutPluginMetadataJson << "\t\"inclusive_optionalsegment\":" << InGraphEntry.InclusiveSizes[SizeClass][UE::Cook::EPluginSizeTypes::OptionalSegment] << ",\n";
+
+		// this only has values for is_root_plugin == true.
+		OutPluginMetadataJson << "\t\"unique_installed\":" << InGraphEntry.UniqueSizes[SizeClass][UE::Cook::EPluginSizeTypes::Installed] << ",\n";
+		OutPluginMetadataJson << "\t\"unique_optional\":" << InGraphEntry.UniqueSizes[SizeClass][UE::Cook::EPluginSizeTypes::Optional] << ",\n";
+		OutPluginMetadataJson << "\t\"unique_ias\":" << InGraphEntry.UniqueSizes[SizeClass][UE::Cook::EPluginSizeTypes::Streaming] << ",\n";
+		OutPluginMetadataJson << "\t\"unique_optionalsegment\":" << InGraphEntry.UniqueSizes[SizeClass][UE::Cook::EPluginSizeTypes::OptionalSegment] << ",\n";
+
+		OutPluginMetadataJson << "\t\"direct_refcount\":" << InGraphEntry.DirectRefcount << ",\n";
+
+		// pass through any custom fields that were added to the cook metadata.
+		if (InGraphEntry.IndexInEnabledPlugins != TNumericLimits<uint16>::Max())
+		{
+			const UE::Cook::FCookMetadataPluginEntry& CookMetadataEntry = MutablePluginHierarchy.PluginsEnabledAtCook[InGraphEntry.IndexInEnabledPlugins];
+			for (const TPair<uint8, UE::Cook::FCookMetadataPluginEntry::CustomFieldVariantType>& CustomValue : CookMetadataEntry.CustomFields)
+			{
+				const FString& FieldName = MutablePluginHierarchy.CustomFieldEntries[CustomValue.Key].Name;
+				UE::Cook::ECookMetadataCustomFieldType FieldType = MutablePluginHierarchy.CustomFieldEntries[CustomValue.Key].Type;
+
+				OutPluginMetadataJson << "\t\"" << FieldName;
+				
+				if (CustomValue.Value.IsType<bool>())
+				{
+					check(FieldType == UE::Cook::ECookMetadataCustomFieldType::Bool);
+					OutPluginMetadataJson << (CustomValue.Value.Get<bool>() ? "\":true,\n" : "\":false,\n");
+				}
+				else
+				{
+					check(FieldType == UE::Cook::ECookMetadataCustomFieldType::String);
+					OutPluginMetadataJson << "\":\"" << CustomValue.Value.Get<FString>() << "\",\n";
+				}
+
+			}
+		}
+
+		{
+			OutPluginMetadataJson << "\t\"roots\":[";
+
+			int32 RootIndex = 0;
+			for (FPluginGraphEntry* Root : InGraphEntry.Roots)
+			{
+				
+				OutPluginMetadataJson << "\"" << Root->Name << "\"";
+				if (RootIndex + 1 < InGraphEntry.Roots.Num())
+				{
+					OutPluginMetadataJson << ",";
+				}
+				RootIndex++;
+			}
+
+			OutPluginMetadataJson << "]\n";
+		}
+
+
+
+		OutPluginMetadataJson << "}\n";
+	};
+
+	//
+	// Generate the plugin_summary jsons.	
+	//
+
+	// Also write a csv for easier browsing in spreadsheets.
+	TUtf8StringBuilder<4096> Csv;
+	Csv.Append("name,asset_sizes_class,exclusive_installed,exclusive_optional,exclusive_ias,inclusive_installed,inclusive_optional,inclusive_ias,unique_installed,unique_optional,unique_ias,direct_refcount,total_dependency_count\n");
+
+
+	// This is so re-staging the same cook is consistent.	
+	for (UE::Cook::FCookMetadataPluginEntry& Plugin : MutablePluginHierarchy.PluginsEnabledAtCook)
+	{
+		Plugin.InclusiveSizes.Zero();
+		Plugin.ExclusiveSizes.Zero();
+	}
+	
+	// Instead of writing out a ton of small event files we concat them all. There are a lot in a mature project.
+	// This will be megabytes.
+	TArray<UTF8CHAR> PluginMetadataFullJson;
+	uint32 PluginsAddedToFullJson = 0;
+	PluginMetadataFullJson.Append(UTF8TEXTVIEW("{ \"PluginSizeInfos\": ["));
+
+	auto AddPluginJsonToFull = [&PluginMetadataFullJson, &PluginsAddedToFullJson](TUtf8StringBuilder<4096>& InJsonToAdd)
+	{
+		if (PluginsAddedToFullJson)
+		{
+			PluginMetadataFullJson.Add(UTF8TEXT(','));
+		}
+		PluginsAddedToFullJson++;
+		PluginMetadataFullJson.Append(InJsonToAdd.GetData(), InJsonToAdd.Len());
+	};
+
+	TUtf8StringBuilder<4096> PluginMetadataJson;
+
+	for (UE::Cook::FCookMetadataPluginEntry& Plugin : MutablePluginHierarchy.PluginsEnabledAtCook)
+	{
+		const FPluginGraphEntry& PluginEntry = *PluginGraph.NameToPlugin[Plugin.Name];
+		if (PluginEntry.InclusiveSizes[(uint8)EPluginGraphSizeClass::All].TotalSize() == 0)
+		{
+			continue;
+		}
+
+		Plugin.InclusiveSizes = PluginEntry.InclusiveSizes[(uint8)EPluginGraphSizeClass::All];
+		Plugin.ExclusiveSizes = PluginEntry.ExclusiveSizes[(uint8)EPluginGraphSizeClass::All];
+
+		for (uint8 ClassIndex = 0; ClassIndex < FPluginGraphEntry::ClassCount; ClassIndex++)
+		{
+
+			GeneratePluginJson(PluginMetadataJson, Plugin.Name, PluginEntry, (EPluginGraphSizeClass)ClassIndex);
+
+			if (PluginMetadataJson.Len()>0)
+			{
+				AddPluginJsonToFull(PluginMetadataJson);
+				Csv.Appendf("%ls,%s,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%llu,%u,%u\n", *Plugin.Name, PluginGraphEntryClassNames[ClassIndex],
+					PluginEntry.ExclusiveSizes[ClassIndex][UE::Cook::EPluginSizeTypes::Installed],
+					PluginEntry.ExclusiveSizes[ClassIndex][UE::Cook::EPluginSizeTypes::Optional],
+					PluginEntry.ExclusiveSizes[ClassIndex][UE::Cook::EPluginSizeTypes::Streaming],
+					PluginEntry.InclusiveSizes[ClassIndex][UE::Cook::EPluginSizeTypes::Installed],
+					PluginEntry.InclusiveSizes[ClassIndex][UE::Cook::EPluginSizeTypes::Optional],
+					PluginEntry.InclusiveSizes[ClassIndex][UE::Cook::EPluginSizeTypes::Streaming],
+					PluginEntry.UniqueSizes[ClassIndex][UE::Cook::EPluginSizeTypes::Installed],
+					PluginEntry.UniqueSizes[ClassIndex][UE::Cook::EPluginSizeTypes::Optional],
+					PluginEntry.UniqueSizes[ClassIndex][UE::Cook::EPluginSizeTypes::Streaming],
+					PluginEntry.DirectRefcount, PluginEntry.TotalDependencies.Num());
+			}
+		}
+	}
+
+	// Also write a json that contains the sizes for the plugins that don't belong to any root plugin,
+	// so that size information never gets lost.
+	{
+		FPluginGraphEntry OrphanedEntry;
+		OrphanedEntry.bIsRoot = true;
+		OrphanedEntry.DirectRefcount = 0;
+		OrphanedEntry.InclusiveSizes[(uint8)EPluginGraphSizeClass::All] = UnrootedTotal;
+		GeneratePluginJson(PluginMetadataJson, TEXT("OrphanedPlugins"), OrphanedEntry, EPluginGraphSizeClass::All);
+		if (PluginMetadataJson.Len() > 0)
+		{
+			AddPluginJsonToFull(PluginMetadataJson);
+		}
+
+		Csv.Appendf("OrphanedPlugins,all,0,0,0,%llu,%llu,%llu,0,%u\n",
+			UnrootedTotal[UE::Cook::EPluginSizeTypes::Installed], UnrootedTotal[UE::Cook::EPluginSizeTypes::Optional], UnrootedTotal[UE::Cook::EPluginSizeTypes::Streaming],
+			PluginGraph.UnrootedPlugins.Num());
+	}
+
+	PluginMetadataFullJson.Append(UTF8TEXTVIEW("]}"));
+	{
+		FString JsonFilename = FPaths::GetPath(InAssetRegistryFileName) / TEXT("plugin_size_jsons.json");
+		if (WriteUtf8StringView(MakeStringView(PluginMetadataFullJson), JsonFilename) == false)
+		{
+			UE_LOG(LogIoStore, Error, TEXT("Unable to write plugin json file: %s"), *JsonFilename);
+			return;
+		}
+	}
+
+	{
+		FString CsvFilename = FPaths::GetPath(InAssetRegistryFileName) / TEXT("plugin_sizes.csv");
+		if (WriteUtf8StringView(Csv.ToView(), CsvFilename) == false)
+		{
+			UE_LOG(LogIoStore, Error, TEXT("Unable to write plugin csv file: %s"), *CsvFilename);
+			return;
+		}
+	}
+
+	double WritePluginEnd = FPlatformTime::Seconds();
+	UE_LOG(LogIoStore, Display, TEXT("Wrote plugin size jsons/csv in %.2f seconds [graph %.2f shaders %.2f sizes %.2f writes %.2f]"), 
+		WritePluginEnd - WritePluginStart, 
+		GeneratePluginGraphEnd - WritePluginStart, 
+		AssetPackageMapStart - GeneratePluginGraphEnd,
+		WriteBegin - AssetPackageMapStart,
+		WritePluginEnd - WriteBegin);
+}
+
+
+static void AddChunkInfoToAssetRegistry(TMap<FPackageId, TArray<FIoStoreChunkSource, TInlineAllocator<2>>>&& PackageToChunks, FAssetRegistryState& AssetRegistry, const FShaderAssociationInfo* ShaderSizeInfo, uint64 InUnassignableShaderCodeBytes, uint64 InAssignableShaderCodeBytes, uint64 TotalCompressedSize)
 {
 	//
 	// The asset registry has the chunks associate with each package, so we can just iterate the
@@ -3179,6 +4410,8 @@ static void AddChunkInfoToAssetRegistry(TMap<FPackageId, TArray<FIoStoreTocChunk
 			continue;
 		}
 
+		FPackageId PackageId = FPackageId::FromName(AssetPackage.Key);
+
 		const FAssetData* AssetData = UE::AssetRegistry::GetMostImportantAsset(AssetRegistry.GetAssetsByPackageName(AssetPackage.Key), UE::AssetRegistry::EGetMostImportantAssetFlags::IgnoreSkipClasses);
 		if (AssetData == nullptr)
 		{
@@ -3186,46 +4419,53 @@ static void AddChunkInfoToAssetRegistry(TMap<FPackageId, TArray<FIoStoreTocChunk
 			continue;
 		}
 
-		const TArray<FIoStoreTocChunkInfo, TInlineAllocator<2>>* PackageChunks = PackageToChunks.Find(FPackageId::FromName(AssetPackage.Key));
+		const TArray<FIoStoreChunkSource, TInlineAllocator<2>>* PackageChunks = PackageToChunks.Find(PackageId);
 		if (PackageChunks == nullptr)
 		{
 			// This happens when the package has been stripped by UAT prior to staging by e.g. PakDenyList.
 			continue;
 		}
 
+		UE::Cook::FPluginSizeInfo PackageCompressedSize;
+		UE::Cook::FPluginSizeInfo PackageSize;
 		int32 ChunkCount = 0;
-		int64 Size = 0;
-		int64 CompressedSize = 0;
-		for (const FIoStoreTocChunkInfo& ChunkInfo : *PackageChunks)
+		for (const FIoStoreChunkSource& ChunkInfo : *PackageChunks)
 		{
 			ChunkCount++;
-			Size += ChunkInfo.Size;
-			CompressedSize += ChunkInfo.CompressedSize;
+			PackageSize[ChunkInfo.SizeType] += ChunkInfo.ChunkInfo.Size;
+			PackageCompressedSize[ChunkInfo.SizeType] += ChunkInfo.ChunkInfo.CompressedSize;
 		}
 
 		FAssetDataTagMap TagsAndValues;
-		TagsAndValues.Add("Stage_ChunkCount", LexToString(ChunkCount));
-		TagsAndValues.Add("Stage_ChunkSize", LexToString(Size));
-		TagsAndValues.Add("Stage_ChunkCompressedSize", LexToString(CompressedSize));
+		TagsAndValues.Add(UE::AssetRegistry::Stage_ChunkCountFName, LexToString(ChunkCount));
+		TagsAndValues.Add(UE::AssetRegistry::Stage_ChunkSizeFName, LexToString(PackageSize.TotalSize()));
+		TagsAndValues.Add(UE::AssetRegistry::Stage_ChunkCompressedSizeFName, LexToString(PackageCompressedSize.TotalSize()));
+		TagsAndValues.Add(UE::AssetRegistry::Stage_ChunkInstalledSizeFName, LexToString(PackageCompressedSize[UE::Cook::EPluginSizeTypes::Installed]));
+		TagsAndValues.Add(UE::AssetRegistry::Stage_ChunkStreamingSizeFName, LexToString(PackageCompressedSize[UE::Cook::EPluginSizeTypes::Streaming]));
+		TagsAndValues.Add(UE::AssetRegistry::Stage_ChunkOptionalSizeFName, LexToString(PackageCompressedSize[UE::Cook::EPluginSizeTypes::Optional]));
 		AssetRegistry.AddTagsToAssetData(AssetData->GetSoftObjectPath(), MoveTemp(TagsAndValues));
 
 		// We assign a package's chunks to a single asset, remove it from the list so that
 		// at the end we can track how many chunks don't get assigned.
-		PackageToChunks.Remove(FPackageId::FromName(AssetPackage.Key));
+		PackageToChunks.Remove(PackageId);
 
 		UpdatedAssetCount++;
-		AssetsCompressedSize += CompressedSize;
+		AssetsCompressedSize += PackageCompressedSize.TotalSize();
 	}
 	
 	// PackageToChunks now has chunks that we never assigned to an asset, and so aren't accounted for.
 	uint64 RemainingByType[(uint8)EIoChunkType::MAX] = {};
 	for (auto PackageChunks : PackageToChunks)
 	{
-		for (FIoStoreTocChunkInfo& Info : PackageChunks.Value)
+		for (FIoStoreChunkSource& Info : PackageChunks.Value)
 		{
-			RemainingByType[(uint8)Info.ChunkType] += Info.CompressedSize;
+			RemainingByType[(uint8)Info.ChunkInfo.ChunkType] += Info.ChunkInfo.CompressedSize;
 		}
 	}
+	
+	// Shaders aren't in the PackageToChunks map, but we want to numbers reported to include them.
+	RemainingByType[(uint8)EIoChunkType::ShaderCode] += InUnassignableShaderCodeBytes;
+	AssetsCompressedSize += InAssignableShaderCodeBytes;
 
 	double PercentAssets = 1.0f;
 	if (TotalCompressedSize != 0)
@@ -3245,15 +4485,33 @@ static void AddChunkInfoToAssetRegistry(TMap<FPackageId, TArray<FIoStoreTocChunk
 	}
 }
 
-static bool LoadAssetRegistry(const FString& InAssetRegistryFileName, FAssetRegistryState& OutAssetRegistry)
+// Returns the hash of the development asset registry or 0 on failure.
+static uint64 LoadAssetRegistry(const FString& InAssetRegistryFileName, FAssetRegistryState& OutAssetRegistry)
 {
 	FAssetRegistryVersion::Type Version;
 	FAssetRegistryLoadOptions Options(UE::AssetRegistry::ESerializationTarget::ForDevelopment);
-	bool bSucceeded = FAssetRegistryState::LoadFromDisk(*InAssetRegistryFileName, Options, OutAssetRegistry, &Version);
-	return bSucceeded;
+
+	TUniquePtr<FArchive> FileReader(IFileManager::Get().CreateFileReader(*InAssetRegistryFileName));
+	if (FileReader)
+	{
+		TArray64<uint8> Data;
+		Data.SetNumUninitialized(FileReader->TotalSize());
+		FileReader->Serialize(Data.GetData(), Data.Num());
+		check(!FileReader->IsError());
+
+		uint64 DevArHash = UE::Cook::FCookMetadataState::ComputeHashOfDevelopmentAssetRegistry(MakeMemoryView(Data));
+
+		FLargeMemoryReader MemoryReader(Data.GetData(), Data.Num());
+		if (OutAssetRegistry.Load(MemoryReader, Options, &Version))
+		{
+			return DevArHash;
+		}
+	}
+
+	return 0;;
 }
 
-static bool SaveAssetRegistry(const FString& InAssetRegistryFileName, FAssetRegistryState& InAssetRegistry, bool InSaveTempAndRename)
+static bool SaveAssetRegistry(const FString& InAssetRegistryFileName, FAssetRegistryState& InAssetRegistry, uint64* OutDevArHash)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(SavingAssetRegistry);
 	FLargeMemoryWriter SerializedAssetRegistry;
@@ -3263,7 +4521,12 @@ static bool SaveAssetRegistry(const FString& InAssetRegistryFileName, FAssetRegi
 		return false;
 	}
 
-	FString OutputFileName = InSaveTempAndRename ? (InAssetRegistryFileName + TEXT(".temp")) : InAssetRegistryFileName;
+	if (OutDevArHash)
+	{
+		*OutDevArHash = UE::Cook::FCookMetadataState::ComputeHashOfDevelopmentAssetRegistry(MakeMemoryView(SerializedAssetRegistry.GetData(), SerializedAssetRegistry.TotalSize()));
+	}
+
+	FString OutputFileName = InAssetRegistryFileName + TEXT(".temp");
 
 	TUniquePtr<FArchive> Writer = TUniquePtr<FArchive>(IFileManager::Get().CreateFileWriter(*OutputFileName));
 	if (!Writer)
@@ -3283,14 +4546,11 @@ static bool SaveAssetRegistry(const FString& InAssetRegistryFileName, FAssetRegi
 		return false;
 	}
 
-	if (InSaveTempAndRename)
+	// Move our temp file over the original asset registry.
+	if (IFileManager::Get().Move(*InAssetRegistryFileName, *OutputFileName) == false)
 	{
-		// Move our temp file over the original asset registry.
-		if (IFileManager::Get().Move(*InAssetRegistryFileName, *OutputFileName) == false)
-		{
-			// Error already logged by FileManager
-			return false;
-		}
+		// Error already logged by FileManager
+		return false;
 	}
 
 	UE_LOG(LogIoStore, Display, TEXT("Saved asset registry to disk. (%s)"), *InAssetRegistryFileName);
@@ -3298,14 +4558,14 @@ static bool SaveAssetRegistry(const FString& InAssetRegistryFileName, FAssetRegi
 	return true;
 }
 
-int32 DoAssetRegistryWritebackAfterStage(const FString& InAssetRegistryFileName, FString&& InContainerDirectory, const FKeyChain& InKeyChain)
+static int32 DoAssetRegistryWritebackAfterStage(const FString& InAssetRegistryFileName, FString&& InContainerDirectory, const FKeyChain& InKeyChain)
 {
 	// This version called after the containers are already created, when you
 	// have a bunch of containers on disk and you want to add chunk info back to
 	// an asset registry.
 
 	FAssetRegistryState AssetRegistry;
-	if (LoadAssetRegistry(InAssetRegistryFileName, AssetRegistry) == false)
+	if (LoadAssetRegistry(InAssetRegistryFileName, AssetRegistry) == 0)
 	{
 		UE_LOG(LogIoStore, Error, TEXT("Unabled to open source asset registry: %s"), *InAssetRegistryFileName);
 		return 1;
@@ -3319,7 +4579,7 @@ int32 DoAssetRegistryWritebackAfterStage(const FString& InAssetRegistryFileName,
 	uint64 TotalCompressedSize = 0;
 	
 	// Grab all the package infos.
-	TMap<FPackageId, TArray<FIoStoreTocChunkInfo, TInlineAllocator<2>>> PackageToChunks;
+	TMap<FPackageId, TArray<FIoStoreChunkSource, TInlineAllocator<2>>> PackageToChunks;
 	for (const FString& Filename : FoundContainerFiles)
 	{
 		TUniquePtr<FIoStoreReader> Reader = CreateIoStoreReader(*(InContainerDirectory / Filename), InKeyChain);
@@ -3331,18 +4591,31 @@ int32 DoAssetRegistryWritebackAfterStage(const FString& InAssetRegistryFileName,
 		Reader->EnumerateChunks([&](const FIoStoreTocChunkInfo& ChunkInfo)
 		{
 			FPackageId PackageId = FPackageId::FromValue(*(int64*)(ChunkInfo.Id.GetData()));
-			PackageToChunks.FindOrAdd(PackageId).Add(ChunkInfo);
+			// (Deployment can't be ascertained after staging - plugin jsons are not generated.)
+			PackageToChunks.FindOrAdd(PackageId).Add({ChunkInfo, UE::Cook::EPluginSizeTypes::COUNT});
 			TotalCompressedSize += ChunkInfo.CompressedSize;
 			return true;
 		});
 	}
 
-	AddChunkInfoToAssetRegistry(MoveTemp(PackageToChunks), AssetRegistry, TotalCompressedSize);
+	AddChunkInfoToAssetRegistry(MoveTemp(PackageToChunks), AssetRegistry, nullptr, 0, 0, TotalCompressedSize);
 
-	return SaveAssetRegistry(InAssetRegistryFileName, AssetRegistry, true) ? 0 : 1;
+	return SaveAssetRegistry(InAssetRegistryFileName, AssetRegistry, nullptr) ? 0 : 1;
 }
 
-static bool FindAndLoadDevelopmentAssetRegistry(const FString& InCookedDir, bool bInRequired, FAssetRegistryState& OutAssetRegistry, FString* OutAssetRegistryFileName /*optional, set on success*/)
+enum class ECookMetadataFiles
+{
+	None = 0,
+	AssetRegistry = 1,
+	CookMetadata = 2,
+	All = 4
+};
+ENUM_CLASS_FLAGS(ECookMetadataFiles);
+
+static ECookMetadataFiles FindAndLoadMetadataFiles(
+	const FString& InCookedDir, ECookMetadataFiles InRequiredFiles, 
+	FAssetRegistryState& OutAssetRegistry, FString* OutAssetRegistryFileName /*optional, set on success*/,
+	UE::Cook::FCookMetadataState* OutCookMetadata, FString* OutCookMetadataFileName /*optional, set on success or need*/)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LoadingAssetRegistry);
 
@@ -3361,7 +4634,7 @@ static bool FindAndLoadDevelopmentAssetRegistry(const FString& InCookedDir, bool
 
 	if (PossibleAssetRegistryFiles.Num() == 0)
 	{
-		if (bInRequired)
+		if (EnumHasAnyFlags(InRequiredFiles, ECookMetadataFiles::AssetRegistry))
 		{
 			UE_LOG(LogIoStore, Error, TEXT("No development asset registry file found!"));
 		}
@@ -3369,71 +4642,199 @@ static bool FindAndLoadDevelopmentAssetRegistry(const FString& InCookedDir, bool
 		{
 			UE_LOG(LogIoStore, Display, TEXT("No development asset registry file found!"));
 		}
-		return false;
+		return ECookMetadataFiles::None;
 	}
 
 	UE_LOG(LogIoStore, Display, TEXT("Using input asset registry: %s"), *PossibleAssetRegistryFiles[0]);
-	if (LoadAssetRegistry(PossibleAssetRegistryFiles[0], OutAssetRegistry) == false)
+	uint64 LoadedDevArHash = LoadAssetRegistry(PossibleAssetRegistryFiles[0], OutAssetRegistry);
+
+	if (LoadedDevArHash == 0)
 	{
-		return false; // already logged
+		return ECookMetadataFiles::None; // already logged
 	}
+
+	// If we found the asset registry, try and find the cook metadata that should be next to it.
+	ECookMetadataFiles ResultFiles = ECookMetadataFiles::AssetRegistry;
+
+	if (OutCookMetadata)
+	{
+		// The cook metadata file should be adjacent to the development asset registry.
+		FString CookMetadataFileName = FPaths::GetPath(PossibleAssetRegistryFiles[0]) / UE::Cook::GetCookMetadataFilename();
+		if (IFileManager::Get().FileExists(*CookMetadataFileName))
+		{
+			if (OutCookMetadata->ReadFromFile(CookMetadataFileName) == false)
+			{
+				UE_LOG(LogIoStore, Error, TEXT("Failed to deserialize cook metadata file - invalid data. [%s]"), *CookMetadataFileName);
+				if (EnumHasAnyFlags(InRequiredFiles, ECookMetadataFiles::CookMetadata))
+				{
+					return ECookMetadataFiles::None;
+				}
+			}
+			else if (OutCookMetadata->GetAssociatedDevelopmentAssetRegistryHash() != LoadedDevArHash &&
+				OutCookMetadata->GetAssociatedDevelopmentAssetRegistryHashPostWriteback() != LoadedDevArHash) // during testing we can repeat stage after cook so we might have already edited it.
+			{
+				if (EnumHasAnyFlags(InRequiredFiles, ECookMetadataFiles::CookMetadata))
+				{
+					UE_LOG(LogIoStore, Error,
+						TEXT("Cook metadata file mismatch: Hash of associated development asset registry does not match. [%s] %llx vs %llx (%llx post writeback)"),
+						*CookMetadataFileName, LoadedDevArHash, OutCookMetadata->GetAssociatedDevelopmentAssetRegistryHash(), OutCookMetadata->GetAssociatedDevelopmentAssetRegistryHashPostWriteback());
+					return ECookMetadataFiles::None;
+				}
+				else
+				{
+					UE_LOG(LogIoStore, Display,
+						TEXT("Cook metadata file mismatch: Hash of associated development asset registry does not match. [%s] %llx vs %llx (%llx post writeback)"),
+						*CookMetadataFileName, LoadedDevArHash, OutCookMetadata->GetAssociatedDevelopmentAssetRegistryHash(), OutCookMetadata->GetAssociatedDevelopmentAssetRegistryHashPostWriteback());
+					OutCookMetadata->Reset();
+				}
+			}
+			else
+			{
+				EnumAddFlags(ResultFiles, ECookMetadataFiles::CookMetadata);
+				if (OutCookMetadataFileName)
+				{
+					*OutCookMetadataFileName = MoveTemp(CookMetadataFileName);
+				}
+			}
+		}
+		else
+		{
+			if (EnumHasAnyFlags(InRequiredFiles, ECookMetadataFiles::CookMetadata))
+			{
+				UE_LOG(LogIoStore, Error, TEXT("Failed to open and read cook metadata file %s"), *CookMetadataFileName);
+				return ECookMetadataFiles::None;
+			}
+
+			UE_LOG(LogIoStore, Display, TEXT("No cook metadata file found, checked %s"), *CookMetadataFileName);
+			if (OutCookMetadataFileName)
+			{
+				*OutCookMetadataFileName = FString("");
+			}
+		}
+	}
+
 
 	if (OutAssetRegistryFileName)
 	{
 		*OutAssetRegistryFileName = MoveTemp(PossibleAssetRegistryFiles[0]);
 	}
-	return true;
+	return ResultFiles;
 }
 
-bool DoAssetRegistryWritebackDuringStage(EAssetRegistryWritebackMethod InMethod, const FString& InCookedDir, TArray<TSharedPtr<IIoStoreWriter>>& InIoStoreWriters)
+struct FIoStoreWriterInfo
+{
+	UE::Cook::EPluginSizeTypes SizeType;
+	FName PakChunkName;
+};
+
+static bool DoAssetRegistryWritebackDuringStage(
+	EAssetRegistryWritebackMethod InMethod, 
+	bool bInWritePluginMetadata,
+	const FString& InCookedDir, 
+	bool bInCompressionEnabled,
+	TArray<TSharedPtr<IIoStoreWriter>>& InIoStoreWriters, 
+	TArray<FIoStoreWriterInfo>& InIoStoreWriterInfos,
+	FShaderAssociationInfo& InShaderAssociationInfo
+)
 {
 	// This version called during container creation.
-
 	TRACE_CPUPROFILER_EVENT_SCOPE(UpdateAssetRegistryWithSizeInfo);
 	UE_LOG(LogIoStore, Display, TEXT("Adding staging metadata to asset registry..."));
 
 	// The overwhelming majority of time for the asset registry writeback is loading and saving.
 	FString AssetRegistryFileName;
 	FAssetRegistryState AssetRegistry;
-	if (FindAndLoadDevelopmentAssetRegistry(InCookedDir, true, AssetRegistry, &AssetRegistryFileName) == false)
+	FString CookMetadataFileName;
+	UE::Cook::FCookMetadataState CookMetadata;
+	ECookMetadataFiles FilesNeeded = ECookMetadataFiles::AssetRegistry;
+
+	// We always need the cook metadata in order to update the corresponding hash.
+	EnumAddFlags(FilesNeeded, ECookMetadataFiles::CookMetadata);
+
+	if (FindAndLoadMetadataFiles(InCookedDir, FilesNeeded, AssetRegistry, &AssetRegistryFileName, &CookMetadata, &CookMetadataFileName) == ECookMetadataFiles::None)
 	{
 		// already logged
 		return false;
 	}
 
-	// Create a map off the package id to all of its chunks. 2 inline allocation
-	// is for the export data and the bulk data. For a major test project, 2 covers
-	// 89% of packages, 1 covers 72%.
-	uint64 TotalCompressedSize = 0;
-	TMap<FPackageId, TArray<FIoStoreTocChunkInfo, TInlineAllocator<2>>> PackageToChunks;
-	for (TSharedPtr<IIoStoreWriter> IoStoreWriter : InIoStoreWriters)
+	//
+	// We want to separate out the sizes based on where they go in the end product.
+	//
+	uint64 UnassignableShaderCodeBytes = 0;
+	uint64 AssignableShaderCodeBytes = 0;
+	UE::Cook::FPluginSizeInfo ProductSize;
+	TMap<FPackageId, TArray<FIoStoreChunkSource, TInlineAllocator<2>>> PackageToChunks;
 	{
-		IoStoreWriter->EnumerateChunks([&](const FIoStoreTocChunkInfo& ChunkInfo)
+		int32 IoStoreWriterIndex = 0;
+		for (TSharedPtr<IIoStoreWriter> IoStoreWriter : InIoStoreWriters)
 		{
-			FPackageId PackageId = FPackageId::FromValue(*(int64*)(ChunkInfo.Id.GetData()));
-			PackageToChunks.FindOrAdd(PackageId).Add(ChunkInfo);
-			TotalCompressedSize += ChunkInfo.CompressedSize;
-			return true;
-		});
+			IoStoreWriter->EnumerateChunks(
+				[&PackageToChunks, 
+				 IoStoreWriterInfo = InIoStoreWriterInfos[IoStoreWriterIndex],
+				 &ProductSize, 
+				 &InShaderAssociationInfo,
+				 &UnassignableShaderCodeBytes,
+				 &AssignableShaderCodeBytes
+				 ](const FIoStoreTocChunkInfo& ChunkInfo)
+			{			
+				ProductSize[IoStoreWriterInfo.SizeType] += ChunkInfo.CompressedSize;
+
+				// Shader code chunks don't have the package in their chunk id, so we have to use other data to look
+				// it up and find it.
+				FPackageId PackageId = FPackageId::FromValue(*(int64*)(ChunkInfo.Id.GetData()));
+				if (ChunkInfo.ChunkType == EIoChunkType::ShaderCode)
+				{
+					// Update size info for the shader.
+					FShaderAssociationInfo::FShaderChunkInfo* ShaderChunkInfo = InShaderAssociationInfo.ShaderChunkInfos.Find({IoStoreWriterInfo.PakChunkName, ChunkInfo.Id});
+					ShaderChunkInfo->CompressedSize = ChunkInfo.CompressedSize;
+					ShaderChunkInfo->SizeType = IoStoreWriterInfo.SizeType;
+
+					// Shaders don't put their package in their chunk - they are just a hash. We have the list of them
+					// already in the shader association so we don't bother adding here. However some can't get assigned to
+					// anything and so we track that size for reporting.
+					if (ShaderChunkInfo->Type == FShaderAssociationInfo::FShaderChunkInfo::Global ||
+						ShaderChunkInfo->Type == FShaderAssociationInfo::FShaderChunkInfo::Orphan)
+					{
+						UnassignableShaderCodeBytes += ChunkInfo.CompressedSize;
+					}
+					else
+					{
+						AssignableShaderCodeBytes += ChunkInfo.CompressedSize;
+					}
+				}
+				else
+				{
+					PackageToChunks.FindOrAdd(PackageId).Add({ChunkInfo, IoStoreWriterInfo.SizeType});
+				}
+				return true;
+			});
+
+			IoStoreWriterIndex++;
+		}
 	}
 
-	AddChunkInfoToAssetRegistry(MoveTemp(PackageToChunks), AssetRegistry, TotalCompressedSize);
+	if (bInWritePluginMetadata)
+	{
+		UpdatePluginMetadataAndWriteJsons(AssetRegistryFileName, PackageToChunks, AssetRegistry, CookMetadata, &InShaderAssociationInfo);
+	}
 
-	FString OutputFileName;
+	AddChunkInfoToAssetRegistry(MoveTemp(PackageToChunks), AssetRegistry, &InShaderAssociationInfo, UnassignableShaderCodeBytes, AssignableShaderCodeBytes, ProductSize.TotalSize());
+	uint64 UpdatedDevArHash = 0;
 	switch (InMethod)
 	{
 	case EAssetRegistryWritebackMethod::OriginalFile:
 		{
 			// Write to an adjacent file and move after
-			if (SaveAssetRegistry(AssetRegistryFileName, AssetRegistry, true) == false)
+			if (SaveAssetRegistry(AssetRegistryFileName, AssetRegistry, &UpdatedDevArHash) == false)
 			{
 				return false;
 			}
+
 			break;
 		}
 	case EAssetRegistryWritebackMethod::AdjacentFile:
 		{
-			if (SaveAssetRegistry(AssetRegistryFileName.Replace(TEXT(".bin"), TEXT("Staged.bin")), AssetRegistry, true) == false)
+			if (SaveAssetRegistry(AssetRegistryFileName.Replace(TEXT(".bin"), TEXT("Staged.bin")), AssetRegistry, &UpdatedDevArHash) == false)
 			{
 				return false;
 			}
@@ -3444,6 +4845,29 @@ bool DoAssetRegistryWritebackDuringStage(EAssetRegistryWritebackMethod InMethod,
 			UE_LOG(LogIoStore, Error, TEXT("Invalid asset registry writeback method (should already be handled!) (%d)"), int(InMethod));
 			return false;
 		}
+	}
+
+	// Since we modified the dev ar, we need to save the updated hash in the cook metadata so it can still validate.
+	CookMetadata.SetSizesPresent(bInCompressionEnabled ? UE::Cook::ECookMetadataSizesPresent::Compressed : UE::Cook::ECookMetadataSizesPresent::Uncompressed);
+	CookMetadata.SetAssociatedDevelopmentAssetRegistryHashPostWriteback(UpdatedDevArHash);
+
+	FArrayWriter SerializedCookMetadata;
+	CookMetadata.Serialize(SerializedCookMetadata);
+
+	FString TempFileName = CookMetadataFileName + TEXT(".temp");
+	if (FFileHelper::SaveArrayToFile(SerializedCookMetadata, *TempFileName))
+	{
+		// Move our temp file over the original asset registry.
+		if (IFileManager::Get().Move(*CookMetadataFileName, *TempFileName) == false)
+		{
+			// Error already logged by FileManager
+			return false;
+		}
+	}
+	else
+	{
+		UE_LOG(LogIoStore, Error, TEXT("Failed to save temp file for write updated cook metadata file (%s"), *TempFileName);
+		return false;
 	}
 	
 	return true;
@@ -3462,7 +4886,7 @@ public:
 	{
 		FString AssetRegistryFileName;
 		FAssetRegistryState AssetRegistry;
-		if (FindAndLoadDevelopmentAssetRegistry(InCookedDir, false, AssetRegistry, nullptr) == false)
+		if (FindAndLoadMetadataFiles(InCookedDir, ECookMetadataFiles::None, AssetRegistry, nullptr, nullptr, nullptr) == ECookMetadataFiles::None)
 		{
 			// already logged
 			return false;
@@ -3558,7 +4982,7 @@ void CreateContainerHeader(FContainerTargetSpec& ContainerTarget, bool bIsOption
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(CreateContainerHeader);
 	FIoContainerHeader& Header = bIsOptional ? ContainerTarget.OptionalSegmentHeader : ContainerTarget.Header;
-	Header.ContainerId = ContainerTarget.ContainerId;
+	Header.ContainerId = bIsOptional ? ContainerTarget.OptionalSegmentContainerId : ContainerTarget.ContainerId;
 
 	int32 NonOptionalSegmentStoreEntriesCount = 0;
 	int32 OptionalSegmentStoreEntriesCount = 0;
@@ -3767,6 +5191,7 @@ int32 CreateTarget(const FIoStoreArguments& Arguments, const FIoStoreWriterSetti
 	}
 	TArray<FString> OnDemandContainers;
 	TArray<TSharedPtr<IIoStoreWriter>> IoStoreWriters;
+	TArray<FIoStoreWriterInfo> IoStoreWriterInfos;
 	TSharedPtr<IIoStoreWriter> GlobalIoStoreWriter;
 	{
 		IOSTORE_CPU_SCOPE(InitializeWriters);
@@ -3781,6 +5206,7 @@ int32 CreateTarget(const FIoStoreArguments& Arguments, const FIoStoreWriterSetti
 			}
 			GlobalIoStoreWriter = IoStoreWriterContext->CreateContainer(*Arguments.GlobalContainerPath, GlobalContainerSettings);
 			IoStoreWriters.Add(GlobalIoStoreWriter);
+			IoStoreWriterInfos.Add({UE::Cook::EPluginSizeTypes::Installed, "global"});
 		}
 		for (FContainerTargetSpec* ContainerTarget : ContainerTargets)
 		{
@@ -3797,6 +5223,7 @@ int32 CreateTarget(const FIoStoreArguments& Arguments, const FIoStoreWriterSetti
 				FLooseFilesWriterSettings WriterSettings;
 				WriterSettings.TargetRootPath = ContainerTarget->StageLooseFileRootPath;
 				ContainerTarget->IoStoreWriter = MakeLooseFilesIoStoreWriter(WriterSettings);
+				IoStoreWriterInfos.Add({UE::Cook::EPluginSizeTypes::Streaming, ContainerTarget->Name}); // LooseFiles currently end up as a streamed source.
 				IoStoreWriters.Add(ContainerTarget->IoStoreWriter);
 			}
 			else
@@ -3831,11 +5258,40 @@ int32 CreateTarget(const FIoStoreArguments& Arguments, const FIoStoreWriterSetti
 				ContainerTarget->IoStoreWriter->SetReferenceChunkDatabase(ChunkDatabase);
 				ContainerTarget->IoStoreWriter->SetHashDatabase(HashDatabase, Arguments.bVerifyHashDatabase);
 				IoStoreWriters.Add(ContainerTarget->IoStoreWriter);
+
+				if (EnumHasAnyFlags(ContainerTarget->ContainerFlags, EIoContainerFlags::OnDemand))
+				{
+					IoStoreWriterInfos.Add({UE::Cook::EPluginSizeTypes::Streaming, ContainerTarget->Name});
+				}
+				else
+				{
+					// There's no way to know whether a container is optional without parsing the filename, see
+					// EIoStoreWriterType.
+					FString BaseFileName = FPaths::GetBaseFilename(ContainerTarget->OutputPath, true);
+					// Strip the platform identifier off the pak
+					if (int32 DashIndex=0; BaseFileName.FindLastChar(TEXT('-'), DashIndex))
+					{
+						BaseFileName.LeftInline(DashIndex);
+					}
+					if (BaseFileName.EndsWith(TEXT("optional")))
+					{
+						IoStoreWriterInfos.Add({UE::Cook::EPluginSizeTypes::Optional, ContainerTarget->Name});
+					}
+					else
+					{
+						IoStoreWriterInfos.Add({UE::Cook::EPluginSizeTypes::Installed, ContainerTarget->Name});
+					}
+				}
+
 				if (!ContainerTarget->OptionalSegmentOutputPath.IsEmpty())
 				{
+					ContainerSettings.ContainerId = ContainerTarget->OptionalSegmentContainerId;
 					ContainerTarget->OptionalSegmentIoStoreWriter = IoStoreWriterContext->CreateContainer(*ContainerTarget->OptionalSegmentOutputPath, ContainerSettings);
+					ContainerSettings.ContainerId = ContainerTarget->ContainerId;
+
 					ContainerTarget->OptionalSegmentIoStoreWriter->SetReferenceChunkDatabase(ChunkDatabase);
 					IoStoreWriters.Add(ContainerTarget->OptionalSegmentIoStoreWriter);
+					IoStoreWriterInfos.Add({UE::Cook::EPluginSizeTypes::OptionalSegment, ContainerTarget->Name});
 				}
 				if (EnumHasAnyFlags(ContainerTarget->ContainerFlags, EIoContainerFlags::OnDemand))
 				{
@@ -3879,7 +5335,8 @@ int32 CreateTarget(const FIoStoreArguments& Arguments, const FIoStoreWriterSetti
 
 	UE_LOG(LogIoStore, Display, TEXT("Processing shader libraries, compressing with Oodle %s, level %d (%s)"), FOodleDataCompression::ECompressorToString(Arguments.ShaderOodleCompressor), (int32)Arguments.ShaderOodleLevel, FOodleDataCompression::ECompressionLevelToString(Arguments.ShaderOodleLevel));
 	TArray<FShaderInfo*> Shaders;
-	ProcessShaderLibraries(Arguments, ContainerTargets, Shaders);
+	FShaderAssociationInfo ShaderAssocInfo;
+	ProcessShaderLibraries(Arguments, ContainerTargets, Shaders, ShaderAssocInfo);
 
 	auto AppendTargetFileChunk = [&WriteRequestManager](FContainerTargetSpec* ContainerTarget, const FContainerTargetFile& TargetFile)
 	{
@@ -3957,12 +5414,15 @@ int32 CreateTarget(const FIoStoreArguments& Arguments, const FIoStoreWriterSetti
 		{
 			if (ContainerTarget->IoStoreWriter)
 			{
-				auto WriteContainerHeaderChunk = [](FIoContainerHeader& Header, IIoStoreWriter* IoStoreWriter)
+				auto WriteContainerHeaderChunk = [](FIoContainerHeader& Header, IIoStoreWriter* IoStoreWriter, const FIoContainerId& IoStoreWriterId)
 				{
 					FLargeMemoryWriter HeaderAr(0, true);
 					HeaderAr << Header;
 					int64 DataSize = HeaderAr.TotalSize();
 					FIoBuffer ContainerHeaderBuffer(FIoBuffer::AssumeOwnership, HeaderAr.ReleaseOwnership(), DataSize);
+
+					// The header must have the same ID so that the loading code can find it.
+					check(IoStoreWriterId == Header.ContainerId);
 
 					FIoWriteOptions WriteOptions;
 					WriteOptions.DebugName = TEXT("ContainerHeader");
@@ -3974,12 +5434,12 @@ int32 CreateTarget(const FIoStoreArguments& Arguments, const FIoStoreWriterSetti
 				};
 
 				CreateContainerHeader(*ContainerTarget, false);
-				WriteContainerHeaderChunk(ContainerTarget->Header, ContainerTarget->IoStoreWriter.Get());
+				WriteContainerHeaderChunk(ContainerTarget->Header, ContainerTarget->IoStoreWriter.Get(), ContainerTarget->ContainerId);
 
 				if (ContainerTarget->OptionalSegmentIoStoreWriter)
 				{
 					CreateContainerHeader(*ContainerTarget, true);
-					WriteContainerHeaderChunk(ContainerTarget->OptionalSegmentHeader, ContainerTarget->OptionalSegmentIoStoreWriter.Get());
+					WriteContainerHeaderChunk(ContainerTarget->OptionalSegmentHeader, ContainerTarget->OptionalSegmentIoStoreWriter.Get(), ContainerTarget->OptionalSegmentContainerId);
 				}
 			}
 
@@ -4129,7 +5589,14 @@ int32 CreateTarget(const FIoStoreArguments& Arguments, const FIoStoreWriterSetti
 
 	if (Arguments.WriteBackMetadataToAssetRegistry != EAssetRegistryWritebackMethod::Disabled)
 	{
-		DoAssetRegistryWritebackDuringStage(Arguments.WriteBackMetadataToAssetRegistry, Arguments.CookedDir, IoStoreWriters);
+		DoAssetRegistryWritebackDuringStage(
+			Arguments.WriteBackMetadataToAssetRegistry, 
+			Arguments.bWritePluginSizeSummaryJsons, 
+			Arguments.CookedDir, 
+			GeneralIoWriterSettings.CompressionMethod != NAME_None, 
+			IoStoreWriters, 
+			IoStoreWriterInfos,
+			ShaderAssocInfo);
 	}
 
 	TArray<FIoStoreWriterResult> IoStoreWriterResults;
@@ -4305,22 +5772,82 @@ int32 CreateTarget(const FIoStoreArguments& Arguments, const FIoStoreWriterSetti
 	}
 	UE_LOG(LogIoStore, Display, TEXT("Output: %8.2lf MB InitialLoadData"), (double)InitialLoadSize / 1024.0 / 1024.0);
 
+
 	if (ChunkDatabase.IsValid())
 	{
-		uint64 TotalCompressedBytes = 0;
+		//
+		// If we are using a reference cache, the assumption is that we are expecting a high hit rate
+		// on the chunks - this is supposed to be a current release, so theoretically we should only
+		// miss on changed or new data, so it's useful to know where the misses are in case something
+		// major happened that maybe shouldn't have.
+		//
+		uint64 TotalEntryBytes = 0;
+		uint64 TotalMissBytes = 0;
+		TMap<FIoContainerId, FString> ContainerNameMap;
+
 		for (const FIoStoreWriterResult& Result : IoStoreWriterResults)
 		{
-			TotalCompressedBytes += Result.CompressedContainerSize;
+			TotalEntryBytes += Result.TotalEntryCompressedSize;
+			TotalMissBytes += Result.ReferenceCacheMissBytes;
+			ContainerNameMap.Add(Result.ContainerId, Result.ContainerName);
 		}
 
 		FIoStoreChunkDatabase& ChunkDatabaseRef = (FIoStoreChunkDatabase&)*ChunkDatabase;
-		UE_LOG(LogIoStore, Display, TEXT("Reference Chunk: %s reused bytes out of %s possible: %.1f%%"), *FText::AsNumber(ChunkDatabaseRef.FulfillBytes).ToString(), *FText::AsNumber(TotalCompressedBytes).ToString(), 100.0 * ChunkDatabaseRef.FulfillBytes / TotalCompressedBytes);
-		UE_LOG(LogIoStore, Display, TEXT("Reference Chunk: %s chunks found / %s requests"), *FText::AsNumber(ChunkDatabaseRef.FulfillCount).ToString(), *FText::AsNumber(ChunkDatabaseRef.RequestCount).ToString());
+
+		uint64 TotalCandidateBytes = ChunkDatabaseRef.FulfillBytes + TotalMissBytes;
+
+		UE_LOG(LogIoStore, Display, TEXT("Reference Chunk Database:"));
+		UE_LOG(LogIoStore, Display, TEXT("    %s reused bytes out of %s candidate bytes - %.1f%% hit rate."),
+			*NumberString(ChunkDatabaseRef.FulfillBytes),
+			*NumberString(TotalCandidateBytes),
+			100.0 * ChunkDatabaseRef.FulfillBytes / (TotalCandidateBytes));
+		UE_LOG(LogIoStore, Display, TEXT("    %s candidate bytes out of %s io chunk bytes - %.1f%% coverage."),
+			*NumberString(TotalCandidateBytes),
+			*NumberString(TotalEntryBytes),
+			100.0 * TotalCandidateBytes / (TotalEntryBytes));
+
+		UE_LOG(LogIoStore, Display, TEXT("    %s chunks found out of %s requests"), 
+			*NumberString(ChunkDatabaseRef.FulfillCount),
+			*NumberString(ChunkDatabaseRef.RequestCount.load()));
+		for (const TPair<FIoContainerId, TUniquePtr<FIoStoreChunkDatabase::FReaderChunks>>& ContainerInDatabase : ChunkDatabaseRef.ChunkDatabase)
+		{
+			for (uint8 i = 0; i < FIoStoreChunkDatabase::IoChunkTypeCount; i++)
+			{
+				if (ContainerInDatabase.Value->ChangedChunkCount[i] ||
+					ContainerInDatabase.Value->NewChunkCount[i] ||
+					ContainerInDatabase.Value->UsedChunkCount[i])
+				{
+					UE_LOG(LogIoStore, Display, TEXT("        %s[%s]:    %s changed, %s new, %s reused"), 
+						*ContainerNameMap[ContainerInDatabase.Key],
+						*LexToString((EIoChunkType)i),
+						*NumberString(ContainerInDatabase.Value->ChangedChunkCount[i]),
+						*NumberString(ContainerInDatabase.Value->NewChunkCount[i]),
+						*NumberString(ContainerInDatabase.Value->UsedChunkCount[i]));
+				}
+			}
+		}
+
 		if (ChunkDatabaseRef.ContainerNotFound)
 		{
-			UE_LOG(LogIoStore, Warning, TEXT("Reference Chunk had %s requests for a container that wasn't loaded. This means the "), *FText::AsNumber(ChunkDatabaseRef.ContainerNotFound).ToString());
-			UE_LOG(LogIoStore, Warning, TEXT("new output has a container that wasn't deployed before. If that doesn't sound right"));
-			UE_LOG(LogIoStore, Warning, TEXT("verify that you used reference containers from the same project."));
+			UE_LOG(LogIoStore, Display, TEXT("    %s containers were requested that weren't available. This means the "),
+				*NumberString(ChunkDatabaseRef.MissingContainerIds.Num()));
+			UE_LOG(LogIoStore, Display, TEXT("    previous release didn't have these containers. If that doesn't sound right verify"));
+			UE_LOG(LogIoStore, Display, TEXT("    that you used reference containers from the same project. Missing containers:"));
+
+			for (const TPair<FIoContainerId, TUniquePtr<FIoStoreChunkDatabase::FMissingContainerInfo>>& MissingId : ChunkDatabaseRef.MissingContainerIds)
+			{
+				 // we know this is a valid entry because the writers are what gave us the id in the first place.
+				for (uint8 i = 0; i < FIoStoreChunkDatabase::IoChunkTypeCount; i++)
+				{
+					if (MissingId.Value->RequestedChunkCount[i])
+					{
+						UE_LOG(LogIoStore, Display, TEXT("        %s[%s]: %s requests"), 
+							*ContainerNameMap[MissingId.Key], 
+							*LexToString((EIoChunkType)i),
+							*NumberString(MissingId.Value->RequestedChunkCount[i].load(std::memory_order_relaxed)));
+					}
+				}
+			}
 		}
 	}
 
@@ -4334,7 +5861,7 @@ int32 CreateTarget(const FIoStoreArguments& Arguments, const FIoStoreWriterSetti
 
 	if (Arguments.bUpload && OnDemandContainers.IsEmpty() == false)
 	{
-		TIoStatusOr<UE::FIoStoreUploadParams> UploadParams = UE::FIoStoreUploadParams::Parse(FCommandLine::Get());
+		TIoStatusOr<UE::IO::IAS::FIoStoreUploadParams> UploadParams = UE::IO::IAS::FIoStoreUploadParams::Parse(FCommandLine::Get());
 		if (UploadParams.IsOk() == false)
 		{
 			UE_LOG(LogIoStore, Warning, TEXT("Skipping upload of container file(s), reason '%s'"), *UploadParams.Status().ToString());
@@ -4443,12 +5970,12 @@ int32 CreateContentPatch(const FIoStoreArguments& Arguments, const FIoStoreWrite
 
 		TMap<FIoChunkId, FString> ChunkFileNamesMap;
 		TargetReader->GetDirectoryIndexReader().IterateDirectoryIndex(FIoDirectoryIndexHandle::RootDirectory(), TEXT(""),
-		[&ChunkFileNamesMap, &TargetReader](FString Filename, uint32 TocEntryIndex) -> bool
+		[&ChunkFileNamesMap, &TargetReader](FStringView Filename, uint32 TocEntryIndex) -> bool
 		{
 			TIoStatusOr<FIoStoreTocChunkInfo> ChunkInfo = TargetReader->GetChunkInfo(TocEntryIndex);
 			if (ChunkInfo.IsOk())
 			{
-				ChunkFileNamesMap.Add(ChunkInfo.ValueOrDie().Id, Filename);
+				ChunkFileNamesMap.Add(ChunkInfo.ValueOrDie().Id, FString(Filename));
 			}
 			return true;
 		});
@@ -4618,6 +6145,259 @@ int32 ListContainer(
 	}
 
 	return 0;
+}
+
+bool ListIoStoreContainer(const TCHAR* CmdLine)
+{
+	FKeyChain KeyChain;
+	LoadKeyChain(CmdLine, KeyChain);
+
+	FString ContainerPathOrWildcard;
+	if (!FParse::Value(FCommandLine::Get(), TEXT("ListContainer="), ContainerPathOrWildcard))
+	{
+		UE_LOG(LogIoStore, Error, TEXT("Missing argument -ListContainer=<ContainerFileOrWildCard>"));
+		return false;
+	}
+
+	FString CsvPath;
+	if (!FParse::Value(FCommandLine::Get(), TEXT("csv="), CsvPath))
+	{
+		UE_LOG(LogIoStore, Error, TEXT("Missing argument -Csv=<Path>"));
+		return false;
+	}
+
+	return ListContainer(KeyChain, ContainerPathOrWildcard, CsvPath) == 0;
+}
+
+bool ListContainerBulkData(
+	const FKeyChain& KeyChain,
+	const FString& ContainerPathOrWildcard,
+	const FString& OutFile)
+{
+	struct FPackageData
+	{
+		FPackageId Id;
+		FString Filename;
+		TArray<FBulkDataMapEntry> BulkDataMap;
+	};
+
+	struct FContainerData
+	{
+		FString Name;
+		FString Path;
+		TArray<FPackageData> Packages;
+	};
+
+	TArray<FContainerData> Containers;
+	TArray<FString> ContainerFilePaths;
+
+	if (IFileManager::Get().FileExists(*ContainerPathOrWildcard))
+	{
+		ContainerFilePaths.Add(ContainerPathOrWildcard);
+	}
+	else if (IFileManager::Get().DirectoryExists(*ContainerPathOrWildcard))
+	{
+		FString Directory = ContainerPathOrWildcard;
+		FPaths::NormalizeDirectoryName(Directory);
+
+		TArray<FString> FoundContainerFiles;
+		IFileManager::Get().FindFiles(FoundContainerFiles, *(Directory / TEXT("*.utoc")), true, false);
+
+		for (const FString& Filename : FoundContainerFiles)
+		{
+			ContainerFilePaths.Emplace(Directory / Filename);
+		}
+	}
+	else
+	{
+		FString Directory = FPaths::GetPath(ContainerPathOrWildcard);
+		FPaths::NormalizeDirectoryName(Directory);
+
+		TArray<FString> FoundContainerFiles;
+		IFileManager::Get().FindFiles(FoundContainerFiles, *ContainerPathOrWildcard, true, false);
+
+		for (const FString& Filename : FoundContainerFiles)
+		{
+			ContainerFilePaths.Emplace(Directory / Filename);
+		}
+	}
+
+	if (ContainerFilePaths.Num() == 0)
+	{
+		UE_LOG(LogIoStore, Error, TEXT("Container '%s' doesn't exist and no container matches wildcard."), *ContainerPathOrWildcard);
+		return false;
+	}
+
+	for (const FString& ContainerFilePath : ContainerFilePaths)
+	{
+		FString ContainerName = FPaths::GetBaseFilename(ContainerFilePath);
+		if (ContainerName == TEXT("global"))
+		{
+			continue;
+		}
+
+		TUniquePtr<FIoStoreReader> Reader = CreateIoStoreReader(*ContainerFilePath, KeyChain);
+		if (!Reader.IsValid())
+		{
+			UE_LOG(LogIoStore, Error, TEXT("Failed to read container '%s'"), *ContainerFilePath);
+			continue;
+		}
+
+		TMap<FIoChunkId, FString> FilenameByChunkId;
+		Reader->GetDirectoryIndexReader().IterateDirectoryIndex(FIoDirectoryIndexHandle::RootDirectory(), TEXT(""),
+			[&FilenameByChunkId, &Reader](FStringView Filename, uint32 TocEntryIndex) -> bool
+			{
+				TIoStatusOr<FIoStoreTocChunkInfo> ChunkInfo = Reader->GetChunkInfo(TocEntryIndex);
+				if (ChunkInfo.IsOk())
+				{
+					FilenameByChunkId.Add(ChunkInfo.ValueOrDie().Id, FString(Filename));
+				}
+				return true;
+			});
+
+		UE_LOG(LogIoStore, Display, TEXT("Listing bulk data in container '%s'"), *ContainerFilePath);
+		FIoChunkId ChunkId = CreateIoChunkId(Reader->GetContainerId().Value(), 0, EIoChunkType::ContainerHeader);
+		TIoStatusOr<FIoBuffer> Status = Reader->Read(ChunkId, FIoReadOptions());
+
+		if (!Status.IsOk())
+		{
+			UE_LOG(LogIoStore, Display, TEXT("Failed to read container header '%s', reason '%s'"),
+				*ContainerFilePath, *Status.Status().ToString());
+			continue;
+		}
+
+		FIoContainerHeader ContainerHeader;
+		{
+			FIoBuffer Chunk = Status.ValueOrDie();
+			FMemoryReaderView Ar(MakeArrayView(Chunk.Data(), Chunk.GetSize()));
+			Ar << ContainerHeader;
+		}
+
+		FContainerData& Container = Containers.AddDefaulted_GetRef();
+		Container.Path = ContainerFilePath;
+		Container.Name = MoveTemp(ContainerName);
+
+		for (const FPackageId& PackageId : ContainerHeader.PackageIds)
+		{
+			ChunkId = CreatePackageDataChunkId(PackageId);
+			Status = Reader->Read(ChunkId, FIoReadOptions());
+			if (!Status.IsOk())
+			{
+				UE_LOG(LogIoStore, Display, TEXT("Failed to package data"));
+				continue;
+			}
+
+			FIoBuffer Chunk = Status.ValueOrDie();
+			FZenPackageHeader PkgHeader = FZenPackageHeader::MakeView(Chunk.GetView());
+			FPackageData& Pkg = Container.Packages.AddDefaulted_GetRef();
+			Pkg.Id = PackageId;
+			Pkg.BulkDataMap = PkgHeader.BulkDataMap;
+			if (FString* Filename = FilenameByChunkId.Find(ChunkId))
+			{
+				Pkg.Filename = *Filename;
+			}
+		}
+	}
+
+	const FString Ext = FPaths::GetExtension(OutFile);
+	if (Ext == TEXT("json"))
+	{
+		using FWriter = TSharedPtr<TJsonWriter<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>>; 
+		using FWriterFactory = TJsonWriterFactory<TCHAR, TPrettyJsonPrintPolicy<TCHAR>>;
+
+		FString Json;
+		FWriter Writer = FWriterFactory::Create(&Json);
+		Writer->WriteArrayStart();
+		
+		TStringBuilder<512> Sb;
+		for (const FContainerData& Container: Containers)
+		{
+			Writer->WriteObjectStart();
+			Writer->WriteValue(TEXT("Container"), Container.Name);
+			Writer->WriteArrayStart(TEXT("Packages"));
+			for (const FPackageData& Pkg : Container.Packages)
+			{
+				if (Pkg.BulkDataMap.IsEmpty())
+				{
+					continue;
+				}
+
+				Writer->WriteObjectStart();
+				Writer->WriteValue(TEXT("PackageId"), FString::Printf(TEXT("0x%llX"), Pkg.Id.Value()));
+				Writer->WriteValue(TEXT("Filename"), Pkg.Filename);
+				Writer->WriteArrayStart(TEXT("BulkData"));
+				for (const FBulkDataMapEntry& Entry : Pkg.BulkDataMap)
+				{
+					Sb.Reset();
+					LexToString(static_cast<EBulkDataFlags>(Entry.Flags), Sb);
+					Writer->WriteObjectStart();
+					Writer->WriteValue(TEXT("Offset"), Entry.SerialOffset);
+					Writer->WriteValue(TEXT("Size"), Entry.SerialSize);
+					Writer->WriteValue(TEXT("Flags"), Sb.ToString());
+					Writer->WriteObjectEnd();
+				}
+				Writer->WriteArrayEnd();
+				Writer->WriteObjectEnd();
+			}
+			Writer->WriteArrayEnd();
+			Writer->WriteObjectEnd();
+		}
+
+		Writer->WriteArrayEnd();
+		Writer->Close();
+
+		UE_LOG(LogIoStore, Display, TEXT("Saving '%s'"), *OutFile);
+		if (!FFileHelper::SaveStringToFile(Json, *OutFile))
+		{
+			return false;
+		}
+	}
+	else
+	{
+		TUniquePtr<FArchive> CsvAr(IFileManager::Get().CreateFileWriter(*OutFile));
+		CsvAr->Logf(TEXT("Container,Filename,PackageId,Offset,Size,Flags"));
+
+		TStringBuilder<512> Sb;
+		for (const FContainerData& Container: Containers)
+		{
+			for (const FPackageData& Pkg : Container.Packages)
+			{
+				for (const FBulkDataMapEntry& Entry : Pkg.BulkDataMap)
+				{
+					Sb.Reset();
+					LexToString(static_cast<EBulkDataFlags>(Entry.Flags), Sb);
+					CsvAr->Logf(TEXT("%s,%s,0x%llX,%lld,%lld,%s"),
+						*Container.Name, *Pkg.Filename, Pkg.Id.Value(), Entry.SerialOffset, Entry.SerialSize, Sb.ToString());
+				}
+			}
+		}
+
+		UE_LOG(LogIoStore, Display, TEXT("Saving '%s'"), *OutFile);
+	}
+
+	return true;
+}
+
+bool ListIoStoreContainerBulkData(const TCHAR* CmdLine)
+{
+	FKeyChain KeyChain;
+	LoadKeyChain(CmdLine, KeyChain);
+
+	FString ContainerPathOrWildcard;
+	if (!FParse::Value(FCommandLine::Get(), TEXT("ListContainerBulkData="), ContainerPathOrWildcard))
+	{
+		UE_LOG(LogIoStore, Error, TEXT("Missing argument -ListContainerBulkData=<ContainerFileOrWildCard>"));
+		return false;
+	}
+
+	FString OutFile;
+	if (!FParse::Value(FCommandLine::Get(), TEXT("Out="), OutFile))
+	{
+		UE_LOG(LogIoStore, Error, TEXT("Missing argument -Out=<Path.[json|csv]>"));
+		return false;
+	}
+
+	return ListContainerBulkData(KeyChain, ContainerPathOrWildcard, OutFile) == 0;
 }
 
 bool LegacyListIoStoreContainer(
@@ -5476,7 +7256,7 @@ namespace DescribeUtils
 						}
 						while (ExportStack.Num() > 0)
 						{
-							Current = ExportStack.Pop(false);
+							Current = ExportStack.Pop(EAllowShrinking::No);
 							FullNameBuilder.Append(TEXT("."));
 							Current->Name.ToString(NameBuffer);
 							FullNameBuilder.Append(NameBuffer);
@@ -5508,8 +7288,14 @@ namespace DescribeUtils
 						else
 						{
 							FScriptObjectDesc* ScriptObjectDesc = ScriptObjectByGlobalIdMap.Find(Import.GlobalImportIndex);
-							check(ScriptObjectDesc);
-							Import.Name = ScriptObjectDesc->FullName;
+							if (ScriptObjectDesc)
+							{
+								Import.Name = ScriptObjectDesc->FullName;
+							}
+							else
+							{
+								UE_LOG(LogIoStore, Warning, TEXT("Missing Script Object for Import: 0x%llX in package 0x%llX '%s'"), Import.GlobalImportIndex.Value(), PackageDesc->PackageId.ValueForDebugging(), *PackageDesc->PackageName.ToString());
+							}
 						}
 					}
 				}
@@ -5846,21 +7632,21 @@ int32 ValidateCrossContainerRefs(
 		return -1;
 	}
 
-	if (FConfigSection* EdgesSection = ConfigFile.Find(TEXT("Edges")))
+	if (const FConfigSection* EdgesSection = ConfigFile.FindSection(TEXT("Edges")))
 	{
-		for (auto It = EdgesSection->CreateIterator(); It; ++It)
+		for (auto It = EdgesSection->CreateConstIterator(); It; ++It)
 		{
 			ValidEdges.Add(It.Key().ToString(), It.Value().GetValue());
 		}
 	}
-	if (FConfigSection* DefaultEdgesSection = ConfigFile.Find(TEXT("DefaultEdges")))
+	if (const FConfigSection* DefaultEdgesSection = ConfigFile.FindSection(TEXT("DefaultEdges")))
 	{
-		for (auto It = DefaultEdgesSection->CreateIterator(); It; ++It)
+		for (auto It = DefaultEdgesSection->CreateConstIterator(); It; ++It)
 		{
 			ValidEdges.Add(FString(), It.Key().ToString());
 		}
 	}
-	if (FConfigSection* IgnoreSection = ConfigFile.Find(TEXT("Ignore")))
+	if (const FConfigSection* IgnoreSection = ConfigFile.FindSection(TEXT("Ignore")))
 	{
 		IgnoreSection->MultiFind(TEXT("IgnoreRefsFrom"), IgnoreRefsFromAssets);
 		IgnoreSection->MultiFind(TEXT("IgnoreRefsTo"), IgnoreRefsToAssets);
@@ -7342,13 +9128,14 @@ bool ParseContainerGenerationArguments(FIoStoreArguments& Arguments, FIoStoreWri
 	// This should be a path to your last released containers. If those containers are encrypted, be sure to
 	// provide keys via -ReferenceContainerCryptoKeys.
 	//
-	FParse::Value(FCommandLine::Get(), TEXT("-ReferenceContainerGlobalFileName="), Arguments.ReferenceChunkGlobalContainerFileName);
-
-	FString CryptoKeysCacheFilename;
-	if (FParse::Value(FCommandLine::Get(), TEXT("-ReferenceContainerCryptoKeys="), CryptoKeysCacheFilename))
+	if (FParse::Value(FCommandLine::Get(), TEXT("-ReferenceContainerGlobalFileName="), Arguments.ReferenceChunkGlobalContainerFileName))
 	{
-		UE_LOG(LogIoStore, Display, TEXT("Parsing reference container crypto keys from a crypto key cache file '%s'"), *CryptoKeysCacheFilename);
-		KeyChainUtilities::LoadKeyChainFromFile(CryptoKeysCacheFilename, Arguments.ReferenceChunkKeys);
+		FString CryptoKeysCacheFilename;
+		if (FParse::Value(FCommandLine::Get(), TEXT("-ReferenceContainerCryptoKeys="), CryptoKeysCacheFilename))
+		{
+			UE_LOG(LogIoStore, Display, TEXT("Parsing reference container crypto keys from a crypto key cache file '%s'"), *CryptoKeysCacheFilename);
+			KeyChainUtilities::LoadKeyChainFromFile(CryptoKeysCacheFilename, Arguments.ReferenceChunkKeys);
+		}
 	}
 
 	// By default, we use any hashes in the asset registry that exist in order to avoid reading and hashing
@@ -7549,6 +9336,7 @@ int32 CreateIoStoreContainerFiles(const TCHAR* CmdLine)
 		{
 			UE_LOG(LogIoStore, Error, TEXT("Asset registry writeback requires -ContainerDirectory=Path/To/Containers"));
 		}
+		UE_LOG(LogIoStore, Warning, TEXT("AssetRegistryWriteback after stage is deprecated and will be removed in 5.5. Use writeback during stage via project packaging settings."));
 		return DoAssetRegistryWritebackAfterStage(AssetRegistryFileName, MoveTemp(PathToContainers), Arguments.KeyChain);
 	}
 	else if (FParse::Value(FCommandLine::Get(), TEXT("Describe="), ArgumentValue))
@@ -7827,6 +9615,8 @@ int32 CreateIoStoreContainerFiles(const TCHAR* CmdLine)
 			UE_LOG(LogIoStore, Error, TEXT("Valid options are: AdjacentFile, OriginalFile, Disabled."), *WriteBackMetadataToAssetRegistry);
 			return -1;
 		}
+
+		Arguments.bWritePluginSizeSummaryJsons = FParse::Param(FCommandLine::Get(), TEXT("WritePluginSizeSummaryJsons"));
 	}
 
 	FString PackageStoreManifestFilename;
@@ -7883,81 +9673,16 @@ int32 CreateIoStoreContainerFiles(const TCHAR* CmdLine)
 	return CreateTarget(Arguments, WriterSettings);
 }
 
-bool UploadIoStoreContainerFiles(const UE::FIoStoreUploadParams& UploadParams, TConstArrayView<FString> ContainerFiles, const FKeyChain& KeyChain)
+bool UploadIoStoreContainerFiles(const UE::IO::IAS::FIoStoreUploadParams& UploadParams, TConstArrayView<FString> ContainerFiles, const FKeyChain& KeyChain)
 {
-	TMap<FGuid, FAES::FAESKey> EncryptionKeys;
-	for (const TPair<FGuid, FNamedAESKey>& KeyPair: KeyChain.GetEncryptionKeys())
-	{
-		EncryptionKeys.Add(KeyPair.Key, KeyPair.Value.Key);
-	}
-
-	TIoStatusOr<UE::FIoStoreUploadResult> Result = UE::UploadContainerFiles(UploadParams, ContainerFiles, EncryptionKeys);
+	TIoStatusOr<UE::IO::IAS::FIoStoreUploadResult> Result = UE::IO::IAS::UploadContainerFiles(UploadParams, ContainerFiles, KeyChain);
 	if (Result.IsOk() == false)
 	{
 		UE_LOG(LogIoStore, Error, TEXT("Failed to upload container file(s), reason '%s'"), *Result.Status().ToString());
 		return false;
 	}
 
-	UE::FIoStoreUploadResult UploadResult = Result.ConsumeValueOrDie();
-
-	FString ConfigFilePath;
-	if (FParse::Value(FCommandLine::Get(), TEXT("ConfigFilePath="), ConfigFilePath))
-	{
-		FStringBuilderBase Sb;
-		Sb << TEXT("[Endpoint]") << TEXT("\r\n");
-
-		FString DistributionUrl;
-		if (FParse::Value(FCommandLine::Get(), TEXT("DistributionUrl="), DistributionUrl))
-		{
-			Sb << TEXT("DistributionUrl=\"") << DistributionUrl << TEXT("\"\r\n");
-		}
-		else
-		{
-			Sb << TEXT("ServiceUrl=\"") << UploadParams.ServiceUrl << TEXT("\"\r\n");
-		}
-
-		// Temporary solution to get replays working with encrypted on demand content
-		{
-			FString EncryptionKeyName;
-			if (FParse::Value(FCommandLine::Get(), TEXT("OnDemandEncryptionKeyName="), EncryptionKeyName))
-			{
-				TOptional<FNamedAESKey> EncryptionKey;
-				for (const TPair<FGuid, FNamedAESKey>& KeyPair: KeyChain.GetEncryptionKeys())
-				{
-					if (KeyPair.Value.Name.Compare(EncryptionKeyName, ESearchCase::IgnoreCase) == 0)
-					{
-						EncryptionKey.Emplace(KeyPair.Value);
-					}
-				}
-
-				if (EncryptionKey)
-				{
-					FString KeyString = FBase64::Encode(EncryptionKey.GetValue().Key.Key, FAES::FAESKey::KeySize);
-					Sb << TEXT("ContentKey=\"") << EncryptionKey.GetValue().Guid.ToString() << TEXT(":") << KeyString << TEXT("\"\r\n");
-				}
-				else
-				{
-					UE_LOG(LogIoStore, Warning, TEXT("Failed to encryption key '%s' in key chain"), *EncryptionKeyName);
-				}
-			}
-		}
-
-		if (DistributionUrl.IsEmpty())
-		{
-			// Append the bucket name when using a local/custom service
-			Sb << TEXT("TocPath=\"") << UploadParams.Bucket / UploadResult.TocPath << TEXT("\"\r\n");
-		}
-		else
-		{
-			Sb << TEXT("TocPath=\"") << UploadResult.TocPath << TEXT("\"\r\n");
-		}
-
-		UE_LOG(LogIoStore, Display, TEXT("Saving on demand config file '%s'"), *ConfigFilePath);
-		if (FFileHelper::SaveStringToFile(Sb.ToString(), *ConfigFilePath) == false)
-		{
-			UE_LOG(LogIoStore, Error, TEXT("Failed to save on demand config file '%s'"), *ConfigFilePath);
-		}
-	}
+	UE::IO::IAS::FIoStoreUploadResult UploadResult = Result.ConsumeValueOrDie();
 
 	return Result.IsOk();
 }
@@ -7969,7 +9694,7 @@ bool UploadIoStoreContainerFiles(const TCHAR* ContainerPathOrWildcard)
 	FKeyChain KeyChain;
 	LoadKeyChain(FCommandLine::Get(), KeyChain);
 
-	TIoStatusOr<UE::FIoStoreUploadParams> UploadParams = UE::FIoStoreUploadParams::Parse(FCommandLine::Get());
+	TIoStatusOr<UE::IO::IAS::FIoStoreUploadParams> UploadParams = UE::IO::IAS::FIoStoreUploadParams::Parse(FCommandLine::Get());
 	if (UploadParams.IsOk() == false)
 	{
 		UE_LOG(LogIoStore, Error, TEXT("Failed to upload container file(s), reason '%s'"), *UploadParams.Status().ToString());
@@ -8017,4 +9742,45 @@ bool UploadIoStoreContainerFiles(const TCHAR* ContainerPathOrWildcard)
 	}
 
 	return UploadIoStoreContainerFiles(UploadParams.ConsumeValueOrDie(), ContainerFiles, KeyChain);
+}
+
+bool DownloadIoStoreContainerFiles(const TCHAR* TocPath)
+{
+	using namespace UE::IO::IAS;
+	check(TocPath);
+
+	TIoStatusOr<FIoStoreDownloadParams> Params = FIoStoreDownloadParams::Parse(FCommandLine::Get());
+	if (Params.IsOk() == false)
+	{
+		UE_LOG(LogIoStore, Error, TEXT("Failed to download container file(s), reason '%s'"), *Params.Status().ToString());
+		return false;
+	}
+
+	FIoStatus Status = DownloadContainerFiles(Params.ConsumeValueOrDie(), TocPath);
+	if (Status.IsOk() == false)
+	{
+		UE_LOG(LogIoStore, Error, TEXT("Failed to download container file(s), reason '%s'"), *Status.ToString());
+	}
+
+	return Status.IsOk();
+}
+
+bool ListOnDemandTocs()
+{
+	using namespace UE::IO::IAS;
+
+	TIoStatusOr<FIoStoreListTocsParams> Params = FIoStoreListTocsParams::Parse(FCommandLine::Get());
+	if (Params.IsOk() == false)
+	{
+		UE_LOG(LogIoStore, Error, TEXT("Failed to list TOC file(s), reason '%s'"), *Params.Status().ToString());
+		return false;
+	}
+
+	FIoStatus Status = ListTocs(Params.ConsumeValueOrDie());
+	if (Status.IsOk() == false)
+	{
+		UE_LOG(LogIoStore, Error, TEXT("Failed to list TOC file(s), reason '%s'"), *Status.ToString());
+	}
+
+	return Status.IsOk();
 }

@@ -13,6 +13,7 @@ class UIKRigEffectorGoal;
 class FIKRigEditorToolkit;
 class FIKRigPreviewScene;
 class UIKRigProcessor;
+struct FGizmoState;
 
 class FIKRigEditMode : public IPersonaEditMode
 {
@@ -48,7 +49,9 @@ public:
 	virtual bool InputDelta(FEditorViewportClient* InViewportClient, FViewport* InViewport, FVector& InDrag, FRotator& InRot, FVector& InScale) override;
 	virtual bool GetCustomDrawingCoordinateSystem(FMatrix& InMatrix, void* InData) override;
 	virtual bool GetCustomInputCoordinateSystem(FMatrix& InMatrix, void* InData) override;
-	virtual bool InputKey(FEditorViewportClient* ViewportClient,FViewport* Viewport, FKey Key,EInputEvent Event);
+	virtual bool InputKey(FEditorViewportClient* ViewportClient,FViewport* Viewport, FKey Key,EInputEvent Event) override;
+	virtual bool BeginTransform(const FGizmoState& InState) override;
+	virtual bool EndTransform(const FGizmoState& InState) override;
 	/** END FEdMode interface */
 
 private:
@@ -60,6 +63,9 @@ private:
 		const UIKRigProcessor* Processor,
 		const FReferenceSkeleton& RefSkeleton,
 		TArray<FLinearColor>& OutBoneColors) const;
+
+	bool HandleBeginTransform() const;
+	bool HandleEndTransform() const;
 	
 	/** The hosting app */
 	TWeakPtr<FIKRigEditorController> EditorController;

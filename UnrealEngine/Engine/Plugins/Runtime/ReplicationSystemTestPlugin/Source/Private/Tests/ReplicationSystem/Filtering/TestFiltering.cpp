@@ -31,6 +31,26 @@ protected:
 	virtual FName GetMockFilterName() const { return FName("MockFilter"); }
 	virtual FName GetMockFilterClassName() const { return FName("/Script/ReplicationSystemTestPlugin.MockNetObjectFilter"); }
 
+	void SetDynamicFilterStatus(ENetFilterStatus FilterStatus)
+	{
+		UMockNetObjectFilter::FFunctionCallSetup CallSetup;
+		CallSetup.AddObject.bReturnValue = true;
+		CallSetup.Filter.bFilterOutByDefault = FilterStatus == ENetFilterStatus::Disallow;
+
+		MockNetObjectFilter->SetFunctionCallSetup(CallSetup);
+		MockNetObjectFilter->ResetFunctionCallStatus();
+	}
+
+	void SetDynamicFragmentFilterStatus(ENetFilterStatus FilterStatus)
+	{
+		UMockNetObjectFilterUsingFragmentData::FFunctionCallSetup CallSetup;
+		CallSetup.AddObject.bReturnValue = true;
+		CallSetup.Filter.bFilterOutByDefault = FilterStatus == ENetFilterStatus::Disallow;
+
+		MockNetObjectFilterWithFragments->SetFunctionCallSetup(CallSetup);
+		MockNetObjectFilterWithFragments->ResetFunctionCallStatus();
+	}
+
 private:
 	void InitNetObjectFilterDefinitions()
 	{
@@ -419,7 +439,7 @@ UE_NET_TEST_FIXTURE(FTestFilteringFixture, ConnectionFilterAllowsObjectToReplica
 	// Setup group filter
 	FNetObjectGroupHandle GroupHandle = Server->ReplicationSystem->CreateGroup();
 	Server->ReplicationSystem->AddToGroup(GroupHandle, ServerObject0->NetRefHandle);
-	Server->ReplicationSystem->AddGroupFilter(GroupHandle);
+	Server->ReplicationSystem->AddExclusionFilterGroup(GroupHandle);
 
 	// Spawn object on server
 	UReplicatedTestObject* ServerObject = Server->CreateObject(0, 0);
@@ -443,7 +463,7 @@ UE_NET_TEST_FIXTURE(FTestFilteringFixture, ConnectionFilterAllowsObjectToReplica
 	// Object should not have been created on the clients 
 	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject0->NetRefHandle), nullptr);
 		
-	// Object should have been crated on all clients
+	// Object should have been created on all clients
 	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
 	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObject->NetRefHandle), nullptr);
 }
@@ -470,12 +490,7 @@ UE_NET_TEST_FIXTURE(FTestFilteringFixture, ConnectionFilterPreventsObjectFromRep
 	UE_NET_ASSERT_EQ(ClientArray[0]->ConnectionIdOnServer, 1U);
 
 	// Send and deliver packets
-	Server->PreSendUpdate();
-	for (FReplicationSystemTestClient* Client : ClientArray)
-	{
-		Server->SendAndDeliverTo(Client, DeliverPacket);
-	}
-	Server->PostSendUpdate();
+	Server->UpdateAndSend(ClientArray, DeliverPacket);
 
 	// Object should have been created on the client with connection ID 1.
 	for (FReplicationSystemTestClient*& Client : ClientArray)
@@ -510,12 +525,7 @@ UE_NET_TEST_FIXTURE(FTestFilteringFixture, ConnectionFilterReplicatesOnlyToAllow
 	Server->ReplicationSystem->SetConnectionFilter(ServerObject->NetRefHandle, AllowedConnections, ENetFilterStatus::Allow);
 
 	// Send and deliver packets
-	Server->PreSendUpdate();
-	for (FReplicationSystemTestClient* Client : ClientArray)
-	{
-		Server->SendAndDeliverTo(Client, DeliverPacket);
-	}
-	Server->PostSendUpdate();
+	Server->UpdateAndSend(ClientArray, DeliverPacket);
 
 	// Object should only have been created on the last client
 	for (FReplicationSystemTestClient*& Client : ClientArray)
@@ -693,7 +703,7 @@ UE_NET_TEST_FIXTURE(FTestFilteringFixture, GroupFilterPreventsObjectFromReplicat
 
 	FNetObjectGroupHandle GroupHandle = Server->ReplicationSystem->CreateGroup();
 	Server->ReplicationSystem->AddToGroup(GroupHandle, ServerObject->NetRefHandle);
-	Server->ReplicationSystem->AddGroupFilter(GroupHandle);
+	Server->ReplicationSystem->AddExclusionFilterGroup(GroupHandle);
 
 	// Filter out objects in group
 	Server->ReplicationSystem->SetGroupFilterStatus(GroupHandle, Client->ConnectionIdOnServer, ENetFilterStatus::Disallow);
@@ -717,7 +727,7 @@ UE_NET_TEST_FIXTURE(FTestFilteringFixture, GroupFilterAllowsObjectToReplicate)
 
 	FNetObjectGroupHandle GroupHandle = Server->ReplicationSystem->CreateGroup();
 	Server->ReplicationSystem->AddToGroup(GroupHandle, ServerObject->NetRefHandle);
-	Server->ReplicationSystem->AddGroupFilter(GroupHandle);
+	Server->ReplicationSystem->AddExclusionFilterGroup(GroupHandle);
 
 	// Filter out objects in group
 	Server->ReplicationSystem->SetGroupFilterStatus(GroupHandle, Client->ConnectionIdOnServer, ENetFilterStatus::Disallow);
@@ -759,12 +769,7 @@ UE_NET_TEST_FIXTURE(FTestFilteringFixture, GroupFilterRestoresConnectionConnecti
 	Server->ReplicationSystem->SetConnectionFilter(ServerObject->NetRefHandle, AllowedConnections, ENetFilterStatus::Allow);
 
 	// Send and deliver packets
-	Server->PreSendUpdate();
-	for (FReplicationSystemTestClient* Client : ClientArray)
-	{
-		Server->SendAndDeliverTo(Client, DeliverPacket);
-	}
-	Server->PostSendUpdate();
+	Server->UpdateAndSend(ClientArray, DeliverPacket);
 
 	// Object should only have been created on the last client
 	for (FReplicationSystemTestClient*& Client : ClientArray)
@@ -783,16 +788,11 @@ UE_NET_TEST_FIXTURE(FTestFilteringFixture, GroupFilterRestoresConnectionConnecti
 	// Create and set group filter for last client only
 	FNetObjectGroupHandle GroupHandle = Server->ReplicationSystem->CreateGroup();
 	Server->ReplicationSystem->AddToGroup(GroupHandle, ServerObject->NetRefHandle);
-	Server->ReplicationSystem->AddGroupFilter(GroupHandle);
+	Server->ReplicationSystem->AddExclusionFilterGroup(GroupHandle);
 	Server->ReplicationSystem->SetGroupFilterStatus(GroupHandle, ConnectionIdForLastClient, ENetFilterStatus::Disallow);
 
 	// Send and deliver packets
-	Server->PreSendUpdate();
-	for (FReplicationSystemTestClient* Client : ClientArray)
-	{
-		Server->SendAndDeliverTo(Client, DeliverPacket);
-	}
-	Server->PostSendUpdate();
+	Server->UpdateAndSend(ClientArray, DeliverPacket);
 
 	// Object Should now have been destroyed on the last client
 	for (FReplicationSystemTestClient*& Client : ClientArray)
@@ -804,12 +804,7 @@ UE_NET_TEST_FIXTURE(FTestFilteringFixture, GroupFilterRestoresConnectionConnecti
 	Server->ReplicationSystem->SetGroupFilterStatus(GroupHandle, ConnectionIdForLastClient, ENetFilterStatus::Allow);
 
 	// Send and deliver packets
-	Server->PreSendUpdate();
-	for (FReplicationSystemTestClient* Client : ClientArray)
-	{
-		Server->SendAndDeliverTo(Client, DeliverPacket);
-	}
-	Server->PostSendUpdate();
+	Server->UpdateAndSend(ClientArray, DeliverPacket);
 
 	// Object should now be recreated on last client
 	for (FReplicationSystemTestClient*& Client : ClientArray)
@@ -846,13 +841,7 @@ UE_NET_TEST_FIXTURE(FTestFilteringFixture, DynamicFilterInitIsCalled)
 UE_NET_TEST_FIXTURE(FTestFilteringFixture, DynamicFilterAddObjectAndRemoveObjectIsCalledWhenObjectIsDeleted)
 {
 	// Setup dynamic filter for the test
-	{
-		UMockNetObjectFilter::FFunctionCallSetup CallSetup;
-		CallSetup.AddObject.bReturnValue = true;
-		CallSetup.Filter.bFilterOutByDefault = false;
-		MockNetObjectFilter->SetFunctionCallSetup(CallSetup);
-		MockNetObjectFilter->ResetFunctionCallStatus();
-	}
+	SetDynamicFilterStatus(ENetFilterStatus::Allow);
 
 	UReplicatedTestObject* ServerObject = Server->CreateObject(0, 0);
 	Server->ReplicationSystem->SetFilter(ServerObject->NetRefHandle, MockFilterHandle);
@@ -888,13 +877,7 @@ UE_NET_TEST_FIXTURE(FTestFilteringFixture, DynamicFilterAddObjectAndRemoveObject
 UE_NET_TEST_FIXTURE(FTestFilteringFixture, DynamicFilterCanAllowObjectToReplicate)
 {
 	// Setup dynamic filter for the test
-	{
-		UMockNetObjectFilter::FFunctionCallSetup CallSetup;
-		CallSetup.AddObject.bReturnValue = true;
-		CallSetup.Filter.bFilterOutByDefault = false;
-		MockNetObjectFilter->SetFunctionCallSetup(CallSetup);
-		MockNetObjectFilter->ResetFunctionCallStatus();
-	}
+	SetDynamicFilterStatus(ENetFilterStatus::Allow);
 
 	// Add client
 	FReplicationSystemTestClient* Client = CreateClient();
@@ -915,13 +898,7 @@ UE_NET_TEST_FIXTURE(FTestFilteringFixture, DynamicFilterCanAllowObjectToReplicat
 UE_NET_TEST_FIXTURE(FTestFilteringFixture, DynamicFilterCanDisallowObjectToReplicate)
 {
 	// Setup dynamic filter for the test
-	{
-		UMockNetObjectFilter::FFunctionCallSetup CallSetup;
-		CallSetup.AddObject.bReturnValue = true;
-		CallSetup.Filter.bFilterOutByDefault = true;
-		MockNetObjectFilter->SetFunctionCallSetup(CallSetup);
-		MockNetObjectFilter->ResetFunctionCallStatus();
-	}
+	SetDynamicFilterStatus(ENetFilterStatus::Disallow);
 
 	// Add client
 	FReplicationSystemTestClient* Client = CreateClient();
@@ -942,13 +919,7 @@ UE_NET_TEST_FIXTURE(FTestFilteringFixture, DynamicFilterCanDisallowObjectToRepli
 UE_NET_TEST_FIXTURE(FTestFilteringFixture, SwitchingFiltersCallsRemoveObjectOnPreviousFilter)
 {
 	// Setup dynamic filter for the test
-	{
-		UMockNetObjectFilter::FFunctionCallSetup CallSetup;
-		CallSetup.AddObject.bReturnValue = true;
-		CallSetup.Filter.bFilterOutByDefault = true;
-		MockNetObjectFilter->SetFunctionCallSetup(CallSetup);
-		MockNetObjectFilter->ResetFunctionCallStatus();
-	}
+	SetDynamicFilterStatus(ENetFilterStatus::Disallow);
 
 	// Spawn object on server and set filter
 	UReplicatedTestObject* ServerObject = Server->CreateObject(0, 0);
@@ -977,13 +948,7 @@ UE_NET_TEST_FIXTURE(FTestFilteringFixture, SwitchingFiltersCallsRemoveObjectOnPr
 UE_NET_TEST_FIXTURE(FTestFilteringFixture, SubObjectsAreReplicatedWhenOwnerDynamicFilterAllows)
 {
 	// Setup dynamic filter for the test
-	{
-		UMockNetObjectFilter::FFunctionCallSetup CallSetup;
-		CallSetup.AddObject.bReturnValue = true;
-		CallSetup.Filter.bFilterOutByDefault = false;
-		MockNetObjectFilter->SetFunctionCallSetup(CallSetup);
-		MockNetObjectFilter->ResetFunctionCallStatus();
-	}
+	SetDynamicFilterStatus(ENetFilterStatus::Allow);
 
 	// Add client
 	FReplicationSystemTestClient* Client = CreateClient();
@@ -1007,13 +972,7 @@ UE_NET_TEST_FIXTURE(FTestFilteringFixture, SubObjectsAreReplicatedWhenOwnerDynam
 UE_NET_TEST_FIXTURE(FTestFilteringFixture, SubObjectsAreNotReplicatedWhenOwnerDynamicFilterDisallows)
 {
 	// Setup dynamic filter for the test
-	{
-		UMockNetObjectFilter::FFunctionCallSetup CallSetup;
-		CallSetup.AddObject.bReturnValue = true;
-		CallSetup.Filter.bFilterOutByDefault = true;
-		MockNetObjectFilter->SetFunctionCallSetup(CallSetup);
-		MockNetObjectFilter->ResetFunctionCallStatus();
-	}
+	SetDynamicFilterStatus(ENetFilterStatus::Disallow);
 
 	// Add client
 	FReplicationSystemTestClient* Client = CreateClient();
@@ -1037,13 +996,7 @@ UE_NET_TEST_FIXTURE(FTestFilteringFixture, SubObjectsAreNotReplicatedWhenOwnerDy
 UE_NET_TEST_FIXTURE(FTestFilteringFixture, DependentObjectIsUnaffectedByDynamicFilter)
 {
 	// Setup dynamic filter for the test
-	{
-		UMockNetObjectFilter::FFunctionCallSetup CallSetup;
-		CallSetup.AddObject.bReturnValue = true;
-		CallSetup.Filter.bFilterOutByDefault = true;
-		MockNetObjectFilter->SetFunctionCallSetup(CallSetup);
-		MockNetObjectFilter->ResetFunctionCallStatus();
-	}
+	SetDynamicFilterStatus(ENetFilterStatus::Disallow);
 
 	// Add client
 	FReplicationSystemTestClient* Client = CreateClient();
@@ -1090,13 +1043,7 @@ UE_NET_TEST_FIXTURE(FTestFilteringFixture, DependentObjectIsUnaffectedByDynamicF
 UE_NET_TEST_FIXTURE(FTestFilteringFixture, NestedDependentObjectIsFilteredAsParentsOrIndependent)
 {
 	// Setup dynamic filter for the test
-	{
-		UMockNetObjectFilter::FFunctionCallSetup CallSetup;
-		CallSetup.AddObject.bReturnValue = true;
-		CallSetup.Filter.bFilterOutByDefault = true;
-		MockNetObjectFilter->SetFunctionCallSetup(CallSetup);
-		MockNetObjectFilter->ResetFunctionCallStatus();
-	}
+	SetDynamicFilterStatus(ENetFilterStatus::Disallow);
 
 	// Add client
 	FReplicationSystemTestClient* Client = CreateClient();
@@ -1166,13 +1113,7 @@ UE_NET_TEST_FIXTURE(FTestFilteringFixture, NestedDependentObjectIsFilteredAsPare
 UE_NET_TEST_FIXTURE(FTestFilteringFixture, ObjectGetsFilterOutSettingFromStart)
 {
 	// Setup dynamic filter for the test. For this test we want the value of the object's filter property to rule.
-	{
-		UMockNetObjectFilter::FFunctionCallSetup CallSetup;
-		CallSetup.AddObject.bReturnValue = true;
-		CallSetup.Filter.bFilterOutByDefault = false;
-		MockNetObjectFilterWithFragments->SetFunctionCallSetup(CallSetup);
-		MockNetObjectFilterWithFragments->ResetFunctionCallStatus();
-	}
+	SetDynamicFragmentFilterStatus(ENetFilterStatus::Allow);
 
 	// Add client
 	FReplicationSystemTestClient* Client = CreateClient();
@@ -1197,13 +1138,7 @@ UE_NET_TEST_FIXTURE(FTestFilteringFixture, ObjectGetsFilterOutSettingFromStart)
 UE_NET_TEST_FIXTURE(FTestFilteringFixture, ObjectGetsUpdatedFilterOutSetting)
 {
 	// Setup dynamic filter for the test. For this test we want the value of the object's filter property to rule.
-	{
-		UMockNetObjectFilter::FFunctionCallSetup CallSetup;
-		CallSetup.AddObject.bReturnValue = true;
-		CallSetup.Filter.bFilterOutByDefault = false;
-		MockNetObjectFilterWithFragments->SetFunctionCallSetup(CallSetup);
-		MockNetObjectFilterWithFragments->ResetFunctionCallStatus();
-	}
+	SetDynamicFragmentFilterStatus(ENetFilterStatus::Allow);
 
 	// Add client
 	FReplicationSystemTestClient* Client = CreateClient();
@@ -1237,18 +1172,9 @@ UE_NET_TEST_FIXTURE(FTestFilteringFixture, ObjectGetsUpdatedFilterOutSetting)
 
 UE_NET_TEST_FIXTURE(FTestFilteringFixture, MixPreAndPostFilters)
 {
-	// Setup dynamic filter for the test.
-	{
-		UMockNetObjectFilter::FFunctionCallSetup CallSetup;
-		CallSetup.AddObject.bReturnValue = true;
-		CallSetup.Filter.bFilterOutByDefault = true;
-
-		MockNetObjectFilter->SetFunctionCallSetup(CallSetup);
-		MockNetObjectFilter->ResetFunctionCallStatus();
-
-		MockNetObjectFilterWithFragments->SetFunctionCallSetup(CallSetup);
-		MockNetObjectFilterWithFragments->ResetFunctionCallStatus();
-	}
+	// Setup dynamic filters for the test.
+	SetDynamicFilterStatus(ENetFilterStatus::Disallow);
+	SetDynamicFragmentFilterStatus(ENetFilterStatus::Disallow);
 
 	// Add client
 	FReplicationSystemTestClient* Client = CreateClient();
@@ -1281,14 +1207,8 @@ UE_NET_TEST_FIXTURE(FTestFilteringFixture, MixPreAndPostFilters)
 
 UE_NET_TEST_FIXTURE(FTestFilteringFixture, DynamicFilteredOutSubObjectsAreResetWhenIndexIsReused)
 {
-	// Setup dynamic filter for the test
-	{
-		UMockNetObjectFilter::FFunctionCallSetup CallSetup;
-		CallSetup.AddObject.bReturnValue = true;
-		CallSetup.Filter.bFilterOutByDefault = true;
-		MockNetObjectFilter->SetFunctionCallSetup(CallSetup);
-		MockNetObjectFilter->ResetFunctionCallStatus();
-	}
+	// Setup dynamic filters for the test
+	SetDynamicFilterStatus(ENetFilterStatus::Disallow);
 
 	// Add client
 	FReplicationSystemTestClient* Client = CreateClient();
@@ -1326,15 +1246,8 @@ UE_NET_TEST_FIXTURE(FTestFilteringFixture, DynamicFilteredOutSubObjectsAreResetW
 
 UE_NET_TEST_FIXTURE(FTestFilteringWithConditionFixture, TestCulledDirtyActors)
 {
-	// Setup dynamic filter for the test.
-	{
-		UMockNetObjectFilter::FFunctionCallSetup CallSetup;
-		CallSetup.AddObject.bReturnValue = true;
-		CallSetup.Filter.bFilterOutByDefault = true;
-
-		MockNetObjectFilter->SetFunctionCallSetup(CallSetup);
-		MockNetObjectFilter->ResetFunctionCallStatus();
-	}
+	// Setup dynamic filter for the test
+	SetDynamicFilterStatus(ENetFilterStatus::Disallow);
 
 	const uint32 RepSystemID = Server->GetReplicationSystemId();
 
@@ -1438,6 +1351,1048 @@ UE_NET_TEST_FIXTURE(FTestFilteringWithConditionFixture, TestCulledDirtyActors)
 		// These don't
 		UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerObjectC->NetRefHandle), nullptr);
 	}
+}
+
+UE_NET_TEST_FIXTURE(FTestFilteringFixture, InclusionGroupDoesNotFilterOutObject)
+{
+	// Add client
+	FReplicationSystemTestClient* Client = CreateClient();
+
+	// Spawn object on server
+	UReplicatedTestObject* ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+	
+	// Setup inclusion group filter
+	FNetObjectGroupHandle GroupHandle = Server->ReplicationSystem->CreateGroup();
+	Server->ReplicationSystem->AddToGroup(GroupHandle, ServerObject->NetRefHandle);
+	Server->ReplicationSystem->AddInclusionFilterGroup(GroupHandle);
+	Server->ReplicationSystem->SetGroupFilterStatus(GroupHandle, ENetFilterStatus::Allow);
+
+	// Send and deliver packets
+	Server->UpdateAndSend({Client}, DeliverPacket);
+
+	// Object should have been created
+	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+
+	// Change filter to not allow replication. As it's an inclusion filter this should not change things.
+	Server->ReplicationSystem->SetGroupFilterStatus(GroupHandle, ENetFilterStatus::Disallow);
+
+	// Send and deliver packets
+	Server->UpdateAndSend({Client}, DeliverPacket);
+
+	// Object should not have been destroyed
+	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+}
+
+UE_NET_TEST_FIXTURE(FTestFilteringFixture, InclusionGroupDoesNotOverrideOwnerFilter)
+{
+	// Add clients
+	constexpr uint32 OwningClientIndex = 0;
+	constexpr uint32 NonOwningClientIndex = 1;
+
+	FReplicationSystemTestClient* ClientArray[2];
+	for (FReplicationSystemTestClient*& Client : ClientArray)
+	{
+		Client = CreateClient();
+	}
+
+	// Spawn object on server
+	UReplicatedTestObject* ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+	Server->ReplicationSystem->SetFilter(ServerObject->NetRefHandle, ToOwnerFilterHandle);
+	Server->ReplicationSystem->SetOwningNetConnection(ServerObject->NetRefHandle, ClientArray[OwningClientIndex]->ConnectionIdOnServer);
+
+	// Setup inclusion group filter
+	FNetObjectGroupHandle GroupHandle = Server->ReplicationSystem->CreateGroup();
+	Server->ReplicationSystem->AddToGroup(GroupHandle, ServerObject->NetRefHandle);
+	Server->ReplicationSystem->AddInclusionFilterGroup(GroupHandle);
+	Server->ReplicationSystem->SetGroupFilterStatus(GroupHandle, ENetFilterStatus::Allow);
+
+	// Send and deliver packet
+	Server->UpdateAndSend(ClientArray, DeliverPacket);
+
+	// Object should have been created on the owning client
+	UE_NET_ASSERT_NE(Clients[OwningClientIndex]->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+	// Object should not have been created on the non-owning client
+	UE_NET_ASSERT_EQ(Clients[NonOwningClientIndex]->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+
+	// Change filter to not allow replication. As it's an inclusion filter this should not change things.
+	Server->ReplicationSystem->SetGroupFilterStatus(GroupHandle, ENetFilterStatus::Disallow);
+
+	// Send and deliver packets
+	Server->UpdateAndSend(ClientArray, DeliverPacket);
+
+	// Object creation status should remain the same as before
+	UE_NET_ASSERT_NE(Clients[OwningClientIndex]->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+	UE_NET_ASSERT_EQ(Clients[NonOwningClientIndex]->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+}
+
+UE_NET_TEST_FIXTURE(FTestFilteringFixture, InclusionGroupDoesNotOverrideConnectionFilter)
+{
+	// Add clients
+	constexpr uint32 AllowedClientIndex = 0;
+	constexpr uint32 DisallowedOwningClientIndex = 1;
+
+	FReplicationSystemTestClient* ClientArray[2];
+	for (FReplicationSystemTestClient*& Client : ClientArray)
+	{
+		Client = CreateClient();
+	}
+
+	// Spawn object on server
+	UReplicatedTestObject* ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+
+	// Apply connection filter
+	TBitArray<> AllowedConnections;
+	AllowedConnections.Init(false, ClientArray[AllowedClientIndex]->ConnectionIdOnServer + 1);
+	AllowedConnections[ClientArray[AllowedClientIndex]->ConnectionIdOnServer] = true;
+	Server->ReplicationSystem->SetConnectionFilter(ServerObject->NetRefHandle, AllowedConnections, ENetFilterStatus::Allow);
+
+	// Setup inclusion group filter
+	FNetObjectGroupHandle GroupHandle = Server->ReplicationSystem->CreateGroup();
+	Server->ReplicationSystem->AddToGroup(GroupHandle, ServerObject->NetRefHandle);
+	Server->ReplicationSystem->AddInclusionFilterGroup(GroupHandle);
+	Server->ReplicationSystem->SetGroupFilterStatus(GroupHandle, ENetFilterStatus::Allow);
+
+	// Send and deliver packet
+	Server->UpdateAndSend(ClientArray, DeliverPacket);
+
+	// Object should have been created on the owning client
+	UE_NET_ASSERT_NE(Clients[AllowedClientIndex]->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+	// Object should not have been created on the non-owning client
+	UE_NET_ASSERT_EQ(Clients[DisallowedOwningClientIndex]->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+
+	// Change filter to not allow replication. As it's an inclusion filter this should not change things.
+	Server->ReplicationSystem->SetGroupFilterStatus(GroupHandle, ENetFilterStatus::Disallow);
+
+	// Send and deliver packets
+	Server->UpdateAndSend(ClientArray, DeliverPacket);
+
+	// Object creation status should remain the same as before
+	UE_NET_ASSERT_NE(Clients[AllowedClientIndex]->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+	UE_NET_ASSERT_EQ(Clients[DisallowedOwningClientIndex]->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+}
+
+UE_NET_TEST_FIXTURE(FTestFilteringFixture, InclusionGroupDoesNotOverrideExclusionGroupFilter)
+{
+	// Add clients
+	constexpr uint32 AllowedClientIndex = 0;
+	constexpr uint32 DisallowedOwningClientIndex = 1;
+
+	FReplicationSystemTestClient* ClientArray[2];
+	for (FReplicationSystemTestClient*& Client : ClientArray)
+	{
+		Client = CreateClient();
+	}
+
+	// Spawn object on server
+	UReplicatedTestObject* ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+
+	// Setup exclusion group filter
+	FNetObjectGroupHandle ExclusionGroupHandle = Server->ReplicationSystem->CreateGroup();
+	Server->ReplicationSystem->AddToGroup(ExclusionGroupHandle, ServerObject->NetRefHandle);
+	Server->ReplicationSystem->AddExclusionFilterGroup(ExclusionGroupHandle);
+	Server->ReplicationSystem->SetGroupFilterStatus(ExclusionGroupHandle, ClientArray[AllowedClientIndex]->ConnectionIdOnServer, ENetFilterStatus::Allow);
+
+	// Setup inclusion group filter
+	FNetObjectGroupHandle InclusionGroupHandle = Server->ReplicationSystem->CreateGroup();
+	Server->ReplicationSystem->AddToGroup(InclusionGroupHandle, ServerObject->NetRefHandle);
+	Server->ReplicationSystem->AddInclusionFilterGroup(InclusionGroupHandle);
+	Server->ReplicationSystem->SetGroupFilterStatus(InclusionGroupHandle, ENetFilterStatus::Allow);
+
+	// Send and deliver packet
+	Server->PreSendUpdate();
+	for (FReplicationSystemTestClient* Client : ClientArray)
+	{
+		Server->SendAndDeliverTo(Client, DeliverPacket);
+	}
+	Server->PostSendUpdate();
+
+	// Object should have been created on the allowed client
+	UE_NET_ASSERT_NE(Clients[AllowedClientIndex]->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+	// Object should not have been created on the disallowed client
+	UE_NET_ASSERT_EQ(Clients[DisallowedOwningClientIndex]->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+
+	// Change inclusion filter to not allow replication. As it's an inclusion filter this should not change things.
+	Server->ReplicationSystem->SetGroupFilterStatus(InclusionGroupHandle, ENetFilterStatus::Disallow);
+
+	// Send and deliver packets
+	Server->UpdateAndSend(ClientArray, DeliverPacket);
+
+	// Object creation status should remain the same as before
+	UE_NET_ASSERT_NE(Clients[AllowedClientIndex]->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+	UE_NET_ASSERT_EQ(Clients[DisallowedOwningClientIndex]->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+}
+
+UE_NET_TEST_FIXTURE(FTestFilteringFixture, DisabledInclusionGroupDoesNotOverrideDynamicFilter)
+{
+	// Setup dynamic filter for the test
+	SetDynamicFilterStatus(ENetFilterStatus::Disallow);
+
+	// Add clients
+	FReplicationSystemTestClient* ClientArray[2];
+	for (FReplicationSystemTestClient*& Client : ClientArray)
+	{
+		Client = CreateClient();
+	}
+
+	// Spawn object on server
+	UReplicatedTestObject* ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+
+	// Set filter which will filter out all objects
+	Server->ReplicationSystem->SetFilter(ServerObject->NetRefHandle, MockFilterHandle);
+
+	// Setup inclusion group filter
+	FNetObjectGroupHandle InclusionGroupHandle = Server->ReplicationSystem->CreateGroup();
+	Server->ReplicationSystem->AddToGroup(InclusionGroupHandle, ServerObject->NetRefHandle);
+	Server->ReplicationSystem->AddInclusionFilterGroup(InclusionGroupHandle);
+	Server->ReplicationSystem->SetGroupFilterStatus(InclusionGroupHandle, ENetFilterStatus::Disallow);
+
+	// Send and deliver packet
+	Server->UpdateAndSend(ClientArray, DeliverPacket);
+
+	// Object should not have been created on any clients
+	for (FReplicationSystemTestClient* Client : ClientArray)
+	{
+		UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+	}
+}
+
+UE_NET_TEST_FIXTURE(FTestFilteringFixture, EnabledInclusionGroupDoesOverrideDynamicFilter)
+{
+	// Setup dynamic filter for the test
+	SetDynamicFilterStatus(ENetFilterStatus::Disallow);
+
+	// Add clients
+	constexpr uint32 AllowedClientIndex = 1;
+	constexpr uint32 DisallowedOwningClientIndex = 0;
+
+	FReplicationSystemTestClient* ClientArray[2];
+	for (FReplicationSystemTestClient*& Client : ClientArray)
+	{
+		Client = CreateClient();
+	}
+
+	// Spawn object on server
+	UReplicatedTestObject* ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+
+	// Set filter which will filter out all objects
+	Server->ReplicationSystem->SetFilter(ServerObject->NetRefHandle, MockFilterHandle);
+
+	// Setup inclusion group filter
+	FNetObjectGroupHandle InclusionGroupHandle = Server->ReplicationSystem->CreateGroup();
+	Server->ReplicationSystem->AddToGroup(InclusionGroupHandle, ServerObject->NetRefHandle);
+	Server->ReplicationSystem->AddInclusionFilterGroup(InclusionGroupHandle);
+	// Disallow by default
+	Server->ReplicationSystem->SetGroupFilterStatus(InclusionGroupHandle, ENetFilterStatus::Disallow);
+	// Allow one client
+	Server->ReplicationSystem->SetGroupFilterStatus(InclusionGroupHandle, ClientArray[AllowedClientIndex]->ConnectionIdOnServer, ENetFilterStatus::Allow);
+
+	// Send and deliver packet
+	Server->UpdateAndSend(ClientArray, DeliverPacket);
+
+	// Object should have been created on the allowed client
+	UE_NET_ASSERT_NE(Clients[AllowedClientIndex]->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+	// Object should not have been created on the disallowed client
+	UE_NET_ASSERT_EQ(Clients[DisallowedOwningClientIndex]->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+}
+
+UE_NET_TEST_FIXTURE(FTestFilteringFixture, LateAddingToEnabledInclusionGroupDoesOverrideDynamicFilter)
+{
+	// Setup dynamic filter for the test
+	SetDynamicFilterStatus(ENetFilterStatus::Disallow);
+
+	// Add clients
+	constexpr uint32 AllowedClientIndex = 1;
+	constexpr uint32 DisallowedOwningClientIndex = 0;
+
+	FReplicationSystemTestClient* ClientArray[2];
+	for (FReplicationSystemTestClient*& Client : ClientArray)
+	{
+		Client = CreateClient();
+	}
+
+	// Spawn object on server
+	UReplicatedTestObject* ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+
+	// Set filter which will filter out all objects
+	Server->ReplicationSystem->SetFilter(ServerObject->NetRefHandle, MockFilterHandle);
+
+	// Setup inclusion group filter
+	FNetObjectGroupHandle InclusionGroupHandle = Server->ReplicationSystem->CreateGroup();
+	Server->ReplicationSystem->AddInclusionFilterGroup(InclusionGroupHandle);
+	// Disallow by default
+	Server->ReplicationSystem->SetGroupFilterStatus(InclusionGroupHandle, ENetFilterStatus::Disallow);
+	// Allow one client
+	Server->ReplicationSystem->SetGroupFilterStatus(InclusionGroupHandle, ClientArray[AllowedClientIndex]->ConnectionIdOnServer, ENetFilterStatus::Allow);
+
+	// Send and deliver packet
+	Server->UpdateAndSend(ClientArray, DeliverPacket);
+
+	// At this point the object should not have been created on any client
+	for (FReplicationSystemTestClient* Client : ClientArray)
+	{
+		UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+	}
+
+	// Late adding to group
+	Server->ReplicationSystem->AddToGroup(InclusionGroupHandle, ServerObject->NetRefHandle);
+
+	// Send and deliver packet
+	Server->UpdateAndSend(ClientArray, DeliverPacket);
+
+	// Object should have been created on the allowed client
+	UE_NET_ASSERT_NE(Clients[AllowedClientIndex]->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+	// Object should not have been created on the disallowed client
+	UE_NET_ASSERT_EQ(Clients[DisallowedOwningClientIndex]->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+}
+
+UE_NET_TEST_FIXTURE(FTestFilteringFixture, LateEnablingInclusionGroupDoesOverrideDynamicFilter)
+{
+	// Setup dynamic filter for the test
+	SetDynamicFilterStatus(ENetFilterStatus::Disallow);
+
+	// Add clients
+	constexpr uint32 AllowedClientIndex = 1;
+	constexpr uint32 DisallowedOwningClientIndex = 0;
+
+	FReplicationSystemTestClient* ClientArray[2];
+	for (FReplicationSystemTestClient*& Client : ClientArray)
+	{
+		Client = CreateClient();
+	}
+
+	// Spawn object on server
+	UReplicatedTestObject* ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+
+	// Set filter which will filter out all objects
+	Server->ReplicationSystem->SetFilter(ServerObject->NetRefHandle, MockFilterHandle);
+
+	// Setup inclusion group filter
+	FNetObjectGroupHandle InclusionGroupHandle = Server->ReplicationSystem->CreateGroup();
+	Server->ReplicationSystem->AddToGroup(InclusionGroupHandle, ServerObject->NetRefHandle);
+	Server->ReplicationSystem->AddInclusionFilterGroup(InclusionGroupHandle);
+	// Disallow by default
+	Server->ReplicationSystem->SetGroupFilterStatus(InclusionGroupHandle, ENetFilterStatus::Disallow);
+
+	// Send and deliver packet
+	Server->UpdateAndSend(ClientArray, DeliverPacket);
+
+	// At this point the object should not have been created on any client
+	for (FReplicationSystemTestClient* Client : ClientArray)
+	{
+		UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+	}
+
+	// Late enabling client
+	Server->ReplicationSystem->SetGroupFilterStatus(InclusionGroupHandle, ClientArray[AllowedClientIndex]->ConnectionIdOnServer, ENetFilterStatus::Allow);
+
+	// Send and deliver packet
+	Server->UpdateAndSend(ClientArray, DeliverPacket);
+
+	// Object should have been created on the allowed client
+	UE_NET_ASSERT_NE(Clients[AllowedClientIndex]->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+	// Object should not have been created on the disallowed client
+	UE_NET_ASSERT_EQ(Clients[DisallowedOwningClientIndex]->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+}
+
+UE_NET_TEST_FIXTURE(FTestFilteringFixture, RemovingFromInclusionGroupRemovesDynamicFilterOverride)
+{
+	// Setup dynamic filter for the test
+	SetDynamicFilterStatus(ENetFilterStatus::Disallow);
+
+	// Add client
+	FReplicationSystemTestClient* Client = CreateClient();
+
+	// Spawn object on server
+	UReplicatedTestObject* ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+
+	// Set filter which will filter out all objects
+	Server->ReplicationSystem->SetFilter(ServerObject->NetRefHandle, MockFilterHandle);
+
+	// Setup inclusion group filter
+	FNetObjectGroupHandle InclusionGroupHandle = Server->ReplicationSystem->CreateGroup();
+	Server->ReplicationSystem->AddToGroup(InclusionGroupHandle, ServerObject->NetRefHandle);
+	Server->ReplicationSystem->AddInclusionFilterGroup(InclusionGroupHandle);
+	Server->ReplicationSystem->SetGroupFilterStatus(InclusionGroupHandle, ENetFilterStatus::Allow);
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client}, DeliverPacket);
+
+	// Object should have been created
+	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+
+	// Remove object from inclusion group. This should cause the object to be filtered out again.
+	Server->ReplicationSystem->RemoveFromGroup(InclusionGroupHandle, ServerObject->NetRefHandle);
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client}, DeliverPacket);
+
+	// Object should have been created
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+}
+
+UE_NET_TEST_FIXTURE(FTestFilteringFixture, SubObjectAddedToAllowedInclusionGroupFollowsOwnerNotInInclusionGroup)
+{
+	// Setup dynamic filter for the test
+	SetDynamicFilterStatus(ENetFilterStatus::Disallow);
+
+	// Add client
+	FReplicationSystemTestClient* Client = CreateClient();
+
+	// Spawn object with subobject on server
+	UReplicatedTestObject* ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+	UReplicatedTestObject* ServerSubObject = Server->CreateSubObject(ServerObject->NetRefHandle, UTestReplicatedIrisObject::FComponents{});
+
+	// Set filter which will filter out all objects
+	Server->ReplicationSystem->SetFilter(ServerObject->NetRefHandle, MockFilterHandle);
+
+	// Setup inclusion group filter
+	FNetObjectGroupHandle InclusionGroupHandle = Server->ReplicationSystem->CreateGroup();
+	Server->ReplicationSystem->AddToGroup(InclusionGroupHandle, ServerSubObject->NetRefHandle);
+	Server->ReplicationSystem->AddInclusionFilterGroup(InclusionGroupHandle);
+	Server->ReplicationSystem->SetGroupFilterStatus(InclusionGroupHandle, Client->ConnectionIdOnServer, ENetFilterStatus::Allow);
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client}, DeliverPacket);
+
+	// Neither object nor subobject should have been created on the client.
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObject->NetRefHandle), nullptr);
+}
+
+UE_NET_TEST_FIXTURE(FTestFilteringFixture, SubObjectLateAddedToAllowedInclusionGroupFollowsOwnerNotInInclusionGroup)
+{
+	// Setup dynamic filter for the test
+	SetDynamicFilterStatus(ENetFilterStatus::Disallow);
+
+	// Add client
+	FReplicationSystemTestClient* Client = CreateClient();
+
+	// Spawn object with subobject on server
+	UReplicatedTestObject* ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+	UReplicatedTestObject* ServerSubObject = Server->CreateSubObject(ServerObject->NetRefHandle, UTestReplicatedIrisObject::FComponents{});
+
+	// Set filter which will filter out all objects
+	Server->ReplicationSystem->SetFilter(ServerObject->NetRefHandle, MockFilterHandle);
+
+	// Setup inclusion group filter
+	FNetObjectGroupHandle InclusionGroupHandle = Server->ReplicationSystem->CreateGroup();
+	Server->ReplicationSystem->AddInclusionFilterGroup(InclusionGroupHandle);
+	Server->ReplicationSystem->SetGroupFilterStatus(InclusionGroupHandle, Client->ConnectionIdOnServer, ENetFilterStatus::Allow);
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client}, DeliverPacket);
+
+	// Late add subobject to group
+	Server->ReplicationSystem->AddToGroup(InclusionGroupHandle, ServerSubObject->NetRefHandle);
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client}, DeliverPacket);
+
+	// Neither object nor subobject should have been created on the client.
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObject->NetRefHandle), nullptr);
+}
+
+UE_NET_TEST_FIXTURE(FTestFilteringFixture, LateAddedSubObjectFollowsOwnerInAllowedInclusionGroup)
+{
+	// Setup dynamic filter for the test
+	SetDynamicFilterStatus(ENetFilterStatus::Disallow);
+
+	// Add client
+	FReplicationSystemTestClient* Client = CreateClient();
+
+	// Spawn object on server
+	UReplicatedTestObject* ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+
+	// Set filter which will filter out all objects
+	Server->ReplicationSystem->SetFilter(ServerObject->NetRefHandle, MockFilterHandle);
+
+	// Setup inclusion group filter and add object
+	FNetObjectGroupHandle InclusionGroupHandle = Server->ReplicationSystem->CreateGroup();
+	Server->ReplicationSystem->AddInclusionFilterGroup(InclusionGroupHandle);
+	Server->ReplicationSystem->AddToGroup(InclusionGroupHandle, ServerObject->NetRefHandle);
+	Server->ReplicationSystem->SetGroupFilterStatus(InclusionGroupHandle, Client->ConnectionIdOnServer, ENetFilterStatus::Allow);
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client}, DeliverPacket);
+
+	// Object should now have been created on the client.
+	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+
+	// Late add subobject to owner
+	UReplicatedTestObject* ServerSubObject = Server->CreateSubObject(ServerObject->NetRefHandle, UTestReplicatedIrisObject::FComponents{});
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client}, DeliverPacket);
+
+	// Subobject should now have been created on the client.
+	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObject->NetRefHandle), nullptr);
+}
+
+UE_NET_TEST_FIXTURE(FTestFilteringFixture, LateAddedSubObjectFollowsOwnerInDisallowedInclusionGroup)
+{
+	// Setup dynamic filter for the test
+	SetDynamicFilterStatus(ENetFilterStatus::Disallow);
+
+	// Add client
+	FReplicationSystemTestClient* Client = CreateClient();
+
+	// Spawn object on server
+	UReplicatedTestObject* ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+
+	// Set filter which will filter out all objects
+	Server->ReplicationSystem->SetFilter(ServerObject->NetRefHandle, MockFilterHandle);
+
+	// Setup inclusion group filter and add object
+	FNetObjectGroupHandle InclusionGroupHandle = Server->ReplicationSystem->CreateGroup();
+	Server->ReplicationSystem->AddInclusionFilterGroup(InclusionGroupHandle);
+	Server->ReplicationSystem->AddToGroup(InclusionGroupHandle, ServerObject->NetRefHandle);
+	Server->ReplicationSystem->SetGroupFilterStatus(InclusionGroupHandle, Client->ConnectionIdOnServer, ENetFilterStatus::Disallow);
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client}, DeliverPacket);
+
+	// Object should not have been created on the client.
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+
+	// Late add subobject to owner
+	UReplicatedTestObject* ServerSubObject = Server->CreateSubObject(ServerObject->NetRefHandle, UTestReplicatedIrisObject::FComponents{});
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client}, DeliverPacket);
+
+	// Subobject should not have been created on the client.
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObject->NetRefHandle), nullptr);
+}
+
+UE_NET_TEST_FIXTURE(FTestFilteringFixture, SubObjectAddedToDisallowedInclusionGroupFollowsOwnerNotInInclusionGroup)
+{
+	// Setup dynamic filter for the test
+	SetDynamicFilterStatus(ENetFilterStatus::Allow);
+
+	// Add client
+	FReplicationSystemTestClient* Client = CreateClient();
+
+	// Spawn object with subobject on server
+	UReplicatedTestObject* ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+	UReplicatedTestObject* ServerSubObject = Server->CreateSubObject(ServerObject->NetRefHandle, UTestReplicatedIrisObject::FComponents{});
+
+	// Set filter which will filter out all objects
+	Server->ReplicationSystem->SetFilter(ServerObject->NetRefHandle, MockFilterHandle);
+
+	// Setup inclusion group filter
+	FNetObjectGroupHandle InclusionGroupHandle = Server->ReplicationSystem->CreateGroup();
+	Server->ReplicationSystem->AddToGroup(InclusionGroupHandle, ServerSubObject->NetRefHandle);
+	Server->ReplicationSystem->AddInclusionFilterGroup(InclusionGroupHandle);
+	Server->ReplicationSystem->SetGroupFilterStatus(InclusionGroupHandle, Client->ConnectionIdOnServer, ENetFilterStatus::Disallow);
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client}, DeliverPacket);
+
+	// Both object and subobject should have been created. Disallowing replication of members in an inclusion group does not filter out, not objects nor subobjects.
+	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObject->NetRefHandle), nullptr);
+}
+
+UE_NET_TEST_FIXTURE(FTestFilteringFixture, SubObjectRemovedFromAllowedInclusionGroupFollowsOwnerNotInInclusionGroup)
+{
+	// Setup dynamic filter for the test
+	SetDynamicFilterStatus(ENetFilterStatus::Disallow);
+
+	// Add client
+	FReplicationSystemTestClient* Client = CreateClient();
+
+	// Spawn object with subobject on server
+	UReplicatedTestObject* ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+	UReplicatedTestObject* ServerSubObject = Server->CreateSubObject(ServerObject->NetRefHandle, UTestReplicatedIrisObject::FComponents{});
+
+	// Set filter which will filter out all objects
+	Server->ReplicationSystem->SetFilter(ServerObject->NetRefHandle, MockFilterHandle);
+
+	// Setup inclusion group filter
+	FNetObjectGroupHandle InclusionGroupHandle = Server->ReplicationSystem->CreateGroup();
+	Server->ReplicationSystem->AddToGroup(InclusionGroupHandle, ServerSubObject->NetRefHandle);
+	Server->ReplicationSystem->AddInclusionFilterGroup(InclusionGroupHandle);
+	Server->ReplicationSystem->SetGroupFilterStatus(InclusionGroupHandle, Client->ConnectionIdOnServer, ENetFilterStatus::Allow);
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client}, DeliverPacket);
+
+	// Remove subobject from group
+	Server->ReplicationSystem->RemoveFromGroup(InclusionGroupHandle, ServerSubObject->NetRefHandle);
+ 
+	// Send and deliver packet
+	Server->UpdateAndSend({Client}, DeliverPacket);
+
+	// Neither object nor subobject should have been created on the client.
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObject->NetRefHandle), nullptr);
+}
+
+UE_NET_TEST_FIXTURE(FTestFilteringFixture, SubObjectRemovedFromDisallowedInclusionGroupFollowsOwnerNotInInclusionGroup)
+{
+	// Setup dynamic filter for the test
+	SetDynamicFilterStatus(ENetFilterStatus::Allow);
+
+	// Add client
+	FReplicationSystemTestClient* Client = CreateClient();
+
+	// Spawn object with subobject on server
+	UReplicatedTestObject* ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+	UReplicatedTestObject* ServerSubObject = Server->CreateSubObject(ServerObject->NetRefHandle, UTestReplicatedIrisObject::FComponents{});
+
+	// Set filter which will filter out all objects
+	Server->ReplicationSystem->SetFilter(ServerObject->NetRefHandle, MockFilterHandle);
+
+	// Setup inclusion group filter
+	FNetObjectGroupHandle InclusionGroupHandle = Server->ReplicationSystem->CreateGroup();
+	Server->ReplicationSystem->AddToGroup(InclusionGroupHandle, ServerSubObject->NetRefHandle);
+	Server->ReplicationSystem->AddInclusionFilterGroup(InclusionGroupHandle);
+	Server->ReplicationSystem->SetGroupFilterStatus(InclusionGroupHandle, Client->ConnectionIdOnServer, ENetFilterStatus::Disallow);
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client}, DeliverPacket);
+
+	// Remove subobject from group
+	Server->ReplicationSystem->RemoveFromGroup(InclusionGroupHandle, ServerSubObject->NetRefHandle);
+ 
+	// Send and deliver packet
+	Server->UpdateAndSend({Client}, DeliverPacket);
+
+	// Both object and subobject should have been created.
+	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObject->NetRefHandle), nullptr);
+}
+
+UE_NET_TEST_FIXTURE(FTestFilteringFixture, SubObjectAddedToInclusionGroupFollowsOwnerInOtherInclusionGroupp)
+{
+	// Setup dynamic filter for the test
+	SetDynamicFilterStatus(ENetFilterStatus::Disallow);
+
+	// Add client
+	FReplicationSystemTestClient* Client = CreateClient();
+
+	// Spawn object with subobject on server
+	UReplicatedTestObject* ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+	UReplicatedTestObject* ServerSubObject = Server->CreateSubObject(ServerObject->NetRefHandle, UTestReplicatedIrisObject::FComponents{});
+
+	// Set filter which will filter out all objects
+	Server->ReplicationSystem->SetFilter(ServerObject->NetRefHandle, MockFilterHandle);
+
+	// Setup separate inclusion group filters for object and subobject
+	FNetObjectGroupHandle ObjectInclusionGroupHandle = Server->ReplicationSystem->CreateGroup();
+	Server->ReplicationSystem->AddToGroup(ObjectInclusionGroupHandle, ServerObject->NetRefHandle);
+	Server->ReplicationSystem->AddInclusionFilterGroup(ObjectInclusionGroupHandle);
+	Server->ReplicationSystem->SetGroupFilterStatus(ObjectInclusionGroupHandle, Client->ConnectionIdOnServer, ENetFilterStatus::Disallow);
+	
+	FNetObjectGroupHandle SubObjectInclusionGroupHandle = Server->ReplicationSystem->CreateGroup();
+	Server->ReplicationSystem->AddToGroup(SubObjectInclusionGroupHandle, ServerSubObject->NetRefHandle);
+	Server->ReplicationSystem->AddInclusionFilterGroup(SubObjectInclusionGroupHandle);
+	Server->ReplicationSystem->SetGroupFilterStatus(SubObjectInclusionGroupHandle, Client->ConnectionIdOnServer, ENetFilterStatus::Disallow);
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client}, DeliverPacket);
+
+	// Neither object nor subobject should have been created on the client.
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObject->NetRefHandle), nullptr);
+
+	// Allow subobject group to be replicated. This should not change anything.
+	Server->ReplicationSystem->SetGroupFilterStatus(SubObjectInclusionGroupHandle, Client->ConnectionIdOnServer, ENetFilterStatus::Allow);
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client}, DeliverPacket);
+
+	// Neither object nor subobject should have been created on the client.
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObject->NetRefHandle), nullptr);
+
+	// Allow object group to be replicated and subobject group to not be replicated. This should result in both the object and subobject being created on the client.
+	Server->ReplicationSystem->SetGroupFilterStatus(ObjectInclusionGroupHandle, Client->ConnectionIdOnServer, ENetFilterStatus::Allow);
+	Server->ReplicationSystem->SetGroupFilterStatus(SubObjectInclusionGroupHandle, Client->ConnectionIdOnServer, ENetFilterStatus::Disallow);
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client}, DeliverPacket);
+
+	// Both object and subobject should have been created on the client.
+	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObject->NetRefHandle), nullptr);
+}
+
+UE_NET_TEST_FIXTURE(FTestFilteringFixture, SubObjectLateAddedToInclusionGroupFollowsOwnerInOtherInclusionGroupp)
+{
+	// Setup dynamic filter for the test
+	SetDynamicFilterStatus(ENetFilterStatus::Disallow);
+
+	// Add client
+	FReplicationSystemTestClient* Client = CreateClient();
+
+	// Spawn object with subobject on server
+	UReplicatedTestObject* ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+	UReplicatedTestObject* ServerSubObject = Server->CreateSubObject(ServerObject->NetRefHandle, UTestReplicatedIrisObject::FComponents{});
+
+	// Set filter which will filter out all objects
+	Server->ReplicationSystem->SetFilter(ServerObject->NetRefHandle, MockFilterHandle);
+
+	// Setup separate inclusion group filters for object and subobject
+	FNetObjectGroupHandle ObjectInclusionGroupHandle = Server->ReplicationSystem->CreateGroup();
+	Server->ReplicationSystem->AddToGroup(ObjectInclusionGroupHandle, ServerObject->NetRefHandle);
+	Server->ReplicationSystem->AddInclusionFilterGroup(ObjectInclusionGroupHandle);
+	Server->ReplicationSystem->SetGroupFilterStatus(ObjectInclusionGroupHandle, Client->ConnectionIdOnServer, ENetFilterStatus::Disallow);
+	
+	FNetObjectGroupHandle SubObjectInclusionGroupHandle = Server->ReplicationSystem->CreateGroup();
+	Server->ReplicationSystem->AddInclusionFilterGroup(SubObjectInclusionGroupHandle);
+	Server->ReplicationSystem->SetGroupFilterStatus(SubObjectInclusionGroupHandle, Client->ConnectionIdOnServer, ENetFilterStatus::Allow);
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client}, DeliverPacket);
+
+	// Late add subobject to group
+	Server->ReplicationSystem->AddToGroup(SubObjectInclusionGroupHandle, ServerSubObject->NetRefHandle);
+ 
+	// Send and deliver packet
+	Server->UpdateAndSend({Client}, DeliverPacket);
+
+	// Neither object nor subobject should have been created on the client.
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObject->NetRefHandle), nullptr);
+}
+
+UE_NET_TEST_FIXTURE(FTestFilteringFixture, SubObjectRemovedFromInclusionGroupFollowsOwnerInOtherInclusionGroup)
+{
+	// Setup dynamic filter for the test
+	SetDynamicFilterStatus(ENetFilterStatus::Disallow);
+
+	// Add client
+	FReplicationSystemTestClient* Client = CreateClient();
+
+	// Spawn object with subobject on server
+	UReplicatedTestObject* ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+	UReplicatedTestObject* ServerSubObject = Server->CreateSubObject(ServerObject->NetRefHandle, UTestReplicatedIrisObject::FComponents{});
+
+	// Set filter which will filter out all objects
+	Server->ReplicationSystem->SetFilter(ServerObject->NetRefHandle, MockFilterHandle);
+
+	// Setup separate inclusion group filters for object and subobject
+	FNetObjectGroupHandle ObjectInclusionGroupHandle = Server->ReplicationSystem->CreateGroup();
+	Server->ReplicationSystem->AddToGroup(ObjectInclusionGroupHandle, ServerObject->NetRefHandle);
+	Server->ReplicationSystem->AddInclusionFilterGroup(ObjectInclusionGroupHandle);
+	Server->ReplicationSystem->SetGroupFilterStatus(ObjectInclusionGroupHandle, Client->ConnectionIdOnServer, ENetFilterStatus::Disallow);
+	
+	FNetObjectGroupHandle SubObjectInclusionGroupHandle = Server->ReplicationSystem->CreateGroup();
+	Server->ReplicationSystem->AddToGroup(SubObjectInclusionGroupHandle, ServerSubObject->NetRefHandle);
+	Server->ReplicationSystem->AddInclusionFilterGroup(SubObjectInclusionGroupHandle);
+	Server->ReplicationSystem->SetGroupFilterStatus(SubObjectInclusionGroupHandle, Client->ConnectionIdOnServer, ENetFilterStatus::Disallow);
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client}, DeliverPacket);
+
+	// Neither object nor subobject should have been created on the client.
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObject->NetRefHandle), nullptr);
+
+	// Allow subobject group to be replicated. This should not change anything.
+	Server->ReplicationSystem->SetGroupFilterStatus(SubObjectInclusionGroupHandle, Client->ConnectionIdOnServer, ENetFilterStatus::Allow);
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client}, DeliverPacket);
+
+	// Neither object nor subobject should have been created on the client.
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObject->NetRefHandle), nullptr);
+
+	// Remove subobject from group. This should not affect anything.
+	Server->ReplicationSystem->RemoveFromGroup(SubObjectInclusionGroupHandle, ServerSubObject->NetRefHandle);
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client}, DeliverPacket);
+
+	// Neither object nor subobject should have been created on the client.
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObject->NetRefHandle), nullptr);
+
+	// Re-add subobject to its group for a second round of tests...
+	Server->ReplicationSystem->AddToGroup(SubObjectInclusionGroupHandle, ServerSubObject->NetRefHandle);
+	
+	// Allow object group to be replicated and subobject group to not be replicated. This should result in both the object and subobject being created on the client.
+	Server->ReplicationSystem->SetGroupFilterStatus(ObjectInclusionGroupHandle, Client->ConnectionIdOnServer, ENetFilterStatus::Allow);
+	Server->ReplicationSystem->SetGroupFilterStatus(SubObjectInclusionGroupHandle, Client->ConnectionIdOnServer, ENetFilterStatus::Disallow);
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client}, DeliverPacket);
+
+	// Both object and subobject should have been created on the client.
+	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObject->NetRefHandle), nullptr);
+
+	// Remove subobject from group. This should not affect anything.
+	Server->ReplicationSystem->RemoveFromGroup(SubObjectInclusionGroupHandle, ServerSubObject->NetRefHandle);
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client}, DeliverPacket);
+
+	// Both object and subobject should have been created on the client.
+	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObject->NetRefHandle), nullptr);
+}
+
+UE_NET_TEST_FIXTURE(FTestFilteringFixture, InclusionGroupsWorksWithMultipleObjects)
+{
+	// Setup dynamic filter for the test
+	SetDynamicFilterStatus(ENetFilterStatus::Disallow);
+
+	// Add clients
+	FReplicationSystemTestClient* ClientArray[3];
+	for (FReplicationSystemTestClient*& Client : ClientArray)
+	{
+		Client = CreateClient();
+	}
+
+	// Spawn objects on server
+	UReplicatedTestObject* ServerObjects[3];
+	for (UReplicatedTestObject*& ServerObject : ServerObjects)
+	{
+		ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+		// Filter out by default
+		Server->ReplicationSystem->SetFilter(ServerObject->NetRefHandle, MockFilterHandle);
+	}
+
+	// Setup inclusion group filters
+	FNetObjectGroupHandle InclusionGroupHandles[UE_ARRAY_COUNT(ServerObjects)];
+	for (FNetObjectGroupHandle& InclusionGroupHandle : InclusionGroupHandles)
+	{
+		const SIZE_T Index = &InclusionGroupHandle - &InclusionGroupHandles[0];
+		InclusionGroupHandle = Server->ReplicationSystem->CreateGroup();
+		Server->ReplicationSystem->AddInclusionFilterGroup(InclusionGroupHandle);
+		Server->ReplicationSystem->AddToGroup(InclusionGroupHandle, ServerObjects[Index]->NetRefHandle);
+		// Disallow by default
+		Server->ReplicationSystem->SetGroupFilterStatus(InclusionGroupHandle, ENetFilterStatus::Disallow);
+		// Allow one client
+		Server->ReplicationSystem->SetGroupFilterStatus(InclusionGroupHandle, ClientArray[Index]->ConnectionIdOnServer, ENetFilterStatus::Allow);
+	}
+
+	// Send and deliver packet
+	Server->UpdateAndSend(ClientArray, DeliverPacket);
+
+	// Exactly one object should have been replicated to each
+	for (UReplicatedTestObject*& ServerObject : ServerObjects)
+	{
+		const SIZE_T Index = IntCastChecked<uint32>(&ServerObject - &ServerObjects[0]);
+		UE_NET_ASSERT_NE(ClientArray[Index]->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+		UE_NET_ASSERT_EQ(ClientArray[(Index + 1U) % UE_ARRAY_COUNT(ServerObjects)]->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+		UE_NET_ASSERT_EQ(ClientArray[(Index + 2U) % UE_ARRAY_COUNT(ServerObjects)]->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+	}
+}
+
+UE_NET_TEST_FIXTURE(FTestFilteringFixture, InclusionGroupsAreCumulative)
+{
+	// Setup dynamic filter for the test
+	SetDynamicFilterStatus(ENetFilterStatus::Disallow);
+
+	// Add clients
+	FReplicationSystemTestClient* ClientArray[3];
+	for (FReplicationSystemTestClient*& Client : ClientArray)
+	{
+		Client = CreateClient();
+	}
+
+	// Spawn objects on server
+	UReplicatedTestObject* ServerObjects[3];
+	for (UReplicatedTestObject*& ServerObject : ServerObjects)
+	{
+		ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+		// Filter out by default
+		Server->ReplicationSystem->SetFilter(ServerObject->NetRefHandle, MockFilterHandle);
+	}
+
+	// Setup inclusion group filters
+	FNetObjectGroupHandle InclusionGroupHandles[UE_ARRAY_COUNT(ServerObjects)];
+	for (FNetObjectGroupHandle& InclusionGroupHandle : InclusionGroupHandles)
+	{
+		const SIZE_T Index = &InclusionGroupHandle - &InclusionGroupHandles[0];
+		InclusionGroupHandle = Server->ReplicationSystem->CreateGroup();
+		Server->ReplicationSystem->AddInclusionFilterGroup(InclusionGroupHandle);
+		Server->ReplicationSystem->AddToGroup(InclusionGroupHandle, ServerObjects[Index]->NetRefHandle);
+		// Disallow by default
+		Server->ReplicationSystem->SetGroupFilterStatus(InclusionGroupHandle, ENetFilterStatus::Disallow);
+		// Allow one client
+		Server->ReplicationSystem->SetGroupFilterStatus(InclusionGroupHandle, ClientArray[Index]->ConnectionIdOnServer, ENetFilterStatus::Allow);
+	}
+
+	// Send and deliver packet
+	Server->UpdateAndSend(ClientArray, DeliverPacket);
+
+	// Exactly one object should have been replicated to each connection
+	for (UReplicatedTestObject*& ServerObject : ServerObjects)
+	{
+		const int32 Index = static_cast<int32>(&ServerObject - &ServerObjects[0]);
+		UE_NET_ASSERT_NE(Clients[Index]->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+		UE_NET_ASSERT_EQ(Clients[(Index + 1U) % UE_ARRAY_COUNT(ServerObjects)]->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+		UE_NET_ASSERT_EQ(Clients[(Index + 2U) % UE_ARRAY_COUNT(ServerObjects)]->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle), nullptr);
+	}
+}
+
+UE_NET_TEST_FIXTURE(FTestFilteringFixture, LateAddedConnectionWorksWithSimpleGroupInclusionFilter)
+{
+	// Setup dynamic filter for the test
+	SetDynamicFilterStatus(ENetFilterStatus::Disallow);
+
+	// Add client
+	FReplicationSystemTestClient* Client = CreateClient();
+
+	// Spawn objects on server
+	UReplicatedTestObject* ServerObjects[4];
+	for (UReplicatedTestObject*& ServerObject : ServerObjects)
+	{
+		ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+		// Filter out by default
+		Server->ReplicationSystem->SetFilter(ServerObject->NetRefHandle, MockFilterHandle);
+	}
+
+	// Setup inclusion group filters differently for each object
+	FNetObjectGroupHandle InclusionGroupHandles[UE_ARRAY_COUNT(ServerObjects)];
+	for (FNetObjectGroupHandle& InclusionGroupHandle : InclusionGroupHandles)
+	{
+		const SIZE_T Index = &InclusionGroupHandle - &InclusionGroupHandles[0];
+		InclusionGroupHandle = Server->ReplicationSystem->CreateGroup();
+		Server->ReplicationSystem->AddInclusionFilterGroup(InclusionGroupHandle);
+		Server->ReplicationSystem->AddToGroup(InclusionGroupHandle, ServerObjects[Index]->NetRefHandle);
+
+		switch (Index)
+		{
+		case 0:
+			Server->ReplicationSystem->SetGroupFilterStatus(InclusionGroupHandle, ENetFilterStatus::Disallow);
+			break;
+		case 1:
+			Server->ReplicationSystem->SetGroupFilterStatus(InclusionGroupHandle, ENetFilterStatus::Allow);
+			break;
+		case 2:
+			Server->ReplicationSystem->SetGroupFilterStatus(InclusionGroupHandle, ENetFilterStatus::Disallow);
+			Server->ReplicationSystem->SetGroupFilterStatus(InclusionGroupHandle, Client->ConnectionIdOnServer, ENetFilterStatus::Allow);
+			break;
+		case 3:
+			Server->ReplicationSystem->SetGroupFilterStatus(InclusionGroupHandle, ENetFilterStatus::Disallow);
+			// For testing purposes we predict the next client ID and allow the object to be replicated to it.
+			Server->ReplicationSystem->SetGroupFilterStatus(InclusionGroupHandle, Client->ConnectionIdOnServer + 1, ENetFilterStatus::Allow);
+			break;
+		};
+	}
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client}, DeliverPacket);
+
+	// Add client
+	FReplicationSystemTestClient* LateAddedClient = CreateClient();
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client, LateAddedClient}, DeliverPacket);
+
+	// Verify objects were created or not according to inclusion filters
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerObjects[0]->NetRefHandle), nullptr);
+	UE_NET_ASSERT_EQ(LateAddedClient->GetReplicationBridge()->GetReplicatedObject(ServerObjects[0]->NetRefHandle), nullptr);
+	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerObjects[1]->NetRefHandle), nullptr);
+	UE_NET_ASSERT_NE(LateAddedClient->GetReplicationBridge()->GetReplicatedObject(ServerObjects[1]->NetRefHandle), nullptr);
+	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerObjects[2]->NetRefHandle), nullptr);
+	UE_NET_ASSERT_EQ(LateAddedClient->GetReplicationBridge()->GetReplicatedObject(ServerObjects[2]->NetRefHandle), nullptr);
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerObjects[3]->NetRefHandle), nullptr);
+	UE_NET_ASSERT_NE(LateAddedClient->GetReplicationBridge()->GetReplicatedObject(ServerObjects[3]->NetRefHandle), nullptr);
+}
+
+UE_NET_TEST_FIXTURE(FTestFilteringFixture, LateAddedConnectionWorksWithComplexGroupInclusionFilter)
+{
+	// Setup dynamic filter for the test
+	SetDynamicFilterStatus(ENetFilterStatus::Disallow);
+
+	// Add client
+	FReplicationSystemTestClient* Client = CreateClient();
+
+	// Spawn objects with one subobject on server
+	UReplicatedTestObject* ServerObjects[4];
+	UReplicatedTestObject* ServerSubObjects[4];
+	for (UReplicatedTestObject*& ServerObject : ServerObjects)
+	{
+		const SIZE_T Index = &ServerObject - &ServerObjects[0];
+
+		ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+		ServerSubObjects[Index] = Server->CreateSubObject(ServerObject->NetRefHandle, UTestReplicatedIrisObject::FComponents{});
+
+		// Filter out by default
+		Server->ReplicationSystem->SetFilter(ServerObject->NetRefHandle, MockFilterHandle);
+	}
+
+	// Setup inclusion group filters differently for each object, and subobject differently than the root object
+	FNetObjectGroupHandle ObjectInclusionGroupHandles[UE_ARRAY_COUNT(ServerObjects)];
+	FNetObjectGroupHandle SubObjectInclusionGroupHandles[UE_ARRAY_COUNT(ServerSubObjects)];
+	for (FNetObjectGroupHandle& ObjectInclusionGroupHandle : ObjectInclusionGroupHandles)
+	{
+		const SIZE_T Index = &ObjectInclusionGroupHandle - &ObjectInclusionGroupHandles[0];
+
+		ObjectInclusionGroupHandle = Server->ReplicationSystem->CreateGroup();
+		Server->ReplicationSystem->AddInclusionFilterGroup(ObjectInclusionGroupHandle);
+		Server->ReplicationSystem->AddToGroup(ObjectInclusionGroupHandle, ServerObjects[Index]->NetRefHandle);
+
+		FNetObjectGroupHandle SubObjectInclusionGroupHandle = Server->ReplicationSystem->CreateGroup();
+		Server->ReplicationSystem->AddInclusionFilterGroup(SubObjectInclusionGroupHandle);
+		Server->ReplicationSystem->AddToGroup(SubObjectInclusionGroupHandle, ServerSubObjects[Index]->NetRefHandle);
+
+		
+		switch (Index)
+		{
+		case 0:
+			Server->ReplicationSystem->SetGroupFilterStatus(ObjectInclusionGroupHandle, ENetFilterStatus::Disallow);
+			Server->ReplicationSystem->SetGroupFilterStatus(SubObjectInclusionGroupHandle, ENetFilterStatus::Allow);
+			break;
+		case 1:
+			Server->ReplicationSystem->SetGroupFilterStatus(ObjectInclusionGroupHandle, ENetFilterStatus::Allow);
+			Server->ReplicationSystem->SetGroupFilterStatus(SubObjectInclusionGroupHandle, ENetFilterStatus::Disallow);
+			break;
+		case 2:
+			Server->ReplicationSystem->SetGroupFilterStatus(ObjectInclusionGroupHandle, ENetFilterStatus::Disallow);
+			Server->ReplicationSystem->SetGroupFilterStatus(ObjectInclusionGroupHandle, Client->ConnectionIdOnServer, ENetFilterStatus::Allow);
+
+			Server->ReplicationSystem->SetGroupFilterStatus(SubObjectInclusionGroupHandle, ENetFilterStatus::Allow);
+			Server->ReplicationSystem->SetGroupFilterStatus(SubObjectInclusionGroupHandle, Client->ConnectionIdOnServer, ENetFilterStatus::Disallow);
+			break;
+		case 3:
+			Server->ReplicationSystem->SetGroupFilterStatus(ObjectInclusionGroupHandle, ENetFilterStatus::Disallow);
+			// For testing purposes we predict the next client ID and allow the object to be replicated to it.
+			Server->ReplicationSystem->SetGroupFilterStatus(ObjectInclusionGroupHandle, Client->ConnectionIdOnServer + 1, ENetFilterStatus::Allow);
+
+			Server->ReplicationSystem->SetGroupFilterStatus(SubObjectInclusionGroupHandle, ENetFilterStatus::Allow);
+			Server->ReplicationSystem->SetGroupFilterStatus(SubObjectInclusionGroupHandle, Client->ConnectionIdOnServer + 1, ENetFilterStatus::Disallow);
+			break;
+		};
+	}
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client}, DeliverPacket);
+
+	// Add client
+	FReplicationSystemTestClient* LateAddedClient = CreateClient();
+
+	// Send and deliver packet
+	Server->UpdateAndSend({Client, LateAddedClient}, DeliverPacket);
+
+	// Verify objects were created or not according to inclusion filters
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerObjects[0]->NetRefHandle), nullptr);
+	UE_NET_ASSERT_EQ(LateAddedClient->GetReplicationBridge()->GetReplicatedObject(ServerObjects[0]->NetRefHandle), nullptr);
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObjects[0]->NetRefHandle), nullptr);
+	UE_NET_ASSERT_EQ(LateAddedClient->GetReplicationBridge()->GetReplicatedObject(ServerSubObjects[0]->NetRefHandle), nullptr);
+
+	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerObjects[1]->NetRefHandle), nullptr);
+	UE_NET_ASSERT_NE(LateAddedClient->GetReplicationBridge()->GetReplicatedObject(ServerObjects[1]->NetRefHandle), nullptr);
+	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObjects[1]->NetRefHandle), nullptr);
+	UE_NET_ASSERT_NE(LateAddedClient->GetReplicationBridge()->GetReplicatedObject(ServerSubObjects[1]->NetRefHandle), nullptr);
+	
+	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerObjects[2]->NetRefHandle), nullptr);
+	UE_NET_ASSERT_EQ(LateAddedClient->GetReplicationBridge()->GetReplicatedObject(ServerObjects[2]->NetRefHandle), nullptr);
+	UE_NET_ASSERT_NE(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObjects[2]->NetRefHandle), nullptr);
+	UE_NET_ASSERT_EQ(LateAddedClient->GetReplicationBridge()->GetReplicatedObject(ServerSubObjects[2]->NetRefHandle), nullptr);
+	
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerObjects[3]->NetRefHandle), nullptr);
+	UE_NET_ASSERT_NE(LateAddedClient->GetReplicationBridge()->GetReplicatedObject(ServerObjects[3]->NetRefHandle), nullptr);
+	UE_NET_ASSERT_EQ(Client->GetReplicationBridge()->GetReplicatedObject(ServerSubObjects[3]->NetRefHandle), nullptr);
+	UE_NET_ASSERT_NE(LateAddedClient->GetReplicationBridge()->GetReplicatedObject(ServerSubObjects[3]->NetRefHandle), nullptr);
 }
 
 } // end namespace UE::Net::Private

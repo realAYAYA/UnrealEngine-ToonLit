@@ -55,7 +55,7 @@ namespace Horde.Server.Tests
 		{
 			if (await _channel.Reader.WaitToReadAsync())
 			{
-				_channel.Reader.TryRead(out var message);
+				_channel.Reader.TryRead(out T? message);
 				return message;
 			}
 			else
@@ -79,7 +79,7 @@ namespace Horde.Server.Tests
 			return Task.CompletedTask;
 		}
 	}
-	
+
 	public class TestAsyncStreamReader<T> : IAsyncStreamReader<T> where T : class
 	{
 		private readonly Channel<T> _channel;

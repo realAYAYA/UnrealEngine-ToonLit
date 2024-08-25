@@ -1,8 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-// this import must come first as it loads theme!
-import './styles/Styles';
-
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import './index.css';

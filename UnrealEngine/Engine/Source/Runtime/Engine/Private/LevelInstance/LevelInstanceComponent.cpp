@@ -222,6 +222,11 @@ void ULevelInstanceComponent::UpdateEditFilter()
 	EditFilter = Filter;
 }
 
+void ULevelInstanceComponent::ClearCachedFilter()
+{
+	CachedFilteredActorsPerContainer.Reset();
+}
+
 bool ULevelInstanceComponent::IsEditFilter() const
 {
 	if (ILevelInstanceInterface* LevelInstance = Cast<ILevelInstanceInterface>(GetOwner()))

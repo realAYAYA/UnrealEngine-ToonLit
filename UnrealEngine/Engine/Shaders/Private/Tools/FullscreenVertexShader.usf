@@ -9,17 +9,29 @@
 #ifndef SCREEN_VS_FOR_INSTANCED_VIEWS
 	#define SCREEN_VS_FOR_INSTANCED_VIEWS 0
 #endif
+#ifndef SCREEN_VS_FOR_MOBILE_MULTI_VIEW
+	#define SCREEN_VS_FOR_MOBILE_MULTI_VIEW 0
+#endif
+
+#if SCREEN_VS_FOR_MOBILE_MULTI_VIEW
+	#include "../InstancedStereo.ush"
+#endif
 
 void MainVS(
 	float2 ViewportUV : ATTRIBUTE0,
 	float2 UV         : ATTRIBUTE1, // TODO: kill
-#if !SCREEN_VS_FOR_INSTANCED_VIEWS
 	out float4 OutPosition : SV_POSITION
-#else
-	uint InstanceId	  : SV_InstanceID,
-	out float4 OutPosition : SV_POSITION,
-	out uint OutViewportId	: SV_ViewportArrayIndex,
-	out nointerpolation uint OutViewId : VIEW_ID
+#if SCREEN_VS_FOR_INSTANCED_VIEWS
+	,	uint InstanceId	  : SV_InstanceID
+	,	out uint OutViewportId	: SV_ViewportArrayIndex
+	,	out nointerpolation uint OutViewId : VIEW_ID
+#elif SCREEN_VS_FOR_MOBILE_MULTI_VIEW
+	,	out noperspective float2 OutUV : TEXCOORD0
+	#if INSTANCED_STEREO // Mobile multi view fallback path
+	,	in uint InstanceId : SV_InstanceID
+	,	out nointerpolation uint EyeIndex : TEXCOORD1
+	,	out uint LayerIndex : SV_RenderTargetArrayIndex
+	#endif
 #endif
 	)
 {
@@ -28,5 +40,13 @@ void MainVS(
 #if SCREEN_VS_FOR_INSTANCED_VIEWS
 	OutViewportId = InstanceId;
 	OutViewId = InstanceId;
+#endif
+	
+#if SCREEN_VS_FOR_MOBILE_MULTI_VIEW
+	OutUV = UV;
+	#if INSTANCED_STEREO // Mobile multi view fallback path
+		EyeIndex = GetEyeIndex(InstanceId);
+		LayerIndex = EyeIndex;
+	#endif
 #endif
 }

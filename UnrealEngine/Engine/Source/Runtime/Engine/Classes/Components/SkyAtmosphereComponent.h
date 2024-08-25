@@ -72,7 +72,7 @@ class USkyAtmosphereComponent : public USceneComponent
 	 * Multiple scattering is evaluated using a dual scattering approach. 
 	 * A value of 2 is recommended to better represent default atmosphere when r.SkyAtmosphere.MultiScatteringLUT.HighQuality=0. 
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, interp, Category = "Atmosphere", meta = (DisplayName = "MultiScattering", UIMin = 0.0, UIMax = 1.0, ClampMin = 0.0, ClampMax = 2.0))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, interp, Category = "Atmosphere", meta = (DisplayName = "MultiScattering", UIMin = 0.0, UIMax = 2.0, ClampMin = 0.0, ClampMax = 100.0))
 	float MultiScatteringFactor;
 
 	/**
@@ -160,6 +160,14 @@ class USkyAtmosphereComponent : public USceneComponent
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, interp, Category = "Art Direction", meta = (UIMin = 0.001f, UIMax = 10.0f, ClampMin = 0.001f))
 	float AerialPerspectiveStartDepth;
 
+	/** If this is True, this primitive will render black with an alpha of 0, but all secondary effects (shadows, reflections, indirect lighting) remain. This feature required the project setting "Enable alpha channel support in post processing". */
+	UPROPERTY(EditAnywhere, AdvancedDisplay, BlueprintReadOnly, Category = Rendering, Interp)
+	uint8 bHoldout : 1;
+
+	/** If true, this component will be rendered in the main pass (basepass, transparency) */
+	UPROPERTY(EditAnywhere, AdvancedDisplay, BlueprintReadOnly, Category = Rendering)
+	uint8 bRenderInMainPass : 1;
+
 
 	UFUNCTION(BlueprintCallable, Category = "Rendering")
 	ENGINE_API void OverrideAtmosphereLightDirection(int32 AtmosphereLightIndex, const FVector& LightDirection);
@@ -211,6 +219,12 @@ class USkyAtmosphereComponent : public USceneComponent
 	ENGINE_API void SetAerialPespectiveViewDistanceScale(float NewValue);
 	UFUNCTION(BlueprintCallable, Category = "Rendering")
 	ENGINE_API void SetHeightFogContribution(float NewValue);
+
+	UFUNCTION(BlueprintCallable, Category = "Rendering")
+	ENGINE_API void SetHoldout(bool bNewHoldout);
+
+	UFUNCTION(BlueprintCallable, Category = "Rendering")
+	ENGINE_API void SetRenderInMainPass(bool bValue);
 
 	UFUNCTION(BlueprintCallable, Category = "Utilities", meta = (DisplayName = "Get Atmosphere Transmitance On Ground At Planet Top"))
 	ENGINE_API FLinearColor GetAtmosphereTransmitanceOnGroundAtPlanetTop(UDirectionalLightComponent* DirectionalLight);
@@ -286,7 +300,7 @@ class ASkyAtmosphere : public AInfo
 
 private:
 #if WITH_EDITOR
-	virtual bool IsDataLayerTypeSupported(TSubclassOf<UDataLayerInstance> DataLayerType) const override { return true; }
+	virtual bool ActorTypeSupportsDataLayer() const override { return true; }
 #endif
 
 	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category = Atmosphere, meta = (AllowPrivateAccess = "true"))

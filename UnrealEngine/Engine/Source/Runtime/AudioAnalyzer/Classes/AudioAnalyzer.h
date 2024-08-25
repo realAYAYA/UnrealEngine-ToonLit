@@ -3,12 +3,14 @@
 #pragma once
 
 #include "Async/AsyncWork.h"
-#include "CoreMinimal.h"
-#include "IAudioAnalyzerInterface.h"
 #include "AudioAnalyzerAsset.h"
 #include "AudioAnalyzerFacade.h"
-#include "Sound/AudioBus.h"
+#include "AudioDefines.h"
+#include "CoreMinimal.h"
 #include "DSP/MultithreadedPatching.h"
+#include "IAudioAnalyzerInterface.h"
+#include "Sound/AudioBus.h"
+
 #include "AudioAnalyzer.generated.h"
 
 class UAudioAnalyzerSubsystem;
@@ -32,6 +34,9 @@ class FAudioAnalyzeTask : public FNonAbandonableTask
 public:
 	FAudioAnalyzeTask(TUniquePtr<Audio::FAnalyzerFacade>& InAnalyzerFacade, int32 InSampleRate, int32 InNumChannels);
 	
+	// Set in the task the current state of the analyzer controls
+	void SetAnalyzerControls(TSharedPtr<Audio::IAnalyzerControls> InControls);
+
 	// Give the task the audio data to analyze
 	void SetAudioBuffer(TArray<float>&& InAudioData);
 
@@ -52,6 +57,7 @@ private:
 	int32 NumChannels = 0;
 	TArray<float> AudioData;
 	TUniquePtr<Audio::IAnalyzerResult> Results;
+	TSharedPtr<Audio::IAnalyzerControls> AnalyzerControls;
 };
 
 /** UAudioAnalyzer
@@ -90,7 +96,10 @@ public:
 	AUDIOANALYZER_API void StartAnalyzing(const UObject* WorldContextObject, UAudioBus* AudioBusToAnalyze);
 
 	/** Starts analyzing using the given world.*/
+	UE_DEPRECATED(5.4, "Use the StartAnalyzing method that uses Audio::FDeviceId.")
 	AUDIOANALYZER_API void StartAnalyzing(UWorld* InWorld, UAudioBus* AudioBusToAnalyze);
+
+	AUDIOANALYZER_API void StartAnalyzing(const Audio::FDeviceId InAudioDeviceId, UAudioBus* AudioBusToAnalyze);
 
 	/** Stops analyzing audio. */
 	UFUNCTION(BlueprintCallable, BlueprintCosmetic, Category = AudioAnalyzer, meta = (WorldContext = "WorldContextObject"))
@@ -101,6 +110,12 @@ public:
 	 * specific for their analyzer.
 	 */
 	AUDIOANALYZER_API virtual TUniquePtr<Audio::IAnalyzerSettings> GetSettings(const int32 InSampleRate, const int32 InNumChannels) const;
+
+	/**
+	 * Implementations can override this method to create controls objects
+	 * specific for their analyzer.
+	 */
+	AUDIOANALYZER_API virtual TSharedPtr<Audio::IAnalyzerControls> GetAnalyzerControls() const;
 
 	/** Function to broadcast results. */
 	virtual void BroadcastResults() {}
@@ -150,6 +165,9 @@ private:
 
 	// Cached results of previous analysis task. Can be invalid.
 	TUniquePtr<Audio::IAnalyzerResult> ResultsInternal;
+
+	// The analyzer controls that can be modified real-time
+	TSharedPtr<Audio::IAnalyzerControls> AnalyzerControls;
 
 	// Scratch buffer used for copying data from patch output and fed to analysis task
 	TArray<float> AnalysisBuffer;

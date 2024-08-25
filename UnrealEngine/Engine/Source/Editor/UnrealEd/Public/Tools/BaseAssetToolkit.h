@@ -42,7 +42,7 @@ public:
 		return FLinearColor::White;
 	}
 	UNREALED_API virtual void RegisterTabSpawners(const TSharedRef<FTabManager>& InTabManager) override;
-
+	UNREALED_API virtual void UnregisterTabSpawners(const TSharedRef<FTabManager>& InTabManager) override;
 
 	UNREALED_API virtual const TSharedRef<FTabManager::FLayout> GetDefaultLayout() const;
 	UNREALED_API virtual void CreateWidgets();

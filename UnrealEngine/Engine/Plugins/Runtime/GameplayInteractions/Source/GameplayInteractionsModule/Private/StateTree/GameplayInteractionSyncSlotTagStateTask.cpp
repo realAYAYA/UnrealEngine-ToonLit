@@ -95,15 +95,16 @@ EStateTreeRunStatus FGameplayInteractionSyncSlotTagStateTask::EnterState(FStateT
 				&& Data.Reason == ESmartObjectChangeReason::OnTagRemoved)
 			{
 				check(InstanceDataRef.IsValid());
-				FInstanceDataType& InstanceData = *InstanceDataRef;
-
-				if (!InstanceData.bBreakSignalled && Data.Tag.MatchesTag(TagToMonitor))
+				if (FInstanceDataType* InstanceData = InstanceDataRef.GetPtr())
 				{
-					UE_VLOG_UELOG(Owner, LogStateTree, VeryVerbose, TEXT("[GameplayInteractionSyncSlotTagStateTask] Sync state: [%s] -> Event %s"), *TagToMonitor.ToString(), *BreakEventTag.ToString());
+					if (!InstanceData->bBreakSignalled && Data.Tag.MatchesTag(TagToMonitor))
+					{
+						UE_VLOG_UELOG(Owner, LogStateTree, VeryVerbose, TEXT("[GameplayInteractionSyncSlotTagStateTask] Sync state: [%s] -> Event %s"), *TagToMonitor.ToString(), *BreakEventTag.ToString());
 
-					SmartObjectSubsystem->SendSlotEvent(InstanceData.TargetSlot, BreakEventTag);
-					EventQueue.SendEvent(Owner, BreakEventTag);
-					InstanceData.bBreakSignalled = true;
+						SmartObjectSubsystem->SendSlotEvent(InstanceData->TargetSlot, BreakEventTag);
+						EventQueue.SendEvent(Owner, BreakEventTag);
+						InstanceData->bBreakSignalled = true;
+					}
 				}
 			}
 		});

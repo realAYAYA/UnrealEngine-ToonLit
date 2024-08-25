@@ -194,67 +194,70 @@ FDepthBounds::FDepthBoundsValues FDepthBounds::CalculateNearFarDepthExcludingSky
 	return Values;
 }
 
-IMPLEMENT_GLOBAL_SHADER_PARAMETER_STRUCT(FStrataPublicGlobalUniformParameters, "StrataPublic");
+IMPLEMENT_GLOBAL_SHADER_PARAMETER_STRUCT(FSubstratePublicGlobalUniformParameters, "SubstratePublic");
 
-namespace Strata
+namespace Substrate
 {
 	void PreInitViews(FScene& Scene)
 	{
-		FStrataSceneData& StrataScene = Scene.StrataSceneData;
-		StrataScene.StrataPublicGlobalUniformParameters = nullptr;
+		FSubstrateSceneData& SubstrateScene = Scene.SubstrateSceneData;
+		SubstrateScene.SubstratePublicGlobalUniformParameters = nullptr;
 	}
 
 	void PostRender(FScene& Scene)
 	{
-		FStrataSceneData& StrataScene = Scene.StrataSceneData;
-		StrataScene.StrataPublicGlobalUniformParameters = nullptr;
+		FSubstrateSceneData& SubstrateScene = Scene.SubstrateSceneData;
+		SubstrateScene.SubstratePublicGlobalUniformParameters = nullptr;
 	}
 
-	TRDGUniformBufferRef<FStrataPublicGlobalUniformParameters> GetPublicGlobalUniformBuffer(FRDGBuilder& GraphBuilder, FScene& Scene)
+	TRDGUniformBufferRef<FSubstratePublicGlobalUniformParameters> GetPublicGlobalUniformBuffer(FRDGBuilder& GraphBuilder, FScene& Scene)
 	{		
-		if(::Strata::IsStrataEnabled())
+		if(::Substrate::IsSubstrateEnabled())
 		{
-			FStrataSceneData& StrataScene = Scene.StrataSceneData;
+			FSubstrateSceneData& SubstrateScene = Scene.SubstrateSceneData;
 
-			if(StrataScene.StrataPublicGlobalUniformParameters == nullptr)
+			if(SubstrateScene.SubstratePublicGlobalUniformParameters == nullptr)
 			{
 				return CreatePublicGlobalUniformBuffer(GraphBuilder, nullptr);//We are creating a dummy here so pass in null for the scene data.
 			}
-			return StrataScene.StrataPublicGlobalUniformParameters;
+			return SubstrateScene.SubstratePublicGlobalUniformParameters;
 		}
 
 		return nullptr;
 	}
 }
 
-FPersistentStructuredBuffer::FPersistentStructuredBuffer(int32 InMinimumNumElementsReserved, const TCHAR *InName, bool bInRoundUpToPOT)
+void FBufferScatterUploader::UploadTo(FRDGBuilder& GraphBuilder, FRDGBuffer *DestBuffer, FRDGBuffer *ScatterOffsets, FRDGBuffer *Values, uint32 NumScatters, uint32 NumBytesPerElement, int32 NumValuesPerScatter)
+{
+	FScatterCopyParams ScatterCopyParams { NumScatters, NumBytesPerElement, NumValuesPerScatter };
+	ScatterCopyResource(GraphBuilder, DestBuffer, GraphBuilder.CreateSRV(ScatterOffsets), GraphBuilder.CreateSRV(Values), ScatterCopyParams);
+}
+
+namespace UE::RendererPrivateUtils::Implementation
+{
+
+FPersistentBuffer::FPersistentBuffer(int32 InMinimumNumElementsReserved, const TCHAR *InName, bool bInRoundUpToPOT)
 	: MinimumNumElementsReserved(InMinimumNumElementsReserved)
 	, Name(InName)
 	, bRoundUpToPOT(bInRoundUpToPOT)
 {
 }
 
-FRDGBuffer* FPersistentStructuredBuffer::ResizeBufferIfNeeded(FRDGBuilder& GraphBuilder, int32 InNewMinNumElements, int32 BytesPerElement)
-{
-	int32 NewMinNumElements = FMath::Max(MinimumNumElementsReserved, bRoundUpToPOT ? int32(FMath::RoundUpToPowerOfTwo(InNewMinNumElements)) : InNewMinNumElements);
-	FRDGBuffer* BufferRDG = ::ResizeBufferIfNeeded(GraphBuilder, PooledBuffer, FRDGBufferDesc::CreateStructuredDesc(BytesPerElement, NewMinNumElements), Name);
-	return BufferRDG;
-}
-
-FRDGBuffer* FPersistentStructuredBuffer::Register(FRDGBuilder& GraphBuilder) 
+FRDGBuffer* FPersistentBuffer::Register(FRDGBuilder& GraphBuilder) const
 { 
 	return GraphBuilder.RegisterExternalBuffer(PooledBuffer); 
 }
 
-void FPersistentStructuredBuffer::Empty()
+void FPersistentBuffer::Empty()
 {
 	PooledBuffer.SafeRelease();
 }
 
-void FStructuredBufferScatterUploader::UploadTo(FRDGBuilder& GraphBuilder, FRDGBuffer *DestBuffer, FRDGBuffer *ScatterOffsets, FRDGBuffer *Values, uint32 NumScatters, uint32 NumBytesPerElement, uint32 NumValuesPerScatter)
+FRDGBuffer* FPersistentBuffer::ResizeBufferIfNeeded(FRDGBuilder& GraphBuilder, const FRDGBufferDesc& BufferDesc)
 {
-	FScatterCopyParams ScatterCopyParams { NumScatters, NumBytesPerElement, NumValuesPerScatter };
-	ScatterCopyResource(GraphBuilder, DestBuffer, GraphBuilder.CreateSRV(ScatterOffsets), GraphBuilder.CreateSRV(Values), ScatterCopyParams);
+	return ::ResizeBufferIfNeeded(GraphBuilder, PooledBuffer, BufferDesc, Name);
+}
+
 }
 
 TGlobalResource<FTileTexCoordVertexBuffer> GOneTileQuadVertexBuffer(1);

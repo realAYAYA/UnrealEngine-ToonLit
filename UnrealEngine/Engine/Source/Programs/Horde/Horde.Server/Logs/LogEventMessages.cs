@@ -55,7 +55,7 @@ namespace Horde.Server.Logs
 			LineIndex = logEvent.LineIndex;
 			LineCount = logEvent.LineCount;
 			IssueId = issueId;
-			Lines = eventData.Lines.ConvertAll(x => x.Data);
+			Lines = eventData.Lines.ConvertAll(x => JsonDocument.Parse(x.Data).RootElement);
 		}
 	}
 }

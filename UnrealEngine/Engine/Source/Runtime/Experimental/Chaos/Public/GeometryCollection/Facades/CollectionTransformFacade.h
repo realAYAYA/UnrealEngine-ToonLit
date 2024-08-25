@@ -42,7 +42,7 @@ namespace GeometryCollection::Facades
 		/**
 		* Returns the child indicesfrom the collection. Null if not initialized.
 		*/
-		const TManagedArray< FTransform >* FindTransforms() const { return TransformAttribute.Find(); }
+		const TManagedArray<FTransform3f>* FindTransforms() const { return TransformAttribute.Find(); }
 
 		/**
 		* Returns array of transforms for transforming from bone space to collection space
@@ -92,6 +92,6 @@ namespace GeometryCollection::Facades
 	private:
 		TManagedArrayAccessor<int32>		ParentAttribute;
 		TManagedArrayAccessor<TSet<int32>>	ChildrenAttribute;
-		TManagedArrayAccessor<FTransform>	TransformAttribute;
+		TManagedArrayAccessor<FTransform3f>	TransformAttribute;
 	};
 }

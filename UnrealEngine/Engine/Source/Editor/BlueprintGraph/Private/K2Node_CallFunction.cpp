@@ -15,6 +15,7 @@
 #include "GraphEditorSettings.h"
 #include "EdGraph/EdGraph.h"
 #include "EdGraphSchema_K2.h"
+#include "FindInBlueprints.h"
 #include "K2Node_Event.h"
 #include "K2Node_AssignmentStatement.h"
 #include "K2Node_CallArrayFunction.h"
@@ -1340,15 +1341,6 @@ void UK2Node_CallFunction::NotifyPinConnectionListChanged(UEdGraphPin* Pin)
 		GetGraph()->NotifyGraphChanged();
 	}
 
-	if (bIsBeadFunction)
-	{
-		if (Pin->LinkedTo.Num() == 0)
-		{
-			// Commit suicide; bead functions must always have an input and output connection
-			DestroyNode();
-		}
-	}
-
 	InvalidatePinTooltips();
 	if(!Pin->IsPendingKill())
 	{
@@ -1587,6 +1579,32 @@ FSlateIcon UK2Node_CallFunction::GetPaletteIconForFunction(UFunction const* Func
 FLinearColor UK2Node_CallFunction::GetNodeTitleColor() const
 {
 	return GetPalletteIconColor(GetTargetFunction());
+}
+
+FString UK2Node_CallFunction::GetFindReferenceSearchString_Impl(EGetFindReferenceSearchStringFlags InFlags) const
+{
+	if (EnumHasAnyFlags(InFlags, EGetFindReferenceSearchStringFlags::UseSearchSyntax))
+	{
+		// Searching by class member: try to resolve function and construct precise query
+		if (const UFunction* Function = GetTargetFunction())
+		{
+			FString SearchTerm;
+			if (FindInBlueprintsHelpers::ConstructSearchTermFromFunction(Function, SearchTerm))
+			{
+				return SearchTerm;
+			}
+		}
+	}
+
+	// Searching by function name: try to resolve function to return native name
+	if (const UFunction* Function = GetTargetFunction())
+	{
+		const FString NativeName = Function->GetName();
+		return FString::Printf(TEXT("\"%s\""), *NativeName);
+	}
+
+	// Fallback behavior: search by node title
+	return Super::GetFindReferenceSearchString_Impl(InFlags);
 }
 
 FText UK2Node_CallFunction::GetTooltipText() const
@@ -1971,11 +1989,6 @@ bool UK2Node_CallFunction::ShouldDrawCompact() const
 	return ShouldDrawCompact(Function);
 }
 
-bool UK2Node_CallFunction::ShouldDrawAsBead() const
-{
-	return bIsBeadFunction;
-}
-
 bool UK2Node_CallFunction::ShouldShowNodeProperties() const
 {
 	// Show node properties if this corresponds to a function graph
@@ -2316,9 +2329,20 @@ void UK2Node_CallFunction::ValidateNodeDuringCompilation(class FCompilerResultsL
 
 		// enforce WorldContext restrictions
 		const bool bInsideBpFuncLibrary = Blueprint && (BPTYPE_FunctionLibrary == Blueprint->BlueprintType);
-		if (!bInsideBpFuncLibrary && 
+		
+		// go through all of the pins and verify if we have a visible world context or not.
+		bool bVisibleWorldContext = false;
+		for (const UEdGraphPin* Pin : Pins)
+		{
+			if (!Pin->bHidden && Pin->PinName.IsEqual(FName("WorldContextObject")))
+			{
+				bVisibleWorldContext = true;
+				break;
+			}
+		}
+		if (!bInsideBpFuncLibrary &&
 			Function->HasMetaData(FBlueprintMetadata::MD_WorldContext) && 
-			!Function->HasMetaData(FBlueprintMetadata::MD_CallableWithoutWorldContext))
+			(!Function->HasMetaData(FBlueprintMetadata::MD_CallableWithoutWorldContext) && !bVisibleWorldContext))
 		{
 			check(Blueprint);
 			UClass* ParentClass = Blueprint->ParentClass;
@@ -3507,6 +3531,24 @@ void UK2Node_CallFunction::AddSearchMetaDataInfo(TArray<struct FSearchTagDataPai
 	if (UFunction* TargetFunction = GetTargetFunction())
 	{
 		OutTaggedMetaData.Add(FSearchTagDataPair(FFindInBlueprintSearchTags::FiB_NativeName, FText::FromString(TargetFunction->GetName())));
+	}
+}
+
+void UK2Node_CallFunction::AddPinSearchMetaDataInfo(const UEdGraphPin* Pin, TArray<FSearchTagDataPair>& OutTaggedMetaData) const
+{
+	Super::AddPinSearchMetaDataInfo(Pin, OutTaggedMetaData);
+
+	// Blueprint graphs that call a function declared in the same blueprint don't store a target type, but rather PinSubCategory == Self.
+	// When this is the case, we will still explicitly index the ObjectClass for the target pin, so that it can be treated the same as 
+	// any other call function nodes.
+	if (Pin->PinName == UEdGraphSchema_K2::PN_Self && Pin->PinType.PinSubCategory == UEdGraphSchema_K2::PSC_Self && !Pin->PinType.PinSubCategoryObject.IsValid())
+	{
+		// Get the parent or interface class that originally defined this function
+		if (const UClass* FuncOriginClass = FindInBlueprintsHelpers::GetFunctionOriginClass(GetTargetFunction()))
+		{
+			const FString FuncOriginClassName = FuncOriginClass->GetPathName();
+			OutTaggedMetaData.Add(FSearchTagDataPair(FFindInBlueprintSearchTags::FiB_ObjectClass, FText::FromString(FuncOriginClassName)));
+		}
 	}
 }
 

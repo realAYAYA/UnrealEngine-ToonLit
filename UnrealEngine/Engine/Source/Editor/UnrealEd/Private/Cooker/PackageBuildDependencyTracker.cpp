@@ -2,11 +2,14 @@
 
 #include "PackageBuildDependencyTracker.h"
 
+#if UE_WITH_PACKAGE_ACCESS_TRACKING
+#include "Async/UniqueLock.h"
 #include "HAL/Platform.h"
 #include "Logging/LogMacros.h"
 #include "Misc/PackageAccessTrackingOps.h"
 #include "UObject/Class.h"
 #include "UObject/Package.h"
+#endif
 
 #if UE_WITH_PACKAGE_ACCESS_TRACKING
 
@@ -36,7 +39,7 @@ void FPackageBuildDependencyTracker::DumpStats() const
 		return;
 	}
 
-	FScopeLock RecordsScopeLock(&RecordsLock);
+	UE::TUniqueLock RecordsScopeLock(RecordsLock);
 	uint64 ReferencingPackageCount = 0;
 	uint64 ReferenceCount = 0;
 	for (const TPair<FName, TSet<FBuildDependencyAccessData>>& PackageAccessRecord : Records)
@@ -66,7 +69,7 @@ void FPackageBuildDependencyTracker::DumpStats() const
 
 TArray<FBuildDependencyAccessData> FPackageBuildDependencyTracker::GetAccessDatas(FName ReferencerPackage) const
 {
-	FScopeLock RecordsScopeLock(&Singleton.RecordsLock);
+	UE::TUniqueLock RecordsScopeLock(Singleton.RecordsLock);
 	const TSet<FBuildDependencyAccessData>* ReferencerSet = Records.Find(ReferencerPackage);
 	if (!ReferencerSet)
 	{
@@ -94,7 +97,7 @@ static bool ShouldSkipDependency(const UObject* Object)
 		(Object->GetClass() == UClass::StaticClass());
 }
 
-void FPackageBuildDependencyTracker::StaticOnObjectHandleRead(TArrayView<const UObject* const> Objects)
+void FPackageBuildDependencyTracker::StaticOnObjectHandleRead(const TArrayView<const UObject* const>& Objects)
 {
 	int Count = Objects.Num();
 	if(Count == 0 || (Count == 1 && ShouldSkipDependency(Objects[0])))
@@ -137,7 +140,7 @@ void FPackageBuildDependencyTracker::StaticOnObjectHandleRead(TArrayView<const U
 		LLM_SCOPE_BYNAME(TEXTVIEW("PackageBuildDependencyTracker"));
 
 		FBuildDependencyAccessData AccessData{ Referenced, AccumulatedScopeData->TargetPlatform };
-		FScopeLock RecordsScopeLock(&Singleton.RecordsLock);
+		UE::TUniqueLock RecordsScopeLock(Singleton.RecordsLock);
 		if (Referencer == Singleton.LastReferencer)
 		{
 			if (AccessData != Singleton.LastAccessData)

@@ -96,7 +96,8 @@ public:
 	MOVIESCENE_API virtual void Reset() override;
 	MOVIESCENE_API virtual void Offset(FFrameNumber DeltaPosition) override;
 	MOVIESCENE_API virtual void Optimize(const FKeyDataOptimizationParams& InParameters) override;
-
+	MOVIESCENE_API virtual FKeyHandle GetHandle(int32 Index) override;
+	MOVIESCENE_API virtual int32 GetIndex(FKeyHandle Handle) override;
 private:
 
 	UPROPERTY(meta = (KeyTimes))

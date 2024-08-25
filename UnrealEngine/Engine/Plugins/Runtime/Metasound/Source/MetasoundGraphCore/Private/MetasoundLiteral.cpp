@@ -118,7 +118,7 @@ namespace Metasound
 
 			case 12:
 			default:
-				static_assert(TVariantSize<FVariantType>::Value == 13, "Possible missing FVariantType case coverage");
+				static_assert(TVariantSize_V<FVariantType> == 13, "Possible missing FVariantType case coverage");
 				return ELiteralType::Invalid;
 		}
 	}

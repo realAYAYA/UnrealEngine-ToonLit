@@ -16,6 +16,8 @@
 #include "RigVMBlueprintUtils.h"
 #include "../../../RigVMEditor/Public/RigVMEditorModule.h"
 #include "RigVMCore/RigVMExecuteContext.h"
+#include "RigVMFunctions/RigVMDispatch_CastEnum.h"
+#include "RigVMFunctions/RigVMDispatch_CastObject.h"
 #include "RigVMModel/Nodes/RigVMAggregateNode.h"
 #include "RigVMModel/Nodes/RigVMFunctionReferenceNode.h"
 #include "RigVMModel/Nodes/RigVMFunctionEntryNode.h"
@@ -43,9 +45,14 @@ URigVMEdGraphNode::URigVMEdGraphNode()
 , bEnableProfiling(false)
 #endif
 , CachedTemplate(nullptr)
+, MicroSeconds(0)
 {
 	bHasCompilerMessage = false;
 	ErrorType = (int32)EMessageSeverity::Info + 1;
+	
+#if WITH_EDITOR
+	UpdateProfilingSettings();
+#endif
 }
 
 FText URigVMEdGraphNode::GetNodeTitle(ENodeTitleType::Type TitleType) const
@@ -64,6 +71,7 @@ FText URigVMEdGraphNode::GetNodeTitle(ENodeTitleType::Type TitleType) const
 					{
 						const FRigVMStruct* RigVMStruct = (const FRigVMStruct*)StructOnScope->GetStructMemory();
 						NodeTitle = FText::FromString(RigVMStruct->GetUnitLabel());
+						SubTitle = RigVMStruct->GetUnitSubTitle();
 					}
 				}
 			}
@@ -168,6 +176,11 @@ FText URigVMEdGraphNode::GetNodeTitle(ENodeTitleType::Type TitleType) const
 			NodeTitle = FText::FromString(FString::Printf(TEXT("%s (Deprecated)"), *NodeTitle.ToString()));
 		}
 
+		if(IsOutDated())
+		{
+			NodeTitle = FText::FromString(FString::Printf(TEXT("%s (OutDated)"), *NodeTitle.ToString()));
+		}
+
 		FullNodeTitle = NodeTitle;
 
 		if(!SubTitle.IsEmpty())
@@ -202,19 +215,12 @@ void URigVMEdGraphNode::ReconstructNode_Internal(bool bForce)
 	}
 
 #if WITH_EDITOR
-	bEnableProfiling = false;
-	if(RigGraph)
-	{
-		if(URigVMBlueprint* RigBlueprint = RigGraph->GetBlueprint())
-		{
-			bEnableProfiling = RigBlueprint->VMRuntimeSettings.bEnableProfiling;
-		}
-	}
+	UpdateProfilingSettings();
 #endif
 
 	// Clear previously set messages
-	ErrorMsg.Reset();
-
+	ClearErrorInfo();
+	
 	// Move the existing pins to a saved array.
 	// This way we can reuse them later
 	LastEdGraphPins = Pins;
@@ -276,14 +282,18 @@ void URigVMEdGraphNode::ReconstructNode_Internal(bool bForce)
 
 bool URigVMEdGraphNode::IsDeprecated() const
 {
+	// we longer consider nodes to be deprecated ever,
+	// instead we refer to them as outdated
+	return false;
+}
+
+bool URigVMEdGraphNode::IsOutDated() const
+{
 	if(URigVMNode* ModelNode = GetModelNode())
 	{
-		if(URigVMUnitNode* StructModelNode = Cast<URigVMUnitNode>(ModelNode))
-		{
-			return StructModelNode->IsDeprecated();
-		}
+		return ModelNode->IsOutDated();
 	}
-	return Super::IsDeprecated();
+	return false;
 }
 
 FEdGraphNodeDeprecationResponse URigVMEdGraphNode::GetDeprecationResponse(EEdGraphNodeDeprecationType DeprecationType) const
@@ -292,15 +302,12 @@ FEdGraphNodeDeprecationResponse URigVMEdGraphNode::GetDeprecationResponse(EEdGra
 
 	if(URigVMNode* ModelNode = GetModelNode())
 	{
-		if(URigVMUnitNode* StructModelNode = Cast<URigVMUnitNode>(ModelNode))
+		const FString DeprecatedMetadata = ModelNode->GetDeprecatedMetadata();
+		if (!DeprecatedMetadata.IsEmpty())
 		{
-			FString DeprecatedMetadata = StructModelNode->GetDeprecatedMetadata();
-			if (!DeprecatedMetadata.IsEmpty())
-			{
-				FFormatNamedArguments Args;
-				Args.Add(TEXT("DeprecatedMetadata"), FText::FromString(DeprecatedMetadata));
-				Response.MessageText = FText::Format(LOCTEXT("RigVMEdGraphNodeDeprecationMessage", "Warning: This node is deprecated from: {DeprecatedMetadata}"), Args);
-			}
+			FFormatNamedArguments Args;
+			Args.Add(TEXT("DeprecatedMetadata"), FText::FromString(DeprecatedMetadata));
+			Response.MessageText = FText::Format(LOCTEXT("RigVMEdGraphNodeDeprecationMessage", "Warning: This node is deprecated from: {DeprecatedMetadata}"), Args);
 		}
 	}
 
@@ -374,7 +381,12 @@ void URigVMEdGraphNode::PostReconstructNode()
 
 	bCanRenameNode = false;
 
-	if(URigVMNode* ModelNode = GetModelNode())
+	if(IsOutDated())
+	{
+		static const FLinearColor WarningColor = FAppStyle::GetColor("ErrorReporting.WarningBackgroundColor");
+		SetColorFromModel(WarningColor);
+	}
+	else if(URigVMNode* ModelNode = GetModelNode())
 	{
 		SetColorFromModel(ModelNode->GetNodeColor());
 	}
@@ -473,7 +485,42 @@ void URigVMEdGraphNode::ClearErrorInfo()
 	// SRigVMGraphNode only updates if the error types do not match so we have
 	// clear the error type as well, see SRigVMGraphNode::RefreshErrorInfo()
 	ErrorType = (int32)EMessageSeverity::Info + 1;
-	ErrorMsg = FString();	
+	ErrorMsg = FString();
+	ErrorMessageHashes.Reset();
+}
+
+void URigVMEdGraphNode::AddErrorInfo(const EMessageSeverity::Type& InSeverity, const FString& InMessage)
+{
+	if (ErrorType < InSeverity)
+	{
+		return;
+	}
+
+	const uint32 MessageHash = GetTypeHash(InMessage);
+	if (ErrorType == InSeverity)
+	{
+		if (ErrorMessageHashes.Contains(MessageHash))
+		{
+			return;
+		}
+		ErrorMessageHashes.Add(MessageHash);
+		ErrorMsg = FString::Printf(TEXT("%s\n%s"), *ErrorMsg, *InMessage);
+	}
+	else
+	{
+		ErrorMessageHashes.Reset();
+		ErrorMessageHashes.Add(MessageHash);
+		ErrorMsg = InMessage;
+		ErrorType = InSeverity;
+	}
+}
+
+void URigVMEdGraphNode::SetErrorInfo(const EMessageSeverity::Type& InSeverity, const FString& InMessage)
+{
+	ErrorMessageHashes.Reset();
+	ErrorMessageHashes.Add(GetTypeHash(InMessage));
+	ErrorMsg = InMessage;
+	ErrorType = InSeverity;
 }
 
 URigVMPin* URigVMEdGraphNode::FindModelPinFromGraphPin(const UEdGraphPin* InGraphPin) const
@@ -906,18 +953,18 @@ bool URigVMEdGraphNode::ModelPinsChanged(bool bForce)
 	
 	int32 PinsAdded = 0;
 	PinsAdded += AddMissingPins(ExecutePins);
-	PinsAdded += AddMissingPins(InputPins);
-	PinsAdded += AddMissingPins(InputOutputPins);
 	PinsAdded += AddMissingPins(OutputPins);
+	PinsAdded += AddMissingPins(InputOutputPins);
+	PinsAdded += AddMissingPins(InputPins);
 
 	const int32 PinsRemoved = RemoveObsoletePins();
 
 	// working through it in the opposite order
 	// due to the use of Append within the lambda
 	int32 PinsReordered = 0;
-	PinsReordered += OrderPins(OutputPins);
-	PinsReordered += OrderPins(InputOutputPins);
 	PinsReordered += OrderPins(InputPins);
+	PinsReordered += OrderPins(InputOutputPins);
+	PinsReordered += OrderPins(OutputPins);
 	PinsReordered += OrderPins(ExecutePins);
 
 	const bool bResult = (PinsAdded > 0) || (PinsRemoved > 0) || (PinsReordered > 0); 
@@ -1012,7 +1059,10 @@ bool URigVMEdGraphNode::DrawAsCompactNode() const
 		DrawAsCompactNodeCache = false;
 		if(const URigVMTemplateNode* TemplateModelNode = Cast<URigVMTemplateNode>(GetModelNode()))
 		{
-			if(TemplateModelNode->GetNotation() == RigVMTypeUtils::GetCastTemplateNotation())
+			if(TemplateModelNode->GetNotation() == RigVMTypeUtils::GetCastTemplateNotation() ||
+				TemplateModelNode->GetNotation() == FRigVMDispatch_CastObject().GetTemplateNotation() ||
+				TemplateModelNode->GetNotation() == FRigVMDispatch_CastIntToEnum().GetTemplateNotation() ||
+				TemplateModelNode->GetNotation() == FRigVMDispatch_CastEnumToInt().GetTemplateNotation())
 			{
 				DrawAsCompactNodeCache = true;
 				
@@ -1084,18 +1134,19 @@ FLinearColor URigVMEdGraphNode::GetNodeProfilingColor() const
 			{
 				if(const URigVMNode* ModelNode = GetModelNode())
 				{
-					const double MicroSeconds = ModelNode->GetInstructionMicroSeconds(DebuggedHost->GetExtendedExecuteContext(), DebuggedHost->GetVM(), FRigVMASTProxy());
+					const double CurrentMicroSeconds = ModelNode->GetInstructionMicroSeconds(DebuggedHost->GetRigVMExtendedExecuteContext(), DebuggedHost->GetVM(), FRigVMASTProxy());
+					MicroSeconds = Blueprint->RigGraphDisplaySettings.AggregateAverage(MicroSecondsFrames, MicroSeconds, CurrentMicroSeconds);
 					if(MicroSeconds >= 0.0)
 					{
 						if(Blueprint->RigGraphDisplaySettings.bAutoDetermineRange)
 						{
-							if(MicroSeconds < Blueprint->RigGraphDisplaySettings.MinMicroSeconds)
+							if(CurrentMicroSeconds < Blueprint->RigGraphDisplaySettings.MinMicroSeconds)
 							{
-								Blueprint->RigGraphDisplaySettings.MinMicroSeconds = MicroSeconds;
+								Blueprint->RigGraphDisplaySettings.MinMicroSeconds = CurrentMicroSeconds;
 							}
-							if(MicroSeconds > Blueprint->RigGraphDisplaySettings.MaxMicroSeconds)
+							if(CurrentMicroSeconds > Blueprint->RigGraphDisplaySettings.MaxMicroSeconds)
 							{
-								Blueprint->RigGraphDisplaySettings.MaxMicroSeconds = MicroSeconds;
+								Blueprint->RigGraphDisplaySettings.MaxMicroSeconds = CurrentMicroSeconds;
 							}
 						}
 							
@@ -1116,6 +1167,11 @@ FLinearColor URigVMEdGraphNode::GetNodeProfilingColor() const
 			}
 		}
 	}
+	else
+	{
+		MicroSeconds = 0;
+		MicroSecondsFrames.Reset();
+	}
 #endif
 	return FLinearColor::Black;
 }
@@ -1123,9 +1179,9 @@ FLinearColor URigVMEdGraphNode::GetNodeProfilingColor() const
 void URigVMEdGraphNode::UpdatePinLists()
 {
 	ExecutePins.Reset();
-	InputPins.Reset();
-	InputOutputPins.Reset();
 	OutputPins.Reset();
+	InputOutputPins.Reset();
+	InputPins.Reset();
 
 	if (URigVMNode* ModelNode = GetModelNode())
 	{
@@ -1181,9 +1237,9 @@ void URigVMEdGraphNode::AllocateDefaultPins()
 	};
 
 	CreateGraphPins(ExecutePins);
-	CreateGraphPins(InputPins);
-	CreateGraphPins(InputOutputPins);
 	CreateGraphPins(OutputPins);
+	CreateGraphPins(InputOutputPins);
+	CreateGraphPins(InputPins);
 
 	// Fill the variable list
 	ExternalVariables.Reset();
@@ -1336,7 +1392,10 @@ FSlateIcon URigVMEdGraphNode::GetIconAndTint(FLinearColor& OutColor) const
 		}
 		else if (const URigVMDispatchNode* DispatchNode = Cast<URigVMDispatchNode>(ModelNode))
 		{
-			MetadataScriptStruct = DispatchNode->GetFactory()->GetScriptStruct();
+			if (const FRigVMDispatchFactory* Factory = DispatchNode->GetFactory())
+			{
+				MetadataScriptStruct = Factory->GetScriptStruct();
+			}
 		}
 
 		if(MetadataScriptStruct && MetadataScriptStruct->HasMetaDataHierarchical(FRigVMStruct::IconMetaName))
@@ -1395,6 +1454,10 @@ void URigVMEdGraphNode::GetNodeContextMenuActions(class UToolMenu* Menu, class U
 {
 #if WITH_EDITOR
 	const URigVMEdGraphSchema* Schema = Cast<URigVMEdGraphSchema>(GetSchema());
+	if(const URigVMBlueprint* Blueprint = GetBlueprint())
+	{
+		return Blueprint->GetEditorModule()->GetContextMenuActions(Schema, Menu, Context);
+	}
 	IRigVMEditorModule::Get().GetContextMenuActions(Schema, Menu, Context);
 #endif
 }
@@ -1524,16 +1587,6 @@ URigVMNode* URigVMEdGraphNode::GetModelNode() const
 
 	if (URigVMEdGraph* Graph = Cast<URigVMEdGraph>(GetOuter()))
 	{
-#if WITH_EDITOR
-
-		if (Graph->TemplateController != nullptr)
-		{
-			MutableThis->CachedModelNode = TWeakObjectPtr<URigVMNode>(Graph->TemplateController->GetGraph()->FindNode(ModelNodePath));
-			return MutableThis->CachedModelNode.Get();
-		}
-
-#endif
-
 		if (URigVMGraph* Model = GetModel())
 		{
 			MutableThis->CachedModelNode = TWeakObjectPtr<URigVMNode>(Model->FindNode(ModelNodePath));
@@ -1551,6 +1604,11 @@ FName URigVMEdGraphNode::GetModelNodeName() const
 		return ModelNode->GetFName();
 	}
 	return NAME_None;
+}
+
+const FString& URigVMEdGraphNode::GetModelNodePath() const
+{
+	return ModelNodePath;
 }
 
 URigVMPin* URigVMEdGraphNode::GetModelPinFromPinPath(const FString& InPinPath) const
@@ -1630,7 +1688,14 @@ FText URigVMEdGraphNode::GetTooltipText() const
 {
 	if(URigVMNode* ModelNode = GetModelNode())
 	{
-		return ModelNode->GetToolTipText();
+		FText Tooltip = ModelNode->GetToolTipText();
+		if(IsOutDated())
+		{
+			return FText::Format(
+				LOCTEXT("OutDatedTooltipFormat", "This node is outdated and can potentially be upgraded.\nFor this right click and choose 'Upgrade Nodes'.\n\n{0}"),
+					Tooltip);
+		}
+		return Tooltip;;
 	}
 	return FText::FromString(ModelNodePath);
 }
@@ -1699,6 +1764,26 @@ void URigVMEdGraphNode::BeginDestroy()
 	Super::BeginDestroy();
 }
 
+#if WITH_EDITOR
+void URigVMEdGraphNode::AddPinSearchMetaDataInfo(const UEdGraphPin* Pin, TArray<FSearchTagDataPair>& OutTaggedMetaData) const
+{
+	Super::AddPinSearchMetaDataInfo(Pin, OutTaggedMetaData);
+	if (const URigVMNode* Node = GetModelNode())
+	{
+		const FString PinName = Pin->GetName();
+		FString Left, Right = PinName;
+		URigVMPin::SplitPinPathAtStart(PinName, Left, Right);
+		if (URigVMPin* ModelPin = Node->FindPin(Right))
+		{
+			if (ModelPin->IsBoundToVariable())
+			{
+				OutTaggedMetaData.Add(FSearchTagDataPair(FText::FromString(TEXT("Binding")), FText::FromString(ModelPin->GetBoundVariablePath())));
+			}
+		}
+	}
+}
+#endif
+
 FEdGraphPinType URigVMEdGraphNode::GetPinTypeForModelPin(const URigVMPin* InModelPin)
 {
 	FEdGraphPinType PinType = RigVMTypeUtils::PinTypeFromCPPType(*InModelPin->GetCPPType(), InModelPin->GetCPPTypeObject());
@@ -1706,7 +1791,7 @@ FEdGraphPinType URigVMEdGraphNode::GetPinTypeForModelPin(const URigVMPin* InMode
 	return PinType;
 }
 
-void URigVMEdGraphNode::ConfigurePin(UEdGraphPin* EdGraphPin, const URigVMPin* ModelPin)
+void URigVMEdGraphNode::ConfigurePin(UEdGraphPin* EdGraphPin, const URigVMPin* ModelPin) const
 {
 	const bool bConnectable =
 		ModelPin->GetDirection() == ERigVMPinDirection::Input ||
@@ -1756,6 +1841,23 @@ TArray<URigVMPin*>& URigVMEdGraphNode::PinListForPin(const URigVMPin* InModelPin
 	static TArray<URigVMPin*> EmptyList;
 	return EmptyList;
 }
+
+#if WITH_EDITOR
+void URigVMEdGraphNode::UpdateProfilingSettings()
+{
+	bEnableProfiling = false;
+	MicroSeconds = 0;
+	MicroSecondsFrames.Reset();
+
+	if(const URigVMEdGraph* RigGraph = Cast<URigVMEdGraph>(GetOuter()))
+	{
+		if(const URigVMBlueprint* RigBlueprint = RigGraph->GetBlueprint())
+		{
+			bEnableProfiling = RigBlueprint->VMRuntimeSettings.bEnableProfiling;
+		}
+	}
+}
+#endif
 
 #undef LOCTEXT_NAMESPACE
 

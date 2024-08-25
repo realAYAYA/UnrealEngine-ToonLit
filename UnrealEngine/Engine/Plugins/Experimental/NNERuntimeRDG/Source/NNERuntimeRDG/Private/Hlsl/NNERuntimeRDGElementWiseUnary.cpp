@@ -34,7 +34,7 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 
 	public:
 
-		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) const override
+		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) override
 		{
 			check(InputTensors.Num() == 1);
 			check(OutputTensors.Num() == 1);
@@ -224,8 +224,6 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 	{
 		bool bIsValid = true;
 
-		//version 6 of operator Clip, next version is 11
-		//https://github.com/onnx/onnx/blob/main/docs/Changelog.md#Clip-6
 		FAttributeValidator AttributeValidator;
 		AttributeValidator.AddOptional(TEXT("min"), ENNEAttributeDataType::Float);
 		AttributeValidator.AddOptional(TEXT("max"), ENNEAttributeDataType::Float);
@@ -241,44 +239,63 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 	
 	bool RegisterElementWiseUnaryOperators(FOperatorRegistryHlsl& Registry)
 	{
-#define OP(Name) Registry.OpAdd(TEXT(#Name), CreateElementWiseUnaryOperator<NNE::Internal::EElementWiseUnaryOperatorType::Name>, ValidateElementWiseUnaryOperator<NNE::Internal::EElementWiseUnaryOperatorType::Name>)
-		OP(Abs);
-		OP(Acos);
-		OP(Acosh);
-		OP(Asin);
-		OP(Asinh);
-		OP(Atan);
-		OP(Atanh);
-		//OP(BitShift);
-		OP(Ceil);
-		OP(Clip);
-		OP(Cos);
-		OP(Cosh);
-		OP(Elu);
-		OP(Erf);
-		OP(Exp);
-		OP(Floor);
-		OP(IsInf);
-		OP(IsNan);
-		OP(HardSigmoid);
-		OP(HardSwish);
-		OP(LeakyRelu);
-		OP(Log);
-		OP(Neg);
-		//OP(Not);
-		OP(Reciprocal);
-		OP(Relu);
-		OP(Round);
-		OP(Selu);
-		OP(Sigmoid);
-		OP(Sign);
-		OP(Sin);
-		OP(Sinh);
-		OP(Softplus);
-		OP(Softsign);
-		OP(Sqrt);
-		OP(Tan);
-		OP(Tanh);
+		// Note: support of a particular version is partial with respect to tensor data types (only the most typical ones are usually supported).
+#define OP(Name, Version) Registry.OpAdd({{TEXT(#Name), TEXT("Onnx")}, Version}, CreateElementWiseUnaryOperator<NNE::Internal::EElementWiseUnaryOperatorType::Name>, ValidateElementWiseUnaryOperator<NNE::Internal::EElementWiseUnaryOperatorType::Name>);
+		OP(Abs, 6)
+		OP(Abs, 13)
+		OP(Acos, 7)
+		OP(Acosh, 9)
+		OP(Asin, 7)
+		OP(Asinh, 9)
+		OP(Atan, 7)
+		OP(Atanh, 9)
+		//OP(BitShift, 11)
+		OP(Ceil, 6)
+		OP(Ceil, 13)
+		OP(Clip, 6)
+		OP(Cos, 7)
+		OP(Cosh, 9)
+		OP(Elu, 6)
+		OP(Erf, 9)
+		OP(Erf, 13)
+		OP(Exp, 6)
+		OP(Exp, 13)
+		OP(Floor, 6)
+		OP(Floor, 13)
+		OP(IsInf, 10)
+		OP(IsInf, 20)
+		OP(IsNan, 9)
+		OP(IsNan, 13)
+		OP(IsNan, 20)
+		OP(HardSigmoid, 6)
+		OP(HardSwish, 14)
+		OP(LeakyRelu, 6)
+		OP(LeakyRelu, 16)
+		OP(Log, 6)
+		OP(Log, 13)
+		OP(Neg, 6)
+		OP(Neg, 13)
+		//OP(Not, 1)
+		OP(Reciprocal, 6)
+		OP(Reciprocal, 13)
+		OP(Relu, 6)
+		OP(Relu, 13)
+		OP(Relu, 14)
+		OP(Round, 11)
+		OP(Selu, 6)
+		OP(Sigmoid, 6)
+		OP(Sigmoid, 13)
+		OP(Sign, 9)
+		OP(Sign, 13)
+		OP(Sin, 7)
+		OP(Sinh, 9)
+		OP(Softplus, 1)
+		OP(Softsign, 1)
+		OP(Sqrt, 6)
+		OP(Sqrt, 13)
+		OP(Tan, 7)
+		OP(Tanh, 6)
+		OP(Tanh, 13)
 #undef OP
 
 		return true;

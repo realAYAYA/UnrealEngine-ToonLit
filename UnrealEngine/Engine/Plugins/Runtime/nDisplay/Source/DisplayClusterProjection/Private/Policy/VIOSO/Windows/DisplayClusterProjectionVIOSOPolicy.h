@@ -16,9 +16,7 @@ public:
 	virtual ~FDisplayClusterProjectionVIOSOPolicy();
 
 public:
-	//////////////////////////////////////////////////////////////////////////////////////////////
-	// IDisplayClusterProjectionPolicy
-	//////////////////////////////////////////////////////////////////////////////////////////////
+	//~~BEGIN IDisplayClusterProjectionPolicy
 	virtual const FString& GetType() const override;
 
 	virtual bool HandleStartScene(IDisplayClusterViewport* InViewport) override;
@@ -41,6 +39,11 @@ public:
 		return true;
 	}
 
+	virtual bool HasPreviewMesh(IDisplayClusterViewport* InViewport) override;
+	virtual class UMeshComponent* GetOrCreatePreviewMeshComponent(IDisplayClusterViewport* InViewport, bool& bOutIsRootActorComponent) override;
+
+	//~~END IDisplayClusterProjectionPolicy
+
 protected:
 	bool ImplApplyWarpBlend_RenderThread(FRHICommandListImmediate& RHICmdList, const IDisplayClusterViewportProxy* InViewportProxy);
 	void ImplRelease();
@@ -53,23 +56,7 @@ protected:
 
 	TArray<TSharedPtr<FDisplayClusterProjectionVIOSOPolicyViewData, ESPMode::ThreadSafe>> Views;
 
-	FCriticalSection DllAccessCS;
-
-private:
-#if WITH_EDITOR
-protected:
-	//////////////////////////////////////////////////////////////////////////////////////////////
-	// IDisplayClusterProjectionPolicyPreview
-	//////////////////////////////////////////////////////////////////////////////////////////////
-	virtual bool HasPreviewMesh() override
-	{
-		return true;
-	}
-	virtual class UMeshComponent* GetOrCreatePreviewMeshComponent(IDisplayClusterViewport* InViewport, bool& bOutIsRootActorComponent) override;
-
-	void ReleasePreviewMeshComponent();
-
-private:
 	FDisplayClusterSceneComponentRef PreviewMeshComponentRef;
-#endif
+
+	FCriticalSection DllAccessCS;
 };

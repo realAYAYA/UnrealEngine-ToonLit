@@ -148,6 +148,16 @@ void FMovieSceneFloatChannel::Offset(FFrameNumber DeltaPosition)
 	AutoSetTangents();
 }
 
+FKeyHandle FMovieSceneFloatChannel::GetHandle(int32 Index)
+{
+	return GetData().GetHandle(Index);
+}
+
+int32 FMovieSceneFloatChannel::GetIndex(FKeyHandle Handle)
+{
+	return GetData().GetIndex(Handle);
+}
+
 void FMovieSceneFloatChannel::Optimize(const FKeyDataOptimizationParams& Params)
 {
 	FMovieSceneFloatChannelImpl::Optimize(this, Params);

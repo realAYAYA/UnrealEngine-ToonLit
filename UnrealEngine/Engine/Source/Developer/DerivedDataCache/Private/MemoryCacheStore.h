@@ -10,8 +10,8 @@ namespace UE::DerivedData
 class IMemoryCacheStore : public ILegacyCacheStore
 {
 public:
-	virtual void Delete(const FCacheKey& Key) = 0;
-	virtual void DeleteValue(const FCacheKey& Key) = 0;
+	virtual void Delete(const FCacheKey& Key, const FSharedString& Name) = 0;
+	virtual void DeleteValue(const FCacheKey& Key, const FSharedString& Name) = 0;
 
 	virtual void Disable() = 0;
 };

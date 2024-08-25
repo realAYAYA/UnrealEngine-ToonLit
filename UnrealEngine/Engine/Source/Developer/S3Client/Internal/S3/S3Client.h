@@ -105,6 +105,8 @@ struct FS3Response
 	/** Returns the body as text. */
 	FString ToString() const { return FString(reinterpret_cast<const ANSICHAR*>(Body.GetData())); }
 
+	UE_API void GetErrorMsg(FStringBuilderBase& OutErrorMsg) const;
+
 	/** HTTP status code. */
 	uint32 StatusCode = 0;
 	/** HTTP response body. */
@@ -158,6 +160,12 @@ struct FS3ListObjectResponse
 	TArray<FS3Object> Objects;
 };
 
+/** Request parameters for deleting objects. */
+using FS3DeleteObjectRequest = FS3GetObjectRequest;
+
+/** Response parameters when deleting objects. */
+using FS3DeleteObjectResponse = FS3Response;
+
 /** S3 client configuration with region and service URL. */
 struct FS3ClientConfig
 {
@@ -196,6 +204,8 @@ public:
 	FS3PutObjectResponse PutObject(const FS3PutObjectRequest& Request);
 	/** Retries uploading an object until succeeded or max attempts has been reached. */
 	FS3PutObjectResponse TryPutObject(const FS3PutObjectRequest& Request, int32 MaxAttempts = 3, float Delay = 0.5f);
+	/** Delete an object associated with the specified request parameters. */
+	FS3DeleteObjectResponse DeleteObject(const FS3DeleteObjectRequest& Request);
 
 private:
 	void Setup(FS3Request& Request);

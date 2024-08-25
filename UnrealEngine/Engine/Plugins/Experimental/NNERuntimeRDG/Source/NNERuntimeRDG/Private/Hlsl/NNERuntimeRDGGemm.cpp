@@ -28,12 +28,9 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 		int32 InputTransA = 0;
 		int32 InputTransB = 0;
 
-		bool bIsCScalar = false;
-		bool bNoBias = true;
-
 	public:
 
-		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) const override
+		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) override
 		{
 			check(InputTensors.Num() >= 2 && InputTensors.Num() <= 3);
 			check(OutputTensors.Num() == 1);
@@ -84,17 +81,7 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 					UE_LOG(LogNNE, Warning, TEXT("Gemm third input should be of rank 2 or less"));
 					return false;
 				}
-				if (InputC.GetShape().Rank() == 1 && InputC.GetShape().GetData()[0] == 1)
-				{
-					UE_LOG(LogNNE, Warning, TEXT("Gemm third input as scalar not supported"));
-					return false;
-				}
 			}
-
-			// C is treated as a scalar if there is no valid C, either width or height is zero or C dimension is 1x1
-			bIsCScalar = false; // InputTensors.Num() != 3 || InputC.Sizes[0] * InputC.Sizes[1] < 2;
-			// CScalar = C != nullptr ? C[0] : (InElementType)0;
-			bNoBias = InputTensorDescs.Num() != 3 /*|| InputC.Sizes[0] * InputC.Sizes[1] < 1*/;
 
 			InputAlpha = Attributes.GetValueOrDefault(TEXT("alpha"), InputAlpha);
 			InputBeta = Attributes.GetValueOrDefault(TEXT("beta"), InputBeta);
@@ -108,29 +95,43 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 		{
 			using namespace UE::NNEHlslShaders::Internal;
 
-			const EGemmAlgorithm Algorithm = EGemmAlgorithm::Simple32x32;
-
-			const float CScalar = 0.0f;
-
 			check(InputTensors.Num() >= 2 && InputTensors.Num() <= 3);
 			check(OutputTensors.Num() == 1);
 			check(InputTensors[0] != nullptr);
 			check(InputTensors[1] != nullptr);
 			check(OutputTensors[0] != nullptr);
+
+			const EGemmAlgorithm Algorithm = EGemmAlgorithm::Simple32x32;
 			const FTensorRDG& InputA = *InputTensors[0];
 			const FTensorRDG& InputB = *InputTensors[1];
 			const FTensorRDG& Output = *OutputTensors[0];
 			const FTensorRDG* InputC = nullptr;
+			float CConstantScalar = 0.0f;
+			EGemmCScalar CScalarMode = EGemmCScalar::MAX;
 
 			if (InputTensors.Num() == 3)
 			{
 				check(InputTensors[2] != nullptr);
-				InputC = InputTensors[2];
+				if (InputTensors[2]->HasPreparedData() && InputTensors[2]->GetVolume() == 1)
+				{
+					CConstantScalar = InputTensors[2]->GetPreparedData<float>()[0];
+					CScalarMode = EGemmCScalar::Yes;
+				}
+				else
+				{
+					InputC = InputTensors[2];
+					CScalarMode = EGemmCScalar::No;
+				}
 			}
+			else
+			{
+				CScalarMode = EGemmCScalar::NoBias;
+			}
+			check(CScalarMode != EGemmCScalar::MAX);
 			
 			// Set parameters
 			TGemmCS::FParameters* Parameters = GraphBuilder.AllocParameters<TGemmCS::FParameters>();
-			TGemmCS::FillInParameters(InputAlpha, InputBeta, InputTransA, InputTransB, InputA, InputB, InputC, CScalar, *Parameters);
+			TGemmCS::FillInParameters(InputAlpha, InputBeta, InputTransA, InputTransB, InputA, InputB, InputC, CConstantScalar, *Parameters);
 			Parameters->A = GraphBuilder.CreateSRV(FRDGBufferSRVDesc(InputA.GetBuffer(), PF_R32_FLOAT));
 			Parameters->B = GraphBuilder.CreateSRV(FRDGBufferSRVDesc(InputB.GetBuffer(), PF_R32_FLOAT));
 			if (InputC != nullptr) {
@@ -139,7 +140,7 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 			Parameters->Y = GraphBuilder.CreateUAV(FRDGBufferUAVDesc(Output.GetBuffer(), PF_R32_FLOAT));
 
 			TGemmCS::FPermutationDomain PermutationVector;
-			PermutationVector.Set<TGemmCS::FGemmCScalar>(bNoBias ? EGemmCScalar::NoBias : (bIsCScalar ? EGemmCScalar::Yes : EGemmCScalar::No));
+			PermutationVector.Set<TGemmCS::FGemmCScalar>(CScalarMode);
 			PermutationVector.Set<TGemmCS::FGemmAlgorithm>(Algorithm);
 			PermutationVector.Set<TGemmCS::FGemmNumStackDimensions>(0);
 			TShaderMapRef<TGemmCS> ComputeShader(GetGlobalShaderMap(GMaxRHIFeatureLevel), PermutationVector);
@@ -163,6 +164,8 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 	{
 		bool bIsValid = true;
 
+		//This match version 9, 11, 13 of the Gemm operator see
+		//https://onnx.ai/onnx/operators/onnx__Gemm.html#l-onnx-doc-gemm
 		FAttributeValidator AttributeValidator;
 		AttributeValidator.AddOptional(TEXT("alpha"), ENNEAttributeDataType::Float);
 		AttributeValidator.AddOptional(TEXT("beta"), ENNEAttributeDataType::Float);
@@ -187,7 +190,11 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 
 	bool RegisterGemmOperator(FOperatorRegistryHlsl& Registry)
 	{
-		Registry.OpAdd(TEXT("Gemm"), CreateGemmOperator, ValidateGemmOperator);
+		// Note: support of a particular version is partial with respect to tensor data types (only the most typical ones are usually supported).
+		Registry.OpAdd({{TEXT("Gemm"), TEXT("Onnx")}, 7}, CreateGemmOperator, ValidateGemmOperator);
+		Registry.OpAdd({{TEXT("Gemm"), TEXT("Onnx")}, 9}, CreateGemmOperator, ValidateGemmOperator);
+		Registry.OpAdd({{TEXT("Gemm"), TEXT("Onnx")}, 11}, CreateGemmOperator, ValidateGemmOperator);
+		Registry.OpAdd({{TEXT("Gemm"), TEXT("Onnx")}, 13}, CreateGemmOperator, ValidateGemmOperator);
 		return true;
 	}
 } // UE::NNERuntimeRDG::Private::Hlsl

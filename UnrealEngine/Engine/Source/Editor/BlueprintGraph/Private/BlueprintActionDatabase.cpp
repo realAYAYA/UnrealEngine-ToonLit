@@ -2,11 +2,6 @@
 
 #include "BlueprintActionDatabase.h"
 
-#include "Animation/AnimBlueprint.h"
-#include "Animation/AnimBlueprintGeneratedClass.h"
-#include "Animation/AnimInstance.h"
-#include "Animation/AnimTypes.h"
-#include "Animation/Skeleton.h"
 #include "AssetRegistry/AssetData.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
@@ -87,7 +82,6 @@
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "PropertyPermissionList.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SubclassOf.h"
 #include "Templates/Tuple.h"
 #include "Templates/UnrealTemplate.h"
@@ -177,15 +171,6 @@ namespace FBlueprintNodeSpawnerFactory
 	 * @return 
 	 */
 	static UBlueprintNodeSpawner* MakeActorBoundEventSpawner(FMulticastDelegateProperty* DelegateProperty);
-
-	/**
-	 * Constructs UK2Node_Event spawner that is owned by UAnimInstance. Used for Anim Notificatios and montage 
-	 * branching points.
-	 *
-	 * @param EventName
-	 * @return A new node-spawner, set up to spawn UK2Node_Event
-	 */
-	static UBlueprintNodeSpawner* MakeAnimOwnedEventSpawner(FName SignatureName, FText CustomCategory);
 };
 
 //------------------------------------------------------------------------------
@@ -306,22 +291,6 @@ static UBlueprintNodeSpawner* FBlueprintNodeSpawnerFactory::MakeActorBoundEventS
 	return UBlueprintBoundEventNodeSpawner::Create(UK2Node_ActorBoundEvent::StaticClass(), DelegateProperty);
 }
 
-//------------------------------------------------------------------------------
-static UBlueprintNodeSpawner* FBlueprintNodeSpawnerFactory::MakeAnimOwnedEventSpawner(FName SignatureName, FText CustomCategory)
-{
-	auto PostSpawnSetupLambda = [](UEdGraphNode* NewNode, bool /*bIsTemplateNode*/)
-	{
-		UK2Node_Event* ActorRefNode = CastChecked<UK2Node_Event>(NewNode);
-		ActorRefNode->EventReference.SetExternalMember(ActorRefNode->CustomFunctionName, UAnimInstance::StaticClass());
-	};
-
-	UBlueprintNodeSpawner* NodeSpawner = UBlueprintEventNodeSpawner::Create(UK2Node_Event::StaticClass(), SignatureName);
-	NodeSpawner->CustomizeNodeDelegate = UBlueprintNodeSpawner::FCustomizeNodeDelegate::CreateStatic(PostSpawnSetupLambda);
-	NodeSpawner->DefaultMenuSignature.Category = CustomCategory;
-
-	return NodeSpawner;
-}
-
 /*******************************************************************************
  * Static FBlueprintActionDatabase Helpers
  ******************************************************************************/
@@ -414,14 +383,6 @@ namespace BlueprintActionDatabaseImpl
 	static void AddClassCastActions(UClass* const Class, FActionList& ActionListOut);
 
 	/**
-	 * Adds custom actions to operate on the provided skeleton. Used primarily
-	 * to find AnimNotify event vocabulary
-	 *
-	 * @Param Skeleton	The skeleton that may have anim notifies defined on it.
-	 */
-	static void AddSkeletonActions( const USkeleton& Skeleton, FActionList& ActionListOut);
-
-	/**
 	 * If the associated class is a blueprint generated class, then this will
 	 * loop over the blueprint's graphs and create any node-spawners associated
 	 * with those graphs (like UK2Node_MacroInstance spawners for macro graphs).
@@ -430,16 +391,6 @@ namespace BlueprintActionDatabaseImpl
 	 * @param  ActionListOut	The list you want populated with new spawners.
 	 */
 	static void AddBlueprintGraphActions(UBlueprint const* const Blueprint, FActionList& ActionListOut);
-	
-	/**
-	 * If the associated class is an anim blueprint generated class, then this
-	 * will loop over AnimNotification events in the anim blueprint generated
-	 * class and create node spawners for those events.
-	 *
-	 * @param  Blueprint		The blueprint which you want graph associated node-spawners for.
-	 * @param  ActionListOut	The list you want populated with new spawners.
-	 */
-	static void AddAnimBlueprintGraphActions( UAnimBlueprint const* AnimBlueprint, FActionList& ActionListOut );
 
 	/**
 	 * Emulates UEdGraphSchema::GetGraphContextActions(). If the supplied class  
@@ -883,21 +834,6 @@ static void BlueprintActionDatabaseImpl::AddClassCastActions(UClass* Class, FAct
 }
 
 //------------------------------------------------------------------------------
-static void BlueprintActionDatabaseImpl::AddSkeletonActions(const USkeleton& Skeleton, FActionList& ActionListOut)
-{
-	TArray<FName> NotifyNames;
-	Skeleton.CollectAnimationNotifies(NotifyNames);
-
-	for (const FName& NotifyName : NotifyNames)
-	{
-		FString Label = NotifyName.ToString();
-
-		FString SignatureName = FString::Printf(TEXT("AnimNotify_%s"), *Label);
-		ActionListOut.Add(FBlueprintNodeSpawnerFactory::MakeAnimOwnedEventSpawner(FName(*SignatureName), FEditorCategoryUtils::GetCommonCategory(FCommonEditorCategory::AnimNotify)));
-	}
-}
-
-//------------------------------------------------------------------------------
 static void BlueprintActionDatabaseImpl::AddBlueprintGraphActions(UBlueprint const* const Blueprint, FActionList& ActionListOut)
 {
 	using namespace FBlueprintNodeSpawnerFactory; // for MakeMacroNodeSpawner()
@@ -966,24 +902,6 @@ static void BlueprintActionDatabaseImpl::AddBlueprintGraphActions(UBlueprint con
 	for (const FBPInterfaceDescription& Interface : Blueprint->ImplementedInterfaces)
 	{
 		CreateEntriesLambda(Interface.Graphs);
-	}
-}
-
-//------------------------------------------------------------------------------
-static void BlueprintActionDatabaseImpl::AddAnimBlueprintGraphActions(UAnimBlueprint const* AnimBlueprint, FActionList& ActionListOut)
-{
-	if (UAnimBlueprintGeneratedClass* GeneratedClass = AnimBlueprint->GetAnimBlueprintGeneratedClass())
-	{
-		for (int32 NotifyIdx = 0; NotifyIdx < GeneratedClass->GetAnimNotifies().Num(); NotifyIdx++)
-		{
-			FName NotifyName = GeneratedClass->GetAnimNotifies()[NotifyIdx].NotifyName;
-			if (NotifyName != NAME_None)
-			{
-				FString Label = NotifyName.ToString();
-				FString SignatureName = FString::Printf(TEXT("AnimNotify_%s"), *Label);
-				ActionListOut.Add(FBlueprintNodeSpawnerFactory::MakeAnimOwnedEventSpawner(FName(*SignatureName), FEditorCategoryUtils::GetCommonCategory(FCommonEditorCategory::AnimNotify)));
-			}
-		}
 	}
 }
 
@@ -1365,6 +1283,10 @@ void FBlueprintActionDatabase::Tick(float DeltaTime)
 	{
 		RefreshAll();
 	}
+	else if (!BlueprintActionDatabaseImpl::PendingModules.IsEmpty())
+	{
+		PreRefresh(false);
+	}
 	
 	// Check for any modules that may have been loaded since the last tick. Even if we call RefreshAll() above, we still want to run
 	// through this list in order to keep track of loaded modules containing native script types that are registered into the database.
@@ -1500,6 +1422,9 @@ void FBlueprintActionDatabase::RefreshAll()
 	TGuardValue<bool> ScopedInitialization(BlueprintActionDatabaseImpl::bIsInitializing, true);
 	BlueprintActionDatabaseImpl::bRefreshAllRequested = false;
 
+	// Refresh other systems before the database is recreated
+	PreRefresh(true);
+
 	// Remove callbacks from blueprints
 	for (TObjectIterator<UBlueprint> BlueprintIt; BlueprintIt; ++BlueprintIt)
 	{
@@ -1526,16 +1451,6 @@ void FBlueprintActionDatabase::RefreshAll()
 	{
 		UClass* const Class = (*ClassIt);
 		RefreshClassActions(Class);
-	}
-
-	if(IsClassAllowed(USkeleton::StaticClass(), EPermissionsContext::Asset))
-	{
-		// this handles creating entries for skeletons that were loaded before the database was alive:
-		for( TObjectIterator<USkeleton> SkeletonIt; SkeletonIt; ++SkeletonIt )
-		{
-			FActionList& ClassActionList = ActionRegistry.FindOrAdd(*SkeletonIt);
-			BlueprintActionDatabaseImpl::AddSkeletonActions(**SkeletonIt, ClassActionList);
-		}
 	}
 
 	FComponentTypeRegistry::Get().SubscribeToComponentList(ComponentTypes).RemoveAll(this);
@@ -1740,11 +1655,6 @@ void FBlueprintActionDatabase::RefreshAssetActions(UObject* const AssetObject)
 		return;
 	}
 
-	if(const USkeleton* Skeleton = Cast<USkeleton>(AssetObject))
-	{
-		AddSkeletonActions(*Skeleton, AssetActionList);
-	}
-
 	UBlueprint* BlueprintAsset = Cast<UBlueprint>(AssetObject);
 	if (BlueprintAsset != nullptr)
 	{
@@ -1752,11 +1662,6 @@ void FBlueprintActionDatabase::RefreshAssetActions(UObject* const AssetObject)
 		if (UClass* SkeletonClass = BlueprintAsset->SkeletonGeneratedClass)
 		{
 			GetClassMemberActions(SkeletonClass, AssetActionList);
-		}
-
-		if( const UAnimBlueprint* AnimBlueprint = Cast<UAnimBlueprint>(BlueprintAsset) )
-		{
-			AddAnimBlueprintGraphActions( AnimBlueprint, AssetActionList );
 		}
 
 		FBlueprintActionDatabaseRegistrar Registrar(ActionRegistry, UnloadedActionRegistry, ActionPrimingQueue);
@@ -2000,6 +1905,12 @@ void FBlueprintActionDatabase::OnBlueprintChanged(UBlueprint* InBlueprint)
 	{
 		BlueprintActionDatabaseImpl::OnBlueprintChanged(InBlueprint);
 	}
+}
+
+void FBlueprintActionDatabase::PreRefresh(bool bRefreshAll)
+{
+	// Refresh other systems as necessary, doing it here avoids redundant work
+	FTypePromotion::RefreshPromotionTables();
 }
 
 bool FBlueprintActionDatabase::IsClassAllowed(UClass const* InClass, EPermissionsContext InContext)

@@ -13,6 +13,7 @@
 class FLightSceneInfo;
 class FViewInfo;
 class FVirtualShadowMapArray;
+class FVisibleLightInfo;
 
 struct FHairStrandsTransmittanceMaskData
 {
@@ -25,6 +26,7 @@ void RenderHairStrandsShadowMask(
 	FRDGBuilder& GraphBuilder,
 	const TArray<FViewInfo>& Views,
 	const FLightSceneInfo* LightSceneInfo,
+	const TArrayView<FVisibleLightInfo>& VisibleLightInfos,
 	const bool bProjectingForForwardShading,
 	FRDGTextureRef ScreenShadowMaskTexture); 
 
@@ -33,6 +35,7 @@ void RenderHairStrandsDeepShadowMask(
 	FRDGBuilder& GraphBuilder,
 	const TArray<FViewInfo>& Views,
 	const FLightSceneInfo* LightSceneInfo,
+	const TArrayView<FVisibleLightInfo>& VisibleLightInfos,
 	FRDGTextureRef OutShadowMask);
 
 /// Output hair transmittance per hair sample for a given light

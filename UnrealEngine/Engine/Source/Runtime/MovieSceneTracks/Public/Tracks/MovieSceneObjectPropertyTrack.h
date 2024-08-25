@@ -4,11 +4,10 @@
 
 #include "MovieSceneTrack.h"
 #include "Tracks/MovieScenePropertyTrack.h"
-#include "Compilation/IMovieSceneTrackTemplateProducer.h"
 #include "MovieSceneObjectPropertyTrack.generated.h"
 
 UCLASS(MinimalAPI)
-class UMovieSceneObjectPropertyTrack : public UMovieScenePropertyTrack, public IMovieSceneTrackTemplateProducer
+class UMovieSceneObjectPropertyTrack : public UMovieScenePropertyTrack
 {
 public:
 
@@ -27,5 +26,4 @@ public:
 	/*~ UMovieSceneTrack interface */
 	virtual bool SupportsType(TSubclassOf<UMovieSceneSection> SectionClass) const override;
 	virtual UMovieSceneSection* CreateNewSection() override;
-	virtual FMovieSceneEvalTemplatePtr CreateTemplateForSection(const UMovieSceneSection& InSection) const override;
 };

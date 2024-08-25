@@ -25,6 +25,7 @@ namespace Chaos::Softs
 		using Base::MuElementArray;
 		using Base::LambdaElementArray;
 		using Base::CorotatedParams;
+		using Base::F;
 
 	public:
 		FGaussSeidelCorotatedConstraints(
@@ -48,13 +49,10 @@ namespace Chaos::Softs
 			ParticleStartIndex(ParticleStartIndexIn), ParticleEndIndex(ParticleEndIndexIn), bDoQuasistatics(bDoQuasistaticsIn), bDoSOR(bDoSORIn), OmegaSOR(InOmegaSOR)
 		{
 			Base::LambdaArray.SetNum(0);
-			Particle2Incident.Init(-1, ParticleEndIndexIn - ParticleStartIndexIn);
+			Particle2Incident.Init(INDEX_NONE, ParticleEndIndexIn - ParticleStartIndexIn);
 			for (int32 i = 0; i < IncidentElements.Num(); i++)
 			{
-				if (IncidentElements[i].Num() > 0)
-				{
-					Particle2Incident[InMesh[IncidentElements[i][0]][IncidentElementsLocal[i][0]] - ParticleStartIndex] = i;
-				}
+				Particle2Incident[i] = i;
 			}
 			for (int32 e = 0; e < InMesh.Num(); e++)
 			{
@@ -74,7 +72,7 @@ namespace Chaos::Softs
 				X_k.Init(TVector<T, 3>(T(0.)), ParticleEndIndex - ParticleStartIndex);
 			}
 			InitColor(InParticles);
-			InitializeLambdas();
+			InitializeCorotatedLambdas();
 		}
 
 		virtual ~FGaussSeidelCorotatedConstraints() {}
@@ -124,12 +122,27 @@ namespace Chaos::Softs
 
 		void Init() const override {}
 
-		TArray<TArray<int32>> GetIncidentElements() const { return IncidentElements; }
-		TArray<TArray<int32>> GetIncidentElementsLocal() const { return IncidentElementsLocal; }
+		TArray<TArray<int32>>& GetIncidentElements() { return IncidentElements; }
+		TArray<TArray<int32>>& GetIncidentElementsLocal() { return IncidentElementsLocal; }
 		TArray<TVector<int32, 4>> GetMeshConstraints() const { return MeshConstraints; }
 		void SetParticlesPerColor(TArray<TArray<int32>>&& InParticlesPerColor) {ParticlesPerColor = MoveTemp(InParticlesPerColor); }
 
+		TArray<TArray<int32>> GetMeshArray() const 
+		{
+			TArray<TArray<int32>> MeshArray;
+			MeshArray.SetNum(MeshConstraints.Num());
+			for (int32 i = 0; i < MeshConstraints.Num(); i++)
+			{
+				MeshArray[i].SetNum(4);
+				for (int32 ie = 0; ie < 4; ie++)
+				{
+					MeshArray[i][ie] = MeshConstraints[i][ie];
+				}
+			}
+			return MeshArray;
+		}
 
+		// Apply Successive Over Relaxation (SOR) to accelerate convergence rate
 		void ApplySOR(ParticleType& Particles, const T Dt) const
 		{
 			if (bDoSOR)
@@ -222,13 +235,54 @@ namespace Chaos::Softs
 			return final_hessian;
 		}
 
+
+		void AddHyperelasticResidualAndHessian (const ParticleType& Particles, const int32 ElementIndex, const int32 ElementIndexLocal, const T Dt, TVec3<T>& ParticleResidual, Chaos::PMatrix<T, 3, 3>& ParticleHessian)
+		{
+			Chaos::PMatrix<T, 3, 3> DmInvT = Base::ElementDmInv(ElementIndex).GetTransposed();
+			Chaos::PMatrix<T, 3, 3> Fe = F(ElementIndex, Particles);
+			Chaos::PMatrix<T, 3, 3> P((T)0.);
+
+			this->ComputeStress(Fe, MuElementArray[ElementIndex], LambdaElementArray[ElementIndex], P);
+
+			Chaos::PMatrix<T, 3, 3> force_term = -Measure[ElementIndex] * DmInvT * P;
+			Chaos::TVector<T, 3> dx((T)0.);
+			if (ElementIndexLocal > 0)
+			{
+				for (int32 c = 0; c < 3; c++)
+				{
+					dx[c] += force_term.GetAt(c, ElementIndexLocal - 1);
+				}
+			}
+			else
+			{
+				for (int32 c = 0; c < 3; c++)
+				{
+					for (int32 h = 0; h < 3; h++)
+					{
+						dx[c] -= force_term.GetAt(c, h);
+					}
+				}
+			}
+
+			for (int32 ll = 0; ll < 3; ll++) {
+				dx[ll] *= Dt * Dt;
+			}
+
+			for (int32 alpha = 0; alpha < 3; alpha++) {
+				ParticleResidual[alpha] -= dx[alpha];
+			}
+
+			ComputeHessianHelper(Fe, Base::ElementDmInv(ElementIndex), MuElementArray[ElementIndex], LambdaElementArray[ElementIndex], ElementIndexLocal, Dt * Dt * Measure[ElementIndex], ParticleHessian);
+
+		}
+
 	protected:
 		 void InitColor(const ParticleType& Particles)
 		{
 			ParticlesPerColor = ComputeNodalColoring(MeshConstraints, Particles, ParticleStartIndex, ParticleEndIndex, IncidentElements, IncidentElementsLocal);
 		}
 
-		 virtual void InitializeLambdas()
+		 void InitializeCorotatedLambdas()
 		 {
 			 ComputeStress = [](const Chaos::PMatrix<T, 3, 3>& Fe, const T mu, const T lambda, Chaos::PMatrix<T, 3, 3>& P)
 			 {
@@ -343,6 +397,7 @@ namespace Chaos::Softs
 		mutable TArray<Chaos::TVector<T, 3>> X_k;
 		bool bDoQuasistatics = false;
 		bool bDoSOR = true;
+		//Parameter to control the behavior of SOR. 1-1.7 is the usual range. Larger paramater leads to potentially more convergence but less stable behavior. 
 		T OmegaSOR = T(1.6);
 		mutable int32 CurrentIt = 0;
 		TFunction<void(const Chaos::PMatrix<T, 3, 3>&, const T, const T, Chaos::PMatrix<T, 3, 3>& )> ComputeStress;

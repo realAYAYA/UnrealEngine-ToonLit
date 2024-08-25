@@ -2,7 +2,12 @@
 
 #pragma once
 
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
 #include "CoreMinimal.h"
+#endif
+
+#include "Containers/StringView.h"
+#include "Containers/UnrealString.h"
 
 /** 
  * 
@@ -32,3 +37,5 @@ struct FEditorCommandLineUtils
 	 */
 	UNREALED_API static bool ParseGameProjectPath(const TCHAR* EditorCmdLine, FString& ProjPathOut, FString& GameNameOut);
 };
+
+constexpr const TCHAR* GEditorUIPidVariable = TEXT("UE_EditorUIPid");

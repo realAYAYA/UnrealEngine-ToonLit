@@ -10,27 +10,29 @@ using namespace UE::Geometry;
 namespace UELocal
 {
 
-static bool FindTriEdgeIndices(
-	const FIndex3i& Triangle, 
-	int32 EdgeVert0, int32 EdgeVert1,
-	int32& EdgeIndex0, int32& EdgeIndex1, int32& OtherIndex2 )
-{
-	for ( int32 j = 0; j < 3; ++j )
+	static bool FindTriEdgeIndices(
+		const FIndex3i& Triangle,
+		int32 EdgeVert0, int32 EdgeVert1,
+		int32& EdgeIndex0, int32& EdgeIndex1, int32& OtherIndex2)
 	{
-		if (Triangle[j] == EdgeVert0)
+		for (int32 j = 0; j < 3; ++j)
 		{
-			if ( Triangle[(j+1)%3] == EdgeVert1 )
+			if (Triangle[j] == EdgeVert0)
 			{
-				EdgeIndex0 = j; EdgeIndex1 = (j+1)%3; OtherIndex2 = (j+2)%3; return true;
-			}
-			else if ( Triangle[(j+2)%3] == EdgeVert1 )
-			{
-				EdgeIndex0 = j; EdgeIndex1 = (j+2)%3; OtherIndex2 = (j+1)%3; return true;
+				if (Triangle[(j + 1) % 3] == EdgeVert1)
+				{
+					EdgeIndex0 = j; EdgeIndex1 = (j + 1) % 3; OtherIndex2 = (j + 2) % 3; 
+					return true;
+				}
+				else if (Triangle[(j + 2) % 3] == EdgeVert1)
+				{
+					EdgeIndex0 = j; EdgeIndex1 = (j + 2) % 3; OtherIndex2 = (j + 1) % 3; 
+					return true;
+				}
 			}
 		}
+		return false;
 	}
-	return false;
-}
 
 }
 
@@ -77,6 +79,95 @@ void FQuadGridPatch::InitializeFromQuadStrip(const FDynamicMesh3& Mesh, const TA
 		checkSlow(VertexSpans[1].Last() == Other0);
 		VertexSpans[1].Add(Other1);
 	}
+}
+
+
+
+bool FQuadGridPatch::InitializeFromQuadPatch(const FDynamicMesh3& Mesh, const TArray<TArray<FIndex2i>>& QuadRowsIn, const TArray<TArray<int32>>& VertexSpansIn)
+{
+	int32 NumV = VertexSpansIn[0].Num();
+	int32 NumQ = QuadRowsIn[0].Num();
+	if (NumQ != NumV - 1 || QuadRowsIn.Num() != VertexSpansIn.Num()-1 )
+	{
+		ensure(false);
+		return false;
+	}
+
+	NumVertexColsU = NumV;
+	NumVertexRowsV = VertexSpansIn.Num();
+	for (int32 j = 1; j < NumVertexRowsV; ++j)
+	{
+		if (VertexSpansIn[j].Num() != VertexSpansIn[0].Num())
+		{
+			ensure(false);
+			return false;
+		}
+	}
+	int32 NumQuadRows = QuadRowsIn.Num();
+	for (int32 j = 1; j < NumQuadRows; ++j)
+	{
+		if (QuadRowsIn[j].Num() != QuadRowsIn[0].Num())
+		{
+			ensure(false);
+			return false;
+		}
+	}
+
+	VertexSpans = VertexSpansIn;
+	QuadTriangles = QuadRowsIn;
+
+	bool bAllOK = true;
+	for (int32 j = 0; j < NumQuadRows && bAllOK; ++j)
+	{
+		for (int32 k = 0; k < NumQ && bAllOK; ++k)
+		{
+			// these should be the four vertices of the quad
+			int VertexA = VertexSpans[j][k];
+			int VertexB = VertexSpans[j][k+1];
+			int VertexC = VertexSpans[j+1][k+1];
+			int VertexD = VertexSpans[j+1][k];
+
+			// figure out unique vertices from the quad info, and verify that there are 4 and they are A/B/C/D
+			FIndex2i& QuadTris = QuadTriangles[j][k];
+			if (Mesh.IsTriangle(QuadTris.A) == false || Mesh.IsTriangle(QuadTris.B) == false)
+			{
+				bAllOK = false;
+				break;
+			}
+			FIndex3i TriA = Mesh.GetTriangle(QuadTris.A);
+			FIndex3i TriB = Mesh.GetTriangle(QuadTris.B);
+			TArray<int32, TInlineAllocator<6>> TriVerts({ TriA.A, TriA.B, TriA.C });
+			TriVerts.AddUnique(TriB.A); TriVerts.AddUnique(TriB.B); TriVerts.AddUnique(TriB.C);
+			if (TriVerts.Num() != 4) 
+			{
+				bAllOK = false;
+				break;
+			}
+			if (TriVerts.Contains(VertexA) == false || TriVerts.Contains(VertexB) == false || TriVerts.Contains(VertexC) == false || TriVerts.Contains(VertexD) == false)
+			{
+				bAllOK = false;
+				break;
+			}
+
+			// we want TriA to be the one containing the edge (Vertex0,Vertex1), so if it's TriB, swap them, and the quad
+			if (TriB.Contains(VertexA) && TriB.Contains(VertexB))
+			{
+				Swap(TriA, TriB);
+				Swap(QuadTris.A, QuadTris.B);
+			}
+		}
+	}
+
+	if (!bAllOK)
+	{
+		ensure(false);
+		VertexSpans.Reset();
+		QuadTriangles.Reset();
+		NumVertexColsU = NumVertexRowsV = 0;
+		return false;
+	}
+
+	return true;
 }
 
 
@@ -173,6 +264,36 @@ FIndex3i FQuadGridPatch::GetQuadTriMappedToSpanIndices(const FDynamicMesh3& Mesh
 	return EncodedIndexTri;
 }
 
+
+
+bool FQuadGridPatch::GetVertexColumn(int32 ColumnIndex, TArray<int32>& VerticesOut) const
+{
+	if (ColumnIndex < 0 || ColumnIndex >= VertexSpans[0].Num())
+	{
+		ensure(false);
+		return false;
+	}
+
+	VerticesOut.Reset();
+	for (int32 k = 0; k < VertexSpans.Num(); ++k)
+	{
+		VerticesOut.Add(VertexSpans[k][ColumnIndex]);
+	}
+	return true;
+}
+
+int32 FQuadGridPatch::FindColumnIndex(int32 VertexID) const
+{
+	for (const TArray<int32>& Span : VertexSpans)
+	{
+		int32 Index = Span.IndexOfByKey(VertexID);
+		if (Index != INDEX_NONE)
+		{
+			return Index;
+		}
+	}
+	return IndexConstants::InvalidID;
+}
 
 
 void FQuadGridPatch::GetSubPatchByQuadRange(int StartRow, int EndRow, int StartCol, int EndCol, FQuadGridPatch& PatchOut ) const

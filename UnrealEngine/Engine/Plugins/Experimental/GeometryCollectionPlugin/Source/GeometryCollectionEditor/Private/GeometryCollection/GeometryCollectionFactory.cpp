@@ -179,13 +179,13 @@ UObject* UGeometryCollectionFactory::FactoryCreateNew(UClass* Class, UObject* In
 	if (TSharedPtr<FGeometryCollection, ESPMode::ThreadSafe> Collection = NewGeometryCollection->GetGeometryCollection())
 	{
 		TManagedArray<int32> & Parent = Collection->Parent;
-		TManagedArray<FTransform>& Transform = Collection->Transform;
+		TManagedArray<FTransform3f>& Transform = Collection->Transform;
 
 		for(int TransformGroupIndex =0; TransformGroupIndex<Collection->Transform.Num(); TransformGroupIndex++)
 		{
 			if (Parent[TransformGroupIndex] == FGeometryCollection::Invalid)
 			{
-				Transform[TransformGroupIndex] = Transform[TransformGroupIndex].GetRelativeTransform(LastTransform);
+				Transform[TransformGroupIndex] = Transform[TransformGroupIndex].GetRelativeTransform(FTransform3f(LastTransform));
 			}
 		}
 	}

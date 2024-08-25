@@ -1,16 +1,17 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
+
 #include "Behaviour/RCBehaviour.h"
 #include "UI/BaseLogicUI/RCLogicModeBase.h"
 
-struct FRCPanelStyle;
 class IPropertyRowGenerator;
 class STextBlock;
 class SRCActionPanel;
 class SRCLogicPanelListBase;
 class SWidget;
 class URCBehaviour;
+struct FRCPanelStyle;
 
 /*
 * ~ FRCBehaviourModel ~
@@ -23,6 +24,12 @@ class FRCBehaviourModel : public FRCLogicModeBase
 public:
 	FRCBehaviourModel(URCBehaviour* InBehaviour, const TSharedPtr<SRemoteControlPanel> InRemoteControlPanel = nullptr);
 
+	/** Add a Logic Action using as an identity action. */
+	virtual URCAction* AddAction();
+
+	/** Add a Logic Action using as an identity action. */
+	virtual URCAction* AddAction(FName InFieldId);
+
 	/** Add a Logic Action using a remote control field as input */
 	virtual URCAction* AddAction(const TSharedRef<const FRemoteControlField> InRemoteControlField);
 
@@ -30,6 +37,9 @@ public:
 	* Currently displays Behaviour Name metadata in the Behaviours Panel List
 	*/
 	virtual TSharedRef<SWidget> GetWidget() const override;
+
+	/** Returns true if this behaviour have a details widget or false if not*/
+	virtual bool HasBehaviourDetailsWidget();
 
 	/** Builds a Behaviour specific widget that child Behaviour classes can implement as required*/
 	virtual TSharedRef<SWidget> GetBehaviourDetailsWidget();

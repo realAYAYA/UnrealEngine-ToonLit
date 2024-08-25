@@ -166,6 +166,65 @@ private:
 	friend class URigVMController;
 };
 
+struct RIGVMDEVELOPER_API FRigVMPinInfo
+{
+	FRigVMPinInfo();
+	FRigVMPinInfo(const URigVMPin* InPin, int32 InParentIndex, ERigVMPinDirection InDirection = ERigVMPinDirection::Invalid);
+	FRigVMPinInfo(FProperty* InProperty, ERigVMPinDirection InDirection, int32 InParentIndex, const uint8* InDefaultValueMemory);
+
+	void CorrectExecuteTypeIndex();
+
+	int32 ParentIndex;
+	FName Name;
+	ERigVMPinDirection Direction;
+	TRigVMTypeIndex TypeIndex;
+	bool bIsArray;
+	FProperty* Property;
+	FString PinPath;
+	FString DefaultValue;
+	FString DisplayName;
+	FString CustomWidgetName;
+	bool bIsExpanded;
+	bool bIsConstant;
+	bool bIsDynamicArray;
+	bool bIsDecorator;
+	bool bIsLazy;
+	TArray<int32> SubPins;
+
+	friend uint32 GetTypeHash(const FRigVMPinInfo& InPin);
+};
+
+struct RIGVMDEVELOPER_API FRigVMPinInfoArray
+{
+	FRigVMPinInfoArray() {}
+	explicit FRigVMPinInfoArray(const URigVMNode* InNode);
+	FRigVMPinInfoArray(const URigVMNode* InNode, URigVMController* InController, const FRigVMPinInfoArray* InPreviousPinInfos = nullptr);
+	FRigVMPinInfoArray(const FRigVMGraphFunctionHeader& FunctionHeader, URigVMController* InController, const FRigVMPinInfoArray* InPreviousPinInfos = nullptr);
+
+	int32 Num() const { return Pins.Num(); }
+	const FRigVMPinInfo& operator[](int32 InIndex) const { return Pins[InIndex]; }
+	FRigVMPinInfo& operator[](int32 InIndex) { return Pins[InIndex]; }
+	TArray<FRigVMPinInfo>::RangedForIteratorType begin() const { return Pins.begin(); }
+	TArray<FRigVMPinInfo>::RangedForIteratorType end() const { return Pins.end(); }
+
+	int32 AddPin(const URigVMPin* InPin, int32 InParentIndex, ERigVMPinDirection InDirection = ERigVMPinDirection::Invalid);
+	int32 AddPin(FProperty* InProperty, URigVMController* InController, ERigVMPinDirection InDirection, int32 InParentIndex, const uint8* InDefaultValueMemory, bool bAddSubPins);
+	int32 AddPin(URigVMController* InController, int32 InParentIndex, const FName& InName, ERigVMPinDirection InDirection, TRigVMTypeIndex InTypeIndex, const FString& InDefaultValue, const uint8* InDefaultValueMemory, const FRigVMPinInfoArray* InPreviousPinInfos, bool bAddSubPins);
+	void AddPins(UScriptStruct* InScriptStruct, URigVMController* InController, ERigVMPinDirection InDirection, int32 InParentIndex, const uint8* InDefaultValueMemory, bool bAddSubPins);
+
+	const FString& GetPinPath(const int32 InIndex) const;
+	int32 GetIndexFromPinPath(const FString& InPinPath) const;
+	const FRigVMPinInfo* GetPinFromPinPath(const FString& InPinPath) const;
+	int32 GetRootIndex(const int32 InIndex) const;
+
+	friend RIGVMDEVELOPER_API uint32 GetTypeHash(const FRigVMPinInfoArray& InPins);
+
+	mutable TArray<FRigVMPinInfo> Pins;
+	mutable TMap<FString, int32> PinPathLookup;;
+};
+
+RIGVMDEVELOPER_API uint32 GetTypeHash(const FRigVMPinInfoArray& InPins);
+
 /**
  * The Controller is the sole authority to perform changes
  * on the Graph. The Controller itself is stateless.
@@ -739,7 +798,7 @@ public:
 	// Sets the default value of a pin given its pinpath.
 	// This causes a PinDefaultValueChanged modified event.
 	UFUNCTION(BlueprintCallable, Category = RigVMController)
-	bool SetPinDefaultValue(const FString& InPinPath, const FString& InDefaultValue, bool bResizeArrays = true, bool bSetupUndoRedo = true, bool bMergeUndoAction = false, bool bPrintPythonCommand = false);
+	bool SetPinDefaultValue(const FString& InPinPath, const FString& InDefaultValue, bool bResizeArrays = true, bool bSetupUndoRedo = true, bool bMergeUndoAction = false, bool bPrintPythonCommand = false, bool bSetValueOnLinkedPins = true);
 
 	// Resets the default value of a pin given its pinpath.
 	// This causes a PinDefaultValueChanged modified event.
@@ -957,7 +1016,33 @@ public:
 	bool ShouldRedirectPin(UScriptStruct* InOwningStruct, const FString& InOldRelativePinPath, FString& InOutNewRelativePinPath) const;
 	bool ShouldRedirectPin(const FString& InOldPinPath, FString& InOutNewPinPath) const;
 
+
+	struct FRepopulatePinsNodeData
+	{
+		URigVMNode* Node = nullptr;
+		uint32 PreviousPinHash = 0;
+		FRigVMPinInfoArray PreviousPinInfos;
+		FRigVMPinInfoArray NewPinInfos;
+		TArray<int32> NewPinsToAdd;
+		TArray<int32> PreviousPinsToRemove;
+		TArray<int32> PreviousPinsToOrphan;
+		TArray<int32> PreviousPinsToUpdate;
+		bool bSetupOrphanPinsForThisNode = false;
+		bool bFollowCoreRedirectors = false;
+		bool bRequirePinStates = false;
+		bool bRecreateLinks = false;
+		bool bRequireRecreateLinks = false;
+	};
+
+	void GenerateRepopulatePinsNodeData(TArray<FRepopulatePinsNodeData>& NodesPinData, URigVMNode* InNode, bool bInFollowCoreRedirectors = true, bool bInSetupOrphanedPins = false, bool bInRecreateLinks = false);
+	void OrphanPins(const TArray<FRepopulatePinsNodeData>& NodesPinData);
+	void RepopulatePins(const TArray<FRepopulatePinsNodeData>& NodesPinData);
+	bool CorrectExecutePinsOnNode(URigVMNode* InOutNode);
+
 	void RepopulatePinsOnNode(URigVMNode* InNode, bool bFollowCoreRedirectors = true, bool bSetupOrphanedPins = false, bool bRecreateLinks = false);
+	bool GenerateNewPinInfos(const FRigVMRegistry& Registry, URigVMNode* InNode, const FRigVMPinInfoArray& PreviousPinInfos, FRigVMPinInfoArray& NewPinInfos, const bool bSetupOrphanPinsForThisNode);
+	void GenerateRepopulatePinLists(const FRigVMRegistry& Registry, FRepopulatePinsNodeData& NodeData);
+	void RepopulatePinsOnNode(const FRigVMRegistry& Registry, const FRepopulatePinsNodeData& NodeData);
 	void RemovePinsDuringRepopulate(URigVMNode* InNode, TArray<URigVMPin*>& InPins, bool bSetupOrphanedPins);
 
 	// removes any orphan pins that no longer holds a link
@@ -993,37 +1078,37 @@ public:
 	void SendUserFacingNotification(const FString& InMessage, float InDuration = 0.f, const UObject* InSubject = nullptr, const FName& InBrushName = TEXT("MessageLog.Warning")) const;
 
 	template <typename FmtType, typename... Types>
-	void ReportInfof(const FmtType& Fmt, Types... Args)
+	void ReportInfof(const FmtType& Fmt, Types... Args) const
 	{
 		ReportInfo(FString::Printf(Fmt, Args...));
 	}
 
 	template <typename FmtType, typename... Types>
-	void ReportWarningf(const FmtType& Fmt, Types... Args)
+	void ReportWarningf(const FmtType& Fmt, Types... Args) const
 	{
 		ReportWarning(FString::Printf(Fmt, Args...));
 	}
 
 	template <typename FmtType, typename... Types>
-	void ReportErrorf(const FmtType& Fmt, Types... Args)
+	void ReportErrorf(const FmtType& Fmt, Types... Args) const
 	{
 		ReportError(FString::Printf(Fmt, Args...));
 	}
 
 	template <typename FmtType, typename... Types>
-	void ReportAndNotifyInfof(const FmtType& Fmt, Types... Args)
+	void ReportAndNotifyInfof(const FmtType& Fmt, Types... Args) const
 	{
 		ReportAndNotifyInfo(FString::Printf(Fmt, Args...));
 	}
 
 	template <typename FmtType, typename... Types>
-	void ReportAndNotifyWarningf(const FmtType& Fmt, Types... Args)
+	void ReportAndNotifyWarningf(const FmtType& Fmt, Types... Args) const
 	{
 		ReportAndNotifyWarning(FString::Printf(Fmt, Args...));
 	}
 
 	template <typename FmtType, typename... Types>
-	void ReportAndNotifyErrorf(const FmtType& Fmt, Types... Args)
+	void ReportAndNotifyErrorf(const FmtType& Fmt, Types... Args) const
 	{
 		ReportAndNotifyError(FString::Printf(Fmt, Args...));
 	}
@@ -1033,64 +1118,6 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = RigVMController)
 	void SetIsRunningUnitTest(bool bIsRunning);
-
-public:
-	
-	struct FPinInfo
-	{
-		FPinInfo();
-		FPinInfo(const URigVMPin* InPin, int32 InParentIndex, ERigVMPinDirection InDirection = ERigVMPinDirection::Invalid);
-		FPinInfo(FProperty* InProperty, ERigVMPinDirection InDirection, int32 InParentIndex, const uint8* InDefaultValueMemory);
-
-		void CorrectExecuteTypeIndex();
-		
-		int32 ParentIndex;
-		FName Name;
-		ERigVMPinDirection Direction;
-		TRigVMTypeIndex TypeIndex;
-		bool bIsArray;
-		FProperty* Property;
-		FString PinPath;
-		FString DefaultValue;
-		FString DisplayName;
-		FString CustomWidgetName;
-		bool bIsExpanded;
-		bool bIsConstant;
-		bool bIsDynamicArray;
-		bool bIsDecorator;
-		TArray<int32> SubPins;
-
-		friend uint32 GetTypeHash(const FPinInfo& InPin);
-	};
-
-	struct FPinInfoArray
-	{
-		FPinInfoArray() {}
-		FPinInfoArray(const URigVMNode* InNode);
-		FPinInfoArray(const URigVMNode* InNode, URigVMController* InController, const FPinInfoArray* InPreviousPinInfos = nullptr);
-		FPinInfoArray(const FRigVMGraphFunctionHeader& FunctionHeader, URigVMController* InController, const FPinInfoArray* InPreviousPinInfos = nullptr);
-
-		int32 Num() const { return Pins.Num(); }
-		const FPinInfo& operator[](int32 InIndex) const { return Pins[InIndex]; }
-		FPinInfo& operator[](int32 InIndex) { return Pins[InIndex]; }
-		TArray<FPinInfo>::RangedForIteratorType begin() const { return Pins.begin(); }
-		TArray<FPinInfo>::RangedForIteratorType end() const { return Pins.end(); }
-
-		int32 AddPin(const URigVMPin* InPin, int32 InParentIndex, ERigVMPinDirection InDirection = ERigVMPinDirection::Invalid);
-		int32 AddPin(FProperty* InProperty, URigVMController* InController, ERigVMPinDirection InDirection, int32 InParentIndex, const uint8* InDefaultValueMemory, bool bAddSubPins);
-		int32 AddPin(URigVMController* InController, int32 InParentIndex, const FName& InName, ERigVMPinDirection InDirection, TRigVMTypeIndex InTypeIndex, const FString& InDefaultValue, const uint8* InDefaultValueMemory, const FPinInfoArray* InPreviousPinInfos, bool bAddSubPins);
-		void AddPins(UScriptStruct* InScriptStruct, URigVMController* InController, ERigVMPinDirection InDirection, int32 InParentIndex, const uint8* InDefaultValueMemory, bool bAddSubPins);
-
-		const FString& GetPinPath(const int32 InIndex) const;
-		int32 GetIndexFromPinPath(const FString& InPinPath) const;
-		const FPinInfo* GetPinFromPinPath(const FString& InPinPath) const;
-		int32 GetRootIndex(const int32 InIndex) const;
-
-		friend uint32 GetTypeHash(const FPinInfoArray& InPins);
-		
-		mutable TArray<FPinInfo> Pins;
-		mutable TMap<FString, int32> PinPathLookup;;
-	};
 
 private:
 
@@ -1106,13 +1133,13 @@ private:
 	bool IsValidNodeForGraph(const URigVMNode* InNode);
 	bool IsValidPinForGraph(const URigVMPin* InPin);
 	bool IsValidLinkForGraph(const URigVMLink* InLink);
-	void AddPinsForStruct(UStruct* InStruct, URigVMNode* InNode, URigVMPin* InParentPin, ERigVMPinDirection InPinDirection, const FString& InDefaultValue, bool bAutoExpandArrays, const FPinInfoArray* PreviousPins = nullptr);
+	void AddPinsForStruct(UStruct* InStruct, URigVMNode* InNode, URigVMPin* InParentPin, ERigVMPinDirection InPinDirection, const FString& InDefaultValue, bool bAutoExpandArrays, const FRigVMPinInfoArray* PreviousPins = nullptr);
 	void AddPinsForArray(FArrayProperty* InArrayProperty, URigVMNode* InNode, URigVMPin* InParentPin, ERigVMPinDirection InPinDirection, const TArray<FString>& InDefaultValues, bool bAutoExpandArrays);
 	void AddPinsForTemplate(const FRigVMTemplate* InTemplate, const FRigVMTemplateTypeMap& InPinTypeMap, URigVMNode* InNode);
-	void ConfigurePinFromProperty(FProperty* InProperty, URigVMPin* InOutPin, ERigVMPinDirection InPinDirection = ERigVMPinDirection::Invalid);
+	void ConfigurePinFromProperty(FProperty* InProperty, URigVMPin* InOutPin, ERigVMPinDirection InPinDirection = ERigVMPinDirection::Invalid) const;
 	void ConfigurePinFromPin(URigVMPin* InOutPin, URigVMPin* InPin, bool bCopyDisplayName = false);
 	void ConfigurePinFromArgument(URigVMPin* InOutPin, const FRigVMGraphFunctionArgument& InArgument, bool bCopyDisplayName = false);
-	bool SetPinDefaultValue(URigVMPin* InPin, const FString& InDefaultValue, bool bResizeArrays, bool bSetupUndoRedo, bool bMergeUndoAction);
+	bool SetPinDefaultValue(URigVMPin* InPin, const FString& InDefaultValue, bool bResizeArrays, bool bSetupUndoRedo, bool bMergeUndoAction, bool bSetValueOnLinkedPins = true);
 	bool ResetPinDefaultValue(URigVMPin* InPin, bool bSetupUndoRedo);
 	static FString GetPinInitialDefaultValue(const URigVMPin* InPin);
 	static FString GetPinInitialDefaultValueFromStruct(UScriptStruct* ScriptStruct, const URigVMPin* InPin, uint32 InOffset);
@@ -1129,6 +1156,12 @@ private:
 	bool EjectAllInjectedNodes(URigVMNode* InNode, bool bSetupUndoRedo = true, bool bPrintPythonCommands = false);
 	FName AddDecorator(URigVMNode* InNode, UScriptStruct* InDecoratorScriptStruct, const FName& InDecoratorName, const FString& InDefaultValue, int32 InPinIndex = -1, bool bSetupUndoRedo = true);
 	bool RemoveDecorator(URigVMNode* InNode, const FName& InDecoratorName, bool bSetupUndoRedo = true);
+
+protected:
+
+#if WITH_EDITOR
+	URigVMUnitNode* AddUnitNode(UScriptStruct* InScriptStruct, TSubclassOf<URigVMUnitNode> InUnitNodeClass, const FName& InMethodName, const FVector2D& InPosition, const FString& InNodeName, bool bSetupUndoRedo, bool bPrintPythonCommand);
+#endif
 
 public:
 
@@ -1198,7 +1231,7 @@ private:
 	bool RenameObject(UObject* InObjectToRename, const TCHAR* InNewName, UObject* InNewOuter = nullptr) const;
 	void DestroyObject(UObject* InObjectToDestroy) const ;
 	static URigVMPin* MakeExecutePin(URigVMNode* InNode, const FName& InName);
-	static void MakeExecutePin(URigVMPin* InOutPin);
+	static bool MakeExecutePin(URigVMPin* InOutPin);
 	bool AddGraphNode(URigVMNode* InNode, bool bNotify);
 	static void AddNodePin(URigVMNode* InNode, URigVMPin* InPin);
 	static void AddSubPin(URigVMPin* InParentPin, URigVMPin* InPin);
@@ -1212,7 +1245,7 @@ private:
 	FRigVMExternalVariable GetVariableByName(const FName& InExternalVariableName, const bool bIncludeInputArguments = false) const;
 	TArray<FRigVMExternalVariable> GetAllVariables(const bool bIncludeInputArguments = false) const;
 
-	void RefreshFunctionReferences(URigVMLibraryNode* InFunctionDefinition, bool bSetupUndoRedo);
+	void RefreshFunctionReferences(URigVMLibraryNode* InFunctionDefinition, bool bSetupUndoRedo, bool bLoadIfNecessary);
 
 public:
 
@@ -1293,6 +1326,8 @@ public:
 
 protected:
 
+	URigVMPin* CreatePinFromPinInfo(const FRigVMRegistry& InRegistry, const FRigVMPinInfoArray& InPreviousPinInfos, const FRigVMPinInfo& InPinInfo, const FString& InPinPath, UObject* InOuter) const;
+
 	// backwards compatibility code
 	FRigVMClientPatchResult PatchRerouteNodesOnLoad();
 	FRigVMClientPatchResult PatchUnitNodesOnLoad();
@@ -1303,6 +1338,8 @@ protected:
 	FRigVMClientPatchResult PatchReduceArrayFloatDoubleConvertsionsOnLoad();
 	FRigVMClientPatchResult PatchInvalidLinksOnWildcards();
 	FRigVMClientPatchResult PatchFunctionsWithInvalidReturnPaths();
+	FRigVMClientPatchResult PatchExecutePins();
+	FRigVMClientPatchResult PatchLazyPins();
 
 	// work to do after a duplication of the host asset
 	void PostDuplicateHost(const FString& InOldPathName, const FString& InNewPathName);
@@ -1451,7 +1488,7 @@ private:
 	friend struct FRigVMEjectNodeFromPinAction;
 	friend class FRigVMParserAST;
 	friend class FRigVMControllerCompileBracketScope;
-	friend struct FPinInfoArray;
+	friend struct FRigVMPinInfoArray;
 	friend class FRigVMControllerNotifGuard;
 	friend struct FRigVMClient;
 	friend struct FRigVMActionWrapper;

@@ -157,7 +157,7 @@ void UBakeTransformTool::UpdateAssets()
 		}
 	}
 
-	constexpr bool bWorkaroundForCrashIfConvexAndMeshModifiedInSameTransaction = true;
+	constexpr bool bWorkaroundForCrashIfConvexAndMeshModifiedInSameTransaction = false;
 	bool bNeedSeparateTransactionForSimpleCollision = false;
 	if constexpr (bWorkaroundForCrashIfConvexAndMeshModifiedInSameTransaction)
 	{
@@ -344,7 +344,7 @@ void UBakeTransformTool::UpdateAssets()
 	if (BasicProperties->bRecenterPivot)
 	{
 		// hack to ensure user sees the updated pivot immediately: request re-select of the original selection
-		FSelectedOjectsChangeList NewSelection;
+		FSelectedObjectsChangeList NewSelection;
 		NewSelection.ModificationType = ESelectedObjectsModificationType::Replace;
 		for (int OrigMeshIdx = 0; OrigMeshIdx < Targets.Num(); OrigMeshIdx++)
 		{

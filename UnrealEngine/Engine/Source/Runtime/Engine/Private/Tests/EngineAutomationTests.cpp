@@ -851,6 +851,7 @@ protected:
 	static const float ExpectedFloatValueOutOfTolerance;
 	static const FString ActualFStringValue;
 	static const FString ExpectedFStringValueLowerCase;
+	static const FString UnexpectedFStringValueLowerCase;
 };
 
 const float FAutomationUTestMacrosExpr::PositiveToleranceFloat(1.e-4f);
@@ -860,6 +861,7 @@ const float FAutomationUTestMacrosExpr::WrongFloatValue(ActualFloatValue + 1.f);
 const float FAutomationUTestMacrosExpr::ExpectedFloatValueOutOfTolerance(ActualFloatValue + PositiveToleranceFloat);
 const FString FAutomationUTestMacrosExpr::ActualFStringValue(TEXT("EQUALS"));
 const FString FAutomationUTestMacrosExpr::ExpectedFStringValueLowerCase(TEXT("equals"));
+const FString FAutomationUTestMacrosExpr::UnexpectedFStringValueLowerCase(TEXT("not-equals"));
 
 IMPLEMENT_CUSTOM_SIMPLE_AUTOMATION_TEST(FAutomationEqualEXPR, FAutomationUTestMacrosExpr, "TestFramework.Validation.UTestEqual", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::EngineFilter);
 bool FAutomationEqualEXPR::RunTest(const FString& Parameters)
@@ -870,6 +872,7 @@ bool FAutomationEqualEXPR::RunTest(const FString& Parameters)
 	UTEST_EQUAL_TOLERANCE_EXPR(ActualFloatValue, ExpectedFloatValueOutOfTolerance, PositiveToleranceFloat);
 	UTEST_NOT_EQUAL_EXPR(ActualFloatValue, WrongFloatValue);
 	UTEST_EQUAL_INSENSITIVE_EXPR(*ActualFStringValue, *ExpectedFStringValueLowerCase);
+	UTEST_NOT_EQUAL_INSENSITIVE_EXPR(*ActualFStringValue, *UnexpectedFStringValueLowerCase);
 
 	return true;
 }
@@ -897,14 +900,31 @@ bool FAutomationTrueFalseEXPR::RunTest(const FString& Parameters)
 IMPLEMENT_CUSTOM_SIMPLE_AUTOMATION_TEST(FAutomationValidInvalidEXPR, FAutomationUTestMacrosExpr, "TestFramework.Validation.UTestValidInvalid", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::EngineFilter);
 bool FAutomationValidInvalidEXPR::RunTest(const FString& Parameters)
 {
-	struct HandleResumeContext
+	struct FHasIsValid
 	{
-		const char* PackageIdentifier = nullptr;
+		explicit FHasIsValid(bool bInIsValid)
+			: bIsValid(bInIsValid)
+		{  }
+		
+		bool IsValid() const { return bIsValid; }
+
+	private:
+		bool bIsValid;
 	};
-	TSharedPtr<HandleResumeContext, ESPMode::ThreadSafe> Context = MakeShared<HandleResumeContext, ESPMode::ThreadSafe>();
-	TSharedPtr< UObject > Entry = nullptr;
-	UTEST_VALID_EXPR(Context);
-	UTEST_INVALID_EXPR(Entry);
+	
+	//** TEST **//
+	TSharedPtr<FVector> ValidSharedPtr = MakeShared<FVector>();
+	TSharedPtr<UObject> InvalidSharedPtr = nullptr;
+
+	FHasIsValid ValidObject(true);
+	FHasIsValid InvalidObject(false);
+
+	//** VERIFY **//
+	UTEST_VALID_EXPR(ValidSharedPtr);
+	UTEST_INVALID_EXPR(InvalidSharedPtr);
+
+	UTEST_VALID_EXPR(ValidObject);
+	UTEST_INVALID_EXPR(InvalidObject);
 
 	return true;
 }

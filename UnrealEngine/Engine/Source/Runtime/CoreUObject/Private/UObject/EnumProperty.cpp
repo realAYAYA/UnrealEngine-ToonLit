@@ -1,23 +1,18 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "UObject/EnumProperty.h"
-#include "UObject/PropertyPortFlags.h"
-#include "UObject/UObjectThreadContext.h"
-#include "UObject/PropertyTag.h"
-#include "UObject/UnrealTypePrivate.h"
-#include "Templates/ChooseClass.h"
-#include "Templates/IsSigned.h"
+
 #include "Algo/Find.h"
-#include "UObject/LinkerLoad.h"
-#include "Misc/EngineNetworkCustomVersion.h"
 #include "Hash/Blake3.h"
+#include "UObject/UnrealTypePrivate.h"
+#include "UObject/UObjectThreadContext.h"
 
 namespace UEEnumProperty_Private
 {
 	template <typename OldIntType>
 	void ConvertIntValueToEnumProperty(OldIntType OldValue, FEnumProperty* EnumProp, FNumericProperty* UnderlyingProp, UEnum* Enum, void* Obj)
 	{
-		using LargeIntType = typename TChooseClass<TIsSigned<OldIntType>::Value, int64, uint64>::Result;
+		using LargeIntType = std::conditional_t<TIsSigned<OldIntType>::Value, int64, uint64>;
 
 		LargeIntType NewValue = OldValue;
 		if (!UnderlyingProp->CanHoldValue(NewValue) || !Enum->IsValidEnumValue(NewValue))
@@ -350,14 +345,16 @@ const TCHAR* FEnumProperty::ImportText_Internal(const TCHAR* InBuffer, void* Con
 			// return null so that the caller of ImportText can generate a more meaningful
 			// warning/error
 			UObject* SerializedObject = nullptr;
-			if (FLinkerLoad* Linker = GetLinker())
+			if (FUObjectSerializeContext* LoadContext = FUObjectThreadContext::Get().GetSerializeContext())
 			{
-				if (FUObjectSerializeContext* LoadContext = Linker->GetSerializeContext())
-				{
-					SerializedObject = LoadContext->SerializedObject;
-				}
+				SerializedObject = LoadContext->SerializedObject;
 			}
-			ErrorText->Logf(ELogVerbosity::Warning, TEXT("In asset '%s', there is an enum property of type '%s' with an invalid value of '%s'"), *GetPathNameSafe(SerializedObject ? SerializedObject : FUObjectThreadContext::Get().ConstructedObject), *Enum->GetName(), *Temp);
+			const bool bIsNativeOrLoaded = (!Enum->HasAnyFlags(RF_WasLoaded) || Enum->HasAnyFlags(RF_LoadCompleted));
+			ErrorText->Logf(ELogVerbosity::Warning, TEXT("FEP: In asset '%s', there is an enum property of type '%s' with an invalid value of '%s' - %s"), 
+				*GetPathNameSafe(SerializedObject ? SerializedObject : FUObjectThreadContext::Get().ConstructedObject), 
+				*Enum->GetName(), 
+				*Temp,
+				bIsNativeOrLoaded ? TEXT("loaded") : TEXT("not loaded"));
 			return nullptr;
 		}
 	}
@@ -417,24 +414,33 @@ bool FEnumProperty::SameType(const FProperty* Other) const
 
 EConvertFromTypeResult FEnumProperty::ConvertFromType(const FPropertyTag& Tag, FStructuredArchive::FSlot Slot , uint8* Data, UStruct* DefaultsStruct, const uint8* Defaults)
 {
-	if ((Enum == nullptr) || (UnderlyingProp == nullptr))
+	const EName* TagType = Tag.Type.ToEName();
+	if (LIKELY(!TagType || *TagType == NAME_EnumProperty || Tag.Type.GetNumber() || !Enum || !UnderlyingProp))
 	{
 		return EConvertFromTypeResult::UseSerializeItem;
 	}
 
-	if (Tag.Type == NAME_ByteProperty)
+	switch (*TagType)
+	{
+	default:
+		return EConvertFromTypeResult::UseSerializeItem;
+	case NAME_ByteProperty:
 	{
 		uint8 PreviousValue = 0;
-		if (Tag.EnumName == NAME_None)
+		if (Tag.GetType().GetParameterCount() == 0)
 		{
-			// If we're a nested property the EnumName tag got lost. Handle this case for backward compatibility reasons
-			FProperty* const PropertyOwner = GetOwner<FProperty>();
-
-			if (PropertyOwner)
+			// A nested property would lose its enum name on previous versions. Handle this case for backward compatibility reasons.
+			if (GetOwner<FProperty>() && Slot.GetArchiveState().UEVer() < EUnrealEngineObjectUE5Version::PROPERTY_TAG_COMPLETE_TYPE_NAME)
 			{
+				UE::FPropertyTypeNameBuilder TypeBuilder;
+				TypeBuilder.AddName(Tag.Type);
+				TypeBuilder.BeginParameters();
+				TypeBuilder.AddPath(Enum);
+				TypeBuilder.EndParameters();
+
 				FPropertyTag InnerPropertyTag;
-				InnerPropertyTag.Type = Tag.Type;
-				InnerPropertyTag.EnumName = Enum->GetFName();
+				InnerPropertyTag.SetType(TypeBuilder.Build());
+				InnerPropertyTag.Name = Tag.Name;
 				InnerPropertyTag.ArrayIndex = 0;
 
 				PreviousValue = (uint8)FNumericProperty::ReadEnumAsInt64(Slot, DefaultsStruct, InnerPropertyTag);
@@ -452,45 +458,33 @@ EConvertFromTypeResult FEnumProperty::ConvertFromType(const FPropertyTag& Tag, F
 
 		// now copy the value into the object's address space
 		UnderlyingProp->SetIntPropertyValue(ContainerPtrToValuePtr<void>(Data, Tag.ArrayIndex), (uint64)PreviousValue);
+		return EConvertFromTypeResult::Converted;
 	}
-	else if (Tag.Type == NAME_Int8Property)
-	{
+	case NAME_Int8Property:
 		UEEnumProperty_Private::ConvertIntToEnumProperty<int8>(Slot, this, UnderlyingProp, Enum, ContainerPtrToValuePtr<void>(Data, Tag.ArrayIndex));
-	}
-	else if (Tag.Type == NAME_Int16Property)
-	{
+		return EConvertFromTypeResult::Converted;
+	case NAME_Int16Property:
 		UEEnumProperty_Private::ConvertIntToEnumProperty<int16>(Slot, this, UnderlyingProp, Enum, ContainerPtrToValuePtr<void>(Data, Tag.ArrayIndex));
-	}
-	else if (Tag.Type == NAME_IntProperty)
-	{
+		return EConvertFromTypeResult::Converted;
+	case NAME_IntProperty:
 		UEEnumProperty_Private::ConvertIntToEnumProperty<int32>(Slot, this, UnderlyingProp, Enum, ContainerPtrToValuePtr<void>(Data, Tag.ArrayIndex));
-	}
-	else if (Tag.Type == NAME_Int64Property)
-	{
+		return EConvertFromTypeResult::Converted;
+	case NAME_Int64Property:
 		UEEnumProperty_Private::ConvertIntToEnumProperty<int64>(Slot, this, UnderlyingProp, Enum, ContainerPtrToValuePtr<void>(Data, Tag.ArrayIndex));
-	}
-	else if (Tag.Type == NAME_UInt16Property)
-	{
+		return EConvertFromTypeResult::Converted;
+	case NAME_UInt16Property:
 		UEEnumProperty_Private::ConvertIntToEnumProperty<uint16>(Slot, this, UnderlyingProp, Enum, ContainerPtrToValuePtr<void>(Data, Tag.ArrayIndex));
-	}
-	else if (Tag.Type == NAME_UInt32Property)
-	{
+		return EConvertFromTypeResult::Converted;
+	case NAME_UInt32Property:
 		UEEnumProperty_Private::ConvertIntToEnumProperty<uint32>(Slot, this, UnderlyingProp, Enum, ContainerPtrToValuePtr<void>(Data, Tag.ArrayIndex));
-	}
-	else if (Tag.Type == NAME_UInt64Property)
-	{
+		return EConvertFromTypeResult::Converted;
+	case NAME_UInt64Property:
 		UEEnumProperty_Private::ConvertIntToEnumProperty<uint64>(Slot, this, UnderlyingProp, Enum, ContainerPtrToValuePtr<void>(Data, Tag.ArrayIndex));
-	}
-	else if (Tag.Type == NAME_BoolProperty)
-	{
+		return EConvertFromTypeResult::Converted;
+	case NAME_BoolProperty:
 		UEEnumProperty_Private::ConvertIntValueToEnumProperty<uint8>(Tag.BoolVal, this, UnderlyingProp, Enum, ContainerPtrToValuePtr<void>(Data, Tag.ArrayIndex));
+		return EConvertFromTypeResult::Converted;
 	}
-	else
-	{
-		return EConvertFromTypeResult::UseSerializeItem;
-	}
-
-	return EConvertFromTypeResult::Converted;
 }
 
 #if WITH_EDITORONLY_DATA
@@ -542,4 +536,64 @@ uint64 FEnumProperty::GetMaxNetSerializeBits() const
 	const uint64 DesiredBits = FMath::CeilLogTwo64(Enum->GetMaxEnumValue() + 1);
 	
 	return FMath::Min(DesiredBits, MaxBits);
+}
+
+bool FEnumProperty::LoadTypeName(UE::FPropertyTypeName Type, const FPropertyTag* Tag)
+{
+	if (!Super::LoadTypeName(Type, Tag))
+	{
+		return false;
+	}
+
+	const FName EnumName = Type.GetParameterName(0);
+	UEnum* LocalEnum = FindFirstObject<UEnum>(*WriteToString<256>(EnumName), EFindFirstObjectOptions::NativeFirst);
+	if (!LocalEnum)
+	{
+		return false;
+	}
+
+	const UE::FPropertyTypeName UnderlyingType = Type.GetParameter(1);
+	FField* Field = FField::TryConstruct(UnderlyingType.GetName(), this, GetFName(), RF_NoFlags);
+	if (FNumericProperty* Property = CastField<FNumericProperty>(Field); Property && Property->LoadTypeName(UnderlyingType, Tag))
+	{
+		Enum = LocalEnum;
+		UE_CLOG(!Property->CanHoldValue(Enum->GetMaxEnumValue()), LogClass, Warning,
+			TEXT("Enum '%s' does not fit in a %s loading property '%s'."),
+			*WriteToString<64>(Enum->GetFName()), *WriteToString<32>(Property->GetID()), *WriteToString<32>(GetFName()));
+		AddCppProperty(Property);
+		return true;
+	}
+	delete Field;
+	return false;
+}
+
+void FEnumProperty::SaveTypeName(UE::FPropertyTypeNameBuilder& Type) const
+{
+	Super::SaveTypeName(Type);
+
+	if (const UEnum* LocalEnum = Enum)
+	{
+		check(UnderlyingProp);
+		Type.BeginParameters();
+		Type.AddPath(LocalEnum);
+		UnderlyingProp->SaveTypeName(Type);
+		Type.EndParameters();
+	}
+}
+
+bool FEnumProperty::CanSerializeFromTypeName(UE::FPropertyTypeName Type) const
+{
+	if (!Super::CanSerializeFromTypeName(Type))
+	{
+		return false;
+	}
+
+	const UEnum* LocalEnum = Enum;
+	if (!LocalEnum)
+	{
+		return false;
+	}
+
+	const FName EnumName = Type.GetParameterName(0);
+	return EnumName == LocalEnum->GetFName();
 }

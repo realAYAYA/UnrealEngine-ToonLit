@@ -434,9 +434,9 @@ void UUMGSequencePlayer::HandleLatentStop()
 
 	PlayerStatus = EMovieScenePlayerStatus::Stopped;
 
-	// This isn't really necessary because UMG animations cannot have director instances
-	// but it is here for completeness
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	RootTemplateInstance.ResetDirectorInstances();
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	if (bRestoreState)
 	{
@@ -568,18 +568,22 @@ void UUMGSequencePlayer::RemoveEvaluationData()
 		}
 
 		SequenceInstance->Ledger.UnlinkEverything(Linker);
-		SequenceInstance->InvalidateCachedData(Linker);
+		SequenceInstance->InvalidateCachedData();
 	}
+
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	RootTemplateInstance.ResetDirectorInstances();
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
 void UUMGSequencePlayer::TearDown()
 {
-	RootTemplateInstance.BeginDestroy();
+	RootTemplateInstance.TearDown();
 }
 
 void UUMGSequencePlayer::BeginDestroy()
 {
-	RootTemplateInstance.BeginDestroy();
+	RootTemplateInstance.TearDown();
 
 	// Remove any latent actions added by this player.
 	if (CVarUserWidgetUseParallelAnimation.GetValueOnGameThread())

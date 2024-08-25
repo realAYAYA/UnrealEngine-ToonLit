@@ -2,7 +2,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
+using EpicGames.Horde.Agents.Pools;
 using EpicGames.Horde.Common;
 using Horde.Server.Agents.Fleet;
 
@@ -19,53 +21,55 @@ namespace Horde.Server.Agents.Pools
 		/// <param name="id">Unique id for the new pool</param>
 		/// <param name="name">Name of the new pool</param>
 		/// <param name="options">Options for the new pool</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>The new pool document</returns>
-		Task<IPool> AddAsync(PoolId id, string name, AddPoolOptions options);
+		[Obsolete("Pools should be configured through globals.json")]
+		Task CreateConfigAsync(PoolId id, string name, CreatePoolConfigOptions options, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Enumerates all the pools
 		/// </summary>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>The pool documents</returns>
-		Task<List<IPool>> GetAsync();
+		Task<IReadOnlyList<IPoolConfig>> GetConfigsAsync(CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Gets a pool by ID
 		/// </summary>
 		/// <param name="id">Unique id of the pool</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>The pool document</returns>
-		Task<IPool?> GetAsync(PoolId id);
+		Task<IPool?> GetAsync(PoolId id, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Gets a list of all valid pool ids
 		/// </summary>
 		/// <returns>List of pool ids</returns>
-		Task<List<PoolId>> GetPoolIdsAsync();
+		Task<List<PoolId>> GetPoolIdsAsync(CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Gets a pool by ID
 		/// </summary>
 		/// <param name="id">Unique id of the pool</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>The pool document</returns>
-		Task<bool> DeleteAsync(PoolId id);
+		[Obsolete("Pools should be configured through globals.json")]
+		Task<bool> DeleteConfigAsync(PoolId id, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Updates a pool
 		/// </summary>
-		/// <param name="pool">The pool to update</param>
+		/// <param name="poolId">The pool to update</param>
 		/// <param name="options">Options for the update</param>
-		Task<IPool?> TryUpdateAsync(IPool pool, UpdatePoolOptions options);
-
-		/// <summary>
-		/// Updates the list of pools from a config file
-		/// </summary>
-		/// <param name="poolConfigs">Configuration for the pools, and revision string for the config file containing them</param>
-		Task ConfigureAsync(IReadOnlyList<(PoolConfig Config, string Revision)> poolConfigs);
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
+		[Obsolete("Pools should be configured through globals.json")]
+		Task<bool> UpdateConfigAsync(PoolId poolId, UpdatePoolConfigOptions options, CancellationToken cancellationToken = default);
 	}
 
 	/// <summary>
 	/// Settings for creating a new pool
 	/// </summary>
-	public class AddPoolOptions
+	public class CreatePoolConfigOptions
 	{
 		/// <summary>
 		/// Condition for agents to be included in this pool
@@ -141,7 +145,7 @@ namespace Horde.Server.Agents.Pools
 	/// <summary>
 	/// Settings for updating a pool state
 	/// </summary>
-	public class UpdatePoolOptions
+	public class UpdatePoolConfigOptions
 	{
 		/// <summary>
 		/// New name for the pool
@@ -171,7 +175,7 @@ namespace Horde.Server.Agents.Pools
 		/// <summary>
 		/// New workspaces for the pool
 		/// </summary>
-		public List<AgentWorkspace>? Workspaces { get; set; }
+		public List<AgentWorkspaceInfo>? Workspaces { get; set; }
 
 		/// <summary>
 		/// Settings for the autosdk workspace
@@ -189,16 +193,6 @@ namespace Horde.Server.Agents.Pools
 		public TimeSpan? ConformInterval { get; set; }
 
 		/// <summary>
-		/// New time for last (auto) scale up
-		/// </summary>
-		public DateTime? LastScaleUpTime { get; set; }
-
-		/// <summary>
-		/// New time for last (auto) scale down
-		/// </summary>
-		public DateTime? LastScaleDownTime { get; set; }
-
-		/// <summary>
 		/// Cooldown time between scale-out events
 		/// </summary>
 		public TimeSpan? ScaleOutCooldown { get; set; }
@@ -212,21 +206,6 @@ namespace Horde.Server.Agents.Pools
 		/// Time to wait before shutting down a disabled agent
 		/// </summary>
 		public TimeSpan? ShutdownIfDisabledGracePeriod { get; set; }
-
-		/// <summary>
-		/// Result from last scaling in/out attempt
-		/// </summary>
-		public ScaleResult? LastScaleResult { get; set; }
-
-		/// <summary>
-		/// Last calculated agent count
-		/// </summary>
-		public int? LastAgentCount { get; set; }
-
-		/// <summary>
-		/// Last calculated desired agent count
-		/// </summary>
-		public int? LastDesiredAgentCount { get; set; }
 
 		/// <summary>
 		/// Pool sizing strategy

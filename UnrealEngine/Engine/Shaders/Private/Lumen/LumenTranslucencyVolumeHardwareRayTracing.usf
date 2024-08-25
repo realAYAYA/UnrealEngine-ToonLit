@@ -7,6 +7,7 @@
 // TODO: Remove hair dependency
 #include "../HairStrands/HairStrandsVoxelPageCommonStruct.ush"
 
+#include "/Engine/Shared/RayTracingTypes.h"
 #include "../Common.ush"
 #include "../SHCommon.ush"
 #include "../MonteCarlo.ush"
@@ -82,7 +83,7 @@ LUMEN_HARDWARE_RAY_TRACING_ENTRY(LumenTranslucencyVolumeHardwareRayTracing)
 			#endif
 
 			FRayDesc Ray;
-			Ray.Origin = WorldPosition + LWCHackToFloat(PrimaryView.PreViewTranslation); // LUMEN_LWC_TODO
+			Ray.Origin = WorldPosition + DFHackToFloat(PrimaryView.PreViewTranslation); // LUMEN_LWC_TODO
 			Ray.Direction = WorldConeDirection;
 			Ray.TMin = 0;
 			Ray.TMax = TraceDistance;

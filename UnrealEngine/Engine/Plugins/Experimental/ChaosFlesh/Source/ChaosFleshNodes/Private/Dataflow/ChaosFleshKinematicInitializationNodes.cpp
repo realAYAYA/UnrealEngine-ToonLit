@@ -445,7 +445,7 @@ void FKinematicBodySetupInitializationDataflowNode::Evaluate(Dataflow::FContext&
 					TArray<TObjectPtr<USkeletalBodySetup>> SkeletalBodySetups = PhysicsAsset->SkeletalBodySetups;
 					TArray<FTransform> ComponentPose;
 					Dataflow::Animation::GlobalTransforms(SkeletalMesh->GetRefSkeleton(), ComponentPose);
-					for (TObjectPtr<USkeletalBodySetup> BodySetup : SkeletalBodySetups)
+					for (const TObjectPtr<USkeletalBodySetup>& BodySetup : SkeletalBodySetups)
 					{	
 						TArray<FKSphylElem> SphylElems = BodySetup->AggGeom.SphylElems;
 						int32 BoneIndex = SkeletalMesh->GetRefSkeleton().FindBoneIndex(BodySetup->BoneName);

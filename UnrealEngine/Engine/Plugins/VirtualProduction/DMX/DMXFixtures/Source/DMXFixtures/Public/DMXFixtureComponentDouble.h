@@ -56,7 +56,7 @@ public:
 	/** Sets the target value for specified channel index. Interpolates to the value if bUseInterpolation is true. */
 	void SetTargetValue(int32 ChannelIndex, float Value);
 
-	//  Sets first value of the second channel. When interpolation is enabled this function should be called until the value is reached, else just once */
+	/** Sets first value of the second channel. When interpolation is enabled this function should be called until the value is reached, else just once */
 	UFUNCTION(BlueprintCallable, BlueprintImplementableEvent, Category = "DMX")
 	void SetChannel1ValueNoInterp(float Channel1Value);
 

@@ -256,8 +256,8 @@ struct FShaderCodeLibrary
 	static RENDERCORE_API void DontOpenPluginShaderLibraryOnMount(const FString& PluginName);
 	
 	// Open the plugin's shader library
-	// @param bMonolithicOnly If true, only attempt to open a monolithic library (no chunks)
-	static RENDERCORE_API void OpenPluginShaderLibrary(IPlugin& Plugin, bool bMonolithicOnly = false);
+	// @param bMonolithicOnly If true, only attempt to open a monolithic library (no chunks) - which is a default behavior for DLC plugins, see FShaderLibraryChunkDataGenerator.
+	static RENDERCORE_API void OpenPluginShaderLibrary(IPlugin& Plugin, bool bMonolithicOnly = true);
 };
 
 #if WITH_EDITOR
@@ -325,6 +325,17 @@ struct FShaderLibraryCooker
 	/** Finishes collection of data that should be in the named code library. This includes loading data from a previous iterative cook. */
 	static RENDERCORE_API void FinishPopulateShaderLibrary(const ITargetPlatform* TargetPlatform, FString const& Name, FString const& SandboxDestinationPath,
 		FString const& SandboxMetadataPath);
+
+	/**
+	 * Given multiple Cooked Metadata directories will attempt to merge the ShaderByteCode and the ShaderStableInfo into the given OutputDir.
+	 * It would be expected that the OutputDir is another MetaData directory but this can be any dir.
+	 * Sub directories for ShaderLibrarySource and PipelineCaches will be automatically generated.
+	 * 
+	 * @param CookedMetadataDirs - the cooked metadata directories to merge the shader archives from
+	 * @param OutputDir - where to place the union of the shader archives
+	 * @param OutWrittenFiles - full path to all the files written
+	 */
+	static RENDERCORE_API bool MergeShaderCodeArchive(const TArray<FString>& CookedMetadataDirs, const FString& OutputDir, TArray<FString>& OutWrittenFiles);
 
 	/**
 	 * Saves collected shader code to a single file per shader platform

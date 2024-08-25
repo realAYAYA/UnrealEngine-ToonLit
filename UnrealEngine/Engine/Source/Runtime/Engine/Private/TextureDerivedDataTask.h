@@ -89,6 +89,9 @@ struct FTextureSourceData
 		, bValid(false)
 	{}
 
+	// Clear the current source data and make it into a placeholder texture.
+	void InitAsPlaceholder();
+
 	void Init(UTexture& InTexture, TextureMipGenSettings InMipGenSettings, bool bInCubeMap, bool bInTextureArray, bool bInVolumeTexture, bool bAllowAsyncLoading);
 	bool IsValid() const { return bValid; }
 
@@ -108,7 +111,11 @@ struct FTextureSourceData
 		// Unload BulkData loaded with LoadBulkDataWithFileReader
 		AsyncSource.RemoveBulkData();
 		Blocks.Empty();
+		Layers.Empty();
+		bValid = false;
 	}
+
+	TArray<TPair<FLinearColor, FLinearColor>> LayerChannelMinMax;
 
 	FString TextureFullName;
 	FTextureSource AsyncSource;

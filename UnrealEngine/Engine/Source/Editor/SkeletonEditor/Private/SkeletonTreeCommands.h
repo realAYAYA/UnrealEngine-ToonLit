@@ -119,4 +119,7 @@ public:
 
 	/** Remove the currently active blend profile */
 	TSharedPtr< FUICommandInfo > DeleteCurrentBlendProfile;
+
+	/** Rename an existing BlendProfile */
+	TSharedPtr< FUICommandInfo > RenameBlendProfile;
 };

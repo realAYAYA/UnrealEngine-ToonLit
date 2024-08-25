@@ -30,24 +30,54 @@ void STextBlock::PrivateRegisterAttributes(FSlateAttributeInitializer& Attribute
 		{
 			return static_cast<const STextBlock&>(OwningWidget).bSimpleTextMode ? EInvalidateWidgetReason::Paint : EInvalidateWidgetReason::Layout;
 		}
+
+		static void UpdateTextStyle(SWidget& OwningWidget)
+		{
+			// see ComputeDesiredSize. We call UpdateTextStyle when the style changes.
+			static_cast<STextBlock&>(OwningWidget).bTextLayoutUpdateTextStyle = true;
+		}
+
+		static void UpdateDesiredSize(SWidget& OwningWidget)
+		{
+			// We call ComputeDesiredSize when the text changes.
+			static_cast<STextBlock&>(OwningWidget).bTextLayoutUpdateDesiredSize = true;
+		}
 	};
 
-	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, BoundText, EInvalidateWidgetReason::Layout);
-	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, Font, EInvalidateWidgetReason::Layout);
-	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, StrikeBrush, FInvalidation::GetInvalidationNoneIfSimpleTextMode);
-	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, ColorAndOpacity, FInvalidation::GetInvalidationPaintIfSimpleTextMode);
-	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, ShadowOffset, EInvalidateWidgetReason::Layout);
-	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, ShadowColorAndOpacity, FInvalidation::GetInvalidationPaintIfSimpleTextMode);
-	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, HighlightColor, FInvalidation::GetInvalidationNoneIfSimpleTextMode);
-	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, HighlightShape, FInvalidation::GetInvalidationNoneIfSimpleTextMode);
-	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, HighlightText, FInvalidation::GetInvalidationNoneIfSimpleTextMode);
-	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, WrapTextAt, FInvalidation::GetInvalidationNoneIfSimpleTextMode);
-	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, AutoWrapText, FInvalidation::GetInvalidationNoneIfSimpleTextMode);
-	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, WrappingPolicy, FInvalidation::GetInvalidationNoneIfSimpleTextMode);
-	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, TransformPolicy, FInvalidation::GetInvalidationNoneIfSimpleTextMode);
-	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, Margin, FInvalidation::GetInvalidationNoneIfSimpleTextMode);
-	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, Justification, FInvalidation::GetInvalidationNoneIfSimpleTextMode);
-	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, LineHeightPercentage, FInvalidation::GetInvalidationNoneIfSimpleTextMode);
+	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, BoundText, EInvalidateWidgetReason::Layout)
+		.OnValueChanged(FSlateAttributeDescriptor::FAttributeValueChangedDelegate::CreateStatic(FInvalidation::UpdateDesiredSize));
+	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, Font, EInvalidateWidgetReason::Layout)
+		.OnValueChanged(FSlateAttributeDescriptor::FAttributeValueChangedDelegate::CreateStatic(FInvalidation::UpdateTextStyle));
+	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, StrikeBrush, FInvalidation::GetInvalidationNoneIfSimpleTextMode)
+		.OnValueChanged(FSlateAttributeDescriptor::FAttributeValueChangedDelegate::CreateStatic(FInvalidation::UpdateTextStyle));
+	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, ColorAndOpacity, FInvalidation::GetInvalidationPaintIfSimpleTextMode)
+		.OnValueChanged(FSlateAttributeDescriptor::FAttributeValueChangedDelegate::CreateStatic(FInvalidation::UpdateTextStyle));
+	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, ShadowOffset, EInvalidateWidgetReason::Layout)
+		.OnValueChanged(FSlateAttributeDescriptor::FAttributeValueChangedDelegate::CreateStatic(FInvalidation::UpdateTextStyle));
+	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, ShadowColorAndOpacity, FInvalidation::GetInvalidationPaintIfSimpleTextMode)
+		.OnValueChanged(FSlateAttributeDescriptor::FAttributeValueChangedDelegate::CreateStatic(FInvalidation::UpdateTextStyle));
+	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, HighlightColor, FInvalidation::GetInvalidationNoneIfSimpleTextMode)
+		.OnValueChanged(FSlateAttributeDescriptor::FAttributeValueChangedDelegate::CreateStatic(FInvalidation::UpdateTextStyle));
+	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, HighlightShape, FInvalidation::GetInvalidationNoneIfSimpleTextMode)
+		.OnValueChanged(FSlateAttributeDescriptor::FAttributeValueChangedDelegate::CreateStatic(FInvalidation::UpdateTextStyle));
+	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, HighlightText, FInvalidation::GetInvalidationNoneIfSimpleTextMode)
+		.OnValueChanged(FSlateAttributeDescriptor::FAttributeValueChangedDelegate::CreateStatic(FInvalidation::UpdateDesiredSize));
+	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, WrapTextAt, FInvalidation::GetInvalidationNoneIfSimpleTextMode)
+		.OnValueChanged(FSlateAttributeDescriptor::FAttributeValueChangedDelegate::CreateStatic(FInvalidation::UpdateDesiredSize));
+	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, AutoWrapText, FInvalidation::GetInvalidationNoneIfSimpleTextMode)
+		.OnValueChanged(FSlateAttributeDescriptor::FAttributeValueChangedDelegate::CreateStatic(FInvalidation::UpdateDesiredSize));
+	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, WrappingPolicy, FInvalidation::GetInvalidationNoneIfSimpleTextMode)
+		.OnValueChanged(FSlateAttributeDescriptor::FAttributeValueChangedDelegate::CreateStatic(FInvalidation::UpdateDesiredSize));
+	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, TransformPolicy, FInvalidation::GetInvalidationNoneIfSimpleTextMode)
+		.OnValueChanged(FSlateAttributeDescriptor::FAttributeValueChangedDelegate::CreateStatic(FInvalidation::UpdateDesiredSize));
+	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, Margin, FInvalidation::GetInvalidationNoneIfSimpleTextMode)
+		.OnValueChanged(FSlateAttributeDescriptor::FAttributeValueChangedDelegate::CreateStatic(FInvalidation::UpdateDesiredSize));
+	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, Justification, FInvalidation::GetInvalidationNoneIfSimpleTextMode)
+		.OnValueChanged(FSlateAttributeDescriptor::FAttributeValueChangedDelegate::CreateStatic(FInvalidation::UpdateDesiredSize));
+	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, LineHeightPercentage, FInvalidation::GetInvalidationNoneIfSimpleTextMode)
+		.OnValueChanged(FSlateAttributeDescriptor::FAttributeValueChangedDelegate::CreateStatic(FInvalidation::UpdateDesiredSize));
+	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, ApplyLineHeightToBottomLine, FInvalidation::GetInvalidationNoneIfSimpleTextMode)
+		.OnValueChanged(FSlateAttributeDescriptor::FAttributeValueChangedDelegate::CreateStatic(FInvalidation::UpdateDesiredSize));
 	SLATE_ADD_MEMBER_ATTRIBUTE_DEFINITION(AttributeInitializer, MinDesiredWidth, EInvalidateWidgetReason::Layout);
 }
 
@@ -68,12 +98,15 @@ STextBlock::STextBlock()
 	, Margin(*this)
 	, Justification(*this)
 	, LineHeightPercentage(*this, 1.0f)
+	, ApplyLineHeightToBottomLine(*this, true)
 	, MinDesiredWidth(*this, 0.0f)
 	, Union_Flags(0)
 	, bSimpleTextMode(false)
 {
 	SetCanTick(false);
 	bCanSupportFocus = false;
+	bTextLayoutUpdateTextStyle = true;
+	bTextLayoutUpdateDesiredSize = true;
 
 #if WITH_ACCESSIBILITY
 	AccessibleBehavior = EAccessibleBehavior::Auto;
@@ -99,6 +132,7 @@ void STextBlock::Construct( const FArguments& InArgs )
 
 	SetMargin(InArgs._Margin);
 	SetLineHeightPercentage(InArgs._LineHeightPercentage);
+	SetApplyLineHeightToBottomLine(InArgs._ApplyLineHeightToBottomLine);
 	SetJustification(InArgs._Justification);
 	SetMinDesiredWidth(InArgs._MinDesiredWidth);
 
@@ -273,15 +307,14 @@ int32 STextBlock::OnPaint( const FPaintArgs& Args, const FGeometry& AllottedGeom
 		const FVector2D LastDesiredSize = TextLayoutCache->GetDesiredSize();
 
 		// OnPaint will also update the text layout cache if required
+		UpdateTextBlockLayout(TextLayoutCache->GetLayoutScale());
 		LayerId = TextLayoutCache->OnPaint(Args, AllottedGeometry, MyCullingRect, OutDrawElements, LayerId, InWidgetStyle, ShouldBeEnabled(bParentEnabled));
-
-		const FVector2D NewDesiredSize = TextLayoutCache->GetDesiredSize();
 
 		// HACK: Due to the nature of wrapping and layout, we may have been arranged in a different box than what we were cached with.  Which
 		// might update wrapping, so make sure we always set the desired size to the current size of the text layout, which may have changed
 		// during paint.
 		const bool bCanWrap = WrapTextAt.Get() > 0 || AutoWrapText.Get();
-
+		const FVector2D NewDesiredSize = TextLayoutCache->GetDesiredSize();
 		if (bCanWrap && !NewDesiredSize.Equals(LastDesiredSize))
 		{
 			const_cast<STextBlock*>(this)->Invalidate(EInvalidateWidgetReason::Layout);
@@ -311,31 +344,9 @@ FVector2D STextBlock::ComputeDesiredSize(float LayoutScaleMultiplier) const
 	}
 	else
 	{
-		FTextBlockStyle::CompareParams StyleParams(TextStyle
-			, GetFontRef()
-			, GetColorAndOpacityRef()
-			, GetShadowOffset()
-			, GetShadowColorAndOpacityRef()
-			, GetHighlightColor()
-			, GetHighlightShape()
-			, GetStrikeBrush());
-
-		TextLayoutCache->ConditionallyUpdateTextStyle(MoveTemp(StyleParams));
-
-		// ComputeDesiredSize will also update the text layout cache if required
-		const FVector2D TextSize = TextLayoutCache->ComputeDesiredSize(
-			FSlateTextBlockLayout::FWidgetDesiredSizeArgs(
-				BoundText.Get(),
-				HighlightText.Get(),
-				WrapTextAt.Get(),
-				AutoWrapText.Get(),
-				WrappingPolicy.Get(),
-				GetTransformPolicyImpl(),
-				Margin.Get(),
-				LineHeightPercentage.Get(),
-				Justification.Get()),
-			LayoutScaleMultiplier);
-
+		bTextLayoutUpdateDesiredSize = true; // force ComputeDesiredSize
+		UpdateTextBlockLayout(LayoutScaleMultiplier);
+		const FVector2D TextSize = TextLayoutCache->GetDesiredSize();
 		return FVector2D(FMath::Max(MinDesiredWidth.Get(), TextSize.X), TextSize.Y);
 	}
 }
@@ -452,6 +463,11 @@ void STextBlock::SetLineHeightPercentage(TAttribute<float> InLineHeightPercentag
 	LineHeightPercentage.Assign(*this, MoveTemp(InLineHeightPercentage));
 }
 
+void STextBlock::SetApplyLineHeightToBottomLine(TAttribute<bool> InApplyLineHeightToBottomLine)
+{
+	ApplyLineHeightToBottomLine.Assign(*this, MoveTemp(InApplyLineHeightToBottomLine));
+}
+
 void STextBlock::SetMargin(TAttribute<FMargin> InMargin)
 {
 	Margin.Assign(*this, MoveTemp(InMargin));
@@ -465,7 +481,7 @@ void STextBlock::SetJustification(TAttribute<ETextJustify::Type> InJustification
 FTextBlockStyle STextBlock::GetComputedTextStyle() const
 {
 	FTextBlockStyle ComputedStyle = TextStyle;
-	ComputedStyle.SetFont( GetFont() );
+	ComputedStyle.SetFont( GetFontRef() );
 	if (const FSlateBrush* const ComputedStrikeBrush = GetStrikeBrush())
 	{
 		ComputedStyle.SetStrikeBrush(*ComputedStrikeBrush);
@@ -474,8 +490,40 @@ FTextBlockStyle STextBlock::GetComputedTextStyle() const
 	ComputedStyle.SetShadowOffset( GetShadowOffset() );
 	ComputedStyle.SetShadowColorAndOpacity( GetShadowColorAndOpacity() );
 	ComputedStyle.SetHighlightColor( GetHighlightColor() );
-	ComputedStyle.SetHighlightShape( *GetHighlightShape() );
+	if (const FSlateBrush* const ComputedHighlightShape = GetHighlightShape())
+	{
+		ComputedStyle.SetHighlightShape(*ComputedHighlightShape);
+	}
 	return ComputedStyle;
+}
+
+void STextBlock::UpdateTextBlockLayout(float LayoutScaleMultiplier) const
+{
+	if (bTextLayoutUpdateTextStyle)
+	{
+		TextLayoutCache->UpdateTextStyle(GetComputedTextStyle());
+	}
+
+	if (bTextLayoutUpdateDesiredSize || bTextLayoutUpdateTextStyle)
+	{
+		// ComputeDesiredSize will also update the text layout cache if required
+		FSlateTextBlockLayout::FWidgetDesiredSizeArgs DesiredSizeArgs(
+			BoundText.Get(),
+			HighlightText.Get(),
+			WrapTextAt.Get(),
+			AutoWrapText.Get(),
+			WrappingPolicy.Get(),
+			GetTransformPolicyImpl(),
+			Margin.Get(),
+			LineHeightPercentage.Get(),
+			ApplyLineHeightToBottomLine.Get(),
+			Justification.Get()
+		);
+		TextLayoutCache->ComputeDesiredSize(DesiredSizeArgs, LayoutScaleMultiplier);
+
+		bTextLayoutUpdateDesiredSize = false;
+		bTextLayoutUpdateTextStyle = false;
+	}
 }
 
 #if WITH_ACCESSIBILITY

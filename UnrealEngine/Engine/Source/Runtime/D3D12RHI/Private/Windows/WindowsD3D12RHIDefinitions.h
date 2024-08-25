@@ -21,6 +21,7 @@ typedef ID3D12GraphicsCommandList ID3D12CopyCommandList;
 #define D3D12RHI_NEEDS_SHADER_FEATURE_CHECKS 1
 
 #define USE_STATIC_ROOT_SIGNATURE			0
+#define D3D12RHI_USE_CONSTANT_BUFFER_VIEWS	0
 #define D3D12_USE_DUMMY_BACKBUFFER			1
 
 // Only enable pipeline statistics if we've got the stats system enabled to display them

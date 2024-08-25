@@ -356,9 +356,9 @@ struct FVirtualFileCacheThread : public FRunnable
 	void RequestErase(VFCKey Target);
 	void Shutdown();
 
-	UE_NODISCARD FFileTableReader ReadFileTable() const;
-	UE_NODISCARD FFileTableMutator MutateFileTable();
-	UE_NODISCARD FFileTableWriter ModifyFileTable();
+	[[nodiscard]] FFileTableReader ReadFileTable() const;
+	[[nodiscard]] FFileTableMutator MutateFileTable();
+	[[nodiscard]] FFileTableWriter ModifyFileTable();
 
 public:
 	void DeleteUnexpectedCacheFiles(TSet<FString>& ExpectedFiles);

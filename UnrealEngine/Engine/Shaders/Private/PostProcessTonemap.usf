@@ -28,7 +28,13 @@
 SCREEN_PASS_TEXTURE_VIEWPORT(Color)
 SCREEN_PASS_TEXTURE_VIEWPORT(Output)
 
+#define MOBILE_MULTI_VIEW_FALLBACK (MOBILE_MULTI_VIEW && INSTANCED_STEREO)
+
+#if USE_MULTI_VIEW_ID_SV || MOBILE_MULTI_VIEW_FALLBACK
+Texture2DArray ColorTexture;
+#else
 Texture2D ColorTexture;
+#endif
 SamplerState ColorSampler;
 
 
@@ -249,20 +255,24 @@ float max4(float4 x)
 	return max(max(x.r, x.g), max(x.b, x.a));
 }
 
-float4 SampleSceneColor(float2 SceneUV)
+float4 SampleSceneColor(float2 SceneUV, float ArrayIndex)
 {
 	SceneUV = clamp(SceneUV, Color_UVViewportBilinearMin, Color_UVViewportBilinearMax);
+	#if USE_MULTI_VIEW_ID_SV || MOBILE_MULTI_VIEW_FALLBACK
+	return Texture2DArraySample(ColorTexture, ColorSampler, float3(SceneUV.xy,ArrayIndex));
+	#else
 	return Texture2DSample(ColorTexture, ColorSampler, SceneUV);
+	#endif
 }
 
-half3 LookupSceneColor(float2 SceneUV, float2 PixelOffset)
+half3 LookupSceneColor(float2 SceneUV, float ArrayIndex, float2 PixelOffset)
 {
 	float2 SampleUV = SceneUV + PixelOffset * Color_ExtentInverse;
-	return SampleSceneColor(SampleUV).xyz;
+	return SampleSceneColor(SampleUV, ArrayIndex).xyz;
 }
 
 float4 TonemapCommonPS(
-	float2 UV,
+	float3 UV,
 	float2 Vignette,
 	float4 GrainUV,
 	float2 ScreenPos, // [-1, 1]x[-1, 1]
@@ -276,6 +286,7 @@ float4 TonemapCommonPS(
 	const float GlobalExposure = EyeAdaptationData.x;
 
 	float2 SceneUV = UV.xy;
+	float ArrayIndex = UV.z;
 
 	// Sample the scene color.
 	half4 SceneColor;
@@ -297,14 +308,14 @@ float4 TonemapCommonPS(
 				CAUV.xy = ScreenPosToUV(CAUV.xy, Color_ExtentInverse);
 				CAUV.zw = ScreenPosToUV(CAUV.zw, Color_ExtentInverse);
 
-			half4 SceneColorR = SampleSceneColor(CAUV.xy + SceneUVJitter.xy);
-			half SceneColorG = SampleSceneColor(CAUV.zw + SceneUVJitter.xy).g;
-			half SceneColorB = SampleSceneColor(SceneUV).b;
+			half4 SceneColorR = SampleSceneColor(CAUV.xy + SceneUVJitter.xy, ArrayIndex);
+			half SceneColorG = SampleSceneColor(CAUV.zw + SceneUVJitter.xy, ArrayIndex).g;
+			half SceneColorB = SampleSceneColor(SceneUV, ArrayIndex).b;
 			SceneColor = SceneColorR;
 			SceneColor.g = SceneColorG;
 			SceneColor.b = SceneColorB;
 		#else
-			SceneColor = SampleSceneColor(SceneUV);
+			SceneColor = SampleSceneColor(SceneUV, ArrayIndex);
 		#endif
 
 		#if METAL_MSAA_HDR_DECODE && !USE_GAMMA_ONLY
@@ -331,7 +342,7 @@ float4 TonemapCommonPS(
 		}
 		#else
 		{
-			BloomUV = ApplyScreenTransform(UV, ColorToBloom);
+			BloomUV = ApplyScreenTransform(UV.xy, ColorToBloom);
 			BloomUV = clamp(BloomUV, BloomUVViewportBilinearMin, BloomUVViewportBilinearMax);
 		}
 		#endif
@@ -368,9 +379,9 @@ float4 TonemapCommonPS(
 		const float3 SceneColorTint = 1.0;
 	#elif SUPPORTS_SCENE_COLOR_APPLY_PARAMETERS
 		// Note that SceneColorApplyParamaters[0] is only for FFT bloom energy conservativeness = doesn't need to be in PreExposure
-		const float3 SceneColorTint = ColorScale0 * SceneColorApplyParamaters[0].xyz;
+		const float3 SceneColorTint = ColorScale0.rgb * SceneColorApplyParamaters[0].xyz;
 	#else
-		const float3 SceneColorTint = ColorScale0;
+		const float3 SceneColorTint = ColorScale0.rgb;
 	#endif
 
 	// Compute the local exposure based of the scene color.
@@ -404,9 +415,9 @@ float4 TonemapCommonPS(
 		FPQMPContext PQMP = PQMPInit(floor(SceneUV* Color_Extent));
 				
 		half4 LuminanceNeighbors;
-
-		half3 C1 = LookupSceneColor(SceneUV, float2(PQMP.QuadVector.x, 0)).rgb;
-		half3 C3 = LookupSceneColor(SceneUV, float2(0, PQMP.QuadVector.y)).rgb;
+		
+		half3 C1 = LookupSceneColor(SceneUV, ArrayIndex, float2(PQMP.QuadVector.x, 0)).rgb;
+		half3 C3 = LookupSceneColor(SceneUV, ArrayIndex, float2(0, PQMP.QuadVector.y)).rgb;
 		LuminanceNeighbors.x = Luminance(C1);
 		LuminanceNeighbors.y = Luminance(C3);
 		
@@ -415,10 +426,10 @@ float4 TonemapCommonPS(
 		LuminanceNeighbors.z =  PQMPReadX(PQMP,A0);
 		LuminanceNeighbors.w =  PQMPReadY(PQMP,A0);
 	#else
-		half3 C1 = LookupSceneColor(SceneUV, float2(-1,  0));
-		half3 C2 = LookupSceneColor(SceneUV, float2( 1,  0));
-		half3 C3 = LookupSceneColor(SceneUV, float2( 0, -1));
-		half3 C4 = LookupSceneColor(SceneUV, float2( 0,  1));
+		half3 C1 = LookupSceneColor(SceneUV, ArrayIndex, float2(-1,  0));
+		half3 C2 = LookupSceneColor(SceneUV, ArrayIndex, float2( 1,  0));
+		half3 C3 = LookupSceneColor(SceneUV, ArrayIndex, float2( 0, -1));
+		half3 C4 = LookupSceneColor(SceneUV, ArrayIndex, float2( 0,  1));
 		half4 LuminanceNeighbors = half4(Luminance(C1), Luminance(C2), Luminance(C3), Luminance(C4));
 	#endif
 
@@ -575,6 +586,9 @@ void MainPS(
 	in noperspective float4 GrainUV : TEXCOORD2,
 	in noperspective float2 ScreenPos : TEXCOORD3,
 	in noperspective float2 FullViewUV : TEXCOORD4,
+	#if USE_MULTI_VIEW_ID_SV
+	in uint MultiViewId : SV_ViewID,
+	#endif
 	float4 SvPosition : SV_POSITION,		// after all interpolators
 	out float4 OutColor : SV_Target0
 #if OUTPUT_LUMINANCE
@@ -583,7 +597,12 @@ void MainPS(
 	)
 {
 	float Luminance;
-    OutColor = TonemapCommonPS(UV, InVignette, GrainUV, ScreenPos, FullViewUV, SvPosition, Luminance);
+	#if USE_MULTI_VIEW_ID_SV
+		float3 UVI = float3(UV.xy,MultiViewId);
+	#else
+		float3 UVI = float3(UV.xy,0);
+	#endif
+    OutColor = TonemapCommonPS(UVI, InVignette, GrainUV, ScreenPos, FullViewUV, SvPosition, Luminance);
 #if OUTPUT_LUMINANCE
 	OutLuminance = Luminance;
 #endif
@@ -613,7 +632,7 @@ void MainCS(uint2 DispatchThreadId : SV_DispatchThreadID)
 	TonemapCommonVS(InScreenPos, UV, Vignette, GrainUV, ScreenPos, FullViewUV);
 
 	float Luminance;
-	float4 OutColor = TonemapCommonPS(UV, Vignette, GrainUV, ScreenPos, FullViewUV, SvPosition, Luminance);
+	float4 OutColor = TonemapCommonPS(float3(UV.xy,0), Vignette, GrainUV, ScreenPos, FullViewUV, SvPosition, Luminance);
 
 	uint2 PixelPos = DispatchThreadId + Output_ViewportMin;
 
@@ -623,4 +642,72 @@ void MainCS(uint2 DispatchThreadId : SV_DispatchThreadID)
 #endif
 }
 #endif
+
+#ifdef SUBPASS_MSAA_SAMPLES
+	#if VULKAN_PROFILE
+		#include "/Engine/Public/Platform/Vulkan/VulkanSubpassSupport.ush"
+	#endif
+#endif
+
+half4 FetchAndResolveSceneColor(float2 UV, float ArrayIndex)
+{
+	half4 SceneColor = half4(1.0, 1.0, 1.0, 1.0);
+
+#if VULKAN_PROFILE && SUBPASS_MSAA_SAMPLES > 0	
+	#if SUBPASS_MSAA_SAMPLES == 8
+		SceneColor = half4(VulkanSubpassFetch0(0) + VulkanSubpassFetch0(1) + VulkanSubpassFetch0(2) + VulkanSubpassFetch0(3) +
+			VulkanSubpassFetch0(4) + VulkanSubpassFetch0(5) + VulkanSubpassFetch0(6) + VulkanSubpassFetch0(7)) * 0.125;
+	#elif SUBPASS_MSAA_SAMPLES == 4
+		SceneColor = half4(VulkanSubpassFetch0(0) + VulkanSubpassFetch0(1) + VulkanSubpassFetch0(2) + VulkanSubpassFetch0(3)) * 0.25;
+	#elif SUBPASS_MSAA_SAMPLES == 2
+		SceneColor = half4(VulkanSubpassFetch0(0) + VulkanSubpassFetch0(1)) * 0.5;
+	#elif SUBPASS_MSAA_SAMPLES == 1
+		SceneColor = half4(VulkanSubpassFetch0());
+	#endif
+#else
+	#if USE_MULTI_VIEW_ID_SV || MOBILE_MULTI_VIEW_FALLBACK
+		SceneColor = Texture2DArraySample(ColorTexture, ColorSampler, float3(UV.xy,ArrayIndex));
+	#else
+		SceneColor = Texture2DSample(ColorTexture, ColorSampler, UV);
+	#endif
+#endif
+	return SceneColor;
+}
+
+void MobileCustomResolve_MainPS(
+	in float4 SvPosition							: SV_POSITION, 
+	in noperspective float2 UV						: TEXCOORD0,
+#if MOBILE_MULTI_VIEW_FALLBACK
+	in nointerpolation uint EyeIndex				: TEXCOORD1,
+#endif
+	out				 float4 OutColor				: SV_Target0
+#if USE_MULTI_VIEW_ID_SV
+	, in nointerpolation uint MultiViewId : SV_ViewID
+#endif
+)
+{
+	uint ArrayIndex = 0;
+#if USE_MULTI_VIEW_ID_SV
+	ResolvedView = ResolveView(MultiViewId);
+	ArrayIndex = MultiViewId;
+#elif MOBILE_MULTI_VIEW_FALLBACK
+	ResolvedView = ResolveView(EyeIndex);
+	ArrayIndex = EyeIndex;
+#else
+	ResolvedView = ResolveView();
+#endif
+	
+	const float OneOverPreExposure = ResolvedView.OneOverPreExposure;
+
+	half4 SceneColor = FetchAndResolveSceneColor(UV, ArrayIndex);
+	SceneColor.a = 1.0;
+
+	half3 LinearColor = SceneColor.rgb * OneOverPreExposure;
+	LinearColor *= ColorScale0.rgb; // SceneColorTint
+	half3 DeviceColor = ColorLookupTable(LinearColor);
+
+	OutColor.rgb = DeviceColor;
+	OutColor.a = 1.0;
+}
+
 

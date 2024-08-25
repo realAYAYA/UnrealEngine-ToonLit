@@ -27,6 +27,7 @@ public:
 	FString GetDeclarations() const override { return FString(); }
 	FString GetShaderText() const override { return SourceText; }
 	void SetShaderText(const FString& InText) override { SetSource(InText); }
+	bool IsShaderTextReadOnly() const override;
 #endif
 	// End IOptimusShaderTextProvider interface.
 

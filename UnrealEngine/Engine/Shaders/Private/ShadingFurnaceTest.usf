@@ -8,8 +8,8 @@
 #define SHADING_PATH_DEFERRED 1
 #define USE_SOURCE_TEXTURE 0
 #define DEBUG_ENABLE 0
-#define STRATA_SSS_TRANSMISSION USE_TRANSMISSION
-#include "Strata/Strata.ush"
+#define SUBSTRATE_SSS_TRANSMISSION USE_TRANSMISSION
+#include "Substrate/Substrate.ush"
 #include "DeferredShadingCommon.ush"
 #include "DeferredLightingCommon.ush"
 #include "MonteCarlo.ush" 
@@ -19,8 +19,8 @@
 #include "ColorMap.ush"
 #endif 
 
-#include "Strata/StrataEvaluation.ush"
-#include "Strata/StrataDeferredLighting.ush"
+#include "Substrate/SubstrateEvaluation.ush"
+#include "Substrate/SubstrateDeferredLighting.ush"
 
 #if SHADER_FURNACE_ANALYTIC
 
@@ -31,7 +31,7 @@ void MainPS(
 	float4 SVPos : SV_POSITION,
 	out float4 OutColor : SV_Target0)
 {
-	// Non strata path (todo: add strata path)
+	// Non Substrate path (todo: add Substrate path)
 	const float2 ScreenUV = SvPositionToBufferUV(SVPos);
 	const float2 ScreenPosition = SvPositionToScreenPosition(SVPos).xy;
 	const float2 PixelPos = SVPos.xy;
@@ -44,26 +44,26 @@ void MainPS(
 	float ClearCoatRoughness = 0.5f;
 	float3 N = float3(0, 0, 1);
 	float SceneDepth = 0;
-#if STRATA_ENABLED 
+#if SUBSTRATE_ENABLED 
 	{
 		// Fetch the first layer of roughness & normal only. This fine for simple material but will not work for clear coat.
-		FStrataAddressing StrataAddressing = GetStrataPixelDataByteOffset(PixelPos, uint2(View.BufferSizeAndInvSize.xy), Strata.MaxBytesPerPixel);
-		FStrataPixelHeader StrataPixelHeader = UnpackStrataHeaderIn(Strata.MaterialTextureArray, StrataAddressing, Strata.TopLayerTexture);
-		bIsValid = StrataPixelHeader.BSDFCount > 0;
+		FSubstrateAddressing SubstrateAddressing = GetSubstratePixelDataByteOffset(PixelPos, uint2(View.BufferSizeAndInvSize.xy), Substrate.MaxBytesPerPixel);
+		FSubstratePixelHeader SubstratePixelHeader = UnpackSubstrateHeaderIn(Substrate.MaterialTextureArray, SubstrateAddressing, Substrate.TopLayerTexture);
+		bIsValid = SubstratePixelHeader.ClosureCount > 0;
 		if (bIsValid)
 		{
 			const float3 DummyV = float3(0, 0, 1);
 			const float3 DummyL = float3(0, 0, 1);
-			FStrataBSDF BSDF = UnpackStrataBSDFIn(Strata.MaterialTextureArray, StrataAddressing, StrataPixelHeader);
-			FStrataBSDFContext BSDFContext = StrataCreateBSDFContext(StrataPixelHeader, BSDF, StrataAddressing, DummyV, DummyL);
+			FSubstrateBSDF BSDF = UnpackSubstrateBSDFIn(Substrate.MaterialTextureArray, SubstrateAddressing, SubstratePixelHeader);
+			FSubstrateBSDFContext BSDFContext = SubstrateCreateBSDFContext(SubstratePixelHeader, BSDF, SubstrateAddressing, DummyV, DummyL);
 
 			SceneDepth = CalcSceneDepth(ScreenUV);
 			N = BSDFContext.N;
-			Roughness = StrataGetBSDFRoughness(BSDFContext.BSDF);
+			Roughness = SubstrateGetBSDFRoughness(BSDFContext.BSDF);
 			ClearCoatRoughness = Roughness;
 		}
 	}
-#else // STRATA_ENABLED
+#else // SUBSTRATE_ENABLED
 	FScreenSpaceData ScreenSpaceData;
 	{
 		ScreenSpaceData = GetScreenSpaceData(ScreenUV);
@@ -79,7 +79,7 @@ void MainPS(
 		ClearCoatRoughness = bIsClearCoat ? max(ScreenSpaceData.GBuffer.CustomData.y, 0.02f) : ScreenSpaceData.GBuffer.Roughness;
 	
 	}
-#endif // STRATA_ENABLED
+#endif // SUBSTRATE_ENABLED
 
 	const float4 PixelLightAttenuation = 1.0f;
 	const float3 InRadiance = 0.5f;
@@ -204,7 +204,7 @@ void MainPS(
 				}
 
 				float3 SampleRadiance = 0;
-			#if !STRATA_ENABLED
+			#if !SUBSTRATE_ENABLED
 				{
 					float SurfaceShadow = 1.0f;
 					SampleRadiance = GetDynamicLighting(
@@ -221,25 +221,28 @@ void MainPS(
 				}
 			#elif 0
 				{
-					FStrataAddressing StrataAddressing = GetStrataPixelDataByteOffset(PixelPos, uint2(View.BufferSizeAndInvSize.xy), Strata.MaxBytesPerPixel);
-					FStrataPixelHeader StrataPixelHeader = UnpackStrataHeaderIn(Strata.MaterialTextureArray, StrataAddressing, Strata.TopLayerTexture);
+					FSubstrateAddressing SubstrateAddressing = GetSubstratePixelDataByteOffset(PixelPos, uint2(View.BufferSizeAndInvSize.xy), Substrate.MaxBytesPerPixel);
+					FSubstratePixelHeader SubstratePixelHeader = UnpackSubstrateHeaderIn(Substrate.MaterialTextureArray, SubstrateAddressing, Substrate.TopLayerTexture);
 					const float LightMask = 1;
 
 					BRANCH
-					if (StrataPixelHeader.BSDFCount > 0)
+					if (SubstratePixelHeader.BSDFCount > 0)
 					{
-						FShadowTerms ShadowTerms = { 1.0, 1.0, 1.0, InitHairTransmittanceData() };
-						SampleRadiance = StrataDeferredLighting(
+						HEADER_SETIRRADIANCE_AO(SubstratePixelHeader.State, SubstratePackIrradianceAndOcclusion(1.0, 1.0));
+
+						FSubstrateShadowTermInputParameters SubstrateShadowTermInputParameters	= GetInitialisedSubstrateShadowTermInputParameters();
+						SubstrateShadowTermInputParameters.bEvaluateShadowTerm					= false;
+						SampleRadiance = SubstrateDeferredLighting(
 							LightData,
 							V,
 							L,
 							L,
 							LightMask,
-							ShadowTerms,
+							SubstrateShadowTermInputParameters,
 							RectTexture,
-							Strata.MaterialTextureArray,
-							StrataAddressing,
-							StrataPixelHeader).xyz;
+							Substrate.MaterialTextureArray,
+							SubstrateAddressing,
+							SubstratePixelHeader).xyz;
 					}
 				}
 			#endif

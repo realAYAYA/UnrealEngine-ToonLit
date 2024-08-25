@@ -9,7 +9,7 @@
 #include "Styling/AppStyle.h"
 #include "Sections/MovieSceneDataLayerSection.h"
 #include "Tracks/MovieSceneDataLayerTrack.h"
-#include "SequencerUtilities.h"
+#include "MVVM/Views/ViewUtilities.h"
 #include "LevelUtils.h"
 #include "MovieSceneTimeHelpers.h"
 #include "MovieSceneToolHelpers.h"
@@ -115,17 +115,17 @@ struct FDataLayerSection
 	FText GetPrerollText() const
 	{
 		UMovieSceneDataLayerSection* Section = WeakSection.Get();
-		if (Section)
+		if (Section && Section->GetPreRollFrames() > 0)
 		{
 			switch (Section->GetPrerollState())
 			{
 			case EDataLayerRuntimeState::Unloaded:  return LOCTEXT("PrerollText_Unloaded", "(Unloaded over time in pre/post roll)");
 			case EDataLayerRuntimeState::Loaded:    return LOCTEXT("PrerollText_Loaded", "(Loaded over time in preroll)");
-			default: break;
+			case EDataLayerRuntimeState::Activated:	return LOCTEXT("PrerollText_Activated", "(Activated over time in preroll)");
 			}
 		}
 
-		return LOCTEXT("PrerollText_Activated", "(Activated over time in preroll)");
+		return FText();
 	}
 
 	FText GetLayerBarText() const
@@ -301,10 +301,10 @@ void FDataLayerTrackEditor::BuildAddTrackMenu(FMenuBuilder& MenuBuilder)
 
 TSharedPtr<SWidget> FDataLayerTrackEditor::BuildOutlinerEditWidget(const FGuid& ObjectBinding, UMovieSceneTrack* Track, const FBuildEditWidgetParams& Params)
 {
-	return FSequencerUtilities::MakeAddButton(
+	return UE::Sequencer::MakeAddButton(
 		LOCTEXT("AddDataLayer_ButtonLabel", "Data Layer"),
 		FOnGetContent::CreateSP(this, &FDataLayerTrackEditor::BuildAddDataLayerMenu, Track),
-		Params.NodeIsHovered, GetSequencer());
+		Params.ViewModel);
 }
 
 UMovieSceneDataLayerSection* FDataLayerTrackEditor::AddNewSection(UMovieScene* MovieScene, UMovieSceneTrack* DataLayerTrack, EDataLayerRuntimeState DesiredState)

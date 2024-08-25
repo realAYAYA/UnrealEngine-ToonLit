@@ -12,19 +12,21 @@
 class SUsdPrimInfo : public SCompoundWidget
 {
 public:
-	SLATE_BEGIN_ARGS( SUsdPrimInfo ) {}
+	SLATE_BEGIN_ARGS(SUsdPrimInfo)
+	{
+	}
 	SLATE_END_ARGS()
 
-	void Construct( const FArguments& InArgs );
+	void Construct(const FArguments& InArgs);
 	void SetPrimPath(const UE::FUsdStageWeak& UsdStage, const TCHAR* PrimPath);
 
 private:
 	friend class SUsdStage;
-	TSharedPtr< class SUsdObjectFieldList > PropertiesList;
-	TSharedPtr< class SUsdObjectFieldList > PropertyMetadataPanel;
-	TSharedPtr< class SUsdIntegrationsPanel > IntegrationsPanel;
-	TSharedPtr< class SVariantsList > VariantsList;
-	TSharedPtr< class SUsdReferencesList > ReferencesList;
+	TSharedPtr<class SUsdObjectFieldList> PropertiesList;
+	TSharedPtr<class SUsdObjectFieldList> PropertyMetadataPanel;
+	TSharedPtr<class SUsdIntegrationsPanel> IntegrationsPanel;
+	TSharedPtr<class SVariantsList> VariantsList;
+	TSharedPtr<class SUsdReferencesList> ReferencesList;
 };
 
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK

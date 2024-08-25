@@ -981,12 +981,12 @@ bool FCoreRedirects::ReadRedirectsFromIni(const FString& IniName)
 
 	if (GConfig)
 	{
-		FConfigSection* RedirectSection = GConfig->GetSectionPrivate(TEXT("CoreRedirects"), false, true, IniName);
+		const FConfigSection* RedirectSection = GConfig->GetSection(TEXT("CoreRedirects"), false, IniName);
 		if (RedirectSection)
 		{
 			TArray<FCoreRedirect> NewRedirects;
 
-			for (FConfigSection::TIterator It(*RedirectSection); It; ++It)
+			for (FConfigSection::TConstIterator It(*RedirectSection); It; ++It)
 			{
 				FString OldName, NewName, OverrideClassName;
 
@@ -1099,12 +1099,6 @@ bool FCoreRedirects::AddRedirectList(TArrayView<const FCoreRedirect> Redirects, 
 			|| (!NewRedirect.NewName.HasValidCharacters(NewRedirect.RedirectFlags) && !FPackageName::IsVersePackage(NewRedirect.NewName.PackageName.ToString())))
 		{
 			UE_LOG(LogCoreRedirects, Error, TEXT("AddRedirect(%s) failed to add redirect from %s to %s with invalid characters!"), *SourceString, *NewRedirect.OldName.ToString(), *NewRedirect.NewName.ToString());
-			continue;
-		}
-
-		if (NewRedirect.NewName.PackageName != NewRedirect.OldName.PackageName && NewRedirect.OldName.OuterName != NAME_None)
-		{
-			UE_LOG(LogCoreRedirects, Error, TEXT("AddRedirect(%s) failed to add redirect, cannot modify package from %s to %s while specifying outer!"), *SourceString, *NewRedirect.OldName.ToString(), *NewRedirect.NewName.ToString());
 			continue;
 		}
 
@@ -1939,8 +1933,6 @@ static void RegisterNativeRedirects46(TArray<FCoreRedirect>& Redirects)
 	FUNCTION_REDIRECT("PawnMovementComponent.GetInputVector", "PawnMovementComponent.GetPendingInputVector");
 	FUNCTION_REDIRECT("SceneComponent.AttachTo", "SceneComponent.K2_AttachTo");
 	FUNCTION_REDIRECT("SkyLightComponent.SetBrightness", "SkyLightComponent.SetIntensity");
-
-	PROPERTY_REDIRECT("AnimCurveBase.CurveName", "LastObservedName");
 
 	// 4.6
 

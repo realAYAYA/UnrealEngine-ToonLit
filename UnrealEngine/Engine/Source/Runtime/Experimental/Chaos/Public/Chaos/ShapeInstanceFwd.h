@@ -5,17 +5,14 @@
 #include "Framework/ThreadContextEnum.h"
 #include "Templates/SharedPointer.h"
 #include "Templates/UniquePtr.h"
+#include "Templates/RefCounting.h"
+#include "ImplicitFwd.h"
 #include <type_traits>
 
 // @todo(chaos): use TRefCountPtr rather than TSharedPtr below - it is smaller (one atomic int instead of 2 atomic ints and 2 pointers)
 
 namespace Chaos
 {
-	class FImplicitObject;
-	using FImplicitObjectPtr = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>;
-	using FConstImplicitObjectPtr = TSharedPtr<const FImplicitObject, ESPMode::ThreadSafe>;
-	using FImplicitObjectsArray = TArray<FImplicitObjectPtr>;
-
 	// Legacy names
 	class FPerShapeData;
 	using FShapesArray = TArray<TUniquePtr<FPerShapeData>, TInlineAllocator<1>>;

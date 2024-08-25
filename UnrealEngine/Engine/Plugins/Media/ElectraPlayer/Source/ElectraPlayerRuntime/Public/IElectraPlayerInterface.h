@@ -181,7 +181,7 @@ public:
 		TOptional<int32>			MaxVerticalStreamResolution;
 		TOptional<int32>			MaxBandwidthForStreaming;
 		bool						bDoNotPreload = false;
-		
+
 		TSharedPtr<IElectraPlayerExternalDataReader, ESPMode::ThreadSafe> ExternalDataReader;
 		TSharedPtr<IElectraPlayerDataCache, ESPMode::ThreadSafe> ExternalDataCache;
 	};
@@ -237,6 +237,17 @@ public:
 	virtual void SetPlaybackRange(const FPlaybackRange& InPlaybackRange) = 0;
 	virtual void GetPlaybackRange(FPlaybackRange& OutPlaybackRange) const = 0;
 
+	enum class ETimeRangeType
+	{
+		/** Total absolute time range as defined by the media. */
+		Absolute,
+
+		/** Current time range of the media, set by media internal means or through API calls. */
+		Current
+	};
+	virtual TRange<FTimespan> GetPlaybackRange(ETimeRangeType InRangeToGet) const = 0;
+
+
 	enum class EPlayRateType
 	{
 		// Playback rate with frames being dropped.
@@ -260,7 +271,7 @@ public:
 	virtual bool Seek(const FTimespan& Time) = 0;
 	virtual bool Seek(const FTimespan& Time, const FSeekParam& Param) = 0;
 	virtual void SetFrameAccurateSeekMode(bool bEnableFrameAccuracy) = 0;
-	
+
 	virtual void ModifyOptions(const Electra::FParamDict& InOptionsToSetOrChange, const Electra::FParamDict& InOptionsToClear) = 0;
 
 	struct FAudioTrackFormat

@@ -1,11 +1,24 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "ZenPackageHeader.h"
-#include "Serialization/MemoryReader.h"
+#include "Serialization/ZenPackageHeader.h"
 
+#include "Serialization/MemoryReader.h"
 
 FZenPackageHeader FZenPackageHeader::MakeView(FMemoryView Memory)
 {
+	FString Error;
+	FZenPackageHeader Result = MakeView(Memory, Error);
+	if (!Error.IsEmpty())
+	{
+		UE_LOG(LogStreaming, Fatal, TEXT("%s"), *Error);
+	}
+	return Result;
+}
+
+FZenPackageHeader FZenPackageHeader::MakeView(FMemoryView Memory, FString& OutError)
+{
+	OutError.Reset();
+
 	FZenPackageHeader PackageHeader;
 	const uint8* PackageHeaderDataPtr = reinterpret_cast<const uint8*>(Memory.GetData());
 	const FZenPackageSummary* PackageSummary = reinterpret_cast<const FZenPackageSummary*>(PackageHeaderDataPtr);
@@ -29,6 +42,10 @@ FZenPackageHeader FZenPackageHeader::MakeView(FMemoryView Memory)
 	if (LocalVersioningInfo == nullptr || LocalVersioningInfo->PackageVersion >= EUnrealEngineObjectUE5Version::DATA_RESOURCES)
 	{
 		int64 BulkDataMapSize = 0;
+		uint64 BulkDataPad = 0;
+		PackageHeaderDataReader << BulkDataPad;
+		uint8 PadBytes[sizeof(uint64)] = {};
+		PackageHeaderDataReader.Serialize(PadBytes, BulkDataPad);
 		PackageHeaderDataReader << BulkDataMapSize;
 		const uint8* BulkDataMapData = PackageHeaderDataPtr + sizeof(FZenPackageSummary) + PackageHeaderDataReader.Tell();
 		PackageHeader.BulkDataMap = MakeArrayView(reinterpret_cast<const FBulkDataMapEntry*>(BulkDataMapData), BulkDataMapSize / sizeof(FBulkDataMapEntry));
@@ -51,7 +68,7 @@ FZenPackageHeader FZenPackageHeader::MakeView(FMemoryView Memory)
 
 	if (ExportBundleEntriesCount != PackageHeader.ExportCount * FExportBundleEntry::ExportCommandType_Count)
 	{
-		UE_LOG(LogStreaming, Fatal, TEXT("Corrupt Zen header in package %s"), *PackageHeader.PackageName.ToString());
+		OutError = FString::Printf(TEXT("Corrupt Zen header in package %s"), *PackageHeader.PackageName.ToString());
 		return PackageHeader;
 	}
 

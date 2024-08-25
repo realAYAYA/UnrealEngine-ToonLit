@@ -299,6 +299,8 @@ private:
 	const char *to_storage_qualifiers_glsl(const SPIRVariable &var) override;
 	void replace_illegal_names() override;
 
+	SPIRType::BaseType get_builtin_basetype(spv::BuiltIn builtin, SPIRType::BaseType default_type) override;
+
 	bool is_hlsl_force_storage_buffer_as_uav(ID id) const;
 
 	Options hlsl_options;

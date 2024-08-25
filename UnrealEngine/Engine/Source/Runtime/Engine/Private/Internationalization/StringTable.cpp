@@ -294,7 +294,7 @@ private:
 			int32 DotIndex = INDEX_NONE;
 			if (StringTablePackageName.FindChar(TEXT('.'), DotIndex))
 			{
-				StringTablePackageName.LeftInline(DotIndex, false);
+				StringTablePackageName.LeftInline(DotIndex, EAllowShrinking::No);
 			}
 		}
 

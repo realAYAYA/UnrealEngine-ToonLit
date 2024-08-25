@@ -39,10 +39,10 @@ mu::NodeProjectorPtr GenerateMutableSourceProjector(const UEdGraphPin* Pin, FMut
 			case mu::PROJECTOR_TYPE::PLANAR:
 				ProjectorNode->SetValue(
 					ProjectorType,
-					TypedNodeConst->Value.Position[0], TypedNodeConst->Value.Position[1], TypedNodeConst->Value.Position[2],
-					TypedNodeConst->Value.Direction[0], TypedNodeConst->Value.Direction[1], TypedNodeConst->Value.Direction[2],
-					TypedNodeConst->Value.Up[0], TypedNodeConst->Value.Up[1], TypedNodeConst->Value.Up[2],
-					TypedNodeConst->Value.Scale[0], TypedNodeConst->Value.Scale[1], TypedNodeConst->Value.Scale[2],
+					TypedNodeConst->Value.Position,
+					TypedNodeConst->Value.Direction,
+					TypedNodeConst->Value.Up,
+					TypedNodeConst->Value.Scale,
 					TypedNodeConst->Value.Angle);
 				break;
 			
@@ -54,10 +54,10 @@ mu::NodeProjectorPtr GenerateMutableSourceProjector(const UEdGraphPin* Pin, FMut
 					const float Height = TypedNodeConst->Value.Scale[2];
 					ProjectorNode->SetValue(
 						ProjectorType,
-						TypedNodeConst->Value.Position[0], TypedNodeConst->Value.Position[1], TypedNodeConst->Value.Position[2],
-						-TypedNodeConst->Value.Direction[0], -TypedNodeConst->Value.Direction[1], -TypedNodeConst->Value.Direction[2],
-						-TypedNodeConst->Value.Up[0], -TypedNodeConst->Value.Up[1], -TypedNodeConst->Value.Up[2],
-						-Height, Radius, Radius,
+						TypedNodeConst->Value.Position,
+						-TypedNodeConst->Value.Direction,
+						-TypedNodeConst->Value.Up,
+						FVector3f( -Height, Radius, Radius ),
 						TypedNodeConst->Value.Angle);
 				}
 				break;
@@ -65,10 +65,10 @@ mu::NodeProjectorPtr GenerateMutableSourceProjector(const UEdGraphPin* Pin, FMut
 			case mu::PROJECTOR_TYPE::WRAPPING:
 				ProjectorNode->SetValue(
 					ProjectorType,
-					TypedNodeConst->Value.Position[0], TypedNodeConst->Value.Position[1], TypedNodeConst->Value.Position[2],
-					TypedNodeConst->Value.Direction[0], TypedNodeConst->Value.Direction[1], TypedNodeConst->Value.Direction[2],
-					TypedNodeConst->Value.Up[0], TypedNodeConst->Value.Up[1], TypedNodeConst->Value.Up[2],
-					TypedNodeConst->Value.Scale[0], TypedNodeConst->Value.Scale[1], TypedNodeConst->Value.Scale[2],
+					TypedNodeConst->Value.Position,
+					TypedNodeConst->Value.Direction,
+					TypedNodeConst->Value.Up,
+					TypedNodeConst->Value.Scale,
 					TypedNodeConst->Value.Angle);
 				break;
 			
@@ -85,17 +85,17 @@ mu::NodeProjectorPtr GenerateMutableSourceProjector(const UEdGraphPin* Pin, FMut
 
 		GenerationContext.AddParameterNameUnique(Node, TypedNodeParam->ParameterName);
 
-		ProjectorNode->SetName(StringCast<ANSICHAR>(*TypedNodeParam->ParameterName).Get());
-		ProjectorNode->SetUid(StringCast<ANSICHAR>(*GenerationContext.GetNodeIdUnique(Node).ToString()).Get());
+		ProjectorNode->SetName(TypedNodeParam->ParameterName);
+		ProjectorNode->SetUid(GenerationContext.GetNodeIdUnique(Node).ToString());
 		switch ((int)TypedNodeParam->DefaultValue.ProjectionType)
 		{
 		case 0:
 			ProjectorNode->SetDefaultValue(
 				mu::PROJECTOR_TYPE::PLANAR,
-				TypedNodeParam->DefaultValue.Position[0], TypedNodeParam->DefaultValue.Position[1], TypedNodeParam->DefaultValue.Position[2],
-				TypedNodeParam->DefaultValue.Direction[0], TypedNodeParam->DefaultValue.Direction[1], TypedNodeParam->DefaultValue.Direction[2],
-				TypedNodeParam->DefaultValue.Up[0], TypedNodeParam->DefaultValue.Up[1], TypedNodeParam->DefaultValue.Up[2],
-				TypedNodeParam->DefaultValue.Scale[0], TypedNodeParam->DefaultValue.Scale[1], TypedNodeParam->DefaultValue.Scale[2],
+				TypedNodeParam->DefaultValue.Position,
+				TypedNodeParam->DefaultValue.Direction,
+				TypedNodeParam->DefaultValue.Up,
+				TypedNodeParam->DefaultValue.Scale,
 				TypedNodeParam->DefaultValue.Angle);
 			break;
 
@@ -107,10 +107,10 @@ mu::NodeProjectorPtr GenerateMutableSourceProjector(const UEdGraphPin* Pin, FMut
 			float Height = TypedNodeParam->DefaultValue.Scale[2];
 			ProjectorNode->SetDefaultValue(
 				mu::PROJECTOR_TYPE::CYLINDRICAL,
-				TypedNodeParam->DefaultValue.Position[0], TypedNodeParam->DefaultValue.Position[1], TypedNodeParam->DefaultValue.Position[2],
-				-TypedNodeParam->DefaultValue.Direction[0], -TypedNodeParam->DefaultValue.Direction[1], -TypedNodeParam->DefaultValue.Direction[2],
-				-TypedNodeParam->DefaultValue.Up[0], -TypedNodeParam->DefaultValue.Up[1], -TypedNodeParam->DefaultValue.Up[2],
-				-Height, Radius, Radius,
+				TypedNodeParam->DefaultValue.Position,
+				-TypedNodeParam->DefaultValue.Direction,
+				-TypedNodeParam->DefaultValue.Up,
+				FVector3f( -Height, Radius, Radius ),
 				TypedNodeParam->DefaultValue.Angle);
 			break;
 		}
@@ -118,10 +118,10 @@ mu::NodeProjectorPtr GenerateMutableSourceProjector(const UEdGraphPin* Pin, FMut
 		case 2:
 			ProjectorNode->SetDefaultValue(
 				mu::PROJECTOR_TYPE::WRAPPING,
-				TypedNodeParam->DefaultValue.Position[0], TypedNodeParam->DefaultValue.Position[1], TypedNodeParam->DefaultValue.Position[2],
-				TypedNodeParam->DefaultValue.Direction[0], TypedNodeParam->DefaultValue.Direction[1], TypedNodeParam->DefaultValue.Direction[2],
-				TypedNodeParam->DefaultValue.Up[0], TypedNodeParam->DefaultValue.Up[1], TypedNodeParam->DefaultValue.Up[2],
-				TypedNodeParam->DefaultValue.Scale[0], TypedNodeParam->DefaultValue.Scale[1], TypedNodeParam->DefaultValue.Scale[2],
+				TypedNodeParam->DefaultValue.Position,
+				TypedNodeParam->DefaultValue.Direction,
+				TypedNodeParam->DefaultValue.Up,
+				TypedNodeParam->DefaultValue.Scale,
 				TypedNodeParam->DefaultValue.Angle);
 			break;
 

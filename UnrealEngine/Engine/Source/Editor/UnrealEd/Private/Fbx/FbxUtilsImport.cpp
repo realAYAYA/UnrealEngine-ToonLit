@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "FbxImporter.h"
+#include "Logging/TokenizedMessage.h"
 
 using namespace UnFbx;
 
@@ -10,6 +11,55 @@ FbxAMatrix FFbxDataConverter::JointPostConversionMatrix;
 FbxAMatrix FFbxDataConverter::AxisConversionMatrix;
 FbxAMatrix FFbxDataConverter::AxisConversionMatrixInv;
 
+namespace UE::Fbx::Private
+{
+	void LogFinitErrorOnce()
+	{
+		static bool bLogged = false;
+		if (!bLogged)
+		{
+			bLogged = true;
+			UE_LOG(LogFbx, Error, TEXT("Import mesh have some infinite value in the data."));
+		}
+	}
+
+	void VerifyFiniteValue(float& Value)
+	{
+		if (!FMath::IsFinite(Value))
+		{
+			Value = 0.0f;
+			LogFinitErrorOnce();
+		}
+	}
+
+	void VerifyFiniteValue(FVector& Value)
+	{
+		if (Value.ContainsNaN())
+		{
+			Value.Set(0.0, 0.0, 0.0);
+			LogFinitErrorOnce();
+		}
+	}
+
+	void VerifyFiniteValue(FQuat& Value)
+	{
+		if (Value.ContainsNaN())
+		{
+			Value = FQuat::Identity;
+			LogFinitErrorOnce();
+		}
+	}
+
+	void VerifyFiniteValue(FMatrix& Value)
+	{
+		if (Value.ContainsNaN())
+		{
+			Value.SetIdentity();
+			LogFinitErrorOnce();
+		}
+	}
+} //ns UE::Fbx::Private
+
 FVector FFbxDataConverter::ConvertPos(FbxVector4 Vector)
 {
 	FVector Out;
@@ -17,6 +67,7 @@ FVector FFbxDataConverter::ConvertPos(FbxVector4 Vector)
 	// flip Y, then the right-handed axis system is converted to LHS
 	Out[1] = -Vector[1];
 	Out[2] = Vector[2];
+	UE::Fbx::Private::VerifyFiniteValue(Out);
 	return Out;
 }
 
@@ -28,12 +79,15 @@ FVector FFbxDataConverter::ConvertDir(FbxVector4 Vector)
 	Out[0] = Vector[0];
 	Out[1] = -Vector[1];
 	Out[2] = Vector[2];
+	UE::Fbx::Private::VerifyFiniteValue(Out);
 	return Out;
 }
 
 FRotator FFbxDataConverter::ConvertEuler( FbxDouble3 Euler )
 {
-	return FRotator::MakeFromEuler( FVector( Euler[0], -Euler[1], Euler[2] ) );
+	FVector UnrealEuler(Euler[0], -Euler[1], Euler[2]);
+	UE::Fbx::Private::VerifyFiniteValue(UnrealEuler);
+	return FRotator::MakeFromEuler(UnrealEuler);
 }
 
 
@@ -43,6 +97,7 @@ FVector FFbxDataConverter::ConvertScale(FbxDouble3 Vector)
 	Out[0] = Vector[0];
 	Out[1] = Vector[1];
 	Out[2] = Vector[2];
+	UE::Fbx::Private::VerifyFiniteValue(Out);
 	return Out;
 }
 
@@ -53,6 +108,7 @@ FVector FFbxDataConverter::ConvertScale(FbxVector4 Vector)
 	Out[0] = Vector[0];
 	Out[1] = Vector[1];
 	Out[2] = Vector[2];
+	UE::Fbx::Private::VerifyFiniteValue(Out);
 	return Out;
 }
 
@@ -70,6 +126,7 @@ FVector FFbxDataConverter::ConvertRotationToFVect(FbxQuaternion Quaternion, bool
 	FQuat UnrealQuaternion = ConvertRotToQuat(Quaternion);
 	FVector Euler;
 	Euler = UnrealQuaternion.Euler();
+	UE::Fbx::Private::VerifyFiniteValue(Euler);
 	if (bInvertOrient)
 	{
 		Euler.Y = -Euler.Y;
@@ -88,6 +145,7 @@ FQuat FFbxDataConverter::ConvertRotToQuat(FbxQuaternion Quaternion)
 	UnrealQuat.Y = -Quaternion[1];
 	UnrealQuat.Z = Quaternion[2];
 	UnrealQuat.W = -Quaternion[3];
+	UE::Fbx::Private::VerifyFiniteValue(UnrealQuat);
 	
 	return UnrealQuat;
 }
@@ -99,6 +157,7 @@ float FFbxDataConverter::ConvertDist(FbxDouble Distance)
 {
 	float Out;
 	Out = (float)Distance;
+	UE::Fbx::Private::VerifyFiniteValue(Out);
 	return Out;
 }
 
@@ -139,7 +198,7 @@ FMatrix FFbxDataConverter::ConvertMatrix(const FbxAMatrix& Matrix)
 			UEMatrix.M[i][3] = Row[3];
 		}
 	}
-	
+	UE::Fbx::Private::VerifyFiniteValue(UEMatrix);
 	return UEMatrix;
 }
 

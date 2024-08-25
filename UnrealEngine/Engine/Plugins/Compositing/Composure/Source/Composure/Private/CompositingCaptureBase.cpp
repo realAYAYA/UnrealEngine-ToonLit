@@ -117,10 +117,10 @@ void ACompositingCaptureBase::PostEditChangeProperty(struct FPropertyChangedEven
 {
 	const FName PropertyName = (PropertyChangedEvent.Property != NULL) ? PropertyChangedEvent.Property->GetFName() : NAME_None;
 
-	if (PropertyName == GET_MEMBER_NAME_CHECKED(ACompositingCaptureBase, TargetCameraActor))
+	if (PropertyName == GET_MEMBER_NAME_CHECKED(ACompositingCaptureBase, TargetCameraActorPtr))
 	{
 		// If there is no target camera, remove the last distortion post-process MID from the scene capture
-		if (TargetCameraActor == nullptr)
+		if (TargetCameraActorPtr == nullptr)
 		{
 			if (SceneCaptureComponent2D)
 			{

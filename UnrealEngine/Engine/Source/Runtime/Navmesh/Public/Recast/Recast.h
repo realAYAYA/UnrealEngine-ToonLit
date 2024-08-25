@@ -286,13 +286,25 @@ struct rcConfig
 	/// The distance to erode/shrink the walkable area of the heightfield away from 
 	/// obstructions.  [Limit: >=0] [Units: vx] 
 	int walkableRadius;
+
+	/// Maximum step height in relation to cs and walkableSlopeAngle [Limit: >=0] [Units: wu]
+	rcReal maxStepFromWalkableSlope;
 	
 	/// The maximum allowed length for contour edges along the border of the mesh. [Limit: >=0] [Units: vx] 
 	int maxEdgeLen;
+
+	/// Maximum vertical deviation between raw contour points to allow merging points. [Limit: >=0] [Units: vx]
+	/// Use a low value (2-5) to allow more precise contours (also see SimplificationElevationFactor).
+	/// Use very high value to deactivate (Recast behavior).
+	int maxVerticalMergeError;	// UE
 	
 	/// The maximum distance a simplified contour's border edges should deviate 
 	/// the original raw contour. [Limit: >=0] [Units: wu]
 	rcReal maxSimplificationError;
+
+	/// When simplifying contours, how much is the vertical error taken into account when comparing with MaxSimplificationError. [Limit: >=0]
+	/// Use 0 to deactivate (Recast behavior), use 1 as a typical value.
+	rcReal simplificationElevationRatio;	// UE
 	
 	/// The minimum number of cells allowed to form isolated island areas. [Limit: >=0] [Units: vx] 
 	int minRegionArea;
@@ -687,6 +699,14 @@ enum rcRasterizationFlags
 	RC_PROJECT_TO_BOTTOM = 1 << 0,		///< Will create spans from the triangle surface to the bottom of the heightfield
 };
 
+// UE
+enum rcNeighborSlopeFilterMode
+{
+	RC_SLOPE_FILTER_RECAST,							// Use walkableClimb value to filter
+	RC_SLOPE_FILTER_NONE,							// Skip slope filtering
+	RC_SLOPE_FILTER_USE_HEIGHT_FROM_WALKABLE_SLOPE	// Use maximum step height computed from walkableSlopeAngle
+};
+
 /// Applied to the region id field of contour vertices in order to extract the region id.
 /// The region id field of a vertex may have several flags applied to it.  So the
 /// fields value can't be used directly.
@@ -1078,29 +1098,31 @@ NAVMESH_API void rcFilterLowHangingWalkableObstacles(rcContext* ctx, const int w
 
 /// Marks spans that are ledges as not-walkable, by a number of y coords at a time.
 ///  @ingroup recast
-///  @param[in,out]	ctx				The build context to use during the operation.
-///  @param[in]		walkableHeight	Minimum floor to 'ceiling' height that will still allow the floor area to 
-///  								be considered walkable. [Limit: >= 3] [Units: vx]
-///  @param[in]		walkableClimb	Maximum ledge height that is considered to still be traversable. 
-///  								[Limit: >=0] [Units: vx]
-///  @param[in]		filterNeighborSlope If set, a span having neighbors not within the walkable climb range will be marked as non walkable. //UE
-///  @param[in,out]	solid			A fully built heightfield.  (All spans have been added.)
-///  @param[in]		yStart			y coord to start at
-///  @param[in]		maxYProcess	    Max y coords to process (yStart + maxYProcess can be more than solid.height and will be capped to solid.height)
-NAVMESH_API void rcFilterLedgeSpans(rcContext* ctx, const int walkableHeight,
-						const int walkableClimb, const bool filterNeighborSlope, const int yStart, const int maxYProcess, rcHeightfield& solid); //UE
+///  @param[in,out]	ctx							The build context to use during the operation.
+///  @param[in]		walkableHeight				Minimum floor to 'ceiling' height that will still allow the floor area to 
+///  											be considered walkable. [Limit: >= 3] [Units: vx]
+///  @param[in]		walkableClimb				Maximum ledge height that is considered to still be traversable. [Limit: >=0] [Units: vx]
+///  @param[in]		neighborSlopeFilterMode		Change the way neighbors slope filtering is done. //UE
+///  @param[in]		maxStepFromWalkableSlope	Maximum step height in relation to cs and the walkable angle. [Limit: >= 0] [Units: wu] //UE
+///  @param[in]		ch							Cell height. [Limit: >= 0] [Units: wu] //UE
+///  @param[in,out]	solid						A fully built heightfield.  (All spans have been added.)
+///  @param[in]		yStart						y coord to start at
+///  @param[in]		maxYProcess					Max y coords to process (yStart + maxYProcess can be more than solid.height and will be capped to solid.height)
+NAVMESH_API void rcFilterLedgeSpans(rcContext* ctx, const int walkableHeight, const int walkableClimb,
+					const rcNeighborSlopeFilterMode neighborSlopeFilterMode, const rcReal maxStepFromWalkableSlope, const rcReal ch, const int yStart, const int maxYProcess, rcHeightfield& solid); //UE
 
 /// Marks spans that are ledges as not-walkable. 
 ///  @ingroup recast
-///  @param[in,out]	ctx				The build context to use during the operation.
-///  @param[in]		walkableHeight	Minimum floor to 'ceiling' height that will still allow the floor area to 
-///  								be considered walkable. [Limit: >= 3] [Units: vx]
-///  @param[in]		walkableClimb	Maximum ledge height that is considered to still be traversable. 
-///  								[Limit: >=0] [Units: vx]
-///  @param[in]		filterNeighborSlope If set, a span having neighbors not within the walkable climb range will be marked as non walkable. //UE
-///  @param[in,out]	solid			A fully built heightfield.  (All spans have been added.)
-NAVMESH_API void rcFilterLedgeSpans(rcContext* ctx, const int walkableHeight,
-						const int walkableClimb, const bool filterNeighborSlope, rcHeightfield& solid); //UE
+///  @param[in,out]	ctx							The build context to use during the operation.
+///  @param[in]		walkableHeight				Minimum floor to 'ceiling' height that will still allow the floor area to 
+///  											be considered walkable. [Limit: >= 3] [Units: vx]
+///  @param[in]		walkableClimb				Maximum ledge height that is considered to still be traversable. [Limit: >=0] [Units: vx] 
+///  @param[in]		neighborSlopeFilterMode		Change the way neighbors slope filtering is done. //UE
+///  @param[in]		maxStepFromWalkableSlope	Maximum step height in relation to cs and the walkable angle. [Limit: >= 0] [Units: wu] //UE
+///  @param[in]		ch							Cell height. [Limit: >= 0] [Units: wu] //UE
+///  @param[in,out]	solid						A fully built heightfield.  (All spans have been added.)
+NAVMESH_API void rcFilterLedgeSpans(rcContext* ctx, const int walkableHeight, const int walkableClimb,
+					const rcNeighborSlopeFilterMode neighborSlopeFilterMode, const rcReal maxStepFromWalkableSlope, const rcReal ch, rcHeightfield& solid); //UE
 
 /// Marks walkable spans as not walkable if the clearance above the span is less than the specified height. 
 ///  @ingroup recast

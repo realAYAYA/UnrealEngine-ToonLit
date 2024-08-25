@@ -186,7 +186,12 @@ UClass* ULoudnessNRT::GetSupportedClass() const
 {
 	return ULoudnessNRT::StaticClass();
 }
-#endif
+
+bool ULoudnessNRT::ShouldEventTriggerAnalysis(FPropertyChangedEvent& PropertyChangeEvent)
+{
+	return Settings != nullptr && Super::ShouldEventTriggerAnalysis(PropertyChangeEvent);
+}
+#endif // WITH_EDITOR
 
 FName ULoudnessNRT::GetAnalyzerNRTFactoryName() const
 {

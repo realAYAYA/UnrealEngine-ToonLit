@@ -10,7 +10,7 @@
 #include "SceneRendering.h"
 #include "ScenePrivate.h"
 #include "PixelShaderUtils.h"
-#include "Strata/Strata.h"
+#include "Substrate/Substrate.h"
 
 static TAutoConsoleVariable<int32> CVarShadingEnergyConservation(
 	TEXT("r.Shading.EnergyConservation"),
@@ -46,12 +46,12 @@ static TAutoConsoleVariable<int32> CVarShadingFurnaceTest_TableFormat(
 	TEXT("Energy conservation table format 0: 16bits, 1: 32bits."),
 	ECVF_RenderThreadSafe);
 
-// Transition render settings that will disapear when strata gets enabled
+// Transition render settings that will disapear when Substrate gets enabled
 
 static TAutoConsoleVariable<int32> CVarMaterialEnergyConservation(
 	TEXT("r.Material.EnergyConservation"),
 	0,
-	TEXT("Enable energy conservation for legacy materials (project settings, read only). Please note that when Strata is enabled, energy conservation is forced to enabled."),
+	TEXT("Enable energy conservation for legacy materials (project settings, read only). Please note that when Substrate is enabled, energy conservation is forced to enabled."),
 	ECVF_ReadOnly | ECVF_RenderThreadSafe);
 
 #define SHADING_ENERGY_CONSERVATION_TABLE_RESOLUTION 32
@@ -106,7 +106,7 @@ class FShadingFurnaceTestPassPS : public FGlobalShader
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, ViewUniformBuffer)
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneTextureUniformParameters, SceneTexturesStruct)
 		SHADER_PARAMETER(uint32, NumSamplesPerSet)
 		SHADER_PARAMETER_STRUCT_INCLUDE(ShaderPrint::FShaderParameters, ShaderPrintUniformBuffer)
@@ -144,9 +144,9 @@ static void AddShadingFurnacePass(
 	Parameters->SceneTexturesStruct				= SceneTexturesUniformBuffer;
 	Parameters->NumSamplesPerSet				= FMath::Clamp(CVarShadingFurnaceTest_SampleCount.GetValueOnAnyThread(), 16, 2048);
 	Parameters->RenderTargets[0]				= FRenderTargetBinding(OutTexture, ERenderTargetLoadAction::ELoad);
-	if (Strata::IsStrataEnabled())
+	if (Substrate::IsSubstrateEnabled())
 	{
-		Parameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
+		Parameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 	}
 
 	ShaderPrint::SetParameters(GraphBuilder, View.ShaderPrintData, Parameters->ShaderPrintUniformBuffer);
@@ -224,10 +224,10 @@ void Init(FRDGBuilder& GraphBuilder, FViewInfo& View)
 	const bool bIsEnergyConservationEnabled = CVarShadingEnergyConservation.GetValueOnRenderThread() > 0;
 	const bool bIsEnergyPreservationEnabled = CVarShadingEnergyConservation_Preservation.GetValueOnRenderThread() > 0;	
 
-	// Build/bind table if energy conservation is enabled or if strata is enabled in order to have 
+	// Build/bind table if energy conservation is enabled or if Substrate is enabled in order to have 
 	// the correct tables built & bound. Even if we are not using energy conservation, we want to 
 	// have access to directional albedo information for env. lighting for instance)
-	const bool bBindEnergyData = (View.ViewState != nullptr) && (bMaterialEnergyConservationEnabled || Strata::IsStrataEnabled() || (View.Family->EngineShowFlags.PathTracing && RHI_RAYTRACING)) && (bIsEnergyPreservationEnabled || bIsEnergyConservationEnabled);
+	const bool bBindEnergyData = (View.ViewState != nullptr) && (bMaterialEnergyConservationEnabled || Substrate::IsSubstrateEnabled() || (View.Family->EngineShowFlags.PathTracing && RHI_RAYTRACING)) && (bIsEnergyPreservationEnabled || bIsEnergyConservationEnabled);
 	if (bBindEnergyData)
 	{
 		// Change this to true in order to regenerate the energy tables, and manually copy the coefficients into ShadingEnergyConservationData.h
@@ -337,7 +337,7 @@ void Init(FRDGBuilder& GraphBuilder, FViewInfo& View)
 
 				ShadingEnergyConservationData::LockCopyTexture2D(GraphBuilder.RHICmdList, View.ViewState->ShadingEnergyConservationData.GGXSpecEnergyTexture->GetRHI(),  ShadingEnergyConservationData::GGXSpecValues, 2);
 				ShadingEnergyConservationData::LockCopyTexture3D(GraphBuilder.RHICmdList, View.ViewState->ShadingEnergyConservationData.GGXGlassEnergyTexture->GetRHI(), ShadingEnergyConservationData::GGXGlassValues, 2);
-				ShadingEnergyConservationData::LockCopyTexture2D(GraphBuilder.RHICmdList, View.ViewState->ShadingEnergyConservationData.ClothEnergyTexture->GetRHI(),    Strata::IsStrataEnabled() ? ShadingEnergyConservationData::StrataClothSpecValues : ShadingEnergyConservationData::ClothSpecValues, 2);
+				ShadingEnergyConservationData::LockCopyTexture2D(GraphBuilder.RHICmdList, View.ViewState->ShadingEnergyConservationData.ClothEnergyTexture->GetRHI(),    Substrate::IsSubstrateEnabled() ? ShadingEnergyConservationData::SubstrateClothSpecValues : ShadingEnergyConservationData::ClothSpecValues, 2);
 				ShadingEnergyConservationData::LockCopyTexture2D(GraphBuilder.RHICmdList, View.ViewState->ShadingEnergyConservationData.DiffuseEnergyTexture->GetRHI(),  ShadingEnergyConservationData::DiffuseValues, 1);
 
 				GGXSpecEnergyTexture  = GraphBuilder.RegisterExternalTexture(View.ViewState->ShadingEnergyConservationData.GGXSpecEnergyTexture);

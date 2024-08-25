@@ -176,15 +176,20 @@ public:
 		FKey MinKey = MakeKey(InBox.Min);
 		FKey MaxKey = MakeKey(InBox.Max);
 
-		int64 CellCount = (MaxKey.Z - MinKey.Z + 1) * (MaxKey.Y - MinKey.Y + 1) * (MaxKey.X - MinKey.X + 1);
+		// compute in doubles to avoid overflow issues (queries using WORLD_MAX bounds can produce very large numbers...)
+		double CellsX = static_cast<double>((MaxKey.X - MinKey.X + 1));
+		double CellsY = static_cast<double>((MaxKey.Y - MinKey.Y + 1));
+		double CellsZ = static_cast<double>((MaxKey.Z - MinKey.Z + 1));
+		double CellCount = CellsX * CellsY * CellsZ;
 
 		// The idea here is to decide when it is faster to just check every populated cell.
 		// The actual ideal threshold will depend on the exact state of the cells, but we just pick
 		// some arbitrary ratio where we switch to checking populated cells over potential cells within range.
 		// In practice the exact threshold is not that important; we just want to know if there are different orders of magnitude involved.
 		// (i.e. it is faster to check 32 populated cells than 3,000,000,000 potential cells...)
-		constexpr int32 RelativeCostOfCheckingPopulatedCells = 2;
-		if (CellCount > RelativeCostOfCheckingPopulatedCells * CellMap.Num())
+		constexpr double RelativeCostOfCheckingPopulatedCells = 2.0;
+		double Threshold = RelativeCostOfCheckingPopulatedCells * CellMap.Num();
+		if (CellCount > Threshold)
 		{
 			// check every populated cell
 			for (auto& Pair : CellMap)

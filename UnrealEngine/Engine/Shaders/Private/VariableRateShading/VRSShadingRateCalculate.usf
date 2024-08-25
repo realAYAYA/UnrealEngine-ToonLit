@@ -9,67 +9,50 @@ float EdgeThreshold;
 float ConservativeEdgeThreshold;
 
 Texture2D<float> LuminanceTexture;
-RWTexture2D<uint> VariableRateShadingTexture;
+RWTexture2D<uint> HardwareShadingRateImage;
+RWTexture2D<uint> SoftwareShadingRateImage;
 
-#define USE_WAVE_OP COMPILER_SUPPORTS_WAVE_BIT_ORAND
-
-// Per the D3D spec: https://microsoft.github.io/DirectX-Specs/d3d/VariableRateShading.htm
-// coarse rate shading is guaranteed to always stay within VRS tile boundaries so no
-// need to check edges on tile borders 
-#define SKIP_EDGE_DETECTION_ON_BORDERS 1
-
-#if COMPUTE_SHADER
-
-#if !USE_WAVE_OP
-groupshared uint GroupShadingRate;
-#endif 
-
-groupshared half LumaMatrix[THREADGROUP_SIZEX][THREADGROUP_SIZEY];
-
-#endif /* COMPUTE_SHADER */
+groupshared half LumaMatrix[THREADGROUP_SIZE_XY][THREADGROUP_SIZE_XY];
+groupshared uint TileSupportedShadingRate;
 
 #define SOBEL_DIMENSION 3
+#define USE_WAVE_OP COMPILER_SUPPORTS_WAVE_BIT_ORAND
 
-#if COMPUTE_SHADER
 void CalculateShadingRateImageInner(
 	uint2 DispatchThreadId,
-	uint2 SwizzledGroupThreadId,
 	uint2 GroupThreadId,
-	uint2 GroupId,
-	uint GroupIndex,
-	float LuminanceValue)
+	uint2 GroupId)
 {
-	float2 Dimensions = ViewRect.zw - ViewRect.xy;
+	const uint VRSBitMask = D3D12_SHADING_RATE_2X2 | (D3D12_SHADING_RATE_2X2 << CONSERVATIVE_SHADING_RATE_SHIFT);
+	const uint SobelWidth = SOBEL_DIMENSION / 2;
 
-	uint VRSBitMask = D3D12_SHADING_RATE_2X2 | (D3D12_SHADING_RATE_2X2 << CONSERVATIVE_SHADING_RATE_SHIFT);
-#if !USE_WAVE_OP
-	if (GroupThreadId.x == 1 && GroupThreadId.y == 1)
-	{
-		GroupShadingRate = VRSBitMask;
-	}
+	uint2 LuminanceTextureCoord = uint2(int(ViewRect.x + DispatchThreadId.x), int(ViewRect.y + DispatchThreadId.y));
+
+#if !OUTPUT_SOFTWARE_IMAGE
+	LumaMatrix[GroupThreadId.y][GroupThreadId.x] = LuminanceTexture[LuminanceTextureCoord];
 #endif
 
-	LumaMatrix[SwizzledGroupThreadId.y][SwizzledGroupThreadId.x] = LuminanceValue;
-
+	TileSupportedShadingRate = VRSBitMask;
 	GroupMemoryBarrierWithGroupSync();
-	uint UnsupportedShadingRate = 0;
-
-	// Don't bother doing edge detection on anything on the texture borders
-	bool InvalidThread = 
-		((float)DispatchThreadId.x >= Dimensions.x - 1 ||
-		(float)DispatchThreadId.y >= Dimensions.y - 1 ||
-#if SKIP_EDGE_DETECTION_ON_BORDERS
-		GroupThreadId.x == THREADGROUP_SIZEX - 1 ||
-		GroupThreadId.y == THREADGROUP_SIZEY - 1 ||
+	
+	// Exclude pixels outside our ViewRect
+	float2 Dimensions = ViewRect.zw - ViewRect.xy;
+	bool InvalidThread = (
+#if !OUTPUT_SOFTWARE_IMAGE
+		// When in HW only mode, we only read from the groupshared LumaMatrix, and so skip sobel operations on pixels at the edge of a group
+		GroupThreadId.x == THREADGROUP_SIZE_XY - 1 ||
+		GroupThreadId.y == THREADGROUP_SIZE_XY - 1 ||
 		GroupThreadId.x == 0 ||
-		GroupThreadId.y == 0);
-#else
-		DispatchThreadId.x == 0 ||
-		DispatchThreadId.y == 0);
+		GroupThreadId.y == 0 ||
 #endif
+		(float)DispatchThreadId.x >= Dimensions.x - 1 ||
+		(float)DispatchThreadId.y >= Dimensions.y - 1);
 
-	int SobelWidth = SOBEL_DIMENSION / 2;
+	// If Sobel X is over a certain threshold, we rule out 2x1 rates. If Sobel Y is over that threshold, we rule out 1x2 rates.
+	// Later, taking the inverse will give us the roughest supported rate for the current lane.
+	uint UnsupportedShadingRate = 0x0;
 
+	if(!InvalidThread)
 	{
 		float SobelXSum = 0.0;
 		float SobelX[SOBEL_DIMENSION][SOBEL_DIMENSION] =
@@ -78,14 +61,32 @@ void CalculateShadingRateImageInner(
 			{-2.0, 0.0, 2.0},
 			{-1.0, 0.0, 1.0}
 		};
+
+		float SobelYSum = 0.0;
+		float SobelY[SOBEL_DIMENSION][SOBEL_DIMENSION] =
+		{
+			{-1.0, -2.0, -1.0},
+			{ 0.0,  0.0,  0.0},
+			{ 1.0,  2.0,  1.0}
+		};
+
+
 		for (int x = 0; x < SOBEL_DIMENSION; x++)
 		{
 			for (int y = 0; y < SOBEL_DIMENSION; y++)
 			{
-				int2 LumaCoord = GroupThreadId + int2(x - SobelWidth, y - SobelWidth);
-				SobelXSum += SobelX[y][x] * LumaMatrix[LumaCoord.y][LumaCoord.x];
+#if OUTPUT_SOFTWARE_IMAGE
+				uint2 LumaCoord = LuminanceTextureCoord + int2(x - SobelWidth, y - SobelWidth);
+				float LumaValue = LuminanceTexture[LumaCoord];
+#else			
+				uint2 LumaCoord = GroupThreadId + int2(x - SobelWidth, y - SobelWidth);
+				float LumaValue = LumaMatrix[LumaCoord.y][LumaCoord.x];
+#endif
+				SobelXSum += SobelX[y][x] * LumaValue;
+				SobelYSum += SobelY[y][x] * LumaValue;
 			}
 		}
+
 		if (abs(SobelXSum) > EdgeThreshold)
 		{
 			UnsupportedShadingRate |= D3D12_SHADING_RATE_2X1;
@@ -95,24 +96,7 @@ void CalculateShadingRateImageInner(
 		{
 			UnsupportedShadingRate |= (D3D12_SHADING_RATE_2X1 << CONSERVATIVE_SHADING_RATE_SHIFT);
 		}
-	}
 
-	{
-		float SobelYSum = 0.0;
-		float SobelY[SOBEL_DIMENSION][SOBEL_DIMENSION] =
-		{
-			{-1.0, -2.0, -1.0},
-			{ 0.0,  0.0,  0.0},
-			{ 1.0,  2.0,  1.0}
-		};
-		for (int x = 0; x < SOBEL_DIMENSION; x++)
-		{
-			for (int y = 0; y < SOBEL_DIMENSION; y++)
-			{
-				int2 LumaCoord = GroupThreadId + int2(x - SobelWidth, y - SobelWidth);
-				SobelYSum += SobelY[y][x] * LumaMatrix[LumaCoord.y][LumaCoord.x];
-			}
-		}
 		if (abs(SobelYSum) > EdgeThreshold)
 		{
 			UnsupportedShadingRate |= D3D12_SHADING_RATE_1X2;
@@ -124,50 +108,105 @@ void CalculateShadingRateImageInner(
 		}
 	}
 
-	const float2 VRSTileSize = float2(THREADGROUP_SIZEX, THREADGROUP_SIZEY);
-	uint2 GroupOffset = ceil(ViewRect.xy / VRSTileSize);
+#if OUTPUT_SOFTWARE_IMAGE
+	uint QuadSupportedShadingRate = ~UnsupportedShadingRate;
+
 #if USE_WAVE_OP
-	if (InvalidThread)
-	{
-		UnsupportedShadingRate = 0;
-	}
+	QuadSupportedShadingRate &= QuadReadAcrossX(QuadSupportedShadingRate);
+	QuadSupportedShadingRate &= QuadReadAcrossY(QuadSupportedShadingRate);
+#endif
 
-	int WaveSupportedShadingRate = WaveActiveBitAnd(~UnsupportedShadingRate);
-	if (GroupThreadId.x == 1 && GroupThreadId.y == 1)
+	if (GroupThreadId.x % 2 == 0 && GroupThreadId.y % 2 == 0)
 	{
-		VariableRateShadingTexture[GroupId.xy + GroupOffset] = VRSBitMask & WaveSupportedShadingRate;
+		// Software VRS always uses a 2x2 tile size
+		SoftwareShadingRateImage[DispatchThreadId.xy >> 1] = VRSBitMask & QuadSupportedShadingRate;
 	}
-#else
-	uint unused;
-	if(!InvalidThread)
-	{
-		InterlockedAnd(GroupShadingRate, ~UnsupportedShadingRate, unused);
-	}
+#endif
 
+#if OUTPUT_HARDWARE_IMAGE
+	// Tile size may exceed wave size (and always will for 16x16 tiles), so WaveActiveBitAnd is insufficient
+	uint Unused;
+	InterlockedAnd(TileSupportedShadingRate, ~UnsupportedShadingRate, Unused);
 	GroupMemoryBarrierWithGroupSync();
+
 	if (GroupThreadId.x == 1 && GroupThreadId.y == 1)
 	{
-		VariableRateShadingTexture[GroupId.xy + GroupOffset] = GroupShadingRate;
+		// Generation is always done in one pass for a view family, so no need to account for stereo offsets
+		HardwareShadingRateImage[GroupId.xy] = VRSBitMask & TileSupportedShadingRate;
 	}
 #endif
 }
 
-[numthreads(THREADGROUP_SIZEX, THREADGROUP_SIZEY, 1)]
+
+
+uint2 LinearToSwizzled(uint LinearIndex)
+{
+	// Just like pixel shaders, compute 2x2 CS quads from thread index so we can leverage the 4 lane cross bar.
+	// [0 1][2 3] -> [0 1][4 5]
+	// [4 5][6 7] -> [2 3][6 7]
+
+	// All quads internally have this index order:
+	//  0	1
+	//	2	3
+
+	// Ordering of 8x8 group quads (each index represents one four-lane quad)
+	//	0	2	4	6
+	//	1	3	5	7
+	//	8	10	12	14
+	//	9	11	13	15
+
+	// Ordering of 16x16 group quads (rectangular)
+	//  0	8	16	24	32	40	48	56
+	//  1	9	17	25	33	41	49	57
+	//  2	10	18	26	34	42	50	58
+	//  3	11	19	27	35	43	51	59
+	//  4	12	20	28	36	44	52	60
+	//  5	13	21	29	37	45	53	61
+	//  6	14	22	30	38	46	54	62
+	//  7	15	23	31	39	47	55	63
+
+#if THREADGROUP_SIZE_XY == 8
+	// Quads organized in squares (shift Y, then X, then X, then Y)
+	// Original index has bits 5-4-3-2-1-0
+	// SwizzleX = 4-3-0
+	// SwizzleY = 5-2-1
+	const uint SwizzleX = BitFieldInsertU32(BitFieldMaskU32(1u, 0u), LinearIndex, BitFieldExtractU32(LinearIndex, 3u, 2u));
+	const uint SwizzleY = BitFieldInsertU32(BitFieldMaskU32(2u, 0u), BitFieldExtractU32(LinearIndex, 2u, 1u), BitFieldExtractU32(LinearIndex, 3u, 3u));
+#else
+	// Quads go down, then right
+	// Original index has bits 7-6-5-4-3-2-1-0
+	// SwizzleX = 7-6-5-0
+	// SwizzleY = 4-3-2-1
+	const uint SwizzleX =  BitFieldInsertU32(BitFieldMaskU32(1u, 0u), LinearIndex, BitFieldExtractU32(LinearIndex, 4u, 4u));
+	const uint SwizzleY =  BitFieldExtractU32(LinearIndex, 4u, 1u);
+#endif
+	
+	return uint2(SwizzleX, SwizzleY);
+}
+
+
+
+[numthreads(THREADGROUP_SIZE_XY, THREADGROUP_SIZE_XY, 1)]
 void CalculateShadingRateImage(
 	uint3 DispatchThreadId : SV_DispatchThreadID,
 	uint3 GroupThreadId : SV_GroupThreadID,
 	uint3 GroupId : SV_GroupID,
 	uint GroupIndex : SV_GroupIndex)
 {
-	int2 TextureCoord = int2(int(ViewRect.x + DispatchThreadId.x), int(ViewRect.y + DispatchThreadId.y));
+#if OUTPUT_SOFTWARE_IMAGE
+	// Remap lanes so that 4 adjacent lanes (e.g. 0,1,2,3) correspond to a pixel quad in the luma texture
+	// Required to use QuadReadAcross functions
+	uint2 RemappedGroupThreadId = LinearToSwizzled(GroupIndex);
+	uint2 RemappeddDispatchThreadId = GroupId.xy * uint2(THREADGROUP_SIZE_XY, THREADGROUP_SIZE_XY) + RemappedGroupThreadId;
 
 	CalculateShadingRateImageInner(
+		RemappeddDispatchThreadId, 
+		RemappedGroupThreadId,
+		GroupId.xy);
+#else
+	CalculateShadingRateImageInner(
 		DispatchThreadId.xy, 
-		GroupThreadId.xy, 
-		GroupThreadId.xy, 
-		GroupId, 
-		GroupIndex,
-		LuminanceTexture[TextureCoord]);
+		GroupThreadId.xy,
+		GroupId.xy);
+#endif
 }
-
-#endif /* COMPUTE_SHADER */

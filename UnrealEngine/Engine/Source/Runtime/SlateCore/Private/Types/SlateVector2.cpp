@@ -38,21 +38,21 @@ bool FDeprecateSlateVector2D::Serialize(FStructuredArchive::FSlot Slot)
 
 bool FDeprecateSlateVector2D::SerializeFromMismatchedTag(const struct FPropertyTag& Tag, FStructuredArchive::FSlot Slot)
 {
-	if (Tag.StructName == NAME_Vector2d)
+	if (Tag.GetType().IsStruct(NAME_Vector2d))
 	{
 		FVector2d OldVector;
 		Slot << OldVector;
 		*this = UE::Slate::CastToVector2f(OldVector);
 		return true;
 	}
-	else if (Tag.StructName == NAME_Vector2f)
+	else if (Tag.GetType().IsStruct(NAME_Vector2f))
 	{
 		FVector2f OldVector;
 		Slot << OldVector;
 		*this = OldVector;
 		return true;
 	}
-	else if (Tag.StructName == NAME_Vector2D)
+	else if (Tag.GetType().IsStruct(NAME_Vector2D))
 	{
 		if (Slot.GetUnderlyingArchive().UEVer() < EUnrealEngineObjectUE5Version::LARGE_WORLD_COORDINATES)
 		{

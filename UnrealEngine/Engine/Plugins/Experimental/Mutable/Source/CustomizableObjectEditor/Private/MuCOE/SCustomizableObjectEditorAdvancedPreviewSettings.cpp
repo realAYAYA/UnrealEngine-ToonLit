@@ -415,7 +415,7 @@ SCustomizableObjectEditorAdvancedPreviewSettings::SCustomizableObjectEditorAdvan
 void SCustomizableObjectEditorAdvancedPreviewSettings::Construct(const FArguments& InArgs, const TSharedRef<FAdvancedPreviewScene>& InPreviewScene)
 {
 	SAdvancedPreviewDetailsTab::FArguments ParentArgs;
-	ParentArgs.AdditionalSettings( InArgs._AdditionalSettings );
+	ParentArgs.AdditionalSettings( InArgs._CustomSettings );
 	SAdvancedPreviewDetailsTab::Construct(ParentArgs, InPreviewScene);
 
 	//SkyMaterial = nullptr;

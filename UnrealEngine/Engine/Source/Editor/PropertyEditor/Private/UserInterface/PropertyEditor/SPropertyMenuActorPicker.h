@@ -15,10 +15,12 @@ public:
 	SLATE_BEGIN_ARGS( SPropertyMenuActorPicker )
 		: _InitialActor(NULL)
 		, _AllowClear(true)
+		, _AllowPickingLevelInstanceContent(false)
 		, _ActorFilter()
 	{}
 		SLATE_ARGUMENT( AActor*, InitialActor )
 		SLATE_ARGUMENT( bool, AllowClear )
+		SLATE_ARGUMENT( bool, AllowPickingLevelInstanceContent )
 		SLATE_ARGUMENT( FOnShouldFilterActor, ActorFilter )
 		SLATE_EVENT( FOnActorSelected, OnSet )
 		SLATE_EVENT( FSimpleDelegate, OnClose )
@@ -81,6 +83,9 @@ private:
 
 	/** Whether the asset can be 'None' in this case */
 	bool bAllowClear;
+
+	/** Whether we allow picking actors inside level instances */
+	bool bAllowPickingLevelInstanceContent;
 
 	/** Delegate used to test whether an actor should be displayed or not */
 	FOnShouldFilterActor ActorFilter;

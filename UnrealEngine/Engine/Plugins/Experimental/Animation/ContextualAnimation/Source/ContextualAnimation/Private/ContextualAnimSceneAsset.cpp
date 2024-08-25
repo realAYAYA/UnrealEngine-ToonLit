@@ -421,7 +421,6 @@ const FContextualAnimTrack* FContextualAnimSceneSection::FindFirstAnimTrackForRo
 UContextualAnimSceneAsset::UContextualAnimSceneAsset(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
-	bDisableCollisionBetweenActors = true;
 	SampleRate = 15;
 }
 
@@ -890,6 +889,20 @@ void UContextualAnimSceneAsset::GetAlignmentPointsForSecondaryRoleConsideringSel
 			}
 		}
 	}
+}
+
+const TArray<TEnumAsByte<ECollisionChannel>>& UContextualAnimSceneAsset::GetCollisionChannelsToIgnoreForRole(FName Role) const
+{
+	if (CollisionBehavior == EContextualAnimCollisionBehavior::IgnoreChannels)
+	{
+		if (const FContextualAnimIgnoreChannelsParam* Param = CollisionChannelsToIgnoreParams.FindByPredicate([Role](const FContextualAnimIgnoreChannelsParam& Item){ return Item.Role == Role; }))
+		{
+			return Param->Channels;
+		}
+	}
+
+	static const TArray<TEnumAsByte<ECollisionChannel>> EmptyArray;
+	return EmptyArray;
 }
 
 // Blueprint Interface

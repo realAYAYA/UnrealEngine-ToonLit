@@ -97,6 +97,6 @@ protected:
 	TObjectPtr<const ULyraPawnData> PawnData;
 
 	/** Pointer to the ability system component that is cached for convenience. */
-	UPROPERTY()
+	UPROPERTY(Transient)
 	TObjectPtr<ULyraAbilitySystemComponent> AbilitySystemComponent;
 };

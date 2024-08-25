@@ -146,7 +146,7 @@ void UStatePerObjectConfig::RegisterStateConfig(const TArray<FString>& StateName
 			}
 			else
 			{
-				OutStates.RemoveAt(OutStates.Num()-1, 1, false);
+				OutStates.RemoveAt(OutStates.Num()-1, 1, EAllowShrinking::No);
 
 				UE_LOG(LogNetCore, Warning, TEXT("StatePerObjectConfig could not load defaults or ini section, removing: %s"), CurSectionStr);
 			}

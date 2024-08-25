@@ -108,8 +108,10 @@ struct FExecution_SingleValidProcessor : FExecutionTestBase
 		FMassProcessingContext ProcessingContext(EntityManager, DeltaSeconds);
 		UMassTestProcessorBase* Processor = NewObject<UMassTestProcessorBase>();
 		check(Processor);
+		// need to set up some requirements to make EntityQuery valid
+		Processor->EntityQuery.AddRequirement<FTestFragment_Float>(EMassFragmentAccess::ReadOnly);
 
-		// nothing should break. The actual result of processing is getting tested in MassProcessorTests.cpp
+		// nothing should break. The actual result of processing is getting tested in MassProcessorTest.cpp
 		UE::Mass::Executor::Run(*Processor, ProcessingContext);
 		return true;
 	}
@@ -149,6 +151,8 @@ struct FExecution_Sparse : FEntityTestBase
 		FMassProcessingContext ProcessingContext(*EntityManager, DeltaSeconds);
 		UMassTestProcessorBase* Processor = NewObject<UMassTestProcessorBase>();
 		check(Processor);
+		// need to set up some requirements to make EntityQuery valid
+		Processor->EntityQuery.AddRequirement<FTestFragment_Float>(EMassFragmentAccess::ReadOnly);
 
 		FMassRuntimePipeline Pipeline;
 		{
@@ -158,7 +162,7 @@ struct FExecution_Sparse : FEntityTestBase
 		}
 
 		FMassArchetypeEntityCollection EntityCollection(FloatsArchetype);
-		// nothing should break. The actual result of processing is getting tested in MassProcessorTests.cpp
+		// nothing should break. The actual result of processing is getting tested in MassProcessorTest.cpp
 		
 		UE::Mass::Executor::RunSparse(Pipeline, ProcessingContext, EntityCollection);
 

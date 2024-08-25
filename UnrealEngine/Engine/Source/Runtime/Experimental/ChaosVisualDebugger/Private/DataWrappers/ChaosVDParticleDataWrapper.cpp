@@ -11,77 +11,134 @@ bool FChaosVDFRigidParticleControlFlags::Serialize(FArchive& Ar)
 	Ar << bGravityEnabled;
 	Ar << bCCDEnabled;
 	Ar << bOneWayInteractionEnabled;
-	Ar << bMaxDepenetrationVelocityOverrideEnabled;
 	Ar << bInertiaConditioningEnabled;
 	Ar << GravityGroupIndex;
+	Ar << bMACDEnabled;
 
-	return true;
+	return !Ar.IsError();
 }
 
 bool FChaosVDParticlePositionRotation::Serialize(FArchive& Ar)
 {
+	Ar << bHasValidData;
+	if (!bHasValidData)
+	{
+		return !Ar.IsError();
+	}
+
 	Ar << MX;
 	Ar << MR;
-	Ar << bHasValidData;
 
-	return true;
+	return !Ar.IsError();
 }
 
 bool FChaosVDParticleVelocities::Serialize(FArchive& Ar)
 {
+	Ar << bHasValidData;
+	if (!bHasValidData)
+	{
+		return !Ar.IsError();
+	}
+
 	Ar << MV;
 	Ar << MW;
-	Ar << bHasValidData;
 
-	return true;
+	return !Ar.IsError();
 }
 
 bool FChaosVDParticleDynamics::Serialize(FArchive& Ar)
 {
+	Ar << bHasValidData;
+	if (!bHasValidData)
+	{
+		return !Ar.IsError();
+	}
+
 	Ar << MAcceleration;
 	Ar << MAngularAcceleration;
 	Ar << MAngularImpulseVelocity;
 	Ar << MLinearImpulseVelocity;
-	Ar << bHasValidData;
 
-	return true;
+	return !Ar.IsError();
 }
 
 bool FChaosVDParticleMassProps::Serialize(FArchive& Ar)
 {
+	Ar << bHasValidData;
+	if (!bHasValidData)
+	{
+		return !Ar.IsError();
+	}
+
 	Ar << MCenterOfMass;
 	Ar << MRotationOfMass;
 	Ar << MI;
 	Ar << MInvI;
 	Ar << MM;
 	Ar << MInvM;
-	Ar << bHasValidData;
 
-	return true;
+	return !Ar.IsError();
 }
 
 bool FChaosVDParticleDynamicMisc::Serialize(FArchive& Ar)
 {
+	Ar << bHasValidData;
+	if (!bHasValidData)
+	{
+		return !Ar.IsError();
+	}
+
 	Ar << MAngularEtherDrag;
 	Ar << MMaxLinearSpeedSq;
 	Ar << MMaxAngularSpeedSq;
+	Ar << MInitialOverlapDepenetrationVelocity;
 	Ar << MCollisionGroup;
 	Ar << MObjectState;
 	Ar << MSleepType;
 	Ar << bDisabled;
-	Ar << bHasValidData;
 
 	MControlFlags.Serialize(Ar);
 
 	return true;
 }
 
+bool FChaosVDParticleCluster::Serialize(FArchive& Ar)
+{
+	Ar << bHasValidData;
+	if (!bHasValidData)
+	{
+		return !Ar.IsError();
+	}
+
+	Ar << ParentParticleID;	
+	Ar << NumChildren;
+	Ar << ChildToParent;
+	Ar << ClusterGroupIndex;
+	Ar << bInternalCluster;
+	Ar << CollisionImpulse;
+	Ar << ExternalStrains;
+	Ar << InternalStrains;
+	Ar << Strain;
+	Ar << ConnectivityEdges;
+	Ar << bIsAnchored;
+	Ar << bUnbreakable;
+	Ar << bIsChildToParentLocked;
+
+	return !Ar.IsError();
+}
+
 bool FChaosVDParticleDataWrapper::Serialize(FArchive& Ar)
 {
+	Ar << bHasValidData;
+	if (!bHasValidData)
+	{
+		return !Ar.IsError();
+	}
+
 	Ar << Type;
 	Ar << GeometryHash;
 
-	bHasDebugName = DebugNamePtr.IsValid();
+	bHasDebugName = DebugNamePtr != nullptr;
 	Ar << bHasDebugName;
 
 	if (bHasDebugName)
@@ -92,7 +149,10 @@ bool FChaosVDParticleDataWrapper::Serialize(FArchive& Ar)
 		}
 		else
 		{
-			FString& DebugNameRef = *DebugNamePtr.Get();
+			// Keep the static analyser happy, we already checked this above
+			checkSlow(DebugNamePtr != nullptr);
+
+			FString& DebugNameRef = *DebugNamePtr;
 			Ar << DebugNameRef;
 		}
 	}
@@ -106,7 +166,9 @@ bool FChaosVDParticleDataWrapper::Serialize(FArchive& Ar)
 	Ar << ParticleDynamicsMisc;
 	Ar << ParticleMassProps;
 
-	Ar << bHasValidData;
+	Ar << CollisionDataPerShape;
 
-	return true;
+	Ar << ParticleCluster;
+
+	return !Ar.IsError();
 }

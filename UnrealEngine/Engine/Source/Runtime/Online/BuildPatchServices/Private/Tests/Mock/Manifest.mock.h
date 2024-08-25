@@ -2,6 +2,7 @@
 #pragma once
 
 #include "Interfaces/IBuildManifest.h"
+#include "Algo/Copy.h"
 #include "BuildPatchManifest.h"
 #include "Tests/Mock/ManifestField.mock.h"
 
@@ -85,9 +86,23 @@ namespace BuildPatchServices
 			return Filenames;
 		}
 
+		virtual TArray<FStringView> GetBuildFileListView() const override
+		{
+			TArray<FStringView> Filenames;
+			GetFileList(Filenames);
+			return Filenames;
+		}
+
 		virtual TArray<FString> GetBuildFileList(const TSet<FString>& Tags) const override
 		{
 			TArray<FString> Filenames;
+			GetTaggedFileList(Tags, Filenames);
+			return Filenames;
+		}
+
+		virtual TArray<FStringView> GetBuildFileListView(const TSet<FString>& Tags) const override
+		{
+			TArray<FStringView> Filenames;
 			GetTaggedFileList(Tags, Filenames);
 			return Filenames;
 		}
@@ -200,9 +215,9 @@ namespace BuildPatchServices
 			return DataSize;
 		}
 
-		virtual int64 GetFileSize(const FString& Filename) const override
+		virtual int64 GetFileSize(FStringView Filename) const override
 		{
-			return FileNameToFileSize.FindRef(Filename);
+			return FileNameToFileSize.FindRef(FString(Filename));
 		}
 
 		virtual int64 GetFileSize(const TArray<FString>& Filenames) const override
@@ -230,6 +245,16 @@ namespace BuildPatchServices
 			Filenames = BuildFileList;
 		}
 
+		virtual void GetFileList(TArray<FStringView>& Filenames) const override
+		{
+			Algo::Copy(BuildFileList, Filenames);
+		}
+
+		virtual void GetFileList(TSet<FString>& Filenames) const override
+		{
+			Algo::Copy(BuildFileList, Filenames);
+		}
+
 		virtual void GetTaggedFileList(const TSet<FString>& Tags, TSet<FString>& TaggedFiles) const override
 		{
 			TaggedFiles = TaggedFileList;
@@ -238,6 +263,11 @@ namespace BuildPatchServices
 		virtual void GetTaggedFileList(const TSet<FString>& Tags, TArray<FString>& TaggedFiles) const override
 		{
 			TaggedFiles = TaggedFileList.Array();
+		}
+
+		virtual void GetTaggedFileList(const TSet<FString>& Tags, TArray<FStringView>& TaggedFiles) const override
+		{
+			Algo::Copy(TaggedFileList, TaggedFiles);
 		}
 
 		virtual void GetDataList(TArray<FGuid>& DataGuids) const override

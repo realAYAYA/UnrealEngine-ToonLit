@@ -54,7 +54,7 @@ namespace Horde.Server.Perforce
 		public CommitTag(string text)
 		{
 			Text = text;
-			StringId.ValidateArgument(text, nameof(text));
+			StringId.ValidateArgument(new Utf8String(text), nameof(text));
 		}
 
 		/// <summary>

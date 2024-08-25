@@ -1,0 +1,1771 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Private/DeferredShadingCommon.ush"
+
+#if defined(SHADER_DEBUGSUBSTRATETREE_PS) || defined(SHADER_DEBUGSUBSTRATETREE_CS)
+#define SUBSTRATE_INLINE_SHADING 1
+#else
+#define SUBSTRATE_INLINE_SHADING 0
+#endif
+
+#define SUBSTRATE_SSS_MATERIAL_OVERRIDE 0
+#define SUBSTRATE_SSS_TRANSMISSION 0				// Disable for now, as the SSS profile texture need to be bound
+#define SUBSTRATE_COMPLEXSPECIALPATH 1				// Allow to read data from complex special path
+#include "/Engine/Private/Substrate/SubstrateEvaluation.ush"
+#include "/Engine/Private/Substrate/SubstrateTile.ush"
+
+#include "/Engine/Private/ShaderPrint.ush"
+#include "../ColorMap.ush"
+
+uint bOverrideCursorPosition;
+int2 GetCursorPosition()
+{
+	const int2 OverrideCursorPosition = (View.ViewSizeAndInvSize.xy + View.ViewRectMin.xy) / 2;
+	return bOverrideCursorPosition > 0 ? OverrideCursorPosition : View.CursorPosition;	
+}
+
+// This is for the fxc compiler to compile faster.
+#define SUBSTRATE_VIZ_MAX_BSDF 2
+
+void DrawReferentialTWS(float3 P /*In Translated World Space*/, float3 X, float3 Y, float3 N, float3 InColor)
+{
+	const float Size = 10.f;
+	const float SizeWithTip = 12.0f;
+	const float4 Color = float4(InColor, 1);
+	const float4 ColorX = float4(1, 0, 0, 1);
+	const float4 ColorY = float4(0, 1, 0, 1);
+	const float4 ColorZ = float4(0, 0, 1, 1);
+
+	// Core
+	AddLineTWS(P, P + X * Size, Color, Color);
+	AddLineTWS(P, P + Y * Size, Color, Color);
+	AddLineTWS(P, P + N * Size, Color, Color);
+	// Tips
+	AddLineTWS(P + X * Size, P + X * SizeWithTip, ColorX, ColorX);
+	AddLineTWS(P + Y * Size, P + Y * SizeWithTip, ColorY, ColorY);
+	AddLineTWS(P + N * Size, P + N * SizeWithTip, ColorZ, ColorZ);
+}
+
+void AddDrawPixelFootprint(float3 P, float3 dPdx, float3 dPdy, float2 Scale, bool bNormalize, float4 Color)
+{
+	const float3 T = (bNormalize ? normalize(dPdx) : dPdx) * Scale.x;
+	const float3 B = (bNormalize ? normalize(dPdy) : dPdy) * Scale.y;
+	const float3 N = normalize(cross(T, B));
+
+	const float3 WP0 = P - T - B;
+	const float3 WP1 = P + T - B;
+	const float3 WP2 = P + T + B;
+	const float3 WP3 = P - T + B;
+
+	AddLineTWS(WP0, WP1, Color);
+	AddLineTWS(WP1, WP2, Color);
+	AddLineTWS(WP2, WP3, Color);
+	AddLineTWS(WP3, WP0, Color);
+}
+
+void DrawPixelFootprint(float3 P, float3 dPdx, float3 dPdy, uint2 PixelCoord)
+{
+	const FSubstrateSubsurfaceHeader SSSHeader = SubstrateLoadSubsurfaceHeader(Substrate.MaterialTextureArray, Substrate.FirstSliceStoringSubstrateSSSData, PixelCoord);
+	const bool bIsValid = SubstrateSubSurfaceHeaderGetIsValid(SSSHeader);
+	const bool bIsProfile = SubstrateSubSurfaceHeaderGetIsProfile(SSSHeader);
+
+	if (bIsValid)
+	{
+		float3 MFP = 0;
+		if (bIsProfile)
+		{
+			MFP = GetSubsurfaceProfileMFPInCm(SubstrateSubSurfaceHeaderGetProfileId(SSSHeader)).xyz * SubstrateSubSurfaceHeaderGetProfileRadiusScale(SSSHeader);
+		}
+		else
+		{
+			MFP = SubstrateSubSurfaceHeaderGetMFP(SSSHeader);
+		}
+
+		FSubstratePixelFootprint Footprint = SubstrateGetPixelFootprint(dPdx, dPdy, 0.f /*InNormalCurvatureRoughness*/);
+		AddDrawPixelFootprint(P, dPdx, dPdy, 0.5f, false, ColorRed);
+		AddDrawPixelFootprint(P, dPdx, dPdy, Footprint.PixelRadiusInWorldSpace, true, ColorOrange);
+		AddDrawPixelFootprint(P, dPdx, dPdy, max3(MFP.x, MFP.y, MFP.z), true, ColorCyan);
+	}
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Material Print
+
+#if SHADER_MATERIALPRINT
+
+uint ClosureIndex;
+RWBuffer<uint> RWPositionOffsetBuffer;
+
+void PrintPixelType(inout FShaderPrintContext Ctx, in FSubstratePixelHeader Header, FFontColor InColor)
+{
+	if (Header.IsSimpleMaterial())						Print(Ctx, TEXT("Simple  "), InColor);
+	else if (Header.IsSingleMaterial())					Print(Ctx, TEXT("Single  "), InColor);
+	else if (Header.IsComplexSpecialMaterial())			Print(Ctx, TEXT("Complex Special "), InColor);
+	else if (Header.IsComplexMaterial())				Print(Ctx, TEXT("Complex "), InColor);
+	else if (Header.IsSingleLayerWater())				Print(Ctx, TEXT("SLWater "), InColor);
+	else if (Header.IsHair())							Print(Ctx, TEXT("Hair    "), InColor);
+	else if (Header.IsEye())							Print(Ctx, TEXT("Eye     "), InColor);
+	else												Print(Ctx, TEXT("Error - Unkown pixel type"), FontRed);
+}
+
+void PrintSSSType(inout FShaderPrintContext Ctx, uint SSSType, bool bThin, FFontColor InColor)
+{
+		 if (SSSType == SSS_TYPE_WRAP && bThin)		Print(Ctx, TEXT("Wrap & Thin"), InColor);
+	else if (SSSType == SSS_TYPE_WRAP)				Print(Ctx, TEXT("Wrap"), InColor);
+	else if (SSSType == SSS_TYPE_DIFFUSION)			Print(Ctx, TEXT("Diffusion"), InColor);
+	else if (SSSType == SSS_TYPE_DIFFUSION_PROFILE)	Print(Ctx, TEXT("Diffusion Profile"), InColor);
+	else if (SSSType == SSS_TYPE_SIMPLEVOLUME)		Print(Ctx, TEXT("Simple Volume"), InColor);
+	else if (bThin)									Print(Ctx, TEXT("Thin"), InColor);
+	else /*	(SSSType == SSS_TYPE_INVALID) */		Print(Ctx, TEXT("Invalid"), InColor);
+}
+
+void PrintBackgroundRect(inout FShaderPrintContext Ctx, float2 StartRect, float2 EndRect)
+{
+	const float4 RectBackgroundColor = float4(1, 1, 1, 0.25f);
+	AddFilledQuadSS(
+		(StartRect - ShaderPrintData.FontSize) * ShaderPrintData.Resolution,
+		(EndRect + ShaderPrintData.FontSize) * ShaderPrintData.Resolution,
+		RectBackgroundColor);
+}
+
+void Newline(inout FShaderPrintContext Context, inout float2 MaxRect)
+{
+	MaxRect.x = max(MaxRect.x, Context.Pos.x);
+	MaxRect.y = Context.Pos.y;
+	Newline(Context);
+}
+
+void PrintAddress(inout FShaderPrintContext Context, inout FSubstrateAddressing SubstrateAddressing)
+{
+	FFontColor Font;
+	Font.Color = lerp(FontEmerald.Color, FontSilver.Color, 0.75f);
+	Print(Context, TEXT("[Address="), Font);
+	Print(Context, SubstrateAddressing.CurrentIndex, Font, 2, 0);
+	Print(Context, TEXT("]"), Font);
+}
+
+void PrintBSDF(inout FShaderPrintContext Context, inout FSubstrateAddressing SubstrateAddressing, FSubstratePixelHeader Header, float3 WorldPosition, float3 V, inout float2 RectMax)
+{
+	const FFontColor FontBSDF         = FontSilver;
+	const FFontColor FontBSDFType     = FontEmerald;
+	const FFontColor FontBSDFStateName= FontWhite;
+	const FFontColor FontBSDFPropName = FontOrange;
+	const FFontColor FontBSDFPropValu = FontWhite;
+
+	Newline(Context, RectMax);
+
+	const FSubstrateBSDF BSDF = UnpackSubstrateBSDFIn(Substrate.MaterialTextureArray, SubstrateAddressing, Header);
+
+	// Draw Referential
+	{
+		const float3 DummyL = float3(0, 0, 1);
+		FSubstrateBSDFContext BSDFContext = SubstrateCreateBSDFContext(Header, BSDF, SubstrateAddressing, V, DummyL);
+		DrawReferentialTWS(WorldPosition, BSDFContext.X, BSDFContext.Y, BSDFContext.N, float3(1, 1, 0));
+	}
+
+	switch (BSDF_GETTYPE(BSDF))
+	{
+		case SUBSTRATE_BSDF_TYPE_SLAB:
+		{
+			const bool bWeightL = BSDF_GETHASTRANSABOVE(BSDF);
+			const bool bGreyWeightV = BSDF_GETHASGREYWEIGHT_V(BSDF);
+			const bool bGreyTopTrans = BSDF.TransmittanceAboveAlongN.x == BSDF.TransmittanceAboveAlongN.y && BSDF.TransmittanceAboveAlongN.x == BSDF.TransmittanceAboveAlongN.z;
+
+			Print(Context, TEXT("Slab "), FontBSDFType);
+			PrintAddress(Context, SubstrateAddressing);
+			Newline(Context, RectMax);
+			Print(Context, TEXT(" NormalID BasisType Aniso TopLayer Scattering IsThin WeightV "), FontBSDFStateName);
+			if (!bGreyWeightV)
+			{
+				Print(Context, TEXT("            "), FontBSDFStateName);
+			}
+			if (bWeightL)
+			{
+				Print(Context, TEXT("TransToL     "), FontBSDFStateName);
+				if (!bGreyTopTrans)
+				{
+					Print(Context, TEXT("       "), FontBSDFStateName);
+				}
+				Print(Context, TEXT("CoverToL"), FontBSDFStateName);
+			}
+			Newline(Context, RectMax);
+
+			const uint BasisType  = SubstrateGetSharedLocalBasisType(Header.SharedLocalBasesTypes_PackedHeader, BSDF_GETSHAREDLOCALBASISID(BSDF));
+
+			Print(Context, TEXT(" "), FontSilver);
+			Print(Context, BSDF_GETSHAREDLOCALBASISID(BSDF), FontBSDF, 2, 1);	Print(Context, TEXT("       "), FontSilver);
+			if (BasisType == 0)
+			{
+				Print(Context, TEXT("Normal"), FontBSDF);	Print(Context, TEXT("    "), FontSilver);
+			}
+			else
+			{
+				Print(Context, TEXT("Tangent"), FontBSDF);	Print(Context, TEXT("   "), FontSilver);
+			}
+			PrintBool(Context, BSDF_GETHASANISOTROPY(BSDF));					Print(Context, TEXT("  "));
+			PrintBool(Context, BSDF_GETISTOPLAYER(BSDF));						Print(Context, TEXT("     "));
+			PrintBool(Context, BSDF_GETSSSTYPE(BSDF) != SSS_TYPE_INVALID);		Print(Context, TEXT("       "));
+			PrintBool(Context, BSDF_GETISTHIN(BSDF));							Print(Context, TEXT("   "));
+
+			// View Weight
+			{
+				if (bGreyWeightV)
+				{
+					Print(Context, BSDF.LuminanceWeightV.x, FontSilver, 6, 4);
+				}
+				else
+				{
+					Print(Context, BSDF.LuminanceWeightV.r, FontLightRed,   6, 4);
+					Print(Context, BSDF.LuminanceWeightV.g, FontLightGreen, 6, 4);
+					Print(Context, BSDF.LuminanceWeightV.b, FontLightBlue,  6, 4);
+				}
+				Print(Context, TEXT(" "), FontWhite);
+			}
+
+			// Light Weight
+			if (bWeightL)
+			{
+				Print(Context, TEXT(" "), FontSilver);
+				if (bGreyTopTrans)
+				{
+					Print(Context, BSDF.TransmittanceAboveAlongN.x, FontSilver);
+				}
+				else	
+				{
+					Print(Context, BSDF.TransmittanceAboveAlongN.r, FontLightRed,   6, 4);
+					Print(Context, BSDF.TransmittanceAboveAlongN.g, FontLightGreen, 6, 4);
+					Print(Context, BSDF.TransmittanceAboveAlongN.b, FontLightBlue,  6, 4);
+				}
+
+				Print(Context, TEXT(" "), FontSilver);
+				Print(Context, BSDF.CoverageAboveAlongN, FontSilver, 6, 4);
+			}
+			Newline(Context, RectMax);
+
+			Print(Context, TEXT(" Diffuse     "), FontBSDFPropName);	Print(Context, SLAB_DIFFUSEALBEDO(BSDF), FontBSDFPropValu);			Newline(Context, RectMax);
+
+			const bool bGreyF0 = SLAB_F0(BSDF).x == SLAB_F0(BSDF).y && SLAB_F0(BSDF).x == SLAB_F0(BSDF).z;
+			if (bGreyF0)
+			{
+				Print(Context, TEXT(" F0          "), FontBSDFPropName);	Print(Context, SLAB_F0(BSDF).x, FontBSDFPropValu);				Newline(Context, RectMax);
+			}
+			else
+			{
+				Print(Context, TEXT(" F0          "), FontBSDFPropName);	Print(Context, SLAB_F0(BSDF), FontBSDFPropValu);				Newline(Context, RectMax);
+			}
+
+
+			if (BSDF_GETHASF90(BSDF))
+			{
+				const bool bGreyF90 = SLAB_F90(BSDF).x == SLAB_F90(BSDF).y && SLAB_F90(BSDF).x == SLAB_F90(BSDF).z;
+				if (bGreyF90)
+				{
+					Print(Context, TEXT(" F90         "), FontBSDFPropName);	Print(Context, SLAB_F90(BSDF).x, FontBSDFPropValu);			Newline(Context, RectMax);
+				}
+				else
+				{
+					Print(Context, TEXT(" F90         "), FontBSDFPropName);	Print(Context, SLAB_F90(BSDF), FontBSDFPropValu);			Newline(Context, RectMax);
+				}
+			}
+
+			Print(Context, TEXT(" Roughness   "), FontBSDFPropName);	Print(Context, SLAB_ROUGHNESS(BSDF), FontBSDFPropValu);				Newline(Context, RectMax);
+
+			if (BSDF_GETHASANISOTROPY(BSDF))
+			{
+				Print(Context, TEXT(" Anisotropy  "), FontBSDFPropName);	Print(Context, SLAB_ANISOTROPY(BSDF), FontBSDFPropValu);		Newline(Context, RectMax);
+			}
+
+			if (BSDF_GETHASHAZINESS(BSDF))
+			{
+				FHaziness Haziness = UnpackHaziness(SLAB_HAZINESS(BSDF));
+
+				Print(Context, TEXT(" Haziness    "),			FontBSDFPropName);																		Newline(Context, RectMax);
+				Print(Context, TEXT("  - Roughness       "),	FontBSDFPropName);	Print(Context, Haziness.Roughness,				FontBSDFPropValu);	Newline(Context, RectMax);
+				Print(Context, TEXT("  - Weight          "),	FontBSDFPropName);	Print(Context, Haziness.Weight,					FontBSDFPropValu);	Newline(Context, RectMax);
+				Print(Context, TEXT("  - SimpleClearCoat "),	FontBSDFPropName);	Print(Context, Haziness.bSimpleClearCoat?1u:0u,	FontBSDFPropValu);	Newline(Context, RectMax);
+			}
+
+			if (BSDF_GETSSSTYPE(BSDF) != SSS_TYPE_INVALID || BSDF_GETISTHIN(BSDF))
+			{
+				const bool bIsThin = BSDF_GETISTHIN(BSDF);
+				const FSubstrateSubsurfaceHeader SSSHeader = SubstrateLoadSubsurfaceHeader(Substrate.MaterialTextureArray, Substrate.FirstSliceStoringSubstrateSSSData, SubstrateAddressing.PixelCoords);
+				Print(Context, TEXT(" SSS Type    "), FontBSDFPropName);	PrintSSSType(Context, BSDF_GETSSSTYPE(BSDF), BSDF_GETISTHIN(BSDF), FontYellow);	Newline(Context, RectMax);
+				if (BSDF_GETSSSTYPE(BSDF) == SSS_TYPE_WRAP)
+				{
+					const float Opacity = SubstrateSubSurfaceHeaderGetWrapOpacity(SSSHeader);
+					Print(Context, TEXT(" SSS Opacity "), FontBSDFPropName);	Print(Context, Opacity, FontBSDFPropValu);						Newline(Context, RectMax);
+					Print(Context, TEXT(" SSS MFP     "), FontBSDFPropName);	Print(Context, SLAB_SSSMFP(BSDF), FontBSDFPropValu);			Newline(Context, RectMax);
+					Print(Context, TEXT(" SSS Phase   "), FontBSDFPropName);	Print(Context, SLAB_SSSPHASEANISOTROPY(BSDF), FontBSDFPropValu);Newline(Context, RectMax);
+					Print(Context, TEXT(" SSS Thicknes"), FontBSDFPropName);	Print(Context, BSDF_GETTHICKNESSCM(BSDF), FontBSDFPropValu);	Newline(Context, RectMax);
+				}
+				else if (BSDF_GETSSSTYPE(BSDF) == SSS_TYPE_SIMPLEVOLUME)
+				{
+					const float Opacity = SubstrateSubSurfaceHeaderGetWrapOpacity(SSSHeader);
+					Print(Context, TEXT(" SSS Opacity "), FontBSDFPropName);	Print(Context, Opacity, FontBSDFPropValu);						Newline(Context, RectMax);
+					Print(Context, TEXT(" SSS MFP     "), FontBSDFPropName);	Print(Context, SLAB_SSSMFP(BSDF), FontBSDFPropValu);			Newline(Context, RectMax);
+					Print(Context, TEXT(" SSS Phase   "), FontBSDFPropName);	Print(Context, SLAB_SSSPHASEANISOTROPY(BSDF), FontBSDFPropValu);Newline(Context, RectMax);
+					Print(Context, TEXT(" SSS Thicknes"), FontBSDFPropName);	Print(Context, BSDF_GETTHICKNESSCM(BSDF), FontBSDFPropValu);	Newline(Context, RectMax);
+				}
+				else if (BSDF_GETSSSTYPE(BSDF) == SSS_TYPE_DIFFUSION_PROFILE)
+				{
+					const uint ProfileId = SubstrateSubSurfaceHeaderGetProfileId(SSSHeader);
+					const float RadiusScale = SubstrateSubSurfaceHeaderGetProfileRadiusScale(SSSHeader);
+					const float3 DiffuseMFP = GetSubsurfaceProfileMFPInCm(ProfileId).xyz * RadiusScale;
+					const float Phase = GetTransmissionProfileParams(ProfileId).ScatteringDistribution;
+
+					Print(Context, TEXT(" SSS ID.     "), FontBSDFPropName);	Print(Context, ProfileId, FontBSDFPropValu);	Newline(Context, RectMax);
+					Print(Context, TEXT(" SSS Radius  "), FontBSDFPropName);	Print(Context, RadiusScale, FontBSDFPropValu);	Newline(Context, RectMax);
+					Print(Context, TEXT(" SSS MFP     "), FontBSDFPropName);	Print(Context, DiffuseMFP, FontBSDFPropValu);	Newline(Context, RectMax);
+					Print(Context, TEXT(" SSS Phase   "), FontBSDFPropName);	Print(Context, Phase, FontBSDFPropValu);		Newline(Context, RectMax);
+					if (bIsThin)
+					{
+					Print(Context, TEXT(" SSS Thicknes"), FontBSDFPropName);	Print(Context, SLAB_SSSPROFILETHICKNESSCM(BSDF), FontBSDFPropValu);		Newline(Context, RectMax);
+					}
+				}
+				else if (BSDF_GETSSSTYPE(BSDF) == SSS_TYPE_DIFFUSION)
+				{
+					const float3 OriginalMFP = SubstrateSubSurfaceHeaderGetMFP(SSSHeader);
+					const float3 RescaledMFP = SLAB_SSSMFP(BSDF);
+
+					if (bIsThin)
+					{
+						Print(Context, TEXT(" SSS MFP     "), FontBSDFPropName);	Print(Context, OriginalMFP, FontBSDFPropValu);				Newline(Context, RectMax);
+						Print(Context, TEXT(" SSS MFP Norm"), FontBSDFPropName);	Print(Context, RescaledMFP, FontBSDFPropValu);				Newline(Context, RectMax);
+						Print(Context, TEXT(" SSS Thicknes"), FontBSDFPropName);	Print(Context, BSDF_GETTHICKNESSCM(BSDF), FontBSDFPropValu);Newline(Context, RectMax);
+					}
+					else
+					{
+						Print(Context, TEXT(" SSS MFP     "), FontBSDFPropName);	Print(Context, OriginalMFP, FontBSDFPropValu);				Newline(Context, RectMax);
+					}
+
+					Print(Context, TEXT(" SSS Phase   "), FontBSDFPropName);	Print(Context, SLAB_SSSPHASEANISOTROPY(BSDF), FontBSDFPropValu);Newline(Context, RectMax);
+				}
+			} // SSS
+
+			if (BSDF_GETHASFUZZ(BSDF))
+			{
+				Print(Context, TEXT(" Fuzz Amount "), FontBSDFPropName);	Print(Context, SLAB_FUZZ_AMOUNT(BSDF), FontBSDFPropValu);				Newline(Context, RectMax);
+				Print(Context, TEXT(" Fuzz Color  "), FontBSDFPropName);	Print(Context, SLAB_FUZZ_COLOR(BSDF), FontBSDFPropValu);				Newline(Context, RectMax);
+				Print(Context, TEXT(" Fuzz Rough. "), FontBSDFPropName);	Print(Context, SLAB_FUZZ_ROUGHNESS(BSDF), FontBSDFPropValu);			Newline(Context, RectMax);
+			}
+#if SUBSTRATE_COMPLEXSPECIALPATH
+			if (BSDF_GETHASGLINT(BSDF))
+			{
+				Print(Context, TEXT(" Glint Value "), FontBSDFPropName);	Print(Context, SLAB_GLINT_VALUE(BSDF), FontBSDFPropValu);				Newline(Context, RectMax);
+				Print(Context, TEXT(" Glint UVs   "), FontBSDFPropName);	Print(Context, SLAB_GLINT_UV(BSDF), FontBSDFPropValu);					Newline(Context, RectMax);
+			}
+			if (BSDF_GETHASSPECPROFILE(BSDF))
+			{
+				Print(Context, TEXT(" SpecID      "), FontBSDFPropName);	Print(Context, GetSpecularProfileId(SLAB_SPECPROFILEID(BSDF)), FontBSDFPropValu);Newline(Context, RectMax);
+				if (GetSpecularProfileParameterization(SLAB_SPECPROFILEID(BSDF)) == 0)
+				{
+				Print(Context, TEXT(" Spec Param. "), FontBSDFPropName);	Print(Context, TEXT("View/Light angles"), FontBSDFPropValu);			Newline(Context, RectMax);
+				}
+				else
+				{
+				Print(Context, TEXT(" Spec Param. "), FontBSDFPropName);	Print(Context, TEXT("Half angles"), FontBSDFPropValu);					Newline(Context, RectMax);
+				}
+			}
+#endif
+		}
+		break;
+
+		case SUBSTRATE_BSDF_TYPE_HAIR:
+		{
+			Print(Context, TEXT("Hair"), FontBSDFType);
+			PrintAddress(Context, SubstrateAddressing);
+			Newline(Context, RectMax);
+			Print(Context, TEXT(" NormalID Aniso IsTopLayer LuminanceWeight"), FontBSDFStateName);
+			Newline(Context, RectMax);
+
+			Print(Context, TEXT(" "), FontSilver);
+			Print(Context, BSDF_GETSHAREDLOCALBASISID(BSDF), FontBSDF);
+			PrintBool(Context, BSDF_GETHASANISOTROPY(BSDF));
+			PrintBool(Context, BSDF_GETISTOPLAYER(BSDF));
+			if (BSDF_GETHASGREYWEIGHT_V(BSDF))
+			{
+				Print(Context, BSDF.LuminanceWeightV.x, FontSilver);
+			}
+			else
+			{
+				Print(Context, BSDF.LuminanceWeightV.r, FontLightRed);
+				Print(Context, BSDF.LuminanceWeightV.g, FontLightGreen);
+				Print(Context, BSDF.LuminanceWeightV.b, FontLightBlue);
+			}
+			Newline(Context, RectMax);
+
+			Print(Context, TEXT(" BaseColor         "), FontBSDFPropName);	Print(Context, HAIR_BASECOLOR(BSDF), FontBSDFPropValu);				Newline(Context, RectMax);
+			Print(Context, TEXT(" Specular          "), FontBSDFPropName);	Print(Context, HAIR_SPECULAR(BSDF), FontBSDFPropValu);				Newline(Context, RectMax);
+			Print(Context, TEXT(" Roughness         "), FontBSDFPropName);	Print(Context, HAIR_ROUGHNESS(BSDF), FontBSDFPropValu);				Newline(Context, RectMax);
+			Print(Context, TEXT(" Scatter           "), FontBSDFPropName);	Print(Context, HAIR_SCATTER(BSDF), FontBSDFPropValu);				Newline(Context, RectMax);
+			Print(Context, TEXT(" Backlit           "), FontBSDFPropName);	Print(Context, HAIR_BACKLIT(BSDF), FontBSDFPropValu);				Newline(Context, RectMax);
+			Print(Context, TEXT(" Has Transmittance "), FontBSDFPropName);	Print(Context, HAIR_COMPLEXTRANSMITTANCE(BSDF), FontBSDFPropValu);	Newline(Context, RectMax);
+		}
+		break;
+
+		case SUBSTRATE_BSDF_TYPE_EYE:
+		{
+			Print(Context, TEXT("Eye"), FontBSDFType);
+			PrintAddress(Context, SubstrateAddressing);
+			Newline(Context, RectMax);
+			Print(Context, TEXT(" NormalID IsTopLayer LuminanceWeight"), FontBSDFStateName);
+			Newline(Context, RectMax);
+
+			Print(Context, TEXT(" "), FontSilver);
+			Print(Context, BSDF_GETSHAREDLOCALBASISID(BSDF), FontBSDF);
+			PrintBool(Context, BSDF_GETISTOPLAYER(BSDF));
+			if (BSDF_GETHASGREYWEIGHT_V(BSDF))
+			{
+				Print(Context, BSDF.LuminanceWeightV.x, FontSilver);
+			}
+			else
+			{
+				Print(Context, BSDF.LuminanceWeightV.r, FontLightRed);
+				Print(Context, BSDF.LuminanceWeightV.g, FontLightGreen);
+				Print(Context, BSDF.LuminanceWeightV.b, FontLightBlue);
+			}
+			Newline(Context, RectMax);
+
+			Print(Context, TEXT(" Diffuse Albedo    "), FontBSDFPropName);	Print(Context, EYE_DIFFUSEALBEDO(BSDF), FontBSDFPropValu);			Newline(Context, RectMax);
+			Print(Context, TEXT(" F0                "), FontBSDFPropName);	Print(Context, EYE_F0(BSDF), FontBSDFPropValu);						Newline(Context, RectMax);
+			Print(Context, TEXT(" Roughness         "), FontBSDFPropName);	Print(Context, EYE_ROUGHNESS(BSDF), FontBSDFPropValu);				Newline(Context, RectMax);
+			Print(Context, TEXT(" Iris Mask         "), FontBSDFPropName);	Print(Context, EYE_IRISDISTANCE(BSDF), FontBSDFPropValu);			Newline(Context, RectMax);
+			Print(Context, TEXT(" Iris Distance     "), FontBSDFPropName);	Print(Context, EYE_IRISMASK(BSDF), FontBSDFPropValu);				Newline(Context, RectMax);
+
+			// Tangent basis for the iris
+			const float3x3 IrisTangentBasis = GetTangentBasis(EYE_IRISNORMAL(BSDF));
+			DrawReferentialTWS(WorldPosition, IrisTangentBasis[0], IrisTangentBasis[1], IrisTangentBasis[2], float3(0, 1, 1));
+
+			// Tangent basis for the iris plane
+			const float3x3 IrisPlaneTangentBasis = GetTangentBasis(EYE_IRISPLANENORMAL(BSDF));
+			DrawReferentialTWS(WorldPosition, IrisPlaneTangentBasis[0], IrisPlaneTangentBasis[1], IrisPlaneTangentBasis[2], float3(1, 0, 1));
+
+			const bool bHasSSS = Header.HasSubsurface();
+			const FSubstrateSubsurfaceHeader SSSHeader = SubstrateLoadSubsurfaceHeader(Substrate.MaterialTextureArray, Substrate.FirstSliceStoringSubstrateSSSData, SubstrateAddressing.PixelCoords);
+			const bool bIsValid = SubstrateSubSurfaceHeaderGetIsValid(SSSHeader);
+			const bool bIsProfile = SubstrateSubSurfaceHeaderGetIsProfile(SSSHeader);
+			if (bHasSSS && bIsValid && bIsProfile)
+			{
+				const uint SubsurfaceProfileInt = SubstrateSubSurfaceHeaderGetProfileId(SSSHeader);
+				Print(Context, TEXT(" SSS ID.           "), FontBSDFPropName);	Print(Context, SubsurfaceProfileInt, FontBSDFPropValu);			Newline(Context, RectMax);
+			}
+		}
+		break;
+
+		case SUBSTRATE_BSDF_TYPE_SINGLELAYERWATER:
+		{
+			Print(Context, TEXT("Water"), FontBSDFType);
+			PrintAddress(Context, SubstrateAddressing);
+			Newline(Context);
+
+			Print(Context, TEXT(" BaseColor            "), FontBSDFPropName);	Print(Context, SLW_BASECOLOR(BSDF), FontBSDFPropValu);			Newline(Context, RectMax);
+			Print(Context, TEXT(" Metallic             "), FontBSDFPropName);	Print(Context, SLW_METALLIC(BSDF), FontBSDFPropValu);			Newline(Context, RectMax);
+			Print(Context, TEXT(" Specular             "), FontBSDFPropName);	Print(Context, SLW_SPECULAR(BSDF), FontBSDFPropValu);			Newline(Context, RectMax);
+			Print(Context, TEXT(" Roughness            "), FontBSDFPropName);	Print(Context, SLW_ROUGHNESS(BSDF), FontBSDFPropValu);			Newline(Context, RectMax);
+			Print(Context, TEXT(" Top Material Opacity "), FontBSDFPropName);	Print(Context, SLW_TOPMATERIALOPACITY(BSDF), FontBSDFPropValu);	Newline(Context, RectMax);
+		}
+		break;
+
+	default:
+		{
+			Print(Context, TEXT("Error - Uknown BSDF type"), FontRed);
+		}
+		break;
+	}
+
+	Newline(Context);
+}
+
+void PrintPixel(uint2 InCoord, float3 InWorldPosition, float3 V)
+{
+	FShaderPrintContext Context;
+	if (ClosureIndex > 0)
+	{
+		float2 PrintOffset;
+		PrintOffset.x = asfloat(RWPositionOffsetBuffer[0]);
+		PrintOffset.y = asfloat(RWPositionOffsetBuffer[1]);
+		Context = InitShaderPrintContext(true, PrintOffset);
+	}
+	else
+	{
+		Context = InitShaderPrintContext(true, uint2(50, 50));
+	}
+
+	FSubstrateAddressing SubstrateAddressing = GetSubstratePixelDataByteOffset(InCoord, uint2(View.BufferSizeAndInvSize.xy), Substrate.MaxBytesPerPixel);
+	const uint FootPrint_Start = SubstrateAddressing.ReadBytes;
+
+	FSubstratePixelHeader Header = UnpackSubstrateHeaderIn(Substrate.MaterialTextureArray, SubstrateAddressing, Substrate.TopLayerTexture);
+	const uint FootPrint_PostHeader = SubstrateAddressing.ReadBytes;
+
+	const FFontColor FontBSDFCount = FontEmerald;
+	const FFontColor FontHeaderStateName = FontWhite;
+	const FFontColor FontHeaderPropName = FontWhite;
+	const FFontColor FontHeaderPropValue = FontSilver;
+
+	// Backgroun rect. for better print visibility. Track min/max point
+	float2 RectMin = Context.Pos;
+	float2 RectMax = Context.StartPos;
+
+	// Header
+	if (ClosureIndex < Header.ClosureCount && ClosureIndex == 0)
+	{
+		const FSubstrateTopLayerData TopLayerData = SubstrateUnpackTopLayerData(Substrate.TopLayerTexture.Load(uint3(InCoord, 0)));
+
+		const bool bSubstrateMaterial = Header.ClosureCount > 0;
+		const bool bIsSimpleMaterial = Header.IsSimpleMaterial() || Header.ClosureCount == 0;
+		const bool bIsSingleMaterial = !Header.IsSimpleMaterial() && Header.IsSingleMaterial();
+
+		FSubstrateIrradianceAndOcclusion IrradianceAndOcclusion = SubstrateGetIrradianceAndAO(Header);
+
+		RectMin = Context.Pos;
+		Print(Context, Header.ClosureCount, FontBSDFCount, 2, 0);
+		Print(Context, TEXT("BSDF"), FontBSDFCount);
+		Print(Context, TEXT(" - "), FontWhite);
+		PrintPixelType(Context, Header, FontLightRed);
+		if (bIsSingleMaterial)
+		{
+		#if SUBSTRATE_DEFERRED_SHADING
+			uint OptimisedLegacyMode = (Header.SharedLocalBasesTypes_PackedHeader >> (HEADER_SINGLEENCODING_BIT_COUNT)) & HEADER_SINGLE_OPTLEGACYMODE_BIT_MASK;
+			if (OptimisedLegacyMode ==SINGLE_OPTLEGACYMODE_CLEARCOAT)
+			{
+				Print(Context, TEXT(" - Legacy Clear-Coat"), FontLightRed);
+			}
+			else if (OptimisedLegacyMode ==SINGLE_OPTLEGACYMODE_CLOTH)
+			{
+				Print(Context, TEXT(" - Legacy Cloth"), FontLightRed);
+			}
+			else if (OptimisedLegacyMode ==SINGLE_OPTLEGACYMODE_SSSWRAP)
+			{
+				Print(Context, TEXT(" - Legacy SSS-Wrap"), FontLightRed);
+			}
+			else if (OptimisedLegacyMode == SINGLE_OPTLEGACYMODE_SSSWRAP_THIN)
+			{
+				Print(Context, TEXT(" - Legacy Foliage"), FontLightRed);
+			}
+			else if (OptimisedLegacyMode == SINGLE_OPTLEGACYMODE_SSSPROFILE)
+			{
+				Print(Context, TEXT(" - Legacy SSS-Profile"), FontLightRed);
+			}
+		#endif
+		}
+		Newline(Context, RectMax);
+
+		Print(Context, TEXT(" AO    IndIrr TopRoughness PreShadow ZeroShadow ContacShadow Ind.Occluder HasSSS"), FontHeaderStateName);
+		Newline(Context, RectMax);
+
+		Print(Context, TEXT(" "));
+		Print(Context, IrradianceAndOcclusion.MaterialAO, FontHeaderPropValue, 5, 3);					Print(Context, TEXT(" "));
+		Print(Context, IrradianceAndOcclusion.IndirectIrradiance, FontHeaderPropValue, 6, 3);			Print(Context, TEXT(" "));
+		Print(Context, TopLayerData.Roughness, FontHeaderPropValue, 5, 3);								Print(Context, TEXT("        "));
+		PrintBool(Context, Header.HasPrecShadowMask());													Print(Context, TEXT("      "));
+		PrintBool(Context, Header.HasZeroPrecShadowMask());												Print(Context, TEXT("       "));
+		PrintBool(Context, Header.DoesCastContactShadow());												Print(Context, TEXT("         "));
+		PrintBool(Context, Header.HasDynamicIndirectShadowCasterRepresentation());						Print(Context, TEXT("         "));
+		PrintBool(Context, Header.HasSubsurface());
+		Newline(Context, RectMax);
+		Newline(Context);
+		
+		PrintBackgroundRect(Context, RectMin, RectMax);
+	}
+
+	// BSDFs
+	if (ClosureIndex < Header.ClosureCount)
+	{
+		if (ClosureIndex > 0)
+		{
+			const uint AddressOffset = UnpackClosureOffsetAtIndex(Substrate.ClosureOffsetTexture[InCoord], ClosureIndex, Header.ClosureCount);
+			SubstrateSeekClosure(SubstrateAddressing, AddressOffset);
+		}
+
+		RectMin = Context.Pos;
+		RectMax = Context.StartPos;
+		PrintBSDF(Context, SubstrateAddressing, Header, InWorldPosition, V, RectMax);
+		PrintBackgroundRect(Context, RectMin, RectMax);
+
+		RWPositionOffsetBuffer[0] = asuint(Context.Pos.x);
+		RWPositionOffsetBuffer[1] = asuint(Context.Pos.y);
+	}
+
+	// Memory footprint
+	if (ClosureIndex+1 == Header.ClosureCount)
+	{
+		const bool bSubstrateMaterial = Header.ClosureCount > 0;
+		const bool bIsSimpleMaterial = Header.IsSimpleMaterial() || Header.ClosureCount == 0;
+		const bool bIsSingleMaterial = !Header.IsSimpleMaterial() && Header.IsSingleMaterial();
+
+		const uint FootPrint_PostBSDFs = SubstrateAddressing.ReadBytes;
+
+		const FSubstrateSubsurfaceHeader SSSHeader = SubstrateLoadSubsurfaceHeader(Substrate.MaterialTextureArray, Substrate.FirstSliceStoringSubstrateSSSData, SubstrateAddressing.PixelCoords);
+		const bool bHasSSSData = SubstrateSubSurfaceHeaderGetIsValid(SSSHeader);
+
+		const uint TopLayerDataBytes = 4;	// bytes 
+		const uint SSSDataBytes = 8;
+
+		const uint HeaderSize =  FootPrint_PostHeader - FootPrint_Start;
+		const uint BSDFsSize  =  FootPrint_PostBSDFs - FootPrint_PostHeader;
+		const uint TotalSize  = (FootPrint_PostBSDFs - FootPrint_Start) + (bHasSSSData ? SSSDataBytes : 0);
+
+		RectMin = Context.Pos;
+		RectMax = Context.StartPos;
+		Print(Context, TEXT("Memory"), FontEmerald); Newline(Context, RectMax);
+		if (bIsSingleMaterial || Header.IsEye() || Header.IsHair())
+		{
+			Print(Context, TEXT(" Header       "), FontSilver); Print(Context, HeaderSize - TopLayerDataBytes,				FontSilver, 3, 0); Print(Context, TEXT("bytes"), FontSilver); Newline(Context, RectMax);
+			Print(Context, TEXT(" TopNormalTex "), FontSilver); Print(Context, TopLayerDataBytes,							FontSilver, 3, 0); Print(Context, TEXT("bytes"), FontSilver); Newline(Context, RectMax);
+			Print(Context, TEXT(" BSDF         "), FontSilver); Print(Context, BSDFsSize,									FontSilver, 3, 0); Print(Context, TEXT("bytes"), FontSilver); Newline(Context, RectMax);
+		}
+		else if (bIsSimpleMaterial || Header.IsSingleLayerWater())
+		{
+			Print(Context, TEXT(" Header+BSDF  "), FontSilver); Print(Context, HeaderSize + BSDFsSize - TopLayerDataBytes,	FontSilver, 3, 0); Print(Context, TEXT("bytes"), FontSilver); Newline(Context, RectMax);
+			Print(Context, TEXT(" TopNormalTex "), FontSilver); Print(Context, TopLayerDataBytes,							FontSilver, 3, 0); Print(Context, TEXT("bytes"), FontSilver); Newline(Context, RectMax);
+		}
+		else
+		{
+			Print(Context, TEXT(" Header+Norm  "), FontSilver); Print(Context, HeaderSize,									FontSilver, 3, 0); Print(Context, TEXT("bytes"), FontSilver); Newline(Context, RectMax);
+			Print(Context, TEXT(" BSDFs        "), FontSilver); Print(Context, BSDFsSize,									FontSilver, 3, 0); Print(Context, TEXT("bytes"), FontSilver); Newline(Context, RectMax);
+		}
+
+		if (bHasSSSData)
+		{
+			Print(Context, TEXT(" SSS Data     "), FontSilver); Print(Context, SSSDataBytes, FontSilver, 3, 0); Print(Context, TEXT("bytes"), FontSilver); Newline(Context, RectMax);
+		}
+
+		Print(Context, TEXT(" Total        "), FontOrange); Print(Context, TotalSize,  FontOrange, 3, 0); Print(Context, TEXT("bytes"), FontOrange); Newline(Context, RectMax);
+		PrintBackgroundRect(Context, RectMin, RectMax);
+	}
+}
+
+float3 GetWorldPositionFromPixelPos(uint2 PixelPos)
+{
+	const float2 BufferUV = SvPositionToBufferUV(float4(PixelPos + 0.5f, 0, 0));
+	const float2 ScreenPosition = SvPositionToScreenPosition(float4(PixelPos, 0.5f, 1)).xy;
+	const float DeviceZ = SampleDeviceZFromSceneTextures(BufferUV);
+	const float SceneDepth = ConvertFromDeviceZ(DeviceZ);
+	const float3 WorldPosition = mul(float4(ScreenPosition * SceneDepth, SceneDepth, 1), PrimaryView.ScreenToTranslatedWorld).xyz;
+	return WorldPosition;
+}
+
+[numthreads(1, 1, 1)]
+void MaterialPrintInfoCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	const uint2 PixelPos = (float2(GetCursorPosition()) * View.ViewResolutionFraction);
+	const float3 WorldPosition = GetWorldPositionFromPixelPos(PixelPos);
+	const float3 V = -normalize(WorldPosition - PrimaryView.TranslatedWorldCameraOrigin);
+
+	// Print pixel info
+	PrintPixel(PixelPos, WorldPosition, V);
+
+	// Print pixel footprint
+	const float3 WorldPositionX = GetWorldPositionFromPixelPos(PixelPos + uint2(1, 0));
+	const float3 WorldPositionY = GetWorldPositionFromPixelPos(PixelPos + uint2(0, 1));
+	const float3 dPdx = WorldPositionX - WorldPosition;
+	const float3 dPdy = WorldPositionY - WorldPosition;
+	DrawPixelFootprint(WorldPosition, dPdx, dPdy, PixelPos);
+
+	// When overriding cursor position (on platform without mouse), display a small rect to show the pointing position
+	if (bOverrideCursorPosition)
+	{
+		const uint2 CursorPosition = GetCursorPosition();
+		FShaderPrintContext Ctx = InitShaderPrintContext(true, uint2(0, 0));
+		AddQuadSS(Ctx, float2(CursorPosition) - float2(1, 1), float2(CursorPosition) + float2(1, 1), ColorYellow);
+	}
+}
+#endif // SHADER_MATERIALPRINT
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Material Visualize
+
+#if SHADER_MATERIALCOUNT
+
+uint ViewMode;
+
+float3 BytePerPixelToColor(uint In)
+{
+	float3 Out = 0;
+	// 16->32  : Blue -> green
+	// 32->64  : Green -> Orange
+	// 64->128 : Orange -> Red
+	if (In < 32)
+	{
+		Out = ColorMapTurbo(saturate((In-16.f) / 32.f) * 0.25f + 0.25f);
+	}
+	else if (In < 64)
+	{
+		Out = ColorMapTurbo(saturate((In-32.f) / 32.f) * 0.25f + 0.5f);
+	}
+	else
+	{
+		Out = ColorMapTurbo(saturate((In-64.f) / 64.f) * 0.25f + 0.75f);
+	}
+
+	return Out;
+}
+
+void VisualizeMaterialPS(
+	float4 SVPos : SV_POSITION,
+	out float4 OutColor : SV_Target0)
+{
+	const uint2 PixelPosDynRes = uint2(float2(SVPos.xy) * View.ViewResolutionFraction);
+	float2 BufferUV = SvPositionToBufferUV(float4(PixelPosDynRes, SVPos.zw));
+
+	const float2 ScreenPosition = SvPositionToScreenPosition(SVPos).xy;
+	const float2 ScreenMaterialPosition = SvPositionToScreenPosition(float4(PixelPosDynRes, 0.5f, 1)).xy;
+	float DeviceZ = SampleDeviceZFromSceneTextures(BufferUV);
+	float SceneDepth = ConvertFromDeviceZ(DeviceZ);
+	const float3 WorldPosition = mul(float4(ScreenMaterialPosition * SceneDepth, SceneDepth, 1), PrimaryView.ScreenToTranslatedWorld).xyz;
+	const float3 V = -normalize(WorldPosition - PrimaryView.TranslatedWorldCameraOrigin);
+
+	FSubstrateAddressing SubstrateAddressing = GetSubstratePixelDataByteOffset(PixelPosDynRes, uint2(View.BufferSizeAndInvSize.xy), Substrate.MaxBytesPerPixel);
+	const uint FootPrint_Start = SubstrateAddressing.ReadBytes;
+	FSubstratePixelHeader Header = UnpackSubstrateHeaderIn(Substrate.MaterialTextureArray, SubstrateAddressing, Substrate.TopLayerTexture);
+	const bool bSubstrateMaterial = Header.ClosureCount > 0;
+
+	OutColor = 0;
+	OutColor.w = 0.1f;
+	if (ViewMode == 2)
+	{
+		// BSDF count
+		const float MaxClosureCount = SUBSTRATE_MAX_CLOSURE_COUNT;
+		if (Header.ClosureCount > 0)
+		{
+			const float BSDFCost = saturate(float(Header.ClosureCount) / MaxClosureCount);
+			OutColor.xyz = ColorMapTurbo(BSDFCost);
+		}
+	
+		// Print Legend
+		if (all(uint2(SVPos.xy) == uint2(0,0)))
+		{
+			FShaderPrintContext Context = InitShaderPrintContext(true, uint2(50, 50));
+			Print(Context, TEXT("1 BSDF"), InitFontColor(ColorMapTurbo(1 / MaxClosureCount))); Newline(Context);
+			Print(Context, TEXT("2 BSDF"), InitFontColor(ColorMapTurbo(2 / MaxClosureCount))); Newline(Context);
+			Print(Context, TEXT("3 BSDF"), InitFontColor(ColorMapTurbo(3 / MaxClosureCount))); Newline(Context);
+			Print(Context, TEXT("4 BSDF"), InitFontColor(ColorMapTurbo(4 / MaxClosureCount))); Newline(Context);
+		}
+	}
+	else if (ViewMode == 3)
+	{
+		FSubstrateAddressing SubstrateAddressing = GetSubstratePixelDataByteOffset(PixelPosDynRes, uint2(View.BufferSizeAndInvSize.xy), Substrate.MaxBytesPerPixel);
+		FSubstratePixelHeader Header = UnpackSubstrateHeaderIn(Substrate.MaterialTextureArray, SubstrateAddressing, Substrate.TopLayerTexture);
+
+		uint MaterialBytePerPixel = 0;
+		Substrate_for (uint ClosureIndex = 0, ClosureIndex < Header.ClosureCount, ++ClosureIndex)
+		{
+			// Unpack BSDF data
+			FSubstrateBSDF BSDF = UnpackSubstrateBSDF(Substrate.MaterialTextureArray, SubstrateAddressing, Header);
+			MaterialBytePerPixel = SubstrateAddressing.ReadBytes;
+		}
+			
+		OutColor.xyz = BytePerPixelToColor(MaterialBytePerPixel);
+	
+		// Print Legend
+		if (all(uint2(SVPos.xy) == uint2(0,0)))
+		{
+			FShaderPrintContext Context = InitShaderPrintContext(true, uint2(50, 50));
+			Print(Context, TEXT("16  Bytes"), InitFontColor(BytePerPixelToColor(16))); Newline(Context);	
+			Print(Context, TEXT("32  Bytes"), InitFontColor(BytePerPixelToColor(32))); Newline(Context);
+			Print(Context, TEXT("64  Bytes"), InitFontColor(BytePerPixelToColor(64))); Newline(Context);
+			Print(Context, TEXT("96  Bytes"), InitFontColor(BytePerPixelToColor(96))); Newline(Context);
+			Print(Context, TEXT("128 Bytes"), InitFontColor(BytePerPixelToColor(128))); Newline(Context);
+		}
+
+		// Cursor
+		if (all(PixelPosDynRes == GetCursorPosition()))
+		{
+			FShaderPrintContext Context = InitShaderPrintContext(true, uint2(250, 50));
+			Print(Context, MaterialBytePerPixel, InitFontColor(BytePerPixelToColor(MaterialBytePerPixel)), 3, 0); 
+			Print(Context, TEXT("/"), FontWhite); 
+			Print(Context, Substrate.MaxBytesPerPixel, FontYellow, 3, 0); 
+			Print(Context, TEXT(" Bytes"), FontWhite); 
+		}
+	}
+}
+#endif // SHADER_MATERIALCOUNT
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Advanced Material Visualize
+
+#define BSDF_ELEMENT_SIZE 210
+#define BSDF_ELEMENT_STARTX 100.0f + 450.0f
+#define BSDF_ELEMENT_STARTY 100
+
+#if SHADER_DEBUGSUBSTRATETREE_PS || SHADER_DEBUGSUBSTRATETREE_CS
+
+#define TREE_MAX_DEPTH			4
+#define TREE_START_POS			float2(1300, 350)
+#define TREE_BRANCH				float2(100, 75)
+#define TREE_COLOR				float4(0.8, 0.8, 0.8, 1.0)
+#define TREE_NODE_RADIUS		20.0
+
+float2 GetBranchOffset(FSubstrateOperator Op, bool bIsLeft)
+{
+	if (Op.Type == SUBSTRATE_OPERATOR_WEIGHT)
+	{
+		return float2(0, TREE_BRANCH.y);
+	}
+	return TREE_BRANCH * (bIsLeft ? float2(-1, 1) : float2(1, 1));
+}
+
+#endif // SHADER_DEBUGSUBSTRATETREE_PS || SHADER_DEBUGSUBSTRATETREE_CS
+
+
+#if SHADER_DEBUGSUBSTRATETREE_CS
+
+[numthreads(1, 1, 1)]
+void MaterialDebugSubstrateTreeCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+// UE-194712 - Temporary workaround with Vulkan shader compilation
+#if !COMPILER_VULKAN
+	const uint2 PixelPos = (float2(GetCursorPosition()) * View.ViewResolutionFraction);
+
+	FSubstrateAddressing SubstrateAddressing = GetSubstratePixelDataByteOffset(PixelPos, uint2(View.BufferSizeAndInvSize.xy), Substrate.MaxBytesPerPixel);
+	FSubstratePixelHeader Header = UnpackSubstrateHeaderIn(Substrate.MaterialTextureArray, SubstrateAddressing, Substrate.TopLayerTexture);
+	if (Header.ClosureCount > 0)
+	{
+		const int SliceStoringDebugSubstrateTreeData = Substrate.SliceStoringDebugSubstrateTreeData;
+
+		FSubstrateTreeHeader SubstrateTreeHeader = (FSubstrateTreeHeader)0;
+		SubstrateUnpackInSubstrateTreeHeader(
+			Substrate.MaterialTextureArray,
+			SubstrateTreeHeader,
+			SliceStoringDebugSubstrateTreeData);
+
+		FShaderPrintContext Context;
+		Context = InitShaderPrintContext(true, uint2(50, 50));
+
+		const int BSDFCount = SubstrateTreeHeader.BSDFCount;
+
+		Print(Context, BSDFCount, FontYellow, 2, 0);
+		Print(Context, TEXT("BSDFs"), FontYellow);
+		if (SubstrateTreeHeader.ConvertedFromLegacy)
+		{
+			Print(Context, TEXT(" (Converted from legacy material)"), FontOrange);
+		}
+		Newline(Context);
+		Print(Context, SubstrateTreeHeader.OperatorCount, FontWhite, 2, 0);
+		Print(Context, TEXT("Operators"), FontWhite);
+
+		#define MAX_LAYER_COUNT 4
+		float LayerAccCoverage[MAX_LAYER_COUNT];
+		{
+			for (int i = 0; i < MAX_LAYER_COUNT; ++i)
+			{
+				LayerAccCoverage[i] = 0.0f;
+			}
+		}
+
+		Context = InitShaderPrintContext(true, uint2(50, BSDF_ELEMENT_STARTY));
+		{
+			SubstrateTreeHeader.OperatorCount = min(SubstrateTreeHeader.OperatorCount, 2);
+			SUBSTRATE_UNROLL_N(2)
+			for (int i = 0; i < SubstrateTreeHeader.OperatorCount; i++)
+			{
+				FSubstrateOperator Op = SubstrateUnpackInSubstrateTreeOperator(
+					i,
+					Substrate.MaterialTextureArray,
+					SubstrateTreeHeader,
+					SliceStoringDebugSubstrateTreeData);
+
+				Print(Context, TEXT("OperatorIndex = "), FontCyan);
+				Print(Context, i, FontCyan, 2, 0);
+				Newline(Context);
+				Print(Context, TEXT("ParentIndex = "), FontWhite);
+				Print(Context, Op.ParentIndex, FontWhite, 2, 0);
+				Newline(Context);
+				Print(Context, TEXT("LayerDepth = "), FontWhite);
+				Print(Context, Op.LayerDepth, FontWhite, 2, 0);
+				Newline(Context);
+				Print(Context, TEXT("MaxDistanceFromLeaves = "), FontWhite);
+				Print(Context, Op.MaxDistanceFromLeaves, FontWhite, 2, 0);
+				Newline(Context);
+				Print(Context, TEXT("Type = "), FontWhite);
+				if (Op.Type == SUBSTRATE_OPERATOR_WEIGHT)
+				{
+					Print(Context, TEXT("WEIGHT"), FontWhite);
+				}
+				else if (Op.Type == SUBSTRATE_OPERATOR_VERTICAL)
+				{
+					Print(Context, TEXT("VERTICAL"), FontWhite);
+				}
+				else if (Op.Type == SUBSTRATE_OPERATOR_HORIZONTAL)
+				{
+					Print(Context, TEXT("HORIZONTAL"), FontWhite);
+				}
+				else if (Op.Type == SUBSTRATE_OPERATOR_ADD)
+				{
+					Print(Context, TEXT("ADD"), FontWhite);
+				}
+				else if (Op.Type == SUBSTRATE_OPERATOR_BSDF)
+				{
+					Print(Context, TEXT("BSDF"), FontWhite);
+				}
+				else if (Op.Type == SUBSTRATE_OPERATOR_BSDF_LEGACY)
+				{
+					Print(Context, TEXT("BSDF_LEGACY"), FontWhite);
+				}
+				else
+				{
+					Print(Context, TEXT("UNKOWN"), FontWhite);
+				}
+				Newline(Context);
+				if (Op.Type == SUBSTRATE_OPERATOR_BSDF)
+				{
+					Print(Context, TEXT("BSDFIndex = "), FontYellow);
+					Print(Context, Op.LeftIndex, FontYellow, 2, 0);
+				}
+				else
+				{
+					Print(Context, TEXT("LeftIndex = "), FontWhite);
+					Print(Context, Op.LeftIndex, FontWhite, 2, 0);
+				}
+				Newline(Context);
+				Print(Context, TEXT("RightIndex = "), FontWhite);
+				Print(Context, Op.RightIndex, FontWhite, 2, 0);
+				Newline(Context);
+				Print(Context, TEXT("Weight = "), FontWhite);
+				Print(Context, Op.Weight, FontWhite, 5, 2);
+				Newline(Context);
+				Print(Context, TEXT("Coverage = "), FontWhite);
+				Print(Context, Op.Coverage, FontWhite, 5, 2);
+				Newline(Context);
+				Newline(Context);
+			}
+		}
+
+		{
+			SubstrateTreeHeader.BSDFCount = min(SubstrateTreeHeader.BSDFCount, 2);
+			SUBSTRATE_UNROLL_N(2)
+			for (int i = 0; i < SubstrateTreeHeader.BSDFCount; i++)
+			{
+				FSubstrateBSDF BSDF = SubstrateUnpackInSubstrateTreeBSDF(
+					i,
+					Substrate.MaterialTextureArray,
+					SubstrateTreeHeader,
+					SliceStoringDebugSubstrateTreeData);
+
+				const bool bActive = any(BSDF.LuminanceWeightV > 0.0);
+				FFontColor BSDFFont = FontDarkRed;
+
+				Context = InitShaderPrintContext(true, uint2(300, BSDF_ELEMENT_STARTY + BSDF_ELEMENT_SIZE * i));
+				Print(Context, TEXT("BSDFIndex = "), FontYellow);
+				Print(Context, i, FontYellow, 2, 0);
+				if (!bActive)
+				{
+					Print(Context, TEXT("DISABLED"), FontDarkRed);
+				}
+				else
+				{
+					BSDFFont = FontWhite;
+				}
+				Newline(Context);
+				Print(Context, TEXT("OperatorIndex = "), FontCyan);
+				Print(Context, BSDF.OperatorIndex, FontCyan, 2, 0);
+				Newline(Context);
+				Print(Context, TEXT("Coverage = "), BSDFFont);
+				Print(Context, BSDF.Coverage, BSDFFont, 5, 2);
+				Newline(Context);
+				Print(Context, TEXT("LumWghtV = "), BSDFFont);
+				Print(Context, BSDF.LuminanceWeightV.r, FontLightRed, 5, 2);
+				Print(Context, BSDF.LuminanceWeightV.g, FontLightGreen, 5, 2);
+				Print(Context, BSDF.LuminanceWeightV.b, FontLightBlue, 5, 2);
+				Newline(Context);
+				Print(Context, TEXT("TopTrans = "), BSDFFont);
+				Print(Context, BSDF.TransmittanceAboveAlongN.r, FontLightRed, 5, 2);
+				Print(Context, BSDF.TransmittanceAboveAlongN.g, FontLightGreen, 5, 2);
+				Print(Context, BSDF.TransmittanceAboveAlongN.b, FontLightBlue, 5, 2);
+				Newline(Context);
+				Print(Context, TEXT("TopCover = "), BSDFFont);
+				Print(Context, BSDF.CoverageAboveAlongN, FontLightRed, 5, 2);
+				Newline(Context);
+				Newline(Context);
+				Print(Context, TEXT("Diffuse  = "), BSDFFont);
+				const float3 BSDFDiffuse = SubstrateGetBSDFDiffuseColor(BSDF);
+				Print(Context, BSDFDiffuse.r, FontLightRed, 5, 2);
+				Print(Context, BSDFDiffuse.g, FontLightGreen, 5, 2);
+				Print(Context, BSDFDiffuse.b, FontLightBlue, 5, 2);
+				Newline(Context);
+			}
+		}
+
+		Context = InitShaderPrintContext(true, uint2(675, BSDF_ELEMENT_STARTY - 50));
+		Print(Context, TEXT("BSDF visualization"), FontWhite);
+
+		Context = InitShaderPrintContext(true, uint2(1165, BSDF_ELEMENT_STARTY - 50));
+		Print(Context, TEXT("Topology"), FontWhite);
+
+		// Debug print the Substrate tree only for DXC for the sake of compilation performance.
+	#if SUBSTRATE_COMPILER
+		uint NodeIndexStack[TREE_MAX_DEPTH];
+		uint ChildrenVisitedStack[TREE_MAX_DEPTH]; // 0:none, 1:left, 2:left&right
+		float2 PrintPosStack[TREE_MAX_DEPTH];
+
+		int StackPtr = 0;
+		NodeIndexStack[StackPtr] = SubstrateTreeHeader.RootOperatorIndex;
+		ChildrenVisitedStack[StackPtr] = 0;
+		PrintPosStack[StackPtr] = TREE_START_POS;
+
+		while (StackPtr >= 0)
+		{
+			uint OperatorIndex = NodeIndexStack[StackPtr];
+			FSubstrateOperator Op = SubstrateUnpackInSubstrateTreeOperator(
+				OperatorIndex,
+				Substrate.MaterialTextureArray,
+				SubstrateTreeHeader,
+				SliceStoringDebugSubstrateTreeData);
+
+			Context = InitShaderPrintContext(true, uint2(PrintPosStack[StackPtr]));
+			if (Op.Type == SUBSTRATE_OPERATOR_WEIGHT)
+			{
+				Print(Context, TEXT("W"), FontWhite);
+			}
+			else if (Op.Type == SUBSTRATE_OPERATOR_VERTICAL)
+			{
+				Print(Context, TEXT("V"), FontWhite);
+			}
+			else if (Op.Type == SUBSTRATE_OPERATOR_HORIZONTAL)
+			{
+				Print(Context, TEXT("H"), FontWhite);
+			}
+			else if (Op.Type == SUBSTRATE_OPERATOR_ADD)
+			{
+				Print(Context, TEXT("A"), FontWhite);
+			}
+			else if (Op.Type == SUBSTRATE_OPERATOR_BSDF)
+			{
+				Context = InitShaderPrintContext(true, uint2(PrintPosStack[StackPtr]) - uint2(3,0));
+				Print(Context, TEXT("B"), FontYellow);
+				Print(Context, Op.LeftIndex, FontYellow);
+			}
+			else if (Op.Type == SUBSTRATE_OPERATOR_BSDF_LEGACY)
+			{
+				Print(Context, TEXT("BL"), FontWhite);
+			}
+			else
+			{
+				Print(Context, TEXT("UNKOWN"), FontWhite);
+			}
+
+			const float2 ParentPrintPos = PrintPosStack[StackPtr];
+
+			AddCircleSS(Context, ParentPrintPos, TREE_NODE_RADIUS, TREE_COLOR);
+
+			if (Op.LayerDepth == TREE_MAX_DEPTH - 1 || Op.Type == SUBSTRATE_OPERATOR_BSDF || Op.Type == SUBSTRATE_OPERATOR_BSDF_LEGACY)
+			{
+				StackPtr--;
+				continue;
+			}
+
+			if (ChildrenVisitedStack[StackPtr] == 0)
+			{
+				if (Op.LeftIndex >= 0)
+				{
+					ChildrenVisitedStack[StackPtr] = 1;
+
+					StackPtr++;
+					NodeIndexStack[StackPtr] = Op.LeftIndex;
+					ChildrenVisitedStack[StackPtr] = 0;
+
+					const float2 BranchOffset = GetBranchOffset(Op, true);
+					const float2 BranchOffsetNorm = normalize(BranchOffset);
+					PrintPosStack[StackPtr] = ParentPrintPos + BranchOffset;
+					AddLineSS(Context, ParentPrintPos + TREE_NODE_RADIUS * BranchOffsetNorm, PrintPosStack[StackPtr] - TREE_NODE_RADIUS * BranchOffsetNorm, TREE_COLOR);
+				}
+				else if (Op.RightIndex >= 0)
+				{
+					ChildrenVisitedStack[StackPtr] = 2;
+
+					StackPtr++;
+					NodeIndexStack[StackPtr] = Op.RightIndex;
+					ChildrenVisitedStack[StackPtr] = 0;
+
+					const float2 BranchOffset = GetBranchOffset(Op, false);
+					const float2 BranchOffsetNorm = normalize(BranchOffset);
+					PrintPosStack[StackPtr] = ParentPrintPos + BranchOffset;
+					AddLineSS(Context, ParentPrintPos + TREE_NODE_RADIUS * BranchOffsetNorm, PrintPosStack[StackPtr] - TREE_NODE_RADIUS * BranchOffsetNorm, TREE_COLOR);
+				}
+				else
+				{
+					StackPtr--;
+				}
+			}
+			else if (ChildrenVisitedStack[StackPtr] == 1)
+			{
+				if (Op.RightIndex >= 0)
+				{
+					ChildrenVisitedStack[StackPtr] = 2;
+
+					StackPtr++;
+					NodeIndexStack[StackPtr] = Op.RightIndex;
+					ChildrenVisitedStack[StackPtr] = 0;
+
+					const float2 BranchOffset = GetBranchOffset(Op, false);
+					const float2 BranchOffsetNorm = normalize(BranchOffset);
+					PrintPosStack[StackPtr] = ParentPrintPos + BranchOffset;
+					AddLineSS(Context, ParentPrintPos + TREE_NODE_RADIUS * BranchOffsetNorm, PrintPosStack[StackPtr] - TREE_NODE_RADIUS * BranchOffsetNorm, TREE_COLOR);
+				}
+				else
+				{
+					StackPtr--;
+				}
+			}
+			else
+			{
+				StackPtr--;
+			}
+		}
+
+	#endif // SUBSTRATE_COMPILER
+
+	}
+#endif
+}
+
+#endif // SHADER_DEBUGSUBSTRATETREE_CS
+
+#if SHADER_DEBUGSUBSTRATETREE_PS
+
+#include "../DeferredShadingCommon.ush"
+#define SUPPORT_CONTACT_SHADOWS 0
+#include "../DeferredLightingCommon.ush"
+
+#include "SubstrateEvaluation.ush"
+
+// These defines are needed for environment lighting in SubstrateLightingCommon
+#define ENABLE_DYNAMIC_SKY_LIGHT 1
+#define ENABLE_SKY_LIGHT 1
+#define SUPPORT_DFAO_INDIRECT_OCCLUSION 0
+#define SUBSTRATE_FASTPATH 0
+#define REFLECTION_COMPOSITE_USE_BLENDED_REFLECTION_CAPTURES 0
+#include "../ReflectionEnvironmentShared.ush"
+#include "../SkyLightingDiffuseShared.ush"
+#include "../ReflectionEnvironmentComposite.ush"
+
+#define USE_SUBSTRATE_ENV_LIGHTING_COMMON 1
+#define USE_SUBSTRATE_FORWARD_LIGHTING_COMMON 1
+#include "SubstrateLightingCommon.ush"
+
+float4 GetBackgroundCheckboardColor(float2 UV)
+{
+	const float Count = 16.0f;
+	uint2 UVi = uint2(UV * Count);
+	bool bIsBlack = (UVi.x % 2) > 0 ? true : false;
+	bIsBlack = (UVi.y % 2) > 0 ? !bIsBlack : bIsBlack;
+	const float3 Color = (bIsBlack ? 0.04 : 0.18);
+	return float4(Color, 0.0);
+}
+
+// Updated from http://jcgt.org/published/0007/03/04/
+bool slabs(float3 p0, float3 p1, float3 rayOrigin, float3 invRaydir, out float outTMin, out float outTMax)
+{
+	float3 t0 = (p0 - rayOrigin) * invRaydir;
+	float3 t1 = (p1 - rayOrigin) * invRaydir;
+	float3 tmin = min(t0, t1), tmax = max(t0, t1);
+	float maxtmin = max(max(tmin.x, tmin.y), tmin.z);
+	float mintmax = min(min(tmax.x, tmax.y), tmax.z);
+	outTMin = maxtmin;
+	outTMax = mintmax;
+	return maxtmin <= mintmax;
+}
+
+void EvaluateLighting(
+	in FSubstrateBSDF BSDF,
+	in float3 V,
+	in float3x3 TangentBasis,
+	in float ThicknessRatio,
+	inout float4 OutColor)
+{
+	float3 AbsoluteWorldPosition = DFHackToFloat(PrimaryView.WorldCameraOrigin);
+	float3 TranslatedWorldPosition = PrimaryView.TranslatedWorldCameraOrigin;
+	float SceneDepth = 0.0;
+
+	const float3 N = TangentBasis[2];
+
+	if (BSDF_GETSSSTYPE(BSDF) == SSS_TYPE_SIMPLEVOLUME)
+	{
+		// Apply transmittance on the background
+
+		float3 DiffuseColor = SLAB_DIFFUSEALBEDO(BSDF);
+		FParticipatingMedia PM = SubstrateSlabCreateParticipatingMedia(DiffuseColor, SLAB_SSSMFP(BSDF));
+		const float3 Transmittance = IsotropicMediumSlabTransmittance(PM, ThicknessRatio * SUBSTRATE_SIMPLEVOLUME_THICKNESS_M, 1.f);
+
+		OutColor.rgb *= Transmittance * BSDF.Coverage + (1.0f - BSDF.Coverage);
+	}
+	else
+	{
+		OutColor.rgb *= 0.0f;
+	}
+
+	// Patch the BSDF to appear as a top layer
+	BSDF.LuminanceWeightV = 1.0f;
+	BSDF.TransmittanceAboveAlongN = 1.0f;
+	BSDF.bIsBottom = true;
+	BSDF.bIsTop = true;
+	BSDF.Coverage = 1.0f;
+
+	// Create a head that will map to a single BSDF
+	FSubstratePixelHeader SubstratePixelHeader = InitialiseSubstratePixelHeader();
+	SubstratePixelHeader.ClosureCount = 1;
+
+	FSubstrateIntegrationSettings Settings = InitSubstrateIntegrationSettings();
+	FSubstrateAddressing NullSubstrateAddressing = (FSubstrateAddressing)0;
+
+	// Apply emissive
+	OutColor.rgb += BSDF_GETEMISSIVE(BSDF) * View.PreExposure;
+
+	// Apply a white directional light
+	if (ForwardLightData.HasDirectionalLight)
+	{
+		FDeferredLightData DirLightData = (FDeferredLightData)0;
+		DirLightData.Color = ForwardLightData.DirectionalLightColor;
+		DirLightData.FalloffExponent = 0;
+		DirLightData.Direction = ForwardLightData.DirectionalLightDirection;
+		DirLightData.DistanceFadeMAD = ForwardLightData.DirectionalLightDistanceFadeMAD;
+		DirLightData.bRadialLight = false;
+		DirLightData.SpecularScale = ForwardLightData.DirectionalLightSpecularScale;
+		float4 DirLightAttenuation = float4(1, 1, 1, 1);
+		DirLightData.ShadowedBits = 1;
+		DirLightData.ShadowMapChannelMask.x = 1;
+		DirLightData.HairTransmittance = InitHairTransmittanceData();
+
+		float Dither = 0.0f;
+		float3 ToLight = DirLightData.Direction;
+		float LightMask = 1.0f;
+		FRectTexture RectTexture = InitRectTexture();
+		uint LightChannelMask = 0xFFFFFFFF;
+		uint PrimitiveLightingChannelMask = LightChannelMask;
+		half4 PrecomputedShadowFactors = 1;
+
+		float3 BSDFColoredVisibility = 1.0f;
+
+		FSubstrateBSDFContext SubstrateBSDFContext = SubstrateCreateBSDFContext(TangentBasis, BSDF, V, ToLight);
+
+		FSubstrateEvaluateResult BSDFEvaluate = (FSubstrateEvaluateResult)0;
+		float3 DirLightLuminance = SubstrateForwardLightingCommon(
+			Dither,
+			Settings,
+			DirLightData,
+			ToLight,
+			LightMask,
+			DirLightAttenuation,
+			RectTexture,
+			LightChannelMask,
+			PrimitiveLightingChannelMask,
+			PrecomputedShadowFactors,
+			TranslatedWorldPosition,
+			SceneDepth,
+			BSDFColoredVisibility,
+			SubstratePixelHeader,
+			SubstrateBSDFContext,
+			BSDFEvaluate);
+
+		OutColor.rgb += DirLightLuminance * View.PreExposure;
+	}
+
+	// Apply the sky box
+	{
+		float3 ToLight = V;
+		FSubstrateBSDFContext SubstrateBSDFContext = SubstrateCreateBSDFContext(TangentBasis, BSDF, V, ToLight);
+
+		const bool bEnableSpecular = ReflectionStruct.SkyLightParameters.y > 0.0f;
+		FSubstrateEnvLightResult SubstrateEnvLight = SubstrateEvaluateForEnvLight(SubstrateBSDFContext, bEnableSpecular, Settings);
+
+		float3 DiffuseLighting = 0.0;
+		float3 SpecularLighting = 0.0;
+		SubstrateEnvLightingCommon(
+			SubstrateEnvLight,
+			SubstratePixelHeader,
+			SubstrateBSDFContext,
+			BSDF,
+			N,	//in float3 BentNormal,
+			1.0,//in float3 BSDFThroughput,
+			0,	//in uint CaptureDataStartIndex,
+			0,	//in uint NumCulledReflectionCaptures,
+			1.0,//in float ScreenAmbientOcclusion,
+			1.0,//in float CloudVolumetricAOShadow,
+			1.0,//in float TopLayerSpecularContributionFactor,
+			TranslatedWorldPosition,
+			1.0,//in float CombinedScreenAndMaterialAO,
+			DiffuseLighting,
+			SpecularLighting);
+
+		OutColor.rgb += (DiffuseLighting + SpecularLighting) * View.PreExposure;;
+	}
+}
+
+void GetMaterialOnCube(
+	in float4 SVPos,
+	in float2 Pos,
+	in float  Size,
+	in FSubstrateBSDF BSDF,
+	inout float4 OutColor)
+{
+	const float2 PixelPos = SVPos.xy;
+
+	if (BSDF_GETTYPE(BSDF) == SUBSTRATE_BSDF_TYPE_SLAB && all(PixelPos > Pos) && all(PixelPos < (Pos + Size)))
+	{
+		const float2 UV = (PixelPos - Pos) / Size;
+		OutColor = GetBackgroundCheckboardColor(UV);
+
+		const float3 RayO = -View.ViewForward*1.2;
+		const float3 RayD = View.ViewForward + 1.0 * (UV.x - 0.5) * View.ViewRight - 1.0 * (UV.y - 0.5) * View.ViewUp;
+		float3 V = -RayD;
+
+		float2 Hit;
+		const float CubeSize = 0.25;
+		bool bIntersection = slabs(-CubeSize, CubeSize, RayO, 1/RayD, Hit.x, Hit.y);
+		if (bIntersection)
+		{
+			float3 P = RayO + RayD * Hit.x;
+			float3 N = normalize(P);
+			float3 AbsN = abs(N);
+			N = AbsN.x > AbsN.y && AbsN.x > AbsN.z ? float3(1 * sign(N.x), 0, 0) : N;
+			N = AbsN.y > AbsN.z && AbsN.y > AbsN.x ? float3(0, 1 * sign(N.y), 0) : N;
+			N = AbsN.z > AbsN.x && AbsN.z > AbsN.y ? float3(0, 0, 1 * sign(N.z)) : N;
+			const float ThicknessRatio = abs(Hit.y - Hit.x) / CubeSize;
+
+			float3x3 TangentBasis;
+			TangentBasis[2] = N;
+			TangentBasis[0] = AbsN.x > AbsN.y && AbsN.x > AbsN.z ? float3(0, 1, 0) : (AbsN.y > AbsN.z && AbsN.y > AbsN.x ? float3(0, 0, 1) : float3(1, 0, 0));
+			TangentBasis[1] = AbsN.x > AbsN.y && AbsN.x > AbsN.z ? float3(0, 0, 1) : (AbsN.y > AbsN.z && AbsN.y > AbsN.x ? float3(1, 0, 0) : float3(0, 1, 0));
+
+			EvaluateLighting(
+				BSDF,
+				V,
+				TangentBasis,
+				ThicknessRatio,
+				OutColor);
+		}
+	}
+}
+
+void GetMaterialOnSphere(
+	in float4 SVPos,
+	in float2 Pos,
+	in float  Size,
+	in FSubstrateBSDF BSDF,
+	inout float4 OutColor)
+{
+	const float2 PixelPos = SVPos.xy;
+
+	if (BSDF_GETTYPE(BSDF) == SUBSTRATE_BSDF_TYPE_SLAB && all(PixelPos > Pos) && all(PixelPos < (Pos + Size)))
+	{
+		const float2 UV = (PixelPos - Pos) / Size;
+		OutColor = GetBackgroundCheckboardColor(UV);
+
+		float3 V = -View.ViewForward;
+		const float3 RayO = V + (UV.x-0.5) * View.ViewRight + -(UV.y-0.5) * View.ViewUp;
+		const float3 RayD = -V;
+		const float4 Sphere = float4(0.0f, 0.0f, 0.f, 0.48);
+		const float2 Hit = RayIntersectSphere(RayO, RayD, Sphere);
+		if (Hit.x >= 0)
+		{
+			float3 P = RayO + RayD * Hit.x;
+			float3 N = normalize(P - Sphere.xyz);
+			const float ThicknessRatio = (Hit.y - Hit.x) / Sphere.w;
+
+			float3x3 TangentBasis;
+			TangentBasis[2] = N;
+			TangentBasis[0] = normalize(N * float3(1, 0, 0));
+			TangentBasis[1] = cross(N, TangentBasis[0]);
+			TangentBasis[0] = -cross(N, TangentBasis[1]);
+
+			EvaluateLighting(
+				BSDF,
+				V,
+				TangentBasis,
+				ThicknessRatio,
+				OutColor);
+		}
+	}
+}
+
+void GetMaterialSlice(
+	in float4 SVPos,
+	in float2 Pos,
+	in float2  Size,
+	in FSubstrateBSDF BSDF,
+	inout float4 OutColor)
+{
+	const float2 PixelPos = SVPos.xy;
+
+	if (BSDF_GETTYPE(BSDF) == SUBSTRATE_BSDF_TYPE_SLAB && all(int2(PixelPos) > int2(Pos)) && all(int2(PixelPos) < int2(Pos + Size)))
+	{
+		const float2 UV = (PixelPos - Pos) / Size;
+		OutColor = GetBackgroundCheckboardColor((PixelPos - Pos) / Size.x);
+
+		// View and normal along up.
+		float3 V = float3(0, 0, 1);
+		float3 N = float3(0, 0, 1);
+		const float ThicknessRatio = 1.0;
+
+		float3x3 TangentBasis;
+		TangentBasis[2] = N;
+		TangentBasis[0] = float3(1, 0, 0);
+		TangentBasis[1] = float3(0, 1, 0);
+
+		EvaluateLighting(
+			BSDF,
+			V,
+			TangentBasis,
+			ThicknessRatio,
+			OutColor);
+	}
+	else
+	{
+		OutColor = 0;
+	}
+}
+
+void MaterialDebugSubstrateTreePS(
+	float4 SVPos : SV_POSITION,
+	out float4 OutColor : SV_Target0)
+{
+	OutColor = float4(0.0f, 0.0f, 0.0f, 1.0f);
+
+	// Workaround on Vulkan where this shader does not compile correctly
+#if !VULKAN_PROFILE & !VULKAN_PROFILE_SM5 && !VULKAN_PROFILE_SM6
+
+	FSubstrateAddressing SubstrateAddressing = GetSubstratePixelDataByteOffset((float2(GetCursorPosition()) * View.ViewResolutionFraction), uint2(View.BufferSizeAndInvSize.xy), Substrate.MaxBytesPerPixel);
+	FSubstratePixelHeader Header = UnpackSubstrateHeaderIn(Substrate.MaterialTextureArray, SubstrateAddressing, Substrate.TopLayerTexture);
+	if (Header.ClosureCount > 0)
+	{
+		const float2 PixelPos = SVPos.xy;
+		OutColor = float4(0.0f, 0.0f, 0.0f, PixelPos.x < 540.0f ? 0.5f : 1.0f); // Background
+		if (int(PixelPos.x) == 280 && int(PixelPos.y) > 90)
+		{
+			OutColor = float4(1.0f, 1.0f, 1.0f, 0.5f);							// Operator/BSDF separator
+		}
+
+		const int SliceStoringDebugSubstrateTreeData = Substrate.SliceStoringDebugSubstrateTreeData;
+
+		FSubstrateTreeHeader SubstrateTreeHeader = (FSubstrateTreeHeader)0;
+		SubstrateUnpackInSubstrateTreeHeader(
+			Substrate.MaterialTextureArray,
+			SubstrateTreeHeader,
+			SliceStoringDebugSubstrateTreeData);
+
+
+		float2 Pos = float2(BSDF_ELEMENT_STARTX, BSDF_ELEMENT_STARTY);
+		const float MaterialPanelSize = 200.0f;
+
+		// SUBSTRATE_TODO: read BSDF and Operators "on the fly".
+		{
+			SubstrateTreeHeader.BSDFCount = min(SubstrateTreeHeader.BSDFCount, 2);
+			SUBSTRATE_UNROLL_N(2)
+			for (int i = 0; i < SubstrateTreeHeader.BSDFCount; i++)
+			{
+				FSubstrateBSDF BSDF = SubstrateUnpackInSubstrateTreeBSDF(
+					i,
+					Substrate.MaterialTextureArray,
+					SubstrateTreeHeader,
+					SliceStoringDebugSubstrateTreeData);
+
+				//if (BSDF.Coverage > 0.0f)
+				{
+					GetMaterialOnSphere(
+						SVPos,
+						Pos,
+						MaterialPanelSize,
+						BSDF,
+						OutColor);
+
+					GetMaterialOnCube(
+						SVPos,
+						Pos + float2(MaterialPanelSize + 10.0f, 0.0f),
+						MaterialPanelSize,
+						BSDF,
+						OutColor);
+
+					Pos.y += MaterialPanelSize + 10.0f;
+				}
+			}
+		}
+
+		#define MAX_LAYER_COUNT 4
+		float LayerAccCoverage[MAX_LAYER_COUNT];
+		{
+			for (int i = 0; i < MAX_LAYER_COUNT; ++i)
+			{
+				LayerAccCoverage[i] = 0.0f;
+			}
+		}
+
+		float2 MatTopOrigin = float2(BSDF_ELEMENT_STARTX + 450, BSDF_ELEMENT_STARTY);// float2(BSDF_ELEMENT_STARTX, 550);
+		float2 MatTopLayerSize = float2(410, 100);
+		
+		// This is a really basic material topology debug. SUBSTRATE_TODO would be to draw the material graph itself with anottation
+		{
+			SubstrateTreeHeader.BSDFCount = min(SubstrateTreeHeader.BSDFCount, 2);
+			SUBSTRATE_UNROLL_N(2)
+			for (int i = 0; i < SubstrateTreeHeader.BSDFCount; i++)
+			{
+				FSubstrateBSDF BSDF = SubstrateUnpackInSubstrateTreeBSDF(
+					i,
+					Substrate.MaterialTextureArray,
+					SubstrateTreeHeader,
+					SliceStoringDebugSubstrateTreeData);
+
+				FSubstrateOperator Op = SubstrateUnpackInSubstrateTreeOperator(
+					BSDF.OperatorIndex,
+					Substrate.MaterialTextureArray,
+					SubstrateTreeHeader,
+					SliceStoringDebugSubstrateTreeData);
+
+				const uint LayerDepth = Op.LayerDepth;
+
+				if (LayerDepth < MAX_LAYER_COUNT)
+				{
+					// Draw the slab information
+					float2 LayerOrigin = MatTopOrigin + MatTopLayerSize.xy * float2(LayerAccCoverage[LayerDepth], LayerDepth);
+					float2 SlabSize = MatTopLayerSize.xy * float2(BSDF.Coverage, 1.0);
+
+					if (BSDF_GETTYPE(BSDF) == SUBSTRATE_BSDF_TYPE_SLAB && all(int2(PixelPos) >= int2(LayerOrigin)) && all(int2(PixelPos) <= int2(LayerOrigin + SlabSize)))
+					{
+						GetMaterialSlice(
+							SVPos,
+							LayerOrigin,
+							SlabSize,
+							BSDF,
+							OutColor);
+					}
+
+					LayerAccCoverage[LayerDepth] += BSDF.Coverage;
+				}
+			}
+		}
+	}
+
+	OutColor = float4(pow(OutColor.rgb, 1.0 / 2.2), OutColor.a);
+#endif
+}
+
+#endif // SHADER_DEBUGSUBSTRATETREE_PS
+
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Material Print
+
+#if SHADER_SYSTEMINFO
+uint bAdvancedDebugEnabled;
+uint bEnergyConservation;
+uint bEnergyPreservation;
+uint bDbufferPass;
+uint ClassificationCMask;
+uint ClassificationAsync;
+uint Classification8bits;
+uint bRoughRefraction;
+uint bUseClosureCountFromMaterialData;
+uint ViewsMaxBytesPerPixel;
+uint ViewsMaxClosurePerPixel;
+uint ProjectMaxBytesPerPixel;
+uint ProjectMaxClosurePerPixel;
+uint MaterialBufferAllocationInBytes;
+uint MaterialBufferAllocationMode;
+
+uint MaxClosureCount;
+Buffer<uint> ClassificationTileDrawIndirectBuffer;
+
+uint GetTileCount(uint InType)
+{
+	return ClassificationTileDrawIndirectBuffer[InType * 4 + 1];
+}
+
+[numthreads(1, 1, 1)]
+void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	// Print Legend
+	if (all(DispatchThreadId == 0))
+	{
+		FFontColor TitleColor  = FontYellow;
+		FFontColor LegendColor = FontWhite;
+		FFontColor ValueColor  = FontOrange;
+		FShaderPrintContext Context = InitShaderPrintContext(true, uint2(50, 50));
+
+		FFontColor SubTitleColor= FontYellow;
+		SubTitleColor.Color *= 0.7f;
+
+		// General
+		Print(Context, TEXT("General"), TitleColor);
+		Newline(Context);
+
+		Print(Context, TEXT(" Byte Per Pixel"), SubTitleColor); Newline(Context);
+		Print(Context, TEXT(" Max   : "), LegendColor); 
+		Print(Context, Substrate.MaxBytesPerPixel, ValueColor, 3, 0);
+		Print(Context, TEXT(" / "), FontWhite); 
+		Print(Context, ProjectMaxBytesPerPixel, ValueColor, 3, 0);
+		Print(Context, TEXT(" ["), FontWhite); 
+		Print(Context, uint(DivideAndRoundUp(MaterialBufferAllocationInBytes, 1000000.f)), ValueColor, 4, 0);
+		Print(Context, TEXT("Mb]"), FontWhite);
+		Newline(Context);
+
+		Print(Context, TEXT(" Views : "), LegendColor); 
+		Print(Context, ViewsMaxBytesPerPixel, ValueColor, 3, 0);
+		Print(Context, TEXT(" / "), FontWhite); 
+		Print(Context, ProjectMaxBytesPerPixel, ValueColor, 3, 0);
+		Newline(Context);
+		Newline(Context);
+
+		Print(Context, TEXT(" Closure Per Pixel"), SubTitleColor); Newline(Context);
+		Print(Context, TEXT(" Max   : "), LegendColor); 
+		Print(Context, Substrate.MaxClosurePerPixel, ValueColor, 3, 0);
+		Print(Context, TEXT(" / "), FontWhite); 
+		Print(Context, ProjectMaxClosurePerPixel, ValueColor, 3, 0);
+		Newline(Context);
+
+		Print(Context, TEXT(" Views : "), LegendColor); 
+		Print(Context, ViewsMaxClosurePerPixel, ValueColor, 3, 0);
+		Print(Context, TEXT(" / "), FontWhite); 
+		Print(Context, ProjectMaxClosurePerPixel, ValueColor, 3, 0);
+		Newline(Context);
+		Newline(Context);
+
+		Print(Context, TEXT(" Allocation Mode    : "), LegendColor);
+		switch (MaterialBufferAllocationMode)
+		{
+			case 0: Print(Context, TEXT("View based"), ValueColor); break;
+			case 1: Print(Context, TEXT("View based | Growing-only"), ValueColor); break;
+			case 2: Print(Context, TEXT("Setting based"), ValueColor); break;
+			default: Print(Context, TEXT("Unknown: "), ValueColor); break;
+		}
+		Newline(Context);
+
+		Print(Context, TEXT(" Shading quality    : "), LegendColor);
+		Print(Context, uint(SUBSTRATE_SHADING_QUALITY), ValueColor);
+		Newline(Context);
+
+		Print(Context, TEXT(" Rough diffuse      : "), LegendColor);
+		PrintBool(Context, Substrate.bRoughDiffuse);
+		Newline(Context);
+
+		Print(Context, TEXT(" Energy conservation: "), LegendColor);
+		PrintBool(Context, bEnergyConservation);
+		Newline(Context);
+
+		Print(Context, TEXT(" Energy preservation: "), LegendColor);
+		PrintBool(Context, bEnergyPreservation);
+		Newline(Context);
+
+		Print(Context, TEXT(" Use #closures mat. : "), LegendColor);
+		PrintBool(Context, bUseClosureCountFromMaterialData);
+		Newline(Context); 
+
+		Print(Context, TEXT(" Tile Closure Count : "), LegendColor);
+		Print(Context, MaxClosureCount, FontOrange);
+		Newline(Context); 
+
+		Print(Context, TEXT(" DBuffer pass       : "), LegendColor);
+		PrintBool(Context, bDbufferPass);
+		Newline(Context);
+
+		Print(Context, TEXT(" Rough refraction   : "), LegendColor);
+		PrintBool(Context, bRoughRefraction);
+		Newline(Context);
+
+		Newline(Context);
+
+		// Classification
+		Print(Context, TEXT("Classification"), TitleColor);
+		Newline(Context);
+
+		Print(Context, TEXT(" Tile Size          : "), LegendColor);
+		Print(Context, Substrate.TileSize, ValueColor, 1, 0);
+		Print(Context, TEXT("x"), LegendColor);
+		Print(Context, Substrate.TileSize, ValueColor, 1, 0);
+		Newline(Context);
+
+		Print(Context, TEXT(" Tile Count         : "), LegendColor);
+		Print(Context, Substrate.TileCount.x, ValueColor, 3, 0);
+		Print(Context, TEXT("x"), LegendColor);
+		Print(Context, Substrate.TileCount.y, ValueColor, 3, 0);
+		Newline(Context);
+
+		Print(Context, TEXT(" CMask              : "), LegendColor);
+		PrintBool(Context, ClassificationCMask);
+		Newline(Context);
+
+		Print(Context, TEXT(" Async              : "), LegendColor);
+		PrintBool(Context, ClassificationAsync);
+		Newline(Context);
+
+		Print(Context, TEXT(" 8-bits coord       : "), LegendColor);
+		PrintBool(Context, Classification8bits);
+		Newline(Context);
+
+		Newline(Context);
+
+		// Material tiles
+		Print(Context, TEXT("Material Tiles"), TitleColor);
+		Newline(Context);
+
+		Print(Context, TEXT(" # Simple tiles     : "), LegendColor);
+		Print(Context, GetTileCount(SUBSTRATE_TILE_TYPE_SIMPLE), ValueColor);
+		Newline(Context);
+
+		Print(Context, TEXT(" # Single tiles     : "), LegendColor);
+		Print(Context, GetTileCount(SUBSTRATE_TILE_TYPE_SINGLE), ValueColor);
+		Newline(Context);
+
+		Print(Context, TEXT(" # Complex tiles    : "), LegendColor);
+		Print(Context, GetTileCount(SUBSTRATE_TILE_TYPE_COMPLEX), ValueColor);
+		Newline(Context);
+
+		Print(Context, TEXT(" # Complex Special tiles: "), LegendColor);
+		Print(Context, GetTileCount(SUBSTRATE_TILE_TYPE_COMPLEX_SPECIAL), ValueColor);
+		Newline(Context);
+
+		Newline(Context);
+
+		// Rough tiles
+		if (bRoughRefraction)
+		{
+			Print(Context, TEXT("Rough Refraction Tiles"), TitleColor);
+			Newline(Context);
+
+			Print(Context, TEXT(" # Rough refract.   : "), LegendColor);
+			Print(Context, GetTileCount(SUBSTRATE_TILE_TYPE_ROUGH_REFRACT), ValueColor);
+			Newline(Context);
+
+			Print(Context, TEXT(" # Rough r. w/o SSS : "), LegendColor);
+			Print(Context, GetTileCount(SUBSTRATE_TILE_TYPE_ROUGH_REFRACT_SSS_WITHOUT), ValueColor);
+			Newline(Context);
+
+			Newline(Context);
+		}
+
+		// DBuffer Tiles
+		if (bDbufferPass)
+		{
+			Print(Context, TEXT("Decal Tiles"), TitleColor);
+			Newline(Context);
+
+			Print(Context, TEXT(" # Simple tiles     : "), LegendColor);
+			Print(Context, GetTileCount(SUBSTRATE_TILE_TYPE_DECAL_SIMPLE), ValueColor);
+			Newline(Context);
+
+			Print(Context, TEXT(" # Single tiles     : "), LegendColor);
+			Print(Context, GetTileCount(SUBSTRATE_TILE_TYPE_DECAL_SINGLE), ValueColor);
+			Newline(Context);
+
+			Print(Context, TEXT(" # Complex tiles    : "), LegendColor);
+			Print(Context, GetTileCount(SUBSTRATE_TILE_TYPE_DECAL_COMPLEX), ValueColor);
+			Newline(Context);
+
+			Newline(Context);
+		}
+
+		// Debug
+		Print(Context, TEXT("Debug"), TitleColor);
+		Newline(Context);
+
+		Print(Context, TEXT(" Adv. debug         : "), LegendColor);
+		PrintBool(Context, bAdvancedDebugEnabled);
+		Newline(Context);
+
+		Print(Context, TEXT(" Layer peel index   : "), LegendColor);
+		Print(Context, Substrate.PeelLayersAboveDepth, ValueColor);
+		Newline(Context);
+
+		Newline(Context);
+	}
+}
+#endif // SHADER_SYSTEMINFO

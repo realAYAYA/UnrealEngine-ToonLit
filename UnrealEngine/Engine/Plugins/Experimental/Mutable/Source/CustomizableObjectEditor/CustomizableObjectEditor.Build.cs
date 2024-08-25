@@ -12,15 +12,6 @@ public class CustomizableObjectEditor : ModuleRules
 
 		DefaultBuildSettings = BuildSettingsVersion.V2;
 
-		// Strangely enough:
-		// - this has to be enabled for the windows editor build, or it raises an exception at runtime (compiling Mutable).
-		// - this cannot be enabled in Linux, or it doesn't compile.
-		// No class in this module requires RTTI, but this module uses RTTI for classes in the MutableTools module.
-		if (Target.Platform == UnrealTargetPlatform.Win64)
-		{
-			bUseRTTI = true;
-		}
-
 		PrivateIncludePathModuleNames.AddRange(
 			new string[] { 
 				"AssetRegistry", 
@@ -60,6 +51,7 @@ public class CustomizableObjectEditor : ModuleRules
 				"ClothingSystemRuntimeInterface",
 				"DeveloperToolSettings",
 				"ToolMenus",
+				"ToolWidgets",
 				"EditorFramework",
 				"UMG",
 				"Persona",
@@ -73,6 +65,10 @@ public class CustomizableObjectEditor : ModuleRules
 				
 				"AssetDefinition",
 				"ContentBrowser",
+				
+				"TextureCompressor",
+				"TextureBuildUtilities",
+				"ImageCore",
 			}
 		);
 
@@ -83,22 +79,17 @@ public class CustomizableObjectEditor : ModuleRules
 				"SceneOutliner",
 				"ClassViewer",
 				"WorkspaceMenuStructure",
-				}
-			);
+			}
+		);
 
 
 		PublicDependencyModuleNames.AddRange(
 			new string[] {
 				"PropertyEditor",
 				"CustomizableObject",
-				"StructUtils",
+				"StructUtils", 
+				"MutableTools",
 			}
-			);
-
-		PrivateIncludePaths.AddRange(new string[] {
-				"CustomizableObject/Private",
-				"MutableRuntime/Private",
-				"MutableTools/Private",
-			});
+		);
 	}
 }

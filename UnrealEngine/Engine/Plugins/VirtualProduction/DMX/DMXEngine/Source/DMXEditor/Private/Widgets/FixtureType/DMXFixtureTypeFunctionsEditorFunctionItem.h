@@ -51,6 +51,9 @@ public:
 	/** Sets a Function Name, makes it unique. Returns the OutUniqueFunctionName as output argument */
 	void SetFunctionName(const FText& DesiredFunctionName, FText& OutUniqueFunctionName);
 
+	/** Deletes the function this item stands for */
+	void DeleteFunction();
+
 	/** Returns the Fixture Type Shared Data for the editor that makes use of this Item */
 	TSharedPtr<FDMXFixtureTypeSharedData> GetFixtureTypeSharedData() const;
 

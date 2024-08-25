@@ -14,6 +14,7 @@
 #include "Engine/Engine.h"
 #include "Engine/InstancedStaticMesh.h"
 #include "Engine/StaticMeshSocket.h"
+#include "MaterialDomain.h"
 #include "Field/FieldSystemComponent.h"
 #include "GeometryCollection/Facades/CollectionHierarchyFacade.h"
 #include "GeometryCollection/GeometryCollection.h"
@@ -37,11 +38,13 @@
 #include "Net/UnrealNetwork.h"
 #include "PhysicalMaterials/PhysicalMaterial.h"
 #include "Physics/Experimental/PhysScene_Chaos.h"
+#include "Physics/Experimental/ChaosInterfaceUtils.h"
 #include "Physics/PhysicsFiltering.h"
 #include "PhysicsEngine/PhysicsObjectExternalInterface.h"
 #include "PhysicsField/PhysicsFieldComponent.h"
 #include "PhysicsProxy/GeometryCollectionPhysicsProxy.h"
 #include "PhysicsSolver.h"
+#include "UObject/FortniteValkyrieBranchObjectVersion.h"
 #include "Chaos/PBDRigidClusteringAlgo.h"
 
 #include "Algo/RemoveIf.h"
@@ -62,6 +65,7 @@
 #include "Chaos/ChaosGameplayEventDispatcher.h"
 
 #include "Rendering/NaniteResources.h"
+#include "NaniteVertexFactory.h"
 #include "PrimitiveSceneInfo.h"
 #include "GeometryCollection/GeometryCollectionEngineRemoval.h"
 #include "GeometryCollection/Facades/CollectionAnchoringFacade.h"
@@ -105,9 +109,6 @@ static bool bChaos_BoxCalcBounds_ISPC_Enabled = CHAOS_BOX_CALC_BOUNDS_ISPC_ENABL
 static FAutoConsoleVariableRef CVarChaosBoxCalcBoundsISPCEnabled(TEXT("p.Chaos.BoxCalcBounds.ISPC"), bChaos_BoxCalcBounds_ISPC_Enabled, TEXT("Whether to use ISPC optimizations in calculating box bounds in geometry collections"));
 #endif
 
-bool bChaos_GC_CacheComponentSpaceBounds = true;
-FAutoConsoleVariableRef CVarChaosGCCacheComponentSpaceBounds(TEXT("p.Chaos.GC.CacheComponentSpaceBounds"), bChaos_GC_CacheComponentSpaceBounds, TEXT("Cache component space bounds for performance"));
-
 bool bChaos_GC_UseCustomRenderer = true;
 FAutoConsoleVariableRef CVarChaosGCUseCustomRenderer(TEXT("p.Chaos.GC.UseCustomRenderer"), bChaos_GC_UseCustomRenderer, TEXT("When enabled, use a custom renderer if specified"));
 
@@ -126,7 +127,21 @@ FAutoConsoleVariableRef CVarGeometryCollectionRemovalTimerMultiplier(TEXT("p.Cha
 // temporary cvar , should be removed when the root event is no longer no necessary
 bool GeometryCollectionEmitRootBreakingEvent = false;
 FAutoConsoleVariableRef CVarGeometryCollectionEmitRootBreakingEvent(TEXT("p.Chaos.GC.EmitRootBreakingEvent"), GeometryCollectionEmitRootBreakingEvent, TEXT("When true send a breaking event when root is breaking"));
+
+bool GeometryCollectionCreatePhysicsStateInEditor = false;
+FAutoConsoleVariableRef CVarGeometryCollectionCreatePhysicsStateInEditor(TEXT("p.Chaos.GC.CreatePhysicsStateInEditor"), GeometryCollectionCreatePhysicsStateInEditor, TEXT("when on , physics state for a GC will be create in editor ( non PIE )"));
+
+bool GeometryCollectionEnableRootProxyComponents = true;
+FAutoConsoleVariableRef CVarGeometryCollectionRootProxyComponents(TEXT("p.Chaos.GC.EnableRootProxyComponents"), GeometryCollectionEnableRootProxyComponents, TEXT("when on ( by default ) , create root proxy components"));
+
+bool GeometryCollectionUseReplicationV2 = true;
+FAutoConsoleVariableRef CVarGeometryCollectionUseReplicationV2(TEXT("p.Chaos.GC.UseReplicationV2"), GeometryCollectionUseReplicationV2, TEXT("When true use new replication data model"));
+
+int32 GeometryCollectionNetAwakeningMode = 1;
+FAutoConsoleVariableRef CVarGeometryCollectionNetAwakeningMode(TEXT("p.Chaos.GC.NetAwakeningMode"), GeometryCollectionNetAwakeningMode, TEXT("Changes how GC components ensure that their owner is awake for replication. 0 = ForceDormancyAwake, 1 = Use Flush Net Dormancy"));
+
 DEFINE_LOG_CATEGORY_STATIC(UGCC_LOG, Error, All);
+DEFINE_LOG_CATEGORY_STATIC(LogGeometryCollectionComponent, Warning, All);
 
 extern FGeometryCollectionDynamicDataPool GDynamicDataPool;
 
@@ -199,6 +214,34 @@ bool FGeometryCollectionRepData::Identical(const FGeometryCollectionRepData* Oth
 	return Other && (Version == Other->Version);
 }
 
+bool FGeometryCollectionRepData::HasChanged(const FGeometryCollectionRepData& BaseData) const
+{
+	if((Version == 0) || (bIsRootAnchored != BaseData.bIsRootAnchored))
+	{
+		return true;
+	}
+	for (const FGeometryCollectionActivatedCluster& Data : OneOffActivated)
+	{
+		if (!BaseData.OneOffActivated.Contains(Data))
+		{
+			return true;
+		}
+	}
+	
+	for (const FGeometryCollectionClusterRep& Data : Clusters)
+	{
+		const FGeometryCollectionClusterRep* ExistingData = BaseData.Clusters.FindByPredicate(
+			[&TransformIndex = Data.ClusterIdx](const FGeometryCollectionClusterRep& OtherData) ->
+			bool { return OtherData.ClusterIdx == TransformIndex; });
+
+		if(!ExistingData || (ExistingData && Data.ClusterChanged(*ExistingData)))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
 bool FGeometryCollectionRepData::NetSerialize(FArchive& Ar, class UPackageMap* Map, bool& bOutSuccess)
 {
 	bOutSuccess = true;
@@ -236,6 +279,175 @@ bool FGeometryCollectionRepData::NetSerialize(FArchive& Ar, class UPackageMap* M
 	return true;
 }
 
+bool FGeometryCollectionRepStateData::SetBroken(int32 TransformIndex, int32 NumTransforms, bool bDisabled, const FVector& LinV, const FVector& AngVInRadiansPerSecond)
+{
+	if (BrokenState.Num() != NumTransforms)
+	{
+		BrokenState.SetNum(NumTransforms, false);
+	}
+	if (!BrokenState[TransformIndex])
+	{
+		BrokenState[TransformIndex] = true;
+
+		FReleasedData Data;
+		Data.TransformIndex = TransformIndex;
+		Data.LinearVelocity = LinV;
+		Data.AngularVelocityInDegreesPerSecond = FMath::RadiansToDegrees(AngVInRadiansPerSecond);
+		ReleasedData.Emplace(Data);
+
+		return true;
+	}
+
+	// breaking state already recorded, if it's disabled we can remove it from the ReleasedData
+	// because it certainly went throug the removal stage and clients do not need to care about the initial velocity anymore
+	if (bDisabled)
+	{
+		const int32 FoundDataIndex = ReleasedData.IndexOfByPredicate(
+			[&TransformIndex](const FReleasedData& Data) -> bool { return (Data.TransformIndex == TransformIndex); });
+		if (FoundDataIndex != INDEX_NONE)
+		{
+			ReleasedData.RemoveAtSwap(FoundDataIndex, 1, EAllowShrinking::No);
+		}
+		// this does not have to be reported as a state change to save bandwidth
+		return false;
+	}
+
+	return false;
+}
+
+bool FGeometryCollectionRepStateData::Identical(const FGeometryCollectionRepStateData* Other, uint32 PortFlags) const
+{
+	return Other && (Version == Other->Version);
+}
+
+bool  FGeometryCollectionRepStateData::HasChanged(const FGeometryCollectionRepStateData& BaseData) const
+{
+	// We are not using the ReleasedData to check if something has changed since this array is fully controlled by the brokenstate one
+	return (Version == 0) || (BrokenState != BaseData.BrokenState) || (bIsRootAnchored != BaseData.bIsRootAnchored);
+}
+
+bool FGeometryCollectionRepStateData::NetSerialize(FArchive& Ar, class UPackageMap* Map, bool& bOutSuccess)
+{
+	bOutSuccess = true;
+
+	Ar << Version;
+
+	Ar << BrokenState;
+
+	Ar << bIsRootAnchored;
+
+	// we only support up to 2^16 bones for replication ( bandwidth reasons )
+	ensure(ReleasedData.Num() < TNumericLimits<uint16>::Max());
+	uint16 NumReleasedData = static_cast<uint16>(ReleasedData.Num());
+	Ar << NumReleasedData;
+
+	if (Ar.IsLoading())
+	{
+		ReleasedData.SetNumUninitialized(static_cast<int32>(NumReleasedData));
+	}
+
+	for (FReleasedData& Data : ReleasedData)
+	{
+		Ar << Data.TransformIndex;
+		Ar << Data.LinearVelocity;
+		Ar << Data.AngularVelocityInDegreesPerSecond;
+	}
+
+	return true;
+}
+
+bool FGeometryCollectionRepDynamicData::FClusterData::IsEqualPositionsAndVelocities(const FGeometryCollectionRepDynamicData::FClusterData& Data) const
+{
+	return Position.Equals(Data.Position)
+		&& EulerRotation.Equals(Data.EulerRotation)
+		&& LinearVelocity.Equals(Data.LinearVelocity)
+		&& AngularVelocityInDegreesPerSecond.Equals(Data.AngularVelocityInDegreesPerSecond)
+		;
+}
+
+bool FGeometryCollectionRepDynamicData::SetData(const FGeometryCollectionRepDynamicData::FClusterData& Data)
+{
+	FClusterData* ExistingData = ClusterData.FindByPredicate(
+		[&TransformIndex = Data.TransformIndex](const FClusterData& Data) -> bool { return Data.TransformIndex == TransformIndex; });
+	if (ExistingData)
+	{
+		const bool bHasChanged = !ExistingData->IsEqualPositionsAndVelocities(Data);
+		if (bHasChanged)
+		{
+			*ExistingData = Data;
+			ExistingData->LastUpdatedVersion = (Version + 1);
+		}
+		return bHasChanged;
+	}
+	FClusterData& NewData = ClusterData.Emplace_GetRef(Data);
+	NewData.LastUpdatedVersion = (Version + 1);
+	return true;
+}
+
+bool FGeometryCollectionRepDynamicData::RemoveOutOfDateClusterData()
+{
+	const int32 NumRemoved = ClusterData.RemoveAllSwap(
+		[this](const FClusterData& Data) -> bool
+		{
+			return (Data.LastUpdatedVersion <= Version);
+		},
+		EAllowShrinking::No);
+
+	return (NumRemoved > 0);
+}
+
+bool FGeometryCollectionRepDynamicData::Identical(const FGeometryCollectionRepDynamicData* Other, uint32 PortFlags) const
+{
+	return Other && (Version == Other->Version);
+}
+
+bool FGeometryCollectionRepDynamicData::HasChanged(const FGeometryCollectionRepDynamicData& BaseData) const
+{
+	if (Version == 0)
+	{
+		return true;
+	}
+	for (const FGeometryCollectionRepDynamicData::FClusterData& Data : ClusterData)
+	{
+		const FGeometryCollectionRepDynamicData::FClusterData* ExistingData = BaseData.ClusterData.FindByPredicate(
+			[&TransformIndex = Data.TransformIndex](const FGeometryCollectionRepDynamicData::FClusterData& OtherData) ->
+			bool { return OtherData.TransformIndex == TransformIndex; });
+
+		if (!ExistingData || (ExistingData && !ExistingData->IsEqualPositionsAndVelocities(Data)))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+bool FGeometryCollectionRepDynamicData::NetSerialize(FArchive& Ar, class UPackageMap* Map, bool& bOutSuccess)
+{
+	Ar << Version;
+
+	// we only support up to 2^16 bones for replication ( bandwidth reasons )
+	ensure(ClusterData.Num() < TNumericLimits<uint16>::Max());
+	uint16 NumClusterData = static_cast<uint16>(ClusterData.Num());
+	Ar << NumClusterData;
+
+	if (Ar.IsLoading())
+	{
+		ClusterData.SetNumUninitialized(static_cast<int32>(NumClusterData));
+	}
+
+	for (FClusterData& Data : ClusterData)
+	{
+		Ar << Data.TransformIndex;
+		Ar << Data.bIsInternalCluster;
+		Ar << Data.Position;
+		Ar << Data.EulerRotation; // as rotator
+		Ar << Data.LinearVelocity;
+		Ar << Data.AngularVelocityInDegreesPerSecond;
+	}
+
+	return true;
+}
+
 int32 GGeometryCollectionNanite = 1;
 FAutoConsoleVariableRef CVarGeometryCollectionNanite(
 	TEXT("r.GeometryCollection.Nanite"),
@@ -257,6 +469,7 @@ FAutoConsoleVariableRef CVarGeometryCollectionNavigationSizeThreshold(TEXT("p.Ge
 bool bGeometryCollectionSingleThreadedBoundsCalculation = false;
 FAutoConsoleVariableRef CVarGeometryCollectionSingleThreadedBoundsCalculation(TEXT("p.GeometryCollectionSingleThreadedBoundsCalculation"), bGeometryCollectionSingleThreadedBoundsCalculation, TEXT("[Debug Only] Single threaded bounds calculation. [def:false]"));
 
+FName UGeometryCollectionComponent::DefaultCollisionProfileName("InternalGCDefaultCollision");
 
 FGeomComponentCacheParameters::FGeomComponentCacheParameters()
 	: CacheMode(EGeometryCollectionCacheType::None)
@@ -286,42 +499,100 @@ FGeomComponentCacheParameters::FGeomComponentCacheParameters()
 #define COPY_ON_WRITE_ATTRIBUTE(Type, Name, Group)										\
 const TManagedArray<Type>& UGeometryCollectionComponent::Get##Name##Array() const 		\
 {																						\
-	return Indirect##Name##Array ?														\
-		*Indirect##Name##Array : RestCollection->GetGeometryCollection()->Name;			\
+	return RestCollection->GetGeometryCollection()->Name;								\
 }																						\
 TManagedArray<Type>& UGeometryCollectionComponent::Get##Name##ArrayCopyOnWrite()		\
 {																						\
-	if(!Indirect##Name##Array)															\
+	static FName StaticName(#Name);														\
+	if (!DynamicCollection->HasAttribute(StaticName, Group))							\
 	{																					\
-		static FName StaticName(#Name);													\
 		DynamicCollection->AddAttribute<Type>(StaticName, Group);						\
 		DynamicCollection->CopyAttribute(												\
-			*RestCollection->GetGeometryCollection(), StaticName, Group);				\
-		Indirect##Name##Array =															\
-			&DynamicCollection->ModifyAttribute<Type>(StaticName, Group);				\
-		CopyOnWriteAttributeList.Add(													\
-			reinterpret_cast<FManagedArrayBase**>(&Indirect##Name##Array));				\
+		    *RestCollection->GetGeometryCollection(), StaticName, Group);				\
 	}																					\
-	return *Indirect##Name##Array;														\
+	return RestCollection->GetGeometryCollection()->Name;								\
 }																						\
 void UGeometryCollectionComponent::Reset##Name##ArrayDynamic()							\
 {																						\
-	Indirect##Name##Array = NULL;														\
 }																						\
 const TManagedArray<Type>& UGeometryCollectionComponent::Get##Name##ArrayRest() const	\
 {																						\
 	return RestCollection->GetGeometryCollection()->Name;								\
 }																						\
 
+#if !(UE_BUILD_SHIPPING)
+static TAutoConsoleVariable<int> CVarNumToForceBreak(
+	TEXT("r.GeometryCollection.CustomRenderer.ForceBreak"),
+	-1,
+	TEXT("Force the specified number of pieces to render individually, replacing their root proxy mesh.")
+);
+
+struct _ForcedBroken
+{
+public:
+	void Reset()
+	{
+		Components.Reset();
+		TotalTransforms = 0;
+	}
+
+	bool Break(UGeometryCollectionComponent* t, const TArray<FTransform3f>& CompSpaceTransforms)
+	{
+		if (Components.Contains(t))
+			return true;
+
+		if (TotalTransforms + CompSpaceTransforms.Num() > (uint32)CVarNumToForceBreak->GetInt())
+			return false;
+
+		TotalTransforms += CompSpaceTransforms.Num();
+		Components.Add(t);
+		return true;
+	}
+
+private:
+	TSet<UGeometryCollectionComponent*> Components;
+	uint32 TotalTransforms = 0;
+
+}static ForcedBroken;
+#endif
+
 // Define the methods
 COPY_ON_WRITE_ATTRIBUTES
+
+TManagedArray<int32>& UGeometryCollectionComponent::GetParentArrayCopyOnWrite()
+{
+	if (!IndirectParentArray)
+	{
+		DynamicCollection->AddAttribute<int32>(FTransformCollection::ParentAttribute, FTransformCollection::TransformGroup);
+		DynamicCollection->CopyAttribute(*RestCollection->GetGeometryCollection(), FTransformCollection::ParentAttribute, FTransformCollection::TransformGroup);
+		IndirectParentArray = &DynamicCollection->ModifyAttribute<int32>(FTransformCollection::ParentAttribute, FTransformCollection::TransformGroup);
+	}
+	return *IndirectParentArray;
+}
+
+int32 UGeometryCollectionComponent::GetParent(int32 Index) const
+{
+	if (DynamicCollection)
+	{
+		return DynamicCollection->GetParent(Index);
+	}
+	return RestCollection->GetGeometryCollection()->Parent[Index];
+}
+
+const TManagedArray<int32>& UGeometryCollectionComponent::GetParentArrayRest() const
+{
+	return RestCollection->GetGeometryCollection()->Parent;
+}
 
 UGeometryCollectionComponent::UGeometryCollectionComponent(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 	, ChaosSolverActor(nullptr)
+	, IndirectParentArray(nullptr)
 	, InitializationState(ESimulationInitializationState::Unintialized)
 	, ObjectType(EObjectStateTypeEnum::Chaos_Object_Dynamic)
 	, GravityGroupIndex(0)
+	, OneWayInteractionLevel(INDEX_NONE)
+	, bDensityFromPhysicsMaterial(false)
 	, bForceMotionBlur()
 	, EnableClustering(true)
 	, ClusterGroupIndex(0)
@@ -329,6 +600,7 @@ UGeometryCollectionComponent::UGeometryCollectionComponent(const FObjectInitiali
 	, MaxSimulatedLevel(100)
 	, DamageThreshold({ 500000.f, 50000.f, 5000.f })
 	, bUseSizeSpecificDamageThreshold(false)
+	, bUseMaterialDamageModifiers(false)
 	, bEnableDamageFromCollision(true)
 	, bAllowRemovalOnSleep(true)
 	, bAllowRemovalOnBreak(true)
@@ -353,6 +625,7 @@ UGeometryCollectionComponent::UGeometryCollectionComponent(const FObjectInitiali
 	, bGlobalCrumblingEventIncludesChildren(false)
 	, bStoreVelocities(false)
 	, bShowBoneColors(false)
+	, bUpdateComponentTransformToRootBone(false)
 	, bUseRootProxyForNavigation(false)
 	, bUpdateNavigationInTick(true) 
 #if WITH_EDITORONLY_DATA 
@@ -365,12 +638,13 @@ UGeometryCollectionComponent::UGeometryCollectionComponent(const FObjectInitiali
 	, ReplicationAbandonClusterLevel_DEPRECATED(0)
 	, ReplicationAbandonAfterLevel(0)
 	, ReplicationMaxPositionAndVelocityCorrectionLevel(100)
-	, bRenderStateDirty(true)
+	, bInitializedRemovalDynamicAttribute(false)
 	, bEnableBoneSelection(false)
 	, ViewLevel(-1)
 	, NavmeshInvalidationTimeSliceIndex(0)
 	, IsObjectDynamic(false)
 	, IsObjectLoading(true)
+	, ComponentSpaceTransforms(this)
 	, PhysicsProxy(nullptr)
 #if WITH_EDITOR && WITH_EDITORONLY_DATA
 	, EditorActor(nullptr)
@@ -379,6 +653,8 @@ UGeometryCollectionComponent::UGeometryCollectionComponent(const FObjectInitiali
 	, bIsTransformSelectionModeEnabled(false)
 #endif  // #if GEOMETRYCOLLECTION_EDITOR_SELECTION
 	, bIsMoving(false)
+	, bUpdateCustomRenderer(true)
+	, bUpdateCustomRendererOnPostPhysicsSync(true)
 {
 	// by default tick is registered but disabled, we only need it when we need to update the removal timers
 	// tick will be then enabled only when the root is broken from OnPostPhysicsSync callback
@@ -415,6 +691,17 @@ UGeometryCollectionComponent::UGeometryCollectionComponent(const FObjectInitiali
 	// make sure older asset are using the default behaviour
 	DamagePropagationData.bEnabled = false;
 
+#if !(UE_BUILD_SHIPPING)
+	static auto ForcedBrokenDelegate = CVarNumToForceBreak->OnChangedDelegate().Add(FConsoleVariableDelegate::CreateLambda([](IConsoleVariable* CVar)
+	{
+		ForcedBroken.Reset();
+
+		for (TObjectIterator<UGeometryCollectionComponent> It; It; ++It)
+		{
+			It->RefreshCustomRenderer();
+		}
+	}));
+#endif
 }
 
 Chaos::FPhysicsSolver* UGeometryCollectionComponent::GetSolver(const UGeometryCollectionComponent& GeometryCollectionComponent)
@@ -466,6 +753,24 @@ void UGeometryCollectionComponent::EndPlay(const EEndPlayReason::Type ReasonEnd)
 	CurrentCacheTime = MAX_flt;
 }
 
+void UGeometryCollectionComponent::OnVisibilityChanged()
+{
+	Super::OnVisibilityChanged();
+	RefreshCustomRenderer();
+}
+
+void UGeometryCollectionComponent::OnActorVisibilityChanged()
+{
+	Super::OnVisibilityChanged();
+	RefreshCustomRenderer();
+}
+
+void UGeometryCollectionComponent::OnHiddenInGameChanged()
+{
+	Super::OnHiddenInGameChanged();
+	RefreshCustomRenderer();
+}
+
 void UGeometryCollectionComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
 {
 	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
@@ -476,6 +781,12 @@ void UGeometryCollectionComponent::GetLifetimeReplicatedProps(TArray<FLifetimePr
 	Params.RepNotifyCondition = REPNOTIFY_OnChanged;
 	DOREPLIFETIME_WITH_PARAMS_FAST(UGeometryCollectionComponent, RepData, Params);*/
 	DOREPLIFETIME(UGeometryCollectionComponent, RepData);
+
+	FDoRepLifetimeParams Params;
+	Params.bIsPushBased = true;
+	Params.RepNotifyCondition = REPNOTIFY_OnChanged;
+	DOREPLIFETIME_WITH_PARAMS_FAST(UGeometryCollectionComponent, RepStateData, Params);
+	DOREPLIFETIME_WITH_PARAMS_FAST(UGeometryCollectionComponent, RepDynamicData, Params);
 }
 
 namespace
@@ -506,7 +817,7 @@ namespace
 				{
 					for (int32 TransformIndex = 0; TransformIndex < ExplodedVectors.Num(); ++TransformIndex)
 					{
-						GlobalMatricesInOut[TransformIndex].AddToTranslation((FVector)ExplodedVectors[TransformIndex]);
+						GlobalMatricesInOut[TransformIndex].AddToTranslation((FVector3f)ExplodedVectors[TransformIndex]);
 					}
 				}
 			}
@@ -516,17 +827,17 @@ namespace
 	/**
 	* compute the bounding box from the bounding boxes stored in the geometry group
 	*/
-	template <typename TTransformType>
+	template <typename TWorldTransformType, typename TLocalTransformType>
 	inline FBox ComputeBoundsFromGeometryBoundingBoxes(
 		const TManagedArray<int32>& TransformToGeometryIndex,
 		const TManagedArray<int32>& TransformIndices,
 		const TManagedArray<FBox>& BoundingBoxes,
-		const TArray<TTransformType>& GlobalMatrices,
-		const TTransformType& LocalToWorldWithScale)
+		const TArray<TLocalTransformType>& GlobalMatrices,
+		const TWorldTransformType& LocalToWorldWithScale)
 	{
 		FBox BoundingBox(ForceInit);
 		// todo(chaos ) implement ISPC function using FTransform 
-		constexpr bool bIsMatrixType = std::is_same<TTransformType, FMatrix>::value;
+		constexpr bool bIsMatrixType = std::is_same<TLocalTransformType, FMatrix>::value && std::is_same<TWorldTransformType, FMatrix>::value;
 		if constexpr (bIsMatrixType)
 		{
 			if (bChaos_BoxCalcBounds_ISPC_Enabled && !bGeometryCollectionSingleThreadedBoundsCalculation)
@@ -557,7 +868,7 @@ namespace
 			
 			if (TransformToGeometryIndex[TransformIndex] != INDEX_NONE)
 			{
-				BoundingBox += BoundingBoxes[BoxIdx].TransformBy(GlobalMatrices[TransformIndex] * LocalToWorldWithScale);
+				BoundingBox += BoundingBoxes[BoxIdx].TransformBy(TWorldTransformType(GlobalMatrices[TransformIndex]) * LocalToWorldWithScale);
 			}
 		}
 		return BoundingBox;
@@ -567,17 +878,17 @@ namespace
 	* compute the bounding box from the bounding boxes stored in the transform group
 	* (used for nanite or when the geometry group data has been stripped on cook )
 	*/
-	template <typename TTransformType>
+	template <typename TWorldTransformType, typename TLocalTransformType>
 	inline FBox ComputeBoundsFromTransformBoundingBoxes(
 		const TManagedArray<int32>& TransformToGeometryIndex,
 		const TManagedArray<FBox>& BoundingBoxes,
-		const TArray<TTransformType>& GlobalMatrices,
-		const TTransformType& LocalToWorldWithScale)
+		const TArray<TLocalTransformType>& GlobalMatrices,
+		const TWorldTransformType& LocalToWorldWithScale)
 	{
 		FBox BoundingBox(ForceInit);
 
 		// todo(chaos ) implement ISPC function using FTransform 
-		constexpr bool bIsMatrixType = std::is_same<TTransformType, FMatrix>::value;
+		constexpr bool bIsMatrixType = std::is_same<TWorldTransformType, FMatrix>::value && std::is_same<TLocalTransformType, FMatrix>::value;
 		if constexpr (bIsMatrixType)
 		{
 			if (bChaos_BoxCalcBounds_ISPC_Enabled && !bGeometryCollectionSingleThreadedBoundsCalculation)
@@ -600,39 +911,47 @@ namespace
 		{
 			if (TransformToGeometryIndex[TransformIndex] != INDEX_NONE)
 			{
-				BoundingBox += BoundingBoxes[TransformIndex].TransformBy(GlobalMatrices[TransformIndex] * LocalToWorldWithScale);
+				BoundingBox += BoundingBoxes[TransformIndex].TransformBy(TWorldTransformType(GlobalMatrices[TransformIndex]) * LocalToWorldWithScale);
 			}
 		}
 		return BoundingBox;
 	}
 
-	template <typename TTransformType>
-	inline FBox ComputeBoundsFromTransforms(const UGeometryCollectionComponent& Component, const TTransformType& LocalToWorldWithScale, const TArray<TTransformType>& GlobalMatricesArray)
+	template <typename TWorldTransformType, typename TLocalTransformType>
+	inline FBox ComputeBoundsFromTransforms(const UGeometryCollectionComponent& Component, const TWorldTransformType& LocalToWorldWithScale, const TArray<TLocalTransformType>& GlobalMatricesArray)
 	{
+		static FName BoundingBoxAttributeName = "BoundingBox";
+
 		auto GeometryCollectionPtr = Component.GetRestCollection()->GetGeometryCollection();
-		const TManagedArray<FBox>* TransformBoundingBoxes = GeometryCollectionPtr->FindAttribute<FBox>("BoundingBox", FGeometryCollection::TransformGroup);
-		const TManagedArray<FBox>& GeometryBoundingBoxes = Component.GetBoundingBoxArray();
-		const TManagedArray<int32>& TransformToGeometryIndex = Component.GetTransformToGeometryIndexArray();
+		const TManagedArray<FBox>* TransformBoundingBoxes = GeometryCollectionPtr->FindAttribute<FBox>(BoundingBoxAttributeName, FGeometryCollection::TransformGroup);
+		const TManagedArray<FBox>& GeometryBoundingBoxes =  GeometryCollectionPtr->BoundingBox;
+		const TManagedArray<int32>& TransformToGeometryIndex = GeometryCollectionPtr->TransformToGeometryIndex;
 
 		if (TransformBoundingBoxes)
 		{
 			return ComputeBoundsFromTransformBoundingBoxes(TransformToGeometryIndex, *TransformBoundingBoxes, GlobalMatricesArray, LocalToWorldWithScale);
 		}
 
-		const TManagedArray<int32>& TransformIndices = Component.GetTransformIndexArray();
+		const TManagedArray<int32>& TransformIndices = GeometryCollectionPtr->TransformIndex;
 		return ComputeBoundsFromGeometryBoundingBoxes(TransformToGeometryIndex, TransformIndices, GeometryBoundingBoxes, GlobalMatricesArray, LocalToWorldWithScale);
 	}
 }
 
 FBox UGeometryCollectionComponent::ComputeBoundsFromGlobalMatrices(const FMatrix& LocalToWorldWithScale, const TArray<FMatrix>& GlobalMatricesArray) const
 {
-	return ComputeBoundsFromTransforms<FMatrix>(*this, LocalToWorldWithScale, GlobalMatricesArray);
+	return ComputeBoundsFromTransforms<FMatrix, FMatrix>(*this, LocalToWorldWithScale, GlobalMatricesArray);
 }
 
 FBox UGeometryCollectionComponent::ComputeBoundsFromComponentSpaceTransforms(const FTransform& LocalToWorldWithScale, const TArray<FTransform>& ComponentSpaceTransformsArray) const
 {
-	return ComputeBoundsFromTransforms<FTransform>(*this, LocalToWorldWithScale, ComponentSpaceTransformsArray);
+	return ComputeBoundsFromTransforms<FTransform, FTransform>(*this, LocalToWorldWithScale, ComponentSpaceTransformsArray);
 }
+
+FBox UGeometryCollectionComponent::ComputeBoundsFromComponentSpaceTransforms(const FTransform& LocalToWorldWithScale, const TArray<FTransform3f>& ComponentSpaceTransformsArray) const
+{
+	return ComputeBoundsFromTransforms<FTransform, FTransform3f>(*this, LocalToWorldWithScale, ComponentSpaceTransformsArray);
+}
+
 
 FBox UGeometryCollectionComponent::ComputeBounds(const FMatrix& LocalToWorldWithScale) const
 {
@@ -644,40 +963,33 @@ FBox UGeometryCollectionComponent::ComputeBounds(const FTransform& LocalToWorldW
 	FBox BoundingBox(ForceInit);
 	if (RestCollection)
 	{
-		//Hold on to reference so it doesn't get GC'ed
-		auto GeometryCollectionPtr = RestCollection->GetGeometryCollection();
-
-		const int32 NumElements = GeometryCollectionPtr->NumElements(FGeometryCollection::TransformGroup);
-		if (NumElements == 0 || ComponentSpaceTransforms.Num() != RestCollection->NumElements(FGeometryCollection::TransformGroup))
+		if (IsRootBroken())
 		{
-			// #todo(dmp): we could do the bbox transform in parallel with a bit of reformulating		
-			// #todo(dmp):  there are some cases where the calcbounds function is called before the component
-			// has set the global matrices cache while in the editor.  This is a somewhat weak guard against this
-			// to default to just calculating tmp global matrices.  This should be removed or modified somehow
-			// such that we always cache the global matrices and this method always does the correct behavior
-
-			const TManagedArray<FTransform>& Transforms = GetTransformArray();
-			const TManagedArray<int32>& ParentIndices = GetParentArray();
-			if (!ensure(Transforms.Num() == NumElements))
+			// root is broken we need to go through all the leafs and compute bounds from them 
+			const TArray<FTransform3f>& CompSpaceTransforms = ComponentSpaceTransforms.RequestAllTransforms();
+			if (CompSpaceTransforms.Num() > 0)
 			{
-				return FBox(ForceInitToZero);
-			}
-			
-			TArray<FTransform> TmpComponentSpaceTransforms;
-			GeometryCollectionAlgo::GlobalMatrices(Transforms, ParentIndices, TmpComponentSpaceTransforms);
-			if (TmpComponentSpaceTransforms.Num() == 0)
-			{
-				BoundingBox = FBox(ForceInitToZero);
-			}
-			else
-			{
-				UpdateGlobalMatricesWithExplodedVectors(TmpComponentSpaceTransforms, *GeometryCollectionPtr);
-				BoundingBox = ComputeBoundsFromComponentSpaceTransforms(LocalToWorldWithScale, TmpComponentSpaceTransforms);
+				BoundingBox = ComputeBoundsFromComponentSpaceTransforms(LocalToWorldWithScale, CompSpaceTransforms);
 			}
 		}
 		else
 		{
-			BoundingBox = ComputeBoundsFromComponentSpaceTransforms(LocalToWorldWithScale, ComponentSpaceTransforms);
+			// fast path where we use the root space bounds top avoid paying the high cost of recomputing everything from scratch
+			if (!RootSpaceBounds.IsValid)
+			{
+				const TArray<FTransform3f>& CompSpaceTransforms = ComponentSpaceTransforms.RequestAllTransforms();
+				if (CompSpaceTransforms.Num() > 0)
+				{
+					const FTransform InverseRootTransform(ComponentSpaceTransforms.RequestRootTransform().Inverse());
+					RootSpaceBounds = ComputeBoundsFromComponentSpaceTransforms(InverseRootTransform, CompSpaceTransforms);
+				}
+			}
+
+			if (RootSpaceBounds.IsValid)
+			{
+				const FTransform RootToWorld = (FTransform(ComponentSpaceTransforms.RequestRootTransform()) * LocalToWorldWithScale);
+				BoundingBox = RootSpaceBounds.TransformBy(RootToWorld);
+			}
 		}
 	}
 	return BoundingBox;
@@ -687,27 +999,13 @@ FBoxSphereBounds UGeometryCollectionComponent::CalcBounds(const FTransform& Loca
 {	
 	SCOPE_CYCLE_COUNTER(STAT_GCCUpdateBounds);
 
-	if (bChaos_GC_CacheComponentSpaceBounds)
+	const bool NeedBoundsUpdate = (!ComponentSpaceBounds.IsValid) || CachePlayback;
+	if (NeedBoundsUpdate)
 	{
-		bool NeedBoundsUpdate = false;
-		NeedBoundsUpdate |= (ComponentSpaceBounds.GetSphere().W < 1e-5);
-		NeedBoundsUpdate |= CachePlayback;
-//		NeedBoundsUpdate |= (PhysicsProxy == nullptr);
-		NeedBoundsUpdate |= (DynamicCollection && DynamicCollection->IsDirty());
-		
-		if (NeedBoundsUpdate)
-		{
-			ComponentSpaceBounds = ComputeBounds(FTransform::Identity);
-		}
-		else
-		{
-			NeedBoundsUpdate = false;
-		}
-
-		return ComponentSpaceBounds.TransformBy(LocalToWorldIn);
+		ComponentSpaceBounds = ComputeBounds(FTransform::Identity);
 	}
 
-	return FBoxSphereBounds(ComputeBounds(LocalToWorldIn));
+	return ComponentSpaceBounds.TransformBy(LocalToWorldIn);
 }
 
 int32 UGeometryCollectionComponent::GetNumElements(FName Group) const
@@ -716,24 +1014,84 @@ int32 UGeometryCollectionComponent::GetNumElements(FName Group) const
 	return Size > 0 ? Size : DynamicCollection->NumElements(Group);	//if not, maybe dynamic has the group
 }
 
+void UGeometryCollectionComponent::SetDamageModel(EDamageModelTypeEnum InDamageModel)
+{
+	DamageModel = InDamageModel;
+	if (PhysicsProxy)
+	{
+		PhysicsProxy->SetDamageModel_External(DamageModel);
+	}
+}
+
+void UGeometryCollectionComponent::SetGravityGroupIndex(int32 InGravityGroupIndex)
+{
+	GravityGroupIndex = InGravityGroupIndex;
+	if (PhysicsProxy)
+	{
+		PhysicsProxy->SetGravityGroupIndex_External(GravityGroupIndex);
+	}
+}
+
+void UGeometryCollectionComponent::SetOneWayInteractionLevel(int32 InOneWayInteractionLevel)
+{
+	OneWayInteractionLevel = InOneWayInteractionLevel;
+	if (PhysicsProxy)
+	{
+		PhysicsProxy->SetOneWayInteractionLevel_External(InOneWayInteractionLevel);
+	}
+}
+
 void UGeometryCollectionComponent::SetDamageThreshold(const TArray<float>& InDamageThreshold)
 {
 	// NOTE: Should only call this during construction, not during runtime
 
 	DamageThreshold = InDamageThreshold;
 
-	if (IsPhysicsStateCreated())
+	if (PhysicsProxy)
 	{
-		// NOTE: Probably should use a deferred version of this.
-		RecreatePhysicsState();
+		PhysicsProxy->SetDamageThresholds_External(DamageThreshold);
+	}
+}
+
+void UGeometryCollectionComponent::SetDamagePropagationData(const FGeometryCollectionDamagePropagationData& InDamagePropagationData)
+{
+	DamagePropagationData = InDamagePropagationData;
+
+	if (PhysicsProxy)
+	{
+		PhysicsProxy->SetDamagePropagationData_External(DamagePropagationData.bEnabled, DamagePropagationData.BreakDamagePropagationFactor, DamagePropagationData.ShockDamagePropagationFactor);
+	}
+}
+
+void UGeometryCollectionComponent::SetUseMaterialDamageModifiers(bool bInUseMaterialDamageModifiers)
+{
+	bUseMaterialDamageModifiers = bInUseMaterialDamageModifiers;
+
+	if (PhysicsProxy)
+	{
+		PhysicsProxy->SetUseMaterialDamageModifiers_External(bUseMaterialDamageModifiers);
+	}
+}
+
+void UGeometryCollectionComponent::SetDensityFromPhysicsMaterial(bool bInDensityFromPhysicsMaterial)
+{
+	bDensityFromPhysicsMaterial = bInDensityFromPhysicsMaterial;
+
+	if (PhysicsProxy)
+	{
+		PhysicsProxy->SetMaterialOverrideMassScaleMultiplier_External(ComputeMassScaleRelativeToAsset());
 	}
 }
 
 void UGeometryCollectionComponent::UpdateCachedBounds()
 {
 	ComponentSpaceBounds = ComputeBounds(FTransform::Identity);
-	CalculateLocalBounds();
 	UpdateBounds();
+}
+
+bool UGeometryCollectionComponent::ShouldCreateRenderState() const
+{
+	return !CanUseCustomRenderer();
 }
 
 void UGeometryCollectionComponent::CreateRenderState_Concurrent(FRegisterComponentContext* Context)
@@ -748,7 +1106,8 @@ FPrimitiveSceneProxy* UGeometryCollectionComponent::CreateSceneProxy()
 
 	FPrimitiveSceneProxy* LocalSceneProxy = nullptr;
 
-	if (RestCollection && !CanUseCustomRenderer())
+	const bool bNotUsingRootProxyComponents = RootProxyStaticMeshComponents.IsEmpty();
+	if (RestCollection && !CanUseCustomRenderer() && bNotUsingRootProxyComponents)
 	{
 		if (UseNanite(GetScene()->GetShaderPlatform()) &&
 			RestCollection->EnableNanite &&
@@ -763,7 +1122,7 @@ FPrimitiveSceneProxy* UGeometryCollectionComponent::CreateSceneProxy()
 			{
 				bIsMoving = true;
 				ENQUEUE_RENDER_COMMAND(NaniteProxyOnMotionEnd)(
-					[NaniteProxy](FRHICommandListImmediate& RHICmdList)
+					[NaniteProxy] (FRHICommandListBase&)
 					{
 						NaniteProxy->OnMotionBegin();
 					}
@@ -800,7 +1159,7 @@ void UGeometryCollectionComponent::SetNotifyBreaks(bool bNewNotifyBreaks)
 			PhysicsProxy->SetNotifyBreakings_External(bNewNotifyBreaks);
 		}
 		bNotifyBreaks = bNewNotifyBreaks;
-		UpdateBreakEventRegistration();
+		RegisterForEvents();
 	}
 }
 
@@ -813,7 +1172,7 @@ void UGeometryCollectionComponent::SetNotifyRemovals(bool bNewNotifyRemovals)
 			PhysicsProxy->SetNotifyRemovals_External(bNewNotifyRemovals);
 		}
 		bNotifyRemovals = bNewNotifyRemovals;
-		UpdateRemovalEventRegistration();
+		RegisterForEvents();
 	}
 }
 
@@ -828,7 +1187,7 @@ void UGeometryCollectionComponent::SetNotifyCrumblings(bool bNewNotifyCrumblings
 		}
 		bNotifyCrumblings = bNewNotifyCrumblings;
 		bCrumblingEventIncludesChildren = bNewCrumblingEventIncludesChildren;
-		UpdateCrumblingEventRegistration();
+		RegisterForEvents();
 	}
 }
 
@@ -882,7 +1241,7 @@ void UGeometryCollectionComponent::SetNotifyGlobalCrumblings(bool bNewNotifyGlob
 
 FBodyInstance* UGeometryCollectionComponent::GetBodyInstance(FName BoneName /*= NAME_None*/, bool bGetWelded /*= true*/, int32 Index /*=INDEX_NONE*/) const
 {
-	return nullptr;// const_cast<FBodyInstance*>(&DummyBodyInstance);
+	return nullptr;
 }
 
 void UGeometryCollectionComponent::SetNotifyRigidBodyCollision(bool bNewNotifyRigidBodyCollision)
@@ -893,7 +1252,7 @@ void UGeometryCollectionComponent::SetNotifyRigidBodyCollision(bool bNewNotifyRi
 
 bool UGeometryCollectionComponent::CanEditSimulatePhysics()
 {
-	return true;
+	return (RestCollection != nullptr);
 }
 
 void UGeometryCollectionComponent::SetSimulatePhysics(bool bEnabled)
@@ -910,7 +1269,11 @@ void UGeometryCollectionComponent::SetSimulatePhysics(bool bEnabled)
 
 	if (bEnabled && !PhysicsProxy && RestCollection)
 	{
-		RegisterAndInitializePhysicsProxy();
+		EnsurePhysicsStateCreated();
+		if (!PhysicsProxy)
+		{
+			RegisterAndInitializePhysicsProxy();
+		}
 	}
 }
 
@@ -1008,6 +1371,11 @@ void UGeometryCollectionComponent::AddTorqueInRadians(FVector Torque, FName Bone
 	DispatchFieldCommand(Command);
 }
 
+bool UGeometryCollectionComponent::IsFullyDecayed() const
+{
+	return bAlreadyFullyDecayed;
+}
+
 void UGeometryCollectionComponent::DispatchBreakEvent(const FChaosBreakEvent& Event)
 {
 	// native
@@ -1058,8 +1426,10 @@ bool UGeometryCollectionComponent::DoCustomNavigableGeometryExport(FNavigableGeo
 			const TObjectPtr<UStaticMesh>& ProxyMesh = RestCollection->RootProxyData.ProxyMeshes[MeshIndex];
 			if (ProxyMesh != nullptr)
 			{
-				const FTransform& CompToWorld = GetComponentToWorld();
-				const FVector Scale3D = CompToWorld.GetScale3D();
+				const int32 RootIndex = GetRootIndex();
+				const FTransform& CompToWorld = GetComponentToWorld(); 
+				const FTransform FinalTransform = (DynamicCollection ? FTransform(DynamicCollection->GetTransform(RootIndex)) : FTransform::Identity) * CompToWorld;
+				const FVector Scale3D = FinalTransform.GetScale3D();
 				if (!Scale3D.IsZero())
 				{
 					if (const UNavCollisionBase* NavCollision = ProxyMesh->GetNavCollision())
@@ -1069,7 +1439,7 @@ bool UGeometryCollectionComponent::DoCustomNavigableGeometryExport(FNavigableGeo
 							continue;
 						}
 						
-						bHasData = NavCollision->ExportGeometry(CompToWorld, GeomExport) || bHasData;
+						bHasData = NavCollision->ExportGeometry(FinalTransform, GeomExport) || bHasData;
 					}
 				}
 			}
@@ -1084,6 +1454,12 @@ bool UGeometryCollectionComponent::DoCustomNavigableGeometryExport(FNavigableGeo
 		return true;
 	}
 
+	if (RestCollection->bStripOnCook)
+	{
+		UE_LOG(LogGeometryCollectionComponent, Log,
+			TEXT("Collection data is set to be stripped on cook so there is nothing left to export. Make sure to use bUseRootProxyForNavigation with bStripOnCook for %s."), *GetFullNameSafe(GetOwner()));
+	}
+	
 	TArray<FVector> OutVertexBuffer;
 	TArray<int32> OutIndexBuffer;
 
@@ -1119,8 +1495,8 @@ bool UGeometryCollectionComponent::DoCustomNavigableGeometryExport(FNavigableGeo
 	}
 
 	// Get all the geometry transforms in component space (they are stored natively in parent-bone space)
-	TArray<FTransform> GeomToComponent;
-	GeometryCollectionAlgo::GlobalMatrices(GetTransformArray(), GetParentArray(), TransformIndexBuffer, GeomToComponent);
+	TArray<FTransform3f> GeomToComponent;
+	ComputeCurrentGlobalsMatrices(GeomToComponent);
 
 	OutVertexBuffer.AddUninitialized(VertexCount);
 
@@ -1135,16 +1511,15 @@ bool UGeometryCollectionComponent::DoCustomNavigableGeometryExport(FNavigableGeo
 		int32 SourceGeometryVertexStart = VertexStartArray[GeometryIndex];
 		int32 SourceGeometryVertexCount = VertexCountArray[GeometryIndex];
 
-		ParallelFor(SourceGeometryVertexCount, [&](int32 PointIdx)
+		ParallelFor(SourceGeometryVertexCount, [&OutVertexBuffer, &GeomToComponent, &Vertex, SourceGeometryVertexStart, SubsetIndex, DestVertex](int32 PointIdx)
 			{
 				//extract vertex from source
 				int32 SourceGeometryVertexIndex = SourceGeometryVertexStart + PointIdx;
-				FVector const VertexInWorldSpace = GeomToComponent[SubsetIndex].TransformPosition((FVector)Vertex[SourceGeometryVertexIndex]);
-
+				const FVector3f VertexInComponentSpace = GeomToComponent[SubsetIndex].TransformPosition(Vertex[SourceGeometryVertexIndex]);
 				int32 DestVertexIndex = DestVertex + PointIdx;
-				OutVertexBuffer[DestVertexIndex].X = VertexInWorldSpace.X;
-				OutVertexBuffer[DestVertexIndex].Y = VertexInWorldSpace.Y;
-				OutVertexBuffer[DestVertexIndex].Z = VertexInWorldSpace.Z;
+				OutVertexBuffer[DestVertexIndex].X = VertexInComponentSpace.X;
+				OutVertexBuffer[DestVertexIndex].Y = VertexInComponentSpace.Y;
+				OutVertexBuffer[DestVertexIndex].Z = VertexInComponentSpace.Z;
 			});
 
 		DestVertex += SourceGeometryVertexCount;
@@ -1153,7 +1528,7 @@ bool UGeometryCollectionComponent::DoCustomNavigableGeometryExport(FNavigableGeo
 	//gather data needed for indices
 	const TManagedArray<int32>& FaceStartArray = Collection->FaceStart;
 	const TManagedArray<FIntVector>& Indices = Collection->Indices;
-	const TManagedArray<bool>& Visible = GetVisibleArray();
+	const TManagedArray<bool>& Visible = Collection->Visible;
 	const TManagedArray<int32>& MaterialIndex = Collection->MaterialIndex;
 
 	//pre-allocate enough room (assuming all faces are visible)
@@ -1241,7 +1616,7 @@ void UGeometryCollectionComponent::RefreshEmbeddedGeometry()
 		return;
 	}
 
-	const TManagedArray<int32>& ExemplarIndexArray = GetExemplarIndexArray();
+	const TManagedArray<int32>& ExemplarIndexArray = GetRestCollection()->GetGeometryCollection()->ExemplarIndex;
 	const int32 TransformCount = ComponentSpaceTransforms.Num();
 	if (!ensureMsgf(TransformCount == ExemplarIndexArray.Num(), TEXT("GlobalMatrices (Num=%d) cached on GeometryCollectionComponent are not in sync with ExemplarIndexArray (Num=%d) on underlying GeometryCollection; likely missed a dynamic data update"), TransformCount, ExemplarIndexArray.Num()))
 	{
@@ -1257,6 +1632,8 @@ void UGeometryCollectionComponent::RefreshEmbeddedGeometry()
 #if WITH_EDITOR	
 	EmbeddedInstanceIndex.Init(INDEX_NONE, RestCollection->GetGeometryCollection()->NumElements(FGeometryCollection::TransformGroup));
 #endif
+
+	const TArray<FTransform3f>& CompSpaceTransforms = ComponentSpaceTransforms.RequestAllTransforms();
 
 	for (int32 ExemplarIndex = 0; ExemplarIndex < ExemplarCount; ++ExemplarIndex)
 	{		
@@ -1275,7 +1652,7 @@ void UGeometryCollectionComponent::RefreshEmbeddedGeometry()
 			{
 				if (!HideArray || !(*HideArray)[Idx])
 				{ 
-					InstanceTransforms.Add(ComponentSpaceTransforms[Idx]);
+					InstanceTransforms.Add(FTransform(CompSpaceTransforms[Idx]));
 #if WITH_EDITOR
 					int32 InstanceIndex = EmbeddedBoneMaps[ExemplarIndex].Add(Idx);
 					EmbeddedInstanceIndex[Idx] = InstanceIndex;
@@ -1314,7 +1691,7 @@ void UGeometryCollectionComponent::RefreshEmbeddedGeometry()
 #if WITH_EDITOR
 void UGeometryCollectionComponent::SetEmbeddedGeometrySelectable(bool bSelectableIn)
 {
-	for (TObjectPtr<UInstancedStaticMeshComponent> EmbeddedGeometryComponent : EmbeddedGeometryComponents)
+	for (TObjectPtr<UInstancedStaticMeshComponent>& EmbeddedGeometryComponent : EmbeddedGeometryComponents)
 	{
 		if (EmbeddedGeometryComponent)
 		{
@@ -1338,23 +1715,43 @@ int32 UGeometryCollectionComponent::EmbeddedIndexToTransformIndex(const UInstanc
 }
 #endif
 
-void UGeometryCollectionComponent::SetRestState(TArray<FTransform>&& InRestTransforms)
-{	
-	RestTransforms = InRestTransforms;
-	
-	if (DynamicCollection)
+void UGeometryCollectionComponent::ResetRestTransforms()
+{
+	const bool bWasOverriden = (RestTransforms.Num() > 0);
+	if (bWasOverriden)
 	{
-		SetInitialTransforms(RestTransforms);
+		RestTransforms.Empty();
+
+		if (RestCollection && RestCollection->GetGeometryCollection())
+		{
+			if (DynamicCollection)
+			{
+				DynamicCollection->ResetInitialTransforms();
+			}
+			RestTransformsChanged();
+		}
 	}
+}
 
-	FGeometryCollectionDynamicData* DynamicData = GDynamicDataPool.Allocate();
-	DynamicData->SetPrevTransforms(ComponentSpaceTransforms);
-	CalculateGlobalMatrices();
-	DynamicData->SetTransforms(ComponentSpaceTransforms);
-	DynamicData->IsDynamic = true;
+void UGeometryCollectionComponent::SetRestState(TArray<FTransform>&& InRestTransforms)
+{
+	RestTransforms = InRestTransforms;
+	SetInitialTransforms(RestTransforms);
+	RestTransformsChanged();
+}
 
+void UGeometryCollectionComponent::RestTransformsChanged()
+{
 	if (SceneProxy)
 	{
+		FGeometryCollectionDynamicData* DynamicData = GDynamicDataPool.Allocate();
+		DynamicData->SetPrevTransforms(ComponentSpaceTransforms.RequestAllTransforms());
+
+		OnTransformsDirty();
+
+		DynamicData->SetTransforms(ComponentSpaceTransforms.RequestAllTransforms());
+		DynamicData->IsDynamic = true;
+
 #if WITH_EDITOR
 			// We need to do this in case we're controlled by Sequencer in editor, which doesn't invoke PostEditChangeProperty
 			UpdateCachedBounds();
@@ -1364,9 +1761,9 @@ void UGeometryCollectionComponent::SetRestState(TArray<FTransform>&& InRestTrans
 		{
 			FNaniteGeometryCollectionSceneProxy* GeometryCollectionSceneProxy = static_cast<FNaniteGeometryCollectionSceneProxy*>(SceneProxy);
 			ENQUEUE_RENDER_COMMAND(SendRenderDynamicData)(
-				[GeometryCollectionSceneProxy, DynamicData](FRHICommandListImmediate& RHICmdList)
+				[GeometryCollectionSceneProxy, DynamicData] (FRHICommandListBase&)
 				{
-					GeometryCollectionSceneProxy->SetDynamicData_RenderThread(DynamicData);
+					GeometryCollectionSceneProxy->SetDynamicData_RenderThread(DynamicData, GeometryCollectionSceneProxy->GetLocalToWorld());
 				}
 			);
 		}
@@ -1374,38 +1771,22 @@ void UGeometryCollectionComponent::SetRestState(TArray<FTransform>&& InRestTrans
 		{
 			FGeometryCollectionSceneProxy* GeometryCollectionSceneProxy = static_cast<FGeometryCollectionSceneProxy*>(SceneProxy);
 			ENQUEUE_RENDER_COMMAND(SendRenderDynamicData)(
-				[GeometryCollectionSceneProxy, DynamicData](FRHICommandListImmediate& RHICmdList)
+				[GeometryCollectionSceneProxy, DynamicData] (FRHICommandListBase& RHICmdList)
 				{
-					GeometryCollectionSceneProxy->SetDynamicData_RenderThread(DynamicData);
+					GeometryCollectionSceneProxy->SetDynamicData_RenderThread(RHICmdList, DynamicData);
 				}
 			);
 		}
 	}
+	else
+	{
+		// only need to mark transform dirty and let whoever needs it to compute it on demand
+		OnTransformsDirty();
+	}
+	RootSpaceBounds.Init();
 
 	RefreshEmbeddedGeometry();
 	RefreshCustomRenderer();
-}
-
-void UGeometryCollectionComponent::InitializeComponent()
-{
-	Super::InitializeComponent();
-
-	if (DynamicCollection)
-	{
-		if (bStoreVelocities || bNotifyTrailing)
-		{
-			if (!DynamicCollection->FindAttributeTyped<FVector3f>("LinearVelocity", FTransformCollection::TransformGroup))
-			{
-				DynamicCollection->AddAttribute<FVector3f>("LinearVelocity", FTransformCollection::TransformGroup);
-			}
-
-			if (!DynamicCollection->FindAttributeTyped<FVector3f>("AngularVelocity", FTransformCollection::TransformGroup))
-			{
-				DynamicCollection->AddAttribute<FVector3f>("AngularVelocity", FTransformCollection::TransformGroup);
-			}
-		}
-		DynamicCollection->AddAttribute<uint8>("InternalClusterParentTypeArray", FTransformCollection::TransformGroup);
-	}
 }
 
 void UGeometryCollectionComponent::GetResourceSizeEx(FResourceSizeEx& CumulativeResourceSize)
@@ -1420,7 +1801,6 @@ void UGeometryCollectionComponent::GetResourceSizeEx(FResourceSizeEx& Cumulative
 		+ CollisionProfilePerLevel.GetAllocatedSize()
 		+ ComponentSpaceTransforms.GetAllocatedSize()
 		+ EventsPlayed.GetAllocatedSize()
-		+ CopyOnWriteAttributeList.GetAllocatedSize()
 		+ EmbeddedGeometryComponents.GetAllocatedSize()
 		+ (ClustersToRep ? ClustersToRep->GetAllocatedSize() : 0);
 
@@ -1440,6 +1820,10 @@ void UGeometryCollectionComponent::GetResourceSizeEx(FResourceSizeEx& Cumulative
 	CumulativeResourceSize.AddDedicatedSystemMemoryBytes(SizeBytes);
 }
 
+bool UGeometryCollectionComponent::IsNavigationRelevant() const
+{
+	return bIsCurrentlyNavigationRelevant && Super::IsNavigationRelevant();
+}
 
 #if WITH_EDITOR
 FDelegateHandle UGeometryCollectionComponent::RegisterOnGeometryCollectionPropertyChanged(const FOnGeometryCollectionPropertyChanged& Delegate)
@@ -1497,6 +1881,21 @@ static void DispatchGeometryCollectionCrumblingEvent(const FChaosCrumblingEvent&
 	}
 }
 
+// DEPRECATED Use GetComponentSpaceTransforms3f instead
+TArray<FTransform> UGeometryCollectionComponent::GetComponentSpaceTransforms()
+{ 
+	const TArray<FTransform3f>& Transforms3f = GetComponentSpaceTransforms3f();
+	TArray<FTransform> Transforms;
+	Transforms.Reserve(Transforms3f.Num());
+	Algo::Transform(Transforms3f, Transforms, [](const FTransform3f& T) { return FTransform(T); });
+	return Transforms;
+}
+
+const TArray<FTransform3f>& UGeometryCollectionComponent::GetComponentSpaceTransforms3f()
+{
+	return ComponentSpaceTransforms.RequestAllTransforms();
+}
+
 const FGeometryDynamicCollection* UGeometryCollectionComponent::GetDynamicCollection() const
 {
 	return DynamicCollection.Get();
@@ -1516,7 +1915,19 @@ void UGeometryCollectionComponent::DispatchChaosPhysicsCollisionBlueprintEvents(
 // call when first registering
 void UGeometryCollectionComponent::RegisterForEvents()
 {
-	Chaos::FPhysicsSolver* Solver = GetWorld()->GetPhysicsScene()->GetSolver();
+	UWorld* World = GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	FPhysScene* Scene = World->GetPhysicsScene();
+	if (!Scene)
+	{
+		return;
+	}
+
+	Chaos::FPhysicsSolver* Solver = Scene->GetSolver();
 	if (Solver)
 	{
 		if (EventDispatcher)
@@ -1526,7 +1937,6 @@ void UGeometryCollectionComponent::RegisterForEvents()
 			// re-create the physics proxy (e.g. in the case of the construction script in PIE). In that case, UChaosGameplayEventDispatcher::OnRegister
 			// will run *before* the new physics proxy is created.
 			EventDispatcher->UnregisterChaosEvents();
-			EventDispatcher->RegisterChaosEvents();
 
 			if (BodyInstance.bNotifyRigidBodyCollision || bNotifyBreaks || bNotifyCollisions || bNotifyRemovals || bNotifyCrumblings)
 			{
@@ -1570,6 +1980,10 @@ void UGeometryCollectionComponent::RegisterForEvents()
 						});
 				}
 			}
+
+			// Needs to be after the RegisterForXYZEvents calls on the event dispatcher or else GetInterestedProxyOwnersForXYZEvents will not
+			// properly allow our registration to go through.
+			EventDispatcher->RegisterChaosEvents();
 		}
 		if (bNotifyGlobalBreaks || bNotifyGlobalCrumblings)
 		{
@@ -1632,35 +2046,6 @@ void UGeometryCollectionComponent::UpdateGlobalCollisionEventRegistration()
 		}
 	}
 }
-void UGeometryCollectionComponent::UpdateBreakEventRegistration()
-{
-	if (EventDispatcher)
-	{
-		if (bNotifyBreaks)
-		{
-			EventDispatcher->RegisterForBreakEvents(this, &DispatchGeometryCollectionBreakEvent);
-		}
-		else
-		{
-			EventDispatcher->UnRegisterForBreakEvents(this);
-		}
-	}
-}
-
-void UGeometryCollectionComponent::UpdateRemovalEventRegistration()
-{
-	if (EventDispatcher)
-	{
-		if (bNotifyRemovals)
-		{
-			EventDispatcher->RegisterForRemovalEvents(this, &DispatchGeometryCollectionRemovalEvent);
-		}
-		else
-		{
-			EventDispatcher->UnRegisterForRemovalEvents(this);
-		}
-	}
-}
 
 void UGeometryCollectionComponent::UpdateGlobalRemovalEventRegistration()
 {
@@ -1673,21 +2058,6 @@ void UGeometryCollectionComponent::UpdateGlobalRemovalEventRegistration()
 		else
 		{
 			PhysicsScene->UnRegisterForGlobalRemovalEvents(this);
-		}
-	}
-}
-
-void UGeometryCollectionComponent::UpdateCrumblingEventRegistration()
-{
-	if (EventDispatcher)
-	{
-		if (bNotifyCrumblings)
-		{
-			EventDispatcher->RegisterForCrumblingEvents(this, &DispatchGeometryCollectionCrumblingEvent);
-		}
-		else
-		{
-			EventDispatcher->UnRegisterForCrumblingEvents(this);
 		}
 	}
 }
@@ -1707,37 +2077,30 @@ void ActivateClusters(Chaos::FRigidClustering& Clustering, Chaos::TPBDRigidClust
 	Clustering.DeactivateClusterParticle(Cluster);
 }
 
-void UGeometryCollectionComponent::ResetRepDataCommon()
-{
-	OneOffActivatedProcessed = 0;
-	VersionProcessed = INDEX_NONE;
-	LastHardsnapTimeInMs = 0;
-}
-
 void UGeometryCollectionComponent::ResetRepData()
 {
 	ClustersToRep.Reset();
 	RepData.Reset();
+	RepStateData.Reset();
+	RepDynamicData.Reset();
 
-	if (GetNetMode() == ENetMode::NM_Client)
-	{
-		// Reset on the Physics Thread no to read/write on the client from different thread
-		if (Chaos::FPhysicsSolver* CurrSolver = GetSolver(*this))
-		{
-			CurrSolver->EnqueueCommandImmediate([this]()
-				{
-					ResetRepDataCommon();
-				});
-		}
-	}
-	else
-	{
-		ResetRepDataCommon();
-	}
+	// Those following data are initialized here from the Game Thread, 
+	// but they are read and written from the Physics Thread
+	// This function ResetRepData is only called when the component is destroyed and so the PhysicsProxy become null
+	// so at this point those data won't be changed on the Physics Thread. 
+	OneOffActivatedProcessed = 0;
+	VersionProcessed = INDEX_NONE;
+	DynamicRepDataVersionProcessed = INDEX_NONE;
+	LastHardsnapTimeInMs = 0;
 }
 
 void UGeometryCollectionComponent::UpdateRepData()
 {
+	if (GeometryCollectionUseReplicationV2)
+	{
+		return UpdateRepStateAndDynamicData();
+	}
+	
 	check(GetNetMode() != ENetMode::NM_Client);
 	using namespace Chaos;
 	if(!bEnableReplication)
@@ -1779,32 +2142,31 @@ void UGeometryCollectionComponent::UpdateRepData()
 		//TODO: for now we have to iterate over all particles to find the clusters, would be better if we had the clusters and children already available
 		//We are relying on the fact that we fracture one level per step. This means we will see all one offs here
 
-		bool bClustersChanged = false;
+		FGeometryCollectionRepData LocalRepData;
+
+		LocalRepData.Version = RepData.Version;
+		LocalRepData.RepDataReceivedTime = RepData.RepDataReceivedTime;
+		LocalRepData.ServerFrame = RepData.ServerFrame;
 
 		FPBDRigidsSolver* Solver = PhysicsProxy->GetSolver<Chaos::FPBDRigidsSolver>();
 		const FRigidClustering& RigidClustering = Solver->GetEvolution()->GetRigidClustering();
 
-		const TManagedArray<int32>* InitialLevels = PhysicsProxy->GetPhysicsCollection().FindAttribute<int32>("InitialLevel", FGeometryCollection::TransformGroup);
-		const TManagedArray<TSet<int32>>& InitialChildren = PhysicsProxy->GetPhysicsCollection().Children;
-		const TArray<FPBDRigidClusteredParticleHandle*>& ParticleHandles = PhysicsProxy->GetParticles();
+		const TManagedArrayAccessor<int32> InitialLevels = PhysicsProxy->GetPhysicsCollection().GetInitialLevels();
+		const TArray<FPBDRigidClusteredParticleHandle*>& UnorderedParticleHandles = PhysicsProxy->GetUnorderedParticles_Internal();
 
 		// Replicate the anchored state of the root particle
-		const int32 InitialRootIndex = PhysicsProxy->GetSimParameters().InitialRootIndex;
-		if (FPBDRigidClusteredParticleHandle* RootHandle = ParticleHandles[InitialRootIndex])
+		LocalRepData.bIsRootAnchored = RepData.bIsRootAnchored;
+		if (FPBDRigidClusteredParticleHandle* RootHandle = PhysicsProxy->GetInitialRootHandle_Internal())
 		{
-			const bool bIsRootAnchored = RootHandle->IsAnchored();
-			if (bFirstUpdate || bIsRootAnchored != RepData.bIsRootAnchored)
-			{
-				RepData.bIsRootAnchored = bIsRootAnchored;
-				bClustersChanged = true;
-			}
+			LocalRepData.bIsRootAnchored = RootHandle->IsAnchored();
 		}
 		
-
 		//see if we have any new clusters that are enabled
 		TSet<FPBDRigidClusteredParticleHandle*> Processed;
 
-		for (FPBDRigidClusteredParticleHandle* Particle : ParticleHandles)
+		// It feels weird to start from the previous one. Need to be checked
+		LocalRepData.OneOffActivated = RepData.OneOffActivated;
+		for (FPBDRigidClusteredParticleHandle* Particle : UnorderedParticleHandles)
 		{
 			// Particle can be null if we have embedded geometry 
 			if (Particle)
@@ -1839,14 +2201,14 @@ void UGeometryCollectionComponent::UpdateRepData()
 						ensureMsgf(TransformGroupIdx >= 0, TEXT("Non-internal cluster should always have a group index"));
 						ensureMsgf(TransformGroupIdx < TNumericLimits<uint16>::Max(), TEXT("Trying to replicate GC with more than 65k pieces. We assumed uint16 would suffice"));
 
-						Level = InitialLevels && InitialLevels->Num() > 0 ? (*InitialLevels)[TransformGroupIdx] : INDEX_NONE;
+						Level = InitialLevels.IsValid() && InitialLevels.Num() > 0 ? InitialLevels[TransformGroupIdx] : INDEX_NONE;
 					}
 					else
 					{
 						// Use internal cluster child's index to compute level.
 						const TArray<FPBDRigidParticleHandle*>& Children = RigidClustering.GetChildrenMap()[Root];
 						const int32 ChildTransformGroupIdx = PhysicsProxy->GetTransformGroupIndexFromHandle(Children[0]);
-						Level = InitialLevels && InitialLevels->Num() > 0 ? ((*InitialLevels)[ChildTransformGroupIdx] - 1) : INDEX_NONE;
+						Level = InitialLevels.IsValid() && InitialLevels.Num() > 0 ? (InitialLevels[ChildTransformGroupIdx] - 1) : INDEX_NONE;
 					}
 	
 					if (!bEnableAbandonAfterLevel || Level <= ReplicationAbandonAfterLevel)
@@ -1855,7 +2217,6 @@ void UGeometryCollectionComponent::UpdateRepData()
 						if (Level <= ReplicationMaxPositionAndVelocityCorrectionLevel)
 						{
 							ClustersToRep->Add(Root);
-							bClustersChanged = true;
 						}
 					}
 
@@ -1864,16 +2225,15 @@ void UGeometryCollectionComponent::UpdateRepData()
 						//a one off so record it
 						ensureMsgf(TransformGroupIdx >= 0, TEXT("Non-internal cluster should always have a group index"));
 						ensureMsgf(TransformGroupIdx < TNumericLimits<uint16>::Max(), TEXT("Trying to replicate GC with more than 65k pieces. We assumed uint16 would suffice"));
-						ensureMsgf(PhysicsProxy->GetParticles().IsValidIndex(TransformGroupIdx) && PhysicsProxy->GetParticles()[TransformGroupIdx] != nullptr, TEXT("Invalid particle index being replicated - Contact physics team"));
+						ensureMsgf(PhysicsProxy->GetParticle_Internal(TransformGroupIdx) != nullptr, TEXT("Invalid particle index being replicated - Contact physics team"));
 
 						// Because we cull ClustersToRep with abandoned level, we must make sure we don't add duplicates to one off activated.
 						// TODO: avoid search for entry for perf
 						// TODO: once we support deep fracture we should be able to remove one offs clusters that are now disabled, reducing the amount to be replicated
-						FGeometryCollectionActivatedCluster OneOffActivated(TransformGroupIdx, Root->V(), Root->W());
-						if(!RepData.OneOffActivated.Contains(OneOffActivated))
+						FGeometryCollectionActivatedCluster OneOffActivated(TransformGroupIdx, Root->GetV(), Root->GetW());
+						if(!LocalRepData.OneOffActivated.Contains(OneOffActivated))
 						{
-							bClustersChanged = true;
-							RepData.OneOffActivated.Add(OneOffActivated);
+							LocalRepData.OneOffActivated.Add(OneOffActivated);
 						}
 					}
 
@@ -1882,7 +2242,6 @@ void UGeometryCollectionComponent::UpdateRepData()
 					{
 						if (!Root->Disabled())
 						{
-							Solver->GetEvolution()->GetIslandManager().RemoveParticle(Root);
 							Solver->GetEvolution()->DisableParticle(Root);
 							Solver->GetParticles().MarkTransientDirtyParticle(Root);
 						}
@@ -1891,13 +2250,12 @@ void UGeometryCollectionComponent::UpdateRepData()
 			}
 		}
 
-		INC_DWORD_STAT_BY(STAT_GCReplicatedFractures, RepData.OneOffActivated.Num());
+		INC_DWORD_STAT_BY(STAT_GCReplicatedFractures, LocalRepData.OneOffActivated.Num());
 		
 		//Build up clusters to replicate and compare with previous frame
-		TArray<FGeometryCollectionClusterRep> Clusters;
-
 		if (bReplicateMovement)
 		{
+			LocalRepData.Clusters.Reserve(ClustersToRep->Num());
 			//remove disabled clusters and update rep data if needed
 			for (auto Itr = ClustersToRep->CreateIterator(); Itr; ++Itr)
 			{
@@ -1912,19 +2270,17 @@ void UGeometryCollectionComponent::UpdateRepData()
 				}
 				else
 				{
-					Clusters.AddDefaulted();
-					FGeometryCollectionClusterRep& ClusterRep = Clusters.Last();
+					FGeometryCollectionClusterRep& ClusterRep = LocalRepData.Clusters.AddDefaulted_GetRef();
 
-					ClusterRep.Position = Cluster->X();
-					ClusterRep.Rotation = Cluster->R();
-					ClusterRep.LinearVelocity = Cluster->V();
-					ClusterRep.AngularVelocity = Cluster->W();
+					ClusterRep.Position = Cluster->GetX();
+					ClusterRep.Rotation = Cluster->GetR();
+					ClusterRep.LinearVelocity = Cluster->GetV();
+					ClusterRep.AngularVelocity = Cluster->GetW();
 					ClusterRep.ClusterState.SetObjectState(Cluster->ObjectState());
 					ClusterRep.ClusterState.SetInternalCluster(Cluster->InternalCluster());
 					int32 TransformGroupIdx;
 					if (Cluster->InternalCluster())
 					{
-
 						ensureMsgf(Children.Num(), TEXT("Internal cluster yet we have no children? [Num %d vs Cached Empty %d]"), Children.Num(), bChildrenEmpty);
 						TransformGroupIdx = PhysicsProxy->GetTransformGroupIndexFromHandle(Children[0]);
 					}
@@ -1936,63 +2292,203 @@ void UGeometryCollectionComponent::UpdateRepData()
 
 					ensureMsgf(TransformGroupIdx < TNumericLimits<uint16>::Max(), TEXT("Trying to replicate GC with more than 65k pieces. We assumed uint16 would suffice"));
 					ClusterRep.ClusterIdx = TransformGroupIdx;
-
-					if (!bClustersChanged)
-					{
-						//compare to previous frame data
-						// this could be more efficient by having a way to find back the data from the idx
-						auto Predicate = [TransformGroupIdx](const FGeometryCollectionClusterRep& Entry)
-						{
-							return Entry.ClusterIdx == TransformGroupIdx;
-						};
-						if (const FGeometryCollectionClusterRep* PrevClusterData = RepData.Clusters.FindByPredicate(Predicate))
-						{
-							if (ClusterRep.ClusterChanged(*PrevClusterData))
-							{
-								bClustersChanged = true;
-							}
-						}
-					}
 				}
 			}
 		}
 
-		if (bClustersChanged)
+		if (LocalRepData.HasChanged(RepData))
 		{
-			RepData.Clusters = MoveTemp(Clusters);
-
 			if (Owner->GetWorld() && Owner->GetWorld()->GetPhysicsScene())
 			{
-				RepData.ServerFrame = Owner->GetWorld()->GetPhysicsScene()->ReplicationCache.ServerFrame;
+				LocalRepData.ServerFrame = Owner->GetWorld()->GetPhysicsScene()->ReplicationCache.ServerFrame;
 			}
+			INC_DWORD_STAT_BY(STAT_GCReplicatedClusters, LocalRepData.Clusters.Num());
 
-			INC_DWORD_STAT_BY(STAT_GCReplicatedClusters, RepData.Clusters.Num());
+			FlushNetDormancyIfNeeded();
 
+			RepData = MoveTemp(LocalRepData);
 			MARK_PROPERTY_DIRTY_FROM_NAME(UGeometryCollectionComponent, RepData, this);
 			++RepData.Version;
 
-			if(Owner->NetDormancy != DORM_Awake)
+			const bool bSetDormancyToAwake = Owner->NetDormancy > DORM_Awake && GetDesiredNetAwakeningMode() == ENetAwakeningMode::ForceDormancyAwake;
+			if (bSetDormancyToAwake)
 			{
-				//If net dormancy is Initial it must be for perf reasons, but since a cluster changed we need to replicate down
-				Owner->SetNetDormancy(DORM_Awake);
+				if (Owner->NetDormancy > DORM_Awake)
+				{
+					//If net dormancy is Initial it must be for perf reasons, but since a cluster changed we need to replicate down	
+					Owner->SetNetDormancy(DORM_Awake);
+				}
 			}
-		}
-		else if (!bFirstUpdate && Owner->NetDormancy == DORM_Awake)
-		{
-			// Clusters are no longer changing so we shouldn't need to replicate anymore.
-			// TODO: Wait a few frames?
-			Owner->SetNetDormancy(DORM_DormantAll);
 		}
 	}
 }
 
-int32 GeometryCollectionHardMissingUpdatesSnapThreshold = 20;
-FAutoConsoleVariableRef CVarGeometryCollectionHardMissingUpdatesSnapThreshold(TEXT("p.GeometryCollectionHardMissingUpdatesSnapThreshold"), GeometryCollectionHardMissingUpdatesSnapThreshold,
-	TEXT("Determines how many missing updates before we trigger a hard snap"));
 
-int32 GeometryCollectionHardsnapThresholdMs = 100; // 10 Hz
-FAutoConsoleVariableRef CVarGeometryCollectionHardsnapThresholdMs(TEXT("p.GeometryCollectionHardsnapThresholdMs"), GeometryCollectionHardMissingUpdatesSnapThreshold,
-	TEXT("Determines how many ms since the last hardsnap to trigger a new one"));
+void UGeometryCollectionComponent::UpdateRepStateAndDynamicData()
+{
+	check(GetNetMode() != ENetMode::NM_Client);
+	using namespace Chaos;
+	if (!bEnableReplication || PhysicsProxy == nullptr)
+	{
+		return;
+	}
+
+	AActor* Owner = GetOwner();
+
+	// If we have no owner or our netmode means we never require replication then early out
+	if (!Owner || Owner->GetNetMode() == ENetMode::NM_Standalone)
+	{
+		return;
+	}
+
+	if (GetIsReplicated() && Owner->GetLocalRole() == ROLE_Authority)
+	{
+		if (RestCollection && RestCollection->GetGeometryCollection())
+		{
+			FPBDRigidsSolver* Solver = PhysicsProxy->GetSolver<Chaos::FPBDRigidsSolver>();
+
+			// let go through all the transform and see which one has changed its state
+			const TArray<FPBDRigidClusteredParticleHandle*>& UnorderedParticleHandles = PhysicsProxy->GetUnorderedParticles_Internal();
+			const int32 NumParticles = UnorderedParticleHandles.Num();
+
+			const TManagedArrayAccessor<int32> InitialLevels = PhysicsProxy->GetPhysicsCollection().GetInitialLevels();
+			
+			FGeometryCollectionRepStateData LocalRepStateData;
+			FGeometryCollectionRepDynamicData LocalRepDynamicData;
+
+			LocalRepStateData.Version = RepStateData.Version;
+			LocalRepDynamicData.Version = RepDynamicData.Version;
+
+			// root level anchor state
+			LocalRepStateData.bIsRootAnchored = RepStateData.bIsRootAnchored;
+			if (FPBDRigidClusteredParticleHandle* RootHandle = PhysicsProxy->GetInitialRootHandle_Internal())
+			{
+				LocalRepStateData.bIsRootAnchored = RootHandle->IsAnchored() ? 1 : 0;
+			}
+
+			struct FRootHandle
+			{
+				const FPBDRigidClusteredParticleHandle* Handle; // handle of the particle or internal cluster 
+				const int32 TransformIndex; // transform index of the particle or the child of the internal cluster 
+
+				bool operator==(const FRootHandle& Other) const	{ return Handle == Other.Handle; }
+			};
+
+			// contains all the dynamic root of the geometry collection
+			// this includes non-clusterunion internal clusters 
+			// using an array as the number of root should always be small 
+			TArray<FRootHandle> RootsToTrack;
+
+			const int32 RootIndex = GetRootIndex();
+
+			// go through particles and send replicated data 
+			const int32 NumTransforms = PhysicsProxy->GetNumTransforms();
+			LocalRepStateData.BrokenState.SetNum(NumTransforms, false);
+			LocalRepStateData.ReleasedData.Reserve(NumTransforms);
+			for (int32 ParticleIndex = 0; ParticleIndex < NumParticles; ParticleIndex++)
+			{
+				const int32 TransformIndex = PhysicsProxy->GetFromParticleToTransformIndex(ParticleIndex);
+				if (FPBDRigidClusteredParticleHandle* ParticleHandle = UnorderedParticleHandles[ParticleIndex])
+				{
+					const int32 Level = (InitialLevels.IsValid() && InitialLevels.IsValidIndex(TransformIndex)) ? InitialLevels[TransformIndex] : INDEX_NONE;
+
+					const FPBDRigidClusteredParticleHandle* ParentHandle = ParticleHandle->Parent();
+
+					// no parent and not root means the particle has been broken  
+					const bool bIsRootIndex = (TransformIndex == RootIndex);
+					const bool bIsBroken = (ParentHandle == nullptr && !bIsRootIndex);
+					if (bIsBroken)
+					{
+						// only record the one at the abandon level and before ( child break of abandon level clusters must be recorded )  
+						if (!bEnableAbandonAfterLevel || Level <= ReplicationAbandonAfterLevel)
+						{
+							LocalRepStateData.BrokenState[TransformIndex] = true;
+							if(!ParticleHandle->Disabled())
+							{
+								FGeometryCollectionRepStateData::FReleasedData& Data = LocalRepStateData.ReleasedData.AddDefaulted_GetRef();
+								Data.TransformIndex = TransformIndex;
+								Data.LinearVelocity = ParticleHandle->GetV();
+								Data.AngularVelocityInDegreesPerSecond = FMath::RadiansToDegrees(ParticleHandle->GetW());
+							}
+						}
+
+						// anything beyond ReplicationAbandonAfterLevel must be disabled to save server CPU as they are now client authoritative
+						if (bEnableAbandonAfterLevel && Level >= (ReplicationAbandonAfterLevel + 1))
+						{
+							if (!ParticleHandle->Disabled())
+							{
+								Solver->GetEvolution()->DisableParticle(ParticleHandle);
+								Solver->GetParticles().MarkTransientDirtyParticle(ParticleHandle);
+							}
+						}
+					}
+
+					const bool bIsActiveBrokenOrOriginalRoot = (!ParticleHandle->Disabled()) && (bIsBroken || bIsRootIndex);
+					const bool bHasInternalClusterParent = ParentHandle && (ParentHandle->InternalCluster()) && (ParentHandle->PhysicsProxy() == ParticleHandle->PhysicsProxy());
+
+					const FPBDRigidClusteredParticleHandle* RootParticle = bIsActiveBrokenOrOriginalRoot ? ParticleHandle : (bHasInternalClusterParent ? ParentHandle : nullptr);
+					const int32 RootParticleLevel = (bHasInternalClusterParent)? (Level - 1): (Level);
+					const bool bTrackPosition = (RootParticleLevel <= this->ReplicationMaxPositionAndVelocityCorrectionLevel);
+					if (bTrackPosition && RootParticle)
+					{
+						RootsToTrack.AddUnique(FRootHandle{ RootParticle, TransformIndex });
+					}
+					
+				}
+			}
+
+			//reclaim unused slack
+			LocalRepStateData.ReleasedData.Shrink();
+
+			// let's update the data for the tracked clusters 
+			LocalRepDynamicData.ClusterData.Reserve(RootsToTrack.Num());
+			for (const FRootHandle& Root: RootsToTrack)
+			{
+				FGeometryCollectionRepDynamicData::FClusterData& Data = LocalRepDynamicData.ClusterData.AddDefaulted_GetRef();
+				Data.TransformIndex = Root.TransformIndex;
+				Data.bIsInternalCluster = Root.Handle->InternalCluster();
+				Data.Position = Root.Handle->GetX();
+				Data.EulerRotation = Root.Handle->GetR().Rotator().Euler();
+				Data.LinearVelocity = Root.Handle->GetV();
+				Data.AngularVelocityInDegreesPerSecond = FMath::RadiansToDegrees(Root.Handle->GetW());
+				Data.LastUpdatedVersion = LocalRepDynamicData.Version + 1;
+			}
+
+			// Check to see if the replicated state and dynamic Data has changed
+			const bool bStateChanged = LocalRepStateData.HasChanged(RepStateData);
+			const bool bDynamicChanged = LocalRepDynamicData.HasChanged(RepDynamicData);
+
+			if(bStateChanged || bDynamicChanged)
+			{
+				FlushNetDormancyIfNeeded();
+			}
+
+			if (bStateChanged)
+			{
+				RepStateData = MoveTemp(LocalRepStateData);
+				MARK_PROPERTY_DIRTY_FROM_NAME(UGeometryCollectionComponent, RepStateData, this);
+				++RepStateData.Version;
+			}
+
+			if (bDynamicChanged)
+			{
+				RepDynamicData = MoveTemp(LocalRepDynamicData);
+				MARK_PROPERTY_DIRTY_FROM_NAME(UGeometryCollectionComponent, RepDynamicData, this);
+				++RepDynamicData.Version;
+			}
+
+			if (bDynamicChanged || bStateChanged)
+			{
+				const bool bSetDormancyToAwake = Owner->NetDormancy > DORM_Awake && GetDesiredNetAwakeningMode() == ENetAwakeningMode::ForceDormancyAwake;
+				if (bSetDormancyToAwake)
+				{
+					//If net dormancy is Initial it must be for perf reasons, but since a cluster changed we need to replicate down
+					Owner->SetNetDormancy(DORM_Awake);
+				}
+			}
+		}
+	}
+}
 
 float GeometryCollectionRepLinearMatchStrength = 50;
 FAutoConsoleVariableRef CVarGeometryCollectionRepLinearMatchStrength(TEXT("p.GeometryCollectionRepLinearMatchStrength"), GeometryCollectionRepLinearMatchStrength, TEXT("Units can be interpreted as %/s^2 - acceleration of percent linear correction"));
@@ -2011,14 +2507,155 @@ bool bGeometryCollectionRepUseClusterVelocityMatch = true;
 FAutoConsoleVariableRef CVarGeometryCollectionRepUseClusterVelocityMatch(TEXT("p.bGeometryCollectionRepUseClusterVelocityMatch"), bGeometryCollectionRepUseClusterVelocityMatch,
 	TEXT("Use physical velocity to match cluster states"));
 
+int32 GeometryCollectionHardMissingUpdatesSnapThreshold = 20;
+FAutoConsoleVariableRef CVarGeometryCollectionHardMissingUpdatesSnapThreshold(TEXT("p.GeometryCollectionHardMissingUpdatesSnapThreshold"), GeometryCollectionHardMissingUpdatesSnapThreshold,
+	TEXT("Determines how many missing updates before we trigger a hard snap"));
+
+int32 GeometryCollectionHardsnapThresholdMs = 100; // 10 Hz
+FAutoConsoleVariableRef CVarGeometryCollectionHardsnapThresholdMs(TEXT("p.GeometryCollectionHardsnapThresholdMs"), GeometryCollectionHardMissingUpdatesSnapThreshold,
+	TEXT("Determines how many ms since the last hardsnap to trigger a new one"));
+
 void UGeometryCollectionComponent::ProcessRepData()
 {
 	bGeometryCollectionRepUseClusterVelocityMatch = false;
 	ProcessRepData(0.f, 0.f);
 }
 
-namespace {
-	bool ProcessRepDataCommon(const float DeltaTime, const float SimTime, const FGeometryCollectionRepData& RepData, FGeometryCollectionPhysicsProxy* PhysicsProxy, int32& VersionProcessed, int32& OneOffActivatedProcessed, double& LastHardsnapTimeInMs, float ReceivedTime, bool bReplicateMovement)
+namespace 
+{
+	bool ReplicationShouldHardSnap(int32 RepDataVersion, int32 VersionProcessed, bool bReplicateMovement, double& LastHardsnapTimeInMs)
+	{
+		bool bHardSnap = false;
+		if (bReplicateMovement)
+		{
+			const int64 CurrentTimeInMs = FPlatformTime::ToMilliseconds64(FPlatformTime::Cycles64());
+
+			// Always hard snap on the very first version received
+			if (VersionProcessed == 0)
+			{
+				bHardSnap = true;
+			}
+			else if (VersionProcessed < RepDataVersion)
+			{
+				//TODO: this will not really work if a fracture happens and then immediately goes to sleep without updating client enough times
+				//A time method would work better here, but is limited to async mode. Maybe we can support both
+				bHardSnap = (RepDataVersion - VersionProcessed) > GeometryCollectionHardMissingUpdatesSnapThreshold;
+
+				if (!bGeometryCollectionRepUseClusterVelocityMatch)
+				{
+					// When not doing velocity match for clusters, instead we do periodic hard snapping
+					bHardSnap |= (CurrentTimeInMs - LastHardsnapTimeInMs) > GeometryCollectionHardsnapThresholdMs;
+				}
+			}
+			else if (VersionProcessed > RepDataVersion)
+			{
+				//rollover so just treat as hard snap - this case is extremely rare and a one off
+				bHardSnap = true;
+			}
+
+			if (bHardSnap)
+			{
+				LastHardsnapTimeInMs = CurrentTimeInMs;
+			}
+		}
+		return bHardSnap;
+	}
+
+	void UpdateRootStateFromReplication(const FGeometryCollectionPhysicsProxy& PhysicsProxy, const bool bNewAnchoredState)
+	{
+		using namespace Chaos;
+
+		const int32 InitialRootIndex = PhysicsProxy.GetSimParameters().InitialRootIndex;
+		if (FPBDRigidClusteredParticleHandle* RootHandle = PhysicsProxy.GetParticle_Internal(InitialRootIndex))
+		{
+			if (RootHandle->Parent() || !RootHandle->Disabled())
+			{
+				if (bNewAnchoredState != RootHandle->IsAnchored())
+				{
+					RootHandle->SetIsAnchored(bNewAnchoredState);
+
+					if (FPBDRigidsSolver* Solver = PhysicsProxy.GetSolver<Chaos::FPBDRigidsSolver>())
+					{
+						if (FPBDRigidsEvolutionGBF* Evolution = Solver->GetEvolution())
+						{
+							FRigidClustering& RigidClustering = Solver->GetEvolution()->GetRigidClustering();
+							// NOTE: We have to start out with the particle as kinematic and let UpdateKinematicProperties correct it if this is wrong
+							Evolution->SetParticleObjectState(RootHandle, EObjectStateType::Kinematic);
+							UpdateKinematicProperties(RootHandle, RigidClustering.GetChildrenMap(), *Evolution);
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// return the awaken state of the cluster 
+	bool UpdateClusterPositionAndVelocitiesFromReplication(
+		Chaos::FPBDRigidsSolver* Solver,
+		Chaos::FPBDRigidParticleHandle& Cluster,
+		const FVector& Position, const FQuat& Rotation, 
+		const FVector& LinearVelocity, const FVector& AngularVelocity,
+		const bool bHardSnap,
+		const double RepExtrapTime,
+		const double DeltaTime)
+	{
+		bool bWake = false;
+
+		if (bHardSnap)
+		{
+			Cluster.SetX(Position);
+			Cluster.SetR(Rotation);
+			Cluster.SetV(LinearVelocity);
+			Cluster.SetW(AngularVelocity);
+			bWake = true;
+		}
+		else if (bGeometryCollectionRepUseClusterVelocityMatch)
+		{
+			//
+			// Match linear velocity
+			//
+			const FVector RepVel = LinearVelocity;
+			const FVector RepExtrapPos = Position + (RepVel * RepExtrapTime);
+			const Chaos::FVec3 DeltaX = RepExtrapPos - Cluster.GetX();
+			const float DeltaXMagSq = DeltaX.SizeSquared();
+			if (DeltaXMagSq > SMALL_NUMBER && GeometryCollectionRepLinearMatchStrength > SMALL_NUMBER)
+			{
+				bWake = true;
+				//
+				// DeltaX * MatchStrength is an acceleration, m/s^2, which is integrated
+				// by multiplying by DeltaTime.
+				//
+				// It's formulated this way to get a larger correction for a longer time
+				// step, ie. correction velocities are framerate independent.
+				//
+				Cluster.SetV(RepVel + (DeltaX * FMath::Min(1.0f, GeometryCollectionRepLinearMatchStrength * DeltaTime)));
+			}
+
+			//
+			// Match angular velocity
+			//
+			const FVector RepAngVel = AngularVelocity;
+			const Chaos::FRotation3 RepExtrapAng = Chaos::FRotation3::IntegrateRotationWithAngularVelocity(Rotation, RepAngVel, RepExtrapTime);
+			const FVector AngVel = Chaos::FRotation3::CalculateAngularVelocity(Cluster.GetR(), RepExtrapAng, GeometryCollectionRepAngularMatchTime);
+			if (AngVel.SizeSquared() > SMALL_NUMBER)
+			{
+				Cluster.SetW(RepAngVel + AngVel);
+				bWake = true;
+			}
+		}
+
+		//
+		// Wake up particle if it's sleeping and there's a delta to correct
+		//
+		if (bWake && Cluster.IsSleeping())
+		{
+			Solver->GetEvolution()->SetParticleObjectState(&Cluster, Chaos::EObjectStateType::Dynamic);
+		}
+
+		return bWake;
+	}
+
+	bool ProcessRepDataCommon(const float DeltaTime, const float SimTime, const FGeometryCollectionRepData& RepData, FGeometryCollectionPhysicsProxy* PhysicsProxy, int32& VersionProcessed, int32& OneOffActivatedProcessed, double& LastHardsnapTimeInMs, bool bReplicateMovement)
 	{
 		using namespace Chaos;
 
@@ -2027,6 +2664,14 @@ namespace {
 			return false;
 		}
 
+		float ReceivedTime = SimTime;
+
+		// Track the sim time that this rep data was received on.
+		if (RepData.RepDataReceivedTime.IsSet())
+		{
+			ReceivedTime = *RepData.RepDataReceivedTime;
+		}
+		
 		// How far we must extrapolate from when we received the data
 		const float RepExtrapTime = FMath::Max(0.f, SimTime - ReceivedTime);
 
@@ -2043,7 +2688,7 @@ namespace {
 		{
 			for (const FGeometryCollectionClusterRep& RepCluster : RepData.Clusters)
 			{
-				if (Chaos::FPBDRigidParticleHandle* Cluster = PhysicsProxy->GetParticles()[RepCluster.ClusterIdx])
+				if (Chaos::FPBDRigidParticleHandle* Cluster = PhysicsProxy->GetParticle_Internal(RepCluster.ClusterIdx))
 				{
 					if (RepCluster.ClusterState.IsInternalCluster())
 					{
@@ -2070,62 +2715,9 @@ namespace {
 		}
 
 		// Update the anchored state of the root particle
-		const int32 InitialRootIndex = PhysicsProxy->GetSimParameters().InitialRootIndex;
-		const TArray<FPBDRigidClusteredParticleHandle*>& ParticleHandles = PhysicsProxy->GetParticles();
-		if (FPBDRigidClusteredParticleHandle* RootHandle = ParticleHandles[InitialRootIndex])
-		{
-			if (RootHandle->Parent() || !RootHandle->Disabled())
-			{
-				if (RepData.bIsRootAnchored != RootHandle->IsAnchored())
-				{
-					RootHandle->SetIsAnchored(RepData.bIsRootAnchored);
+		UpdateRootStateFromReplication(*PhysicsProxy, RepData.bIsRootAnchored);
 
-					if (FPBDRigidsSolver* Solver = PhysicsProxy->GetSolver<Chaos::FPBDRigidsSolver>())
-					{
-						if (FPBDRigidsEvolutionGBF* Evolution = Solver->GetEvolution())
-						{
-							FRigidClustering& RigidClustering = Solver->GetEvolution()->GetRigidClustering();
-							// NOTE: We have to start out with the particle as kinematic and let UpdateKinematicProperties correct it if this is wrong
-							Evolution->SetParticleObjectState(RootHandle, Chaos::EObjectStateType::Kinematic);
-							Chaos::UpdateKinematicProperties(RootHandle, RigidClustering.GetChildrenMap(), *Evolution);
-						}
-					}
-				}
-			}
-		}
-		bool bHardSnap = false;
-		if (bReplicateMovement)
-		{
-			const int64 CurrentTimeInMs = FPlatformTime::ToMilliseconds64(FPlatformTime::Cycles64());
-
-			// Always hard snap on the very first version received
-			if (VersionProcessed == 0)
-			{
-				bHardSnap = true;
-			}
-			else if (VersionProcessed < RepData.Version)
-			{
-				//TODO: this will not really work if a fracture happens and then immediately goes to sleep without updating client enough times
-				//A time method would work better here, but is limited to async mode. Maybe we can support both
-				bHardSnap = (RepData.Version - VersionProcessed) > GeometryCollectionHardMissingUpdatesSnapThreshold;
-
-				if (!bGeometryCollectionRepUseClusterVelocityMatch)
-				{
-					// When not doing velocity match for clusters, instead we do periodic hard snapping
-					bHardSnap |= (CurrentTimeInMs - LastHardsnapTimeInMs) > GeometryCollectionHardsnapThresholdMs;
-				}
-			}
-			else if (VersionProcessed > RepData.Version)
-			{
-				//rollover so just treat as hard snap - this case is extremely rare and a one off
-				bHardSnap = true;
-			}
-
-			if (bHardSnap)
-			{
-				LastHardsnapTimeInMs = CurrentTimeInMs;
-			}
-		}
+		const bool bHardSnap = ReplicationShouldHardSnap(RepData.Version, VersionProcessed, bReplicateMovement, LastHardsnapTimeInMs);
 
 		FPBDRigidsSolver* Solver = PhysicsProxy->GetSolver<Chaos::FPBDRigidsSolver>();
 		FRigidClustering& RigidClustering = Solver->GetEvolution()->GetRigidClustering();
@@ -2134,7 +2726,16 @@ namespace {
 		for (; OneOffActivatedProcessed < RepData.OneOffActivated.Num(); ++OneOffActivatedProcessed)
 		{
 			const FGeometryCollectionActivatedCluster& ActivatedCluster = RepData.OneOffActivated[OneOffActivatedProcessed];
-			FPBDRigidParticleHandle* OneOff = PhysicsProxy->GetParticles()[ActivatedCluster.ActivatedIndex];
+
+#if !UE_BUILD_SHIPPING
+			if(PhysicsProxy->GetParticle_Internal(ActivatedCluster.ActivatedIndex) == nullptr)
+			{
+				ensureMsgf(false, TEXT("Invalid activated cluster index processing replication data."));
+				continue;
+			}
+#endif
+
+			FPBDRigidParticleHandle* OneOff = PhysicsProxy->GetParticle_Internal(ActivatedCluster.ActivatedIndex);
 
 			if (ensure(OneOff))
 			{
@@ -2161,69 +2762,156 @@ namespace {
 		bool bProcessed = false;
 		if (bReplicateMovement)
 		{
-			ForEachClusterPair([Solver, DeltaTime, RepExtrapTime, bHardSnap, &bProcessed](const FGeometryCollectionClusterRep& RepCluster, Chaos::FPBDRigidParticleHandle& Cluster)
+			ForEachClusterPair([Solver, DeltaTime, RepExtrapTime, bHardSnap, &bProcessed](const FGeometryCollectionClusterRep& RepData, Chaos::FPBDRigidParticleHandle& Cluster)
 			{
-				bool bWake = false;
-
-				if (bHardSnap)
-				{
-					Cluster.SetX(RepCluster.Position);
-					Cluster.SetR(RepCluster.Rotation);
-					Cluster.SetV(RepCluster.LinearVelocity);
-					Cluster.SetW(RepCluster.AngularVelocity);
-					bWake = true;
-				}
-				else if (bGeometryCollectionRepUseClusterVelocityMatch)
-				{
-					//
-					// Match linear velocity
-					//
-					const FVector RepVel = RepCluster.LinearVelocity;
-					const FVector RepExtrapPos = RepCluster.Position + (RepVel * RepExtrapTime);
-					const FVec3 DeltaX = RepExtrapPos - Cluster.X();
-					const float DeltaXMagSq = DeltaX.SizeSquared();
-					if (DeltaXMagSq > SMALL_NUMBER && GeometryCollectionRepLinearMatchStrength > SMALL_NUMBER)
-					{
-						bWake = true;
-						//
-						// DeltaX * MatchStrength is an acceleration, m/s^2, which is integrated
-						// by multiplying by DeltaTime.
-						//
-						// It's formulated this way to get a larger correction for a longer time
-						// step, ie. correction velocities are framerate independent.
-						//
-						Cluster.SetV(RepVel + (DeltaX * GeometryCollectionRepLinearMatchStrength * DeltaTime));
-					}
-
-					//
-					// Match angular velocity
-					//
-					const FVector RepAngVel = RepCluster.AngularVelocity;
-					const Chaos::FRotation3 RepExtrapAng = Chaos::FRotation3::IntegrateRotationWithAngularVelocity(RepCluster.Rotation, RepAngVel, RepExtrapTime);
-					const FVector AngVel = Chaos::FRotation3::CalculateAngularVelocity(Cluster.R(), RepExtrapAng, GeometryCollectionRepAngularMatchTime);
-					if (AngVel.SizeSquared() > SMALL_NUMBER)
-					{
-						Cluster.SetW(RepAngVel + AngVel);
-						bWake = true;
-					}
-				}
-
-				bProcessed |= bWake;
-
-				//
-				// Wake up particle if it's sleeping and there's a delta to correct
-				//
-				if (bWake && Cluster.IsSleeping())
-				{
-					Solver->GetEvolution()->SetParticleObjectState(&Cluster, Chaos::EObjectStateType::Dynamic);
-				}
+				bProcessed |= UpdateClusterPositionAndVelocitiesFromReplication(Solver, Cluster, RepData.Position, RepData.Rotation, RepData.LinearVelocity, RepData.AngularVelocity, bHardSnap, RepExtrapTime, DeltaTime);
 			});
 		}
 
 		VersionProcessed = RepData.Version;
 		return bProcessed;
 	}
+
+	bool ProcessRepStateDataCommon(FGeometryCollectionPhysicsProxy* PhysicsProxy, const FGeometryCollectionRepStateData& RepStateData, int32& VersionProcessed)
+	{
+		using namespace Chaos;
+
+		if (!PhysicsProxy || !PhysicsProxy->IsInitializedOnPhysicsThread() || PhysicsProxy->GetReplicationMode() != FGeometryCollectionPhysicsProxy::EReplicationMode::Client)
+		{
+			return false;
+		}
+
+		if (VersionProcessed == RepStateData.Version)
+		{
+			return false;
+		}
+
+		const TArray<FPBDRigidClusteredParticleHandle*>& UnorderedParticleHandle = PhysicsProxy->GetUnorderedParticles_Internal();
+
+		// Update the anchored state of the root particle
+		UpdateRootStateFromReplication(*PhysicsProxy, (bool)RepStateData.bIsRootAnchored);
+		
+		
+		// now sync the broken state of the particles
+		if (RepStateData.BrokenState.Num() == PhysicsProxy->GetNumTransforms())
+		{
+			FPBDRigidsSolver* Solver = PhysicsProxy->GetSolver<Chaos::FPBDRigidsSolver>();
+			FRigidClustering& RigidClustering = Solver->GetEvolution()->GetRigidClustering();
+
+			for (int32 ParticleIndex = 0; ParticleIndex < UnorderedParticleHandle.Num(); ParticleIndex++)
+			{
+				if (FPBDRigidClusteredParticleHandle* ParticleHandle = UnorderedParticleHandle[ParticleIndex])
+				{
+					const int32 TransformIndex = PhysicsProxy->GetFromParticleToTransformIndex(ParticleIndex);
+					// we only check for when thing goes from unbroken to broken 
+					const bool bWasBroken = (ParticleHandle->Parent() == nullptr);
+					const bool bIsBroken = RepStateData.BrokenState[TransformIndex];
+					if (!bWasBroken && bIsBroken)
+					{
+						RigidClustering.ForceReleaseChildParticleAndParents(ParticleHandle, /* bTriggerBreakEvents */true);
+
+						if (!ParticleHandle->Disabled())
+						{
+							// check if we have a release velocity to be applied 
+							const FGeometryCollectionRepStateData::FReleasedData* ReleaseData = RepStateData.ReleasedData.FindByPredicate(
+								[TransformIndex](const FGeometryCollectionRepStateData::FReleasedData& Data)
+								{
+									return Data.TransformIndex == TransformIndex;
+								});
+							if (ReleaseData)
+							{
+								ParticleHandle->SetV(ReleaseData->LinearVelocity);
+								ParticleHandle->SetW(FMath::DegreesToRadians(ReleaseData->AngularVelocityInDegreesPerSecond));
+							}
+							else
+							{
+								// if we are a leaf we can disable this particle right away if there's no release data
+								// because this means the server has already disabled the particle from a removal 
+								if (ParticleHandle->ClusterIds().NumChildren == 0)
+								{
+									// todo we could probably disable all at once later to have only one call 
+									Solver->GetEvolution()->DisableParticle(ParticleHandle);
+									Solver->GetParticles().MarkTransientDirtyParticle(ParticleHandle);
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		VersionProcessed = RepStateData.Version;
+		return true;
+	}
+
+	bool ProcessRepDynamicDataCommon(
+		FGeometryCollectionPhysicsProxy* PhysicsProxy,
+		const FGeometryCollectionRepDynamicData& RepDynamicData,
+		int32& VersionProcessed,
+		bool bReplicateMovement,
+		double SimTime,
+		double DeltaTime,
+		double& LastHardsnapTimeInMs
+	)
+	{
+		using namespace Chaos;
+
+		if (!PhysicsProxy || !PhysicsProxy->IsInitializedOnPhysicsThread() || PhysicsProxy->GetReplicationMode() != FGeometryCollectionPhysicsProxy::EReplicationMode::Client)
+		{
+			return false;
+		}
+
+		if (VersionProcessed == RepDynamicData.Version)
+		{
+			return false;
+		}
+
+		// extrapolation time is 0, because we do have the sim time when we receive the data 
+		// we keep this to be mimic the original implementation that was not running on the physics thread 
+		// todo(chaos) shoul dwe fix this ? 
+		const float RepExtrapTime = 0.f;
+
+		// If we've extrapolated past a threshold, then stop tracking
+		// the last received rep data
+		if (RepExtrapTime > GeometryCollectionRepMaxExtrapolationTime)
+		{
+			return false;
+		}
+
+		const bool bHardSnap = ReplicationShouldHardSnap(RepDynamicData.Version, VersionProcessed, bReplicateMovement, LastHardsnapTimeInMs);
+
+		// Keep track of whether we did some "work" on this frame so we can turn off the async tick after
+		// multiple frames of not doing anything.
+		bool bProcessed = false;
+		if (bReplicateMovement)
+		{
+			FPBDRigidsSolver* Solver = PhysicsProxy->GetSolver<Chaos::FPBDRigidsSolver>();
+			for (const FGeometryCollectionRepDynamicData::FClusterData& RepCluster : RepDynamicData.ClusterData)
+			{
+				if (Chaos::FPBDRigidParticleHandle* Cluster = PhysicsProxy->GetParticle_Internal(RepCluster.TransformIndex))
+				{
+					if (RepCluster.bIsInternalCluster)
+					{
+						// internal cluster do not have an index so we rep data send one of the children's, let's find the parent
+						Cluster = Cluster->CastToClustered()->Parent();
+					}
+
+					if (Cluster && Cluster->Disabled() == false)
+					{
+						const FQuat RotationAsQuat = FQuat::MakeFromEuler(RepCluster.EulerRotation);
+						const FVector AngularVelocityInRadiansPerSecond = FMath::DegreesToRadians(RepCluster.AngularVelocityInDegreesPerSecond);
+						UpdateClusterPositionAndVelocitiesFromReplication(Solver, *Cluster, RepCluster.Position, RotationAsQuat, RepCluster.LinearVelocity, AngularVelocityInRadiansPerSecond, bHardSnap, RepExtrapTime, DeltaTime);
+					}
+				}
+			};
+		}
+
+		VersionProcessed = RepDynamicData.Version;
+		return true;
+	}
 }
+
+
 
 bool UGeometryCollectionComponent::ProcessRepData(const float DeltaTime, const float SimTime)
 {
@@ -2234,12 +2922,10 @@ bool UGeometryCollectionComponent::ProcessRepData(const float DeltaTime, const f
 		RepData.RepDataReceivedTime = SimTime;
 	}
 
-	float ReceivedTime = *RepData.RepDataReceivedTime;
-
 	AActor* Owner = GetOwner();
 	const bool bReplicateMovement = Owner ? GetOwner()->IsReplicatingMovement() : true;
 
-	bool ReturnValue = ::ProcessRepDataCommon(DeltaTime, SimTime, RepData, PhysicsProxy, VersionProcessed, OneOffActivatedProcessed, LastHardsnapTimeInMs, ReceivedTime, bReplicateMovement);
+	bool ReturnValue = ::ProcessRepDataCommon(DeltaTime, SimTime, RepData, PhysicsProxy, VersionProcessed, OneOffActivatedProcessed, LastHardsnapTimeInMs, bReplicateMovement);
 
 
 #if ENABLE_DRAW_DEBUG
@@ -2261,7 +2947,7 @@ bool UGeometryCollectionComponent::ProcessRepData(const float DeltaTime, const f
 		{
 			for (const FGeometryCollectionClusterRep& RepCluster : RepData.Clusters)
 			{
-				if (Chaos::FPBDRigidParticleHandle* Cluster = PhysicsProxy->GetParticles()[RepCluster.ClusterIdx])
+				if (Chaos::FPBDRigidParticleHandle* Cluster = PhysicsProxy->GetParticle_Internal(RepCluster.ClusterIdx))
 				{
 					if (RepCluster.ClusterState.IsInternalCluster())
 					{
@@ -2281,11 +2967,11 @@ bool UGeometryCollectionComponent::ProcessRepData(const float DeltaTime, const f
 		ForEachClusterPair([RepExtrapTime](const FGeometryCollectionClusterRep& RepCluster, Chaos::FPBDRigidParticleHandle& Cluster)
 		{
 			// Don't bother debug drawing if the delta is too small
-			if ((Cluster.X() - RepCluster.Position).SizeSquared() < .1f)
+			if ((Cluster.GetX() - RepCluster.Position).SizeSquared() < .1f)
 			{
 				FVector Axis;
 				float Angle;
-				(RepCluster.Rotation.Inverse() * Cluster.R()).ToAxisAndAngle(Axis, Angle);
+				(RepCluster.Rotation.Inverse() * Cluster.GetR()).ToAxisAndAngle(Axis, Angle);
 				if (FMath::Abs(Angle) < .1f)
 				{
 					return;
@@ -2293,8 +2979,8 @@ bool UGeometryCollectionComponent::ProcessRepData(const float DeltaTime, const f
 			}
 
 			Chaos::FDebugDrawQueue& DrawQueue = Chaos::FDebugDrawQueue::GetInstance();
-			DrawQueue.DrawDebugCoordinateSystem(Cluster.X(), FRotator(Cluster.R()), 100.f, false, -1, -1, 1.f);
-			DrawQueue.DrawDebugBox(Cluster.X() + Cluster.LocalBounds().Center(), Cluster.LocalBounds().Extents(), Cluster.R(), FColor::White, false, -1, -1, 1.f);
+			DrawQueue.DrawDebugCoordinateSystem(Cluster.GetX(), FRotator(Cluster.GetR()), 100.f, false, -1, -1, 1.f);
+			DrawQueue.DrawDebugBox(Cluster.GetX() + Cluster.LocalBounds().Center(), Cluster.LocalBounds().Extents(), Cluster.GetR(), FColor::White, false, -1, -1, 1.f);
 			DrawQueue.DrawDebugBox(RepCluster.Position + Cluster.LocalBounds().Center(), Cluster.LocalBounds().Extents(), RepCluster.Rotation, FColor::Green, false, -1, -1, 1.f);
 
 			if (bGeometryCollectionRepUseClusterVelocityMatch)
@@ -2304,7 +2990,7 @@ bool UGeometryCollectionComponent::ProcessRepData(const float DeltaTime, const f
 				const FVector RepExtrapPos = RepCluster.Position + (RepVel * RepExtrapTime);
 				const Chaos::FRotation3 RepExtrapAng = Chaos::FRotation3::IntegrateRotationWithAngularVelocity(RepCluster.Rotation, RepAngVel, RepExtrapTime);
 				DrawQueue.DrawDebugCoordinateSystem(RepExtrapPos, FRotator(RepExtrapAng), 100.f, false, -1, -1, 1.f);
-				DrawQueue.DrawDebugDirectionalArrow(Cluster.X(), RepExtrapPos, 10.f, FColor::White, false, -1, -1, 1.f);
+				DrawQueue.DrawDebugDirectionalArrow(Cluster.GetX(), RepExtrapPos, 10.f, FColor::White, false, -1, -1, 1.f);
 				DrawQueue.DrawDebugBox(RepExtrapPos + Cluster.LocalBounds().Center(), Cluster.LocalBounds().Extents(), RepExtrapAng, FColor::Orange, false, -1, -1, 1.f);
 			}
 			else
@@ -2331,32 +3017,54 @@ void UGeometryCollectionComponent::ProcessRepDataOnPT()
 		// which are only used in that function and in the reset function and both are executed on the Physics Thread
 		CurrSolver->EnqueueCommandImmediate([PhysicsProxy = PhysicsProxy, RepDataCopy = RepData, &VersionProcessed = VersionProcessed, &LastHardsnapTimeInMs = LastHardsnapTimeInMs, &OneOffActivatedProcessed = OneOffActivatedProcessed, bReplicateMovement](Chaos::FReal DeltaTime, Chaos::FReal SimTime)
 		{
-				float ReceivedTime;
-
-				// Track the sim time that this rep data was received on.
-				if (!RepDataCopy.RepDataReceivedTime.IsSet())
-				{
-					ReceivedTime = SimTime;
-				}
-				else
-				{
-					ReceivedTime = *RepDataCopy.RepDataReceivedTime;
-				}
-
-			::ProcessRepDataCommon(DeltaTime, SimTime, RepDataCopy, PhysicsProxy, VersionProcessed, OneOffActivatedProcessed, LastHardsnapTimeInMs, ReceivedTime, bReplicateMovement);
+			::ProcessRepDataCommon(DeltaTime, SimTime, RepDataCopy, PhysicsProxy, VersionProcessed, OneOffActivatedProcessed, LastHardsnapTimeInMs, bReplicateMovement);
 		});
 	}
+}
 
+void UGeometryCollectionComponent::ProcessRepStateDataOnPT()
+{
+	ensure(GeometryCollectionUseReplicationV2);
+
+	if (Chaos::FPhysicsSolver* CurrSolver = GetSolver(*this))
+	{
+		// enqueue a callback to process the replicated state data on the physics thread 
+		CurrSolver->EnqueueCommandImmediate(
+			[PhysicsProxy = PhysicsProxy, RepStateDataCopy = RepStateData, &VersionProcessed = VersionProcessed]
+			(Chaos::FReal /*DeltaTime*/, Chaos::FReal /*SimTime*/)
+			{
+				::ProcessRepStateDataCommon(PhysicsProxy, RepStateDataCopy, VersionProcessed);
+			});
+	}
+}
+
+void UGeometryCollectionComponent::ProcessRepDynamicDataOnPT()
+{
+	ensure(GeometryCollectionUseReplicationV2);
+
+	if (Chaos::FPhysicsSolver* CurrSolver = GetSolver(*this))
+	{
+		AActor* Owner = GetOwner();
+		const bool bReplicateMovement = Owner ? GetOwner()->IsReplicatingMovement() : true;
+
+		// enqueue a callback to process the replicated dynamic data on the physics thread 
+		CurrSolver->EnqueueCommandImmediate(
+			[PhysicsProxy = PhysicsProxy, RepDynamicDataCopy = RepDynamicData, &VersionProcessed = DynamicRepDataVersionProcessed, bReplicateMovement, &LastHardsnapTimeInMs = LastHardsnapTimeInMs]
+			(Chaos::FReal DeltaTime, Chaos::FReal SimTime)
+			{
+				::ProcessRepDynamicDataCommon(PhysicsProxy, RepDynamicDataCopy, VersionProcessed, bReplicateMovement, SimTime, DeltaTime, LastHardsnapTimeInMs);
+			});
+	}
 }
 
 void UGeometryCollectionComponent::SetDynamicState(const Chaos::EObjectStateType& NewDynamicState)
 {
 	if (DynamicCollection)
 	{
-		TManagedArray<int32>& DynamicState = DynamicCollection->DynamicState;
+		TManagedArray<uint8>& DynamicState = DynamicCollection->DynamicState;
 		for (int i = 0; i < DynamicState.Num(); i++)
 		{
-			DynamicState[i] = static_cast<int32>(NewDynamicState);
+			DynamicState[i] = static_cast<uint8>(NewDynamicState);
 		}
 	}
 }
@@ -2365,11 +3073,10 @@ void UGeometryCollectionComponent::SetInitialTransforms(const TArray<FTransform>
 {
 	if (DynamicCollection)
 	{
-		TManagedArray<FTransform>& Transform = DynamicCollection->Transform;
-		int32 MaxIdx = FMath::Min(Transform.Num(), InitialTransforms.Num());
+		int32 MaxIdx = FMath::Min(DynamicCollection->GetNumTransforms(), InitialTransforms.Num());
 		for (int32 Idx = 0; Idx < MaxIdx; ++Idx)
 		{
-			Transform[Idx] = InitialTransforms[Idx];
+			DynamicCollection->SetTransform(Idx, FTransform3f(InitialTransforms[Idx]));
 		}
 	}
 }
@@ -2378,18 +3085,14 @@ void UGeometryCollectionComponent::SetInitialClusterBreaks(const TArray<int32>& 
 {
 	if (DynamicCollection)
 	{
-		TManagedArray<int32>& Parent = DynamicCollection->Parent;
-		TManagedArray <TSet<int32>>& Children = DynamicCollection->Children;
-		const int32 NumTransforms = Parent.Num();
-
+		const int32 NumTransforms = DynamicCollection->GetNumTransforms();
 		for (int32 ReleaseIndex : ReleaseIndices)
 		{
 			if (ReleaseIndex < NumTransforms)
 			{
-				if (Parent[ReleaseIndex] > INDEX_NONE)
+				if (int32 ParentIndex = DynamicCollection->GetParent(ReleaseIndex); ParentIndex > INDEX_NONE)
 				{
-					Children[Parent[ReleaseIndex]].Remove(ReleaseIndex);
-					Parent[ReleaseIndex] = INDEX_NONE;
+					DynamicCollection->SetHasParent(ReleaseIndex, false);
 				}
 			}
 		}
@@ -2455,7 +3158,16 @@ void UGeometryCollectionComponent::GetHiddenTransforms(TArray<bool>& OutHiddenTr
 void UGeometryCollectionComponent::GetRestTransforms(TArray<FMatrix44f>& OutRestTransforms) const
 {
 	TArray<FMatrix> RestMatrices;
-	GeometryCollectionAlgo::GlobalMatrices(RestCollection->GetGeometryCollection()->Transform, RestCollection->GetGeometryCollection()->Parent, RestMatrices);
+	
+	const int32 RestCollectionNum = RestCollection->GetGeometryCollection()->Transform.Num();
+	if (RestTransforms.Num() == RestCollectionNum)
+	{
+		GeometryCollectionAlgo::GlobalMatrices(TManagedArray<FTransform>(RestTransforms), RestCollection->GetGeometryCollection()->Parent, RestMatrices);
+	}
+	else
+	{
+		GeometryCollectionAlgo::GlobalMatrices(RestCollection->GetGeometryCollection()->Transform, RestCollection->GetGeometryCollection()->Parent, RestMatrices);
+	}
 #if WITH_EDITOR
 	UpdateGlobalMatricesWithExplodedVectors(RestMatrices, *(RestCollection->GetGeometryCollection()));
 #endif
@@ -2477,41 +3189,31 @@ FGeometryCollectionDynamicData* UGeometryCollectionComponent::InitDynamicData(bo
 		DynamicData->IsDynamic = true;
 		DynamicData->IsLoading = GetIsObjectLoading();
 
+		const TArray<FTransform3f>& CompSpaceTransforms = ComponentSpaceTransforms.RequestAllTransforms();
+
 		// If we have no transforms stored in the dynamic data, then assign both prev and current to the same global matrices
-		if (ComponentSpaceTransforms.Num() == 0)
-		{
-			// Copy global matrices over to DynamicData
-			CalculateGlobalMatrices();
+		// Copy existing global matrices into prev transforms
+		DynamicData->PrevTransforms = DynamicData->Transforms;
 
-			DynamicData->SetAllTransforms(ComponentSpaceTransforms);
+		// Copy global matrices over to DynamicData
+		bool bComputeChanges = true;
+
+		// if the number of matrices has changed between frames, then sync previous to current
+		if (CompSpaceTransforms.Num() != DynamicData->PrevTransforms.Num())
+		{
+			DynamicData->SetPrevTransforms(CompSpaceTransforms);
+			DynamicData->ChangedCount = CompSpaceTransforms.Num();
+			bComputeChanges = false; // Optimization to just force all transforms as changed and skip comparison
 		}
-		else
+
+		DynamicData->SetTransforms(CompSpaceTransforms);
+
+		// The number of transforms for current and previous should match now
+		check(DynamicData->PrevTransforms.Num() == DynamicData->Transforms.Num());
+
+		if (bComputeChanges)
 		{
-			// Copy existing global matrices into prev transforms
-			DynamicData->SetPrevTransforms(ComponentSpaceTransforms);
-
-			// Copy global matrices over to DynamicData
-			CalculateGlobalMatrices();
-
-			bool bComputeChanges = true;
-
-			// if the number of matrices has changed between frames, then sync previous to current
-			if (ComponentSpaceTransforms.Num() != DynamicData->PrevTransforms.Num())
-			{
-				DynamicData->SetPrevTransforms(ComponentSpaceTransforms);
-				DynamicData->ChangedCount = ComponentSpaceTransforms.Num();
-				bComputeChanges = false; // Optimization to just force all transforms as changed and skip comparison
-			}
-
-			DynamicData->SetTransforms(ComponentSpaceTransforms);
-
-			// The number of transforms for current and previous should match now
-			check(DynamicData->PrevTransforms.Num() == DynamicData->Transforms.Num());
-
-			if (bComputeChanges)
-			{
-				DynamicData->DetermineChanges();
-			}
+			DynamicData->DetermineChanges();
 		}
 	}
 
@@ -2530,7 +3232,7 @@ FGeometryCollectionDynamicData* UGeometryCollectionComponent::InitDynamicData(bo
 				{
 					FNaniteGeometryCollectionSceneProxy* NaniteProxy = static_cast<FNaniteGeometryCollectionSceneProxy*>(SceneProxy);
 					ENQUEUE_RENDER_COMMAND(NaniteProxyOnMotionEnd)(
-						[NaniteProxy](FRHICommandListImmediate& RHICmdList)
+						[NaniteProxy] (FRHICommandListBase&)
 						{
 							NaniteProxy->OnMotionEnd();
 						}
@@ -2548,7 +3250,7 @@ FGeometryCollectionDynamicData* UGeometryCollectionComponent::InitDynamicData(bo
 				{
 					FNaniteGeometryCollectionSceneProxy* NaniteProxy = static_cast<FNaniteGeometryCollectionSceneProxy*>(SceneProxy);
 					ENQUEUE_RENDER_COMMAND(NaniteProxyOnMotionBegin)(
-						[NaniteProxy](FRHICommandListImmediate& RHICmdList)
+						[NaniteProxy] (FRHICommandListBase&)
 						{
 							NaniteProxy->OnMotionBegin();
 						}
@@ -2563,9 +3265,12 @@ FGeometryCollectionDynamicData* UGeometryCollectionComponent::InitDynamicData(bo
 
 void UGeometryCollectionComponent::OnUpdateTransform(EUpdateTransformFlags UpdateTransformFlags, ETeleportType Teleport)
 {
-	Super::OnUpdateTransform(UpdateTransformFlags, Teleport);
+	// Don't allow the primitive component to update physics as that does processing to set a transform for
+	// UPrimitiveComponent::BodyInstance as it is unecessary for geometry collections. Out update is handled below.
+	Super::OnUpdateTransform(UpdateTransformFlags | EUpdateTransformFlags::SkipPhysicsUpdate, Teleport);
 
-	if (PhysicsProxy)
+	const bool bSkipPhysicsUpdate = ((UpdateTransformFlags & EUpdateTransformFlags::SkipPhysicsUpdate) == EUpdateTransformFlags::SkipPhysicsUpdate);
+	if (!bSkipPhysicsUpdate && PhysicsProxy)
 	{
 		PhysicsProxy->SetWorldTransform_External(GetComponentTransform());
 	}
@@ -2640,13 +3345,14 @@ FTransform UGeometryCollectionComponent::GetSocketTransform(FName InSocketName, 
 				const int32 TransformIndex = Collection->BoneName.Find(InSocketName.ToString());
 				if (TransformIndex != INDEX_NONE)
 				{
-					if (ComponentSpaceTransforms.IsValidIndex(TransformIndex))
+					const TArray<FTransform3f>& CompSpaceTransforms = ComponentSpaceTransforms.RequestAllTransforms();
+					if (CompSpaceTransforms.IsValidIndex(TransformIndex))
 					{
-						SocketComponentSpaceTransform = ComponentSpaceTransforms[TransformIndex];
+						SocketComponentSpaceTransform = FTransform(CompSpaceTransforms[TransformIndex]);
 						const int32 ParentTransformIndex = Collection->Parent[TransformIndex];
-						if (ComponentSpaceTransforms.IsValidIndex(ParentTransformIndex))
+						if (CompSpaceTransforms.IsValidIndex(ParentTransformIndex))
 						{
-							ParentComponentSpaceTransform = ComponentSpaceTransforms[ParentTransformIndex];
+							ParentComponentSpaceTransform = FTransform(CompSpaceTransforms[ParentTransformIndex]);
 						}
 						bFoundSocket = true;
 					}
@@ -2761,13 +3467,34 @@ void UGeometryCollectionComponent::TickComponent(float DeltaTime, enum ELevelTic
 	//UE_LOG(UGCC_LOG, Log, TEXT("GeometryCollectionComponent[%p]::TickComponent()"), this);
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	// todo(chaos) : cache root broken state ? 
-	if (IsRootBroken())
+	if (BrokenAndDecayedStates.HasAnyDecaying())
 	{
+		InitializeRemovalDynamicAttributesIfNeeded();
 		const float AdjustedDeltaTime = FMath::Max(GeometryCollectionRemovalMultiplier, 0.0001f) * DeltaTime;
 		// todo(chaos) : move removal logic on the physics thread
 		IncrementSleepTimer(AdjustedDeltaTime);
 		IncrementBreakTimer(AdjustedDeltaTime);
+	}
+	// if there's no more decaying pieces, we can disable tick component
+	if (!BrokenAndDecayedStates.HasAnyDecaying())
+	{
+		PrimaryComponentTick.SetTickFunctionEnable(false);
+	}
+}
+
+void UGeometryCollectionComponent::CheckFullyDecayed()
+{
+	if (!bAlreadyFullyDecayed)
+	{
+		if (BrokenAndDecayedStates.HasFullyDecayed())
+		{
+			bAlreadyFullyDecayed = true;
+			if (OnFullyDecayedEvent.IsBound())
+			{
+				SCOPE_CYCLE_COUNTER(STAT_GCFullyDecayedBroadcast);
+				OnFullyDecayedEvent.Broadcast();
+			}
+		}
 	}
 }
 
@@ -2787,19 +3514,10 @@ void UGeometryCollectionComponent::AsyncPhysicsTickComponent(float DeltaTime, fl
 		return;
 	}
 #endif
+	check(GetNetMode() != ENetMode::NM_Client);
 
 	Super::AsyncPhysicsTickComponent(DeltaTime, SimTime);
-
-	if (GetNetMode() != ENetMode::NM_Client)
-	{
-		UpdateRepData();
-	}
-}
-
-void UGeometryCollectionComponent::OnHiddenInGameChanged()
-{
-	Super::OnHiddenInGameChanged();
-	RefreshCustomRenderer();
+	UpdateRepData();
 }
 
 void UGeometryCollectionComponent::OnRegister()
@@ -2824,15 +3542,19 @@ void UGeometryCollectionComponent::OnRegister()
 	UClass* Type = bOverrideCustomRenderer ? CustomRendererType : (RestCollection ? RestCollection->CustomRendererType : nullptr);
 	if (Type && Type->ImplementsInterface(UGeometryCollectionExternalRenderInterface::StaticClass()))
 	{
-		CustomRenderer = (UGeometryCollectionExternalRenderInterface*)NewObject<UObject>(this, Type);
+		CustomRenderer = NewObject<UObject>(this, Type);
 		RegisterCustomRenderer();
 	}
 
 	Super::OnRegister();
+
+	CreateRootProxyComponentsIfNeeded();
 }
 
 void UGeometryCollectionComponent::OnUnregister()
 {
+	ClearRootProxyComponents();
+
 	Super::OnUnregister();
 
 	// Remove any custom renderer.
@@ -2843,9 +3565,107 @@ void UGeometryCollectionComponent::OnUnregister()
 	}
 }
 
+void UGeometryCollectionComponent::EnableRootProxyStaticMeshComponents(bool bEnabled)
+{
+	if (bEnabled != bEnableRootProxyStaticMeshComponents)
+	{
+		bEnableRootProxyStaticMeshComponents = bEnabled;
+
+		if (bEnabled)
+		{
+			CreateRootProxyComponentsIfNeeded();
+		}
+		else
+		{
+			ClearRootProxyComponents();
+		}	
+		MarkRenderStateDirty();
+	}
+	
+}
+
+bool UGeometryCollectionComponent::ShouldCreateRootProxyComponents() const
+{
+	const bool bHasRootProxyMeshes = RestCollection && RestCollection->RootProxyData.ProxyMeshes.Num() > 0;
+	const bool bHasCustomRenderer = CanUseCustomRenderer();
+	return bHasRootProxyMeshes && !bHasCustomRenderer && bEnableRootProxyStaticMeshComponents && GeometryCollectionEnableRootProxyComponents;
+}
+
+void UGeometryCollectionComponent::CreateRootProxyComponentsIfNeeded()
+{
+	ClearRootProxyComponents();
+
+	if (ShouldCreateRootProxyComponents() && GetOwner())
+	{
+		for (const TObjectPtr<UStaticMesh>& ProxyMesh : RestCollection->RootProxyData.ProxyMeshes)
+		{
+			if (UStaticMesh* StaticMesh = ProxyMesh.Get())
+			{
+				const FName UniqueName = MakeUniqueObjectName(GetOwner(), UStaticMeshComponent::StaticClass(), TEXT("GC_RootProxyMesh"));
+				UStaticMeshComponent* MeshComponent = NewObject<UStaticMeshComponent>(GetOwner(), UniqueName, RF_DuplicateTransient | RF_Transient | RF_TextExportTransient);
+
+				MeshComponent->SetStaticMesh(StaticMesh);
+				//MeshComponent->SetRelativeTransform(GetComponentTransform());
+				MeshComponent->SetCanEverAffectNavigation(false);
+				MeshComponent->SetCollisionProfileName(UCollisionProfile::NoCollision_ProfileName);
+				MeshComponent->SetMobility(this->Mobility);
+				MeshComponent->SetupAttachment(this);
+				MeshComponent->RegisterComponent();
+
+				RootProxyStaticMeshComponents.Add(MeshComponent);
+			}
+		}
+	}
+}
+
+void UGeometryCollectionComponent::UpdateRootProxyComponentsIfNeeded()
+{
+	if (RootProxyStaticMeshComponents.Num() > 0 && !bUpdateComponentTransformToRootBone)
+	{
+		if (RestCollection && !IsRootBroken())
+		{
+			const TSharedPtr<FGeometryCollection, ESPMode::ThreadSafe> AssetCollection = RestCollection->GetGeometryCollection();
+			if (AssetCollection)
+			{
+				const int32 RootIndex = RestCollection->GetRootIndex();
+				const FTransform3f RootRestTransform = AssetCollection->Transform[RootIndex];
+				const FTransform3f RootCurrentTransform = ComponentSpaceTransforms.RequestRootTransform();
+				const FTransform RootTransformFromRestPose = FTransform(RootCurrentTransform.GetRelativeTransform(RootRestTransform));
+
+				for (int32 MeshIndex = 0; MeshIndex < RootProxyStaticMeshComponents.Num(); MeshIndex++)
+				{
+					if (TObjectPtr<UStaticMeshComponent> StaticMeshComponent = RootProxyStaticMeshComponents[MeshIndex])
+					{
+						if (RootProxyLocalTransforms.IsValidIndex(MeshIndex))
+						{
+							StaticMeshComponent->SetRelativeTransform(FTransform(RootProxyLocalTransforms[MeshIndex]) * RootTransformFromRestPose);
+						}
+						else
+						{
+							StaticMeshComponent->SetRelativeTransform(RootTransformFromRestPose);
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+void UGeometryCollectionComponent::ClearRootProxyComponents()
+{
+	for (TObjectPtr<UStaticMeshComponent> StaticMeshComponent : RootProxyStaticMeshComponents)
+	{
+		if (StaticMeshComponent)
+		{
+			StaticMeshComponent->DestroyComponent();
+		}
+	}
+	RootProxyStaticMeshComponents.Empty();
+}
+
 void UGeometryCollectionComponent::RegisterCustomRenderer()
 {
-	if (IGeometryCollectionExternalRenderInterface* RendererInterface = Cast<IGeometryCollectionExternalRenderInterface>(CustomRenderer))
+	if (IGeometryCollectionExternalRenderInterface* RendererInterface = CustomRenderer.GetInterface())
 	{
 		RendererInterface->OnRegisterGeometryCollection(*this);
 	}
@@ -2853,7 +3673,7 @@ void UGeometryCollectionComponent::RegisterCustomRenderer()
 
 void UGeometryCollectionComponent::UnregisterCustomRenderer()
 {
-	if (IGeometryCollectionExternalRenderInterface* RendererInterface = Cast<IGeometryCollectionExternalRenderInterface>(CustomRenderer))
+	if (IGeometryCollectionExternalRenderInterface* RendererInterface = CustomRenderer.GetInterface())
 	{
 		RendererInterface->OnUnregisterGeometryCollection();
 	}
@@ -2872,35 +3692,13 @@ void UGeometryCollectionComponent::ReregisterAllCustomRenderers()
 	}
 }
 
-void UGeometryCollectionComponent::ResetDynamicCollection()
+
+void UGeometryCollectionComponent::InitializeRemovalDynamicAttributesIfNeeded()
 {
-	bool bCreateDynamicCollection = true;
-#if WITH_EDITOR
-	bCreateDynamicCollection = false;
-	if (UWorld* World = GetWorld())
+	if (bInitializedRemovalDynamicAttribute == false)
 	{
-		if(World->IsGameWorld())
-		{
-			bCreateDynamicCollection = true;
-		}
-	}
-#endif
-	if (bCreateDynamicCollection && RestCollection && RestCollection->GetGeometryCollection())
-	{
-		DynamicCollection = MakeUnique<FGeometryDynamicCollection>();
-		for (const auto DynamicArray : CopyOnWriteAttributeList)
-		{
-			*DynamicArray = nullptr;
-		}
-
-		GetTransformArrayCopyOnWrite();
-		GetParentArrayCopyOnWrite();
-		GetChildrenArrayCopyOnWrite();
-		GetSimulationTypeArrayCopyOnWrite();
-		GetStatusFlagsArrayCopyOnWrite();
-
 		FGeometryCollectionDecayDynamicFacade DecayDynamicFacade(*DynamicCollection);
-		
+
 		// we are not testing for bAllowRemovalOnSleep, so that we can enable it at runtime if necessary
 		if (RestCollection->bRemoveOnMaxSleep)
 		{
@@ -2910,7 +3708,7 @@ void UGeometryCollectionComponent::ResetDynamicCollection()
 			RemoveOnSleepDynamicFacade.DefineSchema();
 			RemoveOnSleepDynamicFacade.SetAttributeValues(RestCollection->MaximumSleepTime, RestCollection->RemovalDuration);
 		}
-		
+
 		// Remove on break feature related dynamic attribute arrays
 		// we are not testing for bAllowRemovalOnBreak, so that we can enable it at runtime if necessary
 		GeometryCollection::Facades::FCollectionRemoveOnBreakFacade RemoveOnBreakFacade(*RestCollection->GetGeometryCollection());
@@ -2921,6 +3719,34 @@ void UGeometryCollectionComponent::ResetDynamicCollection()
 			FGeometryCollectionRemoveOnBreakDynamicFacade RemoveOnBreakDynamicFacade(*DynamicCollection);
 			RemoveOnBreakDynamicFacade.DefineSchema();
 			RemoveOnBreakDynamicFacade.SetAttributeValues(RemoveOnBreakFacade);
+		}
+		bInitializedRemovalDynamicAttribute = true;
+	}
+}
+
+void UGeometryCollectionComponent::ResetDynamicCollection()
+{
+	bool bCreateDynamicCollection = true;
+#if WITH_EDITOR
+	bCreateDynamicCollection = false;
+	if (UWorld* World = GetWorld())
+	{
+		if(World->IsGameWorld() || GeometryCollectionCreatePhysicsStateInEditor)
+		{
+			bCreateDynamicCollection = true;
+		}
+	}
+#endif
+	if (bCreateDynamicCollection && RestCollection && RestCollection->GetGeometryCollection())
+	{
+		DynamicCollection = MakeUnique<FGeometryDynamicCollection>(RestCollection->GetGeometryCollection().Get());
+
+		IndirectParentArray = nullptr;
+		GetParentArrayCopyOnWrite();
+
+		if (bStoreVelocities || bNotifyTrailing)
+		{
+			DynamicCollection->AddVelocitiesAttributes();
 		}
 
 		DynamicCollection->MakeDirty();
@@ -2933,23 +3759,24 @@ void UGeometryCollectionComponent::ResetDynamicCollection()
 		DynamicCollection.Reset();
 	}
 
-	// make sure we have the RestTransforms up to date, other wise, otherwise there may be case where they do not match the Restcollection ones
-	// can happen if the RestCollection asset has been changed without the component knowing about it 
-	if (RestCollection && RestCollection->GetGeometryCollection())
+	const int32 NumRestCollectionTransforms = RestCollection ? RestCollection->GetGeometryCollection()->Transform.Num() : 0;
+	if (RestTransforms.Num() != NumRestCollectionTransforms)
 	{
-		RestTransforms = RestCollection->GetGeometryCollection()->Transform.GetConstArray();
+		RestTransforms.Reset();
 	}
 
+	// if Reset transform have been overridden uses them to initialize the dynamic collection transforms
 	if (RestTransforms.Num() > 0)
 	{
 		SetInitialTransforms(RestTransforms);
 	}
 
-	if (RestCollection)
-	{
-		CalculateGlobalMatrices();
-	}
+	ComponentSpaceTransforms.Reset(NumRestCollectionTransforms, GetRootIndex());
+
+	RootSpaceBounds.Init();
 	UpdateCachedBounds();
+	bInitializedRemovalDynamicAttribute = false;
+	BrokenAndDecayedStates.Reset(NumRestCollectionTransforms);
 }
 
 void UGeometryCollectionComponent::OnCreatePhysicsState()
@@ -2974,14 +3801,14 @@ void UGeometryCollectionComponent::OnCreatePhysicsState()
 			RestCollectionMutable->CreateSimulationDataIfNeeded();
 		}
 #endif
-		const bool bValidWorld = GetWorld() && (GetWorld()->IsGameWorld() || GetWorld()->IsPreviewWorld());
-		const bool bValidCollection = DynamicCollection && DynamicCollection->Transform.Num() > 0;
+		const bool bValidWorld = GetWorld() && (GetWorld()->IsGameWorld() || GetWorld()->IsPreviewWorld() || GeometryCollectionCreatePhysicsStateInEditor);
+		const bool bValidCollection = DynamicCollection && DynamicCollection->GetNumTransforms() > 0;
 		if (bValidWorld && bValidCollection)
 		{
 			FChaosUserData::Set<UPrimitiveComponent>(&PhysicsUserData, this);
 
 			// If the Component is set to Dynamic, we look to the RestCollection for initial dynamic state override per transform.
-			TManagedArray<int32> & DynamicState = DynamicCollection->DynamicState;
+			TManagedArray<uint8> & DynamicState = DynamicCollection->DynamicState;
 
 			// if this code is changed you may need to account for bStartAwake
 			EObjectStateTypeEnum LocalObjectType = (ObjectType != EObjectStateTypeEnum::Chaos_Object_Sleeping) ? ObjectType : EObjectStateTypeEnum::Chaos_Object_Dynamic;
@@ -2992,14 +3819,14 @@ void UGeometryCollectionComponent::OnCreatePhysicsState()
 					TManagedArray<int32>& InitialDynamicState = RestCollection->GetGeometryCollection()->InitialDynamicState;
 					for (int i = 0; i < DynamicState.Num(); i++)
 					{
-						DynamicState[i] = (InitialDynamicState[i] == static_cast<int32>(Chaos::EObjectStateType::Uninitialized)) ? static_cast<int32>(LocalObjectType) : InitialDynamicState[i];
+						DynamicState[i] = (InitialDynamicState[i] == static_cast<int32>(Chaos::EObjectStateType::Uninitialized)) ? static_cast<uint8>(LocalObjectType) : InitialDynamicState[i];
 					}
 				}
 				else
 				{
 					for (int i = 0; i < DynamicState.Num(); i++)
 					{
-						DynamicState[i] = static_cast<int32>(LocalObjectType);
+						DynamicState[i] = static_cast<uint8>(LocalObjectType);
 					}
 				}
 			}
@@ -3022,14 +3849,6 @@ void UGeometryCollectionComponent::OnCreatePhysicsState()
 				}
 			}
 			
-			TManagedArray<int32> & CollisionGroupArray = DynamicCollection->CollisionGroup;
-			{
-				for (int i = 0; i < CollisionGroupArray.Num(); i++)
-				{
-					CollisionGroupArray[i] = CollisionGroup;
-				}
-			}
-
 			// there's a code path where Level is not serialized and InitializeSharedCollisionStructures is not being called,
 			// resulting in the attribute missing and causing a crash in CopyAttribute calls later in FGeometryCollectionPhysicsProxy::Initialize
 			// @todo(chaos) we should better handle computation of dependent attribute like level
@@ -3109,6 +3928,7 @@ void UGeometryCollectionComponent::RegisterAndInitializePhysicsProxy()
 		SimulationParameters.DamageModel = DamageModel;
 		SimulationParameters.DamageEvaluationModel = GetDamageEvaluationModel(DamageModel);
 		SimulationParameters.bUseSizeSpecificDamageThresholds = bUseSizeSpecificDamageThreshold;
+		SimulationParameters.bUseMaterialDamageModifiers = bUseMaterialDamageModifiers;
 		SimulationParameters.DamageThreshold = DamageThreshold;
 		SimulationParameters.bUsePerClusterOnlyDamageThreshold = RestCollection? RestCollection->PerClusterOnlyDamageThreshold: false; 
 		SimulationParameters.ClusterConnectionMethod = (Chaos::FClusterCreationParameters::EConnectionMethod)ClusterCollectionType;
@@ -3134,40 +3954,33 @@ void UGeometryCollectionComponent::RegisterAndInitializePhysicsProxy()
 		SimulationParameters.bGenerateGlobalCrumblingChildrenData = bGlobalCrumblingEventIncludesChildren;
 		SimulationParameters.EnableGravity = BodyInstance.bEnableGravity;
 		SimulationParameters.GravityGroupIndex = GravityGroupIndex;
+		SimulationParameters.OneWayInteractionLevel = OneWayInteractionLevel;
 		SimulationParameters.UseInertiaConditioning = BodyInstance.IsInertiaConditioningEnabled();
 		SimulationParameters.UseCCD = BodyInstance.bUseCCD;
+		SimulationParameters.UseMACD = BodyInstance.GetUseMACD();
 		SimulationParameters.LinearDamping = BodyInstance.LinearDamping;
 		SimulationParameters.AngularDamping = BodyInstance.AngularDamping;
+		SimulationParameters.InitialOverlapDepenetrationVelocity = BodyInstance.GetMaxDepenetrationVelocity();
+		SimulationParameters.SleepThresholdMultiplier = BodyInstance.GetSleepThresholdMultiplier();
 		SimulationParameters.bUseDamagePropagation = DamagePropagationData.bEnabled;
 		SimulationParameters.BreakDamagePropagationFactor = DamagePropagationData.BreakDamagePropagationFactor;
 		SimulationParameters.ShockDamagePropagationFactor = DamagePropagationData.ShockDamagePropagationFactor;
 		SimulationParameters.WorldTransform = GetComponentToWorld();
 		SimulationParameters.UserData = static_cast<void*>(&PhysicsUserData);
 		SimulationParameters.bEnableStrainOnCollision = bEnableDamageFromCollision;
+		SimulationParameters.bUseStaticMeshCollisionForTraces = bUseStaticMeshCollisionForTraces;
+		SimulationParameters.bOptimizeConvexes = RestCollection ? RestCollection->bOptimizeConvexes : true;
 
 		UPhysicalMaterial* EnginePhysicalMaterial = GetPhysicalMaterial();
 		if (ensure(EnginePhysicalMaterial))
 		{
 			SimulationParameters.PhysicalMaterialHandle = EnginePhysicalMaterial->GetPhysicsMaterial();
-
-			// mass properties are cooked in the GC asset, but component can override physics material with a different density
-			// if the user wants the density to be set from the physics material we need adjust by scaling mass by the ratio override/cooked defined properties
-			SimulationParameters.MaterialOverrideMassScaleMultiplier = 1.0f;
-			if (RestCollection && RestCollection->bDensityFromPhysicsMaterial)
-			{
-				bool bMassAsDensity = false;
-				const float AssetMassOrDensity = RestCollection->GetMassOrDensity(bMassAsDensity);
-				if (ensureMsgf(bMassAsDensity, TEXT("Need a density to be able to compute the mass scale multiplier, this may result in incorrect mass properties")))
-				{
-					if (ensureMsgf(AssetMassOrDensity > SMALL_NUMBER, TEXT("Asset density is set to a too small number, ignoring it for mass adjustment")))
-					{
-						const float OverrideMaterialDensity = Chaos::GCm3ToKgCm3(EnginePhysicalMaterial->Density);
-						SimulationParameters.MaterialOverrideMassScaleMultiplier = OverrideMaterialDensity / AssetMassOrDensity;
-					}
-				}
-				
-			}
 		}
+
+		// mass properties are cooked in the GC asset, but component can override physics material with a different density
+		// if the user wants the density to be set from the physics material we need adjust by scaling mass by the ratio override/cooked defined properties
+		SimulationParameters.MaterialOverrideMassScaleMultiplier = ComputeMassScaleRelativeToAsset();
+
 		GetInitializationCommands(SimulationParameters.InitializationCommands);
 	}
 
@@ -3185,6 +3998,8 @@ void UGeometryCollectionComponent::RegisterAndInitializePhysicsProxy()
 #endif
 	PhysicsProxy = new FGeometryCollectionPhysicsProxy(this, *DynamicCollection, SimulationParameters, InitialSimFilter, InitialQueryFilter, CollectorGuid);
 	PhysicsProxy->SetPostPhysicsSyncCallback([this]() { OnPostPhysicsSync(); });
+	PhysicsProxy->SetPostParticlesCreatedCallback([this]() { OnPostCreateParticles(); });
+
 
 	if (GetIsReplicated())
 	{
@@ -3200,52 +4015,313 @@ void UGeometryCollectionComponent::RegisterAndInitializePhysicsProxy()
 		}
 	}
 
-	FPhysScene_Chaos* Scene = GetInnerChaosScene();
-	Scene->AddObject(this, PhysicsProxy);
-
-	// If we're replicating we need some extra setup - check netmode as we don't need this for standalone runtime where we aren't going to network the component
-	// IMPORTANT this need to happen after the object is registered so this will guarantee that the particles are properly created by the time the callback below gets called
-	if (GetIsReplicated() && PhysicsProxy->GetReplicationMode() == FGeometryCollectionPhysicsProxy::EReplicationMode::Client)
-	{
-		// Client side : geometry collection children of parents below the rep level need to be infinitely strong so that client cannot break it 
-		if (Chaos::FPhysicsSolver* CurrSolver = GetSolver(*this))
+	auto CreateTraceCollisionFromStaticMeshGeometry = [this](const FTransform& InToLocal, TArray<Chaos::FImplicitObjectPtr>& OutGeoms, Chaos::FShapesArray& OutShapes) {
+		for (const TObjectPtr<UStaticMesh>& ProxyMesh : RestCollection->RootProxyData.ProxyMeshes)
 		{
-			CurrSolver->EnqueueCommandImmediate([Proxy = PhysicsProxy, AbandonAfterLevel = ReplicationAbandonAfterLevel, EnableAbandonAfterLevel = bEnableAbandonAfterLevel]()
+			if (const UStaticMesh* StaticMesh = ProxyMesh.Get())
+			{
+				if (UBodySetup* BodySetup = ProxyMesh->GetBodySetup())
 				{
-					// As we're not in control we make it so our simulated proxy cannot break clusters
-					// We have to set the strain to a high value but be below the max for the data type
-					// so releasing on authority demand works
-					for (Chaos::FPBDRigidClusteredParticleHandle* ParticleHandle : Proxy->GetParticles())
-					{
-						if (ParticleHandle)
-						{
-							const int32 Level = EnableAbandonAfterLevel ? ComputeParticleLevel(ParticleHandle) : -1;
-							if (Level <= AbandonAfterLevel)	//we only replicate up until level X, but it means we should replicate the breaking event of level X+1 (but not X+1's positions)
-							{
-								ParticleHandle->SetUnbreakable(true);
-							}
-						}
-					}
-				});
+					FBodyCollisionData BodyCollisionData;
+					BodyInstance.BuildBodyFilterData(BodyCollisionData.CollisionFilterData);
+					FBodyInstance::BuildBodyCollisionFlags(BodyCollisionData.CollisionFlags, BodyInstance.GetCollisionEnabled(), BodySetup->GetCollisionTraceFlag() == CTF_UseComplexAsSimple);
+
+					FGeometryAddParams AddParams;
+					AddParams.bDoubleSided = BodySetup->bDoubleSidedGeometry;
+					AddParams.CollisionData = BodyCollisionData;
+					AddParams.CollisionTraceType = BodySetup->GetCollisionTraceFlag();
+					AddParams.WorldTransform = PhysicsProxy->GetWorldTransform_External();
+					AddParams.Scale = AddParams.WorldTransform.GetScale3D();
+					AddParams.SimpleMaterial = GetPhysicalMaterial();
+					AddParams.LocalTransform = InToLocal;
+
+					AddParams.Geometry = &BodySetup->AggGeom;
+					ChaosInterface::CreateGeometry(AddParams, OutGeoms, OutShapes);
+				}
+			}
+		}
+	};
+
+	// todo(chaos): Remove this and move to a cook time approach of the SM data based on the GC property
+	if (RestCollection != nullptr)
+	{
+		for (const TObjectPtr<UStaticMesh>& ProxyMesh : RestCollection->RootProxyData.ProxyMeshes)
+		{
+			if (const UStaticMesh* StaticMesh = ProxyMesh.Get())
+			{
+				if (UBodySetup* BodySetup = ProxyMesh->GetBodySetup())
+				{
+					// We have at least one valid mesh, so set the callback in case we are asked to use SM collision for traces
+					PhysicsProxy->SetCreateTraceCollisionGeometryCallback(CreateTraceCollisionFromStaticMeshGeometry);
+					break;
+				}
+			}
 		}
 	}
 
-	LoadCollisionProfiles();
-
-	// We need to add the geometry collection into the external acceleration structure so that it's immediately available for queries instead of waiting for the sync from the physics thread (which could take awhile).
-	// Just adding the root particle should be sufficient since that'll be the only particle we'd expect any collisions with right after initialization.
-	if (Chaos::FPhysicsObjectHandle RootObject = GetPhysicsObjectByName(NAME_None))
+	FPhysScene_Chaos* PhysicsScene = GetInnerChaosScene();
+	if (ensure(PhysicsScene))
 	{
-		TArrayView<Chaos::FPhysicsObjectHandle> Handles{ &RootObject, 1 };
-		FLockedWritePhysicsObjectExternalInterface Interface = FPhysicsObjectExternalInterface::LockWrite(Handles);
-		Interface->AddToSpatialAcceleration(Handles, Scene->GetSpacialAcceleration());
+		PhysicsScene->AddObject(this, PhysicsProxy);
+
+		// If we're replicating we need some extra setup - check netmode as we don't need this for standalone runtime where we aren't going to network the component
+		// IMPORTANT this need to happen after the object is registered so this will guarantee that the particles are properly created by the time the callback below gets called
+		if (GetIsReplicated() && PhysicsProxy->GetReplicationMode() == FGeometryCollectionPhysicsProxy::EReplicationMode::Client)
+		{
+			// Client side : geometry collection children of parents below the rep level need to be infinitely strong so that client cannot break it 
+			if (Chaos::FPhysicsSolver* CurrSolver = GetSolver(*this))
+			{
+				CurrSolver->EnqueueCommandImmediate([Proxy = PhysicsProxy, AbandonAfterLevel = ReplicationAbandonAfterLevel, EnableAbandonAfterLevel = bEnableAbandonAfterLevel]()
+					{
+						// As we're not in control we make it so our simulated proxy cannot break clusters
+						// We have to set the strain to a high value but be below the max for the data type
+						// so releasing on authority demand works
+						for (Chaos::FPBDRigidClusteredParticleHandle* ParticleHandle : Proxy->GetUnorderedParticles_Internal())
+						{
+							if (ParticleHandle)
+							{
+								const int32 Level = EnableAbandonAfterLevel ? ComputeParticleLevel(ParticleHandle) : -1;
+								if (Level <= AbandonAfterLevel)	//we only replicate up until level X, but it means we should replicate the breaking event of level X+1 (but not X+1's positions)
+								{
+									ParticleHandle->SetUnbreakable(true);
+								}
+							}
+						}
+					});
+			}
+		}
+
+		LoadCollisionProfiles();
+
+		// We need to add the geometry collection into the external acceleration structure so that it's immediately available for queries instead of waiting for the sync from the physics thread (which could take awhile).
+		// Just adding the root particle should be sufficient since that'll be the only particle we'd expect any collisions with right after initialization.
+		if (Chaos::FPhysicsObjectHandle RootObject = GetPhysicsObjectByName(NAME_None))
+		{
+			TArrayView<Chaos::FPhysicsObjectHandle> Handles{ &RootObject, 1 };
+			FLockedWritePhysicsObjectExternalInterface Interface = FPhysicsObjectExternalInterface::LockWrite(Handles);
+			Interface->AddToSpatialAcceleration(Handles, PhysicsScene->GetSpacialAcceleration());
+		}
 	}
 
 	RegisterForEvents();
 }
 
+void UGeometryCollectionComponent::UpdateBrokenAndDecayedStates()
+{
+	if (PhysicsProxy && DynamicCollection && DynamicCollection->Active.Num() > 0)
+	{
+		const int32 RootIndex = GetRootIndex();
+		if (RootIndex != INDEX_NONE)
+		{
+			const int32 NumTransforms = DynamicCollection->GetNumTransforms();
+			
+			const bool bIsRootBroken = !DynamicCollection->Active[RootIndex];
+			BrokenAndDecayedStates.SetRootIsBroken(bIsRootBroken);
+			// we mark it both broken and decayed
+			BrokenAndDecayedStates.SetIsBroken(RootIndex);
+			BrokenAndDecayedStates.SetHasDecayed(RootIndex);
+
+			if (BrokenAndDecayedStates.GetIsRootBroken())
+			{
+				const FGeometryCollectionDynamicStateFacade DynamicStateFacade(*DynamicCollection);
+				if (DynamicStateFacade.IsValid())
+				{
+					for (int32 TransformIdx = 0; TransformIdx < NumTransforms; ++TransformIdx)
+					{
+						if (BrokenAndDecayedStates.GetIsBroken(TransformIdx) || BrokenAndDecayedStates.GetHasDecayed(TransformIdx))
+						{
+							// already decayed nothing to do anymore 
+							continue;
+						}
+
+						const Chaos::FPBDRigidParticle* Particle = PhysicsProxy->GetParticleByIndex_External(TransformIdx);
+						if (!Particle)
+						{
+							// when no particle we mark it as a decayed one
+							BrokenAndDecayedStates.SetHasDecayed(TransformIdx);
+							continue;
+						}
+
+						if (!BrokenAndDecayedStates.GetIsBroken(TransformIdx))
+						{
+							const bool bInternalClusterParentBrokenOff = DynamicStateFacade.HasDynamicInternalClusterParent(TransformIdx) && !DynamicStateFacade.HasClusterUnionParent(TransformIdx);
+							const bool bSelfBrokenOff = DynamicStateFacade.HasBrokenOff(TransformIdx) && !DynamicStateFacade.HasInternalClusterParent(TransformIdx);
+							if (bSelfBrokenOff || bInternalClusterParentBrokenOff)
+							{
+								BrokenAndDecayedStates.SetIsBroken(TransformIdx);								
+							}
+						}
+
+						if (BrokenAndDecayedStates.GetIsBroken(TransformIdx))
+						{
+							if (Particle->Disabled())
+							{
+								// Todo(chaos) in the future we shoud probably store a bitArray to know if the bone is a simulated leaf
+								bool bHasAnyChildWithValidParticle = false;
+								DynamicCollection->IterateThroughChildren(TransformIdx, 
+									[&bHasAnyChildWithValidParticle, this] (int32 ChildTransformIdx) -> bool
+									{
+										if (PhysicsProxy->GetParticleByIndex_External(ChildTransformIdx))
+										{
+											bHasAnyChildWithValidParticle = true;
+											return false; // do no continue iterating
+										}
+										return true; // continue iterating
+									});
+
+								if (!bHasAnyChildWithValidParticle)
+								{
+									BrokenAndDecayedStates.SetHasDecayed(TransformIdx);
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+bool UGeometryCollectionComponent::FBrokenAndDecayedStates::GetIsBroken(int32 TransformIndex) const
+{
+	return bIsRootBroken ? IsBroken[TransformIndex] : false;
+}
+bool UGeometryCollectionComponent::FBrokenAndDecayedStates::GetHasDecayed(int32 TransformIndex) const
+{
+	return bIsRootBroken ? HasDecayed[TransformIndex] : false;
+}
+
+double UGeometryCollectionComponent::FBrokenAndDecayedStates::GetRootBrokenEventTimeInMs() const
+{ 
+	return RootBrokenEventTimeInMs;
+}
+
+double UGeometryCollectionComponent::FBrokenAndDecayedStates::GetRootBrokenElapsedTimeInMs() const
+{
+	if (bIsRootBroken)
+	{
+		const double CurrentTimeInMs = FPlatformTime::ToMilliseconds64(FPlatformTime::Cycles64());
+		return (CurrentTimeInMs - RootBrokenEventTimeInMs);
+	}
+	return 0;
+}
+
+void UGeometryCollectionComponent::FBrokenAndDecayedStates::Reset(int32 InNumTransforms)
+{
+	NumTransforms = InNumTransforms;
+	bIsRootBroken = false;
+	NumDecaying = 0;
+	IsBroken.Empty();
+	HasDecayed.Empty();
+	RootBrokenEventTimeInMs = 0;
+}
+
+void UGeometryCollectionComponent::FBrokenAndDecayedStates::SetRootIsBroken(bool bIsBroken)
+{
+	if (bIsBroken != bIsRootBroken)
+	{
+		bIsRootBroken = bIsBroken;
+		NumDecaying = 0;
+		if (bIsBroken)
+		{
+			IsBroken.Init(false, NumTransforms);
+			HasDecayed.Init(false, NumTransforms);
+			RootBrokenEventTimeInMs = FPlatformTime::ToMilliseconds64(FPlatformTime::Cycles64());
+		}
+		else
+		{
+			IsBroken.Empty();
+			HasDecayed.Empty();
+			RootBrokenEventTimeInMs = 0;
+		}
+	}
+}
+
+void UGeometryCollectionComponent::FBrokenAndDecayedStates::SetIsBroken(int32 TransformIndex)
+{
+	if (bIsRootBroken && !IsBroken[TransformIndex])
+	{
+		IsBroken[TransformIndex] = true;
+		NumDecaying++;
+	}
+}
+
+void UGeometryCollectionComponent::FBrokenAndDecayedStates::SetHasDecayed(int32 TransformIndex)
+{
+	if (bIsRootBroken && !HasDecayed[TransformIndex])
+	{
+		HasDecayed[TransformIndex] = true;
+		if (IsBroken[TransformIndex])
+		{
+			NumDecaying--;
+		}
+	}
+}
+
+void UGeometryCollectionComponent::FBrokenAndDecayedStates::SetHasDecayedRecursive(int32 TransformIndex, const TArray<TSet<int32>>& Children)
+{
+	if (bIsRootBroken && ensure(Children.Num() == HasDecayed.Num()))
+	{
+		if (!HasDecayed[TransformIndex])
+		{
+			HasDecayed[TransformIndex] = true;
+			if (IsBroken[TransformIndex])
+			{
+				NumDecaying--;
+			}
+			for (const int32 ChildIndex : Children[TransformIndex])
+			{
+				SetHasDecayedRecursive(ChildIndex, Children);
+			}
+		}
+	}
+}
+
+bool UGeometryCollectionComponent::FBrokenAndDecayedStates::HasAnyDecaying() const
+{
+	return (NumDecaying > 0);
+}
+
+bool UGeometryCollectionComponent::FBrokenAndDecayedStates::HasFullyDecayed() const
+{
+	if (HasAnyDecaying())
+	{
+		return false;
+	}
+	return (HasDecayed.CountSetBits() == HasDecayed.Num());
+}
+
+void UGeometryCollectionComponent::OnTransformsDirty()
+{
+	ComponentSpaceTransforms.MarkDirty();
+	ComponentSpaceBounds.Init();
+}
+
+void UGeometryCollectionComponent::OnPostCreateParticles()
+{
+	LoadCollisionProfiles();
+}
+
 void UGeometryCollectionComponent::OnPostPhysicsSync()
 {
+	SCOPE_CYCLE_COUNTER(STAT_GCPostPhysicsSync);
+
+	// dirty the transform if the collection is
+	bool bHasRootMoved = false;
+	if (DynamicCollection && DynamicCollection->IsDirty())
+	{
+		// Can't be a const reference - we need to make a copy or else the next RequestRootTransform will change the value under our nose.
+		const FTransform3f PreviousRootTransform = OnRootMovedEvent.IsBound() ? ComponentSpaceTransforms.RequestRootTransform() : FTransform3f::Identity;
+
+		OnTransformsDirty();
+		
+		if (OnRootMovedEvent.IsBound() || OnRootMovedNativeEvent.IsBound())
+		{
+			const FTransform3f& NewRootTransform = ComponentSpaceTransforms.RequestRootTransform();
+			bHasRootMoved = !PreviousRootTransform.EqualsNoScale(NewRootTransform);
+		}
+	}
+
 	UpdateAttachedChildrenTransform();
 
 	if (GetIsReplicated() && GetNetMode() != ENetMode::NM_Client)
@@ -3257,31 +4333,105 @@ void UGeometryCollectionComponent::OnPostPhysicsSync()
 
 	// Once the GC is broken, removal feature will need the tick to properly update the timers 
 	// even if the physics does not get any updates
-	if (IsRootBroken())
+	UpdateBrokenAndDecayedStates();
+	if (BrokenAndDecayedStates.GetIsRootBroken())
 	{
-		if (!PrimaryComponentTick.IsTickFunctionEnabled())
-		{ 
-			if (GeometryCollectionEmitRootBreakingEvent)
+		if (GeometryCollectionEmitRootBreakingEvent)
+		{
+			if (OnRootBreakEvent.IsBound())
 			{
-				if (OnRootBreakEvent.IsBound())
-				{
-					FChaosBreakEvent Event;
-					Event.Index = GetRootIndex();
-					Event.Component = this;
-					OnRootBreakEvent.Broadcast(Event);
-				}
+				FChaosBreakEvent Event;
+				Event.Index = GetRootIndex();
+				Event.Component = this;
+				OnRootBreakEvent.Broadcast(Event);
+				OnRootBreakEvent.Clear(); // one shot
 			}
-
-			PrimaryComponentTick.SetTickFunctionEnable(true);
 		}
 
-		// only update removal if the root is broken
+		if (BrokenAndDecayedStates.HasAnyDecaying())
+		{
+			if (!PrimaryComponentTick.IsTickFunctionEnabled())
+			{
+				PrimaryComponentTick.SetTickFunctionEnable(true);
+			}
+		}
+		else
+		{
+			InitializeRemovalDynamicAttributesIfNeeded();
+		}
+
+		if (RootProxyStaticMeshComponents.Num() > 0)
+		{
+			ClearRootProxyComponents();
+			RecreateRenderState_Concurrent();
+		}
+
 		UpdateRemovalIfNeeded();
+
+		CheckFullyDecayed();
+	}
+	else if (bUpdateComponentTransformToRootBone)
+	{
+		MoveComponentToRootTransform();
 	}
 
 	const bool bDynamicDataIsDirty = (DynamicCollection && DynamicCollection->IsDirty() && HasVisibleGeometry());
 	UpdateRenderSystemsIfNeeded(bDynamicDataIsDirty);
 	UpdateNavigationDataIfNeeded(bDynamicDataIsDirty);
+
+	// at this is called at the end as thos events may change some internal values of the component
+	// and interfere with transforms required for naviagtion or rendering 
+	if (bHasRootMoved)
+	{
+		if (OnRootMovedEvent.IsBound())
+		{
+			OnRootMovedEvent.Broadcast();
+		}
+		if (OnRootMovedNativeEvent.IsBound())
+		{
+			OnRootMovedNativeEvent.Broadcast(this);
+		}
+	}
+}
+
+void UGeometryCollectionComponent::MoveComponentToRootTransform()
+{
+	if (RestCollection && PhysicsProxy)
+	{
+		const TSharedPtr<FGeometryCollection, ESPMode::ThreadSafe> AssetCollection = RestCollection->GetGeometryCollection();
+
+		if (AssetCollection && DynamicCollection && DynamicCollection->IsDirty())
+		{
+			static FName MassToLocalAttributeName = "MassToLocal";
+			const TManagedArray<FTransform>& MassToLocalAttribute = RestCollection->GetGeometryCollection()->GetAttribute<FTransform>(MassToLocalAttributeName, FGeometryCollection::TransformGroup);
+
+			FGeometryCollectionDynamicStateFacade DynamicStateFacade(*DynamicCollection);
+
+			const int32 RootIndex = GetRootIndex();
+			const bool bIsRootActive = DynamicStateFacade.IsDynamicOrSleeping(RootIndex);
+			const bool bHasDynamicOPrClusterUnionParent = DynamicStateFacade.HasDynamicInternalClusterParent(RootIndex) || !DynamicStateFacade.HasClusterUnionParent(RootIndex);
+			if (bIsRootActive || bHasDynamicOPrClusterUnionParent)
+			{
+				const FTransform3f& OriginalComponentSpaceRootTransformOffset = AssetCollection->Transform[RootIndex];
+				DynamicCollection->SetTransform(RootIndex, OriginalComponentSpaceRootTransformOffset);
+				const Chaos::FPBDRigidParticle* RootParticle = PhysicsProxy->GetParticleByIndex_External(RootIndex);
+				const FTransform ParticleWorldPosition(RootParticle->R(), RootParticle->X());
+				const FTransform MassToLocal = MassToLocalAttribute[RootIndex];
+				const FTransform NewRootWorldPosition = MassToLocal.Inverse() * ParticleWorldPosition;
+
+				const FTransform CurrentComponentTransform = GetComponentTransform();
+				if (!NewRootWorldPosition.EqualsNoScale(CurrentComponentTransform))
+				{
+					const FVector NewPosition = NewRootWorldPosition.GetLocation();
+					const FVector MoveBy = NewPosition - CurrentComponentTransform.GetLocation();
+					const FRotator NewRotation = NewRootWorldPosition.Rotator();
+					MoveComponent(MoveBy, NewRotation, /* bSweep */ false,/* Hit */ NULL, MOVECOMP_SkipPhysicsMove);
+				}
+
+				OnTransformsDirty();
+			}
+		}
+	}
 }
 
 void UGeometryCollectionComponent::UpdateRenderSystemsIfNeeded(bool bDynamicCollectionDirty)
@@ -3308,17 +4458,24 @@ void UGeometryCollectionComponent::UpdateRenderSystemsIfNeeded(bool bDynamicColl
 		// #todo review: When we've made changes to ISMC, we need to move this function call to SetRenderDynamicData_Concurrent
 		RefreshEmbeddedGeometry();
 
-		RefreshCustomRenderer();
-
-		if (SceneProxy && SceneProxy->IsNaniteMesh())
+		if (bUpdateCustomRendererOnPostPhysicsSync)
 		{
-			FNaniteGeometryCollectionSceneProxy* NaniteProxy = static_cast<FNaniteGeometryCollectionSceneProxy*>(SceneProxy);
-			NaniteProxy->FlushGPUSceneUpdate_GameThread();
+			RefreshCustomRenderer();
 		}
 
-		MarkRenderTransformDirty();
-		MarkRenderDynamicDataDirty();
-		bRenderStateDirty = false;
+		UpdateRootProxyComponentsIfNeeded();
+
+		if (SceneProxy != nullptr)
+		{
+			if (SceneProxy->IsNaniteMesh())
+			{
+				FNaniteGeometryCollectionSceneProxy* NaniteProxy = static_cast<FNaniteGeometryCollectionSceneProxy*>(SceneProxy);
+				NaniteProxy->FlushGPUSceneUpdate_GameThread();
+			}
+
+			MarkRenderTransformDirty();
+			MarkRenderDynamicDataDirty();
+		}
 	}
 }
 
@@ -3326,7 +4483,7 @@ void UGeometryCollectionComponent::UpdateNavigationDataIfNeeded(bool bDynamicCol
 {
 	if (bUpdateNavigationInTick && bDynamicCollectionDirty)
 	{
-		const UWorld* MyWorld = GetWorld();
+		const UWorld* MyWorld = GetWorld();// If not doing velocity match, don't bother processing the same version twice.
 		if (MyWorld && MyWorld->IsGameWorld())
 		{
 			//cycle every 0xff frames
@@ -3341,9 +4498,11 @@ void UGeometryCollectionComponent::UpdateNavigationDataIfNeeded(bool bDynamicCol
 
 void UGeometryCollectionComponent::UpdateRemovalIfNeeded()
 {
+	static FName MassToLocalAttributeName = "MassToLocal";
+
 	// if removal is enabled, update the dynamic collection transform based on the decay 
 	// todo: we could optimize this using a list of transform to update from when we update the decay values
-	if (DynamicCollection && bAllowRemovalOnBreak && bAllowRemovalOnSleep)
+	if (DynamicCollection && bAllowRemovalOnBreak && bAllowRemovalOnSleep && PhysicsProxy)
 	{
 		FGeometryCollectionDecayDynamicFacade DecayFacade(*DynamicCollection);
 		if (DecayFacade.IsValid())
@@ -3352,20 +4511,49 @@ void UGeometryCollectionComponent::UpdateRemovalIfNeeded()
 
 			const FTransform InverseComponentTransform = (RestCollection->bScaleOnRemoval) ? GetComponentTransform().Inverse() : FTransform::Identity;
 
+			const TManagedArray<FTransform>* MassToLocal = nullptr;
+			const TArray<FTransform3f>* CompSpaceTransform = nullptr;
+			if (RestCollection->bScaleOnRemoval)
+			{
+				MassToLocal = RestCollection->GetGeometryCollection()->FindAttribute<FTransform>(MassToLocalAttributeName, FGeometryCollection::TransformGroup);
+				CompSpaceTransform = &ComponentSpaceTransforms.RequestAllTransforms();
+			}
+
+			const int32 RootIndex = RestCollection->GetRootIndex();
+
+			bool bTransformsChanged = false;
+
 			const int32 NumTransforms = DecayFacade.GetDecayAttributeSize();
 			for (int32 TransformIndex = 0; TransformIndex < NumTransforms; ++TransformIndex)
 			{
 				// only update values if the decay has changed 
-				const float Decay = DecayFacade.GetDecay(TransformIndex);
+				float Decay = DecayFacade.GetDecay(TransformIndex);
+
+				// reconcile changes to the decay state with the decay value
+				if (Decay < 1.f && TransformIndex != RootIndex)
+				{
+					if (PhysicsProxy->GetParticleByIndex_External(TransformIndex))
+					{
+						if (BrokenAndDecayedStates.GetHasDecayed(TransformIndex))
+						{
+							Decay = 1.0f;
+							DecayFacade.SetDecay(TransformIndex, Decay);
+						}
+					}
+				}
+
 				if (Decay > 0.f && Decay <= 1.f)
 				{
 					const float Scale = 1.0 - Decay;
 					if (Scale < UE_SMALL_NUMBER)
 					{
-						DynamicCollection->Transform[TransformIndex].SetScale3D(FVector::ZeroVector);
+						FTransform3f Transform = DynamicCollection->GetTransform(TransformIndex);
+						Transform.SetScale3D(FVector3f::ZeroVector);
+						DynamicCollection->SetTransform(TransformIndex, Transform);
+						bTransformsChanged = true;
 					}
 					// do not try to get this condition out of the loop as this may cause some optimizer related issues
-					else if (RestCollection->bScaleOnRemoval) 
+					else if (RestCollection->bScaleOnRemoval && MassToLocal && CompSpaceTransform)
 					{
 						float ShrinkRadius = 0.0f;
 						UE::Math::TSphere<double> AccumulatedSphere;
@@ -3375,14 +4563,28 @@ void UGeometryCollectionComponent::UpdateRemovalIfNeeded()
 							ShrinkRadius = -AccumulatedSphere.W;
 						}
 
-						const FQuat LocalRotation = (InverseComponentTransform * ComponentSpaceTransforms[TransformIndex].Inverse()).GetRotation();
+						const FTransform3f& CurrentTransform = DynamicCollection->GetTransform(TransformIndex);
+						const float CurrentScale = CurrentTransform.GetScale3D().X; // always uniform scale
+
+						const float ScaleToApply = (CurrentScale >  SMALL_NUMBER) ? (Scale / CurrentScale): Scale;
+
+						// InverseComponentTransform calculation must in double precision for LWC
+						const FQuat LocalRotation = (InverseComponentTransform * FTransform((*CompSpaceTransform)[TransformIndex].Inverse())).GetRotation();
 						const FVector LocalDown = LocalRotation.RotateVector(FVector(0.f, 0.f, ShrinkRadius));
-						const FVector CenterOfMass = DynamicCollection->MassToLocal[TransformIndex].GetTranslation();
-						const FVector ScaleCenter = LocalDown + CenterOfMass;
-						const FTransform ScaleTransform(FQuat::Identity, ScaleCenter * FVector::FReal(1.f - Scale), FVector(Scale));
-						DynamicCollection->Transform[TransformIndex] = ScaleTransform * DynamicCollection->Transform[TransformIndex];
+						const FVector CenterOfMass = (*MassToLocal)[TransformIndex].GetTranslation();
+						const FVector3f ScaleCenter = FVector3f(LocalDown + CenterOfMass);
+						const FTransform3f ScaleTransform(FQuat4f::Identity, ScaleCenter * FVector3f::FReal(1.f - ScaleToApply), FVector3f(ScaleToApply));
+						const FTransform3f FinalTransform = ScaleTransform * CurrentTransform;
+						DynamicCollection->SetTransform(TransformIndex, FinalTransform);
+						bTransformsChanged = true;
 					}
 				}
+			}
+
+			if (bTransformsChanged)
+			{
+				DynamicCollection->MakeDirty();
+				OnTransformsDirty();
 			}
 		}
 	}
@@ -3390,17 +4592,20 @@ void UGeometryCollectionComponent::UpdateRemovalIfNeeded()
 
 void UGeometryCollectionComponent::RequestUpdateRepData()
 {
-	if (FPhysScene* PhysScene = GetInnerChaosScene())
+	FPhysScene* PhysScene = GetInnerChaosScene();
+	if (PhysScene && PhysicsProxy) 
 	{
-		Chaos::FPBDRigidsSolver* Solver = PhysicsProxy->GetSolver<Chaos::FPBDRigidsSolver>();
-		const int32 CurrentFrame = Solver->GetCurrentFrame();
+		if (Chaos::FPBDRigidsSolver* Solver = PhysicsProxy->GetSolver<Chaos::FPBDRigidsSolver>())
+		{
+			const int32 CurrentFrame = Solver->GetCurrentFrame();
 
-		PhysScene->EnqueueAsyncPhysicsCommand(CurrentFrame, this,
-			[this]()
-			{
-				UpdateRepData();
-			}, false
-		);
+			PhysScene->EnqueueAsyncPhysicsCommand(CurrentFrame, this,
+				[this]()
+				{
+					UpdateRepData();
+				}, false
+			);
+		}
 	}
 }
 
@@ -3412,6 +4617,26 @@ void UGeometryCollectionComponent::OnRep_RepData()
     check(GetNetMode() == ENetMode::NM_Client);
 
 	ProcessRepDataOnPT();
+}
+
+void UGeometryCollectionComponent::OnRep_RepStateData()
+{
+	// We have new data that was replicated! Turn on the async tick to process instead of just requesting a one-off
+	// since we may want to keep processing for extra time afterwards.
+	check(IsInGameThread());
+	check(GetNetMode() == ENetMode::NM_Client);
+
+	ProcessRepStateDataOnPT();
+}
+
+void UGeometryCollectionComponent::OnRep_RepDynamicData()
+{
+	// We have new dynamic data that was replicated! Turn on the async tick to process instead of just requesting a one-off
+	// since we may want to keep processing for extra time afterwards.
+	check(IsInGameThread());
+	check(GetNetMode() == ENetMode::NM_Client);
+
+	ProcessRepDynamicDataOnPT();
 }
 
 void UGeometryCollectionComponent::SetAbandonedParticleCollisionProfileName(FName CollisionProfile)
@@ -3431,16 +4656,21 @@ void UGeometryCollectionComponent::SetPerLevelCollisionProfileNames(const TArray
 	LoadCollisionProfiles();
 }
 
-void UGeometryCollectionComponent::SetPerParticleCollisionProfileName(const TArray<int32>& BoneIds, FName ProfileName)
+// return true if anything was cahnged
+template <typename TIteratableBoneContainerType>
+static bool SetPerParticleCollisionProfileNameFromIterable(const UGeometryCollection* RestCollection, const TIteratableBoneContainerType& BoneIds, FName ProfileName, TArray<FName>& CollisionProfilePerParticle)
 {
 	if (!RestCollection)
 	{
-		return;
+		return false;
 	}
+
+	bool bHasChanged = false;
 
 	const int32 NumTransforms = RestCollection->GetGeometryCollection()->Transform.Num();
 	if (CollisionProfilePerParticle.Num() != NumTransforms)
 	{
+		bHasChanged = true;
 		CollisionProfilePerParticle.SetNumZeroed(NumTransforms);
 	}
 
@@ -3448,11 +4678,73 @@ void UGeometryCollectionComponent::SetPerParticleCollisionProfileName(const TArr
 	{
 		if (CollisionProfilePerParticle.IsValidIndex(Id))
 		{
-			CollisionProfilePerParticle[Id] = ProfileName;
+			if (CollisionProfilePerParticle[Id] != ProfileName)
+			{
+				bHasChanged = true;
+				CollisionProfilePerParticle[Id] = ProfileName;
+			}
 		}
 	}
 
-	LoadCollisionProfiles();
+	return bHasChanged;
+}
+
+void UGeometryCollectionComponent::SetPerParticleCollisionProfileName(const TSet<int32>& BoneIds, FName ProfileName)
+{
+	const bool bHasChanged = SetPerParticleCollisionProfileNameFromIterable(RestCollection, BoneIds, ProfileName, CollisionProfilePerParticle);
+	if (bHasChanged)
+	{
+		LoadCollisionProfiles();
+	}
+}
+
+bool UGeometryCollectionComponent::UpdatePerParticleCollisionProfilesNum()
+{
+	if (!RestCollection)
+	{
+		return false;
+	}
+
+	const int32 NumTransforms = RestCollection->GetGeometryCollection()->Transform.Num();
+	const bool bHasChanged = CollisionProfilePerParticle.Num() != NumTransforms;
+
+	if (bHasChanged)
+	{
+		CollisionProfilePerParticle.SetNumZeroed(NumTransforms);
+	}
+
+	return bHasChanged;
+}
+
+void UGeometryCollectionComponent::SetParticleCollisionProfileName(int32 BoneId, FName ProfileName, FGCCollisionProfileScopedTransaction& InProfileNameUpdateTransaction)
+{
+	if (!InProfileNameUpdateTransaction.IsValid())
+	{
+		return;
+	}
+	
+	if (!CollisionProfilePerParticle.IsValidIndex(BoneId))
+	{
+		return;
+	}
+
+	FName& CurrentProfileName = CollisionProfilePerParticle[BoneId];
+
+	if (CurrentProfileName !=  ProfileName)
+	{
+		CurrentProfileName = ProfileName;
+
+		InProfileNameUpdateTransaction.MarkDirty();
+	}
+}
+
+void UGeometryCollectionComponent::SetPerParticleCollisionProfileName(const TArray<int32>& BoneIds, FName ProfileName)
+{
+	const bool bHasChanged = SetPerParticleCollisionProfileNameFromIterable(RestCollection, BoneIds, ProfileName, CollisionProfilePerParticle);
+	if (bHasChanged)
+	{
+		LoadCollisionProfiles();
+	}
 }
 
 void UGeometryCollectionComponent::LoadCollisionProfiles()
@@ -3477,25 +4769,41 @@ void UGeometryCollectionComponent::LoadCollisionProfiles()
 
 		FCollisionProfileDataCache Cache;
 		FCollisionResponseTemplate Template;
-		if (ProfileName == NAME_None || !UCollisionProfile::Get()->GetProfileTemplate(ProfileName, Template))
+		if (ProfileName == NAME_None)
 		{
 			return nullptr;
 		}
 
-		AActor* Owner = GetOwner();
-		const uint32 ActorID = Owner ? Owner->GetUniqueID() : 0;
-		const uint32 CompID = GetUniqueID();
+		if (ProfileName == DefaultCollisionProfileName)
+		{
+			Cache.QueryFilter = InitialQueryFilter;
+			Cache.SimFilter = InitialSimFilter;
 
-		Cache.QueryFilter = InitialQueryFilter;
-		Cache.SimFilter = InitialSimFilter;
-		CreateShapeFilterData(Template.ObjectType, BodyInstance.GetMaskFilter(), ActorID, Template.ResponseToChannels, CompID, INDEX_NONE, Cache.QueryFilter, Cache.SimFilter, BodyInstance.bUseCCD, bNotifyCollisions || bNotifyGlobalCollisions, false, false);
+			Cache.bQueryEnabled = true;
+			Cache.bSimEnabled = true;
+		}
+		else if (UCollisionProfile::Get()->GetProfileTemplate(ProfileName, Template))
+		{
+			AActor* Owner = GetOwner();
+			const uint32 ActorID = Owner ? Owner->GetUniqueID() : 0;
+			const uint32 CompID = GetUniqueID();
 
-		// Maintain parity with the rest of the geometry collection filters.
-		Cache.QueryFilter.Word3 |= (EPDF_SimpleCollision | EPDF_ComplexCollision);
-		Cache.SimFilter.Word3 |= (EPDF_SimpleCollision | EPDF_ComplexCollision);
+			Cache.QueryFilter = InitialQueryFilter;
+			Cache.SimFilter = InitialSimFilter;
+			CreateShapeFilterData(Template.ObjectType, BodyInstance.GetMaskFilter(), ActorID, Template.ResponseToChannels, CompID, INDEX_NONE, Cache.QueryFilter, Cache.SimFilter, BodyInstance.bUseCCD, bNotifyCollisions || bNotifyGlobalCollisions, false, false);
+
+			// Maintain parity with the rest of the geometry collection filters.
+			Cache.QueryFilter.Word3 |= (EPDF_SimpleCollision | EPDF_ComplexCollision);
+			Cache.SimFilter.Word3 |= (EPDF_SimpleCollision | EPDF_ComplexCollision);
 		
-		Cache.bQueryEnabled = CollisionEnabledHasQuery(Template.CollisionEnabled);
-		Cache.bSimEnabled = CollisionEnabledHasPhysics(Template.CollisionEnabled);
+			Cache.bQueryEnabled = CollisionEnabledHasQuery(Template.CollisionEnabled);
+			Cache.bSimEnabled = CollisionEnabledHasPhysics(Template.CollisionEnabled);
+		}
+		else
+		{
+			return nullptr;
+		}
+
 		Cache.bIsValid = true;
 		return &CachedData.Add(ProfileName, Cache);
 	};
@@ -3533,13 +4841,14 @@ void UGeometryCollectionComponent::LoadCollisionProfiles()
 
 			if (Data)
 			{
-				PerParticleData.Add(*Data);
-				Interface->UpdateShapeCollisionFlags(ParticleView, Data->bSimEnabled, Data->bQueryEnabled);
-				Interface->UpdateShapeFilterData(ParticleView, Data->QueryFilter, Data->SimFilter);
-			}
-			else
-			{
-				PerParticleData.Add({});
+				FCollisionProfileDataCache ParticleData = *Data;
+				ParticleData.ParticleIndex = ParticleIndex;
+
+				PerParticleData.Emplace(MoveTemp(ParticleData));
+
+				// Need to update on the GT too (physics proxy will just enqueue to do it on the PT) or else the changes won't take effect for GT SQ queries.
+				Interface->UpdateShapeCollisionFlags(ParticleView, ParticleData.bSimEnabled, ParticleData.bQueryEnabled);
+				Interface->UpdateShapeFilterData(ParticleView, ParticleData.QueryFilter, ParticleData.SimFilter);
 			}
 		}
 	}
@@ -3558,11 +4867,6 @@ void UGeometryCollectionComponent::OnDestroyPhysicsState()
 {
 	UActorComponent::OnDestroyPhysicsState();
 
-	if(DummyBodyInstance.IsValidBodyInstance())
-	{
-		DummyBodyInstance.TermBody();
-	}
-
 	// we need to unregister the events because it relies on the proxy internally 
 	if (EventDispatcher)
 	{
@@ -3571,8 +4875,13 @@ void UGeometryCollectionComponent::OnDestroyPhysicsState()
 
 	if(PhysicsProxy)
 	{
-		FPhysScene_Chaos* Scene = GetInnerChaosScene();
-		Scene->RemoveObject(PhysicsProxy);
+		// Clear physics sync callback
+		PhysicsProxy->SetPostPhysicsSyncCallback([]() {}); 
+
+		if (FPhysScene* PhysScene = GetInnerChaosScene())
+		{
+			PhysScene->RemoveObject(PhysicsProxy);
+		}
 		InitializationState = ESimulationInitializationState::Unintialized;
 
 		// clear the clusters to rep as the information hold by it is now invalid
@@ -3611,11 +4920,11 @@ void UGeometryCollectionComponent::SendRenderDynamicData_Concurrent()
 			{
 				FNaniteGeometryCollectionSceneProxy* GeometryCollectionSceneProxy = static_cast<FNaniteGeometryCollectionSceneProxy*>(SceneProxy);
 				ENQUEUE_RENDER_COMMAND(SendRenderDynamicData)(
-					[GeometryCollectionSceneProxy, DynamicData](FRHICommandListImmediate& RHICmdList)
+					[GeometryCollectionSceneProxy, DynamicData] (FRHICommandListBase&)
 					{
 						if (DynamicData)
 						{
-							GeometryCollectionSceneProxy->SetDynamicData_RenderThread(DynamicData);
+							GeometryCollectionSceneProxy->SetDynamicData_RenderThread(DynamicData, GeometryCollectionSceneProxy->GetLocalToWorld());
 						}
 						else
 						{
@@ -3629,22 +4938,16 @@ void UGeometryCollectionComponent::SendRenderDynamicData_Concurrent()
 			{
 				FGeometryCollectionSceneProxy* GeometryCollectionSceneProxy = static_cast<FGeometryCollectionSceneProxy*>(SceneProxy);
 				ENQUEUE_RENDER_COMMAND(SendRenderDynamicData)(
-					[GeometryCollectionSceneProxy, DynamicData](FRHICommandListImmediate& RHICmdList)
+					[GeometryCollectionSceneProxy, DynamicData](FRHICommandListBase& RHICmdList)
 					{
 						if (GeometryCollectionSceneProxy)
 						{
-							GeometryCollectionSceneProxy->SetDynamicData_RenderThread(DynamicData);
+							GeometryCollectionSceneProxy->SetDynamicData_RenderThread(RHICmdList, DynamicData);
 						}
 					}
 				);
 			}
 		}		
-	}
-
-	// mark collection clean now that we have rendered
-	if (DynamicCollection)
-	{
-		DynamicCollection->MakeClean();
 	}
 }
 
@@ -3705,6 +5008,7 @@ void UGeometryCollectionComponent::ApplyAssetDefaults()
 		DamageModel = RestCollection->DamageModel;
 		DamageThreshold = RestCollection->DamageThreshold;
 		bUseSizeSpecificDamageThreshold = RestCollection->bUseSizeSpecificDamageThreshold;
+		bUseMaterialDamageModifiers = RestCollection->bUseMaterialDamageModifiers;
 
 		// initialize the component damage progataion data from the asset defaults 
 		DamagePropagationData = RestCollection->DamagePropagationData;
@@ -3713,6 +5017,8 @@ void UGeometryCollectionComponent::ApplyAssetDefaults()
 		{
 			BodyInstance.SetPhysMaterialOverride(RestCollection->PhysicsMaterial);
 		}
+
+		bDensityFromPhysicsMaterial = RestCollection->bDensityFromPhysicsMaterial;
 	}
 }
 
@@ -3722,6 +5028,10 @@ void UGeometryCollectionComponent::SetRestCollection(const UGeometryCollection* 
 	if (RestCollectionIn)
 	{
 		RestCollection = RestCollectionIn;
+
+		// if the geometry collection changes we need to clear the rest override rest transforms
+		// otherwise this may cause mismatch issues and make the geometry collection look wrong 
+		RestTransforms.Reset();
 
 		ResetDynamicCollection();
 
@@ -3735,6 +5045,10 @@ void UGeometryCollectionComponent::SetRestCollection(const UGeometryCollection* 
 			UnregisterCustomRenderer();
 			RegisterCustomRenderer();
 		}
+
+		CreateRootProxyComponentsIfNeeded();
+
+		ClearRootProxyLocalTransforms();
 
 		if (bApplyAssetDefaults)
 		{
@@ -4616,13 +5930,18 @@ FPhysScene_Chaos* UGeometryCollectionComponent::GetInnerChaosScene() const
 	}
 	else
 	{
-		if (ensure(GetOwner()) && ensure(GetOwner()->GetWorld()))
+		if (GetOwner() && GetOwner()->GetWorld())
 		{
 			return GetOwner()->GetWorld()->GetPhysicsScene();
 		}
 
-		check(GWorld);
-		return GWorld->GetPhysicsScene();
+		if (GWorld)
+		{
+			return GWorld->GetPhysicsScene();
+		}
+
+		UE_LOG(LogPhysics, Error, TEXT("Failed to find valid UWorld in UGeometryCollectionComponent::GetInnerChaosScene"));
+		return nullptr;
 	}
 }
 
@@ -4637,14 +5956,6 @@ AChaosSolverActor* UGeometryCollectionComponent::GetPhysicsSolverActor() const
 		FPhysScene_Chaos const* const Scene = GetInnerChaosScene();
 		return Scene ? Cast<AChaosSolverActor>(Scene->GetSolverActor()) : nullptr;
 	}
-
-	return nullptr;
-}
-
-void UGeometryCollectionComponent::CalculateLocalBounds()
-{
-	LocalBounds.Init();
-	LocalBounds = ComputeBounds(FTransform::Identity);
 }
 
 #define GEOMETRY_COLLECTION_CHECK_FOR_NANS_IN_TRANSFORMS 0
@@ -4659,32 +5970,134 @@ static void CheckForNaNs(const TArray<FTransform>& Transforms)
 }
 #endif
 
-void UGeometryCollectionComponent::CalculateGlobalMatrices()
+FTransform3f UGeometryCollectionComponent::GetCurrentTransform(int32 Index) const
 {
-	SCOPE_CYCLE_COUNTER(STAT_GCCUGlobalMatrices);
-
-	// If hierarchy topology has changed, the RestTransforms is invalidated.
-	if (RestTransforms.Num() != GetTransformArray().Num())
+	if (DynamicCollection)
 	{
-		RestTransforms.Empty();
+		return DynamicCollection->GetTransform(Index);
 	}
 
-	if (!DynamicCollection && RestTransforms.Num() > 0)
+	const bool bRestTransformsOverriden = (RestTransforms.Num() > 0);
+	if (bRestTransformsOverriden)
 	{
-		GeometryCollectionAlgo::GlobalMatrices(RestTransforms, GetParentArray(), ComponentSpaceTransforms);
+		return FTransform3f(RestTransforms[Index]);
+	}
+	return RestCollection->GetGeometryCollection()->Transform[Index];
+}
+
+void UGeometryCollectionComponent::ComputeCurrentGlobalsMatrices(TArray<FTransform3f>& OutTransforms) const
+{
+	if (DynamicCollection)
+	{
+		GeometryCollectionAlgo::Private::GlobalMatrices(*DynamicCollection, OutTransforms);
 	}
 	else
 	{
-		GeometryCollectionAlgo::GlobalMatrices(GetTransformArray(), GetParentArray(), ComponentSpaceTransforms);
+		const bool bRestTransformsOverriden = (RestTransforms.Num() > 0);
+		if (bRestTransformsOverriden)
+		{
+			GeometryCollectionAlgo::GlobalMatrices(TManagedArray<FTransform>(RestTransforms), GetParentArrayRest(), OutTransforms);
+		}
+		else
+		{
+			GeometryCollectionAlgo::GlobalMatrices(RestCollection->GetGeometryCollection()->Transform, GetParentArrayRest(), OutTransforms);
+		}
+	}
+}
+
+const FTransform3f& UGeometryCollectionComponent::FComponentSpaceTransforms::RequestRootTransform() const
+{
+	if (!Component)
+	{
+		ensure(false); // we should not be able to reach here 
+		return FTransform3f::Identity;
+	}
+
+	if (Transforms.IsValidIndex(RootIndex))
+	{
+		if (bIsRootDirty)
+		{
+			Transforms[RootIndex] = Component->GetCurrentTransform(RootIndex);
+			bIsRootDirty = false;
+		}
+
+		return Transforms[RootIndex];
+	}
+
+	return FTransform3f::Identity;
+}
+
+const TArray<FTransform3f>& UGeometryCollectionComponent::FComponentSpaceTransforms::RequestAllTransforms() const
+{
+	SCOPE_CYCLE_COUNTER(STAT_GCCUGlobalMatrices);
+
+	static TArray<FTransform3f> EmptyArray;
+	if (!Component || Transforms.Num() == 0)
+	{
+		return EmptyArray;
+	}
+
+	if (!bIsDirty)
+	{
+		return Transforms;
+	}
+
+	int32 CurrentTransformNum;
+	if (Component->DynamicCollection)
+	{
+		CurrentTransformNum = Component->DynamicCollection->GetNumTransforms();
+	}
+	else
+	{
+		CurrentTransformNum = Component->RestCollection->GetGeometryCollection()->Transform.Num();
+	}
+
+	bool bFastPath = false;
+	if (Component->RestCollection)
+	{
+		const TArray<int32>& BreadthFirstTransformIndices = Component->RestCollection->GetBreadthFirstTransformIndices();
+		bFastPath = (BreadthFirstTransformIndices.Num() == CurrentTransformNum);
+	}
+
+	if (bFastPath)
+	{
+		const TArray<int32>& BreadthFirstTransformIndices = Component->RestCollection->GetBreadthFirstTransformIndices();
+
+		for (int32 Index = 0; Index < BreadthFirstTransformIndices.Num(); Index++)
+		{
+			const int32 TransformIndex = BreadthFirstTransformIndices[Index];
+			const int32 ParentTransformIndex = Component->GetParent(TransformIndex);
+
+
+			FTransform3f CurrentTransform = Component->GetCurrentTransform(TransformIndex);
+			if (ParentTransformIndex == INDEX_NONE)
+			{
+				
+				Transforms[TransformIndex] = CurrentTransform;
+			}
+			else
+			{
+				const FTransform3f& ParentTransform = Transforms[ParentTransformIndex];
+				Transforms[TransformIndex] = CurrentTransform * ParentTransform;
+			}
+		}
+	}
+	else
+	{
+		Component->ComputeCurrentGlobalsMatrices(Transforms);
 	}
 
 #if WITH_EDITOR
-	UpdateGlobalMatricesWithExplodedVectors(ComponentSpaceTransforms, *(RestCollection->GetGeometryCollection()));
+	UpdateGlobalMatricesWithExplodedVectors(Transforms, *(Component->RestCollection->GetGeometryCollection()));
 #endif
 
 #if GEOMETRY_COLLECTION_CHECK_FOR_NANS_IN_TRANSFORMS
-	CheckForNaNs(ComponentSpaceTransforms);
+	CheckForNaNs(Transforms);
 #endif
+
+	bIsDirty = false;
+	bIsRootDirty = false;
+	return Transforms;
 }
 
 int32 UGeometryCollectionComponent::GetNumMaterials() const
@@ -4730,12 +6143,12 @@ FMaterialRelevance UGeometryCollectionComponent::GetMaterialRelevance(ERHIFeatur
 void UGeometryCollectionComponent::SelectEmbeddedGeometry()
 {
 	// First reset the selections
-	for (TObjectPtr<UInstancedStaticMeshComponent> EmbeddedGeometryComponent : EmbeddedGeometryComponents)
+	for (TObjectPtr<UInstancedStaticMeshComponent>& EmbeddedGeometryComponent : EmbeddedGeometryComponents)
 	{
 		EmbeddedGeometryComponent->ClearInstanceSelection();
 	}
 	
-	const TManagedArray<int32>& ExemplarIndex = GetExemplarIndexArray();
+	const TManagedArray<int32>& ExemplarIndex = RestCollection->GetGeometryCollection()->ExemplarIndex;
 	for (int32 SelectedBone : SelectedBones)
 	{
 		if (EmbeddedGeometryComponents.IsValidIndex(ExemplarIndex[SelectedBone]))
@@ -4888,6 +6301,36 @@ void UGeometryCollectionComponent::InitializeEmbeddedGeometry()
 	}
 }
 
+void UGeometryCollectionComponent::EnableRootProxyForCustomRenderer(bool bEnable)
+{ 
+	bEnableRootProxyForCustomRenderer = bEnable;
+	RefreshCustomRenderer();
+}
+
+void UGeometryCollectionComponent::SetRootProxyLocalTransform(int32 Index, const FTransform3f& RootProxyTransform)
+{
+	if (RootProxyLocalTransforms.IsEmpty() && RestCollection)
+	{
+		const int32 NumProxyMeshes = RestCollection->RootProxyData.ProxyMeshes.Num();
+		RootProxyLocalTransforms.Init(FTransform3f::Identity, NumProxyMeshes);
+	}
+	if (RootProxyLocalTransforms.IsValidIndex(Index))
+	{
+		RootProxyLocalTransforms[Index] = RootProxyTransform;
+	}
+}
+
+void UGeometryCollectionComponent::ClearRootProxyLocalTransforms()
+{
+	RootProxyLocalTransforms.Empty();
+}
+
+void UGeometryCollectionComponent::RefreshRootProxies()
+{
+	RefreshCustomRenderer();
+	UpdateRootProxyComponentsIfNeeded();
+}
+
 bool UGeometryCollectionComponent::CanUseCustomRenderer() const 
 {
 	return bChaos_GC_UseCustomRenderer && CustomRenderer != nullptr && GetWorld()->IsGameWorld();
@@ -4897,31 +6340,53 @@ void UGeometryCollectionComponent::RefreshCustomRenderer()
 {
 	if (CanUseCustomRenderer())
 	{
-		if (IGeometryCollectionExternalRenderInterface* RendererInterface = Cast<IGeometryCollectionExternalRenderInterface>(CustomRenderer))
+		// Don't refresh the custom renderer on the server but we still need to do the work of computing component space transforms.
+		const bool bUpdateRenderer = !IsNetMode(NM_DedicatedServer) && bUpdateCustomRenderer;
+
+		if (IGeometryCollectionExternalRenderInterface* RendererInterface = CustomRenderer.GetInterface())
 		{
 			if (RestCollection != nullptr)
 			{
-				const FTransform ComponentTransform = GetComponentTransform();
-				const int32 RootIndex = GetRootIndex();
-
-				const bool bIsBroken = DynamicCollection ? !DynamicCollection->Active[RootIndex] : false;
-
-				RendererInterface->UpdateState(*RestCollection, ComponentTransform, bIsBroken, !bHiddenInGame);
-
-				if (bIsBroken)
+				if (bUpdateRenderer)
 				{
-					CalculateGlobalMatrices();
-					RendererInterface->UpdateTransforms(*RestCollection, ComponentSpaceTransforms);
-				}
-				else
-				{
-					// No need to compute the component space transform in that case, since the root is always in component space 
-					const FTransform RootTransform = 
-						(DynamicCollection && DynamicCollection->Transform.IsValidIndex(RootIndex))
-						? DynamicCollection->Transform[RootIndex]
-						: FTransform::Identity;
-					ComponentSpaceTransforms[RootIndex] = RootTransform;
-					RendererInterface->UpdateRootTransform(*RestCollection, RootTransform);
+					const FTransform ComponentTransform = GetComponentTransform();
+					const int32 RootIndex = GetRootIndex();
+
+					bool bIsBroken = DynamicCollection ? !DynamicCollection->Active[RootIndex] : false;
+
+				#if !(UE_BUILD_SHIPPING)
+					if (CVarNumToForceBreak->GetInt() >= 0)
+					{
+						bIsBroken = ForcedBroken.Break(this, ComponentSpaceTransforms.RequestAllTransforms());
+					}
+				#endif						
+
+					const bool bRenderRootProxy = bEnableRootProxyForCustomRenderer && !bIsBroken && (RestCollection->RootProxyData.ProxyMeshes.Num() > 0);
+
+					uint32 StateFlags = 0;
+					StateFlags |= bHiddenInGame || !IsVisible() ? 0 : IGeometryCollectionExternalRenderInterface::EState_Visible;
+					StateFlags |= bRenderRootProxy ? 0 : IGeometryCollectionExternalRenderInterface::EState_Broken;
+					StateFlags |= bEnableRootProxyForCustomRenderer ? 0 : IGeometryCollectionExternalRenderInterface::EState_ForcedBroken;
+
+					RendererInterface->UpdateState(*RestCollection, ComponentTransform, StateFlags);
+
+					if (bRenderRootProxy)
+					{
+						const FTransform CompSpaceRootTransform(ComponentSpaceTransforms.RequestRootTransform());
+						if (RootProxyLocalTransforms.IsEmpty())
+						{
+							RendererInterface->UpdateRootTransform(*RestCollection, CompSpaceRootTransform);
+						}
+						else
+						{
+							RendererInterface->UpdateRootTransforms(*RestCollection, CompSpaceRootTransform, MakeArrayView(RootProxyLocalTransforms));
+						}
+					}
+					else
+					{
+						const TArray<FTransform3f>& CompSpaceTransforms = ComponentSpaceTransforms.RequestAllTransforms();
+						RendererInterface->UpdateTransforms(*RestCollection, CompSpaceTransforms);
+					}
 				}
 			}
 		}
@@ -4941,7 +6406,9 @@ TArray<UStaticMeshComponent*> UGeometryCollectionComponent::CreateProxyComponent
 			{
 				UStaticMeshComponent* NewComponent = NewObject<UStaticMeshComponent>(GetOwner());
 				NewComponent->SetStaticMesh(Mesh);
-				NewComponent->SetComponentToWorld(GetComponentToWorld());
+				NewComponent->SetRelativeTransform(GetComponentTransform());
+				NewComponent->RegisterComponent();
+
 				Components.Add(NewComponent);
 			}
 		}
@@ -4950,19 +6417,18 @@ TArray<UStaticMeshComponent*> UGeometryCollectionComponent::CreateProxyComponent
 	return Components;
 }
 
-bool UGeometryCollectionComponent::IsRootBroken() const
+void UGeometryCollectionComponent::SetUseStaticMeshCollisionForTraces(const bool bInUseStaticMeshCollisionForTraces)
 {
-	if (DynamicCollection && DynamicCollection->Active.Num() > 0)
+	if (bUseStaticMeshCollisionForTraces != bInUseStaticMeshCollisionForTraces)
 	{
-		const int32 RootIndex = GetRootIndex();
-		if (RootIndex != INDEX_NONE)
+		if (PhysicsProxy != nullptr)
 		{
-			return !DynamicCollection->Active[RootIndex];
+			PhysicsProxy->SetUseStaticMeshCollisionForTraces_External(bInUseStaticMeshCollisionForTraces);
 		}
-	}
-	return false;
-}
 
+		bUseStaticMeshCollisionForTraces = bInUseStaticMeshCollisionForTraces;
+	}
+}
 struct FGeometryCollectionDecayContext
 {
 	FGeometryCollectionDecayContext(FGeometryCollectionPhysicsProxy& PhysicsProxyIn, FGeometryCollectionDecayDynamicFacade& DecayFacadeIn)
@@ -5012,12 +6478,14 @@ void UGeometryCollectionComponent::UpdateDecay(int32 TransformIdx, float Updated
 				{
 					ContextInOut.ToCrumble.AddUnique(InternalClusterItemindex);
 					Decay = 0.0f;
+					// this is an internal cluster so we do not update the BrokenAndDecayedStates, the children will update their own state 
 				}
 			}
 			else
 			{
 				ContextInOut.ToCrumble.AddUnique(FGeometryCollectionItemIndex::CreateTransformItemIndex(TransformIdx));
 				Decay = 0.0f;
+				BrokenAndDecayedStates.SetHasDecayed(TransformIdx);
 			}
 		}
 		else if (Decay >= 1.0f)
@@ -5025,6 +6493,10 @@ void UGeometryCollectionComponent::UpdateDecay(int32 TransformIdx, float Updated
 			// Disable the particle if it has decayed the requisite time
 			Decay = 1.0f;
 			ContextInOut.ToDisable.Add(TransformIdx);
+			if (RestCollection && RestCollection->GetGeometryCollection())
+			{
+				BrokenAndDecayedStates.SetHasDecayedRecursive(TransformIdx, RestCollection->GetGeometryCollection()->Children.GetConstArray());
+			}
 		}
 
 		// push back Decay in the attribute
@@ -5062,7 +6534,7 @@ void UGeometryCollectionComponent::IncrementSleepTimer(float DeltaTime)
 				{
 					// this children has an dynamic internal cluster parent so it can't be removed but we need tyo process the internal cluster by looking at the original parent properties
 					const int32 OriginalParentIdx = OriginalParents[TransformIdx];
-					const bool HasDynamicInternalClusterParent = DynamicStateFacade.HasDynamicInternalClusterParent(TransformIdx);
+					const bool HasDynamicInternalClusterParent = DynamicStateFacade.HasDynamicInternalClusterParent(TransformIdx) && DynamicStateFacade.HasClusterUnionParent(TransformIdx);
 					if (OriginalParentIdx > INDEX_NONE && HasDynamicInternalClusterParent && RemoveOnSleepFacade.IsRemovalActive(OriginalParentIdx))
 					{
 						const bool UseClusterCrumbling = true; // with sleep removal : internal clusters always crumble - this will change when we merge the removal feature together
@@ -5079,8 +6551,8 @@ void UGeometryCollectionComponent::IncrementSleepTimer(float DeltaTime)
 						bool ShouldUpdateTimer = (DecayFacade.GetDecay(TransformIdx) > 0);
 						if (!ShouldUpdateTimer && RestCollection->bSlowMovingAsSleeping)
 						{
-							const FVector CurrentPosition = DynamicCollection->Transform[TransformIdx].GetTranslation();
-							ShouldUpdateTimer |= RemoveOnSleepFacade.ComputeSlowMovingState(TransformIdx, CurrentPosition, DeltaTime, RestCollection->SlowMovingVelocityThreshold);
+							const FVector3f CurrentPosition = DynamicCollection->GetTransform(TransformIdx).GetTranslation();
+							ShouldUpdateTimer |= RemoveOnSleepFacade.ComputeSlowMovingState(TransformIdx, FVector(CurrentPosition), DeltaTime, RestCollection->SlowMovingVelocityThreshold);
 						}
 						if (ShouldUpdateTimer || DynamicStateFacade.IsSleeping(TransformIdx))
 						{
@@ -5122,7 +6594,7 @@ void UGeometryCollectionComponent::IncrementBreakTimer(float DeltaTime)
 			FGeometryCollectionDecayContext DecayContext(*PhysicsProxy, DecayFacade);
 			const TManagedArray<int32>& OriginalParents = RestCollection->GetGeometryCollection()->Parent;
 
-			const TManagedArray<int32>* InitialLevels = PhysicsProxy->GetPhysicsCollection().FindAttribute<int32>("InitialLevel", FGeometryCollection::TransformGroup);
+			const TManagedArrayAccessor<int32> InitialLevels = PhysicsProxy->GetPhysicsCollection().GetInitialLevels();
 
 			const int32 NumTransforms = OriginalParents.Num();
 			for (int32 TransformIdx = 0; TransformIdx < NumTransforms; ++TransformIdx)
@@ -5132,14 +6604,14 @@ void UGeometryCollectionComponent::IncrementBreakTimer(float DeltaTime)
 				{
 					// this children has an internal cluster parent so it can't be removed but we need tyo process the internal cluster by looking at the original parent properties
 					const int32 OriginalParentIdx = OriginalParents[TransformIdx];
-					const bool HasDynamicInternalClusterParent = DynamicStateFacade.HasDynamicInternalClusterParent(TransformIdx);
+					const bool HasDynamicInternalClusterParent = DynamicStateFacade.HasDynamicInternalClusterParent(TransformIdx) && !DynamicStateFacade.HasClusterUnionParent(TransformIdx);
 
 					if (OriginalParentIdx > INDEX_NONE && HasDynamicInternalClusterParent && RemoveOnBreakFacade.IsRemovalActive(OriginalParentIdx))
 					{
 						bool bIsAllowedClusterCrumbling = true;
-						if (bIsReplicatedClient && InitialLevels && (InitialLevels->Num() > 0))
+						if (bIsReplicatedClient && InitialLevels.IsValid() && (InitialLevels.Num() > 0))
 						{
-							if (!bEnableAbandonAfterLevel || (*InitialLevels)[OriginalParentIdx] <= ReplicationAbandonAfterLevel)
+							if (!bEnableAbandonAfterLevel || InitialLevels[OriginalParentIdx] <= ReplicationAbandonAfterLevel)
 							{
 								bIsAllowedClusterCrumbling = false;
 							}
@@ -5156,9 +6628,9 @@ void UGeometryCollectionComponent::IncrementBreakTimer(float DeltaTime)
 				else if (RemoveOnBreakFacade.IsRemovalActive(TransformIdx) && DynamicStateFacade.HasBrokenOff(TransformIdx))
 				{
 					bool bIsAllowedClusterCrumbling = true;
-					if (bIsReplicatedClient && InitialLevels && (InitialLevels->Num() > 0))
+					if (bIsReplicatedClient && InitialLevels.IsValid() && (InitialLevels.Num() > 0))
 					{
-						if (!bEnableAbandonAfterLevel || (*InitialLevels)[TransformIdx] <= ReplicationAbandonAfterLevel)
+						if (!bEnableAbandonAfterLevel || InitialLevels[TransformIdx] <= ReplicationAbandonAfterLevel)
 						{
 							bIsAllowedClusterCrumbling = false;
 						}
@@ -5251,7 +6723,7 @@ void UGeometryCollectionComponent::ApplyBreakingAngularVelocity(int32 ItemIndex,
 {
 	if (PhysicsProxy)
 	{
-		PhysicsProxy->ApplyBreakingLinearVelocity_External(FGeometryCollectionItemIndex::CreateFromExistingItemIndex(ItemIndex), AngularVelocity);
+		PhysicsProxy->ApplyBreakingAngularVelocity_External(FGeometryCollectionItemIndex::CreateFromExistingItemIndex(ItemIndex), AngularVelocity);
 	}
 }
 
@@ -5329,10 +6801,12 @@ FTransform UGeometryCollectionComponent::GetRootInitialTransform() const
 	FTransform RootInitialTransform{ FTransform::Identity };
 	if (RestCollection && RestCollection->GetGeometryCollection())
 	{
+		const FGeometryCollection& RestGeometryCollection = *RestCollection->GetGeometryCollection();
+
 		const int32 RootIndex = RestCollection->GetRootIndex();
-		if (RestTransforms.IsValidIndex(RootIndex))
+		if (RestGeometryCollection.Transform.IsValidIndex(RootIndex))
 		{
-			const FTransform LocalSpaceTransform = GeometryCollectionAlgo::GlobalMatrix(RestTransforms, RestCollection->GetGeometryCollection()->Parent, RootIndex);
+			const FTransform LocalSpaceTransform = GeometryCollectionAlgo::GlobalMatrix(RestGeometryCollection.Transform, RestGeometryCollection.Parent, RootIndex);
 			RootInitialTransform = LocalSpaceTransform * GetComponentTransform();
 		}
 	}
@@ -5344,13 +6818,33 @@ FTransform UGeometryCollectionComponent::GetRootCurrentTransform() const
 	FTransform RootInitialTransform{ FTransform::Identity };
 	if (RestCollection)
 	{
-		const int32 RootIndex = RestCollection->GetRootIndex();
-		if (ComponentSpaceTransforms.IsValidIndex(RootIndex))
-		{
-			RootInitialTransform = ComponentSpaceTransforms[RootIndex] * GetComponentTransform();
-		}
+		const FTransform CompSpaceRootTransform(ComponentSpaceTransforms.RequestRootTransform());
+		RootInitialTransform = CompSpaceRootTransform * GetComponentTransform();
 	}
 	return RootInitialTransform;
+}
+
+FTransform UGeometryCollectionComponent::GetRootCurrentComponentSpaceTransform() const
+{
+	return (RestCollection) ? FTransform(ComponentSpaceTransforms.RequestRootTransform()) : FTransform::Identity;
+}
+
+FTransform UGeometryCollectionComponent::GetRootParticleMassOffset() const
+{
+	FTransform MassOffset{ FTransform::Identity };
+	if (RestCollection)
+	{
+		const int32 RootIndex = RestCollection->GetRootIndex();
+		if (const FGeometryCollection* RestGeometryCollection = RestCollection->GetGeometryCollection().Get())
+		{
+			const TManagedArray<FTransform>* MassToLocal = RestGeometryCollection->FindAttribute<FTransform>("MassToLocal", FGeometryCollection::TransformGroup);
+			if (MassToLocal && MassToLocal->IsValidIndex(RootIndex))
+			{
+				MassOffset = (*MassToLocal)[RootIndex];
+			}
+		}
+	}
+	return MassOffset;
 }
 
 TArray<FTransform> UGeometryCollectionComponent::GetInitialLocalRestTransforms() const
@@ -5359,11 +6853,11 @@ TArray<FTransform> UGeometryCollectionComponent::GetInitialLocalRestTransforms()
 
 	if (RestCollection && RestCollection->GetGeometryCollection())
 	{
-		FGeometryCollection& GeometryCollection = *RestCollection->GetGeometryCollection();
+		const FGeometryCollection& RestGeometryCollection = *RestCollection->GetGeometryCollection();
 
-		GeometryCollectionAlgo::GlobalMatrices(RestTransforms, RestCollection->GetGeometryCollection()->Parent, InitialLocalTransforms);
+		GeometryCollectionAlgo::GlobalMatrices(RestGeometryCollection.Transform, RestGeometryCollection.Parent, InitialLocalTransforms);
 
-		const TManagedArray<FTransform>* MassToLocal = GeometryCollection.FindAttribute<FTransform>("MassToLocal", FGeometryCollection::TransformGroup);
+		const TManagedArray<FTransform>* MassToLocal = RestGeometryCollection.FindAttribute<FTransform>("MassToLocal", FGeometryCollection::TransformGroup);
 		if (MassToLocal && InitialLocalTransforms.Num() == MassToLocal->Num())
 		{
 			for (int32 TransformIndex = 0; TransformIndex < InitialLocalTransforms.Num(); TransformIndex++)
@@ -5393,12 +6887,12 @@ void UGeometryCollectionComponent::SetLocalRestTransforms(const TArray<FTransfor
 			for (int32 ProcessIndex = 0; ProcessIndex < TransformsToProcess.Num(); ProcessIndex++)
 			{
 				const int32 TransformIndex = TransformsToProcess[ProcessIndex];
+				const FTransform InvMassToLocal = MassToLocal ? (*MassToLocal)[TransformIndex].Inverse() : FTransform::Identity;
+
 				const bool bIsLeaf = (GeometryCollection.SimulationType[TransformIndex] == FGeometryCollection::ESimulationTypes::FST_Rigid);
 				const bool bNeedUpdate = !bOnlyLeaves || bIsLeaf;
 				if (bNeedUpdate)
 				{
-					const FTransform InvMassToLocal = MassToLocal ? (*MassToLocal)[TransformIndex].Inverse() : FTransform::Identity;
-
 					LocalTransforms[TransformIndex] = InvMassToLocal * NewTransforms[TransformIndex];
 
 					// because we update top-down, the parent up-to-date transform is stored in LocalTransforms
@@ -5407,6 +6901,10 @@ void UGeometryCollectionComponent::SetLocalRestTransforms(const TArray<FTransfor
 					{
 						LocalTransforms[TransformIndex] = LocalTransforms[TransformIndex].GetRelativeTransform(LocalTransforms[ParentTransformIndex]);
 					}
+				}
+				else
+				{
+					LocalTransforms[TransformIndex] = InvMassToLocal * LocalTransforms[TransformIndex];
 				}
 
 				for (const int32 ChildTransformIndex : GeometryCollection.Children[TransformIndex])
@@ -5426,9 +6924,10 @@ TArray<FMatrix> UGeometryCollectionComponent::ComputeGlobalMatricesFromComponent
 	TArray<FMatrix> ComponentSpaceMatrices;
 	ComponentSpaceMatrices.SetNumUninitialized(ComponentSpaceTransforms.Num());
 
-	for (int32 TransformIndex = 0; TransformIndex < ComponentSpaceTransforms.Num(); TransformIndex++)
+	const TArray<FTransform3f>& CompSpaceTransforms = ComponentSpaceTransforms.RequestAllTransforms();
+	for (int32 TransformIndex = 0; TransformIndex < CompSpaceTransforms.Num(); TransformIndex++)
 	{
-		ComponentSpaceMatrices[TransformIndex] = ComponentSpaceTransforms[TransformIndex].ToMatrixWithScale();
+		ComponentSpaceMatrices[TransformIndex] = FTransform(CompSpaceTransforms[TransformIndex]).ToMatrixWithScale();
 	}
 	return ComponentSpaceMatrices;
 }
@@ -5488,6 +6987,70 @@ void UGeometryCollectionComponent::GetMassAndExtents(int32 ItemIndex, float& Out
 	}
 }
 
+float UGeometryCollectionComponent::ComputeMassScaleRelativeToAsset() const
+{
+	// note this only acount for material override density , in the future we could certainly take in account the scale of the component
+	float MassScaleMultiplier = 1.0f;
+	UPhysicalMaterial* EnginePhysicalMaterial = GetPhysicalMaterial();
+	if (ensure(EnginePhysicalMaterial))
+	{
+		if (RestCollection && bDensityFromPhysicsMaterial)
+		{
+			bool bMassAsDensity = false;
+			const float AssetMassOrDensity = RestCollection->GetMassOrDensity(bMassAsDensity);
+			if (ensureMsgf(bMassAsDensity, TEXT("Need a density to be able to compute the mass scale multiplier, this may result in incorrect mass properties")))
+			{
+				if (ensureMsgf(AssetMassOrDensity > SMALL_NUMBER, TEXT("Asset density is set to a too small number, ignoring it for mass adjustment")))
+				{
+					const float OverrideMaterialDensity = Chaos::GCm3ToKgCm3(EnginePhysicalMaterial->Density);
+					MassScaleMultiplier = OverrideMaterialDensity / AssetMassOrDensity;
+				}
+			}
+		}
+	}
+	return MassScaleMultiplier;
+}
+
+float UGeometryCollectionComponent::GetMass() const
+{
+	float OutMass{ 0 };
+
+	if (RestCollection && RestCollection->GetGeometryCollection())
+	{
+		const FGeometryCollection& Collection = *RestCollection->GetGeometryCollection();
+		if (const TManagedArray<float>* CollectionMass = Collection.FindAttribute<float>(TEXT("Mass"), FTransformCollection::TransformGroup))
+		{
+			const int32 RootIndex = RestCollection->GetRootIndex();
+			if (CollectionMass->IsValidIndex(RootIndex))
+			{
+				OutMass = (*CollectionMass)[RootIndex];
+			}
+		}
+	}
+	// need to multiply by the instance specific mass scale is any
+	return OutMass * ComputeMassScaleRelativeToAsset();
+}
+
+float UGeometryCollectionComponent::CalculateMass(FName BoneName)
+{
+	float OutMass{ 0 };
+
+	if (RestCollection && RestCollection->GetGeometryCollection())
+	{
+		const FGeometryCollection& Collection = *RestCollection->GetGeometryCollection();
+		if (const TManagedArray<float>* CollectionMass = Collection.FindAttribute<float>(TEXT("Mass"), FTransformCollection::TransformGroup))
+		{
+			const int32 BoneIndex = (BoneName == NAME_None)? RestCollection->GetRootIndex(): Collection.BoneName.Find(BoneName.ToString());
+			if (CollectionMass->IsValidIndex(BoneIndex))
+			{
+				OutMass = (*CollectionMass)[BoneIndex];
+			}
+		}
+	}
+	// need to multiply by the instance specific mass scale is any
+	return OutMass * ComputeMassScaleRelativeToAsset();
+}
+
 bool UGeometryCollectionComponent::CalculateInnerSphere(int32 TransformIndex, UE::Math::TSphere<double>& SphereOut) const
 {
 	// Approximates the inscribed sphere. Returns false if no such sphere exists, if for instance the index is to an embedded geometry. 
@@ -5533,9 +7096,58 @@ bool UGeometryCollectionComponent::CalculateInnerSphere(int32 TransformIndex, UE
 	return false;
 }
 
+void UGeometryCollectionComponent::Serialize(FArchive& Ar)
+{
+	Super::Serialize(Ar);
+
+	Ar.UsingCustomVersion(FFortniteValkyrieBranchObjectVersion::GUID);
+
+#if WITH_EDITOR
+	// Fix rest transforms
+	// Prior to this change, it is possible for the RestTransforms to be set with the original rest collection transforms or have outdated rest transforms
+	// this is a waste of memory and performance cost with serialization at runtime since FTransform can not be bulk serialized
+	// so if they are no longer matching the rest collection let's clear them 
+	if (Ar.IsLoading() && RestTransforms.Num() > 0)
+	{
+		if (Ar.CustomVer(FFortniteValkyrieBranchObjectVersion::GUID) < FFortniteValkyrieBranchObjectVersion::FixRestTransformsInGeometryCollectionComponent)
+		{
+			bool bNeedToRestRestTransform = false;
+			bool bIsRestCollectionValid = (RestCollection && RestCollection->GetGeometryCollection());
+			if (!bIsRestCollectionValid || RestTransforms.Num() != RestCollection->GetGeometryCollection()->Transform.Num())
+			{
+				bNeedToRestRestTransform = true;
+			}
+			else
+			{
+				const TArray<FTransform3f>& RestCollectionTransforms = RestCollection->GetGeometryCollection()->Transform.GetConstArray();
+				for (int32 Index = 0; Index < RestTransforms.Num(); Index++)
+				{
+					// Do a float comparison otherwise, changing from float to double coulld cause transforms to be different
+					if (!FTransform3f(RestTransforms[Index]).Equals(RestCollectionTransforms[Index]))
+					{
+						bNeedToRestRestTransform = true;
+						break;
+					}
+				}
+			}
+			if (bNeedToRestRestTransform)
+			{
+				RestTransforms.Reset();
+			}
+		}
+	}
+#endif
+}
+
 void UGeometryCollectionComponent::PostLoad()
 {
 	Super::PostLoad();
+
+	// If there is a rest collection and no custom renderer then precache PSOs required to render the mesh
+	if (RestCollection && !CanUseCustomRenderer())
+	{
+		PrecachePSOs();
+	}
 
 	//
 	// The UGeometryCollectionComponent::PhysicalMaterial_DEPRECATED needs
@@ -5556,6 +7168,96 @@ void UGeometryCollectionComponent::PostLoad()
 		ISMPool_DEPRECATED = nullptr;
 		bAutoAssignISMPool_DEPRECATED = false;
 	}
+}
+
+void UGeometryCollectionComponent::CollectPSOPrecacheData(const FPSOPrecacheParams& BasePrecachePSOParams, FMaterialInterfacePSOPrecacheParamsList& OutParams)
+{
+	if (!RestCollection)
+	{
+		return;
+	}
+
+	FPSOPrecacheVertexFactoryDataList VFDataList;
+	const FVertexFactoryType* VFType = nullptr;
+	if (UseNanite(GMaxRHIShaderPlatform) &&
+		RestCollection->EnableNanite &&
+		RestCollection->HasNaniteData() &&
+		GGeometryCollectionNanite != 0)
+	{
+		if (NaniteLegacyMaterialsSupported())
+		{
+			VFDataList.Add(FPSOPrecacheVertexFactoryData(&Nanite::FVertexFactory::StaticType));
+		}
+
+		if (NaniteComputeMaterialsSupported())
+		{
+			VFDataList.Add(FPSOPrecacheVertexFactoryData(&FNaniteVertexFactory::StaticType));
+		}
+	}	
+	else if (RestCollection->HasMeshData())
+	{
+		VFDataList.Add(FPSOPrecacheVertexFactoryData(&FGeometryCollectionVertexFactory::StaticType));
+	}
+
+	const TManagedArray<FGeometryCollectionSection>& SectionsArray = RestCollection->GetGeometryCollection()->Sections;
+	for (int32 SectionIndex = 0; SectionIndex < SectionsArray.Num(); ++SectionIndex)
+	{
+		const FGeometryCollectionSection& MeshSection = SectionsArray[SectionIndex];
+		const bool bValidMeshSection = MeshSection.MaterialID != INDEX_NONE;
+		UMaterialInterface* MaterialInterface = bValidMeshSection ? GetMaterial(MeshSection.MaterialID) : UMaterial::GetDefaultMaterial(MD_Surface);
+
+		FMaterialInterfacePSOPrecacheParams& ComponentParams = OutParams[OutParams.AddDefaulted()];
+		ComponentParams.Priority = EPSOPrecachePriority::Medium;
+		ComponentParams.MaterialInterface = MaterialInterface;
+		ComponentParams.VertexFactoryDataList = VFDataList;
+		ComponentParams.PSOPrecacheParams = BasePrecachePSOParams;
+	}
+}
+
+void UGeometryCollectionComponent::SetPhysMaterialOverride(UPhysicalMaterial* NewPhysMaterial)
+{
+	Super::SetPhysMaterialOverride(NewPhysMaterial);
+
+	if (PhysicsProxy)
+	{
+		UPhysicalMaterial* EnginePhysicalMaterial = GetPhysicalMaterial();
+		if (ensure(EnginePhysicalMaterial))
+		{
+			PhysicsProxy->SetPhysicsMaterial_External(EnginePhysicalMaterial->GetPhysicsMaterial());
+		}
+	}
+}
+
+void UGeometryCollectionComponent::FlushNetDormancyIfNeeded() const
+{
+	if (GetDesiredNetAwakeningMode() != ENetAwakeningMode::FlushNetDormancy)
+	{
+		return;
+	}
+
+	if (AActor* Owner = GetOwner())
+	{
+
+		Owner->FlushNetDormancy();
+	}
+}
+
+UGeometryCollectionComponent::ENetAwakeningMode UGeometryCollectionComponent::GetDesiredNetAwakeningMode() const
+{
+	constexpr int32 MinNetAwakeningMode = 0;
+	constexpr int32 MaxNetAwakeningMode = 1;
+	ENetAwakeningMode Mode;
+	if (GeometryCollectionNetAwakeningMode < MinNetAwakeningMode || GeometryCollectionNetAwakeningMode > MaxNetAwakeningMode)
+	{
+		ensureMsgf(false, TEXT("Invalid NetAwakening mode configured, falling back to the default mode"));
+		Mode = ENetAwakeningMode::ForceDormancyAwake;
+	}
+	else
+	{
+		Mode = static_cast<ENetAwakeningMode>(GeometryCollectionNetAwakeningMode);
+	}
+
+	return Mode;
 }
 
 Chaos::FPhysicsObject* UGeometryCollectionComponent::GetPhysicsObjectById(Chaos::FPhysicsObjectId Id) const
@@ -5600,9 +7302,9 @@ TArray<Chaos::FPhysicsObject*> UGeometryCollectionComponent::GetAllPhysicsObject
 		return {};
 	}
 	TArray<Chaos::FPhysicsObject*> Objects;
-	Objects.Reserve(PhysicsProxy->GetNumParticles());
+	Objects.Reserve(PhysicsProxy->GetNumTransforms());
 	
-	for (int32 Index = 0; Index < PhysicsProxy->GetNumParticles(); ++Index)
+	for (int32 Index = 0; Index < PhysicsProxy->GetNumTransforms(); ++Index)
 	{
 		Objects.Add(GetPhysicsObjectById(Index));
 	}
@@ -5635,6 +7337,28 @@ void UGeometryCollectionComponent::SetEnableDamageFromCollision(bool bValue)
 	}
 }
 
+void UGeometryCollectionComponent::OnComponentCollisionSettingsChanged(bool bUpdateOverlaps)
+{
+	Super::OnComponentCollisionSettingsChanged(bUpdateOverlaps);
+
+	BuildInitialFilterData();
+	LoadCollisionProfiles();
+}
+
+bool UGeometryCollectionComponent::CanBeUsedInPhysicsReplication(const FName BoneName) const
+{
+	return false;
+}
+
+const FTransform& UGeometryCollectionComponent::GetPreviousComponentToWorld() const
+{
+	if (!PhysicsProxy)
+	{
+		return FTransform::Identity;
+	}
+
+	return PhysicsProxy->GetPreviousWorldTransform_External();
+}
 
 #if WITH_EDITOR
 
@@ -5671,3 +7395,14 @@ bool UGeometryCollectionComponent::IsHLODRelevant() const
 }
 
 #endif // #if WITH_EDITOR
+
+void UGeometryCollectionComponent::RebaseDynamicCollectionTransformsOnNewWorldTransform()
+{
+	if (!PhysicsProxy)
+	{
+		return;
+	}
+
+	PhysicsProxy->RebaseAllGameThreadCollectionTransformsOnNewWorldTransform_External();
+	ComponentSpaceTransforms.MarkDirty();
+}

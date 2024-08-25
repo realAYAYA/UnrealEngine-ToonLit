@@ -20,3 +20,20 @@ public:
 protected:
 	UNREALED_API virtual TSharedRef<FLegacyEdModeWidgetHelper> CreateWidgetHelper() override;
 };
+
+namespace FAssetEdModes
+{
+	UNREALED_API extern const FEditorModeID EM_AssetDefault;
+}
+
+UCLASS(Transient, MinimalAPI)
+class UAssetEdModeDefault : public UEdModeDefault
+{
+	GENERATED_BODY()
+
+public:
+	UNREALED_API UAssetEdModeDefault();
+
+protected:
+	UNREALED_API virtual TSharedRef<FLegacyEdModeWidgetHelper> CreateWidgetHelper() override;
+};

@@ -23,12 +23,16 @@ public:
 		, ContainerVersion(INDEX_NONE)
 	{}
 
-	FCachedRigElement(const FRigElementKey& InKey, const URigHierarchy* InHierarchy)
+	FCachedRigElement(const FRigElementKey& InKey, const URigHierarchy* InHierarchy, bool bForceStoreKey = false)
 		: Key()
 		, Index(UINT16_MAX)
 		, ContainerVersion(INDEX_NONE)
 	{
 		UpdateCache(InKey, InHierarchy);
+		if(bForceStoreKey)
+		{
+			Key = InKey;
+		}
 	}
 
 	bool IsValid() const
@@ -72,6 +76,8 @@ public:
 	{
 		return Key;
 	}
+
+	const FRigElementKey& GetResolvedKey() const;
 
 	const FRigBaseElement* GetElement() const
 	{
@@ -149,4 +155,38 @@ private:
 	int32 ContainerVersion;
 
 	const FRigBaseElement* Element;
+};
+
+class CONTROLRIG_API FRigElementKeyRedirector
+{
+public:
+
+	FRigElementKeyRedirector()
+		: InternalKeyToExternalKey()
+		, Hash(UINT32_MAX)
+	{}
+
+	FRigElementKeyRedirector(const TMap<FRigElementKey, FRigElementKey>& InMap, const URigHierarchy* InHierarchy);
+	FRigElementKeyRedirector(const FRigElementKeyRedirector& InOther, const URigHierarchy* InHierarchy);
+
+	bool Contains(const FRigElementKey& InKey) const { return InternalKeyToExternalKey.Contains(InKey); }
+	const FCachedRigElement* Find(const FRigElementKey& InKey) const { return InternalKeyToExternalKey.Find(InKey); }
+	const FRigElementKey* FindExternalKey(const FRigElementKey& InKey) const { return ExternalKeys.Find(InKey); }
+	FCachedRigElement* Find(const FRigElementKey& InKey) { return InternalKeyToExternalKey.Find(InKey); }
+	const FRigElementKey* FindReverse(const FRigElementKey& InKey) const;
+	uint32 GetHash() const { return Hash; }
+	
+private:
+
+	void Add(const FRigElementKey& InSource, const FRigElementKey& InTarget, const URigHierarchy* InHierarchy);
+
+	TMap<FRigElementKey, FCachedRigElement> InternalKeyToExternalKey;
+	TMap<FRigElementKey, FRigElementKey> ExternalKeys;
+	uint32 Hash;
+
+	friend class URigHierarchy;
+	friend class URigHierarchyController;
+	friend class FRigModuleInstanceDetails;
+	friend class UModularRig;
+	friend class FControlRigSchematicModel;
 };

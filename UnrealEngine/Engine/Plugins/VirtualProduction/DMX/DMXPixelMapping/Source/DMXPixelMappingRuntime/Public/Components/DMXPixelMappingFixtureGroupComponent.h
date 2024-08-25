@@ -26,30 +26,30 @@ public:
 	UDMXPixelMappingFixtureGroupComponent();
 
 	//~ Begin UObject implementation
-	virtual void PostInitProperties() override;
-	virtual void PostLoad() override;
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 	virtual void PostEditUndo() override;
-#endif // WITH_EDITOR
+#endif
 	//~ End UObject implementation
 
 	//~ Begin UDMXPixelMappingBaseComponent implementation
 	virtual const FName& GetNamePrefix() override;
 	virtual void AddChild(UDMXPixelMappingBaseComponent* InComponent) override;
 	virtual bool CanBeMovedTo(const UDMXPixelMappingBaseComponent* Component) const override;
-	virtual void ResetDMX() override;
+	virtual void ResetDMX(EDMXPixelMappingResetDMXMode ResetMode = EDMXPixelMappingResetDMXMode::SendDefaultValues) override;
 	virtual void SendDMX() override;
 	virtual FString GetUserName() const override;
 	//~ End UDMXPixelMappingBaseComponent implementation
 
 	//~ Begin UDMXPixelMappingOutputComponent implementation
+	virtual void SetPosition(const FVector2D& NewPosition) override;
+	virtual void SetPositionRotated(FVector2D NewRotatedPosition) override;
+	virtual void SetSize(const FVector2D& NewSize) override;
+	virtual void SetRotation(double NewRotation) override;
 #if WITH_EDITOR
 	virtual bool IsExposedToTemplate() { return true; }
 	virtual const FText GetPaletteCategory() override;
-#endif // WITH_EDITOR
-	virtual void SetPosition(const FVector2D& NewPosition) override;
-	virtual void SetSize(const FVector2D& NewSize) override;
+#endif
 	//~ End UDMXPixelMappingOutputComponent implementation
 
 	/** Returns a delegate broadcasted when the DMX Library changed */
@@ -66,12 +66,6 @@ public:
 	TObjectPtr<UDMXPixelMappingLayoutScript> LayoutScript;
 
 private:
-	/** Handles changes in position */
-	void HandlePositionChanged();
-
-	/** Holds the last set size */
-	FVector2D LastPosition;
-
 	/** Returns a delegate broadcasted when the DMX Library changed */
 	FSimpleMulticastDelegate OnDMXLibraryChangedDelegate;
 

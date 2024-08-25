@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using Microsoft.Extensions.Logging;
+using UnrealBuildBase;
 
 namespace UnrealBuildTool
 {
@@ -28,7 +29,7 @@ namespace UnrealBuildTool
 			List<string> JunkManifest = new List<string>();
 			if (File.Exists(ManifestPath))
 			{
-				string MachineName = Environment.MachineName;
+				string MachineName = Unreal.MachineName;
 				using (StreamReader reader = new StreamReader(ManifestPath))
 				{
 					string CurrentToRootDir = ".." + Path.DirectorySeparatorChar + "..";

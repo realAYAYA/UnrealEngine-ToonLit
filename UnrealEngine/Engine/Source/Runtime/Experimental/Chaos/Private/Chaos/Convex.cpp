@@ -8,10 +8,26 @@
 
 namespace Chaos
 {
-	TUniquePtr<FImplicitObject> FConvex::CopyWithScale(const FVec3& Scale) const
+	FImplicitObjectPtr FConvex::CopyGeometry() const
 	{
-		TSharedPtr<FConvex, ESPMode::ThreadSafe> ConvexCopy = MakeShared<FConvex, ESPMode::ThreadSafe>(FConvex(*this));
-		return  TUniquePtr<FImplicitObject>(new TImplicitObjectScaled<FConvex>(ConvexCopy, Scale));
+		// const_cast required as this object has an intrusive reference count that need to be mutable
+		return FImplicitObjectPtr(const_cast<FConvex*>(this));
+	}
+
+	FImplicitObjectPtr FConvex::CopyGeometryWithScale(const FVec3& Scale) const
+	{
+		// const_cast required as this object has an intrusive reference count that need to be mutable
+		return FImplicitObjectPtr(new TImplicitObjectScaled<FConvex>(const_cast<FConvex*>(this), Scale));
+	}
+
+	FImplicitObjectPtr FConvex::DeepCopyGeometry() const
+	{
+		return FImplicitObjectPtr(new FConvex(*this));
+	}
+
+	FImplicitObjectPtr FConvex::DeepCopyGeometryWithScale(const FVec3& Scale) const
+	{
+		return FImplicitObjectPtr(new TImplicitObjectScaled<FConvex>(new FConvex(*this), Scale));
 	}
 
 	bool FConvex::Raycast(const FVec3& StartPoint, const FVec3& Dir, const FReal Length, const FReal Thickness, FReal& OutTime, FVec3& OutPosition, FVec3& OutNormal, int32& OutFaceIndex) const
@@ -303,9 +319,11 @@ namespace Chaos
 	}
 
 	// Store the structure data with the convex. This is used by manifold generation, for example
-	void FConvex::CreateStructureData(TArray<TArray<int32>>&& PlaneVertexIndices)
+	DECLARE_CYCLE_STAT(TEXT("FConvex::CreateStructureData"), STAT_CreateConvexStructureData, STATGROUP_ChaosCollision);
+	void FConvex::CreateStructureData(TArray<TArray<int32>>&& PlaneVertexIndices, const bool bRegularDatas)
 	{
-		const bool bSuccess = StructureData.SetPlaneVertices(MoveTemp(PlaneVertexIndices), Vertices.Num());
+		SCOPE_CYCLE_COUNTER(STAT_CreateConvexStructureData);
+		const bool bSuccess = StructureData.SetPlaneVertices(MoveTemp(PlaneVertexIndices), Vertices.Num(), bRegularDatas);
 		if (!bSuccess || !StructureData.IsValid())
 		{
 			UE_LOG(LogChaos, Error, TEXT("Unable to create structure data for %s"), *ToStringFull());
@@ -379,8 +397,10 @@ namespace Chaos
 		*this = FConvex(NewPoints, 0.0f);
 	}
 
+	DECLARE_CYCLE_STAT(TEXT("FConvex::ComputeUnitMassInertiaTensorAndRotationOfMass"), STAT_ComputeConvexMassInertia, STATGROUP_ChaosCollision);
 	void FConvex::ComputeUnitMassInertiaTensorAndRotationOfMass(const FReal InVolume)
 	{
+		SCOPE_CYCLE_COUNTER(STAT_ComputeConvexMassInertia);
 		if (InVolume < UE_SMALL_NUMBER || !StructureData.IsValid())
 		{
 			UnitMassInertiaTensor = FVec3{1., 1., 1.};

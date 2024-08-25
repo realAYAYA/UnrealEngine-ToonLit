@@ -15,7 +15,6 @@ endif()
 
 project(unsync)
 
-option(UNSYNC_USE_TLS "Include TLS support for encrypted connections via libretls" ON)
 option(UNSYNC_USE_DEBUG_HEAP "Include support for debug memory allocator" ON)
 
 # Validate compiler
@@ -31,12 +30,20 @@ endif()
 # Add unsync code
 
 set(src
+	Private/UnsyncAuth.cpp
+	Private/UnsyncAuth.h
 	Private/UnsyncBuffer.cpp
 	Private/UnsyncBuffer.h
 	Private/UnsyncCmdDiff.cpp
 	Private/UnsyncCmdDiff.h
 	Private/UnsyncCmdHash.cpp
 	Private/UnsyncCmdHash.h
+	Private/UnsyncCmdLogin.cpp
+	Private/UnsyncCmdLogin.h
+	Private/UnsyncCmdMount.cpp
+	Private/UnsyncCmdMount.h
+	Private/UnsyncCmdPack.cpp
+	Private/UnsyncCmdPack.h
 	Private/UnsyncCmdPatch.cpp
 	Private/UnsyncCmdPatch.h
 	Private/UnsyncCmdPush.cpp
@@ -63,10 +70,14 @@ set(src
 	Private/UnsyncLog.cpp
 	Private/UnsyncLog.h
 	Private/UnsyncMain.cpp
+	Private/UnsyncManifest.cpp
+	Private/UnsyncManifest.h
 	Private/UnsyncMemory.cpp
 	Private/UnsyncMemory.h
 	Private/UnsyncMiniCb.cpp
 	Private/UnsyncMiniCb.h
+	Private/UnsyncMount.cpp
+	Private/UnsyncMount.h
 	Private/UnsyncPool.h
 	Private/UnsyncProgress.cpp
 	Private/UnsyncProgress.h
@@ -83,6 +94,8 @@ set(src
 	Private/UnsyncSerialization.h
 	Private/UnsyncSocket.cpp
 	Private/UnsyncSocket.h
+	Private/UnsyncTarget.cpp
+	Private/UnsyncTarget.h
 	Private/UnsyncTest.cpp
 	Private/UnsyncTest.h
 	Private/UnsyncThread.cpp
@@ -132,13 +145,9 @@ find_path(BLAKE3_INCLUDE_DIR blake3.h REQUIRED)
 target_include_directories(unsync PRIVATE ${BLAKE3_INCLUDE_DIR})
 target_link_libraries(unsync PRIVATE blake3)
 
-if (UNSYNC_USE_TLS)
-	find_path(LIBRESSL_INCLUDE_DIR tls.h)
-	target_include_directories(unsync PRIVATE ${LIBRESSL_INCLUDE_DIR})
-	target_link_libraries(unsync PRIVATE tls ssl crypto)
-	target_compile_definitions(unsync PRIVATE UNSYNC_USE_TLS=1)
-	message(STATUS "TLS support enabled")
-endif(UNSYNC_USE_TLS)
+find_path(LIBRESSL_INCLUDE_DIR tls.h)
+target_include_directories(unsync PRIVATE ${LIBRESSL_INCLUDE_DIR})
+target_link_libraries(unsync PRIVATE tls ssl crypto)
 
 if (UNSYNC_USE_DEBUG_HEAP)
 	target_compile_definitions(unsync PRIVATE UNSYNC_USE_DEBUG_HEAP=1)

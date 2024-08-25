@@ -26,6 +26,9 @@ public:
 	/** Rivermax capture specific API to provide stream options access */
 	UE::RivermaxCore::FRivermaxOutputStreamOptions GetOutputStreamOptions() const;
 
+	/** Returns information about last presented frame on the output stream */
+	void GetLastPresentedFrameInformation(UE::RivermaxCore::FPresentedFrameInfo& OutFrameInfo) const;
+
 public:
 
 	//~ Begin UMediaCapture interface
@@ -38,6 +41,7 @@ protected:
 	virtual void StopCaptureImpl(bool bAllowPendingFrameToBeProcess) override;
 	virtual bool ShouldCaptureRHIResource() const override;
 	virtual void OnFrameCaptured_RenderingThread(const FCaptureBaseData& InBaseData, TSharedPtr<FMediaCaptureUserData, ESPMode::ThreadSafe> InUserData, void* InBuffer, int32 Width, int32 Height, int32 BytesPerRow) override;
+	virtual void OnRHIResourceCaptured_RenderingThread(const FCaptureBaseData& InBaseData, TSharedPtr<FMediaCaptureUserData, ESPMode::ThreadSafe> InUserData, FBufferRHIRef InBuffer) override;
 	virtual void OnRHIResourceCaptured_AnyThread(const FCaptureBaseData& InBaseData, TSharedPtr<FMediaCaptureUserData, ESPMode::ThreadSafe> InUserData, FBufferRHIRef InBuffer) override;
 	virtual void OnFrameCaptured_AnyThread(const FCaptureBaseData& InBaseData, TSharedPtr<FMediaCaptureUserData, ESPMode::ThreadSafe> InUserData, const FMediaCaptureResourceData& InResourceData) override;
 	virtual bool SupportsAnyThreadCapture() const override
@@ -78,6 +82,12 @@ private:
 
 	/** Enqueues a RHI lambda to reserve a spot for the next frame to capture */
 	void AddFrameReservationPass(FRDGBuilder& GraphBuilder);
+
+	/** Common method called for non gpudirect route when a frame is captured, either from render thread or any thread  */
+	void OnFrameCapturedInternal_AnyThread(const FCaptureBaseData& InBaseData, TSharedPtr<FMediaCaptureUserData, ESPMode::ThreadSafe> InUserData, void* InBuffer, int32 Width, int32 Height, int32 BytesPerRow);
+
+	/** Common method called for gpudirect route when a frame is captured, either from render thread or any thread  */
+	void OnRHIResourceCapturedInternal_AnyThread(const FCaptureBaseData& InBaseData, TSharedPtr<FMediaCaptureUserData, ESPMode::ThreadSafe> InUserData, FBufferRHIRef InBuffer);
 private:
 
 	/** Instance of the rivermax stream opened for this capture */

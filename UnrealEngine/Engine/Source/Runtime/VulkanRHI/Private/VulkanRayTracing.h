@@ -79,6 +79,18 @@ public:
 
 	void SetLocalShaderParameters(EShaderFrequency Frequency, uint32 RecordIndex, uint32 OffsetWithinRecord, const void* InData, uint32 InDataSize);
 
+	void Commit(FVulkanCommandListContext& Context);
+
+	void AddUBRef(FRHIUniformBuffer* UB)
+	{
+		ReferencedUniformBuffers.AddUnique(UB);
+	}
+
+	TArrayView<TRefCountPtr<FRHIUniformBuffer>> GetUBRefs()
+	{
+		return ReferencedUniformBuffers;
+	}
+
 private:
 
 	struct FVulkanShaderTableAllocation
@@ -91,18 +103,26 @@ private:
 		uint32 HandleCount = 0;
 		bool bUseLocalRecord = false;
 
-		VkBuffer Buffer = VK_NULL_HANDLE;
-		VulkanRHI::FVulkanAllocation Allocation;
+		// Host memory copy
+		TArray<uint8> HostBuffer;
+
+		// GPU Local memory copy
+		VkBuffer LocalBuffer = VK_NULL_HANDLE;
+		VulkanRHI::FVulkanAllocation LocalAllocation;
 		VkStridedDeviceAddressRegionKHR Region;
-		uint8* MappedBufferMemory = nullptr;
+
+		bool bIsDirty = true;
 	};
 
 	FVulkanShaderTableAllocation& GetAlloc(EShaderFrequency Frequency);
+	static void ReleaseLocalBuffer(FVulkanDevice* Device, FVulkanShaderTableAllocation& Alloc);
 
 	FVulkanShaderTableAllocation Raygen;
 	FVulkanShaderTableAllocation Miss;
 	FVulkanShaderTableAllocation HitGroup;
 	FVulkanShaderTableAllocation Callable;
+
+	TArray<TRefCountPtr<FRHIUniformBuffer>> ReferencedUniformBuffers;
 
 	// Convenience
 	const uint32 HandleSize;
@@ -151,6 +171,11 @@ public:
 class FVulkanRayTracingScene : public FRHIRayTracingScene, public VulkanRHI::FDeviceChild
 {
 public:
+	// Ray tracing shader bindings can be processed in parallel.
+	// Each concurrent worker gets its own dedicated descriptor cache instance to avoid contention or locking.
+	// Scaling beyond 5 total threads does not yield any speedup in practice (RHI thread + 4 parallel workers).
+	static constexpr uint32 MaxBindingWorkers = 1; // :todo-jn:
+
 	FVulkanRayTracingScene(FRayTracingSceneInitializer2 Initializer, FVulkanDevice* InDevice);
 	~FVulkanRayTracingScene();
 

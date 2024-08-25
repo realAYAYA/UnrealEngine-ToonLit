@@ -24,6 +24,7 @@
 #include "NotifiesTrack.h"
 #include "PoseWatchTrack.h"
 #include "PropertiesTrack.h"
+#include "ExternalMorphTrack.h"
 #include "PropertyWatchManager.h"
 
 #if WITH_EDITOR
@@ -74,10 +75,9 @@ void FGameplayInsightsModule::StartupModule()
 	});
 
 #if WITH_EDITOR
-	// register rewind debugger view creators
-	static FAnimGraphSchematicViewCreator AnimGraphSchematicViewCreator;
-	IModularFeatures::Get().RegisterModularFeature(IRewindDebuggerViewCreator::ModularFeatureName, &AnimGraphSchematicViewCreator);
-	
+	// register rewind debugger track creators
+	static FAnimGraphSchematicTrackCreator AnimGraphSchematicTrackCreator;
+	IModularFeatures::Get().RegisterModularFeature(RewindDebugger::IRewindDebuggerTrackCreator::ModularFeatureName, &AnimGraphSchematicTrackCreator);
 	static RewindDebugger::FAnimationCurvesTrackCreator AnimationCurvesTrackCreator;
 	IModularFeatures::Get().RegisterModularFeature(RewindDebugger::IRewindDebuggerTrackCreator::ModularFeatureName, &AnimationCurvesTrackCreator);
 	static RewindDebugger::FInertializationsTrackCreator InertializationsTrackCreator;
@@ -92,6 +92,8 @@ void FGameplayInsightsModule::StartupModule()
 	IModularFeatures::Get().RegisterModularFeature(RewindDebugger::IRewindDebuggerTrackCreator::ModularFeatureName, &PoseWatchesTrackCreator);
 	static RewindDebugger::FPropertiesTrackCreator PropertyTrackCreator;
 	IModularFeatures::Get().RegisterModularFeature(RewindDebugger::IRewindDebuggerTrackCreator::ModularFeatureName, &PropertyTrackCreator);
+	static RewindDebugger::FExternalMorphSetGroupTrackCreator ExternalMorphSetGroupTrackCreator;
+	IModularFeatures::Get().RegisterModularFeature(RewindDebugger::IRewindDebuggerTrackCreator::ModularFeatureName, &ExternalMorphSetGroupTrackCreator);
 
 	FPropertyWatchManager::Initialize();
 	
@@ -432,23 +434,6 @@ void FGameplayInsightsModule::StartTrace()
 	
 	if (!bTraceStarted)
 	{
-		if (!FTraceAuxiliary::IsConnected())
-		{
-			// cpu tracing is enabled by default, but not connected.
-			// when not connected, disable all channels initially to avoid a whole bunch of extra cpu, memory, and disk overhead from processing all the extra default trace channels
-			////////////////////////////////////////////////////////////////////////////////
-			UE::Trace::EnumerateChannels([](const ANSICHAR* ChannelName, bool bEnabled, void*)
-				{
-					if (bEnabled)
-					{
-						FString ChannelNameFString(ChannelName);
-						UE::Trace::ToggleChannel(ChannelNameFString.GetCharArray().GetData(), false);
-					}
-				}
-				, nullptr);
-		}
-
-
 		bTraceStarted = FTraceAuxiliary::Start(
 			FTraceAuxiliary::EConnectionType::Network,
 			TEXT("127.0.0.1"),

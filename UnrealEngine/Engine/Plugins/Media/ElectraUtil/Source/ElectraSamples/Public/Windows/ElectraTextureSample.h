@@ -44,17 +44,18 @@ public:
 	}
 
 #if WITH_ENGINE
-	virtual FRHITexture* GetTexture() const override
-	{
-		return Texture;
-	}
+	virtual FRHITexture* GetTexture() const override;
 #endif //WITH_ENGINE
-
-	IMFSample* GetMFSample();
 
 	virtual IMediaTextureSampleConverter* GetMediaTextureSampleConverter() override;
 
+#if !UE_SERVER
+	virtual void ShutdownPoolable() override;
+#endif
+
 private:
+	virtual float GetSampleDataScale(bool b10Bit) const override;
+
 	virtual bool Convert(FTexture2DRHIRef & InDstTexture, const FConversionHints & Hints) override;
 	virtual uint32 GetConverterInfoFlags() const
 	{
@@ -65,17 +66,13 @@ private:
 	EMediaTextureSampleFormat SampleFormat;
 
 	/** Destination Texture resource (from Rendering device) */
-	FTexture2DRHIRef Texture;
+	mutable FTexture2DRHIRef Texture;
 
 	/** True if texture format could support sRGB conversion in HW */
 	bool bCanUseSRGB;
 
 	/** Output data from video decoder. Baseclass holds reference */
 	FVideoDecoderOutputPC* VideoDecoderOutputPC;
-
-	/** DX12 related resources */
-	TRefCountPtr<ID3D12GraphicsCommandList> D3DCmdList;
-	TRefCountPtr<ID3D12CommandAllocator> D3DCmdAllocator;
 };
 
 using FElectraTextureSamplePtr = TSharedPtr<FElectraTextureSample, ESPMode::ThreadSafe>;

@@ -5,8 +5,7 @@
 
 namespace mu
 {
-
-	void ImageSwizzle( Image* Result, const Ptr<const Image> Sources[], const uint8 Channels[] )
+	void ImageSwizzle(Image* Result, const Ptr<const Image> Sources[], const uint8 Channels[])
 	{
 		MUTABLE_CPUPROFILER_SCOPE(ImageSwizzle);
 
@@ -15,28 +14,18 @@ namespace mu
 			return;
 		}
 
-		// Very slow generic implementations
-        int32 PixelCount = Result->CalculatePixelCount();
-
 		EImageFormat Format = Result->GetFormat();
 
-        // Pixelcount should already match, but due to bugs it may not be the case. Try to detect it,
-        // but avoid crashing below:
-        uint16 numChannels = GetImageFormatData(Format).Channels;
-        for (uint16 c=0;c<numChannels; ++c)
-        {
-            if (Sources[c])
-            {
-                int32 SourcePixelCount = Sources[c]->CalculatePixelCount();
-                if (PixelCount> SourcePixelCount)
-                {
-                    // Something went wrong
-					PixelCount = SourcePixelCount;
-                }
-            }
-        }
+		// LODs may not match due to bugs, only precess the common avaliable lODs.
+		int32 NumLODs = Result->GetLODCount();
 
-		int NumDestChannels = 0;
+        uint16 NumChannels = GetImageFormatData(Format).Channels;
+		for (uint16 C = 0; C < NumChannels; ++C)
+		{
+			NumLODs = Sources[C] ? FMath::Min(NumLODs, Sources[C]->GetLODCount()) : NumLODs;
+		}
+
+		int32 NumDestChannels = 0;
 
 		switch (Format)
 		{
@@ -57,44 +46,46 @@ namespace mu
 			check(false);
 		}
 
-		for (int i = 0; i < NumDestChannels; ++i)
+		for (int32 Channel = 0; Channel < NumDestChannels; ++Channel)
 		{
-			uint8* pDestBuf = Result->GetData() + i;
+			const Image* Src = Sources[Channel].get();
+			
+			const int32 DestChannel = Format == EImageFormat::IF_BGRA_UBYTE && Channel < 3
+								    ? FMath::Abs(Channel - 2)
+									: Channel;
 
-			if (Format == EImageFormat::IF_BGRA_UBYTE)
-			{
-				if (i == 0)
-				{
-					pDestBuf = Result->GetData() + 2;
-				}
-				else if (i == 2)
-				{
-					pDestBuf = Result->GetData() + 0;
-				}
-			}
-
-			bool filled = false;
+			bool bFilled = false;
 
 			constexpr int32 NumBatchElems = 4096*2;
-			const int32 NumBatches = FMath::DivideAndRoundUp(PixelCount, NumBatchElems);
 
-			if (Sources[i])
+			if (Sources[Channel])
 			{
-				const uint8* pSourceBuf = Sources[i]->GetData() + Channels[i];
-
-				switch (Sources[i]->GetFormat())
+				EImageFormat SrcFormat = Sources[Channel]->GetFormat();
+				switch (SrcFormat)
 				{
 				case EImageFormat::IF_L_UBYTE:
-					if (Channels[i] < 1)
+				{
+					if (Channels[Channel] < 1)
 					{
-						auto ProcessBatch = [pDestBuf, pSourceBuf, NumDestChannels, PixelCount, NumBatchElems ](int32 BatchId)
-						{
-							const int32 BatchBegin = BatchId * NumBatchElems;
-							const int32 BatchEnd = FMath::Min(BatchBegin + NumBatchElems, PixelCount);
+						const int32 NumBatches = Src->DataStorage.GetNumBatchesLODRange(NumBatchElems, 1, 0, NumLODs);
+						check(NumBatches == Result->DataStorage.GetNumBatchesLODRange(NumBatchElems, NumDestChannels, 0, NumLODs));
+		
+						int32 SrcChannel = Channels[Channel];
 
-							for (int32 p = BatchBegin; p < BatchEnd; ++p)
+						auto ProcessBatch = [Result, Src, Sources, NumDestChannels, DestChannel, SrcChannel, NumBatchElems, NumLODs](int32 BatchId)
+						{
+							TArrayView<const uint8> SrcView = Src->DataStorage.GetBatchLODRange(BatchId, NumBatchElems, 1, 0, NumLODs);
+							TArrayView<uint8> ResultView = Result->DataStorage.GetBatchLODRange(BatchId, NumBatchElems, NumDestChannels, 0, NumLODs);
+
+							const int32 NumElems = SrcView.Num() / 1;
+							check(NumElems == ResultView.Num() / NumDestChannels);
+
+							uint8* DestBuf = ResultView.GetData() + DestChannel;
+							const uint8* SrcBuf = SrcView.GetData() + SrcChannel;
+
+							for (int32 I = 0; I < NumElems; ++I)
 							{
-								pDestBuf[p * NumDestChannels] = pSourceBuf[p];
+								DestBuf[I*NumDestChannels] = SrcBuf[I];
 							}
 						};
 
@@ -107,21 +98,33 @@ namespace mu
 							ParallelFor(NumBatches, ProcessBatch);
 						}
 
-						filled = true;
+						bFilled = true;
 					}
 					break;
-
+				}
 				case EImageFormat::IF_RGB_UBYTE:
-					if (Channels[i] < 3)
+				{
+					if (Channels[Channel] < 3)
 					{
-						auto ProcessBatch = [pDestBuf, pSourceBuf, NumDestChannels, PixelCount, NumBatchElems](int32 BatchId)
-						{
-							const int32 BatchBegin = BatchId * NumBatchElems;
-							const int32 BatchEnd = FMath::Min(BatchBegin + NumBatchElems, PixelCount);
+						const int32 NumBatches = Src->DataStorage.GetNumBatchesLODRange(NumBatchElems, 3, 0, NumLODs);
+						check(NumBatches == Result->DataStorage.GetNumBatchesLODRange(NumBatchElems, NumDestChannels, 0, NumLODs));
+		
+						const int32 SrcChannel = Channels[Channel];
 
-							for (int32 p = BatchBegin; p < BatchEnd; ++p)
+						auto ProcessBatch = [Result, Src, Sources, NumDestChannels, DestChannel, SrcChannel, NumBatchElems, NumLODs](int32 BatchId)
+						{
+							TArrayView<const uint8> SrcView = Src->DataStorage.GetBatchLODRange(BatchId, NumBatchElems, 3, 0, NumLODs);
+							TArrayView<uint8> ResultView = Result->DataStorage.GetBatchLODRange(BatchId, NumBatchElems, NumDestChannels, 0, NumLODs);
+
+							const int32 NumElems = SrcView.Num() / 3;
+							check(NumElems == ResultView.Num()/NumDestChannels);
+
+							uint8* DestBuf = ResultView.GetData() + DestChannel;
+							const uint8* SrcBuf = SrcView.GetData() + SrcChannel;
+							
+							for (int32 I = 0; I < NumElems; ++I)
 							{
-								pDestBuf[p * NumDestChannels] = pSourceBuf[p * 3];
+								DestBuf[I*NumDestChannels] = SrcBuf[I*3];
 							}
 						};
 
@@ -134,55 +137,36 @@ namespace mu
 							ParallelFor(NumBatches, ProcessBatch);
 						}
 
-						filled = true;
+						bFilled = true;
 					}
 					break;
-
+				}
 				case EImageFormat::IF_RGBA_UBYTE:
-					if (Channels[i] < 4)
-					{	
-						auto ProcessBatch = [pDestBuf, pSourceBuf, NumDestChannels, PixelCount, NumBatchElems](int32 BatchId)
-						{
-							const int32 BatchBegin = BatchId * NumBatchElems;
-							const int32 BatchEnd = FMath::Min(BatchBegin + NumBatchElems, PixelCount);
-
-							for (int32 p = BatchBegin; p < BatchEnd; ++p)
-							{
-								pDestBuf[p * NumDestChannels] = pSourceBuf[p * 4];
-							}
-						};
-
-						if (NumBatches == 1)
-						{
-							ProcessBatch(0);
-						}
-						else if (NumBatches > 1)
-						{
-							ParallelFor(NumBatches, ProcessBatch);
-						}
-
-						filled = true;
-					}
-					break;
-
 				case EImageFormat::IF_BGRA_UBYTE:
-					if (Channels[i] == 0)
+				{
+					if (Channels[Channel] < 4)
 					{
-						pSourceBuf = Sources[i]->GetData() + 2;
-					}
-					else if (Channels[i] == 2)
-					{
-						pSourceBuf = Sources[i]->GetData() + 0;
-					}
-					if (Channels[i] < 4)
-					{
-						auto ProcessBatch = [pDestBuf, pSourceBuf, NumDestChannels, PixelCount, NumBatchElems](int32 BatchId)
+						const int32 SrcChannel = SrcFormat == EImageFormat::IF_BGRA_UBYTE && Channels[Channel] < 3
+											   ? FMath::Abs(int32(Channels[Channel]) - 2)
+											   : Channels[Channel];
+
+						const int32 NumBatches = Src->DataStorage.GetNumBatchesLODRange(NumBatchElems, 4, 0, NumLODs);
+						check(NumBatches == Result->DataStorage.GetNumBatchesLODRange(NumBatchElems, NumDestChannels, 0, NumLODs));
+			
+						auto ProcessBatch = [Result, Src, Sources, NumDestChannels, DestChannel, SrcChannel, NumBatchElems, NumLODs](int32 BatchId)
 						{
-							const int32 BatchBegin = BatchId * NumBatchElems;
-							const int32 BatchEnd = FMath::Min(BatchBegin + NumBatchElems, PixelCount);
-							for (int32 p = BatchBegin; p < BatchEnd; ++p)
+							TArrayView<const uint8> SrcView = Src->DataStorage.GetBatchLODRange(BatchId, NumBatchElems, 4, 0, NumLODs);  
+							TArrayView<uint8> ResultView = Result->DataStorage.GetBatchLODRange(BatchId, NumBatchElems, NumDestChannels, 0, NumLODs);  
+
+							const int32 NumElems = SrcView.Num() / 4;
+							check(NumElems == ResultView.Num()/NumDestChannels);
+
+							uint8* DestBuf = ResultView.GetData() + DestChannel;
+							const uint8* SrcBuf = SrcView.GetData() + SrcChannel;
+							
+							for (int32 I = 0; I < NumElems; ++I)
 							{
-								pDestBuf[p * NumDestChannels] = pSourceBuf[p * 4];
+								DestBuf[I*NumDestChannels] = SrcBuf[I*4];
 							}
 						};
 
@@ -195,25 +179,34 @@ namespace mu
 							ParallelFor(NumBatches, ProcessBatch);
 						}
 
-						filled = true;
+						bFilled = true;
 					}
 					break;
-
+				}
 				default:
+				{
 					check(false);
+				}
 				}
 			}
 
-			if (!filled)
+			if (!bFilled)
 			{
-				// Source not set. Clear to 0
-				auto ProcessBatch = [pDestBuf, NumDestChannels, PixelCount, NumBatchElems](int32 BatchId)
+				const int32 NumBatches = Result->DataStorage.GetNumBatchesLODRange(NumBatchElems, NumDestChannels, 0, NumLODs);
+
+				// Alpha is expected to be filled with 1.
+				const uint8 FillValue = DestChannel < 3 ? 0 : 255;
+
+				auto ProcessBatch = [Result, NumDestChannels, NumBatchElems, NumLODs, DestChannel, FillValue](int32 BatchId)
 				{
-					const int32 BatchBegin = BatchId * NumBatchElems;
-					const int32 BatchEnd = FMath::Min(BatchBegin + NumBatchElems, PixelCount);
-					for (int32 p = BatchBegin; p < BatchEnd; ++p)
+					TArrayView<uint8> ResultView = Result->DataStorage.GetBatchLODRange(BatchId, NumBatchElems, NumDestChannels, 0, NumLODs);
+					int32 NumElems = ResultView.Num() / NumDestChannels;
+
+					uint8* DestBuf = ResultView.GetData() + DestChannel;
+
+					for (int32 I = 0; I < NumElems; ++I)
 					{
-						pDestBuf[p * NumDestChannels] = 0;
+						DestBuf[I * NumDestChannels] = FillValue;
 					}
 				};
 
@@ -228,7 +221,6 @@ namespace mu
 			}
 		}
 	}
-
 
 	Ptr<Image> FImageOperator::ImageSwizzle( EImageFormat Format, const Ptr<const Image> Sources[], const uint8 Channels[] )
 	{
@@ -245,6 +237,5 @@ namespace mu
 
 		return Dest;
 	}
-
 
 }

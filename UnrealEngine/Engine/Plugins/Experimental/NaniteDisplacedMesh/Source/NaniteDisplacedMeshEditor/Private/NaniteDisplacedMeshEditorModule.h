@@ -12,6 +12,8 @@ class FString;
 
 struct FNaniteDisplacedMeshParams;
 
+enum class ELinkDisplacedMeshAssetSetting : uint8;
+
 class FNaniteDisplacedMeshEditorModule : public IModuleInterface
 {
 public:
@@ -24,7 +26,7 @@ public:
 	UPackage* GetNaniteDisplacementMeshTransientPackage() const;
 
 	// Invoked when a nanite displaced mesh is linked
-	DECLARE_DELEGATE_RetVal_TwoParams(UNaniteDisplacedMesh*, FOnLinkDisplacedMesh, const FNaniteDisplacedMeshParams& /*InParameters*/, const FString& /*DisplacedMeshFolder*/);
+	DECLARE_DELEGATE_RetVal_ThreeParams(UNaniteDisplacedMesh*, FOnLinkDisplacedMesh, const FNaniteDisplacedMeshParams& /*InParameters*/, const FString& /*DisplacedMeshFolder*/, const ELinkDisplacedMeshAssetSetting& /*LinkDisplacedMeshAssetSetting*/);
 	FOnLinkDisplacedMesh OnLinkDisplacedMeshOverride;
 
 private:

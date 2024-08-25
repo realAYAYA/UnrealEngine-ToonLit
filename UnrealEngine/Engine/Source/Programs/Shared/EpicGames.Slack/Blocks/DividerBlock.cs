@@ -1,7 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System.Collections.Generic;
-
 namespace EpicGames.Slack.Blocks
 {
 	/// <summary>

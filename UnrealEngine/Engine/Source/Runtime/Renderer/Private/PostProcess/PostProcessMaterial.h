@@ -4,8 +4,9 @@
 
 #include "ScreenPass.h"
 #include "OverridePassSequence.h"
-#include "Strata/Strata.h"
+#include "Substrate/Substrate.h"
 
+#include "NeuralPostProcess.h"
 #include "PostProcess/PostProcessMaterialInputs.h"
 
 class UMaterialInterface;
@@ -17,9 +18,10 @@ FPostProcessMaterialChain GetPostProcessMaterialChain(const FViewInfo& View, EBl
 BEGIN_SHADER_PARAMETER_STRUCT(FPostProcessMaterialParameters, )
 	SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
 	SHADER_PARAMETER_STRUCT_INCLUDE(FSceneTextureShaderParameters, SceneTextures)
-	SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+	SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
+	SHADER_PARAMETER_STRUCT_INCLUDE(FNeuralPostProcessShaderParameters, NeuralPostProcessParameters)
 	SHADER_PARAMETER_STRUCT(FScreenPassTextureViewportParameters, PostProcessOutput)
-	SHADER_PARAMETER_STRUCT_ARRAY(FScreenPassTextureInput, PostProcessInput, [kPostProcessMaterialInputCountMax])
+	SHADER_PARAMETER_STRUCT_ARRAY(FScreenPassTextureSliceInput, PostProcessInput, [kPostProcessMaterialInputCountMax])
 	SHADER_PARAMETER_STRUCT_ARRAY(FScreenPassTextureInput, PathTracingPostProcessInput, [kPathTracingPostProcessMaterialInputCountMax])
 	SHADER_PARAMETER_SAMPLER(SamplerState, PostProcessInput_BilinearSampler)
 	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float4>, EyeAdaptationBuffer)
@@ -47,7 +49,8 @@ FScreenPassTexture AddPostProcessMaterialChain(
 	FRDGBuilder& GraphBuilder,
 	const FViewInfo& View,
 	const FPostProcessMaterialInputs& Inputs,
-	const FPostProcessMaterialChain& MaterialChain);
+	const FPostProcessMaterialChain& MaterialChain,
+	EPostProcessMaterialInput MaterialInput = EPostProcessMaterialInput::SceneColor);
 
 struct FHighResolutionScreenshotMaskInputs
 {

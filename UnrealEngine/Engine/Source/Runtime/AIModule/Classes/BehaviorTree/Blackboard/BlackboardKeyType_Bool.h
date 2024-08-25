@@ -22,7 +22,11 @@ class UBlackboardKeyType_Bool : public UBlackboardKeyType
 	AIMODULE_API virtual EBlackboardCompare::Type CompareValues(const UBlackboardComponent& OwnerComp, const uint8* MemoryBlock,
 		const UBlackboardKeyType* OtherKeyOb, const uint8* OtherMemoryBlock) const override;
 
+	UPROPERTY(Category = Blackboard, EditDefaultsOnly)
+	bool bDefaultValue = InvalidValue;
+
 protected:
+	AIMODULE_API virtual void InitializeMemory(UBlackboardComponent& OwnerComp, uint8* MemoryBlock) override;
 	AIMODULE_API virtual FString DescribeValue(const UBlackboardComponent& OwnerComp, const uint8* RawData) const override;
 	AIMODULE_API virtual bool TestBasicOperation(const UBlackboardComponent& OwnerComp, const uint8* MemoryBlock, EBasicKeyOperation::Type Op) const override;
 };

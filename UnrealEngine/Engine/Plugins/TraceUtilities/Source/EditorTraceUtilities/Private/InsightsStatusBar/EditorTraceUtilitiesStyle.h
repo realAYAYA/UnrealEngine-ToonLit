@@ -48,6 +48,12 @@ public:
 
 		Set("Icons.Screenshot.Menu", new CORE_IMAGE_BRUSH_SVG("../Editor/Slate/Starship/Common/HighResolutionScreenshot", Icon16x16));
 		Set("Icons.Bookmark.Menu", new CORE_IMAGE_BRUSH_SVG("../Editor/Slate/Starship/Common/Bookmarks", Icon16x16));
+		
+		Set("Icons.TraceServerStart", new CORE_IMAGE_BRUSH_SVG("Starship/Common/play", Icon16x16, FStyleColors::AccentGreen));
+		Set("Icons.TraceServerStop", new CORE_IMAGE_BRUSH_SVG("Starship/Common/close", Icon16x16, FStyleColors::AccentRed));
+
+		Set("Icons.PauseTrace.Menu", new IMAGE_BRUSH_SVG("Pause_16", Icon16x16));
+		Set("Icons.ResumeTrace.Menu", new CORE_IMAGE_BRUSH_SVG("Starship/Common/play", Icon16x16));
 
 		FSlateStyleRegistry::RegisterSlateStyle(*this);
 	}

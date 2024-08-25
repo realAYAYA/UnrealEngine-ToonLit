@@ -15,24 +15,21 @@ namespace mu
     class NodeColourVariation::Private : public Node::Private
     {
     public:
-        MUTABLE_DEFINE_CONST_VISITABLE()
-
-    public:
         Private() {}
 
-        static NODE_TYPE s_type;
+        static FNodeType s_type;
 
         NodeColourPtr m_defaultColour;
 
-        struct VARIATION
+        struct FVariation
         {
             NodeColourPtr m_colour;
-            string m_tag;
+			FString m_tag;
 
             //!
             void Serialise( OutputArchive& arch ) const
             {
-                uint32_t ver = 1;
+                uint32 ver = 2;
                 arch << ver;
 
                 arch << m_tag;
@@ -41,16 +38,25 @@ namespace mu
 
             void Unserialise( InputArchive& arch )
             {
-                uint32_t ver = 0;
+                uint32 ver = 0;
                 arch >> ver;
-                check( ver == 1 );
+				check(ver >= 1 && ver <= 2);
 
-                arch >> m_tag;
-                arch >> m_colour;
+				if (ver <= 1)
+				{
+					std::string Temp;
+					arch >> Temp;
+					m_tag = Temp.c_str();
+				}
+				else
+				{
+					arch >> m_tag;
+				}
+				arch >> m_colour;
             }
         };
 
-        TArray<VARIATION> m_variations;
+        TArray<FVariation> m_variations;
 
         //!
         void Serialise( OutputArchive& arch ) const

@@ -23,7 +23,7 @@ TEST_CASE("ChaosUserDataPT", "[integration]")
 	FTestUserData* TestUserData = Solver->CreateAndRegisterSimCallbackObject_External<FTestUserData>();
 
 	// Make a box geometry
-	auto BoxGeom = TSharedPtr<Chaos::FImplicitObject, ESPMode::ThreadSafe>(new Chaos::TBox<Chaos::FReal, 3>(Chaos::FVec3(-1, -1, -1), Chaos::FVec3(1, 1, 1)));
+	auto BoxGeom = Chaos::FImplicitObjectPtr(new Chaos::TBox<Chaos::FReal, 3>(Chaos::FVec3(-1, -1, -1), Chaos::FVec3(1, 1, 1)));
 
 	// Add some proxies to the solver
 	Chaos::FSingleParticlePhysicsProxy* Proxy0 = Chaos::FSingleParticlePhysicsProxy::Create(Chaos::FGeometryParticle::CreateParticle());

@@ -41,10 +41,9 @@
 #include "MovieSceneTrack.h"
 #include "ScopedTransaction.h"
 #include "Sections/MovieSceneCameraShakeSection.h"
-#include "SequencerUtilities.h"
+#include "MVVM/Views/ViewUtilities.h"
 #include "SlotBase.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Tracks/MovieSceneCameraShakeTrack.h"
 #include "Types/SlateEnums.h"
 #include "Types/SlateStructs.h"
@@ -207,16 +206,7 @@ void FCameraShakeTrackEditor::AddCameraShakeSubMenu(FMenuBuilder& MenuBuilder, T
 
 TSharedPtr<SWidget> FCameraShakeTrackEditor::BuildOutlinerEditWidget(const FGuid& ObjectBinding, UMovieSceneTrack* Track, const FBuildEditWidgetParams& Params)
 {
-	// Create a container edit box
-	return SNew(SHorizontalBox)
-
-	// Add the camera shake combo box
-	+ SHorizontalBox::Slot()
-	.AutoWidth()
-	.VAlign(VAlign_Center)
-	[
-		FSequencerUtilities::MakeAddButton(LOCTEXT("AddCameraShake", "Camera Shake"), FOnGetContent::CreateSP(this, &FCameraShakeTrackEditor::BuildCameraShakeSubMenu, ObjectBinding), Params.NodeIsHovered, GetSequencer())
-	];
+	return UE::Sequencer::MakeAddButton(LOCTEXT("AddCameraShake", "Camera Shake"), FOnGetContent::CreateSP(this, &FCameraShakeTrackEditor::BuildCameraShakeSubMenu, ObjectBinding), Params.ViewModel);
 }
 
 

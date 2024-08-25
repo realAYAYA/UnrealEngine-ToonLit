@@ -374,7 +374,6 @@ public:
 			return (MCells[0] * MCells[1] * MCells[2]);
 		else
 			return ((MCells[0] + 1) * (MCells[1] + 1) * (MCells[2] + 1));
-		return -1;
 	}
 
 	int32 Loc2GlobIndex(const int32 IndexIn, const TVector<int32, 3>& LocalIndexIn) const;

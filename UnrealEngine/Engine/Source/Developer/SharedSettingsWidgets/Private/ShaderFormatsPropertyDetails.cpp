@@ -85,6 +85,8 @@ void FShaderFormatsPropertyDetails::CreateTargetShaderFormatsPropertyView(
 			];
 		}
 	}
+    
+    ShaderFormatsPropertyHandle->GetProperty()->SetMetaData("ConfigRestartRequired", "true");
 }
 
 

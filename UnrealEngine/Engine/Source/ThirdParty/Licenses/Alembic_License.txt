@@ -1,3 +1,8 @@
+================================================================================
+Software Name: Alembic
+Version: 1.8.6
+URL: https://github.com/alembic/alembic/blob/1.8.6/LICENSE.txt
+================================================================================
 TM & © 2009-2015 Lucasfilm Entertainment Company Ltd. or Lucasfilm Ltd.
 All rights reserved.
 

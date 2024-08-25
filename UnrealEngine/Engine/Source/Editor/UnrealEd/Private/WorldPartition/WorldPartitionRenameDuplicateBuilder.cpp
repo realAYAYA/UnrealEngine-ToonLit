@@ -4,7 +4,7 @@
 #include "WorldPartition/WorldPartitionStreamingGeneration.h"
 #include "WorldPartition/WorldPartition.h"
 #include "WorldPartition/WorldPartitionHelpers.h"
-#include "WorldPartition/WorldPartitionActorDescView.h"
+#include "WorldPartition/WorldPartitionActorDescInstance.h"
 #include "ReferenceCluster.h"
 #include "PackageSourceControlHelper.h"
 #include "SourceControlHelpers.h"
@@ -19,6 +19,8 @@
 #include "UObject/ObjectRedirector.h"
 #include "ProfilingDebugging/ScopedTimers.h"
 #include "HAL/FileManager.h"
+#include "WorldPartition/ActorDescContainerInstanceCollection.h"
+#include "WorldPartition/ActorDescContainerInstance.h"
 #include "WorldPartition/ActorDescContainer.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogWorldPartitionRenameDuplicateBuilder, All, All);
@@ -146,14 +148,14 @@ bool UWorldPartitionRenameDuplicateBuilder::RunInternal(UWorld* World, const FCe
 
 	if (WorldPartition->GetActorDescContainerCount() > 1)
 	{
-		UE_LOG(LogWorldPartitionRenameDuplicateBuilder, Warning, TEXT("Actors coming from containers outside of %s will not be duplicated"), *WorldPartition->GetActorDescContainer()->GetExternalActorPath());
+		UE_LOG(LogWorldPartitionRenameDuplicateBuilder, Warning, TEXT("Actors coming from containers outside of %s will not be duplicated"), *WorldPartition->GetActorDescContainerInstance()->GetExternalActorPath());
 	}
 
 	// Build actor clusters
 	TArray<TPair<FGuid, TArray<FGuid>>> ActorsWithRefs;
-	for (FActorDescContainerCollection::TIterator<> ActorDescIterator(WorldPartition); ActorDescIterator; ++ActorDescIterator)
+	for (FActorDescContainerInstanceCollection::TIterator<> Iterator(WorldPartition); Iterator; ++Iterator)
 	{
-		ActorsWithRefs.Emplace(ActorDescIterator->GetGuid(), ActorDescIterator->GetReferences());
+		ActorsWithRefs.Emplace(Iterator->GetGuid(), Iterator->GetReferences());
 	}
 
 	TArray<TArray<FGuid>> ActorClusters = GenerateObjectsClusters(ActorsWithRefs);
@@ -259,7 +261,7 @@ bool UWorldPartitionRenameDuplicateBuilder::RunInternal(UWorld* World, const FCe
 				
 				for (const FWorldPartitionReference& ActorReference : ActorReferences)
 				{
-					AActor* Actor = ActorReference->GetActor();
+					AActor* Actor = ActorReference.GetActor();
 					UPackage* PreviousActorPackage = Actor->GetExternalPackage();
 
 					// Rename Actor first so new package gets created
@@ -276,7 +278,7 @@ bool UWorldPartitionRenameDuplicateBuilder::RunInternal(UWorld* World, const FCe
 					}, false);
 
 					// Move dependant objects into the new actor package
-					for (UObject* DependantObject : DependantObjects)
+					for (UObject* DependantObject : DependantObjects) //-V1078
 					{
 						DependantObject->Rename(nullptr, Actor->GetExternalPackage(), REN_NonTransactional | REN_DontCreateRedirectors | REN_ForceNoResetLoaders | REN_DoNotDirty);
 					}
@@ -311,7 +313,7 @@ bool UWorldPartitionRenameDuplicateBuilder::RunInternal(UWorld* World, const FCe
 				// This is to prevent failures when some non-serialized references get taken by loaded actors this makes sure those references will resolve. (example that no longer exists: Landscape SplineHandles)
 				for (FWorldPartitionReference ActorReference : ActorReferences)
 				{
-					AActor* Actor = ActorReference->GetActor();
+					AActor* Actor = ActorReference.GetActor();
 					UPackage* NewActorPackage = Actor->GetExternalPackage();
 					check(Actor);
 					Actor->Rename(nullptr, World->PersistentLevel, REN_NonTransactional | REN_DontCreateRedirectors | REN_ForceNoResetLoaders | REN_DoNotDirty);
@@ -327,7 +329,7 @@ bool UWorldPartitionRenameDuplicateBuilder::RunInternal(UWorld* World, const FCe
 					}, false);
 
 					// Move back dependant objects into the previous actor package
-					for (UObject* DependantObject : DependantObjects)
+					for (UObject* DependantObject : DependantObjects) //-V1078
 					{
 						DependantObject->Rename(nullptr, Actor->GetExternalPackage(), REN_NonTransactional | REN_DontCreateRedirectors | REN_ForceNoResetLoaders | REN_DoNotDirty);
 					}
@@ -347,8 +349,8 @@ bool UWorldPartitionRenameDuplicateBuilder::RunInternal(UWorld* World, const FCe
 					if (!DuplicatedActorGuids.Contains(ActorGuid))
 					{
 						FWorldPartitionReference ActorReference(WorldPartition, ActorGuid);
-						check(*ActorReference);
-						AActor* Actor = ActorReference->GetActor();
+						check(ActorReference.IsValid());
+						AActor* Actor = ActorReference.GetActor();
 						check(Actor);
 						ActorReferences.Add(ActorReference);
 					}
@@ -356,10 +358,10 @@ bool UWorldPartitionRenameDuplicateBuilder::RunInternal(UWorld* World, const FCe
 					// If we are renaming add package to delete
 					if (bRename)
 					{
-						const FWorldPartitionActorDesc* ActorDesc = WorldPartition->GetActorDesc(ActorGuid);
-						check(ActorDesc);
+						const FWorldPartitionActorDescInstance* ActorDescInstance = WorldPartition->GetActorDescInstance(ActorGuid);
+						check(ActorDescInstance);
 
-						PackagesToDelete.Add(ActorDesc->GetActorPackage().ToString());
+						PackagesToDelete.Add(ActorDescInstance->GetActorPackage().ToString());
 					}
 				}
 						
@@ -393,29 +395,29 @@ bool UWorldPartitionRenameDuplicateBuilder::RunInternal(UWorld* World, const FCe
 		{
 			// Validate results
 			UE_SCOPED_TIMER(TEXT("Validating actors"), LogWorldPartitionRenameDuplicateBuilder, Display);
-			for (FActorDescContainerCollection::TConstIterator<> ActorDescIterator(WorldPartition); ActorDescIterator; ++ActorDescIterator)
+			for (FActorDescContainerInstanceCollection::TConstIterator<> Iterator(WorldPartition); Iterator; ++Iterator)
 			{
-				const FWorldPartitionActorDesc* SourceActorDesc = *ActorDescIterator;
-				FGuid* DuplicatedGuid = DuplicatedActorGuids.Find(SourceActorDesc->GetGuid());
-				const FWorldPartitionActorDesc* NewActorDesc = NewWorld->GetWorldPartition()->GetActorDescContainer()->GetActorDesc(DuplicatedGuid ? *DuplicatedGuid : SourceActorDesc->GetGuid());
-				if (!NewActorDesc)
+				const FWorldPartitionActorDescInstance* SourceActorDescInstance = *Iterator;
+				FGuid* DuplicatedGuid = DuplicatedActorGuids.Find(SourceActorDescInstance->GetGuid());
+				const FWorldPartitionActorDescInstance* NewActorDescInstance = NewWorld->GetWorldPartition()->GetActorDescInstance(DuplicatedGuid ? *DuplicatedGuid : SourceActorDescInstance->GetGuid());
+				if (!NewActorDescInstance)
 				{
-					UE_LOG(LogWorldPartitionRenameDuplicateBuilder, Warning, TEXT("Failed to find source actor for Actor: %s"), *SourceActorDesc->GetActorSoftPath().ToString());
+					UE_LOG(LogWorldPartitionRenameDuplicateBuilder, Warning, TEXT("Failed to find source actor for Actor: %s"), *SourceActorDescInstance->GetActorSoftPath().ToString());
 				}
 				else
 				{
-					if (NewActorDesc->GetReferences().Num() != SourceActorDesc->GetReferences().Num())
+					if (NewActorDescInstance->GetReferences().Num() != SourceActorDescInstance->GetReferences().Num())
 					{
-						UE_LOG(LogWorldPartitionRenameDuplicateBuilder, Warning, TEXT("Actor: %s and Source Actor: %s have mismatching reference count"), *NewActorDesc->GetActorSoftPath().ToString(), *SourceActorDesc->GetActorSoftPath().ToString());
+						UE_LOG(LogWorldPartitionRenameDuplicateBuilder, Warning, TEXT("Actor: %s and Source Actor: %s have mismatching reference count"), *NewActorDescInstance->GetActorSoftPath().ToString(), *SourceActorDescInstance->GetActorSoftPath().ToString());
 					}
 					else
 					{
-						for (const FGuid& ReferenceGuid : SourceActorDesc->GetReferences())
+						for (const FGuid& ReferenceGuid : SourceActorDescInstance->GetReferences())
 						{
 							FGuid* DuplicateReferenceGuid = DuplicatedActorGuids.Find(ReferenceGuid);
-							if (!NewActorDesc->GetReferences().Contains(DuplicateReferenceGuid ? *DuplicateReferenceGuid : ReferenceGuid))
+							if (!NewActorDescInstance->GetReferences().Contains(DuplicateReferenceGuid ? *DuplicateReferenceGuid : ReferenceGuid))
 							{
-								UE_LOG(LogWorldPartitionRenameDuplicateBuilder, Warning, TEXT("Actor: %s and Source Actor: %s have mismatching reference"), *NewActorDesc->GetActorSoftPath().ToString(), *SourceActorDesc->GetActorSoftPath().ToString());
+								UE_LOG(LogWorldPartitionRenameDuplicateBuilder, Warning, TEXT("Actor: %s and Source Actor: %s have mismatching reference"), *NewActorDescInstance->GetActorSoftPath().ToString(), *SourceActorDescInstance->GetActorSoftPath().ToString());
 							}
 						}
 					}

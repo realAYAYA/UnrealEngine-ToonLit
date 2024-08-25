@@ -73,8 +73,15 @@ namespace Chaos
 		*/
 		virtual void UnprepareTick() = 0;
 
+		// This is called when a particle is destroyed. The constraint should be disabled and the particle in the constraint set to null
 		// @todo(chaos): remove the set
 		virtual void DisconnectConstraints(const TSet<TGeometryParticleHandle<FReal, 3>*>&) {}
+
+		// This is called to notify the constraint container that a particle has been disabled
+		virtual void OnDisableParticle(FGeometryParticleHandle* DisabledParticle);
+
+		// This is called to notify the constraint container that a particle has been disabled
+		virtual void OnEnableParticle(FGeometryParticleHandle* EnabledParticle);
 
 		/**
 		* Create a constraint solver for an Evolution without Graph support (RBAN evolution).

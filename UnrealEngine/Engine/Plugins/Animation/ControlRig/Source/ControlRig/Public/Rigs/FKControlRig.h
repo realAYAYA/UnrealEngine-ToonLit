@@ -44,6 +44,10 @@ public:
 
 	// BEGIN ControlRig
 	virtual void Initialize(bool bInitRigUnits = true) override;
+	virtual void InitializeVMs(bool bRequestInit = true) override { URigVMHost::Initialize(bRequestInit); }
+	virtual bool InitializeVMs(const FName& InEventName) override { return URigVMHost::InitializeVM(InEventName); }
+	virtual void InitializeVMsFromCDO() override { URigVMHost::InitializeFromCDO(); }
+	virtual void RequestInitVMs() override { URigVMHost::RequestInit(); }
 	virtual bool Execute_Internal(const FName& InEventName) override;
 	virtual void SetBoneInitialTransformsFromSkeletalMeshComponent(USkeletalMeshComponent* InSkelMeshComp, bool bUseAnimInstance = false) override;
 	// END ControlRig
@@ -61,7 +65,7 @@ public:
 	void SetApplyMode(EControlRigFKRigExecuteMode InMode);
 	void ToggleApplyMode();
 	bool CanToggleApplyMode() const { return true; }
-	bool IsApplyModeAdditive() const { return ApplyMode == EControlRigFKRigExecuteMode::Additive; }
+	bool IsAdditive() const override { return ApplyMode == EControlRigFKRigExecuteMode::Additive; }
 	EControlRigFKRigExecuteMode GetApplyMode() const { return ApplyMode; }
 
 	// Ensures that controls mask is updated according to contained ControlRig (control) elements

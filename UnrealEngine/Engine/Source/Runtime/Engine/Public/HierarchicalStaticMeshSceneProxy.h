@@ -67,7 +67,7 @@ public:
 
 	// FPrimitiveSceneProxy interface.
 	
-	ENGINE_API virtual void CreateRenderThreadResources() override;
+	ENGINE_API virtual void CreateRenderThreadResources(FRHICommandListBase& RHICmdList) override;
 	
 	ENGINE_API virtual FPrimitiveViewRelevance GetViewRelevance(const FSceneView* View) const override;
 
@@ -83,7 +83,9 @@ public:
 	ENGINE_API virtual const TArray<FBoxSphereBounds>* GetOcclusionQueries(const FSceneView* View) const override;
 	
 	ENGINE_API virtual void AcceptOcclusionResults(const FSceneView* View, TArray<bool>* Results, int32 ResultsStart, int32 NumResults) override;
-	
+
+	ENGINE_API virtual bool AllowInstanceCullingOcclusionQueries() const override { return false; }
+
 	virtual bool HasSubprimitiveOcclusionQueries() const override
 	{
 		return FirstOcclusionNode > 0;
@@ -91,7 +93,7 @@ public:
 
 	ENGINE_API virtual void DrawStaticElements(FStaticPrimitiveDrawInterface* PDI) override;
 
-	ENGINE_API virtual void ApplyWorldOffset(FVector InOffset) override;
+	ENGINE_API virtual void ApplyWorldOffset(FRHICommandListBase& RHICmdList, FVector InOffset) override;
 
 	ENGINE_API void FillDynamicMeshElements(const FSceneView* View, FMeshElementCollector& Collector, const FFoliageElementParams& ElementParams, const FFoliageRenderInstanceParams& Instances) const;
 

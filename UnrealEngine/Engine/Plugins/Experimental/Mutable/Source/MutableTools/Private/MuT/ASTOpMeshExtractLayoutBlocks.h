@@ -10,24 +10,24 @@
 
 namespace mu
 {
-struct FProgram;
+	struct FProgram;
 
 
 	//---------------------------------------------------------------------------------------------
 	//! Variable sized mesh block extract operation.
 	//---------------------------------------------------------------------------------------------
-	class ASTOpMeshExtractLayoutBlocks : public ASTOp
+	class ASTOpMeshExtractLayoutBlocks final : public ASTOp
 	{
 	public:
 
-		//! Source mesh to extract block from.
-		ASTChild source;
+		/** Source mesh to extract block from. */
+		ASTChild Source;
 
-		//! Layout to use to select the blocks.
-		uint16 layout = 0;
+		/** Layout to use to select the blocks. */
+		uint16 Layout = 0;
 
-		//! Blocks
-		TArray<uint32> blocks;
+		/** Blocks to include in the resulting mesh. */
+		TArray<uint32> Blocks;
 
 	public:
 
@@ -43,6 +43,7 @@ struct FProgram;
 		Ptr<ASTOp> Clone(MapChildFuncRef mapChild) const override;
 		void Assert() override;
 		void Link(FProgram& program, FLinkerOptions* Options) override;
+		mu::Ptr<ASTOp> OptimiseSink(const FModelOptimizationOptions&, FOptimizeSinkContext&) const;
 
 	};
 

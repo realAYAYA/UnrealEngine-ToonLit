@@ -217,7 +217,7 @@ protected:
 	FDiffPanel& GetDiffPanelForNode(UEdGraphNode& Node);
 
 	/** Event handler that updates the graph view when user selects a new graph */
-	void HandleGraphChanged( const FString& GraphPath );
+	void HandleGraphChanged(FGraphToDiff* Diff);
 	
 	/** Function used to generate the list of differences and the widgets needed to calculate that list */
 	void GenerateDifferencesList();
@@ -299,6 +299,18 @@ protected:
 	TWeakPtr<SWindow> WeakParentWindow;
 
 	FDelegateHandle AssetEditorCloseDelegate;
+
+	/** To make diffing more accurate and friendly, UBlueprint::CategorySorting gets modified. this will revert to the
+	 *  old version when the window closes */
+	class FScopedCategorySortChange
+	{
+	public:
+		~FScopedCategorySortChange();
+		void SetBlueprint(UBlueprint* Blueprint);
+	private:
+		UBlueprint* Blueprint = nullptr;
+		TArray<FName> Backup = {};
+	} ScopedCategorySortChange;
 };
 
 

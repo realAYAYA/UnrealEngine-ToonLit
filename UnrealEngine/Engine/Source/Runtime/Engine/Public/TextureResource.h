@@ -362,6 +362,9 @@ public:
 	 */
 	ENGINE_API static bool IsSupportedFormat( EPixelFormat Format );
 
+	// FRenderTarget implementation
+	virtual const FTextureRHIRef& GetShaderResourceTexture() const override;
+
 	// FTextureRenderTargetResource interface
 	
 	virtual class FTextureRenderTarget2DResource* GetTextureRenderTarget2DResource() { return nullptr; }
@@ -371,17 +374,20 @@ public:
 
 	virtual void ClampSize(int32 SizeX,int32 SizeY) {}
 
-	// FRenderTarget interface.
-	virtual uint32 GetSizeX() const = 0;
-	virtual uint32 GetSizeY() const = 0;
-	virtual FIntPoint GetSizeXY() const = 0;
+	// GetSizeX/GetSizeY are from "FTexture" interface.
+	//   the FTexture implementations return zero; force them to be implemented:
+	virtual uint32 GetSizeX() const override = 0;
+	virtual uint32 GetSizeY() const override = 0;
+	// also GetSizeZ()
+	// GetSizeXY from "FRenderTarget"
+	//virtual FIntPoint GetSizeXY() const override = 0;
 
 	/** 
 	 * Render target resource should be sampled in linear color space
 	 *
 	 * @return display gamma expected for rendering to this render target 
 	 */
-	virtual float GetDisplayGamma() const;
+	virtual float GetDisplayGamma() const override;
 
 	virtual FRHIGPUMask GetGPUMask(FRHICommandListImmediate& RHICmdList) const final override
 	{
@@ -601,6 +607,7 @@ public:
 	* @param InRect - Rectangle of texels to copy.
 	* @return true if the read succeeded.
 	*/
+	UE_DEPRECATED(5.4, "Use FRenderTarget's ReadPixels, which is functionally equivalent")
 	ENGINE_API bool ReadPixels(TArray< FColor >& OutImageData, FReadSurfaceDataFlags InFlags, FIntRect InRect = FIntRect(0, 0, 0, 0));
 
 	/**
@@ -610,6 +617,7 @@ public:
 	* @param InRect - Rectangle of texels to copy.
 	* @return true if the read succeeded.
 	*/
+	UE_DEPRECATED(5.4, "Use FRenderTarget's ReadFloat16Pixels, which is functionally equivalent")
 	ENGINE_API bool ReadPixels(TArray<FFloat16Color>& OutImageData, FReadSurfaceDataFlags InFlags, FIntRect InRect = FIntRect(0, 0, 0, 0));
 
 protected:
@@ -648,9 +656,12 @@ private:
 
 /** Gets the name of a format for the given LayerIndex */
 ENGINE_API FName GetDefaultTextureFormatName( const class ITargetPlatform* TargetPlatform, const class UTexture* Texture, int32 LayerIndex, bool bSupportCompressedVolumeTexture, int32 Unused_BlockSize, bool bSupportFilteredFloat32Textures);
+ENGINE_API FName GetDefaultTextureFormatName( const class ITargetPlatformSettings* TargetPlatformSettings, const class ITargetPlatformControls* TargetPlatformControls, const class UTexture* Texture, int32 LayerIndex, bool bSupportCompressedVolumeTexture, int32 Unused_BlockSize, bool bSupportFilteredFloat32Textures);
 
 /** Gets an array of format names for each layer in the texture */
 ENGINE_API void GetDefaultTextureFormatNamePerLayer(TArray<FName>& OutFormatNames, const class ITargetPlatform* TargetPlatform, const class UTexture* Texture, bool bSupportCompressedVolumeTexture, int32 Unused_BlockSize, bool bSupportFilteredFloat32Textures);
+ENGINE_API void GetDefaultTextureFormatNamePerLayer(TArray<FName>& OutFormatNames, const class ITargetPlatformSettings* TargetPlatformSettings, const class ITargetPlatformControls* TargetPlatformControls, const class UTexture* Texture, bool bSupportCompressedVolumeTexture, int32 Unused_BlockSize, bool bSupportFilteredFloat32Textures);
 
 // returns all the texture formats which can be returned by GetDefaultTextureFormatName
 ENGINE_API void GetAllDefaultTextureFormats( const class ITargetPlatform* TargetPlatform, TArray<FName>& OutFormats);
+ENGINE_API void GetAllDefaultTextureFormats( const class ITargetPlatformSettings* TargetPlatformSettings, TArray<FName>& OutFormats);

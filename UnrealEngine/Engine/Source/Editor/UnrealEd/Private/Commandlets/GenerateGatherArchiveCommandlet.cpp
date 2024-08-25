@@ -14,7 +14,6 @@
 #include "LocTextHelper.h"
 #include "Logging/LogCategory.h"
 #include "Logging/LogMacros.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SharedPointer.h"
 #include "Trace/Detail/Channel.h"
 

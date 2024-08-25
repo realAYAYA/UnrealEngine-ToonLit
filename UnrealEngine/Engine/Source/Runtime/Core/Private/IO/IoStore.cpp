@@ -1,31 +1,32 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "IO/IoStore.h"
-#include "Containers/Map.h"
-#include "HAL/FileManager.h"
-#include "Templates/UniquePtr.h"
-#include "Misc/Paths.h"
-#include "Misc/Compression.h"
-#include "Serialization/BufferWriter.h"
+
 #include "Async/Async.h"
+#include "Async/AsyncFileHandle.h"
 #include "Async/Future.h"
 #include "Async/ParallelFor.h"
-#include "HAL/PlatformFileManager.h"
-#include "Misc/StringBuilder.h"
-#include "Features/IModularFeatures.h"
-#include "Modules/ModuleManager.h"
-#include "Misc/CoreDelegates.h"
-#include "Serialization/MemoryWriter.h"
-#include "Async/AsyncFileHandle.h"
-#include "Interfaces/ITargetPlatform.h"
-#include "Misc/ConfigCacheIni.h"
-#include "DerivedDataPluginInterface.h"
+#include "Containers/Map.h"
 #include "DerivedDataCacheInterface.h"
+#include "DerivedDataPluginInterface.h"
+#include "Features/IModularFeatures.h"
+#include "HAL/FileManager.h"
+#include "HAL/PlatformFileManager.h"
+#include "IO/IoDirectoryIndex.h"
+#include "Interfaces/ITargetPlatform.h"
+#include "Misc/Compression.h"
+#include "Misc/ConfigCacheIni.h"
+#include "Misc/CoreDelegates.h"
+#include "Misc/Paths.h"
+#include "Misc/StringBuilder.h"
+#include "Modules/ModuleManager.h"
+#include "ProfilingDebugging/CountersTrace.h"
+#include "Serialization/BufferWriter.h"
 #include "Serialization/LargeMemoryReader.h"
 #include "Serialization/MemoryWriter.h"
-#include "ProfilingDebugging/CountersTrace.h"
+#include "Serialization/MemoryWriter.h"
 #include "Tasks/Task.h"
-#include "IO/IoDirectoryIndex.h"
+#include "Templates/UniquePtr.h"
 
 DEFINE_LOG_CATEGORY(LogIoStore);
 
@@ -170,6 +171,9 @@ struct FChunkBlock
 	uint64 UncompressedSize = 0;
 	FName CompressionMethod = NAME_None;
 	FSHAHash Signature;
+
+	/** Hash of the block data as it would be found on disk - this includes encryption alignment padding */
+	FIoHash DiskHash;
 };
 
 struct FIoStoreWriteQueueEntry
@@ -179,12 +183,19 @@ struct FIoStoreWriteQueueEntry
 	IIoStoreWriteRequest* Request = nullptr;
 	FIoChunkId ChunkId;
 	FIoChunkHash ChunkHash;
+	/** Hash of the block data as it would be found on disk after compression and encryption */
+	FIoHash ChunkDiskHash;
+
 	uint64 Sequence = 0;
 	
 	// We make this optional because at the latest it might not be valid until FinishCompressionBarrior
 	// completes and we'd like to have a check() on that.
 	TOptional<uint64> UncompressedSize = 0;
-	uint64 CompressedSize = 0;
+
+	// this is not filled out until after encryption completes and *includes the alignment padding for encryption*!
+	// think of this as "size on disk".
+	uint64 CompressedSize = 0; 
+
 	uint64 Padding = 0;
 	uint64 Offset = 0;
 	TArray<FChunkBlock> ChunkBlocks;
@@ -194,6 +205,7 @@ struct FIoStoreWriteQueueEntry
 	FGraphEventRef BeginCompressionBarrier;
 	FGraphEventRef FinishCompressionBarrier;
 	FGraphEventRef FinishEncryptionAndSigningBarrier;
+	FGraphEventRef BeginOnDemandDataBarrier;
 	FGraphEventRef BeginWriteBarrier;
 	FGraphEventRef WriteFinishedEvent;
 	TAtomic<int32> CompressedBlocksCount{ 0 };
@@ -204,6 +216,7 @@ struct FIoStoreWriteQueueEntry
 	bool bModified = false;
 	bool bStoreCompressedDataInDDC = false;
 	
+	bool bCouldBeFromReferenceDb = false; // Whether the chunk is a valid candidate for the reference db.
 	bool bLoadingFromReferenceDb = false;
 	// When we know we're loading from the reference chunk db, we don't read the source
 	// buffer but we still need to know the number of chunks which we get from the refdb.
@@ -302,10 +315,12 @@ public:
 		BeginCompressionQueue.CompleteAdding();
 		BeginEncryptionAndSigningQueue.CompleteAdding();
 		FinishEncryptionAndSigningQueue.CompleteAdding();
+		OnDemandDataQueue.CompleteAdding();
 		WriterQueue.CompleteAdding();
 		BeginCompressionThread.Wait();
 		BeginEncryptionAndSigningThread.Wait();
 		FinishEncryptionAndSigningThread.Wait();
+		BeginOnDemandDataThread.Wait();
 		WriterThread.Wait();
 		if (CompressionBufferAvailableEvent)
 		{
@@ -318,7 +333,7 @@ public:
 		}
 	}
 
-	UE_NODISCARD FIoStatus Initialize(const FIoStoreWriterSettings& InWriterSettings)
+	[[nodiscard]] FIoStatus Initialize(const FIoStoreWriterSettings& InWriterSettings)
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(FIoStoreWriterContext::Initialize);
 		WriterSettings = InWriterSettings;
@@ -347,12 +362,13 @@ public:
 		BeginCompressionThread = Async(EAsyncExecution::Thread, [this]() { BeginCompressionThreadFunc(); });
 		BeginEncryptionAndSigningThread = Async(EAsyncExecution::Thread, [this]() { BeginEncryptionAndSigningThreadFunc(); });
 		FinishEncryptionAndSigningThread = Async(EAsyncExecution::Thread, [this]() { FinishEncryptionAndSigningThreadFunc(); });
+		BeginOnDemandDataThread = Async(EAsyncExecution::Thread, [this]() { BeginOnDemandDataThreadFunc(); });
 		WriterThread = Async(EAsyncExecution::Thread, [this]() { WriterThreadFunc(); });
 
 		return FIoStatus::Ok;
 	}
 
-	TSharedPtr<IIoStoreWriter> CreateContainer(const TCHAR* InContainerPath, const FIoContainerSettings& InContainerSettings);
+	TSharedPtr<IIoStoreWriter> CreateContainer(const TCHAR* InContainerPathAndBaseFileName, const FIoContainerSettings& InContainerSettings);
 
 	void Flush();
 
@@ -462,6 +478,7 @@ private:
 	void BeginCompressionThreadFunc();
 	void BeginEncryptionAndSigningThreadFunc();
 	void FinishEncryptionAndSigningThreadFunc();
+	void BeginOnDemandDataThreadFunc();
 	void WriterThreadFunc();
 
 	FIoStoreWriterSettings WriterSettings;
@@ -470,10 +487,12 @@ private:
 	TFuture<void> BeginCompressionThread;
 	TFuture<void> BeginEncryptionAndSigningThread;
 	TFuture<void> FinishEncryptionAndSigningThread;
+	TFuture<void> BeginOnDemandDataThread;
 	TFuture<void> WriterThread;
 	FIoStoreWriteQueue BeginCompressionQueue;
 	FIoStoreWriteQueue BeginEncryptionAndSigningQueue;
 	FIoStoreWriteQueue FinishEncryptionAndSigningQueue;
+	FIoStoreWriteQueue OnDemandDataQueue;
 	FIoStoreWriteQueue WriterQueue;
 	TAtomic<uint64> TotalChunksCount{ 0 };
 	TAtomic<uint64> HashedChunksCount{ 0 };
@@ -510,7 +529,7 @@ FIoStoreWriterContext::~FIoStoreWriterContext()
 	delete Impl;
 }
 
-UE_NODISCARD FIoStatus FIoStoreWriterContext::Initialize(const FIoStoreWriterSettings& InWriterSettings)
+[[nodiscard]] FIoStatus FIoStoreWriterContext::Initialize(const FIoStoreWriterSettings& InWriterSettings)
 {
 	return Impl->Initialize(InWriterSettings);
 }
@@ -540,7 +559,7 @@ public:
 
 	void Initialize()
 	{
-		ChunkIdToIndex.Empty(false);
+		ChunkIdToIndex.Empty(Toc.ChunkIds.Num());
 
 		for (int32 ChunkIndex = 0; ChunkIndex < Toc.ChunkIds.Num(); ++ChunkIndex)
 		{
@@ -548,7 +567,7 @@ public:
 		}
 	}
 
-	int32 AddChunkEntry(const FIoChunkId& ChunkId, const FIoOffsetAndLength& OffsetLength, const FIoStoreTocEntryMeta& Meta)
+	int32 AddChunkEntry(const FIoChunkId& ChunkId, const FIoOffsetAndLength& OffsetLength, const FIoStoreTocEntryMeta& Meta, const FIoStoreTocOnDemandChunkMeta& OnDemandData)
 	{
 		int32& Index = ChunkIdToIndex.FindOrAdd(ChunkId);
 
@@ -557,6 +576,7 @@ public:
 			Index = Toc.ChunkIds.Add(ChunkId);
 			Toc.ChunkOffsetLengths.Add(OffsetLength);
 			Toc.ChunkMetas.Add(Meta);
+			Toc.OnDemandChunkMeta.Add(OnDemandData);
 
 			return Index;
 		}
@@ -572,6 +592,11 @@ public:
 	FSHAHash& AddBlockSignatureEntry()
 	{
 		return Toc.ChunkBlockSignatures.AddDefaulted_GetRef();
+	}
+
+	FIoStoreTocOnDemandCompressedBlockMeta& AddCompressionBlockMetaEntry()
+	{
+		return Toc.OnDemandCompressedBlockMeta.AddDefaulted_GetRef();
 	}
 
 	uint8 AddCompressionMethodEntry(FName CompressionMethod)
@@ -699,20 +724,29 @@ class FIoStoreWriter
 	: public IIoStoreWriter
 {
 public:
-	FIoStoreWriter(const TCHAR* InContainerPath)
-		: ContainerPath(InContainerPath)
+	FIoStoreWriter(const TCHAR* InContainerPathAndBaseFileName)
+		: ContainerPathAndBaseFileName(InContainerPathAndBaseFileName)
 	{
 	}
 
 	void SetReferenceChunkDatabase(TSharedPtr<IIoStoreWriterReferenceChunkDatabase> InReferenceChunkDatabase)
 	{
-		if (InReferenceChunkDatabase.IsValid() && InReferenceChunkDatabase->GetCompressionBlockSize() != WriterContext->GetSettings().CompressionBlockSize)
+		if (InReferenceChunkDatabase.IsValid() == false)
+		{
+			ReferenceChunkDatabase = InReferenceChunkDatabase;
+			return;
+		}
+
+		if (InReferenceChunkDatabase->GetCompressionBlockSize() != WriterContext->GetSettings().CompressionBlockSize)
 		{
 			UE_LOG(LogIoStore, Warning, TEXT("Reference chunk database has a different compression block size than the current writer!"));
 			UE_LOG(LogIoStore, Warning, TEXT("No chunks will match, so ignoring. ReferenceChunkDb: %d, IoStoreWriter: %d"), InReferenceChunkDatabase->GetCompressionBlockSize(), WriterContext->GetSettings().CompressionBlockSize);
 			return;
 		}
 		ReferenceChunkDatabase = InReferenceChunkDatabase;
+		
+		// Add ourselves to the reference chunk db's list of possibles
+		ReferenceChunkDatabase->NotifyAddedToWriter(ContainerSettings.ContainerId);
 	}
 	void SetHashDatabase(TSharedPtr<IIoStoreWriterHashDatabase> InHashDatabase, bool bInVerifyHashDatabase)
 	{
@@ -734,12 +768,12 @@ public:
 		}
 	}
 
-	UE_NODISCARD FIoStatus Initialize(FIoStoreWriterContextImpl& InContext, const FIoContainerSettings& InContainerSettings)
+	[[nodiscard]] FIoStatus Initialize(FIoStoreWriterContextImpl& InContext, const FIoContainerSettings& InContainerSettings)
 	{
 		WriterContext = &InContext;
 		ContainerSettings = InContainerSettings;
 
-		TocFilePath = ContainerPath + TEXT(".utoc");
+		TocFilePath = ContainerPathAndBaseFileName + TEXT(".utoc");
 		
 		IPlatformFile& Ipf = IPlatformFile::GetPlatformPhysical();
 		Ipf.CreateDirectoryTree(*FPaths::GetPath(TocFilePath));
@@ -825,6 +859,7 @@ public:
 		Entry->BeginCompressionBarrier = FGraphEvent::CreateGraphEvent();
 		Entry->FinishCompressionBarrier = FGraphEvent::CreateGraphEvent();
 		Entry->FinishEncryptionAndSigningBarrier = FGraphEvent::CreateGraphEvent();
+		Entry->BeginOnDemandDataBarrier = FGraphEvent::CreateGraphEvent();
 		Entry->BeginWriteBarrier = FGraphEvent::CreateGraphEvent();
 		Entry->WriteFinishedEvent = FGraphEvent::CreateGraphEvent();
 		
@@ -845,7 +880,8 @@ public:
 				if (ReferenceChunkDatabase.IsValid() && CompressionMethodForEntry(Entry) != NAME_None)
 				{
 					TPair<FIoContainerId, FIoChunkHash> ChunkKey(ContainerSettings.ContainerId, Entry->ChunkHash);
-					Entry->bLoadingFromReferenceDb = ReferenceChunkDatabase->ChunkExists(ChunkKey, Entry->NumChunkBlocksFromRefDb);
+					Entry->bLoadingFromReferenceDb = ReferenceChunkDatabase->ChunkExists(ChunkKey, Entry->ChunkId, Entry->NumChunkBlocksFromRefDb);
+					Entry->bCouldBeFromReferenceDb = true;
 				}
 				return;
 			}
@@ -880,7 +916,8 @@ public:
 			if (ReferenceChunkDatabase.IsValid() && CompressionMethodForEntry(Entry) != NAME_None)
 			{
 				TPair<FIoContainerId, FIoChunkHash> ChunkKey(ContainerSettings.ContainerId, Entry->ChunkHash);
-				Entry->bLoadingFromReferenceDb = ReferenceChunkDatabase->ChunkExists(ChunkKey, Entry->NumChunkBlocksFromRefDb);
+				Entry->bLoadingFromReferenceDb = ReferenceChunkDatabase->ChunkExists(ChunkKey, Entry->ChunkId, Entry->NumChunkBlocksFromRefDb);
+				Entry->bCouldBeFromReferenceDb = true;
 			}
 
 			// Release the source data buffer, it will be reloaded later when we start compressing the chunk
@@ -948,6 +985,8 @@ public:
 		OutTocOffsetAndLengths.SetNum(ChunkCount);
 		TArray<FIoStoreTocEntryMeta> OutTocChunkMetas;
 		OutTocChunkMetas.SetNum(ChunkCount);
+		TArray<FIoStoreTocOnDemandChunkMeta> OutTocOnDemandChunkMeta;
+		OutTocOnDemandChunkMeta.SetNum(ChunkCount);
 		TArray<int32> OutTocChunkHashSeeds;
 		OutTocChunkHashSeeds.SetNumZeroed(SeedCount);
 		TArray<int32> OutTocChunkIndicesWithoutPerfectHash;
@@ -1107,6 +1146,7 @@ public:
 					OutTocChunkIds[Slot] = ChunkId;
 					OutTocOffsetAndLengths[Slot] = TocResource.ChunkOffsetLengths[ChunkIndex];
 					OutTocChunkMetas[Slot] = TocResource.ChunkMetas[ChunkIndex];
+					OutTocOnDemandChunkMeta[Slot] = TocResource.OnDemandChunkMeta[ChunkIndex];
 				}
 			}
 		}
@@ -1128,6 +1168,7 @@ public:
 				OutTocChunkIds[Slot] = ChunkId;
 				OutTocOffsetAndLengths[Slot] = TocResource.ChunkOffsetLengths[ChunkIndex];
 				OutTocChunkMetas[Slot] = TocResource.ChunkMetas[ChunkIndex];
+				OutTocOnDemandChunkMeta[Slot] = TocResource.OnDemandChunkMeta[ChunkIndex];
 			}
 		}
 
@@ -1143,6 +1184,7 @@ public:
 				OutTocChunkIds[Slot] = ChunkId;
 				OutTocOffsetAndLengths[Slot] = TocResource.ChunkOffsetLengths[OverflowEntryIndex];
 				OutTocChunkMetas[Slot] = TocResource.ChunkMetas[OverflowEntryIndex];
+				OutTocOnDemandChunkMeta[Slot] = TocResource.OnDemandChunkMeta[OverflowEntryIndex];
 				OverflowEntryIndex = Slot;
 			}
 		}
@@ -1156,6 +1198,7 @@ public:
 		TocResource.ChunkIds = MoveTemp(OutTocChunkIds);
 		TocResource.ChunkOffsetLengths = MoveTemp(OutTocOffsetAndLengths);
 		TocResource.ChunkMetas = MoveTemp(OutTocChunkMetas);
+		TocResource.OnDemandChunkMeta = MoveTemp(OutTocOnDemandChunkMeta);
 		TocResource.ChunkPerfectHashSeeds = MoveTemp(OutTocChunkHashSeeds);
 		TocResource.ChunkIndicesWithoutPerfectHash = MoveTemp(OutTocChunkIndicesWithoutPerfectHash);
 
@@ -1184,6 +1227,7 @@ public:
 					CompressedContainerSize += ExtraPaddingBytes;
 					UncompressedContainerSize += ExtraPaddingBytes;
 					Partition.Offset += ExtraPaddingBytes;
+					TotalPaddingSize += ExtraPaddingBytes;
 				}
 			}
 			
@@ -1210,7 +1254,7 @@ public:
 			TRACE_CPUPROFILER_EVENT_SCOPE(BuildIndex);
 			TArray<FStringView> FilesToIndex;
 			Toc.GetFileNamesToIndex(FilesToIndex);
-			
+
 			FString MountPoint = IoDirectoryIndexUtils::GetCommonRootPath(FilesToIndex);
 			FIoDirectoryIndexWriter DirectoryIndexWriter;
 			DirectoryIndexWriter.SetMountPoint(MountPoint);
@@ -1244,6 +1288,8 @@ public:
 		Result.PaddingSize = TotalPaddingSize;
 		Result.UncompressedContainerSize = UncompressedContainerSize;
 		Result.CompressedContainerSize = CompressedContainerSize;
+		Result.TotalEntryCompressedSize = TotalEntryCompressedSize;
+		Result.ReferenceCacheMissBytes = ReferenceCacheMissBytes;
 		Result.DirectoryIndexSize = TocResource.Header.DirectoryIndexSize;
 		Result.CompressionMethod = EnumHasAnyFlags(ContainerSettings.ContainerFlags, EIoContainerFlags::Compressed)
 			? WriterSettings.CompressionMethod
@@ -1425,7 +1471,7 @@ private:
 	FIoStatus CreatePartitionContainerFile(FPartition& Partition)
 	{
 		check(!Partition.ContainerFileHandle);
-		FString ContainerFilePath = ContainerPath;
+		FString ContainerFilePath = ContainerPathAndBaseFileName;
 		if (Partition.Index > 0)
 		{
 			ContainerFilePath += FString::Printf(TEXT("_s%d"), Partition.Index);
@@ -1561,6 +1607,7 @@ private:
 
 				uint64 TotalUncompressedSize = 0;
 				uint8* ReferenceData = ReadResult.IoBuffer.GetData();
+				uint64 TotalAlignedSize = 0;
 				for (int32 BlockIndex = 0; BlockIndex < ReadResult.Blocks.Num(); ++BlockIndex)
 				{
 					FIoStoreCompressedBlockInfo& ReferenceBlock = ReadResult.Blocks[BlockIndex];
@@ -1581,6 +1628,15 @@ private:
 					// we "could".
 					FMemory::Memcpy(Block.IoBuffer->GetData(), ReferenceData, Block.CompressedSize);
 					ReferenceData += ReferenceBlock.AlignedSize;
+					TotalAlignedSize += ReferenceBlock.AlignedSize;
+				}
+
+				if (TotalAlignedSize != ReadResult.IoBuffer.GetSize())
+				{
+					// If we hit this, we might have read garbage memory above! This is very bad.
+					UE_LOG(LogIoStore, Error, TEXT("Block aligned size does not match iobuffer source size! Blocks: %s source size: %s"),
+						*FText::AsNumber(TotalAlignedSize).ToString(),
+						*FText::AsNumber(ReadResult.IoBuffer.GetSize()).ToString());
 				}
 
 				Entry->UncompressedSize.Emplace(TotalUncompressedSize);
@@ -1746,6 +1802,33 @@ private:
 		}
 	}
 
+	void BeginOnDemandData(FIoStoreWriteQueueEntry* Entry)
+	{
+		if (ContainerSettings.IsOnDemand())
+		{
+			// TODO: Worth threading this branch? (needs profiling on larger data sets)
+			FIoHashBuilder HashBuilder;
+			for (FChunkBlock& Block : Entry->ChunkBlocks)
+			{
+				check(Align(Block.CompressedSize, FAES::AESBlockSize) == Block.Size);
+
+				// Note that the IoBuffer size is not the size of the data!
+				FMemoryView BlockData = MakeMemoryView(Block.IoBuffer->Data(), Block.Size);
+		
+				HashBuilder.Update(BlockData);
+				Block.DiskHash = FIoHash::HashBuffer(BlockData);
+			}
+
+			Entry->ChunkDiskHash = HashBuilder.Finalize();
+
+			Entry->BeginWriteBarrier->DispatchSubsequents();
+		}
+		else
+		{
+			Entry->BeginWriteBarrier->DispatchSubsequents();
+		}
+	}
+
 	void WriteEntry(FIoStoreWriteQueueEntry* Entry)
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(WriteEntry);
@@ -1791,6 +1874,10 @@ private:
 			}
 			if (WriterSettings.CompressionBlockAlignment)
 			{
+				// Try and prevent entries from crossing compression alignment blocks if possible. This is to avoid
+				// small entries from causing multiple file system block reads afaict. Large entries necesarily get
+				// aligned to prevent things like a blocksize + 2 entry being at alignment -1, causing 3 low level reads.
+				// ...I think.
 				bool bCrossesBlockBoundary = Align(TargetPartition->Offset, WriterSettings.CompressionBlockAlignment) != Align(TargetPartition->Offset + Entry->CompressedSize - 1, WriterSettings.CompressionBlockAlignment);
 				if (bCrossesBlockBoundary)
 				{
@@ -1824,7 +1911,7 @@ private:
 			CreatePartitionContainerFile(*TargetPartition);
 		}
 		Entry->Offset = TargetPartition->Offset;
-		
+
 		FIoOffsetAndLength OffsetLength;
 		OffsetLength.SetOffset(UncompressedFileOffset);
 		OffsetLength.SetLength(Entry->UncompressedSize.GetValue());
@@ -1845,6 +1932,13 @@ private:
 			BlockEntry.SetUncompressedSize(uint32(ChunkBlock.UncompressedSize));
 			BlockEntry.SetCompressionMethodIndex(Toc.AddCompressionMethodEntry(ChunkBlock.CompressionMethod));
 
+			// We do this here so that we get the total size of data excluding the encryption alignment
+			TotalEntryCompressedSize += ChunkBlock.CompressedSize;
+			if (Entry->bCouldBeFromReferenceDb && !Entry->bLoadingFromReferenceDb)
+			{
+				ReferenceCacheMissBytes += ChunkBlock.CompressedSize;
+			}
+
 			if (!ChunkBlock.CompressionMethod.IsNone())
 			{
 				ChunkMeta.Flags |= FIoStoreTocEntryMetaFlags::Compressed;
@@ -1855,9 +1949,17 @@ private:
 				FSHAHash& Signature = Toc.AddBlockSignatureEntry();
 				Signature = ChunkBlock.Signature;
 			}
+
+			if (ContainerSettings.IsOnDemand())
+			{
+				FIoStoreTocOnDemandCompressedBlockMeta& Meta = Toc.AddCompressionBlockMetaEntry();
+				Meta.DiskHash = ChunkBlock.DiskHash;
+			}
 		}
 
-		const int32 TocEntryIndex = Toc.AddChunkEntry(Entry->ChunkId, OffsetLength, ChunkMeta);
+		FIoStoreTocOnDemandChunkMeta OnDemandChunkMeta{ Entry->ChunkDiskHash };
+
+		const int32 TocEntryIndex = Toc.AddChunkEntry(Entry->ChunkId, OffsetLength, ChunkMeta, OnDemandChunkMeta);
 		check(TocEntryIndex != INDEX_NONE);
 
 		if (ContainerSettings.IsIndexed() && Entry->Options.FileName.Len() > 0)
@@ -1907,7 +2009,7 @@ private:
 		WriterContext->SerializedChunksCount.IncrementExchange();
 	}
 
-	const FString				ContainerPath;
+	const FString				ContainerPathAndBaseFileName;
 	FIoStoreWriterContextImpl*	WriterContext = nullptr;
 	FIoContainerSettings		ContainerSettings;
 	FString						TocFilePath;
@@ -1922,10 +2024,12 @@ private:
 	TUniquePtr<FArchive>		CsvArchive;
 	FIoStoreWriterResult		Result;
 	uint64						UncompressedFileOffset = 0;
-	uint64						TotalEntryUncompressedSize = 0;
+	uint64						TotalEntryUncompressedSize = 0; // sum of all entry source buffer sizes
+	uint64						TotalEntryCompressedSize = 0; // entry compressed size excluding encryption alignment
+	uint64						ReferenceCacheMissBytes = 0; // number of compressed bytes excluding alignment that could have been from refcache but weren't.
 	uint64						TotalPaddingSize = 0;
-	uint64						UncompressedContainerSize = 0;
-	uint64						CompressedContainerSize = 0;
+	uint64						UncompressedContainerSize = 0; // this is the size the container would be if it were uncompressed.
+	uint64						CompressedContainerSize = 0; // this is the size of the container with the given compression (which may be none).
 	int32						CurrentPartitionIndex = 0;
 	bool						bHasMemoryMappedEntry = false;
 	bool						bHasFlushed = false;
@@ -1938,9 +2042,11 @@ private:
 	friend class FIoStoreWriterContextImpl;
 };
 
-TSharedPtr<IIoStoreWriter> FIoStoreWriterContextImpl::CreateContainer(const TCHAR* InContainerPath, const FIoContainerSettings& InContainerSettings)
+// InContainerPathAndBaseFileName: the utoc file will just be this with .utoc appended.
+// The base filename ends up getting returned as the container name in the writer results.
+TSharedPtr<IIoStoreWriter> FIoStoreWriterContextImpl::CreateContainer(const TCHAR* InContainerPathAndBaseFileName, const FIoContainerSettings& InContainerSettings)
 {
-	TSharedPtr<FIoStoreWriter> IoStoreWriter = MakeShared<FIoStoreWriter>(InContainerPath);
+	TSharedPtr<FIoStoreWriter> IoStoreWriter = MakeShared<FIoStoreWriter>(InContainerPathAndBaseFileName);
 	FIoStatus IoStatus = IoStoreWriter->Initialize(*this, InContainerSettings);
 	check(IoStatus.IsOk());
 	IoStoreWriters.Add(IoStoreWriter);
@@ -2095,13 +2201,37 @@ void FIoStoreWriterContextImpl::FinishEncryptionAndSigningThreadFunc()
 		{
 			FIoStoreWriteQueueEntry* Next = Entry->Next;
 			Entry->FinishEncryptionAndSigningBarrier->Wait();
-			WriterQueue.Enqueue(Entry);
+			OnDemandDataQueue.Enqueue(Entry);
 			Entry->CompressedSize = 0;
 			for (const FChunkBlock& ChunkBlock : Entry->ChunkBlocks)
 			{
 				Entry->CompressedSize += ChunkBlock.Size;
 			}
-			Entry->BeginWriteBarrier->DispatchSubsequents();
+			Entry->BeginOnDemandDataBarrier->DispatchSubsequents();
+
+			Entry = Next;
+		}
+	}
+}
+
+void FIoStoreWriterContextImpl::BeginOnDemandDataThreadFunc()
+{
+	for (;;)
+	{
+		FIoStoreWriteQueueEntry* Entry = OnDemandDataQueue.DequeueOrWait();
+		if (!Entry)
+		{
+			return;
+		}
+
+		while (Entry)
+		{
+			FIoStoreWriteQueueEntry* Next = Entry->Next;
+			Entry->BeginOnDemandDataBarrier->Wait();
+
+			WriterQueue.Enqueue(Entry);
+
+			Entry->Writer->BeginOnDemandData(Entry);
 
 			Entry = Next;
 		}
@@ -2140,9 +2270,9 @@ public:
 	// GenericPlatformFile isn't designed around a lot of jobs throwing accesses at it, so instead we 
 	// use IFileHandle directly and round robin between a number of file handles in order to saturate
 	// year 2022 ssd drives. For a file hot in the windows file cache, you can get 4+ GB/s with as few as 
-	// 4 file handles, however a cold file you need upwards of 32 in order to reach ~1.5 GB/s. This is
-	// low because IoStore reads are comparatively small - at most you're reading compression block sized
-	// chunks with uncompressed, however with Oodle those get cut by ~half, so with a default block size
+	// 4 file handles, however for a cold file you need upwards of 32 in order to reach ~1.5 GB/s. This is
+	// low because IoStoreReader (note: not IoDispatcher!) reads are comparatively small - at most you're reading compression block sized
+	// chunks when uncompressed, however with Oodle those get cut by ~half, so with a default block size
 	// of 64kb, reads are generally less than 32kb, which is tough to use and get full ssd bandwidth out of.
 	//
 	static constexpr uint32 NumHandlesPerFile = 12;
@@ -2150,7 +2280,7 @@ public:
 	{
 		FCriticalSection HandleLock[NumHandlesPerFile];
 		IFileHandle* Handle[NumHandlesPerFile];
-		std::atomic_uint32_t NextHandleIndex;
+		std::atomic_uint32_t NextHandleIndex{0};
 		bool bValid = false;
 
 		FContainerFileAccess(IPlatformFile& Ipf, const TCHAR* ContainerFileName)
@@ -2216,7 +2346,7 @@ public:
 		});
 	}
 
-	UE_NODISCARD FIoStatus Initialize(const TCHAR* InContainerPath, const TMap<FGuid, FAES::FAESKey>& InDecryptionKeys)
+	[[nodiscard]] FIoStatus Initialize(FStringView InContainerPath, const TMap<FGuid, FAES::FAESKey>& InDecryptionKeys)
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(FIoStoreReader::Initialize);
 		ContainerPath = InContainerPath;
@@ -2274,9 +2404,9 @@ public:
 			DirectoryIndexReader.IterateDirectoryIndex(
 				FIoDirectoryIndexHandle::RootDirectory(),
 				TEXT(""),
-				[this](FString Filename, uint32 TocEntryIndex) -> bool
+				[this](FStringView Filename, uint32 TocEntryIndex) -> bool
 				{
-					ChunkFileNamesMap.Add(TocEntryIndex, MoveTemp(Filename));
+					ChunkFileNamesMap.Add(TocEntryIndex, FString(Filename));
 					return true;
 				});
 		}
@@ -2342,6 +2472,73 @@ public:
 		else
 		{
 			return FIoStatus(EIoErrorCode::InvalidParameter, TEXT("Invalid TocEntryIndex"));
+		}
+	}
+
+	TIoStatusOr<FIoStoreCompressedChunkInfo> GetChunkCompressedInfo(const FIoChunkId& ChunkId) const
+	{
+		const int32* TocEntryIndex = Toc.GetTocEntryIndex(ChunkId);
+		if (TocEntryIndex != nullptr)
+		{
+			// Find where in the virtual file the chunk exists.
+			const FIoOffsetAndLength* OffsetAndLength = Toc.GetOffsetAndLength(ChunkId);
+			if (!OffsetAndLength)
+			{
+				return FIoStatus(EIoErrorCode::NotFound, TEXT("Unknown chunk ID"));
+			}
+
+			const uint64 ResolvedOffset = OffsetAndLength->GetOffset();
+			const uint64 ResolvedSize = OffsetAndLength->GetLength();
+
+			// Find what compressed blocks this read straddles.
+			const FIoStoreTocResource& TocResource = Toc.GetTocResource();
+			const uint64 CompressionBlockSize = TocResource.Header.CompressionBlockSize;
+
+			const int32 FirstBlockIndex = int32(ResolvedOffset / CompressionBlockSize);
+			const int32 LastBlockIndex = int32((Align(ResolvedOffset + ResolvedSize, CompressionBlockSize) - 1) / CompressionBlockSize);
+
+			// Determine size of the result and set up output buffers
+			uint64 TotalCompressedSize = 0;
+			for (int32 BlockIndex = FirstBlockIndex; BlockIndex <= LastBlockIndex; ++BlockIndex)
+			{
+				const FIoStoreTocCompressedBlockEntry& CompressionBlock = TocResource.CompressionBlocks[BlockIndex];
+				TotalCompressedSize += CompressionBlock.GetCompressedSize();
+			}
+
+			FIoStoreCompressedChunkInfo Info;
+			if (!TocResource.OnDemandChunkMeta.IsEmpty())
+			{
+				Info.DiskHash = TocResource.OnDemandChunkMeta[*TocEntryIndex].DiskHash;
+			}
+
+			Info.Blocks.Reserve(LastBlockIndex + 1 - FirstBlockIndex);
+			Info.UncompressedOffset = ResolvedOffset % CompressionBlockSize;
+			Info.UncompressedSize = ResolvedSize;
+			Info.TotalCompressedSize = TotalCompressedSize;
+
+			// Set up the result blocks.
+			uint64 CurrentOffset = 0;
+			for (int32 BlockIndex = FirstBlockIndex; BlockIndex <= LastBlockIndex; ++BlockIndex)
+			{
+				const FIoStoreTocCompressedBlockEntry& CompressionBlock = TocResource.CompressionBlocks[BlockIndex];
+				FIoStoreCompressedBlockInfo& BlockInfo = Info.Blocks.AddDefaulted_GetRef();
+				if (!TocResource.OnDemandCompressedBlockMeta.IsEmpty())
+				{
+					BlockInfo.DiskHash = TocResource.OnDemandCompressedBlockMeta[BlockIndex].DiskHash;
+				}
+				BlockInfo.CompressionMethod = TocResource.CompressionMethods[CompressionBlock.GetCompressionMethodIndex()];
+				BlockInfo.CompressedSize = CompressionBlock.GetCompressedSize();
+				BlockInfo.UncompressedSize = CompressionBlock.GetUncompressedSize();
+				BlockInfo.OffsetInBuffer = CurrentOffset;
+				BlockInfo.AlignedSize = Align(CompressionBlock.GetCompressedSize(), FAES::AESBlockSize);
+				CurrentOffset += BlockInfo.AlignedSize;
+			}
+
+			return Info;
+		}
+		else
+		{
+			return FIoStatus(EIoErrorCode::NotFound, TEXT("Not found"));
 		}
 	}
 
@@ -2688,6 +2885,10 @@ public:
 		{
 			const FIoStoreTocCompressedBlockEntry& CompressionBlock = TocResource.CompressionBlocks[BlockIndex];
 			FIoStoreCompressedBlockInfo& BlockInfo = Result.Blocks.AddDefaulted_GetRef();
+			if (!TocResource.OnDemandCompressedBlockMeta.IsEmpty())
+			{
+				BlockInfo.DiskHash = TocResource.OnDemandCompressedBlockMeta[BlockIndex].DiskHash;
+			}
 			BlockInfo.CompressionMethod = TocResource.CompressionMethods[CompressionBlock.GetCompressionMethodIndex()];
 			BlockInfo.CompressedSize = CompressionBlock.GetCompressedSize();
 			BlockInfo.UncompressedSize = CompressionBlock.GetUncompressedSize();
@@ -2813,6 +3014,23 @@ public:
 		}
 	}
 
+	void GetContainerFilePaths(TArray<FString>& OutPaths)
+	{
+		TStringBuilder<256> Sb;
+
+		for (uint32 PartitionIndex = 0; PartitionIndex < Toc.GetTocResource().Header.PartitionCount; ++PartitionIndex)
+		{
+			Sb.Reset();
+			Sb.Append(ContainerPath);
+			if (PartitionIndex > 0)
+			{
+				Sb.Append(FString::Printf(TEXT("_s%d"), PartitionIndex));
+			}
+			Sb.Append(TEXT(".ucas"));
+			OutPaths.Add(Sb.ToString());
+		}
+	}
+
 private:
 
 
@@ -2834,7 +3052,7 @@ FIoStoreReader::~FIoStoreReader()
 	delete Impl;
 }
 
-FIoStatus FIoStoreReader::Initialize(const TCHAR* InContainerPath, const TMap<FGuid, FAES::FAESKey>& InDecryptionKeys)
+FIoStatus FIoStoreReader::Initialize(FStringView InContainerPath, const TMap<FGuid, FAES::FAESKey>& InDecryptionKeys)
 {
 	return Impl->Initialize(InContainerPath, InDecryptionKeys);
 }
@@ -2872,6 +3090,11 @@ TIoStatusOr<FIoStoreTocChunkInfo> FIoStoreReader::GetChunkInfo(const FIoChunkId&
 TIoStatusOr<FIoStoreTocChunkInfo> FIoStoreReader::GetChunkInfo(const uint32 TocEntryIndex) const
 {
 	return Impl->GetChunkInfo(TocEntryIndex);
+}
+
+TIoStatusOr<FIoStoreCompressedChunkInfo> FIoStoreReader::GetChunkCompressedInfo(const FIoChunkId& Chunk) const
+{
+	return Impl->GetChunkCompressedInfo(Chunk);
 }
 
 TIoStatusOr<FIoBuffer> FIoStoreReader::Read(const FIoChunkId& Chunk, const FIoReadOptions& Options) const
@@ -2912,6 +3135,11 @@ void FIoStoreReader::EnumerateCompressedBlocks(TFunction<bool(const FIoStoreTocC
 void FIoStoreReader::EnumerateCompressedBlocksForChunk(const FIoChunkId& Chunk, TFunction<bool(const FIoStoreTocCompressedBlockInfo&)>&& Callback) const
 {
 	Impl->EnumerateCompressedBlocksForChunk(Chunk, MoveTemp(Callback));
+}
+
+void FIoStoreReader::GetContainerFilePaths(TArray<FString>& OutPaths)
+{
+	Impl->GetContainerFilePaths(OutPaths);
 }
 
 FIoStatus FIoStoreTocResource::Read(const TCHAR* TocFilePath, EIoStoreTocReadOptions ReadOptions, FIoStoreTocResource& OutTocResource)
@@ -2958,9 +3186,14 @@ FIoStatus FIoStoreTocResource::Read(const TCHAR* TocFilePath, EIoStoreTocReadOpt
 		return FIoStatusBuilder(EIoErrorCode::CorruptToc) << TEXT("Too new TOC header version while reading '") << TocFilePath << TEXT("'");
 	}
 
+	const bool bHasOnDemandMetaData = Header.Version >= static_cast<uint8>(EIoStoreTocVersion::OnDemandMetaData) && EnumHasAnyFlags(Header.ContainerFlags, EIoContainerFlags::OnDemand);
+
 	const uint64 TotalTocSize = TocFileHandle->Size() - sizeof(FIoStoreTocHeader);
 	const uint64 TocMetaSize = Header.TocEntryCount * sizeof(FIoStoreTocEntryMeta);
-	const uint64 DefaultTocSize = TotalTocSize - Header.DirectoryIndexSize - TocMetaSize;
+	const uint64 TocOnDemandMetaSize = !bHasOnDemandMetaData ? 0 :	(Header.TocEntryCount * sizeof(FIoStoreTocOnDemandChunkMeta)) +
+																	(Header.TocCompressedBlockEntryCount * sizeof(FIoStoreTocOnDemandCompressedBlockMeta));
+
+	const uint64 DefaultTocSize = TotalTocSize - (Header.DirectoryIndexSize + TocMetaSize + TocOnDemandMetaSize);
 	uint64 TocSize = DefaultTocSize;
 
 	if (EnumHasAnyFlags(ReadOptions, EIoStoreTocReadOptions::ReadTocMeta))
@@ -3047,10 +3280,10 @@ FIoStatus FIoStoreTocResource::Read(const TCHAR* TocFilePath, EIoStoreTocReadOpt
 		const int32* HashSize = reinterpret_cast<const int32*>(SignatureBuffer);
 		TArrayView<const uint8> TocSignature = MakeArrayView<const uint8>(reinterpret_cast<const uint8*>(HashSize + 1), *HashSize);
 		TArrayView<const uint8> BlockSignature = MakeArrayView<const uint8>(TocSignature.GetData() + *HashSize, *HashSize);
-		
+
 		TArrayView<const uint8> BothSignatures = MakeArrayView<const uint8>(TocSignature.GetData(), *HashSize * 2);
 		FSHA1::HashBuffer(BothSignatures.GetData(), BothSignatures.Num(), OutTocResource.SignatureHash.Hash);
-		
+
 		TArrayView<const FSHAHash> ChunkBlockSignatures = MakeArrayView<const FSHAHash>(reinterpret_cast<const FSHAHash*>(BlockSignature.GetData() + *HashSize), Header.TocCompressedBlockEntryCount);
 
 		// Adjust address to meta data
@@ -3077,11 +3310,26 @@ FIoStatus FIoStoreTocResource::Read(const TCHAR* TocFilePath, EIoStoreTocReadOpt
 	}
 
 	// Meta
-	const uint8* TocMeta = DirectoryIndexBuffer + Header.DirectoryIndexSize;
 	if (EnumHasAnyFlags(ReadOptions, EIoStoreTocReadOptions::ReadTocMeta))
 	{
+		const uint8* TocMeta = (uint8*)DirectoryIndexBuffer + Header.DirectoryIndexSize;
+
 		const FIoStoreTocEntryMeta* ChunkMetas = reinterpret_cast<const FIoStoreTocEntryMeta*>(TocMeta);
 		OutTocResource.ChunkMetas = MakeArrayView<FIoStoreTocEntryMeta const>(ChunkMetas, Header.TocEntryCount);
+
+		// OnDemand 
+		if (bHasOnDemandMetaData)
+		{
+			uint8 const* OnDemandPtr = TocMeta + TocMetaSize;
+
+			const FIoStoreTocOnDemandChunkMeta* OnDemandChunkMeta = reinterpret_cast<const FIoStoreTocOnDemandChunkMeta*>(OnDemandPtr);
+			OutTocResource.OnDemandChunkMeta = MakeArrayView<FIoStoreTocOnDemandChunkMeta const>(OnDemandChunkMeta, Header.TocEntryCount);
+
+			OnDemandPtr += sizeof(FIoStoreTocOnDemandChunkMeta) * Header.TocEntryCount;
+
+			const FIoStoreTocOnDemandCompressedBlockMeta* OnDemandCompressedBlockMeta = reinterpret_cast<const FIoStoreTocOnDemandCompressedBlockMeta*>(OnDemandPtr);
+			OutTocResource.OnDemandCompressedBlockMeta = MakeArrayView<FIoStoreTocOnDemandCompressedBlockMeta const>(OnDemandCompressedBlockMeta, Header.TocCompressedBlockEntryCount);
+		}
 	}
 
 	if (Header.Version < static_cast<uint8>(EIoStoreTocVersion::PartitionSize))
@@ -3256,16 +3504,36 @@ TIoStatusOr<uint64> FIoStoreTocResource::Write(
 		}
 	}
 
-	// Directory index
+	// Directory index (EIoStoreTocReadOptions::ReadDirectoryIndex)
 	if (EnumHasAnyFlags(TocHeader.ContainerFlags, EIoContainerFlags::Indexed))
 	{
-		TocFileHandle->Write(TocResource.DirectoryIndexBuffer.GetData(), TocResource.DirectoryIndexBuffer.Num());
+		if (!TocFileHandle->Write(TocResource.DirectoryIndexBuffer.GetData(), TocResource.DirectoryIndexBuffer.Num()))
+		{
+			return FIoStatus(EIoErrorCode::WriteError, TEXT("Failed to write directory index buffer"));
+		}
 	}
 
-	// Meta
-	if (!WriteArray(TocFileHandle.Get(), TocResource.ChunkMetas))
+	// Meta data (EIoStoreTocReadOptions::ReadTocMeta)
 	{
-		return FIoStatus(EIoErrorCode::WriteError, TEXT("Failed to write chunk meta data"));
+		// First write out the standard meta info
+		if (!WriteArray(TocFileHandle.Get(), TocResource.ChunkMetas))
+		{
+			return FIoStatus(EIoErrorCode::WriteError, TEXT("Failed to write chunk meta data"));
+		}
+
+		// Write out the metadata for the 'OnDemand' feature if the container supports this.
+		if (EnumHasAnyFlags(TocHeader.ContainerFlags, EIoContainerFlags::OnDemand))
+		{
+			if (!WriteArray(TocFileHandle.Get(), TocResource.OnDemandChunkMeta))
+			{
+				return FIoStatus(EIoErrorCode::WriteError, TEXT("Failed to write on demand chunk meta data"));
+			}
+
+			if (!WriteArray(TocFileHandle.Get(), TocResource.OnDemandCompressedBlockMeta))
+			{
+				return FIoStatus(EIoErrorCode::WriteError, TEXT("Failed to write on demand compressed block meta data"));
+			}
+		}
 	}
 
 	TocFileHandle->Flush(true);
@@ -3292,9 +3560,9 @@ void FIoStoreReader::GetFilenames(TArray<FString>& OutFileList) const
 	DirectoryIndex.IterateDirectoryIndex(
 		FIoDirectoryIndexHandle::RootDirectory(),
 		TEXT(""),
-		[&OutFileList](FString Filename, uint32 TocEntryIndex) -> bool
+		[&OutFileList](FStringView Filename, uint32 TocEntryIndex) -> bool
 		{
-			OutFileList.AddUnique(Filename);
+			OutFileList.AddUnique(FString(Filename));
 			return true;
 		});
 }
@@ -3304,13 +3572,13 @@ void FIoStoreReader::GetFilenamesByBlockIndex(const TArray<int32>& InBlockIndexL
 	const FIoDirectoryIndexReader& DirectoryIndex = GetDirectoryIndexReader();
 
 	DirectoryIndex.IterateDirectoryIndex(FIoDirectoryIndexHandle::RootDirectory(), TEXT(""),
-		[this, &InBlockIndexList, &OutFileList](FString Filename, uint32 TocEntryIndex) -> bool
+		[this, &InBlockIndexList, &OutFileList](FStringView Filename, uint32 TocEntryIndex) -> bool
 		{
 			for (int32 BlockIndex : InBlockIndexList)
 			{
 				if (Impl->TocChunkContainsBlockIndex(TocEntryIndex, BlockIndex))
 				{
-					OutFileList.AddUnique(Filename);
+					OutFileList.AddUnique(FString(Filename));
 					break;
 				}
 			}

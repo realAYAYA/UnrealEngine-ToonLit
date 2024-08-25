@@ -95,7 +95,7 @@ class UnrealObjectFilterRegistry {
     _CustomUnrealObjectFilter(
       internalName: 'Flag',
       getDisplayName: (context) => AppLocalizations.of(context)!.actorNameFlag,
-      iconPath: 'assets/images/icons/light_card_flag.svg',
+      iconPath: 'packages/epic_common/assets/icons/light_card_flag.svg',
       passFunction: (UnrealObject object) {
         final lightcardData = object.getPerClassData<LightCardActorData>();
         return lightcardData?.bIsFlag == true;

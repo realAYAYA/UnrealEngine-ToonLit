@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
 #include "DragAndDrop/DecoratedDragDropOp.h"
@@ -79,20 +79,17 @@ public:
 	/** Returns number of items in the list. */
 	virtual int32 Num() const override;
 
-	/** The number of Controllers currently selected*/
+	/** The number of Controllers currently selected */
 	virtual int32 NumSelectedLogicItems() const override;
 
-	/** Whether the Controllers List View currently has focus.*/
+	/** Whether the Controllers List View currently has focus. */
 	virtual bool IsListFocused() const override;
 
-	/** Deletes currently selected items from the list view*/
-	virtual void DeleteSelectedPanelItem() override;
+	/** Deletes currently selected items from the list view */
+	virtual void DeleteSelectedPanelItems() override;
 
-	/** Returns the UI item currently selected by the user (if any)*/
-	virtual TSharedPtr<FRCLogicModeBase> GetSelectedLogicItem() override
-	{
-		return GetSelectedControllerItem();
-	}
+	/** Returns the UI items currently selected by the user (if any). */
+	virtual TArray<TSharedPtr<FRCLogicModeBase>> GetSelectedLogicItems() override;
 
 	/** FNotifyHook Interface Begin */
 	virtual void NotifyPreChange(FEditPropertyChain* PropertyAboutToChange) override;
@@ -105,20 +102,20 @@ public:
 		return ControllerItems.Num();
 	}
 
-	/** Finds a Controller UI model by unique Id*/
+	/** Finds a Controller UI model by unique Id */
 	TSharedPtr<FRCControllerModel> FindControllerItemById(const FGuid& InId) const;
 
 	/** Given an item to move and an anchor row this function moves the item to the position of the anchor
 	* and pushes all other rows below */
 	void ReorderControllerItem(TSharedRef<FRCControllerModel> ItemToMove, TSharedRef<FRCControllerModel> AnchorItem);
 
-	/** Returns the currently selected Controller UI Item*/
+	/** Returns the currently selected Controller UI Item */
 	TSharedPtr<FRCControllerModel> GetSelectedControllerItem() const
 	{
 		return SelectedControllerItemWeakPtr.Pin();
 	}
 
-	/** Requests the panel to refresh its contents from the latest list of Controllers*/
+	/** Requests the panel to refresh its contents from the latest list of Controllers */
 	void RequestRefresh()
 	{
 		Reset();
@@ -127,16 +124,16 @@ public:
 	/** Drag-Drop validation delegate for the Controllers Panel List */
 	bool OnAllowDrop(TSharedPtr<FDragDropOperation> DragDropOperation);
 
-	/** Drag-Drop action delegate for the Controllers Panel List*/
+	/** Drag-Drop action delegate for the Controllers Panel List */
 	FReply OnControllerListViewDragDrop(TSharedPtr<FDragDropOperation> DragDropOperation);
 
 	/** Fetches the Remote Control preset associated with the parent panel */
 	virtual URemoteControlPreset* GetPreset() override;
 
-	/** Creates a Bind Behaviour for the given Controller and binds the given remote control property to it*/
+	/** Creates a Bind Behaviour for the given Controller and binds the given remote control property to it */
 	void CreateBindBehaviourAndAssignTo(URCController* Controller, TSharedRef<const FRemoteControlProperty> InRemoteControlProperty, const bool bExecuteBind);
 
-	/** Whether the user's cursor is directly hovered over the List View*/
+	/** Whether the user's cursor is directly hovered over the List View */
 	bool IsListViewHovered();
 
 	/** Enable/disable MultiController Mode */
@@ -206,16 +203,16 @@ private:
 	/** List of Controllers (UI model) active in this widget */
 	TArray<TSharedPtr<FRCControllerModel>> ControllerItems;
 
-	/** List View widget for representing our Controllers List*/
+	/** List View widget for representing our Controllers List */
 	TSharedPtr<SListView<TSharedPtr<FRCControllerModel>>> ListView;
 	
-	/** Refreshes the list from the latest state of the model*/
+	/** Refreshes the list from the latest state of the model */
 	virtual void Reset() override;
 
-	/** Handles broadcasting of a successful remove item operation.*/
+	/** Handles broadcasting of a successful remove item operation. */
 	virtual void BroadcastOnItemRemoved() override;
 
-	/** Removes the given Controller UI model item from the list of UI models*/
+	/** Removes the given Controller UI model item from the list of UI models */
 	virtual int32 RemoveModel(const TSharedPtr<FRCLogicModeBase> InModel) override;
 
 	/** Set the visibility of the List header the Value Type Column used for MultiControllers */
@@ -226,8 +223,8 @@ private:
 
 	/** Add a custom column */
 	void AddColumn(const FName& InColumnName);
-
-	/** Checks whether the provided Entity can be used to create a Controller*/
+	
+	/** Checks whether the provided Entity can be used to create a Controller */
 	bool IsEntitySupported(FGuid ExposedEntityId);
 
 	/** Panel Style reference. */
@@ -244,4 +241,3 @@ private:
 	/** List of custom columns names */
 	TArray<FName> CustomColumns;
 };
-

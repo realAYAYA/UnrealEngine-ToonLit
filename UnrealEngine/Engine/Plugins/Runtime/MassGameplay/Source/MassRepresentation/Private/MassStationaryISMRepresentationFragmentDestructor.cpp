@@ -13,13 +13,13 @@ UMassStationaryISMRepresentationFragmentDestructor::UMassStationaryISMRepresenta
 {
 	ObservedType = FMassRepresentationFragment::StaticStruct();
 	Operation = EMassObservedOperation::Remove;
-	ExecutionFlags = (int32)(EProcessorExecutionFlags::All);
+	ExecutionFlags = (int32)EProcessorExecutionFlags::All;
 	bRequiresGameThreadExecution = true; // not sure about this
 }
 
 void UMassStationaryISMRepresentationFragmentDestructor::ConfigureQueries()
 {
-	EntityQuery.AddRequirement<FMassRepresentationFragment>(EMassFragmentAccess::ReadOnly);
+	EntityQuery.AddRequirement<FMassRepresentationFragment>(EMassFragmentAccess::ReadWrite);
 	EntityQuery.AddConstSharedRequirement<FMassRepresentationParameters>();
 	EntityQuery.AddSharedRequirement<FMassRepresentationSubsystemSharedFragment>(EMassFragmentAccess::ReadWrite);
 	EntityQuery.AddTagRequirement<FMassStaticRepresentationTag>(EMassFragmentPresence::All);
@@ -41,14 +41,13 @@ void UMassStationaryISMRepresentationFragmentDestructor::Execute(FMassEntityMana
 			FMassRepresentationFragment& Representation = RepresentationList[EntityIdx];
 			if (Representation.CurrentRepresentation == EMassRepresentationType::StaticMeshInstance)
 			{
-				FMassInstancedStaticMeshInfo& ISMInfo = ISMInfosView[Representation.StaticMeshDescIndex];
+				FMassInstancedStaticMeshInfo& ISMInfo = ISMInfosView[Representation.StaticMeshDescHandle.ToIndex()];
 				if (FMassLODSignificanceRange* OldRange = ISMInfo.GetLODSignificanceRange(Representation.PrevLODSignificance))
 				{
 					const FMassEntityHandle EntityHandle = Context.GetEntity(EntityIdx);
-					const int32 EntityId = GetTypeHash(EntityHandle);
 					if (OldRange)
 					{
-						OldRange->RemoveInstance(EntityId);
+						OldRange->RemoveInstance(EntityHandle);
 					}
 				}
 				Representation.CurrentRepresentation = EMassRepresentationType::None;

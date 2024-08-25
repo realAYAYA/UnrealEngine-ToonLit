@@ -14,7 +14,7 @@ namespace ConstructorHelpersInternal
 		PathName.FindChar(TCHAR('.'), PackageDelimPos);
 		if (PackageDelimPos != INDEX_NONE)
 		{
-			PathName.RemoveAt(PackageDelimPos, 1, false);
+			PathName.RemoveAt(PackageDelimPos, 1, EAllowShrinking::No);
 		}
 
 		// Find the package in memory. 

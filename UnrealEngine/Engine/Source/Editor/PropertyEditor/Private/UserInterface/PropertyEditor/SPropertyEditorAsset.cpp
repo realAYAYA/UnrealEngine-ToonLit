@@ -31,10 +31,15 @@
 #include "Framework/Notifications/NotificationManager.h"
 #include "Widgets/Notifications/SNotificationList.h"
 #include "WorldPartition/WorldPartition.h"
+#include "WorldPartition/WorldPartitionActorDescInstance.h"
 #include "FileHelpers.h"
 #include "Presentation/PropertyEditor/PropertyEditor.h"
 #include "AssetThumbnail.h"
 #include "DetailWidgetRow.h"
+#include "Subsystems/AssetEditorSubsystem.h"
+#include "PropertyEditorConstants.h"
+#include "PropertyEditorUtils.h"
+#include "Misc/EditorPathHelper.h"
 
 #define LOCTEXT_NAMESPACE "PropertyEditor"
 
@@ -79,6 +84,66 @@ static bool GetTagOrBoolMetadata(const FProperty* Property, FName TagName, bool 
 	}
 
 	return bResult;
+}
+
+static bool GetEditorPathOwnerFromPropertyHandle(const TSharedPtr<IPropertyHandle>& PropertyHandle, UObject*& OutEditorPathOwner)
+{
+	// If we don't get a proper Handle then consider the context null and valid
+	OutEditorPathOwner = nullptr;
+
+	if(PropertyHandle.IsValid())
+	{ 
+		TArray<UObject*> OuterObjects;
+		PropertyHandle->GetOuterObjects(OuterObjects);
+
+		if (OuterObjects.Num() > 0)
+		{
+			UObject* OutReferencer = OuterObjects[0];
+			OutEditorPathOwner = FEditorPathHelper::GetEditorPathOwner(OutReferencer);
+			for (int32 i = 1; i < OuterObjects.Num(); ++i)
+			{
+				if (OutEditorPathOwner != FEditorPathHelper::GetEditorPathOwner(OuterObjects[i]))
+				{
+					OutEditorPathOwner = nullptr;
+					return false;
+				}
+			}
+		}
+	}
+
+	return true;
+}
+
+static FString GetActorEditorPathLabel(const AActor* InActor)
+{
+	check(InActor);
+	
+	TArray<FString> EditorPathOwners;
+	EditorPathOwners.Add(InActor->GetActorLabel());
+	const UObject* Context = InActor;
+
+	while (UObject* EditorPathOwner = FEditorPathHelper::GetEditorPathOwner(Context))
+	{
+		if (AActor* ActorEditorPathOwner = Cast<AActor>(EditorPathOwner))
+		{
+			EditorPathOwners.Add(ActorEditorPathOwner->GetActorLabel());
+		}
+		else
+		{
+			EditorPathOwners.Add(EditorPathOwner->GetName());
+		}
+		Context = EditorPathOwner;
+	}
+
+	TStringBuilder<256> LabelBuilder;
+	LabelBuilder.Append(EditorPathOwners[EditorPathOwners.Num()-1]);
+	for (int32 i = EditorPathOwners.Num() - 2; i >= 0; --i)
+	{
+		LabelBuilder.Append(TEXT("."));
+		LabelBuilder.Append(EditorPathOwners[i]);
+	}
+
+	return LabelBuilder.ToString();
 }
 
 bool SPropertyEditorAsset::ShouldDisplayThumbnail(const FArguments& InArgs, const UClass* InObjectClass) const
@@ -132,14 +197,23 @@ void SPropertyEditorAsset::InitializeClassFilters(const FProperty* Property)
 
 	bExactClass = GetTagOrBoolMetadata(MetadataProperty, "ExactClass", false);
 	
-	AllowedClassFilters = PropertyCustomizationHelpers::GetClassesFromMetadataString(MetadataProperty->GetMetaData("AllowedClasses"));
+	TArray<UObject*> ObjectList;
+	if (PropertyEditor && PropertyEditor->GetPropertyHandle()->IsValidHandle())
+	{
+		PropertyEditor->GetPropertyHandle()->GetOuterObjects(ObjectList);
+	}
+	else if (PropertyHandle.IsValid())
+	{
+		PropertyHandle->GetOuterObjects(ObjectList);
+	}
+	
+	PropertyEditorUtils::GetAllowedAndDisallowedClasses(ObjectList, *MetadataProperty, AllowedClassFilters, DisallowedClassFilters, bExactClass, ObjectClass);
+	
 	if (AllowedClassFilters.Num() == 0)
 	{
 		// always add the object class to the filters
 		AllowedClassFilters.Add(ObjectClass);
 	}
-
-	DisallowedClassFilters = PropertyCustomizationHelpers::GetClassesFromMetadataString(MetadataProperty->GetMetaData("DisallowedClasses"));
 }
 
 void SPropertyEditorAsset::InitializeAssetDataTags(const FProperty* Property)
@@ -193,7 +267,7 @@ void SPropertyEditorAsset::InitializeAssetDataTags(const FProperty* Property)
 	}
 }
 
-bool SPropertyEditorAsset::IsAssetAllowed(const FAssetData& InAssetData)
+bool SPropertyEditorAsset::IsAssetFiltered(const FAssetData& InAssetData)
 {
 	if (DisallowedAssetDataTags.IsValid())
 	{
@@ -201,7 +275,7 @@ bool SPropertyEditorAsset::IsAssetAllowed(const FAssetData& InAssetData)
 		{
 			if (InAssetData.TagsAndValues.ContainsKeyValue(DisallowedTagAndValue.Key, DisallowedTagAndValue.Value))
 			{
-				return false;
+				return true;
 			}
 		}
 	}
@@ -217,11 +291,11 @@ bool SPropertyEditorAsset::IsAssetAllowed(const FAssetData& InAssetData)
 				{
 					continue;
 				}
-				return false;
+				return true;
 			}
 		}
 	}
-	return true;
+	return false;
 }
 
 // Awful hack to deal with UClass::FindCommonBase taking an array of non-const classes...
@@ -243,7 +317,6 @@ void SPropertyEditorAsset::Construct(const FArguments& InArgs, const TSharedPtr<
 	OwnerAssetDataArray = InArgs._OwnerAssetDataArray;
 	OnIsEnabled = InArgs._IsEnabled;
 	OnSetObject = InArgs._OnSetObject;
-	OnShouldFilterAsset = InArgs._OnShouldFilterAsset;
 	OnShouldFilterActor = InArgs._OnShouldFilterActor;
 	ObjectPath = InArgs._ObjectPath;
 
@@ -279,19 +352,58 @@ void SPropertyEditorAsset::Construct(const FArguments& InArgs, const TSharedPtr<
 	ObjectClass = InArgs._Class != nullptr ? InArgs._Class : GetObjectPropertyClass(Property);
 	bAllowClear = InArgs._AllowClear.IsSet() ? InArgs._AllowClear.GetValue() : (Property ? !(Property->PropertyFlags & CPF_NoClear) : true);
 	bAllowCreate = InArgs._AllowCreate.IsSet() ? InArgs._AllowCreate.GetValue() : (Property ? !Property->HasMetaData("NoCreate") : true);
-
+	bIsSoftObjectPath = CastField<FSoftObjectProperty>(Property) != nullptr;
+	
 	InitializeAssetDataTags(Property);
+
+	auto AppendOnShouldFilterAssetCallback = [this](FOnShouldFilterAsset&& OnShouldFilterAssetCallback)
+	{
+		check(OnShouldFilterAssetCallback.IsBound());
+		if (OnShouldFilterAsset.IsBound())
+		{
+			OnShouldFilterAsset.BindLambda([BaseOnShouldFilterAsset = OnShouldFilterAsset, OnShouldFilterAssetCallback = MoveTemp(OnShouldFilterAssetCallback)](const FAssetData& InAssetData)
+			{
+				return BaseOnShouldFilterAsset.Execute(InAssetData) || OnShouldFilterAssetCallback.Execute(InAssetData);
+			});
+		}
+		else
+		{
+			OnShouldFilterAsset = MoveTemp(OnShouldFilterAssetCallback);
+		}
+	};
+
+	OnShouldFilterAsset = InArgs._OnShouldFilterAsset;
+	
 	if (DisallowedAssetDataTags.IsValid() || RequiredAssetDataTags.IsValid())
 	{
 		// re-route the filter delegate to our own if we have our own asset data tags filter :
-		OnShouldFilterAsset.BindLambda([this, AssetFilter = InArgs._OnShouldFilterAsset](const FAssetData& InAssetData)
+		AppendOnShouldFilterAssetCallback(FOnShouldFilterAsset::CreateRaw(this, &SPropertyEditorAsset::IsAssetFiltered));
+	}
+
+	if (Property && Property->GetOwnerProperty()->HasMetaData("GetAssetFilter"))
+	{
+		// Add MetaData asset filter
+		const FString GetAssetFilterFunctionName = Property->GetOwnerProperty()->GetMetaData("GetAssetFilter");
+		if (!GetAssetFilterFunctionName.IsEmpty())
 		{
-			if (IsAssetAllowed(InAssetData))
+			TArray<UObject*> ObjectList;
+			if (PropertyEditor.IsValid())
 			{
-				return AssetFilter.IsBound() ? AssetFilter.Execute(InAssetData) : false;
+				PropertyEditor->GetPropertyHandle()->GetOuterObjects(ObjectList);
 			}
-			return true;
-		});
+			else if (PropertyHandle.IsValid())
+			{
+				PropertyHandle->GetOuterObjects(ObjectList);
+			}
+			for (UObject* Object : ObjectList)
+			{
+				const UFunction* GetAssetFilterFunction = Object ? Object->FindFunction(*GetAssetFilterFunctionName) : nullptr;
+				if (GetAssetFilterFunction)
+				{
+					AppendOnShouldFilterAssetCallback(FOnShouldFilterAsset::CreateUFunction(Object, GetAssetFilterFunction->GetFName()));
+				}
+			}
+		}
 	}
 
 	InitializeClassFilters(Property);
@@ -335,6 +447,16 @@ void SPropertyEditorAsset::Construct(const FArguments& InArgs, const TSharedPtr<
 
 	TAttribute<bool> IsEnabledAttribute(this, &SPropertyEditorAsset::CanEdit);
 	TAttribute<FText> TooltipAttribute(this, &SPropertyEditorAsset::OnGetToolTip);
+
+	EditorPathOwner = nullptr;
+	if (bIsActor && bIsSoftObjectPath && FEditorPathHelper::IsEnabled())
+	{
+		if (!GetEditorPathOwnerFromPropertyHandle(GetMostSpecificPropertyHandle(), EditorPathOwner))
+		{
+			IsEnabledAttribute.Set(false);
+			TooltipAttribute.Set(LOCTEXT("InvalidActorEditorPathOwner", "Editing this value with different referencing context is not allowed"));
+		}
+	}
 
 	if (Property)
 	{
@@ -437,18 +559,18 @@ void SPropertyEditorAsset::Construct(const FArguments& InArgs, const TSharedPtr<
 		}
 
 		ValueContentBox->AddSlot()
-		.Padding(0,3,5,0)
+		.Padding(0.0f,3.0f,5.0f,0.0f)
 		.AutoWidth()
 		.VAlign(VAlign_Center)
 		[
 			SNew(SBorder)
 			.Visibility(EVisibility::SelfHitTestInvisible)
-			.Padding(FMargin(0, 0, 4, 4))
+			.Padding(FMargin(0.0f, 0.0f, 4.0f, 4.0f))
 			.BorderImage(FAppStyle::Get().GetBrush("PropertyEditor.AssetTileItem.DropShadow"))
 			[
 				SNew(SOverlay)
 				+SOverlay::Slot()
-				.Padding(1)
+				.Padding(1.0f)
 				[
 					SAssignNew(ThumbnailBorder, SBorder)
 					.Padding(0)
@@ -457,8 +579,8 @@ void SPropertyEditorAsset::Construct(const FArguments& InArgs, const TSharedPtr<
 					[
 						SNew(SBox)
 						.ToolTipText(TooltipAttribute)
-						.WidthOverride(InArgs._ThumbnailSize.X)
-						.HeightOverride(InArgs._ThumbnailSize.Y)
+						.WidthOverride(static_cast<float>(InArgs._ThumbnailSize.X))
+						.HeightOverride(static_cast<float>(InArgs._ThumbnailSize.Y))
 						[
 							AssetThumbnail->MakeThumbnailWidget(AssetThumbnailConfig)
 						]
@@ -475,7 +597,7 @@ void SPropertyEditorAsset::Construct(const FArguments& InArgs, const TSharedPtr<
 
 	
 		ValueContentBox->AddSlot()
-		.Padding(0)
+		.Padding(0.0f)
 		.VAlign(VAlign_Center)
 		[
 			SNew(SVerticalBox)
@@ -544,14 +666,14 @@ void SPropertyEditorAsset::Construct(const FArguments& InArgs, const TSharedPtr<
 		];
 	}
 
-	if( !bIsActor && InArgs._DisplayUseSelected )
+	if( InArgs._DisplayUseSelected )
 	{
 		ButtonBox->AddSlot()
 		.VAlign(VAlign_Center)
 		.AutoWidth()
 		.Padding( 2.0f, 0.0f )
 		[
-			PropertyCustomizationHelpers::MakeUseSelectedButton( FSimpleDelegate::CreateSP( this, &SPropertyEditorAsset::OnUse ), FText(), IsEnabledAttribute )
+			PropertyCustomizationHelpers::MakeUseSelectedButton( FSimpleDelegate::CreateSP( this, &SPropertyEditorAsset::OnUse ), FText(), IsEnabledAttribute, bIsActor )
 		];
 	}
 
@@ -728,6 +850,7 @@ TSharedRef<SWidget> SPropertyEditorAsset::OnGetMenuContent()
 	{
 		return PropertyCustomizationHelpers::MakeActorPickerWithMenu(Cast<AActor>(Value.Object),
 																	 bAllowClear,
+																	 bIsSoftObjectPath && FEditorPathHelper::IsEnabled(),
 																	 FOnShouldFilterActor::CreateSP( this, &SPropertyEditorAsset::IsFilteredActor ),
 																	 FOnActorSelected::CreateSP( this, &SPropertyEditorAsset::OnActorSelected),
 																	 FSimpleDelegate::CreateSP( this, &SPropertyEditorAsset::CloseComboButton ),
@@ -759,6 +882,13 @@ void SPropertyEditorAsset::OnMenuOpenChanged(bool bOpen)
 bool SPropertyEditorAsset::IsFilteredActor( const AActor* const Actor ) const
 {
 	bool IsAllowed = Actor != nullptr && Actor->IsA(ObjectClass) && !Actor->IsChildActor() && IsClassAllowed(Actor->GetClass());
+
+	if (IsAllowed)
+	{
+		// If we have an EditorPathOwner referenced actor needs to be in same EditorPathOwner
+		IsAllowed = !EditorPathOwner || FEditorPathHelper::IsInEditorPath(EditorPathOwner, Actor);
+	}
+
 	if (IsAllowed && OnShouldFilterActor.IsBound())
 	{
 		IsAllowed = OnShouldFilterActor.Execute(Actor);
@@ -795,7 +925,7 @@ FText SPropertyEditorAsset::OnGetAssetName() const
 
 				if (Actor)
 				{
-					Name = FText::AsCultureInvariant(Actor->GetActorLabel());
+					Name = FText::AsCultureInvariant(GetActorEditorPathLabel(Actor));
 				}
 				else
 				{
@@ -822,7 +952,7 @@ FText SPropertyEditorAsset::OnGetAssetName() const
 	}
 	else if( Result == FPropertyAccess::MultipleValues )
 	{
-		Name = LOCTEXT("MultipleValues", "Multiple Values");
+		Name = PropertyEditorConstants::DefaultUndeterminedText;
 	}
 
 	return Name;
@@ -830,7 +960,7 @@ FText SPropertyEditorAsset::OnGetAssetName() const
 
 FText SPropertyEditorAsset::OnGetAssetClassName() const
 {
-	UClass* Class = GetDisplayedClass();
+	const UClass* Class = GetDisplayedClass();
 	if(Class)
 	{
 		return FText::AsCultureInvariant(Class->GetName());
@@ -886,7 +1016,7 @@ FText SPropertyEditorAsset::OnGetToolTip() const
 	}
 	else if( Result == FPropertyAccess::MultipleValues )
 	{
-		ToolTipText = LOCTEXT("MultipleValues", "Multiple Values");
+		ToolTipText = PropertyEditorConstants::DefaultUndeterminedText;
 	}
 
 	if( ToolTipText.IsEmpty() )
@@ -985,7 +1115,7 @@ FPropertyAccess::Result SPropertyEditorAsset::GetValue( FObjectOrAssetData& OutV
 		}
 #endif
 
-		OutValue = FObjectOrAssetData( Object );
+		OutValue = FObjectOrAssetData( Object, EditorPathOwner );
 	}
 	else
 	{
@@ -1073,7 +1203,7 @@ FPropertyAccess::Result SPropertyEditorAsset::GetValue( FObjectOrAssetData& OutV
 	return Result;
 }
 
-UClass* SPropertyEditorAsset::GetDisplayedClass() const
+const UClass* SPropertyEditorAsset::GetDisplayedClass() const
 {
 	FObjectOrAssetData Value;
 	GetValue( Value );
@@ -1092,8 +1222,33 @@ void SPropertyEditorAsset::OnAssetSelected( const struct FAssetData& AssetData )
 	SetValue(AssetData);
 }
 
+SPropertyEditorAsset::FObjectOrAssetData::FObjectOrAssetData(UObject* InObject, UObject* InEditorPathOwner)
+	: Object(InObject)
+{
+	if (AActor* Actor = Cast<AActor>(InObject))
+	{
+		ObjectPath = FEditorPathHelper::GetEditorPathFromEditorPathOwner(Actor, InEditorPathOwner);
+	}
+	else if(InObject != nullptr)
+	{
+		AssetData = FAssetData(InObject);
+		ObjectPath = InObject;
+	}
+}
+
 void SPropertyEditorAsset::OnActorSelected( AActor* InActor )
 {
+	if (InActor && FEditorPathHelper::IsEnabled() && bIsSoftObjectPath)
+	{
+		// Even if SetValue ends up calling FSoftObjectProperty::ImportText_Internal the FAssetData validation needs to validate the reference domain which is /Temp when referencing Level Instance objects. So we convert the FAssetData to the EditorPath version to pass validation.
+		FSoftObjectPath EditorPath = FEditorPathHelper::GetEditorPathFromEditorPathOwner(InActor, EditorPathOwner);
+		if (FSoftObjectPath(InActor) != EditorPath)
+		{
+			FAssetData EditorAssetData(EditorPath.GetLongPackageName(), EditorPath.ToString(), FTopLevelAssetPath(InActor->GetClass()->GetPathName()));
+			SetValue(EditorAssetData);
+			return;
+		}
+	}
 	SetValue(InActor);
 }
 
@@ -1121,7 +1276,20 @@ void SPropertyEditorAsset::OnOpenAssetEditor()
 			}
 		}
 
-		GEditor->EditObject( ObjectToEdit );
+		UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
+
+		if(AssetEditorSubsystem)
+		{
+			FText ErrorMsg;
+			if(AssetEditorSubsystem->CanOpenEditorForAsset(ObjectToEdit, EAssetTypeActivationOpenedMethod::Edit, &ErrorMsg))
+			{
+				AssetEditorSubsystem->OpenEditorForAsset(ObjectToEdit); // Default opens in Edit Mode
+			}
+			else if(AssetEditorSubsystem->CanOpenEditorForAsset(ObjectToEdit, EAssetTypeActivationOpenedMethod::View, &ErrorMsg))
+			{
+				AssetEditorSubsystem->OpenEditorForAsset(ObjectToEdit, EToolkitMode::Standalone /* default */, TSharedPtr<IToolkitHost>() /* default */, true /* default */, EAssetTypeActivationOpenedMethod::View);
+			}
+		}
 	}
 }
 
@@ -1144,9 +1312,9 @@ void SPropertyEditorAsset::OnBrowse()
 				{
 					if (UWorld* World = Cast<UWorld>(MapObject); World && World->IsPartitionedWorld())
 					{
-						if (const FWorldPartitionActorDesc* ActorDesc = World->GetWorldPartition()->GetActorDescByName(Value.ObjectPath))
+						if (const FWorldPartitionActorDescInstance* ActorDescInstance = World->GetWorldPartition()->GetActorDescInstanceByPath(Value.ObjectPath))
 						{
-							World->GetWorldPartition()->PinActors({ ActorDesc->GetGuid() });
+							World->GetWorldPartition()->PinActors({ ActorDescInstance->GetGuid() });
 							GetValue(Value);
 						}
 					}
@@ -1205,6 +1373,7 @@ void SPropertyEditorAsset::OnUse()
 	// Use the property editor path if it is valid and there is no custom filtering required
 	if(PropertyEditor.IsValid()
 		&& !OnShouldFilterAsset.IsBound()
+		&& !OnShouldFilterActor.IsBound()
 		&& AllowedClassFilters.Num() == 0
 		&& DisallowedClassFilters.Num() == 0
 		&& (GEditor ? !GEditor->MakeAssetReferenceFilter(FAssetReferenceFilterContext()).IsValid() : true))
@@ -1217,10 +1386,16 @@ void SPropertyEditorAsset::OnUse()
 		FEditorDelegates::LoadSelectedAssetsIfNeeded.Broadcast();
 
 		// try to get a selected object of our class
-		UObject* Selection = nullptr;
+		const UObject* Selection = nullptr;
 		if( ObjectClass && ObjectClass->IsChildOf( AActor::StaticClass() ) )
 		{
 			Selection = GEditor->GetSelectedActors()->GetTop( ObjectClass );
+
+			// For actors filtered means allowed, unlike for assets (where filtered means NOT allowed)
+			if (!IsFilteredActor(static_cast<const AActor*>(Selection)))
+			{
+				Selection = nullptr;
+			}
 		}
 		else if( ObjectClass )
 		{

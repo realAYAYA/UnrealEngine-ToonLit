@@ -16,6 +16,7 @@
 #include "UObject/UnrealType.h"
 #include "UObject/GCObject.h"
 #include "UObject/GCScopeLock.h"
+#include "UObject/GCVerseCellInfo.h"
 #include "HAL/ExceptionHandling.h"
 
 
@@ -53,6 +54,19 @@ static FAutoConsoleCommand CmdSetHistorySize(
 		})
 );
 
+/** Dummy class to represent GC barrier inside of GC history object graph */
+class UGCBarrier : public UObject
+{
+	DECLARE_CLASS_INTRINSIC(UGCBarrier,
+		UObject,
+		CLASS_Transient,
+		TEXT("/Script/CoreUObject"));
+};
+
+IMPLEMENT_CORE_INTRINSIC_CLASS(UGCBarrier, UObject,
+	{
+	});
+
 FGCHistory::~FGCHistory()
 {
 	Cleanup();
@@ -66,7 +80,7 @@ FGCHistory& FGCHistory::Get()
 
 void FGCHistory::Cleanup(FGCSnapshot& InSnapshot)
 {
-	for (TPair<FGCObjectInfo*, TArray<FGCDirectReferenceInfo>*>& DirectReferenceInfos : InSnapshot.DirectReferences)
+	for (TPair<FReferenceToken, TArray<FGCDirectReference>*>& DirectReferenceInfos : InSnapshot.DirectReferences)
 	{
 		delete DirectReferenceInfos.Value;
 	}
@@ -76,6 +90,13 @@ void FGCHistory::Cleanup(FGCSnapshot& InSnapshot)
 		delete ObjectToInfoPair.Value;
 	}
 	InSnapshot.ObjectToInfoMap.Reset();
+#if WITH_VERSE_VM || defined(__INTELLISENSE__)
+	for (TPair<const Verse::VCell*, FGCVerseCellInfo*>& VerseCellToInfoPair : InSnapshot.VerseCellToInfoMap)
+	{
+		delete VerseCellToInfoPair.Value;
+	}
+	InSnapshot.VerseCellToInfoMap.Reset();
+#endif
 }
 
 void FGCHistory::Cleanup()
@@ -84,6 +105,7 @@ void FGCHistory::Cleanup()
 	{
 		Cleanup(Snapshot);
 	}
+	GCBarrier = nullptr;
 	Snapshots.Empty();
 	MostRecentSnapshotIndex = -1;	
 }
@@ -99,24 +121,53 @@ void FGCHistory::SetHistorySize(int32 HistorySize)
 			Snapshots.AddDefaulted(HistorySize);
 		}		
 	}
+	if (HistorySize > 0)
+	{
+		if (!GCBarrier)
+		{
+			GCBarrier = NewObject<UGCBarrier>(GetTransientPackage(), TEXT("GC_Barrier"), RF_Transient);
+			GCBarrier->AddToRoot();
+		}
+	}
+	else if (GCBarrier)
+	{
+		GCBarrier->RemoveFromRoot();
+	}
 }
 
-void FGCHistory::MergeArrayStructHistory(TMap<const UObject*, TArray<FGCDirectReference>*>& History, FGCSnapshot& Snapshot)
+void FGCHistory::MergeArrayStructHistory(TMap<FReferenceToken, TArray<FGCDirectReference>*>& History, FGCSnapshot& Snapshot)
 {
-	for (TPair<const UObject*, TArray<FGCDirectReference>*>& ReferencePair : History)
+	for (TPair<FReferenceToken, TArray<FGCDirectReference>*>& ReferencePair : History)
 	{
-		FGCObjectInfo* ReferencerInfo = FGCObjectInfo::FindOrAddInfoHelper(ReferencePair.Key, Snapshot.ObjectToInfoMap);
-		TArray<FGCDirectReferenceInfo>*& DirectReferencesInfoArray = Snapshot.DirectReferences.FindOrAdd(ReferencerInfo);
+		FReferenceToken Referencer = GetInfoReferenceToken(ReferencePair.Key, Snapshot);
+		TArray<FGCDirectReference>*& DirectReferencesInfoArray = Snapshot.DirectReferences.FindOrAdd(Referencer);
 		if (!DirectReferencesInfoArray)
 		{
-			DirectReferencesInfoArray = new TArray<FGCDirectReferenceInfo>();
+			DirectReferencesInfoArray = new TArray<FGCDirectReference>();
 			DirectReferencesInfoArray->Reserve(ReferencePair.Value->Num());
 		}
 		for (FGCDirectReference& DirectReference : *ReferencePair.Value)
 		{
-			FGCObjectInfo* ReferencedObjectInfo = FGCObjectInfo::FindOrAddInfoHelper(DirectReference.ReferencedObject, Snapshot.ObjectToInfoMap);
-			DirectReferencesInfoArray->Add(FGCDirectReferenceInfo(DirectReference.ReferencerName, ReferencedObjectInfo));
+			DirectReferencesInfoArray->Add(FGCDirectReference(GetInfoReferenceToken(DirectReference.Reference, Snapshot), DirectReference.ReferencerName));
 		}
+	}
+}
+
+FReferenceToken FGCHistory::GetInfoReferenceToken(FReferenceToken InToken, FGCSnapshot& Snapshot)
+{
+	switch (InToken.GetType())
+	{
+	case EReferenceTokenType::Object:
+		return FReferenceToken(FGCObjectInfo::FindOrAddInfoHelper(InToken.AsObject(), Snapshot.ObjectToInfoMap));
+	case EReferenceTokenType::VerseCell:
+#if WITH_VERSE_VM || defined(__INTELLISENSE__)
+		return FReferenceToken(FGCVerseCellInfo::FindOrAddInfoHelper(InToken.AsVerseCell(), Snapshot.VerseCellToInfoMap));
+#else
+		unimplemented();
+		return InToken;
+#endif
+	default:
+		return InToken;
 	}
 }
 
@@ -180,9 +231,12 @@ int64 FGCHistory::GetAllocatedSize() const
 int64 FGCSnapshot::GetAllocatedSize() const
 {
 	int64 TotalSize = ObjectToInfoMap.GetAllocatedSize() + ObjectToInfoMap.Num() * sizeof(FGCObjectInfo);
+#if WITH_VERSE_VM || defined(__INTELLISENSE__)
+	TotalSize += VerseCellToInfoMap.GetAllocatedSize() + VerseCellToInfoMap.Num() * sizeof(FGCVerseCellInfo);
+#endif
 
 	TotalSize += DirectReferences.GetAllocatedSize();
-	for (const TPair<FGCObjectInfo*, TArray<FGCDirectReferenceInfo>*>& ReferencePair : DirectReferences)
+	for (const TPair<FReferenceToken, TArray<FGCDirectReference>*>& ReferencePair : DirectReferences)
 	{
 		TotalSize += ReferencePair.Value->GetAllocatedSize();
 	}

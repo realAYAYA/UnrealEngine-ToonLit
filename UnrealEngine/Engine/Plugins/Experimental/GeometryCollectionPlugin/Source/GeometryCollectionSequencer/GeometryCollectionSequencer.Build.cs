@@ -24,6 +24,7 @@ namespace UnrealBuildTool.Rules
                     "MovieSceneTools",
                     "MovieSceneTracks",
                     "RHI",
+                    "SequencerCore",
                     "Sequencer",
                     "Slate",
                     "SlateCore",

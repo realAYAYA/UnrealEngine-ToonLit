@@ -16,7 +16,6 @@ class ITargetPlatform;
 #if ENABLE_HTTP_FOR_NFS
 
 #if PLATFORM_WINDOWS
-	#include "Windows/WindowsHWrapper.h"
 	#include "Windows/AllowWindowsPlatformTypes.h"
 #endif
 

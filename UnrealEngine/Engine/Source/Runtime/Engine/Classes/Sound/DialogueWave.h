@@ -116,6 +116,8 @@ public:
 	virtual void Serialize( FArchive& Ar ) override;
 	virtual bool IsReadyForFinishDestroy() override;
 	virtual FString GetDesc() override;
+	virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 
 	virtual void PostDuplicate(bool bDuplicateForPIE) override;

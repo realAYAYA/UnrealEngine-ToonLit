@@ -15,7 +15,7 @@
 #include "LandscapeWeightmapUsage.h"
 #include "Containers/ArrayView.h"
 #include "Engine/StreamableRenderAsset.h"
-
+#include "Engine/Texture2DArray.h"
 #include "LandscapeComponent.generated.h"
 
 class ALandscape;
@@ -184,6 +184,18 @@ inline uint32 GetTypeHash(const FWeightmapLayerAllocationInfo& InAllocInfo)
 	return InAllocInfo.GetHash();
 }
 
+template<typename T>
+struct IBuffer2DView
+{
+	// copy up to Count elements to Dest, in X then Y order (standard image order)
+	virtual void CopyTo(T* Dest, int32 Count) const = 0;
+
+	// copy up to Count elements to Dest, in X then Y order (standard image order)
+	virtual bool CopyToAndCalcIsAllZero(T* Dest, int32 Count) const = 0;
+
+	// return the total number of elements
+	virtual int32 Num() const = 0;
+};
 
 struct FLandscapeComponentGrassData
 {
@@ -192,10 +204,13 @@ struct FLandscapeComponentGrassData
 
 	// Guid per material instance in the hierarchy between the assigned landscape material (instance) and the root UMaterial
 	// used to detect changes to material instance parameters or the root material that could affect the grass maps
-	TArray<FGuid, TInlineAllocator<2>> MaterialStateIds;
+	TArray<FGuid, TInlineAllocator<2>> MaterialStateIds_DEPRECATED;
 	// cached component rotation when material world-position-offset is used,
 	// as this will affect the direction of world-position-offset deformation (included in the HeightData below)
-	FQuat RotationForWPO;
+	FQuat RotationForWPO_DEPRECATED;
+
+	// Variable used to detect when grass data needs to be regenerated:
+	uint32 GenerationHash = 0;
 #endif
 
 #if WITH_EDITORONLY_DATA
@@ -204,7 +219,7 @@ struct FLandscapeComponentGrassData
 
 	// Grass data was updated but not saved yet
 	bool bIsDirty = false;
-#endif
+#endif // WITH_EDITORONLY_DATA
 	
 	static constexpr int32 UnknownNumElements = -1;
 	// Elements per contiguous array: for validation and also to indicate whether the grass data is valid (NumElements >= 0, meaning 0 elements is valid but the grass data is all zero and 
@@ -216,9 +231,7 @@ struct FLandscapeComponentGrassData
 
 	FLandscapeComponentGrassData() = default;
 
-#if WITH_EDITOR
 	FLandscapeComponentGrassData(ULandscapeComponent* Component);
-#endif
 
 	// Returns whether grass data has been computed (or serialized) yet. Returns true even if the data is completely empty (e.g. all-zero weightmap data)
 	bool HasValidData() const;
@@ -227,6 +240,7 @@ struct FLandscapeComponentGrassData
 	bool HasData() const;
 
 	void InitializeFrom(const TArray<uint16>& HeightData, const TMap<ULandscapeGrassType*, TArray<uint8>>& WeightData);
+	void InitializeFrom(IBuffer2DView<uint16>* HeightData, TMap<ULandscapeGrassType*, IBuffer2DView<uint8>*>& WeightData, bool bStripEmptyWeights);
 
 	bool HasWeightData() const;
 	TArrayView<uint8> GetWeightData(const ULandscapeGrassType* GrassType);
@@ -452,6 +466,17 @@ class ULandscapeComponent : public UPrimitiveComponent
 	UPROPERTY()
 	FBox CachedLocalBox;
 
+	/** Maximum deltas between vertices and their counterparts from other mips. This mip-to-mip data is laid out in a contiguous array following the following pattern : 
+	*  Say, we have 5 "relevant" mips and [N -> M] is the delta from mip N to M (where M > N and M < (NumRelevantMips - 1)) then the array will contain : 
+	*  [0 -> 1], [0 -> 2], [0 -> 3], [1 -> 2], [1 -> 3], [2 -> 3]
+	*  i.e. for mip 0 : (NumRelevantMips - 1) deltas, then for mip 1 : (NumRelevantMips - 2) deltas, until mip == (NumRelevantMips - 2) : 1 delta
+	*  Note: a "relevant" mip is one with more than 1 vertex. i.e.:
+	*   - In the case of a 1x1 subsection, the last mip index (NumMips - 1) has a single pixel and is therefore not relevant (we cannot draw a landscape component with a single vertex!), hence the last relevant mip index will be NumMips - 2
+	*   - In the case of 2x2 subsections, the penultimate mip index (NumMips - 2) has 4 pixels, which means 4 subsections, each with a single pixel, and is therefore not relevant either, hence the last relevant mip index will be NumMips - 3
+	*/
+	UPROPERTY()
+	TArray<double> MipToMipMaxDeltas;
+
 #if WITH_EDITORONLY_DATA
 	UPROPERTY()
 	TLazyObjectPtr<ULandscapeHeightfieldCollisionComponent> CollisionComponent_DEPRECATED;
@@ -511,7 +536,31 @@ private:
 	UPROPERTY(EditAnywhere, Category = LandscapeComponent)
 	TArray<FLandscapePerLODMaterialOverride> PerLODOverrideMaterials;
 
+#if WITH_EDITORONLY_DATA
+	/** The value of the landscape material AllStateCRC the last time the GrassTypes array was updated from it */
+	uint32 LastLandscapeMaterialAllStateCRCWhenGrassTypesBuilt = 0;
+#endif // WITH_EDITORONLY_DATA
+
+	/** Cached list of grass types supported by the component's material.
+	* This is needed in a cooked build, as the grass types list is not available
+	* on the cooked material.
+	* Call UpdateGrassTypes() to ensure this array is up to date */
+	UPROPERTY()
+	TArray<TObjectPtr<ULandscapeGrassType>> GrassTypes;
+
 public:
+	// Non-serialized runtime cache of values derived from the assigned grass types.
+	// Call ALandscapeProxy::UpdateGrassTypeSummary() to update.
+	struct FGrassTypeSummary
+	{
+		bool bInvalid = true;
+		double MaxInstanceDiscardDistance = DBL_MAX;
+	};
+	FGrassTypeSummary GrassTypeSummary;
+	inline bool IsGrassTypeSummaryValid() { return GrassTypeSummary.bInvalid; }
+
+	/** Invalidate the grass type summary.  Call whenever grass types are changed to indicate that the summary values are out of date. */
+	LANDSCAPE_API void InvalidateGrassTypeSummary();
 
 	/** Uniquely identifies this component's built map data. */
 	UPROPERTY()
@@ -612,6 +661,9 @@ public:
 	UPROPERTY(NonPIEDuplicateTransient)
 	TArray<TObjectPtr<UTexture2D>> MobileWeightmapTextures;
 
+	UPROPERTY(NonPIEDuplicateTransient)
+	TObjectPtr<UTexture2DArray> MobileWeightmapTextureArray;
+	
 	/** Layer allocations used by mobile.*/
 	UPROPERTY()
 	TArray<FWeightmapLayerAllocationInfo> MobileWeightmapLayerAllocations;
@@ -629,7 +681,21 @@ public:
 public:
 	/** Grass data for generation **/
 	TSharedRef<FLandscapeComponentGrassData, ESPMode::ThreadSafe> GrassData;
-	TArray<FBox> ActiveExcludedBoxes;
+	
+	// This wrapper is needed to filter out exclude boxes that are completely inside of another exclude box
+	struct FExcludeBox
+	{
+		FBox Box;
+
+		FExcludeBox() = default;
+		FExcludeBox(const FBox& InBox) : Box(InBox) {}
+
+		bool operator==(const FExcludeBox& Other) const
+		{
+			return Box.IsInsideOrOn(Other.Box);
+		}
+	};
+	TArray<FExcludeBox> ActiveExcludedBoxes;
 	uint32 ChangeTag;
 
 #if WITH_EDITOR
@@ -701,6 +767,7 @@ public:
 	LANDSCAPE_API const TArray<UTexture2D*>& GetWeightmapTextures(bool InReturnEditingWeightmap = false) const;
 	LANDSCAPE_API TArray<TObjectPtr<UTexture2D>>& GetWeightmapTextures(const FGuid& InLayerGuid);
 	LANDSCAPE_API const TArray<UTexture2D*>& GetWeightmapTextures(const FGuid& InLayerGuid) const;
+	const TArray<UTexture2D*>& GetRenderedWeightmapTexturesForFeatureLevel(ERHIFeatureLevel::Type FeatureLevel) const;
 
 	LANDSCAPE_API TArray<FWeightmapLayerAllocationInfo>& GetWeightmapLayerAllocations(bool InReturnEditingWeightmap = false);
 	LANDSCAPE_API const TArray<FWeightmapLayerAllocationInfo>& GetWeightmapLayerAllocations(bool InReturnEditingWeightmap = false) const;
@@ -737,9 +804,6 @@ public:
 	LANDSCAPE_API void AddDefaultLayerData(const FGuid& InLayerGuid, const TArray<ULandscapeComponent*>& InComponentsUsingHeightmap, TMap<UTexture2D*, UTexture2D*>& InOutCreatedHeightmapTextures);
 	LANDSCAPE_API void RemoveLayerData(const FGuid& InLayerGuid);
 	LANDSCAPE_API void ForEachLayer(TFunctionRef<void(const FGuid&, struct FLandscapeLayerComponentData&)> Fn);
-
-	UE_DEPRECATED(5.1, "SetEditingLayer has been deprecated, use GetLandscapeActor()->SetEditingLayer() instead.")
-	void SetEditingLayer(const FGuid& InEditingLayer) {}
 
 	/** Get the Landscape Actor's editing layer data */
 	FLandscapeLayerComponentData* GetEditingLayer();
@@ -787,7 +851,27 @@ public:
 	/** Gets the landscape info object for this landscape */
 	LANDSCAPE_API ULandscapeInfo* GetLandscapeInfo() const;
 
+	/** Returns the array of grass types used by the landscape material. Call UpdateGrassTypes first to ensure this array is up to date. */
+	const TArray<TObjectPtr<ULandscapeGrassType>>& GetGrassTypes() const { return GrassTypes; }
+
+	/** Temporarily sets the grass type for this component. Any call to UpdateGrassTypes may override what has been set using this method. */
+	void SetGrassTypes(const TArray<TObjectPtr<ULandscapeGrassType>>& InGrassTypes)
+	{
+		GrassTypes = InGrassTypes;
+		InvalidateGrassTypeSummary();
+	}
+	
+	bool MaterialHasGrass() const { return !GetGrassTypes().IsEmpty(); }
+
+	float GetGrassTypesMaxDiscardDistance() const { return GrassTypeSummary.MaxInstanceDiscardDistance; }
+	void SetGrassTypesMaxDiscardDistance(const float InGrassTypesMaxDiscardDistance) { GrassTypeSummary.MaxInstanceDiscardDistance = InGrassTypesMaxDiscardDistance; GrassTypeSummary.bInvalid = false; }
+
+	/** If the LandscapeMaterial has changed, updates the GrassTypes array. Returns true if the GrassTypes array was updated. */
+	LANDSCAPE_API bool UpdateGrassTypes(bool bForceUpdate = false);
+
 #if WITH_EDITOR
+	/** Deletes a layer from this component if it does not contain data, calling DeleteLayerAllocation. */
+	bool DeleteLayerIfAllZero(const FGuid& InEditLayerGuid, const uint8* const TexDataPtr, int32 TexSize, int32 LayerIdx, bool bShouldDirtyPackage);
 
 	/** Deletes a material layer from the current edit layer on this component, removing all its data, adjusting other layer's weightmaps if necessary, etc. */
 	LANDSCAPE_API void DeleteLayer(ULandscapeLayerInfoObject* LayerInfo, FLandscapeEditDataInterface& LandscapeEdit);
@@ -805,20 +889,19 @@ public:
 	LANDSCAPE_API void ReplaceLayer(ULandscapeLayerInfoObject* FromLayerInfo, ULandscapeLayerInfoObject* ToLayerInfo, FLandscapeEditDataInterface& LandscapeEdit);
 	void ReplaceLayerInternal(ULandscapeLayerInfoObject* FromLayerInfo, ULandscapeLayerInfoObject* ToLayerInfo, FLandscapeEditDataInterface& LandscapeEdit, const FGuid& InEditLayerGUID);
 
-	// true if the component's landscape material supports grass
-	bool MaterialHasGrass() const;
+#endif // WITH_EDITOR
 
-	/** Creates and destroys cooked grass data stored in the map */
-	void RenderGrassMap();
+	/** Destroys grass map data stored on the component */
 	void RemoveGrassMap();
 
 	/* Could a grassmap currently be generated, disregarding whether our textures are streamed in? */
 	bool CanRenderGrassMap() const;
 
-	/* Are the textures we need to render a grassmap currently streamed in? */
-	bool AreTexturesStreamedForGrassMapRender() const;
+#if WITH_EDITOR
+	/** Computes a hash representing the state of the material and grasstypes used by this component. */
+	LANDSCAPE_API uint32 ComputeGrassMapGenerationHash() const;
 
-	/* Is the grassmap data outdated, eg by a material */
+	/* Returns true if the component HAS grass data, but it is not up to date */
 	bool IsGrassMapOutdated() const;
 
 	/** Renders the heightmap of this component (including material world-position-offset) at the specified LOD */
@@ -836,6 +919,9 @@ public:
 
 	virtual TSubclassOf<class UHLODBuilder> GetCustomHLODBuilderClass() const override;
 #endif
+
+	int32 GetCurrentRuntimeMaterialInstanceCount() const;
+	class UMaterialInterface* GetCurrentRuntimeMaterialInterface(int32 InIndex);
 
 	LANDSCAPE_API int32 GetMaterialInstanceCount(bool InDynamic = true) const;
 	LANDSCAPE_API class UMaterialInstance* GetMaterialInstance(int32 InIndex, bool InDynamic = true) const;
@@ -863,7 +949,7 @@ public:
 	LANDSCAPE_API void GetGeneratedTexturesAndMaterialInstances(TArray<UObject*>& OutTexturesAndMaterials) const;
 	LANDSCAPE_API TArray<UTexture*> GetGeneratedTextures() const;
 	LANDSCAPE_API TArray<UMaterialInstance*> GetGeneratedMaterialInstances() const;
-#endif
+#endif // WITH_EDITOR
 
 	/** Gets the landscape proxy actor which owns this component */
 	LANDSCAPE_API ALandscapeProxy* GetLandscapeProxy() const;
@@ -880,6 +966,13 @@ public:
 		SectionBaseX = InSectionBase.X;
 		SectionBaseY = InSectionBase.Y;
 	}
+
+	/** 
+	* Computes the number of mips that are actually usable, i.e.:
+	*  - For 1x1 subsection, the last mip is not usable (it has a single vertex)
+	*  - For 2x2 subsections, the last 2 mips are not usable (a single vertex per subsection)
+	*/
+	int32 GetNumRelevantMips() const;
 
 	/** @todo document */
 	const FGuid& GetLightingGuid() const
@@ -921,6 +1014,16 @@ public:
 	 * Recalculate cached bounds using height values.
 	 */
 	LANDSCAPE_API void UpdateCachedBounds(bool bInApproximateBounds = false);
+
+	/**
+	 * Recalculate cached bounds using height values.  Returns true when the bounds were changed.
+	 */
+private:
+	// temporary private version for 5.4, to avoid changing the public API
+	bool UpdateCachedBoundsInternal(bool bInApproximateBounds = false);
+	friend class ALandscapeProxy;
+	
+public:
 
 	/**
 	 * Update the MaterialInstance parameters to match the layer and weightmaps for this component

@@ -209,10 +209,13 @@ bool SRCPanelGroup::OnAllowDropFromOtherGroup(TSharedPtr<FDragDropOperation> Dra
 		{
 			if (OnGetGroupId.IsBound())
 			{
-				const FGuid OriginGroupId = OnGetGroupId.Execute(DragDropOp->GetId());
-				if (OriginGroupId != Id)
+				for (FGuid SelectedId : DragDropOp->GetSelectedIds())
 				{
-					return true;
+					const FGuid OriginGroupId = OnGetGroupId.Execute(SelectedId);
+					if (OriginGroupId != Id)
+					{
+						return true;
+					}
 				}
 			}
 		}

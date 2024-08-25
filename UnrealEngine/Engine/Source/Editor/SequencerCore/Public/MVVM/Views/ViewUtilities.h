@@ -3,20 +3,26 @@
 #pragma once
 
 #include "CoreTypes.h"
+#include "SequencerCoreFwd.h"
 #include "Framework/SlateDelegates.h"
 #include "Templates/SharedPointer.h"
-#include "Widgets/SWidget.h"
+
 
 class FText;
 class SWidget;
 template< typename ObjectType > class TAttribute;
 
-namespace UE
-{
-namespace Sequencer
+namespace UE::Sequencer
 {
 
-SEQUENCERCORE_API TSharedRef<SWidget> MakeAddButton(FText HoverText, FOnGetContent MenuContent, const TAttribute<bool>& HoverState, const TAttribute<bool>& IsEnabled);
+class IOutlinerExtension;
 
-} // namespace Sequencer
-} // namespace UE
+SEQUENCERCORE_API TSharedRef<SWidget> MakeAddButton(FText HoverText, const FOnClicked& HandleClicked, const FViewModelPtr& ViewModel);
+
+SEQUENCERCORE_API TSharedRef<SWidget> MakeAddButton(FText HoverText, const FOnGetContent& HandleGetMenuContent, const FViewModelPtr& ViewModel);
+
+SEQUENCERCORE_API TSharedRef<SWidget> MakeAddButton(FText HoverText, const FOnClicked& OnClicked, const TAttribute<bool>& HoverState, const TAttribute<bool>& IsEnabled);
+
+SEQUENCERCORE_API TSharedRef<SWidget> MakeAddButton(FText HoverText, const FOnGetContent& HandleGetMenuContent, const TAttribute<bool>& HoverState, const TAttribute<bool>& IsEnabled);
+
+} // namespace UE::Sequencer

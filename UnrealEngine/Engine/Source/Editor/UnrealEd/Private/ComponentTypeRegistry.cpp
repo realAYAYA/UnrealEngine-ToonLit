@@ -297,6 +297,7 @@ public:
 static const FString CommonClassGroup(TEXT("Common"));
 // This has to stay in sync with logic in FKismetCompilerContext::FinishCompilingClass
 static const FString BlueprintComponents(TEXT("Custom"));
+static const FName BPParentClassName(GET_MEMBER_NAME_CHECKED(UBlueprint, ParentClass));
 
 template <typename ObjectType>
 static ObjectType* FindOrLoadObject( const FString& ObjectPath )
@@ -426,7 +427,11 @@ FComponentTypeRegistryData::FComponentTypeRegistryData()
 {
 	const auto HandleAdded = [](const FAssetData& Data, FComponentTypeRegistryData* Parent)
 	{
-		Parent->PendingAssetData.Push(Data);
+		// Only add to pending array if this might actually be a blueprint
+		if (Data.FindTag(BPParentClassName))
+		{
+			Parent->PendingAssetData.Push(Data);
+		}
 	};
 
 	IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(AssetRegistryConstants::ModuleName).Get();
@@ -435,7 +440,10 @@ FComponentTypeRegistryData::FComponentTypeRegistryData()
 
 	const auto HandleRenamed = [](const FAssetData& Data, const FString&, FComponentTypeRegistryData* Parent)
 	{
-		Parent->PendingAssetData.Push(Data);
+		if (Data.FindTag(BPParentClassName))
+		{
+			Parent->PendingAssetData.Push(Data);
+		}
 	};
 	AssetRegistry.OnAssetRenamed().AddStatic(HandleRenamed, this);
 }
@@ -606,7 +614,12 @@ void FComponentTypeRegistryData::ForceRefreshComponentList()
 		AssetRegistry.GetAssetsByClass(UBlueprint::StaticClass()->GetClassPathName(), Assets, true);
 		for (FAssetData& BPAsset : Assets)
 		{
-			const FTopLevelAssetPath ClassPath(FEditorClassUtils::GetClassPathNameFromAssetTag(BPAsset));
+			FTopLevelAssetPath ClassPath(FEditorClassUtils::GetClassPathNameFromAssetTag(BPAsset));
+			FSoftObjectPath SoftClassPath(ClassPath);
+			if (SoftClassPath.FixupCoreRedirects() && SoftClassPath.GetSubPathString().IsEmpty())
+			{
+				ClassPath = FTopLevelAssetPath(SoftClassPath.GetLongPackageFName(), SoftClassPath.GetAssetFName());
+			}
 			if (!ClassPath.IsNull())
 			{
 				if (!InMemoryClassPaths.Contains(ClassPath) && 
@@ -693,7 +706,6 @@ void FComponentTypeRegistryData::Tick(float)
 
 		for (const FAssetData& Asset : PendingAssetData)
 		{
-			const FName BPParentClassName(GET_MEMBER_NAME_CHECKED(UBlueprint, ParentClass));
 			const FString TagValue = Asset.GetTagValueRef<FString>(BPParentClassName);
 			const FTopLevelAssetPath ObjectPath(FPackageName::ExportTextPathToObjectPath(TagValue));
 			if (DerivedClassNames.Contains(ObjectPath))
@@ -762,16 +774,56 @@ FComponentTypeRegistry::FComponentTypeRegistry()
 	Data->Invalidate();
 
 	FCoreUObjectDelegates::ReloadCompleteDelegate.AddRaw(this, &FComponentTypeRegistry::OnReloadComplete);
+
+	// Clear references when unloaded otherwise unload will fail and leak the object
+	FKismetEditorUtilities::OnBlueprintGeneratedClassUnloaded.AddRaw(this, &FComponentTypeRegistry::OnBlueprintGeneratedClassUnloaded);
 }
 
 FComponentTypeRegistry::~FComponentTypeRegistry()
 {
 	FCoreUObjectDelegates::ReloadCompleteDelegate.RemoveAll(this);
+	FKismetEditorUtilities::OnBlueprintGeneratedClassUnloaded.RemoveAll(this);
 }
 
 void FComponentTypeRegistry::OnReloadComplete(EReloadCompleteReason Reason)
 {
 	Data->ForceRefreshComponentList();
+}
+
+void FComponentTypeRegistry::OnBlueprintGeneratedClassUnloaded(UBlueprintGeneratedClass* BlueprintGeneratedClass)
+{
+	if (!BlueprintGeneratedClass)
+	{
+		return;
+	}
+
+	if (!BlueprintGeneratedClass->IsChildOf(UActorComponent::StaticClass()))
+	{
+		return;
+	}
+
+	bool bModified = false;
+	for (FComponentClassComboEntryPtr& ComboEntry : Data->ComponentClassList)
+	{
+		if (ComboEntry->OnBlueprintGeneratedClassUnloaded(BlueprintGeneratedClass))
+		{
+			bModified = true;
+		}
+	}
+
+	for (FComponentTypeEntry& ComponentTypeEntry : Data->ComponentTypeList)
+	{
+		if (ComponentTypeEntry.ComponentClass == BlueprintGeneratedClass)
+		{
+			ComponentTypeEntry.ComponentClass = nullptr;
+			bModified = true;
+		}
+	}
+
+	if (bModified)
+	{
+		Data->bNeedsRefreshNextTick = true;
+	}
 }
 
 void FComponentTypeRegistry::InvalidateClass(TSubclassOf<UActorComponent> /*ClassToUpdate*/)

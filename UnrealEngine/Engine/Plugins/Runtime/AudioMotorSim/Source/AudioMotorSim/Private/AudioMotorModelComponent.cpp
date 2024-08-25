@@ -6,25 +6,25 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AudioMotorModelComponent)
 
-void UAudioMotorModelComponent::Update(FAudioMotorSimInputContext Input)
+void UAudioMotorModelComponent::Update(const FAudioMotorSimInputContext& Input)
 {
-	for(FMotorSimEntry& Entry : SimComponents)
+	CachedInputContext = Input;
+	
+	for(const FMotorSimEntry& Entry : SimComponents)
 	{
-		if(Entry.Sim)
+		if(Entry.Sim && Entry.Sim->GetEnabled())
 		{
-			Entry.Sim->Update(Input, CachedRuntimeContext);
+			Entry.Sim->Update(CachedInputContext, CachedRuntimeContext);
 		}
 	}
 
-	for(TScriptInterface<IAudioMotorSimOutput> Component : AudioComponents)
+	for(TScriptInterface<IAudioMotorSimOutput>& Component : AudioComponents)
 	{
 		if(Component)
 		{
-			Component->Update(Input, CachedRuntimeContext);
+			Component->Update(CachedInputContext, CachedRuntimeContext);
 		}
 	}
-	
-	CachedInputContext = Input;
 }
 	
 void UAudioMotorModelComponent::Reset()

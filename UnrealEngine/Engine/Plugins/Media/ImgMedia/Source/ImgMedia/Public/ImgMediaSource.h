@@ -103,15 +103,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category="ImgMedia|ImgMediaSource")
 	void SetSequencePath(const FString& Path);
 
-	UE_DEPRECATED(5.1, "AddGlobalCamera has been deprecated.")
-	UFUNCTION(BlueprintCallable, Category = "ImgMedia|ImgMediaSource", meta = (DeprecatedFunction, DeprecationMessage = "AddGlobalCamera has been deprecated."))
-	void AddGlobalCamera(AActor* InActor) { }
-
-
-	UE_DEPRECATED(5.1, "RemoveGlobalCamera has been deprecated.")
-	UFUNCTION(BlueprintCallable, Category = "ImgMedia|ImgMediaSource", meta = (DeprecatedFunction, DeprecationMessage = "RemoveGlobalCamera has been deprecated."))
-	void RemoveGlobalCamera(AActor* InActor) { }
-
 	/**
 	 * Set the path to the image sequence directory this source represents.
 	 *
@@ -129,9 +120,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "ImgMedia|ImgMediaSource")
 	void AddTargetObject(AActor* InActor);
 
-	UE_DEPRECATED(5.1, "AddTargetObject has been deprecated, please use the variant with no Width argument.")
-	void AddTargetObject(AActor* InActor, float Width);
-
 	/**
 	 * This object is no longer using our img sequence.
 	 *
@@ -139,10 +127,6 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "ImgMedia|ImgMediaSource")
 	void RemoveTargetObject(AActor* InActor);
-
-	UE_DEPRECATED(5.1, "SetMipLevelDistance has been deprecated.")
-	UFUNCTION(BlueprintCallable, Category = "ImgMedia|ImgMediaSource", meta = (DeprecatedFunction, DeprecationMessage = "SetMipLevelDistance has been deprecated."))
-	void SetMipLevelDistance(float Distance) {}
 
 	/**
 	 * Get our mipmap info object.

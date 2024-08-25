@@ -30,6 +30,7 @@ namespace Dataflow
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FCreateNonOverlappingConvexHullsDataflowNode);
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FGenerateClusterConvexHullsFromLeafHullsDataflowNode);
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FGenerateClusterConvexHullsFromChildrenHullsDataflowNode);
+		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FClearConvexHullsDataflowNode);
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FMergeConvexHullsDataflowNode);
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FUpdateVolumeAttributesDataflowNode);
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FGetConvexHullVolumeDataflowNode);
@@ -107,6 +108,7 @@ void FCreateLeafConvexHullsDataflowNode::Evaluate(Dataflow::FContext& Context, c
 			LeafSettings.DecompositionSettings.MaxHullsPerGeometry = InDecompSettings.MaxHullsPerGeometry;
 			LeafSettings.DecompositionSettings.MinThicknessTolerance = InDecompSettings.MinThicknessTolerance;
 			LeafSettings.DecompositionSettings.NumAdditionalSplits = InDecompSettings.NumAdditionalSplits;
+			LeafSettings.bComputeIntersectionsBeforeHull = bComputeIntersectionsBeforeHull;
 			FGeometryCollectionConvexUtility::GenerateLeafConvexHulls(*GeomCollection, bRestrictToSelection, SelectedBones, LeafSettings);
 			SetValue(Context, (const FManagedArrayCollection&)(*GeomCollection), &Collection);
 		}
@@ -193,6 +195,19 @@ void FCreateNonOverlappingConvexHullsDataflowNode::Evaluate(Dataflow::FContext& 
 	}
 }
 
+// local helper to convert the dataflow enum
+static UE::Geometry::FNegativeSpaceSampleSettings::ESampleMethod ConvertNegativeSpaceSampleMethodDataflowEnum(ENegativeSpaceSampleMethodDataflowEnum SampleMethod)
+{
+	switch (SampleMethod)
+	{
+	case ENegativeSpaceSampleMethodDataflowEnum::Uniform:
+		return UE::Geometry::FNegativeSpaceSampleSettings::ESampleMethod::Uniform;
+	case ENegativeSpaceSampleMethodDataflowEnum::VoxelSearch:
+		return UE::Geometry::FNegativeSpaceSampleSettings::ESampleMethod::VoxelSearch;
+	}
+	return UE::Geometry::FNegativeSpaceSampleSettings::ESampleMethod::Uniform;
+}
+
 FGenerateClusterConvexHullsFromLeafHullsDataflowNode::FGenerateClusterConvexHullsFromLeafHullsDataflowNode(const Dataflow::FNodeParameters& InParam, FGuid InGuid)
 	: FDataflowNode(InParam, InGuid)
 {
@@ -236,6 +251,9 @@ void FGenerateClusterConvexHullsFromLeafHullsDataflowNode::Evaluate(Dataflow::FC
 				NegativeSpaceSettings.MinRadius = GetValue(Context, &MinRadius);
 				NegativeSpaceSettings.ReduceRadiusMargin = GetValue(Context, &NegativeSpaceTolerance);
 				NegativeSpaceSettings.MinSpacing = GetValue(Context, &MinSampleSpacing);
+				NegativeSpaceSettings.SampleMethod = ConvertNegativeSpaceSampleMethodDataflowEnum(SampleMethod);
+				NegativeSpaceSettings.bRequireSearchSampleCoverage = bRequireSearchSampleCoverage;
+				NegativeSpaceSettings.bOnlyConnectedToHull = bOnlyConnectedToHull;
 				NegativeSpaceSettings.Sanitize();
 				bHasNegativeSpace = UE::FractureEngine::Convex::ComputeConvexHullsNegativeSpace(*GeomCollection, NegativeSpace, NegativeSpaceSettings, bHasSelectionFilter, SelectionArray);
 			}
@@ -319,6 +337,9 @@ void FGenerateClusterConvexHullsFromChildrenHullsDataflowNode::Evaluate(Dataflow
 				NegativeSpaceSettings.MinRadius = GetValue(Context, &MinRadius);
 				NegativeSpaceSettings.ReduceRadiusMargin = GetValue(Context, &NegativeSpaceTolerance);
 				NegativeSpaceSettings.MinSpacing = GetValue(Context, &MinSampleSpacing);
+				NegativeSpaceSettings.SampleMethod = ConvertNegativeSpaceSampleMethodDataflowEnum(SampleMethod);
+				NegativeSpaceSettings.bRequireSearchSampleCoverage = bRequireSearchSampleCoverage;
+				NegativeSpaceSettings.bOnlyConnectedToHull = bOnlyConnectedToHull;
 				NegativeSpaceSettings.Sanitize();
 				bHasNegativeSpace = UE::FractureEngine::Convex::ComputeConvexHullsNegativeSpace(*GeomCollection, NegativeSpace, NegativeSpaceSettings, bHasSelectionFilter, SelectionArray);
 			}
@@ -376,6 +397,32 @@ FMergeConvexHullsDataflowNode::FMergeConvexHullsDataflowNode(const Dataflow::FNo
 	RegisterOutputConnection(&SphereCovering);
 }
 
+void FClearConvexHullsDataflowNode::Evaluate(Dataflow::FContext& Context, const FDataflowOutput* Out) const
+{
+	if (Out->IsA(&Collection))
+	{
+		FManagedArrayCollection InCollection = GetValue(Context, &Collection);
+
+		if (!IsConnected(&Collection) || !IsConnected(&TransformSelection) || !FGeometryCollectionConvexUtility::HasConvexHullData(&InCollection))
+		{
+			SetValue(Context, MoveTemp(InCollection), &Collection);
+			return;
+		}
+
+		const FDataflowTransformSelection& InSelection = GetValue(Context, &TransformSelection);
+
+		const FDataflowTransformSelection& InTransformSelection = GetValue<FDataflowTransformSelection>(Context, &TransformSelection);
+		TArray<int32> Selection = InTransformSelection.AsArray();
+
+		TArray<int32> ToClear = InTransformSelection.AsArray();
+		GeometryCollection::Facades::FCollectionTransformSelectionFacade SelectionFacade(InCollection);
+		SelectionFacade.Sanitize(ToClear);
+
+		FGeometryCollectionConvexUtility::RemoveConvexHulls(&InCollection, ToClear);
+		SetValue(Context, MoveTemp(InCollection), &Collection);
+	}
+}
+
 void FMergeConvexHullsDataflowNode::Evaluate(Dataflow::FContext& Context, const FDataflowOutput* Out) const
 {
 	if (Out->IsA(&Collection) || Out->IsA(&SphereCovering))
@@ -391,32 +438,40 @@ void FMergeConvexHullsDataflowNode::Evaluate(Dataflow::FContext& Context, const 
 			SelectionArray = InOptionalSelectionFilter.AsArray();
 		}
 
-		bool bHasNegativeSpace = false;
+		bool bHasPrecomputedNegativeSpace = false;
 		UE::Geometry::FSphereCovering NegativeSpace;
-		if (GetValue(Context, &bProtectNegativeSpace))
+		bool bInProtectNegativeSpace = GetValue(Context, &bProtectNegativeSpace);
+		UE::Geometry::FNegativeSpaceSampleSettings NegativeSpaceSettings;
+		if (bInProtectNegativeSpace)
 		{
-			UE::Geometry::FNegativeSpaceSampleSettings NegativeSpaceSettings;
 			NegativeSpaceSettings.TargetNumSamples = GetValue(Context, &TargetNumSamples);
 			NegativeSpaceSettings.MinRadius = GetValue(Context, &MinRadius);
 			NegativeSpaceSettings.ReduceRadiusMargin = GetValue(Context, &NegativeSpaceTolerance);
 			NegativeSpaceSettings.MinSpacing = GetValue(Context, &MinSampleSpacing);
+			NegativeSpaceSettings.SampleMethod = ConvertNegativeSpaceSampleMethodDataflowEnum(SampleMethod);
+			NegativeSpaceSettings.bRequireSearchSampleCoverage = bRequireSearchSampleCoverage;
+			NegativeSpaceSettings.bOnlyConnectedToHull = bOnlyConnectedToHull;
 			NegativeSpaceSettings.Sanitize();
-			bHasNegativeSpace = UE::FractureEngine::Convex::ComputeConvexHullsNegativeSpace(InCollection, NegativeSpace, NegativeSpaceSettings, bHasSelectionFilter, SelectionArray, false);
+		}
+		if (bInProtectNegativeSpace && !bComputeNegativeSpacePerBone)
+		{
+			bHasPrecomputedNegativeSpace = UE::FractureEngine::Convex::ComputeConvexHullsNegativeSpace(InCollection, NegativeSpace, NegativeSpaceSettings, bHasSelectionFilter, SelectionArray, false);
 		}
 
 		const int32 InMaxConvexCount = GetValue(Context, &MaxConvexCount);
 		const double InErrorToleranceInCm = GetValue(Context, &ErrorTolerance);
 		FGeometryCollectionConvexUtility::FMergeConvexHullSettings HullMergeSettings;
-		HullMergeSettings.EmptySpace = bHasNegativeSpace ? &NegativeSpace : nullptr;
+		HullMergeSettings.EmptySpace = bHasPrecomputedNegativeSpace ? &NegativeSpace : nullptr;
 		HullMergeSettings.ErrorToleranceInCm = InErrorToleranceInCm;
 		HullMergeSettings.MaxConvexCount = InMaxConvexCount;
+		HullMergeSettings.ComputeEmptySpacePerBoneSettings = (bInProtectNegativeSpace && bComputeNegativeSpacePerBone) ? &NegativeSpaceSettings : nullptr;
 
-		FGeometryCollectionConvexUtility::MergeHullsOnTransforms(InCollection, HullMergeSettings, bHasSelectionFilter, SelectionArray);
+		UE::Geometry::FSphereCovering UsedNegativeSpace;
+		FGeometryCollectionConvexUtility::MergeHullsOnTransforms(InCollection, HullMergeSettings, bHasSelectionFilter, SelectionArray, &UsedNegativeSpace);
 
 		SetValue(Context, MoveTemp(InCollection), &Collection);
 
-		// Move the negative space to the output container at the end, after it is no longer needed
-		Spheres.Spheres = MoveTemp(NegativeSpace);
+		Spheres.Spheres = MoveTemp(UsedNegativeSpace);
 		SetValue(Context, MoveTemp(Spheres), &SphereCovering);
 	}
 }
@@ -483,7 +538,7 @@ void FGetConvexHullVolumeDataflowNode::Evaluate(Dataflow::FContext& Context, con
 		}
 
 		const TManagedArray<TSet<int32>>& TransformToConvexIndices = InCollection.GetAttribute<TSet<int32>>("TransformToConvexIndices", FTransformCollection::TransformGroup);
-		const TManagedArray<TUniquePtr<Chaos::FConvex>>& ConvexHulls = InCollection.GetAttribute<TUniquePtr<Chaos::FConvex>>("ConvexHull", "Convex");
+		const TManagedArray<Chaos::FConvexPtr>& ConvexHulls = InCollection.GetAttribute<Chaos::FConvexPtr>(FGeometryCollection::ConvexHullAttribute, FGeometryCollection::ConvexGroup);
 
 		Chaos::Facades::FCollectionHierarchyFacade HierarchyFacade(InCollection);
 
@@ -491,7 +546,7 @@ void FGetConvexHullVolumeDataflowNode::Evaluate(Dataflow::FContext& Context, con
 		{
 			while (!SelectionToSum.IsEmpty())
 			{
-				int32 TransformIdx = SelectionToSum.Pop(false);
+				int32 TransformIdx = SelectionToSum.Pop(EAllowShrinking::No);
 				if (!bSumChildrenForClustersWithoutHulls || !TransformToConvexIndices[TransformIdx].IsEmpty())
 				{
 					ProcessFn(TransformIdx);

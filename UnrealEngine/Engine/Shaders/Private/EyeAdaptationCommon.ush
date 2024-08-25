@@ -51,20 +51,23 @@ float EyeAdaptationLookup()
 #endif
 }
 
-float EyeAdaptationInverseLookup(float Alpha)
+float InverseExposureLerp(float Exposure, float Alpha)
 {
-	float Adaptation = EyeAdaptationLookup();
-
-	// When Alpha=0.0, we want to multiply by 1.0. when Alpha = 1.0, we want to multiply by 1/Adaptation.
+	// When Alpha=0.0, we want to multiply by 1.0. when Alpha = 1.0, we want to multiply by 1/Exposure.
 	// So the lerped value is:
-	//     LerpLogScale = Lerp(log(1),log(1/Adaptaiton),T)
+	//     LerpLogScale = Lerp(log(1),log(1/Exposure),T)
 	// Which is simplified as:
-	//     LerpLogScale = Lerp(0,-log(Adaptation),T)
-	//     LerpLogScale = -T * logAdaptation;
+	//     LerpLogScale = Lerp(0,-log(Exposure),T)
+	//     LerpLogScale = -T * log(Exposure);
 
-	float LerpLogScale = -Alpha * log(Adaptation);
+	float LerpLogScale = -Alpha * log(Exposure);
 	float Scale = exp(LerpLogScale);
 	return Scale;
+}
+
+float EyeAdaptationInverseLookup(float Alpha)
+{
+	return InverseExposureLerp(EyeAdaptationLookup(), Alpha);
 }
 
 float3 EyeAdaptationInverseLookup(float3 LightValue, float Alpha)

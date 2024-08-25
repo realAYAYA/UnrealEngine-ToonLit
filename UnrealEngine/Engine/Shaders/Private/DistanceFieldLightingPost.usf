@@ -171,19 +171,22 @@ void UpdateHistoryDepthRejectionPS(
 	float4 ThisClip = float4( UVAndScreenPos.zw, ConvertToDeviceZ(SceneDepth), 1 );
 	float4 PrevClip = mul( ThisClip, View.ClipToPrevClip );
 	float2 PrevScreen = PrevClip.xy / PrevClip.w;
-	float2 Screenvelocity = UVAndScreenPos.zw - PrevScreen;
-		
-	float2 FullResTexel = UVAndScreenPos.xy - .5f * View.BufferSizeAndInvSize.zw;
+	float2 ScreenVelocity = UVAndScreenPos.zw - PrevScreen;
+		 
+	// The scene velocity texture is rendered as a texture atlas for all views,
+	// so first convert the vertex shader's UV coordinates to the size of the view rect and offset into the atlas
+	// before converting back to the correct UV coordinates.
+	float2 FullResTexel = (UVAndScreenPos.xy * View.ViewSizeAndInvSize.xy + View.ViewRectMin.xy - .5f) * View.BufferSizeAndInvSize.zw;
 	float4 EncodedVelocity = Texture2DSampleLevel(VelocityTexture, VelocityTextureSampler, FullResTexel, 0);
 		
 	if (EncodedVelocity.x > 0.0)
 	{
-		Screenvelocity = DecodeVelocityFromTexture(EncodedVelocity).xy;
+		ScreenVelocity = DecodeVelocityFromTexture(EncodedVelocity).xy;
 	}
 		
-	float PixelSpeed = 0.5 * length(Screenvelocity);
+	float PixelSpeed = 0.5 * length(ScreenVelocity);
 
-	float2 OldScreenPosition = (UVAndScreenPos.zw - Screenvelocity);
+	float2 OldScreenPosition = (UVAndScreenPos.zw - ScreenVelocity);
 	float2 OldDistanceFieldUVs = OldScreenPosition * HistoryScreenPositionScaleBias.xy + HistoryScreenPositionScaleBias.wz;
 
 	float EffectiveHistoryWeight = HistoryWeight;
@@ -367,13 +370,15 @@ void AOUpsamplePS(
 {
 	FGBufferData GBuffer = GetGBufferData(UVAndScreenPos.xy);
 
-	float3 BentNormal = UpsampleDFAO(UVAndScreenPos.xy, GBuffer.Depth, GBuffer.WorldNormal);
+	// The rectangle is drawn according to GBuffer rect,
+	// while the bent normal is always offset at (0, 0)
+	const float2 BentNormalUV = UVAndScreenPos.xy - View.ViewRectMin.xy * View.BufferSizeAndInvSize.zw;
+	float3 BentNormal = UpsampleDFAO(BentNormalUV, GBuffer.Depth, GBuffer.WorldNormal);
 
 #if MODULATE_SCENE_COLOR
 	float Visibility = lerp(length(BentNormal), 1.0f, MinIndirectDiffuseOcclusion);
 	OutSceneColor = Visibility;
 #else
 	OutSceneColor = float4(length(BentNormal).xxx, 1.0f);
-
 #endif
 }

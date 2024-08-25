@@ -45,7 +45,17 @@ namespace mu
 		"ASTC_12x12_RGB_LDR",
 		"ASTC_12x12_RGBA_LDR",
 		"ASTC_12x12_RG_LDR",
+
+		"ASTC_6x6_RGB_LDR",
+		"ASTC_6x6_RGBA_LDR",
+		"ASTC_6x6_RG_LDR",
+		"ASTC_10x10_RGB_LDR",
+		"ASTC_10x10_RGBA_LDR",
+		"ASTC_10x10_RG_LDR",
+
 	};
+
+	static_assert(sizeof(TypeInfo::s_imageFormatName) / sizeof(void*) == int32(EImageFormat::IF_COUNT));
 
 
 	const char* TypeInfo::s_meshBufferSemanticName[MBS_COUNT] =
@@ -77,6 +87,8 @@ namespace mu
 
 	};
 
+	static_assert(sizeof(TypeInfo::s_meshBufferSemanticName) / sizeof(void*) == int32(MBS_COUNT));
+
 	const char* TypeInfo::s_meshBufferFormatName[MBF_COUNT] =
 	{
 		"None",
@@ -105,12 +117,15 @@ namespace mu
 		"Float64",
 	};
 
-	const char* TypeInfo::s_projectorTypeName[static_cast<uint32>(mu::PROJECTOR_TYPE::COUNT)] =
+	static_assert(sizeof(TypeInfo::s_meshBufferFormatName) / sizeof(void*) == int32(MBF_COUNT));
+
+	const char* TypeInfo::s_projectorTypeName[static_cast<uint32>(PROJECTOR_TYPE::COUNT)] =
 	{
 		"Planar",
 		"Cylindrical",
 		"Wrapping",
 	};
+	static_assert(sizeof(TypeInfo::s_projectorTypeName) / sizeof(void*) == int32(PROJECTOR_TYPE::COUNT));
 
 	const char* TypeInfo::s_curveInterpolationModeName[static_cast<uint8_t>(mu::CurveKeyFrame::InterpMode::Count)] =
 	{
@@ -150,5 +165,6 @@ namespace mu
 		"Lighten", // TODO: This name is not descriptive.
 		"NormalCombine",
 	};
+	static_assert(sizeof(TypeInfo::s_blendModeName) / sizeof(void*) == int32(EBlendType::_BT_COUNT));
 
 }

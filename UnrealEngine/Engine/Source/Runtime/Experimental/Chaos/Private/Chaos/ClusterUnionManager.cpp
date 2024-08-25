@@ -9,12 +9,29 @@
 #include "Chaos/PBDRigidClusteringAlgo.h"
 #include "Chaos/PBDRigidsEvolution.h"
 #include "Chaos/PBDRigidsEvolutionGBF.h"
+#include "PhysicsProxy/GeometryCollectionPhysicsProxy.h"
 #include "ChaosStats.h"
+#include "RewindData.h"
 
 namespace Chaos
 {
 	namespace
 	{
+		bool bChaosClusterUnionGenerateInterclusterEdges = true;
+		FAutoConsoleVariableRef CVarChaosClusterUnionGenerateInterclusterEdges(
+			TEXT("p.Chaos.ClusterUnion.GenerateInterclusterEdges"),
+			bChaosClusterUnionGenerateInterclusterEdges,
+			TEXT("Whether to generate intercluster edges automatically when adding to a cluster union (and remove them when removing from the cluster union).")
+		);
+
+		// @tmp: To be removed
+		bool bChaosClusterUnionDoNotAddEmptyClusters = true;
+		FAutoConsoleVariableRef CVarChaosClusterUnionDoNotAddEmptyClusters(
+			TEXT("p.Chaos.ClusterUnion.DoNotAddEmptyClusters"),
+			bChaosClusterUnionDoNotAddEmptyClusters,
+			TEXT("Gating a risky bug fix.")
+		);
+
 		FRigidTransform3 GetParticleRigidFrameInClusterUnion(FPBDRigidParticleHandle* Child, const FRigidTransform3& ClusterWorldTM)
 		{
 			FRigidTransform3 Frame = FRigidTransform3::Identity;
@@ -25,7 +42,7 @@ namespace Chaos
 			}
 			else
 			{
-				const FRigidTransform3 ChildWorldTM(Child->X(), Child->R());
+				const FRigidTransform3 ChildWorldTM(Child->GetX(), Child->GetR());
 				Frame = ChildWorldTM.GetRelativeTransform(ClusterWorldTM);
 			}
 
@@ -34,15 +51,15 @@ namespace Chaos
 
 		void AddParticleToConnectionGraph(FRigidClustering& Clustering, FClusterUnion& ClusterUnion, FPBDRigidParticleHandle* Particle)
 		{
-			if (!ClusterUnion.ChildParticles.IsEmpty() && ClusterUnion.SharedGeometry->GetType() == ImplicitObjectType::Union)
+			if (!ClusterUnion.ChildParticles.IsEmpty() && ClusterUnion.Geometry->GetType() == ImplicitObjectType::Union)
 			{
 				constexpr FReal kAddThickness = 5.0;
-				const FRigidTransform3 ClusterWorldTM(ClusterUnion.InternalCluster->X(), ClusterUnion.InternalCluster->R());
+				const FRigidTransform3 ClusterWorldTM(ClusterUnion.InternalCluster->GetX(), ClusterUnion.InternalCluster->GetR());
 
 				// Use the acceleration structure of the cluster union itself to make finding overlaps easy.
-				const FImplicitObjectUnion& ShapeUnion = ClusterUnion.SharedGeometry->GetObjectChecked<FImplicitObjectUnion>();
+				const FImplicitObjectUnion& ShapeUnion = ClusterUnion.Geometry->GetObjectChecked<FImplicitObjectUnion>();
 				const FRigidTransform3 FromTransform = GetParticleRigidFrameInClusterUnion(Particle, ClusterWorldTM);
-				FAABB3 ParticleLocalBounds = Particle->SharedGeometry()->BoundingBox().TransformedAABB(FromTransform);
+				FAABB3 ParticleLocalBounds = Particle->GetGeometry()->BoundingBox().TransformedAABB(FromTransform);
 				ParticleLocalBounds.Thicken(kAddThickness);
 
 				ShapeUnion.VisitOverlappingLeafObjects(
@@ -54,7 +71,7 @@ namespace Chaos
 						// NOTE: This will need to be re-thought if we ever decide to make the mapping between child shapes and child particles not 1-to-1 (e.g. if we ever attempt to simplify the cluster union shape).
 
 						// Ignore intersections against the same particle since we just added the particle (potentially) into the geometry.
-						if (Particle == ClusterUnion.ChildParticles[RootObjectIndex])
+						if ((RootObjectIndex >= ClusterUnion.ChildParticles.Num()) || ((RootObjectIndex < ClusterUnion.ChildParticles.Num()) && (Particle == ClusterUnion.ChildParticles[RootObjectIndex])))
 						{
 							return;
 						}
@@ -72,7 +89,7 @@ namespace Chaos
 								if (AllFromShapes[FromIndex])
 								{
 									const FPerShapeData& FromShape = *AllFromShapes[FromIndex];
-									if (const FImplicitObject* FromGeom = FromShape.GetGeometry().Get())
+									if (const FImplicitObject* FromGeom = FromShape.GetGeometry())
 									{
 										FAABB3 FromAABB = FromGeom->CalculateTransformedBounds(FromTransform);
 										FromAABB.Thicken(kAddThickness);
@@ -103,7 +120,7 @@ namespace Chaos
 										}
 
 										const FPerShapeData& FromShape = *AllFromShapes[FromIndex];
-										const FImplicitObject* FromGeom = FromShape.GetGeometry().Get();
+										const FImplicitObject* FromGeom = FromShape.GetGeometry();
 
 										if (!FromGeom)
 										{
@@ -137,21 +154,148 @@ namespace Chaos
 						}
 						if (bOverlap)
 						{
-							Clustering.CreateNodeConnection(Particle, ClusterUnion.ChildParticles[RootObjectIndex]);
+							FPBDRigidParticleHandle* OtherParticle = ClusterUnion.ChildParticles[RootObjectIndex];
+							Clustering.CreateNodeConnection(Particle, OtherParticle);
+							
+							if (FClusterUnionParticleProperties* Properties = ClusterUnion.ChildProperties.Find(Particle))
+							{
+								Properties->bEdgesAreGenerated = false;
+								if (FClusterUnionParticleProperties* OtherProperties = ClusterUnion.ChildProperties.Find(OtherParticle))
+								{
+									OtherProperties->bEdgesAreGenerated = false;
+								}
+
+								if (bChaosClusterUnionGenerateInterclusterEdges && Particle && OtherParticle)
+								{
+									// Only generate intercluster edges for main particles. Auxiliary particles that are just bits and pieces of geometry collections
+									// shouldn't also generate intercluster edges.
+									if (!Properties || !Properties->bIsAuxiliaryParticle)
+									{
+										const TArray<FPBDRigidParticleHandle*>& ParticleChildren = Clustering.GetChildrenMap().FindRef(Particle->CastToClustered());
+										const TArray<FPBDRigidParticleHandle*>& OtherChildren = Clustering.GetChildrenMap().FindRef(OtherParticle->CastToClustered());
+
+										TSet<FPBDRigidParticleHandle*> FromSet{ ParticleChildren };
+										TSet<FPBDRigidParticleHandle*> ToSet{ OtherChildren };
+
+										TArray<FPBDRigidParticleHandle*> AllParticles;
+										AllParticles.Reserve(FromSet.Num() + ToSet.Num());
+										AllParticles.Append(ParticleChildren);
+										AllParticles.Append(OtherChildren);
+
+										FClusterCreationParameters Parameters{ 0.3f, 100, false, false };
+										Parameters.ConnectionMethod = FClusterCreationParameters::EConnectionMethod::BoundsOverlapFilteredDelaunayTriangulation;
+										Parameters.ConnectionGraphBoundsFilteringMargin = 1.0;
+
+										Clustering.GenerateConnectionGraph(AllParticles, Parameters, &FromSet, &ToSet);
+									}
+								}
+							}
 						}
 					}
 				);
 			}
 		}
 
+		void RemoveClusterUnionEdges(FRigidClustering& Clustering, FPBDRigidParticleHandle* ParticleHandle)
+		{
+			if (!ParticleHandle)
+			{
+				return;
+			}
+
+			Clustering.RemoveNodeConnections(ParticleHandle);
+
+			if (bChaosClusterUnionGenerateInterclusterEdges)
+			{
+				if (FPBDRigidClusteredParticleHandle* ClusterParticle = ParticleHandle->CastToClustered())
+				{
+					if (TArray<FPBDRigidParticleHandle*>* AllChildren = Clustering.GetChildrenMap().Find(ClusterParticle))
+					{
+						for (FPBDRigidParticleHandle* Child : *AllChildren)
+						{
+							if (!Child)
+							{
+								continue;
+							}
+
+							if (FPBDRigidClusteredParticleHandle* ClusterChild = Child->CastToClustered())
+							{
+								Clustering.RemoveFilteredNodeConnections(
+									ClusterChild,
+								    [Child](const FConnectivityEdge& Edge)
+									{
+										return IsInterclusterEdge(*Child, Edge);
+									}
+								);
+							}
+						}
+					}
+				}
+			}
+		}
+
 		void GenerateConnectionGraph(FRigidClustering& Clustering, FClusterUnion& ClusterUnion)
 		{
-			Clustering.ClearConnectionGraph(ClusterUnion.InternalCluster);
 			for (FPBDRigidParticleHandle* ChildParticle : ClusterUnion.ChildParticles)
 			{
+				RemoveClusterUnionEdges(Clustering, ChildParticle);
 				AddParticleToConnectionGraph(Clustering, ClusterUnion, ChildParticle);
 			}
 		}
+
+		FPBDRigidClusteredParticleHandle* GetParentParticleInClusterUnion(const FClusterUnion& ClusterUnion, FPBDRigidClusteredParticleHandle* Particle)
+		{
+			if (!Particle)
+			{
+				return nullptr;
+			}
+
+			if (Particle->Parent() == ClusterUnion.InternalCluster)
+			{
+				return Particle;
+			}
+
+			return GetParentParticleInClusterUnion(ClusterUnion, Particle->Parent());
+		}
+
+		FGeometryCollectionPhysicsProxy* GetGCProxy(FPBDRigidParticleHandle* Particle)
+		{
+			if (IPhysicsProxyBase* Proxy = Particle->PhysicsProxy())
+			{
+				if (Proxy->GetType() == FGeometryCollectionPhysicsProxy::ConcreteType())
+				{
+					return static_cast<FGeometryCollectionPhysicsProxy*>(Proxy);
+				}
+			}
+			return nullptr;
+		}
+	}
+
+	const TArray<FPBDRigidParticleHandle*>& FClusterUnion::GetPendingGeometryOperationParticles(EClusterUnionGeometryOperation Op) const
+	{
+		static TArray<FPBDRigidParticleHandle*> EmptyArray;
+		if (const TArray<FPBDRigidParticleHandle*>* Results = PendingGeometryOperations.Find(Op))
+		{
+			return *Results;
+		}
+		return EmptyArray;
+	}
+
+	void FClusterUnion::AddPendingGeometryOperation(EClusterUnionGeometryOperation Op, FPBDRigidParticleHandle* Particle)
+	{
+		PendingGeometryOperations.FindOrAdd(Op).AddUnique(Particle);
+	}
+
+	void FClusterUnion::ClearAllPendingGeometryOperations()
+	{
+		bGeometryModified = true;
+		PendingGeometryOperations.Empty();
+	}
+
+	void FClusterUnion::ClearPendingGeometryOperations(EClusterUnionGeometryOperation Op)
+	{
+		bGeometryModified = true;
+		PendingGeometryOperations.Remove(Op);
 	}
 
 	FClusterUnionManager::FClusterUnionManager(FRigidClustering& InClustering, FPBDRigidsEvolutionGBF& InEvolution)
@@ -170,8 +314,8 @@ namespace Chaos
 		FClusterUnion NewUnion;
 		NewUnion.InternalIndex = NewIndex;
 		NewUnion.ExplicitIndex = ClusterUnionParameters.ExplicitIndex;
-		NewUnion.SharedGeometry = ForceRecreateClusterUnionSharedGeometry(NewUnion);
-		NewUnion.InternalCluster = MClustering.CreateClusterParticle(-NewIndex, {}, Parameters, NewUnion.SharedGeometry, nullptr, ClusterUnionParameters.UniqueIndex);
+		NewUnion.Geometry = MakeImplicitObjectPtr<FImplicitObjectUnionClustered>();
+		NewUnion.InternalCluster = MClustering.CreateClusterParticle(-NewIndex, {}, Parameters, NewUnion.Geometry, nullptr, ClusterUnionParameters.UniqueIndex);
 		NewUnion.Parameters = Parameters;
 		NewUnion.ClusterUnionParameters = ClusterUnionParameters;
 
@@ -180,6 +324,11 @@ namespace Chaos
 
 		if (ensure(NewUnion.InternalCluster != nullptr))
 		{
+			if (ClusterUnionParameters.GravityGroupOverride != INDEX_NONE)
+			{
+				NewUnion.InternalCluster->SetGravityGroupIndex(ClusterUnionParameters.GravityGroupOverride);
+			}
+
 			NewUnion.InternalCluster->SetInternalCluster(true);
 			if (AccelerationStructureSplitStaticAndDynamic == 1)
 			{
@@ -193,7 +342,6 @@ namespace Chaos
 			// geometry should switch this flag back on.
 			NewUnion.InternalCluster->SetHasBounds(false);
 		}
-		MEvolution.GetIslandManager().RemoveParticle(NewUnion.InternalCluster);
 		MEvolution.DisableParticle(NewUnion.InternalCluster);
 
 		ClusterUnions.Add(NewIndex, NewUnion);
@@ -230,32 +378,32 @@ namespace Chaos
 	}
 
 	DECLARE_CYCLE_STAT(TEXT("FClusterUnionManager::ForceRecreateClusterUnionSharedGeometry"), STAT_ForceRecreateClusterUnionSharedGeometry, STATGROUP_Chaos);
-	TSharedPtr<FImplicitObject, ESPMode::ThreadSafe> FClusterUnionManager::ForceRecreateClusterUnionSharedGeometry(const FClusterUnion& Union)
+	Chaos::FImplicitObjectPtr FClusterUnionManager::ForceRecreateClusterUnionGeometry(const FClusterUnion& Union)
 	{
 		SCOPE_CYCLE_COUNTER(STAT_ForceRecreateClusterUnionSharedGeometry);
 		if (Union.ChildParticles.IsEmpty() || !Union.InternalCluster)
 		{
-			return MakeShared<FImplicitObjectUnionClustered>();
+			return MakeImplicitObjectPtr<FImplicitObjectUnionClustered>();
 		}
 
 		// TODO: Can we do something better than a union?
-		const FRigidTransform3 ClusterWorldTM(Union.InternalCluster->X(), Union.InternalCluster->R());
-		TArray<TUniquePtr<FImplicitObject>> Objects;
+		const FRigidTransform3 ClusterWorldTM(Union.InternalCluster->GetX(), Union.InternalCluster->GetR());
+		TArray<Chaos::FImplicitObjectPtr> Objects;
 		Objects.Reserve(Union.ChildParticles.Num());
 
 		for (FPBDRigidParticleHandle* Child : Union.ChildParticles)
 		{
 			const FRigidTransform3 Frame = GetParticleRigidFrameInClusterUnion(Child, ClusterWorldTM);
-			if (Child->Geometry())
+			if (Child->GetGeometry())
 			{
-				Objects.Add(TUniquePtr<FImplicitObject>(CreateTransformGeometryForClusterUnion<EThreadContext::Internal>(Child, Frame)));
+				Objects.Add(Chaos::FImplicitObjectPtr(CreateTransformGeometryForClusterUnion<EThreadContext::Internal>(Child, Frame)));
 			}
 		}
 
 		FImplicitObjectUnion* NewGeometry = new FImplicitObjectUnion(MoveTemp(Objects));
 		NewGeometry->SetAllowBVH(true);
 
-		return TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(NewGeometry);
+		return FImplicitObjectPtr(NewGeometry);
 	}
 
 	DECLARE_CYCLE_STAT(TEXT("FClusterUnionManager::ClaimNextUnionIndex"), STAT_ClaimNextUnionIndex, STATGROUP_Chaos);
@@ -268,7 +416,7 @@ namespace Chaos
 		}
 		else
 		{
-			return ReusableIndices.Pop(false);
+			return ReusableIndices.Pop(EAllowShrinking::No);
 		}
 	}
 
@@ -319,6 +467,7 @@ namespace Chaos
 					}
 				);
 
+
 				for (TPair<EClusterUnionOperation, TArray<FPBDRigidParticleHandle*>>& Op : OpMap.Value)
 				{
 					switch (Op.Key)
@@ -337,6 +486,12 @@ namespace Chaos
 				}
 			}
 			PendingClusterIndexOperations.Empty();
+
+			if (FRewindData* RewindData = MEvolution.GetRewindData())
+			{
+				// Temp, since rewind doesn't handle altered cluster unions we tell it to never rewind past this frame for now, only relevant when resimulation is used.
+				RewindData->BlockResim();
+			}
 		}
 
 		HandleDeferredClusterUnionUpdateProperties();
@@ -358,14 +513,25 @@ namespace Chaos
 		return ClusterUnions.Find(Index);
 	}
 
+	const FClusterUnion* FClusterUnionManager::FindClusterUnion(FClusterUnionIndex Index) const
+	{
+		return ClusterUnions.Find(Index);
+	}
+
 	FClusterUnion* FClusterUnionManager::FindClusterUnionFromParticle(FPBDRigidParticleHandle* Particle)
 	{
 		FClusterUnionIndex ClusterUnionIndex = FindClusterUnionIndexFromParticle(Particle);
 		return FindClusterUnion(ClusterUnionIndex);
 	}
 
+	const FClusterUnion* FClusterUnionManager::FindClusterUnionFromParticle(const FPBDRigidParticleHandle* Particle) const
+	{
+		FClusterUnionIndex ClusterUnionIndex = FindClusterUnionIndexFromParticle(Particle);
+		return FindClusterUnion(ClusterUnionIndex);
+	}
+
 	DECLARE_CYCLE_STAT(TEXT("FClusterUnionManager::HandleAddOperation"), STAT_HandleAddOperation, STATGROUP_Chaos);
-	void FClusterUnionManager::HandleAddOperation(FClusterUnionIndex ClusterIndex, const TArray<FPBDRigidParticleHandle*>& Particles, bool bReleaseClustersFirst)
+	void FClusterUnionManager::HandleAddOperation(FClusterUnionIndex ClusterIndex, const TArray<FPBDRigidParticleHandle*>& InParticles, bool bReleaseClustersFirst)
 	{
 		SCOPE_CYCLE_COUNTER(STAT_HandleAddOperation);
 		FClusterUnion* Cluster = ClusterUnions.Find(ClusterIndex);
@@ -373,6 +539,25 @@ namespace Chaos
 		{
 			return;
 		}
+
+		// This ensures us that we only try to add particles that aren't already in the cluster already.
+		// TODO: There's probably a better way to do this without having to reallocate another array - but these arrays should be small.
+		TArray<FPBDRigidParticleHandle*> Particles = InParticles.FilterByPredicate(
+			[this, Cluster](FPBDRigidParticleHandle* P)
+			{
+				if (!P)
+				{
+					return false;
+				}
+
+				if (FPBDRigidClusteredParticleHandle* ClusteredP = P->CastToClustered())
+				{
+					return Cluster->InternalCluster != ClusteredP->Parent();
+				}
+
+				return false;
+			}
+		);
 
 		// If we're adding particles to a cluster we need to first make sure they're not part of any other cluster.
 		// Book-keeping might get a bit odd if we try to add a particle to a new cluster and then only later remove the particle from its old cluster.
@@ -415,10 +600,21 @@ namespace Chaos
 				continue;
 			}
 
-			bIsSleeping &= Handle->ObjectState() == EObjectStateType::Sleeping;
-
 			if (FPBDRigidClusteredParticleHandle* ClusterHandle = Handle->CastToClustered())
 			{
+				// If this particle is a broken cluster without any children, then we should not be adding it to a ClusterUnion.
+				// This can happen on the client if we receive an AddComponentToCluster on the same frame when we receive a GC repdata
+				// that breaks all the particles and releases its children. Unfortunately the Add operation has already been queued
+				if (bChaosClusterUnionDoNotAddEmptyClusters)
+				{
+					const bool bIsClusterThatHadChildren = (ClusterHandle->GetParticleType() == EParticleType::Clustered);
+					if (bIsClusterThatHadChildren && (ClusterHandle->Parent() == nullptr) && ClusterHandle->Disabled() && (ClusterHandle->ClusterIds().NumChildren == 0))
+					{
+						UE_LOG(LogChaos, Verbose, TEXT("FClusterUnionManager::HandleAddOperation rejecting particle because it is 'broken' %s"), *ClusterHandle->GetDebugName());
+						continue;
+					}
+				}
+
 				if (bReleaseClustersFirst)
 				{
 					TSet<FPBDRigidParticleHandle*> Children = MClustering.ReleaseClusterParticles(ClusterHandle, true);
@@ -440,6 +636,8 @@ namespace Chaos
 			{
 				FinalParticlesToAdd.Add(Handle);
 			}
+
+			bIsSleeping &= Handle->ObjectState() == EObjectStateType::Sleeping;
 		}
 
 		if (FinalParticlesToAdd.IsEmpty())
@@ -448,12 +646,41 @@ namespace Chaos
 		}
 
 		Cluster->ChildParticles.Append(FinalParticlesToAdd);
+
+		// We need to call AddParticlesToCluster before we set the temporary ChildToParent. RemoveFromParent (which AddParticlesToCluster calls)
+		// will set the particles' X/R based on ChildToParent if the particle has an old parent. This ChildToParent needs to be correct relative to the old parent,
+		// not the new parent when AddParticlesToCluster is called.
+		MClustering.AddParticlesToCluster(Cluster->InternalCluster, FinalParticlesToAdd, ChildToParentMap);
+
+		// Cluster has one-way interaction only if all children are also one-way
+		bool bIsOneWayInteraction = (bIsNewCluster) || Cluster->InternalCluster->OneWayInteraction();
+
+		// Cluster uses MACD is any children require MACD (or it is already enabled on this cluster)
+		bool bIsMACD = Cluster->InternalCluster->MACDEnabled();
+
+		// Use the minimum sleep multiplier of all member particles
+		FRealSingle MinSleepThresholdMultiplier = TNumericLimits<FRealSingle>::Max();
+
 		for (FPBDRigidParticleHandle* Particle : FinalParticlesToAdd)
 		{
+			if (Particle->GetGeometry() == nullptr)
+			{
+				FGeometryCollectionPhysicsProxy* GCPhysicsProxy = GetGCProxy(Particle);
+				if (GCPhysicsProxy)
+				{
+					GCPhysicsProxy->CreateChildrenGeometry_Internal();
+				}
+			}
+
 			if (!bIsNewCluster)
 			{
-				Cluster->PendingConnectivityOperations.Add({Particle, EClusterUnionConnectivityOperation ::Add});
+				Cluster->PendingConnectivityOperations.Add({ Particle, EClusterUnionConnectivityOperation::Add });
+				Cluster->AddPendingGeometryOperation(EClusterUnionGeometryOperation::Add, Particle);
 			}
+
+			bIsOneWayInteraction &= Particle->OneWayInteraction();
+			bIsMACD |= Particle->MACDEnabled();
+			MinSleepThresholdMultiplier = FMath::Min(MinSleepThresholdMultiplier, Particle->SleepThresholdMultiplier());
 
 			if (!Cluster->ChildProperties.Contains(Particle))
 			{
@@ -466,13 +693,13 @@ namespace Chaos
 			// the deferred cluster union update properties is called, the position of the particle will get reset to the position of the cluster union.
 			if (FPBDRigidClusteredParticleHandle* ClusterParticle = Particle->CastToClustered())
 			{
-				const FRigidTransform3 ClusterWorldTM(Cluster->InternalCluster->X(), Cluster->InternalCluster->R());
+				const FRigidTransform3 ClusterWorldTM(Cluster->InternalCluster->GetX(), Cluster->InternalCluster->GetR());
 				const FRigidTransform3 Frame = GetParticleRigidFrameInClusterUnion(Particle, ClusterWorldTM);
 				ClusterParticle->SetChildToParent(Frame);
 			}
-		}
 
-		MClustering.AddParticlesToCluster(Cluster->InternalCluster, FinalParticlesToAdd, ChildToParentMap);
+			MEvolution.GetParticles().MarkTransientDirtyParticle(Particle);
+		}
 
 		// For all the particles that have been added to the cluster we need to set their parent proxy to the
 		// cluster's proxy if it exists. We need the proxy type check because for non-cluster union proxy backed unions,
@@ -494,7 +721,9 @@ namespace Chaos
 			Cluster->InternalCluster->SetIsAnchored(true);
 		}
 
-		RequestDeferredClusterPropertiesUpdate(ClusterIndex, bIsNewCluster ? EUpdateClusterUnionPropertiesFlags::All : EUpdateClusterUnionPropertiesFlags::IncrementalGenerateConnectionGraph);
+		constexpr EUpdateClusterUnionPropertiesFlags DefaultIncrementalFlags = EUpdateClusterUnionPropertiesFlags::IncrementalGenerateConnectionGraph
+			| EUpdateClusterUnionPropertiesFlags::IncrementalGenerateGeometry;
+		RequestDeferredClusterPropertiesUpdate(ClusterIndex, bIsNewCluster ? EUpdateClusterUnionPropertiesFlags::All : DefaultIncrementalFlags);
 
 		if (OldProxy)
 		{
@@ -508,7 +737,26 @@ namespace Chaos
 				MEvolution.SetParticleObjectState(Cluster->InternalCluster, Chaos::EObjectStateType::Sleeping);
 			}
 
-			MEvolution.SetPhysicsMaterial(Cluster->InternalCluster, MEvolution.GetPhysicsMaterial(FinalParticlesToAdd[0]));
+			if (!FinalParticlesToAdd.IsEmpty())
+			{
+				FPBDRigidParticleHandle* ParticlePropertySource = FinalParticlesToAdd[0];
+
+				if (!Cluster->IsGravityOverrideSet())
+				{
+					Cluster->InternalCluster->SetGravityGroupIndex(ParticlePropertySource->GravityGroupIndex());
+				}
+
+				// Should be min or max of all children or something else that doesn't depend on order? 
+				Cluster->InternalCluster->SetInitialOverlapDepenetrationVelocity(ParticlePropertySource->InitialOverlapDepenetrationVelocity());
+			}
+		}
+
+		Cluster->InternalCluster->SetOneWayInteraction(bIsOneWayInteraction);
+		Cluster->InternalCluster->SetMACDEnabled(bIsMACD);
+
+		if (MinSleepThresholdMultiplier != TNumericLimits<FRealSingle>::Max())
+		{
+			Cluster->InternalCluster->SetSleepThresholdMultiplier(MinSleepThresholdMultiplier);
 		}
 	}
 
@@ -531,7 +779,6 @@ namespace Chaos
 		{
 			// Note that if we have 0 child particles, our implicit object union will have an invalid bounding box.
 			// We must eject from the acceleration structure otherwise we risk cashes.
-			MEvolution.GetIslandManager().RemoveParticle(Union.InternalCluster);
 			MEvolution.DisableParticle(Union.InternalCluster);
 		}
 		MEvolution.GetParticles().MarkTransientDirtyParticle(Union.InternalCluster);
@@ -554,6 +801,16 @@ namespace Chaos
 			}
 		}
 
+		// Pending particles to undo child to parent lock is global across all cluster unions hence why it has to be done after.
+		for (FPBDRigidClusteredParticleHandle* ChildParticle : PendingParticlesToUndoChildToParentLock)
+		{
+			if (ChildParticle)
+			{
+				ChildParticle->SetChildToParentLocked(false);
+			}
+		}
+		PendingParticlesToUndoChildToParentLock.Empty();
+
 		DeferredClusterUnionsForUpdateProperties.Reset();
 	}
 
@@ -574,11 +831,14 @@ namespace Chaos
 		);
 		MClustering.SetGenerateClusterBreaking(false);
 
+		// Use a set to guarantee that there's no duplicates. This is necessary since further removal operations assume that the particle is only in here once.
+		const TSet<FPBDRigidParticleHandle*> ParticleSet{ Particles };
+
 		IPhysicsProxyBase* OldProxy = Cluster->InternalCluster->PhysicsProxy();
 		TArray<int32> ParticleIndicesToRemove;
-		ParticleIndicesToRemove.Reserve(Particles.Num());
+		ParticleIndicesToRemove.Reserve(ParticleSet.Num());
 
-		for (FPBDRigidParticleHandle* Handle : Particles)
+		for (FPBDRigidParticleHandle* Handle : ParticleSet)
 		{
 			const int32 ParticleIndex = Cluster->ChildParticles.Find(Handle);
 			if (ParticleIndex != INDEX_NONE)
@@ -598,24 +858,76 @@ namespace Chaos
 				}
 
 				Cluster->PendingConnectivityOperations.Add({ Handle, EClusterUnionConnectivityOperation::Remove });
+				Cluster->AddPendingGeometryOperation(EClusterUnionGeometryOperation::Remove, Handle);
+
+				MEvolution.GetParticles().MarkTransientDirtyParticle(Handle);
 			}
 		}
 
+		// If we don't actually make a change to the cluster union then we don't actually want to trigger any further changes.
+		if (ParticleIndicesToRemove.IsEmpty())
+		{
+			return;
+		}
+
 		ParticleIndicesToRemove.Sort();
+
+		TArray<FPBDRigidParticleHandle*> NonMainReleasedParticles;
+		NonMainReleasedParticles.Reserve(ParticleIndicesToRemove.Num());
+
 		for (int32 Index = ParticleIndicesToRemove.Num() - 1; Index >= 0; --Index)
 		{
 			const int32 ParticleIndex = ParticleIndicesToRemove[Index];
-			Cluster->ChildProperties.Remove(Cluster->ChildParticles[ParticleIndex]);
-			Cluster->ChildParticles.RemoveAtSwap(ParticleIndex);
+			FPBDRigidParticleHandle* Particle = Cluster->ChildParticles[ParticleIndex];
+			if (const FClusterUnionParticleProperties* Properties = Cluster->ChildProperties.Find(Particle))
+			{
+				if (Properties->bIsAuxiliaryParticle)
+				{
+					NonMainReleasedParticles.Add(Particle);
+				}
+				Cluster->ChildProperties.Remove(Particle);
+			}
+
+			// This can't be RemoveAtSwap otherwise there will be a mismatch between the index of a particle
+			// and the index of its corresponding shape in the cluster union's shape array. There is currently
+			// an assumption that the two will always match each other.
+			Cluster->ChildParticles.RemoveAt(ParticleIndex);
+
+			if (FPBDRigidClusteredParticleHandle* ClusterParticle = Particle->CastToClustered())
+			{
+				// If we remove the particle we don't need to update its child to parent any longer.
+				if (FClusterUnionChildToParentUpdate* Update = PendingChildToParentUpdates.Find(ClusterParticle))
+				{
+					// Doing this here ensures that this particle is still part of this cluster union and hasn't yet been added into another cluster union.
+					if (Update->ClusterUnionIndex == ClusterIndex)
+					{
+						PendingChildToParentUpdates.Remove(ClusterParticle);
+					}
+				}
+
+				// TODO: We probably won't ever run into a situation where this actually does anything since
+				// this container gets cleared pretty shortly after things are added to it. But to be safe
+				// we probably need some sort of verification that we're removing a particle that isn't associated
+				// with some other cluster union.
+				PendingParticlesToUndoChildToParentLock.Remove(ClusterParticle);
+			}
 		}
 
-		MClustering.RemoveParticlesFromCluster(Cluster->InternalCluster, Particles);
+		MClustering.RemoveParticlesFromCluster(Cluster->InternalCluster, ParticleSet.Array());
+		if (MClustering.ShouldThrottleParticleRelease())
+		{
+			// Only want to throttle the release of non-main particles.
+			MClustering.ThrottleReleasedParticlesIfNecessary(NonMainReleasedParticles);
+		}
 
 		// Removing a particle should have no bearing on the proxy of the cluster.
 		// This gets changed because we go through an internal initialization route when we update the cluster union particle's properties.
 		Cluster->InternalCluster->SetPhysicsProxy(OldProxy);
 
-		constexpr EUpdateClusterUnionPropertiesFlags RemoveUpdateFlags = EUpdateClusterUnionPropertiesFlags::IncrementalGenerateConnectionGraph | EUpdateClusterUnionPropertiesFlags::UpdateKinematicProperties;
+		constexpr EUpdateClusterUnionPropertiesFlags RemoveUpdateFlags = EUpdateClusterUnionPropertiesFlags::IncrementalGenerateConnectionGraph
+			| EUpdateClusterUnionPropertiesFlags::UpdateKinematicProperties
+			| EUpdateClusterUnionPropertiesFlags::IncrementalGenerateGeometry
+			| EUpdateClusterUnionPropertiesFlags::ConnectivityCheck;
 		switch (UpdateClusterPropertiesTiming)
 		{
 		case EClusterUnionOperationTiming::Immediate:
@@ -661,7 +973,7 @@ namespace Chaos
 		// Position the internal cluster at the CoM of the children
 		if (bRecomputeMassOrientation)
 		{
-			MoveClusterToMassOffset(ClusterUnion.InternalCluster, EMassOffsetType::EPosition);
+			MoveClusterToMassOffset(ClusterUnion.InternalCluster, EMassOffsetType::Position);
 			ClusterUnion.bNeedsXRInitialization = false;
 		}
 
@@ -676,7 +988,8 @@ namespace Chaos
 				}
 				else
 				{
-					MEvolution.SetParticleObjectState(ClusterUnion.InternalCluster, EObjectStateType::Dynamic);
+					const EObjectStateType TransferedState = ClusterUnion.InternalCluster->IsSleeping() ? EObjectStateType::Sleeping : EObjectStateType::Dynamic;
+					MEvolution.SetParticleObjectState(ClusterUnion.InternalCluster, TransferedState);
 					MEvolution.SetParticleKinematicTarget(ClusterUnion.InternalCluster, FKinematicTarget());
 				}
 			}
@@ -692,60 +1005,41 @@ namespace Chaos
 		// The recreation of the geometry must happen after the call to UpdateClusterMassProperties.
 		// Creating the geometry requires knowing the relative frame between the parent cluster and the child clusters. The
 		// parent transform is not set properly for a new empty cluster until UpdateClusterMassProperties is called for the first time.
-		ClusterUnion.SharedGeometry = ForceRecreateClusterUnionSharedGeometry(ClusterUnion);
-		UpdateGeometry(ClusterUnion.InternalCluster, FullChildrenSet, MClustering.GetChildrenMap(), ClusterUnion.SharedGeometry, ClusterUnion.Parameters);
-
-		// TODO: Need to figure out how to do the mapping back to the child shape if we ever do shape simplification...
-		if (!ClusterUnion.ChildParticles.IsEmpty() && ClusterUnion.ChildParticles.Num() == ClusterUnion.InternalCluster->ShapesArray().Num())
+		if (EnumHasAnyFlags(Flags, EUpdateClusterUnionPropertiesFlags::ForceGenerateGeometry))
 		{
-			for (int32 ChildIndex = 0; ChildIndex < ClusterUnion.ChildParticles.Num(); ++ChildIndex)
+			ForceRegenerateGeometry(ClusterUnion, FullChildrenSet);
+		}
+		else if (EnumHasAnyFlags(Flags, EUpdateClusterUnionPropertiesFlags::IncrementalGenerateGeometry))
+		{
+			FlushIncrementalGeometryOperations(ClusterUnion);
+		}
+		
+		if (ClusterUnion.bGenerateConnectivityEdges)
+		{
+			if(EnumHasAnyFlags(Flags, EUpdateClusterUnionPropertiesFlags::ForceGenerateConnectionGraph))
 			{
-				// TODO: Is there a better way to do this merge?
-				const TUniquePtr<Chaos::FPerShapeData>& TemplateShape = ClusterUnion.ChildParticles[ChildIndex]->ShapesArray()[0];
-				const TUniquePtr<Chaos::FPerShapeData>& ShapeData = ClusterUnion.InternalCluster->ShapesArray()[ChildIndex];
-				if (ShapeData && TemplateShape)
-				{
-					{
-						FCollisionData Data = TemplateShape->GetCollisionData();
-						Data.UserData = nullptr;
-						ShapeData->SetCollisionData(Data);
-					}
+				GenerateConnectionGraph(MClustering, ClusterUnion);
+				ClusterUnion.PendingConnectivityOperations.Empty();
+			}
+			else if (EnumHasAnyFlags(Flags, EUpdateClusterUnionPropertiesFlags::IncrementalGenerateConnectionGraph))
+			{
+				FlushIncrementalConnectivityGraphOperations(ClusterUnion);
+			}
 
-					{
-						FCollisionFilterData Data = TemplateShape->GetQueryData();
-						Data.Word0 = ClusterUnion.ClusterUnionParameters.ActorId;
-						ShapeData->SetQueryData(Data);
-					}
-
-					{
-						FCollisionFilterData Data = TemplateShape->GetSimData();
-						Data.Word0 = 0;
-						Data.Word2 = ClusterUnion.ClusterUnionParameters.ComponentId;
-						ShapeData->SetSimData(Data);
-					}
-				}
+			if (EnumHasAnyFlags(Flags, EUpdateClusterUnionPropertiesFlags::ConnectivityCheck))
+			{
+				// TODO: Can probably argue that cluster union connectivity should be moved into the
+				// cluster union manager instead?
+				MClustering.HandleConnectivityOnReleaseClusterParticle(ClusterUnion.InternalCluster, false);
 			}
 		}
+		// Build the convex optimizer if required
+		MClustering.BuildConvexOptimizer(ClusterUnion.InternalCluster);
+	}
 
-		if(EnumHasAnyFlags(Flags, EUpdateClusterUnionPropertiesFlags::ForceGenerateConnectionGraph))
-		{
-			GenerateConnectionGraph(MClustering, ClusterUnion);
-			ClusterUnion.PendingConnectivityOperations.Empty();
-		}
-		else if (EnumHasAnyFlags(Flags, EUpdateClusterUnionPropertiesFlags::IncrementalGenerateConnectionGraph))
-		{
-			FlushIncrementalConnectivityGraphOperations(ClusterUnion);
-		}
-
-		for (FPBDRigidClusteredParticleHandle* ChildParticle : PendingParticlesToUndoChildToParentLock)
-		{
-			if (ChildParticle)
-			{
-				ChildParticle->SetChildToParentLocked(false);
-			}
-		}
-
-		PendingParticlesToUndoChildToParentLock.Empty();
+	void FClusterUnionManager::AddParticleToConnectionGraphInCluster(FClusterUnion& ClusterUnion, FPBDRigidParticleHandle* Particle)
+	{
+		AddParticleToConnectionGraph(MClustering, ClusterUnion, Particle);
 	}
 
 	DECLARE_CYCLE_STAT(TEXT("FClusterUnionManager::FlushIncrementalConnectivityGraphOperations"), STAT_FlushIncrementalConnectivityGraphOperations, STATGROUP_Chaos);
@@ -760,11 +1054,175 @@ namespace Chaos
 			}
 			else if (Op.Value == EClusterUnionConnectivityOperation::Remove)
 			{
-				MClustering.RemoveNodeConnections(Op.Key);
+				RemoveClusterUnionEdges(MClustering, Op.Key);
 			}
 		}
 
 		ClusterUnion.PendingConnectivityOperations.Empty();
+	}
+
+	DECLARE_CYCLE_STAT(TEXT("FClusterUnionManager::ForceRegenerateGeometry"), STAT_ForceRegenerateGeometry, STATGROUP_Chaos);
+	void FClusterUnionManager::ForceRegenerateGeometry(FClusterUnion& ClusterUnion, const TSet<FPBDRigidParticleHandle*>& FullChildrenSet)
+	{
+		SCOPE_CYCLE_COUNTER(STAT_ForceRegenerateGeometry);
+		ClusterUnion.InternalCluster->SetGeometry(MakeImplicitObjectPtr<FImplicitObjectUnionClustered>());
+
+		ModifyAdditionOfChildrenToClusterUnionGeometry(
+			ClusterUnion.InternalCluster,
+			ClusterUnion.ChildParticles,
+			ClusterUnion.ClusterUnionParameters.ActorId,
+			ClusterUnion.ClusterUnionParameters.ComponentId,
+			[this, &ClusterUnion, &FullChildrenSet]()
+			{
+				ClusterUnion.Geometry = ForceRecreateClusterUnionGeometry(ClusterUnion);
+				UpdateGeometry(ClusterUnion.InternalCluster, FullChildrenSet, MClustering.GetChildrenMap(), ClusterUnion.Geometry, ClusterUnion.Parameters);
+			}
+		);
+
+		ClusterUnion.GeometryChildParticles = ClusterUnion.ChildParticles;
+		ClusterUnion.ClearAllPendingGeometryOperations();
+	}
+
+	DECLARE_CYCLE_STAT(TEXT("FClusterUnionManager::FlushIncrementalGeometryOperations"), STAT_FlushIncrementalGeometryOperations, STATGROUP_Chaos);
+	void FClusterUnionManager::FlushIncrementalGeometryOperations(FClusterUnion& ClusterUnion)
+	{
+		SCOPE_CYCLE_COUNTER(STAT_FlushIncrementalGeometryOperations);
+		check(ClusterUnion.Geometry != nullptr);
+
+		if (ClusterUnion.Geometry->template IsA<FImplicitObjectUnionClustered>())
+		{
+			ForceRegenerateGeometry(ClusterUnion, TSet<FPBDRigidParticleHandle*>{ClusterUnion.ChildParticles});
+			return;
+		}
+
+		FImplicitObjectUnion* ImplicitUnion = ClusterUnion.Geometry->template AsA<FImplicitObjectUnion>();
+		check(ImplicitUnion != nullptr);
+
+		const TArray<FPBDRigidParticleHandle*>& PendingGeometryAdditions = ClusterUnion.GetPendingGeometryOperationParticles(EClusterUnionGeometryOperation::Add);
+		const TArray<FPBDRigidParticleHandle*>& PendingGeometryRemovals = ClusterUnion.GetPendingGeometryOperationParticles(EClusterUnionGeometryOperation::Remove);
+		const TArray<FPBDRigidParticleHandle*>& PendingGeometryRefresh = ClusterUnion.GetPendingGeometryOperationParticles(EClusterUnionGeometryOperation::Refresh);
+		if (PendingGeometryAdditions.IsEmpty() && PendingGeometryRemovals.IsEmpty() && PendingGeometryRefresh.IsEmpty())
+		{
+			// NOTE: Early out is important to prevent collision reset and BVH rebuild when there are no changes
+			return;
+		}
+
+		// We are about to change the geometry so clear all cached collisions and prevent the BVH from being rebuilt until we are done
+		MEvolution.InvalidateParticle(ClusterUnion.InternalCluster);
+		ImplicitUnion->SetAllowBVH(false);
+
+		const FRigidTransform3 ClusterWorldTM(ClusterUnion.InternalCluster->GetX(), ClusterUnion.InternalCluster->GetR());
+		if (!PendingGeometryAdditions.IsEmpty())
+		{
+			ModifyAdditionOfChildrenToClusterUnionGeometry(
+				ClusterUnion.InternalCluster,
+				PendingGeometryAdditions,
+				ClusterUnion.ClusterUnionParameters.ActorId,
+				ClusterUnion.ClusterUnionParameters.ComponentId,
+				[this, &ClusterUnion, &PendingGeometryAdditions, &ClusterWorldTM]()
+				{
+
+					TArray<Chaos::FImplicitObjectPtr> Objects;
+					Objects.Reserve(PendingGeometryAdditions.Num());
+					ClusterUnion.GeometryChildParticles.Reserve(ClusterUnion.GeometryChildParticles.Num() + PendingGeometryAdditions.Num());
+
+					for (FPBDRigidParticleHandle* Child : PendingGeometryAdditions)
+					{
+						const FRigidTransform3 Frame = GetParticleRigidFrameInClusterUnion(Child, ClusterWorldTM);
+						if (Child->GetGeometry())
+						{
+							ClusterUnion.GeometryChildParticles.Add(Child);
+							Objects.Add(Chaos::FImplicitObjectPtr(CreateTransformGeometryForClusterUnion<EThreadContext::Internal>(Child, Frame)));
+						}
+					}
+
+					if (!Objects.IsEmpty())
+					{
+						ClusterUnion.InternalCluster->MergeGeometry(MoveTemp(Objects));
+					}
+				}
+			);
+
+			ClusterUnion.ClearPendingGeometryOperations(EClusterUnionGeometryOperation::Add);
+		}
+
+		if (!PendingGeometryRemovals.IsEmpty())
+		{
+			RemoveParticlesFromClusterUnionGeometry(ClusterUnion.InternalCluster, PendingGeometryRemovals, ClusterUnion.GeometryChildParticles);
+			ClusterUnion.Geometry = ClusterUnion.InternalCluster->GetGeometry();
+			ClusterUnion.ClearPendingGeometryOperations(EClusterUnionGeometryOperation::Remove);
+
+			ImplicitUnion = ClusterUnion.Geometry->template AsA<FImplicitObjectUnion>();
+			check(ImplicitUnion != nullptr);
+		}
+
+		check(ClusterUnion.Geometry != nullptr);
+		// Need to double check the geometry here. Did we get switched to a FImplicitObjectUnionClustered?
+		// In that case we need to skip the refresh.
+		const bool bIsUnionClustered = ClusterUnion.Geometry->template IsA<FImplicitObjectUnionClustered>();
+
+		if (!PendingGeometryRefresh.IsEmpty() && !bIsUnionClustered)
+		{
+			// For each particle we need to find the corresponding shape.
+			// Note that by the time we get to handling PendimgGeometryRefresh, we can once again
+			// make the assumption that the number of children particles = number of shapes.
+			const FShapesArray& ShapesArray = ClusterUnion.InternalCluster->ShapesArray();
+			check(ClusterUnion.ChildParticles.Num() == ShapesArray.Num());
+
+			bool bAnyTransformChanged = false;
+			for (FPBDRigidParticleHandle* Particle : PendingGeometryRefresh)
+			{
+				if (!Particle)
+				{
+					continue;
+				}
+
+				const int32 Index = ClusterUnion.ChildParticles.Find(Particle);
+				if (Index == INDEX_NONE || !ShapesArray.IsValidIndex(Index))
+				{
+					continue;
+				}
+
+				const TUniquePtr<Chaos::FPerShapeData>& TemplateShape = Particle->ShapesArray()[0];
+				if (!TemplateShape)
+				{
+					continue;
+				}
+
+				if (FImplicitObjectRef ImplicitGeometry = ShapesArray[Index]->GetGeometry())
+				{
+					if (FImplicitObjectTransformed* Transformed = ImplicitGeometry->AsA<FImplicitObjectTransformed>())
+					{
+						const FRigidTransform3 Frame = GetParticleRigidFrameInClusterUnion(Particle, ClusterWorldTM);
+						if (!Transformed->GetTransform().Equals(Frame))
+						{
+							Transformed->SetTransform(Frame);
+							bAnyTransformChanged = true;
+						}
+					}
+				}
+
+				// @todo(chaos): we should probably rebuild the bounds if the sim and query filters change as well
+				TransferClusterUnionShapeData(
+					ShapesArray[Index],
+					Particle,
+					TemplateShape,
+					ClusterUnion.ClusterUnionParameters.ActorId,
+					ClusterUnion.ClusterUnionParameters.ComponentId
+				);
+			}
+
+			ClusterUnion.ClearPendingGeometryOperations(EClusterUnionGeometryOperation::Refresh);
+
+			if (bAnyTransformChanged)
+			{
+				// We have changed the transforms of some children so we must update the bounds
+				ClusterUnion.InternalCluster->UpdateWorldSpaceState(ClusterUnion.InternalCluster->GetTransformPQ(), FVec3(0));
+			}
+		}
+
+		// Re-enable the BVH to rebuild it
+		ImplicitUnion->SetAllowBVH(true);
 	}
 
 	DECLARE_CYCLE_STAT(TEXT("FClusterUnionManager::GetOrCreateClusterUnionIndexFromExplicitIndex"), STAT_GetOrCreateClusterUnionIndexFromExplicitIndex, STATGROUP_Chaos);
@@ -793,7 +1251,7 @@ namespace Chaos
 	}
 
 	DECLARE_CYCLE_STAT(TEXT("FClusterUnionManager::FindClusterUnionIndexFromParticle"), STAT_FindClusterUnionIndexFromParticle, STATGROUP_Chaos);
-	FClusterUnionIndex FClusterUnionManager::FindClusterUnionIndexFromParticle(FPBDRigidParticleHandle* ChildParticle)
+	FClusterUnionIndex FClusterUnionManager::FindClusterUnionIndexFromParticle(const FPBDRigidParticleHandle* ChildParticle) const
 	{
 		SCOPE_CYCLE_COUNTER(STAT_FindClusterUnionIndexFromParticle);
 		if (!ChildParticle)
@@ -801,9 +1259,9 @@ namespace Chaos
 			return INDEX_NONE;
 		}
 
-		if (FPBDRigidClusteredParticleHandle* ChildClustered = ChildParticle->CastToClustered())
+		if (const FPBDRigidClusteredParticleHandle* ChildClustered = ChildParticle->CastToClustered())
 		{
-			if (FPBDRigidClusteredParticleHandle* Parent = ChildClustered->Parent())
+			if (const FPBDRigidClusteredParticleHandle* Parent = ChildClustered->Parent())
 			{
 				// Recursion should be fine here since the hierarchy should be fairly shallow.
 				return FindClusterUnionIndexFromParticle(Parent);
@@ -811,7 +1269,7 @@ namespace Chaos
 
 			// The only other check to do here is to see if this is the cluster union particle itself.
 			const int32 ClusterGroupIndex = ChildClustered->ClusterGroupIndex();
-			if (FClusterUnion* ClusterUnion = FindClusterUnion(FMath::Abs(ClusterGroupIndex)))
+			if (const FClusterUnion* ClusterUnion = FindClusterUnion(FMath::Abs(ClusterGroupIndex)))
 			{
 				// This is a sanity check which may or may not be necessary.
 				// TODO: Can probably be safely removed once we deprecate cluster group indices on GCs.
@@ -858,6 +1316,7 @@ namespace Chaos
 				}
 				Update.ChildToParent = ChildToParent[InputIndex];
 				Update.bLock = bLock;
+				Update.ClusterUnionIndex = Index;
 			}
 		}
 	}
@@ -877,6 +1336,8 @@ namespace Chaos
 		// may try to recompute the ChildToParent using the position of the particle. To counteract this, we will force the ChildToParent
 		// to be *temporarily* locked for the duration of the *next* UpdateAllClusterUnionProperties. However, unless bLock is true, we will restore the
 		// lock state of the particle to what it was previously.
+
+		bool bMadeChanges = false;
 		for (FPBDRigidParticleHandle* Particle : Particles)
 		{
 			if (!ensure(Particle))
@@ -884,41 +1345,105 @@ namespace Chaos
 				return;
 			}
 
-			const int32 ChildIndex = ClusterUnion->ChildParticles.Find(Particle->CastToRigidParticle());
+			FPBDRigidParticleHandle* RigidParticle = Particle->CastToRigidParticle();
+			FPBDRigidClusteredParticleHandle* ClusteredParticle = Particle->CastToClustered();
+
+			const int32 ChildIndex = ClusterUnion->ChildParticles.Find(RigidParticle);
 			if (ChildIndex != INDEX_NONE && ClusterUnion->InternalCluster)
 			{
-				if (FPBDRigidClusteredParticleHandle* ChildHandle = ClusterUnion->ChildParticles[ChildIndex]->CastToClustered())
+				if (ClusteredParticle)
 				{
-					if (const FClusterUnionChildToParentUpdate* Update = PendingChildToParentUpdates.Find(ChildHandle))
+					if (const FClusterUnionChildToParentUpdate* Update = PendingChildToParentUpdates.Find(ClusteredParticle))
 					{
-						const FRigidTransform3 ChildToParent = Update->ChildToParent;
-						ChildHandle->SetChildToParent(ChildToParent);
-
-						if (!Update->bLock && !ChildHandle->IsChildToParentLocked())
+						if (Update->ClusterUnionIndex != ClusterIndex)
 						{
-							PendingParticlesToUndoChildToParentLock.Add(ChildHandle);
+							continue;
 						}
-						ChildHandle->SetChildToParentLocked(true);
-						PendingChildToParentUpdates.Remove(ChildHandle);
+
+						const FRigidTransform3 ChildToParent = Update->ChildToParent;
+						ClusteredParticle->SetChildToParent(ChildToParent);
+
+						if (!Update->bLock && !ClusteredParticle->IsChildToParentLocked())
+						{
+							PendingParticlesToUndoChildToParentLock.Add(ClusteredParticle);
+						}
+						ClusteredParticle->SetChildToParentLocked(true);
 
 						// Update the child's world transform to be consistent with its ChildToParent transform
 						const FPBDRigidClusteredParticleHandle* ParentHandle = ClusterUnion->InternalCluster;
-						const FRigidTransform3 ParticleToWorld = ChildToParent * FRigidTransform3(ParentHandle->X(), ParentHandle->R());
-						ChildHandle->SetX(ParticleToWorld.GetTranslation());
-						ChildHandle->SetP(ParticleToWorld.GetTranslation());
-						ChildHandle->SetR(ParticleToWorld.GetRotation());
-						ChildHandle->SetQ(ParticleToWorld.GetRotation());
+						const FRigidTransform3 ParticleToWorld = ChildToParent * FRigidTransform3(ParentHandle->GetX(), ParentHandle->GetR());
+						ClusteredParticle->SetX(ParticleToWorld.GetTranslation());
+						ClusteredParticle->SetP(ParticleToWorld.GetTranslation());
+						ClusteredParticle->SetR(ParticleToWorld.GetRotation());
+						ClusteredParticle->SetQ(ParticleToWorld.GetRotation());
+
+						// We need to mark the child handle to be dirty so that its proxy gets a chance to sync back to the GC 
+						MEvolution.GetParticles().MarkTransientDirtyParticle(ClusteredParticle);
 
 						// A child to parent update needs to remove *and* add to the connectivity graph (in that order) since
 						// the child to parent update might move the node so far away as to make the old connectivity edges incorrect.
 						ClusterUnion->PendingConnectivityOperations.Add({ Particle, EClusterUnionConnectivityOperation::Remove });
 						ClusterUnion->PendingConnectivityOperations.Add({ Particle, EClusterUnionConnectivityOperation::Add });
+
+						// A child to parent update also requires the geometry to be refreshed since its transform is changed.
+						ClusterUnion->AddPendingGeometryOperation(EClusterUnionGeometryOperation::Refresh, Particle);
+
+						bMadeChanges = true;
+					}
+				}
+			}
+
+			PendingChildToParentUpdates.Remove(ClusteredParticle);
+		}
+
+		if (bMadeChanges)
+		{
+			MEvolution.GetParticles().MarkTransientDirtyParticle(ClusterUnion->InternalCluster, false);
+
+			constexpr EUpdateClusterUnionPropertiesFlags Flags = EUpdateClusterUnionPropertiesFlags::IncrementalGenerateConnectionGraph
+				| EUpdateClusterUnionPropertiesFlags::IncrementalGenerateGeometry;
+			RequestDeferredClusterPropertiesUpdate(ClusterIndex, Flags);
+		}
+	}
+
+	bool FClusterUnionManager::IsDirectlyConnectedToMainParticleInClusterUnion(const FClusterUnion& ClusterUnion, FPBDRigidParticleHandle* Particle) const
+	{
+		auto IsParticleMainParticle = [&ClusterUnion](const FPBDRigidClusteredParticleHandle* ClusterParticle)
+		{
+			if (!ClusterParticle)
+			{
+				return false;
+			}
+
+			if (const FClusterUnionParticleProperties* Props = ClusterUnion.ChildProperties.Find(ClusterParticle))
+			{
+				return !Props->bIsAuxiliaryParticle;
+			}
+
+			return false;
+		};
+
+		if (FPBDRigidClusteredParticleHandle* ClusterParticle = Particle->CastToClustered())
+		{
+			if (IsParticleMainParticle(ClusterParticle))
+			{
+				return true;
+			}
+
+			for (const FConnectivityEdge& Edge : ClusterParticle->ConnectivityEdges())
+			{
+				if (Edge.Sibling && IsInterclusterEdge(*ClusterParticle, Edge))
+				{
+					// We don't want to check the sibling, we want to check the parent of the sibling that's actually in the cluster union
+					if (IsParticleMainParticle(GetParentParticleInClusterUnion(ClusterUnion, Edge.Sibling->CastToClustered())))
+					{
+						return true;
 					}
 				}
 			}
 		}
 
-		RequestDeferredClusterPropertiesUpdate(ClusterIndex, EUpdateClusterUnionPropertiesFlags::IncrementalGenerateConnectionGraph);
+		return false;
 	}
 
 	void FClusterUnionManager::RequestDeferredClusterPropertiesUpdate(FClusterUnionIndex ClusterIndex, EUpdateClusterUnionPropertiesFlags Flags)

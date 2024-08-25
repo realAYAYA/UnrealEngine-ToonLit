@@ -7,8 +7,8 @@
 #include "Common.ush"
 #include "PostProcessCommon.ush"
 #include "PostProcessHistogramCommon.ush"
-#include "Strata/Strata.ush"
-#include "Strata/StrataEvaluation.ush"
+#include "Substrate/Substrate.ush"
+#include "Substrate/SubstrateEvaluation.ush"
 
 #if COMPUTESHADER
 
@@ -372,7 +372,7 @@ uint IllumiananceDownscaleFactor;
 // but skip the min since we apply EyeAdaptation_IgnoreMaterialsMinBaseColorLuminance here
 float CalculateEyeAdaptationLuminanceWithoutMin(float3 Color)
 {
-	return dot(Color, float3(1.0f, 1.0f, 1.0f) / 3.0f);
+	return dot(Color, EyeAdaptation_LuminanceWeights);
 }
 
 [numthreads(8, 8, 1)]
@@ -407,12 +407,12 @@ struct FExposureMaterial
 FExposureMaterial GetExposureMaterial(uint2 InPixelPos)
 {
 	FExposureMaterial Out = (FExposureMaterial)0;
-	#if STRATA_ENABLED
+	#if SUBSTRATE_ENABLED
 	{	
-		FStrataAddressing StrataAddressing = GetStrataPixelDataByteOffset(InPixelPos, uint2(View.BufferSizeAndInvSize.xy), Strata.MaxBytesPerPixel);
-		FStrataPixelHeader StrataPixelHeader = UnpackStrataHeaderIn(Strata.MaterialTextureArray, StrataAddressing, Strata.TopLayerTexture);
-		FStrataTopLayerData TopLayerData = StrataUnpackTopLayerData(Strata.TopLayerTexture.Load(uint3(InPixelPos, 0)));
-		FStrataSubsurfaceHeader SSSHeader = StrataLoadSubsurfaceHeader(Strata.MaterialTextureArray, Strata.FirstSliceStoringStrataSSSData, InPixelPos);
+		FSubstrateAddressing SubstrateAddressing = GetSubstratePixelDataByteOffset(InPixelPos, uint2(View.BufferSizeAndInvSize.xy), Substrate.MaxBytesPerPixel);
+		FSubstratePixelHeader SubstratePixelHeader = UnpackSubstrateHeaderIn(Substrate.MaterialTextureArray, SubstrateAddressing, Substrate.TopLayerTexture);
+		FSubstrateTopLayerData TopLayerData = SubstrateUnpackTopLayerData(Substrate.TopLayerTexture.Load(uint3(InPixelPos, 0)));
+		FSubstrateSubsurfaceHeader SSSHeader = SubstrateLoadSubsurfaceHeader(Substrate.MaterialTextureArray, Substrate.FirstSliceStoringSubstrateSSSData, InPixelPos);
 
 		const float DeviceZ = ConvertFromDeviceZ(SceneDepthTexture.Load(int3(InPixelPos, 0)).r);
 		const float3 TranslatedWorldPosition = ReconstructTranslatedWorldPositionFromDeviceZ(InPixelPos, DeviceZ);
@@ -422,29 +422,29 @@ FExposureMaterial GetExposureMaterial(uint2 InPixelPos)
 		float3 DirectionalAlbedo = 0;
 		bool bHasMaterialBackfaceDiffuse = false;
 		{
-			FStrataDeferredLighting Out = GetInitialisedStrataDeferredLighting();
-			const FStrataIntegrationSettings Settings = InitStrataIntegrationSettings(false /*bForceFullyRough*/, Strata.bRoughDiffuse, Strata.PeelLayersAboveDepth, Strata.bRoughnessTracking);
-			Strata_for(uint BSDFIndex = 0, BSDFIndex < StrataPixelHeader.BSDFCount, ++BSDFIndex)
+			FSubstrateDeferredLighting Out = GetInitialisedSubstrateDeferredLighting();
+			const FSubstrateIntegrationSettings Settings = InitSubstrateIntegrationSettings(false /*bForceFullyRough*/, Substrate.bRoughDiffuse, Substrate.PeelLayersAboveDepth, Substrate.bRoughnessTracking);
+			Substrate_for(uint ClosureIndex = 0, ClosureIndex < SubstratePixelHeader.ClosureCount, ++ClosureIndex)
 			{
-				FStrataBSDF BSDF = UnpackStrataBSDF(Strata.MaterialTextureArray, StrataAddressing, StrataPixelHeader);
-				FStrataBSDFContext StrataBSDFContext = StrataCreateBSDFContext(StrataPixelHeader, BSDF, StrataAddressing, V);
-				const float3 BSDFThroughput = LuminanceWeight(StrataBSDFContext, BSDF);
+				FSubstrateBSDF BSDF = UnpackSubstrateBSDF(Substrate.MaterialTextureArray, SubstrateAddressing, SubstratePixelHeader);
+				FSubstrateBSDFContext SubstrateBSDFContext = SubstrateCreateBSDFContext(SubstratePixelHeader, BSDF, SubstrateAddressing, V);
+				const float3 BSDFThroughput = LuminanceWeight(SubstrateBSDFContext, BSDF);
 
 				// Evaluate environment lighting
-				FStrataEnvLightResult StrataEnvLight = StrataEvaluateForEnvLight(StrataBSDFContext, true /*bEnableSpecular*/, Settings);
+				FSubstrateEnvLightResult SubstrateEnvLight = SubstrateEvaluateForEnvLight(SubstrateBSDFContext, true /*bEnableSpecular*/, Settings);
 
-				DiffuseDirectionalAlbedo += BSDFThroughput * StrataEnvLight.DiffuseWeight;
-				DirectionalAlbedo        += BSDFThroughput * StrataEnvLight.DiffuseWeight;
-				DirectionalAlbedo        += BSDFThroughput * StrataEnvLight.SpecularWeight;
+				DiffuseDirectionalAlbedo += BSDFThroughput * SubstrateEnvLight.DiffuseWeight;
+				DirectionalAlbedo        += BSDFThroughput * SubstrateEnvLight.DiffuseWeight;
+				DirectionalAlbedo        += BSDFThroughput * SubstrateEnvLight.SpecularWeight;
 
-				const bool bHasBackfaceDiffuse = StrataGetBSDFType(BSDF) == STRATA_BSDF_TYPE_SLAB && BSDF.HasBackScattering();
+				const bool bHasBackfaceDiffuse = SubstrateGetBSDFType(BSDF) == SUBSTRATE_BSDF_TYPE_SLAB && BSDF.HasBackScattering();
 				if (bHasBackfaceDiffuse)
 				{
-					DirectionalAlbedo += BSDFThroughput * StrataEnvLight.DiffuseBackFaceWeight; // StrataEnvLight.DiffuseBackFaceWeight is already divided PI
+					DirectionalAlbedo += BSDFThroughput * SubstrateEnvLight.DiffuseBackFaceWeight; // SubstrateEnvLight.DiffuseBackFaceWeight is already divided PI
 				}
-				if (any(StrataEnvLight.SpecularHazeWeight > 0.0f))
+				if (any(SubstrateEnvLight.SpecularHazeWeight > 0.0f))
 				{
-					DirectionalAlbedo += BSDFThroughput * StrataEnvLight.SpecularHazeWeight;
+					DirectionalAlbedo += BSDFThroughput * SubstrateEnvLight.SpecularHazeWeight;
 				}
 			}
 		}
@@ -452,11 +452,11 @@ FExposureMaterial GetExposureMaterial(uint2 InPixelPos)
 		Out.TranslatedWorldPosition = ReconstructTranslatedWorldPositionFromDeviceZ(InPixelPos, DeviceZ);
 		Out.WorldNormal = TopLayerData.WorldNormal;
 		Out.DirectionalAlbedo = DirectionalAlbedo;
-		Out.bIsValid = StrataPixelHeader.IsStrataMaterial();
+		Out.bIsValid = SubstratePixelHeader.IsSubstrateMaterial();
 		Out.bHasBackfaceLighting = bHasMaterialBackfaceDiffuse;
 		Out.bHasValidDirectionalAlbedo = CalculateEyeAdaptationLuminanceWithoutMin(DiffuseDirectionalAlbedo) > EyeAdaptation_IgnoreMaterialsMinBaseColorLuminance;
 	}
-	#else // STRATA_ENABLED
+	#else // SUBSTRATE_ENABLED
 	{
 		const float2 GBufferUV = (InPixelPos + 0.5f) * View.BufferSizeAndInvSize.zw;
 		const FGBufferData GBufferData = GetGBufferDataFromSceneTextures(GBufferUV);
@@ -499,7 +499,7 @@ FExposureMaterial GetExposureMaterial(uint2 InPixelPos)
 		Out.bHasBackfaceLighting = GetShadingModelRequiresBackfaceLighting(GBufferData.ShadingModelID);
 		Out.bHasValidDirectionalAlbedo = CalculateEyeAdaptationLuminanceWithoutMin(GBufferData.DiffuseColor) > EyeAdaptation_IgnoreMaterialsMinBaseColorLuminance;
 	}
-	#endif // STRATA_ENABLED
+	#endif // SUBSTRATE_ENABLED
 	return Out;
 }
 
@@ -560,7 +560,7 @@ void CalculateExposureIlluminance(uint2 ThreadId : SV_DispatchThreadID)
 			if (IsLumenTranslucencyGIEnabled())
 			{
 				// Lumen Dynamic GI + shadowed Skylight
-				FLWCVector3 TranslucencyEvaluationPosition = LWCSubtract(TranslucencyEvaluationTranslatedPosition, PrimaryView.PreViewTranslation);
+				FDFVector3 TranslucencyEvaluationPosition = DFFastSubtract(TranslucencyEvaluationTranslatedPosition, PrimaryView.PreViewTranslation);
 
 				FTwoBandSHVectorRGB TranslucencyGISH = GetTranslucencyGIVolumeLighting(TranslucencyEvaluationPosition, PrimaryView.WorldToClip, true);
 

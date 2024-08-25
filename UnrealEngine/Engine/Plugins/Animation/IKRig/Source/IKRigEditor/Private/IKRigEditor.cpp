@@ -15,6 +15,7 @@
 #include "RetargetEditor/IKRetargetDetails.h"
 #include "RetargetEditor/IKRetargetEditPoseMode.h"
 #include "RetargetEditor/IKRetargeterThumbnailRenderer.h"
+#include "Retargeter/IKRetargetOps.h"
 #include "RigEditor/IKRigCommands.h"
 #include "RigEditor/IKRigEditMode.h"
 #include "RigEditor/IKRigSkeletonCommands.h"
@@ -74,6 +75,9 @@ void FIKRigEditor::StartupModule()
 	// custom retargeter global details
 	PropertyEditorModule.RegisterCustomClassLayout(UIKRetargetGlobalSettings::StaticClass()->GetFName(), FOnGetDetailCustomizationInstance::CreateStatic(&FRetargetGlobalSettingsCustomization::MakeInstance));
 	ClassesToUnregisterOnShutdown.Add(UIKRetargetGlobalSettings::StaticClass()->GetFName());
+	// custom retargeter op stack details
+	PropertyEditorModule.RegisterCustomClassLayout(URetargetOpStack::StaticClass()->GetFName(), FOnGetDetailCustomizationInstance::CreateStatic(&FRetargetOpStackCustomization::MakeInstance));
+	ClassesToUnregisterOnShutdown.Add(URetargetOpStack::StaticClass()->GetFName());
 
 	// register a thumbnail renderer for the assets
 	UThumbnailManager::Get().RegisterCustomRenderer(UIKRigDefinition::StaticClass(), UIKRigThumbnailRenderer::StaticClass());

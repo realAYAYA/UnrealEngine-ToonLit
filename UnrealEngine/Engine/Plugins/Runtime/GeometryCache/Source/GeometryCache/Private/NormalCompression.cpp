@@ -50,9 +50,9 @@ int32 FNormalCoderSmith::GetTotalBinCount() const
 int32 FNormalCoderSmith::CalcNTheta(int32 JIndex, float MaxError)
 {
 	// According to page 3 of Smith et al.
-	float Phi = JIndex * PI / (NPhiValue - 1);
-	float Numerator = FMath::Cos(MaxError) - FMath::Cos(Phi) * FMath::Cos(Phi + PI / (2 * (NPhiValue - 1)));
-	float Denominator = FMath::Sin(Phi) * FMath::Sin(Phi + PI / (2 * (NPhiValue - 1)));
+	float Phi = static_cast<float>(JIndex) * PI / static_cast<float>(NPhiValue - 1);
+	float Numerator = FMath::Cos(MaxError) - FMath::Cos(Phi) * FMath::Cos(Phi + PI / static_cast<float>(2 * (NPhiValue - 1)));
+	float Denominator = FMath::Sin(Phi) * FMath::Sin(Phi + PI / static_cast<float>(2 * (NPhiValue - 1)));
 
 	if (Denominator == 0.0f) // pole
 	{
@@ -78,14 +78,14 @@ FNormalCoderSmith::FEncodedNormal FNormalCoderSmith::Encode(const FVector& Value
 	int32 KIndex = 0;
 
 	// Calculate our bin indices
-	JIndex = FMath::RoundToInt(Spherical.Phi * (NPhiValue - 1) / PI);
+	JIndex = FMath::RoundToInt(Spherical.Phi * static_cast<float>(NPhiValue - 1) / PI);
 	int32 NTheta = GetNtheta(JIndex);
-	KIndex = PositiveModulo(FMath::RoundToInt(Spherical.Theta * NTheta / (2 * PI)), NTheta);
+	KIndex = PositiveModulo(FMath::RoundToInt(Spherical.Theta * static_cast<float>(NTheta) / (2 * PI)), NTheta);
 
 	// Decode those indices again
 	FSphericalCoordinates DecodedDelta;
-	DecodedDelta.Phi = JIndex * PI / (NPhiValue - 1);
-	DecodedDelta.Theta = KIndex * 2 * PI / NTheta;
+	DecodedDelta.Phi = static_cast<float>(JIndex) * PI / static_cast<float>(NPhiValue - 1);
+	DecodedDelta.Theta = static_cast<float>(KIndex) * 2 * PI / static_cast<float>(NTheta);
 
 	// Convert back to absolute positions as our decoder will do
 	FVector DecodedDeltaVector = SphericalToVector(DecodedDelta);
@@ -99,9 +99,9 @@ FVector FNormalCoderSmith::Decode(const FEncodedNormal& Value)
 {
 	// Decode our bin indices to spherical coordinates, according to page 2 of Smith et al.
 	FSphericalCoordinates DecodedDelta;
-	DecodedDelta.Phi = Value.JIndex * PI / (NPhiValue - 1);
+	DecodedDelta.Phi = static_cast<float>(Value.JIndex) * PI / static_cast<float>(NPhiValue - 1);
 	int32 NTheta = GetNtheta(Value.JIndex);
-	DecodedDelta.Theta = Value.KIndex * 2 * PI / NTheta;
+	DecodedDelta.Theta = static_cast<float>(Value.KIndex) * 2 * PI / static_cast<float>(NTheta);
 
 	// Transform our coordinates relative to the previously-seen vector back to absolute values
 	FVector DecodedDeltaVector = SphericalToVector(DecodedDelta);
@@ -116,7 +116,7 @@ FNormalCoderSmith::FSphericalCoordinates FNormalCoderSmith::VectorToSpherical(co
 	FVector NormalizedVector = Vector;
 	NormalizedVector.Normalize();
 	FVector2D UESpherical = NormalizedVector.UnitCartesianToSpherical();
-	return FNormalCoderSmith::FSphericalCoordinates(UESpherical.X, UESpherical.Y);
+	return FNormalCoderSmith::FSphericalCoordinates(static_cast<float>(UESpherical.X), static_cast<float>(UESpherical.Y));
 }
 
 /** Convert from spherical coordinates to Cartesian vectors */
@@ -181,10 +181,10 @@ void FNormalCoderSmith::UpdateRotationMatrix(const FVector& UnmovedVector, FVect
 
 	// Calculate the rotation matrix. Method in the paper did not seem to work. This is a generic rotation between two vectors but 
 	// optimized for the case where one of the vectors is always (0, 0, 1)
-	float SizeTerm = 1.0f / (UnmovedVector.Y * UnmovedVector.Y + UnmovedVector.X * UnmovedVector.X);
-	float X = UnmovedVector.Y * UnmovedVector.Y * SizeTerm * (1.0f - UnmovedVector.Z) + UnmovedVector.Z;
-	float Y = (UnmovedVector.Y * -UnmovedVector.X) * SizeTerm * (1.0f - UnmovedVector.Z);
-	float Z = -UnmovedVector.X;
+	float SizeTerm = static_cast<float>(1.0f / (UnmovedVector.Y * UnmovedVector.Y + UnmovedVector.X * UnmovedVector.X));
+	float X = static_cast<float>(UnmovedVector.Y * UnmovedVector.Y * SizeTerm * (1.0f - UnmovedVector.Z) + UnmovedVector.Z);
+	float Y = static_cast<float>((UnmovedVector.Y * -UnmovedVector.X) * SizeTerm * (1.0f - UnmovedVector.Z));
+	float Z = static_cast<float>(-UnmovedVector.X);
 
 	ColumnZ = UnmovedVector;
 	ColumnX = FVector(X, Y, Z);
@@ -194,13 +194,13 @@ void FNormalCoderSmith::UpdateRotationMatrix(const FVector& UnmovedVector, FVect
 int32 FNormalCoderSmithTest::Denormalize(float Value)
 {
 	// From -1,1 to 0-255
-	return (Value + 1) * 0.5f * 255.0f;
+	return static_cast<int32>((Value + 1) * 0.5f * 255.0f);
 }
 
 FIntVector FNormalCoderSmithTest::Denormalize(const FVector& Value)
 {
 	// From -1,1 to 0-255
-	return FIntVector(Denormalize(Value.X), Denormalize(Value.Y), Denormalize(Value.Z));
+	return FIntVector(Denormalize(static_cast<float>(Value.X)), Denormalize(static_cast<float>(Value.Y)), Denormalize(static_cast<float>(Value.Z)));
 }
 
 void FNormalCoderSmithTest::Test()
@@ -241,14 +241,14 @@ void FNormalCoderSmithTest::Test()
 			MaximumDifferenceSpherical.Y = FMath::Max(MaximumDifferenceSpherical.Y, FMath::Abs(SphericalDifference.Y));
 
 			UE_LOG(LogGeoCaStreamingNormalCompression, Log, TEXT("Input: (%i, %i, %i), Encoded: (%i, %i), Decoded: (%i, %i, %i), Difference: (%i, %i, %i)\n"),
-				Denormalize(Input.X),
-				Denormalize(Input.Y),
-				Denormalize(Input.Z),
+				Denormalize(static_cast<float>(Input.X)),
+				Denormalize(static_cast<float>(Input.Y)),
+				Denormalize(static_cast<float>(Input.Z)),
 				Encoded.JIndex,
 				Encoded.KIndex,
-				Denormalize(Decoded.X),
-				Denormalize(Decoded.Y),
-				Denormalize(Decoded.Z),
+				Denormalize(static_cast<float>(Decoded.X)),
+				Denormalize(static_cast<float>(Decoded.Y)),
+				Denormalize(static_cast<float>(Decoded.Z)),
 				ByteDifference.X, ByteDifference.Y, ByteDifference.Z);
 		}
 	}

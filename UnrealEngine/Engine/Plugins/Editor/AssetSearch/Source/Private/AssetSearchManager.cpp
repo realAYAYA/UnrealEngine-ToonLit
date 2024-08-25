@@ -9,7 +9,7 @@
 #include "Misc/Paths.h"
 #include "HAL/RunnableThread.h"
 #include "Misc/App.h"
-#include "StudioAnalytics.h"
+#include "StudioTelemetry.h"
 #include "AnalyticsEventAttribute.h"
 #include "Misc/PackageName.h"
 #include "WidgetBlueprint.h"
@@ -22,6 +22,7 @@
 #include "Sound/SoundCue.h"
 #include "Misc/ScopedSlowTask.h"
 #include "Editor.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/ObjectSaveContext.h"
 #include "FileHelpers.h"
 #include "Misc/MessageDialog.h"
@@ -126,7 +127,7 @@ public:
 			if (UObject* LoadedObject = PackageObjectPtr.Get())
 			{
 				//FReferencerInformationList ReferencesIncludingUndo;
-				//bool bReferencedInMemoryOrUndoStack = IsReferenced(LoadedObject, GARBAGE_COLLECTION_KEEPFLAGS, EInternalObjectFlags::GarbageCollectionKeepFlags, true, &ReferencesIncludingUndo);
+				//bool bReferencedInMemoryOrUndoStack = IsReferenced(LoadedObject, GARBAGE_COLLECTION_KEEPFLAGS, EInternalObjectFlags_GarbageCollectionKeepFlags, true, &ReferencesIncludingUndo);
 
 				LoadedObject->SetFlags(RF_Standalone);
 			}
@@ -202,7 +203,7 @@ FAssetSearchManager::~FAssetSearchManager()
 
 	UPackage::PackageSavedWithContextEvent.RemoveAll(this);
 	FCoreUObjectDelegates::OnAssetLoaded.RemoveAll(this);
-	UObject::FAssetRegistryTag::OnGetExtendedAssetRegistryTagsForSave.RemoveAll(this);
+	UObject::FAssetRegistryTag::OnGetExtraObjectTagsWithContext.RemoveAll(this);
 
 	FTSTicker::GetCoreTicker().RemoveTicker(TickerHandle);
 }
@@ -234,12 +235,14 @@ void FAssetSearchManager::Start()
 
 	TickerHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateRaw(this, &FAssetSearchManager::Tick_GameThread), 0);
 
+	SearchDatabase.bEnableIntegrityChecks = GetDefault<USearchUserSettings>()->bEnableIntegrityChecks;
+	FileInfoDatabase.bEnableIntegrityChecks = GetDefault<USearchUserSettings>()->bEnableIntegrityChecks;
 	RunThread = true;
 	DatabaseThread = FRunnableThread::Create(this, TEXT("UniversalSearch"), 0, TPri_BelowNormal);
 
 	if (IntermediateStorage == ESearchIntermediateStorage::AssetTagData)
 	{
-		UObject::FAssetRegistryTag::OnGetExtendedAssetRegistryTagsForSave.AddRaw(this, &FAssetSearchManager::HandleGetExtendedAssetRegistryTagsForSave);
+		UObject::FAssetRegistryTag::OnGetExtraObjectTagsWithContext.AddRaw(this, &FAssetSearchManager::HandleOnGetExtraObjectTags);
 	}
 }
 
@@ -483,8 +486,15 @@ uint64 FAssetSearchManager::GetTextHash(FStringView PackageRelativeExportPath) c
 	return CityHash64(reinterpret_cast<const char*>(PackageRelativeExportPath.GetData() + 1), (PackageRelativeExportPath.Len() - 1) * sizeof(TCHAR));
 }
 
-void FAssetSearchManager::HandleGetExtendedAssetRegistryTagsForSave(const UObject* Object, const ITargetPlatform* TargetPlatform, TArray<UObject::FAssetRegistryTag>& OutTags)
+void FAssetSearchManager::HandleOnGetExtraObjectTags(FAssetRegistryTagsContext Context)
 {
+	if (!Context.IsFullUpdate())
+	{
+		return;
+	}
+
+	const UObject* Object = Context.GetObject();
+	const ITargetPlatform* TargetPlatform = Context.GetTargetPlatform();
 	if (GIsEditor && !Object->GetOutermost()->HasAnyPackageFlags(PKG_ForDiffing) && !IsRunningCookCommandlet())
 	{
 		if (!GEditor->IsAutosaving())
@@ -500,9 +510,9 @@ void FAssetSearchManager::HandleGetExtendedAssetRegistryTagsForSave(const UObjec
 					const FString IndexVersion = GetBaseIndexKey(Object->GetClass());
 					const FString IndexHash = LexToString(GetTextHash(IndexedJson));
 
-					OutTags.Add(UObject::FAssetRegistryTag(FAssetSearchManager::AssetSearchIndexVersionTag, IndexVersion, UObject::FAssetRegistryTag::TT_Hidden));
-					OutTags.Add(UObject::FAssetRegistryTag(FAssetSearchManager::AssetSearchIndexHashTag, IndexHash, UObject::FAssetRegistryTag::TT_Hidden));
-					OutTags.Add(UObject::FAssetRegistryTag(FAssetSearchManager::AssetSearchIndexDataTag, IndexedJson, UObject::FAssetRegistryTag::TT_Hidden));
+					Context.AddTag(UObject::FAssetRegistryTag(FAssetSearchManager::AssetSearchIndexVersionTag, IndexVersion, UObject::FAssetRegistryTag::TT_Hidden));
+					Context.AddTag(UObject::FAssetRegistryTag(FAssetSearchManager::AssetSearchIndexHashTag, IndexHash, UObject::FAssetRegistryTag::TT_Hidden));
+					Context.AddTag(UObject::FAssetRegistryTag(FAssetSearchManager::AssetSearchIndexDataTag, IndexedJson, UObject::FAssetRegistryTag::TT_Hidden));
 
 					if (!IndexedJson.IsEmpty())
 					{
@@ -685,6 +695,12 @@ bool FAssetSearchManager::TryLoadIndexForAsset_Tags(const FAssetData& InAssetDat
 bool FAssetSearchManager::TryLoadIndexForAsset_DDC(const FAssetData& InAssetData)
 {
 	check(IntermediateStorage == ESearchIntermediateStorage::DerivedDataCache);
+	
+	bool bAllowFetch = !GetDefault<USearchProjectSettings>()->bDisableDDC;
+	if (!bAllowFetch)
+	{
+		return false;
+	}
 
 	const bool bSuccess = AsyncGetDerivedDataKey(InAssetData, [this, InAssetData](bool bSuccess, FString InDDCKey) {
 		if (!bSuccess)
@@ -902,9 +918,13 @@ void FAssetSearchManager::StoreIndexForAsset_DDC(const UObject* InAsset)
 			AsyncMainThreadTask([this, InAssetData, IndexedJson, InDDCKey]() {
 				check(IsInGameThread());
 
-				FTCHARToUTF8 IndexedJsonUTF8(*IndexedJson);
-				TArrayView<const uint8> IndexedJsonUTF8View((const uint8*)IndexedJsonUTF8.Get(), IndexedJsonUTF8.Length() * sizeof(UTF8CHAR));
-				GetDerivedDataCacheRef().Put(*InDDCKey, IndexedJsonUTF8View, InAssetData.GetObjectPathString(), false);
+				bool bAllowPut = !GetDefault<USearchProjectSettings>()->bDisableDDC;
+				if (bAllowPut)
+				{
+					FTCHARToUTF8 IndexedJsonUTF8(*IndexedJson);
+					TArrayView<const uint8> IndexedJsonUTF8View((const uint8*)IndexedJsonUTF8.Get(), IndexedJsonUTF8.Length() * sizeof(UTF8CHAR));
+					GetDerivedDataCacheRef().Put(*InDDCKey, IndexedJsonUTF8View, InAssetData.GetObjectPathString(), false);
+				}
 
 				AddOrUpdateAsset(InAssetData, IndexedJson, InDDCKey);
 			});
@@ -948,7 +968,7 @@ bool FAssetSearchManager::Tick_GameThread(float DeltaTime)
 	int32 ScanLimit = PerformanceLimits.AssetScanRate;
 	while (ProcessAssetQueue.Num() > 0 && ScanLimit > 0)
 	{
-		FAssetOperation Operation = ProcessAssetQueue.Pop(false);
+		FAssetOperation Operation = ProcessAssetQueue.Pop(EAllowShrinking::No);
 		FAssetData Asset = Operation.Asset;
 
 		if (Operation.bRemoval)
@@ -1147,10 +1167,11 @@ void FAssetSearchManager::Search(FSearchQueryPtr SearchQuery)
 {
 	check(IsInGameThread());
 
-	FStudioAnalytics::RecordEvent(TEXT("AssetSearch"), {
-		FAnalyticsEventAttribute(TEXT("QueryString"), SearchQuery->QueryText)
-	});
-
+	if (FStudioTelemetry::IsAvailable())
+	{
+		FStudioTelemetry::Get().RecordEvent(TEXT("AssetSearch"), { FAnalyticsEventAttribute(TEXT("QueryString"), SearchQuery->QueryText)} );
+	}
+	
 	ImmediateOperations.Enqueue([this, SearchQuery]() {
 
 		TArray<FSearchRecord> Results;

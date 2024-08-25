@@ -110,7 +110,7 @@ TArray<FFractureToolContext> UFractureToolConvert::GetFractureToolContexts() con
 		FullSelection.ConvertSelectionToRigidNodes();
 		
 		// Update global transforms and bounds -- TODO: pull this bounds update out to a shared function?
-		const TManagedArray<FTransform>& Transform = FullSelection.GetGeometryCollection()->Transform;
+		const TManagedArray<FTransform3f>& Transform = FullSelection.GetGeometryCollection()->Transform;
 		const TManagedArray<int32>& TransformToGeometryIndex = FullSelection.GetGeometryCollection()->TransformToGeometryIndex;
 		const TManagedArray<FBox>& BoundingBoxes = FullSelection.GetGeometryCollection()->BoundingBox;
 

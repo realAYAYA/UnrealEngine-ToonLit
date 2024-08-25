@@ -137,7 +137,7 @@ class FLogSuppressionImplementation: public FLogSuppressionInterface, private FS
 			FString Command = SubCmds[Index].TrimStart();
 			if (Command.StartsWith(LogString))
 			{
-				Command.RightInline(Command.Len() - (UE_ARRAY_COUNT(LogString) - 1), false);
+				Command.RightInline(Command.Len() - (UE_ARRAY_COUNT(LogString) - 1), EAllowShrinking::No);
 			}
 			TArray<FString> CommandParts;
 			Command.ParseIntoArrayWS(CommandParts);
@@ -501,10 +501,10 @@ class FLogSuppressionImplementation: public FLogSuppressionInterface, private FS
 		PendingAssociations.Empty();
 
 		// first we do the config values
-		FConfigSection* RefTypes = GConfig->GetSectionPrivate(TEXT("Core.Log"), false, true, GEngineIni);
+		const FConfigSection* RefTypes = GConfig->GetSection(TEXT("Core.Log"), false, GEngineIni);
 		if (RefTypes != NULL)
 		{
-			for( FConfigSectionMap::TIterator It(*RefTypes); It; ++It )
+			for( FConfigSectionMap::TConstIterator It(*RefTypes); It; ++It )
 			{
 				ProcessCmdString(It.Key().ToString() + TEXT(" ") + It.Value().GetValue(), true);
 			}
@@ -533,10 +533,10 @@ class FLogSuppressionImplementation: public FLogSuppressionInterface, private FS
 				{
 					break;
 				}
-				CmdLineEnv.MidInline(Index + LogCmds.Len(), MAX_int32, false);
+				CmdLineEnv.MidInline(Index + LogCmds.Len(), MAX_int32, EAllowShrinking::No);
 			}
 			// now strip off the environment arg part
-			CmdLine.MidInline(0, IndexOfEnv, false);
+			CmdLine.MidInline(0, IndexOfEnv, EAllowShrinking::No);
 		}
 		while (1)
 		{
@@ -553,7 +553,7 @@ class FLogSuppressionImplementation: public FLogSuppressionInterface, private FS
 			{
 				break;
 			}
-			CmdLine.MidInline(Index + LogCmds.Len(), MAX_int32, false);
+			CmdLine.MidInline(Index + LogCmds.Len(), MAX_int32, EAllowShrinking::No);
 		}
 #endif // !UE_BUILD_SHIPPING
 

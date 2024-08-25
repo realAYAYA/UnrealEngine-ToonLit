@@ -14,6 +14,7 @@ namespace RewindDebugger
 
 FAnimCurvesTrack::FAnimCurvesTrack(uint64 InObjectId) : ObjectId(InObjectId)
 {
+	ChildPlaceholder = MakeShared<FRewindDebuggerPlaceholderTrack>( "Child", LOCTEXT("No Curves", "No Curves to Display"));
 	SetIsExpanded(false);
 	Icon = FSlateIcon("EditorStyle", "AnimGraph.Attribute.Curves.Icon", "AnimGraph.Attribute.Curves.Icon");
 }
@@ -28,6 +29,11 @@ TSharedPtr<SWidget> FAnimCurvesTrack::GetDetailsViewInternal()
 
 void FAnimCurvesTrack::IterateSubTracksInternal(TFunction<void(TSharedPtr<FRewindDebuggerTrack> SubTrack)> IteratorFunction)
 {
+	if (Children.Num() == 0)
+	{
+		IteratorFunction(ChildPlaceholder);
+	}
+	
 	for(TSharedPtr<FAnimCurveTrack>& Track : Children)
 	{
 		IteratorFunction(Track);
@@ -36,6 +42,12 @@ void FAnimCurvesTrack::IterateSubTracksInternal(TFunction<void(TSharedPtr<FRewin
 
 bool FAnimCurvesTrack::UpdateInternal()
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FAnimCurvesTrack::UpdateInternal);
+	if (!GetIsExpanded())
+	{
+		return false;
+	}
+	
 	TArray<uint32> UniqueTrackIds;
 
 	IRewindDebugger* RewindDebugger = IRewindDebugger::Instance();
@@ -55,7 +67,7 @@ bool FAnimCurvesTrack::UpdateInternal()
 	if(GameplayProvider && AnimationProvider)
 	{
 		TraceServices::FAnalysisSessionReadScope SessionReadScope(*AnalysisSession);
-		UniqueTrackIds.SetNum(0, false);
+		UniqueTrackIds.SetNum(0, EAllowShrinking::No);
 
 		AnimationProvider->ReadSkeletalMeshPoseTimeline(ObjectId, [&UniqueTrackIds,AnimationProvider, StartTime, EndTime](const FAnimationProvider::SkeletalMeshPoseTimeline& InTimeline, bool bHasCurves)
 		{
@@ -89,7 +101,10 @@ bool FAnimCurvesTrack::UpdateInternal()
 				bChanged = true;
 			}
 
-			bChanged = bChanged || Children[i]->Update();
+			if (Children[i]->Update())
+			{
+				bChanged = true;
+			}
 		}
 	}
 
@@ -140,6 +155,8 @@ bool FAnimCurveTrack::UpdateInternal()
 
 void FAnimCurveTrack::UpdateCurvePointsInternal()
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FAnimCurveTrack::UpdateCurvePointsInternal);
+	
 	IRewindDebugger* RewindDebugger = IRewindDebugger::Instance();
 	const TraceServices::IAnalysisSession* AnalysisSession = RewindDebugger->GetAnalysisSession();
 	const FAnimationProvider* AnimationProvider = AnalysisSession->ReadProvider<FAnimationProvider>(FAnimationProvider::ProviderName);
@@ -150,7 +167,7 @@ void FAnimCurveTrack::UpdateCurvePointsInternal()
 	double EndTime = TraceTimeRange.GetUpperBoundValue();
 	
 	auto& CurvePoints = CurveData->Points;
-	CurvePoints.SetNum(0,false);
+	CurvePoints.SetNum(0,EAllowShrinking::No);
 
 	TraceServices::FAnalysisSessionReadScope SessionReadScope(*AnalysisSession);
 	
@@ -190,6 +207,7 @@ TSharedPtr<SWidget> FAnimCurveTrack::GetTimelineViewInternal()
 	FLinearColor CurveColor(0.5,0.5,0.5);
 	
 	return SNew(SCurveTimelineView)
+		.TrackName(GetDisplayNameInternal())
 		.CurveColor(CurveColor)
 		.ViewRange_Lambda([]() { return IRewindDebugger::Instance()->GetCurrentViewRange(); })
 		.RenderFill(false)
@@ -208,6 +226,11 @@ FName FAnimationCurvesTrackCreator::GetTargetTypeNameInternal() const
 FName FAnimationCurvesTrackCreator::GetNameInternal() const
 {
 	return AnimationCurvesName;
+}
+		
+void FAnimationCurvesTrackCreator::GetTrackTypesInternal(TArray<FRewindDebuggerTrackType>& Types) const
+{
+	Types.Add({AnimationCurvesName, LOCTEXT("Curves", "Curves")});
 }
 
 TSharedPtr<RewindDebugger::FRewindDebuggerTrack> FAnimationCurvesTrackCreator::CreateTrackInternal(uint64 ObjectId) const

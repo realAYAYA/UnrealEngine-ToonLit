@@ -122,7 +122,7 @@ namespace Gauntlet
 			if (!HasExited)
 			{
 				WasKilled = true;
-				ProcessResult.ProcessObject.Kill();
+				ProcessResult.ProcessObject.Kill(true);
 			}
 		}
 
@@ -462,21 +462,19 @@ namespace Gauntlet
 			{
 				throw new AutomationException("Failed to resign application");
 			}
-
 		}
 
 		// We need to lock around setting up the IPA
 		static object IPALock = new object();
-
 		public IAppInstall InstallApplication(UnrealAppConfig AppConfig)
-		{            
+		{
             IOSBuild Build = AppConfig.Build as IOSBuild;
 
 			// Ensure Build exists
 			if (Build == null)
 			{
 				throw new AutomationException("Invalid build for IOS!");
-			}	
+			}
 
 			bool CacheResigned = false;
 			bool UseLocalExecutable = Globals.Params.ParseParam("dev");
@@ -488,7 +486,7 @@ namespace Gauntlet
 				// device artifact path
 				DeviceArtifactPath = string.Format("/Documents/{0}/Saved", AppConfig.ProjectName);
 
-				CacheResigned = File.Exists(CacheResignedFilename);				
+				CacheResigned = File.Exists(CacheResignedFilename);
 
 				if (CacheResigned && !UseLocalExecutable)
 				{
@@ -496,15 +494,15 @@ namespace Gauntlet
 					{
 						Log.Verbose("App was resigned, invalidating app cache");
 						File.Delete(IPAHashFilename);
-					}								
+					}
 				}
 
 				PrepareIPA(Build);
 
-				// local executable support			
+				// local executable support
 				if (UseLocalExecutable)
-				{					
-					ResignApplication(AppConfig);				
+				{
+					ResignApplication(AppConfig);
 				}
 			}
 
@@ -518,10 +516,10 @@ namespace Gauntlet
 				// remove device artifacts
 				CleanDeviceArtifacts(Build);
 			}
-			
+
 			// parallel iOS tests use same app install folder, so lock it as setup is quick
 			lock (Globals.MainLock)
-			{				
+			{
 				// local app install with additional files, this directory will be mirrored to device in a single operation
 				string AppInstallPath;
 
@@ -578,11 +576,36 @@ namespace Gauntlet
 
 				// store the IPA hash to avoid redundant deployments
 				CopyCommand = String.Format("--bundle_id {0} --upload={1} --to {2}", Build.PackageName, IPAHashFilename, "/Documents/IPAHash.txt");
-				ExecuteIOSDeployCommand(CopyCommand, 120);				
+				ExecuteIOSDeployCommand(CopyCommand, 120);
 			}
 
-			IOSAppInstall IOSApp = new IOSAppInstall(AppConfig.Name, this, Build.PackageName, AppConfig.CommandLine);	
+			IOSAppInstall IOSApp = new IOSAppInstall(AppConfig.Name, this, Build.PackageName, AppConfig.CommandLine);
 			return IOSApp;
+		}
+
+		public void FullClean()
+		{
+
+		}
+
+		public void CleanArtifacts()
+		{
+
+		}
+
+		public void InstallBuild(UnrealAppConfig AppConfiguration)
+		{
+
+		}
+
+		public IAppInstall CreateAppInstall(UnrealAppConfig AppConfig)
+		{
+			return null;
+		}
+
+		public void CopyAdditionalFiles(IEnumerable<UnrealFileToCopy> FilesToCopy)
+		{
+
 		}
 
 		public void PopulateDirectoryMappings(string ProjectDir)
@@ -607,11 +630,11 @@ namespace Gauntlet
 
 
 		/// <summary>
-		/// Artifact (e.g. Saved) path on the device		
+		/// Artifact (e.g. Saved) path on the device
 		/// </summary>
 		public string DeviceArtifactPath { get; protected set;  }
 
-		
+
 		#region Device State Management
 
 		// NOTE: We check that a default device UUID or the one specifed is connected with 'ios-deploy --detect' at device creation time

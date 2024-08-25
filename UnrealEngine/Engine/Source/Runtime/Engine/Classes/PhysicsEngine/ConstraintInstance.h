@@ -22,6 +22,7 @@ class FMaterialRenderProxy;
 class FPrimitiveDrawInterface;
 class FMaterialRenderProxy;
 class UPhysicsAsset;
+struct FReferenceSkeleton;
 
 UENUM()
 enum class EConstraintTransformComponentFlags : uint8
@@ -41,6 +42,9 @@ enum class EConstraintTransformComponentFlags : uint8
 };
 
 ENUM_CLASS_FLAGS(EConstraintTransformComponentFlags);
+
+/** Returns the 'To' bone's transform relative to the 'From' bone. */
+ENGINE_API FTransform CalculateRelativeBoneTransform(const FName ToBoneName, const FName FromBoneName, const FReferenceSkeleton& ReferenceSkeleton);
 
 /** Container for properties of a physics constraint that can be easily swapped at runtime. This is useful for switching different setups when going from ragdoll to standup for example */
 USTRUCT()
@@ -862,6 +866,18 @@ public:
 		return ProfileInstance.AngularDrive.AngularDriveMode;
 	}
 
+	/** 
+	 * This allows the most common drive parameters to be set in one call, avoiding lock overheads etc.
+	 * Note that the individual drive elements will be enabled/disabled depending on the strength/damping
+	 * values passed in.
+	 * 
+	 * Angular values are passed in as (swing, twist, slerp)
+	 */
+	ENGINE_API void SetDriveParams(
+		const FVector& InPositionStrength, const FVector& InVelocityStrength, const FVector& InForceLimit,
+		const FVector& InAngularSpring, const FVector& InAngularDamping, const FVector& InTorqueLimit,
+		EAngularDriveMode::Type InAngularDriveMode);
+
 	/** Refreshes the physics engine joint's linear limits. Only applicable if the joint has been created already.*/
 	ENGINE_API void UpdateLinearLimit();
 
@@ -918,16 +934,16 @@ public:
 	// @todo document
 	void DrawConstraint(int32 ViewIndex, class FMeshElementCollector& Collector,
 		float Scale, float LimitDrawScale, bool bDrawLimits, bool bDrawSelected,
-		const FTransform& Con1Frame, const FTransform& Con2Frame, bool bDrawAsPoint) const
+		const FTransform& Con1Frame, const FTransform& Con2Frame, bool bDrawAsPoint, bool bDrawViolatedLimits) const
 	{
-		DrawConstraintImp(FPDIOrCollector(ViewIndex, Collector), Scale, LimitDrawScale, bDrawLimits, bDrawSelected, Con1Frame, Con2Frame, bDrawAsPoint);
+		DrawConstraintImp(FPDIOrCollector(ViewIndex, Collector), Scale, LimitDrawScale, bDrawLimits, bDrawSelected, Con1Frame, Con2Frame, bDrawAsPoint, bDrawViolatedLimits);
 	}
 
 	void DrawConstraint(FPrimitiveDrawInterface* PDI,
 		float Scale, float LimitDrawScale, bool bDrawLimits, bool bDrawSelected,
-		const FTransform& Con1Frame, const FTransform& Con2Frame, bool bDrawAsPoint) const
+		const FTransform& Con1Frame, const FTransform& Con2Frame, bool bDrawAsPoint, bool bDrawViolatedLimits) const
 	{
-		DrawConstraintImp(FPDIOrCollector(PDI), Scale, LimitDrawScale, bDrawLimits, bDrawSelected, Con1Frame, Con2Frame, bDrawAsPoint);
+		DrawConstraintImp(FPDIOrCollector(PDI), Scale, LimitDrawScale, bDrawLimits, bDrawSelected, Con1Frame, Con2Frame, bDrawAsPoint, bDrawViolatedLimits);
 	}
 
 	ENGINE_API void GetUsedMaterials(TArray<UMaterialInterface*>& Materials);
@@ -970,6 +986,7 @@ public:
 	/** Enable/Disable parent dominates (meaning the parent body cannot be be affected at all by a child) */
 	ENGINE_API void EnableParentDominates();
 	ENGINE_API void DisableParentDominates();
+	ENGINE_API void SetParentDominates(bool bParentDominates);
 
 	/** Whether mass conditioning is enabled. @see FConstraintProfileProperties::bEnableMassConditioning */
 	bool IsMassConditioningEnabled() const
@@ -1033,7 +1050,7 @@ private:
 
 	ENGINE_API void DrawConstraintImp(const FPDIOrCollector& PDIOrCollector,
 		float Scale, float LimitDrawScale, bool bDrawLimits, bool bDrawSelected,
-		const FTransform& Con1Frame, const FTransform& Con2Frame, bool bDrawAsPoint) const;
+		const FTransform& Con1Frame, const FTransform& Con2Frame, bool bDrawAsPoint, bool bDrawViolatedLimits = false) const;
 
 	ENGINE_API void UpdateBreakable();
 	ENGINE_API void UpdatePlasticity();

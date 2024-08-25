@@ -23,11 +23,7 @@ public:
 	/** End IDetailCustomization interface */
 
 protected:
-	bool OnShouldFilterAsset(const FAssetData&) { return false; }
-	bool OnShouldFilterAssetStandardSurface(const FAssetData& InAssetData);
-	bool OnShouldFilterAssetStandardSurfaceTransmission(const FAssetData& InAssetData);
-	bool OnShouldFilterAssetSurfaceUnlit(const FAssetData& InAssetData);
-	bool OnShouldFilterAssetUsdPreviewSurface(const FAssetData& InAssetData);
+	static bool OnShouldFilterAssetEnum(const FAssetData&, uint8 EnumType, uint8 EnumValue);
 
 private:
 	TWeakObjectPtr<UMaterialXPipelineSettings> MaterialXSettings;

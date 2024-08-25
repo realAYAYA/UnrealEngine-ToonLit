@@ -8,7 +8,7 @@ import os
 import threading
 from typing import Dict, Optional
 
-from PySide2 import QtCore, QtWidgets
+from PySide6 import QtCore, QtWidgets
 
 from switchboard import message_protocol
 from switchboard.listener_client import ListenerClient

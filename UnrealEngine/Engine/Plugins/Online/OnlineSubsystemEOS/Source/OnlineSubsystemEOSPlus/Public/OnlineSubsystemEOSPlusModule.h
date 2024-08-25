@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Modules/ModuleInterface.h"
+#include "Templates/UniquePtr.h"
 
 /**
  * OSS that aggregates EOS plus the platform OSS
@@ -11,13 +12,7 @@
 class FOnlineSubsystemEOSPlusModule : public IModuleInterface
 {
 public:
-
-	FOnlineSubsystemEOSPlusModule() :
-		PlusFactory(nullptr)
-	{}
-
-	virtual ~FOnlineSubsystemEOSPlusModule() {}
-
+	virtual ~FOnlineSubsystemEOSPlusModule() = default;
 
 // IModuleInterface
 	virtual void StartupModule() override;
@@ -37,5 +32,5 @@ private:
 	void LoadBaseOSS();
 
 	/** Class responsible for creating instance(s) of the subsystem */
-	class FOnlineFactoryEOSPlus* PlusFactory;
+	TUniquePtr<class FOnlineFactoryEOSPlus> PlusFactory;
 };

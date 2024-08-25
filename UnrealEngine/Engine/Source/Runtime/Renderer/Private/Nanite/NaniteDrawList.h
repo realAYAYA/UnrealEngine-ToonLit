@@ -97,6 +97,7 @@ public:
 	void Apply(FScene& Scene);
 
 private:
+	FNaniteMaterialSlot& GetMaterialSlotForWrite(FPrimitiveSceneInfo& PrimitiveSceneInfo, ENaniteMeshPass::Type MeshPass, uint8 SectionIndex);
 	void AddShadingCommand(FPrimitiveSceneInfo& PrimitiveSceneInfo, const FNaniteCommandInfo& CommandInfo, ENaniteMeshPass::Type MeshPass, uint8 SectionIndex);
 	void AddRasterBin(FPrimitiveSceneInfo& PrimitiveSceneInfo, const FNaniteRasterBin& PrimaryRasterBin, const FNaniteRasterBin& SecondaryRasterBin, ENaniteMeshPass::Type MeshPass, uint8 SectionIndex);
 	void AddShadingBin(FPrimitiveSceneInfo& PrimitiveSceneInfo, const FNaniteShadingBin& ShadingBin, ENaniteMeshPass::Type MeshPass, uint8 SectionIndex);
@@ -109,6 +110,8 @@ private:
 public:
 	TArray<FDeferredCommand> DeferredCommands[ENaniteMeshPass::Num];
 	TArray<FDeferredPipelines> DeferredPipelines[ENaniteMeshPass::Num];
+
+	FMaterialRelevance CombinedRelevance;
 };
 
 class FNaniteMeshProcessor : public FSceneRenderingAllocatorObject<FNaniteMeshProcessor>, public FMeshPassProcessor
@@ -185,7 +188,7 @@ struct FNaniteMaterialPassInfo
 void BuildNaniteMaterialPassCommands(
 	const TConstArrayView<FGraphicsPipelineRenderTargetsInfo> RenderTargetsInfo,
 	const FNaniteMaterialCommands& MaterialCommands,
-	const FNaniteVisibilityResults& VisibilityResults,
+	const FNaniteVisibilityResults* VisibilityResults,
 	TArray<FNaniteMaterialPassCommand, SceneRenderingAllocator>& OutNaniteMaterialPassCommands,
 	TArrayView<FNaniteMaterialPassInfo> OutMaterialPassInfo);
 

@@ -29,7 +29,74 @@
 
 #define LOCTEXT_NAMESPACE "SColorGradientEditor"
 
-const FSlateRect SColorGradientEditor::HandleRect( 13.0f/2.0f, 0.0f, 13.0f, 16.0f );
+namespace FColorGradientEditorGeometry
+{
+	const float HandleWidth = 13.0f;
+	const float HandleHeight = 16.0f;
+	const float HandleColorWidth = 7.0f;
+	const float HandleColorHeight = 7.0f;
+	const float HandleColorXOffset = (HandleWidth - HandleColorWidth) / 2;
+	const float HandleColorYOffsetForColor = HandleColorXOffset + 1;
+	const float HandleColorYOffsetForAlpha = HandleHeight - HandleColorHeight - HandleColorXOffset - 1;
+
+	const FSlateRect HandleRect = FSlateRect(
+		-FColorGradientEditorGeometry::HandleWidth / 2.0f,
+		0.0f,
+		FColorGradientEditorGeometry::HandleWidth / 2.0f,
+		FColorGradientEditorGeometry::HandleHeight);
+
+	FGeometry GetColorMarkAreaPaintGeometry( const FGeometry& WidgetGeometry )
+	{
+		return WidgetGeometry.MakeChild(
+			FVector2D( WidgetGeometry.GetLocalSize().X - HandleWidth, HandleHeight ),
+			FSlateLayoutTransform(FVector2D(HandleWidth / 2, 0)) );
+	}
+
+	FGeometry GetColorMarkAreaMouseGeometry(const FGeometry& WidgetGeometry)
+	{
+		return WidgetGeometry.MakeChild(
+			FVector2D(WidgetGeometry.GetLocalSize().X, HandleHeight),
+			FSlateLayoutTransform() );
+	}
+
+	FGeometry GetAlphaMarkAreaPaintGeometry( const FGeometry& WidgetGeometry)
+	{
+		return WidgetGeometry.MakeChild(
+			FVector2D(WidgetGeometry.GetLocalSize().X - HandleWidth, HandleHeight ),
+			FSlateLayoutTransform(FVector2D(HandleWidth / 2, WidgetGeometry.GetLocalSize().Y - HandleHeight)) );
+	}
+
+	FGeometry GetAlphaMarkAreaMouseGeometry(const FGeometry& WidgetGeometry)
+	{
+		return WidgetGeometry.MakeChild(
+			FVector2D(WidgetGeometry.GetLocalSize().X, HandleHeight ),
+			FSlateLayoutTransform(FVector2D(0.0f, WidgetGeometry.GetLocalSize().Y - HandleHeight)) );
+	}
+
+	FGeometry GetGradientAreaPaintGeometry( const FGeometry& WidgetGeometry )
+	{
+		return WidgetGeometry.MakeChild(
+			FVector2D( WidgetGeometry.GetLocalSize().X - HandleWidth, WidgetGeometry.GetLocalSize().Y - (2 * HandleHeight) ),
+			FSlateLayoutTransform(FVector2D(HandleWidth / 2, HandleHeight)) );
+	}
+
+	FTrackScaleInfo GetTimeScaleForWidgetGeometry(const FGeometry& WidgetGeometry, float ViewMinInput, float ViewMaxInput)
+	{
+		return FTrackScaleInfo(ViewMinInput, ViewMaxInput, 0.0f, 1.0f, GetGradientAreaPaintGeometry(WidgetGeometry).GetLocalSize());
+	}
+
+	FTrackScaleInfo GetTimeScaleForAreaPaintGeomtry(const FGeometry& AreaGeometry, float ViewMinInput, float ViewMaxInput)
+	{
+		return FTrackScaleInfo(ViewMinInput, ViewMaxInput, 0.0f, 1.0f, AreaGeometry.GetLocalSize());
+	}
+
+	float GetTimeForAbsolutePosition(const FGeometry& WidgetGeometry, float ViewMinInput, float ViewMaxInput, const FVector2D& AbsolutePosition)
+	{
+		FGeometry GradientAreaPaintGeometry = GetGradientAreaPaintGeometry(WidgetGeometry);
+		FTrackScaleInfo TimeScaleInfo = FTrackScaleInfo(ViewMinInput, ViewMaxInput, 0.0f, 1.0f, GradientAreaPaintGeometry.GetLocalSize());
+		return TimeScaleInfo.LocalXToInput(GradientAreaPaintGeometry.AbsoluteToLocal(AbsolutePosition).X);
+	}
+}
 
 FGradientStopMark::FGradientStopMark()
 {}
@@ -135,6 +202,7 @@ void SColorGradientEditor::Construct( const FArguments& InArgs )
 	CurveOwner = NULL;
 	ViewMinInput = InArgs._ViewMinInput;
 	ViewMaxInput = InArgs._ViewMaxInput;
+	bClampStopsToViewRange = InArgs._ClampStopsToViewRange;
 	bDraggingAlphaValue = false;
 	bDraggingStop = false;
 	DistanceDragged = 0.0f;
@@ -148,20 +216,19 @@ int32 SColorGradientEditor::OnPaint( const FPaintArgs& Args, const FGeometry& Al
 	if( CurveOwner )
 	{
 		// Split the geometry into areas for stops and the gradient
-		FGeometry ColorMarkAreaGeometry = GetColorMarkAreaGeometry( AllottedGeometry );
-		FGeometry AlphaMarkAreaGeometry = GetAlphaMarkAreaGeometry( AllottedGeometry );
-
-		FGeometry GradientAreaGeometry = AllottedGeometry.MakeChild( FVector2D( AllottedGeometry.GetLocalSize().X, AllottedGeometry.GetLocalSize().Y - 30.0f ), FSlateLayoutTransform(FVector2D(0.0f, 16.0f)) );
+		FGeometry ColorMarkAreaGeometry = FColorGradientEditorGeometry::GetColorMarkAreaPaintGeometry( AllottedGeometry );
+		FGeometry AlphaMarkAreaGeometry = FColorGradientEditorGeometry::GetAlphaMarkAreaPaintGeometry( AllottedGeometry );
+		FGeometry GradientAreaGeometry = FColorGradientEditorGeometry::GetGradientAreaPaintGeometry( AllottedGeometry );
 
 		bool bEnabled = ShouldBeEnabled( bParentEnabled );
 		ESlateDrawEffect DrawEffects = bEnabled ? ESlateDrawEffect::None : ESlateDrawEffect::DisabledEffect;
 
 		// Pixel to value input converter
-		FTrackScaleInfo ScaleInfo(ViewMinInput.Get(),  ViewMaxInput.Get(), 0.0f, 1.0f, GradientAreaGeometry.GetLocalSize());
+		FTrackScaleInfo ScaleInfo = FColorGradientEditorGeometry::GetTimeScaleForWidgetGeometry(AllottedGeometry, ViewMinInput.Get(), ViewMaxInput.Get());
 
 		// The start and end location in slate units of the area to draw
 		int32 Start = 0;
-		int32 Finish = FMath::TruncToInt( AllottedGeometry.GetLocalSize().X );
+		int32 Finish = FMath::TruncToInt( GradientAreaGeometry.GetLocalSize().X );
 
 		TArray<FSlateGradientStop> Stops;
 
@@ -380,15 +447,15 @@ FReply SColorGradientEditor::OnMouseButtonDoubleClick( const FGeometry& InMyGeom
 
 FReply SColorGradientEditor::OnMouseMove( const FGeometry& MyGeometry, const FPointerEvent& MouseEvent )
 {
-	FGeometry ColorMarkAreaGeometry = GetColorMarkAreaGeometry(MyGeometry);
-	FGeometry AlphaMarkAreaGeometry = GetAlphaMarkAreaGeometry(MyGeometry);
+	FGeometry ColorMarkAreaMouseGeometry = FColorGradientEditorGeometry::GetColorMarkAreaMouseGeometry(MyGeometry);
+	FGeometry AlphaMarkAreaMouseGeometry = FColorGradientEditorGeometry::GetAlphaMarkAreaMouseGeometry(MyGeometry);
 
-	if (ColorMarkAreaGeometry.IsUnderLocation(MouseEvent.GetScreenSpacePosition()))
+	if (ColorMarkAreaMouseGeometry.IsUnderLocation(MouseEvent.GetScreenSpacePosition()))
 	{
 		bColorAreaHovered = true;
 		bAlphaAreaHovered = false;
 	}
-	else if (AlphaMarkAreaGeometry.IsUnderLocation(MouseEvent.GetScreenSpacePosition()))
+	else if (AlphaMarkAreaMouseGeometry.IsUnderLocation(MouseEvent.GetScreenSpacePosition()))
 	{
 		bColorAreaHovered = false;
 		bAlphaAreaHovered = true;
@@ -421,8 +488,11 @@ FReply SColorGradientEditor::OnMouseMove( const FGeometry& MyGeometry, const FPo
 			else
 			{
 				// Already dragging a stop, move it
-				FTrackScaleInfo ScaleInfo(ViewMinInput.Get(),  ViewMaxInput.Get(), 0.0f, 1.0f, MyGeometry.GetLocalSize());
-				float MouseTime = ScaleInfo.LocalXToInput( MyGeometry.AbsoluteToLocal( MouseEvent.GetScreenSpacePosition() ).X );
+				float MouseTime = FColorGradientEditorGeometry::GetTimeForAbsolutePosition(MyGeometry, ViewMinInput.Get(), ViewMaxInput.Get(), MouseEvent.GetScreenSpacePosition());
+				if (bClampStopsToViewRange)
+				{
+					MouseTime = FMath::Clamp(MouseTime, ViewMinInput.Get(), ViewMaxInput.Get());
+				}
 				MoveStop( SelectedStop, MouseTime );
 
 				return FReply::Handled();
@@ -448,10 +518,10 @@ FReply SColorGradientEditor::OnMouseButtonUp( const FGeometry& MyGeometry, const
 			}
 			else if( DistanceDragged < DragThresholdDist && !SelectedStop.IsValid( *CurveOwner ) )
 			{
-				FGeometry ColorMarkAreaGeometry = GetColorMarkAreaGeometry( MyGeometry );
-				FGeometry AlphaMarkAreaGeometry = GetAlphaMarkAreaGeometry( MyGeometry );
+				FGeometry ColorMarkAreaMouseGeometry = FColorGradientEditorGeometry::GetColorMarkAreaMouseGeometry( MyGeometry );
+				FGeometry AlphaMarkAreaMouseGeometry = FColorGradientEditorGeometry::GetAlphaMarkAreaMouseGeometry( MyGeometry );
 
-				if( ColorMarkAreaGeometry.IsUnderLocation( MouseEvent.GetScreenSpacePosition() ) )
+				if( ColorMarkAreaMouseGeometry.IsUnderLocation( MouseEvent.GetScreenSpacePosition() ) )
 				{
 					// Add a new color mark
 					bool bColorStop = true;
@@ -460,7 +530,7 @@ FReply SColorGradientEditor::OnMouseButtonUp( const FGeometry& MyGeometry, const
 					return FReply::Handled().CaptureMouse( SharedThis(this) );
 
 				}
-				else if( AlphaMarkAreaGeometry.IsUnderLocation( MouseEvent.GetScreenSpacePosition() ) )
+				else if( AlphaMarkAreaMouseGeometry.IsUnderLocation( MouseEvent.GetScreenSpacePosition() ) )
 				{
 					// Add a new alpha mark
 					bool bColorStop = false;
@@ -758,8 +828,6 @@ void SColorGradientEditor::DrawGradientStopMark( const FGradientStopMark& Mark, 
 	static const FSlateBrush* AlphaStopBrush = FAppStyle::GetBrush("CurveEditor.Gradient.HandleUp");
 	static const FLinearColor SelectionColor = FAppStyle::GetSlateColor("SelectionColor").GetColor( InWidgetStyle );
 
-	const float HandleSize = 13.0f;
-
 	bool bSelected = Mark == SelectedStop;
 	if( bSelected )
 	{
@@ -768,11 +836,13 @@ void SColorGradientEditor::DrawGradientStopMark( const FGradientStopMark& Mark, 
 	}
 
 	// Draw a box for the non colored area
+	FVector2f HandleSize = FColorGradientEditorGeometry::HandleRect.GetSize();
+	FVector2f HandlePosition = FColorGradientEditorGeometry::HandleRect.GetTopLeft2f() + FVector2f(XPos, 0);
 	FSlateDrawElement::MakeBox
 	( 
 		OutDrawElements,
 		LayerId,
-		Geometry.ToPaintGeometry( FVector2f( HandleRect.Right, HandleRect.Bottom ), FSlateLayoutTransform(FVector2f( XPos-HandleRect.Left, HandleRect.Top )) ),
+		Geometry.ToPaintGeometry( HandleSize, FSlateLayoutTransform(HandlePosition) ),
 		bColor ? ColorStopBrush : AlphaStopBrush,
 		DrawEffects,
 		bSelected ? SelectionColor : FLinearColor::White
@@ -780,76 +850,73 @@ void SColorGradientEditor::DrawGradientStopMark( const FGradientStopMark& Mark, 
 
 	// Draw a box with the gradient stop color
 	//Slate MakeGradient call expects the linear colors to be pre-converted to sRGB
+	FVector2f HandleColorSize = FVector2f(FColorGradientEditorGeometry::HandleColorWidth, FColorGradientEditorGeometry::HandleColorHeight);
+	FVector2f HandleColorPosition = HandlePosition + FVector2f(
+		FColorGradientEditorGeometry::HandleColorXOffset, 
+		bColor 
+			? FColorGradientEditorGeometry::HandleColorYOffsetForColor 
+			: FColorGradientEditorGeometry::HandleColorYOffsetForAlpha);
 	FSlateDrawElement::MakeBox
 	( 
 		OutDrawElements,
 		LayerId+1,
-		Geometry.ToPaintGeometry( FVector2f( HandleRect.Right-6.f, HandleRect.Bottom-9.f ), FSlateLayoutTransform(FVector2f( XPos-HandleRect.Left+3.f, bColor ? HandleRect.Top+3.0f : HandleRect.Top+6.f)) ),
+		Geometry.ToPaintGeometry( HandleColorSize, FSlateLayoutTransform(HandleColorPosition) ),
 		WhiteBrush,
 		DrawEffects,
 		Color.ToFColor(true)
 	);
 }
-FGeometry SColorGradientEditor::GetColorMarkAreaGeometry( const FGeometry& InGeometry ) const
-{
-	return InGeometry.MakeChild( FVector2D( InGeometry.GetLocalSize().X, 16.0f ), FSlateLayoutTransform() );
-}
-
-FGeometry SColorGradientEditor::GetAlphaMarkAreaGeometry( const FGeometry& InGeometry ) const
-{
-	return InGeometry.MakeChild( FVector2D( InGeometry.GetLocalSize().X, 16.0f ), FSlateLayoutTransform(FVector2D( 0.0f, InGeometry.GetLocalSize().Y-14.0f)) );
-}
 
 FGradientStopMark SColorGradientEditor::GetGradientStopAtPoint( const FVector2D& MousePos, const FGeometry& MyGeometry )
 {
-	FGeometry ColorMarkAreaGeometry = GetColorMarkAreaGeometry( MyGeometry );
-	FGeometry AlphaMarkAreaGeometry = GetAlphaMarkAreaGeometry( MyGeometry );
+	FGradientStopMark StopUnderMouse;
+	FGeometry ColorMarkAreaMouseGeometry = FColorGradientEditorGeometry::GetColorMarkAreaMouseGeometry( MyGeometry );
+	FGeometry AlphaMarkAreaMouseGeometry = FColorGradientEditorGeometry::GetAlphaMarkAreaMouseGeometry( MyGeometry );
+	bool bUnderColorMarkAreaGeometry = ColorMarkAreaMouseGeometry.IsUnderLocation(MousePos);
+	bool bUnderAlphaMarkAreaGeometry = AlphaMarkAreaMouseGeometry.IsUnderLocation(MousePos);
 
-	FTrackScaleInfo ScaleInfo(ViewMinInput.Get(),  ViewMaxInput.Get(), 0.0f, 1.0f, MyGeometry.GetLocalSize());
-
-	if( ColorMarkAreaGeometry.IsUnderLocation( MousePos ) || AlphaMarkAreaGeometry.IsUnderLocation( MousePos ) )
+	if( bUnderColorMarkAreaGeometry || bUnderAlphaMarkAreaGeometry )
 	{
 		TArray<FGradientStopMark> ColorMarks;
 		TArray<FGradientStopMark> AlphaMarks;
 		GetGradientStopMarks( ColorMarks, AlphaMarks );
 
-		// See if any color stops are under the mouse
-		for( int32 ColorIndex = 0; ColorIndex < ColorMarks.Num(); ++ColorIndex )
+		auto GetMarkUnderMouse = [this](const FVector2D& MousePos, const TArray<FGradientStopMark>& Marks, const FGeometry& AreaPaintGeometry)
 		{
-			const FGradientStopMark& Mark = ColorMarks[ColorIndex];
-
-			// Convert the time to a screen coordinate
-			float XVal = ScaleInfo.InputToLocalX( Mark.Time );
-
-			if( XVal >= 0 )
+			FTrackScaleInfo TimeScaleInfo = FColorGradientEditorGeometry::GetTimeScaleForAreaPaintGeomtry(AreaPaintGeometry, ViewMinInput.Get(), ViewMaxInput.Get());
+			for (int32 MarkIndex = 0; MarkIndex < Marks.Num(); ++MarkIndex)
 			{
-				FGeometry MarkGeometry = ColorMarkAreaGeometry.MakeChild( FVector2D( HandleRect.Right, HandleRect.Bottom ), FSlateLayoutTransform(FVector2D( XVal-HandleRect.Left, HandleRect.Top )) );
-				if( MarkGeometry.IsUnderLocation( MousePos ) )
+				const FGradientStopMark& Mark = Marks[MarkIndex];
+
+				// Convert the time to a screen coordinate
+				float XVal = TimeScaleInfo.InputToLocalX(Mark.Time);
+
+				if (XVal >= 0)
 				{
-					return Mark;
+					FVector2f HandleSize = FColorGradientEditorGeometry::HandleRect.GetSize2f();
+					FVector2f HandlePosition = FColorGradientEditorGeometry::HandleRect.GetTopLeft2f() + FVector2f(XVal, 0.0f);
+					FGeometry HandleGeometry = AreaPaintGeometry.MakeChild(HandleSize, FSlateLayoutTransform(HandlePosition));
+					if (HandleGeometry.IsUnderLocation(MousePos))
+					{
+						return Mark;
+					}
 				}
 			}
+			return FGradientStopMark();
+		};
+
+		if (bUnderColorMarkAreaGeometry)
+		{
+			FGeometry ColorMarkAreaPaintGeometry = FColorGradientEditorGeometry::GetColorMarkAreaPaintGeometry(MyGeometry);
+			StopUnderMouse = GetMarkUnderMouse(MousePos, ColorMarks, ColorMarkAreaPaintGeometry);
 		}
-
-		// See if any color stops are under the mouse
-		for( int32 ColorIndex = 0; ColorIndex < AlphaMarks.Num(); ++ColorIndex )
+		else // bUnderAlphaMarkAreaGeometry
 		{
-			const FGradientStopMark& Mark = AlphaMarks[ColorIndex];
-
-			float XVal = ScaleInfo.InputToLocalX( Mark.Time );
-
-			if( XVal >= 0 )
-			{
-				FGeometry MarkGeometry = AlphaMarkAreaGeometry.MakeChild( FVector2D( HandleRect.Right, HandleRect.Bottom ), FSlateLayoutTransform(FVector2D( XVal-HandleRect.Left, HandleRect.Top )) );
-				if( MarkGeometry.IsUnderLocation( MousePos ) )
-				{
-					return Mark;
-				}
-			}
+			FGeometry AlphaMarkAreaPaintGeometry = FColorGradientEditorGeometry::GetAlphaMarkAreaPaintGeometry(MyGeometry);
+			StopUnderMouse = GetMarkUnderMouse(MousePos, AlphaMarks, AlphaMarkAreaPaintGeometry);
 		}
 	}
-
-	return FGradientStopMark();
+	return StopUnderMouse;
 }
 
 void SColorGradientEditor::GetGradientStopMarks( TArray<FGradientStopMark>& OutColorMarks, TArray<FGradientStopMark>& OutAlphaMarks ) const
@@ -928,12 +995,8 @@ FGradientStopMark SColorGradientEditor::AddStop( const FVector2D& Position, cons
 
 	CurveOwner->ModifyOwner();
 
-	FTrackScaleInfo ScaleInfo(ViewMinInput.Get(),  ViewMaxInput.Get(), 0.0f, 1.0f, MyGeometry.GetLocalSize());
+	float NewStopTime = FColorGradientEditorGeometry::GetTimeForAbsolutePosition(MyGeometry, ViewMinInput.Get(), ViewMaxInput.Get(), Position);
 
-	FVector2D LocalPos = MyGeometry.AbsoluteToLocal( Position );
-
-	float NewStopTime = ScaleInfo.LocalXToInput( LocalPos.X );
-			
 	TArray<FRichCurveEditInfo> Curves = CurveOwner->GetCurves();
 
 	FGradientStopMark NewStop;

@@ -43,8 +43,13 @@ bool UBTDecorator_TagCooldown::CalculateRawConditionValue(UBehaviorTreeComponent
 
 void UBTDecorator_TagCooldown::InitializeMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryInit::Type InitType) const
 {
-	FBTTagCooldownDecoratorMemory* DecoratorMemory = CastInstanceNodeMemory<FBTTagCooldownDecoratorMemory>(NodeMemory);
+	FBTTagCooldownDecoratorMemory* DecoratorMemory = InitializeNodeMemory<FBTTagCooldownDecoratorMemory>(NodeMemory, InitType);
 	DecoratorMemory->bRequestedRestart = false;
+}
+
+void UBTDecorator_TagCooldown::CleanupMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryClear::Type CleanupType) const
+{
+	CleanupNodeMemory<FBTTagCooldownDecoratorMemory>(NodeMemory, CleanupType);
 }
 
 void UBTDecorator_TagCooldown::OnNodeDeactivation(FBehaviorTreeSearchData& SearchData, EBTNodeResult::Type NodeResult)

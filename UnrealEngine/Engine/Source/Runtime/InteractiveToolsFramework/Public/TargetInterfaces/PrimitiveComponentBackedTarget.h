@@ -3,9 +3,6 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "Engine/EngineTypes.h"    // FHitResult
-#endif
 #include "UObject/Interface.h"
 
 #include "PrimitiveComponentBackedTarget.generated.h"

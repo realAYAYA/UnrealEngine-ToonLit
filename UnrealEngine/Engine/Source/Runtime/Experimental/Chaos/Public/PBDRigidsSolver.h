@@ -179,8 +179,10 @@ namespace Chaos
 		void SetVelocityIterations(const int32 InNumIterations) { GetEvolution()->SetNumVelocityIterations(InNumIterations); }
 		void SetProjectionIterations(const int32 InNumIterations) { GetEvolution()->SetNumProjectionIterations(InNumIterations); }
 		void SetCollisionCullDistance(const FReal InCullDistance) { GetEvolution()->GetCollisionConstraints().SetCullDistance(InCullDistance); }
-		void SetVelocityBoundsExpansion(const FReal BoundsVelocityMultiplier, const FReal MaxBoundsVelocityExpansion) { GetEvolution()->GetCollisionConstraints().SetVelocityBoundsExpansion(BoundsVelocityMultiplier, MaxBoundsVelocityExpansion); }
+		void SetVelocityBoundsExpansion(const FReal BoundsVelocityMultiplier, const FReal MaxBoundsVelocityExpansion);
+		void SetVelocityBoundsExpansionMACD(const FReal BoundsVelocityMultiplier, const FReal MaxBoundsVelocityExpansion);
 		void SetCollisionMaxPushOutVelocity(const FReal InMaxPushOutVelocity) { GetEvolution()->GetCollisionConstraints().SetMaxPushOutVelocity(InMaxPushOutVelocity); }
+		void SetCollisionDepenetrationVelocity(const FRealSingle InVelocity) { GetEvolution()->GetCollisionConstraints().SetDepenetrationVelocity(InVelocity); }
 
 		/**/
 		void SetGenerateCollisionData(bool bDoGenerate) { GetEventFilters()->SetGenerateCollisionEvents(bDoGenerate); }
@@ -221,7 +223,8 @@ namespace Chaos
 		FCharacterGroundConstraintContainer& GetCharacterGroundConstraints() { return MEvolution->GetCharacterGroundConstraints(); }
 		const FCharacterGroundConstraintContainer& GetCharacterGroundConstraints() const { return MEvolution->GetCharacterGroundConstraints(); }
 
-		CHAOS_API void EnableRewindCapture(int32 NumFrames, bool InUseCollisionResimCache, TUniquePtr<IRewindCallback>&& RewindCallback = TUniquePtr<IRewindCallback>());
+		CHAOS_API void EnableRewindCapture(int32 NumFrames, bool InUseCollisionResimCache, TUniquePtr<IRewindCallback>&& RewindCallback);
+		CHAOS_API void EnableRewindCapture(int32 NumFrames, bool InUseCollisionResimCache);
 
 		/**/
 		FPBDRigidsEvolution* GetEvolution() { return MEvolution.Get(); }
@@ -232,6 +235,7 @@ namespace Chaos
 		
 		/**/
 		FEventManager* GetEventManager() { return MEventManager.Get(); }
+		virtual void FlipEventManagerBuffer() { MEventManager->FlipBuffersIfRequired(); }
 
 		/**/
 		FSolverEventFilters* GetEventFilters() { return MSolverEventFilters.Get(); }
@@ -241,6 +245,8 @@ namespace Chaos
 		CHAOS_API void SyncEvents_GameThread();
 
 		/**/
+		CHAOS_API void PreIntegrateDebugDraw(FReal Dt) const;
+		CHAOS_API void PreSolveDebugDraw(FReal Dt) const;
 		CHAOS_API void PostTickDebugDraw(FReal Dt) const;
 
 		// Visual debugger (VDB) push methods
@@ -294,6 +300,11 @@ namespace Chaos
 		/** Apply a solver configuration to this solver, set externally by the owner of a solver (see UPhysicsSettings for world solver settings) */
 		CHAOS_API void ApplyConfig(const FChaosSolverConfiguration& InConfig);
 
+		virtual void KillSafeAsyncTasks() override
+		{
+			GetEvolution()->KillSafeAsyncTasks();
+		}
+
 		virtual bool AreAnyTasksPending() const override
 		{
 			if (IsPendingTasksComplete() == false || GetEvolution()->AreAnyTasksPending())
@@ -315,6 +326,7 @@ namespace Chaos
 		CHAOS_API void FieldForcesUpdateCallback();
 
 		// Update the counter in Stats and the CSV profiler
+		CHAOS_API void ResetStatCounters();
 		CHAOS_API void UpdateStatCounters() const;
 		CHAOS_API void UpdateExpensiveStatCounters() const;
 
@@ -330,6 +342,12 @@ namespace Chaos
 		// Apply callbacks internally 
 		CHAOS_API virtual void ApplyCallbacks_Internal() override;
 
+	protected:
+
+#if CHAOS_DEBUG_NAME
+		virtual void OnDebugNameChanged() override final;
+#endif
+
 	private:
 
 		/**/
@@ -342,6 +360,8 @@ namespace Chaos
 		CHAOS_API virtual void SetExternalTimestampConsumed_Internal(const int32 Timestamp) override;
 
 		CHAOS_API void UpdateIsDeterministic();
+
+		CHAOS_API void DebugDrawShapes(const bool bShowStatic, const bool bShowKinematic, const bool bShowDynamic) const;
 
 		//
 		// Solver Data
@@ -406,6 +426,9 @@ namespace Chaos
 
 		/** Check if we are resimming or not */
 		virtual bool IsResimming() const {return GetEvolution()->IsResimming();}
+
+		/** Sets if we are resimming or not */
+		void SetIsResimming(bool bIsResimming);
 	};
 
 	template<>

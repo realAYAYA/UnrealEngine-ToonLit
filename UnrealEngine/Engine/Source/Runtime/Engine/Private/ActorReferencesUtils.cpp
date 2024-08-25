@@ -99,10 +99,10 @@ private:
 			Actor = Obj->GetTypedOuter<AActor>();
 		}
 
-		if(Actor)
+		if (Actor)
 		{
 			AActor* TopParentActor = Actor;
-			while(TopParentActor->GetParentActor())
+			while (TopParentActor->GetParentActor())
 			{
 				TopParentActor = TopParentActor->GetParentActor();
 			}

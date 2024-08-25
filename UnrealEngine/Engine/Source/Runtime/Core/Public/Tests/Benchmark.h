@@ -34,5 +34,5 @@ void Benchmark(const TCHAR* TestName, TestT&& TestBody)
 #endif
 }
 
-#define UE_BENCHMARK(NumRuns, ...) { TRACE_CPUPROFILER_EVENT_SCOPE(TEXT(#__VA_ARGS__)); Benchmark<NumRuns>(TEXT(#__VA_ARGS__), __VA_ARGS__); }
+#define UE_BENCHMARK(NumRuns, ...) { TRACE_CPUPROFILER_EVENT_SCOPE_STR(TEXT(#__VA_ARGS__)); Benchmark<NumRuns>(TEXT(#__VA_ARGS__), __VA_ARGS__); }
 

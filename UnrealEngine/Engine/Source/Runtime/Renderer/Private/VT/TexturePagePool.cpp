@@ -122,7 +122,14 @@ void FTexturePagePool::EvictPages(FVirtualTextureSystem* System, const FVirtualT
 	}
 }
 
-void FTexturePagePool::EvictPages(FVirtualTextureSystem* System, FVirtualTextureProducerHandle const& ProducerHandle, FVTProducerDescription const& Desc, FIntRect const& TextureRegion, uint32 MaxLevel, TArray<union FVirtualTextureLocalTile>& OutLocked)
+void FTexturePagePool::EvictPages(
+	FVirtualTextureSystem* System, 
+	FVirtualTextureProducerHandle const& ProducerHandle, 
+	FVTProducerDescription const& Desc, 
+	FIntRect const& TextureRegion, 
+	uint32 MaxLevelToEvict, 
+	uint32 MinFrameToKeepMapped,
+	TArray<union FVirtualTextureLocalTile>& OutDirtyMapped)
 {
 	TArray<uint32, TInlineAllocator<256>> ToEvict;
 	const uint32 Hash = MurmurFinalize32(ProducerHandle.PackedValue);
@@ -134,7 +141,7 @@ void FTexturePagePool::EvictPages(FVirtualTextureSystem* System, FVirtualTexture
 			const uint32 vAddress = Pages[pAddress].Local_vAddress;
 			const uint32 vLevel = Pages[pAddress].Local_vLevel;
 
-			if (vLevel <= MaxLevel)
+			if (vLevel <= MaxLevelToEvict)
 			{
 				const int32 TileSize = Desc.TileSize << vLevel;
 				const int32 X = FMath::ReverseMortonCode2(vAddress) * TileSize;
@@ -146,11 +153,21 @@ void FTexturePagePool::EvictPages(FVirtualTextureSystem* System, FVirtualTexture
 				{
 					if (!FreeHeap.IsPresent(pAddress))
 					{
-						OutLocked.Add(FVirtualTextureLocalTile(ProducerHandle, vAddress, vLevel));
+						// Locked pages aren't unmapped but are added to the dirty output array.
+						OutDirtyMapped.Add(FVirtualTextureLocalTile(ProducerHandle, vAddress, vLevel));
 					}
 					else
 					{
-						ToEvict.Add(pAddress);
+						const uint32 PageFrame = FreeHeap.GetKey(pAddress) >> 4;
+						if (PageFrame >= MinFrameToKeepMapped)
+						{
+							// Visible pages aren't unmapped but are added to the dirty output array.
+							OutDirtyMapped.Add(FVirtualTextureLocalTile(ProducerHandle, vAddress, vLevel));
+						}
+						else
+						{
+							ToEvict.Add(pAddress);
+						}
 					}
 				}
 			}

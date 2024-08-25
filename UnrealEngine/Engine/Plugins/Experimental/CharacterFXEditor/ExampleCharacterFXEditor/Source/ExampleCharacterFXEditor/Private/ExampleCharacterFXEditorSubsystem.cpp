@@ -27,7 +27,7 @@ void UExampleCharacterFXEditorSubsystem::Initialize(FSubsystemCollectionBase& Co
 	TArray<TObjectPtr<UToolTargetFactory>> ToolTargetFactories;
 	CreateToolTargetFactories(ToolTargetFactories);
 
-	for (TObjectPtr<UToolTargetFactory> Factory : ToolTargetFactories)
+	for (const TObjectPtr<UToolTargetFactory>& Factory : ToolTargetFactories)
 	{
 		ToolTargetManager->AddTargetFactory(Factory);
 	}

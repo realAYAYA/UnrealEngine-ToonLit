@@ -460,8 +460,8 @@ void ANUTActor::HookNetDriver(UNetDriver* TargetNetDriver)
 			UE_LOG(LogUnitTest, Log, TEXT("Setting %s InitialConnectTimeout/ConnectionTimeout to '%i'"), *TargetNetDriver->GetFullName(),
 					CustomTimeout);
 
-			TargetNetDriver->InitialConnectTimeout = CustomTimeout;
-			TargetNetDriver->ConnectionTimeout = CustomTimeout;
+			TargetNetDriver->InitialConnectTimeout = static_cast<float>(CustomTimeout);
+			TargetNetDriver->ConnectionTimeout = static_cast<float>(CustomTimeout);
 		}
 	}
 }
@@ -627,7 +627,7 @@ void ANUTActor::ServerClientPing_Implementation()
 		{
 			// Based on UNetDriver::IsLevelInitializeForActor
 			bNotLoaded = !(CurConn->GetClientWorldPackageName() == CurWorld->GetOutermost()->GetFName() &&
-										CurConn->ClientHasInitializedLevelFor(this));
+										CurConn->ClientHasInitializedLevel(GetLevel()));
 
 			// Also trigger if there is no PlayerController yet set for the connection
 			if (CurConn->OwningActor == nullptr)

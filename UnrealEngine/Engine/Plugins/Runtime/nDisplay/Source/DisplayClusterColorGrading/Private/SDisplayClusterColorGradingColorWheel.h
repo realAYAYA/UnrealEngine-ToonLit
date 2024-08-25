@@ -31,7 +31,8 @@ public:
 		float SliderExponent = 1.0f;
 		float Delta = 0.0f;
 		int32 LinearDeltaSensitivity = 0;
-		int32 ShiftMouseMovePixelPerDelta = 1;
+		float ShiftMultiplier = 10.f;
+		float CtrlMultiplier = 0.1f;
 		bool bSupportDynamicSliderMaxValue = false;
 		bool bSupportDynamicSliderMinValue = false;
 	};
@@ -99,7 +100,8 @@ private:
 	TOptional<float> GetMetadataSliderMinValue() const;
 	TOptional<float> GetMetadataSliderMaxValue() const;
 	float GetMetadataDelta() const;
-	int32 GetMetadataShiftMouseMovePixelPerDelta() const;
+	float GetMetadataShiftMultiplier() const;
+	float GetMetadataCtrlMultiplier() const;
 	bool GetMetadataSupportDynamicSliderMinValue() const;
 	bool GetMetadataSupportDynamicSliderMaxValue() const;
 

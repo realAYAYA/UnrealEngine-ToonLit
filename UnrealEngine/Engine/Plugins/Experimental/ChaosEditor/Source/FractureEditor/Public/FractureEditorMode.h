@@ -86,7 +86,11 @@ private:
 
 private:
 	/** This selection set is updated from actor selection changed event.  We change state on components as they are selected so we have to maintain or own list **/
-	TArray<UGeometryCollectionComponent*> SelectedGeometryComponents;
+	TArray<TWeakObjectPtr<UGeometryCollectionComponent>> SelectedGeometryComponents;
+
+	// Return an array of all selected geometry collection components that are still valid/non-null
+	TArray<UGeometryCollectionComponent*> GetValidSelectedGeometryComponents();
+
 	// Hack: We have to set this to work around the editor defaulting to orbit around selection and breaking our custom per-bone orbiting
 	mutable TOptional<FVector> CustomOrbitPivot;
 };

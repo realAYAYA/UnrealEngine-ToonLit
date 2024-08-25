@@ -349,17 +349,22 @@ public:
 	 * @param	FieldClass		UClass of field type we are looking for
 	 * @param	InitialScope	The scope the field was initially defined in.  The function will search up into parent scopes to attempt to find remappings
 	 * @param	InitialName		The name of the field to attempt to find a redirector for
-	 * @param	bInitialScopeMustBeOwnerOfField		if true the InitialScope must be Child of the field's owner
+	 * @param	bInitialScopeMustBeOwnerOfFieldForParentScopeRedirect If true, and a redirect is found in a parent scope, and the targetscope of the redirect
+	 *          is a child scope of the parent scope that is not the initial scope or a parent of the initial scope, then the redirect will be ignored.
 	 * @return	The remapped field, if one exists
 	 */
-	ENGINE_API static UField* FindRemappedField(UClass *FieldClass, UClass* InitialScope, FName InitialName, bool bInitialScopeMustBeOwnerOfField = false);
-	ENGINE_API static FField* FindRemappedField(FFieldClass* FieldClass, UClass* InitialScope, FName InitialName, bool bInitialScopeMustBeOwnerOfField = false);
+	ENGINE_API static UField* FindRemappedField(UClass *FieldClass, UClass* InitialScope, FName InitialName,
+		bool bInitialScopeMustBeOwnerOfFieldForParentScopeRedirect = false);
+	ENGINE_API static FField* FindRemappedField(FFieldClass* FieldClass, UClass* InitialScope, FName InitialName,
+		bool bInitialScopeMustBeOwnerOfFieldForParentScopeRedirect = false);
 
 	/** Templated version of above, extracts FieldClass and Casts result */
 	template<class TFieldType>
-	static TFieldType* FindRemappedField(UClass* InitialScope, FName InitialName, bool bInitialScopeMustBeOwnerOfField = false)
+	static TFieldType* FindRemappedField(UClass* InitialScope, FName InitialName,
+		bool bInitialScopeMustBeOwnerOfFieldForParentScopeRedirect = false)
 	{
-		return FFieldVariant(FindRemappedField(TFieldType::StaticClass(), InitialScope, InitialName, bInitialScopeMustBeOwnerOfField)).Get<TFieldType>();
+		return FFieldVariant(FindRemappedField(TFieldType::StaticClass(), InitialScope, InitialName,
+			bInitialScopeMustBeOwnerOfFieldForParentScopeRedirect)).Get<TFieldType>();
 	}
 
 #if WITH_EDITOR

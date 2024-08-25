@@ -3,6 +3,7 @@
 #include "AbilityTask_GrantNearbyInteraction.h"
 
 #include "AbilitySystemComponent.h"
+#include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 #include "GameFramework/Controller.h"
 #include "Interaction/IInteractableTarget.h"

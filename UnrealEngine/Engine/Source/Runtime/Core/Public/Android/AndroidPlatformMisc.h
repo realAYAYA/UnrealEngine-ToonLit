@@ -23,28 +23,6 @@ class TFunction;
 
 enum class ECrashContextType;
 
-//The android configuration orientations defined in C++ map to the values in https://developer.android.com/reference/android/content/res/Configuration#ORIENTATION_PORTRAIT
-namespace EAndroidConfigurationOrientation
-{
-	enum Type
-	{
-		ORIENTATION_PORTRAIT = 0x00000001,
-		ORIENTATION_LANDSCAPE = 0x00000002,
-	};
-};
-
-//The android surface rotations defined in C++ map to the values in https://developer.android.com/reference/android/view/Surface#ROTATION_0
-namespace EAndroidSurfaceRotation
-{
-	enum Type
-	{
-		ROTATION_0,
-		ROTATION_90,
-		ROTATION_180,
-		ROTATION_270,
-	};
-};
-
 /**
  * Android implementation of the misc OS functions
  */
@@ -80,7 +58,6 @@ struct FAndroidMisc : public FGenericPlatformMisc
 	static CORE_API EAppReturnType::Type MessageBoxExt( EAppMsgType::Type MsgType, const TCHAR* Text, const TCHAR* Caption );
 	static CORE_API bool UseRenderThread();
 	static CORE_API bool HasPlatformFeature(const TCHAR* FeatureName);
-	static CORE_API bool ShouldDisablePluginAtRuntime(const FString& PluginName);
 	static CORE_API bool SupportsES30();
 
 public:
@@ -189,13 +166,14 @@ public:
 	static CORE_API bool FileExistsInPlatformPackage(const FString& RelativePath);
 
 	// ANDROID ONLY:
-	static CORE_API void SetVersionInfo(FString AndroidVersion, int32 InTargetSDKVersion, FString DeviceMake, FString DeviceModel, FString DeviceBuildNumber, FString OSLanguage);
+	static CORE_API void SetVersionInfo(FString AndroidVersion, int32 InTargetSDKVersion, FString DeviceMake, FString DeviceModel, FString DeviceBuildNumber, FString OSLanguage, FString ProductName);
 	static CORE_API const FString GetAndroidVersion();
 	static CORE_API int32 GetAndroidMajorVersion();
 	static CORE_API int32 GetTargetSDKVersion();
 	static CORE_API const FString GetDeviceMake();
 	static CORE_API const FString GetDeviceModel();
 	static CORE_API const FString GetOSLanguage();
+	static CORE_API const FString GetProductName(); // returns the product name, if available. e.g. 'Galaxy Tab S8' or empty string.
 	static CORE_API const FString GetDeviceBuildNumber();
 	static CORE_API const FString GetProjectVersion();
 	static CORE_API FString GetDefaultLocale();
@@ -222,6 +200,7 @@ public:
 	 *			and not we are not forcing GLES with a command line switch
 	 */
 	static CORE_API bool IsVulkanAvailable();
+	static CORE_API bool IsDesktopVulkanAvailable();
 
 	/* ShouldUseVulkan
 	 * @return true if Vulkan is available, and not disabled by device profile cvar
@@ -280,6 +259,7 @@ public:
 	static CORE_API FString DeviceModel; // model of the device we are running on eg "SAMSUNG-SGH-I437"
 	static CORE_API FString DeviceBuildNumber; // platform image build number of device "R16NW.G960NKSU1ARD6"
 	static CORE_API FString OSLanguage; // language code the device is set to
+	static CORE_API FString ProductName; // Product name, if available. e.g. 'Galaxy Tab S8' or empty string.
 
 	// Build version of Android, i.e. API level.
 	static CORE_API int32 AndroidBuildVersion;
@@ -308,7 +288,7 @@ public:
 
 	static void SaveDeviceOrientation(EDeviceScreenOrientation NewDeviceOrentation) { DeviceOrientation = NewDeviceOrentation; }
 
-	// Window access is locked by the game thread before preinit and unlocked here after RHIInit (PlatformCreateDynamicRHI). 
+	// Window access is locked by the game thread before preinit and unlocked here after RHIInit
 	static CORE_API void UnlockAndroidWindow();
 	
 	static CORE_API TArray<int32> GetSupportedNativeDisplayRefreshRates();

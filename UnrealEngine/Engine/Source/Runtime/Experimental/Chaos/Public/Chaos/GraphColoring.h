@@ -61,33 +61,54 @@ class FGraphColoring
 	};
 
   public:
+	template<typename DynamicParticlesType>
+	static TArray<TArray<int32>> ComputeGraphColoringParticlesOrRange(const TArray<TVector<int32, 2>>& Graph, const DynamicParticlesType& InParticles, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
+
 	template<typename T>
-	static TArray<TArray<int32>> ComputeGraphColoring(const TArray<TVector<int32, 2>>& Graph, const TDynamicParticles<T, 3>& InParticles, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
+	inline static TArray<TArray<int32>> ComputeGraphColoring(const TArray<TVector<int32, 2>>& Graph, const TDynamicParticles<T, 3>& InParticles, const int32 GraphParticlesStart, const int32 GraphParticlesEnd)
+	{
+		return ComputeGraphColoringParticlesOrRange(Graph, InParticles, GraphParticlesStart, GraphParticlesEnd);
+	}
 	template<typename T>
 	inline static TArray<TArray<int32>> ComputeGraphColoring(const TArray<TVector<int32, 2>>& Graph, const TDynamicParticles<T, 3>& InParticles)
 	{
-		return ComputeGraphColoring(Graph, InParticles, 0, InParticles.Size());
+		return ComputeGraphColoringParticlesOrRange(Graph, InParticles, 0, InParticles.Size());
 	}
+	template<typename DynamicParticlesType>
+	static TArray<TArray<int32>> ComputeGraphColoringParticlesOrRange(const TArray<TVector<int32, 3>>& Graph, const DynamicParticlesType& InParticles, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
 	template<typename T>
-	static TArray<TArray<int32>> ComputeGraphColoring(const TArray<TVector<int32, 3>>& Graph, const TDynamicParticles<T, 3>& InParticles, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
+	inline static TArray<TArray<int32>> ComputeGraphColoring(const TArray<TVector<int32, 3>>& Graph, const TDynamicParticles<T, 3>& InParticles, const int32 GraphParticlesStart, const int32 GraphParticlesEnd)
+	{
+		return ComputeGraphColoringParticlesOrRange(Graph, InParticles, GraphParticlesStart, GraphParticlesEnd);
+	}
 	template<typename T>
 	inline static TArray<TArray<int32>> ComputeGraphColoring(const TArray<TVector<int32, 3>>& Graph, const TDynamicParticles<T, 3>& InParticles)
 	{
-		return ComputeGraphColoring(Graph, InParticles, 0, InParticles.Size());
+		return ComputeGraphColoringParticlesOrRange(Graph, InParticles, 0, InParticles.Size());
 	}
+	template<typename DynamicParticlesType>
+	static TArray<TArray<int32>> ComputeGraphColoringParticlesOrRange(const TArray<TVector<int32, 4>>& Graph, const DynamicParticlesType& InParticles, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
 	template<typename T>
-	static TArray<TArray<int32>> ComputeGraphColoring(const TArray<TVector<int32, 4>>& Graph, const TDynamicParticles<T, 3>& InParticles, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
+	inline static TArray<TArray<int32>> ComputeGraphColoring(const TArray<TVector<int32, 4>>& Graph, const TDynamicParticles<T, 3>& InParticles, const int32 GraphParticlesStart, const int32 GraphParticlesEnd)
+	{
+		return ComputeGraphColoringParticlesOrRange(Graph, InParticles, GraphParticlesStart, GraphParticlesEnd);
+	}
 	template<typename T>
 	inline static TArray<TArray<int32>> ComputeGraphColoring(const TArray<TVector<int32, 4>>& Graph, const TDynamicParticles<T, 3>& InParticles)
 	{
-		return ComputeGraphColoring(Graph, InParticles, 0, InParticles.Size());
+		return ComputeGraphColoringParticlesOrRange(Graph, InParticles, 0, InParticles.Size());
 	}
+	template<typename DynamicParticlesType>
+	static TArray<TArray<int32>> ComputeGraphColoringAllDynamicParticlesOrRange(const TArray<TVec4<int32>>& Graph, const DynamicParticlesType& InParticles, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
 	template<typename T>
-	static TArray<TArray<int32>> ComputeGraphColoringAllDynamic(const TArray<TVec4<int32>>& Graph, const Chaos::TDynamicParticles<T, 3>& InParticles, const int32 GraphParticlesStart, const int32 GraphParticlesEnd);
+	inline static TArray<TArray<int32>> ComputeGraphColoringAllDynamic(const TArray<TVec4<int32>>& Graph, const Chaos::TDynamicParticles<T, 3>& InParticles, const int32 GraphParticlesStart, const int32 GraphParticlesEnd)
+	{
+		return ComputeGraphColoringAllDynamicParticlesOrRange(Graph, InParticles, GraphParticlesStart, GraphParticlesEnd);
+	}
 	template<typename T>
 	inline static TArray<TArray<int32>> ComputeGraphColoringAllDynamic(const TArray<TVec4<int32>>& Graph, const Chaos::TDynamicParticles<T, 3>& InParticles)
 	{
-		return ComputeGraphColoring(Graph, InParticles, 0, InParticles.Size());
+		return ComputeGraphColoringAllDynamicParticlesOrRange(Graph, InParticles, 0, InParticles.Size());
 	}
 };
 
@@ -100,5 +121,11 @@ CHAOS_API void ComputeWeakConstraintsColoring(const TArray<TArray<int32>>& Indic
 
 template<typename T>
 CHAOS_API TArray<TArray<int32>> ComputeNodalColoring(const TArray<TVec4<int32>>& Graph, const Chaos::TDynamicParticles<T, 3>& InParticles, const int32 GraphParticlesStart, const int32 GraphParticlesEnd, const TArray<TArray<int32>>& IncidentElements, const TArray<TArray<int32>>& IncidentElementsLocalIndex);
+
+template<typename T>
+CHAOS_API TArray<TArray<int32>> ComputeNodalColoring(const TArray<TArray<int32>>& Graph, const Chaos::TDynamicParticles<T, 3>& InParticles, const int32 GraphParticlesStart, const int32 GraphParticlesEnd, const TArray<TArray<int32>>& IncidentElements, const TArray<TArray<int32>>& IncidentElementsLocalIndex, TArray<int32>* ParticleColorsOut = nullptr);
+
+template<typename T>
+CHAOS_API void ComputeExtraNodalColoring(const TArray<TArray<int32>>& Graph, const TArray<TArray<int32>>& ExtraGraph, const Chaos::TDynamicParticles<T, 3>& InParticles, const TArray<TArray<int32>>& IncidentElements, const TArray<TArray<int32>>& ExtraIncidentElements, TArray<int32>& ParticleColors, TArray<TArray<int32>>& ParticlesPerColor);
 
 }

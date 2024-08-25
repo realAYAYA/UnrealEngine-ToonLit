@@ -19,6 +19,7 @@
 #include "SceneManagement.h"
 #include "Engine/ReflectionCapture.h"
 #include "EngineModule.h"
+#include "Serialization/MemoryReader.h"
 #include "ShaderCompiler.h"
 #include "Engine/SphereReflectionCapture.h"
 #include "Components/SphereReflectionCaptureComponent.h"
@@ -1284,10 +1285,7 @@ FReflectionCaptureProxy::FReflectionCaptureProxy(const UReflectionCaptureCompone
 
 void FReflectionCaptureProxy::SetTransform(const FMatrix& InTransform)
 {
-	const FLargeWorldRenderPosition AbsolutePosition(InTransform.GetOrigin());
-
-	RelativePosition = AbsolutePosition.GetOffset();
-	TilePosition = AbsolutePosition.GetTile();
+	Position = FDFVector3(InTransform.GetOrigin());
 
 	const FMatrix44f LocalToRelativeWorld = FMatrix44f(InTransform.RemoveTranslation());
 	BoxTransform = LocalToRelativeWorld.Inverse();
@@ -1325,6 +1323,8 @@ void FReflectionCaptureProxy::UpdateMobileUniformBuffer(FRHICommandListBase& RHI
 	Parameters.Params = FVector4f(EncodedHDRAverageBrightness, 0.f, 0.0f, Brightness);
 	Parameters.Texture = CaptureTexture->TextureRHI;
 	Parameters.TextureSampler = CaptureTexture->SamplerStateRHI;
+	Parameters.TextureBlend = Parameters.Texture;
+	Parameters.TextureBlendSampler = Parameters.TextureSampler;
 
 	if (MobileUniformBuffer.GetReference())
 	{

@@ -32,7 +32,7 @@ struct IKRIG_API FAnimNode_IKRig : public FAnimNode_CustomProperty
 	TObjectPtr<UIKRigDefinition> RigDefinitionAsset = nullptr;
 
 	/** The input goal transforms used by the IK Rig solvers.*/
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Goal, meta=(NeverAsPin, EditCondition=false, EditConditionHides))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Goal, meta=(NeverAsPin))
 	TArray<FIKRigGoal> Goals;
 
 	/** optionally ignore the input pose and start from the reference pose each solve */
@@ -110,8 +110,11 @@ public:
 	virtual void OnInitializeAnimInstance(const FAnimInstanceProxy* InProxy, const UAnimInstance* InAnimInstance) override;
 	// End of FAnimNode_Base interface
 
-	/** force reinitialization */
+	// force reinitialization
 	void SetProcessorNeedsInitialized();
+	
+	void CreateIKRigProcessorIfNeeded(UObject* Outer);
+	UIKRigProcessor* GetIKRigProcessor();
 
 protected:
 
@@ -128,6 +131,4 @@ private:
 	virtual void ConditionalDebugDraw(FPrimitiveDrawInterface* PDI, USkeletalMeshComponent* PreviewSkelMeshComp) const;
 	
 	friend class UAnimGraphNode_IKRig;
-	friend struct FIKRigAnimInstanceProxy;
-	friend class UIKRigAnimInstance;
 };

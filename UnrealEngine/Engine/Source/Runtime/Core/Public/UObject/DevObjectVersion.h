@@ -29,6 +29,7 @@ struct FDevSystemGuids
 	const FGuid POSESEARCHDB_DERIVEDDATA_VER;
 	const FGuid SkeletalMeshDerivedDataVersion;
 	const FGuid STATICMESH_DERIVEDDATA_VER;
+	const FGuid MaterialTranslationDDCVersion;
 };
 
 class FDevVersionRegistration :  public FCustomVersionRegistration

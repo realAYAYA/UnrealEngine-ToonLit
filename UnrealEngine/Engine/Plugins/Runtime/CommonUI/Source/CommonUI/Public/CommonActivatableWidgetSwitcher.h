@@ -26,6 +26,10 @@ protected:
 	virtual void HandleOutgoingWidget() override;
 	virtual void HandleSlateActiveIndexChanged(int32 ActiveIndex) override;
 
+protected:
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Switcher")
+	bool bClearFocusRestorationTargetOfDeactivatedWidgets = false;
+
 private:
 	void HandleOwningWidgetActivationChanged(const bool bIsActivated);
 

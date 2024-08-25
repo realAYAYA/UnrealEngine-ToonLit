@@ -110,6 +110,16 @@ public:
 	/** Whether this light should create CSM for dynamic objects only (forward renderer) */
 	ENGINE_API virtual bool UseCSMForDynamicObjects() const;
 
+	ENGINE_API float GetVSMTexelDitherScale() const
+	{
+		return VSMTexelDitherScale;
+	}
+
+	ENGINE_API float GetVSMResolutionLodBias() const
+	{
+		return VSMResolutionLodBias;
+	}
+	
 	/** Returns the number of view dependent shadows this light will create, not counting distance field shadow cascades. */
 	virtual uint32 GetNumViewDependentWholeSceneShadows(const FSceneView& View, bool bPrecomputedLightingIsValid) const { return 0; }
 
@@ -212,6 +222,8 @@ public:
 	inline uint8 GetLightingChannelMask() const { return LightingChannelMask; }
 	inline FName GetComponentFName() const { return ComponentName; }
 
+	inline bool IsSelected() const { return bSelected; }
+
 	/**
 	 * Use to get the owning actor label (or component name as fallback, if the owner is null or ENABLE_DEBUG_LABELS is off) for diagnostic messages, debug or profiling.
 	 * The actor label is what is shown in the UI (as opposed to the the FName).
@@ -281,6 +293,10 @@ public:
 	virtual FLinearColor GetCloudScatteredLuminanceScale() const { return FLinearColor::White; }
 	virtual bool GetUsePerPixelAtmosphereTransmittance() const { return false; }
 
+	inline void  SetLightFunctionAtlasIndices(uint8 LightIndex) { LightFunctionAtlasLightIndex = LightIndex; }
+	inline bool  HasValidLightFunctionAtlasSlot() const { return LightFunctionAtlasLightIndex != 0; }
+	inline uint8 GetLightFunctionAtlasLightIndex() const { return LightFunctionAtlasLightIndex; }
+
 protected:
 
 	friend class FScene;
@@ -292,7 +308,7 @@ protected:
 	/** The scene the primitive is in. */
 	FSceneInterface* SceneInterface;
 
-	/** The homogenous position of the light. */
+	/** The homogeneous position of the light. */
 	FVector4 Position;
 
 	/** The light color. */
@@ -428,6 +444,8 @@ protected:
 	/** Whether to render csm shadows for movable objects only (mobile). */
 	uint8 bUseWholeSceneCSMForMovableObjects : 1;
 
+	const uint8 bSelected : 1;
+
 	/** The index of the atmospheric light. Multiple lights can be considered when computing the sky/atmospheric scattering. */
 	const uint8 AtmosphereSunLightIndex;
 
@@ -446,6 +464,11 @@ protected:
 
 	/** The name of the level the light is in. */
 	FName LevelName;
+
+	/** Used to control the amount of additional dither filtering applied to shadows for each light. */
+	float VSMTexelDitherScale;
+	/** Used to control shadow resolution for each light. */
+	float VSMResolutionLodBias;
 
 	/** Only for whole scene directional lights, if FarShadowCascadeCount > 0 and FarShadowDistance >= WholeSceneDynamicShadowRadius, where far shadow cascade should end. */
 	float FarShadowDistance;
@@ -467,6 +490,12 @@ protected:
 
 	/** IES texture atlas id. */
 	uint32 IESAtlasId;
+
+	/**
+	 * The light index in order to be able to read matrix and parameters when reading the light function atlas for that light.
+	 * A value of 0 means this is the default identity light function and no light function sampling will be done in shader.
+	 */
+	uint8 LightFunctionAtlasLightIndex;
 
 	/**
 	 * Updates the light proxy's cached transforms.

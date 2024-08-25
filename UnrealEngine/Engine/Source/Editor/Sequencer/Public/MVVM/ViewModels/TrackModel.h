@@ -10,6 +10,7 @@
 #include "MVVM/Extensions/IResizableExtension.h"
 #include "MVVM/Extensions/ISortableExtension.h"
 #include "MVVM/Extensions/ITrackAreaExtension.h"
+#include "MVVM/Extensions/ILockableExtension.h"
 #include "MVVM/Extensions/ITrackExtension.h"
 #include "MVVM/Extensions/IDeletableExtension.h"
 #include "MVVM/Extensions/IDraggableOutlinerExtension.h"
@@ -35,11 +36,12 @@ namespace Sequencer
 class FSectionModel;
 
 class SEQUENCER_API FTrackModel
-	: public FOutlinerItemModel
+	: public FMuteSoloOutlinerItemModel
 	, public IRenameableExtension
 	, public IResizableExtension
 	, public ITrackExtension
 	, public ITrackAreaExtension
+	, public ILockableExtension
 	, public IGroupableExtension
 	, public ISortableExtension
 	, public IDraggableOutlinerExtension
@@ -50,11 +52,12 @@ class SEQUENCER_API FTrackModel
 public:
 
 	UE_SEQUENCER_DECLARE_CASTABLE(FTrackModel
-		, FOutlinerItemModel
+		, FMuteSoloOutlinerItemModel
 		, IRenameableExtension
 		, IResizableExtension
 		, ITrackExtension
 		, ITrackAreaExtension
+		, ILockableExtension
 		, IGroupableExtension
 		, ISortableExtension
 		, IDraggableOutlinerExtension
@@ -82,11 +85,11 @@ public:
 	void OnModifiedIndirectly(UMovieSceneSignedObject*) override;
 
 	/* IDeferredSignedObjectFlushSignal */
-	void OnDeferredModifyFlush() override;
+	virtual void OnDeferredModifyFlush() override;
 
 	/*~ IOutlinerExtension */
 	FOutlinerSizing GetOutlinerSizing() const override;
-	TSharedRef<SWidget> CreateOutlinerView(const FCreateOutlinerViewParams& InParams) override;
+	TSharedPtr<SWidget> CreateOutlinerViewForColumn(const FCreateOutlinerViewParams& InParams, const FName& InColumnName) override;
 	FSlateFontInfo GetLabelFont() const override;
 	const FSlateBrush* GetIconBrush() const override;
 	FText GetLabel() const override;
@@ -99,6 +102,10 @@ public:
 	/*~ IResizableExtension */
 	bool IsResizable() const override;
 	void Resize(float NewSize) override;
+
+	/*~ ILockableExtension Interface */
+	ELockableLockState GetLockState() const override;
+	void SetIsLocked(bool bIsLocked) override;
 
 	/*~ ITrackAreaExtension */
 	FTrackAreaParameters GetTrackAreaParameters() const override;
@@ -133,10 +140,10 @@ public:
 	bool CanDelete(FText* OutErrorMessage) const override;
 	void Delete() override;
 
-private:
-
 	/*~ FViewModel interface */
-	void OnConstruct() override;
+	virtual void OnConstruct() override;
+
+private:
 
 	void ForceUpdate();
 

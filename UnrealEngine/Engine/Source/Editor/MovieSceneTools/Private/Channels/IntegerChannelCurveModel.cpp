@@ -122,6 +122,38 @@ TUniquePtr<IBufferedCurveModel> FIntegerChannelCurveModel::CreateBufferedCurveCo
 	return nullptr;
 }
 
+void FIntegerChannelCurveModel::GetCurveAttributes(FCurveAttributes& OutCurveAttributes) const
+{
+	FMovieSceneIntegerChannel* Channel = GetChannelHandle().Get();
+	if (Channel)
+	{
+		OutCurveAttributes.SetPreExtrapolation(Channel->PreInfinityExtrap);
+		OutCurveAttributes.SetPostExtrapolation(Channel->PostInfinityExtrap);
+	}
+}
+
+void FIntegerChannelCurveModel::SetCurveAttributes(const FCurveAttributes& InCurveAttributes)
+{
+	FMovieSceneIntegerChannel* Channel = GetChannelHandle().Get();
+	UMovieSceneSection* Section = Cast<UMovieSceneSection>(GetOwningObject());
+	if (Channel && Section && !IsReadOnly())
+	{
+		Section->MarkAsChanged();
+
+		if (InCurveAttributes.HasPreExtrapolation())
+		{
+			Channel->PreInfinityExtrap = InCurveAttributes.GetPreExtrapolation();
+		}
+
+		if (InCurveAttributes.HasPostExtrapolation())
+		{
+			Channel->PostInfinityExtrap = InCurveAttributes.GetPostExtrapolation();
+		}
+
+		CurveModifiedDelegate.Broadcast();
+	}
+}
+
 double FIntegerChannelCurveModel::GetKeyValue(TArrayView<const int32> Values, int32 Index) const
 {
 	return (double)Values[Index];

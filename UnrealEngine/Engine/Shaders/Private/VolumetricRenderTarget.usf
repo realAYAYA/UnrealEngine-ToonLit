@@ -74,13 +74,17 @@ float4 PreviousVolumetricTextureSizeAndInvSize;
 uint4 PreviousFrameVolumetricTextureValidCoordRect;
 float4 PreviousFrameVolumetricTextureValidUvRect;
 
+float HistoryPreExposureCorrection;
+
 float4 SafeLoadPreviousFrameVolumetricTexture(uint2 Coord)
 {
-	return PreviousFrameVolumetricTexture.Load(uint3(clamp(Coord, PreviousFrameVolumetricTextureValidCoordRect.xy, PreviousFrameVolumetricTextureValidCoordRect.zw), 0));
+	float4 Result = PreviousFrameVolumetricTexture.Load(uint3(clamp(Coord, PreviousFrameVolumetricTextureValidCoordRect.xy, PreviousFrameVolumetricTextureValidCoordRect.zw), 0));
+	return float4(Result.rgb * HistoryPreExposureCorrection, Result.a);
 }
 float4 SafeSamplePreviousFrameVolumetricTexture(float2 UV)
 {
-	return PreviousFrameVolumetricTexture.SampleLevel(LinearTextureSampler, clamp(UV, PreviousFrameVolumetricTextureValidUvRect.xy, PreviousFrameVolumetricTextureValidUvRect.zw), 0);
+	float4 Result = PreviousFrameVolumetricTexture.SampleLevel(LinearTextureSampler, clamp(UV, PreviousFrameVolumetricTextureValidUvRect.xy, PreviousFrameVolumetricTextureValidUvRect.zw), 0);
+	return float4(Result.rgb * HistoryPreExposureCorrection, Result.a);
 }
 FDepthData SafeLoadPreviousFrameVolumetricDepthTexture(uint2 Coord)
 {
@@ -332,8 +336,8 @@ void ReconstructVolumetricRenderTargetPS(
 				int2 NeightboorsOffset[8] = { int2(1,0), int2(1,1), int2(0,1), int2(-1,1), int2(-1,0), int2(-1,-1), int2(0,-1), int2(1,-1)};
 
 				const float ReconstructDepthZ = HalfResDepthTexture.Load(int3(SVPos.xy + ViewViewRectMin, 0)).r;
-				const float3 WorldPosition = LWCHackToFloat(SvPositionToWorld(float4(CenterSample, ReconstructDepthZ, 1.0)));
-				const float PixelDistanceFromViewKm = length(WorldPosition - LWCHackToFloat(PrimaryView.WorldCameraOrigin)) * CENTIMETER_TO_KILOMETER;
+				const float3 WorldPosition = DFHackToFloat(SvPositionToWorld(float4(CenterSample, ReconstructDepthZ, 1.0)));
+				const float PixelDistanceFromViewKm = length(WorldPosition - DFHackToFloat(PrimaryView.WorldCameraOrigin)) * CENTIMETER_TO_KILOMETER;
 
 				RGBA = HistoryRGBA;
 				DepthData = HistoryDepthData;
@@ -451,8 +455,9 @@ Texture2D<float4> VolumetricTexture;
 Texture2D<float2> VolumetricDepthTexture;
 uint4 VolumetricTextureValidCoordRect;
 float4 VolumetricTextureValidUvRect;
+uint ForwardShadingEnable;
 
-#if PERMUTATION_RENDER_UNDERWATER_BUFFER || PERMUTATION_RENDER_CAMERA_UNDERWATER
+#if PERMUTATION_RENDER_UNDERWATER_BUFFER || PERMUTATION_COMPOSE_WITH_WATER
 Texture2D WaterLinearDepthTexture;
 SamplerState WaterLinearDepthSampler;
 float4 SceneWithoutSingleLayerWaterViewRect;
@@ -582,10 +587,10 @@ void ComposeVolumetricRTOverScenePS(
 
 	float PixelLinearDepth = ConvertFromDeviceZ(WaterLinearDepthTexture.SampleLevel(WaterLinearDepthSampler, WaterDepthScreenUV, 0).r);
 
-	float3 WorldPosition = LWCHackToFloat(SvPositionToWorld(float4(SVPos.xy, 0.5, 1.0)));
-	WorldPosition = normalize(WorldPosition - LWCHackToFloat(PrimaryView.WorldCameraOrigin)) * PixelLinearDepth + LWCHackToFloat(PrimaryView.WorldCameraOrigin);
+	float3 WorldPosition = DFHackToFloat(SvPositionToWorld(float4(SVPos.xy, 0.5, 1.0)));
+	WorldPosition = normalize(WorldPosition - DFHackToFloat(PrimaryView.WorldCameraOrigin)) * PixelLinearDepth + DFHackToFloat(PrimaryView.WorldCameraOrigin);
 
-	float4 ClipPosition = mul(float4(WorldPosition,1.0), LWCHackToFloat(PrimaryView.WorldToClip));
+	float4 ClipPosition = mul(float4(WorldPosition,1.0), DFHackToFloat(PrimaryView.WorldToClip));
 	ClipPosition /= ClipPosition.w;
 	float PixelDeviceZ = ClipPosition.z;
 
@@ -606,7 +611,7 @@ void ComposeVolumetricRTOverScenePS(
 
 
 
-#if PERMUTATION_RENDER_CAMERA_UNDERWATER
+#if PERMUTATION_COMPOSE_WITH_WATER
 	// Now check that we are compositing a pixel that is not "water" to avoid applying clouds twice (they are already composited with the behind water layer scene).
 	// We also lack depth information behind the water surface now so the composition would be wrong anyway.
 	float WaterTestPixelLinearDepth = ConvertFromDeviceZ(WaterLinearDepthTexture.SampleLevel(WaterLinearDepthSampler, ScreenUV, 0).r);
@@ -759,12 +764,12 @@ void ComposeVolumetricRTOverScenePS(
 		}
 	}
 	return;
-
-#endif
+#else // PERMUTATION_RENDER_UNDERWATER_BUFFER
 
 	// We only want to run the special "cloud over water" code path on actual water pixels, otherwise depth threshold can cause visual issues.
+	// However, with Forward Shading, we do not have access to the gbuffer: so we still run that simple water depth test to occlude cloud on forrground meshes. Not the perfect but it will work in most cases.
 	FScreenSpaceData ScreenSpaceData = GetScreenSpaceData(ScreenUV);
-	const bool bIsWaterPixel = ScreenSpaceData.GBuffer.ShadingModelID == SHADINGMODELID_SINGLELAYERWATER;
+	const bool bIsWaterPixel = ForwardShadingEnable || ScreenSpaceData.GBuffer.ShadingModelID == SHADINGMODELID_SINGLELAYERWATER;
 
 	uint2 VolumeCoord0 = max(0, int2(VolumeCoordUInt) + int2(0, 0));
 	uint2 VolumeCoord1 = max(0, int2(VolumeCoordUInt) + int2(OffsetX, 0));
@@ -871,6 +876,7 @@ void ComposeVolumetricRTOverScenePS(
 	{
 		clip(-1.0f);
 	}
+#endif // PERMUTATION_RENDER_UNDERWATER_BUFFER
 
 #endif
 

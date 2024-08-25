@@ -67,3 +67,16 @@ enum class EJsonNotation
 	Null,
 	Error
 };
+
+/** Array of data */
+using FJsonSerializableArray = TArray<FString>;
+using FJsonSerializableArrayInt = TArray<int32>;
+using FJsonSerializableArrayFloat = TArray<float>;
+
+/** Maps a key to a value */
+using FJsonSerializableKeyValueMap = TMap<FString, FString>;
+using FJsonSerializableKeyValueMapInt = TMap<FString, int32>;
+using FJsonSerializableKeyValueMapInt64 = TMap<FString, int64>;
+using FJsonSerializableKeyValueMapFloat = TMap<FString, float>;
+using FJsonSerializableKeyValueMapArrayInt = TMap<FString, FJsonSerializableArrayInt>;
+

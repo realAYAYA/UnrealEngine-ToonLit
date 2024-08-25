@@ -36,10 +36,10 @@ FText GetOperatorText(const EGenericAICheck Operator)
 		return FText::FromString(TEXT("&gt;="));
 		break;
 	default:
-		return FText::FromString(TEXT("??"));
 		break;
 	}
-	return FText::GetEmpty();
+
+	return FText::FromString(TEXT("??"));
 }
 #endif // WITH_EDITOR
 
@@ -71,7 +71,6 @@ bool CompareNumbers(const T Left, const T Right, const EGenericAICheck Operator)
 		return false;
 		break;
 	}
-	return false;
 }
 
 } // UE::StateTree::Conditions

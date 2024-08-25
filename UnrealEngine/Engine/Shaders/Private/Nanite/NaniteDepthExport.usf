@@ -19,6 +19,8 @@
 uint4 DepthExportConfig;
 uint4 ViewRect;
 uint bWriteCustomStencil;
+uint MeshPassIndex;
+uint RegularMaterialRasterBinCount;
 
 // Requirements:
 // COMPILER_SUPPORTS_TO_SCALAR_MEMORY
@@ -26,26 +28,26 @@ uint bWriteCustomStencil;
 // COMPILER_SUPPORTS_WAVE_MINMAX
 // PLATFORM_SUPPORTS_HTILE_LOOKUP
 
-Texture2D<UlongType>		VisBuffer64;
+Texture2D<UlongType>					VisBuffer64;
 
-RWStructuredBuffer<uint>	SceneHTile;
-RWTexture2D<float>			SceneDepth;
-RWTexture2D<uint>			SceneStencil;
+RWStructuredBuffer<uint>				SceneHTile;
+RWTexture2D<float>						SceneDepth;
+RWTexture2D<uint>						SceneStencil;
 
-RWTexture2D<float4>			Velocity;
+RWTexture2D<float4>						Velocity;
 
 #if SHADING_MASK_EXPORT
-RWTexture2D<uint>			ShadingMask;
+RWTexture2D<uint>						ShadingMask;
+#endif
+StructuredBuffer<FNaniteRasterBinMeta>	RasterBinMeta;
+
+#if MATERIAL_DEPTH_EXPORT
+RWStructuredBuffer<uint>				MaterialHTile;
+RWTexture2D<float>						MaterialDepth;
 #endif
 
 #if MATERIAL_DEPTH_EXPORT
-RWStructuredBuffer<uint>	MaterialHTile;
-RWTexture2D<float>			MaterialDepth;
-#endif
-
-ByteAddressBuffer			MaterialSlotTable;
-#if MATERIAL_DEPTH_EXPORT
-ByteAddressBuffer			MaterialDepthTable;
+ByteAddressBuffer						MaterialDepthTable;
 #endif
 
 uint EncodeTileMinMaxDepth(float MinDepth, float MaxDepth, uint PlatformConfig)
@@ -100,6 +102,12 @@ void DepthExport(uint2 GroupId : SV_GroupID, uint ThreadIndex : SV_GroupIndex)
 	float SceneDepthValue = DecompressDepthValue(SceneDepth, SceneZMask, PixelPos.xy, ThreadIndex, 0.0f, PlatformConfig);
 	uint SceneStencilValue = DecompressStencilValue(SceneStencil, SceneSMem, PixelPos.xy, 0);
 
+#if SHADING_MASK_EXPORT
+	// We need to fully write the shading mask for all pixels, since we intentionally skip clearing it to avoid an FCE
+	// By default we write 0, which indicates non-Nanite, but every valid Nanite pixel will pack this value accordingly.
+	uint EncodedMask = 0x0u;
+#endif
+
 	bool bWriteDepthStencil = false;
 
 	// Avoid the parallel reduction and exports if the tile has no Nanite
@@ -143,9 +151,9 @@ void DepthExport(uint2 GroupId : SV_GroupID, uint ThreadIndex : SV_GroupIndex)
 				const FCluster ClusterData = GetCluster(VisibleCluster.PageIndex, VisibleCluster.ClusterIndex);
 
 			#if LEGACY_CULLING
-				const uint ShadingBin = GetMaterialLegacyShadingId(ClusterData, InstanceData.PrimitiveId, TriIndex, MaterialSlotTable);
+				const uint ShadingBin = GetMaterialLegacyShadingId(ClusterData, InstanceData.PrimitiveId, MeshPassIndex, TriIndex);
 			#else
-				const uint ShadingBin = GetMaterialShadingBin(ClusterData, InstanceData.PrimitiveId, TriIndex, MaterialSlotTable);
+				const uint ShadingBin = GetMaterialShadingBin(ClusterData, InstanceData.PrimitiveId, MeshPassIndex, TriIndex);
 			#endif
 			#if MATERIAL_DEPTH_EXPORT
 				MaterialDepthValue = asfloat(GetMaterialDepthId(ShadingBin, MaterialDepthTable));
@@ -158,14 +166,14 @@ void DepthExport(uint2 GroupId : SV_GroupID, uint ThreadIndex : SV_GroupIndex)
 
 				if (bWriteCustomStencil)
 				{
-					uint CustomStencilMask = (PrimitiveData.CustomStencilValueAndMask >> 8u) & 0xFFu;
+					uint CustomStencilMask = PrimitiveData.CustomStencilValueAndMask & 0xFF00u;
 					if (CustomStencilMask == 0)
 					{
 						// "Default" mask value of 0 means depth pass = replace, depth fail = keep
 						// TODO: Proper support for ignore-depth, bitwise-or modes (requires a separate 32-bit target)
-						CustomStencilMask = 0xFFu;
+						CustomStencilMask = 0xFF00u;
 					}
-
+					CustomStencilMask = CustomStencilMask >> 8u;
 					SceneStencilValue = PrimitiveData.CustomStencilValueAndMask & CustomStencilMask;
 				}
 				else 
@@ -174,22 +182,31 @@ void DepthExport(uint2 GroupId : SV_GroupID, uint ThreadIndex : SV_GroupIndex)
 				}
 
 			#if VELOCITY_EXPORT
-				// Don't output velocity here for WPO clusters, as their velocity must be calculated in the base pass.
-				const bool bWPOEnabled = (VisibleCluster.Flags & NANITE_CULLING_FLAG_ENABLE_WPO) != 0;
+				// Don't output velocity here for WPO clusters, as their velocity must be calculated in the base pass
+				bool bWPOEnabled = (VisibleCluster.Flags & NANITE_CULLING_FLAG_ENABLE_WPO) != 0;
+				const bool bSecondaryRasterBin = !bWPOEnabled;
+		
+				if (bWPOEnabled)
+				{
+					// The cluster may have WPO enabled, but we want to know if WPO is enabled by the material to decide to output velocity
+					const uint RasterBinIndex = GetMaterialRasterBin(ClusterData, InstanceData.PrimitiveId, MeshPassIndex, TriIndex, RegularMaterialRasterBinCount, bSecondaryRasterBin);
+					const FNaniteMaterialFlags MaterialFlags = UnpackNaniteMaterialFlags(RasterBinMeta[RasterBinIndex].MaterialFlags);
+					bWPOEnabled &= MaterialFlags.bWorldPositionOffset;
+				}
+
 				const bool bOutputVelocity = !bWPOEnabled && (GetPrimitiveData(InstanceData.PrimitiveId).Flags & PRIMITIVE_SCENE_DATA_FLAG_OUTPUT_VELOCITY) != 0;
 				if (bOutputVelocity)
 				{
 					FInstanceDynamicData InstanceDynamicData = CalculateInstanceDynamicData(NaniteView, InstanceData);
 
 					const float4 ScreenPos = SvPositionToScreenPosition(float4(PixelPos.xy, asfloat(DepthInt), 1.0f));
-					const FLWCVector3 WorldPos  = SvPositionToWorld(float4(PixelPos.xy, asfloat(DepthInt), 1.0f));
-					const float3 LocalPos = LWCMultiply(WorldPos, InstanceData.WorldToLocal);
+					const FDFVector3 WorldPos  = SvPositionToWorld(float4(PixelPos.xy, asfloat(DepthInt), 1.0f));
+					const float3 LocalPos = DFMultiplyDemote(WorldPos, InstanceData.WorldToLocal);
 
-					// TODO: PROG_RASTER - this is incorrect for WPO. Will likely need to be output by the base pass
 					const float3 WorldPosPrev = mul(float4(LocalPos, 1), InstanceDynamicData.PrevLocalToTranslatedWorld).xyz;
 					const float4 ScreenPosPrev = mul(float4(WorldPosPrev.xyz, 1), NaniteView.PrevTranslatedWorldToClip);
 
-					Velocity[PixelPos.xy] = EncodeVelocityToTexture(Calculate3DVelocity(ScreenPos, ScreenPosPrev));
+					Velocity[PixelPos.xy] = EncodeVelocityToTexture(Calculate3DVelocity(ScreenPos, ScreenPosPrev), (GetPrimitiveData(InstanceData.PrimitiveId).Flags & PRIMITIVE_SCENE_DATA_FLAG_HAS_PIXEL_ANIMATION) != 0);
 				}
 				else
 				{
@@ -199,7 +216,7 @@ void DepthExport(uint2 GroupId : SV_GroupID, uint ThreadIndex : SV_GroupIndex)
 			#endif
 
 			#if SHADING_MASK_EXPORT
-				ShadingMask[PixelPos.xy] = PackShadingMask(
+				EncodedMask = PackShadingMask(
 					ShadingBin,
 					D3D12_SHADING_RATE_1X1,
 					bIsDecalReceiver,
@@ -240,6 +257,10 @@ void DepthExport(uint2 GroupId : SV_GroupID, uint ThreadIndex : SV_GroupIndex)
 			SceneHTile[TileIndex] = EncodeTileMinMaxDepth(TileMinSceneDepth, TileMaxSceneDepth, PlatformConfig);
 		}
 	}
+
+#if SHADING_MASK_EXPORT
+	ShadingMask[PixelPos.xy] = EncodedMask;
+#endif
 }
 
 // NOTE: A possible further optimization could be to avoid doing a clear depth target clear for materials

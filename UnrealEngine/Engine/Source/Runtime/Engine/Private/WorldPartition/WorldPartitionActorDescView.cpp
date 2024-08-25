@@ -6,15 +6,19 @@
 #include "WorldPartition/WorldPartitionLog.h"
 #include "WorldPartition/WorldPartitionActorDesc.h"
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+
 FWorldPartitionActorDescView::FWorldPartitionActorDescView()
 	: FWorldPartitionActorDescView(nullptr)
 {}
 
 FWorldPartitionActorDescView::FWorldPartitionActorDescView(const FWorldPartitionActorDesc* InActorDesc)
 	: ActorDesc(InActorDesc)
+	, ParentView(nullptr)
 	, bIsForcedNonSpatiallyLoaded(false)
 	, bIsForcedNoRuntimeGrid(false)
-	, bInvalidDataLayers(false)	
+	, bIsForcedNoDataLayers(false)
+	, bIsForceNoHLODLayer(false)
 {}
 
 const FGuid& FWorldPartitionActorDescView::GetGuid() const
@@ -37,16 +41,24 @@ UClass* FWorldPartitionActorDescView::GetActorNativeClass() const
 	return ActorDesc->GetActorNativeClass();
 }
 
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
 FVector FWorldPartitionActorDescView::GetOrigin() const
 {
 	return ActorDesc->GetOrigin();
 }
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 FName FWorldPartitionActorDescView::GetRuntimeGrid() const
 {
-	return bIsForcedNoRuntimeGrid ? NAME_None : ActorDesc->GetRuntimeGrid();
+	if (bIsForcedNoRuntimeGrid)
+	{
+		return NAME_None;
+	}
+
+	if (ParentView)
+	{
+		return ParentView->GetRuntimeGrid();
+	}
+
+	return ActorDesc->GetRuntimeGrid();
 }
 
 bool FWorldPartitionActorDescView::GetActorIsEditorOnly() const
@@ -61,7 +73,18 @@ bool FWorldPartitionActorDescView::GetActorIsRuntimeOnly() const
 
 bool FWorldPartitionActorDescView::GetIsSpatiallyLoaded() const
 {
-	return bIsForcedNonSpatiallyLoaded ? false : ActorDesc->GetIsSpatiallyLoaded();
+	if (bIsForcedNonSpatiallyLoaded)
+	{
+		return false;
+	}
+
+	bool bIsSpatiallyLoaded = ActorDesc->GetIsSpatiallyLoaded();
+	if (bIsSpatiallyLoaded && ParentView)
+	{
+		bIsSpatiallyLoaded = ParentView->GetIsSpatiallyLoaded();
+	}
+
+	return bIsSpatiallyLoaded;
 }
 
 bool FWorldPartitionActorDescView::GetActorIsHLODRelevant() const
@@ -71,6 +94,16 @@ bool FWorldPartitionActorDescView::GetActorIsHLODRelevant() const
 
 FSoftObjectPath FWorldPartitionActorDescView::GetHLODLayer() const
 {
+	if (bIsForceNoHLODLayer)
+	{
+		return FSoftObjectPath();
+	}
+
+	if (RuntimedHLODLayer.IsSet())
+	{
+		return RuntimedHLODLayer.GetValue();
+	}
+
 	return ActorDesc->GetHLODLayer();
 }
 
@@ -83,28 +116,38 @@ void FWorldPartitionActorDescView::SetDataLayerInstanceNames(const TArray<FName>
 const TArray<FName>& FWorldPartitionActorDescView::GetDataLayerInstanceNames() const
 {
 	static TArray<FName> EmptyDataLayers;
-	if (bInvalidDataLayers)
+	if (bIsForcedNoDataLayers)
 	{
 		return EmptyDataLayers;
 	}
-	else if (ResolvedDataLayerInstanceNames.IsSet())
+
+	if (ParentView)
+	{
+		return ParentView->GetDataLayerInstanceNames();
+	}
+
+	if (ResolvedDataLayerInstanceNames.IsSet())
 	{
 		return ResolvedDataLayerInstanceNames.GetValue();
 	}
-	return ActorDesc->GetDataLayerInstanceNames();
+
+	return EmptyDataLayers;
 }
 
 const TArray<FName>& FWorldPartitionActorDescView::GetRuntimeDataLayerInstanceNames() const
 {
-	static TArray<FName> EmptyDataLayers;
-	if (!bInvalidDataLayers)
+	if (bIsForcedNoDataLayers || !ensure(RuntimeDataLayerInstanceNames.IsSet()))
 	{
-		if (ensure(RuntimeDataLayerInstanceNames.IsSet()))
-		{
-			return RuntimeDataLayerInstanceNames.GetValue();
-		}
+		static TArray<FName> EmptyDataLayers;
+		return EmptyDataLayers;
 	}
-	return EmptyDataLayers;
+
+	if (ParentView)
+	{
+		return ParentView->GetRuntimeDataLayerInstanceNames();
+	}
+
+	return RuntimeDataLayerInstanceNames.GetValue();
 }
 
 const TArray<FName>& FWorldPartitionActorDescView::GetTags() const
@@ -132,12 +175,10 @@ FName FWorldPartitionActorDescView::GetActorName() const
 	return ActorDesc->GetActorName();
 }
 
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
 FBox FWorldPartitionActorDescView::GetBounds() const
 {
 	return ActorDesc->GetBounds();
 }
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 FBox FWorldPartitionActorDescView::GetEditorBounds() const
 {
@@ -181,17 +222,17 @@ FGuid FWorldPartitionActorDescView::GetContentBundleGuid() const
 
 bool FWorldPartitionActorDescView::IsContainerInstance() const
 {
-	return ActorDesc->IsContainerInstance();
+	return ActorDesc->IsChildContainerInstance();
 }
 
 EWorldPartitionActorFilterType FWorldPartitionActorDescView::GetContainerFilterType() const
 {
-	return ActorDesc->GetContainerFilterType();
+	return ActorDesc->GetChildContainerFilterType();
 }
 
 FName FWorldPartitionActorDescView::GetContainerPackage() const
 {
-	return ActorDesc->GetContainerPackage();
+	return ActorDesc->GetChildContainerPackage();
 }
 
 bool FWorldPartitionActorDescView::GetContainerInstance(FWorldPartitionActorDesc::FContainerInstance& OutContainerInstance) const
@@ -215,13 +256,6 @@ FName FWorldPartitionActorDescView::GetActorLabelOrName() const
 	return ActorDesc->GetActorLabelOrName();
 }
 
-bool FWorldPartitionActorDescView::ShouldValidateRuntimeGrid() const
-{
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	return ActorDesc->ShouldValidateRuntimeGrid();
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
-}
-
 void FWorldPartitionActorDescView::SetForcedNonSpatiallyLoaded()
 {
 	if (!bIsForcedNonSpatiallyLoaded)
@@ -233,14 +267,18 @@ void FWorldPartitionActorDescView::SetForcedNonSpatiallyLoaded()
 
 void FWorldPartitionActorDescView::SetForcedNoRuntimeGrid()
 {
-	bIsForcedNoRuntimeGrid = true;	
+	if (!bIsForcedNoRuntimeGrid)
+	{
+		bIsForcedNoRuntimeGrid = true;
+		UE_LOG(LogWorldPartition, Verbose, TEXT("Actor '%s' runtime grid invalidated"), *GetActorLabelOrName().ToString());
+	}
 }
 
-void FWorldPartitionActorDescView::SetInvalidDataLayers()
+void FWorldPartitionActorDescView::SetForcedNoDataLayers()
 {
-	if (!bInvalidDataLayers)
+	if (!bIsForcedNoDataLayers)
 	{
-		bInvalidDataLayers = true;
+		bIsForcedNoDataLayers = true;
 		UE_LOG(LogWorldPartition, Verbose, TEXT("Actor '%s' data layers invalidated"), *GetActorLabelOrName().ToString());
 	}
 }
@@ -260,6 +298,20 @@ void FWorldPartitionActorDescView::SetEditorReferences(const TArray<FGuid>& InEd
 	EditorReferences = InEditorReferences;
 }
 
+void FWorldPartitionActorDescView::SetForcedNoHLODLayer()
+{
+	if (!bIsForceNoHLODLayer)
+	{
+		bIsForceNoHLODLayer = true;
+		UE_LOG(LogWorldPartition, Verbose, TEXT("Actor '%s' HLOD layer invalidated"), *GetActorLabelOrName().ToString());
+	}
+}
+
+void FWorldPartitionActorDescView::SetRuntimeHLODLayer(const FSoftObjectPath& InHLODLayer)
+{
+	RuntimedHLODLayer = InHLODLayer;
+}
+
 AActor* FWorldPartitionActorDescView::GetActor() const
 {
 	return ActorDesc->GetActor();
@@ -274,8 +326,18 @@ bool FWorldPartitionActorDescView::GetProperty(FName PropertyName, FName* Proper
 {
 	return ActorDesc->GetProperty(PropertyName, PropertyValue);
 }
+
 bool FWorldPartitionActorDescView::HasProperty(FName PropertyName) const
 {
 	return ActorDesc->HasProperty(PropertyName);
 }
+
+void FWorldPartitionActorDescView::SetParentView(const FWorldPartitionActorDescView* InParentView)
+{
+	check(!ParentView);
+	check(GetParentActor().IsValid());
+	ParentView = InParentView;
+}
+
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 #endif

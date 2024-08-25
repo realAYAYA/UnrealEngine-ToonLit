@@ -34,7 +34,9 @@
 #include "Misc/Attribute.h"
 #include "Textures/SlateIcon.h"
 #include "WidgetDrawerConfig.h"
+#include "Framework/Commands/GenericCommands.h"
 #include "Interfaces/Interface_AsyncCompilation.h"
+#include "Widgets/Images/SImage.h"
 
 #define LOCTEXT_NAMESPACE "AssetEditorToolkit"
 
@@ -45,6 +47,7 @@ TSharedPtr<FExtensibilityManager> FAssetEditorToolkit::SharedMenuExtensibilityMa
 TSharedPtr<FExtensibilityManager> FAssetEditorToolkit::SharedToolBarExtensibilityManager;
 
 const FName FAssetEditorToolkit::DefaultAssetEditorToolBarName("AssetEditor.DefaultToolBar");
+const FName FAssetEditorToolkit::ReadOnlyMenuProfileName("AssetEditor.ReadOnlyMenuProfile");
 
 FAssetEditorToolkit::FAssetEditorToolkit()
 	: GCEditingObjects(*this)
@@ -52,11 +55,12 @@ FAssetEditorToolkit::FAssetEditorToolkit()
 	, AssetEditorModeManager(nullptr)
 	, bIsToolbarFocusable(false)
 	, bIsToolbarUsingSmallIcons(false)
+	, OpenMethod(EAssetOpenMethod::Edit)
 {
 	WorkspaceMenuCategory = FWorkspaceItem::NewGroup(LOCTEXT("WorkspaceMenu_BaseAssetEditor", "Asset Editor"));
 }
 
-void FAssetEditorToolkit::InitAssetEditor( const EToolkitMode::Type Mode, const TSharedPtr< class IToolkitHost >& InitToolkitHost, const FName AppIdentifier, const TSharedRef<FTabManager::FLayout>& StandaloneDefaultLayout, const bool bCreateDefaultStandaloneMenu, const bool bCreateDefaultToolbar, UObject* ObjectToEdit, const bool bInIsToolbarFocusable, const bool bInUseSmallToolbarIcons )
+void FAssetEditorToolkit::InitAssetEditor( const EToolkitMode::Type Mode, const TSharedPtr< class IToolkitHost >& InitToolkitHost, const FName AppIdentifier, const TSharedRef<FTabManager::FLayout>& StandaloneDefaultLayout, const bool bCreateDefaultStandaloneMenu, const bool bCreateDefaultToolbar, UObject* ObjectToEdit, const bool bInIsToolbarFocusable, const bool bInUseSmallToolbarIcons, const TOptional<EAssetOpenMethod>& InOpenMethod )
 {
 	TArray< UObject* > ObjectsToEdit;
 	ObjectsToEdit.Add( ObjectToEdit );
@@ -64,7 +68,7 @@ void FAssetEditorToolkit::InitAssetEditor( const EToolkitMode::Type Mode, const 
 	InitAssetEditor( Mode, InitToolkitHost, AppIdentifier, StandaloneDefaultLayout, bCreateDefaultStandaloneMenu, bCreateDefaultToolbar, ObjectsToEdit, bInIsToolbarFocusable, bInUseSmallToolbarIcons );
 }
 
-void FAssetEditorToolkit::InitAssetEditor( const EToolkitMode::Type Mode, const TSharedPtr< class IToolkitHost >& InitToolkitHost, const FName AppIdentifier, const TSharedRef<FTabManager::FLayout>& StandaloneDefaultLayout, const bool bCreateDefaultStandaloneMenu, const bool bCreateDefaultToolbar, const TArray<UObject*>& ObjectsToEdit, const bool bInIsToolbarFocusable, const bool bInUseSmallToolbarIcons )
+void FAssetEditorToolkit::InitAssetEditor( const EToolkitMode::Type Mode, const TSharedPtr< class IToolkitHost >& InitToolkitHost, const FName AppIdentifier, const TSharedRef<FTabManager::FLayout>& StandaloneDefaultLayout, const bool bCreateDefaultStandaloneMenu, const bool bCreateDefaultToolbar, const TArray<UObject*>& ObjectsToEdit, const bool bInIsToolbarFocusable, const bool bInUseSmallToolbarIcons, const TOptional<EAssetOpenMethod>& InOpenMethod )
 {
 	// Must not already be editing an object
 	check( ObjectsToEdit.Num() > 0 );
@@ -77,6 +81,22 @@ void FAssetEditorToolkit::InitAssetEditor( const EToolkitMode::Type Mode, const 
 	FToolkitManager& ToolkitManager = FToolkitManager::Get();
 
 	EditingObjects.Append( ObjectsToEdit );
+
+	// If the open method was manually overriden, use that
+	if(InOpenMethod.IsSet())
+	{
+		OpenMethod = InOpenMethod.GetValue();
+	}
+	// Otherwise we check the Asset Editor Subsystem to see if there is a method this asset editor is being requested to open in
+	else
+	{
+		TOptional<EAssetOpenMethod> CachedOpenMethod =  GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->GetAssetsBeingOpenedMethod(EditingObjects);
+
+		if(CachedOpenMethod.IsSet())
+		{
+			OpenMethod = CachedOpenMethod.GetValue();
+		}
+	}
 
 	// Store "previous" asset editing toolkit host, and clear it out
 	PreviousWorldCentricToolkitHost = PreviousWorldCentricToolkitHostForNewAssetEditor;
@@ -190,6 +210,7 @@ void FAssetEditorToolkit::InitAssetEditor( const EToolkitMode::Type Mode, const 
 		const TSharedRef<FTabManager> NewTabManager = FGlobalTabmanager::Get()->NewTabManager( NewMajorTab.ToSharedRef() );		
 		NewTabManager->SetOnPersistLayout(FTabManager::FOnPersistLayout::CreateRaw(this, &FAssetEditorToolkit::HandleTabManagerPersistLayout));
 		NewTabManager->SetAllowWindowMenuBar(true);
+		NewTabManager->SetReadOnly(OpenMethod == EAssetOpenMethod::View);
 
 		this->TabManager = NewTabManager;
 
@@ -202,7 +223,7 @@ void FAssetEditorToolkit::InitAssetEditor( const EToolkitMode::Type Mode, const 
 		NewMajorTab->SetContent
 		( 
 			SAssignNew( NewStandaloneHost, SStandaloneAssetEditorToolkitHost, NewTabManager, AppIdentifier )
-			.IsEnabled_Lambda([ObjectsToEditWeak]()
+			.Visibility_Lambda([ObjectsToEditWeak]()
 				{
 					for (const TWeakObjectPtr<UObject> Object : ObjectsToEditWeak)
 					{
@@ -210,11 +231,11 @@ void FAssetEditorToolkit::InitAssetEditor( const EToolkitMode::Type Mode, const 
 						{
 							if (AsyncAsset->IsCompiling())
 							{
-								return false;
+								return EVisibility::Collapsed;
 							}
 						}
 					}
-					return true;
+					return EVisibility::All;
 				})
 			.OnRequestClose(this, &FAssetEditorToolkit::OnRequestClose, EAssetEditorCloseReason::AssetEditorHostClosed)
 			.OnClose(this, &FAssetEditorToolkit::OnClose)
@@ -233,12 +254,12 @@ void FAssetEditorToolkit::InitAssetEditor( const EToolkitMode::Type Mode, const 
 	ToolkitCommands->MapAction(
 		FAssetEditorCommonCommands::Get().SaveAsset,
 		FExecuteAction::CreateSP( this, &FAssetEditorToolkit::SaveAsset_Execute ),
-		FCanExecuteAction::CreateSP( this, &FAssetEditorToolkit::CanSaveAsset ));
+		FCanExecuteAction::CreateSP( this, &FAssetEditorToolkit::CanSaveAsset_Internal ));
 
 	ToolkitCommands->MapAction(
 		FAssetEditorCommonCommands::Get().SaveAssetAs,
 		FExecuteAction::CreateSP( this, &FAssetEditorToolkit::SaveAssetAs_Execute ),
-		FCanExecuteAction::CreateSP( this, &FAssetEditorToolkit::CanSaveAssetAs ));
+		FCanExecuteAction::CreateSP( this, &FAssetEditorToolkit::CanSaveAssetAs_Internal ));
 
 	ToolkitCommands->MapAction(
 		FGlobalEditorCommonCommands::Get().FindInContentBrowser,
@@ -254,7 +275,7 @@ void FAssetEditorToolkit::InitAssetEditor( const EToolkitMode::Type Mode, const 
 	ToolkitCommands->MapAction(
 		FAssetEditorCommonCommands::Get().ReimportAsset,
 		FExecuteAction::CreateSP( this, &FAssetEditorToolkit::Reimport_Execute ),
-		FCanExecuteAction::CreateSP(this, &FAssetEditorToolkit::CanReimport));
+		FCanExecuteAction::CreateSP(this, &FAssetEditorToolkit::CanReimport_Internal));
 
 	FGlobalEditorCommonCommands::MapActions(ToolkitCommands);
 
@@ -274,9 +295,11 @@ void FAssetEditorToolkit::InitAssetEditor( const EToolkitMode::Type Mode, const 
 		}
 	}
 
+	InitializeReadOnlyMenuProfiles();
+
 	// Give a chance to customize tab manager and other UI before widgets are created
 	GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->NotifyEditorOpeningPreWidgets(ObjectPtrDecay(EditingObjects), this);
-
+	
 	// Create menus
 	if (ToolkitMode == EToolkitMode::Standalone)
 	{
@@ -315,7 +338,7 @@ void FAssetEditorToolkit::InitAssetEditor( const EToolkitMode::Type Mode, const 
 	{
 		EditorModeManager->SetToolkitHost(ToolkitHost.Pin().ToSharedRef());
 	}
-
+	
 	PostInitAssetEditor();
 
 	// NOTE: Currently, the AssetEditorSubsystem will keep a hard reference to our object as we're editing it
@@ -342,7 +365,6 @@ FAssetEditorToolkit::~FAssetEditorToolkit()
 	AssetEditorModeManager = nullptr;
 	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
-
 
 void FAssetEditorToolkit::RegisterTabSpawners(const TSharedRef<class FTabManager>& InTabManager)
 {
@@ -570,7 +592,7 @@ TArray<TObjectPtr<UObject>>& FAssetEditorToolkit::GetEditingObjectPtrs()
 
 void FAssetEditorToolkit::GetSaveableObjects(TArray<UObject*>& OutObjects) const
 {
-	for (const auto Object : EditingObjects)
+	for (const TObjectPtr<UObject>& Object : EditingObjects)
 	{
 		// If we are editing a subobject of asset (e.g., a level script blueprint which is contained in a map asset), still provide the
 		// option to work with it but treat save operations/etc... as working on the top level asset itself
@@ -605,6 +627,15 @@ void FAssetEditorToolkit::RemoveEditingObject(UObject* Object)
 	GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->NotifyAssetClosed( Object, this );
 }
 
+bool FAssetEditorToolkit::CanSaveAsset_Internal() const
+{
+	if(GetOpenMethod() != EAssetOpenMethod::Edit)
+	{
+		return false;
+	}
+
+	return CanSaveAsset();
+}
 
 void FAssetEditorToolkit::SaveAsset_Execute()
 {
@@ -639,6 +670,15 @@ void FAssetEditorToolkit::SaveAsset_Execute()
 	FEditorFileUtils::PromptForCheckoutAndSave(PackagesToSave, bCheckDirtyOnAssetSave, /*bPromptToSave=*/ false);
 }
 
+bool FAssetEditorToolkit::CanSaveAssetAs_Internal() const
+{
+	if(GetOpenMethod() != EAssetOpenMethod::Edit)
+	{
+		return false;
+	}
+
+	return CanSaveAssetAs();
+}
 
 void FAssetEditorToolkit::SaveAssetAs_Execute()
 {
@@ -949,6 +989,15 @@ bool FAssetEditorToolkit::CanReimport() const
 	return false;
 }
 
+bool FAssetEditorToolkit::CanReimport_Internal() const
+{
+	if(GetOpenMethod() != EAssetOpenMethod::Edit)
+	{
+		return false;
+	}
+
+	return CanReimport();
+}
 
 bool FAssetEditorToolkit::CanReimport( UObject* EditingObject ) const
 {
@@ -1010,10 +1059,13 @@ void FAssetEditorToolkit::FillDefaultFileMenuCommands(FToolMenuSection& InSectio
 {
 	const FToolMenuInsert InsertPosition(NAME_None, EToolMenuInsertType::First);
 
-	InSection.AddMenuEntry(FAssetEditorCommonCommands::Get().SaveAsset, TAttribute<FText>(), TAttribute<FText>(), FSlateIcon(FAppStyle::GetAppStyleSetName(), "AssetEditor.SaveAsset")).InsertPosition = InsertPosition;
-	if( IsActuallyAnAsset() )
+	if (UAssetEditorToolkitMenuContext* Context = InSection.FindContext<UAssetEditorToolkitMenuContext>())
 	{
-		InSection.AddMenuEntry(FAssetEditorCommonCommands::Get().SaveAssetAs, TAttribute<FText>(), TAttribute<FText>(), FSlateIcon(FAppStyle::GetAppStyleSetName(), "AssetEditor.SaveAssetAs")).InsertPosition = InsertPosition;
+		InSection.AddMenuEntry(FAssetEditorCommonCommands::Get().SaveAsset, TAttribute<FText>(), TAttribute<FText>(), FSlateIcon(FAppStyle::GetAppStyleSetName(), "AssetEditor.SaveAsset")).InsertPosition = InsertPosition;
+		if( IsActuallyAnAsset() )
+		{
+			InSection.AddMenuEntry(FAssetEditorCommonCommands::Get().SaveAssetAs, TAttribute<FText>(), TAttribute<FText>(), FSlateIcon(FAppStyle::GetAppStyleSetName(), "AssetEditor.SaveAssetAs")).InsertPosition = InsertPosition;
+		}
 	}
 
 	if( IsWorldCentricAssetEditor() )
@@ -1122,9 +1174,82 @@ void FAssetEditorToolkit::RegisterDefaultToolBar()
 	}
 }
 
+void FAssetEditorToolkit::InitializeReadOnlyMenuProfiles()
+{
+	// Toolbar Customizations
+
+	// Only allow the "Find in Content Browser" toolbar item by default - which hides "Save" since we are using an allowlist
+	ReadOnlyCustomization.ToolbarPermissionList.AddAllowListItem(ReadOnlyMenuProfileName, FGlobalEditorCommonCommands::Get().FindInContentBrowser->GetCommandName());
+
+	// Main Menu Customizations
+
+	// The default menus we provide in the main menu
+	TArray<FName> MainMenuSubmenus({"File", "Edit", "Asset", "Window", "Tools", "Help"});
+
+	// Only allow the default menus we provide
+	for(const FName& Submenu : MainMenuSubmenus)
+	{
+		ReadOnlyCustomization.MainMenuPermissionList.AddAllowListItem(ReadOnlyMenuProfileName, Submenu);
+		ReadOnlyCustomization.MainMenuSubmenuPermissionLists.Add(Submenu, FNamePermissionList());
+	}
+
+	// Hide the save commands in the "File" menu in read only mode
+	FNamePermissionList& FileMenuPermissionList = ReadOnlyCustomization.MainMenuSubmenuPermissionLists.FindOrAdd("File");
+
+	FileMenuPermissionList.AddDenyListItem(ReadOnlyMenuProfileName, FAssetEditorCommonCommands::Get().SaveAsset->GetCommandName());
+	FileMenuPermissionList.AddDenyListItem(ReadOnlyMenuProfileName, FAssetEditorCommonCommands::Get().SaveAssetAs->GetCommandName());
+
+	// Hide the re-import command in the "asset" menu in read only mode
+	// There is a reimport command per editing object, so we make sure to hide them all. See FAssetEditorToolkit::FillDefaultAssetMenuCommands
+	FNamePermissionList& AssetMenuPermissionList = ReadOnlyCustomization.MainMenuSubmenuPermissionLists.FindOrAdd("Asset");
+	
+	FName ReimportEntryName = TEXT("Reimport");
+	int32 MenuEntryCount = 0;
+
+	for( auto ObjectIter = EditingObjects.CreateConstIterator(); ObjectIter; ++ObjectIter )
+	{
+		ReimportEntryName.SetNumber(MenuEntryCount++);
+		AssetMenuPermissionList.AddDenyListItem(ReadOnlyMenuProfileName, ReimportEntryName);
+	}
+	
+	// Give specific asset editors a chance to customize the default behavior (e.g show specific menus they want to allow in read only mode)
+	SetupReadOnlyMenuProfiles(ReadOnlyCustomization);
+
+	// Create the menu profile and apply the permission lists
+	FToolMenuProfile* MainMenuProfile = UToolMenus::Get()->AddRuntimeMenuProfile(GetToolMenuName(), ReadOnlyMenuProfileName);
+	FToolMenuProfile* ToolbarProfile = UToolMenus::Get()->AddRuntimeMenuProfile(GetToolMenuToolbarName(), ReadOnlyMenuProfileName);
+	FToolMenuProfile* CommonActionsToolbarProfile = UToolMenus::Get()->AddRuntimeMenuProfile("AssetEditorToolbar.CommonActions", ReadOnlyMenuProfileName);
+
+	MainMenuProfile->MenuPermissions = ReadOnlyCustomization.MainMenuPermissionList;
+	ToolbarProfile->MenuPermissions = ReadOnlyCustomization.ToolbarPermissionList;
+	CommonActionsToolbarProfile->MenuPermissions = ReadOnlyCustomization.ToolbarPermissionList;
+
+	for(const FName& Submenu : MainMenuSubmenus)
+	{
+		const FName SubmenuName = *(GetToolMenuName().ToString() + TEXT(".") + Submenu.ToString());
+		
+		FToolMenuProfile* SubmenuProfile = UToolMenus::Get()->AddRuntimeMenuProfile(SubmenuName, ReadOnlyMenuProfileName);
+		SubmenuProfile->MenuPermissions = ReadOnlyCustomization.MainMenuSubmenuPermissionLists[Submenu];
+	}
+
+}
+
 void FAssetEditorToolkit::InitToolMenuContext(FToolMenuContext& MenuContext)
 {
+	UAssetEditorToolkitMenuContext* ToolkitMenuContext = MenuContext.FindContext<UAssetEditorToolkitMenuContext>();
+	
+	if(!ToolkitMenuContext || !ToolkitMenuContext->Toolkit.IsValid())
+	{
+		return;
+	}
 
+	// If we are in read only mode, set the read only menu profile as active
+	if(ToolkitMenuContext->Toolkit.Pin()->GetOpenMethod() == EAssetOpenMethod::View)
+	{
+		UToolMenuProfileContext* ProfileContext = NewObject<UToolMenuProfileContext>();
+		ProfileContext->ActiveProfiles.Add(ReadOnlyMenuProfileName);
+		MenuContext.AddObject(ProfileContext);
+	}
 }
 
 UToolMenu* FAssetEditorToolkit::GenerateCommonActionsToolbar(FToolMenuContext& MenuContext)
@@ -1140,9 +1265,84 @@ UToolMenu* FAssetEditorToolkit::GenerateCommonActionsToolbar(FToolMenuContext& M
 		FoundMenu->StyleName = "AssetEditorToolbar";
 
 		FToolMenuSection& Section = FoundMenu->AddSection("CommonActions");
-		Section.AddEntry(FToolMenuEntry::InitToolBarButton(FAssetEditorCommonCommands::Get().SaveAsset));
+
+		Section.AddDynamicEntry("CommonActionsDynamic", FNewToolMenuSectionDelegate::CreateLambda([this](FToolMenuSection& InSection)
+		{
+			UAssetEditorToolkitMenuContext* AssetEditorToolkitMenuContext = InSection.FindContext<UAssetEditorToolkitMenuContext>();
+
+			if (AssetEditorToolkitMenuContext)
+			{
+				if(TSharedPtr<FAssetEditorToolkit> AssetEditorToolkit = AssetEditorToolkitMenuContext->Toolkit.Pin())
+				{
+					InSection.AddEntry(FToolMenuEntry::InitToolBarButton(FAssetEditorCommonCommands::Get().SaveAsset));
+				}
+			}
+		}));
+
 		Section.AddEntry(FToolMenuEntry::InitToolBarButton(FGlobalEditorCommonCommands::Get().FindInContentBrowser, LOCTEXT("FindInContentBrowserButton", "Browse")));
 		Section.AddSeparator(NAME_None);
+	}
+
+	return ToolMenus->GenerateMenu(ToolBarName, MenuContext);
+}
+
+UToolMenu* FAssetEditorToolkit::GenerateReadOnlyToolbar(FToolMenuContext& MenuContext)
+{
+	UToolMenus* ToolMenus = UToolMenus::Get();
+	FName ToolBarName = "AssetEditorToolbar.ReadOnly";
+
+	UToolMenu* FoundMenu = ToolMenus->FindMenu(ToolBarName);
+	
+	if (!FoundMenu || !FoundMenu->IsRegistered())
+	{
+		FoundMenu = ToolMenus->RegisterMenu(ToolBarName, NAME_None, EMultiBoxType::SlimHorizontalToolBar);
+		FoundMenu->StyleName = "AssetEditorToolbar";
+		FToolMenuSection& Section = FoundMenu->AddSection("ReadOnly");
+
+		Section.AddDynamicEntry("ReadOnlyDynamic", FNewToolMenuSectionDelegate::CreateLambda([this](FToolMenuSection& InSection)
+		{
+			// A custom widget to show the read only status of the asset editor
+			TSharedRef<SWidget> ReadOnlyIndicatorWidget =
+			SNew(SHorizontalBox)
+			+SHorizontalBox::Slot()
+			.Padding(20.0f, 0.0f)
+			[
+				SNew(SBorder)
+				.BorderImage(FAppStyle::GetBrush("AssetEditor.ReadOnlyBorder"))
+				.Padding(0.0f, 0.0f)
+				[
+					SNew(SHorizontalBox)
+					+SHorizontalBox::Slot()
+					.AutoWidth()
+					.HAlign(HAlign_Left)
+					.VAlign(VAlign_Center)
+					.Padding(8.0f, 0.0f, 0.0f, 0.0f)
+					[
+						SNew(SBox)
+						.HeightOverride(16.0f)
+						.WidthOverride(16.0f)
+						[
+							SNew(SImage)
+							.Image(FAppStyle::GetBrush("AssetEditor.ReadOnlyOpenable"))
+							.ColorAndOpacity(FStyleColors::AccentBlack)
+						]
+						
+					]
+					+SHorizontalBox::Slot()
+					.HAlign(HAlign_Left)
+					.VAlign(VAlign_Center)
+					.Padding(4.0f, 0.0f, 8.0f, 0.0f)
+					[
+						SNew(STextBlock)
+						.Text(LOCTEXT("ReadOnlyText", "Read Only"))
+						.ColorAndOpacity(FStyleColors::AccentBlack)
+					]
+				]	
+			];
+		
+			InSection.AddSeparator(NAME_None);
+			InSection.AddEntry(FToolMenuEntry::InitWidget("ReadOnlyIndicatorWidget", ReadOnlyIndicatorWidget, FText::GetEmpty()));
+		}));
 	}
 
 	return ToolMenus->GenerateMenu(ToolBarName, MenuContext);;
@@ -1178,6 +1378,9 @@ void FAssetEditorToolkit::GenerateToolbar()
 
 	UToolMenu* CommonActionsToolbar = GenerateCommonActionsToolbar(MenuContext);
 	TSharedRef< class SWidget > CommonActionsToolbarWidget = ToolMenus->GenerateWidget(CommonActionsToolbar);
+
+	UToolMenu* ReadOnlyToolbar = GenerateReadOnlyToolbar(MenuContext);
+	TSharedRef< class SWidget > ReadOnlyWidget = ToolMenus->GenerateWidget(ReadOnlyToolbar);
 
 	TSharedRef<SWidget> MiscWidgets = SNullWidget::NullWidget;
 
@@ -1225,6 +1428,22 @@ void FAssetEditorToolkit::GenerateToolbar()
 			.Padding(FMargin(0.0f))
 			[
 				MiscWidgets
+			]
+		]
+		+SHorizontalBox::Slot()
+		.HAlign(HAlign_Right)
+		.AutoWidth()
+		[
+			SNew(SBorder)
+			.VAlign(VAlign_Center)
+			.Visibility_Lambda([this]()
+			{
+				return GetOpenMethod() == EAssetOpenMethod::View ? EVisibility::Visible : EVisibility::Collapsed;
+			})
+			.BorderImage(FAppStyle::Get().GetBrush("AssetEditorToolbar.Background"))
+			.Padding(FMargin(0.0f))
+			[
+				ReadOnlyWidget
 			]
 		];
 

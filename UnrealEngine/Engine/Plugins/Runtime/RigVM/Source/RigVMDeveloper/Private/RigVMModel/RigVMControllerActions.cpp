@@ -1075,7 +1075,7 @@ FRigVMSetPinDefaultValueAction::FRigVMSetPinDefaultValueAction()
 FRigVMSetPinDefaultValueAction::FRigVMSetPinDefaultValueAction(URigVMController* InController, URigVMPin* InPin, const FString& InNewDefaultValue)
 : FRigVMBaseAction(InController)
 , PinPath(InPin->GetPinPath())
-, OldDefaultValue(InPin->GetDefaultValue())
+, OldDefaultValue(InPin->GetDefaultValueStoredByUserInterface())
 , NewDefaultValue(InNewDefaultValue)
 {
 	/* Since for template we are chaning types - it is possible that the

@@ -9,6 +9,7 @@
 #include "RHITextureTests.h"
 #include "RHIDrawTests.h"
 #include "RHIReadbackTests.h"
+#include "RHIReservedResourceTests.h"
 
 #define LOCTEXT_NAMESPACE "FRHITestsModule"
 
@@ -17,9 +18,23 @@ static bool RunTests_RenderThread(FRHICommandListImmediate& RHICmdList)
 	bool bResult = true;
 
 	// ------------------------------------------------
+	// Reserved resources
+	// ------------------------------------------------
+	{
+
+		RUN_TEST(FRHIReservedResourceTests::Test_ReservedResource_CommitBuffer(RHICmdList));
+		RUN_TEST(FRHIReservedResourceTests::Test_ReservedResource_DecommitBuffer(RHICmdList));
+		RUN_TEST(FRHIReservedResourceTests::Test_ReservedResource_CreateBuffer(RHICmdList));
+		RUN_TEST(FRHIReservedResourceTests::Test_ReservedResource_CreateTexture(RHICmdList));
+		RUN_TEST(FRHIReservedResourceTests::Test_ReservedResource_CreateVolumeTexture(RHICmdList));
+	}
+
+	// ------------------------------------------------
 	// Drawing
 	// ------------------------------------------------
 	{
+		RUN_TEST(FRHIDrawTests::Test_DrawBaseVertexAndInstanceDirect(RHICmdList));
+		RUN_TEST(FRHIDrawTests::Test_DrawBaseVertexAndInstanceIndirect(RHICmdList));
 		RUN_TEST(FRHIDrawTests::Test_MultiDrawIndirect(RHICmdList));
 	}
 
@@ -68,6 +83,13 @@ static bool RunTests_RenderThread(FRHICommandListImmediate& RHICmdList)
 	// ------------------------------------------------
 	{
 		RUN_TEST(FRHIBufferTests::Test_RHICreateBuffer_Parallel(RHICmdList));
+	}
+
+	// ------------------------------------------------
+	// RT Operations
+	// ------------------------------------------------
+	{
+		RUN_TEST(FRHITextureTests::Test_ClearRenderTargets(RHICmdList));
 	}
 
 	// @todo - add more tests

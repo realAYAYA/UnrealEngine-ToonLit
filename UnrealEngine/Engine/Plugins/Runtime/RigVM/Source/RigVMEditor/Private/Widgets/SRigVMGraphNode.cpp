@@ -103,7 +103,7 @@ void SRigVMGraphNode::Construct( const FArguments& InArgs )
 	.ColorAndOpacity(FLinearColor::White)
 	.ShadowColorAndOpacity(FLinearColor(0.1f, 0.1f, 0.1f, 1.f))
 	.Visibility(EVisibility::Visible)
-	.ToolTipText(LOCTEXT("NodeHitCountToolTip", "This number represents the hit count for a node.\nFor functions / collapse nodes it represents the sum of all hit counts of contained nodes.\n\nYou can enable / disable the display of the number in the Class Settings\n(Rig Graph Display Settings -> Show Node Run Counts)"));
+	.ToolTipText(LOCTEXT("NodeHitCountToolTip", "This number represents the number of instructions hit for a node.\nIf the node has auxiliary instructions (such as Copies) you'll first see the primary instructions followed by the overall instructions in braces.\nFor functions / collapse nodes it represents the sum of all hit instructions of contained nodes.\n\nYou can enable / disable the display of the number in the Class Settings\n(Rig Graph Display Settings -> Show Node Run Counts)"));
 
 	SAssignNew(InstructionDurationTextBlockWidget, STextBlock)
 	.Margin(FMargin(2.0f, 2.0f, 2.0f, 1.0f))
@@ -112,7 +112,7 @@ void SRigVMGraphNode::Construct( const FArguments& InArgs )
 	.ColorAndOpacity(FLinearColor::White)
 	.ShadowColorAndOpacity(FLinearColor(0.1f, 0.1f, 0.1f, 1.f))
 	.Visibility(EVisibility::Visible)
-	.ToolTipText(LOCTEXT("NodeDurationToolTip", "This number represents the duration in microseconds for a node.\nFor functions / collapse nodes it represents the accumulated time of contained nodes.\n\nYou can enable / disable the display of the number in the Class Settings\n(VM Runtime Settings -> Enable Profiling)"));
+	.ToolTipText(LOCTEXT("NodeDurationToolTip", "This number represents the duration in microseconds for a node.\nFor functions / collapse nodes it represents the accumulated time of contained nodes.\n\nIf you have more than one node selected you'll see also the overall summed up time of the selection.\n\nYou can enable / disable the display of the number in the Class Settings\n(VM Runtime Settings -> Enable Profiling)"));
 
 	EdGraphNode->OnNodeTitleDirtied().AddSP(this, &SRigVMGraphNode::HandleNodeTitleDirtied);
 	EdGraphNode->OnNodePinsChanged().AddSP(this, &SRigVMGraphNode::HandleNodePinsChanged);
@@ -837,7 +837,7 @@ void SRigVMGraphNode::GetNodeInfoPopups(FNodeInfoContext* Context, TArray<FGraph
 							FString PinHash = URigVMCompiler::GetPinHash(ModelPin, nullptr, true);
 							if (const FRigVMOperand* WatchOperand = RigBlueprint->PinToOperandMap.Find(PinHash))
 							{
-								URigVMMemoryStorage* Memory = ActiveObject->GetVM()->GetDebugMemory();
+								FRigVMMemoryStorageStruct* Memory = ActiveObject->GetDebugMemory();
 								// We mark PPF_ExternalEditor so that default values are also printed
 								const FString DebugValue = Memory->GetDataAsStringSafe(WatchOperand->GetRegisterIndex(), PPF_ExternalEditor | STRUCT_ExportTextItemNative);
 								if(!DebugValue.IsEmpty())
@@ -900,7 +900,7 @@ void SRigVMGraphNode::GetNodeInfoPopups(FNodeInfoContext* Context, TArray<FGraph
 				{
 					if(URigVMHost* DebuggedHost = Cast<URigVMHost>(Blueprint->GetObjectBeingDebugged()))
 					{
-						const int32 Count = ModelNode->GetInstructionVisitedCount(DebuggedHost->GetExtendedExecuteContext(), DebuggedHost->GetVM(), FRigVMASTProxy());
+						const int32 Count = ModelNode->GetInstructionVisitedCount(DebuggedHost->GetRigVMExtendedExecuteContext(), DebuggedHost->GetVM(), FRigVMASTProxy());
 						if(Count == 0)
 						{
 							PinnedWatchText = FString::Printf(TEXT("Node is not running - wrong event?\n%s"), *PinnedWatchText);
@@ -985,7 +985,7 @@ TArray<FOverlayWidgetInfo> SRigVMGraphNode::GetOverlayWidgets(bool bSelected, co
 				{
 					if(bShowNodeCounts || bShowInstructionIndex)
 					{
-						const int32 Count = ModelNode->GetInstructionVisitedCount(DebuggedHost->GetExtendedExecuteContext(), DebuggedHost->GetVM(), FRigVMASTProxy());
+						const int32 Count = ModelNode->GetInstructionVisitedCount(DebuggedHost->GetRigVMExtendedExecuteContext(), DebuggedHost->GetVM(), FRigVMASTProxy());
 						if((Count > Blueprint->RigGraphDisplaySettings.NodeRunLowerBound) || bShowInstructionIndex)
 						{
 							const int32 VOffset = bSelected ? -2 : 2;
@@ -999,7 +999,7 @@ TArray<FOverlayWidgetInfo> SRigVMGraphNode::GetOverlayWidgets(bool bSelected, co
 
 					if(bEnableProfiling)
 					{
-						const double MicroSeconds = ModelNode->GetInstructionMicroSeconds(DebuggedHost->GetExtendedExecuteContext(), DebuggedHost->GetVM(), FRigVMASTProxy());
+						const double MicroSeconds = ModelNode->GetInstructionMicroSeconds(DebuggedHost->GetRigVMExtendedExecuteContext(), DebuggedHost->GetVM(), FRigVMASTProxy());
 						if(MicroSeconds >= 0.0)
 						{
 							const int32 VOffset = bSelected ? -2 : 2;
@@ -1053,9 +1053,12 @@ void SRigVMGraphNode::RefreshErrorInfo()
 							if(Pin->IsArray() && !Pin->IsFixedSizeArray())
 							{
 								GraphNode->bHasCompilerMessage = true;
-								GraphNode->ErrorType = int32(EMessageSeverity::Info);
-								static const FString ArrayWarning = TEXT("This node creates a copy of the array.\nThis may cause side effects.");
-								GraphNode->ErrorMsg = ArrayWarning;
+								if (URigVMEdGraphNode* RigVMEdGraphNode = Cast<URigVMEdGraphNode>(GraphNode))
+								{
+									static const FString ArrayWarning = TEXT("This node creates a copy of the array.\nThis may cause side effects.");
+									RigVMEdGraphNode->SetErrorInfo(EMessageSeverity::Info, ArrayWarning);
+								}
+								
 								break;
 							}
 						}
@@ -1258,13 +1261,16 @@ FText SRigVMGraphNode::GetInstructionCountText() const
 					int32 FirstInstructionIndex = INDEX_NONE;
 					if(bShowNodeRunCount)
 					{
-						RunCount = ModelNode->GetInstructionVisitedCount(DebuggedHost->GetExtendedExecuteContext(), DebuggedHost->GetVM(), FRigVMASTProxy());
+						RunCount = ModelNode->GetInstructionVisitedCount(DebuggedHost->GetRigVMExtendedExecuteContext(), DebuggedHost->GetVM(), FRigVMASTProxy());
 						bShowNodeRunCount = RunCount > Blueprint->RigGraphDisplaySettings.NodeRunLowerBound;
+
+						// toodoo here we want to differentiate between primary and secondary instructions. (call extern vs copy).
+						// const TArray<int32>& Instructions = ModelNode->GetInstructionsForVM(DebuggedHost->GetRigVMExtendedExecuteContext(), DebuggedHost->GetVM());
 					}
 
 					if(bShowInstructionIndex)
 					{
-						const TArray<int32> Instructions = ModelNode->GetInstructionsForVM(DebuggedHost->GetExtendedExecuteContext(), DebuggedHost->GetVM());
+						const TArray<int32>& Instructions = ModelNode->GetInstructionsForVM(DebuggedHost->GetRigVMExtendedExecuteContext(), DebuggedHost->GetVM());
 						bShowInstructionIndex = Instructions.Num() > 0;
 						if(bShowInstructionIndex)
 						{
@@ -1309,15 +1315,30 @@ FText SRigVMGraphNode::GetInstructionDurationText() const
 	{
 		if(Blueprint->VMRuntimeSettings.bEnableProfiling)
 		{
-			if (ModelNode.IsValid())
+			if(const URigVMEdGraphNode* RigGraphNode = Cast<URigVMEdGraphNode>(GraphNode))
 			{
-				if(URigVMHost* DebuggedHost = Cast<URigVMHost>(Blueprint->GetObjectBeingDebugged()))
+				const double MicroSeconds = RigGraphNode->MicroSeconds;
+				if(MicroSeconds >= 0)
 				{
-					const double MicroSeconds = ModelNode->GetInstructionMicroSeconds(DebuggedHost->GetExtendedExecuteContext(), DebuggedHost->GetVM(), FRigVMASTProxy());
-					if(MicroSeconds >= 0)
+					if (const SGraphPanel* MyOwnerPanel = GetOwnerPanel().Get())
 					{
-						return FText::FromString(FString::Printf(TEXT("%d µs"), (int32)MicroSeconds));
+						const TArray<UEdGraphNode*> SelectedNodes = MyOwnerPanel->GetSelectedGraphNodes();
+						if((SelectedNodes.Num() > 1) && SelectedNodes.Contains(RigGraphNode))
+						{
+							double OverallMicroSeconds = 0;
+							for(const UEdGraphNode* SelectedNode : SelectedNodes)
+							{
+								if(const URigVMEdGraphNode* SelectedRigGraphNode = Cast<URigVMEdGraphNode>(SelectedNode))
+								{
+									OverallMicroSeconds += SelectedRigGraphNode->MicroSeconds;
+								}
+							}
+							
+							return FText::FromString(FString::Printf(TEXT("%.02f µs of %.02f µs"), (float)MicroSeconds, (float)OverallMicroSeconds));
+						}
 					}
+
+					return FText::FromString(FString::Printf(TEXT("%.02f µs"), (float)MicroSeconds));
 				}
 			}
 		}
@@ -1608,7 +1629,15 @@ void SRigVMGraphNode::UpdatePinTreeView()
 					}
 					break;
 				}
-				case 1: // IO pins
+				case 1: // output pins
+				{
+					if(RootPin->GetDirection() == ERigVMPinDirection::Output)
+					{
+						Local::VisitPinRecursively(RootPin, ModelPins, bSupportSubPins);
+					}
+					break;
+				}
+				case 2: // IO pins
 				{
 					if(!RootPin->IsExecuteContext() && RootPin->GetDirection() == ERigVMPinDirection::IO)
 					{
@@ -1616,18 +1645,10 @@ void SRigVMGraphNode::UpdatePinTreeView()
 					}
 					break;
 				}
-				case 2: // input / visible pins
-				{
-					if(RootPin->GetDirection() == ERigVMPinDirection::Input || RootPin->GetDirection() == ERigVMPinDirection::Visible)
-					{
-						Local::VisitPinRecursively(RootPin, ModelPins, bSupportSubPins);
-					}
-					break;
-				}
-				case 3: // output pins
+				case 3: // input / visible pins
 				default:
 				{
-					if(RootPin->GetDirection() == ERigVMPinDirection::Output)
+					if(RootPin->GetDirection() == ERigVMPinDirection::Input || RootPin->GetDirection() == ERigVMPinDirection::Visible)
 					{
 						Local::VisitPinRecursively(RootPin, ModelPins, bSupportSubPins);
 					}

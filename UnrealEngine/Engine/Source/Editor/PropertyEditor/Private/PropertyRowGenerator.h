@@ -3,13 +3,13 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "DetailFilter.h"
 #include "UObject/WeakObjectPtr.h"
 #include "PropertyPath.h"
 #include "TickableEditorObject.h"
 #include "IPropertyUtilities.h"
 #include "PropertyEditorModule.h"
 #include "IPropertyRowGenerator.h"
-
 
 class FDetailCategoryImpl;
 class FDetailLayoutBuilderImpl;
@@ -100,6 +100,7 @@ public:
 	/** This function sets property paths to generate PropertyNodes.This improves the performance for cases where PropertyView is only showing a few properties of the object by not generating all other PropertyNodes */
 	virtual void SetPropertyGenerationAllowListPaths(const TSet<FString>& InPropertyGenerationAllowListPaths) override;
 	virtual void InvalidateCachedState() override;
+	virtual void FilterNodes(const TArray<FString>& InFilterStrings) override;
 
 	/** FTickableEditorObject interface */
 	virtual ETickableTickType GetTickableTickType() const override { return ETickableTickType::Always; }
@@ -161,6 +162,8 @@ private:
 	FOnValidatePropertyRowGeneratorNodes CustomValidatePropertyNodesFunction;
 	/** If specified only nodes for these properties will be generated */
 	TSet<FString> PropertyGenerationAllowListPaths;
+	/** Filter to apply on generated rows nodes */
+	FDetailFilter CurrentFilter;
 
 	bool bViewingClassDefaultObject = false;
 	bool bRefreshPending = false;

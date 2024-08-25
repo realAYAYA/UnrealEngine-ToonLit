@@ -16,7 +16,7 @@
 #include "EntitySystem/MovieSceneEntitySystemTask.h"
 #include "EntitySystem/MovieSceneEntitySystemTypes.h"
 #include "Evaluation/PreAnimatedState/IMovieScenePreAnimatedStorage.h"
-#include "Evaluation/PreAnimatedState/MovieScenePreAnimatedEntityCaptureSource.h"
+#include "Evaluation/PreAnimatedState/MovieScenePreAnimatedCaptureSources.h"
 #include "Evaluation/PreAnimatedState/MovieScenePreAnimatedStateExtension.h"
 #include "Evaluation/PreAnimatedState/MovieScenePreAnimatedStateTypes.h"
 #include "Evaluation/PreAnimatedState/MovieScenePreAnimatedStorageID.h"
@@ -64,11 +64,6 @@ struct TPreAnimatedStateTaskParams
 	{
 		TrackingMode = EPreAnimatedCaptureSourceTracking::CacheIfTracked;
 		AdditionalFilter.All({ FBuiltInComponentTypes::Get()->Tags.NeedsLink });
-	}
-
-	static constexpr bool ShouldSavePreAnimatedState(typename TCallTraits<InputTypes>::ParamType... Inputs)
-	{
-		return true;
 	}
 };
 
@@ -458,6 +453,29 @@ public:
 	}
 
 	/**
+	* Given a list of arguments suitable for building a storage key, builds that key, and then 
+	* tries to find an existing pre-animated state entry for that key if it already exists.
+	* If it doesn't exist, it returns an empty FPreAnimatedStateEntry.
+	*
+	* Note that the arguments are also used for find the group handle, if the storage traits required grouping.
+	*/
+	template<typename... KeyArgs>
+	FPreAnimatedStateEntry FindEntry(KeyArgs&&... InKeyArgs)
+	{
+		KeyType Key{ Forward<KeyArgs>(InKeyArgs)... };
+
+		FPreAnimatedStorageGroupHandle GroupHandle;
+		if constexpr (StorageTraits::SupportsGrouping)
+		{
+			GroupHandle = this->Traits.FindGroup(InKeyArgs...);
+		}
+
+		FPreAnimatedStorageIndex StorageIndex = this->FindStorageIndex(Key);
+
+		return FPreAnimatedStateEntry{ GroupHandle, FPreAnimatedStateCachedValueHandle{ this->StorageID, StorageIndex } };
+	}
+
+	/**
 	 * Creates a new pre-animated state entry from a list of arguments suitable for building the storage key.
 	 *
 	 * Note that the arguments are also used for getting the group handle, if the storage traits required grouping.
@@ -529,6 +547,24 @@ public:
 	}
 
 	/**
+	 * Get the cached value associated with a particular storage index
+	 */
+	const StorageType& GetCachedValue(FPreAnimatedStorageIndex StorageIndex) const
+	{
+		static const StorageType DefaultValue = StorageType();
+
+		if (ensure(PreAnimatedStorage.IsValidIndex(StorageIndex.Value)))
+		{
+			const FCachedData& CachedData = PreAnimatedStorage[StorageIndex.Value];
+			if (CachedData.bInitialized)
+			{
+				return CachedData.Value;
+			}
+		}
+		return DefaultValue;
+	}
+
+	/**
 	 * Look at any entity with the specified component types, and set up new associations with storage indices for those entities
 	 * The provided component values are put together to make up the storage key
 	 * WARNING: Does not cache actual pre-animated values
@@ -562,11 +598,6 @@ public:
 			FPreAnimatedEntityCaptureSource* EntityMetaData = this->ParentExtension->GetOrCreateEntityMetaData();
 			for (int32 Index = 0; Index < Num; ++Index)
 			{
-				if (!InParams.ShouldSavePreAnimatedState(Inputs[Index]...))
-				{
-					continue;
-				}
-
 				FPreAnimatedStateEntry Entry = MakeEntry(Inputs[Index]...);
 				EntityMetaData->BeginTrackingEntity(Entry, EntityIDs[Index], RootInstanceHandles[Index], bWantsRestore);
 			}
@@ -600,11 +631,6 @@ public:
 
 		TPreAnimatedStateTaskParams<ContributorTypes...> Params;
 
-		if (!Params.ShouldSavePreAnimatedState(InComponents...))
-		{
-			return;
-		}
-
 		FPreAnimatedStateEntry Entry = MakeEntry(InComponents...);
 		FPreAnimatedEntityCaptureSource* EntityMetaData = this->ParentExtension->GetOrCreateEntityMetaData();
 		EntityMetaData->BeginTrackingEntity(Entry, EntityID, RootInstanceHandle, bWantsRestoreState);
@@ -630,20 +656,19 @@ public:
 			const int32 Num = Item.GetAllocation()->Num();
 			for (int32 Index = 0; Index < Num; ++Index)
 			{
-				if (!InParams.ShouldSavePreAnimatedState(Values[Index]...))
+				if (!ShouldTrackCaptureSource(InParams.TrackingMode, Values[Index]...))
 				{
 					continue;
 				}
 
 				FPreAnimatedStateEntry Entry = MakeEntry(Values[Index]...);
-				if (TrackCaptureSource(Entry, InParams.TrackingMode))
+				TrackCaptureSource(Entry, InParams.TrackingMode);
+				
+				EPreAnimatedStorageRequirement StorageRequirement = this->ParentExtension->GetStorageRequirement(Entry);
+				if (!this->IsStorageRequirementSatisfied(Entry.ValueHandle.StorageIndex, StorageRequirement))
 				{
-					EPreAnimatedStorageRequirement StorageRequirement = this->ParentExtension->GetStorageRequirement(Entry);
-					if (!this->IsStorageRequirementSatisfied(Entry.ValueHandle.StorageIndex, StorageRequirement))
-					{
-						StorageType NewValue = this->Traits.CachePreAnimatedValue(Values[Index]...);
-						this->AssignPreAnimatedValue(Entry.ValueHandle.StorageIndex, StorageRequirement, MoveTemp(NewValue));
-					}
+					StorageType NewValue = this->Traits.CachePreAnimatedValue(Values[Index]...);
+					this->AssignPreAnimatedValue(Entry.ValueHandle.StorageIndex, StorageRequirement, MoveTemp(NewValue));
 				}
 			}
 		};
@@ -671,9 +696,12 @@ public:
 	template<typename... ContributorTypes>
 	void CacheTrackedPreAnimatedValue(EPreAnimatedCaptureSourceTracking TrackingMode, ContributorTypes... Values)
 	{
-		FPreAnimatedStateEntry Entry = MakeEntry(Values...);
-		if (TrackCaptureSource(Entry, TrackingMode))
+		if (ShouldTrackCaptureSource(TrackingMode, Values...))
 		{
+			FPreAnimatedStateEntry Entry = MakeEntry(Values...);
+
+			TrackCaptureSource(Entry, TrackingMode);
+
 			EPreAnimatedStorageRequirement Requirement = ParentExtension->HasActiveCaptureSource()
 				? EPreAnimatedStorageRequirement::Transient
 				: EPreAnimatedStorageRequirement::Persistent;
@@ -706,13 +734,14 @@ public:
 	{
 		ensureMsgf(GroupHandle.IsValid() || !StorageTraits::SupportsGrouping, TEXT("The group handle must be valid for pre-animated state that supports grouping, and invalid if not"));
 
-		// Find the storage index for the specific key we're animating
-		FPreAnimatedStorageIndex StorageIndex = GetOrCreateStorageIndex(InKey);
-		FPreAnimatedStateEntry Entry{ GroupHandle, FPreAnimatedStateCachedValueHandle{ this->StorageID, StorageIndex } };
-		if (!TrackCaptureSource(Entry, TrackingMode))
+		if (!ShouldTrackCaptureSource(TrackingMode, InKey))
 		{
 			return;
 		}
+		// Find the storage index for the specific key we're animating
+		FPreAnimatedStorageIndex StorageIndex = GetOrCreateStorageIndex(InKey);
+		FPreAnimatedStateEntry Entry{ GroupHandle, FPreAnimatedStateCachedValueHandle{ this->StorageID, StorageIndex } };
+		TrackCaptureSource(Entry, TrackingMode);
 
 		EPreAnimatedStorageRequirement Requirement = ParentExtension->HasActiveCaptureSource()
 			? EPreAnimatedStorageRequirement::Transient
@@ -755,11 +784,6 @@ public:
 			FPreAnimatedEntityCaptureSource* EntityMetaData = this->ParentExtension->GetOrCreateEntityMetaData();
 			for (int32 Index = 0; Index < Num; ++Index)
 			{
-				if (!InParams.ShouldSavePreAnimatedState(Inputs[Index]...))
-				{
-					continue;
-				}
-
 				FPreAnimatedStateEntry Entry = MakeEntry(Inputs[Index]...);
 
 				EntityMetaData->BeginTrackingEntity(Entry, EntityIDs[Index], RootInstanceHandles[Index], bWantsRestore);
@@ -770,7 +794,6 @@ public:
 					StorageType NewValue = this->Traits.CachePreAnimatedValue(Inputs[Index]...);
 					this->AssignPreAnimatedValue(Entry.ValueHandle.StorageIndex, StorageRequirement, MoveTemp(NewValue));
 				}
-
 			}
 		};
 
@@ -796,12 +819,47 @@ public:
 
 protected:
 
+	template<typename... KeyArgs>
+	bool ShouldTrackCaptureSource(EPreAnimatedCaptureSourceTracking TrackingMode, KeyArgs&&... InKeyArgs)
+	{
+		switch (TrackingMode)
+		{
+		case EPreAnimatedCaptureSourceTracking::CacheIfTracked:
+		{
+			// If we're capturing global state we always track changes
+			if (this->ParentExtension->IsCapturingGlobalState())
+			{
+				return true;
+			}
+
+			// Only cache the value if an entry already exists, and if metadata already exists.
+			// (ie, something is actively animating this and wants restore state)
+			if (FPreAnimatedStateEntry Entry = FindEntry(InKeyArgs...))
+			{
+				return ensureMsgf(this->ParentExtension->MetaDataExists(Entry), TEXT("PreAnimatedStateEntry has allocated storage but no metadata exists to track it."));
+			}
+			return false;
+		}
+		break;
+
+		case EPreAnimatedCaptureSourceTracking::AlwaysCache:
+		{
+			// Always cache the source meta data. If there is no capture source this calls EnsureMetaData as above
+			return true;
+		}
+		break;
+
+		default:
+			ensureMsgf(false, TEXT("Unsupported tracking mode, no pre-animated state caching will occur!"));
+			return false;
+		}
+	}
+
 	/**
 	 * Begins tracking the current entry with the currently set tracking source, if necessary/desirable.
-	 *
-	 * Returns whether caching pre-animated state value is wanted.
+	 * If the entry is valid, we assume the metadata must already exist.
 	 */
-	bool TrackCaptureSource(const FPreAnimatedStateEntry& Entry, EPreAnimatedCaptureSourceTracking TrackingMode)
+	void TrackCaptureSource(const FPreAnimatedStateEntry& Entry, EPreAnimatedCaptureSourceTracking TrackingMode)
 	{
 		switch (TrackingMode)
 		{
@@ -811,12 +869,12 @@ protected:
 				if (this->ParentExtension->IsCapturingGlobalState())
 				{
 					this->ParentExtension->EnsureMetaData(Entry);
-					return true;
+					return;
 				}
 
 				// Only cache the value if tracking meta-data exists for this entry
 				// (ie, something is actively animating this and wants restore state)
-				return this->ParentExtension->MetaDataExists(Entry);
+				ensureMsgf(Entry.IsValid() && this->ParentExtension->MetaDataExists(Entry), TEXT("PreAnimatedStateEntry has allocated storage but no metadata exists to track it."));
 			}
 			break;
 
@@ -824,13 +882,12 @@ protected:
 			{
 				// Always cache the source meta data. If there is no capture source this calls EnsureMetaData as above
 				this->ParentExtension->AddSourceMetaData(Entry);
-				return true;
+				return;
 			}
 			break;
 
 		default:
 			ensureMsgf(false, TEXT("Unsupported tracking mode, no pre-animated state caching will occur!"));
-			return false;
 		}
 	}
 

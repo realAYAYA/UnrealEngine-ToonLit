@@ -63,7 +63,6 @@ public:
 		int32 Id;
 	};
 
-
 	/** */
 	struct FBindingHandle
 	{
@@ -149,7 +148,7 @@ public:
 	};
 
 public:
-	FCompiledBindingLibraryCompiler();
+	FCompiledBindingLibraryCompiler(UBlueprint* Context);
 
 public:
 	/** */
@@ -159,7 +158,7 @@ public:
 	TValueOrError<FFieldPathHandle, FText> AddFieldPath(TArrayView<const UE::MVVM::FMVVMConstFieldVariant> FieldPath, bool bRead);
 
 	/** */
-	TValueOrError<FFieldPathHandle, FText> AddObjectFieldPath(TArrayView<const UE::MVVM::FMVVMConstFieldVariant> FieldPath, UClass* ExpectedType, bool bRead);
+	TValueOrError<FFieldPathHandle, FText> AddObjectFieldPath(TArrayView<const UE::MVVM::FMVVMConstFieldVariant> FieldPath, const UClass* ExpectedType, bool bRead);
 
 	/** */
 	TValueOrError<FFieldPathHandle, FText> AddConversionFunctionFieldPath(const UClass* SourceClass, const UFunction* Function);
@@ -175,14 +174,15 @@ public:
 
 	struct FCompileResult
 	{
+		FCompileResult(FGuid LibraryId);
 		FMVVMCompiledBindingLibrary Library;
 		TMap<FFieldPathHandle, FMVVMVCompiledFieldPath> FieldPaths;
 		TMap<FBindingHandle, FMVVMVCompiledBinding> Bindings;
-		TMap<FFieldIdHandle, FMVVMVCompiledFieldId> FieldIds;
+		TMap<FFieldIdHandle, UE::FieldNotification::FFieldId> FieldIds;
 	};
 
 	/** */
-	TValueOrError<FCompileResult, FText> Compile();
+	TValueOrError<FCompileResult, FText> Compile(FGuid LibraryId);
 
 private:
 	/** */

@@ -421,10 +421,10 @@ namespace NDIDynamicMeshLocal
 				IndexBufferDesc.Usage = (IndexBufferDesc.Usage & ~EBufferUsageFlags::VertexBuffer) | EBufferUsageFlags::IndexBuffer;
 
 				//-OPT: We don't need to create a SectionDefaultPooledBuffer if we aren't doing dynamic allocations
-				ResizeBufferIfNeeded(GraphBuilder, SectionDefaultPooledBuffer, EPixelFormat::PF_R32_UINT, FMath::Max(NumSections * 2u, 1u), TEXT("NiagaraDynamicMeshSectionBuffer"));
+				FRDGBufferRef SectionDefaultBuffer = ResizeBufferIfNeeded(GraphBuilder, SectionDefaultPooledBuffer, EPixelFormat::PF_R32_UINT, FMath::Max(NumSections * 2u, 1u), TEXT("NiagaraDynamicMeshSectionBuffer"));
 				ResizeBufferIfNeeded(GraphBuilder, SectionPooledBuffer, EPixelFormat::PF_R32_UINT, FMath::Max(NumSections * 2u, 1u), TEXT("NiagaraDynamicMeshSectionBuffer"));
-				ResizeBufferIfNeeded(GraphBuilder, IndexPooledBuffer, IndexBufferDesc, TEXT("NiagaraDynamicMeshIndexBuffer"));
-				ResizeBufferIfNeeded(GraphBuilder, VertexPooledBuffer, EPixelFormat::PF_R32_UINT, FMath::Max(GameToRenderData.VertexBufferSize >> 2u, 1u), TEXT("NiagaraDynamicMeshVertexBuffer"));
+				FRDGBufferRef RDGIndexBuffer = ResizeBufferIfNeeded(GraphBuilder, IndexPooledBuffer, IndexBufferDesc, TEXT("NiagaraDynamicMeshIndexBuffer"));
+				FRDGBufferRef RDGVertexBuffer = ResizeBufferIfNeeded(GraphBuilder, VertexPooledBuffer, EPixelFormat::PF_R32_UINT, FMath::Max(GameToRenderData.VertexBufferSize >> 2u, 1u), TEXT("NiagaraDynamicMeshVertexBuffer"));
 
 				MeshSections.SetNum(GameToRenderData.MeshSections.Num());
 				if (NumSections > 0)
@@ -451,18 +451,29 @@ namespace NDIDynamicMeshLocal
 						GpuMeshSections[i * 2 + 0] = InSection.MaxTriangles;
 						GpuMeshSections[i * 2 + 1] = InSection.AllocatedTriangles;
 					}
-					GraphBuilder.QueueBufferUpload(GraphBuilder.RegisterExternalBuffer(SectionDefaultPooledBuffer), GpuMeshSections, GpuMeshSectionsBytes, ERDGInitialDataFlags::NoCopy);
+					GraphBuilder.QueueBufferUpload(SectionDefaultBuffer, GpuMeshSections, GpuMeshSectionsBytes, ERDGInitialDataFlags::NoCopy);
 				}
 				//-OPT: We can remove the copying here.
 				if (GameToRenderData.IndexData.Num() > 0)
 				{
-					GraphBuilder.QueueBufferUpload(GraphBuilder.RegisterExternalBuffer(IndexPooledBuffer), GameToRenderData.IndexData.GetData(), GameToRenderData.IndexData.Num());
+					GraphBuilder.QueueBufferUpload(RDGIndexBuffer, GameToRenderData.IndexData.GetData(), GameToRenderData.IndexData.Num());
 				}
 
 				if (GameToRenderData.VertexData.Num() > 0)
 				{
-					GraphBuilder.QueueBufferUpload(GraphBuilder.RegisterExternalBuffer(VertexPooledBuffer), GameToRenderData.VertexData.GetData(), GameToRenderData.VertexData.Num());
+					GraphBuilder.QueueBufferUpload(RDGVertexBuffer, GameToRenderData.VertexData.GetData(), GameToRenderData.VertexData.Num());
 				}
+
+				FRDGExternalAccessQueue ExternalAccessQueue;
+				if (RDGIndexBuffer != nullptr)
+				{
+					ExternalAccessQueue.Add(RDGIndexBuffer, ERHIAccess::VertexOrIndexBuffer | ERHIAccess::SRVMask);
+				}
+				if (RDGVertexBuffer != nullptr)
+				{
+					ExternalAccessQueue.Add(RDGVertexBuffer, ERHIAccess::VertexOrIndexBuffer | ERHIAccess::SRVMask);
+				}
+				ExternalAccessQueue.Submit(GraphBuilder);
 
 				GraphBuilder.Execute();
 			}
@@ -606,7 +617,7 @@ namespace NDIDynamicMeshLocal
 			return FBox(FVector(-100.0f), FVector(100.0f));
 		}
 
-		virtual void GetLODModelData(FLODModelData& OutLODModelData) const
+		virtual void GetLODModelData(FLODModelData& OutLODModelData, int32 LODLevel) const
 		{
 			const FNDIInstanceData_RenderThread* InstanceData = OwnerProxy->InstanceData_RT.Find(SystemInstanceID);
 			if (InstanceData && InstanceData->NumTriangles > 0 && InstanceData->NumVertices > 0)
@@ -623,7 +634,7 @@ namespace NDIDynamicMeshLocal
 			}
 		}
 
-		virtual void SetupVertexFactory(class FNiagaraMeshVertexFactory& VertexFactory, const FLODModelData& LODModelData) const override
+		virtual void SetupVertexFactory(FRHICommandListBase& RHICmdList, class FNiagaraMeshVertexFactory& VertexFactory, const FLODModelData& LODModelData) const override
 		{
 			const FNDIInstanceData_RenderThread* InstanceData = &OwnerProxy->InstanceData_RT.FindChecked(SystemInstanceID);
 
@@ -686,7 +697,7 @@ namespace NDIDynamicMeshLocal
 				StaticMeshData.ColorComponentsSRV = GNullColorVertexBuffer.VertexBufferSRV;
 			}
 
-			VertexFactory.SetData(StaticMeshData);
+			VertexFactory.SetData(RHICmdList, StaticMeshData);
 		}
 
 		virtual void GetUsedMaterials(TArray<UMaterialInterface*>& OutMaterials) const override
@@ -740,7 +751,8 @@ void UNiagaraDataInterfaceDynamicMesh::PostInitProperties()
 	}
 }
 
-void UNiagaraDataInterfaceDynamicMesh::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceDynamicMesh::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	using namespace NDIDynamicMeshLocal;
 
@@ -990,6 +1002,7 @@ void UNiagaraDataInterfaceDynamicMesh::GetFunctions(TArray<FNiagaraFunctionSigna
 		Signature.SetDescription(LOCTEXT("AppendTriangleDesc", "Appends a triangle to the section.  This assumes that triangles are stored sequentially in the section, no vertex sharing, etc."));
 	}
 }
+#endif
 
 void UNiagaraDataInterfaceDynamicMesh::GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction& OutFunc)
 {

@@ -48,6 +48,7 @@
 #include "Engine/SkinnedAssetCommon.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/StaticMeshActor.h"
+#include "Features/IModularFeatures.h"
 #include "HAL/FileManager.h"
 #include "IAssetTools.h"
 #include "ISourceControlModule.h"
@@ -80,11 +81,6 @@
 #include "UObject/Package.h"
 #include "UObject/UObjectHash.h"
 #include "UnrealEdGlobals.h"
-
-#include "Animation/Skeleton.h"
-#include "ChaosClothAsset/ClothAsset.h"
-#include "ChaosClothAsset/CollectionClothFacade.h"
-#include "GeometryCollection/ManagedArrayCollection.h"
 
 extern UNREALED_API UEditorEngine* GEditor;
 
@@ -390,6 +386,24 @@ void FDatasmithImporter::ImportClothes(FDatasmithImportContext& ImportContext)
 
 	TRACE_CPUPROFILER_EVENT_SCOPE(FDatasmithImporter::ImportClothes);
 
+	// Locate a cloth asset provider
+	const TArray<IDatasmithClothFactoryClassesProvider*> ClothFactoryClassesProviders = IModularFeatures::Get().GetModularFeatureImplementations<IDatasmithClothFactoryClassesProvider>(IDatasmithClothFactoryClassesProvider::FeatureName);
+	if (!ClothFactoryClassesProviders.Num() || !ClothFactoryClassesProviders[0])
+	{
+		UE_LOG(LogDatasmithImport, Warning, TEXT("No cloth factory class provider found, cloth import skipped."));
+		return;
+	}
+	const UDatasmithClothAssetFactory* const ClothAssetFactory = ClothFactoryClassesProviders[0]->GetClothAssetFactoryClass().GetDefaultObject();
+	if (!ClothAssetFactory)
+	{
+		UE_LOG(LogDatasmithImport, Warning, TEXT("Invalid (null) cloth asset factory, cloth import skipped."));
+		return;
+	}
+	if (ClothFactoryClassesProviders.Num() > 1)
+	{
+		UE_LOG(LogDatasmithImport, Warning, TEXT("Multiple cloth asset providers found, only the cloth asset type from provider %s will be imported."), *ClothFactoryClassesProviders[0]->GetName().ToString());
+	}
+
 	TUniquePtr<FScopedSlowTask> ProgressPtr;
 	if (ImportContext.FeedbackContext)
 	{
@@ -437,8 +451,6 @@ void FDatasmithImporter::ImportClothes(FDatasmithImportContext& ImportContext)
 		UPackage* ImportPackage = ImportContext.AssetsContext.StaticMeshesImportPackage.Get();
 		EObjectFlags ObjectFlags = ImportContext.ObjectFlags & ~RF_Public; // not RF_Public yet, the publicized asset will be.
 
-		UChaosClothAsset* ClothAsset = nullptr;
-
 		// TODO: Use FCollectionPropertyFacade instead, see \Engine\Source\Runtime\Experimental\Chaos\Public\Chaos\CollectionPropertyFacade.h
 		//TArray<UObject*> ClothPresetAssets;
 
@@ -456,22 +468,22 @@ void FDatasmithImporter::ImportClothes(FDatasmithImportContext& ImportContext)
 		//	}
 		//}
 
-		UObject* ExistingClothObj = nullptr;
+		UObject* ExistingCloth = nullptr;
 		if (ImportContext.SceneAsset)
 		{
 			if (TSoftObjectPtr<UObject>* ExistingAssetPtr = ImportContext.SceneAsset->Clothes.Find(ClothElement->GetName()))
 			{
-				ExistingClothObj = ExistingAssetPtr->LoadSynchronous();
+				ExistingCloth = ExistingAssetPtr->LoadSynchronous();
 			}
 		}
-		UChaosClothAsset* ExistingCloth = Cast<UChaosClothAsset>(ExistingClothObj);
+		UObject* ClothAsset = nullptr;
 		if (ExistingCloth)
 		{
 			if (ExistingCloth->GetOuter() != ImportPackage)
 			{
 				// Temporary flag to skip PostLoad during DuplicateObject
 				ExistingCloth->SetFlags(RF_ArchetypeObject);
-				ClothAsset = DuplicateObject<UChaosClothAsset>(ExistingCloth, ImportPackage, *ClothName);
+				ClothAsset = ClothAssetFactory->DuplicateClothAsset(ExistingCloth, ImportPackage, *ClothName);
 				ExistingCloth->ClearFlags(RF_ArchetypeObject);
 				ClothAsset->ClearFlags(RF_ArchetypeObject);
 
@@ -486,7 +498,7 @@ void FDatasmithImporter::ImportClothes(FDatasmithImportContext& ImportContext)
 		}
 		else
 		{
-			ClothAsset = NewObject<UChaosClothAsset>(ImportPackage, *ClothName, ObjectFlags);
+			ClothAsset = ClothAssetFactory->CreateClothAsset(ImportPackage, *ClothName, ObjectFlags);
 		}
 
 		if (!ensure(ClothAsset))
@@ -494,56 +506,7 @@ void FDatasmithImporter::ImportClothes(FDatasmithImportContext& ImportContext)
 			continue;
 		}
 
-		using namespace UE::Chaos::ClothAsset;
-
-		TArray<TSharedRef<FManagedArrayCollection>>& Collections = ClothAsset->GetClothCollections();
-		Collections.Reset(1);
-		FCollectionClothFacade Cloth(Collections.Emplace_GetRef(MakeShared<FManagedArrayCollection>()));
-		Cloth.DefineSchema();
-
-		for (FDatasmithClothPattern& Pattern : DsCloth.Patterns)
-		{
-			if (Pattern.IsValid())
-			{
-				FCollectionClothSimPatternFacade ClothPattern = Cloth.AddGetSimPattern();
-				ClothPattern.Initialize(Pattern.SimPosition, Pattern.SimRestPosition, Pattern.SimTriangleIndices);
-			}
-		}
-
-		for (const FDatasmithClothSewingInfo& SeamInfo : DsCloth.Sewing)
-		{
-			const int32 SeamPattern0 = (int32)SeamInfo.Seam0PanelIndex;
-			const int32 SeamPattern1 = (int32)SeamInfo.Seam1PanelIndex;
-
-			if (SeamPattern0 >= 0 && SeamPattern0 < Cloth.GetNumSimPatterns() &&
-				SeamPattern1 >= 0 && SeamPattern1 < Cloth.GetNumSimPatterns())
-			{
-				const FCollectionClothSimPatternConstFacade ClothPattern0 = Cloth.GetSimPattern(SeamPattern0);
-				const FCollectionClothSimPatternConstFacade ClothPattern1 = Cloth.GetSimPattern(SeamPattern1);
-
-				const int32 ClothPattern0VerticesOffset = ClothPattern0.GetSimVertices2DOffset();
-				const int32 ClothPattern1VerticesOffset = ClothPattern1.GetSimVertices2DOffset();
-
-				TArray<FIntVector2> Stitches;
-				const uint32 StitchesCount = FMath::Min(SeamInfo.Seam0MeshIndices.Num(), SeamInfo.Seam1MeshIndices.Num());
-				Stitches.Reserve(StitchesCount);
-				for (uint32 StitchIndex = 0; StitchIndex < StitchesCount; ++StitchIndex)
-				{
-					Stitches.Emplace(
-						(int32)SeamInfo.Seam0MeshIndices[StitchIndex] + ClothPattern0VerticesOffset, 
-						(int32)SeamInfo.Seam1MeshIndices[StitchIndex] + ClothPattern1VerticesOffset);
-				}
-
-				FCollectionClothSeamFacade SeamFacade = Cloth.AddGetSeam();
-				SeamFacade.Initialize(Stitches);
-			}
-		}
-
-		// Set the render mesh to duplicate the sim mesh
-		ClothAsset->CopySimMeshToRenderMesh();
-
-		// Set a default skeleton and rebuild the asset
-		ClothAsset->SetReferenceSkeleton(nullptr);  // This creates a default reference skeleton, redo the bindings, and rebuild the asset
+		ClothAssetFactory->InitializeClothAsset(ClothAsset, DsCloth);
 
 		ImportContext.ImportedClothes.Add(ClothElement, ClothAsset);
 
@@ -1189,11 +1152,17 @@ AActor* FDatasmithImporter::ImportActor( FDatasmithImportContext& ImportContext,
 		ImportedActor = FDatasmithActorImporter::ImportBaseActor( ImportContext, ActorElement );
 	}
 
-
 	if ( ImportedActor ) // It's possible that we didn't import an actor (ie: the user doesn't want to import the cameras), in that case, we'll skip it in the hierarchy
 	{
 		ImportContext.Hierarchy.Push( ImportedActor->GetRootComponent() );
 		ImportMetaDataForObject(ImportContext, ActorElement, ImportedActor);
+
+		ImportContext.AddImportedActor(ImportedActor);
+
+		if (ADatasmithSceneActor* DatasmithSceneActor = ImportContext.ActorsContext.ImportSceneActor)
+		{
+			DatasmithSceneActor->RelatedActors.FindOrAdd(ActorElement->GetName()) = ImportedActor;
+		}
 	}
 	else
 	{

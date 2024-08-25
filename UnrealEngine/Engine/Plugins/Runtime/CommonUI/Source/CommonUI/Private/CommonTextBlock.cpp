@@ -29,6 +29,7 @@ FTextScrollerOptions UCommonTextScrollStyle::ToScrollOptions() const
 UCommonTextStyle::UCommonTextStyle()
 	: Color(FLinearColor::Black)
 	, LineHeightPercentage(1.0f)
+	, ApplyLineHeightToBottomLine(true)
 {
 }
 
@@ -50,6 +51,11 @@ void UCommonTextStyle::GetMargin(FMargin& OutMargin) const
 float UCommonTextStyle::GetLineHeightPercentage() const
 {
 	return LineHeightPercentage;
+}
+
+bool UCommonTextStyle::GetApplyLineHeightToBottomLine() const
+{
+	return ApplyLineHeightToBottomLine;
 }
 
 void UCommonTextStyle::GetShadowOffset(FVector2D& OutShadowOffset) const
@@ -82,6 +88,7 @@ void UCommonTextStyle::ApplyToTextBlock(const TSharedRef<STextBlock>& TextBlock)
 	TextBlock->SetStrikeBrush(&StrikeBrush);
 	TextBlock->SetMargin(Margin);
 	TextBlock->SetLineHeightPercentage(LineHeightPercentage);
+	TextBlock->SetApplyLineHeightToBottomLine(ApplyLineHeightToBottomLine);
 	TextBlock->SetColorAndOpacity(Color);
 	if (bUsesDropShadow)
 	{
@@ -212,6 +219,9 @@ void UCommonTextBlock::PostLoad()
 			// LineHeightPercentage
 			if (LineHeightPercentage == CDO->LineHeightPercentage) { LineHeightPercentage = DefaultStyleCDO->LineHeightPercentage; } else { bAllDefaults = false; }
 
+			// ApplyLineHeightToBottomLine
+			if (ApplyLineHeightToBottomLine == CDO->ApplyLineHeightToBottomLine) { ApplyLineHeightToBottomLine = DefaultStyleCDO->ApplyLineHeightToBottomLine; } else { bAllDefaults = false; }
+
 			// ColorAndOpacity
 			if (GetColorAndOpacity() == CDO->GetColorAndOpacity()) { SetColorAndOpacity(DefaultStyleCDO->Color); } else { bAllDefaults = false; }
 
@@ -297,6 +307,7 @@ void UCommonTextBlock::Serialize(FArchive& Ar)
 		FSlateBrush TempStrikeBrush;
 		FMargin TempMargin;
 		float TempLineHeightPercentage = 1.f;
+		bool TempApplyLineHeightToBottomLine = true;
 		FSlateColor TempColorAndOpacity;
 		FVector2D TempShadowOffset = FVector2D::ZeroVector;
 		FLinearColor TempShadowColorAndOpacity = FLinearColor::Transparent;
@@ -306,6 +317,7 @@ void UCommonTextBlock::Serialize(FArchive& Ar)
 		Swap(StrikeBrush, TempStrikeBrush);
 		Swap(Margin, TempMargin);
 		Swap(LineHeightPercentage, TempLineHeightPercentage);
+		Swap(ApplyLineHeightToBottomLine, TempApplyLineHeightToBottomLine);
 		Swap(ColorAndOpacity, TempColorAndOpacity);
 		Swap(ShadowOffset, TempShadowOffset);
 		Swap(ShadowColorAndOpacity, TempShadowColorAndOpacity);
@@ -316,6 +328,7 @@ void UCommonTextBlock::Serialize(FArchive& Ar)
 		Swap(TempStrikeBrush, StrikeBrush);
 		Swap(TempMargin, Margin);
 		Swap(TempLineHeightPercentage, LineHeightPercentage);
+		Swap(TempApplyLineHeightToBottomLine, ApplyLineHeightToBottomLine);
 		Swap(TempColorAndOpacity, ColorAndOpacity);
 		Swap(TempShadowOffset, ShadowOffset);
 		Swap(TempShadowColorAndOpacity, ShadowColorAndOpacity);
@@ -336,8 +349,7 @@ void UCommonTextBlock::Serialize(FArchive& Ar)
 
 void UCommonTextBlock::SetWrapTextWidth(int32 InWrapTextAt)
 {
-	WrapTextAt = InWrapTextAt;
-	SynchronizeProperties();
+	SetWrapTextAt(InWrapTextAt);
 }
 
 void UCommonTextBlock::SetTextCase(bool bUseAllCaps)
@@ -348,7 +360,12 @@ void UCommonTextBlock::SetTextCase(bool bUseAllCaps)
 
 void UCommonTextBlock::SetLineHeightPercentage(float InLineHeightPercentage)
 {
-	LineHeightPercentage = InLineHeightPercentage;
+	UTextLayoutWidget::SetLineHeightPercentage(InLineHeightPercentage);
+}
+
+void UCommonTextBlock::SetApplyLineHeightToBottomLine(bool InApplyLineHeightToBottomLine)
+{
+	UTextLayoutWidget::SetApplyLineHeightToBottomLine(InApplyLineHeightToBottomLine);
 }
 
 void UCommonTextBlock::SetStyle(TSubclassOf<UCommonTextStyle> InStyle)
@@ -364,7 +381,7 @@ const FMargin& UCommonTextBlock::GetMargin()
 
 void UCommonTextBlock::SetMargin(const FMargin& InMargin)
 {
-	Margin = InMargin;
+	UTextLayoutWidget::SetMargin(InMargin);
 }
 
 void UCommonTextBlock::ResetScrollState()
@@ -407,7 +424,14 @@ void UCommonTextBlock::SynchronizeProperties()
 
 	if (bAutoCollapseWithEmptyText)
 	{
-		SetVisibility(GetText().IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible);
+		if (IsDesignTime())
+		{
+			SetVisibility(GetText().IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+		}
+		else
+		{
+			SetVisibility(GetText().IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible);
+		}
 	}
 
 	if (CommonUIUtils::ShouldDisplayMobileUISizes())
@@ -439,7 +463,14 @@ void UCommonTextBlock::OnTextChanged()
 	Super::OnTextChanged();
 	if (bAutoCollapseWithEmptyText)
 	{
-		SetVisibility(GetText().IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible);
+		if (IsDesignTime())
+		{
+			SetVisibility(GetText().IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::Visible);
+		}
+		else
+		{
+			SetVisibility(GetText().IsEmpty() ? ESlateVisibility::Collapsed : ESlateVisibility::SelfHitTestInvisible);
+		}
 	}
 }
 
@@ -460,6 +491,7 @@ void UCommonTextBlock::UpdateFromStyle()
 		SetStrikeBrush(TextStyle->StrikeBrush);
 		Margin = TextStyle->Margin;
 		LineHeightPercentage = TextStyle->LineHeightPercentage;
+		ApplyLineHeightToBottomLine = TextStyle->ApplyLineHeightToBottomLine;
 		SetColorAndOpacity(TextStyle->Color);
 
 		if (TextStyle->bUsesDropShadow)
@@ -504,6 +536,8 @@ bool UCommonTextBlock::CanEditChange(const FProperty* InProperty) const
 	if (Super::CanEditChange(InProperty))
 	{
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
+		bool bIsInvalidProperty = false;
+		
 		if (const UCommonTextStyle* TextStyle = GetStyleCDO())
 		{
 			static TArray<FName> InvalidPropertiesWithStyle =
@@ -512,13 +546,30 @@ PRAGMA_DISABLE_DEPRECATION_WARNINGS
 				GET_MEMBER_NAME_CHECKED(UCommonTextBlock, StrikeBrush),
 				GET_MEMBER_NAME_CHECKED(UCommonTextBlock, Margin),
 				GET_MEMBER_NAME_CHECKED(UCommonTextBlock, LineHeightPercentage),
+				GET_MEMBER_NAME_CHECKED(UCommonTextBlock, ApplyLineHeightToBottomLine),
 				GET_MEMBER_NAME_CHECKED(UCommonTextBlock, ColorAndOpacity),
 				GET_MEMBER_NAME_CHECKED(UCommonTextBlock, ShadowOffset),
 				GET_MEMBER_NAME_CHECKED(UCommonTextBlock, ShadowColorAndOpacity)
 			};
 
-			return !InvalidPropertiesWithStyle.Contains(InProperty->GetFName());
+			bIsInvalidProperty |= InvalidPropertiesWithStyle.Contains(InProperty->GetFName());
 		}
+		
+		if (const UCommonTextScrollStyle* TextScrollStyle = UCommonTextBlock::GetScrollStyleCDO())
+		{
+			static TArray<FName> InvalidPropertiesWithScrollStyle =
+			{
+				GET_MEMBER_NAME_CHECKED(UCommonTextBlock, Clipping)
+			};
+			
+			bIsInvalidProperty |= InvalidPropertiesWithScrollStyle.Contains(InProperty->GetFName());
+		}
+
+		if (bIsInvalidProperty)
+		{
+			return false;
+		}
+
 		if (bAutoCollapseWithEmptyText && InProperty->GetFName() == GET_MEMBER_NAME_CHECKED(UCommonTextBlock, Visibility))
 		{
 			return false;
@@ -540,12 +591,7 @@ TSharedRef<SWidget> UCommonTextBlock::RebuildWidget()
 		return Super::RebuildWidget();
 	}
 
-	// If the clipping mode is the default, but we're using a scrolling style,
-	// we need to switch over to a clip to bounds style.
-	if (GetClipping() == EWidgetClipping::Inherit)
-	{
-		SetClipping(EWidgetClipping::OnDemand);
-	}
+	SetClipping(TextScrollStyle->Clipping);
 
 	// clang-format off
 	TextScroller = 

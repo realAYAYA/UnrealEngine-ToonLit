@@ -41,8 +41,8 @@ void* stb_arena_alloc_aligned(struct stb_arena* a, size_t size, size_t align)
 			}
 		}
 
-		// allocate and record allocation
-		a->last_block = (unsigned char*)STB_COMMON_MALLOC(a->last_block_size + 31);
+		// allocate and record allocation.  31 bytes for alignment, 16 bytes for SSE padding at end of a block
+		a->last_block = (unsigned char*)STB_COMMON_MALLOC(a->last_block_size + 31 + 16);
 		STB_ASSUME(a->blocks != NULL);
 		a->blocks[a->num_blocks++] = a->last_block;
 		a->last_block_alloc_offset = 0;

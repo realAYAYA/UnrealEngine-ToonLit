@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Text.Json;
 using System.Text.Json.Serialization;
 using EpicGames.Slack.Elements;
 
@@ -37,6 +36,14 @@ namespace EpicGames.Slack
 		/// </summary>
 		[JsonPropertyName("url")]
 		public Uri? Url { get; set; }
+
+		/// <summary>
+		/// Constructor
+		/// </summary>
+		public SlackOption()
+			: this("", "")
+		{
+		}
 
 		/// <summary>
 		/// Constructor

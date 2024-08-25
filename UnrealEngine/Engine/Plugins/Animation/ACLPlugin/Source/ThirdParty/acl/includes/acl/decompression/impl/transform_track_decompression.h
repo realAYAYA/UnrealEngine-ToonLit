@@ -1,4 +1,3 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
 #pragma once
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -25,6 +24,7 @@
 // SOFTWARE.
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "acl/version.h"
 #include "acl/core/bit_manip_utils.h"
 #include "acl/core/bitset.h"
 #include "acl/core/compressed_tracks.h"
@@ -33,8 +33,9 @@
 #include "acl/core/range_reduction_types.h"
 #include "acl/core/track_formats.h"
 #include "acl/core/track_writer.h"
-#include "acl/core/variable_bit_rates.h"
+#include "acl/core/impl/atomic.impl.h"
 #include "acl/core/impl/compiler_utils.h"
+#include "acl/core/impl/variable_bit_rates.h"
 #include "acl/decompression/database/database.h"
 #include "acl/decompression/impl/transform_animated_track_cache.h"
 #include "acl/decompression/impl/transform_constant_track_cache.h"
@@ -63,6 +64,8 @@ ACL_IMPL_FILE_PRAGMA_PUSH
 
 namespace acl
 {
+	ACL_IMPL_VERSION_NAMESPACE_BEGIN
+
 	namespace acl_impl
 	{
 #if defined(ACL_IMPL_USE_SEEK_PREFETCH)
@@ -99,36 +102,111 @@ namespace acl
 			ACL_ASSERT(translation_format == packed_translation_format, "Statically compiled translation format (%s) differs from the compressed translation format (%s)!", get_vector_format_name(translation_format), get_vector_format_name(packed_translation_format));
 			ACL_ASSERT(scale_format == packed_scale_format, "Statically compiled scale format (%s) differs from the compressed scale format (%s)!", get_vector_format_name(scale_format), get_vector_format_name(packed_scale_format));
 
-			context.tracks = &tracks;
-			context.db = reinterpret_cast<const database_context_v0*>(database);	// Context is always the first member and versions should always match
-			context.clip_hash = tracks.get_hash();
-			context.clip_duration = calculate_finite_duration(header.num_samples, header.sample_rate);
-			context.sample_time = -1.0F;
+			// Context is always the first member and versions should always match
+			const database_context_v0* db = reinterpret_cast<const database_context_v0*>(database);
 
+			context.tracks = &tracks;
+			context.db = db;
+			context.tracks_hash = tracks.get_hash();
+			context.db_hash = db != nullptr ? db->db_hash : 0;
+			context.sample_time = -1.0F;
 			context.rotation_format = rotation_format;
 			context.translation_format = translation_format;
 			context.scale_format = scale_format;
 			context.has_scale = header.get_has_scale();
 			context.has_segments = transform_header.has_multiple_segments();
 
+			if (decompression_settings_type::is_wrapping_supported())
+			{
+				context.clip_duration = tracks.get_finite_duration();
+				context.looping_policy = static_cast<uint8_t>(tracks.get_looping_policy());
+			}
+			else
+			{
+				context.clip_duration = tracks.get_finite_duration(sample_looping_policy::clamp);
+				context.looping_policy = static_cast<uint8_t>(sample_looping_policy::clamp);
+			}
+
 			return true;
 		}
 
-		inline bool is_dirty_v0(const persistent_transform_decompression_context_v0& context, const compressed_tracks& tracks)
+		template<class decompression_settings_type, class database_settings_type>
+		inline bool relocated_v0(persistent_transform_decompression_context_v0& context, const compressed_tracks& tracks, const database_context<database_settings_type>* database)
+		{
+			if (context.tracks_hash != tracks.get_hash())
+				return false;	// Hash is different, this instance did not relocate, it is different
+
+			// Context is always the first member and versions should always match
+			const database_context_v0* db = reinterpret_cast<const database_context_v0*>(database);
+			const uint32_t db_hash = db != nullptr ? db->db_hash : 0;
+
+			if (context.db_hash != db_hash)
+				return false;	// Hash is different, this instance did not relocate, it is different
+
+			// The instances are identical and might have relocated, update our metadata
+			context.tracks = &tracks;
+			context.db = db;
+
+			// Reset the sample time to force seek() to be called again.
+			// The context otherwise contains pointers within the tracks and database instances
+			// that are populated during seek.
+			context.sample_time = -1.0F;
+
+			return true;
+		}
+
+		inline bool is_bound_to_v0(const persistent_transform_decompression_context_v0& context, const compressed_tracks& tracks)
 		{
 			if (context.tracks != &tracks)
-				return true;
+				return false;	// Different pointer, no guarantees
 
-			if (context.clip_hash != tracks.get_hash())
-				return true;
+			if (context.tracks_hash != tracks.get_hash())
+				return false;	// Different hash
 
-			return false;
+			// Must be bound to it!
+			return true;
+		}
+
+		inline bool is_bound_to_v0(const persistent_transform_decompression_context_v0& context, const compressed_database& database)
+		{
+			if (context.db == nullptr)
+				return false;	// Not bound to any database
+
+			if (context.db->db != &database)
+				return false;	// Different pointer, no guarantees
+
+			if (context.db_hash != database.get_hash())
+				return false;	// Different hash
+
+			// Must be bound to it!
+			return true;
+		}
+
+		template<class decompression_settings_type>
+		inline void set_looping_policy_v0(persistent_transform_decompression_context_v0& context, sample_looping_policy policy)
+		{
+			if (!decompression_settings_type::is_wrapping_supported())
+				return;	// Only clamping is supported
+
+			const compressed_tracks* tracks = context.tracks;
+
+			if (policy == sample_looping_policy::as_compressed)
+				policy = tracks->get_looping_policy();
+
+			const sample_looping_policy current_policy = static_cast<sample_looping_policy>(context.looping_policy);
+			if (current_policy != policy)
+			{
+				// Policy changed
+				context.clip_duration = tracks->get_finite_duration(policy);
+				context.looping_policy = static_cast<uint8_t>(policy);
+			}
 		}
 
 		template<class decompression_settings_type>
 		inline void seek_v0(persistent_transform_decompression_context_v0& context, float sample_time, sample_rounding_policy rounding_policy)
 		{
-			const tracks_header& header = get_tracks_header(*context.tracks);
+			const compressed_tracks* tracks = context.tracks;
+			const tracks_header& header = get_tracks_header(*tracks);
 			if (header.num_tracks == 0)
 				return;	// Empty track list
 
@@ -136,10 +214,10 @@ namespace acl
 			if (decompression_settings_type::clamp_sample_time())
 				sample_time = rtm::scalar_clamp(sample_time, 0.0F, context.clip_duration);
 
-			if (context.sample_time == sample_time)
+			if (context.sample_time == sample_time && context.get_rounding_policy() == rounding_policy)
 				return;
 
-			const transform_tracks_header& transform_header = get_transform_tracks_header(*context.tracks);
+			const transform_tracks_header& transform_header = get_transform_tracks_header(*tracks);
 
 			// Prefetch our sub-track types, we'll need them soon when we start decompressing
 			// Most clips will have their sub-track types fit into 1 or 2 cache lines, we'll prefetch 2
@@ -153,9 +231,14 @@ namespace acl
 
 			context.sample_time = sample_time;
 
+			// If the wrap looping policy isn't supported, use our statically known value
+			const sample_looping_policy looping_policy_ = decompression_settings_type::is_wrapping_supported() ? static_cast<sample_looping_policy>(context.looping_policy) : sample_looping_policy::clamp;
+
 			uint32_t key_frame0;
 			uint32_t key_frame1;
-			find_linear_interpolation_samples_with_sample_rate(header.num_samples, header.sample_rate, sample_time, rounding_policy, key_frame0, key_frame1, context.interpolation_alpha);
+			find_linear_interpolation_samples_with_sample_rate(header.num_samples, header.sample_rate, sample_time, rounding_policy, looping_policy_, key_frame0, key_frame1, context.interpolation_alpha);
+
+			context.rounding_policy = static_cast<uint8_t>(rounding_policy);
 
 			uint32_t segment_key_frame0;
 			uint32_t segment_key_frame1;
@@ -168,26 +251,26 @@ namespace acl
 
 			// These two pointers are the same, the compiler should optimize one out, only here for type safety later
 			const segment_header* segment_headers = transform_header.get_segment_headers();
-			const segment_tier0_header* segment_tier0_headers = transform_header.get_segment_tier0_headers();
+			const stripped_segment_header_t* segment_tier0_headers = transform_header.get_stripped_segment_headers();
 
 			const uint32_t num_segments = transform_header.num_segments;
 
 			constexpr bool is_database_supported = is_database_supported_impl<decompression_settings_type>();
-			ACL_ASSERT(is_database_supported || !context.tracks->has_database(), "Cannot have a database when it isn't supported");
+			ACL_ASSERT(is_database_supported || !tracks->has_database(), "Cannot have a database when it isn't supported");
 
-			const bool has_database = is_database_supported && context.tracks->has_database();
+			const bool has_database = is_database_supported && tracks->has_database();
 			const database_context_v0* db = context.db;
+
+			const bool has_stripped_keyframes = has_database || tracks->has_stripped_keyframes();
 
 			if (num_segments == 1)
 			{
 				// Key frame 0 and 1 are in the only segment present
 				// This is a really common case and when it happens, we don't store the segment start index (zero)
 
-// @third party code - Epic Games Begin
-				if ((is_database_supported && has_database) || context.tracks->frames_dropped())
-// @third party code - Epic Games End
+				if (has_stripped_keyframes)
 				{
-					const segment_tier0_header* segment_tier0_header0 = segment_tier0_headers;
+					const stripped_segment_header_t* segment_tier0_header0 = segment_tier0_headers;
 
 					// This will cache miss
 					uint32_t sample_indices0 = segment_tier0_header0->sample_indices;
@@ -202,7 +285,7 @@ namespace acl
 					uint64_t low_importance_tier_metadata0 = 0;
 
 					// Combine all our loaded samples into a single bit set to find which samples we need to interpolate
-					if (db != nullptr)
+					if (is_database_supported && db != nullptr)
 					{
 						// Possible cache miss for the clip header offset
 						// Cache miss for the db clip segment headers pointer
@@ -212,8 +295,8 @@ namespace acl
 
 						// Cache miss for the db segment headers
 						const database_runtime_segment_header* db_segment_header0 = db_segment_headers;
-						medium_importance_tier_metadata0 = db_segment_header0->tier_metadata[0].load(std::memory_order::memory_order_relaxed);
-						low_importance_tier_metadata0 = db_segment_header0->tier_metadata[1].load(std::memory_order::memory_order_relaxed);
+						medium_importance_tier_metadata0 = db_segment_header0->tier_metadata[0].load(k_memory_order_relaxed);
+						low_importance_tier_metadata0 = db_segment_header0->tier_metadata[1].load(k_memory_order_relaxed);
 
 						sample_indices0 |= uint32_t(medium_importance_tier_metadata0);
 						sample_indices0 |= uint32_t(low_importance_tier_metadata0);
@@ -229,13 +312,15 @@ namespace acl
 					key_frame1 = count_leading_zeros(candidate_indices1);
 
 					// Calculate our new interpolation alpha
-					context.interpolation_alpha = find_linear_interpolation_alpha(sample_index, key_frame0, key_frame1, rounding_policy);
+					// We used the rounding policy above to snap to the correct key frame earlier but we might need to interpolate now
+					// if key frames have been removed
+					context.interpolation_alpha = find_linear_interpolation_alpha(sample_index, key_frame0, key_frame1, sample_rounding_policy::none, looping_policy_);
 
 					// Find where our data lives (clip or database tier X)
 					sample_indices0 = segment_tier0_header0->sample_indices;
 					uint32_t sample_indices1 = sample_indices0;	// Identical
 
-					if (db != nullptr)
+					if (is_database_supported && db != nullptr)
 					{
 						const uint64_t sample_index0 = uint64_t(1) << (31 - key_frame0);
 						const uint64_t sample_index1 = uint64_t(1) << (31 - key_frame1);
@@ -308,7 +393,13 @@ namespace acl
 						// We went too far, use previous segment
 						ACL_ASSERT(segment_index > 0, "Invalid segment index: %u", segment_index);
 						segment_index0 = segment_index - 1;
-						segment_index1 = key_frame1 < segment_start_indices[segment_index] ? segment_index0 : segment_index;
+
+						// If wrapping is enabled and we wrapped, use the first segment
+						if (decompression_settings_type::is_wrapping_supported() && key_frame1 == 0)
+							segment_index1 = 0;
+						else
+							segment_index1 = key_frame1 < segment_start_indices[segment_index] ? segment_index0 : segment_index;
+
 						break;
 					}
 				}
@@ -316,12 +407,10 @@ namespace acl
 				segment_key_frame0 = key_frame0 - segment_start_indices[segment_index0];
 				segment_key_frame1 = key_frame1 - segment_start_indices[segment_index1];
 
-// @third party code - Epic Games Begin
-				if ((is_database_supported && has_database) || context.tracks->frames_dropped())
-// @third party code - Epic Games End
+				if (has_stripped_keyframes)
 				{
-					const segment_tier0_header* segment_tier0_header0 = segment_tier0_headers + segment_index0;
-					const segment_tier0_header* segment_tier0_header1 = segment_tier0_headers + segment_index1;
+					const stripped_segment_header_t* segment_tier0_header0 = segment_tier0_headers + segment_index0;
+					const stripped_segment_header_t* segment_tier0_header1 = segment_tier0_headers + segment_index1;
 
 					// This will cache miss
 					uint32_t sample_indices0 = segment_tier0_header0->sample_indices;
@@ -339,7 +428,7 @@ namespace acl
 					uint64_t low_importance_tier_metadata1 = 0;
 
 					// Combine all our loaded samples into a single bit set to find which samples we need to interpolate
-					if (db != nullptr)
+					if (is_database_supported && db != nullptr)
 					{
 						// Possible cache miss for the clip header offset
 						// Cache miss for the db clip segment headers pointer
@@ -349,15 +438,15 @@ namespace acl
 
 						// Cache miss for the db segment headers
 						const database_runtime_segment_header* db_segment_header0 = db_segment_headers + segment_index0;
-						medium_importance_tier_metadata0 = db_segment_header0->tier_metadata[0].load(std::memory_order::memory_order_relaxed);
-						low_importance_tier_metadata0 = db_segment_header0->tier_metadata[1].load(std::memory_order::memory_order_relaxed);
+						medium_importance_tier_metadata0 = db_segment_header0->tier_metadata[0].load(k_memory_order_relaxed);
+						low_importance_tier_metadata0 = db_segment_header0->tier_metadata[1].load(k_memory_order_relaxed);
 
 						sample_indices0 |= uint32_t(medium_importance_tier_metadata0);
 						sample_indices0 |= uint32_t(low_importance_tier_metadata0);
 
 						const database_runtime_segment_header* db_segment_header1 = db_segment_headers + segment_index1;
-						medium_importance_tier_metadata1 = db_segment_header1->tier_metadata[0].load(std::memory_order::memory_order_relaxed);
-						low_importance_tier_metadata1 = db_segment_header1->tier_metadata[1].load(std::memory_order::memory_order_relaxed);
+						medium_importance_tier_metadata1 = db_segment_header1->tier_metadata[0].load(k_memory_order_relaxed);
+						low_importance_tier_metadata1 = db_segment_header1->tier_metadata[1].load(k_memory_order_relaxed);
 
 						sample_indices1 |= uint32_t(medium_importance_tier_metadata1);
 						sample_indices1 |= uint32_t(low_importance_tier_metadata1);
@@ -377,13 +466,15 @@ namespace acl
 					const uint32_t clip_key_frame1 = segment_start_indices[segment_index1] + segment_key_frame1;
 
 					// Calculate our new interpolation alpha
-					context.interpolation_alpha = find_linear_interpolation_alpha(sample_index, clip_key_frame0, clip_key_frame1, rounding_policy);
+					// We used the rounding policy above to snap to the correct key frame earlier but we might need to interpolate now
+					// if key frames have been removed
+					context.interpolation_alpha = find_linear_interpolation_alpha(sample_index, clip_key_frame0, clip_key_frame1, sample_rounding_policy::none, looping_policy_);
 
 					// Find where our data lives (clip or database tier X)
 					sample_indices0 = segment_tier0_header0->sample_indices;
 					sample_indices1 = segment_tier0_header1->sample_indices;
 
-					if (db != nullptr)
+					if (is_database_supported && db != nullptr)
 					{
 						const uint64_t sample_index0 = uint64_t(1) << (31 - segment_key_frame0);
 						const uint64_t sample_index1 = uint64_t(1) << (31 - segment_key_frame1);
@@ -453,7 +544,7 @@ namespace acl
 				context.animated_track_data[1] = context.animated_track_data[0];
 			}
 
-			if (is_database_supported && has_database)
+			if (has_database)
 			{
 				// Update our pointers if the data lives within the database
 				if (db_animated_track_data0 != nullptr)
@@ -466,21 +557,32 @@ namespace acl
 			context.key_frame_bit_offsets[0] = segment_key_frame0 * segment_header0->animated_pose_bit_size;
 			context.key_frame_bit_offsets[1] = segment_key_frame1 * segment_header1->animated_pose_bit_size;
 
-			context.segment_offsets[0] = ptr_offset32<segment_header>(context.tracks, segment_header0);
-			context.segment_offsets[1] = ptr_offset32<segment_header>(context.tracks, segment_header1);
+			context.segment_offsets[0] = ptr_offset32<segment_header>(tracks, segment_header0);
+			context.segment_offsets[1] = ptr_offset32<segment_header>(tracks, segment_header1);
 		}
 
 
 		// TODO: Merge the per track format and segment range info into a single buffer? Less to prefetch and used together
 		// TODO: Remove segment data alignment, no longer required?
+		// TODO: sample_rounding_policy ends up being signed extended on x64 from a 32 bit value into 64 bit (edx -> rax)
+		//       I tried using uint32_t and uint64_t as its underlying type but code generation remained the same
+		//       Would using a raw uint32_t below instead of the typed enum help avoid the extra instruction?
 
 
 		// Force inline this function, we only use it to keep the code readable
 		template<class track_writer_type>
 		RTM_FORCE_INLINE RTM_DISABLE_SECURITY_COOKIE_CHECK void RTM_SIMD_CALL unpack_default_rotation_sub_tracks(
 			const packed_sub_track_types* rotation_sub_track_types, uint32_t last_entry_index, uint32_t padding_mask,
-			rtm::quatf_arg0 default_rotation, track_writer_type& writer)
+			track_writer_type& writer)
 		{
+			constexpr default_sub_track_mode default_mode = track_writer_type::get_default_rotation_mode();
+			static_assert(default_mode != default_sub_track_mode::legacy, "Not supported for rotations");
+			if (default_mode == default_sub_track_mode::skipped)
+				return;	// Nothing to write
+
+			// Grab our constant default rotation if we have one, otherwise init with some value
+			const rtm::quatf default_rotation = default_mode == default_sub_track_mode::constant ? writer.get_constant_default_rotation() : rtm::quat_identity();
+
 			for (uint32_t entry_index = 0, track_index = 0; entry_index <= last_entry_index; ++entry_index)
 			{
 				uint32_t packed_entry = rotation_sub_track_types[entry_index].types;
@@ -521,7 +623,12 @@ namespace acl
 						const uint32_t track_index0 = curr_group_track_index + 0;
 
 						if (!track_writer_type::skip_all_rotations() && !writer.skip_track_rotation(track_index0))
-							writer.write_rotation(track_index0, default_rotation);
+						{
+							if (default_mode == default_sub_track_mode::variable)
+								writer.write_rotation(track_index0, writer.get_variable_default_rotation(track_index0));
+							else
+								writer.write_rotation(track_index0, default_rotation);
+						}
 					}
 
 					if ((packed_group & 0x20000000) != 0)
@@ -529,7 +636,12 @@ namespace acl
 						const uint32_t track_index1 = curr_group_track_index + 1;
 
 						if (!track_writer_type::skip_all_rotations() && !writer.skip_track_rotation(track_index1))
-							writer.write_rotation(track_index1, default_rotation);
+						{
+							if (default_mode == default_sub_track_mode::variable)
+								writer.write_rotation(track_index1, writer.get_variable_default_rotation(track_index1));
+							else
+								writer.write_rotation(track_index1, default_rotation);
+						}
 					}
 
 					if ((packed_group & 0x08000000) != 0)
@@ -537,7 +649,12 @@ namespace acl
 						const uint32_t track_index2 = curr_group_track_index + 2;
 
 						if (!track_writer_type::skip_all_rotations() && !writer.skip_track_rotation(track_index2))
-							writer.write_rotation(track_index2, default_rotation);
+						{
+							if (default_mode == default_sub_track_mode::variable)
+								writer.write_rotation(track_index2, writer.get_variable_default_rotation(track_index2));
+							else
+								writer.write_rotation(track_index2, default_rotation);
+						}
 					}
 
 					if ((packed_group & 0x02000000) != 0)
@@ -545,7 +662,12 @@ namespace acl
 						const uint32_t track_index3 = curr_group_track_index + 3;
 
 						if (!track_writer_type::skip_all_rotations() && !writer.skip_track_rotation(track_index3))
-							writer.write_rotation(track_index3, default_rotation);
+						{
+							if (default_mode == default_sub_track_mode::variable)
+								writer.write_rotation(track_index3, writer.get_variable_default_rotation(track_index3));
+							else
+								writer.write_rotation(track_index3, default_rotation);
+						}
 					}
 				}
 			}
@@ -631,6 +753,8 @@ namespace acl
 			const persistent_transform_decompression_context_v0& context,
 			animated_track_cache_v0& animated_track_cache, track_writer_type& writer)
 		{
+			const sample_rounding_policy rounding_policy = context.get_rounding_policy();
+
 			for (uint32_t entry_index = 0, track_index = 0; entry_index <= last_entry_index; ++entry_index)
 			{
 				// Mask out everything but animated sub-tracks, this way we can early out when we iterate
@@ -661,7 +785,18 @@ namespace acl
 					if ((packed_group & 0x80000000) != 0)
 					{
 						const uint32_t track_index0 = curr_group_track_index + 0;
-						const rtm::quatf& rotation = animated_track_cache.consume_rotation();
+
+						// We need the true rounding policy to be statically known when per track rounding is not supported
+						// When it isn't supported, we always use 'none' since the interpolation alpha was properly calculated
+						// and rounding has already been performed for us.
+						const sample_rounding_policy rounding_policy_ =
+							decompression_settings_type::is_per_track_rounding_supported() ?
+							writer.get_rounding_policy(rounding_policy, track_index0) :
+							sample_rounding_policy::none;
+
+						ACL_ASSERT(rounding_policy_ != sample_rounding_policy::per_track, "track_writer::get_rounding_policy() cannot return per_track");
+
+						const rtm::quatf& rotation = animated_track_cache.consume_rotation(rounding_policy_);
 
 						ACL_ASSERT(rtm::quat_is_finite(rotation), "Rotation is not valid!");
 						ACL_ASSERT(rtm::quat_is_normalized(rotation), "Rotation is not normalized!");
@@ -673,7 +808,18 @@ namespace acl
 					if ((packed_group & 0x20000000) != 0)
 					{
 						const uint32_t track_index1 = curr_group_track_index + 1;
-						const rtm::quatf& rotation = animated_track_cache.consume_rotation();
+
+						// We need the true rounding policy to be statically known when per track rounding is not supported
+						// When it isn't supported, we always use 'none' since the interpolation alpha was properly calculated
+						// and rounding has already been performed for us.
+						const sample_rounding_policy rounding_policy_ =
+							decompression_settings_type::is_per_track_rounding_supported() ?
+							writer.get_rounding_policy(rounding_policy, track_index1) :
+							sample_rounding_policy::none;
+
+						ACL_ASSERT(rounding_policy_ != sample_rounding_policy::per_track, "track_writer::get_rounding_policy() cannot return per_track");
+
+						const rtm::quatf& rotation = animated_track_cache.consume_rotation(rounding_policy_);
 
 						ACL_ASSERT(rtm::quat_is_finite(rotation), "Rotation is not valid!");
 						ACL_ASSERT(rtm::quat_is_normalized(rotation), "Rotation is not normalized!");
@@ -685,7 +831,18 @@ namespace acl
 					if ((packed_group & 0x08000000) != 0)
 					{
 						const uint32_t track_index2 = curr_group_track_index + 2;
-						const rtm::quatf& rotation = animated_track_cache.consume_rotation();
+
+						// We need the true rounding policy to be statically known when per track rounding is not supported
+						// When it isn't supported, we always use 'none' since the interpolation alpha was properly calculated
+						// and rounding has already been performed for us.
+						const sample_rounding_policy rounding_policy_ =
+							decompression_settings_type::is_per_track_rounding_supported() ?
+							writer.get_rounding_policy(rounding_policy, track_index2) :
+							sample_rounding_policy::none;
+
+						ACL_ASSERT(rounding_policy_ != sample_rounding_policy::per_track, "track_writer::get_rounding_policy() cannot return per_track");
+
+						const rtm::quatf& rotation = animated_track_cache.consume_rotation(rounding_policy_);
 
 						ACL_ASSERT(rtm::quat_is_finite(rotation), "Rotation is not valid!");
 						ACL_ASSERT(rtm::quat_is_normalized(rotation), "Rotation is not normalized!");
@@ -697,7 +854,18 @@ namespace acl
 					if ((packed_group & 0x02000000) != 0)
 					{
 						const uint32_t track_index3 = curr_group_track_index + 3;
-						const rtm::quatf& rotation = animated_track_cache.consume_rotation();
+
+						// We need the true rounding policy to be statically known when per track rounding is not supported
+						// When it isn't supported, we always use 'none' since the interpolation alpha was properly calculated
+						// and rounding has already been performed for us.
+						const sample_rounding_policy rounding_policy_ =
+							decompression_settings_type::is_per_track_rounding_supported() ?
+							writer.get_rounding_policy(rounding_policy, track_index3) :
+							sample_rounding_policy::none;
+
+						ACL_ASSERT(rounding_policy_ != sample_rounding_policy::per_track, "track_writer::get_rounding_policy() cannot return per_track");
+
+						const rtm::quatf& rotation = animated_track_cache.consume_rotation(rounding_policy_);
 
 						ACL_ASSERT(rtm::quat_is_finite(rotation), "Rotation is not valid!");
 						ACL_ASSERT(rtm::quat_is_normalized(rotation), "Rotation is not normalized!");
@@ -713,8 +881,16 @@ namespace acl
 		template<class track_writer_type>
 		RTM_FORCE_INLINE RTM_DISABLE_SECURITY_COOKIE_CHECK void RTM_SIMD_CALL unpack_default_translation_sub_tracks(
 			const packed_sub_track_types* translation_sub_track_types, uint32_t last_entry_index, uint32_t padding_mask,
-			rtm::vector4f_arg0 default_translation, track_writer_type& writer)
+			track_writer_type& writer)
 		{
+			constexpr default_sub_track_mode default_mode = track_writer_type::get_default_translation_mode();
+			static_assert(default_mode != default_sub_track_mode::legacy, "Not supported for translations");
+			if (default_mode == default_sub_track_mode::skipped)
+				return;	// Nothing to write
+
+			// Grab our constant default translation if we have one, otherwise init with some value
+			const rtm::vector4f default_translation = default_mode == default_sub_track_mode::constant ? writer.get_constant_default_translation() : rtm::vector_zero();
+
 			for (uint32_t entry_index = 0, track_index = 0; entry_index <= last_entry_index; ++entry_index)
 			{
 				uint32_t packed_entry = translation_sub_track_types[entry_index].types;
@@ -755,7 +931,12 @@ namespace acl
 						const uint32_t track_index0 = curr_group_track_index + 0;
 
 						if (!track_writer_type::skip_all_translations() && !writer.skip_track_translation(track_index0))
-							writer.write_translation(track_index0, default_translation);
+						{
+							if (default_mode == default_sub_track_mode::variable)
+								writer.write_translation(track_index0, writer.get_variable_default_translation(track_index0));
+							else
+								writer.write_translation(track_index0, default_translation);
+						}
 					}
 
 					if ((packed_group & 0x20000000) != 0)
@@ -763,7 +944,12 @@ namespace acl
 						const uint32_t track_index1 = curr_group_track_index + 1;
 
 						if (!track_writer_type::skip_all_translations() && !writer.skip_track_translation(track_index1))
-							writer.write_translation(track_index1, default_translation);
+						{
+							if (default_mode == default_sub_track_mode::variable)
+								writer.write_translation(track_index1, writer.get_variable_default_translation(track_index1));
+							else
+								writer.write_translation(track_index1, default_translation);
+						}
 					}
 
 					if ((packed_group & 0x08000000) != 0)
@@ -771,7 +957,12 @@ namespace acl
 						const uint32_t track_index2 = curr_group_track_index + 2;
 
 						if (!track_writer_type::skip_all_translations() && !writer.skip_track_translation(track_index2))
-							writer.write_translation(track_index2, default_translation);
+						{
+							if (default_mode == default_sub_track_mode::variable)
+								writer.write_translation(track_index2, writer.get_variable_default_translation(track_index2));
+							else
+								writer.write_translation(track_index2, default_translation);
+						}
 					}
 
 					if ((packed_group & 0x02000000) != 0)
@@ -779,7 +970,12 @@ namespace acl
 						const uint32_t track_index3 = curr_group_track_index + 3;
 
 						if (!track_writer_type::skip_all_translations() && !writer.skip_track_translation(track_index3))
-							writer.write_translation(track_index3, default_translation);
+						{
+							if (default_mode == default_sub_track_mode::variable)
+								writer.write_translation(track_index3, writer.get_variable_default_translation(track_index3));
+							else
+								writer.write_translation(track_index3, default_translation);
+						}
 					}
 				}
 			}
@@ -875,12 +1071,14 @@ namespace acl
 		}
 
 		// Force inline this function, we only use it to keep the code readable
-		template<class translation_adapter, class track_writer_type>
+		template<class decompression_settings_adapter_type, class track_writer_type>
 		RTM_FORCE_INLINE RTM_DISABLE_SECURITY_COOKIE_CHECK void RTM_SIMD_CALL unpack_animated_translation_sub_tracks(
 			const packed_sub_track_types* translation_sub_track_types, uint32_t last_entry_index,
 			const persistent_transform_decompression_context_v0& context,
 			animated_track_cache_v0& animated_track_cache, track_writer_type& writer)
 		{
+			const sample_rounding_policy rounding_policy = context.get_rounding_policy();
+
 			for (uint32_t entry_index = 0, track_index = 0; entry_index <= last_entry_index; ++entry_index)
 			{
 				// Mask out everything but animated sub-tracks, this way we can early out when we iterate
@@ -906,12 +1104,23 @@ namespace acl
 						continue;	// This group contains no animated sub-tracks, skip it
 
 					// Unpack our next 4 tracks
-					animated_track_cache.unpack_translation_group<translation_adapter>(context);
+					animated_track_cache.unpack_translation_group<decompression_settings_adapter_type>(context);
 
 					if ((packed_group & 0x80000000) != 0)
 					{
 						const uint32_t track_index0 = curr_group_track_index + 0;
-						const rtm::vector4f& translation = animated_track_cache.consume_translation();
+
+						// We need the true rounding policy to be statically known when per track rounding is not supported
+						// When it isn't supported, we always use 'none' since the interpolation alpha was properly calculated
+						// and rounding has already been performed for us.
+						const sample_rounding_policy rounding_policy_ =
+							decompression_settings_adapter_type::is_per_track_rounding_supported() ?
+							writer.get_rounding_policy(rounding_policy, track_index0) :
+							sample_rounding_policy::none;
+
+						ACL_ASSERT(rounding_policy_ != sample_rounding_policy::per_track, "track_writer::get_rounding_policy() cannot return per_track");
+
+						const rtm::vector4f& translation = animated_track_cache.consume_translation(rounding_policy_);
 
 						ACL_ASSERT(rtm::vector_is_finite3(translation), "Translation is not valid!");
 
@@ -922,7 +1131,18 @@ namespace acl
 					if ((packed_group & 0x20000000) != 0)
 					{
 						const uint32_t track_index1 = curr_group_track_index + 1;
-						const rtm::vector4f& translation = animated_track_cache.consume_translation();
+
+						// We need the true rounding policy to be statically known when per track rounding is not supported
+						// When it isn't supported, we always use 'none' since the interpolation alpha was properly calculated
+						// and rounding has already been performed for us.
+						const sample_rounding_policy rounding_policy_ =
+							decompression_settings_adapter_type::is_per_track_rounding_supported() ?
+							writer.get_rounding_policy(rounding_policy, track_index1) :
+							sample_rounding_policy::none;
+
+						ACL_ASSERT(rounding_policy_ != sample_rounding_policy::per_track, "track_writer::get_rounding_policy() cannot return per_track");
+
+						const rtm::vector4f& translation = animated_track_cache.consume_translation(rounding_policy_);
 
 						ACL_ASSERT(rtm::vector_is_finite3(translation), "Translation is not valid!");
 
@@ -933,7 +1153,18 @@ namespace acl
 					if ((packed_group & 0x08000000) != 0)
 					{
 						const uint32_t track_index2 = curr_group_track_index + 2;
-						const rtm::vector4f& translation = animated_track_cache.consume_translation();
+
+						// We need the true rounding policy to be statically known when per track rounding is not supported
+						// When it isn't supported, we always use 'none' since the interpolation alpha was properly calculated
+						// and rounding has already been performed for us.
+						const sample_rounding_policy rounding_policy_ =
+							decompression_settings_adapter_type::is_per_track_rounding_supported() ?
+							writer.get_rounding_policy(rounding_policy, track_index2) :
+							sample_rounding_policy::none;
+
+						ACL_ASSERT(rounding_policy_ != sample_rounding_policy::per_track, "track_writer::get_rounding_policy() cannot return per_track");
+
+						const rtm::vector4f& translation = animated_track_cache.consume_translation(rounding_policy_);
 
 						ACL_ASSERT(rtm::vector_is_finite3(translation), "Translation is not valid!");
 
@@ -944,7 +1175,18 @@ namespace acl
 					if ((packed_group & 0x02000000) != 0)
 					{
 						const uint32_t track_index3 = curr_group_track_index + 3;
-						const rtm::vector4f& translation = animated_track_cache.consume_translation();
+
+						// We need the true rounding policy to be statically known when per track rounding is not supported
+						// When it isn't supported, we always use 'none' since the interpolation alpha was properly calculated
+						// and rounding has already been performed for us.
+						const sample_rounding_policy rounding_policy_ =
+							decompression_settings_adapter_type::is_per_track_rounding_supported() ?
+							writer.get_rounding_policy(rounding_policy, track_index3) :
+							sample_rounding_policy::none;
+
+						ACL_ASSERT(rounding_policy_ != sample_rounding_policy::per_track, "track_writer::get_rounding_policy() cannot return per_track");
+
+						const rtm::vector4f& translation = animated_track_cache.consume_translation(rounding_policy_);
 
 						ACL_ASSERT(rtm::vector_is_finite3(translation), "Translation is not valid!");
 
@@ -959,8 +1201,21 @@ namespace acl
 		template<class track_writer_type>
 		RTM_FORCE_INLINE RTM_DISABLE_SECURITY_COOKIE_CHECK void RTM_SIMD_CALL unpack_default_scale_sub_tracks(
 			const packed_sub_track_types* scale_sub_track_types, uint32_t last_entry_index, uint32_t padding_mask,
-			rtm::vector4f_arg0 default_scale, track_writer_type& writer)
+			rtm::vector4f_arg0 default_scale_, track_writer_type& writer)
 		{
+			constexpr default_sub_track_mode default_mode = track_writer_type::get_default_scale_mode();
+			if (default_mode == default_sub_track_mode::skipped)
+				return;	// Nothing to write
+
+			// Grab our constant default scale if we have one, otherwise init with some value
+			rtm::vector4f default_scale;
+			if (default_mode == default_sub_track_mode::constant)
+				default_scale = writer.get_constant_default_scale();
+			else if (default_mode == default_sub_track_mode::legacy)
+				default_scale = default_scale_;
+			else
+				default_scale = rtm::vector_zero();
+
 			for (uint32_t entry_index = 0, track_index = 0; entry_index <= last_entry_index; ++entry_index)
 			{
 				uint32_t packed_entry = scale_sub_track_types[entry_index].types;
@@ -1001,7 +1256,12 @@ namespace acl
 						const uint32_t track_index0 = curr_group_track_index + 0;
 
 						if (!track_writer_type::skip_all_scales() && !writer.skip_track_scale(track_index0))
-							writer.write_scale(track_index0, default_scale);
+						{
+							if (default_mode == default_sub_track_mode::variable)
+								writer.write_scale(track_index0, writer.get_variable_default_scale(track_index0));
+							else
+								writer.write_scale(track_index0, default_scale);
+						}
 					}
 
 					if ((packed_group & 0x20000000) != 0)
@@ -1009,7 +1269,12 @@ namespace acl
 						const uint32_t track_index1 = curr_group_track_index + 1;
 
 						if (!track_writer_type::skip_all_scales() && !writer.skip_track_scale(track_index1))
-							writer.write_scale(track_index1, default_scale);
+						{
+							if (default_mode == default_sub_track_mode::variable)
+								writer.write_scale(track_index1, writer.get_variable_default_scale(track_index1));
+							else
+								writer.write_scale(track_index1, default_scale);
+						}
 					}
 
 					if ((packed_group & 0x08000000) != 0)
@@ -1017,7 +1282,12 @@ namespace acl
 						const uint32_t track_index2 = curr_group_track_index + 2;
 
 						if (!track_writer_type::skip_all_scales() && !writer.skip_track_scale(track_index2))
-							writer.write_scale(track_index2, default_scale);
+						{
+							if (default_mode == default_sub_track_mode::variable)
+								writer.write_scale(track_index2, writer.get_variable_default_scale(track_index2));
+							else
+								writer.write_scale(track_index2, default_scale);
+						}
 					}
 
 					if ((packed_group & 0x02000000) != 0)
@@ -1025,7 +1295,12 @@ namespace acl
 						const uint32_t track_index3 = curr_group_track_index + 3;
 
 						if (!track_writer_type::skip_all_scales() && !writer.skip_track_scale(track_index3))
-							writer.write_scale(track_index3, default_scale);
+						{
+							if (default_mode == default_sub_track_mode::variable)
+								writer.write_scale(track_index3, writer.get_variable_default_scale(track_index3));
+							else
+								writer.write_scale(track_index3, default_scale);
+						}
 					}
 				}
 			}
@@ -1121,12 +1396,14 @@ namespace acl
 		}
 
 		// Force inline this function, we only use it to keep the code readable
-		template<class scale_adapter, class track_writer_type>
+		template<class decompression_settings_adapter_type, class track_writer_type>
 		RTM_FORCE_INLINE RTM_DISABLE_SECURITY_COOKIE_CHECK void RTM_SIMD_CALL unpack_animated_scale_sub_tracks(
 			const packed_sub_track_types* scale_sub_track_types, uint32_t last_entry_index,
 			const persistent_transform_decompression_context_v0& context,
 			animated_track_cache_v0& animated_track_cache, track_writer_type& writer)
 		{
+			const sample_rounding_policy rounding_policy = context.get_rounding_policy();
+
 			for (uint32_t entry_index = 0, track_index = 0; entry_index <= last_entry_index; ++entry_index)
 			{
 				// Mask out everything but animated sub-tracks, this way we can early out when we iterate
@@ -1152,12 +1429,23 @@ namespace acl
 						continue;	// This group contains no animated sub-tracks, skip it
 
 					// Unpack our next 4 tracks
-					animated_track_cache.unpack_scale_group<scale_adapter>(context);
+					animated_track_cache.unpack_scale_group<decompression_settings_adapter_type>(context);
 
 					if ((packed_group & 0x80000000) != 0)
 					{
 						const uint32_t track_index0 = curr_group_track_index + 0;
-						const rtm::vector4f& scale = animated_track_cache.consume_scale();
+
+						// We need the true rounding policy to be statically known when per track rounding is not supported
+						// When it isn't supported, we always use 'none' since the interpolation alpha was properly calculated
+						// and rounding has already been performed for us.
+						const sample_rounding_policy rounding_policy_ =
+							decompression_settings_adapter_type::is_per_track_rounding_supported() ?
+							writer.get_rounding_policy(rounding_policy, track_index0) :
+							sample_rounding_policy::none;
+
+						ACL_ASSERT(rounding_policy_ != sample_rounding_policy::per_track, "track_writer::get_rounding_policy() cannot return per_track");
+
+						const rtm::vector4f& scale = animated_track_cache.consume_scale(rounding_policy_);
 
 						ACL_ASSERT(rtm::vector_is_finite3(scale), "Scale is not valid!");
 
@@ -1168,7 +1456,18 @@ namespace acl
 					if ((packed_group & 0x20000000) != 0)
 					{
 						const uint32_t track_index1 = curr_group_track_index + 1;
-						const rtm::vector4f& scale = animated_track_cache.consume_scale();
+
+						// We need the true rounding policy to be statically known when per track rounding is not supported
+						// When it isn't supported, we always use 'none' since the interpolation alpha was properly calculated
+						// and rounding has already been performed for us.
+						const sample_rounding_policy rounding_policy_ =
+							decompression_settings_adapter_type::is_per_track_rounding_supported() ?
+							writer.get_rounding_policy(rounding_policy, track_index1) :
+							sample_rounding_policy::none;
+
+						ACL_ASSERT(rounding_policy_ != sample_rounding_policy::per_track, "track_writer::get_rounding_policy() cannot return per_track");
+
+						const rtm::vector4f& scale = animated_track_cache.consume_scale(rounding_policy_);
 
 						ACL_ASSERT(rtm::vector_is_finite3(scale), "Scale is not valid!");
 
@@ -1179,7 +1478,18 @@ namespace acl
 					if ((packed_group & 0x08000000) != 0)
 					{
 						const uint32_t track_index2 = curr_group_track_index + 2;
-						const rtm::vector4f& scale = animated_track_cache.consume_scale();
+
+						// We need the true rounding policy to be statically known when per track rounding is not supported
+						// When it isn't supported, we always use 'none' since the interpolation alpha was properly calculated
+						// and rounding has already been performed for us.
+						const sample_rounding_policy rounding_policy_ =
+							decompression_settings_adapter_type::is_per_track_rounding_supported() ?
+							writer.get_rounding_policy(rounding_policy, track_index2) :
+							sample_rounding_policy::none;
+
+						ACL_ASSERT(rounding_policy_ != sample_rounding_policy::per_track, "track_writer::get_rounding_policy() cannot return per_track");
+
+						const rtm::vector4f& scale = animated_track_cache.consume_scale(rounding_policy_);
 
 						ACL_ASSERT(rtm::vector_is_finite3(scale), "Scale is not valid!");
 
@@ -1190,7 +1500,18 @@ namespace acl
 					if ((packed_group & 0x02000000) != 0)
 					{
 						const uint32_t track_index3 = curr_group_track_index + 3;
-						const rtm::vector4f& scale = animated_track_cache.consume_scale();
+
+						// We need the true rounding policy to be statically known when per track rounding is not supported
+						// When it isn't supported, we always use 'none' since the interpolation alpha was properly calculated
+						// and rounding has already been performed for us.
+						const sample_rounding_policy rounding_policy_ =
+							decompression_settings_adapter_type::is_per_track_rounding_supported() ?
+							writer.get_rounding_policy(rounding_policy, track_index3) :
+							sample_rounding_policy::none;
+
+						ACL_ASSERT(rounding_policy_ != sample_rounding_policy::per_track, "track_writer::get_rounding_policy() cannot return per_track");
+
+						const rtm::vector4f& scale = animated_track_cache.consume_scale(rounding_policy_);
 
 						ACL_ASSERT(rtm::vector_is_finite3(scale), "Scale is not valid!");
 
@@ -1204,7 +1525,8 @@ namespace acl
 		template<class decompression_settings_type, class track_writer_type>
 		inline void decompress_tracks_v0(const persistent_transform_decompression_context_v0& context, track_writer_type& writer)
 		{
-			const tracks_header& header = get_tracks_header(*context.tracks);
+			const compressed_tracks* tracks = context.tracks;
+			const tracks_header& header = get_tracks_header(*tracks);
 			const uint32_t num_tracks = header.num_tracks;
 			if (num_tracks == 0)
 				return;	// Empty track list
@@ -1222,12 +1544,10 @@ namespace acl
 			using translation_adapter = acl_impl::translation_decompression_settings_adapter<decompression_settings_type>;
 			using scale_adapter = acl_impl::scale_decompression_settings_adapter<decompression_settings_type>;
 
-			const rtm::quatf default_rotation = rtm::quat_identity();
-			const rtm::vector4f default_translation = rtm::vector_zero();
 			const rtm::vector4f default_scale = rtm::vector_set(float(header.get_default_scale()));
 			const uint32_t has_scale = context.has_scale;
 
-			const packed_sub_track_types* sub_track_types = get_transform_tracks_header(*context.tracks).get_sub_track_types();
+			const packed_sub_track_types* sub_track_types = get_transform_tracks_header(*tracks).get_sub_track_types();
 			const uint32_t num_sub_track_entries = (num_tracks + k_num_sub_tracks_per_packed_entry - 1) / k_num_sub_tracks_per_packed_entry;
 			const uint32_t num_padded_sub_tracks = (num_sub_track_entries * k_num_sub_tracks_per_packed_entry) - num_tracks;
 			const uint32_t last_entry_index = num_sub_track_entries - 1;
@@ -1283,7 +1603,7 @@ namespace acl
 
 			// Unpack our default rotation sub-tracks
 			// Default rotation sub-tracks are uncommon, this shouldn't take much more than 50 cycles
-			unpack_default_rotation_sub_tracks(rotation_sub_track_types, last_entry_index, padding_mask, default_rotation, writer);
+			unpack_default_rotation_sub_tracks(rotation_sub_track_types, last_entry_index, padding_mask, writer);
 
 			// Unpack our constant rotation sub-tracks
 			// Constant rotation sub-tracks are very common, this should take at least 200 cycles
@@ -1313,7 +1633,7 @@ namespace acl
 
 			// Unpack our default translation sub-tracks
 			// Default translation sub-tracks are rare, this shouldn't take much more than 50 cycles
-			unpack_default_translation_sub_tracks(translation_sub_track_types, last_entry_index, padding_mask, default_translation, writer);
+			unpack_default_translation_sub_tracks(translation_sub_track_types, last_entry_index, padding_mask, writer);
 
 			// Unpack our constant translation sub-tracks
 			// Constant translation sub-tracks are very common, this should take at least 200 cycles
@@ -1331,12 +1651,30 @@ namespace acl
 			}
 			else
 			{
-				// No scale present, everything is just the default value
-				// This shouldn't take much more than 50 cycles
-				for (uint32_t track_index = 0; track_index < num_tracks; ++track_index)
+				constexpr default_sub_track_mode default_scale_mode = track_writer_type::get_default_scale_mode();
+				if (default_scale_mode != default_sub_track_mode::skipped)
 				{
-					if (!track_writer_type::skip_all_scales() && !writer.skip_track_scale(track_index))
-						writer.write_scale(track_index, default_scale);
+					// Grab our constant default scale if we have one, otherwise init with some value
+					rtm::vector4f scale;
+					if (default_scale_mode == default_sub_track_mode::constant)
+						scale = writer.get_constant_default_scale();
+					else if (default_scale_mode == default_sub_track_mode::legacy)
+						scale = default_scale;
+					else
+						scale = rtm::vector_zero();
+
+					// No scale present, everything is just the default value
+					// This shouldn't take much more than 50 cycles
+					for (uint32_t track_index = 0; track_index < num_tracks; ++track_index)
+					{
+						if (!track_writer_type::skip_all_scales() && !writer.skip_track_scale(track_index))
+						{
+							if (default_scale_mode == default_sub_track_mode::variable)
+								writer.write_scale(track_index, writer.get_variable_default_scale(track_index));
+							else
+								writer.write_scale(track_index, scale);
+						}
+					}
 				}
 			}
 
@@ -1414,7 +1752,8 @@ namespace acl
 		template<class decompression_settings_type, class track_writer_type>
 		inline void decompress_track_v0(const persistent_transform_decompression_context_v0& context, uint32_t track_index, track_writer_type& writer)
 		{
-			const tracks_header& tracks_header_ = get_tracks_header(*context.tracks);
+			const compressed_tracks* tracks = context.tracks;
+			const tracks_header& tracks_header_ = get_tracks_header(*tracks);
 			const uint32_t num_tracks = tracks_header_.num_tracks;
 			if (num_tracks == 0)
 				return;	// Empty track list
@@ -1436,12 +1775,28 @@ namespace acl
 			using translation_adapter = acl_impl::translation_decompression_settings_adapter<decompression_settings_type>;
 			using scale_adapter = acl_impl::scale_decompression_settings_adapter<decompression_settings_type>;
 
-			const rtm::quatf default_rotation = rtm::quat_identity();
-			const rtm::vector4f default_translation = rtm::vector_zero();
-			const rtm::vector4f default_scale = rtm::vector_set(float(tracks_header_.get_default_scale()));
+			constexpr default_sub_track_mode default_rotation_mode = track_writer_type::get_default_rotation_mode();
+			constexpr default_sub_track_mode default_translation_mode = track_writer_type::get_default_translation_mode();
+			constexpr default_sub_track_mode default_scale_mode = track_writer_type::get_default_scale_mode();
+
+			static_assert(default_rotation_mode != default_sub_track_mode::legacy, "Not supported for rotations");
+			static_assert(default_translation_mode != default_sub_track_mode::legacy, "Not supported for translations");
+
+			// Grab our constant default values if we have one, otherwise init with some value
+			const rtm::quatf default_rotation = default_rotation_mode == default_sub_track_mode::constant ? writer.get_constant_default_rotation() : rtm::quat_identity();
+			const rtm::vector4f default_translation = default_translation_mode == default_sub_track_mode::constant ? writer.get_constant_default_translation() : rtm::vector_zero();
+
+			rtm::vector4f default_scale;
+			if (default_scale_mode == default_sub_track_mode::constant)
+				default_scale = writer.get_constant_default_scale();
+			else if (default_scale_mode == default_sub_track_mode::legacy)
+				default_scale = rtm::vector_set(float(tracks_header_.get_default_scale()));
+			else
+				default_scale = rtm::vector_zero();
+
 			const uint32_t has_scale = context.has_scale;
 
-			const packed_sub_track_types* sub_track_types = get_transform_tracks_header(*context.tracks).get_sub_track_types();
+			const packed_sub_track_types* sub_track_types = get_transform_tracks_header(*tracks).get_sub_track_types();
 			const uint32_t num_sub_track_entries = (num_tracks + k_num_sub_tracks_per_packed_entry - 1) / k_num_sub_tracks_per_packed_entry;
 
 			const packed_sub_track_types* rotation_sub_track_types = sub_track_types;
@@ -1471,9 +1826,30 @@ namespace acl
 			if (combined_sub_track_type == 0)
 			{
 				// Everything is default
-				writer.write_rotation(track_index, default_rotation);
-				writer.write_translation(track_index, default_translation);
-				writer.write_scale(track_index, default_scale);
+				if (default_rotation_mode != default_sub_track_mode::skipped)
+				{
+					if (default_rotation_mode == default_sub_track_mode::variable)
+						writer.write_rotation(track_index, writer.get_variable_default_rotation(track_index));
+					else
+						writer.write_rotation(track_index, default_rotation);
+				}
+
+				if (default_translation_mode != default_sub_track_mode::skipped)
+				{
+					if (default_translation_mode == default_sub_track_mode::variable)
+						writer.write_translation(track_index, writer.get_variable_default_translation(track_index));
+					else
+						writer.write_translation(track_index, default_translation);
+				}
+
+				if (default_scale_mode != default_sub_track_mode::skipped)
+				{
+					if (default_scale_mode == default_sub_track_mode::variable)
+						writer.write_scale(track_index, writer.get_variable_default_scale(track_index));
+					else
+						writer.write_scale(track_index, default_scale);
+				}
+
 				return;
 			}
 
@@ -1595,38 +1971,75 @@ namespace acl
 
 			// Finally reached our desired track, unpack it
 
+			float interpolation_alpha = context.interpolation_alpha;
+			if (decompression_settings_type::is_per_track_rounding_supported())
+			{
+				const sample_rounding_policy rounding_policy = context.get_rounding_policy();
+				const sample_rounding_policy rounding_policy_ = writer.get_rounding_policy(rounding_policy, track_index);
+				ACL_ASSERT(rounding_policy_ != sample_rounding_policy::per_track, "track_writer::get_rounding_policy() cannot return per_track");
+
+				interpolation_alpha = apply_rounding_policy(interpolation_alpha, rounding_policy_);
+			}
+
+			if (rotation_sub_track_type == 0)
+			{
+				if (default_rotation_mode != default_sub_track_mode::skipped)
+				{
+					if (default_rotation_mode == default_sub_track_mode::variable)
+						writer.write_rotation(track_index, writer.get_variable_default_rotation(track_index));
+					else
+						writer.write_rotation(track_index, default_rotation);
+				}
+			}
+			else
 			{
 				rtm::quatf rotation;
-				if (rotation_sub_track_type == 0)
-					rotation = default_rotation;
-				else if (rotation_sub_track_type & 1)
+				if (rotation_sub_track_type & 1)
 					rotation = constant_track_cache.unpack_rotation_within_group<decompression_settings_type>(context, rotation_group_sample_index);
 				else
-					rotation = animated_track_cache.unpack_rotation_within_group<decompression_settings_type>(context, rotation_group_sample_index);
+					rotation = animated_track_cache.unpack_rotation_within_group<decompression_settings_type>(context, rotation_group_sample_index, interpolation_alpha);
 
 				writer.write_rotation(track_index, rotation);
 			}
 
+			if (translation_sub_track_type == 0)
+			{
+				if (default_translation_mode != default_sub_track_mode::skipped)
+				{
+					if (default_translation_mode == default_sub_track_mode::variable)
+						writer.write_translation(track_index, writer.get_variable_default_translation(track_index));
+					else
+						writer.write_translation(track_index, default_translation);
+				}
+			}
+			else
 			{
 				rtm::vector4f translation;
-				if (translation_sub_track_type == 0)
-					translation = default_translation;
-				else if (translation_sub_track_type & 1)
+				if (translation_sub_track_type & 1)
 					translation = constant_track_cache.unpack_translation_within_group(translation_group_sample_index);
 				else
-					translation = animated_track_cache.unpack_translation_within_group<translation_adapter>(context, translation_group_sample_index);
+					translation = animated_track_cache.unpack_translation_within_group<translation_adapter>(context, translation_group_sample_index, interpolation_alpha);
 
 				writer.write_translation(track_index, translation);
 			}
 
+			if (scale_sub_track_type == 0)
+			{
+				if (default_scale_mode != default_sub_track_mode::skipped)
+				{
+					if (default_scale_mode == default_sub_track_mode::variable)
+						writer.write_scale(track_index, writer.get_variable_default_scale(track_index));
+					else
+						writer.write_scale(track_index, default_scale);
+				}
+			}
+			else
 			{
 				rtm::vector4f scale;
-				if (scale_sub_track_type == 0)
-					scale = default_scale;
-				else if (scale_sub_track_type & 1)
+				if (scale_sub_track_type & 1)
 					scale = constant_track_cache.unpack_scale_within_group(scale_group_sample_index);
 				else
-					scale = animated_track_cache.unpack_scale_within_group<scale_adapter>(context, scale_group_sample_index);
+					scale = animated_track_cache.unpack_scale_within_group<scale_adapter>(context, scale_group_sample_index, interpolation_alpha);
 
 				writer.write_scale(track_index, scale);
 			}
@@ -1642,6 +2055,8 @@ namespace acl
 		#pragma GCC diagnostic pop
 #endif
 	}
+
+	ACL_IMPL_VERSION_NAMESPACE_END
 }
 
 #if defined(RTM_COMPILER_MSVC)

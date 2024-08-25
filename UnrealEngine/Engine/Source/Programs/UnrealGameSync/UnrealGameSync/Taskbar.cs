@@ -50,7 +50,7 @@ namespace UnrealGameSync
 
 		public static void SetState(IntPtr windowHandle, TaskbarState state)
 		{
-			if(_interface != null)
+			if (_interface != null)
 			{
 				try
 				{
@@ -64,7 +64,7 @@ namespace UnrealGameSync
 
 		public static void SetProgress(IntPtr windowHandle, ulong completed, ulong total)
 		{
-			if(_interface != null)
+			if (_interface != null)
 			{
 				try
 				{

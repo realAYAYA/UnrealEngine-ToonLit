@@ -130,8 +130,6 @@ bool FGameplayTagNetSerializer::IsEqual(FNetSerializationContext& Context, const
 		const SourceType& Value1 = *reinterpret_cast<SourceType*>(Args.Source1);
 		return Value0.GetTagName() == Value1.GetTagName();
 	}
-
-	return true;
 }
 
 static const FName PropertyNetSerializerRegistry_NAME_GameplayTag("GameplayTag");

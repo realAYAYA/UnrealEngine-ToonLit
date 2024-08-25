@@ -236,7 +236,7 @@ bool FCborStructDeserializerBackend::ReadProperty(FProperty* Property, FProperty
 
 		if (FSoftClassProperty* SoftClassProperty = CastField<FSoftClassProperty>(Property))
 		{
-			return StructDeserializerBackendUtilities::SetPropertyValue(SoftClassProperty, Outer, Data, ArrayIndex, FSoftObjectPtr(LoadObject<UClass>(nullptr, *StringValue, nullptr, LOAD_NoWarn)));
+			return StructDeserializerBackendUtilities::SetPropertyValue(SoftClassProperty, Outer, Data, ArrayIndex, FSoftObjectPtr(FSoftObjectPath(StringValue)));
 		}
 
 		if (FObjectProperty* ObjectProperty = CastField<FObjectProperty>(Property))

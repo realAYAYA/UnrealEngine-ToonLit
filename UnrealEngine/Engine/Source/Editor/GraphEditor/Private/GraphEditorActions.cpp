@@ -78,6 +78,10 @@ void FGraphEditorCommandsImpl::RegisterCommands()
 	UI_COMMAND( SelectReferenceInLevel, "Find Actor in Level", "Select the actor referenced by this node in the level", EUserInterfaceActionType::Button, FInputChord() )
 	UI_COMMAND( AssignReferencedActor, "Assign Selected Actor", "Assign the selected actor to be this node's referenced object", EUserInterfaceActionType::Button, FInputChord() )
 	UI_COMMAND( FindReferences, "Find References", "Find references of this item", EUserInterfaceActionType::Button, FInputChord(EKeys::F, EModifierKey::Shift | EModifierKey::Alt) )
+	UI_COMMAND( FindReferencesByNameLocal, "By Name", "Find references of this item by name", EUserInterfaceActionType::Button, FInputChord() )
+	UI_COMMAND( FindReferencesByNameGlobal, "By Name (All)", "Find references of this item by name in all blueprints", EUserInterfaceActionType::Button, FInputChord() )
+	UI_COMMAND( FindReferencesByClassMemberLocal, "By Class Member", "Find references of this item by class member", EUserInterfaceActionType::Button, FInputChord() )
+	UI_COMMAND( FindReferencesByClassMemberGlobal, "By Class Member (All)", "Find references of this item by class member in all blueprints", EUserInterfaceActionType::Button, FInputChord() )
 	UI_COMMAND( FindAndReplaceReferences, "Replace References", "Brings up a window to help find and replace all instances of this item", EUserInterfaceActionType::Button, FInputChord() )
 	
 	UI_COMMAND( GoToDefinition, "Goto Definition", "Jumps to the defintion of the selected node if available, e.g., C++ code for a native function or the graph for a Blueprint function.", EUserInterfaceActionType::Button, FInputChord(EKeys::G, EModifierKey::Alt) )
@@ -95,6 +99,7 @@ void FGraphEditorCommandsImpl::RegisterCommands()
 	UI_COMMAND( SelectAllOutputNodes, "Select All Output Nodes", "Adds all output Nodes linked to this Pin to selection", EUserInterfaceActionType::Button, FInputChord() )
 
 	UI_COMMAND( CreateComment, "Create Comment", "Create a comment box", EUserInterfaceActionType::Button, FInputChord(EKeys::C))
+	UI_COMMAND( CreateCustomEvent, "Create Custom Event", "Create a new custom event node.", EUserInterfaceActionType::Button, FInputChord())
 
 	UI_COMMAND( ZoomIn, "Zoom In", "Zoom in on the graph editor", EUserInterfaceActionType::Button, FInputChord(EKeys::Add))
 	UI_COMMAND( ZoomOut, "Zoom Out", "Zoom out from the graph editor", EUserInterfaceActionType::Button, FInputChord(EKeys::Subtract))
@@ -166,6 +171,18 @@ void FGraphEditorCommands::Register()
 const FGraphEditorCommandsImpl& FGraphEditorCommands::Get()
 {
 	return FGraphEditorCommandsImpl::Get();
+}
+
+void FGraphEditorCommands::BuildFindReferencesMenu(FMenuBuilder& MenuBuilder)
+{
+	MenuBuilder.BeginSection("FindReferences", LOCTEXT("FindReferences", "Find References"));
+	{
+		MenuBuilder.AddMenuEntry(FGraphEditorCommands::Get().FindReferencesByNameLocal);
+		MenuBuilder.AddMenuEntry(FGraphEditorCommands::Get().FindReferencesByNameGlobal);
+		MenuBuilder.AddMenuEntry(FGraphEditorCommands::Get().FindReferencesByClassMemberLocal);
+		MenuBuilder.AddMenuEntry(FGraphEditorCommands::Get().FindReferencesByClassMemberGlobal);
+	}
+	MenuBuilder.EndSection();
 }
 
 void FGraphEditorCommands::Unregister()

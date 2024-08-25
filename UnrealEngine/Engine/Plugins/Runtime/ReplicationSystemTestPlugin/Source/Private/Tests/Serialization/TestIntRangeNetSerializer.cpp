@@ -227,7 +227,7 @@ void FTestIntRangeNetSerializer<SerializerConfig, SourceType>::SetupConfigs()
 		SerializerConfig& Config = Configs[0];
 		Config.LowerBound = std::numeric_limits<SourceType>::min();
 		Config.UpperBound = std::numeric_limits<SourceType>::max();
-		Config.BitCount = GetBitsNeededForRange(Config.LowerBound, Config.UpperBound);
+		Config.BitCount = static_cast<uint8>(GetBitsNeededForRange(Config.LowerBound, Config.UpperBound));
 	}
 
 	// Zero range
@@ -235,7 +235,7 @@ void FTestIntRangeNetSerializer<SerializerConfig, SourceType>::SetupConfigs()
 		SerializerConfig& Config = Configs[1];
 		Config.LowerBound = -64;
 		Config.UpperBound = -64;
-		Config.BitCount = GetBitsNeededForRange(Config.LowerBound, Config.UpperBound);
+		Config.BitCount = static_cast<uint8>(GetBitsNeededForRange(Config.LowerBound, Config.UpperBound));
 	}
 
 	// Arbitrary ranges
@@ -243,14 +243,14 @@ void FTestIntRangeNetSerializer<SerializerConfig, SourceType>::SetupConfigs()
 		SerializerConfig& Config = Configs[2];
 		Config.LowerBound = std::numeric_limits<SourceType>::min()/2;
 		Config.UpperBound = std::numeric_limits<SourceType>::max()/4;
-		Config.BitCount = GetBitsNeededForRange(Config.LowerBound, Config.UpperBound);
+		Config.BitCount = static_cast<uint8>(GetBitsNeededForRange(Config.LowerBound, Config.UpperBound));
 	}
 
 	{
 		SerializerConfig& Config = Configs[3];
 		Config.LowerBound = std::numeric_limits<SourceType>::max()/4;
 		Config.UpperBound = std::numeric_limits<SourceType>::max()/2;
-		Config.BitCount = GetBitsNeededForRange(Config.LowerBound, Config.UpperBound);
+		Config.BitCount = static_cast<uint8>(GetBitsNeededForRange(Config.LowerBound, Config.UpperBound));
 	}
 }
 

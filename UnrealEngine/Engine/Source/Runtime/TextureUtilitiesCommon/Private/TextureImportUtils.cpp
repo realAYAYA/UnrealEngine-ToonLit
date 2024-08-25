@@ -346,10 +346,7 @@ namespace UE
 
 					// X is opaque, repeat
 				}
-
 				// can't get here
-
-				return true;
 			}
 
 			void FillRowColorPixels(int64 FillColorRow, int64 Y)

@@ -4,7 +4,7 @@
 
 #include "Engine/Texture.h"
 #include "TranslucentLighting.h"
-#include "Strata/Strata.h"
+#include "Substrate/Substrate.h"
 
 #include "BufferVisualizationData.h"
 #include "SceneTextureParameters.h"
@@ -77,6 +77,14 @@ namespace
 		TEXT("(Experimental) Whether to calculate auto exposure assuming every surface uses a perfectly diffuse white material.\n")
 		TEXT("(default: false)"),
 		ECVF_Scalability | ECVF_RenderThreadSafe);
+
+	TAutoConsoleVariable<int32> CVarAutoExposureLuminanceMethod(
+		TEXT("r.AutoExposure.LuminanceMethod"),
+		0,
+		TEXT("0 - Uniform.\n")
+		TEXT("1 - NSTC.\n")
+		TEXT("2 - Rec709."),
+		ECVF_RenderThreadSafe);
 
 	TAutoConsoleVariable<bool> CVarAutoExposureIgnoreMaterialsReconstructFromSceneColor(
 		TEXT("r.AutoExposure.IgnoreMaterials.ReconstructFromSceneColor"),
@@ -183,7 +191,8 @@ bool IsExtendLuminanceRangeEnabled()
 
 bool IsAutoExposureUsingIlluminanceEnabled(const FViewInfo& View)
 {
-	return CVarAutoExposureIgnoreMaterials.GetValueOnRenderThread() && GetAutoExposureMethod(View) == AEM_Histogram;
+	// NOTE: This method cannot be supported with PathTracing because it requires a GBuffer which is not available in the path tracing case
+	return CVarAutoExposureIgnoreMaterials.GetValueOnRenderThread() && GetAutoExposureMethod(View) == AEM_Histogram && !View.Family->EngineShowFlags.PathTracing;
 }
 
 int32 GetAutoExposureIlluminanceDownscaleFactor()
@@ -363,7 +372,7 @@ float CalculateManualAutoExposure(const FViewInfo& View, bool bForceDisablePhysi
 	return FoundLuminance;
 }
 
-FEyeAdaptationParameters GetEyeAdaptationParameters(const FViewInfo& View, ERHIFeatureLevel::Type MinFeatureLevel)
+FEyeAdaptationParameters GetEyeAdaptationParameters(const FViewInfo& View)
 {
 	const bool bExtendedLuminanceRange = IsExtendLuminanceRangeEnabled();
 
@@ -417,7 +426,7 @@ FEyeAdaptationParameters GetEyeAdaptationParameters(const FViewInfo& View, ERHIF
 		MinWhitePointLuminance = MaxWhitePointLuminance = CalculateFixedAutoExposure(View);
 	}
 	// The feature level check should always pass unless on mobile with MobileHDR is false
-	else if (EngineShowFlags.EyeAdaptation && View.GetFeatureLevel() >= MinFeatureLevel)
+	else if (EngineShowFlags.EyeAdaptation && View.GetFeatureLevel() >= GetBasicEyeAdaptationMinFeatureLevel())
 	{
 		if (AutoExposureMethod == EAutoExposureMethod::AEM_Manual)
 		{
@@ -532,12 +541,30 @@ FEyeAdaptationParameters GetEyeAdaptationParameters(const FViewInfo& View, ERHIF
 	Parameters.VisualizeDebugType = CVarEyeAdaptationVisualizeDebugType.GetValueOnRenderThread();
 	Parameters.MeterMaskTexture = MeterMask;
 	Parameters.MeterMaskSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
+
+	const int32 LuminanceMethod = CVarAutoExposureLuminanceMethod.GetValueOnRenderThread();
+	if (LuminanceMethod == 1)
+	{
+		// NTSC / match weights in Common.ush
+		Parameters.LuminanceWeights = FVector3f(0.3f, 0.59f, 0.11f);
+	}
+	else if (LuminanceMethod == 2)
+	{
+		// Rec 709
+		Parameters.LuminanceWeights = FVector3f(0.2126f, 0.7152f, 0.0722f);
+	}
+	else
+	{
+		// default (uniform weights)
+		Parameters.LuminanceWeights = FVector3f(1.0f / 3.0f);
+	}
+
 	return Parameters;
 }
 
 float GetEyeAdaptationFixedExposure(const FViewInfo& View)
 {
-	const FEyeAdaptationParameters Parameters = GetEyeAdaptationParameters(View, GetBasicEyeAdaptationMinFeatureLevel());
+	const FEyeAdaptationParameters Parameters = GetEyeAdaptationParameters(View);
 
 	const float Exposure = (Parameters.MinAverageLuminance + Parameters.MaxAverageLuminance) * 0.5f;
 
@@ -612,6 +639,7 @@ class FSetupExposureIlluminanceCS : public FGlobalShader
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, ColorTexture)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, RWIlluminanceTexture)
 		SHADER_PARAMETER_STRUCT(FScreenPassTextureViewportParameters, Illuminance)
+		SHADER_PARAMETER_STRUCT(FEyeAdaptationParameters, EyeAdaptation)
 		SHADER_PARAMETER(uint32, IllumiananceDownscaleFactor)
 	END_SHADER_PARAMETER_STRUCT()
 
@@ -662,6 +690,7 @@ FRDGTextureRef AddSetupExposureIlluminancePass(
 			PassParameters->ColorTexture = SceneTextures.Color.Resolve;
 			PassParameters->RWIlluminanceTexture = GraphBuilder.CreateUAV(OutputTexture);
 			PassParameters->Illuminance = GetScreenPassTextureViewportParameters(OutputViewport);
+			PassParameters->EyeAdaptation = GetEyeAdaptationParameters(View);
 			PassParameters->IllumiananceDownscaleFactor = GetAutoExposureIlluminanceDownscaleFactor();
 
 			auto ComputeShader = View.ShaderMap->GetShader<FSetupExposureIlluminanceCS>();
@@ -698,7 +727,7 @@ class FCalculateExposureIlluminanceCS : public FGlobalShader
 
 		SHADER_PARAMETER_STRUCT_INCLUDE(FTranslucencyLightingVolumeParameters, TranslucencyLightingVolume)
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FLumenTranslucencyLightingUniforms, LumenGIVolumeStruct)
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
@@ -741,7 +770,7 @@ FRDGTextureRef AddCalculateExposureIlluminancePass(
 			PassParameters->RWIlluminanceTexture = GraphBuilder.CreateUAV(ExposureIlluminanceSetup);
 			PassParameters->Illuminance = GetScreenPassTextureViewportParameters(OutputViewport);
 			PassParameters->IllumiananceDownscaleFactor = GetAutoExposureIlluminanceDownscaleFactor();
-			PassParameters->EyeAdaptation = GetEyeAdaptationParameters(View, ERHIFeatureLevel::SM5);
+			PassParameters->EyeAdaptation = GetEyeAdaptationParameters(View);
 
 			PassParameters->PreIntegratedGF = GSystemTextures.PreintegratedGF->GetRHI();
 			PassParameters->PreIntegratedGFSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
@@ -751,7 +780,7 @@ FRDGTextureRef AddCalculateExposureIlluminancePass(
 			auto* LumenUniforms = GraphBuilder.AllocParameters<FLumenTranslucencyLightingUniforms>();
 			LumenUniforms->Parameters = GetLumenTranslucencyLightingParameters(GraphBuilder, View.GetLumenTranslucencyGIVolume(), View.LumenFrontLayerTranslucency);
 			PassParameters->LumenGIVolumeStruct = GraphBuilder.CreateUniformBuffer(LumenUniforms);
-			PassParameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
+			PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 
 			auto ComputeShader = View.ShaderMap->GetShader<FCalculateExposureIlluminanceCS>();
 
@@ -915,7 +944,7 @@ public:
 		SHADER_PARAMETER_STRUCT(FEyeAdaptationParameters, EyeAdaptation)
 		SHADER_PARAMETER_STRUCT(FLocalExposureParameters, LocalExposure)
 		SHADER_PARAMETER_STRUCT(FScreenPassTextureViewportParameters, Color)
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, ColorTexture)
+		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D, ColorTexture)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float4>, EyeAdaptationBuffer)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<float4>, RWEyeAdaptationBuffer)
 	END_SHADER_PARAMETER_STRUCT()
@@ -936,7 +965,7 @@ FRDGBufferRef AddBasicEyeAdaptationPass(
 	const FViewInfo& View,
 	const FEyeAdaptationParameters& EyeAdaptationParameters,
 	const FLocalExposureParameters& LocalExposureParameters,
-	FScreenPassTexture SceneColor,
+	FScreenPassTextureSlice SceneColor,
 	FRDGBufferRef EyeAdaptationBuffer,
 	bool bComputeAverageLocalExposure)
 {
@@ -952,7 +981,7 @@ FRDGBufferRef AddBasicEyeAdaptationPass(
 	PassParameters->EyeAdaptation = EyeAdaptationParameters;
 	PassParameters->LocalExposure = LocalExposureParameters;
 	PassParameters->Color = GetScreenPassTextureViewportParameters(SceneColorViewport);
-	PassParameters->ColorTexture = SceneColor.Texture;
+	PassParameters->ColorTexture = SceneColor.TextureSRV;
 	PassParameters->EyeAdaptationBuffer = GraphBuilder.CreateSRV(EyeAdaptationBuffer);
 	PassParameters->RWEyeAdaptationBuffer = GraphBuilder.CreateUAV(OutputBuffer);
 
@@ -1174,7 +1203,7 @@ void FViewInfo::UpdatePreExposure()
 		&& !ViewFamily.EngineShowFlags.LightComplexity
 		&& !ViewFamily.EngineShowFlags.LODColoration
 		&& !ViewFamily.EngineShowFlags.HLODColoration
-		&& !ViewFamily.EngineShowFlags.LevelColoration
+		&& !ViewFamily.EngineShowFlags.ActorColoration
 		&& ((!ViewFamily.EngineShowFlags.VisualizeBuffer) || CurrentBufferVisualizationMode != NAME_None) // disable pre-exposure for the buffer visualization modes
 		&& !ViewFamily.EngineShowFlags.RayTracingDebug;
 

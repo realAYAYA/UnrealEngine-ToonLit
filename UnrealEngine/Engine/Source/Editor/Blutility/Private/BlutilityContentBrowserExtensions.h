@@ -7,5 +7,6 @@ class FBlutilityContentBrowserExtensions
 {
 public:
 	static void InstallHooks();
+	static void RegisterMenus();
 	static void RemoveHooks();
 };

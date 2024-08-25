@@ -4,9 +4,11 @@
 
 #include "AssetActionUtility.h"
 #include "EditorUtilityBlueprint.h"
+#include "Engine/BlueprintGeneratedClass.h"
 #include "JsonObjectConverter.h"
 #include "AssetRegistry/AssetData.h"
 #include "Serialization/JsonSerializerMacros.h"
+#include "UObject/AssetRegistryTagsContext.h"
 
 const FName AssetActionUtilityTags::BlutilityTagVersion(TEXT("BlutilityTagVersion"));
 const FName AssetActionUtilityTags::SupportedClasses(TEXT("SupportedClasses"));
@@ -24,6 +26,10 @@ UObject* FAssetActionUtilityPrototype::LoadUtilityAsset() const
 		{
 			return BPClass->GetDefaultObject();
 		}
+	}
+	else if (const UBlueprintGeneratedClass* BPClass = Cast<UBlueprintGeneratedClass>(UtilityBlueprintAsset.GetAsset()))
+	{
+		return BPClass->GetDefaultObject();
 	}
 
 	return nullptr;
@@ -99,19 +105,19 @@ TArray<FAssetActionSupportCondition> FAssetActionUtilityPrototype::GetAssetActio
 	return Results;
 }
 
-void FAssetActionUtilityPrototype::AddTagsFor_Version(TArray<UObject::FAssetRegistryTag>& OutTags)
+void FAssetActionUtilityPrototype::AddTagsFor_Version(FAssetRegistryTagsContext Context)
 {
 	// Adding a version to the tags just in case we need to know 'this blutility is out of date and we can't go based off the cached data because the format isn't followed, or this is a pre-tagged version'
-	OutTags.Add(UObject::FAssetRegistryTag(AssetActionUtilityTags::BlutilityTagVersion, LexToString(AssetActionUtilityTags::TagVersion), UObject::FAssetRegistryTag::TT_Hidden));	
+	Context.AddTag(UObject::FAssetRegistryTag(AssetActionUtilityTags::BlutilityTagVersion, LexToString(AssetActionUtilityTags::TagVersion), UObject::FAssetRegistryTag::TT_Hidden));	
 }
 
-void FAssetActionUtilityPrototype::AddTagsFor_SupportedClasses(const TArray<TSoftClassPtr<UObject>>& SupportedClasses, TArray<UObject::FAssetRegistryTag>& OutTags)
+void FAssetActionUtilityPrototype::AddTagsFor_SupportedClasses(const TArray<TSoftClassPtr<UObject>>& SupportedClasses, FAssetRegistryTagsContext Context)
 {
 	const FString SupportedClassesString = FString::JoinBy(SupportedClasses, TEXT(","), [](const TSoftClassPtr<UObject>& SupportedClass) { return SupportedClass.ToString(); });
-	OutTags.Add(UObject::FAssetRegistryTag(AssetActionUtilityTags::SupportedClasses, SupportedClassesString, UObject::FAssetRegistryTag::TT_Hidden));
+	Context.AddTag(UObject::FAssetRegistryTag(AssetActionUtilityTags::SupportedClasses, SupportedClassesString, UObject::FAssetRegistryTag::TT_Hidden));
 }
 
-void FAssetActionUtilityPrototype::AddTagsFor_SupportedConditions(const TArray<FAssetActionSupportCondition>& SupportedConditions, TArray<UObject::FAssetRegistryTag>& OutTags)
+void FAssetActionUtilityPrototype::AddTagsFor_SupportedConditions(const TArray<FAssetActionSupportCondition>& SupportedConditions, FAssetRegistryTagsContext Context)
 {
 	TArray<TSharedPtr<FJsonValue>> SupportedConditionJsonValues;
 	for (const FAssetActionSupportCondition& Condition : SupportedConditions)
@@ -132,17 +138,17 @@ void FAssetActionUtilityPrototype::AddTagsFor_SupportedConditions(const TArray<F
 			FJsonSerializer::Serialize(JsonArray, FString(), JsonWriter);
 		}
 
-		OutTags.Add(UObject::FAssetRegistryTag(AssetActionUtilityTags::SupportedConditions, SupportedConditionsJson, UObject::FAssetRegistryTag::TT_Hidden));
+		Context.AddTag(UObject::FAssetRegistryTag(AssetActionUtilityTags::SupportedConditions, SupportedConditionsJson, UObject::FAssetRegistryTag::TT_Hidden));
 	}
 }
 
-void FAssetActionUtilityPrototype::AddTagsFor_IsActionForBlueprints(bool IsActionForBlueprints, TArray<UObject::FAssetRegistryTag>& OutTags)
+void FAssetActionUtilityPrototype::AddTagsFor_IsActionForBlueprints(bool IsActionForBlueprints, FAssetRegistryTagsContext Context)
 {
 	const bool ActionForBlueprint = IsActionForBlueprints;
-	OutTags.Add(UObject::FAssetRegistryTag(AssetActionUtilityTags::IsActionForBlueprint, ActionForBlueprint ? TEXT("True") : TEXT("False"), UObject::FAssetRegistryTag::TT_Hidden));
+	Context.AddTag(UObject::FAssetRegistryTag(AssetActionUtilityTags::IsActionForBlueprint, ActionForBlueprint ? TEXT("True") : TEXT("False"), UObject::FAssetRegistryTag::TT_Hidden));
 }
 
-void FAssetActionUtilityPrototype::AddTagsFor_CallableFunctions(const UObject* FunctionsSource, TArray<UObject::FAssetRegistryTag>& OutTags)
+void FAssetActionUtilityPrototype::AddTagsFor_CallableFunctions(const UObject* FunctionsSource, FAssetRegistryTagsContext Context)
 {
 	check(FunctionsSource);
 	
@@ -187,6 +193,6 @@ void FAssetActionUtilityPrototype::AddTagsFor_CallableFunctions(const UObject* F
 			FJsonSerializer::Serialize(JsonArray, FString(), JsonWriter);
 		}
 
-		OutTags.Add(UObject::FAssetRegistryTag(AssetActionUtilityTags::CallableFunctions, FunctionDataJson, UObject::FAssetRegistryTag::TT_Hidden));
+		Context.AddTag(UObject::FAssetRegistryTag(AssetActionUtilityTags::CallableFunctions, FunctionDataJson, UObject::FAssetRegistryTag::TT_Hidden));
 	}
 }

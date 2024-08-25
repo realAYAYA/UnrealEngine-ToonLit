@@ -2,6 +2,8 @@
 
 #include "BehaviorTreeGraphNode_Composite.h"
 
+#include "BehaviorTreeColors.h"
+#include "BehaviorTreeGraph.h"
 #include "BehaviorTree/BTCompositeNode.h"
 #include "BehaviorTree/BTNode.h"
 #include "HAL/PlatformMath.h"
@@ -51,6 +53,13 @@ FText UBehaviorTreeGraphNode_Composite::GetTooltipText() const
 	return Super::GetTooltipText();
 }
 
+FLinearColor UBehaviorTreeGraphNode_Composite::GetBackgroundColor(bool bIsActiveForDebugger) const
+{
+	UBTCompositeNode* CompositeNodeInstance = Cast<UBTCompositeNode>(NodeInstance);
+	const bool bIsScoped = CompositeNodeInstance && CompositeNodeInstance->IsApplyingDecoratorScope();
+	return bIsScoped ? BehaviorTreeColors::NodeBody::CompositeScoped : BehaviorTreeColors::NodeBody::Composite;
+}
+
 void UBehaviorTreeGraphNode_Composite::PostPasteNode()
 {
 	Super::PostPasteNode();
@@ -67,5 +76,9 @@ void UBehaviorTreeGraphNode_Composite::PostPasteNode()
 void UBehaviorTreeGraphNode_Composite::GetNodeContextMenuActions(UToolMenu* Menu, UGraphNodeContextMenuContext* Context) const
 {
 	AddContextMenuActionsDecorators(Menu, "BehaviorTreeGraphNode", Context);
-	AddContextMenuActionsServices(Menu, "BehaviorTreeGraphNode", Context);
+
+	if (GetOwnerBehaviorTreeGraph()->DoesSupportServices())
+	{
+		AddContextMenuActionsServices(Menu, "BehaviorTreeGraphNode", Context);
+	}
 }

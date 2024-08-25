@@ -12,7 +12,6 @@
 #include "Evaluation/MovieSceneEvaluationKey.h"
 #include "Evaluation/PreAnimatedState/IMovieScenePreAnimatedCaptureSource.h"
 #include "Evaluation/PreAnimatedState/MovieScenePreAnimatedStateTypes.h"
-#include "MovieSceneSequenceID.h"
 #include "UObject/ObjectKey.h"
 
 class UMovieSceneTrackInstance;
@@ -23,7 +22,6 @@ namespace UE
 namespace MovieScene
 {
 
-struct FPreAnimatedEvalHookKeyType;
 struct FPreAnimatedStateExtension;
 struct FRestoreStateParams;
 
@@ -37,17 +35,41 @@ enum class EPreAnimatedCaptureSourceState
 	UpToDate,
 };
 
+/** Key type for pre-animated state associated to evaluation hooks */
 struct FPreAnimatedEvalHookKeyType
 {
 	FObjectKey Hook;
+	FRootInstanceHandle RootInstanceHandle;
 	FMovieSceneSequenceID SequenceID;
 
-	friend uint32 GetTypeHash(const FPreAnimatedEvalHookKeyType& In) { return GetTypeHash(In.Hook) ^ GetTypeHash(In.SequenceID); }
-	friend bool operator==(const FPreAnimatedEvalHookKeyType& A, const FPreAnimatedEvalHookKeyType& B) { return A.Hook == B.Hook && A.SequenceID == B.SequenceID; }
+	friend uint32 GetTypeHash(const FPreAnimatedEvalHookKeyType& In)
+	{
+		return GetTypeHash(In.Hook) ^ GetTypeHash(In.RootInstanceHandle) ^ GetTypeHash(In.SequenceID);
+	}
+	friend bool operator==(const FPreAnimatedEvalHookKeyType& A, const FPreAnimatedEvalHookKeyType& B)
+	{
+		return A.Hook == B.Hook && A.RootInstanceHandle == B.RootInstanceHandle && A.SequenceID == B.SequenceID;
+	}
+};
+
+/** Key type for pre-animated state associated to evaluation templates */
+struct FPreAnimatedEvaluationKeyType
+{
+	FMovieSceneEvaluationKey EvaluationKey;
+	FRootInstanceHandle RootInstanceHandle;
+
+	friend uint32 GetTypeHash(const FPreAnimatedEvaluationKeyType& In)
+	{
+		return GetTypeHash(In.EvaluationKey) ^ GetTypeHash(In.RootInstanceHandle);
+	}
+	friend bool operator==(const FPreAnimatedEvaluationKeyType& A, const FPreAnimatedEvaluationKeyType& B)
+	{
+		return A.EvaluationKey == B.EvaluationKey && A.RootInstanceHandle == B.RootInstanceHandle; 
+	}
 };
 
 /**
- * Structure responsible for tracking contributions to pre-eanimated state entries that originate from track templates (ie, from an IMovieSceneExecutionToken::Execute)
+ * Structure responsible for tracking contributions to pre-animated state entries that originate from track templates (ie, from an IMovieSceneExecutionToken::Execute)
  */
 template<typename KeyType>
 struct TPreAnimatedCaptureSources : IPreAnimatedCaptureSource
@@ -55,20 +77,29 @@ struct TPreAnimatedCaptureSources : IPreAnimatedCaptureSource
 	TPreAnimatedCaptureSources(FPreAnimatedStateExtension* InOwner);
 
 	/**
-	 * Make an association for the specifieid evaluation key to the value specified by Entry,
+	 * Make an association for the specified evaluation key to the value specified by Entry,
 	 * along with an indication of whether it should be restored on completion
 	 */
 	EPreAnimatedCaptureSourceState BeginTrackingCaptureSource(const KeyType& InKey, const FPreAnimatedStateMetaData& MetaData);
+
+	/**
+	 * Stop tracking the evaluation key in question, where associated with the given storage value ID
+	 * This restores the value if it was captured with bWantsRestoreState
+	 */
+	void StopTrackingCaptureSource(const KeyType& InKey, FPreAnimatedStorageID InStorageID);
 
 	/**
 	 * Stop tracking the evaluation key in question, restoring the value if it was captured with bWantsRestoreState
 	 */
 	void StopTrackingCaptureSource(const KeyType& InKey);
 
+	// IPreAnimatedCaptureSource members
 	void Reset() override;
 	bool ContainsInstanceHandle(FRootInstanceHandle RootInstanceHandle) const override;
 	void GatherAndRemoveExpiredMetaData(const FRestoreStateParams& Params, TArray<FPreAnimatedStateMetaData>& OutExpiredMetaData) override;
 	void GatherAndRemoveMetaDataForGroup(FPreAnimatedStorageGroupHandle Group, TArray<FPreAnimatedStateMetaData>& OutExpiredMetaData) override;
+	void GatherAndRemoveMetaDataForStorage(FPreAnimatedStorageID StorageID, FPreAnimatedStorageIndex StorageIndex, TArray<FPreAnimatedStateMetaData>& OutExpiredMetaData) override;
+	void GatherAndRemoveMetaDataForRootInstance(FRootInstanceHandle InstanceHandle, TArray<FPreAnimatedStateMetaData>& OutExpiredMetaData) override;
 
 private:
 
@@ -78,11 +109,46 @@ private:
 
 
 /**
+ * Structure responsible for tracking contributions to pre-animated state entries that originate from ECS data (ie, from FMovieSceneEntityIDs)
+ */
+struct FPreAnimatedEntityCaptureSource : TPreAnimatedCaptureSources<FMovieSceneEntityID>
+{
+	MOVIESCENE_API FPreAnimatedEntityCaptureSource(FPreAnimatedStateExtension* InOwner);
+
+	MOVIESCENE_API void BeginTrackingEntity(const FPreAnimatedStateEntry& Entry, FMovieSceneEntityID EntityID, FRootInstanceHandle RootInstanceHandle, bool bWantsRestoreState);
+
+	void StopTrackingEntity(FMovieSceneEntityID EntityID, FPreAnimatedStorageID StorageID)
+	{
+		StopTrackingCaptureSource(EntityID, StorageID);
+	}
+
+	void StopTrackingEntity(FMovieSceneEntityID EntityID)
+	{
+		StopTrackingCaptureSource(EntityID);
+	}
+};
+
+/**
  * Structure responsible for tracking contributions to pre-eanimated state entries that originate from track templates (ie, from an IMovieSceneExecutionToken::Execute)
  */
-struct FPreAnimatedTemplateCaptureSources : TPreAnimatedCaptureSources<FMovieSceneEvaluationKey>
+struct FPreAnimatedTemplateCaptureSources : TPreAnimatedCaptureSources<FPreAnimatedEvaluationKeyType>
 {
 	MOVIESCENE_API FPreAnimatedTemplateCaptureSources(FPreAnimatedStateExtension* InOwner);
+
+	/**
+	 * Make an association for the specified evaluation key to the value specified by Entry,
+	 * along with an indication of whether it should be restored on completion
+	 */
+	MOVIESCENE_API EPreAnimatedCaptureSourceState BeginTrackingCaptureSource(const FMovieSceneEvaluationKey& EvaluationKey, const FPreAnimatedStateMetaData& MetaData);
+
+	/**
+	 * Stop tracking the evaluation key in question, restoring the value if it was captured with bWantsRestoreState
+	 */
+	MOVIESCENE_API void StopTrackingCaptureSource(const FMovieSceneEvaluationKey& EvaluationKey, FRootInstanceHandle RootInstanceHandle);
+
+	// Un-shadow base class methods (it's OK, they're not virtual)
+	using TPreAnimatedCaptureSources<FPreAnimatedEvaluationKeyType>::BeginTrackingCaptureSource;
+	using TPreAnimatedCaptureSources<FPreAnimatedEvaluationKeyType>::StopTrackingCaptureSource;
 };
 
 /**
@@ -93,7 +159,7 @@ struct FPreAnimatedEvaluationHookCaptureSources : TPreAnimatedCaptureSources<FPr
 	MOVIESCENE_API FPreAnimatedEvaluationHookCaptureSources(FPreAnimatedStateExtension* InOwner);
 
 	/**
-	 * Make an association for the specifieid evaluation key to the value specified by Entry,
+	 * Make an association for the specified evaluation key to the value specified by Entry,
 	 * along with an indication of whether it should be restored on completion
 	 */
 	MOVIESCENE_API EPreAnimatedCaptureSourceState BeginTrackingCaptureSource(const UObject* Hook, FMovieSceneSequenceID SequenceID, const FPreAnimatedStateMetaData& MetaData);
@@ -101,7 +167,11 @@ struct FPreAnimatedEvaluationHookCaptureSources : TPreAnimatedCaptureSources<FPr
 	/**
 	 * Stop tracking the evaluation key in question, restoring the value if it was captured with bWantsRestoreState
 	 */
-	MOVIESCENE_API void StopTrackingCaptureSource(const UObject* Hook, FMovieSceneSequenceID SequenceID);
+	MOVIESCENE_API void StopTrackingCaptureSource(const UObject* Hook, FRootInstanceHandle RootInstanceHandle, FMovieSceneSequenceID SequenceID);
+
+	// Un-shadow base class methods (it's OK, they're not virtual)
+	using TPreAnimatedCaptureSources<FPreAnimatedEvalHookKeyType>::BeginTrackingCaptureSource;
+	using TPreAnimatedCaptureSources<FPreAnimatedEvalHookKeyType>::StopTrackingCaptureSource;
 };
 
 
@@ -113,7 +183,7 @@ struct FPreAnimatedTrackInstanceCaptureSources : TPreAnimatedCaptureSources<FObj
 	MOVIESCENE_API FPreAnimatedTrackInstanceCaptureSources(FPreAnimatedStateExtension* InOwner);
 
 	/**
-	 * Make an association for the specifieid evaluation key to the value specified by Entry,
+	 * Make an association for the specified evaluation key to the value specified by Entry,
 	 * along with an indication of whether it should be restored on completion
 	 */
 	MOVIESCENE_API EPreAnimatedCaptureSourceState BeginTrackingCaptureSource(UMovieSceneTrackInstance* TrackInstance, const FPreAnimatedStateMetaData& MetaData);

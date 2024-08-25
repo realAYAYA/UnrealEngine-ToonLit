@@ -519,7 +519,7 @@ void MakeLocalCopy(const TCHAR* Filename)
 		FString FilenameStr = Filename;
 		if (FCString::Stristr(*FilenameStr, TEXT(".ini")))
 		{
-			FilenameStr.LeftChopInline(4, false);
+			FilenameStr.LeftChopInline(4, EAllowShrinking::No);
 		} 
 		else
 		{

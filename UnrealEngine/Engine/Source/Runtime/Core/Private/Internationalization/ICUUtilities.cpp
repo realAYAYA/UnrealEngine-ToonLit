@@ -116,7 +116,7 @@ namespace ICUUtilities
 			const int32_t DestinationSizeBytes = ucnv_fromUChars(ICUConverter, reinterpret_cast<char*>(InternalStringBuffer.GetData()), DestinationCapacityBytes, Source.getBuffer() + SourceStartIndex, SourceLen, &ICUStatus);
 			const int32 DestinationSizeTCHARs = DestinationSizeBytes / sizeof(TCHAR);
 			InternalStringBuffer[DestinationSizeTCHARs] = 0;
-			InternalStringBuffer.SetNum(DestinationSizeTCHARs + 1, /*bAllowShrinking*/false); // the array size includes null
+			InternalStringBuffer.SetNum(DestinationSizeTCHARs + 1, EAllowShrinking::No); // the array size includes null
 
 			check(U_SUCCESS(ICUStatus));
 		}

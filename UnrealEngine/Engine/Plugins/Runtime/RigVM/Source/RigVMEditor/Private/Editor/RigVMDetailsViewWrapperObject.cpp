@@ -386,6 +386,18 @@ UClass* URigVMDetailsViewWrapperObject::GetClassForNodes(TArray<URigVMNode*> InN
 			Property = ArrayProperty;
 			ElementProperty = &ArrayProperty->Inner;
 			PropertyOwner = ArrayProperty;
+
+			// In case the base type is also an array (RigVM supports up to 2 nested levels of arrays)
+			if (RigVMTypeUtils::IsArrayType(BaseCPPType))
+			{
+				BaseCPPType = RigVMTypeUtils::BaseTypeFromArrayType(BaseCPPType);
+				
+				// create an array property as a container for the tail
+				FArrayProperty* InnerArrayProperty = new FArrayProperty(PropertyOwner, Pin->GetFName(), RF_Public);
+				(*ElementProperty) = InnerArrayProperty;
+				ElementProperty = &InnerArrayProperty->Inner;
+				PropertyOwner = InnerArrayProperty;
+			}
 		}
 
 		if(BaseCPPType.Equals(BoolString, ESearchCase::IgnoreCase))
@@ -436,6 +448,10 @@ UClass* URigVMDetailsViewWrapperObject::GetClassForNodes(TArray<URigVMNode*> InN
 		}
 
 		if(Property == nullptr)
+		{
+			return nullptr;
+		}
+		if (ElementProperty && *ElementProperty == nullptr)
 		{
 			return nullptr;
 		}
@@ -597,7 +613,12 @@ void URigVMDetailsViewWrapperObject::PostEditChangeChainProperty(FPropertyChange
 	const TDoubleLinkedList<FProperty*>::TDoubleLinkedListNode* PropertyNode = PropertyChangedEvent.PropertyChain.GetHead();
 	do
 	{
-		const FString PropertyName = PropertyNode->GetValue()->GetNameCPP();
+		FString PropertyName = PropertyNode->GetValue()->GetNameCPP();
+		int32 Index = PropertyChangedEvent.GetArrayIndex(PropertyName);
+		if (Index != INDEX_NONE)
+		{
+			PropertyName = FString::Printf(TEXT("%s[%d]"), *PropertyName, Index);
+		}
 		if(PropertyPath.IsEmpty())
 		{
 			PropertyPath = PropertyName;

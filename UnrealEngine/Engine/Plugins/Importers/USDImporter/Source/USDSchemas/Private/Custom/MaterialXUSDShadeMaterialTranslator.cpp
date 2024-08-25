@@ -56,7 +56,9 @@ namespace UE::USDMaterialXTranslator::Private
 	{
 		TArray<FString> Result;
 
-		pxr::UsdPrimCompositionQuery PrimCompositionQuery = pxr::UsdPrimCompositionQuery::GetDirectReferences(Prim);
+		// We used to just fetch "direct references" here, but stages may compose the .mtlx file reference onto the prim
+		// via another sublayer or reference, so it will be marked as an "ancestral arc" and not be included in the "direct references" filter
+		pxr::UsdPrimCompositionQuery PrimCompositionQuery = pxr::UsdPrimCompositionQuery{Prim};
 		for (const pxr::UsdPrimCompositionQueryArc& CompositionArc : PrimCompositionQuery.GetCompositionArcs())
 		{
 			if (CompositionArc.GetArcType() == pxr::PcpArcTypeReference)
@@ -156,7 +158,13 @@ namespace UE::USDMaterialXTranslator::Private
 		return Hash.ToString();
 	}
 
-	bool TranslateMaterialXFile(const FString& MaterialXFilePath, const FString& FileHash, const pxr::UsdPrim& MaterialXReferencerPrim, UUsdAssetCache2& AssetCache)
+	bool TranslateMaterialXFile(
+		const FString& MaterialXFilePath,
+		const FString& FileHash,
+		const pxr::UsdPrim& MaterialXReferencerPrim,
+		UUsdAssetCache2& AssetCache,
+		bool bReuseIdenticalAssets
+	)
 	{
 		if (!FPaths::FileExists(MaterialXFilePath))
 		{
@@ -182,10 +190,12 @@ namespace UE::USDMaterialXTranslator::Private
 			TempPackagePath = FString::Printf(TEXT("/Engine/USDImporter/Transient/%d"), PackageSuffix++);
 		}
 
+		const FString HashPrefix = UsdUtils::GetAssetHashPrefix(MaterialXReferencerPrim, bReuseIdenticalAssets);
+
 		// Currently Interchange cannot import directly into the transient package, so we'll import into a temporary folder and then
 		// move everything over
 		InterchangeParameters.OnAssetsImportDoneNative.BindLambda(
-			[&AssetCache, &FileHash, &ReferencerPrimPath, &TempPackagePath, &MaterialXFilePath](const TArray<UObject*>& ImportedObjects)
+			[&AssetCache, &FileHash, &ReferencerPrimPath, &TempPackagePath, &MaterialXFilePath, &HashPrefix](const TArray<UObject*>& ImportedObjects)
 			{
 				UE_LOG(LogUsd, Verbose, TEXT("Translated '%d' assets from MaterialX file '%s'"), ImportedObjects.Num(), *MaterialXFilePath);
 
@@ -217,23 +227,23 @@ namespace UE::USDMaterialXTranslator::Private
 					{
 						// MaterialX names are unique, and can only have alphanumeric and the "_" character, so we should
 						// always have a solid enough mapping to assume UAsset name == Prim name == MaterialX name
-						FString NewMaterialHash = FileHash + TEXT("/") + Material->GetFName().GetPlainNameString();
+						FString NewPrefixedMaterialHash = HashPrefix + FileHash + TEXT("/") + Material->GetFName().GetPlainNameString();
 
 						// We generate all assets from the MaterialX file once, but it's possible we're just updating a
 						// single material prim here. If we were to cache all assets here, we'd potentially be trying
 						// to overwrite the existing assets that are being used by other prims and wouldn't otherwise
 						// be discarded, so make sure we don't do that
-						UMaterialInterface* ExistingMaterial = Cast<UMaterialInterface>(AssetCache.GetCachedAsset(NewMaterialHash));
+						UMaterialInterface* ExistingMaterial = Cast<UMaterialInterface>(AssetCache.GetCachedAsset(NewPrefixedMaterialHash));
 						if (!ExistingMaterial)
 						{
-							AssetCache.CacheAsset(NewMaterialHash, Material);
+							AssetCache.CacheAsset(NewPrefixedMaterialHash, Material);
 						}
 					}
 					else if (UTexture* Texture = Cast<UTexture>(ImportedObject))
 					{
 						const FString FilePath = Texture->AssetImportData ? Texture->AssetImportData->GetFirstFilename() : TEXT("");
 
-						FString TextureHash = UsdUtils::GetTextureHash(
+						FString PrefixedTextureHash = HashPrefix + UsdUtils::GetTextureHash(
 							FilePath,
 							Texture->SRGB,
 							Texture->CompressionSettings,
@@ -242,14 +252,14 @@ namespace UE::USDMaterialXTranslator::Private
 						);
 
 						// See comment on the analogous part of the Material case above
-						UTexture* ExistingTexture = Cast<UTexture>(AssetCache.GetCachedAsset(TextureHash));
+						UTexture* ExistingTexture = Cast<UTexture>(AssetCache.GetCachedAsset(PrefixedTextureHash));
 						if (!ExistingTexture)
 						{
 							UUsdAssetUserData* UserData = NewObject<UUsdAssetUserData>(Texture, TEXT("USDAssetUserData"));
 							UserData->PrimPaths = {ReferencerPrimPath};
 							Texture->AddAssetUserData(UserData);
 
-							AssetCache.CacheAsset(TextureHash, Texture);
+							AssetCache.CacheAsset(PrefixedTextureHash, Texture);
 						}
 					}
 					else
@@ -416,6 +426,7 @@ void FMaterialXUsdShadeMaterialTranslator::CreateAssets()
 	}
 
 	FString TargetHashSuffix = TEXT("/") + UsdToUnreal::ConvertString(Prim.GetName());
+	FString TargetHashPrefix = UsdUtils::GetAssetHashPrefix(Prim, Context->bReuseIdenticalAssets);
 
 	FString FoundMaterialAssetHash;
 	UMaterialInterface* ParsedMaterial = nullptr;
@@ -431,7 +442,7 @@ void FMaterialXUsdShadeMaterialTranslator::CreateAssets()
 			continue;
 		}
 
-		FString MaterialAssetHashForThisFile = MaterialXHash + TargetHashSuffix;
+		FString MaterialAssetHashForThisFile = TargetHashPrefix + MaterialXHash + TargetHashSuffix;
 		ParsedMaterial = Cast<UMaterialInterface>(Context->AssetCache->GetCachedAsset(MaterialAssetHashForThisFile));
 		if (ParsedMaterial)
 		{
@@ -453,7 +464,8 @@ void FMaterialXUsdShadeMaterialTranslator::CreateAssets()
 				MaterialXFilePath,
 				MaterialXFileHash,
 				MaterialXReferencerPrim,
-				*Context->AssetCache
+				*Context->AssetCache,
+				Context->bReuseIdenticalAssets
 			);
 
 			if (!bSuccess)
@@ -470,7 +482,7 @@ void FMaterialXUsdShadeMaterialTranslator::CreateAssets()
 			// Check if we found our target material when parsing this file
 			if (!ParsedMaterial)
 			{
-				FString MaterialAssetHashForThisFile = MaterialXFileHash + TargetHashSuffix;
+				FString MaterialAssetHashForThisFile = TargetHashPrefix + MaterialXFileHash + TargetHashSuffix;
 				ParsedMaterial = Cast<UMaterialInterface>(Context->AssetCache->GetCachedAsset(MaterialAssetHashForThisFile));
 				if (ParsedMaterial)
 				{

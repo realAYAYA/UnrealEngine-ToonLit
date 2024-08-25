@@ -5,6 +5,7 @@
 #include "Animation/AnimSequence.h"
 #include "Animation/AnimInstanceProxy.h"
 #include "AnimGraphRuntimeTrace.h"
+#include "Animation/AnimInertializationSyncScope.h"
 #include "Animation/AnimSync.h"
 #include "Animation/AnimSyncScope.h"
 #include "Animation/AnimStats.h"
@@ -97,11 +98,11 @@ void FAnimNode_BlendSpacePlayerBase::UpdateInternal(const FAnimationUpdateContex
 			IsEvaluator(), Context.GetFinalBlendWeight(), /*inout*/ InternalTimeAccumulator, MarkerTickRecord);
 		TickRecord.RootMotionWeightModifier = Context.GetRootMotionWeightModifier();
 		TickRecord.DeltaTimeRecord = &DeltaTimeRecord;
-
-		UE::Anim::FAnimSyncParams SyncParams(GetGroupName(), GetGroupRole(), GetGroupMethod());
+		TickRecord.bRequestedInertialization = Context.GetMessage<UE::Anim::FAnimInertializationSyncScope>() != nullptr;
+		
 		TickRecord.GatherContextData(Context);
 
-		SyncScope.AddTickRecord(TickRecord, SyncParams, UE::Anim::FAnimSyncDebugInfo(Context));
+		SyncScope.AddTickRecord(TickRecord, GetSyncParams(TickRecord.bRequestedInertialization), UE::Anim::FAnimSyncDebugInfo(Context));
 
 		TRACE_ANIM_TICK_RECORD(Context, TickRecord);
 
@@ -117,7 +118,7 @@ void FAnimNode_BlendSpacePlayerBase::UpdateInternal(const FAnimationUpdateContex
 
 	TRACE_BLENDSPACE_PLAYER(Context, *this);
 	TRACE_ANIM_NODE_VALUE(Context, TEXT("Name"), CurrentBlendSpace ? *CurrentBlendSpace->GetName() : TEXT("None"));
-	TRACE_ANIM_NODE_VALUE(Context, TEXT("Blend Space"), CurrentBlendSpace);
+	TRACE_ANIM_NODE_VALUE(Context, TEXT("Asset"), CurrentBlendSpace);
 	TRACE_ANIM_NODE_VALUE(Context, TEXT("Playback Time"), InternalTimeAccumulator);
 }
 
@@ -206,6 +207,8 @@ void FAnimNode_BlendSpacePlayerBase::Reinitialize(bool bResetTime)
 			// Blend spaces run between 0 and 1
 			InternalTimeAccumulator = 1.0f;
 		}
+
+		MarkerTickRecord.Reset();
 	}
 
 	UBlendSpace* CurrentBlendSpace = GetBlendSpace();

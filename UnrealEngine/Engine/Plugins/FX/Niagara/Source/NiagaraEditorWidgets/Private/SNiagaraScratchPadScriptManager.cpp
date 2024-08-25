@@ -25,6 +25,7 @@
 #include "EditorFontGlyphs.h"
 #include "NiagaraConstants.h"
 #include "DragAndDrop/AssetDragDropOp.h"
+#include "ScopedTransaction.h"
 
 #define LOCTEXT_NAMESPACE "NiagaraScratchPad"
 
@@ -395,6 +396,7 @@ private:
 
 	FReply ScriptSelectorAddButtonClicked(ENiagaraScriptUsage Usage)
 	{
+		FScopedTransaction ScopedTransaction(LOCTEXT("MakeScratchpad", "Make new scratchpad"));
 		TSharedPtr<FNiagaraScratchPadScriptViewModel> NewScriptViewModel = ViewModel->CreateNewScript(Usage, ENiagaraScriptUsage::ParticleUpdateScript, FNiagaraTypeDefinition());
 		if (NewScriptViewModel.IsValid())
 		{

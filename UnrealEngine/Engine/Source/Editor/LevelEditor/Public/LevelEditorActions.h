@@ -1060,6 +1060,12 @@ public:
 	 * Called to apply a material to selected surfaces
 	 */
 	static void OnApplyMaterialToSurface();
+
+	/**
+	 * Checks to see if the selected actors can be grouped
+	 *	@return true if it can execute.
+	 */
+	static bool GroupActors_CanExecute();
 	
 	/**
 	 * Called when the RegroupActor command is executed
@@ -1169,6 +1175,9 @@ public:
 
 	/** Select the world info actor and show the properties */
 	static void OnShowWorldProperties( TWeakPtr< SLevelEditor > LevelEditor );
+
+	/** Focuses the outliner on the selected actors */
+	static void OnFocusOutlinerToSelection(TWeakPtr<SLevelEditor> LevelEditor);
 
 	/** Open the Place Actors Panel */
 	static void OpenPlaceActors();
@@ -1397,13 +1406,27 @@ public:
 	 * Checks to see if at least one element is selected
 	 *	@return true if it can execute.
 	 */
+	UE_DEPRECATED(5.4, "Use ElementSelected_CanExecuteMove. If you only needed to verify if there is at least one item in the selection set, use the selection set directly from the level editor.")
 	static bool ElementSelected_CanExecute();
 
 	/**
 	 * Checks to see if multiple elements are selected
 	 *	@return true if it can execute.
 	 */
+	UE_DEPRECATED(5.4, "Use ElementsSelected_CanExecuteMove. If you only needed to verify if there is more than one item in the selection set, use the selection set directly from the level editor.")
 	static bool ElementsSelected_CanExecute();
+
+	/**
+	 * Checks to see if at least one element is selected that can be translated
+	 *	@return true if it can execute.
+	 */
+	static bool ElementSelected_CanExecuteMove();
+
+	/**
+	 * Checks to see if multiple elements are selected that can be translated
+	 *	@return true if it can execute.
+	 */
+	static bool ElementsSelected_CanExecuteMove();
 
 	/** Called when 'Open Merge Actor' is clicked */
 	static void OpenMergeActor_Clicked();

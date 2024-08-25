@@ -59,6 +59,12 @@ public:
 	 */
 	ENGINE_API virtual FRDGTextureRef GetRenderTargetTexture(FRDGBuilder& GraphBuilder) const;
 
+	/**
+	* Accessor for the surface RHI to use when reading the reading target (may differ from GetRenderTargetTexture() for some implementations like cubemaps)
+	* @return surface RHI resource
+	*/
+	ENGINE_API virtual const FTextureRHIRef& GetShaderResourceTexture() const;
+
 	// Properties.
 	virtual FIntPoint GetSizeXY() const = 0;
 
@@ -66,6 +72,9 @@ public:
 	* @return display gamma expected for rendering to this render target
 	*/
 	ENGINE_API virtual float GetDisplayGamma() const;
+
+	// return global Engine default gamma (GetDisplayGamma returns this if not overriden)
+	static float GetEngineDisplayGamma();
 
 	virtual EDisplayColorGamut GetDisplayColorGamut() const { return EDisplayColorGamut::sRGB_D65; }
 	virtual EDisplayOutputFormat GetDisplayOutputFormat() const { return EDisplayOutputFormat::SDR_sRGB; }
@@ -82,55 +91,92 @@ public:
 	virtual bool HasToggleFreezeCommand() { return false; };
 
 	/**
-	* Reads the viewport's displayed pixels into a preallocated color buffer.
+	* Reads the render target's displayed pixels into a preallocated color buffer.
 	* @param OutImageData - RGBA8 values will be stored in this buffer
-	* @param InRect - source rect of the image to capture
+	* @param InFlags - Additional information about how to to read the surface data (cube face, slice index, etc.)
+	* @param InSrcRect - InSrcRect not specified means the whole rect
 	* @return True if the read succeeded.
+	*
+	* This will convert whatever the pixel format is to FColor
+	* Prefer using FImageUtils::GetRenderTargetImage rather than calling this directly.
+	*
+	* The default value for InFlags specifies RCM_UNorm which will cause values to be scaled into [0,1] ; use RCM_MinMax to retrieve values without change.
+	*
+	* If the RenderTarget surface is float linear, it will converted to SRGB FColor, if InFlags.bLinearToGamma is set (which is on by default).
+	* If the RenderTarget surface is U8, then the SRGB/not state is unchanged, the U8 values are retrieved unchanged in either Linear or SRGB.
+	* Gamma is handled correctly automatically by FImageUtils::GetRenderTargetImage
 	*/
-	ENGINE_API bool ReadPixels(TArray< FColor >& OutImageData,FReadSurfaceDataFlags InFlags = FReadSurfaceDataFlags(RCM_UNorm, CubeFace_MAX), FIntRect InRect = FIntRect(0, 0, 0, 0) );
+	ENGINE_API virtual bool ReadPixels(TArray<FColor>& OutImageData, FReadSurfaceDataFlags InFlags = FReadSurfaceDataFlags(RCM_UNorm, CubeFace_MAX), FIntRect InSrcRect = FIntRect(0, 0, 0, 0));
 
 	/**
-	* Reads the viewport's displayed pixels into a preallocated color buffer.
+	* Reads the render target's displayed pixels into a preallocated color buffer.
 	* @param OutImageBytes - RGBA8 values will be stored in this buffer.  Buffer must be preallocated with the correct size!
-	* @param InSrcRect InSrcRect not specified means the whole rect
+	* @param InFlags - Additional information about how to to read the surface data (cube face, slice index, etc.)
+	* @param InSrcRect - InSrcRect not specified means the whole rect
 	* @return True if the read succeeded.
+	*
+	* Ptr variant of this API just does an extra memcpy; prefer the TArray variant.
+	* Prefer using FImageUtils::GetRenderTargetImage rather than calling this directly.
 	*/
 	ENGINE_API bool ReadPixelsPtr(FColor* OutImageBytes, FReadSurfaceDataFlags InFlags = FReadSurfaceDataFlags(RCM_UNorm, CubeFace_MAX), FIntRect InSrcRect = FIntRect(0, 0, 0, 0));
 
 	/**
-	 * Reads the viewport's displayed pixels into the given color buffer.
-	 * @param OutputBuffer - RGBA16F values will be stored in this buffer
+	 * Reads the render target's displayed pixels into the given color buffer.
+	 * @param OutImageData - RGBA16F values will be stored in this buffer
 	 * @param CubeFace - optional cube face for when reading from a cube render target
 	 * @return True if the read succeeded.
 	 */
-	ENGINE_API bool ReadFloat16Pixels(TArray<FFloat16Color>& OutputBuffer,ECubeFace CubeFace=CubeFace_PosX);
+	UE_DEPRECATED(5.4, "Use the other ReadFloat16Pixels variant (ECubeFace can be set in FReadSurfaceDataFlags)")
+	ENGINE_API bool ReadFloat16Pixels(TArray<FFloat16Color>& OutImageData, ECubeFace CubeFace);
 
 	/**
-	 * Reads the viewport's displayed pixels into the given color buffer.
-	 * @param OutputBuffer - Linear color array to store the value
-	 * @param CubeFace - optional cube face for when reading from a cube render target
+	 * Reads the render target's displayed pixels into the given color buffer.
+	 * @param OutImageData - RGBA16F values will be stored in this buffer
+	 * @param InFlags - Additional information about how to to read the surface data (cube face, slice index, etc.)
+	 * @param InSrcRect - InSrcRect not specified means the whole rect
 	 * @return True if the read succeeded.
+	 *
+	 * The default value for InFlags specifies RCM_UNorm which will cause values to be scaled into [0,1] ; use RCM_MinMax to retrieve values without change.
+	 *
+	 * Unlike other RenderTarget Read functions, this only works if surface is PF_FloatRGBA exactly ; it does not convert.
+	 * Prefer using FImageUtils::GetRenderTargetImage rather than calling this directly.
 	 */
-	ENGINE_API bool ReadLinearColorPixels(TArray<FLinearColor>& OutputBuffer, FReadSurfaceDataFlags InFlags = FReadSurfaceDataFlags(RCM_MinMax, CubeFace_MAX), FIntRect InRect = FIntRect(0, 0, 0, 0));
-
-	ENGINE_API bool ReadLinearColorPixelsPtr(FLinearColor* OutImageBytes, FReadSurfaceDataFlags InFlags = FReadSurfaceDataFlags(RCM_MinMax, CubeFace_MAX), FIntRect InRect = FIntRect(0, 0, 0, 0));
+	ENGINE_API virtual bool ReadFloat16Pixels(TArray<FFloat16Color>& OutImageData, FReadSurfaceDataFlags InFlags = FReadSurfaceDataFlags(RCM_UNorm, CubeFace_MAX), FIntRect InSrcRect = FIntRect(0, 0, 0, 0));
 
 	/**
-	 * Returns the GPU nodes on which to render this rendertarget.
+	 * Reads the render target's displayed pixels into the given color buffer.
+	 * @param OutImageData - Linear color array to store the value
+	 * @param InFlags - Additional information about how to to read the surface data (cube face, slice index, etc.)
+	 * @param InSrcRect - InSrcRect not specified means the whole rect
+	 * @return True if the read succeeded.
+	 *
+	 * The default value for InFlags specifies RCM_UNorm which will cause values to be scaled into [0,1] ; use RCM_MinMax to retrieve values without change.
+	 *
+	 * This will convert whatever the pixel format is to FLinearColor (if supported).
+	 * Prefer using FImageUtils::GetRenderTargetImage rather than calling this directly.
+	 */
+	ENGINE_API virtual bool ReadLinearColorPixels(TArray<FLinearColor>& OutImageData, FReadSurfaceDataFlags InFlags = FReadSurfaceDataFlags(RCM_MinMax, CubeFace_MAX), FIntRect InSrcRect = FIntRect(0, 0, 0, 0));
+
+	/**
+	 * Reads the render target's displayed pixels into the given color buffer.
+	 * @param OutImageBytes - Linear color array will be stored in this buffer.  Buffer must be preallocated with the correct size!
+	 * @param InFlags - Additional information about how to to read the surface data (cube face, slice index, etc.)
+	 * @param InSrcRect - InSrcRect not specified means the whole rect
+	 * @return True if the read succeeded.
+	 *
+	 * Ptr variant of this API just does an extra memcpy; prefer the TArray variant.
+	 * Prefer using FImageUtils::GetRenderTargetImage rather than calling this directly.
+	 */
+	ENGINE_API bool ReadLinearColorPixelsPtr(FLinearColor* OutImageBytes, FReadSurfaceDataFlags InFlags = FReadSurfaceDataFlags(RCM_MinMax, CubeFace_MAX), FIntRect InSrcRect = FIntRect(0, 0, 0, 0));
+
+	/**
+	 * Returns the GPU nodes on which to render this render target.
 	 **/
 	virtual FRHIGPUMask GetGPUMask(FRHICommandListImmediate& RHICmdList) const { return FRHIGPUMask::GPU0(); }
 
 protected:
 
 	FTextureRHIRef RenderTargetTextureRHI;
-
-	/**
-	 * Reads the viewport's displayed pixels into a preallocated color buffer.
-	 * @param OutImageBytes - RGBA16F values will be stored in this buffer.  Buffer must be preallocated with the correct size!
-	 * @param CubeFace - optional cube face for when reading from a cube render target
-	 * @return True if the read succeeded.
-	 */
-	bool ReadFloat16Pixels(FFloat16Color* OutImageBytes,ECubeFace CubeFace=CubeFace_PosX);
 };
 
 

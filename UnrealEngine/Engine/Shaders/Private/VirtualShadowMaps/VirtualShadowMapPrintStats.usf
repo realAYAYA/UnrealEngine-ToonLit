@@ -185,6 +185,11 @@ void LogVirtualSmStatsCS()
 			PrintLeftAlign(Context, InStatsBuffer[VSM_STAT_STATIC_INVALIDATED_PAGES]);
 			Newline(Context);
 		}
+
+		Context.Pos.x = HeadlineX;
+		Print(Context, TEXT("Global Resolution Bias   "), FontWhite);
+		Print(Context, VirtualShadowMap.GlobalResolutionLodBias);
+		Newline(Context);
 	}
 
 	if (bShowNonNaniteInstances)

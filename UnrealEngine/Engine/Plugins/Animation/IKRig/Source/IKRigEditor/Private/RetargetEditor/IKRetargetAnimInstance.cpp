@@ -151,8 +151,11 @@ void UIKRetargetAnimInstance::ConfigureAnimInstance(
 	Proxy.ConfigureAnimInstance(InSourceOrTarget, InAsset, InSourceMeshComponent);
 }
 
-UIKRetargetProcessor* UIKRetargetAnimInstance::GetRetargetProcessor() const
+UIKRetargetProcessor* UIKRetargetAnimInstance::GetRetargetProcessor()
 {
+	// depending on initialization order, the anim node may not have created the processor yet, so optionally force it to do so now
+	RetargetNode.CreateRetargetProcessorIfNeeded(this);
+	
 	return RetargetNode.GetRetargetProcessor();
 }
 

@@ -1,0 +1,44 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Live Link Hub",
+	"Description": "LiveLink Hub allows streaming of animated data into Unreal Engine or UEFN",
+	"Category": "Animation",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "https://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EnabledByDefault": false,
+	"CanContainContent": false,
+	"IsBetaVersion": true,
+	"IsExperimentalVersion": true,
+	"Installed": false,
+	"SupportedPrograms": [ "LiveLinkHub" ],
+	"Plugins": [
+		{
+			"Name": "LiveLink",
+			"Enabled": true
+		}
+	],
+	"Modules": [
+		{
+			"Name": "LiveLinkHub",
+			"Type": "EditorAndProgram",
+			"ProgramAllowList": [ "LiveLinkHub" ],
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "LiveLinkHubEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "LiveLinkHubMessaging",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"ProgramAllowList": [ "LiveLinkHub" ]
+		}
+	]
+}

@@ -211,7 +211,9 @@ bool FDeferredShadingSceneRenderer::ShouldRenderVelocities() const
 		bool bSSGI = ViewPipelineState.DiffuseIndirectMethod == EDiffuseIndirectMethod::SSGI;
 		bool bLumen = ViewPipelineState.DiffuseIndirectMethod == EDiffuseIndirectMethod::Lumen || ViewPipelineState.ReflectionsMethod == EReflectionsMethod::Lumen;
 		
-		bNeedsVelocity |= bVisualizeMotionblur || bMotionBlur || bTemporalAA || bDistanceFieldAO || bSSRTemporal || bDenoise || bSSGI || bLumen;
+		bool bDistortion = ShouldRenderDistortion();
+
+		bNeedsVelocity |= bVisualizeMotionblur || bMotionBlur || bTemporalAA || bDistanceFieldAO || bSSRTemporal || bDenoise || bSSGI || bLumen || bDistortion;
 	}
 
 	return bNeedsVelocity;
@@ -239,13 +241,14 @@ bool FMobileSceneRenderer::ShouldRenderVelocities() const
 
 BEGIN_SHADER_PARAMETER_STRUCT(FVelocityPassParameters, )
 	SHADER_PARAMETER_STRUCT_INCLUDE(FViewShaderParameters, View)
-	SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneTextureUniformParameters, SceneTextures)
+	SHADER_PARAMETER_STRUCT_INCLUDE(FSceneTextureShaderParameters, SceneTextures)
 	SHADER_PARAMETER_STRUCT_INCLUDE(FInstanceCullingDrawParams, InstanceCullingDrawParams)
 	RENDER_TARGET_BINDING_SLOTS()
 END_SHADER_PARAMETER_STRUCT()
 
 void FSceneRenderer::RenderVelocities(
 	FRDGBuilder& GraphBuilder,
+	TArrayView<FViewInfo> InViews,
 	const FSceneTextures& SceneTextures,
 	EVelocityPass VelocityPass,
 	bool bForceVelocity)
@@ -271,9 +274,9 @@ void FSceneRenderer::RenderVelocities(
 														? FExclusiveDepthStencil::DepthRead_StencilWrite
 														: FExclusiveDepthStencil::DepthWrite_StencilWrite;
 
-	for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ViewIndex++)
+	for (int32 ViewIndex = 0; ViewIndex < InViews.Num(); ViewIndex++)
 	{
-		FViewInfo& View = Views[ViewIndex];
+		FViewInfo& View = InViews[ViewIndex];
 
 		if (View.ShouldRenderView())
 		{
@@ -313,7 +316,7 @@ void FSceneRenderer::RenderVelocities(
 			FVelocityPassParameters* PassParameters = GraphBuilder.AllocParameters<FVelocityPassParameters>();
 			PassParameters->View = View.GetShaderParameters();
 			ParallelMeshPass.BuildRenderingCommands(GraphBuilder, Scene->GPUScene, PassParameters->InstanceCullingDrawParams);
-			PassParameters->SceneTextures = SceneTextures.UniformBuffer;
+			PassParameters->SceneTextures = SceneTextures.GetSceneTextureShaderParameters(View.FeatureLevel);
 			PassParameters->RenderTargets.DepthStencil = FDepthStencilBinding(
 				SceneTextures.Depth.Resolve,
 				ERenderTargetLoadAction::ELoad,
@@ -361,7 +364,7 @@ void FSceneRenderer::RenderVelocities(
 			ERenderTargetLoadAction::ELoad,
 			ExclusiveDepthStencil);
 
-		StampDeferredDebugProbeVelocityPS(GraphBuilder, Views, VelocityRenderTargets);
+		StampDeferredDebugProbeVelocityPS(GraphBuilder, InViews, VelocityRenderTargets);
 	}
 #endif
 
@@ -588,7 +591,8 @@ void FOpaqueVelocityMeshProcessor::AddMeshBatch(
 void FOpaqueVelocityMeshProcessor::CollectPSOInitializers(const FSceneTexturesConfig& SceneTexturesConfig, const FMaterial& Material, const FPSOPrecacheVertexFactoryData& VertexFactoryData, const FPSOPrecacheParams& PreCacheParams, TArray<FPSOPrecacheData>& PSOInitializers)
 {
 	const EShaderPlatform ShaderPlatform = GetFeatureLevelShaderPlatform(FeatureLevel);
-	bool bDrawsVelocity = (PreCacheParams.Mobility == EComponentMobility::Movable || PreCacheParams.Mobility == EComponentMobility::Stationary || PreCacheParams.bHasWorldPositionOffsetVelocity);
+	bool bDrawsVelocity = (PreCacheParams.Mobility == EComponentMobility::Movable || PreCacheParams.Mobility == EComponentMobility::Stationary);
+	bDrawsVelocity = bDrawsVelocity || (/*VertexDeformationOutputsVelocity() &&*/ (PreCacheParams.bAnyMaterialHasWorldPositionOffset || Material.MaterialUsesWorldPositionOffset_GameThread()));
 	if (!PrimitiveCanHaveVelocity(ShaderPlatform, bDrawsVelocity, PreCacheParams.bStaticLighting))
 	{
 		return;

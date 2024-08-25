@@ -38,7 +38,7 @@ UObject* UUserObjectListEntryLibrary::GetListItemObject(TScriptInterface<IUserOb
 	if (UUserWidget* EntryWidget = Cast<UUserWidget>(UserObjectListEntry.GetObject()))
 	{
 		const UListView* OwningListView = Cast<UListView>(UUserListEntryLibrary::GetOwningListView(EntryWidget));
-		if (UObject* const* ListItem = OwningListView ? OwningListView->ItemFromEntryWidget(*EntryWidget) : nullptr)
+		if (const TObjectPtrWrapTypeOf<UObject*>* ListItem = OwningListView ? OwningListView->ItemFromEntryWidget(*EntryWidget) : nullptr)
 		{
 			return *ListItem;
 		}

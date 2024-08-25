@@ -73,6 +73,8 @@ protected:
 
 	virtual void ExtendMenu(FMenuBuilder& MenuBuilder) override;
 
+	virtual void UpdateBannerText() override;
+
 private:
 	void AddCommmands();
 

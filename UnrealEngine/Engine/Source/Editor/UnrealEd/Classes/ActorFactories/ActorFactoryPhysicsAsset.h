@@ -19,7 +19,6 @@ class UActorFactoryPhysicsAsset : public UActorFactory
 	//~ Begin UActorFactory Interface
 	virtual bool PreSpawnActor( UObject* Asset, FTransform& InOutLocation ) override;
 	virtual void PostSpawnActor( UObject* Asset, AActor* NewActor ) override;
-	virtual void PostCreateBlueprint( UObject* Asset, AActor* CDO ) override;
 	virtual bool CanCreateActorFrom( const FAssetData& AssetData, FText& OutErrorMsg ) override;
 	//~ End UActorFactory Interface
 };

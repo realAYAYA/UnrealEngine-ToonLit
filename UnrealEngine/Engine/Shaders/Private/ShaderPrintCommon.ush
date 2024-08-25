@@ -1,3 +1,5 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
 /*=============================================================================
 	ShaderPrintCommon.ush:
 	Include this to be able to call ShaderPrint() from arbitrary shaders.
@@ -111,20 +113,29 @@
 #define SHADER_PRINT_COUNTER_OFFSET_FREE     3
 #define SHADER_PRINT_COUNTER_COUNT           4
 
-uint GetSymbolOffset(uint InIndex)				
+uint GetSymbolOffset(uint InIndex)
 {
 	return SHADER_PRINT_COUNTER_COUNT + SHADER_PRINT_UINT_COUNT_SYMBOL * InIndex; 
 }
-uint GetPrimitiveLineOffset(uint InIndex, uint MaxValueCount)
+uint GetPrimitiveLineOffset(uint InIndex, uint MaxCharacterCount)
 {
-	return SHADER_PRINT_COUNTER_COUNT + SHADER_PRINT_UINT_COUNT_SYMBOL * MaxValueCount + SHADER_PRINT_UINT_COUNT_LINE * InIndex; 
+	return SHADER_PRINT_COUNTER_COUNT + SHADER_PRINT_UINT_COUNT_SYMBOL * MaxCharacterCount + SHADER_PRINT_UINT_COUNT_LINE * InIndex; 
 }
-uint GetPrimitiveTriangleOffset(uint InIndex, uint MaxValueCount, uint MaxLineCount)
+uint GetPrimitiveTriangleOffset(uint InIndex, uint MaxCharacterCount, uint MaxLineCount)
 {
-	return SHADER_PRINT_COUNTER_COUNT + SHADER_PRINT_UINT_COUNT_SYMBOL * MaxValueCount + SHADER_PRINT_UINT_COUNT_LINE * MaxLineCount + SHADER_PRINT_UINT_COUNT_TRIANGLE * InIndex; 
+	return SHADER_PRINT_COUNTER_COUNT + SHADER_PRINT_UINT_COUNT_SYMBOL * MaxCharacterCount + SHADER_PRINT_UINT_COUNT_LINE * MaxLineCount + SHADER_PRINT_UINT_COUNT_TRIANGLE * InIndex; 
 }
 
 void ClearCounters(RWStructuredBuffer<uint> InRWBuffer)
+{
+	// Symbol/print Counter
+	InRWBuffer[SHADER_PRINT_COUNTER_OFFSET_LINE] = 0;
+	InRWBuffer[SHADER_PRINT_COUNTER_OFFSET_TRIANGLE] = 0;
+	InRWBuffer[SHADER_PRINT_COUNTER_OFFSET_SYMBOL] = 0;
+	InRWBuffer[SHADER_PRINT_COUNTER_OFFSET_FREE] = 0;
+}
+
+void ClearCounters(RWBuffer<uint> InRWBuffer)
 {
 	// Symbol/print Counter
 	InRWBuffer[SHADER_PRINT_COUNTER_OFFSET_LINE] = 0;
@@ -148,13 +159,18 @@ void ClearCounters(RWStructuredBuffer<uint> InRWBuffer)
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Buffers/Resources accessors
-#ifndef SHADER_PRINT_USE_GLOBAL_RESOURCE
-#define SHADER_PRINT_USE_GLOBAL_RESOURCE 0
+
+#if !defined(SHADER_PRINT_RWENTRYBUFFER)
+#define SHADER_PRINT_RWENTRYBUFFER(Ctx, Idx) Ctx.Buffers.RWEntryBuffer[Idx]
+#define SHADER_PRINT_RWSTATEBUFFER(Ctx, Idx) Ctx.Buffers.StateBuffer[Idx]
 #endif
 
-#if !SHADER_PRINT_USE_GLOBAL_RESOURCE
-#define SHADER_PRINT_RWENTRYBUFFER(Ctx) Ctx.Buffers.RWEntryBuffer
-#define SHADER_PRINT_RWSTATEBUFFER(Ctx) Ctx.Buffers.StateBuffer
+// Currently a bug Metal shader translation cause compilation to fails due to atomic operation.
+// As a workaround, disabling interlock add on Metal
+#if COMPILER_METAL
+#define SHADER_PRINT_INTERLOCKEDADD(InBuffer, InIncrement, OutOldValue) 
+#else
+#define SHADER_PRINT_INTERLOCKEDADD(InBuffer, InIncrement, OutOldValue) InterlockedAdd(InBuffer, InIncrement, OutOldValue)
 #endif
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -214,6 +230,7 @@ FFontColor GetDefaultFontColor()							{ FFontColor Out; Out.Color = float3(1,1,
 #define ColorDarkRed	float4(0.50f, 0.25f, 0.25f, 1.0f)
 #define ColorDarkGreen	float4(0.25f, 0.50f, 0.25f, 1.0f)
 #define ColorDarkBlue	float4(0.25f, 0.25f, 0.50f, 1.0f)
+#define ColorDarkOrange	float4(ColorOrange.xyz * 0.5f,1.0f)
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Util pack/unpack functions
@@ -264,7 +281,8 @@ FShaderPrintItem UnpackShaderPrintItem(FPackedShaderPrintItem In)
 	return Out;
 }
 
-void WriteSymbol(uint Offset, FShaderPrintItem In, RWStructuredBuffer<uint> InRWBuffer)
+// /!\ If you update this function, update the WriteSymbol() version without explicit buffer, below in this file
+void WriteSymbol(uint Offset, FShaderPrintItem In, RWBuffer<uint> InRWBuffer)
 {
 	const uint Offset4 = GetSymbolOffset(Offset);
 
@@ -288,6 +306,19 @@ FShaderPrintItem ReadSymbol(uint Offset, StructuredBuffer<uint> InBuffer)
 	return UnpackShaderPrintItem(Packed);
 }
 
+FShaderPrintItem ReadSymbol(uint Offset, Buffer<uint> InBuffer)
+{
+	const uint Offset4 = GetSymbolOffset(Offset);
+
+	FPackedShaderPrintItem Packed = (FPackedShaderPrintItem)0;
+	Packed.ScreenPos16bits	= InBuffer[Offset4 + 0];
+	Packed.Value			= InBuffer[Offset4 + 1];
+	Packed.TypeAndColor		= InBuffer[Offset4 + 2];
+	Packed.Metadata			= InBuffer[Offset4 + 3];
+
+	return UnpackShaderPrintItem(Packed);
+}
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Context structures.
 // Stores the current dynamic state, and the constant data describing config and buffer bindings.
@@ -299,7 +330,7 @@ struct FShaderPrintConfig
 	float3 TranslatedWorldOffset;
 	float2 FontSize;
 	float2 FontSpacing;
-	uint MaxValueCount;
+	uint MaxCharacterCount;
 	uint MaxSymbolCount;
 	uint MaxStateCount;
 	uint MaxLineCount;
@@ -308,8 +339,8 @@ struct FShaderPrintConfig
 
 struct FShaderPrintBuffers
 {
-	StructuredBuffer<uint> StateBuffer;
-	RWStructuredBuffer<uint> RWEntryBuffer;
+	Buffer<uint> StateBuffer;
+	RWBuffer<uint> RWEntryBuffer;
 };
 
 struct FShaderPrintContext
@@ -325,29 +356,41 @@ struct FShaderPrintContext
 #endif
 };
 
+// Version using SHADER_PRINT_RWENTRYBUFFER in order to provide offset value
+void WriteSymbol(uint Offset, FShaderPrintItem In, FShaderPrintContext Ctx) 
+{
+	const uint Offset4 = GetSymbolOffset(Offset);
+
+	const FPackedShaderPrintItem Packed = PackShaderPrintItem(In);
+	SHADER_PRINT_RWENTRYBUFFER(Ctx, Offset4 + 0) = Packed.ScreenPos16bits;
+	SHADER_PRINT_RWENTRYBUFFER(Ctx, Offset4 + 1) = Packed.Value;
+	SHADER_PRINT_RWENTRYBUFFER(Ctx, Offset4 + 2) = Packed.TypeAndColor;
+	SHADER_PRINT_RWENTRYBUFFER(Ctx, Offset4 + 3) = Packed.Metadata;
+}
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Internal helpers
 
 void ShaderPrint_Internal(FShaderPrintContext Ctx, in FShaderPrintItem Item)
 {
-	// If MaxValueCount is 0 then we don't reset the buffer counter so early out here
-	if (!Ctx.bIsActive || Ctx.Config.MaxValueCount == 0)
+	// If MaxCharacterCount is 0 then we don't reset the buffer counter so early out here
+	if (!Ctx.bIsActive || Ctx.Config.MaxCharacterCount == 0)
 	{
 		return;
 	}
 
 	// Buffer counter is stored in first element .Value
 	int IndexToStore = 0;
-	InterlockedAdd(SHADER_PRINT_RWENTRYBUFFER(Ctx)[SHADER_PRINT_COUNTER_OFFSET_SYMBOL], 1, IndexToStore);
+	SHADER_PRINT_INTERLOCKEDADD(SHADER_PRINT_RWENTRYBUFFER(Ctx,SHADER_PRINT_COUNTER_OFFSET_SYMBOL), 1, IndexToStore);
 
 	// Prevent writing off the buffer
 	// Note that counter still increases so need clamp when reading it in later passes
-	if (uint(IndexToStore) >= Ctx.Config.MaxValueCount)
+	if (uint(IndexToStore) >= Ctx.Config.MaxCharacterCount)
 	{
 		return;
 	}
 
-	WriteSymbol(IndexToStore, Item, SHADER_PRINT_RWENTRYBUFFER(Ctx));
+	WriteSymbol(IndexToStore, Item, Ctx);
 }
 
 void ShaderPrint_Internal(FShaderPrintContext Ctx, in float2 ScreenPos, in int Value, in FFontColor FontColor, in uint Metadata, in int Type)
@@ -411,8 +454,8 @@ uint ShaderPrintGetHash(FShaderPrintText InTextEntry);
 // Function for reading global TEXT string
 float2 ShaderPrintText_Internal(FShaderPrintContext Ctx, bool bIsActive, float2 InPos, FShaderPrintText InTextEntry, FFontColor InColor)
 {
-	// If MaxValueCount is 0 then we don't reset the buffer counter so early out here
-	if (bIsActive && Ctx.Config.MaxValueCount > 0)
+	// If MaxCharacterCount is 0 then we don't reset the buffer counter so early out here
+	if (bIsActive && Ctx.Config.MaxCharacterCount > 0)
 	{
 		const uint Begin = ShaderPrintGetOffset(InTextEntry);
 		const uint End   = ShaderPrintGetOffset(InitShaderPrintText(InTextEntry.Index + 1));
@@ -422,8 +465,8 @@ float2 ShaderPrintText_Internal(FShaderPrintContext Ctx, bool bIsActive, float2 
 		// Prevent writing off the buffer
 		// Note that counter still increases so need clamp when reading it in later passes
 		int IndexToStore = 0;
-		InterlockedAdd(SHADER_PRINT_RWENTRYBUFFER(Ctx)[SHADER_PRINT_COUNTER_OFFSET_SYMBOL], Count, IndexToStore);
-		if (uint(IndexToStore + Count) < Ctx.Config.MaxValueCount)
+		SHADER_PRINT_INTERLOCKEDADD(SHADER_PRINT_RWENTRYBUFFER(Ctx,SHADER_PRINT_COUNTER_OFFSET_SYMBOL), Count, IndexToStore);
+		if (uint(IndexToStore + Count) < Ctx.Config.MaxCharacterCount)
 		{
 			for (uint i = Begin; i < End; ++i)
 			{
@@ -434,7 +477,7 @@ float2 ShaderPrintText_Internal(FShaderPrintContext Ctx, bool bIsActive, float2 
 				Item.Color = InColor.Color;
 				Item.Metadata = 0u;
 
-				WriteSymbol(IndexToStore, Item, SHADER_PRINT_RWENTRYBUFFER(Ctx));
+				WriteSymbol(IndexToStore, Item, Ctx);
 
 				++IndexToStore;
 				InPos.x += Ctx.Config.FontSpacing.x;
@@ -446,10 +489,6 @@ float2 ShaderPrintText_Internal(FShaderPrintContext Ctx, bool bIsActive, float2 
 
 void Print(inout FShaderPrintContext Ctx, FShaderPrintText InTextEntry, FFontColor InColor)	{ Ctx.Pos = ShaderPrintText_Internal(Ctx, Ctx.bIsActive, Ctx.Pos, InTextEntry, InColor); }
 void Print(inout FShaderPrintContext Ctx, FShaderPrintText InTextEntry)						{ Ctx.Pos = ShaderPrintText_Internal(Ctx, Ctx.bIsActive, Ctx.Pos, InTextEntry, GetDefaultFontColor()); }
-
-// Function for reading global TEXT string. 
-// The data and function are generated by the shader compiler.
-GENERATED_SHADER_PRINT
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Value printing (common value printing)
@@ -508,29 +547,8 @@ SHADER_PRINT_OVERLOAD_NN(4, 4, float4x4)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Bool printing
 
-void PrintBool(inout FShaderPrintContext Ctx, bool In)
-{
-	if (In)
-	{
-		Print(Ctx, TEXT("Yes "), FontGreen);
-	}
-	else
-	{
-		Print(Ctx, TEXT("No  "), FontRed);
-	}
-}
-
-void PrintBool(inout FShaderPrintContext Ctx, bool In, FFontColor InColor)
-{
-	if (In)
-	{
-		Print(Ctx, TEXT("Yes "), InColor);
-	}
-	else
-	{
-		Print(Ctx, TEXT("No  "), InColor);
-	}
-}
+// Note: Use a define rather than a function to avoid unecessary TEXT() parsing during shader compilation, even for shader not using ShaderPrint.
+#define PrintBool(Ctx, In) { if (In) Print(Ctx, TEXT("Yes "), FontGreen); else Print(Ctx, TEXT("No  "), FontRed); }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Widgets (experimental)
@@ -572,15 +590,15 @@ bool ShaderPrintGetStateValue(FShaderPrintContext Ctx, in uint InHash, inout uin
 	OutValue = 0;
 
 	// Slow linear search among all widget states
-	const uint MaxCount = min(SHADER_PRINT_RWSTATEBUFFER(Ctx)[SHADER_PRINT_STATE_COUNT_OFFSET], Ctx.Config.MaxStateCount);
+	const uint MaxCount = min(SHADER_PRINT_RWSTATEBUFFER(Ctx, SHADER_PRINT_STATE_COUNT_OFFSET), Ctx.Config.MaxStateCount);
 	for (uint Index = 0; Index < MaxCount; ++Index)
 	{
 		const uint Index3 = Index * SHADER_PRINT_STATE_STRIDE + SHADER_PRINT_STATE_VALUE_OFFSET;
-		const FShaderPrintMetadata Metadata = ShaderPrintUnpackMetadata(SHADER_PRINT_RWSTATEBUFFER(Ctx)[Index3 + SHADER_PRINT_STATE_INDEX_METADATA]);
+		const FShaderPrintMetadata Metadata = ShaderPrintUnpackMetadata(SHADER_PRINT_RWSTATEBUFFER(Ctx, Index3 + SHADER_PRINT_STATE_INDEX_METADATA));
 		if (Metadata.Hash == InHash)
 		{
 			OutIndex = Metadata.Index;
-			OutValue = SHADER_PRINT_RWSTATEBUFFER(Ctx)[Index3 + SHADER_PRINT_STATE_INDEX_VALUE];
+			OutValue = SHADER_PRINT_RWSTATEBUFFER(Ctx, Index3 + SHADER_PRINT_STATE_INDEX_VALUE);
 			return true;
 		}
 	}
@@ -757,9 +775,9 @@ FPackedTriangleElement PackTriangleElement(FTriangleElement In)
 	return Out;
 }
 
-FTriangleElement UnpackTriangleElement(StructuredBuffer<uint> InPrimitiveBuffer, uint InIndex, uint MaxValueCount, uint MaxLineCount)
+FTriangleElement UnpackTriangleElement(Buffer<uint> InPrimitiveBuffer, uint InIndex, uint MaxCharacterCount, uint MaxLineCount)
 {
-	const uint Index12 = GetPrimitiveTriangleOffset(InIndex, MaxValueCount, MaxLineCount);
+	const uint Index12 = GetPrimitiveTriangleOffset(InIndex, MaxCharacterCount, MaxLineCount);
 
 	FPackedTriangleElement Out = (FPackedTriangleElement)0;
 	Out.Packed0.x = InPrimitiveBuffer[Index12 + 0];
@@ -787,29 +805,29 @@ bool AllocateTriangleElement(FShaderPrintContext Ctx, uint Count, inout uint Out
 		return false;
 	}
 
-	InterlockedAdd(SHADER_PRINT_RWENTRYBUFFER(Ctx)[SHADER_PRINT_COUNTER_OFFSET_TRIANGLE], Count, OutIndex);
+	SHADER_PRINT_INTERLOCKEDADD(SHADER_PRINT_RWENTRYBUFFER(Ctx,SHADER_PRINT_COUNTER_OFFSET_TRIANGLE), Count, OutIndex);
 	return (OutIndex + Count) < Ctx.Config.MaxTriangleCount;
 }
 
 void AddTriangleElement(FShaderPrintContext Ctx, FTriangleElement In, uint Index)
 {
-	const uint Index12 = GetPrimitiveTriangleOffset(Index, Ctx.Config.MaxValueCount, Ctx.Config.MaxLineCount);
+	const uint Index12 = GetPrimitiveTriangleOffset(Index, Ctx.Config.MaxCharacterCount, Ctx.Config.MaxLineCount);
 
 	FPackedTriangleElement Out = PackTriangleElement(In);
-	SHADER_PRINT_RWENTRYBUFFER(Ctx)[Index12 + 0] = Out.Packed0.x;
-	SHADER_PRINT_RWENTRYBUFFER(Ctx)[Index12 + 1] = Out.Packed0.y;
-	SHADER_PRINT_RWENTRYBUFFER(Ctx)[Index12 + 2] = Out.Packed0.z;
-	SHADER_PRINT_RWENTRYBUFFER(Ctx)[Index12 + 3] = Out.Packed0.w;
+	SHADER_PRINT_RWENTRYBUFFER(Ctx, Index12 + 0) = Out.Packed0.x;
+	SHADER_PRINT_RWENTRYBUFFER(Ctx, Index12 + 1) = Out.Packed0.y;
+	SHADER_PRINT_RWENTRYBUFFER(Ctx, Index12 + 2) = Out.Packed0.z;
+	SHADER_PRINT_RWENTRYBUFFER(Ctx, Index12 + 3) = Out.Packed0.w;
 
-	SHADER_PRINT_RWENTRYBUFFER(Ctx)[Index12 + 4] = Out.Packed1.x;
-	SHADER_PRINT_RWENTRYBUFFER(Ctx)[Index12 + 5] = Out.Packed1.y;
-	SHADER_PRINT_RWENTRYBUFFER(Ctx)[Index12 + 6] = Out.Packed1.z;
-	SHADER_PRINT_RWENTRYBUFFER(Ctx)[Index12 + 7] = Out.Packed1.w;
+	SHADER_PRINT_RWENTRYBUFFER(Ctx, Index12 + 4) = Out.Packed1.x;
+	SHADER_PRINT_RWENTRYBUFFER(Ctx, Index12 + 5) = Out.Packed1.y;
+	SHADER_PRINT_RWENTRYBUFFER(Ctx, Index12 + 6) = Out.Packed1.z;
+	SHADER_PRINT_RWENTRYBUFFER(Ctx, Index12 + 7) = Out.Packed1.w;
 
-	SHADER_PRINT_RWENTRYBUFFER(Ctx)[Index12 + 8] = Out.Packed2.x;
-	SHADER_PRINT_RWENTRYBUFFER(Ctx)[Index12 + 9] = Out.Packed2.y;
-	SHADER_PRINT_RWENTRYBUFFER(Ctx)[Index12 + 10] = Out.Packed2.z;
-	SHADER_PRINT_RWENTRYBUFFER(Ctx)[Index12 + 11] = Out.Packed2.w;
+	SHADER_PRINT_RWENTRYBUFFER(Ctx, Index12 + 8) = Out.Packed2.x;
+	SHADER_PRINT_RWENTRYBUFFER(Ctx, Index12 + 9) = Out.Packed2.y;
+	SHADER_PRINT_RWENTRYBUFFER(Ctx, Index12 + 10) = Out.Packed2.z;
+	SHADER_PRINT_RWENTRYBUFFER(Ctx, Index12 + 11) = Out.Packed2.w;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -961,9 +979,9 @@ FPackedLineElement PackLineElement(FLineElement In)
 	return Out;
 }
 
-FLineElement UnpackLineElement(StructuredBuffer<uint> InPrimitiveBuffer, uint InIndex, uint MaxValueCount)
+FLineElement UnpackLineElement(Buffer<uint> InPrimitiveBuffer, uint InIndex, uint MaxCharacterCount)
 {
-	const uint Index8 = GetPrimitiveLineOffset(InIndex, MaxValueCount);
+	const uint Index8 = GetPrimitiveLineOffset(InIndex, MaxCharacterCount);
 
 	FPackedLineElement Out = (FPackedLineElement)0;
 	Out.Packed0.x = InPrimitiveBuffer[Index8 + 0];
@@ -986,24 +1004,24 @@ bool AllocateLineElement(FShaderPrintContext Ctx, uint Count, inout uint OutInde
 		return false;
 	}
 
-	InterlockedAdd(SHADER_PRINT_RWENTRYBUFFER(Ctx)[SHADER_PRINT_COUNTER_OFFSET_LINE], Count, OutIndex);
+	SHADER_PRINT_INTERLOCKEDADD(SHADER_PRINT_RWENTRYBUFFER(Ctx,SHADER_PRINT_COUNTER_OFFSET_LINE), Count, OutIndex);
 	return (OutIndex + Count) < Ctx.Config.MaxLineCount;
 }
 
 void AddLineElement(FShaderPrintContext Ctx, FLineElement In, uint Index)
 {
-	const uint Index8 = GetPrimitiveLineOffset(Index, Ctx.Config.MaxValueCount);
+	const uint Index8 = GetPrimitiveLineOffset(Index, Ctx.Config.MaxCharacterCount);
 
 	FPackedLineElement Out = PackLineElement(In);
-	SHADER_PRINT_RWENTRYBUFFER(Ctx)[Index8 + 0] = Out.Packed0.x;
-	SHADER_PRINT_RWENTRYBUFFER(Ctx)[Index8 + 1] = Out.Packed0.y;
-	SHADER_PRINT_RWENTRYBUFFER(Ctx)[Index8 + 2] = Out.Packed0.z;
-	SHADER_PRINT_RWENTRYBUFFER(Ctx)[Index8 + 3] = Out.Packed0.w;
+	SHADER_PRINT_RWENTRYBUFFER(Ctx,Index8 + 0) = Out.Packed0.x;
+	SHADER_PRINT_RWENTRYBUFFER(Ctx,Index8 + 1) = Out.Packed0.y;
+	SHADER_PRINT_RWENTRYBUFFER(Ctx,Index8 + 2) = Out.Packed0.z;
+	SHADER_PRINT_RWENTRYBUFFER(Ctx,Index8 + 3) = Out.Packed0.w;
 
-	SHADER_PRINT_RWENTRYBUFFER(Ctx)[Index8 + 4] = Out.Packed1.x;
-	SHADER_PRINT_RWENTRYBUFFER(Ctx)[Index8 + 5] = Out.Packed1.y;
-	SHADER_PRINT_RWENTRYBUFFER(Ctx)[Index8 + 6] = Out.Packed1.z;
-	SHADER_PRINT_RWENTRYBUFFER(Ctx)[Index8 + 7] = Out.Packed1.w;
+	SHADER_PRINT_RWENTRYBUFFER(Ctx,Index8 + 4) = Out.Packed1.x;
+	SHADER_PRINT_RWENTRYBUFFER(Ctx,Index8 + 5) = Out.Packed1.y;
+	SHADER_PRINT_RWENTRYBUFFER(Ctx,Index8 + 6) = Out.Packed1.z;
+	SHADER_PRINT_RWENTRYBUFFER(Ctx,Index8 + 7) = Out.Packed1.w;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1412,3 +1430,22 @@ uint LenString(uint InEntryID, uint InInfoCount, StructuredBuffer<uint2> InInfoB
 	{\
 		return N##_InfoCount;\
 	}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Current pixel
+
+// Store the current pixel coordinates, which allow to retrieve it in any shaders once set.
+// This data is only visible for the current thread/pixel, not available for neighbors
+static uint2 ShaderPrintCurrentPixelCoord;
+
+// Set current pixel coordinates
+void SetShaderPrintCurrentPixelCoord(uint2 In)
+{
+	ShaderPrintCurrentPixelCoord = In;
+}
+
+// Get current pixel coordinates
+uint2 GetShaderPrintCurrentPixelCoord()
+{
+	return ShaderPrintCurrentPixelCoord;
+}

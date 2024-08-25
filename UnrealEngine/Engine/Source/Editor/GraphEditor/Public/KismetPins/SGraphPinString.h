@@ -31,4 +31,11 @@ protected:
 
 	/** @return True if the pin default value field is read-only */
 	bool GetDefaultValueIsReadOnly() const;
+
+private:
+	TSharedRef<SWidget> GenerateComboBoxEntry(TSharedPtr<FString> Value);
+	void HandleComboBoxSelectionChanged(TSharedPtr<FString> Value, ESelectInfo::Type InSelectInfo);
+	TSharedPtr<SWidget> TryBuildComboBoxWidget();
+
+	TArray<TSharedPtr<FString>> ComboBoxOptions;
 };

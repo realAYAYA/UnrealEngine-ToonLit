@@ -169,6 +169,55 @@ public:
 	 */
 	static UNREALED_API ULevelStreaming* CreateNewStreamingLevelForWorld(UWorld& World, TSubclassOf<ULevelStreaming> LevelStreamingClass, bool bUseExternalActors, const FString& DefaultFilename, const TArray<AActor*>* ActorsToMove = nullptr, UWorld* InTemplateWorld = nullptr, bool bInUseSaveAs = true, bool bIsPartitioned = false, TFunction<void(ULevel*)> InPreSaveLevelOperation = TFunction<void(ULevel*)>(), const FTransform& InTransform = FTransform::Identity);
 
+	struct FCreateNewStreamingLevelForWorldParams
+	{
+		FCreateNewStreamingLevelForWorldParams(TSubclassOf<ULevelStreaming> InLevelStreamingClass, FString InDefaultFilename)
+			: LevelStreamingClass(InLevelStreamingClass), DefaultFilename(InDefaultFilename) {}
+		
+		/** The streaming class type instead to use for the level */
+		TSubclassOf<ULevelStreaming> LevelStreamingClass;
+
+		/** file name for level.  If empty, the user will be prompted during the save process. */
+		FString DefaultFilename;
+
+		/** If valid, the new level will be a copy of the template world. */
+		UWorld* TemplateWorld = nullptr;
+
+		/** The transform to apply to the streaming level. */
+		FTransform Transform = FTransform::Identity;
+		
+		/** Optional, move provided actors into the new level. */
+		const TArray<AActor*>* ActorsToMove = nullptr;
+
+		/** If level should use external actors. */
+		bool bUseExternalActors = false;
+		
+		/** If level should be Partitioned (has precedence over bUseExternalActors). */
+		bool bCreateWorldPartition = false;
+		
+		/** If level WorldPartition should have streamng enabled (only valid if bCreateWorldPartition is true) */
+		bool bEnableWorldPartitionStreaming = true;
+		
+		/** If true, show SaveAs dialog instead of Save with DefaultFilename */
+		bool bUseSaveAs = true;
+
+		/** Optional function to call before saving the created level */
+		TFunction<void(ULevel*)> PreSaveLevelCallback = nullptr;
+
+		/** Optional function to call after the ULevelStreaming gets created. */
+		TFunction<void(ULevelStreaming*)> LevelStreamingCreatedCallback = nullptr;
+	};
+
+	/**
+	 * Creates a new streaming level and adds it to a world
+	 *
+	 * @param	InWorld			The world to add the streaming level to
+	 * @param	InCreateParams	Parameters used to create this new streaming world
+	 *
+	 * @return	Returns the newly created level, or NULL on failure
+	 */
+	static UNREALED_API ULevelStreaming* CreateNewStreamingLevelForWorld(UWorld& InWorld, const FCreateNewStreamingLevelForWorldParams& InCreateParams);
+
 	/**
 	 * Adds the named level packages to the world.  Does nothing if all the levels already exist in the world.
 	 *
@@ -196,6 +245,21 @@ public:
 	}
 
 	/**
+	 * Removes given level from the world. Note, this will only work for sub-levels in the main level.
+	 *
+	 * @param	InLevel				    Level asset to remove from the world.
+	 * @param	bClearSelection			If true, it will clear the editor selection.
+	 * @param	bResetTransactionBuffer	If true, it will reset the transaction buffer (i.e. clear undo history)
+	 *
+	 * @return							True if the level was successfully removed.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Editor Scripting | Level Creation", meta=(DisplayName="Remove Level From World", ScriptName="RemoveLevelFromWorld"))
+	static bool K2_RemoveLevelFromWorld(ULevel* InLevel, bool bClearSelection = true, bool bResetTransactionBuffer = true)
+	{
+		return RemoveLevelFromWorld(InLevel, bClearSelection, bResetTransactionBuffer);
+	}
+
+	/**
 	 * Adds the named level package to the world at the given position.  Does nothing if the level already exists in the world.
 	 *
 	 * @param	InWorld				World in which to add the level.
@@ -217,14 +281,36 @@ public:
 	 * @param	InWorld				World in which to add the level
 	 * @param	LevelPackageName	The base filename of the level package to add.
 	 * @param	LevelStreamingClass	The streaming class type instead to use for the level.
+	 * @param	InTransform			The transform to apply to the streaming level.
 	 *
 	 * @return								The new level, or NULL if the level couldn't added.
 	 */
 	static UNREALED_API ULevelStreaming* AddLevelToWorld(UWorld* InWorld, const TCHAR* LevelPackageName, TSubclassOf<ULevelStreaming> LevelStreamingClass, const FTransform& LevelTransform = FTransform::Identity);
 
+	struct FAddLevelToWorldParams
+	{
+		FAddLevelToWorldParams(TSubclassOf<ULevelStreaming> InLevelStreamingClass, FName InLevelPackageName)
+			: LevelStreamingClass(InLevelStreamingClass), PackageName(InLevelPackageName)
+		{}
+
+		/** The streaming class type instead to use for the level. */
+		TSubclassOf<ULevelStreaming> LevelStreamingClass;
+		
+		/** The base filename of the level package to add. */
+		FName PackageName;
+		
+		/** The transform to apply to the streaming level. */
+		FTransform Transform = FTransform::Identity;
+
+		/** Optional function to call after the ULevelStreaming gets created. */
+		TFunction<void(ULevelStreaming*)> LevelStreamingCreatedCallback = nullptr;
+	};
+
+	static UNREALED_API ULevelStreaming* AddLevelToWorld(UWorld* InWorld, const FAddLevelToWorldParams& InParams);
+
 private:
 
-	static UNREALED_API ULevelStreaming* AddLevelToWorld_Internal(UWorld* InWorld, const TCHAR* LevelPackageName, TSubclassOf<ULevelStreaming> LevelStreamingClass, const FTransform& LevelTransform = FTransform::Identity);
+	static UNREALED_API ULevelStreaming* AddLevelToWorld_Internal(UWorld* InWorld, const FAddLevelToWorldParams& InParams);
 
 	static UNREALED_API int32 CopyOrMoveActorsToLevel(const TArray<AActor*>& ActorsToMove, ULevel* DestLevel, bool bMoveActors, bool bWarnAboutReferences = true, bool bWarnAboutRenaming = true, bool bMoveAllOrFail = false, TArray<AActor*>* OutActors = nullptr);
 

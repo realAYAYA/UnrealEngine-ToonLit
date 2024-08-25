@@ -17,6 +17,8 @@
 #include "DataDrivenShaderPlatformInfo.h"
 #include "ShaderCompilerCore.h"
 
+#include "SceneRendering.h"
+
 #include "Async/ParallelFor.h"
 
 #include "Experimental/Containers/SherwoodHashTable.h"
@@ -180,9 +182,7 @@ void FillRayTracingInstanceUploadBuffer(
 			const uint32 NumTransforms = SceneInstance.NumTransforms;
 
 			checkf(SceneInstance.UserData.Num() == 0 || SceneInstance.UserData.Num() >= int32(NumTransforms),
-				TEXT("User data array must be either be empty (Instance.DefaultUserData is used), or contain one entry per entry in Transforms array."));
-
-			check(SceneInstance.ActivationMask.IsEmpty() || SceneInstance.ActivationMask.Num() * 32 >= int32(NumTransforms));
+				TEXT("User data array must be either be empty (Instance.DefaultUserData is used), or contain one entry per entry in Transforms array."));			
 
 			const bool bUseUniqueUserData = SceneInstance.UserData.Num() != 0;
 
@@ -241,12 +241,7 @@ void FillRayTracingInstanceUploadBuffer(
 				checkf(InstanceDesc.InstanceId <= 0xFFFFFF, TEXT("InstanceId must fit in 24 bits."));
 				checkf(InstanceDesc.InstanceContributionToHitGroupIndex <= 0xFFFFFF, TEXT("InstanceContributionToHitGroupIndex must fit in 24 bits."));
 
-				if (!SceneInstance.ActivationMask.IsEmpty() && (SceneInstance.ActivationMask[TransformIndex / 32] & (1 << (TransformIndex % 32))) == 0)
-				{
-					// Set flag for deactivated instances
-					InstanceDesc.AccelerationStructureIndex = 0xFFFFFFFF;
-					NumInactiveNativeInstancesThisSceneInstance++;
-				} else if (bCpuInstance)
+				if (bCpuInstance)
 				{
 					const uint32 TransformDataOffset = InstanceDesc.GPUSceneInstanceOrTransformIndex * 3;
 					FMatrix LocalToTranslatedWorld = SceneInstance.Transforms[TransformIndex].ConcatTranslation(PreViewTranslation);
@@ -298,8 +293,15 @@ struct FRayTracingBuildInstanceBufferCS : public FGlobalShader
 
 		SHADER_PARAMETER(uint32, InstanceSceneDataSOAStride)
 
-		SHADER_PARAMETER(FVector3f, ViewTilePosition)
-		SHADER_PARAMETER(FVector3f, RelativePreViewTranslation)
+		SHADER_PARAMETER(FVector3f, PreViewTranslationHigh)
+		SHADER_PARAMETER(FVector3f, PreViewTranslationLow)
+
+		// Instance culling params
+		SHADER_PARAMETER(float, CullingRadius)
+		SHADER_PARAMETER(float, FarFieldCullingRadius)
+		SHADER_PARAMETER(float, AngleThresholdRatioSq)
+		SHADER_PARAMETER(FVector3f, ViewOrigin)
+		SHADER_PARAMETER(uint32, CullingMode)
 
 		// Debug parameters
 		SHADER_PARAMETER_UAV(RWStructuredBuffer<uint>, RWDebugInstanceGPUSceneIndices)
@@ -307,7 +309,8 @@ struct FRayTracingBuildInstanceBufferCS : public FGlobalShader
 
 	class FUseGPUSceneDim : SHADER_PERMUTATION_BOOL("USE_GPUSCENE");
 	class FOutputInstanceGPUSceneIndexDim : SHADER_PERMUTATION_BOOL("OUTPUT_INSTANCE_GPUSCENE_INDEX");
-	using FPermutationDomain = TShaderPermutationDomain<FUseGPUSceneDim, FOutputInstanceGPUSceneIndexDim>;
+	class FGpuCullingDim : SHADER_PERMUTATION_BOOL("GPU_CULLING");
+	using FPermutationDomain = TShaderPermutationDomain<FUseGPUSceneDim, FOutputInstanceGPUSceneIndexDim, FGpuCullingDim>;
 		
 	static constexpr uint32 ThreadGroupSize = 64;
 
@@ -334,14 +337,14 @@ IMPLEMENT_GLOBAL_SHADER(FRayTracingBuildInstanceBufferCS, "/Engine/Private/Raytr
 void BuildRayTracingInstanceBuffer(
 	FRHICommandList& RHICmdList,
 	const FGPUScene* GPUScene,
-	FVector3f ViewTilePosition,
-	FVector3f RelativePreViewTranslation,
+	const FDFVector3& PreViewTranslation,
 	uint32 NumInstances,
 	uint32 InputDescOffset,
 	FUnorderedAccessViewRHIRef InstancesUAV,
 	FShaderResourceViewRHIRef InstanceUploadSRV,
 	FShaderResourceViewRHIRef AccelerationStructureAddressesSRV,
 	FShaderResourceViewRHIRef InstanceTransformSRV,
+	const FRayTracingCullingParameters* CullingParameters,
 	FUnorderedAccessViewRHIRef DebugInstanceGPUSceneIndexUAV)
 {
 	FRayTracingBuildInstanceBufferCS::FParameters PassParams;
@@ -352,8 +355,8 @@ void BuildRayTracingInstanceBuffer(
 	PassParams.FarFieldReferencePos = (FVector3f)Lumen::GetFarFieldReferencePos();	// LWC_TODO: Precision Loss
 	PassParams.NumInstances = NumInstances;
 	PassParams.InputDescOffset = InputDescOffset;
-	PassParams.ViewTilePosition = ViewTilePosition;
-	PassParams.RelativePreViewTranslation = RelativePreViewTranslation;
+	PassParams.PreViewTranslationHigh = PreViewTranslation.High;
+	PassParams.PreViewTranslationLow = PreViewTranslation.Low;
 
 	if (GPUScene)
 	{
@@ -363,11 +366,21 @@ void BuildRayTracingInstanceBuffer(
 		PassParams.GPUScenePrimitiveSceneData = GPUScene->PrimitiveBuffer->GetSRV();
 	}
 
+	if (CullingParameters)
+	{
+		PassParams.CullingRadius = CullingParameters->CullingRadius;
+		PassParams.FarFieldCullingRadius = CullingParameters->FarFieldCullingRadius;
+		PassParams.AngleThresholdRatioSq = CullingParameters->AngleThresholdRatioSq;
+		PassParams.ViewOrigin = CullingParameters->TranslatedViewOrigin;
+		PassParams.CullingMode = uint32(CullingParameters->CullingMode);
+	}
+
 	PassParams.RWDebugInstanceGPUSceneIndices = DebugInstanceGPUSceneIndexUAV;
 
 	FRayTracingBuildInstanceBufferCS::FPermutationDomain PermutationVector;
 	PermutationVector.Set<FRayTracingBuildInstanceBufferCS::FUseGPUSceneDim>(InstanceTransformSRV == nullptr);
 	PermutationVector.Set<FRayTracingBuildInstanceBufferCS::FOutputInstanceGPUSceneIndexDim>(DebugInstanceGPUSceneIndexUAV != nullptr);
+	PermutationVector.Set<FRayTracingBuildInstanceBufferCS::FGpuCullingDim>(CullingParameters != nullptr);
 
 	auto ComputeShader = GetGlobalShaderMap(GMaxRHIFeatureLevel)->GetShader<FRayTracingBuildInstanceBufferCS>(PermutationVector);
 	const int32 GroupSize = FMath::DivideAndRoundUp(PassParams.NumInstances, FRayTracingBuildInstanceBufferCS::ThreadGroupSize);
@@ -386,8 +399,7 @@ void BuildRayTracingInstanceBuffer(
 void BuildRayTracingInstanceBuffer(
 	FRHICommandList& RHICmdList,
 	const FGPUScene* GPUScene,
-	FVector3f ViewTilePosition,
-	FVector3f RelativePreViewTranslation,
+	const FDFVector3& PreViewTranslation,
 	FUnorderedAccessViewRHIRef InstancesUAV,
 	FShaderResourceViewRHIRef InstanceUploadSRV,
 	FShaderResourceViewRHIRef AccelerationStructureAddressesSRV,
@@ -395,6 +407,7 @@ void BuildRayTracingInstanceBuffer(
 	uint32 NumNativeGPUSceneInstances,
 	uint32 NumNativeCPUInstances,
 	TConstArrayView<FRayTracingGPUInstance> GPUInstances,
+	const FRayTracingCullingParameters* CullingParameters,
 	FUnorderedAccessViewRHIRef DebugInstanceGPUSceneIndexUAV)
 {
 	if (NumNativeGPUSceneInstances > 0)
@@ -402,14 +415,14 @@ void BuildRayTracingInstanceBuffer(
 		BuildRayTracingInstanceBuffer(
 			RHICmdList,
 			GPUScene,
-			ViewTilePosition,
-			RelativePreViewTranslation,
+			PreViewTranslation,
 			NumNativeGPUSceneInstances,
 			0,
 			InstancesUAV,
 			InstanceUploadSRV,
 			AccelerationStructureAddressesSRV,
 			nullptr,
+			CullingParameters,
 			DebugInstanceGPUSceneIndexUAV);
 	}
 
@@ -418,14 +431,14 @@ void BuildRayTracingInstanceBuffer(
 		BuildRayTracingInstanceBuffer(
 			RHICmdList,
 			GPUScene,
-			ViewTilePosition,
-			RelativePreViewTranslation,
+			PreViewTranslation,
 			NumNativeCPUInstances,
 			NumNativeGPUSceneInstances, // CPU instance input descriptors are stored after GPU Scene instances
 			InstancesUAV,
 			InstanceUploadSRV,
 			AccelerationStructureAddressesSRV,
 			CPUInstanceTransformSRV,
+			nullptr,
 			nullptr);
 	}
 
@@ -437,14 +450,14 @@ void BuildRayTracingInstanceBuffer(
 		BuildRayTracingInstanceBuffer(
 			RHICmdList,
 			GPUScene,
-			ViewTilePosition,
-			RelativePreViewTranslation,
+			PreViewTranslation,
 			GPUInstance.NumInstances,
 			InputDescOffset,
 			InstancesUAV,
 			InstanceUploadSRV,
 			AccelerationStructureAddressesSRV,
 			GPUInstance.TransformSRV,
+			CullingParameters,
 			DebugInstanceGPUSceneIndexUAV);
 	}
 }

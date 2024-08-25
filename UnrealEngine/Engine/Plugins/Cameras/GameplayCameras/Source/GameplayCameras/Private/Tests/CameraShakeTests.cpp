@@ -1,9 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "CameraShakeTestObjects.h"
-#include "DefaultCameraShakeBase.h"
-#include "CompositeCameraShakePattern.h"
-#include "WaveOscillatorCameraShakePattern.h"
+#include "Shakes/DefaultCameraShakeBase.h"
+#include "Shakes/CompositeCameraShakePattern.h"
+#include "Shakes/WaveOscillatorCameraShakePattern.h"
 #include "Misc/AutomationTest.h"
 
 #define LOCTEXT_NAMESPACE "CameraShakeTests"

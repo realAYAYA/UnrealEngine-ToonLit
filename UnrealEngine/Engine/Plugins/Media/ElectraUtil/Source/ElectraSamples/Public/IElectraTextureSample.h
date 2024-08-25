@@ -48,12 +48,14 @@ public:
 	virtual bool GetFullRange() const override;
 
 	virtual FMatrix44f GetSampleToRGBMatrix() const override;
-	virtual FMatrix44f GetGamutToXYZMatrix() const override;
-	virtual FVector2f GetWhitePoint() const override;
-	virtual FVector2f GetDisplayPrimaryRed() const override;
-	virtual FVector2f GetDisplayPrimaryGreen() const override;
-	virtual FVector2f GetDisplayPrimaryBlue() const override;
+	virtual FMatrix44d GetGamutToXYZMatrix() const override;
+	virtual FVector2d GetWhitePoint() const override;
+	virtual FVector2d GetDisplayPrimaryRed() const override;
+	virtual FVector2d GetDisplayPrimaryGreen() const override;
+	virtual FVector2d GetDisplayPrimaryBlue() const override;
 	virtual UE::Color::EEncoding GetEncodingType() const override;
+	virtual bool GetDisplayMasteringLuminance(float& OutMin, float& OutMax) const override;
+	virtual bool GetMaxLuminanceLevels(uint16& OutCLL, uint16& OutFALL) const override;
 
 protected:
 	virtual float GetSampleDataScale(bool b10Bit) const { return 1.0f; }
@@ -66,5 +68,18 @@ protected:
 	TWeakPtr<const IVideoDecoderColorimetry, ESPMode::ThreadSafe> Colorimetry;
 
 	/** YUV matrix, adjusted to compensate for decoder output specific scale */
-	FMatrix44f YuvToRgbMtx;
+	FMatrix44f SampleToRgbMtx;
+
+	/** YUV to RGB matrix without any adjustments for decoder output specifics */
+	const FMatrix* YuvToRgbMtx;
+
+	/** Precomputed colorimetric data */
+	UE::Color::EEncoding ColorEncoding;
+	UE::Color::FColorSpace SampleColorSpace;
+	UE::Color::FColorSpace DisplayColorSpace;
+	bool bDisplayColorSpaceValid;
+	float DisplayMasteringLuminanceMin;
+	float DisplayMasteringLuminanceMax;
+	uint16 MaxCLL;
+	uint16 MaxFALL;
 };

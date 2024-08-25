@@ -10,9 +10,7 @@
 	#define USE_GLOBAL_GPU_LIGHTMAP_DATA 0
 #endif
 
-#if VF_USE_PRIMITIVE_SCENE_DATA
-
-// Must match FPrecomputedLightingUniformParameters in C++
+ // Must match FPrecomputedLightingUniformParameters in C++
 struct FLightmapSceneData
 {
 	float4 StaticShadowMapMasks;
@@ -24,6 +22,29 @@ struct FLightmapSceneData
 	uint4 LightmapVTPackedPageTableUniform[2];
 	uint4 LightmapVTPackedUniform[5];
 };
+
+FLightmapSceneData GetLightmapDataFromUniformBuffer()
+{
+	FLightmapSceneData LightmapData;
+	LightmapData.StaticShadowMapMasks = PrecomputedLightingBuffer.StaticShadowMapMasks;
+	LightmapData.InvUniformPenumbraSizes = PrecomputedLightingBuffer.InvUniformPenumbraSizes;
+	LightmapData.LightMapCoordinateScaleBias = PrecomputedLightingBuffer.LightMapCoordinateScaleBias;
+	LightmapData.ShadowMapCoordinateScaleBias = PrecomputedLightingBuffer.ShadowMapCoordinateScaleBias;
+	LightmapData.LightMapScale[0] = PrecomputedLightingBuffer.LightMapScale[0];
+	LightmapData.LightMapScale[1] = PrecomputedLightingBuffer.LightMapScale[1];
+	LightmapData.LightMapAdd[0] = PrecomputedLightingBuffer.LightMapAdd[0];
+	LightmapData.LightMapAdd[1] = PrecomputedLightingBuffer.LightMapAdd[1];
+	LightmapData.LightmapVTPackedPageTableUniform[0] = PrecomputedLightingBuffer.LightmapVTPackedPageTableUniform[0];
+	LightmapData.LightmapVTPackedPageTableUniform[1] = PrecomputedLightingBuffer.LightmapVTPackedPageTableUniform[1];
+	UNROLL
+	for (uint i = 0u; i < 5u; ++i)
+	{
+		LightmapData.LightmapVTPackedUniform[i] = PrecomputedLightingBuffer.LightmapVTPackedUniform[i];
+	}
+	return LightmapData;
+}
+
+#if VF_USE_PRIMITIVE_SCENE_DATA
 
 // Stride of a single lightmap data entry in float4's, must match C++
 #define LIGHTMAP_SCENE_DATA_STRIDE 15
@@ -46,10 +67,10 @@ float4 LoadLightmapDataElement(uint Index)
 // Fetch from scene lightmap data buffer
 FLightmapSceneData GetLightmapData(uint LightmapDataIndex) 
 {
+	FLightmapSceneData LightmapData;
+
 	// Note: layout must match FLightmapSceneShaderData in C++
 	// Relying on optimizer to remove unused loads
-
-	FLightmapSceneData LightmapData;
 	uint LightmapDataBaseOffset = LightmapDataIndex * LIGHTMAP_SCENE_DATA_STRIDE;
 	LightmapData.StaticShadowMapMasks = LoadLightmapDataElement(LightmapDataBaseOffset + 0);
 	LightmapData.InvUniformPenumbraSizes = LoadLightmapDataElement(LightmapDataBaseOffset + 1);
@@ -61,7 +82,6 @@ FLightmapSceneData GetLightmapData(uint LightmapDataIndex)
 	LightmapData.LightMapAdd[1] = LoadLightmapDataElement(LightmapDataBaseOffset + 7);
 	LightmapData.LightmapVTPackedPageTableUniform[0] = asuint(LoadLightmapDataElement(LightmapDataBaseOffset + 8));
 	LightmapData.LightmapVTPackedPageTableUniform[1] = asuint(LoadLightmapDataElement(LightmapDataBaseOffset + 9));
-
 	UNROLL
 	for (uint i = 0u; i < 5u; ++i)
 	{
@@ -71,9 +91,28 @@ FLightmapSceneData GetLightmapData(uint LightmapDataIndex)
 	return LightmapData;
 }
 
+FLightmapSceneData GetLightmapData(uint LightmapDataIndex, uint DrawInstanceId)
+{
+#if SHADER_USES_PRIMITIVE_UBO
+	#if USE_INSTANCE_CULLING
+		return GetLightmapDataFromUniformBuffer();
+	#else
+		FLightmapSceneData LightmapData = (FLightmapSceneData)0;
+		LightmapData.LightMapCoordinateScaleBias = LoadPrimitiveDataElementUBO(DrawInstanceId, 0u);
+		LightmapData.ShadowMapCoordinateScaleBias = LoadPrimitiveDataElementUBO(DrawInstanceId, 1u);
+		return LightmapData;
+	#endif
+#else	
+	return GetLightmapData(LightmapDataIndex);
+#endif
+}
+
 #else 
 
 // Route to uniform buffer
-#define GetLightmapData(x) PrecomputedLightingBuffer
+FLightmapSceneData GetLightmapData(uint LightmapDataIndex)
+{
+	return GetLightmapDataFromUniformBuffer();
+}
 
 #endif

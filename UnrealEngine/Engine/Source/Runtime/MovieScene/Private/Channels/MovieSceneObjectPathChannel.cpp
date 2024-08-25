@@ -155,6 +155,16 @@ void FMovieSceneObjectPathChannel::Offset(FFrameNumber DeltaPosition)
 	GetData().Offset(DeltaPosition);
 }
 
+FKeyHandle FMovieSceneObjectPathChannel::GetHandle(int32 Index)
+{
+	return GetData().GetHandle(Index);
+}
+
+int32 FMovieSceneObjectPathChannel::GetIndex(FKeyHandle Handle)
+{
+	return GetData().GetIndex(Handle);
+}
+
 void FMovieSceneObjectPathChannel::Optimize(const FKeyDataOptimizationParams& InParameters)
 {}
 

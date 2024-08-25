@@ -18,6 +18,11 @@
 LLM_DEFINE_TAG(LiveLink);
 #define LOCTEXT_NAMESPACE "LiveLinkModule"
 
+#ifndef WITH_LIVELINK_HUB
+#define WITH_LIVELINK_HUB 0
+#endif
+
+
 FLiveLinkClient* FLiveLinkModule::LiveLinkClient_AnyThread = nullptr;
 
 FLiveLinkModule::FLiveLinkModule()
@@ -37,8 +42,11 @@ void FLiveLinkModule::StartupModule()
 	FLiveLinkLogInstance::CreateInstance();
 	CreateStyle();
 
+#if !WITH_LIVELINK_HUB
 	FPlatformAtomics::InterlockedExchangePtr((void**)&LiveLinkClient_AnyThread, &LiveLinkClient);
 	IModularFeatures::Get().RegisterModularFeature(FLiveLinkClient::ModularFeatureName, &LiveLinkClient);
+#endif
+
 	LiveLinkMotionController.RegisterController();
 
 	//Register for engine initialization completed so we can load default preset if any. Presets could depend on plugins loaded at a later stage.
@@ -56,11 +64,26 @@ void FLiveLinkModule::ShutdownModule()
 #endif
 	LiveLinkMotionController.UnregisterController();
 
+
+#if !WITH_LIVELINK_HUB
 	IModularFeatures::Get().UnregisterModularFeature(FLiveLinkClient::ModularFeatureName, &LiveLinkClient);
 	FPlatformAtomics::InterlockedExchangePtr((void**)&LiveLinkClient_AnyThread, nullptr);
+#endif
 
 	FSlateStyleRegistry::UnRegisterSlateStyle(*StyleSet.Get());
 	FLiveLinkLogInstance::DestroyInstance();
+}
+
+FDelegateHandle FLiveLinkModule::RegisterMessageBusSourceFilter(const FOnLiveLinkShouldDisplaySource& Delegate)
+{
+	FDelegateHandle Handle = Delegate.GetHandle();
+	RegisteredSourceFilters.FindOrAdd(Handle) = Delegate;
+	return Handle;
+}
+
+void FLiveLinkModule::UnregisterMessageBusSourceFilter(FDelegateHandle Handle)
+{
+	RegisteredSourceFilters.Remove(Handle);
 }
 
 void FLiveLinkModule::CreateStyle()

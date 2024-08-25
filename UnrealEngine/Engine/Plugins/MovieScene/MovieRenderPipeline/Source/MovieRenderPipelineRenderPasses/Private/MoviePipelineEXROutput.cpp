@@ -122,22 +122,10 @@ bool FEXRImageWriteTask::WriteToDisk()
 
 	if (bSuccess)
 	{
-		Imf::Compression FileCompression = Imf::Compression::NO_COMPRESSION;
-		switch(Compression)
-		{
-			case EEXRCompressionFormat::None:
-				FileCompression = Imf::Compression::NO_COMPRESSION; break;
-			case EEXRCompressionFormat::ZIP:
-				FileCompression = Imf::Compression::ZIP_COMPRESSION; break;
-			case EEXRCompressionFormat::PIZ:
-				FileCompression = Imf::Compression::PIZ_COMPRESSION; break;
-			case EEXRCompressionFormat::DWAA:
-				FileCompression = Imf::Compression::DWAA_COMPRESSION; break;
-			case EEXRCompressionFormat::DWAB:
-				FileCompression = Imf::Compression::DWAB_COMPRESSION; break;
-			default: 
-				checkNoEntry();
-		}
+		PreProcess();
+
+		static_assert(static_cast<uint8>(EEXRCompressionFormat::Max) == Imf::Compression::NUM_COMPRESSION_METHODS);
+		Imf::Compression FileCompression = static_cast<Imf::Compression>(Compression);
 		
 		// Data Window specifies how much data is in the actual file, ie: 1920x1080
 		IMATH_NAMESPACE::Box2i DataWindow = IMATH_NAMESPACE::Box2i(IMATH_NAMESPACE::V2i(0,0), IMATH_NAMESPACE::V2i(Width - 1, Height - 1));
@@ -200,7 +188,7 @@ bool FEXRImageWriteTask::WriteToDisk()
 					continue;
 				}
 
-				void const* RawDataPtr;
+				void const* RawDataPtr = nullptr;
 				int64 RawDataSize;
 				bSuccess = Layer->GetRawData(RawDataPtr, RawDataSize);
 				if (!bSuccess)
@@ -312,7 +300,7 @@ static FString GetChannelName(const FString& InLayerName, const int32 InChannelI
 
 	if (InLayerName.Len() > 0)
 	{
-		return FString::Printf(TEXT("%s.%s"), *InLayerName, ChannelNames[InChannelIndex]);
+		return FString::Printf(TEXT("%s.%hs"), *InLayerName, ChannelNames[InChannelIndex]);
 	}
 	else
 	{
@@ -336,9 +324,15 @@ static int32 GetComponentWidth(const EImagePixelType InPixelType)
 template <Imf::PixelType OutputFormat>
 int64 FEXRImageWriteTask::CompressRaw(Imf::Header& InHeader, Imf::FrameBuffer& InFrameBuffer, FImagePixelData* InLayer)
 {
-	void const* RawDataPtr;
+	void const* RawDataPtr = nullptr;
 	int64 RawDataSize;
-	InLayer->GetRawData(RawDataPtr, RawDataSize);
+
+	if (InLayer->GetRawData(RawDataPtr, RawDataSize) == false)
+	{
+		UE_LOG(LogMovieRenderPipelineIO, Error, TEXT("Failed to retrieve raw data from image data for writing. Bailing."));
+		return 0;
+	}
+		
 
 	// Look up our layer name (if any).
 	FString& LayerName = LayerNames.FindOrAdd(InLayer);
@@ -400,7 +394,133 @@ void FEXRImageWriteTask::AddFileMetadata(Imf::Header& InHeader)
 	}
 }
 
+void FEXRImageWriteTask::PreProcess()
+{
+	if (PixelPreprocessors.IsEmpty())
+	{
+		return;
+	}
+
+	for (int32 LayerIdx = 0; LayerIdx < Layers.Num(); ++LayerIdx)
+	{
+		if (const TArray<FPixelPreProcessor>* LayerPixelPreprocessorsPtr = PixelPreprocessors.Find(LayerIdx))
+		{
+			for (const FPixelPreProcessor& PreProcessor : *LayerPixelPreprocessorsPtr)
+			{
+				// PreProcessors are assumed to be valid. Fetch the Data pointer each time
+				// in case a pre-processor changes our pixel data.
+				FImagePixelData* Data = Layers[LayerIdx].Get();
+				PreProcessor(Data);
+			}
+		}
+	}
+}
+
 #endif // WITH_UNREALEXR
+
+namespace UE
+{
+	namespace MoviePipeline
+	{
+		static TPair<UE::Color::EColorSpace, FString> GetDisplayGamutType(EDisplayColorGamut InDisplayGamut)
+		{
+			switch (InDisplayGamut)
+			{
+			case EDisplayColorGamut::sRGB_D65: return { UE::Color::EColorSpace::sRGB, TEXT("sRGB") };
+			case EDisplayColorGamut::DCIP3_D65: return { UE::Color::EColorSpace::P3DCI, TEXT("P3DCI") };
+			case EDisplayColorGamut::Rec2020_D65: return { UE::Color::EColorSpace::Rec2020, TEXT("Rec2020") };
+			case EDisplayColorGamut::ACES_D60: return { UE::Color::EColorSpace::ACESAP0, TEXT("ACESAP0") };
+			case EDisplayColorGamut::ACEScg_D60: return { UE::Color::EColorSpace::ACESAP1, TEXT("ACESAP1") };
+
+			default:
+				checkNoEntry();
+				return {};
+			}
+		};
+
+		void UpdateColorSpaceMetadataImpl(const FEXRColorSpaceMetadata& InColorSpaceMetadata, FEXRImageWriteTask& InOutImageTask)
+		{
+			if (!InColorSpaceMetadata.SourceName.IsEmpty())
+			{
+				InOutImageTask.FileMetadata.Add("unreal/colorSpace/source", InColorSpaceMetadata.SourceName);
+			}
+			if (!InColorSpaceMetadata.DestinationName.IsEmpty())
+			{
+				InOutImageTask.FileMetadata.Add("unreal/colorSpace/destination", InColorSpaceMetadata.DestinationName);
+			}
+
+			InOutImageTask.ColorSpaceChromaticities = InColorSpaceMetadata.Chromaticities;
+		}
+
+		void UpdateColorSpaceMetadata(const FOpenColorIOColorConversionSettings& InConversionSettings, FEXRImageWriteTask& InOutImageTask)
+		{
+			FEXRColorSpaceMetadata ColorSpaceMetadata;
+
+			if (InConversionSettings.IsValid())
+			{
+				// Note: OpenColorIO does not expose chromaticity information so we only provide transform names.
+				if (InConversionSettings.IsDisplayView())
+				{
+					switch (InConversionSettings.DisplayViewDirection)
+					{
+					case EOpenColorIOViewTransformDirection::Forward:
+						ColorSpaceMetadata.SourceName = InConversionSettings.SourceColorSpace.ToString();
+						ColorSpaceMetadata.DestinationName = InConversionSettings.DestinationDisplayView.ToString();
+						break;
+					case EOpenColorIOViewTransformDirection::Inverse:
+						ColorSpaceMetadata.SourceName = InConversionSettings.DestinationDisplayView.ToString();
+						ColorSpaceMetadata.DestinationName = InConversionSettings.SourceColorSpace.ToString();
+						break;
+
+					default:
+						checkNoEntry();
+					}
+				}
+				else
+				{
+					ColorSpaceMetadata.SourceName = InConversionSettings.SourceColorSpace.ToString();
+					ColorSpaceMetadata.DestinationName = InConversionSettings.DestinationColorSpace.ToString();
+				}
+			}
+
+			UpdateColorSpaceMetadataImpl(ColorSpaceMetadata, InOutImageTask);
+		}
+
+		void UpdateColorSpaceMetadata(ESceneCaptureSource InSceneCaptureSource, FEXRImageWriteTask& InOutImageTask)
+		{
+			FEXRColorSpaceMetadata ColorSpaceMetadata;
+
+			switch (InSceneCaptureSource)
+			{
+			case SCS_FinalColorLDR:
+			case SCS_FinalToneCurveHDR:
+			{
+				// We are in output display space
+				TPair<UE::Color::EColorSpace, FString> ColorSpaceType = GetDisplayGamutType(HDRGetDefaultDisplayColorGamut());
+				UE::Color::FColorSpace OutputCS = UE::Color::FColorSpace(ColorSpaceType.Key);
+
+				ColorSpaceMetadata.DestinationName = ColorSpaceType.Value;
+				ColorSpaceMetadata.Chromaticities = { OutputCS.GetRedChromaticity(), OutputCS.GetGreenChromaticity(), OutputCS.GetBlueChromaticity(), OutputCS.GetWhiteChromaticity() };
+				break;
+			}
+			case SCS_SceneColorHDR:
+			case SCS_SceneColorHDRNoAlpha:
+			case SCS_FinalColorHDR:
+			case SCS_BaseColor:
+			{
+				// We are in working color space
+				const UE::Color::FColorSpace& WCS = UE::Color::FColorSpace::GetWorking();
+				ColorSpaceMetadata.Chromaticities = { WCS.GetRedChromaticity(), WCS.GetGreenChromaticity(), WCS.GetBlueChromaticity(), WCS.GetWhiteChromaticity() };
+				break;
+			}
+			default:
+				break;
+			}
+
+			UpdateColorSpaceMetadataImpl(ColorSpaceMetadata, InOutImageTask);
+		}
+	}
+}
 
 void UMoviePipelineImageSequenceOutput_EXR::OnReceiveImageDataImpl(FMoviePipelineMergerOutputFrame* InMergedOutputFrame)
 {
@@ -508,21 +628,15 @@ void UMoviePipelineImageSequenceOutput_EXR::OnReceiveImageDataImpl(FMoviePipelin
 
 		// Add color space metadata to the output: xy chromaticity coordinates and/or the color space source/dest names.
 		// TODO: Support is also needed for regular exrs via the image wrapper module.
+		UMoviePipelineColorSetting* ColorSetting = GetPipeline()->GetPipelinePrimaryConfig()->FindSetting<UMoviePipelineColorSetting>();
+		if (ColorSetting && ColorSetting->OCIOConfiguration.bIsEnabled)
 		{
-			UMoviePipelineColorSetting* ColorSetting = GetPipeline()->GetPipelinePrimaryConfig()->FindSetting<UMoviePipelineColorSetting>();
-
-			FColorSpaceMetadata ColorSpaceMetadata = GetColorSpaceMetadata(ColorSetting);
-
-			if (!ColorSpaceMetadata.SourceName.IsEmpty())
-			{
-				MultiLayerImageTask->FileMetadata.Add("unreal/colorSpace/source", ColorSpaceMetadata.SourceName);
-			}
-			if (!ColorSpaceMetadata.DestinationName.IsEmpty())
-			{
-				MultiLayerImageTask->FileMetadata.Add("unreal/colorSpace/destination", ColorSpaceMetadata.DestinationName);
-			}
-
-			MultiLayerImageTask->ColorSpaceChromaticities = ColorSpaceMetadata.Chromaticities;
+			UE::MoviePipeline::UpdateColorSpaceMetadata(ColorSetting->OCIOConfiguration.ColorConfiguration, *MultiLayerImageTask);
+		}
+		else
+		{
+			ESceneCaptureSource SceneCaptureSource = (ColorSetting && ColorSetting->bDisableToneCurve) ? ESceneCaptureSource::SCS_FinalColorHDR : ESceneCaptureSource::SCS_FinalToneCurveHDR;
+			UE::MoviePipeline::UpdateColorSpaceMetadata(SceneCaptureSource, *MultiLayerImageTask);
 		}
 
 		int32 LayerIndex = 0;
@@ -587,76 +701,4 @@ void UMoviePipelineImageSequenceOutput_EXR::OnReceiveImageDataImpl(FMoviePipelin
 #endif
 
 	}
-}
-
-UMoviePipelineImageSequenceOutput_EXR::FColorSpaceMetadata UMoviePipelineImageSequenceOutput_EXR::GetColorSpaceMetadata(UMoviePipelineColorSetting* InColorSettings)
-{
-	auto GetDisplayGamutTypeFn = [](EDisplayColorGamut InDisplayGamut) -> TPair<UE::Color::EColorSpace, FString>
-	{
-		switch (InDisplayGamut)
-		{
-		case EDisplayColorGamut::sRGB_D65: return { UE::Color::EColorSpace::sRGB, TEXT("sRGB") };
-		case EDisplayColorGamut::DCIP3_D65: return { UE::Color::EColorSpace::P3DCI, TEXT("P3DCI") };
-		case EDisplayColorGamut::Rec2020_D65: return { UE::Color::EColorSpace::Rec2020, TEXT("Rec2020") };
-		case EDisplayColorGamut::ACES_D60: return { UE::Color::EColorSpace::ACESAP0, TEXT("ACESAP0") };
-		case EDisplayColorGamut::ACEScg_D60: return { UE::Color::EColorSpace::ACESAP1, TEXT("ACESAP1") };
-
-		default:
-			checkNoEntry();
-			return {};
-		}
-	};
-
-	const UE::Color::FColorSpace& WCS = UE::Color::FColorSpace::GetWorking();
-	FColorSpaceMetadata OutMetadata;
-
-	if (InColorSettings)
-	{
-		if (InColorSettings->OCIOConfiguration.bIsEnabled)
-		{
-			// Note: OpenColorIO does not expose chromaticity information so we only provide transform names.
-			const FOpenColorIOColorConversionSettings& ConversionSettings = InColorSettings->OCIOConfiguration.ColorConfiguration;
-
-			if (ConversionSettings.IsDisplayView())
-			{
-				switch (ConversionSettings.DisplayViewDirection)
-				{
-				case EOpenColorIOViewTransformDirection::Forward:
-					OutMetadata.SourceName = ConversionSettings.SourceColorSpace.ToString();
-					OutMetadata.DestinationName = ConversionSettings.DestinationDisplayView.ToString();
-					break;
-				case EOpenColorIOViewTransformDirection::Inverse:
-					OutMetadata.SourceName = ConversionSettings.DestinationDisplayView.ToString();
-					OutMetadata.DestinationName = ConversionSettings.SourceColorSpace.ToString();
-					break;
-
-				default:
-					checkNoEntry();
-				}
-			}
-			else
-			{
-				OutMetadata.SourceName = ConversionSettings.SourceColorSpace.ToString();
-				OutMetadata.DestinationName = ConversionSettings.DestinationColorSpace.ToString();
-			}
-		}
-		else if (!InColorSettings->bDisableToneCurve)
-		{
-			TPair<UE::Color::EColorSpace, FString> ColorSpaceType = GetDisplayGamutTypeFn(HDRGetDefaultDisplayColorGamut());
-			UE::Color::FColorSpace OutputCS = UE::Color::FColorSpace(ColorSpaceType.Key);
-
-			OutMetadata.DestinationName = ColorSpaceType.Value;
-			OutMetadata.Chromaticities = { OutputCS.GetRedChromaticity(), OutputCS.GetGreenChromaticity(), OutputCS.GetBlueChromaticity(), OutputCS.GetWhiteChromaticity() };
-		}
-		else
-		{
-			OutMetadata.Chromaticities = { WCS.GetRedChromaticity(), WCS.GetGreenChromaticity(), WCS.GetBlueChromaticity(), WCS.GetWhiteChromaticity() };
-		}
-	}
-	else
-	{
-		OutMetadata.Chromaticities = { WCS.GetRedChromaticity(), WCS.GetGreenChromaticity(), WCS.GetBlueChromaticity(), WCS.GetWhiteChromaticity() };
-	}
-
-	return OutMetadata;
 }

@@ -17,17 +17,21 @@
 #include "UObject/ObjectMacros.h"
 #include "UObject/ObjectPtr.h"
 #include "UObject/UObjectGlobals.h"
+#include "UnrealEdMisc.h"
 
 #include "EditorUtilitySubsystem.generated.h"
 
 class FOutputDevice;
+class FSpawnTabArgs;
 class FSubsystemCollectionBase;
 class IConsoleObject;
+class SDockTab;
 class SWindow;
 class UClass;
 class UEditorUtilityTask;
 class UEditorUtilityWidget;
 class UEditorUtilityWidgetBlueprint;
+class UWidgetBlueprintGeneratedClass;
 class UWorld;
 struct FFrame;
 struct FSoftObjectPath;
@@ -58,6 +62,7 @@ public:
 	TArray<FSoftObjectPath> StartupObjects;
 
 	TMap<FName, UEditorUtilityWidgetBlueprint*> RegisteredTabs;
+	TMap<FName, UWidgetBlueprintGeneratedClass*> RegisteredTabsByGeneratedClass;
 
 	// Allow startup object to be garbage collected
 	UFUNCTION(BlueprintCallable, Category = "Development|Editor")
@@ -67,6 +72,9 @@ public:
 	bool TryRun(UObject* Asset);
 
 	UFUNCTION(BlueprintCallable, Category = "Development|Editor")
+	bool TryRunClass(UClass* ObjectClass);
+
+	UFUNCTION(BlueprintCallable, Category = "Development|Editor")
 	bool CanRun(UObject* Asset) const;
 
 	UFUNCTION(BlueprintCallable, Category = "Development|Editor")
@@ -74,6 +82,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Development|Editor")
 	UEditorUtilityWidget* SpawnAndRegisterTab(class UEditorUtilityWidgetBlueprint* InBlueprint);
+	
+	UFUNCTION(BlueprintCallable, Category = "Development|Editor")
+	void RegisterTabAndGetID(class UEditorUtilityWidgetBlueprint* InBlueprint, FName& NewTabID);
 
 	/**
 	 * Unlike SpawnAndRegisterTabAndGetID allows spawn tab while providing TabID from Python scripts or BP
@@ -82,7 +93,19 @@ public:
 	UEditorUtilityWidget* SpawnAndRegisterTabWithId(class UEditorUtilityWidgetBlueprint* InBlueprint, FName InTabID);
 
 	UFUNCTION(BlueprintCallable, Category = "Development|Editor")
-	void RegisterTabAndGetID(class UEditorUtilityWidgetBlueprint* InBlueprint, FName& NewTabID);
+	UEditorUtilityWidget* SpawnAndRegisterTabAndGetIDGeneratedClass(UWidgetBlueprintGeneratedClass* InGeneratedWidgetBlueprint, FName& NewTabID);
+
+	UFUNCTION(BlueprintCallable, Category = "Development|Editor")
+	UEditorUtilityWidget* SpawnAndRegisterTabGeneratedClass(UWidgetBlueprintGeneratedClass* InGeneratedWidgetBlueprint);
+
+	UFUNCTION(BlueprintCallable, Category = "Development|Editor")
+	void RegisterTabAndGetIDGeneratedClass(UWidgetBlueprintGeneratedClass* InGeneratedWidgetBlueprint, FName& NewTabID);
+
+	/**
+	 * Unlike SpawnAndRegisterTabAndGetID allows spawn tab while providing TabID from Python scripts or BP
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Development|Editor")
+	UEditorUtilityWidget* SpawnAndRegisterTabWithIdGeneratedClass(UWidgetBlueprintGeneratedClass* InGeneratedWidgetBlueprint, FName InTabID);
 
 	/** Given an ID for a tab, try to find a tab spawner that matches, and then spawn a tab. Returns true if it was able to find a matching tab spawner */
 	UFUNCTION(BlueprintCallable, Category = "Development|Editor")
@@ -141,6 +164,15 @@ protected:
 
 	/** Called when Play in Editor stops. */
 	void HandleOnEndPIE(const bool bIsSimulating);
+
+	TSharedRef<SDockTab> SpawnEditorUITabFromGeneratedClass(const FSpawnTabArgs& SpawnTabArgs, UWidgetBlueprintGeneratedClass* InGeneratedWidgetBlueprint);
+
+	void OnSpawnedFromGeneratedClassTabClosed(TSharedRef<SDockTab> TabBeingClosed);
+
+	void OnMapChanged(UWorld* World, EMapChangeType MapChangeType);
+
+	TMap<TSharedRef<SDockTab>, UEditorUtilityWidget*> SpawnedFromGeneratedClassTabs;
+
 
 private:
 	IConsoleObject* RunTaskCommandObject = nullptr;

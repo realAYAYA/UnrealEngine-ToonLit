@@ -243,6 +243,7 @@ public:
 
 	int32 GetNumberOfFrames() const { return FMath::Max(NumberOfKeys - 1, 1); }
 
+	EAdditiveAnimationType AdditiveType = AAT_None;
 	bool bIsValidAdditive;
 
 	float ErrorThresholdScale;
@@ -872,14 +873,14 @@ struct FRootMotionReset
 
 	bool bIsValidAdditive;
 
-	void ResetRootBoneForRootMotion(FTransform& BoneTransform, const FBoneContainer& RequiredBones) const
+	void ResetRootBoneForRootMotion(FTransform& BoneTransform, const FTransform& RefPoseRootTransform) const
 	{
 		switch (RootMotionRootLock)
 		{
 		case ERootMotionRootLock::AnimFirstFrame: BoneTransform = AnimFirstFrame; break;
 		case ERootMotionRootLock::Zero: BoneTransform = FTransform::Identity; break;
 		default:
-		case ERootMotionRootLock::RefPose: BoneTransform = RequiredBones.GetRefPoseArray()[0]; break;
+		case ERootMotionRootLock::RefPose: BoneTransform = RefPoseRootTransform; break;
 		}
 
 		if (bIsValidAdditive && RootMotionRootLock != ERootMotionRootLock::AnimFirstFrame)
@@ -887,6 +888,11 @@ struct FRootMotionReset
 			//Need to remove default scale here for additives
 			BoneTransform.SetScale3D(BoneTransform.GetScale3D() - FVector(1.f));
 		}
+	}
+
+	void ResetRootBoneForRootMotion(FTransform& BoneTransform, const FBoneContainer& RequiredBones) const
+	{
+		ResetRootBoneForRootMotion(BoneTransform, RequiredBones.GetRefPoseArray()[0]);
 	}
 };
 

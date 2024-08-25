@@ -14,7 +14,6 @@
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include "Windows/AllowWindowsPlatformAtomics.h"
 
-#include "Windows/MinWindows.h"
 #include "Windows/COMPointer.h"
 
 THIRD_PARTY_INCLUDES_START

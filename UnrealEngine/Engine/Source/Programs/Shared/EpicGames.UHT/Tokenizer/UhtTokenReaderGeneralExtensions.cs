@@ -235,6 +235,10 @@ namespace EpicGames.UHT.Tokenizer
 						.Require(')', "deprecation macro");
 					attributeAction?.Invoke("deprecated");
 				}
+				else if (token.IsIdentifier("UE_INTERNAL"))
+				{
+					tokenReader.ConsumeToken();
+				}
 				else if (token.IsIdentifier("UE_NODISCARD") || token.IsIdentifier("UE_NODISCARD_CTOR"))
 				{
 					tokenReader.ConsumeToken();

@@ -4,9 +4,11 @@
 #include "MuT/Streams.h"
 
 #include "GenericPlatform/GenericPlatformFile.h"
+#include "GenericPlatform/GenericPlatformTime.h"
 #include "HAL/PlatformFileManager.h"
 #include "HAL/PlatformMath.h"
 #include "HAL/UnrealMemory.h"
+#include "Math/RandomStream.h"
 #include "Misc/AssertionMacros.h"
 #include "MuR/Image.h"
 #include "MuR/Model.h"
@@ -19,30 +21,39 @@
 
 namespace mu
 {
-	InputFileStream::InputFileStream( const char* strFile )
+	FProxyFileContext::FProxyFileContext()
+	{
+		uint32 Seed = FPlatformTime::Cycles();
+		FRandomStream RandomStream = FRandomStream((int32)Seed);
+		CurrentFileIndex = RandomStream.GetUnsignedInt();
+	}
+
+
+	InputFileStream::InputFileStream( const FString& File )
 	{
 		m_pD = new Private();
 
-		m_pD->m_pFile = mutable_fopen( strFile, "rb" );
-		m_pD->m_size = 0;
-		m_pD->m_pos = 0;
-        m_pD->m_readBytes = 0;
+		TSharedPtr<IFileHandle> FilePtr(FPlatformFileManager::Get().GetPlatformFile().OpenRead(*File));
+		m_pD->File = FilePtr;
+		
+		if (m_pD->File)
+		{
+			m_pD->File->SeekFromEnd();
+			m_pD->FileSize = m_pD->File->Tell();
+			m_pD->File->Seek(0);
+		}
+		
+		m_pD->BytesInBuffer = 0;
+		m_pD->BufferPosition = 0;
+		m_pD->FilePosition = 0;
 
-        m_pD->m_buffer = reinterpret_cast<uint8*>(FMemory::Malloc(MUTABLE_STREAM_BUFFER_SIZE,16));
+		m_pD->Buffer.SetNum(MUTABLE_STREAM_BUFFER_SIZE);
 	}
 
 
 	//---------------------------------------------------------------------------------------------
 	InputFileStream::~InputFileStream()
 	{
-        if ( m_pD->m_pFile )
-        {
-            fclose( m_pD->m_pFile );
-        }
-
-		FMemory::Free( m_pD->m_buffer );
-        m_pD->m_buffer = nullptr;
-
         delete m_pD;
 		m_pD = nullptr;
 	}
@@ -51,22 +62,17 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	bool InputFileStream::IsOpen() const
     {
-        return m_pD->m_pFile!=0;
-    }
-    
-
-    //---------------------------------------------------------------------------------------------
-	uint64 InputFileStream::GetReadBytes() const
-    {
-        return m_pD->m_readBytes;
+        return m_pD->File != nullptr;
     }
     
 
     //---------------------------------------------------------------------------------------------
 	uint64 InputFileStream::Tell() const
     {
-        size_t bufferOffset = m_pD->m_size - m_pD->m_pos;
-        int64_t filePos = mutable_ftell( m_pD->m_pFile );
+		check(IsOpen());
+
+        size_t bufferOffset = m_pD->BytesInBuffer - m_pD->BufferPosition;
+        int64 filePos = m_pD->File->Tell();
         check(filePos>0);
         size_t pos = size_t(filePos) - bufferOffset;
         return pos;
@@ -74,42 +80,48 @@ namespace mu
 
 
     //---------------------------------------------------------------------------------------------
-    void InputFileStream::Seek( uint64 position )
+    void InputFileStream::Seek( uint64 NewPosition )
     {
-        int64_t result = mutable_fseek( m_pD->m_pFile, int64_t(position), SEEK_SET );
-        check(result==0);
-        (void)result;
+		check(IsOpen());
 
-        m_pD->m_size = 0;
-        m_pD->m_pos = 0;
+        bool bSuccess = m_pD->File->Seek( int64(NewPosition) );
+        check(bSuccess);
+
+        m_pD->BytesInBuffer = 0;
+        m_pD->BufferPosition = 0;
+		m_pD->FilePosition = NewPosition;
     }
 
 
 	//---------------------------------------------------------------------------------------------
     void InputFileStream::Read( void* pData, uint64 size )
 	{
-        uint8_t* pDest = (uint8_t*) pData;
-        while (size && m_pD->m_pFile )
+		check(IsOpen());
+
+        uint8* pDest = (uint8*) pData;
+        while (size && m_pD->File )
 		{			
-			int available = FMath::Min( int(m_pD->m_size) - int(m_pD->m_pos), int(size) );
+			int64 Available = FMath::Min( int64(m_pD->BytesInBuffer) - int64(m_pD->BufferPosition), int64(size) );
 
 			// Copy from what is already loaded
-			if ( available>0 )
+			if (Available >0 )
 			{
-                FMemory::Memcpy( pDest, m_pD->m_buffer+m_pD->m_pos, available );
-				m_pD->m_pos += available;
-				size -= available;
-				pDest += available;
+                FMemory::Memcpy( pDest, m_pD->Buffer.GetData()+m_pD->BufferPosition, Available);
+				m_pD->BufferPosition += Available;
+				size -= Available;
+				pDest += Available;
 			}
 
 			// Load more data if necessary
-			if ( m_pD->m_pos == m_pD->m_size && size )
+			if ( m_pD->BufferPosition == m_pD->BytesInBuffer && size )
 			{
-                m_pD->m_size = fread( m_pD->m_buffer, 1, MUTABLE_STREAM_BUFFER_SIZE, m_pD->m_pFile );
-                check( !ferror( m_pD->m_pFile ) );
-                check( m_pD->m_size );
-				m_pD->m_pos = 0;
-                m_pD->m_readBytes += m_pD->m_size;
+				int64 BytesLeftInFile = m_pD->FileSize - m_pD->FilePosition;
+				int64 BytesToRead = FMath::Min(MUTABLE_STREAM_BUFFER_SIZE, BytesLeftInFile);
+                bool bSuccess = m_pD->File->Read( m_pD->Buffer.GetData(), BytesToRead );
+                check( bSuccess );
+				m_pD->BytesInBuffer = BytesToRead;
+				m_pD->BufferPosition = 0;
+                m_pD->FilePosition += BytesToRead;
             }
 		}
 
@@ -119,14 +131,15 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	//---------------------------------------------------------------------------------------------
 	//---------------------------------------------------------------------------------------------
-	OutputFileStream::OutputFileStream( const char* strFile )
+	OutputFileStream::OutputFileStream( const FString& File )
 	{
 		m_pD = new Private();
-		m_pD->m_pFile = mutable_fopen( strFile, "wb" );
-		m_pD->m_pos = 0;
-		m_pD->m_buffer = reinterpret_cast<uint8*>(FMemory::Malloc(MUTABLE_STREAM_BUFFER_SIZE, 16));
+		TSharedPtr<IFileHandle> FilePtr(FPlatformFileManager::Get().GetPlatformFile().OpenWrite(*File));
+		m_pD->File = FilePtr;
+		m_pD->BufferPosition = 0;
+		m_pD->Buffer.SetNum(MUTABLE_STREAM_BUFFER_SIZE);
 
-		check( m_pD->m_pFile );
+		check( m_pD->File );
 	}
 
 
@@ -137,19 +150,19 @@ namespace mu
 
 		while (size)
 		{
-            int available = FMath::Min( int(MUTABLE_STREAM_BUFFER_SIZE) - int(m_pD->m_pos), int(size) );
+            int64 Available = FMath::Min(int64(MUTABLE_STREAM_BUFFER_SIZE) - int64(m_pD->BufferPosition), int64(size) );
 
 			// Copy from what fits in the current buffer
-			if ( available>0 )
+			if (Available >0 )
 			{
-                memcpy( m_pD->m_buffer+m_pD->m_pos, pSrc, available );
-				m_pD->m_pos += available;
-				size -= available;
-				pSrc += available;
+                FMemory::Memcpy( m_pD->Buffer.GetData() + m_pD->BufferPosition, pSrc, Available);
+				m_pD->BufferPosition += Available;
+				size -= Available;
+				pSrc += Available;
 			}
 
 			// Flush the data if necessary
-            if ( m_pD->m_pos == MUTABLE_STREAM_BUFFER_SIZE )
+            if ( m_pD->BufferPosition == MUTABLE_STREAM_BUFFER_SIZE )
 			{
 				Flush();
 			}
@@ -160,18 +173,13 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	void OutputFileStream::Flush()
 	{
-		if ( m_pD->m_pos )
+		if ( m_pD->BufferPosition)
 		{
-            std::size_t count = fwrite( m_pD->m_buffer,
-										1,
-										m_pD->m_pos,
-										m_pD->m_pFile );
-
-			check( count == m_pD->m_pos );
-            (void)count;
+			bool bSuccess = m_pD->File->Write( m_pD->Buffer.GetData(), m_pD->BufferPosition);
+			check(bSuccess);
         }
 
-		m_pD->m_pos = 0;
+		m_pD->BufferPosition = 0;
 	}
 
 
@@ -179,11 +187,6 @@ namespace mu
 	OutputFileStream::~OutputFileStream()
 	{
 		Flush();
-
-		fclose( m_pD->m_pFile );
-
-        FMemory::Free( m_pD->m_buffer );
-        m_pD->m_buffer = nullptr;
 
         delete m_pD;
 		m_pD = 0;
@@ -266,32 +269,22 @@ namespace mu
     //---------------------------------------------------------------------------------------------
     //---------------------------------------------------------------------------------------------
     //---------------------------------------------------------------------------------------------
-    Ptr<ResourceProxy<Image>> ProxyFactoryFiles::NewImageProxy(InputArchive& arch)
-    {        
-        Ptr<Image> t = Image::StaticUnserialise( arch );
-        return new ResourceProxyTempFile<Image>(t.get());
-    }
-
-
-    //---------------------------------------------------------------------------------------------
-    //---------------------------------------------------------------------------------------------
-    //---------------------------------------------------------------------------------------------
-    class ProxyFactoryMutableSourceFile::Private : public Base
+    class ProxyFactoryMutableSourceFile::Private
     {
     public:
-        InputFileStream* m_pStream = nullptr;
-        std::string m_filename;
+        InputFileStream* Stream = nullptr;
+        FString FileName;
     };
 
 
     //---------------------------------------------------------------------------------------------
-    ProxyFactoryMutableSourceFile::ProxyFactoryMutableSourceFile( const char* strFileName, 
+    ProxyFactoryMutableSourceFile::ProxyFactoryMutableSourceFile( const FString& InFileName, 
                                                                   InputFileStream* pStream )
     {
         m_pD = new Private();
 
-        m_pD->m_pStream = pStream;
-        m_pD->m_filename = strFileName;
+        m_pD->Stream = pStream;
+        m_pD->FileName = InFileName;
     }
 
 
@@ -307,13 +300,13 @@ namespace mu
     Ptr<ResourceProxy<Image>> ProxyFactoryMutableSourceFile::NewImageProxy(InputArchive& arch)
     {
         // assert: the archive should beusing m_pStream
-        size_t position = m_pD->m_pStream->Tell();
+        size_t position = m_pD->Stream->Tell();
 
         // we are unserialising just to skip the image. It would be much better if we had the size
         // and we could skip it.
         Ptr<Image> t = Image::StaticUnserialise( arch );
 
-        return new ResourceProxyFile<Image>( m_pD->m_filename, position );
+        return new ResourceProxyFile<Image>( m_pD->FileName, position );
     }
 
 

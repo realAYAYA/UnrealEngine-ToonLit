@@ -263,18 +263,48 @@ FBehaviorTreeInstance::~FBehaviorTreeInstance()
 
 void FBehaviorTreeInstance::AddToActiveAuxNodes(UBTAuxiliaryNode* AuxNode)
 {
+	AddToActiveAuxNodesImpl(AuxNode);
+}
+
+void FBehaviorTreeInstance::AddToActiveAuxNodesImpl(UBTAuxiliaryNode* AuxNode)
+{
 #if DO_ENSURE
 	ensureAlwaysMsgf(bIteratingNodes == false, TEXT("Adding aux node while iterating through them is not allowed."));
 #endif // DO_ENSURE
+
 	MEM_STAT_UPDATE_WRAPPER(ActiveAuxNodes.Add(AuxNode));
+}
+
+void FBehaviorTreeInstance::AddToActiveAuxNodes(UBehaviorTreeComponent& OwnerComp, UBTAuxiliaryNode* AuxNode)
+{
+	UE_VLOG(OwnerComp.GetOwner(), LogBehaviorTree, Verbose, TEXT("%hs %s")
+		, __FUNCTION__
+		, *UBehaviorTreeTypes::DescribeNodeHelper(AuxNode));
+
+	AddToActiveAuxNodesImpl(AuxNode);
 }
 
 void FBehaviorTreeInstance::RemoveFromActiveAuxNodes(UBTAuxiliaryNode* AuxNode)
 {
+	RemoveFromActiveAuxNodesImpl(AuxNode);
+}
+
+void FBehaviorTreeInstance::RemoveFromActiveAuxNodesImpl(UBTAuxiliaryNode* AuxNode)
+{
 #if DO_ENSURE
 	ensureAlwaysMsgf(bIteratingNodes == false, TEXT("Removing aux node while iterating through them is not allowed."));
 #endif // DO_ENSURE
+
 	MEM_STAT_UPDATE_WRAPPER(ActiveAuxNodes.RemoveSingleSwap(AuxNode));
+}
+
+void FBehaviorTreeInstance::RemoveFromActiveAuxNodes(UBehaviorTreeComponent& OwnerComp, UBTAuxiliaryNode* AuxNode)
+{
+	UE_VLOG(OwnerComp.GetOwner(), LogBehaviorTree, Verbose, TEXT("%hs %s")
+		, __FUNCTION__
+		, *UBehaviorTreeTypes::DescribeNodeHelper(AuxNode));
+
+	RemoveFromActiveAuxNodesImpl(AuxNode);
 }
 
 void FBehaviorTreeInstance::ResetActiveAuxNodes()
@@ -301,7 +331,7 @@ void FBehaviorTreeInstance::RemoveParallelTaskAt(int32 TaskIndex)
 		TEXT("Removing from the list of parallel tasks from ExecuteOnEachParallelTask is only supported for the current task. Otherwise the iteration is broken."));
 #endif // DO_ENSURE
 
-	MEM_STAT_UPDATE_WRAPPER(ParallelTasks.RemoveAt(TaskIndex, /*Count=*/1, /*bAllowShrinking=*/false));
+	MEM_STAT_UPDATE_WRAPPER(ParallelTasks.RemoveAt(TaskIndex, /*Count=*/1, EAllowShrinking::No));
 }
 
 void FBehaviorTreeInstance::MarkParallelTaskAsAbortingAt(int32 TaskIndex)
@@ -393,7 +423,7 @@ void FBehaviorTreeInstance::DeactivateNodes(FBehaviorTreeSearchData& SearchData,
 				*UBehaviorTreeTypes::DescribeNodeUpdateMode(EBTNodeUpdateMode::Remove),
 				*UBehaviorTreeTypes::DescribeNodeHelper(UpdateInfo.AuxNode ? (UBTNode*)UpdateInfo.AuxNode : (UBTNode*)UpdateInfo.TaskNode));
 
-			SearchData.PendingUpdates.RemoveAt(Idx, 1, false);
+			SearchData.PendingUpdates.RemoveAt(Idx, 1, EAllowShrinking::No);
 		}
 	}
 
@@ -462,7 +492,7 @@ void FBehaviorTreeSearchData::AddUniqueUpdate(const FBehaviorTreeSearchUpdate& U
 			bSkipAdding = (Info.Mode == EBTNodeUpdateMode::Remove) || (UpdateInfo.Mode == EBTNodeUpdateMode::Remove);
 			UE_CVLOG(bSkipAdding, OwnerComp.GetOwner(), LogBehaviorTree, Verbose, TEXT(">> skipped: paired add/remove"));
 
-			PendingUpdates.RemoveAt(UpdateIndex, 1, false);
+			PendingUpdates.RemoveAt(UpdateIndex, 1, EAllowShrinking::No);
 		}
 	}
 	
@@ -472,7 +502,7 @@ void FBehaviorTreeSearchData::AddUniqueUpdate(const FBehaviorTreeSearchUpdate& U
 	{
 		const bool bIsActive = OwnerComp.IsAuxNodeActive(UpdateInfo.AuxNode, UpdateInfo.InstanceIndex);
 		bSkipAdding = !bIsActive;
-		UE_CVLOG(bSkipAdding, OwnerComp.GetOwner(), LogBehaviorTree, Verbose, TEXT(">> skipped: inactive aux nodes"));
+		UE_CVLOG(bSkipAdding, OwnerComp.GetOwner(), LogBehaviorTree, Verbose, TEXT(">> skipped: did not push a remove to PendingUpdates due to inactive aux node"));
 	}
 
 	if (!bSkipAdding)
@@ -690,7 +720,7 @@ FString UBehaviorTreeTypes::GetShortTypeName(const UObject* Ob)
 	const int32 ShortNameIdx = TypeDesc.Find(TEXT("_"), ESearchCase::CaseSensitive);
 	if (ShortNameIdx != INDEX_NONE)
 	{
-		TypeDesc.MidInline(ShortNameIdx + 1, MAX_int32, false);
+		TypeDesc.MidInline(ShortNameIdx + 1, MAX_int32, EAllowShrinking::No);
 	}
 
 	return TypeDesc;
@@ -704,4 +734,3 @@ void UBehaviorTreeTypes::SetBTLoggingContext(const UBTNode* NewBTLoggingContext)
 //----------------------------------------------------------------------//
 // DEPRECATED
 //----------------------------------------------------------------------//
-

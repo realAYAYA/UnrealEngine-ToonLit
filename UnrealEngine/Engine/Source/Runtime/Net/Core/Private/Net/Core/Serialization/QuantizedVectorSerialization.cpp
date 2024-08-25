@@ -185,9 +185,79 @@ bool ReadQuantizedVector(const int32 Scale, T& Value, FArchive& Ar)
 			return true;
 		}
 	}
+}
 
-	// Should not get here so something is very wrong.
-	return false;
+template<class T>
+T QuantizeVector(const int32 Scale, const T& Value)
+{
+	using ScalarType = decltype(T::X);
+	constexpr SIZE_T ScalarTypeSize = sizeof(ScalarType);
+	using IntType = typename TSignedIntType<ScalarTypeSize>::Type;
+
+	static_assert(ScalarTypeSize == 4U || ScalarTypeSize == 8U, "Unknown floating point type.");
+
+	// Beyond 2^MaxExponentForScaling scaling cannot improve the precision as the next floating point value is at least 1.0 more. 
+	constexpr uint32 MaxExponentForScaling = ScalarTypeSize == 4 ? 23U : 52U;
+	constexpr ScalarType MaxValueToScale = ScalarType(IntType(1) << MaxExponentForScaling);
+
+	// Rounding of large values can introduce additional precision errors and the extra cost to serialize with full precision is small.
+	constexpr uint32 MaxExponentAfterScaling = ScalarTypeSize == 4 ? 30U : 62U;
+	constexpr ScalarType MaxScaledValue = ScalarType(IntType(1) << MaxExponentAfterScaling);
+
+	// NaN values can be properly serialized using the full precision path, but they typically cause lots of errors
+	// for the typical engine use case.
+	if (Value.ContainsNaN())
+	{
+		logOrEnsureNanError(TEXT("%s"), TEXT("QuantizeVector: Value isn't finite. Clearing for safety."));
+		return T{ 0,0,0 };
+	}
+
+	const ScalarType Factor = IntCastChecked<int16>(Scale);
+	T ScaledValue;
+	ScaledValue.X = Value.X * Factor;
+	ScaledValue.Y = Value.Y * Factor;
+	ScaledValue.Z = Value.Z * Factor;
+
+	// If the component values are within bounds then we optimize the bandwidth, otherwise we use full precision.
+	if (ScaledValue.GetAbsMax() < MaxScaledValue)
+	{
+		const bool bUseScaledValue = Value.GetAbsMin() < MaxValueToScale;
+
+		// 'Write' value
+		IntType X;
+		IntType Y;
+		IntType Z;
+		if (bUseScaledValue)
+		{
+			X = RoundFloatToInt(ScaledValue.X);
+			Y = RoundFloatToInt(ScaledValue.Y);
+			Z = RoundFloatToInt(ScaledValue.Z);
+		}
+		else
+		{
+			X = RoundFloatToInt(Value.X);
+			Y = RoundFloatToInt(Value.Y);
+			Z = RoundFloatToInt(Value.Z);
+		}
+
+		// 'Read' value
+		T TempValue;
+		TempValue.X = ScalarType(X);
+		TempValue.Y = ScalarType(Y);
+		TempValue.Z = ScalarType(Z);
+
+		// Apply scaling if needed.
+		if (bUseScaledValue)
+		{
+			return TempValue / ScalarType(Scale);
+		}
+		else
+		{
+			return TempValue;
+		}
+	}
+
+	return Value;
 }
 
 }
@@ -205,6 +275,11 @@ bool ReadQuantizedVector(int32 Scale, FVector3d& Value, FArchive& Ar)
 	return Private::ReadQuantizedVector(Scale, Value, Ar);
 }
 
+FVector3d QuantizeVector(const int32 Scale, const FVector3d& Value)
+{
+	return Private::QuantizeVector(Scale, Value);
+}
+
 bool WriteQuantizedVector(int32 Scale, const FVector3f& Value, FArchive& Ar)
 {
 	return Private::WriteQuantizedVector(Scale, Value, Ar);
@@ -213,6 +288,11 @@ bool WriteQuantizedVector(int32 Scale, const FVector3f& Value, FArchive& Ar)
 bool ReadQuantizedVector(int32 Scale, FVector3f& Value, FArchive& Ar)
 {
 	return Private::ReadQuantizedVector(Scale, Value, Ar);
+}
+
+FVector3f QuantizeVector(const int32 Scale, const FVector3f& Value)
+{
+	return Private::QuantizeVector(Scale, Value);
 }
 
 }

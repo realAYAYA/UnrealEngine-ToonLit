@@ -2,7 +2,7 @@
 
 import datetime
 
-from PySide2 import QtCore, QtGui
+from PySide6 import QtCore, QtGui
 
 from switchboard import config_osc as osc
 from switchboard.config import CONFIG, SETTINGS, IntSetting

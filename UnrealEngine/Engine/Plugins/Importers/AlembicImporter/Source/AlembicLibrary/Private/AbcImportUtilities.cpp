@@ -16,13 +16,10 @@
 #include "Materials/Material.h"
 #include "MeshUtilities.h"
 #include "Misc/PackageName.h"
+#include "Misc/ScopedSlowTask.h"
 #include "PackageTools.h"
 #include "RenderMath.h"
 #include "UObject/Package.h"
-
-#if PLATFORM_WINDOWS
-#include "Windows/WindowsHWrapper.h"
-#endif
 
 #if PLATFORM_WINDOWS
 #include "RenderMath.h"
@@ -60,36 +57,41 @@ uint32 AbcImporterUtilities::GenerateMaterialIndicesFromFaceSets(Alembic::AbcGeo
 	std::vector<std::string> FaceSetNames;
 	Schema.getFaceSetNames(FaceSetNames);
 
+	if (FaceSetNames.size() == 0)
+	{
+		return 1; // We will create a default unnamed faceset
+	}
+
 	// Number of unique face sets found in the Alembic Object
 	uint32 NumUniqueFaceSets = 0;
-	if (FaceSetNames.size() != 0)
+	
+	// Loop over the face-set names
+	for (uint32 FaceSetIndex = 0; FaceSetIndex < FaceSetNames.size(); ++FaceSetIndex)
 	{
-		// Loop over the face-set names
-		for (uint32 FaceSetIndex = 0; FaceSetIndex < FaceSetNames.size(); ++FaceSetIndex)
+		const std::string& FaceSetName = FaceSetNames[FaceSetIndex];
+
+		Alembic::AbcGeom::IFaceSet FaceSet = Schema.getFaceSet(FaceSetName);
+		Alembic::AbcGeom::IFaceSetSchema FaceSetSchema = FaceSet.getSchema();
+		Alembic::AbcGeom::IFaceSetSchema::Sample FaceSetSample;
+		FaceSetSchema.get(FaceSetSample, FrameSelector);
+
+		// Retrieve face indices that are part of this face set
+		Alembic::Abc::Int32ArraySamplePtr Faces = FaceSetSample.getFaces();
+		const bool bFacesAvailable = (Faces != nullptr);
+		const int NumFaces = Faces->size();
+
+		// Set the shared Material index for all the contained faces
+		for (int32 i = 0; i < NumFaces && NumFaces < MaterialIndicesOut.Num(); ++i)
 		{
-			Alembic::AbcGeom::IFaceSet FaceSet = Schema.getFaceSet(FaceSetNames[FaceSetIndex]);
-			Alembic::AbcGeom::IFaceSetSchema FaceSetSchema = FaceSet.getSchema();
-			Alembic::AbcGeom::IFaceSetSchema::Sample FaceSetSample;
-			FaceSetSchema.get(FaceSetSample, FrameSelector);
-
-			// Retrieve face indices that are part of this face set
-			Alembic::Abc::Int32ArraySamplePtr Faces = FaceSetSample.getFaces();
-			const bool bFacesAvailable = (Faces != nullptr);
-			const int NumFaces = Faces->size();
-
-			// Set the shared Material index for all the contained faces
-			for (int32 i = 0; i < NumFaces && NumFaces < MaterialIndicesOut.Num(); ++i)
+			const int32 FaceIndex = Faces->get()[i];
+			if (MaterialIndicesOut.IsValidIndex(FaceIndex))
 			{
-				const int32 FaceIndex = Faces->get()[i];
-				if (MaterialIndicesOut.IsValidIndex(FaceIndex))
-				{
-					MaterialIndicesOut[FaceIndex] = FaceSetIndex;
-				}
+				MaterialIndicesOut[FaceIndex] = FaceSetIndex;
 			}
-
-			// Found a new unique faceset
-			NumUniqueFaceSets++;
 		}
+
+		// Found a new unique faceset
+		NumUniqueFaceSets++;
 	}
 
 	return NumUniqueFaceSets;
@@ -104,6 +106,11 @@ void AbcImporterUtilities::RetrieveFaceSetNames(Alembic::AbcGeom::IPolyMeshSchem
 	for (const std::string& Name : FaceSetNames)
 	{
 		NamesOut.Add(FString(Name.c_str()));
+	}
+
+	if (NamesOut.IsEmpty()) 
+	{
+		NamesOut.Add(FAbcFile::NoFaceSetNameStr);
 	}
 }
 
@@ -265,7 +272,14 @@ ESampleReadFlags AbcImporterUtilities::GenerateAbcMeshSampleReadFlags(const Alem
 		bool bConstantFaceSets = true;
 		for (int32 FaceSetIndex = 0; FaceSetIndex < FaceSetNames.size(); ++FaceSetIndex)
 		{
-			Alembic::AbcGeom::IFaceSet FaceSet = MutableSchema->getFaceSet(FaceSetNames[FaceSetIndex]);
+			const std::string& FaceSetName = FaceSetNames[FaceSetIndex];
+
+			if (!MutableSchema->hasFaceSet(FaceSetName))
+			{
+				continue;
+			}
+
+			Alembic::AbcGeom::IFaceSet FaceSet = MutableSchema->getFaceSet(FaceSetName);
 			Alembic::AbcGeom::IFaceSetSchema FaceSetSchema = FaceSet.getSchema();
 			bConstantFaceSets &= FaceSetSchema.isConstant();
 		}
@@ -665,24 +679,14 @@ bool AbcImporterUtilities::GenerateAbcMeshSampleDataForFrame(const Alembic::AbcG
 		}
 	}
 
-	if (EnumHasAnyFlags(ReadFlags, ESampleReadFlags::MaterialIndices))
-	{
-		// Pre initialize face-material indices
-		Sample->MaterialIndices.AddZeroed(Sample->Indices.Num() / 3);
-		Sample->NumMaterials = GenerateMaterialIndicesFromFaceSets(*const_cast<Alembic::AbcGeom::IPolyMeshSchema*>(&Schema), FrameSelector, Sample->MaterialIndices);
+	// Pre initialize face-material indices
+	Sample->MaterialIndices.AddZeroed(Sample->Indices.Num() / 3);
+	Sample->NumMaterials = GenerateMaterialIndicesFromFaceSets(*const_cast<Alembic::AbcGeom::IPolyMeshSchema*>(&Schema), FrameSelector, Sample->MaterialIndices);
 
-		// Triangulate material face indices if needed
-		if (bNeedsTriangulation)
-		{
-			TriangulateMaterialIndices(FaceCounts, Sample->MaterialIndices);
-		}
-	}
-	else
+	// Triangulate material face indices if needed
+	if (bNeedsTriangulation)
 	{
-		if (Sample->MaterialIndices.Num() < ( Sample->Indices.Num() / 3))
-		{
-			Sample->MaterialIndices.AddZeroed((Sample->Indices.Num() / 3) - Sample->MaterialIndices.Num());
-		}
+		TriangulateMaterialIndices(FaceCounts, Sample->MaterialIndices);
 	}
 
 	return bRetrievalResult;
@@ -801,7 +805,8 @@ void AbcImporterUtilities::GenerateSmoothingGroupsIndices(FAbcMeshSample* MeshSa
 		Offset += NumVertsForFace;
 
 		// Store the averaged face normal
-		FaceNormals.Add(FaceNormal.GetSafeNormal());
+		FaceNormal.Normalize();
+		FaceNormals.Add(FaceNormal);
 	}
 		
 	MeshSample->NumSmoothingGroups = 0;
@@ -1194,12 +1199,12 @@ void AbcImporterUtilities::PropogateMatrixTransformationToSample(FAbcMeshSample*
 }
 
 void AbcImporterUtilities::GenerateDeltaFrameDataMatrix(const TArray<FVector3f>& FrameVertexData, const TArray<FVector3f>& FrameNormalData, const TArray<FVector3f>& AverageVertexData, const TArray<FVector3f>& AverageNormalData,
-	const int32 SampleIndex, const int32 AverageVertexOffset, const int32 AverageIndexOffset, const FVector& SamplePositionOffset, TArray<float>& OutGeneratedMatrix, TArray<float>& OutGeneratedNormalsMatrix)
+	const int32 SampleIndex, const int32 AverageVertexOffset, const int32 AverageIndexOffset, const FVector& SamplePositionOffset, TArray64<float>& OutGeneratedMatrix, TArray64<float>& OutGeneratedNormalsMatrix)
 {
-	const uint32 NumVertices = FrameVertexData.Num();
-	const uint32 VertexOffset = SampleIndex * AverageVertexData.Num() * 3;
+	const int32 NumVertices = FrameVertexData.Num();
+	const int64 VertexOffset = int64(SampleIndex) * AverageVertexData.Num() * 3;
 
-	for (uint32 VertexIndex = 0; VertexIndex < NumVertices; ++VertexIndex)
+	for (int32 VertexIndex = 0; VertexIndex < NumVertices; ++VertexIndex)
 	{
 		const int32 ComponentIndexOffset = (VertexIndex + AverageVertexOffset) * 3;
 		const FVector AverageDifference = ((FVector)AverageVertexData[VertexIndex + AverageVertexOffset] + SamplePositionOffset) - (FVector)FrameVertexData[VertexIndex];
@@ -1209,10 +1214,10 @@ void AbcImporterUtilities::GenerateDeltaFrameDataMatrix(const TArray<FVector3f>&
 		OutGeneratedMatrix[VertexOffset + ComponentIndexOffset + 2] = static_cast<float>(AverageDifference.Z);
 	}
 
-	const uint32 NumIndices = FrameNormalData.Num();
-	const uint32 IndexOffset = SampleIndex * AverageNormalData.Num() * 3;
+	const int32 NumIndices = FrameNormalData.Num();
+	const int64 IndexOffset = int64(SampleIndex) * AverageNormalData.Num() * 3;
 
-	for (uint32 Index = 0; Index < NumIndices; ++Index)
+	for (int32 Index = 0; Index < NumIndices; ++Index)
 	{
 		const int32 ComponentIndexOffset = (Index + AverageIndexOffset) * 3;
 		const FVector AverageNormal = (FVector)AverageNormalData[Index + AverageIndexOffset] - (FVector)FrameNormalData[Index];
@@ -1224,8 +1229,11 @@ void AbcImporterUtilities::GenerateDeltaFrameDataMatrix(const TArray<FVector3f>&
 }
 
 void AbcImporterUtilities::GenerateCompressedMeshData(FCompressedAbcData& CompressedData, const uint32 NumUsedSingularValues, const uint32 NumSamples,
-	const TArrayView<float>& BasesMatrix, const TArrayView<float>& NormalsBasesMatrix, const TArray<float>& BasesWeights, const float SampleTimeStep, const float StartTime)
+	const TArrayView64<float>& BasesMatrix, const TArrayView64<float>& NormalsBasesMatrix, const TArray64<float>& BasesWeights, const float SampleTimeStep, const float StartTime)
 {
+	FScopedSlowTask SlowTask(static_cast<float>(NumUsedSingularValues), FText::FromString(FString(TEXT("Generating bases"))));
+	SlowTask.MakeDialog();
+
 	// Allocate base sample data	
 	CompressedData.BaseSamples.AddZeroed(NumUsedSingularValues);
 	CompressedData.CurveValues.AddZeroed(NumUsedSingularValues);
@@ -1236,12 +1244,12 @@ void AbcImporterUtilities::GenerateCompressedMeshData(FCompressedAbcData& Compre
 	{
 		FAbcMeshSample* Base = new FAbcMeshSample(*CompressedData.AverageSample);
 
-		const uint32 NumVertices = Base->Vertices.Num();
-		const uint32 NumMatrixRows = NumVertices * 3;
-		const int32 BaseOffset = BaseIndex * NumMatrixRows;
-		for (uint32 Index = 0; Index < NumVertices; ++Index)
+		const int32 NumVertices = Base->Vertices.Num();
+		const int32 NumMatrixRows = NumVertices * 3;
+		const int64 BaseOffset = int64(BaseIndex) * NumMatrixRows;
+		for (int32 Index = 0; Index < NumVertices; ++Index)
 		{
-			const int32 IndexOffset = BaseOffset + (Index * 3);
+			const int64 IndexOffset = BaseOffset + (Index * 3);
 			FVector3f& BaseVertex = Base->Vertices[Index];
 
 			BaseVertex.X -= BasesMatrix[IndexOffset + 0];
@@ -1249,12 +1257,12 @@ void AbcImporterUtilities::GenerateCompressedMeshData(FCompressedAbcData& Compre
 			BaseVertex.Z -= BasesMatrix[IndexOffset + 2];
 		}
 
-		const uint32 NumIndices = Base->Indices.Num();
-		const uint32 NumNormalsMatrixRows = NumIndices * 3;
-		const int32 BaseIndexOffset = BaseIndex * NumNormalsMatrixRows;
-		for (uint32 Index = 0; Index < NumIndices; ++Index)
+		const int32 NumIndices = Base->Indices.Num();
+		const int32 NumNormalsMatrixRows = NumIndices * 3;
+		const int64 BaseIndexOffset = int64(BaseIndex) * NumNormalsMatrixRows;
+		for (int32 Index = 0; Index < NumIndices; ++Index)
 		{
-			const int32 IndexOffset = BaseIndexOffset + (Index * 3);
+			const int64 IndexOffset = BaseIndexOffset + (Index * 3);
 			FVector3f& BaseNormal = Base->Normals[Index];
 
 			BaseNormal.X -= NormalsBasesMatrix[IndexOffset + 0];
@@ -1271,13 +1279,15 @@ void AbcImporterUtilities::GenerateCompressedMeshData(FCompressedAbcData& Compre
 		TimeValues.Reserve(NumSamples);
 
 		// Use original number of singular values to index into the array (otherwise we would be reading incorrect data if NumUsedSingularValues != the original number
-		const uint32 OriginalNumberOfSingularValues = BasesWeights.Num() / NumSamples;
+		const int64 OriginalNumberOfSingularValues = BasesWeights.Num() / NumSamples;
 		// Should be possible to rearrange the data so this can become a memcpy
 		for (uint32 CurveSampleIndex = 0; CurveSampleIndex < NumSamples; ++CurveSampleIndex)
 		{
 			CurveValues.Add(BasesWeights[BaseIndex + (OriginalNumberOfSingularValues * CurveSampleIndex)]);
 			TimeValues.Add(StartTime + (SampleTimeStep * static_cast<float>(CurveSampleIndex)));
 		}
+
+		SlowTask.EnterProgressFrame(1.f);
 	}
 }
 
@@ -1534,8 +1544,6 @@ void AbcImporterUtilities::GeometryCacheDataForMeshSample(FGeometryCacheMeshData
 	OutMeshData.VertexInfo.bHasMotionVectors = bHasVelocities;
 	OutMeshData.VertexInfo.bHasImportedVertexNumbers = bHasImportedVertexNumbers;
 
-	uint32 NumMaterials = MaterialOffset;
-
 	const int32 NumTriangles = MeshSample->Indices.Num() / 3;
 	const uint32 NumSections = MeshSample->NumMaterials ? MeshSample->NumMaterials : 1;
 
@@ -1606,8 +1614,10 @@ void AbcImporterUtilities::GeometryCacheDataForMeshSample(FGeometryCacheMeshData
 		}
 	}
 
+	uint32 NumMaterials = MaterialOffset;
+
 	TArray<uint32>& Indices = OutMeshData.Indices;
-	for (uint32 SectionIndex = 0; SectionIndex < NumSections; ++SectionIndex)
+	for (uint32 SectionIndex = 0; SectionIndex < NumSections; ++SectionIndex, ++NumMaterials)
 	{
 		// Sometimes empty sections seem to be in the file, filter these out
 		// as empty batches are not allowed by the geometry cache (They ultimately trigger checks in the renderer)
@@ -1620,8 +1630,6 @@ void AbcImporterUtilities::GeometryCacheDataForMeshSample(FGeometryCacheMeshData
 		FGeometryCacheMeshBatchInfo BatchInfo;
 		BatchInfo.StartIndex = Indices.Num();
 		BatchInfo.MaterialIndex = NumMaterials;
-		NumMaterials++;
-
 
 		BatchInfo.NumTriangles = SectionIndices[SectionIndex].Num() / 3;
 		Indices.Append(SectionIndices[SectionIndex]);
@@ -1630,7 +1638,9 @@ void AbcImporterUtilities::GeometryCacheDataForMeshSample(FGeometryCacheMeshData
 }
 
 void AbcImporterUtilities::MergePolyMeshesToMeshData(int32 FrameIndex, int32 FrameStart, float SecondsPerFrame, bool bUseVelocitiesAsMotionVectors,
-	const TArray<FAbcPolyMesh*>& PolyMeshes, const TArray<FString>& UniqueFaceSetNames, float& FrameTime,
+	const TArray<FAbcPolyMesh*>& PolyMeshes, 
+	const TArray<int32> LookupMaterialSlot,
+	float& FrameTime,
 	FGeometryCacheMeshData& MeshData, int32& PreviousNumVertices, bool& bConstantTopology, bool bStoreImportedVertexNumbers)
 {
 	FAbcMeshSample MergedSample;
@@ -1640,34 +1650,30 @@ void AbcImporterUtilities::MergePolyMeshesToMeshData(int32 FrameIndex, int32 Fra
 		if (PolyMesh->bShouldImport)
 		{
 			const int32 Offset = MergedSample.MaterialIndices.Num();
-			const int32 MaterialIndexOffset = MergedSample.NumMaterials;
 			bConstantTopology = bConstantTopology && PolyMesh->bConstantTopology;
+
+			// The caller expects this value to be calculated regardless of mesh visibility
+			FrameTime = PolyMesh->GetTimeForFrameIndex(FrameIndex);
+
 			if (PolyMesh->GetVisibility(FrameIndex))
 			{
 				const FAbcMeshSample* Sample = PolyMesh->GetSample(FrameIndex);
-				FrameTime = PolyMesh->GetTimeForFrameIndex(FrameIndex);
 				AbcImporterUtilities::AppendMeshSample(&MergedSample, Sample);
-				if (PolyMesh->FaceSetNames.Num() == 0)
+			
+				for (int32 Index = Offset; Index < MergedSample.MaterialIndices.Num(); ++Index)
 				{
-					FMemory::Memzero(MergedSample.MaterialIndices.GetData() + Offset, (MergedSample.MaterialIndices.Num() - Offset) * sizeof(int32));
-				}
-				else
-				{
-					for (int32 Index = Offset; Index < MergedSample.MaterialIndices.Num(); ++Index)
-					{
-						int32& MaterialIndex = MergedSample.MaterialIndices[Index];
-						if (PolyMesh->FaceSetNames.IsValidIndex(MaterialIndex - MaterialIndexOffset))
-						{
-							int32 FaceSetMaterialIndex = UniqueFaceSetNames.IndexOfByKey(PolyMesh->FaceSetNames[MaterialIndex - MaterialIndexOffset]);
-							MaterialIndex = FaceSetMaterialIndex != INDEX_NONE ? FaceSetMaterialIndex : 0;
-						}
-						else
-						{
-							MaterialIndex = 0;
-						}
-					}
+					int32 MaterialID = MergedSample.MaterialIndices[Index];
+					MergedSample.MaterialIndices[Index] = LookupMaterialSlot[MaterialID];
 				}
 			}
+			else
+			{
+				MergedSample.NumMaterials += PolyMesh->FaceSetNames.Num();
+
+				// If this mesh is invisible on this frame then the topology is not constant!
+				bConstantTopology = false;
+			}
+
 		}
 	}
 
@@ -1677,7 +1683,6 @@ void AbcImporterUtilities::MergePolyMeshesToMeshData(int32 FrameIndex, int32 Fra
 	}
 	PreviousNumVertices = MergedSample.Vertices.Num();
 
-	MergedSample.NumMaterials = UniqueFaceSetNames.Num();
 
 	// Generate the mesh data for this sample
 	AbcImporterUtilities::GeometryCacheDataForMeshSample(MeshData, &MergedSample, 0, SecondsPerFrame, bUseVelocitiesAsMotionVectors, bStoreImportedVertexNumbers);

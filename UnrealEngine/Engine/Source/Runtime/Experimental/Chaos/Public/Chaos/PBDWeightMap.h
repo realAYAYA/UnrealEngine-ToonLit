@@ -59,7 +59,7 @@ public:
 	 * The weight map table only gets updated after ApplyValues is called.
 	 * Low and high values are clamped between [0,1]
 	 */
-	void SetWeightedValue(const FSolverVec2& InWeightedValue) { WeightedValue = InWeightedValue; bIsDirty = true; }
+	void SetWeightedValue(const FSolverVec2& InWeightedValue) { bIsDirty = WeightedValue != InWeightedValue; WeightedValue = InWeightedValue;}
 
 	/**
 	 * Set the low and high values of the weight map.
@@ -67,7 +67,7 @@ public:
 	 * Low and high values are not clamped. Commonly used for XPBD Stiffness values which are not [0,1]
 	 */
 	UE_DEPRECATED(5.2, "Use SetWeightedValue.")
-	void SetWeightedValueUnclamped(const FSolverVec2& InWeightedValue) { WeightedValue = InWeightedValue; bIsDirty = true; }
+	void SetWeightedValueUnclamped(const FSolverVec2& InWeightedValue) { bIsDirty = WeightedValue != InWeightedValue; WeightedValue = InWeightedValue;}
 
 	/**
 	 * Return the low and high values set for this weight map.
@@ -76,7 +76,7 @@ public:
 	const FSolverVec2& GetWeightedValue() const { return WeightedValue; }
 
 	/** Update the weight map table with the current simulation parameters. */
-	void ApplyValues() { ApplyValues([](FSolverReal Value)->FSolverReal { return Value; }); }
+	void ApplyValues(bool* bOutUpdated = nullptr) { ApplyValues([](FSolverReal Value)->FSolverReal { return Value; }, bOutUpdated); }
 
 	/**
 	 * Lookup for the exponential weighted value at the specified weight map index.
@@ -104,7 +104,7 @@ public:
 
 protected:
 	template<typename FunctorType>
-	inline void ApplyValues(FunctorType&& MappingFunction);
+	inline void ApplyValues(FunctorType&& MappingFunction, bool* bOutUpdated = nullptr);
 
 	TArray<uint8> Indices; // Per particle/constraints array of index to the stiffness table
 	TArray<FSolverReal> Table;  // Fixed lookup table of stiffness values, use uint8 indexation
@@ -192,9 +192,13 @@ inline FPBDWeightMap::FPBDWeightMap(
 }
 
 template<typename FunctorType>
-inline void FPBDWeightMap::ApplyValues(FunctorType&& MappingFunction)
+inline void FPBDWeightMap::ApplyValues(FunctorType&& MappingFunction, bool* bOutUpdated)
 {
 	SCOPE_CYCLE_COUNTER(STAT_PBD_WeightMapApplyValues);
+	if (bOutUpdated)
+	{
+		*bOutUpdated = true;
+	}
 	if (bIsDirty)
 	{
 		const FSolverReal Offset = WeightedValue[0];

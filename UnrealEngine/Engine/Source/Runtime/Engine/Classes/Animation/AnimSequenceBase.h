@@ -179,8 +179,10 @@ public:
 	/** Calculates what (if any) offset should be applied to the trigger time of a notify given its display time */ 
 	ENGINE_API virtual EAnimEventTriggerOffsets::Type CalculateOffsetForNotify(float NotifyDisplayTime) const;
 
+	ENGINE_API virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	ENGINE_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
-	
+
 	// Get a pointer to the data for a given Anim Notify
 	ENGINE_API uint8* FindNotifyPropertyData(int32 NotifyIndex, FArrayProperty*& ArrayProperty);
 
@@ -258,6 +260,7 @@ public:
 
 	// to support anim sequence base to montage
 	virtual void EnableRootMotionSettingFromMontage(bool bInEnableRootMotion, const ERootMotionRootLock::Type InRootMotionRootLock) {};
+	virtual bool GetEnableRootMotionSettingFromMontage() const { return false; }
 
 #if WITH_EDITOR
 private:

@@ -119,7 +119,7 @@ bool UMetasoundOutputBlueprintAccess::IsTime(const FMetaSoundOutput& Output)
 	return Output.IsType<Metasound::FTime>();
 }
 
-float UMetasoundOutputBlueprintAccess::GetTimeSeconds(const FMetaSoundOutput& Output, bool& Success)
+double UMetasoundOutputBlueprintAccess::GetTimeSeconds(const FMetaSoundOutput& Output, bool& Success)
 {
 	Metasound::FTime TimeValue;
 	Success = Output.Get(TimeValue);

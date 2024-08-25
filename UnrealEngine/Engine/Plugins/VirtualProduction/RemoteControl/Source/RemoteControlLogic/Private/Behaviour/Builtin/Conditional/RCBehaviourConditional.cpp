@@ -6,6 +6,7 @@
 #include "Action/RCFunctionAction.h"
 #include "Action/RCPropertyAction.h"
 #include "Behaviour/Builtin/Conditional/RCBehaviourConditionalNode.h"
+#include "PropertyBag.h"
 #include "RCVirtualProperty.h"
 #include "RemoteControlField.h"
 #include "Controller/RCController.h"
@@ -19,7 +20,136 @@ void URCBehaviourConditional::Initialize()
 	Super::Initialize();
 }
 
-void URCBehaviourConditional::Execute()
+URCAction* URCBehaviourConditional::DuplicateAction(URCAction* InAction, URCBehaviour* InBehaviour)
+{
+	URCBehaviourConditional* InBehaviourConditional = Cast<URCBehaviourConditional>(InBehaviour);
+	if (!ensureMsgf(InBehaviourConditional, TEXT("Expected Behaviour of the same type (Conditional) For CopyAction operation!")))
+	{
+		return nullptr;
+	}
+
+	URCAction* NewAction = Super::DuplicateAction(InAction, InBehaviour);
+	if (ensure(NewAction))
+	{
+		// Copy Action specific data residing in Conditional Behaviour:
+		if (FRCBehaviourCondition* ConditionData = this->Conditions.Find(InAction))
+		{
+			// Virtual Property for the Comparand
+			Comparand = NewObject<URCVirtualPropertySelfContainer>(InBehaviourConditional);
+			Comparand->DuplicatePropertyWithCopy(ConditionData->Comparand);
+
+			InBehaviourConditional->OnActionAdded(NewAction, ConditionData->ConditionType, Comparand);
+		}
+	}
+
+	return NewAction;
+}
+
+void URCBehaviourConditional::OnActionAdded(URCAction* Action, const ERCBehaviourConditionType InConditionType, const TObjectPtr<URCVirtualPropertySelfContainer> InComparand)
+{
+	FRCBehaviourCondition Condition(InConditionType, InComparand);
+
+	Conditions.Add(Action, MoveTemp(Condition));
+}
+
+URCAction* URCBehaviourConditional::AddConditionalAction(const TSharedRef<const FRemoteControlField> InRemoteControlField, const ERCBehaviourConditionType InConditionType, const TObjectPtr<URCVirtualPropertySelfContainer> InComparand)
+{
+	TRCActionUniquenessTest UniquenessTest = [this, InRemoteControlField, InConditionType, InComparand](const TSet<TObjectPtr<URCAction>>& Actions)
+	{
+		const FGuid FieldId = InRemoteControlField->GetId();
+
+		for (const URCAction* Action : Actions)
+		{
+			if (const FRCBehaviourCondition* Condition = this->Conditions.Find(Action))
+			{
+				const ERCBehaviourConditionType ActionCondition = Condition->ConditionType;
+
+				TObjectPtr<URCVirtualPropertySelfContainer> ActionComparand = Condition->Comparand;
+
+				if (Action->ExposedFieldId == FieldId && ActionCondition == InConditionType && ActionComparand->IsValueEqual(InComparand))
+				{
+					return false; // Not Unique!
+				}
+			}
+		}
+
+		return true;
+	};
+
+	return ActionContainer->AddAction(UniquenessTest, InRemoteControlField);
+}
+
+bool URCBehaviourConditional::CanHaveActionForField(const TSharedPtr<FRemoteControlField> InRemoteControlField) const
+{
+	if (InRemoteControlField->FieldType == EExposedFieldType::Property)
+	{
+		if (const TSharedPtr<FRemoteControlProperty>& RCProperty = StaticCastSharedPtr<FRemoteControlProperty>(InRemoteControlField))
+		{
+			if (const FProperty* Property = RCProperty->GetProperty())
+			{
+				const FPropertyBagPropertyDesc PropertyBagDesc = FPropertyBagPropertyDesc(Property->GetFName(), Property);
+				return RCProperty->IsEditable() && PropertyBagDesc.ValueType != EPropertyBagPropertyType::None;
+			}
+		}
+	}
+
+	return true;
+}
+
+FText URCBehaviourConditional::GetConditionTypeAsText(ERCBehaviourConditionType ConditionType) const
+{
+	FText ConditionDisplayText;
+
+	switch (ConditionType)
+	{
+		case ERCBehaviourConditionType::IsEqual:
+		{
+			ConditionDisplayText = FText::FromName("=");
+			break;
+		}
+		case ERCBehaviourConditionType::IsGreaterThan:
+		{
+			ConditionDisplayText = FText::FromName(">");
+			break;
+		}
+		case ERCBehaviourConditionType::IsLesserThan:
+		{
+			ConditionDisplayText = FText::FromName("<");
+			break;
+		}
+		case ERCBehaviourConditionType::IsGreaterThanOrEqualTo:
+		{
+			ConditionDisplayText = FText::FromName(">=");
+			break;
+		}
+		case ERCBehaviourConditionType::IsLesserThanOrEqualTo:
+		{
+			ConditionDisplayText = FText::FromName("<=");
+			break;
+		}
+		case ERCBehaviourConditionType::Else:
+		{
+			ConditionDisplayText = FText::FromName("Else");
+			break;
+		}
+		default:
+		{
+			ensureMsgf(false, TEXT("Unknown condition type"));
+		}
+	}
+
+	return ConditionDisplayText;
+}
+
+void URCBehaviourConditional::NotifyActionValueChanged(URCAction* InChangedAction)
+{
+	if (InChangedAction)
+	{
+		ExecuteSingleAction(InChangedAction);
+	}
+}
+
+void URCBehaviourConditional::ExecuteInternal(const TSet<TObjectPtr<URCAction>>& InActionsToExecute)
 {
 	const URCBehaviourNode* BehaviourNode = GetBehaviourNode();
 	check(BehaviourNode);
@@ -56,7 +186,8 @@ void URCBehaviourConditional::Execute()
 
 	ERCBehaviourConditionType PreviousConditionType = ERCBehaviourConditionType::None;
 
-	for (TObjectPtr<URCAction> Action : ActionContainer->GetActions())
+	// execute all the action if the given action is null otherwise only execute the given action
+	for (const TObjectPtr<URCAction>& Action : InActionsToExecute)
 	{
 		FRCBehaviourCondition* Condition = Conditions.Find(Action);
 		if (!Condition)
@@ -124,108 +255,4 @@ void URCBehaviourConditional::Execute()
 			BehaviourNode->OnPassed(this);
 		}
 	}
-}
-
-URCAction* URCBehaviourConditional::DuplicateAction(URCAction* InAction, URCBehaviour* InBehaviour)
-{
-	URCBehaviourConditional* InBehaviourConditional = Cast<URCBehaviourConditional>(InBehaviour);
-	if (!ensureMsgf(InBehaviourConditional, TEXT("Expected Behaviour of the same type (Conditional) For CopyAction operation!")))
-	{
-		return nullptr;
-	}
-
-	URCAction* NewAction = Super::DuplicateAction(InAction, InBehaviour);
-	if (ensure(NewAction))
-	{
-		// Copy Action specific data residing in Conditional Behaviour:
-		if (FRCBehaviourCondition* ConditionData = this->Conditions.Find(InAction))
-		{
-			// Virtual Property for the Comparand
-			Comparand = NewObject<URCVirtualPropertySelfContainer>(InBehaviourConditional);
-			Comparand->DuplicatePropertyWithCopy(ConditionData->Comparand);
-
-			InBehaviourConditional->OnActionAdded(NewAction, ConditionData->ConditionType, Comparand);
-		}
-	}
-
-	return NewAction;
-}
-
-void URCBehaviourConditional::OnActionAdded(URCAction* Action, const ERCBehaviourConditionType InConditionType, const TObjectPtr<URCVirtualPropertySelfContainer> InComparand)
-{
-	FRCBehaviourCondition Condition(InConditionType, InComparand);
-
-	Conditions.Add(Action, MoveTemp(Condition));
-}
-
-URCAction* URCBehaviourConditional::AddConditionalAction(const TSharedRef<const FRemoteControlField> InRemoteControlField, const ERCBehaviourConditionType InConditionType, const TObjectPtr<URCVirtualPropertySelfContainer> InComparand)
-{
-	TRCActionUniquenessTest UniquenessTest = [this, InRemoteControlField, InConditionType, InComparand](const TSet<TObjectPtr<URCAction>>& Actions)
-	{
-		const FGuid FieldId = InRemoteControlField->GetId();
-
-		for (const URCAction* Action : Actions)
-		{
-			if (const FRCBehaviourCondition* Condition = this->Conditions.Find(Action))
-			{
-				const ERCBehaviourConditionType ActionCondition = Condition->ConditionType;
-
-				TObjectPtr<URCVirtualPropertySelfContainer> ActionComparand = Condition->Comparand;
-
-				if (Action->ExposedFieldId == FieldId && ActionCondition == InConditionType && ActionComparand->IsValueEqual(InComparand))
-				{
-					return false; // Not Unique!
-				}
-			}
-		}
-
-		return true;
-	};
-
-	return ActionContainer->AddAction(UniquenessTest, InRemoteControlField);
-}
-
-FText URCBehaviourConditional::GetConditionTypeAsText(ERCBehaviourConditionType ConditionType) const
-{
-	FText ConditionDisplayText;
-
-	switch (ConditionType)
-	{
-		case ERCBehaviourConditionType::IsEqual:
-		{
-			ConditionDisplayText = FText::FromName("=");
-			break;
-		}
-		case ERCBehaviourConditionType::IsGreaterThan:
-		{
-			ConditionDisplayText = FText::FromName(">");
-			break;
-		}
-		case ERCBehaviourConditionType::IsLesserThan:
-		{
-			ConditionDisplayText = FText::FromName("<");
-			break;
-		}
-		case ERCBehaviourConditionType::IsGreaterThanOrEqualTo:
-		{
-			ConditionDisplayText = FText::FromName(">=");
-			break;
-		}
-		case ERCBehaviourConditionType::IsLesserThanOrEqualTo:
-		{
-			ConditionDisplayText = FText::FromName("<=");
-			break;
-		}
-		case ERCBehaviourConditionType::Else:
-		{
-			ConditionDisplayText = FText::FromName("Else");
-			break;
-		}
-		default:
-		{
-			ensureMsgf(false, TEXT("Unknown condition type"));
-		}
-	}
-
-	return ConditionDisplayText;
 }

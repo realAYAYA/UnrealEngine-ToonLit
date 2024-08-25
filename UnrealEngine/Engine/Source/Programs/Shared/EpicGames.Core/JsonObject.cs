@@ -5,22 +5,84 @@ using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Text.Json;
+using System.Collections.Specialized;
+using System.Collections;
+using System.IO;
+using System.Text;
+using System.Text.Encodings.Web;
 
 namespace EpicGames.Core
 {
+	using SystemJsonObject = System.Text.Json.Nodes.JsonObject;
+	using SystemJsonNode = System.Text.Json.Nodes.JsonNode;
+	using SystemJsonValue = System.Text.Json.Nodes.JsonValue;
+	using SystemJsonArray = System.Text.Json.Nodes.JsonArray;
+
 	/// <summary>
-	/// Exception thrown for errors parsing JSON files
+	/// Extension methods for OrderedDictionary to have functionality more similar to Dictionary.
 	/// </summary>
-	public class JsonParseException : Exception
+	public static class OrderedDictionaryExtensions
 	{
 		/// <summary>
-		/// Constructor
+		/// Tries to get a value associated with a key in the OrderedDictionary. 
 		/// </summary>
-		/// <param name="format">Format string</param>
-		/// <param name="args">Optional arguments</param>
-		public JsonParseException(string format, params object[] args)
-			: base(String.Format(format, args))
+		/// <param name="dictionary"></param>
+		/// <param name="key"> The key to find a value for.</param>
+		/// <param name="value"> The value associated with the key. Is null if no key is found.</param>
+		/// <returns> Returns true if the associated value with the key exists and is found. Else returns false.</returns>
+		public static bool TryGetValue(this OrderedDictionary dictionary, object key, [NotNullWhen(true)] out object? value)
 		{
+			if (dictionary.Contains(key))
+			{
+				value = dictionary[key]!;
+				return true;
+			}
+			value = null;
+			return false;
+		}
+
+		private static object? DeepCopyHelper(object? original)
+		{
+			if (original is null)
+			{
+				return null;
+			}
+
+			if (original is OrderedDictionary dictionary)
+			{
+				OrderedDictionary copy = new OrderedDictionary(StringComparer.InvariantCultureIgnoreCase);
+				foreach (DictionaryEntry entry in dictionary)
+				{
+					copy.Add(entry.Key, DeepCopyHelper(entry.Value));
+				}
+				return copy;
+			}
+
+			if (original is Array array)
+			{
+				Array copy = Array.CreateInstance(array.GetType().GetElementType()!, array.Length);
+				for (int index = 0; index < array.Length; ++index)
+				{
+					copy.SetValue(DeepCopyHelper(array.GetValue(index)), index);
+				}
+				return copy;
+			}
+			// It's a value type or a string, it's safe to just copy it 
+			return original;
+		}
+		/// <summary>
+		/// Creates a deep copy of all the elements in an OrderedDictionary.
+		/// </summary>
+		/// <param name="dictionary"></param>
+		/// <returns> An ordered dictionary with a deep copy of elements from dictionary.</returns>
+		public static OrderedDictionary CreateDeepCopy(this OrderedDictionary dictionary)
+		{
+			OrderedDictionary copy = new OrderedDictionary(StringComparer.InvariantCultureIgnoreCase);
+			foreach (DictionaryEntry entry in dictionary)
+			{
+				copy.Add(entry.Key, DeepCopyHelper(entry.Value));
+			}
+			return copy;
 		}
 	}
 
@@ -29,15 +91,23 @@ namespace EpicGames.Core
 	/// </summary>
 	public class JsonObject
 	{
-		readonly Dictionary<string, object?> _rawObject;
+		readonly OrderedDictionary _rawOrderedObject;
 
 		/// <summary>
-		/// Construct a JSON object from the raw string -> object dictionary
+		/// Default constructor. Use this to create new JsonObject elements and use the AddOrSetFieldValue API to add values to this JsonObject.
+		/// </summary>
+		public JsonObject()
+		{
+			_rawOrderedObject = new OrderedDictionary(StringComparer.InvariantCultureIgnoreCase);
+		}
+
+		/// <summary>
+		/// Construct a JSON object from the OrderedDictionary obtained from reading a file on disk or parsing valid json text.
 		/// </summary>
 		/// <param name="inRawObject">Raw object parsed from disk</param>
-		public JsonObject(Dictionary<string, object?> inRawObject)
+		private JsonObject(OrderedDictionary inRawObject)
 		{
-			_rawObject = new Dictionary<string, object?>(inRawObject, StringComparer.InvariantCultureIgnoreCase);
+			_rawOrderedObject = inRawObject.CreateDeepCopy();
 		}
 
 		/// <summary>
@@ -46,11 +116,52 @@ namespace EpicGames.Core
 		/// <param name="element"></param>
 		public JsonObject(JsonElement element)
 		{
-			_rawObject = new Dictionary<string, object?>(StringComparer.InvariantCultureIgnoreCase);
+			_rawOrderedObject = new OrderedDictionary(StringComparer.InvariantCultureIgnoreCase);
 			foreach (JsonProperty property in element.EnumerateObject())
 			{
-				_rawObject[property.Name] = ParseElement(property.Value);
+				_rawOrderedObject[property.Name] = ParseElement(property.Value);
 			}
+		}
+
+		/// <summary>
+		/// Override of the Equals method to check for equality between 2 JsonObject instances.
+		/// </summary>
+		/// <param name="obj"></param>
+		/// <returns> Returns true if this object and obj are equal. Else returns false.</returns>
+		public override bool Equals(object? obj)
+		{
+			if (obj is null || GetType() != obj.GetType())
+			{
+				return false;
+			}
+			JsonObject jsonObject = (JsonObject) obj;
+			if (_rawOrderedObject.Count != jsonObject._rawOrderedObject.Count)
+			{
+				return false;
+			}
+			
+			foreach (DictionaryEntry entry in _rawOrderedObject)
+			{
+				if (!jsonObject._rawOrderedObject.Contains(entry.Key))
+				{
+					return false;
+				}
+				if (!entry.Value!.Equals(jsonObject._rawOrderedObject[entry.Key!]))
+				{
+					return false;
+				}
+			}
+
+			return true;
+		}
+
+		/// <summary>
+		/// Returns the calculated hash code for a JsonObject instance.
+		/// </summary>
+		/// <returns> Returns the hash code for a JsonObject instance. </returns>
+		public override int GetHashCode()
+		{
+			return HashCode.Combine(_rawOrderedObject);
 		}
 
 		/// <summary>
@@ -67,7 +178,12 @@ namespace EpicGames.Core
 				case JsonValueKind.Number:
 					return element.GetDouble();
 				case JsonValueKind.Object:
-					return element.EnumerateObject().ToDictionary(x => x.Name, x => ParseElement(x.Value));
+					OrderedDictionary dictionary = new OrderedDictionary(StringComparer.InvariantCultureIgnoreCase);
+					foreach (JsonProperty property in element.EnumerateObject())
+						{
+						dictionary.Add(property.Name, ParseElement(property.Value));
+					}
+					return dictionary;
 				case JsonValueKind.String:
 					return element.GetString();
 				case JsonValueKind.False:
@@ -79,6 +195,46 @@ namespace EpicGames.Core
 				default:
 					throw new NotImplementedException();
 			}
+		}
+
+		private static SystemJsonNode ToJsonNode(object? obj)
+		{
+			// All values in the JsonObject are either parsed from a string, read from a file or set/added with the API
+			// All values at this point must be supported and the correct types 
+			switch (obj)
+			{
+				case OrderedDictionary objDictionary:
+					SystemJsonObject dictionaryJson= new SystemJsonObject();
+					foreach (object? key in objDictionary.Keys)
+					{
+						dictionaryJson.Add((string) key, ToJsonNode(objDictionary[key]));
+					}
+					return dictionaryJson;
+				case Array objArray:
+					SystemJsonArray tempJsonArray = new SystemJsonArray();
+					foreach (object? element in objArray)
+					{
+						tempJsonArray.Add(ToJsonNode(element));
+					}
+					return tempJsonArray;
+				default:
+					// We support null as per the json spec 
+					return SystemJsonValue.Create(obj)!;
+			}
+		}
+
+		/// <summary>
+		/// Converts a JsonObject instance to a System.Text.Json.Nodes.JsonObject instance. Users can then use .NET facilities like Utf8JsonWriter to interact with this JsonObject.
+		/// </summary>
+		/// <returns> Returns the System.Text.Json.Nodes.JsonObject representation of this object.</returns>
+		public SystemJsonObject ToSystemJsonObject()
+		{
+			SystemJsonObject returnObject = new SystemJsonObject();
+			foreach (DictionaryEntry entry in _rawOrderedObject )
+			{
+				returnObject.Add((string) entry.Key, ToJsonNode(entry.Value));
+			}
+			return returnObject;
 		}
 
 		/// <summary>
@@ -93,9 +249,13 @@ namespace EpicGames.Core
 			{
 				return Parse(text);
 			}
-			catch(Exception ex)
+			catch (JsonException)
 			{
-				throw new JsonParseException("Unable to parse {0}: {1}", file, ex.Message);
+				throw;
+			}
+			catch (Exception ex)
+			{
+				throw new JsonException($"Unable to parse {file}: {ex.Message}", file.FullName, null, null, ex );
 			}
 		}
 
@@ -124,8 +284,19 @@ namespace EpicGames.Core
 		/// <returns>New JsonObject instance</returns>
 		public static JsonObject Parse(string text)
 		{
-			JsonDocument document = JsonDocument.Parse(text, new JsonDocumentOptions { AllowTrailingCommas = true });
-			return new JsonObject(document.RootElement);
+			try
+			{
+				JsonDocument document = JsonDocument.Parse(text, new JsonDocumentOptions { AllowTrailingCommas = true });
+				return new JsonObject(document.RootElement);
+			}
+			catch (JsonException)
+			{
+				throw;
+			}
+			catch (Exception ex)
+			{
+				throw new JsonException($"Failed to parse json text '{text}'. {ex.Message}", ex);
+			}
 		}
 
 		/// <summary>
@@ -151,7 +322,7 @@ namespace EpicGames.Core
 		/// <summary>
 		/// List of key names in this object
 		/// </summary>
-		public IEnumerable<string> KeyNames => _rawObject.Keys;
+		public IEnumerable<string> KeyNames => _rawOrderedObject.Keys.Cast<string>();
 
 		/// <summary>
 		/// Gets a string field by the given name from the object, throwing an exception if it is not there or cannot be parsed.
@@ -163,7 +334,7 @@ namespace EpicGames.Core
 			string? stringValue;
 			if (!TryGetStringField(fieldName, out stringValue))
 			{
-				throw new JsonParseException("Missing or invalid '{0}' field", fieldName);
+				throw new JsonException($"Missing or invalid '{fieldName}' field");
 			}
 			return stringValue;
 		}
@@ -177,7 +348,7 @@ namespace EpicGames.Core
 		public bool TryGetStringField(string fieldName, [NotNullWhen(true)] out string? result)
 		{
 			object? rawValue;
-			if (_rawObject.TryGetValue(fieldName, out rawValue) && (rawValue is string strValue))
+			if (_rawOrderedObject.TryGetValue(fieldName, out rawValue) && (rawValue is string strValue))
 			{
 				result = strValue;
 				return true;
@@ -199,7 +370,7 @@ namespace EpicGames.Core
 			string[]? stringValues;
 			if (!TryGetStringArrayField(fieldName, out stringValues))
 			{
-				throw new JsonParseException("Missing or invalid '{0}' field", fieldName);
+				throw new JsonException($"Missing or invalid '{fieldName}' field");
 			}
 			return stringValues;
 		}
@@ -213,7 +384,7 @@ namespace EpicGames.Core
 		public bool TryGetStringArrayField(string fieldName, [NotNullWhen(true)] out string[]? result)
 		{
 			object? rawValue;
-			if (_rawObject.TryGetValue(fieldName, out rawValue) && (rawValue is IEnumerable<object> enumValue) && enumValue.All(x => x is string))
+			if (_rawOrderedObject.TryGetValue(fieldName, out rawValue) && (rawValue is IEnumerable<object> enumValue) && enumValue.All(x => x is string))
 			{
 				result = enumValue.Select(x => (string)x).ToArray();
 				return true;
@@ -235,7 +406,7 @@ namespace EpicGames.Core
 			bool boolValue;
 			if (!TryGetBoolField(fieldName, out boolValue))
 			{
-				throw new JsonParseException("Missing or invalid '{0}' field", fieldName);
+				throw new JsonException($"Missing or invalid '{fieldName}' field");
 			}
 			return boolValue;
 		}
@@ -249,7 +420,7 @@ namespace EpicGames.Core
 		public bool TryGetBoolField(string fieldName, out bool result)
 		{
 			object? rawValue;
-			if (_rawObject.TryGetValue(fieldName, out rawValue) && (rawValue is bool boolValue))
+			if (_rawOrderedObject.TryGetValue(fieldName, out rawValue) && (rawValue is bool boolValue))
 			{
 				result = boolValue;
 				return true;
@@ -271,7 +442,7 @@ namespace EpicGames.Core
 			int integerValue;
 			if (!TryGetIntegerField(fieldName, out integerValue))
 			{
-				throw new JsonParseException("Missing or invalid '{0}' field", fieldName);
+				throw new JsonException($"Missing or invalid '{fieldName}' field");
 			}
 			return integerValue;
 		}
@@ -285,7 +456,7 @@ namespace EpicGames.Core
 		public bool TryGetIntegerField(string fieldName, out int result)
 		{
 			object? rawValue;
-			if (!_rawObject.TryGetValue(fieldName, out rawValue) || !Int32.TryParse(rawValue?.ToString(), out result))
+			if (!_rawOrderedObject.TryGetValue(fieldName, out rawValue) || !Int32.TryParse(rawValue?.ToString(), out result))
 			{
 				result = 0;
 				return false;
@@ -302,7 +473,7 @@ namespace EpicGames.Core
 		public bool TryGetUnsignedIntegerField(string fieldName, out uint result)
 		{
 			object? rawValue;
-			if (!_rawObject.TryGetValue(fieldName, out rawValue) || !UInt32.TryParse(rawValue?.ToString(), out result))
+			if (!_rawOrderedObject.TryGetValue(fieldName, out rawValue) || !UInt32.TryParse(rawValue?.ToString(), out result))
 			{
 				result = 0;
 				return false;
@@ -320,7 +491,7 @@ namespace EpicGames.Core
 			double doubleValue;
 			if (!TryGetDoubleField(fieldName, out doubleValue))
 			{
-				throw new JsonParseException("Missing or invalid '{0}' field", fieldName);
+				throw new JsonException($"Missing or invalid '{fieldName}' field");
 			}
 			return doubleValue;
 		}
@@ -334,7 +505,7 @@ namespace EpicGames.Core
 		public bool TryGetDoubleField(string fieldName, out double result)
 		{
 			object? rawValue;
-			if (!_rawObject.TryGetValue(fieldName, out rawValue) || !Double.TryParse(rawValue?.ToString(), out result))
+			if (!_rawOrderedObject.TryGetValue(fieldName, out rawValue) || !Double.TryParse(rawValue?.ToString(), out result))
 			{
 				result = 0.0;
 				return false;
@@ -352,7 +523,7 @@ namespace EpicGames.Core
 			T enumValue;
 			if (!TryGetEnumField(fieldName, out enumValue))
 			{
-				throw new JsonParseException("Missing or invalid '{0}' field", fieldName);
+				throw new JsonException($"Missing or invalid '{fieldName}' field");
 			}
 			return enumValue;
 		}
@@ -413,7 +584,7 @@ namespace EpicGames.Core
 			JsonObject? result;
 			if (!TryGetObjectField(fieldName, out result))
 			{
-				throw new JsonParseException("Missing or invalid '{0}' field", fieldName);
+				throw new JsonException($"Missing or invalid '{fieldName}' field");
 			}
 			return result;
 		}
@@ -427,9 +598,9 @@ namespace EpicGames.Core
 		public bool TryGetObjectField(string fieldName, [NotNullWhen(true)] out JsonObject? result)
 		{
 			object? rawValue;
-			if (_rawObject.TryGetValue(fieldName, out rawValue) && (rawValue is Dictionary<string, object?> dictValue))
+			if (_rawOrderedObject.TryGetValue(fieldName, out rawValue) && (rawValue is OrderedDictionary orderedDictValue))
 			{
-				result = new JsonObject(dictValue);
+				result = new JsonObject(orderedDictValue);
 				return true;
 			}
 			else
@@ -449,7 +620,7 @@ namespace EpicGames.Core
 			JsonObject[]? result;
 			if (!TryGetObjectArrayField(fieldName, out result))
 			{
-				throw new JsonParseException("Missing or invalid '{0}' field", fieldName);
+				throw new JsonException($"Missing or invalid '{fieldName}' field");
 			}
 			return result;
 		}
@@ -463,9 +634,9 @@ namespace EpicGames.Core
 		public bool TryGetObjectArrayField(string fieldName, [NotNullWhen(true)] out JsonObject[]? result)
 		{
 			object? rawValue;
-			if (_rawObject.TryGetValue(fieldName, out rawValue) && (rawValue is IEnumerable<object> enumValue) && enumValue.All(x => x is Dictionary<string, object>))
+			if (_rawOrderedObject.TryGetValue(fieldName, out rawValue) && (rawValue is IEnumerable<object> enumValue) && enumValue.All(x => x is OrderedDictionary))
 			{
-				result = enumValue.Select(x => new JsonObject((Dictionary<string, object?>)x)).ToArray();
+				result = enumValue.Select(x => new JsonObject((OrderedDictionary)x)).ToArray();
 				return true;
 			}
 			else
@@ -473,6 +644,238 @@ namespace EpicGames.Core
 				result = null;
 				return false;
 			}
+		}
+
+		/// <summary>
+		/// Checks if the provided field exists in this Json object.
+		/// </summary>
+		/// <param name="fieldName">Name of the field to check if it is contained. </param>
+		/// <returns>True if the field exists in the JsonObject, false otherwise</returns>
+		public bool ContainsField(string fieldName)
+		{
+			return _rawOrderedObject.Contains(fieldName);
+		}
+
+		/// <summary>
+		/// Removes a field from the given json object.
+		/// </summary>
+		/// <param name="fieldName">Name of the field to remove </param>
+		public void RemoveField(string fieldName)
+		{
+			if (String.IsNullOrEmpty(fieldName))
+			{
+				return;
+			}
+			if (ContainsField(fieldName))
+			{
+				_rawOrderedObject.Remove(fieldName);
+			}
+		}
+
+		/// <summary>
+		/// Sets the integer value of a field if it exists. Otherwise, adds the field and value.
+		/// </summary>
+		/// <param name="fieldName"> The field name for the value to add or update.</param>
+		/// <param name="value"> The integer value to add or set. </param>
+		public void AddOrSetFieldValue(string fieldName, int value)
+		{
+			if (String.IsNullOrEmpty(fieldName))
+			{
+				return;
+			}
+			_rawOrderedObject[fieldName] = Convert.ToDouble(value);
+		}
+
+		/// <summary>
+		/// Sets the unsigned integer value of a field if it exists. Otherwise, adds the field and value.
+		/// </summary>
+		/// <param name="fieldName"> The field name for the value to add or update.</param>
+		/// <param name="value"> The unsigned integer value to add or set. </param>
+		public void AddOrSetFieldValue(string fieldName, uint value)
+		{
+			if (String.IsNullOrEmpty(fieldName))
+			{
+				return;
+			}
+			_rawOrderedObject[fieldName] = Convert.ToDouble(value);
+		}
+
+		/// <summary>
+		/// Sets the double value of a field if it exists. Otherwise, adds the field and value.
+		/// </summary>
+		/// <param name="fieldName"> The field name for the value to add or update.</param>
+		/// <param name="value"> The double value to add or set. </param>
+		public void AddOrSetFieldValue(string fieldName, double value)
+		{
+			if (String.IsNullOrEmpty(fieldName))
+			{
+				return;
+			}
+			_rawOrderedObject[fieldName] = value;
+		}
+
+		/// <summary>
+		/// Sets the bool value of a field if it exists. Otherwise, adds the field and value.
+		/// </summary>
+		/// <param name="fieldName"> The field name for the value to add or update.</param>
+		/// <param name="value"> The bool value to add or set. </param>
+		public void AddOrSetFieldValue(string fieldName, bool value)
+		{
+			if (String.IsNullOrEmpty(fieldName))
+			{
+				return;
+			}
+			_rawOrderedObject[fieldName] = value;
+		}
+
+		/// <summary>
+		/// Sets the string value of a field if it exists. Otherwise, adds the field and value.
+		/// Note: If a null string is passed in as a value, it will be replaced with an empty string "" instead to ensure the field can still be added or set.
+		/// </summary>
+		/// <param name="fieldName"> The field name for the value to add or update.</param>
+		/// <param name="value"> The string value to add or set. </param>
+		public void AddOrSetFieldValue(string fieldName, string? value)
+		{
+			if (String.IsNullOrEmpty(fieldName))
+			{
+				return;
+			}
+			// We set null strings to empty strings to follow the behavior of EpicGames.Core.JsonWriter
+			value ??= "";
+			_rawOrderedObject[fieldName] = value;
+		}
+
+		/// <summary>
+		/// Sets the enum value of a field if it exists. Otherwise, adds the field and value.
+		/// </summary>
+		/// <param name="fieldName"> The field name for the value to add or update.</param>
+		/// <param name="value"> The enum value to add or set. </param>
+		public void AddOrSetFieldValue<T>(string fieldName, T value) where T : Enum
+		{
+			if (String.IsNullOrEmpty(fieldName))
+			{
+				return;
+			}
+			
+			_rawOrderedObject[fieldName] = value.ToString();
+		}
+
+		/// <summary>
+		/// Sets the JsonObject value of a field if it exists. Otherwise, adds the field and value.
+		/// </summary>
+		/// <param name="fieldName"> The field name for the value to add or update.</param>
+		/// <param name="value"> The JsonObject value to add or set. </param>
+		public void AddOrSetFieldValue(string fieldName, JsonObject? value)
+		{
+			if (String.IsNullOrEmpty(fieldName))
+			{
+				return;
+			}
+
+			_rawOrderedObject[fieldName] = value?._rawOrderedObject.CreateDeepCopy();
+		}
+
+		/// <summary>
+		/// Sets the string array value of a field if it exists. Otherwise, adds the field and value.
+		/// </summary>
+		/// <param name="fieldName"> The field name for the value to add or update.</param>
+		/// <param name="value"> The string array value to add or set. </param>
+		public void AddOrSetFieldValue(string fieldName, string?[]? value)
+		{
+			if (String.IsNullOrEmpty(fieldName))
+			{
+				return;
+			}
+			if (value is null)
+			{
+				_rawOrderedObject[fieldName] = value;
+				return;
+			}
+			// Contents of the strings array should never be null and should be "" instead to match behavior EpicGames.Core.JsonWriter
+			string[] stringArray = value.Select(x => x ?? "").ToArray();
+			_rawOrderedObject[fieldName] = stringArray;
+		}
+
+		/// <summary>
+		/// Sets the JsonObject array value of a field if it exists. Otherwise, adds the field and value.
+		/// </summary>
+		/// <param name="fieldName"> The field name for the value to add or update.</param>
+		/// <param name="value"> The JsonObject array value to add or set. </param>
+		public void AddOrSetFieldValue(string fieldName, JsonObject[]? value)
+		{
+			if (String.IsNullOrEmpty(fieldName))
+			{
+				return;
+			}
+			if (value is null)
+			{
+				_rawOrderedObject[fieldName] = null;
+				return;
+			}
+			List<OrderedDictionary?> objList = new List<OrderedDictionary?>();
+			foreach (JsonObject? obj in value)
+			{
+				objList.Add(obj?._rawOrderedObject.CreateDeepCopy());
+			}
+			_rawOrderedObject[fieldName] = objList.ToArray();
+		}
+
+		/// <summary>
+		/// Sets the enum array value of a field if it exists. Otherwise, adds the field and value.
+		/// </summary>
+		/// <param name="fieldName"> The field name for the value to add or update.</param>
+		/// <param name="value"> The enum array value to add or set. </param>
+		public void AddOrSetFieldValue<T>(string fieldName, T[]? value) where T : Enum
+		{
+			if (String.IsNullOrEmpty(fieldName))
+			{
+				return;
+			}
+			if (value is null)
+			{
+				_rawOrderedObject[fieldName] = null;
+				return;
+			}
+
+			string[] stringArray = value.Select(x => x.ToString()!).ToArray();
+			_rawOrderedObject[fieldName] = stringArray;
+		}
+
+		/// <summary>
+		/// Converts this Json Object to a string representation. This follows formatting of UE .uplugin files with 4 spaces for tabs and indentation enabled.
+		/// IMPORTANT: If this JsonObject contains HTML, the returned string should NOT be used directly for HTML or a script. Read the note below.
+		/// </summary>
+		/// <returns>The formatted, prettified string representation of this Json Object.</returns>
+		public string ToJsonString()
+		{
+			SystemJsonObject jsonObjectToWrite = ToSystemJsonObject();
+			JsonWriterOptions options = new JsonWriterOptions();
+			options.Indented = true;
+			// IMPORTANT: Utf8JsonWriter blocks certain characters like +, &, <, >,` from being escaped in a global block list
+			// Best way around is to use the relaxed JavaScriptEncoder.UnsafeRelaxedJsonEscaping.
+			// However this can have security implications if this string is ever written to an HTML page or script
+			// https://learn.microsoft.com/en-us/dotnet/standard/serialization/system-text-json/character-encoding
+			options.Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping;
+			using MemoryStream jsonMemoryStream = new MemoryStream();
+			using (Utf8JsonWriter writer = new Utf8JsonWriter(jsonMemoryStream, options))
+			{
+				jsonObjectToWrite.WriteTo(writer);
+				writer.Flush();
+			}
+			// The Utf8JsonWriter doesn't format json the same as we want in UE, we massage the string to meet our standards 
+			string jsonString = Encoding.UTF8.GetString(jsonMemoryStream.ToArray());
+			string[] lines = jsonString.Split(new[] { Environment.NewLine }, StringSplitOptions.None);
+			StringBuilder jsonStringBuilder = new StringBuilder();
+			foreach (string line in lines)
+			{
+				// Utf8JsonWriter uses 2 spaces for indents, we replace them with tabs here 
+				int numLeadingSpaces = line.TakeWhile(x => x == ' ').Count();
+				int numLeadingTabs = numLeadingSpaces / 2;
+				jsonStringBuilder.Append('\t', numLeadingTabs);
+				jsonStringBuilder.AppendLine(line.Substring(numLeadingSpaces));
+			}
+
+			return jsonStringBuilder.ToString();
 		}
 	}
 }

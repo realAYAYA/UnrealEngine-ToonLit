@@ -4,12 +4,15 @@
 
 #include "IMessageContext.h"
 #include "Misc/DateTime.h"
+#include "UObject/TopLevelAssetPath.h"
+#include "Misc/TVariant.h"
 
 class FUdpReassembledMessage;
 class IMessageAttachment;
 class UScriptStruct;
 class FUdpDeserializedMessageDetails;
 
+using FNameOrFTopLevel = TVariant<FName, FTopLevelAssetPath>;
 /**
  * Holds a deserialized message.
  */
@@ -37,6 +40,12 @@ public:
 	 * @return true on success, false otherwise.
 	 */
 	bool Deserialize(const FUdpReassembledMessage& ReassembledMessage);
+
+	/**
+	 * Called early by the message processor to peek at the typeinfo name.
+	 */
+	static FNameOrFTopLevel PeekMessageTypeInfoName(const FUdpReassembledMessage& ReassembledMessage);
+	static TWeakObjectPtr<UScriptStruct> ResolvePath(const FNameOrFTopLevel& Path);
 
 public:
 

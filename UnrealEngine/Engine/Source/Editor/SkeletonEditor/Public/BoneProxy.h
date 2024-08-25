@@ -36,13 +36,20 @@ public:
 		TransformType_Mesh
 	};
 
+	enum class ESliderMovementState
+	{
+		Begin,
+		End
+	};
+
+	
 	/** UObject interface */
 	virtual void PreEditChange(FEditPropertyChain& PropertyAboutToChange) override;
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 
 	// overload based on a property name
-	void OnPreEditChange(FName PropertyName, bool bIsCommit);
-	void OnPostEditChangeProperty(FName PropertyName, bool bIsCommit);
+	void OnPreEditChange(FName PropertyName);
+	void OnPostEditChangeProperty(FName PropertyName);
 	
 	/** FTickableEditorObject interface */
 	virtual void Tick(float DeltaTime) override;
@@ -134,29 +141,39 @@ public:
 		TArrayView<UBoneProxy*> BoneProxies);
 
 	/** Method to react to changes of numeric values in the widget */
-	void OnNumericValueCommitted(
+	void OnNumericValueChanged(
 		ESlateTransformComponent::Type Component,
 		ESlateRotationRepresentation::Type Representation,
 		ESlateTransformSubComponent::Type SubComponent,
 		FVector::FReal Value,
-		ETextCommit::Type CommitType,
-		ETransformType TransformType,
-		bool bIsCommit);
+		ETransformType TransformType);
+
+	static void OnSliderMovementStateChanged(
+		ESlateTransformComponent::Type Component,
+		ESlateRotationRepresentation::Type Representation,
+		ESlateTransformSubComponent::Type SubComponent,
+		FVector::FReal Value,
+		ESliderMovementState SliderMovementState,
+		TArrayView<UBoneProxy*> BoneProxies);
 
 	/** Method to react to changes of numeric values in the widget */
-	static void OnMultiNumericValueCommitted(
+	static void OnMultiNumericValueChanged(
 		ESlateTransformComponent::Type Component,
 		ESlateRotationRepresentation::Type Representation,
 		ESlateTransformSubComponent::Type SubComponent,
 		FVector::FReal Value,
-		ETextCommit::Type CommitType,
+		ETextCommit::Type InCommitType,
+		bool bInTransactional,
 		ETransformType TransformType,
-		TArrayView<UBoneProxy*> BoneProxies,
-		bool bIsCommit);
+		TArrayView<UBoneProxy*> BoneProxies);
 
 	// Returns true if a given transform component differs from the reference
 	bool DiffersFromDefault(ESlateTransformComponent::Type Component, ETransformType TransformType) const;
 
 	// Resets the bone transform's component to its reference
 	void ResetToDefault(ESlateTransformComponent::Type InComponent, ETransformType TransformType);
+
+private:
+	static void BeginSetValueTransaction(ESlateTransformComponent::Type InComponent, TArrayView<UBoneProxy*> BoneProxies);
+	static void EndTransaction();
 };

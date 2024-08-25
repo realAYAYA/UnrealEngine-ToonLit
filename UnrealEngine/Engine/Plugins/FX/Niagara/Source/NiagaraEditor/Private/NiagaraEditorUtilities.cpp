@@ -6,6 +6,7 @@
 #include "AssetToolsModule.h"
 #include "ContentBrowserModule.h"
 #include "EdGraphSchema_Niagara.h"
+#include "GeneralProjectSettings.h"
 #include "Styling/AppStyle.h"
 #include "IContentBrowserSingleton.h"
 #include "INiagaraEditorTypeUtilities.h"
@@ -14,6 +15,7 @@
 #include "NiagaraCustomVersion.h"
 #include "NiagaraDataInterface.h"
 #include "IPythonScriptPlugin.h"
+#include "NiagaraAnalytics.h"
 #include "NiagaraClipboard.h"
 #include "NiagaraEditorSettings.h"
 #include "NiagaraEditorStyle.h"
@@ -29,6 +31,7 @@
 #include "NiagaraOverviewNode.h"
 #include "NiagaraParameterMapHistory.h"
 #include "NiagaraParameterDefinitions.h"
+#include "NiagaraRecentAndFavoritesManager.h"
 #include "NiagaraScript.h"
 #include "ViewModels/NiagaraScriptGraphViewModel.h"
 #include "NiagaraScriptMergeManager.h"
@@ -44,6 +47,7 @@
 #include "ViewModels/NiagaraScratchPadUtilities.h"
 #include "ViewModels/NiagaraScriptViewModel.h"
 #include "ViewModels/Stack/NiagaraParameterHandle.h"
+#include "ViewModels/Stack/NiagaraStackNote.h"
 #include "Widgets/SNiagaraParameterName.h"
 
 #include "EdGraph/EdGraphPin.h"
@@ -75,6 +79,7 @@
 #include "ViewModels/NiagaraEmitterHandleViewModel.h"
 #include "ViewModels/NiagaraEmitterViewModel.h"
 #include "ViewModels/NiagaraParameterPanelViewModel.h"
+#include "Widgets/SToolTip.h"
 
 #define LOCTEXT_NAMESPACE "FNiagaraEditorUtilities"
 
@@ -85,6 +90,8 @@ static FAutoConsoleVariableRef CVarDeletePythonFilesOnError(
 	TEXT("This determines whether we keep the intermediate python used by module/emitter versioning around when they were executed and resulted in an error."),
 	ECVF_Default
 );
+
+const FText FNiagaraEditorSharedTexts::DebugDrawUIActionBaseText = LOCTEXT("EnableDebugDrawCheckBoxToolTip", "Enable or disable debug drawing for this item.");
 
 TSet<FName> FNiagaraEditorUtilities::GetSystemConstantNames()
 {
@@ -505,23 +512,22 @@ bool FNiagaraEditorUtilities::NestedPropertiesAppendCompileHash(const void* Cont
 		{
 			continue;
 		}
-		else if (Property->IsA(FStructProperty::StaticClass()))
+
+		if (Property->IsA(FStructProperty::StaticClass()))
 		{
 			FStructProperty* StructProp = CastFieldChecked<FStructProperty>(Property);
 			const void* StructContainer = Property->ContainerPtrToValuePtr<uint8>(Container);
 			NestedPropertiesAppendCompileHash(StructContainer, StructProp->Struct, EFieldIteratorFlags::IncludeSuper, *PropertyName, InVisitor);
-			continue;
 		}
 		else if (Property->IsA(FEnumProperty::StaticClass()))
 		{
 			FEnumProperty* CastProp = CastFieldChecked<FEnumProperty>(Property);
 			const void* EnumContainer = Property->ContainerPtrToValuePtr<uint8>(Container);
-			if (PODPropertyAppendCompileHash(EnumContainer, CastProp->GetUnderlyingProperty(), *PropertyName, InVisitor))
+			if (!PODPropertyAppendCompileHash(EnumContainer, CastProp->GetUnderlyingProperty(), *PropertyName, InVisitor))
 			{
-				continue;
+				check(false);
+				return false;
 			}
-			check(false);
-			return false;
 		}
 		else if (Property->IsA(FObjectProperty::StaticClass()))
 		{
@@ -548,7 +554,6 @@ bool FNiagaraEditorUtilities::NestedPropertiesAppendCompileHash(const void* Cont
 					InVisitor->UpdateString(*PropertyName, TEXT("nullptr"));
 				}
 			}
-			continue;
 		}
 		else if (Property->IsA(FMapProperty::StaticClass()))
 		{
@@ -569,19 +574,12 @@ bool FNiagaraEditorUtilities::NestedPropertiesAppendCompileHash(const void* Cont
 				{
 					// To be safe, let's gather up all the keys and sort them lexicographically so that this is stable across application runs.
 					TArray<FName> Names;
-					Names.AddUninitialized(MapHelper.Num());
-					for (int32 i = 0; i < MapHelper.Num(); i++)
+					Names.Reserve(MapHelper.Num());
+					for (FScriptMapHelper::FIterator It(MapHelper); It; ++It)
 					{
-						FName* KeyPtr = (FName*)(MapHelper.GetKeyPtr(i));
-						if (KeyPtr)
-						{
-							Names[i] = *KeyPtr;
-						}
-						else
-						{
-							Names[i] = FName();
-							UE_LOG(LogNiagaraEditor, Warning, TEXT("Bad key in %s at %d"), *Property->GetName(), i);
-						}
+						const FName* KeyPtr = (FName*)MapHelper.GetKeyPtr(It);
+						// Iterator guarantees a valid FName key
+						Names.Add(*KeyPtr);
 					}
 					// Sort stably over runs
 					Names.Sort(FNameLexicalLess());
@@ -590,49 +588,34 @@ bool FNiagaraEditorUtilities::NestedPropertiesAppendCompileHash(const void* Cont
 					// We support map values of POD types or map values of structs with POD types internally. Anything else we should generate a warning on.
 					if (MapHelper.GetValueProperty()->IsA(FStructProperty::StaticClass()))
 					{
-						bool bPassed = true;
 						FStructProperty* StructProp = CastFieldChecked<FStructProperty>(MapHelper.GetValueProperty());
 
-						for (int32 ArrayIdx = 0; ArrayIdx < MapHelper.Num(); ArrayIdx++)
+						for (FScriptMapHelper::FIterator It(MapHelper); It; ++It)
 						{
-							InVisitor->UpdateString(*FString::Printf(TEXT("Key[%d]"), ArrayIdx), Names[ArrayIdx].ToString());
-							if (!NestedPropertiesAppendCompileHash(MapHelper.GetValuePtr(ArrayIdx), StructProp->Struct, EFieldIteratorFlags::IncludeSuper, FString::Printf(TEXT("Value[%d]"), ArrayIdx), InVisitor))
+							InVisitor->UpdateString(*FString::Printf(TEXT("Key[%d]"), It.GetLogicalIndex()), Names[It.GetLogicalIndex()].ToString());
+							if (!NestedPropertiesAppendCompileHash(MapHelper.GetValuePtr(It), StructProp->Struct, EFieldIteratorFlags::IncludeSuper, FString::Printf(TEXT("Value[%d]"), It.GetLogicalIndex()), InVisitor))
 							{
-								UE_LOG(LogNiagaraEditor, Warning, TEXT("Skipping %s because it is an map value property of unsupported underlying type, please add \"meta = (SkipForCompileHash=\"true\")\" to avoid this warning in the future or handle it yourself in NestedPropertiesAppendCompileHash!"), *Property->GetName());
-								bPassed = false;
-								continue;
+								UE_LOG(LogNiagaraEditor, Warning, TEXT("Skipping %s because it is a map value property of unsupported underlying type, please add \"meta = (SkipForCompileHash=\"true\")\" to avoid this warning in the future or handle it yourself in NestedPropertiesAppendCompileHash!"), *Property->GetName());
 							}
-						}
-						if (bPassed)
-						{
-							continue;
 						}
 					}
 					else
 					{
-						bool bPassed = true;
-						for (int32 ArrayIdx = 0; ArrayIdx < MapHelper.Num(); ArrayIdx++)
+						for (FScriptMapHelper::FIterator It(MapHelper); It; ++It)
 						{
-							InVisitor->UpdateString(*FString::Printf(TEXT("Key[%d]"), ArrayIdx), Names[ArrayIdx].ToString());
-							if (!PODPropertyAppendCompileHash(MapHelper.GetPairPtr(ArrayIdx), MapHelper.GetValueProperty(), FString::Printf(TEXT("Value[%d]"), ArrayIdx), InVisitor))
+							InVisitor->UpdateString(*FString::Printf(TEXT("Key[%d]"), It.GetLogicalIndex()), Names[It.GetLogicalIndex()].ToString());
+							if (!PODPropertyAppendCompileHash(MapHelper.GetPairPtr(It), MapHelper.GetValueProperty(), FString::Printf(TEXT("Value[%d]"), It.GetLogicalIndex()), InVisitor))
 							{
-								UE_LOG(LogNiagaraEditor, Warning, TEXT("Skipping %s because it is an map value property of unsupported underlying type, please add \"meta = (SkipForCompileHash=\"true\")\" to avoid this warning in the future or handle it yourself in PODPropertyAppendCompileHash!"), *Property->GetName());
-								bPassed = false;
-								continue;
+								UE_LOG(LogNiagaraEditor, Warning, TEXT("Skipping %s because it is a map value property of unsupported underlying type, please add \"meta = (SkipForCompileHash=\"true\")\" to avoid this warning in the future or handle it yourself in PODPropertyAppendCompileHash!"), *Property->GetName());
 							}
-						}
-						if (bPassed)
-						{
-							continue;
 						}
 					}
 				}
 				else
 				{
-					UE_LOG(LogNiagaraEditor, Warning, TEXT("Skipping %s because it is a map property, please add \"meta = (SkipForCompileHash=\"true\")\" to avoid this warning in the future or handle it yourself in NestedPropertiesAppendCompileHash!"), *Property->GetName());
+					UE_LOG(LogNiagaraEditor, Warning, TEXT("Skipping %s because it is a map property of unsupported key type, please add \"meta = (SkipForCompileHash=\"true\")\" to avoid this warning in the future or handle it yourself in NestedPropertiesAppendCompileHash!"), *Property->GetName());
 				}
 			}
-			continue;
 		}
 		else if (Property->IsA(FArrayProperty::StaticClass()))
 		{
@@ -647,7 +630,6 @@ bool FNiagaraEditorUtilities::NestedPropertiesAppendCompileHash(const void* Cont
 			// We support arrays of POD types or arrays of structs with POD types internally. Anything else we should generate a warning on.
 			if (CastProp->Inner->IsA(FStructProperty::StaticClass()))
 			{
-				bool bPassed = true;
 				FStructProperty* StructProp = CastFieldChecked<FStructProperty>(CastProp->Inner);
 
 				for (int32 ArrayIdx = 0; ArrayIdx < ArrayHelper.Num(); ArrayIdx++)
@@ -655,42 +637,22 @@ bool FNiagaraEditorUtilities::NestedPropertiesAppendCompileHash(const void* Cont
 					if (!NestedPropertiesAppendCompileHash(ArrayHelper.GetRawPtr(ArrayIdx), StructProp->Struct, EFieldIteratorFlags::IncludeSuper, *PropertyName, InVisitor))
 					{
 						UE_LOG(LogNiagaraEditor, Warning, TEXT("Skipping %s because it is an array property of unsupported underlying type, please add \"meta = (SkipForCompileHash=\"true\")\" to avoid this warning in the future or handle it yourself in NestedPropertiesAppendCompileHash!"), *Property->GetName());
-						bPassed = false;
-						continue;
 					}
-				}
-				if (bPassed)
-				{
-					continue;
 				}
 			}
 			else
 			{
-				bool bPassed = true;
 				for (int32 ArrayIdx = 0; ArrayIdx < ArrayHelper.Num(); ArrayIdx++)
 				{
 					if (!PODPropertyAppendCompileHash(ArrayHelper.GetRawPtr(ArrayIdx), CastProp->Inner, *PropertyName, InVisitor))
 					{
-						if (bPassed)
-						{
-							UE_LOG(LogNiagaraEditor, Warning, TEXT("Skipping %s because it is an array property of unsupported underlying type, please add \"meta = (SkipForCompileHash=\"true\")\" to avoid this warning in the future or handle it yourself in NestedPropertiesAppendCompileHash!"), *Property->GetName());
-						}
-						bPassed = false;
-						continue;
+						UE_LOG(LogNiagaraEditor, Warning, TEXT("Skipping %s because it is an array property of unsupported underlying type, please add \"meta = (SkipForCompileHash=\"true\")\" to avoid this warning in the future or handle it yourself in NestedPropertiesAppendCompileHash!"), *Property->GetName());
 					}
 				}
-				if (bPassed)
-				{
-					continue;
-				}
 			}
-
-			UE_LOG(LogNiagaraEditor, Warning, TEXT("Skipping %s because it is an array property, please add \"meta = (SkipForCompileHash=\"true\")\" to avoid this warning in the future or handle it yourself in NestedPropertiesAppendCompileHash!"), *Property->GetName());
-			continue;
 		}
 		else if (Property->IsA(FTextProperty::StaticClass()))
 		{
-			FTextProperty* CastProp = CastFieldChecked<FTextProperty>(Property);
 			UE_LOG(LogNiagaraEditor, Warning, TEXT("Skipping %s because it is a UText property, please add \"meta = (SkipForCompileHash=\"true\")\" to avoid this warning in the future or handle it yourself in NestedPropertiesAppendCompileHash!"), *Property->GetName());
 			return true;
 		}
@@ -1031,9 +993,9 @@ FText FNiagaraEditorUtilities::GetTypeDefinitionCategory(const FNiagaraTypeDefin
 	return Category;
 }
 
-bool FNiagaraEditorUtilities::AreTypesAssignable(const FNiagaraTypeDefinition& TypeA, const FNiagaraTypeDefinition& TypeB)
+bool FNiagaraEditorUtilities::AreTypesAssignable(const FNiagaraTypeDefinition& FromType, const FNiagaraTypeDefinition& ToType)
 {
-	return FNiagaraUtilities::AreTypesAssignable(TypeA, TypeB);
+	return FNiagaraUtilities::AreTypesAssignable(FromType, ToType);
 }
 
 void FNiagaraEditorUtilities::MarkDependentCompilableAssetsDirty(TArray<UObject*> InObjects)
@@ -1061,7 +1023,8 @@ void FNiagaraEditorUtilities::MarkDependentCompilableAssetsDirty(const TArray<FA
 	{
 		FAssetData AssetToCheck = AssetsToCheck[0];
 		AssetsToCheck.RemoveAtSwap(0);
-		if (IsCompilableAssetClass(AssetToCheck.GetClass()))
+		bool bMustBeCompilableAsset = !InAssetsToCheck.Contains(AssetToCheck);//Don't require the original assets to be compilable.
+		if (!bMustBeCompilableAsset || IsCompilableAssetClass(AssetToCheck.GetClass()))
 		{
 			if (AssetsToLoadAndMarkDirty.Contains(AssetToCheck) == false)
 			{
@@ -1122,7 +1085,7 @@ void FNiagaraEditorUtilities::SetStaticSwitchConstants(UNiagaraGraph* Graph, TAr
 {
 	const UEdGraphSchema_Niagara* Schema = GetDefault<UEdGraphSchema_Niagara>();
 
-	for (TObjectPtr<UEdGraphNode> Node : Graph->Nodes)
+	for (const TObjectPtr<UEdGraphNode>& Node : Graph->Nodes)
 	{
 		// if there is a static switch node its value must be set by the caller
 		UNiagaraNodeStaticSwitch* SwitchNode = Cast<UNiagaraNodeStaticSwitch>(Node);
@@ -1621,6 +1584,25 @@ ENiagaraScriptLibraryVisibility FNiagaraEditorUtilities::GetScriptAssetVisibilit
 	return ScriptVisibility;
 }
 
+bool FNiagaraEditorUtilities::GetIsInheritableFromAssetRegistryTags(const FAssetData& AssetData, bool& bUseInheritance)
+{
+	if(AssetData.GetTagValue(GET_MEMBER_NAME_CHECKED(UNiagaraEmitter, bIsInheritable), bUseInheritance))
+	{
+		return true;		
+	}
+	else
+	{
+		ENiagaraScriptTemplateSpecification DeprecatedTemplateTag;
+		if(GetTemplateSpecificationFromTag(AssetData, DeprecatedTemplateTag))
+		{
+			bUseInheritance = DeprecatedTemplateTag == ENiagaraScriptTemplateSpecification::None;
+			return true;
+		}
+	}
+
+	return false;
+}
+
 // this function is used as an overload inside FAssetData.GetTagValue for the ENiagaraScriptTemplateSpecification enum
 void LexFromString(ENiagaraScriptTemplateSpecification& OutValue, const TCHAR* Buffer)
 {
@@ -1630,7 +1612,7 @@ void LexFromString(ENiagaraScriptTemplateSpecification& OutValue, const TCHAR* B
 bool FNiagaraEditorUtilities::GetTemplateSpecificationFromTag(const FAssetData& Data, ENiagaraScriptTemplateSpecification& OutTemplateSpecification)
 {
 	ENiagaraScriptTemplateSpecification TemplateSpecification = ENiagaraScriptTemplateSpecification::None;
-	bool bTemplateEnumTagFound = Data.GetTagValue(GET_MEMBER_NAME_CHECKED(UNiagaraEmitter, TemplateSpecification), TemplateSpecification);
+	bool bTemplateEnumTagFound = Data.GetTagValue(FName("TemplateSpecification"), TemplateSpecification);
 
 	if(bTemplateEnumTagFound)
 	{
@@ -1657,11 +1639,10 @@ bool FNiagaraEditorUtilities::IsScriptAssetInLibrary(const FAssetData& ScriptAss
 	return GetScriptAssetVisibility(ScriptAssetData) == ENiagaraScriptLibraryVisibility::Library;
 }
 
-bool FNiagaraEditorUtilities::IsEnginePluginAsset(const FAssetData& InAssetData)
+bool FNiagaraEditorUtilities::IsEnginePluginAsset(const FTopLevelAssetPath& InTopLevelAssetPath)
 {
 	FString PackagePathLocal = "";
-	return 
-		FPackageName::TryConvertGameRelativePackagePathToLocalPath(InAssetData.PackagePath.ToString(), PackagePathLocal) &&
+	return FPackageName::TryConvertGameRelativePackagePathToLocalPath(InTopLevelAssetPath.ToString(), PackagePathLocal) &&
 		FPaths::IsUnderDirectory(PackagePathLocal, FPaths::EnginePluginsDir() + "FX/Niagara");
 }
 
@@ -1722,6 +1703,14 @@ int32 FNiagaraEditorUtilities::GetWeightForItem(const TSharedPtr<FNiagaraMenuAct
 	TArray<FString> DisplayNameArray;
 	InCurrentAction->DisplayName.ToString().ParseIntoArray(DisplayNameArray, TEXT(" "), true);
 	WeightedArrayList.Add(FArrayWithWeight(&DisplayNameArray, DisplayNameWeight, 10, StartsWith));
+
+	// Alternate Name
+	TArray<FString> AlternameNameArray;
+	if(InCurrentAction->AlternateSearchName.IsSet())
+	{
+		InCurrentAction->AlternateSearchName.GetValue().ToString().ParseIntoArray(AlternameNameArray, TEXT(" "), true);
+		WeightedArrayList.Add(FArrayWithWeight(&AlternameNameArray, DisplayNameWeight, 10, StartsWith));
+	}
 
 	// Keywords
 	TArray<FString> KeywordsArray;
@@ -1874,10 +1863,13 @@ int32 FNiagaraEditorUtilities::GetWeightForItem(const TSharedPtr<FNiagaraMenuAct
 		}
 	}
 
-	// parameter actions get favored
+	// NPC Variables are rarely wanted so we halve their weight here
 	if(InCurrentAction->GetParameterVariable().IsSet())
 	{
-		TotalWeight *= 2;
+		if(InCurrentAction->GetParameterVariable().GetValue().IsInNameSpace(FNiagaraConstants::ParameterCollectionNamespaceString))
+		{
+			TotalWeight *= 0.5f;
+		}
 	}
 
 	// suggested actions get favored massively
@@ -2097,6 +2089,8 @@ TArray<UNiagaraComponent*> FNiagaraEditorUtilities::GetComponentsThatReferenceSy
 
 const FGuid FNiagaraEditorUtilities::AddEmitterToSystem(UNiagaraSystem& InSystem, UNiagaraEmitter& InEmitterToAdd, FGuid EmitterVersion, bool bCreateCopy)
 {
+	FNiagaraEditorModule::Get().GetRecentsManager()->EmitterUsed(InEmitterToAdd);
+
 	// Kill all system instances before modifying the emitter handle list to prevent accessing deleted data.
 	KillSystemInstances(InSystem);
 
@@ -2606,6 +2600,49 @@ void FNiagaraEditorUtilities::ToggleSelectedEmittersIsolated(TSharedRef<FNiagara
 	SystemViewModel->IsolateEmitters(EmittersToIsolate);
 }
 
+ECheckBoxState FNiagaraEditorUtilities::GetSelectedEmittersEmitterModeCheckState(TSharedRef<FNiagaraSystemViewModel> SystemViewModel, ENiagaraEmitterMode EmitterMode)
+{
+	TOptional<ENiagaraEmitterMode> CurrentEmitterMode;
+	const TArray<FGuid>& SelectedEmitterHandleIds = SystemViewModel->GetSelectionViewModel()->GetSelectedEmitterHandleIds();
+	for (const TSharedRef<FNiagaraEmitterHandleViewModel>& EmitterHandleViewModel : SystemViewModel->GetEmitterHandleViewModels())
+	{
+		if (SelectedEmitterHandleIds.Contains(EmitterHandleViewModel->GetId()) == false)
+		{
+			continue;
+		}
+		if (CurrentEmitterMode.IsSet() == false)
+		{
+			CurrentEmitterMode = EmitterHandleViewModel->GetEmitterHandle()->GetEmitterMode();
+		}
+		else
+		{
+			if (CurrentEmitterMode.GetValue() != EmitterHandleViewModel->GetEmitterHandle()->GetEmitterMode())
+			{
+				return ECheckBoxState::Undetermined;
+			}
+		}
+	}
+	if (CurrentEmitterMode.IsSet())
+	{
+		return CurrentEmitterMode.GetValue() == EmitterMode ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+	}
+	return ECheckBoxState::Unchecked;
+}
+
+void FNiagaraEditorUtilities::SetSelectedEmittersEmitterMode(TSharedRef<FNiagaraSystemViewModel> SystemViewModel, ENiagaraEmitterMode EmitterMode)
+{
+	FScopedTransaction ScopedTransaction(LOCTEXT("ChangeEmitterMode", "Change emitter mode"));
+	SystemViewModel->GetSystem().Modify();
+
+	const TArray<FGuid>& SelectedEmitterHandleIds = SystemViewModel->GetSelectionViewModel()->GetSelectedEmitterHandleIds();
+	for (const TSharedRef<FNiagaraEmitterHandleViewModel>& EmitterHandleViewModel : SystemViewModel->GetEmitterHandleViewModels())
+	{
+		if (SelectedEmitterHandleIds.Contains(EmitterHandleViewModel->GetId()))
+		{
+			EmitterHandleViewModel->GetEmitterHandle()->SetEmitterMode(SystemViewModel->GetSystem(), EmitterMode);
+		}
+	}
+}
 
 void FNiagaraEditorUtilities::CreateAssetFromEmitter(TSharedRef<FNiagaraEmitterHandleViewModel> EmitterHandleViewModel)
 {
@@ -2635,6 +2672,7 @@ void FNiagaraEditorUtilities::CreateAssetFromEmitter(TSharedRef<FNiagaraEmitterH
 	if (CreatedAsset != nullptr)
 	{
 		CreatedAsset->SetUniqueEmitterName(CreatedAsset->GetName());
+		CreatedAsset->bIsInheritable = true;
 
 		GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(CreatedAsset);
 
@@ -3052,6 +3090,19 @@ bool FNiagaraEditorUtilities::GetAvailableParameterDefinitions(const TArray<FStr
 
 	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
 	return AssetRegistryModule.GetRegistry().GetAssets(ARFilter, OutParameterDefinitionsAssetData);
+}
+
+void FNiagaraEditorUtilities::GetAvailableParameterCollections(TArray<UNiagaraParameterCollection*>& OutParameterCollections)
+{
+	const TArray<TWeakObjectPtr<UNiagaraParameterCollection>>& CachedParameterCollectionAssets = FNiagaraEditorModule::Get().GetCachedParameterCollectionAssets();
+
+	for (const TWeakObjectPtr<UNiagaraParameterCollection>& CachedParameterCollectionAsset : CachedParameterCollectionAssets)
+	{
+		if (UNiagaraParameterCollection* ParameterCollection = CachedParameterCollectionAsset.Get())
+		{
+			OutParameterCollections.Add(ParameterCollection);
+		}
+	}
 }
 
 TSharedPtr<INiagaraParameterDefinitionsSubscriberViewModel> FNiagaraEditorUtilities::GetOwningLibrarySubscriberViewModelForGraph(const UNiagaraGraph* Graph)
@@ -3635,6 +3686,14 @@ void FNiagaraEditorUtilities::SwitchParentEmitterVersion(TSharedRef<FNiagaraEmit
 		OldSystemViewModel.Reset();
 		CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS);
 	}
+
+	// analytics
+	TArray<FAnalyticsEventAttribute> Attributes;
+	if (NiagaraAnalytics::IsPluginAsset(Parent.Emitter))
+	{
+		Attributes.Add(FAnalyticsEventAttribute(TEXT("AssetName"), Parent.Emitter->GetPackage()->GetName()));
+	}
+	NiagaraAnalytics::RecordEvent(TEXT("Versioning.EmitterVersionChanged"), Attributes);
 }
 
 bool FNiagaraParameterUtilities::DoesParameterNameMatchSearchText(FName ParameterName, const FString& SearchTextString)
@@ -4445,7 +4504,7 @@ void FNiagaraEditorUtilities::GetAllowedUserVariableTypes(TArray<FNiagaraTypeDef
 	const UNiagaraEditorSettings* NiagaraEditorSettings = GetDefault<UNiagaraEditorSettings>();
 	for (const FNiagaraTypeDefinition& RegisteredUserVariableType : FNiagaraTypeRegistry::GetRegisteredUserVariableTypes())
 	{
-		if (NiagaraEditorSettings->IsAllowedTypeDefinition(RegisteredUserVariableType))
+		if (NiagaraEditorSettings->IsVisibleTypeDefinition(RegisteredUserVariableType))
 		{
 			OutAllowedTypes.Add(RegisteredUserVariableType);
 		}
@@ -4457,7 +4516,7 @@ void FNiagaraEditorUtilities::GetAllowedSystemVariableTypes(TArray<FNiagaraTypeD
 	const UNiagaraEditorSettings* NiagaraEditorSettings = GetDefault<UNiagaraEditorSettings>();
 	for (const FNiagaraTypeDefinition& RegisteredSystemVariableType : FNiagaraTypeRegistry::GetRegisteredSystemVariableTypes())
 	{
-		if (NiagaraEditorSettings->IsAllowedTypeDefinition(RegisteredSystemVariableType))
+		if (NiagaraEditorSettings->IsVisibleTypeDefinition(RegisteredSystemVariableType))
 		{
 			OutAllowedTypes.Add(RegisteredSystemVariableType);
 		}
@@ -4469,7 +4528,7 @@ void FNiagaraEditorUtilities::GetAllowedEmitterVariableTypes(TArray<FNiagaraType
 	const UNiagaraEditorSettings* NiagaraEditorSettings = GetDefault<UNiagaraEditorSettings>();
 	for (const FNiagaraTypeDefinition& RegisteredEmitterVariableType : FNiagaraTypeRegistry::GetRegisteredEmitterVariableTypes())
 	{
-		if (NiagaraEditorSettings->IsAllowedTypeDefinition(RegisteredEmitterVariableType))
+		if (NiagaraEditorSettings->IsVisibleTypeDefinition(RegisteredEmitterVariableType))
 		{
 			OutAllowedTypes.Add(RegisteredEmitterVariableType);
 		}
@@ -4481,7 +4540,7 @@ void FNiagaraEditorUtilities::GetAllowedParticleVariableTypes(TArray<FNiagaraTyp
 	const UNiagaraEditorSettings* NiagaraEditorSettings = GetDefault<UNiagaraEditorSettings>();
 	for (const FNiagaraTypeDefinition& RegisteredParticleVariableType : FNiagaraTypeRegistry::GetRegisteredParticleVariableTypes())
 	{
-		if (NiagaraEditorSettings->IsAllowedTypeDefinition(RegisteredParticleVariableType))
+		if (NiagaraEditorSettings->IsVisibleTypeDefinition(RegisteredParticleVariableType))
 		{
 			OutAllowedTypes.Add(RegisteredParticleVariableType);
 		}
@@ -4493,7 +4552,7 @@ void FNiagaraEditorUtilities::GetAllowedParameterTypes(TArray<FNiagaraTypeDefini
 	const UNiagaraEditorSettings* NiagaraEditorSettings = GetDefault<UNiagaraEditorSettings>();
 	for (const FNiagaraTypeDefinition& RegisteredParameterType : FNiagaraTypeRegistry::GetRegisteredParameterTypes())
 	{
-		if (NiagaraEditorSettings->IsAllowedTypeDefinition(RegisteredParameterType))
+		if (NiagaraEditorSettings->IsVisibleTypeDefinition(RegisteredParameterType))
 		{
 			OutAllowedTypes.Add(RegisteredParameterType);
 		}
@@ -4505,7 +4564,7 @@ void FNiagaraEditorUtilities::GetAllowedPayloadTypes(TArray<FNiagaraTypeDefiniti
 	const UNiagaraEditorSettings* NiagaraEditorSettings = GetDefault<UNiagaraEditorSettings>();
 	for (const FNiagaraTypeDefinition& RegisteredPayloadType : FNiagaraTypeRegistry::GetRegisteredPayloadTypes())
 	{
-		if (NiagaraEditorSettings->IsAllowedTypeDefinition(RegisteredPayloadType))
+		if (NiagaraEditorSettings->IsVisibleTypeDefinition(RegisteredPayloadType))
 		{
 			OutAllowedTypes.Add(RegisteredPayloadType);
 		}
@@ -4570,7 +4629,73 @@ UNiagaraDataInterface* FNiagaraEditorUtilities::GetResolvedRuntimeInstanceForEdi
 			}
 		}
 	}
+	UNiagaraNodeFunctionCall* OuterFunctionCall = EditorDataInterfaceInstance.GetTypedOuter<UNiagaraNodeFunctionCall>();
+	if (OuterFunctionCall != nullptr)
+	{
+		// Placeholder data interfaces are outered to the function call defines their input.
+
+	}
 	return nullptr;
+}
+
+TSharedRef<SToolTip> FNiagaraEditorUtilities::Tooltips::CreateStackNoteTooltip(UNiagaraStackNote& StackNote)
+{
+	if(StackNote.GetTargetStackNoteData().IsSet() == false)
+	{
+		return SNew(SToolTip);
+	}
+
+	TSharedRef<SVerticalBox> TooltipContent = SNew(SVerticalBox)
+	+ SVerticalBox::Slot()
+	.AutoHeight()
+	.Padding(3.f)
+	[
+		SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot()
+		.AutoWidth()
+		.Padding(2.f)
+		[
+			SNew(SBox)
+			.HeightOverride(16.f)
+			.WidthOverride(16.f)
+			.HAlign(HAlign_Center)
+			.VAlign(VAlign_Center)
+			[
+				SNew(SImage)
+				.Image(FNiagaraEditorStyle::Get().GetBrush("NiagaraEditor.Message.CustomNote"))
+			]
+		]
+		+ SHorizontalBox::Slot()
+		.Padding(2.f)
+		[
+			SNew(STextBlock)
+			.Text(StackNote.GetTargetStackNoteData().GetValue().MessageHeader)
+			.TextStyle(&FNiagaraEditorStyle::Get().GetWidgetStyle<FTextBlockStyle>("NiagaraEditor.Stack.Note.HeaderText"))
+			.AutoWrapText(true)
+		]
+	];
+
+	if(StackNote.GetTargetStackNoteData().GetValue().Message.IsEmpty() == false)
+	{
+		TooltipContent->AddSlot()
+		.AutoHeight()
+		.Padding(5.f)
+		[
+			SNew(STextBlock)
+			.Text(StackNote.GetTargetStackNoteData().GetValue().Message)
+			.AutoWrapText(true)
+		];
+	}
+	
+	return SNew(SToolTip)
+	.Content()
+	[
+		SNew(SBox)
+		.MaxDesiredWidth(500.f)
+		[
+			TooltipContent
+		]
+	];
 }
 
 TMap<FGuid, TArray<FNiagaraVariableBase>> FNiagaraEditorUtilities::Scripts::Validation::ValidateScriptVariableIds(UNiagaraScript* Script, FGuid VersionGuid)
@@ -4676,6 +4801,207 @@ TMap<FNiagaraVariableBase, FGuid> FNiagaraEditorUtilities::Scripts::Validation::
 	}
 
 	return RemappedGuids;
+}
+
+TArray<FNiagaraEditorUtilities::AssetBrowser::FStructuredAssetTagDefinitionLookupData> FNiagaraEditorUtilities::AssetBrowser::GetStructuredSortedAssetTagDefinitions(bool bSortTagsByName)
+{
+	TArray<FStructuredAssetTagDefinitionLookupData> Result;
+	
+	// Internal Tags
+	{
+		FStructuredAssetTagDefinitionLookupData TagDefinitionData;
+		TagDefinitionData.DefinitionsAsset = nullptr;
+
+		for(const FNiagaraAssetTagDefinition* InternalAssetTagDefinition : INiagaraModule::Get().GetInternalAssetTagDefinitions())
+		{
+			TagDefinitionData.AssetTagDefinitions.Add(*InternalAssetTagDefinition);
+		}
+		
+		if(bSortTagsByName)
+		{
+			TagDefinitionData.AssetTagDefinitions.Sort();
+		}
+		TagDefinitionData.Source = EAssetTagSectionSource::NiagaraInternal;
+		Result.Add(TagDefinitionData);
+	}
+
+	FAssetRegistryModule& AssetRegistryModule = FModuleManager::Get().LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+	FARFilter Filter;
+	Filter.ClassPaths.Add(UNiagaraAssetTagDefinitions::StaticClass()->GetClassPathName());
+
+	TArray<FAssetData> FilteredTagDefinitionAssets;
+	AssetRegistryModule.Get().GetAssets(Filter, FilteredTagDefinitionAssets);
+
+	for(const FAssetData& AssetData : FilteredTagDefinitionAssets)
+	{
+		UNiagaraAssetTagDefinitions* TagDefinitions = Cast<UNiagaraAssetTagDefinitions>(AssetData.GetAsset());
+		FStructuredAssetTagDefinitionLookupData TagDefinitionData;
+		TagDefinitionData.DefinitionsAsset = TagDefinitions;
+		TagDefinitionData.AssetTagDefinitions = TagDefinitions->GetAssetTagDefinitions();
+		if(bSortTagsByName)
+		{
+			TagDefinitionData.AssetTagDefinitions.Sort();
+		}
+		TagDefinitionData.Source = GetAssetTagDefinitionSource(AssetData);
+		Result.Add(TagDefinitionData);
+	}
+
+	Result.Sort([](const FStructuredAssetTagDefinitionLookupData& CandidateA, const FStructuredAssetTagDefinitionLookupData& CandidateB)
+	{
+		if((int32) CandidateA.Source != (int32) CandidateB.Source)
+		{
+			return (int32) CandidateA.Source < (int32) CandidateB.Source;
+		}
+
+		if(CandidateA.DefinitionsAsset == nullptr || CandidateB.DefinitionsAsset == nullptr)
+		{
+			if(CandidateB.DefinitionsAsset != nullptr)
+			{
+				return true;
+			}
+			else if(CandidateA.DefinitionsAsset != nullptr)
+			{
+				return false;
+			}
+			
+			return CandidateA.AssetTagDefinitions.Num() < CandidateB.AssetTagDefinitions.Num();
+		}
+		
+		return CandidateA.DefinitionsAsset->GetSortOrder() < CandidateB.DefinitionsAsset->GetSortOrder();
+	});
+	
+	return Result;
+}
+
+TArray<FNiagaraAssetTagDefinition> FNiagaraEditorUtilities::AssetBrowser::GetFlatSortedAssetTagDefinitions(bool bSortEndResultTagsByName)
+{
+	TArray<FNiagaraAssetTagDefinition> Result;
+	TArray<FStructuredAssetTagDefinitionLookupData> IntermediateResult;
+	FAssetRegistryModule& AssetRegistryModule = FModuleManager::Get().LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+
+	for(const FNiagaraAssetTagDefinition* InternalAssetTagDefinition : INiagaraModule::Get().GetInternalAssetTagDefinitions())
+	{
+		Result.Add(*InternalAssetTagDefinition);
+	}
+
+	FARFilter Filter;
+	Filter.ClassPaths.Add(UNiagaraAssetTagDefinitions::StaticClass()->GetClassPathName());
+
+	TArray<FAssetData> AllTagDefinitionAssets;
+	AssetRegistryModule.Get().GetAssets(Filter, AllTagDefinitionAssets);
+
+	for(const FAssetData& AssetData : AllTagDefinitionAssets)
+	{
+		UNiagaraAssetTagDefinitions* TagDefinitions = Cast<UNiagaraAssetTagDefinitions>(AssetData.GetAsset());
+		FStructuredAssetTagDefinitionLookupData TagDefinitionData;
+		TagDefinitionData.DefinitionsAsset = TagDefinitions;
+		TagDefinitionData.AssetTagDefinitions = TagDefinitions->GetAssetTagDefinitions();
+		TagDefinitionData.Source = GetAssetTagDefinitionSource(AssetData);
+		IntermediateResult.Add(TagDefinitionData);
+	}
+	
+	IntermediateResult.Sort([](const FStructuredAssetTagDefinitionLookupData& CandidateA, const FStructuredAssetTagDefinitionLookupData& CandidateB)
+	{
+		if((int32) CandidateA.Source != (int32) CandidateB.Source)
+		{
+			return (int32) CandidateA.Source < (int32) CandidateB.Source;
+		}
+
+		if(CandidateA.DefinitionsAsset == nullptr || CandidateB.DefinitionsAsset == nullptr)
+		{
+			if(CandidateB.DefinitionsAsset != nullptr)
+			{
+				return true;
+			}
+			else if(CandidateA.DefinitionsAsset != nullptr)
+			{
+				return false;
+			}
+			
+			return CandidateA.AssetTagDefinitions.Num() < CandidateB.AssetTagDefinitions.Num();
+		}
+		
+		return CandidateA.DefinitionsAsset->GetSortOrder() < CandidateB.DefinitionsAsset->GetSortOrder();
+	});
+
+	for(const FStructuredAssetTagDefinitionLookupData& IntermediateData : IntermediateResult)
+	{
+		Result.Append(IntermediateData.AssetTagDefinitions);
+	}
+
+	if(bSortEndResultTagsByName)
+	{
+		Result.Sort();
+	}
+	
+	return Result;
+}
+
+const FNiagaraAssetTagDefinition& FNiagaraEditorUtilities::AssetBrowser::FindTagDefinitionForReference(const FNiagaraAssetTagDefinitionReference& Reference)
+{
+	TMap<FGuid, FNiagaraAssetTagDefinition> Result;
+	FAssetRegistryModule& AssetRegistryModule = FModuleManager::Get().LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+
+	FARFilter Filter;
+	Filter.ClassPaths.Add(UNiagaraAssetTagDefinitions::StaticClass()->GetClassPathName());
+
+	const TArray<const FNiagaraAssetTagDefinition*>& InternalTagDefinitions = INiagaraModule::Get().GetInternalAssetTagDefinitions();
+	
+	for(const FNiagaraAssetTagDefinition* InternalTagDefinition : InternalTagDefinitions)
+	{
+		Result.Add(InternalTagDefinition->TagGuid, *InternalTagDefinition);
+	}
+
+	TArray<FAssetData> AssetTagDefinitionAssets;
+	AssetRegistryModule.Get().GetAssets(Filter, AssetTagDefinitionAssets);
+
+	for(const FAssetData& AssetTagDefinitionAsset : AssetTagDefinitionAssets)
+	{
+		UNiagaraAssetTagDefinitions* TagDefinitionsAsset = Cast<UNiagaraAssetTagDefinitions>(AssetTagDefinitionAsset.GetAsset());
+
+		for(const FNiagaraAssetTagDefinition& TagDefinition : TagDefinitionsAsset->GetAssetTagDefinitions())
+		{
+			Result.Add(TagDefinition.TagGuid, TagDefinition);
+		}
+	}
+
+	if(Result.Contains(Reference.GetTagDefinitionReferenceGuid()))
+	{
+		return Result[Reference.GetTagDefinitionReferenceGuid()];
+	}
+
+	static FNiagaraAssetTagDefinition DummyTagDefinition;
+	return DummyTagDefinition;
+}
+
+FNiagaraEditorUtilities::AssetBrowser::EAssetTagSectionSource FNiagaraEditorUtilities::AssetBrowser::GetAssetTagDefinitionSource(const FAssetData& AssetData)
+{	
+	ensure(AssetData.GetClass() == UNiagaraAssetTagDefinitions::StaticClass());
+
+	if(AssetData.PackagePath.ToString().StartsWith("/Niagara"))
+	{
+		return EAssetTagSectionSource::NiagaraInternal;
+	}
+	else if(AssetData.PackagePath.ToString().StartsWith("/Game"))
+	{
+		return EAssetTagSectionSource::Project;
+	}
+
+	return EAssetTagSectionSource::Other;
+}
+
+FText FNiagaraEditorUtilities::AssetBrowser::GetAssetTagSectionNameFromSource(EAssetTagSectionSource Source)
+{
+	if(Source == EAssetTagSectionSource::NiagaraInternal)
+	{
+		return FText::FromString("Niagara");
+	}
+	else if(Source == EAssetTagSectionSource::Project)
+	{
+		return FText::FromString(FApp::GetProjectName());
+	}
+
+	return LOCTEXT("NiagaraAssetTagSourceSectionName", "Misc");
 }
 
 void FNiagaraParameterUtilities::FilterToRelevantStaticVariables(TConstArrayView<FNiagaraVariable> InVars, TArray<FNiagaraVariable>& OutVars, FName InOldEmitterAlias, FName InNewEmitterAlias, bool bFilterByEmitterAliasAndConvertToUnaliased)

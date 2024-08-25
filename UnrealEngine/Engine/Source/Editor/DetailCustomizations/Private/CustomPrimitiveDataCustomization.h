@@ -116,7 +116,7 @@ private:
 	void SetVectorColor(FLinearColor NewColor, uint8 PrimIdx);
 
 	/** Iterates through each parameter, and sets their values to the material interface's defaults on a per-component basis */
-	void SetDefaultValue(TSharedPtr<IPropertyHandle> Handle, uint8 PrimIdx);
+	void SetDefaultValue(uint8 PrimIdx);
 
 	/** Helper method to SetDefaultValue for vectors, but makes one transaction for all edits */
 	void SetDefaultVectorValue(uint8 PrimIdx);

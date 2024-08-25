@@ -1,0 +1,124 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#define AVSM_NULL_PTR 0xFF
+
+struct FAVSMSampleData
+{
+	float X;
+	float Tau;
+};
+
+/* AVSM Sample Data API */
+FAVSMSampleData AVSM_CreateSampleData(float X, float Tau)
+{
+	FAVSMSampleData SampleData;
+	SampleData.X = X;
+	SampleData.Tau = Tau;
+	return SampleData;
+}
+
+int AVSM_PackSampleData(float X, float3 Tau)
+{
+	int PackedData = f32tof16(X) | (f32tof16(Luminance(Tau)) << 16);
+	return PackedData;
+}
+
+int AVSM_PackSampleData(FAVSMSampleData SampleData)
+{
+	int PackedData = 0;
+	PackedData |= f32tof16(SampleData.X);
+	PackedData |= f32tof16(SampleData.Tau) << 16;
+	return PackedData;
+}
+
+FAVSMSampleData AVSM_UnpackSampleData(int PackedData)
+{
+	FAVSMSampleData SampleData;
+	SampleData.X = f16tof32(PackedData & 0xFFFF);
+	SampleData.Tau = f16tof32(PackedData >> 16);
+	return SampleData;
+}
+
+/* AVSM Linked List API */
+
+FAVSMSampleData AVSM_UnpackSampleData(int2 PackedData)
+{
+	return AVSM_UnpackSampleData(PackedData.x);
+}
+
+int AVSM_GetPrevPtr(int2 PackedData)
+{
+	return (PackedData.y >> 8) & AVSM_NULL_PTR;
+}
+
+int AVSM_GetNextPtr(int2 PackedData)
+{
+	return PackedData.y & AVSM_NULL_PTR;
+}
+
+void AVSM_SetPrevPtr(inout int2 PackedData, int PrevPtr)
+{
+	PackedData.y = (PackedData.y & 0xFFFF00FF) |
+		((PrevPtr & AVSM_NULL_PTR) << 8);
+}
+
+void AVSM_SetNextPtr(inout int2 PackedData, int NextPtr)
+{
+	PackedData.y = (PackedData.y & 0xFFFFFF00) |
+		(NextPtr & AVSM_NULL_PTR);
+}
+
+struct FAVSMIndirectionDataContext
+{
+	// TODO: Store begin and length
+	FAVSMSampleData Begin;
+	FAVSMSampleData End;
+};
+
+FAVSMIndirectionDataContext AVSM_CreateIndirectionDataContext(FAVSMSampleData Begin, FAVSMSampleData End)
+{
+	FAVSMIndirectionDataContext Context;
+	Context.Begin = Begin;
+	Context.End = End;
+	return Context;
+}
+
+#define AVSM_INVALID_PIXEL_OFFSET 0x3FFFFFF
+
+struct FAVSMIndirectionData
+{
+	uint PixelOffset;
+	int SampleCount;
+	float BeginX;
+	float EndX;
+};
+
+FAVSMIndirectionData AVSM_CreateIndirectionData(FAVSMIndirectionDataContext Context, uint PixelOffset, int SampleCount)
+{
+	FAVSMIndirectionData IndirectionData;
+	IndirectionData.PixelOffset = PixelOffset;
+	IndirectionData.SampleCount = SampleCount;
+	IndirectionData.BeginX = Context.Begin.X;
+	IndirectionData.EndX = Context.End.X;
+	return IndirectionData;
+}
+
+uint2 AVSM_PackIndirectionData(FAVSMIndirectionData IndirectionData)
+{
+	uint2 PackedData;
+	PackedData.x = ((IndirectionData.PixelOffset & AVSM_INVALID_PIXEL_OFFSET) << 6) | (IndirectionData.SampleCount & 0x3f);
+	PackedData.y = (f32tof16(IndirectionData.BeginX) << 16) | f32tof16(IndirectionData.EndX);
+	return PackedData;
+}
+
+FAVSMIndirectionData ASVM_UnpackIndirectionData(uint2 PackedData)
+{
+	FAVSMIndirectionData IndirectionData;
+	IndirectionData.PixelOffset = (PackedData.x >> 6) & AVSM_INVALID_PIXEL_OFFSET;
+	IndirectionData.SampleCount = PackedData.x & 0x3f;
+	IndirectionData.BeginX = f16tof32(PackedData.y >> 16);
+	IndirectionData.EndX = f16tof32(PackedData.y);
+	return IndirectionData;
+}

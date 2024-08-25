@@ -1,6 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Net;
@@ -22,7 +21,7 @@ namespace EpicGames.Horde.Compute.Clients
 	{
 		class LeaseImpl : IComputeLease
 		{
-			readonly IAsyncEnumerator<ComputeSocket> _source;
+			readonly IAsyncEnumerator<RemoteComputeSocket> _source;
 
 			/// <inheritdoc/>
 			public IReadOnlyList<string> Properties { get; } = new List<string>();
@@ -31,9 +30,18 @@ namespace EpicGames.Horde.Compute.Clients
 			public IReadOnlyDictionary<string, int> AssignedResources => new Dictionary<string, int>();
 
 			/// <inheritdoc/>
-			public ComputeSocket Socket => _source.Current;
+			public RemoteComputeSocket Socket => _source.Current;
 
-			public LeaseImpl(IAsyncEnumerator<ComputeSocket> source) => _source = source;
+			/// <inheritdoc/>
+			public string Ip => "127.0.0.1";
+
+			/// <inheritdoc/>
+			public ConnectionMode ConnectionMode => ConnectionMode.Direct;
+
+			/// <inheritdoc/>
+			public IReadOnlyDictionary<string, ConnectionMetadataPort> Ports => new Dictionary<string, ConnectionMetadataPort>();
+
+			public LeaseImpl(IAsyncEnumerator<RemoteComputeSocket> source) => _source = source;
 
 			/// <inheritdoc/>
 			public async ValueTask DisposeAsync()
@@ -67,13 +75,13 @@ namespace EpicGames.Horde.Compute.Clients
 		public ValueTask DisposeAsync() => new ValueTask();
 
 		/// <inheritdoc/>
-		public async Task<IComputeLease?> TryAssignWorkerAsync(ClusterId clusterId, Requirements? requirements, CancellationToken cancellationToken)
+		public async Task<IComputeLease?> TryAssignWorkerAsync(ClusterId clusterId, Requirements? requirements, string? requestId, ConnectionMetadataRequest? connection, ILogger logger, CancellationToken cancellationToken)
 		{
-			_logger.LogInformation("** CLIENT **");
-			_logger.LogInformation("Launching {Path} to handle remote", _hordeAgentAssembly);
+			logger.LogInformation("** CLIENT **");
+			logger.LogInformation("Launching {Path} to handle remote", _hordeAgentAssembly);
 
 			// The connection logic is an async enumerator that returns the socket, then shuts down.
-			IAsyncEnumerator<ComputeSocket> source = ConnectAsync(cancellationToken).GetAsyncEnumerator(cancellationToken);
+			IAsyncEnumerator<RemoteComputeSocket> source = ConnectAsync(logger, cancellationToken).GetAsyncEnumerator(cancellationToken);
 			if (!await source.MoveNextAsync())
 			{
 				await source.DisposeAsync();
@@ -83,16 +91,23 @@ namespace EpicGames.Horde.Compute.Clients
 			return new LeaseImpl(source);
 		}
 
-		async IAsyncEnumerable<ComputeSocket> ConnectAsync([EnumeratorCancellation] CancellationToken cancellationToken)
+		/// <inheritdoc/>
+		public Task DeclareResourceNeedsAsync(ClusterId clusterId, string pool, Dictionary<string, int> resourceNeeds, CancellationToken cancellationToken = default)
+		{
+			return Task.CompletedTask;
+		}
+
+		async IAsyncEnumerable<RemoteComputeSocket> ConnectAsync(ILogger logger, [EnumeratorCancellation] CancellationToken cancellationToken)
 		{
 			using Socket listener = new Socket(SocketType.Stream, ProtocolType.IP);
 			listener.Bind(new IPEndPoint(IPAddress.Loopback, _port));
 			listener.Listen();
 
-			using BackgroundTask agentTask = BackgroundTask.StartNew(ctx => RunAgentAsync(_hordeAgentAssembly, _port, _logger, ctx));
+			await using BackgroundTask agentTask = BackgroundTask.StartNew(ctx => RunAgentAsync(_hordeAgentAssembly, _port, logger, ctx));
 			using Socket tcpSocket = await listener.AcceptAsync(cancellationToken);
 
-			await using ComputeSocket socket = new ComputeSocket(new TcpTransport(tcpSocket), ComputeSocketEndpoint.Local, _logger);
+			await using TcpTransport tcpTransport = new(tcpSocket);
+			await using RemoteComputeSocket socket = new(tcpTransport, ComputeProtocol.Latest, _logger);
 			yield return socket;
 
 			await socket.CloseAsync(cancellationToken);

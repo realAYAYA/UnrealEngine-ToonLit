@@ -244,8 +244,6 @@ namespace
 			{
 				return &Container;
 			}
-
-			return nullptr;
 		}
 
 		static constexpr bool IsPhysScene()

@@ -449,6 +449,7 @@ namespace EpicGames.Perforce
 		/// <returns>List of objects returned by the server</returns>
 		public static async IAsyncEnumerable<PerforceResponse> StreamCommandAsync(this IPerforceConnection perforce, string command, IReadOnlyList<string> arguments, IReadOnlyList<string>? fileArguments, byte[]? inputData, Type? statRecordType, bool interceptIo, [EnumeratorCancellation] CancellationToken cancellationToken)
 		{
+#pragma warning disable CA1849 // Call async methods when in an async method
 			await using (IPerforceOutput output = perforce.Command(command, arguments, fileArguments, inputData, null, interceptIo))
 			{
 				await foreach (PerforceResponse response in output.ReadStreamingResponsesAsync(statRecordType, cancellationToken))
@@ -456,6 +457,7 @@ namespace EpicGames.Perforce
 					yield return response;
 				}
 			}
+#pragma warning restore CA1849 // Call async methods when in an async method
 		}
 
 		/// <summary>
@@ -470,6 +472,7 @@ namespace EpicGames.Perforce
 		/// <returns>List of objects returned by the server</returns>
 		public static async IAsyncEnumerable<PerforceResponse<T>> StreamCommandAsync<T>(this IPerforceConnection perforce, string command, IReadOnlyList<string> arguments, IReadOnlyList<string>? fileArguments = null, byte[]? inputData = null, [EnumeratorCancellation] CancellationToken cancellationToken = default) where T : class
 		{
+#pragma warning disable CA1849 // Call async methods when in an async method
 			await using (IPerforceOutput output = perforce.Command(command, arguments, fileArguments, inputData, null, false))
 			{
 				Type statRecordType = typeof(T);
@@ -478,6 +481,7 @@ namespace EpicGames.Perforce
 					yield return new PerforceResponse<T>(response);
 				}
 			}
+#pragma warning restore CA1849 // Call async methods when in an async method
 		}
 
 		/// <summary>
@@ -492,10 +496,12 @@ namespace EpicGames.Perforce
 		/// <returns>List of objects returned by the server</returns>
 		public static async Task RecordCommandAsync(this IPerforceConnection perforce, string command, IReadOnlyList<string> arguments, byte[]? inputData, Action<PerforceRecord> handleRecord, CancellationToken cancellationToken = default)
 		{
+#pragma warning disable CA1849 // Call async methods when in an async method
 			await using (IPerforceOutput response = perforce.Command(command, arguments, null, inputData, null, false))
 			{
 				await response.ReadRecordsAsync(handleRecord, cancellationToken);
 			}
+#pragma warning restore CA1849 // Call async methods when in an async method
 		}
 
 		/// <summary>
@@ -891,6 +897,10 @@ namespace EpicGames.Perforce
 			{
 				nameToValue.Add(new KeyValuePair<string, object>("Description", input.Description));
 			}
+			if (input.Status != ChangeStatus.All)
+			{
+				nameToValue.Add(new KeyValuePair<string, object>("Status", PerforceReflection.GetEnumText(typeof(ChangeStatus), input.Status)));
+			}
 			if (input.Files.Count > 0)
 			{
 				nameToValue.Add(new KeyValuePair<string, object>("Files", input.Files));
@@ -1044,7 +1054,7 @@ namespace EpicGames.Perforce
 			{
 				arguments.AddRange(fileSpecs.List);
 			}
-	
+
 			return CommandAsync<ChangesRecord>(connection, "changes", arguments, null, cancellationToken);
 		}
 
@@ -2378,7 +2388,7 @@ namespace EpicGames.Perforce
 		public static async Task<PerforceResponse<LoginRecord>> TryLoginAsync(this IPerforceConnection connection, LoginOptions options, string? user, string? password, string? host, CancellationToken cancellationToken = default)
 		{
 			List<string> arguments = new List<string>();
-			if((options & LoginOptions.AllHosts) != 0)
+			if ((options & LoginOptions.AllHosts) != 0)
 			{
 				arguments.Add("-a");
 			}
@@ -2400,6 +2410,7 @@ namespace EpicGames.Perforce
 			}
 
 			List<PerforceResponse> parsedResponses;
+#pragma warning disable CA1849 // Call async methods when in an async method
 			await using (IPerforceOutput response = connection.Command("login", arguments, null, null, password, false))
 			{
 				for (; ; )
@@ -2418,6 +2429,7 @@ namespace EpicGames.Perforce
 				// this prevents a deadlock in case `connection` is a `NativePerforceConnection` and `response` is a `NativePerforceConnection.Response`
 				// not DisposeAsync()ing here will cause a deadlock when calling `TryGetLoginStateAsync()` below
 			}
+#pragma warning restore CA1849 // Call async methods when in an async method
 
 			PerforceResponse? error = parsedResponses.FirstOrDefault(x => !x.Succeeded);
 			if (error != null)
@@ -2524,7 +2536,34 @@ namespace EpicGames.Perforce
 			{
 				arguments.Add($"-m{maxFiles}");
 			}
+			if ((options & MergeOptions.AsStreamSpec) != 0)
+			{
+				arguments.Add("-As");
+			}
+			if ((options & MergeOptions.AsFiles) != 0)
+			{
+				arguments.Add("-Af");
+			}
+			if ((options & MergeOptions.Stream) != 0)
+			{
+				arguments.Add("-S");
+			}
+
 			arguments.Add(sourceFileSpec);
+
+			if ((options & MergeOptions.Force) != 0)
+			{
+				arguments.Add("-F");
+			}
+			if ((options & MergeOptions.ReverseMapping) != 0)
+			{
+				arguments.Add("-r");
+			}
+			if ((options & MergeOptions.Source) != 0)
+			{
+				arguments.Add("-s");
+			}
+
 			arguments.Add(targetFileSpec);
 
 			PerforceResponseList<MergeRecord> records = await CommandAsync<MergeRecord>(connection, "merge", arguments, null, cancellationToken);
@@ -3303,11 +3342,11 @@ namespace EpicGames.Perforce
 			{
 				arguments.Add("-S");
 			}
-            if ((options & SizesOptions.ExcludeLazyCopies) != 0)
-            {
-                arguments.Add("-z");
-            }
-            if (maxLines > 0)
+			if ((options & SizesOptions.ExcludeLazyCopies) != 0)
+			{
+				arguments.Add("-z");
+			}
+			if (maxLines > 0)
 			{
 				arguments.Add($"-m{maxLines}");
 			}
@@ -3354,6 +3393,67 @@ namespace EpicGames.Perforce
 			return SingleResponseCommandAsync<StreamRecord>(connection, "stream", arguments, null, cancellationToken);
 		}
 
+		/// <summary>
+		/// Updates an existing stream
+		/// </summary>
+		/// <param name="connection">Connection to the Perforce server</param>
+		/// <param name="record">Information of the stream to update</param>
+		/// <param name="cancellationToken">Token used to cancel the operation</param>
+		/// <returns>Stream information record</returns>
+		public static Task<PerforceResponse> TryUpdateStreamAsync(this IPerforceConnection connection, StreamRecord record, CancellationToken cancellationToken = default)
+		{
+			List<string> arguments = new() { "-i" };
+			return SingleResponseCommandAsync(connection, "stream", arguments, connection.SerializeRecord(record), null, cancellationToken);
+		}
+
+		/// <summary>
+		/// Serializes a client record to a byte array
+		/// </summary>
+		/// <param name="connection">Connection to the Perforce server</param>
+		/// <param name="input">The input record</param>
+		/// <returns>Serialized record data</returns>
+		static byte[] SerializeRecord(this IPerforceConnection connection, StreamRecord input)
+		{
+			List<KeyValuePair<string, object>> nameToValue = new List<KeyValuePair<string, object>>();
+
+			void Add(string fieldName, string? value)
+			{
+				if (value != null)
+				{
+					nameToValue.Add(new KeyValuePair<string, object>(fieldName, value));
+				}
+			}
+
+			Add("Stream", input.Stream);
+			Add("Owner", input.Owner);
+			Add("Name", input.Name);
+			Add("Parent", input.Parent);
+			Add("Type", input.Type);
+			Add("Description", input.Description);
+			Add("ParentView", input.ParentView);
+
+			if (input.Options != StreamOptions.None)
+			{
+				nameToValue.Add(new KeyValuePair<string, object>("Options", PerforceReflection.GetEnumText(typeof(StreamOptions), input.Options)));
+			}
+
+			if (input.Paths.Count > 0)
+			{
+				nameToValue.Add(new KeyValuePair<string, object>("Paths", input.Paths));
+			}
+
+			if (input.View.Count > 0)
+			{
+				nameToValue.Add(new KeyValuePair<string, object>("View", input.View));
+			}
+
+			if (input.ChangeView.Count > 0)
+			{
+				nameToValue.Add(new KeyValuePair<string, object>("ChangeView", input.ChangeView));
+			}
+
+			return connection.CreateRecord(nameToValue).Serialize();
+		}
 		#endregion
 
 		#region p4 streams
@@ -3806,22 +3906,22 @@ namespace EpicGames.Perforce
 			}
 
 			// Using multiple threads is not supported through p4.exe due to threaded output not being parsable
-			if(numThreads != -1 && (connection is NativePerforceConnection))
+			if (numThreads != -1 && (connection is NativePerforceConnection))
 			{
 				StringBuilder argument = new StringBuilder($"--parallel=threads={numThreads}");
-				if(batch != -1)
+				if (batch != -1)
 				{
 					argument.Append($",batch={batch}");
 				}
-				if(batchSize != -1)
+				if (batchSize != -1)
 				{
 					argument.Append($",batchsize={batchSize}");
 				}
-				if(min != -1)
+				if (min != -1)
 				{
 					argument.Append($",min={min}");
 				}
-				if(minSize != -1)
+				if (minSize != -1)
 				{
 					argument.Append($",minsize={minSize}");
 				}

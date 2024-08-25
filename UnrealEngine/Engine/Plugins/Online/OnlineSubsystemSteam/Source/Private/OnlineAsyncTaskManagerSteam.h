@@ -65,6 +65,8 @@ private:
 	/** Delegate registered with Steam to trigger when a server (gameserver API) is properly connected to Steam servers, logon isn't complete until this occurs */
 	STEAM_GAMESERVER_CALLBACK(FOnlineAsyncTaskManagerSteam, OnPolicyResponseGS, GSPolicyResponse_t, OnPolicyResponseGSCallback);
 
+	/** Delegate registered with Steam to trigger when a user (client API) gets a response for a GetTicketForWebApiResponse request */
+	STEAM_CALLBACK(FOnlineAsyncTaskManagerSteam, OnGetTicketForWebApiResponse, GetTicketForWebApiResponse_t, OnGetTicketForWebApiResponseCallback);
 	/** Delegate registered with Steam to trigger when a server (gameserver API) gets a response for a Steam session authentication ticket request */
 	STEAM_GAMESERVER_CALLBACK(FOnlineAsyncTaskManagerSteam, OnAuthenticationResponseGS, ValidateAuthTicketResponse_t, OnAuthenticationResponseGSCallback);
 	/** Delegate registered with Steam to trigger when a user (client API) gets a response for a Steam session authentication ticket request */
@@ -119,6 +121,7 @@ public:
 		OnSteamServersDisconnectedGSCallback(this, &FOnlineAsyncTaskManagerSteam::OnSteamServersDisconnectedGS),
 		OnSteamServersConnectFailureGSCallback(this, &FOnlineAsyncTaskManagerSteam::OnSteamServersConnectFailureGS),
 		OnPolicyResponseGSCallback(this, &FOnlineAsyncTaskManagerSteam::OnPolicyResponseGS),
+		OnGetTicketForWebApiResponseCallback(this, &FOnlineAsyncTaskManagerSteam::OnGetTicketForWebApiResponse),
 		OnAuthenticationResponseGSCallback(this, &FOnlineAsyncTaskManagerSteam::OnAuthenticationResponseGS),
 		OnAuthenticationResponseCallback(this, &FOnlineAsyncTaskManagerSteam::OnAuthenticationResponse),
 		OnInviteAcceptedCallback(this, &FOnlineAsyncTaskManagerSteam::OnInviteAccepted),

@@ -3,10 +3,10 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using EpicGames.Horde.Api;
-using Horde.Server.Projects;
-using Horde.Server.Users;
-using Horde.Server.Utilities;
+using EpicGames.Horde.Devices;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Users;
+using Horde.Server.Jobs;
 using MongoDB.Bson;
 
 namespace Horde.Server.Devices
@@ -53,60 +53,6 @@ namespace Horde.Server.Devices
 	/// </summary>
 	public interface IDeviceCollection
 	{
-		// PLATFORMS
-
-		/// <summary>
-		/// Add a platform 
-		/// </summary>
-		/// <param name="id">The id of the platform</param>
-		/// <param name="name">The friendly name of the platform</param>
-		Task<IDevicePlatform?> TryAddPlatformAsync(DevicePlatformId id, string name);
-
-		/// <summary>
-		/// Get a list of all available device platforms
-		/// </summary>		
-		Task<List<IDevicePlatform>> FindAllPlatformsAsync();
-
-		/// <summary>
-		/// Get a specific platform by id
-		/// </summary>
-		Task<IDevicePlatform?> GetPlatformAsync(DevicePlatformId platformId);
-
-		/// <summary>
-		/// Update a device platform
-		/// </summary>
-		/// <param name="platformId">The id of the device</param>
-		/// <param name="modelIds">The available model ids for the platform</param>
-		Task<bool> UpdatePlatformAsync(DevicePlatformId platformId, string[]? modelIds);
-
-		// POOLS
-
-		/// <summary>
-		/// Add a new device pool to the collection
-		/// </summary>
-		/// <param name="id">The id of the new pool</param>
-		/// <param name="name">The friendly name of the new pool</param>
-		/// <param name="poolType">The pool type</param>
-		/// <param name="projectIds">Projects associated with this pool</param>
-		Task<IDevicePool?> TryAddPoolAsync(DevicePoolId id, string name, DevicePoolType poolType, List<ProjectId>? projectIds );
-
-		/// <summary>
-		/// Update a device pool
-		/// </summary>
-		/// <param name="id">The id of the device pool to update</param>
-		/// <param name="projectIds">Associated project ids</param>
-		Task UpdatePoolAsync(DevicePoolId id, List<ProjectId>? projectIds);
-
-		/// <summary>
-		/// Get a pool by id
-		/// </summary>
-		Task<IDevicePool?> GetPoolAsync(DevicePoolId poolId);
-
-		/// <summary>
-		/// Gets a list of existing device pools
-		/// </summary>		
-		Task<List<IDevicePool>> FindAllPoolsAsync();
-
 		// DEVICES
 
 		/// <summary>
@@ -137,7 +83,7 @@ namespace Horde.Server.Devices
 		/// <param name="enabled">Whather the device is enabled by default</param>
 		/// <param name="address">The network address or hostname the device can be reached at</param>
 		/// <param name="modelId">The vendor model id of the device</param>
-        /// <param name="userId">The user adding the device</param>
+		/// <param name="userId">The user adding the device</param>
 		Task<IDevice?> TryAddDeviceAsync(DeviceId id, string name, DevicePlatformId platformId, DevicePoolId poolId, bool? enabled, string? address, string? modelId, UserId? userId);
 
 		/// <summary>
@@ -152,7 +98,7 @@ namespace Horde.Server.Devices
 		/// <param name="newEnabled">Whether the device is enabled or not</param>
 		/// <param name="newProblem">Whether to set or clear problem state</param>
 		/// <param name="newMaintenance">Whether to set or clear maintenance state</param>
-        /// <param name="modifiedByUserId">The user who is updating the device</param>
+		/// <param name="modifiedByUserId">The user who is updating the device</param>
 		Task UpdateDeviceAsync(DeviceId deviceId, DevicePoolId? newPoolId, string? newName, string? newAddress, string? newModelId, string? newNotes, bool? newEnabled, bool? newProblem, bool? newMaintenance, UserId? modifiedByUserId = null);
 
 		/// <summary>
@@ -162,28 +108,36 @@ namespace Horde.Server.Devices
 		Task<bool> DeleteDeviceAsync(DeviceId deviceId);
 
 		/// <summary>
-        /// Checkout or checkin the specified device
-        /// </summary>
-        /// <param name="deviceId"></param>
-        /// <param name="checkedOutByUserId"></param>
-        /// <returns></returns>
-        Task CheckoutDeviceAsync(DeviceId deviceId, UserId? checkedOutByUserId);
+		/// Checkout or checkin the specified device
+		/// </summary>
+		/// <param name="deviceId"></param>
+		/// <param name="checkedOutByUserId"></param>
+		/// <returns></returns>
+		Task CheckoutDeviceAsync(DeviceId deviceId, UserId? checkedOutByUserId);
 
 		// RESERVATIONS
+
+		/// <summary>
+		/// Tries to find an existing reservation block
+		/// </summary>
+		/// <param name="jobId"></param>
+		/// <param name="stepId"></param>
+		/// <returns></returns>
+		Task<IDeviceReservation?> TryFindReserveBlockAsync(JobId? jobId, JobStepId? stepId);
 
 		/// <summary>
 		/// Create a new reseveration in the pool with the specified devices
 		/// </summary>
 		/// <param name="poolId">The pool of devices to use for the new reservation</param>
 		/// <param name="request">The requested devices for the reservation</param>
+		/// <param name="problemCooldown">The configured problem device cooldown in minutes</param>
 		/// <param name="hostname">The hostname of the machine making the reservation</param>
 		/// <param name="reservationDetails">The details of the reservation</param>
-		/// <param name="streamId">The Stream Id associated with the job</param>
-		/// <param name="jobId">The Job Id associated with the job</param>
+		/// <param name="job">The job reserving the device</param>
 		/// <param name="stepId">The Step Id associated with the job</param>
-		/// <param name="jobName">The Job name associated with the job</param>
-		/// <param name="stepName">The Step name associated with the job</param>		
-		Task<IDeviceReservation?> TryAddReservationAsync(DevicePoolId poolId, List<DeviceRequestData> request, string? hostname, string? reservationDetails, string? streamId, string? jobId, string? stepId, string? jobName, string? stepName);
+		/// <param name="stepName">The Step name associated with the job</param>
+		/// <param name="stepIds">The step ids of the job to hold sequential reservation</param>		
+		Task<(IDeviceReservation?, bool)> TryAddReservationAsync(DevicePoolId poolId, List<DeviceRequestData> request, int problemCooldown, string? hostname, string? reservationDetails, IJob? job, JobStepId? stepId, string? stepName, List<JobStepId>? stepIds);
 
 		/// <summary>
 		/// Gets a reservation by guid for legacy clients
@@ -191,33 +145,37 @@ namespace Horde.Server.Devices
 		/// <param name="legacyGuid">YThe legacy guid of the reservation</param>
 		Task<IDeviceReservation?> TryGetReservationFromLegacyGuidAsync(string legacyGuid);
 
-        /// <summary>
-        /// Gets a reservation by device id
-        /// </summary>
-        /// <param name="id">A device contained in reservation</param>
-        Task<IDeviceReservation?> TryGetDeviceReservationAsync(DeviceId id);
+		/// <summary>
+		/// Gets a reservation by reservation id
+		/// </summary>
+		/// <param name="reservationId">The id of the reservation</param>
+		Task<IDeviceReservation?> TryGetReservationAsync(ObjectId reservationId);
 
-        /// <summary>
-        /// Get a list of all reservations
-        /// </summary>
-        Task<List<IDeviceReservation>> FindAllReservationsAsync();
+		/// <summary>
+		/// Gets a reservation by device id
+		/// </summary>
+		/// <param name="id">A device contained in reservation</param>
+		Task<IDeviceReservation?> TryGetDeviceReservationAsync(DeviceId id);
+
+		/// <summary>
+		/// Get a list of all reservations
+		/// </summary>
+		Task<List<IDeviceReservation>> FindAllReservationsAsync();
 
 		/// <summary>
 		/// Updates a reservation to the current time, for expiration
 		/// </summary>
 		/// <param name="id">The id of the reservation to update</param>
-		public Task<bool> TryUpdateReservationAsync(ObjectId id);
+		/// <param name="problemDevice">Whether the current device has a problem</param>
+		/// <param name="deviceIds">New devices assigned to reservation</param>
+		/// <param name="clearProblemDevice">Whether to clear problem device</param>
+		public Task<IDeviceReservation?> TryUpdateReservationAsync(ObjectId id, DeviceId? problemDevice = null, List<DeviceId>? deviceIds = null, bool? clearProblemDevice = null);
 
 		/// <summary>
 		/// Deletes a reservation and releases reserved devices
 		/// </summary>
 		/// <param name="id">The id of the reservation to delete</param>
 		public Task<bool> DeleteReservationAsync(ObjectId id);
-
-		/// <summary>
-		/// Deletes expired reservations
-		/// </summary>
-		public Task<bool> ExpireReservationsAsync();
 
 		/// <summary>
 		/// Deletes user device checkouts
@@ -246,7 +204,7 @@ namespace Horde.Server.Devices
 		/// Creates a device pool telemetry snapshot
 		/// </summary>
 		/// <returns></returns>
-		public Task CreatePoolTelemetrySnapshot();
+		public Task CreatePoolTelemetrySnapshotAsync(List<IDevicePool> pools, int poolCooldown);
 
 		/// <summary>
 		/// Gets pool telemetry for an optional date range

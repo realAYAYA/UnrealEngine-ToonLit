@@ -47,6 +47,16 @@ void UXRCreativePointerComponent::UninitializeComponent()
 }
 
 
+FCollisionQueryParams UXRCreativePointerComponent::GetQueryParams() const
+{
+	FCollisionQueryParams QueryParams;
+	QueryParams.AddIgnoredActors(IgnoredActors);
+	QueryParams.AddIgnoredComponents(IgnoredComponents);
+	QueryParams.bTraceComplex = true;
+	return QueryParams;
+}
+
+
 void UXRCreativePointerComponent::TickComponent(float InDeltaTime, enum ELevelTick InTickType, FActorComponentTickFunction* InThisTickFunction)
 {
 	Super::TickComponent(InDeltaTime, InTickType, InThisTickFunction);
@@ -54,9 +64,7 @@ void UXRCreativePointerComponent::TickComponent(float InDeltaTime, enum ELevelTi
 	RawTraceEnd = GetComponentLocation() + (GetForwardVector() * TraceMaxLength);
 	const FVector FilteredTraceEnd = SmoothingFilter->Filter(RawTraceEnd, InDeltaTime);
 
-	FCollisionQueryParams QueryParams;
-	QueryParams.AddIgnoredActor(GetOwner());
-	GetWorld()->LineTraceSingleByChannel(HitResult, GetComponentLocation(), FilteredTraceEnd, ECC_Visibility, QueryParams);
+	GetWorld()->LineTraceSingleByChannel(HitResult, GetComponentLocation(), FilteredTraceEnd, ECC_Visibility, GetQueryParams());
 }
 
 
@@ -65,7 +73,7 @@ FVector UXRCreativePointerComponent::GetRawTraceEnd(const bool bScaledByImpact /
 	if (bScaledByImpact)
 	{
 		const FVector TraceStart = GetComponentLocation();
-		return ((RawTraceEnd - TraceStart) * HitResult.Time) + TraceStart;
+		return TraceStart + ((RawTraceEnd - TraceStart) * HitResult.Time);
 	}
 	else
 	{
@@ -80,7 +88,7 @@ FVector UXRCreativePointerComponent::GetFilteredTraceEnd(const bool bScaledByImp
 	if (bScaledByImpact)
 	{
 		const FVector TraceStart = GetComponentLocation();
-		return ((HitResult.TraceEnd - TraceStart) * HitResult.Time) + TraceStart;
+		return TraceStart + ((HitResult.TraceEnd - TraceStart) * HitResult.Time);
 	}
 	else
 	{

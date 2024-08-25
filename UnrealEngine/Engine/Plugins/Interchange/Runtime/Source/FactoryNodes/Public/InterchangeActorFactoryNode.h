@@ -21,6 +21,12 @@ public:
 	bool SetCustomGlobalTransform(const FTransform& AttributeValue, bool bAddApplyDelegate = true);
 
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | ActorFactory")
+	bool GetCustomLocalTransform(FTransform& AttributeValue) const;
+
+	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | ActorFactory")
+	bool SetCustomLocalTransform(const FTransform& AttributeValue, bool bAddApplyDelegate = true);
+
+	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | ActorFactory")
 	bool GetCustomActorClassName(FString& AttributeValue) const
 	{
 		IMPLEMENT_NODE_ATTRIBUTE_GETTER(ActorClassName, FString);
@@ -52,6 +58,7 @@ private:
 	bool FillCustomGlobalTransformFromAsset(UObject* Asset);
 
 	const UE::Interchange::FAttributeKey Macro_CustomGlobalTransformKey = UE::Interchange::FAttributeKey(TEXT("GlobalTransform"));
+	const UE::Interchange::FAttributeKey Macro_CustomLocalTransformKey = UE::Interchange::FAttributeKey(TEXT("LocalTransform"));
 	const UE::Interchange::FAttributeKey Macro_CustomActorClassNameKey = UE::Interchange::FAttributeKey(TEXT("ActorClassName"));
 	const UE::Interchange::FAttributeKey Macro_CustomMobilityKey = UE::Interchange::FAttributeKey(TEXT("Mobility"));
 };

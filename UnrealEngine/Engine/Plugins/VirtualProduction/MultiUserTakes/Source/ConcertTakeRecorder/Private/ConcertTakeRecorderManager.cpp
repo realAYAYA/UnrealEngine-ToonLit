@@ -188,6 +188,45 @@ void FConcertTakeRecorderManager::Unregister(TSharedRef<IConcertClientSession> I
 	WeakSession.Reset();
 }
 
+const FConcertClientRecordSetting* FConcertTakeRecorderManager::FindClientRecorderSetting(const FGuid& EndpointId) const
+{
+	return Customization ? Customization->FindClientSettings(EndpointId) : nullptr;
+}
+
+bool FConcertTakeRecorderManager::EditClientSettings(
+	const FGuid& EndpointId,
+	TFunctionRef<void(FTakeRecordSettings& Settings)> ModifierFunc,
+	TOptional<TFunctionRef<bool(const FTakeRecordSettings& Settings)>> Predicate
+	)
+{
+	const FConcertClientRecordSetting* Setting = FindClientRecorderSetting(EndpointId);
+	if (!Setting)
+	{
+		return false;
+	}
+
+	const bool bFailedPredicate = Predicate && !(*Predicate)(Setting->Settings);
+	if (bFailedPredicate)
+	{
+		return true;
+	}
+
+	// This unnecessarily copies a bunch of strings in FConcertSessionClientInfo as well but it keeps this logic simple...
+	// Should refactor FConcertClientRecordSetting to contain a sub-struct that is then copied.
+	FConcertClientRecordSetting SettingCopy = *Setting;
+	ModifierFunc(SettingCopy.Settings);
+
+	// Update the other clients...
+	RecordSettingChange(SettingCopy);
+	// ... and the local UI
+	if (Customization)
+	{
+		Customization->UpdateClientSettings(EConcertClientStatus::Updated, SettingCopy);
+	}
+
+	return true;
+}
+
 void FConcertTakeRecorderManager::RegisterExtensions()
 {
 	ITakeRecorderModule& Module = FTakeRecorderRecorderManagerGetModule();
@@ -242,27 +281,30 @@ void FConcertTakeRecorderManager::UnregisterExtensions()
 		TakeRecorder->GetRecordErrorCheckGenerator().RemoveAll(this);
 	}
 
-	FPropertyEditorModule* PropertyEditorModule = FModuleManager::Get().GetModulePtr<FPropertyEditorModule>("PropertyEditor");
-	if (PropertyEditorModule)
+	if (GIsEditor)
 	{
-		if (UObjectInitialized())
+		FPropertyEditorModule* PropertyEditorModule = FModuleManager::Get().GetModulePtr<FPropertyEditorModule>("PropertyEditor");
+		if (PropertyEditorModule)
 		{
-			PropertyEditorModule->UnregisterCustomClassLayout(UConcertTakeSynchronization::StaticClass()->GetFName());
-			PropertyEditorModule->UnregisterCustomClassLayout(UConcertSessionRecordSettings::StaticClass()->GetFName());
+			if (UObjectInitialized())
+			{
+				PropertyEditorModule->UnregisterCustomClassLayout(UConcertTakeSynchronization::StaticClass()->GetFName());
+				PropertyEditorModule->UnregisterCustomClassLayout(UConcertSessionRecordSettings::StaticClass()->GetFName());
+			}
+
+			FConcertTakeRecorderSynchronizationCustomization::OnSyncPropertyValueChanged().Remove(TakeSyncDelegate);
 		}
 
-		FConcertTakeRecorderSynchronizationCustomization::OnSyncPropertyValueChanged().Remove(TakeSyncDelegate);
-	}
+		if (TSharedPtr<IConcertSyncClient> ConcertSyncClient = IConcertSyncClientModule::Get().GetClient(TEXT("MultiUser")))
+		{
+			IConcertClientTransactionBridge* TransactionBridge = ConcertSyncClient->GetTransactionBridge();
+			check(TransactionBridge != nullptr);
+			TransactionBridge->UnregisterTransactionFilter(TEXT("ConcertTakes"));
 
-	if (TSharedPtr<IConcertSyncClient> ConcertSyncClient = IConcertSyncClientModule::Get().GetClient(TEXT("MultiUser")))
-	{
-		IConcertClientTransactionBridge* TransactionBridge = ConcertSyncClient->GetTransactionBridge();
-		check(TransactionBridge != nullptr);
-		TransactionBridge->UnregisterTransactionFilter(TEXT("ConcertTakes"));
-
-		IConcertClientPackageBridge* PackageBridge = ConcertSyncClient->GetPackageBridge();
-		check(PackageBridge != nullptr);
-		PackageBridge->UnregisterPackageFilter(TEXT("ConcertTakes"));
+			IConcertClientPackageBridge* PackageBridge = ConcertSyncClient->GetPackageBridge();
+			check(PackageBridge != nullptr);
+			PackageBridge->UnregisterPackageFilter(TEXT("ConcertTakes"));
+		}
 	}
 }
 
@@ -918,8 +960,8 @@ EPackageFilterResult FConcertTakeRecorderManager::ShouldPackageBeFiltered(const 
 	{
 		FTakeRecorderProjectParameters Project = GetDefault<UTakeRecorderProjectSettings>()->Settings;
 		FString FullName = InPackageInfo.PackageName.ToString();
-		if (FullName.StartsWith(Project.RootTakeSaveDir.Path) &&
-			FullName.EndsWith(UE::TakeRecorderManager::Private::TempPostfix))
+		if (FullName.Contains(Project.RootTakeSaveDir.Path) &&
+			FullName.Contains(UE::TakeRecorderManager::Private::TempPostfix))
 		{
 			return EPackageFilterResult::Exclude;
 		}
@@ -990,6 +1032,7 @@ FTakeRecorderParameters FConcertTakeRecorderManager::SetupTakeParametersForMulti
 		{
 			FTakeRecorderParameters Output = Input;
 			Output.Project.TakeSaveDir = Input.Project.TakeSaveDir + UE::TakeRecorderManager::Private::TempPostfix;
+			Output.User.bSaveRecordedAssets = false;
 			return Output;
 		}
 	}

@@ -19,6 +19,7 @@ class UMovieSceneSection;
 class UMovieSceneEventSectionBase;
 class IMovieSceneToolsTrackImporter;
 class ULevelSequence;
+class IStructureDetailsView;
 
 class IMovieSceneToolsTakeData
 {
@@ -36,6 +37,13 @@ public:
 	virtual void PreEvaluation(UMovieScene* MovieScene, FFrameNumber Frame) {};
 	virtual void PostEvaluation(UMovieScene* MovieScene, FFrameNumber Frame) {};
 	virtual void StopBaking(UMovieScene* MovieScene) {};
+};
+
+// Interface to allow external modules to register additional key struct instanced property type customizations
+class IMovieSceneToolsKeyStructInstancedPropertyTypeCustomizer
+{
+public:
+	virtual void RegisterKeyStructInstancedPropertyTypeCustomization(TSharedRef<IStructureDetailsView> StructureDetailsView, TWeakObjectPtr<UMovieSceneSection> WeakOwningSection) {};
 };
 
 /**
@@ -70,6 +78,12 @@ public:
 
 	bool ImportAnimatedProperty(const FString& InPropertyName, const FRichCurve& InCurve, FGuid InBinding, UMovieScene* InMovieScene);
 	bool ImportStringProperty(const FString& InPropertyName, const FString& InPropertyValue, FGuid InBinding, UMovieScene* InMovieScene);
+
+	void RegisterKeyStructInstancedPropertyTypeCustomizer(IMovieSceneToolsKeyStructInstancedPropertyTypeCustomizer*);
+	void UnregisterKeyStructInstancedPropertyTypeCustomizer(IMovieSceneToolsKeyStructInstancedPropertyTypeCustomizer*);
+
+	// Called By SKeyEditInterface to allow external modules to add key struct instanced property type customizations
+	void CustomizeKeyStructInstancedPropertyTypes(TSharedRef<IStructureDetailsView> StructureDetailsView, TWeakObjectPtr<UMovieSceneSection> Section);
 
 private:
 
@@ -123,9 +137,12 @@ private:
 	FDelegateHandle PrimitiveMaterialCreateEditorHandle;
 	FDelegateHandle CameraShakeSourceShakeCreateEditorHandle;
 	FDelegateHandle CVarTrackCreateEditorHandle;
+	FDelegateHandle CustomPrimitiveDataTrackCreateEditorHandle;
+	FDelegateHandle BindingLifetimeTrackCreateEditorHandle;
 
 	FDelegateHandle CameraCutTrackModelHandle;
 	FDelegateHandle CinematicShotTrackModelHandle;
+	FDelegateHandle BindingLifetimeTrackModelHandle;
 
 	FDelegateHandle GenerateEventEntryPointsHandle;
 	FDelegateHandle FixupDynamicBindingPayloadParameterNameHandle;
@@ -138,4 +155,5 @@ private:
 	TArray<IMovieSceneToolsTrackImporter*> TrackImporters;
 
 	TArray<IMovieSceneToolsAnimationBakeHelper*> BakeHelpers;
+	TArray<IMovieSceneToolsKeyStructInstancedPropertyTypeCustomizer*> KeyStructInstancedPropertyTypeCustomizers;
 };

@@ -16,28 +16,31 @@ namespace UnrealBuildTool.Rules
 				"AdvancedPreviewScene",
 				"Core",
 				"CoreUObject",
-				"ComponentVisualizers",
-				"EditorInteractiveToolsFramework",
 				"Engine",
-				"InputCore",
-				"InteractiveToolsFramework",
-				"PropertyEditor",
-				"SlateCore",
-				"Slate",
+				"GameplayTags",
 				"SmartObjectsModule",
 				"SourceControl",
-				"UnrealEd",
 				"StructUtils",
-				"WorldConditions"
+				"UnrealEd",
+				"WorldConditions",
 			}
 			);
 
 			PrivateDependencyModuleNames.AddRange(
 			new string[] {
-				"RenderCore",
 				"ApplicationCore",
 				"AssetDefinition",
+				"BlueprintGraph",
+				"ComponentVisualizers",
+				"InputCore",
+				"PropertyAccessEditor",
+				"PropertyBindingUtils",
+				"PropertyEditor",
+				"RenderCore",
+				"Slate",
+				"SlateCore",
 				"StructUtilsEditor",
+				"ToolWidgets",
 			}
 			);
 		}

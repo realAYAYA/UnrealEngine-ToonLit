@@ -6,24 +6,12 @@
 #include "../DeferredShadingCommon.ush"
 #include "../BRDF.ush"
 #include "../SceneTextureParameters.ush"
+#include "LumenPosition.ush"
 #include "LumenRadianceCacheMarkCommon.ush"
 #include "LumenRadianceCacheCommon.ush"
 #include "LumenReflectionsCombine.ush"
 #include "../ClearCoatCommon.ush"
 #include "../ReflectionEnvironmentShared.ush"
-
-float3 GetWorldPositionFromScreenUV(float2 ScreenUV, float SceneDepth)
-{
-	float2 ScreenPosition = (ScreenUV - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
-	float3 WorldPosition = mul(float4(GetScreenPositionForProjectionType(ScreenPosition, SceneDepth), SceneDepth, 1), LWCHackToFloat(PrimaryView.ScreenToWorld)).xyz;
-	return WorldPosition;
-}
-
-float3 GetTranslatedWorldPositionFromScreenUV(float2 ScreenUV, float SceneDepth)
-{
-	float2 ScreenPosition = (ScreenUV - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
-	return mul(float4(GetScreenPositionForProjectionType(ScreenPosition, SceneDepth), SceneDepth, 1), PrimaryView.ScreenToTranslatedWorld).xyz;
-}
 
 #ifndef THREADGROUP_SIZE
 #define THREADGROUP_SIZE 1
@@ -93,7 +81,7 @@ void IrradianceFieldGatherCS(
 		if (IsValid(Material))
 		{
 			float3 WorldPosition = GetWorldPositionFromScreenUV(ScreenUV, SceneDepth);
-			float3 V = normalize(LWCHackToFloat(PrimaryView.WorldCameraOrigin) - WorldPosition);
+			float3 V = -GetCameraVectorFromTranslatedWorldPosition(WorldPosition);
 			uint ClipmapIndex = GetRadianceProbeClipmap(WorldPosition, InterleavedGradientNoise(SvPosition, View.StateFrameIndexMod8));
 
 			float3 DiffuseLighting = 0;

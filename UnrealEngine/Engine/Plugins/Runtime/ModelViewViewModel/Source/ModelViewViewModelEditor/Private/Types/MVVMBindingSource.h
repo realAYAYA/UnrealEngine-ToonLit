@@ -3,24 +3,31 @@
 #pragma once
 
 #include "Framework/Views/TableViewTypeTraits.h"
+#include "MVVMPropertyPath.h"
 #include "UObject/Class.h"
 
 struct FMVVMBindingName;
 struct FMVVMBlueprintPropertyPath;
+struct FMVVMBlueprintViewModelContext;
+class UWidget;
 class UWidgetBlueprint;
 
 namespace UE::MVVM
 {
+
 struct FBindingSource
 {
+private:
 	FGuid ViewModelId;
-	FName Name;
+	FName WidgetName;
 	TWeakObjectPtr<UClass> Class;
 	FText DisplayName;
+	EMVVMBlueprintFieldPathSource Source = EMVVMBlueprintFieldPathSource::None;
 
+public:
 	bool operator==(const FBindingSource& Other) const
 	{
-		return ViewModelId == Other.ViewModelId && Name == Other.Name && Class == Other.Class;
+		return Source == Other.Source && ViewModelId == Other.ViewModelId && WidgetName == Other.WidgetName && Class == Other.Class;
 	}
 
 	bool operator!=(const FBindingSource& Other) const
@@ -28,34 +35,62 @@ struct FBindingSource
 		return !(operator==(Other));
 	}
 
-	friend int32 GetTypeHash(const FBindingSource& Source)
+	friend int32 GetTypeHash(const FBindingSource& InSource)
 	{
-		uint32 Hash = HashCombine(GetTypeHash(Source.ViewModelId), GetTypeHash(Source.Name));
-		Hash = HashCombine(Hash, GetTypeHash(Source.Class));
+		uint32 Hash = HashCombine(GetTypeHash(InSource.ViewModelId), GetTypeHash(InSource.WidgetName));
+		Hash = HashCombine(Hash, GetTypeHash(InSource.Class));
+		Hash = HashCombine(Hash, GetTypeHash(InSource.Source));
 		return Hash;
 	}
 
 	bool IsValid() const
 	{
-		return Class != nullptr && (ViewModelId.IsValid() || !Name.IsNone());
+		return Class != nullptr && Source != EMVVMBlueprintFieldPathSource::None;
+	}
+
+	EMVVMBlueprintFieldPathSource GetSource() const
+	{
+		return Source;
+	}
+
+	const UClass* GetClass() const;
+	FText GetDisplayName() const;
+
+	FName GetWidgetName() const
+	{
+		return WidgetName;
+	}
+
+	FGuid GetViewModelId() const
+	{
+		return ViewModelId;
 	}
 
 	void Reset()
 	{
 		ViewModelId = FGuid();
-		Name = FName();
+		WidgetName = FName();
 		Class = nullptr;
 		DisplayName = FText::GetEmpty();
+		Source = EMVVMBlueprintFieldPathSource::None;
 	}
 
 	FMVVMBindingName ToBindingName(const UWidgetBlueprint* WidgetBlueprint) const;
+	void SetSourceTo(FMVVMBlueprintPropertyPath& PropertyPath) const;
 
+	bool Matches(const UWidgetBlueprint* WidgetBlueprint, const FMVVMBlueprintPropertyPath& PropertyPath) const;
+
+	static FBindingSource CreateForBlueprint(const UWidgetBlueprint* WidgetBlueprint);
+	static FBindingSource CreateForWidget(const UWidgetBlueprint* WidgetBlueprint, const UWidget* Widget);
 	static FBindingSource CreateForWidget(const UWidgetBlueprint* WidgetBlueprint, FName WidgetName);
 	static FBindingSource CreateForViewModel(const UWidgetBlueprint* WidgetBlueprint, FGuid ViewModelId);
 	static FBindingSource CreateForViewModel(const UWidgetBlueprint* WidgetBlueprint, FName ViewModelName);
+	static FBindingSource CreateForViewModel(const UWidgetBlueprint* WidgetBlueprint, const FMVVMBlueprintViewModelContext& ViewModelContext);
+	static FBindingSource CreateEmptySource(UClass* ViewModel);
 	static FBindingSource CreateFromPropertyPath(const UWidgetBlueprint* WidgetBlueprint, const FMVVMBlueprintPropertyPath& Path);
 };
-}
+
+} // namespace
 
 template <>
 struct TIsValidListItem<UE::MVVM::FBindingSource>
@@ -105,7 +140,7 @@ struct TListTypeTraits<UE::MVVM::FBindingSource>
 
 	static FString DebugDump(UE::MVVM::FBindingSource InPtr)
 	{
-		return InPtr.DisplayName.ToString();
+		return InPtr.GetDisplayName().ToString();
 	}
 
 	class SerializerType {};

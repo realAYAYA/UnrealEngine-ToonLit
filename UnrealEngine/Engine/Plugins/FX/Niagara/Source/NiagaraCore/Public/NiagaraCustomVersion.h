@@ -189,6 +189,20 @@ struct FNiagaraCustomVersion
 
 		RibbonRendererLinkOrderDefaultIsUniqueID,	// Ribbon renderer will default to unique ID rather than normalized age to make more things 'just work'
 
+		SubImageBlendEnabledByDefault,	// Renderer SubImage Blends are enabled by default
+
+		RibbonPlaneUseGeometryNormals,	// Ribbon renderer will use geometry normals by default rather than screen / facing aligned normals
+
+		InitialOwnerVelocityFromActor, // Actors velocity is used for the initial velocity before the component has any tracking, old assets use the old zero velocity
+
+		ParameterBindingWithValueRenameFixup, // FNiagaraParameterBindingWithValue wouldn't necessarily have the appropriate ResolvedParameter namespace when it comes to emitter merging
+
+		SimCache_BulkDataVersion1, // Sim Cache moved to bulk data by default
+
+		InheritanceUxRefactor, // Decoupling of 'Template' and 'Inheritance'
+
+		NDCSpawnGroupOverrideDisabledByDefault, // NDC Read DIs will not override spawn group by default when spawning particles. Old content will remain unchanged.
+		
 		// DO NOT ADD A NEW VERSION UNLESS YOU HAVE TALKED TO THE NIAGARA LEAD. Mismanagement of these versions can lead to data loss if it is adjusted in multiple streams simultaneously.
 		// -----<new versions can be added above this line>  -------------------------------------------------
 		VersionPlusOne,

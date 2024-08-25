@@ -1,0 +1,17 @@
+{
+	"FileVersion": 3,
+	"bIsPluginExtension": true,
+	"SupportedTargetPlatforms": [
+		"VisionOS"
+	],
+	"Modules": [
+		{
+			"Name": "OpenXRHandTracking",
+			"Type": "Runtime",
+			"PlatformAllowList": [
+				"VisionOS"
+			]
+		}
+	]
+}
+

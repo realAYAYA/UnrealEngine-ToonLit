@@ -153,8 +153,8 @@ bool FTargetDeviceServiceManager::AddTargetDevice(ITargetDevicePtr InDevice)
 
 void FTargetDeviceServiceManager::InitializeTargetPlatforms()
 {
-	ITargetPlatform::OnDeviceDiscovered().AddRaw(this, &FTargetDeviceServiceManager::HandleTargetPlatformDeviceDiscovered);
-	ITargetPlatform::OnDeviceLost().AddRaw(this, &FTargetDeviceServiceManager::HandleTargetPlatformDeviceLost);
+	ITargetPlatformControls::OnDeviceDiscovered().AddRaw(this, &FTargetDeviceServiceManager::HandleTargetPlatformDeviceDiscovered);
+	ITargetPlatformControls::OnDeviceLost().AddRaw(this, &FTargetDeviceServiceManager::HandleTargetPlatformDeviceLost);
 	
 	for (ITargetPlatform* Platform : GetTargetPlatformManager()->GetTargetPlatforms())
 	{
@@ -182,7 +182,7 @@ void FTargetDeviceServiceManager::LoadSettings()
 		return;
 	}
 
-	FConfigSection* OwnedDevices = GConfig->GetSectionPrivate(TEXT("TargetDeviceServices"), false, true, GEngineIni);
+	const FConfigSection* OwnedDevices = GConfig->GetSection(TEXT("TargetDeviceServices"), false, GEngineIni);
 	
 	if (OwnedDevices == nullptr)
 	{
@@ -190,7 +190,7 @@ void FTargetDeviceServiceManager::LoadSettings()
 	}
 
 	// for each entry in the INI file...
-	for (FConfigSection::TIterator It(*OwnedDevices); It; ++It)
+	for (FConfigSection::TConstIterator It(*OwnedDevices); It; ++It)
 	{
 		if (It.Key() != TEXT("StartupServices"))
 		{
@@ -325,8 +325,8 @@ void FTargetDeviceServiceManager::SaveSettings()
 
 void FTargetDeviceServiceManager::ShutdownTargetPlatforms()
 {
-	ITargetPlatform::OnDeviceDiscovered().RemoveAll(this);
-	ITargetPlatform::OnDeviceLost().RemoveAll(this);
+	ITargetPlatformControls::OnDeviceDiscovered().RemoveAll(this);
+	ITargetPlatformControls::OnDeviceLost().RemoveAll(this);
 }
 
 

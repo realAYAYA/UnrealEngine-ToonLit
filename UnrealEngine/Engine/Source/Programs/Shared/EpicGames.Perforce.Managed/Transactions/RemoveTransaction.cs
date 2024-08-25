@@ -2,6 +2,7 @@
 
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using EpicGames.Core;
 
 namespace EpicGames.Perforce.Managed
@@ -21,14 +22,19 @@ namespace EpicGames.Perforce.Managed
 			_newWorkspaceRootDir = new WorkspaceDirectoryInfo(workspaceRootDir.GetLocation());
 			_streamSnapshot = streamSnapshot;
 			_contentIdToTrackedFile = contentIdToTrackedFile;
-
-			using (ThreadPoolWorkQueue queue = new ThreadPoolWorkQueue())
-			{
-				queue.Enqueue(() => Merge(workspaceRootDir, _newWorkspaceRootDir, streamSnapshot.Root, queue));
-			}
 		}
 
-		void Merge(WorkspaceDirectoryInfo workspaceDir, WorkspaceDirectoryInfo newWorkspaceDir, StreamTreeRef streamTreeRef, ThreadPoolWorkQueue queue)
+		public static async Task<RemoveTransaction> CreateAsync(WorkspaceDirectoryInfo workspaceRootDir, StreamSnapshot streamSnapshot, Dictionary<FileContentId, CachedFileInfo> contentIdToTrackedFile, int numWorkers)
+		{
+			RemoveTransaction transaction = new(workspaceRootDir, streamSnapshot, contentIdToTrackedFile);
+
+			using AsyncThreadPoolWorkQueue queue = new(numWorkers);
+			await queue.EnqueueAsync(_ => transaction.MergeAsync(workspaceRootDir, transaction._newWorkspaceRootDir, streamSnapshot.Root, queue));
+			await queue.ExecuteAsync();
+			return transaction;
+		}
+
+		async Task MergeAsync(WorkspaceDirectoryInfo workspaceDir, WorkspaceDirectoryInfo newWorkspaceDir, StreamTreeRef streamTreeRef, AsyncThreadPoolWorkQueue queue)
 		{
 			StreamTree streamDir = _streamSnapshot.Lookup(streamTreeRef);
 
@@ -38,11 +44,11 @@ namespace EpicGames.Perforce.Managed
 				StreamTreeRef? streamSubTreeRef;
 				if (streamDir.NameToTree.TryGetValue(workspaceSubDir.Name, out streamSubTreeRef))
 				{
-					MergeSubDirectory(workspaceSubDir.Name, newWorkspaceDir, workspaceSubDir, streamSubTreeRef, queue);
+					await MergeSubDirectoryAsync(workspaceSubDir.Name, newWorkspaceDir, workspaceSubDir, streamSubTreeRef, queue);
 				}
 				else
 				{
-					RemoveDirectory(workspaceSubDir, queue);
+					await RemoveDirectoryAsync(workspaceSubDir, queue);
 				}
 			}
 
@@ -61,20 +67,20 @@ namespace EpicGames.Perforce.Managed
 			}
 		}
 
-		void MergeSubDirectory(Utf8String name, WorkspaceDirectoryInfo newWorkspaceDir, WorkspaceDirectoryInfo workspaceSubDir, StreamTreeRef streamSubTreeRef, ThreadPoolWorkQueue queue)
+		async Task MergeSubDirectoryAsync(Utf8String name, WorkspaceDirectoryInfo newWorkspaceDir, WorkspaceDirectoryInfo workspaceSubDir, StreamTreeRef streamSubTreeRef, AsyncThreadPoolWorkQueue queue)
 		{
 			WorkspaceDirectoryInfo newWorkspaceSubDir = new WorkspaceDirectoryInfo(newWorkspaceDir, name, streamSubTreeRef);
 			newWorkspaceDir.NameToSubDirectory.Add(newWorkspaceSubDir.Name, newWorkspaceSubDir);
-			queue.Enqueue(() => Merge(workspaceSubDir, newWorkspaceSubDir, streamSubTreeRef, queue));
+			await queue.EnqueueAsync(_ => MergeAsync(workspaceSubDir, newWorkspaceSubDir, streamSubTreeRef, queue));
 		}
 
-		void RemoveDirectory(WorkspaceDirectoryInfo workspaceDir, ThreadPoolWorkQueue queue)
+		async Task RemoveDirectoryAsync(WorkspaceDirectoryInfo workspaceDir, AsyncThreadPoolWorkQueue queue)
 		{
 			_directoriesToDelete.Enqueue(workspaceDir);
 
 			foreach (WorkspaceDirectoryInfo workspaceSubDir in workspaceDir.NameToSubDirectory.Values)
 			{
-				queue.Enqueue(() => RemoveDirectory(workspaceSubDir, queue));
+				await queue.EnqueueAsync(_ => RemoveDirectoryAsync(workspaceSubDir, queue));
 			}
 			foreach (WorkspaceFileInfo workspaceFile in workspaceDir.NameToFile.Values)
 			{

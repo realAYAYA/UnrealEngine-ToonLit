@@ -1,12 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+import 'package:epic_common/localizations.dart';
+import 'package:epic_common/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 
 import '../../../../utilities/net_utilities.dart';
-import '../../../elements/asset_icon.dart';
-import '../../../elements/epic_icon_button.dart';
-import '../../../elements/parsed_rich_text.dart';
 
 /// Error modal for when there's an error connecting to an instance of UE.
 class ErrorModal extends StatelessWidget {
@@ -30,7 +29,7 @@ class ErrorModal extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               AssetIcon(
-                path: 'assets/images/icons/alert_triangle_large.svg',
+                path: 'packages/epic_common/assets/icons/alert_triangle_large.svg',
                 size: 24,
               ),
               SizedBox(width: 10),
@@ -55,7 +54,7 @@ class ErrorModal extends StatelessWidget {
             children: [
               EpicLozengeButton(
                 onPressed: () => Navigator.of(context).pop(),
-                label: AppLocalizations.of(context)!.menuButtonCancel,
+                label: EpicCommonLocalizations.of(context)!.menuButtonCancel,
                 color: Colors.transparent,
               ),
               SizedBox(width: 16),
@@ -64,7 +63,7 @@ class ErrorModal extends StatelessWidget {
                   Navigator.of(context).pop();
                   reconnect?.call();
                 },
-                label: AppLocalizations.of(context)!.menuButtonRetry,
+                label: EpicCommonLocalizations.of(context)!.menuButtonRetry,
               ),
             ],
           ),

@@ -49,7 +49,10 @@ struct FGarbageTraits
 	{
 		return FBuiltInComponentTypes::IsBoundObjectGarbage(InObject);
 	}
-
+	FORCEINLINE static bool IsGarbage(FObjectComponent& InComponent)
+	{
+		return FBuiltInComponentTypes::IsBoundObjectGarbage(InComponent.GetObject());
+	}
 	
 	template<typename T>
 	FORCEINLINE static void AddReferencedObjects(FReferenceCollector& ReferenceCollector, T* In)
@@ -589,6 +592,13 @@ struct TOverlappingEntityTracker_WithGarbage : TOverlappingEntityTrackerImpl<Out
 
 				this->Outputs.RemoveAt(Index, 1);
 
+				// Make sure this output is not flagged as invalidated because it is being destroyed.
+				// This prevents us from blindly processing it in ProcessInvalidatedOutputs
+				if (this->InvalidatedOutputs.IsValidIndex(OutputIndex))
+				{
+					this->InvalidatedOutputs[OutputIndex] = false;
+				}
+
 				for (auto It = this->OutputToEntity.CreateKeyIterator(OutputIndex); It; ++It)
 				{
 					this->EntityToOutput.Remove(It.Value());
@@ -661,11 +671,11 @@ protected:
 
 
 template<typename OutputType, typename... KeyType>
-using TOverlappingEntityTracker = typename TChooseClass<
+using TOverlappingEntityTracker = std::conditional_t<
 	(THasAddReferencedObjectForComponent<KeyType>::Value || ...) || THasAddReferencedObjectForComponent<OutputType>::Value,
 	TOverlappingEntityTracker_WithGarbage<OutputType, KeyType...>,
 	TOverlappingEntityTracker_NoGarbage<OutputType, KeyType...>
->::Result;
+>;
 
 } // namespace MovieScene
 } // namespace UE

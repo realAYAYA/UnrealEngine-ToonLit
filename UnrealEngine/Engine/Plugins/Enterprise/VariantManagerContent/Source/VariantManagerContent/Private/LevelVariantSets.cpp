@@ -231,7 +231,7 @@ FString ULevelVariantSets::GetUniqueVariantSetName(const FString& InPrefix)
 	FString LastChar = VarSetName.Right(1);
 	while (LastChar.IsNumeric())
 	{
-		VarSetName.LeftChopInline(1, false);
+		VarSetName.LeftChopInline(1, EAllowShrinking::No);
 		LastChar = VarSetName.Right(1);
 	}
 

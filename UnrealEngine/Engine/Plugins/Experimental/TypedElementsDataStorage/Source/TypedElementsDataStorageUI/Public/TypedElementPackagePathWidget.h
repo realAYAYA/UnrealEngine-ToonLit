@@ -31,12 +31,10 @@ public:
 	FTypedElementPackagePathWidgetConstructor();
 	~FTypedElementPackagePathWidgetConstructor() override = default;
 
-	bool CanBeReused() const override;
-
 protected:
 	explicit FTypedElementPackagePathWidgetConstructor(const UScriptStruct* InTypeInfo);
 
-	TSharedPtr<SWidget> CreateWidget() override;
+	TSharedPtr<SWidget> CreateWidget(const TypedElementDataStorage::FMetaDataView& Arguments) override;
 	bool FinalizeWidget(ITypedElementDataStorageInterface* DataStorage, ITypedElementDataStorageUiInterface* DataStorageUi,
 		TypedElementRowHandle Row, const TSharedPtr<SWidget>& Widget) override;
 };

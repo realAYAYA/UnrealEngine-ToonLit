@@ -1,49 +1,57 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using UnrealBuildTool;
 
-public class DotNetPerforceLib : ModuleRules
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+namespace UnrealBuildTool.Rules
 {
-	public DotNetPerforceLib(ReadOnlyTargetRules Target) : base(Target)
+	public class DotNetPerforceLib : ModuleRules
 	{
-		if (Target.Platform == UnrealTargetPlatform.Win64)
+		public DotNetPerforceLib(ReadOnlyTargetRules Target) : base(Target)
 		{
-			PrivateDefinitions.Add("OS_NT");
-			PrivateDefinitions.Add("_CRT_NONSTDC_NO_DEPRECATE");
-		}
+			if (Target.Platform == UnrealTargetPlatform.Win64)
+			{
+				PrivateDefinitions.Add("OS_NT");
+				PrivateDefinitions.Add("_CRT_NONSTDC_NO_DEPRECATE");
+			}
 
-		PublicIncludePathModuleNames.Add("Core");
+			PublicIncludePathModuleNames.Add("Core");
 
-		PrivateDependencyModuleNames.Add("OpenSSL");
+			PrivateDependencyModuleNames.Add("OpenSSL");
 
-		string ApiPath = Target.UEThirdPartySourceDirectory + "Perforce/p4api-2018.1/";
-		if (Target.Platform == UnrealTargetPlatform.Linux)
-		{
-			PublicSystemIncludePaths.Add(ApiPath + "Include/Linux");
-			PublicAdditionalLibraries.Add(ApiPath + "Lib/Linux/libclient.a");
-			PublicAdditionalLibraries.Add(ApiPath + "Lib/Linux/librpc.a");
-			PublicAdditionalLibraries.Add(ApiPath + "Lib/Linux/libsupp.a");
+			string ApiPath = Target.UEThirdPartySourceDirectory + "Perforce/p4api-2023.2/";
+			if (Target.Platform == UnrealTargetPlatform.Linux)
+			{
+				PublicSystemIncludePaths.Add(ApiPath + "Linux/include");
+				PublicAdditionalLibraries.Add(ApiPath + "Linux/lib/libclient.a");
+				PublicAdditionalLibraries.Add(ApiPath + "Linux/lib/librpc.a");
+				PublicAdditionalLibraries.Add(ApiPath + "Linux/lib/libsupp.a");
+				PublicAdditionalLibraries.Add(ApiPath + "Linux/lib/libp4script_cstub.a");
 
-			PublicSystemLibraries.Add("dl");
-		}
-		else if (Target.Platform == UnrealTargetPlatform.Mac)
-		{
-			PublicIncludePaths.Add(ApiPath + "Include/Mac");
-			PublicAdditionalLibraries.Add(ApiPath + "Lib/Mac/libclient.a");
-			PublicAdditionalLibraries.Add(ApiPath + "Lib/Mac/librpc.a");
-			PublicAdditionalLibraries.Add(ApiPath + "Lib/Mac/libsupp.a");
+				PublicSystemLibraries.Add("dl");
+			}
+			else if (Target.Platform == UnrealTargetPlatform.Mac)
+			{
+				PublicIncludePaths.Add(ApiPath + "Mac/include");
+				PublicAdditionalLibraries.Add(ApiPath + "Mac/lib/libclient.a");
+				PublicAdditionalLibraries.Add(ApiPath + "Mac/lib/librpc.a");
+				PublicAdditionalLibraries.Add(ApiPath + "Mac/lib/libsupp.a");
+				PublicAdditionalLibraries.Add(ApiPath + "Mac/lib/libp4script_cstub.a");
 
-			PublicFrameworks.Add("Foundation");
-			PublicFrameworks.Add("CoreFoundation");
-			PublicFrameworks.Add("CoreGraphics");
-			PublicFrameworks.Add("CoreServices");
-		}
-		else if (Target.Platform == UnrealTargetPlatform.Win64)
-		{
-			PublicIncludePaths.Add(ApiPath + "Include/Win64/VS2015");
-			PublicAdditionalLibraries.Add(ApiPath + "Lib/Win64/VS2015/Release/libclient.lib");
-			PublicAdditionalLibraries.Add(ApiPath + "Lib/Win64/VS2015/Release/librpc.lib");
-			PublicAdditionalLibraries.Add(ApiPath + "Lib/Win64/VS2015/Release/libsupp.lib");
+				PublicFrameworks.Add("Foundation");
+				PublicFrameworks.Add("CoreFoundation");
+				PublicFrameworks.Add("CoreGraphics");
+				PublicFrameworks.Add("CoreServices");
+				PublicFrameworks.Add("Security");
+			}
+			else if (Target.Platform == UnrealTargetPlatform.Win64)
+			{
+				PublicIncludePaths.Add(ApiPath + "Win64/include");
+				PublicAdditionalLibraries.Add(ApiPath + "Win64/lib/libclient.lib");
+				PublicAdditionalLibraries.Add(ApiPath + "Win64/lib/librpc.lib");
+				PublicAdditionalLibraries.Add(ApiPath + "Win64/lib/libsupp.lib");
+				PublicAdditionalLibraries.Add(ApiPath + "Win64/lib/libp4script_cstub.lib");
+			}
 		}
 	}
 }

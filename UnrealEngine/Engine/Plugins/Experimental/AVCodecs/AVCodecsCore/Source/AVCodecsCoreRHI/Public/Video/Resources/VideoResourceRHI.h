@@ -7,9 +7,9 @@
 #include "Video/VideoResource.h"
 #include "RHI.h"
 
-#if PLATFORM_WINDOWS
+#if AVCODECS_USE_D3D
 THIRD_PARTY_INCLUDES_START
-#include "Windows/MinWindows.h"
+#include "Windows/WindowsHWrapper.h"
 #include "d3d12.h"
 THIRD_PARTY_INCLUDES_END
 #endif
@@ -24,7 +24,7 @@ public:
 	struct FRawData
 	{
 		FTextureRHIRef Texture;
-#if PLATFORM_WINDOWS
+#if AVCODECS_USE_D3D
 		TRefCountPtr<ID3D12Fence> Fence; // TODO replace with an RHI fence and convert in a transform function
 #else 
 		FGPUFenceRHIRef Fence;
@@ -81,7 +81,7 @@ FAVResult FAVExtension::TransformResource(TSharedPtr<FVideoResourceRHI>& OutReso
 template <>
 FAVResult FAVExtension::TransformResource(TSharedPtr<FVideoResourceRHI>& OutResource, TSharedPtr<class FVideoResourceCPU> const& InResource);
 
-#if PLATFORM_WINDOWS
+#if AVCODECS_USE_D3D
 
 template <>
 FAVResult FAVExtension::TransformResource(TSharedPtr<class FVideoResourceD3D11>& OutResource, TSharedPtr<FVideoResourceRHI> const& InResource);
@@ -91,8 +91,19 @@ FAVResult FAVExtension::TransformResource(TSharedPtr<class FVideoResourceD3D12>&
 
 #endif
 
+#if AVCODECS_USE_VULKAN
+
 template <>
 FAVResult FAVExtension::TransformResource(TSharedPtr<class FVideoResourceVulkan>& OutResource, TSharedPtr<FVideoResourceRHI> const& InResource);
+
+#endif
+
+#if AVCODECS_USE_METAL
+
+template <>
+FAVResult FAVExtension::TransformResource(TSharedPtr<class FVideoResourceMetal>& OutResource, TSharedPtr<FVideoResourceRHI> const& InResource);
+
+#endif
 
 DECLARE_TYPEID(FVideoContextRHI, AVCODECSCORERHI_API);
 DECLARE_TYPEID(FVideoResourceRHI, AVCODECSCORERHI_API);

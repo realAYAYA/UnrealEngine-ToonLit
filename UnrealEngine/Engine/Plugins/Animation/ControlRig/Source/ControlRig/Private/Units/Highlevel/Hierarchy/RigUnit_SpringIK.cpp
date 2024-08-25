@@ -5,6 +5,49 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(RigUnit_SpringIK)
 
+#if WITH_EDITOR
+
+bool FRigUnit_SpringIK::UpdateHierarchyForDirectManipulation(const URigVMUnitNode* InNode, TSharedPtr<FStructOnScope> InInstance, FControlRigExecuteContext& InContext, TSharedPtr<FRigDirectManipulationInfo> InInfo)
+{
+	URigHierarchy* Hierarchy = InContext.Hierarchy;
+	if (Hierarchy == nullptr)
+	{
+		return false;
+	}
+
+	if(InInfo->Target.Name == GET_MEMBER_NAME_STRING_CHECKED(FRigUnit_SpringIK, PoleVector))
+	{
+		const FRigElementKey PoleVectorSpaceKey(PoleVectorSpace, ERigElementType::Bone);
+		const FTransform ParentTransform = Hierarchy->GetGlobalTransform(PoleVectorSpaceKey, false);
+		Hierarchy->SetControlOffsetTransform(InInfo->ControlKey, ParentTransform, false);
+		Hierarchy->SetLocalTransform(InInfo->ControlKey, FTransform(PoleVector), false);
+		if(!InInfo->bInitialized)
+		{
+			Hierarchy->SetLocalTransform(InInfo->ControlKey, FTransform(PoleVector), true);
+		}
+		return true;
+	}
+	return FRigUnit_HighlevelBaseMutable::UpdateHierarchyForDirectManipulation(InNode, InInstance, InContext, InInfo);
+}
+
+bool FRigUnit_SpringIK::UpdateDirectManipulationFromHierarchy(const URigVMUnitNode* InNode, TSharedPtr<FStructOnScope> InInstance, FControlRigExecuteContext& InContext, TSharedPtr<FRigDirectManipulationInfo> InInfo)
+{
+	URigHierarchy* Hierarchy = InContext.Hierarchy;
+	if (Hierarchy == nullptr)
+	{
+		return false;
+	}
+
+	if(InInfo->Target.Name == GET_MEMBER_NAME_STRING_CHECKED(FRigUnit_SpringIK, PoleVector))
+	{
+		PoleVector = Hierarchy->GetLocalTransform(InInfo->ControlKey, false).GetTranslation();
+		return true;
+	}
+	return FRigUnit_HighlevelBaseMutable::UpdateDirectManipulationFromHierarchy(InNode, InInstance, InContext, InInfo);
+}
+
+#endif
+
 FRigUnit_SpringIK_Execute()
 {
     DECLARE_SCOPE_HIERARCHICAL_COUNTER_RIGUNIT()

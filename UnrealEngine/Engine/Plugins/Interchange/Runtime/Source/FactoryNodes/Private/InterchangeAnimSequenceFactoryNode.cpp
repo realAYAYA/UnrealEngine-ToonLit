@@ -98,6 +98,8 @@ FString UInterchangeAnimSequenceFactoryNode::GetTypeName() const
 	return TypeName;
 }
 
+#if WITH_EDITOR
+
 FString UInterchangeAnimSequenceFactoryNode::GetKeyDisplayName(const UE::Interchange::FAttributeKey& NodeAttributeKey) const
 {
 	FString KeyDisplayName = NodeAttributeKey.ToString();
@@ -109,12 +111,238 @@ FString UInterchangeAnimSequenceFactoryNode::GetKeyDisplayName(const UE::Interch
 	{
 		KeyDisplayName = TEXT("Specified Existing Skeleton");
 	}
+	else if (NodeAttributeKey == UE::Interchange::FAnimSequenceNodeStaticData::GetAnimatedMorphTargetDependenciesKey())
+	{
+		KeyDisplayName = TEXT("Animated Morph Targets Count");
+		return KeyDisplayName;
+	}
+	else if (KeyDisplayName.StartsWith(UE::Interchange::FAnimSequenceNodeStaticData::GetAnimatedMorphTargetDependenciesKey().ToString()))
+	{
+		KeyDisplayName = TEXT("Animated Morph Targets Index ");
+		const FString IndexKey = UE::Interchange::TArrayAttributeHelper<FString>::IndexKey();
+		int32 IndexPosition = KeyDisplayName.Find(IndexKey) + IndexKey.Len();
+		if (IndexPosition < KeyDisplayName.Len())
+		{
+			KeyDisplayName += KeyDisplayName.RightChop(IndexPosition);
+		}
+		return KeyDisplayName;
+	}
+	else if (NodeAttributeKey == UE::Interchange::FAnimSequenceNodeStaticData::GetAnimatedAttributeCurveNamesKey())
+	{
+		KeyDisplayName = TEXT("Animated Attribute Curvse Count");
+		return KeyDisplayName;
+	}
+	else if (KeyDisplayName.StartsWith(UE::Interchange::FAnimSequenceNodeStaticData::GetAnimatedAttributeCurveNamesKey().ToString()))
+	{
+		KeyDisplayName = TEXT("Animated Attribute Curves Index ");
+		const FString IndexKey = UE::Interchange::TArrayAttributeHelper<FString>::IndexKey();
+		int32 IndexPosition = KeyDisplayName.Find(IndexKey) + IndexKey.Len();
+		if (IndexPosition < KeyDisplayName.Len())
+		{
+			KeyDisplayName += KeyDisplayName.RightChop(IndexPosition);
+		}
+		return KeyDisplayName;
+	}
+	else if (NodeAttributeKey == UE::Interchange::FAnimSequenceNodeStaticData::GetAnimatedAttributeStepCurveNamesKey())
+	{
+		KeyDisplayName = TEXT("Animated Attribute Step Curves Count");
+		return KeyDisplayName;
+	}
+	else if (KeyDisplayName.StartsWith(UE::Interchange::FAnimSequenceNodeStaticData::GetAnimatedAttributeStepCurveNamesKey().ToString()))
+	{
+		KeyDisplayName = TEXT("Animated Attribute Step Curves Index ");
+		const FString IndexKey = UE::Interchange::TArrayAttributeHelper<FString>::IndexKey();
+		int32 IndexPosition = KeyDisplayName.Find(IndexKey) + IndexKey.Len();
+		if (IndexPosition < KeyDisplayName.Len())
+		{
+			KeyDisplayName += KeyDisplayName.RightChop(IndexPosition);
+		}
+		return KeyDisplayName;
+	}
+	else if (NodeAttributeKey == UE::Interchange::FAnimSequenceNodeStaticData::GetAnimatedMaterialCurveSuffixesKey())
+	{
+		KeyDisplayName = TEXT("Animated Material Curve suffixes Count");
+		return KeyDisplayName;
+	}
+	else if (KeyDisplayName.StartsWith(UE::Interchange::FAnimSequenceNodeStaticData::GetAnimatedMaterialCurveSuffixesKey().ToString()))
+	{
+		KeyDisplayName = TEXT("Animated Material Curve Suffixes Index ");
+		const FString IndexKey = UE::Interchange::TArrayAttributeHelper<FString>::IndexKey();
+		int32 IndexPosition = KeyDisplayName.Find(IndexKey) + IndexKey.Len();
+		if (IndexPosition < KeyDisplayName.Len())
+		{
+			KeyDisplayName += KeyDisplayName.RightChop(IndexPosition);
+		}
+		return KeyDisplayName;
+	}
+	else if (NodeAttributeKey == UE::Interchange::FAnimSequenceNodeStaticData::GetSceneNodeAnimationPayloadKeyUidMapKey())
+	{
+		KeyDisplayName = TEXT("Scene Node Animation Payload Key Uid Count");
+		return KeyDisplayName;
+	}
+	else if (KeyDisplayName.StartsWith(UE::Interchange::FAnimSequenceNodeStaticData::GetSceneNodeAnimationPayloadKeyUidMapKey().ToString()))
+	{
+		FString MapKeyIndex = UE::Interchange::FAnimSequenceNodeStaticData::GetSceneNodeAnimationPayloadKeyUidMapKey().ToString() + TEXT("_KeyIndex_");
+		FString MapKey = UE::Interchange::FAnimSequenceNodeStaticData::GetSceneNodeAnimationPayloadKeyUidMapKey().ToString() + TEXT("_Key_");
+
+		int32 IndexPosition = 0;
+		if (KeyDisplayName.StartsWith(MapKeyIndex))
+		{
+			KeyDisplayName = TEXT("Scene Node Animation Payload Key Uid Key ");
+			IndexPosition = KeyDisplayName.Find(MapKeyIndex) + MapKeyIndex.Len();
+		}
+		else if (KeyDisplayName.StartsWith(MapKey))
+		{
+			KeyDisplayName = TEXT("Scene Node Animation Payload Key Uid Value ");
+			IndexPosition = KeyDisplayName.Find(MapKey) + MapKey.Len();
+		}
+
+		if (IndexPosition < KeyDisplayName.Len())
+		{
+			KeyDisplayName += KeyDisplayName.RightChop(IndexPosition);
+		}
+		return KeyDisplayName;
+	}
+	else if (NodeAttributeKey == UE::Interchange::FAnimSequenceNodeStaticData::GetSceneNodeAnimationPayloadKeyTypeMapKey())
+	{
+		KeyDisplayName = TEXT("Scene Node Animation Payload Key Type Count");
+		return KeyDisplayName;
+	}
+	else if (KeyDisplayName.StartsWith(UE::Interchange::FAnimSequenceNodeStaticData::GetSceneNodeAnimationPayloadKeyTypeMapKey().ToString()))
+	{
+		FString MapKeyIndex = UE::Interchange::FAnimSequenceNodeStaticData::GetSceneNodeAnimationPayloadKeyTypeMapKey().ToString() + TEXT("_KeyIndex_");
+		FString MapKey = UE::Interchange::FAnimSequenceNodeStaticData::GetSceneNodeAnimationPayloadKeyTypeMapKey().ToString() + TEXT("_Key_");
+
+		int32 IndexPosition = 0;
+		if (KeyDisplayName.StartsWith(MapKeyIndex))
+		{
+			KeyDisplayName = TEXT("Scene Node Animation Payload Key Type Key ");
+			IndexPosition = KeyDisplayName.Find(MapKeyIndex) + MapKeyIndex.Len();
+		}
+		else if (KeyDisplayName.StartsWith(MapKey))
+		{
+			KeyDisplayName = TEXT("Scene Node Animation Payload Key Type Value ");
+			IndexPosition = KeyDisplayName.Find(MapKey) + MapKey.Len();
+		}
+
+		if (IndexPosition < KeyDisplayName.Len())
+		{
+			KeyDisplayName += KeyDisplayName.RightChop(IndexPosition);
+		}
+		return KeyDisplayName;
+	}
+	else if (NodeAttributeKey == UE::Interchange::FAnimSequenceNodeStaticData::GetMorphTargetNodePayloadKeyUidMapKey())
+	{
+		KeyDisplayName = TEXT("Morph Target Node Payload Key Uid Count");
+		return KeyDisplayName;
+	}
+	else if (KeyDisplayName.StartsWith(UE::Interchange::FAnimSequenceNodeStaticData::GetMorphTargetNodePayloadKeyUidMapKey().ToString()))
+	{
+		FString MapKeyIndex = UE::Interchange::FAnimSequenceNodeStaticData::GetMorphTargetNodePayloadKeyUidMapKey().ToString() + TEXT("_KeyIndex_");
+		FString MapKey = UE::Interchange::FAnimSequenceNodeStaticData::GetMorphTargetNodePayloadKeyUidMapKey().ToString() + TEXT("_Key_");
+
+		int32 IndexPosition = 0;
+		if (KeyDisplayName.StartsWith(MapKeyIndex))
+		{
+			KeyDisplayName = TEXT("Morph Target Node Payload Key Uid Key ");
+			IndexPosition = KeyDisplayName.Find(MapKeyIndex) + MapKeyIndex.Len();
+		}
+		else if (KeyDisplayName.StartsWith(MapKey))
+		{
+			KeyDisplayName = TEXT("Morph Target Node Payload Key Uid Value ");
+			IndexPosition = KeyDisplayName.Find(MapKey) + MapKey.Len();
+		}
+
+		if (IndexPosition < KeyDisplayName.Len())
+		{
+			KeyDisplayName += KeyDisplayName.RightChop(IndexPosition);
+		}
+		return KeyDisplayName;
+	}
+	else if (NodeAttributeKey == UE::Interchange::FAnimSequenceNodeStaticData::GetMorphTargetNodePayloadKeyTypeMapKey())
+	{
+		KeyDisplayName = TEXT("Morph Target Node Payload Key Type Count");
+		return KeyDisplayName;
+	}
+	else if (KeyDisplayName.StartsWith(UE::Interchange::FAnimSequenceNodeStaticData::GetMorphTargetNodePayloadKeyTypeMapKey().ToString()))
+	{
+		FString MapKeyIndex = UE::Interchange::FAnimSequenceNodeStaticData::GetMorphTargetNodePayloadKeyTypeMapKey().ToString() + TEXT("_KeyIndex_");
+		FString MapKey = UE::Interchange::FAnimSequenceNodeStaticData::GetMorphTargetNodePayloadKeyTypeMapKey().ToString() + TEXT("_Key_");
+
+		int32 IndexPosition = 0;
+		if (KeyDisplayName.StartsWith(MapKeyIndex))
+		{
+			KeyDisplayName = TEXT("Morph Target Node Payload Key Type Key ");
+			IndexPosition = KeyDisplayName.Find(MapKeyIndex) + MapKeyIndex.Len();
+		}
+		else if (KeyDisplayName.StartsWith(MapKey))
+		{
+			KeyDisplayName = TEXT("Morph Target Node Payload Key Type Value ");
+			IndexPosition = KeyDisplayName.Find(MapKey) + MapKey.Len();
+		}
+
+		if (IndexPosition < KeyDisplayName.Len())
+		{
+			KeyDisplayName += KeyDisplayName.RightChop(IndexPosition);
+		}
+		return KeyDisplayName;
+	}
 	else
 	{
 		KeyDisplayName = Super::GetKeyDisplayName(NodeAttributeKey);
 	}
 	return KeyDisplayName;
 }
+
+FString UInterchangeAnimSequenceFactoryNode::GetAttributeCategory(const UE::Interchange::FAttributeKey& NodeAttributeKey) const
+{
+	const FString NodeAttributeKeyString = NodeAttributeKey.ToString();
+	if (NodeAttributeKeyString.StartsWith(UE::Interchange::FAnimSequenceNodeStaticData::GetAnimatedMorphTargetDependenciesKey().ToString()))
+	{
+		return TEXT("Animated Morph Target Dependencies");
+	}
+	else if (NodeAttributeKeyString.StartsWith(UE::Interchange::FAnimSequenceNodeStaticData::GetAnimatedAttributeCurveNamesKey().ToString()))
+	{
+		return TEXT("Animated Attribute Curve Names");
+	}
+	else if (NodeAttributeKeyString.StartsWith(UE::Interchange::FAnimSequenceNodeStaticData::GetAnimatedAttributeStepCurveNamesKey().ToString()))
+	{
+		return TEXT("Animated Attribute Step Curve Names");
+	}
+	else if (NodeAttributeKeyString.StartsWith(UE::Interchange::FAnimSequenceNodeStaticData::GetAnimatedMaterialCurveSuffixesKey().ToString()))
+	{
+		return TEXT("Animated Material Curve Suffixes");
+	}
+	else if (NodeAttributeKeyString.StartsWith(UE::Interchange::FAnimSequenceNodeStaticData::GetSceneNodeAnimationPayloadKeyUidMapKey().ToString())
+		|| NodeAttributeKeyString.StartsWith(UE::Interchange::FAnimSequenceNodeStaticData::GetSceneNodeAnimationPayloadKeyTypeMapKey().ToString()))
+	{
+		return TEXT("Scene Node Animation Payload Keys");
+	}
+	else if (NodeAttributeKeyString.StartsWith(UE::Interchange::FAnimSequenceNodeStaticData::GetMorphTargetNodePayloadKeyUidMapKey().ToString())
+		|| NodeAttributeKeyString.StartsWith(UE::Interchange::FAnimSequenceNodeStaticData::GetMorphTargetNodePayloadKeyTypeMapKey().ToString()))
+	{
+		return TEXT("Morph Target Node Payload Keys");
+	}
+	else
+	{
+		return Super::GetAttributeCategory(NodeAttributeKey);
+	}
+}
+
+bool UInterchangeAnimSequenceFactoryNode::ShouldHideAttribute(const UE::Interchange::FAttributeKey& NodeAttributeKey) const
+{
+	if (UserInterfaceContext == EInterchangeNodeUserInterfaceContext::Preview)
+	{
+		if (NodeAttributeKey == Macro_CustomSkeletonFactoryNodeUidKey)
+		{
+			return true;
+		}
+	}
+
+	return Super::ShouldHideAttribute(NodeAttributeKey);
+}
+
+#endif //WITH_EDITOR
 
 UClass* UInterchangeAnimSequenceFactoryNode::GetObjectClass() const
 {

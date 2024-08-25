@@ -15,7 +15,7 @@ public class AlembicLib : ModuleRules
 
 		bool bDebug = (Target.Configuration == UnrealTargetConfiguration.Debug && Target.bDebugBuildsActuallyUseDebugCRT);
 
-		string DeploymentDirectory = Path.Combine(ModuleDirectory, "Deploy", "alembic-1.8.2");
+		string DeploymentDirectory = Path.Combine(ModuleDirectory, "Deploy", "alembic-1.8.6");
 
 		PublicSystemIncludePaths.Add(Path.Combine(DeploymentDirectory, "include"));
 

@@ -10,6 +10,7 @@
 #pragma once
 
 #include "Engine/World.h"
+#include "UObject/LinkerInstancingContext.h"
 #include "WorldPartition/WorldPartitionRuntimeCell.h"
 
 class FWorldPartitionPackageHelper;
@@ -19,7 +20,9 @@ struct FActorContainerID;
 class FWorldPartitionLevelHelper
 {
 public:
-	static FString AddActorContainerIDToSubPathString(const FActorContainerID& InContainerID, const FString& InSubPathString);
+	ENGINE_API static FString AddActorContainerIDToSubPathString(const FActorContainerID& InContainerID, const FString& InSubPathString);
+	ENGINE_API static FString AddActorContainerID(const FActorContainerID& InContainerID, const FString& InActorName);
+
 #if WITH_EDITOR
 public:
 	static FWorldPartitionLevelHelper& Get();
@@ -36,7 +39,37 @@ public:
 	static void MoveExternalActorsToLevel(const TArray<FWorldPartitionRuntimeCellObjectMapping>& InChildPackages, ULevel* InLevel, TArray<UPackage*>& OutModifiedPackages);
 	static void RemapLevelSoftObjectPaths(ULevel* InLevel, UWorldPartition* InWorldPartition);
 	
-	static bool LoadActors(UWorld* InOuterWorld, ULevel* InDestLevel, TArrayView<FWorldPartitionRuntimeCellObjectMapping> InActorPackages, FPackageReferencer& InPackageReferencer, TFunction<void(bool)> InCompletionCallback, bool bInLoadAsync, FLinkerInstancingContext InOutInstancingContext);
+	UE_DEPRECATED(5.4, "LoadActors is deprecated, LoadActors with FLoadActorsParams should be used instead.")
+	static bool LoadActors(UWorld* InOuterWorld, ULevel* InDestLevel, TArrayView<FWorldPartitionRuntimeCellObjectMapping> InActorPackages, FPackageReferencer& InPackageReferencer, TFunction<void(bool)> InCompletionCallback, bool bInLoadAsync, FLinkerInstancingContext InInstancingContext);
+
+	/* Struct of optional parameters passed to foreach actordesc functions. */
+	struct FLoadActorsParams
+	{
+		FLoadActorsParams()
+			: OuterWorld(nullptr)
+			, DestLevel(nullptr)
+			, PackageReferencer(nullptr)
+			, bLoadAsync(false)
+		{}
+
+		UWorld* OuterWorld;
+		ULevel* DestLevel;
+		TArrayView<FWorldPartitionRuntimeCellObjectMapping> ActorPackages;
+		FPackageReferencer* PackageReferencer;
+		TFunction<void(bool)> CompletionCallback;
+		bool bLoadAsync;
+		mutable FLinkerInstancingContext InstancingContext;
+
+		FLoadActorsParams& SetOuterWorld(UWorld* InOuterWorld) { OuterWorld = InOuterWorld; return *this; }
+		FLoadActorsParams& SetDestLevel(ULevel* InDestLevel) { DestLevel = InDestLevel; return *this; }
+		FLoadActorsParams& SetActorPackages(TArrayView<FWorldPartitionRuntimeCellObjectMapping> InActorPackages) { ActorPackages = InActorPackages; return *this; }
+		FLoadActorsParams& SetPackageReferencer(FPackageReferencer* InPackageReferencer) { PackageReferencer = InPackageReferencer; return *this; }
+		FLoadActorsParams& SetCompletionCallback(TFunction<void(bool)> InCompletionCallback) { CompletionCallback = InCompletionCallback; return *this; }
+		FLoadActorsParams& SetLoadAsync(bool bInLoadAsync) { bLoadAsync = bInLoadAsync; return *this; }
+		FLoadActorsParams& SetInstancingContext(FLinkerInstancingContext InInstancingContext) { InstancingContext = InInstancingContext; return *this; }
+	};
+
+	static bool LoadActors(const FLoadActorsParams& InParams);
 	
 	static FSoftObjectPath RemapActorPath(const FActorContainerID& InContainerID, const FString& SourceWorldName, const FSoftObjectPath& InActorPath);
 

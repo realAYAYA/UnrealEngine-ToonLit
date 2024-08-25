@@ -312,21 +312,66 @@ void ContentBrowserUtils::DisplayConfirmationPopup(const FText& Message, const F
 	Popup->OpenPopup(ParentContent);
 }
 
-void ContentBrowserUtils::CopyItemReferencesToClipboard(const TArray<FContentBrowserItem>& ItemsToCopy)
+FString ContentBrowserUtils::GetItemReferencesText(const TArray<FContentBrowserItem>& Items)
 {
-	TArray<FContentBrowserItem> SortedItems = ItemsToCopy;
+	TArray<FContentBrowserItem> SortedItems = Items;
 	SortedItems.Sort([](const FContentBrowserItem& One, const FContentBrowserItem& Two)
 	{
 		return One.GetVirtualPath().Compare(Two.GetVirtualPath()) < 0;
 	});
 
-	FString ClipboardText;
+	FString Result;
 	for (const FContentBrowserItem& Item : SortedItems)
 	{
-		Item.AppendItemReference(ClipboardText);
+		if (ensure(!Item.IsFolder()))
+		{
+			Item.AppendItemReference(Result);
+		}
 	}
 
-	FPlatformApplicationMisc::ClipboardCopy(*ClipboardText);
+	return Result;
+}
+
+FString ContentBrowserUtils::GetFolderReferencesText(const TArray<FContentBrowserItem>& Folders)
+{
+	TArray<FContentBrowserItem> SortedItems = Folders;
+	SortedItems.Sort([](const FContentBrowserItem& One, const FContentBrowserItem& Two)
+	{
+		return One.GetVirtualPath().Compare(Two.GetVirtualPath()) < 0;
+	});
+
+	TStringBuilder<2048> Result;
+	for (const FContentBrowserItem& Item : SortedItems)
+	{
+		if (ensure(Item.IsFolder()))
+		{
+			FName InternalPath = Item.GetInternalPath();
+			if (!InternalPath.IsNone())
+			{
+				Result << InternalPath << LINE_TERMINATOR;
+			}
+		}
+	}
+
+	return Result.ToString();
+}
+
+void ContentBrowserUtils::CopyItemReferencesToClipboard(const TArray<FContentBrowserItem>& ItemsToCopy)
+{
+	FString Text = GetItemReferencesText(ItemsToCopy);
+	if (!Text.IsEmpty())
+	{
+		FPlatformApplicationMisc::ClipboardCopy(*Text);
+	}
+}
+
+void ContentBrowserUtils::CopyFolderReferencesToClipboard(const TArray<FContentBrowserItem>& FoldersToCopy)
+{
+	FString Text = GetFolderReferencesText(FoldersToCopy);
+	if (!Text.IsEmpty())
+	{
+		FPlatformApplicationMisc::ClipboardCopy(*Text);
+	}
 }
 
 void ContentBrowserUtils::CopyFilePathsToClipboard(const TArray<FContentBrowserItem>& ItemsToCopy)
@@ -389,6 +434,26 @@ bool ContentBrowserUtils::IsItemPluginContent(const FContentBrowserItem& InItem)
 {
 	const FContentBrowserItemDataAttributeValue IsPluginAttributeValue = InItem.GetItemAttribute(ContentBrowserItemAttributes::ItemIsPluginContent);
 	return IsPluginAttributeValue.IsValid() && IsPluginAttributeValue.GetValue<bool>();
+}
+
+bool ContentBrowserUtils::IsItemPluginRootFolder(const FContentBrowserItem& InItem)
+{
+	if (!InItem.IsFolder())
+	{
+		return false;
+	}
+	FName InternalPath = InItem.GetInternalPath();
+	if (InternalPath.IsNone())
+	{
+		return false;
+	}
+	FNameBuilder PathBuffer(InternalPath);
+	FStringView Path = PathBuffer.ToView();
+	if (int32 Index = 0; Path.RightChop(1).FindChar('/', Index) && Index != INDEX_NONE)
+	{
+		return false; // Contains a second slash, is not a root
+	}
+	return IsItemPluginContent(InItem);
 }
 
 bool ContentBrowserUtils::IsCollectionPath(const FString& InPath, FName* OutCollectionName, ECollectionShareType::Type* OutCollectionShareType)
@@ -834,6 +899,26 @@ void ContentBrowserUtils::RemoveShowPrivateContentFolder(const FStringView Virtu
 	ShowPrivateContentPermissionList->RemoveAllowListItem(Owner, InvariantPath);
 
 	ContentBrowserSingleton.SetPrivateContentPermissionListDirty();
+}
+
+FAutoConsoleVariable CVarShowCustomVirtualFolderIcon(
+	TEXT("ContentBrowser.ShowCustomVirtualFolderIcon"),
+	1,
+	TEXT("Whether to show a special icon for custom virtual folders added for organizational purposes in the content browser. E.g. EditorCustomVirtualPath field in plugins"));
+
+bool ContentBrowserUtils::ShouldShowCustomVirtualFolderIcon()
+{
+	return CVarShowCustomVirtualFolderIcon->GetBool();
+}
+
+FAutoConsoleVariable CVarShowPluginFolderIcon(
+	TEXT("ContentBrowser.ShowPluginFolderIcon"),
+	1,
+	TEXT("Whether to show a special icon for plugin folders in the content browser."));
+
+bool ContentBrowserUtils::ShouldShowPluginFolderIcon()
+{
+	return CVarShowPluginFolderIcon->GetBool();
 }
 
 #undef LOCTEXT_NAMESPACE

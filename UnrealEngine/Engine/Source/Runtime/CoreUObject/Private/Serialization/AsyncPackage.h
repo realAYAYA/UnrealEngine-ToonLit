@@ -30,11 +30,8 @@ struct FAsyncPackageDesc
 	TAsyncLoadPriority Priority;
 	/** PIE instance ID this package belongs to, INDEX_NONE otherwise */
 	int32 PIEInstanceID;
-
-#if WITH_EDITORONLY_DATA
 	/** Instancing context, maps original package to their instanced counterpart, used to remap imports. */
 	FLinkerInstancingContext InstancingContext;
-#endif
 #if UE_WITH_PACKAGE_ACCESS_TRACKING
 	FName ReferencerPackageName;
 	FName ReferencerPackageOp;
@@ -43,13 +40,8 @@ struct FAsyncPackageDesc
 	ECookLoadType CookLoadType;
 #endif
 
-#if WITH_EDITORONLY_DATA
 	const FLinkerInstancingContext* GetInstancingContext() const { return &InstancingContext; }
 	void SetInstancingContext(FLinkerInstancingContext InInstancingContext) { InstancingContext = MoveTemp(InInstancingContext); }
-#else
-	const FLinkerInstancingContext* GetInstancingContext() const { return nullptr; }
-	void SetInstancingContext(FLinkerInstancingContext) {}
-#endif 
 
 	FAsyncPackageDesc(int32 InRequestID, const FName& InName, const FPackagePath& InPackagePath, TUniquePtr<FLoadPackageAsyncDelegate>&& InCompletionDelegate = TUniquePtr<FLoadPackageAsyncDelegate>(), EPackageFlags InPackageFlags = PKG_None, int32 InPIEInstanceID = INDEX_NONE, TAsyncLoadPriority InPriority = 0)
 		: RequestID(InRequestID)
@@ -74,9 +66,7 @@ struct FAsyncPackageDesc
 		, PackageFlags(OldPackage.PackageFlags)
 		, Priority(OldPackage.Priority)
 		, PIEInstanceID(OldPackage.PIEInstanceID)
-#if WITH_EDITORONLY_DATA
 		, InstancingContext(OldPackage.InstancingContext)
-#endif
 #if UE_WITH_PACKAGE_ACCESS_TRACKING
 		, ReferencerPackageName(OldPackage.ReferencerPackageName)
 		, ReferencerPackageOp(OldPackage.ReferencerPackageOp)

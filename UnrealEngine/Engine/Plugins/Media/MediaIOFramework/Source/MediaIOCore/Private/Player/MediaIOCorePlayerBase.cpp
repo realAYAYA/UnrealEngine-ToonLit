@@ -465,7 +465,7 @@ FText FMediaIOCorePlayerBase::GetTrackDisplayName(EMediaTrackType TrackType, int
 		return LOCTEXT("DefaultVideoTrackName", "Video Track");
 
 	default:
-		return FText::GetEmpty();
+		break;
 	}
 
 	return FText::GetEmpty();
@@ -919,6 +919,15 @@ void FMediaIOCorePlayerBase::ExecuteGPUTransfer(const TSharedPtr<FMediaIOCoreTex
 	});
 }
 
+FMediaIOCoreSamples& FMediaIOCorePlayerBase::GetSamples_Internal()
+{
+	if (IsJustInTimeRenderingEnabled())
+	{
+		return *JITRSamples;
+	}
+	return *Samples;
+}
+
 TArray<TSharedRef<FMediaIOCoreTextureSampleBase>> FMediaIOCorePlayerBase::Deinterlace(const UE::MediaIOCore::FVideoFrame& InVideoFrame) const
 {
 	if (Deinterlacer)
@@ -1074,22 +1083,22 @@ bool FMediaIOCorePlayerBase::SupportsSubFrames() const
 
 void FMediaIOCorePlayerBase::AddAudioSample(const TSharedRef<FMediaIOCoreAudioSampleBase>& Sample)
 {
-	Samples->AddAudio(Sample);
+	GetSamples_Internal().AddAudio(Sample);
 }
 
 void FMediaIOCorePlayerBase::AddCaptionSample(const TSharedRef<FMediaIOCoreCaptionSampleBase>& Sample)
 {
-	Samples->AddCaption(Sample);
+	GetSamples_Internal().AddCaption(Sample);
 }
 
 void FMediaIOCorePlayerBase::AddMetadataSample(const TSharedRef<FMediaIOCoreBinarySampleBase>& Sample)
 {
-	Samples->AddMetadata(Sample);
+	GetSamples_Internal().AddMetadata(Sample);
 }
 
 void FMediaIOCorePlayerBase::AddSubtitleSample(const TSharedRef<FMediaIOCoreSubtitleSampleBase>& Sample)
 {
-	Samples->AddSubtitle(Sample);
+	GetSamples_Internal().AddSubtitle(Sample);
 }
 
 void FMediaIOCorePlayerBase::AddVideoSample(const TSharedRef<FMediaIOCoreTextureSampleBase>& Sample)

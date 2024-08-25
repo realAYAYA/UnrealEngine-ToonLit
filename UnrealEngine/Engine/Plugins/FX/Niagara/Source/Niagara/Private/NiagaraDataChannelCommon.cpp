@@ -5,5 +5,5 @@
 
 FVector FNiagaraDataChannelSearchParameters::GetLocation()const
 {
-	return OwningComponent ? OwningComponent->GetComponentLocation() : Location;
+	return OwningComponent && !bOverrideLocation ? OwningComponent->GetComponentLocation() : Location;
 }

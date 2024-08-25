@@ -1,4 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
+
 #ifdef NNE_USE_DIRECTML
 #include "NNEDmlOperator.h"
 #include "NNEDmlOperatorUtils.h"
@@ -12,10 +13,12 @@ namespace UE::NNERuntimeRDG::Private::Dml
 template
 <
 	typename DmlActivationOpDescType,
-	DML_OPERATOR_TYPE DmlActivationOpType
+	DML_OPERATOR_TYPE DmlActivationOpType,
+	TCHAR const *OpName
 >
 class FOperatorDmlActivationUnary : public FOperatorDml
 {
+	static constexpr uint32 NumAllowedInputTensors = 1, NumAllowedOutputTensors = 1;
 public:
 
 	static FOperatorDml* Create()
@@ -25,19 +28,26 @@ public:
 
 	static bool Validate(const NNE::FAttributeMap& AttributeMap, TConstArrayView<ENNETensorDataType> InputTypes, TConstArrayView<NNE::FSymbolicTensorShape> InputShapes)
 	{
-		if(InputShapes.Num() != 1)
+		if(InputShapes.Num() != NumAllowedInputTensors)
 		{
-			UE_LOG(LogNNE, Warning, TEXT("Invalid number of input tensors"));
+			UE_LOG(LogNNE, Warning, TEXT("DML %s: Invalid number of input tensors. %d provided, it should be %d."), OpName, InputShapes.Num(), NumAllowedInputTensors);
 			return false;
 		}
-		return CheckElementwiseTensor(InputTypes[0], InputShapes[0]);
+		return CheckElementwiseTensor(OpName, InputTypes[0], InputShapes[0]);
 	}
 
 	virtual ~FOperatorDmlActivationUnary() = default;
 
 private:
 
-	FOperatorDmlActivationUnary() : Alpha(0.0f), Beta(0.0f), Gamma(0.0f), Axis(-1) {}
+	FOperatorDmlActivationUnary() 
+		: Alpha(0.0f)
+		, Beta(0.0f)
+		, Gamma(0.0f)
+		, Axis(-1) 
+	{
+	}
+	
 	float Alpha;
 	float Beta;
 	float Gamma;
@@ -47,20 +57,16 @@ private:
 
 public:
 
-	//
-	//
-	//
-	virtual bool Initialize(IDMLDevice* Device, TArrayView<const NNE::Internal::FTensor> InputTensors, TArrayView<const NNE::Internal::FTensor> OutputTensors, const NNE::FAttributeMap& Attributes) override
+	virtual bool Initialize(TConstArrayView<NNE::FTensorDesc> Inputs, TConstArrayView<NNE::FTensorDesc> Outputs, const NNE::FAttributeMap& Attributes) override
 	{
-		const NNE::Internal::FTensor& InputTensor = InputTensors[0];
-		const NNE::Internal::FTensor& OutputTensor = OutputTensors[0];
+		const NNE::FSymbolicTensorShape& InputShape = Inputs[0].GetShape();
 
 		if constexpr (std::is_same_v<DmlActivationOpDescType, DML_ACTIVATION_SOFTMAX1_OPERATOR_DESC> ||
-					  std::is_same_v<DmlActivationOpDescType, DML_ACTIVATION_LOG_SOFTMAX1_OPERATOR_DESC>)
+			std::is_same_v<DmlActivationOpDescType, DML_ACTIVATION_LOG_SOFTMAX1_OPERATOR_DESC>)
 		{
 			Axis = Attributes.GetValueOrDefault(TEXT("axis"), -1);
 		}
-		Axis = HandleNegativeAxis(Axis, InputTensor.GetShape().Rank());
+		Axis = HandleNegativeAxis(Axis, InputShape.Rank());
 
 		Alpha = Attributes.GetValueOrDefault(TEXT("alpha"), Alpha);
 		Beta = Attributes.GetValueOrDefault(TEXT("beta"), Beta);
@@ -71,6 +77,23 @@ public:
 			Bias = Attributes.GetValueOrDefault(TEXT("bias"), 0.0f);
 			Treshold = Attributes.GetValueOrDefault(TEXT("lambd"), 0.5f);
 		}
+
+		return true;
+	}
+
+	virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) override
+	{
+		check(InputTensors.Num() == NumAllowedInputTensors);
+		check(OutputTensors.Num() == NumAllowedOutputTensors);
+		OutputTensors[0]->SetShape(InputTensors[0]->GetShape());
+
+		return 0;
+	}
+
+	virtual bool Create(IDMLDevice* Device, TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TConstArrayView<NNE::Internal::FTensorRef> OutputTensors) override
+	{
+		const NNE::Internal::FTensor& InputTensor = *InputTensors[0];
+		const NNE::Internal::FTensor& OutputTensor = *OutputTensors[0];
 
 		// Initialize tensor descriptor (it's same for both input and output)
 		FTensorDescDml	DmlTensorDesc;
@@ -179,11 +202,12 @@ private:
 template
 <
 	typename DmlActivationOpDescType,
-	DML_OPERATOR_TYPE DmlActivationOpType
+	DML_OPERATOR_TYPE DmlActivationOpType,
+	TCHAR const *OpName
 >
 class FOperatorDmlActivationBinary : public FOperatorDml
 {
-
+	static constexpr uint32 NumAllowedInputTensors = 2, NumAllowedOutputTensors = 1;
 public:
 
 	static FOperatorDml* Create()
@@ -193,18 +217,18 @@ public:
 
 	static bool Validate(const NNE::FAttributeMap& AttributeMap, TConstArrayView<ENNETensorDataType> InputTypes, TConstArrayView<NNE::FSymbolicTensorShape> InputShapes)
 	{
-		if(InputShapes.Num() != 2)
+		if(InputShapes.Num() != NumAllowedInputTensors)
 		{
-			UE_LOG(LogNNE, Warning, TEXT("Invalid number of input tensors"));
+			UE_LOG(LogNNE, Warning, TEXT("DML %s: Invalid number of input tensors. %d provided, it should be %d."), OpName, InputShapes.Num(), NumAllowedInputTensors);
 			return false;
 		}
 
-		if(!CheckElementwiseTensor(InputTypes[0], InputShapes[0]))
+		if(!CheckElementwiseTensor(OpName, InputTypes[0], InputShapes[0]))
 		{
 			return false;
 		}
 
-		if(!CheckElementwiseTensor(InputTypes[1], InputShapes[1]))
+		if(!CheckElementwiseTensor(OpName, InputTypes[1], InputShapes[1]))
 		{
 			return false;
 		}
@@ -218,14 +242,25 @@ private:
 
 public:
 
-	//
-	//
-	//
-	virtual bool Initialize(IDMLDevice* Device, TArrayView<const NNE::Internal::FTensor> InputTensors, TArrayView<const NNE::Internal::FTensor> OutputTensors, const NNE::FAttributeMap& Attributes) override
+	virtual bool Initialize(TConstArrayView<NNE::FTensorDesc> Inputs, TConstArrayView<NNE::FTensorDesc> Outputs, const NNE::FAttributeMap& Attributes) override
 	{
-		const NNE::Internal::FTensor& InputATensor = InputTensors[0];
-		const NNE::Internal::FTensor& InputBTensor = InputTensors[1];
-		const NNE::Internal::FTensor& OutputTensor = OutputTensors[0];
+		return true;
+	}
+
+	virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) override
+	{
+		check(InputTensors.Num() == NumAllowedInputTensors);
+		check(OutputTensors.Num() == NumAllowedOutputTensors);
+		OutputTensors[0]->SetShape(InputTensors[0]->GetShape());
+
+		return 0;
+	}
+
+	virtual bool Create(IDMLDevice* Device, TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TConstArrayView<NNE::Internal::FTensorRef> OutputTensors)
+	{
+		const NNE::Internal::FTensor& InputATensor = *InputTensors[0];
+		const NNE::Internal::FTensor& InputBTensor = *InputTensors[1];
+		const NNE::Internal::FTensor& OutputTensor = *OutputTensors[0];
 
 		// Initialize tensor descriptors
 		FTensorDescDml	DmlInputATensorDesc;
@@ -233,24 +268,24 @@ public:
 		FTensorDescDml	DmlOutputTensorDesc;
 
 		if (!DmlInputATensorDesc
-				.SetFromTensorBroadcast(InputATensor, OutputTensor.GetShape())
-				.Validate())
+			.SetFromTensorBroadcast(InputATensor, OutputTensor.GetShape())
+			.Validate())
 		{
 			UE_LOG(LogNNE, Error, TEXT("Failed to initialize tensor(s) for DML inference"));
 			return false;
 		}
 
 		if (!DmlInputBTensorDesc
-				.SetFromTensorBroadcast(InputBTensor, OutputTensor.GetShape())
-				.Validate())
+			.SetFromTensorBroadcast(InputBTensor, OutputTensor.GetShape())
+			.Validate())
 		{
 			UE_LOG(LogNNE, Error, TEXT("Failed to initialize tensor(s) for DML inference"));
 			return false;
 		}
 
 		if (!DmlOutputTensorDesc
-				.SetFromTensor(OutputTensor)
-				.Validate())
+			.SetFromTensor(OutputTensor)
+			.Validate())
 		{
 			UE_LOG(LogNNE, Error, TEXT("Failed to initialize tensor(s) for DML inference"));
 			return false;
@@ -266,6 +301,7 @@ public:
 		DmlOpDesc.Desc = &DmlActivationOpDesc;
 
 		return CreateOperator(Device, DmlOpDesc);
+
 	}
 
 private:
@@ -287,53 +323,49 @@ private:
 };
 
 #define REGISTER_OP_ACTIVATION(OpName, DmlOpName, OpClass) \
+TCHAR const Op##OpName##Name[] = TEXT(#OpName); \
 struct FDmlOperator##OpName##Registrator \
 { \
 	FDmlOperator##OpName##Registrator() \
 	{ \
-		FOperatorRegistryDml::Get()->OpAdd(TEXT(#OpName), OpClass<DML_ACTIVATION_##DmlOpName##_OPERATOR_DESC, DML_OPERATOR_ACTIVATION_##DmlOpName>::Create, OpClass<DML_ACTIVATION_##DmlOpName##_OPERATOR_DESC, DML_OPERATOR_ACTIVATION_##DmlOpName>::Validate); \
+		FOperatorRegistryDml::Get()->OpAdd({{TEXT(#OpName), TEXT("Onnx")}}, OpClass<DML_ACTIVATION_##DmlOpName##_OPERATOR_DESC, DML_OPERATOR_ACTIVATION_##DmlOpName, Op##OpName##Name>::Create, OpClass<DML_ACTIVATION_##DmlOpName##_OPERATOR_DESC, DML_OPERATOR_ACTIVATION_##DmlOpName, Op##OpName##Name>::Validate); \
 	} \
 }; \
 \
 static FDmlOperator##OpName##Registrator RegisterDmlOperator##OpName;
 
 
+// Register unary activation OP without any additional params
 #define REGISTER_OP_ACTIVATION_UNARY(OpName, DmlOpName) REGISTER_OP_ACTIVATION(OpName, DmlOpName, FOperatorDmlActivationUnary)
 
+// Register unary activation OP with additional params
 #define REGISTER_OP_ACTIVATION_UNARY_PARAMS(OpName, DmlOpName, InAlpha, InBeta, InGamma) \
-template<> FOperatorDmlActivationUnary<DML_ACTIVATION_##DmlOpName##_OPERATOR_DESC, DML_OPERATOR_ACTIVATION_##DmlOpName>::FOperatorDmlActivationUnary() \
+REGISTER_OP_ACTIVATION_UNARY(OpName, DmlOpName) \
+template<> FOperatorDmlActivationUnary<DML_ACTIVATION_##DmlOpName##_OPERATOR_DESC, DML_OPERATOR_ACTIVATION_##DmlOpName, Op##OpName##Name>::FOperatorDmlActivationUnary() \
 	: Alpha(InAlpha), Beta(InBeta), Gamma(InGamma) \
 { \
-} \
-REGISTER_OP_ACTIVATION_UNARY(OpName, DmlOpName)
+}
 
 
+
+// Register binary activation OP 
 #define REGISTER_OP_ACTIVATION_BINARY(OpName, DmlOpName) REGISTER_OP_ACTIVATION(OpName, DmlOpName, FOperatorDmlActivationBinary)
 
+REGISTER_OP_ACTIVATION_UNARY(			Dropout,			IDENTITY )
+REGISTER_OP_ACTIVATION_UNARY_PARAMS(	Celu, 				CELU, 					1.0f, 								0.0f, 		0.0f )
+REGISTER_OP_ACTIVATION_UNARY_PARAMS(	Elu, 				ELU, 					1.0f, 								0.0f, 		0.0f )
+REGISTER_OP_ACTIVATION_UNARY_PARAMS(	HardSigmoid, 		HARD_SIGMOID, 			0.2f, 								0.5f, 		0.0f )
+REGISTER_OP_ACTIVATION_UNARY_PARAMS(	LeakyRelu, 			LEAKY_RELU, 			0.01f, 								0.0f, 		0.0f )
+REGISTER_OP_ACTIVATION_UNARY(			LogSoftmax, 		LOG_SOFTMAX1 )
+REGISTER_OP_ACTIVATION_UNARY(			Relu, 				RELU )
+REGISTER_OP_ACTIVATION_UNARY_PARAMS(	Selu, 				SCALED_ELU, 			1.67326319217681884765625f, 		0.0f, 		1.05070102214813232421875f )
+REGISTER_OP_ACTIVATION_UNARY(			Shrink, 			SHRINK	)
+REGISTER_OP_ACTIVATION_UNARY(			Sigmoid, 			SIGMOID	)
+REGISTER_OP_ACTIVATION_UNARY(			Softmax, 			SOFTMAX1 )
+REGISTER_OP_ACTIVATION_UNARY(			Softplus, 			SOFTPLUS )
+REGISTER_OP_ACTIVATION_UNARY(			Softsign, 			SOFTSIGN )
 
-
-// 	REGISTER_OP_ACTIVATION_UNARY(			OpName, 			DmlOpName )
-// 	REGISTER_OP_ACTIVATION_UNARY_PARAMS(	OpName, 			DmlOpName, 				InAlpha, 							InBeta, 	InGamma )
-
-	REGISTER_OP_ACTIVATION_UNARY(			Dropout,			IDENTITY )
-	REGISTER_OP_ACTIVATION_UNARY_PARAMS(	Celu, 				CELU, 					1.0f, 								0.0f, 		0.0f )
-	REGISTER_OP_ACTIVATION_UNARY_PARAMS(	Elu, 				ELU, 					1.0f, 								0.0f, 		0.0f )
-	REGISTER_OP_ACTIVATION_UNARY_PARAMS(	HardSigmoid, 		HARD_SIGMOID, 			0.2f, 								0.5f, 		0.0f )
-	REGISTER_OP_ACTIVATION_UNARY_PARAMS(	LeakyRelu, 			LEAKY_RELU, 			0.01f, 								0.0f, 		0.0f )
-	REGISTER_OP_ACTIVATION_UNARY(			LogSoftmax, 		LOG_SOFTMAX1 )
-	REGISTER_OP_ACTIVATION_UNARY(			Relu, 				RELU )
-	REGISTER_OP_ACTIVATION_UNARY_PARAMS(	Selu, 				SCALED_ELU, 			1.67326319217681884765625f, 		0.0f, 		1.05070102214813232421875f )
-	REGISTER_OP_ACTIVATION_UNARY(			Shrink, 			SHRINK	)
-	REGISTER_OP_ACTIVATION_UNARY(			Sigmoid, 			SIGMOID	)
-	REGISTER_OP_ACTIVATION_UNARY(			Softmax, 			SOFTMAX1 )
-	REGISTER_OP_ACTIVATION_UNARY(			Softplus, 			SOFTPLUS )
-	REGISTER_OP_ACTIVATION_UNARY(			Softsign, 			SOFTSIGN )
-
-// 	REGISTER_OP_ACTIVATION_BINARY(	OpName, 			DmlOpName )
-
-	REGISTER_OP_ACTIVATION_BINARY(	Prelu, 				PARAMETERIZED_RELU )
-
-
+REGISTER_OP_ACTIVATION_BINARY(	Prelu, 				PARAMETERIZED_RELU )
 
 } // namespace UE::NNERuntimeRDG::Private::Dml
 

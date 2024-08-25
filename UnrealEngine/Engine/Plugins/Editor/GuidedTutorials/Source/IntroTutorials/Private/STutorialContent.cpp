@@ -814,7 +814,7 @@ const FSlateBrush* STutorialContent::GetBackButtonBrush() const
 
 EVisibility STutorialContent::GetBackButtonVisibility() const
 {
-	return IsBackEnabled.Get() == true ? EVisibility::Visible : EVisibility::Collapsed;
+	return IsBackEnabled.Get() ? EVisibility::Visible : EVisibility::Collapsed;
 }
 
 FText STutorialContent::GetBackButtonTooltip() const

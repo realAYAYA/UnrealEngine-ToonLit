@@ -55,12 +55,12 @@ public:
         TSharedRef<FSolverStackElement> InStackElement,
         TSharedPtr<SIKRigSolverStack> InSolverStack);
 
-	bool GetWarningMessage(FText& Message);
+	bool GetWarningMessage(FText& Message) const;
 
 	bool IsSolverEnabled() const;
 
 private:
-	UIKRigSolver* GetSolver() const;
+	UIKRigSolver* GetSolver(const bool bFromAsset) const;
 	TWeakPtr<FSolverStackElement> StackElement;
 	TWeakPtr<SIKRigSolverStack> SolverStack;
 };

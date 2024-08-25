@@ -43,7 +43,7 @@ void UNiagaraStackErrorItem::SetIsExpandedByDefault(bool bIsExpanded)
 
 UNiagaraStackEntry::EStackRowStyle UNiagaraStackErrorItem::GetStackRowStyle() const
 {
-	return StackIssue.GetSeverity() == EStackIssueSeverity::CustomNote ? EStackRowStyle::ItemContentNote : EStackRowStyle::StackIssue;
+	return EStackRowStyle::StackIssue;
 }
 
 UNiagaraStackErrorItem::FOnIssueNotify& UNiagaraStackErrorItem::OnIssueModified()
@@ -146,7 +146,7 @@ EStackIssueSeverity UNiagaraStackErrorItemLongDescription::GetIssueSeverity() co
 
 UNiagaraStackEntry::EStackRowStyle UNiagaraStackErrorItemLongDescription::GetStackRowStyle() const
 {
-	return StackIssue.GetSeverity() == EStackIssueSeverity::CustomNote ? EStackRowStyle::ItemContentNote : EStackRowStyle::StackIssue;
+	return EStackRowStyle::StackIssue;
 }
 
 //UNiagaraStackErrorItemFix
@@ -180,7 +180,7 @@ EStackIssueSeverity UNiagaraStackErrorItemFix::GetIssueSeverity() const
 
 UNiagaraStackEntry::EStackRowStyle UNiagaraStackErrorItemFix::GetStackRowStyle() const
 {
-	return StackIssue.GetSeverity() == EStackIssueSeverity::CustomNote ? EStackRowStyle::ItemContentNote : EStackRowStyle::StackIssue;
+	return EStackRowStyle::StackIssue;
 }
 
 FText UNiagaraStackErrorItemFix::GetFixButtonText() const
@@ -206,7 +206,7 @@ void UNiagaraStackErrorItemDismiss::Initialize(FRequiredEntryData InRequiredEntr
 	UNiagaraStackEntry::Initialize(InRequiredEntryData, ErrorStackEditorDataKey);
 	StackIssue = InStackIssue;
 	IssueFix = FStackIssueFix(
-		StackIssue.GetSeverity() == EStackIssueSeverity::Info || StackIssue.GetSeverity() == EStackIssueSeverity::CustomNote ?
+		StackIssue.GetSeverity() == EStackIssueSeverity::Info ?
 			LOCTEXT("DismissNote", "Dismiss note") :
 			LOCTEXT("DismissError", "Dismiss the issue without fixing (I know what I'm doing)"),
 		FStackIssueFixDelegate::CreateUObject(this, &UNiagaraStackErrorItemDismiss::DismissIssue));
@@ -227,12 +227,12 @@ void UNiagaraStackErrorItemDismiss::DismissIssue()
 
 UNiagaraStackEntry::EStackRowStyle UNiagaraStackErrorItemDismiss::GetStackRowStyle() const
 {
-	return StackIssue.GetSeverity() == EStackIssueSeverity::CustomNote ? EStackRowStyle::ItemContentNote : EStackRowStyle::StackIssue;
+	return EStackRowStyle::StackIssue;
 }
 
 FText UNiagaraStackErrorItemDismiss::GetFixButtonText() const
 {
-	return StackIssue.GetSeverity() == EStackIssueSeverity::Info || StackIssue.GetSeverity() == EStackIssueSeverity::CustomNote ? LOCTEXT("DismissNoteButtonText", "Dismiss") : LOCTEXT("DismissIssueButtonText", "Dismiss issue");
+	return StackIssue.GetSeverity() == EStackIssueSeverity::Info ? LOCTEXT("DismissNoteButtonText", "Dismiss") : LOCTEXT("DismissIssueButtonText", "Dismiss issue");
 }
 
 #undef LOCTEXT_NAMESPACE

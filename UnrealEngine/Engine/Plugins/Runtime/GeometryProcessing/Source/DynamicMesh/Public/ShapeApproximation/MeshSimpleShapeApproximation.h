@@ -76,6 +76,15 @@ public:
 	double ConvexDecompositionErrorTolerance = 0;
 	/** Minimum part thickness for convex decomposition (in cm); hulls thinner than this will be merged into adjacent hulls, if possible. */
 	double ConvexDecompositionMinPartThickness = .1;
+	/** Whether to guide the convex decomposition to prioritize not filling negative space of the input shape */
+	bool bConvexDecompositionProtectNegativeSpace = false;
+
+	/** Negative space closer to the input than this tolerance distance can be filled in */
+	double NegativeSpaceTolerance = 3;
+	/** Minimum radius of negative space to protect; tunnels with radius smaller than this could be filled in */
+	double NegativeSpaceMinRadius = 10;
+	/** Whether to ignore negative space that is not accessible by traversing from the convex hull (via paths w/ radius of at least Negative Space Tolerance) */
+	bool bIgnoreInternalNegativeSpace = true;
 
 	bool bUseExactComputationForBox = false;
 

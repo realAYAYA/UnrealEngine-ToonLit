@@ -230,7 +230,7 @@ public:
 
 		if (ensureMsgf(bIsValid, TEXT("Trying to Remove Invalid Handle with Index %d, Serial Number %d"), IndexedHandle.GetIndex(), IndexedHandle.GetSerialNumber()))
 		{
-			if(bOptimizeHandleReuse)
+			if constexpr (bOptimizeHandleReuse)
 			{
 			    const TIndexType Idx = IndexedHandle.GetIndex();
 			    const int32 InsertPosition = Algo::LowerBound(FreeHandleIndices, Idx, [](const TIndexType& Lhs, const TIndexType& Rhs) {return Lhs > Rhs;});
@@ -253,7 +253,7 @@ public:
 	bool IsValidHandle(TIndexedHandle IndexedHandle) const
 	{
 #if UE_DO_INDEXED_HANDLE_MANAGER_ID
-		if (!ensureMsgf(ManagerID == IndexedHandle.ManagerID, TEXT("ManagerID %d does not match IndexedHandle.ManagerID %d, handles must only be used by the same manager they were created by!"), IndexedHandle.ManagerID))
+		if (!ensureMsgf(ManagerID == IndexedHandle.ManagerID, TEXT("ManagerID %d does not match IndexedHandle.ManagerID %d, handles must only be used by the same manager they were created by!"), ManagerID, IndexedHandle.ManagerID))
 		{
 			return false;
 		}
@@ -292,7 +292,7 @@ public:
 	{
 		while (Handles.Num() > 0 && FreeHandleIndices.Num() > 0 && FreeHandleIndices.Remove(Handles.Num() - 1))
 		{
-			Handles.Pop(false);
+			Handles.Pop(EAllowShrinking::No);
 		}
 
 		return Handles.Num();

@@ -23,18 +23,14 @@ namespace mu
 	{
 	public:
 
-		MUTABLE_DEFINE_CONST_VISITABLE();
-
-	public:
-
-		static NODE_TYPE s_type;
+		static FNodeType s_type;
 
 		bool m_value;
 
 		//!
 		void Serialise( OutputArchive& arch ) const
 		{
-            uint32_t ver = 0;
+            uint32 ver = 0;
 			arch << ver;
 
 			arch << m_value;
@@ -43,7 +39,7 @@ namespace mu
 		//!
 		void Unserialise( InputArchive& arch )
 		{
-            uint32_t ver;
+            uint32 ver;
 			arch >> ver;
 			check(ver==0);
 
@@ -56,22 +52,18 @@ namespace mu
 	{
 	public:
 
-		MUTABLE_DEFINE_CONST_VISITABLE();
-
-	public:
-
-		static NODE_TYPE s_type;
+		static FNodeType s_type;
 
 		bool m_defaultValue;
-		string m_name;
-		string m_uid;
+		FString m_name;
+		FString m_uid;
 
         TArray<Ptr<NodeRange>> m_ranges;
 
 		//!
 		void Serialise( OutputArchive& arch ) const
 		{
-            uint32_t ver = 2;
+            uint32 ver = 3;
 			arch << ver;
 
 			arch << m_defaultValue;
@@ -83,48 +75,27 @@ namespace mu
 		//!
 		void Unserialise( InputArchive& arch )
 		{
-            uint32_t ver;
+            uint32 ver;
 			arch >> ver;
-            check(ver==2);
+            check(ver>=2 && ver<=3);
 
 			arch >> m_defaultValue;
-			arch >> m_name;
-            arch >> m_uid;
-            arch >> m_ranges;
+			if (ver <= 2)
+			{
+				std::string Temp;
+				arch >> Temp;
+				m_name = Temp.c_str();
+				arch >> Temp;
+				m_uid = Temp.c_str();
+			}
+			else
+			{
+				arch >> m_name;
+				arch >> m_uid;
+			}
+			
+			arch >> m_ranges;
         }
-	};
-
-
-	class NodeBoolIsNull::Private : public NodeBool::Private
-	{
-	public:
-
-		MUTABLE_DEFINE_CONST_VISITABLE();
-
-	public:
-
-		static NODE_TYPE s_type;
-
-		NodePtr m_pSource;
-
-		//!
-		void Serialise( OutputArchive& arch ) const
-		{
-            uint32_t ver = 0;
-			arch << ver;
-
-			arch << m_pSource;
-		}
-
-		//!
-		void Unserialise( InputArchive& arch )
-		{
-            uint32_t ver;
-			arch >> ver;
-            check(ver<=0);
-
-			arch >> m_pSource;
-		}
 	};
 
 
@@ -132,18 +103,14 @@ namespace mu
 	{
 	public:
 
-		MUTABLE_DEFINE_CONST_VISITABLE();
+		static FNodeType s_type;
 
-	public:
-
-		static NODE_TYPE s_type;
-
-		NodeBoolPtr m_pSource;
+		Ptr<NodeBool> m_pSource;
 
 		//!
 		void Serialise( OutputArchive& arch ) const
 		{
-            uint32_t ver = 0;
+            uint32 ver = 0;
 			arch << ver;
 
 			arch << m_pSource;
@@ -152,7 +119,7 @@ namespace mu
 		//!
 		void Unserialise( InputArchive& arch )
 		{
-            uint32_t ver;
+            uint32 ver;
 			arch >> ver;
             check(ver<=0);
 
@@ -165,19 +132,15 @@ namespace mu
 	{
 	public:
 
-		MUTABLE_DEFINE_CONST_VISITABLE();
+		static FNodeType s_type;
 
-	public:
-
-		static NODE_TYPE s_type;
-
-		NodeBoolPtr m_pA;
-		NodeBoolPtr m_pB;
+		Ptr<NodeBool> m_pA;
+		Ptr<NodeBool> m_pB;
 
 		//!
 		void Serialise( OutputArchive& arch ) const
 		{
-            uint32_t ver = 0;
+            uint32 ver = 0;
 			arch << ver;
 
 			arch << m_pA;
@@ -187,7 +150,7 @@ namespace mu
 		//!
 		void Unserialise( InputArchive& arch )
 		{
-            uint32_t ver;
+            uint32 ver;
 			arch >> ver;
             check(ver<=0);
 

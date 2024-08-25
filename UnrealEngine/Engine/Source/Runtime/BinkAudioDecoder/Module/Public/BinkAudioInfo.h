@@ -21,19 +21,24 @@ public:
 	virtual uint32 GetMaxFrameSizeSamples() const override;
 	virtual bool CreateDecoder() override;
 	virtual void SeekToTime(const float SeekToTimeSeconds) override;
-	virtual void PrepareToLoop() override;
+	virtual void SeekToFrame(const uint32 SeekTimeFrames) override;
 	virtual FDecodeResult Decode(const uint8* CompressedData, const int32 CompressedDataSize, uint8* OutPCMData, const int32 OutputPCMDataSize) override;
 	virtual bool HasError() const override;
 	//~ End IStreamedCompressedInfo Interface
 
 protected:
 	using Super = IStreamedCompressedInfo;
-
+	
+	void NotifySeek();
+	
 	// copied from header during ParseHeader
 	uint32 MaxCompSpaceNeeded;
 	uint32 SampleRate;
 
+	// we lazy init this because the general use case (streaming) should always be able to decode
+	// directly to the output buffer.
+	TArray<uint8, TAlignedHeapAllocator<16>> OutputReservoir;
 	struct BinkAudioDecoder* Decoder = 0;
-	uint8* RawMemory = 0;
+	TArray<uint8, TAlignedHeapAllocator<16>> RawMemory;
 	bool bErrorStateLatch = false;
 };

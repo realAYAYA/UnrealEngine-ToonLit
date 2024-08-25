@@ -8,7 +8,7 @@
 
 #include "Evaluation/PreAnimatedState/MovieScenePreAnimatedStateExtension.h"
 #include "Evaluation/PreAnimatedState/MovieScenePreAnimatedStateStorage.h"
-#include "Evaluation/PreAnimatedState/MovieScenePreAnimatedEntityCaptureSource.h"
+#include "Evaluation/PreAnimatedState/MovieScenePreAnimatedCaptureSources.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MovieScenePreAnimatedStateSystem)
 

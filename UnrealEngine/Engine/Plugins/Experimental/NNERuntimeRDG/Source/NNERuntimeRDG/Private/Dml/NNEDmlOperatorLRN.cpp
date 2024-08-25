@@ -7,11 +7,15 @@
 namespace UE::NNERuntimeRDG::Private::Dml
 {
 
-//
-//
-//
 class FOperatorDmlLRN : public FOperatorDml
 {
+	int32 Size;
+	float Alpha;
+	float Beta;
+	float Bias;
+	static constexpr uint32 NumAllowedInputTensors = 1, NumAllowedOutputTensors = 1;
+	static constexpr int32 	MinTensorRank = 4, MaxTensorRank = 4;
+
 public:
 
 	static FOperatorDml* Create()
@@ -21,37 +25,55 @@ public:
 
 	static bool Validate(const NNE::FAttributeMap& AttributeMap, TConstArrayView<ENNETensorDataType> InputTypes, TConstArrayView<NNE::FSymbolicTensorShape> InputShapes)
 	{
-		//TODO
-		return true;
-	}
+		const FString OpName = TEXT("LRN");
 
-	//
-	//
-	//
-	virtual bool Initialize(IDMLDevice* Device, TArrayView<const NNE::Internal::FTensor> InputTensors, TArrayView<const NNE::Internal::FTensor> OutputTensors, const NNE::FAttributeMap& Attributes) override
-	{
-		check(InputTensors.Num() == 1);
-		check(OutputTensors.Num() == 1);
-
-		const NNE::Internal::FTensor& InputTensor = InputTensors[0];
-		const NNE::Internal::FTensor& OutputTensor = OutputTensors[0];
-
-		if (InputTensor.GetShape().Rank() > 8)
+		if(InputShapes.Num() != NumAllowedInputTensors)
 		{
-			UE_LOG(LogNNE, Warning, TEXT("InputTensor rank should be between 1 and 8, got:%d"), InputTensor.GetShape().Rank());
+			UE_LOG(LogNNE, Warning, TEXT("DML %s: Invalid number of input tensors. %d provided, it should be %d."), *OpName, InputShapes.Num(), NumAllowedInputTensors);
+			return false;
+		}
+		
+		if (!CheckGenericTensor(OpName, InputTypes[0], InputShapes[0], 
+			{ 	ENNETensorDataType::Float, ENNETensorDataType::Half
+			},
+			MinTensorRank, MaxTensorRank
+		  	))
+		{
 			return false;
 		}
 
+		return true;
+	}
+
+	virtual bool Initialize(TConstArrayView<NNE::FTensorDesc> Inputs, TConstArrayView<NNE::FTensorDesc> Outputs, const NNE::FAttributeMap& Attributes) override
+	{
+		check(Inputs.Num() == NumAllowedInputTensors);
+		check(Outputs.Num() == NumAllowedOutputTensors);
+
 		// Read attributes
-		const int32 Size = Attributes.GetValueOrDefault<int32>(TEXT("size"), 0);
-		const float Alpha = Attributes.GetValueOrDefault<float>(TEXT("alpha"), 0.0f);
-		const float Beta = Attributes.GetValueOrDefault<float>(TEXT("beta"), 0.0f);
-		const float Bias = Attributes.GetValueOrDefault<float>(TEXT("bias"), 0.0f);
+		Size = Attributes.GetValueOrDefault<int32>(TEXT("size"), 0);
+		Alpha = Attributes.GetValueOrDefault<float>(TEXT("alpha"), 0.0f);
+		Beta = Attributes.GetValueOrDefault<float>(TEXT("beta"), 0.0f);
+		Bias = Attributes.GetValueOrDefault<float>(TEXT("bias"), 0.0f);
+
+		return true;
+	}
+
+	virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) override
+	{
+		OutputTensors[0]->SetShape(InputTensors[0]->GetShape());
+		return 0;
+	}
+
+	virtual bool Create(IDMLDevice* Device, TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TConstArrayView<NNE::Internal::FTensorRef> OutputTensors) override
+	{
+		const NNE::Internal::FTensor& InputTensor = *InputTensors[0];
+		const NNE::Internal::FTensor& OutputTensor = *OutputTensors[0];
 
 		FTensorDescDml	DmlInputTensorDesc;
 
 		if (!DmlInputTensorDesc
-				.SetTensorRank(4, 4)
+				.SetTensorRank(MinTensorRank, MaxTensorRank)
 				.SetFromTensor(InputTensor)
 				.Validate())
 		{
@@ -62,7 +84,7 @@ public:
 		FTensorDescDml	DmlOutputTensorDesc;
 
 		if (!DmlOutputTensorDesc
-				.SetTensorRank(4, 4)
+				.SetTensorRank(MinTensorRank, MaxTensorRank)
 				.SetFromTensor(OutputTensor)
 				.Validate())
 		{
@@ -85,7 +107,8 @@ public:
 };
 
 // Register operator on Module startup
-NNE_DML_REGISTER_OP(LRN)
+NNE_DML_REGISTER_OP_VERSION(LRN, 1)
+NNE_DML_REGISTER_OP_VERSION(LRN, 13)
 
 } // namespace UE::NNERuntimeRDG::Private::Dml
 

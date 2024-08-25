@@ -64,7 +64,7 @@ public:
 	 *
 	 * @return A status wrapper around the memory pointer. Even if the status is valid the pointer might still be null.
 	 */
-	UE_NODISCARD CORE_API TIoStatusOr<uint8*> Release();
+	[[nodiscard]] CORE_API TIoStatusOr<uint8*> Release();
 
 private:
 	/** Core buffer object. For internal use only, used by FIoBuffer

@@ -19,13 +19,12 @@
 
 namespace Metasound
 {
-# pragma region Operator Declaration
 	template<uint32 NumInputs, uint32 NumChannels>
 	class TAudioMixerNodeOperator : public TExecutableOperator<TAudioMixerNodeOperator<NumInputs, NumChannels>>
 	{
 	public:
 		// ctor
-		TAudioMixerNodeOperator(const FCreateOperatorParams& InParams, const TArray<FAudioBufferReadRef>&& InInputBuffers, const TArray<FFloatReadRef>&& InGainValues)
+		TAudioMixerNodeOperator(const FBuildOperatorParams& InParams, const TArray<FAudioBufferReadRef>&& InInputBuffers, const TArray<FFloatReadRef>&& InGainValues)
 			: Gains(InGainValues)
 			, Inputs (InInputBuffers)
 		{
@@ -78,7 +77,7 @@ namespace Metasound
 #else 
 					FDataVertexMetadata GainPinMetaData;
 #endif // WITH_EDITOR
-					TInputDataVertex<float>GainVertexModel(GetGainInputName(InputIndex), GainPinMetaData, 1.0f);
+					TInputDataVertex<float>GainVertexModel(GainInputNames[InputIndex], GainPinMetaData, 1.0f);
 
 					InputInterface.Add(GainVertexModel);
 				}
@@ -96,7 +95,7 @@ namespace Metasound
 #else 
 					const FDataVertexMetadata AudioOutputMetadata;
 #endif // WITH_EDITOR
-					OutputInterface.Add(TOutputDataVertex<FAudioBuffer>(GetAudioOutputName(i), AudioOutputMetadata));
+					OutputInterface.Add(TOutputDataVertex<FAudioBuffer>(AudioOutputNames[i], AudioOutputMetadata));
 				}
 
 				return FVertexInterface(InputInterface, OutputInterface);
@@ -146,11 +145,10 @@ namespace Metasound
 			return Metadata;
 		}
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, TArray<TUniquePtr<IOperatorBuildError>>& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
-			const FInputVertexInterface& InputInterface = InParams.Node.GetVertexInterface().GetInputInterface();
-			const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
-
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
+			
 			TArray<FAudioBufferReadRef> InputBuffers;
 			TArray<FFloatReadRef> InputGains;
 
@@ -158,10 +156,10 @@ namespace Metasound
 			{
 				for (uint32 Chan = 0; Chan < NumChannels; ++Chan)
 				{
-					InputBuffers.Add(InputCollection.GetDataReadReferenceOrConstruct<FAudioBuffer>(GetAudioInputName(i, Chan), InParams.OperatorSettings));
+					InputBuffers.Add(InputData.GetOrConstructDataReadReference<FAudioBuffer>(GetAudioInputName(i, Chan), InParams.OperatorSettings));
 				}
 
-				InputGains.Add(InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, GetGainInputName(i), InParams.OperatorSettings));
+				InputGains.Add(InputData.GetOrCreateDefaultDataReadReference<float>(GainInputNames[i], InParams.OperatorSettings));
 			}
 
 			return MakeUnique<TAudioMixerNodeOperator<NumInputs, NumChannels>>(InParams, MoveTemp(InputBuffers), MoveTemp(InputGains));
@@ -176,7 +174,7 @@ namespace Metasound
 					InOutVertexData.BindReadVertex(GetAudioInputName(i, Chan), Inputs[i * NumChannels + Chan]);
 				}
 
-				InOutVertexData.BindReadVertex(GetGainInputName(i), Gains[i]);
+				InOutVertexData.BindReadVertex(GainInputNames[i], Gains[i]);
 			}
 		}
 
@@ -184,7 +182,7 @@ namespace Metasound
 		{
 			for (uint32 i = 0; i < NumChannels; ++i)
 			{
-				InOutVertexData.BindReadVertex(GetAudioOutputName(i), Outputs[i]);
+				InOutVertexData.BindReadVertex(AudioOutputNames[i], Outputs[i]);
 			}
 		}
 
@@ -216,17 +214,27 @@ namespace Metasound
 
 		void Execute()
 		{
-			// zero the outputs
+			// initialize the output using the first set of input channels
+			float NextGain = *Gains[0];
+			float PrevGain = PrevGains[0];
+
+			// initialize the output buffers w/ the first set of input buffers 
 			for (uint32 i = 0; i < NumChannels; ++i)
 			{
-				Outputs[i]->Zero();
+				TArrayView<const float> InputView = *Inputs[i];
+				TArrayView<float> OutputView = *Outputs[i];
+	
+				check(InputView.Num() == OutputView.Num());
+				Audio::ArrayFade(InputView, PrevGain, NextGain, OutputView);
 			}
 
-			// for each input
-			for (uint32 InputIndex = 0; InputIndex < NumInputs; ++InputIndex)
+			PrevGains[0] = NextGain;
+
+			// mix in each following input
+			for (uint32 InputIndex = 1; InputIndex < NumInputs; ++InputIndex)
 			{
-				const float NextGain = *Gains[InputIndex];
-				const float PrevGain = PrevGains[InputIndex];
+				NextGain = *Gains[InputIndex];
+				PrevGain = PrevGains[InputIndex];
 
 				// for each channel of audio
 				for (uint32 ChanIndex = 0; ChanIndex < NumChannels; ++ChanIndex)
@@ -241,6 +249,94 @@ namespace Metasound
 
 
 	private:
+		static TArray<FVertexName> InitializeAudioInputNames()
+		{
+			TStringBuilder<32> InputNameStr;
+			TArray<FVertexName> Names;
+			Names.AddUninitialized(NumInputs * NumChannels);
+
+			for (int InputIndex = 0; InputIndex < NumInputs; ++InputIndex)
+			{
+				for (int ChannelIndex = 0; ChannelIndex < NumChannels; ++ChannelIndex)
+				{
+					InputNameStr << "In " << InputIndex;
+
+					if (NumChannels == 1)
+					{
+					}
+					else if (NumChannels == 2)
+					{
+						InputNameStr << ' ' << ((!ChannelIndex)? 'L' : 'R');
+					}
+					else
+					{
+						InputNameStr << ", " << ChannelIndex;
+					}
+
+					Names[InputIndex * NumChannels + ChannelIndex] = *InputNameStr;
+					InputNameStr.Reset();
+				}
+			}
+
+			return Names;
+		}
+
+		static TArray<FVertexName> InitializeAudioOutputNames()
+		{
+			TStringBuilder<32> AudioOutNameStr;
+			TArray<FVertexName> Names;
+			Names.AddUninitialized(NumChannels);
+
+			for (int ChanIndex = 0; ChanIndex < NumChannels; ++ChanIndex)
+			{
+				AudioOutNameStr << "Out";
+
+				if (NumChannels == 1)
+				{
+				}
+				else if (NumChannels == 2)
+				{
+					AudioOutNameStr << ' ' << ((!ChanIndex)? 'L' : 'R');
+				}
+				else
+				{
+					AudioOutNameStr << ' ' << ChanIndex;
+				}
+			
+				Names[ChanIndex] = *AudioOutNameStr;
+				AudioOutNameStr.Reset();
+			}
+
+			return Names;
+		}
+
+		static TArray<FVertexName> InitializeGainInputNames()
+		{
+			TStringBuilder<32> GainNameStr;
+			TArray<FVertexName> Names;
+			Names.AddUninitialized(NumInputs);
+
+			for (int GainIndex = 0; GainIndex < NumInputs; ++GainIndex)
+			{
+				GainNameStr << "Gain " << GainIndex;
+				Names[GainIndex] = * GainNameStr;
+
+				GainNameStr.Reset();
+			}
+
+			return Names;
+		}
+
+		static const FVertexName& GetAudioInputName(uint32 InputIndex, uint32 ChannelIndex)
+		{
+			return AudioInputNames[InputIndex * NumChannels + ChannelIndex];
+		}
+
+
+		static inline const TArray<FVertexName> AudioInputNames = InitializeAudioInputNames();
+		static inline const TArray<FVertexName> AudioOutputNames = InitializeAudioOutputNames();
+		static inline const TArray<FVertexName> GainInputNames = InitializeGainInputNames();
+
 		TArray<FFloatReadRef> Gains;
 		TArray<FAudioBufferReadRef> Inputs;
 		TArray<FAudioBufferWriteRef> Outputs;
@@ -267,39 +363,6 @@ namespace Metasound
 			return Metadata;
 		}
 
-#pragma region Name Gen
-		static const FVertexName GetAudioInputName(uint32 InputIndex, uint32 ChannelIndex)
-		{
-			if (NumChannels == 1)
-			{
-				return *FString::Printf(TEXT("In %i"), InputIndex);
-			}
-			else if (NumChannels == 2)
-			{
-				return *FString::Printf(TEXT("In %i %s"), InputIndex, (ChannelIndex == 0) ? TEXT("L") : TEXT("R"));
-			}
-
-			return *FString::Printf(TEXT("In %i, %i"), InputIndex, ChannelIndex);
-		}
-
-		static const FVertexName GetGainInputName(uint32 InputIndex)
-		{
-			return *FString::Printf(TEXT("Gain %i"), InputIndex);
-		}
-
-		static const FVertexName GetAudioOutputName(uint32 ChannelIndex)
-		{
-			if (NumChannels == 1)
-			{
-				return TEXT("Out");
-			}
-			else if (NumChannels == 2)
-			{
-				return *FString::Printf(TEXT("Out %s"), (ChannelIndex == 0) ? TEXT("L") : TEXT("R"));
-			}
-
-			return *FString::Printf(TEXT("Out %i"), ChannelIndex);
-		}
 
 #if WITH_EDITOR
 		static const FText GetAudioInputDescription(uint32 InputIndex, uint32 ChannelIndex)
@@ -362,12 +425,9 @@ namespace Metasound
 			return METASOUND_LOCTEXT_FORMAT("AudioMixerAudioOutputDescription", "Summed output for channel: {0}", ChannelIndex);
 		}
 #endif // WITH_EDITOR
-#pragma endregion
 	}; // class TAudioMixerNodeOperator
-#pragma endregion
 
 
-#pragma region Node Definition
 	template<uint32 NumInputs, uint32 NumChannels>
 	class METASOUNDSTANDARDNODES_API TAudioMixerNode : public FNodeFacade
 	{
@@ -381,10 +441,8 @@ namespace Metasound
 
 		virtual ~TAudioMixerNode() = default;
 	};
-#pragma endregion
 
 
-#pragma region Node Registration
 	#define REGISTER_AUDIOMIXER_NODE(A, B) \
 		using FAudioMixerNode_##A ## _ ##B = TAudioMixerNode<A, B>; \
 		METASOUND_REGISTER_NODE(FAudioMixerNode_##A ## _ ##B) \
@@ -410,11 +468,6 @@ namespace Metasound
 
 	// test
 //	REGISTER_AUDIOMIXER_NODE(8, 6)
-
-#pragma endregion
-
-
-
 
 } // namespace Metasound
 

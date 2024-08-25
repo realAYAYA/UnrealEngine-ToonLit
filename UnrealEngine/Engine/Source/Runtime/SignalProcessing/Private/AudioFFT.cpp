@@ -1090,7 +1090,7 @@ namespace Audio
 
 	void FFFTConvolver_DEPRECATED::SetCOLABuffer(float* InAudio, int32 NumSamples)
 	{
-		COLABuffer.SetNumUninitialized(NumSamples, false);
+		COLABuffer.SetNumUninitialized(NumSamples, EAllowShrinking::No);
 		FMemory::Memcpy(COLABuffer.GetData(), InAudio, NumSamples * sizeof(float));
 	}
 

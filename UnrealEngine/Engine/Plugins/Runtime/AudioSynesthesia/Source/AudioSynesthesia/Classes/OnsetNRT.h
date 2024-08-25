@@ -81,7 +81,9 @@ class AUDIOSYNESTHESIA_API UOnsetNRT : public UAudioSynesthesiaNRT
 		virtual FText GetAssetActionName() const override;
 
 		virtual UClass* GetSupportedClass() const override;
-#endif
+
+		virtual bool ShouldEventTriggerAnalysis(FPropertyChangedEvent& PropertyChangeEvent) override;
+#endif // WITH_EDITOR
 	protected:
 
 		/** Return the name of the IAudioAnalyzerNRTFactory associated with this UAudioAnalyzerNRT */

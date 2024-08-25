@@ -84,8 +84,6 @@ struct FSortedLightSceneInfo
 			// Currently bHandledByLumen is the MSB and LightType is LSB
 			/** The type of light. */
 			uint32 LightType : LightType_NumBits;
-			/** Whether the light has a texture profile. */
-			uint32 bTextureProfile : 1;
 			/** Whether the light uses a light function. */
 			uint32 bLightFunction : 1;
 			/** Whether the light uses lighting channels. */
@@ -94,15 +92,13 @@ struct FSortedLightSceneInfo
 			uint32 bShadowed : 1;
 			/** Whether the light is NOT a simple light - they always support tiled/clustered but may want to be selected separately. */
 			uint32 bIsNotSimpleLight : 1;
-			/* We want to sort the lights that write into the packed shadow mask (when enabled) to the front of the list so we don't waste slots in the packed shadow mask. */
-			uint32 bDoesNotWriteIntoPackedShadowMask : 1;
 			/** 
 			 * True if the light doesn't support clustered deferred, logic is inverted so that lights that DO support clustered deferred will sort first in list 
 			 * Super-set of lights supporting tiled, so the tiled lights will end up in the first part of this range.
 			 */
 			uint32 bClusteredDeferredNotSupported : 1;
-			/** Whether the light should be handled by Lumen's Final Gather, these will be sorted to the end so they can be skipped */
-			uint32 bHandledByLumen : 1;
+			/** Whether the light should be handled by Many Lights, these will be sorted to the end so they can be skipped */
+			uint32 bHandledByManyLights : 1;
 		} Fields;
 		/** Sort key bits packed into an integer. */
 		int32 Packed;
@@ -143,7 +139,12 @@ struct FSortedLightSetSceneInfo
 	/** First light with shadow map or */
 	int32 UnbatchedLightStart;
 
-	int32 LumenLightStart;
+	// First light handled by Many Lights
+	int32 ManyLightsLightStart;
+
+	bool bHasRectLights = false;
+	bool bHasLightFunctions = false;
+	bool bHasLightChannels = false;
 
 	FSimpleLightArray SimpleLights;
 	TArray<FSortedLightSceneInfo, SceneRenderingAllocator> SortedLights;
@@ -313,7 +314,7 @@ public:
 
 	bool ShouldRecordShadowSubjectsForMobile() const;
 
-	uint32 PackLightTypeAndShadowMapChannelMask(bool bAllowStaticLighting) const;
+	uint32 PackLightTypeAndShadowMapChannelMask(bool bAllowStaticLighting, bool bLightFunction = false) const;
 };
 
 /** Defines how the light is stored in the scene's light octree. */

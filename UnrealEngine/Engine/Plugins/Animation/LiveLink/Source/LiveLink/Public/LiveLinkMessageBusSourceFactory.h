@@ -15,8 +15,8 @@ class LIVELINK_API ULiveLinkMessageBusSourceFactory : public ULiveLinkSourceFact
 public:
 	GENERATED_BODY()
 
-	virtual FText GetSourceDisplayName() const;
-	virtual FText GetSourceTooltip() const;
+	virtual FText GetSourceDisplayName() const override;
+	virtual FText GetSourceTooltip() const override;
 
 	virtual EMenuType GetMenuType() const override { return EMenuType::SubPanel; }
 	virtual TSharedPtr<SWidget> BuildCreationPanel(FOnLiveLinkSourceCreated OnLiveLinkSourceCreated) const override;
@@ -31,6 +31,5 @@ protected:
 																   const FMessageAddress& Address,
 																   double TimeOffset) const;
 
-private:
 	void OnSourceSelected(FProviderPollResultPtr SelectedSource, FOnLiveLinkSourceCreated OnLiveLinkSourceCreated) const;
 };

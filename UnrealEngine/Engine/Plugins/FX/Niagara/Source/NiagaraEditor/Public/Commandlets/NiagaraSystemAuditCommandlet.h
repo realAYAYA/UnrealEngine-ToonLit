@@ -24,8 +24,8 @@ class UNiagaraSystemAuditCommandlet : public UCommandlet
 	TSet<FString> NiagaraSystemsWithPrerequisites;
 	/** All Niagara systems that contain emitters with dynamic bounds */
 	TSet<FString> NiagaraSystemsWithDynamicBounds;
-	/** All Niagara systems that use a user requested data interface */
-	TSet<FString> NiagaraSystemsWithUserDataInterface;
+	/** All Niagara systems that contain the requested data interface */
+	TSet<FString> NiagaraSystemsWithDataInterfaceToFind;
 	/** All Niagara Systems & Emitters with simulation stages enabled*/
 	TSet<FString> NiagaraSystemsWithSimulationStages;
 
@@ -39,6 +39,7 @@ class UNiagaraSystemAuditCommandlet : public UCommandlet
 		TSet<FName>		Systems;
 	};
 	bool bCaptureDataInterfaceUsage = false;
+	TSet<FName> NiagaraDataInterfaceUsageToCapture;
 	TMap<FName, FDataInterfaceUsage>  NiagaraDataInterfaceUsage;
 
 	/** Detailed renderer information. */
@@ -54,8 +55,11 @@ class UNiagaraSystemAuditCommandlet : public UCommandlet
 	/** Package paths to include */
 	TArray<FName> PackagePaths;
 
+	/** List of assets to only include (i.e. process only these) */
+	TSet<FName> IncludeOnlyPackages;
+
 	/** Systems using specific data interfaces to find */
-	TSet<UClass*> UserDataInterfacesToFind;
+	TSet<UClass*> DataInterfacesToFind;
 
 	/** DeviceProfiles we want to disable GPU emitters for. */
 	TArray<class UDeviceProfile*> DeviceProfilesToDisableGpu;

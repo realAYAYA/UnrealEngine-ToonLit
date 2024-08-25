@@ -206,6 +206,7 @@ void FAvfMediaCapturePlayer::CreateCaptureSession(NSString* deviceIDString)
 		if(bResult)
 		{
 			EventSink.ReceiveMediaEvent(EMediaEvent::MediaOpened);
+			EventSink.ReceiveMediaEvent(EMediaEvent::TracksChanged);
 		}
 		else
 		{
@@ -282,6 +283,11 @@ bool FAvfMediaCapturePlayer::Open(const TSharedRef<FArchive, ESPMode::ThreadSafe
 {
 	// Does not support open/playback from an Unreal Engine Archive
 	return false;
+}
+
+bool FAvfMediaCapturePlayer::GetPlayerFeatureFlag(EFeatureFlag Flag) const
+{
+	return Flag == EFeatureFlag::PlayerSelectsDefaultTracks ? true : false;
 }
 
 // IMediaTracks Interface
@@ -703,7 +709,7 @@ void FAvfMediaCapturePlayer::ProcessSampleBufferVideo(CMSampleBufferRef SampleBu
 		
 		if (!MetalTextureCache)
 		{
-			id<MTLDevice> Device = (id<MTLDevice>)GDynamicRHI->RHIGetNativeDevice();
+            id<MTLDevice> Device = (__bridge id<MTLDevice>)GDynamicRHI->RHIGetNativeDevice();
 			check(Device);
 			
 			CVReturn Return = CVMetalTextureCacheCreate(kCFAllocatorDefault, nullptr, Device, nullptr, &MetalTextureCache);
@@ -718,20 +724,27 @@ void FAvfMediaCapturePlayer::ProcessSampleBufferVideo(CMSampleBufferRef SampleBu
 		check(Result == kCVReturnSuccess);
 		check(TextureRef);
 
-		const FRHITextureCreateDesc Desc =
+		FRHITextureCreateDesc Desc =
 			FRHITextureCreateDesc::Create2D(TEXT("FAvfMediaCapturePlayer"), Width, Height, PF_B8G8R8A8)
 			.SetFlags(ETextureCreateFlags::SRGB | ETextureCreateFlags::Dynamic | ETextureCreateFlags::NoTiling | ETextureCreateFlags::ShaderResource)
 			.SetBulkData(new FAvfTexture2DResourceWrapper(TextureRef));
 
-		TRefCountPtr<FRHITexture2D> ShaderResource = RHICreateTexture(Desc);
 		CFRelease(TextureRef);
 		
 		FIntPoint Dim(Width, Height);
 		
-		TSharedRef<FAvfMediaTextureSample, ESPMode::ThreadSafe> VideoSample = VideoSamplePool.AcquireShared();
-		VideoSample->Initialize(ShaderResource, Dim, Dim, CurrentTime, SampleDuration);
-		
-		MediaSamples->AddVideo(VideoSample);
+		ENQUEUE_RENDER_COMMAND(FAvfMediaCapturePlayer_ProcessSampleBufferVideo_CreateTexture)(
+            [WeakPlayer = this->AsWeak(), InDesc = MoveTemp(Desc), Dim, SampleDuration](FRHICommandListImmediate& RHICmdList)
+            {
+            	if (const TSharedPtr<FAvfMediaCapturePlayer> Player = WeakPlayer.Pin())
+            	{
+            		TRefCountPtr<FRHITexture2D> ShaderResource = RHICreateTexture(InDesc);
+					TSharedRef<FAvfMediaTextureSample, ESPMode::ThreadSafe> VideoSample = Player->VideoSamplePool.AcquireShared();
+					VideoSample->Initialize(ShaderResource, Dim, Dim, Player->CurrentTime, SampleDuration);
+            
+					Player->MediaSamples->AddVideo(VideoSample);
+            	}
+        });
 	}
 }
 

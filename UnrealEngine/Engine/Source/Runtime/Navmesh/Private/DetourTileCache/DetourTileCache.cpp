@@ -704,11 +704,11 @@ dtStatus dtTileCache::buildNavMeshTile(const dtCompressedTileRef ref, dtNavMesh*
 	if (!bc.lclusters)
 		return status;
 	status = dtBuildTileCacheContours(m_talloc, *bc.layer, walkableClimbVx,
-									  m_params.maxSimplificationError, m_params.cs, m_params.ch,
+									  m_params.maxVerticalMergeError, m_params.maxSimplificationError, m_params.simplificationElevationRatio, m_params.cs, m_params.ch,
 									  *bc.lcset, *bc.lclusters);
 #else
 	status = dtBuildTileCacheContours(m_talloc, *bc.layer, walkableClimbVx,
-									  m_params.maxSimplificationError, m_params.cs, m_params.ch, *bc.lcset);
+									  m_params.maxVerticalMergeError, m_params.maxSimplificationError, m_params.simplificationElevationRatio, m_params.cs, m_params.ch, *bc.lcset);
 #endif //WITH_NAVMESH_CLUSTER_LINKS
 	//@UE END
 

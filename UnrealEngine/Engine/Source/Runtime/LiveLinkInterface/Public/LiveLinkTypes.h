@@ -482,9 +482,8 @@ protected:
 				{
 					return StaticCast<Type*>(BaseData);
 				}
+				return nullptr;
 			}
-
-			return nullptr;
 		}
 		static const Type* ConstCast(const UScriptStruct* ScriptStruct, const BaseType* BaseData)
 		{

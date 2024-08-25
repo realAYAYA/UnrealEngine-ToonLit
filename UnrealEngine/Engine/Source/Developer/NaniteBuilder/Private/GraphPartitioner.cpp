@@ -3,6 +3,8 @@
 #include "GraphPartitioner.h"
 #include "Async/Async.h"
 #include "Async/LocalWorkQueue.h"
+#include "EngineLogs.h"
+#include "HAL/PlatformMemory.h"
 
 FGraphPartitioner::FGraphPartitioner( uint32 InNumElements )
 	: NumElements( InNumElements )
@@ -67,6 +69,13 @@ void FGraphPartitioner::Partition( FGraphData* Graph, int32 InMinPartitionSize, 
 			&EdgesCut,
 			PartitionIDs.GetData()
 		);
+
+		if (r == METIS_ERROR_MEMORY)
+		{
+			UE_LOG(LogStaticMesh, Error, TEXT("Call to METIS_PartGraphKway() failed - error code: %d, Graph->Num: %d"), r, Graph->Num);
+			// We can't get the precise allocation size, but Metis logs an error that contains the actual error.
+			FPlatformMemory::OnOutOfMemory(0, 0);
+		}
 
 		if( ensure( r == METIS_OK ) )
 		{
@@ -177,6 +186,13 @@ void FGraphPartitioner::BisectGraph( FGraphData* Graph, FGraphData* ChildGraphs[
 		&EdgesCut,
 		PartitionIDs.GetData() + Graph->Offset
 	);
+
+	if (r == METIS_ERROR_MEMORY)
+	{
+		UE_LOG(LogStaticMesh, Error, TEXT("Call to METIS_PartGraphRecursive() failed - error code: %d, Graph->Num: %d"), r, Graph->Num);
+		// We can't get the precise allocation size, but Metis logs an error that contains the actual error.
+		FPlatformMemory::OnOutOfMemory(0, 0);
+	}
 
 	checkf(r == METIS_OK, TEXT("Call to METIS_PartGraphRecursive() failed - error code: %d, Graph->Num: %d"), r, Graph->Num);
 

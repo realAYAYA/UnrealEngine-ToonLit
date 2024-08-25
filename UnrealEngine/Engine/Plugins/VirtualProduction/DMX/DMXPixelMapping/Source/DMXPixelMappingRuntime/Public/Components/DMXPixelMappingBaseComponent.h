@@ -15,6 +15,14 @@ class UDMXPixelMapping;
 class UDMXPixelMappingRootComponent;
 
 
+UENUM(BlueprintType)
+enum class EDMXPixelMappingResetDMXMode : uint8
+{
+	SendDefaultValues UMETA(DisplayName = "Send Default Values"),
+	SendZeroValues UMETA(DisplayName = "Send Zero Values"),
+	DoNotSendValues UMETA(DisplayName = "Keep Last Mapped Values")
+};
+
 /**
  * Base class for all DMX Pixel Mapping components. 
  */
@@ -44,7 +52,6 @@ public:
 	static FDMXPixelMappingOnComponentRenamed& GetOnComponentRenamed();
 	
 	//~ Begin UObject interface
-protected:
 	virtual void PostRename(UObject* OldOuter, const FName OldName) override;
 	virtual void Serialize(FArchive& Ar) override;
 #if WITH_EDITOR
@@ -52,7 +59,6 @@ protected:
 #endif // WITH_EDITOR
 	//~ End UObject interface
 
-public:
 	/**
 	 * Should log properties that were changed in underlying fixture patch or fixture type
 	 *
@@ -135,19 +141,6 @@ public:
 		return FoundObject;
 	}
 
-	/** DEPRECATED 4.27  */
-	template <typename TComponentClass>
-	UE_DEPRECATED(4.27, "Use ForEachChildOfClass in favor of a clearer name instead.")
-	void ForEachComponentOfClass(TComponentPredicateType<TComponentClass> Predicate, bool bIsRecursive)
-	{
-		ForEachChild([&Predicate](UDMXPixelMappingBaseComponent* InComponent) {
-			if (TComponentClass* CastComponent = Cast<TComponentClass>(InComponent))
-			{
-				Predicate(CastComponent);
-			}
-		}, bIsRecursive);
-	}
-
 	/** 
 	 * Loop through all templated child class by given Predicate
 	 *
@@ -165,7 +158,7 @@ public:
 	}
 
 	/** Get Pixel Mapping asset UObject */
-	UDMXPixelMapping* GetPixelMapping();
+	UDMXPixelMapping* GetPixelMapping() const;
 
 	/** Get root component of the component tree */
 	const UDMXPixelMappingRootComponent* GetRootComponent() const;
@@ -187,7 +180,7 @@ public:
 
 	/** Reset all sending DMX channels to 0 for this component and all children */
 	UFUNCTION(BlueprintCallable, Category = "DMX|PixelMapping")
-	virtual void ResetDMX() {};
+	virtual void ResetDMX(EDMXPixelMappingResetDMXMode ResetMode = EDMXPixelMappingResetDMXMode::SendDefaultValues) {};
 
 	/** Send DMX values of this component and all children. */
 	UFUNCTION(BlueprintCallable, Category = "DMX|PixelMapping")
@@ -200,16 +193,6 @@ public:
 	/** Render downsample texture and send DMX for this component and all children */
 	UFUNCTION(BlueprintCallable, Category = "DMX|PixelMapping")
 	virtual void RenderAndSendDMX() {};
-
-#if WITH_EDITORONLY_DATA
-	UPROPERTY()
-	bool bExpanded = true;
-#endif
-
-public:
-	/*----------------------------------------------------------
-		Public static functions
-	----------------------------------------------------------*/
 
 	/**
 	 * Recursively looking for the first parent by given Class
@@ -251,10 +234,14 @@ public:
 	/** Set the components parent */
 	void SetParent(const TWeakObjectPtr<UDMXPixelMappingBaseComponent>& NewParent) { WeakParent = NewParent; }
 #endif 
-
 	/** Parent component */
 	UPROPERTY(Meta = (DeprecatedProperty, DeprecationMessage = "Leads to entangled references. Use GetParent() or WeakParent instead."))
 	TObjectPtr<UDMXPixelMappingBaseComponent> Parent_DEPRECATED;
+
+#if WITH_EDITORONLY_DATA
+	UPROPERTY()
+	bool bExpanded = true;
+#endif
 
 protected:
 	/** Called when the component was added to a parent */

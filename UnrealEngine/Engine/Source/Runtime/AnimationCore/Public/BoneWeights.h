@@ -534,8 +534,7 @@ class FBoneWeights
 
 		static void SetNum(ContainerType& InContainer, int32 InNum)
 		{
-			const bool bResizeOnShrink = false;
-			InContainer.SetNumUninitialized(InNum, bResizeOnShrink);
+			InContainer.SetNumUninitialized(InNum, EAllowShrinking::No);
 		}
 
 		static int32 Num(const ContainerType& InContainer)

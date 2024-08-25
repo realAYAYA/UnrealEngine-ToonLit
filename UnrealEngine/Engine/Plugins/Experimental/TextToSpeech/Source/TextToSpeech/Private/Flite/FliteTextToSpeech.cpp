@@ -21,7 +21,6 @@
  */
 FFliteTextToSpeech::FFliteTextToSpeech()
 {
-
 }
 
 FFliteTextToSpeech::~FFliteTextToSpeech()
@@ -138,14 +137,17 @@ void FFliteTextToSpeech::OnActivated()
 	{
 		if (FAudioDeviceHandle AudioDeviceHandle = AudioDeviceManager->GetMainAudioDeviceHandle())
 		{
-			FliteAdapter = MakeUnique<FFliteAdapter>();
-			TTSSubmixListener = MakeUnique<FFliteTextToSpeechSubmixListener>(GetId());
-			AudioDeviceHandle->RegisterSubmixBufferListener(TTSSubmixListener.Get());
-			// RegisterSubmixBufferListener lazily enqueues the registration on the audio thread,
-		// so we have to wait for the audio thread to destroy.
-			FAudioCommandFence Fence;
-			Fence.BeginFence();
-			Fence.Wait();
+			if (FAudioDevice* AudioDevice = AudioDeviceHandle.GetAudioDevice())
+			{
+				FliteAdapter = MakeUnique<FFliteAdapter>();
+				TTSSubmixListener = MakeShared<FFliteTextToSpeechSubmixListener>(GetId());
+				AudioDeviceHandle->RegisterSubmixBufferListener(TTSSubmixListener->AsShared(), AudioDevice->GetMainSubmixObject());
+				// RegisterSubmixBufferListener lazily enqueues the registration on the audio thread,
+			// so we have to wait for the audio thread to destroy.
+				FAudioCommandFence Fence;
+				Fence.BeginFence();
+				Fence.Wait();
+			}
 		}
 	}
 }
@@ -166,13 +168,13 @@ void FFliteTextToSpeech::OnDeactivated()
 	{
 		if (FAudioDeviceHandle AudioDeviceHandle = AudioDeviceManager->GetMainAudioDeviceHandle())
 		{
-			AudioDeviceHandle->UnregisterSubmixBufferListener(TTSSubmixListener.Get());
+			AudioDeviceHandle->UnregisterSubmixBufferListener(TTSSubmixListener->AsShared(), AudioDeviceHandle->GetMainSubmixObject());
 			FAudioCommandFence Fence;
 			Fence.BeginFence();
 			Fence.Wait();
 		}
 		FliteAdapter = nullptr;
-		TTSSubmixListener = nullptr;
+		TTSSubmixListener.Reset();
 	}
 }
 

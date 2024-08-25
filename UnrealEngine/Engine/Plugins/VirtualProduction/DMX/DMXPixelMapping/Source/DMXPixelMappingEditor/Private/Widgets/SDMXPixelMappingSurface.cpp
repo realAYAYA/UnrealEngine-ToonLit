@@ -2,9 +2,10 @@
 
 #include "Widgets/SDMXPixelMappingSurface.h"
 
-#include "Framework/Application/SlateApplication.h"
 #include "Components/DMXPixelMappingRendererComponent.h"
+#include "Framework/Application/SlateApplication.h"
 #include "Settings/LevelEditorViewportSettings.h"
+#include "SNodePanel.h"
 #include "Toolkits/DMXPixelMappingToolkit.h"
 
 
@@ -240,7 +241,7 @@ int32 SDMXPixelMappingSurface::OnPaint(const FPaintArgs& Args, const FGeometry& 
 	OnPaintBackground(AllottedGeometry, MyCullingRect, OutDrawElements, LayerId);
 
 	SCompoundWidget::OnPaint(Args, AllottedGeometry, MyCullingRect, OutDrawElements, LayerId, InWidgetStyle, bParentEnabled);
-
+ 
 	return LayerId;
 }
 
@@ -593,7 +594,7 @@ void SDMXPixelMappingSurface::PaintBackgroundAsLines(const FSlateBrush* Backgrou
 	const FLinearColor CenterColor(FAppStyle::GetColor("Graph.Panel.GridCenterColor"));
 	const float GraphSmallestGridSize = 8.0f;
 	const float RawZoomFactor = GetZoomAmount();
-	const float NominalGridSize = GetSnapGridSize() * GetGridScaleAmount();
+	const float NominalGridSize = GetGridSize() * GetGridScaleAmount();
 
 	float ZoomFactor = RawZoomFactor;
 	float Inflation = 1.0f;

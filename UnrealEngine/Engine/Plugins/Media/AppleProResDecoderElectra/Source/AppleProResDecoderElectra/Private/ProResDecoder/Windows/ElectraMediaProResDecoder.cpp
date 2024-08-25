@@ -15,6 +15,8 @@
 #include "IElectraDecoderResourceDelegate.h"
 #include "ElectraDecodersUtils.h"
 #include "Utils/MPEG/ElectraUtilsMP4.h"	// to read the ProRes header, which is given in the form of an MP4 Atom
+#include COMPILED_PLATFORM_HEADER(ElectraDecoderGPUBufferHelpers.h)
+
 
 #include "ProResDecoder.h"
 
@@ -130,7 +132,24 @@ public:
 	}
 	void* GetBufferTextureByIndex(int32 InBufferIndex) const override
 	{
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+		if (InBufferIndex == 0)
+		{
+			return GPUBuffer.Resource.GetReference();
+		}
+#endif
 		return nullptr;
+	}
+	virtual bool GetBufferTextureSyncByIndex(int32 InBufferIndex, FElectraDecoderOutputSync& SyncObject) const override
+	{
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+		if (InBufferIndex == 0)
+		{
+			SyncObject = { GPUBuffer.Fence.GetReference(), GPUBuffer.FenceValue };
+			return true;
+		}
+#endif
+		return false;
 	}
 	EElectraDecoderPlatformPixelFormat GetBufferFormatByIndex(int32 InBufferIndex) const override
 	{
@@ -167,6 +186,9 @@ public:
 	TSharedPtr<TArray<uint8>, ESPMode::ThreadSafe> Buffer;
 	EElectraDecoderPlatformPixelFormat BufferFormat = EElectraDecoderPlatformPixelFormat::INVALID;
 	EElectraDecoderPlatformPixelEncoding BufferEncoding = EElectraDecoderPlatformPixelEncoding::Native;
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+	FElectraMediaDecoderOutputBufferPool_DX12::FOutputData GPUBuffer;
+#endif
 };
 
 
@@ -346,6 +368,8 @@ private:
 	uint32 Codec4CC = 0;
 	uint32 BufferAllocationSize = 0;
 
+	TWeakPtr<IElectraDecoderResourceDelegate, ESPMode::ThreadSafe> ResourceDelegate;
+
 	IElectraDecoder::FError LastError;
 
 	PRPixelFormat OutputPixelFormat = kPRFormat_y416;
@@ -357,6 +381,11 @@ private:
 
 	PRDecoderRef Decoder = nullptr;
 	FProResHeader CurrentHeader;
+
+	uint32 MaxOutputBuffers;
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+	mutable TSharedPtr<FElectraMediaDecoderOutputBufferPool_DX12> D3D12ResourcePool;
+#endif
 };
 
 
@@ -432,6 +461,10 @@ FVideoDecoderProResElectra::FVideoDecoderProResElectra(const TMap<FString, FVari
 	// The decoded width is the same as the display width
 	DecodedWidth = DisplayWidth;
 	DecodedHeight = DisplayHeight;
+	ResourceDelegate = InResourceDelegate;
+
+	MaxOutputBuffers = (uint32)ElectraDecodersUtil::GetVariantValueSafeU64(InOptions, TEXT("max_output_buffers"), 5);
+	MaxOutputBuffers += kElectraDecoderPipelineExtraFrames;
 }
 
 FVideoDecoderProResElectra::~FVideoDecoderProResElectra()
@@ -587,6 +620,14 @@ IElectraDecoder::EDecoderError FVideoDecoderProResElectra::DecodeAccessUnit(cons
 		return IElectraDecoder::EDecoderError::NoBuffer;
 	}
 
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+	// If we will create a new resource pool or we have still buffers in an existing one, we can proceed, else we'd have no resources to output the data
+	if (D3D12ResourcePool.IsValid() && !D3D12ResourcePool->BufferAvailable())
+	{
+		return IElectraDecoder::EDecoderError::NoBuffer;
+	}
+#endif
+
 	// Create a decoder?
 	if (!Decoder)
 	{
@@ -618,6 +659,17 @@ IElectraDecoder::EDecoderError FVideoDecoderProResElectra::DecodeAccessUnit(cons
 			PostError(0, TEXT("Failed to configure the ProRes output for the current input format"), ERRCODE_INTERNAL_FAILED_TO_DECODE_INPUT);
 			return IElectraDecoder::EDecoderError::Error;
 		}
+
+		void* PlatformDevice = nullptr;
+		int32 PlatformDeviceVersion = 0;
+		bool bUseGPUBuffers = false;
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+		if (auto PinnedResourceDelegate = ResourceDelegate.Pin())
+		{
+			PinnedResourceDelegate->GetD3DDevice(&PlatformDevice, &PlatformDeviceVersion);
+			bUseGPUBuffers = (PlatformDevice && PlatformDeviceVersion >= 12000);
+		}
+#endif
 
 		TSharedPtr<FVideoDecoderOutputProResElectra, ESPMode::ThreadSafe> NewOutput = MakeShared<FVideoDecoderOutputProResElectra>();
 		NewOutput->PTS = InInputAccessUnit.PTS;
@@ -691,18 +743,67 @@ IElectraDecoder::EDecoderError FVideoDecoderProResElectra::DecodeAccessUnit(cons
 		NewOutput->ExtraValues.Emplace(TEXT("codec"), FVariant(TEXT("prores")));
 		NewOutput->ExtraValues.Emplace(TEXT("codec_4cc"), FVariant(Codec4CC));
 
-		NewOutput->Buffer = MakeShared<TArray<uint8>, ESPMode::ThreadSafe>();
-		NewOutput->Buffer->AddUninitialized(BufferAllocationSize);
-
 		PRPixelBuffer pb;
 		FMemory::Memzero(pb);
-		pb.baseAddr = NewOutput->Buffer->GetData();
-		pb.rowBytes = OutputBufferBytesPerRow;
 		pb.format = OutputPixelFormat;
 		pb.width = DecodedWidth;
 		pb.height = DecodedHeight;
 
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+		if (bUseGPUBuffers)
+		{
+			// Setup a resource to directly receive the decoder output
+			// (the memory is WC configured, so the decoder must not read from it -- this seems to be the case with ProRes)
+
+			TRefCountPtr D3D12Device(static_cast<ID3D12Device*>(PlatformDevice));
+
+			// Create the resource pool as needed...
+			if (!D3D12ResourcePool)
+			{
+				// note: prores will use a constant resolution and format throughout a decoder session
+				D3D12ResourcePool = MakeShared<FElectraMediaDecoderOutputBufferPool_DX12, ESPMode::ThreadSafe>(D3D12Device, MaxOutputBuffers, NewOutput->Width, NewOutput->Height, NewOutput->Pitch / NewOutput->Width);
+			}
+
+			// Request resource and fence...
+			uint32 BufferPitch;
+			D3D12ResourcePool->AllocateOutputDataAsBuffer(NewOutput->GPUBuffer, BufferPitch);
+
+			// Correct output pitch to what the resource is setup for
+			NewOutput->Pitch = BufferPitch;
+
+			void* BufferAddr;
+			HRESULT Res = NewOutput->GPUBuffer.Resource->Map(0, nullptr, &BufferAddr);
+			check(SUCCEEDED(Res));
+
+			check((uint32)OutputBufferBytesPerRow <= BufferPitch);
+			pb.baseAddr = (unsigned char*)BufferAddr;
+			pb.rowBytes = BufferPitch;
+		}
+		else
+#endif
+		{
+			NewOutput->Buffer = MakeShared<TArray<uint8>, ESPMode::ThreadSafe>();
+			NewOutput->Buffer->AddUninitialized(BufferAllocationSize);
+
+			pb.baseAddr = NewOutput->Buffer->GetData();
+			pb.rowBytes = OutputBufferBytesPerRow;
+		}
+
 		int NumBytesDecoded = PRDecodeFrame(Decoder, InInputAccessUnit.Data, static_cast<int>(InInputAccessUnit.DataSize), &pb, OutDownscaleMode, OutputDiscardAlpha);
+
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+		if (bUseGPUBuffers)
+		{
+			// Unmap the resource memory and signal that it's usable by the GPU
+			NewOutput->GPUBuffer.Resource->Unmap(0, nullptr);
+
+			if (NumBytesDecoded >= 0)
+			{
+				NewOutput->GPUBuffer.Fence->Signal(NewOutput->GPUBuffer.FenceValue);
+			}
+		}
+#endif
+
 		if (NumBytesDecoded < 0)
 		{
 			PostError(NumBytesDecoded, TEXT("PRDecodeFrame() failed"), ERRCODE_INTERNAL_FAILED_TO_DECODE_INPUT);

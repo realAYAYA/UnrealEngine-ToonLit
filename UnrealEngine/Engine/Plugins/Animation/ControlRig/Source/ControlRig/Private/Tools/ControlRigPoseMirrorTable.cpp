@@ -15,7 +15,7 @@ void FControlRigPoseMirrorTable::SetUpMirrorTable(const UControlRig* ControlRig)
 		TArray<FRigControlElement*> CurrentControls = ControlRig->AvailableControls();
 		for (FRigControlElement* ControlElement : CurrentControls)
 		{
-			FString CurrentString = ControlElement->GetName().ToString();
+			FString CurrentString = ControlElement->GetName();
 			if (CurrentString.Contains(Settings->RightSide))
 			{
 				FString NewString = CurrentString.Replace(*Settings->RightSide, *Settings->LeftSide);

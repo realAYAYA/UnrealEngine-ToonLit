@@ -4,7 +4,6 @@
 #ifdef ELECTRA_DECODERS_ENABLE_DX
 
 #include "Windows/AllowWindowsPlatformTypes.h"
-#include "Windows/WindowsHWrapper.h"
 
 THIRD_PARTY_INCLUDES_START
 #include "mftransform.h"

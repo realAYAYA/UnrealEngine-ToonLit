@@ -12,7 +12,7 @@
 #include "Interfaces/IAudioFormatModule.h"
 #include "AudioDecompress.h"
 #include "Audio.h"
-#include "ADPCMAudioInfo.h"
+#include "Decoders/ADPCMAudioInfo.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogAudioFormatADPCM, Log, All);
 
@@ -416,7 +416,7 @@ class FAudioFormatADPCM : public IAudioFormat
 	enum
 	{
 		/** Version for ADPCM format, this becomes part of the DDC key. */
-		UE_AUDIO_ADPCM_VER = 6,
+		UE_AUDIO_ADPCM_VER = 7,
 	};
 
 	void InterleaveBuffers(const TArray<TArray<uint8> >& SrcBuffers, TArray<uint8> & InterleavedBuffer) const
@@ -600,10 +600,9 @@ public:
 			SrcSize -= HeaderSize;
 			SrcData = WaveInfo.SampleDataStart;
 
-			const int32 Chunk0Remaining = InitialMaxChunkSize - HeaderSize;
-			int32 DataLeftInCurChunk = Chunk0Remaining <= 0 ? MaxChunkSize : Chunk0Remaining;
+			int32 DataLeftInCurChunk = InitialMaxChunkSize - HeaderSize;
 
-			while (SrcSize > 0 && DataLeftInCurChunk > 0)
+			while (SrcSize > 0)
 			{
 				// Calculate how many frames can fit in whats left of the current chunk
 				DataLeftInCurChunk = FMath::Min(DataLeftInCurChunk, SrcSize);
@@ -616,6 +615,7 @@ public:
 				SrcSize -= SizeOfNewChunk;
 				SrcData += SizeOfNewChunk;
 
+				
 				if (SrcSize > 0)
 				{
 					DataLeftInCurChunk = MaxChunkSize;
@@ -634,7 +634,7 @@ public:
 	// Add a new chunk and reserve ChunkSize bytes in it
 	void AddNewChunk(TArray<TArray<uint8>>& OutBuffers, int32 ChunkReserveSize) const
 	{
-		TArray<uint8>& NewBuffer = *new (OutBuffers) TArray<uint8>;
+		TArray<uint8>& NewBuffer = OutBuffers.AddDefaulted_GetRef();
 		NewBuffer.Empty(ChunkReserveSize);
 	}
 	

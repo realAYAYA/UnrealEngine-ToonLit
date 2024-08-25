@@ -9,12 +9,14 @@
 #include "NiagaraEmitterInstance.h"
 #include "NiagaraGPUSortInfo.h"
 #include "NiagaraSystem.h"
+#include "NiagaraSystemImpl.h"
 
-#include "MaterialDomain.h"
-#include "Materials/MaterialRenderProxy.h"
 #include "Engine/StaticMesh.h"
+#include "Materials/MaterialRenderProxy.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "Modules/ModuleManager.h"
+#include "MaterialDomain.h"
+#include "SceneManagement.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(NiagaraMeshRendererProperties)
 
@@ -45,8 +47,14 @@ public:
 	{
 		WeakStaticMesh	= StaticMesh;
 		RenderData		= StaticMesh->GetRenderData();
+		MeshMinLOD		= StaticMesh->GetMinLODIdx();
 		MinLOD			= StaticMesh->GetMinLODIdx();
 		LocalBounds		= StaticMesh->GetExtendedBounds().GetBox();
+	}
+
+	void SetMinLODBias(int32 MinLODBias) override
+	{
+		MinLOD = FMath::Max(MeshMinLOD + MinLODBias, 0);
 	}
 
 	FBox GetLocalBounds() const override
@@ -54,9 +62,10 @@ public:
 		return LocalBounds;
 	}
 
-	void GetLODModelData(FLODModelData& OutLODModelData) const override
+	void GetLODModelData(FLODModelData& OutLODModelData, int32 LODLevel) const override
 	{
-		OutLODModelData.LODIndex = RenderData->GetCurrentFirstLODIdx(MinLOD);
+		LODLevel = FMath::Max(MinLOD, LODLevel);
+		OutLODModelData.LODIndex = RenderData->GetCurrentFirstLODIdx(LODLevel);
 		if (!RenderData->LODResources.IsValidIndex(OutLODModelData.LODIndex))
 		{
 			OutLODModelData.LODIndex = INDEX_NONE;
@@ -79,6 +88,27 @@ public:
 		}
 	}
 
+	virtual FIntVector2 GetLODRange() const override
+	{
+		return FIntVector2(MeshMinLOD, RenderData->LODResources.Num());
+	}
+
+	virtual FVector3f GetLODScreenSize(int32 LODLevel) const override
+	{
+		constexpr int32 MaxLODLevel = MAX_STATIC_MESH_LODS - 1;
+		LODLevel = FMath::Clamp(LODLevel, 0, MaxLODLevel);
+		return FVector3f(
+			LODLevel < MaxLODLevel ? RenderData->ScreenSize[LODLevel + 1].GetValue() : 0.0f,
+			RenderData->ScreenSize[LODLevel].GetValue(),
+			RenderData->Bounds.SphereRadius
+		);
+	}
+
+	virtual int32 ComputeLOD(const FVector& SphereOrigin, const float SphereRadius, const FSceneView& SceneView, float LODDistanceFactor) override
+	{
+		return ComputeStaticMeshLOD(RenderData, SphereOrigin, SphereRadius, SceneView, MinLOD, LODDistanceFactor);
+	}
+
 	static void InitVertexFactoryComponents(
 		const FStaticMeshVertexBuffers& VertexBuffers,
 		FNiagaraMeshVertexFactory* VertexFactory,
@@ -90,12 +120,12 @@ public:
 		VertexBuffers.ColorVertexBuffer.BindColorVertexBuffer(VertexFactory, OutData);
 	}
 
-	void SetupVertexFactory(FNiagaraMeshVertexFactory& InVertexFactory, const FLODModelData& LODModelData) const override
+	void SetupVertexFactory(FRHICommandListBase& RHICmdList, FNiagaraMeshVertexFactory& InVertexFactory, const FLODModelData& LODModelData) const override
 	{
 		FStaticMeshDataType Data;
 		const FStaticMeshLODResources& LODResources = RenderData->LODResources[LODModelData.LODIndex];
 		InitVertexFactoryComponents(LODResources.VertexBuffers, &InVertexFactory, Data);
-		InVertexFactory.SetData(Data);
+		InVertexFactory.SetData(RHICmdList, Data);
 	}
 
 	void GetUsedMaterials(TArray<UMaterialInterface*>& OutMaterials) const override
@@ -135,6 +165,7 @@ public:
 
 	TWeakObjectPtr<const UStaticMesh>	WeakStaticMesh;
 	const class FStaticMeshRenderData*	RenderData = nullptr;
+	int32								MeshMinLOD = 0;
 	int32								MinLOD = 0;
 	FBox								LocalBounds = FBox(ForceInitToZero);
 };
@@ -203,6 +234,7 @@ FNiagaraMeshRendererMeshProperties::FNiagaraMeshRendererMeshProperties()
 #if WITH_EDITORONLY_DATA
 	, UserParamBinding_DEPRECATED(FNiagaraTypeDefinition(UStaticMesh::StaticClass()))
 #endif
+	, LODRange(0, MAX_STATIC_MESH_LODS)
 	, Scale(1.0f, 1.0f, 1.0f)
 	, Rotation(FRotator::ZeroRotator)
 	, PivotOffset(ForceInitToZero)
@@ -212,6 +244,14 @@ FNiagaraMeshRendererMeshProperties::FNiagaraMeshRendererMeshProperties()
 	MeshParameterBinding.SetUsage(ENiagaraParameterBindingUsage::NotParticle);
 	MeshParameterBinding.SetAllowedInterfaces({UNiagaraRenderableMeshInterface::StaticClass()});
 	MeshParameterBinding.SetAllowedObjects({UStaticMesh::StaticClass()});
+
+	LODLevelBinding.SetUsage(ENiagaraParameterBindingUsage::System | ENiagaraParameterBindingUsage::Emitter | ENiagaraParameterBindingUsage::StaticVariable);
+	LODLevelBinding.SetAllowedTypeDefinitions({ FNiagaraTypeDefinition::GetIntDef().ToStaticDef() });
+	LODLevelBinding.SetDefaultParameter(FNiagaraTypeDefinition::GetIntDef().ToStaticDef(), 0);
+
+	LODBiasBinding.SetUsage(ENiagaraParameterBindingUsage::System | ENiagaraParameterBindingUsage::Emitter | ENiagaraParameterBindingUsage::StaticVariable);
+	LODBiasBinding.SetAllowedTypeDefinitions({ FNiagaraTypeDefinition::GetIntDef().ToStaticDef() });
+	LODBiasBinding.SetDefaultParameter(FNiagaraTypeDefinition::GetIntDef().ToStaticDef(), 0);
 #endif
 }
 
@@ -245,12 +285,9 @@ UNiagaraMeshRendererProperties::UNiagaraMeshRendererProperties()
 	: bOverrideMaterials(false)
 	, bUseHeterogeneousVolumes(false)
 	, bSortOnlyWhenTranslucent(true)
-	, bSubImageBlend(false)
+	, bSubImageBlend(true)
 	, bLockedAxisEnable(false)
 {
-	// Initialize the array with a single, defaulted entry
-	Meshes.AddDefaulted();
-
 #if WITH_EDITORONLY_DATA
 	FlipbookSuffixFormat = TEXT("_{frame_number}");
 	FlipbookSuffixNumDigits = 1;
@@ -293,10 +330,17 @@ FNiagaraRenderer* UNiagaraMeshRendererProperties::CreateEmitterRenderer(ERHIFeat
 	{
 		if (MeshProperties.HasValidRenderableMesh())
 		{
-			// There's at least one valid mesh
-			FNiagaraRenderer* NewRenderer = new FNiagaraRendererMeshes(FeatureLevel, this, Emitter);
+			FNiagaraRendererMeshes* NewRenderer = new FNiagaraRendererMeshes(FeatureLevel, this, Emitter);
 			NewRenderer->Initialize(this, Emitter, InController);
-			return NewRenderer;
+			if (NewRenderer->HasValidMeshes())
+			{
+				return NewRenderer;
+			}
+
+			// There are cases where we might end up with no meshes to render due to LODs or features not being enabled on that platform
+			// so we discard the renderer here, the cost to do this work in HasValidRenderableMesh makes it not worthwhile
+			delete NewRenderer;
+			return nullptr;
 		}
 	}
 
@@ -391,9 +435,16 @@ void UNiagaraMeshRendererProperties::Serialize(FArchive& Ar)
 	Ar.UsingCustomVersion(FNiagaraCustomVersion::GUID);
 	const int32 NiagaraVersion = Ar.CustomVer(FNiagaraCustomVersion::GUID);
 
-	if (Ar.IsLoading() && (NiagaraVersion < FNiagaraCustomVersion::DisableSortingByDefault))
+	if (Ar.IsLoading())
 	{
-		SortMode = ENiagaraSortMode::ViewDistance;
+		if (NiagaraVersion < FNiagaraCustomVersion::DisableSortingByDefault)
+		{
+			SortMode = ENiagaraSortMode::ViewDistance;
+		}
+		if (NiagaraVersion < FNiagaraCustomVersion::SubImageBlendEnabledByDefault)
+		{
+			bSubImageBlend = false;
+		}
 	}
 
 	Super::Serialize(Ar);
@@ -444,6 +495,9 @@ void UNiagaraMeshRendererProperties::InitBindings()
 
 		//Default custom sorting to age
 		CustomSortingBinding = FNiagaraConstants::GetAttributeDefaultBinding(SYS_PARAM_PARTICLES_NORMALIZED_AGE);
+
+		// Initialize the array with a single, defaulted entry
+		Meshes.AddDefaulted();
 	}
 
 	SetPreviousBindings(FVersionedNiagaraEmitter(), SourceMode);
@@ -476,6 +530,8 @@ void UNiagaraMeshRendererProperties::UpdateSourceModeDerivates(ENiagaraRendererS
 		for (FNiagaraMeshRendererMeshProperties& Mesh : Meshes)
 		{
 			Mesh.MeshParameterBinding.OnRenameEmitter(SrcEmitter.Emitter->GetUniqueEmitterName());
+			Mesh.LODLevelBinding.OnRenameEmitter(SrcEmitter.Emitter->GetUniqueEmitterName());
+			Mesh.LODBiasBinding.OnRenameEmitter(SrcEmitter.Emitter->GetUniqueEmitterName());
 		}
 #endif
 	}
@@ -545,6 +601,39 @@ void UNiagaraMeshRendererProperties::CacheFromCompiledData(const FNiagaraDataSet
 	MaterialParamValidMask |= bDynamicParam1Valid ? GetDynamicParameterChannelMask(EmitterData, DynamicMaterial1Binding.GetName(), 0xf) << 4 : 0;
 	MaterialParamValidMask |= bDynamicParam2Valid ? GetDynamicParameterChannelMask(EmitterData, DynamicMaterial2Binding.GetName(), 0xf) << 8 : 0;
 	MaterialParamValidMask |= bDynamicParam3Valid ? GetDynamicParameterChannelMask(EmitterData, DynamicMaterial3Binding.GetName(), 0xf) << 12 : 0;
+
+	// Gather LOD information per mesh
+	UNiagaraSystem* OwnerSystem = GetTypedOuter<UNiagaraSystem>();
+	for (FNiagaraMeshRendererMeshProperties& Mesh : Meshes)
+	{
+		Mesh.LODLevel = Mesh.LODLevelBinding.GetDefaultValue<int32>();
+		Mesh.LODBias = Mesh.LODBiasBinding.GetDefaultValue<int32>();
+
+		if (OwnerSystem && (Mesh.LODLevelBinding.AliasedParameter.IsValid() || Mesh.LODBiasBinding.AliasedParameter.IsValid()))
+		{
+			OwnerSystem->ForEachScript(
+				[&Mesh](const UNiagaraScript* NiagaraScript)
+				{
+					if (Mesh.LODLevelBinding.AliasedParameter.IsValid())
+					{
+						TOptional<int32> VariableValue = NiagaraScript->GetCompiledStaticVariableValue<int32>(Mesh.LODLevelBinding.ResolvedParameter);
+						if (VariableValue.IsSet())
+						{
+							Mesh.LODLevel = VariableValue.GetValue();
+						}
+					}
+					if (Mesh.LODBiasBinding.AliasedParameter.IsValid())
+					{
+						TOptional<int32> VariableValue = NiagaraScript->GetCompiledStaticVariableValue<int32>(Mesh.LODBiasBinding.ResolvedParameter);
+						if (VariableValue.IsSet())
+						{
+							Mesh.LODBias = VariableValue.GetValue();
+						}
+					}
+				}
+			);
+		}
+	}
 #endif
 }
 
@@ -674,18 +763,16 @@ void UNiagaraMeshRendererProperties::GetUsedMaterials(const FNiagaraEmitterInsta
 	}
 }
 
-void UNiagaraMeshRendererProperties::CollectPSOPrecacheData(FPSOPrecacheParamsList& OutParams)
+void UNiagaraMeshRendererProperties::CollectPSOPrecacheData(const FNiagaraEmitterInstance* InEmitter, FPSOPrecacheParamsList& OutParams) const
 {
 	const FVertexFactoryType* VFType = GetVertexFactoryType();
 	bool bSupportsManualVertexFetch = VFType->SupportsManualVertexFetch(GMaxRHIFeatureLevel);
 		
 	for (int32 MeshIndex = 0; MeshIndex < Meshes.Num(); ++MeshIndex)
 	{
-		// Don't have an instance yet to retrieve the possible material override data from
-		FNiagaraEmitterInstance* EmitterInstance = nullptr;
 		INiagaraRenderableMeshInterface* RenderableMeshInterface = nullptr;
 		UStaticMesh* StaticMesh = nullptr;
-		NiagaraMeshRendererPropertiesInternal::ResolveRenderableMeshInternal(Meshes[MeshIndex], EmitterInstance, RenderableMeshInterface, StaticMesh);
+		NiagaraMeshRendererPropertiesInternal::ResolveRenderableMeshInternal(Meshes[MeshIndex], InEmitter, RenderableMeshInterface, StaticMesh);
 		if (StaticMesh)
 		{
 			TArray<UMaterialInterface*> OrderedMeshMaterials;
@@ -859,6 +946,18 @@ void UNiagaraMeshRendererProperties::PostLoad()
 		}
 	}
 
+	for (const FNiagaraMeshMICOverride& MICOverrideMaterial : MICOverrideMaterials)
+	{
+		if (MICOverrideMaterial.OriginalMaterial)
+		{
+			MICOverrideMaterial.OriginalMaterial->ConditionalPostLoad();
+		}
+		if (MICOverrideMaterial.ReplacementMaterial)
+		{
+			MICOverrideMaterial.ReplacementMaterial->ConditionalPostLoad();
+		}
+	}
+
 #if WITH_EDITORONLY_DATA
 	if (MaterialParameterBindings_DEPRECATED.Num() > 0)
 	{
@@ -866,6 +965,7 @@ void UNiagaraMeshRendererProperties::PostLoad()
 		MaterialParameterBindings_DEPRECATED.Empty();
 	}
 #endif
+	MaterialParameters.ConditionalPostLoad();
 }
 
 #if WITH_EDITORONLY_DATA
@@ -1114,6 +1214,21 @@ void UNiagaraMeshRendererProperties::PostEditChangeProperty(FPropertyChangedEven
 		}
 	}
 
+	if (MemberPropertyName == GET_MEMBER_NAME_CHECKED(UNiagaraMeshRendererProperties, Meshes))
+	{
+		for (FNiagaraMeshRendererMeshProperties& MeshProperties : Meshes)
+		{
+			if (MeshProperties.bUseLODRange)
+			{
+				MeshProperties.LODRange.X = FMath::Clamp(MeshProperties.LODRange.X, 0, MAX_STATIC_MESH_LODS - 1);
+				MeshProperties.LODRange.Y = FMath::Clamp(MeshProperties.LODRange.Y, 1, MAX_STATIC_MESH_LODS);
+
+				MeshProperties.LODRange.X = FMath::Clamp(MeshProperties.LODRange.X, 0, MeshProperties.LODRange.Y - 1);
+				MeshProperties.LODRange.Y = FMath::Clamp(MeshProperties.LODRange.Y, MeshProperties.LODRange.X + 1, MAX_STATIC_MESH_LODS);
+			}
+		}
+	}
+
 	// Update our MICs if we change override material / material bindings / meshes
 	//-OPT: Could narrow down further to only static materials
 	if ((MemberPropertyName == GET_MEMBER_NAME_CHECKED(UNiagaraMeshRendererProperties, OverrideMaterials)) ||
@@ -1134,6 +1249,8 @@ void UNiagaraMeshRendererProperties::RenameVariable(const FNiagaraVariableBase& 
 	for (FNiagaraMeshRendererMeshProperties& Mesh : Meshes)
 	{
 		Mesh.MeshParameterBinding.OnRenameVariable(OldVariable, NewVariable, InEmitter.Emitter->GetUniqueEmitterName());
+		Mesh.LODLevelBinding.OnRenameVariable(OldVariable, NewVariable, InEmitter.Emitter->GetUniqueEmitterName());
+		Mesh.LODBiasBinding.OnRenameVariable(OldVariable, NewVariable, InEmitter.Emitter->GetUniqueEmitterName());
 	}
 #endif
 }
@@ -1146,6 +1263,8 @@ void UNiagaraMeshRendererProperties::RemoveVariable(const FNiagaraVariableBase& 
 	for (FNiagaraMeshRendererMeshProperties& Mesh : Meshes)
 	{
 		Mesh.MeshParameterBinding.OnRemoveVariable(OldVariable, InEmitter.Emitter->GetUniqueEmitterName());
+		Mesh.LODLevelBinding.OnRemoveVariable(OldVariable, InEmitter.Emitter->GetUniqueEmitterName());
+		Mesh.LODBiasBinding.OnRemoveVariable(OldVariable, InEmitter.Emitter->GetUniqueEmitterName());
 	}
 #endif
 }
@@ -1304,7 +1423,7 @@ void UNiagaraMeshRendererProperties::RebuildMeshList()
 	{
 		// Remove the suffix for the base name and retrieve the first frame index
 		int32 SuffixLen = Matcher.GetMatchEnding() - Matcher.GetMatchBeginning();
-		BaseName.LeftChopInline(SuffixLen, false);
+		BaseName.LeftChopInline(SuffixLen, EAllowShrinking::No);
 
 		FString NumMatch = Matcher.GetCaptureGroup(1);
 		FirstFrameIdx = FCString::Atoi(*NumMatch);
@@ -1315,7 +1434,7 @@ void UNiagaraMeshRendererProperties::RebuildMeshList()
 	int32 PackageDirEnd;
 	if (BasePackageLocation.FindLastChar(TCHAR('/'), PackageDirEnd))
 	{
-		BasePackageLocation.LeftInline(PackageDirEnd, false);
+		BasePackageLocation.LeftInline(PackageDirEnd, EAllowShrinking::No);
 	}
 
 	// Now retrieve all meshes for the flipbook and add them

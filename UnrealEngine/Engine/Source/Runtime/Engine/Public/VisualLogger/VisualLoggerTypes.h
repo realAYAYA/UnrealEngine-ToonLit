@@ -38,13 +38,19 @@ namespace EVisualLoggerDeviceFlags
 enum class EVisualLoggerShapeElement : uint8
 {
 	Invalid = 0,
-	SinglePoint, // individual points. 
+	SinglePoint, // individual points, rendered as plain spheres
+	Sphere, 
+	WireSphere,
 	Segment, // pairs of points 
 	Path,	// sequence of point
 	Box,
+	WireBox,
 	Cone,
+	WireCone,
 	Cylinder,
+	WireCylinder,
 	Capsule,
+	WireCapsule,
 	Polygon,
 	Mesh,
 	NavAreaMesh, // convex based mesh with min and max Z values
@@ -166,7 +172,10 @@ struct FVisualLogDataBlock
 struct FVisualLogEntry
 {
 #if ENABLE_VISUAL_LOG
+	/** For absolute position of events along a timeline (can involve multiple worlds/game instances such as clients and server) */
 	double TimeStamp;
+	/** The time of the event according to its UWorld (can vary widely between game instances such as clients and server) */
+	double WorldTimeStamp;
 	FVector Location;
 	uint8 bPassedClassAllowList : 1;
 	uint8 bPassedObjectAllowList : 1;	
@@ -182,7 +191,11 @@ struct FVisualLogEntry
 	TArray<FVisualLogDataBlock>	DataBlocks;
 
 	FVisualLogEntry() { Reset(); }
+
+	UE_DEPRECATED(5.4, "To be removed.  Build up the FVisualLogEntry manually or write your own helper function which doesn't rely on Children being IVisualLoggerDebugSnapshotInterface")
 	ENGINE_API FVisualLogEntry(const AActor* InActor, TArray<TWeakObjectPtr<UObject> >* Children);
+	
+	UE_DEPRECATED(5.4, "To be removed.  Build up the FVisualLogEntry manually or write your own helper function which doesn't rely on Children being IVisualLoggerDebugSnapshotInterface")
 	ENGINE_API FVisualLogEntry(double InTimeStamp, FVector InLocation, const UObject* Object, TArray<TWeakObjectPtr<UObject> >* Children);
 
 	bool ShouldLog(const ECreateIfNeeded ShouldCreate) const
@@ -205,25 +218,45 @@ struct FVisualLogEntry
 
 	ENGINE_API void AddText(const FString& TextLine, const FName& CategoryName, ELogVerbosity::Type Verbosity);
 	// path
+	UE_DEPRECATED(5.4, "Use AddPath")
 	ENGINE_API void AddElement(const TArray<FVector>& Points, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color = FColor::White, const FString& Description = TEXT(""), uint16 Thickness = 0);
+	ENGINE_API void AddPath(const TArray<FVector>& Points, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color = FColor::White, const FString& Description = TEXT(""), uint16 Thickness = 0);
 	// location
+	UE_DEPRECATED(5.4, "Use AddLocation")
 	ENGINE_API void AddElement(const FVector& Point, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color = FColor::White, const FString& Description = TEXT(""), uint16 Thickness = 0);
+	ENGINE_API void AddLocation(const FVector& Point, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color = FColor::White, const FString& Description = TEXT(""), uint16 Thickness = 0);	// location
+	// sphere
+	ENGINE_API void AddSphere(const FVector& Center, float Radius, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color = FColor::White, const FString& Description = TEXT(""), bool bInUseWires = false);
 	// segment
+	UE_DEPRECATED(5.4, "Use AddSegment")
 	ENGINE_API void AddElement(const FVector& Start, const FVector& End, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color = FColor::White, const FString& Description = TEXT(""), uint16 Thickness = 0);
+	ENGINE_API void AddSegment(const FVector& Start, const FVector& End, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color = FColor::White, const FString& Description = TEXT(""), uint16 Thickness = 0);
 	// box
-	ENGINE_API void AddElement(const FBox& Box, const FMatrix& Matrix, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color = FColor::White, const FString& Description = TEXT(""), uint16 Thickness = 0);
-	// Cone
-	ENGINE_API void AddElement(const FVector& Orgin, const FVector& Direction, float Length, float AngleWidth, float AngleHeight, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color = FColor::White, const FString& Description = TEXT(""), uint16 Thickness = 0);
-	// Cylinder
-	ENGINE_API void AddElement(const FVector& Start, const FVector& End, float Radius, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color = FColor::White, const FString& Description = TEXT(""), uint16 Thickness = 0);
+	UE_DEPRECATED(5.4, "Use AddBox")
+	ENGINE_API void AddElement(const FBox& Box, const FMatrix& Matrix, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color = FColor::White, const FString& Description = TEXT(""), uint16 Thickness = 0, bool bInUseWires = false);
+	ENGINE_API void AddBox(const FBox& Box, const FMatrix& Matrix, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color = FColor::White, const FString& Description = TEXT(""), uint16 Thickness = 0, bool bInUseWires = false);
+	// cone
+	UE_DEPRECATED(5.4, "Use AddCone")
+	ENGINE_API void AddElement(const FVector& Origin, const FVector& Direction, float Length, float AngleWidth, float AngleHeight, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color = FColor::White, const FString& Description = TEXT(""), uint16 Thickness = 0, bool bInUseWires = false);
+	ENGINE_API void AddCone(const FVector& Origin, const FVector& Direction, float Length, float AngleWidth, float AngleHeight, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color = FColor::White, const FString& Description = TEXT(""), uint16 Thickness = 0, bool bInUseWires = false);
+	// cylinder
+	UE_DEPRECATED(5.4, "Use AddCylinder")
+	ENGINE_API void AddElement(const FVector& Start, const FVector& End, float Radius, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color = FColor::White, const FString& Description = TEXT(""), uint16 Thickness = 0, bool bInUseWires = false);
+	ENGINE_API void AddCylinder(const FVector& Start, const FVector& End, float Radius, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color = FColor::White, const FString& Description = TEXT(""), uint16 Thickness = 0, bool bInUseWires = false);
 	// capsule
-	ENGINE_API void AddElement(const FVector& Center, float HalfHeight, float Radius, const FQuat & Rotation, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color = FColor::White, const FString& Description = TEXT(""));
+	UE_DEPRECATED(5.4, "Use AddCapsule")
+	ENGINE_API void AddElement(const FVector& Base, float HalfHeight, float Radius, const FQuat & Rotation, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color = FColor::White, const FString& Description = TEXT(""), bool bInUseWires = false);
+	ENGINE_API void AddCapsule(const FVector& Base, float HalfHeight, float Radius, const FQuat & Rotation, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color = FColor::White, const FString& Description = TEXT(""), bool bInUseWires = false);
 	// custom element
 	ENGINE_API void AddElement(const FVisualLogShapeElement& Element);
-	// NavAreaMesh
+	// NavArea or vertically pulled convex shape
+	UE_DEPRECATED(5.4, "Use AddPulledConvex")
 	ENGINE_API void AddElement(const TArray<FVector>& ConvexPoints, FVector::FReal MinZ, FVector::FReal MaxZ, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color = FColor::White, const FString& Description = TEXT(""));
+	ENGINE_API void AddPulledConvex(const TArray<FVector>& ConvexPoints, FVector::FReal MinZ, FVector::FReal MaxZ, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color = FColor::White, const FString& Description = TEXT(""));
 	// 3d Mesh
+	UE_DEPRECATED(5.4, "Use AddMesh")
 	ENGINE_API void AddElement(const TArray<FVector>& Vertices, const TArray<int32>& Indices, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color = FColor::White, const FString& Description = TEXT(""));
+	ENGINE_API void AddMesh(const TArray<FVector>& Vertices, const TArray<int32>& Indices, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color = FColor::White, const FString& Description = TEXT(""));
 	// 2d convex
 	ENGINE_API void AddConvexElement(const TArray<FVector>& Points, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FColor& Color = FColor::White, const FString& Description = TEXT(""));
 	// histogram sample

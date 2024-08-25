@@ -20,7 +20,7 @@
 #include "Sections/MovieSceneEventSection.h"
 #include "Sections/MovieSceneEventTriggerSection.h"
 #include "Sections/MovieSceneEventRepeaterSection.h"
-#include "SequencerUtilities.h"
+#include "MVVM/Views/ViewUtilities.h"
 #include "MovieSceneSequenceEditor.h"
 
 #define LOCTEXT_NAMESPACE "FEventTrackEditor"
@@ -159,13 +159,7 @@ TSharedPtr<SWidget> FEventTrackEditor::BuildOutlinerEditWidget(const FGuid& Obje
 		return MenuBuilder.MakeWidget();
 	};
 
-	return SNew(SHorizontalBox)
-	+ SHorizontalBox::Slot()
-	.AutoWidth()
-	.VAlign(VAlign_Center)
-	[
-		FSequencerUtilities::MakeAddButton(LOCTEXT("AddSection", "Section"), FOnGetContent::CreateLambda(SubMenuCallback), Params.NodeIsHovered, GetSequencer())
-	];
+	return UE::Sequencer::MakeAddButton(LOCTEXT("AddSection", "Section"), FOnGetContent::CreateLambda(SubMenuCallback), Params.ViewModel);
 }
 
 void FEventTrackEditor::BuildTrackContextMenu(FMenuBuilder& MenuBuilder, UMovieSceneTrack* Track)

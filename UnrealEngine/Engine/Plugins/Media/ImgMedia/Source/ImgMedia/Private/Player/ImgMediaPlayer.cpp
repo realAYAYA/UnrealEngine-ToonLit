@@ -23,7 +23,6 @@
 #include "MediaTexture.h"
 #include "MediaTextureTracker.h"
 
-#define IMG_MEDIA_PLAYER_VERSION 2
 #define LOCTEXT_NAMESPACE "FImgMediaPlayer"
 
 
@@ -35,38 +34,6 @@ DECLARE_CYCLE_STAT(TEXT("ImgMedia Player TickInput"), STAT_ImgMedia_PlayerTickIn
 
 
 const FTimespan HackDeltaTimeOffset(1);
-
-namespace {
-	/** Convenience function to process all media textures corresponding the specified player. */
-	void ApplyToPlayerMediaTextures(FImgMediaPlayer* InPlayer, TFunctionRef<void(UMediaTexture*)> TextureCallbackFn)
-	{
-		TArray<UMediaTexture*> PlayerTextures;
-
-		FMediaTextureTracker& TextureTracker = FMediaTextureTracker::Get();
-
-		// Look through all the media textures we know about.
-		for (TWeakObjectPtr<UMediaTexture> TexturePtr : TextureTracker.GetTextures())
-		{
-			UMediaTexture* Texture = TexturePtr.Get();
-			if (Texture != nullptr)
-			{
-				// Does this match the player?
-				UMediaPlayer* MediaPlayer = Texture->GetMediaPlayer();
-				if (MediaPlayer != nullptr)
-				{
-					TSharedPtr<IMediaPlayer, ESPMode::ThreadSafe> Player = MediaPlayer->GetPlayerFacade()->GetPlayer();
-					if (Player.IsValid())
-					{
-						if (Player.Get() == InPlayer)
-						{
-							TextureCallbackFn(Texture);
-						}
-					}
-				}
-			}
-		}
-	}
-}
 
 
 /* FImgMediaPlayer structors
@@ -111,15 +78,10 @@ void FImgMediaPlayer::Close()
 		return;
 	}
 
+	const TSharedPtr<FImgMediaMipMapInfo, ESPMode::ThreadSafe>& MipMapInfo = Loader->GetMipMapInfo();
+	if (MipMapInfo.IsValid() && MediaTextureWeakPtr.IsValid())
 	{
-		const TSharedPtr<FImgMediaMipMapInfo, ESPMode::ThreadSafe>& MipMapInfo = Loader->GetMipMapInfo();
-		if (MipMapInfo.IsValid())
-		{
-			ApplyToPlayerMediaTextures(this, [&MipMapInfo](UMediaTexture* Texture)
-				{
-					MipMapInfo->RemoveObjectsUsingThisMediaTexture(Texture);
-				});
-		}
+		MipMapInfo->RemoveObjectsUsingThisMediaTexture(MediaTextureWeakPtr.Get());
 	}
 
 	Scheduler->UnregisterLoader(Loader.ToSharedRef());
@@ -276,10 +238,29 @@ bool FImgMediaPlayer::Open(const FString& Url, const IMediaOptions* Options)
 			MipMapInfo = StaticCastSharedPtr<FImgMediaMipMapInfo, IMediaOptions::FDataContainer, ESPMode::ThreadSafe>(DataContainer);
 			if (MipMapInfo.IsValid())
 			{
-				ApplyToPlayerMediaTextures(this, [&MipMapInfo](UMediaTexture* Texture)
+				// Look through all the media textures we know about to find the one tied to this player
+				for (TWeakObjectPtr<UMediaTexture> TexturePtr : FMediaTextureTracker::Get().GetTextures())
+				{
+					UMediaTexture* Texture = TexturePtr.Get();
+					if (Texture != nullptr)
 					{
-						MipMapInfo->AddObjectsUsingThisMediaTexture(Texture);
-					});
+						// Does this match the player?
+						UMediaPlayer* MediaPlayer = Texture->GetMediaPlayer();
+						if (MediaPlayer != nullptr)
+						{
+							TSharedPtr<IMediaPlayer, ESPMode::ThreadSafe> Player = MediaPlayer->GetPlayerFacade()->GetPlayer();
+							if (Player.IsValid())
+							{
+								if (Player.Get() == this)
+								{
+									MediaTextureWeakPtr = TexturePtr;
+
+									MipMapInfo->AddObjectsUsingThisMediaTexture(MediaTextureWeakPtr.Get());
+								}
+							}
+						}
+					}
+				}
 			}
 		}
 	}
@@ -347,125 +328,22 @@ void FImgMediaPlayer::TickInput(FTimespan DeltaTime, FTimespan /*Timecode*/)
 		}
 	}
 
-#if IMG_MEDIA_PLAYER_VERSION == 1
-
-	if ((CurrentState != EMediaState::Playing) || (CurrentDuration == FTimespan::Zero()))
-	{
-		return; // nothing to play
-	}
-
-	// update clock
-	if (PlaybackRestarted)
-	{
-		PlaybackRestarted = false;
-	}
-	else
-	{
-		CurrentTime += DeltaTime * CurrentRate;
-	}
-
-	// The following is a hack to accommodate for frame time rounding errors. The problem is
-	// that frame delta times can be one tick more or less each frame, depending on how the
-	// frame time is rounded. This presents a problem when driving media playback from Sequencer,
-	// because even both Sequencer and Media Framework clocks are running at the same rate, they
-	// may not be in phase with regards to rounding. This can cause some frames to be skipped.
-	// FFrameTime support in Media Framework is required to fix this properly.
-
-	if (!DeltaTimeHackApplied)
-	{
-		CurrentTime += HackDeltaTimeOffset;
-		DeltaTimeHackApplied = true;
-	}
-
-	// handle looping
-	if ((CurrentTime >= CurrentDuration) || (CurrentTime < FTimespan::Zero()))
-	{
-		EventSink.ReceiveMediaEvent(EMediaEvent::PlaybackEndReached);
-
-		if (ShouldLoop)
-		{
-			CurrentTime %= CurrentDuration;
-
-			if (CurrentTime < FTimespan::Zero())
-			{
-				CurrentTime += CurrentDuration;
-			}
-		}
-		else
-		{
-			CurrentState = EMediaState::Stopped;
-			CurrentTime = FTimespan::Zero();
-			CurrentRate = 0.0f;
-			LastNonZeroRate = 0.0f;
-			DeltaTimeHackApplied = false;
-
-			EventSink.ReceiveMediaEvent(EMediaEvent::PlaybackSuspended);
-		}
-	}
-
-	UE_LOG(LogImgMedia, VeryVerbose, TEXT("Player %p: CurrentTime %s, Delta %s, CurrentRate %f"),
-		this,
-		*CurrentTime.ToString(TEXT("%h:%m:%s.%t")),
-		*DeltaTime.ToString(TEXT("%h:%m:%s.%t")),
-		CurrentRate
-	);
-
-	// update image loader
-	if (SelectedVideoTrack == 0)
-	{
-		Loader->RequestFrame(CurrentTime, CurrentRate, ShouldLoop);
-	}
-	RequestFrameHasRun = true;
-#else
 	// Tick the scheduler an extra time in addition to its hookup as media clock sink, so we also get it moving forward during blocked playback
 	Scheduler->TickInput(FTimespan::Zero(), FTimespan::MinValue());
-#endif // IMG_MEDIA_PLAYER_VERSION == 1
 }
 
 bool FImgMediaPlayer::FlushOnSeekStarted() const
 {
-#if IMG_MEDIA_PLAYER_VERSION == 1
-	return false;
-#else
-	// V2 player response will always be treated as 'true'
 	return true;
-#endif
 }
 
 bool FImgMediaPlayer::FlushOnSeekCompleted() const
 {
-#if IMG_MEDIA_PLAYER_VERSION == 1
-	return true;
-#else
-	// V2 player response will always be treated as 'false'
 	return false;
-#endif
 }
 
 void FImgMediaPlayer::ProcessVideoSamples()
 {
-#if IMG_MEDIA_PLAYER_VERSION == 1
-	// Did we already run this frame?
-	if (RequestFrameHasRun)
-	{
-		RequestFrameHasRun = false;
-	}
-	else
-	{
-		// We are blocked... run stuff here as it will not get run normally.
-		if (Loader.IsValid())
-		{
-			if (SelectedVideoTrack == 0)
-			{
-				Loader->RequestFrame(CurrentTime, CurrentRate, ShouldLoop);
-			}
-		}
-		if (Scheduler.IsValid())
-		{
-			Scheduler->TickFetch(FTimespan::Zero(), FTimespan::Zero());
-		}
-	}
-#endif // IMG_MEDIA_PLAYER_VERSION == 1
 }
 
 //-----------------------------------------------------------------------------
@@ -474,7 +352,6 @@ void FImgMediaPlayer::ProcessVideoSamples()
 */
 bool FImgMediaPlayer::GetPlayerFeatureFlag(EFeatureFlag flag) const
 {
-#if IMG_MEDIA_PLAYER_VERSION >= 2
 	switch (flag)
 	{
 	case EFeatureFlag::UsePlaybackTimingV2:
@@ -483,7 +360,7 @@ bool FImgMediaPlayer::GetPlayerFeatureFlag(EFeatureFlag flag) const
 	default:
 		break;
 	}
-#endif  // IMG_MEDIA_PLAYER_VERSION >= 2
+	
 	return IMediaPlayer::GetPlayerFeatureFlag(flag);
 }
 
@@ -640,23 +517,12 @@ bool FImgMediaPlayer::Seek(const FTimespan& Time)
 		}
 	}
 
-#if IMG_MEDIA_PLAYER_VERSION == 1
-	// more timing hacks for Sequencer
-	CurrentTime = Time + HackDeltaTimeOffset;
-	DeltaTimeHackApplied = true;
-
-	if (CurrentTime == CurrentDuration)
-	{
-		CurrentTime -= HackDeltaTimeOffset;
-	}
-#else
 	CurrentTime = Time;
 	CurrentSeekIndex += (CurrentRate >= 0.0f) ? 1 : -1;
 	if (Loader.IsValid())
 	{
 		Loader->Seek(FMediaTimeStamp(CurrentTime, FMediaTimeStamp::MakeSequenceIndex(CurrentSeekIndex, 0)), LastNonZeroRate < 0.0f);
 	}
-#endif // IMG_MEDIA_PLAYER_VERSION == 1
 
 	if (CurrentState == EMediaState::Paused)
 	{
@@ -702,13 +568,6 @@ bool FImgMediaPlayer::SetRate(float Rate)
 	{
 		if (CurrentState == EMediaState::Stopped)
 		{
-#if IMG_MEDIA_PLAYER_VERSION == 1
-			if (Rate < 0.0f)
-			{
-				CurrentTime = CurrentDuration - FTimespan(1);
-			}
-#endif // IMG_MEDIA_PLAYER_VERSION == 1
-
 			PlaybackRestarted = true;
 		}
 
@@ -763,38 +622,7 @@ void FImgMediaPlayer::SetBlockingPlaybackHint(bool FacadeWillUseBlockingPlayback
 
 bool FImgMediaPlayer::FetchVideo(TRange<FTimespan> TimeRange, TSharedPtr<IMediaTextureSample, ESPMode::ThreadSafe>& OutSample)
 {
-#if IMG_MEDIA_PLAYER_VERSION == 1
-	if ((CurrentState != EMediaState::Paused) && (CurrentState != EMediaState::Playing))
-	{
-		return false; // nothing to play
-	}
-
-	if (SelectedVideoTrack != 0)
-	{
-		return false; // no video track selected
-	}
-
-	TSharedPtr<IMediaTextureSample, ESPMode::ThreadSafe> Sample = Loader->GetFrameSample(CurrentTime);
-
-	if (!Sample.IsValid())
-	{
-		return false; // sample not loaded yet
-	}
-
-	const FTimespan SampleTime = Sample->GetTime().Time;
-
-	if (SampleTime == LastFetchTime)
-	{
-		return false; // sample already fetched
-	}
-
-	LastFetchTime = SampleTime;
-	OutSample = Sample;
-
-	return true;
-#else // IMG_MEDIA_PLAYER_VERSION == 1
 	return false;
-#endif // IMG_MEDIA_PLAYER_VERSION == 1
 }
 
 
@@ -804,7 +632,7 @@ void FImgMediaPlayer::FlushSamples()
 	{
 		CurrentSeekIndex = 0;
 		LastFetchTime = FTimespan::MinValue();
-		Loader->ResetFetchLogic();
+		Loader->Flush();
 	}
 }
 
@@ -819,8 +647,10 @@ bool FImgMediaPlayer::DiscardVideoSamples(const TRange<FMediaTimeStamp>& TimeRan
 }
 
 
-IMediaSamples::EFetchBestSampleResult FImgMediaPlayer::FetchBestVideoSampleForTimeRange(const TRange<FMediaTimeStamp>& TimeRange, TSharedPtr<IMediaTextureSample, ESPMode::ThreadSafe>& OutSample, bool bReverse)
+IMediaSamples::EFetchBestSampleResult FImgMediaPlayer::FetchBestVideoSampleForTimeRange(const TRange<FMediaTimeStamp>& TimeRange, TSharedPtr<IMediaTextureSample, ESPMode::ThreadSafe>& OutSample, bool bReverse, bool bConsistentResult)
 {
+	// note: the results produced by this player are "consistent" in respect to which frame is returned for a specific range, so we just disregard the bConsistentResult flag
+
 	IMediaSamples::EFetchBestSampleResult SampleResult = EFetchBestSampleResult::NoSample;
 
 	if (Loader.IsValid() && IsInitialized())

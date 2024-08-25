@@ -218,22 +218,41 @@ void FDataRegistryCache::ClearCache(bool bClearRequests)
 	}
 }
 
-TArray<TSharedPtr<FDataRegistryResolver> > FDataRegistryResolverScope::ResolverStack;
+TArray<FDataRegistryResolverScope::FResolverStackEntry> FDataRegistryResolverScope::ResolverStack;
+
+FDataRegistryResolverScope::FDataRegistryResolverScope(FDataRegistryResolver& ScopeResolver)
+	: AddedScopeResolver(&ScopeResolver)
+{
+	// Only valid to call on game thread
+	check(IsInGameThread());
+	ResolverStack.Emplace(ScopeResolver);
+}
 
 FDataRegistryResolverScope::FDataRegistryResolverScope(const TSharedPtr<FDataRegistryResolver>& ScopeResolver)
+	: AddedScopeResolver(ScopeResolver.Get())
 {
 	// Only valid to call on game thread
 	check(IsInGameThread() && ScopeResolver.IsValid());
-	
-	ResolverStack.Push(ScopeResolver);
-	StackAtAdd = ResolverStack.Num();
+	ResolverStack.Emplace(ScopeResolver);
 }
 
 FDataRegistryResolverScope::~FDataRegistryResolverScope()
 {
-	if (ensureMsgf(StackAtAdd == ResolverStack.Num(), TEXT("FDataRegistryResolverScope has invalid stack depth at destroy! Unsafe to copy scope or add a global resolve while scope is active")))
+	if (ensureMsgf(!ResolverStack.IsEmpty() && (AddedScopeResolver == ResolverStack.Last().AsRawPtr), TEXT("FDataRegistryResolverScope has invalid stack depth at destroy! Unsafe to copy scope or add a global resolve while scope is active")))
 	{
 		ResolverStack.Pop();
+	}
+	else
+	{
+		// Don't want to leak a raw pointer, so manually find and remove it here
+		for (int32 i = ResolverStack.Num() - 1; i >= 0; --i)
+		{
+			if (ResolverStack[i].AsRawPtr == AddedScopeResolver)
+			{
+				ResolverStack.RemoveAt(i);
+				break;
+			}
+		}
 	}
 }
 
@@ -241,23 +260,41 @@ void FDataRegistryResolverScope::RegisterGlobalResolver(const TSharedPtr<FDataRe
 {
 	// Only valid to call on game thread
 	check(IsInGameThread() && ScopeResolver.IsValid());
-	
 	ResolverStack.Add(ScopeResolver);
 }
 
 void FDataRegistryResolverScope::UnregisterGlobalResolver(const TSharedPtr<FDataRegistryResolver>& ScopeResolver)
 {
-	int32 RemovedIndex = ResolverStack.Remove(ScopeResolver);
-	ensureMsgf(RemovedIndex != INDEX_NONE, TEXT("FDataRegistryResolverScope::UnregisterGlobalResolver called with resolver that was never registered!"));
+	const int32 RemovedIndex = ResolverStack.FindLastByPredicate([ScopeResolver](const FResolverStackEntry& Entry) { return Entry.AsSharedPtr == ScopeResolver; });
+	if (ensureMsgf(RemovedIndex != INDEX_NONE, TEXT("FDataRegistryResolverScope::UnregisterGlobalResolver called with resolver that was never registered!")))
+	{
+		ResolverStack.RemoveAt(RemovedIndex);
+	}
 }
 
 TSharedPtr<FDataRegistryResolver> FDataRegistryResolverScope::ResolveIdToName(FName& OutResolvedName, const FDataRegistryId& ItemId, const class UDataRegistry* Registry, const class UDataRegistrySource* RegistrySource)
 {
+	// This version will only crawl shared pointer resolvers since we don't want it to resolve successfully but then return null
 	for (int32 i = ResolverStack.Num() - 1; i >= 0; i--)
 	{
-		if (ResolverStack[i]->ResolveIdToName(OutResolvedName, ItemId, Registry, RegistrySource))
+		FResolverStackEntry& Entry = ResolverStack[i];
+		if (Entry.AsSharedPtr.IsValid() && Entry.AsSharedPtr->ResolveIdToName(OutResolvedName, ItemId, Registry, RegistrySource))
 		{
-			return ResolverStack[i];
+			return ResolverStack[i].AsSharedPtr;
+		}
+	}
+
+	return nullptr;
+}
+
+FDataRegistryResolver* FDataRegistryResolverScope::ResolveNameFromId(FName& OutResolvedName, const FDataRegistryId& ItemId, const class UDataRegistry* Registry, const class UDataRegistrySource* RegistrySource)
+{
+	for (int32 i = ResolverStack.Num() - 1; i >= 0; i--)
+	{
+		FResolverStackEntry& Entry = ResolverStack[i];
+		if (Entry.AsRawPtr->ResolveIdToName(OutResolvedName, ItemId, Registry, RegistrySource))
+		{
+			return ResolverStack[i].AsRawPtr;
 		}
 	}
 
@@ -268,7 +305,7 @@ bool FDataRegistryResolverScope::IsStackVolatile()
 {
 	for (int32 i = ResolverStack.Num() - 1; i >= 0; i--)
 	{
-		if (ResolverStack[i]->IsVolatile())
+		if (ResolverStack[i].AsRawPtr->IsVolatile())
 		{
 			return true;
 		}

@@ -1,11 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System;
-using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using EpicGames.BuildGraph.Expressions;
-using EpicGames.Core;
-using Microsoft.Extensions.Logging;
 
 namespace EpicGames.BuildGraph
 {

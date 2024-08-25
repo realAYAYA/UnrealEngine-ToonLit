@@ -833,7 +833,7 @@ void URenderGrid::PostLoad()
 	{
 		ClearFlags(RF_Transactional);
 	}
-	for (TObjectPtr<URenderGridJob> Job : RenderGridJobs)
+	for (const TObjectPtr<URenderGridJob>& Job : RenderGridJobs)
 	{
 		if (IsValid(Job))
 		{

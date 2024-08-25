@@ -146,7 +146,7 @@ public:
 	{}
 
 	ERigVMExecuteResult Execute(FRigVMExtendedExecuteContext& Context);
-	ERigVMExecuteResult ExecuteIfRequired(FRigVMExtendedExecuteContext& Context, int32 InSliceIndex);
+	ERigVMExecuteResult ExecuteIfRequired(FRigVMExtendedExecuteContext& Context, uint32 InSliceHash);
 
 private:
 
@@ -167,7 +167,7 @@ public:
 
 	TRigVMLazyValueBase()
 		: bFollowPropertyPath(false)
-		, SliceIndex(INDEX_NONE)
+		, SliceHash(UINT32_MAX)
 		, MemoryHandle(nullptr)
 	{
 	}
@@ -178,7 +178,7 @@ public:
 protected:
 	
 	bool bFollowPropertyPath;
-	int32 SliceIndex;
+	uint32 SliceHash;
 	FRigVMMemoryHandle* MemoryHandle;
 	
 	friend class URigVM;
@@ -304,7 +304,7 @@ public:
 	 * Computes the data if necessary and returns true if the value is valid
 	 * @return True if the value of the handle is valid after the compute
 	 */
-	bool ComputeLazyValueIfNecessary(FRigVMExtendedExecuteContext& Context, int32 InSliceIndex = INDEX_NONE);
+	RIGVM_API bool ComputeLazyValueIfNecessary(FRigVMExtendedExecuteContext& Context, uint32 InSliceHash);
 
 	// Returns the head property of this handle
 	const FProperty* GetProperty() const
@@ -791,50 +791,48 @@ private:
 	{
 		if(InSliceIndex != INDEX_NONE)
 		{
-			// sliced memory cannot be accessed
-			// using a property path.
-			// it refers to opaque memory only
+			// Sliced memory cannot be accessed using a property path.
+			// It refers to opaque memory only
 			check(PropertyPath == nullptr);
 			check(!bFollowPropertyPath);
 
 			const FArrayProperty* ArrayProperty = CastFieldChecked<FArrayProperty>(Property);
 			FScriptArrayHelper ArrayHelper(ArrayProperty, Ptr);
-			if(ArrayHelper.Num() <= InSliceIndex)
+
+			if (InSliceIndex >= ArrayHelper.Num() - 1)
 			{
-				const int32 NumValuesToAdd = 1 + InSliceIndex - ArrayHelper.Num();
-				const int32 FirstAddedIndex = ArrayHelper.AddValues(NumValuesToAdd);
-
-				if (FirstAddedIndex > 0)
+				// For each slice we copy the default value to the next slice index
+				// The Index 0 has the initial default value, we carry it over the next slice on each call
+				const int32 NumValuesToAdd = FMath::Max(InSliceIndex + 1 - FMath::Max(ArrayHelper.Num() - 1, 0), 0);
+				if (NumValuesToAdd > 0)
 				{
-					// Adding slices, we need to initialize the new values.
-					// Otherwise, if we are adding the first slice, we don't need to worry about initializing.
-					UObject* CDO = ArrayProperty->GetOwnerClass()->GetDefaultObject();
-					const uint8* DefaultArrayMemory = ArrayProperty->ContainerPtrToValuePtr<uint8>(CDO);		
-					FScriptArrayHelper DefaultArrayHelper(ArrayProperty, DefaultArrayMemory);
-					if (const uint8* DefaultElementMemory = DefaultArrayHelper.GetRawPtr(0))
+					const int32 FirstAddedIndex = ArrayHelper.AddValues(NumValuesToAdd);
+					if (FirstAddedIndex > 0)
 					{
-						const FProperty* ElementProperty = ArrayProperty->Inner;
-						for (int32 i=FirstAddedIndex; i<ArrayHelper.Num(); ++i)
+						if (const uint8* SourceElementMemory = ArrayHelper.GetRawPtr(FirstAddedIndex - 1))
 						{
+							const FProperty* ElementProperty = ArrayProperty->Inner;
+							for (int32 i = FirstAddedIndex; i < ArrayHelper.Num(); ++i)
+							{
 #if UE_RIGVM_DEBUG_EXECUTION
-							// FString DefaultValue;
-							// ElementProperty->ExportText_Direct(
-							// 	DefaultValue,
-							// 	DefaultElementMemory,
-							// 	DefaultElementMemory,
-							// 	nullptr,
-							// 	PPF_None,
-							// 	nullptr);
-							//
-							// UE_LOG(LogRigVM, Display, TEXT("Adding slice %d for Property '%s', defaulting to '%s'."),
-							// 	InSliceIndex,
-							// 	*ArrayProperty->GetName(),
-							// 	*DefaultValue
-							// );
-#endif
+								FString DefaultValue;
+								ElementProperty->ExportText_Direct(
+									DefaultValue,
+									SourceElementMemory,
+									SourceElementMemory,
+									nullptr,
+									PPF_None,
+									nullptr);
 
-							uint8* DestMemory = ArrayHelper.GetRawPtr(i);
-							ElementProperty->CopyCompleteValue(DestMemory, DefaultElementMemory);
+								UE_LOG(LogRigVM, Display, TEXT("Adding slice %d for Property '%s', defaulting to '%s'."),
+									InSliceIndex,
+									*ArrayProperty->GetName(),
+									*DefaultValue
+								);
+#endif // UE_RIGVM_DEBUG_EXECUTION
+								uint8* DestMemory = ArrayHelper.GetRawPtr(i);
+								ElementProperty->CopyCompleteValue(DestMemory, SourceElementMemory);
+							}
 						}
 					}
 				}
@@ -871,13 +869,13 @@ private:
 		return Ptr;
 	}
 
-	TRigVMLazyValueBase GetDataLazily_Internal(bool bFollowPropertyPath, int32 InSliceIndex) const
+	TRigVMLazyValueBase GetDataLazily_Internal(bool bFollowPropertyPath, uint32 InSliceHash) const
 	{
 		// note: this works also for memory handles which don't provide a lazy branch
 		TRigVMLazyValueBase LazyValue;
 		LazyValue.MemoryHandle = (FRigVMMemoryHandle*)this;
 		LazyValue.bFollowPropertyPath = bFollowPropertyPath;
-		LazyValue.SliceIndex = InSliceIndex;
+		LazyValue.SliceHash = InSliceHash;
 		return LazyValue;
 	}
 
@@ -1019,6 +1017,9 @@ public:
 	// Returns a sanitized, valid name to use for a new property 
 	static FName SanitizeName(const FName& InName);
 
+	// Sanitizes a name using a string ref, creating a valid name to use for a new property 
+	static void SanitizeName(FString& InString);
+
 	// Sanitize the name of this description in line
 	void SanitizeName();
 
@@ -1125,6 +1126,16 @@ public:
 	void RefreshLinkedProperties();
 	void RefreshPropertyPaths();
 
+	bool IsValidPropertyPathDescriptionIndex(int32 Index) const
+	{
+		return PropertyPathDescriptions.IsValidIndex(Index);
+	}
+
+	const FRigVMPropertyPathDescription* GetPropertyPathDescriptionByIndex(int32 Index) const
+	{
+		return &PropertyPathDescriptions[Index];
+	}
+
 private:
 
 	// The type of memory of this class
@@ -1145,6 +1156,7 @@ private:
 	friend class URigVMCompiler;
 	friend struct FRigVMCompilerWorkData;
 	friend class URigVM;
+	friend class URigVMHost;
 	friend struct FRigVMCodeGenerator;
 };
 

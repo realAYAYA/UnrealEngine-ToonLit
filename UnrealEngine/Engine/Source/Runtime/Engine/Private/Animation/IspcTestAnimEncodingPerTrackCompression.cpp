@@ -77,7 +77,8 @@ bool FIspcTestAnimEncodingPerTrackCompressionGetPoseRotations::RunTest(const FSt
 			ISPCTransforms,
 			SkeletonMap,
 			nullptr,
-			false);
+			false,
+			AAT_None);
 		KeyLerp.GetPoseRotations(ISPCAtoms, Bones, DecompressContext);
 	}
 
@@ -92,7 +93,8 @@ bool FIspcTestAnimEncodingPerTrackCompressionGetPoseRotations::RunTest(const FSt
 			CPPTransforms,
 			SkeletonMap,
 			nullptr,
-			false);
+			false,
+			AAT_None);
 		KeyLerp.GetPoseRotations(CPPAtoms, Bones, DecompressContext);
 	}
 
@@ -177,7 +179,8 @@ bool FIspcTestAnimEncodingPerTrackCompressionGetPoseTranslations::RunTest(const 
 			ISPCTransforms,
 			SkeletonMap,
 			nullptr,
-			false);
+			false,
+			AAT_None);
 		KeyLerp.GetPoseTranslations(ISPCAtoms, Bones, DecompressContext);
 	}
 
@@ -192,7 +195,8 @@ bool FIspcTestAnimEncodingPerTrackCompressionGetPoseTranslations::RunTest(const 
 			CPPTransforms,
 			SkeletonMap,
 			nullptr,
-			false);
+			false,
+			AAT_None);
 		KeyLerp.GetPoseTranslations(CPPAtoms, Bones, DecompressContext);
 	}
 
@@ -277,7 +281,8 @@ bool FIspcTestAnimEncodingPerTrackCompressionGetPoseScales::RunTest(const FStrin
 			ISPCTransforms,
 			SkeletonMap,
 			nullptr,
-			false);
+			false,
+			AAT_None);
 		KeyLerp.GetPoseScales(ISPCAtoms, Bones, DecompressContext);
 	}
 
@@ -292,7 +297,8 @@ bool FIspcTestAnimEncodingPerTrackCompressionGetPoseScales::RunTest(const FStrin
 			CPPTransforms,
 			SkeletonMap,
 			nullptr,
-			false);
+			false,
+			AAT_None);
 		KeyLerp.GetPoseScales(CPPAtoms, Bones, DecompressContext);
 	}
 

@@ -9,14 +9,12 @@
 #include "MuR/ModelPrivate.h"
 #include "MuR/MutableMath.h"
 #include "MuR/MutableTrace.h"
+#include "MuR/ImagePrivate.h"
 #include "MuR/RefCounted.h"
 #include "MuR/Types.h"
 #include "MuT/ASTOpConstantResource.h"
 #include "MuT/ASTOpImagePixelFormat.h"
 #include "MuT/StreamsPrivate.h"
-
-#include <memory>
-#include <utility>
 
 
 namespace mu
@@ -46,9 +44,10 @@ ASTOpImageCompose::~ASTOpImageCompose()
 //-------------------------------------------------------------------------------------------------
 bool ASTOpImageCompose::IsEqual(const ASTOp& otherUntyped) const
 {
-    if ( const ASTOpImageCompose* other = dynamic_cast<const ASTOpImageCompose*>(&otherUntyped) )
+	if (otherUntyped.GetOpType() == GetOpType())
     {
-        return Layout ==other->Layout &&
+		const ASTOpImageCompose* other = static_cast<const ASTOpImageCompose*>(&otherUntyped);
+		return Layout == other->Layout &&
 			Base ==other->Base &&
 			BlockImage == other->BlockImage &&
 			Mask == other->Mask &&
@@ -144,8 +143,13 @@ FImageDesc ASTOpImageCompose::GetImageDesc( bool returnBestOption, FGetImageDesc
         res = Base->GetImageDesc( returnBestOption, context );
     }
 
+	if (BlockImage)
+	{
+		FImageDesc BlockDesc = BlockImage->GetImageDesc(returnBestOption, context);
+		res.m_format = GetMostGenericFormat(res.m_format,BlockDesc.m_format);
+	}
 
-    // Cache the result
+    // Cache th result
     if (context)
     {
 		context->m_results.Add(this, res);
@@ -231,7 +235,7 @@ mu::Ptr<ASTOp> ASTOpImageCompose::OptimiseSemantic(const FModelOptimizationOptio
 		&&
 		blockAt)
 	{
-		auto typedLayout = dynamic_cast<const ASTOpConstantResource*>(layoutAt.get());
+		const ASTOpConstantResource* typedLayout = static_cast<const ASTOpConstantResource*>(layoutAt.get());
 		mu::Ptr<const mu::Layout> pLayout = static_cast<const mu::Layout*>(typedLayout->GetValue().get());
 
 		// Constant single-block full layout?

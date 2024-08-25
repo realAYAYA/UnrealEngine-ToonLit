@@ -2,6 +2,7 @@
 
 #include "OptimusDataDomain.h"
 
+#include "OptimusExecutionDomain.h"
 #include "OptimusExpressionEvaluator.h"
 #include "OptimusObjectVersion.h"
 #include "String/ParseTokens.h"
@@ -30,32 +31,23 @@ FString Optimus::FormatDimensionNames(const TArray<FName>& InNames)
 }
 
 
-TOptional<int32> FOptimusDataDomain::GetElementCount(TMap<FName, int32> InDomainCounts) const
+FOptimusDataDomain::FOptimusDataDomain(const FOptimusExecutionDomain& InExecutionDomain)
 {
-	switch(Type)
+	if (InExecutionDomain.Type == EOptimusExecutionDomainType::DomainName)
 	{
-	case EOptimusDataDomainType::Dimensional:
-		{
-			if (DimensionNames.IsEmpty())
-			{
-				return 1;
-			}
-			else if (DimensionNames.Num() == 1)
-			{
-				if (const int32* Value = InDomainCounts.Find(DimensionNames[0]))
-				{
-					return *Value;
-				}
-			}
-		}
-		break;
-	case EOptimusDataDomainType::Expression:
-		return Optimus::Expression::FEngine(InDomainCounts).Evaluate(Expression);
+		Type = EOptimusDataDomainType::Dimensional;
+		DimensionNames = {InExecutionDomain.Name};
 	}
-	
-	return {};
+	else if (InExecutionDomain.Type == EOptimusExecutionDomainType::Expression)
+	{
+		Type = EOptimusDataDomainType::Expression;
+		Expression = InExecutionDomain.Expression;
+	}
+	else
+	{
+		checkNoEntry();
+	}
 }
-
 
 FString FOptimusDataDomain::ToString() const
 {
@@ -151,3 +143,129 @@ void FOptimusDataDomain::BackCompFixupLevels()
 		LevelNames_DEPRECATED.Reset();
 	}
 }
+
+TOptional<FString> FOptimusDataDomain::AsExpression() const
+{
+	if (IsSingleton())
+	{
+		return {};
+	}
+
+	if (IsMultiDimensional())
+	{
+		return {};
+	}
+
+	if (Type == EOptimusDataDomainType::Dimensional)
+	{
+		if (Multiplier > 1)
+		{
+			return FString::Printf(TEXT("%s * %d"), *DimensionNames[0].ToString(), Multiplier);
+		}
+		
+		return DimensionNames[0].ToString();
+	}
+
+	if (Type == EOptimusDataDomainType::Expression)
+	{
+		return Expression;
+	}
+
+	return {};
+}
+
+TSet<FName> FOptimusDataDomain::GetUsedConstants() const
+{
+	if (ensure(Type == EOptimusDataDomainType::Expression))
+	{
+		using namespace Optimus::Expression;
+		FEngine Engine;
+		TVariant<FExpressionObject, FParseError> ParseResult = Engine.Parse(Expression);
+
+		if (ParseResult.IsType<FParseError>())
+		{
+			return {};
+		}
+
+		return ParseResult.Get<FExpressionObject>().GetUsedConstants();
+	}
+
+	return {};
+}
+
+FString FOptimusDataDomain::GetDisplayName() const
+{
+	switch(Type)
+	{
+	case EOptimusDataDomainType::Dimensional:
+		{
+			if (DimensionNames.IsEmpty())
+			{
+				return TEXT("Parameter");
+			}
+			TArray<FString> Names;
+			for (FName DomainLevelName: DimensionNames)
+			{
+				Names.Add(DomainLevelName.ToString());
+			}
+			FString DomainName = FString::Join(Names, *FString(UTF8TEXT(" › ")));
+			if (Multiplier > 1)
+			{
+				DomainName += FString::Printf(TEXT(" x %d"), Multiplier);
+			}
+			return DomainName;
+		}
+		
+	case EOptimusDataDomainType::Expression:
+		if (Expression.IsEmpty())
+		{
+			return TEXT("Undefined");
+		}
+		return FString::Printf(TEXT("'%s'"), *Expression.TrimStartAndEnd());
+	}
+
+	checkNoEntry();
+	return TEXT("");	
+}
+
+bool FOptimusDataDomain::AreCompatible(const FOptimusDataDomain& InOutput, const FOptimusDataDomain& InInput,
+                                       FString* OutReason)
+{
+	if (!InOutput.IsFullyDefined() || !InInput.IsFullyDefined())
+	{
+		if (OutReason)
+		{
+			*OutReason = TEXT("One of the pins has undefined datadomain");
+		}
+		return false;
+	}
+
+	// We don't allow resource -> value connections. All other combos are legit. 
+	// Value -> Resource just means the resource gets filled with the value.
+	if (!InOutput.IsSingleton() && InInput.IsSingleton())
+	{
+		if (OutReason)
+		{
+			*OutReason = TEXT("Can't connect a resource output into a value input.");
+		}
+		return false;
+	}
+
+	// If it's resource -> resource, check that the domains are compatible
+	if (!InOutput.IsSingleton() && !InInput.IsSingleton())
+	{
+		if (InOutput != InInput)
+		{
+			if (OutReason)
+			{
+				*OutReason = FString::Printf(TEXT("Can't connect resources with incompatible data domain types (%s vs %s)."),
+					*InOutput.GetDisplayName(), *InInput.GetDisplayName());
+			}
+			return false;
+		}
+	}
+
+	return true;
+}
+
+

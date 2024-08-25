@@ -31,7 +31,5 @@ namespace UE::Chaos::ClothGenerator
 	public:
 		static TSharedRef<IDetailCustomization> MakeInstance();
 		virtual void CustomizeDetails(IDetailLayoutBuilder& DetailBuilder) override;
-	private:
-		TWeakObjectPtr<UClothGeneratorProperties> GetProperties(IDetailLayoutBuilder& DetailBuilder) const;
 	};
 };

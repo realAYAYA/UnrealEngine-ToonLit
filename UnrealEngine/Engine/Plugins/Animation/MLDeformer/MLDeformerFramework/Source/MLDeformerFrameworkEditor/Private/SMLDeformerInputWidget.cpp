@@ -33,54 +33,49 @@ namespace UE::MLDeformer
 		SectionVerticalBox->AddSlot()
 		.AutoHeight()
 		[
-			SNew(SBorder)
+			SNew(SExpandableArea)
 			.BorderImage(FAppStyle::Get().GetBrush("Brushes.Header"))
-			.Padding(0.0f, 2.0f, 0.0f, 0.0f)
+			.BodyBorderImage(FAppStyle::Get().GetBrush("Brushes.Recessed"))
+			.HeaderPadding(FMargin(4.0f, 2.0f))
+			.Padding(0.0f)
+			.MaxHeight(300.0f)
+			.AllowAnimatedTransition(false)
+			.HeaderContent()
 			[
-				SNew(SExpandableArea)
-				.BorderImage(FAppStyle::Get().GetBrush("Brushes.Header"))
-				.BodyBorderImage(FAppStyle::Get().GetBrush("Brushes.Recessed"))
-				.HeaderPadding(FMargin(4.0f, 2.0f))
-				.Padding(0.0f)
-				.MaxHeight(300.0f)
-				.AllowAnimatedTransition(false)
-				.HeaderContent()
+				SNew(SHorizontalBox)
+				+SHorizontalBox::Slot()
+				.VAlign(VAlign_Center)
 				[
-					SNew(SHorizontalBox)
-					+SHorizontalBox::Slot()
-					.VAlign(VAlign_Center)
+					SNew(STextBlock)
+					.Text(SectionInfo.SectionTitle)
+					.TextStyle(FAppStyle::Get(), "ButtonText")
+					.Font(FAppStyle::Get().GetFontStyle("NormalFontBold"))
+				]
+				+SHorizontalBox::Slot()
+				.VAlign(VAlign_Center)
+				.HAlign(HAlign_Right)
+				.AutoWidth()
+				.Padding(4.0f, 0.0f, 0.0f, 0.0f)
+				[
+					SNew(SButton)
+					.ButtonStyle(FAppStyle::Get(), "SimpleButton")
+					.ToolTipText(SectionInfo.PlusButtonTooltip)
+					.OnClicked(SectionInfo.PlusButtonPressed)
+					.ContentPadding(FMargin(1, 0))					
 					[
-						SNew(STextBlock)
-						.Text(SectionInfo.SectionTitle)
-						.TextStyle(FAppStyle::Get(), "ButtonText")
-						.Font(FAppStyle::Get().GetFontStyle("NormalFontBold"))
-					]
-					+SHorizontalBox::Slot()
-					.VAlign(VAlign_Center)
-					.HAlign(HAlign_Right)
-					.AutoWidth()
-					.Padding(4.0f, 0.0f, 0.0f, 0.0f)
-					[
-						SNew(SButton)
-						.ButtonStyle(FAppStyle::Get(), "SimpleButton")
-						.ToolTipText(SectionInfo.PlusButtonTooltip)
-						.OnClicked(SectionInfo.PlusButtonPressed)
-						.ContentPadding(FMargin(1, 0))					
-						[
-							SNew(SImage)
-							.Image(FAppStyle::Get().GetBrush("Icons.PlusCircle"))
-							.ColorAndOpacity(FSlateColor::UseForeground())
-						]
+						SNew(SImage)
+						.Image(FAppStyle::Get().GetBrush("Icons.PlusCircle"))
+						.ColorAndOpacity(FSlateColor::UseForeground())
 					]
 				]
-				.BodyContent()			
+			]
+			.BodyContent()			
+			[
+				SNew(SBorder)
+				.BorderImage(FAppStyle::Get().GetBrush("Brushes.Header"))
+				.Padding(FMargin(8.0f, 2.0f))
 				[
-					SNew(SBorder)
-					.BorderImage(FAppStyle::Get().GetBrush("Brushes.Header"))
-					.Padding(FMargin(8.0f, 2.0f))
-					[
-						Widget.ToSharedRef()
-					]
+					Widget.ToSharedRef()
 				]
 			]
 		];

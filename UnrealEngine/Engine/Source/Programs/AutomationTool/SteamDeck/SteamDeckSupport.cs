@@ -324,11 +324,6 @@ public static class SteamDeckSupport
 		string MsvsmonPath = null;
 		MsvsmonVersion = "2022";
 		IEnumerable<DirectoryReference> InstallDirs = WindowsExports.TryGetVSInstallDirs(WindowsCompiler.VisualStudio2022);
-		if (InstallDirs == null)
-		{
-			InstallDirs = WindowsExports.TryGetVSInstallDirs(WindowsCompiler.VisualStudio2019);
-			MsvsmonVersion = "2019";
-		}
 		if (InstallDirs != null)
 		{
 			MsvsmonPath = Path.Combine(InstallDirs.First().FullName, "Common7/IDE/Remote Debugger");

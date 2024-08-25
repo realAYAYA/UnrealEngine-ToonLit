@@ -1,14 +1,17 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #pragma once
-#include "Box.h"
-#include "Chaos/Framework/PhysicsProxyBase.h"
-#include "Chaos/PBDConstraintContainer.h"
+#include "Chaos/Box.h"
 #include "Chaos/ParticleHandleFwd.h"
-#include "Chaos/Vector.h"
 #include "Chaos/PhysicalMaterials.h"
+#include "Chaos/Vector.h"
+//
+// NOTE: This file is widely included in Engine code. 
+// Avoid including Chaos headers when possible.
+//
 
 
 class UPhysicalMaterial;
+class IPhysicsProxyBase;
 
 namespace Chaos
 {

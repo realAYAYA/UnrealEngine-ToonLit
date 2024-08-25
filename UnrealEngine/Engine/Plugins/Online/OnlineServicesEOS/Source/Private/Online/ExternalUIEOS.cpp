@@ -3,10 +3,11 @@
 #include "Online/ExternalUIEOS.h"
 
 #include "EOSShared.h"
+#include "IEOSSDKManager.h"
 #include "Online/OnlineIdEOS.h"
 #include "Online/OnlineServicesEOS.h"
-
 #include "Online/OnlineServicesEOSGSTypes.h"
+
 #include "eos_ui.h"
 
 namespace UE::Online {
@@ -20,7 +21,7 @@ void FExternalUIEOS::Initialize()
 {
 	Super::Initialize();
 
-	UIHandle = EOS_Platform_GetUIInterface(static_cast<FOnlineServicesEOS&>(GetServices()).GetEOSPlatformHandle());
+	UIHandle = EOS_Platform_GetUIInterface(*static_cast<FOnlineServicesEOS&>(GetServices()).GetEOSPlatformHandle());
 	check(UIHandle != nullptr);
 }
 

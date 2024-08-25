@@ -73,7 +73,12 @@ namespace NiagaraScriptStatsLocal
 				const FNiagaraVMExecutableData& VMData = Script->GetVMExecutableData();
 				if (VMData.LastOpCount > 0)
 				{
-					OutStatus.Appendf(TEXT("VM: %s = %u\n"), *Script->GetName(), VMData.LastOpCount);
+					if (!OutStatus.IsEmpty())
+					{
+						OutStatus.AppendChar(TEXT('\n'));
+					}
+					OutStatus.Appendf(TEXT("VM: %s\n"), *Script->GetName());
+					OutStatus.Appendf(TEXT("- Op Count = %u\n"), VMData.LastOpCount);
 				}
 			}
 		}
@@ -196,16 +201,24 @@ namespace NiagaraScriptStatsLocal
 								FNiagaraShaderRef Shader = ShaderScript->GetShaderGameThread(iSimStageIndex);
 								if ( Shader.IsValid() )
 								{
-									ResultsString.Appendf(TEXT("GPU: %s = "), *SimulationStageMetaData[iSimStageIndex].SimulationStageName.ToString());
-									if (Shader->GetNumInstructions() == 0)
+									if (!ResultsString.IsEmpty())
 									{
-										ResultsString.Append(TEXT("n/a"));
+										ResultsString.AppendChar(TEXT('\n'));
 									}
-									else
+									ResultsString.Appendf(TEXT("GPU: %s\n"), *SimulationStageMetaData[iSimStageIndex].SimulationStageName.ToString());
+									if (Shader->GetNumInstructions() > 0)
 									{
-										ResultsString.AppendInt(Shader->GetNumInstructions());
+										ResultsString.Appendf(TEXT("- Num Instructions = %d\n"), Shader->GetNumInstructions());
 									}
-									ResultsString.AppendChar(TEXT('\n'));
+
+									TStringBuilder<2048> ShaderStatsBuilder;
+									const FShader::FShaderStatisticMap ShaderStats = Shader->GetShaderStatistics();
+									for (const auto& ShaderStat : ShaderStats)
+									{
+										ShaderStatsBuilder << TEXT("- ") << ShaderStat.Key << TEXT(" = ");
+										Visit([&ShaderStatsBuilder](auto& StoredValue) { ShaderStatsBuilder << StoredValue << "\n"; }, ShaderStat.Value);
+									}
+									ResultsString.Append(ShaderStatsBuilder.ToString());
 								}
 							}
 						}
@@ -767,7 +780,11 @@ EShaderPlatform FNiagaraScriptStatsViewModel::ColumnNameToShaderPlatform(const F
 void FNiagaraScriptStatsViewModel::BuildShaderPlatformDetails()
 {
 	TArray<EShaderPlatform, TInlineAllocator<SP_StaticPlatform_Last + 1>> StaticShaderPlatforms;
+#if PLATFORM_WINDOWS
 	StaticShaderPlatforms.Add(SP_PCD3D_SM5);
+	StaticShaderPlatforms.Add(SP_PCD3D_SM6);
+	StaticShaderPlatforms.Add(SP_PCD3D_ES3_1);
+#endif
 	StaticShaderPlatforms.Add(SP_VULKAN_SM5);
 	StaticShaderPlatforms.Add(SP_VULKAN_SM6);
 	StaticShaderPlatforms.Add(SP_OPENGL_ES3_1_ANDROID); 

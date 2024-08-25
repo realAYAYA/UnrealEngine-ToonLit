@@ -194,7 +194,7 @@ public:
 		if (FreeCachedMeshDatas.Num() > 0)
 		{
 			FScopeLock ScopeLock(&FreeCachedMeshDatasMutex);
-			FCachedMeshData::SharedPtr CachedMeshData(FreeCachedMeshDatas.Pop(false));
+			FCachedMeshData::SharedPtr CachedMeshData(FreeCachedMeshDatas.Pop(EAllowShrinking::No));
 			CachedMeshData->Init(this);
 			return CachedMeshData;
 		}

@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "VPScoutingMode.h"
+#include "VirtualScoutingEditorModule.h"
 #include "VirtualScoutingOpenXR.h"
 #include "VirtualScoutingOpenXRModule.h"
 
@@ -18,30 +19,10 @@
 #define LOCTEXT_NAMESPACE "VirtualScouting"
 
 
-DECLARE_LOG_CATEGORY_EXTERN(LogVirtualScouting, Log, All);
-DEFINE_LOG_CATEGORY(LogVirtualScouting);
-
-
 static const FName OpenXRSystemName = FName(TEXT("OpenXR"));
 
 
-class FVirtualScoutingEditorModule : public IModuleInterface
-{
-private:
-	virtual void StartupModule() override
-	{
-	}
-
-	virtual void ShutdownModule() override
-	{
-	}
-};
-
-
-IMPLEMENT_MODULE(FVirtualScoutingEditorModule, VirtualScoutingEditor);
-
-
-UVPScoutingMode::UVPScoutingMode(const FObjectInitializer& ObjectInitializer)
+UVPScoutingMode::UVPScoutingMode()
 {
 	InteractorClass = FSoftObjectPath("/VirtualProductionUtilities/VR/VirtualScoutingInteractor.VirtualScoutingInteractor_C");
 	TeleporterClass = FSoftObjectPath("/VirtualProductionUtilities/VR/VirtualScoutingTeleporter.VirtualScoutingTeleporter_C");
@@ -70,7 +51,7 @@ void UVPScoutingMode::Enter()
 	TSharedPtr<FVirtualScoutingOpenXRExtension> XrExt = FVirtualScoutingOpenXRModule::Get().GetOpenXRExt();
 	if (!XrExt)
 	{
-		UE_LOG(LogVirtualScouting, Error, TEXT("OpenXR extension plugin invalid"));
+		UE_LOG(LogVirtualScoutingEditor, Error, TEXT("OpenXR extension plugin invalid"));
 		IVREditorModule::Get().EnableVREditor(false);
 		return;
 	}
@@ -99,13 +80,13 @@ void UVPScoutingMode::Enter()
 			UVPScoutingMode* This = WeakThis.Get();
 			if (!This || !This->bIsFullyInitialized)
 			{
-				UE_LOG(LogVirtualScouting, Warning, TEXT("Stale UVPScoutingMode; ignoring HmdDeviceType future"));
+				UE_LOG(LogVirtualScoutingEditor, Warning, TEXT("Stale UVPScoutingMode; ignoring HmdDeviceType future"));
 				return DeviceType;
 			}
 
 			if (DeviceType == NAME_None)
 			{
-				UE_LOG(LogVirtualScouting, Error, TEXT("Unable to map legacy HMD device type"));
+				UE_LOG(LogVirtualScoutingEditor, Error, TEXT("Unable to map legacy HMD device type"));
 				return DeviceType;
 			}
 
@@ -140,7 +121,7 @@ void UVPScoutingMode::InvalidSettingNotification(const FText& ErrorDetails)
 {
 	FText NotificationHeading = LOCTEXT("InvalidSettingNotificationTitle", "Unable to initialize Virtual Scouting");
 
-	UE_LOG(LogVirtualScouting, Error, TEXT("%s: %s"), *NotificationHeading.ToString(), *ErrorDetails.ToString());
+	UE_LOG(LogVirtualScoutingEditor, Error, TEXT("%s: %s"), *NotificationHeading.ToString(), *ErrorDetails.ToString());
 
 	FNotificationInfo Info(NotificationHeading);
 	Info.SubText = ErrorDetails;

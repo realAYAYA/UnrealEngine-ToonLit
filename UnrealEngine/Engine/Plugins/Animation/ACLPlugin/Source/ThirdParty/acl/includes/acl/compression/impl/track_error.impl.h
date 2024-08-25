@@ -26,6 +26,7 @@
 
 // Included only once from track_error.h
 
+#include "acl/version.h"
 #include "acl/core/compressed_tracks.h"
 #include "acl/core/error.h"
 #include "acl/core/error_result.h"
@@ -43,6 +44,8 @@
 
 namespace acl
 {
+	ACL_IMPL_VERSION_NAMESPACE_BEGIN
+
 	namespace acl_impl
 	{
 		inline rtm::vector4f RTM_SIMD_CALL get_scalar_track_error(track_type8 track_type, uint32_t raw_track_index, uint32_t lossy_track_index, const debug_track_writer& raw_tracks_writer, const debug_track_writer& lossy_tracks_writer)
@@ -108,6 +111,7 @@ namespace acl
 			virtual uint32_t get_output_index(uint32_t track_index) { return track_index; }
 
 			// Transforms only, mandatory
+			virtual void initialize_bind_pose(debug_track_writer& tracks_writer0, debug_track_writer& tracks_writer1) { (void)tracks_writer0; (void)tracks_writer1; }
 			virtual uint32_t get_parent_index(uint32_t track_index) { (void)track_index; return k_invalid_track_index; }
 			virtual float get_shell_distance(uint32_t track_index) { (void)track_index; return 0.0F; }
 
@@ -173,6 +177,8 @@ namespace acl
 			debug_track_writer tracks_writer0(allocator, track_type, num_tracks);
 			debug_track_writer tracks_writer1(allocator, track_type, num_tracks);
 
+			ACL_ASSERT(track_type != track_type8::qvvf, "Don't use calculate_scalar_track_error on track_type8::qvvf");
+
 			// Measure our error
 			for (uint32_t sample_index = 0; sample_index < num_samples; ++sample_index)
 			{
@@ -228,6 +234,9 @@ namespace acl
 
 			debug_track_writer tracks_writer0(allocator, track_type8::qvvf, num_tracks);
 			debug_track_writer tracks_writer1(allocator, track_type8::qvvf, num_tracks);
+
+			args.adapter.initialize_bind_pose(tracks_writer0, tracks_writer1);
+
 			debug_track_writer tracks_writer1_remapped(allocator, track_type8::qvvf, num_tracks);
 			debug_track_writer tracks_writer_base(allocator, track_type8::qvvf, num_tracks);
 
@@ -265,12 +274,17 @@ namespace acl
 			convert_transforms_args_raw.num_dirty_transforms = num_tracks;
 			convert_transforms_args_raw.transforms = tracks_writer0.tracks_typed.qvvf;
 			convert_transforms_args_raw.num_transforms = num_tracks;
+			convert_transforms_args_raw.sample_index = 0;
+			convert_transforms_args_raw.is_lossy = false;
+			convert_transforms_args_raw.is_additive_base = false;
 
 			itransform_error_metric::convert_transforms_args convert_transforms_args_base = convert_transforms_args_raw;
 			convert_transforms_args_base.transforms = tracks_writer_base.tracks_typed.qvvf;
+			convert_transforms_args_base.is_additive_base = true;
 
 			itransform_error_metric::convert_transforms_args convert_transforms_args_lossy = convert_transforms_args_raw;
 			convert_transforms_args_lossy.transforms = tracks_writer1_remapped.tracks_typed.qvvf;
+			convert_transforms_args_lossy.is_lossy = true;
 
 			itransform_error_metric::apply_additive_to_base_args apply_additive_to_base_args_raw;
 			apply_additive_to_base_args_raw.dirty_transform_indices = self_transform_indices;
@@ -308,6 +322,8 @@ namespace acl
 
 				if (needs_conversion)
 				{
+					convert_transforms_args_raw.sample_index = sample_index;
+					convert_transforms_args_lossy.sample_index = sample_index;
 					error_metric.convert_transforms(convert_transforms_args_raw, raw_local_pose_converted);
 					error_metric.convert_transforms(convert_transforms_args_lossy, lossy_local_pose_converted);
 				}
@@ -319,7 +335,11 @@ namespace acl
 					args.adapter.sample_tracks_base(additive_sample_time, rounding_policy, tracks_writer_base);
 
 					if (needs_conversion)
+					{
+						const uint32_t nearest_base_sample_index = static_cast<uint32_t>(rtm::scalar_round_bankers(normalized_sample_time * additive_num_samples));
+						convert_transforms_args_base.sample_index = nearest_base_sample_index;
 						error_metric.convert_transforms(convert_transforms_args_base, base_local_pose_converted);
+					}
 
 					error_metric.apply_additive_to_base(apply_additive_to_base_args_raw, raw_local_pose_);
 					error_metric.apply_additive_to_base(apply_additive_to_base_args_lossy, lossy_local_pose_);
@@ -414,12 +434,18 @@ namespace acl
 		calculate_track_error_args args(adapter);
 		args.num_samples = raw_tracks.get_num_samples_per_track();
 		args.num_tracks = raw_tracks.get_num_tracks();
-		args.duration = raw_tracks.get_duration();
+		args.duration = raw_tracks.get_finite_duration();
 		args.sample_rate = raw_tracks.get_sample_rate();
 		args.track_type = raw_tracks.get_track_type();
 
-		// We use the nearest sample to accurately measure the loss that happened, if any
-		args.rounding_policy = sample_rounding_policy::nearest;
+		// We use the nearest sample to accurately measure the loss that happened, if any but only if all data is loaded
+		// If we have a database with some data missing, we can't use the nearest samples, we have to interpolate
+		// TODO: Check if all the data is loaded, always interpolate for now
+		const compressed_tracks& tracks = *context.get_compressed_tracks();
+		if (tracks.has_database() || tracks.has_stripped_keyframes())
+			args.rounding_policy = sample_rounding_policy::none;
+		else
+			args.rounding_policy = sample_rounding_policy::nearest;
 
 		return calculate_scalar_track_error(allocator, args);
 	}
@@ -456,6 +482,12 @@ namespace acl
 
 			error_calculation_adapter(const error_calculation_adapter&) = delete;
 			error_calculation_adapter& operator=(const error_calculation_adapter&) = delete;
+
+			virtual void initialize_bind_pose(debug_track_writer& track_writer0, debug_track_writer& tracks_writer1) override
+			{
+				(void)track_writer0;
+				tracks_writer1.initialize_with_defaults(raw_tracks_);
+			}
 
 			virtual void sample_tracks0(float sample_time, sample_rounding_policy rounding_policy, debug_track_writer& track_writer) override
 			{
@@ -504,20 +536,18 @@ namespace acl
 		calculate_track_error_args args(adapter);
 		args.num_samples = raw_tracks.get_num_samples_per_track();
 		args.num_tracks = raw_tracks.get_num_tracks();
-		args.duration = raw_tracks.get_duration();
+		args.duration = raw_tracks.get_finite_duration();
 		args.sample_rate = raw_tracks.get_sample_rate();
 		args.track_type = raw_tracks.get_track_type();
 
 		// We use the nearest sample to accurately measure the loss that happened, if any but only if all data is loaded
 		// If we have a database with some data missing, we can't use the nearest samples, we have to interpolate
-		args.rounding_policy = sample_rounding_policy::nearest;
-
+		// TODO: Check if all the data is loaded, always interpolate for now
 		const compressed_tracks& tracks = *context.get_compressed_tracks();
-		if (tracks.has_database())
-		{
-			// TODO: Check if all the data is loaded, always interpolate for now
+		if (tracks.has_database() || tracks.has_stripped_keyframes())
 			args.rounding_policy = sample_rounding_policy::none;
-		}
+		else
+			args.rounding_policy = sample_rounding_policy::nearest;
 
 		if (raw_tracks.get_track_type() != track_type8::qvvf)
 			return calculate_scalar_track_error(allocator, args);
@@ -561,6 +591,12 @@ namespace acl
 
 			error_calculation_adapter(const error_calculation_adapter&) = delete;
 			error_calculation_adapter& operator=(const error_calculation_adapter&) = delete;
+
+			virtual void initialize_bind_pose(debug_track_writer& track_writer0, debug_track_writer& tracks_writer1) override
+			{
+				(void)track_writer0;
+				tracks_writer1.initialize_with_defaults(raw_tracks_);
+			}
 
 			virtual void sample_tracks0(float sample_time, sample_rounding_policy rounding_policy, debug_track_writer& track_writer) override
 			{
@@ -615,27 +651,25 @@ namespace acl
 		calculate_track_error_args args(adapter);
 		args.num_samples = raw_tracks.get_num_samples_per_track();
 		args.num_tracks = raw_tracks.get_num_tracks();
-		args.duration = raw_tracks.get_duration();
+		args.duration = raw_tracks.get_finite_duration();
 		args.sample_rate = raw_tracks.get_sample_rate();
 		args.track_type = raw_tracks.get_track_type();
 
 		// We use the nearest sample to accurately measure the loss that happened, if any but only if all data is loaded
 		// If we have a database with some data missing, we can't use the nearest samples, we have to interpolate
-		args.rounding_policy = sample_rounding_policy::nearest;
-
+		// TODO: Check if all the data is loaded, always interpolate for now
 		const compressed_tracks& tracks = *context.get_compressed_tracks();
-		if (tracks.has_database())
-		{
-			// TODO: Check if all the data is loaded, always interpolate for now
+		if (tracks.has_database() || tracks.has_stripped_keyframes())
 			args.rounding_policy = sample_rounding_policy::none;
-		}
+		else
+			args.rounding_policy = sample_rounding_policy::nearest;
 
 		args.error_metric = &error_metric;
 
 		if (!additive_base_tracks.is_empty())
 		{
 			args.base_num_samples = additive_base_tracks.get_num_samples_per_track();
-			args.base_duration = additive_base_tracks.get_duration();
+			args.base_duration = additive_base_tracks.get_finite_duration();
 		}
 
 		return calculate_transform_track_error(allocator, args);
@@ -683,20 +717,18 @@ namespace acl
 		calculate_track_error_args args(adapter);
 		args.num_samples = tracks0->get_num_samples_per_track();
 		args.num_tracks = tracks0->get_num_tracks();
-		args.duration = tracks0->get_duration();
+		args.duration = tracks0->get_finite_duration();
 		args.sample_rate = tracks0->get_sample_rate();
 		args.track_type = tracks0->get_track_type();
 
 		// We use the nearest sample to accurately measure the loss that happened, if any but only if all data is loaded
 		// If we have a database with some data missing, we can't use the nearest samples, we have to interpolate
-		args.rounding_policy = sample_rounding_policy::nearest;
-
+		// TODO: Check if all the data is loaded, always interpolate for now
 		const compressed_tracks* tracks1 = context1.get_compressed_tracks();
-		if (tracks0->has_database() || tracks1->has_database())
-		{
-			// TODO: Check if all the data is loaded, always interpolate for now
+		if (tracks0->has_database() || tracks1->has_database() || tracks0->has_stripped_keyframes() || tracks1->has_stripped_keyframes())
 			args.rounding_policy = sample_rounding_policy::none;
-		}
+		else
+			args.rounding_policy = sample_rounding_policy::nearest;
 
 		return calculate_scalar_track_error(allocator, args);
 	}
@@ -738,7 +770,7 @@ namespace acl
 		calculate_track_error_args args(adapter);
 		args.num_samples = raw_tracks0.get_num_samples_per_track();
 		args.num_tracks = raw_tracks0.get_num_tracks();
-		args.duration = raw_tracks0.get_duration();
+		args.duration = raw_tracks0.get_finite_duration();
 		args.sample_rate = raw_tracks0.get_sample_rate();
 		args.track_type = raw_tracks0.get_track_type();
 
@@ -794,7 +826,7 @@ namespace acl
 		calculate_track_error_args args(adapter);
 		args.num_samples = raw_tracks0.get_num_samples_per_track();
 		args.num_tracks = raw_tracks0.get_num_tracks();
-		args.duration = raw_tracks0.get_duration();
+		args.duration = raw_tracks0.get_finite_duration();
 		args.sample_rate = raw_tracks0.get_sample_rate();
 		args.track_type = raw_tracks0.get_track_type();
 
@@ -808,4 +840,6 @@ namespace acl
 
 		return calculate_transform_track_error(allocator, args);
 	}
+
+	ACL_IMPL_VERSION_NAMESPACE_END
 }

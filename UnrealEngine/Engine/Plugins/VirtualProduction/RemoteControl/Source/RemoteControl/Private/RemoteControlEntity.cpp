@@ -81,6 +81,10 @@ void FRemoteControlEntity::BindObject(UObject* InObjectToBind)
 
 	}
 
+	// The order of this delegate needs to be this way
+	// The first will update the Entity widget with the new data
+	// The second one will refresh the List
+	Owner->OnEntityRebind().Broadcast(Id);
 	OnEntityModifiedDelegate.ExecuteIfBound(Id);
 }
 
@@ -137,7 +141,6 @@ FName FRemoteControlEntity::Rename(FName NewLabel)
 	{
 		Preset->Modify();
 		FName NewName = Preset->RenameExposedEntity(Id, NewLabel);
-		OnEntityModifiedDelegate.ExecuteIfBound(Id);
 		return NewName;
 	}
 

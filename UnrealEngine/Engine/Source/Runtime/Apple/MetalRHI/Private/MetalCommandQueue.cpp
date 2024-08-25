@@ -11,14 +11,17 @@
 #include "MetalCommandList.h"
 #include "MetalProfiler.h"
 #include "Misc/ConfigCacheIni.h"
-#include "command_buffer.hpp"
+
+#if !UE_BUILD_SHIPPING
+#import <Metal/Metal.h>
+#endif
 
 #pragma mark - Private C++ Statics -
-NSUInteger FMetalCommandQueue::PermittedOptions = 0;
+NS::UInteger FMetalCommandQueue::PermittedOptions = 0;
 uint64 FMetalCommandQueue::Features = 0;
-extern mtlpp::VertexFormat GMetalFColorVertexFormat;
-bool GMetalCommandBufferDebuggingEnabled = 0;
+extern MTL::VertexFormat GMetalFColorVertexFormat;
 
+bool GMetalCommandBufferDebuggingEnabled = 0;
 
 static int32 GForceNoMetalHeap = 1;
 static FAutoConsoleVariableRef CVarMetalForceNoHeap(
@@ -38,7 +41,7 @@ static FAutoConsoleVariableRef CVarMetalForceNoFence(
 
 #pragma mark - Public C++ Boilerplate -
 
-FMetalCommandQueue::FMetalCommandQueue(mtlpp::Device InDevice, uint32 const MaxNumCommandBuffers /* = 0 */)
+FMetalCommandQueue::FMetalCommandQueue(MTL::Device* InDevice, uint32 const MaxNumCommandBuffers /* = 0 */)
 	: Device(InDevice)
 	, RuntimeDebuggingLevel(EMetalDebugLevelOff)
 {
@@ -59,21 +62,21 @@ FMetalCommandQueue::FMetalCommandQueue(mtlpp::Device InDevice, uint32 const MaxN
 
 	if(MaxNumCommandBuffers == 0)
 	{
-		CommandQueue = Device.NewCommandQueue();
+		CommandQueue = Device->newCommandQueue();
 	}
 	else
 	{
-		CommandQueue = Device.NewCommandQueue(MaxNumCommandBuffers);
+		CommandQueue = Device->newCommandQueue(MaxNumCommandBuffers);
 	}
 	check(CommandQueue);
 #if PLATFORM_IOS
-	NSOperatingSystemVersion Vers = [[NSProcessInfo processInfo]operatingSystemVersion];
+	NS::OperatingSystemVersion Vers = NS::ProcessInfo::processInfo()->operatingSystemVersion();
 	Features = EMetalFeaturesSetBufferOffset | EMetalFeaturesSetBytes;
 
 #if PLATFORM_TVOS
 	Features &= ~(EMetalFeaturesSetBytes);
 		
-		if(Device.SupportsFeatureSet(mtlpp::FeatureSet::tvOS_GPUFamily2_v1))
+    if(Device->supportsFeatureSet(MTL::FeatureSet_tvOS_GPUFamily2_v1))
 	{
 		Features |= EMetalFeaturesCountingQueries | EMetalFeaturesBaseVertexInstance | EMetalFeaturesIndirectBuffer | EMetalFeaturesMSAADepthResolve | EMetalFeaturesMSAAStoreAndResolve;
 	}
@@ -82,7 +85,7 @@ FMetalCommandQueue::FMetalCommandQueue(mtlpp::Device InDevice, uint32 const MaxN
 
 	Features |= EMetalFeaturesGPUCaptureManager | EMetalFeaturesBufferSubAllocation | EMetalFeaturesParallelRenderEncoders | EMetalFeaturesPipelineBufferMutability;
 
-	GMetalFColorVertexFormat = mtlpp::VertexFormat::UChar4Normalized_BGRA;
+	GMetalFColorVertexFormat = MTL::VertexFormatUChar4Normalized_BGRA;
 
 	Features |= EMetalFeaturesMaxThreadsPerThreadgroup;
 
@@ -98,25 +101,25 @@ FMetalCommandQueue::FMetalCommandQueue(mtlpp::Device InDevice, uint32 const MaxN
 
 	Features |= EMetalFeaturesTextureBuffers;
 #else
-	if (Device.SupportsFeatureSet(mtlpp::FeatureSet::iOS_GPUFamily3_v1))
+	if (Device->supportsFeatureSet(MTL::FeatureSet_iOS_GPUFamily3_v1))
 	{
 		Features |= EMetalFeaturesCountingQueries | EMetalFeaturesBaseVertexInstance | EMetalFeaturesIndirectBuffer | EMetalFeaturesMSAADepthResolve;
 	}
 		
-    if(Device.SupportsFeatureSet(mtlpp::FeatureSet::iOS_GPUFamily3_v2) || Device.SupportsFeatureSet(mtlpp::FeatureSet::iOS_GPUFamily2_v3) || Device.SupportsFeatureSet(mtlpp::FeatureSet::iOS_GPUFamily1_v3))
+    if(Device->supportsFeatureSet(MTL::FeatureSet_iOS_GPUFamily3_v2) || Device->supportsFeatureSet(MTL::FeatureSet_iOS_GPUFamily2_v3) || Device->supportsFeatureSet(MTL::FeatureSet_iOS_GPUFamily1_v3))
 	{
         if (FParse::Param(FCommandLine::Get(),TEXT("metalfence")))
 		{
 			Features |= EMetalFeaturesFences;
 		}
 			
-			if (FParse::Param(FCommandLine::Get(),TEXT("metalheap")))
+		if (FParse::Param(FCommandLine::Get(),TEXT("metalheap")))
 		{
 			Features |= EMetalFeaturesHeaps;
 		}
 	}
 		
-		if(Device.SupportsFeatureSet(mtlpp::FeatureSet::iOS_GPUFamily3_v2))
+    if(Device->supportsFeatureSet(MTL::FeatureSet_iOS_GPUFamily3_v2))
 	{
 		Features |= EMetalFeaturesMSAAStoreAndResolve;
 	}
@@ -128,7 +131,7 @@ FMetalCommandQueue::FMetalCommandQueue(mtlpp::Device InDevice, uint32 const MaxN
 	Features |= EMetalFeaturesBufferSubAllocation;
 	Features |= EMetalFeaturesPrivateBufferSubAllocation;
 
-	GMetalFColorVertexFormat = mtlpp::VertexFormat::UChar4Normalized_BGRA;
+	GMetalFColorVertexFormat = MTL::VertexFormatUChar4Normalized_BGRA;
 
 	Features |= EMetalFeaturesPresentMinDuration | EMetalFeaturesGPUCaptureManager | EMetalFeaturesBufferSubAllocation | EMetalFeaturesParallelRenderEncoders | EMetalFeaturesPipelineBufferMutability;
 
@@ -145,32 +148,32 @@ FMetalCommandQueue::FMetalCommandQueue(mtlpp::Device InDevice, uint32 const MaxN
 
 	Features |= EMetalFeaturesTextureBuffers;
 
-	if (Device.SupportsFeatureSet(mtlpp::FeatureSet::iOS_GPUFamily4_v1))
+	if (Device->supportsFeatureSet(MTL::FeatureSet_iOS_GPUFamily4_v1))
 	{
 		Features |= EMetalFeaturesTileShaders;
                         
 		// The below implies tile shaders which are necessary to order the draw calls and generate a buffer that shows what PSOs/draws ran on each tile.
 		IConsoleVariable* GPUCrashDebuggingCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.GPUCrashDebugging"));
+#if UE_BUILD_SHIPPING || UE_BUILD_TEST
 		GMetalCommandBufferDebuggingEnabled = (GPUCrashDebuggingCVar && GPUCrashDebuggingCVar->GetInt() != 0) || FParse::Param(FCommandLine::Get(), TEXT("metalgpudebug"));
+#else
+        GMetalCommandBufferDebuggingEnabled = true;
+#endif
 	}
                     
-	if (Device.SupportsFeatureSet(mtlpp::FeatureSet::iOS_GPUFamily5_v1))
+	if (Device->supportsFeatureSet(MTL::FeatureSet_iOS_GPUFamily5_v1))
 	{
 		Features |= EMetalFeaturesLayeredRendering;
 	}
 #endif
 #else // Assume that Mac & other platforms all support these from the start. They can diverge later.
-	const bool bIsNVIDIA = [Device.GetName().GetPtr() rangeOfString:@"Nvidia" options:NSCaseInsensitiveSearch].location != NSNotFound;
-	Features = EMetalFeaturesCountingQueries | EMetalFeaturesBaseVertexInstance | EMetalFeaturesIndirectBuffer | EMetalFeaturesLayeredRendering | EMetalFeaturesCubemapArrays;
+	Features = EMetalFeaturesCountingQueries | EMetalFeaturesBaseVertexInstance | EMetalFeaturesIndirectBuffer |
+                EMetalFeaturesLayeredRendering | EMetalFeaturesCubemapArrays | EMetalFeaturesSetBufferOffset;
 
-	if (!bIsNVIDIA)
+    FString DeviceName(Device->name()->cString(NS::UTF8StringEncoding));
+    
+	if (Device->supportsFeatureSet(MTL::FeatureSet_macOS_GPUFamily1_v2))
 	{
-		Features |= EMetalFeaturesSetBufferOffset;
-	}
-	if (Device.SupportsFeatureSet(mtlpp::FeatureSet::macOS_GPUFamily1_v2))
-	{
-		FString DeviceName(Device.GetName());
-
 		Features |= EMetalFeaturesMSAADepthResolve | EMetalFeaturesMSAAStoreAndResolve;
         
 		// Assume that set*Bytes only works on macOS Sierra and above as no-one has tested it anywhere else.
@@ -191,9 +194,8 @@ FMetalCommandQueue::FMetalCommandQueue(mtlpp::Device InDevice, uint32 const MaxN
 			}
 		}
 		
-		GMetalFColorVertexFormat = mtlpp::VertexFormat::UChar4Normalized_BGRA;
-		// Except on Nvidia for the moment
-		if ([Device.GetName().GetPtr() rangeOfString:@"Nvidia" options:NSCaseInsensitiveSearch].location == NSNotFound && !FParse::Param(FCommandLine::Get(), TEXT("nometalparallelencoder")))
+		GMetalFColorVertexFormat = MTL::VertexFormatUChar4Normalized_BGRA;
+		if (!FParse::Param(FCommandLine::Get(), TEXT("nometalparallelencoder")))
 		{
 			Features |= EMetalFeaturesParallelRenderEncoders;
 		}
@@ -209,8 +211,12 @@ FMetalCommandQueue::FMetalCommandQueue(mtlpp::Device InDevice, uint32 const MaxN
 		}
             
 		IConsoleVariable* GPUCrashDebuggingCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.GPUCrashDebugging"));
-        GMetalCommandBufferDebuggingEnabled = (GPUCrashDebuggingCVar && GPUCrashDebuggingCVar->GetInt() != 0) || FParse::Param(FCommandLine::Get(),TEXT("metalgpudebug"));
-            
+#if UE_BUILD_SHIPPING || UE_BUILD_TEST
+        GMetalCommandBufferDebuggingEnabled = (GPUCrashDebuggingCVar && GPUCrashDebuggingCVar->GetInt() != 0) || FParse::Param(FCommandLine::Get(), TEXT("metalgpudebug"));
+#else
+        GMetalCommandBufferDebuggingEnabled = true;
+#endif
+		
 		// The editor spawns so many viewports and preview icons that we can run out of hardware fences!
 		// Need to figure out a way to safely flush the rendering and reuse the fences when that happens.
 #if WITH_EDITORONLY_DATA
@@ -221,32 +227,25 @@ FMetalCommandQueue::FMetalCommandQueue(mtlpp::Device InDevice, uint32 const MaxN
 			{
 				Features |= EMetalFeaturesFences;
 			}
-				
-			// There are still too many driver bugs to use MTLHeap on macOS - nothing works without causing random, undebuggable GPU hangs that completely deadlock the Mac and don't generate any validation errors or command-buffer failures
-            if (FParse::Param(FCommandLine::Get(),TEXT("forcemetalheap")))
-			{
-				Features |= EMetalFeaturesHeaps;
-			}
 		}
 	}
-	else if ([Device.GetName().GetPtr() rangeOfString:@"Nvidia" options:NSCaseInsensitiveSearch].location != NSNotFound)
-	{
-		// Using set*Bytes fixes bugs on Nvidia for 10.11 so we should use it...
-		Features |= EMetalFeaturesSetBytes;
-	}
     
-    if(Device.SupportsFeatureSet(mtlpp::FeatureSet::macOS_GPUFamily1_v3))
+	// Temporarily only support heaps for devices with unified memory
+	// Disable this by default code while we work on metal heaps
+	if (!DeviceName.Contains(TEXT("Intel")) &&
+          Device->hasUnifiedMemory() &&
+          FParse::Param(FCommandLine::Get(),TEXT("metalheap")))
+	{
+		Features |= EMetalFeaturesHeaps;
+	}
+	
+    if(Device->supportsFeatureSet(MTL::FeatureSet_macOS_GPUFamily1_v3))
 	{
 		Features |= EMetalFeaturesMultipleViewports | EMetalFeaturesPipelineBufferMutability | EMetalFeaturesGPUCaptureManager;
 		
 		if (FParse::Param(FCommandLine::Get(),TEXT("metalfence")))
 		{
 			Features |= EMetalFeaturesFences;
-		}
-		
-		if (FParse::Param(FCommandLine::Get(),TEXT("metalheap")))
-		{
-			Features |= EMetalFeaturesHeaps;
 		}
 		
 		if (FParse::Param(FCommandLine::Get(),TEXT("metaliabs")))
@@ -258,7 +257,8 @@ FMetalCommandQueue::FMetalCommandQueue(mtlpp::Device InDevice, uint32 const MaxN
 	
 #if !UE_BUILD_SHIPPING
 	Class MTLDebugDevice = NSClassFromString(@"MTLDebugDevice");
-	if ([Device isKindOfClass:MTLDebugDevice])
+    id<MTLDevice> ObjCDevice = (__bridge id<MTLDevice>)InDevice;
+	if ([ObjCDevice isKindOfClass:MTLDebugDevice])
 	{
 		Features |= EMetalFeaturesValidation;
 	}
@@ -271,20 +271,20 @@ FMetalCommandQueue::FMetalCommandQueue(mtlpp::Device InDevice, uint32 const MaxN
 	}
 
 	PermittedOptions = 0;
-	PermittedOptions |= mtlpp::ResourceOptions::CpuCacheModeDefaultCache;
-	PermittedOptions |= mtlpp::ResourceOptions::CpuCacheModeWriteCombined;
+	PermittedOptions |= MTL::ResourceCPUCacheModeDefaultCache;
+	PermittedOptions |= MTL::ResourceCPUCacheModeWriteCombined;
 	{
-	PermittedOptions |= mtlpp::ResourceOptions::StorageModeShared;
-	PermittedOptions |= mtlpp::ResourceOptions::StorageModePrivate;
+	PermittedOptions |= MTL::ResourceStorageModeShared;
+	PermittedOptions |= MTL::ResourceStorageModePrivate;
 #if PLATFORM_MAC
-	PermittedOptions |= mtlpp::ResourceOptions::StorageModeManaged;
+	PermittedOptions |= MTL::ResourceStorageModeManaged;
 #else
-	PermittedOptions |= mtlpp::ResourceOptions::StorageModeMemoryless;
+	PermittedOptions |= MTL::ResourceStorageModeMemoryless;
 #endif
 	// You can't use HazardUntracked under the validation layer due to bugs in the layer when trying to create linear-textures/texture-buffers
 	if ((Features & EMetalFeaturesFences) && !(Features & EMetalFeaturesValidation))
 	{
-		PermittedOptions |= mtlpp::ResourceOptions::HazardTrackingModeUntracked;
+		PermittedOptions |= MTL::ResourceHazardTrackingModeUntracked;
 	}
 	}
 }
@@ -296,71 +296,70 @@ FMetalCommandQueue::~FMetalCommandQueue(void)
 	
 #pragma mark - Public Command Buffer Mutators -
 
-mtlpp::CommandBuffer FMetalCommandQueue::CreateCommandBuffer(void)
+FMetalCommandBuffer* FMetalCommandQueue::CreateCommandBuffer(void)
 {
 #if PLATFORM_MAC
 	static bool bUnretainedRefs = FParse::Param(FCommandLine::Get(),TEXT("metalunretained"))
 	|| (!FParse::Param(FCommandLine::Get(),TEXT("metalretainrefs"))
-			&& ([Device.GetName() rangeOfString:@"Nvidia" options:NSCaseInsensitiveSearch].location == NSNotFound)
-			&& ([Device.GetName() rangeOfString:@"Intel" options:NSCaseInsensitiveSearch].location == NSNotFound));
+			&& (Device->name()->rangeOfString(NS::String::string("Intel", NS::UTF8StringEncoding), NSCaseInsensitiveSearch).location == NSNotFound));
 #else
 	static bool bUnretainedRefs = !FParse::Param(FCommandLine::Get(),TEXT("metalretainrefs"));
 #endif
 	
-	mtlpp::CommandBuffer CmdBuffer;
-	@autoreleasepool
-	{
-		CmdBuffer = bUnretainedRefs ? MTLPP_VALIDATE(mtlpp::CommandQueue, CommandQueue, SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, CommandBuffer(false, GMetalCommandBufferDebuggingEnabled)) : MTLPP_VALIDATE(mtlpp::CommandQueue, CommandQueue, SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, CommandBuffer(true, GMetalCommandBufferDebuggingEnabled));
-		
-		if (RuntimeDebuggingLevel > EMetalDebugLevelOff)
-		{			
-			METAL_DEBUG_ONLY(FMetalCommandBufferDebugging AddDebugging(CmdBuffer));
-			MTLPP_VALIDATION(mtlpp::CommandBufferValidationTable ValidatedCommandBuffer(CmdBuffer));
-		}
-	}
-	CommandBufferFences.Push(new mtlpp::CommandBufferFence(CmdBuffer.GetCompletionFence()));
+    MTL::CommandBufferDescriptor* CmdBufferDesc = MTL::CommandBufferDescriptor::alloc()->init();
+    check(CmdBufferDesc);
+    
+    CmdBufferDesc->setRetainedReferences(!bUnretainedRefs);
+    CmdBufferDesc->setErrorOptions(GMetalCommandBufferDebuggingEnabled ? MTL::CommandBufferErrorOptionEncoderExecutionStatus : MTL::CommandBufferErrorOptionNone);
+    
+    MTL::CommandBuffer* CmdBuffer = CommandQueue->commandBuffer(CmdBufferDesc);
+    
+    CmdBufferDesc->release();
+                                                           
+    FMetalCommandBuffer* CommandBuffer = new FMetalCommandBuffer(CmdBuffer);
+	CommandBufferFences.Push(CommandBuffer->GetCompletionFence());
+    
 	INC_DWORD_STAT(STAT_MetalCommandBufferCreatedPerFrame);
-	return CmdBuffer;
+	return CommandBuffer;
 }
 
-void FMetalCommandQueue::CommitCommandBuffer(mtlpp::CommandBuffer& CommandBuffer)
+void FMetalCommandQueue::CommitCommandBuffer(FMetalCommandBuffer* CommandBuffer)
 {
 	check(CommandBuffer);
 	INC_DWORD_STAT(STAT_MetalCommandBufferCommittedPerFrame);
 	
-	MTLPP_VALIDATE(mtlpp::CommandBuffer, CommandBuffer, SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, Commit());
-	
+	//MTLPP_VALIDATE(MTL::CommandBuffer, CommandBuffer, SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, Commit());
+    CommandBuffer->GetMTLCmdBuffer()->commit();
+    
 	// Wait for completion when debugging command-buffers.
 	if (RuntimeDebuggingLevel >= EMetalDebugLevelWaitForComplete)
 	{
-		CommandBuffer.WaitUntilCompleted();
+		CommandBuffer->GetMTLCmdBuffer()->waitUntilCompleted();
 	}
+    
+    SafeReleaseFunction([CommandBuffer]() {
+        delete CommandBuffer;
+    });
 }
 
-FMetalFence* FMetalCommandQueue::CreateFence(ns::String const& Label) const
+FMetalFence* FMetalCommandQueue::CreateFence(NS::String* Label) const
 {
 	if ((Features & EMetalFeaturesFences) != 0)
 	{
 		FMetalFence* InternalFence = FMetalFencePool::Get().AllocateFence();
 		{
-			mtlpp::Fence InnerFence = InternalFence->Get();
-			NSString* String = nil;
+			MTL::Fence* InnerFence = InternalFence->Get();
+			NS::String* String = nullptr;
 			if (GetEmitDrawEvents())
 			{
-				String = [NSString stringWithFormat:@"%p: %@", InnerFence.GetPtr(), Label.GetPtr()];
+                NS::String* FenceString = FStringToNSString(FString::Printf(TEXT("%p"), InnerFence));
+                String = FenceString->stringByAppendingString(Label);
 			}
-	#if METAL_DEBUG_OPTIONS
-			if (RuntimeDebuggingLevel >= EMetalDebugLevelValidation)
-			{
-				FMetalDebugFence* Fence = (FMetalDebugFence*)InnerFence.GetPtr();
-				Fence.label = String;
-			}
-			else
-	#endif
+
 			if(InnerFence && String)
-				{
-					InnerFence.SetLabel(String);
-				}
+            {
+                InnerFence->setLabel(String);
+            }
 		}
 		return InternalFence;
 	}
@@ -370,47 +369,39 @@ FMetalFence* FMetalCommandQueue::CreateFence(ns::String const& Label) const
 	}
 }
 
-void FMetalCommandQueue::GetCommittedCommandBufferFences(TArray<mtlpp::CommandBufferFence>& Fences)
+void FMetalCommandQueue::GetCommittedCommandBufferFences(TArray<TSharedPtr<FMetalCommandBufferFence, ESPMode::ThreadSafe>>& Fences)
 {
-	TArray<mtlpp::CommandBufferFence*> Temp;
-	CommandBufferFences.PopAll(Temp);
-	for (mtlpp::CommandBufferFence* Fence : Temp)
-	{
-		Fences.Add(*Fence);
-		delete Fence;
-	}
+    Fences = MoveTemp(CommandBufferFences);
 }
 
 #pragma mark - Public Command Queue Accessors -
 	
-mtlpp::Device& FMetalCommandQueue::GetDevice(void)
+MTL::Device* FMetalCommandQueue::GetDevice(void)
 {
 	return Device;
 }
 
-mtlpp::ResourceOptions FMetalCommandQueue::GetCompatibleResourceOptions(mtlpp::ResourceOptions Options)
+MTL::ResourceOptions FMetalCommandQueue::GetCompatibleResourceOptions(MTL::ResourceOptions Options)
 {
-	NSUInteger NewOptions = (Options & PermittedOptions);
+	NS::UInteger NewOptions = (Options & PermittedOptions);
 #if PLATFORM_IOS // Swizzle Managed to Shared for iOS - we can do this as they are equivalent, unlike Shared -> Managed on Mac.
-	if ((Options & (1 /*mtlpp::StorageMode::Managed*/ << mtlpp::ResourceStorageModeShift)))
+	if ((Options & (1 /*MTL::StorageModeManaged*/ << MTL::ResourceStorageModeShift)))
 	{
 #if WITH_IOS_SIMULATOR
-		NewOptions |= mtlpp::ResourceOptions::StorageModePrivate;
+		NewOptions |= MTL::ResourceStorageModePrivate;
 #else
-		NewOptions |= mtlpp::ResourceOptions::StorageModeShared;
+		NewOptions |= MTL::ResourceStorageModeShared;
 #endif
 	}
 #endif
-	return (mtlpp::ResourceOptions)NewOptions;
+	return (MTL::ResourceOptions)NewOptions;
 }
 
 #pragma mark - Public Debug Support -
 
 void FMetalCommandQueue::InsertDebugCaptureBoundary(void)
 {
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		[CommandQueue insertDebugCaptureBoundary];
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	CommandQueue->insertDebugCaptureBoundary();
 }
 
 void FMetalCommandQueue::SetRuntimeDebuggingLevel(int32 const Level)

@@ -46,22 +46,6 @@ public:
 	virtual void StopStreaming() = 0;
 
 	/**
-	 * Set the stream type object
-	 *
-	 * @param InStreamType The target stream type
-	 */
-	UE_DEPRECATED(5.2, "SetStreamType() has been deprecated. Stream types are configured by setting the appropriate video input on your streamer")
-	virtual void SetStreamType(UE::EditorPixelStreaming::EStreamTypes InStreamType) = 0;
-
-	/**
-	 * Get the stream type
-	 *
-	 * @return UE::EditorPixelStreaming::EStreamTypes The stream type currently streamed by the editor streamer
-	 */
-	UE_DEPRECATED(5.2, "GetStreamType() has been deprecated. You can now instead find what is being streamed by doing Streamer->GetVideoInput()->ToString()")
-	virtual UE::EditorPixelStreaming::EStreamTypes GetStreamType() = 0;
-
-	/**
 	 * Start the inbuilt C++ signalling server
 	 *
 	 */

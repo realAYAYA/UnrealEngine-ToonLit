@@ -135,7 +135,7 @@ protected:
 	FVector2D ZoomToFitPadding;
 
 	/** The Y component of mouse drag (used when zooming) */
-	float TotalMouseDelta;
+	double TotalMouseDelta;
 
 	/** Offset in the panel the user started the LMB+RMB zoom from */
 	FVector2D ZoomStartOffset;

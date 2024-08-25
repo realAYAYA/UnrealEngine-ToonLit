@@ -4,10 +4,12 @@
 
 #include "../Common.ush"
 
+#define NANITE_TESSELLATION_PATCH_REFS	1
+#define NANITE_TESSELLATION_NORMALIZE	0
+
 #if NANITE_TESSELLATION
 
-// TODO Change to 65534. Must be even but doesn't have to be pow2.
-static const uint BarycentricMax = (1 << 15);
+static const uint BarycentricMax = (1 << 15);	// Must be pow2
 
 uint EncodeBarycentrics( float3 Barycentrics )
 {
@@ -15,7 +17,7 @@ uint EncodeBarycentrics( float3 Barycentrics )
 
 	// Normalize after rounding
 	FLATTEN
-	if( Barycentrics.x > Barycentrics.y && Barycentrics.x > Barycentrics.z )
+	if( Barycentrics.x > max( Barycentrics.y, Barycentrics.z ) )
 		Barycentrics.x = BarycentricMax - Barycentrics.y - Barycentrics.z;
 	else if( Barycentrics.y > Barycentrics.z )
 		Barycentrics.y = BarycentricMax - Barycentrics.x - Barycentrics.z;
@@ -31,20 +33,20 @@ uint EncodeBarycentrics( float3 Barycentrics )
 float3 DecodeBarycentrics( uint Encoded )
 {
 	float3 Barycentrics;
-	Barycentrics.x = Encoded & 0xffff;
-	Barycentrics.y = Encoded >> 16;
-	Barycentrics.z = BarycentricMax - Barycentrics.x - Barycentrics.y;
-	Barycentrics  /= BarycentricMax;
+
+	Barycentrics.x = float(Encoded & 0xffff) / BarycentricMax;
+	Barycentrics.y = float(Encoded >> 16) / BarycentricMax;
+	Barycentrics.z = 1.0f - Barycentrics.x - Barycentrics.y;
+
 	return Barycentrics;
 }
 
 
 ByteAddressBuffer TessellationTable_Offsets;
-ByteAddressBuffer TessellationTable_Verts;
-ByteAddressBuffer TessellationTable_Indexes;
-static const uint TessellationTable_Size = 16;
+ByteAddressBuffer TessellationTable_VertsAndIndexes;
 
 float InvDiceRate;
+uint MaxPatchesPerGroup;
 
 float3 GetTessFactors( FNaniteView NaniteView, float3 PointView[3] )
 {
@@ -87,7 +89,8 @@ float3 GetTessFactors( FNaniteView NaniteView, float3 PointView[3] )
 float3 GetSplitFactors( float3 TessFactors )
 {
 #if 1
-	return TessFactors / TessellationTable_Size;
+	return TessFactors / NANITE_TESSELLATION_TABLE_SIZE;
+	// TODO: Fix other modes to work with NANITE_TESSELLATION_TABLE_SIZE
 #elif 1
 	const float SizeLog2 = log2( TessellationTable_Size );
 
@@ -105,77 +108,92 @@ float3 GetSplitFactors( float3 TessFactors )
 #endif
 }
 
+float2 CalculateUVDerivativeForDomainPoint(
+	FNaniteView NaniteView,
+	float ViewZ,
+	float UniformScale,
+	float UVDensity )
+{
+	const bool bOrtho = NaniteView.ViewToClip[3][3] >= 1;
+	const float dUV_dTri = (bOrtho ? 1.0f : ViewZ) / (UVDensity * UniformScale * NaniteView.LODScale * InvDiceRate);
+
+	return dUV_dTri.xx;
+}
+
 struct FTessellatedPatch
 {
-	uint4	TableOffsets;
-	uint	Pattern;
-	uint	Swizzle;
+	uint	TableOffset;
+	uint	Pattern_NumVerts_NumTris;
+	//uint	Swizzle;
 
-	void Init( float3 TessFactors, inout uint3 VertIndexes )
+	void Init( float3 TessFactors, inout uint3 VertData, bool bImmediateTable )
 	{
 		TessFactors = ceil( TessFactors );
-		TessFactors = clamp( TessFactors, 1, TessellationTable_Size );
+		TessFactors = clamp( TessFactors, 1, NANITE_TESSELLATION_TABLE_SIZE );
 
 		float MaxTessFactor = max3( TessFactors.x, TessFactors.y, TessFactors.z );
 
-		Swizzle = 0b011010;
+		//Swizzle = 0b011010;
 
 		// TessFactors in descending order to reduce size of table.
 		// Rotate patch so TessFactors.x == MaxTessFactor
 		if( TessFactors.y == MaxTessFactor )
 		{
-			VertIndexes = VertIndexes.yzx;
+			VertData = VertData.yzx;
 			TessFactors = TessFactors.yzx;
-			Swizzle = 0b110100;
+			//Swizzle = 0b110100;
 		}
 		else if( TessFactors.z == MaxTessFactor )
 		{
-			VertIndexes = VertIndexes.zxy;
+			VertData = VertData.zxy;
 			TessFactors = TessFactors.zxy;
-			Swizzle = 0b101001;
+			//Swizzle = 0b101001;
 		}
 
 		// Sorting can flip winding which we need to undo later.
 		bool bFlipWinding = false;
 		if( TessFactors.y < TessFactors.z )
 		{
-			VertIndexes.xy = VertIndexes.yx;
+			VertData.xy = VertData.yx;
 			TessFactors.yz = TessFactors.zy;
 			bFlipWinding = true;
-			Swizzle ^= 0b000111;
+			//Swizzle ^= 0b000111;
 		}
 
-		Pattern = uint(
+		uint Pattern = uint(
 			TessFactors.x +
-			TessFactors.y * TessellationTable_Size +
-			TessFactors.z * TessellationTable_Size * TessellationTable_Size -
-			(1 + TessellationTable_Size + TessellationTable_Size * TessellationTable_Size) );
+			TessFactors.y * NANITE_TESSELLATION_TABLE_PO2_SIZE +
+			TessFactors.z * NANITE_TESSELLATION_TABLE_PO2_SIZE * NANITE_TESSELLATION_TABLE_PO2_SIZE -
+			(1 + NANITE_TESSELLATION_TABLE_PO2_SIZE + NANITE_TESSELLATION_TABLE_PO2_SIZE * NANITE_TESSELLATION_TABLE_PO2_SIZE) );
 
-		TableOffsets = TessellationTable_Offsets.Load4( 4*2 * Pattern );
 
 		Pattern |= bFlipWinding ? 0x1000 : 0;
-		//Pattern |= Swizzle << 25;
+		
+		Init( Pattern, bImmediateTable );
 	}
 
-	uint GetNumVerts()	{ return TableOffsets[2] - TableOffsets[0]; }
-	uint GetNumTris()	{ return TableOffsets[3] - TableOffsets[1]; }
+	void Init( uint InPattern, bool bImmediateTable)
+	{
+		const uint Offset = bImmediateTable ? (NANITE_TESSELLATION_TABLE_PO2_SIZE * NANITE_TESSELLATION_TABLE_PO2_SIZE * NANITE_TESSELLATION_TABLE_PO2_SIZE) : 0u;
+		const uint2 Tmp = TessellationTable_Offsets.Load2( 4 * 2 * ( Offset + ( InPattern & 0xfff ) ) );
+		TableOffset = Tmp.x;
+		Pattern_NumVerts_NumTris = InPattern | Tmp.y;
+	}
 
+	uint GetPattern()	{ return Pattern_NumVerts_NumTris & 0x1FFFu; }
+	uint GetNumVerts()	{ return ( Pattern_NumVerts_NumTris >> 13 ) & 0x1FFu; }
+	uint GetNumTris()	{ return Pattern_NumVerts_NumTris >> 22; }
+	
 	float3 GetVert( uint VertIndex )
 	{
-		uint BarycentricsEncoded = TessellationTable_Verts.Load( 4 * ( TableOffsets.x + VertIndex ) );
+		uint BarycentricsEncoded = TessellationTable_VertsAndIndexes.Load( 4 * ( TableOffset + VertIndex ) );
 
-		float3 Barycentrics;
-		Barycentrics.x = BarycentricsEncoded & 0xffff;
-		Barycentrics.y = BarycentricsEncoded >> 16;
-		Barycentrics.z = BarycentricMax - Barycentrics.x - Barycentrics.y;
-		Barycentrics  /= BarycentricMax;
-
-		return Barycentrics;
+		return DecodeBarycentrics( BarycentricsEncoded );
 	}
 
 	uint3 GetIndexes( uint TriIndex )
 	{
-		uint  PackedIndexes	= TessellationTable_Indexes.Load( 4 * ( TableOffsets.y + TriIndex ) );
+		uint  PackedIndexes	= TessellationTable_VertsAndIndexes.Load( 4 * ( TableOffset + GetNumVerts() + TriIndex ) );
 
 		uint3 VertIndexes;
 		VertIndexes[0] = ( PackedIndexes >>  0 ) & 1023;
@@ -184,7 +202,7 @@ struct FTessellatedPatch
 			
 		// Sorting TessFactors might have flipped the patch winding.
 		//bool bFlipWinding = Pattern > 0xfff;
-		bool bFlipWinding = Pattern & 0x1000;
+		bool bFlipWinding = Pattern_NumVerts_NumTris & 0x1000;
 		if( bFlipWinding )
 			VertIndexes.yz = VertIndexes.zy;
 
@@ -195,6 +213,7 @@ struct FTessellatedPatch
 	{
 		uint3 VertIndexes = GetIndexes( TriIndex );
 
+		uint Pattern = GetPattern();
 		uint3 Shift, Mask;
 		for( int i = 0; i < 3; i++ )
 		{
@@ -206,7 +225,7 @@ struct FTessellatedPatch
 		uint3 Encoded;
 		for( int i = 0; i < 3; i++ )
 		{
-			uint BarycentricsEncoded = TessellationTable_Verts.Load( 4 * ( TableOffsets.x + VertIndexes[i] ) );
+			uint BarycentricsEncoded = TessellationTable_VertsAndIndexes.Load( 4 * ( TableOffset + VertIndexes[i] ) );
 
 			uint3 Barycentrics;
 			Barycentrics.x = BarycentricsEncoded & 0xffff;
@@ -221,25 +240,25 @@ struct FTessellatedPatch
 
 	uint3 GetTessFactors()
 	{
-		uint Packed = Pattern & 0xfff;
-		Packed -= (1 + TessellationTable_Size + TessellationTable_Size * TessellationTable_Size);
+		uint Packed = GetPattern() & 0xfff;
+		Packed -= (1 + NANITE_TESSELLATION_TABLE_PO2_SIZE + NANITE_TESSELLATION_TABLE_PO2_SIZE * NANITE_TESSELLATION_TABLE_PO2_SIZE);
 		
 		uint3 TessFactors;
 		for( int i = 0; i < 3; i++ )
 		{
-			TessFactors[i] = Packed % TessellationTable_Size;
-			Packed /= TessellationTable_Size;
+			TessFactors[i] = Packed % NANITE_TESSELLATION_TABLE_PO2_SIZE;
+			Packed /= NANITE_TESSELLATION_TABLE_PO2_SIZE;
 		}
 		return TessFactors;
 	}
 };
 
+HLSL_STATIC_ASSERT(sizeof(FTessellatedPatch) == 8, "Unexpected size of FTessellatedPatch. Update WaveReadLaneAt to reflect changes.");
 FTessellatedPatch WaveReadLaneAt( FTessellatedPatch In, uint SrcIndex )
 {
 	FTessellatedPatch Out;
-	Out.TableOffsets= WaveReadLaneAt( In.TableOffsets,	SrcIndex );
-	Out.Pattern		= WaveReadLaneAt( In.Pattern,		SrcIndex );
-	Out.Swizzle		= WaveReadLaneAt( In.Swizzle,		SrcIndex );
+	Out.TableOffset					= WaveReadLaneAt( In.TableOffset,				SrcIndex );
+	Out.Pattern_NumVerts_NumTris	= WaveReadLaneAt( In.Pattern_NumVerts_NumTris,	SrcIndex );
 	return Out;
 }
 
@@ -261,28 +280,63 @@ struct FSplitPatch
 
 	float3 TransformBarycentrics( float3 Local )
 	{
-		return
+		return INVARIANT(
 			Barycentrics[0] * Local.x +
 			Barycentrics[1] * Local.y +
-			Barycentrics[2] * Local.z;
+			Barycentrics[2] * Local.z );
+	}
+
+	FBarycentrics TransformBarycentrics( FBarycentrics Local )
+	{
+		FBarycentrics Global;
+		Global.Value	= TransformBarycentrics( Local.Value );
+		Global.Value_dx	= TransformBarycentrics( Local.Value_dx );
+		Global.Value_dy	= TransformBarycentrics( Local.Value_dy );
+		return Global;
 	}
 };
+
+HLSL_STATIC_ASSERT(sizeof(FSplitPatch) == 44, "Unexpected size of FSplitPatch. Update WaveReadLaneAt to reflect changes.");
+FSplitPatch WaveReadLaneAt(FSplitPatch In, uint SrcIndex)
+{
+	FSplitPatch Result;
+
+	Result.VisibleClusterIndex	= WaveReadLaneAt(In.VisibleClusterIndex, SrcIndex);
+	Result.TriIndex				= WaveReadLaneAt(In.TriIndex, SrcIndex);
+	Result.Barycentrics[0]		= WaveReadLaneAt(In.Barycentrics[0], SrcIndex);
+	Result.Barycentrics[1]		= WaveReadLaneAt(In.Barycentrics[1], SrcIndex);
+	Result.Barycentrics[2]		= WaveReadLaneAt(In.Barycentrics[2], SrcIndex);
+
+	return Result;
+}
 
 
 #define THREADGROUP_SIZE	32
 #include "../WorkDistribution.ush"
 
+#if SPLIT_WORK_QUEUE	// TODO: Remove once shader rewriter has been fixed (UE-202409)
+#ifdef COHERENT_QUEUE
 RWCoherentByteAddressBuffer						SplitWorkQueue_DataBuffer;
 RWCoherentStructuredBuffer( FWorkQueueState )	SplitWorkQueue_StateBuffer;
 uint											SplitWorkQueue_Size;
 
 static const FGlobalWorkQueue SplitWorkQueue = { SplitWorkQueue_DataBuffer, SplitWorkQueue_StateBuffer, 0, SplitWorkQueue_Size };
+#else
+RWByteAddressBuffer						SplitWorkQueue_DataBuffer;
+RWStructuredBuffer< FWorkQueueState >	SplitWorkQueue_StateBuffer;
+uint									SplitWorkQueue_Size;
+
+static const FOutputQueue SplitWorkQueue = { SplitWorkQueue_DataBuffer, SplitWorkQueue_StateBuffer, 0, SplitWorkQueue_Size };
+#endif
+#endif
 
 RWByteAddressBuffer						OccludedPatches_DataBuffer;
 RWStructuredBuffer< FWorkQueueState >	OccludedPatches_StateBuffer;
 uint									OccludedPatches_Size;
 
+#if OCCLUDED_PATCHES_QUEUE	// TODO: Remove once shader rewriter has been fixed (UE-202409)
 static const FOutputQueue OccludedPatches = { OccludedPatches_DataBuffer, OccludedPatches_StateBuffer, 0, OccludedPatches_Size };
+#endif
 
 ByteAddressBuffer	VisiblePatches;
 Buffer< uint >		VisiblePatchesArgs;

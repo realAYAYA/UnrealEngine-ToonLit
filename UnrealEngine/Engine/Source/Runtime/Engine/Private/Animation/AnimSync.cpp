@@ -464,8 +464,8 @@ FAnimTickRecord& FAnimSync::CreateUninitializedTickRecord(FAnimGroupInstance*& O
 	}
 
 	// Create the record
-	FAnimTickRecord* TickRecord = new ((OutSyncGroupPtr != nullptr) ? OutSyncGroupPtr->ActivePlayers : UngroupedActivePlayerArrays[GetSyncGroupWriteIndex()]) FAnimTickRecord();
-	return *TickRecord;
+	FAnimTickRecord& TickRecord = ((OutSyncGroupPtr != nullptr) ? OutSyncGroupPtr->ActivePlayers : UngroupedActivePlayerArrays[GetSyncGroupWriteIndex()]).AddDefaulted_GetRef();
+	return TickRecord;
 }
 
 FAnimTickRecord& FAnimSync::CreateUninitializedTickRecordInScope(FAnimInstanceProxy& InProxy, FAnimGroupInstance*& OutSyncGroupPtr, FName GroupName, EAnimSyncGroupScope Scope)

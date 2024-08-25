@@ -2,6 +2,7 @@
 #include "Chaos/PBDTriangleMeshCollisions.h"
 #include "Chaos/Plane.h"
 #include "Chaos/PBDSoftsSolverParticles.h"
+#include "Chaos/SoftsSolverParticlesRange.h"
 #include "Chaos/Triangle.h"
 #include "Chaos/TriangleCollisionPoint.h"
 #include "Chaos/TriangleMesh.h"
@@ -22,8 +23,8 @@ struct FEdgeFaceIntersection
 };
 
 // Returned array has NOT been shrunk
-template<typename SpatialAccelerator>
-static TArray<FEdgeFaceIntersection> FindEdgeFaceIntersections(const FTriangleMesh& TriangleMesh, const SpatialAccelerator& Spatial, const FSolverParticles& Particles)
+template<typename SpatialAccelerator, typename SolverParticlesOrRange>
+static void FindEdgeFaceIntersections(const FTriangleMesh& TriangleMesh, const SpatialAccelerator& Spatial, const SolverParticlesOrRange& Particles, TArray<FEdgeFaceIntersection>& Intersections)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(ChaosFPBDTriangleMeshCollisions_IntersectionQuery);
 
@@ -31,36 +32,43 @@ static TArray<FEdgeFaceIntersection> FindEdgeFaceIntersections(const FTriangleMe
 	const TArray<TVec2<int32>>& EdgeToFaces = TriangleMesh.GetEdgeToFaces();
 	const TArray<TVec3<int32>>& Elements = TriangleMesh.GetElements();
 
-	TArray<FEdgeFaceIntersection> Intersections;
+	const int32 NumIntersectableEdges = SegmentMesh.GetNumElements();
 
 	// Preallocate enough space for (more than) typical number of expected intersections.
 	constexpr int32 PreallocatedIntersectionsPerEdge = 3;
-	Intersections.SetNum(PreallocatedIntersectionsPerEdge * SegmentMesh.GetNumElements());
+	const int32 PreallocatedIntersectionsNum = PreallocatedIntersectionsPerEdge * NumIntersectableEdges;
+	Intersections.Reset();
+	Intersections.SetNumUninitialized(PreallocatedIntersectionsNum);
 	std::atomic<int32> IntersectionIndex(0);
 
 	// Extra intersections that require a lock to write to if you have more than PreallocatedIntersectionsPerEdge 
 	TArray<FEdgeFaceIntersection> ExtraIntersections;
 	FCriticalSection CriticalSection;
-	PhysicsParallelFor(SegmentMesh.GetNumElements(),
-		[&Spatial, &TriangleMesh, &Particles, &SegmentMesh, &EdgeToFaces, &Elements, &IntersectionIndex, &Intersections, PreallocatedIntersectionsPerEdge, &ExtraIntersections, &CriticalSection](int32 EdgeIndex)
+	PhysicsParallelFor(NumIntersectableEdges,
+		[&Spatial, &TriangleMesh, &Particles, &SegmentMesh, &EdgeToFaces, &Elements, &IntersectionIndex, &Intersections, PreallocatedIntersectionsNum, &ExtraIntersections, &CriticalSection](int32 EdgeIndex)
 		{
-
 			TArray< TTriangleCollisionPoint<FSolverReal> > Result;
 
 			const int32 EdgePointIndex0 = SegmentMesh.GetElements()[EdgeIndex][0];
 			const int32 EdgePointIndex1 = SegmentMesh.GetElements()[EdgeIndex][1];
 			const FSolverVec3& EdgePosition0 = Particles.X(EdgePointIndex0);
 			const FSolverVec3& EdgePosition1 = Particles.X(EdgePointIndex1);
-
+			// No faces can be kinematic, but edges can still be since a face is only kinematic if all 3 vertices are kinematic
+			const bool bEdgeIsKinematic = Particles.InvM(EdgePointIndex0) == (FSolverReal)0. && Particles.InvM(EdgePointIndex1) == (FSolverReal)0.;
+			if (bEdgeIsKinematic)
+			{
+				return;
+			}
 
 			if (TriangleMesh.EdgeIntersectionQuery(Spatial, static_cast<const TArrayView<const FSolverVec3>&>(Particles.XArray()), EdgeIndex, EdgePosition0, EdgePosition1,
-				[&Elements, EdgePointIndex0, EdgePointIndex1](int32 EdgeIndex, int32 TriangleIndex)
+				[&Elements, EdgePointIndex0, EdgePointIndex1, &Particles](int32 EdgeIndex, int32 TriangleIndex)
 				{
 					if (EdgePointIndex0 == Elements[TriangleIndex][0] || EdgePointIndex0 == Elements[TriangleIndex][1] || EdgePointIndex0 == Elements[TriangleIndex][2] ||
 						EdgePointIndex1 == Elements[TriangleIndex][0] || EdgePointIndex1 == Elements[TriangleIndex][1] || EdgePointIndex1 == Elements[TriangleIndex][2])
 					{
 						return false;
 					}
+
 					return true;
 				},
 				Result))
@@ -78,10 +86,9 @@ static TArray<FEdgeFaceIntersection> FindEdgeFaceIntersections(const FTriangleMe
 					Intersection.FaceCoordinate = { CollisionPoint.Bary[2], CollisionPoint.Bary[3] };
 					Intersection.FaceNormal = CollisionPoint.Normal;
 					Intersection.IntersectionPoint = CollisionPoint.Location;
-
-					if (CollisionPointIndex < PreallocatedIntersectionsPerEdge)
+					const int32 IndexToWrite = IntersectionIndex.fetch_add(1);
+					if (IndexToWrite < PreallocatedIntersectionsNum)
 					{
-						const int32 IndexToWrite = IntersectionIndex.fetch_add(1);
 						Intersections[IndexToWrite] = Intersection;
 					}
 					else
@@ -96,12 +103,11 @@ static TArray<FEdgeFaceIntersection> FindEdgeFaceIntersections(const FTriangleMe
 	);
 
 	// Set Intersections Num to actual number found.
-	const int32 IntersectionNum = IntersectionIndex.load();
-	Intersections.SetNum(IntersectionNum, false /*bAllowShrinking*/);
+	const int32 IntersectionNum = FMath::Min(IntersectionIndex.load(), PreallocatedIntersectionsNum);
+	Intersections.SetNum(IntersectionNum, EAllowShrinking::No);
 
 	// Append any ExtraIntersections
 	Intersections.Append(ExtraIntersections);
-	return Intersections;
 }
 
 // Global intersection analysis (identifying global contours, flood filling)
@@ -120,17 +126,32 @@ namespace GIA
 		{}
 	};
 
-	using FIntersectionContour = TArray<FIntersectionContourTriangleSection>;
+	struct FIntersectionContour
+	{
+		int8 BoundaryEdgeCount = 0;
+		TArray<FIntersectionContourTriangleSection> Contour;		
+	};
 
 	struct FIntersectionContourPair
 	{
-		bool bIsClosed = false;
-		int8 LoopVertexCount = 0;
-		int8 BoundaryEdgeCount = 0;
+		enum struct EClosedStatus : uint8
+		{
+			Open, // Can't color.
+			SimpleClosed, // Expect to color both contours separately.
+			LoopClosed, // Expect to have a single colorable contour.
+			BoundaryClosed // Expect to have one colorable contour (two boundary ends), and one open contour.
+		};
+		EClosedStatus ClosedStatus = EClosedStatus::Open;
+		int8 LoopVertexCount = 0; // Shared between ColorContours
 
 		FIntersectionContour ColorContours[2];
 		TArray<FEdgeFaceIntersection> Intersections;
 		TArray<int32> ContourPointCurves[2]; // Track which curves correspond with which Contours. (Sometimes we generate multiple curves per contour)
+
+		int8 NumContourEnds() const
+		{
+			return LoopVertexCount + ColorContours[0].BoundaryEdgeCount + ColorContours[1].BoundaryEdgeCount;
+		}
 	};
 
 	// methods for building contours
@@ -224,7 +245,8 @@ namespace GIA
 		} // namespace __internal
 
 		// Build intersection contour data from edge-face intersection data.
-		static TArray<FIntersectionContourPair> BuildIntersectionContours(const FTriangleMesh& TriangleMesh, const TArray<FEdgeFaceIntersection>& IntersectionArray, TArray<TArray<FPBDTriangleMeshCollisions::FBarycentricPoint>>& ContourPoints)
+		static void BuildIntersectionContours(const FTriangleMesh& TriangleMesh, const TArray<FEdgeFaceIntersection>& IntersectionArray, 
+			TArray<FIntersectionContourPair>& Contours, TArray<TArray<FPBDTriangleMeshCollisions::FBarycentricPoint>>& ContourPoints)
 		{
 			TRACE_CPUPROFILER_EVENT_SCOPE(ChaosFPBDTriangleMeshCollisions_BuildIntersectionContours);
 
@@ -241,8 +263,6 @@ namespace GIA
 			const TArray<TVec2<int32>>& EdgeToFaces = TriangleMesh.GetEdgeToFaces();
 			const TArray<TVec3<int32>>& FaceToEdges = TriangleMesh.GetFaceToEdges();
 			const TArray<TVec3<int32>>& Elements = TriangleMesh.GetElements();
-
-			TArray<FIntersectionContourPair> Contours;
 
 			while (!IntersectionMap.IsEmpty())
 			{
@@ -262,25 +282,25 @@ namespace GIA
 
 				FIntersectionContour* FaceContour = &ContourPair.ColorContours[InitialFaceContourIndex];
 				FIntersectionContour* EdgeContour = &ContourPair.ColorContours[InitialEdgeContourIndex];
-				ContourPair.ContourPointCurves[InitialFaceContourIndex].Add(ContourPoints.Num());
-				TArray<FPBDTriangleMeshCollisions::FBarycentricPoint>* FaceContourPoints = &ContourPoints.AddDefaulted_GetRef();
-				ContourPair.ContourPointCurves[InitialEdgeContourIndex].Add(ContourPoints.Num());
-				TArray<FPBDTriangleMeshCollisions::FBarycentricPoint>* EdgeContourPoints = &ContourPoints.AddDefaulted_GetRef();
+				int32 FaceContourPointsIndex = ContourPoints.AddDefaulted();
+				int32 EdgeContourPointsIndex = ContourPoints.AddDefaulted();
+				ContourPair.ContourPointCurves[InitialFaceContourIndex].Add(FaceContourPointsIndex);
+				ContourPair.ContourPointCurves[InitialEdgeContourIndex].Add(EdgeContourPointsIndex);
 
 				const int32 FirstEdgeFace = EdgeToFaces[FirstIntersection.EdgeIndex][0];
 				check(FirstEdgeFace != -1); // Each Edge should be connected to at least one face
 
 				// We will rely on finding the First FaceSection and EdgeFaceSection as the [0] element in these arrays.
-				check(FaceContour->Num() == 0);
-				check(EdgeContour->Num() == 0);
+				check(FaceContour->Contour.Num() == 0);
+				check(EdgeContour->Contour.Num() == 0);
 
 
 				// Start main loop to consume intersections to build this contour
 				bool bReverseDirection = false; // when not reversing, write to CrossingEdgeLocalIndex[0] first. when reversing, writing to CrossingEdgeLocalIndex[1] first.
 				FEdgeFaceIntersection CurrIntersection = FirstIntersection;
 				int32 EdgeFace = FirstEdgeFace;
-				FIntersectionContourTriangleSection* FaceSection = &FaceContour->Add_GetRef(FIntersectionContourTriangleSection(FirstIntersection.FaceIndex));
-				FIntersectionContourTriangleSection* EdgeFaceSection = &EdgeContour->Add_GetRef(FIntersectionContourTriangleSection(FirstEdgeFace));
+				FIntersectionContourTriangleSection* FaceSection = &FaceContour->Contour.Add_GetRef(FIntersectionContourTriangleSection(FirstIntersection.FaceIndex));
+				FIntersectionContourTriangleSection* EdgeFaceSection = &EdgeContour->Contour.Add_GetRef(FIntersectionContourTriangleSection(FirstEdgeFace));
 
 				// Setup first EdgeFaceSection crossing
 				EdgeFaceSection->CrossingEdgeLocalIndex[0] = __internal::GetLocalEdgeIndex(FaceToEdges, FirstEdgeFace, FirstIntersection.EdgeIndex);
@@ -289,8 +309,8 @@ namespace GIA
 					const TVec3<int32>& FaceVertices = Elements[CurrIntersection.FaceIndex];
 					const TVec3<int32>& EdgeFaceVertices = Elements[EdgeFace];
 
-					FaceContourPoints->Add({ CurrIntersection.FaceCoordinate, FaceVertices });
-					EdgeContourPoints->Add({ {CurrIntersection.EdgeCoordinate, 0.f}, {EdgeFaceVertices[0], EdgeFaceVertices[1], EdgeFaceVertices[1]} });
+					ContourPoints[FaceContourPointsIndex].Add({CurrIntersection.FaceCoordinate, FaceVertices});
+					ContourPoints[EdgeContourPointsIndex].Add({ {CurrIntersection.EdgeCoordinate, 0.f}, {EdgeFaceVertices[0], EdgeFaceVertices[1], EdgeFaceVertices[1]} });
 
 					// Walk the intersection contour. Next point in contour is either
 					// 1) Loop vertex
@@ -314,20 +334,23 @@ namespace GIA
 						EdgeFaceSection->LoopVertexLocalIndex = (EdgeFaceCrossingEdgeLocalIndex + 2) % 3;
 						++ContourPair.LoopVertexCount;
 
-						if (ContourPair.LoopVertexCount + ContourPair.BoundaryEdgeCount == 2)
+						if (ContourPair.NumContourEnds() == 2)
 						{
 							// We've found both ends of this contour.
-							ContourPair.bIsClosed = ContourPair.LoopVertexCount == 2;
+							if (ContourPair.LoopVertexCount == 2)
+							{
+								ContourPair.ClosedStatus = FIntersectionContourPair::EClosedStatus::LoopClosed;
+							}
 							break;
 						}
-						check(ContourPair.LoopVertexCount + ContourPair.BoundaryEdgeCount == 1);
+						check(ContourPair.NumContourEnds() == 1);
 						// We hit one loop vertex. Pick up at the FirstIntersection and move the opposite direction if possible.
 
 						EdgeFace = EdgeToFaces[FirstIntersection.EdgeIndex][1];
 						if (EdgeFace == -1)
 						{
 							// First intersection edge was a boundary, so this contour is done. We're NOT closed.
-							++ContourPair.BoundaryEdgeCount;
+							++ContourPair.ColorContours[InitialEdgeContourIndex].BoundaryEdgeCount;
 							break;
 						}
 
@@ -338,13 +361,13 @@ namespace GIA
 						EdgeContour = &ContourPair.ColorContours[InitialEdgeContourIndex];
 
 						// ContourPoints are currently just used for debug drawing. Start new contours for reverse section
-						ContourPair.ContourPointCurves[InitialFaceContourIndex].Add(ContourPoints.Num());
-						FaceContourPoints = &ContourPoints.AddDefaulted_GetRef();
-						ContourPair.ContourPointCurves[InitialEdgeContourIndex].Add(ContourPoints.Num());
-						EdgeContourPoints = &ContourPoints.AddDefaulted_GetRef();
+						FaceContourPointsIndex = ContourPoints.AddDefaulted();
+						EdgeContourPointsIndex = ContourPoints.AddDefaulted();
+						ContourPair.ContourPointCurves[InitialFaceContourIndex].Add(FaceContourPointsIndex);
+						ContourPair.ContourPointCurves[InitialEdgeContourIndex].Add(EdgeContourPointsIndex);
 
-						FaceSection = &ContourPair.ColorContours[InitialFaceContourIndex][0];
-						EdgeFaceSection = &EdgeContour->Add_GetRef(FIntersectionContourTriangleSection(EdgeFace));
+						FaceSection = &FaceContour->Contour[0];
+						EdgeFaceSection = &EdgeContour->Contour.Add_GetRef(FIntersectionContourTriangleSection(EdgeFace));
 						EdgeFaceSection->CrossingEdgeLocalIndex[1] = __internal::GetLocalEdgeIndex(FaceToEdges, EdgeFace, CurrIntersection.EdgeIndex);
 						continue;
 					}
@@ -356,24 +379,29 @@ namespace GIA
 						// We can close the contour
 						EdgeFaceSection->CrossingEdgeLocalIndex[1] = LocalEdgeIndex;
 
-						FIntersectionContourTriangleSection& FirstFaceSection = ContourPair.ColorContours[InitialFaceContourIndex][0];
+						FIntersectionContourTriangleSection& FirstFaceSection = ContourPair.ColorContours[InitialFaceContourIndex].Contour[0];
+
+						if (!ensure(FaceContour == &ContourPair.ColorContours[InitialFaceContourIndex]) ||
+							!ensure(FaceSection->TriangleIndex == FirstFaceSection.TriangleIndex))
+						{
+							// Somehow our two contours have crossed. Just bail on this contour.
+							break;
+						}
 
 						// Merge current FaceSection and FirstFaceSection (if they're not already the same)
-						check(FaceContour == &ContourPair.ColorContours[InitialFaceContourIndex]);
-						check(FaceSection->TriangleIndex == FirstFaceSection.TriangleIndex);
 						if (FaceSection != &FirstFaceSection)
 						{
 							check(FaceSection->CrossingEdgeLocalIndex[0] != INDEX_NONE);
 							FirstFaceSection.CrossingEdgeLocalIndex[0] = FaceSection->CrossingEdgeLocalIndex[0];
-							check(FaceSection == &FaceContour->Last());
-							FaceContour->RemoveAt(FaceContour->Num() - 1, 1, false);
+							check(FaceSection == &FaceContour->Contour.Last());
+							FaceContour->Contour.RemoveAt(FaceContour->Contour.Num() - 1, 1, EAllowShrinking::No);
 						}
 
-						ContourPair.bIsClosed = true;
+						ContourPair.ClosedStatus = FIntersectionContourPair::EClosedStatus::SimpleClosed;
 
 						// Repeat first point in contour points for ease of drawing closed loop
-						FaceContourPoints->Add(FPBDTriangleMeshCollisions::FBarycentricPoint((*FaceContourPoints)[0]));
-						EdgeContourPoints->Add(FPBDTriangleMeshCollisions::FBarycentricPoint((*EdgeContourPoints)[0]));
+						ContourPoints[FaceContourPointsIndex].Add(FPBDTriangleMeshCollisions::FBarycentricPoint(ContourPoints[FaceContourPointsIndex][0]));
+						ContourPoints[EdgeContourPointsIndex].Add(FPBDTriangleMeshCollisions::FBarycentricPoint(ContourPoints[EdgeContourPointsIndex][0]));
 						break;
 					}
 
@@ -384,20 +412,25 @@ namespace GIA
 						FaceSection->CrossingEdgeLocalIndex[1] = LocalEdgeIndex;
 
 						// Merge current EdgeFaceSection with FirstFaceSection
-						FIntersectionContourTriangleSection& FirstFaceSection = ContourPair.ColorContours[InitialFaceContourIndex][0];
-						check(EdgeContour == &ContourPair.ColorContours[InitialFaceContourIndex]);
-						check(EdgeFaceSection->TriangleIndex == FirstFaceSection.TriangleIndex);
+						FIntersectionContourTriangleSection& FirstFaceSection = ContourPair.ColorContours[InitialFaceContourIndex].Contour[0];
+						if (!ensure(EdgeContour == &ContourPair.ColorContours[InitialFaceContourIndex]) ||
+							!ensure(EdgeFaceSection->TriangleIndex == FirstFaceSection.TriangleIndex))
+						{
+							// Somehow our two contours have crossed. Just bail on this contour.
+							break;
+						}
+
 						check(EdgeFaceSection->CrossingEdgeLocalIndex[0] != INDEX_NONE);
 						FirstFaceSection.CrossingEdgeLocalIndex[0] = EdgeFaceSection->CrossingEdgeLocalIndex[0];
 
-						check(EdgeFaceSection == &EdgeContour->Last());
-						EdgeContour->RemoveAt(EdgeContour->Num() - 1, 1, false);
+						check(EdgeFaceSection == &EdgeContour->Contour.Last());
+						EdgeContour->Contour.RemoveAt(EdgeContour->Contour.Num() - 1, 1, EAllowShrinking::No);
 
-						ContourPair.bIsClosed = true;
+						ContourPair.ClosedStatus = FIntersectionContourPair::EClosedStatus::SimpleClosed;
 
 						// Repeat first point in contour points for ease of drawing closed loop
-						FaceContourPoints->Add(FPBDTriangleMeshCollisions::FBarycentricPoint((*FaceContourPoints)[0]));
-						EdgeContourPoints->Add(FPBDTriangleMeshCollisions::FBarycentricPoint((*EdgeContourPoints)[0]));
+						ContourPoints[FaceContourPointsIndex].Add(FPBDTriangleMeshCollisions::FBarycentricPoint(ContourPoints[FaceContourPointsIndex][0]));
+						ContourPoints[EdgeContourPointsIndex].Add(FPBDTriangleMeshCollisions::FBarycentricPoint(ContourPoints[EdgeContourPointsIndex][0]));
 						break;
 					}
 
@@ -421,39 +454,49 @@ namespace GIA
 						if (NextEdgeFace == -1)
 						{
 							// We've hit a boundary.
-							++ContourPair.BoundaryEdgeCount;
+							++EdgeContour->BoundaryEdgeCount;
 
-							if (ContourPair.LoopVertexCount + ContourPair.BoundaryEdgeCount == 2)
+							if (ContourPair.NumContourEnds() == 2)
 							{
-								// We've hit both ends of this contour. Since (at least) one end is a boundary, we won't be able to form a closed contour
+								// We've hit both ends of this contour.
+								if (EdgeContour->BoundaryEdgeCount == 2)
+								{
+									// This contour is "closed" by hitting boundaries on both sides
+									ContourPair.ClosedStatus = FIntersectionContourPair::EClosedStatus::BoundaryClosed;
+								}
 								break;
 							}
 
-							check(ContourPair.LoopVertexCount + ContourPair.BoundaryEdgeCount == 1);
+							check(ContourPair.NumContourEnds() == 1);
 
 							// Pick up at the FirstIntersection and move the opposite direction if possible.
 							EdgeFace = EdgeToFaces[FirstIntersection.EdgeIndex][1];
 							if (EdgeFace == -1)
 							{
-								// First intersection edge was a boundary, so this contour is done. We're NOT closed.
-								++ContourPair.BoundaryEdgeCount;
+								// First intersection edge was a boundary, so this contour is done.
+								++ContourPair.ColorContours[InitialEdgeContourIndex].BoundaryEdgeCount;
+								if (EdgeContour->BoundaryEdgeCount == 2)
+								{
+									// This contour is "closed" by hitting boundaries on both sides
+									ContourPair.ClosedStatus = FIntersectionContourPair::EClosedStatus::BoundaryClosed;
+								}
 								break;
 							}
 
 							check(bReverseDirection == false);
 							bReverseDirection = true;
 							CurrIntersection = FirstIntersection;
-							FaceContour = &ContourPair.ColorContours[0];
-							EdgeContour = &ContourPair.ColorContours[1];
+							FaceContour = &ContourPair.ColorContours[InitialFaceContourIndex];
+							EdgeContour = &ContourPair.ColorContours[InitialEdgeContourIndex];
 
 							// ContourPoints are currently just used for debug drawing. Start new contours for reverse section
-							ContourPair.ContourPointCurves[InitialFaceContourIndex].Add(ContourPoints.Num());
-							FaceContourPoints = &ContourPoints.AddDefaulted_GetRef();
-							ContourPair.ContourPointCurves[InitialEdgeContourIndex].Add(ContourPoints.Num());
-							EdgeContourPoints = &ContourPoints.AddDefaulted_GetRef();
+							FaceContourPointsIndex = ContourPoints.AddDefaulted();
+							EdgeContourPointsIndex = ContourPoints.AddDefaulted();
+							ContourPair.ContourPointCurves[InitialFaceContourIndex].Add(FaceContourPointsIndex);
+							ContourPair.ContourPointCurves[InitialEdgeContourIndex].Add(EdgeContourPointsIndex);
 
-							FaceSection = &ContourPair.ColorContours[InitialFaceContourIndex][0];
-							EdgeFaceSection = &EdgeContour->Add_GetRef(FIntersectionContourTriangleSection(EdgeFace));
+							FaceSection = &ContourPair.ColorContours[InitialFaceContourIndex].Contour[0];
+							EdgeFaceSection = &EdgeContour->Contour.Add_GetRef(FIntersectionContourTriangleSection(EdgeFace));
 							EdgeFaceSection->CrossingEdgeLocalIndex[1] = __internal::GetLocalEdgeIndex(FaceToEdges, EdgeFace, CurrIntersection.EdgeIndex);
 
 							continue;
@@ -464,7 +507,7 @@ namespace GIA
 						CurrIntersection = NextIntersection;
 						EdgeFace = NextEdgeFace;
 
-						EdgeFaceSection = &EdgeContour->Add_GetRef(FIntersectionContourTriangleSection(EdgeFace));
+						EdgeFaceSection = &EdgeContour->Contour.Add_GetRef(FIntersectionContourTriangleSection(EdgeFace));
 						int32& FirstCrossingLocalIndex = bReverseDirection ? EdgeFaceSection->CrossingEdgeLocalIndex[1] : EdgeFaceSection->CrossingEdgeLocalIndex[0];
 						FirstCrossingLocalIndex = __internal::GetLocalEdgeIndex(FaceToEdges, EdgeFace, CurrIntersection.EdgeIndex);
 						continue;
@@ -487,22 +530,32 @@ namespace GIA
 						if (NextEdgeFace == -1)
 						{
 							// We've hit a boundary.
-							++ContourPair.BoundaryEdgeCount;
+							++FaceContour->BoundaryEdgeCount;
 
-							if (ContourPair.LoopVertexCount + ContourPair.BoundaryEdgeCount == 2)
+							if (ContourPair.NumContourEnds() == 2)
 							{
-								// We've hit both ends of this contour. Since (at least) one end is a boundary, we won't be able to form a closed contour
+								// We've hit both ends of this contour. 
+								if (FaceContour->BoundaryEdgeCount == 2)
+								{
+									// This contour is "closed" by hitting boundaries on both sides
+									ContourPair.ClosedStatus = FIntersectionContourPair::EClosedStatus::BoundaryClosed;
+								}
 								break;
 							}
 
-							check(ContourPair.LoopVertexCount + ContourPair.BoundaryEdgeCount == 1);
+							check(ContourPair.NumContourEnds() == 1);
 
 							// Pick up at the FirstIntersection and move the opposite direction if possible.
 							EdgeFace = EdgeToFaces[FirstIntersection.EdgeIndex][1];
 							if (EdgeFace == -1)
 							{
-								// First intersection edge was a boundary, so this contour is done. We're NOT closed.
-								++ContourPair.BoundaryEdgeCount;
+								// First intersection edge was a boundary.
+								++ContourPair.ColorContours[InitialEdgeContourIndex].BoundaryEdgeCount;
+								if (FaceContour->BoundaryEdgeCount == 2)
+								{
+									// This contour is "closed" by hitting boundaries on both sides
+									ContourPair.ClosedStatus = FIntersectionContourPair::EClosedStatus::BoundaryClosed;
+								}
 								break;
 							}
 
@@ -513,13 +566,13 @@ namespace GIA
 							EdgeContour = &ContourPair.ColorContours[1];
 
 							// ContourPoints are currently just used for debug drawing. Start new contours for reverse section
-							ContourPair.ContourPointCurves[InitialFaceContourIndex].Add(ContourPoints.Num());
-							FaceContourPoints = &ContourPoints.AddDefaulted_GetRef();
-							ContourPair.ContourPointCurves[InitialEdgeContourIndex].Add(ContourPoints.Num());
-							EdgeContourPoints = &ContourPoints.AddDefaulted_GetRef();
+							FaceContourPointsIndex = ContourPoints.AddDefaulted();
+							EdgeContourPointsIndex = ContourPoints.AddDefaulted();
+							ContourPair.ContourPointCurves[InitialFaceContourIndex].Add(FaceContourPointsIndex);
+							ContourPair.ContourPointCurves[InitialEdgeContourIndex].Add(EdgeContourPointsIndex);
 
-							FaceSection = &ContourPair.ColorContours[InitialFaceContourIndex][0];
-							EdgeFaceSection = &EdgeContour->Add_GetRef(FIntersectionContourTriangleSection(EdgeFace));
+							FaceSection = &ContourPair.ColorContours[InitialFaceContourIndex].Contour[0];
+							EdgeFaceSection = &EdgeContour->Contour.Add_GetRef(FIntersectionContourTriangleSection(EdgeFace));
 							EdgeFaceSection->CrossingEdgeLocalIndex[1] = __internal::GetLocalEdgeIndex(FaceToEdges, EdgeFace, CurrIntersection.EdgeIndex);
 
 							continue;
@@ -529,17 +582,17 @@ namespace GIA
 						CurrIntersection = NextIntersection;
 
 						// FaceContour and EdgeContour swap
-						FIntersectionContour* TmpContourSwap = EdgeContour;
+						FIntersectionContour* const TmpContourSwap = EdgeContour;
 						EdgeContour = FaceContour;
 						FaceContour = TmpContourSwap;
-						TArray<FPBDTriangleMeshCollisions::FBarycentricPoint>* TmpPointsSwap = EdgeContourPoints;
-						EdgeContourPoints = FaceContourPoints;
-						FaceContourPoints = TmpPointsSwap;
+						const int32 TmpContourPointsSwap = EdgeContourPointsIndex;
+						EdgeContourPointsIndex = FaceContourPointsIndex;
+						FaceContourPointsIndex = TmpContourPointsSwap;
 
 						FaceSection = EdgeFaceSection;
 
 						EdgeFace = NextEdgeFace;
-						EdgeFaceSection = &EdgeContour->Add_GetRef(FIntersectionContourTriangleSection(EdgeFace));
+						EdgeFaceSection = &EdgeContour->Contour.Add_GetRef(FIntersectionContourTriangleSection(EdgeFace));
 						int32& FirstCrossingLocalIndex = bReverseDirection ? EdgeFaceSection->CrossingEdgeLocalIndex[1] : EdgeFaceSection->CrossingEdgeLocalIndex[0];
 						FirstCrossingLocalIndex = __internal::GetLocalEdgeIndex(FaceToEdges, EdgeFace, CurrIntersection.EdgeIndex);
 						continue;
@@ -548,8 +601,7 @@ namespace GIA
 					// We failed to find the next intersection in this contour. 
 					break;
 				}
-			}
-			return Contours;
+			};
 		}
 	} // namespace ContourBuilding
 
@@ -680,7 +732,7 @@ namespace GIA
 			static bool OneFloodFillStep(const TMap<int32 /*TriangleIndex*/, FIntersectionContourTriangleSection>& ContourSegments, const TArray<TVec3<int32>>& Elements, const TConstArrayView<TArray<int32>>& PointToTriangleMap, TArray<int32>& Queue, int32& RegionSize, TArrayView<EFloodFillRegion>& VertexRegions,
 				const EFloodFillRegion RegionColor, const EFloodFillRegion OtherRegionColor)
 			{
-				const int32 CurrVertex = Queue.Pop(false);
+				const int32 CurrVertex = Queue.Pop(EAllowShrinking::No);
 				for (int32 NeighborTri : PointToTriangleMap[CurrVertex])
 				{
 					if (const FIntersectionContourTriangleSection* TriSection = ContourSegments.Find(NeighborTri))
@@ -926,49 +978,92 @@ namespace GIA
 			int32 CurrentContourIndex = 1; // ContourIndex 0 is reserved for loop 
 			for (const FIntersectionContourPair& Contour : Contours)
 			{
-				if (!Contour.bIsClosed)
+				if (Contour.ClosedStatus == FIntersectionContourPair::EClosedStatus::Open)
 				{
 					continue;
 				}
 
 				TMultiMap<int32 /*TriangleIndex*/, const FIntersectionContourTriangleSection*> ContourSegments;
-				const bool bCombineContours = Contour.LoopVertexCount > 0; // Loop contours were built still as a contour pair, but really represent a single contour doubling back on itself.
-				const int32 ContourSegmentReserveNum = bCombineContours ? Contour.ColorContours[0].Num() + Contour.ColorContours[1].Num() : FMath::Max(Contour.ColorContours[0].Num(), Contour.ColorContours[1].Num());
-				ContourSegments.Reserve(ContourSegmentReserveNum);
+				
+				const bool bTwoSimpleContours = Contour.ClosedStatus == FIntersectionContourPair::EClosedStatus::SimpleClosed;
 
-				for (const FIntersectionContourTriangleSection& Section : Contour.ColorContours[0])
+				int32 ContourIndex = INDEX_NONE;
+				bool bIsColorB = false;
+				switch (Contour.ClosedStatus)
 				{
-					ContourSegments.Emplace(Section.TriangleIndex, &Section);
-				}
+				case FIntersectionContourPair::EClosedStatus::SimpleClosed:
+				{
+					ContourIndex = (((CurrentContourIndex++) - 1) % 31) + 1;
+					bIsColorB = false;
+					ContourSegments.Reserve(FMath::Max(Contour.ColorContours[0].Contour.Num(), Contour.ColorContours[1].Contour.Num()));
 
-				if (bCombineContours)
-				{
-					for (const FIntersectionContourTriangleSection& Section : Contour.ColorContours[1])
+					for (const FIntersectionContourTriangleSection& Section : Contour.ColorContours[0].Contour)
 					{
 						ContourSegments.Emplace(Section.TriangleIndex, &Section);
 					}
+				}break;
+				case FIntersectionContourPair::EClosedStatus::LoopClosed:
+				{
+					ContourIndex = FPBDTriangleMeshCollisions::FGIAColor::LoopContourIndex;
+					bIsColorB = true;
+					ContourSegments.Reserve(Contour.ColorContours[0].Contour.Num() + Contour.ColorContours[1].Contour.Num());
+					for (const FIntersectionContourTriangleSection& Section : Contour.ColorContours[0].Contour)
+					{
+						ContourSegments.Emplace(Section.TriangleIndex, &Section);
+					}
+					for (const FIntersectionContourTriangleSection& Section : Contour.ColorContours[1].Contour)
+					{
+						ContourSegments.Emplace(Section.TriangleIndex, &Section);
+					}
+				}break;
+				case FIntersectionContourPair::EClosedStatus::BoundaryClosed:
+				{
+					ContourIndex = FPBDTriangleMeshCollisions::FGIAColor::BoundaryContourIndex;
+					bIsColorB = false;
+					if (Contour.ColorContours[0].BoundaryEdgeCount == 2)
+					{
+						ContourSegments.Reserve(Contour.ColorContours[0].Contour.Num());
+
+						for (const FIntersectionContourTriangleSection& Section : Contour.ColorContours[0].Contour)
+						{
+							ContourSegments.Emplace(Section.TriangleIndex, &Section);
+						}
+					}
+					else
+					{
+						check(Contour.ColorContours[1].BoundaryEdgeCount == 2);
+						ContourSegments.Reserve(Contour.ColorContours[1].Contour.Num());
+
+						for (const FIntersectionContourTriangleSection& Section : Contour.ColorContours[1].Contour)
+						{
+							ContourSegments.Emplace(Section.TriangleIndex, &Section);
+						}
+					}
+				}break;
+				default:
+					checkNoEntry();
 				}
 
-				const int32 ContourIndex = bCombineContours ? FPBDTriangleMeshCollisions::FGIAColor::LoopContourIndex : (((CurrentContourIndex++) - 1) % 31) + 1;
+				check(ContourIndex != INDEX_NONE);
 
-				if (!__internal::FloodFillContourColor(TriangleMesh, NumParticles, Offset, ContourSegments, ContourIndex, bCombineContours, VertexGIAColors, TriangleGIAColors))
+				if (!__internal::FloodFillContourColor(TriangleMesh, NumParticles, Offset, ContourSegments, ContourIndex, bIsColorB, VertexGIAColors, TriangleGIAColors))
 				{
-					const_cast<FIntersectionContourPair&>(Contour).bIsClosed = false;
+					const_cast<FIntersectionContourPair&>(Contour).ClosedStatus = FIntersectionContourPair::EClosedStatus::Open;
 					continue;
 				}
 
-				if (!bCombineContours)
+				if (bTwoSimpleContours)
 				{
 					ContourSegments.Reset();
 
-					for (const FIntersectionContourTriangleSection& Section : Contour.ColorContours[1])
+					for (const FIntersectionContourTriangleSection& Section : Contour.ColorContours[1].Contour)
 					{
 						ContourSegments.Emplace(Section.TriangleIndex, &Section);
 					}
 
 					if (!__internal::FloodFillContourColor(TriangleMesh, NumParticles, Offset, ContourSegments, ContourIndex, true, VertexGIAColors, TriangleGIAColors))
 					{
-						const_cast<FIntersectionContourPair&>(Contour).bIsClosed = false;
+						const_cast<FIntersectionContourPair&>(Contour).ClosedStatus = FIntersectionContourPair::EClosedStatus::Open;
 						continue;
 					}
 				}
@@ -982,30 +1077,48 @@ namespace GIA
 			IntersectionContourTypes.SetNumZeroed(ContourPoints.Num());
 			for (const FIntersectionContourPair& ContourPair : Contours)
 			{
-				if (ContourPair.bIsClosed)
+				switch (ContourPair.ClosedStatus)
 				{
-					if (ContourPair.LoopVertexCount > 0)
+				case FIntersectionContourPair::EClosedStatus::SimpleClosed:
+				{
+					for (const int32 PointIndex : ContourPair.ContourPointCurves[0])
 					{
-						for (const int32 PointIndex : ContourPair.ContourPointCurves[0])
+						IntersectionContourTypes[PointIndex] = FPBDTriangleMeshCollisions::FContourType::Contour0;
+					}
+					for (const int32 PointIndex : ContourPair.ContourPointCurves[1])
+					{
+						IntersectionContourTypes[PointIndex] = FPBDTriangleMeshCollisions::FContourType::Contour1;
+					}
+				}break;
+				case FIntersectionContourPair::EClosedStatus::LoopClosed:
+				{
+					for (const int32 PointIndex : ContourPair.ContourPointCurves[0])
+					{
+						IntersectionContourTypes[PointIndex] = FPBDTriangleMeshCollisions::FContourType::Loop;
+					}
+					for (const int32 PointIndex : ContourPair.ContourPointCurves[1])
+					{
+						IntersectionContourTypes[PointIndex] = FPBDTriangleMeshCollisions::FContourType::Loop;
+					}
+				}break;
+				case FIntersectionContourPair::EClosedStatus::BoundaryClosed:
+				{
+					for (int32 ContourIndex = 0; ContourIndex < 2; ++ContourIndex)
+					{
+						const FPBDTriangleMeshCollisions::FContourType ContourType =
+							ContourPair.ColorContours[ContourIndex].BoundaryEdgeCount == 2 ?
+							FPBDTriangleMeshCollisions::FContourType::BoundaryClosed
+							: FPBDTriangleMeshCollisions::FContourType::BoundaryOpen;
+
+						for (const int32 PointIndex : ContourPair.ContourPointCurves[ContourIndex])
 						{
-							IntersectionContourTypes[PointIndex] = FPBDTriangleMeshCollisions::FContourType::Loop;
-						}
-						for (const int32 PointIndex : ContourPair.ContourPointCurves[1])
-						{
-							IntersectionContourTypes[PointIndex] = FPBDTriangleMeshCollisions::FContourType::Loop;
+							IntersectionContourTypes[PointIndex] = ContourType;;
 						}
 					}
-					else
-					{
-						for (const int32 PointIndex : ContourPair.ContourPointCurves[0])
-						{
-							IntersectionContourTypes[PointIndex] = FPBDTriangleMeshCollisions::FContourType::Contour0;
-						}
-						for (const int32 PointIndex : ContourPair.ContourPointCurves[1])
-						{
-							IntersectionContourTypes[PointIndex] = FPBDTriangleMeshCollisions::FContourType::Contour1;
-						}
-					}
+				}
+				break;
+				default:
+					break;
 				}
 			}
 		}
@@ -1015,7 +1128,8 @@ namespace GIA
 // Calculating gradient direction to minimize contour length.
 namespace ContourMinimization
 {
-	static void BuildLocalContourMinimizationIntersection(const FEdgeFaceIntersection& EdgeFaceIntersection, const FTriangleMesh& TriangleMesh, const FSegmentMesh& SegmentMesh, const FSolverParticles& Particles, FPBDTriangleMeshCollisions::FContourMinimizationIntersection& ContourIntersection)
+	template<typename SolverParticlesOrRange>
+	static void BuildLocalContourMinimizationIntersection(const FEdgeFaceIntersection& EdgeFaceIntersection, const FTriangleMesh& TriangleMesh, const FSegmentMesh& SegmentMesh, const SolverParticlesOrRange& Particles, FPBDTriangleMeshCollisions::FContourMinimizationIntersection& ContourIntersection)
 	{
 		ContourIntersection.EdgeVertices = SegmentMesh.GetElements()[EdgeFaceIntersection.EdgeIndex];
 		ContourIntersection.FaceVertices = TriangleMesh.GetElements()[EdgeFaceIntersection.FaceIndex];
@@ -1025,8 +1139,8 @@ namespace ContourMinimization
 		const TArray<TVec2<int32>>& EdgeToFaces = TriangleMesh.GetEdgeToFaces();
 		const TArray<TVec3<int32>>& Elements = TriangleMesh.GetElements();
 
-		const FSolverVec3& EdgePosition0 = Particles.X(ContourIntersection.EdgeVertices[0]);
-		const FSolverVec3& EdgePosition1 = Particles.X(ContourIntersection.EdgeVertices[1]);
+		const FSolverVec3& EdgePosition0 = Particles.GetX(ContourIntersection.EdgeVertices[0]);
+		const FSolverVec3& EdgePosition1 = Particles.GetX(ContourIntersection.EdgeVertices[1]);
 		const FSolverVec3 EdgeDir = EdgePosition1 - EdgePosition0; // Unnormalized
 		const FSolverReal EdgeDirDotNormal = FSolverVec3::DotProduct(EdgeDir, EdgeFaceIntersection.FaceNormal);
 		if (FMath::Abs(EdgeDirDotNormal) >= UE_SMALL_NUMBER)
@@ -1041,9 +1155,9 @@ namespace ContourMinimization
 					continue;
 				}
 
-				const FSolverVec3& P0 = Particles.X(Elements[EdgeFace_i][0]);
-				const FSolverVec3& P1 = Particles.X(Elements[EdgeFace_i][1]);
-				const FSolverVec3& P2 = Particles.X(Elements[EdgeFace_i][2]);
+				const FSolverVec3& P0 = Particles.GetX(Elements[EdgeFace_i][0]);
+				const FSolverVec3& P1 = Particles.GetX(Elements[EdgeFace_i][1]);
+				const FSolverVec3& P2 = Particles.GetX(Elements[EdgeFace_i][2]);
 
 				// B_i
 				const TTriangle<FSolverReal> Triangle_i(P0, P1, P2);
@@ -1078,7 +1192,8 @@ namespace ContourMinimization
 		ContourIntersection.GlobalGradientVector = ContourIntersection.LocalGradientVector;
 	}
 
-	static void BuildLocalContourMinimizationIntersections(const FTriangleMesh& TriangleMesh, const FSolverParticles& Particles, const TArray<FEdgeFaceIntersection>& Intersections, TArray<FPBDTriangleMeshCollisions::FContourMinimizationIntersection>& ContourMinimizationIntersections)
+	template<typename SolverParticlesOrRange>
+	static void BuildLocalContourMinimizationIntersections(const FTriangleMesh& TriangleMesh, const SolverParticlesOrRange& Particles, const TArray<FEdgeFaceIntersection>& Intersections, TArray<FPBDTriangleMeshCollisions::FContourMinimizationIntersection>& ContourMinimizationIntersections)
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(ChaosFPBDTriangleMeshCollisions_BuildLocalContourMinimizationIntersections);
 		const FSegmentMesh& SegmentMesh = TriangleMesh.GetSegmentMesh();
@@ -1094,7 +1209,8 @@ namespace ContourMinimization
 		);
 	}
 
-	static void BuildGlobalContourMinimizationIntersections(const FTriangleMesh& TriangleMesh, const FSolverParticles& Particles, const TArray<GIA::FIntersectionContourPair>& IntersectionContours, TArray<FPBDTriangleMeshCollisions::FContourMinimizationIntersection>& ContourMinimizationIntersections)
+	template<typename SolverParticlesOrRange>
+	static void BuildGlobalContourMinimizationIntersections(const FTriangleMesh& TriangleMesh, const SolverParticlesOrRange& Particles, const TArray<GIA::FIntersectionContourPair>& IntersectionContours, TArray<FPBDTriangleMeshCollisions::FContourMinimizationIntersection>& ContourMinimizationIntersections)
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(ChaosFPBDTriangleMeshCollisions_BuildGlobalContourMinimizationIntersections);
 		const FSegmentMesh& SegmentMesh = TriangleMesh.GetSegmentMesh();
@@ -1112,7 +1228,7 @@ namespace ContourMinimization
 		int32 IndexStart = 0;
 		for (int32 ContourPairIndex = 0; ContourPairIndex < IntersectionContours.Num(); ++ContourPairIndex)
 		{
-			if (IntersectionContours[ContourPairIndex].bIsClosed && IntersectionContours[ContourPairIndex].LoopVertexCount == 0)
+			if (IntersectionContours[ContourPairIndex].ClosedStatus == GIA::FIntersectionContourPair::EClosedStatus::SimpleClosed)
 			{
 				continue;
 			}
@@ -1153,46 +1269,185 @@ namespace ContourMinimization
 	}
 } // namespace ContourMinimization
 
-void FPBDTriangleMeshCollisions::Init(const FSolverParticles& Particles, const FSolverReal MinProximityQueryRadius)
+struct FPBDTriangleMeshCollisions::FScratchBuffers
 {
-	if (TriangleMesh.GetNumElements() == 0)
+	TArray<FEdgeFaceIntersection> EdgeFaceIntersections;
+	TArray<GIA::FIntersectionContourPair> IntersectionContours;
+
+	void Reset()
+	{
+		EdgeFaceIntersections.Reset();
+		IntersectionContours.Reset();
+	}
+};
+
+template<typename SolverParticlesOrRange>
+void FPBDTriangleMeshCollisions::FTriangleSubMesh::Init(const SolverParticlesOrRange& Particles, const TSet<int32>& InDisabledFaces, bool bCollideAgainstAllKinematicVertices, const TSet<int32>& InEnabledKinematicFaces, const bool bOnlyCollideKinematics)
+{
+	FullMeshToSubMeshIndices.Reset();
+	DynamicSubMeshToFullMeshIndices.Reset();
+	KinematicColliderSubMeshToFullMeshIndices.Reset();
+	DynamicVertices.Reset();
+
+	TArray<TVec3<int32>> DynamicMeshElements;
+	TArray<TVec3<int32>> KinematicMeshElements;
+	if (!bOnlyCollideKinematics)
+	{
+		DynamicMeshElements.Reserve(FullMesh.GetNumElements());
+	}
+	KinematicMeshElements.Reserve(InEnabledKinematicFaces.Num());
+
+	FullMeshToSubMeshIndices.SetNumZeroed(FullMesh.GetNumElements());
+	DynamicSubMeshToFullMeshIndices.Reserve(FullMesh.GetNumElements());
+	KinematicColliderSubMeshToFullMeshIndices.Reserve(InEnabledKinematicFaces.Num());
+
+	const TArray<TVec3<int32>>& FullElements = FullMesh.GetElements();
+	for (int32 FullElementIndex = 0; FullElementIndex < FullMesh.GetNumElements(); ++FullElementIndex)
+	{
+		if (InDisabledFaces.Contains(FullElementIndex))
+		{
+			FullMeshToSubMeshIndices[FullElementIndex].SubMeshType = ESubMeshType::Invalid;
+			continue;
+		}
+		const bool bIsKinematic =
+			Particles.InvM(FullElements[FullElementIndex][0]) == (FSolverReal)0.f &&
+			Particles.InvM(FullElements[FullElementIndex][1]) == (FSolverReal)0.f &&
+			Particles.InvM(FullElements[FullElementIndex][2]) == (FSolverReal)0.f;
+
+		if (bIsKinematic)
+		{
+			if (bCollideAgainstAllKinematicVertices || InEnabledKinematicFaces.Contains(FullElementIndex))
+			{
+				const int32 SubMeshIndex = KinematicMeshElements.Add(FullElements[FullElementIndex]);
+				KinematicColliderSubMeshToFullMeshIndices.Add(FullElementIndex);
+				FullMeshToSubMeshIndices[FullElementIndex].SubMeshIndex = SubMeshIndex;
+				FullMeshToSubMeshIndices[FullElementIndex].SubMeshType = ESubMeshType::Kinematic;
+			}
+			else
+			{
+				FullMeshToSubMeshIndices[FullElementIndex].SubMeshType = ESubMeshType::Invalid;
+			}
+		}
+		else if (!bOnlyCollideKinematics)
+		{
+			const int32 SubMeshIndex = DynamicMeshElements.Add(FullElements[FullElementIndex]);
+			DynamicSubMeshToFullMeshIndices.Add(FullElementIndex);
+			FullMeshToSubMeshIndices[FullElementIndex].SubMeshIndex = SubMeshIndex;
+			FullMeshToSubMeshIndices[FullElementIndex].SubMeshType = ESubMeshType::Dynamic;
+		}
+	}
+
+	// Use same Vertex range for submeshes.
+	const TVec2<int32> VertexRange = FullMesh.GetVertexRange();
+	constexpr bool bCullDegenerateFalse = false;
+
+	DynamicSubMesh.Init(MoveTemp(DynamicMeshElements), VertexRange[0], VertexRange[1], bCullDegenerateFalse);
+	KinematicColliderSubMesh.Init(MoveTemp(KinematicMeshElements), VertexRange[0], VertexRange[1], bCullDegenerateFalse);
+
+	check(DynamicSubMesh.GetNumElements() == DynamicSubMeshToFullMeshIndices.Num());
+	check(KinematicColliderSubMesh.GetNumElements() == KinematicColliderSubMeshToFullMeshIndices.Num());
+
+	const TSet<int32> DynamicVertexSet = DynamicSubMesh.GetVertices();
+	DynamicVertices.Reserve(DynamicVertexSet.Num());
+	for (const int32 PossiblyDynamicVertex : DynamicVertexSet)
+	{
+		// Some of these vertices may be kinematic since a triangle is dynamic if any of its vertices are.
+		if (Particles.InvM(PossiblyDynamicVertex) > (FSolverReal)0.)
+		{
+			DynamicVertices.Add(PossiblyDynamicVertex);
+		}
+	}
+}
+
+void FPBDTriangleMeshCollisions::FTriangleSubMesh::InitAllDynamic()
+{
+	constexpr bool bCullDegenerateFalse = false;
+	DynamicSubMesh.Init(FullMesh.GetElements(), FullMesh.GetVertexRange()[0], FullMesh.GetVertexRange()[1], bCullDegenerateFalse);
+	KinematicColliderSubMesh.Init(TArray<TVec3<int32>>());
+
+	FullMeshToSubMeshIndices.SetNumUninitialized(FullMesh.GetNumElements());
+	DynamicSubMeshToFullMeshIndices.SetNumUninitialized(FullMesh.GetNumElements());
+	KinematicColliderSubMeshToFullMeshIndices.Reset();
+	DynamicVertices.Reset();
+	for (int32 Index = 0; Index < FullMesh.GetNumElements(); ++Index)
+	{
+		FullMeshToSubMeshIndices[Index].SubMeshIndex = Index;
+		FullMeshToSubMeshIndices[Index].SubMeshType = ESubMeshType::Dynamic;
+		DynamicSubMeshToFullMeshIndices[Index] = Index;
+	}
+}
+
+template<typename SolverParticlesOrRange>
+void FPBDTriangleMeshCollisions::Init(const SolverParticlesOrRange& Particles, const FPBDFlatWeightMap& ThicknessMap)
+{
+	const bool bDoSelfIntersections = bGlobalIntersectionAnalysis || bContourMinimization;
+	if (bCollidableSubMeshDirty)
+	{		
+		CollidableSubMesh.Init(Particles, DisabledFaces, bSelfCollideAgainstAllKinematicVertices, EnabledKinematicFaces, bOnlyCollideWithKinematics);
+		bCollidableSubMeshDirty = false;
+	}
+
+	const FTriangleMesh& DynamicSubMesh = CollidableSubMesh.GetDynamicSubMesh();
+
+	if (DynamicSubMesh.GetNumElements() == 0 && !bOnlyCollideWithKinematics)
 	{
 		return;
 	}
 
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(ChaosFPBDTriangleMeshCollisions_BuildSpatialHash);
+
 		constexpr FSolverReal RadiusToLodSizeMultiplier = 2.; // Radius to Diameter
-		TriangleMesh.BuildSpatialHash(static_cast<const TArrayView<const FSolverVec3>&>(Particles.XArray()), SpatialHash, RadiusToLodSizeMultiplier * MinProximityQueryRadius);
+		FSolverReal MinProximityQueryRadius;
+		if (!ThicknessMap.HasWeightMap())
+		{	
+			MinProximityQueryRadius = ((FSolverReal)ThicknessMap) * 2.f; // When thickness is constant, we don't put any thickness in the spatial hash and instead query with particles with 2*thickness radius.
+			DynamicSubMesh.BuildSpatialHash(static_cast<const TArrayView<const FSolverVec3>&>(Particles.XArray()), DynamicSubMeshSpatialHash, RadiusToLodSizeMultiplier * MinProximityQueryRadius);
+		}
+		else
+		{
+			MinProximityQueryRadius = FMath::Max(ThicknessMap.GetLow(), ThicknessMap.GetHigh());
+			DynamicSubMesh.BuildSpatialHash(static_cast<const TArrayView<const FSolverVec3>&>(Particles.XArray()), DynamicSubMeshSpatialHash, ThicknessMap, Offset, RadiusToLodSizeMultiplier * MinProximityQueryRadius);
+		}
+		if (CollidableSubMesh.GetKinematicColliderSubMesh().GetNumElements() > 0)
+		{
+			CollidableSubMesh.GetKinematicColliderSubMesh().BuildSpatialHash(static_cast<const TArrayView<const FSolverVec3>&>(Particles.XArray()), KinematicSubMeshSpatialHash, RadiusToLodSizeMultiplier * MinProximityQueryRadius);
+		}
 	}
 	ContourMinimizationIntersections.Reset();
 	VertexGIAColors.Reset();
 	VertexGIAColors.SetNumZeroed(NumParticles);
 	TriangleGIAColors.Reset();
-	TriangleGIAColors.SetNumZeroed(TriangleMesh.GetNumElements());
+	TriangleGIAColors.SetNumZeroed(DynamicSubMesh.GetNumElements());
 	IntersectionContourPoints.Reset();
 	IntersectionContourTypes.Reset();
 
-	if (!bGlobalIntersectionAnalysis && !bContourMinimization)
+	if (!bDoSelfIntersections || bOnlyCollideWithKinematics)
 	{
 		return;
 	}
+
+	if (!ScratchBuffers)
+	{
+		ScratchBuffers = MakePimpl<FScratchBuffers>();
+	}
+	ScratchBuffers->Reset();
 
 	// Detect all EdgeFace Intersections
-	TArray<FEdgeFaceIntersection> Intersections = FindEdgeFaceIntersections(TriangleMesh, SpatialHash, Particles);
-	if (Intersections.Num() == 0)
+	constexpr bool bSkipKinematicTrue = true;
+	FindEdgeFaceIntersections(DynamicSubMesh, DynamicSubMeshSpatialHash, Particles, ScratchBuffers->EdgeFaceIntersections);
+	if (ScratchBuffers->EdgeFaceIntersections.Num() == 0)
 	{
 		return;
 	}
 
-	TArray<GIA::FIntersectionContourPair> IntersectionContours;
 	if (bGlobalIntersectionAnalysis)
 	{ 
 		// Walk EdgeFace intersections to build global contours
-		IntersectionContours = GIA::ContourBuilding::BuildIntersectionContours(TriangleMesh, Intersections, IntersectionContourPoints);
+		GIA::ContourBuilding::BuildIntersectionContours(DynamicSubMesh, ScratchBuffers->EdgeFaceIntersections, ScratchBuffers->IntersectionContours, IntersectionContourPoints);
 		// Flood fill global contours to determine intersecting regions.
-		GIA::FloodFill::FloodFillContours(TriangleMesh, NumParticles, Offset, IntersectionContours, VertexGIAColors, TriangleGIAColors);
-		GIA::FloodFill::AssignContourPointTypes(IntersectionContours, IntersectionContourPoints, IntersectionContourTypes);
+		GIA::FloodFill::FloodFillContours(DynamicSubMesh, NumParticles, Offset, ScratchBuffers->IntersectionContours, VertexGIAColors, TriangleGIAColors);
+		GIA::FloodFill::AssignContourPointTypes(ScratchBuffers->IntersectionContours, IntersectionContourPoints, IntersectionContourTypes);
 	}
 
 	if (bContourMinimization)
@@ -1200,13 +1455,60 @@ void FPBDTriangleMeshCollisions::Init(const FSolverParticles& Particles, const F
 		if (bGlobalIntersectionAnalysis)
 		{
 			// Global contours which are non-closed or loop are handled via ContourMinimization impulses. Build global gradient (by adding contribution across all intersections per contour).
-			ContourMinimization::BuildGlobalContourMinimizationIntersections(TriangleMesh, Particles, IntersectionContours, ContourMinimizationIntersections);
+			ContourMinimization::BuildGlobalContourMinimizationIntersections(DynamicSubMesh, Particles, ScratchBuffers->IntersectionContours, ContourMinimizationIntersections);
 		}
 		else
 		{
 			// Just build local gradient for all Intersections
-			ContourMinimization::BuildLocalContourMinimizationIntersections(TriangleMesh, Particles, Intersections, ContourMinimizationIntersections);
+			ContourMinimization::BuildLocalContourMinimizationIntersections(DynamicSubMesh, Particles, ScratchBuffers->EdgeFaceIntersections, ContourMinimizationIntersections);
 		}
 	}
 }
+template CHAOS_API void FPBDTriangleMeshCollisions::Init(const FSolverParticles& Particles, const FPBDFlatWeightMap& ThicknessMap);
+template CHAOS_API void FPBDTriangleMeshCollisions::Init(const FSolverParticlesRange& Particles, const FPBDFlatWeightMap& ThicknessMap);
+
+template<typename SolverParticlesOrRange>
+void FPBDTriangleMeshCollisions::PostStepInit(const SolverParticlesOrRange& Particles)
+{
+	const FTriangleMesh& DynamicSubMesh = CollidableSubMesh.GetDynamicSubMesh();
+	if (DynamicSubMesh.GetNumElements() == 0)
+	{
+		return;
+	}
+
+	PostStepIntersectionContourPoints.Reset();
+	PostStepContourMinimizationIntersections.Reset();
+
+	if (NumContourMinimizationPostSteps > 0)
+	{
+		// For now just going to rebuild the spatial grid every time. In reality, should really do some sort of refitting.
+		{
+			TRACE_CPUPROFILER_EVENT_SCOPE(ChaosFPBDTriangleMeshCollisions_BuildSpatialHash);
+			constexpr FSolverReal MinSpatialLodSize = 1.f;
+			DynamicSubMesh.BuildSpatialHash(static_cast<const TArrayView<const FSolverVec3>&>(Particles.XArray()), DynamicSubMeshSpatialHash, MinSpatialLodSize);
+
+			if (!ScratchBuffers)
+			{
+				ScratchBuffers = MakePimpl<FScratchBuffers>();
+			}
+			ScratchBuffers->Reset();
+
+			// Detect all EdgeFace Intersections
+			FindEdgeFaceIntersections(DynamicSubMesh, DynamicSubMeshSpatialHash, Particles, ScratchBuffers->EdgeFaceIntersections);
+
+			if (bUseGlobalPostStepContours)
+			{
+				GIA::ContourBuilding::BuildIntersectionContours(DynamicSubMesh, ScratchBuffers->EdgeFaceIntersections, ScratchBuffers->IntersectionContours, PostStepIntersectionContourPoints);
+				ContourMinimization::BuildGlobalContourMinimizationIntersections(DynamicSubMesh, Particles, ScratchBuffers->IntersectionContours, PostStepContourMinimizationIntersections);
+			}
+			else
+			{
+				// Just build local gradient for all Intersections
+				ContourMinimization::BuildLocalContourMinimizationIntersections(DynamicSubMesh, Particles, ScratchBuffers->EdgeFaceIntersections, PostStepContourMinimizationIntersections);
+			}
+		}
+	}
+}
+template CHAOS_API void FPBDTriangleMeshCollisions::PostStepInit(const FSolverParticles& Particles);
+template CHAOS_API void FPBDTriangleMeshCollisions::PostStepInit(const FSolverParticlesRange& Particles);
 }  // End namespace Chaos::Softs

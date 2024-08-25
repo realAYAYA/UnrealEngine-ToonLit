@@ -135,7 +135,7 @@ EOS_DECLARE_FUNC(void) EOS_Achievements_UnlockAchievements(EOS_HAchievements Han
 
 /**
  * Register to receive achievement unlocked notifications.
- * @note must call EOS_Achievements_RemoveNotifyAchievementsUnlocked to remove the notification
+ * @note If the returned NotificationId is valid, you must call EOS_Achievements_RemoveNotifyAchievementsUnlocked when you no longer wish to have your NotificationHandler called.
  *
  * @see EOS_Achievements_RemoveNotifyAchievementsUnlocked
  *
@@ -239,7 +239,7 @@ EOS_DECLARE_FUNC(EOS_EResult) EOS_Achievements_CopyUnlockedAchievementByAchievem
  * DEPRECATED! Use EOS_Achievements_AddNotifyAchievementsUnlockedV2 instead.
  *
  * Register to receive achievement unlocked notifications.
- * @note must call EOS_Achievements_RemoveNotifyAchievementsUnlocked to remove the notification
+ * @note If the returned NotificationId is valid, you must call EOS_Achievements_RemoveNotifyAchievementsUnlocked when you no longer wish to have your NotificationHandler called.
  *
  * @see EOS_Achievements_RemoveNotifyAchievementsUnlocked
  *

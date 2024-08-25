@@ -9,6 +9,17 @@
 #include "HeightFogCommon.ush"
 #include "SkyAtmosphereCommon.ush"
 
+#if PERMUTATION_SUPPORT_LOCAL_FOG_VOLUME > 0
+#include "LocalFogVolumes/LocalFogVolumeCommon.ush"
+#endif
+
+#if PERMUTATION_SUPPORT_LOCAL_FOG_VOLUME == 2
+Texture2D<float4> HalfResLocalFogVolumeViewSRV;
+SamplerState HalfResLocalFogVolumeViewSRVSampler;
+Texture2D<float4>  HalfResLocalFogVolumeDepthSRV;
+SamplerState HalfResLocalFogVolumeDepthSRVSampler;
+#endif
+
 float StartDepthZ;
 
 void MobileFogVS(
@@ -37,31 +48,98 @@ void MobileFogPS(
 {
 	ResolvedView = ResolveView();
 	half4 FinalFog = half4(0,0,0,1);
-	float SceneDepth = CalcSceneDepth(TexCoord);
+	float DeviceZ = LookupDeviceZ(TexCoord);
+	float SceneDepth = ConvertFromDeviceZ(DeviceZ);
 	float3 WorldPositionRelativeToCamera = ScreenVector.xyz * SceneDepth;
-	float3 WorldPosition = WorldPositionRelativeToCamera + ResolvedView.TranslatedWorldCameraOrigin - LWCHackToFloat(ResolvedView.PreViewTranslation);
+	float3 TranslatedWorldPosition = WorldPositionRelativeToCamera + ResolvedView.TranslatedWorldCameraOrigin;
 
 // at least one of these is active
 #if PERMUTATION_SUPPORT_HEIGHT_FOG
 	FinalFog = CalculateHeightFog(WorldPositionRelativeToCamera);
 #endif
 
+#if PERMUTATION_SUPPORT_LOCAL_FOG_VOLUME == 1
+
+	// Evaluate the local fog volumes in line when there is volumetric fog.
+	uint2 TilePos = uint2(SVPos.xy - ResolvedView.ViewRectMin.xy) / LFVTilePixelSize.xx;
+	float4 LFVContribution = GetLFVContribution(ResolvedView, TilePos, WorldPositionRelativeToCamera);
+	FinalFog = float4(LFVContribution.rgb + FinalFog.rgb * LFVContribution.a, LFVContribution.a * FinalFog.a);
+
+#elif PERMUTATION_SUPPORT_LOCAL_FOG_VOLUME == 2
+
+	// Upsample the half resolution local fog volumes previously traced in a half resolution texture.
+	const int2 FullResolutionToVolumetricBufferResolutionScale = uint2(2, 2);
+
+	int2 PixelPos = SVPos.xy - ResolvedView.ViewRectMin.xy;
+	int2 VolumeCoordUInt = PixelPos / int(FullResolutionToVolumetricBufferResolutionScale.y);
+	int OffsetX = (VolumeCoordUInt.x * int(FullResolutionToVolumetricBufferResolutionScale.y)) == PixelPos.x ? -1 : 1;
+	int OffsetY = (VolumeCoordUInt.y * int(FullResolutionToVolumetricBufferResolutionScale.y)) == PixelPos.y ? -1 : 1;
+
+	uint2 VolumeCoord0 = max(0, int2(VolumeCoordUInt) + int2(0, 0));
+	uint2 VolumeCoord1 = max(0, int2(VolumeCoordUInt) + int2(OffsetX, 0));
+	uint2 VolumeCoord2 = max(0, int2(VolumeCoordUInt) + int2(OffsetX, OffsetY));
+	uint2 VolumeCoord3 = max(0, int2(VolumeCoordUInt) + int2(0, OffsetY));
+
+	float VolumeFrontDepth0 = HalfResLocalFogVolumeDepthSRV.Load(uint3(VolumeCoord0, 0)).r * METER_TO_CENTIMETER;
+	float VolumeFrontDepth1 = HalfResLocalFogVolumeDepthSRV.Load(uint3(VolumeCoord1, 0)).r * METER_TO_CENTIMETER;
+	float VolumeFrontDepth2 = HalfResLocalFogVolumeDepthSRV.Load(uint3(VolumeCoord2, 0)).r * METER_TO_CENTIMETER;
+	float VolumeFrontDepth3 = HalfResLocalFogVolumeDepthSRV.Load(uint3(VolumeCoord3, 0)).r * METER_TO_CENTIMETER;
+
+	float MaxFrontDepth4Diff = max(max(VolumeFrontDepth0, VolumeFrontDepth1), max(VolumeFrontDepth2, VolumeFrontDepth3));
+	float UpsampleSceneDepth = min(SceneDepth, MaxFrontDepth4Diff);	// needed because FP16 is limited in distance adn that fixes upsampling artefacts when depth is super large..
+
+	float4 Depth4 = float4(VolumeFrontDepth0, VolumeFrontDepth1, VolumeFrontDepth2, VolumeFrontDepth3);
+	float4 Depth4Diff = UpsampleSceneDepth - Depth4;
+	Depth4Diff = abs(Depth4Diff);
+	float MaxDepth4Diff = max(max(Depth4Diff.x, Depth4Diff.y), max(Depth4Diff.z, Depth4Diff.w));
+
+	const float WeightMultiplier = 10.0f;
+	const float ThresholdToBilinear = 30.0f; // in centimeters
+	float4 LFVContribution;
+	if (MaxDepth4Diff > ThresholdToBilinear)
+	{
+		float MaxDepth4Diff = max(max(Depth4Diff.x, Depth4Diff.y), max(Depth4Diff.z, Depth4Diff.w));
+		// Depth discontinuities edges
+		float4 weights = 1.0f / (Depth4Diff * WeightMultiplier + 1.0f);
+		const float weightsSum = dot(weights, float4(1.0f, 1.0f, 1.0f, 1.0f));
+		weights /= weightsSum;
+
+		float4 VolumeRGBT0 = HalfResLocalFogVolumeViewSRV.Load(uint3(VolumeCoord0, 0));
+		float4 VolumeRGBT1 = HalfResLocalFogVolumeViewSRV.Load(uint3(VolumeCoord1, 0));
+		float4 VolumeRGBT2 = HalfResLocalFogVolumeViewSRV.Load(uint3(VolumeCoord2, 0));
+		float4 VolumeRGBT3 = HalfResLocalFogVolumeViewSRV.Load(uint3(VolumeCoord3, 0));
+
+		LFVContribution = weights.x * VolumeRGBT0 + weights.y * VolumeRGBT1 + weights.z * VolumeRGBT2 + weights.w * VolumeRGBT3;
+	}
+	else
+	{
+		// This is needed when half res is not exactly a multiple of 2, for the bilinear filtering to work nicely.
+		const float2 ResolutionRatioCorrection = (ResolvedView.ViewSizeAndInvSize.xy * LFVHalfResTextureSizeAndInvSize.zw * 0.5);
+		const float2 HalfResSourceTexCoord = float2(SVPos.xy - ResolvedView.ViewRectMin.xy) * ResolvedView.ViewSizeAndInvSize.zw * ResolutionRatioCorrection;
+		LFVContribution = Texture2DSampleLevel(HalfResLocalFogVolumeViewSRV, HalfResLocalFogVolumeViewSRVSampler, HalfResSourceTexCoord, 0.0f); // Simple bilinear filtering for increased performance
+	}
+
+	// HalfResLocalFogVolumeViewSRV contains pre exposed color, so remove it for composition.
+	LFVContribution.rgb /= ResolvedView.PreExposure;
+
+	// Combine with the curren fog
+	FinalFog = float4(LFVContribution.rgb + FinalFog.rgb * LFVContribution.a, LFVContribution.a * FinalFog.a);
+
+#endif // PERMUTATION_SUPPORT_LOCAL_FOG_VOLUME
+
 #if PERMUTATION_SUPPORT_VOLUMETRIC_FOG
 	if (FogStruct.ApplyVolumetricFog > 0) 
-		{
-			const uint EyeIndex = 0;
-			float3 VolumeUV = ComputeVolumeUV(LWCPromote(WorldPosition), ResolvedView.WorldToClip);
-			FinalFog = CombineVolumetricFog(FinalFog, VolumeUV, EyeIndex, SceneDepth);
-		}
+	{
+		const uint EyeIndex = 0;
+		float3 VolumeUV = ComputeVolumeUVFromTranslatedPos(TranslatedWorldPosition, ResolvedView.TranslatedWorldToClip);
+		FinalFog = CombineVolumetricFog(FinalFog, VolumeUV, EyeIndex, SceneDepth);
+	}
 #endif
 
 #if PERMUTATION_SUPPORT_AERIAL_PERSPECTIVE
-	if (ResolvedView.SkyAtmosphereApplyCameraAerialPerspectiveVolume > 0.0f)
+	if (ResolvedView.SkyAtmosphereApplyCameraAerialPerspectiveVolume > 0.0f && (DeviceZ != FarDepthValue))
 	{
-		
-
-	//	float4 NDCPosition = LWCMultiply(MakeLWCVector4(WorldPosition, 1.0f), PrimaryView.WorldToClip);		// LWC_TODO: MakeLWCVector4 seems broken
-		float4 NDCPosition = LWCMultiply(LWCPromote(float4(WorldPosition, 1.0f)), PrimaryView.WorldToClip);	// Using LWCPromote make the math work as expected.
+		float4 NDCPosition = mul(float4(TranslatedWorldPosition, 1.0f), PrimaryView.TranslatedWorldToClip);
 
 		// Sample the aerial perspective (AP). It is also blended under the VertexFog parameter.
 		FinalFog = GetAerialPerspectiveLuminanceTransmittanceWithFogOver(

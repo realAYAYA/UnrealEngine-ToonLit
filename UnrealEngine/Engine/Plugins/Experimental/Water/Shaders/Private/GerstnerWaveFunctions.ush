@@ -6,23 +6,24 @@
 
 #pragma once
 
+#include "WaterDataFunctions.ush"
+
 #define Gravity 980
 #define SOLVE_NORMAL_Z 1
 #define SteepnessThreshold 50
-#define PER_WAVE_DATA_SIZE 2
-
-struct FWaveParams
-{
-	float2 Direction;
-	float Wavelength;
-	float Amplitude;
-	float Steepness;
-};
 
 struct WaveOutput
 {
 	float3 Normal;
 	float3 WPO;
+};
+
+struct WaveOutputs
+{
+	WaveOutput LowFrequency;
+	WaveOutput MiddleFrequency;
+	WaveOutput HighFrequency;
+	WaveOutput AllWaves;
 };
 
 struct GerstnerWaveRenderer
@@ -283,56 +284,10 @@ float3 FinalizeNormalNew(float3 inNormal)
 	return normalize(float3(inNormal.xy, 1.0f - inNormal.z));
 }
 
-/** Struct containing the decoded water body header data  */	
-struct FWaterBodyHeader
-{
-	// Index into the actual wave data buffer
-	int DataIndex;
-
-	// Number of waves to be read from DataIndex
-	int NumWaves;
-	
-	// Target Wave Mask Depth
-	float TargetWaveMaskDepth;
-};
-
-/** Function to decode the raw data from the water indirection buffer */
-FWaterBodyHeader DecodeWaterBodyHeader(float4 InDataToDecode)
-{
-	FWaterBodyHeader OutWaterBodyHeader = (FWaterBodyHeader)0;
-	OutWaterBodyHeader.DataIndex = InDataToDecode.x; 
-	OutWaterBodyHeader.NumWaves = InDataToDecode.y; 
-	OutWaterBodyHeader.TargetWaveMaskDepth = InDataToDecode.z;
-	
-	return OutWaterBodyHeader;
-}
-
-/** Function to decode the data for an individual gerstner wave from the water data buffer */
-FWaveParams DecodeWaveParams(float4 InDataToDecode0, float4 InDataToDecode1)
-{
-	FWaveParams OutWaveParams = (FWaveParams)0;
-	OutWaveParams.Direction = InDataToDecode0.xy;
-	OutWaveParams.Wavelength = InDataToDecode0.z;
-	OutWaveParams.Amplitude = InDataToDecode0.w;
-	OutWaveParams.Steepness = InDataToDecode1.x;
-
-	return OutWaveParams;
-}
-
-FWaveParams GetWaveDataNew(int InWaveIndex, FWaterBodyHeader InWaterBodyHeader)
-{
-	const int AbsoluteWaveDataIndex = InWaterBodyHeader.DataIndex + (InWaveIndex * PER_WAVE_DATA_SIZE);
-
-	float4 Data0 = View.WaterData[AbsoluteWaveDataIndex];
-	float4 Data1 = View.WaterData[AbsoluteWaveDataIndex + 1];
-		
-	return DecodeWaveParams(Data0, Data1);
-}
-
 FWaveParams GetWaveDataByWaveIndexNew(int InWaterBodyIndex, int InWaveIndex)
 {
-	const FWaterBodyHeader WaterBodyHeader = DecodeWaterBodyHeader(View.WaterIndirection[InWaterBodyIndex]);
-	return GetWaveDataNew(InWaveIndex, WaterBodyHeader);
+	const FWaterBodyData WaterBodyData = GetWaterBodyData(InWaterBodyIndex);
+	return GetWaveDataNew(InWaveIndex, WaterBodyData);
 }
 
 float3 PackNormalAndWPONew(WaveOutput inWave)
@@ -345,11 +300,11 @@ float3 PackNormalAndWPONew(WaveOutput inWave)
 	return packedoutput;
 }
 
-WaveOutput GetSingleGerstnerWaveNew(int InWaveIndex, FWaterBodyHeader InWaterBodyHeader, float InTime, FLWCVector2 InWorldPos)
+WaveOutput GetSingleGerstnerWaveNew(int InWaveIndex, FWaterBodyData InWaterBodyData, float InTime, FDFVector2 InWorldPos)
 {
 	WaveOutput OutWave = (WaveOutput)0;
 		
-	FWaveParams CurrentWave = GetWaveDataNew(InWaveIndex, InWaterBodyHeader);
+	FWaveParams CurrentWave = GetWaveDataNew(InWaveIndex, InWaterBodyData);
 		
 	float Dispersion = 2 * PI / CurrentWave.Wavelength;
 	float2 WaveVector = CurrentWave.Direction * Dispersion;
@@ -358,12 +313,12 @@ WaveOutput GetSingleGerstnerWaveNew(int InWaveIndex, FWaterBodyHeader InWaterBod
 
 	// Use the offset of the normalized tile as world position.
 	// Doing proper LWC math is both more expensive and leads to less smooth/precise results.
-	InWorldPos = LWCNormalizeTile(InWorldPos);
-	float2 WorldPos = InWorldPos.Offset;
-
+	FLWCVector2 LWCWorldPos = DFToTileOffset_Hack(InWorldPos);
+	float2 WorldPos = LWCWorldPos.Offset;	
+	
 	float WavePos = dot(WorldPos, WaveVector) - WaveTime;
-	float WaveSin = sin(WavePos);
-	float WaveCos = cos(WavePos);
+	float WaveSin, WaveCos;
+	sincos(WavePos, WaveSin, WaveCos);
 
 	// Fix up tile borders by blending between them
 	const float2 TileBorderDist = (UE_LWC_RENDER_TILE_SIZE * 0.5f) - abs(WorldPos);
@@ -400,16 +355,17 @@ WaveOutput GetSingleGerstnerWaveNew(int InWaveIndex, FWaterBodyHeader InWaterBod
 		
 }
 
-WaveOutput GetAllGerstnerWavesNew(int InWaterBodyIndex, float InTime, FLWCVector2 InWorldPos)
+WaveOutput GetAllGerstnerWavesNew(int InWaterBodyIndex, float InTime, FDFVector2 InWorldPos)
 {		
 	WaveOutput OutWaves = (WaveOutput)0;
 	WaveOutput CurrentWave = (WaveOutput)0;
-		
-	const FWaterBodyHeader WaterBodyHeader = DecodeWaterBodyHeader(View.WaterIndirection[InWaterBodyIndex]);
+	
+	const FWaterBodyData WaterBodyData = GetWaterBodyData(InWaterBodyIndex);
+	const int NumWaves = WaterBodyData.NumWaves;
 
-	for (int i = 0; i < WaterBodyHeader.NumWaves; i++)
+	for (int i = 0; i < NumWaves; i++)
 	{
-		CurrentWave = GetSingleGerstnerWaveNew(i, WaterBodyHeader, InTime, InWorldPos);
+		CurrentWave = GetSingleGerstnerWaveNew(i, WaterBodyData, InTime, InWorldPos);
 		OutWaves = AddWavesNew(OutWaves, CurrentWave);
 	}
 		
@@ -417,20 +373,23 @@ WaveOutput GetAllGerstnerWavesNew(int InWaterBodyIndex, float InTime, FLWCVector
 	OutWaves.Normal = FinalizeNormalNew(OutWaves.Normal);
 	return OutWaves;
 }
+
+WaveOutput GetAllGerstnerWavesNew(int InWaterBodyIndex, float InTime, FLWCVector2 InWorldPos) { return GetAllGerstnerWavesNew(InWaterBodyIndex, InTime, DFFromTileOffset(InWorldPos)); }
 	
-WaveOutput GetRangeGerstnerWavesNew(int InMinWaveIndex, int InMaxWaveIndex, int InWaterBodyIndex, float InTime, FLWCVector2 InWorldPos)
+WaveOutput GetRangeGerstnerWavesNew(int InMinWaveIndex, int InMaxWaveIndex, int InWaterBodyIndex, float InTime, FDFVector2 InWorldPos)
 {
 	WaveOutput OutWaves = (WaveOutput)0;
 	WaveOutput CurrentWave = (WaveOutput)0;
 		
-	const FWaterBodyHeader WaterBodyHeader = DecodeWaterBodyHeader(View.WaterIndirection[InWaterBodyIndex]);
+	const FWaterBodyData WaterBodyData = GetWaterBodyData(InWaterBodyIndex);
+	const int NumWaves = WaterBodyData.NumWaves;
 
-	const int MaxWaveRange = min(InMaxWaveIndex + 1, WaterBodyHeader.NumWaves);
+	const int MaxWaveRange = min(InMaxWaveIndex + 1, NumWaves);
 	const int MinWaveRange = max(0, InMinWaveIndex);
 
 	for (int i = MinWaveRange; i < MaxWaveRange; i++)
 	{
-		CurrentWave = GetSingleGerstnerWaveNew(i, WaterBodyHeader, InTime, InWorldPos);
+		CurrentWave = GetSingleGerstnerWaveNew(i, WaterBodyData, InTime, InWorldPos);
 		OutWaves = AddWavesNew(OutWaves, CurrentWave);
 	}
 		
@@ -438,16 +397,36 @@ WaveOutput GetRangeGerstnerWavesNew(int InMinWaveIndex, int InMaxWaveIndex, int 
 	OutWaves.Normal = FinalizeNormalNew(OutWaves.Normal);
 		
 	return OutWaves;
+}
+
+WaveOutputs GetPerFrequencyGerstnerWavesNew(int LowFrequencyMaxIndex, int MiddleFrequencyMaxIndex, int InWaterBodyIndex, float InTime, FDFVector2 InWorldPos)
+{
+	const int NumWaves = GetWaterBodyData(InWaterBodyIndex).NumWaves;
+	// Correct bad user input. Further input handling is done internally inside GetRangeGerstnerWavesNew to ensure the index ranges are valid for the number of waves in a given water body.
+	MiddleFrequencyMaxIndex = max(LowFrequencyMaxIndex + 1, MiddleFrequencyMaxIndex);
+	
+	WaveOutputs Result = (WaveOutputs)0;
+	Result.LowFrequency = GetRangeGerstnerWavesNew(0, LowFrequencyMaxIndex, InWaterBodyIndex, InTime, InWorldPos);
+	Result.MiddleFrequency = GetRangeGerstnerWavesNew(LowFrequencyMaxIndex + 1, MiddleFrequencyMaxIndex, InWaterBodyIndex, InTime, InWorldPos);
+	Result.HighFrequency = GetRangeGerstnerWavesNew(MiddleFrequencyMaxIndex + 1, NumWaves, InWaterBodyIndex, InTime, InWorldPos);
+	Result.AllWaves = AddWavesNew(Result.LowFrequency, AddWavesNew(Result.HighFrequency, Result.MiddleFrequency));
+
+	return Result;
+}
+
+WaveOutputs GetPerFrequencyGerstnerWavesNew(int LowFrequencyMaxIndex, int MiddleFrequencyMaxIndex, int InWaterBodyIndex, float InTime, FLWCVector2 InWorldPos)
+{
+	return GetPerFrequencyGerstnerWavesNew(LowFrequencyMaxIndex, MiddleFrequencyMaxIndex, InWaterBodyIndex, InTime, DFFromTileOffset(InWorldPos));
 }
 
 /** Returns the wave attenuation factor according to a given water body and a given water depth. Should match the CPU version (GetWaveAttenuationFactor) */
 float ComputeWaveDepthAttenuationFactorNew(int InWaterBodyIndex, float InWaterDepth)
 {
-	const FWaterBodyHeader WaterBodyHeader = DecodeWaterBodyHeader(View.WaterIndirection[InWaterBodyIndex]);
+	const FWaterBodyData WaterBodyData = GetWaterBodyData(InWaterBodyIndex);
 
 	// Completely erase waves when there are no waves at all (in case waves are computed on a water body with no waves, like a swimming pool) :
-	const float TotalErasureFactor = saturate((float) WaterBodyHeader.NumWaves);
-	const float StrengthCoefficient = exp(-max(InWaterDepth, 0.0f) / (WaterBodyHeader.TargetWaveMaskDepth / 2.0f));
+	const float TotalErasureFactor = saturate((float)WaterBodyData.NumWaves);
+	const float StrengthCoefficient = exp(-max(InWaterDepth, 0.0f) / (WaterBodyData.TargetWaveMaskDepth / 2.0f));
 	return saturate(1.0f - StrengthCoefficient) * TotalErasureFactor;
 }
 

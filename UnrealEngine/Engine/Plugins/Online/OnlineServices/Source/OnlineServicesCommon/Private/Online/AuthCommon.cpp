@@ -11,15 +11,13 @@ namespace UE::Online {
 TSharedPtr<FAccountInfo> FAccountInfoRegistry::Find(FPlatformUserId PlatformUserId) const
 {
 	FReadScopeLock Lock(IndexLock);
-	const TSharedRef<FAccountInfo>* FoundPtr = AuthDataByPlatformUserId.Find(PlatformUserId);
-	return FoundPtr ? TSharedPtr<FAccountInfo>(*FoundPtr) : TSharedPtr<FAccountInfo>();
+	return FindNoLock(PlatformUserId);
 }
 
 TSharedPtr<FAccountInfo> FAccountInfoRegistry::Find(FAccountId AccountId) const
 {
 	FReadScopeLock Lock(IndexLock);
-	const TSharedRef<FAccountInfo>* FoundPtr = AuthDataByOnlineAccountIdHandle.Find(AccountId);
-	return FoundPtr ? TSharedPtr<FAccountInfo>(*FoundPtr) : TSharedPtr<FAccountInfo>();
+	return FindNoLock(AccountId);
 }
 
 TArray<TSharedRef<FAccountInfo>> FAccountInfoRegistry::GetAllAccountInfo(TFunction<bool(const TSharedRef<FAccountInfo>&)> Predicate) const
@@ -39,6 +37,18 @@ TArray<TSharedRef<FAccountInfo>> FAccountInfoRegistry::GetAllAccountInfo(TFuncti
 			return Value.Get<1>();
 		});
 	return Result;
+}
+
+TSharedPtr<FAccountInfo> FAccountInfoRegistry::FindNoLock(FPlatformUserId PlatformUserId) const
+{
+	const TSharedRef<FAccountInfo>* FoundPtr = AuthDataByPlatformUserId.Find(PlatformUserId);
+	return FoundPtr ? TSharedPtr<FAccountInfo>(*FoundPtr) : TSharedPtr<FAccountInfo>();
+}
+
+TSharedPtr<FAccountInfo> FAccountInfoRegistry::FindNoLock(FAccountId AccountId) const
+{
+	const TSharedRef<FAccountInfo>* FoundPtr = AuthDataByOnlineAccountIdHandle.Find(AccountId);
+	return FoundPtr ? TSharedPtr<FAccountInfo>(*FoundPtr) : TSharedPtr<FAccountInfo>();
 }
 
 void FAccountInfoRegistry::DoRegister(const TSharedRef<FAccountInfo>& AccountInfo)

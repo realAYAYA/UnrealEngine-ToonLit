@@ -185,7 +185,8 @@ bool URivermaxCustomTimeStep::WaitForNextFrame()
 	IRivermaxCoreModule& RivermaxModule = FModuleManager::GetModuleChecked<IRivermaxCoreModule>("RivermaxCore");
 	const uint64 CurrentPTPTime = RivermaxModule.GetRivermaxManager()->GetTime();
 	const double CurrentPlatformTime = FPlatformTime::Seconds();
-	const uint64 TargetTimeNanosec = UE::RivermaxCore::GetNextAlignmentPoint(CurrentPTPTime, FrameRate);
+	const uint64 DelayNanosec = AlignmentPointDelayMS * 1E6;
+	const uint64 TargetTimeNanosec = UE::RivermaxCore::GetNextAlignmentPoint(CurrentPTPTime, FrameRate) + DelayNanosec;
 
 	double TimeLeftNanosec = 0.0;
 	if(TargetTimeNanosec >= CurrentPTPTime)

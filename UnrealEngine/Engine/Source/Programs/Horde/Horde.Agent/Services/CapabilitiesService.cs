@@ -1,25 +1,22 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
-using System.Collections.Generic;
 using System.Diagnostics;
-using System.IO;
-using System.Linq;
 using System.Net;
+using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
-using System.Threading;
-using System.Threading.Tasks;
 using System.Xml;
 using Amazon.EC2;
 using Amazon.EC2.Model;
 using Amazon.Util;
 using EpicGames.Core;
+using EpicGames.Horde.Compute;
 using Horde.Agent.Execution;
 using HordeCommon.Rpc.Messages;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Microsoft.Management.Infrastructure;
+using AddressFamily = System.Net.Sockets.AddressFamily;
 
 namespace Horde.Agent.Services
 {
@@ -49,6 +46,25 @@ namespace Horde.Agent.Services
 		/// <param name="workingDir">Working directory for the agent</param>
 		/// <returns>Worker object for advertising to the server</returns>
 		public async Task<AgentCapabilities> GetCapabilitiesAsync(DirectoryReference? workingDir)
+		{
+			_logger.LogInformation("Querying agent capabilities... (may take up to 30 seconds)");
+			Stopwatch timer = Stopwatch.StartNew();
+
+			Task<AgentCapabilities> task = GetCapabilitiesInternalAsync(workingDir);
+			while (!task.IsCompleted)
+			{
+				Task delayTask = Task.Delay(TimeSpan.FromSeconds(30.0));
+				if (Task.WhenAny(task, delayTask) == delayTask)
+				{
+					_logger.LogWarning("GetCapabilitiesInternalAsync() has been running for {Time}", timer.Elapsed);
+				}
+			}
+			_logger.LogInformation("Agent capabilities queried in {Time} ms", timer.ElapsedMilliseconds);
+
+			return await task;
+		}
+
+		async Task<AgentCapabilities> GetCapabilitiesInternalAsync(DirectoryReference? workingDir)
 		{
 			ILogger logger = _logger;
 
@@ -126,9 +142,9 @@ namespace Horde.Agent.Services
 					AddCpuInfo(primaryDevice, cpuNameToCount, totalLogicalCores, totalPhysicalCores);
 
 					// Add RAM info
+					ulong totalCapacity = 0;
 					foreach (CimInstance instance in session.QueryInstances(QueryNamespace, QueryDialect, "select Capacity from Win32_PhysicalMemory"))
 					{
-						ulong totalCapacity = 0;
 						foreach (CimProperty property in instance.CimInstanceProperties)
 						{
 							if (property.Name.Equals("Capacity", StringComparison.OrdinalIgnoreCase) && property.Value is ulong capacity)
@@ -136,12 +152,8 @@ namespace Horde.Agent.Services
 								totalCapacity += capacity;
 							}
 						}
-
-						if (totalCapacity > 0)
-						{
-							primaryDevice.Properties.Add($"RAM={totalCapacity / (1024 * 1024 * 1024)}");
-						}
 					}
+					primaryDevice.Properties.Add($"RAM={totalCapacity / (1024 * 1024 * 1024)}");
 
 					// Add GPU info
 					int index = 0;
@@ -178,7 +190,7 @@ namespace Horde.Agent.Services
 				// Add EC2 properties if needed
 				if (_settings.EnableAwsEc2Support)
 				{
-					await AddAwsProperties(primaryDevice.Properties, logger);
+					await AddAwsPropertiesAsync(primaryDevice.Properties, logger);
 				}
 
 				// Add session information
@@ -200,7 +212,7 @@ namespace Horde.Agent.Services
 				// Add EC2 properties if needed
 				if (_settings.EnableAwsEc2Support)
 				{
-					await AddAwsProperties(primaryDevice.Properties, logger);
+					await AddAwsPropertiesAsync(primaryDevice.Properties, logger);
 				}
 
 				// Parse the CPU info
@@ -338,7 +350,6 @@ namespace Horde.Agent.Services
 			}
 
 			// Get the IP addresses
-			IPAddress? ip = null;
 			try
 			{
 				using CancellationTokenSource dnsCts = new(3000);
@@ -348,7 +359,6 @@ namespace Horde.Agent.Services
 					if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
 					{
 						primaryDevice.Properties.Add($"Ipv4={address}");
-						ip = address;
 					}
 					else if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
 					{
@@ -358,7 +368,13 @@ namespace Horde.Agent.Services
 			}
 			catch (Exception ex)
 			{
-				logger.LogDebug(ex, "Unable to get local IP address");
+				logger.LogWarning(ex, "Unable to get local IP addresses");
+			}
+
+			IPAddress? ip = await GetLocalIpAddressAsync(_settings.GetCurrentServerProfile().Url.Host);
+			if (ip == null)
+			{
+				logger.LogWarning("Unable to get local IP address");
 			}
 
 			// Add the compute configuration
@@ -414,9 +430,45 @@ namespace Horde.Agent.Services
 			agent.Devices.Add(primaryDevice);
 			agent.Devices.AddRange(otherDevices);
 
+			// Add the max supported compute protocol version
+			agent.Properties.Add($"ComputeProtocol={(int)ComputeProtocol.Latest}");
+
+			// Whether the agent is packaged as a self-contained .NET app
+			// Used during the transition period over from multi-platform, non-self-contained agent packages.
+			agent.Properties.Add($"SelfContained={AgentApp.IsSelfContained}");
+
 			// Add any additional properties from the config file
 			agent.Properties.AddRange(_settings.Properties.Select(kvp => $"{kvp.Key}={kvp.Value}"));
 			return agent;
+		}
+
+		/// <summary>
+		/// Resolve local IP address of agent
+		///
+		/// A machine can have multiple valid IP addresses, but not all suitable for accepting incoming traffic.
+		/// By establishing a socket to a well-known host on a relevant network, a better guess can be made.  
+		/// </summary>
+		/// <param name="hostname">A hostname to test against</param>
+		/// <param name="timeoutMs">Max time to wait for a connect, in milliseconds</param>
+		/// <returns>Local IP address of this machine</returns>
+		public static async Task<IPAddress?> GetLocalIpAddressAsync(string hostname, int timeoutMs = 2000)
+		{
+			try
+			{
+				using Socket socket = new(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.IP);
+				using CancellationTokenSource cts = new(timeoutMs);
+				// Port here is irrelevant as merely trying to connect is enough to get the local endpoint IP
+				await socket.ConnectAsync(hostname, 65530, cts.Token);
+				return (socket.LocalEndPoint as IPEndPoint)?.Address;
+			}
+			catch (SocketException)
+			{
+				return null;
+			}
+			catch (TaskCanceledException)
+			{
+				return null;
+			}
 		}
 
 		static void AddCpuInfo(DeviceCapabilities primaryDevice, Dictionary<string, int> nameToCount, int numLogicalCores, int numPhysicalCores)
@@ -484,7 +536,7 @@ namespace Horde.Agent.Services
 			return records;
 		}
 
-		static async Task AddAwsProperties(IList<string> properties, ILogger logger)
+		static async Task AddAwsPropertiesAsync(IList<string> properties, ILogger logger)
 		{
 			if (EC2InstanceMetadata.IdentityDocument != null)
 			{

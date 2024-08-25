@@ -38,7 +38,7 @@ void SDetailMultiTopLevelObjectTableRow::SetContent(TSharedRef<SWidget> InConten
 			]
 			+ SHorizontalBox::Slot()
 			.Expose(ContentSlot)
-			.Padding(FMargin(0, 0, 0, 16))
+			.Padding(FMargin(0.0f, 0.0f, 0.0f, 16.0f))
 			[
 				InContent
 			]

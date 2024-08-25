@@ -1,7 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System.Collections.Generic;
+using System.Linq;
 using EpicGames.Core;
+using Microsoft.Extensions.Logging;
+using UnrealBuildBase;
 
 namespace UnrealBuildTool
 {
@@ -88,6 +91,41 @@ namespace UnrealBuildTool
 		public override string ToString()
 		{
 			return Info.Name;
+		}
+
+		/// <summary>
+		/// Public entry point to validate a module
+		/// </summary>
+		/// <param name="logger"></param>
+		/// <returns>true if there are any fatal errors</returns>
+		public bool ValidatePlugin(ILogger logger)
+		{
+			bool anyErrors = false;
+			if (Dependencies != null)
+			{
+				foreach (UEBuildPlugin dependencyPlugin in Dependencies)
+				{
+					if (dependencyPlugin.Descriptor.bIsSealed)
+					{
+						logger.LogError("Plugin '{PluginName}' cannot depend on plugin '{DependencyPluginName}' because it is sealed.", Name, dependencyPlugin.Name);
+						anyErrors = true;
+					}
+					else if (Descriptor.DisallowedPlugins != null && Descriptor.DisallowedPlugins.Contains(dependencyPlugin.Name))
+					{
+						logger.LogError("Plugin '{PluginName}' cannot depend on plugin '{DependencyPluginName}' because it is disallowed.", Name, dependencyPlugin.Name);
+						anyErrors = true;
+					}
+				}
+			}
+
+			// Check that any plugins with the NoCode specifier do not contain modules.
+			if (Descriptor.bNoCode && Modules.Any())
+			{
+				logger.LogError("Plugin '{PluginName}' cannot contain any code or modules. See the plugin descriptor property `NoCode`", Name);
+				anyErrors = true;
+			}
+
+			return anyErrors;
 		}
 	}
 }

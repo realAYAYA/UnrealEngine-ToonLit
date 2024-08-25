@@ -11,9 +11,15 @@
 #include "ScopedTransaction.h"
 #include "SDetailExpanderArrow.h"
 #include "SDetailRowIndent.h"
+#include "DetailsViewStyle.h"
+#include "SDetailsView.h"
 #include "Serialization/JsonSerializer.h"
-#include "Styling/StyleColors.h"
+#include "UserInterface/Categories/CategoryMenuComboButtonBuilder.h"
 #include "UserInterface/PropertyEditor/PropertyEditorConstants.h"
+#include "Widgets/Input/SComboButton.h"
+#include "Widgets/Layout/SSeparator.h"
+#include "Brushes/SlateColorBrush.h"
+#include "ToolMenus.h"
 
 void SDetailCategoryTableRow::Construct(const FArguments& InArgs, TSharedRef<FDetailTreeNode> InOwnerTreeNode, const TSharedRef<STableViewBase>& InOwnerTableView)
 {
@@ -22,12 +28,21 @@ void SDetailCategoryTableRow::Construct(const FArguments& InArgs, TSharedRef<FDe
 	DisplayName = InArgs._DisplayName;
 	bIsInnerCategory = InArgs._InnerCategory;
 	bShowBorder = InArgs._ShowBorder;
+	bIsEmpty = InArgs._IsEmpty;
 
 	IDetailsViewPrivate* DetailsView = InOwnerTreeNode->GetDetailsView();
 	FDetailColumnSizeData& ColumnSizeData = DetailsView->GetColumnSizeData();
-	
-	PulseAnimation.AddCurve(0.0f, UE::PropertyEditor::Private::PulseAnimationLength, ECurveEaseFunction::CubicInOut);
+	ObjectName = InArgs._ObjectName;
+	DisplayManager = DetailsView->GetDisplayManager();
 
+	if (DisplayManager.IsValid() && DisplayManager->GetDetailsViewStyle())
+	{
+		DetailsViewStyle = DisplayManager->GetDetailsViewStyle();
+	}
+
+	InitializeDisplayManager();
+
+	PulseAnimation.AddCurve(0.0f, UE::PropertyEditor::Private::PulseAnimationLength, ECurveEaseFunction::CubicInOut);
 	CopyAction.ExecuteAction = FExecuteAction::CreateSP(this, &SDetailCategoryTableRow::OnCopyCategory);
 	CopyAction.CanExecuteAction = FCanExecuteAction::CreateSP(this, &SDetailCategoryTableRow::CanCopyCategory);
 
@@ -38,6 +53,9 @@ void SDetailCategoryTableRow::Construct(const FArguments& InArgs, TSharedRef<FDe
 	
 	PasteAction.ExecuteAction = FExecuteAction::CreateSP(this, &SDetailCategoryTableRow::OnPasteCategory);
 	PasteAction.CanExecuteAction = FCanExecuteAction::CreateSP(this, &SDetailCategoryTableRow::CanPasteCategory);
+
+	ResetToDefault.ExecuteAction = FExecuteAction::CreateSP(this, &SDetailCategoryTableRow::OnResetToDefaultCategory);
+	ResetToDefault.CanExecuteAction = FCanExecuteAction::CreateSP(this, &SDetailCategoryTableRow::CanResetToDefaultCategory);
 	
 	TSharedRef<SHorizontalBox> HeaderBox = SNew(SHorizontalBox)
 		+ SHorizontalBox::Slot()
@@ -50,21 +68,34 @@ void SDetailCategoryTableRow::Construct(const FArguments& InArgs, TSharedRef<FDe
 		+ SHorizontalBox::Slot()
 		.HAlign(HAlign_Left)
 		.VAlign(VAlign_Center)
-		.Padding(2, 0, 0, 0)
+		.Padding(2.0f, 0.0f, 0.0f, 0.0f)
 		.AutoWidth()
 		[
 			SNew(SDetailExpanderArrow, SharedThis(this))
-		]
-		+ SHorizontalBox::Slot()
-		.VAlign(VAlign_Center)
-		.Padding(4, 0, 0, 0)
-		.FillWidth(1)
-		[
-			SNew(STextBlock)
-			.Text(InArgs._DisplayName)
-			.Font(FAppStyle::Get().GetFontStyle(bIsInnerCategory ? PropertyEditorConstants::PropertyFontStyle : PropertyEditorConstants::CategoryFontStyle))
-			.TextStyle(FAppStyle::Get(), "DetailsView.CategoryTextStyle")
+				//if this is a stub category
+				.Visibility_Lambda([this]
+				{
+					if (bIsEmpty)
+					{
+						return EVisibility::Hidden;
+					}
+					return EVisibility::Visible;
+				})
 		];
+	
+	if (!InArgs._WholeRowHeaderContent)
+	{
+		HeaderBox->AddSlot()
+			.VAlign(VAlign_Center)
+			.Padding(4.0f, 0.0f, 0.0f, 0.0f)
+			.FillWidth(1)
+			[
+				SNew(STextBlock)
+				.Text(InArgs._DisplayName)
+				.Font(FAppStyle::Get().GetFontStyle(bIsInnerCategory ? PropertyEditorConstants::PropertyFontStyle : PropertyEditorConstants::CategoryFontStyle))
+				.TextStyle(FAppStyle::Get(), "DetailsView.CategoryTextStyle")
+			];
+	}
 
 	if (InArgs._HeaderContent.IsValid())
 	{
@@ -76,34 +107,36 @@ void SDetailCategoryTableRow::Construct(const FArguments& InArgs, TSharedRef<FDe
 			];
 	}
 
-	TWeakPtr<STableViewBase> OwnerTableViewWeak = InOwnerTableView;
-	auto GetScrollbarWellBrush = [this, OwnerTableViewWeak]()
+	OwnerTableViewWeak = InOwnerTableView;
+	PropertyUpdatedWidgetBuilder = DisplayManager->GetPropertyUpdatedWidget(FExecuteAction::CreateLambda( [this]
+		{
+			if( ResetToDefault.CanExecute())
+			{
+				ResetToDefault.Execute();
+			}
+		}), true, ObjectName );
+	if (PropertyUpdatedWidgetBuilder.IsValid())
 	{
-		return SDetailTableRowBase::IsScrollBarVisible(OwnerTableViewWeak) ?
-			FAppStyle::Get().GetBrush("DetailsView.GridLine") :
-			this->GetBackgroundImage();
-	};
-
-	auto GetScrollbarWellTint = [this, OwnerTableViewWeak]()
-	{
-		return SDetailTableRowBase::IsScrollBarVisible(OwnerTableViewWeak) ?
-			FSlateColor(EStyleColor::White) :
-			this->GetInnerBackgroundColor();
-	};
+		TAttribute<bool> IsHovered = TAttribute<bool>::CreateSP( this, &SDetailCategoryTableRow::IsHovered);
+		PropertyUpdatedWidgetBuilder->Bind_IsRowHovered(IsHovered);
+	}
 
 	this->ChildSlot
 	[
 		SNew(SBorder)
 		.BorderImage(FAppStyle::Get().GetBrush("DetailsView.GridLine"))
-		.Padding(FMargin(0, 0, 0, 1))
+		.Padding_Lambda([this]
+		{
+			return DetailsViewStyle ? DetailsViewStyle->GetRowPadding(!bIsInnerCategory) : 0;
+		})
 		[
-			SNew(SHorizontalBox)
-			+ SHorizontalBox::Slot()
+			SNew(SOverlay)
+			+ SOverlay::Slot()
 			[
 				SNew(SBorder)
 				.BorderImage(this, &SDetailCategoryTableRow::GetBackgroundImage)
 				.BorderBackgroundColor(this, &SDetailCategoryTableRow::GetInnerBackgroundColor)
-				.Padding(0)
+					.Padding(0.0f)
 				[
 					SNew(SBox)
 					.MinDesiredHeight(PropertyEditorConstants::PropertyRowHeight)
@@ -112,15 +145,47 @@ void SDetailCategoryTableRow::Construct(const FArguments& InArgs, TSharedRef<FDe
 					]
 				]
 			]
-			+ SHorizontalBox::Slot()
+			 + SOverlay::Slot()
 			.HAlign(HAlign_Right)
+			[
+			SNew(SBorder)
+			.BorderImage(new FSlateColorBrush(FLinearColor::Transparent))
+			.Visibility(EVisibility::Visible)
+			.Padding_Lambda([this]
+			{
+				return DetailsViewStyle ? DetailsViewStyle->GetCategoryButtonsMargin() : 0;
+			})
+			[
+
+			SNew(SHorizontalBox)
+			+SHorizontalBox::Slot()
+			.HAlign(HAlign_Right)
+			.VAlign(VAlign_Center)
 			.AutoWidth()
 			[
-				SNew(SBorder)
-				.BorderImage_Lambda(GetScrollbarWellBrush)
-				.BorderBackgroundColor_Lambda(GetScrollbarWellTint)
-				.Padding(FMargin(0, 0, SDetailTableRowBase::ScrollBarPadding, 0))
+			PropertyUpdatedWidgetBuilder.IsValid() ?
+								PropertyUpdatedWidgetBuilder->Bind_IsVisible(TAttribute<EVisibility>::CreateLambda([this]
+									{
+										return EVisibility::Visible;
+									})).GenerateWidget().ToSharedRef() :
+									SNullWidget::NullWidget
 			]
+			+SHorizontalBox::Slot()
+			.HAlign(HAlign_Right)
+			.VAlign(VAlign_Center)
+			.AutoWidth()
+			[
+			DisplayManager.IsValid() ?
+				*FCategoryMenuComboButtonBuilder( DisplayManager.ToSharedRef() )
+				.Set_OnGetContent(FOnGetContent::CreateLambda([this]
+				{
+					const TSharedPtr<SWidget> Menu = DisplayManager->GetCategoryMenu(ObjectName);
+					return Menu.IsValid() ? Menu.ToSharedRef() : SNullWidget::NullWidget;
+				})) :
+				SNullWidget::NullWidget
+			]
+			]
+			] 
 		]
 	];
 
@@ -159,50 +224,55 @@ FReply SDetailCategoryTableRow::OnMouseButtonUp(const FGeometry& MyGeometry, con
 	return SDetailTableRowBase::OnMouseButtonUp(MyGeometry, MouseEvent);
 }
 
-bool SDetailCategoryTableRow::OnContextMenuOpening(FMenuBuilder& MenuBuilder)
+void SDetailCategoryTableRow::PopulateContextMenu(UToolMenu* ToolMenu)
 {
-	// Don't add anything if neither actions are bound
-	if (!CopyAction.IsBound() || !PasteAction.IsBound())
-	{
-		return true;
-	}
-	
-	MenuBuilder.BeginSection(NAME_None, NSLOCTEXT("PropertyView", "EditHeading", "Edit"));
-	{
-		bool bLongDisplayName = false;
+	SDetailTableRowBase::PopulateContextMenu(ToolMenu);
 
-		FMenuEntryParams CopyContentParams;
-		CopyContentParams.LabelOverride = NSLOCTEXT("PropertyView", "CopyCategoryProperties", "Copy All Properties in Category");
-		CopyContentParams.ToolTipOverride = TAttribute<FText>::CreateLambda([this]()
+	FToolMenuSection& EditSection = ToolMenu->FindOrAddSection(TEXT("Edit"));
+	{
+		// Don't add anything if neither actions are bound
+		if (CopyAction.IsBound() && PasteAction.IsBound())
 		{
-			return CanCopyCategory()
-				? NSLOCTEXT("PropertyView", "CopyCategoryProperties_ToolTip", "Copy all properties in this category")
-				: NSLOCTEXT("PropertyView", "CantCopyCategoryProperties_ToolTip", "None of the properties in this category can be copied");
-		});
-		CopyContentParams.InputBindingOverride = FInputChord(EModifierKey::Shift, EKeys::RightMouseButton).GetInputText(bLongDisplayName);
-		CopyContentParams.IconOverride = FSlateIcon(FCoreStyle::Get().GetStyleSetName(), "GenericCommands.Copy");
-		CopyContentParams.DirectActions = CopyAction;
-		
-		
-		MenuBuilder.AddMenuEntry(CopyContentParams);
+			bool bLongDisplayName = false;
 
-		FMenuEntryParams PasteContentParams;
-		PasteContentParams.LabelOverride = NSLOCTEXT("PropertyView", "PasteCategoryProperties", "Paste All Properties in Category");
-		PasteContentParams.ToolTipOverride = TAttribute<FText>::CreateLambda([this]()
-		{
-			return CanPasteCategory()
-				? NSLOCTEXT("PropertyView", "PasteCategoryProperties_ToolTip", "Paste the copied property values here")
-				// @note: this is specific to the constraint that the destination category has to match the source category (copied from) exactly 
-				: NSLOCTEXT("PropertyView", "CantPasteCategoryProperties_ToolTip", "The properties in this category don't match the contents of the clipboard");
-		});
-		PasteContentParams.InputBindingOverride = FInputChord(EModifierKey::Shift, EKeys::LeftMouseButton).GetInputText(bLongDisplayName);
-		PasteContentParams.IconOverride = FSlateIcon(FCoreStyle::Get().GetStyleSetName(), "GenericCommands.Paste");
-		PasteContentParams.DirectActions = PasteAction;
-		MenuBuilder.AddMenuEntry(PasteContentParams);
+			{
+				// Copy
+				{
+					FToolMenuEntry& CopyMenuEntry = EditSection.AddMenuEntry(
+						TEXT("Copy"),
+						NSLOCTEXT("PropertyView", "CopyCategoryProperties", "Copy All Properties in Category"),
+						TAttribute<FText>::CreateLambda([this]()
+						{
+							return CanCopyCategory()
+								? NSLOCTEXT("PropertyView", "CopyCategoryProperties_ToolTip", "Copy all properties in this category")
+								: NSLOCTEXT("PropertyView", "CantCopyCategoryProperties_ToolTip", "None of the properties in this category can be copied");
+						}),
+						FSlateIcon(FCoreStyle::Get().GetStyleSetName(), "GenericCommands.Copy"),
+						CopyAction);
+
+					CopyMenuEntry.InputBindingLabel = FInputChord(EModifierKey::Shift, EKeys::RightMouseButton).GetInputText(bLongDisplayName);
+				}
+
+				// Paste
+				{
+					FToolMenuEntry& PasteMenuEntry = EditSection.AddMenuEntry(
+						TEXT("Paste"),
+						NSLOCTEXT("PropertyView", "PasteCategoryProperties", "Paste All Properties in Category"),
+						TAttribute<FText>::CreateLambda([this]()
+						{
+							return CanPasteCategory()
+								? NSLOCTEXT("PropertyView", "PasteCategoryProperties_ToolTip", "Paste the copied property values here")
+								// @note: this is specific to the constraint that the destination category has to match the source category (copied from) exactly 
+								: NSLOCTEXT("PropertyView", "CantPasteCategoryProperties_ToolTip", "The properties in this category don't match the contents of the clipboard");
+						}),
+						FSlateIcon(FCoreStyle::Get().GetStyleSetName(), "GenericCommands.Paste"),
+						PasteAction);
+
+					PasteMenuEntry.InputBindingLabel = FInputChord(EModifierKey::Shift, EKeys::LeftMouseButton).GetInputText(bLongDisplayName);
+				}
+			}
+		}
 	}
-	MenuBuilder.EndSection();
-	
-	return true;
 }
 
 EVisibility SDetailCategoryTableRow::IsSeparatorVisible() const
@@ -210,6 +280,7 @@ EVisibility SDetailCategoryTableRow::IsSeparatorVisible() const
 	return bIsInnerCategory || IsItemExpanded() ? EVisibility::Collapsed : EVisibility::Visible;
 }
 
+/* TODO ~ refactor to not require styling of row and scrollbar well separately */
 const FSlateBrush* SDetailCategoryTableRow::GetBackgroundImage() const
 {
 	if (bShowBorder)
@@ -219,14 +290,27 @@ const FSlateBrush* SDetailCategoryTableRow::GetBackgroundImage() const
 			return FAppStyle::Get().GetBrush("DetailsView.CategoryMiddle");
 		}
 
-		// intentionally no hover on outer categories
-		return FAppStyle::Get().GetBrush("DetailsView.CategoryTop");
+		const bool bIsScrollBarNeeded = IsScrollBarVisible(OwnerTableViewWeak);
+		DisplayManager->SetIsScrollBarNeeded(bIsScrollBarNeeded);
+		const bool bIsCategoryExpanded = IsItemExpanded() && !bIsEmpty;
+		return DetailsViewStyle ? DetailsViewStyle->GetBackgroundImageForCategoryRow(bShowBorder, bIsInnerCategory, bIsCategoryExpanded) : nullptr;
 	}
-
 	return nullptr;
 }
 
-FSlateColor SDetailCategoryTableRow::GetInnerBackgroundColor() const
+const FSlateBrush* SDetailCategoryTableRow::GetBackgroundImageForScrollBarWell() const
+{
+	if (bShowBorder)
+	{
+		const bool bIsCategoryExpanded = IsItemExpanded() && !bIsEmpty;
+		const bool bIsScrollBarVisible = IsScrollBarVisible(OwnerTableViewWeak);
+		return DetailsViewStyle ? DetailsViewStyle->GetBackgroundImageForScrollBarWell(
+			bShowBorder, bIsInnerCategory, bIsCategoryExpanded, bIsScrollBarVisible) : nullptr;
+	}
+	return nullptr;
+}
+
+FSlateColor SDetailCategoryTableRow::	GetInnerBackgroundColor() const
 {
 	FSlateColor Color = FSlateColor(FLinearColor::White);
 	
@@ -350,7 +434,10 @@ void SDetailCategoryTableRow::OnPasteCategory()
 			const FGuid OperationGuid = FGuid::NewGuid();			
 			for (const TPair<FName, FString>& KVP : PreviousClipboardData.PropertyValues)
 			{
-				OnPasteFromTextDelegate->Broadcast(KVP.Key.ToString(), KVP.Value, OperationGuid);
+				if ( OnPasteFromTextDelegate.IsValid() )
+				{
+					OnPasteFromTextDelegate->Broadcast(KVP.Key.ToString(), KVP.Value, OperationGuid);
+				}
 			}
 		}
 		
@@ -434,6 +521,34 @@ bool SDetailCategoryTableRow::CanPasteCategory()
 	return PreviousClipboardData.bIsApplicable = Algo::Compare(PreviousClipboardData.PropertyNames, PropertyNames);
 }
 
+void SDetailCategoryTableRow::OnResetToDefaultCategory()
+{
+	if (!OwnerTreeNode.IsValid())
+	{
+		return;
+	}
+
+	if (TArray<TSharedPtr<IPropertyHandle>> CategoryProperties = GetPropertyHandles(true);
+		!CategoryProperties.IsEmpty())
+	{
+		for (TSharedPtr<IPropertyHandle> PropertyHandle : CategoryProperties)
+		{
+			PropertyHandle->ResetToDefault();
+		}
+	}
+}
+
+bool SDetailCategoryTableRow::CanResetToDefaultCategory() const
+{
+	if (!OwnerTreeNode.IsValid())
+	{
+		return false;
+	}
+
+	TArray<TSharedPtr<IPropertyHandle>> PropertyHandles = GetPropertyHandles(true);
+	return !PropertyHandles.IsEmpty();
+}
+
 FReply SDetailCategoryTableRow::OnMouseButtonDown(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
 {
 	if (MouseEvent.GetModifierKeys().IsShiftDown())
@@ -454,4 +569,13 @@ FReply SDetailCategoryTableRow::OnMouseButtonDown(const FGeometry& MyGeometry, c
 FReply SDetailCategoryTableRow::OnMouseButtonDoubleClick(const FGeometry& InMyGeometry, const FPointerEvent& InMouseEvent)
 {
 	return OnMouseButtonDown(InMyGeometry, InMouseEvent);
+}
+
+void SDetailCategoryTableRow::InitializeDisplayManager()
+{
+	if (DisplayManager.IsValid())
+	{
+		DisplayManager->SetCategoryObjectName( ObjectName );
+		DisplayManager->SetIsOuterCategory( !bIsInnerCategory );
+	}
 }

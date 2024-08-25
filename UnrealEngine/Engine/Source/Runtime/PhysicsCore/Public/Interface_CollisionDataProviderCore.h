@@ -19,6 +19,9 @@ struct FTriIndices
 	}
 };
 
+#if WITH_EDITORONLY_DATA
+PHYSICSCORE_API void operator<<(class FArchive& Ar, FTriIndices& TriIndices);
+#endif
 
 // Description of triangle mesh collision data necessary for cooking physics data
 struct FTriMeshCollisionData
@@ -55,6 +58,10 @@ struct FTriMeshCollisionData
 	{
 	}
 };
+
+#if WITH_EDITORONLY_DATA
+PHYSICSCORE_API void operator<<(class FArchive& Ar, FTriMeshCollisionData& TriMeshCollisionData);
+#endif
 
 // Estimates of triangle mesh collision data necessary for cooking physics data
 struct FTriMeshCollisionDataEstimates

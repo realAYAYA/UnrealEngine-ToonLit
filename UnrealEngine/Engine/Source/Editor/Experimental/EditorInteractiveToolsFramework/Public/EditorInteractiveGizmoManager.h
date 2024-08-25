@@ -25,6 +25,8 @@ class UInteractiveGizmoBuilder;
 class UObject;
 class UTypedElementSelectionSet;
 struct FToolBuilderState;
+class UTransformGizmo;
+struct FGizmosParameters;
 
 USTRUCT()
 struct FActiveEditorGizmo
@@ -110,24 +112,6 @@ public:
 	}
 
 	/**
-	 * Try to automatically activate a new Gizmo instance based on the current selection set state
-	 * @return array of new Gizmo instances that have been created and initialized
-	 */
-	virtual TArray<UInteractiveGizmo*> CreateGizmosForCurrentSelectionSet();
-
-	/**
-	 * Try to automatically activate a new Gizmo instance based on the current state
-	 * @return array of new Gizmo instances that have been created and initialized
-	 */
-	virtual UInteractiveGizmoBuilder* GetTransformGizmoBuilder();
-
-	/**
-	 * Handle Editor selection changes
-	 * @param InSelectionSet - typed element selection set which invoked this selection changed call
-	 */
-	void HandleEditorSelectionSetChanged(const UTypedElementSelectionSet* InSelectionSet);
-
-	/**
 	 * Shutdown and remove a selection-based Gizmo
 	 * @param Gizmo the Gizmo to shutdown and remove
 	 * @return true if the Gizmo was found and removed
@@ -138,6 +122,49 @@ public:
 	 * Shutdown and remove all active auto gizmos
 	 */
 	virtual void DestroyAllEditorGizmos();
+
+	/** Try to activate a new Gizmo instance (UInteractiveGizmoManager override) */	
+	virtual UInteractiveGizmo* CreateGizmo(
+		const FString& BuilderIdentifier, const FString& InstanceIdentifier = FString(), void* Owner = nullptr) override;
+
+	/** Shutdown and remove a Gizmo (UInteractiveGizmoManager override) */
+	virtual bool DestroyGizmo(UInteractiveGizmo* InGizmo) override;
+
+	/** instance/builder identifiers for transform gizmo */
+	static const FString& TransformInstanceIdentifier();
+	static const FString& TransformBuilderIdentifier();
+
+	/**
+	 * Returns true if the new TRS gizmos are used.
+	 */
+	static bool UsesNewTRSGizmos();
+
+	/**
+	 * Updates the current New TRS Gizmo state and notifies that change using OnUsesNewTRSGizmosChangedDelegate  
+	 */
+	static void SetUsesNewTRSGizmos(const bool bUseNewTRSGizmos);
+
+	/**
+	 * Delegate to notify from bUseNewTRSGizmos changes  
+	 */
+	DECLARE_MULTICAST_DELEGATE_OneParam(FOnUsesNewTRSGizmosChanged, const bool bUseNewTRSGizmos);
+	static FOnUsesNewTRSGizmosChanged& OnUsesNewTRSGizmosChangedDelegate();
+
+	/**
+	 * Notifies FGizmosParameters changes across bound transform gizmos
+	 */
+	static void SetGizmosParameters(const FGizmosParameters& InParameters);
+
+	/**
+	 * Delegate to notify from FGizmosParameters changes  
+	 */
+	DECLARE_MULTICAST_DELEGATE_OneParam(FOnGizmosParametersChanged, const FGizmosParameters& InParameters);
+    static FOnGizmosParametersChanged& OnGizmosParametersChangedDelegate();
+
+	/**
+	 * Returns the default gizmos parameters if set
+	 */
+    static const TOptional<FGizmosParameters>& GetDefaultGizmosParameters();
 
 protected:
 
@@ -157,7 +184,6 @@ protected:
 	 * Updates active selection gizmos when show selection state changes
 	 */
 	void UpdateActiveEditorGizmos();
-
 
 	/** Actual registry */
 	UPROPERTY()
@@ -179,4 +205,9 @@ protected:
 
 	/** Whether Editor gizmos are enabled. UpdateActiveEditorGizmos() determines this value each tick and updates if it has changed. */
 	bool bShowEditorGizmos = false;
+
+private:
+
+	/** Returns the existing default Gizmo instance if any. */
+	UTransformGizmo* FindDefaultTransformGizmo() const;
 };

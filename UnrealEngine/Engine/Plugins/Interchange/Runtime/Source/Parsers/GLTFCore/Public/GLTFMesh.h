@@ -5,6 +5,7 @@
 #include "GLTFAccessor.h"
 #include "CoreMinimal.h"
 
+class FMD5;
 struct FMD5Hash;
 
 namespace GLTF
@@ -40,23 +41,49 @@ namespace GLTF
 		TArray<int32> VariantIndices;
 	};
 
-	struct GLTFCORE_API FMorphTarget
+	struct GLTFCORE_API FAttributeAccessors
+	{
+		FAttributeAccessors(const FAccessor& InPositionDisplacements, const FAccessor& InNormalDisplacements,
+							const FAccessor& InTangentDisplacements, 
+							const FAccessor& InTexCoord0Displacements, const FAccessor& InTexCoord1Displacements, 
+							const FAccessor& InColor0Deltas);
+
+		FAttributeAccessors(const FAccessor& InPosition, const FAccessor& InNormal,
+							const FAccessor& InTangent, 
+							const FAccessor& InTexCoord0, const FAccessor& InTexCoord1, 
+							const FAccessor& InColor0, 
+							const FAccessor& InJoints0, const FAccessor& InWeights0);
+
+	protected:
+		bool HasAttributeAccessor(const EMeshAttributeType& Type) const;
+		const FAccessor& GetAttributeAccessor(const EMeshAttributeType& Type) const;
+		
+		bool AreAttributeAccessorsValid(bool& bHasData, uint32 ExpectedElementCount) const;
+
+		void HashAttributes(FMD5& MD5) const;
+
+	private:
+		TArray<TPair<EMeshAttributeType, const FAccessor&>> AttributeAccessors;
+		const bool bMorphTarget;
+	};
+
+	struct GLTFCORE_API FMorphTarget : FAttributeAccessors
 	{
 		FMorphTarget(const FAccessor& InPositionDisplacements, const FAccessor& InNormalDisplacements,
 			const FAccessor& InTangentDisplacements, const FAccessor& InTexCoord0Displacements, const FAccessor& InTexCoord1Displacements, const FAccessor& InColor0Deltas);
 
-		bool IsValid() const;
+		bool IsValid(uint32 ExpectedElementCount) const;
 		FMD5Hash GetHash() const;
 
-		bool HasPositionDisplacements() const;
+		bool HasPositionDisplacements() const { return HasAttributeAccessor(EMeshAttributeType::POSITION); };
 		void GetPositionDisplacements(TArray<FVector3f>& Buffer) const;
 		int32 GetNumberOfPositionDisplacements() const;
 
-		bool HasNormalDisplacements() const;
+		bool HasNormalDisplacements() const { return HasAttributeAccessor(EMeshAttributeType::NORMAL); };
 		void GetNormalDisplacements(TArray<FVector3f>& Buffer) const;
 		int32 GetNumberOfNormalDisplacements() const;
 
-		bool HasTangentDisplacements() const;
+		bool HasTangentDisplacements() const { return HasAttributeAccessor(EMeshAttributeType::TANGENT); };
 		void GetTangentDisplacements(TArray<FVector4f>& Buffer) const;
 		int32 GetNumberOfTangentDisplacements() const;
 
@@ -64,20 +91,12 @@ namespace GLTF
 		void GetTexCoordDisplacements(uint32 Index, TArray<FVector2f>& Buffer) const;
 		int32 GetNumberOfTexCoordDisplacements(uint32 Index) const;
 
-		bool HasColorDeltas() const;
+		bool HasColorDeltas() const { return HasAttributeAccessor(EMeshAttributeType::COLOR_0); };
 		void GetColorDeltas(TArray<FVector4f>& Buffer) const;
 		int32 GetNumberOfColorDeltas() const;
-
-	private:
-		const FAccessor& PositionDisplacements;
-		const FAccessor& NormalDisplacements;
-		const FAccessor& TangentDisplacements;
-		const FAccessor& TexCoord0Displacements;
-		const FAccessor& TexCoord1Displacements;
-		const FAccessor& Color0Deltas;
 	};
 
-	struct GLTFCORE_API FPrimitive
+	struct GLTFCORE_API FPrimitive : FAttributeAccessors
 	{
 		enum class EMode
 		{
@@ -88,13 +107,15 @@ namespace GLTF
 			LineStrip = 3,
 			// initially supported
 			Triangles = 4,
-			// will be supported prior to release
 			TriangleStrip = 5,
 			TriangleFan   = 6,
 
 			//
 			Unknown = 7
 		};
+
+		static const TArray<EMode> SupportedModes;
+		static FString ToString(const EMode& Mode);
 
 		const EMode Mode;
 		const int32 MaterialIndex;
@@ -108,16 +129,18 @@ namespace GLTF
 		bool IsValid() const;
 		FMD5Hash GetHash() const;
 
-		void GetPositions(TArray<FVector3f>& Buffer) const;
-		bool HasNormals() const;
-		void GetNormals(TArray<FVector3f>& Buffer) const;
-		bool HasTangents() const;
-		void GetTangents(TArray<FVector4f>& Buffer) const;
+		bool HasPositions() const { return HasAttributeAccessor(EMeshAttributeType::POSITION); }
+		bool HasNormals() const { return HasAttributeAccessor(EMeshAttributeType::NORMAL); }
+		bool HasTangents() const { return HasAttributeAccessor(EMeshAttributeType::TANGENT); }
 		bool HasTexCoords(uint32 Index) const;
+		bool HasColors() const { return HasAttributeAccessor(EMeshAttributeType::COLOR_0); }
+		bool HasJointWeights() const { return HasAttributeAccessor(EMeshAttributeType::JOINTS_0) && HasAttributeAccessor(EMeshAttributeType::WEIGHTS_0); }
+
+		void GetPositions(TArray<FVector3f>& Buffer) const;
+		void GetNormals(TArray<FVector3f>& Buffer) const;
+		void GetTangents(TArray<FVector4f>& Buffer) const;
 		void GetTexCoords(uint32 Index, TArray<FVector2f>& Buffer) const;
 		void GetColors(TArray<FVector4f>& Buffer) const;
-		bool HasColors() const;
-		bool HasJointWeights() const;
 		void GetJointInfluences(TArray<FJointInfluence>& Buffer) const;
 
 		FTriangle TriangleVerts(uint32 T) const;
@@ -129,22 +152,15 @@ namespace GLTF
 		//
 		TArray<FMorphTarget> MorphTargets;
 
+		//
+		uint32 GetIndicesAccessorIndex() { return Indices.AccessorIndex; }
+		uint32 GetAttributeAccessorIndex(const EMeshAttributeType& Type) { return GetAttributeAccessor(Type).AccessorIndex; }
+
 	private:
 		bool IsValidPrivate() const;
 
 		// index buffer
 		const FAccessor& Indices;
-
-		// common attributes
-		const FAccessor& Position;  // always required
-		const FAccessor& Normal;
-		const FAccessor& Tangent;
-		const FAccessor& TexCoord0;
-		const FAccessor& TexCoord1;
-		const FAccessor& Color0;
-		// skeletal mesh attributes
-		const FAccessor& Joints0;
-		const FAccessor& Weights0;
 
 		//Validity cache:
 		TOptional<bool> bIsValidCache;
@@ -178,65 +194,6 @@ namespace GLTF
 		//Validity cache:
 		TOptional<bool> bIsValidCache;
 	};
-
-	//
-
-	inline bool FPrimitive::HasNormals() const
-	{
-		return Normal.IsValid();
-	}
-
-	inline bool FPrimitive::HasTangents() const
-	{
-		return Tangent.IsValid();
-	}
-
-	inline bool FPrimitive::HasTexCoords(uint32 Index) const
-	{
-		switch (Index)
-		{
-			case 0:
-				return TexCoord0.IsValid();
-			case 1:
-				return TexCoord1.IsValid();
-			default:
-				return false;
-		}
-	}
-
-	inline bool FPrimitive::HasColors() const
-	{
-		return Color0.IsValid() && (Color0.Type == FAccessor::EType::Vec3 || Color0.Type == FAccessor::EType::Vec4);
-	}
-
-	inline void FPrimitive::GetPositions(TArray<FVector3f>& Buffer) const
-	{
-		Position.GetCoordArray(Buffer);
-	}
-
-	inline void FPrimitive::GetNormals(TArray<FVector3f>& Buffer) const
-	{
-		Normal.GetCoordArray(Buffer);
-	}
-
-	inline void FPrimitive::GetTexCoords(uint32 Index, TArray<FVector2f>& Buffer) const
-	{
-		switch (Index)
-		{
-			case 0:
-				return TexCoord0.GetVec2Array(Buffer);
-			case 1:
-				return TexCoord1.GetVec2Array(Buffer);
-			default:
-				ensure(false);
-				break;
-		}
-	}
-
-	inline bool FPrimitive::HasJointWeights() const
-	{
-		return Joints0.IsValid() && Weights0.IsValid();
-	}
 
 	//
 

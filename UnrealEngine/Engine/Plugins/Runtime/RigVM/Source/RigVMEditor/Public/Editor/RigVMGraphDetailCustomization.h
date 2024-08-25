@@ -17,6 +17,7 @@
 #include "EdGraph/RigVMEdGraphSchema.h"
 #include "SAdvancedTransformInputBox.h"
 #include "Widgets/SRigVMGraphPinNameListValueWidget.h"
+#include "HAL/PlatformApplicationMisc.h"
 
 class IDetailLayoutBuilder;
 
@@ -189,8 +190,8 @@ public:
 	void OnNodeColorCancelled(FLinearColor OriginalColor);
 	FReply OnNodeColorClicked();
 	FText GetCurrentAccessSpecifierName() const;
-	void OnAccessSpecifierSelected( TSharedPtr<FString> SpecifierName, ESelectInfo::Type SelectInfo );
-	TSharedRef<ITableRow> HandleGenerateRowAccessSpecifier( TSharedPtr<FString> SpecifierName, const TSharedRef<STableViewBase>& OwnerTable );
+	void OnAccessSpecifierSelected( TSharedPtr<FRigVMStringWithTag> SpecifierName, ESelectInfo::Type SelectInfo );
+	TSharedRef<ITableRow> HandleGenerateRowAccessSpecifier( TSharedPtr<FRigVMStringWithTag> SpecifierName, const TSharedRef<STableViewBase>& OwnerTable );
 
 private:
 
@@ -209,7 +210,7 @@ private:
 	/** Set to true if the UI is currently picking a color */
 	bool bIsPickingColor;
 
-	static TArray<TSharedPtr<FString>> AccessSpecifierStrings;
+	static TArray<TSharedPtr<FRigVMStringWithTag>> AccessSpecifierStrings;
 };
 
 /** Customization for editing a rig vm node */
@@ -225,18 +226,147 @@ public:
 	// IDetailCustomization interface
 	virtual void CustomizeDetails(IDetailLayoutBuilder& DetailLayout) override;
 
-	TSharedRef<SWidget> MakeNameListItemWidget(TSharedPtr<FString> InItem);
+	TSharedRef<SWidget> MakeNameListItemWidget(TSharedPtr<FRigVMStringWithTag> InItem);
 	FText GetNameListText(FNameProperty* InProperty) const;
-	TSharedPtr<FString> GetCurrentlySelectedItem(FNameProperty* InProperty, const TArray<TSharedPtr<FString>>* InNameList) const;
+	TSharedPtr<FRigVMStringWithTag> GetCurrentlySelectedItem(FNameProperty* InProperty, const TArray<TSharedPtr<FRigVMStringWithTag>>* InNameList) const;
 	void SetNameListText(const FText& NewTypeInValue, ETextCommit::Type, FNameProperty* InProperty, TSharedRef<IPropertyUtilities> PropertyUtilities);
-	void OnNameListChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo, FNameProperty* InProperty, TSharedRef<IPropertyUtilities> PropertyUtilities);
-	void OnNameListComboBox(FNameProperty* InProperty, const TArray<TSharedPtr<FString>>* InNameList);
+	void OnNameListChanged(TSharedPtr<FRigVMStringWithTag> NewSelection, ESelectInfo::Type SelectInfo, FNameProperty* InProperty, TSharedRef<IPropertyUtilities> PropertyUtilities);
+	void OnNameListComboBox(FNameProperty* InProperty, const TArray<TSharedPtr<FRigVMStringWithTag>>* InNameList);
 	void CustomizeLiveValues(IDetailLayoutBuilder& DetailLayout);
 
 	URigVMBlueprint* BlueprintBeingCustomized;
 	TArray<TWeakObjectPtr<URigVMDetailsViewWrapperObject>> ObjectsBeingCustomized;
 	TArray<TWeakObjectPtr<URigVMNode>> NodesBeingCustomized;
 	TMap<FName, TSharedPtr<SRigVMGraphPinNameListValueWidget>> NameListWidgets;
+};
+
+/** Customization for editing a rig vm integer control enum class */
+class RIGVMEDITOR_API FRigVMGraphEnumDetailCustomization : public IPropertyTypeCustomization
+{
+public:
+
+	FRigVMGraphEnumDetailCustomization();
+	
+	static TSharedRef<IPropertyTypeCustomization> MakeInstance()
+	{
+		return MakeShareable(new FRigVMGraphEnumDetailCustomization);
+	}
+
+	/** IPropertyTypeCustomization interface */
+	virtual void CustomizeHeader(TSharedRef<class IPropertyHandle> InPropertyHandle, class FDetailWidgetRow& HeaderRow, IPropertyTypeCustomizationUtils& StructCustomizationUtils) override;
+	virtual void CustomizeChildren(TSharedRef<class IPropertyHandle> InPropertyHandle, class IDetailChildrenBuilder& StructBuilder, IPropertyTypeCustomizationUtils& StructCustomizationUtils) override;
+
+protected:
+
+	TArray<uint8*> GetMemoryBeingCustomized()
+	{
+		TArray<uint8*> MemoryPtr;
+		MemoryPtr.Reserve(ObjectsBeingCustomized.Num() + StructsBeingCustomized.Num());
+
+		for(const TWeakObjectPtr<UObject>& Object : ObjectsBeingCustomized)
+		{
+			if(Object.IsValid())
+			{
+				MemoryPtr.Add((uint8*)Object.Get());
+			}
+		}
+
+		for(const TSharedPtr<FStructOnScope>& StructPtr: StructsBeingCustomized)
+		{
+			if(StructPtr.IsValid())
+			{
+				MemoryPtr.Add(StructPtr->GetStructMemory());
+			}
+		}
+
+		return MemoryPtr;
+	}
+	
+	bool GetPropertyChain(TSharedRef<class IPropertyHandle> InPropertyHandle, FEditPropertyChain& OutPropertyChain, TArray<int32> &OutPropertyArrayIndices, bool& bOutEnabled)
+	{
+		if (!InPropertyHandle->IsValidHandle())
+		{
+			return false;
+		}
+		
+		OutPropertyChain.Empty();
+		OutPropertyArrayIndices.Reset();
+		bOutEnabled = false;
+
+		const bool bHasObject = !ObjectsBeingCustomized.IsEmpty() && ObjectsBeingCustomized[0].Get();
+		const bool bHasStruct = !StructsBeingCustomized.IsEmpty() && StructsBeingCustomized[0].Get();
+		
+		if (bHasStruct || bHasObject)
+		{
+			TSharedPtr<class IPropertyHandle> ChainHandle = InPropertyHandle;
+			while (ChainHandle.IsValid() && ChainHandle->GetProperty() != nullptr)
+			{
+				OutPropertyChain.AddHead(ChainHandle->GetProperty());
+				OutPropertyArrayIndices.Insert(ChainHandle->GetIndexInArray(), 0);
+				ChainHandle = ChainHandle->GetParentHandle();
+			}
+
+			if (OutPropertyChain.GetHead() != nullptr)
+			{
+				OutPropertyChain.SetActiveMemberPropertyNode(OutPropertyChain.GetTail()->GetValue());
+				bOutEnabled = !OutPropertyChain.GetHead()->GetValue()->HasAnyPropertyFlags(CPF_EditConst);
+				return true;
+			}
+		}
+		return false;
+	}
+
+	// extracts the value for a nested property from an outer owner
+	static UEnum** ContainerMemoryBlockToEnumPtr(uint8* InMemoryBlock, FEditPropertyChain& InPropertyChain, TArray<int32> &InPropertyArrayIndices)
+	{
+		if (InPropertyChain.GetHead() == nullptr)
+		{
+			return nullptr;
+		}
+		
+		FEditPropertyChain::TDoubleLinkedListNode* PropertyNode = InPropertyChain.GetHead();
+		uint8* MemoryPtr = InMemoryBlock;
+		int32 ChainIndex = 0;
+		do
+		{
+			const FProperty* Property = PropertyNode->GetValue();
+			MemoryPtr = Property->ContainerPtrToValuePtr<uint8>(MemoryPtr);
+
+			PropertyNode = PropertyNode->GetNextNode();
+			ChainIndex++;
+			
+			if(InPropertyArrayIndices.IsValidIndex(ChainIndex))
+			{
+				const int32 ArrayIndex = InPropertyArrayIndices[ChainIndex];
+				if(ArrayIndex != INDEX_NONE)
+				{
+					const FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Property->GetOwnerProperty());
+					check(ArrayProperty);
+					
+					FScriptArrayHelper ArrayHelper(ArrayProperty, MemoryPtr);
+					if(!ArrayHelper.IsValidIndex(ArrayIndex))
+					{
+						return nullptr;
+					}
+					MemoryPtr = ArrayHelper.GetRawPtr(ArrayIndex);
+
+					// skip to the next property node already
+					PropertyNode = PropertyNode->GetNextNode();
+					ChainIndex++;
+				}
+			}
+		}
+		while (PropertyNode);
+
+		return (UEnum**)MemoryPtr;
+	}
+
+	void HandleControlEnumChanged(TSharedPtr<FString> InEnumPath, ESelectInfo::Type InSelectType, TSharedRef<IPropertyHandle> InPropertyHandle);
+
+	URigVMBlueprint* BlueprintBeingCustomized;
+	URigVMGraph* GraphBeingCustomized;
+	TArray<TWeakObjectPtr<UObject>> ObjectsBeingCustomized;
+	TArray<TSharedPtr<FStructOnScope>> StructsBeingCustomized;
 };
 
 /** Customization for editing a rig vm node */
@@ -257,29 +387,59 @@ public:
 
 protected:
 
+	TArray<uint8*> GetMemoryBeingCustomized()
+	{
+		TArray<uint8*> MemoryPtr;
+		MemoryPtr.Reserve(ObjectsBeingCustomized.Num() + StructsBeingCustomized.Num());
+
+		for(const TWeakObjectPtr<UObject>& Object : ObjectsBeingCustomized)
+		{
+			if(Object.IsValid())
+			{
+				MemoryPtr.Add((uint8*)Object.Get());
+			}
+		}
+
+		for(const TSharedPtr<FStructOnScope>& StructPtr: StructsBeingCustomized)
+		{
+			if(StructPtr.IsValid())
+			{
+				MemoryPtr.Add(StructPtr->GetStructMemory());
+			}
+		}
+
+		return MemoryPtr;
+	}
+	
 	bool GetPropertyChain(TSharedRef<class IPropertyHandle> InPropertyHandle, FEditPropertyChain& OutPropertyChain, TArray<int32> &OutPropertyArrayIndices, bool& bOutEnabled)
 	{
+		if (!InPropertyHandle->IsValidHandle())
+		{
+			return false;
+		}
+		
 		OutPropertyChain.Empty();
 		OutPropertyArrayIndices.Reset();
 		bOutEnabled = false;
-		if (!ObjectsBeingCustomized.IsEmpty())
-		{
-			if (ObjectsBeingCustomized[0].Get())
-			{
-				TSharedPtr<class IPropertyHandle> ChainHandle = InPropertyHandle;
-				while (ChainHandle.IsValid() && ChainHandle->GetProperty() != nullptr)
-				{
-					OutPropertyChain.AddHead(ChainHandle->GetProperty());
-					OutPropertyArrayIndices.Insert(ChainHandle->GetIndexInArray(), 0);
-					ChainHandle = ChainHandle->GetParentHandle();					
-				}
 
-				if (OutPropertyChain.GetHead() != nullptr)
-				{
-					OutPropertyChain.SetActiveMemberPropertyNode(OutPropertyChain.GetTail()->GetValue());
-					bOutEnabled = !OutPropertyChain.GetHead()->GetValue()->HasAnyPropertyFlags(CPF_EditConst);
-					return true;
-				}
+		const bool bHasObject = !ObjectsBeingCustomized.IsEmpty() && ObjectsBeingCustomized[0].Get();
+		const bool bHasStruct = !StructsBeingCustomized.IsEmpty() && StructsBeingCustomized[0].Get();
+		
+		if (bHasStruct || bHasObject)
+		{
+			TSharedPtr<class IPropertyHandle> ChainHandle = InPropertyHandle;
+			while (ChainHandle.IsValid() && ChainHandle->GetProperty() != nullptr)
+			{
+				OutPropertyChain.AddHead(ChainHandle->GetProperty());
+				OutPropertyArrayIndices.Insert(ChainHandle->GetIndexInArray(), 0);
+				ChainHandle = ChainHandle->GetParentHandle();					
+			}
+
+			if (OutPropertyChain.GetHead() != nullptr)
+			{
+				OutPropertyChain.SetActiveMemberPropertyNode(OutPropertyChain.GetTail()->GetValue());
+				bOutEnabled = !OutPropertyChain.GetHead()->GetValue()->HasAnyPropertyFlags(CPF_EditConst);
+				return true;
 			}
 		}
 		return false;
@@ -287,7 +447,7 @@ protected:
 
 	// extracts the value for a nested property (for Example Settings.WorldTransform) from an outer owner
 	template<typename ValueType>
-	ValueType& ContainerUObjectToValueRef(UObject* InOwner, ValueType& InDefault, FEditPropertyChain& InPropertyChain, TArray<int32> &InPropertyArrayIndices) const
+	static ValueType& ContainerMemoryBlockToValueRef(uint8* InMemoryBlock, ValueType& InDefault, FEditPropertyChain& InPropertyChain, TArray<int32> &InPropertyArrayIndices)
 	{
 		if (InPropertyChain.GetHead() == nullptr)
 		{
@@ -295,7 +455,7 @@ protected:
 		}
 		
 		FEditPropertyChain::TDoubleLinkedListNode* PropertyNode = InPropertyChain.GetHead();
-		uint8* MemoryPtr = (uint8*)InOwner;
+		uint8* MemoryPtr = InMemoryBlock;
 		int32 ChainIndex = 0;
 		do
 		{
@@ -325,7 +485,6 @@ protected:
 					ChainIndex++;
 				}
 			}
-
 		}
 		while (PropertyNode);
 
@@ -348,13 +507,14 @@ protected:
 		{
 			return Result;
 		}
-	
-		for(const TWeakObjectPtr<UObject>& Object : ObjectsBeingCustomized)
+
+		const TArray<uint8*> MemoryBlocks = GetMemoryBeingCustomized();
+		for(uint8* MemoryBlock: MemoryBlocks)
 		{
-			if(Object.Get() && InPropertyHandle->IsValidHandle())
+			if(MemoryBlock)
 			{
 				static VectorType ZeroVector = VectorType();
-				const VectorType& Vector = ContainerUObjectToValueRef<VectorType>(Object.Get(), ZeroVector, PropertyChain, PropertyArrayIndices);
+				const VectorType& Vector = ContainerMemoryBlockToValueRef<VectorType>(MemoryBlock, ZeroVector, PropertyChain, PropertyArrayIndices);
 				NumericType Component = Vector[InComponent];
 				if(Result.IsSet())
 				{
@@ -376,6 +536,11 @@ protected:
 	template<typename VectorType, typename NumericType>
 	void OnVectorComponentChanged(TSharedRef<class IPropertyHandle> InPropertyHandle, int32 InComponent, NumericType InValue, bool bIsCommit, ETextCommit::Type InCommitType = ETextCommit::Default)
 	{
+		if (ObjectsBeingCustomized.IsEmpty())
+		{
+			return;
+		}
+		
 		FEditPropertyChain PropertyChain;
 		TArray<int32> PropertyArrayIndices;
 		bool bEnabled;
@@ -412,7 +577,7 @@ protected:
 			if(Object.Get() && InPropertyHandle->IsValidHandle())
 			{
 				static VectorType ZeroVector = VectorType();
-				VectorType& Vector = ContainerUObjectToValueRef<VectorType>(Object.Get(), ZeroVector, PropertyChain, PropertyArrayIndices);
+				VectorType& Vector = ContainerMemoryBlockToValueRef<VectorType>((uint8*)Object.Get(), ZeroVector, PropertyChain, PropertyArrayIndices);
 				VectorType PreviousVector = Vector;
 				Vector[InComponent] = InValue;
 					
@@ -435,66 +600,19 @@ protected:
 	void ExtendVectorArgs(TSharedRef<class IPropertyHandle> InPropertyHandle, void* ArgumentsPtr) {}
 
 	template<typename VectorType, int32 NumberOfComponents>
-	void CustomizeVector(TSharedRef<class IPropertyHandle> InPropertyHandle, class IDetailChildrenBuilder& StructBuilder, IPropertyTypeCustomizationUtils& StructCustomizationUtils)
-	{
-		typedef typename VectorType::FReal NumericType;
-		typedef SNumericVectorInputBox<NumericType, VectorType, NumberOfComponents> SLocalVectorInputBox;
+	void MakeVectorHeaderRow(TSharedRef<class IPropertyHandle> InPropertyHandle, FDetailWidgetRow& HeaderRow, IPropertyTypeCustomizationUtils& StructCustomizationUtils);
 
-		FEditPropertyChain PropertyChain;
-        TArray<int32> PropertyArrayIndices;
-        bool bEnabled;
-        if (!GetPropertyChain(InPropertyHandle, PropertyChain, PropertyArrayIndices, bEnabled))
-        {
-        	return;
-        }
+	template<typename RotationType>
+	void MakeRotationHeaderRow(TSharedRef<class IPropertyHandle> InPropertyHandle, FDetailWidgetRow& HeaderRow, IPropertyTypeCustomizationUtils& StructCustomizationUtils);
 
-		typename SLocalVectorInputBox::FArguments Args;
-		Args.Font(IDetailLayoutBuilder::GetDetailFont());
-		Args.IsEnabled(bEnabled);
-		Args.AllowSpin(true);
-		Args.SpinDelta(0.01f);
-		Args.bColorAxisLabels(true);
-		Args.X_Lambda([this, InPropertyHandle]()
-		{
-			return GetVectorComponent<VectorType, NumericType>(InPropertyHandle, 0);
-		});
-		Args.OnXChanged_Lambda([this, InPropertyHandle](NumericType Value)
-		{
-			OnVectorComponentChanged<VectorType, NumericType>(InPropertyHandle, 0, Value, false);
-		});
-		Args.OnXCommitted_Lambda([this, InPropertyHandle](NumericType Value, ETextCommit::Type CommitType)
-		{
-			OnVectorComponentChanged<VectorType, NumericType>(InPropertyHandle, 0, Value, true, CommitType);
-		});
-		Args.Y_Lambda([this, InPropertyHandle]()
-		{
-			return GetVectorComponent<VectorType, NumericType>(InPropertyHandle, 1);
-		});
-		Args.OnYChanged_Lambda([this, InPropertyHandle](NumericType Value)
-		{
-			OnVectorComponentChanged<VectorType, NumericType>(InPropertyHandle, 1, Value, false);
-		});
-		Args.OnYCommitted_Lambda([this, InPropertyHandle](NumericType Value, ETextCommit::Type CommitType)
-		{
-			OnVectorComponentChanged<VectorType, NumericType>(InPropertyHandle, 1, Value, true, CommitType);
-		});
+	template<typename TransformType>
+	void ConfigureTransformWidgetArgs(TSharedRef<class IPropertyHandle> InPropertyHandle, typename SAdvancedTransformInputBox<TransformType>::FArguments& WidgetArgs);
 
-		ExtendVectorArgs<VectorType>(InPropertyHandle, &Args);
+	template<typename TransformType>
+	void MakeTransformHeaderRow(TSharedRef<class IPropertyHandle> InPropertyHandle, FDetailWidgetRow& HeaderRow, IPropertyTypeCustomizationUtils& StructCustomizationUtils);
 
-		StructBuilder.AddProperty(InPropertyHandle).CustomWidget()
-		.IsEnabled(bEnabled)
-		.NameContent()
-		[
-			InPropertyHandle->CreatePropertyNameWidget()
-		]
-		.ValueContent()
-		.MinDesiredWidth(375.f)
-		.MaxDesiredWidth(375.f)
-		.HAlign(HAlign_Left)
-		[
-			SArgumentNew(Args, SLocalVectorInputBox)
-		];
-	}
+	template<typename TransformType>
+	void MakeTransformChildren(TSharedRef<class IPropertyHandle> InPropertyHandle, IDetailChildrenBuilder& StructBuilder, IPropertyTypeCustomizationUtils& StructCustomizationUtils);
 
 	// returns the rotation for rotator or quaternions (or empty optional for varying values)
 	template<typename RotationType>
@@ -508,13 +626,14 @@ protected:
 		{
 			return Result;
 		}
-		
-		for(const TWeakObjectPtr<UObject>& Object : ObjectsBeingCustomized)
+
+		const TArray<uint8*> MemoryBlocks = GetMemoryBeingCustomized();
+		for(uint8* MemoryBlock: MemoryBlocks)
 		{
-			if(Object.Get() && InPropertyHandle->IsValidHandle())
+			if(MemoryBlock)
 			{
 				static RotationType ZeroRotation = RotationType();
-				const RotationType& Rotation = ContainerUObjectToValueRef<RotationType>(Object.Get(), ZeroRotation, PropertyChain, PropertyArrayIndices);
+				const RotationType& Rotation = ContainerMemoryBlockToValueRef<RotationType>(MemoryBlock, ZeroRotation, PropertyChain, PropertyArrayIndices);
 				if(Result.IsSet())
 				{
 					if(!Rotation.Equals(Result.GetValue()))
@@ -535,6 +654,11 @@ protected:
 	template<typename RotationType>
 	void OnRotationChanged(TSharedRef<class IPropertyHandle> InPropertyHandle, RotationType InValue, bool bIsCommit, ETextCommit::Type InCommitType = ETextCommit::Default)
 	{
+		if (ObjectsBeingCustomized.IsEmpty())
+		{
+			return;
+		}
+		
 		FEditPropertyChain PropertyChain;
         TArray<int32> PropertyArrayIndices;
         bool bEnabled;
@@ -571,7 +695,7 @@ protected:
 			if(Object.Get() && InPropertyHandle->IsValidHandle())
 			{
 				static RotationType ZeroRotation = RotationType();
-				RotationType& Rotation = ContainerUObjectToValueRef<RotationType>(Object.Get(), ZeroRotation, PropertyChain, PropertyArrayIndices);
+				RotationType& Rotation = ContainerMemoryBlockToValueRef<RotationType>((uint8*)Object.Get(), ZeroRotation, PropertyChain, PropertyArrayIndices);
 				RotationType PreviousRotation = Rotation;
 				Rotation = InValue;
 					
@@ -592,342 +716,12 @@ protected:
 	// specializations for FRotator and FQuat at the end of this file
 	template<typename RotationType>
 	void ExtendRotationArgs(TSharedRef<class IPropertyHandle> InPropertyHandle, void* ArgumentsPtr) {}
-
-	// add the widget for a rotation (rotator or quat)
-	template<typename RotationType>
-	void CustomizeRotation(TSharedRef<class IPropertyHandle> InPropertyHandle, class IDetailChildrenBuilder& StructBuilder, IPropertyTypeCustomizationUtils& StructCustomizationUtils)
-	{
-		FEditPropertyChain PropertyChain;
-		TArray<int32> PropertyArrayIndices;
-		bool bEnabled;
-		if (!GetPropertyChain(InPropertyHandle, PropertyChain, PropertyArrayIndices, bEnabled))
-		{
-			return;
-		}
-		
-		typedef typename RotationType::FReal NumericType;
-		typedef SAdvancedRotationInputBox<NumericType> SLocalRotationInputBox;
-		typename SLocalRotationInputBox::FArguments Args;
-		Args.Font(IDetailLayoutBuilder::GetDetailFont());
-		Args.IsEnabled(bEnabled);
-		Args.AllowSpin(true);
-		Args.bColorAxisLabels(true);
-
-		ExtendRotationArgs<RotationType>(InPropertyHandle, &Args);
-		
-		StructBuilder.AddProperty(InPropertyHandle).CustomWidget()
-		.IsEnabled(bEnabled)
-		.NameContent()
-		[
-			
-			InPropertyHandle->CreatePropertyNameWidget()
-		]
-		.ValueContent()
-		.MinDesiredWidth(375.f)
-		.MaxDesiredWidth(375.f)
-		.HAlign(HAlign_Left)
-		[
-			SArgumentNew(Args, SLocalRotationInputBox)
-		];
-	}
-
-	// add the widget for a transform / euler transform
-	template<typename TransformType>
-	void CustomizeTransform(TSharedRef<class IPropertyHandle> InPropertyHandle, class IDetailChildrenBuilder& StructBuilder, IPropertyTypeCustomizationUtils& StructCustomizationUtils)
-	{
-		FEditPropertyChain PropertyChain;
-		TArray<int32> PropertyArrayIndices;
-		bool bEnabled;
-		if (!GetPropertyChain(InPropertyHandle, PropertyChain, PropertyArrayIndices, bEnabled))
-		{
-			return;
-		}
-		
-		typedef typename TransformType::FReal FReal;
-		typename SAdvancedTransformInputBox<TransformType>::FArguments WidgetArgs;
-		WidgetArgs.IsEnabled(bEnabled);
-		WidgetArgs.AllowEditRotationRepresentation(true);
-		WidgetArgs.UseQuaternionForRotation(IsQuaternionBasedRotation<TransformType>());
-
-		static TransformType Identity = TransformType::Identity;
-		TransformType DefaultValue = ContainerUObjectToValueRef<TransformType>(ObjectsBeingCustomized[0]->GetClass()->GetDefaultObject(), Identity, PropertyChain, PropertyArrayIndices);
-
-		WidgetArgs.DiffersFromDefault_Lambda([this, InPropertyHandle, DefaultValue](ESlateTransformComponent::Type InTransformComponent) -> bool
-		{
-			FEditPropertyChain PropertyChain;
-			TArray<int32> PropertyArrayIndices;
-			bool bEnabled;
-			if (!GetPropertyChain(InPropertyHandle, PropertyChain, PropertyArrayIndices, bEnabled))
-			{
-				return false;
-			}
-			
-			for(const TWeakObjectPtr<UObject>& Object : ObjectsBeingCustomized)
-			{
-				if(Object.Get() && InPropertyHandle->IsValidHandle())
-				{
-					const TransformType& Transform = ContainerUObjectToValueRef<TransformType>(Object.Get(), Identity, PropertyChain, PropertyArrayIndices);
-
-					switch(InTransformComponent)
-					{
-						case ESlateTransformComponent::Location:
-						{
-							if(!Transform.GetLocation().Equals(DefaultValue.GetLocation()))
-							{
-								return true;
-							}
-							break;
-						}
-						case ESlateTransformComponent::Rotation:
-						{
-							if(!Transform.Rotator().Equals(DefaultValue.Rotator()))
-							{
-								return true;
-							}
-							break;
-						}
-						case ESlateTransformComponent::Scale:
-						{
-							if(!Transform.GetScale3D().Equals(DefaultValue.GetScale3D()))
-							{
-								return true;
-							}
-							break;
-						}
-						default:
-						{
-							break;
-						}
-					}
-				}
-			}
-			return false;
-		});
-
-		WidgetArgs.OnGetNumericValue_Lambda([this, InPropertyHandle](
-			ESlateTransformComponent::Type InTransformComponent,
-			ESlateRotationRepresentation::Type InRotationRepresentation,
-			ESlateTransformSubComponent::Type InTransformSubComponent) -> TOptional<FReal>
-		{
-			TOptional<FReal> Result;
-			FEditPropertyChain PropertyChain;
-			TArray<int32> PropertyArrayIndices;
-			bool bEnabled;
-			if (!GetPropertyChain(InPropertyHandle, PropertyChain, PropertyArrayIndices, bEnabled))
-			{
-				return Result;
-			}
-			
-			for(const TWeakObjectPtr<UObject>& Object : ObjectsBeingCustomized)
-			{
-				if(Object.Get() && InPropertyHandle->IsValidHandle())
-				{
-					const TransformType& Transform = ContainerUObjectToValueRef<TransformType>(Object.Get(), Identity, PropertyChain, PropertyArrayIndices);
-					
-					TOptional<FReal> Value = SAdvancedTransformInputBox<TransformType>::GetNumericValueFromTransform(
-						Transform,
-						InTransformComponent,
-						InRotationRepresentation,
-						InTransformSubComponent
-						);
-
-					if(Value.IsSet())
-					{
-						if(Result.IsSet())
-						{
-							if(!FMath::IsNearlyEqual(Result.GetValue(), Value.GetValue()))
-							{
-								return TOptional<FReal>();
-							}
-						}
-						else
-						{
-							Result = Value;
-						}
-					}
-				}
-			}
-			return Result;
-		});
-		
-
-		auto OnNumericValueChanged = [this, InPropertyHandle](
-			ESlateTransformComponent::Type InTransformComponent, 
-			ESlateRotationRepresentation::Type InRotationRepresentation, 
-			ESlateTransformSubComponent::Type InSubComponent,
-			FReal InValue,
-			bool bIsCommit,
-			ETextCommit::Type InCommitType = ETextCommit::Default)
-		{
-			FEditPropertyChain PropertyChain;
-			TArray<int32> PropertyArrayIndices;
-			bool bEnabled;
-			if (!GetPropertyChain(InPropertyHandle, PropertyChain, PropertyArrayIndices, bEnabled))
-			{
-				return;
-			}
-			
-			TArray<UObject*> ObjectsView;
-			for(int32 Index = 0; Index < ObjectsBeingCustomized.Num(); Index++)
-			{
-				const TWeakObjectPtr<UObject>& Object = ObjectsBeingCustomized[Index];
-				if (Object.Get())
-				{
-					ObjectsView.Add(Object.Get());
-				}
-			}
-			FPropertyChangedEvent PropertyChangedEvent(InPropertyHandle->GetProperty(), bIsCommit ? EPropertyChangeType::ValueSet : EPropertyChangeType::Interactive, ObjectsView);
-			FPropertyChangedChainEvent PropertyChangedChainEvent(PropertyChain, PropertyChangedEvent);
-
-			URigVMController* Controller = nullptr;
-			if(BlueprintBeingCustomized && GraphBeingCustomized)
-			{
-				Controller = BlueprintBeingCustomized->GetController(GraphBeingCustomized);
-				if(bIsCommit)
-				{
-					Controller->OpenUndoBracket(FString::Printf(TEXT("Set %s"), *InPropertyHandle->GetProperty()->GetName()));
-				}
-			}
-
-			for(int32 Index = 0; Index < ObjectsBeingCustomized.Num(); Index++)
-			{
-				const TWeakObjectPtr<UObject>& Object = ObjectsBeingCustomized[Index];
-				if(Object.Get() && InPropertyHandle->IsValidHandle())
-				{
-					TransformType& Transform = ContainerUObjectToValueRef<TransformType>(Object.Get(), Identity, PropertyChain, PropertyArrayIndices);
-					TransformType PreviousTransform = Transform;
-					
-					SAdvancedTransformInputBox<TransformType>::ApplyNumericValueChange(
-						Transform,
-						InValue,
-						InTransformComponent,
-						InRotationRepresentation,
-						InSubComponent);
-
-					if(!PreviousTransform.Equals(Transform))
-					{
-						Object->PostEditChangeChainProperty(PropertyChangedChainEvent);
-						InPropertyHandle->NotifyPostChange(PropertyChangedEvent.ChangeType);
-					}
-				}
-			}
-
-			if(Controller && bIsCommit)
-			{
-				Controller->CloseUndoBracket();
-			}
-		};
-
-		WidgetArgs.OnNumericValueChanged_Lambda([OnNumericValueChanged](
-			ESlateTransformComponent::Type InTransformComponent, 
-			ESlateRotationRepresentation::Type InRotationRepresentation, 
-			ESlateTransformSubComponent::Type InSubComponent,
-			FReal InValue)
-		{
-			OnNumericValueChanged(InTransformComponent, InRotationRepresentation, InSubComponent, InValue, false);
-		});
-
-		WidgetArgs.OnNumericValueCommitted_Lambda([OnNumericValueChanged](
-			ESlateTransformComponent::Type InTransformComponent, 
-			ESlateRotationRepresentation::Type InRotationRepresentation, 
-			ESlateTransformSubComponent::Type InSubComponent,
-			FReal InValue, 
-			ETextCommit::Type InCommitType)
-		{
-			OnNumericValueChanged(InTransformComponent, InRotationRepresentation, InSubComponent, InValue, true, InCommitType);
-		});
-
-		WidgetArgs.OnResetToDefault_Lambda([this, DefaultValue, InPropertyHandle](ESlateTransformComponent::Type InTransformComponent)
-		{
-			FEditPropertyChain PropertyChain;
-			TArray<int32> PropertyArrayIndices;
-			bool bEnabled;
-			if (!GetPropertyChain(InPropertyHandle, PropertyChain, PropertyArrayIndices, bEnabled))
-			{
-				return;
-			}
-			
-			URigVMController* Controller = nullptr;
-			if(BlueprintBeingCustomized && GraphBeingCustomized)
-			{
-				Controller = BlueprintBeingCustomized->GetController(GraphBeingCustomized);
-				if(Controller)
-				{
-					Controller->OpenUndoBracket(FString::Printf(TEXT("Reset %s to Default"), *InPropertyHandle->GetProperty()->GetName()));
-				}
-			}
-
-			TArray<UObject*> ObjectsView;
-			for(int32 Index = 0; Index < ObjectsBeingCustomized.Num(); Index++)
-			{
-				const TWeakObjectPtr<UObject>& Object = ObjectsBeingCustomized[Index];
-				if (Object.Get())
-				{
-					ObjectsView.Add(Object.Get());
-				}
-			}
-			FPropertyChangedEvent PropertyChangedEvent(InPropertyHandle->GetProperty(), EPropertyChangeType::ValueSet, ObjectsView);
-			FPropertyChangedChainEvent PropertyChangedChainEvent(PropertyChain, PropertyChangedEvent);
-			
-			for(int32 Index = 0; Index < ObjectsBeingCustomized.Num(); Index++)
-			{
-				const TWeakObjectPtr<UObject>& Object = ObjectsBeingCustomized[Index];
-				if(Object.Get() && InPropertyHandle->IsValidHandle())
-				{
-					TransformType& Transform = ContainerUObjectToValueRef<TransformType>(Object.Get(), Identity, PropertyChain, PropertyArrayIndices);
-					TransformType PreviousTransform = Transform;
-
-					switch(InTransformComponent)
-					{
-						case ESlateTransformComponent::Location:
-						{
-							Transform.SetLocation(DefaultValue.GetLocation());
-							break;
-						}
-						case ESlateTransformComponent::Rotation:
-						{
-							Transform.SetRotation(DefaultValue.GetRotation());
-							break;
-						}
-						case ESlateTransformComponent::Scale:
-						{
-							Transform.SetScale3D(DefaultValue.GetScale3D());
-							break;
-						}
-						case ESlateTransformComponent::Max:
-						default:
-						{
-							Transform.SetLocation(DefaultValue.GetLocation());
-							break;
-						}
-					}
-
-					
-					if(!PreviousTransform.Equals(Transform))
-					{
-						Object->PostEditChangeChainProperty(PropertyChangedChainEvent);
-						InPropertyHandle->NotifyPostChange(PropertyChangedEvent.ChangeType);
-					}
-				}
-			}
-
-			if(Controller)
-			{
-				Controller->CloseUndoBracket();
-			}
-		});
-
-		SAdvancedTransformInputBox<TransformType>::ConstructGroupedTransformRows(
-			StructBuilder,
-			InPropertyHandle->GetPropertyDisplayName(),
-			InPropertyHandle->GetToolTipText(),
-			WidgetArgs);
-	}
 		
 	UScriptStruct* ScriptStruct;
 	URigVMBlueprint* BlueprintBeingCustomized;
 	URigVMGraph* GraphBeingCustomized;
-	TArray<TWeakObjectPtr<UObject>> ObjectsBeingCustomized; 
+	TArray<TWeakObjectPtr<UObject>> ObjectsBeingCustomized;
+	TArray<TSharedPtr<FStructOnScope>> StructsBeingCustomized;
 };
 
 template<>

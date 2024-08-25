@@ -12,9 +12,7 @@
 #include "GameplayTagContainer.h"
 #include "GameplayEffectTypes.h"
 #include "GameplayPrediction.h"
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "Components/MeshComponent.h"
-#endif
+
 #include "GameplayAbilityTargetTypes.generated.h"
 
 class UGameplayAbility;

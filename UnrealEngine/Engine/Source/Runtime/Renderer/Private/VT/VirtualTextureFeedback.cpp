@@ -291,7 +291,7 @@ FVirtualTextureFeedback::FMapResult FVirtualTextureFeedback::Map(FRHICommandList
 		else
 		{
 			// Concatenate the results to a single buffer (stored in the MapResources) and return that.
-			MapResources[MapResult.MapHandle].ResultData.SetNumUninitialized(TotalReadSize, false);
+			MapResources[MapResult.MapHandle].ResultData.SetNumUninitialized(TotalReadSize, EAllowShrinking::No);
 			MapResult.Data = MapResources[MapResult.MapHandle].ResultData.GetData();
 			MapResult.Size = 0;
 

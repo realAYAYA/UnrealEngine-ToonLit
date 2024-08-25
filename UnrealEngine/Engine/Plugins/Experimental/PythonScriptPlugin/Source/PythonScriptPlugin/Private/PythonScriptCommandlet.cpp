@@ -51,12 +51,11 @@ int32 UPythonScriptCommandlet::Main(const FString& Params)
 			return -1;
 		}
 	}
+	UE_LOG(LogPythonScriptCommandlet, Display, TEXT("Python script executed successfully"));
+	return 0;
 #else	// WITH_PYTHON
 	UE_LOG(LogPythonScriptCommandlet, Error, TEXT("Python script cannot run as the plugin was built as a stub!"));
 	return -1;
 #endif	// WITH_PYTHON
-
-	UE_LOG(LogPythonScriptCommandlet, Display, TEXT("Python script executed successfully"));
-	return 0;
 }
 

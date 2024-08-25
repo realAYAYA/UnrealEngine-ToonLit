@@ -17,6 +17,7 @@ UCommonTabListWidgetBase::UCommonTabListWidgetBase(const FObjectInitializer& Obj
 	, TabButtonGroup(nullptr)
 	, bIsListeningForInput(false)
 	, RegisteredTabsByID()
+	, TabButtonWidgetPool(*this)
 	, ActiveTabID(NAME_None)
 	, bIsRebuildingList(false)
 	, bPendingRebuild(false)
@@ -66,7 +67,8 @@ bool UCommonTabListWidgetBase::RegisterTab(FName TabNameID, TSubclassOf<UCommonB
 		return false;
 	}
 
-	UCommonButtonBase* const NewTabButton = CreateWidget<UCommonButtonBase>(GetOwningPlayer(), ButtonWidgetType);
+	// There is no PlayerController in Designer
+	UCommonButtonBase* const NewTabButton = TabButtonWidgetPool.GetOrCreateInstance<UCommonButtonBase>(ButtonWidgetType);
 	if (!ensureMsgf(NewTabButton, TEXT("Failed to create tab button. Aborting tab registration.")))
 	{
 		return false;
@@ -154,9 +156,26 @@ bool UCommonTabListWidgetBase::RemoveTab(FName TabNameID)
 
 void UCommonTabListWidgetBase::RemoveAllTabs()
 {
+	// We don't call RemoveTab_Internal(Iter->Key, Iter->Value); because that would individually remove TabButtonGroup buttons one by one
+	// Which is something we don't want when we are removing all tabs
+	if (TabButtonGroup)
+	{
+		TabButtonGroup->RemoveAll();
+	}
+	
 	for (TMap<FName, FCommonRegisteredTabInfo>::TIterator Iter(RegisteredTabsByID); Iter; ++Iter)
 	{
-		RemoveTab_Internal(Iter->Key, Iter->Value);
+		if (UCommonButtonBase* const TabButton =  Iter->Value.TabButton)
+		{
+			TabButton->RemoveFromParent();
+			
+			const FName Key = Iter->Key;
+
+			RegisteredTabsByID.Remove(Key);
+			
+			HandleTabRemoval(Key, TabButton);
+			OnTabButtonRemoval.Broadcast(Key, TabButton);
+		}
 	}
 }
 
@@ -389,6 +408,13 @@ void UCommonTabListWidgetBase::NativeDestruct()
 	}
 }
 
+void UCommonTabListWidgetBase::ReleaseSlateResources(bool bReleaseChildren)
+{
+	Super::ReleaseSlateResources(bReleaseChildren);
+
+	TabButtonWidgetPool.ResetPool();
+}
+
 void UCommonTabListWidgetBase::HandlePreLinkedSwitcherChanged()
 {
 	HandlePreLinkedSwitcherChanged_BP();
@@ -514,6 +540,7 @@ void UCommonTabListWidgetBase::RemoveTab_Internal(const FName TabNameID, const F
 	{
 		TabButtonGroup->RemoveWidget(TabButton);
 		TabButton->RemoveFromParent();
+		TabButtonWidgetPool.Release(TabButton);
 	}
 
 	RegisteredTabsByID.Remove(TabNameID);

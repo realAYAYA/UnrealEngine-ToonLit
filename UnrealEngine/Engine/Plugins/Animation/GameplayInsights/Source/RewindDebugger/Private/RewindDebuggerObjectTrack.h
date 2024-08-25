@@ -2,26 +2,27 @@
 #pragma once
 
 #include "RewindDebuggerTrack.h"
-#include "SSegmentedTimelineView.h"
+#include "SEventTimelineView.h"
+
 
 namespace RewindDebugger
 {
+	
+class IRewindDebuggerTrackCreator;
+
+struct FTrackCreatorAndTrack
+{
+	const IRewindDebuggerTrackCreator* Creator;
+	TSharedPtr<FRewindDebuggerTrack> Track;
+};
 
 class FRewindDebuggerObjectTrack : public FRewindDebuggerTrack
 {
 public:
 
-	FRewindDebuggerObjectTrack(uint64 InObjectId, const FString& InObjectName, bool bInAddController = false)
-		: ObjectName(InObjectName)
-		, ObjectId(InObjectId)
-		, bAddController(bInAddController)
-		, bDisplayNameValid(false)
-	{
-		ExistenceRange = MakeShared<SSegmentedTimelineView::FSegmentData>();
-		ExistenceRange->Segments.SetNumUninitialized(1);
-	}
+	FRewindDebuggerObjectTrack(uint64 InObjectId, const FString& InObjectName, bool bInAddController = false);
 
-	TSharedPtr<SSegmentedTimelineView::FSegmentData> GetExistenceRange() const { return ExistenceRange; }
+	TSharedPtr<SEventTimelineView::FTimelineEventData> GetExistenceRange() const { return ExistenceRange; }
 
 private:
 	virtual TSharedPtr<SWidget> GetTimelineViewInternal() override;
@@ -34,17 +35,18 @@ private:
 	virtual uint64 GetObjectIdInternal() const override { return ObjectId; }
 	virtual bool HasDebugDataInternal() const override { return false; }
 	virtual bool HandleDoubleClickInternal() override;
-	virtual int GetSortOrderPriorityInternal() const override { return -10; };
 	
 	mutable FText DisplayName;
 	FString ObjectName;
 	FSlateIcon Icon;
-	TSharedPtr<SSegmentedTimelineView::FSegmentData> ExistenceRange;
+	TSharedPtr<SEventTimelineView::FTimelineEventData> ExistenceRange;
 	uint64 ObjectId;
+	TArray<FTrackCreatorAndTrack> TrackChildren;
 	TArray<TSharedPtr<FRewindDebuggerTrack>> Children;
 
 	bool bAddController;
 	mutable bool bDisplayNameValid;
+	
 };
 
 }

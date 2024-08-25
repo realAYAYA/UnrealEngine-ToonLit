@@ -40,6 +40,12 @@ public:
 	rtc::scoped_refptr<webrtc::VideoFrameBuffer> GetFrameBuffer();
 
 	/**
+	 * Used internally by the encode process.
+	 * @return A frame buffer that has a null capturer.
+	 */
+	rtc::scoped_refptr<webrtc::VideoFrameBuffer> GetEmptyFrameBuffer();
+
+	/**
 	 *
 	 */
 	TSharedPtr<IPixelCaptureOutputFrame> RequestFormat(int32 Format, int32 LayerIndex = -1);

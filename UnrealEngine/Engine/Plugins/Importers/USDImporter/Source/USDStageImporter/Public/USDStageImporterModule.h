@@ -2,17 +2,17 @@
 
 #pragma once
 
-#include "USDStageImporter.h"
-
 #include "Modules/ModuleInterface.h"
 #include "Modules/ModuleManager.h"
+
+class UUsdStageImporter;
 
 class IUsdStageImporterModule : public IModuleInterface
 {
 public:
 	static inline IUsdStageImporterModule& Get()
 	{
-		return FModuleManager::LoadModuleChecked< IUsdStageImporterModule >("UsdStageImporter");
+		return FModuleManager::LoadModuleChecked<IUsdStageImporterModule>("UsdStageImporter");
 	}
 
 	static inline bool IsAvailable()

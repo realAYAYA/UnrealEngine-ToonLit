@@ -3,6 +3,17 @@
 
 #include "Chaos/Core.h"
 #include "ParticleHandleFwd.h"
+#include "Chaos/ImplicitFwd.h"
+
+namespace
+{
+	// When a FContactPairModifierParticleRange is created to iterate over the contacts
+	// of a particular particle, an array of relevant constraints is generated.
+	//
+	// So long as the number of constraints for this particle does not exceed this constant
+	// value, no heap allocations will occur.
+	constexpr int32 ParticleContactsStackSize = 16;
+}
 
 namespace Chaos
 {
@@ -12,6 +23,8 @@ namespace Chaos
 	class FCollisionContactModifier;
 	class FContactPairModifier;
 	class FPerShapeData;
+	class FShapeInstance;
+	class FPBDCollisionConstraintContainerCookie;
 
 	class FContactPairModifier
 	{
@@ -42,6 +55,16 @@ namespace Chaos
 		* yet, but that it may)
 		*/
 		CHAOS_API void ConvertToProbe();
+
+		/**
+		 * Convert the constraint from probe to a regular physical collision
+		 */
+		CHAOS_API void ConvertToNonProbe();
+
+		/**
+		 * Return true if this constraint is a probe type
+		 */
+		CHAOS_API bool GetIsProbe() const;
 
 		/**
 		* @return Number of contact points in constraint pair. ContactPointIdx must be below number of contacts.
@@ -211,6 +234,12 @@ namespace Chaos
 		CHAOS_API void ModifyInvMassScale(FReal InvMassScale, int32 ParticleIdx);
 
 		/*
+		* Get the other particle in the constraint - if the input particle isn't in the constraint,
+		* get null
+		*/
+		CHAOS_API FGeometryParticleHandle* GetOtherParticle(FGeometryParticleHandle* Particle) const;
+
+		/*
 		* Retrieve physics handles for particles in contact pair.
 		*/
 		CHAOS_API TVec2<FGeometryParticleHandle*> GetParticlePair() const;
@@ -219,6 +248,16 @@ namespace Chaos
 		* Get shape pair from constraint.
 		*/
 		CHAOS_API TVec2<const FPerShapeData*> GetShapePair() const;
+
+		/*
+		* Get one of the particle's shapes.
+		*/
+		CHAOS_API const FShapeInstance* GetShape(int32 ParticleIdx) const;
+
+		/*
+		* Get one of the particle's implicit objects.
+		*/
+		CHAOS_API const FConstImplicitObjectRef GetImplicit(int32 ParticleIdx) const;
 
 		/*
 		* Check to see if a contact point index is an edge contact.
@@ -236,6 +275,12 @@ namespace Chaos
 		CHAOS_API void SetContactPointDisabled(int32 ContactPointIdx) const;
 
 	private:
+
+		/*
+		* Get direct const access to the index of this constraint container cookie
+		*/
+		CHAOS_API const FPBDCollisionConstraintContainerCookie& GetConstraintContainerCookie() const;
+
 		/**
 		 * @brief Update cached shape transforms in the constraint after modifying particle positions
 		*/
@@ -243,6 +288,8 @@ namespace Chaos
 
 		FPBDCollisionConstraint* Constraint;
 		FCollisionContactModifier* Modifier;
+
+		friend class FVisitedContactPairsTracker;
 	};
 
 	class FContactPairModifierIterator
@@ -323,7 +370,123 @@ namespace Chaos
 		FCollisionContactModifier* Modifier;
 		FContactPairModifier PairModifier;
 	};
-	
+
+	/*
+	* Iterator for FContactPairModifierParticleRange
+	*/
+	class FContactPairModifierParticleRangeIterator
+	{
+	public:
+
+		FContactPairModifier& operator*()
+		{
+			return PairModifier;
+		}
+
+		FContactPairModifier* operator->()
+		{
+			return &PairModifier;
+		}
+
+		FContactPairModifierParticleRangeIterator& operator++()
+		{
+			++Index;
+
+			PairModifier
+				= IsValid()
+				? FContactPairModifier(Constraints[Index], *Modifier)
+				: FContactPairModifier();
+
+			return *this;
+		}
+
+		bool operator==(const FContactPairModifierParticleRangeIterator& Other)
+		{
+			return
+				&Constraints == &Other.Constraints &&
+				Index == Other.Index;
+		}
+
+		bool operator!=(const FContactPairModifierParticleRangeIterator& Other)
+		{
+			return !(*this == Other);
+		}
+
+		bool IsValid() const
+		{
+			return 0 <= Index && Index < Constraints.Num();
+		}
+
+	private:
+		FContactPairModifierParticleRangeIterator(FCollisionContactModifier* InModifier, TArray<FPBDCollisionConstraint*, TInlineAllocator<ParticleContactsStackSize>>& InConstraints, int32 InIndex)
+			: Modifier(InModifier)
+			, Constraints(InConstraints)
+			, Index(InIndex)
+		{
+			PairModifier
+				= IsValid()
+				? FContactPairModifier(Constraints[Index], *Modifier)
+				: FContactPairModifier();
+		}
+
+		FCollisionContactModifier* Modifier;
+		FContactPairModifier PairModifier;
+
+		TArray<FPBDCollisionConstraint*, TInlineAllocator<ParticleContactsStackSize>>& Constraints;
+		int32 Index;
+
+		// Befriend the range object so that it can create iterators
+		friend class FContactPairModifierParticleRange;
+	};
+
+	/*
+	* Interface for iterating over a range of contacts for a particular particle
+	*/
+	class FContactPairModifierParticleRange
+	{
+	public:
+		CHAOS_API FContactPairModifierParticleRangeIterator begin();
+		CHAOS_API FContactPairModifierParticleRangeIterator end();
+
+		FContactPairModifierParticleRange(FContactPairModifierParticleRange&& Other)
+			: Modifier(Other.Modifier)
+			, Particle(Other.Particle)
+			, Constraints(MoveTemp(Other.Constraints))
+		{ }
+
+	private:
+		FContactPairModifierParticleRange(FCollisionContactModifier* InModifier, FGeometryParticleHandle* InParticle);
+		FCollisionContactModifier* Modifier;
+		FGeometryParticleHandle* Particle;
+		TArray<FPBDCollisionConstraint*, TInlineAllocator<ParticleContactsStackSize>> Constraints;
+
+		// Befriend the modifier so that it can create ranges
+		friend class FCollisionContactModifier;
+	};
+
+	/*
+	* Utility for tracking visited contact pair modifiers so that clients can avoid processing duplicates
+	*/
+	class FVisitedContactPairsTracker
+	{
+	public:
+
+		// If a contact pair was not already visited, mark it visited and return true. Otherwise return false.
+		CHAOS_API bool Visit(const FContactPairModifier& ContactPair);
+
+	private:
+		FVisitedContactPairsTracker(const TArrayView<FPBDCollisionConstraint* const>& InConstraints)
+			: Constraints(InConstraints)
+			, VisitedContacts(false, Constraints.Num())
+		{ }
+
+		TArrayView<FPBDCollisionConstraint* const> Constraints;
+		TBitArray<> VisitedContacts;
+
+		// Befriend the modifier so that it can create these
+		friend class FCollisionContactModifier;
+	};
+
 	/*
 	*  Provides interface for iterating over modifiable contact pairs
 	*/
@@ -335,7 +498,7 @@ namespace Chaos
 		friend FPBDCollisionConstraints; // Calls UpdateConstraintManifolds after callback.
 
 
-		FCollisionContactModifier(TArrayView<FPBDCollisionConstraint* const>& InConstraints, FReal InDt)
+		FCollisionContactModifier(const TArrayView<FPBDCollisionConstraint* const>& InConstraints, FReal InDt)
 			: Constraints(InConstraints)
 			, Dt(InDt)
 		{}
@@ -346,6 +509,10 @@ namespace Chaos
 		FContactPairModifierIterator End() const { return FContactPairModifierIterator(); }
 		FContactPairModifierIterator end() const { return FContactPairModifierIterator(); }
 
+		CHAOS_API FContactPairModifierParticleRange GetContacts(FGeometryParticleHandle* Particle);
+
+		CHAOS_API FVisitedContactPairsTracker MakeVisitedContactPairsTracker() const;
+
 	private:
 		CHAOS_API TArrayView<FPBDCollisionConstraint* const>& GetConstraints();
 		CHAOS_API void DisableConstraint(FPBDCollisionConstraint& Constraint);
@@ -355,12 +522,15 @@ namespace Chaos
 		// but will not produce impulses
 		CHAOS_API void ConvertToProbeConstraint(FPBDCollisionConstraint& Constraint);
 
+		// Turn this constraint from a probe into a regular constraint
+		CHAOS_API void ConvertToNonProbeConstraint(FPBDCollisionConstraint& Constraint);
+
 		CHAOS_API void MarkConstraintForManifoldUpdate(FPBDCollisionConstraint& Constraint);
 
 		// Update manifolds of modified constraints.
 		CHAOS_API void UpdateConstraintManifolds();
 
-		TArrayView<FPBDCollisionConstraint* const>& Constraints;
+		TArrayView<FPBDCollisionConstraint* const> Constraints;
 
 		// Constraints that should update manifold from contact points.
 		TSet<FPBDCollisionConstraint*> NeedsManifoldUpdate;

@@ -8,10 +8,14 @@ namespace Chaos
 	namespace CVars
 	{
 		extern FRealSingle ChaosUnionBVHSplitBias;
+
+		extern bool bChaosImplicitBVHOptimizedCountLeafObjects;
 	}
 
 	namespace Private
 	{
+		static_assert(sizeof(FImplicitBVHObject) == 72, "FImplicitBVHObject was packed to avoid any padding in it");
+
 		FImplicitBVHObject::FImplicitBVHObject()
 		{
 		}
@@ -23,11 +27,11 @@ namespace Chaos
 			const FAABB3& InBounds,
 			const int32 InRootObjectIndex,
 			const int32 InObjectIndex)
-			: R(FRotation3f(InR))
+			: R{ (float)InR.X, (float)InR.Y, (float)InR.Z, (float)InR.W }
 			, X(FVec3f(InX))
 			, Bounds(FAABB3f(InBounds))
-			, Geometry(InGeometry)
 			, RootObjectIndex(InRootObjectIndex)
+			, Geometry(InGeometry)
 			, ObjectIndex(InObjectIndex)
 		{
 		}
@@ -37,23 +41,49 @@ namespace Chaos
 		///////////////////////////////////////////////////////////////////////////////////////////
 		///////////////////////////////////////////////////////////////////////////////////////////
 
-		int32 FImplicitBVH::CountLeafObjects(const TArrayView<const TUniquePtr<FImplicitObject>>& InRootObjects)
+		int32 FImplicitBVH::CountLeafObjects(const TArrayView<const Chaos::FImplicitObjectPtr>& InRootObjects)
 		{
 			// Count the objects in the hierarchy
-			// @todo(chaos): provide a visitor that does not check bounds
 			int32 NumObjects = 0;
-			for (const TUniquePtr<FImplicitObject>& RootObject : InRootObjects)
+			if (CVars::bChaosImplicitBVHOptimizedCountLeafObjects)
 			{
-				RootObject->VisitLeafObjects(
-					[&NumObjects](const FImplicitObject* Object, const FRigidTransform3& ParentTransform, const int32 RootObjectIndex, const int32 ObjectIndex, const int32 LeafObjectIndex)
-					{ 
-						++NumObjects;
-					});
+				for (const Chaos::FImplicitObjectPtr& RootObject : InRootObjects)
+				{
+					NumObjects += RootObject->CountLeafObjectsInHierarchy();
+				}
 			}
+			else
+			{
+				for (const Chaos::FImplicitObjectPtr& RootObject : InRootObjects)
+				{
+					RootObject->VisitLeafObjects(
+						[&NumObjects](const FImplicitObject* Object, const FRigidTransform3& ParentTransform, const int32 RootObjectIndex, const int32 ObjectIndex, const int32 LeafObjectIndex)
+						{ 
+							++NumObjects;
+						});
+				}
+			}
+
 			return NumObjects;
 		}
+		
+		void FImplicitBVH::CollectLeafObject(const FImplicitObject* Object, 
+			const FRigidTransform3& ParentTransform, const int32 RootObjectIndex, TArray<FImplicitBVHObject>& LeafObjects, const int32 LeafObjectIndex)
+		{
+			// @todo(chaos): clean this up (SetFromRawLowLevel). We know all the objects we visit are children of a UniquePtr because we own it
+			TSerializablePtr<FImplicitObject> SerializableObject;
+			SerializableObject.SetFromRawLowLevel(Object);
 
-		FImplicitBVH::FObjects FImplicitBVH::CollectLeafObjects(const TArrayView<const TUniquePtr<FImplicitObject>>& InRootObjects)
+			LeafObjects.Emplace(
+				SerializableObject,
+				ParentTransform.GetTranslation(),
+				ParentTransform.GetRotation(),
+				Object->CalculateTransformedBounds(ParentTransform),
+				RootObjectIndex,
+				LeafObjectIndex);
+		}
+
+		FImplicitBVH::FObjects FImplicitBVH::CollectLeafObjects(const TArrayView<const Chaos::FImplicitObjectPtr>& InRootObjects)
 		{
 			// We visit the hierarchy once to ensure we can create a tight-fitting array of leaf objects (the array growth
 			// policy will over-allocate if we don't size exactly)
@@ -62,24 +92,12 @@ namespace Chaos
 
 			for (int32 RootObjectIndex = 0; RootObjectIndex < InRootObjects.Num(); ++RootObjectIndex)
 			{
-				const TUniquePtr<FImplicitObject>& RootObject = InRootObjects[RootObjectIndex];
-
-				RootObject->VisitLeafObjects(
-					[RootObjectIndex, &Objects](const FImplicitObject* Object, const FRigidTransform3& ParentTransform, const int32 UnusedRootObjectIndex, const int32 UnusedObjectIndex, const int32 UnusedLeafObjectIndex)
-					{
-						// @todo(chaos): clean this up (SetFromRawLowLevel). We know all the objects we visit are children of a UniquePtr because we own it
-						TSerializablePtr<FImplicitObject> SerializableObject;
-						SerializableObject.SetFromRawLowLevel(Object);
-
-						const int32 ObjectIndex = Objects.Num();
-						Objects.Emplace(
-							SerializableObject,
-							ParentTransform.GetTranslation(),
-							ParentTransform.GetRotation(),
-							Object->CalculateTransformedBounds(ParentTransform),
-							RootObjectIndex,
-							ObjectIndex);
-					});
+				InRootObjects[RootObjectIndex]->VisitLeafObjects(
+				[RootObjectIndex, &Objects](const FImplicitObject* Object, const FRigidTransform3& ParentTransform,
+					const int32 UnusedRootObjectIndex, const int32 UnusedObjectIndex, const int32 UnusedLeafObjectIndex)
+				{
+					CollectLeafObject(Object, ParentTransform, RootObjectIndex, Objects, Objects.Num());
+				});
 			}
 
 			return Objects;
@@ -90,12 +108,17 @@ namespace Chaos
 			return TUniquePtr<FImplicitBVH>(new FImplicitBVH());
 		}
 
-		TUniquePtr<FImplicitBVH> FImplicitBVH::TryMake(const TArrayView<const TUniquePtr<FImplicitObject>>& InRootObjects, const int32 InMinObjects, const int32 InMaxBVHDepth)
+		TUniquePtr<FImplicitBVH> FImplicitBVH::TryMake(const TArrayView<const Chaos::FImplicitObjectPtr>& InRootObjects, const int32 InMinObjects, const int32 InMaxBVHDepth)
 		{
-			TArray<FImplicitBVHObject> Objects = CollectLeafObjects(InRootObjects);
-			if (Objects.Num() > InMinObjects)
+			TArray<FImplicitBVHObject> LeafObjects = CollectLeafObjects(InRootObjects);
+			return TryMakeFromLeaves(MoveTemp(LeafObjects), InMinObjects, InMaxBVHDepth);
+		}
+		
+		TUniquePtr<FImplicitBVH> FImplicitBVH::TryMakeFromLeaves(TArray<FImplicitBVHObject>&& LeafObjects, const int32 InMinObjects, const int32 InMaxBVHDepth)
+		{
+			if (LeafObjects.Num() > InMinObjects)
 			{
-				return TUniquePtr<FImplicitBVH>(new FImplicitBVH(MoveTemp(Objects), InMaxBVHDepth));
+				return TUniquePtr<FImplicitBVH>(new FImplicitBVH(MoveTemp(LeafObjects), InMaxBVHDepth));
 			}
 			return TUniquePtr<FImplicitBVH>();
 		}
@@ -319,7 +342,7 @@ namespace Chaos
 		{
 			Ar << Geometry;
 			Ar << X;
-			Ar << R;
+			Ar << R[0]; Ar << R[1]; Ar << R[2]; Ar << R[3];
 			Ar << RootObjectIndex;
 			return Ar;
 		}

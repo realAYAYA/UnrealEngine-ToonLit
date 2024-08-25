@@ -436,13 +436,32 @@ void SConvertToVirtualTexture::UpdateList()
 	AssetList.Empty();
 	AssetStatus.Empty();
 
+	auto CheckUnderSized = [] (const UTexture2D * Texture, int SizeThreshold, bool bConvertBackward)
+	{
+		// code dupe from FVirtualTextureConversionWorker::FilterList
+		
+		bool DoInclude;
+
+		// don't use Texture->GetSizeX() as it can be Default texture
+		FIntPoint Size = Texture->Source.GetLogicalSize();
+		uint64 TexturePixelCount = (uint64) Size.X * Size.Y;
+
+		DoInclude = ( TexturePixelCount >= (uint64)SizeThreshold * SizeThreshold );
+			
+		// for Backwards this should be the other way around
+		//	we want to filter textures *Smaller* than SizeThreshold
+		if ( bConvertBackward ) DoInclude = ! DoInclude;
+
+		return ! DoInclude;
+	};
+
 	for (UTexture2D *Texture : Worker.Textures)
 	{
 		AssetList.Add(Texture);
 		FConversionStatus* Status = new(AssetStatus) FConversionStatus();
 		Status->UserSelected = Worker.UserTextures.Contains(Texture);
-		Status->UnderSized = (Texture->GetSizeX()*Texture->GetSizeY() < ThresholdValue*ThresholdValue);
-		Status->NonPowerOf2 = !Texture->Source.IsPowerOfTwo() && Texture->PowerOfTwoMode == ETexturePowerOfTwoSetting::None;
+		Status->UnderSized = CheckUnderSized(Texture,ThresholdValue,bBackwards);
+		Status->NonPowerOf2 = !Texture->Source.AreAllBlocksPowerOfTwo() && Texture->PowerOfTwoMode == ETexturePowerOfTwoSetting::None;
 	}
 
 	for (UTexture2D* Texture : Worker.MaterialRejectedTextures)
@@ -450,8 +469,8 @@ void SConvertToVirtualTexture::UpdateList()
 		AssetList.Add(Texture);
 		FConversionStatus* Status = new(AssetStatus) FConversionStatus();
 		Status->UserSelected = Worker.UserTextures.Contains(Texture);
-		Status->UnderSized = (Texture->GetSizeX()*Texture->GetSizeY() < ThresholdValue*ThresholdValue);
-		Status->NonPowerOf2 = !Texture->Source.IsPowerOfTwo() && Texture->PowerOfTwoMode == ETexturePowerOfTwoSetting::None;
+		Status->UnderSized = CheckUnderSized(Texture,ThresholdValue,bBackwards);
+		Status->NonPowerOf2 = !Texture->Source.AreAllBlocksPowerOfTwo() && Texture->PowerOfTwoMode == ETexturePowerOfTwoSetting::None;
 		Status->InvalidMaterialUsage = true;
 	}
 
@@ -603,7 +622,9 @@ FConvertToVTDlg::FConvertToVTDlg(const TArray<UTexture2D *> &Textures, bool bBac
 	if (FSlateApplication::IsInitialized())
 	{
 		DialogWindow = SNew(SWindow)
-			.Title((bBackwards) ? LOCTEXT("ConvertToVTDlgTitle_Backwards", "Convert From VT") : LOCTEXT("ConvertToVTDlgTitle", "Convert To VT"))
+			.Title((bBackwards) ? 
+				LOCTEXT("ConvertToVTDlgTitle_Backwards", "Convert VT to Regular if < Threshold") : 
+				LOCTEXT("ConvertToVTDlgTitle", "Convert To VT Textures >= Threshold"))
 			.SupportsMinimize(false).SupportsMaximize(false)
 			.ClientSize(FVector2D(500, 500));
 

@@ -15,7 +15,7 @@ void FControlRigAnimInstanceProxy::Initialize(UAnimInstance* InAnimInstance)
 
 bool FControlRigAnimInstanceProxy::Evaluate(FPoseContext& Output)
 {
-	if (StoredTransforms.Num() == 0 && StoredCurves.Num() == 0)
+	if (StoredTransforms.Num() == 0 && StoredCurves.Num() == 0 && !StoredAttributes.ContainsData())
 	{
 		return false;
 	}
@@ -54,6 +54,8 @@ bool FControlRigAnimInstanceProxy::Evaluate(FPoseContext& Output)
 	FBlendedCurve Curve;
 	UE::Anim::FCurveUtils::BuildUnsorted(Curve, StoredCurves);
 	Output.Curve.Combine(Curve);
+
+	Output.CustomAttributes.CopyFrom(StoredAttributes);
 
 	return true;
 }

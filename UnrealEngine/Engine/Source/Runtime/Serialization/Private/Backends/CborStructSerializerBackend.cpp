@@ -300,7 +300,7 @@ void FCborStructSerializerBackend::WriteProperty(const FStructSerializerState& S
 	else if (State.FieldType == FSoftClassProperty::StaticClass())
 	{
 		FSoftObjectPtr const& Value = CastFieldChecked<FSoftClassProperty>(State.ValueProperty)->GetPropertyValue_InContainer(State.ValueData, ArrayIndex);
-		WritePropertyValue(CborWriter, State, Value.IsValid() ? Value->GetPathName() : FString());
+		WritePropertyValue(CborWriter, State, Value.ToString());
 	}
 	else if (State.FieldType == FWeakObjectProperty::StaticClass())
 	{

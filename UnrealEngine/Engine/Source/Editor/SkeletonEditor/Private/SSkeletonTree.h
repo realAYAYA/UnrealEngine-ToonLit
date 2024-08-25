@@ -339,6 +339,9 @@ private:
 	/** Removes the active Blend Profile */
 	void OnDeleteCurrentBlendProfile();
 
+	/** Removes the active Blend Profile */
+	void OnRenameBlendProfile();
+
 	/** Register Blend Profile Menu */
 	void RegisterBlendProfileMenu();
 
@@ -391,6 +394,9 @@ private:
 
 	/** Current type of blend profile no create. We shouldn't need to hold state for this, but blend profile creation is tied to its header text committed*/
 	EBlendProfileMode NewBlendProfileMode;
+
+	/** Whether we are creating or renaming a BlendProfile, so the EditBox know what to do */
+	bool bIsCreateNewBlendProfile = false;
 
 	/** Current type of bones to show */
 	EBoneFilter BoneFilter;

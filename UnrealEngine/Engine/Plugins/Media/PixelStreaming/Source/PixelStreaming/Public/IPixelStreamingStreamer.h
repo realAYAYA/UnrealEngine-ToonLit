@@ -80,21 +80,6 @@ public:
 	virtual TWeakPtr<SWindow> GetTargetWindow() = 0;
 
 	/**
-	 * @brief Set the target screen size for this streamer. This is used to when the streamer doesn't have a singular target window / viewport
-	 * and as such we just use the manual scale
-	 * @param InTargetScreenSize The target screen size
-	 */
-	UE_DEPRECATED(5.2, "SetTargetScreenSize() is deprecated. Please use SetTargetScreenRect() instead.")
-	virtual void SetTargetScreenSize(TWeakPtr<FIntPoint> InTargetScreenSize) = 0;
-
-	/**
-	 * @brief Get the target screen size for this streamer
-	 * @return The target screen size
-	 */
-	UE_DEPRECATED(5.2, "GetTargetScreenSize() is deprecated. Please use GetTargetScreenRect() instead.")
-	virtual TWeakPtr<FIntPoint> GetTargetScreenSize() = 0;
-
-	/**
 	 * @brief Set the target screen rectangle for this streamer. This is used to when the streamer doesn't have a singular target window / viewport
 	 * and as such we just use the manual scale
 	 * @param InTargetScreenRect The target screen rectangle
@@ -146,6 +131,17 @@ public:
 	 * @return false
 	 */
 	virtual bool IsStreaming() const = 0;
+
+	/**
+	 * @brief Event fired just before the streamer begins connecting to signalling.
+	 */
+	DECLARE_EVENT_OneParam(IPixelStreamingStreamer, FPreConnectionEvent, IPixelStreamingStreamer*);
+
+	/**
+	 * @brief A getter for the OnPreConnection event. Intent is for users to call IPixelStreamingModule::Get().FindStreamer(ID)->OnPreConnection().AddXXX.
+	 * @return - The bindable OnPreConnection event.
+	 */
+	virtual FPreConnectionEvent& OnPreConnection() = 0;
 
 	/**
 	 * @brief Event fired when the streamer has connected to a signalling server and is ready for peers.
@@ -207,9 +203,10 @@ public:
 	virtual void SendFileData(const TArray64<uint8>& ByteData, FString& MimeType, FString& FileExtension) = 0;
 
 	/**
-	 * @brief Kick a player by player id.
+	 * @brief Kick a player by player id. DEPRECATED
 	 * @param PlayerId		- The ID of the player to kick
 	 */
+	UE_DEPRECATED(5.4, "Kick player has been deprecated, will no longer function and will be removed in future versions.")
 	virtual void KickPlayer(FPixelStreamingPlayerId PlayerId) = 0;
 
 	/**
@@ -293,4 +290,10 @@ public:
 	 */
 	virtual void SetConfigOption(const FName& OptionName, const FString& Value) = 0;
 	virtual bool GetConfigOption(const FName& OptionName, FString& OutValue) = 0;
+
+	/**
+	*/
+	virtual void PlayerRequestsBitrate(FPixelStreamingPlayerId PlayerId, int MinBitrate, int MaxBitrate) = 0;
+
+	virtual void RefreshStreamBitrate() = 0;
 };

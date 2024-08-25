@@ -467,6 +467,14 @@ protected:
 		{
 			bParsedAddr = FIPv4Endpoint::FromHostAndPort(InEndpointString, OutEndpoint);
 		}
+		if (bParsedAddr)
+		{
+			// Detect 169.254.x.x addresses.
+			if (OutEndpoint.Address.A == 169 &&	OutEndpoint.Address.B == 254)
+			{
+				UE_LOG(LogUdpMessaging, Warning, TEXT("Detected IPv4 address in the form of 169.254.x.x. This is a link assigned address and may prevent you from reach external endpoints. "));
+			}
+		}
 		return bParsedAddr;
 	}
 
@@ -528,9 +536,6 @@ protected:
 		TArray<FIPv4Endpoint> StaticEndpoints = AdditionalStaticEndpoints.Array();
 		StaticEndpoints += ParseStringArrayAddresses(Settings->StaticEndpoints);
 
-		// Addresses to deny on transport.
-		TArray<FIPv4Endpoint> ExcludedEndpoints = ParseStringArrayAddresses(Settings->ExcludedEndpoints);
-
 		if (Settings->MulticastTimeToLive == 0)
 		{
 			Settings->MulticastTimeToLive = 1;
@@ -544,7 +549,7 @@ protected:
 		UE_LOG(LogUdpMessaging, Log, TEXT("Initializing bridge on interface %s to multicast group %s."), *UnicastEndpoint.ToString(), *MulticastEndpoint.ToText().ToString());
 
 		TSharedRef<FUdpMessageTransport, ESPMode::ThreadSafe> Transport = MakeShared<FUdpMessageTransport, ESPMode::ThreadSafe>(
-			UnicastEndpoint, MulticastEndpoint, MoveTemp(StaticEndpoints), MoveTemp(ExcludedEndpoints), Settings->MulticastTimeToLive);
+			UnicastEndpoint, MulticastEndpoint, MoveTemp(StaticEndpoints), Settings->ExcludedEndpoints, Settings->MulticastTimeToLive);
 		WeakBridgeTransport = Transport;
 		MessageBridge = FMessageBridgeBuilder()
 			.UsingTransport(Transport);

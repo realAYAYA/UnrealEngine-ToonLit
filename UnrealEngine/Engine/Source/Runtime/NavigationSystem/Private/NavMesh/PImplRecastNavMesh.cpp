@@ -401,7 +401,7 @@ float FRecastQueryFilter::GetHeuristicScale() const
 bool FRecastQueryFilter::IsEqual(const INavigationQueryFilterInterface* Other) const
 {
 	// @NOTE: not type safe, should be changed when another filter type is introduced
-	return FMemory::Memcmp(this, Other, sizeof(FRecastQueryFilter)) == 0;
+	return FMemory::Memcmp(this, Other, sizeof(FRecastQueryFilter)) == 0; //-V598
 }
 
 void FRecastQueryFilter::SetIncludeFlags(uint16 Flags)
@@ -669,7 +669,7 @@ void FPImplRecastNavMesh::Serialize( FArchive& Ar, int32 NavMeshVersion )
 					Status = DetourNavMesh->addTile(TileData, TileDataSize, DT_TILE_FREE_DATA, TileRef, NULL);
 					if (dtStatusDetail(Status, DT_OUT_OF_MEMORY))
 					{
-						UE_LOG(LogNavigation, Warning, TEXT("%s Failed to add tile (%d,%d:%d), %d tile limit reached in %s."),
+						UE_LOG(LogNavigation, Warning, TEXT("%s Failed to add tile (%d,%d:%d), %d tile limit reached in %s. If using FixedTilePoolSize, try increasing the TilePoolSize or using bigger tiles."),
 							ANSI_TO_TCHAR(__FUNCTION__), TileHeader->x, TileHeader->y, TileHeader->layer, DetourNavMesh->getMaxTiles(), *NavMeshOwner->GetFullName());
 					}
 
@@ -2725,7 +2725,7 @@ bool FPImplRecastNavMesh::GetDebugGeometryForTile(FRecastDebugGeometry& OutGeome
 		: 0;
 
 	const FRecastNavMeshGenerator* Generator = static_cast<const FRecastNavMeshGenerator*>(NavMeshOwner->GetGenerator());
-	const bool bIsGenerationRestrictedToActiveTiles = Generator && Generator->IsBuildingRestrictedToActiveTiles() && NavMeshOwner->GetActiveTiles().Num() > 0;
+	const bool bIsGenerationRestrictedToActiveTiles = Generator && Generator->IsBuildingRestrictedToActiveTiles() && !NavMeshOwner->GetActiveTileSet().IsEmpty();
 
 	auto ComputeSizeToReserve = [](dtMeshTile const* const Tile, int32& OutNumVertsToReserve, int32& OutNumIndicesToReserve)
 	{
@@ -2771,14 +2771,15 @@ bool FPImplRecastNavMesh::GetDebugGeometryForTile(FRecastDebugGeometry& OutGeome
 	}
 	else if (bIsGenerationRestrictedToActiveTiles)
 	{
-		const TArray<FIntPoint>& ActiveTiles = NavMeshOwner->GetActiveTiles();
+		TArray<const dtMeshTile*> Tiles;
+		const TSet<FIntPoint>& ActiveTiles = NavMeshOwner->GetActiveTileSet();
 		for (const FIntPoint& TileLocation : ActiveTiles)
 		{
-			const int32 LayersCount = ConstNavMesh->getTileCountAt(TileLocation.X, TileLocation.Y);
-
-			for (int32 Layer = 0; Layer < LayersCount; ++Layer)
+			Tiles.Reset();
+			Tiles.AddZeroed(ConstNavMesh->getTileCountAt(TileLocation.X, TileLocation.Y));
+			ConstNavMesh->getTilesAt(TileLocation.X, TileLocation.Y, Tiles.GetData(), Tiles.Num());
+			for (const dtMeshTile* Tile : Tiles)
 			{
-				dtMeshTile const* const Tile = ConstNavMesh->getTileAt(TileLocation.X, TileLocation.Y, Layer);
 				ComputeSizeToReserve(Tile, NumVertsToReserve, NumIndicesToReserve);
 			}
 		}
@@ -2788,11 +2789,11 @@ bool FPImplRecastNavMesh::GetDebugGeometryForTile(FRecastDebugGeometry& OutGeome
 		uint32 VertBase = OutGeometry.MeshVerts.Num();
 		for (const FIntPoint& TileLocation : ActiveTiles)
 		{
-			const int32 LayersCount = ConstNavMesh->getTileCountAt(TileLocation.X, TileLocation.Y);
-
-			for (int32 Layer = 0; Layer < LayersCount; ++Layer)
+			Tiles.Reset();
+			Tiles.AddZeroed(ConstNavMesh->getTileCountAt(TileLocation.X, TileLocation.Y));
+			ConstNavMesh->getTilesAt(TileLocation.X, TileLocation.Y, Tiles.GetData(), Tiles.Num());
+			for (const dtMeshTile* Tile : Tiles)
 			{
-				dtMeshTile const* const Tile = ConstNavMesh->getTileAt(TileLocation.X, TileLocation.Y, Layer);
 				if (Tile != nullptr && Tile->header != nullptr)
 				{
 					VertBase += GetTilesDebugGeometry(Generator, *Tile, VertBase, OutGeometry, INDEX_NONE, ForbiddenFlags);
@@ -3188,14 +3189,17 @@ void FPImplRecastNavMesh::GetNavMeshTilesIn(const TArray<FBox>& InclusionBounds,
 		TSet<FIntPoint>	TileCoords;	
 		for (const FBox& Bounds : InclusionBounds)
 		{
-			const FVector RcNavMeshOrigin(NavMeshOrigin[0], NavMeshOrigin[1], NavMeshOrigin[2]);
-			const FRcTileBox TileBox(Bounds, RcNavMeshOrigin, TileSize);
-
-			for (int32 y = TileBox.YMin; y <= TileBox.YMax; ++y)
+			if (ensureMsgf(Bounds.IsValid, TEXT("%hs Bounds is not valid"), __FUNCTION__))
 			{
-				for (int32 x = TileBox.XMin; x <= TileBox.XMax; ++x)
+				const FVector RcNavMeshOrigin(NavMeshOrigin[0], NavMeshOrigin[1], NavMeshOrigin[2]);
+				const FRcTileBox TileBox(Bounds, RcNavMeshOrigin, TileSize);
+
+				for (int32 y = TileBox.YMin; y <= TileBox.YMax; ++y)
 				{
-					TileCoords.Add(FIntPoint(x, y));
+					for (int32 x = TileBox.XMin; x <= TileBox.XMax; ++x)
+					{
+						TileCoords.Add(FIntPoint(x, y));
+					}
 				}
 			}
 		}
@@ -3211,7 +3215,7 @@ void FPImplRecastNavMesh::GetNavMeshTilesIn(const TArray<FBox>& InclusionBounds,
 			int32 MaxTiles = DetourNavMesh->getTileCountAt(TileCoord.X, TileCoord.Y);
 			if (MaxTiles > 0)
 			{
-				MeshTiles.SetNumZeroed(MaxTiles, false);
+				MeshTiles.SetNumZeroed(MaxTiles, EAllowShrinking::No);
 				
 				const int32 MeshTilesCount = DetourNavMesh->getTilesAt(TileCoord.X, TileCoord.Y, MeshTiles.GetData(), MaxTiles);
 				for (int32 i = 0; i < MeshTilesCount; ++i)

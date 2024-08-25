@@ -504,7 +504,7 @@ public:
 
 	static FString DebugDump(TObjectPtr<T> InPtr)
 	{
-		return InPtr ? FString::Printf(TEXT("0x%08x [%s]"), InPtr, *InPtr->GetName()) : FString(TEXT("nullptr"));
+		return InPtr ? FString::Printf(TEXT("0x%08x [%s]"), InPtr.Get(), *InPtr->GetName()) : FString(TEXT("nullptr"));
 	}
 
 	typedef FGCObject SerializerType;
@@ -528,9 +528,9 @@ public:
 
 	template<typename U>
 	static void AddReferencedObjects( FReferenceCollector& Collector, 
-		TArray<T*>& ItemsWithGeneratedWidgets, 
-		TSet<T*>& SelectedItems, 
-		TMap< const U*, T* >& WidgetToItemMap)
+		TArray<TObjectPtr<T>>& ItemsWithGeneratedWidgets, 
+		TSet<TObjectPtr<T>>& SelectedItems, 
+		TMap< const U*, TObjectPtr<T> >& WidgetToItemMap)
 	{
 		// Serialize generated items
 		Collector.AddReferencedObjects(ItemsWithGeneratedWidgets);
@@ -574,9 +574,9 @@ public:
 
 	template<typename U>
 	static void AddReferencedObjects( FReferenceCollector& Collector, 
-		TArray<const T*>& ItemsWithGeneratedWidgets, 
-		TSet<const T*>& SelectedItems,
-		TMap< const U*, const T* >& WidgetToItemMap)
+		TArray<TObjectPtr<const T>>& ItemsWithGeneratedWidgets, 
+		TSet<TObjectPtr<const T>>& SelectedItems,
+		TMap< const U*, TObjectPtr<const T> >& WidgetToItemMap)
 	{
 		// Serialize generated items
 		Collector.AddReferencedObjects(ItemsWithGeneratedWidgets);
@@ -585,7 +585,7 @@ public:
 		// Also, we cannot AddReferencedObject to the Keys of the ItemToWidgetMap or we end up with keys being set to 0 when the UObject is destroyed which generate an invalid id in the map.
 		for (auto& It : WidgetToItemMap)
 		{
-			Collector.AddReferencedObject(*(UObject**)&It.Value);
+			Collector.AddReferencedObject(It.Value);
 		}
 
 		// Serialize the selected items

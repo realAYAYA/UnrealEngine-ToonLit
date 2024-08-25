@@ -27,14 +27,21 @@ struct MASSREPRESENTATION_API FMassRepresentationLODFragment : public FMassFragm
 	GENERATED_BODY()
 
 	/** LOD information */
+	UPROPERTY()
 	TEnumAsByte<EMassLOD::Type> LOD = EMassLOD::Max;
+
+	UPROPERTY()
 	TEnumAsByte<EMassLOD::Type> PrevLOD = EMassLOD::Max;
 
 	/** Visibility Info */
+	UPROPERTY()
 	EMassVisibility Visibility = EMassVisibility::Max;
+
+	UPROPERTY()
 	EMassVisibility PrevVisibility = EMassVisibility::Max;
 
 	/** Value scaling from 0 to 3, 0 highest LOD we support and 3 being completely off LOD */
+	UPROPERTY()
 	float LODSignificance = 0.0f;
 };
 
@@ -43,21 +50,29 @@ struct MASSREPRESENTATION_API FMassRepresentationFragment : public FMassFragment
 {
 	GENERATED_BODY()
 
+	UPROPERTY()
 	EMassRepresentationType CurrentRepresentation = EMassRepresentationType::None;
 
+	UPROPERTY()
 	EMassRepresentationType PrevRepresentation = EMassRepresentationType::None;
 
+	UPROPERTY()
 	int16 HighResTemplateActorIndex = INDEX_NONE;
 
+	UPROPERTY()
 	int16 LowResTemplateActorIndex = INDEX_NONE;
 
-	int16 StaticMeshDescIndex = INDEX_NONE;
+	UPROPERTY()
+	FStaticMeshInstanceVisualizationDescHandle StaticMeshDescHandle;
 
+	UPROPERTY()
 	FMassActorSpawnRequestHandle ActorSpawnRequestHandle;
 
+	UPROPERTY()
 	FTransform PrevTransform;
 
 	/** Value scaling from 0 to 3, 0 highest LOD we support and 3 being completely off LOD */
+	UPROPERTY()
 	float PrevLODSignificance = -1.0f;
 };
 
@@ -95,17 +110,33 @@ struct FMassRepresentationParameters : public FMassSharedFragment
 	UPROPERTY(EditAnywhere, Category = "Mass|Representation", config)
 	EMassRepresentationType LODRepresentation[EMassLOD::Max] = { EMassRepresentationType::HighResSpawnedActor, EMassRepresentationType::LowResSpawnedActor, EMassRepresentationType::StaticMeshInstance, EMassRepresentationType::None };
 
+	/** 
+	 * If true, forces UMassRepresentationProcessor to override the WantedRepresentationType to actor representation whenever an external (non Mass owned)
+	 * actor is set on an entitie's FMassActorFragment fragment. If / when the actor fragment is reset, WantedRepresentationType resumes selecting the 
+	 * appropriate representation for the current representation LOD.
+	 *
+	 * Useful for server-authoritative actor spawning to force actor representation on clients for replicated actors. 
+	 */ 
+	UPROPERTY(EditAnywhere, Category = "Mass|Representation", config)
+	uint8 bForceActorRepresentationForExternalActors : 1 = false;
+
 	/** If true, LowRes actors will be kept around, disabled, whilst StaticMeshInstance representation is active */
 	UPROPERTY(EditAnywhere, Category = "Mass|Representation", config)
-	bool bKeepLowResActors = true;
+	uint8 bKeepLowResActors : 1  = true;
 
 	/** When switching to ISM keep the actor an extra frame, helps cover rendering glitches (i.e. occlusion query being one frame late) */
 	UPROPERTY(EditAnywhere, Category = "Mass|Representation", config)
-	bool bKeepActorExtraFrame = false;
+	uint8 bKeepActorExtraFrame : 1  = false;
 
 	/** If true, will spread the first visualization update over the period specified in NotVisibleUpdateRate member */
 	UPROPERTY(EditAnywhere, Category = "Mass|Representation", config)
-	bool bSpreadFirstVisualizationUpdate = false;
+	uint8 bSpreadFirstVisualizationUpdate : 1  = false;
+
+#if WITH_EDITORONLY_DATA
+	/** the property is marked like this to ensure it won't show up in UI */
+	UPROPERTY(EditDefaultsOnly, Category = "Mass|Visual")
+	uint8 bCanModifyRepresentationActorManagementClass : 1 = true;
+#endif // WITH_EDITORONLY_DATA
 
 	/** World Partition grid name to test collision against, default None will be the main grid */
 	UPROPERTY(EditAnywhere, Category = "Mass|Representation", config)
@@ -123,12 +154,6 @@ struct FMassRepresentationParameters : public FMassSharedFragment
 
 	UPROPERTY(Transient)
 	mutable TObjectPtr<UMassRepresentationActorManagement> CachedRepresentationActorManagement = nullptr;
-
-#if WITH_EDITORONLY_DATA
-	/** the property is marked like this to ensure it won't show up in UI */
-	UPROPERTY(EditDefaultsOnly, Category = "Mass|Visual")
-	bool bCanModifyRepresentationActorManagementClass = true;
-#endif // WITH_EDITORONLY_DATA
 };
 
 template<>
@@ -182,10 +207,15 @@ struct FMassVisualizationLODParameters : public FMassSharedFragment
 	UPROPERTY(EditAnywhere, Category = "Mass|LOD", config)
 	int32 LODMaxCount[EMassLOD::Max] = {50, 100, 500, MAX_int32};
 
-	/** How far away from frustum does this entities are considered visible */
+	/** Entities within this distance from frustum will be considered visible. Expressed in Unreal Units. */
 	UPROPERTY(EditAnywhere, Category = "Mass|LOD", meta = (ClampMin = "0.0", UIMin = "0.0"), config)
 	float DistanceToFrustum = 0.0f;
+
 	/** Once visible how much further than DistanceToFrustum does the entities need to be before being cull again */
+	/** 
+	 * Once an entity is visible how far away from frustum does it need to get to lose "visible" state. 
+	 * Expressed in Unreal Units and is added to DistanceToFrustum to arrive at the final value to be used for testing.
+	 */
 	UPROPERTY(EditAnywhere, Category = "Mass|LOD", meta = (ClampMin = "0.0", UIMin = "0.0"), config)
 	float DistanceToFrustumHysteresis = 0.0f;
 
@@ -204,6 +234,48 @@ struct FMassVisualizationLODSharedFragment : public FMassSharedFragment
 
 	TMassLODCalculator<FMassRepresentationLODLogic> LODCalculator;
 	bool bHasAdjustedDistancesFromCount = false;
+
+	UPROPERTY(Transient)
+	TObjectPtr<const UScriptStruct> FilterTag = nullptr;
+};
+
+/** Simplest version of LOD Calculation based strictly on Distance parameters 
+ *	Compared to FMassVisualizationLODParameters, we:
+ *	* Only include a single set of LOD Distances (radial distance from viewer)
+ *	* we do not care about distance to Frustum
+ *	* we do not care about Max Count
+ */
+USTRUCT()
+struct FMassDistanceLODParameters : public FMassSharedFragment
+{
+	GENERATED_BODY()
+
+	/** Distances where each LOD becomes relevant */
+	UPROPERTY(EditAnywhere, Category = "Mass|LOD", config)
+	float LODDistance[EMassLOD::Max] = { 0.f, 1000.f, 2500.f, 10000.f };
+
+	UPROPERTY(EditAnywhere, Category = "Mass|LOD", meta = (ClampMin = "0.0", UIMin = "0.0"), config)
+	float BufferHysteresisOnDistancePercentage = 10.0f;
+
+	/** Filter these settings with specified tag */
+	UPROPERTY(EditAnywhere, Category = "Mass|LOD", meta = (BaseStruct = "/Script/MassEntity.MassTag"))
+	TObjectPtr<UScriptStruct> FilterTag = nullptr;
+};
+
+/** Simplest version of LOD Calculation based strictly on Distance parameters 
+ *	Compared to FMassVisualizationLODSharedFragment, we:
+ *	* Cannot Adjust the Distance from count
+ *	* We care about a MassLODCalculator with a new LOD logic that excludes Visibility computation
+ */
+USTRUCT()
+struct FMassDistanceLODSharedFragment : public FMassSharedFragment
+{
+	GENERATED_BODY()
+
+	FMassDistanceLODSharedFragment() = default;
+	FMassDistanceLODSharedFragment(const FMassDistanceLODParameters& LODParams);
+
+	TMassLODCalculator<FMassDistanceLODLogic> LODCalculator;
 
 	UPROPERTY(Transient)
 	TObjectPtr<const UScriptStruct> FilterTag = nullptr;

@@ -17,6 +17,7 @@
 #include "Components/ActorComponent.h"
 #include "GameFramework/Actor.h"
 #include "Kismet2/ComponentEditorUtils.h"
+#include "Engine/HitResult.h"
 #include "Engine/Selection.h"
 #include "HAL/FileManager.h"
 #include "Modules/ModuleManager.h"
@@ -388,12 +389,18 @@ void FLevelEditorContextMenu::RegisterActorContextMenu()
 		}
 
 
-		if (LevelEditorContext->ContextType == ELevelEditorMenuContext::Viewport || LevelEditorContext->ContextType == ELevelEditorMenuContext::SceneOutliner)
 		{
-			// Options that only appear in the viewport context menu or scene outliner (will affect the current viewport)
+			// Options that affect the current viewport.
 			// In most cases, you DO NOT want to extend this section; look at ActorUETools or ActorTypeTools below
 			FToolMenuSection& Section = InMenu->AddSection("ActorViewOptions", LOCTEXT("ViewOptionsHeading", "View Options"));
 			const FVector* ClickLocation = &GEditor->ClickLocation;
+
+			Section.AddMenuEntry(
+				FEditorViewportCommands::Get().FocusViewportToSelection,
+				TAttribute<FText>(),
+				TAttribute<FText>(),
+				FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.FrameActor")
+			);
 
 			// This keys off the mouse position so can only appear in the viewport
 			if (LevelEditorContext->ContextType == ELevelEditorMenuContext::Viewport)
@@ -1135,25 +1142,24 @@ void FLevelEditorContextMenuImpl::FillActorLevelMenu(UToolMenu* Menu)
 
 void FLevelEditorContextMenuImpl::FillTransformMenu(UToolMenu* Menu)
 {
-	if ( FLevelEditorActionCallbacks::ElementSelected_CanExecute() )
+	if (ULevelEditorContextMenuContext* LevelEditorContext = Menu->FindContext<ULevelEditorContextMenuContext>())
 	{
-		FToolMenuSection& Section = Menu->AddSection("DeltaTransformToActors");
-		Section.AddMenuEntry(FLevelEditorCommands::Get().DeltaTransformToActors);
-	}
-
-	{
-		FToolMenuSection& Section = Menu->AddSection("MirrorLock");
-
-		// TODO: Need an element API to allow the mirror actions
-		if ( FLevelEditorActionCallbacks::ActorSelected_CanExecute() )
+		if (!LevelEditorContext->CurrentSelection || LevelEditorContext->CurrentSelection->GetNumSelectedElements() == 0)
 		{
+			return;
+		}
+
+		{
+			FToolMenuSection& Section = Menu->AddSection("DeltaTransformToActors");
+			Section.AddMenuEntry(FLevelEditorCommands::Get().DeltaTransformToActors);
+		}
+
+		if (LevelEditorContext->CurrentSelection->HasSelectedObjects<AActor>())
+		{
+			FToolMenuSection& Section = Menu->AddSection("MirrorLock");
 			Section.AddMenuEntry(FLevelEditorCommands::Get().MirrorActorX);
 			Section.AddMenuEntry(FLevelEditorCommands::Get().MirrorActorY);
 			Section.AddMenuEntry(FLevelEditorCommands::Get().MirrorActorZ);
-		}
-
-		if ( FLevelEditorActionCallbacks::ActorSelected_CanExecute() )
-		{
 			Section.AddMenuEntry(FLevelEditorCommands::Get().LockActorMovement);
 		}
 	}

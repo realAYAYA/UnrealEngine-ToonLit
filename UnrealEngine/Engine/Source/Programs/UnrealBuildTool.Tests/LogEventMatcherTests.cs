@@ -181,7 +181,7 @@ namespace UnrealBuildToolTests
 
 				LogValue noteProperty1 = logEvents[2].GetProperty<LogValue>("file");
 				Assert.AreEqual(LogValueType.SourceFile, noteProperty1.Type);
-				Assert.AreEqual(@"Engine\Plugins\Editor\EditorScriptingUtilities\Source\EditorScriptingUtilities\Public\EditorLevelLibrary.h", noteProperty1.Properties!["file"].ToString()!);
+				Assert.AreEqual(@"Engine\Plugins\Editor\EditorScriptingUtilities\Source\EditorScriptingUtilities\Public\EditorLevelLibrary.h", noteProperty1.Properties![LogEventPropertyName.File].ToString()!);
 			}
 		}
 
@@ -675,10 +675,10 @@ namespace UnrealBuildToolTests
 			CheckEventGroup(logEvents, 0, 2, LogLevel.Error, KnownLogEvents.Linker_UndefinedSymbol);
 
 			LogValue symbolProperty = (LogValue)logEvents[0].GetProperty("symbol");
-			Assert.AreEqual("Foo::Bar", symbolProperty.Properties!["identifier"].ToString());
+			Assert.AreEqual("Foo::Bar", symbolProperty.Properties![LogEventPropertyName.Identifier].ToString());
 
 			LogValue symbolProperty2 = (LogValue)logEvents[1].GetProperty("symbol");
-			Assert.AreEqual("Foo::Bar2", symbolProperty2.Properties!["identifier"].ToString());
+			Assert.AreEqual("Foo::Bar2", symbolProperty2.Properties![LogEventPropertyName.Identifier].ToString());
 		}
 
 		[TestMethod]
@@ -696,7 +696,7 @@ namespace UnrealBuildToolTests
 			CheckEventGroup(logEvents, 0, 4, LogLevel.Error, KnownLogEvents.Linker_UndefinedSymbol);
 
 			LogValue symbolProperty = (LogValue)logEvents[0].GetProperty("symbol");
-			Assert.AreEqual("USkeleton::GetBlendProfile", symbolProperty.Properties!["identifier"].ToString());
+			Assert.AreEqual("USkeleton::GetBlendProfile", symbolProperty.Properties![LogEventPropertyName.Identifier].ToString());
 		}
 
 		[TestMethod]
@@ -713,7 +713,7 @@ namespace UnrealBuildToolTests
 			CheckEventGroup(logEvents, 0, 3, LogLevel.Error, KnownLogEvents.Linker_DuplicateSymbol);
 
 			LogValue symbolProperty = (LogValue)logEvents[0].GetProperty("symbol");
-			Assert.AreEqual("IMPLEMENT_MODULE_DataInterface", symbolProperty.Properties!["identifier"].ToString());
+			Assert.AreEqual("IMPLEMENT_MODULE_DataInterface", symbolProperty.Properties![LogEventPropertyName.Identifier].ToString());
 		}
 
 		[TestMethod]
@@ -730,7 +730,7 @@ namespace UnrealBuildToolTests
 
 			LogValue symbolProperty = (LogValue)logEvents[1].GetProperty("symbol");
 			Assert.AreEqual(LogValueType.Symbol, symbolProperty.Type);
-			Assert.AreEqual("Foo::Bar", symbolProperty.Properties!["identifier"].ToString());
+			Assert.AreEqual("Foo::Bar", symbolProperty.Properties![LogEventPropertyName.Identifier].ToString());
 		}
 
 		[TestMethod]
@@ -784,7 +784,7 @@ namespace UnrealBuildToolTests
 			CheckEventGroup(logEvents, 0, 1, LogLevel.Error, KnownLogEvents.Linker_UndefinedSymbol);
 
 			LogValue symbolProperty = (LogValue)logEvents[0].GetProperty("symbol");
-			Assert.AreEqual("Foo::Bar", symbolProperty.Properties!["identifier"].ToString());
+			Assert.AreEqual("Foo::Bar", symbolProperty.Properties![LogEventPropertyName.Identifier].ToString());
 		}
 
 		[TestMethod]
@@ -817,7 +817,7 @@ namespace UnrealBuildToolTests
 			CheckEventGroup(logEvents, 0, 1, LogLevel.Error, KnownLogEvents.Linker_UndefinedSymbol);
 
 			LogValue symbolProperty = logEvents[0].GetProperty<LogValue>("symbol");
-			Assert.AreEqual("Foo::Bar", symbolProperty.Properties!["identifier"].ToString());
+			Assert.AreEqual("Foo::Bar", symbolProperty.Properties![LogEventPropertyName.Identifier].ToString());
 		}
 
 		[TestMethod]
@@ -832,7 +832,7 @@ namespace UnrealBuildToolTests
 			CheckEventGroup(logEvents, 0, 1, LogLevel.Error, KnownLogEvents.Linker_UndefinedSymbol);
 
 			LogValue symbolProperty = logEvents[0].GetProperty<LogValue>("symbol");
-			Assert.AreEqual("Foo::Bar", symbolProperty.Properties!["identifier"].ToString());
+			Assert.AreEqual("Foo::Bar", symbolProperty.Properties![LogEventPropertyName.Identifier].ToString());
 		}
 
 		[TestMethod]
@@ -847,7 +847,7 @@ namespace UnrealBuildToolTests
 			CheckEventGroup(logEvents, 0, 1, LogLevel.Error, KnownLogEvents.Linker_UndefinedSymbol);
 
 			LogValue symbolProperty = logEvents[0].GetProperty<LogValue>("symbol");
-			Assert.AreEqual("Foo::Bar", symbolProperty.Properties!["identifier"].ToString());
+			Assert.AreEqual("Foo::Bar", symbolProperty.Properties![LogEventPropertyName.Identifier].ToString());
 		}
 
 		[TestMethod]
@@ -907,8 +907,9 @@ namespace UnrealBuildToolTests
 			};
 
 			List<LogEvent> logEvents = Parse(lines);
-			Assert.AreEqual(1, logEvents.Count);
-			CheckEventGroup(logEvents, 5, 1, LogLevel.Information, KnownLogEvents.Systemic_Xge_CacheLimit);
+			Assert.AreEqual(3, logEvents.Count);
+			CheckEventGroup(logEvents.Slice(0, 1), 5, 1, LogLevel.Information, KnownLogEvents.Systemic_Xge_CacheLimit);
+			CheckEventGroup(logEvents.Slice(1, 2), 7, 2, LogLevel.Information, KnownLogEvents.Systemic_Xge);
 		}
 
 		[TestMethod]
@@ -953,9 +954,10 @@ namespace UnrealBuildToolTests
 			};
 
 			List<LogEvent> logEvents = Parse(lines);
-			Assert.AreEqual(2, logEvents.Count);
+			Assert.AreEqual(4, logEvents.Count);
 			CheckEventGroup(logEvents.Slice(0, 1), 5, 1, LogLevel.Information, KnownLogEvents.Systemic_Xge_CacheLimit);
 			CheckEventGroup(logEvents.Slice(1, 1), 6, 1, LogLevel.Information, KnownLogEvents.Systemic_Xge_CacheLimit);
+			CheckEventGroup(logEvents.Slice(2, 2), 7, 2, LogLevel.Information, KnownLogEvents.Systemic_Xge);
 		}
 
 		[TestMethod]
@@ -1037,6 +1039,27 @@ namespace UnrealBuildToolTests
 			LogValue fileProperty = logEvents[0].GetProperty<LogValue>("file");
 			Assert.AreEqual(LogValueType.SourceFile, fileProperty.Type);
 			Assert.AreEqual(@"C:/Horde/Foo/Plugins/VerseAI/CompanionAI/Source/CompanionAI/Verse/CompanionAI.verse", fileProperty.Text);
+		}
+
+		[TestMethod]
+		public void VerseInEngineWarningMatcher()
+		{
+			string[] lines =
+			{
+				@"LogSolarisIde: Warning: C:/Horde/Plugins/PlayerProfileManager.verse(78,31, 84,14): Script Warning 2011: This expression can fail, but the meaning of failure in the right operand of 'set ... = ...' will change in a future version of Verse."
+			};
+
+			List<LogEvent> logEvents = Parse(String.Join("\n", lines));
+			Assert.AreEqual(1, logEvents.Count);
+			CheckEventGroup(logEvents.Slice(0, 1), 0, 1, LogLevel.Warning, KnownLogEvents.Compiler);
+
+			LogEvent logEvent = logEvents[0];
+			Assert.AreEqual("2011", logEvent.GetProperty("code").ToString());
+			Assert.AreEqual(LogLevel.Warning, logEvent.Level);
+
+			LogValue fileProperty = logEvents[0].GetProperty<LogValue>("file");
+			Assert.AreEqual(LogValueType.SourceFile, fileProperty.Type);
+			Assert.AreEqual(@"C:/Horde/Plugins/PlayerProfileManager.verse", fileProperty.Text);
 		}
 
 		static List<LogEvent> Parse(IEnumerable<string> lines)

@@ -13,7 +13,7 @@ public class UEOpenExr : ModuleRules
 
 		bool bDebug = (Target.Configuration == UnrealTargetConfiguration.Debug && Target.bDebugBuildsActuallyUseDebugCRT);
 
-		string DeploymentDirectory = Path.Combine(ModuleDirectory, "Deploy", "openexr-3.1.6");
+		string DeploymentDirectory = Path.Combine(ModuleDirectory, "Deploy", "openexr-3.2.1");
 
 		PublicSystemIncludePaths.Add(Path.Combine(DeploymentDirectory, "include"));
 
@@ -33,11 +33,11 @@ public class UEOpenExr : ModuleRules
 
 			PublicAdditionalLibraries.AddRange(
 				new string[] {
-					Path.Combine(LibDirectory, "Iex-3_1" + LibPostfix + ".lib"),
-					Path.Combine(LibDirectory, "IlmThread-3_1" + LibPostfix + ".lib"),
-					Path.Combine(LibDirectory, "OpenEXR-3_1" + LibPostfix + ".lib"),
-					Path.Combine(LibDirectory, "OpenEXRCore-3_1" + LibPostfix + ".lib"),
-					Path.Combine(LibDirectory, "OpenEXRUtil-3_1" + LibPostfix + ".lib")
+					Path.Combine(LibDirectory, "Iex-3_2" + LibPostfix + ".lib"),
+					Path.Combine(LibDirectory, "IlmThread-3_2" + LibPostfix + ".lib"),
+					Path.Combine(LibDirectory, "OpenEXR-3_2" + LibPostfix + ".lib"),
+					Path.Combine(LibDirectory, "OpenEXRCore-3_2" + LibPostfix + ".lib"),
+					Path.Combine(LibDirectory, "OpenEXRUtil-3_2" + LibPostfix + ".lib")
 				}
 			);
 		}
@@ -50,11 +50,11 @@ public class UEOpenExr : ModuleRules
 
 			PublicAdditionalLibraries.AddRange(
 				new string[] {
-					Path.Combine(LibDirectory, "libIex-3_1" + LibPostfix + ".a"),
-					Path.Combine(LibDirectory, "libIlmThread-3_1" + LibPostfix + ".a"),
-					Path.Combine(LibDirectory, "libOpenEXR-3_1" + LibPostfix + ".a"),
-					Path.Combine(LibDirectory, "libOpenEXRCore-3_1" + LibPostfix + ".a"),
-					Path.Combine(LibDirectory, "libOpenEXRUtil-3_1" + LibPostfix + ".a")
+					Path.Combine(LibDirectory, "libIex-3_2" + LibPostfix + ".a"),
+					Path.Combine(LibDirectory, "libIlmThread-3_2" + LibPostfix + ".a"),
+					Path.Combine(LibDirectory, "libOpenEXR-3_2" + LibPostfix + ".a"),
+					Path.Combine(LibDirectory, "libOpenEXRCore-3_2" + LibPostfix + ".a"),
+					Path.Combine(LibDirectory, "libOpenEXRUtil-3_2" + LibPostfix + ".a")
 				}
 			);
 		}
@@ -68,11 +68,11 @@ public class UEOpenExr : ModuleRules
 
 			PublicAdditionalLibraries.AddRange(
 				new string[] {
-					Path.Combine(LibDirectory, "libIex-3_1" + LibPostfix + ".a"),
-					Path.Combine(LibDirectory, "libIlmThread-3_1" + LibPostfix + ".a"),
-					Path.Combine(LibDirectory, "libOpenEXR-3_1" + LibPostfix + ".a"),
-					Path.Combine(LibDirectory, "libOpenEXRCore-3_1" + LibPostfix + ".a"),
-					Path.Combine(LibDirectory, "libOpenEXRUtil-3_1" + LibPostfix + ".a")
+					Path.Combine(LibDirectory, "libIex-3_2" + LibPostfix + ".a"),
+					Path.Combine(LibDirectory, "libIlmThread-3_2" + LibPostfix + ".a"),
+					Path.Combine(LibDirectory, "libOpenEXR-3_2" + LibPostfix + ".a"),
+					Path.Combine(LibDirectory, "libOpenEXRCore-3_2" + LibPostfix + ".a"),
+					Path.Combine(LibDirectory, "libOpenEXRUtil-3_2" + LibPostfix + ".a")
 				}
 			);
 		}

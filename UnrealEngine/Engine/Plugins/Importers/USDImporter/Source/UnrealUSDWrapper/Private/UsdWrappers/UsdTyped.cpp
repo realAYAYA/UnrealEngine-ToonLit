@@ -8,12 +8,10 @@
 #include "USDMemory.h"
 
 #if USE_USD_SDK
-
 #include "USDIncludesStart.h"
-	#include "pxr/usd/usd/typed.h"
+#include "pxr/usd/usd/typed.h"
 #include "USDIncludesEnd.h"
-
-#endif //  #if USE_USD_SDK
+#endif	  //  #if USE_USD_SDK
 
 namespace UE
 {
@@ -25,63 +23,63 @@ namespace UE
 			FUsdTypedImpl() = default;
 
 #if USE_USD_SDK
-			explicit FUsdTypedImpl( const pxr::UsdTyped& InUsdTyped )
-				: PxrUsdTyped( InUsdTyped )
+			explicit FUsdTypedImpl(const pxr::UsdTyped& InUsdTyped)
+				: PxrUsdTyped(InUsdTyped)
 			{
 			}
 
-			explicit FUsdTypedImpl( pxr::UsdTyped&& InUsdTyped )
-				: PxrUsdTyped( MoveTemp( InUsdTyped ) )
+			explicit FUsdTypedImpl(pxr::UsdTyped&& InUsdTyped)
+				: PxrUsdTyped(MoveTemp(InUsdTyped))
 			{
 			}
 
-			explicit FUsdTypedImpl( const pxr::UsdPrim& InUsdPrim )
-				: PxrUsdTyped( pxr::UsdTyped( InUsdPrim ) )
+			explicit FUsdTypedImpl(const pxr::UsdPrim& InUsdPrim)
+				: PxrUsdTyped(pxr::UsdTyped(InUsdPrim))
 			{
 			}
 
-			TUsdStore< pxr::UsdTyped > PxrUsdTyped;
-#endif // #if USE_USD_SDK
+			TUsdStore<pxr::UsdTyped> PxrUsdTyped;
+#endif	  // #if USE_USD_SDK
 		};
 	}
 
 	FUsdTyped::FUsdTyped()
 	{
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl = MakeUnique< Internal::FUsdTypedImpl >();
+		Impl = MakeUnique<Internal::FUsdTypedImpl>();
 	}
 
-	FUsdTyped::FUsdTyped( const FUsdTyped& Other )
+	FUsdTyped::FUsdTyped(const FUsdTyped& Other)
 	{
 #if USE_USD_SDK
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl = MakeUnique< Internal::FUsdTypedImpl >( Other.Impl->PxrUsdTyped.Get() );
-#endif // #if USE_USD_SDK
+		Impl = MakeUnique<Internal::FUsdTypedImpl>(Other.Impl->PxrUsdTyped.Get());
+#endif	  // #if USE_USD_SDK
 	}
 
-	FUsdTyped::FUsdTyped( FUsdTyped&& Other ) = default;
+	FUsdTyped::FUsdTyped(FUsdTyped&& Other) = default;
 
-	FUsdTyped::FUsdTyped( const FUsdPrim& Prim )
+	FUsdTyped::FUsdTyped(const FUsdPrim& Prim)
 	{
 #if USE_USD_SDK
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl = MakeUnique< Internal::FUsdTypedImpl >( Prim );
-#endif // #if USE_USD_SDK
+		Impl = MakeUnique<Internal::FUsdTypedImpl>(Prim);
+#endif	  // #if USE_USD_SDK
 	}
 
-	FUsdTyped& FUsdTyped::operator=( const FUsdTyped& Other )
+	FUsdTyped& FUsdTyped::operator=(const FUsdTyped& Other)
 	{
 #if USE_USD_SDK
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl = MakeUnique< Internal::FUsdTypedImpl >( Other.Impl->PxrUsdTyped.Get() );
-#endif // #if USE_USD_SDK
+		Impl = MakeUnique<Internal::FUsdTypedImpl>(Other.Impl->PxrUsdTyped.Get());
+#endif	  // #if USE_USD_SDK
 		return *this;
 	}
 
-	FUsdTyped& FUsdTyped::operator=( FUsdTyped&& Other )
+	FUsdTyped& FUsdTyped::operator=(FUsdTyped&& Other)
 	{
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl = MoveTemp( Other.Impl );
+		Impl = MoveTemp(Other.Impl);
 
 		return *this;
 	}
@@ -98,26 +96,26 @@ namespace UE
 		return (bool)Impl->PxrUsdTyped.Get();
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 #if USE_USD_SDK
-	FUsdTyped::FUsdTyped( const pxr::UsdTyped& InUsdTyped )		
+	FUsdTyped::FUsdTyped(const pxr::UsdTyped& InUsdTyped)
 	{
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl = MakeUnique< Internal::FUsdTypedImpl >( InUsdTyped );
+		Impl = MakeUnique<Internal::FUsdTypedImpl>(InUsdTyped);
 	}
 
-	FUsdTyped::FUsdTyped( pxr::UsdTyped&& InUsdTyped )
+	FUsdTyped::FUsdTyped(pxr::UsdTyped&& InUsdTyped)
 	{
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl = MakeUnique< Internal::FUsdTypedImpl >( MoveTemp( InUsdTyped ) );
+		Impl = MakeUnique<Internal::FUsdTypedImpl>(MoveTemp(InUsdTyped));
 	}
 
-	FUsdTyped::FUsdTyped( const pxr::UsdPrim& Prim )
+	FUsdTyped::FUsdTyped(const pxr::UsdPrim& Prim)
 	{
 		FScopedUnrealAllocs UnrealAllocs;
-		Impl = MakeUnique< Internal::FUsdTypedImpl >( Prim );
+		Impl = MakeUnique<Internal::FUsdTypedImpl>(Prim);
 	}
 
 	FUsdTyped::operator pxr::UsdTyped&()
@@ -129,23 +127,23 @@ namespace UE
 	{
 		return Impl->PxrUsdTyped.Get();
 	}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 	FSdfPath FUsdTyped::GetPath() const
 	{
 #if USE_USD_SDK
-		return FSdfPath( Impl->PxrUsdTyped.Get().GetPath() );
+		return FSdfPath(Impl->PxrUsdTyped.Get().GetPath());
 #else
 		return FSdfPath();
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	FUsdPrim FUsdTyped::GetPrim() const
 	{
 #if USE_USD_SDK
-		return FUsdPrim( Impl->PxrUsdTyped.Get().GetPrim() );
+		return FUsdPrim(Impl->PxrUsdTyped.Get().GetPrim());
 #else
 		return FUsdPrim();
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
-}
+}	 // namespace UE

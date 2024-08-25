@@ -70,6 +70,19 @@ struct FCrashOverrideParameters
 	CORE_API ~FCrashOverrideParameters();
 };
 
+namespace UE
+{
+struct FMultiprocessCreatedContext
+{
+	int32 Id;
+};
+
+struct FMultiprocessDetachedContext
+{
+	int32 Id;
+};
+}
+
 class FCoreDelegates
 {
 public:
@@ -80,7 +93,11 @@ public:
 	static CORE_API TMulticastDelegate<void()> OnAsyncLoadingFlushUpdate;
 
 	// Callback on the game thread when an async load is started. This goes off before the packages has finished loading
+	UE_DEPRECATED(5.3, "This delegate is not thread-safe, please use GetOnAsyncLoadPackage().")
 	static CORE_API TMulticastDelegate<void(const FString&)> OnAsyncLoadPackage;
+
+	// Thread-safe callback that is called on the same thread that LoadPackageAsync is issued from.
+	static CORE_API TTSMulticastDelegate<void(FStringView)>& GetOnAsyncLoadPackage();
 
 	static CORE_API TMulticastDelegate<void(const FString&)> OnSyncLoadPackage;
 
@@ -568,6 +585,13 @@ public:
 	// Extension point for projects to report the URL for a continuous integration job which is currently executing this process. 
 	static CORE_API TDelegate<const TCHAR*()> OnGetExecutingJobURL;
 	
+#if WITH_EDITOR
+	// Called when a subprocess is created for multiprocess operation.
+	static CORE_API TMulticastDelegate<void(const UE::FMultiprocessCreatedContext&)> OnMultiprocessWorkerCreated;
+
+	// Called when a subprocess is detached (but not necessarily terminated) for multiprocess operation.
+	static CORE_API TMulticastDelegate<void(const UE::FMultiprocessDetachedContext&)> OnMultiprocessWorkerDetached;
+#endif
 private:
 
 	// Callbacks for hotfixes

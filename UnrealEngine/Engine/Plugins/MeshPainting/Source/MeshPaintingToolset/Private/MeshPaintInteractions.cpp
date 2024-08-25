@@ -65,7 +65,7 @@ void UMeshPaintSelectionMechanic::OnClicked(const FInputDeviceRay& ClickPos)
 			GetParentTool()->GetToolManager()->BeginUndoTransaction(LOCTEXT("MeshSelection", "Select Mesh"));
 
 
-			FSelectedOjectsChangeList NewSelection;
+			FSelectedObjectsChangeList NewSelection;
 			// TODO add CTRL handling
 			const bool bShouldAddToSelection = bAddToSelectionSet && Interface->AllowsMultiselect();
 			NewSelection.ModificationType = bShouldAddToSelection ? ESelectedObjectsModificationType::Add : ESelectedObjectsModificationType::Replace;

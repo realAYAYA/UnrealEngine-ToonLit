@@ -773,6 +773,9 @@ private:
 	/** Gets the spacing dedicated to support type names */
 	float GetTileViewTypeNameHeight() const;
 
+	/** Gets the spacing needed to support source control icons. No scaling is required for this since the icon itself is not scaled by the thumbnail size. */
+	float GetSourceControlIconHeight() const;
+
 	/** Gets the scaled item height for the list view */
 	float GetListViewItemHeight() const;
 	

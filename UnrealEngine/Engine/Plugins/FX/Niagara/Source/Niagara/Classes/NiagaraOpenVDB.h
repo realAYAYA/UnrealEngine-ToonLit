@@ -36,7 +36,7 @@ UE_PUSH_MACRO("check")
 #include <openvdb/tools/Prune.h>
 #include <openvdb/tools/Dense.h>
 #include <openvdb/math/Vec4.h>
-#include <openvdb//math/Half.h>
+#include <openvdb/math/Half.h>
 
 using Vec4s = openvdb::Vec4s;
 using Vec4STree = openvdb::tree::Tree4<Vec4s, 5, 4, 3>::Type;

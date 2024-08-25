@@ -50,7 +50,7 @@ public:
 	/** Loads content from the SourceFilename into this collection. If false, OutError is a human readable warning depicting the error. */
 	bool Load(FText& OutError);
 	/** Saves this collection to SourceFilename. If submitting to source control, AdditionalChangelistText will be added to the changelist description. If false, OutError is a human readable warning depicting the error. */
-	bool Save(const TArray<FText>& AdditionalChangelistText, FText& OutError);
+	bool Save(const TArray<FText>& AdditionalChangelistText, FText& OutError, bool bForceCommitToRevisionControl);
 	/** Updates this collection to ensure it's the latest version from source control. If false, OutError is a human readable warning depicting the error. */
 	bool Update(FText& OutError);
 	/** Merge the contents of NewCollection into this collection. Returns true if there were changes to merge, or false if the collections were identical. */
@@ -123,6 +123,9 @@ public:
 
 	/** Get the source filename of this collection */
 	FORCEINLINE const FString& GetSourceFilename() const { return SourceFilename; }
+
+	/** Gets set of all objects for fast iteration */
+	FORCEINLINE const TSet<FSoftObjectPath>& GetObjectSet() const { return ObjectSet; }
 
 private:
 	/** Generates the header pairs for the collection file. */

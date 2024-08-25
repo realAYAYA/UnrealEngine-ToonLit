@@ -422,13 +422,13 @@ FConnectionDialog::FConnectionDialog()
         {
             return 0;
         }
-        GS::Ref<GS::Object> Object(ConnectionsListBox.GetItemObjectData(EventArgs.listItem));
-        if (Object == GS::null)
+        const GS::Object* Object = ConnectionsListBox.GetItemObjectData(EventArgs.listItem);
+        if (Object == nullptr)
         {
             UE_AC_DebugF("ConnectionsListBox.onToolTipRequested - Object is null\n");
             return 0;
         }
-        EventArgs.toolTipText += static_cast<FToolTipText&>(*Object).ToolTipText;
+        EventArgs.toolTipText += static_cast<const FToolTipText&>(*Object).ToolTipText;
         return 1;
     };
 #endif

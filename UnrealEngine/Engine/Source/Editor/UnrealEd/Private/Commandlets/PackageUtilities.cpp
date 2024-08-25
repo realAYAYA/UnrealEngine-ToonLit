@@ -73,7 +73,7 @@ void SearchDirectoryRecursive( const FString& SearchPathMask, TArray<FString>& o
 	{
 		for ( int32 PkgIndex = 0; PkgIndex < PackageNames.Num(); PkgIndex++ )
 		{
-			new(out_PackageFilenames) FString( SearchPath / PackageNames[PkgIndex] );
+			out_PackageFilenames.Add( SearchPath / PackageNames[PkgIndex] );
 		}
 
 		out_PackageNames += PackageNames;
@@ -124,13 +124,15 @@ bool NormalizePackageNames( TArray<FString> PackageNames, TArray<FString>& Packa
 			TStringBuilder<256> UnusedRelPath;
 			for ( const FString& Path : Paths)
 			{
-				if (!FPackageName::TryGetMountPointForPath(Path, UnusedPackagePath, UnusedFilePath, UnusedRelPath))
+				// Make sure paths are relative so SearchDirectoryRecursive will output relative paths
+				const FString RelativePath = FPaths::CreateStandardFilename(Path);
+				if (!FPackageName::TryGetMountPointForPath(RelativePath, UnusedPackagePath, UnusedFilePath, UnusedRelPath))
 				{
 					UE_LOG(LogPackageUtilities, Warning,
-						TEXT("Engine.ini:[Core.System]:Paths entry '%s' is not mounted. Skipping it."), *Path);
+						TEXT("Engine.ini:[Core.System]:Paths entry '%s' is not mounted. Skipping it."), *RelativePath);
 					continue;
 				}
-				FString SearchWildcard = Path / PackageWildcard;
+				FString SearchWildcard = RelativePath / PackageWildcard;
 				UE_LOG(LogPackageUtilities, Log, TEXT("Searching using wildcard: '%s'"), *SearchWildcard);
 				SearchDirectoryRecursive(SearchWildcard, PackageNames, PackagePathNames);
 			}
@@ -730,6 +732,7 @@ int32 ULoadPackageCommandlet::Main( const FString& Params )
 
 				Tokens.Empty(TempTokens.Num());
 				Tokens = TempTokens;
+				break;
 			}
 		}
 	}
@@ -815,7 +818,7 @@ int32 ULoadPackageCommandlet::Main( const FString& Params )
 
 		if (bCheckForLegacyPackages)
 		{
-			FLinkerLoad* Linker = LoadPackageLinker(nullptr, PackagePath, LOAD_NoVerify);
+			FLinkerLoad* Linker = GetPackageLinker(nullptr, PackagePath, LOAD_NoVerify, nullptr);
 			MinVersion = FMath::Min<int32>(MinVersion, Linker->Summary.GetFileVersionUE().ToValue());
 		}
 		else
@@ -996,9 +999,7 @@ void FPkgInfoReporter_Log::GeneratePackageReport( FLinkerLoad* InLinker /*=nullp
 
 	if (!IsHideSaveUnstable())
 	{
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		Out.Logf(ELogVerbosity::Display, TEXT("\t             Guid: %s"), *Linker->Summary.Guid.ToString());
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+		Out.Logf(ELogVerbosity::Display, TEXT("\t        SavedHash: %s"), *WriteToString<40>(Linker->Summary.GetSavedHash()));
 	}
 	Out.Logf(ELogVerbosity::Display, TEXT("\t   PersistentGuid: %s"), *Linker->Summary.PersistentGuid.ToString());
 	Out.Logf(ELogVerbosity::Display, TEXT("\t      Generations:"));
@@ -1137,7 +1138,7 @@ void FPkgInfoReporter_Log::GeneratePackageReport( FLinkerLoad* InLinker /*=nullp
 		SortedExportMap.Empty(Linker->ExportMap.Num());
 		for( int32 i = 0; i < Linker->ExportMap.Num(); ++i )
 		{
-			new(SortedExportMap) FExportInfo(Linker, i);
+			SortedExportMap.Emplace(Linker, i);
 		}
 
 		FString SortingParms;

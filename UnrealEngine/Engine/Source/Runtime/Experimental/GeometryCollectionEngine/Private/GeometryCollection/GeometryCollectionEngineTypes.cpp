@@ -2,7 +2,7 @@
 
 #include "GeometryCollection/GeometryCollectionEngineTypes.h"
 
-
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 FName GetCollectionAttributeName(ECollectionAttributeEnum TypeIn)
 {
 	switch (TypeIn)
@@ -18,7 +18,6 @@ FName GetCollectionAttributeName(ECollectionAttributeEnum TypeIn)
 	return FName("");
 }
 
-
 FName GetCollectionGroupName(ECollectionGroupEnum TypeIn)
 {
 	switch (TypeIn)
@@ -29,3 +28,4 @@ FName GetCollectionGroupName(ECollectionGroupEnum TypeIn)
 	check(false);
 	return FName("");
 }
+PRAGMA_ENABLE_DEPRECATION_WARNINGS

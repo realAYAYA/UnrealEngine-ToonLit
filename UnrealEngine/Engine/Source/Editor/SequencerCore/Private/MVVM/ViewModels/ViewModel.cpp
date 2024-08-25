@@ -14,11 +14,15 @@ namespace UE
 namespace Sequencer
 {
 
+uint32 GNextViewModelID = 0;
+
 FViewModel::FViewModel()
 	: FirstChildListHead(nullptr)
 	, ActiveIterationCount(0)
 	, bNeedsConstruction(1)
 {
+	// Don't really care about overflow here - by the time it does overflow, any overlapping IDs should have been released
+	ModelID = GNextViewModelID++;
 }
 
 FViewModel::~FViewModel()

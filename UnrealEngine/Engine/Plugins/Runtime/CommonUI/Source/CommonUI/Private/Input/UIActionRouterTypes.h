@@ -114,6 +114,7 @@ public:
 	
 	FActivatableTreeNodeRef AddChildNode(UCommonActivatableWidget& InActivatableWidget);
 	void CacheFocusRestorationTarget();
+	void ClearFocusRestorationTarget() { FocusRestorationTarget.Reset(); }
 	TSharedPtr<SWidget> GetFocusFallbackTarget() const;
 
 	bool IsExclusiveParentOfWidget(const TSharedPtr<SWidget>& SlateWidget) const;

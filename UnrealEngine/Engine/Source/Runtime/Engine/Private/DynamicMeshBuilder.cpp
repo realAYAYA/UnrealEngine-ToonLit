@@ -97,13 +97,13 @@ public:
 	 * @param Args The buffer size in bytes.
 	 * @returns A suitably sized buffer or NULL on failure.
 	 */
-	FBufferRHIRef CreateResource(FGlobalDynamicMeshPoolPolicy::CreationArguments Args)
+	FBufferRHIRef CreateResource(FRHICommandListBase& RHICmdList, FGlobalDynamicMeshPoolPolicy::CreationArguments Args)
 	{
 		FGlobalDynamicMeshPoolPolicy::CreationArguments BufferSize = GetPoolBucketSize(GetPoolBucketIndex(Args));
 		// The use of BUF_Static is deliberate - on OS X the buffer backing-store orphaning & reallocation will dominate execution time
 		// so to avoid this we don't reuse a buffer for several frames, thereby avoiding the pipeline stall and the reallocation cost.
 		FRHIResourceCreateInfo CreateInfo(TEXT("FGlobalDynamicMeshIndexPolicy"));
-		FBufferRHIRef VertexBuffer = FRHICommandListImmediate::Get().CreateIndexBuffer(sizeof(DynamicMeshIndexType), BufferSize, BUF_Static, CreateInfo);
+		FBufferRHIRef VertexBuffer = RHICmdList.CreateIndexBuffer(sizeof(DynamicMeshIndexType), BufferSize, BUF_Static, CreateInfo);
 		return VertexBuffer;
 	}
 	
@@ -155,11 +155,11 @@ public:
 	 * @param Args The buffer size in bytes.
 	 * @returns A suitably sized buffer or NULL on failure.
 	 */
-	FBufferRHIRef CreateResource(FGlobalDynamicMeshPoolPolicy::CreationArguments Args)
+	FBufferRHIRef CreateResource(FRHICommandListBase& RHICmdList, FGlobalDynamicMeshPoolPolicy::CreationArguments Args)
 	{
 		FGlobalDynamicMeshPoolPolicy::CreationArguments BufferSize = GetPoolBucketSize(GetPoolBucketIndex(Args));
 		FRHIResourceCreateInfo CreateInfo(TEXT("FGlobalDynamicMeshVertexPolicy"));
-		FBufferRHIRef VertexBuffer = FRHICommandListImmediate::Get().CreateVertexBuffer(BufferSize, BUF_Volatile | BUF_ShaderResource, CreateInfo);
+		FBufferRHIRef VertexBuffer = RHICmdList.CreateVertexBuffer(BufferSize, BUF_Volatile | BUF_ShaderResource, CreateInfo);
 		return VertexBuffer;
 	}
 	
@@ -235,10 +235,15 @@ int32 FDynamicMeshBufferAllocator::GetVertexBufferSize(uint32 Stride, uint32 Num
 
 FBufferRHIRef FDynamicMeshBufferAllocator::AllocIndexBuffer(uint32 NumElements)
 {
+	return AllocIndexBuffer(FRHICommandListImmediate::Get(), NumElements);
+}
+
+FBufferRHIRef FDynamicMeshBufferAllocator::AllocIndexBuffer(FRHICommandListBase& RHICmdList, uint32 NumElements)
+{
 	uint32 SizeInBytes = GetIndexBufferSize(NumElements);
 
 	FRHIResourceCreateInfo CreateInfo(TEXT("FDynamicMeshBufferAllocator"));
-	return FRHICommandListImmediate::Get().CreateIndexBuffer(sizeof(DynamicMeshIndexType), SizeInBytes, BUF_Volatile, CreateInfo);
+	return RHICmdList.CreateIndexBuffer(sizeof(DynamicMeshIndexType), SizeInBytes, BUF_Volatile, CreateInfo);
 }
 
 void FDynamicMeshBufferAllocator::ReleaseIndexBuffer(FBufferRHIRef& IndexBufferRHI)
@@ -248,10 +253,15 @@ void FDynamicMeshBufferAllocator::ReleaseIndexBuffer(FBufferRHIRef& IndexBufferR
 
 FBufferRHIRef FDynamicMeshBufferAllocator::AllocVertexBuffer(uint32 Stride, uint32 NumElements)
 {
+	return AllocVertexBuffer(FRHICommandListImmediate::Get(), Stride, NumElements);
+}
+
+FBufferRHIRef FDynamicMeshBufferAllocator::AllocVertexBuffer(FRHICommandListBase& RHICmdList, uint32 Stride, uint32 NumElements)
+{
 	uint32 SizeInBytes = GetVertexBufferSize(Stride, NumElements);
 
 	FRHIResourceCreateInfo CreateInfo(TEXT("FDynamicMeshBufferAllocator"));
-	return FRHICommandListImmediate::Get().CreateVertexBuffer(SizeInBytes, BUF_Volatile | BUF_ShaderResource, CreateInfo);
+	return RHICmdList.CreateVertexBuffer(SizeInBytes, BUF_Volatile | BUF_ShaderResource, CreateInfo);
 }
 
 void FDynamicMeshBufferAllocator::ReleaseVertexBuffer(FBufferRHIRef& VertexBufferRHI)
@@ -262,15 +272,15 @@ void FDynamicMeshBufferAllocator::ReleaseVertexBuffer(FBufferRHIRef& VertexBuffe
 /** This is our default implementation using GDynamicMeshIndexPool. */
 class FPooledDynamicMeshBufferAllocator : public FDynamicMeshBufferAllocator
 {
-	virtual FBufferRHIRef AllocIndexBuffer(uint32 NumElements) override
+	virtual FBufferRHIRef AllocIndexBuffer(FRHICommandListBase& RHICmdList, uint32 NumElements) override
 	{
 		uint32 SizeInBytes = NumElements * sizeof(DynamicMeshIndexType);
 		if (SizeInBytes <= FGlobalDynamicMeshIndexPolicy().GetPoolBucketSize(FGlobalDynamicMeshIndexPolicy::NumPoolBuckets - 1))
 		{
-			return GDynamicMeshIndexPool.CreatePooledResource(SizeInBytes);
+			return GDynamicMeshIndexPool.CreatePooledResource(RHICmdList, SizeInBytes);
 		}
 
-		return FDynamicMeshBufferAllocator::AllocIndexBuffer(NumElements);
+		return FDynamicMeshBufferAllocator::AllocIndexBuffer(RHICmdList, NumElements);
 	}
 
 	virtual void ReleaseIndexBuffer(FBufferRHIRef& IndexBufferRHI)
@@ -286,15 +296,15 @@ class FPooledDynamicMeshBufferAllocator : public FDynamicMeshBufferAllocator
 		}
 	}
 
-	virtual FBufferRHIRef AllocVertexBuffer(uint32 Stride, uint32 NumElements)
+	virtual FBufferRHIRef AllocVertexBuffer(FRHICommandListBase& RHICmdList, uint32 Stride, uint32 NumElements)
 	{
 		uint32 SizeInBytes = NumElements * Stride;
 		if (SizeInBytes <= FGlobalDynamicMeshVertexPolicy().GetPoolBucketSize(FGlobalDynamicMeshVertexPolicy::NumPoolBuckets - 1))
 		{
-			return GDynamicMeshVertexPool.CreatePooledResource(SizeInBytes);
+			return GDynamicMeshVertexPool.CreatePooledResource(RHICmdList, SizeInBytes);
 		}
 
-		return FDynamicMeshBufferAllocator::AllocVertexBuffer(Stride, NumElements);
+		return FDynamicMeshBufferAllocator::AllocVertexBuffer(RHICmdList, Stride, NumElements);
 	}
 
 	virtual void ReleaseVertexBuffer(FBufferRHIRef& VertexBufferRHI)
@@ -329,7 +339,7 @@ public:
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(FPooledDynamicMeshIndexBuffer::InitRHI)
 
-		IndexBufferRHI = DynamicMeshBufferAllocator.AllocIndexBuffer(Indices.Num());
+		IndexBufferRHI = DynamicMeshBufferAllocator.AllocIndexBuffer(RHICmdList, Indices.Num());
 
 		// Write the indices to the index buffer.
 		void* Buffer;
@@ -411,10 +421,10 @@ public:
 			TextureFormat = PF_G16R16F;
 		}
 
-		PositionBuffer.VertexBufferRHI = DynamicMeshBufferAllocator.AllocVertexBuffer(sizeof(FVector3f), Vertices.Num());
-		TangentBuffer.VertexBufferRHI  = DynamicMeshBufferAllocator.AllocVertexBuffer(sizeof(FPackedNormal), 2 * Vertices.Num());
-		TexCoordBuffer.VertexBufferRHI = DynamicMeshBufferAllocator.AllocVertexBuffer(TextureStride, NumTexCoords * Vertices.Num());
-		ColorBuffer.VertexBufferRHI    = DynamicMeshBufferAllocator.AllocVertexBuffer(sizeof(FColor), Vertices.Num());
+		PositionBuffer.VertexBufferRHI = DynamicMeshBufferAllocator.AllocVertexBuffer(RHICmdList, sizeof(FVector3f), Vertices.Num());
+		TangentBuffer.VertexBufferRHI  = DynamicMeshBufferAllocator.AllocVertexBuffer(RHICmdList, sizeof(FPackedNormal), 2 * Vertices.Num());
+		TexCoordBuffer.VertexBufferRHI = DynamicMeshBufferAllocator.AllocVertexBuffer(RHICmdList, TextureStride, NumTexCoords * Vertices.Num());
+		ColorBuffer.VertexBufferRHI    = DynamicMeshBufferAllocator.AllocVertexBuffer(RHICmdList, sizeof(FColor), Vertices.Num());
 
 		void* TexCoordBufferData = RHICmdList.LockBuffer(TexCoordBuffer.VertexBufferRHI, 0, NumTexCoords * TextureStride * Vertices.Num(), RLM_WriteOnly);
 		FVector2f* TexCoordBufferData32 = !Use16bitTexCoord ? static_cast<FVector2f*>(TexCoordBufferData) : nullptr;
@@ -538,77 +548,74 @@ public:
 	{
 		FLocalVertexFactory* VertexFactory = this;
 		const FPooledDynamicMeshVertexBuffer* PooledVertexBuffer = VertexBuffer;
-		ENQUEUE_RENDER_COMMAND(InitDynamicMeshVertexFactory)(
-			[VertexFactory, PooledVertexBuffer](FRHICommandListImmediate& RHICmdList)
+
+		FDataType LocalData;
+		LocalData.PositionComponent = FVertexStreamComponent(
+			&PooledVertexBuffer->PositionBuffer,
+			0,
+			sizeof(FVector3f),
+			VET_Float3
+		);
+
+		LocalData.NumTexCoords = PooledVertexBuffer->GetNumTexCoords();
 		{
-			FDataType Data;
-			Data.PositionComponent = FVertexStreamComponent(
-				&PooledVertexBuffer->PositionBuffer,
-				0,
-				sizeof(FVector3f),
-				VET_Float3
-			);
+			LocalData.LightMapCoordinateIndex = PooledVertexBuffer->GetLightmapCoordinateIndex();
+			LocalData.TangentsSRV = PooledVertexBuffer->TangentBufferSRV;
+			LocalData.TextureCoordinatesSRV = PooledVertexBuffer->TexCoordBufferSRV;
+			LocalData.ColorComponentsSRV = PooledVertexBuffer->ColorBufferSRV;
+			LocalData.PositionComponentSRV = PooledVertexBuffer->PositionBufferSRV;
+		}
 
-			Data.NumTexCoords = PooledVertexBuffer->GetNumTexCoords();
+		{
+			EVertexElementType UVDoubleWideVertexElementType = VET_None;
+			EVertexElementType UVVertexElementType = VET_None;
+			uint32 UVSizeInBytes = 0;
+			if (PooledVertexBuffer->GetUse16bitTexCoords())
 			{
-				Data.LightMapCoordinateIndex = PooledVertexBuffer->GetLightmapCoordinateIndex();
-				Data.TangentsSRV = PooledVertexBuffer->TangentBufferSRV;
-				Data.TextureCoordinatesSRV = PooledVertexBuffer->TexCoordBufferSRV;
-				Data.ColorComponentsSRV = PooledVertexBuffer->ColorBufferSRV;
-				Data.PositionComponentSRV = PooledVertexBuffer->PositionBufferSRV;
+				UVSizeInBytes = sizeof(FVector2DHalf);
+				UVDoubleWideVertexElementType = VET_Half4;
+				UVVertexElementType = VET_Half2;
+			}
+			else
+			{
+				UVSizeInBytes = sizeof(FVector2f);
+				UVDoubleWideVertexElementType = VET_Float4;
+				UVVertexElementType = VET_Float2;
 			}
 
+			int32 UVIndex;
+			uint32 UvStride = UVSizeInBytes * PooledVertexBuffer->GetNumTexCoords();
+			for (UVIndex = 0; UVIndex < (int32)PooledVertexBuffer->GetNumTexCoords() - 1; UVIndex += 2)
 			{
-				EVertexElementType UVDoubleWideVertexElementType = VET_None;
-				EVertexElementType UVVertexElementType = VET_None;
-				uint32 UVSizeInBytes = 0;
-				if (PooledVertexBuffer->GetUse16bitTexCoords())
-				{
-					UVSizeInBytes = sizeof(FVector2DHalf);
-					UVDoubleWideVertexElementType = VET_Half4;
-					UVVertexElementType = VET_Half2;
-				}
-				else
-				{
-					UVSizeInBytes = sizeof(FVector2f);
-					UVDoubleWideVertexElementType = VET_Float4;
-					UVVertexElementType = VET_Float2;
-				}
-
-				int32 UVIndex;
-				uint32 UvStride = UVSizeInBytes * PooledVertexBuffer->GetNumTexCoords();
-				for (UVIndex = 0; UVIndex < (int32)PooledVertexBuffer->GetNumTexCoords() - 1; UVIndex += 2)
-				{
-					Data.TextureCoordinates.Add
-					(
-						FVertexStreamComponent(
-							&PooledVertexBuffer->TexCoordBuffer, 
-							UVSizeInBytes * UVIndex, 
-							UvStride,
-							UVDoubleWideVertexElementType,
-							EVertexStreamUsage::ManualFetch
-						)
-					);
-				}
-
-				// possible last UV channel if we have an odd number
-				if (UVIndex < (int32)PooledVertexBuffer->GetNumTexCoords())
-				{
-					Data.TextureCoordinates.Add(FVertexStreamComponent(
-						&PooledVertexBuffer->TexCoordBuffer,
-						UVSizeInBytes * UVIndex,
+				LocalData.TextureCoordinates.Add
+				(
+					FVertexStreamComponent(
+						&PooledVertexBuffer->TexCoordBuffer, 
+						UVSizeInBytes * UVIndex, 
 						UvStride,
-						UVVertexElementType, 
+						UVDoubleWideVertexElementType,
 						EVertexStreamUsage::ManualFetch
-					));
-				}
-
-				Data.TangentBasisComponents[0] = FVertexStreamComponent(&PooledVertexBuffer->TangentBuffer, 0, 2 * sizeof(FPackedNormal), VET_PackedNormal, EVertexStreamUsage::ManualFetch);
-				Data.TangentBasisComponents[1] = FVertexStreamComponent(&PooledVertexBuffer->TangentBuffer, sizeof(FPackedNormal), 2 * sizeof(FPackedNormal), VET_PackedNormal, EVertexStreamUsage::ManualFetch);
-				Data.ColorComponent = FVertexStreamComponent(&PooledVertexBuffer->ColorBuffer, 0, sizeof(FColor), VET_Color, EVertexStreamUsage::ManualFetch);
+					)
+				);
 			}
-			VertexFactory->SetData(Data);
-		});
+
+			// possible last UV channel if we have an odd number
+			if (UVIndex < (int32)PooledVertexBuffer->GetNumTexCoords())
+			{
+				LocalData.TextureCoordinates.Add(FVertexStreamComponent(
+					&PooledVertexBuffer->TexCoordBuffer,
+					UVSizeInBytes * UVIndex,
+					UvStride,
+					UVVertexElementType, 
+					EVertexStreamUsage::ManualFetch
+				));
+			}
+
+			LocalData.TangentBasisComponents[0] = FVertexStreamComponent(&PooledVertexBuffer->TangentBuffer, 0, 2 * sizeof(FPackedNormal), VET_PackedNormal, EVertexStreamUsage::ManualFetch);
+			LocalData.TangentBasisComponents[1] = FVertexStreamComponent(&PooledVertexBuffer->TangentBuffer, sizeof(FPackedNormal), 2 * sizeof(FPackedNormal), VET_PackedNormal, EVertexStreamUsage::ManualFetch);
+			LocalData.ColorComponent = FVertexStreamComponent(&PooledVertexBuffer->ColorBuffer, 0, sizeof(FColor), VET_Color, EVertexStreamUsage::ManualFetch);
+		}
+		VertexFactory->SetData(RHICmdList, LocalData);
 
 		FLocalVertexFactory::InitResource(RHICmdList);
 	}
@@ -820,7 +827,7 @@ void FDynamicMeshBuilder::GetMesh(
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FDynamicMeshBuilder::GetMesh)
 
-	FRHICommandListBase& RHICmdList = FRHICommandListImmediate::Get();
+	FRHICommandListBase& RHICmdList = Collector.GetRHICommandList();
 
 	// Only draw non-empty meshes.
 	if((VertexBuffer && VertexBuffer->Vertices.Num() > 0) || (DrawOffset != nullptr))
@@ -858,14 +865,8 @@ void FDynamicMeshBuilder::GetMesh(
 					.OutputVelocity(true)
 				.Build();
 
-			if (IsInGameThread())
-			{
-				BeginSetUniformBufferContents(*OneFrameResources->PrimitiveUniformBuffer, PrimitiveParams);
-			}
-			else
-			{
-				OneFrameResources->PrimitiveUniformBuffer->SetContents(PrimitiveParams);
-			}
+			
+			OneFrameResources->PrimitiveUniformBuffer->SetContents(RHICmdList, PrimitiveParams);
 
 			OneFrameResources->PrimitiveUniformBuffer->InitResource(RHICmdList);
 
@@ -949,14 +950,7 @@ void FDynamicMeshBuilder::GetMeshElement(const FPrimitiveUniformShaderParameters
 			// Create the primitive uniform buffer.
 			OneFrameResource.PrimitiveUniformBuffer = new FDynamicMeshPrimitiveUniformBuffer();
 
-			if (IsInGameThread())
-			{
-				BeginSetUniformBufferContents(*OneFrameResource.PrimitiveUniformBuffer, PrimitiveParams);
-			}
-			else
-			{
-				OneFrameResource.PrimitiveUniformBuffer->SetContents(PrimitiveParams);
-			}
+			OneFrameResource.PrimitiveUniformBuffer->SetContents(RHICmdList, PrimitiveParams);
 
 			OneFrameResource.PrimitiveUniformBuffer->InitResource(RHICmdList);
 
@@ -1025,7 +1019,7 @@ void FDynamicMeshBuilder::Draw(FPrimitiveDrawInterface* PDI,const FMatrix& Local
 		}
 		else
 		{
-			PrimitiveUniformBuffer->SetContents(PrimitiveParams);
+			PrimitiveUniformBuffer->SetContents(FRHICommandListImmediate::Get(), PrimitiveParams);
 		}
 		PDI->RegisterDynamicResource(PrimitiveUniformBuffer);
 

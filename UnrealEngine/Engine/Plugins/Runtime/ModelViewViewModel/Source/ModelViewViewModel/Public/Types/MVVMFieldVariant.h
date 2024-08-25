@@ -61,12 +61,12 @@ namespace UE::MVVM
 			Type = EVariantType::Function;
 		}
 
-		UE_NODISCARD bool IsProperty() const
+		[[nodiscard]] bool IsProperty() const
 		{
 			return Type == EVariantType::Property;
 		}
 
-		UE_NODISCARD PropertyType* GetProperty() const
+		[[nodiscard]] PropertyType* GetProperty() const
 		{
 			check(Type == EVariantType::Property);
 			return Binding.Property;
@@ -78,12 +78,12 @@ namespace UE::MVVM
 			Type = EVariantType::Property;
 		}
 
-		UE_NODISCARD bool IsFunction() const
+		[[nodiscard]] bool IsFunction() const
 		{
 			return Type == EVariantType::Function;
 		}
 
-		UE_NODISCARD FunctionType* GetFunction() const
+		[[nodiscard]] FunctionType* GetFunction() const
 		{
 			check(Type == EVariantType::Function);
 			return Binding.Function;
@@ -95,7 +95,7 @@ namespace UE::MVVM
 			Type = EVariantType::Function;
 		}
 
-		UE_NODISCARD FName GetName() const
+		[[nodiscard]] FName GetName() const
 		{
 			if (Type == EVariantType::Property)
 			{
@@ -108,7 +108,7 @@ namespace UE::MVVM
 			return FName();
 		}
 
-		UE_NODISCARD UStruct* GetOwner() const
+		[[nodiscard]] UStruct* GetOwner() const
 		{
 			if (Type == EVariantType::Property)
 			{
@@ -121,7 +121,7 @@ namespace UE::MVVM
 			return nullptr;
 		}
 
-		UE_NODISCARD bool HasAnyFlags(EObjectFlags InFlags) const
+		[[nodiscard]] bool HasAnyFlags(EObjectFlags InFlags) const
 		{
 			if (Type == EVariantType::Property)
 			{
@@ -134,7 +134,7 @@ namespace UE::MVVM
 			return false;
 		}
 
-		UE_NODISCARD bool IsValid() const
+		[[nodiscard]] bool IsValid() const
 		{
 			if (Type == EVariantType::Property)
 			{
@@ -147,7 +147,7 @@ namespace UE::MVVM
 			return false;
 		}
 
-		UE_NODISCARD bool IsEmpty() const
+		[[nodiscard]] bool IsEmpty() const
 		{
 			return Type == EVariantType::Empty || Binding.Function == nullptr;
 		}

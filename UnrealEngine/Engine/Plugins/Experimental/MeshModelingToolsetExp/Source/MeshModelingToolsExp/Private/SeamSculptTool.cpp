@@ -151,11 +151,12 @@ void USeamSculptTool::OnBeginDrag(const FRay& Ray)
 {
 	UBaseBrushTool::OnBeginDrag(Ray);
 
-	if (CurrentSnapVertex >= 0)
+	if (IsInBrushStroke() && CurrentSnapVertex >= 0)
 	{
 		CaptureState = EActiveCaptureState::DrawNewPath;
 		DrawPathStartVertex = CurrentSnapVertex;
 		DrawPathStartPositionLocal = CurrentSnapPositionLocal;
+		LongTransactions.Open(LOCTEXT("CreateSeamChange", "Add UV Seam"), GetToolManager());
 
 		CurDrawPath.Reset();
 	}
@@ -187,12 +188,16 @@ void USeamSculptTool::OnUpdateDrag(const FRay& Ray)
 
 void USeamSculptTool::OnEndDrag(const FRay& Ray)
 {
+	// Capture brush stroke state prior to invoking Super::OnEndDrag
+	const bool bWasInBrushStroke = IsInBrushStroke();
+	
 	UBaseBrushTool::OnEndDrag(Ray);
 
-	if (CaptureState == EActiveCaptureState::DrawNewPath)
+	if (bWasInBrushStroke && CaptureState == EActiveCaptureState::DrawNewPath)
 	{
 		CreateSeamAlongPath();
 		CurDrawPath.Reset();
+		LongTransactions.Close(GetToolManager());
 	}
 
 	CaptureState = EActiveCaptureState::NoState;

@@ -2,10 +2,8 @@
 
 #include "PlasticSourceControlRevision.h"
 #include "PlasticSourceControlModule.h"
-#include "PlasticSourceControlProvider.h"
 #include "PlasticSourceControlState.h"
 #include "PlasticSourceControlUtils.h"
-#include "SPlasticSourceControlSettings.h"
 
 #include "HAL/FileManager.h"
 #include "Misc/Paths.h"
@@ -15,21 +13,20 @@
 
 bool FPlasticSourceControlRevision::Get(FString& InOutFilename, EConcurrency::Type InConcurrency /* = EConcurrency::Synchronous */) const
 {
-	if (InConcurrency != EConcurrency::Synchronous)
-	{
-		UE_LOG(LogSourceControl, Warning, TEXT("Only EConcurrency::Synchronous is tested/supported for this operation."));
-	}
-
 	// if a filename for the temp file wasn't supplied generate a unique-ish one
-	if (InOutFilename.Len() == 0)
+	if (InOutFilename.IsEmpty())
 	{
-		// create the diff dir if we don't already have it (Plastic wont)
+		// create the diff dir if we don't already have it
 		IFileManager::Get().MakeDirectory(*FPaths::DiffDir(), true);
 		// create a unique temp file name based on the unique revision Id
 		FString TempFileName;
 		if (ShelveId != ISourceControlState::INVALID_REVISION)
 		{
 			TempFileName = FString::Printf(TEXT("%stemp-sh%d-%s"), *FPaths::DiffDir(), ShelveId, *FPaths::GetCleanFilename(Filename));
+		}
+		else if (RevisionId != ISourceControlState::INVALID_REVISION)
+		{
+			TempFileName = FString::Printf(TEXT("%stemp-rev%d-%s"), *FPaths::DiffDir(), RevisionId, *FPaths::GetCleanFilename(Filename));
 		}
 		else
 		{
@@ -38,15 +35,13 @@ bool FPlasticSourceControlRevision::Get(FString& InOutFilename, EConcurrency::Ty
 		InOutFilename = FPaths::ConvertRelativePathToFull(TempFileName);
 	}
 
-	bool bCommandSuccessful;
+	bool bCommandSuccessful = false;
 	if (FPaths::FileExists(InOutFilename))
 	{
 		bCommandSuccessful = true; // if the temp file already exists, reuse it directly
 	}
-	else if (State)
+	else
 	{
-		const FString& PathToPlasticBinary = FPlasticSourceControlModule::Get().GetProvider().AccessSettings().GetBinaryPath();
-
 		FString RevisionSpecification;
 		if (ShelveId != ISourceControlState::INVALID_REVISION)
 		{
@@ -54,28 +49,48 @@ bool FPlasticSourceControlRevision::Get(FString& InOutFilename, EConcurrency::Ty
 			// Note: the plugin doesn't support shelves on Xlinks (no known RepSpec)
 			RevisionSpecification = FString::Printf(TEXT("rev:%s#sh:%d"), *Filename, ShelveId);
 		}
-		else
+		else if (RevisionId != ISourceControlState::INVALID_REVISION)
+		{
+			// Format the revision specification of the file, like rev:revid:920
+			RevisionSpecification = FString::Printf(TEXT("rev:revid:%d"), RevisionId);
+		}
+		else if (State)
 		{
 			// Format the revision specification of the checked-in file, like rev:Content/BP.uasset#cs:12@repo@server:8087
 			RevisionSpecification = FString::Printf(TEXT("rev:%s#cs:%d@%s"), *Filename, ChangesetNumber, *State->RepSpec);
 		}
-		bCommandSuccessful = PlasticSourceControlUtils::RunDumpToFile(PathToPlasticBinary, RevisionSpecification, InOutFilename);
-	}
-	else
-	{
-		UE_LOG(LogSourceControl, Error, TEXT("Revision(%s %d): unknown state!"), *Filename, RevisionId);
-		bCommandSuccessful = false;
+		else
+		{
+			UE_LOG(LogSourceControl, Error, TEXT("Unknown revision for %s!"), *Filename);
+		}
+
+		if (!RevisionSpecification.IsEmpty())
+		{
+			bCommandSuccessful = PlasticSourceControlUtils::RunGetFile(RevisionSpecification, InOutFilename);
+		}
+		if (!bCommandSuccessful && FPaths::FileExists(InOutFilename))
+		{
+			// On error, delete the temp file if it was created
+			IFileManager::Get().Delete(*InOutFilename);
+		}
 	}
 	return bCommandSuccessful;
 }
 
-bool FPlasticSourceControlRevision::GetAnnotated( TArray<FAnnotationLine>& OutLines ) const
+bool FPlasticSourceControlRevision::GetAnnotated(TArray<FAnnotationLine>& OutLines) const
 {
+	// NOTE GetAnnotated: called only by SourceControlHelpers::AnnotateFile(),
+	//      called only by ICrashDebugHelper::AddAnnotatedSourceToReport() using a changelist/check identifier
+	//      called only by FCrashDebugHelperWindows::CreateMinidumpDiagnosticReport() (and Mac) to Extract annotated lines from a source file stored in Perforce, and add to the crash report.
+	//      called by - MinidumpDiagnosticsApp RunMinidumpDiagnostics() for Perforce ONLY "MinidumpDiagnostics.exe <Crash.dmp> [-Annotate] [-SyncSymbols] [-SyncMicrosoftSymbols]"
+	//                - FWindowsErrorReport::DiagnoseReport() (and Mac)
+	// Reserved for internal use by Epic Games with Perforce only
 	return false;
 }
 
-bool FPlasticSourceControlRevision::GetAnnotated( FString& InOutFilename ) const
+bool FPlasticSourceControlRevision::GetAnnotated(FString& InOutFilename) const
 {
+	// NOTE: Unused, only the above method is called by the Editor
 	return false;
 }
 

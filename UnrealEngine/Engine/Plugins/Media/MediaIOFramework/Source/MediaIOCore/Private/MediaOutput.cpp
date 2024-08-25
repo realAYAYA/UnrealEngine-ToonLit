@@ -14,7 +14,7 @@ const FIntPoint UMediaOutput::RequestCaptureSourceSize = FIntPoint::ZeroValue;
 
 UMediaOutput::UMediaOutput(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
-	, NumberOfTextureBuffers(3)
+	, NumberOfTextureBuffers(4)
 {
 }
 

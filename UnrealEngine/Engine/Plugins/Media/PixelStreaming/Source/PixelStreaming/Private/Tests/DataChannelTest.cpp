@@ -20,8 +20,8 @@ namespace UE::PixelStreaming
 		// need to be able to accept codec to handshake otherwise setting local description fails when generating an answer
 		SetCodec(EPixelStreamingCodec::VP8, false /*bUseComputeShader*/);
 
-		int32 StreamerPort = 7567;
-		int32 PlayerPort = 4581;
+		int32 StreamerPort = TestUtils::NextStreamerPort();
+		int32 PlayerPort = TestUtils::NextPlayerPort();
 
 		TSharedPtr<UE::PixelStreamingServers::IServer> SignallingServer = CreateSignallingServer(StreamerPort, PlayerPort);
 

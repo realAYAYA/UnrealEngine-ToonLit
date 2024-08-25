@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "MetasoundLog.h"
 #include "MetasoundFrontendDataTypeRegistry.h"
+#include "MetasoundFrontendProxyDataCache.h"
 #include "MetasoundFrontendRegistries.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MetasoundFrontendLiteral)
@@ -65,6 +66,8 @@ namespace MetasoundFrontendLiteralPrivate
 				}
 				Builder << TLiteralValueToStringHelper<ElementType>::Convert(InArray[i]);
 			}
+
+			Builder << TEXT("]");
 
 			return FString(Builder);
 		}
@@ -597,7 +600,7 @@ bool FMetasoundFrontendLiteral::TryGet(int32& OutValue) const
 
 bool FMetasoundFrontendLiteral::TryGet(TArray<int32>& OutValue) const
 {
-	if (Type == EMetasoundFrontendLiteralType::Integer)
+	if (Type == EMetasoundFrontendLiteralType::IntegerArray)
 	{
 		OutValue = AsInteger;
 		return true;
@@ -645,49 +648,75 @@ bool FMetasoundFrontendLiteral::TryGet(TArray<FString>& OutValue) const
 	return false;
 }
 
-Metasound::FLiteral FMetasoundFrontendLiteral::ToLiteral(const FName& InMetasoundDataTypeName) const
+Metasound::FLiteral FMetasoundFrontendLiteral::ToLiteral(const FName& InMetasoundDataTypeName, const Metasound::Frontend::IDataTypeRegistry* InDataTypeRegistry, const Metasound::Frontend::FProxyDataCache* InProxyDataCache) const
 {
 	using namespace Metasound;
 	using namespace Metasound::Frontend;
 
-
-	FLiteral Literal = FLiteral::CreateInvalid();
-	const IDataTypeRegistry& DataTypeRegistry = IDataTypeRegistry::Get();
-
-	const bool bIsTypeSupported = DataTypeRegistry.IsLiteralTypeSupported(InMetasoundDataTypeName, Type);
-
-	if (!bIsTypeSupported)
-	{
-		UE_LOG(LogMetaSound, Error, TEXT("Reverting to default literal type for data type. Failed to create supported Metasound::FLiteral for data type [Name:%s] with FMetasoundFrontendLiteral [Literal:%s]"), *InMetasoundDataTypeName.ToString(), *ToString());
-
-		Literal = DataTypeRegistry.CreateDefaultLiteral(InMetasoundDataTypeName);
-	}
-	else if (EMetasoundFrontendLiteralType::UObject == Type)
+	if (EMetasoundFrontendLiteralType::UObject == Type)
 	{
 		if (ensure(AsUObject.Num() > 0))
 		{
-			// UObject proxies must go through the registry. The registry contains the information
-			// needed to convert UObjects to proxies. 
-			Literal = DataTypeRegistry.CreateLiteralFromUObject(InMetasoundDataTypeName, AsUObject[0]);
+			if (InProxyDataCache)
+			{
+				if (const TSharedPtr<Audio::IProxyData>* ProxyData = InProxyDataCache->FindProxy(AsUObject[0]))
+				{
+					return FLiteral(*ProxyData);
+				}
+				else
+				{
+					return FLiteral(TSharedPtr<Audio::IProxyData>());
+				}
+			}
+			else
+			{
+				if (!InDataTypeRegistry)
+				{
+					InDataTypeRegistry = &IDataTypeRegistry::Get();
+				}
+
+				// UObject proxies must go through the registry. The registry contains the information
+				// needed to convert UObjects to proxies. 
+				return InDataTypeRegistry->CreateLiteralFromUObject(InMetasoundDataTypeName, AsUObject[0]);
+			}
 		}
+
+		return FLiteral(TSharedPtr<Audio::IProxyData>());
 	}
 	else if (EMetasoundFrontendLiteralType::UObjectArray == Type)
 	{
-		// UObject proxies must go through the registry. The registry contains the information
-		// needed to convert UObjects to proxies. 
-		Literal = DataTypeRegistry.CreateLiteralFromUObjectArray(InMetasoundDataTypeName, AsUObject);
+		if (InProxyDataCache)
+		{
+			TArray<TSharedPtr<Audio::IProxyData>> Proxies;
+			for (const UObject* Object : AsUObject)
+			{
+				if (const TSharedPtr<Audio::IProxyData>* ProxyData = InProxyDataCache->FindProxy(Object))
+				{
+					Proxies.Add(*ProxyData);
+				}
+				else
+				{
+					Proxies.Add(TSharedPtr<Audio::IProxyData>());
+				}
+			}
+			return FLiteral(Proxies);
+		}
+		else
+		{
+			if (!InDataTypeRegistry)
+			{
+				InDataTypeRegistry = &IDataTypeRegistry::Get();
+			}
+			// UObject proxies must go through the registry. The registry contains the information
+			// needed to convert UObjects to proxies. 
+			return InDataTypeRegistry->CreateLiteralFromUObjectArray(InMetasoundDataTypeName, AsUObject);
+		}
 	}
 	else 
 	{
 		// Use default conversions for core literal types.
-		Literal = ToLiteralNoProxy();
+		return ToLiteralNoProxy();
 	}
-
-	// The support for the data type should be the same whether we pass in an
-	// Metasound::ELiteralType or a EMetasoundFrontendLiteralType
-	check(bIsTypeSupported == DataTypeRegistry.IsLiteralTypeSupported(InMetasoundDataTypeName, Literal.GetType()));
-
-	return Literal;
 }
 
 Metasound::FLiteral FMetasoundFrontendLiteral::ToLiteralNoProxy() const
@@ -801,6 +830,43 @@ FString FMetasoundFrontendLiteral::ToString() const
 	}
 }
 
+int32 FMetasoundFrontendLiteral::GetArrayNum() const
+{
+	switch (Type)
+	{
+	case EMetasoundFrontendLiteralType::None:
+	case EMetasoundFrontendLiteralType::Boolean:
+	case EMetasoundFrontendLiteralType::Integer:
+	case EMetasoundFrontendLiteralType::Float:
+	case EMetasoundFrontendLiteralType::String:
+	case EMetasoundFrontendLiteralType::UObject:
+		return INDEX_NONE;
+
+	case EMetasoundFrontendLiteralType::NoneArray:
+		return AsNumDefault;
+
+	case EMetasoundFrontendLiteralType::BooleanArray:
+		return AsBoolean.Num();
+
+	case EMetasoundFrontendLiteralType::IntegerArray:
+		return AsInteger.Num();
+
+	case EMetasoundFrontendLiteralType::FloatArray:
+		return AsFloat.Num();
+
+	case EMetasoundFrontendLiteralType::StringArray:
+		return AsString.Num();
+
+	case EMetasoundFrontendLiteralType::UObjectArray:
+		return AsUObject.Num();
+
+	case EMetasoundFrontendLiteralType::Invalid:
+	default:
+		static_assert(static_cast<int32>(EMetasoundFrontendLiteralType::Invalid) == 12, "Possible missing literal type switch coverage");
+		return INDEX_NONE;
+	}
+}
+
 EMetasoundFrontendLiteralType FMetasoundFrontendLiteral::GetType() const
 {
 	return Type;
@@ -842,5 +908,3 @@ namespace Metasound
 		}
 	}
 }
-
-

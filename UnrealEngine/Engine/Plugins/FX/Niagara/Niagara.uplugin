@@ -48,6 +48,11 @@
 			"LoadingPhase" : "PostConfigInit"
 		},
 		{
+			"Name" : "NiagaraBlueprintNodes",
+			"Type" : "UncookedOnly",
+			"LoadingPhase" : "Default"
+		},
+		{
 			"Name" : "NiagaraEditor",
 			"Type" : "Editor",
 			"LoadingPhase" : "Default"

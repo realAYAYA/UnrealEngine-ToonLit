@@ -14,6 +14,9 @@
 #include <iterator>
 #include <memory>
 #include <type_traits>
+#if !defined(__clang__)
+#include <span>
+#endif
 #ifdef _MSC_VER
     #pragma warning(pop)
 #endif
@@ -70,7 +73,7 @@ class DynArray {
 
             #if defined(_MSC_VER) && !defined(__clang__)
                 if (size() != 0ul) {
-                    std::copy(start, end, stdext::checked_array_iterator<value_type*>(data(), size()));
+                    std::copy(start, end, std::span{data(), size()}.begin());
                 }
             #else
                 std::copy(start, end, data());
@@ -207,7 +210,7 @@ class DynArray {
             resize_uninitialized(static_cast<std::size_t>(std::distance(start, end)));
             #if defined(_MSC_VER) && !defined(__clang__)
                 if (size() != 0ul) {
-                    std::copy(start, end, stdext::checked_array_iterator<value_type*>(data(), size()));
+                    std::copy(start, end, std::span{data(), size()}.begin());
                 }
             #else
                 std::copy(start, end, data());

@@ -7,7 +7,6 @@
 #include "AI/Navigation/NavigationTypes.h"
 #include "Chaos/Core.h"
 
-class AActor;
 class UBodySetup;
 struct FCompositeNavModifier;
 struct FKAggregateGeom;

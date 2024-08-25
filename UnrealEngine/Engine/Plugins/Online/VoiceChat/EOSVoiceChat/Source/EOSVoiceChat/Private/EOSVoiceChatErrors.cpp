@@ -2,7 +2,7 @@
 
 #include "EOSVoiceChatErrors.h"
 
-#if WITH_EOS_RTC
+#if WITH_EOSVOICECHAT
 
 #include "VoiceChatResult.h"
 #include "VoiceChatErrors.h"
@@ -120,4 +120,4 @@ FVoiceChatResult ResultFromEOSResult(const EOS_EResult EosResult)
 	return Result;
 }
 
-#endif // WITH_EOS_RTC
+#endif // WITH_EOSVOICECHAT

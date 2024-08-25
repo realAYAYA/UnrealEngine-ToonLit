@@ -388,6 +388,9 @@ public:
 	 */
 	virtual void ProcessActorChildMeshes(TFunctionRef<void(const FActorAdapter* ActorAdapter, const FActorChildMesh* ChildMesh)> ProcessFunc);
 
+	/** Whether valid actors/components were added to the scene representation */
+	bool IsValid() const;
+
 protected:
 	// top-level list of ActorAdapters, which represent each Actor and set of Components
 	TArray<TUniquePtr<FActorAdapter>> SceneActors;

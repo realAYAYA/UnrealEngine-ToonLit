@@ -266,7 +266,88 @@ void FPreviewSceneDescriptionCustomization::CustomizeDetails(IDetailLayoutBuilde
 			.ThumbnailPool(DetailBuilder.GetThumbnailPool())
 		];
 	}
+
+	// Customize animation blueprint preview
+	TSharedRef<IPropertyHandle> PreviewAnimationBlueprintProperty = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UPersonaPreviewSceneDescription, PreviewAnimationBlueprint));
+	TSharedRef<IPropertyHandle> ApplicationMethodProperty = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UPersonaPreviewSceneDescription, ApplicationMethod));
+	TSharedRef<IPropertyHandle> LinkedAnimGraphTagProperty = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UPersonaPreviewSceneDescription, LinkedAnimGraphTag));
 	
+	if (PersonaToolkit.Pin()->GetContext() == UAnimBlueprint::StaticClass()->GetFName())
+	{
+		DetailBuilder.EditCategory("Animation Blueprint")
+		.AddProperty(PreviewAnimationBlueprintProperty)
+		.CustomWidget()
+		.NameContent()
+		[
+			SNew(SVerticalBox)
+			+SVerticalBox::Slot()
+			.AutoHeight()
+			[
+				PreviewAnimationBlueprintProperty->CreatePropertyNameWidget()
+			]
+		]
+		.ValueContent()
+		.MaxDesiredWidth(250.0f)
+		.MinDesiredWidth(250.0f)
+		[
+			SNew(SObjectPropertyEntryBox)
+			.AllowedClass(UAnimBlueprint::StaticClass())
+			.PropertyHandle(PreviewAnimationBlueprintProperty)
+			.OnShouldFilterAsset(this, &FPreviewSceneDescriptionCustomization::HandleShouldFilterAsset, FName("TargetSkeleton"), false)
+			.OnObjectChanged(this, &FPreviewSceneDescriptionCustomization::HandlePreviewAnimBlueprintChanged)
+			.ThumbnailPool(DetailBuilder.GetThumbnailPool())
+		];
+
+		ApplicationMethodProperty->SetOnPropertyValueChanged(FSimpleDelegate::CreateLambda([this]()
+		{
+			FScopedTransaction Transaction(LOCTEXT("SetAnimationBlueprintApplicationMethod", "Set Application Method"));
+
+			TSharedPtr<IPersonaToolkit> PinnedPersonaToolkit = PersonaToolkit.Pin();
+			TSharedRef<FAnimationEditorPreviewScene> LocalPreviewScene = StaticCastSharedRef<FAnimationEditorPreviewScene>(PinnedPersonaToolkit->GetPreviewScene());
+			UPersonaPreviewSceneDescription* PersonaPreviewSceneDescription = LocalPreviewScene->GetPreviewSceneDescription();
+			PinnedPersonaToolkit->GetAnimBlueprint()->SetPreviewAnimationBlueprintApplicationMethod(PersonaPreviewSceneDescription->ApplicationMethod);
+			LocalPreviewScene->SetPreviewAnimationBlueprint(PersonaPreviewSceneDescription->PreviewAnimationBlueprint.Get(), PinnedPersonaToolkit->GetAnimBlueprint());
+		}));
+
+		DetailBuilder.EditCategory("Animation Blueprint")
+		.AddProperty(ApplicationMethodProperty)
+		.IsEnabled(MakeAttributeLambda([this]()
+		{
+			TSharedPtr<IPersonaToolkit> PinnedPersonaToolkit = PersonaToolkit.Pin();
+			TSharedRef<FAnimationEditorPreviewScene> LocalPreviewScene = StaticCastSharedRef<FAnimationEditorPreviewScene>(PinnedPersonaToolkit->GetPreviewScene());
+			UPersonaPreviewSceneDescription* PersonaPreviewSceneDescription = LocalPreviewScene->GetPreviewSceneDescription();
+			
+			return PersonaPreviewSceneDescription->PreviewAnimationBlueprint.IsValid();
+		}));
+	
+		LinkedAnimGraphTagProperty->SetOnPropertyValueChanged(FSimpleDelegate::CreateLambda([this]()
+		{
+			FScopedTransaction Transaction(LOCTEXT("SetAnimationBlueprintTag", "Set Linked Anim Graph Tag"));
+
+			TSharedPtr<IPersonaToolkit> PinnedPersonaToolkit = PersonaToolkit.Pin();
+			TSharedRef<FAnimationEditorPreviewScene> LocalPreviewScene = StaticCastSharedRef<FAnimationEditorPreviewScene>(PinnedPersonaToolkit->GetPreviewScene());
+			UPersonaPreviewSceneDescription* PersonaPreviewSceneDescription = LocalPreviewScene->GetPreviewSceneDescription();
+			PinnedPersonaToolkit->GetAnimBlueprint()->SetPreviewAnimationBlueprintTag(PersonaPreviewSceneDescription->LinkedAnimGraphTag);
+			LocalPreviewScene->SetPreviewAnimationBlueprint(PersonaPreviewSceneDescription->PreviewAnimationBlueprint.Get(), PinnedPersonaToolkit->GetAnimBlueprint());
+		}));
+
+		DetailBuilder.EditCategory("Animation Blueprint")
+		.AddProperty(LinkedAnimGraphTagProperty)
+		.IsEnabled(MakeAttributeLambda([this]()
+		{
+			TSharedPtr<IPersonaToolkit> PinnedPersonaToolkit = PersonaToolkit.Pin();
+			TSharedRef<FAnimationEditorPreviewScene> LocalPreviewScene = StaticCastSharedRef<FAnimationEditorPreviewScene>(PinnedPersonaToolkit->GetPreviewScene());
+			UPersonaPreviewSceneDescription* PersonaPreviewSceneDescription = LocalPreviewScene->GetPreviewSceneDescription();
+			
+			return PersonaPreviewSceneDescription->PreviewAnimationBlueprint.IsValid() && PersonaPreviewSceneDescription->ApplicationMethod == EPreviewAnimationBlueprintApplicationMethod::LinkedAnimGraph;
+		}));
+	}
+	else
+	{
+		PreviewAnimationBlueprintProperty->MarkHiddenByCustomization();
+		ApplicationMethodProperty->MarkHiddenByCustomization();
+		LinkedAnimGraphTagProperty->MarkHiddenByCustomization();
+	}
 
 	//
 	// Physics section...
@@ -531,6 +612,25 @@ void FPreviewSceneDescriptionCustomization::HandleMeshChanged(const FAssetData& 
 {
 	USkeletalMesh* NewPreviewMesh = Cast<USkeletalMesh>(InAssetData.GetAsset());
 	PersonaToolkit.Pin()->SetPreviewMesh(NewPreviewMesh, false);
+}
+
+void FPreviewSceneDescriptionCustomization::HandlePreviewAnimBlueprintChanged(const FAssetData& InAssetData)
+{
+	UAnimBlueprint* NewAnimBlueprint = Cast<UAnimBlueprint>(InAssetData.GetAsset());
+	PersonaToolkit.Pin()->SetPreviewAnimationBlueprint(NewAnimBlueprint);
+}
+
+void FPreviewSceneDescriptionCustomization::HandleAnimBlueprintCompiled(UBlueprint* Blueprint)
+{
+	// Only re-initialize controller if we are not debugging an external instance.
+	// If we switch at this point then we will disconnect from the external instance
+	const TSharedPtr<FAnimationEditorPreviewScene> AnimPreviewScene = PreviewScene.Pin();
+	if(AnimPreviewScene->GetPreviewMeshComponent()->PreviewInstance == nullptr || AnimPreviewScene->GetPreviewMeshComponent()->PreviewInstance->GetDebugSkeletalMeshComponent() == nullptr)
+	{
+		UPersonaPreviewSceneDescription* PersonaPreviewSceneDescription = AnimPreviewScene->GetPreviewSceneDescription();
+		PersonaPreviewSceneDescription->PreviewControllerInstance->UninitializeView(PersonaPreviewSceneDescription, AnimPreviewScene.Get());
+		PersonaPreviewSceneDescription->PreviewControllerInstance->InitializeView(PersonaPreviewSceneDescription, AnimPreviewScene.Get());
+	}
 }
 
 void FPreviewSceneDescriptionCustomization::HandleAdditionalMeshesChanged(const FAssetData& InAssetData, IDetailLayoutBuilder* DetailLayoutBuilder)

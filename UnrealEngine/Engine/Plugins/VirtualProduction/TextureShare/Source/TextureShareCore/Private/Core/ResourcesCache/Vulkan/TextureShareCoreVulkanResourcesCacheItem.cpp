@@ -8,12 +8,10 @@
 #if PLATFORM_WINDOWS
 THIRD_PARTY_INCLUDES_START
 #include "Windows/AllowWindowsPlatformTypes.h"
-#include "Windows/PreWindowsApi.h"
 
 #include "vulkan/vulkan_core.h"
 #include "vulkan/vulkan_win32.h"
 
-#include "Windows/PostWindowsApi.h"
 #include "Windows/HideWindowsPlatformTypes.h"
 THIRD_PARTY_INCLUDES_END
 #endif

@@ -49,11 +49,15 @@ TSharedRef<SWidget> SZenCacheStatistics::GetGridPanel()
 {
 	TSharedRef<SGridPanel> Panel = SNew(SGridPanel);
 
-	UE::Zen::FZenStats ZenStats;
+	bool bHaveStats = false;
+	UE::Zen::FZenCacheStats ZenStats;
 
 	if (TSharedPtr<UE::Zen::FZenServiceInstance> ServiceInstance = ZenServiceInstance.Get())
 	{
-		ServiceInstance->GetStats(ZenStats);
+		if (ServiceInstance->GetCacheStats(ZenStats))
+		{
+			bHaveStats = true;
+		}
 	}
 
 	const static FNumberFormattingOptions SingleDecimalFormatting = FNumberFormattingOptions()
@@ -71,57 +75,13 @@ TSharedRef<SWidget> SZenCacheStatistics::GetGridPanel()
 
 
 	Panel->AddSlot(0, Row)
+	.ColumnSpan(2)
 	[
 		SNew(STextBlock)
 		.Margin(FMargin(ColumnMargin, RowMargin))
 		.ColorAndOpacity(TitleColor)
 		.Font(TitleFont)
 		.Text(LOCTEXT("Cache", "Local Cache"))
-	];
-
-	Panel->AddSlot(2, Row)
-	[
-		SNew(STextBlock)
-		.Margin(FMargin(ColumnMargin, RowMargin))
-		.ColorAndOpacity(TitleColor)
-		.Font(TitleFont)
-		.Text(LOCTEXT("CAS", "Local Content Store"))
-	];
-
-	Row++;
-
-	Panel->AddSlot(0, Row)
-	[
-		SNew(STextBlock)
-		.Margin(FMargin(ColumnMargin, RowMargin))
-		.Text(LOCTEXT("DiskSpace", "Disk Space"))
-	];
-
-	Panel->AddSlot(1, Row)
-	[
-		SNew(STextBlock)
-		.Margin(FMargin(ColumnMargin, RowMargin))
-		.Text_Lambda([DiskUsage = ZenStats.CacheStats.Size.Disk]
-		{
-			return FText::AsMemory(DiskUsage, (DiskUsage > 1024) ? &SingleDecimalFormatting : nullptr, nullptr, EMemoryUnitStandard::IEC);
-		})
-	];
-
-	Panel->AddSlot(2, Row)
-	[
-		SNew(STextBlock)
-		.Margin(FMargin(ColumnMargin, RowMargin))
-		.Text(LOCTEXT("DiskSpace", "Disk Space"))
-	];
-
-	Panel->AddSlot(3, Row)
-	[
-		SNew(STextBlock)
-		.Margin(FMargin(ColumnMargin, RowMargin))
-		.Text_Lambda([DiskUsage = ZenStats.CASStats.Size.Total]
-		{
-			return FText::AsMemory(DiskUsage, (DiskUsage > 1024) ? &SingleDecimalFormatting : nullptr, nullptr, EMemoryUnitStandard::IEC);
-		})
 	];
 
 	Row++;
@@ -137,7 +97,7 @@ TSharedRef<SWidget> SZenCacheStatistics::GetGridPanel()
 	[
 		SNew(STextBlock)
 		.Margin(FMargin(ColumnMargin, RowMargin))
-		.Text_Lambda([CacheStats = ZenStats.CacheStats]
+		.Text_Lambda([CacheStats = ZenStats.General]
 		{
 			int64 CacheTotal = CacheStats.Hits + CacheStats.Misses;
 			return CacheTotal == 0 ? LOCTEXT("CacheNoHitRateValue", "-") : FText::AsPercent(CacheStats.HitRatio, &SingleDecimalFormatting);
@@ -157,34 +117,99 @@ TSharedRef<SWidget> SZenCacheStatistics::GetGridPanel()
 	[
 		SNew(STextBlock)
 		.Margin(FMargin(ColumnMargin, RowMargin))
-		.Text_Lambda([CacheHits = ZenStats.CacheStats.Hits]
+		.Text_Lambda([bHaveStats, CacheHits = ZenStats.General.Hits]
 		{
-			return FText::AsNumber(CacheHits);
+			return bHaveStats ? FText::AsNumber(CacheHits) : LOCTEXT("UnavailableValue", "-");
 		})
 	];
 
 	Row++;
 
 	Panel->AddSlot(0, Row)
-		[
-			SNew(STextBlock)
-			.Margin(FMargin(ColumnMargin, RowMargin))
+	[
+		SNew(STextBlock)
+		.Margin(FMargin(ColumnMargin, RowMargin))
 		.Text(LOCTEXT("CacheMissQuantity", "Misses"))
-		];
+	];
 
 	Panel->AddSlot(1, Row)
-		[
-			SNew(STextBlock)
-			.Margin(FMargin(ColumnMargin, RowMargin))
-		.Text_Lambda([CacheMisses = ZenStats.CacheStats.Misses]
-			{
-				return FText::AsNumber(CacheMisses);
-			})
-		];
+	[
+		SNew(STextBlock)
+		.Margin(FMargin(ColumnMargin, RowMargin))
+		.Text_Lambda([bHaveStats, CacheMisses = ZenStats.General.Misses]
+		{
+			return bHaveStats ? FText::AsNumber(CacheMisses) : LOCTEXT("UnavailableValue", "-");
+		})
+	];
 
 	Row++;
 
-	if (!ZenStats.UpstreamStats.EndPointStats.IsEmpty())
+	Panel->AddSlot(0, Row)
+	[
+		SNew(STextBlock)
+		.Margin(FMargin(ColumnMargin, RowMargin))
+		.Text(LOCTEXT("CacheWriteQuantity", "Writes"))
+	];
+
+	Panel->AddSlot(1, Row)
+	[
+		SNew(STextBlock)
+		.Margin(FMargin(ColumnMargin, RowMargin))
+		.Text_Lambda([bHaveStats, CacheWrites = ZenStats.General.Writes]
+		{
+			return bHaveStats ? FText::AsNumber(CacheWrites) : LOCTEXT("UnavailableValue", "-");
+		})
+	];
+
+	Row++;
+
+	Panel->AddSlot(0, Row)
+	[
+		SNew(STextBlock)
+		.Margin(FMargin(ColumnMargin, RowMargin))
+		.Text(LOCTEXT("CacheRequests", "Requests"))
+	];
+
+	Panel->AddSlot(1, Row)
+	[
+		SNew(STextBlock)
+		.Margin(FMargin(ColumnMargin, RowMargin))
+		.Text_Lambda([bHaveStats, Requests = ZenStats.Request.Count]
+		{
+			if (bHaveStats)
+			{
+				return FText::AsNumber(Requests);
+			}
+			return LOCTEXT("UnavailableValue", "-");
+		})
+	];
+
+	Row++;
+
+	Panel->AddSlot(0, Row)
+	[
+		SNew(STextBlock)
+		.Margin(FMargin(ColumnMargin, RowMargin))
+		.Text(LOCTEXT("CacheBadRequests", "Bad Requests"))
+	];
+
+	Panel->AddSlot(1, Row)
+	[
+		SNew(STextBlock)
+		.Margin(FMargin(ColumnMargin, RowMargin))
+		.Text_Lambda([bHaveStats, BadRequests = ZenStats.General.BadRequestCount]
+		{
+			if (bHaveStats)
+			{
+				return FText::AsNumber(BadRequests);
+			}
+			return LOCTEXT("UnavailableValue", "-");
+		})
+	];
+
+	Row++;
+
+	if (!ZenStats.Upstream.EndPoint.IsEmpty())
 	{
 		Panel->AddSlot(0, Row)
 		[
@@ -232,7 +257,7 @@ TSharedRef<SWidget> SZenCacheStatistics::GetGridPanel()
 		];
 		Row++;
 
-		for (const UE::Zen::FZenEndPointStats& EndpointStats : ZenStats.UpstreamStats.EndPointStats)
+		for (const UE::Zen::FZenCacheStats::FEndPointStats& EndpointStats : ZenStats.Upstream.EndPoint)
 		{
 			Panel->AddSlot(0, Row)
 			[

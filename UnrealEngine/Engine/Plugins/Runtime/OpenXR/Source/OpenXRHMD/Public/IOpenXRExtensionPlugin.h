@@ -207,6 +207,16 @@ public:
 	}
 
 	/**
+	 * Set the output parameter to add suggested bindings to the given interaction profile.
+	 * This function gets called once for each interaction profile.
+	 * If false is returned the bindings will be ignored.
+	 */
+	virtual bool GetSuggestedBindings(XrPath InInteractionProfile, TArray<XrActionSuggestedBinding>& OutBindings)
+	{
+		return false;
+	}
+
+	/**
 	 * Set the output parameters to provide a path to an asset in the plugin content folder that visualizes
 	 * the controller in the hand represented by the user path.
 	 * While it's possible to provide controller models for other interaction profiles, you should only provide
@@ -334,10 +344,15 @@ public:
 	{
 	}
 
-	// OpenXRHMD::OnBeginRendering_GameThread
+	// OpenXRHMD::OnBeginSimulation_GameThread
 	virtual void* OnWaitFrame(XrSession InSession, void* InNext)
 	{
 		return InNext;
+	}
+
+	// OpenXRHMD::OnBeginRendering_GameThread
+	virtual void OnBeginRendering_GameThread(XrSession InSession)
+	{
 	}
 
 	// OpenXRHMD::OnBeginRendering_RenderThread
@@ -376,8 +391,42 @@ public:
 		return InNext;
 	}
 
+	// FOpenXRInputPlugin::FOpenXRInput::BuildActions
+	virtual const void* OnSuggestBindings(XrPath InteractionProfile, const void* InNext)
+	{
+		return InNext;
+	}
+
 	// FOpenXRRenderBridge::Present, RHI thread
 	virtual const void* OnEndFrame(XrSession InSession, XrTime DisplayTime, const void* InNext)
+	{
+		return InNext;
+	}
+
+	// FOpenXRInputPlugin::FOpenXRActionSet::FOpenXRActionSet
+	virtual const void* OnCreateActionSet(XrActionSetCreateInfo InCreateInfo, const void* InNext)
+	{
+		return InNext;
+	}
+
+	// FOpenXRInputPlugin::FOpenXRActionSet::FOpenXRActionSet
+	void PostCreateActionSet(XrActionSet InActionSet)
+	{
+	}
+
+	// FOpenXRInputPlugin::FOpenXRAction::FOpenXRAction
+	virtual const void* OnCreateAction(XrActionCreateInfo InCreateInfo, const void* InNext)
+	{
+		return InNext;
+	}
+
+	// FOpenXRInputPlugin::FOpenXRAction::FOpenXRAction
+	void PostCreateAction(XrAction InAction)
+	{
+	}
+
+	// FOpenXRInputPlugin::FOpenXRInput::BuildActions
+	virtual const void* OnActionSetAttach(XrSessionActionSetsAttachInfo InAttachInfo, const void* InNext)
 	{
 		return InNext;
 	}

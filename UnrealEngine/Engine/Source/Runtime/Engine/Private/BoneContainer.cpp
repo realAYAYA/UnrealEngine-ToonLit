@@ -36,7 +36,7 @@ FBoneContainer::FBoneContainer()
 	PoseToSkeletonBoneIndexArray.Empty();
 }
 
-FBoneContainer::FBoneContainer(const TArray<FBoneIndexType>& InRequiredBoneIndexArray, const FCurveEvaluationOption& CurveEvalOption, UObject& InAsset)
+FBoneContainer::FBoneContainer(const TArrayView<const FBoneIndexType>& InRequiredBoneIndexArray, const FCurveEvaluationOption& CurveEvalOption, UObject& InAsset)
 : BoneIndicesArray(InRequiredBoneIndexArray)
 , Asset(&InAsset)
 , AssetSkeletalMesh(nullptr)
@@ -56,7 +56,7 @@ FBoneContainer::FBoneContainer(const TArray<FBoneIndexType>& InRequiredBoneIndex
 	Initialize(CurveFilterSettings);
 }
 
-FBoneContainer::FBoneContainer(const TArray<FBoneIndexType>& InRequiredBoneIndexArray, const UE::Anim::FCurveFilterSettings& InCurveFilterSettings, UObject& InAsset)
+FBoneContainer::FBoneContainer(const TArrayView<const FBoneIndexType>& InRequiredBoneIndexArray, const UE::Anim::FCurveFilterSettings& InCurveFilterSettings, UObject& InAsset)
 	: BoneIndicesArray(InRequiredBoneIndexArray)
 	, Asset(&InAsset)
 	, AssetSkeletalMesh(nullptr)
@@ -74,13 +74,13 @@ FBoneContainer::FBoneContainer(const TArray<FBoneIndexType>& InRequiredBoneIndex
 	Initialize(InCurveFilterSettings);
 }
 
-void FBoneContainer::InitializeTo(const TArray<FBoneIndexType>& InRequiredBoneIndexArray, const FCurveEvaluationOption& CurveEvalOption, UObject& InAsset)
+void FBoneContainer::InitializeTo(const TArrayView<const FBoneIndexType>& InRequiredBoneIndexArray, const FCurveEvaluationOption& CurveEvalOption, UObject& InAsset)
 {
 	const UE::Anim::FCurveFilterSettings CurveFilterSettings(CurveEvalOption.bAllowCurveEvaluation ? UE::Anim::ECurveFilterMode::DisallowFiltered : UE::Anim::ECurveFilterMode::DisallowAll, CurveEvalOption.DisallowedList, CurveEvalOption.LODIndex);
 	InitializeTo(InRequiredBoneIndexArray, CurveFilterSettings, InAsset);
 }
 
-void FBoneContainer::InitializeTo(const TArray<FBoneIndexType>& InRequiredBoneIndexArray, const UE::Anim::FCurveFilterSettings& CurveFilterSettings, UObject& InAsset)
+void FBoneContainer::InitializeTo(const TArrayView<const FBoneIndexType>& InRequiredBoneIndexArray, const UE::Anim::FCurveFilterSettings& CurveFilterSettings, UObject& InAsset)
 {
 	LLM_SCOPE_BYNAME(TEXT("Animation/BoneContainer"));
 	BoneIndicesArray = InRequiredBoneIndexArray;
@@ -304,7 +304,7 @@ void FBoneContainer::CacheRequiredAnimCurves(const UE::Anim::FCurveFilterSetting
 				if(Index != INDEX_NONE)
 				{
 					FilterFlags |= UE::Anim::ECurveFilterFlags::Filtered;
-					FilterCurves.RemoveAtSwap(Index, 1, false);
+					FilterCurves.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 				}
 				
 				if (InMetaData.MaxLOD < InCurveFilterSettings.LODIndex)
@@ -407,13 +407,29 @@ const FRetargetSourceCachedData& FBoneContainer::GetRetargetSourceCachedData(con
 	return GetRetargetSourceCachedData(InRetargetSourceName, FSkeletonRemapping(), RetargetTransforms);
 }
 
-const FRetargetSourceCachedData& FBoneContainer::GetRetargetSourceCachedData(const FName& InSourceName, const FSkeletonRemapping& InRemapping, const TArray<FTransform>& InRetargetTransforms) const
+const FRetargetSourceCachedData& FBoneContainer::GetRetargetSourceCachedData(
+	const FName& InSourceName,
+	const FSkeletonRemapping& InRemapping,
+	const TArray<FTransform>& InRetargetTransforms) const
 {
 	LLM_SCOPE_BYNAME(TEXT("Animation/BoneContainer"));
-	FRetargetSourceCachedData* RetargetSourceCachedData = RetargetSourceCachedDataLUT.Find(InSourceName);
+	
+	const USkeleton* SourceSkeleton = InRemapping.IsValid() ? InRemapping.GetSourceSkeleton().Get() : AssetSkeleton.Get();
+	check(SourceSkeleton);
+	
+	// Invalid retarget source names (not found on the skeleton) are internally treated as None, so we do the same
+	FName RetargetSourceKey = InSourceName;
+	if (!SourceSkeleton->AnimRetargetSources.Contains(InSourceName))
+	{
+		RetargetSourceKey = NAME_None;
+	}
+	
+	// Construct a key from the skeleton and the retarget source since both are necessary for uniqueness
+	FRetargetSourceCachedDataKey LUTKey(Cast<UObject>(SourceSkeleton), RetargetSourceKey);
+	FRetargetSourceCachedData* RetargetSourceCachedData = RetargetSourceCachedDataLUT.Find(LUTKey);
 	if (!RetargetSourceCachedData)
 	{
-		RetargetSourceCachedData = &RetargetSourceCachedDataLUT.Add(InSourceName);
+		RetargetSourceCachedData = &RetargetSourceCachedDataLUT.Add(LUTKey);
 
 		// Build Cached Data for OrientAndScale retargeting.
 
@@ -428,7 +444,7 @@ const FRetargetSourceCachedData& FBoneContainer::GetRetargetSourceCachedData(con
 			const int32 TargetSkeletonBoneIndex = CompactPoseToSkeletonIndex[CompactBoneIndex];
 			const int32 SourceSkeletonBoneIndex = InRemapping.IsValid() ? InRemapping.GetSourceSkeletonBoneIndex(TargetSkeletonBoneIndex) : TargetSkeletonBoneIndex;
 
-			if (SourceSkeletonBoneIndex != INDEX_NONE && AssetSkeleton.GetEvenIfUnreachable()->GetBoneTranslationRetargetingMode(SourceSkeletonBoneIndex, bDisableRetargeting) == EBoneTranslationRetargetingMode::OrientAndScale)
+			if (AssetSkeleton.GetEvenIfUnreachable()->GetBoneTranslationRetargetingMode(TargetSkeletonBoneIndex, bDisableRetargeting) == EBoneTranslationRetargetingMode::OrientAndScale)
 			{
 				if(AuthoredOnRefSkeleton.IsValidIndex(SourceSkeletonBoneIndex))
 				{
@@ -537,10 +553,8 @@ bool FBoneContainer::BoneIsChildOf(const FCompactPoseBoneIndex& BoneIndex, const
 void FBoneContainer::RemapFromSkelMesh(USkeletalMesh const & SourceSkeletalMesh, USkeleton& TargetSkeleton)
 {
 	LLM_SCOPE_BYNAME(TEXT("Animation/BoneContainer"));
-	int32 const SkelMeshLinkupIndex = TargetSkeleton.GetMeshLinkupIndex(&SourceSkeletalMesh);
-	check(SkelMeshLinkupIndex != INDEX_NONE);
-
-	FSkeletonToMeshLinkup const & LinkupTable = TargetSkeleton.LinkupCache[SkelMeshLinkupIndex];
+	
+	const FSkeletonToMeshLinkup& LinkupTable = TargetSkeleton.FindOrAddMeshLinkupData(&SourceSkeletalMesh);
 
 	// Copy LinkupTable arrays for now.
 	// @laurent - Long term goal is to trim that down based on LOD, so we can get rid of the BoneIndicesArray and branch cost of testing if PoseBoneIndex is in that required bone index array.

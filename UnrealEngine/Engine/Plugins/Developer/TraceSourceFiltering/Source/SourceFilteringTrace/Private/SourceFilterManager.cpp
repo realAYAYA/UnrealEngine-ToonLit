@@ -124,7 +124,7 @@ void FSourceFilterManager::ApplyFilters()
 
 		if (FilterType == EFilterType::GameThreadFilters)
 		{
-			ActorHashes.SetNumZeroed(NumActors, false);
+			ActorHashes.SetNumZeroed(NumActors, EAllowShrinking::No);
 
 			const FFilterSet& RootSet = FilterSetup.GetRootSet();
 			check(RootSet.bContainsGameThreadFilter);

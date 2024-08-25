@@ -8,14 +8,12 @@ THIRD_PARTY_INCLUDES_START
 
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
-#include "Windows/PreWindowsApi.h"
 #endif
 
 #include <cuviddec.h>
 #include <nvcuvid.h>
 
 #if PLATFORM_WINDOWS
-#include "Windows/PostWindowsApi.h"
 #include "Windows/HideWindowsPlatformTypes.h"
 #endif
 
@@ -31,6 +29,7 @@ struct NV_DECODE_API_FUNCTION_LIST
 	typedef CUresult (*cuvidCreateDecoderPtr)(CUvideodecoder*, CUVIDDECODECREATEINFO*);
 	typedef CUresult (*cuvidParseVideoDataPtr)(CUvideoparser, CUVIDSOURCEDATAPACKET*);
 	typedef CUresult (*cuvidCreateVideoParserPtr)(CUvideoparser*, CUVIDPARSERPARAMS*);
+	typedef CUresult (*cuvidDestroyVideoParserPtr)(CUvideoparser);
 	typedef CUresult (*cuvidCtxLockCreatePtr)(CUvideoctxlock*, CUcontext);
 	typedef CUresult (*cuvidCtxLockDestroyPtr)(CUvideoctxlock);
 	typedef CUresult (*cuvidDecodePicturePtr)(CUvideodecoder, CUVIDPICPARAMS*);
@@ -44,6 +43,7 @@ struct NV_DECODE_API_FUNCTION_LIST
 	cuvidCreateDecoderPtr cuvidCreateDecoder = nullptr;
 	cuvidParseVideoDataPtr cuvidParseVideoData = nullptr;
 	cuvidCreateVideoParserPtr cuvidCreateVideoParser = nullptr;
+	cuvidDestroyVideoParserPtr cuvidDestroyVideoParser = nullptr;
 	cuvidCtxLockCreatePtr cuvidCtxLockCreate = nullptr;
 	cuvidCtxLockDestroyPtr cuvidCtxLockDestroy = nullptr;
 	cuvidDecodePicturePtr cuvidDecodePicture = nullptr;

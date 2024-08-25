@@ -55,7 +55,8 @@ void UFractureToolFlattenAll::Execute(TWeakPtr<FFractureEditorModeToolkit> InToo
 			}
 			const TManagedArray<int32>& Levels = Context.GetGeometryCollection()->GetAttribute<int32>("Level", FGeometryCollection::TransformGroup);
 
-			Context.ConvertSelectionToClusterNodes();
+			Context.Sanitize();
+			Context.FilterSelectionBySimulationType(FGeometryCollection::FST_Clustered);
 
 			int32 MaxClusterLevel = -1;
 			for (int32 ClusterIndex : Context.GetSelection())

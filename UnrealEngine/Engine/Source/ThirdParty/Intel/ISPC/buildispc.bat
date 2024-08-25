@@ -1,8 +1,8 @@
 @echo off
 setlocal
 
-set LLVM_VERSION=12.0.1
-set ISPC_VERSION=1.17.0
+set LLVM_VERSION=16.0.5
+set ISPC_VERSION=1.21.0
 
 Set TREE_ROOT=%~dp0
 Set LLVM_ROOT=%TREE_ROOT%\llvm-%LLVM_VERSION%

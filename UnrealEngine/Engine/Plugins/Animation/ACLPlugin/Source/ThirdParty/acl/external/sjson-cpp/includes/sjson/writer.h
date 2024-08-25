@@ -30,6 +30,7 @@
 #endif
 
 #include "sjson/error.h"
+#include "sjson/version.h"
 
 #include <cstdio>
 #include <cstdint>
@@ -42,6 +43,8 @@
 
 namespace sjson
 {
+	SJSON_CPP_IMPL_VERSION_NAMESPACE_BEGIN
+
 	// TODO: Cleanup the locking stuff, wrap it in #ifdef to strip when asserts are disabled
 
 	class Writer;
@@ -761,4 +764,6 @@ namespace sjson
 	inline Writer::Writer(StreamWriter& stream_writer)
 		: ObjectWriter(stream_writer, 0)
 	{}
+
+	SJSON_CPP_IMPL_VERSION_NAMESPACE_END
 }

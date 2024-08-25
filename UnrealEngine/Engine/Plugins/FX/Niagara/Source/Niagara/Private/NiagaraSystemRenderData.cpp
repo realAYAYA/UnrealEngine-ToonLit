@@ -7,6 +7,9 @@
 #include "NiagaraSystem.h"
 #include "PrimitiveViewRelevance.h"
 #include "SceneView.h"
+#include "Rendering/RenderCommandPipes.h"
+
+DECLARE_RENDER_COMMAND_PIPE(NiagaraDynamicData, );
 
 void FNiagaraSystemRenderData::ExecuteDynamicDataCommands_RenderThread(const FSetDynamicDataCommandList& Commands)
 {
@@ -34,13 +37,13 @@ FNiagaraSystemRenderData::~FNiagaraSystemRenderData()
 	}
 }
 
-void FNiagaraSystemRenderData::CreateRenderThreadResources()
+void FNiagaraSystemRenderData::CreateRenderThreadResources(FRHICommandListBase& RHICmdList)
 {
 	for (auto Renderer : EmitterRenderers_RT)
 	{
 		if (Renderer)
 		{
-			Renderer->CreateRenderThreadResources();
+			Renderer->CreateRenderThreadResources(RHICmdList);
 		}
 	}
 }
@@ -73,8 +76,6 @@ void FNiagaraSystemRenderData::DestroyRenderState_Concurrent()
 
 void FNiagaraSystemRenderData::Destroy_RenderThread()
 {
-	check(IsInRenderingThread());
-
 	// Delete the renderers
 	for (auto Renderer : EmitterRenderers_RT)
 	{
@@ -91,9 +92,9 @@ void FNiagaraSystemRenderData::Destroy_RenderThread()
 FPrimitiveViewRelevance FNiagaraSystemRenderData::GetViewRelevance(const FSceneView& View, const FNiagaraSceneProxy& SceneProxy) const
 {
 	FPrimitiveViewRelevance Relevance;
-	if (IsRenderingEnabled())
+	if (IsRenderingEnabled_RT())
 	{
-		for (const auto Renderer : EmitterRenderers_RT)
+		for (const FNiagaraRenderer* Renderer : EmitterRenderers_RT)
 		{
 			if (Renderer)
 			{
@@ -168,20 +169,18 @@ void FNiagaraSystemRenderData::GenerateSetDynamicDataCommands(FSetDynamicDataCom
 	for (int32 i = 0; i < SystemInstance->GetEmitters().Num(); i++)
 	{
 		FNiagaraEmitterInstance* EmitterInst = &SystemInstance->GetEmitters()[i].Get();
-		FVersionedNiagaraEmitterData* EmitterData = EmitterInst->GetCachedEmitterData();
+#if STATS
+		TStatId EmitterStatID = EmitterInst->GetEmitterStatID(true, true);
+		FScopeCycleCounter EmitterStatCounter(EmitterStatID);
+#endif
 
-		if (EmitterData == nullptr)
+		if (!EmitterInst->GetEmitterHandle().GetIsEnabled())
 		{
 			continue;
 		}
 
-#if STATS
-		TStatId EmitterStatID = EmitterInst->GetCachedEmitter().Emitter->GetStatID(true, true);
-		FScopeCycleCounter EmitterStatCounter(EmitterStatID);
-#endif
-
-		EmitterData->ForEachEnabledRenderer(
-			[&](UNiagaraRendererProperties* Properties)
+		EmitterInst->ForEachEnabledRenderer(
+			[&](const UNiagaraRendererProperties* Properties)
 			{
 				FNiagaraRenderer* Renderer = EmitterRenderers_GT[RendererIndex];
 				FNiagaraDynamicDataBase* NewData = nullptr;
@@ -190,8 +189,7 @@ void FNiagaraSystemRenderData::GenerateSetDynamicDataCommands(FSetDynamicDataCom
 				{
 					bool bRendererEditorEnabled = true;
 #if WITH_EDITORONLY_DATA
-					const FNiagaraEmitterHandle& Handle = System->GetEmitterHandle(i);
-					bRendererEditorEnabled = (!SystemInstance->GetIsolateEnabled() || Handle.IsIsolated());
+					bRendererEditorEnabled = EmitterInst->IsDisabledFromIsolation() == false;
 #endif
 					if (bRendererEditorEnabled && !EmitterInst->IsComplete() && !SystemInstance->IsComplete())
 					{
@@ -271,16 +269,19 @@ void FNiagaraSystemRenderData::RecacheRenderers(const FNiagaraSystemInstance& Sy
 
 	bAnyMotionBlurEnabled = false;
 	bAnyHeterogeneousVolumesEnabled = false;
-	for (TSharedRef<const FNiagaraEmitterInstance, ESPMode::ThreadSafe> EmitterInst : SystemInstance.GetEmitters())
+	for (const FNiagaraEmitterInstanceRef& EmitterInst : SystemInstance.GetEmitters())
 	{
-		if (FVersionedNiagaraEmitterData* EmitterData = EmitterInst->GetCachedEmitterData())
+		if (!EmitterInst->GetEmitterHandle().GetIsEnabled())
 		{
-			EmitterData->ForEachEnabledRenderer(
-				[&](UNiagaraRendererProperties* Properties)
+			continue;
+		}
+
+		EmitterInst->ForEachEnabledRenderer(
+			[&](UNiagaraRendererProperties* Properties)
 			{
 				//We can skip creation of the renderer if the current quality level doesn't support it. If the quality level changes all systems are fully reinitialized.
 				FNiagaraRenderer* NewRenderer = nullptr;
-				if (Properties->GetIsActive() && EmitterInst->GetData().IsInitialized() && !EmitterInst->IsDisabled())
+				if (Properties->GetIsActive() && EmitterInst->GetParticleData().IsInitialized() && !EmitterInst->IsDisabled())
 				{
 					NewRenderer = Properties->CreateEmitterRenderer(FeatureLevel, &EmitterInst.Get(), Controller);
 					if (Properties->MotionVectorSetting != ENiagaraRendererMotionVectorSetting::Disable)
@@ -294,18 +295,26 @@ void FNiagaraSystemRenderData::RecacheRenderers(const FNiagaraSystemInstance& Sy
 				}
 				EmitterRenderers_GT.Add(NewRenderer);
 			}
-			);
-		}
+		);
 	}
 
 	// If we have renderers then the draw order on the system should match, when compiling the number of renderers can be zero
 	checkf((EmitterRenderers_GT.Num() == 0) || (EmitterRenderers_GT.Num() == RendererDrawOrder.Num()), TEXT("EmitterRenderers Num %d does not match System DrawOrder %d"), EmitterRenderers_GT.Num(), RendererDrawOrder.Num());
-	
+
+	UE::Tasks::FTaskEvent TaskEvent{ UE_SOURCE_LOCATION };
+
+	ENQUEUE_RENDER_COMMAND(SignalFence)(UE::RenderCommandPipe::NiagaraDynamicData, [TaskEvent] () mutable
+	{
+		TaskEvent.Trigger();
+	});
+
 	// NOTE: Since this object and its render thread resources may be concurrently accessed on the render thread, we have to create the renderers and pass them off to
 	// replace the current ones on the render thread's time line
 	ENQUEUE_RENDER_COMMAND(NiagaraRecacheRenderers)(
-		[this, EmitterRenderers_Copy=EmitterRenderers_GT](FRHICommandListImmediate& RHICmdList) mutable
+		[this, EmitterRenderers_Copy=EmitterRenderers_GT, TaskEvent = MoveTemp(TaskEvent)](FRHICommandListBase& RHICmdList) mutable
 		{
+			TaskEvent.Wait();
+
 			// Release/destroy the current renderers
 			Destroy_RenderThread();
 
@@ -327,16 +336,32 @@ void FNiagaraSystemRenderData::PostTickRenderers(const FNiagaraSystemInstance& S
 				const FNiagaraEmitterInstance& EmitterInst = SystemInstance.GetEmitters()[ExecIdx.EmitterIndex].Get();
 				if ( !EmitterInst.IsComplete() )
 				{
-					FVersionedNiagaraEmitterData* EmitterData = EmitterInst.GetCachedEmitterData();
-					FNiagaraRenderer* EmitterRenderer = EmitterRenderers_GT[ExecIdx.SystemRendererIndex];
-					if (EmitterData && EmitterRenderer)
+					if ( FNiagaraRenderer* EmitterRenderer = EmitterRenderers_GT[ExecIdx.SystemRendererIndex] )
 					{
-						const UNiagaraRendererProperties* RendererProperties = EmitterData->GetRenderers()[ExecIdx.EmitterRendererIndex];
+						const UNiagaraRendererProperties* RendererProperties = EmitterInst.GetRenderer(ExecIdx.EmitterRendererIndex);
 						EmitterRenderer->PostSystemTick_GameThread(RendererProperties, &EmitterInst);
 					}
 				}
 			}
 		}
+	}
+}
+
+void FNiagaraSystemRenderData::SetRenderingEnabled_GT(bool bInEnabled)
+{
+	check(IsInGameThread());
+
+	if (bRenderingEnabled_GT != bInEnabled)
+	{
+		bRenderingEnabled_GT = bInEnabled;
+		
+		// Note we send immediately because there is no guarantee we would push new data this frame
+		ENQUEUE_RENDER_COMMAND(FNiagaraSystemRenderData_SetRenderingEnabled)(UE::RenderCommandPipe::NiagaraDynamicData,
+			[this]()
+			{
+				bRenderingEnabled_RT = bRenderingEnabled_GT;
+			}
+		);
 	}
 }
 
@@ -348,7 +373,7 @@ void FNiagaraSystemRenderData::OnSystemComplete(const FNiagaraSystemInstance& Sy
 	}
 
 	const UNiagaraSystem* System = SystemInstance.GetSystem();
-	const TArray<TSharedRef<FNiagaraEmitterInstance, ESPMode::ThreadSafe>>& EmitterInstances = SystemInstance.GetEmitters();
+	TConstArrayView<FNiagaraEmitterInstanceRef> EmitterInstances = SystemInstance.GetEmitters();
 	if (EmitterInstances.Num() == 0)
 	{
 		return;
@@ -359,11 +384,9 @@ void FNiagaraSystemRenderData::OnSystemComplete(const FNiagaraSystemInstance& Sy
 		if (EmitterRenderers_GT.IsValidIndex(ExecIdx.SystemRendererIndex) && ensure(EmitterInstances.IsValidIndex(ExecIdx.EmitterIndex)) )
 		{
 			const FNiagaraEmitterInstance& EmitterInstance = EmitterInstances[ExecIdx.EmitterIndex].Get();
-			FVersionedNiagaraEmitterData* EmitterData = EmitterInstance.GetCachedEmitterData();
-			FNiagaraRenderer* EmitterRenderer = EmitterRenderers_GT[ExecIdx.SystemRendererIndex];
-			if (EmitterData && EmitterRenderer)
+			if (FNiagaraRenderer* EmitterRenderer = EmitterRenderers_GT[ExecIdx.SystemRendererIndex])
 			{
-				const UNiagaraRendererProperties* RendererProperties = EmitterData->GetRenderers()[ExecIdx.EmitterRendererIndex];
+				const UNiagaraRendererProperties* RendererProperties = EmitterInstance.GetRenderer(ExecIdx.EmitterRendererIndex);
 				EmitterRenderer->OnSystemComplete_GameThread(RendererProperties, &EmitterInstance);
 			}
 		}

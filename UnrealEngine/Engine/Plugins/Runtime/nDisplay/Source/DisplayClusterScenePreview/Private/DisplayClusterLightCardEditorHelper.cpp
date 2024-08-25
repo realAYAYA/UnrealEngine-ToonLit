@@ -1196,8 +1196,11 @@ void FDisplayClusterLightCardEditorHelper::InternalMoveActorTo(
 	SetActorCoordinates(Actor, FSphericalCoordinates(InverseRotatedPosition));
 	Actor->UpdateStageActorTransform();
 
-	ADisplayClusterRootActor* RootActor = (Actor->IsProxy() || !LevelInstanceRootActor.IsValid()) ? CachedRootActor.Get() : LevelInstanceRootActor.Get();
-	RootActor->MakeStageActorFlushToWall(Actor.AsActor());
+	if (Actor->IsAlwaysFlushToWall())
+	{
+		ADisplayClusterRootActor* RootActor = (Actor->IsProxy() || !LevelInstanceRootActor.IsValid()) ? CachedRootActor.Get() : LevelInstanceRootActor.Get();
+		RootActor->MakeStageActorFlushToWall(Actor.AsActor());
+	}
 
 #if WITH_EDITOR
 	if (!Actor->IsProxy())
@@ -1453,8 +1456,9 @@ bool FDisplayClusterLightCardEditorHelper::UpdateNormalMaps()
 
 void FDisplayClusterLightCardEditorHelper::UpdateNormalMapMesh()
 {
-	if (!NormalMeshScene.IsValid())
+	if (!NormalMeshScene.IsValid() || !IsValid(NormalMeshScene->GetWorld()))
 	{
+		FWorldDelegates::OnWorldCleanup.RemoveAll(this);
 		FWorldDelegates::OnWorldCleanup.AddRaw(this, &FDisplayClusterLightCardEditorHelper::OnWorldCleanup);
 		NormalMeshScene = MakeShared<FPreviewScene>(FPreviewScene::ConstructionValues());
 	}

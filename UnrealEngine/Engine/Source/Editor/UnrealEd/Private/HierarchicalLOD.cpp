@@ -854,7 +854,7 @@ void FHierarchicalLODBuilder::BuildMeshesForLODActors(bool bForceAll)
 							{
 								SlowTask.EnterProgressFrame(100.0f / (float)NumLODActors, FText::Format(LOCTEXT("HierarchicalLOD_BuildLODActorMeshesProgress", "Building LODActor Mesh {0} of {1} (LOD Level {2})"), FText::AsNumber(LODActorIndex), FText::AsNumber(LODLevelActors[LODIndex].Num()), FText::AsNumber(LODIndex + 1)));
 
-								bool bBuildSuccessful = Utilities->BuildStaticMeshForLODActor(Actor, AssetsOuter, BuildLODLevelSettings[LODIndex], BaseMaterial);
+								bool bBuildSuccessful = Utilities->BuildStaticMeshForLODActor(Actor, Proxy, BuildLODLevelSettings[LODIndex], BaseMaterial);
 
 								// Report an error if the build failed
 								if (!bBuildSuccessful)
@@ -1152,8 +1152,7 @@ void FHierarchicalLODBuilder::BuildMeshForLODActor(ALODActor* LODActor, const ui
 	IHierarchicalLODUtilities* Utilities = Module.GetUtilities();
 
 	UHLODProxy* Proxy = Utilities->CreateOrRetrieveLevelHLODProxy(LODActor->GetLevel(), LODLevel);
-	UPackage* AssetsOuter = Proxy->GetOutermost();
-	const bool bResult = Utilities->BuildStaticMeshForLODActor(LODActor, AssetsOuter, BuildLODLevelSettings[LODLevel], BaseMaterial);
+	const bool bResult = Utilities->BuildStaticMeshForLODActor(LODActor, Proxy, BuildLODLevelSettings[LODLevel], BaseMaterial);
 
 	if (bResult == false)
 	{
@@ -1291,8 +1290,8 @@ void FHierarchicalLODBuilder::MergeClustersAndBuildActors(ULevel* InLevel, const
 
 						for (AActor* RemoveActor : Cluster.Actors)
 						{
-							ValidStaticMeshActorsInLevel.RemoveSingleSwap(RemoveActor, false);
-							RejectedActorsInLevel.RemoveSingleSwap(RemoveActor, false);
+							ValidStaticMeshActorsInLevel.RemoveSingleSwap(RemoveActor, EAllowShrinking::No);
+							RejectedActorsInLevel.RemoveSingleSwap(RemoveActor, EAllowShrinking::No);
 						}
 					}
 					else
@@ -1328,9 +1327,9 @@ ALODActor* FHierarchicalLODBuilder::CreateLODActor(const FLODCluster& InCluster,
 		{
 			TArray<UStaticMeshComponent*> Components;
 
-			if (Actor->IsA<ALODActor>())
+			if (ALODActor* LODActor = Cast<ALODActor>(Actor))
 			{
-				Utilities->ExtractStaticMeshComponentsFromLODActor(Actor, Components);
+				UHLODProxy::ExtractStaticMeshComponentsFromLODActor(LODActor, Components);
 			}
 			else
 			{

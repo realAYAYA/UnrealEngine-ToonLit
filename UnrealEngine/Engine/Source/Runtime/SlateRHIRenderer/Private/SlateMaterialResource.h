@@ -21,6 +21,7 @@ public:
 	virtual uint32 GetWidth() const override { return Width; }
 	virtual uint32 GetHeight() const override { return Height; }
 	virtual ESlateShaderResource::Type GetType() const override { return ESlateShaderResource::Material; }
+	virtual ESlatePostRT GetUsedSlatePostBuffers() const override;
 	virtual bool IsResourceValid() const override;
 	//~ End FSlateShaderResource Interface.
 
@@ -61,6 +62,9 @@ private:
 	FSlateShaderResource* TextureMaskResource;
 	uint32 Width;
 	uint32 Height;
+
+	/** Cached slate SlatePostRT assets / buffers in use */
+	ESlatePostRT CachedSlatePostBuffers;
 
 private:
 #if SLATE_CHECK_UOBJECT_RENDER_RESOURCES

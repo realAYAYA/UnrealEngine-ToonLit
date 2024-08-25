@@ -19,6 +19,14 @@ struct FCastableTypeTable;
 class FDynamicExtensionContainer;
 class FViewModel;
 
+struct FDynamicExtensionContainerIterator;
+
+template<typename T>
+struct TDynamicExtensionContainerIterator;
+
+template<typename T>
+struct TDynamicExtensionContainerIteratorProxy;
+
 /**
  * Base class for dynamic extensions that can be added to sequence data models and participate in dynamic casting.
  */
@@ -39,6 +47,7 @@ public:
 };
 
 DECLARE_DELEGATE_OneParam(FDynamicExtensionCallback, TSharedRef<FViewModel>);
+
 
 /**
  * Base class for supporting dynamic extensions that participate in dynamic casting.
@@ -82,6 +91,12 @@ public:
 	T* CastDynamicChecked()
 	{
 		return const_cast<T*>(const_cast<const FDynamicExtensionContainer*>(this)->CastDynamicChecked<T>());
+	}
+
+	template<typename T>
+	TDynamicExtensionContainerIteratorProxy<T> FilterDynamic()
+	{
+		return TDynamicExtensionContainerIteratorProxy<T>(this);
 	}
 
 	SEQUENCERCORE_API const void* CastDynamic(FViewModelTypeID Type) const;
@@ -140,6 +155,9 @@ protected:
 
 private:
 
+	friend struct FDynamicExtensionContainerIterator;
+	template<typename T> friend struct TDynamicExtensionContainerIteratorProxy;
+
 	struct FDynamicExtensionInfo
 	{
 		FCastableTypeTable* TypeTable;
@@ -147,6 +165,64 @@ private:
 	};
 
 	TArray<FDynamicExtensionInfo> DynamicExtensions;
+};
+
+struct FDynamicExtensionContainerIterator
+{
+	explicit operator bool() const
+	{
+		return (bool)Iterator;
+	}
+
+	SEQUENCERCORE_API FDynamicExtensionContainerIterator& operator++();
+
+	SEQUENCERCORE_API friend bool operator!=(const FDynamicExtensionContainerIterator& A, const FDynamicExtensionContainerIterator& B);
+
+protected:
+	using IteratorType = TArray<FDynamicExtensionContainer::FDynamicExtensionInfo>::TConstIterator;
+
+	friend FDynamicExtensionContainer;
+
+	SEQUENCERCORE_API explicit FDynamicExtensionContainerIterator(IteratorType&& InIterator, FViewModelTypeID InType);
+
+	void* CurrentExtension = nullptr;
+	IteratorType Iterator;
+	FViewModelTypeID Type;
+};
+
+template<typename T>
+struct TDynamicExtensionContainerIteratorProxy
+{
+	FORCEINLINE TDynamicExtensionContainerIterator<T> begin() { return TDynamicExtensionContainerIterator<T>(IteratorType(Container->DynamicExtensions)); }
+	FORCEINLINE TDynamicExtensionContainerIterator<T> end()   { return TDynamicExtensionContainerIterator<T>(IteratorType(Container->DynamicExtensions, Container->DynamicExtensions.Num())); }
+
+private:
+	friend FDynamicExtensionContainer;
+
+	using IteratorType = TArray<FDynamicExtensionContainer::FDynamicExtensionInfo>::TConstIterator;
+
+	TDynamicExtensionContainerIteratorProxy(FDynamicExtensionContainer* InContainer)
+		: Container(InContainer)
+	{}
+
+	FDynamicExtensionContainer* Container;
+};
+
+template<typename T>
+struct TDynamicExtensionContainerIterator : FDynamicExtensionContainerIterator
+{
+	T& operator*() const
+	{
+		check(CurrentExtension);
+		return *static_cast<T*>(CurrentExtension);
+	}
+
+protected:
+	friend TDynamicExtensionContainerIteratorProxy<T>;
+
+	explicit TDynamicExtensionContainerIterator(FDynamicExtensionContainerIterator::IteratorType InIterator)
+		: FDynamicExtensionContainerIterator(MoveTemp(InIterator), T::ID)
+	{}
 };
 
 } // namespace Sequencer

@@ -8,9 +8,9 @@
 #include "InterchangeVariantSetNode.generated.h"
 
 /**
- * Class to represent a set of variants
+ * Class to represent a set of variants.
  */
-UCLASS(BlueprintType, Experimental)
+UCLASS(BlueprintType)
 class INTERCHANGENODES_API UInterchangeVariantSetNode : public UInterchangeBaseNode
 {
 	GENERATED_BODY()
@@ -24,7 +24,7 @@ public:
 	}
 
 	/**
-	 * Return the node type name of the class, we use this when reporting errors
+	 * Return the node type name of the class. This is used when reporting errors.
 	 */
 	virtual FString GetTypeName() const override
 	{
@@ -33,13 +33,13 @@ public:
 	}
 
 	/**
-	 * This function allow to retrieve the text which is displayed in the UI for this VariantSet.
+	 * Retrieve the text that is displayed in the UI for this VariantSet.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | VariantSet")
 	bool GetCustomDisplayText(FString& AttributeValue) const;
 
 	/**
-	 * This function allow to set the text to be displayed in the UI for this VariantSet.
+	 * Set the text to be displayed in the UI for this VariantSet.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | VariantSet")
 	bool SetCustomDisplayText(const FString& AttributeValue);
@@ -57,31 +57,31 @@ public:
 	bool SetCustomVariantsPayloadKey(const FString& PayloadKey);
 
 	/**
-	 * This function allow to retrieve the number of translated node's unique ids for this VariantSet.
+	 * Retrieve the number of translated node's unique IDs for this VariantSet.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | SceneVariantSet")
 	int32 GetCustomDependencyUidCount() const;
 
 	/**
-	 * This function allow to retrieve all the translated node's unique ids for this VariantSet.
+	 * Retrieve all the translated node's unique IDs for this VariantSet.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | SceneVariantSet")
 	void GetCustomDependencyUids(TArray<FString>& OutDependencyUids) const;
 
 	/**
-	 * This function allow to retrieve a specific translated node's unique id for this VariantSet.
+	 * Retrieve the specified translated node's unique ID for this VariantSet.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | SceneVariantSet")
 	void GetCustomDependencyUid(const int32 Index, FString& OutDependencyUid) const;
 
 	/**
-	 * Add one translated node's unique id to this VariantSet.
+	 * Add the specified translated node's unique ID to this VariantSet.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | SceneVariantSet")
 	bool AddCustomDependencyUid(const FString& DependencyUid);
 
 	/**
-	 * Remove one translated node's unique id from this VariantSet.
+	 * Remove the specified translated node's unique ID from this VariantSet.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | SceneVariantSet")
 	bool RemoveCustomDependencyUid(const FString& DependencyUid);
@@ -95,7 +95,7 @@ private:
 /**
  * Class to represent a set of VariantSet nodes
  */
-UCLASS(BlueprintType, Experimental)
+UCLASS(BlueprintType)
 class INTERCHANGENODES_API UInterchangeSceneVariantSetsNode : public UInterchangeBaseNode
 {
 	GENERATED_BODY()
@@ -109,7 +109,7 @@ public:
 	}
 
 	/**
-	* Return the node type name of the class, we use this when reporting errors
+	* Return the node type name of the class. This is used when reporting errors.
 	*/
 	virtual FString GetTypeName() const override
 	{
@@ -118,31 +118,31 @@ public:
 	}
 
 	/**
-	 * This function allow to retrieve the number of VariantSets for this object.
+	 * Retrieve the number of VariantSets for this object.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | SceneVariantSet")
 	int32 GetCustomVariantSetUidCount() const;
 
 	/**
-	 * This function allow to retrieve all the VariantSets' unique ids for this object.
+	 * Retrieve all the VariantSets' unique ids for this object.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | SceneVariantSet")
 	void GetCustomVariantSetUids(TArray<FString>& OutVariantUids) const;
 
 	/**
-	 * This function allow to retrieve one VariantSet's unique id for this object.
+	 * Retrieve the specified VariantSet's unique id for this object.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | SceneVariantSet")
 	void GetCustomVariantSetUid(const int32 Index, FString& OutVariantUid) const;
 
 	/**
-	 * Add one VariantSet's unique id to this object.
+	 * Add the specified VariantSet's unique id to this object.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | SceneVariantSet")
 	bool AddCustomVariantSetUid(const FString& VariantUid);
 
 	/**
-	 * Remove one VariantSet's unique id from this object.
+	 * Remove the specified VariantSet's unique id from this object.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | SceneVariantSet")
 	bool RemoveCustomVariantSetUid(const FString& VariantUid);

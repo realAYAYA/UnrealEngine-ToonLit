@@ -93,7 +93,7 @@ struct FIntNetSerializerBase
 		// Sign-extend the value if needed
 		if constexpr (std::is_signed_v<SourceType>)
 		{
-			const QuantizedType SignMask = QuantizedType(1) << (BitCount - 1U);
+			const QuantizedType SignMask = static_cast<QuantizedType>(QuantizedType(1) << (BitCount - 1U));
 			Value = (Value ^ SignMask) - SignMask;
 		}
 
@@ -168,7 +168,7 @@ struct FIntNetSerializerBase
 		QuantizedType Value;
 		if constexpr (std::is_signed_v<SourceType>)
 		{
-			const QuantizedType SignMask = (QuantizedType(1) << (BitCount - 1U));
+			const QuantizedType SignMask = static_cast<QuantizedType>(QuantizedType(1) << (BitCount - 1U));
 			const QuantizedType ValueMask = SignMask | (SignMask - QuantizedType(1));
 
 			Value = static_cast<QuantizedType>(Source) & ValueMask;

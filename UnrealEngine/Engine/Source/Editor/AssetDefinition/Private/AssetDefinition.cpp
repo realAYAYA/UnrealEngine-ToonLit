@@ -23,6 +23,7 @@ FAssetCategoryPath EAssetCategoryPaths::Input(LOCTEXT("Input", "Input"));
 FAssetCategoryPath EAssetCategoryPaths::FX(LOCTEXT("FX", "FX"));
 FAssetCategoryPath EAssetCategoryPaths::Cinematics(LOCTEXT("Cinematics", "Cinematics"));
 FAssetCategoryPath EAssetCategoryPaths::Media(LOCTEXT("Media", "Media"));
+FAssetCategoryPath EAssetCategoryPaths::World(LOCTEXT("World", "World"));
 
 FAssetCategoryPath::FAssetCategoryPath(const FText& InCategory)
 {

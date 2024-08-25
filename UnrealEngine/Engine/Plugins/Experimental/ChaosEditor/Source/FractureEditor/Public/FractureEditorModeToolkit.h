@@ -95,6 +95,7 @@ enum class EOutlinerColumnMode : uint8
 	Removal = 2				UMETA(DisplayName = "Removal"),
 	Collision = 3			UMETA(DisplayName = "Collision"),
 	Size = 4				UMETA(DisplayName = "Size"),
+	Geometry = 5			UMETA(DisplayName = "Geometry")
 };
 
 class FRACTUREEDITOR_API FFractureEditorModeToolkit : public FModeToolkit, public FGCObject
@@ -202,6 +203,9 @@ public:
 
 	void SetOutlinerColumnMode(EOutlinerColumnMode ColumnMode);
 
+	// function to poll whether the geometry collection data cached by the outliner is stale compared to the current geometry (using quick heuristics such as bone counts)
+	bool IsCachedOutlinerGeometryStale(const TArray<TWeakObjectPtr<UGeometryCollectionComponent>>& SelectedComponents) const;
+
 protected:
 	/** FModeToolkit interface */
 	virtual void RequestModeUITabs() override;
@@ -260,5 +264,8 @@ private:
 	TSharedPtr<SGeometryCollectionStatistics> StatisticsView;
 	TArray<TSharedPtr<FString>> AssetLocationModes;
 	TSharedPtr<STextComboBox> AssetLocationMode;
+
+	// Simple cached statistics to allow use to quickly/heuristically check for stale geometry collection data
+	int64 OutlinerCachedBoneCount = 0, OutlinerCachedVertexCount = 0;
 
 };

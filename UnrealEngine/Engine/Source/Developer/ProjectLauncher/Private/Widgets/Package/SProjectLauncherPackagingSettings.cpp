@@ -151,25 +151,6 @@ void SProjectLauncherPackagingSettings::Construct(const FArguments& InArgs, cons
 							[
 								SNew(SCheckBox)
 								.IsEnabled(this, &SProjectLauncherPackagingSettings::IsEditable)
-								.IsChecked(this, &SProjectLauncherPackagingSettings::HandleRetainStagedDirectoryCheckBoxIsChecked)
-								.OnCheckStateChanged(this, &SProjectLauncherPackagingSettings::HandleRetainStagedDirectoryCheckStateChanged)
-								.Padding(FMargin(4.0f, 0.0f))
-								.ToolTipText(LOCTEXT("RetainStagedDirectoryCheckBoxTooltip", "Some platforms modify I/O store containers before deployment which prevents using them as reference chunk database. Set this to true to save the staged directory beforehand."))
-								.Content()
-								[
-									SNew(STextBlock)
-									.Text(LOCTEXT("RetainStagedDirectoryCheckBoxText", "Retain the staged directory if the platform will modify the I/O store containers for deployment"))
-								]
-							]
-
-
-
-						+ SVerticalBox::Slot()
-							.AutoHeight()
-							.Padding(0.0, 4.0, 0.0, 0.0)
-							[
-								SNew(SCheckBox)
-								.IsEnabled(this, &SProjectLauncherPackagingSettings::IsEditable)
 								.IsChecked(this, &SProjectLauncherPackagingSettings::HandleMakeBinaryConfigCheckBoxIsChecked)
 								.OnCheckStateChanged(this, &SProjectLauncherPackagingSettings::HandleMakeBinaryConfigCheckStateChanged)
 								.Padding(FMargin(4.0f, 0.0f))
@@ -319,29 +300,6 @@ ECheckBoxState SProjectLauncherPackagingSettings::HandleIncludePrerequisitesChec
 	if (SelectedProfile.IsValid())
 	{
 		if (SelectedProfile->IsIncludingPrerequisites())
-		{
-			return ECheckBoxState::Checked;
-		}
-	}
-	return ECheckBoxState::Unchecked;
-}
-
-
-void SProjectLauncherPackagingSettings::HandleRetainStagedDirectoryCheckStateChanged(ECheckBoxState NewState)
-{
-	ILauncherProfilePtr SelectedProfile = Model->GetSelectedProfile();
-	if (SelectedProfile.IsValid())
-	{
-		SelectedProfile->SetRetainStagedDirectory(NewState == ECheckBoxState::Checked);
-	}
-}
-
-ECheckBoxState SProjectLauncherPackagingSettings::HandleRetainStagedDirectoryCheckBoxIsChecked() const
-{
-	ILauncherProfilePtr SelectedProfile = Model->GetSelectedProfile();
-	if (SelectedProfile.IsValid())
-	{
-		if (SelectedProfile->IsRetainStagedDirectory())
 		{
 			return ECheckBoxState::Checked;
 		}

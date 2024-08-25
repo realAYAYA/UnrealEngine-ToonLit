@@ -1,7 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Online/LeaderboardsEOSGS.h"
+
 #include "EOSShared.h"
+#include "IEOSSDKManager.h"
 #include "Online/AuthEOSGS.h"
 #include "Online/OnlineErrorEOSGS.h"
 #include "Online/OnlineIdEOSGS.h"
@@ -23,7 +25,7 @@ void FLeaderboardsEOSGS::Initialize()
 {
 	Super::Initialize();
 
-	LeaderboardsHandle = EOS_Platform_GetLeaderboardsInterface(static_cast<FOnlineServicesEOSGS&>(GetServices()).GetEOSPlatformHandle());
+	LeaderboardsHandle = EOS_Platform_GetLeaderboardsInterface(*static_cast<FOnlineServicesEOSGS&>(GetServices()).GetEOSPlatformHandle());
 	check(LeaderboardsHandle);
 }
 

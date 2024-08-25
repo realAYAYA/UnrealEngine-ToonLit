@@ -94,26 +94,50 @@ namespace FCompressionUtil
 		}
 	}
 
+	TArray<FString> CORE_API HexDumpLines(const uint8* Bytes, int64 BytesNum, int64 OffsetStart, int64 OffsetEnd, int32 BytesPerLine)
+	{
+ 		TArray<FString> Results;
+
+		for (int64 Idx = OffsetStart; Idx < OffsetEnd;)
+		{
+			FString HexString;
+			HexString.Reserve(128);
+			int64 LineOffset = OffsetStart;
+			for (int64 Idx2 = 0; Idx2 < BytesPerLine && Idx < OffsetEnd; ++Idx, ++Idx2, ++OffsetStart)
+			{
+				if (0 <= Idx && Idx < BytesNum)
+				{
+					HexString += FString::Printf(TEXT("%02X "), Bytes[Idx]);
+				}
+				else
+				{
+					HexString += TEXT("-- ");
+				}
+				if ((Idx2 & 7) == 7)
+				{
+					HexString += TEXT(" ");
+				}
+			}
+			if (LineOffset >= 0)
+			{
+				Results.Add(FString::Printf(TEXT("%016X: %s"), LineOffset, *HexString));
+			}
+			else
+			{
+				Results.Add(FString::Printf(TEXT(" -%014X: %s"), -LineOffset, *HexString));
+			}
+		}
+		return Results;
+	}
+
 	void CORE_API LogHexDump(const uint8* Bytes, int64 BytesNum, int64 OffsetStart, int64 OffsetEnd, int32 BytesPerLine)
 	{
 		if (UE_LOG_ACTIVE(LogCore, Display))
 		{
-			OffsetStart = FMath::Max(0ll, OffsetStart);
-			OffsetEnd = FMath::Min(BytesNum, OffsetEnd);
-
-			for (int64 Idx = OffsetStart; Idx < OffsetEnd;)
+			TArray<FString> Results = HexDumpLines(Bytes, BytesNum, OffsetStart, OffsetEnd, BytesPerLine);
+			for (const FString& Result : Results)
 			{
-				int64 LineOffset = OffsetStart;
-				FString HexString;
-				for (int64 Idx2 = 0; Idx2 < BytesPerLine && Idx < OffsetEnd; ++Idx, ++Idx2, ++OffsetStart)
-				{
-					HexString += FString::Printf(TEXT("%02X "), Bytes[Idx]);
-					if ((Idx2 & 7) == 7)
-					{
-						HexString += TEXT(" ");
-					}
-				}
-				UE_LOG(LogCore, Display, TEXT("%016X: %s"), LineOffset, *HexString);
+				UE_LOG(LogCore, Display, TEXT("%s"), *Result);
 			}
 		}
 	}

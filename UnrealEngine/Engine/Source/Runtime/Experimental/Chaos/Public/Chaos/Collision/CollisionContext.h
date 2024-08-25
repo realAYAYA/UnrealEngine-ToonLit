@@ -19,22 +19,31 @@ namespace Chaos
 			: BoundsExpansion(0)
 			, BoundsVelocityInflation(0)
 			, MaxVelocityBoundsExpansion(0)
+			, BoundsVelocityInflationMACD(0)
+			, MaxVelocityBoundsExpansionMACD(0)
 			, bFilteringEnabled(true)
 			, bDeferNarrowPhase(false)
 			, bAllowManifolds(true)
 			, bAllowManifoldReuse(true)
 			, bAllowCCD(true)
+			, bAllowMACD(false)
 		{
 		}
 
 		// Shape bounds are expanded by this in all 3 directions. This is also used as the CullDistance for collision response.
 		FReal BoundsExpansion;
 		
-		// Shape bounds in the broadphase are expanded by this multiple of velocity
+		// Shape bounds in the broadphase are expanded by this multiple of velocity (normal collision mode)
 		FReal BoundsVelocityInflation;
 
-		// We only allow the bounds to grow from velocity by this much
+		// We only allow the bounds to grow from velocity by this much (normal collision mode)
 		FReal MaxVelocityBoundsExpansion;
+
+		// Shape bounds in the broadphase are expanded by this multiple of velocity (movement-aware collision mode)
+		FReal BoundsVelocityInflationMACD;
+
+		// We only allow the bounds to grow from velocity by this much (movement-aware collision mode)
+		FReal MaxVelocityBoundsExpansionMACD;
 
 		// Whether to check the shape query flags in the narrow phase (e.g., Rigid Body nodes have already performed filtering prior to collision detection)
 		bool bFilteringEnabled;
@@ -52,6 +61,9 @@ namespace Chaos
 
 		// Whether CCD is allowed (disabled for RBAN)
 		bool bAllowCCD;
+
+		// Whether MACD is allowed (disabled for RBAN)
+		bool bAllowMACD;
 
 	};
 

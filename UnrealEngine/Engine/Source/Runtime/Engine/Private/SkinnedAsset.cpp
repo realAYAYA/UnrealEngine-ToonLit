@@ -439,6 +439,11 @@ void USkinnedAsset::FillComponentSpaceTransforms(const TArray<FTransform>& InBon
 	check(GetRefSkeleton().GetNum() == OutComponentSpaceTransforms.Num());
 
 	const int32 NumBones = InBoneSpaceTransforms.Num();
+	
+	if (!NumBones)
+	{
+		return;
+	}
 
 #if DO_GUARD_SLOW
 	/** Keep track of which bones have been processed for fast look up */

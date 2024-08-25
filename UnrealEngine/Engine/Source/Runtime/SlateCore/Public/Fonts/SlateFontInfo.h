@@ -6,6 +6,7 @@
 #include "UObject/ObjectMacros.h"
 #include "UObject/Class.h"
 #include "Fonts/CompositeFont.h"
+#include "HAL/IConsoleManager.h"
 #include "SlateFontInfo.generated.h"
 
 namespace FontConstants
@@ -42,6 +43,10 @@ struct FFontOutlineSettings
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=OutlineSettings, meta=(ClampMin="0", ClampMax="1024"))
 	int32 OutlineSize;
 
+	/** When enabled, outlines have sharp mitered corners, otherwise they are rounded. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = OutlineSettings, meta = (DisplayName="Mitered Corners"))
+	bool bMiteredCorners;
+
 	/**
 	 * When enabled the outline will be completely translucent where the filled area will be.  This allows for a separate fill alpha value
 	 * The trade off when enabling this is slightly worse quality for completely opaque fills where the inner outline border meets the fill area
@@ -65,6 +70,7 @@ struct FFontOutlineSettings
 
 	FFontOutlineSettings()
 		: OutlineSize(0)
+		, bMiteredCorners(false)
 		, bSeparateFillAlpha(false)
 		, bApplyOutlineToDropShadows(false)
 		, OutlineMaterial(nullptr)
@@ -73,6 +79,7 @@ struct FFontOutlineSettings
 
 	FFontOutlineSettings(int32 InOutlineSize, FLinearColor InColor = FLinearColor::Black)
 		: OutlineSize(InOutlineSize)
+		, bMiteredCorners(false)
 		, bSeparateFillAlpha(false)
 		, bApplyOutlineToDropShadows(false)
 		, OutlineMaterial(nullptr)
@@ -83,6 +90,7 @@ struct FFontOutlineSettings
 	{
 		// Ignore OutlineMaterial && OutlineColor because they do not affect the cached glyph.
 		return OutlineSize == Other.OutlineSize
+			&&  bMiteredCorners == Other.bMiteredCorners
 			&&  bSeparateFillAlpha == Other.bSeparateFillAlpha;
 	}
 
@@ -90,6 +98,7 @@ struct FFontOutlineSettings
 	{
 		return
 			OutlineSize == Other.OutlineSize &&
+			bMiteredCorners == Other.bMiteredCorners &&
 			bSeparateFillAlpha == Other.bSeparateFillAlpha &&
 			bApplyOutlineToDropShadows == Other.bApplyOutlineToDropShadows &&
 			OutlineMaterial == Other.OutlineMaterial &&
@@ -101,6 +110,7 @@ struct FFontOutlineSettings
 		uint32 Hash = 0;
 		// Ignore OutlineMaterial && OutlineColor because they do not affect the cached glyph.
 		Hash = HashCombine(Hash, GetTypeHash(OutlineSettings.OutlineSize));
+		Hash = HashCombine(Hash, GetTypeHash(OutlineSettings.bMiteredCorners));
 		Hash = HashCombine(Hash, GetTypeHash(OutlineSettings.bSeparateFillAlpha));
 		return Hash;
 	}
@@ -143,7 +153,7 @@ struct FSlateFontInfo
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=SlateStyleRules, meta=(AllowedClasses="/Script/Engine.Font", DisplayName="Font Family"))
 	TObjectPtr<const UObject> FontObject;
 
-	/** The material to use when rendering this font */
+	/** The material to use when rendering */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=SlateStyleRules, meta=(AllowedClasses="/Script/Engine.MaterialInterface"))
 	TObjectPtr<UObject> FontMaterial;
 
@@ -155,7 +165,7 @@ struct FSlateFontInfo
 	TSharedPtr<const FCompositeFont> CompositeFont;
 
 	/** The name of the font to use from the default typeface (None will use the first entry) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=SlateStyleRules, meta=(DisplayName="Typeface"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=SlateStyleRules, meta=(DisplayName="Typeface", EditCondition="FontObject"))
 	FName TypefaceFontName;
 
 	/**
@@ -176,6 +186,14 @@ struct FSlateFontInfo
 
 	/** The font fallback level. Runtime only, don't set on shared FSlateFontInfo, as it may change the font elsewhere (make a copy). */
 	EFontFallback FontFallback;
+
+	/** Enable pseudo-monospaced font. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=SlateStyleRules, meta=(DisplayName="Monospacing"))
+	bool bForceMonospaced = false;
+
+	/** The uniform width to apply to all characters when bForceMonospaced is enabled, proportional of the font Size. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=SlateStyleRules, meta=(ClampMin=0))
+	float MonospacedWidth = 1.0f;
 
 #if WITH_EDITORONLY_DATA
 private:
@@ -252,18 +270,20 @@ public:
 	SLATECORE_API FSlateFontInfo( const WIDECHAR* InFontName, float InSize, EFontHinting InHinting = EFontHinting::Default );
 
 public:
-	inline bool IsIdentialToForCaching(const FSlateFontInfo& Other) const
+	/**
+	* We need to verify equality without taking into account some more recently added
+	* UPROPERTY.. this is required and used only by the legacy FSlateFontKey.
+	*/
+	inline bool IsLegacyIdenticalTo(const FSlateFontInfo& Other) const
 	{
-		// Ignore FontMaterial because it does not affect the cached glyph.
 		return FontObject == Other.FontObject
 			&& OutlineSettings.IsIdenticalToForCaching(Other.OutlineSettings)
 			&& CompositeFont == Other.CompositeFont
 			&& TypefaceFontName == Other.TypefaceFontName
-			&& Size == Other.Size
-			&& SkewAmount == Other.SkewAmount;
+			&& GetClampSize() == Other.GetClampSize();
 	}
 
-	inline bool IsIdenticalTo(const FSlateFontInfo& Other) const
+	inline  bool IsIdenticalTo(const FSlateFontInfo& Other) const
 	{
 		return FontObject == Other.FontObject
 			&& FontMaterial == Other.FontMaterial
@@ -272,7 +292,9 @@ public:
 			&& TypefaceFontName == Other.TypefaceFontName
 			&& Size == Other.Size
 			&& LetterSpacing == Other.LetterSpacing
-			&& SkewAmount == Other.SkewAmount;
+			&& SkewAmount == Other.SkewAmount
+			&& bForceMonospaced == Other.bForceMonospaced
+			&& (bForceMonospaced ? MonospacedWidth == Other.MonospacedWidth : true);
 	}
 
 	inline bool operator==(const FSlateFontInfo& Other) const
@@ -298,6 +320,20 @@ public:
 	SLATECORE_API float GetClampSkew() const;
 
 	/**
+	* We need a Type Hash that does not take into account some more recently added 
+	* UPROPERTY.. this is required and used only by the legacy FSlateFontKey.
+	*/
+	friend inline uint32 GetLegacyTypeHash(const FSlateFontInfo& FontInfo)
+	{
+		uint32 Hash = 0;
+		Hash = HashCombine(Hash, GetTypeHash(FontInfo.FontObject));
+		Hash = HashCombine(Hash, GetTypeHash(FontInfo.CompositeFont));
+		Hash = HashCombine(Hash, GetTypeHash(FontInfo.TypefaceFontName));
+		Hash = HashCombine(Hash, GetTypeHash(FontInfo.GetClampSize()));
+		return Hash;
+	}
+
+	/**
 	 * Calculates a type hash value for a font info.
 	 *
 	 * Type hashes are used in certain collection types, such as TMap.
@@ -307,14 +343,15 @@ public:
 	 */
 	friend inline uint32 GetTypeHash( const FSlateFontInfo& FontInfo )
 	{
-		// Ignore FontMaterial because it does not affect the cached glyph.
 		uint32 Hash = 0;
 		Hash = HashCombine(Hash, GetTypeHash(FontInfo.FontObject));
-		Hash = HashCombine(Hash, GetTypeHash(FontInfo.OutlineSettings));
 		Hash = HashCombine(Hash, GetTypeHash(FontInfo.CompositeFont));
+		Hash = HashCombine(Hash, GetTypeHash(FontInfo.FontMaterial));
 		Hash = HashCombine(Hash, GetTypeHash(FontInfo.TypefaceFontName));
-		Hash = HashCombine(Hash, GetTypeHash(FontInfo.Size));
-		Hash = HashCombine(Hash, GetTypeHash(FontInfo.SkewAmount));
+		Hash = HashCombine(Hash, GetTypeHash(FontInfo.GetClampSize()));
+		Hash = HashCombine(Hash, GetTypeHash(FontInfo.LetterSpacing));
+		Hash = HashCombine(Hash, GetTypeHash(FontInfo.GetClampSkew()));
+		Hash = HashCombine(Hash, GetTypeHash(FontInfo.OutlineSettings));
 		return Hash;
 	}
 

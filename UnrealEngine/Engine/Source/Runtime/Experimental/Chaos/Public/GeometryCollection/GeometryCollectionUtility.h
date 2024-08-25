@@ -46,12 +46,12 @@ namespace GeometryCollection
 		TManagedArray<int32>& MaterialIndex = RestCollection->MaterialIndex;
 		TManagedArray<int32>& MaterialID = RestCollection->MaterialID;
 		TManagedArray<bool>& Internal = RestCollection->Internal;
-		TManagedArray<FTransform>& Transform = RestCollection->Transform;
+		TManagedArray<FTransform3f>& Transform = RestCollection->Transform;
 		TManagedArray<int32>& SimulationType = RestCollection->SimulationType;
 		TManagedArray<int32>& BoneMap = RestCollection->BoneMap;
 
 		// Set particle info
-		Transform[0] = Xf;
+		Transform[0] = FTransform3f(Xf);
 		Transform[0].NormalizeRotation();
 		SimulationType[0] = FGeometryCollection::ESimulationTypes::FST_Rigid;
 

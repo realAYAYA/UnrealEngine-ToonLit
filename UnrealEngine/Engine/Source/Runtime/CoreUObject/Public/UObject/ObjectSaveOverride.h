@@ -9,7 +9,7 @@
 /** 
  * Data collected during SavePackage that modifies the EPropertyFlags for a single FProperty on a single object instance when that object is serialized by SavePackage.
  * The specified changes apply during both the harvesting phase (discovery of referenced imports and exports) and the serialization to disk phase.
- * @note currently only support marking a reference property transient (i.e object pointers)
+ * @note currently only support marking a property transient
  */
 struct FPropertySaveOverride
 {

@@ -891,11 +891,13 @@ void FNetPing::PingTimerUDP(double CurTimeSeconds)
 
 void FNetPing::HandleNetPingControlMessage(UNetConnection* Connection, ENetPingControlMessage MessageType, FString MessageStr)
 {
-	if (UNetDriver* Driver = Connection != nullptr ? Connection->Driver : nullptr)
+	if (Connection)
 	{
-		bool bIsClient = Driver->ServerConnection == Connection;
-
-		auto IsAddrValid = [](const FString& InAddr) -> bool
+		if (UNetDriver* Driver = Connection->Driver)
+		{
+			bool bIsClient = Driver->ServerConnection == Connection;
+	
+			auto IsAddrValid = [](const FString& InAddr)->bool
 			{
 				if (InAddr.Len() < 32)
 				{
@@ -906,55 +908,56 @@ void FNetPing::HandleNetPingControlMessage(UNetConnection* Connection, ENetPingC
 						{
 							continue;
 						}
-
+	
 						return false;
 					}
 				}
-
+	
 				return true;
 			};
-
-		if (bIsClient)
-		{
-			if (MessageType == ENetPingControlMessage::SetPingAddress)
+	
+			if (bIsClient)
 			{
-				if (FNetPing* NetPing = Driver->ServerConnection->GetNetPing())
+				if (MessageType == ENetPingControlMessage::SetPingAddress)
 				{
-					TArray<FString> Args;
-
-					if (MessageStr.ParseIntoArray(Args, TEXT("=")) == 2 && Args[0].IsNumeric())
+					if (FNetPing* NetPing = Driver->ServerConnection->GetNetPing())
 					{
-						const EPingType PingType = static_cast<EPingType>(FCString::Atoi(*Args[0]));
-						FString& PingAddress = Args[1];
-
-						if (IsValidPingType(PingType) && IsAddrValid(PingAddress))
+						TArray<FString> Args;
+	
+						if (MessageStr.ParseIntoArray(Args, TEXT("=")) == 2 && Args[0].IsNumeric())
 						{
-							NetPing->ServerSetPingAddress(PingType, PingAddress);
+							const EPingType PingType = static_cast<EPingType>(FCString::Atoi(*Args[0]));
+							FString& PingAddress = Args[1];
+	
+							if (IsValidPingType(PingType) && IsAddrValid(PingAddress))
+							{
+								NetPing->ServerSetPingAddress(PingType, PingAddress);
+							}
 						}
 					}
 				}
 			}
-		}
-		else
-		{
-			if (MessageType == ENetPingControlMessage::PingFailure)
+			else
 			{
-				TArray<FString> Args;
-
-				if (MessageStr.ParseIntoArray(Args, TEXT("=")) == 2 && Args[0].IsNumeric())
+				if (MessageType == ENetPingControlMessage::PingFailure)
 				{
-					const EPingType PingType = static_cast<EPingType>(FCString::Atoi(*Args[0]));
-					FString& PingAddress = Args[1];
-
-					if (IsValidPingType(PingType) && IsAddrValid(PingAddress))
+					TArray<FString> Args;
+	
+					if (MessageStr.ParseIntoArray(Args, TEXT("=")) == 2 && Args[0].IsNumeric())
 					{
-						if (PingType == EPingType::ICMP)
+						const EPingType PingType = static_cast<EPingType>(FCString::Atoi(*Args[0]));
+						FString& PingAddress = Args[1];
+	
+						if (IsValidPingType(PingType) && IsAddrValid(PingAddress))
 						{
-							Connection->AnalyticsVars.AddFailedPingAddressICMP(PingAddress);
-						}
-						else if (PingType == EPingType::UDPQoS)
-						{
-							Connection->AnalyticsVars.AddFailedPingAddressUDP(PingAddress);
+							if (PingType == EPingType::ICMP)
+							{
+								Connection->AnalyticsVars.AddFailedPingAddressICMP(PingAddress);
+							}
+							else if (PingType == EPingType::UDPQoS)
+							{
+								Connection->AnalyticsVars.AddFailedPingAddressUDP(PingAddress);
+							}
 						}
 					}
 				}

@@ -66,6 +66,7 @@ protected:
 	virtual void PostRendererSubmission(const FMoviePipelineRenderPassMetrics& InSampleState, const FMoviePipelinePassIdentifier InPassIdentifier, const int32 InSortingOrder, FCanvas& InCanvas);
 
 	virtual int32 GetNumCamerasToRender() const;
+	virtual int32 GetCameraIndexForRenderPass(const int32 InCameraIndex) const;
 	virtual FString GetCameraName(const int32 InCameraIndex) const;
 	virtual FString GetCameraNameOverride(const int32 InCameraIndex) const;
 
@@ -191,7 +192,7 @@ private:
 
 
 UCLASS(BlueprintType)
-class UMoviePipelineDeferredPass_Unlit : public UMoviePipelineDeferredPassBase
+class MOVIERENDERPIPELINERENDERPASSES_API UMoviePipelineDeferredPass_Unlit : public UMoviePipelineDeferredPassBase
 {
 	GENERATED_BODY()
 
@@ -213,7 +214,7 @@ public:
 };
 
 UCLASS(BlueprintType)
-class UMoviePipelineDeferredPass_DetailLighting : public UMoviePipelineDeferredPassBase
+class MOVIERENDERPIPELINERENDERPASSES_API UMoviePipelineDeferredPass_DetailLighting : public UMoviePipelineDeferredPassBase
 {
 	GENERATED_BODY()
 
@@ -236,7 +237,7 @@ public:
 };
 
 UCLASS(BlueprintType)
-class UMoviePipelineDeferredPass_LightingOnly : public UMoviePipelineDeferredPassBase
+class MOVIERENDERPIPELINERENDERPASSES_API UMoviePipelineDeferredPass_LightingOnly : public UMoviePipelineDeferredPassBase
 {
 	GENERATED_BODY()
 
@@ -259,7 +260,7 @@ public:
 };
 
 UCLASS(BlueprintType)
-class UMoviePipelineDeferredPass_ReflectionsOnly : public UMoviePipelineDeferredPassBase
+class MOVIERENDERPIPELINERENDERPASSES_API UMoviePipelineDeferredPass_ReflectionsOnly : public UMoviePipelineDeferredPassBase
 {
 	GENERATED_BODY()
 
@@ -282,7 +283,7 @@ public:
 
 
 UCLASS(BlueprintType)
-class UMoviePipelineDeferredPass_PathTracer : public UMoviePipelineDeferredPassBase
+class MOVIERENDERPIPELINERENDERPASSES_API UMoviePipelineDeferredPass_PathTracer : public UMoviePipelineDeferredPassBase
 {
 	GENERATED_BODY()
 

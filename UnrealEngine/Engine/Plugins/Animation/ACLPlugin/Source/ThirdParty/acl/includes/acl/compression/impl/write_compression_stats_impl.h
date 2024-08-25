@@ -24,13 +24,16 @@
 // SOFTWARE.
 ////////////////////////////////////////////////////////////////////////////////
 
-#if defined(SJSON_CPP_WRITER)
+#if defined(ACL_USE_SJSON)
 
+#include "acl/version.h"
 #include "acl/core/impl/compiler_utils.h"
 #include "acl/core/error.h"
 #include "acl/core/scope_profiler.h"
 #include "acl/compression/impl/track_list_context.h"
 #include "acl/compression/output_stats.h"
+
+#include <sjson/writer.h>
 
 #include <cstdint>
 
@@ -38,6 +41,8 @@ ACL_IMPL_FILE_PRAGMA_PUSH
 
 namespace acl
 {
+	ACL_IMPL_VERSION_NAMESPACE_BEGIN
+
 	namespace acl_impl
 	{
 		inline void write_compression_stats(const track_list_context& context, const compressed_tracks& tracks, const scope_profiler& compression_time, output_stats& stats)
@@ -53,7 +58,7 @@ namespace acl
 			sjson::ObjectWriter& writer = *stats.writer;
 			writer["algorithm_name"] = get_algorithm_name(algorithm_type8::uniformly_sampled);
 			//writer["algorithm_uid"] = settings.get_hash();
-			//writer["clip_name"] = clip.get_name().c_str();
+			writer["clip_name"] = context.reference_list->get_name().c_str();
 			writer["raw_size"] = raw_size;
 			writer["compressed_size"] = compressed_size;
 			writer["compression_ratio"] = compression_ratio;
@@ -61,10 +66,13 @@ namespace acl
 			writer["duration"] = context.duration;
 			writer["num_samples"] = context.num_samples;
 			writer["num_tracks"] = context.num_tracks;
+			writer["looping"] = tracks.get_looping_policy() == sample_looping_policy::wrap;
 		}
 	}
+
+	ACL_IMPL_VERSION_NAMESPACE_END
 }
 
 ACL_IMPL_FILE_PRAGMA_POP
 
-#endif	// #if defined(SJSON_CPP_WRITER)
+#endif	// #if defined(ACL_USE_SJSON)

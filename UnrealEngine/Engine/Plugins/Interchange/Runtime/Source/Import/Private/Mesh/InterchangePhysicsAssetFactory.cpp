@@ -18,6 +18,7 @@ UClass* UInterchangePhysicsAssetFactory::GetFactoryClass() const
 
 UInterchangeFactoryBase::FImportAssetResult UInterchangePhysicsAssetFactory::BeginImportAsset_GameThread(const FImportAssetObjectParams& Arguments)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(UInterchangePhysicsAssetFactory::BeginImportAsset_GameThread);
 	FImportAssetResult ImportAssetResult;
 	UObject* PhysicsAsset = nullptr;
 
@@ -70,10 +71,11 @@ UInterchangeFactoryBase::FImportAssetResult UInterchangePhysicsAssetFactory::Beg
 
 UInterchangeFactoryBase::FImportAssetResult UInterchangePhysicsAssetFactory::ImportAsset_Async(const FImportAssetObjectParams& Arguments)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(UInterchangePhysicsAssetFactory::ImportAsset_Async);
 	FImportAssetResult ImportAssetResult;
 #if !WITH_EDITORONLY_DATA
 
-	UE_LOG(LogInterchangeImport, Error, TEXT("Cannot import PhysicsAsset asset in runtime, this is an editor only feature."));
+	UE_LOG(LogInterchangeImport, Error, TEXT("Cannot import PhysicsAsset asset at runtime. This is an editor-only feature."));
 	return ImportAssetResult;
 
 #else
@@ -93,14 +95,14 @@ UInterchangeFactoryBase::FImportAssetResult UInterchangePhysicsAssetFactory::Imp
 
 	if (!PhysicsAssetObject)
 	{
-		UE_LOG(LogInterchangeImport, Error, TEXT("Could not import the PhysicsAsset asset %s, because the asset do not exist."), *Arguments.AssetName);
+		UE_LOG(LogInterchangeImport, Error, TEXT("Could not import the PhysicsAsset asset %s because the asset does not exist."), *Arguments.AssetName);
 		return ImportAssetResult;
 	}
 
 	UPhysicsAsset* PhysicsAsset = Cast<UPhysicsAsset>(PhysicsAssetObject);
 	if (!ensure(PhysicsAsset))
 	{
-		UE_LOG(LogInterchangeImport, Error, TEXT("Could not cast to PhysicsAsset asset %s"), *Arguments.AssetName);
+		UE_LOG(LogInterchangeImport, Error, TEXT("Could not cast to PhysicsAsset asset %s."), *Arguments.AssetName);
 		return ImportAssetResult;
 	}
 

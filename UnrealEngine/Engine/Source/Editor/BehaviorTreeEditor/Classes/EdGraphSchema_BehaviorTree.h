@@ -20,6 +20,9 @@
 
 class FSlateRect;
 class UBehaviorTreeGraphNode_CompositeDecorator;
+class UBehaviorTreeGraphNode_Decorator;
+class UBehaviorTreeGraphNode_Service;
+class UBehaviorTreeGraphNode_Task;
 class UClass;
 class UEdGraph;
 class UEdGraphNode;
@@ -68,6 +71,9 @@ class BEHAVIORTREEEDITOR_API UEdGraphSchema_BehaviorTree : public UAIGraphSchema
 	virtual void GetSubNodeClasses(int32 SubNodeFlags, TArray<FGraphNodeClassData>& ClassData, UClass*& GraphNodeClass) const override;
 
 	TSubclassOf<UBehaviorTreeGraphNode_CompositeDecorator> CompositeDecoratorClass;
+	TSubclassOf<UBehaviorTreeGraphNode_Decorator> DecoratorClass;
+	TSubclassOf<UBehaviorTreeGraphNode_Task> TaskClass;
+	TSubclassOf<UBehaviorTreeGraphNode_Service> ServiceClass;
 
 protected:
 	virtual FGraphNodeClassHelper& GetClassCache() const;

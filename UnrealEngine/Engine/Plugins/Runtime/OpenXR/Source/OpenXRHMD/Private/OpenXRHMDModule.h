@@ -31,7 +31,7 @@ public:
 		AliasesOut.Add(TEXT("OpenXR"));
 	}
 
-	virtual bool PreInit() override { return InitInstance(); }
+	virtual bool PreInit() override; 
 	virtual void ShutdownModule() override;
 
 	virtual bool IsHMDConnected() override { return true; }
@@ -65,10 +65,15 @@ private:
 	TSortedMap<XrPath, FName> PathToName;
 	TSortedMap<FName, XrPath, FDefaultAllocator, FNameFastLess> NameToPath;
 
+	// Cache off Oculus Audio devices on PreInit so that the XrInstance can be released before Initialize
+	FString OculusAudioInputDevice;
+	FString OculusAudioOutputDevice;
+
 	bool EnumerateExtensions();
 	bool EnumerateLayers();
 	bool InitRenderBridge();
 	bool InitInstance();
+	bool TryCreateInstance(XrInstanceCreateInfo& Info);
 	PFN_xrGetInstanceProcAddr GetDefaultLoader();
 	bool EnableExtensions(const TArray<const ANSICHAR*>& RequiredExtensions, const TArray<const ANSICHAR*>& OptionalExtensions, TArray<const ANSICHAR*>& OutExtensions);
 	bool GetRequiredExtensions(TArray<const ANSICHAR*>& OutExtensions);

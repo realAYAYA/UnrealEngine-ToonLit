@@ -44,13 +44,15 @@ NIAGARA_GRAPH_DIGEST_NODE_TYPE_LIST;
 
 struct FNiagaraCompilationGraphCreateContext
 {
-	FNiagaraCompilationGraphCreateContext(FNiagaraCompilationGraph& InParentGraph, const FNiagaraGraphChangeIdBuilder& InChangeIdBuilder)
+	FNiagaraCompilationGraphCreateContext(FNiagaraCompilationGraphDigested& InParentGraph, TArray<const FNiagaraCompilationGraphDigested*>& InDigestedChildGraphs, const FNiagaraGraphChangeIdBuilder& InChangeIdBuilder)
 		: ParentGraph(InParentGraph)
+		, DigestedChildGraphs(InDigestedChildGraphs)
 		, ChangeIdBuilder(InChangeIdBuilder)
 	{
 	}
 
-	FNiagaraCompilationGraph& ParentGraph;
+	FNiagaraCompilationGraphDigested& ParentGraph;
+	TArray<const FNiagaraCompilationGraphDigested*>& DigestedChildGraphs;
 	const FNiagaraGraphChangeIdBuilder& ChangeIdBuilder;
 };
 
@@ -531,7 +533,7 @@ FGuid FNiagaraGraphChangeIdBuilder::RecursiveBuildGraphChangeId(const UNiagaraGr
 	return ChangeId;
 }
 
-void FNiagaraCompilationGraph::Create(const UNiagaraGraph* InGraph, const FNiagaraGraphChangeIdBuilder& ChangeIdBuilder)
+void FNiagaraCompilationGraphDigested::Digest(const UNiagaraGraph* InGraph, const FNiagaraGraphChangeIdBuilder& ChangeIdBuilder)
 {
 	using namespace NiagaraCompilationImpl;
 
@@ -546,7 +548,7 @@ void FNiagaraCompilationGraph::Create(const UNiagaraGraph* InGraph, const FNiaga
 
 	TMap<const UEdGraphNode*, int32> NodeIndexMap;
 
-	FNiagaraCompilationGraphCreateContext NodeContext(*this, ChangeIdBuilder);
+	FNiagaraCompilationGraphCreateContext NodeContext(*this, ChildGraphs, ChangeIdBuilder);
 
 	for (const UEdGraphNode* SourceNode : InGraph->Nodes)
 	{
@@ -573,18 +575,33 @@ void FNiagaraCompilationGraph::Create(const UNiagaraGraph* InGraph, const FNiaga
 		for (FNiagaraCompilationInputPin& InputPin : CompilationNode->InputPins)
 		{
 			const UEdGraphPin* SourceInputPin = CompilationNode->SourceNode->Pins[InputPin.SourcePinIndex];
+			const UEdGraphPin* SourceLinkedPin = nullptr;
 
-			check(SourceInputPin->LinkedTo.Num() <= 1);
-
-			if (!SourceInputPin->LinkedTo.IsEmpty())
+			// apparently some content exists where we'll have multiple copies of a connection added.  Find the first non-null LinkedPin
+			for (const UEdGraphPin* CurrentLinkedPin : SourceInputPin->LinkedTo)
 			{
-				if (const UEdGraphPin* LinkedPin = TraceThroughIgnoredNodes(SourceInputPin->LinkedTo[0]))
+				if (SourceLinkedPin == nullptr)
+				{
+					SourceLinkedPin = CurrentLinkedPin;
+					break;
+				}
+			}
+
+			if (SourceLinkedPin)
+			{
+				if (const UEdGraphPin* LinkedPin = TraceThroughIgnoredNodes(SourceLinkedPin))
 				{
 					const UEdGraphNode* LinkedSourceNode = LinkedPin->GetOwningNode();
 					const int32* LinkedNodeIndexPtr = NodeIndexMap.Find(LinkedSourceNode);
-					if (ensure(LinkedNodeIndexPtr && Nodes.IsValidIndex(*LinkedNodeIndexPtr)))
+
+					// There are situations where a pin is connected to a node that doesn't exist within the UNiagaraGraph::Nodes array.
+					// This corruption seems connected to auto-generated input nodes for function calls.  For now we're going to ignore those
+					// connections
+					const int32 LinkedNodeIndex = (LinkedNodeIndexPtr && Nodes.IsValidIndex(*LinkedNodeIndexPtr)) ? *LinkedNodeIndexPtr : INDEX_NONE;
+
+					if (LinkedNodeIndex != INDEX_NONE)
 					{
-						TUniquePtr<FNiagaraCompilationNode>& LinkedNode = Nodes[*LinkedNodeIndexPtr];
+						TUniquePtr<FNiagaraCompilationNode>& LinkedNode = Nodes[LinkedNodeIndex];
 						const int32 LinkedSourcePinIndex = LinkedNode->SourceNode->Pins.IndexOfByKey(LinkedPin);
 						if (LinkedSourcePinIndex != INDEX_NONE)
 						{
@@ -671,34 +688,32 @@ void FNiagaraCompilationGraph::Create(const UNiagaraGraph* InGraph, const FNiaga
 
 	// go through all the data interfaces that have been registered and make sure we populate CachedDataInterfaceCDODuplicates
 	// along with moving things over to transient duplicates
-	if (!CachedDataInterfaceInstanceDuplicates.IsEmpty())
+	for (const FDataInterfaceDuplicateMap::ElementType& DataInterfaceIt : CachedDataInterfaceDuplicates)
 	{
-		for (TMap<FName, UNiagaraDataInterface*>::TIterator It(CachedDataInterfaceInstanceDuplicates); It; ++It)
+		if (UNiagaraDataInterface* DataInterface = DataInterfaceIt.Value.Get())
 		{
-			UNiagaraDataInterface* SourceDataInterface = It.Value();
-			UClass* DataInterfaceClass = SourceDataInterface->GetClass();
-
-			RegisterTransientCDO(TransientPackage, DataInterfaceClass);
-
-			It.Value() = DuplicateObject<UNiagaraDataInterface>(SourceDataInterface, TransientPackage);
+			if (UClass* DataInterfaceClass = DataInterface->GetClass())
+			{
+				RegisterTransientCDO(TransientPackage, DataInterfaceClass);
+			}
 		}
 	}
 }
 
-void FNiagaraCompilationGraph::RegisterDataInterface(FName VariableName, UNiagaraDataInterface* SourceDataInterface)
+UNiagaraDataInterface* FNiagaraCompilationGraphDigested::DigestDataInterface(UNiagaraDataInterface* SourceDataInterface)
 {
-	UNiagaraDataInterface* ExistingDataInterface = CachedDataInterfaceInstanceDuplicates.FindRef(VariableName);
-	if (ExistingDataInterface)
+	check(IsInGameThread());
+	TObjectPtr<UNiagaraDataInterface>& ExistingDuplicate = CachedDataInterfaceDuplicates.FindOrAdd(SourceDataInterface);
+
+	if (!ExistingDuplicate)
 	{
-		check(ExistingDataInterface->Equals(SourceDataInterface));
+		ExistingDuplicate = DuplicateObject<UNiagaraDataInterface>(SourceDataInterface, GetTransientPackage());
 	}
-	else
-	{
-		CachedDataInterfaceInstanceDuplicates.Add(VariableName, SourceDataInterface);
-	}
+
+	return ExistingDuplicate;
 }
 
-void FNiagaraCompilationGraph::RegisterObjectAsset(FName VariableName, UObject* SourceObjectAsset)
+void FNiagaraCompilationGraphDigested::RegisterObjectAsset(FName VariableName, UObject* SourceObjectAsset)
 {
 	const UObject* ExistingObjectAsset = CachedNamedObjectAssets.FindRef(VariableName);
 	if (ExistingObjectAsset)
@@ -708,6 +723,20 @@ void FNiagaraCompilationGraph::RegisterObjectAsset(FName VariableName, UObject* 
 	else
 	{
 		CachedNamedObjectAssets.Add(VariableName, SourceObjectAsset);
+	}
+}
+
+void FNiagaraCompilationGraphDigested::CollectReferencedDataInterfaceCDO(FDataInterfaceCDOMap& Interfaces) const
+{
+	// add our collected DIs then iterate over all the child graphs
+	for (FDataInterfaceCDOMap::TConstIterator It = CachedDataInterfaceCDODuplicates.CreateConstIterator(); It; ++It)
+	{
+		Interfaces.FindOrAdd(It.Key(), It.Value());
+	}
+
+	for (const FNiagaraCompilationGraphDigested* ChildGraph : ChildGraphs)
+	{
+		ChildGraph->CollectReferencedDataInterfaceCDO(Interfaces);
 	}
 }
 
@@ -959,7 +988,7 @@ TArray<const FNiagaraCompilationNode*> FNiagaraCompilationGraph::FindOutputNodes
 	return OutputNodesByUsage;
 }
 
-TSharedPtr<FNiagaraCompilationGraph, ESPMode::ThreadSafe> FNiagaraCompilationGraph::DuplicateSubGraph(
+TSharedPtr<FNiagaraCompilationGraphInstanced, ESPMode::ThreadSafe> FNiagaraCompilationGraphDigested::InstantiateSubGraph(
 	const TArray<ENiagaraScriptUsage>& Usages,
 	const FNiagaraCompilationCopyData* CopyCompilationData,
 	const FNiagaraCompilationBranchMap& Branches,
@@ -967,8 +996,8 @@ TSharedPtr<FNiagaraCompilationGraph, ESPMode::ThreadSafe> FNiagaraCompilationGra
 {
 	using namespace NiagaraCompilationImpl;
 
-	TSharedPtr<FNiagaraCompilationGraph, ESPMode::ThreadSafe> SubGraph = MakeShared<FNiagaraCompilationGraph, ESPMode::ThreadSafe>();
-	SubGraph->InstantiationSourceGraph = this;
+	TSharedPtr<FNiagaraCompilationGraphInstanced, ESPMode::ThreadSafe> SubGraph = MakeShared<FNiagaraCompilationGraphInstanced, ESPMode::ThreadSafe>();
+	SubGraph->InstantiationSourceGraph = AsShared().ToSharedPtr();
 
 	TArray<const FNiagaraCompilationNode*> OutputNodesByUsage = FindOutputNodesByUsage(Usages);
 	const int32 InstantiatedOutputNodeCount = OutputNodesByUsage.Num();
@@ -994,7 +1023,6 @@ TSharedPtr<FNiagaraCompilationGraph, ESPMode::ThreadSafe> FNiagaraCompilationGra
 
 	// copy over all the properties for the subgraph (this will contain data that could have been culled based on the
 	// output nodes that we're filtering by above
-	SubGraph->SourceGraph = SourceGraph;
 	SubGraph->VariableBinding = VariableBinding;
 	SubGraph->ScriptVariableData = ScriptVariableData;
 	SubGraph->SourceScriptName = SourceScriptName;
@@ -1013,15 +1041,10 @@ TSharedPtr<FNiagaraCompilationGraph, ESPMode::ThreadSafe> FNiagaraCompilationGra
 		SubGraph->StaticSwitchInputs.AddUnique(SwitchInput);
 	}
 
-	// make sure that we've collected the CDO for the registered DI as well
-	SubGraph->CachedDataInterfaceCDODuplicates.Append(CachedDataInterfaceCDODuplicates);
-	SubGraph->CachedDataInterfaceInstanceDuplicates.Append(CachedDataInterfaceInstanceDuplicates);
-	SubGraph->bInstanced = true;
-
 	return SubGraph;
 }
 
-void FNiagaraCompilationGraph::ValidateRefinement() const
+void FNiagaraCompilationGraphInstanced::ValidateRefinement() const
 {
 	// validate that now that we've refined the graph we have no more generic numerics and also ensure
 	// that there are no more static switches connected
@@ -1055,7 +1078,7 @@ void FNiagaraCompilationGraph::ValidateRefinement() const
 	}
 }
 
-void FNiagaraCompilationGraph::Refine(FNiagaraCompilationGraphInstanceContext& InstantiationContext, const FNiagaraCompilationNodeFunctionCall* CallingNode)
+void FNiagaraCompilationGraphInstanced::Refine(FNiagaraCompilationGraphInstanceContext& InstantiationContext, const FNiagaraCompilationNodeFunctionCall* CallingNode)
 {
 	if (CallingNode)
 	{
@@ -1082,7 +1105,7 @@ void FNiagaraCompilationGraph::Refine(FNiagaraCompilationGraphInstanceContext& I
 	ValidateRefinement();
 }
 
-void FNiagaraCompilationGraph::PatchGenericNumericsFromCaller(FNiagaraCompilationGraphInstanceContext& Context)
+void FNiagaraCompilationGraphInstanced::PatchGenericNumericsFromCaller(FNiagaraCompilationGraphInstanceContext& Context)
 {
 	static const FNiagaraTypeDefinition& GenericTypeDef = FNiagaraTypeDefinition::GetGenericNumericDef();
 	const FNiagaraCompilationNodeFunctionCall* CallingNode = Context.GetCurrentFunctionNode();
@@ -1132,7 +1155,7 @@ void FNiagaraCompilationGraph::PatchGenericNumericsFromCaller(FNiagaraCompilatio
 	}
 }
 
-void FNiagaraCompilationGraph::ResolveNumerics(FNiagaraCompilationGraphInstanceContext& Context)
+void FNiagaraCompilationGraphInstanced::ResolveNumerics(FNiagaraCompilationGraphInstanceContext& Context)
 {
 	const FNiagaraTypeDefinition& GenericTypeDef = FNiagaraTypeDefinition::GetGenericNumericDef();
 	const FNiagaraTypeDefinition& PlaceholderTypeDef = FNiagaraTypeDefinition::GetFloatDef();
@@ -1185,12 +1208,12 @@ void FNiagaraCompilationGraph::ResolveNumerics(FNiagaraCompilationGraphInstanceC
 	}
 }
 
-void FNiagaraCompilationGraph::InheritDebugState(FNiagaraCompilationGraphInstanceContext& Context, FNiagaraCompilationNodeFunctionCall& FunctionCallNode)
+void FNiagaraCompilationGraphInstanced::InheritDebugState(FNiagaraCompilationGraphInstanceContext& Context, FNiagaraCompilationNodeFunctionCall& FunctionCallNode)
 {
 	FunctionCallNode.DebugState = FunctionCallNode.bInheritDebugState ? Context.ConstantResolver.GetDebugState() : ENiagaraFunctionDebugState::NoDebug;
 }
 
-void FNiagaraCompilationGraph::PropagateDefaultValues(FNiagaraCompilationGraphInstanceContext& Context, FNiagaraCompilationNodeFunctionCall& FunctionCallNode)
+void FNiagaraCompilationGraphInstanced::PropagateDefaultValues(FNiagaraCompilationGraphInstanceContext& Context, FNiagaraCompilationNodeFunctionCall& FunctionCallNode)
 {
 	using namespace NiagaraCompilationImpl;
 
@@ -1216,7 +1239,7 @@ void FNiagaraCompilationGraph::PropagateDefaultValues(FNiagaraCompilationGraphIn
 	}
 }
 
-TSharedPtr<FNiagaraCompilationGraph, ESPMode::ThreadSafe> FNiagaraCompilationGraph::Instantiate(const FNiagaraPrecompileData* PrecompileData, const FNiagaraCompilationCopyData* CopyCompilationData, const TArray<ENiagaraScriptUsage>& Usages, const FNiagaraFixedConstantResolver& ConstantResolver) const
+TSharedPtr<FNiagaraCompilationGraphInstanced, ESPMode::ThreadSafe> FNiagaraCompilationGraphDigested::Instantiate(const FNiagaraPrecompileData* PrecompileData, const FNiagaraCompilationCopyData* CopyCompilationData, const TArray<ENiagaraScriptUsage>& Usages, const FNiagaraFixedConstantResolver& ConstantResolver) const
 {
 	// in order to manage the traversal state context and to keep a lit on the potential for crazy recursion we're
 	// going to track the dependent graphs that require instantiation in this quasi tree structure
@@ -1233,7 +1256,7 @@ TSharedPtr<FNiagaraCompilationGraph, ESPMode::ThreadSafe> FNiagaraCompilationGra
 	};
 
 	TArray<FChildrenStackEntry> FunctionsToInstantiate;
-	TSharedPtr<FNiagaraCompilationGraph, ESPMode::ThreadSafe> InstantiatedGraph = DuplicateSubGraph(Usages, CopyCompilationData, FNiagaraCompilationBranchMap(), FunctionsToInstantiate.Emplace_GetRef(INDEX_NONE).Functions);
+	TSharedPtr<FNiagaraCompilationGraphInstanced, ESPMode::ThreadSafe> InstantiatedGraph = InstantiateSubGraph(Usages, CopyCompilationData, FNiagaraCompilationBranchMap(), FunctionsToInstantiate.Emplace_GetRef(INDEX_NONE).Functions);
 
 	// initialize the traversal context with the data that was pulled from the parameter map history done during the
 	// precompile
@@ -1264,15 +1287,21 @@ TSharedPtr<FNiagaraCompilationGraph, ESPMode::ThreadSafe> FNiagaraCompilationGra
 			FNiagaraCompilationBranchMap Branches;
 			EvaluateStaticBranches(InstantiationContext, Branches);
 
-			const auto& OriginalGraph = FunctionToInstantiate->CalledGraph;
-			FunctionToInstantiate->CalledGraph = FunctionToInstantiate->CalledGraph->DuplicateSubGraph({FunctionToInstantiate->CalledScriptUsage}, CopyCompilationData, Branches, ChildStack.Functions);
-			FunctionToInstantiate->CalledGraph->Refine(InstantiationContext, FunctionToInstantiate);
+			FNiagaraCompilationGraphDigested* CalledDigestedGraph = FunctionToInstantiate->CalledGraph->AsDigested();
+			if (ensure(CalledDigestedGraph))
+			{
+				TSharedPtr<FNiagaraCompilationGraphInstanced, ESPMode::ThreadSafe> CalledInstantiatedGraph =
+					CalledDigestedGraph->InstantiateSubGraph({ FunctionToInstantiate->CalledScriptUsage }, CopyCompilationData, Branches, ChildStack.Functions);
 
-			InstantiatedGraph->AggregateDataInterfaces(FunctionToInstantiate->CalledGraph.Get());
+				CalledInstantiatedGraph->Refine(InstantiationContext, FunctionToInstantiate);
 
-			++TotalGraphCount;
-			TotalNodeCount += FunctionToInstantiate->CalledGraph->Nodes.Num();
-			TotalCulledNodeCount += OriginalGraph->Nodes.Num() - FunctionToInstantiate->CalledGraph->Nodes.Num();
+				++TotalGraphCount;
+				TotalNodeCount += CalledInstantiatedGraph->Nodes.Num();
+				TotalCulledNodeCount += CalledDigestedGraph->Nodes.Num() - CalledInstantiatedGraph->Nodes.Num();
+
+				// now replace the called graph with the instantiated version
+				FunctionToInstantiate->CalledGraph = CalledInstantiatedGraph;
+			}
 
 			CurrentFunctionSetIndex = NextFunctionSetIndex;
 		}
@@ -1289,15 +1318,17 @@ TSharedPtr<FNiagaraCompilationGraph, ESPMode::ThreadSafe> FNiagaraCompilationGra
 					const int32 ChildFunctionIndex = InstantiationContext.FunctionStack.Num() - 1;
 					ensure(InstantiationContext.FunctionStack.IsValidIndex(ChildFunctionIndex));
 
-					FNiagaraCompilationGraph* ParentGraph = InstantiationContext.FunctionStack.IsValidIndex(ParentFunctionIndex)
-						? InstantiationContext.FunctionStack[ParentFunctionIndex]->CalledGraph.Get()
+					FNiagaraCompilationGraphInstanced* ParentGraph = InstantiationContext.FunctionStack.IsValidIndex(ParentFunctionIndex)
+						? InstantiationContext.FunctionStack[ParentFunctionIndex]->CalledGraph->AsInstanced()
 						: InstantiatedGraph.Get();
 
-					FNiagaraCompilationGraph* ChildGraph = InstantiationContext.FunctionStack[ChildFunctionIndex]->CalledGraph.Get();
-
-					ParentGraph->AggregateChildGraph(ChildGraph);
+					FNiagaraCompilationGraphInstanced* ChildGraph = InstantiationContext.FunctionStack[ChildFunctionIndex]->CalledGraph->AsInstanced();
+					
+					if (ensure(ParentGraph && ChildGraph))
+					{
+						ParentGraph->AggregateChildGraph(ChildGraph);
+					}
 				}
-
 
 				FChildrenStackEntry& ParentEntry = FunctionsToInstantiate[CurrentFunctionSetIndex];
 				InstantiationContext.LeaveFunction(ParentEntry.Functions[ParentEntry.CurrentFunctionIndex]);
@@ -1395,46 +1426,7 @@ void FNiagaraCompilationGraph::NodeTraversal(
 	}
 }
 
-
-void FNiagaraCompilationGraph::AggregateDataInterfaces(const FNiagaraCompilationGraph* ChildGraph)
-{
-	for (TMap<FName, UNiagaraDataInterface*>::TConstIterator ChildIt(ChildGraph->CachedDataInterfaceInstanceDuplicates); ChildIt; ++ChildIt)
-	{
-		CachedDataInterfaceInstanceDuplicates.Add(ChildIt.Key(), ChildIt.Value());
-
-		// matching behavior in FNiagaraCompileRequestDuplicateData::DuplicateReferencedGraphsRecursive where
-		// child graphs override the values of the parent when it comes to the DIs...this makes me a bit
-		// nervous because there's no concept there of the nodes actually being relevant to the compile
-		// for this version that should at least be taken care of...but weird DI juju for sure
-		#if 0
-		UNiagaraDataInterface* ExistingDI = CachedDataInterfaceInstanceDuplicates.FindRef(ChildIt.Key());
-		if (ExistingDI)
-		{
-			check(ExistingDI->Equals(ChildIt.Value()));
-		}
-		else
-		{
-			CachedDataInterfaceInstanceDuplicates.Add(ChildIt.Key(), ChildIt.Value());
-		}
-		#endif
-	}
-
-	for (TMap<UClass*, UNiagaraDataInterface*>::TConstIterator ChildIt(ChildGraph->CachedDataInterfaceCDODuplicates); ChildIt; ++ChildIt)
-	{
-		UNiagaraDataInterface* ChildDataInterface = ChildIt.Value();
-		UNiagaraDataInterface* ExistingDI = CachedDataInterfaceCDODuplicates.FindRef(ChildIt.Key());
-		if (ExistingDI)
-		{
-			check(ExistingDI->Equals(ChildDataInterface));
-		}
-		else
-		{
-			CachedDataInterfaceCDODuplicates.Add(ChildIt.Key(), ChildIt.Value());
-		}
-	}
-}
-
-void FNiagaraCompilationGraph::AggregateChildGraph(const FNiagaraCompilationGraph* ChildGraph)
+void FNiagaraCompilationGraphInstanced::AggregateChildGraph(const FNiagaraCompilationGraphInstanced* ChildGraph)
 {
 	if (ChildGraph->bContainsStaticVariables)
 	{
@@ -1458,11 +1450,16 @@ void FNiagaraCompilationGraph::BuildTraversal(const FNiagaraCompilationNode* Roo
 	OrderedNodes = TopologicalSort(CollectConnectedNodes({ RootNode }, Nodes.Num(), Branches), Branches);
 }
 
-void FNiagaraCompilationGraph::AddReferencedObjects(FReferenceCollector& Collector)
+void FNiagaraCompilationGraphDigested::AddReferencedObjects(FReferenceCollector& Collector)
 {
-	Collector.AddReferencedObjects(CachedDataInterfaceInstanceDuplicates);
+	Collector.AddReferencedObjects(CachedDataInterfaceDuplicates);
 	Collector.AddReferencedObjects(CachedDataInterfaceCDODuplicates);
 	Collector.AddReferencedObjects(CachedNamedObjectAssets);
+}
+
+FString FNiagaraCompilationGraphDigested::GetReferencerName() const
+{
+	return TEXT("FNiagaraCompilationGraphDigested");
 }
 
 TArray<const FNiagaraCompilationNode*> FNiagaraCompilationGraph::GetOutputNodes() const
@@ -1575,7 +1572,7 @@ FNiagaraCompilationInputPin::FNiagaraCompilationInputPin(const FNiagaraCompilati
 			}
 		}
 
-		if (ensure(Variable.GetType() == TracedInputPin->Variable.GetType()))
+		if (ensure(FNiagaraTypeDefinition::TypesAreAssignable(Variable.GetType(), TracedInputPin->Variable.GetType())))
 		{
 			if (TracedInputPin->Variable.IsDataAllocated())
 			{
@@ -1645,6 +1642,7 @@ FNiagaraCompilationNode::FNiagaraCompilationNode(ENodeType InNodeType, const UEd
 
 		SourceNode = InNode;
 		OwningGraph = &Context.ParentGraph;
+		const UEdGraph* SourceOwningGraph = Context.ParentGraph.SourceGraph.Get();
 
 		const int32 PinCount = SourceNode->Pins.Num();
 
@@ -1662,6 +1660,22 @@ FNiagaraCompilationNode::FNiagaraCompilationNode(ENodeType InNodeType, const UEd
 			{
 				// todo error reporting
 				UE_LOG(LogNiagaraEditor, Warning, TEXT("Node pin is no longer valid.  This pin must be disconnected or reset to default so it can be removed."));
+				continue;
+			}
+
+			// in the case of the pin being connected to a node that is not in the graph's Node array we just skip the pin
+			bool bConnectedToInvalidNode = false;
+			for (const UEdGraphPin* LinkedPin : Pin->LinkedTo)
+			{
+				if (!SourceOwningGraph->Nodes.Contains(LinkedPin->GetOwningNode()))
+				{
+					bConnectedToInvalidNode = true;
+					break;
+				}
+			}
+
+			if (bConnectedToInvalidNode)
+			{
 				continue;
 			}
 
@@ -1892,22 +1906,22 @@ void FNiagaraCompilationNode::RegisterPassthroughPin(FParameterMapHistoryBuilder
 	FNiagaraTypeDefinition InDef = InputPin->Variable.GetType();
 	FNiagaraTypeDefinition OutDef = OutputPin->Variable.GetType();
 
-	if (InputPin && InDef == FNiagaraTypeDefinition::GetParameterMapDef() && OutDef == FNiagaraTypeDefinition::GetParameterMapDef() && InputPin->LinkedTo)
+	if (InDef == FNiagaraTypeDefinition::GetParameterMapDef() && OutDef == FNiagaraTypeDefinition::GetParameterMapDef() && InputPin->LinkedTo)
 	{
 		int32 PMIdx = Builder.TraceParameterMapOutputPin(InputPin->LinkedTo);
 		Builder.RegisterParameterMapPin(PMIdx, OutputPin);
 	}
-	else if (InputPin && InDef.IsStatic() && InputPin->LinkedTo)
+	else if (InDef.IsStatic() && InputPin->LinkedTo)
 	{
 		int32 ConstantIdx = Builder.GetConstantFromOutputPin(InputPin->LinkedTo);
 		Builder.RegisterConstantPin(ConstantIdx, InputPin);
 
-		if (OutputPin && OutDef == InDef)
+		if (OutDef == InDef)
 		{
 			Builder.RegisterConstantPin(ConstantIdx, OutputPin);
 		}
 	}
-	else if (InputPin && InDef.IsStatic() && !InputPin->LinkedTo)
+	else if (InDef.IsStatic() && !InputPin->LinkedTo)
 	{
 		FString CachedDefaultValue;
 		if (!Builder.TraversalStateContext->GetFunctionDefaultValue(NodeGuid, InputPin->PinName, CachedDefaultValue))
@@ -1917,7 +1931,7 @@ void FNiagaraCompilationNode::RegisterPassthroughPin(FParameterMapHistoryBuilder
 
 		int32 ConstantIdx = Builder.AddOrGetConstantFromValue(CachedDefaultValue);
 		Builder.RegisterConstantPin(ConstantIdx, InputPin);
-		if (OutputPin && OutDef == InDef)
+		if (OutDef == InDef)
 		{
 			Builder.RegisterConstantPin(ConstantIdx, OutputPin);
 		}
@@ -1997,26 +2011,36 @@ FNiagaraCompilationNodeAssignment::FNiagaraCompilationNodeAssignment(const FNiag
 FNiagaraCompilationNodeEmitter::FNiagaraCompilationNodeEmitter(const UNiagaraNodeEmitter* InNode, FNiagaraCompilationGraphCreateContext& Context)
 : FNiagaraCompilationNode(ENodeType::Emitter, InNode, Context)
 {
+	EmitterID = InNode->GetEmitterID();
+	EmitterHandleID = InNode->GetEmitterHandleId();
 	EmitterUniqueName = InNode->GetEmitterUniqueName();
 
 	if (const UNiagaraGraph* DependentGraph = InNode->GetCalledGraph())
 	{
 		CalledGraph = FNiagaraDigestDatabase::Get().CreateGraphDigest(DependentGraph, Context.ChangeIdBuilder);
+		if (const FNiagaraCompilationGraphDigested* DigestedGraph = CalledGraph->AsDigested())
+		{
+			Context.DigestedChildGraphs.AddUnique(DigestedGraph);
+		}
 	}
 
 	Usage = InNode->GetUsage();
 	EmitterName = InNode->GetName();
 	EmitterPathName = InNode->GetPathName();
-	EmitterHandleIdString = InNode->GetEmitterHandleId().ToString(EGuidFormats::Digits);
+	EmitterHandleIdString = EmitterHandleID.ToString(EGuidFormats::Digits);
+	EmitterUniqueFName = *EmitterUniqueName;
 }
 
 
 FNiagaraCompilationNodeEmitter::FNiagaraCompilationNodeEmitter(const FNiagaraCompilationNodeEmitter& InNode, FNiagaraCompilationGraphDuplicateContext& Context)
 	: FNiagaraCompilationNode(InNode, Context)
+	, EmitterID(InNode.EmitterID)
+	, EmitterHandleID(InNode.EmitterHandleID)
 	, EmitterUniqueName(InNode.EmitterUniqueName)
 	, EmitterName(InNode.EmitterName)
 	, EmitterPathName(InNode.EmitterPathName)
 	, EmitterHandleIdString(InNode.EmitterHandleIdString)
+	, EmitterUniqueFName(InNode.EmitterUniqueFName)
 	, Usage(InNode.Usage)
 {
 	// we need to replace the CalledGraph here with the graph that has been instantiated already
@@ -2025,9 +2049,15 @@ FNiagaraCompilationNodeEmitter::FNiagaraCompilationNodeEmitter(const FNiagaraCom
 		return EmitterCopy->EmitterUniqueName == EmitterUniqueName;
 	});
 
-	if (ensure(EmitterCopy))
+	// because toggling the enabled state of an emitter doesn't necessarily change the emitter node in the graph
+	// and so the EmitterCopy may be null in this case.  If that's true, we'll mark the node as being disabled.
+	if (EmitterCopy)
 	{
 		CalledGraph = (*EmitterCopy)->InstantiatedGraph;
+	}
+	else
+	{
+		NodeEnabled = false;
 	}
 }
 
@@ -2037,6 +2067,21 @@ void FNiagaraCompilationNodeEmitter::BuildParameterMapHistory(FParameterMapHisto
 
 	if (ConditionalRouteParameterMapAroundMe(Builder))
 	{
+		return;
+	}
+
+	if (Builder.ExclusiveEmitterHandle.IsSet() && Builder.ExclusiveEmitterHandle != EmitterHandleID)
+	{
+		RouteParameterMapAroundMe(Builder);
+		return;
+	}
+
+	const FNiagaraFixedConstantResolver* ChildConstantResolver = Builder.ConstantResolver->FindChildResolver(EmitterUniqueFName);
+	if (!ChildConstantResolver)
+	{
+		// if no child resolver was found for the specified emitter, that means that the emitter is likely not enabled and so we can proceed without
+		// processing it
+		RouteParameterMapAroundMe(Builder);
 		return;
 	}
 
@@ -2077,13 +2122,14 @@ void FNiagaraCompilationNodeEmitter::BuildParameterMapHistory(FParameterMapHisto
 
 			// Build up a new parameter map history with all the child graph nodes..
 			FParameterMapHistoryBuilder ChildBuilder;
-			*ChildBuilder.ConstantResolver = *Builder.ConstantResolver;
+			*ChildBuilder.ConstantResolver = *ChildConstantResolver;
 			ChildBuilder.RegisterEncounterableVariables(Builder.GetEncounterableVariables());
 			ChildBuilder.EnableScriptAllowList(true, Usage);
 
 			TArray<FNiagaraVariable> LocalStaticVars;
 			FNiagaraParameterUtilities::FilterToRelevantStaticVariables(Builder.StaticVariables, LocalStaticVars, *EmitterUniqueName, TEXT("Emitter"), true);
 			ChildBuilder.RegisterExternalStaticVariables(LocalStaticVars);
+			ChildBuilder.AvailableCollections->EditCollections() = Builder.AvailableCollections->ReadCollections();
 
 			FString LocalEmitterName = TEXT("Emitter");
 			ChildBuilder.EnterEmitter(LocalEmitterName, CalledGraph.Get(), this);
@@ -2238,6 +2284,10 @@ FNiagaraCompilationNodeFunctionCall::FNiagaraCompilationNodeFunctionCall(const U
 	if (const UNiagaraGraph* DependentGraph = InNode->GetCalledGraph())
 	{
 		CalledGraph = FNiagaraDigestDatabase::Get().CreateGraphDigest(DependentGraph, Context.ChangeIdBuilder);
+		if (const FNiagaraCompilationGraphDigested* DigestedGraph = CalledGraph->AsDigested())
+		{
+			Context.DigestedChildGraphs.AddUnique(DigestedGraph);
+		}
 	}
 
 	// Top level functions (functions invoked in the root graph) will use the serialized DebugState value, all others will
@@ -2613,11 +2663,37 @@ void FNiagaraCompilationNodeFunctionCall::Compile(FTranslator* Translator, TArra
 
 		for (const FNiagaraCompilationNodeInput* FunctionInputNode : FunctionInputNodes)
 		{
-			//Finds the matching Pin in the caller.
-			const FNiagaraCompilationInputPin* CallerPin = InputPins.FindByPredicate([&FunctionInputNode](const FNiagaraCompilationInputPin& InputPin) -> bool
+			const FNiagaraTypeDefinition& InputNodeType = FunctionInputNode->InputVariable.GetType();
+
+			TOptional<FNiagaraTypeDefinition> SWCType;
+			if (FNiagaraTypeHelper::IsLWCType(InputNodeType))
 			{
-				return InputPin.Variable.IsEquivalent(FunctionInputNode->InputVariable);
-			});
+				SWCType = FNiagaraTypeHelper::GetSWCType(InputNodeType);
+			}
+
+			//Finds the matching Pin in the caller.
+			auto MatchInputNodePredicate = [&FunctionInputNode, &SWCType](const FNiagaraCompilationInputPin& InputPin) -> bool
+			{
+				if (InputPin.Variable.GetName() != FunctionInputNode->InputVariable.GetName())
+				{
+					return false;
+				}
+
+				if (InputPin.Variable.IsEquivalent(FunctionInputNode->InputVariable))
+				{
+					return true;
+				}
+
+				// the last thing we need to worry about is when types differ because of LWC vs SWC concerns
+				if (SWCType.IsSet())
+				{
+					return InputPin.Variable.GetType() == *SWCType;
+				}
+
+				return false;
+			};
+
+			const FNiagaraCompilationInputPin* CallerPin = InputPins.FindByPredicate(MatchInputNodePredicate);
 
 			if (!CallerPin)
 			{
@@ -2734,9 +2810,9 @@ void FNiagaraCompilationNodeFunctionCall::Compile(FTranslator* Translator, TArra
 
 const FNiagaraCompilationInputPin* FNiagaraCompilationNodeFunctionCall::FindStaticSwitchInputPin(FName VariableName) const
 {
-	if (ensure(OwningGraph))
+	if (CalledGraph)
 	{
-		for (const FNiagaraVariableBase& StaticSwitchInput : OwningGraph->StaticSwitchInputs)
+		for (const FNiagaraVariableBase& StaticSwitchInput : CalledGraph->StaticSwitchInputs)
 		{
 			if (StaticSwitchInput.GetName() == VariableName)
 			{
@@ -2897,10 +2973,17 @@ FNiagaraCompilationNodeCustomHlsl::FNiagaraCompilationNodeCustomHlsl(const UNiag
 	CustomScriptUsage = InNode->ScriptUsage;
 	Signature = InNode->Signature;
 	CustomHlsl = InNode->GetCustomHlsl();
-	InNode->GetTokens(Tokens, false, false);
+	TArray<FStringView> TokenViews;
+	InNode->GetTokens(TokenViews, false, false);
+	Tokens.Reserve(TokenViews.Num());
+	for (const FStringView View : TokenViews)
+	{
+		Tokens.Push(FString(View));
+	}
 	InNode->GetIncludeFilePaths(CustomIncludePaths);
-}
 
+	bCallsImpureFunctions = InNode->CallsImpureDataInterfaceFunctions();
+}
 
 FNiagaraCompilationNodeCustomHlsl::FNiagaraCompilationNodeCustomHlsl(const FNiagaraCompilationNodeCustomHlsl& InNode, FNiagaraCompilationGraphDuplicateContext& Context)
 	: FNiagaraCompilationNodeFunctionCall(InNode, Context)
@@ -2909,6 +2992,7 @@ FNiagaraCompilationNodeCustomHlsl::FNiagaraCompilationNodeCustomHlsl(const FNiag
 	, CustomHlsl(InNode.CustomHlsl)
 	, Tokens(InNode.Tokens)
 	, CustomIncludePaths(InNode.CustomIncludePaths)
+	, bCallsImpureFunctions(InNode.bCallsImpureFunctions)
 {
 
 }
@@ -3067,7 +3151,7 @@ FNiagaraCompilationNodeInput::FNiagaraCompilationNodeInput(const UNiagaraNodeInp
 		DataInterfaceName = InputVariable.GetName();
 		check(SourceDataInterface);
 		SourceDataInterface->GetEmitterReferencesByName(DataInterfaceEmitterReferences);
-		Context.ParentGraph.RegisterDataInterface(DataInterfaceName, SourceDataInterface);
+		DuplicatedDataInterface = Context.ParentGraph.DigestDataInterface(SourceDataInterface);
 	}
 	else if (InputVariable.IsUObject())
 	{
@@ -3096,17 +3180,10 @@ FNiagaraCompilationNodeInput::FNiagaraCompilationNodeInput(const FNiagaraCompila
 	, bRequired(InNode.bRequired)
 	, bExposed(InNode.bExposed)
 	, bCanAutoBind(InNode.bCanAutoBind)
+	, DuplicatedDataInterface(InNode.DuplicatedDataInterface)
 	, ObjectAssetPath(InNode.ObjectAssetPath)
 {
 	Context.TargetGraph.InputNodeIndices.Add(Context.TargetGraph.Nodes.Num());
-	if (!DataInterfaceName.IsNone())
-	{
-		InstancedDataInterface = Context.SourceGraph.CachedDataInterfaceInstanceDuplicates.FindRef(DataInterfaceName);
-		if (ensure(InstancedDataInterface))
-		{
-			Context.TargetGraph.RegisterDataInterface(DataInterfaceName, InstancedDataInterface);
-		}
-	}
 }
 
 void FNiagaraCompilationNodeInput::BuildParameterMapHistory(FParameterMapHistoryBuilder& Builder, bool bRecursive, bool bFilterForCompilation) const
@@ -3177,9 +3254,9 @@ void FNiagaraCompilationNodeInput::Compile(FTranslator* Translator, TArray<int32
 				{
 					if (!DataInterfaceName.IsNone())
 					{
-						check(InstancedDataInterface);
+						check(DuplicatedDataInterface);
 						check(InputVariable.IsDataInterface());
-						Outputs.Add(Translator->RegisterDataInterface(InputVariable, InstancedDataInterface, false, false));
+						Outputs.Add(Translator->RegisterDataInterface(InputVariable, DuplicatedDataInterface, false, false));
 						return;
 					}
 					else if (!ObjectAssetName.IsNone())
@@ -3203,9 +3280,9 @@ void FNiagaraCompilationNodeInput::Compile(FTranslator* Translator, TArray<int32
 	case ENiagaraInputNodeUsage::Parameter:
 		if (!DataInterfaceName.IsNone())
 		{
-			check(InstancedDataInterface);
+			check(DuplicatedDataInterface);
 			check(InputVariable.IsDataInterface());
-			Outputs.Add(Translator->RegisterDataInterface(InputVariable, InstancedDataInterface, false, false));
+			Outputs.Add(Translator->RegisterDataInterface(InputVariable, DuplicatedDataInterface, false, false));
 			break;
 		}
 		else if (!ObjectAssetName.IsNone())
@@ -3838,28 +3915,40 @@ void FNiagaraCompilationNodeParameterMapSet::Compile(FTranslator* Translator, TA
 	check(Outputs.Num() == 0);
 	Outputs.Init(INDEX_NONE, OutputPins.Num());
 
-	TArray<FTranslator::FCompiledPin, TInlineAllocator<16>> CompileInputs;
-	CompileInputs.Reserve(InputPins.Num());
-
-	// update the translator with the culled function calls before compiling any further
+	TArray<const FNiagaraCompilationInputPin*, TInlineAllocator<16>> ActiveInputPins;
+	ActiveInputPins.Reserve(InputPins.Num());
+	// do a first pass over all of the pins so that we can properly cull out input pins and
+	// propagate the disabled pins up the chain
 	for (const FNiagaraCompilationInputPin& InputPin : InputPins)
 	{
 		if (Translator->IsFunctionVariableCulledFromCompilation(InputPin.PinName))
 		{
 			Translator->CullMapSetInputPin(&InputPin);
 		}
-		else if (NodeEnabled || InputPin.Variable.GetType() == FNiagaraTypeDefinition::GetParameterMapDef())
+		else
 		{
-			int32 CompiledInput = Translator->CompileInputPin(&InputPin);
-			if (CompiledInput == INDEX_NONE)
-			{
-				Translator->Error(LOCTEXT("MapSetInputError", "Error compiling input for set node."), this, &InputPin);
-			}
-			CompileInputs.Emplace(CompiledInput, &InputPin);
+			ActiveInputPins.Add(&InputPin);
 		}
 	}
 
-	if (InputPins.Num() && InputPins[0].LinkedTo)
+	TArray<FTranslator::FCompiledPin, TInlineAllocator<16>> CompileInputs;
+	CompileInputs.Reserve(ActiveInputPins.Num());
+
+	// update the translator with the culled function calls before compiling any further
+	for (const FNiagaraCompilationInputPin* InputPin : ActiveInputPins)
+	{
+		if (NodeEnabled || InputPin->Variable.GetType() == FNiagaraTypeDefinition::GetParameterMapDef())
+		{
+			int32 CompiledInput = Translator->CompileInputPin(InputPin);
+			if (CompiledInput == INDEX_NONE)
+			{
+				Translator->Error(LOCTEXT("MapSetInputError", "Error compiling input for set node."), this, InputPin);
+			}
+			CompileInputs.Emplace(CompiledInput, InputPin);
+		}
+	}
+
+	if (ActiveInputPins.Num() && ActiveInputPins[0] && ActiveInputPins[0]->LinkedTo)
 	{
 		Translator->ParameterMapSet(this, CompileInputs, Outputs);
 	}

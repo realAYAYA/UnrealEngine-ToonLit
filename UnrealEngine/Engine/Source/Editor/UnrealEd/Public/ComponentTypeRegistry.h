@@ -7,6 +7,7 @@
 #include "Components/ActorComponent.h"
 
 class FComponentClassComboEntry;
+class UBlueprintGeneratedClass;
 
 DECLARE_MULTICAST_DELEGATE(FOnComponentTypeListChanged);
 
@@ -53,6 +54,7 @@ struct FComponentTypeRegistry
 
 private:
 	void OnReloadComplete(EReloadCompleteReason Reason);
+	void OnBlueprintGeneratedClassUnloaded(UBlueprintGeneratedClass* BlueprintGeneratedClass);
 
 private:
 	FComponentTypeRegistry();

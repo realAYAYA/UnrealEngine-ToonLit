@@ -1,8 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "BehaviorTree/Tasks/BTTask_RunBehaviorDynamic.h"
+#include "GameFramework/Actor.h"
 #include "VisualLogger/VisualLogger.h"
 #include "BehaviorTree/BehaviorTree.h"
+#include "Internationalization/Regex.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(BTTask_RunBehaviorDynamic)
 
@@ -59,6 +61,10 @@ void UBTTask_RunBehaviorDynamic::DescribeRuntimeValues(const UBehaviorTreeCompon
 {
 	Super::DescribeRuntimeValues(OwnerComp, NodeMemory, Verbosity, Values);
 	Values.Add(FString::Printf(TEXT("subtree: %s"), *GetNameSafe(BehaviorAsset)));
+	if (BehaviorAsset)
+	{
+		Values.Add(FString::Printf(TEXT("subtree path: %s"), *BehaviorAsset->GetPathName()));
+	}
 }
 
 bool UBTTask_RunBehaviorDynamic::SetBehaviorAsset(UBehaviorTree* NewBehaviorAsset)
@@ -72,6 +78,18 @@ bool UBTTask_RunBehaviorDynamic::SetBehaviorAsset(UBehaviorTree* NewBehaviorAsse
 }
 
 #if WITH_EDITOR
+UBehaviorTree* UBTTask_RunBehaviorDynamic::GetBehaviorAssetFromRuntimeValue(const FString& RuntimeValue) const
+{
+	static const FRegexPattern RegexPatern(FString(TEXT("[\\n\\r].*subtree path:\\s*([^\\n\\r]*)")));
+	FRegexMatcher Matcher(RegexPatern, RuntimeValue);
+	if (Matcher.FindNext())
+	{
+		// Capture group 0 is the whole subtree line, capture group 1 is the path.
+		const FString SubtreePath = Matcher.GetCaptureGroup(1);
+		return FindObject<UBehaviorTree>(nullptr, *SubtreePath);
+	}
+	return nullptr;
+}
 
 FName UBTTask_RunBehaviorDynamic::GetNodeIconName() const
 {

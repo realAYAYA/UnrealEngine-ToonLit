@@ -533,7 +533,7 @@ protected:
 	TSet<FTableTreeNodePtr> ExpandedNodes;
 
 	static constexpr int32 MaxNodesToAutoExpand = 1000;
-	static constexpr int32 MaxDepthToAutoExpand = 3;
+	static constexpr int32 MaxDepthToAutoExpand = 1;
 	static constexpr int32 MaxNodesToExpand = 1000000;
 	static constexpr int32 MaxDepthToExpand = 100;
 
@@ -635,8 +635,8 @@ class FTableTreeViewNodeFilteringAsyncTask
 {
 public:
 	FTableTreeViewNodeFilteringAsyncTask(STableTreeView* InPtr)
+		: TableTreeViewPtr(InPtr)
 	{
-		TableTreeViewPtr = InPtr;
 	}
 
 	FORCEINLINE TStatId GetStatId() const { RETURN_QUICK_DECLARE_CYCLE_STAT(FTableTreeViewNodeFilteringAsyncTask, STATGROUP_TaskGraphTasks); }
@@ -661,8 +661,8 @@ class FTableTreeViewHierarchyFilteringAsyncTask
 {
 public:
 	FTableTreeViewHierarchyFilteringAsyncTask(STableTreeView* InPtr)
+		: TableTreeViewPtr(InPtr)
 	{
-		TableTreeViewPtr = InPtr;
 	}
 
 	FORCEINLINE TStatId GetStatId() const { RETURN_QUICK_DECLARE_CYCLE_STAT(FTableTreeViewHierarchyFilteringAsyncTask, STATGROUP_TaskGraphTasks); }
@@ -687,10 +687,10 @@ class FTableTreeViewSortingAsyncTask
 {
 public:
 	FTableTreeViewSortingAsyncTask(STableTreeView* InPtr, ITableCellValueSorter* InSorter, EColumnSortMode::Type InColumnSortMode)
+		: TableTreeViewPtr(InPtr)
+		, Sorter(InSorter)
+		, ColumnSortMode(InColumnSortMode)
 	{
-		TableTreeViewPtr = InPtr;
-		Sorter = InSorter;
-		ColumnSortMode = InColumnSortMode;
 	}
 
 	FORCEINLINE TStatId GetStatId() const { RETURN_QUICK_DECLARE_CYCLE_STAT(FTableTreeViewSortingAsyncTask, STATGROUP_TaskGraphTasks); }
@@ -706,9 +706,9 @@ public:
 	}
 
 private:
-	STableTreeView* TableTreeViewPtr;
-	ITableCellValueSorter* Sorter;
-	EColumnSortMode::Type ColumnSortMode;
+	STableTreeView* TableTreeViewPtr = nullptr;
+	ITableCellValueSorter* Sorter = nullptr;
+	EColumnSortMode::Type ColumnSortMode = EColumnSortMode::Type::None;
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -717,9 +717,9 @@ class FTableTreeViewGroupingAsyncTask
 {
 public:
 	FTableTreeViewGroupingAsyncTask(STableTreeView* InPtr, TArray<TSharedPtr<FTreeNodeGrouping>>* InGroupings)
+		: TableTreeViewPtr(InPtr)
+		, Groupings(InGroupings)
 	{
-		TableTreeViewPtr = InPtr;
-		Groupings = InGroupings;
 	}
 
 	FORCEINLINE TStatId GetStatId() const { RETURN_QUICK_DECLARE_CYCLE_STAT(FTableTreeViewGroupingAsyncTask, STATGROUP_TaskGraphTasks); }
@@ -736,36 +736,7 @@ public:
 
 private:
 	STableTreeView* TableTreeViewPtr = nullptr;
-	TArray<TSharedPtr<FTreeNodeGrouping>>* Groupings;
-};
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-class FTableTreeViewAsyncCompleteTask
-{
-public:
-	FTableTreeViewAsyncCompleteTask(TSharedPtr<STableTreeView> InPtr)
-	{
-		TableTreeViewPtr = InPtr;
-	}
-
-	FORCEINLINE TStatId GetStatId() const { RETURN_QUICK_DECLARE_CYCLE_STAT(FTableTreeViewAsyncCompleteTask, STATGROUP_TaskGraphTasks); }
-	ENamedThreads::Type GetDesiredThread() { return ENamedThreads::Type::GameThread; }
-	static ESubsequentsMode::Type GetSubsequentsMode() { return ESubsequentsMode::TrackSubsequents; }
-
-	void DoTask(ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent)
-	{
-		// The role of this task is to keep the STableTreeView object alive until the task and it's prerequisites are completed and to destroy it on the game thread.
-		FGraphEventRef Event = TableTreeViewPtr->AsyncCompleteTaskEvent;
-		if (TableTreeViewPtr.IsValid())
-		{
-			TableTreeViewPtr.Reset();
-		}
-		//TODO: callback for FInsightsManager::Get()->RemoveInProgressAsyncOp(Event);
-	}
-
-private:
-	TSharedPtr<STableTreeView> TableTreeViewPtr;
+	TArray<TSharedPtr<FTreeNodeGrouping>>* Groupings = nullptr;
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -776,7 +747,8 @@ public:
 	FSearchForItemToSelectTask(TSharedPtr<FTableTaskCancellationToken> InToken, TSharedPtr<STableTreeView> InPtr)
 		: CancellationToken(InToken)
 		, TableTreeViewPtr(InPtr)
-	{}
+	{
+	}
 
 	FORCEINLINE TStatId GetStatId() const { RETURN_QUICK_DECLARE_CYCLE_STAT(FSearchForItemToSelectTask, STATGROUP_TaskGraphTasks); }
 	ENamedThreads::Type GetDesiredThread() { return ENamedThreads::Type::AnyThread; }
@@ -784,7 +756,13 @@ public:
 
 	void DoTask(ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent)
 	{
-		TableTreeViewPtr->SearchForItem(CancellationToken);
+		if (!CancellationToken.IsValid() || !CancellationToken->ShouldCancel())
+		{
+			if (TableTreeViewPtr.IsValid())
+			{
+				TableTreeViewPtr->SearchForItem(CancellationToken);
+			}
+		}
 	}
 
 private:
@@ -801,7 +779,8 @@ public:
 		: CancellationToken(InToken)
 		, TableTreeViewPtr(InPtr)
 		, RowIndex(InRowIndex)
-		{}
+	{
+	}
 
 	FORCEINLINE TStatId GetStatId() const { RETURN_QUICK_DECLARE_CYCLE_STAT(FSelectNodeByTableRowIndexTask, STATGROUP_TaskGraphTasks); }
 	ENamedThreads::Type GetDesiredThread() { return ENamedThreads::Type::GameThread; }
@@ -809,16 +788,19 @@ public:
 
 	void DoTask(ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent)
 	{
-		if (!CancellationToken->ShouldCancel())
+		if (!CancellationToken.IsValid() || !CancellationToken->ShouldCancel())
 		{
-			TableTreeViewPtr->SelectNodeByTableRowIndex(RowIndex);
+			if (TableTreeViewPtr.IsValid())
+			{
+				TableTreeViewPtr->SelectNodeByTableRowIndex(RowIndex);
+			}
 		}
 	}
 
 private:
 	TSharedPtr< FTableTaskCancellationToken> CancellationToken;
 	TSharedPtr<STableTreeView> TableTreeViewPtr;
-	uint32 RowIndex;
+	uint32 RowIndex = 0;
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -74,6 +74,7 @@ namespace WaveTable
 
 		// Retrieves the sample value at the currently set phase, returning the floating point index which the current phase corresponds to.
 		float Process(const FWaveTableView& InTableView, float& OutSample, ESingleSampleMode InMode = ESingleSampleMode::Zero);
+		float Process(const FWaveTableData& InTableData, float& OutSample, ESingleSampleMode InMode = ESingleSampleMode::Zero);
 
 		// Resamples entire table length into given view
 		float Process(const FWaveTableView& InTableView, TArrayView<float> OutSamplesView);
@@ -102,7 +103,10 @@ namespace WaveTable
 
 		// If set to one-shot, sets IndexFinished to valid index and resets remaining indices provided past the initial stop to the first index.
 		// Returns last positively increasing index if finished. If not finished, returns the last index value stored in the view.
-		int32 ComputeIndexFinished(TArrayView<const float> InSyncTriggers, TArrayView<float> OutIndicesView);
+		float ComputeIndexFinished(TArrayView<const float> InSyncTriggers, TArrayView<float> OutIndicesView);
+
+		// Utility that takes in necessary data for finalizing a single sample index processing from either a TableData or a TableView.  Covers edge cases for final value.
+		float FinalizeSingleSample(float Index, int32 NumSamples, TArrayView<float> OutSample, float LastTableValue, float FinalValue, FWaveTableSampler::ESingleSampleMode InMode);
 
 		float LastIndex = 0.0f;
 

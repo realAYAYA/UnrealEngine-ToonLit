@@ -6,9 +6,10 @@
 
 float3 TranslatedWorldOffsetConversion;
 uint bCheckerboardEnabled;
+uint bDrawOccludedLines;
 
 // The shader used to render the debug element on view
-StructuredBuffer<uint> ShaderDrawDebugPrimitive;
+Buffer<uint> ShaderDrawDebugPrimitive;
 
 Texture2D<float> DepthTexture;
 float2 OutputInvResolution; 
@@ -26,7 +27,7 @@ void ShaderDrawDebugVS(
 	out float4 Position : SV_POSITION,
 	out float4 ColorAlpha : TEXCOORD0)
 {
-	const FLineElement Item = UnpackLineElement(ShaderDrawDebugPrimitive, InstanceId, ShaderPrintData.MaxValueCount);
+	const FLineElement Item = UnpackLineElement(ShaderDrawDebugPrimitive, InstanceId, ShaderPrintData.MaxCharacterCount);
 
 	float4 VertexPositionTWS = float4(VertexId == 0 ? Item.Pos0 : Item.Pos1, 1.0f);
 	float4 VertexColor = VertexId == 0 ? Item.Color0 : Item.Color1;
@@ -60,7 +61,7 @@ void ShaderDrawDebugVS(
 	out float4 Position : SV_POSITION,
 	out float4 ColorAlpha : TEXCOORD0)
 {
-	const FTriangleElement Item = UnpackTriangleElement(ShaderDrawDebugPrimitive, InstanceId, ShaderPrintData.MaxValueCount, ShaderPrintData.MaxLineCount);
+	const FTriangleElement Item = UnpackTriangleElement(ShaderDrawDebugPrimitive, InstanceId, ShaderPrintData.MaxCharacterCount, ShaderPrintData.MaxLineCount);
 
 	float4 VertexPositionTWS = float4(VertexId == 0 ? Item.Pos0 : (VertexId == 1 ? Item.Pos1 : Item.Pos2), 1.0f);
 	float4 VertexColor = Item.Color;
@@ -102,14 +103,14 @@ void ShaderDrawDebugPS(
 
 	const float ColorScale = bIsHidden ? 0.4f : 1;
 	const float CheckerboardScale = ((PixelCoord.x%2) ^ (PixelCoord.y%2)) > 0 ? 1 : 0.0;
-	const float OcclusionScale = (bCheckerboardEnabled && bIsHidden) ? CheckerboardScale : 1;
+	const float OcclusionScale = (bCheckerboardEnabled && bIsHidden) ? (bDrawOccludedLines ? CheckerboardScale : 0.0f) : 1;
 	OutSceneColor = OcclusionScale * ColorAlpha * float4(ColorAlpha.aaa * ColorScale, 1.0); // Pre multiplied alpha with color scale
 }
 #endif
 
 #if GPU_DEBUG_RENDERING_COPY_CS
 
-StructuredBuffer<uint> ElementBuffer;
+Buffer<uint> ElementBuffer;
 RWBuffer<uint> RWIndirectArgs;
 uint PrimitiveType;
 

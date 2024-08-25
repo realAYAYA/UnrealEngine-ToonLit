@@ -2,7 +2,6 @@
 
 using System;
 using System.Numerics;
-using EpicGames.Core;
 
 namespace EpicGames.Core
 {

@@ -1,8 +1,8 @@
 ﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Perforce;
 using System;
 using System.Windows.Forms;
+using EpicGames.Perforce;
 
 namespace UnrealGameSync
 {
@@ -21,11 +21,11 @@ namespace UnrealGameSync
 			_defaultPerforceSettings = defaultPerforceSettings;
 			_serviceProvider = serviceProvider;
 
-			if(!String.IsNullOrWhiteSpace(serverAndPortOverride))
+			if (!String.IsNullOrWhiteSpace(serverAndPortOverride))
 			{
 				_serverAndPortOverride = serverAndPortOverride.Trim();
 			}
-			if(!String.IsNullOrEmpty(userNameOverride))
+			if (!String.IsNullOrEmpty(userNameOverride))
 			{
 				_userNameOverride = userNameOverride.Trim();
 			}
@@ -42,7 +42,7 @@ namespace UnrealGameSync
 		public static bool ShowModal(IWin32Window owner, IPerforceSettings defaultSettings, ref string? serverAndPortOverride, ref string? userNameOverride, IServiceProvider serviceProvider)
 		{
 			using ConnectWindow connect = new ConnectWindow(defaultSettings, serverAndPortOverride, userNameOverride, serviceProvider);
-			if(connect.ShowDialog(owner) == DialogResult.OK)
+			if (connect.ShowDialog(owner) == DialogResult.OK)
 			{
 				serverAndPortOverride = connect._serverAndPortOverride;
 				userNameOverride = connect._userNameOverride;
@@ -59,7 +59,7 @@ namespace UnrealGameSync
 
 		private void OkBtn_Click(object sender, EventArgs e)
 		{
-			if(UseDefaultConnectionSettings.Checked)
+			if (UseDefaultConnectionSettings.Checked)
 			{
 				_serverAndPortOverride = null;
 				_userNameOverride = null;
@@ -67,13 +67,13 @@ namespace UnrealGameSync
 			else
 			{
 				_serverAndPortOverride = ServerAndPortTextBox.Text.Trim();
-				if(_serverAndPortOverride.Length == 0)
+				if (_serverAndPortOverride.Length == 0)
 				{
 					_serverAndPortOverride = _defaultPerforceSettings.ServerAndPort;
 				}
 
 				_userNameOverride = UserNameTextBox.Text.Trim();
-				if(_userNameOverride.Length == 0)
+				if (_userNameOverride.Length == 0)
 				{
 					_userNameOverride = _defaultPerforceSettings.UserName;
 				}
@@ -102,7 +102,7 @@ namespace UnrealGameSync
 		private void BrowseUserBtn_Click(object sender, EventArgs e)
 		{
 			string? newUserName;
-			if(SelectUserWindow.ShowModal(this, new PerforceSettings(_defaultPerforceSettings) { UserName = UserNameTextBox.Text, ServerAndPort = ServerAndPortTextBox.Text }, _serviceProvider, out newUserName))
+			if (SelectUserWindow.ShowModal(this, new PerforceSettings(_defaultPerforceSettings) { UserName = UserNameTextBox.Text, ServerAndPort = ServerAndPortTextBox.Text }, _serviceProvider, out newUserName))
 			{
 				UserNameTextBox.Text = newUserName;
 			}

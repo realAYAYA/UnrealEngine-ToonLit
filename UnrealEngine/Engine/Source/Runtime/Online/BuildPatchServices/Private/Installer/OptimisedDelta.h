@@ -63,21 +63,15 @@ namespace BuildPatchServices
 	struct FOptimisedDeltaDependencies
 	{
 	public:
-		/**
-		 * Constructor setting up default values.
-		 */
-		FOptimisedDeltaDependencies();
-
-	public:
 		// A download service instance.
-		IDownloadService* DownloadService;
+		IDownloadService* DownloadService = nullptr;
 		// Function to call once the destination manifest has been selected. Receives manifest or error.
-		TFunction<void(const IOptimisedDelta::FResultValueOrError&)> OnComplete;
+		TUniqueFunction<void(const IOptimisedDelta::FResultValueOrError&)> OnComplete;
 	};
 
 	class FOptimisedDeltaFactory
 	{
 	public:
-		static IOptimisedDelta* Create(const FOptimisedDeltaConfiguration& Configuration, const FOptimisedDeltaDependencies& Dependencies);
+		static IOptimisedDelta* Create(const FOptimisedDeltaConfiguration& Configuration, FOptimisedDeltaDependencies&& Dependencies);
 	};
 }

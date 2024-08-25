@@ -15,27 +15,6 @@
 
 class FOutputDeviceError;
 
-void FUnixOutputDevices::SetupOutputDevices()
-{
-	check(GLog);
-
-	ResetCachedAbsoluteFilename();
-
-	// add file log
-	GLog->AddOutputDevice(FPlatformOutputDevices::GetLog());
-
-	// @todo: set to false for minor utils?
-	if (GLogConsole != nullptr)
-	{
-		bool bLogToConsole = !NO_LOGGING && !FParse::Param(FCommandLine::Get(), TEXT("NOCONSOLE"));
-		if (bLogToConsole)
-		{
-			GLog->AddOutputDevice(GLogConsole);
-		}
-	}
-	// debug and event logging is not really supported on Unix. 
-}
-
 FString FUnixOutputDevices::GetAbsoluteLogFilename()
 {
 	// FIXME: this function should not exist once FGenericPlatformOutputDevices::GetAbsoluteLogFilename() returns absolute filename (see UE-25650)

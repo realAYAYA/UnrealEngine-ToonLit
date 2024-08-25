@@ -65,4 +65,47 @@ namespace UE::MeshPassUtils
 		RHICmdList.DispatchIndirectComputeShader(IndirectArgsBuffer, IndirectArgOffset);
 		Private::AfterDispatch(RHICmdList, ComputeShader);
 	}
+
+	template<typename TShaderClass, typename TShaderElementData>
+	inline void SetupComputeBindings(
+		const TShaderRef<TShaderClass>& ComputeShader,
+		const FScene* Scene,
+		ERHIFeatureLevel::Type FeatureLevel,
+		const FPrimitiveSceneProxy* PrimitiveSceneProxy,
+		const FMaterialRenderProxy& MaterialRenderProxy,
+		const FMaterial& Material,
+		const TShaderElementData& ShaderElementData,
+		FMeshDrawShaderBindings& ShaderBindings
+	)
+	{
+		FMeshProcessorShaders MeshProcessorShaders;
+		MeshProcessorShaders.ComputeShader = ComputeShader;
+
+		ShaderBindings.Initialize(MeshProcessorShaders);
+
+		if (ComputeShader.IsValid())
+		{
+			FMeshDrawSingleShaderBindings SingleShaderBindings = ShaderBindings.GetSingleShaderBindings(SF_Compute);
+			ComputeShader->GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, ShaderElementData, SingleShaderBindings);
+		}
+
+		ShaderBindings.Finalize(&MeshProcessorShaders);
+	}
+
+	template<typename TShaderClass>
+	inline void SetupComputeBindings(
+		const TShaderRef<TShaderClass>& ComputeShader,
+		const FScene* Scene,
+		ERHIFeatureLevel::Type FeatureLevel,
+		const FPrimitiveSceneProxy* PrimitiveSceneProxy,
+		const FMaterialRenderProxy& MaterialRenderProxy,
+		const FMaterial& Material,
+		FMeshDrawShaderBindings& ShaderBindings
+	)
+	{
+		FMeshMaterialShaderElementData ShaderElementData;
+		ShaderElementData.InitializeMeshMaterialData();
+
+		SetupComputeBindings(ComputeShader, Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, ShaderElementData, ShaderBindings);
+	}
 }

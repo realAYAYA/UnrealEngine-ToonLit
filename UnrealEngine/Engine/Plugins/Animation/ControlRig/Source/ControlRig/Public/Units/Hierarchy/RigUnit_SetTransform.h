@@ -29,18 +29,10 @@ struct CONTROLRIG_API FRigUnit_SetTransform : public FRigUnitMutable
 
 	virtual FString GetUnitLabel() const override;
 
-	virtual FRigElementKey DetermineSpaceForPin(const FString& InPinPath, void* InUserContext) const override
-	{
-		if(Space == ERigVMTransformSpace::LocalSpace)
-		{
-			if (const URigHierarchy* Hierarchy = (const URigHierarchy*)InUserContext)
-			{
-				return Hierarchy->GetFirstParent(Item);
-			}
-		}
-		return FRigElementKey();
-	}
-
+#if WITH_EDITOR
+	virtual bool UpdateHierarchyForDirectManipulation(const URigVMUnitNode* InNode, TSharedPtr<FStructOnScope> InInstance, FControlRigExecuteContext& InContext, TSharedPtr<FRigDirectManipulationInfo> InInfo) override;
+	virtual bool UpdateDirectManipulationFromHierarchy(const URigVMUnitNode* InNode, TSharedPtr<FStructOnScope> InInstance, FControlRigExecuteContext& InContext, TSharedPtr<FRigDirectManipulationInfo> InInfo) override;
+#endif
 
 	RIGVM_METHOD()
 	virtual void Execute() override;
@@ -102,18 +94,11 @@ struct CONTROLRIG_API FRigUnit_SetTranslation : public FRigUnitMutable
 
 	virtual FString GetUnitLabel() const override;
 
-	virtual FRigElementKey DetermineSpaceForPin(const FString& InPinPath, void* InUserContext) const override
-	{
-		if(Space == ERigVMTransformSpace::LocalSpace)
-		{
-			if (const URigHierarchy* Hierarchy = (const URigHierarchy*)InUserContext)
-			{
-				return Hierarchy->GetFirstParent(Item);
-			}
-		}
-		return FRigElementKey();
-	}
-
+#if WITH_EDITOR
+	virtual bool UpdateHierarchyForDirectManipulation(const URigVMUnitNode* InNode, TSharedPtr<FStructOnScope> InInstance, FControlRigExecuteContext& InContext, TSharedPtr<FRigDirectManipulationInfo> InInfo) override;
+	virtual bool UpdateDirectManipulationFromHierarchy(const URigVMUnitNode* InNode, TSharedPtr<FStructOnScope> InInstance, FControlRigExecuteContext& InContext, TSharedPtr<FRigDirectManipulationInfo> InInfo) override;
+#endif
+	
 	RIGVM_METHOD()
 	virtual void Execute() override;
 
@@ -174,18 +159,11 @@ struct CONTROLRIG_API FRigUnit_SetRotation : public FRigUnitMutable
 
 	virtual FString GetUnitLabel() const override;
 
-	virtual FRigElementKey DetermineSpaceForPin(const FString& InPinPath, void* InUserContext) const override
-	{
-		if(Space == ERigVMTransformSpace::LocalSpace)
-		{
-			if (const URigHierarchy* Hierarchy = (const URigHierarchy*)InUserContext)
-			{
-				return Hierarchy->GetFirstParent(Item);
-			}
-		}
-		return FRigElementKey();
-	}
-
+#if WITH_EDITOR
+	virtual bool UpdateHierarchyForDirectManipulation(const URigVMUnitNode* InNode, TSharedPtr<FStructOnScope> InInstance, FControlRigExecuteContext& InContext, TSharedPtr<FRigDirectManipulationInfo> InInfo) override;
+	virtual bool UpdateDirectManipulationFromHierarchy(const URigVMUnitNode* InNode, TSharedPtr<FStructOnScope> InInstance, FControlRigExecuteContext& InContext, TSharedPtr<FRigDirectManipulationInfo> InInfo) override;
+#endif
+	
 	RIGVM_METHOD()
 	virtual void Execute() override;
 
@@ -246,6 +224,11 @@ struct FRigUnit_SetScale : public FRigUnitMutable
 
 	virtual FString GetUnitLabel() const override;
 
+#if WITH_EDITOR
+	virtual bool UpdateHierarchyForDirectManipulation(const URigVMUnitNode* InNode, TSharedPtr<FStructOnScope> InInstance, FControlRigExecuteContext& InContext, TSharedPtr<FRigDirectManipulationInfo> InInfo) override;
+	virtual bool UpdateDirectManipulationFromHierarchy(const URigVMUnitNode* InNode, TSharedPtr<FStructOnScope> InInstance, FControlRigExecuteContext& InContext, TSharedPtr<FRigDirectManipulationInfo> InInfo) override;
+#endif
+	
 	RIGVM_METHOD()
 	virtual void Execute() override;
 

@@ -15,6 +15,7 @@
 #include "HAL/ThreadHeartBeat.h"
 #include "HAL/ThreadManager.h"
 #include "Internationalization/Internationalization.h"
+#include "GenericPlatform/GenericPlatformCrashContextEx.h"
 #include "Misc/App.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/CoreDelegates.h"
@@ -29,11 +30,12 @@
 #include "Serialization/Archive.h"
 #include "Templates/UniquePtr.h"
 #include "Templates/UnrealTemplate.h"
+#include "Windows/WindowsPlatformMisc.h"
+#include "Windows/WindowsPlatformProcess.h"
 #include "Windows/WindowsPlatformStackWalk.h"
 #include <atomic>
 #include <signal.h>
 
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 THIRD_PARTY_INCLUDES_START
 #include <strsafe.h>
@@ -91,7 +93,8 @@ enum EConstants
 const uint32 EnsureExceptionCode = ECrashExitCodes::UnhandledEnsure; // Use a rather unique exception code in case SEH doesn't handle it as expected.
 const uint32 AssertExceptionCode = 0x4000;
 const uint32 GPUCrashExceptionCode = 0x8000;
-constexpr double CrashHandlingTimeoutSecs = 60.0;
+const uint32 OutOfMemoryExceptionCode = 0xc000;
+constexpr double DefaultCrashHandlingTimeoutSecs = 60.0;
 
 namespace {
 	/**
@@ -140,7 +143,7 @@ namespace {
 		bool bShouldBeFullCrashDump = InContext.IsFullCrashDump();
 		if (bShouldBeFullCrashDump)
 		{
-			MinidumpType = (MINIDUMP_TYPE)(MiniDumpWithFullMemory | MiniDumpWithFullMemoryInfo | MiniDumpWithHandleData | MiniDumpWithThreadInfo | MiniDumpWithUnloadedModules);
+			MinidumpType = (MINIDUMP_TYPE)(MiniDumpWithFullMemory | MiniDumpWithFullMemoryInfo | MiniDumpWithHandleData | MiniDumpWithThreadInfo );
 		}
 
 		const BOOL Result = MiniDumpWriteDump(Process, GetProcessId(Process), FileHandle, MinidumpType, ExceptionInfo ? &DumpExceptionInfo : NULL, &CrashContextStreamInformation, NULL);
@@ -148,6 +151,20 @@ namespace {
 
 		return Result == TRUE;
 	}
+	
+	/** Returns the crash timeout in seconds. */
+	FORCEINLINE double GetCrashTimeoutSeconds()
+	{
+		// 60s is plenty of time to generate a crash report under Windows, but generating minidumps under Wine is much slower
+		double TimeoutSeconds = FWindowsPlatformMisc::IsWine() ? 120.0 : DefaultCrashHandlingTimeoutSecs;
+		if (GConfig)
+		{
+			// If available override with configurable value. Negative values are interpreted as infinite wait (not generally recommended)
+			GConfig->GetDouble(TEXT("CrashReportClient"), TEXT("CrashHandlingTimeoutSecs"), TimeoutSeconds, GEngineIni);
+		}
+		return TimeoutSeconds;
+	}
+
 }
 
 /**
@@ -199,6 +216,32 @@ void FWindowsPlatformCrashContext::AddPlatformSpecificProperties() const
 {
 	AddCrashProperty(TEXT("PlatformIsRunningWindows"), 1);
 	AddCrashProperty(TEXT("IsRunningOnBattery"), FPlatformMisc::IsRunningOnBattery());
+	WIDECHAR DriveName = 0;
+	const TCHAR* BaseDir = FWindowsPlatformProcess::BaseDir();
+	if (BaseDir && *BaseDir)
+	{
+		FPlatformString::Convert(&DriveName, 1, BaseDir, 1);
+		const FPlatformDriveStats* DriveStats = FWindowsPlatformMisc::GetDriveStats(DriveName);
+		if (DriveStats)
+		{
+			AddCrashProperty(TEXT("DriveStats.Project.Name"), BaseDir);
+			AddCrashProperty(TEXT("DriveStats.Project.Type"), LexToString(DriveStats->DriveType));
+			AddCrashProperty(TEXT("DriveStats.Project.FreeSpaceKb"), DriveStats->FreeBytes/1024);
+		}
+	}
+
+	const TCHAR* DownloadDir = FGenericPlatformMisc::GamePersistentDownloadDir();
+	if (DownloadDir && *DownloadDir)
+	{
+		FPlatformString::Convert(&DriveName, 1, DownloadDir, 1);
+		const FPlatformDriveStats* DriveStats = FWindowsPlatformMisc::GetDriveStats(DriveName);
+		if (DriveStats)
+		{
+			AddCrashProperty(TEXT("DriveStats.PersistentDownload.Name"), DownloadDir);
+			AddCrashProperty(TEXT("DriveStats.PersistentDownload.Type"), LexToString(DriveStats->DriveType));
+			AddCrashProperty(TEXT("DriveStats.PersistentDownload.FreeSpaceKb"), DriveStats->FreeBytes / 1024);
+		}
+	}
 }
 
 
@@ -413,6 +456,12 @@ FProcHandle LaunchCrashReportClient(void** OutWritePipe, void** OutReadPipe, uin
 				}
 			}
 		}
+
+		// Tell CRC if we're using low integrity paths (AppData\LocalLow instead of AppData\Local).
+		if (FWindowsPlatformProcess::ShouldExpectLowIntegrityLevel())
+		{
+			FCString::Strncat(CrashReporterClientArgs, TEXT(" -ExpectLowIntegrityLevel"), CR_CLIENT_MAX_ARGS_LEN);
+		}
 	}
 
 #if WITH_EDITOR // Disaster recovery is only enabled for the Editor. Start the server even if in -game, -server, commandlet, the client-side will not connect (its too soon here to query this executable config).
@@ -473,7 +522,8 @@ FProcHandle LaunchCrashReportClient(void** OutWritePipe, void** OutReadPipe, uin
 			FPlatformProcess::CloseProc(Handle);
 
 			// Acquire a handle on the final CRC instance responsible to handle the crash/reports, but forbid this process from terminating it in case we try to terminate it by accident (like a stomped handle that would terminate the wrong process)
-			Handle = RepawnedCrcPid != 0 ? FProcHandle(::OpenProcess(PROCESS_ALL_ACCESS & ~(PROCESS_TERMINATE), 0, RepawnedCrcPid)) : FProcHandle();
+			// Use the minimum required access rights to avoid creating a SecuritySandbox bypass.
+			Handle = RepawnedCrcPid != 0 ? FProcHandle(::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, 0, RepawnedCrcPid)) : FProcHandle();
 
 			// Update the PID returned to the client.
 			if (OutCrashReportClientProcessId != nullptr)
@@ -532,7 +582,7 @@ int32 ReportCrashForMonitor(
 	HANDLE CrashingThreadHandle,
 	DWORD CrashingThreadId,
 	FProcHandle& CrashMonitorHandle,
-	FSharedCrashContext* SharedContext,
+	FSharedCrashContextEx* SharedContext,
 	void* WritePipe,
 	void* ReadPipe,
 	EErrorReportUI ReportUI)
@@ -541,6 +591,7 @@ int32 ReportCrashForMonitor(
 	FScopeLock ScopedMonitorLock(&GMonitorLock);
 
 	FGenericCrashContext::CopySharedCrashContext(*SharedContext);
+	CopyGPUBreadcrumbsToSharedCrashContext(*SharedContext);
 
 	// Set the platform specific crash context, so that we can stack walk and minidump from
 	// the crash reporter client.
@@ -713,7 +764,7 @@ int32 ReportCrashForMonitor(
 	// Write the shared context to the pipe
 	bool bPipeWriteSucceeded = true;
 	const uint8* DataIt = (const uint8*)SharedContext;
-	const uint8* DataEndIt = DataIt + sizeof(FSharedCrashContext);
+	const uint8* DataEndIt = DataIt + sizeof(FSharedCrashContextEx);
 	while (DataIt != DataEndIt && bPipeWriteSucceeded)
 	{
 		int32 OutDataWritten = 0;
@@ -727,6 +778,7 @@ int32 ReportCrashForMonitor(
 		// Wait for a response, saying it's ok to continue
 		bool bCanContinueExecution = false;
 		int32 ExitCode = 0;
+		const double TimeoutSecs = GetCrashTimeoutSeconds();
 		// Would like to use TInlineAllocator here to avoid heap allocation on crashes, but it doesn't work since ReadPipeToArray 
 		// cannot take array with non-default allocator
 		TArray<uint8> ResponseBuffer;
@@ -745,7 +797,8 @@ int32 ReportCrashForMonitor(
 			// In general, the crash monitor app (CRC) is expected to respond within ~5 seconds, but it might be busy sending an
 			// ensure/stall that occurred just before. In some degenerated cases, CRC may hang several minutes and cause the crash
 			// reporting thread to timeout and resume the crashing thread, likely resulting in this process to exit or to request it exit.
-			if (IsEngineExitRequested() && FPlatformTime::Seconds() - WaitResponseStartTimeSecs >= CrashHandlingTimeoutSecs)
+			const double WaitResponseTimeSecs = FPlatformTime::Seconds() - WaitResponseStartTimeSecs;
+			if (IsEngineExitRequested() && (TimeoutSecs >= 0 && WaitResponseTimeSecs >= TimeoutSecs))
 			{
 				break;
 			}
@@ -1078,7 +1131,7 @@ private:
 	/** The crash report client process ID. */
 	uint32 CrashMonitorPid;
 	/** Memory allocated for crash context. */
-	FSharedCrashContext SharedContext;
+	FSharedCrashContextEx SharedContext;
 	
 
 	/** Thread main proc */
@@ -1308,8 +1361,9 @@ public:
 	/** The thread that crashed calls this function to wait for the report to be generated */
 	FORCEINLINE bool WaitUntilCrashIsHandled()
 	{
-		// Wait 60s, it's more than enough to generate crash report. We don't want to stall forever otherwise.
-		return WaitForSingleObject(CrashHandledEvent, static_cast<DWORD>(CrashHandlingTimeoutSecs * 1000)) == WAIT_OBJECT_0;
+		const double TimeoutSeconds = GetCrashTimeoutSeconds();
+		const DWORD TimeoutMs = TimeoutSeconds < 0.0f ? INFINITE : (static_cast<DWORD>(TimeoutSeconds * 1000));
+		return WaitForSingleObject(CrashHandledEvent, TimeoutMs) == WAIT_OBJECT_0;
 	}
 
 	/** Crashes during static init should be reported directly to crash monitor. */
@@ -1384,11 +1438,17 @@ private:
 			ErrorMessage = Info.ErrorMessage;
 			ErrorProgramCounter = Info.ProgramCounter;
 		}
-		// Generic exception description is stored in GErrorExceptionDescription
 		else if (ExceptionInfo->ExceptionRecord->ExceptionCode == EnsureExceptionCode)
 		{
 			const FAssertInfo& Info = *(const FAssertInfo*)ExceptionInfo->ExceptionRecord->ExceptionInformation[0];
 			Type = ECrashContextType::Ensure;
+			ErrorMessage = Info.ErrorMessage;
+			ErrorProgramCounter = Info.ProgramCounter;
+		}
+		else if (ExceptionInfo->ExceptionRecord->ExceptionCode == OutOfMemoryExceptionCode)
+		{
+			const FAssertInfo& Info = *(const FAssertInfo*)ExceptionInfo->ExceptionRecord->ExceptionInformation[0];
+			Type = ECrashContextType::OutOfMemory;
 			ErrorMessage = Info.ErrorMessage;
 			ErrorProgramCounter = Info.ProgramCounter;
 		}
@@ -1599,7 +1659,7 @@ int32 ReportCrash( LPEXCEPTION_POINTERS ExceptionInfo )
 #if !NOINITCRASHREPORTER
 	// Only create a minidump the first time this function is called.
 	// (Can be called the first time from the RenderThread, then a second time from the MainThread.)
-	if (GCrashReportingThread)
+	if (GCrashReportingThread.IsSet())
 	{
 		if (GLog)
 		{
@@ -1757,7 +1817,14 @@ void ReportAssert(const TCHAR* ErrorMessage, void* ProgramCounter)
 	FAssertInfo Info(ErrorMessage, ProgramCounter);
 
 	ULONG_PTR Arguments[] = { (ULONG_PTR)&Info };
-	::RaiseException(AssertExceptionCode, 0, UE_ARRAY_COUNT(Arguments), Arguments);
+	if (FGenericPlatformMemory::bIsOOM)
+	{
+		::RaiseException(OutOfMemoryExceptionCode, 0, UE_ARRAY_COUNT(Arguments), Arguments);
+	}
+	else
+	{
+		::RaiseException(AssertExceptionCode, 0, UE_ARRAY_COUNT(Arguments), Arguments);
+	}
 }
 
 FORCENOINLINE void ReportGPUCrash(const TCHAR* ErrorMessage, void* ProgramCounter)

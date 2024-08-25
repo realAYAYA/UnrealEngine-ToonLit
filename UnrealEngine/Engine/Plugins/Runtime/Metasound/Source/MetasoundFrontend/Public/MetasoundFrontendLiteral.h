@@ -53,6 +53,15 @@ static_assert(static_cast<uint8>(EMetasoundFrontendLiteralType::UObjectArray) ==
 static_assert(std::is_same<uint8, std::underlying_type<EMetasoundFrontendLiteralType>::type>::value, "Update type in static_cast<TYPE> from Metasound::ELiteralType to EMetasoundFrontendLiteralType in EMetasoundFrontendLiteralType declaration.");
 static_assert(std::is_same<std::underlying_type<Metasound::ELiteralType>::type, std::underlying_type<EMetasoundFrontendLiteralType>::type>::value, "EMetasoundFrontendLiteralType and Metasound::ELiteralType must have matching underlying types to support conversion.");
 
+// Forward Declare
+namespace Metasound
+{
+	namespace Frontend
+	{
+		class IDataTypeRegistry;
+		class FProxyDataCache;
+	}
+}
 
 // Represents the serialized version of variant literal types. 
 USTRUCT(BlueprintType, meta = (DisplayName = "MetaSound Literal"))
@@ -130,12 +139,20 @@ public:
 	void SetFromLiteral(const Metasound::FLiteral& InLiteral);
 
 	EMetasoundFrontendLiteralType GetType() const;
+	
+	// Get the number of array elements if this literal is an array type, otherwise return 0
+	int32 GetArrayNum() const;
 
-	// Return the literal description parsed into a init param. 
-	// @Returns an invalid init param if the data type couldn't be found, or if the literal type was incompatible with the data type.
-	Metasound::FLiteral ToLiteral(const FName& InMetasoundDataType) const;
+	// Return a Metasound::FLiteral representation of this object. 
+	//
+	// @param InMetaSoundDataType - The name of the MetaSound data type
+	// @param InDataTypeRegistry - A pointer to an existing data type registry. If null, the data type registry will be retrieved within this function.
+	// @param InProxyDataCache - A pointer to an existing proxy data cache. If not null, UObject proxies will be retrieved from the cache. If null, UObject proxies will be created in this function.
+	//
+	// @returns An FLiteral. If the data type couldn't be found, or if the literal type was incompatible with the data type, then an invalid FLiteral is returned.
+	Metasound::FLiteral ToLiteral(const FName& InMetaSoundDataType, const Metasound::Frontend::IDataTypeRegistry* InDataTypeRegistry=nullptr, const Metasound::Frontend::FProxyDataCache* InProxyDataCache=nullptr) const;
 
-	// Does not do type checking or handle proxy
+	// Return a Metasound::FLiteral representation of this object, excluding UObject proxies.
 	Metasound::FLiteral ToLiteralNoProxy() const;
 
 	// Convert the value to a string for printing. 
@@ -160,4 +177,3 @@ namespace Metasound
 		METASOUNDFRONTEND_API ELiteralType GetMetasoundLiteralType(EMetasoundFrontendLiteralType InLiteralType);
 	}
 }
-

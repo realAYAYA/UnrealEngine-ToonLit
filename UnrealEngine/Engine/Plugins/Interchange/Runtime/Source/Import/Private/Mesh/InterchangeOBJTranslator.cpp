@@ -13,6 +13,7 @@
 #include "InterchangeShaderGraphNode.h"
 #include "InterchangeTexture2DNode.h"
 #include "InterchangeTextureNode.h"
+#include "InterchangeTranslatorHelper.h"
 #include "MaterialDomain.h"
 #include "Materials/Material.h"
 #include "Misc/ConfigCacheIni.h"
@@ -25,7 +26,7 @@
 #include "StaticMeshOperations.h"
 #include "UObject/GCObjectScopeGuard.h"
 #include "UVMapSettings.h"
-
+#include "Material/InterchangeMaterialNodesHelper.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(InterchangeOBJTranslator)
 
@@ -1090,27 +1091,48 @@ namespace ObjTranslatorUtils
 
 			if (const UInterchangeTexture2DNode* TextureNode = CreateTexture2DNode(BaseNodeContainer, TextureParameter.Path, TextureName))
 			{
-				UInterchangeShaderNode* TextureSampleShader = UInterchangeShaderNode::Create(&BaseNodeContainer, TextureName, ShaderGraphNode->GetUniqueID());
-				TextureSampleShader->SetCustomShaderType(TextureSample::Name.ToString());
-				TextureSampleShader->AddStringAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(TextureSample::Inputs::Texture.ToString()), TextureNode->GetUniqueID());
-				return TextureSampleShader;
+				UInterchangeShaderNode* TextureSampleShaderNode = UInterchangeShaderNode::Create(&BaseNodeContainer, TextureName, ShaderGraphNode->GetUniqueID());
+				TextureSampleShaderNode->SetCustomShaderType(TextureSample::Name.ToString());
+				TextureSampleShaderNode->AddStringInput(TextureSample::Inputs::Texture.ToString(), TextureNode->GetUniqueID(), /*bIsAParameter =*/ true);
+				return TextureSampleShaderNode;
 			}
 		}
 		return nullptr;
 	}
 
 	// multiply texture by color, handling cases when any of the arguments is missing
-	static bool AddTexturedColoredInput(UInterchangeBaseNodeContainer& BaseNodeContainer, UInterchangeShaderGraphNode* ShaderGraphNode, const FString& InputType, const FVector3f& Color, const FObjData::FTextureParameter& TexturePath) 
+	static bool AddTexturedColoredInput(UInterchangeBaseNodeContainer& BaseNodeContainer, UInterchangeShaderGraphNode* ShaderGraphNode, const FString& InputName, const FVector3f& Color, const FObjData::FTextureParameter& TexturePath)
 	{
-		UInterchangeShaderNode* TextureSampleShader = CreateMaterialTextureSampleNode(BaseNodeContainer, ShaderGraphNode, TexturePath);
+		UInterchangeShaderNode* TextureSampleShaderNode = CreateMaterialTextureSampleNode(BaseNodeContainer, ShaderGraphNode, TexturePath);
 
-		if (TextureSampleShader)
+		if (TextureSampleShaderNode)
 		{
-			UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(ShaderGraphNode, InputType, TextureSampleShader->GetUniqueID());
+			using namespace UE::Interchange::Materials::Standard::Nodes;
+
+			const FString MultiplierNodeName = InputName + TEXT("Multiply");
+			UInterchangeShaderNode* MultiplierNode = UInterchangeShaderNode::Create(&BaseNodeContainer, MultiplierNodeName, ShaderGraphNode->GetUniqueID());
+			MultiplierNode->SetCustomShaderType(Multiply::Name.ToString());
+
+			UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(MultiplierNode, Multiply::Inputs::A.ToString(), TextureSampleShaderNode->GetUniqueID());
+
+			const FString WeightNodeName = InputName + TEXT("MapWeight");
+			UInterchangeShaderNode* WeightNode = UInterchangeShaderNode::Create(&BaseNodeContainer, WeightNodeName, MultiplierNode->GetUniqueID());
+			WeightNode->SetCustomShaderType(ScalarParameter::Name.ToString());
+
+			const float WeightValue = 1.0f;
+			WeightNode->AddFloatAttribute(UInterchangeShaderPortsAPI::MakeInputParameterKey(ScalarParameter::Attributes::DefaultValue.ToString()), WeightValue);
+
+			UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(MultiplierNode, Multiply::Inputs::B.ToString(), WeightNode->GetUniqueID());
+
+			UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(MultiplierNode, Multiply::Inputs::A.ToString(), TextureSampleShaderNode->GetUniqueID());
+
+			const FString InputNameLabel = InputName + TEXT("Map");
+			TextureSampleShaderNode->SetDisplayLabel(InputNameLabel);
+			UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(ShaderGraphNode, InputName, MultiplierNode->GetUniqueID());
 		}
 		else if (IsColorInitialized(Color))
 		{
-			ShaderGraphNode->AddLinearColorAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(InputType), FLinearColor(Color));
+			UE::Interchange::Materials::Private::FMaterialNodesHelper::SetupVectorParameter(BaseNodeContainer, ShaderGraphNode, InputName, FLinearColor(Color));
 		}
 		else
 		{
@@ -1119,37 +1141,43 @@ namespace ObjTranslatorUtils
 		return true;
 	}
 
-	static UInterchangeShaderNode* MakeTexturedWeighted(UInterchangeBaseNodeContainer& BaseNodeContainer, UInterchangeShaderGraphNode* ShaderGraphNode, FString MapName, const float& Weight, UInterchangeShaderNode* TextureSampleShader) 
+	static UInterchangeShaderNode* MakeTexturedWeighted(UInterchangeBaseNodeContainer& BaseNodeContainer, UInterchangeShaderGraphNode* ShaderGraphNode, FString MapName, const float& Weight, UInterchangeShaderNode* TextureSampleShaderNode) 
 	{
-		if (!TextureSampleShader)
+		if (!TextureSampleShaderNode)
 		{
 			return nullptr;
 		}
 
-		if (IsScalarInitialized(Weight))
-		{
-			using namespace UE::Interchange::Materials::Standard::Nodes;
+		using namespace UE::Interchange::Materials::Standard::Nodes;
 
-			const FString MultiplierNodeName = MapName + TEXT("Multiply");
-			UInterchangeShaderNode* MultiplierNode = UInterchangeShaderNode::Create(&BaseNodeContainer, MultiplierNodeName, ShaderGraphNode->GetUniqueID());
-			MultiplierNode->SetCustomShaderType(Multiply::Name.ToString());
+		const FString MultiplierNodeName = MapName + TEXT("Multiply");
+		UInterchangeShaderNode* MultiplierNode = UInterchangeShaderNode::Create(&BaseNodeContainer, MultiplierNodeName, ShaderGraphNode->GetUniqueID());
+		MultiplierNode->SetCustomShaderType(Multiply::Name.ToString());
 
-			UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(MultiplierNode, Multiply::Inputs::A.ToString(), TextureSampleShader->GetUniqueID());
-			MultiplierNode->AddFloatAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey( Multiply::Inputs::B.ToString() ), Weight);
-			return MultiplierNode;
-		}
-		return TextureSampleShader;
+		UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(MultiplierNode, Multiply::Inputs::A.ToString(), TextureSampleShaderNode->GetUniqueID());
+
+		const FString WeightNodeName = MapName + TEXT("MapWeight");
+		UInterchangeShaderNode* WeightNode = UInterchangeShaderNode::Create(&BaseNodeContainer, WeightNodeName, MultiplierNode->GetUniqueID());
+		WeightNode->SetCustomShaderType(ScalarParameter::Name.ToString());
+
+		const float WeightValue = IsScalarInitialized(Weight) ? Weight : 1.0f;
+		WeightNode->AddFloatAttribute(UInterchangeShaderPortsAPI::MakeInputParameterKey(ScalarParameter::Attributes::DefaultValue.ToString()), WeightValue);
+
+		UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(MultiplierNode, Multiply::Inputs::B.ToString(), WeightNode->GetUniqueID());
+
+		return MultiplierNode;
 	}
 
-	static bool AddTexturedWeightedInput(UInterchangeBaseNodeContainer& BaseNodeContainer, UInterchangeShaderGraphNode* ShaderGraphNode, const FString& InputType, const float& Weight, UInterchangeShaderNode* TextureSampleShader) 
+	static bool AddTexturedWeightedInput(UInterchangeBaseNodeContainer& BaseNodeContainer, UInterchangeShaderGraphNode* ShaderGraphNode, const FString& InputName, const float& Weight, UInterchangeShaderNode* TextureSampleShader) 
 	{
-		if (UInterchangeShaderNode* TextureSampleWeighted = MakeTexturedWeighted(BaseNodeContainer, ShaderGraphNode, InputType, Weight, TextureSampleShader))
+		if (UInterchangeShaderNode* TextureSampleWeighted = MakeTexturedWeighted(BaseNodeContainer, ShaderGraphNode, InputName, Weight, TextureSampleShader))
 		{
-			UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(ShaderGraphNode, InputType, TextureSampleWeighted->GetUniqueID());
+			TextureSampleWeighted->SetDisplayLabel(InputName);
+			UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(ShaderGraphNode, InputName, TextureSampleWeighted->GetUniqueID());
 		}
 		else if (IsScalarInitialized(Weight))
 		{
-			ShaderGraphNode->AddFloatAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(InputType), Weight);
+			UE::Interchange::Materials::Private::FMaterialNodesHelper::SetupScalarParameter(BaseNodeContainer, ShaderGraphNode, InputName, Weight);
 		}
 		else
 		{
@@ -1161,9 +1189,9 @@ namespace ObjTranslatorUtils
 	// multiply texture by scalar, handling cases when any of the arguments is missing
 	static bool AddTexturedWeightedInput(UInterchangeBaseNodeContainer& BaseNodeContainer, UInterchangeShaderGraphNode* ShaderGraphNode, const FString& InputType, const float& Weight, const FObjData::FTextureParameter& TexturePath) 
 	{
-		UInterchangeShaderNode* TextureSampleShader = CreateMaterialTextureSampleNode(BaseNodeContainer, ShaderGraphNode, TexturePath);
-
-		return AddTexturedWeightedInput(BaseNodeContainer, ShaderGraphNode, InputType, Weight, TextureSampleShader);
+		UInterchangeShaderNode* TextureSampleShaderNode = CreateMaterialTextureSampleNode(BaseNodeContainer, ShaderGraphNode, TexturePath);
+		
+		return AddTexturedWeightedInput(BaseNodeContainer, ShaderGraphNode, InputType, Weight, TextureSampleShaderNode);
 	}
 
 	static bool HandlePbrAttributes(UInterchangeBaseNodeContainer& BaseNodeContainer, const FObjData::FMaterialData& MaterialData, UInterchangeShaderGraphNode* ShaderGraphNode)
@@ -1187,17 +1215,17 @@ namespace ObjTranslatorUtils
 
 		if (IsScalarInitialized(MaterialData.ClearCoatThickness) && !FMath::IsNearlyZero(MaterialData.ClearCoatThickness))
 		{
-			ShaderGraphNode->AddFloatAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(Materials::ClearCoat::Parameters::ClearCoat.ToString()), MaterialData.ClearCoatThickness);
+			UE::Interchange::Materials::Private::FMaterialNodesHelper::SetupScalarParameter(BaseNodeContainer, ShaderGraphNode, Materials::ClearCoat::Parameters::ClearCoat.ToString(), MaterialData.ClearCoatThickness);
 
 			if (IsScalarInitialized(MaterialData.ClearCoatRoughness))
 			{
-				ShaderGraphNode->AddFloatAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(Materials::ClearCoat::Parameters::ClearCoatRoughness.ToString()), MaterialData.ClearCoatRoughness);
+				UE::Interchange::Materials::Private::FMaterialNodesHelper::SetupScalarParameter(BaseNodeContainer, ShaderGraphNode, Materials::ClearCoat::Parameters::ClearCoatRoughness.ToString(), MaterialData.ClearCoatRoughness);
 			}
 		}
 
 		if (IsScalarInitialized(MaterialData.Anisotropy)  && !FMath::IsNearlyZero(MaterialData.Anisotropy))
 		{
-			ShaderGraphNode->AddFloatAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(Materials::PBRMR::Parameters::Anisotropy.ToString()), MaterialData.Anisotropy);
+			UE::Interchange::Materials::Private::FMaterialNodesHelper::SetupScalarParameter(BaseNodeContainer, ShaderGraphNode, Materials::PBRMR::Parameters::Anisotropy.ToString(), MaterialData.Anisotropy);
 		}
 
 		return true;
@@ -1427,25 +1455,25 @@ bool UInterchangeOBJTranslator::Translate(UInterchangeBaseNodeContainer& BaseNod
 
 						// OBJ Specular Exponent('Ns') is in range 0 to 1000(for sharpest highlight) and Interchange Shininess is up to 100
 						const float SpecularExponentToShininessFactor = 0.1f;
+						const FString ShininessParameterName = Materials::Phong::Parameters::Shininess.ToString();
 						if (UInterchangeShaderNode* SpecularExponentTextureSampleShader = CreateMaterialTextureSampleNode(BaseNodeContainer, ShaderGraphNode, MaterialData.SpecularExponentTexture))
 						{
 							using namespace UE::Interchange::Materials::Standard::Nodes;
 
 							float SpecularExponentScale = (IsScalarInitialized(MaterialData.SpecularExponent) ? MaterialData.SpecularExponent : 1.0f) * SpecularExponentToShininessFactor;
 
-							FString MapName = Materials::Phong::Parameters::Shininess.ToString();
-							const FString MultiplierNodeName = MapName + TEXT("_Multiply");
+							const FString MultiplierNodeName = ShininessParameterName + TEXT("_Multiply");
 							UInterchangeShaderNode* MultiplierNode = UInterchangeShaderNode::Create(&BaseNodeContainer, MultiplierNodeName, ShaderGraphNode->GetUniqueID());
 							MultiplierNode->SetCustomShaderType(Multiply::Name.ToString());
 
 							UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(MultiplierNode, Multiply::Inputs::A.ToString(), SpecularExponentTextureSampleShader->GetUniqueID());
 							MultiplierNode->AddFloatAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey( Multiply::Inputs::B.ToString() ), SpecularExponentScale);
 
-							UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(ShaderGraphNode, Materials::Phong::Parameters::Shininess.ToString(), MultiplierNode->GetUniqueID());
+							UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(ShaderGraphNode, ShininessParameterName, MultiplierNode->GetUniqueID());
 						}
 						else if (IsScalarInitialized(MaterialData.SpecularExponent))
 						{
-							ShaderGraphNode->AddFloatAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(Materials::Phong::Parameters::Shininess.ToString()), MaterialData.SpecularExponent);
+							UE::Interchange::Materials::Private::FMaterialNodesHelper::SetupScalarParameter(BaseNodeContainer, ShaderGraphNode, ShininessParameterName, MaterialData.SpecularExponent);
 						}
 					}
 
@@ -1453,7 +1481,7 @@ bool UInterchangeOBJTranslator::Translate(UInterchangeBaseNodeContainer& BaseNod
 					if (bReflectionMetal)
 					{
 						// Set ambient to white as it drives the metallic parameter of UE Pbr material.
-						ShaderGraphNode->AddLinearColorAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(AmbientColorPropertyName), FLinearColor::White);
+						UE::Interchange::Materials::Private::FMaterialNodesHelper::SetupVectorParameter(BaseNodeContainer, ShaderGraphNode, AmbientColorPropertyName, FLinearColor::White);
 					}
 					else
 					{
@@ -1467,28 +1495,27 @@ bool UInterchangeOBJTranslator::Translate(UInterchangeBaseNodeContainer& BaseNod
 
 			// Opacity
 			{
-				FString OpacityInputType = Materials::Common::Parameters::Opacity.ToString();
+				const FString OpacityInputName = Materials::Common::Parameters::Opacity.ToString();
 
 				// Transparency texture replaces Transparency scalar
 				if (UInterchangeShaderNode* TransparencySample = CreateMaterialTextureSampleNode(BaseNodeContainer, ShaderGraphNode, MaterialData.TransparencyTexture))
 				{
 					// Invert transparency to get Opacity
-					FString MapName = OpacityInputType;
-					const FString OneMinusNodeName = MapName + TEXT("OneMinus");
+					const FString OneMinusNodeName = OpacityInputName + TEXT("OneMinus");
 					UInterchangeShaderNode* OneMinusNode = UInterchangeShaderNode::Create( &BaseNodeContainer, OneMinusNodeName, ShaderGraphNode->GetUniqueID() );
 					OneMinusNode->SetCustomShaderType(Materials::Standard::Nodes::OneMinus::Name.ToString());
 					UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(OneMinusNode, Materials::Standard::Nodes::OneMinus::Inputs::Input.ToString(), TransparencySample->GetUniqueID());
-					UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(ShaderGraphNode, OpacityInputType, OneMinusNode->GetUniqueID());
+					UInterchangeShaderPortsAPI::ConnectDefaultOuputToInput(ShaderGraphNode, OpacityInputName, OneMinusNode->GetUniqueID());
 				}
 				// Opacity texture is weighted by scalar opacity("d")
-				else if (!AddTexturedWeightedInput(BaseNodeContainer, ShaderGraphNode, OpacityInputType, MaterialData.Opacity, MaterialData.OpacityTexture))
+				else if (!AddTexturedWeightedInput(BaseNodeContainer, ShaderGraphNode, OpacityInputName, MaterialData.Opacity, MaterialData.OpacityTexture))
 				{
 					// When no textures are present compute opacity value depending on which is defined - opacity or transparency
 					// OBJ has two ways to define Opacity/Transparency - "d"(for opacity) and "Tr"(for "inverse opacity" - transparency)
 					float OpacityScalar = IsScalarInitialized(MaterialData.Opacity) ? MaterialData.Opacity : (IsScalarInitialized(MaterialData.Transparency) ? 1.f - MaterialData.Transparency : -1.f);
 					if (IsScalarInitialized(OpacityScalar))
 					{
-						ShaderGraphNode->AddFloatAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(OpacityInputType), OpacityScalar);
+						UE::Interchange::Materials::Private::FMaterialNodesHelper::SetupScalarParameter(BaseNodeContainer, ShaderGraphNode, OpacityInputName, OpacityScalar);
 					}
 				}
 			}
@@ -1505,14 +1532,16 @@ bool UInterchangeOBJTranslator::Translate(UInterchangeBaseNodeContainer& BaseNod
 			if (IsScalarInitialized(MaterialData.IndexOfRefraction) || bRefraction)
 			{
 				const float DefaultIndexOfRefraction = 1.52f;  // Use glass index of refraction by default
-				float IndexOfRefraction = IsScalarInitialized(MaterialData.IndexOfRefraction) ? MaterialData.IndexOfRefraction : DefaultIndexOfRefraction;
-				ShaderGraphNode->AddFloatAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(Materials::Common::Parameters::IndexOfRefraction.ToString()), IndexOfRefraction);
+				const float IndexOfRefraction = IsScalarInitialized(MaterialData.IndexOfRefraction) ? MaterialData.IndexOfRefraction : DefaultIndexOfRefraction;
+				const FString ParameterName = Materials::Common::Parameters::IndexOfRefraction.ToString();
+				UE::Interchange::Materials::Private::FMaterialNodesHelper::SetupScalarParameter(BaseNodeContainer, ShaderGraphNode, ParameterName, IndexOfRefraction);
 			}
 
 			if ((IsColorInitialized(MaterialData.TransmissionFilter) && !(MaterialData.TransmissionFilter - FVector3f::One()).IsNearlyZero()) || bTransmission)
 			{
 				FLinearColor TransmissionColor = IsColorInitialized(MaterialData.TransmissionFilter) ? MaterialData.TransmissionFilter : FLinearColor::White;
-				ShaderGraphNode->AddLinearColorAttribute(UInterchangeShaderPortsAPI::MakeInputValueKey(Materials::ThinTranslucent::Parameters::TransmissionColor.ToString()), TransmissionColor);
+				const FString ParameterName = Materials::ThinTranslucent::Parameters::TransmissionColor.ToString();
+				UE::Interchange::Materials::Private::FMaterialNodesHelper::SetupVectorParameter(BaseNodeContainer, ShaderGraphNode, ParameterName, TransmissionColor);
 			}
 
 			// Normal/bump
@@ -1559,6 +1588,13 @@ TFuture<TOptional<UE::Interchange::FMeshPayloadData>> UInterchangeOBJTranslator:
 			FMeshPayloadData Payload;
 			Payload.MeshDescription = ObjDataPtr->MakeMeshDescriptionForGroup(PayLoadKey.UniqueId, MeshGlobalTransform);
 
+			if (!FStaticMeshOperations::ValidateAndFixData(Payload.MeshDescription, PayLoadKey.UniqueId))
+			{
+				UInterchangeResultError_Generic* ErrorResult = AddMessage<UInterchangeResultError_Generic>();
+				ErrorResult->SourceAssetName = SourceData ? SourceData->GetFilename() : FString();
+				ErrorResult->Text = NSLOCTEXT("UInterchangeOBJTranslator", "GetMeshPayloadData_ValidateMeshDescriptionFail", "Invalid mesh data (NAN) was found and fix to zero. Mesh render can be bad.");
+			}
+
 			return TOptional<FMeshPayloadData>(Payload);
 		}
 	);
@@ -1573,25 +1609,13 @@ TOptional<UE::Interchange::FImportImage> UInterchangeOBJTranslator::GetTexturePa
 	// Here, we have a texture source referenced by the .obj which is ideally handled by the existing texture translators.
 	// In this case, we can just implement the texture payload interface here and use a temporary texture translator instance
 	// to generate the payload, but what if the translator needed to do non-trivial work during the Translate() phase?
-	UInterchangeSourceData* PayloadSourceData = UInterchangeManager::GetInterchangeManager().CreateSourceData(PayLoadKey);
-	FGCObjectScopeGuard ScopedSourceData(PayloadSourceData);
-	if (!PayloadSourceData)
-	{
-		return TOptional<UE::Interchange::FImportImage>();
-	}
-
-	UInterchangeTranslatorBase* SourceTranslator = UInterchangeManager::GetInterchangeManager().GetTranslatorForSourceData(PayloadSourceData);
-	FGCObjectScopeGuard ScopedSourceTranslator(SourceTranslator);
-	const IInterchangeTexturePayloadInterface* TextureTranslator = Cast<IInterchangeTexturePayloadInterface>(SourceTranslator);
+	UE::Interchange::Private::FScopedTranslator ScopedTranslator(PayLoadKey, Results);
+	const IInterchangeTexturePayloadInterface* TextureTranslator = ScopedTranslator.GetPayLoadInterface<IInterchangeTexturePayloadInterface>();
 	if (!ensure(TextureTranslator))
 	{
 		return TOptional<UE::Interchange::FImportImage>();
 	}
-
-	SourceTranslator->SetResultsContainer(Results);
-
 	AlternateTexturePath = PayLoadKey;
-
 	return TextureTranslator->GetTexturePayloadData(PayLoadKey, AlternateTexturePath);
 }
 

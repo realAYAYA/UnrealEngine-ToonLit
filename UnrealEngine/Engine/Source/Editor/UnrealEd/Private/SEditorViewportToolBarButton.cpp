@@ -102,11 +102,11 @@ void SEditorViewportToolBarButton::OnCheckStateChanged( ECheckBoxState NewChecke
 
 const FSlateBrush* SEditorViewportToolBarButton::OnGetButtonImage() const
 {
-	return IsChecked.Get() == true ? CheckedBrush : NormalBrush;
+	return IsChecked.Get() ? CheckedBrush : NormalBrush;
 }
 
 ECheckBoxState SEditorViewportToolBarButton::OnIsChecked() const
 {
-	return IsChecked.Get() == true ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+	return IsChecked.Get() ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
 }
 

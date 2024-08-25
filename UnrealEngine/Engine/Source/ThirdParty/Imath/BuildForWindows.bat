@@ -1,18 +1,21 @@
 @echo off
 setlocal
 
-set IMATH_VERSION=3.1.3
+set LIBRARY_NAME="Imath"
+set REPOSITORY_NAME="Imath"
+
+set LIBRARY_VERSION=3.1.9
 
 if [%1]==[] goto usage
 
-rem Set as VS2015 for backwards compatibility even though VS2019 is used
+rem Set as VS2015 for backwards compatibility even though VS2022 is used
 rem when building.
 set COMPILER_VERSION_NAME=VS2015
 set ARCH_NAME=%1
 
 set UE_MODULE_LOCATION=%cd%
 
-set SOURCE_LOCATION=%UE_MODULE_LOCATION%\Imath-%IMATH_VERSION%
+set SOURCE_LOCATION=%UE_MODULE_LOCATION%\%REPOSITORY_NAME%-%LIBRARY_VERSION%
 
 set BUILD_LOCATION=%UE_MODULE_LOCATION%\Intermediate
 
@@ -22,7 +25,7 @@ set INSTALL_INCLUDEDIR=include
 set INSTALL_BIN_DIR=%COMPILER_VERSION_NAME%\%ARCH_NAME%\bin
 set INSTALL_LIB_DIR=%COMPILER_VERSION_NAME%\%ARCH_NAME%\lib
 
-set INSTALL_LOCATION=%UE_MODULE_LOCATION%\Deploy\Imath-%IMATH_VERSION%
+set INSTALL_LOCATION=%UE_MODULE_LOCATION%\Deploy\%REPOSITORY_NAME%-%LIBRARY_VERSION%
 set INSTALL_INCLUDE_LOCATION=%INSTALL_LOCATION%\%INSTALL_INCLUDEDIR%
 set INSTALL_WIN_LOCATION=%INSTALL_LOCATION%\%COMPILER_VERSION_NAME%\%ARCH_NAME%
 
@@ -36,38 +39,37 @@ if exist %INSTALL_WIN_LOCATION% (
 mkdir %BUILD_LOCATION%
 pushd %BUILD_LOCATION%
 
-echo Configuring build for Imath version %IMATH_VERSION%...
+echo Configuring build for %LIBRARY_NAME% version %LIBRARY_VERSION%...
 cmake -G "Visual Studio 17 2022" %SOURCE_LOCATION%^
     -A %ARCH_NAME%^
     -DCMAKE_INSTALL_PREFIX="%INSTALL_LOCATION%"^
     -DCMAKE_INSTALL_INCLUDEDIR="%INSTALL_INCLUDEDIR%"^
     -DCMAKE_INSTALL_BINDIR="%INSTALL_BIN_DIR%"^
     -DCMAKE_INSTALL_LIBDIR="%INSTALL_LIB_DIR%"^
-    -DBUILD_SHARED_LIBS=FALSE^
-    -DBUILD_TESTING=OFF
+    -DBUILD_TESTING=OFF^
+    -DBUILD_SHARED_LIBS=OFF
 if %errorlevel% neq 0 exit /B %errorlevel%
 
-echo Building Imath for Debug...
+echo Building %LIBRARY_NAME% for Debug...
 cmake --build . --config Debug -j8
 if %errorlevel% neq 0 exit /B %errorlevel%
 
-echo Installing Imath for Debug...
+echo Installing %LIBRARY_NAME% for Debug...
 cmake --install . --config Debug
 if %errorlevel% neq 0 exit /B %errorlevel%
 
-echo Building Imath for Release...
+echo Building %LIBRARY_NAME% for Release...
 cmake --build . --config Release -j8
 if %errorlevel% neq 0 exit /B %errorlevel%
 
-echo Installing Imath for Release...
+echo Installing %LIBRARY_NAME% for Release...
 cmake --install . --config Release
 if %errorlevel% neq 0 exit /B %errorlevel%
 
 popd
 
 echo Done.
-
-goto :eof
+exit /B 0
 
 :usage
 echo Arch: x64 or ARM64

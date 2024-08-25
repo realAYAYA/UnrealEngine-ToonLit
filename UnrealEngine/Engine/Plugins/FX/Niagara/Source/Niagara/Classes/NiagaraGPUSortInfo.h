@@ -68,8 +68,8 @@ struct FNiagaraGPUSortInfo
 	int32 MeshIndex = 0;
 	FSphere LocalBSphere = FSphere(0);
 	FVector CullingWorldSpaceOffset = FVector(0, 0, 0);
-	FVector3f SystemLWCTile = FVector3f(0, 0, 0);
 	FVector2f DistanceCullRange { 0.0f, FLT_MAX };
+	FVector4f LODScreenSize = FVector4f(0.0f, 2.0f, 1.0f, 0.0f);
 	TArray<FPlane, TFixedAllocator<MaxCullPlanes>> CullPlanes;
 
 	// The GPUSortManager bindings for this sort task.

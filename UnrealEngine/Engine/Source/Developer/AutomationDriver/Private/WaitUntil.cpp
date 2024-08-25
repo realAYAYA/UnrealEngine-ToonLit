@@ -145,6 +145,46 @@ FDriverWaitDelegate Until::ElementIsVisible(const TSharedRef<IElementLocator, ES
 	});
 }
 
+FDriverWaitDelegate Until::ElementIsHidden(const TSharedRef<IElementLocator, ESPMode::ThreadSafe>& ElementLocator, FWaitTimeout Timeout)
+{
+	return Until::ElementIsHidden(ElementLocator, FWaitInterval::InSeconds(1.0), Timeout);
+}
+
+FDriverWaitDelegate Until::ElementIsHidden(const TSharedRef<IElementLocator, ESPMode::ThreadSafe>& ElementLocator, FWaitInterval Interval, FWaitTimeout Timeout)
+{
+	return Until::Lambda([ElementLocator, Interval, Timeout](const FTimespan& TotalWaitTime) {
+		check(IsInGameThread());
+
+		TArray<TSharedRef<IApplicationElement>> Elements;
+		ElementLocator->Locate(Elements);
+
+		if (Elements.Num() == 0)
+		{
+			if (TotalWaitTime > Timeout.Timespan)
+			{
+				return FDriverWaitResponse::Failed();
+			}
+
+			return FDriverWaitResponse::Wait(Interval.Timespan);
+		}
+
+		for (TSharedRef<IApplicationElement> Element : Elements)
+		{
+			if (Element->IsVisible())
+			{
+				if (TotalWaitTime > Timeout.Timespan)
+				{
+					return FDriverWaitResponse::Failed();
+				}
+
+				return FDriverWaitResponse::Wait(Interval.Timespan);
+			}
+		}
+
+		return FDriverWaitResponse::Passed();
+		});
+}
+
 FDriverWaitDelegate Until::ElementIsInteractable(const TSharedRef<IElementLocator, ESPMode::ThreadSafe>& ElementLocator, FWaitTimeout Timeout)
 {
 	return Until::ElementIsInteractable(ElementLocator, FWaitInterval::InSeconds(1.0), Timeout);

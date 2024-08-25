@@ -4,45 +4,41 @@
 
 namespace UE::Learning
 {
-	void FResetInstanceBuffer::Resize(const int32 InMaxInstanceNum)
+	void FResetInstanceBuffer::Reserve(const int32 InMaxInstanceNum)
 	{
-		MaxInstanceNum = InMaxInstanceNum;
-		ResetInstanceNum = 0;
-		ResetInstances.SetNumUninitialized({ MaxInstanceNum });
+		ResetInstances.Reserve(InMaxInstanceNum);
 	}
 
 	void FResetInstanceBuffer::SetResetInstances(const FIndexSet Instances)
 	{
-		ResetInstanceNum = 0;
-
+		ResetInstances.Reset();
 		for (const int32 InstanceIdx : Instances)
 		{
-			ResetInstances[ResetInstanceNum] = InstanceIdx;
-			ResetInstanceNum++;
+			ResetInstances.Add(InstanceIdx);
 		}
 
-		ResetInstancesSet = ResetInstances.Slice(0, ResetInstanceNum);
+		ResetInstancesSet = ResetInstances;
 		ResetInstancesSet.TryMakeSlice();
 	}
 
 	void FResetInstanceBuffer::SetResetInstancesFromCompletions(const TLearningArrayView<1, const ECompletionMode> Completions, const FIndexSet Instances)
 	{
-		ResetInstanceNum = 0;
-
+		ResetInstances.Reset();
 		for (const int32 InstanceIdx : Instances)
 		{
 			if (Completions[InstanceIdx] != ECompletionMode::Running)
 			{
-				ResetInstances[ResetInstanceNum] = InstanceIdx;
-				ResetInstanceNum++;
+				ResetInstances.Add(InstanceIdx);
 			}
 		}
 
-		ResetInstancesSet = ResetInstances.Slice(0, ResetInstanceNum);
+		ResetInstancesSet = ResetInstances;
 		ResetInstancesSet.TryMakeSlice();
 	}
 
-	const int32 FResetInstanceBuffer::GetResetInstanceNum() const { return ResetInstanceNum; }
+	const int32 FResetInstanceBuffer::GetResetInstanceNum() const { return ResetInstances.Num(); }
+
+	const TArray<int32>& FResetInstanceBuffer::GetResetInstancesArray() const { return ResetInstances; }
 
 	const FIndexSet FResetInstanceBuffer::GetResetInstances() const { return ResetInstancesSet; }
 
@@ -76,17 +72,11 @@ namespace UE::Learning
 			TLearningArrayView<1, ECompletionMode> InOutCompletions,
 			const TLearningArrayView<1, const int32> EpisodeStepNums,
 			const int32 EpisodeMaxStepNum,
-			const ECompletionMode EpisodeEndCompletionMode,
 			const FIndexSet Instances)
 		{
-			UE_LEARNING_TRACE_CPUPROFILER_EVENT_SCOPE(Learning::Completion::EvaluateEndOfEpisodeCompletions);
-
 			for (const int32 InstanceIdx : Instances)
 			{
-				if (InOutCompletions[InstanceIdx] == ECompletionMode::Running && EpisodeStepNums[InstanceIdx] == EpisodeMaxStepNum)
-				{
-					InOutCompletions[InstanceIdx] = EpisodeEndCompletionMode;
-				}
+				InOutCompletions[InstanceIdx] = EpisodeStepNums[InstanceIdx] == EpisodeMaxStepNum ? ECompletionMode::Truncated : ECompletionMode::Running;
 			}
 		}
 	}

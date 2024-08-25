@@ -960,6 +960,8 @@ TSharedPtr<INameValidatorInterface> URigVMEdGraphSchema::GetNameValidator(const 
 {
 	if (ActionTypeId == FRigVMEdGraphSchemaAction_LocalVar::StaticGetTypeId())
 	{
+		// this cast will always fail, URigVMEdGraph is not a UStruct
+		/*
 		if (const URigVMEdGraph* EdGraph = Cast<URigVMEdGraph>(ValidationScope))
 		{
 			if (const URigVMGraph* Graph = EdGraph->GetModel())
@@ -967,6 +969,7 @@ TSharedPtr<INameValidatorInterface> URigVMEdGraphSchema::GetNameValidator(const 
 				return MakeShareable(new FRigVMLocalVariableNameValidator(BlueprintObj, Graph, OriginalName));
 			}
 		}
+		*/
 	}
 
 	return MakeShareable(new FRigVMNameValidator(BlueprintObj, ValidationScope, OriginalName));		
@@ -1252,6 +1255,10 @@ FReply URigVMEdGraphSchema::BeginGraphDragAction(TSharedPtr<FEdGraphSchemaAction
 FConnectionDrawingPolicy* URigVMEdGraphSchema::CreateConnectionDrawingPolicy(int32 InBackLayerID, int32 InFrontLayerID, float InZoomFactor, const FSlateRect& InClippingRect, class FSlateWindowElementList& InDrawElements, class UEdGraph* InGraphObj) const
 {
 #if WITH_EDITOR
+	if (const URigVMBlueprint* Blueprint = Cast<URigVMBlueprint>(FBlueprintEditorUtils::FindBlueprintForGraph(InGraphObj)))
+	{
+		return Blueprint->GetEditorModule()->CreateConnectionDrawingPolicy(InBackLayerID, InFrontLayerID, InZoomFactor, InClippingRect, InDrawElements, InGraphObj);
+	}	
 	return IRigVMEditorModule::Get().CreateConnectionDrawingPolicy(InBackLayerID, InFrontLayerID, InZoomFactor, InClippingRect, InDrawElements, InGraphObj);
 #else
 	check(0);
@@ -1320,6 +1327,10 @@ bool URigVMEdGraphSchema::MarkBlueprintDirtyFromNewNode(UBlueprint* InBlueprint,
 
 bool URigVMEdGraphSchema::IsStructEditable(UStruct* InStruct) const
 {
+	if (InStruct == TBaseStructure<FQuat>::Get())
+	{
+		return true;
+	}
 	if (InStruct == FRuntimeFloatCurve::StaticStruct())
 	{
 		return true;

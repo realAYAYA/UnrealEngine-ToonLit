@@ -183,7 +183,10 @@ public:
 				}
 			}
 		}
-		return Random.GetNext(Value);
+		else
+		{
+			return Random.GetNext(Value);
+		}
 	}
 
 private:
@@ -781,6 +784,12 @@ struct FFileSystemCacheStoreParams
 	/** Path to the optional access log that records every accessed file. */
 	FString AccessLogPath;
 
+	/** Optional name of a file containing redirection information so that if the file is present and valid, another cache store can be used in place of this FileSystemCacheStore. */
+	FString RedirectionFileName;
+
+	/** Optional name of a key within the RedirectionFileName containing redirection information so that if the file+key is present and valid, another cache store can be used in place of this FileSystemCacheStore. */
+	FString RedirectionKeyName;
+
 	/** Maximum total size of compressed data stored within a record package with multiple attachments. */
 	uint64 MaxRecordSizeKB = 256;
 	/** Maximum total size of compressed data stored within a value package, or a record package with one attachment. */
@@ -830,7 +839,9 @@ public:
 	static ILegacyCacheStore* TryCreate(
 		const FFileSystemCacheStoreParams& Params,
 		ICacheStoreOwner& Owner,
-		FString& OutPath);
+		ICacheStoreGraph* Graph,
+		FString& OutPath,
+		bool& bOutRedirected);
 
 private:
 	FFileSystemCacheStore(
@@ -849,6 +860,11 @@ private:
 		std::atomic<uint32>* NumLatencyTestsCompleted,
 		std::atomic<bool>* AbandonRequest);
 
+	static ILegacyCacheStore* TryRedirection(
+		const FFileSystemCacheStoreParams& Params,
+		ICacheStoreOwner& Owner,
+		ICacheStoreGraph* Graph);
+	
 	// ICacheStore Interface
 
 	void Put(
@@ -980,7 +996,7 @@ private:
 	FRWLock PerformanceReEvaluationTaskLock;
 	Tasks::TTask<std::atomic<EPerformanceReEvaluationResult>> PerformanceReEvaluationTask;
 	std::atomic<int64> LastPerformanceEvaluationTicks;
-	std::atomic<bool> bDeactivedForPerformance = false;
+	std::atomic<bool> bDeactivatedForPerformance = false;
 	bool bDeactivationDeferredClean = false;
 	float DeactivateAtMs;
 };
@@ -988,7 +1004,9 @@ private:
 ILegacyCacheStore* FFileSystemCacheStore::TryCreate(
 	const FFileSystemCacheStoreParams& Params,
 	ICacheStoreOwner& Owner,
-	FString& OutPath)
+	ICacheStoreGraph* Graph,
+	FString& OutPath,
+	bool& bOutRedirected)
 {
 	// If we find a platform that has more stringent limits, this needs to be rethought.
 	checkf(GMaxCacheRootLen + GMaxCacheKeyLen <= FPlatformMisc::GetMaxPathLength(),
@@ -1025,6 +1043,12 @@ ILegacyCacheStore* FFileSystemCacheStore::TryCreate(
 		bool bShared = Params.CacheName == TEXTVIEW("Shared");
 		if (!bShared || IFileManager::Get().DirectoryExists(*Params.CachePath))
 		{
+			if (ILegacyCacheStore* RedirectedStore = TryRedirection(Params, Owner, Graph))
+			{
+				bOutRedirected = true;
+				return RedirectedStore;
+			}
+
 			FDerivedDataCacheSpeedStats LocalSpeedStats;
 			LocalSpeedStats.ReadSpeedMBs = 999;
 			LocalSpeedStats.WriteSpeedMBs = 999;
@@ -1053,7 +1077,7 @@ ILegacyCacheStore* FFileSystemCacheStore::TryCreate(
 			bRetryOnFailure = FPlatformMisc::MessageBoxExt(EAppMsgType::YesNo, *Message, TEXT("Failed to access Derived Data Cache")) == EAppReturnType::Yes;
 		}
 	}
-	while (bRetryOnFailure);
+	while (bRetryOnFailure); //-V654
 
 	UE_LOG(LogDerivedDataCache, Warning, TEXT("%s: Path %s is not available and this cache store will be disabled."), *Params.CacheName, *Params.CachePath);
 	return nullptr;
@@ -1080,7 +1104,7 @@ FFileSystemCacheStore::FFileSystemCacheStore(
 	bReadOnly = bReadOnly || !bWriteTestPassed;
 
 	const bool bLocalDeactivatedForPerformance = (Params.DeactivateAtMs > 0.f) && (SpeedStats.LatencyMS >= Params.DeactivateAtMs);
-	bDeactivedForPerformance.store(bLocalDeactivatedForPerformance, std::memory_order_relaxed);
+	bDeactivatedForPerformance.store(bLocalDeactivatedForPerformance, std::memory_order_relaxed);
 
 	// classify and report on these times
 	if (SpeedStats.LatencyMS < 1)
@@ -1387,7 +1411,7 @@ bool FFileSystemCacheStore::RunSpeedTest(
 				TCHAR ErrorBuffer[1024];
 				FPlatformMisc::GetSystemErrorMessage(ErrorBuffer, 1024, ErrorCode);
 				UE_LOG(LogDerivedDataCache, Warning,
-					TEXT("%s: Failed to read from %s, this cache store will be disabled. ReadError: %u (%s)"),
+					TEXT("%s: Failed to read from %s. ReadError: %u (%s)"),
 					*CachePath, *FilePath, ErrorCode, ErrorBuffer);
 				bReadTestPassed = false;
 				break;
@@ -1436,7 +1460,7 @@ bool FFileSystemCacheStore::RunSpeedTest(
 				TCHAR ErrorBuffer[1024];
 				FPlatformMisc::GetSystemErrorMessage(ErrorBuffer, 1024, ErrorCode);
 				UE_LOG(LogDerivedDataCache, Warning,
-					TEXT("%s: Failed to write to %s, this cache store will be disabled. ReadError: %u (%s)"),
+					TEXT("%s: Failed to write to %s. WriteError: %u (%s)"),
 					*CachePath, *FilePath, ErrorCode, ErrorBuffer);
 				bWriteTestPassed = false;
 				break;
@@ -1481,6 +1505,56 @@ bool FFileSystemCacheStore::RunSpeedTest(
 	OutWriteSpeedMBs = (bWriteTestPassed ? (TotalDataWritten / TotalWriteTime) : 0) / (1024 * 1024);
 
 	return bWriteTestPassed || bReadTestPassed;
+}
+
+ILegacyCacheStore* FFileSystemCacheStore::TryRedirection(
+	const FFileSystemCacheStoreParams& Params,
+	ICacheStoreOwner& Owner,
+	ICacheStoreGraph* Graph)
+{
+	if (Graph && !Params.RedirectionFileName.IsEmpty())
+	{
+		FString RedirectionFileName = FPaths::Combine(Params.CachePath, Params.RedirectionFileName);
+		FConfigFile RedirectionFile;
+		if (FConfigCacheIni::LoadLocalIniFile(RedirectionFile, *RedirectionFileName, false))
+		{
+			FString RedirectionKeyName = Params.RedirectionKeyName.IsEmpty() ? TEXT("Default") : Params.RedirectionKeyName;
+			FString RedirectionData;
+			if (RedirectionFile.GetString(TEXT("Redirect"), *RedirectionKeyName, RedirectionData))
+			{
+				RedirectionData.TrimStartInline();
+				RedirectionData.RemoveFromStart(TEXT("("));
+				RedirectionData.RemoveFromEnd(TEXT(")"));
+
+				FString EnvName;
+				FString EnvValue;
+				if (FParse::Value(*RedirectionData, TEXT("SetEnvName="), EnvName) && FParse::Value(*RedirectionData, TEXT("SetEnvValue="), EnvValue))
+				{
+					FPlatformMisc::SetEnvironmentVar(*EnvName, *EnvValue);
+				}
+
+				FString TargetName;
+				if (FParse::Value(*RedirectionData, TEXT("Target="), TargetName))
+				{
+					UE_LOG(LogDerivedDataCache, Log, TEXT("%s: Found redirection to '%s'"),
+						*Params.CachePath, *TargetName);
+					if (ILegacyCacheStore* RedirectedStore = Graph->FindOrCreate(*TargetName))
+					{
+						UE_LOG(LogDerivedDataCache, Log, TEXT("%s: Successfully redirected to '%s'"),
+							*Params.CachePath, *TargetName);
+						return RedirectedStore;
+					}
+					else
+					{
+						UE_LOG(LogDerivedDataCache, Warning, TEXT("%s: Failed to redirect to '%s'"),
+							*Params.CachePath, *TargetName);
+					}
+				}
+			}
+		}
+	}
+
+	return nullptr;
 }
 
 void FFileSystemCacheStore::LegacyStats(FDerivedDataCacheStatsNode& OutNode)
@@ -2702,7 +2776,7 @@ bool FFileSystemCacheStore::FileExists(FStringBuilderBase& Path, FRequestStats& 
 
 bool FFileSystemCacheStore::IsDeactivatedForPerformance()
 {
-	if ((DeactivateAtMs <= 0.f) || !bDeactivedForPerformance.load(std::memory_order_relaxed))
+	if ((DeactivateAtMs <= 0.f) || !bDeactivatedForPerformance.load(std::memory_order_relaxed))
 	{
 		return false;
 	}
@@ -2746,7 +2820,7 @@ bool FFileSystemCacheStore::IsDeactivatedForPerformance()
 							*CachePath);
 					}
 
-					bDeactivedForPerformance.store(bLocalDeactivatedForPerformance, std::memory_order_relaxed);
+					bDeactivatedForPerformance.store(bLocalDeactivatedForPerformance, std::memory_order_relaxed);
 					UpdateStatus();
 					return bLocalDeactivatedForPerformance;
 				}
@@ -2820,7 +2894,7 @@ void FFileSystemCacheStore::UpdateStatus()
 {
 	if (StoreStats)
 	{
-		if (bDeactivedForPerformance.load(std::memory_order_relaxed))
+		if (bDeactivatedForPerformance.load(std::memory_order_relaxed))
 		{
 			StoreStats->SetStatus(ECacheStoreStatusCode::Warning, NSLOCTEXT("DerivedDataCache", "DeactivatedForPerformance", "Deactivated for performance"));
 		}
@@ -2985,17 +3059,22 @@ void FFileSystemCacheStoreParams::Parse(const TCHAR* Name, const TCHAR* Config)
 	FParse::Value(Config, TEXT("FoldersToClean="), MaxDirectoryScanCount);
 
 	GConfig->GetDouble(TEXT("DDCCleanup"), TEXT("TimeToWaitAfterInit"), MaintenanceDelayInSeconds, GEngineIni);
+
+	FParse::Value(Config, TEXT("RedirectionFileName="), RedirectionFileName);
+	FParse::Value(Config, TEXT("RedirectionKeyName="), RedirectionKeyName);
 }
 
 ILegacyCacheStore* CreateFileSystemCacheStore(
 	const TCHAR* Name,
 	const TCHAR* Config,
 	ICacheStoreOwner& Owner,
-	FString& OutPath)
+	ICacheStoreGraph* Graph,
+	FString& OutPath,
+	bool& bOutRedirected)
 {
 	FFileSystemCacheStoreParams Params;
 	Params.Parse(Name, Config);
-	return FFileSystemCacheStore::TryCreate(Params, Owner, OutPath);
+	return FFileSystemCacheStore::TryCreate(Params, Owner, Graph, OutPath, bOutRedirected);
 }
 
 } // UE::DerivedData

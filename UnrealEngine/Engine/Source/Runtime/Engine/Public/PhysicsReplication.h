@@ -12,10 +12,10 @@
 #include "PhysicsReplicationInterface.h"
 #include "Physics/PhysicsInterfaceDeclares.h"
 #include "PhysicsProxy/SingleParticlePhysicsProxyFwd.h"
-#include "Chaos/Particles.h"
 #include "Chaos/PhysicsObject.h"
 #include "Chaos/SimCallbackObject.h"
 #include "Physics/PhysicsInterfaceUtils.h"
+#include "Physics/NetworkPhysicsSettingsComponent.h"
 
 namespace CharacterMovementCVars
 {
@@ -48,7 +48,7 @@ namespace PhysicsReplicationCVars
 class FPhysScene_PhysX;
 
 
-// -------- Async Flow ------->
+#pragma region FPhysicsReplicationAsync
 
 struct FPhysicsRepErrorCorrectionData
 {
@@ -63,16 +63,16 @@ struct FPhysicsRepAsyncInputData
 {
 	FRigidBodyState TargetState;
 	Chaos::FSingleParticlePhysicsProxy* Proxy; // Used for legacy (BodyInstance) flow
-	Chaos::FPhysicsObject* PhysicsObject;
+	Chaos::FConstPhysicsObjectHandle PhysicsObject;
 	TOptional<FPhysicsRepErrorCorrectionData> ErrorCorrection;
 	EPhysicsReplicationMode RepMode;
 	int32 ServerFrame;
 	int32 FrameOffset;
 	float LatencyOneWay;
 
-	FPhysicsRepAsyncInputData()
+	FPhysicsRepAsyncInputData(Chaos::FConstPhysicsObjectHandle POHandle)
 		: Proxy(nullptr)
-		, PhysicsObject(nullptr)
+		, PhysicsObject(POHandle)
 		, RepMode(EPhysicsReplicationMode::Default)
 	{};
 };
@@ -92,9 +92,26 @@ struct FReplicatedPhysicsTargetAsync
 {
 	FReplicatedPhysicsTargetAsync()
 		: AccumulatedErrorSeconds(0.0f)
-		, ServerFrame(0)
-		, PhysicsObject(nullptr)
+		, TickCount(0)
+		, ServerFrame(INDEX_NONE)
+		, ReceiveFrame(INDEX_NONE)
+		, ReceiveInterval(5)
+		, AverageReceiveInterval(5.0f)
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
+		, PrevServerFrame(INDEX_NONE)
+		, bWaiting(false)
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+		, AccumulatedSleepSeconds(0.0f)
+		, bAllowTargetAltering(false)
+		, WaitForServerFrame(INDEX_NONE)
 	{ }
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	~FReplicatedPhysicsTargetAsync() = default;
+	FReplicatedPhysicsTargetAsync(const FReplicatedPhysicsTargetAsync&) = default;
+	FReplicatedPhysicsTargetAsync(FReplicatedPhysicsTargetAsync&&) = default;
+	FReplicatedPhysicsTargetAsync& operator=(const FReplicatedPhysicsTargetAsync&) = default;
+	FReplicatedPhysicsTargetAsync& operator=(FReplicatedPhysicsTargetAsync&&) = default;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	/** The target state replicated by server */
 	FRigidBodyState TargetState;
@@ -105,36 +122,89 @@ struct FReplicatedPhysicsTargetAsync
 	/** The amount of simulation ticks this target has been used for */
 	int32 TickCount;
 
-	/** ServerFrame this target was replicated on (must be converted to local frame prior to client-side use) */
+	/** ServerFrame this target was replicated on. (LocalFrame = ServerFrame - FrameOffset) */
 	int32 ServerFrame;
 
-	/** The frame offset between local client and server */
+	/** The frame offset between local client and server. (LocalFrame = ServerFrame - FrameOffset) */
 	int32 FrameOffset;
 
-	/** Index of physics object on component */
-	Chaos::FPhysicsObject* PhysicsObject;
+	/** The local client frame when receiving this target from the server */
+	int32 ReceiveFrame;
+
+	/** Local physics frames between received targets */
+	int32 ReceiveInterval;
+	float AverageReceiveInterval;
 
 	/** The replication mode this PhysicsObject should use */
 	EPhysicsReplicationMode RepMode;
+	EPhysicsReplicationMode RepModeOverride;
 
 	/** Correction values from previous update */
 	FVector PrevPosTarget;
 	FQuat PrevRotTarget;
 	FVector PrevPos;
 	FVector PrevLinVel;
+
+	UE_DEPRECATED(5.4, "This property is deprecated. PrevServerFrame will no longer be cached.")
 	int32 PrevServerFrame;
 
+	UE_DEPRECATED(5.4, "This property is deprecated. PrevReceiveFrame will no longer be cached.")
+	int32 PrevReceiveFrame;
+
 	/** If this target is waiting for up-to-date data? */
+	UE_DEPRECATED(5.4, "This property is deprecated. Use IsWaiting() and SetWaiting() instead.")
 	bool bWaiting;
+
+	/** Accumulated seconds asleep */
+	float AccumulatedSleepSeconds;
+
+	/** If this target is allowed to be altered, via extrapolation or target alignment via TickCount */
+	bool bAllowTargetAltering;
+
+	/** ServerFrame for the target to wait on, no replication will be performed while waiting for up to date data. */
+	int32 WaitForServerFrame;
+
+public:
+	/** Is this target waiting for up to date data? */
+	const bool IsWaiting() { return WaitForServerFrame > INDEX_NONE; } const
+
+	/** Set target to wait for data newer than @param InWaitForServerFrame and while waiting replicate via @param InRepModeOverride */
+	void SetWaiting(int32 InWaitForServerFrame, EPhysicsReplicationMode InRepModeOverride)
+	{
+		SetWaiting(InWaitForServerFrame);
+		RepModeOverride = InRepModeOverride;
+	}
+
+	/** Set target to wait for data newer than @param InWaitForServerFrame */
+	void SetWaiting(int32 InWaitForServerFrame)
+	{
+		RepModeOverride = RepMode;
+		WaitForServerFrame = InWaitForServerFrame;
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
+		bWaiting = IsWaiting();
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	}
+
+	/** Update waiting status and clear waiting if @param InServerFrame is newer than the frame we are waiting for */
+	void UpdateWaiting(int32 InServerFrame)
+	{
+		if (InServerFrame > WaitForServerFrame)
+		{
+			SetWaiting(INDEX_NONE);
+		}
+	}
 };
 
 class FPhysicsReplicationAsync : public Chaos::TSimCallbackObject<
 	FPhysicsReplicationAsyncInput,
 	Chaos::FSimCallbackNoOutput,
-	Chaos::ESimCallbackOptions::Presimulate>
+	Chaos::ESimCallbackOptions::Presimulate | Chaos::ESimCallbackOptions::PhysicsObjectUnregister>
 {
 	virtual FName GetFNameForStatId() const override;
+	virtual void OnPostInitialize_Internal() override;
 	virtual void OnPreSimulate_Internal() override;
+	virtual void OnPhysicsObjectUnregistered_Internal(Chaos::FConstPhysicsObjectHandle PhysicsObject) override;
+
 	virtual void ApplyTargetStatesAsync(const float DeltaSeconds, const FPhysicsRepErrorCorrectionData& ErrorCorrection, const TArray<FPhysicsRepAsyncInputData>& TargetStates);
 
 	// Replication functions
@@ -143,14 +213,25 @@ class FPhysicsReplicationAsync : public Chaos::TSimCallbackObject<
 	virtual bool PredictiveInterpolation(Chaos::FPBDRigidParticleHandle* Handle, FReplicatedPhysicsTargetAsync& Target, const float DeltaSeconds);
 	virtual bool ResimulationReplication(Chaos::FPBDRigidParticleHandle* Handle, FReplicatedPhysicsTargetAsync& Target, const float DeltaSeconds);
 
+public:
+	virtual void RegisterSettings(Chaos::FConstPhysicsObjectHandle PhysicsObject, FNetworkPhysicsSettingsAsync InSettings);
+
 private:
 	float LatencyOneWay;
 	FRigidBodyErrorCorrection ErrorCorrectionDefault;
-	TMap<Chaos::FPhysicsObject*, FReplicatedPhysicsTargetAsync> ObjectToTarget;
+	FNetworkPhysicsSettingsAsync SettingsCurrent;
+	FNetworkPhysicsSettingsAsync SettingsDefault;
+	TMap<Chaos::FConstPhysicsObjectHandle, FReplicatedPhysicsTargetAsync> ObjectToTarget;
+	TMap<Chaos::FConstPhysicsObjectHandle, FNetworkPhysicsSettingsAsync> ObjectToSettings;
+	TArray<int32> ParticlesInResimIslands;
 
 private:
-	void UpdateAsyncTarget(const FPhysicsRepAsyncInputData& Input);
+	void UpdateAsyncTarget(const FPhysicsRepAsyncInputData& Input, Chaos::FPBDRigidsSolver* RigidsSolver);
 	void UpdateRewindDataTarget(const FPhysicsRepAsyncInputData& Input);
+	void CacheResimInteractions();
+	// Sets SettingsCurrent to either the objects custom settings or to the default settings
+	void FetchObjectSettings(Chaos::FConstPhysicsObjectHandle PhysicsObject); 
+	static void ExtrapolateTarget(FReplicatedPhysicsTargetAsync& Target, const int32 ExtrapolateFrames, const float DeltaSeconds);
 
 public:
 	void Setup(FRigidBodyErrorCorrection ErrorCorrection)
@@ -159,17 +240,17 @@ public:
 	}
 };
 
-// <-------- Async Flow --------
+#pragma endregion // FPhysicsReplicationAsync
 
 
 
 struct FReplicatedPhysicsTarget
 {
-	FReplicatedPhysicsTarget()
+	FReplicatedPhysicsTarget(Chaos::FConstPhysicsObjectHandle POHandle = nullptr)
 		: ArrivedTimeSeconds(0.0f)
 		, AccumulatedErrorSeconds(0.0f)
 		, ServerFrame(0)
-		, PhysicsObject(nullptr)
+		, PhysicsObject(POHandle)
 	{ }
 
 	/** The target state replicated by server */
@@ -192,7 +273,7 @@ struct FReplicatedPhysicsTarget
 	int32 ServerFrame;
 
 	/** Index of physics object on component */
-	Chaos::FPhysicsObject* PhysicsObject;
+	Chaos::FConstPhysicsObjectHandle PhysicsObject;
 
 	/** The replication mode the target should be used with */
 	EPhysicsReplicationMode ReplicationMode;
@@ -219,7 +300,7 @@ public:
 	virtual void SetReplicatedTarget(UPrimitiveComponent* Component, FName BoneName, const FRigidBodyState& ReplicatedTarget) { SetReplicatedTarget(Component, BoneName, ReplicatedTarget, 0); }
 	ENGINE_API virtual void SetReplicatedTarget(UPrimitiveComponent* Component, FName BoneName, const FRigidBodyState& ReplicatedTarget, int32 ServerFrame) override;
 private:
-	ENGINE_API void SetReplicatedTarget(Chaos::FPhysicsObject* PhysicsObject, const FRigidBodyState& ReplicatedTarget, int32 ServerFrame, EPhysicsReplicationMode ReplicationMode = EPhysicsReplicationMode::Default);
+	ENGINE_API void SetReplicatedTarget(Chaos::FConstPhysicsObjectHandle PhysicsObject, const FRigidBodyState& ReplicatedTarget, int32 ServerFrame, EPhysicsReplicationMode ReplicationMode = EPhysicsReplicationMode::Default);
 
 public:
 	/** Remove the replicated target*/

@@ -934,8 +934,7 @@ inline void FNetBitArray::SetNumBits(uint32 InBitCount)
 	BitCount = InBitCount;
 
 	const uint32 WordCount = (InBitCount + WordBitCount - 1U)/WordBitCount;
-	constexpr bool bAllowShrinking = false;
-	Storage.SetNumZeroed(WordCount, bAllowShrinking);
+	Storage.SetNumZeroed(WordCount, EAllowShrinking::No);
 	ClearPaddingBits();
 }
 
@@ -1364,6 +1363,11 @@ inline Private::FNetBitArrayRangedForConstIterator FNetBitArrayView::end() const
 inline FNetBitArrayView MakeNetBitArrayView(const FNetBitArrayView::StorageWordType* Storage, uint32 BitCount)
 {
 	return FNetBitArrayView(const_cast<FNetBitArrayView::StorageWordType*>(Storage), BitCount);
+}
+
+inline FNetBitArrayView MakeNetBitArrayView(const FNetBitArrayView::StorageWordType* Storage, uint32 BitCount, const FNetBitArrayBase::ENoResetNoValidateType)
+{
+	return FNetBitArrayView(const_cast<FNetBitArrayView::StorageWordType*>(Storage), BitCount, FNetBitArrayBase::NoResetNoValidate);
 }
 
 /** Transform a FNetBitArray into a FNetBitArrayView */

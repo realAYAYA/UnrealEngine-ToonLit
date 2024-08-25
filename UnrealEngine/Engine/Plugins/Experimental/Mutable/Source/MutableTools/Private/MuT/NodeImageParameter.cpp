@@ -14,8 +14,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-    NODE_TYPE NodeImageParameter::Private::s_type =
-            NODE_TYPE( "ImageParameter", NodeImage::GetStaticType() );
+    FNodeType NodeImageParameter::Private::s_type =
+            FNodeType( "ImageParameter", NodeImage::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -26,69 +26,25 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-    int NodeImageParameter::GetInputCount() const
-	{
-		return 0;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    Node* NodeImageParameter::GetInputNode( int ) const
-	{
-		check( false );
-		return 0;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    void NodeImageParameter::SetInputNode( int, NodePtr )
-	{
-		check( false );
-	}
-
-
-	//---------------------------------------------------------------------------------------------
 	// Own Interface
 	//---------------------------------------------------------------------------------------------
-    const char* NodeImageParameter::GetName() const
+    void NodeImageParameter::SetName( const FString& Name )
 	{
-		return m_pD->m_name.c_str();
+		m_pD->m_name = Name;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-    void NodeImageParameter::SetName( const char* strName )
+	void NodeImageParameter::SetUid(const FString& Uid)
 	{
-		if ( strName )
-		{
-			m_pD->m_name = strName;
-		}
-		else
-		{
-			m_pD->m_name = "";
-		}
+		m_pD->m_uid = Uid;
 	}
 
-
-	const char* NodeImageParameter::GetUid() const
-	{
-		return m_pD->m_uid.c_str();
-	}
-
-
+	
 	//---------------------------------------------------------------------------------------------
-	void NodeImageParameter::SetUid( const char* strUid )
+	void NodeImageParameter::SetDefaultValue(FName Value)
 	{
-		if ( strUid )
-		{
-			m_pD->m_uid = strUid;
-		}
-		else
-		{
-			m_pD->m_uid = "";
-		}
+    	m_pD->m_defaultValue = Value;
 	}
 
 

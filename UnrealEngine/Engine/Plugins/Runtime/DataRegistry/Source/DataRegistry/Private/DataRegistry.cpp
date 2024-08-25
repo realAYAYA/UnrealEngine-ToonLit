@@ -193,26 +193,37 @@ void UDataRegistry::RuntimeRefreshIfNeeded()
 	}
 }
 
-bool UDataRegistry::RegisterSpecificAsset(const FAssetData& AssetData, int32 AssetPriority /*= 0*/)
+EDataRegistryRegisterAssetResult UDataRegistry::RegisterSpecificAsset(const FAssetData& AssetData, int32 AssetPriority /*= 0*/)
 {
-	bool bMadeChange = false;
+	EDataRegistryRegisterAssetResult RegisterAssetResult = EDataRegistryRegisterAssetResult::NotRegistered;
 
 	for (int32 i = 0; i < DataSources.Num(); i++)
 	{
 		UDataRegistrySource* Source = DataSources[i];
-		if (Source && Source->RegisterSpecificAsset(AssetData, AssetPriority))
+		if (Source)
 		{
-			bMadeChange = true;
+			EDataRegistryRegisterAssetResult CurrentRegisterAssetResult = Source->RegisterSpecificAsset(AssetData, AssetPriority);
+
+			// Don't clobber Asset already registered if Not Registered, Only move to a higher Result state, with success being the highest.
+			if (CurrentRegisterAssetResult > RegisterAssetResult)
+			{
+				RegisterAssetResult = CurrentRegisterAssetResult;
+			}
 		}
 	}
 
-	if (bMadeChange && IsInitialized())
+	if (DidRegisterAssetResultCauseChange(RegisterAssetResult) && IsInitialized())
 	{
 		// Don't want to do a full reset, but do clear cache as lookup rules may have changed
 		RefreshRuntimeSources();
 	}
 	
-	return bMadeChange;
+	return RegisterAssetResult;
+}
+
+bool UDataRegistry::DidRegisterAssetResultCauseChange(EDataRegistryRegisterAssetResult RegisterAssetStatus) const
+{
+	return RegisterAssetStatus == EDataRegistryRegisterAssetResult::RegisteredSuccesfully;
 }
 
 bool UDataRegistry::UnregisterSpecificAsset(const FSoftObjectPath& AssetPath)
@@ -923,10 +934,6 @@ void UDataRegistry::RefreshRuntimeSources()
 		{
 			if (IsInitialized() && !Source->IsInitialized())
 			{
-				if (GUObjectArray.IsDisregardForGC(this))
-				{
-					Source->AddToRoot();
-				}
 				Source->Initialize();
 			}
 
@@ -935,16 +942,18 @@ void UDataRegistry::RefreshRuntimeSources()
 		}
 	}
 
-	// Uninitialize any orphaned sources
+	// Deinitialize any orphaned sources
 	for (int32 i = 0; i < OldRuntimeSources.Num(); i++)
 	{
 		UDataRegistrySource* OldSource = OldRuntimeSources[i];
-		if (OldSource && OldSource->IsInitialized() && !RuntimeSources.Contains(OldSource))
+		if (IsValid(OldSource) && OldSource->GetOuter() == this && OldSource->IsInitialized() && !RuntimeSources.Contains(OldSource))
 		{
 			OldSource->Deinitialize();
-			if (GUObjectArray.IsDisregardForGC(this))
+
+			if (OldSource->IsTransientSource())
 			{
-				OldSource->RemoveFromRoot();
+				// Transient sources should have already been removed during RefreshRuntimeSources
+				UE_LOG(LogDataRegistry, Warning, TEXT("RefreshRuntimeSources found orphaned transient source %s for registry %s!"), *OldSource->GetPathName(), *RegistryType.ToString());
 			}
 		}
 	}
@@ -988,8 +997,8 @@ FName UDataRegistry::MapIdToResolvedName(const FDataRegistryId& ItemId, const UD
 {
 	// Try resolver stack before falling back to raw name
 	FName ResolvedName;
-	TSharedPtr<FDataRegistryResolver> FoundResolver = FDataRegistryResolverScope::ResolveIdToName(ResolvedName, ItemId, this, RegistrySource);
-	if (FoundResolver.IsValid())
+	FDataRegistryResolver* FoundResolver = FDataRegistryResolverScope::ResolveNameFromId(ResolvedName, ItemId, this, RegistrySource);
+	if (FoundResolver)
 	{
 		return ResolvedName;
 	}

@@ -25,12 +25,15 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 #include "sjson/error.h"
+#include "sjson/version.h"
 
 #include <cstring>
 #include <memory>
 
 namespace sjson
 {
+	SJSON_CPP_IMPL_VERSION_NAMESPACE_BEGIN
+
 	//////////////////////////////////////////////////////////////////////////
 	// A StringView is just a pointer to a string and an associated length.
 	// It does NOT own the memory and no allocation or deallocation ever takes place.
@@ -52,25 +55,25 @@ namespace sjson
 			, m_length(0)
 		{}
 
-		StringView(const char* c_str, size_t length)
-			: m_c_str(c_str)
+		StringView(const char* str, size_t length)
+			: m_c_str(str)
 			, m_length(length)
 		{
 #if defined(SJSON_CPP_USE_ERROR_CHECKS) && !defined(NDEBUG)
 			for (size_t i = 0; i < length; ++i)
-				SJSON_CPP_ASSERT(c_str[i] != '\0', "StringView cannot contain NULL terminators");
+				SJSON_CPP_ASSERT(str[i] != '\0', "StringView cannot contain NULL terminators");
 #endif
 		}
 
-		StringView(const char* c_str)
-			: m_c_str(c_str)
-			, m_length(c_str == nullptr ? 0 : std::strlen(c_str))
+		StringView(const char* str)
+			: m_c_str(str)
+			, m_length(str == nullptr ? 0 : std::strlen(str))
 		{}
 
-		StringView& operator=(const char* c_str)
+		StringView& operator=(const char* str)
 		{
-			m_c_str = c_str;
-			m_length = c_str == nullptr ? 0 : std::strlen(c_str);
+			m_c_str = str;
+			m_length = str == nullptr ? 0 : std::strlen(str);
 			return *this;
 		}
 
@@ -78,19 +81,19 @@ namespace sjson
 		constexpr size_t size() const { return m_length; }
 		constexpr bool empty() const { return m_length == 0; }
 
-		bool operator==(const char* c_str) const
+		bool operator==(const char* str) const
 		{
-			const size_t length = c_str == nullptr ? 0 : std::strlen(c_str);
+			const size_t length = str == nullptr ? 0 : std::strlen(str);
 			if (m_length != length)
 				return false;
 
-			if (m_c_str == c_str || length == 0)
+			if (m_c_str == str || length == 0)
 				return true;
 
-			return std::memcmp(m_c_str, c_str, length) == 0;
+			return std::memcmp(m_c_str, str, length) == 0;
 		}
 
-		bool operator!=(const char* c_str) const { return !(*this == c_str); }
+		bool operator!=(const char* str) const { return !(*this == str); }
 
 		bool operator==(const StringView& other) const
 		{
@@ -115,4 +118,6 @@ namespace sjson
 		const char* m_c_str;
 		size_t m_length;
 	};
+
+	SJSON_CPP_IMPL_VERSION_NAMESPACE_END
 }

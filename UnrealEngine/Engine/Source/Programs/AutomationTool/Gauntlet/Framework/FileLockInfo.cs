@@ -15,11 +15,15 @@ namespace FileLockInfo
 		{
 			try
 			{
-				using (ManagementObjectSearcher searcher = new ManagementObjectSearcher("SELECT CommandLine FROM Win32_Process WHERE ProcessId = " + process.Id))
-				using (ManagementObjectCollection objects = searcher.Get())
+				if (OperatingSystem.IsWindows())
 				{
-					return objects.Cast<ManagementBaseObject>().SingleOrDefault()?["CommandLine"]?.ToString();
+					using (ManagementObjectSearcher searcher = new ManagementObjectSearcher("SELECT CommandLine FROM Win32_Process WHERE ProcessId = " + process.Id))
+					using (ManagementObjectCollection objects = searcher.Get())
+					{
+						return objects.Cast<ManagementBaseObject>().SingleOrDefault()?["CommandLine"]?.ToString();
+					}
 				}
+				return string.Format("<error retrieving commandline: non-windows platform>");
 			}
 			catch (Exception Ex)
 			{

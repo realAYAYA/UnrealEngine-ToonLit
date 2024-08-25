@@ -181,6 +181,37 @@ void SAnimationEditorViewport::BindCommands()
 	}
 }
 
+void SAnimationEditorViewport::OnDragEnter(const FGeometry& MyGeometry, const FDragDropEvent& DragDropEvent)
+{
+	SEditorViewport::OnDragEnter(MyGeometry, DragDropEvent);
+	if(AssetEditorToolkitPtr.IsValid())
+	{
+		AssetEditorToolkitPtr.Pin()->OnViewportDragEnter(MyGeometry, DragDropEvent);
+	}
+}
+
+void SAnimationEditorViewport::OnDragLeave(const FDragDropEvent& DragDropEvent)
+{
+	SEditorViewport::OnDragLeave(DragDropEvent);
+	if(AssetEditorToolkitPtr.IsValid())
+	{
+		AssetEditorToolkitPtr.Pin()->OnViewportDragLeave(DragDropEvent);
+	}
+}
+
+FReply SAnimationEditorViewport::OnDrop(const FGeometry& MyGeometry, const FDragDropEvent& DragDropEvent)
+{
+	if(AssetEditorToolkitPtr.IsValid())
+	{
+		const FReply ReplyFromToolkit = AssetEditorToolkitPtr.Pin()->OnViewportDrop(MyGeometry, DragDropEvent);
+		if(ReplyFromToolkit.IsEventHandled())
+		{
+			return ReplyFromToolkit;
+		}
+	}
+	return SEditorViewport::OnDrop(MyGeometry, DragDropEvent);
+}
+
 //////////////////////////////////////////////////////////////////////////
 // SAnimationEditorViewportTabBody
 
@@ -992,9 +1023,9 @@ void SAnimationEditorViewportTabBody::BindCommands()
 		CommandList.MapAction(
 			ViewportLODMenuCommands.LODDebug,
 			FExecuteAction::CreateSP(this, &SAnimationEditorViewportTabBody::OnSetLODTrackDebuggedInstance),
-			FCanExecuteAction::CreateLambda([PreviewComponent]() { return (bool)PreviewComponent->PreviewInstance->GetDebugSkeletalMeshComponent(); }),
+			FCanExecuteAction::CreateLambda([PreviewComponent]() { return PreviewComponent->PreviewInstance ? (bool)PreviewComponent->PreviewInstance->GetDebugSkeletalMeshComponent() : false; }),
 			FIsActionChecked::CreateLambda([PreviewComponent]() { return PreviewComponent->IsTrackingAttachedLOD(); }),
-			FIsActionButtonVisible::CreateLambda([PreviewComponent]() { return (bool)PreviewComponent->PreviewInstance->GetDebugSkeletalMeshComponent() ; }));
+			FIsActionButtonVisible::CreateLambda([PreviewComponent]() { return PreviewComponent->PreviewInstance ? (bool)PreviewComponent->PreviewInstance->GetDebugSkeletalMeshComponent() : false; }));
 
 		PreviewComponent->RegisterOnDebugForceLODChangedDelegate(FOnDebugForceLODChanged::CreateSP(this, &SAnimationEditorViewportTabBody::OnDebugForcedLODChanged));
 	}
@@ -2095,7 +2126,7 @@ void SAnimationEditorViewportTabBody::SetProcessRootMotionMode(EProcessRootMotio
 bool SAnimationEditorViewportTabBody::IsProcessRootMotionModeSet(EProcessRootMotionMode Mode) const
 {
 	const UDebugSkelMeshComponent* PreviewComponent = GetPreviewScene()->GetPreviewMeshComponent();
-	return PreviewComponent ? (PreviewComponent->GetProcessRootMotionMode() == Mode) : false;
+	return PreviewComponent ? (PreviewComponent->GetRequestedProcessRootMotionMode() == Mode) : false;
 }
 
 bool SAnimationEditorViewportTabBody::CanUseProcessRootMotionMode(EProcessRootMotionMode Mode) const

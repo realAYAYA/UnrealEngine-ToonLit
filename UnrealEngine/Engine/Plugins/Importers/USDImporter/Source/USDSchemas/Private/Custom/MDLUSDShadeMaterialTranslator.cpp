@@ -149,8 +149,9 @@ void FMdlUsdShadeMaterialTranslator::CreateAssets()
 
 		const FString MdlFullName = MdlModuleName + TEXT("::") + MdlDefinitionName;
 		const FString MdlFullInstanceName = MdlFullName + TEXT("_Instance");
+		const FString HashPrefix = UsdUtils::GetAssetHashPrefix(GetPrim(), Context->bReuseIdenticalAssets);
 
-		UMaterialInterface* MdlMaterial = Cast< UMaterialInterface >( Context->AssetCache->GetCachedAsset( MdlFullName ) );
+		UMaterialInterface* MdlMaterial = Cast< UMaterialInterface >( Context->AssetCache->GetCachedAsset( HashPrefix + MdlFullName ) );
 		if ( !MdlMaterial )
 		{
 			FScopedUnrealAllocs UnrealAllocs;
@@ -174,13 +175,19 @@ void FMdlUsdShadeMaterialTranslator::CreateAssets()
 			}
 		}
 
-		UMaterialInstanceConstant* MdlMaterialInstance = Cast< UMaterialInstanceConstant >(Context->AssetCache->GetCachedAsset(MdlFullInstanceName));
+		UMaterialInstanceConstant* MdlMaterialInstance = Cast< UMaterialInstanceConstant >(Context->AssetCache->GetCachedAsset(HashPrefix + MdlFullInstanceName));
 		if ( !MdlMaterialInstance && MdlMaterial )
 		{
 			MdlMaterialInstance = NewObject< UMaterialInstanceConstant >(GetTransientPackage(), NAME_None, Context->ObjectFlags | RF_Transient);
 			MdlMaterialInstance->SetParentEditorOnly( MdlMaterial );
 
-			UsdToUnreal::ConvertShadeInputsToParameters( ShadeMaterial, *MdlMaterialInstance, Context->AssetCache.Get(), *Context->RenderContext.ToString() );
+			UsdToUnreal::ConvertShadeInputsToParameters(
+				ShadeMaterial,
+				*MdlMaterialInstance,
+				Context->AssetCache.Get(),
+				*Context->RenderContext.ToString(),
+				Context->bReuseIdenticalAssets
+			);
 
 			// We can't blindly recreate all component render states when a level is being added, because we may end up first creating
 			// render states for some components, and UWorld::AddToWorld calls FScene::AddPrimitive which expects the component to not have
@@ -199,8 +206,8 @@ void FMdlUsdShadeMaterialTranslator::CreateAssets()
 			UE::MDLShadeTranslatorImpl::Private::NotifyIfMaterialNeedsVirtualTextures( MdlMaterialInstance );
 		}
 
-		PostImportMaterial(MdlFullName, MdlMaterial);
-		PostImportMaterial(MdlFullInstanceName, MdlMaterialInstance);
+		PostImportMaterial(HashPrefix + MdlFullName, MdlMaterial);
+		PostImportMaterial(HashPrefix + MdlFullInstanceName, MdlMaterialInstance);
 	}
 	else
 	{

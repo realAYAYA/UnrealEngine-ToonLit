@@ -3,6 +3,7 @@
 #include "MuCOP/CustomizableObjectPopulation.h"
 
 #include "MuCO/CustomizableObject.h"
+#include "MuCO/CustomizableObjectPrivate.h"
 #include "MuCOP/CustomizableObjectPopulationCharacteristic.h"
 #include "MuCOP/CustomizableObjectPopulationClass.h"
 #include "MuCOP/CustomizableObjectPopulationConstraint.h"
@@ -91,7 +92,7 @@ void UCustomizableObjectPopulation::BeginCacheForCookedPlatformData(const ITarge
 	{
 		for (int32 i = 0; i < ClassWeights.Num(); ++i)
 		{
-			ClassWeights[i].Class->CustomizableObject->LoadCompiledDataFromDisk(false, TargetPlatform);
+			check(ClassWeights[i].Class->CustomizableObject->IsCompiled());
 		}
 
 		CompilePopulation(Generator);
@@ -175,7 +176,7 @@ void CompileBoolSamplers(
 
 	for (FString& BoolParamName : InBoolParamNames)
 	{
-		FParameterTags* ParamTagsFound = PopulationClass->CustomizableObject->CustomizableObjectParametersTags.Find(BoolParamName);
+		FParameterTags* ParamTagsFound = PopulationClass->CustomizableObject->GetPrivate()->GetCustomizableObjectParametersTags().Find(BoolParamName);
 
 		const TArray<FString> EmptyTagArray;
 		const TArray<FString>& ParamTags = ParamTagsFound ? ParamTagsFound->Tags : EmptyTagArray;
@@ -531,7 +532,7 @@ void CompileIntSamplers(
 	//IntSamplers.Empty(InIntParamNames.Num());
 	for (FString& IntParamName : InIntParamNames)
 	{
-		FParameterTags* ParamTagsFound = PopulationClass->CustomizableObject->CustomizableObjectParametersTags.Find(IntParamName);
+		FParameterTags* ParamTagsFound = PopulationClass->CustomizableObject->GetPrivate()->GetCustomizableObjectParametersTags().Find(IntParamName);
 
 		TArray<FString> ParamTags = ParamTagsFound ? ParamTagsFound->Tags : TArray<FString>();
 

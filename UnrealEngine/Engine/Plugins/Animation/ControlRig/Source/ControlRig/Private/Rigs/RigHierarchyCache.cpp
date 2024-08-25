@@ -5,11 +5,21 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(RigHierarchyCache)
 
+const FRigElementKey& FCachedRigElement::GetResolvedKey() const
+{
+	if(Element)
+	{
+		return Element->GetKey();
+	}
+	static FRigElementKey InvalidKey;
+	return InvalidKey;
+}
+
 bool FCachedRigElement::UpdateCache(const URigHierarchy* InHierarchy)
 {
 	if(InHierarchy)
 	{
-		if(!IsValid() || InHierarchy->GetTopologyVersion() != ContainerVersion)
+		if(!IsValid() || InHierarchy->GetTopologyVersionHash() != ContainerVersion || Element != InHierarchy->Get(Index))
 		{
 			return UpdateCache(GetKey(), InHierarchy);
 		}
@@ -22,7 +32,7 @@ bool FCachedRigElement::UpdateCache(const FRigElementKey& InKey, const URigHiera
 {
 	if(InHierarchy)
 	{
-		if(!IsValid() || !IsIdentical(InKey, InHierarchy))
+		if(!IsValid() || !IsIdentical(InKey, InHierarchy) || Element != InHierarchy->Get(Index))
 		{
 			// have to create a copy since Reset below
 			// potentially resets the InKey as well.
@@ -39,13 +49,11 @@ bool FCachedRigElement::UpdateCache(const FRigElementKey& InKey, const URigHiera
 					{
 						Key = KeyToResolve;
 						Element = PreviousElement;
-						ContainerVersion = InHierarchy->GetTopologyVersion();
+						ContainerVersion = InHierarchy->GetTopologyVersionHash();
 						return IsValid();
 					}
 				}
 			}
-
-			Reset();
 
 			int32 Idx = InHierarchy->GetIndex(KeyToResolve);
 			if(Idx != INDEX_NONE)
@@ -54,8 +62,13 @@ bool FCachedRigElement::UpdateCache(const FRigElementKey& InKey, const URigHiera
 				Index = (uint16)Idx;
 				Element = InHierarchy->Get(Index);
 			}
+			else
+			{
+				Reset();
+				Key = KeyToResolve;
+			}
 
-			ContainerVersion = InHierarchy->GetTopologyVersion();
+			ContainerVersion = InHierarchy->GetTopologyVersionHash();
 		}
 		return IsValid();
 	}
@@ -64,6 +77,61 @@ bool FCachedRigElement::UpdateCache(const FRigElementKey& InKey, const URigHiera
 
 bool FCachedRigElement::IsIdentical(const FRigElementKey& InKey, const URigHierarchy* InHierarchy)
 {
-	return InKey == Key && InHierarchy->GetTopologyVersion() == ContainerVersion;
+	return InKey == Key && InHierarchy->GetTopologyVersionHash() == ContainerVersion;
+}
+
+FRigElementKeyRedirector::FRigElementKeyRedirector(const TMap<FRigElementKey, FRigElementKey>& InMap, const URigHierarchy* InHierarchy)
+{
+	check(InHierarchy);
+	InternalKeyToExternalKey.Reserve(InMap.Num());
+	ExternalKeys.Reserve(InMap.Num());
+
+	Hash = 0;
+	for(const TPair<FRigElementKey, FRigElementKey>& Pair : InMap)
+	{
+		check(Pair.Key.IsValid());
+		Add(Pair.Key, Pair.Value, InHierarchy);
+	}
+}
+
+FRigElementKeyRedirector::FRigElementKeyRedirector(const FRigElementKeyRedirector& InOther, const URigHierarchy* InHierarchy)
+{
+	check(InHierarchy);
+	InternalKeyToExternalKey.Reserve(InOther.InternalKeyToExternalKey.Num());
+	ExternalKeys.Reserve(InOther.ExternalKeys.Num());
+
+	Hash = 0;
+	for(const TPair<FRigElementKey, FCachedRigElement>& Pair : InOther.InternalKeyToExternalKey)
+	{
+		check(Pair.Key.IsValid());
+		Add(Pair.Key, Pair.Value.GetKey(), InHierarchy);
+	}
+}
+
+const FRigElementKey* FRigElementKeyRedirector::FindReverse(const FRigElementKey& InKey) const
+{
+	for(const TPair<FRigElementKey, FCachedRigElement>& Pair : InternalKeyToExternalKey)
+	{
+		if(Pair.Value.GetKey() == InKey)
+		{
+			return &Pair.Key;
+		}
+	}
+	return nullptr;
+}
+
+void FRigElementKeyRedirector::Add(const FRigElementKey& InSource, const FRigElementKey& InTarget, const URigHierarchy* InHierarchy)
+{
+	if(!InSource.IsValid() || InSource == InTarget)
+	{
+		return;
+	}
+
+	if (InTarget.IsValid())
+	{
+		InternalKeyToExternalKey.Add(InSource, FCachedRigElement(InTarget, InHierarchy, true));
+	}
+	ExternalKeys.Add(InSource, InTarget);
+	Hash = HashCombine(Hash, HashCombine(GetTypeHash(InSource), GetTypeHash(InTarget)));
 }
 

@@ -6,6 +6,10 @@
 
 void UDisplayClusterStageActorComponent::SetRootActor(ADisplayClusterRootActor* InRootActor)
 {
+#if WITH_EDITOR
+	Modify();
+#endif
+	
 	RootActor = InRootActor;
 }
 

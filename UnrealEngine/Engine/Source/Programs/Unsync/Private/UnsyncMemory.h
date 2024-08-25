@@ -23,4 +23,12 @@ void  UnsyncMallocInit(EMallocType MallocType);
 void* UnsyncMalloc(size_t Size);
 void  UnsyncFree(void* Ptr);
 
+struct FSystemMemoryInfo
+{
+	uint64 InstalledPhysicalMemory = 0;
+};
+
+// Queries various memory properties from the OS, returns false if information is not available
+bool QueryMemoryInfo(FSystemMemoryInfo& OutMemoryInfo);
+
 }  // namespace unsync

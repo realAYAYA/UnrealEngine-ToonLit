@@ -241,17 +241,14 @@ FProperty* FComponentEditorUtils::GetPropertyForEditableNativeComponent(const UA
 				}
 
 				FScriptMapHelper MapHelper(TestProperty, MapPropInstAddress);
-				for (int32 MapSparseIndex = 0; MapSparseIndex < MapHelper.GetMaxIndex(); ++MapSparseIndex)
+				for (FScriptMapHelper::FIterator It(MapHelper); It; ++It)
 				{
 					// For each value in the map (don't bother checking the keys, they won't be what the user can edit in this case)
-					if (MapHelper.IsValidIndex(MapSparseIndex))
+					const uint8* MapValueData = MapHelper.GetValuePtr(It);
+					UObject* ValueElement = MapValProp->GetObjectPropertyValue(MapValueData);
+					if (ValueElement != nullptr && ValueElement->GetFName() == NativeComponent->GetFName())
 					{
-						const uint8* MapValueData = MapHelper.GetValuePtr(MapSparseIndex);						
-						UObject* ValueElement = MapValProp->GetObjectPropertyValue(MapValueData);
-						if (ValueElement != nullptr && ValueElement->GetFName() == NativeComponent->GetFName())
-						{
-							return MapValProp;
-						}
+						return MapValProp;
 					}
 				}
 			}
@@ -271,17 +268,14 @@ FProperty* FComponentEditorUtils::GetPropertyForEditableNativeComponent(const UA
 				
 				// For each item in the set
 				FScriptSetHelper SetHelper(TestProperty, SetPropInstAddress);
-				for (int32 i = 0; i < SetHelper.Num(); ++i)
+				for (FScriptSetHelper::FIterator It(SetHelper); It; ++It)
 				{
-					if (SetHelper.IsValidIndex(i))
+					const uint8* SetValData = SetHelper.GetElementPtr(It);
+					UObject* SetValueElem = SetValProp->GetObjectPropertyValue(SetValData);
+
+					if (SetValueElem != nullptr && SetValueElem->GetFName() == NativeComponent->GetFName())
 					{
-						const uint8* SetValData = SetHelper.GetElementPtr(i);
-						UObject* SetValueElem = SetValProp->GetObjectPropertyValue(SetValData);
-						
-						if (SetValueElem != nullptr && SetValueElem->GetFName() == NativeComponent->GetFName())
-						{
-							return SetValProp;
-						}
+						return SetValProp;
 					}
 				}
 			}
@@ -328,14 +322,14 @@ FString FComponentEditorUtils::GenerateValidVariableName(TSubclassOf<UActorCompo
 	FString SuffixToStrip( TEXT( "Component" ) );
 	if( ComponentTypeName.EndsWith( SuffixToStrip ) )
 	{
-		ComponentTypeName.LeftInline( ComponentTypeName.Len() - SuffixToStrip.Len(), false );
+		ComponentTypeName.LeftInline( ComponentTypeName.Len() - SuffixToStrip.Len(), EAllowShrinking::No );
 	}
 
 	// Strip off 'Actor' if the class ends with that so as not to confuse actors with components
 	SuffixToStrip = TEXT( "Actor" );
 	if( ComponentTypeName.EndsWith( SuffixToStrip ) )
 	{
-		ComponentTypeName.LeftInline( ComponentTypeName.Len() - SuffixToStrip.Len(), false );
+		ComponentTypeName.LeftInline( ComponentTypeName.Len() - SuffixToStrip.Len(), EAllowShrinking::No );
 	}
 
 	// Try to create a name without any numerical suffix first
@@ -393,7 +387,7 @@ FString FComponentEditorUtils::GenerateValidVariableNameFromAsset(UObject* Asset
 			FString NumericSuffix = AssetName.RightChop(Index);
 			Counter = FCString::Atoi(*NumericSuffix);
 			NumericSuffix = FString::Printf(TEXT("%d"), Counter); // Restringify the counter to account for leading 0s that we don't want to remove
-			AssetName.RemoveAt(AssetName.Len() - NumericSuffix.Len(), NumericSuffix.Len(), false);
+			AssetName.RemoveAt(AssetName.Len() - NumericSuffix.Len(), NumericSuffix.Len(), EAllowShrinking::No);
 			++Counter;
 			NewName = BuildNewName();
 		}

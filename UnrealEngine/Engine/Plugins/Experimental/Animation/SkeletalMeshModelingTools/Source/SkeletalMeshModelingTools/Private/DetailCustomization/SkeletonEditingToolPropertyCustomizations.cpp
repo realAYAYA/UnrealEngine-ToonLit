@@ -10,6 +10,8 @@
 #include "Widgets/Input/SSegmentedControl.h"
 #include "HAL/PlatformApplicationMisc.h"
 #include "InteractiveToolManager.h"
+#include "ModelingToolsEditorModeStyle.h"
+#include "Selection/PolygonSelectionMechanic.h"
 
 
 #define LOCTEXT_NAMESPACE "SkeletonEditingToolCustomization"
@@ -61,10 +63,6 @@ void ISkeletonEditingPropertiesDetailCustomization::UpdateProperties(
 	const TAttribute<bool>& InEnabled) const
 {
 	for (const FName& PropName: GetProperties())
- 
- 
- 
- 
 	{
 		const TSharedRef<IPropertyHandle> Handle = DetailBuilder.GetProperty(PropName);
 		if (IDetailPropertyRow* Row = DetailBuilder.EditDefaultProperty(Handle))
@@ -214,7 +212,7 @@ void FSkeletonEditingPropertiesDetailCustomization::CustomizeValueGet(SAdvancedT
 			  InRepresentation,
 			  InSubComponent);
 	};
-	
+
 	InOutArgs.OnGetNumericValue_Lambda( [this, GetNumericValue](
 		ESlateTransformComponent::Type InComponent,
 		ESlateRotationRepresentation::Type InRepresentation,
@@ -244,6 +242,40 @@ void FSkeletonEditingPropertiesDetailCustomization::CustomizeValueGet(SAdvancedT
 		}
 		return Value;
 	} );
+	
+	InOutArgs.DiffersFromDefault_Lambda([this](ESlateTransformComponent::Type InComponent)
+	{
+		const TArray<FName>& Bones = Tool->GetSelection();
+		for (const FName& BoneName: Bones)
+		{
+			const bool bWorld = !RelativeArray[InComponent];
+			const FTransform& Transform = Tool->GetTransform(BoneName, bWorld);
+			switch (InComponent)
+			{
+				case ESlateTransformComponent::Location:
+					if (!Transform.GetLocation().Equals(FVector::ZeroVector))
+					{
+						return true;
+					}
+					break;
+				case ESlateTransformComponent::Rotation:
+					if(!Transform.GetRotation().Equals(FQuat::Identity))
+					{
+						return true;
+					}
+					break;
+				case ESlateTransformComponent::Scale:
+					if(!Transform.GetScale3D().Equals(FVector::OneVector))
+					{
+						return true;
+					}
+					break;
+				default:
+					break;
+			}
+		}
+		return false;
+	});
 }
 
 void FSkeletonEditingPropertiesDetailCustomization::CustomizeValueSet(SAdvancedTransformInputBox<FTransform>::FArguments& InOutArgs)
@@ -298,8 +330,9 @@ void FSkeletonEditingPropertiesDetailCustomization::CustomizeValueSet(SAdvancedT
 			const bool bWorld = !RelativeArray[InComponent];
 			Tool->SetTransforms(BonesToMove, UpdatedTransforms, bWorld);
 		}
-	})
-	.OnNumericValueCommitted_Lambda([this, PrepareNumericValueChanged](
+	});
+
+	InOutArgs.OnNumericValueCommitted_Lambda([this, PrepareNumericValueChanged](
 		ESlateTransformComponent::Type InComponent,
 		ESlateRotationRepresentation::Type InRepresentation,
 		ESlateTransformSubComponent::Type InSubComponent,
@@ -308,8 +341,11 @@ void FSkeletonEditingPropertiesDetailCustomization::CustomizeValueSet(SAdvancedT
 	{
 		const TArray<FName>& Bones = Tool->GetSelection();
 
-		TArray<FName> BonesToMove; BonesToMove.Reserve(Bones.Num());
-		TArray<FTransform> UpdatedTransforms; UpdatedTransforms.Reserve(Bones.Num());
+		TArray<FName> BonesToMove;
+		BonesToMove.Reserve(Bones.Num());
+		
+		TArray<FTransform> UpdatedTransforms;
+		UpdatedTransforms.Reserve(Bones.Num());
 		
 		FTransform CurrentTransform, UpdatedTransform;
 		for (const FName& BoneName: Bones)
@@ -347,6 +383,79 @@ void FSkeletonEditingPropertiesDetailCustomization::CustomizeValueSet(SAdvancedT
 				ToolManager->EndUndoTransaction();
 			}
 		
+			ActiveChange.Reset();
+		}
+	});
+
+	auto PrepareNumericValueReset = [this]( const FName InBoneName, ESlateTransformComponent::Type InComponent)
+	{
+		const bool bWorld = !RelativeArray[InComponent];
+		const FTransform& InTransform = Tool->GetTransform(InBoneName, bWorld);
+		FTransform OutTransform = InTransform;
+
+		switch (InComponent)
+		{
+		case ESlateTransformComponent::Location:
+			OutTransform.SetLocation(FVector::ZeroVector);
+			break;
+		case ESlateTransformComponent::Rotation:
+			OutTransform.SetRotation(FQuat::Identity);
+			break;
+		case ESlateTransformComponent::Scale:
+			OutTransform.SetScale3D(FVector::OneVector);
+			break;
+		default:
+			break;
+		}
+		
+		return MakeTuple(InTransform, OutTransform);
+	};
+	
+	InOutArgs.OnResetToDefault_Lambda([this, PrepareNumericValueReset](ESlateTransformComponent::Type InComponent)
+	{
+		const TArray<FName>& Bones = Tool->GetSelection();
+
+		TArray<FName> BonesToMove;
+		BonesToMove.Reserve(Bones.Num());
+		
+		TArray<FTransform> UpdatedTransforms;
+		UpdatedTransforms.Reserve(Bones.Num());
+		
+		FTransform CurrentTransform, UpdatedTransform;
+		for (const FName& BoneName: Bones)
+		{
+			Tie(CurrentTransform, UpdatedTransform) = PrepareNumericValueReset(BoneName, InComponent);
+			if (!UpdatedTransform.Equals(CurrentTransform))
+			{
+				BonesToMove.Add(BoneName);
+				UpdatedTransforms.Add(UpdatedTransform);
+			}
+		}
+
+		if (!BonesToMove.IsEmpty())
+		{
+			if (!ActiveChange.IsValid())
+			{
+				ActiveChange = MakeUnique<SkeletonEditingTool::FRefSkeletonChange>(Tool.Get());
+			}
+
+			const bool bWorld = !RelativeArray[InComponent];
+			Tool->SetTransforms(BonesToMove, UpdatedTransforms, bWorld);
+		}
+
+		if (ActiveChange.IsValid())
+		{
+			// send transaction
+			if (UInteractiveToolManager* ToolManager = Tool->GetToolManager())
+			{
+				ActiveChange->StoreSkeleton(Tool.Get());
+
+				static const FText TransactionDesc = LOCTEXT("ResetNumericValue", "Reset Numeric Value");
+				ToolManager->BeginUndoTransaction(TransactionDesc);
+				ToolManager->EmitObjectChange(Tool.Get(), MoveTemp(ActiveChange), TransactionDesc);
+				ToolManager->EndUndoTransaction();
+			}
+				
 			ActiveChange.Reset();
 		}
 	});
@@ -631,6 +740,10 @@ void FOrientingPropertiesDetailCustomization::CustomizeDetails(IDetailLayoutBuil
 			.HAlign(HAlign_Center)
 			.VAlign(VAlign_Center)
 			.Text(LOCTEXT("OrientButtonLabel", "Orient"))
+			.IsEnabled_Lambda([Properties]()
+			{
+				return Properties->Options.Primary != EOrientAxis::None; 
+			})
 			.OnClicked_Lambda([Properties]()
 			{
 				Properties->OrientBones();
@@ -671,7 +784,8 @@ namespace SkeletonEditingCustomizationLocals
 	enum EOperationType
 	{
 		Add,
-		Edit
+		Edit,
+		Component
 	};
 }
 
@@ -685,15 +799,17 @@ void FSkeletonEditingToolDetailCustomization::CustomizeDetails(IDetailLayoutBuil
 	TArray<TWeakObjectPtr<UObject>> ObjectsBeingCustomized;
 	DetailBuilder.GetObjectsBeingCustomized(ObjectsBeingCustomized);
 	
-	TWeakObjectPtr<USkeletonEditingTool> Tool = ObjectsBeingCustomized.Num() == 1 ?
+	Tool = ObjectsBeingCustomized.Num() == 1 ?
 		CastChecked<USkeletonEditingTool>(ObjectsBeingCustomized[0]) : nullptr;
 	
 	if (!Tool.IsValid())
 	{
 		return;
 	}
+
+	const FSegmentedControlStyle& SegmentedControlStyle = FAppStyle::Get().GetWidgetStyle<FSegmentedControlStyle>("SegmentedControl");
 	
-	auto IsCreateEnabled = [Tool]()
+	auto IsCreateEnabled = [this]()
 	{
 		return Tool->GetOperation() == EEditingOperation::Create;
 	};
@@ -702,30 +818,187 @@ void FSkeletonEditingToolDetailCustomization::CustomizeDetails(IDetailLayoutBuil
 	IDetailCategoryBuilder& ActionCategory = DetailBuilder.EditCategory("Action", FText::GetEmpty(), ECategoryPriority::Important);
 	ActionCategory.AddCustomRow(LOCTEXT("ActionCategory", "Action"), false)
 	[
-		SNew(SBox)
-		.Padding(2.0f)
+		SNew(SBorder)
+		.BorderImage(&SegmentedControlStyle.BackgroundBrush)
+		.Padding(FMargin(0,0,SegmentedControlStyle.UniformPadding.Right,0))
 		[
-			SNew(SSegmentedControl<EOperationType>)
-			
-			.Value_Lambda([IsCreateEnabled]()
-			{
-				return IsCreateEnabled() ? Add : Edit;
-			})
-			.OnValueChanged_Lambda([Tool](EOperationType Mode)
-			{
-				const EEditingOperation Operation = Mode == Add ? EEditingOperation::Create : EEditingOperation::Select;
-				Tool->SetOperation(Operation);
-			})
-			+ SSegmentedControl<EOperationType>::Slot(Add)
-			.Text(LOCTEXT("AddMode", "Add"))
-			.ToolTip(LOCTEXT("AddModeTooltip", "Create new bones. (N)"))
-			
-			+ SSegmentedControl<EOperationType>::Slot(Edit)
-			.Text(LOCTEXT("EditMode", "Edit"))
-			.ToolTip(LOCTEXT("EditModeTooltip", "Edit current bone(s) selection. (Esc)"))
+			SNew(SHorizontalBox)
+			+SHorizontalBox::Slot()
+			[
+				SNew(SCheckBox)
+				.Clipping(EWidgetClipping::ClipToBounds)
+				.Style(&SegmentedControlStyle.FirstControlStyle)
+				.ToolTipText(LOCTEXT("AddModeTooltip", "Create new bones. (N)"))
+				.OnCheckStateChanged_Lambda([this](ECheckBoxState InCheckState)
+				{
+					if (InCheckState == ECheckBoxState::Checked)
+					{
+						Tool->SetOperation(EEditingOperation::Create);
+					}
+				})
+				.IsChecked_Lambda([IsCreateEnabled]()
+				{
+					return IsCreateEnabled() ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+				})
+				[
+					SNew(SOverlay)
+					+ SOverlay::Slot()
+					.VAlign(VAlign_Center)
+					.HAlign(HAlign_Center)
+					[
+						SNew(STextBlock)
+						.Text(LOCTEXT("AddMode", "Add"))
+						.TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("ButtonText"))
+						.ColorAndOpacity(FLinearColor::White)
+					]
+				]
+			]
+			+SHorizontalBox::Slot()
+			[
+				SNew(SCheckBox)
+				.Clipping(EWidgetClipping::ClipToBounds)
+				.Style(&SegmentedControlStyle.LastControlStyle)
+				.ToolTipText(LOCTEXT("EditModeTooltip", "Edit current bone(s) selection. (Esc)"))
+				.OnCheckStateChanged_Lambda([this](ECheckBoxState InCheckState)
+				{
+					if (InCheckState == ECheckBoxState::Checked)
+					{
+						Tool->SetOperation(EEditingOperation::Select);
+					}
+				})
+				.IsChecked_Lambda([IsCreateEnabled]()
+				{
+					return IsCreateEnabled() ? ECheckBoxState::Unchecked : ECheckBoxState::Checked;
+				})
+				[
+					SNew(SOverlay)
+						
+					+ SOverlay::Slot()
+					.VAlign(VAlign_Center)
+					.HAlign(HAlign_Center)
+					[
+						SNew(STextBlock)
+						.Text(LOCTEXT("EditMode", "Edit"))
+						.TextStyle(&FAppStyle::Get().GetWidgetStyle<FTextBlockStyle>("ButtonText"))
+						.ColorAndOpacity(FLinearColor::White)
+					]
+				]
+			]
+
+			+ SHorizontalBox::Slot()
+			.Padding(FMargin(4.f, 0.f, 0.f, 0.f))
+			.AutoWidth()
+			.HAlign(HAlign_Center)
+			.VAlign(VAlign_Center)
+			[
+				SNew(SCheckBox)
+				.Clipping(EWidgetClipping::ClipToBounds)
+				.Style(FAppStyle::Get(), "ToggleButtonCheckbox")
+				.ToolTipText(LOCTEXT("ComponentModeTooltip", "Select vertices, edges, and triangles to place bone. (T)"))
+				.OnCheckStateChanged_Lambda([this](ECheckBoxState)
+				{
+					Tool->Properties->bEnableComponentSelection = !Tool->Properties->bEnableComponentSelection;
+				})
+				.IsChecked_Lambda([this]()
+				{
+					return Tool->Properties->bEnableComponentSelection ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+				})
+				[
+					SNew(SImage)
+						.Image(FModelingToolsEditorModeStyle::Get()->GetBrush("ModelingToolsManagerCommands.BeginMeshSelectionTool"))
+				]
+			]
 		]
 	];
-	const TAttribute<EVisibility> EditionVisibility = TAttribute<EVisibility>::CreateLambda([Tool]()
+
+	CustomizeEditAction(ActionCategory);
+	CustomizeComponentSelection(DetailBuilder);
+}
+
+void FSkeletonEditingToolDetailCustomization::CustomizeComponentSelection(IDetailLayoutBuilder& DetailBuilder) const
+{
+	const TAttribute<bool> IsEnabledBySelection = TAttribute<bool>::CreateLambda([this]()
+	{
+		return Tool.IsValid() ? Tool->HasSelectedComponent() && !Tool->GetSelection().IsEmpty() : false;
+	});
+
+	const TAttribute<EVisibility> VisibilityAttribute = TAttribute<EVisibility>::CreateLambda([this]()
+	{
+		return (Tool.IsValid() && Tool->Properties->bEnableComponentSelection) ? EVisibility::Visible : EVisibility::Hidden;
+	});
+
+	static const FName SnapCategoryName("Component Snapping");
+	IDetailCategoryBuilder& SnapCategory = DetailBuilder.EditCategory(SnapCategoryName, FText::GetEmpty(), ECategoryPriority::Important);
+
+	SnapCategory.AddCustomRow(LOCTEXT("SnapButtonRow", "Snap"), false)
+	[
+		SNew(SHorizontalBox)
+		+SHorizontalBox::Slot()
+		.Padding(2.f, 4.f)
+		[
+			SNew(SButton)
+			.HAlign(HAlign_Center)
+			.VAlign(VAlign_Center)
+			.Text_Lambda([this]
+			{
+				const bool bCreate = Tool.IsValid() && Tool->GetOperation() == EEditingOperation::Create;
+				return bCreate ? LOCTEXT("SnapCreateButtonLabel", "Create") : LOCTEXT("SnapButtonLabel", "Snap");
+			})
+			.ToolTipText_Lambda([this]
+			{
+				const bool bCreate = Tool.IsValid() && Tool->GetOperation() == EEditingOperation::Create;
+				return bCreate ? LOCTEXT("SnapCreateButtonTooltip", "Create a new bone and snap it to the selected components. (V)") :
+								LOCTEXT("SnapButtonTooltip", "Snap the selected bone to the selected components. (V)");
+			})
+			.IsEnabled_Lambda([this]()
+			{
+				if (!Tool.IsValid())
+				{
+					return false;
+				}
+				const bool bCreate = Tool->GetOperation() == EEditingOperation::Create;
+				return bCreate ? Tool->HasSelectedComponent() : Tool->HasSelectedComponent() && !Tool->GetSelection().IsEmpty(); 
+			})
+			.OnClicked_Lambda([this]()
+			{
+				const bool bCreate = Tool.IsValid() && Tool->GetOperation() == EEditingOperation::Create;
+				Tool->SnapBoneToComponentSelection(bCreate);
+				return FReply::Handled();
+			})
+		]
+	]
+	.Visibility(VisibilityAttribute);
+	
+	// add selection properties
+	TObjectPtr<UMeshTopologySelectionMechanicProperties> SelectionMechanicProperties = Tool->SelectionMechanic->Properties;
+	if (IDetailPropertyRow* SelectionMechanicRow = SnapCategory.AddExternalObjects({SelectionMechanicProperties}))
+	{
+		TSharedPtr<SWidget> NameWidget, ValueWidget;
+		SelectionMechanicRow->GetDefaultWidgets(NameWidget, ValueWidget);
+		SelectionMechanicRow->CustomWidget()
+		.NameContent()
+		[
+			SNew(STextBlock)
+				.Text(FText::FromString(TEXT("Options")))
+				.Font(IDetailLayoutBuilder::GetDetailFont())
+		]
+		.ValueContent()
+		[
+			ValueWidget->AsShared()
+		];
+		SelectionMechanicRow->ShouldAutoExpand(false);
+		SelectionMechanicRow->Visibility(VisibilityAttribute);
+	}
+}
+
+void FSkeletonEditingToolDetailCustomization::CustomizeEditAction(IDetailCategoryBuilder& InActionCategory) const
+{
+	if (!Tool.IsValid())
+	{
+		return;
+	}
+	
+	const TAttribute<EVisibility> EditionVisibility = TAttribute<EVisibility>::CreateLambda([this]()
 	{
 		if (!Tool.IsValid())
 		{
@@ -734,13 +1007,13 @@ void FSkeletonEditingToolDetailCustomization::CustomizeDetails(IDetailLayoutBuil
 		return Tool->GetOperation() == EEditingOperation::Create ? EVisibility::Hidden : EVisibility::Visible;
 	});
 	
-	const TAttribute<bool> IsEnabledBySelection = TAttribute<bool>::CreateLambda([Tool]()
+	const TAttribute<bool> IsEnabledBySelection = TAttribute<bool>::CreateLambda([this]()
 	{
 		return Tool.IsValid() ? !Tool->GetSelection().IsEmpty() : false;
 	});
 	FSegmentedControlStyle SegmentedControlStyle = FAppStyle::Get().GetWidgetStyle<FSegmentedControlStyle>("SegmentedControl");
 	
-	ActionCategory.AddCustomRow(LOCTEXT("EditCategory", "Edit"), false)
+	InActionCategory.AddCustomRow(LOCTEXT("EditCategory", "Edit"), false)
 	[
 		SNew(SHorizontalBox)
 		+SHorizontalBox::Slot()
@@ -748,13 +1021,13 @@ void FSkeletonEditingToolDetailCustomization::CustomizeDetails(IDetailLayoutBuil
 		[
 			SNew(SCheckBox)
 			.Style(FAppStyle::Get(), "SegmentedCombo.ButtonOnly")
-			.OnCheckStateChanged_Lambda([Tool](ECheckBoxState InCheckState)
+			.OnCheckStateChanged_Lambda([this](ECheckBoxState InCheckState)
 			{
 				const EEditingOperation Operation = InCheckState == ECheckBoxState::Checked ?
 					EEditingOperation::Parent : EEditingOperation::Select;
 				Tool->SetOperation(Operation);
 			})
-			.IsChecked_Lambda([Tool]()
+			.IsChecked_Lambda([this]()
 			{
 				return Tool->GetOperation() == EEditingOperation::Parent ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
 			})
@@ -782,12 +1055,12 @@ void FSkeletonEditingToolDetailCustomization::CustomizeDetails(IDetailLayoutBuil
 			.VAlign(VAlign_Center)
 			.Text(LOCTEXT("EditDisconnect", "Disconnect"))
 			.ToolTipText(LOCTEXT("EditDisconnectTooltip", "Unparent current selection. (SHIFT+P)"))
-			.OnClicked_Lambda([Tool]()
+			.OnClicked_Lambda([this]()
 			{
 				Tool->UnParentBones();
 				return FReply::Handled();
 			})
-			.IsEnabled_Lambda([Tool]()
+			.IsEnabled_Lambda([this]()
 			{
 				if (!Tool.IsValid())
 				{
@@ -805,12 +1078,12 @@ void FSkeletonEditingToolDetailCustomization::CustomizeDetails(IDetailLayoutBuil
 			.VAlign(VAlign_Center)
 			.Text(LOCTEXT("EditRemove", "Remove"))
 			.ToolTipText(LOCTEXT("EditRemoveTooltip", "Remove current selection. (Delete)"))
-			.OnClicked_Lambda([Tool]()
+			.OnClicked_Lambda([this]()
 			{
 				Tool->RemoveBones();
 				return FReply::Handled();
 			})
-			.IsEnabled_Lambda([Tool]()
+			.IsEnabled_Lambda([this]()
 			{
 				if (!Tool.IsValid())
 				{

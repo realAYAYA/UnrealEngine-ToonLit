@@ -42,7 +42,9 @@ public class MLDeformerFramework : ModuleRules
 				"OptimusCore",
 				"RenderCore",
 				"ComputeFramework",
-				"Projects"
+				"Projects",
+				"MeshDescription",
+				"SkeletalMeshDescription"
 			}
 			);
 		

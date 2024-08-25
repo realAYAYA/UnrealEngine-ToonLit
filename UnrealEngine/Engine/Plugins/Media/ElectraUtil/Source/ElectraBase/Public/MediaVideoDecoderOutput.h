@@ -137,7 +137,7 @@ public:
 		{
 			return FDecoderTimeStamp(FTimespan::Zero(), 0);
 		}
-		Electra::FTimeValue pts(ParamDict->GetValue("pts").GetTimeValue());
+		Electra::FTimeValue pts(ParamDict->GetValue(IDecoderOutputOptionNames::PTS).GetTimeValue());
 		return FDecoderTimeStamp(pts.GetAsTimespan(), pts.GetSequenceIndex());
 	}
 
@@ -147,7 +147,7 @@ public:
 		{
 			return FTimespan(0);
 		}
-		return FTimespan(ParamDict->GetValue("duration").GetTimeValue().GetAsHNS());
+		return FTimespan(ParamDict->GetValue(IDecoderOutputOptionNames::Duration).GetTimeValue().GetAsHNS());
 	}
 
 	virtual FIntPoint GetOutputDim() const
@@ -158,8 +158,8 @@ public:
 		}
 		if (!(Cached.Flags & FCached::Valid_OutputDim))
 		{
-			Cached.OutputDim.X = (int32)ParamDict->GetValue("width").SafeGetInt64(0);
-			Cached.OutputDim.Y = (int32)ParamDict->GetValue("height").SafeGetInt64(0);
+			Cached.OutputDim.X = (int32)ParamDict->GetValue(IDecoderOutputOptionNames::Width).SafeGetInt64(0);
+			Cached.OutputDim.Y = (int32)ParamDict->GetValue(IDecoderOutputOptionNames::Height).SafeGetInt64(0);
 			FPlatformMisc::MemoryBarrier();
 			Cached.Flags |= FCached::Valid_OutputDim;
 		}
@@ -173,7 +173,7 @@ public:
 			return 1.0;
 		}
 		const FIntPoint Dim = GetOutputDim();
-		return ((double)Dim.X / (double)Dim.Y) * ParamDict->GetValue("aspect_ratio").SafeGetDouble(1.0);
+		return ((double)Dim.X / (double)Dim.Y) * ParamDict->GetValue(IDecoderOutputOptionNames::AspectRatio).SafeGetDouble(1.0);
 	}
 
 	virtual FVideoDecoderCropInfo GetCropInfo() const
@@ -184,10 +184,10 @@ public:
 		}
 		if (!(Cached.Flags & FCached::Valid_CropInfo))
 		{ 
-			Cached.CropInfo.CropLeft = (int32)ParamDict->GetValue("crop_left").SafeGetInt64(0);
-			Cached.CropInfo.CropTop = (int32)ParamDict->GetValue("crop_top").SafeGetInt64(0);
-			Cached.CropInfo.CropRight = (int32)ParamDict->GetValue("crop_right").SafeGetInt64(0);
-			Cached.CropInfo.CropBottom = (int32)ParamDict->GetValue("crop_bottom").SafeGetInt64(0);
+			Cached.CropInfo.CropLeft = (int32)ParamDict->GetValue(IDecoderOutputOptionNames::CropLeft).SafeGetInt64(0);
+			Cached.CropInfo.CropTop = (int32)ParamDict->GetValue(IDecoderOutputOptionNames::CropTop).SafeGetInt64(0);
+			Cached.CropInfo.CropRight = (int32)ParamDict->GetValue(IDecoderOutputOptionNames::CropRight).SafeGetInt64(0);
+			Cached.CropInfo.CropBottom = (int32)ParamDict->GetValue(IDecoderOutputOptionNames::CropBottom).SafeGetInt64(0);
 			FPlatformMisc::MemoryBarrier();
 			Cached.Flags |= FCached::Valid_CropInfo;
 		}
@@ -215,7 +215,7 @@ public:
 		{
 			return EPixelFormat::PF_Unknown;
 		}
-		return (EPixelFormat)ParamDict->GetValue("pixelfmt").SafeGetInt64((int64)EPixelFormat::PF_Unknown);
+		return (EPixelFormat)ParamDict->GetValue(IDecoderOutputOptionNames::PixelFormat).SafeGetInt64((int64)EPixelFormat::PF_Unknown);
 	}
 
 	virtual EVideoDecoderPixelEncoding GetFormatEncoding() const
@@ -224,7 +224,7 @@ public:
 		{
 			return EVideoDecoderPixelEncoding::Native;
 		}
-		return (EVideoDecoderPixelEncoding)ParamDict->GetValue("pixelenc").SafeGetInt64((int64)EVideoDecoderPixelEncoding::Native);
+		return (EVideoDecoderPixelEncoding)ParamDict->GetValue(IDecoderOutputOptionNames::PixelEncoding).SafeGetInt64((int64)EVideoDecoderPixelEncoding::Native);
 	}
 
 	virtual EVideoOrientation GetOrientation() const
@@ -235,7 +235,7 @@ public:
 		}
 		if (!(Cached.Flags & FCached::Valid_Orientation))
 		{
-			Cached.Orientation = (EVideoOrientation)ParamDict->GetValue("orientation").SafeGetInt64((int64)EVideoOrientation::Original);
+			Cached.Orientation = (EVideoOrientation)ParamDict->GetValue(IDecoderOutputOptionNames::Orientation).SafeGetInt64((int64)EVideoOrientation::Original);
 			FPlatformMisc::MemoryBarrier();
 			Cached.Flags |= FCached::Valid_Orientation;
 		}
@@ -247,25 +247,25 @@ public:
 		const int32 NumDefaultBits = 8;
 		if (ParamDict)
 		{
-			return (int32)ParamDict->GetValue("bits_per").SafeGetInt64((int64)NumDefaultBits);
+			return (int32)ParamDict->GetValue(IDecoderOutputOptionNames::BitsPerComponent).SafeGetInt64((int64)NumDefaultBits);
 		}
 		return NumDefaultBits;
 	}
 
 	virtual TSharedPtr<const IVideoDecoderHDRInformation, ESPMode::ThreadSafe> GetHDRInformation() const
 	{
-		if (ParamDict && ParamDict->HaveKey("hdr_info"))
+		if (ParamDict && ParamDict->HaveKey(IDecoderOutputOptionNames::HDRInfo))
 		{
-			return ParamDict->GetValue("hdr_info").GetSharedPointer<const IVideoDecoderHDRInformation>();
+			return ParamDict->GetValue(IDecoderOutputOptionNames::HDRInfo).GetSharedPointer<const IVideoDecoderHDRInformation>();
 		}
 		return nullptr;
 	}
 
 	virtual TSharedPtr<const IVideoDecoderColorimetry, ESPMode::ThreadSafe> GetColorimetry() const
 	{
-		if (ParamDict && ParamDict->HaveKey("colorimetry"))
+		if (ParamDict && ParamDict->HaveKey(IDecoderOutputOptionNames::Colorimetry))
 		{
-			return ParamDict->GetValue("colorimetry").GetSharedPointer<const IVideoDecoderColorimetry>();
+			return ParamDict->GetValue(IDecoderOutputOptionNames::Colorimetry).GetSharedPointer<const IVideoDecoderColorimetry>();
 		}
 		return nullptr;
 	}

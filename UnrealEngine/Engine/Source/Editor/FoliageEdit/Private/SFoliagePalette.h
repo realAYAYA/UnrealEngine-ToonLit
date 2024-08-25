@@ -90,9 +90,13 @@ public:
 	FText GetSearchText() const;
 
 	/** Adds the foliage type asset to the instanced foliage actor's list of types. */
-	void AddFoliageType(const FAssetData& AssetData);
+	UFoliageType* AddFoliageType(const FAssetData& AssetData, bool bPlaceholderAsset = false);
 
+	/** Updates the selection of foliage types in the palette based on the selected foliage instances. */
+	void ReflectSelectionInPalette();
+	
 private:	// GENERAL
+	void AddFoliageTypePicker(const FAssetData& AssetData);
 
 	/** Binds commands used by the palette */
 	void BindCommands();
@@ -121,6 +125,8 @@ private:	// GENERAL
 
 	/** Handler to trigger a refresh of the details view when the active tool changes */
 	void HandleOnToolChanged();
+
+	void OnExternalContentResolved(const FGuid& Identifier, const FAssetData& PlaceholderAsset, const FAssetData& ResolvedAsset);
 
 	/** Sets the view mode of the palette */
 	void SetViewMode(EFoliagePaletteViewMode::Type NewViewMode);
@@ -208,9 +214,6 @@ private:	// CONTEXT MENU
 
 	/** @return Whether selecting instances is currently possible */
 	bool CanSelectInstances() const;
-
-	/** Handler for 'Reflect Selection in Palette ' command */
-	void OnReflectSelectionInPalette();
 
 	/** Selects Foliage Type in palette */
 	void SelectFoliageTypesInPalette(const TArray<const UFoliageType*>& FoliageTypes);
@@ -321,6 +324,8 @@ private:
 	TSharedPtr<class FAssetThumbnailPool> ThumbnailPool;
 
 	FEdModeFoliage* FoliageEditMode;
+
+	TMap<FGuid, TArray<TWeakObjectPtr<UFoliageType>>> ExternalContentFoliageTypes;
 
 	bool bItemsNeedRebuild : 1;
 	bool bIsUneditableFoliageTypeSelected : 1;

@@ -7,37 +7,6 @@
 #include "hlslcc.h"
 
 
-// Controls whether r.Shaders.RemoveDeadCode should be honored
-#ifndef UE_VULKAN_SHADER_COMPILER_ALLOW_DEAD_CODE_REMOVAL
-#define UE_VULKAN_SHADER_COMPILER_ALLOW_DEAD_CODE_REMOVAL 1
-#endif // UE_VULKAN_SHADER_COMPILER_ALLOW_DEAD_CODE_REMOVAL
-
-enum class EVulkanShaderVersion
-{
-	ES3_1,
-	ES3_1_ANDROID,
-	SM5,
-	SM5_ANDROID,
-	SM6,
-};
-
-extern void DoCompileVulkanShader(const struct FShaderCompilerInput& Input,struct FShaderCompilerOutput& Output,const class FString& WorkingDirectory, EVulkanShaderVersion Version);
-
-
-// Hold information to be able to call the compilers
-struct FCompilerInfo
-{
-	const struct FShaderCompilerInput& Input;
-	FString WorkingDirectory;
-	FString Profile;
-	uint32 CCFlags;
-	EHlslShaderFrequency Frequency;
-	FString BaseSourceFilename;
-
-	FCompilerInfo(const struct FShaderCompilerInput& InInput, const FString& InWorkingDirectory, EHlslShaderFrequency InFrequency);
-};
-
-
 struct FVulkanSpirv : FSpirv
 {
 	struct FEntry

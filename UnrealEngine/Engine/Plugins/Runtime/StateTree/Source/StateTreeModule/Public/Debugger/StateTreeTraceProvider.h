@@ -6,10 +6,11 @@
 
 #include "IStateTreeTraceProvider.h"
 #include "Model/PointTimeline.h"
-#include "StateTreeTypes.h" // required to compile TMap<FStateTreeInstanceDebugId, ...>
+#include "StateTreeIndexTypes.h"
 
 namespace TraceServices { class IAnalysisSession; }
 class UStateTree;
+struct FStateTreeInstanceDebugId;
 namespace UE::StateTreeDebugger { struct FInstanceDescriptor; }
 
 class FStateTreeTraceProvider : public IStateTreeTraceProvider
@@ -21,12 +22,15 @@ public:
 	
 	void AppendEvent(FStateTreeInstanceDebugId InInstanceId, double InTime, const FStateTreeTraceEventVariantType& InEvent);
 	void AppendInstanceEvent(
-		const UStateTree* InStateTree,
+		const FStateTreeIndex16 AssetDebugId,
 		const FStateTreeInstanceDebugId InInstanceId,
 		const TCHAR* InInstanceName,
 		double InTime,
 		double InWorldRecordingTime,
 		EStateTreeTraceEventType InEventType);
+
+	void AppendAssetDebugId(const UStateTree* InStateTree, const FStateTreeIndex16 AssetDebugId);
+	bool GetAssetFromDebugId(const FStateTreeIndex16 AssetDebugId, TWeakObjectPtr<const UStateTree>& WeakStateTree) const;
 
 protected:
 	/** IStateTreeDebuggerProvider interface */
@@ -40,5 +44,13 @@ private:
 	TMap<FStateTreeInstanceDebugId, uint32> InstanceIdToDebuggerEntryTimelines;
 	TArray<UE::StateTreeDebugger::FInstanceDescriptor> Descriptors;
 	TArray<TSharedRef<TraceServices::TPointTimeline<FStateTreeTraceEventVariantType>>> EventsTimelines;
+
+	struct FStateTreeDebugIdPair
+	{
+		TWeakObjectPtr<const UStateTree> WeakStateTree;
+		FStateTreeIndex16 Id;
+	};
+
+	TArray<FStateTreeDebugIdPair> StateTreeAssets;
 };
 #endif // WITH_STATETREE_DEBUGGER

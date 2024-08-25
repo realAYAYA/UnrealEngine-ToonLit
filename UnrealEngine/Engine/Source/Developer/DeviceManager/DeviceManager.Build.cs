@@ -15,7 +15,8 @@ public class DeviceManager : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[] {
 				"Core",
-                "InputCore",
+				"CoreUObject",
+				"InputCore",
 				"Slate",
 				"SlateCore",
 				"TargetPlatform",

@@ -13,11 +13,21 @@
 #include "Editor.h"
 #include "ActorFactories/ActorFactory.h"
 #include "EditorViewportClient.h"
+#include "HAL/IConsoleManager.h" // FAutoConsoleVariableRef
 #include "LevelEditorViewport.h"
 #include "SnappingUtils.h"
 #include "LandscapeHeightfieldCollisionComponent.h"
 #include "LandscapeComponent.h"
 #include "Editor/EditorPerProjectUserSettings.h"
+
+namespace ActorPositioningLocals
+{
+	bool bAllowNonPrimitiveComponentHits = true;
+	static FAutoConsoleVariableRef CVarAllowNonPrimitiveComponentHits(
+		TEXT("PlacementMode.AllowNonPrimitiveComponentHits"),
+		bAllowNonPrimitiveComponentHits,
+		TEXT("When raycasting the world in placement mode, allow hits of physics objects that are not tied to a UPrimitiveComponent (to work with non-actor workflows)."));
+}
 
 FActorPositionTraceResult FActorPositioning::TraceWorldForPositionWithDefault(const FViewportCursorLocation& Cursor, const FSceneView& View, const TArray<AActor*>* IgnoreActors)
 {
@@ -36,9 +46,6 @@ FActorPositionTraceResult FActorPositioning::TraceWorldForPositionWithDefault(co
 FActorPositionTraceResult FActorPositioning::TraceWorldForPosition(const FViewportCursorLocation& Cursor, const FSceneView& View, const TArray<AActor*>* IgnoreActors)
 {
 	const auto* ViewportClient = Cursor.GetViewportClient();
-
-	FActorPositionTraceResult Results;
-
 	const auto ViewportType = ViewportClient->GetViewportType();
 
 	// Start with a ray that encapsulates the entire world
@@ -53,56 +60,91 @@ FActorPositionTraceResult FActorPositioning::TraceWorldForPosition(const FViewpo
 	return TraceWorldForPosition(*ViewportClient->GetWorld(), View, RayStart, RayEnd, IgnoreActors);
 }
 
-/** Check to see if the specified hit result should be ignored from actor positioning calculations for the specified scene view */
-bool IsHitIgnored(const FHitResult& InHit, const FSceneView& InSceneView)
+/**
+ * Prunes list of hit results for actor positioning calculations based on conditions that could be tested
+ * on the game thread and returns a list of primitives for the remaining this.
+ * @note If a non-primitive based hit is found and ActorPositioningLocals::bAllowNonPrimitiveComponentHits is true then
+ * an empty weak obj ptr will be added to the result to represent the hit.
+ */
+TArray<TWeakObjectPtr<const UPrimitiveComponent>> FilterHitsGameThread(TArray<FHitResult>& InOutHits)
 {
-	// We're using the SceneProxy and ViewRelevance here, we should execute from the render thread but since
-	// we're also accessing UObjects, the game thread should be blocked during this call.
-	check(IsInParallelRenderingThread());
-	const FActorInstanceHandle& HitObjHandle = InHit.HitObjectHandle;
-	
-	// Try and find a primitive component for the hit
-	const UPrimitiveComponent* PrimitiveComponent = Cast<UPrimitiveComponent>(HitObjHandle.GetRootComponent());
+	check(IsInGameThread() || IsInParallelGameThread());
+	TArray<TWeakObjectPtr<const UPrimitiveComponent>> WeakPrimitives;
+	WeakPrimitives.Reserve(InOutHits.Num());
 
-	if (!PrimitiveComponent)
+	InOutHits.RemoveAll([&WeakPrimitives](const FHitResult& Hit)
 	{
-		PrimitiveComponent = InHit.Component.Get();
-	}
-	if (PrimitiveComponent && PrimitiveComponent->IsA(ULandscapeHeightfieldCollisionComponent::StaticClass()))
-	{
-		PrimitiveComponent = CastChecked<ULandscapeHeightfieldCollisionComponent>(PrimitiveComponent)->GetRenderComponent();
-	}
-
-	if (InHit.bStartPenetrating || !PrimitiveComponent)
-	{
-		return true;
-	}
-
-	// Ignore volumes and shapes
-	if (HitObjHandle.DoesRepresentClass(AVolume::StaticClass()))
-	{
-		return true;
-	}
-	else if (PrimitiveComponent->IsA(UShapeComponent::StaticClass()))
-	{
-		return true;
-	}
-
-	// Only use this component if it is visible in the specified scene views
-	bool bIsRenderedOnScreen = false;
-	bool bIgnoreTranslucentPrimitive = false;
-	const bool bConsiderInvisibleComponentForPlacement = PrimitiveComponent->bConsiderForActorPlacementWhenHidden;
-	{				
-		if (PrimitiveComponent && PrimitiveComponent->SceneProxy)
+		if (Hit.bStartPenetrating)
 		{
-			const FPrimitiveViewRelevance ViewRelevance = PrimitiveComponent->SceneProxy->GetViewRelevance(&InSceneView);
-			// BSP is a bit special in that its bDrawRelevance is false even when drawn as wireframe because InSceneView.Family->EngineShowFlags.BSPTriangles is off
-			bIsRenderedOnScreen = ViewRelevance.bDrawRelevance || (PrimitiveComponent->IsA(UModelComponent::StaticClass()) && InSceneView.Family->EngineShowFlags.BSP);
-			bIgnoreTranslucentPrimitive = ViewRelevance.HasTranslucency() && !GetDefault<UEditorPerProjectUserSettings>()->bAllowSelectTranslucent;
+			return true;
 		}
+
+		const FActorInstanceHandle& HitObjHandle = Hit.HitObjectHandle;
+
+		// Try and find a primitive component for the hit
+		const UPrimitiveComponent* PrimitiveComponent = Cast<UPrimitiveComponent>(HitObjHandle.GetRootComponent());
+
+		if (!PrimitiveComponent)
+		{
+			PrimitiveComponent = Hit.Component.Get();
+		}
+		if (PrimitiveComponent && PrimitiveComponent->IsA(ULandscapeHeightfieldCollisionComponent::StaticClass()))
+		{
+			PrimitiveComponent = CastChecked<ULandscapeHeightfieldCollisionComponent>(PrimitiveComponent)->GetRenderComponent();
+		}
+
+		if (!PrimitiveComponent)
+		{
+			// If we don't have a primitive component, either ignore the hit, or pass it through if the CVar is set appropriately.
+			// i.e. ignoring is the inverse of the "allow non primitive hits" CVar.
+			if (ActorPositioningLocals::bAllowNonPrimitiveComponentHits)
+			{
+				// Keep arrays in sync by adding an invalid weak pointer for that hit.
+				WeakPrimitives.AddDefaulted();
+				return false;
+			}
+			return true;
+		}
+
+		// Ignore volumes and shapes
+		if (HitObjHandle.DoesRepresentClass(AVolume::StaticClass()))
+		{
+			return true;
+		}
+
+		if (PrimitiveComponent->IsA(UShapeComponent::StaticClass()))
+		{
+			return true;
+		}
+
+		WeakPrimitives.Add(PrimitiveComponent);
+		return false;
+	});
+
+	return MoveTemp(WeakPrimitives);
+}
+
+/** Check to see if the specified hit result should be ignored from actor positioning calculations for the specified scene view */
+bool IsHitIgnoredRenderingThread(const TWeakObjectPtr<const UPrimitiveComponent>& InWeakPrimitiveComponent, const FSceneView& InSceneView)
+{
+	// We're using the SceneProxy and ViewRelevance here, we should execute from the render thread
+	check(IsInParallelRenderingThread());
+
+	const UPrimitiveComponent* PrimitiveComponent = InWeakPrimitiveComponent.Get();
+	if (PrimitiveComponent && PrimitiveComponent->SceneProxy)
+	{
+		const bool bConsiderInvisibleComponentForPlacement = PrimitiveComponent->bConsiderForActorPlacementWhenHidden;
+
+		// Only use this component if it is visible in the specified scene views
+		const FPrimitiveViewRelevance ViewRelevance = PrimitiveComponent->SceneProxy->GetViewRelevance(&InSceneView);
+		// BSP is a bit special in that its bDrawRelevance is false even when drawn as wireframe because InSceneView.Family->EngineShowFlags.BSPTriangles is off
+		const bool bIsRenderedOnScreen = ViewRelevance.bDrawRelevance || (PrimitiveComponent->IsA(UModelComponent::StaticClass()) && InSceneView.Family->EngineShowFlags.BSP);
+		const bool bIgnoreTranslucentPrimitive = ViewRelevance.HasTranslucency() && !GetDefault<UEditorPerProjectUserSettings>()->bAllowSelectTranslucent;
+		
+		return (!bIsRenderedOnScreen && !bConsiderInvisibleComponentForPlacement) || bIgnoreTranslucentPrimitive;
 	}
 
-	return (!bIsRenderedOnScreen && !bConsiderInvisibleComponentForPlacement) || bIgnoreTranslucentPrimitive;
+	return false;
 }
 
 FActorPositionTraceResult FActorPositioning::TraceWorldForPosition(const UWorld& InWorld, const FSceneView& InSceneView, const FVector& RayStart, const FVector& RayEnd, const TArray<AActor*>* IgnoreActors)
@@ -120,13 +162,20 @@ FActorPositionTraceResult FActorPositioning::TraceWorldForPosition(const UWorld&
 	if ( InWorld.LineTraceMultiByObjectType(Hits, RayStart, RayEnd, FCollisionObjectQueryParams(FCollisionObjectQueryParams::InitType::AllObjects), Param) )
 	{
 		{
-			// Send IsHitIgnored on the render thread since we're accessing view relevance
+			// Filter out anything that should be ignored based on information accessible on the game thread
+			// and build list of remaining weak primitive components that need to be filtered on the rendering thread 
+			TArray<TWeakObjectPtr<const UPrimitiveComponent>> WeakPrimitives = FilterHitsGameThread(Hits);
+			ensure(Hits.Num() == WeakPrimitives.Num());
+
+			// Send IsHitIgnoredRenderingThread on the render thread since we're accessing view relevance
 			ENQUEUE_RENDER_COMMAND(TraceWorldForPosition_FilterHitsByViewRelevance)(
-				[&Hits, &InSceneView](FRHICommandListImmediate& RHICmdList)
+				[&Hits, &WeakPrimitives, &InSceneView](FRHICommandListImmediate& RHICmdList)
 				{
 					// Filter out anything that should be ignored
-					Hits.RemoveAll([&InSceneView](const FHitResult& Hit){
-						return IsHitIgnored(Hit, InSceneView);
+					int32 Index = 0;
+					Hits.RemoveAll([&Index, &InSceneView, &WeakPrimitives](const FHitResult&)
+					{
+						return IsHitIgnoredRenderingThread(WeakPrimitives[Index++], InSceneView);
 					});
 				}
 			);

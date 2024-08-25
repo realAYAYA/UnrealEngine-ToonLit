@@ -107,7 +107,10 @@ protected:
 	virtual void PostRedo( bool bSuccess );
 
 	virtual void BindCommands() override;
-
+	virtual void OnDragEnter(const FGeometry& MyGeometry, const FDragDropEvent& DragDropEvent) override;
+	virtual void OnDragLeave(const FDragDropEvent& DragDropEvent) override;
+	virtual FReply OnDrop(const FGeometry& MyGeometry, const FDragDropEvent& DragDropEvent) override;
+	
 protected:
 	// Viewport client
 	TSharedPtr<class FAnimationViewportClient> LevelViewportClient;

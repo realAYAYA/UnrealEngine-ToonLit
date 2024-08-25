@@ -104,6 +104,16 @@ uint16 UBTTask_RunEQSQuery::GetInstanceMemorySize() const
 	return sizeof(FBTEnvQueryTaskMemory);
 }
 
+void UBTTask_RunEQSQuery::InitializeMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryInit::Type InitType) const
+{
+	InitializeNodeMemory<FBTEnvQueryTaskMemory>(NodeMemory, InitType);
+}
+
+void UBTTask_RunEQSQuery::CleanupMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryClear::Type CleanupType) const
+{
+	CleanupNodeMemory<FBTEnvQueryTaskMemory>(NodeMemory, CleanupType);
+}
+
 void UBTTask_RunEQSQuery::OnQueryFinished(TSharedPtr<FEnvQueryResult> Result)
 {
 	if (Result->IsAborted())

@@ -9,10 +9,8 @@
 #include "LocalVertexFactory.h"
 #include "PrimitiveViewRelevance.h"
 
-// TODO: Heavy work in progress and experiment (do not use!) vertex factory
-// that performs Nanite base pass material shading with compute shaders 
-// instead of vertex and pixel shaders. This will (likely) eventually replace
-// the Nanite::FVertexFactory at some point.
+// Vertex factory that performs Nanite base pass material shading with 
+// compute shaders instead of vertex and pixel shaders.
 class FNaniteVertexFactory final : public FVertexFactory
 {
 	DECLARE_VERTEX_FACTORY_TYPE_API(FNaniteVertexFactory, ENGINE_API);

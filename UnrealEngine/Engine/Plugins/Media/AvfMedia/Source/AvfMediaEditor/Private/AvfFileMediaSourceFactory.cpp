@@ -29,7 +29,6 @@ UAvfFileMediaSourceFactory::UAvfFileMediaSourceFactory(const FObjectInitializer&
 	Formats.Add(TEXT("m4a;Apple MPEG-4 Audio"));
 	Formats.Add(TEXT("m4v;Apple MPEG-4 Video"));
 	Formats.Add(TEXT("mov;Apple QuickTime Movie"));
-	Formats.Add(TEXT("mp3;MPEG-2 Audio"));
 	Formats.Add(TEXT("mp4;MPEG-4 Movie"));
 	Formats.Add(TEXT("sdv;Samsung Digital Video"));
 	Formats.Add(TEXT("snd;Sound File"));

@@ -4,7 +4,9 @@
 
 #include "CoreMinimal.h"
 
-
+/**
+* DC Viewport Postprocess interface
+*/
 class DISPLAYCLUSTER_API IDisplayClusterViewport_CustomPostProcessSettings
 {
 public:

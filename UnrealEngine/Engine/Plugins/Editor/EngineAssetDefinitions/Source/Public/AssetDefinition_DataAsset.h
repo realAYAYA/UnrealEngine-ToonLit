@@ -33,25 +33,3 @@ public:
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
 #include "CoreMinimal.h"
 #endif
-
-
-UCLASS()
-class UUndoableResolveHandler : public UObject
-{
-public:
-	GENERATED_BODY()
-	void SetManagedObject(UObject* Object);
-	void MarkResolved();
-
-	virtual void PostEditUndo() override;
-
-private:
-	FString BaseRevisionNumber;
-	FString CurrentRevisionNumber;
-	FString BackupFilepath;
-	UObject* ManagedObject;
-	TSharedPtr<class ISourceControlChangelist> CheckinIdentifier;
-	
-	UPROPERTY()
-	bool bShouldBeResolved = false;
-};

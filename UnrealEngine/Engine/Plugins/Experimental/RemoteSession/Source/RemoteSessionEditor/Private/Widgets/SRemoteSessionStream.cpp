@@ -65,9 +65,9 @@ URemoteSessionStreamWidgetUserData::URemoteSessionStreamWidgetUserData()
 TWeakPtr<SRemoteSessionStream> SRemoteSessionStream::WidgetInstance;
 
 
-void SRemoteSessionStream::RegisterNomadTabSpawner()
+void SRemoteSessionStream::RegisterNomadTabSpawner(TSharedRef<FWorkspaceItem> InWorkspaceItem)
 {
-	auto RegisterTabSpawner = []()
+	auto RegisterTabSpawner = [InWorkspaceItem]()
 	{
 		LLM_SCOPE_BYNAME(TEXT("RemoteSession/RemoteSessionStream"));
 		FLevelEditorModule& LevelEditorModule = FModuleManager::LoadModuleChecked<FLevelEditorModule>(RemoteSessionStream::LevelEditorModuleName);
@@ -76,7 +76,7 @@ void SRemoteSessionStream::RegisterNomadTabSpawner()
 		LevelEditorTabManager->RegisterTabSpawner(RemoteSessionStream::RemoteSessionStreamApp, FOnSpawnTab::CreateStatic(&RemoteSessionStream::CreateMediaFrameworkCaptureCameraViewportTab))
 			.SetDisplayName(LOCTEXT("TabTitle", "Remote Session Stream"))
 			.SetTooltipText(LOCTEXT("TooltipText", "Stream a particular UMG to a Remote Session app."))
-			.SetGroup(WorkspaceMenu::GetMenuStructure().GetToolsCategory())
+			.SetGroup(InWorkspaceItem)
 			.SetIcon(FSlateIcon(FRemoteSessionEditorStyle::GetStyleSetName(), "RemoteSessionStream"));
 	};
 

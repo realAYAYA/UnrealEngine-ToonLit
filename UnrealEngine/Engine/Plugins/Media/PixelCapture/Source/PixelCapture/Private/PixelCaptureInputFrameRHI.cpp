@@ -6,7 +6,7 @@
 FPixelCaptureInputFrameRHI::FPixelCaptureInputFrameRHI(FTexture2DRHIRef InFrameTexture)
 	: FrameTexture(InFrameTexture)
 {
-	Metadata.SourceTime = FPlatformTime::Cycles64();
+	Metadata.SourceTime = rtc::TimeMillis();
 }
 
 int32 FPixelCaptureInputFrameRHI::GetType() const

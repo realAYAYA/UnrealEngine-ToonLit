@@ -104,18 +104,46 @@ namespace
 
 		return x;
 	}
+
+	class FFreeImageWrapper
+	{
+	public:
+		static bool IsValid() { return FreeImageDllHandle != nullptr; }
+
+		static void FreeImage_Initialise(); // Loads and inits FreeImage on first call
+
+	private:
+		static void* FreeImageDllHandle; // Lazy init on first use, never release for now
+	};
+
+	void* FFreeImageWrapper::FreeImageDllHandle = nullptr;
+
+	void FFreeImageWrapper::FreeImage_Initialise()
+	{
+		if (FreeImageDllHandle != nullptr)
+		{
+			return;
+		}
+
+		// Push/PopDllDirectory are soooooo not threadsafe!
+		// Must load library in main thread before doing parallel processing
+		check(IsInGameThread());
+
+		if (FreeImageDllHandle == nullptr)
+		{
+			FString FreeImageDir = FPaths::Combine(FPaths::EngineDir(), TEXT("Binaries/ThirdParty/FreeImage"), FPlatformProcess::GetBinariesSubdirectory());
+			FString FreeImageLibDir = FPaths::Combine(FreeImageDir, TEXT(FREEIMAGE_LIB_FILENAME));
+			FPlatformProcess::PushDllDirectory(*FreeImageDir);
+			FreeImageDllHandle = FPlatformProcess::GetDllHandle(*FreeImageLibDir);
+			FPlatformProcess::PopDllDirectory(*FreeImageDir);
+		}
+
+		if (FreeImageDllHandle)
+		{
+			::FreeImage_Initialise();
+		}
+	}
 }
-
-class FFreeImageWrapper
-{
-public:
-	static bool IsValid() { return FreeImageDllHandle != nullptr; }
-
-	static void FreeImage_Initialise(); // Loads and inits FreeImage on first call
-
-private:
-	static void* FreeImageDllHandle; // Lazy init on first use, never release for now
-};
 
 class DatasmithTextureResizeInternal
 {
@@ -660,34 +688,6 @@ void DatasmithTextureResizeInternal::GetBitmapPixelInfo(FIBITMAP* Bitmap, int32&
 	{
 		break;
 	}
-	}
-}
-
-void* FFreeImageWrapper::FreeImageDllHandle = nullptr;
-
-void FFreeImageWrapper::FreeImage_Initialise()
-{
-	if ( FreeImageDllHandle != nullptr )
-	{
-		return;
-	}
-
-	// Push/PopDllDirectory are soooooo not threadsafe!
-	// Must load library in main thread before doing parallel processing
-	check(IsInGameThread());
-
-	if ( FreeImageDllHandle == nullptr )
-	{
-		FString FreeImageDir = FPaths::Combine( FPaths::EngineDir(), TEXT("Binaries/ThirdParty/FreeImage"), FPlatformProcess::GetBinariesSubdirectory() );
-		FString FreeImageLibDir = FPaths::Combine( FreeImageDir, TEXT( FREEIMAGE_LIB_FILENAME ));
-		FPlatformProcess::PushDllDirectory( *FreeImageDir );
-		FreeImageDllHandle = FPlatformProcess::GetDllHandle( *FreeImageLibDir );
-		FPlatformProcess::PopDllDirectory( *FreeImageDir );
-	}
-
-	if ( FreeImageDllHandle )
-	{
-		::FreeImage_Initialise();
 	}
 }
 

@@ -3,11 +3,10 @@
 #include "Policy/VIOSO/DisplayClusterProjectionVIOSOLibrary.h"
 
 #include "DisplayClusterProjectionLog.h"
-#include "DisplayClusterProjectionStrings.h"
 
-#include "Interfaces/IPluginManager.h"
 #include "HAL/PlatformProcess.h"
-#include "Misc/Paths.h"
+#include "Misc/DisplayClusterHelpers.h"
+#include "PDisplayClusterProjectionStrings.h"
 
 #if !WITH_VIOSO_LIBRARY
 FDisplayClusterProjectionVIOSOLibrary::FDisplayClusterProjectionVIOSOLibrary()
@@ -61,10 +60,13 @@ void FDisplayClusterProjectionVIOSOLibrary::ReleaseDLL()
 
 FDisplayClusterProjectionVIOSOLibrary::FDisplayClusterProjectionVIOSOLibrary()
 {
-	const FString PluginDir = IPluginManager::Get().FindPlugin(DisplayClusterProjectionStrings::ThirdParty::PluginName)->GetBaseDir();
-	const FString DllPath   = FPaths::Combine(PluginDir, DisplayClusterProjectionStrings::ThirdParty::VIOSO::Path, DisplayClusterProjectionStrings::ThirdParty::VIOSO::DLL);
-	
+	const FString DllPath = DisplayClusterHelpers::filesystem::GetFullPathForThirdPartyDLL(DisplayClusterProjectionStrings::ThirdParty::DLL::VIOSO);
+	const FString DllDirectory = FPaths::GetPath(DllPath);
+
+	FPlatformProcess::PushDllDirectory(*DllDirectory);
 	VIOSO_DLL_Handler = FPlatformProcess::GetDllHandle(*DllPath);
+	FPlatformProcess::PopDllDirectory(*DllDirectory);
+
 	if (VIOSO_DLL_Handler)
 	{
 		if (InitializeDLL())

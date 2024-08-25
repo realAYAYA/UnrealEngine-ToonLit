@@ -20,7 +20,7 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 	{
 	public:
 
-		FGather() {}
+		FGather() = default;
 		virtual ~FGather() = default;
 
 	private:
@@ -29,56 +29,51 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 
 	public:
 
-		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) const override
+		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) override
 		{
 			check(InputTensors.Num() == 2)
 			check(OutputTensors.Num() == 1)
 
-			const NNE::Internal::FTensor& Data = *InputTensors[0];
-			const NNE::Internal::FTensor& Indices = *InputTensors[1];
-			const NNE::FTensorShape& DataShape = Data.GetShape();
-			const NNE::FTensorShape& IndicesShape = Indices.GetShape();
+			const NNE::Internal::FTensor& DataTensor = *InputTensors[0];
+			const NNE::Internal::FTensor& IndicesTensor = *InputTensors[1];
+			const NNE::FTensorShape& DataShape = DataTensor.GetShape();
+			const NNE::FTensorShape& IndicesShape = IndicesTensor.GetShape();
 
 			const int32 OutputRank = IndicesShape.Rank() + DataShape.Rank() - 1;
+			
 			TArray<uint32> OutputShapeData;
-			int32 DataRankIdx = 0;
-
 			OutputShapeData.Reserve(OutputRank);
-			for (;DataRankIdx < Axis; ++DataRankIdx)
+
+			int32 DataRankIdx = 0;
+			while (DataRankIdx < Axis)
 			{
-				OutputShapeData.Add(DataShape.GetData()[DataRankIdx]);
+				OutputShapeData.Add(DataShape.GetData()[DataRankIdx++]);
 			}
 
 			OutputShapeData.Append(IndicesShape.GetData());
-			++DataRankIdx;
+			DataRankIdx++;
 
-			for (; DataRankIdx < DataShape.Rank(); ++DataRankIdx)
+			while (DataRankIdx < DataShape.Rank())
 			{
-				OutputShapeData.Add(DataShape.GetData()[DataRankIdx]);
+				OutputShapeData.Add(DataShape.GetData()[DataRankIdx++]);
 			}
 
 			NNE::FTensorShape OutputShape = NNE::FTensorShape::Make(OutputShapeData);
-
 			check(OutputShape.Rank() == OutputRank);
+
 			OutputTensors[0]->SetShape(OutputShape);
 
-			Internal::CPUHelper::Gather::Apply(Data, Indices, Axis, *OutputTensors[0]);
-
-			if (!OutputTensors[0]->HasPreparedData())
-			{
-				UE_LOG(LogNNE, Warning, TEXT("Gather: Output could not be computed as a constant tensor, however Gather is not implemented on GPU at the moment."));
-				return -1;
-			}
+			Internal::CPUHelper::Gather::Apply(DataTensor, IndicesTensor, Axis, *OutputTensors[0]);
 
 			return 0;
 		};
 		
 		virtual bool Initialize(TConstArrayView<NNE::FTensorDesc> InputTensorDescs, TConstArrayView<NNE::FTensorDesc> OutputTensorDescs, const NNE::FAttributeMap& Attributes) override
 		{
-			const int32 MaxNumDimensions = NNEHlslShaders::Internal::FGatherConstants::MAX_NUM_DIMENSIONS;
-			
 			check(InputTensorDescs.Num() == 2)
 			check(OutputTensorDescs.Num() == 1)
+
+			const int32 MaxNumDimensions = NNEHlslShaders::Internal::FGatherConstants::MAX_NUM_DIMENSIONS;
 
 			const NNE::FTensorDesc& Data = InputTensorDescs[0];
 			const NNE::FTensorDesc& Indices = InputTensorDescs[1];
@@ -103,7 +98,7 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 				return false;
 			}
 			if (Axis < -Data.GetShape().Rank())
-{
+			{
 				UE_LOG(LogNNE, Warning, TEXT("Gather Axis attribute should be superior or equal to minus the first input rank"));
 				return false;
 			}
@@ -114,8 +109,6 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 
 		virtual void Dispatch(FRDGBuilder& GraphBuilder, TConstArrayView<FTensorRDGRef> InputTensors, TConstArrayView<FTensorRDGRef> OutputTensors) override
 		{
-			UE_LOG(LogNNE, Warning, TEXT("Gather: Output should be constant and already uploaded to GPU memory. Dispatch should not need to be called."));
-			/*
 			using namespace UE::NNEHlslShaders::Internal;
 
 			check(InputTensors.Num() == 2)
@@ -155,7 +148,6 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 				ComputeShader,
 				Parameters,
 				ThreadGroupCount);
-			*/
 		}
 	};
 
@@ -163,8 +155,6 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 	{
 		bool bIsValid = true;
 
-		//This match version 13 of the Gather operator
-		//https://github.com/onnx/onnx/blob/main/docs/Operators.md#Gather
 		FAttributeValidator AttributeValidator;
 		AttributeValidator.AddOptional(TEXT("axis"), ENNEAttributeDataType::Int32);
 		bIsValid &= AttributeValidator.Validate(AttributeMap);
@@ -192,7 +182,10 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 
 	bool RegisterGatherOperator(FOperatorRegistryHlsl& Registry)
 	{
-		Registry.OpAdd(TEXT("Gather"), CreateGatherOperator, ValidateGatherOperator);
+		// Note: support of a particular version is partial with respect to tensor data types (only the most typical ones are usually supported).
+		Registry.OpAdd({{TEXT("Gather"), TEXT("Onnx")}, 1}, CreateGatherOperator, ValidateGatherOperator);
+		Registry.OpAdd({{TEXT("Gather"), TEXT("Onnx")}, 11}, CreateGatherOperator, ValidateGatherOperator);
+		Registry.OpAdd({{TEXT("Gather"), TEXT("Onnx")}, 13}, CreateGatherOperator, ValidateGatherOperator);
 		return true;
 	}
 } // UE::NNERuntimeRDG::Private::Hlsl

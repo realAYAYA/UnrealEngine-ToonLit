@@ -314,18 +314,18 @@ enum class ENDISkeletalMesh_SourceMode : uint8
 	Default behavior.
 	- Use "Source" when specified (either set explicitly or via blueprint with Set Niagara Skeletal Mesh Component).
 	- When no source is specified, fall back on attached actor or component.
+	- If no attach actor look at the default mesh
 	*/
 	Default,
 
-	/**
-	Only use "Source" (either set explicitly or via blueprint with Set Niagara Skeletal Mesh Component).
-	*/
+	/**	Only use "Source" (either set explicitly or via blueprint with Set Niagara Skeletal Mesh Component). */
 	Source,
 
-	/**
-	Only use the parent actor or component the system is attached to.
-	*/
-	AttachParent
+	/**	Only use the parent actor or component the system is attached to. */
+	AttachParent,
+
+	/** Only use the "Default Mesh" specified. */
+	DefaultMeshOnly,
 };
 
 UENUM()
@@ -392,15 +392,18 @@ protected:
 class FSkeletalMeshGpuSpawnStaticBuffers : public FRenderResource
 {
 public:
-
 	virtual ~FSkeletalMeshGpuSpawnStaticBuffers() override;
 
-	FORCEINLINE_DEBUGGABLE void Initialise(struct FNDISkeletalMesh_InstanceData* InstData, const FSkeletalMeshLODRenderData& SkeletalMeshLODRenderData,const FSkeletalMeshSamplingLODBuiltData* SkeletalMeshSamplingLODBuiltData, FNiagaraSystemInstance* SystemInstance);
+	FORCEINLINE_DEBUGGABLE void Initialise(struct FNDISkeletalMesh_InstanceData* InstData, int32 InLODIndex, const FSkeletalMeshLODRenderData& SkeletalMeshLODRenderData, const FSkeletalMeshSamplingLODBuiltData* SkeletalMeshSamplingLODBuiltData, FNiagaraSystemInstance* SystemInstance);
 
 	virtual void InitRHI(FRHICommandListBase& RHICmdList) override;
 	virtual void ReleaseRHI() override;
 
 	virtual FString GetFriendlyName() const override { return TEXT("FSkeletalMeshGpuSpawnStaticBuffers"); }
+
+	USceneComponent* GetSceneComponent() const { return SceneComponent.Get(); }
+
+	int32 GetLODIndex() const { return LODIndex; };
 
 	FRHIShaderResourceView* GetBufferTriangleUniformSamplerProbAliasSRV() const { return BufferTriangleUniformSamplerProbAliasSRV; }
 	FRHIShaderResourceView* GetBufferTriangleMatricesOffsetSRV() const { return BufferTriangleMatricesOffsetSRV; }
@@ -436,6 +439,8 @@ public:
 	int32 GetFilteredSocketBoneOffset() const { return FilteredSocketBoneOffset; }
 
 protected:
+	TWeakObjectPtr<USceneComponent> SceneComponent = nullptr;
+
 	FBufferRHIRef BufferTriangleUniformSamplerProbAliasRHI = nullptr;
 	FShaderResourceViewRHIRef BufferTriangleUniformSamplerProbAliasSRV = nullptr;
 	FBufferRHIRef BufferTriangleMatricesOffsetRHI = nullptr;
@@ -478,6 +483,7 @@ protected:
 	uint32 NumWeights = 0;
 
 	// Cached data for resource creation on RenderThread
+	int32 LODIndex = INDEX_NONE;
 	const FSkeletalMeshLODRenderData* LODRenderData = nullptr;
 	const FSkeletalMeshSamplingLODBuiltData* SkeletalMeshSamplingLODBuiltData = nullptr;
 	uint32 TriangleCount = 0;
@@ -626,12 +632,15 @@ struct FNDISkeletalMesh_InstanceData
 	/** True if the mesh we're using allows area weighted sampling on GPU. */
 	uint32 bIsGpuUniformlyDistributedSampling : 1;
 
+	uint32 bReadDeformedGeometry : 1 = true;
+
 	/** True if the mesh we're using is to be rendered in unlimited bone influences mode. */
 	uint32 bUnlimitedBoneInfluences : 1;
 	const FSkinWeightDataVertexBuffer* MeshSkinWeightBuffer;
 	const FSkinWeightLookupVertexBuffer* MeshSkinWeightLookupBuffer;
-	uint32 MeshWeightStrideByte;
-	uint32 MeshSkinWeightIndexSizeByte;
+	uint32 MeshBoneWeightStrideBytes;
+	uint32 MeshBoneIndexSizeBytes;
+	uint32 MeshBoneWeightSizeBytes;
 
 	/** Extra mesh data upload to GPU.*/
 	FSkeletalMeshGpuSpawnStaticBuffers* MeshGpuSpawnStaticBuffers;
@@ -665,6 +674,7 @@ struct FNDISkeletalMesh_InstanceData
 		return CachedLODData ? &CachedLODData->SkinWeightVertexBuffer : nullptr;
 	}
 
+	FTransform CalculateComponentTransform(FNiagaraSystemInstance* SystemInstance) const;
 	void UpdateFilteredSocketTransforms();
 	TArray<FTransform3f>& GetFilteredSocketsWriteBuffer() { return FilteredSocketTransforms[FilteredSocketTransformsIndex]; }
 	const TArray<FTransform3f>& GetFilteredSocketsCurrBuffer() const { return FilteredSocketTransforms[FilteredSocketTransformsIndex]; }
@@ -689,6 +699,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Mesh", meta = (DisallowedClasses = "/Script/ApexDestruction.DestructibleMesh"))
 	TSoftObjectPtr<USkeletalMesh> PreviewMesh;
 #endif
+
+	/** Mesh used to sample from when not overridden by a source actor from the scene. This mesh is NOT removed from cooked builds. */
+	UPROPERTY(EditAnywhere, Category = "Mesh", meta = (DisallowedClasses = "/Script/ApexDestruction.DestructibleMesh"))
+	TObjectPtr<USkeletalMesh> DefaultMesh;
 
 protected:
 	/** The source actor from which to sample. Takes precedence over the direct mesh. Note that this can only be set when used as a user variable on a component in the world.*/
@@ -754,6 +768,13 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Performance")
 	bool bRequireCurrentFrameData = true;
 
+	/**
+	Overrides the project setting and allows you to opt out of reading from deformed geometry.
+	These is not performance gain from doing this, the branches will still exist in the generated code.
+	*/
+	UPROPERTY(EditAnywhere, Category = "Performance")
+	bool bReadDeformedGeometry = true;
+
 	/** Cached change id off of the data interface.*/
 	uint32 ChangeId;
 
@@ -775,7 +796,6 @@ public:
 	virtual int32 PerInstanceDataSize()const override { return sizeof(FNDISkeletalMesh_InstanceData); }
 	virtual bool HasPreSimulateTick() const override { return true; }
 
-	NIAGARA_API virtual void GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)override;
 	NIAGARA_API virtual void GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction &OutFunc)override;
 	NIAGARA_API virtual bool Equals(const UNiagaraDataInterface* Other) const override;
 	virtual bool CanExecuteOnTarget(ENiagaraSimTarget Target)const override { return true; }
@@ -817,6 +837,10 @@ public:
 	NIAGARA_API virtual void ProvidePerInstanceDataForRenderThread(void* DataForRenderThread, void* PerInstanceData, const FNiagaraSystemInstanceID& SystemInstance) override;
 
 protected:
+#if WITH_EDITORONLY_DATA
+	NIAGARA_API virtual void GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const override;
+#endif
+
 	NIAGARA_API virtual bool CopyToInternal(UNiagaraDataInterface* Destination) const override;
 
 	// Bind/unbind delegates to release references to the source actor & component.
@@ -834,8 +858,9 @@ protected:
 	//Triangle sampling
 	//Triangles are sampled a using MeshTriangleCoordinates which are composed of Triangle index and a bary centric coordinate on that triangle.
 public:
-
-	NIAGARA_API void GetTriangleSamplingFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions);
+#if WITH_EDITORONLY_DATA
+	NIAGARA_API void GetTriangleSamplingFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions) const;
+#endif
 	NIAGARA_API void BindTriangleSamplingFunction(const FVMExternalFunctionBindingInfo& BindingInfo, FNDISkeletalMesh_InstanceData* InstData, FVMExternalFunction &OutFunc);
 
 	template<typename FilterMode, typename AreaWeightingMode>
@@ -851,6 +876,7 @@ public:
 	void IsValidTriCoord(FVectorVMExternalFunctionContext& Context);
 
 	NIAGARA_API void GetTriangleData(FVectorVMExternalFunctionContext& Context);
+	void GetTriangleIndices(FVectorVMExternalFunctionContext& Context);
 
 	template<typename SkinningHandlerType, typename TransformHandlerType, typename VertexAccessorType, typename bInterpolated>
 	void GetTriCoordSkinnedData(FVectorVMExternalFunctionContext& Context);
@@ -858,15 +884,15 @@ public:
 	template<typename TransformHandlerType, typename bInterpolated>
 	void GetTriCoordSkinnedDataFallback(FVectorVMExternalFunctionContext& Context);
 
+	template<typename SkinningHandlerType, typename TransformHandlerType, typename VertexAccessorType, typename bInterpolated>
+	void VMGetSkinnedTriangleVertexData(FVectorVMExternalFunctionContext& Context);
+
 	NIAGARA_API void GetTriCoordColor(FVectorVMExternalFunctionContext& Context);
 
 	NIAGARA_API void GetTriCoordColorFallback(FVectorVMExternalFunctionContext& Context);
 
 	template<typename VertexAccessorType>
 	void GetTriCoordUV(FVectorVMExternalFunctionContext& Context);
-
-	template<typename SkinningHandlerType>
-	void GetTriCoordVertices(FVectorVMExternalFunctionContext& Context);
 
 	template<typename VertexAccessorType>
 	void GetTriangleCoordAtUV(FVectorVMExternalFunctionContext& Context);
@@ -894,7 +920,9 @@ private:
 	//Vertex sampling done with direct vertex indices.
 public:
 
-	NIAGARA_API void GetVertexSamplingFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions);
+#if WITH_EDITORONLY_DATA
+	NIAGARA_API void GetVertexSamplingFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions) const;
+#endif
 	NIAGARA_API void BindVertexSamplingFunction(const FVMExternalFunctionBindingInfo& BindingInfo, FNDISkeletalMesh_InstanceData* InstData, FVMExternalFunction &OutFunc);
 
 	NIAGARA_API void IsValidVertex(FVectorVMExternalFunctionContext& Context);
@@ -913,7 +941,7 @@ public:
 	template<typename VertexAccessorType>
 	void GetVertexData(FVectorVMExternalFunctionContext& Context);
 
-	template<typename SkinningHandlerType, typename TransformHandlerType, typename VertexAccessorType>
+	template<typename SkinningHandlerType, typename TransformHandlerType, typename Interpolated, typename VertexAccessorType>
 	void GetVertexSkinnedData(FVectorVMExternalFunctionContext& Context);
 
 	NIAGARA_API void GetVertexColor(FVectorVMExternalFunctionContext& Context);
@@ -940,7 +968,9 @@ private:
 	// Direct Bone + Socket Sampling
 
 public:
-	NIAGARA_API void GetSkeletonSamplingFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions);
+#if WITH_EDITORONLY_DATA
+	NIAGARA_API void GetSkeletonSamplingFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions) const;
+#endif
 	NIAGARA_API void BindSkeletonSamplingFunction(const FVMExternalFunctionBindingInfo& BindingInfo, FNDISkeletalMesh_InstanceData* InstData, FVMExternalFunction &OutFunc);
 
 	template<typename SkinningHandlerType, typename TransformHandlerType, typename bInterpolated>
@@ -985,10 +1015,15 @@ public:
 	static const FName RandomTriCoordName;
 	static const FName IsValidTriCoordName;
 	static const FName GetTriangleDataName;
+	static const FName GetTriangleIndicesName;
 	static const FName GetSkinnedTriangleDataName;
 	static const FName GetSkinnedTriangleDataWSName;
 	static const FName GetSkinnedTriangleDataInterpName;
 	static const FName GetSkinnedTriangleDataWSInterpName;
+	static const FName GetSkinnedTriangleVertexDataName;
+	static const FName GetSkinnedTriangleVertexDataWSName;
+	static const FName GetSkinnedTriangleVertexDataInterpName;
+	static const FName GetSkinnedTriangleVertexDataWSInterpName;
 	static const FName GetTriColorName;
 	static const FName GetTriUVName;
 	static const FName GetTriCoordVerticesName;
@@ -1029,6 +1064,8 @@ public:
 	static const FName GetVertexDataName;
 	static const FName GetSkinnedVertexDataName;
 	static const FName GetSkinnedVertexDataWSName;
+	static const FName GetSkinnedVertexDataInterpolatedName;
+	static const FName GetSkinnedVertexDataInterpolatedWSName;
 	static const FName GetVertexColorName;
 	static const FName GetVertexUVName;
 
@@ -1060,10 +1097,11 @@ struct FNiagaraDISkeletalMeshPassedDataToRT
 	const FSkeletalMeshConnectivityProxy* ConnectivityBuffer = nullptr;
 
 	bool bIsGpuUniformlyDistributedSampling = false;
-
+	bool bReadDeformedGeometry = false;
 	bool bUnlimitedBoneInfluences = false;
-	uint32 MeshWeightStrideByte = 0;
-	uint32 MeshSkinWeightIndexSizeByte = 0;
+	uint32 MeshBoneWeightStrideBytes = 0;
+	uint32 MeshBoneIndexSizeBytes = 0;
+	uint32 MeshBoneWeightSizeBytes = 0;
 	FMatrix44f Transform = FMatrix44f::Identity;
 	FMatrix44f PrevTransform = FMatrix44f::Identity;
 	float DeltaSeconds = 0.0f;

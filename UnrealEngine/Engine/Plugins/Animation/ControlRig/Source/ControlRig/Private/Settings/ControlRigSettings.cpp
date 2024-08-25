@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Settings/ControlRigSettings.h"
+#include "ControlRig.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ControlRigSettings)
 
@@ -9,6 +10,7 @@ UControlRigSettings::UControlRigSettings(const FObjectInitializer& ObjectInitial
 {
 #if WITH_EDITORONLY_DATA
 	DefaultShapeLibrary = LoadObject<UControlRigShapeLibrary>(nullptr, TEXT("/ControlRig/Controls/DefaultGizmoLibraryNormalized.DefaultGizmoLibraryNormalized"));
+	DefaultRootModule = TEXT("/ControlRig/Modules/Root.Root");
 #endif
 }
 
@@ -21,6 +23,7 @@ UControlRigEditorSettings::UControlRigEditorSettings(const FObjectInitializer& O
 #if WITH_EDITORONLY_DATA
 	bResetControlsOnCompile = true;
 	bResetControlsOnPinValueInteraction = false;
+	bResetPoseWhenTogglingEventQueue = true;
 	bEnableUndoForPoseInteraction = true;
 
 	ConstructionEventBorderColor = FLinearColor::Red;
@@ -28,6 +31,7 @@ UControlRigEditorSettings::UControlRigEditorSettings(const FObjectInitializer& O
 	BackwardsAndForwardsBorderColor = FLinearColor::Blue;
 	bShowStackedHierarchy = false;
 	MaxStackSize = 16;
+	bLeftMouseDragDoesMarquee = true;
 #endif
 }
 

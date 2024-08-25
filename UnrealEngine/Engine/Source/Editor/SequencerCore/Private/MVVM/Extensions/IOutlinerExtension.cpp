@@ -9,10 +9,9 @@
 #include "Misc/StringBuilder.h"
 #include "Styling/AppStyle.h"
 #include "Styling/SlateColor.h"
+#include "Widgets/SNullWidget.h"
 
-namespace UE
-{
-namespace Sequencer
+namespace UE::Sequencer
 {
 
 void GetParentPathImpl(TParentModelIterator<IOutlinerExtension>& Iterator, FStringBuilderBase& OutString)
@@ -139,6 +138,15 @@ void IOutlinerExtension::GetPathName(const FViewModel& Item, FStringBuilderBase&
 	}
 }
 
-} // namespace Sequencer
-} // namespace UE
+TSharedRef<SWidget> IOutlinerExtension::CreateOutlinerView(const FCreateOutlinerViewParams& InParams)
+{
+	return SNullWidget::NullWidget;
+}
+
+TSharedPtr<SWidget> IOutlinerExtension::CreateOutlinerViewForColumn(const FCreateOutlinerViewParams& InParams, const FName& InColumnName)
+{
+	return nullptr;
+}
+
+} // namespace UE::Sequencer
 

@@ -14,6 +14,11 @@ public class GameApplication extends Application implements LifecycleObserver {
 
 	private static boolean isForeground = false;
 
+	public static boolean AndroidFileServer_Verify(String Token)
+	{
+		return true;
+	}
+
 	@Override
 	public void onCreate() {
 		super.onCreate();

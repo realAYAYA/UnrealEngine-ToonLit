@@ -122,25 +122,23 @@ public:
 			return true;
 		}
 
-		if (AssetView->OnShouldFilterItem.IsBound()
-			&& !AssetView->OnShouldFilterItem.Execute(InItemToFilter->GetItem()))
+		if (AssetView->OnShouldFilterItem.IsBound() && AssetView->OnShouldFilterItem.Execute(InItemToFilter->GetItem()))
 		{
-			return true;
+			return false;
 		}
 
 		// If we have OnShouldFilterAsset then it is assumed that we really only want to see true assets and 
 		// nothing else so only include things that have asset data and also pass the query filter
-		FAssetData ItemAssetData;
-		if (AssetView->OnShouldFilterAsset.IsBound()
-			&& InItemToFilter->GetItem().Legacy_TryGetAssetData(ItemAssetData))
+		if (AssetView->OnShouldFilterAsset.IsBound())
 		{
-			if (!AssetView->OnShouldFilterAsset.Execute(ItemAssetData))
+			FAssetData ItemAssetData;
+			if (!InItemToFilter->GetItem().Legacy_TryGetAssetData(ItemAssetData) || AssetView->OnShouldFilterAsset.Execute(ItemAssetData))
 			{
-				return true;
+				return false;
 			}
 		}
 
-		return false;
+		return true;
 	}
 
 	bool DoesItemPassFrontendFilter(const TSharedPtr<FAssetViewItem>& InItemToFilter)
@@ -152,12 +150,12 @@ public:
 		}
 
 		// Run the item through the filters
-		if (!AssetView->IsFrontendFilterActive() || AssetView->PassesCurrentFrontendFilter(InItemToFilter->GetItem()))
+		if (AssetView->IsFrontendFilterActive() && !AssetView->PassesCurrentFrontendFilter(InItemToFilter->GetItem()))
 		{
-			return true;
+			return false;
 		}
 
-		return false;
+		return true;
 	}
 
 private:
@@ -1766,7 +1764,7 @@ TSharedRef<SAssetColumnView> SAssetView::CreateColumnView()
 		.HeaderRow
 		(
 			SNew(SHeaderRow)
-			.ResizeMode(ESplitterResizeMode::FixedSize)
+			.ResizeMode(ESplitterResizeMode::Fill)
 			.CanSelectGeneratedColumn(true)
 			.OnHiddenColumnsListChanged(this, &SAssetView::OnHiddenColumnsChanged)
 
@@ -1949,7 +1947,7 @@ FContentBrowserDataFilter SAssetView::CreateBackendDataFilter(bool bInvalidateCa
 
 void SAssetView::RefreshSourceItems()
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE("SAssetView::RefreshSourceItems");
+	TRACE_CPUPROFILER_EVENT_SCOPE(SAssetView::RefreshSourceItems);
 	const double RefreshSourceItemsStartTime = FPlatformTime::Seconds();
 	
 	OnInterruptFiltering();
@@ -3730,7 +3728,8 @@ TSharedRef<ITableRow> SAssetView::MakeTileViewWidget(TSharedPtr<FAssetViewItem> 
 			.ShouldAllowToolTip(this, &SAssetView::ShouldAllowToolTips)
 			.HighlightText( HighlightedText )
 			.IsSelected(FIsSelected::CreateSP(TableRowWidget.Get(), &STableRow<TSharedPtr<FAssetViewItem>>::IsSelected))
-			.IsSelectedExclusively(FIsSelected::CreateSP(TableRowWidget.Get(), &STableRow<TSharedPtr<FAssetViewItem>>::IsSelectedExclusively));
+			.IsSelectedExclusively(FIsSelected::CreateSP(TableRowWidget.Get(), &STableRow<TSharedPtr<FAssetViewItem>>::IsSelectedExclusively))
+			.AddMetaData<FTagMetaData>(AssetItem->GetItem().GetItemName());
 
 		TableRowWidget->SetContent(Item);
 
@@ -3775,8 +3774,9 @@ TSharedRef<ITableRow> SAssetView::MakeTileViewWidget(TSharedPtr<FAssetViewItem> 
 			.OnGetCustomAssetToolTip(OnGetCustomAssetToolTip)
 			.OnVisualizeAssetToolTip( OnVisualizeAssetToolTip )
 			.OnAssetToolTipClosing( OnAssetToolTipClosing )
-			.ShowType(bShowTypeInTileView);
-
+			.ShowType(bShowTypeInTileView)
+			.AddMetaData<FTagMetaData>(AssetItem->GetItem().GetItemName());
+		
 		TableRowWidget->SetContent(Item);
 
 		return TableRowWidget.ToSharedRef();
@@ -4429,6 +4429,11 @@ float SAssetView::GetTileViewTypeNameHeight() const
 	return TypeNameHeight;
 }
 
+float SAssetView::GetSourceControlIconHeight() const
+{
+	return (float)(ThumbnailSize != EThumbnailSize::Tiny && ISourceControlModule::Get().IsEnabled() && ISourceControlModule::Get().GetProvider().IsAvailable() && !bShowTypeInTileView ? 17.0 : 0.0);
+}
+
 float SAssetView::GetListViewItemHeight() const
 {
 	return (float)(ListViewThumbnailSize + ListViewThumbnailPadding * 2) * FMath::Lerp(MinThumbnailScale, MaxThumbnailScale, GetThumbnailScale());
@@ -4436,8 +4441,7 @@ float SAssetView::GetListViewItemHeight() const
 
 float SAssetView::GetTileViewItemHeight() const
 {
-	float SourceControlIconHeight = ThumbnailSize != EThumbnailSize::Tiny && ISourceControlModule::Get().IsEnabled() && ISourceControlModule::Get().GetProvider().IsAvailable() && !bShowTypeInTileView ? 17.0f : 0.0f;
-	return (((float)TileViewNameHeight + GetTileViewTypeNameHeight()) * FMath::Lerp(MinThumbnailScale, MaxThumbnailScale, GetThumbnailScale())) + GetTileViewItemBaseHeight() * FillScale + SourceControlIconHeight;
+	return (((float)TileViewNameHeight + GetTileViewTypeNameHeight()) * FMath::Lerp(MinThumbnailScale, MaxThumbnailScale, GetThumbnailScale())) + GetTileViewItemBaseHeight() * FillScale + GetSourceControlIconHeight();
 }
 
 float SAssetView::GetTileViewItemBaseHeight() const

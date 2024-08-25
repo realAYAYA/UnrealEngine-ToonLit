@@ -17,11 +17,6 @@ class UDeprecatedDataLayerInstance final : public UDataLayerInstance
 
 	GENERATED_UCLASS_BODY()
 
-	friend class AWorldDataLayers;
-	friend class UDataLayerConversionInfo;
-	friend class UDataLayerToAssetCommandletContext;
-	friend class UDataLayerToAssetCommandlet;
-
 #if WITH_EDITOR
 	//~ Begin UObject Interface
 	ENGINE_API virtual void PostLoad() override;
@@ -34,8 +29,8 @@ public:
 	ENGINE_API void OnCreated();
 	FActorDataLayer GetActorDataLayer() const;
 
-	ENGINE_API PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	static FName MakeName(const UDEPRECATED_DataLayer* DeprecatedDataLayer);
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	ENGINE_API static FName MakeName(const UDEPRECATED_DataLayer* DeprecatedDataLayer);
 	ENGINE_API void OnCreated(const UDEPRECATED_DataLayer* DeprecatedDataLayer);
 	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 #endif
@@ -44,25 +39,24 @@ public:
 
 private:
 #if WITH_EDITOR
+	//~ Begin UDataLayerInstance Interface
 	ENGINE_API virtual bool PerformAddActor(AActor* InActor) const override;
 	ENGINE_API virtual bool PerformRemoveActor(AActor* InActor) const override;
-
-	virtual bool SupportRelabeling() const override { return true; }
 	ENGINE_API virtual bool RelabelDataLayer(FName NewDataLayerLabel) override;
+	virtual bool SupportRelabeling() const override { return true; }
 	virtual bool CanEditDataLayerShortName() const override { return true; }
 	virtual void PerformSetDataLayerShortName(const FString& InNewShortName) { Label = *InNewShortName; }
+	//~ Endif UDataLayerInstance Interface
 #endif
 
+	//~ Begin UDataLayerInstance Interface
 	virtual FName GetDataLayerFName() const override { return !DeprecatedDataLayerFName.IsNone() ? DeprecatedDataLayerFName : Super::GetDataLayerFName(); }
-
 	virtual EDataLayerType GetType() const override { return DataLayerType; }
-
 	virtual bool IsRuntime() const override { return DataLayerType == EDataLayerType::Runtime; }
-
 	virtual FColor GetDebugColor() const override { return DebugColor; }
-
 	virtual FString GetDataLayerShortName() const override { return Label.ToString(); }
 	virtual FString GetDataLayerFullName() const override { return TEXT("Deprecated_") + Label.ToString(); }
+	//~ End UDataLayerInstance Interface
 
 private:
 	UPROPERTY()
@@ -76,4 +70,9 @@ private:
 
 	UPROPERTY(Category = "Data Layer|Runtime", EditAnywhere, meta = (EditConditionHides, EditCondition = "DataLayerType == EDataLayerType::Runtime"))
 	FColor DebugColor;
+
+	friend class AWorldDataLayers;
+	friend class UDataLayerConversionInfo;
+	friend class UDataLayerToAssetCommandletContext;
+	friend class UDataLayerToAssetCommandlet;
 };

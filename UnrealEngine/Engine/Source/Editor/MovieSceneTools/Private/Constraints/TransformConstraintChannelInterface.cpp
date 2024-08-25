@@ -8,35 +8,54 @@
 // {
 // 	return Cast<IMovieSceneConstrainedSection>(GetHandleSection(InHandle, InSequencer));
 // }
-
-bool ITransformConstraintChannelInterface::CanAddKey(const FMovieSceneConstraintChannel& ActiveChannel, const FFrameNumber& InTime, bool& ActiveValue)
+//we changed this so that it will always return true
+bool ITransformConstraintChannelInterface::CanAddKey(FMovieSceneConstraintChannel& ActiveChannel, const FFrameNumber& InTime, bool& ActiveValue)
 {
-	const TMovieSceneChannelData<const bool> ChannelData = ActiveChannel.GetData();
+	TMovieSceneChannelData<bool> ChannelData = ActiveChannel.GetData();
 	const TArrayView<const FFrameNumber> Times = ChannelData.GetTimes();
 	if (Times.IsEmpty())
 	{
 		ActiveValue = true;
 		return true;
 	}
-
-	const TArrayView<const bool> Values = ChannelData.GetValues();
-	if (InTime < Times[0])
+	ActiveChannel.Evaluate(InTime, ActiveValue);
+	ActiveValue = !ActiveValue;
+	const int32 Index = Times.Find(InTime);
+	const int32 NextTimeIndex = Algo::UpperBound(Times, InTime);
+	//have key at that time so need to delete it
+	auto DeleteNextKey = [&ActiveChannel, ActiveValue, &Times, Index,NextTimeIndex]()
 	{
-		if (!Values[0])
+		TMovieSceneChannelData<bool> ChannelData = ActiveChannel.GetData();
+		//if has same value then delete the next
+		if (NextTimeIndex != Index && Times.IsValidIndex(NextTimeIndex))
 		{
-			ActiveValue = true;
-			return true;
+			bool NextValue = false;
+			ActiveChannel.Evaluate(Times[NextTimeIndex], NextValue);
+			if (NextValue == ActiveValue)
+			{
+				//same value so delete
+				ChannelData.RemoveKey(NextTimeIndex);
+			}
 		}
-		return false;
+	};
+	if (Index != INDEX_NONE)
+	{
+		DeleteNextKey();
+		//delete key will add it later
+		ChannelData.RemoveKey(Index);
+		//if last key then we won't add any more keys
+		if (Index == (Times.Num() - 1))
+		{
+			return false;
+		}
+	}
+	//if has same value then delete the next
+	else if (Times.IsValidIndex(NextTimeIndex))
+	{
+		DeleteNextKey();
 	}
 	
-	if (InTime > Times.Last())
-	{
-		ActiveValue = !Values.Last();
-		return true;
-	}
-
-	return false;
+	return true;
 }
 
 FConstraintChannelInterfaceRegistry& FConstraintChannelInterfaceRegistry::Get()

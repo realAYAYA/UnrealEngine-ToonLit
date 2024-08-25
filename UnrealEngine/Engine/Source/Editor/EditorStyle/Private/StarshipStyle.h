@@ -76,6 +76,7 @@ public:
 		void SetupStatusBarStyle();
 		void SetupColorPickerStyle();
 		void SetupDerivedDataStyle();
+		void SetupSourceCodeStyles();
 
 		void SettingsChanged(FName PropertyName);
 		void SyncSettings();

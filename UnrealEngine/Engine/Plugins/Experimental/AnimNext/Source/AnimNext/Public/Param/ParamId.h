@@ -4,8 +4,17 @@
 
 #include "CoreMinimal.h"
 
-struct FRigVMDispatch_SetParameter;
+class UAnimNextConfig;
+struct FRigVMDispatch_SetLayerParameter;
+struct FRigVMDispatch_GetLayerParameter;
 struct FRigVMDispatch_GetParameter;
+
+namespace UE::AnimNext
+{
+	struct FParamDefinition;
+	class FModule;
+	struct FRemappedLayer;
+}
 
 namespace UE::AnimNext::Tests
 {
@@ -15,54 +24,62 @@ namespace UE::AnimNext::Tests
 namespace UE::AnimNext
 {
 
-// Global identifier used to index into dense parameter arrays
+// Global identifier used to avoid re-hashing parameter names
 struct ANIMNEXT_API FParamId
 {
 	friend struct FParamStack;
 	friend class Tests::FParamStackTest;
-	friend struct ::FRigVMDispatch_SetParameter;
+	friend struct ::FRigVMDispatch_SetLayerParameter;
+	friend struct ::FRigVMDispatch_GetLayerParameter;
 	friend struct ::FRigVMDispatch_GetParameter;
+	friend class ::UAnimNextConfig;
+	friend struct FParamDefinition;
+	friend class FModule;
+	friend struct FRemappedLayer;
 
-	static constexpr uint32 InvalidIndex = MAX_uint32;
-
-	FParamId() = delete;
+	FParamId() = default;
 	FParamId(const FParamId& InName) = default;
 	FParamId& operator=(const FParamId& InName) = default;
 
-
-	// Make a parameter ID from an FName
-	explicit FParamId(FName InName);
-
-	// Get the index of this param
-	uint32 ToInt() const
-	{
-		return ParameterIndex;
-	}
-
-	// Get the name that this parameter was created from
-	FName ToName() const;
-
-private:
-	// Make a parameter ID from an index (for internal use)
-	explicit FParamId(uint32 InParameterIndex)
-		: ParameterIndex(InParameterIndex)
+	// Make a parameter ID from an FName, generating the hash
+	explicit FParamId(FName InName)
+		: Name(InName)
+		, Hash(GetTypeHash(InName))
 	{
 	}
 
-	// Get the maximum parameter ID that can exist at present
-	// Note that this can change via concurrent modifications when new parameters are created by 
-	// different threads
-	static FParamId GetMaxParamId();
+	// Make a parameter ID from a name and hash
+	explicit FParamId(FName InName, uint32 InHash)
+		: Name(InName)
+		, Hash(InHash)
+	{
+		checkSlow(Hash == GetTypeHash(Name));
+	}
 
-#if WITH_DEV_AUTOMATION_TESTS
-	// Used to isolate global param IDs from automated tests
-	static void BeginTestSandbox();
-	static void EndTestSandbox();
-#endif
+	// Get the name of this param
+	FName GetName() const
+	{
+		return Name;
+	}
+
+	// Get the hash of this param
+	uint32 GetHash() const
+	{
+		return Hash;
+	}
+
+	// Check if this ID represents a valid parameter
+	bool IsValid() const
+	{
+		return Hash != 0;
+	}
 
 private:
-	// Stable index
-	uint32 ParameterIndex = InvalidIndex;
+	// Parameter name
+	FName Name;
+
+	// Name hash
+	uint32 Hash = 0;
 };
 
 } // end namespace UE::AnimNext

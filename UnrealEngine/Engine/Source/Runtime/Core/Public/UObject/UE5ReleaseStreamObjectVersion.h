@@ -153,6 +153,18 @@ struct FUE5ReleaseStreamObjectVersion
 
 		// Disabled opencolorio display configuration by default
 		OpenColorIODisabledDisplayConfigurationDefault,
+
+		// Serialize ExternalDataLayerAsset in WorldPartitionActorDesc
+		WorldPartitionExternalDataLayers,
+
+		// Fix Chaos Cloth fictitious angular scale bug that requires existing parameter rescaling.
+		ChaosClothFictitiousAngularVelocitySubframeFix,
+
+		// Store physics thread particles data in single precision
+		SinglePrecisonParticleDataPT,
+
+		//Orthographic Near and Far Plane Auto-resolve enabled by default
+		OrthographicAutoNearFarPlane,
 		
 		// -----<new versions can be added above this line>-------------------------------------------------
 		VersionPlusOne,

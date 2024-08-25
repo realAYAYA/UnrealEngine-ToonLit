@@ -119,7 +119,7 @@ Chaos::FChaosPhysicsMaterial* GetMaterialFromInternalFaceIndexAndHitLocation(con
 						if (BodySetup && BodySetup->bSupportUVsAndFaceRemap && GetGeometryType(Shape) == ECollisionShapeType::Trimesh)
 						{
 							FVector Scale(1.0f, 1.0f, 1.0f);
-							const Chaos::FImplicitObject* Geometry = Shape.GetGeometry().Get();
+							const Chaos::FImplicitObject* Geometry = Shape.GetGeometry();
 							if (const Chaos::TImplicitObjectScaled<Chaos::FTriangleMeshImplicitObject>* ScaledTrimesh = Chaos::TImplicitObjectScaled<Chaos::FTriangleMeshImplicitObject>::AsScaled(*Geometry))
 							{
 								Scale = ScaledTrimesh->GetScale();
@@ -691,7 +691,7 @@ void FPhysInterface_Chaos::AddGeometry(FPhysicsActorHandle& InActor, const FGeom
 
 	// @todo(chaos): we should not be creating unique geometry per actor
 	// @todo(chaos): we are creating the Shapes array twice. Once here and again in SetGeometry or MergeGeometry. Fix this.
-	TArray<TUniquePtr<Chaos::FImplicitObject>> Geoms;
+	TArray<Chaos::FImplicitObjectPtr> Geoms;
 	Chaos::FShapesArray Shapes;
 	ChaosInterface::CreateGeometry(InParams, Geoms, Shapes);
 
@@ -714,14 +714,12 @@ void FPhysInterface_Chaos::AddGeometry(FPhysicsActorHandle& InActor, const FGeom
 		// NOTE: Both MergeGeometry and SetGeometry will extend the ShapesInstances array to contain enough elements for
 		// each geometry in the Union. However the shape data will not have been filled in, hence the call to MergeShapeInstance at the end.
 		// todo: we should not be creating unique geometry per actor
-		bool bMergeShapesArray = false;
 		{
-			if (InActor->GetGameThreadAPI().Geometry())
+			if (InActor->GetGameThreadAPI().GetGeometry())
 			{
 				// Geometry already exists - combine new geometry with the existing
 				// NOTE: We do not need to set the AllowBVH flag because it will be cloned (see below)
 				InActor->GetGameThreadAPI().MergeGeometry(MoveTemp(Geoms));
-				bMergeShapesArray = true;
 			}
 			else
 			{
@@ -729,21 +727,14 @@ void FPhysInterface_Chaos::AddGeometry(FPhysicsActorHandle& InActor, const FGeom
 				// NOTE: The root union always supports BVH (if there are enough shapes) and is the only Union in the hierarchy that is allowed 
 				// to do so, but we don't create it here because that makes welding even more expensive (bodies are welded one by one). 
 				// Search for SetAllowBVH to see where the BVH is enabled.
-				TUniquePtr<Chaos::FImplicitObjectUnion> Union = MakeUnique<Chaos::FImplicitObjectUnion>(MoveTemp(Geoms));
+				Chaos::FImplicitObjectPtr Union = MakeImplicitObjectPtr<Chaos::FImplicitObjectUnion>(MoveTemp(Geoms));
 				InActor->GetGameThreadAPI().SetGeometry(MoveTemp(Union));
 			}
 		}
 
 		// Update the newly added shapes with the collision filters, materials etc
 		// NOTE: MergeShapes overwrites the last N shapes (see comments above)
-		if (bMergeShapesArray)
-		{
-			InActor->GetGameThreadAPI().MergeShapesArray(MoveTemp(Shapes));
-		}
-		else
-		{
-			InActor->GetGameThreadAPI().SetShapesArray(MoveTemp(Shapes));
-		}
+		InActor->GetGameThreadAPI().MergeShapesArray(MoveTemp(Shapes));
 	}
 }
 
@@ -773,6 +764,7 @@ void FPhysInterface_Chaos::SetMaterials(const FPhysicsShapeHandle& InShape, cons
 		TArray<Chaos::FMaterialHandle> NewMaterialMaskMaterialHandles;
 
 		NewMaterialMaskHandles.Reserve(InMaterialMasks.Num());
+		NewMaterialMaskMaps.Reserve(InMaterialMasks.Num() * EPhysicalMaterialMaskColor::MAX);
 
 		int MaskMapMatIdx = 0;
 
@@ -825,9 +817,9 @@ void FPhysInterface_Chaos::SetMaterials(const FPhysicsShapeHandle& InShape, cons
 			}
 		}
 
-		InShape.Shape->SetMaterialMasks(NewMaterialMaskHandles);
-		InShape.Shape->SetMaterialMaskMaps(NewMaterialMaskMaps);
-		InShape.Shape->SetMaterialMaskMapMaterials(NewMaterialMaskMaterialHandles);
+		InShape.Shape->SetMaterialMasks(MoveTemp(NewMaterialMaskHandles));
+		InShape.Shape->SetMaterialMaskMaps(MoveTemp(NewMaterialMaskMaps));
+		InShape.Shape->SetMaterialMaskMapMaterials(MoveTemp(NewMaterialMaskMaterialHandles));
 	}
 }
 

@@ -5,6 +5,7 @@
 #include "AnimBlueprintCompiler.h"
 #include "IAnimBlueprintCompilationContext.h"
 #include "IAnimBlueprintCopyTermDefaultsContext.h"
+#include "UObject/FortniteMainBranchObjectVersion.h"
 
 /////////////////////////////////////////////////////
 // FPoseLinkMappingRecord
@@ -42,6 +43,22 @@ void FPoseLinkMappingRecord::PatchLinkIndex(uint8* DestinationPtr, int32 LinkID,
 UAnimGraphNode_Root::UAnimGraphNode_Root(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
+}
+
+void UAnimGraphNode_Root::Serialize(FArchive& Ar)
+{
+	Super::Serialize(Ar);
+
+	Ar.UsingCustomVersion(FFortniteMainBranchObjectVersion::GUID);
+
+	const int32 CustomAnimVersion = Ar.CustomVer(FFortniteMainBranchObjectVersion::GUID);
+
+	if (Ar.IsLoading() && CustomAnimVersion < FFortniteMainBranchObjectVersion::AnimNodeRootDefaultGroupChange)
+	{
+#if WITH_EDITORONLY_DATA
+		Node.LayerGroup = Node.Group_DEPRECATED;
+#endif
+	}
 }
 
 FLinearColor UAnimGraphNode_Root::GetNodeTitleColor() const

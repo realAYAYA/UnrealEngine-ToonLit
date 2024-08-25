@@ -13,10 +13,10 @@
 
 DECLARE_LOG_CATEGORY_EXTERN(LogAutoRTFM, Display, All)
 
-#define ASSERT(exp) UE_CLOG(UNLIKELY(!(exp)), LogAutoRTFM, Fatal, TEXT("%s:%d:%s: assertion %s failed."), ANSI_TO_TCHAR(__FILE__), __LINE__, ANSI_TO_TCHAR(__PRETTY_FUNCTION__), ANSI_TO_TCHAR(#exp))
-
 namespace AutoRTFM
 {
+
+[[noreturn]] void PrettyAbort(const char* const File, const unsigned Line, const char* const Function, const char* const Expression);
 
 [[noreturn]] inline void Unreachable()
 {
@@ -44,3 +44,12 @@ template<size_t A, size_t B> struct PrettyStaticAssert final
 };
 
 } // namespace AutoRTFM
+
+#define ASSERT(exp) do { if (UNLIKELY(!(exp))) { UE_DEBUG_BREAK(); PrettyAbort(__FILE__, __LINE__, __PRETTY_FUNCTION__, #exp); } } while (false)
+
+
+#if defined(__has_feature) && __has_feature(address_sanitizer)
+#define AUTORTFM_NO_ASAN [[clang::no_sanitize("address")]]
+#else
+#define AUTORTFM_NO_ASAN
+#endif

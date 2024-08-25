@@ -23,6 +23,7 @@
 #include "HDRHelper.h"
 #include "VariableRateShadingImageManager.h"
 #include "DataDrivenShaderPlatformInfo.h"
+#include "CommonRenderResources.h"
 
 
 bool SupportsFilmGrain(EShaderPlatform Platform)
@@ -185,12 +186,10 @@ FDesktopDomain RemapPermutation(FDesktopDomain PermutationVector, ERHIFeatureLev
 		PermutationVector.Set<FTonemapperColorFringeDim>(true);
 	}
 
-	// If we're going down a slow path, don't bother with VRS either to keep shader permutations down
-	if (!FVariableRateShadingImageManager::IsVRSCompatibleWithOutputType(PermutationVector.Get<FTonemapperOutputDeviceDim>()) || bFallbackToSlowest)
+	if (!FVariableRateShadingImageManager::IsVRSCompatibleWithOutputType(PermutationVector.Get<FTonemapperOutputDeviceDim>()))
 	{
 		PermutationVector.Set<FTonemapperOutputLuminance>(false);
 	}
-
 
 	// You most likely need Bloom anyway.
 	CommonPermutationVector.Set<FTonemapperBloomDim>(true);
@@ -548,6 +547,37 @@ FRDGBufferRef BuildFilmGrainConstants(FRDGBuilder& GraphBuilder, const FViewInfo
 	return FilmGrainConstantsBuffer;
 }
 
+bool ShouldWriteAlphaChannel(const FViewInfo& View, const FTonemapInputs& Inputs, const FRDGTextureRef Output)
+{
+	// If this is a stereo view, there's a good chance we need alpha out of the tonemapper
+	// @todo: Remove this once Oculus fix the bug in their runtime that requires alpha here.
+	const bool bIsStereo = IStereoRendering::IsStereoEyeView(View);
+	const bool bFormatNeedsAlphaWrite = Output->Desc.Format == PF_R9G9B9EXP5;
+	return (Inputs.bWriteAlphaChannel || bIsStereo || bFormatNeedsAlphaWrite);
+}
+
+bool ShouldOverrideOutputLoadActionToFastClear(const FScreenPassRenderTarget& Output, bool bShouldWriteAlphaChannel)
+{
+	bool bShouldOverride = false;
+	
+	EPixelFormatChannelFlags OutputFlags = GetPixelFormatValidChannels(Output.Texture->Desc.Format);
+	// If we do not write through alpha channel but the output texture has alpha channel
+	// need to override to fast clear load action ERenderTargetLoadAction::Clear, otherwise,
+	// the alpha channel can be garbage data in terms of different driver implementation.
+	if ( (!bShouldWriteAlphaChannel) && EnumHasAnyFlags(OutputFlags, EPixelFormatChannelFlags::A))
+	{
+		bShouldOverride = true;
+	}
+
+	// If the load action is already load, there should be content in the texture. Disable clear overriding.
+	if (Output.LoadAction == ERenderTargetLoadAction::ELoad)
+	{
+		bShouldOverride = false;
+	}
+
+	return bShouldOverride;
+}
+
 FScreenPassTexture AddTonemapPass(FRDGBuilder& GraphBuilder, const FViewInfo& View, const FTonemapInputs& Inputs)
 {
 	if (!Inputs.bGammaOnly)
@@ -580,7 +610,7 @@ FScreenPassTexture AddTonemapPass(FRDGBuilder& GraphBuilder, const FViewInfo& Vi
 			SceneColorViewport.Extent,
 			Inputs.SceneColor.TextureSRV->Desc.Texture->Desc.Format,
 			FClearValueBinding(FLinearColor(0, 0, 0, 0)),
-			GFastVRamConfig.Tonemap | TexCreate_ShaderResource | (View.bUseComputePasses ? TexCreate_UAV : TexCreate_RenderTargetable));;
+			GFastVRamConfig.Tonemap | TexCreate_ShaderResource | TexCreate_RenderTargetable | (View.bUseComputePasses ? TexCreate_UAV : TexCreate_None));;
 		
 		const FTonemapperOutputDeviceParameters OutputDeviceParameters = GetTonemapperOutputDeviceParameters(*View.Family);
 		const EDisplayOutputFormat OutputDevice = static_cast<EDisplayOutputFormat>(OutputDeviceParameters.OutputDevice);
@@ -616,7 +646,13 @@ FScreenPassTexture AddTonemapPass(FRDGBuilder& GraphBuilder, const FViewInfo& Vi
 		Output = FScreenPassRenderTarget(
 			GraphBuilder.CreateTexture(OutputDesc, TEXT("Tonemap")),
 			Inputs.SceneColor.ViewRect,
-			ERenderTargetLoadAction::EClear);
+			ERenderTargetLoadAction::ENoAction);
+	}
+
+	const bool bShouldWriteAlphaChannel = ShouldWriteAlphaChannel(View, Inputs, Output.Texture);
+	if (ShouldOverrideOutputLoadActionToFastClear(Output, bShouldWriteAlphaChannel))
+	{
+		Output.LoadAction = ERenderTargetLoadAction::EClear;
 	}
 
 	const FScreenPassTextureViewport OutputViewport(Output);
@@ -897,7 +933,7 @@ FScreenPassTexture AddTonemapPass(FRDGBuilder& GraphBuilder, const FViewInfo& Vi
 
 		DesktopPermutationVector.Set<TonemapperPermutation::FTonemapperOutputDeviceDim>(EDisplayOutputFormat(CommonParameters.OutputDevice.OutputDevice));
 
-		DesktopPermutationVector.Set<TonemapperPermutation::FTonemapperOutputLuminance>(FVariableRateShadingImageManager::IsVRSCompatibleWithView(View));
+		DesktopPermutationVector.Set<TonemapperPermutation::FTonemapperOutputLuminance>(!View.bIsMobileMultiViewEnabled && GVRSImageManager.IsVRSEnabledForFrame() && FVariableRateShadingImageManager::IsVRSCompatibleWithView(View));
 
 		DesktopPermutationVector = TonemapperPermutation::RemapPermutation(DesktopPermutationVector, View.GetFeatureLevel());
 	}
@@ -911,23 +947,30 @@ FScreenPassTexture AddTonemapPass(FRDGBuilder& GraphBuilder, const FViewInfo& Vi
 	{
 		// Due to the way split-screen shares the same render target for all views, make sure
 		// that we use the same texture for saving out the luminance as well to keep the memory
-		// footprint small
-		auto CachedOuputLuminance = GraphBuilder.Blackboard.Get<FOutputLuminance>();
-		if (CachedOuputLuminance == nullptr)
+		// footprint small - but only if we're outputting directly to the final render target for both views
+		// (that is, neither view has any post-processing steps after tonemapping)
+		const FOutputLuminance* CachedOutputLuminance = GraphBuilder.Blackboard.Get<FOutputLuminance>();
+		if (CachedOutputLuminance && Inputs.OverrideOutput.IsValid() &&
+			CachedOutputLuminance->Texture->Desc.Extent == Output.Texture->Desc.Extent)
 		{
-			auto NewOutputLuminance = &GraphBuilder.Blackboard.Create<FOutputLuminance>();
-			auto OutputSize = Output.Texture->Desc.GetSize();
+			OutputLuminance = CachedOutputLuminance->Texture;
+		}
+		else
+		{
+			FIntPoint OutputSize = Output.Texture->Desc.Extent;
 			const FIntPoint SDROutputSize = FIntPoint(OutputSize.X, OutputSize.Y);
 			FRDGTextureDesc Desc = FRDGTextureDesc::Create2D(
 				SDROutputSize,
 				PF_R8,
 				FClearValueBinding::Black,
 				bComputePass ? TexCreate_UAV : TexCreate_RenderTargetable);
-			OutputLuminance = NewOutputLuminance->Texture = GraphBuilder.CreateTexture(Desc, TEXT("Final Luminance"));
-		}
-		else
-		{
-			OutputLuminance = CachedOuputLuminance->Texture;
+			OutputLuminance = GraphBuilder.CreateTexture(Desc, TEXT("Final Luminance"));
+
+			if (CachedOutputLuminance == nullptr)
+			{
+				FOutputLuminance* NewOutputLuminance = &GraphBuilder.Blackboard.Create<FOutputLuminance>();
+				NewOutputLuminance->Texture = OutputLuminance;
+			}
 		}
 	}
 
@@ -960,6 +1003,7 @@ FScreenPassTexture AddTonemapPass(FRDGBuilder& GraphBuilder, const FViewInfo& Vi
 		FTonemapPS::FParameters* PassParameters = GraphBuilder.AllocParameters<FTonemapPS::FParameters>();
 		PassParameters->Tonemap = CommonParameters;
 		PassParameters->RenderTargets[0] = Output.GetRenderTargetBinding();
+		PassParameters->RenderTargets.MultiViewCount = View.bIsMobileMultiViewEnabled ? 2 : 0;
 
 		if (OutputLuminance)
 		{
@@ -969,11 +1013,8 @@ FScreenPassTexture AddTonemapPass(FRDGBuilder& GraphBuilder, const FViewInfo& Vi
 		TShaderMapRef<FTonemapVS> VertexShader(View.ShaderMap);
 		TShaderMapRef<FTonemapPS> PixelShader(View.ShaderMap, DesktopPermutationVector);
 
-		// If this is a stereo view, there's a good chance we need alpha out of the tonemapper
-		// @todo: Remove this once Oculus fix the bug in their runtime that requires alpha here.
-		const bool bIsStereo = IStereoRendering::IsStereoEyeView(View);
-		const bool bFormatNeedsAlphaWrite = Output.Texture->Desc.Format == PF_R9G9B9EXP5;
-		FRHIBlendState* BlendState = (Inputs.bWriteAlphaChannel || bIsStereo || bFormatNeedsAlphaWrite) ? FScreenPassPipelineState::FDefaultBlendState::GetRHI() : TStaticBlendStateWriteMask<CW_RGB>::GetRHI();
+		FRHIBlendState* BlendState = bShouldWriteAlphaChannel ? FScreenPassPipelineState::FDefaultBlendState::GetRHI() : TStaticBlendStateWriteMask<CW_RGB>::GetRHI();
+
 		FRHIDepthStencilState* DepthStencilState = FScreenPassPipelineState::FDefaultDepthStencilState::GetRHI();
 
 		EScreenPassDrawFlags DrawFlags = EScreenPassDrawFlags::AllowHMDHiddenAreaMask;
@@ -996,9 +1037,137 @@ FScreenPassTexture AddTonemapPass(FRDGBuilder& GraphBuilder, const FViewInfo& Vi
 
 	if (OutputLuminance && View.ViewState)
 	{
+		View.ViewState->PrevFrameViewInfo.LuminanceViewRectHistory = OutputViewport.Rect;
 		GraphBuilder.QueueTextureExtraction(OutputLuminance, &View.ViewState->PrevFrameViewInfo.LuminanceHistory);
 	}
 
 	return MoveTemp(Output);
 }
 
+
+// MSAA custom resolve shader that does tonemapping 
+class FMobileCustomResolvePS : public FGlobalShader
+{
+	DECLARE_GLOBAL_SHADER(FMobileCustomResolvePS);
+
+	SHADER_USE_PARAMETER_STRUCT(FMobileCustomResolvePS, FGlobalShader);
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+		SHADER_PARAMETER_STRUCT_INCLUDE(FViewShaderParameters, View)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, ColorTexture)
+		SHADER_PARAMETER_SAMPLER(SamplerState, ColorSampler)
+		SHADER_PARAMETER(FVector4f, ColorScale0)
+		SHADER_PARAMETER_TEXTURE(Texture2D, ColorGradingLUT)
+		SHADER_PARAMETER_SAMPLER(SamplerState, ColorGradingLUTSampler)
+		SHADER_PARAMETER(float, LUTSize)
+		SHADER_PARAMETER(float, InvLUTSize)
+		SHADER_PARAMETER(float, LUTScale)
+		SHADER_PARAMETER(float, LUTOffset)
+	END_SHADER_PARAMETER_STRUCT()
+
+	class FTonemapperSubpassMsaaDim : SHADER_PERMUTATION_SPARSE_INT("SUBPASS_MSAA_SAMPLES", 0, 1, 2, 4, 8);
+	using FPermutationDomain = TShaderPermutationDomain<FTonemapperSubpassMsaaDim>;
+
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+	{
+		return IsMobilePlatform(Parameters.Platform);
+	}
+
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
+	{
+		const int UseVolumeLut = PipelineVolumeTextureLUTSupportGuaranteedAtRuntime(Parameters.Platform) ? 1 : 0;
+		OutEnvironment.SetDefine(TEXT("USE_VOLUME_LUT"), UseVolumeLut);
+	}
+};
+
+IMPLEMENT_GLOBAL_SHADER(FMobileCustomResolvePS, "/Engine/Private/PostProcessTonemap.usf", "MobileCustomResolve_MainPS", SF_Pixel);
+
+void RenderMobileCustomResolve(FRHICommandList& RHICmdList, const FViewInfo& View, const int32 SubpassMSAASamples, FSceneTextures& SceneTextures)
+{
+	// Part of scene rendering pass
+	check(RHICmdList.IsInsideRenderPass());
+	SCOPED_DRAW_EVENT(RHICmdList, MobileTonemapSubpass);
+
+	IPooledRenderTarget* ColorGradingLUT = View.GetTonemappingLUT();
+	const FIntPoint TargetSize = SceneTextures.Color.Target->Desc.Extent;
+	const float LUTSize = ColorGradingLUT ? (float)ColorGradingLUT->GetDesc().GetSize().Y : /* unused (default): */ 32.0f;
+	const FPostProcessSettings& Settings = View.FinalPostProcessSettings;
+	
+	TShaderMapRef<FMobileMultiViewVertexShaderVS> VertexShader(View.ShaderMap);
+	
+	FMobileCustomResolvePS::FPermutationDomain PermutationVector;
+	PermutationVector.Set<FMobileCustomResolvePS::FTonemapperSubpassMsaaDim>(SubpassMSAASamples);
+	TShaderMapRef<FMobileCustomResolvePS> PixelShader(View.ShaderMap, PermutationVector);
+
+	FMobileCustomResolvePS::FParameters PSShaderParameters;
+	PSShaderParameters.View = View.GetShaderParameters();
+	PSShaderParameters.ColorScale0 = FVector4f(Settings.SceneColorTint.R, Settings.SceneColorTint.G, Settings.SceneColorTint.B, 0);
+	PSShaderParameters.ColorGradingLUT = ColorGradingLUT ? ColorGradingLUT->GetRHI() : GBlackTexture->TextureRHI.GetReference();
+	PSShaderParameters.ColorGradingLUTSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
+	PSShaderParameters.LUTSize = LUTSize;
+	PSShaderParameters.InvLUTSize = 1.0f / LUTSize;
+	PSShaderParameters.LUTScale = (LUTSize - 1.0f) / LUTSize;
+	PSShaderParameters.LUTOffset = 0.5f / LUTSize;
+	if (SubpassMSAASamples == 0u)
+	{
+		PSShaderParameters.ColorTexture = SceneTextures.Color.Resolve;
+		PSShaderParameters.ColorSampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
+	}
+
+	FGraphicsPipelineStateInitializer GraphicsPSOInit;
+	RHICmdList.ApplyCachedRenderTargets(GraphicsPSOInit);
+
+	GraphicsPSOInit.BlendState = TStaticBlendState<>::GetRHI();
+	GraphicsPSOInit.RasterizerState = TStaticRasterizerState<>::GetRHI();
+	GraphicsPSOInit.DepthStencilState = TStaticDepthStencilState<false, CF_Always>::GetRHI();
+
+	GraphicsPSOInit.BoundShaderState.VertexDeclarationRHI = GFilterVertexDeclaration.VertexDeclarationRHI;
+	GraphicsPSOInit.BoundShaderState.VertexShaderRHI = VertexShader.GetVertexShader();
+	GraphicsPSOInit.BoundShaderState.PixelShaderRHI = PixelShader.GetPixelShader();
+	GraphicsPSOInit.PrimitiveType = PT_TriangleList;
+
+	SetGraphicsPipelineState(RHICmdList, GraphicsPSOInit, 0);
+	SetShaderParameters(RHICmdList, PixelShader, PixelShader.GetPixelShader(), PSShaderParameters);
+	RHICmdList.SetViewport(0, 0, 0.0f, TargetSize.X, TargetSize.Y, 1.0f);
+
+	DrawRectangle(
+		RHICmdList,
+		0, 0,
+		TargetSize.X, TargetSize.Y,
+		0, 0,
+		TargetSize.X, TargetSize.Y,
+		TargetSize,
+		TargetSize,
+		VertexShader,
+		EDRF_UseTriangleOptimization,
+		View.InstanceFactor);
+}
+
+BEGIN_SHADER_PARAMETER_STRUCT(FMobileCustomResolveParameters, )
+	SHADER_PARAMETER_STRUCT_INCLUDE(FViewShaderParameters, View)
+	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, ColorTexture)
+	RDG_TEXTURE_ACCESS(ColorGradingLUT, ERHIAccess::SRVGraphics)
+	RENDER_TARGET_BINDING_SLOTS()
+END_SHADER_PARAMETER_STRUCT()
+
+void AddMobileCustomResolvePass(FRDGBuilder& GraphBuilder, const FViewInfo& View, FSceneTextures& SceneTextures, FRDGTextureRef ViewFamilyTexture)
+{
+	FRDGTextureRef ColorGradingLUT = AddCombineLUTPass(GraphBuilder, View);
+
+	FMobileCustomResolveParameters* PassParameters = GraphBuilder.AllocParameters<FMobileCustomResolveParameters>();
+	PassParameters->View = View.GetShaderParameters();
+	PassParameters->ColorTexture = SceneTextures.Color.Resolve;
+	PassParameters->ColorGradingLUT = ColorGradingLUT;
+	PassParameters->RenderTargets[0] = FRenderTargetBinding(ViewFamilyTexture, ERenderTargetLoadAction::EClear);
+	// Need to specify multi view count for when the custom resolve pass is a separate pass and is not within the main pass.
+	PassParameters->RenderTargets.MultiViewCount = View.bIsMobileMultiViewEnabled ? 2 : 0;
+
+	GraphBuilder.AddPass(
+		RDG_EVENT_NAME("MobileCustomResolvePass"),
+		PassParameters,
+		ERDGPassFlags::Raster,
+		[&View, &SceneTextures](FRHICommandListImmediate& RHICmdList)
+		{
+			const uint32 SubpassMSAASamples = 0u; // not using subpass resolve
+			RenderMobileCustomResolve(RHICmdList, View, SubpassMSAASamples, SceneTextures);
+		});
+}

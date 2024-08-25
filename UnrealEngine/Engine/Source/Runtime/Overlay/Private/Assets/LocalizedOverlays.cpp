@@ -5,6 +5,7 @@
 #include "BasicOverlays.h"
 #include "Internationalization/Internationalization.h"
 #include "Internationalization/Culture.h"
+#include "UObject/AssetRegistryTagsContext.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(LocalizedOverlays)
 
@@ -26,14 +27,21 @@ void ULocalizedOverlays::PostInitProperties()
 
 void ULocalizedOverlays::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void ULocalizedOverlays::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
 #if WITH_EDITORONLY_DATA
 	if (AssetImportData)
 	{
-		OutTags.Add(FAssetRegistryTag(SourceFileTagName(), AssetImportData->GetSourceData().ToJson(), FAssetRegistryTag::TT_Hidden));
+		Context.AddTag(FAssetRegistryTag(SourceFileTagName(), AssetImportData->GetSourceData().ToJson(), FAssetRegistryTag::TT_Hidden));
 	}
 #endif	// WITH_EDITORONLY_DATA
 
-	Super::GetAssetRegistryTags(OutTags);
+	Super::GetAssetRegistryTags(Context);
 }
 
 UBasicOverlays* ULocalizedOverlays::GetCurrentLocaleOverlays() const

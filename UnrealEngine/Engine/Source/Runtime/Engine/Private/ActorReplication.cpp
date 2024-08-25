@@ -193,7 +193,24 @@ void AActor::OnRep_ReplicatedMovement()
 #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
 		if (CVarDrawDebugRepMovement->GetInt() > 0)
 		{
-			DrawDebugCapsule(GetWorld(), LocalRepMovement.Location, GetSimpleCollisionHalfHeight(), GetSimpleCollisionRadius(), LocalRepMovement.Rotation.Quaternion(), FColor(100, 255, 100), false, 1.f);
+			FColor DebugColor = FColor::Green;
+			if (LocalRepMovement.bRepPhysics)
+			{
+				switch (GetPhysicsReplicationMode())
+				{
+				case EPhysicsReplicationMode::PredictiveInterpolation:
+					DebugColor = FColor::Yellow;
+					break;
+				case EPhysicsReplicationMode::Resimulation:
+					DebugColor = FColor::Red;
+					break;
+				case EPhysicsReplicationMode::Default:
+				default:
+					DebugColor = FColor::Cyan;
+					break;
+				}
+			}
+			DrawDebugCapsule(GetWorld(), LocalRepMovement.Location, FMath::Max(GetSimpleCollisionHalfHeight(), 25.0f), FMath::Max(GetSimpleCollisionRadius(), 25.0f), LocalRepMovement.Rotation.Quaternion(), DebugColor, false, 1.f);
 		}
 #endif
 
@@ -204,6 +221,12 @@ void AActor::OnRep_ReplicatedMovement()
 			// Turn on/off physics sim to match server.
 			SyncReplicatedPhysicsSimulation();
 		}
+
+		// NOTE: This is only needed because ClusterUnion has a flag bHasReceivedTransform
+		// which does not get updated until the component's transform is directly set.
+		// Until that flag is set, its root particle will be in a disabled state and not
+		// have any children, therefore replication will be dead in the water.
+		RootComponent->OnReceiveReplicatedState(LocalRepMovement.Location, LocalRepMovement.Rotation.Quaternion(), LocalRepMovement.LinearVelocity, LocalRepMovement.AngularVelocity);
 
 		if (LocalRepMovement.bRepPhysics)
 		{
@@ -283,6 +306,45 @@ void AActor::PostNetReceivePhysicState()
 		FRigidBodyState NewState;
 		ThisReplicatedMovement.CopyTo(NewState, this);
 		RootPrimComp->SetRigidBodyReplicatedTarget(NewState, NAME_None, ThisReplicatedMovement.ServerFrame, ThisReplicatedMovement.ServerPhysicsHandle);
+	}
+}
+
+void AActor::SetFakeNetPhysicsState(bool bShouldSleep)
+{
+	if (!IsNetMode(ENetMode::NM_Client))
+	{
+		return;
+	}
+
+	if (!IsReplicatingMovement())
+	{
+		return;
+	}
+
+	if (GetPhysicsReplicationMode() != EPhysicsReplicationMode::PredictiveInterpolation)
+	{
+		return;
+	}
+
+	UPrimitiveComponent* RootPrimComp = Cast<UPrimitiveComponent>(RootComponent);
+	if (RootPrimComp)
+	{
+		FRigidBodyState RBState;
+		RootPrimComp->GetRigidBodyState(RBState);
+
+		RBState.Flags |= ERigidBodyFlags::NeedsUpdate;
+		RBState.Flags |= ERigidBodyFlags::RepPhysics;
+
+		if (bShouldSleep)
+		{
+			RBState.Flags |= ERigidBodyFlags::Sleeping;
+
+			// Force no velocity for sleeping objects else it won't be able to go to sleep
+			RBState.AngVel = FVector::ZeroVector;
+			RBState.LinVel = FVector::ZeroVector;
+		}
+
+		RootPrimComp->SetRigidBodyReplicatedTarget(RBState, NAME_None, /*ServerFrame*/ INDEX_NONE, INDEX_NONE);
 	}
 }
 
@@ -373,20 +435,26 @@ void AActor::GatherCurrentMovement()
 		UPrimitiveComponent* RootPrimComp = Cast<UPrimitiveComponent>(GetRootComponent());
 		if (RootPrimComp && RootPrimComp->IsSimulatingPhysics())
 		{
-#if UE_WITH_IRIS
 			const bool bPrevRepPhysics = ReplicatedMovement.bRepPhysics;
-#endif // UE_WITH_IRIS
 
+			const bool bShouldUsePhysicsReplicationCache = GetPhysicsReplicationMode() != EPhysicsReplicationMode::Default;
 			bool bFoundInCache = false;
 
 			UWorld* World = GetWorld();
 			int ServerFrame = 0; 
-			if (FPhysScene_Chaos* Scene = static_cast<FPhysScene_Chaos*>(World->GetPhysicsScene()))
+			if (bShouldUsePhysicsReplicationCache)
 			{
-				if (const FRigidBodyState* FoundState = Scene->GetStateFromReplicationCache(RootPrimComp, ServerFrame)) 
+				if (FPhysScene_Chaos* Scene = static_cast<FPhysScene_Chaos*>(World->GetPhysicsScene()))
 				{
-					ReplicatedMovement.FillFrom(*FoundState, this, Scene->ReplicationCache.ServerFrame);
-					bFoundInCache = true;
+					if (const FRigidBodyState* FoundState = Scene->GetStateFromReplicationCache(RootPrimComp, /*OUT*/ServerFrame))
+					{
+						if (ReplicatedMovement.ServerFrame != ServerFrame)
+						{
+							ReplicatedMovement.FillFrom(*FoundState, this, ServerFrame);
+							bWasRepMovementModified = true;
+						}
+						bFoundInCache = true;
+					}
 				}
 			}
 
@@ -396,22 +464,21 @@ void AActor::GatherCurrentMovement()
 				FRigidBodyState RBState;
 				RootPrimComp->GetRigidBodyState(RBState);
 				ReplicatedMovement.FillFrom(RBState, this, ServerFrame);
+				bWasRepMovementModified = true;
 			}
 
 			// Don't replicate movement if we're welded to another parent actor.
 			// Their replication will affect our position indirectly since we are attached.
 			ReplicatedMovement.bRepPhysics = !RootPrimComp->IsWelded();
-			
-			// Technically, the values might have stayed the same, but we'll just assume they've changed.
-			bWasRepMovementModified = true;
 
-#if UE_WITH_IRIS
 			// If RepPhysics has changed value then notify the ReplicationSystem
 			if (bPrevRepPhysics != ReplicatedMovement.bRepPhysics)
 			{
+#if UE_WITH_IRIS
 				UpdateReplicatePhysicsCondition();
-			}
 #endif // UE_WITH_IRIS
+				bWasRepMovementModified = true;
+			}
 		}
 		else if (RootComponent != nullptr)
 		{
@@ -577,6 +644,15 @@ void AActor::AddComponentForReplication(UActorComponent* Component)
 
 	const ELifetimeCondition NetCondition = AllowActorComponentToReplicate(Component);
 
+	// Check if the UCS component was built from a template that's not replicated to the client.
+	if (Component->CreationMethod == EComponentCreationMethod::UserConstructionScript && !Component->IsNameStableForNetworking())
+	{
+		ensureMsgf(Component->GetArchetype() == Component->GetClass()->GetDefaultObject(), TEXT("Replicated component %s::%s was added dynamically outside the construction script. This is not well supported and the component on the client will be initialized using the wrong archetype."),
+			*GetName(), *Component->GetName());
+	}
+
+	ensureMsgf(ReplicatedComponents.Find(Component)!=INDEX_NONE, TEXT("AActor::AddComponentForReplication %s::%s but the componenbt was not found in the ReplicatedComponents list."), *GetName(), *Component->GetName());
+
 	FReplicatedComponentInfo* ComponentInfo = ReplicatedComponentsInfo.FindByKey(Component);
 	if (!ComponentInfo)
 	{
@@ -608,7 +684,10 @@ void AActor::RemoveReplicatedComponent(UActorComponent* Component)
 	{
 		ReplicatedComponentsInfo.RemoveAtSwap(Index);
 #if UE_WITH_IRIS
-		Component->EndReplication();
+		if (HasAuthority())
+		{
+			Component->EndReplication();
+		}
 #endif
 	}
 }
@@ -617,7 +696,13 @@ void AActor::AddReplicatedSubObject(UObject* SubObject, ELifetimeCondition NetCo
 {
 	if( !IsValid(SubObject) )
 	{
-		ensureMsgf(TEXT("Ignoring AddReplicatedSubObject for %s. Invalid pointer received."), *GetNameSafe(this));
+		ensureMsgf(false, TEXT("Ignoring AddReplicatedSubObject for %s. Invalid pointer received."), *GetNameSafe(this));
+		return;
+	}
+
+	if (SubObject->HasAnyFlags(RF_ArchetypeObject | RF_ClassDefaultObject))
+	{
+		ensureMsgf(false, TEXT("AddReplicatedSubObject cannot replicate %s for %s. Archetypes or CDO's cannot be replicated subobject's."), *GetNameSafe(SubObject), *GetNameSafe(this));
 		return;
 	}
 
@@ -653,7 +738,7 @@ void AActor::RemoveReplicatedSubObject(UObject* SubObject)
 {
 	const bool bWasRemoved = RemoveReplicatedSubObjectFromList(SubObject);
 #if UE_WITH_IRIS
-	if (bWasRemoved)
+	if (bWasRemoved && HasAuthority())
 	{
 		UE::Net::FReplicationSystemUtil::EndReplicationForActorSubObject(this, SubObject);
 	}
@@ -670,7 +755,7 @@ void AActor::DestroyReplicatedSubObjectOnRemotePeers(UObject* SubObject)
 		return;
 	}
 
-	UE_LOG(LogNetSubObject, Verbose, TEXT("%s (0x%p) requested to Delete replicated subobject on clients %s (0x%p)"), *GetName(), this, *SubObject->GetName(), SubObject);
+	UE_LOG(LogNetSubObject, Verbose, TEXT("%s (0x%p) requested to Delete replicated subobject: %s (0x%p)"), *GetName(), this, *SubObject->GetName(), SubObject);
 
 	if (FWorldContext* const Context = GEngine->GetWorldContextFromWorld(GetWorld()))
 	{
@@ -699,7 +784,7 @@ void AActor::DestroyReplicatedSubObjectOnRemotePeers(UActorComponent* OwnerCompo
 		return;
 	}
 
-	UE_LOG(LogNetSubObject, Verbose, TEXT("%s::%s (0x%p) requested to Delete replicated subobject on clients %s (0x%p)"), *GetName(), *OwnerComponent->GetName(), OwnerComponent, *SubObject->GetName(), SubObject);
+	UE_LOG(LogNetSubObject, Verbose, TEXT("%s::%s (0x%p) requested to Delete replicated subobject: %s (0x%p)"), *GetName(), *OwnerComponent->GetName(), OwnerComponent, *SubObject->GetName(), SubObject);
 
 	if (FWorldContext* const Context = GEngine->GetWorldContextFromWorld(GetWorld()))
 	{
@@ -728,7 +813,7 @@ void AActor::TearOffReplicatedSubObjectOnRemotePeers(UActorComponent* OwnerCompo
 		return;
 	}
 
-	UE_LOG(LogNetSubObject, Verbose, TEXT("%s::%s (0x%p) requested to TearOff replicated subobject on clients %s (0x%p)"), *GetName(), *OwnerComponent->GetName(), this, *SubObject->GetName(), SubObject);
+	UE_LOG(LogNetSubObject, Verbose, TEXT("%s::%s (0x%p) requested to TearOff replicated subobject: %s (0x%p)"), *GetName(), *OwnerComponent->GetName(), this, *SubObject->GetName(), SubObject);
 
 	if (FWorldContext* const Context = GEngine->GetWorldContextFromWorld(GetWorld()))
 	{
@@ -757,7 +842,7 @@ void AActor::TearOffReplicatedSubObjectOnRemotePeers(UObject* SubObject)
 		return;
 	}
 
-	UE_LOG(LogNetSubObject, Verbose, TEXT("%s (0x%p) requested to TearOff replicated subobject on clients %s (0x%p)"), *GetName(), this, *SubObject->GetName(), SubObject);
+	UE_LOG(LogNetSubObject, Verbose, TEXT("%s (0x%p) requested to TearOff replicated subobject: %s (0x%p)"), *GetName(), this, *SubObject->GetName(), SubObject);
 
 	if (FWorldContext* const Context = GEngine->GetWorldContextFromWorld(GetWorld()))
 	{
@@ -783,7 +868,13 @@ void AActor::AddActorComponentReplicatedSubObject(UActorComponent* OwnerComponen
 
 	if (!IsValid(SubObject))
 	{
-		ensureMsgf(TEXT("Ignoring AddReplicatedSubObject for %s::%s. Invalid pointer received."), *GetNameSafe(this), *GetNameSafe(OwnerComponent));
+		ensureMsgf(false, TEXT("Ignoring AddReplicatedSubObject for %s::%s. Invalid pointer received."), *GetNameSafe(this), *GetNameSafe(OwnerComponent));
+		return;
+	}
+
+	if (SubObject->HasAnyFlags(RF_ArchetypeObject | RF_ClassDefaultObject))
+	{
+		ensureMsgf(false, TEXT("AddReplicatedSubObject cannot replicate %s for %s::%s. Archetypes or CDO's cannot be replicated subobject's."), *GetNameSafe(SubObject), *GetNameSafe(this), *GetNameSafe(OwnerComponent));
 		return;
 	}
 	
@@ -846,7 +937,7 @@ void AActor::RemoveActorComponentReplicatedSubObject(UActorComponent* OwnerCompo
 	const bool bWasRemoved = RemoveActorComponentReplicatedSubObjectFromList(OwnerComponent, SubObject);
 	
 #if UE_WITH_IRIS
-	if (bWasRemoved)
+	if (bWasRemoved && HasAuthority())
 	{
 		UE::Net::FReplicationSystemUtil::EndReplicationForActorComponentSubObject(OwnerComponent, SubObject);
 	}
@@ -1003,11 +1094,11 @@ void AActor::EndReplication(EEndPlayReason::Type EndPlayReason)
 	UE::Net::FReplicationSystemUtil::EndReplication(this, EndPlayReason);
 }
 
-void AActor::UpdateOwningNetConnection() const
+void AActor::UpdateOwningNetConnection()
 {
 	using namespace UE::Net;
 
-	UReplicationSystem* ReplicationSystem = FReplicationSystemUtil::GetReplicationSystem(GetNetOwner());
+	UReplicationSystem* ReplicationSystem = FReplicationSystemUtil::GetReplicationSystem(this);
 	UObjectReplicationBridge* ObjectReplicationBridge = (ReplicationSystem ? ReplicationSystem->GetReplicationBridgeAs<UObjectReplicationBridge>() : nullptr);
 	if (ObjectReplicationBridge == nullptr)
 	{
@@ -1021,54 +1112,44 @@ void AActor::UpdateOwningNetConnection() const
 	}
 
 	// If this actor isn't replicated there's no way for us to tell whether we need to update our children.
-	bool bUpdateChildren = !GetIsReplicated();
-	if (!bUpdateChildren)
+	bool bUpdateSelfAndChildren = !GetIsReplicated();
+	if (!bUpdateSelfAndChildren)
 	{
-#if DO_CHECK
-		// Sanity check
-		{
-			const UReplicationSystem* MyReplicationSystem = FReplicationSystemUtil::GetReplicationSystem(this);
-			check(MyReplicationSystem == ReplicationSystem || MyReplicationSystem == nullptr);
-		}
-#endif
-
-		FNetHandle NetHandle = FReplicationSystemUtil::GetNetHandle(this);
-		bUpdateChildren = NetHandle.IsValid();
+		const FNetHandle NetHandle = FReplicationSystemUtil::GetNetHandle(this);
+		bUpdateSelfAndChildren = NetHandle.IsValid();
 	}
 
-	if (!bUpdateChildren)
+	if (!bUpdateSelfAndChildren)
 	{
 		return;
 	}
 
-	constexpr SIZE_T MaxActorCount = 512;
-	const AActor* Actors[MaxActorCount];
-	SIZE_T ActorCount = 1;
-	Actors[0] = this;
-	for (; ActorCount > 0; )
-	{
-		const AActor* Actor = Actors[--ActorCount];
-		check(ActorCount + Actor->Children.Num() <= UE_ARRAY_COUNT(Actors));
-		for (const AActor* Child : MakeArrayView(Actor->Children))
-		{
-			Actors[ActorCount++] = Child;
-		}
+	TArray<AActor*, TInlineAllocator<32>> EveryChildren;
+	// Include ourself
+	EveryChildren.Push(this);
 
-		if (Actor->GetIsReplicated())
+	do 
+	{
+		if (AActor* Actor = EveryChildren.Pop(EAllowShrinking::No))
 		{
-			const UE::Net::FNetRefHandle RefHandle = ObjectReplicationBridge->GetReplicatedRefHandle(Actor);
-			if (RefHandle.IsValid())
+			EveryChildren.Append(Actor->Children);
+
+			if (Actor->GetIsReplicated())
 			{
-				ReplicationSystem->SetOwningNetConnection(RefHandle, NewOwningNetConnectionId);
-				// Update autonomous proxy condition
-				if (Actor->GetRemoteRole() == ROLE_AutonomousProxy)
+				const UE::Net::FNetRefHandle RefHandle = ObjectReplicationBridge->GetReplicatedRefHandle(Actor);
+				if (RefHandle.IsValid())
 				{
-					const bool bEnableAutonomousCondition = true;
-					ReplicationSystem->SetReplicationConditionConnectionFilter(RefHandle, EReplicationCondition::RoleAutonomous, NewOwningNetConnectionId, bEnableAutonomousCondition);
+					ReplicationSystem->SetOwningNetConnection(RefHandle, NewOwningNetConnectionId);
+					// Update autonomous proxy condition
+					if (Actor->GetRemoteRole() == ROLE_AutonomousProxy)
+					{
+						const bool bEnableAutonomousCondition = true;
+						ReplicationSystem->SetReplicationConditionConnectionFilter(RefHandle, EReplicationCondition::RoleAutonomous, NewOwningNetConnectionId, bEnableAutonomousCondition);
+					}
 				}
 			}
 		}
-	}
+	} while (EveryChildren.Num());
 }
 #endif // UE_WITH_IRIS
 
@@ -1093,6 +1174,21 @@ bool AActor::CanTriggerResimulation() const
 void AActor::SetPhysicsReplicationMode(const EPhysicsReplicationMode ReplicationMode)
 {
 	PhysicsReplicationMode = ReplicationMode;
+
+	// When switching replication mode, also clear the current replication target.
+	if (UPrimitiveComponent* RootPrimComp = Cast<UPrimitiveComponent>(RootComponent))
+	{
+		if (UWorld* World = GetWorld())
+		{
+			if (FPhysScene* PhysScene = World->GetPhysicsScene())
+			{
+				if (IPhysicsReplication* PhysicsReplication = PhysScene->GetPhysicsReplication())
+				{
+					PhysicsReplication->RemoveReplicatedTarget(RootPrimComp);
+				}
+			}
+		}
+	}
 }
 
 EPhysicsReplicationMode AActor::GetPhysicsReplicationMode()

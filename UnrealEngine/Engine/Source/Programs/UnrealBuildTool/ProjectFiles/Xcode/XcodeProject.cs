@@ -74,6 +74,7 @@ namespace UnrealBuildTool.XcodeProjectXcconfig
 		public bool bSupportsMac => Supports(UnrealTargetPlatform.Mac);
 		public bool bSupportsIOS => Supports(UnrealTargetPlatform.IOS);
 		public bool bSupportsTVOS => Supports(UnrealTargetPlatform.TVOS);
+		public bool bSupportsVisionOS => Supports(UnrealTargetPlatform.VisionOS);
 		public bool Supports(UnrealTargetPlatform? Platform)
 		{
 			return UnrealData.Supports(Platform) && (ProjectTarget == null || Platform == null || ProjectTarget.SupportedPlatforms.Contains((UnrealTargetPlatform)Platform));
@@ -160,7 +161,7 @@ namespace UnrealBuildTool.XcodeProjectXcconfig
 
 		// Location: Can be key of setting entry in .ini, or the full file path
 		// CopyFromFolderIfNotFound: If the file at "Location" does not exist, try to copy the same named file from this folder
-		public MetadataItem(DirectoryReference ProductDirectory, DirectoryReference XcodeProject, ConfigHierarchy Ini, string Location, MetadataMode InMode, DirectoryReference CopyFromFolderIfNotFound)
+		public MetadataItem(DirectoryReference ProductDirectory, DirectoryReference XcodeProject, ConfigHierarchy Ini, string Location, MetadataMode InMode, DirectoryReference? CopyFromFolderIfNotFound)
 		{
 			// no extension means it's a .ini entry
 			if (Path.GetExtension(Location).Length == 0)
@@ -180,7 +181,7 @@ namespace UnrealBuildTool.XcodeProjectXcconfig
 			{
 				// Copy from source location if no such file exist
 				// Except UBTGenerated, they will be generated during UBT runs
-				if (!FileReference.Exists(File) && !File.ContainsName("UBTGenerated", 0))
+				if (!FileReference.Exists(File) && !File.ContainsName("UBTGenerated", 0) && CopyFromFolderIfNotFound != null)
 				{
 					FileReference SourceFile = FileReference.Combine(CopyFromFolderIfNotFound, File.GetFileName());
 					if (FileReference.Exists(SourceFile))
@@ -224,6 +225,7 @@ namespace UnrealBuildTool.XcodeProjectXcconfig
 		public Dictionary<MetadataPlatform, MetadataItem> PlistFiles = new();
 		public Dictionary<MetadataPlatform, MetadataItem> EntitlementsFiles = new();
 		public Dictionary<MetadataPlatform, MetadataItem> ShippingEntitlementsFiles = new();
+		public Dictionary<MetadataPlatform, MetadataItem> ProjectPrivacyInfoFiles = new();
 
 		public Metadata(DirectoryReference ProductDirectory, DirectoryReference XcodeProject, ConfigHierarchy Ini, bool bSupportsMac, bool bSupportsIOSOrTVOS, ILogger Logger)
 		{
@@ -262,6 +264,11 @@ namespace UnrealBuildTool.XcodeProjectXcconfig
 						MetadataMode.UpdateTemplate,
 						ResourceFolder);
 					}
+
+					ProjectPrivacyInfoFiles[MetadataPlatform.Mac] = new MetadataItem(ProductDirectory, XcodeProject, Ini,
+						"AdditionalPrivacyInfoMac",
+						MetadataMode.UsePremade,
+						null);
 				}
 
 				EntitlementsFiles[MetadataPlatform.MacEditor] = new MetadataItem(ProductDirectory, XcodeProject, Ini,
@@ -295,6 +302,14 @@ namespace UnrealBuildTool.XcodeProjectXcconfig
 						"TemplateIOSPlist",
 						MetadataMode.UpdateTemplate,
 						ResourceFolder);
+				}
+
+				if (ProductDirectory != Unreal.EngineDirectory)
+				{
+					ProjectPrivacyInfoFiles[MetadataPlatform.IOS] = new MetadataItem(ProductDirectory, XcodeProject, Ini,
+						"AdditionalPrivacyInfoIOS",
+						MetadataMode.UsePremade,
+						null);
 				}
 
 				EntitlementsFiles[MetadataPlatform.IOS] = new MetadataItem(ProductDirectory, XcodeProject, Ini,
@@ -338,7 +353,8 @@ namespace UnrealBuildTool.XcodeProjectXcconfig
 
 		// settings read from project configs
 		public IOSProjectSettings? IOSProjectSettings;
-		public TVOSProjectSettings? TVOSProjectSettings;
+		public IOSProjectSettings? TVOSProjectSettings;
+		public IOSProjectSettings? VisionOSProjectSettings;
 
 		// Name of the product (usually the project name, but UE5.xcodeproj is actually UnrealGame product)
 		public string ProductName;
@@ -380,6 +396,7 @@ namespace UnrealBuildTool.XcodeProjectXcconfig
 		public static bool bSupportsMac => Supports(UnrealTargetPlatform.Mac);
 		public static bool bSupportsIOS => Supports(UnrealTargetPlatform.IOS);
 		public static bool bSupportsTVOS => Supports(UnrealTargetPlatform.TVOS);
+		public static bool bSupportsVisionOS => Supports(UnrealTargetPlatform.VisionOS);
 		public static bool Supports(UnrealTargetPlatform? Platform)
 		{
 			return Platform == null || XcodeProjectFileGenerator.XcodePlatforms.Contains((UnrealTargetPlatform)Platform);
@@ -387,9 +404,9 @@ namespace UnrealBuildTool.XcodeProjectXcconfig
 
 		public bool IsAppBundle(UnrealTargetPlatform Platform)
 		{
-			if (Platform == UnrealTargetPlatform.IOS || Platform == UnrealTargetPlatform.TVOS)
+			if (Platform != UnrealTargetPlatform.Mac)
 			{
-				// iOS and TvOS always need app bundles
+				// mobile always need app bundles
 				return true;
 			}
 			return bIsAppBundle;
@@ -536,6 +553,17 @@ namespace UnrealBuildTool.XcodeProjectXcconfig
 				TVOSProjectSettings = TVOSPlatform.ReadProjectSettings(UProjectFileLocation);
 			}
 
+			if (AllConfigs.Any(x => x.bSupportsVisionOS))
+			{
+				// this may not exist since it's a PlatformExtension and the VisionOS files may not be preset
+				UEBuildPlatform? BuildPlatform;
+				if (UEBuildPlatform.TryGetBuildPlatform(UnrealTargetPlatform.VisionOS, out BuildPlatform))
+				{
+					IOSPlatform VisionOSPlatform = (IOSPlatform)BuildPlatform;
+					VisionOSProjectSettings = VisionOSPlatform.ReadProjectSettings(UProjectFileLocation);
+				}
+			}
+
 			return true;
 		}
 
@@ -546,7 +574,7 @@ namespace UnrealBuildTool.XcodeProjectXcconfig
 			ConfigHierarchy SharedPlatformIni = ConfigCache.ReadHierarchy(ConfigHierarchyType.Engine, ConfigDirectory, UnrealTargetPlatform.Mac);
 			SharedPlatformIni.TryGetValue("/Script/MacTargetPlatform.XcodeProjectSettings", "bUseAutomaticCodeSigning", out bUseAutomaticSigning);
 
-			Metadata = new Metadata(ProductDirectory, XcodeProjectFileLocation, SharedPlatformIni, bSupportsMac, bSupportsIOS || bSupportsTVOS, Logger);
+			Metadata = new Metadata(ProductDirectory, XcodeProjectFileLocation, SharedPlatformIni, bSupportsMac, bSupportsIOS || bSupportsTVOS || bSupportsVisionOS, Logger);
 		}
 
 		public string? FindFile(List<string> Paths, UnrealTargetPlatform Platform, bool bMakeRelative)
@@ -645,7 +673,7 @@ namespace UnrealBuildTool.XcodeProjectXcconfig
 				{
 					foreach (UnrealTargetPlatform Platform in Platforms)
 					{
-						if (InstalledPlatformInfo.IsValidPlatform(Platform, EProjectType.Code) && (Platform == UnrealTargetPlatform.Mac || Platform == UnrealTargetPlatform.IOS || Platform == UnrealTargetPlatform.TVOS)) // @todo support other platforms
+						if (InstalledPlatformInfo.IsValidPlatform(Platform, EProjectType.Code) && Platform.IsInGroup(UnrealPlatformGroup.Apple)) // @todo support other platforms
 						{
 							UEBuildPlatform? BuildPlatform;
 							if (UEBuildPlatform.TryGetBuildPlatform(Platform, out BuildPlatform) && (BuildPlatform.HasRequiredSDKsInstalled() == SDKStatus.Valid))
@@ -1024,9 +1052,16 @@ namespace UnrealBuildTool.XcodeProjectXcconfig
 			Content.WriteLine(3, "buildSettings = {");
 			if (bIncludeAllPlatforms)
 			{
-				Content.WriteLine(4, $"SUPPORTED_PLATFORMS = \"macosx iphonesimulator iphoneos appletvsimulator appletvos\";");
+				Content.WriteLine(4, $"SUPPORTED_PLATFORMS = \"macosx iphonesimulator iphoneos appletvsimulator appletvos xros xrsimulator\";");
 				Content.WriteLine(4, $"ONLY_ACTIVE_ARCH = YES;");
+
+				if (Info.bSupportsMac)
+				{
+					string SupportedMacArchitectures = String.Join(" ", XcodeUtils.GetSupportedMacArchitectures(Info.BuildTarget, Info.ProjectTarget?.UnrealProjectFilePath).Architectures.Select(x => x.AppleName));
+					Content.WriteLine(4, $"\"VALID_ARCHS[sdk=macos*]\" = \"{SupportedMacArchitectures}\";");
+				}
 			}
+				
 			Content.WriteLine(3, "};");
 			Content.WriteLine(3, $"name = \"{Info.DisplayName}\";");
 			Content.WriteLine(2, "};");
@@ -1044,6 +1079,7 @@ namespace UnrealBuildTool.XcodeProjectXcconfig
 		public bool bSupportsMac => Supports(UnrealTargetPlatform.Mac);
 		public bool bSupportsIOS => Supports(UnrealTargetPlatform.IOS);
 		public bool bSupportsTVOS => Supports(UnrealTargetPlatform.TVOS);
+		public bool bSupportsVisionOS => Supports(UnrealTargetPlatform.VisionOS);
 		public bool Supports(UnrealTargetPlatform? Platform)
 		{
 			return this.Platform == Platform || (this.Platform == null && BuildConfigs.Any(x => x.Info.Supports(Platform)));
@@ -1313,9 +1349,9 @@ namespace UnrealBuildTool.XcodeProjectXcconfig
 				"DEST_EXE=\\\"${CONFIGURATION_BUILD_DIR}/${EXECUTABLE_PATH}\\\"",
 				"DEST_EXE_DIR=`dirname \\\"${DEST_EXE}\\\"`",
 				"",
-				"echo Copying executable and any standalone dylibs into ${DEST_EXE_DIR}",
+				"echo Copying executable and any standalone dylibs into ${DEST_EXE_DIR} but do not overwrite unless src is newer",
 				"mkdir -p \\\"${DEST_EXE_DIR}\\\"",
-				"ditto \\\"${SRC_EXE}\\\" \\\"${DEST_EXE}\\\"",
+				"rsync -au \\\"${SRC_EXE}\\\" \\\"${DEST_EXE}\\\"",
 			});
 
 			IEnumerable<ModuleRules.RuntimeDependency>? Dylibs;
@@ -1339,19 +1375,20 @@ namespace UnrealBuildTool.XcodeProjectXcconfig
 
 			CopyScript.Add("");
 
-			// Editor just need the above script to copy executable into .app
-			if (Project.UnrealData.TargetRules.Type == TargetType.Editor)
+			if (Project.UnrealData.TargetRules.Type == TargetType.Editor && UnrealData.TargetRules.LinkType == TargetLinkType.Modular)
 			{
+				// Editor just need the above script to copy executable into .app
+
 				XcodeShellScriptBuildPhase EditorCopyScriptPhase = new("Copy Executable into .app", CopyScript, new string[] { }, new string[] { $"/dev/null" });
 				BuildPhases.Add(EditorCopyScriptPhase);
 				References.Add(EditorCopyScriptPhase);
 				return;
 			}
-
-			// rsync the Staged build into the .app, unless the UE_SKIP_STAGEDDATA_SYNC var is set to 1
-			// editor builds don't need staged content in them
-			if (TargetType != TargetType.Editor)
+			else
 			{
+				// rsync the Staged build into the .app, unless the UE_SKIP_STAGEDDATA_SYNC var is set to 1
+				// editor builds don't need staged content in them
+
 				bool bIsEngineBuild = Project.UnrealData.UProjectFileLocation == null;
 				string DefaultStageDir = bIsEngineBuild ? "" : "${UE_PROJECT_DIR}/Saved/StagedBuilds/${UE_TARGET_PLATFORM_NAME}";
 				string SyncSourceSubdir = (Platform == UnrealTargetPlatform.Mac) ? "" : "/cookeddata";
@@ -1394,8 +1431,12 @@ namespace UnrealBuildTool.XcodeProjectXcconfig
 					CopyScript.AddRange(new string[]
 					{
 						"# Make sure the staged directory exists and has files in it",
-						"if [[ ! -e ${STAGED_DIR} ]]; then exit 0; fi",
-					});
+						"if [[ ! -e ${STAGED_DIR} ]]; then ",
+						"  # Make sure the target doesn't exist (so if we delete the Staged dir, it goes back to unstaged",
+						$"  rm -rf \\\"${{CONFIGURATION_BUILD_DIR}}/${{CONTENTS_FOLDER_PATH}}{SyncDestSubdir}\\\"",
+						"  exit -0",
+						"fi",
+					}); ;
 				}
 
 				// when we bring stated data into the .app, we have to skip some temp stuff that went into it
@@ -1493,6 +1534,31 @@ namespace UnrealBuildTool.XcodeProjectXcconfig
 				if (LaunchImagePath != null)
 				{
 					ResourcesBuildPhase.AddResource(new FileReference(LaunchImagePath));
+				}
+			}
+
+			if (Platform == UnrealTargetPlatform.Mac)
+			{
+				ResourcesBuildPhase.AddFolderResource(DirectoryReference.Combine(Unreal.EngineDirectory, "Build/Mac/Resources/UEMetadata"), "Resources");
+				if (UnrealData.Metadata?.ProjectPrivacyInfoFiles.ContainsKey(MetadataPlatform.Mac) == true)
+				{
+					MetadataItem PrivacyInfo = UnrealData.Metadata.ProjectPrivacyInfoFiles[MetadataPlatform.Mac];
+					if (PrivacyInfo.XcodeProjectRelative != null)
+					{
+						ResourcesBuildPhase.AddResource(FileReference.Combine(UnrealData.XcodeProjectFileLocation.ParentDirectory!, PrivacyInfo.XcodeProjectRelative));
+					}
+				}
+			}
+			else if (Platform == UnrealTargetPlatform.IOS || Platform == UnrealTargetPlatform.TVOS || Platform == UnrealTargetPlatform.VisionOS)
+			{
+				ResourcesBuildPhase.AddFolderResource(DirectoryReference.Combine(Unreal.EngineDirectory, "Build/IOS/Resources/UEMetadata"), "Resources");
+				if (UnrealData.Metadata?.ProjectPrivacyInfoFiles.ContainsKey(MetadataPlatform.IOS) == true)
+				{
+					MetadataItem PrivacyInfo = UnrealData.Metadata.ProjectPrivacyInfoFiles[MetadataPlatform.IOS];
+					if (PrivacyInfo.XcodeProjectRelative != null)
+					{
+						ResourcesBuildPhase.AddResource(FileReference.Combine(UnrealData.XcodeProjectFileLocation.ParentDirectory!, PrivacyInfo.XcodeProjectRelative));
+					}
 				}
 			}
 		}
@@ -1720,14 +1786,11 @@ namespace UnrealBuildTool.XcodeProjectXcconfig
 				SDKRoot = "macosx";
 				SupportedPlatforms = "macosx";
 				DeploymentTargetKey = "MACOSX_DEPLOYMENT_TARGET";
-				DeploymentTarget = MacToolChain.Settings.MacOSVersion;
+				DeploymentTarget = MacToolChain.Settings.MinMacDeploymentVersion(UnrealData.TargetRules.Type);
 				BundleIdentifier = bIsEditor ? "com.epicgames.UnrealEditor" : UnrealData.BundleIdentifier;
 
 				// @todo: get a version for  games, like IOS has
 				MarketingVersion = MacToolChain.LoadEngineDisplayVersion();
-
-				string SupportedMacArchitectures = String.Join(" ", XcodeUtils.GetSupportedMacArchitectures(BuildConfig.BuildTarget, UnrealData.UProjectFileLocation).Architectures.Select(x => x.AppleName));
-				ExtraConfigLines.Add($"VALID_ARCHS = {SupportedMacArchitectures}");
 			}
 			else
 			{
@@ -1768,13 +1831,37 @@ namespace UnrealBuildTool.XcodeProjectXcconfig
 						ExtraConfigLines.Add($"INFOPLIST_KEY_UIRequiresFullScreen_iPad = false");
 					}
 				}
-				else // tvos
+				else if (Platform == UnrealTargetPlatform.TVOS) // tvos
 				{
 					SDKRoot = "appletvos";
 					SupportedPlatforms = "appletvos"; // appletvsimulator
 					DeploymentTargetKey = "TVOS_DEPLOYMENT_TARGET";
 					SupportedDevices = UnrealData.TVOSProjectSettings!.RuntimeDevices;
 					DeploymentTarget = UnrealData.TVOSProjectSettings.RuntimeVersion;
+				}
+				else if (Platform == UnrealTargetPlatform.VisionOS)
+				{
+					SDKRoot = "xros";
+					SupportedPlatforms = "xrsimulator xros";
+					DeploymentTargetKey = "XROS_DEPLOYMENT_TARGET";
+					SupportedDevices = UnrealData.VisionOSProjectSettings!.RuntimeDevices;
+					DeploymentTarget = UnrealData.VisionOSProjectSettings.RuntimeVersion;
+
+					ExtraConfigLines.Add($"VALID_ARCHS = arm64");
+					ExtraConfigLines.Add($"ARCHS = arm64");
+
+					// if we are doing immersive with SwiftUI we need a plist key
+					bool bUseSwiftUIMain;
+					AppleExports.GetSwiftIntegrationSettings(UnrealData.UProjectFileLocation, Platform, out bUseSwiftUIMain, out _);
+					if (bUseSwiftUIMain)
+					{
+						ExtraConfigLines.Add($"INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES");
+					}
+
+				}
+				else
+				{
+					throw new BuildException($"Unsupported platform {Platform}");
 				}
 			}
 
@@ -1980,8 +2067,14 @@ namespace UnrealBuildTool.XcodeProjectXcconfig
 
 					ConfigXcconfig.AppendLine($"PRODUCT_NAME_ = {ProductName}");
 					ConfigXcconfig.AppendLine($"PRODUCT_NAME_build = $(PRODUCT_NAME_)");
-					string ArchivedName = ApplicationDisplayName ?? (UnrealData.UProjectFileLocation == null ? ProductName : UnrealData.UProjectFileLocation!.GetFileNameWithoutAnyExtensions());
-					ConfigXcconfig.AppendLine($"PRODUCT_NAME_install = {ArchivedName}");
+					if (String.IsNullOrEmpty(ApplicationDisplayName))
+					{
+						ConfigXcconfig.AppendLine($"PRODUCT_NAME_install = {(UnrealData.UProjectFileLocation == null ? ProductName : UnrealData.UProjectFileLocation!.GetFileNameWithoutAnyExtensions())}");
+					}
+					else
+					{
+						ConfigXcconfig.AppendLine($"PRODUCT_NAME_install = {ApplicationDisplayName}");
+					}
 
 					// this will choose the proper PRODUCT_NAME when archiving vs normal building
 					ConfigXcconfig.AppendLine("PRODUCT_NAME = $(PRODUCT_NAME_$(ACTION))");
@@ -2566,7 +2659,7 @@ namespace UnrealBuildTool.XcodeProjectXcconfig
 
 					// the Build target used some ini settings to compile, and Run target must match, so we override a few settings, at
 					// whatever level they were already specified at (Projet and/or Target)
-					XcodeUtils.PlistSetUpdate($":objects:{ConfigGuid}:buildSettings:MACOSX_DEPLOYMENT_TARGET", MacToolChain.Settings.MacOSVersion);
+					XcodeUtils.PlistSetUpdate($":objects:{ConfigGuid}:buildSettings:MACOSX_DEPLOYMENT_TARGET", MacToolChain.Settings.MinMacDeploymentVersion(UnrealData.TargetRules.Type));
 					if (UnrealData.IOSProjectSettings != null)
 					{
 						XcodeUtils.PlistSetUpdate($":objects:{ConfigGuid}:buildSettings:IPHONEOS_DEPLOYMENT_TARGET", UnrealData.IOSProjectSettings.RuntimeVersion);

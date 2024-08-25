@@ -5,6 +5,7 @@
 // HEADER_UNIT_SKIP - Not used?
 
 #include "Templates/MemoryOps.h"
+#include "Traits/IsContiguousContainer.h"
 
 #if _MSC_VER
 	#pragma warning(push)
@@ -174,6 +175,12 @@ private:
 	friend const T* begin(const TBasicArray& Arr) { return Arr.GetData(); }
 	friend       T* end  (      TBasicArray& Arr) { return Arr.GetData() + Arr.Num(); }
 	friend const T* end  (const TBasicArray& Arr) { return Arr.GetData() + Arr.Num(); }
+};
+
+template <typename T>
+struct TIsContiguousContainer<TBasicArray<T>>
+{
+	enum { Value = true };
 };
 
 #if _MSC_VER

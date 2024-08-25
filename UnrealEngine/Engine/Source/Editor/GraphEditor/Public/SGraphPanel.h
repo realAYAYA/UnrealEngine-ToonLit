@@ -138,7 +138,6 @@ public:
 	virtual FReply OnKeyDown( const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent ) override;
 	virtual bool SupportsKeyboardFocus() const override;
 	virtual void OnArrangeChildren( const FGeometry& AllottedGeometry, FArrangedChildren& ArrangedChildren ) const override;
-	virtual TSharedPtr<IToolTip> GetToolTip() override;
 	// End of SWidget interface
 
 	// SNodePanel interface
@@ -344,11 +343,11 @@ protected:
 	TAttribute<bool> ShowGraphStateOverlay;
 
 private:
-	/** Ordered list of user actions, as they came in */
-	TArray<FEdGraphEditAction> UserActions;
+	/** Set of nodes selected by the user, tracked while a visual update is pending */
+	TSet<TWeakObjectPtr<class UEdGraphNode>> UserSelectedNodes;
 
-	/** Map of recently added nodes for the panel (maps from added nodes to UserActions indices) */
-	TMap<const class UEdGraphNode*, int32> UserAddedNodes;
+	/** Set of user-added nodes for the panel, tracked while a visual update is pending */
+	TSet<const class UEdGraphNode*> UserAddedNodes;
 
 	/** Should the graph display all nodes in a read-only state (grayed)? This does not affect functionality of using them (IsEditable) */
 	TAttribute<bool> DisplayAsReadOnly;
@@ -369,7 +368,7 @@ private:
 	void UpdateSelectedNodesPositions(FVector2D PositionIncrement);
 
 	/** Handle updating the spline hover state */
-	void OnSplineHoverStateChanged(const FGraphSplineOverlapResult& NewSplineHoverState);
+	bool OnSplineHoverStateChanged(const FGraphSplineOverlapResult& NewSplineHoverState);
 
 	/** Returns the pin that we're considering as hovered if we are hovering over a spline; may be null */
 	class SGraphPin* GetBestPinFromHoveredSpline() const;
@@ -384,10 +383,10 @@ private:
 	UEdGraphPin* GetPinUnderMouse(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent, TSharedPtr<SGraphNode> GraphNode) const;
 
 	/** If the spawned nodes were auto-wired from any of the dragged pins, then this will try to make the newly connected pin end up at SpawnGraphPosition */
-	void AdjustNewlySpawnedNodePositions(TArrayView<UEdGraphNode*> SpawnedNodes, TArrayView<UEdGraphPin*> DraggedFromPins, FVector2D SpawnGraphPosition);
+	void AdjustNewlySpawnedNodePositions(TArrayView<UEdGraphNode* const> SpawnedNodes, TArrayView<UEdGraphPin*> DraggedFromPins, FVector2D SpawnGraphPosition);
 
 	/** Will move a group of nodes by the amount needed for an anchor pin to be at a certain position */
-	void MoveNodesToAnchorPinAtGraphPosition(TArrayView<UEdGraphNode*> NodesToMove, FGraphPinHandle PinToAnchor, FVector2D DesiredPinGraphPosition);
+	void MoveNodesToAnchorPinAtGraphPosition(TArrayView<UEdGraphNode* const> NodesToMove, FGraphPinHandle PinToAnchor, FVector2D DesiredPinGraphPosition);
 
 	/** Handle to timer callback that allows the UI to refresh it's arrangement each tick, allows animations to occur within the UI */
 	TWeakPtr<FActiveTimerHandle> ActiveTimerHandleInvalidatePerTick;

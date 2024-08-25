@@ -1,8 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System;
-using Horde.Server.Users;
-using Horde.Server.Utilities;
+using EpicGames.Horde.Users;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;
 
@@ -32,7 +31,7 @@ namespace Horde.Server.Server.Notices
 		/// <summary>
 		/// Finish time to display this message
 		/// </summary>
-		public DateTime? FinishTime { get;  }
+		public DateTime? FinishTime { get; }
 
 		/// <summary>
 		/// Message to display

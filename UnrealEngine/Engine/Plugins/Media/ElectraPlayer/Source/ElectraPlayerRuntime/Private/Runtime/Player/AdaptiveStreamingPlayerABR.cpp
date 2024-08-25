@@ -31,7 +31,7 @@ namespace Electra
 		void SetBandwidth(int64 bitsPerSecond) override;
 		void SetForcedNextBandwidth(int64 bitsPerSecond, double minBufferTimeBeforePlayback) override;
 		FTimeValue GetMinBufferTimeForPlayback(EMinBufferType InBufferingType, FTimeValue InDefaultMBT) override;
-		FRebufferAction GetRebufferAction(const FParamDict& CurrentPlayerOptions) override;
+		FRebufferAction GetRebufferAction() override;
 		EHandlingAction PeriodicHandle() override;
 		void MarkStreamAsUnavailable(const FDenylistedStream& DenylistedStream) override;
 		void MarkStreamAsAvailable(const FDenylistedStream& NoLongerDenylistedStream) override;
@@ -60,6 +60,7 @@ namespace Electra
 		void ReportLicenseKey(const Metrics::FLicenseKeyStats& LicenseKeyStats) override {}
 		void ReportDataAvailabilityChange(const Metrics::FDataAvailabilityChange& DataAvailability) override {}
 		void ReportVideoQualityChange(int32 NewBitrate, int32 PreviousBitrate, bool bIsDrasticDownswitch) override {}
+		void ReportAudioQualityChange(int32 NewBitrate, int32 PreviousBitrate, bool bIsDrasticDownswitch) override {}
 		void ReportDecodingFormatChange(const FStreamCodecInformation& NewDecodingFormat) override {}
 		void ReportPrerollStart() override {}
 		void ReportPrerollEnd() override {}
@@ -77,8 +78,10 @@ namespace Electra
 		void ReportDroppedAudioFrame() override {}
 
 	private:
-		FParamDict& GetPlayerOptions() override
-		{ return PlayerSessionServices->GetOptions(); }
+		bool HaveOptionValue(const FName& InOption) override
+		{ return PlayerSessionServices->HaveOptionValue(InOption); }
+		const FVariantValue GetOptionValue(const FName& InOption) override
+		{ return PlayerSessionServices->GetOptionValue(InOption); }
 		void LogMessage(IInfoLog::ELevel Level, const FString& Message) override
 		{ PlayerSessionServices->PostLog(Facility::EFacility::ABR, Level, Message); }
 		TSharedPtrTS<FABRStreamInformation> GetStreamInformation(const Metrics::FSegmentDownloadStats& FromDownloadStats) override;
@@ -449,9 +452,9 @@ namespace Electra
 		return ABRMethod.IsValid() ? ABRMethod->PeriodicHandle() : IAdaptiveStreamSelector::EHandlingAction::None;
 	}
 
-	IAdaptiveStreamSelector::FRebufferAction FAdaptiveStreamSelector::GetRebufferAction(const FParamDict& CurrentPlayerOptions)
+	IAdaptiveStreamSelector::FRebufferAction FAdaptiveStreamSelector::GetRebufferAction()
 	{
-		return ABRMethod.IsValid() ? ABRMethod->GetRebufferAction(CurrentPlayerOptions) : IAdaptiveStreamSelector::FRebufferAction();
+		return ABRMethod.IsValid() ? ABRMethod->GetRebufferAction() : IAdaptiveStreamSelector::FRebufferAction();
 	}
 
 	FTimeValue FAdaptiveStreamSelector::GetMinBufferTimeForPlayback(IAdaptiveStreamSelector::EMinBufferType InBufferingType, FTimeValue InDefaultMBT)
@@ -607,16 +610,16 @@ namespace Electra
 		}
 		else
 		{
-			// Initial request. The play period is the same for all streams at this point.
+			// Initial request.
 			ESegmentAction ActionV = ESegmentAction::FetchNext;
 			ESegmentAction ActionA = ESegmentAction::FetchNext;
 			if (StreamInformationVideo.Num())
 			{
-				ActionV = SelectSuitableStreamByType(OutDelay, CurrentSegment, CurrentPlayPeriod, EStreamType::Video);
+				ActionV = SelectSuitableStreamByType(OutDelay, CurrentSegment, CurrentPlayPeriodVideo, EStreamType::Video);
 			}
 			if (StreamInformationAudio.Num())
 			{
-				ActionA = SelectSuitableStreamByType(OutDelay, CurrentSegment, CurrentPlayPeriod, EStreamType::Audio);
+				ActionA = SelectSuitableStreamByType(OutDelay, CurrentSegment, CurrentPlayPeriodAudio, EStreamType::Audio);
 			}
 			if (ActionV == IAdaptiveStreamSelector::ESegmentAction::Fail || ActionA == IAdaptiveStreamSelector::ESegmentAction::Fail)
 			{

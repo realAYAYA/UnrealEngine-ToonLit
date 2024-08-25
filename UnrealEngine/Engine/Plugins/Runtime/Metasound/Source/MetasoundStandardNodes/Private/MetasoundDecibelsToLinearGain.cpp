@@ -29,9 +29,9 @@ namespace Metasound
 
 		static const FNodeClassMetadata& GetNodeInfo();
 		static const FVertexInterface& GetVertexInterface();
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors);
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults);
 
-		FDecibelsToLinearGainOperator(const FCreateOperatorParams& InParams, const FFloatReadRef& InDecibelGain);
+		FDecibelsToLinearGainOperator(const FBuildOperatorParams& InParams, const FFloatReadRef& InDecibelGain);
 
 		virtual void BindInputs(FInputVertexInterfaceData& InOutVertexData) override;
 		virtual void BindOutputs(FOutputVertexInterfaceData& InOutVertexData) override;
@@ -48,7 +48,7 @@ namespace Metasound
 		FFloatWriteRef LinearGainOutput;
 	};
 
-	FDecibelsToLinearGainOperator::FDecibelsToLinearGainOperator(const FCreateOperatorParams& InParams, const FFloatReadRef& InDecibelGain)
+	FDecibelsToLinearGainOperator::FDecibelsToLinearGainOperator(const FBuildOperatorParams& InParams, const FFloatReadRef& InDecibelGain)
 		: DecibelGainInput(InDecibelGain)
 		, LinearGainOutput(FFloatWriteRef::CreateNew())
 	{
@@ -137,14 +137,13 @@ namespace Metasound
 		return Info;
 	}
 
-	TUniquePtr<IOperator> FDecibelsToLinearGainOperator::CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+	TUniquePtr<IOperator> FDecibelsToLinearGainOperator::CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 	{
 		using namespace DecibelsToLinearGainVertexNames;
+		
+		const FInputVertexInterfaceData& InputData = InParams.InputData;
 
-		const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
-		const FInputVertexInterface& InputInterface = GetVertexInterface().GetInputInterface();
-
-		FFloatReadRef InDecibelGain = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputDecibelGain), InParams.OperatorSettings);
+		FFloatReadRef InDecibelGain = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputDecibelGain), InParams.OperatorSettings);
 
 		return MakeUnique<FDecibelsToLinearGainOperator>(InParams, InDecibelGain);
 	}

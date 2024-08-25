@@ -201,7 +201,7 @@ void UMovieSceneNiagaraTrackRecorder::FinalizeTrackImpl()
 	if (NiagaraCacheSection.IsValid())
 	{
 		// finalize the sim cache
-		NiagaraCacheSection->Params.SimCache->EndWrite();
+		NiagaraCacheSection->Params.SimCache->EndWrite(true);
 		
 		// Activate the section
 		NiagaraCacheSection->SetIsActive(true);

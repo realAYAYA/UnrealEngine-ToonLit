@@ -18,6 +18,7 @@ namespace UE::PixelStreamingServers
 		: Id(IdGenerator.Increment())
 		, SocketConnection(InSocketConnection)
 	{
+		UrlArgs = SocketConnection->GetUrlArgs();
 	}
 
 	FWebSocketConnection::~FWebSocketConnection()
@@ -32,6 +33,11 @@ namespace UE::PixelStreamingServers
 	uint16 FWebSocketConnection::GetId() const
 	{
 		return Id;
+	}
+
+	TArray<FString> FWebSocketConnection::GetUrlArgs() const
+	{
+		return UrlArgs;
 	}
 
 	bool FWebSocketConnection::Send(FString Message) const
@@ -161,6 +167,11 @@ namespace UE::PixelStreamingServers
 
 	bool FWebSocketServerWrapper::Close(uint16 ConnectionId)
 	{
+		for (const FString* Key = NamedConnections.FindKey(ConnectionId); Key; Key = NamedConnections.FindKey(ConnectionId))
+		{
+			NamedConnections.Remove(*Key);
+		}
+
 		if(Connections.Contains(ConnectionId))
 		{
 			return Connections.Remove(ConnectionId) > 0;
@@ -232,6 +243,11 @@ namespace UE::PixelStreamingServers
 
 	void FWebSocketServerWrapper::OnConnectionClosed(uint16 ConnectionId)
 	{
+		for (const FString* Key = NamedConnections.FindKey(ConnectionId); Key; Key = NamedConnections.FindKey(ConnectionId))
+		{
+			NamedConnections.Remove(*Key);
+		}
+
 		Connections.Remove(ConnectionId);
 		OnClosedConnection.Broadcast(ConnectionId);
 	}

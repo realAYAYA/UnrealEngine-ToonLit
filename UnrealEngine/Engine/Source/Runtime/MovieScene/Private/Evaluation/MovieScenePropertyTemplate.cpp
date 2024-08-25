@@ -14,8 +14,8 @@ PropertyTemplate::FSectionData::FSectionData()
 
 void PropertyTemplate::FSectionData::Initialize(FName InPropertyName, FString InPropertyPath)
 {
-	PropertyBindings = MakeShareable(new FTrackInstancePropertyBindings(InPropertyName, MoveTemp(InPropertyPath)));
 	PropertyID = PropertyTypeIDs.GetAnimTypeID(InPropertyPath);
+	PropertyBindings = MakeShareable(new FTrackInstancePropertyBindings(InPropertyName, MoveTemp(InPropertyPath)));
 }
 
 FMovieScenePropertySectionTemplate::FMovieScenePropertySectionTemplate(FName PropertyName, const FString& InPropertyPath)

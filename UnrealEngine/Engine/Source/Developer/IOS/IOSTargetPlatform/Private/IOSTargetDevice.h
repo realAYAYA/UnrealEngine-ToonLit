@@ -247,19 +247,23 @@ public:
 	/** Sets the type of the device */
 	void SetDeviceType(const FString InDeviceTypeString)
 	{
-		if (InDeviceTypeString == TEXT("Browser"))
+		if (InDeviceTypeString.Contains(TEXT("Browser")))
 		{
 			DeviceType = ETargetDeviceTypes::Browser;
 		}
-		else if (InDeviceTypeString == TEXT("Console"))
+		else if (InDeviceTypeString.Contains(TEXT("Console")))
 		{
 			DeviceType = ETargetDeviceTypes::Console;
 		}
-		else if (InDeviceTypeString == TEXT("Phone"))
+		else if (InDeviceTypeString.Contains(TEXT("Phone")))
 		{
 			DeviceType = ETargetDeviceTypes::Phone;
 		}
-		else if (InDeviceTypeString == TEXT("Tablet"))
+		else if (InDeviceTypeString.Contains(TEXT("Tablet")))
+		{
+			DeviceType = ETargetDeviceTypes::Tablet;
+		}
+		else if (InDeviceTypeString.Contains(TEXT("iPad")))
 		{
 			DeviceType = ETargetDeviceTypes::Tablet;
 		}
@@ -279,6 +283,10 @@ public:
 		else if (InDeviceConnectionTypeString == TEXT("USB"))
 		{
 			DeviceConnectionType = ETargetDeviceConnectionTypes::USB;
+		}
+		else if (InDeviceConnectionTypeString == TEXT("Simulator"))
+		{
+			DeviceConnectionType = ETargetDeviceConnectionTypes::Simulator;
 		}
 		else
 		{

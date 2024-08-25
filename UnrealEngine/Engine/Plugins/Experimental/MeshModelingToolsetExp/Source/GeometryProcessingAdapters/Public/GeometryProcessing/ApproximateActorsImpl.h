@@ -22,16 +22,15 @@ class GEOMETRYPROCESSINGADAPTERS_API FApproximateActorsImpl : public IGeometryPr
 public:
 	virtual FOptions ConstructOptions(const FMeshApproximationSettings& MeshApproximationSettings) override;
 
-	virtual void ApproximateActors(const TArray<AActor*>& Actors, const FOptions& Options, FResults& ResultsOut) override;
+	virtual void ApproximateActors(const FInput& Input, const FOptions& Options, FResults& ResultsOut) override;
 	
 
 
 protected:
 
-	virtual void GenerateApproximationForActorSet(const TArray<AActor*>& Actors, const FOptions& Options, FResults& ResultsOut);
+	virtual void GenerateApproximationForActorSet(const FInput& Input, const FOptions& Options, FResults& ResultsOut);
 
 	virtual UStaticMesh* EmitGeneratedMeshAsset(
-		const TArray<AActor*>& Actors,
 		const FOptions& Options,
 		FResults& ResultsOut,
 		FDynamicMesh3* FinalMesh,

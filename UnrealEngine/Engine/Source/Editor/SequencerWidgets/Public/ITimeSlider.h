@@ -124,6 +124,9 @@ public:
 	/** Get the current play range for this controller */
 	SEQUENCERWIDGETS_API virtual TRange<FFrameNumber> GetPlayRange() const;
 
+	/** Get the current time bounds for this controller. The time bounds should be a subset of the playback range. */
+	SEQUENCERWIDGETS_API virtual TRange<FFrameNumber> GetTimeBounds() const;
+
 	/** Get the current selection range for this controller */
 	SEQUENCERWIDGETS_API virtual TRange<FFrameNumber> GetSelectionRange() const;
 

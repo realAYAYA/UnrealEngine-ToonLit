@@ -1363,7 +1363,6 @@ namespace PropertyPathHelpersInternal
 				}
 				return true;
 			}
-			return false;
 		}
 	};
 

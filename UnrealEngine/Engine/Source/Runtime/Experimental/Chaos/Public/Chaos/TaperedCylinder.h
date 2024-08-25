@@ -142,7 +142,7 @@ namespace Chaos
 			}
 			ensure(Distance1 <= MHeight && Distance2 <= MHeight);
 			const FVec3 SideVector = (x - FVec3(Normal1 * Distance1 + MPlane1.X()));
-			const FReal SideDistance = SideVector.Size() - GetRadius(Distance1);
+			const FReal SideDistance = SideVector.Size() - GetRadiusAtDistance(Distance1);
 			if (SideDistance < 0.)
 			{
 				const FReal TopDistance = Distance1 < Distance2 ? Distance1 : Distance2;
@@ -352,7 +352,7 @@ namespace Chaos
 
 	private:
 		//Phi is distance from closest point on plane1
-		FReal GetRadius(const FReal& Phi) const
+		FReal GetRadiusAtDistance(const FReal& Phi) const
 		{
 			const FReal Alpha = Phi / MHeight;
 			return MRadius1 * (static_cast<FReal>(1.) - Alpha) + MRadius2 * Alpha;

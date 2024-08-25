@@ -33,7 +33,7 @@ public:
 	FMetalShaderDebugZipFile(FString LibPath);
 	~FMetalShaderDebugZipFile();
 
-	ns::String GetShaderCode(uint32 ShaderSrcLen, uint32 ShaderSrcCRC);
+    NS::String* GetShaderCode(uint32 ShaderSrcLen, uint32 ShaderSrcCRC);
 
 private:
 	FCriticalSection Mutex;

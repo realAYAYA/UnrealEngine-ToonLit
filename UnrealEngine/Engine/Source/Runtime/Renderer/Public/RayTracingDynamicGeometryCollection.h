@@ -43,7 +43,6 @@ public:
 	RENDERER_API void EndUpdate(FRHICommandListImmediate& RHICmdList);
 
 	// Clears the working arrays to not hold any references.
-	// Needs to be called every frame when ray tracing is enabled or once when ray tracing mode has changed.
 	RENDERER_API void Clear();
 
 	RENDERER_API uint32 ComputeScratchBufferSize();

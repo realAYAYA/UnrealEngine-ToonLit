@@ -11,6 +11,7 @@
 #include "HAL/LowLevelMemTracker.h"
 #include "ElectraPlayerPrivate.h"
 #include "Player/AdaptiveStreamingPlayerABR.h"
+#include "Player/AdaptivePlayerOptionKeynames.h"
 #include "Player/PlayerEntityCache.h"
 #include "Player/DASH/PlaylistReaderDASH.h"
 #include "Player/DASH/OptionKeynamesDASH.h"
@@ -187,14 +188,15 @@ UEMediaError FStreamReaderDASH::Create(IPlayerSessionServices* InPlayerSessionSe
 		StreamHandlers[i].bSilentCancellation  = false;
 		StreamHandlers[i].bHasErrored   	   = false;
 		StreamHandlers[i].IsIdleSignal.Signal();
-
+#if 0
+	// Disabled because the thread pool is timing sensitive and does not really allow for jobs like this.
 		// Subtitles get fetched running on the thread pool.
 		if (i == 2)
 		{
 			StreamHandlers[i].bRunOnThreadPool = true;
 		}
-
-		StreamHandlers[i].ThreadSetName(i==0 ? "ElectraPlayer::DASH Video" : 
+#endif
+		StreamHandlers[i].ThreadSetName(i==0 ? "ElectraPlayer::DASH Video" :
 										i==1 ? "ElectraPlayer::DASH Audio" :
 											   "ElectraPlayer::DASH Subtitle");
 	}
@@ -437,9 +439,9 @@ void FStreamReaderDASH::FStreamHandler::HTTPUpdateStats(const FTimeValue& Curren
 	TSharedPtrTS<FStreamSegmentRequestDASH> SegmentRequest = CurrentRequest;
 	if (SegmentRequest.IsValid())
 	{
+		// Only update elements that are needed by the ABR here.
 		FMediaCriticalSection::ScopedLock lock(MetricUpdateLock);
-		SegmentRequest->ConnectionInfo = Request->ConnectionInfo;
-		// Update the current download stats which we report periodically to the ABR.
+		SegmentRequest->ConnectionInfo.RequestStartTime = Request->ConnectionInfo.RequestStartTime;
 		Metrics::FSegmentDownloadStats& ds = SegmentRequest->DownloadStats;
 		if (Request->ConnectionInfo.EffectiveURL.Len())
 		{
@@ -508,7 +510,7 @@ FErrorDetail FStreamReaderDASH::FStreamHandler::LoadInitSegment(TSharedPtrTS<FMP
 	{
 		return FErrorDetail();
 	}
-	
+
 	// Set up download stats to be sent to the stream selector.
 	const HTTP::FConnectionInfo* ci = OutLoadRequest->GetConnectionInfo();
 	ds.StatsID = FMediaInterlockedIncrement(UniqueDownloadID);
@@ -527,6 +529,8 @@ FErrorDetail FStreamReaderDASH::FStreamHandler::LoadInitSegment(TSharedPtrTS<FMP
 	ds.AdaptationSetID = Request->AdaptationSet.IsValid() ? Request->AdaptationSet->GetUniqueIdentifier() : "";
 	ds.RepresentationID = Request->Representation.IsValid() ? Request->Representation->GetUniqueIdentifier() : "";
 	ds.Bitrate = Request->GetBitrate();
+	ds.QualityIndex = Request->QualityIndex;
+	ds.HighestQualityIndex = Request->MaxQualityIndex;
 
 	if (!LoadResult->bSuccess)
 	{
@@ -758,7 +762,7 @@ FErrorDetail FStreamReaderDASH::FStreamHandler::RetrieveSideloadedFile(TSharedPt
 	{
 		return FErrorDetail();
 	}
-	
+
 	// Set up download stats to be sent to the stream selector.
 	const HTTP::FConnectionInfo* ci = LoadReq->GetConnectionInfo();
 	Metrics::FSegmentDownloadStats ds;
@@ -958,6 +962,8 @@ void FStreamReaderDASH::FStreamHandler::HandleRequestMP4()
 	ds.SegmentType  	   = Metrics::ESegmentType::Init;
 	ds.PresentationTime    = Request->GetFirstPTS().GetAsSeconds();
 	ds.Bitrate  		   = Request->GetBitrate();
+	ds.QualityIndex        = Request->QualityIndex;
+	ds.HighestQualityIndex = Request->MaxQualityIndex;
 	ds.Duration 		   = SegmentDuration.GetAsSeconds();
 	ds.DurationDownloaded  = 0.0;
 	ds.DurationDelivered   = 0.0;
@@ -983,7 +989,7 @@ void FStreamReaderDASH::FStreamHandler::HandleRequestMP4()
 		A segment that is already at EOS is not meant to be loaded as it does not exist and there
 		would not be another segment following it either. They are meant to indicate to the player
 		that a stream has ended and will not be delivering any more data.
-		
+
 		NOTE:
 		  We had to handle this request up to detecting the use of inband event streams in order to
 		  signal that this stream has now ended and will not be receiving any further inband events!
@@ -1004,6 +1010,8 @@ void FStreamReaderDASH::FStreamHandler::HandleRequestMP4()
 	FTimeValue NextExpectedDTS;
 	FTimeValue LastKnownAUDuration;
 	FTimeValue TimeOffset = Request->PeriodStart + Request->AST + Request->AdditionalAdjustmentTime;
+
+	bool bDoNotTruncateAtPresentationEnd = PlayerSessionService->GetOptionValue(OptionKeyDoNotTruncateAtPresentationEnd).SafeGetBool(false);
 
 	// Get the init segment if there is one. Either gets it from the entity cache or requests it now and adds it to the cache.
 	InitSegmentError = GetInitSegment(MP4InitSegment, Request);
@@ -1107,9 +1115,8 @@ void FStreamReaderDASH::FStreamHandler::HandleRequestMP4()
 			}
 			HTTP->Parameters.bCollectTimingTraces = Request->Segment.bLowLatencyChunkedEncodingExpected;
 			// Set timeouts for media segment retrieval
-			const FParamDict& Options = PlayerSessionService->GetOptions();
-			HTTP->Parameters.ConnectTimeout = Options.GetValue(DASH::OptionKeyMediaSegmentConnectTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 4));
-			HTTP->Parameters.NoDataTimeout = Options.GetValue(DASH::OptionKeyMediaSegmentNoDataTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 4));
+			HTTP->Parameters.ConnectTimeout = PlayerSessionService->GetOptionValue(DASH::OptionKeyMediaSegmentConnectTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 4));
+			HTTP->Parameters.NoDataTimeout = PlayerSessionService->GetOptionValue(DASH::OptionKeyMediaSegmentNoDataTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 4));
 
 			ProgressReportCount = 0;
 			DownloadCompleteSignal.Reset();
@@ -1193,7 +1200,7 @@ void FStreamReaderDASH::FStreamHandler::HandleRequestMP4()
 								TrackTimescale = TrackIterator->GetTimescale();
 
 								int64 MediaLocalFirstAUTime = Request->Segment.MediaLocalFirstAUTime;
-								int64 MediaLocalLastAUTime = Request->Segment.MediaLocalLastAUTime;
+								int64 MediaLocalLastAUTime = bDoNotTruncateAtPresentationEnd ? TNumericLimits<int64>::Max() : Request->Segment.MediaLocalLastAUTime;
 								int64 PTO = Request->Segment.PTO;
 
 								if (TrackTimescale != Request->Segment.Timescale)
@@ -1337,8 +1344,15 @@ void FStreamReaderDASH::FStreamHandler::HandleRequestMP4()
 
 									if (Request->Segment.bFrameAccuracyRequired)
 									{
-										AccessUnit->EarliestPTS.SetFromND(MediaLocalFirstAUTime - PTO, TrackTimescale);
-										AccessUnit->EarliestPTS += TimeOffset;
+										if (Request->FrameAccurateStartTime.IsValid())
+										{
+											AccessUnit->EarliestPTS = Request->FrameAccurateStartTime;
+										}
+										else
+										{
+											AccessUnit->EarliestPTS.SetFromND(MediaLocalFirstAUTime - PTO, TrackTimescale);
+											AccessUnit->EarliestPTS += TimeOffset;
+										}
 										AccessUnit->EarliestPTS.SetSequenceIndex(Request->TimestampSequenceIndex);
 									}
 									if (MediaLocalLastAUTime != TNumericLimits<int64>::Max())
@@ -1405,7 +1419,7 @@ void FStreamReaderDASH::FStreamHandler::HandleRequestMP4()
 										// If we need to decrypt we have to wait for the decrypter to become ready.
 										if (bIsSampleEncrypted && Decrypter.IsValid())
 										{
-											while(!bTerminate && !HasReadBeenAborted() && 
+											while(!bTerminate && !HasReadBeenAborted() &&
 												  (Decrypter->GetState() == ElectraCDM::ECDMState::WaitingForKey || Decrypter->GetState() == ElectraCDM::ECDMState::Idle))
 											{
 												FMediaRunnable::SleepMilliseconds(100);
@@ -1604,7 +1618,7 @@ void FStreamReaderDASH::FStreamHandler::HandleRequestMP4()
 						{
 							case FStreamCodecInformation::ECodec::AAC:
 							{
-								n = ActiveTrackData.CSD->ParsedInfo.GetExtras().GetValue("samples_per_block").SafeGetInt64(1024);
+								n = ActiveTrackData.CSD->ParsedInfo.GetExtras().GetValue(StreamCodecInformationOptions::SamplesPerBlock).SafeGetInt64(1024);
 								break;
 							}
 						}
@@ -1693,6 +1707,8 @@ void FStreamReaderDASH::FStreamHandler::HandleRequestMP4()
 	ActiveTrackData.bGotAllSamples = true;
 	// Emit all remaining pending AUs
 	EmitSamples(EEmitType::AllRemaining, Request);
+	ActiveTrackData.AccessUnitFIFO.Empty();
+	ActiveTrackData.SortedAccessUnitFIFO.Empty();
 
 	// If we did not set a specific failure message yet set the one from the downloader.
 	if (ds.FailureReason.Len() == 0)
@@ -1845,7 +1861,7 @@ void FStreamReaderDASH::FStreamHandler::HandleRequestMKV()
 		A segment that is already at EOS is not meant to be loaded as it does not exist and there
 		would not be another segment following it either. They are meant to indicate to the player
 		that a stream has ended and will not be delivering any more data.
-		
+
 		NOTE:
 		  We had to handle this request up to detecting the use of inband event streams in order to
 		  signal that this stream has now ended and will not be receiving any further inband events!
@@ -1863,6 +1879,8 @@ void FStreamReaderDASH::FStreamHandler::HandleRequestMKV()
 	bFillRemainingDuration = false;
 	ABRAbortReason.Empty();
 
+	bool bDoNotTruncateAtPresentationEnd = PlayerSessionService->GetOptionValue(OptionKeyDoNotTruncateAtPresentationEnd).SafeGetBool(false);
+
 	// Get the init segment if there is one. Either gets it from the entity cache or requests it now and adds it to the cache.
 	InitSegmentError = GetInitSegment(MKVParser, Request);
 	// Get the CSD from the init segment in case there is a failure with the segment later.
@@ -1875,7 +1893,7 @@ void FStreamReaderDASH::FStreamHandler::HandleRequestMKV()
 			{
 				ActiveTrackData.CSD->ParsedInfo = Track->GetCodecInformation();
 				ActiveTrackData.CSD->CodecSpecificData = ActiveTrackData.CSD->ParsedInfo.GetCodecSpecificData();
-				FVariantValue dcr = ActiveTrackData.CSD->ParsedInfo.GetExtras().GetValue(TEXT("dcr"));
+				FVariantValue dcr = ActiveTrackData.CSD->ParsedInfo.GetExtras().GetValue(StreamCodecInformationOptions::DecoderConfigurationRecord);
 				if (dcr.IsValid() && dcr.IsType(FVariantValue::EDataType::TypeU8Array))
 				{
 					ActiveTrackData.CSD->RawCSD = dcr.GetArray();
@@ -1939,9 +1957,8 @@ void FStreamReaderDASH::FStreamHandler::HandleRequestMKV()
 			}
 			HTTP->Parameters.bCollectTimingTraces = Request->Segment.bLowLatencyChunkedEncodingExpected;
 			// Set timeouts for media segment retrieval
-			const FParamDict& Options = PlayerSessionService->GetOptions();
-			HTTP->Parameters.ConnectTimeout = Options.GetValue(DASH::OptionKeyMediaSegmentConnectTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 4));
-			HTTP->Parameters.NoDataTimeout = Options.GetValue(DASH::OptionKeyMediaSegmentNoDataTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 4));
+			HTTP->Parameters.ConnectTimeout = PlayerSessionService->GetOptionValue(DASH::OptionKeyMediaSegmentConnectTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 4));
+			HTTP->Parameters.NoDataTimeout = PlayerSessionService->GetOptionValue(DASH::OptionKeyMediaSegmentNoDataTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 4));
 
 			ProgressReportCount = 0;
 			DownloadCompleteSignal.Reset();
@@ -1979,7 +1996,7 @@ void FStreamReaderDASH::FStreamHandler::HandleRequestMKV()
 			FTimeValue EarliestPTS(Request->Segment.MediaLocalFirstAUTime, Request->Segment.Timescale, Request->TimestampSequenceIndex);
 			EarliestPTS += TimeOffset - PTO;
 			FTimeValue LastPTS;
-			if (Request->Segment.MediaLocalLastAUTime != TNumericLimits<int64>::Max())
+			if (!bDoNotTruncateAtPresentationEnd && Request->Segment.MediaLocalLastAUTime != TNumericLimits<int64>::Max())
 			{
 				LastPTS.SetFromND(Request->Segment.MediaLocalLastAUTime, Request->Segment.Timescale, Request->TimestampSequenceIndex);
 				LastPTS += TimeOffset - PTO;
@@ -2304,6 +2321,8 @@ void FStreamReaderDASH::FStreamHandler::HandleRequestMKV()
 	ActiveTrackData.bGotAllSamples = true;
 	// Emit all remaining pending AUs
 	EmitSamples(EEmitType::AllRemaining, Request);
+	ActiveTrackData.AccessUnitFIFO.Empty();
+	ActiveTrackData.SortedAccessUnitFIFO.Empty();
 
 	// If we did not set a specific failure message yet set the one from the downloader.
 	if (ds.FailureReason.Len() == 0)
@@ -2413,13 +2432,7 @@ FStreamReaderDASH::FStreamHandler::EEmitResult FStreamReaderDASH::FStreamHandler
 {
 	EEmitResult Result = EEmitResult::SentNothing;
 
-	if (ActiveTrackData.bReadPastLastPTS)
-	{
-		ActiveTrackData.AccessUnitFIFO.Empty();
-		ActiveTrackData.SortedAccessUnitFIFO.Empty();
-	}
-
-	while(ActiveTrackData.AccessUnitFIFO.Num() && !bTerminate && !MKVHasReadBeenAborted())
+	while(ActiveTrackData.AccessUnitFIFO.Num() && !bTerminate && !HasReadBeenAborted())
 	{
 		if (ActiveTrackData.bNeedToRecalculateDurations)
 		{
@@ -2488,33 +2501,58 @@ FStreamReaderDASH::FStreamHandler::EEmitResult FStreamReaderDASH::FStreamHandler
 
 		FAccessUnit* pNext = ActiveTrackData.AccessUnitFIFO[0].AU;
 		// Check if this is the last access unit in the requested time range.
-		if (pNext->PTS >= pNext->LatestPTS)
+		if (!ActiveTrackData.bTaggedLastSample && pNext->PTS >= pNext->LatestPTS)
 		{
-			// Because of B frames the last frame that must be decoded could actually be
-			// a later frame in decode order.
-			// Suppose the sequence IPBB with timestamps 0,3,1,2 respectively. Even though the
-			// P frame with timestamp 3 is "the last" one, it will enter the decoder before the B frames.
-			// As such we need to tag the last B frame as "the last one" even though its timstamp
-			// is before the last time requested.
-			// Note: This is not necessary to do for audio frames, but the logic is the same
-			//       so we do not differentiate here.
-			FTimeValue HighestPTSBelow(-1.0);
-			int32 LastIndex = 0;
-			for(int32 i=1; i<ActiveTrackData.AccessUnitFIFO.Num(); ++i)
+			/*
+				Because of B frames the last frame that must be decoded could actually be
+				a later frame in decode order.
+				Suppose the sequence IPBB with timestamps 0,3,1,2 respectively. Even though the
+				P frame with timestamp 3 is "the last" one in presentation order, it will enter
+				the decoder before the B frames.
+				As such we need to tag the last B frame (2) as "the last one" even though its timestamp
+				is before the last time requested.
+				This would be easy if we had access to reliable DTS, but Matroska files only provide PTS.
+				Note: This may seem superfluous since we are tagging as "last" which happens to be the
+				      actual last element in the list, but there could really be even later frames in
+				      the list that we will then remove to avoid sending frames into the decoder that
+				      will be discarded after decoding, which is a waste of decode cycles.
+			*/
+
+			const FTimeValue NextPTS(pNext->PTS);
+			// Sort the remaining access units by ascending PTS
+			ActiveTrackData.AccessUnitFIFO.Sort([](const FActiveTrackData::FSample& a, const FActiveTrackData::FSample& b){return a.PTS < b.PTS;});
+			// Go backwards over the list and drop all access units that _follow_ the next one.
+			for(int32 i=ActiveTrackData.AccessUnitFIFO.Num()-1; i>0; --i)
 			{
-				if (ActiveTrackData.AccessUnitFIFO[i].PTS < pNext->LatestPTS)
+				if (ActiveTrackData.AccessUnitFIFO[i].PTS > NextPTS)
 				{
-					if (ActiveTrackData.AccessUnitFIFO[i].PTS > HighestPTSBelow)
+					for(int32 j=0; j<ActiveTrackData.SortedAccessUnitFIFO.Num(); ++j)
 					{
-						HighestPTSBelow = ActiveTrackData.AccessUnitFIFO[i].PTS;
-						LastIndex = i;
+						if (ActiveTrackData.SortedAccessUnitFIFO[j].PTS == ActiveTrackData.AccessUnitFIFO[i].PTS)
+						{
+							ActiveTrackData.SortedAccessUnitFIFO.RemoveAt(j);
+							break;
+						}
 					}
+					ActiveTrackData.AccessUnitFIFO.RemoveAt(i);
+				}
+				else
+				{
+					break;
 				}
 			}
-			ActiveTrackData.AccessUnitFIFO[LastIndex].AU->bIsLastInPeriod = true;
+			// Sort the list back to index order.
+			ActiveTrackData.AccessUnitFIFO.Sort([](const FActiveTrackData::FSample& a, const FActiveTrackData::FSample& b){return a.SequentialIndex < b.SequentialIndex;});
+			// Whichever element is the last in the list now is the one that needs to be tagged as such.
+			ActiveTrackData.AccessUnitFIFO.Last().AU->bIsLastInPeriod = true;
+			ActiveTrackData.bReadPastLastPTS = true;
+			ActiveTrackData.bTaggedLastSample = true;
+
+			check(pNext == ActiveTrackData.AccessUnitFIFO[0].AU);
+			pNext = ActiveTrackData.AccessUnitFIFO[0].AU;
 		}
 
-		while(!bTerminate && !MKVHasReadBeenAborted())
+		while(!bTerminate && !HasReadBeenAborted())
 		{
 			if (Parameters.EventListener->OnFragmentAccessUnitReceived(pNext))
 			{
@@ -2522,10 +2560,6 @@ FStreamReaderDASH::FStreamHandler::EEmitResult FStreamReaderDASH::FStreamHandler
 				ActiveTrackData.AccessUnitFIFO[0].AU = nullptr;
 				ActiveTrackData.AccessUnitFIFO.RemoveAt(0);
 				Result = Result == EEmitResult::SentNothing ? EEmitResult::Sent : Result;
-				if (pNext->bIsLastInPeriod)
-				{
-					ActiveTrackData.bReadPastLastPTS = true;
-				}
 				break;
 			}
 			// If emitting as much as we can we leave this loop now that the receiver is blocked.
@@ -2577,14 +2611,13 @@ int64 FStreamReaderDASH::FStreamHandler::ReadData(void* IntoBuffer, int64 NumByt
 			if (CurrentRequest.IsValid())
 			{
 				MetricUpdateLock.Lock();
-				Metrics::FSegmentDownloadStats currentDownloadStats = CurrentRequest->DownloadStats;
+				Metrics::FSegmentDownloadStats& currentDownloadStats = CurrentRequest->DownloadStats;
 				currentDownloadStats.DurationDelivered = ActiveTrackData.DurationSuccessfullyDelivered.GetAsSeconds();
 				currentDownloadStats.DurationDownloaded = ActiveTrackData.DurationSuccessfullyRead.GetAsSeconds();
 				currentDownloadStats.TimeToDownload = (MEDIAutcTime::Current() - CurrentRequest->ConnectionInfo.RequestStartTime).GetAsSeconds();
+				FABRDownloadProgressDecision StreamSelectorDecision = StreamSelector->ReportDownloadProgress(currentDownloadStats);
 				MetricUpdateLock.Unlock();
 
-				Metrics::FSegmentDownloadStats& ds = CurrentRequest->DownloadStats;
-				FABRDownloadProgressDecision StreamSelectorDecision = StreamSelector->ReportDownloadProgress(currentDownloadStats);
 				if ((StreamSelectorDecision.Flags & FABRDownloadProgressDecision::EDecisionFlags::eABR_EmitPartialData) != 0)
 				{
 					SCOPE_CYCLE_COUNTER(STAT_ElectraPlayer_DASH_StreamReader);

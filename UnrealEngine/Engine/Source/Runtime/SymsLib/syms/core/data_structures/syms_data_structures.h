@@ -9,6 +9,8 @@
 
 // deduplicates equivalent strings
 
+#define SYMS_STRING_CONS_BUCKET_COUNT 1024
+
 typedef struct SYMS_StringConsNode{
   struct SYMS_StringConsNode *next;
   SYMS_String8 string;
@@ -16,8 +18,7 @@ typedef struct SYMS_StringConsNode{
 } SYMS_StringConsNode;
 
 typedef struct SYMS_StringCons{
-  SYMS_StringConsNode **buckets;
-  SYMS_U64 bucket_count;
+  SYMS_StringConsNode *buckets[SYMS_STRING_CONS_BUCKET_COUNT];
 } SYMS_StringCons;
 
 // assign sequential indexes to small variable length blobs
@@ -102,6 +103,8 @@ typedef struct SYMS_1DEndPoint{
 // maps a unit-id,file-id pair to a string
 // organized as a hash table to opimize for key based lookups
 
+#define SYMS_FILE_ID_TO_NAME_MAP_BUCKET_COUNT 1024
+
 typedef struct SYMS_FileID2NameNode{
   struct SYMS_FileID2NameNode *next;
   // key
@@ -112,8 +115,7 @@ typedef struct SYMS_FileID2NameNode{
 } SYMS_FileID2NameNode;
 
 typedef struct SYMS_FileID2NameMap{
-  SYMS_FileID2NameNode **buckets;
-  SYMS_U64 bucket_count;
+  SYMS_FileID2NameNode *buckets[SYMS_FILE_ID_TO_NAME_MAP_BUCKET_COUNT];
   SYMS_U64 count;
 } SYMS_FileID2NameMap;
 
@@ -190,12 +192,14 @@ typedef struct SYMS_IDMap{
 
 
 ////////////////////////////////
-//~ allen: Symbol Name Mapping Structure (String -> Array(USID))
+//~ allen: Symbol Name Mapping Structure (String -> Array(SID))
 
-// maps strings to lists of USIDs
+// maps strings to lists of SIDs
 // organized as an array of nodes and a hash table simultaneously
 // so that single name lookups are accelerated, and filter matching
 // is also possible.
+
+#define SYMS_SYMBOL_NAME_MAP_BUCKET_COUNT 1024
 
 typedef struct SYMS_SymbolNameNode{
   struct SYMS_SymbolNameNode *next_bucket;
@@ -205,8 +209,7 @@ typedef struct SYMS_SymbolNameNode{
 } SYMS_SymbolNameNode;
 
 typedef struct SYMS_SymbolNameMap{
-  SYMS_SymbolNameNode **buckets;
-  SYMS_U64 bucket_count;
+  SYMS_SymbolNameNode *buckets[SYMS_SYMBOL_NAME_MAP_BUCKET_COUNT];
   SYMS_SymbolNameNode *nodes;
   SYMS_U64 node_count;
 } SYMS_SymbolNameMap;
@@ -221,18 +224,64 @@ typedef struct SYMS_SymbolNameNodeLoose{
 } SYMS_SymbolNameNodeLoose;
 
 typedef struct SYMS_SymbolNameMapLoose{
-  SYMS_SymbolNameNodeLoose **buckets;
-  SYMS_U64 bucket_count;
+  SYMS_SymbolNameNodeLoose *buckets[SYMS_SYMBOL_NAME_MAP_BUCKET_COUNT];
   SYMS_SymbolNameNodeLoose *first;
   SYMS_SymbolNameNodeLoose *last;
   SYMS_U64 node_count;
 } SYMS_SymbolNameMapLoose;
 
+
+////////////////////////////////
+//~ allen: Line To Addr Map Structure
+
+typedef struct SYMS_LineToAddrMap{
+  SYMS_U64Range *ranges;
+  // line_range_indexes ranges from [0,line_count] inclusive so that:
+  // for-all i in [0,line_count):
+  //   (line_range_indexes[i + 1] - line_range_indexes[i]) == # of ranges for line at index i
+  SYMS_U32 *line_range_indexes;
+  SYMS_U32 *line_numbers;
+  SYMS_U64 line_count;
+} SYMS_LineToAddrMap;
+
+typedef struct SYMS_FileToLineToAddrNode{
+  struct SYMS_FileToLineToAddrNode *next;
+  SYMS_FileID file_id;
+  SYMS_LineToAddrMap *map;
+} SYMS_FileToLineToAddrNode;
+
+typedef struct SYMS_FileToLineToAddrMap{
+  SYMS_FileToLineToAddrNode **buckets;
+  SYMS_U64 bucket_count;
+} SYMS_FileToLineToAddrMap;
+
+//- loose version
+typedef struct SYMS_FileToLineToAddrLooseLine{
+  struct SYMS_FileToLineToAddrLooseLine *next;
+  SYMS_U32 line;
+  SYMS_U64RangeList ranges;
+} SYMS_FileToLineToAddrLooseLine;
+
+typedef struct SYMS_FileToLineToAddrLooseFile{
+  struct SYMS_FileToLineToAddrLooseFile *next;
+  SYMS_FileID file_id;
+  SYMS_FileToLineToAddrLooseLine *first;
+  SYMS_FileToLineToAddrLooseLine *last;
+  SYMS_U64 line_count;
+  SYMS_U64 range_count;
+} SYMS_FileToLineToAddrLooseFile;
+
+typedef struct SYMS_FileToLineToAddrLoose{
+  SYMS_FileToLineToAddrLooseFile *first;
+  SYMS_FileToLineToAddrLooseFile *last;
+  SYMS_U64 count;
+} SYMS_FileToLineToAddrLoose;
+
+
 ////////////////////////////////
 //~ allen: String Cons Functions
 
-SYMS_API SYMS_StringCons syms_string_cons_alloc(SYMS_Arena *arena, SYMS_U64 bucket_count);
-SYMS_API SYMS_String8    syms_string_cons(SYMS_Arena *arena, SYMS_StringCons *cons, SYMS_String8 string);
+SYMS_API SYMS_String8     syms_string_cons(SYMS_Arena *arena, SYMS_StringCons *cons, SYMS_String8 string);
 
 SYMS_API SYMS_DataIdxCons syms_data_idx_cons_alloc(SYMS_Arena *arena, SYMS_U64 bucket_count);
 SYMS_API SYMS_U64         syms_data_idx_cons(SYMS_Arena *arena, SYMS_DataIdxCons *cons, SYMS_String8 data);
@@ -286,7 +335,7 @@ SYMS_API SYMS_B32          syms_spatial_map_1d_invariants(SYMS_SpatialMap1D *map
 SYMS_API SYMS_U64            syms_file_id_2_name_map_hash(SYMS_UnitID uid, SYMS_FileID file_id);
 
 //- lookups into file id buckets
-SYMS_API SYMS_String8        syms_file_id_2_name_map_name_from_id(SYMS_FileID2NameMap *buckets,
+SYMS_API SYMS_String8        syms_file_id_2_name_map_name_from_id(SYMS_FileID2NameMap *map,
                                                                   SYMS_UnitID uid, SYMS_FileID file_id);
 
 //- copying file id buckets
@@ -294,7 +343,6 @@ SYMS_API SYMS_FileID2NameMap syms_file_id_2_name_map_copy(SYMS_Arena *arena, SYM
                                                           SYMS_FileID2NameMap *map);
 
 //- constructing file id buckets
-SYMS_API SYMS_FileID2NameMap syms_file_id_2_name_map_alloc(SYMS_Arena *arena, SYMS_U64 bucket_count);
 SYMS_API void                syms_file_id_2_name_map_insert(SYMS_Arena *arena, SYMS_FileID2NameMap *map,
                                                             SYMS_UnitID uid, SYMS_FileID file_id,
                                                             SYMS_String8 name);
@@ -330,7 +378,7 @@ SYMS_API void         syms_id_map_insert(SYMS_Arena *arena, SYMS_IDMap *map, SYM
 
 
 ////////////////////////////////
-//~ allen: Symbol Name Mapping Structure (String -> Array(USID))
+//~ allen: Symbol Name Mapping Structure (String -> Array(SID))
 
 // TODO(allen): copying
 
@@ -338,7 +386,6 @@ SYMS_API void         syms_id_map_insert(SYMS_Arena *arena, SYMS_IDMap *map, SYM
 SYMS_API SYMS_SymbolIDArray syms_symbol_name_map_array_from_string(SYMS_SymbolNameMap *map, SYMS_String8 string);
 
 //- constructing symbol name maps
-SYMS_API SYMS_SymbolNameMapLoose syms_symbol_name_map_begin(SYMS_Arena *arena, SYMS_U64 bucket_count);
 SYMS_API void                    syms_symbol_name_map_push(SYMS_Arena *arena, SYMS_SymbolNameMapLoose *map,
                                                            SYMS_String8 name, SYMS_SymbolID sid);
 SYMS_API SYMS_SymbolNameMap      syms_symbol_name_map_bake(SYMS_Arena *arena, SYMS_SymbolNameMapLoose *loose);
@@ -358,6 +405,24 @@ SYMS_API void              syms_line_table_rewrite_file_ids_in_place(SYMS_FileID
                                                                      SYMS_LineTable *line_table_in_out);
 SYMS_API SYMS_LineTable    syms_line_table_with_indexes_from_parse(SYMS_Arena *arena, SYMS_LineParseOut *parse);
 
+////////////////////////////////
+//~ allen: Line To Addr Map
+
+//- line-to-addr map
+SYMS_API SYMS_FileToLineToAddrMap
+syms_line_to_addr_map_from_line_table(SYMS_Arena *arena, SYMS_LineTable *table);
+
+//- line-to-addr query
+SYMS_API SYMS_LineToAddrMap* syms_line_to_addr_map_lookup_file_id(SYMS_FileToLineToAddrMap *map,
+                                                                  SYMS_FileID file_id);
+
+SYMS_API SYMS_U64RangeArray syms_line_to_addr_map_lookup_nearest_line_number(SYMS_LineToAddrMap *map,
+                                                                             SYMS_U32 line,
+                                                                             SYMS_U32 *actual_line_out);
+
+//- line-to-addr map helpers
+SYMS_API void syms_line_to_addr_line_sort(SYMS_FileToLineToAddrLooseLine **array, SYMS_U64 count);
+SYMS_API void syms_line_to_addr_line_sort__rec(SYMS_FileToLineToAddrLooseLine **array, SYMS_U64 count);
 
 ////////////////////////////////
 //~ allen: Copies & Operators for Other Data Structures
@@ -365,7 +430,11 @@ SYMS_API SYMS_LineTable    syms_line_table_with_indexes_from_parse(SYMS_Arena *a
 SYMS_API SYMS_String8Array syms_string_array_copy(SYMS_Arena *arena, SYMS_StringCons *cons_optional,
                                                   SYMS_String8Array *array);
 
-SYMS_API SYMS_LinkNameRecArray  syms_link_name_record_copy(SYMS_Arena *arena, SYMS_LinkNameRecArray *array);
+SYMS_API SYMS_LinkNameRecArray syms_link_name_record_copy(SYMS_Arena *arena, SYMS_LinkNameRecArray *array);
 
+////////////////////////////////
+//~ allen: Binary Search Functions
+
+SYMS_API SYMS_U64 syms_index_from_n__u32__binary_search_round_up(SYMS_U32 *v, SYMS_U64 count, SYMS_U32 n);
 
 #endif //SYMS_DATA_STRUCTURES_H

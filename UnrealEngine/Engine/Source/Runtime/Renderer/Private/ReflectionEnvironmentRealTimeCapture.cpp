@@ -22,7 +22,6 @@
 
 #if WITH_EDITOR
 #include "CanvasTypes.h"
-#include "RenderTargetTemp.h"
 #endif
 
 extern float GReflectionCaptureNearPlane;
@@ -33,12 +32,12 @@ DECLARE_GPU_STAT(CaptureConvolveSkyEnvMap);
 
 static TAutoConsoleVariable<int32> CVarRealTimeReflectionCaptureTimeSlicing(
 	TEXT("r.SkyLight.RealTimeReflectionCapture.TimeSlice"), 1,
-	TEXT("When enabled, the real-time sky light capture and convolutions will by distributed over several frames to lower the per-frame cost. Value in [1,6]."),
+	TEXT("When enabled, the real-time sky light capture and convolutions will by distributed over several frames to lower the per-frame cost."),
 	ECVF_RenderThreadSafe);
 
 static TAutoConsoleVariable<int32> CVarRealTimeReflectionCaptureTimeSlicingSkyCloudCubeFacePerFrame(
 	TEXT("r.SkyLight.RealTimeReflectionCapture.TimeSlice.SkyCloudCubeFacePerFrame"), 6,
-	TEXT("When enabled, the real-time sky light capture and convolutions will by distributed over several frames to lower the per-frame cost."),
+	TEXT("When enabled, the real-time sky light capture, when time sliced, will not render cloud in all cube face in a single frame; but one face per frame. That is to distribute the cloud tracing cost even more, but will add latency and potentially can result in lighting discrepancy between faces if the sun is moving fast. Value in [1,6]."),
 	ECVF_RenderThreadSafe);
 
 static TAutoConsoleVariable<int32> CVarRealTimeReflectionCaptureShadowFromOpaque(
@@ -360,9 +359,7 @@ void FScene::AllocateAndCaptureFrameSkyEnvMap(
 	const FMatrix CubeProjectionMatrix = GetCubeProjectionMatrix(CubeView.FOV * 0.5f, (float)CubeWidth, GReflectionCaptureNearPlane);
 	CubeView.UpdateProjectionMatrix(CubeProjectionMatrix);
 
-	FPooledRenderTargetDesc SkyCubeTexDesc = FPooledRenderTargetDesc::CreateCubemapDesc(CubeWidth, 
-		PF_FloatR11G11B10, FClearValueBinding::Black, TexCreate_TargetArraySlicesIndependently,
-		TexCreate_ShaderResource | TexCreate_UAV | TexCreate_RenderTargetable, false, 1, CubeMipCount, false);
+	FPooledRenderTargetDesc SkyCubeTexDesc = Translate(FSkyPassMeshProcessor::GetCaptureFrameSkyEnvMapTextureDesc(CubeWidth, CubeMipCount));
 
 	const bool bTimeSlicedRealTimeCapture = CVarRealTimeReflectionCaptureTimeSlicing.GetValueOnRenderThread() > 0 && !MainView.Family->bCurrentlyBeingEdited;
 
@@ -761,7 +758,10 @@ void FScene::AllocateAndCaptureFrameSkyEnvMap(
 				FApplyLowerHemisphereColor::FParameters* PassParameters = GraphBuilder.AllocParameters<FApplyLowerHemisphereColor::FParameters>();
 				PassParameters->ValidDispatchCoord = FIntPoint(Mip0Resolution, Mip0Resolution);
 				PassParameters->LowerHemisphereSolidColor = SkyLight->LowerHemisphereColor;
-				PassParameters->OutTextureMipColor = GraphBuilder.CreateUAV(FRDGTextureUAVDesc(SkyCubeTexture, MipIndex));
+
+				FRDGTextureUAVDesc OutTextureMipColorDesc(SkyCubeTexture, MipIndex);
+				OutTextureMipColorDesc.DimensionOverride = ETextureDimension::Texture2DArray;
+				PassParameters->OutTextureMipColor = GraphBuilder.CreateUAV(OutTextureMipColorDesc);
 
 				FIntVector NumGroups = FIntVector::DivideAndRoundUp(FIntVector(Mip0Resolution, Mip0Resolution, 1), FIntVector(FApplyLowerHemisphereColor::ThreadGroupSize, FApplyLowerHemisphereColor::ThreadGroupSize, 1));
 
@@ -805,7 +805,9 @@ void FScene::AllocateAndCaptureFrameSkyEnvMap(
 			PassParameters->SourceCubemapSampler = TStaticSamplerState<SF_Point>::GetRHI();
 
 			PassParameters->SourceCubemapTexture = SkyCubeTextureSRV;
-			PassParameters->OutTextureMipColor = GraphBuilder.CreateUAV(FRDGTextureUAVDesc(SkyCubeTexture, MipIndex));
+			FRDGTextureUAVDesc OutTextureMipColorDesc(SkyCubeTexture, MipIndex);
+			OutTextureMipColorDesc.DimensionOverride = ETextureDimension::Texture2DArray;
+			PassParameters->OutTextureMipColor = GraphBuilder.CreateUAV(OutTextureMipColorDesc);
 
 			FIntVector NumGroups = FIntVector::DivideAndRoundUp(FIntVector(MipResolution, MipResolution, 1), FIntVector(FDownsampleCubeFaceCS::ThreadGroupSize, FDownsampleCubeFaceCS::ThreadGroupSize, 1));
 
@@ -851,7 +853,9 @@ void FScene::AllocateAndCaptureFrameSkyEnvMap(
 			PassParameters->SourceCubemapSampler = TStaticSamplerState<SF_Point>::GetRHI();
 
 			PassParameters->SourceCubemapTexture = RDGSrcRenderTargetSRV;
-			PassParameters->OutTextureMipColor = GraphBuilder.CreateUAV(FRDGTextureUAVDesc(RDGDstRenderTarget, MipIndex));
+			FRDGTextureUAVDesc OutTextureMipColorDesc(RDGDstRenderTarget, MipIndex);
+			OutTextureMipColorDesc.DimensionOverride = ETextureDimension::Texture2DArray;
+			PassParameters->OutTextureMipColor = GraphBuilder.CreateUAV(OutTextureMipColorDesc);
 
 			FIntVector NumGroups = FIntVector::DivideAndRoundUp(FIntVector(MipResolution, MipResolution, 1), FIntVector(FConvolveSpecularFaceCS::ThreadGroupSize, FConvolveSpecularFaceCS::ThreadGroupSize, 1));
 

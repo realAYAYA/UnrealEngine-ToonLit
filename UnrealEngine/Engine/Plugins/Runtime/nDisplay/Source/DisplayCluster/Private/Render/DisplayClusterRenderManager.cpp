@@ -251,7 +251,9 @@ static bool SimulateMouseClick(HWND WindowHandle)
 
 void FDisplayClusterRenderManager::PreTick(float DeltaSeconds)
 {
-	if(!bWasWindowFocused)
+	static const bool bIsRenderingOffscreen = FParse::Param(FCommandLine::Get(), TEXT("RenderOffscreen"));
+
+	if(!bIsRenderingOffscreen && !bWasWindowFocused)
 	{
 		if (UGameViewportClient* GameViewportClient = GEngine->GameViewport)
 		{

@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "Containers/Array.h"
 #include "MetasoundDataFactory.h"
 
 #include <type_traits>
@@ -28,12 +29,17 @@ namespace Metasound
 	};
 
 	/** Enables or disables send and receive node registration for a given MetaSound
-	 * data type. By default this is true and all data types supported by the transmission
-	 * system will have associated send and receive nodes. */
+	 * data type. By default this is false because send/receive nodes are deprecated. */
 	template<typename ... Type>
 	struct TEnableTransmissionNodeRegistration
 	{
-		static constexpr bool Value = true;
+		static constexpr bool Value = false;
+	};
+
+	template<typename ElementType>
+	struct TEnableTransmissionNodeRegistration<TArray<ElementType>>
+	{
+		static constexpr bool Value = TEnableTransmissionNodeRegistration<ElementType>::Value;
 	};
 
 	/** Enables or disables using a data type in constructor vertices. 

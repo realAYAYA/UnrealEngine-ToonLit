@@ -1,148 +1,133 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System.Collections.Generic;
+using System;
 using System.Diagnostics;
 using System.Linq;
 using EpicGames.Core;
+using Microsoft.Build.Framework;
 
 namespace UnrealBuildTool
 {
+	////////////////////////////////////////////////////////////////////////////////
+	// If you are looking for version numbers, see Engine/Config/Windows_SDK.json
+	////////////////////////////////////////////////////////////////////////////////
+
 	partial class MicrosoftPlatformSDK : UEBuildPlatformSDK
 	{
-		/// <summary>
-		/// The default Windows SDK version to be used, if installed.
-		/// </summary>
-		static readonly VersionNumber[] PreferredWindowsSdkVersions = new VersionNumber[]
-		{
-			VersionNumber.Parse("10.0.18362.0")
-		};
-
-		/// <summary>
-		/// The minimum Windows SDK version to be used. If this is null then it means there is no minimum version
-		/// </summary>
-		static readonly VersionNumber? MinimumWindowsSDKVersion = new VersionNumber(10, 0, 18362, 0);
-
-		/// <summary>
-		/// The maximum Windows SDK version to be used. If this is null then it means "Latest"
-		/// </summary>
-		static readonly VersionNumber? MaximumWindowsSDKVersion = null;
+		private static MicrosoftPlatformSDK SDK => GetSDKForPlatformOrMakeTemp<MicrosoftPlatformSDK>("Win64")!;
 
 		/// <summary>
 		/// The default compiler version to be used, if installed. 
 		/// </summary>
-		static readonly VersionNumberRange[] PreferredClangVersions =
-		{
-			VersionNumberRange.Parse("16.0.0", "16.999"), // VS2022 17.7.x runtime requires Clang 16
-			VersionNumberRange.Parse("15.0.0", "15.999"), // VS2022 17.5.x runtime requires Clang 15
-		};
+		static VersionNumberRange[] PreferredClangVersions = SDK.GetVersionNumberRangeArrayFromConfig("PreferredClangVersions");
 
 		/// <summary>
 		/// The minimum supported Clang compiler
 		/// </summary>
-		static readonly VersionNumber MinimumClangVersion = new VersionNumber(15, 0, 0);
+		static VersionNumber MinimumClangVersion => SDK.GetRequiredVersionNumberFromConfig("MinimumClangVersion");
 
 		/// <summary>
 		/// Ranges of tested compiler toolchains to be used, in order of preference. If multiple toolchains in a range are present, the latest version will be preferred.
-		/// Note that the numbers here correspond to the installation *folders* rather than precise executable versions. 
+		/// Note that the numbers here correspond to the installation *folders* rather than precise executable versions.
 		/// </summary>
-		static readonly VersionNumberRange[] PreferredVisualCppVersions = new VersionNumberRange[]
-		{
-			VersionNumberRange.Parse("14.36.32532", "14.36.99999"), // VS2022 17.6.x
-			VersionNumberRange.Parse("14.35.32215", "14.35.99999"), // VS2022 17.5.x
-			VersionNumberRange.Parse("14.34.31933", "14.34.99999"), // VS2022 17.4.x
-			VersionNumberRange.Parse("14.29.30133", "14.29.99999"), // VS2019 16.11.x
-		};
+		/// <seealso href="https://learn.microsoft.com/en-us/lifecycle/products/visual-studio-2022"/>
+		static VersionNumberRange[] PreferredVisualCppVersions => SDK.GetVersionNumberRangeArrayFromConfig("PreferredVisualCppVersions");
 
 		/// <summary>
 		/// Minimum Clang version required for MSVC toolchain versions
 		/// </summary>
-		static readonly IReadOnlyDictionary<VersionNumber, VersionNumber> MinimumRequiredClangVersion = new Dictionary<VersionNumber, VersionNumber>()
-		{
-			{ new VersionNumber(14, 37), new VersionNumber(16) }, // VS2022 17.7.x
-			{ new VersionNumber(14, 35), new VersionNumber(15) }, // VS2022 17.5.x - 17.6.x
-			{ new VersionNumber(14, 34), new VersionNumber(14) }, // VS2022 17.4.x
-			{ new VersionNumber(14, 29), new VersionNumber(13) }, // VS2019 16.11.x
-
-		};
+		static Tuple<VersionNumber, VersionNumber>[] MinimumRequiredClangVersion => SDK.GetVersionNumberRangeArrayFromConfig("MinimumRequiredClangVersion").
+			Select(x => new Tuple<VersionNumber, VersionNumber>(x.Min, x.Max)).ToArray();
 
 		/// <summary>
 		/// Tested compiler toolchains that should not be allowed.
 		/// </summary>
-		static readonly VersionNumberRange[] BannedVisualCppVersions = new VersionNumberRange[]
-		{
-			VersionNumberRange.Parse("14.30.0", "14.33.99999"), // VS2022 17.0.x - 17.3.x
-		};
+		static VersionNumberRange[] BannedVisualCppVersions => SDK.GetVersionNumberRangeArrayFromConfig("BannedVisualCppVersions");
 
 		/// <summary>
 		/// The minimum supported MSVC compiler
 		/// </summary>
-		static readonly VersionNumber MinimumVisualCppVersion = new VersionNumber(14, 29, 30133);
+		static VersionNumber MinimumVisualCppVersion => SDK.GetRequiredVersionNumberFromConfig("MinimumVisualCppVersion");
 
 		/// <summary>
 		/// The default compiler version to be used, if installed. 
 		/// https://www.intel.com/content/www/us/en/developer/articles/tool/oneapi-standalone-components.html#dpcpp-cpp
 		/// </summary>
-		static readonly VersionNumberRange[] PreferredIntelOneApiVersions =
-		{
-			VersionNumberRange.Parse("2023.1.0", "2023.9999"),
-		};
+		static VersionNumberRange[] PreferredIntelOneApiVersions => SDK.GetVersionNumberRangeArrayFromConfig("PreferredIntelOneApiVersions");
 
 		/// <summary>
 		/// The minimum supported Intel compiler
 		/// </summary>
-		static readonly VersionNumber MinimumIntelOneApiVersion = new VersionNumber(2023, 0, 0);
+		static VersionNumber MinimumIntelOneApiVersion => SDK.GetRequiredVersionNumberFromConfig("MinimumIntelOneApiVersion");
 
-		/// <inheritdoc/>
-		protected override string GetMainVersionInternal()
+		/// <summary>
+		/// If a toolchain version is a preferred version
+		/// </summary>
+		/// <param name="toolchain">The toolchain type</param>
+		/// <param name="version">The version number</param>
+		/// <returns>If the version is preferred</returns>
+		public static bool IsPreferredVersion(WindowsCompiler toolchain, VersionNumber version)
 		{
-			// preferred/main version is the top of the Preferred list - 
-			return PreferredWindowsSdkVersions.First().ToString();
+			if (toolchain.IsMSVC())
+			{
+				return PreferredVisualCppVersions.Any(x => x.Contains(version));
+			}
+			else if (toolchain.IsIntel())
+			{
+				return PreferredIntelOneApiVersions.Any(x => x.Contains(version));
+			}
+			else if (toolchain.IsClang())
+			{
+				return PreferredClangVersions.Any(x => x.Contains(version));
+			}
+			return false;
 		}
 
-		/// <inheritdoc/>
-		protected override void GetValidVersionRange(out string MinVersion, out string MaxVersion)
+		/// <summary>
+		/// Get the latest preferred toolchain version
+		/// </summary>
+		/// <param name="toolchain">The toolchain type</param>
+		/// <returns>The version number</returns>
+		public static VersionNumber GetLatestPreferredVersion(WindowsCompiler toolchain)
 		{
-			MinVersion = "10.0.00000.0";
-			MaxVersion = "10.9.99999.0";
-		}
-
-		/// <inheritdoc/>
-		protected override void GetValidSoftwareVersionRange(out string? MinVersion, out string? MaxVersion)
-		{
-			MinVersion = MinimumWindowsSDKVersion?.ToString();
-			MaxVersion = MaximumWindowsSDKVersion?.ToString();
+			if (toolchain.IsMSVC())
+			{
+				return PreferredVisualCppVersions.Select(x => x.Min).Max()!;
+			}
+			else if (toolchain.IsIntel())
+			{
+				return PreferredIntelOneApiVersions.Select(x => x.Min).Max()!;
+			}
+			else if (toolchain.IsClang())
+			{
+				return PreferredClangVersions.Select(x => x.Min).Max()!;
+			}
+			return new VersionNumber(0);
 		}
 
 		/// <summary>
 		/// The minimum supported Clang version for a given MSVC toolchain
 		/// </summary>
-		/// <param name="VcVersion"></param>
+		/// <param name="vcVersion"></param>
 		/// <returns></returns>
-		public static VersionNumber GetMinimumClangVersionForVcVersion(VersionNumber VcVersion)
+		public static VersionNumber GetMinimumClangVersionForVcVersion(VersionNumber vcVersion)
 		{
-			foreach (KeyValuePair<VersionNumber, VersionNumber> Item in MinimumRequiredClangVersion)
-			{
-				if (VcVersion >= Item.Key)
-				{
-					return Item.Value;
-				}
-			}
-			return MinimumClangVersion;
+			return MinimumRequiredClangVersion.FirstOrDefault(x => vcVersion >= x.Item1)?.Item2 ?? MinimumClangVersion;
 		}
 
 		/// <summary>
 		/// The base Clang version for a given Intel toolchain
 		/// </summary>
-		/// <param name="IntelCompilerPath"></param>
+		/// <param name="intelCompilerPath"></param>
 		/// <returns></returns>
-		public static VersionNumber GetClangVersionForIntelCompiler(FileReference IntelCompilerPath)
+		public static VersionNumber GetClangVersionForIntelCompiler(FileReference intelCompilerPath)
 		{
-			FileReference LdLLdPath = FileReference.Combine(IntelCompilerPath.Directory, "..", "bin-llvm", "ld.lld.exe");
-			if (FileReference.Exists(LdLLdPath))
+			FileReference ldLLdPath = FileReference.Combine(intelCompilerPath.Directory, "compiler", "ld.lld.exe");
+			if (FileReference.Exists(ldLLdPath))
 			{
-				FileVersionInfo VersionInfo = FileVersionInfo.GetVersionInfo(LdLLdPath.FullName);
-				VersionNumber Version = new VersionNumber(VersionInfo.FileMajorPart, VersionInfo.FileMinorPart, VersionInfo.FileBuildPart);
-				return Version;
+				FileVersionInfo versionInfo = FileVersionInfo.GetVersionInfo(ldLLdPath.FullName);
+				VersionNumber version = new VersionNumber(versionInfo.FileMajorPart, versionInfo.FileMinorPart, versionInfo.FileBuildPart);
+				return version;
 			}
 
 			return MinimumClangVersion;
@@ -153,6 +138,6 @@ namespace UnrealBuildTool
 		/// as components such as the recommended toolchain can be installed by opening the generated solution via the .vsconfig file.
 		/// If enabled the error will be downgraded to a warning.
 		/// </summary>
-		public static bool IgnoreToolchainErrors = false;
+		public static bool IgnoreToolchainErrors { get; set; } = false;
 	}
 }

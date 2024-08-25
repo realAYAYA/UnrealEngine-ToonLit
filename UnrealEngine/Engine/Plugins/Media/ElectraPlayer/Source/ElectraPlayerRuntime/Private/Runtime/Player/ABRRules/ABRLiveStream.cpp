@@ -40,7 +40,7 @@ public:
 	void ReportPlaybackEnded() override;
 
 	FTimeValue GetMinBufferTimeForPlayback(IAdaptiveStreamSelector::EMinBufferType InBufferingType, FTimeValue InDefaultMBT) override;
-	IAdaptiveStreamSelector::FRebufferAction GetRebufferAction(const FParamDict& CurrentPlayerOptions) override;
+	IAdaptiveStreamSelector::FRebufferAction GetRebufferAction() override;
 	IAdaptiveStreamSelector::EHandlingAction PeriodicHandle() override;
 	void DebugPrint(void* pThat, void (*pPrintFN)(void* pThat, const char *pFmt, ...)) override;
 
@@ -396,10 +396,10 @@ FABRLiveStream::FABRLiveStream(IABRInfoInterface* InInfo, EMediaFormatType InFor
 	, FormatType(InFormatType)
 	, PresentationType(InPresentationType)
 {
-	bRebufferingJustResumesLoading = Info->GetPlayerOptions().GetValue(OptionRebufferingContinuesLoading).SafeGetBool(false);
-	if (Info->GetPlayerOptions().HaveKey(ABR::OptionKeyABR_CDNSegmentDenyHTTPStatus))
+	bRebufferingJustResumesLoading = Info->GetOptionValue(OptionRebufferingContinuesLoading).SafeGetBool(false);
+	if (Info->HaveOptionValue(ABR::OptionKeyABR_CDNSegmentDenyHTTPStatus))
 	{
-		HTTPStatusCodeToDenyStream.Set((int32) Info->GetPlayerOptions().GetValue(ABR::OptionKeyABR_CDNSegmentDenyHTTPStatus).SafeGetInt64(-1));
+		HTTPStatusCodeToDenyStream.Set((int32) Info->GetOptionValue(ABR::OptionKeyABR_CDNSegmentDenyHTTPStatus).SafeGetInt64(-1));
 	}
 	PrepareLatencyConfiguration();
 
@@ -1600,7 +1600,7 @@ FTimeValue FABRLiveStream::GetMinBufferTimeForPlayback(IAdaptiveStreamSelector::
 	return FTimeValue();
 }
 
-IAdaptiveStreamSelector::FRebufferAction FABRLiveStream::GetRebufferAction(const FParamDict& CurrentPlayerOptions)
+IAdaptiveStreamSelector::FRebufferAction FABRLiveStream::GetRebufferAction()
 {
 	IAdaptiveStreamSelector::FRebufferAction Action;
 

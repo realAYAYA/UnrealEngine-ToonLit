@@ -236,6 +236,37 @@ FString FWebSocket::LocalEndPoint(bool bAppendPort)
 #endif
 }
 
+TArray<FString> FWebSocket::GetUrlArgs() 
+{
+	TArray<FString> UrlArgs;
+#if USE_LIBWEBSOCKET
+	char Buffer[256];	
+	
+	int n = 0;
+	while ( lws_hdr_copy_fragment(Wsi, Buffer, sizeof(Buffer), WSI_TOKEN_HTTP_URI_ARGS, n) >= 0 ) 
+	{
+		UrlArgs.Add(FString(ANSI_TO_TCHAR(Buffer)));
+		n++;
+	}
+#endif
+
+	return UrlArgs;	
+}
+
+FString FWebSocket::GetUrlArgByName(const FString& Name) 
+{
+#if USE_LIBWEBSOCKET
+	char Buffer[256];	
+
+	if ( lws_get_urlarg_by_name(Wsi, TCHAR_TO_ANSI(*Name), Buffer, sizeof(Buffer)) != nullptr )
+	{
+		return FString(ANSI_TO_TCHAR(Buffer));
+	}
+#endif
+
+	return FString(TEXT(""));
+}
+
 void FWebSocket::Tick()
 {
 	HandlePacket();

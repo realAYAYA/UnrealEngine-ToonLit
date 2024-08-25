@@ -10,9 +10,8 @@
 #include "UnrealUSDWrapper.h"
 
 #if USE_USD_SDK
-
 #include "USDIncludesStart.h"
-	#include "pxr/pxr.h"
+#include "pxr/pxr.h"
 #include "USDIncludesEnd.h"
 
 #include <string>
@@ -22,8 +21,7 @@ PXR_NAMESPACE_OPEN_SCOPE
 	class UsdVariantSet;
 	class UsdVariantSets;
 PXR_NAMESPACE_CLOSE_SCOPE
-
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 namespace UE
 {
@@ -68,13 +66,11 @@ namespace UE
 		// Use FUsdPrim::GetVariantSet() or FUsdVariantSets::GetVariantSet()
 		// to construct an instance.
 		explicit FUsdVariantSet(const pxr::UsdPrim& InPrim, const std::string& InVariantSetName);
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
-		// Wrapped pxr::UsdVariantSet functions, refer to the USD SDK documentation
+		  // Wrapped pxr::UsdVariantSet functions, refer to the USD SDK documentation
 	public:
-		bool AddVariant(
-			const FString& VariantName,
-			EUsdListPosition Position = EUsdListPosition::BackOfPrependList);
+		bool AddVariant(const FString& VariantName, EUsdListPosition Position = EUsdListPosition::BackOfPrependList);
 
 		TArray<FString> GetVariantNames() const;
 
@@ -105,7 +101,6 @@ namespace UE
 		friend class FUsdPrim;
 		friend class FUsdVariantSets;
 	};
-
 
 	/**
 	 * Minimal pxr::UsdVariantSets wrapper for Unreal that can be used from no-rtti modules.
@@ -139,13 +134,11 @@ namespace UE
 		// FUsdPrim.
 		// Use FUsdPrim::GetVariantSets() to construct an instance.
 		explicit FUsdVariantSets(const pxr::UsdPrim& InPrim);
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
-		// Wrapped pxr::UsdVariantSets functions, refer to the USD SDK documentation
+		  // Wrapped pxr::UsdVariantSets functions, refer to the USD SDK documentation
 	public:
-		FUsdVariantSet AddVariantSet(
-			const FString& VariantSetName,
-			EUsdListPosition Position = EUsdListPosition::BackOfPrependList);
+		FUsdVariantSet AddVariantSet(const FString& VariantSetName, EUsdListPosition Position = EUsdListPosition::BackOfPrependList);
 
 		TArray<FString> GetNames() const;
 
@@ -160,9 +153,7 @@ namespace UE
 
 		FString GetVariantSelection(const FString& VariantSetName) const;
 
-		bool SetSelection(
-			const FString& VariantSetName,
-			const FString& VariantName);
+		bool SetSelection(const FString& VariantSetName, const FString& VariantName);
 
 		TMap<FString, FString> GetAllVariantSelections() const;
 
@@ -171,4 +162,4 @@ namespace UE
 
 		friend class FUsdPrim;
 	};
-}
+}	 // namespace UE

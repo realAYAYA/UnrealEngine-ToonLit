@@ -9,6 +9,7 @@ public class UMG : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[] {
 				"Core",
+				"TraceLog",
 				"CoreUObject",
 				"DeveloperSettings",
 				"Engine",
@@ -45,6 +46,13 @@ public class UMG : ModuleRules
 			DynamicallyLoadedModuleNames.AddRange(
 				new string[] {
 					"ImageWrapper",
+				}
+			);
+
+			// Implementations depending on 'SlateRHIRenderer' should 
+			// be guarded with: '#if !UE_SERVER'.
+			PrivateDependencyModuleNames.AddRange(
+				new string[] {
 					"SlateRHIRenderer",
 				}
 			);

@@ -19,39 +19,6 @@
 
 #define LOCTEXT_NAMESPACE "OptimusDeformer"
 
-static FString FormatDataDomain(
-	const FOptimusDataDomain& InDataDomain
-	)
-{
-	switch(InDataDomain.Type)
-	{
-	case EOptimusDataDomainType::Dimensional:
-		{
-			if (InDataDomain.DimensionNames.IsEmpty())
-			{
-				return TEXT("Parameter");
-			}
-			TArray<FString> Names;
-			for (FName DomainLevelName: InDataDomain.DimensionNames)
-			{
-				Names.Add(DomainLevelName.ToString());
-			}
-			FString DomainName = FString::Join(Names, *FString(UTF8TEXT(" › ")));
-			if (InDataDomain.Multiplier > 1)
-			{
-				DomainName += FString::Printf(TEXT(" x %d"), InDataDomain.Multiplier);
-			}
-			return DomainName;
-		}
-		
-	case EOptimusDataDomainType::Expression:
-		return FString::Printf(TEXT("<%s>"), *InDataDomain.Expression.TrimStartAndEnd());
-	}
-	
-	checkNoEntry();
-	return TEXT("");
-}
-
 
 
 UOptimusNodePin* UOptimusNodePin::GetParentPin()
@@ -173,14 +140,17 @@ FText UOptimusNodePin::GetTooltipText() const
 	{
 		return FText::FormatOrdered(LOCTEXT("OptimusNodePin_Tooltip_Resource", "Name:\t{0}\nType:\t{1} ({2})\nStorage:\tResource\nDomain:\t{3}"),
 			FText::FromString(GetName()), DataType->DisplayName, FText::FromString(DataType->ShaderValueType->ToString()),
-			FText::FromString(FormatDataDomain(DataDomain)));
+			FText::FromString(DataDomain.GetDisplayName()));
 	}
 }
 
 
 FString UOptimusNodePin::GetPinPath() const
 {
-	return FString::Printf(TEXT("%s.%s"), *GetOwningNode()->GetNodePath(), *GetUniqueName().ToString());
+	return UOptimusNodeGraph::ConstructPath(
+		GetOwningNode()->GetOwningGraph()->GetCollectionPath(),
+		GetOwningNode()->GetName(),
+		GetUniqueName().ToString());
 }
 
 
@@ -215,9 +185,28 @@ TArray<FName> UOptimusNodePin::GetPinNamePathFromString(const FStringView InPinP
 }
 
 
-TSet<UOptimusComponentSourceBinding*> UOptimusNodePin::GetComponentSourceBindings() const
+TSet<UOptimusComponentSourceBinding*> UOptimusNodePin::GetComponentSourceBindings(const FOptimusPinTraversalContext& InContext) const
 {
-	return GetOwningNode()->GetOwningGraph()->GetComponentSourceBindingsForPin(this);
+	return GetOwningNode()->GetOwningGraph()->GetComponentSourceBindingsForPin(this, InContext);
+}
+
+TSet<UOptimusComponentSourceBinding*> UOptimusNodePin::GetComponentSourceBindingsRecursively(const FOptimusPinTraversalContext& InContext) const
+{
+	TArray<UOptimusNodePin*> PinsToConsider = GetSubPinsRecursively(true);
+
+	TSet<UOptimusComponentSourceBinding*> Bindings;
+
+	for (const UOptimusNodePin* Pin : PinsToConsider)
+	{
+		Bindings.Append(Pin->GetComponentSourceBindings(InContext));
+	}
+	
+	return Bindings;
+}
+
+bool UOptimusNodePin::IsMutable(const FOptimusPinTraversalContext& InContext) const
+{
+	return GetOwningNode()->GetOwningGraph()->IsPinMutable(this, InContext);
 }
 
 
@@ -497,32 +486,7 @@ bool UOptimusNodePin::CanCannect(const UOptimusNodePin* InOtherPin, FString* Out
 	}
 
 
-	// We don't allow resource -> value connections. All other combos are legit. 
-	// Value -> Resource just means the resource gets filled with the value.
-	if (!OutputPin->DataDomain.IsSingleton() && InputPin->DataDomain.IsSingleton())
-	{
-		if (OutReason)
-		{
-			*OutReason = TEXT("Can't connect a resource output into a value input.");
-		}
-		return false;
-	}
-
-	// If it's resource -> resource, check that the dimensionality is the same.
-	if (!OutputPin->DataDomain.IsSingleton() && !InputPin->DataDomain.IsSingleton())
-	{
-		if (OutputPin->DataDomain != InputPin->DataDomain)
-		{
-			if (OutReason)
-			{
-				*OutReason = FString::Printf(TEXT("Can't connect resources with different data domain types (%s vs %s)."),
-					*FormatDataDomain(OutputPin->DataDomain), *FormatDataDomain(InputPin->DataDomain));
-			}
-			return false;
-		}
-	}
-
-	return true;
+	return FOptimusDataDomain::AreCompatible(OutputPin->DataDomain, InputPin->DataDomain, OutReason);
 }
 
 

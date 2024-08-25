@@ -9,7 +9,7 @@
 #include "Sequencer/DMXLibrarySection.h"
 
 #include "Sections/MovieSceneParameterSection.h"
-#include "SequencerUtilities.h"
+#include "MVVM/Views/ViewUtilities.h"
 #include "MovieSceneSection.h"
 
 #include "Framework/MultiBox/MultiBoxBuilder.h"
@@ -37,31 +37,34 @@ TSharedRef<ISequencerTrackEditor> FDMXLibraryTrackEditor::CreateTrackEditor(TSha
 	return MakeShared<FDMXLibraryTrackEditor>(OwningSequencer);
 }
 
-TSharedRef<SWidget> CreateAssetPicker(FOnAssetSelected OnAssetSelected, FOnAssetEnterPressed OnAssetEnterPressed, TWeakPtr<ISequencer> InSequencer)
+namespace UE::DMX
 {
-	UMovieSceneSequence* Sequence = InSequencer.IsValid() ? InSequencer.Pin()->GetFocusedMovieSceneSequence() : nullptr;
-
-	FAssetPickerConfig AssetPickerConfig;
+	TSharedRef<SWidget> CreateAssetPicker(FOnAssetSelected OnAssetSelected, FOnAssetEnterPressed OnAssetEnterPressed, TWeakPtr<ISequencer> InSequencer)
 	{
-		AssetPickerConfig.OnAssetSelected = OnAssetSelected;
-		AssetPickerConfig.OnAssetEnterPressed = OnAssetEnterPressed;
-		AssetPickerConfig.bAllowNullSelection = false;
-		AssetPickerConfig.bAddFilterUI = true;
-		AssetPickerConfig.InitialAssetViewType = EAssetViewType::List;
-		AssetPickerConfig.Filter.bRecursiveClasses = true;
-		AssetPickerConfig.Filter.ClassPaths.Add(UDMXLibrary::StaticClass()->GetClassPathName());
-		AssetPickerConfig.SaveSettingsName = TEXT("SequencerAssetPicker");
-		AssetPickerConfig.AdditionalReferencingAssets.Add(FAssetData(Sequence));
+		UMovieSceneSequence* Sequence = InSequencer.IsValid() ? InSequencer.Pin()->GetFocusedMovieSceneSequence() : nullptr;
+
+		FAssetPickerConfig AssetPickerConfig;
+		{
+			AssetPickerConfig.OnAssetSelected = OnAssetSelected;
+			AssetPickerConfig.OnAssetEnterPressed = OnAssetEnterPressed;
+			AssetPickerConfig.bAllowNullSelection = false;
+			AssetPickerConfig.bAddFilterUI = true;
+			AssetPickerConfig.InitialAssetViewType = EAssetViewType::List;
+			AssetPickerConfig.Filter.bRecursiveClasses = true;
+			AssetPickerConfig.Filter.ClassPaths.Add(UDMXLibrary::StaticClass()->GetClassPathName());
+			AssetPickerConfig.SaveSettingsName = TEXT("SequencerAssetPicker");
+			AssetPickerConfig.AdditionalReferencingAssets.Add(FAssetData(Sequence));
+		}
+
+		FContentBrowserModule& ContentBrowserModule = FModuleManager::Get().LoadModuleChecked<FContentBrowserModule>(TEXT("ContentBrowser"));
+
+		return SNew(SBox)
+			.WidthOverride(300.0f)
+			.HeightOverride(300.f)
+			[
+				ContentBrowserModule.Get().CreateAssetPicker(AssetPickerConfig)
+			];
 	}
-
-	FContentBrowserModule& ContentBrowserModule = FModuleManager::Get().LoadModuleChecked<FContentBrowserModule>(TEXT("ContentBrowser"));
-
-	return SNew(SBox)
-		.WidthOverride(300.0f)
-		.HeightOverride(300.f)
-		[
-			ContentBrowserModule.Get().CreateAssetPicker(AssetPickerConfig)
-		];
 }
 
 void FDMXLibraryTrackEditor::BuildTrackContextMenu(FMenuBuilder& MenuBuilder, UMovieSceneTrack* Track)
@@ -96,7 +99,7 @@ void FDMXLibraryTrackEditor::BuildTrackContextMenu(FMenuBuilder& MenuBuilder, UM
 
 	auto SubMenuCallback = [this, AssignAsset, AssignAssetEnterPressed](FMenuBuilder& SubMenuBuilder)
 	{
-		SubMenuBuilder.AddWidget(CreateAssetPicker(FOnAssetSelected::CreateLambda(AssignAsset), FOnAssetEnterPressed::CreateLambda(AssignAssetEnterPressed), GetSequencer()), FText::GetEmpty(), true);
+		SubMenuBuilder.AddWidget(UE::DMX::CreateAssetPicker(FOnAssetSelected::CreateLambda(AssignAsset), FOnAssetEnterPressed::CreateLambda(AssignAssetEnterPressed), GetSequencer()), FText::GetEmpty(), true);
 	};
 
 	MenuBuilder.AddSubMenu(
@@ -111,7 +114,7 @@ void FDMXLibraryTrackEditor::BuildAddTrackMenu(FMenuBuilder& MenuBuilder)
 	auto SubMenuCallback = [this](FMenuBuilder& SubMenuBuilder)
 	{
 		SubMenuBuilder.AddWidget(
-			CreateAssetPicker(
+			UE::DMX::CreateAssetPicker(
 				FOnAssetSelected::CreateRaw(this, &FDMXLibraryTrackEditor::AddDMXLibraryTrackToSequence),
 				FOnAssetEnterPressed::CreateRaw(this, &FDMXLibraryTrackEditor::AddDMXLibraryTrackToSequenceEnterPressed),
 				GetSequencer()
@@ -158,7 +161,7 @@ TSharedPtr<SWidget> FDMXLibraryTrackEditor::BuildOutlinerEditWidget(const FGuid&
 	// Create combo button "+ Patch" to pick an asset to add
 	// sub menu content callback
 	FOnGetContent AddPatchMenuContent = FOnGetContent::CreateSP(this, &FDMXLibraryTrackEditor::OnGetAddPatchMenuContent, DMXTrack);
-	return FSequencerUtilities::MakeAddButton(LOCTEXT("AddPatchButton", "Patch"), AddPatchMenuContent, Params.NodeIsHovered, GetSequencer());
+	return UE::Sequencer::MakeAddButton(LOCTEXT("AddPatchButton", "Patch"), AddPatchMenuContent, Params.ViewModel);
 }
 
 TSharedRef<SWidget> FDMXLibraryTrackEditor::OnGetAddPatchMenuContent(UMovieSceneDMXLibraryTrack* DMXTrack)

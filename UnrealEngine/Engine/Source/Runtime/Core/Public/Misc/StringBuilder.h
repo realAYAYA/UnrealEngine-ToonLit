@@ -9,7 +9,6 @@
 #include "HAL/UnrealMemory.h"
 #include "Misc/AssertionMacros.h"
 #include "Misc/CString.h"
-#include "Templates/AndOrNot.h"
 #include "Templates/EnableIf.h"
 #include "Templates/IsArrayOrRefOfTypeByPredicate.h"
 #include "Templates/IsValidVariadicFunctionArg.h"
@@ -348,7 +347,7 @@ public:
 		UE_REQUIRES(TIsArrayOrRefOfTypeByPredicate<FmtType, TIsCharEncodingCompatibleWithCharType>::Value)>
 	BuilderType& Appendf(const FmtType& Fmt, Types... Args)
 	{
-		static_assert(TAnd<TIsValidVariadicFunctionArg<Types>...>::Value, "Invalid argument(s) passed to Appendf.");
+		static_assert((TIsValidVariadicFunctionArg<Types>::Value && ...), "Invalid argument(s) passed to Appendf.");
 		return AppendfImpl(*this, (const CharType*)Fmt, Forward<Types>(Args)...);
 	}
 
@@ -473,35 +472,50 @@ inline FStringBuilderBase&			operator+=(FStringBuilderBase& Builder, UTF8CHAR Ch
 inline FStringBuilderBase&			operator+=(FStringBuilderBase& Builder, FWideStringView Str)						{ return Builder.Append(Str); }
 inline FStringBuilderBase&			operator+=(FStringBuilderBase& Builder, FUtf8StringView Str)						{ return Builder.Append(Str); }
 
-// Integer Append Operators
+// Bool Append Operators
 
-inline FAnsiStringBuilderBase&		operator<<(FAnsiStringBuilderBase& Builder, int32 Value)							{ return Builder.Appendf("%d", Value); }
-inline FAnsiStringBuilderBase&		operator<<(FAnsiStringBuilderBase& Builder, uint32 Value)							{ return Builder.Appendf("%u", Value); }
-inline FWideStringBuilderBase&		operator<<(FWideStringBuilderBase& Builder, int32 Value)							{ return Builder.Appendf(WIDETEXT("%d"), Value); }
-inline FWideStringBuilderBase&		operator<<(FWideStringBuilderBase& Builder, uint32 Value)							{ return Builder.Appendf(WIDETEXT("%u"), Value); }
-inline FUtf8StringBuilderBase&		operator<<(FUtf8StringBuilderBase& Builder, int32 Value)							{ return Builder.Appendf(UTF8TEXT("%d"), Value); }
-inline FUtf8StringBuilderBase&		operator<<(FUtf8StringBuilderBase& Builder, uint32 Value)							{ return Builder.Appendf(UTF8TEXT("%u"), Value); }
+template <typename T UE_REQUIRES(std::is_same_v<bool, T>)>
+inline FAnsiStringBuilderBase&		operator<<(FAnsiStringBuilderBase& Builder, T Value)								{ return Builder.Append(Value ? "true" : "false"); }
+template <typename T UE_REQUIRES(std::is_same_v<bool, T>)>
+inline FWideStringBuilderBase&		operator<<(FWideStringBuilderBase& Builder, T Value)								{ return Builder.Append(Value ? WIDETEXT("true") : WIDETEXT("false")); }
+template <typename T UE_REQUIRES(std::is_same_v<bool, T>)>
+inline FUtf8StringBuilderBase&		operator<<(FUtf8StringBuilderBase& Builder, T Value)								{ return Builder.Append(Value ? UTF8TEXT("true") : UTF8TEXT("false")); }
 
-inline FAnsiStringBuilderBase&		operator<<(FAnsiStringBuilderBase& Builder, int64 Value)							{ return Builder.Appendf("%" INT64_FMT, Value); }
-inline FAnsiStringBuilderBase&		operator<<(FAnsiStringBuilderBase& Builder, uint64 Value)							{ return Builder.Appendf("%" UINT64_FMT, Value); }
-inline FWideStringBuilderBase&		operator<<(FWideStringBuilderBase& Builder, int64 Value)							{ return Builder.Appendf(WIDETEXT("%" INT64_FMT), Value); }
-inline FWideStringBuilderBase&		operator<<(FWideStringBuilderBase& Builder, uint64 Value)							{ return Builder.Appendf(WIDETEXT("%" UINT64_FMT), Value); }
-inline FUtf8StringBuilderBase&		operator<<(FUtf8StringBuilderBase& Builder, int64 Value)							{ return Builder.Appendf(UTF8TEXT("%" INT64_FMT), Value); }
-inline FUtf8StringBuilderBase&		operator<<(FUtf8StringBuilderBase& Builder, uint64 Value)							{ return Builder.Appendf(UTF8TEXT("%" UINT64_FMT), Value); }
+/**
+ * Trait which determines whether or not a type can be appended to TStringBuilderBase via TFormatSpecifier.
+ */
 
-inline FAnsiStringBuilderBase&		operator<<(FAnsiStringBuilderBase& Builder, int8 Value)								{ return Builder << int32(Value); }
-inline FAnsiStringBuilderBase&		operator<<(FAnsiStringBuilderBase& Builder, uint8 Value)							{ return Builder << uint32(Value); }
-inline FWideStringBuilderBase&		operator<<(FWideStringBuilderBase& Builder, int8 Value)								{ return Builder << int32(Value); }
-inline FWideStringBuilderBase&		operator<<(FWideStringBuilderBase& Builder, uint8 Value)							{ return Builder << uint32(Value); }
-inline FUtf8StringBuilderBase&		operator<<(FUtf8StringBuilderBase& Builder, int8 Value)								{ return Builder << int32(Value); }
-inline FUtf8StringBuilderBase&		operator<<(FUtf8StringBuilderBase& Builder, uint8 Value)							{ return Builder << uint32(Value); }
+template <typename T>        constexpr bool TIsFormattedStringBuilderType_V                   = false;
+template <>           inline constexpr bool TIsFormattedStringBuilderType_V<uint8>            = true;
+template <>           inline constexpr bool TIsFormattedStringBuilderType_V<uint16>           = true;
+template <>           inline constexpr bool TIsFormattedStringBuilderType_V<uint32>           = true;
+template <>           inline constexpr bool TIsFormattedStringBuilderType_V<uint64>           = true;
+template <>           inline constexpr bool TIsFormattedStringBuilderType_V<int8>             = true;
+template <>           inline constexpr bool TIsFormattedStringBuilderType_V<int16>            = true;
+template <>           inline constexpr bool TIsFormattedStringBuilderType_V<int32>            = true;
+template <>           inline constexpr bool TIsFormattedStringBuilderType_V<int64>            = true;
+template <>           inline constexpr bool TIsFormattedStringBuilderType_V<float>            = true;
+template <>           inline constexpr bool TIsFormattedStringBuilderType_V<double>           = true;
+template <>           inline constexpr bool TIsFormattedStringBuilderType_V<long double>      = true;
+template <>           inline constexpr bool TIsFormattedStringBuilderType_V<long>             = true;
+template <>           inline constexpr bool TIsFormattedStringBuilderType_V<unsigned long>    = true;
 
-inline FAnsiStringBuilderBase&		operator<<(FAnsiStringBuilderBase& Builder, int16 Value)							{ return Builder << int32(Value); }
-inline FAnsiStringBuilderBase&		operator<<(FAnsiStringBuilderBase& Builder, uint16 Value)							{ return Builder << uint32(Value); }
-inline FWideStringBuilderBase&		operator<<(FWideStringBuilderBase& Builder, int16 Value)							{ return Builder << int32(Value); }
-inline FWideStringBuilderBase&		operator<<(FWideStringBuilderBase& Builder, uint16 Value)							{ return Builder << uint32(Value); }
-inline FUtf8StringBuilderBase&		operator<<(FUtf8StringBuilderBase& Builder, int16 Value)							{ return Builder << int32(Value); }
-inline FUtf8StringBuilderBase&		operator<<(FUtf8StringBuilderBase& Builder, uint16 Value)							{ return Builder << uint32(Value); }
+template <typename T>        constexpr bool TIsFormattedStringBuilderType_V<const          T> = TIsFormattedStringBuilderType_V<T>;
+template <typename T>        constexpr bool TIsFormattedStringBuilderType_V<      volatile T> = TIsFormattedStringBuilderType_V<T>;
+template <typename T>        constexpr bool TIsFormattedStringBuilderType_V<const volatile T> = TIsFormattedStringBuilderType_V<T>;
+
+// Formatted Append Operators
+
+template <
+	typename CharType,
+	typename T
+	UE_REQUIRES(TIsFormattedStringBuilderType_V<T>)
+>
+inline TStringBuilderBase<CharType>& operator<<(TStringBuilderBase<CharType>& Builder, const T& Value)
+{
+	// std::remove_cv_t to remove potential volatile decorations. Removing const is pointless, but harmless because it's specified in the param declaration.
+	return Builder.Appendf(TFormatSpecifier<std::remove_cv_t<T>>::template GetFormatSpecifier<CharType>(), Value);
+}
 
 template <typename CharType, int32 BufferSize>
 class UE_DEPRECATED(5.3, "Use WriteToString<N>(...) or TStringBuilder<N>(InPlace, ...).") TWriteToString : public TStringBuilderWithBuffer<CharType, BufferSize>

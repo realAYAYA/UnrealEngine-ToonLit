@@ -13,7 +13,7 @@
 bool FMovieSceneIntegerChannel::SerializeFromMismatchedTag(const FPropertyTag& Tag, FStructuredArchive::FSlot Slot)
 {
 	static const FName IntegralCurveName("IntegralCurve");
-	if (Tag.Type == NAME_StructProperty && Tag.StructName == IntegralCurveName)
+	if (Tag.GetType().IsStruct(IntegralCurveName))
 	{
 		FIntegralCurve IntegralCurve;
 		FIntegralCurve::StaticStruct()->SerializeItem(Slot, &IntegralCurve, nullptr);
@@ -47,8 +47,62 @@ bool FMovieSceneIntegerChannel::Evaluate(FFrameTime InTime, int32& OutValue) con
 {
 	if (Times.Num())
 	{
-		const int32 Index = FMath::Max(0, Algo::UpperBound(Times, InTime.FrameNumber)-1);
-		OutValue = Values[Index];
+		const FFrameNumber MinFrame = Times[0];
+		const FFrameNumber MaxFrame = Times.Last();
+		//we do None,Constant, and Linear first ,there is no cycling and so we just exit
+		if (InTime < FFrameTime(MinFrame))
+		{
+			if (PreInfinityExtrap == RCCE_None)
+			{
+				return false;
+			}
+
+			if (PreInfinityExtrap == RCCE_Constant || PreInfinityExtrap == RCCE_Linear)
+			{
+				OutValue = Values[0];
+				return true;
+			}
+		}
+		else if (InTime > FFrameTime(MaxFrame))
+		{
+			if (PostInfinityExtrap == RCCE_None)
+			{
+				return false;
+			}
+
+			if (PostInfinityExtrap == RCCE_Constant || PreInfinityExtrap == RCCE_Linear)
+			{
+				OutValue = Values.Last();
+				return true;
+			}
+		}
+
+		// Compute the cycled time based on extrapolation
+		UE::MovieScene::FCycleParams Params = UE::MovieScene::CycleTime(MinFrame, MaxFrame, InTime);
+
+		// Deal with offset cycles and oscillation
+		// Move int over to double then we will convert back to int if doing an offset
+		const double FirstValue = double(Values[0]);
+		const double LastValue = double(Values.Last());
+		if (InTime < FFrameTime(MinFrame))
+		{
+			switch (PreInfinityExtrap)
+			{
+			case RCCE_CycleWithOffset: Params.ComputePreValueOffset(FirstValue, LastValue); break;
+			case RCCE_Oscillate:       Params.Oscillate(MinFrame.Value, MaxFrame.Value);                       break;
+			}
+		}
+		else if (InTime > FFrameTime(MaxFrame))
+		{
+			switch (PostInfinityExtrap)
+			{
+			case RCCE_CycleWithOffset: Params.ComputePostValueOffset(FirstValue, LastValue); break;
+			case RCCE_Oscillate:       Params.Oscillate(MinFrame.Value, MaxFrame.Value);    break;
+			}
+		}
+
+		const int32 Index = FMath::Max(0, Algo::UpperBound(Times, Params.Time)-1);
+		OutValue = Values[Index] + (int32)(Params.ValueOffset + 0.5);
 		return true;
 	}
 	else if (bHasDefaultValue)
@@ -131,6 +185,16 @@ void FMovieSceneIntegerChannel::Optimize(const FKeyDataOptimizationParams& InPar
 void FMovieSceneIntegerChannel::Offset(FFrameNumber DeltaPosition)
 {
 	GetData().Offset(DeltaPosition);
+}
+
+FKeyHandle FMovieSceneIntegerChannel::GetHandle(int32 Index)
+{
+	return GetData().GetHandle(Index);
+}
+
+int32 FMovieSceneIntegerChannel::GetIndex(FKeyHandle Handle)
+{
+	return GetData().GetIndex(Handle);
 }
 
 void FMovieSceneIntegerChannel::ClearDefault()

@@ -61,6 +61,9 @@ struct FRepMovementNetSerializer
 	static bool IsEqual(FNetSerializationContext&, const FNetIsEqualArgs&);
 	static bool Validate(FNetSerializationContext&, const FNetValidateArgs&);
 
+	// Avoid overwriting some members in the target FRepMovement instance.
+	static void Apply(FNetSerializationContext&, const FNetApplyArgs&);
+
 private:
 	enum EFlags : uint32
 	{
@@ -563,8 +566,11 @@ void FRepMovementNetSerializer::Dequantize(FNetSerializationContext& Context, co
 	Target.bRepPhysics = (Source.Flags & Flag_RepPhysics) ? 1 : 0;
 	Target.ServerFrame = (Source.Flags & Flag_ServerFrameIsPresent ? Source.ServerFrame : 0);
 	Target.ServerPhysicsHandle = (Source.Flags & Flag_ServerPhysicsHandleIsPresent ? Source.ServerPhysicsHandle : INDEX_NONE);
+	Target.LocationQuantizationLevel = EVectorQuantization(Source.LocationQuantizationLevel);
+	Target.VelocityQuantizationLevel = EVectorQuantization(Source.VelocityQuantizationLevel);
+	Target.RotationQuantizationLevel = ERotatorQuantization(Source.RotationQuantizationLevel);
 
-	// We do not overwrite AngularVelocity unless we're replicating it. This is consistent with the FRepMovement serialization method.
+	// There's no need to dequantize angular velocity unless we're replicating it.
 	if (Source.Flags & Flag_RepPhysics)
 	{
 		const FNetSerializer* Serializer = VectorNetQuantizeNetSerializers[Source.VelocityQuantizationLevel];
@@ -689,6 +695,33 @@ bool FRepMovementNetSerializer::Validate(FNetSerializationContext& Context, cons
 	}
 
 	return true;
+}
+
+void FRepMovementNetSerializer::Apply(FNetSerializationContext& Context, const FNetApplyArgs& Args)
+{
+	const SourceType& Source = *reinterpret_cast<const SourceType*>(Args.Source);
+	SourceType& Target = *reinterpret_cast<SourceType*>(Args.Target);
+
+	Target.bSimulatedPhysicSleep = Source.bSimulatedPhysicSleep;
+	Target.bRepPhysics = Source.bRepPhysics;
+	Target.ServerFrame = Source.ServerFrame;
+	// FRepMovement::NetSerialize does not overwrite ServerPhysicsHandle if it wasn't replicated. Despite the member name we mimic the behavior.
+	if (Source.ServerPhysicsHandle != INDEX_NONE)
+	{
+		Target.ServerPhysicsHandle = Source.ServerPhysicsHandle;
+	}
+
+	Target.LinearVelocity = Source.LinearVelocity;
+	Target.Location = Source.Location;
+	Target.Rotation = Source.Rotation;
+
+	// Explicitly do not overwrite AngularVelocity unless it was replicated.
+	if (Source.bRepPhysics)
+	{
+		Target.AngularVelocity = Source.AngularVelocity;
+	}
+
+	// Explicitly do not overwrite quantization levels.
 }
 
 // FNetSerializerRegistryDelegates

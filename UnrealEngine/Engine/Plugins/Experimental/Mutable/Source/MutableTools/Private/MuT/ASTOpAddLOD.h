@@ -16,7 +16,7 @@ struct FProgram;
 	//---------------------------------------------------------------------------------------------
 	//! Operations to add elements to a LOD
 	//---------------------------------------------------------------------------------------------
-	class ASTOpAddLOD : public ASTOp
+	class ASTOpAddLOD final : public ASTOp
 	{
 	public:
 

@@ -6,6 +6,7 @@
 #include "Chaos/PBDSoftsEvolutionFwd.h"
 #include "Chaos/PBDSoftsSolverParticles.h"
 #include "Chaos/PBDStiffness.h"
+#include "Chaos/SoftsSolverParticlesRange.h"
 #include "Containers/Array.h"
 
 namespace Chaos::Softs
@@ -14,6 +15,34 @@ namespace Chaos::Softs
 class FPBDAxialSpringConstraintsBase
 {
 public:
+
+	FPBDAxialSpringConstraintsBase(
+		const FSolverParticlesRange& Particles,
+		const TArray<TVec3<int32>>& InConstraints,
+		const TConstArrayView<FRealSingle>& StiffnessMultipliers,
+		const FSolverVec2& InStiffness,
+		bool bTrimKinematicConstraints,
+		FSolverReal MaxStiffness = FPBDStiffness::DefaultPBDMaxStiffness)
+		: Constraints(TrimConstraints(InConstraints,
+			[&Particles, bTrimKinematicConstraints](int32 Index0, int32 Index1, int32 Index2)
+			{
+				return bTrimKinematicConstraints && Particles.InvM(Index0) == (FSolverReal)0. && Particles.InvM(Index1) == (FSolverReal)0. && Particles.InvM(Index2) == (FSolverReal)0.;
+			}))
+		, ParticleOffset(0)
+		, ParticleCount(Particles.GetRangeSize())
+		, Stiffness(
+			InStiffness,
+			StiffnessMultipliers,
+			TConstArrayView<TVec3<int32>>(Constraints),
+			ParticleOffset,
+			ParticleCount,
+			FPBDStiffness::DefaultTableSize,
+			FPBDStiffness::DefaultParameterFitBase,
+			MaxStiffness)
+	{
+		Init(Particles, bTrimKinematicConstraints);
+	}
+
 	FPBDAxialSpringConstraintsBase(
 		const FSolverParticles& Particles,
 		int32 InParticleOffset,
@@ -40,7 +69,7 @@ public:
 			FPBDStiffness::DefaultParameterFitBase,
 			MaxStiffness)
 	{
-		Init(Particles);
+		Init(Particles, bTrimKinematicConstraints);
 	}
 
 	virtual ~FPBDAxialSpringConstraintsBase() {}
@@ -49,8 +78,12 @@ public:
 
 	void ApplyProperties(const FSolverReal Dt, const int32 NumIterations) { Stiffness.ApplyPBDValues(Dt, NumIterations); }
 
+	const TArray<TVec3<int32>>& GetConstraints() const { return Constraints; }
+	const TArray<FSolverReal>& GetBarys() const { return Barys; }
+
 protected:
-	inline FSolverVec3 GetDelta(const FSolverParticles& Particles, const int32 ConstraintIndex, const FSolverReal ExpStiffnessValue) const
+	template<typename SolverParticlesOrRange>
+	inline FSolverVec3 GetDelta(const SolverParticlesOrRange& Particles, const int32 ConstraintIndex, const FSolverReal ExpStiffnessValue) const
 	{
 		const TVec3<int32>& Constraint = Constraints[ConstraintIndex];
 		const int32 i1 = Constraint[0];
@@ -79,11 +112,12 @@ protected:
 	}
 
 private:
-	FSolverReal FindBary(const FSolverParticles& Particles, const int32 i1, const int32 i2, const int32 i3)
+	template<typename SolverParticlesOrRange>
+	FSolverReal FindBary(const SolverParticlesOrRange& Particles, const int32 i1, const int32 i2, const int32 i3)
 	{
-		const FSolverVec3& P1 = Particles.X(i1);
-		const FSolverVec3& P2 = Particles.X(i2);
-		const FSolverVec3& P3 = Particles.X(i3);
+		const FSolverVec3& P1 = Particles.GetX(i1);
+		const FSolverVec3& P2 = Particles.GetX(i2);
+		const FSolverVec3& P3 = Particles.GetX(i3);
 		const FSolverVec3& P32 = P3 - P2;
 		const FSolverReal Bary = FSolverVec3::DotProduct(P32, P3 - P1) / P32.SizeSquared();
 		return FMath::Clamp(Bary, (FSolverReal)0., (FSolverReal)1.);
@@ -117,13 +151,15 @@ private:
 		return TrimmedConstraints.Array();
 	}
 
-	void Init(const FSolverParticles& Particles)
+	template<typename SolverParticlesOrRange>
+	void Init(const SolverParticlesOrRange& Particles, bool bTrimKinematicConstraints)
 	{
 		Barys.Reset(Constraints.Num());
 		Dists.Reset(Constraints.Num());
 
-		for (TVec3<int32>& Constraint : Constraints)
+		for (int32 Index = 0; Index < Constraints.Num();)
 		{
+			TVec3<int32>& Constraint = Constraints[Index];
 			int32 i1 = Constraint[0];
 			int32 i2 = Constraint[1];
 			int32 i3 = Constraint[2];
@@ -153,13 +189,28 @@ private:
 			i1 = Constraint[0];
 			i2 = Constraint[1];
 			i3 = Constraint[2];
-			const FSolverVec3& P1 = Particles.X(i1);
-			const FSolverVec3& P2 = Particles.X(i2);
-			const FSolverVec3& P3 = Particles.X(i3);
+			const FSolverVec3& P1 = Particles.GetX(i1);
+			const FSolverVec3& P2 = Particles.GetX(i2);
+			const FSolverVec3& P3 = Particles.GetX(i3);
 			const FSolverVec3 P = (P2 - P3) * Bary + P3;
+
+			if (bTrimKinematicConstraints)
+			{
+				const FSolverReal PInvMass = Particles.InvM(i3) * ((FSolverReal)1. - Bary) + Particles.InvM(i2) * Bary;
+				const FSolverReal CombinedInvMass = PInvMass + Particles.InvM(i1);
+				if (CombinedInvMass < UE_SMALL_NUMBER)
+				{
+					Constraints.RemoveAtSwap(Index);
+					continue;
+				}
+			}
+
 			Barys.Add(Bary);
 			Dists.Add((P1 - P).Size());
+			++Index;
 		}
+		check(Barys.Num() == Constraints.Num());
+		check(Dists.Num() == Constraints.Num());
 	}
 
 protected:

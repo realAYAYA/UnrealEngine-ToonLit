@@ -11,6 +11,8 @@
 #include "MovieSceneTrack.h"
 #include "SequencerKeyParams.h"
 #include "Sections/MovieScene3DTransformSection.h"
+#include "MVVM/Extensions/IOutlinerExtension.h"
+#include "MVVM/ViewModelPtr.h"
 
 class FExtender;
 class ISequencer;
@@ -22,11 +24,33 @@ class UMovieScene;
 class UMovieSceneTrack;
 class UMovieSceneSequence;
 
-/** Data structure containing information required to build an edit widget */
-struct FBuildEditWidgetParams
+namespace UE::Sequencer
 {
-	FBuildEditWidgetParams()
-		: RowIndex(0)
+	class ITrackExtension;
+	class FObjectBindingModel;
+}
+
+
+
+struct FBuildColumnWidgetParams : UE::Sequencer::FCreateOutlinerViewParams
+{
+	FBuildColumnWidgetParams(UE::Sequencer::TViewModelPtr<UE::Sequencer::ITrackExtension> InTrack, const UE::Sequencer::FCreateOutlinerViewParams& InBaseParams)
+		: UE::Sequencer::FCreateOutlinerViewParams(InBaseParams)
+		, ViewModel(InTrack.AsModel())
+		, TrackModel(InTrack)
+	{}
+
+	/**  */
+	UE::Sequencer::FViewModelPtr ViewModel;
+	UE::Sequencer::TViewModelPtr<UE::Sequencer::ITrackExtension> TrackModel;
+};
+
+/** Data structure containing information required to build an edit widget */
+struct FBuildEditWidgetParams : FBuildColumnWidgetParams
+{
+	FBuildEditWidgetParams(const FBuildColumnWidgetParams& Other)
+		: FBuildColumnWidgetParams(Other)
+		, RowIndex(0)
 		, TrackInsertRowIndex(0)
 	{}
 
@@ -107,13 +131,18 @@ public:
 	virtual void BuildAddTrackMenu(FMenuBuilder& MenuBuilder) = 0;
 
 	/**
-	 * Builds up the object binding edit buttons for the outliner.
-	 *
-	 * @param EditBox The edit box to add buttons to.
-	 * @param ObjectBinding The object binding this is for.
-	 * @param ObjectClass The class of the object this is for.
+	 * Deprecated in principle, not practice (due to difficulty deprecating public virtual functions).
+	 * Still called from the newer BuildObjectBindingColumnWidgets which should now be preferred
 	 */
-	virtual void BuildObjectBindingEditButtons(TSharedPtr<SHorizontalBox> EditBox, const FGuid& ObjectBinding, const UClass* ObjectClass) = 0;
+	virtual void BuildObjectBindingEditButtons(TSharedPtr<SHorizontalBox> EditBox, const FGuid& ObjectBinding, const UClass* ObjectClass){}
+
+	/**
+	 * Build a column widget for the specified object binding on the outliner
+	 *
+	 * @param GetEditBox A function to retrieve the edit box to populate
+	 * @param ObjectBinding The object binding this is for.
+	 */
+	virtual void BuildObjectBindingColumnWidgets(TFunctionRef<TSharedRef<SHorizontalBox>()> GetEditBox, const UE::Sequencer::TViewModelPtr<UE::Sequencer::FObjectBindingModel>& ObjectBinding, const UE::Sequencer::FCreateOutlinerViewParams& InParams, const FName& InColumnName) = 0;
 
 	/**
 	 * Builds up the object binding track menu for the outliner.
@@ -152,6 +181,16 @@ public:
 	 * @returns The the widget to display in the outliner, or an empty shared ptr if not widget is to be displayed.
 	 */
 	virtual TSharedPtr<SWidget> BuildOutlinerEditWidget(const FGuid& ObjectBinding, UMovieSceneTrack* Track, const FBuildEditWidgetParams& Params) = 0;
+
+
+	/**
+	 * Builds an outliner column widget for the outliner nodes which represent tracks which are edited by this editor.
+	 * 
+	 * @param Params Parameter struct containing data relevant to the edit widget
+	 * @param ColumnName The name of the column. See FCommonOutlinerNames
+	 * @returns The the widget to display in the outliner, or an empty shared ptr if not widget is to be displayed.
+	 */
+	virtual TSharedPtr<SWidget> BuildOutlinerColumnWidget(const FBuildColumnWidgetParams& Params, const FName& ColumnName) = 0;
 
 	/**
 	 * Builds the context menu for the track.

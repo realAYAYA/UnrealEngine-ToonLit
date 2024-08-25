@@ -3,6 +3,7 @@
 #include "BehaviorTreeGraphNode_Service.h"
 
 #include "AIGraphTypes.h"
+#include "BehaviorTreeColors.h"
 #include "BehaviorTree/BTService.h"
 #include "Containers/UnrealString.h"
 #include "HAL/PlatformMath.h"
@@ -18,6 +19,11 @@ UBehaviorTreeGraphNode_Service::UBehaviorTreeGraphNode_Service(const FObjectInit
 void UBehaviorTreeGraphNode_Service::AllocateDefaultPins()
 {
 	//No Pins for services
+}
+
+FLinearColor UBehaviorTreeGraphNode_Service::GetBackgroundColor(bool bIsActiveForDebugger) const
+{
+	return bIsActiveForDebugger ? BehaviorTreeColors::Debugger::ActiveService : BehaviorTreeColors::NodeBody::Service;
 }
 
 

@@ -24,6 +24,7 @@ public class SwitchboardEditor : ModuleRules
 				"Settings",
 				"Slate",
 				"SlateCore",
+				"SwitchboardCommon",
 				"ToolMenus",
 				"ToolWidgets",
 				"UnrealEd",
@@ -31,12 +32,10 @@ public class SwitchboardEditor : ModuleRules
 
 		if (Target.Platform == UnrealTargetPlatform.Win64)
 		{
-			PrivateDefinitions.Add("SB_LISTENER_AUTOLAUNCH=1");
 			PrivateDefinitions.Add("SWITCHBOARD_SHORTCUTS=1");
 		}
 		else
 		{
-			PrivateDefinitions.Add("SB_LISTENER_AUTOLAUNCH=0");
 			PrivateDefinitions.Add("SWITCHBOARD_SHORTCUTS=0");
 		}
 	}

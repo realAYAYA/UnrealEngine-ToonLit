@@ -29,7 +29,7 @@ bool UBakeMeshAttributeTool::ValidTargetMeshTangents()
 {
 	if (bCheckTargetMeshTangents)
 	{
-		bValidTargetMeshTangents = TargetMeshTangents ? FDynamicMeshTangents(&TargetMesh).HasValidTangents(true) : false;
+		bValidTargetMeshTangents = TargetMeshTangents ? FDynamicMeshTangents(TargetMesh.Get()).HasValidTangents(true) : false;
 		bCheckTargetMeshTangents = false;
 	}
 	return bValidTargetMeshTangents;

@@ -28,7 +28,7 @@ class UModelingToolsEditorMode : public UBaseLegacyWidgetEdMode, public ILegacyE
 {
 	GENERATED_BODY()
 public:
-	const static FEditorModeID EM_ModelingToolsEditorModeId;
+	MODELINGTOOLSEDITORMODE_API const static FEditorModeID EM_ModelingToolsEditorModeId;
 
 	UModelingToolsEditorMode();
 	UModelingToolsEditorMode(FVTableHelper& Helper);

@@ -10,11 +10,17 @@
 
 FName FAudioWidgetsStyle::StyleName("AudioWidgetsStyle");
 
+namespace AudioWidgetsStylePrivate
+{
+	static FLazyName ScrubHandleBrushName = "SampledSequenceRuler.VanillaScrubHandleDown";
+}
+
 FAudioWidgetsStyle::FAudioWidgetsStyle()
 	: FSlateStyleSet(StyleName)
 {
 	SetParentStyleName("CoreStyle");
 	SetContentRoot(FPaths::EnginePluginsDir() / TEXT("Runtime/AudioWidgets/Content"));
+	SetResources();
 
 	/** 
 	* AudioTextBox Style
@@ -105,7 +111,8 @@ FAudioWidgetsStyle::FAudioWidgetsStyle()
 	/**
 	* FixedSampledSequenceRuler Style
 	*/
-	Set("FixedSampledSequenceRuler.Style", FFixedSampleSequenceRulerStyle());
+	Set("FixedSampledSequenceRuler.Style", FFixedSampleSequenceRulerStyle()
+		.SetHandleBrush(*GetBrush(AudioWidgetsStylePrivate::ScrubHandleBrushName)));
 
 	/**
 	* Playhead Overlay Style
@@ -120,6 +127,10 @@ FAudioWidgetsStyle::FAudioWidgetsStyle()
 
 
 	FSlateStyleRegistry::RegisterSlateStyle(*this);
+}
+void FAudioWidgetsStyle::SetResources()
+{
+	Set(AudioWidgetsStylePrivate::ScrubHandleBrushName, new FSlateBoxBrush(RootToContentDir(TEXT("Resources/ScrubHandleDown_Clamped.png")), FMargin(6.f / 13.f, 3.f / 12.f, 6.f / 13.f, 7.f / 12.f)));
 }
 
 FAudioWidgetsStyle::~FAudioWidgetsStyle()

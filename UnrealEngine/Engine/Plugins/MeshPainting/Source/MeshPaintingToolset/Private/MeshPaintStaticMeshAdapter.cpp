@@ -253,7 +253,7 @@ void FMeshPaintStaticMeshComponentAdapter::ApplyOrRemoveTextureOverride(UTexture
 {
 	if (StaticMeshComponent.IsValid())
 	{
-		DefaultApplyOrRemoveTextureOverride(StaticMeshComponent.Get(), SourceTexture, OverrideTexture);
+		TextureOverridesState.ApplyOrRemoveTextureOverride(StaticMeshComponent.Get(), SourceTexture, OverrideTexture);
 	}
 }
 

@@ -26,7 +26,6 @@ public:
 		FStaticMeshRenderData& OutRenderData,
 		UStaticMesh* StaticMesh,
 		const FStaticMeshLODGroup& LODGroup,
-		bool bGenerateCoarseMeshStreamingLODs,
 		bool bAllowNanite) override;
 
 	//No support for skeletal mesh build in this class
@@ -40,7 +39,8 @@ public:
 	virtual bool BuildMeshVertexPositions(
 		UStaticMesh* StaticMesh,
 		TArray<uint32>& Indices,
-		TArray<FVector3f>& Vertices) override;
+		TArray<FVector3f>& Vertices,
+		FStaticMeshSectionArray& Sections) override;
 
 private:
 

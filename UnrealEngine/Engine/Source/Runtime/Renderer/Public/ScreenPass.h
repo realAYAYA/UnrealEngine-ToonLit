@@ -346,7 +346,14 @@ BEGIN_SHADER_PARAMETER_STRUCT(FScreenPassTextureInput, )
 	SHADER_PARAMETER_SAMPLER(SamplerState, Sampler)
 END_SHADER_PARAMETER_STRUCT()
 
+BEGIN_SHADER_PARAMETER_STRUCT(FScreenPassTextureSliceInput, )
+	SHADER_PARAMETER_STRUCT_INCLUDE(FScreenPassTextureViewportParameters, Viewport)
+	SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D, Texture)
+	SHADER_PARAMETER_SAMPLER(SamplerState, Sampler)
+END_SHADER_PARAMETER_STRUCT()
+
 FScreenPassTextureInput GetScreenPassTextureInput(FScreenPassTexture Input, FRHISamplerState* Sampler);
+FScreenPassTextureSliceInput GetScreenPassTextureInput(FScreenPassTextureSlice Input, FRHISamplerState* Sampler);
 
 /** Draw information for the more advanced DrawScreenPass variant. Allows customizing the blend / depth stencil state,
  *  providing a custom vertex shader, and more fine-grained control of the underlying draw call.
@@ -637,6 +644,16 @@ void RENDERER_API AddDrawTexturePass(
 	FIntPoint InputPosition = FIntPoint::ZeroValue,
 	FIntPoint OutputPosition = FIntPoint::ZeroValue,
 	FIntPoint Size = FIntPoint::ZeroValue);
+
+void RENDERER_API AddDrawTexturePass(
+	FRDGBuilder& GraphBuilder,
+	const FSceneView& View,
+	FRDGTextureRef InputTexture,
+	FRDGTextureRef OutputTexture,
+	FIntPoint InputPosition,
+	FIntPoint InputSize,
+	FIntPoint OutputPosition,
+	FIntPoint OutputSize);
 
 /** Helper variant which takes a shared viewport instead of unique input / output positions. */
 FORCEINLINE void AddDrawTexturePass(

@@ -7,6 +7,7 @@
 #include "Elements/Common/TypedElementHandles.h"
 #include "Elements/Common/TypedElementQueryTypes.h"
 #include "Elements/Interfaces/TypedElementQueryStorageInterfaces.h"
+#include "Elements/Framework/TypedElementMetaData.h"
 #include "Templates/Function.h"
 #include "UObject/NameTypes.h"
 #include "UObject/WeakObjectPtr.h"
@@ -22,8 +23,6 @@ namespace TypedElementDataStorage
 	using QueryCallbackRef = TFunctionRef<void(const FQueryDescription&, IQueryContext&)>;
 	using DirectQueryCallback = TFunction<void(const FQueryDescription&, IDirectQueryContext&)>;
 	using DirectQueryCallbackRef = TFunctionRef<void(const FQueryDescription&, IDirectQueryContext&)>;
-	using SubqueryCallback = TFunction<void(const FQueryDescription&, ISubqueryContext&)>;
-	using SubqueryCallbackRef = TFunctionRef<void(const FQueryDescription&, ISubqueryContext&)>;
 	
 	struct FQueryDescription final
 	{
@@ -89,6 +88,7 @@ namespace TypedElementDataStorage
 
 		TArray<TWeakObjectPtr<const UScriptStruct>, TInlineAllocator<NumInlineSelections>> SelectionTypes;
 		TArray<EQueryAccessType, TInlineAllocator<NumInlineSelections>> SelectionAccessTypes;
+		TArray<FColumnMetaData, TInlineAllocator<NumInlineSelections>> SelectionMetaData;
 
 		TArray<EOperatorType, TInlineAllocator<NumInlineConditions>> ConditionTypes;
 		TArray<FOperator, TInlineAllocator<NumInlineConditions>> ConditionOperators;
@@ -98,6 +98,7 @@ namespace TypedElementDataStorage
 		/** Cached instances of the dependencies. This will always match the count of the other Dependency*Types, but may contain null pointers. */
 		TArray<TWeakObjectPtr<UObject>, TInlineAllocator<NumInlineDependencies>> CachedDependencies;
 		TArray<QueryHandle> Subqueries;
+		FMetaData MetaData;
 
 		EActionType Action;
 		/** If true, this query only has simple operations and is guaranteed to be executed fully and at optimal performance. */

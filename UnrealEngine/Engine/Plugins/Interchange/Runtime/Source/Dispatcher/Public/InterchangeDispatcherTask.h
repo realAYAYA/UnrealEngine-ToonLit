@@ -91,9 +91,16 @@ namespace UE
 				bIsDataInitialize = false;
 			}
 
-			FJsonLoadSourceCmd(const FString& InTranslatorID, const FString& InSourceFilename)
+			FJsonLoadSourceCmd(const FString& InTranslatorID
+				, const FString& InSourceFilename
+				, const bool InbConvertScene
+				, const bool InbForceFrontXAxis
+				, const bool InbConvertSceneUnit)
 				: TranslatorID(InTranslatorID)
 				, SourceFilename(InSourceFilename)
+				, bConvertScene(InbConvertScene)
+				, bForceFrontXAxis(InbForceFrontXAxis)
+				, bConvertSceneUnit(InbConvertSceneUnit)
 			{
 				bIsDataInitialize = true;
 			}
@@ -127,6 +134,45 @@ namespace UE
 				return Key;
 			}
 
+			bool GetDoesConvertScene() const
+			{
+				//Code should not do query data if the data was not set before
+				ensure(bIsDataInitialize);
+				return bConvertScene;
+			}
+
+			static FString GetDoesConvertSceneJsonKey()
+			{
+				static const FString Key = TEXT("ConvertScene");
+				return Key;
+			}
+
+			bool GetDoesForceFrontXAxis() const
+			{
+				//Code should not do query data if the data was not set before
+				ensure(bIsDataInitialize);
+				return bForceFrontXAxis;
+			}
+
+			static FString GetDoesForceFrontXAxisJsonKey()
+			{
+				static const FString Key = TEXT("ForceFrontXAxis");
+				return Key;
+			}
+
+			bool GetDoesConvertSceneUnit() const
+			{
+				//Code should not do query data if the data was not set before
+				ensure(bIsDataInitialize);
+				return bConvertSceneUnit;
+			}
+
+			static FString GetDoesConvertSceneUnitJsonKey()
+			{
+				static const FString Key = TEXT("ConvertSceneUnit");
+				return Key;
+			}
+
 			/**
 			 * Use this class helper to create the cmd result json string and to read it
 			 */
@@ -156,6 +202,9 @@ namespace UE
 		private:
 			FString TranslatorID = FString();
 			FString SourceFilename = FString();
+			bool bConvertScene = true;
+			bool bForceFrontXAxis = false;
+			bool bConvertSceneUnit = true;
 		};
 
 		class INTERCHANGEDISPATCHER_API FJsonFetchPayloadCmd : public IJsonCmdBase

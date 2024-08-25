@@ -98,6 +98,7 @@ public:
 
 	EJson Type;
 
+	static JSON_API TSharedPtr<FJsonValue> Duplicate(const TSharedPtr<const FJsonValue>& Src);
 	static JSON_API TSharedPtr<FJsonValue> Duplicate(const TSharedPtr<FJsonValue>& Src);
 
 	static JSON_API bool CompareEqual(const FJsonValue& Lhs, const FJsonValue& Rhs);

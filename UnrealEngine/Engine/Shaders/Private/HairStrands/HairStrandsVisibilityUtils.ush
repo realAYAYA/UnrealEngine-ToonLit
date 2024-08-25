@@ -19,6 +19,6 @@ FGBufferData HairSampleToGBufferData(in FHairSample In, in float InDualScatterin
 	Out.DiffuseColor = 0;
 	Out.SpecularColor = 0;
 	Out.PrecomputedShadowFactors = 1;
-	Out.PerObjectGBufferData = 0;
+	Out.PerObjectGBufferData = HasHairFlags(In.Flags, HAIR_FLAGS_CAST_CONTACT_SHADOW) ? 1u : 0u;
 	return Out;
 }

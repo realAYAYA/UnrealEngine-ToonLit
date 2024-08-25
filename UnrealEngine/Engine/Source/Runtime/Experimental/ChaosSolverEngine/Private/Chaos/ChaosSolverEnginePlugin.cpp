@@ -9,6 +9,7 @@
 #include "Chaos/ChaosDebugDrawComponent.h"
 #include "Chaos/ChaosSolverActor.h"
 #include "ChaosSolversModule.h"
+#include "ChaosVDRecordingStateScreenMessageHandler.h"
 
 class FChaosSolverEnginePlugin : public IChaosSolverEnginePlugin
 {
@@ -26,11 +27,20 @@ void FChaosSolverEnginePlugin::StartupModule()
 	ChaosModule->SetSolverActorClass(AChaosSolverActor::StaticClass(), AChaosSolverActor::StaticClass());
 
 	UChaosDebugDrawComponent::BindWorldDelegates();
+
+#if WITH_CHAOS_VISUAL_DEBUGGER
+	FChaosVDRecordingStateScreenMessageHandler::Get().Initialize();
+#endif
+
 }
 
 void FChaosSolverEnginePlugin::ShutdownModule()
 {
-	
+
+#if WITH_CHAOS_VISUAL_DEBUGGER
+	FChaosVDRecordingStateScreenMessageHandler::Get().TearDown();
+#endif
+
 }
 
 

@@ -393,6 +393,7 @@ bool FRemoteControlInstanceMaterialFactory::SupportExposedClass(UClass* InClass)
 {
 #if WITH_EDITOR
 	return InClass->IsChildOf(UDEditorParameterValue::StaticClass());
-#endif
+#else
 	return false;
+#endif
 }

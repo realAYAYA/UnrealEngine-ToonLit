@@ -73,11 +73,12 @@ UNiagaraDataInterfaceRasterizationGrid3D::UNiagaraDataInterfaceRasterizationGrid
 	Proxy.Reset(new FNiagaraDataInterfaceProxyRasterizationGrid3D());	
 }
 
-void UNiagaraDataInterfaceRasterizationGrid3D::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceRasterizationGrid3D::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	using namespace NDIRasterizationGrid3DLocal;
 
-	Super::GetFunctions(OutFunctions);
+	Super::GetFunctionsInternal(OutFunctions);
 
 	{
 		FNiagaraFunctionSignature Sig;
@@ -151,9 +152,7 @@ void UNiagaraDataInterfaceRasterizationGrid3D::GetFunctions(TArray<FNiagaraFunct
 		
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_SetValueFunction", "Set the value at a specific index. Note that this is an older way of working with Grids. Consider using the SetFloat or other typed, named functions or parameter map variables with StackContext namespace instead.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -176,9 +175,7 @@ void UNiagaraDataInterfaceRasterizationGrid3D::GetFunctions(TArray<FNiagaraFunct
 		
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_SetValueFunction", "Set the value at a specific index. Note that this is an older way of working with Grids. Consider using the SetFloat or other typed, named functions or parameter map variables with StackContext namespace instead.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -204,9 +201,7 @@ void UNiagaraDataInterfaceRasterizationGrid3D::GetFunctions(TArray<FNiagaraFunct
 		
 		Sig.bSoftDeprecatedFunction = true;
 		Sig.bHidden = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_SetValueFunction", "Set the value at a specific index. Note that this is an older way of working with Grids. Consider using the SetFloat or other typed, named functions or parameter map variables with StackContext namespace instead.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -229,9 +224,7 @@ void UNiagaraDataInterfaceRasterizationGrid3D::GetFunctions(TArray<FNiagaraFunct
 
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_SetValueFunction", "Set the value at a specific index. Note that this is an older way of working with Grids. Consider using the SetFloat or other typed, named functions or parameter map variables with StackContext namespace instead.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -254,9 +247,7 @@ void UNiagaraDataInterfaceRasterizationGrid3D::GetFunctions(TArray<FNiagaraFunct
 
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_SetValueFunction", "Set the value at a specific index. Note that this is an older way of working with Grids. Consider using the SetFloat or other typed, named functions or parameter map variables with StackContext namespace instead.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -279,9 +270,7 @@ void UNiagaraDataInterfaceRasterizationGrid3D::GetFunctions(TArray<FNiagaraFunct
 
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_SetValueFunction", "Set the value at a specific index. Note that this is an older way of working with Grids. Consider using the SetFloat or other typed, named functions or parameter map variables with StackContext namespace instead.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -307,9 +296,7 @@ void UNiagaraDataInterfaceRasterizationGrid3D::GetFunctions(TArray<FNiagaraFunct
 
 		Sig.bSoftDeprecatedFunction = true;
 		Sig.bHidden = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_SetValueFunction", "Set the value at a specific index. Note that this is an older way of working with Grids. Consider using the SetFloat or other typed, named functions or parameter map variables with StackContext namespace instead.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -329,9 +316,7 @@ void UNiagaraDataInterfaceRasterizationGrid3D::GetFunctions(TArray<FNiagaraFunct
 		Sig.bRequiresContext = false;
 		Sig.bWriteFunction = true;
 		Sig.ModuleUsageBitmask = ENiagaraScriptUsageMask::Particle;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_SetValueFunction", "Set the value at a specific index. Note that this is an older way of working with Grids. Consider using the SetFloat or other typed, named functions or parameter map variables with StackContext namespace instead.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -356,9 +341,7 @@ void UNiagaraDataInterfaceRasterizationGrid3D::GetFunctions(TArray<FNiagaraFunct
 		Sig.bSupportsGPU = true;
 		Sig.bSoftDeprecatedFunction = true;
 		Sig.bHidden = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_SetValueFunction", "Set the value at a specific index. Note that this is an older way of working with Grids. Consider using the SetFloat or other typed, named functions or parameter map variables with StackContext namespace instead.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -381,9 +364,7 @@ void UNiagaraDataInterfaceRasterizationGrid3D::GetFunctions(TArray<FNiagaraFunct
 
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_SetValueFunction", "Set the value at a specific index. Note that this is an older way of working with Grids. Consider using the SetFloat or other typed, named functions or parameter map variables with StackContext namespace instead.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -405,9 +386,7 @@ void UNiagaraDataInterfaceRasterizationGrid3D::GetFunctions(TArray<FNiagaraFunct
 		
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl3D_GetValueFunction", "Get the value at a specific index. Note that this is an older way of working with Grids. Consider using the SetFloat or other typed, named functions or parameter map variables with StackContext namespace instead.");
-#endif
 
 		OutFunctions.Add(Sig);
 	}
@@ -430,13 +409,12 @@ void UNiagaraDataInterfaceRasterizationGrid3D::GetFunctions(TArray<FNiagaraFunct
 		
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl3D_GetValueFunction", "Get the value at a specific index. Note that this is an older way of working with Grids. Consider using the SetFloat or other typed, named functions or parameter map variables with StackContext namespace instead.");
-#endif
 
 		OutFunctions.Add(Sig);
 	}
 }
+#endif // WITH_EDITORONLY_DATA
 
 void UNiagaraDataInterfaceRasterizationGrid3D::GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction &OutFunc)
 {
@@ -930,7 +908,7 @@ bool UNiagaraDataInterfaceRasterizationGrid3D::InitPerInstanceData(void* PerInst
 
 	if (NumAttribChannelsFound == 0 && !Proxy->SourceDIName.IsNone())
 	{
-		UE_LOG(LogNiagara, Warning, TEXT("Zero attributes defined on %s"), *Proxy->SourceDIName.ToString());
+		UE_LOG(LogNiagara, Log, TEXT("Zero attributes defined on %s"), *Proxy->SourceDIName.ToString());
 	}
 
 //	check(InstanceData->NumTiles.X > 0);
@@ -1108,7 +1086,7 @@ void UNiagaraDataInterfaceRasterizationGrid3D::DestroyPerInstanceData(void* PerI
 void FNiagaraDataInterfaceProxyRasterizationGrid3D::ResetData(const FNDIGpuComputeResetContext& Context)
 {	
 	RasterizationGrid3DRWInstanceData* ProxyData = SystemInstancesToProxyData.Find(Context.GetSystemInstanceID());
-	if (!ProxyData)
+	if (!ProxyData || ProxyData->NeedsRealloc || !ProxyData->RasterizationTexture.IsValid())
 	{
 		return;
 	}
@@ -1130,7 +1108,7 @@ void FNiagaraDataInterfaceProxyRasterizationGrid3D::PreStage(const FNDIGpuComput
 	const uint32 NumTotalCells = InstanceData.NumCells.X * InstanceData.NumCells.Y * InstanceData.NumCells.Z * InstanceData.TotalNumAttributes;
 
 	// Resize was requested
-	if (InstanceData.NeedsRealloc)
+	if (InstanceData.NeedsRealloc || !InstanceData.RasterizationTexture.IsValid())
 	{
 		InstanceData.NeedsRealloc = false;
 		

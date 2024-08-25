@@ -73,17 +73,22 @@ const FName UNiagaraDataInterfaceGrid2DCollection::SampleGridFloatFunctionName("
 const FName UNiagaraDataInterfaceGrid2DCollection::SetValueAtIndexFunctionName("SetValueAtIndex");
 const FName UNiagaraDataInterfaceGrid2DCollection::GetPreviousValueAtIndexFunctionName("GetPreviousValueAtIndex");
 const FName UNiagaraDataInterfaceGrid2DCollection::SamplePreviousGridAtIndexFunctionName("SamplePreviousGridAtIndex");
+const FName UNiagaraDataInterfaceGrid2DCollection::CubicSamplePreviousGridAtIndexFunctionName("CubicSamplePreviousGridAtIndex");
 
 const FName UNiagaraDataInterfaceGrid2DCollection::GetPreviousVector4ValueFunctionName("GetPreviousVector4Value");
 const FName UNiagaraDataInterfaceGrid2DCollection::SamplePreviousGridVector4FunctionName("SamplePreviousGridVector4Value");
+const FName UNiagaraDataInterfaceGrid2DCollection::CubicSamplePreviousGridVector4FunctionName("CubicSamplePreviousGridVector4Value");
 const FName UNiagaraDataInterfaceGrid2DCollection::SetVectorValueFunctionName("SetVectorValue");
 const FName UNiagaraDataInterfaceGrid2DCollection::GetPreviousVectorValueFunctionName("GetPreviousVectorValue");
 const FName UNiagaraDataInterfaceGrid2DCollection::SamplePreviousGridVectorFunctionName("SamplePreviousGridVector3Value");
+const FName UNiagaraDataInterfaceGrid2DCollection::CubicSamplePreviousGridVectorFunctionName("CubicSamplePreviousGridVector3Value");
 const FName UNiagaraDataInterfaceGrid2DCollection::SetVector2DValueFunctionName("SetVector2DValue");
 const FName UNiagaraDataInterfaceGrid2DCollection::GetPreviousVector2DValueFunctionName("GetPreviousVector2DValue");
 const FName UNiagaraDataInterfaceGrid2DCollection::SamplePreviousGridVector2DFunctionName("SamplePreviousGridVector2DValue");
+const FName UNiagaraDataInterfaceGrid2DCollection::CubicSamplePreviousGridVector2DFunctionName("CubicSamplePreviousGridVector2DValue");
 const FName UNiagaraDataInterfaceGrid2DCollection::GetPreviousFloatValueFunctionName("GetPreviousFloatValue");
 const FName UNiagaraDataInterfaceGrid2DCollection::SamplePreviousGridFloatFunctionName("SamplePreviousGridFloatValue");
+const FName UNiagaraDataInterfaceGrid2DCollection::CubicSamplePreviousGridFloatFunctionName("CubicSamplePreviousGridFloatValue");
 
 const FName UNiagaraDataInterfaceGrid2DCollection::GetVector4AttributeIndexFunctionName("GetVector4AttributeIndex");
 const FName UNiagaraDataInterfaceGrid2DCollection::GetVectorAttributeIndexFunctionName("GetVectorAttributeIndex");
@@ -102,6 +107,8 @@ const FName UNiagaraDataInterfaceGrid2DCollection::SampleGridFunctionName("Sampl
 
 FNiagaraVariableBase UNiagaraDataInterfaceGrid2DCollection::ExposedRTVar;
 
+const TCHAR* UNiagaraDataInterfaceGrid2DCollection::TemplateShaderFilePath = TEXT("/Plugin/FX/Niagara/Private/NiagaraDataInterfaceGrid2DCollection.ush");
+
 struct FNiagaraGridCollection2DDIFunctionVersion
 {
 	enum Type
@@ -117,26 +124,26 @@ struct FNiagaraGridCollection2DDIFunctionVersion
 
 bool UNiagaraDataInterfaceGrid2DCollection::CanCreateVarFromFuncName(const FName& FuncName)
 {
-	if (FuncName == UNiagaraDataInterfaceGrid2DCollection::SetVector4ValueFunctionName	|| FuncName == UNiagaraDataInterfaceGrid2DCollection::GetVector4ValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SampleGridVector4FunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetPreviousVector4ValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SamplePreviousGridVector4FunctionName)
+	if (FuncName == UNiagaraDataInterfaceGrid2DCollection::SetVector4ValueFunctionName	|| FuncName == UNiagaraDataInterfaceGrid2DCollection::GetVector4ValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SampleGridVector4FunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetPreviousVector4ValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SamplePreviousGridVector4FunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::CubicSamplePreviousGridVector4FunctionName)
 		return true;
-	else if (FuncName == UNiagaraDataInterfaceGrid2DCollection::SetVector3ValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SetVectorValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetVector3ValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SampleGridVector3FunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetPreviousVectorValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SamplePreviousGridVectorFunctionName)
+	else if (FuncName == UNiagaraDataInterfaceGrid2DCollection::SetVector3ValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SetVectorValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetVector3ValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SampleGridVector3FunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetPreviousVectorValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SamplePreviousGridVectorFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::CubicSamplePreviousGridVectorFunctionName)
 		return true;
-	else if (FuncName == UNiagaraDataInterfaceGrid2DCollection::SetVector2ValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SetVector2DValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetVector2ValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SampleGridVector2FunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetPreviousVector2DValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SamplePreviousGridVector2DFunctionName)
+	else if (FuncName == UNiagaraDataInterfaceGrid2DCollection::SetVector2ValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SetVector2DValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetVector2ValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SampleGridVector2FunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetPreviousVector2DValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SamplePreviousGridVector2DFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::CubicSamplePreviousGridVector2DFunctionName)
 		return true;
-	else if (FuncName == UNiagaraDataInterfaceGrid2DCollection::SetFloatValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetFloatValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SampleGridFloatFunctionName       || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetPreviousFloatValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SamplePreviousGridFloatFunctionName )
+	else if (FuncName == UNiagaraDataInterfaceGrid2DCollection::SetFloatValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetFloatValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SampleGridFloatFunctionName       || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetPreviousFloatValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SamplePreviousGridFloatFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::CubicSamplePreviousGridFloatFunctionName)
 		return true;
 	return false;
 }
 
 FNiagaraTypeDefinition UNiagaraDataInterfaceGrid2DCollection::GetValueTypeFromFuncName(const FName& FuncName)
 {
-	if (FuncName == UNiagaraDataInterfaceGrid2DCollection::SetVector4ValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetVector4ValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SampleGridVector4FunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetPreviousVector4ValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SamplePreviousGridVector4FunctionName)
+	if (FuncName == UNiagaraDataInterfaceGrid2DCollection::SetVector4ValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetVector4ValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SampleGridVector4FunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetPreviousVector4ValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SamplePreviousGridVector4FunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::CubicSamplePreviousGridVector4FunctionName)
 		return FNiagaraTypeDefinition::GetVec4Def();
-	else if (FuncName == UNiagaraDataInterfaceGrid2DCollection::SetVector3ValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SetVectorValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetVector3ValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SampleGridVector3FunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetPreviousVectorValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SamplePreviousGridVectorFunctionName)
+	else if (FuncName == UNiagaraDataInterfaceGrid2DCollection::SetVector3ValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SetVectorValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetVector3ValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SampleGridVector3FunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetPreviousVectorValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SamplePreviousGridVectorFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::CubicSamplePreviousGridVectorFunctionName)
 		return FNiagaraTypeDefinition::GetVec3Def();
-	else if (FuncName == UNiagaraDataInterfaceGrid2DCollection::SetVector2ValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SetVector2DValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetVector2ValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SampleGridVector2FunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetPreviousVector2DValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SamplePreviousGridVector2DFunctionName)
+	else if (FuncName == UNiagaraDataInterfaceGrid2DCollection::SetVector2ValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SetVector2DValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetVector2ValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SampleGridVector2FunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetPreviousVector2DValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SamplePreviousGridVector2DFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::CubicSamplePreviousGridVector2DFunctionName)
 		return FNiagaraTypeDefinition::GetVec2Def();
-	else if (FuncName == UNiagaraDataInterfaceGrid2DCollection::SetFloatValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetFloatValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SampleGridFloatFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetPreviousFloatValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SamplePreviousGridFloatFunctionName)
+	else if (FuncName == UNiagaraDataInterfaceGrid2DCollection::SetFloatValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetFloatValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SampleGridFloatFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::GetPreviousFloatValueFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::SamplePreviousGridFloatFunctionName || FuncName == UNiagaraDataInterfaceGrid2DCollection::CubicSamplePreviousGridFloatFunctionName)
 		return FNiagaraTypeDefinition::GetFloatDef();
 
 	return FNiagaraTypeDefinition();
@@ -357,7 +364,7 @@ bool UNiagaraDataInterfaceGrid2DCollection::UpgradeFunctionCall(FNiagaraFunction
 	if (UpgradeName != NAME_None)
 	{
 		TArray<FNiagaraFunctionSignature> Sigs;
-		GetFunctions(Sigs);
+		GetFunctionsInternal(Sigs);
 
 		for (const FNiagaraFunctionSignature& Sig : Sigs)
 		{
@@ -373,7 +380,7 @@ bool UNiagaraDataInterfaceGrid2DCollection::UpgradeFunctionCall(FNiagaraFunction
 	if ( FunctionSignature.FunctionVersion < FNiagaraGridCollection2DDIFunctionVersion::AddReadMemberToFunctions )
 	{
 		TArray<FNiagaraFunctionSignature> Sigs;
-		GetFunctions(Sigs);
+		GetFunctionsInternal(Sigs);
 
 		for (const FNiagaraFunctionSignature& Sig : Sigs)
 		{
@@ -390,9 +397,10 @@ bool UNiagaraDataInterfaceGrid2DCollection::UpgradeFunctionCall(FNiagaraFunction
 }
 #endif
 
-void UNiagaraDataInterfaceGrid2DCollection::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceGrid2DCollection::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
-	Super::GetFunctions(OutFunctions);
+	Super::GetFunctionsInternal(OutFunctions);
 
 	int32 StartIndex = OutFunctions.Num();
 
@@ -432,9 +440,7 @@ void UNiagaraDataInterfaceGrid2DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_GetValueFunction", "Get the value at a specific index. Note that this is an older way of working with Grids. Consider using the SetFloat or other typed, named functions or parameter map variables with StackContext namespace instead.");
-#endif
 
 		OutFunctions.Add(Sig);
 	}
@@ -455,9 +461,7 @@ void UNiagaraDataInterfaceGrid2DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_PreviousValueAtIndexFunction", "Get the value at a specific index.");
-#endif
 
 		OutFunctions.Add(Sig);
 	}
@@ -481,9 +485,7 @@ void UNiagaraDataInterfaceGrid2DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSoftDeprecatedFunction = true;
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_SetValueFunction", "Set the value at a specific index. Note that this is an older way of working with Grids. Consider using the SetFloat or other typed, named functions or parameter map variables with StackContext namespace instead.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -505,9 +507,7 @@ void UNiagaraDataInterfaceGrid2DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSoftDeprecatedFunction = false;
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_SetValueAtIndexFunction", "Set the value at a specific index.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -526,9 +526,7 @@ void UNiagaraDataInterfaceGrid2DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.ModuleUsageBitmask = ENiagaraScriptUsageMask::Particle;
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_ClearCellFunction", "Set all attributes for a given cell to be zeroes.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -548,9 +546,7 @@ void UNiagaraDataInterfaceGrid2DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_CopyPreviousToCurrentForCell", "Take the previous contents of the cell and copy to the output location for the cell.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -570,9 +566,7 @@ void UNiagaraDataInterfaceGrid2DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.ModuleUsageBitmask = ENiagaraScriptUsageMask::Particle;
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_SetVector4", "Sets a Vector4 value on the Grid by Attribute name.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -591,9 +585,7 @@ void UNiagaraDataInterfaceGrid2DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_GetVector4", "Gets a Vector4 value on the Grid by Attribute name. Note that this is the value from the previous execution stage.");
-#endif
 		OutFunctions.Add(Sig);
 
 		// Add older version for back compat with CustomHLSL.
@@ -616,9 +608,30 @@ void UNiagaraDataInterfaceGrid2DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_SampleVector4", "Sample a Vector4 value on the Grid by Attribute name. Note that this is the value from the previous execution stage.");
-#endif
+		OutFunctions.Add(Sig);
+
+		// Add older version for back compat with CustomHLSL.
+		Sig.Name = SampleGridVector4FunctionName;
+		Sig.bSoftDeprecatedFunction = true;
+		OutFunctions.Add(Sig);
+	}
+
+	{
+		FNiagaraFunctionSignature Sig;
+		Sig.Name = CubicSamplePreviousGridVector4FunctionName;
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("Grid")));
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetVec2Def(), TEXT("Unit")));
+		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetVec4Def(), TEXT("Value")));
+		Sig.FunctionSpecifiers.Add(FName("Attribute"));
+		Sig.bMemberFunction = true;
+		Sig.bRequiresContext = false;
+		Sig.bExperimental = true;
+		Sig.ModuleUsageBitmask = ENiagaraScriptUsageMask::Particle;
+		Sig.bSupportsCPU = false;
+		Sig.bSupportsGPU = true;
+		Sig.bReadFunction = true;
+		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_CubicSampleVector4", "Cubic sample a Vector4 value on the Grid by Attribute name. Note that this is the value from the previous execution stage.");
 		OutFunctions.Add(Sig);
 
 		// Add older version for back compat with CustomHLSL.
@@ -643,9 +656,7 @@ void UNiagaraDataInterfaceGrid2DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.ModuleUsageBitmask = ENiagaraScriptUsageMask::Particle;
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_SetVector3", "Sets a Vector3 value on the Grid by Attribute name.");
-#endif
 		OutFunctions.Add(Sig);
 
 		// Add older version for back compat with CustomHLSL.
@@ -669,9 +680,7 @@ void UNiagaraDataInterfaceGrid2DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_GetVector3", "Gets a Vector3 value on the Grid by Attribute name. Note that this is the value from the previous execution stage.");
-#endif
 		OutFunctions.Add(Sig);
 
 		// Add older version for back compat with CustomHLSL.
@@ -694,9 +703,30 @@ void UNiagaraDataInterfaceGrid2DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_SampleVector3", "Sample a Vector3 value on the Grid by Attribute name. Note that this is the value from the previous execution stage.");
-#endif
+		OutFunctions.Add(Sig);
+
+		// Add older version for back compat with CustomHLSL.
+		Sig.Name = SampleGridVector3FunctionName;
+		Sig.bSoftDeprecatedFunction = true;
+		OutFunctions.Add(Sig);
+	}
+
+	{
+		FNiagaraFunctionSignature Sig;
+		Sig.Name = CubicSamplePreviousGridVectorFunctionName;
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("Grid")));
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetVec2Def(), TEXT("Unit")));
+		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("Value")));
+		Sig.FunctionSpecifiers.Add(FName("Attribute"));
+		Sig.bMemberFunction = true;
+		Sig.bRequiresContext = false;
+		Sig.bExperimental = true;
+		Sig.ModuleUsageBitmask = ENiagaraScriptUsageMask::Particle;
+		Sig.bSupportsCPU = false;
+		Sig.bSupportsGPU = true;
+		Sig.bReadFunction = true;
+		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_CubicSampleVector3", "Cubic sample a Vector3 value on the Grid by Attribute name. Note that this is the value from the previous execution stage.");
 		OutFunctions.Add(Sig);
 
 		// Add older version for back compat with CustomHLSL.
@@ -721,9 +751,7 @@ void UNiagaraDataInterfaceGrid2DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.ModuleUsageBitmask = ENiagaraScriptUsageMask::Particle;
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_SetVector2", "Sets a Vector2 value on the Grid by Attribute name.");
-#endif
 		OutFunctions.Add(Sig);
 
 		// Add older version for back compat with CustomHLSL.
@@ -747,9 +775,7 @@ void UNiagaraDataInterfaceGrid2DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_GetVector2", "Gets a Vector2 value on the Grid by Attribute name. Note that this is the value from the previous execution stage.");
-#endif
 		OutFunctions.Add(Sig);
 
 		// Add older version for back compat with CustomHLSL.
@@ -772,9 +798,30 @@ void UNiagaraDataInterfaceGrid2DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_SampleVector2", "Sample a Vector2 value on the Grid by Attribute name. Note that this is the value from the previous execution stage.");
-#endif
+		OutFunctions.Add(Sig);
+
+		// Add older version for back compat with CustomHLSL.
+		Sig.Name = SampleGridVector2FunctionName;
+		Sig.bSoftDeprecatedFunction = true;
+		OutFunctions.Add(Sig);
+	}
+
+	{
+		FNiagaraFunctionSignature Sig;
+		Sig.Name = CubicSamplePreviousGridVector2DFunctionName;
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("Grid")));
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetVec2Def(), TEXT("Unit")));
+		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetVec2Def(), TEXT("Value")));
+		Sig.FunctionSpecifiers.Add(FName("Attribute"));
+		Sig.bMemberFunction = true;
+		Sig.bRequiresContext = false;
+		Sig.bExperimental = true;
+		Sig.ModuleUsageBitmask = ENiagaraScriptUsageMask::Particle;
+		Sig.bSupportsCPU = false;
+		Sig.bSupportsGPU = true;
+		Sig.bReadFunction = true;
+		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_CubicSampleVector2", "Cubic sample a Vector2 value on the Grid by Attribute name. Note that this is the value from the previous execution stage.");
 		OutFunctions.Add(Sig);
 
 		// Add older version for back compat with CustomHLSL.
@@ -799,9 +846,7 @@ void UNiagaraDataInterfaceGrid2DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.ModuleUsageBitmask = ENiagaraScriptUsageMask::Particle;
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_SetFloat", "Sets a float value on the Grid by Attribute name.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -820,9 +865,7 @@ void UNiagaraDataInterfaceGrid2DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_GetFloat", "Gets a float value on the Grid by Attribute name. Note that this is the value from the previous execution stage.");
-#endif
 		OutFunctions.Add(Sig);
 
 		// Add older version for back compat with CustomHLSL.
@@ -845,9 +888,30 @@ void UNiagaraDataInterfaceGrid2DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bSupportsCPU = false;
 		Sig.bSupportsGPU = true;
 		Sig.bReadFunction = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_SampleFloat", "Sample a float value on the Grid by Attribute name.");
-#endif
+		OutFunctions.Add(Sig);
+
+		// Add older version for back compat with CustomHLSL.
+		Sig.Name = SampleGridFloatFunctionName;
+		Sig.bSoftDeprecatedFunction = true;
+		OutFunctions.Add(Sig);
+	}
+
+	{
+		FNiagaraFunctionSignature Sig;
+		Sig.Name = CubicSamplePreviousGridFloatFunctionName;
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("Grid")));
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetVec2Def(), TEXT("Unit")));
+		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetFloatDef(), TEXT("Value")));
+		Sig.FunctionSpecifiers.Add(FName("Attribute"));
+		Sig.bMemberFunction = true;
+		Sig.bRequiresContext = false;
+		Sig.bExperimental = true;
+		Sig.ModuleUsageBitmask = ENiagaraScriptUsageMask::Particle;
+		Sig.bSupportsCPU = false;
+		Sig.bSupportsGPU = true;
+		Sig.bReadFunction = true;
+		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_CubicSampleFloat", "Cubic sample a float value on the Grid by Attribute name.");
 		OutFunctions.Add(Sig);
 
 		// Add older version for back compat with CustomHLSL.
@@ -897,6 +961,25 @@ void UNiagaraDataInterfaceGrid2DCollection::GetFunctions(TArray<FNiagaraFunction
 
 	{
 		FNiagaraFunctionSignature Sig;
+		Sig.Name = CubicSamplePreviousGridAtIndexFunctionName;
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("Grid")));
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetFloatDef(), TEXT("UnitX")));
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetFloatDef(), TEXT("UnitY")));
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("AttributeIndex")));
+		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetFloatDef(), TEXT("Value")));
+
+		Sig.bExperimental = true;
+		Sig.bMemberFunction = true;
+		Sig.bRequiresContext = false;
+		Sig.ModuleUsageBitmask = ENiagaraScriptUsageMask::Particle;
+		Sig.bSupportsCPU = false;
+		Sig.bSupportsGPU = true;
+		Sig.bReadFunction = true;
+		OutFunctions.Add(Sig);
+	}
+
+	{
+		FNiagaraFunctionSignature Sig;
 		Sig.Name = GetVector4AttributeIndexFunctionName;
 		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("Grid")));
 		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("AttributeIndex")));
@@ -904,9 +987,7 @@ void UNiagaraDataInterfaceGrid2DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bMemberFunction = true;
 		Sig.bRequiresContext = false;
 		Sig.bExperimental = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_GetVector4AttributeIndex", "Gets a attribute starting index value for Vector4 on the Grid by Attribute name. Returns -1 if not found.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -919,9 +1000,7 @@ void UNiagaraDataInterfaceGrid2DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bMemberFunction = true;
 		Sig.bRequiresContext = false;
 		Sig.bExperimental = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_GetVector3AttributeIndex", "Gets a attribute starting index value for Vector3 on the Grid by Attribute name. Returns -1 if not found.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -934,9 +1013,7 @@ void UNiagaraDataInterfaceGrid2DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bMemberFunction = true;
 		Sig.bRequiresContext = false;
 		Sig.bExperimental = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_GetVector2AttributeIndex", "Gets a attribute starting index value for Vector2 on the Grid by Attribute name. Returns -1 if not found.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
@@ -949,20 +1026,17 @@ void UNiagaraDataInterfaceGrid2DCollection::GetFunctions(TArray<FNiagaraFunction
 		Sig.bMemberFunction = true;
 		Sig.bRequiresContext = false;
 		Sig.bExperimental = true;
-#if WITH_EDITORONLY_DATA
 		Sig.Description = NSLOCTEXT("Niagara", "NiagaraDataInterfaceGridColl2D_GetFloatAttributeIndex", "Gets a attribute starting index value for float on the Grid by Attribute name. Returns -1 if not found.");
-#endif
 		OutFunctions.Add(Sig);
 	}
 
-#if WITH_EDITORONLY_DATA
 	for (int32 i = StartIndex; i < OutFunctions.Num(); i++)
 	{
 		FNiagaraFunctionSignature& Function = OutFunctions[i];
 		Function.FunctionVersion = FNiagaraGridCollection2DDIFunctionVersion::LatestVersion;
 	}
-#endif
 }
+#endif
 
 // #todo(dmp): expose more CPU functionality
 // #todo(dmp): ideally these would be exposed on the parent class, but we can't bind functions of parent classes but need to work on the interface
@@ -1065,14 +1139,19 @@ void UNiagaraDataInterfaceGrid2DCollection::GetParameterDefinitionHLSL(const FNi
 	const int AttributeInt4Count = FMath::Max(1, FMath::DivideAndRoundUp(ParamInfo.GeneratedFunctions.Num(), 4));
 
 	TMap<FString, FStringFormatArg> ArgsDeclarations = {
+		{ TEXT("ParameterName"),		ParamInfo.DataInterfaceHLSLSymbol},
 		{ TEXT("GridName"),				ParamInfo.DataInterfaceHLSLSymbol + GridName},
+		{ TEXT("Grid"),					ParamInfo.DataInterfaceHLSLSymbol + GridName},
 		{ TEXT("SamplerName"),			ParamInfo.DataInterfaceHLSLSymbol + SamplerName},
 		{ TEXT("OutputGridName"),		ParamInfo.DataInterfaceHLSLSymbol + OutputGridName},
 		{ TEXT("AttributeIndicesName"),	ParamInfo.DataInterfaceHLSLSymbol + TEXT("_") + AttributeIndicesBaseName},
 		{ TEXT("AttributeInt4Count"),	AttributeInt4Count},
 		{ TEXT("NumAttributesName"),	ParamInfo.DataInterfaceHLSLSymbol + UNiagaraDataInterfaceRWBase::NumAttributesName},
+		{ TEXT("NumCellsName"),			ParamInfo.DataInterfaceHLSLSymbol + UNiagaraDataInterfaceRWBase::NumCellsName},
 	};
 	OutHLSL += FString::Format(FormatDeclarations, ArgsDeclarations);
+
+	AppendTemplateHLSL(OutHLSL, TemplateShaderFilePath, ArgsDeclarations);
 }
 
 void UNiagaraDataInterfaceGrid2DCollection::WriteSetHLSL(const FNiagaraDataInterfaceRWAttributeHelper& AttributeHelper, const FNiagaraDataInterfaceGPUParamInfo& ParamInfo, const FNiagaraDataInterfaceGeneratedFunction& FunctionInfo, int FunctionInstanceIndex, int32 InNumChannels, FString& OutHLSL)
@@ -1107,6 +1186,7 @@ void UNiagaraDataInterfaceGrid2DCollection::WriteSetHLSL(const FNiagaraDataInter
 	TMap<FString, FStringFormatArg> ArgsBounds = {
 		{TEXT("FunctionName"),				FunctionInfo.InstanceName},
 		{TEXT("OutputGrid"),				ParamInfo.DataInterfaceHLSLSymbol + OutputGridName},
+		{TEXT("Grid"),						ParamInfo.DataInterfaceHLSLSymbol + GridName},
 		{TEXT("NumCellsName"),				ParamInfo.DataInterfaceHLSLSymbol + UNiagaraDataInterfaceRWBase::NumCellsName},
 		{TEXT("UnitToUVName"),				ParamInfo.DataInterfaceHLSLSymbol + UNiagaraDataInterfaceRWBase::UnitToUVName},
 		{TEXT("AttributeIndicesName"),		ParamInfo.DataInterfaceHLSLSymbol + TEXT("_") + AttributeIndicesBaseName},
@@ -1163,8 +1243,15 @@ void UNiagaraDataInterfaceGrid2DCollection::WriteGetHLSL(const FNiagaraDataInter
 	OutHLSL += FString::Format(*FormatBounds, ArgsBounds);
 }
 
-void UNiagaraDataInterfaceGrid2DCollection::WriteSampleHLSL(const FNiagaraDataInterfaceRWAttributeHelper& AttributeHelper, const FNiagaraDataInterfaceGPUParamInfo& ParamInfo, const FNiagaraDataInterfaceGeneratedFunction& FunctionInfo, int FunctionInstanceIndex, int32 InNumChannels, FString& OutHLSL)
+void UNiagaraDataInterfaceGrid2DCollection::WriteSampleHLSL(const FNiagaraDataInterfaceRWAttributeHelper& AttributeHelper, const FNiagaraDataInterfaceGPUParamInfo& ParamInfo, const FNiagaraDataInterfaceGeneratedFunction& FunctionInfo, int FunctionInstanceIndex, int32 InNumChannels, bool IsCubic, FString& OutHLSL)
 {
+	FString SampleFunctionPlaceholder = "{SampleFunction}";
+	FString SampleFunction = "{Grid}.SampleLevel";
+	if (IsCubic)
+	{
+		SampleFunction = "SampleBiCubic_{ParameterName}";
+	}
+
 
 	FString FormatBounds = TEXT(R"(
 			void {FunctionName}(float2 In_Unit, out float{NumChannelsVariableSuffix} Out_Val)
@@ -1174,16 +1261,16 @@ void UNiagaraDataInterfaceGrid2DCollection::WriteSampleHLSL(const FNiagaraDataIn
 					)");
 	if (InNumChannels == 1)
 	{
-		FormatBounds += FString("	Out_Val = {Grid}.SampleLevel({SamplerName}, float3(In_Unit, In_AttributeIndex), 0);\n");
+		FormatBounds += FString("	Out_Val = {SampleFunction}({SamplerName}, float3(In_Unit, In_AttributeIndex), 0);\n");
 	}
 	else if (InNumChannels > 1)
 	{
 		for (int i = 0; i < InNumChannels; ++i)
 					{
 			FormatBounds += FString("			Out_Val.").Append(FNiagaraDataInterfaceRWAttributeHelper::Channels[i]).
-				Append(" = {Grid}.SampleLevel({SamplerName}, float3(In_Unit, In_AttributeIndex + ").Append(FString::FromInt(i)).Append("), 0); \n");
+				Append(" = {SampleFunction}({SamplerName}, float3(In_Unit, In_AttributeIndex + ").Append(FString::FromInt(i)).Append("), 0); \n");
 		}
-}
+	}
 
 	FormatBounds += TEXT(R"(
 				}
@@ -1192,11 +1279,14 @@ void UNiagaraDataInterfaceGrid2DCollection::WriteSampleHLSL(const FNiagaraDataIn
 	FString AttributeIndexPlaceholder = "{AttributeIndex}";
 	FString AttributeQueryString = GenerateAttributeIndexHLSL(AttributeHelper, FunctionInfo);
 	FormatBounds.ReplaceInline(*AttributeIndexPlaceholder, *AttributeQueryString);
+	FormatBounds.ReplaceInline(*SampleFunctionPlaceholder, *SampleFunction);
 
 	TMap<FString, FStringFormatArg> ArgsBounds = {
+		{TEXT("ParameterName"),				ParamInfo.DataInterfaceHLSLSymbol},
 		{TEXT("FunctionName"),				FunctionInfo.InstanceName},
 		{TEXT("Grid"),						ParamInfo.DataInterfaceHLSLSymbol + GridName},
 		{TEXT("SamplerName"),				ParamInfo.DataInterfaceHLSLSymbol + SamplerName},
+		{TEXT("SampleFunction"),			SampleFunction },
 		{TEXT("NumCellsName"),				ParamInfo.DataInterfaceHLSLSymbol + UNiagaraDataInterfaceRWBase::NumCellsName},
 		{TEXT("UnitToUVName"),				ParamInfo.DataInterfaceHLSLSymbol + UNiagaraDataInterfaceRWBase::UnitToUVName},
 		{TEXT("NumChannels"),				FString::FromInt(InNumChannels)},
@@ -1204,6 +1294,7 @@ void UNiagaraDataInterfaceGrid2DCollection::WriteSampleHLSL(const FNiagaraDataIn
 		{TEXT("AttributeIndicesName"),		ParamInfo.DataInterfaceHLSLSymbol + TEXT("_") + AttributeIndicesBaseName},
 		{TEXT("AttributeIndexGroup"),		FunctionInstanceIndex / 4},
 		{TEXT("AttributeIndexComponent"),	VectorComponentNames[FunctionInstanceIndex % 4]},
+
 	};
 	OutHLSL += FString::Format(*FormatBounds, ArgsBounds);
 }
@@ -1307,6 +1398,7 @@ bool UNiagaraDataInterfaceGrid2DCollection::GetFunctionHLSL(const FNiagaraDataIn
 
 	TMap<FString, FStringFormatArg> ArgsBounds =
 	{
+		{TEXT("ParameterName"),	ParamInfo.DataInterfaceHLSLSymbol},
 		{TEXT("FunctionName"),	FunctionInfo.InstanceName},
 		{TEXT("Grid"),			ParamInfo.DataInterfaceHLSLSymbol + GridName},
 		{TEXT("OutputGrid"),	ParamInfo.DataInterfaceHLSLSymbol + OutputGridName},
@@ -1392,7 +1484,12 @@ bool UNiagaraDataInterfaceGrid2DCollection::GetFunctionHLSL(const FNiagaraDataIn
 	}
 	else if (FunctionInfo.DefinitionName == SampleGridVector4FunctionName || FunctionInfo.DefinitionName == SamplePreviousGridVector4FunctionName)
 	{
-		WriteSampleHLSL(AttributeHelper, ParamInfo, FunctionInfo, FunctionInstanceIndex, 4, OutHLSL);
+		WriteSampleHLSL(AttributeHelper, ParamInfo, FunctionInfo, FunctionInstanceIndex, 4, false, OutHLSL);
+		return true;
+	}
+	else if (FunctionInfo.DefinitionName == CubicSamplePreviousGridVector4FunctionName)
+	{
+		WriteSampleHLSL(AttributeHelper, ParamInfo, FunctionInfo, FunctionInstanceIndex, 4, true, OutHLSL);
 		return true;
 	}
 	else if (FunctionInfo.DefinitionName == SetVector3ValueFunctionName || FunctionInfo.DefinitionName == SetVectorValueFunctionName)
@@ -1407,7 +1504,12 @@ bool UNiagaraDataInterfaceGrid2DCollection::GetFunctionHLSL(const FNiagaraDataIn
 	}
 	else if (FunctionInfo.DefinitionName == SampleGridVector3FunctionName || FunctionInfo.DefinitionName == SamplePreviousGridVectorFunctionName)
 	{
-		WriteSampleHLSL(AttributeHelper, ParamInfo, FunctionInfo, FunctionInstanceIndex, 3, OutHLSL);
+		WriteSampleHLSL(AttributeHelper, ParamInfo, FunctionInfo, FunctionInstanceIndex, 3, false, OutHLSL);
+		return true;
+	}
+	else if (FunctionInfo.DefinitionName == CubicSamplePreviousGridVectorFunctionName)
+	{
+		WriteSampleHLSL(AttributeHelper, ParamInfo, FunctionInfo, FunctionInstanceIndex, 3, true, OutHLSL);
 		return true;
 	}
 	else if (FunctionInfo.DefinitionName == SetVector2ValueFunctionName || FunctionInfo.DefinitionName == SetVector2DValueFunctionName)
@@ -1422,7 +1524,12 @@ bool UNiagaraDataInterfaceGrid2DCollection::GetFunctionHLSL(const FNiagaraDataIn
 	}
 	else if (FunctionInfo.DefinitionName == SampleGridVector2FunctionName || FunctionInfo.DefinitionName == SamplePreviousGridVector2DFunctionName)
 	{
-		WriteSampleHLSL(AttributeHelper, ParamInfo, FunctionInfo, FunctionInstanceIndex, 2, OutHLSL);
+		WriteSampleHLSL(AttributeHelper, ParamInfo, FunctionInfo, FunctionInstanceIndex, 2, false, OutHLSL);
+		return true;
+	}
+	else if (FunctionInfo.DefinitionName == CubicSamplePreviousGridVector2DFunctionName)
+	{
+		WriteSampleHLSL(AttributeHelper, ParamInfo, FunctionInfo, FunctionInstanceIndex, 2, true, OutHLSL);
 		return true;
 	}
 	else if (FunctionInfo.DefinitionName == SetFloatValueFunctionName)
@@ -1437,7 +1544,12 @@ bool UNiagaraDataInterfaceGrid2DCollection::GetFunctionHLSL(const FNiagaraDataIn
 	}
 	else if (FunctionInfo.DefinitionName == SampleGridFloatFunctionName || FunctionInfo.DefinitionName == SamplePreviousGridFloatFunctionName)
 	{
-		WriteSampleHLSL(AttributeHelper, ParamInfo, FunctionInfo, FunctionInstanceIndex, 1, OutHLSL);
+		WriteSampleHLSL(AttributeHelper, ParamInfo, FunctionInfo, FunctionInstanceIndex, 1, false, OutHLSL);
+		return true;
+	}
+	else if (FunctionInfo.DefinitionName == CubicSamplePreviousGridFloatFunctionName)
+	{
+		WriteSampleHLSL(AttributeHelper, ParamInfo, FunctionInfo, FunctionInstanceIndex, 1, true, OutHLSL);
 		return true;
 	}
 	else if (FunctionInfo.DefinitionName == GetVector4AttributeIndexFunctionName)
@@ -1467,6 +1579,18 @@ bool UNiagaraDataInterfaceGrid2DCollection::GetFunctionHLSL(const FNiagaraDataIn
 				{
 					float3 UVW = float3(In_UnitX, In_UnitY, In_AttributeIndex);
 					Out_Val = {Grid}.SampleLevel({SamplerName}, UVW, 0);
+				}
+			)");
+		OutHLSL += FString::Format(FormatBounds, ArgsBounds);
+		return true;
+	}
+	else if (FunctionInfo.DefinitionName == CubicSamplePreviousGridAtIndexFunctionName)
+	{
+		static const TCHAR* FormatBounds = TEXT(R"(
+				void {FunctionName}(float In_UnitX, float In_UnitY, int In_AttributeIndex, out float Out_Val)
+				{
+					float3 UVW = float3(In_UnitX, In_UnitY, In_AttributeIndex);
+					Out_Val = SampleBiCubic_{ParameterName}({SamplerName}, UVW, 0);
 				}
 			)");
 		OutHLSL += FString::Format(FormatBounds, ArgsBounds);
@@ -1917,6 +2041,7 @@ bool UNiagaraDataInterfaceGrid2DCollection::InitPerInstanceData(void* PerInstanc
 			TargetData->Vars.Emplace(RT_InstanceData.Vars[i].GetName());
 			TargetData->VarComponents.Add(RT_InstanceData.Vars[i].GetType().GetSize() / sizeof(float));
 		}
+
 #if WITH_EDITORONLY_DATA
 		TargetData->bPreviewGrid = RT_InstanceData.bPreviewGrid;
 		TargetData->PreviewAttribute = RT_InstanceData.PreviewAttribute;
@@ -2540,21 +2665,7 @@ void FGrid2DCollectionRWInstanceData_RenderThread::BeginSimulate(FRDGBuilder& Gr
 		Buffers.Emplace(DestinationData);
 
 		const FRDGTextureDesc TextureDesc = FRDGTextureDesc::Create2DArray(NumCells, PixelFormat.GetValue(), FClearValueBinding::Black, ETextureCreateFlags::ShaderResource | ETextureCreateFlags::UAV, uint16(NumAttributes));
-
-		const TCHAR* GridTextureName = TEXT("Grid2D::GridTexture");
-	#if 0
-		TStringBuilder<128> StringBuilder;
-		SourceDIName.AppendString(StringBuilder);
-		StringBuilder.Append("_");
-		for (FName CurrName : Vars)
-		{
-			CurrName.AppendString(StringBuilder);
-			StringBuilder.Append("_");
-		}
-		StringBuilder.Append("Grid2DCollection");
-		GridTextureName = *StringBuilder;
-	#endif
-		DestinationData->Initialize(GraphBuilder, GridTextureName, TextureDesc);
+		DestinationData->Initialize(GraphBuilder, TEXT("Grid2D::GridTexture"), TextureDesc);
 
 		// This destination buffer will sometimes have old data in it.  Force it to clear.
 		AddClearUAVPass(GraphBuilder, DestinationData->GetOrCreateUAV(GraphBuilder), FVector4f(ForceInitToZero));

@@ -9,14 +9,14 @@
 #include "Framework/Application/SlateApplication.h"
 #include "Types/InvisibleToWidgetReflectorMetaData.h"
 
-static float VectorSign(const FVector2D& Vec, const FVector2D& A, const FVector2D& B)
+static float VectorSign(const FVector2f& Vec, const FVector2f& A, const FVector2f& B)
 {
 	return FMath::Sign((B.X - A.X) * (Vec.Y - A.Y) - (B.Y - A.Y) * (Vec.X - A.X));
 }
 
 // Returns true when the point is inside the triangle
 // Should not return true when the point is on one of the edges
-static bool IsPointInTriangle(const FVector2D& TestPoint, const FVector2D& A, const FVector2D& B, const FVector2D& C)
+static bool IsPointInTriangle(const FVector2f& TestPoint, const FVector2f& A, const FVector2f& B, const FVector2f& C)
 {
 	float BA = VectorSign(B, A, TestPoint);
 	float CB = VectorSign(C, B, TestPoint);
@@ -38,11 +38,11 @@ FVisualEntry::FVisualEntry(const TWeakPtr<const SWidget>& InWidget, int32 InElem
 FVisualEntry::FVisualEntry(const TSharedRef<const SWidget>& InWidget, const FSlateDrawElement& InElement)
 {
 	const FSlateRenderTransform& Transform = InElement.GetRenderTransform();
-	const FVector2D LocalSize = InElement.GetLocalSize();
+	const FVector2f LocalSize = InElement.GetLocalSize();
 
-	TopLeft = Transform.TransformPoint(FVector2D(0, 0));
-	TopRight = Transform.TransformPoint(FVector2D(LocalSize.X, 0));
-	BottomLeft = Transform.TransformPoint(FVector2D(0, LocalSize.Y));
+	TopLeft = Transform.TransformPoint(FVector2f(0.0f, 0.0f));
+	TopRight = Transform.TransformPoint(FVector2f(LocalSize.X, 0.0f));
+	BottomLeft = Transform.TransformPoint(FVector2f(0.0f, LocalSize.Y));
 	BottomRight = Transform.TransformPoint(LocalSize);
 
 	LayerId = InElement.GetLayer();
@@ -65,11 +65,11 @@ void FVisualEntry::Resolve(const FSlateWindowElementList& ElementList)
 		{
 			const FSlateDrawElement& Element = Container[ElementIndex];
 			const FSlateRenderTransform& Transform = Element.GetRenderTransform();
-			const FVector2D LocalSize = Element.GetLocalSize();
+			const FVector2f LocalSize = Element.GetLocalSize();
 
-			TopLeft = Transform.TransformPoint(FVector2D(0, 0));
-			TopRight = Transform.TransformPoint(FVector2D(LocalSize.X, 0));
-			BottomLeft = Transform.TransformPoint(FVector2D(0, LocalSize.Y));
+			TopLeft = Transform.TransformPoint(FVector2f(0.0f, 0.0f));
+			TopRight = Transform.TransformPoint(FVector2f(LocalSize.X, 0.0f));
+			BottomLeft = Transform.TransformPoint(FVector2f(0.0f, LocalSize.Y));
 			BottomRight = Transform.TransformPoint(LocalSize);
 
 			LayerId = Element.GetLayer();
@@ -80,7 +80,7 @@ void FVisualEntry::Resolve(const FSlateWindowElementList& ElementList)
 	VisitTupleElements(ResolveBounds, ElementList.GetUncachedDrawElements(), UE::Slate::MakeTupleIndicies<uint8, (uint8)EElementType::ET_Count>());
 }
 
-bool FVisualEntry::IsPointInside(const FVector2D& Point) const
+bool FVisualEntry::IsPointInside(const FVector2f& Point) const
 {
 	if (IsPointInTriangle(Point, TopLeft, TopRight, BottomLeft) || IsPointInTriangle(Point, BottomLeft, TopRight, BottomRight))
 	{
@@ -90,7 +90,7 @@ bool FVisualEntry::IsPointInside(const FVector2D& Point) const
 	return false;
 }
 
-TSharedPtr<const SWidget> FVisualTreeSnapshot::Pick(FVector2D Point)
+TSharedPtr<const SWidget> FVisualTreeSnapshot::Pick(FVector2f Point)
 {
 	for (int Index = Entries.Num() - 1; Index >= 0; Index--)
 	{

@@ -31,12 +31,11 @@ public:
 	//~ End of ICookPackageSplitter
 
 private:
+	void OnWorldCleanup(UWorld* InWorld, bool bSessionEnded, bool bCleanupResources);
+
 	/** FGCObject interface */
 	virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
 	virtual FString GetReferencerName() const override;
-
-	const UWorld* ValidateDataObject(const UObject* SplitData);
-	UWorld* ValidateDataObject(UObject* SplitData);
 
 	void BuildPackagesToGenerateList(TArray<ICookPackageSplitter::FGeneratedPackage>& PackagesToGenerate) const;
 	bool MapGeneratePackageToCookPackage(const TArray<ICookPackageSplitter::FGeneratedPackageForPreSave>& GeneratedPackages);
@@ -45,7 +44,6 @@ private:
 
 	FWorldPartitionCookPackageContext CookContext;
 
-	bool bInitializedWorldPartition = false;
 	bool bForceInitializedWorld = false;
 	bool bInitializedPhysicsSceneForSave = false;
 };

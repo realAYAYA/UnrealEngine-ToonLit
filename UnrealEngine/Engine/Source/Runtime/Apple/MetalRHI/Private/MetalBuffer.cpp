@@ -39,121 +39,92 @@ extern int32 GMetalBufferScribble;
 
 FMetalBuffer::~FMetalBuffer()
 {
+    Release();
 }
 
-FMetalBuffer::FMetalBuffer(ns::Protocol<id<MTLBuffer>>::type handle, ns::Ownership retain)
-: mtlpp::Buffer(handle, nullptr, retain)
+FMetalBuffer::FMetalBuffer(MTLBufferPtr Handle)
+: Buffer(Handle)
 , Heap(nullptr)
 , Linear(nullptr)
 , Magazine(nullptr)
+, SubRange(0, Handle->length())
 , bPooled(false)
 , bSingleUse(false)
 {
 }
 
-FMetalBuffer::FMetalBuffer(mtlpp::Buffer&& rhs, FMetalSubBufferHeap* heap)
-: mtlpp::Buffer((mtlpp::Buffer&&)rhs)
-, Heap(heap)
+FMetalBuffer::FMetalBuffer(MTLBufferPtr Handle, NS::Range Range, FMetalSubBufferHeap* Heap)
+: Buffer(Handle)
+, Heap(Heap)
 , Linear(nullptr)
 , Magazine(nullptr)
+, SubRange(Range)
 , bPooled(false)
 , bSingleUse(false)
 {
 }
 
 
-FMetalBuffer::FMetalBuffer(mtlpp::Buffer&& rhs, FMetalSubBufferLinear* heap)
-: mtlpp::Buffer((mtlpp::Buffer&&)rhs)
+FMetalBuffer::FMetalBuffer(MTLBufferPtr Handle, NS::Range Range, FMetalSubBufferLinear* Heap)
+: Buffer(Handle)
 , Heap(nullptr)
-, Linear(heap)
+, Linear(Heap)
 , Magazine(nullptr)
+, SubRange(Range)
 , bPooled(false)
 , bSingleUse(false)
 {
 }
 
-FMetalBuffer::FMetalBuffer(mtlpp::Buffer&& rhs, FMetalSubBufferMagazine* magazine)
-: mtlpp::Buffer((mtlpp::Buffer&&)rhs)
+FMetalBuffer::FMetalBuffer(MTLBufferPtr Handle, NS::Range InRange, FMetalSubBufferMagazine* Magazine)
+: Buffer(Handle)
 , Heap(nullptr)
 , Linear(nullptr)
-, Magazine(magazine)
+, Magazine(Magazine)
+, SubRange(InRange)
 , bPooled(false)
 , bSingleUse(false)
 {
 }
 
-FMetalBuffer::FMetalBuffer(mtlpp::Buffer&& rhs, bool bInPooled)
-: mtlpp::Buffer((mtlpp::Buffer&&)rhs)
+FMetalBuffer::FMetalBuffer(MTLBufferPtr Handle, NS::Range InRange, bool bInPooled)
+: Buffer(Handle)
 , Heap(nullptr)
 , Linear(nullptr)
 , Magazine(nullptr)
+, SubRange(InRange)
 , bPooled(bInPooled)
 , bSingleUse(false)
 {
-}
-
-FMetalBuffer::FMetalBuffer(const FMetalBuffer& rhs)
-: mtlpp::Buffer(rhs)
-, Heap(rhs.Heap)
-, Linear(rhs.Linear)
-, Magazine(rhs.Magazine)
-, bPooled(rhs.bPooled)
-, bSingleUse(false)
-{
-}
-
-FMetalBuffer::FMetalBuffer(FMetalBuffer&& rhs)
-: mtlpp::Buffer((mtlpp::Buffer&&)rhs)
-, Heap(rhs.Heap)
-, Linear(rhs.Linear)
-, Magazine(rhs.Magazine)
-, bPooled(rhs.bPooled)
-, bSingleUse(false)
-{
-}
-
-FMetalBuffer& FMetalBuffer::operator=(const FMetalBuffer& rhs)
-{
-	if(this != &rhs)
-	{
-		mtlpp::Buffer::operator=(rhs);
-        Heap = rhs.Heap;
-		Linear = rhs.Linear;
-		Magazine = rhs.Magazine;
-		bPooled = rhs.bPooled;
-		bSingleUse = rhs.bSingleUse;
-	}
-	return *this;
-}
-
-FMetalBuffer& FMetalBuffer::operator=(FMetalBuffer&& rhs)
-{
-	mtlpp::Buffer::operator=((mtlpp::Buffer&&)rhs);
-	Heap = rhs.Heap;
-	Linear = rhs.Linear;
-	Magazine = rhs.Magazine;
-	bPooled = rhs.bPooled;
-	bSingleUse = rhs.bSingleUse;
-	return *this;
 }
 
 void FMetalBuffer::Release()
 {
 	if (Heap)
 	{
-		Heap->FreeRange(ns::Range(GetOffset(), GetLength()));
+		Heap->FreeRange(SubRange);
 		Heap = nullptr;
 	}
 	else if (Linear)
 	{
-		Linear->FreeRange(ns::Range(GetOffset(), GetLength()));
+		Linear->FreeRange(SubRange);
 		Linear = nullptr;
 	}
 	else if (Magazine)
 	{
-		Magazine->FreeRange(ns::Range(GetOffset(), GetLength()));
+		Magazine->FreeRange(SubRange);
 		Magazine = nullptr;
 	}
+    
+    if(bMarkedAllocated)
+    {
+        LLM_PLATFORM_SCOPE_METAL(ELLMTagMetal::Buffers);
+        
+		LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, this, ELLMAllocType::System));
+        
+        DEC_MEMORY_STAT_BY(STAT_MetalBufferMemory, GetLength());
+        DEC_DWORD_STAT(STAT_MetalBufferCount);
+    }
 }
 
 void FMetalBuffer::SetOwner(class FMetalRHIBuffer* Owner, bool bIsSwap)
@@ -161,46 +132,50 @@ void FMetalBuffer::SetOwner(class FMetalRHIBuffer* Owner, bool bIsSwap)
 	check(Owner == nullptr);
 	if (Heap)
 	{
-		Heap->SetOwner(ns::Range(GetOffset(), GetLength()), Owner, bIsSwap);
+		Heap->SetOwner(SubRange, Owner, bIsSwap);
 	}
 }
 
-FMetalSubBufferHeap::FMetalSubBufferHeap(NSUInteger Size, NSUInteger Alignment, mtlpp::ResourceOptions Options, FCriticalSection& InPoolMutex)
+FMetalSubBufferHeap::FMetalSubBufferHeap(NS::UInteger Size, NS::UInteger Alignment, MTL::ResourceOptions Options, FCriticalSection& InPoolMutex)
 : PoolMutex(InPoolMutex)
 , OutstandingAllocs(0)
 , MinAlign(Alignment)
 , UsedSize(0)
 {
-	Options = (mtlpp::ResourceOptions)FMetalCommandQueue::GetCompatibleResourceOptions(Options);
+	Options = (MTL::ResourceOptions)FMetalCommandQueue::GetCompatibleResourceOptions(Options);
 	static bool bSupportsHeaps = GetMetalDeviceContext().SupportsFeature(EMetalFeaturesHeaps);
-	NSUInteger FullSize = Align(Size, Alignment);
+	NS::UInteger FullSize = Align(Size, Alignment);
 	METAL_GPUPROFILE(FScopedMetalCPUStats CPUStat(FString::Printf(TEXT("AllocBuffer: %llu, %llu"), FullSize, Options)));
 	
-	mtlpp::StorageMode Storage = (mtlpp::StorageMode)((Options & mtlpp::ResourceStorageModeMask) >> mtlpp::ResourceStorageModeShift);
+	MTL::StorageMode Storage = (MTL::StorageMode)((Options & MTL::ResourceStorageModeMask) >> MTL::ResourceStorageModeShift);
 #if PLATFORM_MAC
-	check(Storage != mtlpp::StorageMode::Managed /* Managed memory cannot be safely suballocated! When you overwrite existing data the GPU buffer is immediately disposed of! */);
+	check(Storage != MTL::StorageModeManaged /* Managed memory cannot be safely suballocated! When you overwrite existing data the GPU buffer is immediately disposed of! */);
 #endif
 
-	if (bSupportsHeaps && Storage == mtlpp::StorageMode::Private)
+	if (bSupportsHeaps && Storage == MTL::StorageModePrivate)
 	{
-		mtlpp::HeapDescriptor Desc;
-		Desc.SetSize(FullSize);
-		Desc.SetStorageMode(Storage);
-		ParentHeap = GetMetalDeviceContext().GetDevice().NewHeap(Desc);
-		check(ParentHeap.GetPtr());
+        MTL::HeapDescriptor* Desc = MTL::HeapDescriptor::alloc()->init();
+        check(Desc);
+        
+		Desc->setSize(FullSize);
+		Desc->setStorageMode(Storage);
+		ParentHeap = NS::TransferPtr(GetMetalDeviceContext().GetDevice()->newHeap(Desc));
+        Desc->release();
+		check(ParentHeap);
 #if STATS || ENABLE_LOW_LEVEL_MEM_TRACKER
-		MetalLLM::LogAllocHeap(GetMetalDeviceContext().GetDevice(), ParentHeap);
+		MetalLLM::LogAllocHeap(GetMetalDeviceContext().GetDevice(), ParentHeap.get());
 #endif
 	}
 	else
 	{
-		ParentBuffer = MTLPP_VALIDATE(mtlpp::Device, GetMetalDeviceContext().GetDevice(), SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, NewBuffer(FullSize, Options));
-		check(ParentBuffer.GetPtr());
-		check(ParentBuffer.GetLength() >= FullSize);
+		//ParentBuffer = MTLPP_VALIDATE(MTL::Device*, GetMetalDeviceContext().GetDevice(), SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, NewBuffer(FullSize, Options));
+        ParentBuffer = NS::TransferPtr(GetMetalDeviceContext().GetDevice()->newBuffer(FullSize, Options));
+		check(ParentBuffer);
+		check(ParentBuffer->length() >= FullSize);
 #if STATS || ENABLE_LOW_LEVEL_MEM_TRACKER
-		MetalLLM::LogAllocBuffer(GetMetalDeviceContext().GetDevice(), ParentBuffer);
+		MetalLLM::LogAllocBufferNative(GetMetalDeviceContext().GetDevice(), ParentBuffer);
 #endif
-		FreeRanges.Add(ns::Range(0, FullSize));
+		FreeRanges.Add(NS::Range(0, FullSize));
 	}
 	INC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, FullSize);
 	INC_MEMORY_STAT_BY(STAT_MetalHeapBufferUnusedMemory, FullSize);
@@ -210,25 +185,25 @@ FMetalSubBufferHeap::~FMetalSubBufferHeap()
 {
 	if (ParentHeap)
 	{
-		DEC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, ParentHeap.GetSize());
-		DEC_MEMORY_STAT_BY(STAT_MetalHeapBufferUnusedMemory, ParentHeap.GetSize());
+		DEC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, ParentHeap->size());
+		DEC_MEMORY_STAT_BY(STAT_MetalHeapBufferUnusedMemory, ParentHeap->size());
 	}
 	else
 	{
-		DEC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, ParentBuffer.GetLength());
-		DEC_MEMORY_STAT_BY(STAT_MetalHeapBufferUnusedMemory, ParentBuffer.GetLength());
+		DEC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, ParentBuffer->length());
+		DEC_MEMORY_STAT_BY(STAT_MetalHeapBufferUnusedMemory, ParentBuffer->length());
 	}
 }
 
-void FMetalSubBufferHeap::SetOwner(ns::Range const& Range, FMetalRHIBuffer* Owner, bool bIsSwap)
+void FMetalSubBufferHeap::SetOwner(NS::Range const& Range, FMetalRHIBuffer* Owner, bool bIsSwap)
 {
 	check(Owner == nullptr);
 	FScopeLock Lock(&PoolMutex);
 	for (uint32 i = 0; i < AllocRanges.Num(); i++)
 	{
-		if (AllocRanges[i].Range.Location == Range.Location)
+		if (AllocRanges[i].Range.location == Range.location)
 		{
-			check(AllocRanges[i].Range.Length == Range.Length);
+			check(AllocRanges[i].Range.length == Range.length);
 			check(AllocRanges[i].Owner == nullptr || Owner == nullptr || bIsSwap);
 			AllocRanges[i].Owner = Owner;
 			break;
@@ -236,16 +211,16 @@ void FMetalSubBufferHeap::SetOwner(ns::Range const& Range, FMetalRHIBuffer* Owne
 	}
 }
 
-void FMetalSubBufferHeap::FreeRange(ns::Range const& Range)
+void FMetalSubBufferHeap::FreeRange(NS::Range const& Range)
 {
 	FPlatformAtomics::InterlockedDecrement(&OutstandingAllocs);
 	{
 		FScopeLock Lock(&PoolMutex);
 		for (uint32 i = 0; i < AllocRanges.Num(); i++)
 		{
-			if (AllocRanges[i].Range.Location == Range.Location)
+			if (AllocRanges[i].Range.location == Range.location)
 			{
-				check(AllocRanges[i].Range.Length == Range.Length);
+				check(AllocRanges[i].Range.length == Range.length);
 				AllocRanges.RemoveAt(i);
 				break;
 			}
@@ -253,40 +228,43 @@ void FMetalSubBufferHeap::FreeRange(ns::Range const& Range)
 	}
 	if (ParentHeap)
 	{
-		INC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, Range.Length);
-		INC_MEMORY_STAT_BY(STAT_MetalHeapBufferUnusedMemory, Range.Length);
-		DEC_MEMORY_STAT_BY(STAT_MetalHeapBufferMemory, Range.Length);
+		INC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, Range.length);
+		INC_MEMORY_STAT_BY(STAT_MetalHeapBufferUnusedMemory, Range.length);
+		DEC_MEMORY_STAT_BY(STAT_MetalHeapBufferMemory, Range.length);
 	}
 	else
 	{
 #if METAL_DEBUG_OPTIONS
 		if (GIsRHIInitialized)
 		{
-			MTLPP_VALIDATE_ONLY(mtlpp::Buffer, ParentBuffer, SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, ReleaseRange(Range));
-			FMetalBuffer Buf(ParentBuffer.NewBuffer(Range), false);
-			GetMetalDeviceContext().ValidateIsInactiveBuffer(Buf);
+			//MTLPP_VALIDATE_ONLY(mtlpp::Buffer, ParentBuffer, SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, ReleaseRange(Range));
+            //ParentBuffer->releaseRange(Range);
+            assert(Range.location < ParentBuffer->length());
+            assert(Range.length && (Range.location + Range.Length) <= ParentBuffer->length());
+            
+			GetMetalDeviceContext().ValidateIsInactiveBuffer(ParentBuffer.get(), Range);
 		}
 #endif
     
 		FScopeLock Lock(&PoolMutex);
 		{
-			ns::Range CompactRange = Range;
+			NS::Range CompactRange = Range;
 			for (uint32 i = 0; i < FreeRanges.Num(); )
 			{
-				if (FreeRanges[i].Location == (CompactRange.Location + CompactRange.Length))
+				if (FreeRanges[i].location == (CompactRange.location + CompactRange.length))
 				{
-					ns::Range PrevRange = FreeRanges[i];
+                    NS::Range PrevRange = FreeRanges[i];
 					FreeRanges.RemoveAt(i);
 					
-					CompactRange.Length += PrevRange.Length;
+					CompactRange.length += PrevRange.length;
 				}
-				else if (CompactRange.Location == (FreeRanges[i].Location + FreeRanges[i].Length))
+				else if (CompactRange.location == (FreeRanges[i].location + FreeRanges[i].length))
 				{
-					ns::Range PrevRange = FreeRanges[i];
+                    NS::Range PrevRange = FreeRanges[i];
 					FreeRanges.RemoveAt(i);
 					
-					CompactRange.Location = PrevRange.Location;
-					CompactRange.Length += PrevRange.Length;
+					CompactRange.location = PrevRange.location;
+					CompactRange.length += PrevRange.length;
 				}
 				else
 				{
@@ -297,24 +275,24 @@ void FMetalSubBufferHeap::FreeRange(ns::Range const& Range)
 			uint32 i = 0;
 			for (; i < FreeRanges.Num(); i++)
 			{
-				if (FreeRanges[i].Length >= CompactRange.Length)
+				if (FreeRanges[i].length >= CompactRange.length)
 				{
 					break;
 				}
 			}
 			FreeRanges.Insert(CompactRange, i);
 		
-			UsedSize -= Range.Length;
+			UsedSize -= Range.length;
 			
-			INC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, Range.Length);
-			INC_MEMORY_STAT_BY(STAT_MetalHeapBufferUnusedMemory, Range.Length);
-			DEC_MEMORY_STAT_BY(STAT_MetalHeapBufferMemory, Range.Length);
+			INC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, Range.length);
+			INC_MEMORY_STAT_BY(STAT_MetalHeapBufferUnusedMemory, Range.length);
+			DEC_MEMORY_STAT_BY(STAT_MetalHeapBufferMemory, Range.length);
 		
 #if METAL_DEBUG_OPTIONS
 			uint64 LostSize = GetSize() - UsedSize;
-			for (ns::Range const& FreeRange : FreeRanges)
+			for (NS::Range const& FreeRange : FreeRanges)
 			{
-				LostSize -= FreeRange.Length;
+				LostSize -= FreeRange.length;
 			}
 			check(LostSize == 0);
 #endif
@@ -322,71 +300,71 @@ void FMetalSubBufferHeap::FreeRange(ns::Range const& Range)
 	}
 }
 
-ns::String FMetalSubBufferHeap::GetLabel() const
+NS::String* FMetalSubBufferHeap::GetLabel() const
 {
 	if (ParentHeap)
 	{
-		return ParentHeap.GetLabel();
+		return ParentHeap->label();
 	}
 	else
 	{
-		return ParentBuffer.GetLabel();
+		return ParentBuffer->label();
 	}
 }
 
-mtlpp::Device FMetalSubBufferHeap::GetDevice() const
+MTL::Device* FMetalSubBufferHeap::GetDevice() const
 {
 	if (ParentHeap)
 	{
-		return ParentHeap.GetDevice();
+		return ParentHeap->device();
 	}
 	else
 	{
-		return ParentBuffer.GetDevice();
+		return ParentBuffer->device();
 	}
 }
 
-mtlpp::StorageMode FMetalSubBufferHeap::GetStorageMode() const
+MTL::StorageMode FMetalSubBufferHeap::GetStorageMode() const
 {
 	if (ParentHeap)
 	{
-		return ParentHeap.GetStorageMode();
+		return ParentHeap->storageMode();
 	}
 	else
 	{
-		return ParentBuffer.GetStorageMode();
+		return ParentBuffer->storageMode();
 	}
 }
 
-mtlpp::CpuCacheMode FMetalSubBufferHeap::GetCpuCacheMode() const
+MTL::CPUCacheMode FMetalSubBufferHeap::GetCpuCacheMode() const
 {
 	if (ParentHeap)
 	{
-		return ParentHeap.GetCpuCacheMode();
+		return ParentHeap->cpuCacheMode();
 	}
 	else
 	{
-		return ParentBuffer.GetCpuCacheMode();
+		return ParentBuffer->cpuCacheMode();
 	}
 }
 
-NSUInteger FMetalSubBufferHeap::GetSize() const
+NS::UInteger FMetalSubBufferHeap::GetSize() const
 {
 	if (ParentHeap)
 	{
-		return ParentHeap.GetSize();
+		return ParentHeap->size();
 	}
 	else
 	{
-		return ParentBuffer.GetLength();
+		return ParentBuffer->length();
 	}
 }
 
-NSUInteger FMetalSubBufferHeap::GetUsedSize() const
+NS::UInteger FMetalSubBufferHeap::GetUsedSize() const
 {
 	if (ParentHeap)
 	{
-		return ParentHeap.GetUsedSize();
+		return ParentHeap->usedSize();
 	}
 	else
 	{
@@ -399,29 +377,29 @@ int64 FMetalSubBufferHeap::NumCurrentAllocations() const
 	return OutstandingAllocs;
 }
 
-void FMetalSubBufferHeap::SetLabel(const ns::String& label)
+void FMetalSubBufferHeap::SetLabel(const NS::String* label)
 {
 	if (ParentHeap)
 	{
-		ParentHeap.SetLabel(label);
+		ParentHeap->setLabel(label);
 	}
 	else
 	{
-		ParentBuffer.SetLabel(label);
+		ParentBuffer->setLabel(label);
 	}
 }
 
-NSUInteger FMetalSubBufferHeap::MaxAvailableSize() const
+NS::UInteger FMetalSubBufferHeap::MaxAvailableSize() const
 {
 	if (ParentHeap)
 	{
-		return ParentHeap.MaxAvailableSizeWithAlignment(MinAlign);
+		return ParentHeap->maxAvailableSize(MinAlign);
 	}
 	else
 	{
 		if (UsedSize < GetSize())
 		{
-			return FreeRanges.Last().Length;
+			return FreeRanges.Last().length;
 		}
 		else
 		{
@@ -430,16 +408,16 @@ NSUInteger FMetalSubBufferHeap::MaxAvailableSize() const
 	}
 }
 
-bool FMetalSubBufferHeap::CanAllocateSize(NSUInteger Size) const
+bool FMetalSubBufferHeap::CanAllocateSize(NS::UInteger Size) const
 {
 	if (ParentHeap)
 	{
-		NSUInteger Storage = (NSUInteger(GetStorageMode()) << mtlpp::ResourceStorageModeShift);
-		NSUInteger Cache = (NSUInteger(GetCpuCacheMode()) << mtlpp::ResourceCpuCacheModeShift);
-		mtlpp::ResourceOptions Opt = mtlpp::ResourceOptions(Storage | Cache);
+		NS::UInteger Storage = (NS::UInteger(GetStorageMode()) << MTL::ResourceStorageModeShift);
+		NS::UInteger Cache = (NS::UInteger(GetCpuCacheMode()) << MTL::ResourceCpuCacheModeShift);
+		MTL::ResourceOptions Opt = MTL::ResourceOptions(Storage | Cache);
 		
-		NSUInteger Align = ParentHeap.GetDevice().HeapBufferSizeAndAlign(Size, Opt).Align;
-		return Size <= ParentHeap.MaxAvailableSizeWithAlignment(Align);
+		NS::UInteger Align = ParentHeap->device()->heapBufferSizeAndAlign(Size, Opt).align;
+		return Size <= ParentHeap->maxAvailableSize(Align);
 	}
 	else
 	{
@@ -447,68 +425,66 @@ bool FMetalSubBufferHeap::CanAllocateSize(NSUInteger Size) const
 	}
 }
 
-FMetalBuffer FMetalSubBufferHeap::NewBuffer(NSUInteger length)
+FMetalBufferPtr FMetalSubBufferHeap::NewBuffer(NS::UInteger length)
 {
-	NSUInteger Size = Align(length, MinAlign);
-	FMetalBuffer Result;
+	NS::UInteger Size = Align(length, MinAlign);
+	FMetalBufferPtr Result = nullptr;
 	
 	if (ParentHeap)
 	{
-		NSUInteger Storage = (NSUInteger(GetStorageMode()) << mtlpp::ResourceStorageModeShift);
-		NSUInteger Cache = (NSUInteger(GetCpuCacheMode()) << mtlpp::ResourceCpuCacheModeShift);
-		mtlpp::ResourceOptions Opt = mtlpp::ResourceOptions(Storage | Cache);
+		NS::UInteger Storage = (NS::UInteger(GetStorageMode()) << MTL::ResourceStorageModeShift);
+		NS::UInteger Cache = (NS::UInteger(GetCpuCacheMode()) << MTL::ResourceCpuCacheModeShift);
+		MTL::ResourceOptions Opt = MTL::ResourceOptions(Storage | Cache);
 		
-		Result = FMetalBuffer(ParentHeap.NewBuffer(Size, Opt), this);
+		Result = FMetalBufferPtr(new FMetalBuffer(NS::TransferPtr(ParentHeap->newBuffer(Size, Opt)), NS::Range(0, Size), this));
 #if STATS || ENABLE_LOW_LEVEL_MEM_TRACKER
-		MetalLLM::LogAllocBuffer(GetMetalDeviceContext().GetDevice(), Result);
+		MetalLLM::LogAllocBufferNative(GetMetalDeviceContext().GetDevice(), Result->GetMTLBuffer());
 #endif
-		DEC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, Result.GetLength());
-		DEC_MEMORY_STAT_BY(STAT_MetalHeapBufferUnusedMemory, Result.GetLength());
-		INC_MEMORY_STAT_BY(STAT_MetalHeapBufferMemory, Result.GetLength());
+		DEC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, Result->GetLength());
+		DEC_MEMORY_STAT_BY(STAT_MetalHeapBufferUnusedMemory, Result->GetLength());
+		INC_MEMORY_STAT_BY(STAT_MetalHeapBufferMemory, Result->GetLength());
 	}
 	else
 	{
-		check(ParentBuffer && ParentBuffer.GetPtr());
+		check(ParentBuffer);
 	
 		FScopeLock Lock(&PoolMutex);
 		if (MaxAvailableSize() >= Size)
 		{
 			for (uint32 i = 0; i < FreeRanges.Num(); i++)
 			{
-				if (FreeRanges[i].Length >= Size)
+				if (FreeRanges[i].length >= Size)
 				{
-					ns::Range Range = FreeRanges[i];
+					NS::Range Range = FreeRanges[i];
 					FreeRanges.RemoveAt(i);
 					
-					UsedSize += Range.Length;
+					UsedSize += Range.length;
 					
-					DEC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, Range.Length);
-					DEC_MEMORY_STAT_BY(STAT_MetalHeapBufferUnusedMemory, Range.Length);
-					INC_MEMORY_STAT_BY(STAT_MetalHeapBufferMemory, Range.Length);
+					DEC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, Range.length);
+					DEC_MEMORY_STAT_BY(STAT_MetalHeapBufferUnusedMemory, Range.length);
+					INC_MEMORY_STAT_BY(STAT_MetalHeapBufferMemory, Range.length);
 				
-					if (Range.Length > Size)
+					if (Range.length > Size)
 					{
-						ns::Range Split = ns::Range(Range.Location + Size, Range.Length - Size);
+						NS::Range Split = NS::Range(Range.location + Size, Range.length - Size);
 						FPlatformAtomics::InterlockedIncrement(&OutstandingAllocs);
 						FreeRange(Split);
 						
-						Range.Length = Size;
+						Range.length = Size;
 					}
 					
 #if METAL_DEBUG_OPTIONS
 					uint64 LostSize = GetSize() - UsedSize;
-					for (ns::Range const& FreeRange : FreeRanges)
+					for (NS::Range const& FreeRange : FreeRanges)
 					{
-						LostSize -= FreeRange.Length;
+						LostSize -= FreeRange.length;
 					}
 					check(LostSize == 0);
-#endif
-					
-					Result = FMetalBuffer(MTLPP_VALIDATE(mtlpp::Buffer, ParentBuffer, SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, NewBuffer(Range)), this);
-				
+#endif				
+                    Result = FMetalBufferPtr(new FMetalBuffer(ParentBuffer, Range, this));
                     Allocation Alloc;
                     Alloc.Range = Range;
-                    Alloc.Resource = Result.GetPtr();
+                    Alloc.Resource = Result->GetMTLBuffer();
                     Alloc.Owner = nullptr;
                     AllocRanges.Add(Alloc);
 
@@ -518,69 +494,78 @@ FMetalBuffer FMetalSubBufferHeap::NewBuffer(NSUInteger length)
 		}
 	}
 	FPlatformAtomics::InterlockedIncrement(&OutstandingAllocs);
-	check(Result && Result.GetPtr());
+	check(Result);
 	return Result;
 }
 
-mtlpp::PurgeableState FMetalSubBufferHeap::SetPurgeableState(mtlpp::PurgeableState state)
+MTL::PurgeableState FMetalSubBufferHeap::SetPurgeableState(MTL::PurgeableState state)
 {
 	if (ParentHeap)
 	{
-		return ParentHeap.SetPurgeableState(state);
+		return ParentHeap->setPurgeableState(state);
 	}
 	else
 	{
-		return ParentBuffer.SetPurgeableState(state);
+		return ParentBuffer->setPurgeableState(state);
 	}
 }
 
 #pragma mark --
 
-FMetalSubBufferLinear::FMetalSubBufferLinear(NSUInteger Size, NSUInteger Alignment, mtlpp::ResourceOptions Options, FCriticalSection& InPoolMutex)
+FMetalSubBufferLinear::FMetalSubBufferLinear(NS::UInteger Size, NS::UInteger Alignment, MTL::ResourceOptions Options, FCriticalSection& InPoolMutex)
 : PoolMutex(InPoolMutex)
 , MinAlign(Alignment)
 , WriteHead(0)
 , UsedSize(0)
 , FreedSize(0)
 {
-	Options = (mtlpp::ResourceOptions)FMetalCommandQueue::GetCompatibleResourceOptions(Options);
-	NSUInteger FullSize = Align(Size, Alignment);
+	Options = (MTL::ResourceOptions)FMetalCommandQueue::GetCompatibleResourceOptions(Options);
+	NS::UInteger FullSize = Align(Size, Alignment);
 	METAL_GPUPROFILE(FScopedMetalCPUStats CPUStat(FString::Printf(TEXT("AllocBuffer: %llu, %llu"), FullSize, Options)));
 	
-	mtlpp::StorageMode Storage = (mtlpp::StorageMode)((Options & mtlpp::ResourceStorageModeMask) >> mtlpp::ResourceStorageModeShift);
-	ParentBuffer = MTLPP_VALIDATE(mtlpp::Device, GetMetalDeviceContext().GetDevice(), SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, NewBuffer(FullSize, Options));
-	check(ParentBuffer.GetPtr());
-	check(ParentBuffer.GetLength() >= FullSize);
+	MTL::StorageMode Storage = (MTL::StorageMode)((Options & MTL::ResourceStorageModeMask) >> MTL::ResourceStorageModeShift);
+	
+    //ParentBuffer = MTLPP_VALIDATE(MTL::Device, GetMetalDeviceContext().GetDevice(), SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, NewBuffer(FullSize, Options));
+    
+    ParentBuffer = NS::TransferPtr(GetMetalDeviceContext().GetDevice()->newBuffer(FullSize, Options));
+    
+	check(ParentBuffer);
+	check(ParentBuffer->length() >= FullSize);
+    
 #if STATS || ENABLE_LOW_LEVEL_MEM_TRACKER
-	MetalLLM::LogAllocBuffer(GetMetalDeviceContext().GetDevice(), ParentBuffer);
+	MetalLLM::LogAllocBufferNative(GetMetalDeviceContext().GetDevice(), ParentBuffer);
 #endif
+    
 	INC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, FullSize);
 	INC_MEMORY_STAT_BY(STAT_MetalLinearBufferUnusedMemory, FullSize);
 }
 
 FMetalSubBufferLinear::~FMetalSubBufferLinear()
 {
-	DEC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, ParentBuffer.GetLength());
-	DEC_MEMORY_STAT_BY(STAT_MetalLinearBufferUnusedMemory, ParentBuffer.GetLength());
+	DEC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, ParentBuffer->length());
+	DEC_MEMORY_STAT_BY(STAT_MetalLinearBufferUnusedMemory, ParentBuffer->length());
 }
 
-void FMetalSubBufferLinear::FreeRange(ns::Range const& Range)
+void FMetalSubBufferLinear::FreeRange(NS::Range const& Range)
 {
 #if METAL_DEBUG_OPTIONS
 	if (GIsRHIInitialized)
 	{
-		MTLPP_VALIDATE_ONLY(mtlpp::Buffer, ParentBuffer, SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, ReleaseRange(Range));
-		FMetalBuffer Buf(ParentBuffer.NewBuffer(Range), false);
-		GetMetalDeviceContext().ValidateIsInactiveBuffer(Buf);
+		//MTLPP_VALIDATE_ONLY(mtlpp::Buffer, ParentBuffer, SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, ReleaseRange(Range));
+		
+        assert(Range.location < ParentBuffer->length());
+        assert(Range.length && (Range.location + Range.length) <= ParentBuffer->length());
+        
+		GetMetalDeviceContext().ValidateIsInactiveBuffer(ParentBuffer.get(), Range);
 	}
 #endif
 	
 	FScopeLock Lock(&PoolMutex);
 	{
-		FreedSize += Range.Length;
-		INC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, Range.Length);
-		INC_MEMORY_STAT_BY(STAT_MetalLinearBufferUnusedMemory, Range.Length);
-		DEC_MEMORY_STAT_BY(STAT_MetalLinearBufferMemory, Range.Length);
+		FreedSize += Range.length;
+		INC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, Range.length);
+		INC_MEMORY_STAT_BY(STAT_MetalLinearBufferUnusedMemory, Range.length);
+		DEC_MEMORY_STAT_BY(STAT_MetalLinearBufferMemory, Range.length);
 		if (FreedSize == UsedSize)
 		{
 			UsedSize = 0;
@@ -590,47 +575,47 @@ void FMetalSubBufferLinear::FreeRange(ns::Range const& Range)
 	}
 }
 
-ns::String FMetalSubBufferLinear::GetLabel() const
+NS::String* FMetalSubBufferLinear::GetLabel() const
 {
-	return ParentBuffer.GetLabel();
+	return ParentBuffer->label();
 }
 
-mtlpp::Device FMetalSubBufferLinear::GetDevice() const
+MTL::Device* FMetalSubBufferLinear::GetDevice() const
 {
-	return ParentBuffer.GetDevice();
+	return ParentBuffer->device();
 }
 
-mtlpp::StorageMode FMetalSubBufferLinear::GetStorageMode() const
+MTL::StorageMode FMetalSubBufferLinear::GetStorageMode() const
 {
-	return ParentBuffer.GetStorageMode();
+	return ParentBuffer->storageMode();
 }
 
-mtlpp::CpuCacheMode FMetalSubBufferLinear::GetCpuCacheMode() const
+MTL::CPUCacheMode FMetalSubBufferLinear::GetCpuCacheMode() const
 {
-	return ParentBuffer.GetCpuCacheMode();
+	return ParentBuffer->cpuCacheMode();
 }
 
-NSUInteger FMetalSubBufferLinear::GetSize() const
+NS::UInteger FMetalSubBufferLinear::GetSize() const
 {
-	return ParentBuffer.GetLength();
+	return ParentBuffer->length();
 }
 
-NSUInteger FMetalSubBufferLinear::GetUsedSize() const
+NS::UInteger FMetalSubBufferLinear::GetUsedSize() const
 {
 	return UsedSize;
 }
 
-void FMetalSubBufferLinear::SetLabel(const ns::String& label)
+void FMetalSubBufferLinear::SetLabel(const NS::String* label)
 {
-	ParentBuffer.SetLabel(label);
+	ParentBuffer->setLabel(label);
 }
 
-bool FMetalSubBufferLinear::CanAllocateSize(NSUInteger Size) const
+bool FMetalSubBufferLinear::CanAllocateSize(NS::UInteger Size) const
 {
 	if (WriteHead < GetSize())
 	{
-		NSUInteger Alignment = FMath::Max(NSUInteger(MinAlign), NSUInteger(Size & ~(Size - 1llu)));
-		NSUInteger NewWriteHead = Align(WriteHead, Alignment);
+		NS::UInteger Alignment = FMath::Max(NS::UInteger(MinAlign), NS::UInteger(Size & ~(Size - 1llu)));
+		NS::UInteger NewWriteHead = Align(WriteHead, Alignment);
 		return (GetSize() - NewWriteHead) > Size;
 	}
 	else
@@ -639,21 +624,26 @@ bool FMetalSubBufferLinear::CanAllocateSize(NSUInteger Size) const
 	}
 }
 
-FMetalBuffer FMetalSubBufferLinear::NewBuffer(NSUInteger length)
+FMetalBufferPtr FMetalSubBufferLinear::NewBuffer(NS::UInteger length)
 {
 	FScopeLock Lock(&PoolMutex);
-	NSUInteger Alignment = FMath::Max(NSUInteger(MinAlign), NSUInteger(length & ~(length - 1llu)));
-	NSUInteger Size = Align(length, Alignment);
-	NSUInteger NewWriteHead = Align(WriteHead, Alignment);
+	NS::UInteger Alignment = FMath::Max(NS::UInteger(MinAlign), NS::UInteger(length & ~(length - 1llu)));
+	NS::UInteger Size = Align(length, Alignment);
+	NS::UInteger NewWriteHead = Align(WriteHead, Alignment);
 	
-	FMetalBuffer Result;
+	FMetalBufferPtr Result = nullptr;
 	if ((GetSize() - NewWriteHead) > Size)
 	{
-		ns::Range Range(NewWriteHead, Size);
-		DEC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, Range.Length);
-		DEC_MEMORY_STAT_BY(STAT_MetalLinearBufferUnusedMemory, Range.Length);
-		INC_MEMORY_STAT_BY(STAT_MetalLinearBufferMemory, Range.Length);
-		Result = FMetalBuffer(MTLPP_VALIDATE(mtlpp::Buffer, ParentBuffer, SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, NewBuffer(Range)), this);
+		NS::Range Range(NewWriteHead, Size);
+		DEC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, Range.length);
+		DEC_MEMORY_STAT_BY(STAT_MetalLinearBufferUnusedMemory, Range.length);
+		INC_MEMORY_STAT_BY(STAT_MetalLinearBufferMemory, Range.length);
+		//Result = FMetalBuffer(MTLPP_VALIDATE(mtlpp::Buffer, ParentBuffer, SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, NewBuffer(Range)), this);
+        
+        assert(Range.Location < ParentBuffer->getLength());
+        assert(Range.Length && (Range.Location + Range.length) <= ParentBuffer->getLength());
+        
+        Result = FMetalBufferPtr(new FMetalBuffer(ParentBuffer, Range, this));
 		UsedSize += Size;
 		WriteHead = NewWriteHead + Size;
 	}
@@ -661,54 +651,59 @@ FMetalBuffer FMetalSubBufferLinear::NewBuffer(NSUInteger length)
 	return Result;
 }
 
-mtlpp::PurgeableState FMetalSubBufferLinear::SetPurgeableState(mtlpp::PurgeableState state)
+MTL::PurgeableState FMetalSubBufferLinear::SetPurgeableState(MTL::PurgeableState state)
 {
-	return ParentBuffer.SetPurgeableState(state);
+	return ParentBuffer->setPurgeableState(state);
 }
 
 #pragma mark --
 
-FMetalSubBufferMagazine::FMetalSubBufferMagazine(NSUInteger Size, NSUInteger ChunkSize, mtlpp::ResourceOptions Options)
+FMetalSubBufferMagazine::FMetalSubBufferMagazine(NS::UInteger Size, NS::UInteger ChunkSize, MTL::ResourceOptions Options)
 : MinAlign(ChunkSize)
 , BlockSize(ChunkSize)
 , OutstandingAllocs(0)
 , UsedSize(0)
 {
-	Options = (mtlpp::ResourceOptions)FMetalCommandQueue::GetCompatibleResourceOptions(Options);
+	Options = (MTL::ResourceOptions)FMetalCommandQueue::GetCompatibleResourceOptions(Options);
     static bool bSupportsHeaps = GetMetalDeviceContext().SupportsFeature(EMetalFeaturesHeaps);
-    mtlpp::StorageMode Storage = (mtlpp::StorageMode)((Options & mtlpp::ResourceStorageModeMask) >> mtlpp::ResourceStorageModeShift);
-    if (PLATFORM_IOS && bSupportsHeaps && Storage == mtlpp::StorageMode::Private)
+    MTL::StorageMode Storage = (MTL::StorageMode)((Options & MTL::ResourceStorageModeMask) >> MTL::ResourceStorageModeShift);
+    if (PLATFORM_IOS && bSupportsHeaps && Storage == MTL::StorageModePrivate)
     {
-        MinAlign = GetMetalDeviceContext().GetDevice().HeapBufferSizeAndAlign(BlockSize, Options).Align;
+        MinAlign = GetMetalDeviceContext().GetDevice()->heapBufferSizeAndAlign(BlockSize, Options).align;
     }
     
-    NSUInteger FullSize = Align(Size, MinAlign);
+    NS::UInteger FullSize = Align(Size, MinAlign);
 	METAL_GPUPROFILE(FScopedMetalCPUStats CPUStat(FString::Printf(TEXT("AllocBuffer: %llu, %llu"), FullSize, Options)));
 	
 #if PLATFORM_MAC
-	check(Storage != mtlpp::StorageMode::Managed /* Managed memory cannot be safely suballocated! When you overwrite existing data the GPU buffer is immediately disposed of! */);
+	check(Storage != MTL::StorageModeManaged /* Managed memory cannot be safely suballocated! When you overwrite existing data the GPU buffer is immediately disposed of! */);
 #endif
 
-	if (bSupportsHeaps && Storage == mtlpp::StorageMode::Private)
+	if (bSupportsHeaps && Storage == MTL::StorageModePrivate)
 	{
-		mtlpp::HeapDescriptor Desc;
-		Desc.SetSize(FullSize);
-		Desc.SetStorageMode(Storage);
-		ParentHeap = GetMetalDeviceContext().GetDevice().NewHeap(Desc);
-		check(ParentHeap.GetPtr());
-		METAL_FATAL_ASSERT(ParentHeap, TEXT("Failed to create heap of size %u and resource options %u"), Size, (uint32)Options);
+		MTL::HeapDescriptor* Desc = MTL::HeapDescriptor::alloc()->init();
+        check(Desc);
+        
+		Desc->setSize(FullSize);
+		Desc->setStorageMode(Storage);
+		ParentHeap = NS::TransferPtr(GetMetalDeviceContext().GetDevice()->newHeap(Desc));
+        Desc->release();
+		check(ParentHeap);
+		//METAL_FATAL_ASSERT(ParentHeap, TEXT("Failed to create heap of size %u and resource options %u"), Size, (uint32)Options);
 #if STATS || ENABLE_LOW_LEVEL_MEM_TRACKER
-		MetalLLM::LogAllocHeap(GetMetalDeviceContext().GetDevice(), ParentHeap);
+		MetalLLM::LogAllocHeap(GetMetalDeviceContext().GetDevice(), ParentHeap.get());
 #endif
 	}
 	else
 	{
-		ParentBuffer = MTLPP_VALIDATE(mtlpp::Device, GetMetalDeviceContext().GetDevice(), SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, NewBuffer(FullSize, Options));
-		check(ParentBuffer.GetPtr());
-		check(ParentBuffer.GetLength() >= FullSize);
-		METAL_FATAL_ASSERT(ParentBuffer, TEXT("Failed to create heap of size %u and resource options %u"), Size, (uint32)Options);
+		//ParentBuffer = MTLPP_VALIDATE(MTL::Device, GetMetalDeviceContext().GetDevice(), SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, NewBuffer(FullSize, Options));
+        
+        ParentBuffer = NS::TransferPtr(GetMetalDeviceContext().GetDevice()->newBuffer(FullSize, Options));
+		check(ParentBuffer);
+		check(ParentBuffer->length() >= FullSize);
+		//METAL_FATAL_ASSERT(ParentBuffer, TEXT("Failed to create heap of size %u and resource options %u"), Size, (uint32)Options);
 #if STATS || ENABLE_LOW_LEVEL_MEM_TRACKER
-		MetalLLM::LogAllocBuffer(GetMetalDeviceContext().GetDevice(), ParentBuffer);
+		MetalLLM::LogAllocBufferNative(GetMetalDeviceContext().GetDevice(), ParentBuffer);
 #endif
 		
 		INC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, FullSize);
@@ -722,123 +717,122 @@ FMetalSubBufferMagazine::~FMetalSubBufferMagazine()
 {
 	if (ParentHeap)
 	{
-		DEC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, ParentHeap.GetSize());
-		DEC_MEMORY_STAT_BY(STAT_MetalMagazineBufferUnusedMemory, ParentHeap.GetSize());
+		DEC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, ParentHeap->size());
+		DEC_MEMORY_STAT_BY(STAT_MetalMagazineBufferUnusedMemory, ParentHeap->size());
 	}
 	else
 	{
-		DEC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, ParentBuffer.GetLength());
-		DEC_MEMORY_STAT_BY(STAT_MetalMagazineBufferUnusedMemory, ParentBuffer.GetLength());
+        DEC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, ParentBuffer->length());
+		DEC_MEMORY_STAT_BY(STAT_MetalMagazineBufferUnusedMemory, ParentBuffer->length());
 	}
 }
 
-void FMetalSubBufferMagazine::FreeRange(ns::Range const& Range)
+void FMetalSubBufferMagazine::FreeRange(NS::Range const& Range)
 {
 	FPlatformAtomics::InterlockedDecrement(&OutstandingAllocs);
 	if (ParentHeap)
 	{
-		INC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, Range.Length);
-		INC_MEMORY_STAT_BY(STAT_MetalMagazineBufferUnusedMemory, Range.Length);
-		DEC_MEMORY_STAT_BY(STAT_MetalMagazineBufferMemory, Range.Length);
+		INC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, Range.length);
+		INC_MEMORY_STAT_BY(STAT_MetalMagazineBufferUnusedMemory, Range.length);
+		DEC_MEMORY_STAT_BY(STAT_MetalMagazineBufferMemory, Range.length);
 	}
 	else
 	{
 #if METAL_DEBUG_OPTIONS
 		if (GIsRHIInitialized)
 		{
-			MTLPP_VALIDATE_ONLY(mtlpp::Buffer, ParentBuffer, SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, ReleaseRange(Range));
-			FMetalBuffer Buf(ParentBuffer.NewBuffer(Range), false);
-			GetMetalDeviceContext().ValidateIsInactiveBuffer(Buf);
+			//MTLPP_VALIDATE_ONLY(mtlpp::Buffer, ParentBuffer, SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, ReleaseRange(Range));
+			GetMetalDeviceContext().ValidateIsInactiveBuffer(ParentBuffer.get(), Range);
 		}
 #endif
 	
-		uint32 BlockIndex = Range.Location / Range.Length;
+		uint32 BlockIndex = Range.location / Range.length;
 		FPlatformAtomics::AtomicStore(&Blocks[BlockIndex], 0);
-		FPlatformAtomics::InterlockedAdd(&UsedSize, -((int64)Range.Length));
+		FPlatformAtomics::InterlockedAdd(&UsedSize, -((int64)Range.length));
 		
-		INC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, Range.Length);
-		INC_MEMORY_STAT_BY(STAT_MetalMagazineBufferUnusedMemory, Range.Length);
-		DEC_MEMORY_STAT_BY(STAT_MetalMagazineBufferMemory, Range.Length);
+		INC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, Range.length);
+		INC_MEMORY_STAT_BY(STAT_MetalMagazineBufferUnusedMemory, Range.length);
+		DEC_MEMORY_STAT_BY(STAT_MetalMagazineBufferMemory, Range.length);
 	}
 }
 
-ns::String FMetalSubBufferMagazine::GetLabel() const
+NS::String* FMetalSubBufferMagazine::GetLabel() const
 {
 	if (ParentHeap)
 	{
-		return ParentHeap.GetLabel();
+		return ParentHeap->label();
 	}
 	else
 	{
-		return ParentBuffer.GetLabel();
+		return ParentBuffer->label();
 	}
 }
 
-mtlpp::Device FMetalSubBufferMagazine::GetDevice() const
+MTL::Device* FMetalSubBufferMagazine::GetDevice() const
 {
 	if (ParentHeap)
 	{
-		return ParentHeap.GetDevice();
+		return ParentHeap->device();
 	}
 	else
 	{
-		return ParentBuffer.GetDevice();
+		return ParentBuffer->device();
 	}
 }
 
-mtlpp::StorageMode FMetalSubBufferMagazine::GetStorageMode() const
+MTL::StorageMode FMetalSubBufferMagazine::GetStorageMode() const
 {
 	if (ParentHeap)
 	{
-		return ParentHeap.GetStorageMode();
+		return ParentHeap->storageMode();
 	}
 	else
 	{
-		return ParentBuffer.GetStorageMode();
+		return ParentBuffer->storageMode();
 	}
 }
 
-mtlpp::CpuCacheMode FMetalSubBufferMagazine::GetCpuCacheMode() const
+MTL::CPUCacheMode FMetalSubBufferMagazine::GetCpuCacheMode() const
 {
 	if (ParentHeap)
 	{
-		return ParentHeap.GetCpuCacheMode();
+		return ParentHeap->cpuCacheMode();
 	}
 	else
 	{
-		return ParentBuffer.GetCpuCacheMode();
+		return ParentBuffer->cpuCacheMode();
 	}
 }
 
-NSUInteger FMetalSubBufferMagazine::GetSize() const
+NS::UInteger FMetalSubBufferMagazine::GetSize() const
 {
 	if (ParentHeap)
 	{
-		return ParentHeap.GetSize();
+		return ParentHeap->size();
 	}
 	else
 	{
-		return ParentBuffer.GetLength();
+		return ParentBuffer->length();
 	}
 }
 
-NSUInteger FMetalSubBufferMagazine::GetUsedSize() const
+NS::UInteger FMetalSubBufferMagazine::GetUsedSize() const
 {
 	if (ParentHeap)
 	{
-		return ParentHeap.GetUsedSize();
+		return ParentHeap->usedSize();
 	}
 	else
 	{
-		return (NSUInteger)FPlatformAtomics::AtomicRead(&UsedSize);
+		return (NS::UInteger)FPlatformAtomics::AtomicRead(&UsedSize);
 	}
 }
 
-NSUInteger FMetalSubBufferMagazine::GetFreeSize() const
+NS::UInteger FMetalSubBufferMagazine::GetFreeSize() const
 {
 	if (ParentHeap)
 	{
-		return ParentHeap.MaxAvailableSizeWithAlignment(MinAlign);
+		return ParentHeap->maxAvailableSize(MinAlign);
 	}
 	else
 	{
@@ -851,92 +845,94 @@ int64 FMetalSubBufferMagazine::NumCurrentAllocations() const
 	return OutstandingAllocs;
 }
 
-bool FMetalSubBufferMagazine::CanAllocateSize(NSUInteger Size) const
+bool FMetalSubBufferMagazine::CanAllocateSize(NS::UInteger Size) const
 {
 	return GetFreeSize() >= Size;
 }
 
-void FMetalSubBufferMagazine::SetLabel(const ns::String& label)
+void FMetalSubBufferMagazine::SetLabel(const NS::String* label)
 {
 	if (ParentHeap)
 	{
-		ParentHeap.SetLabel(label);
+		ParentHeap->setLabel(label);
 	}
 	else
 	{
-		ParentBuffer.SetLabel(label);
+		ParentBuffer->setLabel(label);
 	}
 }
 
-FMetalBuffer FMetalSubBufferMagazine::NewBuffer()
+FMetalBufferPtr FMetalSubBufferMagazine::NewBuffer()
 {
-	NSUInteger Size = BlockSize;
-	FMetalBuffer Result;
+	NS::UInteger Size = BlockSize;
+	FMetalBufferPtr Result = nullptr;
 
 	if (ParentHeap)
 	{
-		NSUInteger Storage = (NSUInteger(GetStorageMode()) << mtlpp::ResourceStorageModeShift);
-		NSUInteger Cache = (NSUInteger(GetCpuCacheMode()) << mtlpp::ResourceCpuCacheModeShift);
-		mtlpp::ResourceOptions Opt = mtlpp::ResourceOptions(Storage | Cache);
+		NS::UInteger Storage = (NS::UInteger(GetStorageMode()) << MTL::ResourceStorageModeShift);
+		NS::UInteger Cache = (NS::UInteger(GetCpuCacheMode()) << MTL::ResourceCpuCacheModeShift);
+		MTL::ResourceOptions Opt = MTL::ResourceOptions(Storage | Cache);
 		
-		Result = FMetalBuffer(ParentHeap.NewBuffer(Size, Opt), this);
+		Result = FMetalBufferPtr(new FMetalBuffer(NS::TransferPtr(ParentHeap->newBuffer(Size, Opt)), NS::Range(0, Size), this));
 #if STATS || ENABLE_LOW_LEVEL_MEM_TRACKER
 		MetalLLM::LogAllocBuffer(GetMetalDeviceContext().GetDevice(), Result);
 #endif
-		DEC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, Result.GetLength());
-		DEC_MEMORY_STAT_BY(STAT_MetalMagazineBufferUnusedMemory, Result.GetLength());
-		INC_MEMORY_STAT_BY(STAT_MetalMagazineBufferMemory, Result.GetLength());
+		DEC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, Result->GetLength());
+		DEC_MEMORY_STAT_BY(STAT_MetalMagazineBufferUnusedMemory, Result->GetLength());
+		INC_MEMORY_STAT_BY(STAT_MetalMagazineBufferMemory, Result->GetLength());
 	}
 	else
 	{
-		check(ParentBuffer && ParentBuffer.GetPtr());
+		check(ParentBuffer);
 		
 		for (uint32 i = 0; i < Blocks.Num(); i++)
 		{
 			if (FPlatformAtomics::InterlockedCompareExchange(&Blocks[i], 1, 0) == 0)
 			{
-				ns::Range Range(i * BlockSize, BlockSize);
-				FPlatformAtomics::InterlockedAdd(&UsedSize, ((int64)Range.Length));
-				DEC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, Range.Length);
-				DEC_MEMORY_STAT_BY(STAT_MetalMagazineBufferUnusedMemory, Range.Length);
-				INC_MEMORY_STAT_BY(STAT_MetalMagazineBufferMemory, Range.Length);
-				Result = FMetalBuffer(MTLPP_VALIDATE(mtlpp::Buffer, ParentBuffer, SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, NewBuffer(Range)), this);
+				NS::Range Range(i * BlockSize, BlockSize);
+				FPlatformAtomics::InterlockedAdd(&UsedSize, ((int64)Range.length));
+                DEC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, Range.length);
+				DEC_MEMORY_STAT_BY(STAT_MetalMagazineBufferUnusedMemory, Range.length);
+				INC_MEMORY_STAT_BY(STAT_MetalMagazineBufferMemory, Range.length);
+				//Result = FMetalBuffer(MTLPP_VALIDATE(mtlpp::Buffer, ParentBuffer, SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, NewBuffer(Range)), this);
+                
+                Result = FMetalBufferPtr(new FMetalBuffer(ParentBuffer, Range, this));
 				break;
 			}
 		}
 	}
 
 	FPlatformAtomics::InterlockedIncrement(&OutstandingAllocs);
-	check(Result && Result.GetPtr());
+	check(Result);
 	return Result;
 }
 
-mtlpp::PurgeableState FMetalSubBufferMagazine::SetPurgeableState(mtlpp::PurgeableState state)
+MTL::PurgeableState FMetalSubBufferMagazine::SetPurgeableState(MTL::PurgeableState state)
 {
 	if (ParentHeap)
 	{
-		return ParentHeap.SetPurgeableState(state);
+		return ParentHeap->setPurgeableState(state);
 	}
 	else
 	{
-		return ParentBuffer.SetPurgeableState(state);
+		return ParentBuffer->setPurgeableState(state);
 	}
 }
 
-FMetalRingBufferRef::FMetalRingBufferRef(FMetalBuffer Buf)
+FMetalRingBufferRef::FMetalRingBufferRef(FMetalBufferPtr Buf)
 : Buffer(Buf)
-, LastRead(Buf.GetLength())
+, LastRead(Buffer->GetLength())
 {
-	Buffer.SetLabel(@"Ring Buffer");
+    Buffer->GetMTLBuffer()->setLabel(NS::String::string("Ring Buffer", NS::UTF8StringEncoding));
 }
 
 FMetalRingBufferRef::~FMetalRingBufferRef()
 {
-	MTLPP_VALIDATE_ONLY(mtlpp::Buffer, Buffer, SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, ReleaseAllRanges());
+	//MTLPP_VALIDATE_ONLY(MTL::Buffer, Buffer, SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, ReleaseAllRanges());
 	SafeReleaseMetalBuffer(Buffer);
 }
 
-FMetalSubBufferRing::FMetalSubBufferRing(NSUInteger Size, NSUInteger Alignment, mtlpp::ResourceOptions InOptions)
+FMetalSubBufferRing::FMetalSubBufferRing(NS::UInteger Size, NS::UInteger Alignment, MTL::ResourceOptions InOptions)
 : LastFrameChange(0)
 , InitialSize(Align(Size, Alignment))
 , MinAlign(Alignment)
@@ -945,11 +941,11 @@ FMetalSubBufferRing::FMetalSubBufferRing(NSUInteger Size, NSUInteger Alignment, 
 , WriteHead(0)
 , BufferSize(0)
 , Options(InOptions)
-, Storage((mtlpp::StorageMode)((Options & mtlpp::ResourceStorageModeMask) >> mtlpp::ResourceStorageModeShift))
+, Storage((MTL::StorageMode)((Options & MTL::ResourceStorageModeMask) >> MTL::ResourceStorageModeShift))
 {
-	Options = (mtlpp::ResourceOptions)FMetalCommandQueue::GetCompatibleResourceOptions(Options);
+	Options = (MTL::ResourceOptions)FMetalCommandQueue::GetCompatibleResourceOptions(Options);
 #if !defined(WITH_IOS_SIMULATOR) || !WITH_IOS_SIMULATOR
-	check(Storage != mtlpp::StorageMode::Private /* Private memory requires command-buffers and encoders to properly marshal! */);
+	check(Storage != MTL::StorageModePrivate /* Private memory requires command-buffers and encoders to properly marshal! */);
 #endif
 	FMemory::Memzero(FrameSize);
 }
@@ -958,24 +954,27 @@ FMetalSubBufferRing::~FMetalSubBufferRing()
 {
 }
 
-mtlpp::Device FMetalSubBufferRing::GetDevice() const
+MTL::Device* FMetalSubBufferRing::GetDevice() const
 {
-	return Buffer.IsValid() ? Buffer->Buffer.GetDevice() : nil;
-}
-mtlpp::StorageMode FMetalSubBufferRing::GetStorageMode() const
-{
-	return Buffer.IsValid() ? Buffer->Buffer.GetStorageMode() : Storage;
-}
-mtlpp::CpuCacheMode FMetalSubBufferRing::GetCpuCacheMode() const
-{
-	return Buffer.IsValid() ? Buffer->Buffer.GetCpuCacheMode() : ((mtlpp::CpuCacheMode)((Options & mtlpp::ResourceCpuCacheModeMask) >> mtlpp::ResourceCpuCacheModeShift));
-}
-NSUInteger FMetalSubBufferRing::GetSize() const
-{
-	return Buffer.IsValid() ? Buffer->Buffer.GetLength() : InitialSize;
+	return RingBufferRef->GetMTLBuffer() ? RingBufferRef->GetMTLBuffer()->device() : nullptr;
 }
 
-FMetalBuffer FMetalSubBufferRing::NewBuffer(NSUInteger Size, uint32 Alignment)
+MTL::StorageMode FMetalSubBufferRing::GetStorageMode() const
+{
+	return RingBufferRef->GetMTLBuffer() ? RingBufferRef->GetMTLBuffer()->storageMode() : Storage;
+}
+
+MTL::CPUCacheMode FMetalSubBufferRing::GetCpuCacheMode() const
+{
+	return RingBufferRef->GetMTLBuffer() ? RingBufferRef->GetMTLBuffer()->cpuCacheMode() : ((MTL::CPUCacheMode)((Options & MTL::ResourceCpuCacheModeMask) >> MTL::ResourceCpuCacheModeShift));
+}
+
+NS::UInteger FMetalSubBufferRing::GetSize() const
+{
+	return RingBufferRef->GetMTLBuffer() ? RingBufferRef->GetBuffer()->GetLength() : InitialSize;
+}
+
+FMetalBufferPtr FMetalSubBufferRing::NewBuffer(NS::UInteger Size, uint32 Alignment)
 {
 	if (Alignment == 0)
 	{
@@ -986,32 +985,34 @@ FMetalBuffer FMetalSubBufferRing::NewBuffer(NSUInteger Size, uint32 Alignment)
 		Alignment = Align(Alignment, MinAlign);
 	}
 	
-	NSUInteger FullSize = Align(Size, Alignment);
+	NS::UInteger FullSize = Align(Size, Alignment);
 	
 	// Allocate on first use
-	if(!Buffer.IsValid())
+	if(!RingBufferRef.IsValid())
 	{
-		Buffer = MakeShared<FMetalRingBufferRef, ESPMode::ThreadSafe>(GetMetalDeviceContext().GetResourceHeap().CreateBuffer(InitialSize, MinAlign, BUF_Dynamic, Options, true));
+        RingBufferRef = MakeShared<FMetalRingBufferRef, ESPMode::ThreadSafe>(GetMetalDeviceContext().GetResourceHeap().CreateBuffer(InitialSize, MinAlign, BUF_Dynamic, Options, true));
 		BufferSize = InitialSize;
 	}
 	
-	if(Buffer->LastRead <= WriteHead)
+	if(RingBufferRef->LastRead <= WriteHead)
 	{
-		if (WriteHead + FullSize <= Buffer->Buffer.GetLength())
+		if (WriteHead + FullSize <= RingBufferRef->GetBuffer()->GetLength())
 		{
-			FMetalBuffer NewBuffer(MTLPP_VALIDATE(mtlpp::Buffer, Buffer->Buffer, SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, NewBuffer(ns::Range(WriteHead, FullSize))), false);
+			//FMetalBuffer NewBuffer(MTLPP_VALIDATE(mtlpp::Buffer, Buffer->Buffer, SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, NewBuffer(ns::Range(WriteHead, FullSize))), false);
 			
-			FMemory::Memset(((uint8*)NewBuffer.GetContents()), 0x0, FullSize);
+            FMetalBufferPtr NewBuffer = FMetalBufferPtr(new FMetalBuffer(RingBufferRef->GetMTLBuffer(), NS::Range(WriteHead, FullSize), false));
+            
+			FMemory::Memset(((uint8*)NewBuffer->Contents()), 0x0, FullSize);
 			
 			WriteHead += FullSize;
 			// NewBuffer.MarkSingleUse();
 			return NewBuffer;
 		}
 #if PLATFORM_MAC
-		else if (Storage == mtlpp::StorageMode::Managed)
+		else if (Storage == MTL::StorageModeManaged)
 		{
 			Submit();
-			Buffer = MakeShared<FMetalRingBufferRef, ESPMode::ThreadSafe>(GetMetalDeviceContext().GetResourceHeap().CreateBuffer(BufferSize, MinAlign, BUF_Dynamic, Options, true));
+            RingBufferRef = MakeShared<FMetalRingBufferRef, ESPMode::ThreadSafe>(GetMetalDeviceContext().GetResourceHeap().CreateBuffer(BufferSize, MinAlign, BUF_Dynamic, Options, true));
 			WriteHead = 0;
 			CommitHead = 0;
 			SubmitHead = 0;
@@ -1023,26 +1024,29 @@ FMetalBuffer FMetalSubBufferRing::NewBuffer(NSUInteger Size, uint32 Alignment)
 		}
 	}
 	
-	if(WriteHead + FullSize >= Buffer->LastRead || WriteHead + FullSize > BufferSize)
+	if(WriteHead + FullSize >= RingBufferRef->LastRead || WriteHead + FullSize > BufferSize)
 	{
-		NSUInteger NewBufferSize = AlignArbitrary(BufferSize + Size, Align(BufferSize / 4, MinAlign));
+		NS::UInteger NewBufferSize = AlignArbitrary(BufferSize + Size, Align(BufferSize / 4, MinAlign));
 		
-		UE_LOG(LogMetal, Verbose, TEXT("Reallocating ring-buffer from %d to %d to avoid wrapping write at offset %d into outstanding buffer region %d at frame %lld]"), (uint32)BufferSize, (uint32)NewBufferSize, (uint32)WriteHead, (uint32)Buffer->LastRead, (uint64)GFrameCounter);
+		UE_LOG(LogMetal, Verbose, TEXT("Reallocating ring-buffer from %d to %d to avoid wrapping write at offset %d into outstanding buffer region %d at frame %lld]"), (uint32)BufferSize, (uint32)NewBufferSize, (uint32)WriteHead, (uint32)RingBufferRef->LastRead, (uint64)GFrameCounter);
 		
 		Submit();
 		
-		Buffer = MakeShared<FMetalRingBufferRef, ESPMode::ThreadSafe>(GetMetalDeviceContext().GetResourceHeap().CreateBuffer(NewBufferSize, MinAlign, BUF_Dynamic, Options, true));
+        RingBufferRef = MakeShared<FMetalRingBufferRef, ESPMode::ThreadSafe>(GetMetalDeviceContext().GetResourceHeap().CreateBuffer(NewBufferSize, MinAlign, BUF_Dynamic, Options, true));
 		BufferSize = NewBufferSize;
 		WriteHead = 0;
 		CommitHead = 0;
 		SubmitHead = 0;
 	}
+    
 	{
-		FMetalBuffer NewBuffer(MTLPP_VALIDATE(mtlpp::Buffer, Buffer->Buffer, SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, NewBuffer(ns::Range(WriteHead, FullSize))), false);
+		//FMetalBuffer NewBuffer(MTLPP_VALIDATE(mtlpp::Buffer, Buffer->Buffer, SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, NewBuffer(ns::Range(WriteHead, FullSize))), false);
+        
+        FMetalBufferPtr NewBuffer = FMetalBufferPtr(new FMetalBuffer(RingBufferRef->GetMTLBuffer(), NS::Range(WriteHead, FullSize), false));
 		
-		AllocatedRanges.Add(ns::Range(WriteHead, FullSize));
+		AllocatedRanges.Add(NS::Range(WriteHead, FullSize));
 		
-		FMemory::Memset(((uint8*)NewBuffer.GetContents()), 0x0, FullSize);
+		FMemory::Memset(((uint8*)NewBuffer->Contents()), 0x0, FullSize);
 		
 		WriteHead += FullSize;
 		// NewBuffer.MarkSingleUse();
@@ -1052,24 +1056,24 @@ FMetalBuffer FMetalSubBufferRing::NewBuffer(NSUInteger Size, uint32 Alignment)
 
 void FMetalSubBufferRing::Shrink()
 {
-	if(Buffer.IsValid())
+	if(RingBufferRef.IsValid())
 	{
-		NSUInteger FrameMax = 0;
+		NS::UInteger FrameMax = 0;
 		for (uint32 i = 0; i < UE_ARRAY_COUNT(FrameSize); i++)
 		{
 			FrameMax = FMath::Max(FrameMax, FrameSize[i]);
 		}
 		
-		NSUInteger NecessarySize = FMath::Max(FrameMax, InitialSize);
-		NSUInteger ThreeQuarterSize = Align((BufferSize / 4) * 3, MinAlign);
+		NS::UInteger NecessarySize = FMath::Max(FrameMax, InitialSize);
+		NS::UInteger ThreeQuarterSize = Align((BufferSize / 4) * 3, MinAlign);
 		
 		if ((GFrameNumberRenderThread - LastFrameChange) >= 120 && NecessarySize < ThreeQuarterSize && NecessarySize < BufferSize)
 		{
 			Submit();
 			
-			UE_LOG(LogMetal, Verbose, TEXT("Shrinking RingBuffer from %u to %u as max. usage is %u at frame %lld]"), (uint32)Buffer->Buffer.GetLength(), (uint32)ThreeQuarterSize, (uint32)FrameMax, GFrameNumberRenderThread);
+			UE_LOG(LogMetal, Verbose, TEXT("Shrinking RingBuffer from %u to %u as max. usage is %u at frame %lld]"), (uint32)RingBufferRef->GetBuffer()->GetLength(), (uint32)ThreeQuarterSize, (uint32)FrameMax, GFrameNumberRenderThread);
 			
-			Buffer = MakeShared<FMetalRingBufferRef, ESPMode::ThreadSafe>(GetMetalDeviceContext().GetResourceHeap().CreateBuffer(ThreeQuarterSize, MinAlign, BUF_Dynamic, Options, true));
+            RingBufferRef = MakeShared<FMetalRingBufferRef, ESPMode::ThreadSafe>(GetMetalDeviceContext().GetResourceHeap().CreateBuffer(ThreeQuarterSize, MinAlign, BUF_Dynamic, Options, true));
 			BufferSize = ThreeQuarterSize;
 			WriteHead = 0;
 			CommitHead = 0;
@@ -1083,14 +1087,14 @@ void FMetalSubBufferRing::Shrink()
 
 void FMetalSubBufferRing::Submit()
 {
-	if (Buffer.IsValid() && WriteHead != SubmitHead)
+	if (RingBufferRef.IsValid() && WriteHead != SubmitHead)
 	{
 #if PLATFORM_MAC
-		if (Storage == mtlpp::StorageMode::Managed)
+		if (Storage == MTL::StorageModeManaged)
 		{
 			check(SubmitHead < WriteHead);
-			ns::Range ModifiedRange(SubmitHead, Align(WriteHead - SubmitHead, MinAlign));
-			Buffer->Buffer.DidModify(ModifiedRange);
+			NS::Range ModifiedRange(SubmitHead, Align(WriteHead - SubmitHead, MinAlign));
+            RingBufferRef->GetMTLBuffer()->didModifyRange(ModifiedRange);
 		}
 #endif
 
@@ -1098,65 +1102,63 @@ void FMetalSubBufferRing::Submit()
 	}
 }
 
-void FMetalSubBufferRing::Commit(mtlpp::CommandBuffer& CmdBuf)
+void FMetalSubBufferRing::Commit(FMetalCommandBuffer* CmdBuf)
 {
-	if (Buffer.IsValid() && WriteHead != CommitHead)
+	if (RingBufferRef.IsValid() && WriteHead != CommitHead)
 	{
 #if PLATFORM_MAC
-		check(Storage != mtlpp::StorageMode::Managed || CommitHead < WriteHead);
+		check(Storage != MTL::StorageModeManaged || CommitHead < WriteHead);
 #endif
 		Submit();
 		
-		NSUInteger BytesWritten = 0;
+		NS::UInteger BytesWritten = 0;
 		if (CommitHead <= WriteHead)
 		{
 			BytesWritten = WriteHead - CommitHead;
 		}
 		else
 		{
-			NSUInteger TrailLen = GetSize() - CommitHead;
+			NS::UInteger TrailLen = GetSize() - CommitHead;
 			BytesWritten = TrailLen + WriteHead;
 		}
 		
 		FrameSize[GFrameNumberRenderThread % UE_ARRAY_COUNT(FrameSize)] += Align(BytesWritten, MinAlign);
 		
-		TSharedPtr<FMetalRingBufferRef, ESPMode::ThreadSafe> CmdBufferRingBuffer = Buffer;
+		TSharedPtr<FMetalRingBufferRef, ESPMode::ThreadSafe> CmdBufferRingBuffer = RingBufferRef;
 		FPlatformMisc::MemoryBarrier();
 		
-		NSUInteger CommitOffset = CommitHead;
-		NSUInteger WriteOffset = WriteHead;
+		NS::UInteger CommitOffset = CommitHead;
+		NS::UInteger WriteOffset = WriteHead;
 		
 		CommitHead = WriteHead;
 		
-		TArray<ns::Range> Ranges = MoveTemp(AllocatedRanges);
+		TArray<NS::Range> Ranges = MoveTemp(AllocatedRanges);
 		
-		mtlpp::CommandBufferHandler Handler = [CmdBufferRingBuffer, CommitOffset, WriteOffset, Ranges](mtlpp::CommandBuffer const& InBuffer)
+		MTL::HandlerFunction Handler = [CmdBufferRingBuffer, CommitOffset, WriteOffset, Ranges](MTL::CommandBuffer* InBuffer)
 		{
 #if METAL_DEBUG_OPTIONS
 			if (GMetalBufferScribble && CommitOffset != WriteOffset)
 			{
 				if (CommitOffset < WriteOffset)
 				{
-					FMemory::Memset(((uint8*)CmdBufferRingBuffer->Buffer.GetContents()) + CommitOffset, 0xCD, WriteOffset - CommitOffset);
+					FMemory::Memset(((uint8*)CmdBufferRingBuffer->GetBuffer()->Contents()) + CommitOffset, 0xCD, WriteOffset - CommitOffset);
 				}
 				else
 				{
-					uint32 TrailLen = CmdBufferRingBuffer->Buffer.GetLength() - CommitOffset;
-					FMemory::Memset(((uint8*)CmdBufferRingBuffer->Buffer.GetContents()) + CommitOffset, 0xCD, TrailLen);
-					FMemory::Memset(((uint8*)CmdBufferRingBuffer->Buffer.GetContents()), 0xCD, WriteOffset);
+					uint32 TrailLen = CmdBufferRingBuffer->GetBuffer()->GetLength() - CommitOffset;
+					FMemory::Memset(((uint8*)CmdBufferRingBuffer->GetBuffer()->Contents()) + CommitOffset, 0xCD, TrailLen);
+					FMemory::Memset(((uint8*)CmdBufferRingBuffer->GetBuffer()->Contents()), 0xCD, WriteOffset);
 				}
 			}
 			
-#if MTLPP_CONFIG_VALIDATE
-			for (ns::Range const& Range : Ranges)
+			for (NS::Range const& Range : Ranges)
 			{
-				MTLPP_VALIDATE_ONLY(mtlpp::Buffer, CmdBufferRingBuffer->Buffer, SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, ReleaseRange(Range));
+				//MTLPP_VALIDATE_ONLY(mtlpp::Buffer, CmdBufferRingBuffer->Buffer, SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, ReleaseRange(Range));
 			}
-#endif
 #endif
 			CmdBufferRingBuffer->SetLastRead(WriteOffset);
 		};
-		CmdBuf.AddCompletedHandler(Handler);
+		CmdBuf->GetMTLCmdBuffer()->addCompletedHandler(Handler);
 	}
 }
 
@@ -1195,36 +1197,40 @@ uint32 FMetalBufferPoolPolicyData::GetPoolBucketSize(uint32 Bucket)
 	return BucketSizes[Index];
 }
 
-FMetalBuffer FMetalBufferPoolPolicyData::CreateResource(CreationArguments Args)
+FMetalBufferPtr FMetalBufferPoolPolicyData::CreateResource(FRHICommandListBase&, CreationArguments Args)
 {
 	check(Args.Device);	
 	uint32 BufferSize = GetPoolBucketSize(GetPoolBucketIndex(Args));
 	
-	NSUInteger CpuCacheMode = (NSUInteger)Args.CpuCacheMode << mtlpp::ResourceCpuCacheModeShift;
-	NSUInteger StorageMode = (NSUInteger)Args.Storage << mtlpp::ResourceStorageModeShift;
-	mtlpp::ResourceOptions ResourceOptions = FMetalCommandQueue::GetCompatibleResourceOptions(mtlpp::ResourceOptions(CpuCacheMode | StorageMode | mtlpp::ResourceOptions::HazardTrackingModeUntracked));
+	NS::UInteger CpuCacheMode = (NS::UInteger)Args.CpuCacheMode << MTL::ResourceCpuCacheModeShift;
+	NS::UInteger StorageMode = (NS::UInteger)Args.Storage << MTL::ResourceStorageModeShift;
+	MTL::ResourceOptions ResourceOptions = FMetalCommandQueue::GetCompatibleResourceOptions(MTL::ResourceOptions(CpuCacheMode | StorageMode | MTL::ResourceHazardTrackingModeUntracked));
 	
 	METAL_GPUPROFILE(FScopedMetalCPUStats CPUStat(FString::Printf(TEXT("AllocBuffer: %llu, %llu"), BufferSize, ResourceOptions)));
-	FMetalBuffer NewBuf(MTLPP_VALIDATE(mtlpp::Device, Args.Device, SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, NewBuffer(BufferSize, ResourceOptions), true));
+	//FMetalBuffer NewBuf(MTLPP_VALIDATE(MTL::Device, Args.Device, SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, NewBuffer(BufferSize, ResourceOptions), true));
+    
+    FMetalBufferPtr NewBuf = FMetalBufferPtr(new FMetalBuffer(NS::TransferPtr(Args.Device->newBuffer(BufferSize, ResourceOptions)), NS::Range(0, BufferSize), true));
 
 #if STATS || ENABLE_LOW_LEVEL_MEM_TRACKER
 	MetalLLM::LogAllocBuffer(Args.Device, NewBuf);
 #endif
-	INC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, NewBuf.GetLength());
-	INC_MEMORY_STAT_BY(STAT_MetalPooledBufferUnusedMemory, NewBuf.GetLength());
+	INC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, NewBuf->GetLength());
+	INC_MEMORY_STAT_BY(STAT_MetalPooledBufferUnusedMemory, NewBuf->GetLength());
 	return NewBuf;
 }
 
-FMetalBufferPoolPolicyData::CreationArguments FMetalBufferPoolPolicyData::GetCreationArguments(FMetalBuffer const& Resource)
+FMetalBufferPoolPolicyData::CreationArguments FMetalBufferPoolPolicyData::GetCreationArguments(FMetalBufferPtr Resource)
 {
-	return FMetalBufferPoolPolicyData::CreationArguments(Resource.GetDevice(), Resource.GetLength(), BUF_None, Resource.GetStorageMode(), Resource.GetCpuCacheMode());
+    MTL::Buffer* Buffer = Resource->GetMTLBuffer().get();
+	return FMetalBufferPoolPolicyData::CreationArguments(Buffer->device(), Resource->GetLength(), BUF_None,
+                                                         Buffer->storageMode(), Buffer->cpuCacheMode());
 }
 
-void FMetalBufferPoolPolicyData::FreeResource(FMetalBuffer& Resource)
+void FMetalBufferPoolPolicyData::FreeResource(FMetalBufferPtr Resource)
 {
-	DEC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, Resource.GetLength());
-	DEC_MEMORY_STAT_BY(STAT_MetalPooledBufferUnusedMemory, Resource.GetLength());
-	Resource = nil;
+	DEC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, Resource->GetLength());
+	DEC_MEMORY_STAT_BY(STAT_MetalPooledBufferUnusedMemory, Resource->GetLength());
+	Resource = nullptr;
 }
 
 FMetalTexturePool::FMetalTexturePool(FCriticalSection& InPoolMutex)
@@ -1236,66 +1242,67 @@ FMetalTexturePool::~FMetalTexturePool()
 {
 }
 
-FMetalTexture FMetalTexturePool::CreateTexture(mtlpp::Device Device, mtlpp::TextureDescriptor Desc)
+MTLTexturePtr FMetalTexturePool::CreateTexture(MTL::Device* Device, MTL::TextureDescriptor* Desc)
 {
 	FMetalTexturePool::Descriptor Descriptor;
-	Descriptor.textureType = (NSUInteger)Desc.GetTextureType();
-	Descriptor.pixelFormat = (NSUInteger)Desc.GetPixelFormat();
-	Descriptor.width = Desc.GetWidth();
-	Descriptor.height = Desc.GetHeight();
-	Descriptor.depth = Desc.GetDepth();
-	Descriptor.mipmapLevelCount = Desc.GetMipmapLevelCount();
-	Descriptor.sampleCount = Desc.GetSampleCount();
-	Descriptor.arrayLength = Desc.GetArrayLength();
-	Descriptor.resourceOptions = Desc.GetResourceOptions();
-	Descriptor.usage = Desc.GetUsage();
-	if (Descriptor.usage == mtlpp::TextureUsage::Unknown)
+	Descriptor.textureType = (NS::UInteger)Desc->textureType();
+	Descriptor.pixelFormat = (NS::UInteger)Desc->pixelFormat();
+	Descriptor.width = Desc->width();
+	Descriptor.height = Desc->height();
+	Descriptor.depth = Desc->depth();
+	Descriptor.mipmapLevelCount = Desc->mipmapLevelCount();
+	Descriptor.sampleCount = Desc->sampleCount();
+	Descriptor.arrayLength = Desc->arrayLength();
+	Descriptor.resourceOptions = Desc->resourceOptions();
+	Descriptor.usage = Desc->usage();
+	if (Descriptor.usage == MTL::TextureUsageUnknown)
 	{
-		Descriptor.usage = (mtlpp::TextureUsage)(mtlpp::TextureUsage::ShaderRead | mtlpp::TextureUsage::ShaderWrite | mtlpp::TextureUsage::RenderTarget | mtlpp::TextureUsage::PixelFormatView);
+		Descriptor.usage = (MTL::TextureUsage)(MTL::TextureUsageShaderRead | MTL::TextureUsageShaderWrite | MTL::TextureUsageRenderTarget | MTL::TextureUsagePixelFormatView);
 	}
 	Descriptor.freedFrame = 0;
 
 	FScopeLock Lock(&PoolMutex);
-	FMetalTexture* Tex = Pool.Find(Descriptor);
-	FMetalTexture Texture;
+	MTLTexturePtr* Tex = Pool.Find(Descriptor);
+    MTLTexturePtr Texture;
 	if (Tex)
 	{
 		Texture = *Tex;
 		Pool.Remove(Descriptor);
 		if (GMetalResourcePurgeInPool)
 		{
-            Texture.SetPurgeableState(mtlpp::PurgeableState::NonVolatile);
+            Texture->setPurgeableState(MTL::PurgeableStateNonVolatile);
         }
 	}
 	else
 	{
 		METAL_GPUPROFILE(FScopedMetalCPUStats CPUStat(FString::Printf(TEXT("AllocTexture: %s"), TEXT("")/**FString([Desc.GetPtr() description])*/)));
-		Texture = MTLPP_VALIDATE(mtlpp::Device, Device, SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, NewTexture(Desc));
+		//Texture = MTLPP_VALIDATE(MTL::Device, Device, SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, NewTexture(Desc));
+        Texture = NS::TransferPtr(Device->newTexture(Desc));
 #if STATS || ENABLE_LOW_LEVEL_MEM_TRACKER
-		MetalLLM::LogAllocTexture(Device, Desc, Texture);
+		MetalLLM::LogAllocTexture(Device, Desc, Texture.get());
 #endif
 	}
 	return Texture;
 }
 
-void FMetalTexturePool::ReleaseTexture(FMetalTexture& Texture)
+void FMetalTexturePool::ReleaseTexture(MTLTexturePtr Texture)
 {
 	FMetalTexturePool::Descriptor Descriptor;
-	Descriptor.textureType = (NSUInteger)Texture.GetTextureType();
-	Descriptor.pixelFormat = (NSUInteger)Texture.GetPixelFormat();
-	Descriptor.width = Texture.GetWidth();
-	Descriptor.height = Texture.GetHeight();
-	Descriptor.depth = Texture.GetDepth();
-	Descriptor.mipmapLevelCount = Texture.GetMipmapLevelCount();
-	Descriptor.sampleCount = Texture.GetSampleCount();
-	Descriptor.arrayLength = Texture.GetArrayLength();
-	Descriptor.resourceOptions = ((NSUInteger)Texture.GetStorageMode() << mtlpp::ResourceStorageModeShift) | ((NSUInteger)Texture.GetCpuCacheMode() << mtlpp::ResourceCpuCacheModeShift);
-	Descriptor.usage = Texture.GetUsage();
+	Descriptor.textureType = (NS::UInteger)Texture->textureType();
+	Descriptor.pixelFormat = (NS::UInteger)Texture->pixelFormat();
+	Descriptor.width = Texture->width();
+	Descriptor.height = Texture->height();
+	Descriptor.depth = Texture->depth();
+	Descriptor.mipmapLevelCount = Texture->mipmapLevelCount();
+	Descriptor.sampleCount = Texture->sampleCount();
+	Descriptor.arrayLength = Texture->arrayLength();
+	Descriptor.resourceOptions = ((NS::UInteger)Texture->storageMode() << MTL::ResourceStorageModeShift) | ((NS::UInteger)Texture->cpuCacheMode() << MTL::ResourceCpuCacheModeShift);
+	Descriptor.usage = Texture->usage();
 	Descriptor.freedFrame = GFrameNumberRenderThread;
 	
-    if (GMetalResourcePurgeInPool && Texture.SetPurgeableState(mtlpp::PurgeableState::KeepCurrent) == mtlpp::PurgeableState::NonVolatile)
+    if (GMetalResourcePurgeInPool && Texture->setPurgeableState(MTL::PurgeableStateKeepCurrent) == MTL::PurgeableStateNonVolatile)
     {
-        Texture.SetPurgeableState(mtlpp::PurgeableState::Volatile);
+        Texture->setPurgeableState(MTL::PurgeableStateVolatile);
     }
 	
 	FScopeLock Lock(&PoolMutex);
@@ -1321,7 +1328,7 @@ void FMetalTexturePool::Drain(bool const bForce)
             {
 				if (GMetalResourcePurgeInPool && (GFrameNumberRenderThread - It->Key.freedFrame) >= PurgeAfterNumFrames)
 				{
-					It->Value.SetPurgeableState(mtlpp::PurgeableState::Empty);
+					It->Value->setPurgeableState(MTL::PurgeableStateEmpty);
 				}
             }
         }
@@ -1423,31 +1430,32 @@ FMetalResourceHeap::TextureHeapSize FMetalResourceHeap::TextureSizeToIndex(uint3
 	return (TextureHeapSize)Lower;
 }
 
-mtlpp::Heap FMetalResourceHeap::GetTextureHeap(mtlpp::TextureDescriptor Desc, mtlpp::SizeAndAlign Size)
+MTLHeapPtr FMetalResourceHeap::GetTextureHeap(MTL::TextureDescriptor* Desc, MTL::SizeAndAlign Size)
 {
-	mtlpp::Heap Result;
+    MTLHeapPtr Result;
+    
 	static bool bTextureHeaps = FParse::Param(FCommandLine::Get(),TEXT("metaltextureheaps"));
-	if (FMetalCommandQueue::SupportsFeature(EMetalFeaturesHeaps) && bTextureHeaps && Size.Size <= HeapTextureHeapSizes[MaxTextureSize])
+	if (FMetalCommandQueue::SupportsFeature(EMetalFeaturesHeaps) && bTextureHeaps && Size.size <= HeapTextureHeapSizes[MaxTextureSize])
 	{
-		FMetalResourceHeap::TextureHeapSize HeapIndex = TextureSizeToIndex(Size.Size);
+		FMetalResourceHeap::TextureHeapSize HeapIndex = TextureSizeToIndex(Size.size);
 
 		EMetalHeapTextureUsage UsageIndex = EMetalHeapTextureUsageNum;
-		mtlpp::StorageMode StorageMode = Desc.GetStorageMode();
-		mtlpp::CpuCacheMode CPUMode = Desc.GetCpuCacheMode();
-		if ((Desc.GetUsage() & mtlpp::TextureUsage::RenderTarget) && StorageMode == mtlpp::StorageMode::Private && CPUMode == mtlpp::CpuCacheMode::DefaultCache)
+		MTL::StorageMode StorageMode = Desc->storageMode();
+        MTL::CPUCacheMode CPUMode = Desc->cpuCacheMode();
+		if ((Desc->usage() & MTL::TextureUsageRenderTarget) && StorageMode == MTL::StorageModePrivate && CPUMode == MTL::CPUCacheModeDefaultCache)
 		{
 			UsageIndex = PLATFORM_MAC ? EMetalHeapTextureUsageNum : EMetalHeapTextureUsageRenderTarget;
 		}
-		else if (StorageMode == mtlpp::StorageMode::Private && CPUMode == mtlpp::CpuCacheMode::WriteCombined)
+		else if (StorageMode == MTL::StorageModePrivate && CPUMode == MTL::CPUCacheModeWriteCombined)
 		{
 			UsageIndex = EMetalHeapTextureUsageResource;
 		}
 		
 		if (UsageIndex < EMetalHeapTextureUsageNum)
 		{
-			for (mtlpp::Heap& Heap : TextureHeaps[UsageIndex][HeapIndex])
+			for (MTLHeapPtr & Heap : TextureHeaps[UsageIndex][HeapIndex])
 			{
-				if (Heap.MaxAvailableSizeWithAlignment(Size.Align) >= Size.Size)
+				if (Heap->maxAvailableSize(Size.align) >= Size.size)
 				{
 					Result = Heap;
 					break;
@@ -1455,13 +1463,16 @@ mtlpp::Heap FMetalResourceHeap::GetTextureHeap(mtlpp::TextureDescriptor Desc, mt
 			}
 			if (!Result)
 			{
-				mtlpp::HeapDescriptor HeapDesc;
-				HeapDesc.SetSize(HeapTextureHeapSizes[HeapIndex]);
-				HeapDesc.SetStorageMode(Desc.GetStorageMode());
-				HeapDesc.SetCpuCacheMode(Desc.GetCpuCacheMode());
-				Result = Queue->GetDevice().NewHeap(HeapDesc);
+                MTL::HeapDescriptor* HeapDesc = MTL::HeapDescriptor::alloc()->init();
+                check(HeapDesc);
+                
+				HeapDesc->setSize(HeapTextureHeapSizes[HeapIndex]);
+				HeapDesc->setStorageMode(Desc->storageMode());
+				HeapDesc->setCpuCacheMode(Desc->cpuCacheMode());
+				Result = NS::TransferPtr(Queue->GetDevice()->newHeap(HeapDesc));
+                HeapDesc->release();
 #if STATS || ENABLE_LOW_LEVEL_MEM_TRACKER
-				MetalLLM::LogAllocHeap(Queue->GetDevice(), Result);
+				MetalLLM::LogAllocHeap(Queue->GetDevice(), Result.get());
 #endif
 				TextureHeaps[UsageIndex][HeapIndex].Add(Result);
 			}
@@ -1471,31 +1482,295 @@ mtlpp::Heap FMetalResourceHeap::GetTextureHeap(mtlpp::TextureDescriptor Desc, mt
 	return Result;
 }
 
-FMetalBuffer FMetalResourceHeap::CreateBuffer(uint32 Size, uint32 Alignment, EBufferUsageFlags Flags, mtlpp::ResourceOptions Options, bool bForceUnique)
+TDoubleLinkedList<FMetalResourceHeap::MemoryBlock>::TIterator FMetalResourceHeap::SplitBlock(TDoubleLinkedList<FMetalResourceHeap::MemoryBlock>& List, TDoubleLinkedList<FMetalResourceHeap::MemoryBlock>::TIterator BlockIt, const uint64 Offset, const uint32 Size)
+{
+	MemoryBlock& Block = *BlockIt;
+	check(Size < Block.Size && Block.Resource == nil);
+	check(Offset >= Block.Offset);
+
+	if (Offset > Block.Offset)
+	{
+		uint64 PreBlockSize = Offset - Block.Offset;
+
+		MemoryBlock PreBlock;
+		PreBlock.Heap = Block.Heap;
+		PreBlock.Offset = Block.Offset;
+		PreBlock.Size = PreBlockSize;
+		PreBlock.Resource = nil;
+		PreBlock.Options = MTL::ResourceOptions(0);
+
+		// Move the block at the real offset
+		Block.Offset += PreBlockSize;
+		Block.Size   -= PreBlockSize;
+
+		List.InsertNode(PreBlock, BlockIt.GetNode());
+	}
+	check(Block.Size >= Size);
+
+	// If we have space left after the allocation split the leftover space into its own free block
+	TDoubleLinkedList<FMetalResourceHeap::MemoryBlock>::TIterator MidBlockIt = BlockIt;
+	if (Block.Size > Size)
+	{
+		MemoryBlock PostBlock;
+		PostBlock.Heap = Block.Heap;
+		PostBlock.Offset = Block.Offset + Size;
+		PostBlock.Size = Block.Size - Size;
+		PostBlock.Resource = nil;
+		PostBlock.Options = MTL::ResourceOptions(0);
+
+		// Shrink the current block to size
+		Block.Size = Size;
+
+		// Insert the new block *after* the existing one
+		List.InsertNode(PostBlock, BlockIt.GetNode());
+		BlockIt++;
+	}
+	check(Block.Size == Size);
+
+	// Return the block with the required size first
+	return MidBlockIt;
+}
+
+TDoubleLinkedList<FMetalResourceHeap::MemoryBlock>::TIterator FMetalResourceHeap::MergeBlocks(TDoubleLinkedList<FMetalResourceHeap::MemoryBlock>& List,
+																							  TDoubleLinkedList<FMetalResourceHeap::MemoryBlock>::TIterator BlockItA,
+																							  TDoubleLinkedList<FMetalResourceHeap::MemoryBlock>::TIterator BlockItB)
+{	
+	MemoryBlock& BlockA = *BlockItA;
+	MemoryBlock& BlockB = *BlockItB;
+
+	// Extend block A to cover the range of block B as well
+	BlockA.Size += BlockB.Size;
+
+	// Remove B from the list
+	List.RemoveNode(BlockItB.GetNode());
+
+	return BlockItA;
+}
+
+void FMetalResourceHeap::FreeBlock(const uint32 ResourceAllocationHandle)
+{
+	FScopeLock ScopeLock(&FreeListCS);
+
+	auto BlockIt = InUseResources[ResourceAllocationHandle];
+	MemoryBlock& AllocatedBlock = *BlockIt;
+	check(AllocatedBlock.Resource != nullptr);
+	// AllocatedBlock.Resource->release(); // Will be released once the resource dtor is called (otherwise we may end up double-releasing).
+	AllocatedBlock.Resource = nullptr;
+	{
+		FScopeLock InUseFreeListScopeLock(&InUseResourcesCS);
+		InUseResourcesFreeList.Enqueue(ResourceAllocationHandle);
+	}
+
+	auto& FreeList = FreeLists[AllocatedBlock.Options];
+	auto& UsedList = UsedLists[AllocatedBlock.Options];
+
+	// Find where this block should be placed in the list
+	TDoubleLinkedList<FMetalResourceHeap::MemoryBlock>::TIterator NextBlockIt(FreeList->GetHead());
+	while (NextBlockIt
+	   && ((*NextBlockIt).Heap != AllocatedBlock.Heap || (*NextBlockIt).Offset < AllocatedBlock.Offset + AllocatedBlock.Size))
+	{
+		NextBlockIt++;
+	}
+	
+	// Put the block into the free list
+	UsedList->RemoveNode(BlockIt.GetNode(), false);
+	FreeList->InsertNode(BlockIt.GetNode(), NextBlockIt ? NextBlockIt.GetNode() : nullptr);
+
+	// If we have a next block then attempt to merge blocks
+	if(NextBlockIt)
+	{
+		BlockIt = NextBlockIt;
+		if (BlockIt.GetNode() == nullptr)
+		{
+			BlockIt = TDoubleLinkedList<FMetalResourceHeap::MemoryBlock>::TIterator(FreeList->GetHead());
+		}
+		else
+		{
+			BlockIt--;
+		}
+		check((*BlockIt).Offset == AllocatedBlock.Offset); // Temp sanity check; to be removed.
+		
+		// Figure out the earliest block we can merge the newly freed block with
+		{
+			auto PrevBlockIt = BlockIt;
+			PrevBlockIt--;
+			while (BlockIt
+				   && PrevBlockIt
+				   && (*BlockIt).Heap == (*PrevBlockIt).Heap
+				   && (*BlockIt).Offset == (*PrevBlockIt).Offset + (*PrevBlockIt).Size)
+			{
+				BlockIt = PrevBlockIt;
+				PrevBlockIt--;
+			}
+		}
+		
+		// Merge all adjacent allocations to minimise fragmentation
+		{
+			auto NextIt = BlockIt;
+			NextIt++;
+			
+			while (NextIt)
+			{
+				MemoryBlock& BlockA = *BlockIt;
+				MemoryBlock& BlockB = *NextIt;
+				
+				if (BlockA.Heap == BlockB.Heap
+					&& (BlockA.Offset + BlockA.Size) == BlockB.Offset)
+				{
+					BlockIt = MergeBlocks(*FreeList, BlockIt, NextIt);
+					
+					// NOTE: We don't increment 'blockIt' the next block in the list might also be mergeable into the newly merged block
+					// We merged A and B, nextIt is invalidated so we need to re-initialise it from blockIt++
+					NextIt = BlockIt;
+					NextIt++;
+				}
+				else
+				{
+					break;
+				}
+			}
+		}
+	}
+}
+
+TDoubleLinkedList<FMetalResourceHeap::MemoryBlock>::TIterator FMetalResourceHeap::FindOrAllocateBlock(uint32 Size, uint32 Alignment, MTL::ResourceOptions Options)
+{
+	FScopeLock ScopeLock(&FreeListCS);
+
+	TDoubleLinkedList<FMetalResourceHeap::MemoryBlock>** FreeListIt = FreeLists.Find(Options);
+	if (!FreeListIt)
+	{
+		FreeLists.Add(Options, new TDoubleLinkedList<FMetalResourceHeap::MemoryBlock>());
+		UsedLists.Add(Options, new TDoubleLinkedList<FMetalResourceHeap::MemoryBlock>());
+	}
+
+	auto& FreeList = FreeLists[Options];
+	auto& UsedList = UsedLists[Options];
+
+	// Look for the first existing block with enough space
+	if (!FreeList->IsEmpty())
+	{
+		for (TDoubleLinkedList<FMetalResourceHeap::MemoryBlock>::TIterator It(FreeList->GetHead()); It; ++It)
+		{
+			FMetalResourceHeap::MemoryBlock& Block = *It;
+			check(Block.Resource == nil);
+
+			uint64 AlignedOffset = Align(Block.Offset, Alignment);
+			uint64 WastedSpace = AlignedOffset - Block.Offset;
+
+			if (Block.Size >= (Size + WastedSpace))
+			{
+				// If the block doesn't fit perfectly we need to split
+				if (Block.Size > Size)
+				{
+					auto MidIt = SplitBlock(*FreeList, It, AlignedOffset, Size);
+					It = MidIt;
+				}
+
+				// Transfert node from free to used list
+				FreeList->RemoveNode(It.GetNode(), false);
+				UsedList->AddHead(It.GetNode());
+
+				return It;
+			}
+		}
+	}
+
+	// Allocate a fresh block to use
+	static constexpr uint32 DefaultBlockSize = 1024 << 20; // 1GB
+	{
+		uint64 NewBlockSize = FMath::Max(Size, DefaultBlockSize);
+
+		MTL::StorageMode StorageMode = (MTL::StorageMode)(((NS::UInteger)Options & MTL::ResourceStorageModeMask) >> MTL::ResourceStorageModeShift);
+		MTL::CPUCacheMode CpuMode = (MTL::CPUCacheMode)(((NS::UInteger)Options & MTL::ResourceCpuCacheModeMask) >> MTL::ResourceCpuCacheModeShift);
+
+		MTL::HeapDescriptor* HeapDesc = MTL::HeapDescriptor::alloc()->init();
+		check(HeapDesc);
+		HeapDesc->setSize(NewBlockSize);
+		HeapDesc->setStorageMode(StorageMode);
+		HeapDesc->setCpuCacheMode(CpuMode);
+		HeapDesc->setType(MTL::HeapTypePlacement);
+		HeapDesc->setHazardTrackingMode(MTL::HazardTrackingModeTracked);
+
+		MTLHeapPtr BlockHeap = NS::TransferPtr(Queue->GetDevice()->newHeap(HeapDesc));
+		HeapDesc->release();
+
+		MemoryBlock NewBlock;
+		NewBlock.Heap = BlockHeap;
+		NewBlock.Offset = 0;
+		NewBlock.Size = NewBlockSize;
+		NewBlock.Resource = nullptr;
+		NewBlock.Options = Options;
+
+		GetMetalDeviceContext().GetCurrentState().RegisterMetalHeap(NewBlock.Heap.get());
+
+		FreeList->AddTail(NewBlock);
+
+		// Try again, but this time a fitting block will be immediately available at the front of the list
+		return FindOrAllocateBlock(Size, Alignment, Options);
+	}
+}
+
+FMetalBufferPtr FMetalResourceHeap::CreateBuffer(uint32 Size, uint32 Alignment, EBufferUsageFlags Flags, MTL::ResourceOptions Options, bool bForceUnique)
 {
 	LLM_SCOPE_METAL(ELLMTagMetal::Buffers);
 	LLM_PLATFORM_SCOPE_METAL(ELLMTagMetal::Buffers);
 	
 	static bool bSupportsHeaps = GetMetalDeviceContext().SupportsFeature(EMetalFeaturesHeaps);
+	if (bSupportsHeaps)
+	{
+		check(Alignment != 0);
+
+		uint32 BlockSize = Align(Size, Alignment);
+		auto BlockIt = FindOrAllocateBlock(BlockSize, Alignment, Options);
+		MemoryBlock& Block = *BlockIt;
+
+		check(Block.Resource == nil && Block.Size == BlockSize);
+		Block.Options = Options;
+
+		FScopeLock ScopeLock(&InUseResourcesCS);
+		
+		uint32 HeapAllocationHandle = UINT32_MAX;
+		{
+			if (!InUseResourcesFreeList.IsEmpty())
+			{
+				InUseResourcesFreeList.Dequeue(HeapAllocationHandle);
+				InUseResources[HeapAllocationHandle] = BlockIt;
+			}
+			else
+			{
+				HeapAllocationHandle = InUseResources.Add(BlockIt);
+			}
+		}
+
+		FMetalBufferPtr Buffer = FMetalBufferPtr(new FMetalBuffer(NS::TransferPtr(Block.Heap->newBuffer(Size, Options, Block.Offset)), NS::Range(0, Size), false));
+		check(Buffer->GetMTLBuffer() && Buffer->GetMTLBuffer().get());
+		AllocationHandlesLUT.Add(Buffer->GetMTLBuffer().get(), HeapAllocationHandle);
+
+		Block.Resource = Buffer->GetMTLBuffer().get();
+
+		return Buffer;
+	}
+	
 	static bool bSupportsBufferSubAllocation = FMetalCommandQueue::SupportsFeature(EMetalFeaturesBufferSubAllocation);
 	bForceUnique |= (!bSupportsBufferSubAllocation && !bSupportsHeaps);
 	
 	uint32 Usage = EnumHasAnyFlags(Flags, BUF_Static) ? UsageStatic : UsageDynamic;
 	
-	FMetalBuffer Buffer;
+	FMetalBufferPtr Buffer = nullptr;
 	uint32 BlockSize = Align(Size, Alignment);
-	mtlpp::StorageMode StorageMode = (mtlpp::StorageMode)(((NSUInteger)Options & mtlpp::ResourceStorageModeMask) >> mtlpp::ResourceStorageModeShift);
-	mtlpp::CpuCacheMode CpuMode = (mtlpp::CpuCacheMode)(((NSUInteger)Options & mtlpp::ResourceCpuCacheModeMask) >> mtlpp::ResourceCpuCacheModeShift);
+	MTL::StorageMode StorageMode = (MTL::StorageMode)(((NS::UInteger)Options & MTL::ResourceStorageModeMask) >> MTL::ResourceStorageModeShift);
+	MTL::CPUCacheMode CpuMode = (MTL::CPUCacheMode)(((NS::UInteger)Options & MTL::ResourceCpuCacheModeMask) >> MTL::ResourceCpuCacheModeShift);
 	
 	// Write combined should be on a case by case basis
-	check(CpuMode == mtlpp::CpuCacheMode::DefaultCache);
+	check(CpuMode == MTL::CPUCacheModeDefaultCache);
 	
 	if (BlockSize <= 33554432)
 	{
 		switch (StorageMode)
 		{
 	#if PLATFORM_MAC
-			case mtlpp::StorageMode::Managed:
+			case MTL::StorageModeManaged:
 			{
 				// TextureBuffers must be 1024 aligned.
 				check(Alignment == 256 || Alignment == 1024);
@@ -1515,7 +1790,7 @@ FMetalBuffer FMetalResourceHeap::CreateBuffer(uint32 Size, uint32 Alignment, EBu
 				 	}
 				 	if (!Found)
 				 	{
-				 		Found = new FMetalSubBufferLinear(HeapAllocSizes[NumHeapSizes - 1], BufferOffsetAlignment, mtlpp::ResourceOptions((NSUInteger)Options & (mtlpp::ResourceStorageModeMask|mtlpp::ResourceHazardTrackingModeMask)), Mutex);
+				 		Found = new FMetalSubBufferLinear(HeapAllocSizes[NumHeapSizes - 1], BufferOffsetAlignment, MTL::ResourceOptions((NS::UInteger)Options & (MTL::ResourceStorageModeMask|MTL::ResourceHazardTrackingModeMask)), Mutex);
 				 		ManagedSubHeaps.Add(Found);
 				 	}
 				 	check(Found);
@@ -1524,22 +1799,22 @@ FMetalBuffer FMetalResourceHeap::CreateBuffer(uint32 Size, uint32 Alignment, EBu
 				 }
 				 else
 				 {
-                    Buffer = ManagedBuffers.CreatePooledResource(FMetalPooledBufferArgs(Queue->GetDevice(), BlockSize, Flags, StorageMode, CpuMode));
+                    Buffer = ManagedBuffers.CreatePooledResource(FRHICommandListExecutor::GetImmediateCommandList(), FMetalPooledBufferArgs(Queue->GetDevice(), BlockSize, Flags, StorageMode, CpuMode));
 					if (GMetalResourcePurgeInPool)
 					{
-						Buffer.SetPurgeableState(mtlpp::PurgeableState::NonVolatile);
+						Buffer->GetMTLBuffer()->setPurgeableState(MTL::PurgeableStateNonVolatile);
 					}
-					DEC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, Buffer.GetLength());
-					DEC_MEMORY_STAT_BY(STAT_MetalPooledBufferUnusedMemory, Buffer.GetLength());
-					INC_MEMORY_STAT_BY(STAT_MetalPooledBufferMemory, Buffer.GetLength());
+					DEC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, Buffer->GetLength());
+					DEC_MEMORY_STAT_BY(STAT_MetalPooledBufferUnusedMemory, Buffer->GetLength());
+					INC_MEMORY_STAT_BY(STAT_MetalPooledBufferMemory, Buffer->GetLength());
 				}
 				break;
 			}
 	#endif
-			case mtlpp::StorageMode::Private:
-			case mtlpp::StorageMode::Shared:
+			case MTL::StorageModePrivate:
+			case MTL::StorageModeShared:
 			{
-				AllocTypes Storage = StorageMode != mtlpp::StorageMode::Private ? AllocShared : AllocPrivate;
+				AllocTypes Storage = StorageMode != MTL::StorageModePrivate ? AllocShared : AllocPrivate;
 				check(Alignment == 16 || Alignment == 64 || Alignment == 256 || Alignment == 1024);
 
 				static bool bSupportsPrivateBufferSubAllocation = FMetalCommandQueue::SupportsFeature(EMetalFeaturesPrivateBufferSubAllocation);
@@ -1562,13 +1837,13 @@ FMetalBuffer FMetalResourceHeap::CreateBuffer(uint32 Size, uint32 Alignment, EBu
 					
 					if (!Found)
 					{
-						Found = new FMetalSubBufferMagazine(MagazineAllocSizes[i], MagazineSizes[i], mtlpp::ResourceOptions((NSUInteger)Options & (mtlpp::ResourceStorageModeMask|mtlpp::ResourceHazardTrackingModeMask)));
+						Found = new FMetalSubBufferMagazine(MagazineAllocSizes[i], MagazineSizes[i], MTL::ResourceOptions((NS::UInteger)Options & (MTL::ResourceStorageModeMask|MTL::ResourceHazardTrackingModeMask)));
 						SmallBuffers[Usage][Storage][i].Add(Found);
 					}
 					check(Found);
 					
 					Buffer = Found->NewBuffer();
-					check(Buffer && Buffer.GetPtr());
+					check(Buffer);
 				}
 				else if (!bForceUnique && BlockSize <= HeapSizes[NumHeapSizes - 1] && (Storage == AllocShared || bSupportsPrivateBufferSubAllocation))
 				{
@@ -1590,25 +1865,25 @@ FMetalBuffer FMetalResourceHeap::CreateBuffer(uint32 Size, uint32 Alignment, EBu
 					if (!Found)
 					{
 						uint32 MinAlign = PLATFORM_MAC ? 1024 : 64;
-						Found = new FMetalSubBufferHeap(HeapAllocSizes[i], MinAlign, mtlpp::ResourceOptions((NSUInteger)Options & (mtlpp::ResourceStorageModeMask|mtlpp::ResourceHazardTrackingModeMask)), Mutex);
+						Found = new FMetalSubBufferHeap(HeapAllocSizes[i], MinAlign, MTL::ResourceOptions((NS::UInteger)Options & (MTL::ResourceStorageModeMask|MTL::ResourceHazardTrackingModeMask)), Mutex);
 						BufferHeaps[Usage][Storage][i].Add(Found);
 					}
 					check(Found);
 					
 					Buffer = Found->NewBuffer(BlockSize);
-					check(Buffer && Buffer.GetPtr());
+					check(Buffer);
 				}
 				else
 				{
 					FScopeLock Lock(&Mutex);
-                    Buffer = Buffers[Storage].CreatePooledResource(FMetalPooledBufferArgs(Queue->GetDevice(), BlockSize, Flags, StorageMode, CpuMode));
+                    Buffer = Buffers[Storage].CreatePooledResource(FRHICommandListExecutor::GetImmediateCommandList(), FMetalPooledBufferArgs(Queue->GetDevice(), BlockSize, Flags, StorageMode, CpuMode));
 					if (GMetalResourcePurgeInPool)
 					{
-                   		Buffer.SetPurgeableState(mtlpp::PurgeableState::NonVolatile);
+                   		Buffer->GetMTLBuffer()->setPurgeableState(MTL::PurgeableStateNonVolatile);
 					}
-					DEC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, Buffer.GetLength());
-					DEC_MEMORY_STAT_BY(STAT_MetalPooledBufferUnusedMemory, Buffer.GetLength());
-					INC_MEMORY_STAT_BY(STAT_MetalPooledBufferMemory, Buffer.GetLength());
+					DEC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, Buffer->GetLength());
+					DEC_MEMORY_STAT_BY(STAT_MetalPooledBufferUnusedMemory, Buffer->GetLength());
+					INC_MEMORY_STAT_BY(STAT_MetalPooledBufferMemory, Buffer->GetLength());
 				}
 				break;
 			}
@@ -1622,52 +1897,65 @@ FMetalBuffer FMetalResourceHeap::CreateBuffer(uint32 Size, uint32 Alignment, EBu
 	else
 	{
 		METAL_GPUPROFILE(FScopedMetalCPUStats CPUStat(FString::Printf(TEXT("AllocBuffer: %llu, %llu"), BlockSize, Options)));
-		Buffer = FMetalBuffer(MTLPP_VALIDATE(mtlpp::Device, Queue->GetDevice(), SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, NewBuffer(BlockSize, Options)), false);
+		//Buffer = FMetalBuffer(MTLPP_VALIDATE(MTL::Device, Queue->GetDevice(), SafeGetRuntimeDebuggingLevel() >= EMetalDebugLevelValidation, NewBuffer(BlockSize, Options)), false);
+        
+        Buffer = FMetalBufferPtr(new FMetalBuffer(NS::TransferPtr(Queue->GetDevice()->newBuffer(BlockSize, Options)), NS::Range(0, BlockSize), false));
+        
 #if STATS || ENABLE_LOW_LEVEL_MEM_TRACKER
 		MetalLLM::LogAllocBuffer(Queue->GetDevice(), Buffer);
 #endif
-		INC_MEMORY_STAT_BY(STAT_MetalDeviceBufferMemory, Buffer.GetLength());
+		INC_MEMORY_STAT_BY(STAT_MetalDeviceBufferMemory, Buffer->GetLength());
 	}
 	
-	if (GMetalBufferZeroFill && Buffer.GetStorageMode() != mtlpp::StorageMode::Private)
+	if (GMetalBufferZeroFill && Buffer->GetMTLBuffer()->storageMode() != MTL::StorageModePrivate)
 	{
-		FMemory::Memset(((uint8*)Buffer.GetContents()), 0, Buffer.GetLength());
+		FMemory::Memset(((uint8*)Buffer->Contents()), 0, Buffer->GetLength());
 	}
 	
-    METAL_DEBUG_OPTION(GetMetalDeviceContext().ValidateIsInactiveBuffer(Buffer));
+    METAL_DEBUG_OPTION(GetMetalDeviceContext().ValidateIsInactiveBuffer(Buffer->GetMTLBuffer().get(), Buffer->GetRange()));
 	METAL_FATAL_ASSERT(Buffer, TEXT("Failed to create buffer of size %u and resource options %u"), Size, (uint32)Options);
 	return Buffer;
 }
 
-void FMetalResourceHeap::ReleaseBuffer(FMetalBuffer& Buffer)
+void FMetalResourceHeap::ReleaseBuffer(FMetalBufferPtr Buffer)
 {
-	mtlpp::StorageMode StorageMode = Buffer.GetStorageMode();
-	if (Buffer.IsPooled())
+    MTL::Buffer* MTLBuffer = Buffer->GetMTLBuffer().get();
+	MTL::StorageMode StorageMode = MTLBuffer->storageMode();
+	
+	FScopeLock ScopeLock(&InUseResourcesCS);
+	
+	auto It = AllocationHandlesLUT.Find(MTLBuffer);
+	if (It && *It != UINT32_MAX)
+	{
+		FreeBlock(*It);
+		AllocationHandlesLUT.Remove(MTLBuffer);
+	}
+	else if (Buffer->IsPooled())
 	{
 		FScopeLock Lock(&Mutex);
 		
-		INC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, Buffer.GetLength());
-		INC_MEMORY_STAT_BY(STAT_MetalPooledBufferUnusedMemory, Buffer.GetLength());
-        DEC_MEMORY_STAT_BY(STAT_MetalPooledBufferMemory, Buffer.GetLength());
+		INC_MEMORY_STAT_BY(STAT_MetalBufferUnusedMemory, Buffer->GetLength());
+		INC_MEMORY_STAT_BY(STAT_MetalPooledBufferUnusedMemory, Buffer->GetLength());
+		DEC_MEMORY_STAT_BY(STAT_MetalPooledBufferMemory, Buffer->GetLength());
 		
 		if (GMetalResourcePurgeInPool)
 		{
-       		Buffer.SetPurgeableState(mtlpp::PurgeableState::Volatile);
+			MTLBuffer->setPurgeableState(MTL::PurgeableStateVolatile);
 		}
         
 		switch (StorageMode)
 		{
 	#if PLATFORM_MAC
-			case mtlpp::StorageMode::Managed:
+			case MTL::StorageModeManaged:
 			{
 				ManagedBuffers.ReleasePooledResource(Buffer);
 				break;
 			}
 	#endif
-			case mtlpp::StorageMode::Private:
-			case mtlpp::StorageMode::Shared:
+			case MTL::StorageModePrivate:
+			case MTL::StorageModeShared:
 			{
-				Buffers[(NSUInteger)StorageMode].ReleasePooledResource(Buffer);
+				Buffers[(NS::UInteger)StorageMode].ReleasePooledResource(Buffer);
 				break;
 			}
 			default:
@@ -1677,30 +1965,66 @@ void FMetalResourceHeap::ReleaseBuffer(FMetalBuffer& Buffer)
 			}
 		}
 	}
-	else
+    else
 	{
-		DEC_MEMORY_STAT_BY(STAT_MetalDeviceBufferMemory, Buffer.GetLength());
-		Buffer.Release();
+		DEC_MEMORY_STAT_BY(STAT_MetalDeviceBufferMemory, Buffer->GetLength());
 	}
 }
 
-FMetalTexture FMetalResourceHeap::CreateTexture(mtlpp::TextureDescriptor Desc, FMetalSurface* Surface)
+MTLTexturePtr FMetalResourceHeap::CreateTexture(MTL::TextureDescriptor* Desc, FMetalSurface* Surface)
 {
 	LLM_SCOPE_METAL(ELLMTagMetal::Textures);
 	LLM_PLATFORM_SCOPE_METAL(ELLMTagMetal::Textures);
+
+	static bool bSupportsHeaps = GetMetalDeviceContext().SupportsFeature(EMetalFeaturesHeaps);
+	if (bSupportsHeaps)
+	{
+		MTL::SizeAndAlign SizeAndAlign = Queue->GetDevice()->heapTextureSizeAndAlign(Desc);
+		uint32 Size = SizeAndAlign.size;
+		uint32 Alignment = SizeAndAlign.align;
+		uint32 BlockSize = Align(Size, Alignment);
+		auto BlockIt = FindOrAllocateBlock(BlockSize, Alignment, Desc->resourceOptions());
+			MemoryBlock& Block = *BlockIt;
 	
-	mtlpp::SizeAndAlign Res = Queue->GetDevice().HeapTextureSizeAndAlign(Desc);
-	mtlpp::Heap Heap = GetTextureHeap(Desc, Res);
+		check(Block.Resource == nil && Block.Size == BlockSize);
+		Block.Options = Desc->resourceOptions();
+
+		FScopeLock ScopeLock(&InUseResourcesCS);
+		
+		uint32 HeapAllocationHandle = UINT32_MAX;
+		{
+			if (!InUseResourcesFreeList.IsEmpty())
+			{
+				InUseResourcesFreeList.Dequeue(HeapAllocationHandle);
+				InUseResources[HeapAllocationHandle] = BlockIt;
+			}
+			else
+			{
+				HeapAllocationHandle = InUseResources.Add(BlockIt);
+			}
+		}
+		check(HeapAllocationHandle != UINT32_MAX);
+
+		MTLTexturePtr Texture = NS::TransferPtr(Block.Heap->newTexture(Desc,Block.Offset));
+		AllocationHandlesLUT.Add(Texture.get(), HeapAllocationHandle);
+
+		Block.Resource = Texture.get();
+
+		return Texture;
+	}
+		
+	MTL::SizeAndAlign Res = Queue->GetDevice()->heapTextureSizeAndAlign(Desc);
+    MTLHeapPtr Heap = GetTextureHeap(Desc, Res);
 	if (Heap)
 	{
 		METAL_GPUPROFILE(FScopedMetalCPUStats CPUStat(FString::Printf(TEXT("AllocTexture: %s"), TEXT("")/**FString([Desc.GetPtr() description])*/)));
-		FMetalTexture Texture = Heap.NewTexture(Desc);
+		MTLTexturePtr Texture = NS::TransferPtr(Heap->newTexture(Desc));
 #if STATS || ENABLE_LOW_LEVEL_MEM_TRACKER
-		MetalLLM::LogAllocTexture(Queue->GetDevice(), Desc, Texture);
+		MetalLLM::LogAllocTexture(Queue->GetDevice(), Desc, Texture.get());
 #endif
 		return Texture;
 	}
-	else if (Desc.GetUsage() & mtlpp::TextureUsage::RenderTarget)
+	else if (Desc->usage() & MTL::TextureUsageRenderTarget)
 	{
 		LLM_PLATFORM_SCOPE_METAL(ELLMTagMetal::RenderTargets);
 		return TargetPool.CreateTexture(Queue->GetDevice(), Desc);
@@ -1711,58 +2035,66 @@ FMetalTexture FMetalResourceHeap::CreateTexture(mtlpp::TextureDescriptor Desc, F
 	}
 }
 
-void FMetalResourceHeap::ReleaseTexture(FMetalSurface* Surface, FMetalTexture& Texture)
+void FMetalResourceHeap::ReleaseTexture(FMetalSurface* Surface, MTLTexturePtr Texture)
 {
-	if (Texture && !Texture.GetBuffer() && !Texture.GetParentTexture() && !Texture.GetHeap())
+	FScopeLock ScopeLock(&InUseResourcesCS);
+	
+	if (Texture && !Texture->buffer() && !Texture->parentTexture())
 	{
-        if (Texture.GetUsage() & mtlpp::TextureUsage::RenderTarget)
-        {
-           	TargetPool.ReleaseTexture(Texture);
-        }
-        else
-        {
-            TexturePool.ReleaseTexture(Texture);
-        }
+		auto It = AllocationHandlesLUT.Find(Texture.get());
+		if (It && *It != UINT32_MAX)
+		{
+			FreeBlock(*It);
+			AllocationHandlesLUT.Remove(Texture.get());
+		}
+		else if (Texture->usage() & MTL::TextureUsageRenderTarget)
+		{
+			TargetPool.ReleaseTexture(Texture);
+		}
+		else
+		{
+			TexturePool.ReleaseTexture(Texture);
+		}
 	}
 }
 
 void FMetalResourceHeap::Compact(FMetalRenderPass* Pass, bool const bForce)
 {
 	FScopeLock Lock(&Mutex);
-    for (uint32 u = 0; u < NumUsageTypes; u++)
-    {
-        for (uint32 t = 0; t < NumAllocTypes; t++)
-        {
-            for (uint32 i = 0; i < NumMagazineSizes; i++)
-            {
-                for (auto It = SmallBuffers[u][t][i].CreateIterator(); It; ++It)
-                {
-                    FMetalSubBufferMagazine* Data = *It;
-                    if (Data->NumCurrentAllocations() == 0 || bForce)
-                    {
-                        It.RemoveCurrent();
-                        delete Data;
-                    }
-                }
-            }
-            
-            uint32 BytesCompacted = 0;
-            uint32 const BytesToCompact = GMetalHeapBufferBytesToCompact;
-            
-            for (uint32 i = 0; i < NumHeapSizes; i++)
-            {
-                for (auto It = BufferHeaps[u][t][i].CreateIterator(); It; ++It)
-                {
-                    FMetalSubBufferHeap* Data = *It;
-                    if (Data->NumCurrentAllocations() == 0 || bForce)
-                    {
-                        It.RemoveCurrent();
-                        delete Data;
-                    }
-                }
-            }
-        }
-    }
+	for (uint32 u = 0; u < NumUsageTypes; u++)
+	{
+		for (uint32 t = 0; t < NumAllocTypes; t++)
+		{
+			for (uint32 i = 0; i < NumMagazineSizes; i++)
+			{
+				for (auto It = SmallBuffers[u][t][i].CreateIterator(); It; ++It)
+				{
+					FMetalSubBufferMagazine* Data = *It;
+					if (Data->NumCurrentAllocations() == 0 || bForce)
+					{
+						It.RemoveCurrent();
+						delete Data;
+					}
+				}
+			}
+
+			uint32 BytesCompacted = 0;
+			uint32 const BytesToCompact = GMetalHeapBufferBytesToCompact;
+
+			for (uint32 i = 0; i < NumHeapSizes; i++)
+			{
+				for (auto It = BufferHeaps[u][t][i].CreateIterator(); It; ++It)
+				{
+					FMetalSubBufferHeap* Data = *It;
+					if (Data->NumCurrentAllocations() == 0 || bForce)
+					{
+						It.RemoveCurrent();
+						delete Data;
+					}
+				}
+			}
+		}
+	}
 
 	for(uint32 AllocTypeIndex = 0;AllocTypeIndex < NumAllocTypes;++AllocTypeIndex)
 	{

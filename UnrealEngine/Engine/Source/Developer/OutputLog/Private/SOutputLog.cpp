@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "SOutputLog.h"
+#include "ConsoleSettings.h"
 #include "Framework/Text/IRun.h"
 #include "Framework/Text/TextLayout.h"
 #include "Misc/ConfigCacheIni.h"
@@ -32,6 +33,8 @@
 #include "Widgets/Text/SlateEditableTextTypes.h"
 #include "OutputLogSettings.h"
 #include "OutputLogStyle.h"
+#include "OutputLogMenuContext.h"
+#include "ToolMenus.h"
 
 
 #define LOCTEXT_NAMESPACE "SOutputLog"
@@ -361,6 +364,7 @@ void SConsoleInputBox::OnTextChanged(const FText& InText)
 			};
 
 			IConsoleManager::Get().ForEachConsoleObjectThatContains(FConsoleObjectVisitor::CreateLambda(OnConsoleVariable), *InputTextStr);
+			AutoCompleteList.Append(GetDefault<UConsoleSettings>()->GetFilteredManualAutoCompleteCommands(InputTextStr));
 		}
 		AutoCompleteList.Sort([InputTextStr](const FString& A, const FString& B)
 		{ 
@@ -1099,6 +1103,22 @@ FOutputLogTextLayoutMarshaller::FOutputLogTextLayoutMarshaller(TArray< TSharedPt
 {
 }
 
+//////////////////////////////////////////////////////////////////////////
+
+namespace
+{
+	const FName SettingsMenuName("OutputLog.SettingsMenu");
+
+	const FName SettingsWordWrapEntryName("WordWrapEnable");
+	const FName SettingsTimestampsSubMenuName("TimestampsSubMenu");
+	const FName SettingsClearOnPIEEntryName("ClearOnPIE");
+
+	const FName SettingsSeparatorName("Separator");
+
+	const FName SettingsBrowseLogDirectoryEntryName("BrowseLogDirectory");
+	const FName SettingsOpenLogExternalEntryName("OpenLogExternal");
+}
+
 BEGIN_SLATE_FUNCTION_BUILD_OPTIMIZATION
 void SOutputLog::Construct( const FArguments& InArgs, bool bCreateDrawerDockButton)
 {
@@ -1115,6 +1135,9 @@ void SOutputLog::Construct( const FArguments& InArgs, bool bCreateDrawerDockButt
 		.AutoWrapText(this, &SOutputLog::IsWordWrapEnabled)
 		.OnVScrollBarUserScrolled(this, &SOutputLog::OnUserScrolled)
 		.ContextMenuExtender(this, &SOutputLog::ExtendTextBoxMenu);
+
+	// We take the settings bit flags passed in, and register a corresponding runtime tool menu profile.
+	const FName SettingsMenuProfileName = GetSettingsMenuProfileForFlags(InArgs._SettingsMenuFlags);
 
 	ChildSlot
 	.Padding(3)
@@ -1178,7 +1201,7 @@ void SOutputLog::Construct( const FArguments& InArgs, bool bCreateDrawerDockButt
 			[
 				SNew(SComboButton)
 				.ComboButtonStyle(FOutputLogStyle::Get(), "SimpleComboButton")
-				.OnGetMenuContent(this, &SOutputLog::GetViewButtonContent, InArgs._SettingsMenuFlags)
+				.OnGetMenuContent(this, &SOutputLog::GetSettingsMenuContent, SettingsMenuProfileName)
 				.ButtonContent()
 				[
 					SNew(SHorizontalBox)
@@ -1932,105 +1955,254 @@ void SOutputLog::UpdateOutputLogFilter(const FOutputLogFilter& InFilter)
 	Refresh();
 }
 
-TSharedRef<SWidget> SOutputLog::GetViewButtonContent(EOutputLogSettingsMenuFlags Flags)
+namespace
 {
-	TSharedPtr<FExtender> Extender;
-	FMenuBuilder MenuBuilder(true, nullptr, Extender, true);
-
-	const bool bSupportWordWrapping = (Flags & EOutputLogSettingsMenuFlags::SkipEnableWordWrapping) == EOutputLogSettingsMenuFlags::None;
-	if (bSupportWordWrapping)
+	template <typename TContext>
+	TSharedPtr<SOutputLog> GetWidgetFromContext(const TContext& InContext)
 	{
-		MenuBuilder.AddMenuEntry(
-			LOCTEXT("WordWrapEnabledOption", "Enable Word Wrapping"),
-			LOCTEXT("WordWrapEnabledOptionToolTip", "Enable word wrapping in the Output Log."),
-			FSlateIcon(),
-			FUIAction(
-				FExecuteAction::CreateLambda([this] {
-					// This is a toggle, hence that it is inverted
-					SetWordWrapEnabled(IsWordWrapEnabled() ? ECheckBoxState::Unchecked : ECheckBoxState::Checked);
-				}),
-				FCanExecuteAction::CreateLambda([] { return true; }),
-				FIsActionChecked::CreateSP(this, &SOutputLog::IsWordWrapEnabled)
-			),
-			NAME_None,
-			EUserInterfaceActionType::ToggleButton
-		);
-	}
-	FText Tooltip;
+		UOutputLogMenuContext* Context = InContext.template FindContext<UOutputLogMenuContext>();
+		if (!ensure(Context))
+		{
+			return nullptr;
+		}
 
-	#if WITH_EDITORONLY_DATA
-		Tooltip = UOutputLogSettings::StaticClass()->FindPropertyByName(
-			GET_MEMBER_NAME_CHECKED(UOutputLogSettings, LogTimestampMode))->GetToolTipText();
-	#endif // WITH_EDITORONLY_DATA
-	MenuBuilder.AddSubMenu(
-		TAttribute<FText>::CreateLambda([this]()
+		TSharedPtr<SOutputLog> Widget = Context->GetOutputLog();
+		ensure(Widget);
+		return Widget;
+	};
+};
+
+// static
+void SOutputLog::RegisterSettingsMenu()
+{
+	// We declare the menu structure during module load, but instantiate the
+	// widget much later. Because of this, predicates/actions need to "late
+	// bind" to the instance, by pulling it back out of the FToolMenuContext
+	// or FToolMenuSection. See GetWidgetFromContext() above.
+
+	UToolMenus* ToolMenus = UToolMenus::Get();
+	if (!ensure(ToolMenus))
+	{
+		return;
+	}
+
+	if (ensure(!ToolMenus->IsMenuRegistered(SettingsMenuName)))
+	{
+		UToolMenu* Menu = ToolMenus->RegisterMenu(SettingsMenuName);
+
+		FToolMenuSection& Section = Menu->AddSection(NAME_None);
+
+		RegisterSettingsMenu_WordWrap(Section);
+		RegisterSettingsMenu_TimestampMode(Section);
+		RegisterSettingsMenu_ClearOnPIE(Section);
+
+		Section.AddSeparator(SettingsSeparatorName);
+
+		RegisterSettingsMenu_BrowseLogs(Section);
+		RegisterSettingsMenu_OpenLogExternal(Section);
+	}
+}
+
+// static
+void SOutputLog::RegisterSettingsMenu_WordWrap(FToolMenuSection& InSection)
+{
+	FToolUIAction WordWrapAction;
+	WordWrapAction.ExecuteAction = FToolMenuExecuteAction::CreateLambda([](const FToolMenuContext& InContext)
+		{
+			if (TSharedPtr<SOutputLog> This = GetWidgetFromContext(InContext); ensure(This))
 			{
-				const UEnum* Enum = StaticEnum<ELogTimes::Type>();
-				return FText::Format(LOCTEXT("TimestampsSubmenu", "Timestamp Mode: {0}"),
-					Enum->GetDisplayNameTextByIndex(this->GetSelectedTimestampMode()));
-			}),
-		Tooltip,
-		FNewMenuDelegate::CreateSP(this, &SOutputLog::AddTimestampMenuSection));
+				This->SetWordWrapEnabled(This->IsWordWrapEnabled() ? ECheckBoxState::Unchecked : ECheckBoxState::Checked);
+			}
+		});
+	WordWrapAction.GetActionCheckState = FToolMenuGetActionCheckState::CreateLambda([](const FToolMenuContext& InContext) -> ECheckBoxState
+		{
+			if (TSharedPtr<SOutputLog> This = GetWidgetFromContext(InContext); ensure(This))
+			{
+				return This->IsWordWrapEnabled() ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+			}
 
+			return ECheckBoxState::Unchecked;
+		});
 
+	InSection.AddMenuEntry(
+		SettingsWordWrapEntryName,
+		LOCTEXT("WordWrapEnabledOption", "Enable Word Wrapping"),
+		LOCTEXT("WordWrapEnabledOptionToolTip", "Enable word wrapping in the Output Log."),
+		FSlateIcon(),
+		WordWrapAction,
+		EUserInterfaceActionType::ToggleButton
+	);
+}
+
+// static
+void SOutputLog::RegisterSettingsMenu_TimestampMode(FToolMenuSection& InSection)
+{
+	InSection.AddDynamicEntry(SettingsTimestampsSubMenuName, FNewToolMenuSectionDelegate::CreateLambda([](FToolMenuSection& InSection)
+		{
+			FText TimestampModeTooltip;
+#if WITH_EDITORONLY_DATA
+			TimestampModeTooltip = UOutputLogSettings::StaticClass()->FindPropertyByName(
+				GET_MEMBER_NAME_CHECKED(UOutputLogSettings, LogTimestampMode))->GetToolTipText();
+#endif // WITH_EDITORONLY_DATA
+
+			if (TSharedPtr<SOutputLog> This = GetWidgetFromContext(InSection); ensure(This))
+			{
+				InSection.AddSubMenu(
+					SettingsTimestampsSubMenuName,
+					TAttribute<FText>::CreateLambda([This]()
+						{
+							const UEnum* Enum = StaticEnum<ELogTimes::Type>();
+							return FText::Format(LOCTEXT("TimestampsSubmenu", "Timestamp Mode: {0}"),
+								Enum->GetDisplayNameTextByIndex(This->GetSelectedTimestampMode()));
+						}),
+					TimestampModeTooltip,
+					FNewMenuDelegate::CreateSP(This.ToSharedRef(), &SOutputLog::AddTimestampMenuSection)
+				);
+			}
+		}));
+}
+
+// static
+void SOutputLog::RegisterSettingsMenu_ClearOnPIE(FToolMenuSection& InSection)
+{
 #if WITH_EDITOR
-	const bool bSupportClearOnPie = (Flags & EOutputLogSettingsMenuFlags::SkipClearOnPie) == EOutputLogSettingsMenuFlags::None;
-	if (bSupportClearOnPie)
-	{
-		MenuBuilder.AddMenuEntry(
-			LOCTEXT("ClearOnPIE", "Clear on PIE"),
-			LOCTEXT("ClearOnPIEToolTip", "Enable clearing of the Output Log on PIE startup."),
-			FSlateIcon(),
-			FUIAction(
-				FExecuteAction::CreateLambda([this] {
-					// This is a toggle, hence that it is inverted
-					SetClearOnPIE(IsClearOnPIEEnabled() ? ECheckBoxState::Unchecked : ECheckBoxState::Checked);
-				}),
-				FCanExecuteAction::CreateLambda([] { return true; }),
-				FIsActionChecked::CreateSP(this, &SOutputLog::IsClearOnPIEEnabled)
-			),
-			NAME_None,
-			EUserInterfaceActionType::ToggleButton
-		);
-	}
-#else
-	constexpr bool bSupportClearOnPie = false;
+	FToolUIAction ClearOnPIEAction;
+	ClearOnPIEAction.ExecuteAction = FToolMenuExecuteAction::CreateLambda([](const FToolMenuContext& InContext)
+		{
+			if (TSharedPtr<SOutputLog> This = GetWidgetFromContext(InContext); ensure(This))
+			{
+				This->SetClearOnPIE(This->IsClearOnPIEEnabled() ? ECheckBoxState::Unchecked : ECheckBoxState::Checked);
+			}
+		});
+	ClearOnPIEAction.GetActionCheckState = FToolMenuGetActionCheckState::CreateLambda([](const FToolMenuContext& InContext) -> ECheckBoxState
+		{
+			if (TSharedPtr<SOutputLog> This = GetWidgetFromContext(InContext); ensure(This))
+			{
+				return This->IsClearOnPIEEnabled() ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+			}
+
+			return ECheckBoxState::Unchecked;
+		});
+
+	InSection.AddMenuEntry(
+		SettingsClearOnPIEEntryName,
+		LOCTEXT("ClearOnPIE", "Clear on PIE"),
+		LOCTEXT("ClearOnPIEToolTip", "Enable clearing of the Output Log on PIE startup."),
+		FSlateIcon(),
+		ClearOnPIEAction,
+		EUserInterfaceActionType::ToggleButton
+	);
 #endif
+}
 
-	const bool bSupportSourceLocation = (Flags & EOutputLogSettingsMenuFlags::SkipOpenSourceButton) == EOutputLogSettingsMenuFlags::None;
-	const bool bSupportExternalEditor = (Flags & EOutputLogSettingsMenuFlags::SkipOpenInExternalEditorButton) == EOutputLogSettingsMenuFlags::None;
-	const bool bNeedsSeparator = (bSupportWordWrapping || bSupportClearOnPie) && (bSupportSourceLocation || bSupportExternalEditor);
-	if (bNeedsSeparator)
+// static
+void SOutputLog::RegisterSettingsMenu_BrowseLogs(FToolMenuSection& InSection)
+{
+	InSection.AddMenuEntry(
+		SettingsBrowseLogDirectoryEntryName,
+		LOCTEXT("FindSourceFile", "Open Source Location"),
+		LOCTEXT("FindSourceFileTooltip", "Opens the folder containing the source of the Output Log."),
+		FSlateIcon(FOutputLogStyle::Get().GetStyleSetName(), "OutputLog.OpenSourceLocation"),
+		FToolMenuExecuteAction::CreateLambda([](const FToolMenuContext& InContext)
+			{
+				if (TSharedPtr<SOutputLog> This = GetWidgetFromContext(InContext); ensure(This))
+				{
+					This->OpenLogFileInExplorer();
+				}
+			})
+	);
+}
+
+// static
+void SOutputLog::RegisterSettingsMenu_OpenLogExternal(FToolMenuSection& InSection)
+{
+	InSection.AddMenuEntry(
+		SettingsOpenLogExternalEntryName,
+		LOCTEXT("OpenInExternalEditor", "Open In External Editor"),
+		LOCTEXT("OpenInExternalEditorTooltip", "Opens the Output Log in the default external editor."),
+		FSlateIcon(FOutputLogStyle::Get().GetStyleSetName(), "OutputLog.OpenInExternalEditor"),
+		FToolMenuExecuteAction::CreateLambda([](const FToolMenuContext& InContext)
+			{
+				if (TSharedPtr<SOutputLog> This = GetWidgetFromContext(InContext); ensure(This))
+				{
+					This->OpenLogFileInExternalEditor();
+				}
+			})
+	);
+}
+
+FName SOutputLog::GetSettingsMenuProfileForFlags(EOutputLogSettingsMenuFlags InFlags)
+{
+	UToolMenus* ToolMenus = UToolMenus::Get();
+	if (!ensure(ToolMenus) || InFlags == EOutputLogSettingsMenuFlags::None)
 	{
-		MenuBuilder.AddMenuSeparator();
+		return NAME_None;
 	}
 
-	if (bSupportSourceLocation)
+	const FName MenuProfileName = *FString::Printf(TEXT("OutputLogSettings_Flags%i"), static_cast<int32>(InFlags));
+	FToolMenuProfile* FlagsProfile = ToolMenus->FindRuntimeMenuProfile(SettingsMenuName, MenuProfileName);
+	if (!FlagsProfile)
 	{
-		MenuBuilder.AddMenuEntry(
-			LOCTEXT("FindSourceFile", "Open Source Location"),
-			LOCTEXT("FindSourceFileTooltip", "Opens the folder containing the source of the Output Log."),
-			FSlateIcon(FOutputLogStyle::Get().GetStyleSetName(), "OutputLog.OpenSourceLocation"),
-			FUIAction(
-				FExecuteAction::CreateSP(this, &SOutputLog::OpenLogFileInExplorer)
-			)
-		);
-	}
-	
-	if (bSupportExternalEditor)
-	{
-		// Open In External Editor
-		MenuBuilder.AddMenuEntry(
-			LOCTEXT("OpenInExternalEditor", "Open In External Editor"),
-			LOCTEXT("OpenInExternalEditorTooltip", "Opens the Output Log in the default external editor."),
-			FSlateIcon(FOutputLogStyle::Get().GetStyleSetName(), "OutputLog.OpenInExternalEditor"),
-			FUIAction(
-				FExecuteAction::CreateSP(this, &SOutputLog::OpenLogFileInExternalEditor)
-			)
-		);
+		FlagsProfile = ToolMenus->AddRuntimeMenuProfile(SettingsMenuName, MenuProfileName);
+
+		const bool bSupportWordWrapping = !EnumHasAnyFlags(InFlags, EOutputLogSettingsMenuFlags::SkipEnableWordWrapping);
+		const bool bSupportClearOnPie = !EnumHasAnyFlags(InFlags, EOutputLogSettingsMenuFlags::SkipClearOnPie);
+		const bool bSupportBrowseLocation = !EnumHasAnyFlags(InFlags, EOutputLogSettingsMenuFlags::SkipOpenSourceButton);
+		const bool bSupportExternalEditor = !EnumHasAnyFlags(InFlags, EOutputLogSettingsMenuFlags::SkipOpenInExternalEditorButton);
+
+		const bool bNeedsSeparator = (bSupportWordWrapping || bSupportClearOnPie) && (bSupportBrowseLocation || bSupportExternalEditor);
+
+		if (!bSupportWordWrapping)
+		{
+			FlagsProfile->AddEntry(SettingsWordWrapEntryName)->Visibility = ECustomizedToolMenuVisibility::Hidden;
+		}
+
+		if (!bSupportClearOnPie)
+		{
+			FlagsProfile->AddEntry(SettingsClearOnPIEEntryName)->Visibility = ECustomizedToolMenuVisibility::Hidden;
+		}
+
+		if (!bNeedsSeparator)
+		{
+			FlagsProfile->AddEntry(SettingsSeparatorName)->Visibility = ECustomizedToolMenuVisibility::Hidden;
+		}
+
+		if (!bSupportBrowseLocation)
+		{
+			FlagsProfile->AddEntry(SettingsBrowseLogDirectoryEntryName)->Visibility = ECustomizedToolMenuVisibility::Hidden;
+		}
+
+		if (!bSupportExternalEditor)
+		{
+			FlagsProfile->AddEntry(SettingsOpenLogExternalEntryName)->Visibility = ECustomizedToolMenuVisibility::Hidden;
+		}
 	}
 
-	return MenuBuilder.MakeWidget();
+	return MenuProfileName;
+}
+
+TSharedRef<SWidget> SOutputLog::GetSettingsMenuContent(FName InMenuProfileName)
+{
+	UToolMenus* ToolMenus = UToolMenus::Get();
+	if (!ensure(ToolMenus))
+	{
+		return SNullWidget::NullWidget;
+	}
+
+	FToolMenuContext MenuContext;
+
+	UOutputLogMenuContext* OutputLogContext = NewObject<UOutputLogMenuContext>();
+	OutputLogContext->Init(SharedThis(this));
+	MenuContext.AddObject(OutputLogContext);
+
+	if (InMenuProfileName != NAME_None)
+	{
+		UToolMenuProfileContext* ProfileContext = NewObject<UToolMenuProfileContext>();
+		ProfileContext->ActiveProfiles.Add(InMenuProfileName);
+		MenuContext.AddObject(ProfileContext);
+	}
+
+	return ToolMenus->GenerateWidget(SettingsMenuName, MenuContext);
 }
 
 TSharedRef<SWidget> SOutputLog::CreateDrawerDockButton()
@@ -2187,7 +2359,7 @@ void FOutputLogFilter::ToggleLogCategory(const FName& LogCategory)
 	}
 	else
 	{
-		SelectedLogCategories.RemoveAt(FoundIndex, /*Count=*/1, /*bAllowShrinking=*/false);
+		SelectedLogCategories.RemoveAt(FoundIndex, /*Count=*/1, EAllowShrinking::No);
 	}
 }
 

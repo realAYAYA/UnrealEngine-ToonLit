@@ -50,7 +50,8 @@ void FWorldConditionResultInvalidationHandle::InvalidateResult() const
 	}
 	else
 	{
-		UE_LOG(LogWorldCondition, Warning, TEXT("World Condition: Trying to access freed state memory while calling InvalidateResult(). Make sure you are calling Deactivate() on your world condition query, and that you unregister any delegates on world conditions."));
+		UE_LOG(LogWorldCondition, Warning, TEXT("World Condition: Trying to access freed state memory while calling InvalidateResult(). "
+			"Make sure you are calling Deactivate() on your world condition query, and that you unregister any delegates on world conditions."));
 	}
 }
 
@@ -65,18 +66,34 @@ FWorldConditionQueryState::~FWorldConditionQueryState()
 	// Try to clean up the best we can in case things are still running.
 	if (IsInitialized() && SharedDefinition.IsValid())
 	{
-		if (IsValid(Owner))
+		if (AreConditionsActivated())
 		{
-			// We can call Deactivate(), but we dont know the context data, so some uninitialization can potentially be incomplete.
-			UE_LOG(LogWorldCondition, Warning, TEXT("World Condition: State %p owned by %s is still active on destructor, calling Deactivate() without context data, might leak memory or resources."), this, *GetFullNameSafe(Owner));
-			const FWorldConditionContextData ContextData(*SharedDefinition->GetSchemaClass().GetDefaultObject());
-			const FWorldConditionContext Context(*this, ContextData);
-			Context.Deactivate();
+			if (IsValid(Owner))
+			{
+				// We can call Deactivate(), but we dont know the context data, so some uninitialization can potentially be incomplete.
+				UE_LOG(LogWorldCondition, Warning, TEXT("World Condition: State %p owned by %s is still active on destructor, "
+					"calling Deactivate() without context data, might leak memory or resources."),
+					this,
+					*GetFullNameSafe(Owner));
+
+				const FWorldConditionContextData ContextData(*SharedDefinition->GetSchemaClass().GetDefaultObject());
+				const FWorldConditionContext Context(*this, ContextData);
+				Context.Deactivate();
+			}
+			else
+			{
+				// The owner is not valid, so we cannot call Deactivate(), the best we can do is to clean up the memory properly, as the shared definition is valid. 
+				UE_LOG(LogWorldCondition, Warning, TEXT("World Condition: State %p owned by %s is still active on destructor, "
+					"failed to call Deactivate() due to invalid owner, calling Free(), might leak memory or resources."),
+					this,
+					*GetFullNameSafe(Owner));
+
+				Free();
+			}
 		}
 		else
 		{
-			// The owner is not valid, os we cannot call Deactivate(), the best we can do is to clean up the memory properly, as the shared definition is valid. 
-			UE_LOG(LogWorldCondition, Warning, TEXT("World Condition: State %p owned by %s is still active on destructor, failed to call Deactivate() due to invalid owner, calling Free(), might leak memory or resources."), this, *GetFullNameSafe(Owner));
+			// Activate() was never (e.g. Lazy activated conditions) called so only need to call Free() 
 			Free();
 		}
 	}
@@ -113,6 +130,12 @@ void FWorldConditionQueryState::InitializeInternal(const UObject* InOwner, const
 		return;
 	}
 
+	if (!InSharedDefinition->IsLinked())
+	{
+		UE_LOG(LogWorldCondition, Error, TEXT("World Condition: Trying to initialize query state with invalid definition for %s."), *GetNameSafe(Owner));
+		return;
+	}
+	
 	SharedDefinition = InSharedDefinition;
 
 	const FInstancedStructContainer& Conditions = SharedDefinition->GetConditions(); 
@@ -347,7 +370,8 @@ bool FWorldConditionQuerySharedDefinition::Link(const UObject* Outer)
 				*GetNameSafe(Outer));
 			return false;
 		}
-		
+		Condition->ConditionIndex = Index;
+
 		if (auto* StateStruct = Condition->GetRuntimeStateType(); StateStruct && *StateStruct)
 		{
 			int32 StructMinAlignment = 0;
@@ -459,7 +483,7 @@ FText FWorldConditionQueryDefinition::GetDescription() const
 		}
 		else
 		{
-			ensureMsgf(TEXT("Unhandled operator %s\n"), *UEnum::GetValueAsString(Condition.GetOperator()));
+			ensureMsgf(false, TEXT("Unhandled operator %s\n"), *UEnum::GetValueAsString(Condition.GetOperator()));
 			break;
 		}
 		Builder.Append(Operator.ToString());

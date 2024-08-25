@@ -10,6 +10,7 @@
 #include "AssetRegistry/AssetData.h"
 #include "CollectionManagerTypes.h"
 #include "AssetThumbnail.h"
+#include "IContentBrowserSingleton.h"
 
 class SComboButton;
 class FAssetThumbnailPool;
@@ -19,7 +20,6 @@ class SBox;
 class ITableRow;
 class STableViewBase;
 class SToolInputAssetPicker;
-
 
 /**
 * SToolInputAssetComboPanel provides a similar UI to SComboPanel but
@@ -70,6 +70,7 @@ public:
 		, _AssetThumbnailLabel(EThumbnailLabel::NoLabel)
 		, _bForceShowEngineContent(false)
 		, _bForceShowPluginContent(false)
+		, _AssetViewType(EAssetViewType::Tile)
 	{
 		}
 
@@ -111,6 +112,9 @@ public:
 
 		/** Indicates if plugin content should always be shown */
 		SLATE_ARGUMENT(bool, bForceShowPluginContent)
+
+		/** Sets the type of display we want the asset view to take. */
+		SLATE_ARGUMENT(EAssetViewType::Type, AssetViewType)
 
 	SLATE_END_ARGS()
 

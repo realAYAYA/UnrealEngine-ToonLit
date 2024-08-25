@@ -30,7 +30,10 @@ public:
 	virtual void EnumerateSkeletalMeshCurveIds(uint64 InObjectId, TFunctionRef<void(uint32)> Callback) const override;
 	virtual void EnumerateSkeletalMeshCurves(const FSkeletalMeshPoseMessage& InMessage, TFunctionRef<void(const FSkeletalMeshNamedCurve&)> Callback) const override;
 	virtual void EnumeratePoseWatchCurves(const FPoseWatchMessage& InMessage, TFunctionRef<void(const FSkeletalMeshNamedCurve&)> Callback) const override;
+	virtual void EnumerateExternalMorphSets(const FSkeletalMeshPoseMessage& InMessage, TFunctionRef<void(const FExternalMorphWeightMessage&)> Callback) const override;
 	virtual bool ReadTickRecordTimeline(uint64 InObjectId, TFunctionRef<void(const TickRecordTimeline&)> Callback) const override;
+	virtual bool ReadInertializationTimeline(uint64 InObjectId, TFunctionRef<void(const InertializationTimeline&)> Callback) const override;
+	virtual void EnumerateInertializationNodes(uint64 InObjectId, TFunctionRef<void(int32 NodeId, EInertializationType Type)> Callback) const override;
 	virtual void EnumerateTickRecordIds(uint64 InObjectId, TFunctionRef<void(uint64, int32)> Callback) const override;
 	virtual void EnumerateAnimGraphTimelines(TFunctionRef<void(uint64 ObjectId, const AnimGraphTimeline&)> Callback) const override;
 	virtual bool ReadAnimGraphTimeline(uint64 InObjectId, TFunctionRef<void(const AnimGraphTimeline&)> Callback) const override;
@@ -52,6 +55,9 @@ public:
 	virtual FText FormatNodeKeyValue(const FAnimNodeValueMessage& InMessage) const override;
 	virtual FText FormatNodeValue(const FAnimNodeValueMessage& InMessage) const override;
 
+	/** Does the given object have external morph sets? */
+	bool HasExternalMorphSets(uint64 InObjectId) const;
+
 	// Check to see if any data is present for this provider. Used as an early-out when processing.
 	bool HasAnyData() const;
 
@@ -64,6 +70,7 @@ public:
 	/** Add a skeletal mesh pose/curves etc. */
 	void AppendSkeletalMeshComponent(uint64 InObjectId, uint64 InMeshId, double InProfileTime, double InRecordingTime, uint16 InLodIndex, uint16 InFrameCounter, const TArrayView<const FTransform>& InPose, const TArrayView<const FSkeletalMeshNamedCurve>& InCurves);
 	void AppendSkeletalMeshComponent(uint64 InObjectId, uint64 InMeshId, double InProfileTime, double InRecordingTime, uint16 InLodIndex, uint16 InFrameCounter, const TArrayView<const float>& InComponentToWorldRaw, const TArrayView<const float>& InPoseRaw, const TArrayView<const uint32>& InCurveIds, const TArrayView<const float>& InCurveValues);
+	void AppendSkeletalMeshComponent(uint64 InObjectId, uint64 InMeshId, double InProfileTime, double InRecordingTime, uint16 InLodIndex, uint16 InFrameCounter, const TArrayView<const float>& InComponentToWorldRaw, const TArrayView<const float>& InPoseRaw, const TArrayView<const uint32>& InCurveIds, const TArrayView<const float>& InCurveValues, const TArrayView<const float>& InExternalMorphWeights, const TArrayView<const int32>& InExternalMorphCounts);
 
 	/** Get a skeletal mesh for a specified path. If the mesh no longer exists, make a fake one */
 	USkeletalMesh* GetSkeletalMesh(const TCHAR* InPath);
@@ -116,6 +123,9 @@ public:
 	void AppendPoseWatch(uint64 InAnimInstanceId, double InTime, double InRecordingTime, uint64 PoseWatchId, const TArrayView<const float>& BoneTransformsRaw, const TArrayView<const uint16>& RequiredBones, const TArrayView<const float>& WorldTransformRaw, const bool bIsEnabled);
 	void AppendPoseWatch(uint64 InComponentId, uint64 InAnimInstanceId, double InTime, double InRecordingTime, uint64 PoseWatchId, uint32 NameId, FColor Color, const TArrayView<const float>& BoneTransformsRaw, const TArrayView<const uint32>& CurveIds, const TArrayView<const float>& CurveValues, const TArrayView<const uint16>& RequiredBones, const TArrayView<const float>& WorldTransformRaw, const bool bIsEnabled);
 
+	/** Append Inertialization data */
+	void AppendInertialization(uint64 InAnimInstanceId, double InProfileTime, double InRecordingTime, int32 NodeId, float InWeight, EInertializationType InType);
+
 private:
 	/** Add anim node values helper */
 	void AppendAnimNodeValue(uint64 InAnimInstanceId, double InTime, double InRecordingTime, uint16 InFrameCounter, int32 InNodeId, const TCHAR* InKey, FAnimNodeValueMessage& InMessage);
@@ -140,6 +150,7 @@ private:
 	TMap<uint64, uint32> ObjectIdToAnimNotifyStateTimelines;
 	TMap<uint64, uint32> ObjectIdToAnimNotifyTimelines;
 	TMap<uint64, uint32> ObjectIdToAnimMontageTimelines;
+	TMap<uint64, uint32> ObjectIdToInertializationTimelines;
 	TMap<uint64, uint32> ObjectIdToAnimAttributeTimelines;
 	TMap<uint64, uint32> ObjectIdToAnimSyncTimelines;
 	TMap<uint64, uint32> ObjectIdToPoseWatchTimelines;
@@ -169,6 +180,7 @@ private:
 	{
 		TSharedPtr<TraceServices::TIntervalTimeline<FSkeletalMeshPoseMessage>> Timeline;
 		TSet<uint32> AllCurveIds;
+		int32 NumExternalMorphSets = 0;
 	};
 
 	struct FAnimNotifyStateTimelineStorage
@@ -181,6 +193,12 @@ private:
 	{
 		TSharedPtr<TraceServices::TPointTimeline<FAnimMontageMessage>> Timeline;
 		TSet<uint64> AllMontageIds;
+	};
+	
+	struct FInertializationTimelineStorage
+	{
+		TSharedPtr<TraceServices::TPointTimeline<FInertializationMessage>> Timeline;
+		TMap<int32,EInertializationType> NodeTypes;
 	};
 
 	/** Message storage */
@@ -196,8 +214,10 @@ private:
 	TArray<TSharedRef<FAnimNotifyStateTimelineStorage>> AnimNotifyStateTimelineStorage;
 	TArray<TSharedRef<TraceServices::TPointTimeline<FAnimNotifyMessage>>> AnimNotifyTimelines;
 	TArray<TSharedRef<FMontageTimelineStorage>> AnimMontageTimelineStorage;
+	TArray<TSharedRef<FInertializationTimelineStorage>> InertializationTimelineStorage;
 	TraceServices::TPagedArray<FTransform> SkeletalMeshPoseTransforms;
 	TraceServices::TPagedArray<FSkeletalMeshNamedCurve> SkeletalMeshCurves;
+	TraceServices::TPagedArray<FExternalMorphWeightMessage> ExternalMorphWeights;
 	TraceServices::TPagedArray<int32> SkeletalMeshParentIndices;
 	TArray<TSharedRef<TraceServices::TPointTimeline<FAnimAttributeMessage>>> AnimAttributeTimelines;
 	TArray<TSharedRef<TraceServices::TPointTimeline<FAnimSyncMessage>>> AnimSyncTimelines;

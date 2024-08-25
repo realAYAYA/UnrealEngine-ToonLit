@@ -33,20 +33,14 @@ const TCHAR* LexToString(const ENetProfilerConnectionState Value)
 	{
 	case ENetProfilerConnectionState::USOCK_Closed:
 		return TEXT("Closed");
-		break;
 	case ENetProfilerConnectionState::USOCK_Open:
 		return TEXT("Open");
-		break;
 	case ENetProfilerConnectionState::USOCK_Pending:
 		return TEXT("Pending");
-		break;
 	case ENetProfilerConnectionState::USOCK_Invalid:
 	default:
 		return TEXT("Invalid");
-		break;
 	}
-
-	return TEXT("Invalid");
 }
 
 FNetProfilerProvider::FNetProfilerProvider(IAnalysisSession& InSession)

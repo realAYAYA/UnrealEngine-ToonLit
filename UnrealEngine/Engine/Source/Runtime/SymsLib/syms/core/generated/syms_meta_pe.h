@@ -76,7 +76,7 @@ SYMS_DllCharacteristic_WDM_DRIVER = (1 << 13),
 SYMS_DllCharacteristic_GUARD_CF = (1 << 14),
 SYMS_DllCharacteristic_TERMINAL_SERVER_AWARE = (1 << 15),
 };
-typedef struct SYMS_PeOptionalPe32{
+typedef struct SYMS_PeOptionalHeader32{
 SYMS_U16 magic;
 SYMS_U8 major_linker_version;
 SYMS_U8 minor_linker_version;
@@ -107,8 +107,8 @@ SYMS_U32 sizeof_heap_reserve;
 SYMS_U32 sizeof_heap_commit;
 SYMS_U32 loader_flags;
 SYMS_U32 data_dir_count;
-} SYMS_PeOptionalPe32;
-typedef struct SYMS_PeOptionalPe32Plus{
+} SYMS_PeOptionalHeader32;
+typedef struct SYMS_PeOptionalHeader32Plus{
 SYMS_U16 magic;
 SYMS_U8 major_linker_version;
 SYMS_U8 minor_linker_version;
@@ -130,7 +130,7 @@ SYMS_U32 win32_version_value;
 SYMS_U32 sizeof_image;
 SYMS_U32 sizeof_headers;
 SYMS_U32 check_sum;
-SYMS_U16 subsystem;
+SYMS_PeWindowsSubsystem subsystem;
 SYMS_DllCharacteristics dll_characteristics;
 SYMS_U64 sizeof_stack_reserve;
 SYMS_U64 sizeof_stack_commit;
@@ -138,7 +138,7 @@ SYMS_U64 sizeof_heap_reserve;
 SYMS_U64 sizeof_heap_commit;
 SYMS_U32 loader_flags;
 SYMS_U32 data_dir_count;
-} SYMS_PeOptionalPe32Plus;
+} SYMS_PeOptionalHeader32Plus;
 typedef enum SYMS_PeDataDirectoryIndex{
 SYMS_PeDataDirectoryIndex_EXPORT,
 SYMS_PeDataDirectoryIndex_IMPORT,
@@ -271,7 +271,8 @@ SYMS_PeLoadConfigGuardFlags_DELAYLOAD_IAT_IN_ITS_OWN_SECTION = (1 << 13),
 SYMS_PeLoadConfigGuardFlags_CF_EXPORT_SUPPRESSION_INFO_PRESENT = (1 << 14),
 SYMS_PeLoadConfigGuardFlags_CF_ENABLE_EXPORT_SUPPRESSION = (1 << 15),
 SYMS_PeLoadConfigGuardFlags_CF_LONGJUMP_TABLE_PRESENT = (1 << 16),
-SYMS_PeLoadConfigGuardFlags_CF_FUNCTION_TABLE_SIZE_SHIFT = 20, SYMS_PeLoadConfigGuardFlags_CF_FUNCTION_TABLE_SIZE_MASK = 0xf,
+SYMS_PeLoadConfigGuardFlags_EH_CONTINUATION_TABLE_PRESENT = (1 << 22),
+SYMS_PeLoadConfigGuardFlags_CF_FUNCTION_TABLE_SIZE_SHIFT = 28, SYMS_PeLoadConfigGuardFlags_CF_FUNCTION_TABLE_SIZE_MASK = 0xf,
 };
 #define SYMS_PeLoadConfigGuardFlags_Extract_CF_FUNCTION_TABLE_SIZE(f) (SYMS_U32)(((f) >> SYMS_PeLoadConfigGuardFlags_CF_FUNCTION_TABLE_SIZE_SHIFT) & SYMS_PeLoadConfigGuardFlags_CF_FUNCTION_TABLE_SIZE_MASK)
 #pragma pack(pop)

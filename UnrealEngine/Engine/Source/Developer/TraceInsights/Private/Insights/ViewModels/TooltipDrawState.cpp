@@ -63,63 +63,63 @@ void FTooltipDrawState::ResetContent()
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void FTooltipDrawState::AddTitle(const FString& Title)
+void FTooltipDrawState::AddTitle(FStringView Title)
 {
 	const TSharedRef<FSlateFontMeasure> FontMeasureService = FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
 
 	const FVector2D TextSize = FontMeasureService->Measure(Title, Font, FontScale) / FontScale;
-	Texts.Add({ BorderX, NewLineY, TextSize, Title, DefaultTitleColor, FDrawTextType::Title });
+	Texts.Add({ BorderX, NewLineY, TextSize, FString(Title), DefaultTitleColor, FDrawTextType::Title });
 
 	NewLineY += DefaultTitleHeight;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void FTooltipDrawState::AddTitle(const FString& Title, const FLinearColor& Color)
+void FTooltipDrawState::AddTitle(FStringView Title, const FLinearColor& Color)
 {
 	const TSharedRef<FSlateFontMeasure> FontMeasureService = FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
 
 	const FVector2D TextSize = FontMeasureService->Measure(Title, Font, FontScale) / FontScale;
-	Texts.Add({ BorderX, NewLineY, TextSize, Title, Color, FDrawTextType::Misc });
+	Texts.Add({ BorderX, NewLineY, TextSize, FString(Title), Color, FDrawTextType::Misc });
 
 	NewLineY += DefaultTitleHeight;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void FTooltipDrawState::AddNameValueTextLine(const FString& Name, const FString& Value)
+void FTooltipDrawState::AddNameValueTextLine(FStringView Name, FStringView Value)
 {
 	const TSharedRef<FSlateFontMeasure> FontMeasureService = FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
 
 	const FVector2D NameTextSize = FontMeasureService->Measure(Name, Font, FontScale) / FontScale;
-	Texts.Add({ 0.0f, NewLineY, NameTextSize, Name, DefaultNameColor, FDrawTextType::Name });
+	Texts.Add({ 0.0f, NewLineY, NameTextSize, FString(Name), DefaultNameColor, FDrawTextType::Name });
 
 	const FVector2D ValueTextSize = FontMeasureService->Measure(Value, Font, FontScale) / FontScale;
-	Texts.Add({ 0.0f, NewLineY, ValueTextSize, Value, DefaultValueColor, FDrawTextType::Value });
+	Texts.Add({ 0.0f, NewLineY, ValueTextSize, FString(Value), DefaultValueColor, FDrawTextType::Value });
 
 	NewLineY += DefaultLineHeight;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void FTooltipDrawState::AddTextLine(const FString& Text, const FLinearColor& Color)
+void FTooltipDrawState::AddTextLine(FStringView Text, const FLinearColor& Color)
 {
 	const TSharedRef<FSlateFontMeasure> FontMeasureService = FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
 
 	const FVector2D TextSize = FontMeasureService->Measure(Text, Font, FontScale) / FontScale;
-	Texts.Add({ BorderX, NewLineY, TextSize, Text, Color, FDrawTextType::Misc });
+	Texts.Add({ BorderX, NewLineY, TextSize, FString(Text), Color, FDrawTextType::Misc });
 
 	NewLineY += DefaultLineHeight;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void FTooltipDrawState::AddTextLine(const float X, const float Y, const FString& Text, const FLinearColor& Color)
+void FTooltipDrawState::AddTextLine(const float X, const float Y, FStringView Text, const FLinearColor& Color)
 {
 	const TSharedRef<FSlateFontMeasure> FontMeasureService = FSlateApplication::Get().GetRenderer()->GetFontMeasureService();
 
 	const FVector2D TextSize = FontMeasureService->Measure(Text, Font, FontScale) / FontScale;
-	Texts.Add({ X, Y, TextSize, Text, Color, FDrawTextType::Misc });
+	Texts.Add({ X, Y, TextSize, FString(Text), Color, FDrawTextType::Misc });
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

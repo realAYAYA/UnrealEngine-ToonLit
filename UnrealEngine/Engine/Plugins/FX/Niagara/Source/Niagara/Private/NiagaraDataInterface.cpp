@@ -279,10 +279,24 @@ void UNiagaraDataInterface::GetFeedback(UNiagaraDataInterface* DataInterface, TA
 	DataInterface->GetFeedback(Asset, Component, Errors, Warnings, Info);
 }
 
+void UNiagaraDataInterface::GetFunctionSignatures(TArray<FNiagaraFunctionSignature>& OutFunctions) const
+{
+#if WITH_EDITORONLY_DATA
+	// Until we can eliminate GetFunctions() we just call it, and let it's base implementation call
+	// GetFunctionsInternal().  When GetFunctions() is deleted we can just call GetFunctionsInternal()
+	// directly here.
+	//GetFunctionsInternal(OutFunctions);
+
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS // to be removed when GetFunctions is removed
+	const_cast<UNiagaraDataInterface*>(this)->GetFunctions(OutFunctions);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS // to be removed when GetFunctions is removed
+#endif
+}
+
 void UNiagaraDataInterface::ValidateFunction(const FNiagaraFunctionSignature& Function, TArray<FText>& OutValidationErrors)
 {
 	TArray<FNiagaraFunctionSignature> DIFuncs;
-	GetFunctions(DIFuncs);
+	GetFunctionSignatures(DIFuncs);
 
 	if (!DIFuncs.ContainsByPredicate([&](const FNiagaraFunctionSignature& Sig) { return Sig.EqualsIgnoringSpecifiers(Function); }))
 	{
@@ -363,6 +377,17 @@ FVector3f FNiagaraDataInterfaceSetShaderParametersContext::GetSystemLWCTile() co
 bool FNiagaraDataInterfaceSetShaderParametersContext::IsResourceBound(const void* ResourceAddress) const
 {
 	const uint16 ByteOffset = uint16(uintptr_t(ResourceAddress) - uintptr_t(BaseParameters));
+
+#if PLATFORM_SUPPORTS_BINDLESS_RENDERING
+	for (const FShaderParameterBindings::FBindlessResourceParameter& BindlessResourceParameter : ShaderRef->Bindings.BindlessResourceParameters)
+	{
+		if (BindlessResourceParameter.ByteOffset == ByteOffset)
+		{
+			return true;
+		}
+	}
+#endif
+
 	for (const FShaderParameterBindings::FResourceParameter& ResourceParameter : ShaderRef->Bindings.ResourceParameters)
 	{
 		if ( ResourceParameter.ByteOffset == ByteOffset )
@@ -396,6 +421,21 @@ bool FNiagaraDataInterfaceSetShaderParametersContext::IsStructBoundInternal(cons
 {
 	const uint16 ByteStart = uint16(uintptr_t(StructAddress) - uintptr_t(BaseParameters));
 	const uint16 ByteEnd = ByteStart + uint16(StructSize);
+
+#if PLATFORM_SUPPORTS_BINDLESS_RENDERING
+	// Loop over bindless resources
+	for (const FShaderParameterBindings::FBindlessResourceParameter& BindlessResourceParameter : ShaderRef->Bindings.BindlessResourceParameters)
+	{
+		if (BindlessResourceParameter.ByteOffset >= ByteEnd)
+		{
+			break;
+		}
+		if (BindlessResourceParameter.ByteOffset >= ByteStart)
+		{
+			return true;
+		}
+	}
+#endif
 
 	// Loop over resources
 	for (const FShaderParameterBindings::FResourceParameter& ResourceParameter : ShaderRef->Bindings.ResourceParameters)

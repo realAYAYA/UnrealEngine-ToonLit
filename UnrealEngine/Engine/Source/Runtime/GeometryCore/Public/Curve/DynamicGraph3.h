@@ -111,7 +111,7 @@ public:
 	value_iteration<TVector<T>> VerticesItr() const
 	{
 		return vertices_refcount.MappedIndices<TVector<T>>(
-			[=](int vid) {
+			[=, this](int vid) {
 				return Vertices.template AsVector3<T>(vid);
 			});
 	}

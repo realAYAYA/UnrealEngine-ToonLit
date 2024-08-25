@@ -12,6 +12,7 @@ public class AutoRTFMTests : ModuleRules
 			new string[] {
 				"Catch2Extras",
 				"Core",
+				"CoreUObject",
 				"ApplicationCore",
 				"Projects",
 			}
@@ -25,5 +26,11 @@ public class AutoRTFMTests : ModuleRules
 		}
 
 		bAllowAutoRTFMInstrumentation = true;
+
+		PrivateIncludePaths.AddRange(
+			new string[]
+			{
+				"Runtime/Core/Private"
+			});
 	}
 }

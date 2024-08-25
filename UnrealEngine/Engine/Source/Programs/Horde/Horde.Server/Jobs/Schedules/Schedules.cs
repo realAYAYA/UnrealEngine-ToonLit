@@ -2,9 +2,9 @@
 
 using System;
 using System.Collections.Generic;
+using EpicGames.Horde.Jobs;
 using Horde.Server.Perforce;
 using Horde.Server.Streams;
-using Horde.Server.Utilities;
 
 namespace Horde.Server.Jobs.Schedules
 {
@@ -110,11 +110,10 @@ namespace Horde.Server.Jobs.Schedules
 				{
 					break;
 				}
-				
+
 				curTime = nextTime.Value;
 				NextTriggerTimesUTC.Add(curTime);
 			}
-
 		}
 	}
 

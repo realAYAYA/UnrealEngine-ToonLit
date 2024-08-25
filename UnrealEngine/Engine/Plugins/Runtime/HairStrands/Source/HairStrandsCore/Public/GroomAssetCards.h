@@ -15,141 +15,31 @@ enum class EHairAtlasTextureType : uint8;
 class UGroomAsset;
 
 UENUM(BlueprintType)
-enum class EHairCardsClusterType : uint8
-{
-	Low,
-	High,
-};
-
-UENUM(BlueprintType)
-enum class EHairCardsGenerationType : uint8
-{
-	CardsCount,
-	UseGuides,
-};
-
-/* Deprecated */
-USTRUCT(BlueprintType)
-struct HAIRSTRANDSCORE_API FHairCardsClusterSettings
-{
-	GENERATED_BODY()
-
-	FHairCardsClusterSettings();
-
-	/** Decimation factor use to initialized cluster (only used when UseGuide is disabled). This changes the number of generated cards */
-	UPROPERTY()
-	float ClusterDecimation;
-
-	/** Quality of clustering when group hair to cluster center. This does not change the number cards, but only how cards are shaped (size/shape) */
-	UPROPERTY()
-	EHairCardsClusterType Type;
-
-	/** Use the simulation guide to generate the cards instead of the decimation parameter. This changes the number of generated cards. */
-	UPROPERTY()
-	bool bUseGuide;
-
-	bool operator==(const FHairCardsClusterSettings& A) const;
-};
-
-
-USTRUCT(BlueprintType)
-struct HAIRSTRANDSCORE_API FHairCardsGeometrySettings
-{
-	GENERATED_BODY()
-
-	FHairCardsGeometrySettings();
-
-	/** Define how cards should be generated. Cards count: define a targeted number of cards. Use guides: use simulation guide as cards. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ClusterSettings")
-	EHairCardsGenerationType GenerationType;
-
-	/** Define how many cards should be generated. The generated number can be lower, as some cards can be discarded by other options. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ClusterSettings", meta = (ClampMin = "1", UIMin = "1"))
-	int32 CardsCount;
-
-	/** Quality of clustering when group hair to belong to a similar cards. This does not change the number cards, but only how cards are shaped (size/shape) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ClusterSettings")
-	EHairCardsClusterType ClusterType;
-
-	/** Minimum size of a card segment */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "GeometrySettings", AdvancedDisplay, meta = (ClampMin = "0.1", UIMin = "0.1", UIMax = "8.0", SliderExponent = 6))
-	float MinSegmentLength;
-	
-	/** Max angular difference between adjacents vertices to remove vertices during simplification with MinSegmentLength, in degrees. */
-	UPROPERTY(EditAnywhere, Category = "DecimationSettings", meta = (ClampMin = "0", ClampMax = "45", UIMin = "0", UIMax = "45.0"))
-	float AngularThreshold;
-
-	/** Length below which generated cards are discard, as there are considered too small. (Default:0, which means no trimming) */
-	UPROPERTY(EditAnywhere, Category = "DecimationSettings", meta = (ClampMin = "0", UIMin = "0"))
-	float MinCardsLength;
-
-	/** Length above which generated cards are discard, as there are considered too larger. (Default:0, which means no trimming) */
-	UPROPERTY(EditAnywhere, Category = "DecimationSettings", meta = (ClampMin = "0", UIMin = "0"))
-	float MaxCardsLength;
-
-	bool operator==(const FHairCardsGeometrySettings& A) const;
-};
-
-
-USTRUCT(BlueprintType)
-struct HAIRSTRANDSCORE_API FHairCardsTextureSettings
-{
-	GENERATED_BODY()
-
-	FHairCardsTextureSettings();
-
-	/** Max atlas resolution */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AtlasSettings", meta = (ClampMin = "512", UIMin = "512", UIMax = "8192"))
-	int32 AtlasMaxResolution;
-
-	/** Pixel resolution per centimeters */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AtlasSettings", meta = (ClampMin = "4", UIMin = "2", UIMax = "128"))
-	int32 PixelPerCentimeters;
-
-	/** Number of unique clump textures*/
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AtlasSettings", meta = (ClampMin = "1", UIMin = "1", UIMax = "128"))
-	int32 LengthTextureCount;
-
-	/** Number of texture having variation of strands count */
-	//UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AtlasSettings", meta = (ClampMin = "1", UIMin = "1", UIMax = "128"))
-	UPROPERTY()
-	int32 DensityTextureCount;
-
-	bool operator==(const FHairCardsTextureSettings& A) const;
-};
-
-USTRUCT(BlueprintType)
-struct HAIRSTRANDSCORE_API FHairGroupsProceduralCards
-{
-	GENERATED_BODY()
-
-	FHairGroupsProceduralCards();
-
-	/* Deprecated */
-	UPROPERTY()
-	FHairCardsClusterSettings ClusterSettings;
-
-	UPROPERTY(EditAnywhere, Category = "GeometrySettings", meta = (ToolTip = "Cards geometry settings"))
-	FHairCardsGeometrySettings GeometrySettings;
-
-	UPROPERTY(EditAnywhere, Category = "TextureSettings", meta = (ToolTip = "Cards texture atlas settings"))
-	FHairCardsTextureSettings TextureSettings;
-
-	/* Use to track when a cards asset need to be regenerated */
-	UPROPERTY()
-	int32 Version;
-
-	bool operator==(const FHairGroupsProceduralCards& A) const;
-
-	void BuildDDCKey(FArchive& Ar);
-};
-
-UENUM(BlueprintType)
 enum class EHairCardsSourceType : uint8
 {
 	Procedural  UMETA(DisplayName = "Procedural (experimental)"),
 	Imported UMETA(DisplayName = "Imported"),
 };
+
+UENUM(BlueprintType)
+enum class EHairCardsGuideType : uint8
+{
+	Generated  UMETA(DisplayName = "Generated"),
+	GuideBased UMETA(DisplayName = "Guide-Based"),
+};
+
+UENUM(BlueprintType)
+enum class EHairTextureLayout : uint8
+{
+	Layout0 UMETA(DisplayName = "Card Default"),
+	Layout1 UMETA(DisplayName = "Mesh Default"),
+	Layout2 UMETA(DisplayName = "Card Compact"),
+	Layout3 UMETA(DisplayName = "Mesh Compact"),
+};
+
+// Returns the number of textures used for a particular layout
+HAIRSTRANDSCORE_API uint32 GetHairTextureLayoutTextureCount(EHairTextureLayout In);
+HAIRSTRANDSCORE_API const TCHAR* GetHairTextureLayoutTextureName(EHairTextureLayout InLayout, uint32 InIndex, bool bDetail);
 
 USTRUCT(BlueprintType)
 struct HAIRSTRANDSCORE_API FHairGroupCardsInfo
@@ -169,25 +59,31 @@ struct HAIRSTRANDSCORE_API FHairGroupCardsTextures
 	GENERATED_BODY()
 
 	UPROPERTY(EditAnywhere, Category = "CardsTextures")
-	TObjectPtr<UTexture2D> DepthTexture = nullptr;
+	EHairTextureLayout Layout = EHairTextureLayout::Layout0;
 
 	UPROPERTY(EditAnywhere, Category = "CardsTextures")
-	TObjectPtr<UTexture2D> CoverageTexture = nullptr;
+	TArray<TObjectPtr<UTexture2D>> Textures;
 
-	UPROPERTY(EditAnywhere, Category = "CardsTextures")
-	TObjectPtr<UTexture2D> TangentTexture = nullptr;
+	UPROPERTY()
+	TObjectPtr<UTexture2D> DepthTexture_DEPRECATED = nullptr;
 
-	UPROPERTY(EditAnywhere, Category = "CardsAttributes")
-	TObjectPtr<UTexture2D> AttributeTexture = nullptr;
+	UPROPERTY()
+	TObjectPtr<UTexture2D> CoverageTexture_DEPRECATED = nullptr;
 
-	UPROPERTY(EditAnywhere, Category = "CardsAttributes")
-	TObjectPtr<UTexture2D> AuxilaryDataTexture = nullptr;
+	UPROPERTY()
+	TObjectPtr<UTexture2D> TangentTexture_DEPRECATED = nullptr;
 
-	/* This texture is only used by hair meshes and can be generated through the hair-textures option on Groom Asset. */
-	UPROPERTY(EditAnywhere, Category = "CardsAttributes")
-	TObjectPtr<UTexture2D> MaterialTexture = nullptr;
+	UPROPERTY()
+	TObjectPtr<UTexture2D> AttributeTexture_DEPRECATED = nullptr;
 
-	void SetTexture(EHairAtlasTextureType SlotID, UTexture2D* Texture);
+	UPROPERTY()
+	TObjectPtr<UTexture2D> AuxilaryDataTexture_DEPRECATED = nullptr;
+
+	UPROPERTY()
+	TObjectPtr<UTexture2D> MaterialTexture_DEPRECATED = nullptr;
+
+	void SetLayout(EHairTextureLayout InLayout);
+	void SetTexture(int32 SlotID, UTexture2D* Texture);
 
 	bool bNeedToBeSaved = false;
 };
@@ -219,20 +115,20 @@ struct HAIRSTRANDSCORE_API FHairGroupsCardsSourceDescription
 	UPROPERTY()
 	FName MaterialSlotName;
 
-	UPROPERTY(EditAnywhere, Category = "CardsSource")
-	EHairCardsSourceType SourceType = EHairCardsSourceType::Imported;
-
-	UPROPERTY(EditAnywhere, Category = "CardsSource")
-	TObjectPtr<UStaticMesh> ProceduralMesh = nullptr;
+	UPROPERTY()
+	EHairCardsSourceType SourceType_DEPRECATED = EHairCardsSourceType::Imported;
+	
+	UPROPERTY()
+	TObjectPtr<UStaticMesh> ProceduralMesh_DEPRECATED = nullptr;
 
 	UPROPERTY()
-	FString ProceduralMeshKey;
+	bool bInvertUV = false;
 
 	UPROPERTY(EditAnywhere, Category = "CardsSource")
+	EHairCardsGuideType GuideType;
+
+	UPROPERTY(EditAnywhere, Category = "CardsSource", meta = (DisplayName = "Mesh"))
 	TObjectPtr<UStaticMesh> ImportedMesh = nullptr;
-
-	UPROPERTY(EditAnywhere, Category = "CardsSource")
-	FHairGroupsProceduralCards ProceduralSettings;
 
 	UPROPERTY(EditAnywhere, Category = "CardsSource")
 	FHairGroupCardsTextures Textures;

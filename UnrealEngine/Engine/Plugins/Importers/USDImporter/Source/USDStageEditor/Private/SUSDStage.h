@@ -29,29 +29,31 @@ namespace UE
 
 class SUsdStage : public SCompoundWidget
 {
-	SLATE_BEGIN_ARGS( SUsdStage ) {}
+	SLATE_BEGIN_ARGS(SUsdStage)
+	{
+	}
 	SLATE_END_ARGS()
 
 public:
-	void Construct( const FArguments& InArgs );
+	void Construct(const FArguments& InArgs);
 
 	virtual ~SUsdStage();
 
 	// Attaches to a new stage actor.
 	// When bFlashButton is true we will also blink the button on the UI to draw attention to the fact
 	// that the actor changed
-	void AttachToStageActor( AUsdStageActor* InUsdStageActor, bool bFlashButton=true );
+	void AttachToStageActor(AUsdStageActor* InUsdStageActor, bool bFlashButton = true);
 
 	AUsdStageActor* GetAttachedStageActor() const;
 
 	TArray<UE::FSdfLayer> GetSelectedLayers() const;
-	void SetSelectedLayers( const TArray<UE::FSdfLayer>& NewSelection ) const;
+	void SetSelectedLayers(const TArray<UE::FSdfLayer>& NewSelection) const;
 
 	TArray<UE::FUsdPrim> GetSelectedPrims() const;
-	void SetSelectedPrims( const TArray<UE::FUsdPrim>& NewSelection ) const;
+	void SetSelectedPrims(const TArray<UE::FUsdPrim>& NewSelection) const;
 
 	TArray<FString> GetSelectedPropertyNames() const;
-	void SetSelectedPropertyNames( const TArray<FString>& NewSelection );
+	void SetSelectedPropertyNames(const TArray<FString>& NewSelection);
 
 	TArray<FString> GetSelectedPropertyMetadataNames() const;
 	void SetSelectedPropertyMetadataNames(const TArray<FString>& NewSelection);
@@ -68,58 +70,66 @@ public:
 	void FileReset();
 	void FileClose();
 	void ActionsImportWithDialog();
-	void ActionsImport( const FString& OutputContentFolder, UUsdStageImportOptions* Options );
+	void ActionsImport(const FString& OutputContentFolder, UUsdStageImportOptions* Options);
 	void ExportSelectedLayers(const FString& OutputLayerOrDirectory = {});
 
 protected:
 	void SetupStageActorDelegates();
 	void ClearStageActorDelegates();
 
-	TSharedRef< SWidget > MakeMainMenu();
-	TSharedRef< SWidget > MakeActorPickerMenu();
-	TSharedRef< SWidget > MakeActorPickerMenuContent();
-	TSharedRef< SWidget > MakeIsolateWarningButton();
-	void FillFileMenu( FMenuBuilder& MenuBuilder );
-	void FillActionsMenu( FMenuBuilder& MenuBuilder );
-	void FillOptionsMenu( FMenuBuilder& MenuBuilder );
-	void FillExportSubMenu( FMenuBuilder& MenuBuilder );
-	void FillPayloadsSubMenu( FMenuBuilder& MenuBuilder );
-	void FillPurposesToLoadSubMenu( FMenuBuilder& MenuBuilder );
-	void FillRenderContextSubMenu( FMenuBuilder& MenuBuilder );
-	void FillMaterialPurposeSubMenu( FMenuBuilder& MenuBuilder );
-	void FillRootMotionSubMenu( FMenuBuilder& MenuBuilder );
-	void FillCollapsingSubMenu( FMenuBuilder& MenuBuilder );
-	void FillInterpolationTypeSubMenu( FMenuBuilder& MenuBuilder );
-	void FillSelectionSubMenu( FMenuBuilder& MenuBuilder );
-	void FillNaniteThresholdSubMenu( FMenuBuilder& MenuBuilder );
+	TSharedRef<SWidget> MakeMainMenu();
+	TSharedRef<SWidget> MakeActorPickerMenu();
+	TSharedRef<SWidget> MakeActorPickerMenuContent();
+	TSharedRef<SWidget> MakeIsolateWarningButton();
+	void FillFileMenu(FMenuBuilder& MenuBuilder);
+	void FillActionsMenu(FMenuBuilder& MenuBuilder);
+	void FillOptionsMenu(FMenuBuilder& MenuBuilder);
+	void FillExportSubMenu(FMenuBuilder& MenuBuilder);
+	void FillStageStateSubMenu(FMenuBuilder& MenuBuilder);
+	void FillPayloadsSubMenu(FMenuBuilder& MenuBuilder);
+	void FillPurposesToLoadSubMenu(FMenuBuilder& MenuBuilder);
+	void FillRenderContextSubMenu(FMenuBuilder& MenuBuilder);
+	void FillMaterialPurposeSubMenu(FMenuBuilder& MenuBuilder);
+	void FillRootMotionSubMenu(FMenuBuilder& MenuBuilder);
+	void FillSubdivisionLevelSubMenu(FMenuBuilder& MenuBuilder);
+	void FillMetadataSubMenu(FMenuBuilder& MenuBuilder);
+	void FillCollapsingSubMenu(FMenuBuilder& MenuBuilder);
+	void FillAssetReuseSubMenu(FMenuBuilder& MenuBuilder);
+	void FillInterpolationTypeSubMenu(FMenuBuilder& MenuBuilder);
+	void FillSelectionSubMenu(FMenuBuilder& MenuBuilder);
+	void FillNaniteThresholdSubMenu(FMenuBuilder& MenuBuilder);
 
-	void OnLayerIsolated( const UE::FSdfLayer& IsolatedLayer );
+	void OnLayerIsolated(const UE::FSdfLayer& IsolatedLayer);
 
-	void OnPrimSelectionChanged( const TArray<FString>& PrimPath );
+	void OnPrimSelectionChanged(const TArray<FString>& PrimPath);
 
-	void OpenStage( const TCHAR* FilePath );
+	void OpenStage(const TCHAR* FilePath);
 
 	void RequestLayersTreeViewRefresh();
 	void RequestFullRefresh();
 	void OnSlateTick(float Time);
 
-	void OnViewportSelectionChanged( UObject* NewSelection );
+	void OnViewportSelectionChanged(UObject* NewSelection);
 
-	void OnPostPIEStarted( bool bIsSimulating );
-	void OnEndPIE( bool bIsSimulating );
+	void OnPostPIEStarted(bool bIsSimulating);
+	void OnEndPIE(bool bIsSimulating);
 
 	int32 GetNaniteTriangleThresholdValue() const;
-	void OnNaniteTriangleThresholdValueChanged( int32 InValue );
-	void OnNaniteTriangleThresholdValueCommitted( int32 InValue, ETextCommit::Type InCommitType );
+	void OnNaniteTriangleThresholdValueChanged(int32 InValue);
+	void OnNaniteTriangleThresholdValueCommitted(int32 InValue, ETextCommit::Type InCommitType);
+
+	int32 GetSubdivisionLevelValue() const;
+	void OnSubdivisionLevelValueChanged(int32 InValue);
+	void OnSubdivisionLevelValueCommitted(int32 InValue, ETextCommit::Type InCommitType);
 
 	UE::FUsdStageWeak GetCurrentStage() const;
 
 	AUsdStageActor* GetStageActorOrCDO() const;
 
 protected:
-	TSharedPtr< class SUsdStageTreeView > UsdStageTreeView;
-	TSharedPtr< class SUsdPrimInfo > UsdPrimInfoWidget;
-	TSharedPtr< class SUsdLayersTreeView > UsdLayersTreeView;
+	TSharedPtr<class SUsdStageTreeView> UsdStageTreeView;
+	TSharedPtr<class SUsdPrimInfo> UsdPrimInfoWidget;
+	TSharedPtr<class SUsdLayersTreeView> UsdLayersTreeView;
 
 	FDelegateHandle OnActorLoadedHandle;
 	FDelegateHandle OnActorDestroyedHandle;
@@ -152,6 +162,8 @@ protected:
 
 	int32 CurrentNaniteThreshold = INT32_MAX;
 
+	int32 CurrentSubdivisionLevel = 0;
+
 	TArray<TSharedPtr<FString>> MaterialPurposes;
 
 	// We use our own bool to track engine exit because we use some tickers to delay work onto the next frame,
@@ -165,4 +177,4 @@ protected:
 	FDelegateHandle OnEditorCloseHandle;
 };
 
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK

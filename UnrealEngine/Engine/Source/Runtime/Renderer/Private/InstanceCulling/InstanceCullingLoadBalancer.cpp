@@ -19,9 +19,10 @@ void FInstanceCullingLoadBalancerBase::FGPUData::GetShaderParameters(FRDGBuilder
 	ShaderParameters.ItemBuffer = GraphBuilder.CreateSRV(ItemBuffer);
 	ShaderParameters.NumBatches = NumBatches;
 	ShaderParameters.NumItems = NumItems;
+	ShaderParameters.NumGroupsPerBatch = NumGroupsPerBatch;
 }
 
-FInstanceCullingLoadBalancerBase::FGPUData FInstanceCullingLoadBalancerBase::Upload(FRDGBuilder& GraphBuilder, TConstArrayView<FPackedBatch> Batches, TConstArrayView<FPackedItem> Items, ERDGInitialDataFlags RDGInitialDataFlags) const
+FInstanceCullingLoadBalancerBase::FGPUData FInstanceCullingLoadBalancerBase::Upload(FRDGBuilder& GraphBuilder, TConstArrayView<FPackedBatch> Batches, TConstArrayView<FPackedItem> Items, ERDGInitialDataFlags RDGInitialDataFlags, int32 NumGroupsPerBatch) const
 {
 	FGPUData Result;
 	// TODO: Several of these load balancers are being created on the stack and the memory is going out of scope before RDG execution. Always making a copy for now.
@@ -29,11 +30,12 @@ FInstanceCullingLoadBalancerBase::FGPUData FInstanceCullingLoadBalancerBase::Upl
 	Result.ItemBuffer = CreateStructuredBuffer(GraphBuilder, TEXT("InstanceCullingLoadBalancer.Items"), Items, /* RDGInitialDataFlags */ ERDGInitialDataFlags::None);
 	Result.NumBatches = Batches.Num();
 	Result.NumItems = Items.Num();
+	Result.NumGroupsPerBatch = NumGroupsPerBatch;
 
 	return Result;
 }
 
-FIntVector FInstanceCullingLoadBalancerBase::GetWrappedCsGroupCount(TConstArrayView<FPackedBatch> Batches) const
+FIntVector FInstanceCullingLoadBalancerBase::GetWrappedCsGroupCount(TConstArrayView<FPackedBatch> Batches, int32 NumGroupsPerBatch) const
 {
-	return FComputeShaderUtils::GetGroupCountWrapped(Batches.Num());
+	return FComputeShaderUtils::GetGroupCountWrapped(Batches.Num() * NumGroupsPerBatch);
 }

@@ -6,6 +6,7 @@
 #include "RenderCore.h"
 #include "RenderUtils.h"
 #include "Algo/Reverse.h"
+#include "Async/Mutex.h"
 
 // The maximum number of transient vertex buffer bytes to allocate before we start panic logging who is doing the allocations
 int32 GMaxVertexBytesAllocatedPerFrame = 32 * 1024 * 1024;
@@ -413,31 +414,28 @@ public:
 	// FResource interface.
 	virtual void InitRHI(FRHICommandListBase& RHICmdList) override
 	{
-		if (SupportsTextureCubeArray(GetFeatureLevel()))
+		const TCHAR* Name = TEXT("BlackCubeArray");
+
+		const FRHITextureCreateDesc Desc =
+			FRHITextureCreateDesc::CreateCubeArray(TEXT("BlackCubeArray"), 1, 1, PF_B8G8R8A8)
+			.SetFlags(ETextureCreateFlags::ShaderResource)
+			.SetClassName(TEXT("FBlackCubeArrayTexture"));
+
+		// Create the texture RHI.
+		TextureRHI = RHICreateTexture(Desc);
+
+		for (uint32 FaceIndex = 0; FaceIndex < 6; FaceIndex++)
 		{
-			const TCHAR* Name = TEXT("BlackCubeArray");
-
-			const FRHITextureCreateDesc Desc =
-				FRHITextureCreateDesc::CreateCubeArray(TEXT("BlackCubeArray"), 1, 1, PF_B8G8R8A8)
-				.SetFlags(ETextureCreateFlags::ShaderResource)
-				.SetClassName(TEXT("FBlackCubeArrayTexture"));
-
-			// Create the texture RHI.
-			TextureRHI = RHICreateTexture(Desc);
-
-			for (uint32 FaceIndex = 0; FaceIndex < 6; FaceIndex++)
-			{
-				uint32 DestStride;
-				FColor* DestBuffer = (FColor*)RHILockTextureCubeFace(TextureRHI, FaceIndex, 0, 0, RLM_WriteOnly, DestStride, false);
-				// Note: alpha is used by reflection environment to say how much of the foreground texture is visible, so 0 says it is completely invisible
-				*DestBuffer = FColor(0, 0, 0, 0);
-				RHIUnlockTextureCubeFace(TextureRHI, FaceIndex, 0, 0, false);
-			}
-
-			// Create the sampler state RHI resource.
-			FSamplerStateInitializerRHI SamplerStateInitializer(SF_Point, AM_Wrap, AM_Wrap, AM_Wrap);
-			SamplerStateRHI = GetOrCreateSamplerState(SamplerStateInitializer);
+			uint32 DestStride;
+			FColor* DestBuffer = (FColor*)RHILockTextureCubeFace(TextureRHI, FaceIndex, 0, 0, RLM_WriteOnly, DestStride, false);
+			// Note: alpha is used by reflection environment to say how much of the foreground texture is visible, so 0 says it is completely invisible
+			*DestBuffer = FColor(0, 0, 0, 0);
+			RHIUnlockTextureCubeFace(TextureRHI, FaceIndex, 0, 0, false);
 		}
+
+		// Create the sampler state RHI resource.
+		FSamplerStateInitializerRHI SamplerStateInitializer(SF_Point, AM_Wrap, AM_Wrap, AM_Wrap);
+		SamplerStateRHI = GetOrCreateSamplerState(SamplerStateInitializer);
 	}
 
 	virtual uint32 GetSizeX() const override { return 1; }
@@ -660,7 +658,8 @@ TGlobalResource<FTwoTrianglesIndexBuffer, FRenderResource::EInitPhase::Pre> GTwo
 /**
  * An individual dynamic vertex buffer.
  */
-class FDynamicVertexBuffer final : public FVertexBuffer
+template <typename BufferType>
+class TDynamicBuffer final : public BufferType
 {
 public:
 	/** The aligned size of all dynamic vertex buffers. */
@@ -671,14 +670,17 @@ public:
 	uint32 BufferSize;
 	/** Number of bytes currently allocated from the buffer. */
 	uint32 AllocatedByteCount;
+	/** Stride of the buffer in bytes. */
+	uint32 Stride;
 	/** Last render thread frame this resource was used in. */
 	uint64 LastUsedFrame = 0;
 
 	/** Default constructor. */
-	explicit FDynamicVertexBuffer(uint32 InMinBufferSize)
+	explicit TDynamicBuffer(uint32 InMinBufferSize, uint32 InStride)
 		: MappedBuffer(NULL)
 		, BufferSize(FMath::Max<uint32>(Align(InMinBufferSize, ALIGNMENT), ALIGNMENT))
 		, AllocatedByteCount(0)
+		, Stride(InStride)
 	{
 	}
 
@@ -689,8 +691,8 @@ public:
 	{
 		check(MappedBuffer == NULL);
 		check(AllocatedByteCount == 0);
-		check(IsValidRef(VertexBufferRHI));
-		MappedBuffer = (uint8*)RHICmdList.LockBuffer(VertexBufferRHI, 0, BufferSize, RLM_WriteOnly);
+		check(IsValidRef(BufferType::GetRHI()));
+		MappedBuffer = (uint8*)RHICmdList.LockBuffer(BufferType::GetRHI(), 0, BufferSize, RLM_WriteOnly);
 	}
 
 	/**
@@ -699,8 +701,8 @@ public:
 	void Unlock(FRHICommandListBase& RHICmdList)
 	{
 		check(MappedBuffer != NULL);
-		check(IsValidRef(VertexBufferRHI));
-		RHICmdList.UnlockBuffer(VertexBufferRHI);
+		check(IsValidRef(BufferType::GetRHI()));
+		RHICmdList.UnlockBuffer(BufferType::GetRHI());
 		MappedBuffer = NULL;
 		AllocatedByteCount = 0;
 	}
@@ -708,58 +710,54 @@ public:
 	// FRenderResource interface.
 	virtual void InitRHI(FRHICommandListBase& RHICmdList) override
 	{
-		check(!IsValidRef(VertexBufferRHI));
-		FRHIResourceCreateInfo CreateInfo(TEXT("FDynamicVertexBuffer"));
-		VertexBufferRHI = RHICmdList.CreateBuffer(BufferSize, EBufferUsageFlags::VertexBuffer, 0, ERHIAccess::VertexOrIndexBuffer, CreateInfo);
+		check(!IsValidRef(BufferType::GetRHI()));
+		FRHIResourceCreateInfo CreateInfo(TEXT("FDynamicBuffer"));
+		BufferType::SetRHI(RHICmdList.CreateBuffer(BufferSize, Stride == 0 ? EBufferUsageFlags::VertexBuffer : EBufferUsageFlags::IndexBuffer, Stride, ERHIAccess::VertexOrIndexBuffer, CreateInfo));
 		MappedBuffer = NULL;
 		AllocatedByteCount = 0;
 	}
 
 	virtual void ReleaseRHI() override
 	{
-		FVertexBuffer::ReleaseRHI();
+		BufferType::ReleaseRHI();
 		MappedBuffer = NULL;
 		AllocatedByteCount = 0;
-	}
-
-	virtual FString GetFriendlyName() const override
-	{
-		return TEXT("FDynamicVertexBuffer");
 	}
 };
 
 /**
- * A pool of dynamic vertex buffers.
+ * A pool of dynamic buffers.
  */
-struct FDynamicVertexBufferPool : public FRenderResource
+template <typename DynamicBufferType>
+struct TDynamicBufferPool : public FRenderResource
 {
-	FCriticalSection CriticalSection;
-	TArray<FDynamicVertexBuffer*> LiveList;
-	TArray<FDynamicVertexBuffer*> FreeList;
-	TArray<FDynamicVertexBuffer*> LockList;
-	TArray<FDynamicVertexBuffer*> ReclaimList;
+	UE::FMutex Mutex;
+	TArray<DynamicBufferType*> LiveList;
+	TArray<DynamicBufferType*> FreeList;
+	TArray<DynamicBufferType*> LockList;
+	TArray<DynamicBufferType*> ReclaimList;
 	std::atomic_uint32_t TotalAllocatedMemory{0};
 	uint32 CurrentCycle = 0;
 
-	FDynamicVertexBuffer* Acquire(FRHICommandListBase& RHICmdList, uint32 SizeInBytes)
+	DynamicBufferType* Acquire(FRHICommandListBase& RHICmdList, uint32 SizeInBytes, uint32 Stride)
 	{
 		const uint32 MinimumBufferSize = 65536u;
 		SizeInBytes = FMath::Max(SizeInBytes, MinimumBufferSize);
 
-		FDynamicVertexBuffer* FoundBuffer = nullptr;
+		DynamicBufferType* FoundBuffer = nullptr;
 		bool bInitializeBuffer = false;
 
 		{
-			FScopeLock Lock(&CriticalSection);
+			UE::TScopeLock Lock(Mutex);
 
 			// Traverse the free list like a stack, starting from the top, so recently reclaimed items are allocated first.
 			for (int32 Index = FreeList.Num() - 1; Index >= 0; --Index)
 			{
-				FDynamicVertexBuffer* Buffer = FreeList[Index];
+				DynamicBufferType* Buffer = FreeList[Index];
 
-				if (SizeInBytes <= Buffer->BufferSize)
+				if (SizeInBytes <= Buffer->BufferSize && Buffer->Stride == Stride)
 				{
-					FreeList.RemoveAt(Index, 1, false);
+					FreeList.RemoveAt(Index, 1, EAllowShrinking::No);
 					FoundBuffer = Buffer;
 					break;
 				}
@@ -767,7 +765,7 @@ struct FDynamicVertexBufferPool : public FRenderResource
 
 			if (!FoundBuffer)
 			{
-				FoundBuffer = new FDynamicVertexBuffer(SizeInBytes);
+				FoundBuffer = new DynamicBufferType(SizeInBytes, Stride);
 				LiveList.Emplace(FoundBuffer);
 				bInitializeBuffer = true;
 			}
@@ -792,32 +790,35 @@ struct FDynamicVertexBufferPool : public FRenderResource
 		return FoundBuffer;
 	}
 
-	void Forfeit(FRHICommandListBase& RHICmdList, TConstArrayView<FDynamicVertexBuffer*> BuffersToForfeit)
+	void Forfeit(FRHICommandListBase& RHICmdList, TConstArrayView<DynamicBufferType*> BuffersToForfeit)
 	{
-		for (FDynamicVertexBuffer* Buffer : BuffersToForfeit)
+		if (!BuffersToForfeit.IsEmpty())
 		{
-			Buffer->Unlock(RHICmdList);
-		}
+			for (DynamicBufferType* Buffer : BuffersToForfeit)
+			{
+				Buffer->Unlock(RHICmdList);
+			}
 
-		FScopeLock Lock(&CriticalSection);
-		ReclaimList.Append(BuffersToForfeit);
+			UE::TScopeLock Lock(Mutex);
+			ReclaimList.Append(BuffersToForfeit);
+		}
 	}
 
 	void GarbageCollect()
 	{
-		FScopeLock Lock(&CriticalSection);
+		UE::TScopeLock Lock(Mutex);
 		FreeList.Append(ReclaimList);
 		ReclaimList.Reset();
 
 		for (int32 Index = 0; Index < LiveList.Num(); ++Index)
 		{
-			FDynamicVertexBuffer* Buffer = LiveList[Index];
+			DynamicBufferType* Buffer = LiveList[Index];
 
 			if (GGlobalBufferNumFramesUnusedThreshold > 0 && Buffer->LastUsedFrame + GGlobalBufferNumFramesUnusedThreshold <= GFrameCounterRenderThread)
 			{
 				TotalAllocatedMemory -= Buffer->BufferSize;
 				Buffer->ReleaseResource();
-				LiveList.RemoveAt(Index, 1, false);
+				LiveList.RemoveAt(Index, 1, EAllowShrinking::No);
 				FreeList.Remove(Buffer);
 				delete Buffer;
 			}
@@ -835,31 +836,28 @@ private:
 		check(LockList.IsEmpty());
 		check(FreeList.Num() == LiveList.Num());
 
-		for (FDynamicVertexBuffer* VertexBuffer : LiveList)
+		for (DynamicBufferType* Buffer : LiveList)
 		{
-			TotalAllocatedMemory -= VertexBuffer->BufferSize;
-			VertexBuffer->ReleaseResource();
-			delete VertexBuffer;
+			TotalAllocatedMemory -= Buffer->BufferSize;
+			Buffer->ReleaseResource();
+			delete Buffer;
 		}
 		LiveList.Empty();
 		FreeList.Empty();
 	}
 };
 
-static TGlobalResource<FDynamicVertexBufferPool, FRenderResource::EInitPhase::Pre> GDynamicVertexBufferPool;
+static TGlobalResource<TDynamicBufferPool<FDynamicVertexBuffer>, FRenderResource::EInitPhase::Pre> GDynamicVertexBufferPool;
 
 FGlobalDynamicVertexBuffer::FAllocation FGlobalDynamicVertexBuffer::Allocate(uint32 SizeInBytes)
 {
-	return Allocate(FRHICommandListExecutor::GetImmediateCommandList(), SizeInBytes);
-}
+	checkf(RHICmdList, TEXT("FGlobalDynamicVertexBuffer was not initialized prior to calling Allocate."));
 
-FGlobalDynamicVertexBuffer::FAllocation FGlobalDynamicVertexBuffer::Allocate(FRHICommandListBase& RHICmdList, uint32 SizeInBytes)
-{
 	FAllocation Allocation;
 
 	if (VertexBuffers.IsEmpty() || VertexBuffers.Last()->AllocatedByteCount + SizeInBytes > VertexBuffers.Last()->BufferSize)
 	{
-		VertexBuffers.Emplace(GDynamicVertexBufferPool.Acquire(RHICmdList, SizeInBytes));
+		VertexBuffers.Emplace(GDynamicVertexBufferPool.Acquire(*RHICmdList, SizeInBytes, 0));
 	}
 
 	FDynamicVertexBuffer* VertexBuffer = VertexBuffers.Last();
@@ -877,158 +875,21 @@ bool FGlobalDynamicVertexBuffer::IsRenderAlarmLoggingEnabled() const
 	return GDynamicVertexBufferPool.IsRenderAlarmLoggingEnabled();
 }
 
-void FGlobalDynamicVertexBuffer::Commit(FRHICommandListBase& RHICmdList)
-{
-	GDynamicVertexBufferPool.Forfeit(RHICmdList, VertexBuffers);
-	VertexBuffers.Reset();
-}
-
 void FGlobalDynamicVertexBuffer::Commit()
 {
-	Commit(FRHICommandListExecutor::GetImmediateCommandList());
-}
-
-void FGlobalDynamicVertexBuffer::GarbageCollect()
-{
-	GDynamicVertexBufferPool.GarbageCollect();
-}
-
-/*------------------------------------------------------------------------------
-	FGlobalDynamicIndexBuffer implementation.
-------------------------------------------------------------------------------*/
-
-/**
- * An individual dynamic index buffer.
- */
-class FDynamicIndexBuffer : public FIndexBuffer
-{
-public:
-	/** The aligned size of all dynamic index buffers. */
-	enum { ALIGNMENT = (1 << 16) }; // 64KB
-	/** Pointer to the index buffer mapped in main memory. */
-	uint8* MappedBuffer;
-	/** Size of the index buffer in bytes. */
-	uint32 BufferSize;
-	/** Number of bytes currently allocated from the buffer. */
-	uint32 AllocatedByteCount;
-	/** Stride of the buffer in bytes. */
-	uint32 Stride;
-	/** Number of successive frames for which AllocatedByteCount == 0. Used as a metric to decide when to free the allocation. */
-	int32 NumFramesUnused = 0;
-
-	/** Initialization constructor. */
-	explicit FDynamicIndexBuffer(uint32 InMinBufferSize, uint32 InStride)
-		: MappedBuffer(NULL)
-		, BufferSize(FMath::Max<uint32>(Align(InMinBufferSize, ALIGNMENT), ALIGNMENT))
-		, AllocatedByteCount(0)
-		, Stride(InStride)
+	if (RHICmdList)
 	{
-	}
-
-	/**
-	 * Locks the vertex buffer so it may be written to.
-	 */
-	void Lock(FRHICommandListBase& RHICmdList)
-	{
-		check(MappedBuffer == NULL);
-		check(AllocatedByteCount == 0);
-		check(IsValidRef(IndexBufferRHI));
-		MappedBuffer = (uint8*)RHICmdList.LockBuffer(IndexBufferRHI, 0, BufferSize, RLM_WriteOnly);
-	}
-
-	void Lock()
-	{
-		Lock(FRHICommandListImmediate::Get());
-	}
-
-	/**
-	 * Unocks the buffer so the GPU may read from it.
-	 */
-	void Unlock(FRHICommandListBase& RHICmdList)
-	{
-		check(MappedBuffer != NULL);
-		check(IsValidRef(IndexBufferRHI));
-		RHICmdList.UnlockBuffer(IndexBufferRHI);
-		MappedBuffer = NULL;
-		AllocatedByteCount = 0;
-		NumFramesUnused = 0;
-	}
-
-	void Unlock()
-	{
-		Unlock(FRHICommandListImmediate::Get());
-	}
-
-	// FRenderResource interface.
-	virtual void InitRHI(FRHICommandListBase& RHICmdList) override
-	{
-		check(!IsValidRef(IndexBufferRHI));
-		FRHIResourceCreateInfo CreateInfo(TEXT("FDynamicIndexBuffer"));
-		IndexBufferRHI = RHICmdList.CreateIndexBuffer(Stride, BufferSize, BUF_Volatile, CreateInfo);
-		MappedBuffer = NULL;
-		AllocatedByteCount = 0;
-	}
-
-	virtual void ReleaseRHI() override
-	{
-		FIndexBuffer::ReleaseRHI();
-		MappedBuffer = NULL;
-		AllocatedByteCount = 0;
-	}
-
-	virtual FString GetFriendlyName() const override
-	{
-		return TEXT("FDynamicIndexBuffer");
-	}
-};
-
-/**
- * A pool of dynamic index buffers.
- */
-struct FDynamicIndexBufferPool
-{
-	/** List of index buffers. */
-	TIndirectArray<FDynamicIndexBuffer> IndexBuffers;
-	/** The current buffer from which allocations are being made. */
-	FDynamicIndexBuffer* CurrentIndexBuffer;
-	/** Stride of buffers in this pool. */
-	uint32 BufferStride;
-
-	/** Initialization constructor. */
-	explicit FDynamicIndexBufferPool(uint32 InBufferStride)
-		: CurrentIndexBuffer(NULL)
-		, BufferStride(InBufferStride)
-	{
-	}
-
-	/** Destructor. */
-	~FDynamicIndexBufferPool()
-	{
-		int32 NumIndexBuffers = IndexBuffers.Num();
-		for (int32 BufferIndex = 0; BufferIndex < NumIndexBuffers; ++BufferIndex)
-		{
-			IndexBuffers[BufferIndex].ReleaseResource();
-		}
-	}
-};
-
-FGlobalDynamicIndexBuffer::FGlobalDynamicIndexBuffer()
-{
-	Pools[0] = new FDynamicIndexBufferPool(sizeof(uint16));
-	Pools[1] = new FDynamicIndexBufferPool(sizeof(uint32));
-}
-
-FGlobalDynamicIndexBuffer::~FGlobalDynamicIndexBuffer()
-{
-	for (int32 i = 0; i < 2; ++i)
-	{
-		delete Pools[i];
-		Pools[i] = NULL;
+		GDynamicVertexBufferPool.Forfeit(*RHICmdList, VertexBuffers);
+		VertexBuffers.Reset();
 	}
 }
+
+static TGlobalResource<TDynamicBufferPool<FDynamicIndexBuffer>, FRenderResource::EInitPhase::Pre> GDynamicIndexBufferPool;
 
 FGlobalDynamicIndexBuffer::FAllocation FGlobalDynamicIndexBuffer::Allocate(uint32 NumIndices, uint32 IndexStride)
 {
+	checkf(RHICmdList, TEXT("FGlobalDynamicIndexBuffer was not initialized prior to calling Allocate."));
+
 	FAllocation Allocation;
 
 	if (IndexStride != 2 && IndexStride != 4)
@@ -1036,78 +897,43 @@ FGlobalDynamicIndexBuffer::FAllocation FGlobalDynamicIndexBuffer::Allocate(uint3
 		return Allocation;
 	}
 
-	FDynamicIndexBufferPool* Pool = Pools[IndexStride >> 2]; // 2 -> 0, 4 -> 1
+	const uint32 SizeInBytes = NumIndices * IndexStride;
 
-	uint32 SizeInBytes = NumIndices * IndexStride;
-	FDynamicIndexBuffer* IndexBuffer = Pool->CurrentIndexBuffer;
-	if (IndexBuffer == NULL || IndexBuffer->AllocatedByteCount + SizeInBytes > IndexBuffer->BufferSize)
+	TArray<FDynamicIndexBuffer*>& IndexBuffers = (IndexStride == 2)
+		? IndexBuffers16
+		: IndexBuffers32;
+
+	if (IndexBuffers.IsEmpty() || IndexBuffers.Last()->AllocatedByteCount + SizeInBytes > IndexBuffers.Last()->BufferSize)
 	{
-		// Find a buffer in the pool big enough to service the request.
-		IndexBuffer = NULL;
-		for (int32 BufferIndex = 0, NumBuffers = Pool->IndexBuffers.Num(); BufferIndex < NumBuffers; ++BufferIndex)
-		{
-			FDynamicIndexBuffer& IndexBufferToCheck = Pool->IndexBuffers[BufferIndex];
-			if (IndexBufferToCheck.AllocatedByteCount + SizeInBytes <= IndexBufferToCheck.BufferSize)
-			{
-				IndexBuffer = &IndexBufferToCheck;
-				break;
-			}
-		}
-
-		// Create a new index buffer if needed.
-		if (IndexBuffer == NULL)
-		{
-			IndexBuffer = new FDynamicIndexBuffer(SizeInBytes, Pool->BufferStride);
-			Pool->IndexBuffers.Add(IndexBuffer);
-			IndexBuffer->InitResource(FRHICommandListImmediate::Get());
-		}
-
-		// Lock the buffer if needed.
-		if (IndexBuffer->MappedBuffer == NULL)
-		{
-			IndexBuffer->Lock();
-		}
-		Pool->CurrentIndexBuffer = IndexBuffer;
+		IndexBuffers.Emplace(GDynamicIndexBufferPool.Acquire(*RHICmdList, SizeInBytes, IndexStride));
 	}
 
-	check(IndexBuffer != NULL);
-	checkf(IndexBuffer->AllocatedByteCount + SizeInBytes <= IndexBuffer->BufferSize, TEXT("Global index buffer allocation failed: BufferSize=%d AllocatedByteCount=%d SizeInBytes=%d"), IndexBuffer->BufferSize, IndexBuffer->AllocatedByteCount, SizeInBytes);
+	FDynamicIndexBuffer* IndexBuffer = IndexBuffers.Last();
 
+	checkf(IndexBuffer->AllocatedByteCount + SizeInBytes <= IndexBuffer->BufferSize, TEXT("Global index buffer allocation failed: BufferSize=%d BufferStride=%d AllocatedByteCount=%d SizeInBytes=%d"), IndexBuffer->BufferSize, IndexBuffer->Stride, IndexBuffer->AllocatedByteCount, SizeInBytes);
 	Allocation.Buffer = IndexBuffer->MappedBuffer + IndexBuffer->AllocatedByteCount;
 	Allocation.IndexBuffer = IndexBuffer;
 	Allocation.FirstIndex = IndexBuffer->AllocatedByteCount / IndexStride;
 	IndexBuffer->AllocatedByteCount += SizeInBytes;
-
 	return Allocation;
 }
 
 void FGlobalDynamicIndexBuffer::Commit()
 {
-	for (int32 i = 0; i < 2; ++i)
+	if (RHICmdList)
 	{
-		FDynamicIndexBufferPool* Pool = Pools[i];
-
-		for (int32 BufferIndex = 0, NumBuffers = Pool->IndexBuffers.Num(); BufferIndex < NumBuffers; ++BufferIndex)
-		{
-			FDynamicIndexBuffer& IndexBuffer = Pool->IndexBuffers[BufferIndex];
-			if (IndexBuffer.MappedBuffer != NULL)
-			{
-				IndexBuffer.Unlock();
-			}
-			else if (GGlobalBufferNumFramesUnusedThreshold && !IndexBuffer.AllocatedByteCount)
-			{
-				++IndexBuffer.NumFramesUnused;
-				if (IndexBuffer.NumFramesUnused >= GGlobalBufferNumFramesUnusedThreshold)
-				{
-					// Remove the buffer, assumes they are unordered.
-					IndexBuffer.ReleaseResource();
-					Pool->IndexBuffers.RemoveAtSwap(BufferIndex);
-					--BufferIndex;
-					--NumBuffers;
-				}
-			}
-		}
-		Pool->CurrentIndexBuffer = NULL;
+		GDynamicIndexBufferPool.Forfeit(*RHICmdList, IndexBuffers16);
+		GDynamicIndexBufferPool.Forfeit(*RHICmdList, IndexBuffers32);
+		IndexBuffers16.Reset();
+		IndexBuffers32.Reset();
 	}
 }
 
+namespace GlobalDynamicBuffer
+{
+	void GarbageCollect()
+	{
+		GDynamicVertexBufferPool.GarbageCollect();
+		GDynamicIndexBufferPool.GarbageCollect();
+	}
+}

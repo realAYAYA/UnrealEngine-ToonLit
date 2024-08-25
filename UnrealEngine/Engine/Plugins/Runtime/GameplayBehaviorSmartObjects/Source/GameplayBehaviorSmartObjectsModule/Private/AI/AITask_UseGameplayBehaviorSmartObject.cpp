@@ -20,7 +20,7 @@
 //----------------------------------------------------------------------//
 // Static Blueprint callable and helper functions
 //----------------------------------------------------------------------//
-UAITask_UseGameplayBehaviorSmartObject* UAITask_UseGameplayBehaviorSmartObject::UseSmartObjectWithGameplayBehavior(AAIController* Controller, const FSmartObjectClaimHandle ClaimHandle, const bool bLockAILogic)
+UAITask_UseGameplayBehaviorSmartObject* UAITask_UseGameplayBehaviorSmartObject::UseSmartObjectWithGameplayBehavior(AAIController* Controller, const FSmartObjectClaimHandle ClaimHandle, const bool bLockAILogic, ESmartObjectClaimPriority ClaimPriority)
 {
 	if (Controller == nullptr)
 	{
@@ -38,9 +38,9 @@ UAITask_UseGameplayBehaviorSmartObject* UAITask_UseGameplayBehaviorSmartObject::
 	return UseClaimedSmartObject(*Controller, ClaimHandle, bLockAILogic);
 }
 
-UAITask_UseGameplayBehaviorSmartObject* UAITask_UseGameplayBehaviorSmartObject::MoveToAndUseSmartObjectWithGameplayBehavior(AAIController* Controller, const FSmartObjectClaimHandle ClaimHandle, const bool bLockAILogic)
+UAITask_UseGameplayBehaviorSmartObject* UAITask_UseGameplayBehaviorSmartObject::MoveToAndUseSmartObjectWithGameplayBehavior(AAIController* Controller, const FSmartObjectClaimHandle ClaimHandle, const bool bLockAILogic, ESmartObjectClaimPriority ClaimPriority)
 {
-	UAITask_UseGameplayBehaviorSmartObject* NewTask = UseSmartObjectWithGameplayBehavior(Controller, ClaimHandle, bLockAILogic);
+	UAITask_UseGameplayBehaviorSmartObject* NewTask = UseSmartObjectWithGameplayBehavior(Controller, ClaimHandle, bLockAILogic, ClaimPriority);
 	if (NewTask != nullptr)
 	{
 		NewTask->SetShouldReachSlotLocation(true);
@@ -56,11 +56,11 @@ UAITask_UseGameplayBehaviorSmartObject* UAITask_UseGameplayBehaviorSmartObject::
 	}
 
 	return (SmartObjectComponent && Controller)
-		? UseSmartObjectComponent(*Controller, *SmartObjectComponent, bLockAILogic)
+		? UseSmartObjectComponent(*Controller, *SmartObjectComponent, bLockAILogic, ESmartObjectClaimPriority::Normal)
 		: nullptr;
 }
 
-UAITask_UseGameplayBehaviorSmartObject* UAITask_UseGameplayBehaviorSmartObject::UseSmartObjectComponent(AAIController& Controller, const USmartObjectComponent& SmartObjectComponent, const bool bLockAILogic)
+UAITask_UseGameplayBehaviorSmartObject* UAITask_UseGameplayBehaviorSmartObject::UseSmartObjectComponent(AAIController& Controller, const USmartObjectComponent& SmartObjectComponent, const bool bLockAILogic, ESmartObjectClaimPriority ClaimPriority)
 {
 	AActor* Pawn = Controller.GetPawn();
 	if (Pawn == nullptr)
@@ -77,6 +77,7 @@ UAITask_UseGameplayBehaviorSmartObject* UAITask_UseGameplayBehaviorSmartObject::
 	}
 
 	FSmartObjectRequestFilter Filter;
+	Filter.ClaimPriority = ClaimPriority;
 	Filter.BehaviorDefinitionClasses = { UGameplayBehaviorSmartObjectBehaviorDefinition::StaticClass() };
 	const IGameplayTagAssetInterface* TagsSource = Cast<const IGameplayTagAssetInterface>(Pawn);
 	if (TagsSource != nullptr)
@@ -95,7 +96,7 @@ UAITask_UseGameplayBehaviorSmartObject* UAITask_UseGameplayBehaviorSmartObject::
 		return nullptr;
 	}
 
-	const FSmartObjectClaimHandle ClaimHandle = SmartObjectSubsystem->MarkSlotAsClaimed(SlotHandles.Top(), ActorUserDataView);
+	const FSmartObjectClaimHandle ClaimHandle = SmartObjectSubsystem->MarkSlotAsClaimed(SlotHandles.Top(), ClaimPriority, ActorUserDataView);
 
 	return ClaimHandle.IsValid() ? UseClaimedSmartObject(Controller, ClaimHandle, bLockAILogic) : nullptr;
 }

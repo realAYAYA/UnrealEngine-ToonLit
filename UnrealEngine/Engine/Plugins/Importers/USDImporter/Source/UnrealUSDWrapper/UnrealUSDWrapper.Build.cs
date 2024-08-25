@@ -15,6 +15,9 @@ namespace UnrealBuildTool.Rules
 			// error C2666: 'UE::FDummyRefPtrType::operator ==': overloaded functions have similar conversions
 			CppStandard = CppStandardVersion.Cpp17;
 
+			// Replace with PCHUsageMode.UseExplicitOrSharedPCHs when this plugin can compile with cpp20
+			PCHUsage = PCHUsageMode.NoPCHs;
+
 			bUseRTTI = true;
 
 			PublicDependencyModuleNames.AddRange(
@@ -25,7 +28,6 @@ namespace UnrealBuildTool.Rules
 					"CoreUObject",
 					"Engine",
 					"IntelTBB",
-					"MaterialX", // Needed for the standard data libraries
 					"Projects", // For plugin manager within UnrealUSDWrapper.cpp
 					"USDClasses"
 				}
@@ -56,7 +58,7 @@ namespace UnrealBuildTool.Rules
 					// Python3
 					PublicSystemIncludePaths.Add(Path.Combine(PythonSourceTPSDir, "include"));
 					PublicSystemLibraryPaths.Add(Path.Combine(PythonSourceTPSDir, "libs"));
-					RuntimeDependencies.Add(Path.Combine("$(TargetOutputDir)", "python39.dll"), Path.Combine(PythonBinaryTPSDir, "python39.dll"));
+					RuntimeDependencies.Add(Path.Combine("$(TargetOutputDir)", "python311.dll"), Path.Combine(PythonBinaryTPSDir, "python311.dll"));
 
 					// USD
 					PublicSystemIncludePaths.Add(Path.Combine(ModuleDirectory, "..", "ThirdParty", "USD", "include"));
@@ -71,6 +73,12 @@ namespace UnrealBuildTool.Rules
 					{
 						// We can't delay-load the USD dlls as they contain data and vtables: They need to be next to the executable and implicitly linked
 						RuntimeDependencies.Add(Path.Combine("$(TargetOutputDir)", Path.GetFileName(UsdDll)), UsdDll);
+					}
+
+					// If OpenUSD was rebuilt with debug information, add the .pdb files as well
+					foreach (string UsdPdb in Directory.EnumerateFiles(USDBinDir, "*.pdb", SearchOption.AllDirectories))
+					{
+						RuntimeDependencies.Add(Path.Combine("$(TargetOutputDir)", Path.GetFileName(UsdPdb)), UsdPdb, StagedFileType.DebugNonUFS);
 					}
 				}
 				else if (Target.Platform == UnrealTargetPlatform.Linux)
@@ -88,7 +96,7 @@ namespace UnrealBuildTool.Rules
 					PublicSystemIncludePaths.Add(Path.Combine(PythonSourceTPSDir, "include"));
 					PublicSystemLibraryPaths.Add(Path.Combine(PythonBinaryTPSDir, "lib"));
 					PrivateRuntimeLibraryPaths.Add(Path.Combine(PythonBinaryTPSDir, "bin"));
-					RuntimeDependencies.Add(Path.Combine(PythonBinaryTPSDir, "bin", "python3.9"));
+					RuntimeDependencies.Add(Path.Combine(PythonBinaryTPSDir, "bin", "python3.11"));
 
 					// USD
 					PublicSystemIncludePaths.Add(Path.Combine(ModuleDirectory, "..", "ThirdParty", "USD", "include"));
@@ -119,7 +127,7 @@ namespace UnrealBuildTool.Rules
 					PublicSystemIncludePaths.Add(Path.Combine(PythonSourceTPSDir, "include"));
 					PublicSystemLibraryPaths.Add(Path.Combine(PythonBinaryTPSDir, "lib"));
 					PrivateRuntimeLibraryPaths.Add(Path.Combine(PythonBinaryTPSDir, "bin"));
-					RuntimeModulePaths.Add(Path.Combine(PythonBinaryTPSDir, "lib", "libpython3.9.dylib"));
+					RuntimeModulePaths.Add(Path.Combine(PythonBinaryTPSDir, "lib", "libpython3.11.dylib"));
 
 					// USD
 					PublicSystemIncludePaths.Add(Path.Combine(ModuleDirectory, "..", "ThirdParty", "USD", "include"));
@@ -168,6 +176,7 @@ namespace UnrealBuildTool.Rules
 
 			bool bEnableUsdSdk = (
 				Target.WindowsPlatform.Compiler != WindowsCompiler.Clang &&
+				Target.WindowsPlatform.Compiler != WindowsCompiler.Intel &&
 				Target.StaticAnalyzer == StaticAnalyzer.None
 			);
 

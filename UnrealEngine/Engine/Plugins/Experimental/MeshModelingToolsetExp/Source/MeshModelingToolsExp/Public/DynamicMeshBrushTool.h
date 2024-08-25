@@ -9,6 +9,7 @@
 #include "DynamicMesh/DynamicMeshAABBTree3.h"
 #include "Components/DynamicMeshComponent.h"
 #include "PreviewMesh.h"
+#include "TransactionUtil.h"
 #include "DynamicMeshBrushTool.generated.h"
 
 PREDECLARE_USE_GEOMETRY_CLASS(FDynamicMesh3);
@@ -54,4 +55,6 @@ protected:
 	// UBaseBrushTool private interface
 	//
 	virtual double EstimateMaximumTargetDimension() override;
+
+	UE::TransactionUtil::FLongTransactionTracker LongTransactions;
 };

@@ -79,10 +79,10 @@ namespace ChaosTest
 	void SimpleObjectsSerialization()
 	{
 
-		TArray<TUniquePtr<TSphere<FReal, 3>>> OriginalSpheres;
-		OriginalSpheres.Add(TUniquePtr<TSphere<FReal, 3>>(new TSphere<FReal, 3>(FVec3(), 1)));
-		OriginalSpheres.Add(TUniquePtr<TSphere<FReal, 3>>(new TSphere<FReal, 3>(FVec3(), 2)));
-		OriginalSpheres.Add(TUniquePtr<TSphere<FReal, 3>>(new TSphere<FReal, 3>(FVec3(), 3)));
+		TArray<FSpherePtr> OriginalSpheres;
+		OriginalSpheres.Add(FSpherePtr(new TSphere<FReal, 3>(FVec3(), 1)));
+		OriginalSpheres.Add(FSpherePtr(new TSphere<FReal, 3>(FVec3(), 2)));
+		OriginalSpheres.Add(FSpherePtr(new TSphere<FReal, 3>(FVec3(), 3)));
 
 		TArray<uint8> Data;
 		{
@@ -95,7 +95,7 @@ namespace ChaosTest
 		{
 			FMemoryReader Ar(Data);
 			FChaosArchive Reader(Ar);
-			TArray<TSerializablePtr<TSphere<FReal, 3>>> SerializedSpheres;
+			TArray<FSpherePtr> SerializedSpheres;
 
 			Reader << SerializedSpheres;
 
@@ -110,11 +110,11 @@ namespace ChaosTest
 
 	void SharedObjectsSerialization()
 	{
-		TArray<TSharedPtr<TSphere<FReal, 3>>> OriginalSpheres;
-		TSharedPtr<TSphere<FReal, 3>> Sphere(new TSphere<FReal, 3>(FVec3(0), 1));
+		TArray<FSpherePtr> OriginalSpheres;
+		FSpherePtr Sphere(new TSphere<FReal, 3>(FVec3(0), 1));
 		OriginalSpheres.Add(Sphere);
 		OriginalSpheres.Add(Sphere);
-		TSerializablePtr<TSphere<FReal, 3>> SerializableSphere = MakeSerializable(Sphere);
+		TSerializablePtr<TSphere<FReal, 3>> SerializableSphere(Sphere);
 
 		TArray<uint8> Data;
 		{
@@ -126,7 +126,7 @@ namespace ChaosTest
 		}
 		
 		{
-			TArray<TSharedPtr<TSphere<FReal, 3>>> SerializedSpheres;
+			TArray<FSpherePtr> SerializedSpheres;
 			TSerializablePtr<TSphere<FReal, 3>> SerializedSphere;
 			{
 				FMemoryReader Ar(Data);
@@ -136,32 +136,32 @@ namespace ChaosTest
 				Reader << SerializedSphere;
 
 				EXPECT_TRUE(SerializedSpheres.Num() == OriginalSpheres.Num());
-				EXPECT_EQ(SerializedSphere.Get(), SerializedSpheres[0].Get());
+				EXPECT_EQ(SerializedSphere.GetReference(), SerializedSpheres[0].GetReference());
 
 				for (int32 Idx = 0; Idx < SerializedSpheres.Num(); ++Idx)
 				{
 					EXPECT_TRUE(SerializedSpheres[Idx]->GetRadius() == OriginalSpheres[Idx]->GetRadius());
 				}
 
-				EXPECT_EQ(SerializedSpheres[0].Get(), SerializedSpheres[1].Get());
-				EXPECT_EQ(SerializedSpheres[0].GetSharedReferenceCount(), 3);
+				EXPECT_EQ(SerializedSpheres[0].GetReference(), SerializedSpheres[1].GetReference());
+				EXPECT_EQ(SerializedSpheres[0].GetRefCount(), 3);
 			}
-			EXPECT_EQ(SerializedSpheres[0].GetSharedReferenceCount(), 2);	//archive is gone so ref count went down
+			EXPECT_EQ(SerializedSpheres[0].GetRefCount(), 2);	//archive is gone so ref count went down
 		}
 	}
 
 	void GraphSerialization()
 	{
-		TArray<TUniquePtr<TSphere<FReal, 3>>> OriginalSpheres;
+		TArray<Chaos::FImplicitObjectPtr> OriginalSpheres;
 		OriginalSpheres.Emplace(new TSphere<FReal, 3>{ FVec3(1,2,3), 1 });
 		OriginalSpheres.Emplace(new TSphere<FReal, 3>{ FVec3(1,2,3), 2 });
 
-		TArray<TUniquePtr<TImplicitObjectTransformed<FReal, 3>>> OriginalChildren;
-		OriginalChildren.Emplace(new TImplicitObjectTransformed<FReal, 3>(MakeSerializable(OriginalSpheres[0]), FRigidTransform3::Identity));
-		OriginalChildren.Emplace(new TImplicitObjectTransformed<FReal, 3>(MakeSerializable(OriginalSpheres[1]), FRigidTransform3::Identity));
-		OriginalChildren.Emplace(new TImplicitObjectTransformed<FReal, 3>(MakeSerializable(OriginalSpheres[0]), FRigidTransform3::Identity));
+		TArray<Chaos::FImplicitObjectPtr> OriginalChildren;
+		OriginalChildren.Emplace(new TImplicitObjectTransformed<FReal, 3>(OriginalSpheres[0], FRigidTransform3::Identity));
+		OriginalChildren.Emplace(new TImplicitObjectTransformed<FReal, 3>(OriginalSpheres[1], FRigidTransform3::Identity));
+		OriginalChildren.Emplace(new TImplicitObjectTransformed<FReal, 3>(OriginalSpheres[0], FRigidTransform3::Identity));
 
-		TUniquePtr<TImplicitObjectTransformed<FReal, 3>> Root(new TImplicitObjectTransformed<FReal, 3>(MakeSerializable(OriginalChildren[1]), FRigidTransform3::Identity));
+		TRefCountPtr<TImplicitObjectTransformed<FReal, 3>> Root(new TImplicitObjectTransformed<FReal, 3>(OriginalChildren[1], FRigidTransform3::Identity));
 
 		TArray<uint8> Data;
 		{
@@ -177,9 +177,9 @@ namespace ChaosTest
 			FMemoryReader Ar(Data);
 			FChaosArchive Reader(Ar);
 
-			TArray <TUniquePtr<TSphere<FReal, 3>>> SerializedSpheres;
-			TArray<TSerializablePtr<TImplicitObjectTransformed<FReal, 3>>> SerializedChildren;
-			TUniquePtr<TImplicitObjectTransformed<FReal, 3>> SerializedRoot;
+			TArray <FSpherePtr> SerializedSpheres;
+			TArray<TRefCountPtr<TImplicitObjectTransformed<FReal, 3>>> SerializedChildren;
+			TRefCountPtr<TImplicitObjectTransformed<FReal, 3>> SerializedRoot;
 
 			Reader << SerializedSpheres;
 			Reader << SerializedChildren;
@@ -188,25 +188,25 @@ namespace ChaosTest
 			EXPECT_EQ(SerializedSpheres.Num(), OriginalSpheres.Num());
 			EXPECT_EQ(SerializedChildren.Num(), OriginalChildren.Num());
 
-			EXPECT_EQ(SerializedRoot->GetTransformedObject(), SerializedChildren[1].Get());
-			EXPECT_EQ(SerializedChildren[0]->GetTransformedObject(), SerializedSpheres[0].Get());
-			EXPECT_EQ(SerializedChildren[1]->GetTransformedObject(), SerializedSpheres[1].Get());
-			EXPECT_EQ(SerializedChildren[2]->GetTransformedObject(), SerializedSpheres[0].Get());
+			EXPECT_EQ(SerializedRoot->GetTransformedObject(), SerializedChildren[1].GetReference());
+			EXPECT_EQ(SerializedChildren[0]->GetTransformedObject(), SerializedSpheres[0].GetReference());
+			EXPECT_EQ(SerializedChildren[1]->GetTransformedObject(), SerializedSpheres[1].GetReference());
+			EXPECT_EQ(SerializedChildren[2]->GetTransformedObject(), SerializedSpheres[0].GetReference());
 		}
 	}
 
 	void ObjectUnionSerialization()
 	{
-		TArray<TUniquePtr<FImplicitObject>> OriginalSpheres;
+		TArray<Chaos::FImplicitObjectPtr> OriginalSpheres;
 		OriginalSpheres.Emplace(new TSphere<FReal, 3>(FVec3(1, 2, 3), 1));
 		OriginalSpheres.Emplace(new TSphere<FReal, 3>(FVec3(1, 2, 3), 2));
 
-		TArray<TUniquePtr<FImplicitObject>> OriginalChildren;
-		OriginalChildren.Emplace(new TImplicitObjectTransformed<FReal, 3>(MakeSerializable(OriginalSpheres[0]), FRigidTransform3::Identity));
-		OriginalChildren.Emplace(new TImplicitObjectTransformed<FReal, 3>(MakeSerializable(OriginalSpheres[1]), FRigidTransform3::Identity));
-		OriginalChildren.Emplace(new TImplicitObjectTransformed<FReal, 3>(MakeSerializable(OriginalSpheres[0]), FRigidTransform3::Identity));
+		TArray<Chaos::FImplicitObjectPtr> OriginalChildren;
+		OriginalChildren.Emplace(new TImplicitObjectTransformed<FReal, 3>(OriginalSpheres[0], FRigidTransform3::Identity));
+		OriginalChildren.Emplace(new TImplicitObjectTransformed<FReal, 3>(OriginalSpheres[1], FRigidTransform3::Identity));
+		OriginalChildren.Emplace(new TImplicitObjectTransformed<FReal, 3>(OriginalSpheres[0], FRigidTransform3::Identity));
 
-		TUniquePtr<FImplicitObjectUnion> Root(new FImplicitObjectUnion(MoveTemp(OriginalChildren)));
+		FImplicitObjectUnionPtr Root(new FImplicitObjectUnion(MoveTemp(OriginalChildren)));
 
 		TArray<uint8> Data;
 		{
@@ -222,9 +222,9 @@ namespace ChaosTest
 			FMemoryReader Ar(Data);
 			FChaosArchive Reader(Ar);
 
-			TArray <TUniquePtr<TSphere<FReal, 3>>> SerializedSpheres;
-			TArray<TSerializablePtr<TImplicitObjectTransformed<FReal, 3>>> SerializedChildren;
-			TUniquePtr<FImplicitObjectUnion> SerializedRoot;
+			TArray <FSpherePtr> SerializedSpheres;
+			TArray<TRefCountPtr<TImplicitObjectTransformed<FReal, 3>>> SerializedChildren;
+			FImplicitObjectUnionPtr SerializedRoot;
 
 			Reader << SerializedRoot;
 			Reader << SerializedSpheres;
@@ -234,31 +234,31 @@ namespace ChaosTest
 			EXPECT_EQ(SerializedChildren.Num(), OriginalChildren.Num());
 			EXPECT_EQ(SerializedChildren.Num(), 0);	//We did a move and then serialized, should be empty
 
-			const TArray<TUniquePtr<FImplicitObject>>& UnionObjs = SerializedRoot->GetObjects();
-			TImplicitObjectTransformed<FReal, 3>* FirstChild = static_cast<TImplicitObjectTransformed<FReal, 3>*>(UnionObjs[0].Get());
-			TImplicitObjectTransformed<FReal, 3>* SecondChild = static_cast<TImplicitObjectTransformed<FReal, 3>*>(UnionObjs[1].Get());
-			TImplicitObjectTransformed<FReal, 3>* ThirdChild = static_cast<TImplicitObjectTransformed<FReal, 3>*>(UnionObjs[2].Get());
+			const TArray<Chaos::FImplicitObjectPtr>& UnionObjs = SerializedRoot->GetObjects();
+			TImplicitObjectTransformed<FReal, 3>* FirstChild = static_cast<TImplicitObjectTransformed<FReal, 3>*>(UnionObjs[0].GetReference());
+			TImplicitObjectTransformed<FReal, 3>* SecondChild = static_cast<TImplicitObjectTransformed<FReal, 3>*>(UnionObjs[1].GetReference());
+			TImplicitObjectTransformed<FReal, 3>* ThirdChild = static_cast<TImplicitObjectTransformed<FReal, 3>*>(UnionObjs[2].GetReference());
 
-			EXPECT_EQ(FirstChild->GetTransformedObject(), SerializedSpheres[0].Get());
-			EXPECT_EQ(SecondChild->GetTransformedObject(), SerializedSpheres[1].Get());
-			EXPECT_EQ(ThirdChild->GetTransformedObject(), SerializedSpheres[0].Get());
+			EXPECT_EQ(FirstChild->GetTransformedObject(), SerializedSpheres[0].GetReference());
+			EXPECT_EQ(SecondChild->GetTransformedObject(), SerializedSpheres[1].GetReference());
+			EXPECT_EQ(ThirdChild->GetTransformedObject(), SerializedSpheres[0].GetReference());
 			EXPECT_TRUE(FirstChild != ThirdChild);	//First and third point to same sphere, but still unique children
 		}
 	}
 
 	void ParticleSerialization()
 	{
-		TArray<TUniquePtr<TSphere<FReal, 3>>> OriginalSpheres;
+		TArray<Chaos::FImplicitObjectPtr> OriginalSpheres;
 		OriginalSpheres.Emplace(new TSphere<FReal, 3>(FVec3(1, 2, 3), 1));
 		OriginalSpheres.Emplace(new TSphere<FReal, 3>(FVec3(1, 2, 3), 2));
 
 		{
 			FGeometryParticles OriginalParticles;
 			OriginalParticles.AddParticles(2);
-			OriginalParticles.R(0) = FRotation3::Identity;
-			OriginalParticles.R(1) = FRotation3::Identity;
-			OriginalParticles.SetGeometry(0, MakeSerializable(OriginalSpheres[0]));
-			OriginalParticles.SetGeometry(1, MakeSerializable(OriginalSpheres[1]));
+			OriginalParticles.SetR(0, FRotation3::Identity);
+			OriginalParticles.SetR(1, FRotation3::Identity);
+			OriginalParticles.SetGeometry(0, OriginalSpheres[0]);
+			OriginalParticles.SetGeometry(1, OriginalSpheres[1]);
 
 			TArray<uint8> Data;
 			{
@@ -273,7 +273,7 @@ namespace ChaosTest
 				FMemoryReader Ar(Data);
 				FChaosArchive Reader(Ar);
 
-				TArray <TUniquePtr<TSphere<FReal, 3>>> SerializedSpheres;
+				TArray <FSpherePtr> SerializedSpheres;
 				FGeometryParticles SerializedParticles;
 
 				Reader << SerializedParticles;
@@ -282,8 +282,8 @@ namespace ChaosTest
 				EXPECT_EQ(SerializedSpheres.Num(), OriginalSpheres.Num());
 				EXPECT_EQ(SerializedParticles.Size(), OriginalParticles.Size());
 
-				EXPECT_EQ(SerializedParticles.Geometry(0).Get(), SerializedSpheres[0].Get());
-				EXPECT_EQ(SerializedParticles.Geometry(1).Get(), SerializedSpheres[1].Get());
+				EXPECT_EQ(SerializedParticles.GetGeometry(0).GetReference(), SerializedSpheres[0].GetReference());
+				EXPECT_EQ(SerializedParticles.GetGeometry(1).GetReference(), SerializedSpheres[1].GetReference());
 			}
 		}
 
@@ -291,10 +291,10 @@ namespace ChaosTest
 		{
 			auto OriginalParticles = MakeUnique<FGeometryParticles>();
 			OriginalParticles->AddParticles(2);
-			OriginalParticles->R(0) = FRotation3::Identity;
-			OriginalParticles->R(1) = FRotation3::Identity;
-			OriginalParticles->SetGeometry(0, MakeSerializable(OriginalSpheres[0]));
-			OriginalParticles->SetGeometry(1, MakeSerializable(OriginalSpheres[1]));
+			OriginalParticles->SetR(0, FRotation3::Identity);
+			OriginalParticles->SetR(1, FRotation3::Identity);
+			OriginalParticles->SetGeometry(0, OriginalSpheres[0]);
+			OriginalParticles->SetGeometry(1, OriginalSpheres[1]);
 
 			TArray<uint8> Data;
 			{
@@ -309,7 +309,7 @@ namespace ChaosTest
 				FMemoryReader Ar(Data);
 				FChaosArchive Reader(Ar);
 
-				TArray <TUniquePtr<TSphere<FReal, 3>>> SerializedSpheres;
+				TArray <FSpherePtr> SerializedSpheres;
 				TUniquePtr<FGeometryParticles> SerializedParticles;
 
 				Reader << SerializedParticles;
@@ -318,8 +318,8 @@ namespace ChaosTest
 				EXPECT_EQ(SerializedSpheres.Num(), OriginalSpheres.Num());
 				EXPECT_EQ(SerializedParticles->Size(), OriginalParticles->Size());
 
-				EXPECT_EQ(SerializedParticles->Geometry(0).Get(), SerializedSpheres[0].Get());
-				EXPECT_EQ(SerializedParticles->Geometry(1).Get(), SerializedSpheres[1].Get());
+				EXPECT_EQ(SerializedParticles->GetGeometry(0).GetReference(), SerializedSpheres[0].GetReference());
+				EXPECT_EQ(SerializedParticles->GetGeometry(1).GetReference(), SerializedSpheres[1].GetReference());
 			}
 		}
 	}
@@ -328,20 +328,20 @@ namespace ChaosTest
 	{
 		TArray<uint8> Data;
 		{
-			TArray<TUniquePtr<TSphere<FReal, 3>>> OriginalSpheres;
+			TArray<FImplicitObjectPtr> OriginalSpheres;
 			OriginalSpheres.Emplace(new TSphere<FReal, 3>(FVec3(0, 0, 0), 1));
 			OriginalSpheres.Emplace(new TSphere<FReal, 3>(FVec3(0, 0, 0), 2));
 
 			FGeometryParticles OriginalParticles;
 			OriginalParticles.AddParticles(2);
-			OriginalParticles.R(0) = FRotation3::Identity;
-			OriginalParticles.R(1) = FRotation3::Identity;
-			OriginalParticles.SetGeometry(0, MakeSerializable(OriginalSpheres[0]));
-			OriginalParticles.SetGeometry(1, MakeSerializable(OriginalSpheres[1]));
-			OriginalParticles.X(0) = FVec3(100, 1, 2);
-			OriginalParticles.X(1) = FVec3(0, 1, 2);
-			OriginalParticles.R(0) = FRotation3::Identity;
-			OriginalParticles.R(1) = FRotation3::Identity;
+			OriginalParticles.SetR(0, FRotation3::Identity);
+			OriginalParticles.SetR(1, FRotation3::Identity);
+			OriginalParticles.SetGeometry(0, OriginalSpheres[0]);
+			OriginalParticles.SetGeometry(1, OriginalSpheres[1]);
+			OriginalParticles.SetX(0, FVec3(100, 1, 2));
+			OriginalParticles.SetX(1, FVec3(0, 1, 2));
+			OriginalParticles.SetR(0, FRotation3::Identity);
+			OriginalParticles.SetR(1, FRotation3::Identity);
 
 			TBoundingVolumeHierarchy<FGeometryParticles, TArray<int32>> OriginalBVH(OriginalParticles);
 
@@ -354,7 +354,7 @@ namespace ChaosTest
 		}
 
 		{
-			TArray <TUniquePtr<TSphere<FReal, 3>>> SerializedSpheres;
+			TArray <FSpherePtr> SerializedSpheres;
 			FGeometryParticles SerializedParticles;
 			TBoundingVolumeHierarchy<FGeometryParticles, TArray<int32>> SerializedBVH(SerializedParticles);
 			FMemoryReader Ar(Data);
@@ -369,8 +369,8 @@ namespace ChaosTest
 			TArray<int32> FinalIntersections;
 			for (int32 Potential : PotentialIntersections)
 			{
-				FRigidTransform3 TM(SerializedParticles.X(Potential), SerializedParticles.R(Potential));
-				const FAABB3 Bounds = SerializedParticles.Geometry(Potential)->BoundingBox().TransformedAABB(TM);
+				FRigidTransform3 TM(SerializedParticles.GetX(Potential), SerializedParticles.GetR(Potential));
+				const FAABB3 Bounds = SerializedParticles.GetGeometry(Potential)->BoundingBox().TransformedAABB(TM);
 				if (Bounds.Intersects(QueryBox))
 				{
 					FinalIntersections.Add(Potential);
@@ -394,13 +394,13 @@ namespace ChaosTest
 
 		TRigidParticles<FReal, 3> Particles;
 		Particles.AddParticles(2);
-		Particles.R(0) = FRotation3::Identity;
-		Particles.R(1) = FRotation3::Identity;
+		Particles.SetR(0, FRotation3::Identity);
+		Particles.SetR(1, FRotation3::Identity);
 
 		Particles.Acceleration(0) = F[0];
 		Particles.Acceleration(1) = F[1];
-		Particles.X(0) = X[0];
-		Particles.X(1) = X[1];
+		Particles.SetX(0, X[0]);
+		Particles.SetX(1, X[1]);
 		Particles.RotationOfMass(0) = FRotation3::FromIdentity();
 		Particles.RotationOfMass(1) = FRotation3::FromIdentity();
 
@@ -415,32 +415,32 @@ namespace ChaosTest
 			EXPECT_EQ(TestParticles.Size(), Particles.Size());
 			EXPECT_EQ(TestParticles.Acceleration(0), Particles.Acceleration(0));
 			EXPECT_EQ(TestParticles.Acceleration(1), Particles.Acceleration(1));
-			EXPECT_EQ(TestParticles.X(0), Particles.X(0));
-			EXPECT_EQ(TestParticles.X(1), Particles.X(1));
+			EXPECT_EQ(TestParticles.GetX(0), Particles.GetX(0));
+			EXPECT_EQ(TestParticles.GetX(1), Particles.GetX(1));
 		}
 	}
 
 	void BVHParticlesSerialization()
 	{
 		TArray<uint8> Data;
-		TArray<TUniquePtr<TSphere<FReal, 3>>> Spheres;
+		TArray<FImplicitObjectPtr> Spheres;
 		Spheres.Emplace(new TSphere<FReal, 3>(FVec3(0, 0, 0), 1));
 		Spheres.Emplace(new TSphere<FReal, 3>(FVec3(0, 0, 0), 1));
 		Spheres.Emplace(new TSphere<FReal, 3>(FVec3(0, 0, 0), 1));
 
 		FGeometryParticles Particles;
 		Particles.AddParticles(3);
-		Particles.R(0) = FRotation3::Identity;
-		Particles.R(1) = FRotation3::Identity;
-		Particles.X(0) = FVec3(15, 1, 2);
-		Particles.X(1) = FVec3(0, 2, 2);
-		Particles.X(2) = FVec3(0, 2, 2);
-		Particles.R(0) = FRotation3::Identity;
-		Particles.R(1) = FRotation3::Identity;
-		Particles.R(2) = FRotation3::Identity;
-		Particles.SetGeometry(0, MakeSerializable(Spheres[0]));
-		Particles.SetGeometry(1, MakeSerializable(Spheres[1]));
-		Particles.SetGeometry(2, MakeSerializable(Spheres[2]));
+		Particles.SetR(0, FRotation3::Identity);
+		Particles.SetR(1, FRotation3::Identity);
+		Particles.SetX(0, FVec3(15, 1, 2));
+		Particles.SetX(1, FVec3(0, 2, 2));
+		Particles.SetX(2, FVec3(0, 2, 2));
+		Particles.SetR(0, FRotation3::Identity);
+		Particles.SetR(1, FRotation3::Identity);
+		Particles.SetR(2, FRotation3::Identity);
+		Particles.SetGeometry(0, Spheres[0]);
+		Particles.SetGeometry(1, Spheres[1]);
+		Particles.SetGeometry(2, Spheres[2]);
 
 		FBVHParticles BVHParticles(MoveTemp(Particles));
 
@@ -510,7 +510,7 @@ namespace ChaosTest
 		MaterialIndices.SetNum(1);
 		MaterialIndices[0] = 0;
 
-		TUniquePtr<FHeightField> OriginalHeightField(new FHeightField(Heights, MaterialIndices, Rows, Cols, { (FReal)20000., (FReal)30000., (FReal)10000. }));
+		FHeightFieldPtr OriginalHeightField(new FHeightField(Heights, MaterialIndices, Rows, Cols, { (FReal)20000., (FReal)30000., (FReal)10000. }));
 
 		TArray<uint8> Data;
 		{
@@ -523,7 +523,7 @@ namespace ChaosTest
 		{
 			FMemoryReader Ar(Data);
 			FChaosArchive Reader(Ar);
-			TSerializablePtr<FHeightField> SerializedHeightField;
+			FHeightFieldPtr SerializedHeightField;
 
 			Reader << SerializedHeightField;
 

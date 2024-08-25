@@ -1,0 +1,66 @@
+{
+    "@blueprintjs/icons@3.33.0": {
+        "licenses": "Apache-2.0",
+        "repository": "https://github.com/palantir/blueprint"
+    },
+    "@fluentui/react-charting@5.2.0": {
+        "licenses": "MIT",
+        "repository": "https://github.com/microsoft/fluentui"
+    },
+    "@fluentui/react@8.106.2": {
+        "licenses": "MIT",
+        "repository": "https://github.com/microsoft/fluentui"
+    },
+    "crypto-js@4.1.1": {
+        "licenses": "MIT",
+        "repository": "https://github.com/brix/crypto-js"
+    },
+    "d3@7.8.2": {
+        "licenses": "ISC",
+        "repository": "https://github.com/d3/d3"
+    },
+    "idb@7.1.1": {
+        "licenses": "ISC",
+        "repository": "https://github.com/jakearchibald/idb"
+    },
+    "markdown-to-jsx@7.1.9": {
+        "licenses": "MIT",
+        "repository": "https://github.com/probablyup/markdown-to-jsx"
+    },
+    "mobx-react-lite@3.4.0": {
+        "licenses": "MIT",
+        "repository": "https://github.com/mobxjs/mobx"
+    },
+    "mobx@6.8.0": {
+        "licenses": "MIT",
+        "repository": "https://github.com/mobxjs/mobx"
+    },
+    "moment-timezone@0.5.41": {
+        "licenses": "MIT",
+        "repository": "https://github.com/moment/moment-timezone"
+    },
+    "react-dom@18.2.0": {
+        "licenses": "MIT",
+        "repository": "https://github.com/facebook/react"
+    },
+    "react-highlighter@0.4.3": {
+        "licenses": "MIT",
+        "repository": "https://github.com/helior/react-highlighter"
+    },
+    "react-router-dom@6.6.2": {
+        "licenses": "MIT",
+        "repository": "https://github.com/remix-run/react-router"
+    },
+    "react-router-hash-link@2.4.3": {
+        "licenses": "MIT",
+        "repository": "https://github.com/rafgraph/react-router-hash-link"
+    },
+    "react-sparklines@1.7.0": {
+        "licenses": "MIT",
+        "repository": "https://github.com/borisyankov/react-sparklines"
+    },
+    "react@18.2.0": {
+        "licenses": "MIT",
+        "repository": "https://github.com/facebook/react"
+    }
+}

@@ -67,7 +67,6 @@ struct FLandscapeTargetListInfo
 	ELandscapeToolTargetType TargetType;
 	TWeakObjectPtr<ULandscapeInfo> LandscapeInfo;
 
-	//Values cloned from FLandscapeLayerStruct LayerStruct;			// ignored for heightmap
 	TWeakObjectPtr<ULandscapeLayerInfoObject> LayerInfoObj;			// ignored for heightmap
 	FName LayerName;												// ignored for heightmap
 	TWeakObjectPtr<class ALandscapeProxy> Owner;					// ignored for heightmap
@@ -313,6 +312,8 @@ public:
 	virtual void UpdateSplineMeshLevels();
 	void SetbUseAutoRotateOnJoin(bool InbAutoRotateOnJoin);
 	bool GetbUseAutoRotateOnJoin();
+	void SetbAlwaysRotateForward(bool InbAlwaysRotateForward);
+	bool GetbAlwaysRotateForward();
 
 	// UI callbacks for ramp tool
 	void ApplyRampTool();

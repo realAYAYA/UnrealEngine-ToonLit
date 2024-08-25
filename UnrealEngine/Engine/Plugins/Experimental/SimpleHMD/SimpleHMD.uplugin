@@ -19,7 +19,8 @@
 		"Linux",
 		"Android",
 		"Mac",
-		"IOS"
+		"IOS",
+		"VisionOS"
 	],
 	"Modules" : 
 	[

@@ -41,9 +41,9 @@ protected:
 private:
 	template <uint32 Flags>
 	static auto				EnterImpl(uint32 Uid, uint32 Size);
-	template <class T> void	EnterPrelude(uint32 Size);
-	void					Enter(uint32 Uid, uint32 Size);
-	void					EnterNoSync(uint32 Uid, uint32 Size);
+	template <class T> inline void	EnterPrelude(uint32 Size);
+	inline void				Enter(uint32 Uid, uint32 Size);
+	inline void				EnterNoSync(uint32 Uid, uint32 Size);
 	uint8*					Ptr;
 	FWriteBuffer*			Buffer;
 };
@@ -53,7 +53,7 @@ class TLogScope
 	: public FLogScope
 {
 public:
-	void					operator += (const FLogScope&) const;
+	inline void				operator += (const FLogScope&) const;
 };
 
 

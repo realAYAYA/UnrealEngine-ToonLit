@@ -15,7 +15,6 @@ public:
 	virtual void PostInitProperties() override;
 
 	/** UNiagaraDataInterface interface */
-	virtual void GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions) override;
 	virtual void GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction &OutFunc) override;
 	virtual bool Equals(const UNiagaraDataInterface* Other) const override;
 	virtual bool CopyToInternal(UNiagaraDataInterface* Destination) const override;
@@ -31,12 +30,22 @@ public:
 	virtual bool UpgradeFunctionCall(FNiagaraFunctionSignature& FunctionSignature) override;
 #endif
 
+#if WITH_NIAGARA_DEBUGGER
+	virtual void DrawDebugHud(FNDIDrawDebugHudContext& DebugHudContext) const override;
+#endif
+
 	void GetWaterDataAtPoint(FVectorVMExternalFunctionContext& Context);
 
 	void GetWaveParamLookupTableOffset(FVectorVMExternalFunctionContext& Context);
 
 	/** Sets the current water body to be used by this data interface */
 	void SetWaterBodyComponent(UWaterBodyComponent* InWaterBodyComponent) { SourceBodyComponent = InWaterBodyComponent; }
+
+protected:
+#if WITH_EDITORONLY_DATA
+	virtual void GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const override;
+#endif
+
 private:
 	UPROPERTY(EditAnywhere, Category = "Water") 
 	TObjectPtr<UWaterBodyComponent> SourceBodyComponent;

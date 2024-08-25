@@ -13,13 +13,14 @@ class FContrastAdaptiveImageGenerator : public IVariableRateShadingImageGenerato
 {
 public:
 	virtual ~FContrastAdaptiveImageGenerator() override {};
-	virtual FRDGTextureRef GetImage(FRDGBuilder& GraphBuilder, const FViewInfo& ViewInfo, FVariableRateShadingImageManager::EVRSImageType ImageType) override;
-	virtual void PrepareImages(FRDGBuilder& GraphBuilder, const FSceneViewFamily& ViewFamily, const FMinimalSceneTextures& SceneTextures) override;
-	virtual bool IsEnabledForView(const FSceneView& View) const override;
+	virtual FRDGTextureRef GetImage(FRDGBuilder& GraphBuilder, const FViewInfo& ViewInfo, FVariableRateShadingImageManager::EVRSImageType ImageType, bool bGetSoftwareImage = false) override;
+	virtual void PrepareImages(FRDGBuilder& GraphBuilder, const FSceneViewFamily& ViewFamily, const FMinimalSceneTextures& SceneTextures, bool bPrepareHardwareImages, bool bPrepareSoftwareImages) override;
+	virtual bool IsEnabled() const override;
+	virtual bool IsSupportedByView(const FSceneView& View) const override;
 	virtual FVariableRateShadingImageManager::EVRSSourceType GetType() const override
 	{
 		return FVariableRateShadingImageManager::EVRSSourceType::ContrastAdaptiveShading;
 	}
-	virtual FRDGTextureRef GetDebugImage(FRDGBuilder& GraphBuilder, const FViewInfo& ViewInfo, FVariableRateShadingImageManager::EVRSImageType ImageType) override;
+	virtual FRDGTextureRef GetDebugImage(FRDGBuilder& GraphBuilder, const FViewInfo& ViewInfo, FVariableRateShadingImageManager::EVRSImageType ImageType, bool bGetSoftwareImage = false) override;
 };
 

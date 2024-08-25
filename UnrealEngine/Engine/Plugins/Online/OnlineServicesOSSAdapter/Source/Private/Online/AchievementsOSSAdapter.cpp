@@ -156,6 +156,7 @@ TOnlineAsyncOpHandle<FQueryAchievementDefinitions> FAchievementsOSSAdapter::Quer
 			Definitions.Emplace(MoveTemp(Achievement.Id), MoveTemp(Definition));
 		}
 
+		AchievementDefinitions = MoveTemp(Definitions);
 		Op.SetResult({});
 	})
 	.Enqueue(GetSerialQueue());

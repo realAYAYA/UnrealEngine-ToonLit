@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include "IOptimusNonCollapsibleNode.h"
+#include "IOptimusPinMutabilityDefiner.h"
 #include "IOptimusValueProvider.h"
 #include "OptimusNode.h"
 
@@ -32,7 +34,9 @@ struct FOptimusNode_GetVariable_DuplicationInfo
 UCLASS(Hidden)
 class UOptimusNode_GetVariable : 
 	public UOptimusNode,
-	public IOptimusValueProvider
+	public IOptimusValueProvider,
+	public IOptimusPinMutabilityDefiner,
+	public IOptimusNonCollapsibleNode
 {
 	GENERATED_BODY()
 
@@ -47,12 +51,15 @@ public:
 		return CategoryName::Variables;
 	}
 
-	TOptional<FText> ValidateForCompile() const override;
+	TOptional<FText> ValidateForCompile(const FOptimusPinTraversalContext& InContext) const override;
 	
 	// IOptimusValueProvider overrides 
 	FString GetValueName() const override;
 	FOptimusDataTypeRef GetValueType() const override;
 	FShaderValueType::FValue GetShaderValue() const override;
+
+	//IOptimusPinMutabilityDefiner overrides 
+	EOptimusPinMutability GetOutputPinMutability(const UOptimusNodePin* InPin) const override { return EOptimusPinMutability::Mutable; };
 	
 protected:
 	void ConstructNode() override;

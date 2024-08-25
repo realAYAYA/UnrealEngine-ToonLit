@@ -8,15 +8,26 @@
 #include "Interfaces/IShaderFormat.h"
 #include "Interfaces/IShaderFormatModule.h"
 #include "hlslcc.h"
+#include "ShaderCompilerCommon.h"
+#include "ShaderCompilerCore.h"
 #include "ShaderCore.h"
 
 
-//TODO: Much of the below is some partial work I did towards having the VVM be treat just as a shader platform.
-//This seems like a reasonable way to go but I'm not 100% certain yet.
+
+extern bool CompileVectorVMShader(
+	const FShaderCompilerInput& Input,
+	const FShaderPreprocessOutput& PreprocessOutput,
+	FShaderCompilerOutput& Output,
+	const FString& WorkingDirectory);
+
+extern void OutputVectorVMDebugData(
+	const FShaderCompilerInput& Input,
+	const FShaderPreprocessOutput& PreprocessOutput,
+	const FShaderCompilerOutput& Output);
 
 static FName NAME_VVM_1_0(TEXT("VVM_1_0"));
 
-class FShaderFormatVectorVM : public IShaderFormat
+class FShaderFormatVectorVM : public UE::ShaderCompilerCommon::FBaseShaderFormat
 {
 	enum class VectorVMFormats : uint8
 	{
@@ -49,18 +60,26 @@ public:
 		OutFormats.Add(NAME_VVM_1_0);
 	}
 
-	virtual void CompileShader(FName Format, const struct FShaderCompilerInput& Input, struct FShaderCompilerOutput& Output,const FString& WorkingDirectory) const override
+	virtual void ModifyShaderCompilerInput(FShaderCompilerInput& Input) const override
 	{
-		CheckFormat(Format);
+		Input.Environment.SetDefine(TEXT("COMPILER_HLSLCC"), 1);
+		Input.Environment.SetDefine(TEXT("COMPILER_VECTORVM"), 1);
+		Input.Environment.SetDefine(TEXT("VECTORVM_PROFILE"), 1);
+		Input.Environment.SetDefine(TEXT("FORCE_FLOATS"), (uint32)1);
 
-		if (Format == NAME_VVM_1_0)
-		{
-			CompileShader_VectorVM(Input, Output, WorkingDirectory, (int8)VectorVMFormats::VVM_1_0);
-		}
-		else
-		{
-			check(0);
-		}
+		// minifier has not been tested on vector VM; it's possible this could be removed to improve deduplication rate
+		Input.Environment.CompilerFlags.Remove(CFLAG_RemoveDeadCode);
+	}
+
+	virtual void CompilePreprocessedShader(const FShaderCompilerInput& Input, const FShaderPreprocessOutput& PreprocessOutput, FShaderCompilerOutput& Output, const FString& WorkingDirectory) const override
+	{
+		CheckFormat(Input.ShaderFormat);
+		CompileVectorVMShader(Input, PreprocessOutput, Output, WorkingDirectory);
+	}
+
+	virtual void OutputDebugData(const FShaderCompilerInput& Input, const FShaderPreprocessOutput& PreprocessOutput, const FShaderCompilerOutput& Output) const override
+	{
+		OutputVectorVMDebugData(Input, PreprocessOutput, Output);
 	}
 
 	virtual const TCHAR* GetPlatformIncludeDirectory() const

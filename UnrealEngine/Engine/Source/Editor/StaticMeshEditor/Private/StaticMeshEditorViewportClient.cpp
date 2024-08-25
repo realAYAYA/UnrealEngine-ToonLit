@@ -566,6 +566,19 @@ void FStaticMeshEditorViewportClient::Draw(const FSceneView* View,FPrimitiveDraw
 
 			PDI->SetHitProxy(NULL);
 		}
+
+		for (int32 i = 0; i < AggGeom->LevelSetElems.Num(); ++i)
+		{
+			HSMECollisionProxy* HitProxy = new HSMECollisionProxy(EAggCollisionShape::LevelSet, i);
+			PDI->SetHitProxy(HitProxy);
+
+			const FColor CollisionColor = StaticMeshEditor->IsSelectedPrim(HitProxy->PrimData) ? SelectedColor : UnselectedColor;
+			const FKLevelSetElem& LevelSetElem = AggGeom->LevelSetElems[i];
+			const FTransform ElemTM = LevelSetElem.GetTransform();
+			LevelSetElem.DrawElemWire(PDI, ElemTM, 1.f, CollisionColor);
+
+			PDI->SetHitProxy(NULL);
+		}
 	}
 
 	if (bShowComplexCollision && StaticMesh->ComplexCollisionMesh && StaticMesh->GetBodySetup()->CollisionTraceFlag != ECollisionTraceFlag::CTF_UseSimpleAsComplex)
@@ -1114,12 +1127,12 @@ void FStaticMeshEditorViewportClient::ProcessClick(class FSceneView& InView, cla
 					FStaticMeshLODResources& RenderData = StaticMeshComponent->GetStaticMesh()->GetRenderData()->LODResources[LODLevel];
 
 					int32 NumBackFacingTriangles = 0;
-					uint32 IndexBufferIndex = 0;
 					for (int32 SectionIndex = 0; SectionIndex < RenderData.Sections.Num(); ++SectionIndex)
 					{
 						const FStaticMeshSection& Section = RenderData.Sections[SectionIndex];
 						const int32 FaceMaterialIndex = Section.MaterialIndex;
 						const int32 NumFaces = Section.NumTriangles;
+						uint32 IndexBufferIndex = Section.FirstIndex;
 						for (int32 FaceIndex = 0; FaceIndex < NumFaces; ++FaceIndex)
 						{
 							FVector VertexPosition[3];

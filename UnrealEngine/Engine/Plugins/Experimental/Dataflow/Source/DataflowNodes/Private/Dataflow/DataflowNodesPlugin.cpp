@@ -8,6 +8,7 @@
 #include "Dataflow/DataflowNodeFactory.h"
 #include "Dataflow/DataflowSelectionNodes.h"
 #include "Dataflow/DataflowContextOverridesNodes.h"
+#include "Dataflow/DataflowCollectionAddScalarVertexPropertyNode.h"
 
 #define LOCTEXT_NAMESPACE "DataflowNodes"
 
@@ -18,6 +19,7 @@ void IDataflowNodesPlugin::StartupModule()
 	Dataflow::RegisterStaticMeshNodes();
 	Dataflow::RegisterSelectionNodes();
 	Dataflow::RegisterContextOverridesNodes();
+	DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FDataflowCollectionAddScalarVertexPropertyNode);
 }
 
 void IDataflowNodesPlugin::ShutdownModule()

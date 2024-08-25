@@ -342,6 +342,18 @@ FString FindGitBinaryPath()
 
 bool CheckGitAvailability(const FString& InPathToGitBinary, FGitVersion *OutVersion)
 {
+#if PLATFORM_WINDOWS
+	const TCHAR* GitExecutableSuffix = TEXT("git.exe");
+#else
+	const TCHAR* GitExecutableSuffix = TEXT("git");
+#endif
+
+	// Make sure we don't run arbitrary executables
+	if ( !InPathToGitBinary.EndsWith(GitExecutableSuffix) )
+	{
+		return false;
+	}
+
 	FString InfoMessages;
 	FString ErrorMessages;
 	bool bGitAvailable = RunCommandInternalRaw(TEXT("version"), InPathToGitBinary, FString(), TArray<FString>(), TArray<FString>(), InfoMessages, ErrorMessages);
@@ -1021,7 +1033,7 @@ bool RunDumpToFile(const FString& InPathToGitBinary, const FString& InRepository
 	FProcHandle ProcessHandle = FPlatformProcess::CreateProc(*InPathToGitBinary, *FullCommand, bLaunchDetached, bLaunchHidden, bLaunchReallyHidden, nullptr, 0, *InRepositoryRoot, PipeWrite, nullptr, nullptr);
 	if(ProcessHandle.IsValid())
 	{
-		FPlatformProcess::Sleep(0.01);
+		FPlatformProcess::Sleep(0.01f);
 
 		TArray<uint8> BinaryFileContent;
 		while(FPlatformProcess::IsProcRunning(ProcessHandle))

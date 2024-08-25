@@ -35,7 +35,7 @@ class FDataLayerNameEditSink : public UE::EditorWidgets::IObjectNameEditSink
 	virtual bool IsObjectDisplayNameReadOnly(UObject* Object) const override
 	{
 		UDataLayerInstance* DataLayerInstance = CastChecked<UDataLayerInstance>(Object);
-		return !DataLayerInstance->CanEditDataLayerShortName() || DataLayerInstance->IsLocked();
+		return !DataLayerInstance->CanEditDataLayerShortName() || DataLayerInstance->IsReadOnly();
 	};
 
 	virtual bool SetObjectDisplayName(UObject* Object, FString DisplayName) override

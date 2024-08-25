@@ -176,7 +176,7 @@ namespace EpicGames.UHT.Utils
 		/// <returns>Destination builder</returns>
 		public static StringBuilder AppendMetaDataParams(this StringBuilder builder, UhtProperty property, IUhtPropertyMemberContext context, string name, string nameSuffix)
 		{
-			return builder.AppendMetaDataParams(property, context.StaticsName, context.NamePrefix, name, nameSuffix, context.MetaDataSuffix);
+			return builder.AppendMetaDataParams(property, null, context.NamePrefix, name, nameSuffix, context.MetaDataSuffix);
 		}
 
 		/// <summary>
@@ -190,67 +190,13 @@ namespace EpicGames.UHT.Utils
 		/// <param name="metaNameSuffix">Optional meta data name suffix</param>
 		/// <param name="tabs">Number of tabs to indent</param>
 		/// <returns>Destination builder</returns>
-		private static StringBuilder AppendMetaDataDecl(this StringBuilder builder, UhtType type, string? namePrefix, string name, string? nameSuffix, string? metaNameSuffix, int tabs)
+		public static StringBuilder AppendMetaDataDecl(this StringBuilder builder, UhtType type, string? namePrefix, string name, string? nameSuffix, string? metaNameSuffix, int tabs)
 		{
 			if (!type.MetaData.IsEmpty())
 			{
-				builder.Append("#if WITH_METADATA\r\n");
-				builder.AppendTabs(tabs).Append("static const UECodeGen_Private::FMetaDataPairParam ").AppendNameDecl(namePrefix, name, nameSuffix).Append(metaNameSuffix).Append("[];\r\n");
-				builder.Append("#endif\r\n");
-			}
-			return builder;
-		}
-
-		/// <summary>
-		/// Append the meta data declaration
-		/// </summary>
-		/// <param name="builder">Destination builder</param>
-		/// <param name="type">Source type containing the meta data</param>
-		/// <param name="name">Name</param>
-		/// <param name="tabs">Number of tabs to indent</param>
-		/// <returns>Destination builder</returns>
-		public static StringBuilder AppendMetaDataDecl(this StringBuilder builder, UhtType type, string name, int tabs)
-		{
-			return builder.AppendMetaDataDecl(type, null, name, null, null, tabs);
-		}
-
-		/// <summary>
-		/// Append the meta data declaration
-		/// </summary>
-		/// <param name="builder">Destination builder</param>
-		/// <param name="property">Source type containing the meta data</param>
-		/// <param name="context">Property context used to get the statics name and name prefix</param>
-		/// <param name="name">Name</param>
-		/// <param name="nameSuffix">Optional name suffix</param>
-		/// <param name="tabs">Number of tabs to indent</param>
-		/// <returns>Destination builder</returns>
-		public static StringBuilder AppendMetaDataDecl(this StringBuilder builder, UhtProperty property, IUhtPropertyMemberContext context, string name, string nameSuffix, int tabs)
-		{
-			return builder.AppendMetaDataDecl(property, context.NamePrefix, name, nameSuffix, context.MetaDataSuffix, tabs);
-		}
-
-		/// <summary>
-		/// Append the meta data definition.
-		/// </summary>
-		/// <param name="builder">Destination builder</param>
-		/// <param name="type">Source type containing the meta data</param>
-		/// <param name="staticsName">Optional name of the statics block which will be output in the form of "StaticsName::"</param>
-		/// <param name="namePrefix">Name prefix</param>
-		/// <param name="name">Name</param>
-		/// <param name="nameSuffix">Optional name suffix</param>
-		/// <param name="metaNameSuffix">Optional meta data name suffix</param>
-		/// <param name="tabs">Number of tabs to indent</param>
-		/// <returns>Destination builder</returns>
-		private static StringBuilder AppendMetaDataDef(this StringBuilder builder, UhtType type, string? staticsName, string? namePrefix, string name, string? nameSuffix, string? metaNameSuffix, int tabs)
-		{
-			bool isPartOfEngine = type.Package.IsPartOfEngine;
-			if (!type.MetaData.IsEmpty())
-			{
+				bool isPartOfEngine = type.Package.IsPartOfEngine;
 				List<KeyValuePair<string, string>> sortedMetaData = type.MetaData.GetSorted();
-
-				builder.Append("#if WITH_METADATA\r\n");
-				builder.AppendTabs(tabs).Append("const UECodeGen_Private::FMetaDataPairParam ").AppendNameDef(staticsName, namePrefix, name, nameSuffix).Append(metaNameSuffix).Append("[] = {\r\n");
-
+				builder.AppendTabs(tabs).Append("static constexpr UECodeGen_Private::FMetaDataPairParam ").AppendNameDecl(namePrefix, name, nameSuffix).Append(metaNameSuffix).Append("[] = {\r\n");
 				foreach (KeyValuePair<string, string> kvp in sortedMetaData)
 				{
 					bool restricted = !isPartOfEngine && s_hiddenMetaDataNames.Contains(kvp.Key);
@@ -266,27 +212,12 @@ namespace EpicGames.UHT.Utils
 				}
 
 				builder.AppendTabs(tabs).Append("};\r\n");
-				builder.Append("#endif\r\n");
 			}
 			return builder;
 		}
 
 		/// <summary>
-		/// Append the meta data definition
-		/// </summary>
-		/// <param name="builder">Destination builder</param>
-		/// <param name="type">Source type containing the meta data</param>
-		/// <param name="staticsName">Optional name of the statics block which will be output in the form of "StaticsName::"</param>
-		/// <param name="name">Name</param>
-		/// <param name="tabs">Number of tabs to indent</param>
-		/// <returns>Destination builder</returns>
-		public static StringBuilder AppendMetaDataDef(this StringBuilder builder, UhtType type, string? staticsName, string name, int tabs)
-		{
-			return builder.AppendMetaDataDef(type, staticsName, null, name, null, null, tabs);
-		}
-
-		/// <summary>
-		/// Append the meta data definition
+		/// Append the meta data declaration
 		/// </summary>
 		/// <param name="builder">Destination builder</param>
 		/// <param name="property">Source type containing the meta data</param>
@@ -295,9 +226,9 @@ namespace EpicGames.UHT.Utils
 		/// <param name="nameSuffix">Optional name suffix</param>
 		/// <param name="tabs">Number of tabs to indent</param>
 		/// <returns>Destination builder</returns>
-		public static StringBuilder AppendMetaDataDef(this StringBuilder builder, UhtProperty property, IUhtPropertyMemberContext context, string name, string nameSuffix, int tabs)
+		public static StringBuilder AppendMetaDataDecl(this StringBuilder builder, UhtProperty property, IUhtPropertyMemberContext context, string name, string nameSuffix, int tabs)
 		{
-			return builder.AppendMetaDataDef(property, context.StaticsName, context.NamePrefix, name, nameSuffix, context.MetaDataSuffix, tabs);
+			return property.AppendMetaDataDecl(builder, context, name, nameSuffix, tabs);
 		}
 
 		/// <summary>

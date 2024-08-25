@@ -1,4 +1,4 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
+﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "IESTextureManager.h"
 #include "Shader.h"
@@ -126,6 +126,8 @@ public:
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 	{
 		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		ShaderPrint::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+
 		OutEnvironment.SetDefine(TEXT("SHADER_DEBUG"), 1);
 	}
 };
@@ -190,10 +192,10 @@ static FRDGTextureRef AddIESDebugPass(
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Add pass
 
-static bool UseComputeForAtlasUpdate(ERHIFeatureLevel::Type FeatureLevel)
+static bool UseComputeForAtlasUpdate(const FStaticShaderPlatform ShaderPlatform)
 {
-	// Prefer raster version on mobile, as OpenGL ES does not support writing to R16F images from compute
-	return (FeatureLevel > ERHIFeatureLevel::ES3_1);
+	// OpenGL ES does not support writing to R16F images from compute
+	return !IsOpenGLPlatform(ShaderPlatform);
 }
 
 class FIESAtlasAddTextureCS : public FGlobalShader
@@ -214,7 +216,7 @@ class FIESAtlasAddTextureCS : public FGlobalShader
 public:
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) 
 	{ 
-		return UseComputeForAtlasUpdate(GetMaxSupportedFeatureLevel(Parameters.Platform)); 
+		return UseComputeForAtlasUpdate(Parameters.Platform); 
 	}
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 	{
@@ -284,7 +286,7 @@ class FIESAtlasAddTexturePS : public FGlobalShader
 public:
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) 
 	{ 
-		return !UseComputeForAtlasUpdate(GetMaxSupportedFeatureLevel(Parameters.Platform)); 
+		return !UseComputeForAtlasUpdate(Parameters.Platform); 
 	}
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 	{
@@ -328,12 +330,12 @@ static void AddSlotsPassPS(
 
 static void AddSlotsPass(
 	FRDGBuilder& GraphBuilder,
-	ERHIFeatureLevel::Type FeatureLevel,
+	const FStaticShaderPlatform ShaderPlatform,
 	FGlobalShaderMap* ShaderMap,
 	const TArray<FAtlasSlot>& Slots,
 	FRDGTextureRef& OutAtlas)
 {
-	if (UseComputeForAtlasUpdate(FeatureLevel))
+	if (UseComputeForAtlasUpdate(ShaderPlatform))
 	{
 		AddSlotsPassCS(GraphBuilder, ShaderMap, Slots, OutAtlas);
 	}
@@ -424,9 +426,9 @@ void RemoveTexture(uint32 InSlotIndex)
 	}
 }
 
-static FRDGTextureRef CreateAtlasTexture(FRDGBuilder& GraphBuilder, ERHIFeatureLevel::Type FeatureLevel, const FIntPoint& Resolution, uint32 SliceCount)
+static FRDGTextureRef CreateAtlasTexture(FRDGBuilder& GraphBuilder, const FStaticShaderPlatform ShaderPlatform, const FIntPoint& Resolution, uint32 SliceCount)
 {
-	ETextureCreateFlags CreateAddFlags = UseComputeForAtlasUpdate(FeatureLevel) ? ETextureCreateFlags::UAV : ETextureCreateFlags::TargetArraySlicesIndependently;
+	ETextureCreateFlags CreateAddFlags = UseComputeForAtlasUpdate(ShaderPlatform) ? ETextureCreateFlags::UAV : ETextureCreateFlags::TargetArraySlicesIndependently;
 	if (GIsEditor)
 	{
 		// Make sure UAV flag is always present in Editor environment as target can be used by both compute and raster
@@ -486,7 +488,7 @@ static uint32 GetRequestedSlotCount(const FIESTextureManager& In)
 	return OutCount;
 }
 
-void UpdateAtlasTexture(FRDGBuilder& GraphBuilder, const ERHIFeatureLevel::Type FeatureLevel)
+void UpdateAtlasTexture(FRDGBuilder& GraphBuilder, const FStaticShaderPlatform ShaderPlatform)
 {
 	// Force update by resetting the atlas layout
 	static uint32 CachedAtlasResolution = CVarIESTextureResolution.GetValueOnRenderThread();
@@ -538,7 +540,7 @@ void UpdateAtlasTexture(FRDGBuilder& GraphBuilder, const ERHIFeatureLevel::Type 
 	// 3. Process new atlas entries (texture allocate, slice allocation, ...) or refresh slots
 	if (GIESTextureManager.bHasPendingAdds)
 	{
-		FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(FeatureLevel);
+		FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(ShaderPlatform);
 
 		// 3.1. Allocate new slice
 		TArray<FAtlasSlot> NewSlots;
@@ -562,7 +564,7 @@ void UpdateAtlasTexture(FRDGBuilder& GraphBuilder, const ERHIFeatureLevel::Type 
 			bool bNeedExtraction = false;
 			if (bForceRecreate)
 			{
-				AtlasTexture = CreateAtlasTexture(GraphBuilder, FeatureLevel, CachedAtlasResolution, RequestedSliceCount);
+				AtlasTexture = CreateAtlasTexture(GraphBuilder, ShaderPlatform, CachedAtlasResolution, RequestedSliceCount);
 				bNeedExtraction = true;
 			}
 			else
@@ -573,7 +575,7 @@ void UpdateAtlasTexture(FRDGBuilder& GraphBuilder, const ERHIFeatureLevel::Type 
 			// 3.2.2 Insert new slots into the atlas texture
 			if (NewSlots.Num() > 0)
 			{
-				AddSlotsPass(GraphBuilder, FeatureLevel, ShaderMap, NewSlots, AtlasTexture);
+				AddSlotsPass(GraphBuilder, ShaderPlatform, ShaderMap, NewSlots, AtlasTexture);
 			}
 
 			if (bNeedExtraction)
@@ -598,9 +600,9 @@ void UpdateAtlasTexture(FRDGBuilder& GraphBuilder, const ERHIFeatureLevel::Type 
 			}
 		}
 
-		FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(FeatureLevel);
+		FGlobalShaderMap* ShaderMap = GetGlobalShaderMap(ShaderPlatform);
 		FRDGTextureRef AtlasTexture = GraphBuilder.RegisterExternalTexture(GIESTextureManager.AtlasTexture);
-		AddSlotsPass(GraphBuilder, FeatureLevel, ShaderMap, RefreshSlots, AtlasTexture);
+		AddSlotsPass(GraphBuilder, ShaderPlatform, ShaderMap, RefreshSlots, AtlasTexture);
 		GIESTextureManager.bHasPendingRefreshes = false;
 	}
 }

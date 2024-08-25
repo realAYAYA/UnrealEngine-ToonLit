@@ -46,25 +46,24 @@
 #include "glsl_types.h"
 #include "LanguageSpec.h"
 
+#include <map>
+
 static bool debug = false;
 
 // XXX using variable_entry2 here to avoid collision (MSVC multiply-defined
 // function) with the variable_entry class seen in ir_variable_refcount.h
 // Perhaps we can use the one in ir_variable_refcount.h and make this class
 // here go away?
-class variable_entry2 : public exec_node
+class variable_entry2
 {
 public:
-	variable_entry2(ir_variable *var)
+	variable_entry2()
 	{
-		this->var = var;
 		this->whole_structure_access = 0;
 		this->declaration = false;
 		this->components = NULL;
 		this->mem_ctx = NULL;
 	}
-
-	ir_variable *var; /* The key: the variable's pointer. */
 
 	/** Number of times the variable is referenced, including assignments. */
 	unsigned whole_structure_access;
@@ -75,6 +74,8 @@ public:
 
 	/** ralloc_parent(this->var) -- the shader's ralloc context. */
 	void *mem_ctx;
+
+	using variable_map = std::map<ir_variable*, variable_entry2>;
 };
 
 
@@ -84,7 +85,7 @@ public:
 	ir_structure_reference_visitor(void)
 	{
 		this->mem_ctx = ralloc_context(NULL);
-		this->variable_list.make_empty();
+		this->variable_list.clear();
 	}
 
 	~ir_structure_reference_visitor(void)
@@ -98,42 +99,33 @@ public:
 	virtual ir_visitor_status visit_enter(ir_assignment *);
 	virtual ir_visitor_status visit_enter(ir_function_signature *);
 
-	variable_entry2 *get_variable_entry2(ir_variable *var);
+	variable_entry2* get_variable_entry2(ir_variable *var);
 
 	/* List of variable_entry */
-	exec_list variable_list;
+	variable_entry2::variable_map variable_list;
 
 	void *mem_ctx;
 };
 
-variable_entry2 *
+variable_entry2*
 ir_structure_reference_visitor::get_variable_entry2(ir_variable *var)
 {
 	check(var);
 
 	if (!var->type->is_record() || var->mode == ir_var_uniform)
-		return NULL;
+		return nullptr;
 
-	foreach_iter(exec_list_iterator, iter, this->variable_list)
-	{
-		variable_entry2 *entry = (variable_entry2 *)iter.get();
-		if (entry->var == var)
-			return entry;
-	}
-
-	variable_entry2 *entry = new(mem_ctx)variable_entry2(var);
-	this->variable_list.push_tail(entry);
-	return entry;
+	return &variable_list.insert_or_assign(var, variable_entry2()).first->second;
 }
 
 
 ir_visitor_status
 ir_structure_reference_visitor::visit(ir_variable *ir)
 {
-	variable_entry2 *entry = this->get_variable_entry2(ir);
-
-	if (entry)
+	if (variable_entry2* entry = get_variable_entry2(ir))
+	{
 		entry->declaration = true;
+	}
 
 	return visit_continue;
 }
@@ -142,10 +134,10 @@ ir_visitor_status
 ir_structure_reference_visitor::visit(ir_dereference_variable *ir)
 {
 	ir_variable *const var = ir->variable_referenced();
-	variable_entry2 *entry = this->get_variable_entry2(var);
-
-	if (entry)
+	if (variable_entry2* entry = get_variable_entry2(var))
+	{
 		entry->whole_structure_access++;
+	}
 
 	return visit_continue;
 }
@@ -164,7 +156,7 @@ ir_structure_reference_visitor::visit_enter(ir_assignment *ir)
 	/* If there are no structure references yet, no need to bother with
 	* processing the expression tree.
 	*/
-	if (this->variable_list.is_empty())
+	if (this->variable_list.size() == 0)
 		return visit_continue_with_parent;
 
 	if (ir->lhs->as_dereference_variable() &&
@@ -192,9 +184,9 @@ ir_structure_reference_visitor::visit_enter(ir_function_signature *ir)
 class ir_structure_splitting_visitor : public ir_rvalue_visitor
 {
 public:
-	ir_structure_splitting_visitor(exec_list *vars)
+	ir_structure_splitting_visitor(const variable_entry2::variable_map& vars)
+		: variable_list(vars)
 	{
-		this->variable_list = vars;
 	}
 
 	virtual ~ir_structure_splitting_visitor()
@@ -206,30 +198,27 @@ public:
 
 	void split_deref(ir_dereference **deref);
 	void handle_rvalue(ir_rvalue **rvalue);
-	variable_entry2 *get_splitting_entry(ir_variable *var);
+	const variable_entry2* get_splitting_entry(ir_variable *var) const;
 
-	exec_list *variable_list;
+	const variable_entry2::variable_map& variable_list;
 	void *mem_ctx;
 };
 
-variable_entry2 *
-ir_structure_splitting_visitor::get_splitting_entry(ir_variable *var)
+const variable_entry2*
+ir_structure_splitting_visitor::get_splitting_entry(ir_variable *var) const
 {
 	check(var);
 
 	if (!var->type->is_record())
-		return NULL;
+		return nullptr;
 
-	foreach_iter(exec_list_iterator, iter, *this->variable_list)
+	variable_entry2::variable_map::const_iterator it = variable_list.find(var);
+	if (it == variable_list.end())
 	{
-		variable_entry2 *entry = (variable_entry2 *)iter.get();
-		if (entry->var == var)
-		{
-			return entry;
-		}
+		return nullptr;
 	}
 
-	return NULL;
+	return &it->second;
 }
 
 void
@@ -243,18 +232,18 @@ ir_structure_splitting_visitor::split_deref(ir_dereference **deref)
 	if (!deref_var)
 		return;
 
-	variable_entry2 *entry = get_splitting_entry(deref_var->var);
+	const variable_entry2* entry = get_splitting_entry(deref_var->var);
 	if (!entry)
 		return;
 
 	unsigned int i;
-	for (i = 0; i < entry->var->type->length; i++)
+	for (i = 0; i < deref_var->var->type->length; i++)
 	{
 		if (strcmp(deref_record->field,
-			entry->var->type->fields.structure[i].name) == 0)
+			deref_var->var->type->fields.structure[i].name) == 0)
 			break;
 	}
-	check(i != entry->var->type->length);
+	check(i != deref_var->var->type->length);
 
 	*deref = new(entry->mem_ctx) ir_dereference_variable(entry->components[i]);
 }
@@ -296,8 +285,8 @@ ir_structure_splitting_visitor::visit_leave(ir_assignment *ir)
 {
 	ir_dereference_variable *lhs_deref = ir->lhs->as_dereference_variable();
 	ir_dereference_variable *rhs_deref = ir->rhs->as_dereference_variable();
-	variable_entry2 *lhs_entry = lhs_deref ? get_splitting_entry(lhs_deref->var) : NULL;
-	variable_entry2 *rhs_entry = rhs_deref ? get_splitting_entry(rhs_deref->var) : NULL;
+	const variable_entry2* lhs_entry = lhs_deref ? get_splitting_entry(lhs_deref->var) : nullptr;
+	const variable_entry2* rhs_entry = rhs_deref ? get_splitting_entry(rhs_deref->var) : nullptr;
 	const glsl_type *type = ir->rhs->type;
 
 	if ((lhs_entry || rhs_entry) && !ir->condition)
@@ -355,28 +344,33 @@ bool do_structure_splitting(exec_list *instructions, _mesa_glsl_parse_state * st
 	bool const bSplitInputVariables = state->LanguageSpec->SplitInputVariableStructs();
 
 	/* Trim out variables we can't split. */
-	foreach_iter(exec_list_iterator, iter, refs.variable_list)
+	for (variable_entry2::variable_map::iterator it = refs.variable_list.begin(); it != refs.variable_list.end();)
 	{
-		variable_entry2 *entry = (variable_entry2 *)iter.get();
+		ir_variable* var = it->first;
+		variable_entry2* entry = &it->second;
 
 		if (debug)
 		{
 			printf("structure %s@%p: decl %d, whole_access %d\n",
-				entry->var->name, (void *)entry->var, entry->declaration,
+				var->name, (void*)var, entry->declaration,
 				entry->whole_structure_access);
 		}
 
-		if (!entry->declaration || entry->whole_structure_access || entry->var->is_interface_block)
+		if (!entry->declaration || entry->whole_structure_access || var->is_interface_block)
 		{
-			entry->remove();
+			it = refs.variable_list.erase(it);
 		}
-		else if (!bSplitInputVariables && entry->var->mode == ir_var_in)
+		else if (!bSplitInputVariables && var->mode == ir_var_in)
 		{
-			entry->remove();
+			it = refs.variable_list.erase(it);
+		}
+		else
+		{
+			++it;
 		}
 	}
 
-	if (refs.variable_list.is_empty())
+	if (refs.variable_list.size() == 0)
 		return false;
 
 	void *mem_ctx = ralloc_context(NULL);
@@ -384,29 +378,35 @@ bool do_structure_splitting(exec_list *instructions, _mesa_glsl_parse_state * st
 	/* Replace the decls of the structures to be split with their split
 	* components.
 	*/
-	foreach_iter(exec_list_iterator, iter, refs.variable_list)
+	for (auto& it : refs.variable_list)
 	{
-		variable_entry2 *entry = (variable_entry2 *)iter.get();
-		const struct glsl_type *type = entry->var->type;
+		ir_variable* var = it.first;
+		variable_entry2 *entry = &it.second;
+		const struct glsl_type *type = var->type;
 
-		entry->mem_ctx = ralloc_parent(entry->var);
+		entry->mem_ctx = ralloc_parent(var);
 
 		entry->components = ralloc_array(mem_ctx,
 			ir_variable *,
 			type->length);
 
-		for (unsigned int i = 0; i < entry->var->type->length; i++)
+		for (unsigned int i = 0; i < var->type->length; i++)
 		{
 			const char *name = ralloc_asprintf(mem_ctx, "%s_%s",
-				entry->var->name,
+				var->name,
 				type->fields.structure[i].name);
 
 			// For platforms that don't normally split input variables we can cheat and reference the global resource directly
 			// This doesn't work on platforms that require structure splitting
-			ir_variable* var = state->symbols->get_variable(name);
-			if (var && !bSplitInputVariables)
+			ir_variable* symbol_var = nullptr;
+			if (!bSplitInputVariables)
 			{
-				entry->components[i] = var;
+				symbol_var = state->symbols->get_variable(name);
+			}
+
+			if (symbol_var)
+			{
+				entry->components[i] = symbol_var;
 			}
 			else
 			{
@@ -414,14 +414,15 @@ bool do_structure_splitting(exec_list *instructions, _mesa_glsl_parse_state * st
 					new(state) ir_variable(type->fields.structure[i].type,
 					name,
 					ir_var_temporary);
-				entry->var->insert_before(entry->components[i]);
+
+				var->insert_before(entry->components[i]);
 			}
 		}
 
-		entry->var->remove();
+		var->remove();
 	}
 
-	ir_structure_splitting_visitor split(&refs.variable_list);
+	ir_structure_splitting_visitor split(refs.variable_list);
 	visit_list_elements(&split, instructions);
 
 	ralloc_free(mem_ctx);

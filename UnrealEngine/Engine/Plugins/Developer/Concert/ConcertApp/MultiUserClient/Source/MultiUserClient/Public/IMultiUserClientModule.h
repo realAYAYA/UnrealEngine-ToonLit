@@ -7,6 +7,8 @@
 #include "Modules/ModuleInterface.h"
 #include "Modules/ModuleManager.h"
 
+
+
 class IConcertSyncClient;
 
 struct FProcHandle;
@@ -16,6 +18,11 @@ struct FServerLaunchOverrides
 	/** The name of the server upon launch */
 	FString ServerName;
 };
+
+namespace UE::MultiUserClient
+{
+	class IMultiUserReplication;
+}
 
 /**
  * Interface for the Multi-User module.
@@ -52,6 +59,12 @@ public:
 	 * @return The client
 	 */
 	virtual TSharedPtr<IConcertSyncClient> GetClient() const = 0;
+
+	/**
+	 * Gets the interface for interacting with the replication system that Multi User sets-up.
+	 * Ownership remains in MultiUser. You cannot keep any reference to it: Call this function instead.
+	 */
+	virtual UE::MultiUserClient::IMultiUserReplication* GetReplication() const = 0;
 
 	/**
 	 * Invokes the Multi-User browser tab

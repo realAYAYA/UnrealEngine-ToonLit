@@ -29,6 +29,7 @@
 #include "rtm/quatd.h"
 #include "rtm/vector4d.h"
 #include "rtm/matrix3x4d.h"
+#include "rtm/version.h"
 #include "rtm/impl/compiler_utils.h"
 #include "rtm/impl/qvv_common.h"
 
@@ -36,6 +37,8 @@ RTM_IMPL_FILE_PRAGMA_PUSH
 
 namespace rtm
 {
+	RTM_IMPL_VERSION_NAMESPACE_BEGIN
+
 	//////////////////////////////////////////////////////////////////////////
 	// Casts a QVV transform float32 variant to a float64 variant.
 	//////////////////////////////////////////////////////////////////////////
@@ -254,6 +257,16 @@ namespace rtm
 		return qvv_set(rotation, translation, start.scale);
 	}
 #endif
+
+	//////////////////////////////////////////////////////////////////////////
+	// Returns true if the input QVV does not contain any NaN or Inf, otherwise false.
+	//////////////////////////////////////////////////////////////////////////
+	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool qvv_is_finite(const qvvd& input) RTM_NO_EXCEPT
+	{
+		return quat_is_finite(input.rotation) && vector_is_finite3(input.translation) && vector_is_finite3(input.scale);
+	}
+
+	RTM_IMPL_VERSION_NAMESPACE_END
 }
 
 RTM_IMPL_FILE_PRAGMA_POP

@@ -9,8 +9,22 @@ FDisplayClusterConfiguratorViewportViewModel::FDisplayClusterConfiguratorViewpor
 {
 	ViewportPtr = Viewport;
 
+	INIT_PROPERTY_HANDLE(UDisplayClusterConfigurationViewport, Viewport, Camera);
 	INIT_PROPERTY_HANDLE(UDisplayClusterConfigurationViewport, Viewport, Region);
 	INIT_PROPERTY_HANDLE(UDisplayClusterConfigurationViewport, Viewport, ViewportRemap);
+}
+
+void FDisplayClusterConfiguratorViewportViewModel::SetCamera(const FString& NewCamera)
+{
+	UDisplayClusterConfigurationViewport* Viewport = ViewportPtr.Get();
+	check(Viewport);
+	Viewport->Modify();
+
+	if (NewCamera != Viewport->Camera)
+	{
+		CameraHandle->SetValue(NewCamera);
+		Viewport->MarkPackageDirty();
+	}
 }
 
 void FDisplayClusterConfiguratorViewportViewModel::SetRegion(const FDisplayClusterConfigurationRectangle& NewRegion)

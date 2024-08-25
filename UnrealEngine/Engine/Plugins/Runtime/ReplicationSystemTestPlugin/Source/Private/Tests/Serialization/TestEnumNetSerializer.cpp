@@ -3,6 +3,7 @@
 #include "TestNetSerializerFixture.h"
 #include "Iris/Core/BitTwiddling.h"
 #include "Iris/Serialization/EnumNetSerializers.h"
+#include "Iris/Serialization/InternalEnumNetSerializers.h"
 #include "EnumTestTypes.h"
 #include <limits>
 
@@ -106,42 +107,15 @@ void FTestEnumIntNetSerializer<SerializerConfig, SourceType, EnumType>::SetUp()
 	}
 
 	Enum = StaticEnum<EnumType>();
-	// NumEnums actually also contain the generated _MAX enum value which might not even be a valid value by the backed type. Skip it!
-	const int32 EnumValueCount = Enum->NumEnums() - 1;
-
-	// Setup the NetSerializerConfig
-	using LargeIntegerType = typename TChooseClass<TIsSigned<SourceType>::Value, int64, uint64>::Result;
-
-	{
-		// Find smallest and largest values
-		if (EnumValueCount == 0)
-		{
-			Config.LowerBound = 0;
-			Config.UpperBound = 0;
-			Config.BitCount = GetBitsNeededForRange(Config.LowerBound, Config.UpperBound);
-			Config.Enum = Enum;
-		}
-		else
-		{
-			// N.B. This code is designed to also work with all uint64 enums, which UEnum doesn't handle perfectly.
-			LargeIntegerType SmallestValue = std::numeric_limits<LargeIntegerType>::max();
-			LargeIntegerType LargestValue = std::numeric_limits<LargeIntegerType>::min();
-			for (int32 EnumIt = 0, EnumEndIt = EnumValueCount; EnumIt != EnumEndIt; ++EnumIt)
-			{
-				const LargeIntegerType Value = static_cast<LargeIntegerType>(Enum->GetValueByIndex(EnumIt));
-				SmallestValue = FMath::Min(SmallestValue, Value);
-				LargestValue = FMath::Max(LargestValue, Value);
-			}
-
-			Config.LowerBound = static_cast<SourceType>(SmallestValue);
-			Config.UpperBound = static_cast<SourceType>(LargestValue);
-			Config.BitCount = GetBitsNeededForRange(Config.LowerBound, Config.UpperBound);
-			Config.Enum = Enum;
-		}
-	}
+	InitEnumNetSerializerConfig(Config, Enum);
 
 	// Setup test values
 	{
+		// NumEnums actually also contain the generated _MAX enum value which might not even be a valid value by the backed type. Skip it!
+		const int32 EnumValueCount = Enum->NumEnums() - 1;
+
+		using LargeIntegerType = std::conditional_t<TIsSigned<SourceType>::Value, int64, uint64>;
+
 		// Valid values
 		TArray<SourceType> TempValues;
 		TempValues.Reserve(EnumValueCount);
@@ -224,7 +198,7 @@ void FTestEnumIntNetSerializer<SerializerConfig, SourceType, EnumType>::TestVali
 	{
 		TArray<bool> ExpectedResults;
 		ExpectedResults.SetNumUninitialized(Values.Num());
-		for (SIZE_T ValueIt = 0, ValueEndIt = Values.Num(); ValueIt != ValueEndIt; ++ValueIt)
+		for (int32 ValueIt = 0, ValueEndIt = Values.Num(); ValueIt != ValueEndIt; ++ValueIt)
 		{
 			ExpectedResults[ValueIt] = true;
 		}

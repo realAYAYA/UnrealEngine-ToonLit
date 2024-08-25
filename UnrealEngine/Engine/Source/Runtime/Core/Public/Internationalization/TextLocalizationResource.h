@@ -65,6 +65,7 @@ public:
 	{
 		FTextConstDisplayStringPtr LocalizedString;
 		FTextKey LocResID;
+		int32 LocalizationTargetPathId = INDEX_NONE;
 		uint32 SourceStringHash = 0;
 		int32 Priority = 0; // Smaller numbers are higher priority
 	};

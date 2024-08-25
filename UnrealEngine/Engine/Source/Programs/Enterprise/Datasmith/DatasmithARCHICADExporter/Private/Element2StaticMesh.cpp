@@ -55,6 +55,7 @@ FElement2StaticMesh::FElement2StaticMesh(const FSyncContext& InSyncContext)
 	: SyncContext(InSyncContext)
 	, bSomeHasTextures(false)
 	, BugsCount(0)
+	, GeometryShift(0, 0, 0)
 {
 }
 
@@ -190,14 +191,11 @@ void FElement2StaticMesh::AddVertex(GS::Int32 InBodyVertex, const Geometry::Vect
 	{
 		// Not already used, get value from body
 		CurrentBody.GetVertex(InBodyVertex, &vertex.LocalVertex, ModelerAPI::CoordinateSystem::ElemLocal);
-		if (!bIsIdentity)
-		{
-			Geometry::Point3D WorldPt = Vertex2Point3D(vertex.LocalVertex);
-			Geometry::Point3D LocalPt = World2Local.Apply(WorldPt);
-			vertex.LocalVertex.x = LocalPt.x;
-			vertex.LocalVertex.y = LocalPt.y;
-			vertex.LocalVertex.z = LocalPt.z;
-		}
+
+		vertex.LocalVertex.x = vertex.LocalVertex.x + GeometryShift.x;
+		vertex.LocalVertex.y = vertex.LocalVertex.y + GeometryShift.y;
+		vertex.LocalVertex.z = vertex.LocalVertex.z + GeometryShift.z;
+
 		vertex.LocalVertex.x *= SyncContext.ScaleLength;
 		vertex.LocalVertex.y *= SyncContext.ScaleLength;
 		vertex.LocalVertex.z *= SyncContext.ScaleLength;
@@ -252,8 +250,7 @@ void FElement2StaticMesh::AddVertex(GS::Int32 InBodyVertex, const Geometry::Vect
 		}
 	}
 
-	Geometry::Vector3D VertexWorldNormal = bIsIdentity ? VertexNormal : Matrix * VertexNormal;
-	FVector3f CurrentNormal(float(VertexWorldNormal.x), -float(VertexWorldNormal.y), float(VertexWorldNormal.z));
+	FVector3f CurrentNormal(float(VertexNormal.x), -float(VertexNormal.y), float(VertexNormal.z));
 
 	// Create triangles
 	if (VertexCount == 0)
@@ -339,7 +336,7 @@ void FElement2StaticMesh::InitPolygonMaterial()
 }
 
 void FElement2StaticMesh::AddElementGeometry(const ModelerAPI::Element&		   InModelElement,
-											 const Geometry::Transformation3D& InWorld2Local)
+											 const Geometry::Vector3D&          InGeometryShift)
 {
 #if 0
 	UE_AC_TraceF("Element\n%s\n", F3DElement2String::Element2String(InModelElement).c_str());
@@ -351,9 +348,7 @@ void FElement2StaticMesh::AddElementGeometry(const ModelerAPI::Element&		   InMo
 		UE_AC_DebugF("FElement2StaticMesh::AddElementGeometry - Break element found\n");
 	}
 #endif
-	World2Local = InWorld2Local;
-	Matrix = InWorld2Local.GetMatrix();
-	bIsIdentity = InWorld2Local.IsIdentity();
+	GeometryShift = InGeometryShift;
 
 	// Collect geometry from element's bodies
 	GS::Int32 NbBodies = InModelElement.GetTessellatedBodyCount();

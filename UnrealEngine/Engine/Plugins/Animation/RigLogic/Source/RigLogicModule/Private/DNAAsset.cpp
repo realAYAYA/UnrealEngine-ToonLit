@@ -125,6 +125,44 @@ void UDNAAsset::SetGeometryReader(TSharedPtr<IDNAReader> SourceDNAReader)
 #endif // #if WITH_EDITORONLY_DATA
 }
 
+void UDNAAsset::InitializeForRuntimeFrom(UDNAAsset* Other)
+{
+	FWriteScopeLock DNAScopeLock{DNAUpdateLock};
+	FWriteScopeLock ContextScopeLock{RigRuntimeContextUpdateLock};
+	FWriteScopeLock MappingScopeLock{DNAIndexMappingUpdateLock};
+
+	// Store a reference to the other asset's runtime context, using the accessor function to 
+	// ensure that the necessary lock is taken.
+	//
+	// The runtime context is immutable, i.e. not modified after initialization, so it's safe to
+	// share across UDNAAssets.
+	RigRuntimeContext = Other->GetRigRuntimeContext();
+
+	// BehaviorReader is used at runtime by GetDNAIndexMapping, so it needs to be populated here.
+	//
+	// The reference is taken from RigRuntimeContext to ensure it's consistent with the runtime
+	// context, as the UDNAAsset's BehaviorReader can be changed to point to a new one before the
+	// runtime context is updated.
+	//
+	// As with the runtime context itself, the BehaviorReader is immutable and safe to share.
+	BehaviorReader = RigRuntimeContext->BehaviorReader;
+
+	// Ensure bKeepDNAAfterInitialization reflects the current state of the BehaviorReader, i.e.
+	// if bKeepDNAAfterInitialization is true, BehaviorReader will contain DNA and vice versa.
+	bKeepDNAAfterInitialization = Other->bKeepDNAAfterInitialization;
+
+	// This map is populated on demand, so doesn't need to be copied.
+	DNAIndexMappingContainer.Empty(1);
+
+	// Clear any fields not needed at runtime to avoid any old data causing confusion
+#if WITH_EDITORONLY_DATA
+	AssetImportData = nullptr;
+#endif
+
+	DnaFileName.Empty();
+	GeometryReader = nullptr;
+}
+
 void UDNAAsset::InvalidateRigRuntimeContext()
 {
 	FWriteScopeLock ContextScopeLock{RigRuntimeContextUpdateLock};
@@ -150,9 +188,12 @@ void UDNAAsset::InitializeRigRuntimeContext()
 			RigRuntimeContext = NewContext;
 		}
 #if !WITH_EDITOR
-		BehaviorReader->Unload(EDNADataLayer::Behavior);
-		BehaviorReader->Unload(EDNADataLayer::Geometry);
-		BehaviorReader->Unload(EDNADataLayer::MachineLearnedBehavior);
+		if (!bKeepDNAAfterInitialization)
+		{
+			BehaviorReader->Unload(EDNADataLayer::Behavior);
+			BehaviorReader->Unload(EDNADataLayer::Geometry);
+			BehaviorReader->Unload(EDNADataLayer::MachineLearnedBehavior);
+		}
 #endif  // !WITH_EDITOR
 	}
 }

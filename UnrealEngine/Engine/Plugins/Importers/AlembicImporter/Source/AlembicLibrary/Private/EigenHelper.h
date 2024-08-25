@@ -38,7 +38,7 @@ namespace EigenHelpers
 	}
 
 	/** Converts a float array into an Eigen Matrix */
-	static void ConvertArrayToEigenMatrix(const TArray<float>& InArray, const int32 InRows, const int32 InColumns, Eigen::MatrixXf& OutMatrix)
+	static void ConvertArrayToEigenMatrix(const TArray64<float>& InArray, const int32 InRows, const int32 InColumns, Eigen::MatrixXf& OutMatrix)
 	{
 		OutMatrix.resize(InRows, InColumns);
 
@@ -48,7 +48,7 @@ namespace EigenHelpers
 		// Copy matrix data
 		for (int32 ColumnIndex = 0; ColumnIndex < InColumns; ++ColumnIndex)
 		{
-			const int32 ColumnOffset = ColumnIndex * InRows;
+			const int64 ColumnOffset = int64(ColumnIndex) * InRows;
 			for (int32 RowIndex = 0; RowIndex < InRows; ++RowIndex)
 			{
 				OutMatrix(RowIndex, ColumnIndex) = InArray[ColumnOffset + RowIndex];
@@ -58,11 +58,11 @@ namespace EigenHelpers
 	}
 
 	/** Converts an Eigen Matrix into a float array */
-	static void ConvertEigenMatrixToArray(const Eigen::MatrixXf& InMatrix, TArray<float>& OutArray, uint32& OutColumns, uint32& OutRows )
+	static void ConvertEigenMatrixToArray(const Eigen::MatrixXf& InMatrix, TArray64<float>& OutArray, uint32& OutColumns, uint32& OutRows )
 	{
 		OutColumns = (int32)InMatrix.cols();
 		OutRows = (int32)InMatrix.rows();
-		const uint32 TotalSize = OutRows * OutColumns;
+		const int64 TotalSize = InMatrix.rows() * InMatrix.cols();
 		OutArray.Empty(TotalSize);
 		OutArray.AddZeroed(TotalSize);
 
@@ -71,7 +71,7 @@ namespace EigenHelpers
 #else
 		for (int32 ColumnIndex = 0; ColumnIndex < OutColumns; ++ColumnIndex)
 		{
-			const int32 ColumnOffset = ColumnIndex * OutRows;
+			const int64 ColumnOffset = int64(ColumnIndex) * OutRows;
 			for (int32 RowIndex = 0; RowIndex < OutRows; ++RowIndex)
 			{
 				OutArray[ColumnOffset + RowIndex] = InMatrix(RowIndex, ColumnIndex);
@@ -90,7 +90,7 @@ namespace EigenHelpers
 	}
 
 	/** Performs Singular value decomposition on the given matrix and returns respective the calculated U, V and S Matrix */
-	static void PerformSVD(const TArray<float>& InMatrix, const int32 InRows, const int32 InColumns, TArray<float>& OutU, TArray<float>& OutV, TArray<float>& OutS)
+	static void PerformSVD(const TArray64<float>& InMatrix, const int32 InRows, const int32 InColumns, TArray64<float>& OutU, TArray64<float>& OutV, TArray64<float>& OutS)
 	{
 		Eigen::MatrixXf EigenMatrix;
 		ConvertArrayToEigenMatrix(InMatrix, InRows, InColumns, EigenMatrix);

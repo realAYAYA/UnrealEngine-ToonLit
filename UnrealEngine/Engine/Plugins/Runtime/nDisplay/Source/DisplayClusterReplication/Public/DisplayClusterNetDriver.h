@@ -78,9 +78,6 @@ public:
 	void RemoveNodeConnection(UDisplayClusterNetConnection* NetConnection);
 
 protected:
-	// Contains last max acked packet for specific connection (key - connectionID, value - packetID)
-	TMap<int32, int32> LastAckedPacket;
-
 	// Contains queue of non-processed packets for specific connection (key - connectionID, value - packetID)
 	TMap<int32, TDeque<int32>> OutPacketsQueues;
 
@@ -126,6 +123,12 @@ protected:
 	// Checks if connections viewers for Primary node were formed
 	bool bConnectionViewersAreReady;
 
+	// ClusterId for listen Server
+	int32 ListenClusterId;
+
+	// Num cluster nodes for listen Server
+	int32 ListenClusterNodesNum;
+
 	// Cluster event id, used to start synchrosonus packets processing
 	inline static const int NodeSyncEvent = GetTypeHash(FStringView(TEXT("nDCRNodeSyncEvent")));
 
@@ -138,6 +141,10 @@ protected:
 	void PostListUpdate(ConsiderListUpdateParams const& UpdateParams, int& OutUpdated, const TArray<FNetworkObjectInfo*>& ConsiderList);
 	void ListUpdate(ConsiderListUpdateParams const& UpdateParams, int& OutUpdated, const TArray<FNetworkObjectInfo*>& ConsiderList);
 #endif
+	
+	// Helper functions used by server side to notify cluster via cluster event that it is are ready for sync
+	bool NotifyClusterAsReadyForSync(int32 ClusterId);
+
 	// Helper functions for parameters serialization into binary event data
 	void GenerateClusterCommandsEvent(FDisplayClusterClusterEventBinary& NetworkDriverSyncEvent, int32 EventId);
 	void GenerateClusterCommandsEvent(FDisplayClusterClusterEventBinary& NetworkDriverSyncEvent, int32 EventId, const TMap<uint32, int32>& Parameters);

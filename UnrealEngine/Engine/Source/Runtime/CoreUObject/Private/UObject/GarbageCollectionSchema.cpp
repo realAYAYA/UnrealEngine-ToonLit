@@ -52,6 +52,10 @@ FName ToName(EMemberType Type)
 			Names[(uint8)EMemberType::ARO] =							"ARO";
 			Names[(uint8)EMemberType::SlowARO] =						"SlowARO";
 			Names[(uint8)EMemberType::MemberARO] =						"MemberARO";
+#if WITH_VERSE_VM || defined(__INTELLISENSE__)
+			Names[(uint8)EMemberType::VerseValue] =						"VerseValue";
+			Names[(uint8)EMemberType::VerseValueArray] =				"VerseValueArray";
+#endif
 		}
 
 		FName Names[MemberTypeCount];
@@ -64,7 +68,7 @@ FName ToName(EMemberType Type)
 
 //////////////////////////////////////////////////////////////////////////
 
-static_assert(sizeof(FMemberWord) == 8 && alignof(FMemberWord) == 8);
+static_assert(sizeof(FMemberWord) == 8 && alignof(FMemberWord) == 8); //-V547
 
 static bool IsSet(FMemberWord Word)
 {
@@ -259,7 +263,7 @@ FMemberInfo GetMemberDebugInfo(FSchemaView Schema, FMemberId Id)
 			}
 			else if (IsIn<StopTypes>(Member.Type))
 			{
-				return { Offset, DebugNameIdx >= 0 ? ((FName*)WordIt)[DebugNameIdx] : EName::Error };
+				return { Offset, DebugNameIdx >= 0 ? ((FName*)WordIt)[DebugNameIdx] : EName::Error }; //-V547
 			}
 			else if (Member.Type == EMemberType::Jump)
 			{

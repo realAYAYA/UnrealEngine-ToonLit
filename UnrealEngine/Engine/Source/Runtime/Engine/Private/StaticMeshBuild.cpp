@@ -96,6 +96,15 @@ bool UStaticMesh::CanBuild() const
 		return false;
 	}
 
+	// Mesh descriptions are unlikely at runtime but UStaticMesh::Build can still be called
+	if (FApp::IsGame())
+	{
+		if (!IsMeshDescriptionValid(0))
+		{
+			return false;
+		}
+	}
+
 	return true;
 }
 
@@ -176,7 +185,7 @@ void UStaticMesh::BatchBuild(const TArray<UStaticMesh*>& InStaticMeshes, const F
 			GCardRepresentationAsyncQueue->CancelBuilds(StaticMeshesToProcess);
 		}
 
-		TMap<UStaticMesh*, TArray<UStaticMeshComponent*>> StaticMeshComponents;
+		TMap<UStaticMesh*, TArray<IStaticMeshComponent*>> StaticMeshComponents;
 		StaticMeshComponents.Reserve(InStaticMeshes.Num());
 
 		TSet<FSceneInterface*> Scenes;
@@ -187,15 +196,18 @@ void UStaticMesh::BatchBuild(const TArray<UStaticMesh*>& InStaticMeshes, const F
 			{
 				StaticMeshComponents.Add(StaticMesh);
 
-				for (UStaticMeshComponent* Component : ObjectCacheScope.GetContext().GetStaticMeshComponents(StaticMesh))
+				for (IStaticMeshComponent* Component : ObjectCacheScope.GetContext().GetStaticMeshComponents(StaticMesh))
 				{
+					IPrimitiveComponent* PrimitiveComponent = Component->GetPrimitiveComponentInterface();
+
 					// Detach all instances of those static meshes from the scene.
-					if (Component->IsRenderStateCreated())
+					if (PrimitiveComponent->IsRenderStateCreated())
 					{
-						Component->DestroyRenderState_Concurrent();
-						Scenes.Add(Component->GetScene());
+						PrimitiveComponent->DestroyRenderState();
+						Scenes.Add(PrimitiveComponent->GetScene());
 					}
-					if (Component->IsRegistered())
+					
+					if (PrimitiveComponent->IsRegistered())
 					{
 						StaticMeshComponents[StaticMesh].Add(Component);
 					}
@@ -216,14 +228,16 @@ void UStaticMesh::BatchBuild(const TArray<UStaticMesh*>& InStaticMeshes, const F
 		auto FinalizeStaticMesh = 
 			[&Scenes, &StaticMeshComponents](UStaticMesh* StaticMesh)
 			{
-				if (TArray<UStaticMeshComponent*>* MeshComponents = StaticMeshComponents.Find(StaticMesh))
+				if (TArray<IStaticMeshComponent*>* MeshComponents = StaticMeshComponents.Find(StaticMesh))
 				{
-					for (UPrimitiveComponent* Component : *MeshComponents)
+					for (IStaticMeshComponent* Component : *MeshComponents)
 					{
-						if (Component->IsRegistered() && !Component->IsRenderStateCreated() && Component->ShouldCreateRenderState())
+						IPrimitiveComponent* PrimitiveComponent = Component->GetPrimitiveComponentInterface();
+
+						if (PrimitiveComponent->IsRegistered() && !PrimitiveComponent->IsRenderStateCreated() && PrimitiveComponent->ShouldCreateRenderState())
 						{
-							Component->CreateRenderState_Concurrent(nullptr);
-							Scenes.Add(Component->GetScene());
+							PrimitiveComponent->CreateRenderState(nullptr);
+							Scenes.Add(PrimitiveComponent->GetScene());
 						}
 					}
 				}
@@ -235,7 +249,7 @@ void UStaticMesh::BatchBuild(const TArray<UStaticMesh*>& InStaticMeshes, const F
 				// Only launch async compile if errors are not required
 				if (BuildParameters.OutErrors == nullptr && FStaticMeshCompilingManager::Get().IsAsyncCompilationAllowed(StaticMesh))
 				{
-					const int64 BuildRequiredMemory = StaticMesh->GetBuildRequiredMemory();
+					const int64 BuildRequiredMemory = StaticMesh->GetBuildRequiredMemoryEstimate();
 					TUniquePtr<FStaticMeshBuildContext> Context = MakeUnique<FStaticMeshBuildContext>(BuildParameters);
 					StaticMesh->BeginBuildInternal(Context.Get());
 
@@ -243,7 +257,7 @@ void UStaticMesh::BatchBuild(const TArray<UStaticMesh*>& InStaticMeshes, const F
 					EQueuedWorkPriority BasePriority = FStaticMeshCompilingManager::Get().GetBasePriority(StaticMesh);
 					check(StaticMesh->AsyncTask == nullptr);
 					StaticMesh->AsyncTask = MakeUnique<FStaticMeshAsyncBuildTask>(StaticMesh, MoveTemp(Context));
-					StaticMesh->AsyncTask->StartBackgroundTask(StaticMeshThreadPool, BasePriority, EQueuedWorkFlags::DoNotRunInsideBusyWait, BuildRequiredMemory);
+					StaticMesh->AsyncTask->StartBackgroundTask(StaticMeshThreadPool, BasePriority, EQueuedWorkFlags::DoNotRunInsideBusyWait, BuildRequiredMemory, TEXT("StaticMesh"));
 					FStaticMeshCompilingManager::Get().AddStaticMeshes({ StaticMesh });
 					return true;
 				}
@@ -589,7 +603,7 @@ bool UStaticMesh::ExecuteBuildInternal(const FBuildParameters& BuildParameters)
 	return bHasRenderDataChanged;
 }
 
-void UStaticMesh::FinishBuildInternal(const TArray<UStaticMeshComponent*>& InAffectedComponents, bool bHasRenderDataChanged, bool bShouldComputeExtendedBounds)
+void UStaticMesh::FinishBuildInternal(const TArray<IStaticMeshComponent*>& InAffectedComponents, bool bHasRenderDataChanged, bool bShouldComputeExtendedBounds)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(UStaticMesh::PostBuildInternal);
 
@@ -601,29 +615,11 @@ void UStaticMesh::FinishBuildInternal(const TArray<UStaticMeshComponent*>& InAff
 		InitResources();
 	}
 
-	if (bHasRenderDataChanged)
+
+	for (IStaticMeshComponent* Component : InAffectedComponents)
 	{
-		// Find any static mesh components that use this mesh and fixup their override colors if necessary.
-		// Also invalidate lighting. *** WARNING components may be reattached here! ***
-		for (UStaticMeshComponent* Component : InAffectedComponents)
-		{
-			Component->FixupOverrideColorsIfNecessary(true);
-			Component->InvalidateLightingCache();
-		}
-	}
-	else
-	{
-		// No change in RenderData, still re-register components with preview static lighting system as ray tracing geometry has been recreated
-		// When RenderData is changed, this is handled by InvalidateLightingCache()
-		for (UStaticMeshComponent* Component : InAffectedComponents)
-		{
-			FStaticLightingSystemInterface::OnPrimitiveComponentUnregistered.Broadcast(Component);
-			if (Component->HasValidSettingsForStaticLighting(false))
-			{
-				FStaticLightingSystemInterface::OnPrimitiveComponentRegistered.Broadcast(Component);
-			}
-		}
-	}
+		Component->OnMeshRebuild(bHasRenderDataChanged);			
+	}	
 
 	// If extended bounds were already calculated in the PreBuild step and are unlocked, 
 	// we will only validate here to avoid modifying the value while another thread could read it.

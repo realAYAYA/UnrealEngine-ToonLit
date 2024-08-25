@@ -54,12 +54,6 @@ FIntPoint TextureMediaPlayerVideoDecoderOutput::GetDim() const
 
 #if PLATFORM_WINDOWS
 
-TRefCountPtr<IMFSample> TextureMediaPlayerVideoDecoderOutput::GetMFSample() const
-{
-	check(!"Should not be called!");
-	return nullptr;
-}
-
 TRefCountPtr<IUnknown> TextureMediaPlayerVideoDecoderOutput::GetTexture() const
 {
 	IUnknown* Result = nullptr;

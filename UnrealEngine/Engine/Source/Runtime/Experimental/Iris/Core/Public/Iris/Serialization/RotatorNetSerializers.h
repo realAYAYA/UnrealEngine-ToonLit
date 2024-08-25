@@ -24,11 +24,25 @@ struct FRotatorAsShortNetSerializerConfig : public FNetSerializerConfig
 	GENERATED_BODY()
 };
 
+USTRUCT()
+struct FRotator3fNetSerializerConfig : public FNetSerializerConfig
+{
+	GENERATED_BODY()
+};
+
+USTRUCT()
+struct FRotator3dNetSerializerConfig : public FNetSerializerConfig
+{
+	GENERATED_BODY()
+};
+
 namespace UE::Net
 {
 
 UE_NET_DECLARE_SERIALIZER(FRotatorNetSerializer, IRISCORE_API);
 UE_NET_DECLARE_SERIALIZER(FRotatorAsByteNetSerializer, IRISCORE_API);
 UE_NET_DECLARE_SERIALIZER(FRotatorAsShortNetSerializer, IRISCORE_API);
+UE_NET_DECLARE_SERIALIZER(FRotator3fNetSerializer, IRISCORE_API);
+UE_NET_DECLARE_SERIALIZER(FRotator3dNetSerializer, IRISCORE_API);
 
 }

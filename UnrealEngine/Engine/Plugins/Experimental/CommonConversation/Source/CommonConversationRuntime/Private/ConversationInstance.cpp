@@ -26,7 +26,7 @@ UWorld* UConversationInstance::GetWorld() const
 
 #if WITH_SERVER_CODE
 
-void UConversationInstance::ServerRemoveParticipant(FGameplayTag ParticipantID, const FConversationParticipants& PreservedParticipants)
+void UConversationInstance::ServerRemoveParticipant(const FGameplayTag& ParticipantID, const FConversationParticipants& PreservedParticipants)
 {
 	for (auto It = Participants.List.CreateIterator(); It; ++It)
 	{
@@ -45,7 +45,7 @@ void UConversationInstance::ServerRemoveParticipant(FGameplayTag ParticipantID, 
 	}
 }
 
-void UConversationInstance::ServerAssignParticipant(FGameplayTag ParticipantID, AActor* ParticipantActor)
+void UConversationInstance::ServerAssignParticipant(const FGameplayTag& ParticipantID, AActor* ParticipantActor)
 {
 	if (!ParticipantID.IsValid() || (ParticipantActor == nullptr))
 	{
@@ -73,17 +73,18 @@ void UConversationInstance::ServerAssignParticipant(FGameplayTag ParticipantID, 
 		*GetName(), *ParticipantID.ToString(), *GetPathNameSafe(ParticipantActor));
 }
 
-void UConversationInstance::ServerStartConversation(FGameplayTag EntryPoint)
+void UConversationInstance::ServerStartConversation(const FGameplayTag& EntryPoint, const UConversationDatabase* Graph)
 {
 	UE_LOG(LogCommonConversationRuntime, Verbose, TEXT("Conversation %s starting at %s with %d participants"),
 		*GetName(), *EntryPoint.ToString(), Participants.List.Num());
 
 	ResetConversationProgress();
 	StartingEntryGameplayTag = EntryPoint;
+	ActiveConversationGraph = Graph;
 
 	UConversationRegistry* ConversationRegistry = UConversationRegistry::GetFromWorld(GetWorld());
 	
-	TArray<FGuid> PotentialStartingPoints = ConversationRegistry->GetOutputLinkGUIDs(EntryPoint);
+	TArray<FGuid> PotentialStartingPoints = ConversationRegistry->GetOutputLinkGUIDs(Graph, EntryPoint);
 	if (PotentialStartingPoints.Num() == 0)
 	{
 		UE_LOG(LogCommonConversationRuntime, Warning, TEXT("Entry point %s did not exist or had no destination entries; conversation aborted"), *EntryPoint.ToString());
@@ -427,6 +428,12 @@ void UConversationInstance::ServerRefreshTaskChoiceData(const FConversationNodeH
 		}
 	}
 }
+
+void UConversationInstance::ServerRefreshCurrentConversationNode()
+{
+	ProcessCurrentConversationNode();
+}
+
 #endif // #if WITH_SERVER_CODE
 
 void UConversationInstance::ResetConversationProgress()
@@ -502,7 +509,7 @@ TArray<FGuid> UConversationInstance::DetermineBranches(const TArray<FGuid>& Sour
 	TArray<FGuid> EnabledPaths;
 	for (const FGuid& TestGUID : SourceList)
 	{
-		UConversationNode* TestNode = Context.GetConversationRegistry().GetRuntimeNodeFromGUID(TestGUID);
+		UConversationNode* TestNode = Context.GetConversationRegistry().GetRuntimeNodeFromGUID(TestGUID, ActiveConversationGraph.Get());
 		if (UConversationTaskNode* TaskNode = Cast<UConversationTaskNode>(TestNode))
 		{
 			const EConversationRequirementResult RequirementResult = TaskNode->CheckRequirements(Context);
@@ -520,6 +527,11 @@ TArray<FGuid> UConversationInstance::DetermineBranches(const TArray<FGuid>& Sour
 }
 
 void UConversationInstance::OnCurrentConversationNodeModified()
+{
+	ProcessCurrentConversationNode();
+}
+
+void UConversationInstance::ProcessCurrentConversationNode()
 {
 	check(GetCurrentChoiceReference().IsValid());
 
@@ -586,4 +598,4 @@ void UConversationInstance::OnCurrentConversationNodeModified()
 	}
 }
 
-#endif
+#endif //WITH_SERVER_CODE

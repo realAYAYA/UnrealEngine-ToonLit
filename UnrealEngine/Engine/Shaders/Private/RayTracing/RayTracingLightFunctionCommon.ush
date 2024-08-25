@@ -14,7 +14,7 @@ float3 GetRayTracingLightFunction(float3 TranslatedWorldPosition)
 	}
 
 	// Calculate radial view distance for stable fading
-	float ViewDistance = length(View.TranslatedWorldCameraOrigin - TranslatedWorldPosition);
+	float ViewDistance = GetDistanceToCameraFromViewVector(View.TranslatedWorldCameraOrigin - TranslatedWorldPosition);
 
 	float3 Color = GetLightFunctionColor(LightVector, TranslatedWorldPosition);
 

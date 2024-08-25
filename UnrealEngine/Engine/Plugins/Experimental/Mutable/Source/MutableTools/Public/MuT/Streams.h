@@ -32,7 +32,7 @@ namespace mu
 		//-----------------------------------------------------------------------------------------
 
 		//! Create the stream by reading a file.
-		InputFileStream( const char* strFile );
+		InputFileStream( const FString& File );
 
 		~InputFileStream();
 
@@ -49,11 +49,6 @@ namespace mu
 
         //! Return true if the file was found and it could be opened in the constructor.
         bool IsOpen() const;
-
-        //! Return the number of bytes read from the stream. This should not be used as file 
-        //! position since other bytes might have been read outside this stream, or even Seek might 
-        //! have been called to repeat reads.
-		uint64 GetReadBytes() const;
 
         //! Return the current position in bytes in the underlying file.
 		uint64 Tell() const;
@@ -81,7 +76,7 @@ namespace mu
 
 		//! Create a stream that will write to a file.
 		//! The file will be created overwriting any other file with the same name.
-		OutputFileStream( const char* strFile );
+		OutputFileStream(const FString& File);
 
 		~OutputFileStream();
 
@@ -161,21 +156,12 @@ namespace mu
 	};
 
 
-    //! ProxyFactory that provides proxies for data stored in temporary files.
-    //! \ingroup tools
-    class MUTABLETOOLS_API ProxyFactoryFiles : public InputArchiveWithProxies::ProxyFactory
-    {
-    public:
-        Ptr<ResourceProxy<mu::Image>> NewImageProxy(InputArchive& arch) override;
-    };
-
-
     //! ProxyFactory that provides proxies for data stored in a mutable_source file.
     //! \ingroup tools
     class MUTABLETOOLS_API ProxyFactoryMutableSourceFile : public InputArchiveWithProxies::ProxyFactory
     {
     public:
-        ProxyFactoryMutableSourceFile( const char* strFileName, InputFileStream* );
+        ProxyFactoryMutableSourceFile( const FString& FileName, InputFileStream* );
         ~ProxyFactoryMutableSourceFile() override;
 
         Ptr<ResourceProxy<mu::Image>> NewImageProxy(InputArchive& arch) override;

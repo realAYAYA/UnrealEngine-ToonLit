@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Engine/World.h"
+#include "Engine/OverlapResult.h"
 #include "CollisionDebugDrawingPublic.h"
 #include "Physics/Experimental/PhysScene_Chaos.h"
 #include "Physics/PhysicsInterfaceUtils.h"
@@ -11,6 +12,12 @@
 #include "PhysicsEngine/ScopedSQHitchRepeater.h"
 
 #include "Collision/CollisionDebugDrawing.h"
+
+#if WITH_CHAOS_VISUAL_DEBUGGER
+#include "DataWrappers/ChaosVDQueryDataWrappers.h"
+#endif
+
+#include "ChaosVDSQTraceHelper.h"
 
 float DebugLineLifetime = 2.f;
 
@@ -165,8 +172,8 @@ struct TSQTraits
 	static const ESingleMultiOrTest SingleMultiOrTest = InSingleMultiOrTest;
 	static const ESweepOrRay GeometryQuery = InGeometryQuery;
 	using THitType = InHitType;
-	using TOutHits = typename TChooseClass<InSingleMultiOrTest == ESingleMultiOrTest::Multi, TArray<FHitResult>, FHitResult>::Result;
-	using THitBuffer = typename TChooseClass<InSingleMultiOrTest == ESingleMultiOrTest::Multi, FDynamicHitBuffer<InHitType>, FSingleHitBuffer<InHitType>>::Result;
+	using TOutHits = std::conditional_t<InSingleMultiOrTest == ESingleMultiOrTest::Multi, TArray<FHitResult>, FHitResult>;
+	using THitBuffer = std::conditional_t<InSingleMultiOrTest == ESingleMultiOrTest::Multi, FDynamicHitBuffer<InHitType>, FSingleHitBuffer<InHitType>>;
 
 	// GetNumHits - multi
 	template <ESingleMultiOrTest T = SingleMultiOrTest>
@@ -417,9 +424,10 @@ private:
 };
 
 template <typename Traits, typename TGeomInputs, typename TAccelContainer>
-bool TSceneCastCommonImp(const UWorld* World, typename Traits::TOutHits& OutHits, const TGeomInputs& GeomInputs, const FVector Start, const FVector End, ECollisionChannel TraceChannel, const struct FCollisionQueryParams& Params, const struct FCollisionResponseParams& ResponseParams, const struct FCollisionObjectQueryParams& ObjectParams, const TAccelContainer& AccelContainer)
+bool TSceneCastCommonImpWithRetryRequest(const UWorld* World, typename Traits::TOutHits& OutHits, const TGeomInputs& GeomInputs, const FVector Start, const FVector End, ECollisionChannel TraceChannel, const struct FCollisionQueryParams& Params, const struct FCollisionResponseParams& ResponseParams, const struct FCollisionObjectQueryParams& ObjectParams, const TAccelContainer& AccelContainer, bool& bOutRequestRetry, FCollisionQueryParams& OutRetryParams)
 {
 	using namespace ChaosInterface;
+	bOutRequestRetry = false;
 
 	FScopeCycleCounter Counter(Params.StatId);
 	STARTQUERYTIMER();
@@ -484,7 +492,6 @@ bool TSceneCastCommonImp(const UWorld* World, typename Traits::TOutHits& OutHits
 			bBlockingHit = true;
 			MinBlockingDistance = GetDistance(Traits::GetHits(HitBufferSync)[NumHits - 1]);
 		}
-
 		if (NumHits > 0 && !Traits::IsTest())
 		{
 			bool bSuccess = ConvertTraceResults(bBlockingHit, World, NumHits, Traits::GetHits(HitBufferSync), DeltaMag, Filter, OutHits, Start, End, GeomInputs.GetGeometry(), StartTM, MinBlockingDistance, Params.bReturnFaceIndex, Params.bReturnPhysicalMaterial) == EConvertQueryResult::Valid;
@@ -527,13 +534,15 @@ bool TSceneCastCommonImp(const UWorld* World, typename Traits::TOutHits& OutHits
 
 					return Result;
 				};
-
 				if (bSuccess && Params.bTraceIntoSubComponents)
 				{
 					if constexpr (Traits::IsMulti())
 					{
+						const bool bHadBlockingHit = bBlockingHit;
 						TArray<FHitResult> AllNewHits;
 						TArray<int32> ClusterUnionIndices;
+						TArray<AActor*, TInlineAllocator<1>> ClusterUnionActorsToIgnoreIfRetry;
+						bBlockingHit = false;
 
 						for (int32 Index = 0; Index < OutHits.Num(); ++Index)
 						{
@@ -541,23 +550,55 @@ bool TSceneCastCommonImp(const UWorld* World, typename Traits::TOutHits& OutHits
 							FClusterUnionHit ClusterUnionHit = DoClusterUnionTrace(OutHits[Index], NewHit);
 							if (ClusterUnionHit.bIsClusterUnion)
 							{
-								ClusterUnionIndices.Add(Index);
+								if (Params.bReplaceHitWithSubComponents || !ClusterUnionHit.bHit)
+								{
+									ClusterUnionIndices.Add(Index);
+								}
 
 								if (ClusterUnionHit.bHit)
 								{
+									bBlockingHit = true;
 									AllNewHits.Append(NewHit);
 								}
+								else if (OutHits[Index].bBlockingHit)
+								{
+									// Subtrace has no blocking hit but the cluster union trace was a blocking hit.
+									// We need to make sure this cluster union gets ignored if we retry.
+									ClusterUnionActorsToIgnoreIfRetry.Add(OutHits[Index].GetActor());
+								}
+							}
+							else
+							{
+								bBlockingHit |= OutHits[Index].bBlockingHit;
 							}
 						}
 
-						for (int32 Index = ClusterUnionIndices.Num() - 1; Index >= 0; --Index)
+						if (bHadBlockingHit && !bBlockingHit)
 						{
-							// No shrinking since we're going to be adding more elements shortly.
-							OutHits.RemoveAtSwap(ClusterUnionIndices[Index], 1, false);
+							// We had a blocking hit, but after subtracing against a cluster union we no longer have a blocking hit because its subcomponent(s) were ignored (e.g. if ignored actors/ignored components is used).
+							// In this case we want to retry and ignore the cluster unions that were hit to continue the trace until it reaches the end/finds another blocking hit.
+							Traits::ResetOutHits(OutHits, Start, End);
+							OutRetryParams = Params;
+							for (AActor* IgnoreActor : ClusterUnionActorsToIgnoreIfRetry)
+							{
+								OutRetryParams.AddIgnoredActor(IgnoreActor);
+							}
+							bOutRequestRetry = true;
+							return false;
 						}
-
-						OutHits.Append(AllNewHits);
-						bBlockingHit &= !OutHits.IsEmpty();
+						else
+						{
+							for (int32 Index = ClusterUnionIndices.Num() - 1; Index >= 0; --Index)
+							{
+								// No shrinking since we're going to be adding more elements shortly.
+								OutHits.RemoveAtSwap(ClusterUnionIndices[Index], 1, EAllowShrinking::No);
+							}
+	
+							if (Params.bReplaceHitWithSubComponents)
+							{
+								OutHits.Append(AllNewHits);
+							}
+						}
 					}
 					else
 					{
@@ -568,7 +609,10 @@ bool TSceneCastCommonImp(const UWorld* World, typename Traits::TOutHits& OutHits
 							bBlockingHit = ClusterUnionHit.bHit;
 							if (ClusterUnionHit.bHit)
 							{
-								OutHits = NewHit;
+								if (Params.bReplaceHitWithSubComponents)
+								{
+									OutHits = NewHit;
+								}
 							}
 							else if (AActor* ClusterUnionActor = OutHits.GetActor())
 							{
@@ -576,9 +620,16 @@ bool TSceneCastCommonImp(const UWorld* World, typename Traits::TOutHits& OutHits
 								// redo the entire trace and force the SQ trace to ignore the cluster union actor. This is only relevant in the case where we aren't doing a multi-trace since in the
 								// case of a multi-trace, we would've found all the other things we hit as well. In the case of a non-multi (single) trace, the SQ trace determined that the cluster union
 								// is the best hit! But there could be other things we could've hit instead if we ignored the fact that we hit a cluster union.
-								FCollisionQueryParams NewParams = Params;
-								NewParams.AddIgnoredActor(ClusterUnionActor);
-								return TSceneCastCommonImp<Traits, TGeomInputs, TAccelContainer>(World, OutHits, GeomInputs, Start, End, TraceChannel, NewParams, ResponseParams, ObjectParams, AccelContainer);
+								OutRetryParams = Params;
+								// Ignore the actor that was hit (Check the shape data to be sure)
+								uint32 ActorIDFromShape = Traits::GetHits(HitBufferSync)->Shape->GetQueryData().Word0;
+								OutRetryParams.AddIgnoredActor(ActorIDFromShape);
+								if (ActorIDFromShape != ClusterUnionActor->GetUniqueID())
+								{
+									UE_LOG(LogChaos, Warning, TEXT("TSceneCastCommonImpWithRetryRequest: Incorrect Shape Actor ID detected"));
+								}								
+								bOutRequestRetry = true;
+								return false;
 							}
 							else
 							{
@@ -606,6 +657,36 @@ bool TSceneCastCommonImp(const UWorld* World, typename Traits::TOutHits& OutHits
 #endif
 
 	return bHaveBlockingHit;
+}
+
+template <typename Traits, typename TGeomInputs, typename TAccelContainer>
+bool TSceneCastCommonImp(const UWorld* World, typename Traits::TOutHits& OutHits, const TGeomInputs& GeomInputs, const FVector Start, const FVector End, ECollisionChannel TraceChannel, const struct FCollisionQueryParams& Params, const struct FCollisionResponseParams& ResponseParams, const struct FCollisionObjectQueryParams& ObjectParams, const TAccelContainer& AccelContainer)
+{
+	bool bRequestRetry = true;
+	bool bReturnResult = false;
+	FCollisionQueryParams RetryParams;
+
+	{
+		constexpr bool bIsRetryQuery = false;
+		CVD_TRACE_SCOPED_SCENE_QUERY_HELPER(World, GeomInputs.GetGeometry(), FTransform(GeomInputs.GetGeometryOrientation() ? *GeomInputs.GetGeometryOrientation() : FQuat::Identity, Start), End, TraceChannel, Params, ResponseParams, ObjectParams, Traits::IsSweep() ? EChaosVDSceneQueryType::Sweep : EChaosVDSceneQueryType::RayCast, static_cast<EChaosVDSceneQueryMode>(Traits::SingleMultiOrTest), bIsRetryQuery);
+		bReturnResult = TSceneCastCommonImpWithRetryRequest<Traits, TGeomInputs, TAccelContainer>(World, OutHits, GeomInputs, Start, End, TraceChannel, Params, ResponseParams, ObjectParams, AccelContainer, bRequestRetry, RetryParams);
+	}
+
+	int InfiniteLoopProtection = 10;
+	while (bRequestRetry && InfiniteLoopProtection > 0)
+	{
+		CVD_TRACE_SCOPED_SCENE_QUERY_HELPER(World, GeomInputs.GetGeometry(), FTransform(GeomInputs.GetGeometryOrientation() ? *GeomInputs.GetGeometryOrientation() : FQuat::Identity, Start), End, TraceChannel, Params, ResponseParams, ObjectParams, Traits::IsSweep() ? EChaosVDSceneQueryType::Sweep : EChaosVDSceneQueryType::RayCast, static_cast<EChaosVDSceneQueryMode>(Traits::SingleMultiOrTest), bRequestRetry);
+		bReturnResult = TSceneCastCommonImpWithRetryRequest<Traits, TGeomInputs, TAccelContainer>(World, OutHits, GeomInputs, Start, End, TraceChannel, RetryParams, ResponseParams, ObjectParams, AccelContainer, bRequestRetry, RetryParams);
+		InfiniteLoopProtection--;
+	}
+
+	if (InfiniteLoopProtection <= 0)
+	{
+		UE_LOG(LogChaos, Warning, TEXT("TSceneCastCommonImp: Potential Infinite Loop Detected"));
+		bReturnResult = false;
+	}
+
+	return bReturnResult;
 }
 
 template <typename Traits, typename PTTraits, typename TGeomInputs, typename TAccelContainer = FDefaultAccelContainer>
@@ -852,6 +933,9 @@ bool GeomOverlapMultiImp(const UWorld* World, const FPhysicsGeometry& Geom, cons
 	const ECollisionShapeType GeomType = GetType(Geom);
 	if (GeomType == ECollisionShapeType::Sphere || GeomType == ECollisionShapeType::Capsule || GeomType == ECollisionShapeType::Box || GeomType == ECollisionShapeType::Convex)
 	{
+		constexpr bool bIsRetryQuery = false;
+		CVD_TRACE_SCOPED_SCENE_QUERY_HELPER(World, &Geom, GeomPose, FVector::ZeroVector, TraceChannel, Params, ResponseParams, ObjectParams, EChaosVDSceneQueryType::Overlap, (InfoType == EQueryInfo::GatherAll) ? EChaosVDSceneQueryMode::Multi : EChaosVDSceneQueryMode::Test, bIsRetryQuery);
+
 		// Create filter data used to filter collisions
 		FCollisionFilterData Filter = CreateQueryFilterData(TraceChannel, Params.bTraceComplex, ResponseParams.CollisionResponse, Params, ObjectParams, InfoType != EQueryInfo::IsAnything);
 		FCollisionQueryFilterCallback QueryCallback(Params, false);
@@ -913,13 +997,14 @@ bool GeomOverlapMultiImp(const UWorld* World, const FPhysicsGeometry& Geom, cons
 							if (UClusterUnionComponent* ClusterUnion = Cast<UClusterUnionComponent>(OriginalOverlap.GetComponent()))
 							{
 								Result.bIsClusterUnion = true;
-								Result.bHit = ClusterUnion->OverlapComponentWithResult(GeomPose.GetTranslation(), GeomPose.GetRotation(), Geom, TraceChannel, Params, ResponseParams, ObjectParams, NewOverlaps);
+								ClusterUnion->OverlapComponentWithResult(GeomPose.GetTranslation(), GeomPose.GetRotation(), Geom, TraceChannel, Params, ResponseParams, ObjectParams, NewOverlaps);
+								Result.bHit = !NewOverlaps.IsEmpty();
 							}
 
 							return Result;
 						};
 
-						if (bHaveBlockingHit && Params.bTraceIntoSubComponents)
+						if (!OutOverlaps.IsEmpty() && Params.bTraceIntoSubComponents)
 						{
 							TArray<FOverlapResult> AllNewOverlaps;
 							TArray<int32> ClusterUnionIndices;
@@ -930,7 +1015,10 @@ bool GeomOverlapMultiImp(const UWorld* World, const FPhysicsGeometry& Geom, cons
 								FClusterUnionHit ClusterUnionHit = DoClusterUnionOverlap(OutOverlaps[Index], NewOverlaps);
 								if (ClusterUnionHit.bIsClusterUnion)
 								{
-									ClusterUnionIndices.Add(Index);
+									if (Params.bReplaceHitWithSubComponents || !ClusterUnionHit.bHit)
+									{
+										ClusterUnionIndices.Add(Index);
+									}
 
 									if (ClusterUnionHit.bHit)
 									{
@@ -942,10 +1030,13 @@ bool GeomOverlapMultiImp(const UWorld* World, const FPhysicsGeometry& Geom, cons
 							for (int32 Index = ClusterUnionIndices.Num() - 1; Index >= 0; --Index)
 							{
 								// No shrinking since we're going to be adding more elements shortly.
-								OutOverlaps.RemoveAtSwap(ClusterUnionIndices[Index], 1, false);
+								OutOverlaps.RemoveAtSwap(ClusterUnionIndices[Index], 1, EAllowShrinking::No);
 							}
 
-							OutOverlaps.Append(AllNewOverlaps);
+							if (Params.bReplaceHitWithSubComponents)
+							{
+								OutOverlaps.Append(AllNewOverlaps);
+							}
 							bHaveBlockingHit &= !OutOverlaps.IsEmpty();
 						}
 					}

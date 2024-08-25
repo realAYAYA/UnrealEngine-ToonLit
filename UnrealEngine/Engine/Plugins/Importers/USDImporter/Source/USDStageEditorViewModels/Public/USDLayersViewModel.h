@@ -8,7 +8,7 @@
 #include "UsdWrappers/UsdStage.h"
 #include "Widgets/IUSDTreeViewItem.h"
 
-class USDSTAGEEDITORVIEWMODELS_API FUsdLayerModel : public TSharedFromThis< FUsdLayerModel >
+class USDSTAGEEDITORVIEWMODELS_API FUsdLayerModel : public TSharedFromThis<FUsdLayerModel>
 {
 public:
 	FString DisplayName;
@@ -30,7 +30,7 @@ public:
 
 	bool IsValid() const;
 
-	TArray< TSharedRef< FUsdLayerViewModel > > GetChildren();
+	TArray<TSharedRef<FUsdLayerViewModel>> GetChildren();
 
 	void FillChildren();
 
@@ -49,16 +49,16 @@ public:
 
 	bool IsInIsolatedStage() const;
 
-	void AddSubLayer( const TCHAR* SubLayerIdentifier );
-	void NewSubLayer( const TCHAR* SubLayerIdentifier );
-	bool RemoveSubLayer( int32 SubLayerIndex );
+	void AddSubLayer(const TCHAR* SubLayerIdentifier);
+	void NewSubLayer(const TCHAR* SubLayerIdentifier);
+	bool RemoveSubLayer(int32 SubLayerIndex);
 
 	bool IsLayerDirty() const;
 
 public:
-	TSharedRef< FUsdLayerModel > LayerModel;
+	TSharedRef<FUsdLayerModel> LayerModel;
 	FUsdLayerViewModel* ParentItem;
-	TArray< TSharedRef< FUsdLayerViewModel > > Children;
+	TArray<TSharedRef<FUsdLayerViewModel>> Children;
 
 	UE::FUsdStageWeak UsdStage;
 	UE::FUsdStageWeak IsolatedStage;

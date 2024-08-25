@@ -252,6 +252,9 @@ class UMaterialGraphSchema : public UEdGraphSchema
 	/** update material when the default value of a material node's pin has changed */
 	UNREALED_API void UpdateMaterialOnDefaultValueChanged(const UEdGraph* Graph) const;
 
+	/** Mark the material as dirty (because of a change that shouldn't trigger recompile or preview update) */ 
+	UNREALED_API void MarkMaterialDirty(const UEdGraph* Graph) const;
+
 	/** Update the detail view */
 	UNREALED_API void UpdateDetailView(const UEdGraph* Graph) const;
 

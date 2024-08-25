@@ -4,6 +4,7 @@
 
 #include "Containers/Array.h"
 #include "Containers/ArrayView.h"
+#include "Containers/MRUArray.h"
 #include "Containers/UnrealString.h"
 #include "ContentBrowserDataMenuContexts.h"
 #include "ContentBrowserDataSubsystem.h"
@@ -41,6 +42,7 @@ class SComboButton;
 class SExpandableArea;
 class SFavoritePathView;
 class SFilterList;
+class SNavigationBar;
 class SPathView;
 class SSearchToggleButton;
 class SWidget;
@@ -307,13 +309,16 @@ private:
 
 	/** Save the current search as a filter pill */
 	void SaveSearchAsFilter();
+	
+	/** Binding for begining to edit text in the location bar */
+	void EditPathCommand();
 
 	/** Called when a crumb in the path breadcrumb trail or menu is clicked */
-	void OnPathClicked(const FString& CrumbData);
-
+	void OnPathClicked(const FString& VirtualPath);
+	
 	/** Called when item in the path delimiter arrow menu is clicked */
 	void OnPathMenuItemClicked(FString ClickedPath);
-
+	
 	/** Called to query whether the crumb menu would contain any content (see also OnGetCrumbDelimiterContent) */
 	bool OnHasCrumbDelimiterContent(const FString& CrumbData) const;
 
@@ -325,8 +330,20 @@ private:
 	 */
 	TSharedRef<SWidget> OnGetCrumbDelimiterContent(const FString& CrumbData) const;
 
-	/** Gets the content for the path picker combo button */
-	TSharedRef<SWidget> GetPathPickerContent();
+	/** Return a list of recently visited locations which can be used with OnNavigateToPath to return to those locations */
+	TArray<FString> GetRecentPaths() const;	
+	
+	/** Navigate to a location by text identifier. E.g. a virtual path such as /All/Game/MyFolder */
+	void OnNavigateToPath(const FString& Path);
+
+	/** 
+	  * Returns whether the currently shown location should be presented to the user as a string when beginning to edit the path, 
+	  * Otherwise the text box will be initially empty.
+	  */
+	bool OnCanEditPathAsText(const FString& Text) const;
+	
+	/** Returns a list of valid paths starting with Prefix which can be navigated to with OnNavigateToPath */
+	TArray<FString> OnCompletePathPrefix(const FString& Prefix) const;
 
 	/** Register the context objects needed for the "Add New" menu */
 	void AppendNewMenuContextObjects(const EContentBrowserDataMenuContext_AddNewMenuDomain InDomain, const TArray<FName>& InSelectedPaths, FToolMenuContext& InOutMenuContext, UContentBrowserToolbarMenuContext* CommonContext, bool bCanBeModified);
@@ -342,12 +359,6 @@ private:
 
 	/** Gets the tool tip for the "Add New" button */
 	FText GetAddNewToolTipText() const;
-
-	/** Makes the filters menu */
-	TSharedRef<SWidget> MakeAddFilterMenu();
-	
-	/** Builds the context menu for the filter list area. */
-	TSharedPtr<SWidget> GetFilterContextMenu();
 
 	/** Saves dirty content. */
 	FReply OnSaveClicked();
@@ -421,7 +432,7 @@ private:
 	/** Handler to check to see if a save asset command is allowed */
 	bool HandleSaveAssetCommandCanExecute() const;
 
-	/** Handler for Rename */
+	/** Handler for save asset */
 	void HandleSaveAssetCommand();
 
 	/** Handler for SaveAll in folder */
@@ -429,6 +440,9 @@ private:
 
 	/** Handler for Resave on a folder */
 	void HandleResaveAllCurrentFolderCommand() const;
+
+	/** Handler for Copy path on an asset*/
+	void CopySelectedAssetPathCommand() const;
 
 	/** Handler to check to see if a delete command is allowed */
 	bool HandleDeleteCommandCanExecute() const;
@@ -618,6 +632,12 @@ private:
 	/** The manager that keeps track of history data for this browser */
 	FHistoryManager HistoryManager;
 
+	/** A list of locations "jumped" to for populating a dropdown of such locations.
+	 *  As a general rule, simple up/down navigation should not populate this list and only direct entries such as 
+	 *  "find in content browser" or typing in a path should populate it 
+	 */
+	TMRUArray<FString> JumpMRU;
+	
 	/** A helper class to manage asset context menu options */
 	TSharedPtr<class FAssetContextMenu> AssetContextMenu;
 
@@ -644,9 +664,9 @@ private:
 
 	/** The asset view widget */
 	TSharedPtr<SAssetView> AssetViewPtr;
-
-	/** The breadcrumb trail representing the current path */
-	TSharedPtr< SBreadcrumbTrail<FString> > PathBreadcrumbTrail;
+	
+	/** Combine breadcrumb/text-box widget for showing & changing location */
+	TSharedPtr<SNavigationBar> NavigationBar;
 
 	/** The text box used to search for assets */
 	TSharedPtr<SAssetSearchBox> SearchBoxPtr;

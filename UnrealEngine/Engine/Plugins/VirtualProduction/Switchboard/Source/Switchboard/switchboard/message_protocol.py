@@ -2,7 +2,34 @@
 
 import base64
 import json
+from typing import Optional
 import uuid
+
+
+def create_authenticate_message(
+    *,
+    jwt: Optional[str] = None,
+    password: Optional[str] = None,
+):
+    assert jwt or password
+
+    cmd_id = uuid.uuid4()
+    message = {
+        'command': 'authenticate',
+        'id': str(cmd_id),
+    }
+
+    if jwt:
+        message['jwt'] = jwt
+
+    if password:
+        message['password'] = password
+
+        # TODO: for backward compatibility with pre-release 5.4, remove
+        message['token'] = password
+
+    message_json = json.dumps(message).encode() + b'\x00'
+    return (cmd_id, message_json)
 
 
 def create_start_process_message(
@@ -12,9 +39,10 @@ def create_start_process_message(
     caller: str,
     working_dir: str = "",
     *,
-	update_clients_with_stdout: bool = False,
+    update_clients_with_stdout: bool = False,
     priority_modifier: int = 0,
     lock_gpu_clock: bool = False,
+    hide: bool = False,
 ):
     cmd_id = uuid.uuid4()
     start_cmd = {
@@ -27,7 +55,8 @@ def create_start_process_message(
         'working_dir': working_dir,
         'bUpdateClientsWithStdout': update_clients_with_stdout,
         'priority_modifier': priority_modifier,
-        'bLockGpuClock' : lock_gpu_clock,
+        'bLockGpuClock': lock_gpu_clock,
+        'bHide': hide,
     }
 
     message = json.dumps(start_cmd).encode() + b'\x00'
@@ -120,8 +149,8 @@ def create_fixExeFlags_message(puuid):
     message = json.dumps(cmd).encode() + b'\x00'
     return (cmd_id, message)
 
-def decode_message(msg_in_bytes):
-    msg_as_str = ''.join(msg_in_bytes)
+def decode_message(msg_as_bytes: bytes):
+    msg_as_str = msg_as_bytes.decode()
     msg_json = json.loads(msg_as_str)
     return msg_json
 
@@ -137,4 +166,3 @@ def create_set_inactive_timeout_message(timeout_seconds: int):
            'seconds': timeout_seconds}
     message = json.dumps(cmd).encode() + b'\x00'
     return (cmd_id, message)
-

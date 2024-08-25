@@ -16,7 +16,7 @@ struct FProgram;
 	//---------------------------------------------------------------------------------------------
 	//!
 	//---------------------------------------------------------------------------------------------
-	class ASTOpMeshClipMorphPlane : public ASTOp
+	class ASTOpMeshClipMorphPlane final : public ASTOp
 	{
 	public:
 
@@ -34,14 +34,15 @@ struct FProgram;
 
 		ASTOpMeshClipMorphPlane();
 		ASTOpMeshClipMorphPlane(const ASTOpMeshClipMorphPlane&) = delete;
-		~ASTOpMeshClipMorphPlane();
+		virtual ~ASTOpMeshClipMorphPlane();
 
-		OP_TYPE GetOpType() const override { return OP_TYPE::ME_CLIPMORPHPLANE; }
-		uint64 Hash() const override;
-		bool IsEqual(const ASTOp& otherUntyped) const override;
-		Ptr<ASTOp> Clone(MapChildFuncRef mapChild) const override;
-		void ForEachChild(const TFunctionRef<void(ASTChild&)>) override;
-		void Link(FProgram& program, FLinkerOptions* Options) override;
+		virtual OP_TYPE GetOpType() const override { return OP_TYPE::ME_CLIPMORPHPLANE; }
+		virtual uint64 Hash() const override;
+		virtual bool IsEqual(const ASTOp& otherUntyped) const override;
+		virtual Ptr<ASTOp> Clone(MapChildFuncRef mapChild) const override;
+		virtual void ForEachChild(const TFunctionRef<void(ASTChild&)>) override;
+		virtual void Link(FProgram& program, FLinkerOptions* Options) override;
+		virtual mu::Ptr<ASTOp> OptimiseSink(const FModelOptimizationOptions&, FOptimizeSinkContext&) const override;
 	};
 
 

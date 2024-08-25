@@ -27,7 +27,6 @@
 #include "Misc/Optional.h"
 #include "PropertyEditorModule.h"
 #include "PropertyHandle.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SharedPointer.h"
 #include "Templates/TypeHash.h"
 #include "Templates/UnrealTemplate.h"

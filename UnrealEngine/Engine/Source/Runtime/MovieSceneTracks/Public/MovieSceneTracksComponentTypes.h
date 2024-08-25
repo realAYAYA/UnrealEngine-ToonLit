@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "Math/Range.h"
 #include "Math/Transform.h"
 #include "EntitySystem/BuiltInComponentTypes.h"
 #include "EntitySystem/MovieSceneEntityIDs.h"
@@ -14,6 +15,10 @@
 #include "MovieSceneTracksPropertyTypes.h"
 #include "Styling/SlateColor.h"
 #include "ConstraintChannel.h"
+#include "MaterialTypes.h"
+#include "Sections/MovieSceneCameraShakeSection.h"
+#include "Misc/Guid.h"
+#include "Tracks/MovieSceneMaterialTrack.h"
 #include "MovieSceneTracksComponentTypes.generated.h"
 
 class UMaterialParameterCollection;
@@ -22,6 +27,8 @@ class UMovieSceneAudioSection;
 class UMovieSceneDataLayerSection;
 class UMovieSceneLevelVisibilitySection;
 class UMovieSceneSkeletalAnimationSection;
+struct FCameraShakeBaseStartParams;
+struct FCameraShakeSourceComponentStartParams;
 struct FMovieSceneObjectBindingID;
 
 
@@ -77,7 +84,7 @@ struct FConstraintComponentData
 	GENERATED_BODY()
 
 	UPROPERTY()
-	FName ConstraintName;
+	FGuid ConstraintID;
 	UMovieScene3DTransformSection* Section;
 };
 
@@ -99,6 +106,62 @@ struct FMovieSceneAudioComponentData
 
 	UPROPERTY()
 	TObjectPtr<UMovieSceneAudioSection> Section = nullptr;
+};
+
+/** Component data for camera shakes */
+USTRUCT()
+struct FMovieSceneCameraShakeComponentData
+{
+	GENERATED_BODY()
+
+	/** The shake data from the section that created this component */
+	UPROPERTY()
+	FMovieSceneCameraShakeSectionData SectionData;
+
+	/** The range of the section that created this component */
+	UPROPERTY()
+	FFrameNumber SectionStartTime;
+	UPROPERTY()
+	FFrameNumber SectionEndTime;
+
+	/** The signature of the source section at the time the shake instance was created */
+	UPROPERTY()
+	FGuid SectionSignature;
+
+	FMovieSceneCameraShakeComponentData()
+	{}
+	FMovieSceneCameraShakeComponentData(const FMovieSceneCameraShakeSectionData& InSectionData, const UMovieSceneSection& InSection)
+		: SectionData(InSectionData)
+		, SectionSignature(InSection.GetSignature())
+	{
+		const TRange<FFrameNumber> SectionRange = InSection.GetRange();
+		SectionStartTime = SectionRange.HasLowerBound() ? SectionRange.GetLowerBoundValue() : 0;
+		SectionEndTime = SectionRange.HasUpperBound() ? SectionRange.GetUpperBoundValue() : FFrameNumber(TNumericLimits<int32>::Max());
+	}
+};
+
+/**
+ * Component data for camera shakes created by the shake system
+ * This is separate from FMovieSceneCameraShakeComponentData because that
+ * one it imported from source shake sections, and our component data here
+ * will be preserved on reimported entities.
+ */
+USTRUCT()
+struct FMovieSceneCameraShakeInstanceData
+{
+	GENERATED_BODY()
+
+	/** Shake instance created by the shake evaluation system */
+	UPROPERTY()
+	TObjectPtr<UCameraShakeBase> ShakeInstance;
+
+	/** The signature of the source section at the time the shake instance was created */
+	UPROPERTY()
+	FGuid SectionSignature;
+
+	/** Whether this instance is managed by a shake previewer */
+	UPROPERTY()
+	bool bManagedByPreviewer = false;
 };
 
 /**
@@ -511,6 +574,80 @@ struct FBoolPropertyTraits
 	}
 };
 
+struct FObjectPropertyTraits
+{
+	static constexpr bool bIsComposite = false;
+
+	struct FObjectMetadata
+	{
+		TObjectPtr<UClass> ObjectClass = UObject::StaticClass();
+		bool bAllowsClear = true;
+	};
+
+	using StorageType = FObjectComponent;
+	//using CustomAccessorStorageType = float;
+	using MetaDataType = TPropertyMetaData<FObjectMetadata>;
+	using TraitsType = FObjectPropertyTraits;
+	using ParamType = UObject*;
+
+	using ObjectTraitsImpl = TIndirectPropertyTraits<UObject*, FObjectComponent>;
+
+	static void GetObjectPropertyValue(const UObject* InObject, FObjectMetadata ObjectMetadata, const FCustomPropertyAccessor& BaseCustomAccessor, FObjectComponent& OutValue)
+	{
+		const TCustomPropertyAccessor<FObjectPropertyTraits>& CustomAccessor = static_cast<const TCustomPropertyAccessor<FObjectPropertyTraits>&>(BaseCustomAccessor);
+		OutValue = (*CustomAccessor.Functions.Getter)(InObject, ObjectMetadata);
+	}
+	static void GetObjectPropertyValue(const UObject* InObject, FObjectMetadata ObjectMetadata, uint16 PropertyOffset, FObjectComponent& OutValue)
+	{
+		ObjectTraitsImpl::GetObjectPropertyValue(InObject, PropertyOffset, OutValue);
+	}
+	static void GetObjectPropertyValue(const UObject* InObject, FObjectMetadata ObjectMetadata, FTrackInstancePropertyBindings* PropertyBindings, FObjectComponent& OutValue)
+	{
+		ObjectTraitsImpl::GetObjectPropertyValue(InObject, PropertyBindings, OutValue);
+	}
+	static void GetObjectPropertyValue(const UObject* InObject, FObjectMetadata ObjectMetadata, const FName& PropertyPath, StorageType& OutValue)
+	{
+		ObjectTraitsImpl::GetObjectPropertyValue(InObject, PropertyPath, OutValue);
+	}
+
+	static bool CanAssignValue(const FObjectMetadata& ObjectMetadata, UObject* DesiredValue)
+	{
+		if (!ObjectMetadata.ObjectClass)
+		{
+			return false;
+		}
+		else if (!DesiredValue)
+		{
+			return ObjectMetadata.bAllowsClear;
+		}
+		else if (DesiredValue->GetClass() != nullptr)
+		{
+			return DesiredValue->GetClass()->IsChildOf(ObjectMetadata.ObjectClass);
+		}
+		return false;
+	}
+
+	static void SetObjectPropertyValue(UObject* InObject, FObjectMetadata ObjectMetadata, const FCustomPropertyAccessor& BaseCustomAccessor, const FObjectComponent& InValue)
+	{
+		const TCustomPropertyAccessor<FObjectPropertyTraits>& CustomAccessor = static_cast<const TCustomPropertyAccessor<FObjectPropertyTraits>&>(BaseCustomAccessor);
+		(*CustomAccessor.Functions.Setter)(InObject, ObjectMetadata, InValue);
+	}
+	static void SetObjectPropertyValue(UObject* InObject, FObjectMetadata ObjectMetadata, uint16 PropertyOffset, const FObjectComponent& InValue)
+	{
+		if (CanAssignValue(ObjectMetadata, InValue.GetObject()))
+		{
+			ObjectTraitsImpl::SetObjectPropertyValue(InObject, PropertyOffset, InValue);
+		}
+	}
+	static void SetObjectPropertyValue(UObject* InObject, FObjectMetadata ObjectMetadata, FTrackInstancePropertyBindings* PropertyBindings, const FObjectComponent& InValue)
+	{
+		if (CanAssignValue(ObjectMetadata, InValue.GetObject()))
+		{
+			ObjectTraitsImpl::SetObjectPropertyValue(InObject, PropertyBindings, InValue);
+		}
+	}
+};
+
 using FBytePropertyTraits               = TDirectPropertyTraits<uint8, false>;
 using FEnumPropertyTraits               = TDirectPropertyTraits<uint8, false>;
 using FIntPropertyTraits                = TDirectPropertyTraits<int32, false>;
@@ -540,6 +677,7 @@ struct FMovieSceneTracksComponentTypes
 	TPropertyComponents<FEulerTransformPropertyTraits> EulerTransform;
 	TPropertyComponents<FComponentTransformPropertyTraits> ComponentTransform;
 	TPropertyComponents<FStringPropertyTraits> String;
+	TPropertyComponents<FObjectPropertyTraits> Object;
 
 	TPropertyComponents<FFloatParameterTraits> FloatParameter;
 	TPropertyComponents<FColorParameterTraits> ColorParameter;
@@ -556,7 +694,7 @@ struct FMovieSceneTracksComponentTypes
 
 	TComponentTypeID<FMovieSceneSkeletalAnimationComponentData> SkeletalAnimation;
 
-	TComponentTypeID<int32> ComponentMaterialIndex;
+	TComponentTypeID<FComponentMaterialInfo> ComponentMaterialInfo;
 
 	TComponentTypeID<FName> BoolParameterName;
 	TComponentTypeID<FName> ScalarParameterName;
@@ -564,6 +702,10 @@ struct FMovieSceneTracksComponentTypes
 	TComponentTypeID<FName> VectorParameterName;
 	TComponentTypeID<FName> ColorParameterName;
 	TComponentTypeID<FName> TransformParameterName;
+
+	TComponentTypeID<FMaterialParameterInfo> ScalarMaterialParameterInfo;
+	TComponentTypeID<FMaterialParameterInfo> ColorMaterialParameterInfo;
+	TComponentTypeID<FMaterialParameterInfo> VectorMaterialParameterInfo;
 
 	TComponentTypeID<FObjectComponent> BoundMaterial;
 	TComponentTypeID<TWeakObjectPtr<UMaterialParameterCollection>> MPC;
@@ -573,6 +715,9 @@ struct FMovieSceneTracksComponentTypes
 	TComponentTypeID<FMovieSceneAudioComponentData> Audio;
 	TComponentTypeID<FMovieSceneAudioInputData> AudioInputs;
 	TComponentTypeID<FName> AudioTriggerName;
+
+	TComponentTypeID<FMovieSceneCameraShakeComponentData> CameraShake;
+	TComponentTypeID<FMovieSceneCameraShakeInstanceData> CameraShakeInstance;
 
 	struct
 	{
@@ -586,11 +731,15 @@ struct FMovieSceneTracksComponentTypes
 		TCustomPropertyRegistration<FFloatVectorPropertyTraits> FloatVector;
 		TCustomPropertyRegistration<FDoubleVectorPropertyTraits> DoubleVector;
 		TCustomPropertyRegistration<FComponentTransformPropertyTraits, 1> ComponentTransform;
+		TCustomPropertyRegistration<FObjectPropertyTraits> Object;
 	} Accessors;
 
 	struct
 	{
 		FComponentTypeID BoundMaterialChanged;
+		FComponentTypeID CustomPrimitiveData;
+		FComponentTypeID Slomo;
+		FComponentTypeID Visibility;
 	} Tags;
 
 	TComponentTypeID<FLevelVisibilityComponentData> LevelVisibility;

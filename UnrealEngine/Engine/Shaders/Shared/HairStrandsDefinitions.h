@@ -7,7 +7,7 @@
 
 #pragma once
 
-// Change this to force recompilation of all strata dependent shaders (use https://www.random.org/cgi-bin/randbyte?nbytes=4&format=h)
+// Change this to force recompilation of all Substrate dependent shaders (use https://www.random.org/cgi-bin/randbyte?nbytes=4&format=h)
 #define HAIRSTRANDS_SHADER_VERSION 0x3ba5af0e
 
 // Curve Attribute index
@@ -32,8 +32,12 @@
 #define HAIR_ATTRIBUTE_INVALID_OFFSET 0xFFFFFFFF
 
 // Hair interpolation (in bytes)
-#define HAIR_INTERPOLATION_1GUIDE_STRIDE 4
-#define HAIR_INTERPOLATION_3GUIDE_STRIDE 16
+
+#define HAIR_INTERPOLATION_CURVE_STRIDE 8
+#define HAIR_INTERPOLATION_POINT_STRIDE 2
+#define HAIR_INTERPOLATION_MAX_GUIDE_COUNT 2
+
+#define HAIR_INTERPOLATION_CARDS_GUIDE_STRIDE 4
 
 // Max number of discrete LOD that a hair group can have
 #define MAX_HAIR_LOD 8
@@ -41,14 +45,16 @@
 // Max split for raytracing geometry
 #define STRANDS_PROCEDURAL_INTERSECTOR_MAX_SPLITS 4
 
-// Use triangle strip for HW raster path
-#define USE_HAIR_TRIANGLE_STRIP 0
-
 // Number of vertex per control-point
+#define HAIR_POINT_TO_VERTEX_FOR_TRISTRP 2u
+#define HAIR_POINT_TO_VERTEX_FOR_TRILIST 6u
+
+#ifndef __cplusplus
 #if USE_HAIR_TRIANGLE_STRIP
-#define HAIR_POINT_TO_VERTEX 2u
+#define HAIR_POINT_TO_VERTEX HAIR_POINT_TO_VERTEX_FOR_TRISTRP
 #else
-#define HAIR_POINT_TO_VERTEX 6u
+#define HAIR_POINT_TO_VERTEX HAIR_POINT_TO_VERTEX_FOR_TRILIST
+#endif
 #endif
 
 // Number of triangle per control-point
@@ -97,3 +103,43 @@
 #define HAIR_POINT_LOD_COUNT_PER_UINT_DIV_AS_SHIFT 3
 
 #define HAIR_RBF_ENTRY_COUNT(InSampleCount)	((InSampleCount)+4u)
+
+#define HAIR_CARDS_MAX_TEXTURE_COUNT 6
+
+// Hair instance flags 
+#define HAIR_FLAGS_SCATTER_SCENE_LIGHT 0x1u
+#define HAIR_FLAGS_STABLE_RASTER 0x2u
+#define HAIR_FLAGS_RAYTRACING_GEOMETRY 0x4u
+#define HAIR_FLAGS_HOLDOUT 0x8u
+#define HAIR_FLAGS_CAST_CONTACT_SHADOW 0x10u
+
+#ifndef __cplusplus //HLSL
+bool HasHairFlags(uint In, uint Flags)
+#else
+FORCEINLINE bool HasHairFlags(uint32 In, uint32 Flags)
+#endif
+{
+	return (In & Flags) != 0;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Types
+
+// Hair control point layout
+// [                  uint2                   ]
+// [      x     ][              y             ]
+// [   32bits   ][           32bits           ]
+// [  16 ][  16 ][ 16  ][   8  ][   6  ][  2  ]
+// [ 0-15][16-32][ 0-15][ 16-23][ 24-29][30-31]
+// [Pos.x][Pos.y][Pos.z][CoordU][Radius][ Type]
+#define FPackedHairPosition uint2
+#define FPackedHairPositionStrideInBytes 8u
+
+// Compressed Hair control point layout - Packed 4 points per 16-bytes
+// [                            uint4                                 ]
+// [Position0+Type][Position1+Type][Position2+Type][ Radius012|CoordU ]
+// [   32bits     ][   32bits     ][   32bits     ][      32bits      ]
+// [10][10][10][ 2][10][10][10][ 2][10][10][10][ 2][ 6][ 6][ 6][ 7][ 7]
+#define FCompressedHairPositions uint4
+#define FCompressedHairPositionsStrideInBytes 16u
+#define HAIR_POINT_COUNT_PER_COMPRESSED_POSITION_CHUNK 3

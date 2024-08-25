@@ -6,6 +6,7 @@
 #include "NiagaraCommon.h"
 #include "NiagaraDataChannelPublic.generated.h"
 
+struct FNiagaraDataChannelPublishRequest;
 class FNiagaraWorldManager;
 class UNiagaraDataChannelAsset;
 class UNiagaraDataChannel;
@@ -15,8 +16,16 @@ struct FNiagaraDataChannelData;
 using FNiagaraDataChannelGameDataPtr = TSharedPtr<FNiagaraDataChannelGameData>;
 using FNiagaraDataChannelDataPtr = TSharedPtr<FNiagaraDataChannelData>;
 
-/** Wrapper asset class for UNiagaraDataChannel which is instanced. */
-UCLASS(Experimental, DisplayName = "Niagara Data Channel", MinimalAPI)
+/** Niagara Data Channels are a system for communication between Niagara Systems and with game code/Blueprint.
+
+Data channel assets define the payload as well as some transfer settings.
+Niagara Systems can read from and write to data channels via data interfaces.
+Blueprint and C++ code can also read from and write to data channels using its API functions.
+
+EXPERIMENTAL:
+Data Channels are currently experimental and undergoing heavy development.
+ */
+UCLASS(Experimental, BlueprintType, DisplayName = "Niagara Data Channel", MinimalAPI)
 class UNiagaraDataChannelAsset : public UObject
 {
 	GENERATED_BODY()
@@ -40,29 +49,89 @@ public:
 	UNiagaraDataChannel* Get() const { return DataChannel; }
 };
 
+USTRUCT(BlueprintType)
+struct FNiagaraDataChannelVariable : public FNiagaraVariableBase
+{
+	GENERATED_USTRUCT_BODY()
+	
+	bool Serialize(FArchive& Ar);
+
+#if WITH_EDITORONLY_DATA
+	
+	/** Can be used to track renamed data channel variables */
+	UPROPERTY(meta=(IgnoreForMemberInitializationTest))
+	FGuid Version = FGuid::NewGuid();
+
+	NIAGARA_API static bool IsAllowedType(const FNiagaraTypeDefinition& Type);
+#endif
+	
+	NIAGARA_API static FNiagaraTypeDefinition ToDataChannelType(const FNiagaraTypeDefinition& Type);
+
+};
+
+template<>
+struct TStructOpsTypeTraits<FNiagaraDataChannelVariable> : public TStructOpsTypeTraitsBase2<FNiagaraDataChannelVariable>
+{
+	enum
+	{
+		WithSerializer = true,
+	};
+};
+
 /**
 Minimal set of types and declares required for external users of Niagara Data Channels.
 */
 
 /**
-Parameters allowing users to search for the correct data channel data to read/write.
-Some data channels will sub divide their data internally in various ways, e.g., spacial partition.
-These parameters allow users to search for the correct internal data when reading and writing.
+Parameters used when retrieving a specific set of Data Channel Data to read or write.
+Many Data Channel types will have multiple internal sets of data and these parameters control which the Channel should return to users for access.
+An example of this would be the Islands Data Channel type which will subdivide the world and have a different set of data for each sub division.
+It will return to users the correct data for their location based on these parameters.
 */
 USTRUCT(BlueprintType)
 struct FNiagaraDataChannelSearchParameters
 {
 	GENERATED_BODY()
+	
+	FNiagaraDataChannelSearchParameters()
+	: bOverrideLocation(false)
+	{
+	}
+
+	FNiagaraDataChannelSearchParameters(USceneComponent* Owner)
+	: OwningComponent(Owner)
+	, bOverrideLocation(false)
+	{
+	}
+
+	FNiagaraDataChannelSearchParameters(USceneComponent* Owner, FVector LocationOverride)
+	: OwningComponent(Owner)
+	, Location(LocationOverride)
+	, bOverrideLocation(true)
+	{
+	}
+
+	FNiagaraDataChannelSearchParameters(FVector InLocation)
+		: OwningComponent(nullptr)
+		, Location(InLocation)
+		, bOverrideLocation(true)
+	{
+	}
+	
+	NIAGARA_API FVector GetLocation()const;
+	NIAGARA_API USceneComponent* GetOwner()const { return OwningComponent; }
 
 	/** In cases where there is an owning component such as an object spawning from itself etc, then we pass that component in. Some handlers may only use it's location but others may make use of more data. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Parameters")
 	TObjectPtr<USceneComponent> OwningComponent = nullptr;
 
-	/** In cases where there is no owning component for data being read or written to a data channel, we simply pass in a location. */
+	/** In cases where there is no owning component for data being read or written to a data channel, we simply pass in a location. We can also use this when bOverrideLocaiton is set. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Parameters")
 	FVector Location = FVector::ZeroVector;
 
-	NIAGARA_API FVector GetLocation()const;
+	/** If true, even if an owning component is set, the data channel should use the Location value rather than the component location. If this is false, the NDC will get any location needed from the owning component. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Parameters")
+	uint32 bOverrideLocation : 1;
 };
 
 USTRUCT()
@@ -78,11 +147,11 @@ struct FNiagaraDataChannelGameDataLayout
 	UPROPERTY()
 	TArray<FNiagaraLwcStructConverter> LwcConverters;
 
-	void Init(const TArray<FNiagaraVariable>& Variables);
+	void Init(const TArray<FNiagaraDataChannelVariable>& Variables);
 };
 
 
-#if !UE_BUILD_SHIPPING
+#if WITH_NIAGARA_DEBUGGER
 
 /** Hooks into internal NiagaraDataChannels code for debugging and testing purposes. */
 class FNiagaraDataChannelDebugUtilities
@@ -94,10 +163,36 @@ public:
 	static NIAGARA_API void Tick(FNiagaraWorldManager* WorldMan, float DeltaSeconds, ETickingGroup TickGroup);
 	
 	static NIAGARA_API UNiagaraDataChannelHandler* FindDataChannelHandler(FNiagaraWorldManager* WorldMan, UNiagaraDataChannel* DataChannel);
+
+	static void LogWrite(const FNiagaraDataChannelPublishRequest& WriteRequest, const UNiagaraDataChannel* DataChannel, const ETickingGroup& TickGroup);
+	static void DumpAllWritesToLog();
+
+	static FNiagaraDataChannelDebugUtilities& Get();
+	static void TearDown();
+
+private:
+	struct FChannelWriteRequest
+	{
+		TSharedPtr<FNiagaraDataChannelGameData> Data;
+		bool bVisibleToGame = false;
+		bool bVisibleToCPUSims = false;
+		bool bVisibleToGPUSims = false;
+		ETickingGroup TickGroup;
+		FString DebugSource;
+	};
+	struct FFrameDebugData
+	{
+		uint64 FrameNumber;
+		TArray<FChannelWriteRequest> WriteRequests;
+	};
+	
+	static FString ToJson(FNiagaraDataChannelGameData* Data);
+	static FString TickGroupToString(const ETickingGroup& TickGroup);
+	TArray<FFrameDebugData> FrameData;
 };
 
 
-#endif//UE_BUILD_SHIPPING
+#endif//WITH_NIAGARA_DEBUGGER
 
 
 /** Buffer containing a single FNiagaraVariable's data at the game level. AoS layout. LWC Types. */
@@ -137,7 +232,7 @@ struct FNiagaraDataChannelVariableBuffer
 		check(sizeof(T) == Size);
 		if (Index >= 0 && Index < Num())
 		{
-			T* Dest = ((T*)Data.GetData()) + Index;
+			T* Dest = reinterpret_cast<T*>(Data.GetData()) + Index;
 			*Dest = InData;
 
 			return true;
@@ -157,7 +252,7 @@ struct FNiagaraDataChannelVariableBuffer
 		if (Index >= 0 && Index < NumElems)
 		{
 			const uint8* DataPtr = bPreviousFrameData ? PrevData.GetData() : Data.GetData();
-			T* Src = ((T*)DataPtr) + Index;
+			const T* Src = reinterpret_cast<const T*>(DataPtr) + Index;
 			OutData = *Src;
 
 			return true;
@@ -224,4 +319,5 @@ public:
 	const UNiagaraDataChannel* GetDataChannel()const { return DataChannel.Get(); }
 
 	const TConstArrayView<FNiagaraDataChannelVariableBuffer> GetVariableBuffers()const { return VariableData; }
+	void SetFromSimCache(const FNiagaraVariableBase& SourceVar, TConstArrayView<uint8> Data, int32 Size);
 };

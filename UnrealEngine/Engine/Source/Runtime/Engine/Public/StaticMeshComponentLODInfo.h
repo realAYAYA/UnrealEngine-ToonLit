@@ -55,7 +55,7 @@ struct FStaticMeshComponentLODInfo
 	FStaticMeshComponentLODInfo();
 	FStaticMeshComponentLODInfo(UStaticMeshComponent* InOwningComponent);
 	/** Destructor */
-	~FStaticMeshComponentLODInfo();
+	ENGINE_API ~FStaticMeshComponentLODInfo();
 
 	/** Delete existing resources */
 	void CleanUp();

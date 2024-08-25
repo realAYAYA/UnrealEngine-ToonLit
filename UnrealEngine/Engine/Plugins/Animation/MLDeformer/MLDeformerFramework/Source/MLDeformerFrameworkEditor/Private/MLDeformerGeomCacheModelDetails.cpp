@@ -26,73 +26,10 @@ namespace UE::MLDeformer
 		return (GeomCacheModel != nullptr && GeomCacheEditorModel != nullptr);
 	}
 
-	void FMLDeformerGeomCacheModelDetails::AddAnimSequenceErrors()
+	void FMLDeformerGeomCacheModelDetails::AddTrainingInputAnims()
 	{
-		const FText WarningText = GetGeomCacheAnimSequenceErrorText(GeomCacheModel->GetGeometryCache(), Model->GetAnimSequence());
-		BaseMeshCategoryBuilder->AddCustomRow(FText::FromString("AnimSeqWarning"))
-			.Visibility(!WarningText.IsEmpty() ? EVisibility::Visible : EVisibility::Collapsed)
-			.WholeRowContent()
-			[
-				SNew(SBox)
-				.Padding(FMargin(0.0f, 4.0f))
-				[
-					SNew(SWarningOrErrorBox)
-					.MessageStyle(EMessageStyle::Warning)
-					.Message(WarningText)
-				]
-			];
-	}
-
-	void FMLDeformerGeomCacheModelDetails::AddTargetMesh()
-	{
-		TargetMeshCategoryBuilder->AddProperty(UMLDeformerGeomCacheModel::GetGeometryCachePropertyName(), UMLDeformerGeomCacheModel::StaticClass());
-
-		const FText TargetMeshErrorText = GetGeomCacheErrorText(GeomCacheModel->GetSkeletalMesh(), GeomCacheModel->GetGeometryCache());
-		TargetMeshCategoryBuilder->AddCustomRow(FText::FromString("TargetMeshError"))
-			.Visibility(!TargetMeshErrorText.IsEmpty() ? EVisibility::Visible : EVisibility::Collapsed)
-			.WholeRowContent()
-			[
-				SNew(SBox)
-				.Padding(FMargin(0.0f, 4.0f))
-				[
-					SNew(SWarningOrErrorBox)
-					.MessageStyle(EMessageStyle::Error)
-					.Message(TargetMeshErrorText)
-				]
-			];
-
-		const FText ChangedErrorText = EditorModel->GetTargetAssetChangedErrorText();
-		TargetMeshCategoryBuilder->AddCustomRow(FText::FromString("TargetMeshChangedError"))
-			.Visibility(!ChangedErrorText.IsEmpty() ? EVisibility::Visible : EVisibility::Collapsed)
-			.WholeRowContent()
-			[
-				SNew(SBox)
-				.Padding(FMargin(0.0f, 4.0f))
-				[
-					SNew(SWarningOrErrorBox)
-					.MessageStyle(EMessageStyle::Warning)
-					.Message(ChangedErrorText)
-				]
-			];
-
-		AddGeomCacheMeshMappingWarnings(TargetMeshCategoryBuilder, Model->GetSkeletalMesh(), GeomCacheModel->GetGeometryCache());
-	}
-
-	void FMLDeformerGeomCacheModelDetails::AddGeomCacheMeshMappingWarnings(IDetailCategoryBuilder* InTargetMeshCategoryBuilder, USkeletalMesh* SkeletalMesh, UGeometryCache* GeometryCache)
-	{
-		const FText MeshMappingError = GetGeomCacheMeshMappingErrorText(SkeletalMesh, GeometryCache);
-		InTargetMeshCategoryBuilder->AddCustomRow(FText::FromString("MeshMappingWarning"))
-			.Visibility(!MeshMappingError.IsEmpty() ? EVisibility::Visible : EVisibility::Collapsed)
-			.WholeRowContent()
-			[
-				SNew(SBox)
-				.Padding(FMargin(0.0f, 4.0f))
-				[
-					SNew(SWarningOrErrorBox)
-					.MessageStyle(EMessageStyle::Warning)
-					.Message(MeshMappingError)
-				]
-			];
+		InputOutputCategoryBuilder->AddProperty(UMLDeformerGeomCacheModel::GetTrainingInputAnimsPropertyName(), UMLDeformerGeomCacheModel::StaticClass())
+			.DisplayName( FText::Format(LOCTEXT("TrainingInputAnimsString", "Training Input Anims ({0} Frames)"), EditorModel->GetNumTrainingFrames()) );
 	}
 }	// namespace UE::MLDeformer
 

@@ -154,7 +154,7 @@ ULyraInventoryItemInstance* ULyraQuickBarComponent::GetActiveSlotItem() const
 int32 ULyraQuickBarComponent::GetNextFreeItemSlot() const
 {
 	int32 SlotIndex = 0;
-	for (TObjectPtr<ULyraInventoryItemInstance> ItemPtr : Slots)
+	for (const TObjectPtr<ULyraInventoryItemInstance>& ItemPtr : Slots)
 	{
 		if (ItemPtr == nullptr)
 		{

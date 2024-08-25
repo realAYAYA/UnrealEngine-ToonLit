@@ -1,0 +1,15 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+uint {DataInterfaceName}_Index;
+uint {DataInterfaceName}_Count;
+
+uint ReadIndex_{DataInterfaceName}()
+{
+	return {DataInterfaceName}_Index;
+}
+
+uint ReadCount_{DataInterfaceName}()
+{
+	return {DataInterfaceName}_Count;
+}
+

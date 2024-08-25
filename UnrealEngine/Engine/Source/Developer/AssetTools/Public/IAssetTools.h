@@ -35,6 +35,8 @@ namespace UE::AssetTools
 	DECLARE_MULTICAST_DELEGATE_OneParam(FOnPackageMigration, FPackageMigrationContext&);
 
 	DECLARE_DELEGATE_RetVal_OneParam(bool, FCanMigrateAsset, FName);
+
+	DECLARE_DELEGATE_RetVal_OneParam(bool, FCanAssetBePublic, FStringView /*AssetPath*/);
 }
 
 UENUM()
@@ -69,7 +71,11 @@ enum class ERedirectFixupMode
 	DeleteFixedUpRedirectors,
 
 	// Leave the redirectors around even if no longer locally referenced
-	LeaveFixedUpRedirectors
+	LeaveFixedUpRedirectors,
+
+	// If permitted, prompt the user to delete any redirectors that are no longer locally referenced.
+	// Projects may disable deletion if it interferes with their workflow/branch setup/etc.
+	PromptForDeletingRedirectors,
 };
 
 USTRUCT(BlueprintType)
@@ -213,7 +219,12 @@ struct FMigrationOptions
 	GENERATED_BODY()
 
 	/** Prompt user for confirmation (always false through scripting) */
+	UPROPERTY(BlueprintReadWrite, Category = MigrationOptions)
 	bool bPrompt;
+
+	/** Ignore dependencies of assets, only migrate the given assets. usefull for automation. This will not migrate the actors of a OFPA (one file per actor) level */
+	UPROPERTY(BlueprintReadWrite, Category = MigrationOptions)
+	bool bIgnoreDependencies;
 
 	/** What to do when Assets are conflicting on the destination */
 	UPROPERTY(BlueprintReadWrite, Category = MigrationOptions)
@@ -225,6 +236,7 @@ struct FMigrationOptions
 
 	FMigrationOptions()
 		: bPrompt(false)
+		, bIgnoreDependencies(false)
 		, AssetConflict(EAssetMigrationConflict::Skip)
 	{}
 };
@@ -549,6 +561,12 @@ public:
 	/** Copies files after the flattened map of sources and destinations was confirmed */
 	virtual bool AdvancedCopyPackages(const TMap<FString, FString>& SourceAndDestPackages, const bool bForceAutosave = false, const bool bCopyOverAllDestinationOverlaps = true, FDuplicatedObjects* OutDuplicatedObjects = nullptr, EMessageSeverity::Type NotificationSeverityFilter = EMessageSeverity::Info) const = 0;
 
+	/** Copies a file, patching internal references without performing a de-serialization. This is a blocking operation. returns true on successful copy */
+	virtual bool PatchCopyPackageFile(const FString& SrcFile, const FString& DstFile, const TMap<FString, FString>& SearchForAndReplace) const = 0;
+
+	/** Generates the SearchAndReplace map for a PatchCopyPackageFile if all you are doing is changing the root and not the name. */
+	virtual TMap<FString, FString> GetMappingsForRootPackageRename(const FString& SrcRoot, const FString& DstRoot, const FString& SrcBaseDir, const TArray<TPair<FString, FString>>& SourceAndDestFiles) const = 0;
+
 	/* Given a set of packages to copy, generate the map of those packages to destination filenames */
 	virtual void GenerateAdvancedCopyDestinations(FAdvancedCopyParams& InParams, const TArray<FName>& InPackageNamesToCopy, const UAdvancedCopyCustomization* CopyCustomization, TMap<FString, FString>& OutPackagesAndDestinations) const = 0;
 
@@ -581,17 +599,13 @@ public:
 	/** Find all supported asset factories. */
 	virtual TArray<UFactory*> GetNewAssetFactories() const = 0;
 
-	/** Get asset class permission list for the ViewAsset action */
-	UE_DEPRECATED(5.1, "Pass in an EAssetClassAction instead of nothing")
-	virtual TSharedRef<FNamePermissionList>& GetAssetClassPermissionList() = 0;
-
 	/** Get asset class permission list for content browser and other systems */
 	virtual const TSharedRef<FPathPermissionList>& GetAssetClassPathPermissionList(EAssetClassAction AssetClassAction) const = 0;
 
 	/** Get extension permission list allowed for importer */
 	virtual const TSharedRef<FNamePermissionList>& GetImportExtensionPermissionList() const = 0;
 
-	virtual bool IsImportExtensionAllowed(const FString& Extension) const = 0;
+	virtual bool IsImportExtensionAllowed(const FStringView& Extension) const = 0;
 
 	/** Which BlueprintTypes are allowed to be created. An empty list should allow everything. */
 	virtual TSet<EBlueprintType>& GetAllowedBlueprintTypes() = 0;
@@ -601,6 +615,9 @@ public:
 
 	/** Get writable folder permission list for content browser and other systems */
 	virtual TSharedRef<FPathPermissionList>& GetWritableFolderPermissionList() = 0;
+
+	/** Determines whether an asset has a viewable asset class and its folder is allowed. If not, it can also check if it's aliased to an allowed location. */
+	virtual bool IsAssetVisible(const FAssetData& AssetData, bool bCheckAliases = true) const = 0;
 
 	/** Returns true if all in list pass writable folder filter */
 	virtual bool AllPassWritableFolderFilter(const TArray<FString>& InPaths) const = 0;
@@ -618,6 +635,16 @@ public:
 	/** Allow to add some restrictions to the assets that can be migrated */
 	virtual void RegisterCanMigrateAsset(const FName OwnerName, UE::AssetTools::FCanMigrateAsset Delegate) = 0;
 	virtual void UnregisterCanMigrateAsset(const FName OwnerName) = 0;
+
+	/** Returns whether the specified asset can be public (referenceable from another mount point / plugin) */
+	virtual bool CanAssetBePublic(FStringView AssetPath) const = 0;
+
+	/**
+	 * Register/unregister delegates to specify whether an asset can be made public (referenceable from another mount point / plugin)
+	 * By default any asset can be public and if any delegate return false, the asset must be private
+	 */
+	virtual void RegisterCanAssetBePublic(const FName OwnerName, UE::AssetTools::FCanAssetBePublic Delegate) = 0;
+	virtual void UnregisterCanAssetBePublic(const FName OwnerName) = 0;
 
 	/** Syncs the primary content browser to the specified assets, whether or not it is locked. Most syncs that come from AssetTools -feel- like they came from the content browser, so this is okay. */
 	virtual void SyncBrowserToAssets(const TArray<UObject*>& AssetsToSync) = 0;

@@ -106,6 +106,14 @@ class UFont : public UObject, public IFontProviderInterface
 	UPROPERTY(EditAnywhere, Category=Font)
 	EFontCacheType FontCacheType;
 
+	/** The preferred rasterization method for this font (enable / disable MSDF) */
+	UPROPERTY(EditAnywhere, Category=RuntimeFont)
+	EFontRasterizationMode FontRasterizationMode = EFontRasterizationMode::Bitmap;
+
+	/** Settings for rendering this font using the sdf pipeline */
+	UPROPERTY(EditAnywhere, Category=RuntimeFont, meta = (DisplayName = "SDF Settings"))
+	FFontSdfSettings SdfSettings;
+
 	/** List of characters in the font.  For a MultiFont, this will include all characters in all sub-fonts!  Thus,
 		the number of characters in this array isn't necessary the number of characters available in the font */
 	UPROPERTY(EditAnywhere, Category=OfflineFont)
@@ -169,7 +177,7 @@ class UFont : public UObject, public IFontProviderInterface
 	FName LegacyFontName;
 
 	/** Embedded composite font data */
-	UPROPERTY()
+	UPROPERTY(EditAnywhere, Category = RuntimeFont)
 	FCompositeFont CompositeFont;
 
 public:
@@ -274,9 +282,27 @@ public:
 	 *
 	 *	@return	float		The scaling factor currently set
 	 */
-	FORCEINLINE float GetFontScalingFactor()
+	FORCEINLINE float GetFontScalingFactor() const
 	{
 		return ScalingFactor;
+	}
+
+	/**
+	 *	Returns true if rasterization mode is signed distance field-based (and the feature is enabled)
+	 */
+	virtual bool IsSdfFont() const override;
+
+	/**
+	 *	Get the font rasterization mode (IFontProviderInterface)
+	 */
+	virtual EFontRasterizationMode GetFontRasterizationMode() const override;
+
+	/**
+	 *	Get the font SDF settings (IFontProviderInterface)
+	 */
+	virtual const FFontSdfSettings& GetSdfSettings() const override
+	{
+		return SdfSettings;
 	}
 
 	/** Returns the maximum height for any character in this font using this font's default size and scale. */

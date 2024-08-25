@@ -2,6 +2,9 @@
 
 #include "MuCO/CustomizableObjectInstanceDescriptor.h"
 
+#include "MuCO/CustomizableObjectInstancePrivate.h"
+#include "MuCO/CustomizableObjectSystemPrivate.h"
+#include "UnrealMutableImageProvider.h"
 #include "MuCO/CustomizableObject.h"
 #include "MuCO/CustomizableObjectPrivate.h"
 #include "MuCO/DefaultImageProvider.h"
@@ -122,7 +125,7 @@ void FCustomizableObjectInstanceDescriptor::SaveDescriptor(FArchive& Ar, bool bU
 
 				if (bIsParamMultidimensional)
 				{
-					for (int i = 0; i < P.ParameterRangeValueNames.Num(); ++i)
+					for (int32 i = 0; i < P.ParameterRangeValueNames.Num(); ++i)
 					{
 						ValueNames.Add(P.ParameterRangeValueNames[i]);
 						Values.Add(CustomizableObject->FindIntParameterValue(ModelParameterIndex, P.ParameterRangeValueNames[i]));
@@ -332,7 +335,7 @@ void FCustomizableObjectInstanceDescriptor::LoadDescriptor(FArchive& Ar)
 						//check((P.ParameterValueName.IsEmpty() && ValueName.Equals(FString("None"))) || P.ParameterValueName.Equals(ValueName));
 						P.ParameterRangeValueNames.SetNum(Values.Num());
 
-						for (int ParamIndex = 0; ParamIndex < Values.Num(); ++ParamIndex)
+						for (int32 ParamIndex = 0; ParamIndex < Values.Num(); ++ParamIndex)
 						{
 							P.ParameterRangeValueNames[ParamIndex] = CustomizableObject->FindIntParameterValueName(ModelParameterIndex, Values[ParamIndex]);
 						}
@@ -431,7 +434,11 @@ void FCustomizableObjectInstanceDescriptor::SetCustomizableObject(UCustomizableO
 
 bool FCustomizableObjectInstanceDescriptor::GetBuildParameterRelevancy() const
 {
+#if WITH_EDITOR
+	return true;
+#else
 	return bBuildParameterRelevancy;
+#endif
 }
 
 
@@ -464,7 +471,7 @@ mu::ParametersPtr FCustomizableObjectInstanceDescriptor::GetParameters() const
 	for (int32 ParamIndex = 0; ParamIndex < ParamCount; ++ParamIndex)
 	{
 		const FString& Name = MutableParameters->GetName(ParamIndex);
-		const FString& Uid = MutableParameters->GetUid(ParamIndex);
+		const FGuid& Uid = MutableParameters->GetUid(ParamIndex);
 		const mu::PARAMETER_TYPE MutableType = MutableParameters->GetType(ParamIndex);
 
 		switch (MutableType)
@@ -473,7 +480,7 @@ mu::ParametersPtr FCustomizableObjectInstanceDescriptor::GetParameters() const
 		{
 			for (const FCustomizableObjectBoolParameterValue& BoolParameter : BoolParameters)
 			{
-				if (BoolParameter.ParameterName == Name || (!Uid.IsEmpty() && BoolParameter.Uid == Uid))
+				if (BoolParameter.ParameterName == Name || (Uid.IsValid() && BoolParameter.Id == Uid))
 				{
 					MutableParameters->SetBoolValue(ParamIndex,  BoolParameter.ParameterValue);
 					break;
@@ -487,11 +494,11 @@ mu::ParametersPtr FCustomizableObjectInstanceDescriptor::GetParameters() const
 		{
 			for (const FCustomizableObjectIntParameterValue& IntParameter : IntParameters)
 			{
-				if (IntParameter.ParameterName.Equals(Name, ESearchCase::CaseSensitive) || (!Uid.IsEmpty() && IntParameter.Uid == Uid))
+				if (IntParameter.ParameterName.Equals(Name, ESearchCase::CaseSensitive) || (Uid.IsValid() && IntParameter.Id == Uid))
 				{
 					if (mu::RangeIndexPtr RangeIdxPtr = MutableParameters->NewRangeIndex(ParamIndex))
 					{
-						for (int RangeIndex = 0; RangeIndex < IntParameter.ParameterRangeValueNames.Num(); ++RangeIndex)
+						for (int32 RangeIndex = 0; RangeIndex < IntParameter.ParameterRangeValueNames.Num(); ++RangeIndex)
 						{
 							RangeIdxPtr->SetPosition(0, RangeIndex);
 
@@ -517,11 +524,11 @@ mu::ParametersPtr FCustomizableObjectInstanceDescriptor::GetParameters() const
 		{
 			for (const FCustomizableObjectFloatParameterValue& FloatParameter : FloatParameters)
 			{
-				if (FloatParameter.ParameterName == Name || (!Uid.IsEmpty() && FloatParameter.Uid == Uid))
+				if (FloatParameter.ParameterName == Name || (Uid.IsValid() && FloatParameter.Id == Uid))
 				{
 					if (mu::RangeIndexPtr RangeIdxPtr = MutableParameters->NewRangeIndex(ParamIndex))
 					{
-						for (int RangeIndex = 0; RangeIndex < FloatParameter.ParameterRangeValues.Num(); ++RangeIndex)
+						for (int32 RangeIndex = 0; RangeIndex < FloatParameter.ParameterRangeValues.Num(); ++RangeIndex)
 						{
 							RangeIdxPtr->SetPosition(0, RangeIndex);
 							MutableParameters->SetFloatValue(ParamIndex, FloatParameter.ParameterRangeValues[RangeIndex], RangeIdxPtr);
@@ -543,9 +550,10 @@ mu::ParametersPtr FCustomizableObjectInstanceDescriptor::GetParameters() const
 		{
 			for (const FCustomizableObjectVectorParameterValue& VectorParameter : VectorParameters)
 			{
-				if (VectorParameter.ParameterName == Name || (!Uid.IsEmpty() && VectorParameter.Uid == Uid))
+				if (VectorParameter.ParameterName == Name || (Uid.IsValid() && VectorParameter.Id == Uid))
 				{
-					MutableParameters->SetColourValue(ParamIndex, VectorParameter.ParameterValue.R, VectorParameter.ParameterValue.G, VectorParameter.ParameterValue.B);
+					MutableParameters->SetColourValue(ParamIndex, VectorParameter.ParameterValue.R, VectorParameter.ParameterValue.G, 
+																  VectorParameter.ParameterValue.B, VectorParameter.ParameterValue.A);
 
 					break;
 				}
@@ -558,7 +566,7 @@ mu::ParametersPtr FCustomizableObjectInstanceDescriptor::GetParameters() const
 		{
 			for (const auto& ProjectorParameter : ProjectorParameters)
 			{
-				if (ProjectorParameter.ParameterName == Name || (!Uid.IsEmpty() && ProjectorParameter.Uid == Uid))
+				if (ProjectorParameter.ParameterName == Name || (Uid.IsValid() && ProjectorParameter.Id == Uid))
 				{
 					auto CopyProjector = [&MutableParameters, ParamIndex](const FCustomizableObjectProjector& Value, const mu::RangeIndexPtr RangeIdxPtr = nullptr)
 					{
@@ -597,17 +605,15 @@ mu::ParametersPtr FCustomizableObjectInstanceDescriptor::GetParameters() const
 						}
 					};
 
+					CopyProjector(ProjectorParameter.Value);
+
 					if (const mu::RangeIndexPtr RangeIdxPtr = MutableParameters->NewRangeIndex(ParamIndex))
 					{
-						for (int RangeIndex = 0; RangeIndex < ProjectorParameter.RangeValues.Num(); ++RangeIndex)
+						for (int32 RangeIndex = 0; RangeIndex < ProjectorParameter.RangeValues.Num(); ++RangeIndex)
 						{
 							RangeIdxPtr->SetPosition(0, RangeIndex);
 							CopyProjector(ProjectorParameter.RangeValues[RangeIndex], RangeIdxPtr);
 						}
-					}
-					else
-					{
-						CopyProjector(ProjectorParameter.Value);
 					}
 				}
 			}
@@ -619,11 +625,11 @@ mu::ParametersPtr FCustomizableObjectInstanceDescriptor::GetParameters() const
 		{
 			for (const FCustomizableObjectTextureParameterValue& TextureParameter : TextureParameters)
 			{
-				if (TextureParameter.ParameterName == Name || (!Uid.IsEmpty() && TextureParameter.Uid == Uid))
+				if (TextureParameter.ParameterName == Name || (Uid.IsValid() && TextureParameter.Id == Uid))
 				{
 					if (mu::RangeIndexPtr RangeIdxPtr = MutableParameters->NewRangeIndex(ParamIndex))
 					{
-						for (int RangeIndex = 0; RangeIndex < TextureParameter.ParameterRangeValues.Num(); ++RangeIndex)
+						for (int32 RangeIndex = 0; RangeIndex < TextureParameter.ParameterRangeValues.Num(); ++RangeIndex)
 						{
 							RangeIdxPtr->SetPosition(0, RangeIndex);
 							MutableParameters->SetImageValue(ParamIndex, TextureParameter.ParameterRangeValues[RangeIndex], RangeIdxPtr);
@@ -651,22 +657,32 @@ mu::ParametersPtr FCustomizableObjectInstanceDescriptor::GetParameters() const
 }
 
 
+FString FCustomizableObjectInstanceDescriptor::ToString() const
+{
+	const UScriptStruct* Struct = StaticStruct();
+	FString ExportedText;
+
+	Struct->ExportText(ExportedText, this, nullptr, nullptr, (PPF_ExportsNotFullyQualified | PPF_Copy | PPF_Delimited | PPF_IncludeTransient), nullptr);
+
+	return ExportedText;
+}
+
+
 void FCustomizableObjectInstanceDescriptor::ReloadParameters()
 {
-	if (!CustomizableObject)
+	if (IsRunningCookCommandlet())
 	{
 		return;
 	}
 
-	if (!CustomizableObject->IsCompiled())
-	{	
+	if (!CustomizableObject || !CustomizableObject->IsCompiled())
+	{
 		return;
 	}
 
 	SetState(FMath::Clamp(GetState(), 0, CustomizableObject->GetStateCount() - 1));
 	
-	MaxLOD = FMath::Max(0, CustomizableObject->GetNumLODs() - 1);
-	RequestedLODLevels.Init(0, CustomizableObject->GetComponentCount());
+	RequestedLODLevels.Init(MAX_uint16, CustomizableObject->GetComponentCount());
 
 	TArray<FCustomizableObjectBoolParameterValue> OldBoolParameters = BoolParameters;
 	TArray<FCustomizableObjectIntParameterValue> OldIntParameters = IntParameters;
@@ -694,7 +710,7 @@ void FCustomizableObjectInstanceDescriptor::ReloadParameters()
 	for (int32 ParamIndex = 0; ParamIndex < ParamCount; ++ParamIndex)
 	{
 		const FString& Name = MutableParameters->GetName(ParamIndex);
-		const FString& Uid = MutableParameters->GetUid(ParamIndex);
+		const FGuid& Uid = MutableParameters->GetUid(ParamIndex);
 		const mu::PARAMETER_TYPE MutableType = MutableParameters->GetType(ParamIndex);
 
 		switch (MutableType)
@@ -703,11 +719,11 @@ void FCustomizableObjectInstanceDescriptor::ReloadParameters()
 		{
 			FCustomizableObjectBoolParameterValue Param;
 			Param.ParameterName = Name;
-			Param.Uid = Uid;
+			Param.Id = Uid;
 
 			auto FindByNameAndUid = [&](const FCustomizableObjectBoolParameterValue& P)
 			{
-				return P.ParameterName == Name || (!Uid.IsEmpty() && P.Uid == Uid);
+				return P.ParameterName == Name || (Uid.IsValid() && P.Id == Uid);
 			};
 
 			if (FCustomizableObjectBoolParameterValue* Result = OldBoolParameters.FindByPredicate(FindByNameAndUid))
@@ -727,22 +743,71 @@ void FCustomizableObjectInstanceDescriptor::ReloadParameters()
 		{
 			FCustomizableObjectIntParameterValue Param;
 			Param.ParameterName = Name;
-			Param.Uid = Uid;
+			Param.Id = Uid;
 
 			auto FindByNameAndUid = [&](const FCustomizableObjectIntParameterValue& P)
 			{
-				return P.ParameterName == Name || (!Uid.IsEmpty() && P.Uid == Uid);
+				return P.ParameterName == Name || (Uid.IsValid() && P.Id == Uid);
 			};
 			
 			if (FCustomizableObjectIntParameterValue* Result = OldIntParameters.FindByPredicate(FindByNameAndUid))
-			{	
-				if (mu::RangeIndexPtr RangeIdxPtr = MutableParameters->NewRangeIndex(ParamIndex))
+			{
+				const int32 NumValueIndex = MutableParameters->GetIntPossibleValueCount(ParamIndex);
+
+				auto ValueExists = [&](const FString& ValueName)
 				{
-					Param.ParameterRangeValueNames = Result->ParameterRangeValueNames;
+					for (int32 ValueIndex = 0; ValueIndex < NumValueIndex; ++ValueIndex)
+					{
+						if (ValueName == MutableParameters->GetIntPossibleValueName(ParamIndex, ValueIndex))
+						{
+							return true;
+						}
+					}
+
+					return false;
+				};
+				
+				if (mu::RangeIndexPtr RangeIdxPtr = MutableParameters->NewRangeIndex(ParamIndex)) // Is multidimensional
+				{
+					// Get num of ranges (layers) from the instance
+					int32 ValueCount = Result->ParameterRangeValueNames.Num();
+					Param.ParameterRangeValueNames.Reserve(ValueCount);
+
+					for (int32 RangeIndex = 0; RangeIndex < ValueCount; ++RangeIndex)
+					{
+						// Checking if the selected value still exists as option in the parameter
+						if (const FString& OldValue = Result->ParameterRangeValueNames[RangeIndex]; ValueExists(OldValue))
+						{
+							Param.ParameterRangeValueNames.Add(OldValue);
+						}
+						else
+						{
+							const int32 Value = MutableParameters->GetIntValue(ParamIndex, RangeIdxPtr);
+							const FString AuxParameterValueName = CustomizableObject->FindIntParameterValueName(ParamIndex, Value);
+							Param.ParameterRangeValueNames.Add(AuxParameterValueName);
+						}
+					}
 				}
 				else
 				{
-					Param.ParameterValueName = Result->ParameterValueName;
+					if (ValueExists(Result->ParameterValueName))
+					{
+						Param.ParameterValueName = Result->ParameterValueName;
+					}
+					else
+					{
+						const int32 ParamValue = MutableParameters->GetIntValue(ParamIndex);
+						Param.ParameterValueName = CustomizableObject->FindIntParameterValueName(ParamIndex, ParamValue);
+					}
+
+					// Multilayer ints with one option are not multidimensional parameters. However, we need to preserve the layer 
+					// information in case that we add a new option to the parameter, and it is converted to multidimensional.
+					for (int32 RangeIndex = 0; RangeIndex < Result->ParameterRangeValueNames.Num(); ++RangeIndex)
+					{
+						const int32 Value = MutableParameters->GetIntValue(ParamIndex);
+						const FString AuxParameterValueName = CustomizableObject->FindIntParameterValueName(ParamIndex, Value);
+						Param.ParameterRangeValueNames.Add(AuxParameterValueName);
+					}
 				}
 			} 
 			else // Not found in Instance Parameters. Use Mutable Parameters.
@@ -751,7 +816,7 @@ void FCustomizableObjectInstanceDescriptor::ReloadParameters()
 				{
 					const int32 ValueCount = MutableParameters->GetValueCount(ParamIndex);
 
-					for (int ValueIndex = 0; ValueIndex < ValueCount; ++ValueIndex)
+					for (int32 ValueIndex = 0; ValueIndex < ValueCount; ++ValueIndex)
 					{	
 						const mu::RangeIndexPtr RangeValueIdxPtr = MutableParameters->GetValueIndex(ParamIndex, ValueIndex);
 						const int32 RangeIndex = RangeValueIdxPtr->GetPosition(0);
@@ -782,11 +847,11 @@ void FCustomizableObjectInstanceDescriptor::ReloadParameters()
 		{
 			FCustomizableObjectFloatParameterValue Param;
 			Param.ParameterName = Name;
-			Param.Uid = Uid;
+			Param.Id = Uid;
 
 			auto FindByNameAndUid = [&](const FCustomizableObjectFloatParameterValue& P)
 			{
-				return P.ParameterName == Name || (!Uid.IsEmpty() && P.Uid == Uid);
+				return P.ParameterName == Name || (Uid.IsValid() && P.Id == Uid);
 			};
 			
 			if (FCustomizableObjectFloatParameterValue* Result = OldFloatParameters.FindByPredicate(FindByNameAndUid))
@@ -806,7 +871,7 @@ void FCustomizableObjectInstanceDescriptor::ReloadParameters()
 				{
 					const int32 ValueCount = MutableParameters->GetValueCount(ParamIndex);
 
-					for (int ValueIndex = 0; ValueIndex < ValueCount; ++ValueIndex)
+					for (int32 ValueIndex = 0; ValueIndex < ValueCount; ++ValueIndex)
 					{	
 						mu::RangeIndexPtr RangeValueIdxPtr = MutableParameters->GetValueIndex(ParamIndex, ValueIndex);
 						int32 RangeIndex = RangeValueIdxPtr->GetPosition(0);
@@ -833,11 +898,11 @@ void FCustomizableObjectInstanceDescriptor::ReloadParameters()
 		{
 			FCustomizableObjectVectorParameterValue Param;
 			Param.ParameterName = Name;
-			Param.Uid = Uid;
+			Param.Id = Uid;
 
 			auto FindByNameAndUid = [&](const FCustomizableObjectVectorParameterValue& P)
 			{
-				return P.ParameterName == Name || (!Uid.IsEmpty() && P.Uid == Uid);
+				return P.ParameterName == Name || (Uid.IsValid() && P.Id == Uid);
 			};
 
 			if (FCustomizableObjectVectorParameterValue* Result = OldVectorParameters.FindByPredicate(FindByNameAndUid))
@@ -846,8 +911,8 @@ void FCustomizableObjectInstanceDescriptor::ReloadParameters()
 			}
 			else // Not found in Instance Parameters. Use Mutable Parameters.
 			{
-				MutableParameters->GetColourValue(ParamIndex, &Param.ParameterValue.R, &Param.ParameterValue.G, &Param.ParameterValue.B);
-				Param.ParameterValue.A = 1.0f;
+				MutableParameters->GetColourValue(ParamIndex, &Param.ParameterValue.R, &Param.ParameterValue.G,
+															  &Param.ParameterValue.B, &Param.ParameterValue.A);
 			}
 
 			VectorParameters.Add(Param);
@@ -858,11 +923,14 @@ void FCustomizableObjectInstanceDescriptor::ReloadParameters()
 		{
 			FCustomizableObjectProjectorParameterValue Param;
 			Param.ParameterName = Name;
-			Param.Uid = Uid;
+			Param.Id = Uid;
+
+			// Projector to check if the porojector's type has changed
+			FCustomizableObjectProjector DefaultProjectorValue = CustomizableObject->GetProjectorParameterDefaultValue(Name);
 
 			auto FindByNameAndUid = [&](const FCustomizableObjectProjectorParameterValue& P)
 			{
-				return P.ParameterName == Name || (!Uid.IsEmpty() && P.Uid == Uid);
+				return P.ParameterName == Name || (Uid.IsValid() && P.Id == Uid);
 			};
 			
 			if (FCustomizableObjectProjectorParameterValue* Result = OldProjectorParameters.FindByPredicate(FindByNameAndUid))
@@ -870,10 +938,17 @@ void FCustomizableObjectInstanceDescriptor::ReloadParameters()
 				if (mu::RangeIndexPtr RangeIdxPtr = MutableParameters->NewRangeIndex(ParamIndex))
 				{
 					Param.RangeValues = Result->RangeValues;
+					Param.Value.ProjectionType = DefaultProjectorValue.ProjectionType;
+
+					for (FCustomizableObjectProjector& Projector : Param.RangeValues)
+					{
+						Projector.ProjectionType = DefaultProjectorValue.ProjectionType;
+					}
 				}
 				else
 				{
 					Param.Value = Result->Value;
+					Param.Value.ProjectionType = DefaultProjectorValue.ProjectionType;
 				}
 			} 
 			else // Not found in Instance Parameters. Use Mutable Parameters.
@@ -900,13 +975,15 @@ void FCustomizableObjectInstanceDescriptor::ReloadParameters()
 						Value.Scale[2] = -Value.Scale[0];
 						Value.Scale[0] = Value.Scale[1] = Value.Scale[1] * 2.0f;
 					}
-				}; 
+				};
+
+				GetProjector(Param.Value);
 
 				if (mu::RangeIndexPtr RangeIdxPtr = MutableParameters->NewRangeIndex(ParamIndex))
 				{
 					const int32 ValueCount = MutableParameters->GetValueCount(ParamIndex);
 
-					for (int ValueIndex = 0; ValueIndex < ValueCount; ++ValueIndex)
+					for (int32 ValueIndex = 0; ValueIndex < ValueCount; ++ValueIndex)
 					{	
 						mu::RangeIndexPtr RangeValueIdxPtr = MutableParameters->GetValueIndex(ParamIndex, ValueIndex);
 						int32 RangeIndex = RangeValueIdxPtr->GetPosition(0);
@@ -919,10 +996,6 @@ void FCustomizableObjectInstanceDescriptor::ReloadParameters()
 						GetProjector(Param.RangeValues[RangeIndex], RangeValueIdxPtr);
 					}
 				}
-				else
-				{
-					GetProjector(Param.Value);
-				}
 			}
 
 			ProjectorParameters.Add(Param);
@@ -933,11 +1006,11 @@ void FCustomizableObjectInstanceDescriptor::ReloadParameters()
 		{
 			FCustomizableObjectTextureParameterValue Param;
 			Param.ParameterName = Name;
-			Param.Uid = Uid;
+			Param.Id = Uid;
 
 			auto FindByNameAndUid = [&](const FCustomizableObjectTextureParameterValue& P)
 			{
-				return P.ParameterName == Name || (!Uid.IsEmpty() && P.Uid == Uid);
+				return P.ParameterName == Name || (Uid.IsValid() && P.Id == Uid);
 			};
 			
 			if (FCustomizableObjectTextureParameterValue* Result = OldTextureParameters.FindByPredicate(FindByNameAndUid))
@@ -957,7 +1030,7 @@ void FCustomizableObjectInstanceDescriptor::ReloadParameters()
 				{
 					const int32 ValueCount = MutableParameters->GetValueCount(ParamIndex);
 
-					for (int ValueIndex = 0; ValueIndex < ValueCount; ++ValueIndex)
+					for (int32 ValueIndex = 0; ValueIndex < ValueCount; ++ValueIndex)
 					{	
 						mu::RangeIndexPtr RangeValueIdxPtr = MutableParameters->GetValueIndex(ParamIndex, ValueIndex);
 						int32 RangeIndex = RangeValueIdxPtr->GetPosition(0);
@@ -1005,18 +1078,6 @@ int32 FCustomizableObjectInstanceDescriptor::GetMinLod() const
 void FCustomizableObjectInstanceDescriptor::SetMinLod(int32 InMinLOD)
 {
 	MinLOD = InMinLOD;
-}
-
-
-int32 FCustomizableObjectInstanceDescriptor::GetMaxLod() const
-{
-	return MaxLOD;
-}
-
-
-void FCustomizableObjectInstanceDescriptor::SetMaxLod(int32 InMaxLOD)
-{
-	MaxLOD = InMaxLOD;
 }
 
 
@@ -1120,7 +1181,7 @@ bool FCustomizableObjectInstanceDescriptor::HasAnyParameters() const
 	if (!CustomizableObject->IsCompiled()) \
 	{ \
 		FString AdditionalLoggingInfo = FString::Printf(TEXT("Calling function: %hs.  %s"), __FUNCTION__, ErrorMessage); \
-		CustomizableObject->AddUncompiledCOWarning(AdditionalLoggingInfo);\
+		CustomizableObject->GetPrivate()->AddUncompiledCOWarning(AdditionalLoggingInfo);\
 		return; \
 	} \
 
@@ -1130,7 +1191,7 @@ bool FCustomizableObjectInstanceDescriptor::HasAnyParameters() const
 	if (!ensureMsgf(CustomizableObject->IsCompiled(), TEXT("Customizable Object (%s) was not compiled."), *GetNameSafe(CustomizableObject))) \
 	{ \
 		FString AdditionalLoggingInfo = FString::Printf(TEXT("Calling function: %hs.  %s"), __FUNCTION__, ErrorMessage); \
-		CustomizableObject->AddUncompiledCOWarning(AdditionalLoggingInfo);\
+		CustomizableObject->GetPrivate()->AddUncompiledCOWarning(AdditionalLoggingInfo);\
 		return; \
 	} \
  
@@ -1144,7 +1205,7 @@ void LogParameterNotFoundWarning(const FString& ParameterName, const int32 Objec
 	// Ensuring to help make sure we catch these critical data mismatches, but since we can handle these gracefully,
 	// don't ensure in Shipping builds.  We need to always log an error afterwards since the ensure will only fire
 	// once per session, and we don't want to always ensure since that might interfere with unrelated debugging.
-	ensureMsgf(
+	ensureMsgf(false,
 		TEXT("Failed to find parameter (%s) on CO (%s). CO parameter index: (%d). COI parameter index: (%d)"),
 		*ParameterName, *GetNameSafe(CustomizableObject), ObjectParameterIndex, InstanceParameterIndex
 	);
@@ -1192,7 +1253,7 @@ void FCustomizableObjectInstanceDescriptor::SetIntParameterSelectedOption(const 
 	check(CustomizableObject);
 	RETURN_ON_UNCOMPILED_CO(CustomizableObject, TEXT("Error: Cannot set Int parameter "));
 
-	const int32 ParameterIndexInObject = IntParameters.IsValidIndex(ParameterIndexInInstance) ? CustomizableObject->FindParameter(IntParameters[ParameterIndexInInstance].ParameterName) : INDEX_NONE;
+	const int32 ParameterIndexInObject = IntParameters.IsValidIndex(ParameterIndexInInstance) ? CustomizableObject->FindParameter(IntParameters[ParameterIndexInInstance].ParameterName) : INDEX_NONE; //-V781
 
 	if (ParameterIndexInObject < 0 || ParameterIndexInInstance < 0)
 	{
@@ -1395,18 +1456,6 @@ void FCustomizableObjectInstanceDescriptor::SetTextureParameterSelectedOption(co
 }
 
 
-void FCustomizableObjectInstanceDescriptor::SetTextureParameterSelectedOptionT(const FString& TextureParamName,	UTexture2D* TextureValue, int32 RangeIndex)
-{
-	check(CustomizableObject);
-	RETURN_ON_UNCOMPILED_CO(CustomizableObject, TEXT("Error: Cannot set Int parameter "));
-
-	UDefaultImageProvider& UDefaultImageProvider = UCustomizableObjectSystem::GetInstance()->GetOrCreateDefaultImageProvider();
-	const FString Id = UDefaultImageProvider.Add(TextureValue);
-	
-	SetTextureParameterSelectedOption(TextureParamName, Id, RangeIndex);
-}
-
-
 FLinearColor FCustomizableObjectInstanceDescriptor::GetColorParameterSelectedOption(const FString& ColorParamName) const
 {
 	check(CustomizableObject);
@@ -1540,53 +1589,65 @@ void FCustomizableObjectInstanceDescriptor::SetProjectorValue(const FString& Pro
 }
 
 
-void FCustomizableObjectInstanceDescriptor::SetProjectorPosition(const FString& ProjectorParamName, const FVector3f& Pos, const int32 RangeIndex)
+void FCustomizableObjectInstanceDescriptor::SetProjectorPosition(const FString& ProjectorParamName, const FVector& Pos, const int32 RangeIndex)
 {
-	check(CustomizableObject);
-	RETURN_ON_UNCOMPILED_CO(CustomizableObject, TEXT("Error: Cannot set Projector parameter "))
+	FVector DummyPos, Direction, Up, Scale;
+	float Angle;
+	ECustomizableObjectProjectorType Type;
+   	GetProjectorValue(ProjectorParamName, DummyPos, Direction, Up, Scale, Angle, Type, RangeIndex);
+	
+	SetProjectorValue(ProjectorParamName, static_cast<FVector>(Pos), Direction, Up, Scale, Angle, RangeIndex);
+}
 
-	const int32 ParameterIndexInObject = CustomizableObject->FindParameter(ProjectorParamName);
-	const int32 ParameterIndexInInstance = FindProjectorParameterNameIndex(ProjectorParamName);
 
-	if (ParameterIndexInObject < 0 || ParameterIndexInInstance < 0)
-	{
-		// Early out since we could not find the parameter to set.
-		LogParameterNotFoundWarning(ProjectorParamName, ParameterIndexInObject, ParameterIndexInInstance, CustomizableObject, __FUNCTION__);
-		return;
-	}
+void FCustomizableObjectInstanceDescriptor::SetProjectorDirection(const FString& ProjectorParamName, const FVector& Direction, int32 RangeIndex)
+{
+	FVector Position, DummyDirection, Up, Scale;
+	float Angle;
+	ECustomizableObjectProjectorType Type;
+	GetProjectorValue(ProjectorParamName, Position, DummyDirection, Up, Scale, Angle, Type, RangeIndex);
+		
+	SetProjectorValue(ProjectorParamName, Position, Direction, Up, Scale, Angle, RangeIndex);
+}
 
-	// Parameter to modify
-	FCustomizableObjectProjectorParameterValue& ProjectorParameter = ProjectorParameters[ParameterIndexInInstance];
 
-	FCustomizableObjectProjector ProjectorData = ProjectorParameter.Value;
-	ProjectorData.Position = static_cast<FVector3f>(Pos);
+void FCustomizableObjectInstanceDescriptor::SetProjectorUp(const FString& ProjectorParamName, const FVector& Up, int32 RangeIndex)
+{
+	FVector Position, Direction, DummyUp, Scale;
+	float Angle;
+	ECustomizableObjectProjectorType Type;
+	GetProjectorValue(ProjectorParamName, Position, Direction, DummyUp, Scale, Angle, Type, RangeIndex);
 
-	if (RangeIndex == -1)
-	{
-		check(!CustomizableObject->IsParameterMultidimensional(ParameterIndexInObject)); // This param is multidimensional, it must have a RangeIndex of 0 or more
-		ProjectorParameter.Value = ProjectorData;
-	}
-	else
-	{
-		check(CustomizableObject->IsParameterMultidimensional(ParameterIndexInObject)); // This param is not multidimensional, it must have a RangeIndex of -1
+	SetProjectorValue(ProjectorParamName, Position, Direction, Up, Scale, Angle, RangeIndex);
+}
 
-		if (!ProjectorParameter.RangeValues.IsValidIndex(RangeIndex))
-		{
-			const int32 InsertionIndex = ProjectorParameter.RangeValues.Num();
-			const int32 NumInsertedElements = RangeIndex + 1 - ProjectorParameter.RangeValues.Num();
-			ProjectorParameter.RangeValues.InsertDefaulted(InsertionIndex, NumInsertedElements);
-		}
 
-		check(ProjectorParameter.RangeValues.IsValidIndex(RangeIndex));
-		ProjectorParameter.RangeValues[RangeIndex] = ProjectorData;
-	}
+void FCustomizableObjectInstanceDescriptor::SetProjectorScale(const FString& ProjectorParamName, const FVector& Scale, int32 RangeIndex)
+{
+	FVector Position, Direction, Up, DummyScale;
+	float Angle;
+	ECustomizableObjectProjectorType Type;
+	GetProjectorValue(ProjectorParamName, Position, Direction, Up, DummyScale, Angle, Type, RangeIndex);
+	
+	SetProjectorValue(ProjectorParamName, Position, Direction, Up, Scale, Angle, RangeIndex);
+}
+
+
+void FCustomizableObjectInstanceDescriptor::SetProjectorAngle(const FString& ProjectorParamName, float Angle, int32 RangeIndex)
+{
+	FVector Position, Direction, Up, Scale;
+	float DummyAngle;
+	ECustomizableObjectProjectorType Type;
+	GetProjectorValue(ProjectorParamName, Position, Direction, Up, Scale, DummyAngle, Type, RangeIndex);
+	
+	SetProjectorValue(ProjectorParamName, Position, Direction, Up, Scale, Angle, RangeIndex);
 }
 
 
 void FCustomizableObjectInstanceDescriptor::GetProjectorValue(const FString& ProjectorParamName,
-	FVector& OutPos, FVector& OutDirection, FVector& OutUp, FVector& OutScale,
-	float& OutAngle, ECustomizableObjectProjectorType& OutType,
-	const int32 RangeIndex) const
+                                                              FVector& OutPos, FVector& OutDirection, FVector& OutUp, FVector& OutScale,
+                                                              float& OutAngle, ECustomizableObjectProjectorType& OutType,
+                                                              const int32 RangeIndex) const
 {
 	FVector3f Pos, Direction, Up, Scale;
 	GetProjectorValueF(ProjectorParamName, Pos, Direction, Up, Scale, OutAngle, OutType, RangeIndex);
@@ -2182,40 +2243,95 @@ void FCustomizableObjectInstanceDescriptor::SetCurrentState(const FString& State
 }
 
 
-void FCustomizableObjectInstanceDescriptor::SetRandomValues(const int32& InRandomizationSeed)
+void FCustomizableObjectInstanceDescriptor::SetRandomValues()
+{
+	const int32 RandomSeed = FMath::SRand() * TNumericLimits<int32>::Max();
+	FRandomStream RandomStream{RandomSeed};
+	SetRandomValuesFromStream(RandomSeed);
+}
+
+
+void FCustomizableObjectInstanceDescriptor::SetRandomValuesFromStream(const FRandomStream& InStream)
 {
 	check(CustomizableObject);
-	RETURN_ON_UNCOMPILED_CO(CustomizableObject, TEXT("Error: Cannot set random values"))
 
-	// Set seed for deterministic behaviour
-	FMath::SRandInit(InRandomizationSeed);
+	if (!CustomizableObject)
+	{
+		return;
+	}
 	
-	for (int32 i = 0; i < FloatParameters.Num(); ++i)
+	RETURN_ON_UNCOMPILED_CO(CustomizableObject, TEXT("Error: Cannot set random values"))
+	
+	for (FCustomizableObjectFloatParameterValue& FloatParameter : FloatParameters)
 	{
-		FloatParameters[i].ParameterValue = FMath::SRand();
-	}
+		FloatParameter.ParameterValue = InStream.GetFraction();
 
-	for (int32 i = 0; i < BoolParameters.Num(); ++i)
-	{
-		BoolParameters[i].ParameterValue = (int32)FMath::SRand() % 2 == 0;
-	}
-
-	for (int32 i = 0; i < IntParameters.Num(); ++i)
-	{
-		const int32 ParameterIndexInCO = CustomizableObject->FindParameter(IntParameters[i].ParameterName);
-
-		// TODO: Randomize multidimensional parameters
-		if (ParameterIndexInCO >= 0 && !CustomizableObject->IsParameterMultidimensional(ParameterIndexInCO))
+		for (float& RangeValue : FloatParameter.ParameterRangeValues)
 		{
-			const int32 NumValues = CustomizableObject->GetIntParameterNumOptions(ParameterIndexInCO);
-			if (NumValues > 0)
-			{
-				const int32 Index = (int32)FMath::SRand() % NumValues;
-				FString Option = CustomizableObject->GetIntParameterAvailableOption(ParameterIndexInCO, Index);
-				SetIntParameterSelectedOption(i, Option);
-			}
+			RangeValue = InStream.GetFraction();
 		}
 	}
+
+	for (FCustomizableObjectBoolParameterValue& BoolParameter : BoolParameters)
+	{
+		BoolParameter.ParameterValue = static_cast<bool>(InStream.RandRange(0, 1));
+	}
+	
+	for (FCustomizableObjectIntParameterValue& IntParameter : IntParameters)
+	{
+		const int32 ParamIndex = CustomizableObject->FindParameter(IntParameter.ParameterName);
+		const int32 NumValues = CustomizableObject->GetIntParameterNumOptions(ParamIndex);
+
+		if (NumValues)
+		{
+			IntParameter.ParameterValueName = CustomizableObject->GetIntParameterAvailableOption(ParamIndex, NumValues * InStream.GetFraction());
+
+			for (FString& RangeValue : IntParameter.ParameterRangeValueNames)
+			{
+				RangeValue = CustomizableObject->GetIntParameterAvailableOption(ParamIndex, NumValues * InStream.GetFraction());
+			}
+		}		
+	}
+
+	for (FCustomizableObjectVectorParameterValue& VectorParameter : VectorParameters)
+	{
+		VectorParameter.ParameterValue.R = InStream.GetFraction();
+		VectorParameter.ParameterValue.G = InStream.GetFraction();
+		VectorParameter.ParameterValue.B = InStream.GetFraction();
+		VectorParameter.ParameterValue.A = InStream.GetFraction();
+	}
+
+	const UCustomizableObjectSystemPrivate* SystemPrivate = UCustomizableObjectSystem::GetInstance()->GetPrivate();
+
+	TArray<FName> PossibleValues;
+
+	// Get all possible values
+	TArray<FCustomizableObjectExternalTexture> ProviderValues;
+	for (const TWeakObjectPtr<UCustomizableSystemImageProvider>& Provider : SystemPrivate->ImageProvider->ImageProviders)
+	{
+		ProviderValues.Reset();
+		Provider->GetTextureParameterValues(ProviderValues);
+
+		for (const FCustomizableObjectExternalTexture& ProviderValue : ProviderValues)
+		{
+			PossibleValues.Add(ProviderValue.Value);
+		}
+	}
+
+	if (const int32 NumPossibleValues = PossibleValues.Num())
+	{
+		for (FCustomizableObjectTextureParameterValue& TextureParameter : TextureParameters)
+		{
+			TextureParameter.ParameterValue = PossibleValues[NumPossibleValues * InStream.GetFraction()];
+		
+			for (FName& RangeValue : TextureParameter.ParameterRangeValues)
+			{
+				RangeValue = PossibleValues[NumPossibleValues * InStream.GetFraction()];
+			}				
+		}		
+	}
+	
+	// Currently we are not randomizing the projectors since we do not know the valid range of values.
 }
 
 
@@ -2353,147 +2469,5 @@ void FCustomizableObjectInstanceDescriptor::CreateParametersLookupTable()
 	}
 }
 
-FDescriptorHash::FDescriptorHash(const FCustomizableObjectInstanceDescriptor& Descriptor)
-{
-	if (Descriptor.CustomizableObject)
-	{
-		Hash = HashCombine(Hash, GetTypeHash(Descriptor.CustomizableObject->GetPathName()));
-		Hash = HashCombine(Hash, GetTypeHash(Descriptor.CustomizableObject->GetCompilationGuid()));
-	}
-
-	for (const FCustomizableObjectBoolParameterValue& Value : Descriptor.BoolParameters)
-	{
-		Hash = HashCombine(Hash, GetTypeHash(Value));
-	}	
-
-	for (const FCustomizableObjectIntParameterValue& Value : Descriptor.IntParameters)
-	{
-		Hash = HashCombine(Hash, GetTypeHash(Value));
-	}
-	
-	for (const FCustomizableObjectFloatParameterValue& Value : Descriptor.FloatParameters)
-	{
-		Hash = HashCombine(Hash, GetTypeHash(Value));
-	}
-
-	for (const FCustomizableObjectTextureParameterValue& Value : Descriptor.TextureParameters)
-	{
-		Hash = HashCombine(Hash, GetTypeHash(Value));
-	}
-
-	for (const FCustomizableObjectVectorParameterValue& Value : Descriptor.VectorParameters)
-	{
-		Hash = HashCombine(Hash, GetTypeHash(Value));
-	}
-
-	for (const FCustomizableObjectProjectorParameterValue& Value : Descriptor.ProjectorParameters)
-	{
-		Hash = HashCombine(Hash, GetTypeHash(Value));
-	}
-	
-	Hash = HashCombine(Hash, GetTypeHash(Descriptor.State));
-	Hash = HashCombine(Hash, GetTypeHash(Descriptor.bBuildParameterRelevancy));
-
-	for (const TTuple<FName, FMultilayerProjector>& Pair : Descriptor.MultilayerProjectors)
-	{
-		// Hash = HashCombine(Hash, GetTypeHash(Pair.Key)); // Already hashed by the FMultilayerProjector.
-		Hash = HashCombine(Hash, GetTypeHash(Pair.Value));
-	}
-}
-
-
-bool FDescriptorHash::operator==(const FDescriptorHash& Other) const
-{
-	return Hash == Other.Hash;
-}
-
-
-bool FDescriptorHash::operator!=(const FDescriptorHash& Other) const
-{
-	return Hash != Other.Hash;	
-}
-
-
-bool FDescriptorHash::operator<(const FDescriptorHash& Other) const
-{
-	return Hash < Other.Hash;
-}
-
-
-FString FDescriptorHash::ToString() const
-{
-	return FString::Printf(TEXT("%u"), Hash);
-}
-
-
-FDescriptorRuntimeHash::FDescriptorRuntimeHash(const FCustomizableObjectInstanceDescriptor& Descriptor) :
-	FDescriptorHash(Descriptor)
-{
-	MinLOD = Descriptor.MinLOD;
-	MaxLOD = Descriptor.MaxLOD;	
-
-	RequestedLODsPerComponent = Descriptor.RequestedLODLevels;
-}
-
-
-bool FDescriptorRuntimeHash::IsSubset(const FDescriptorRuntimeHash& Other) const
-{
-	if (FDescriptorHash::operator!=(Other) || MinLOD < Other.MinLOD || MaxLOD != Other.MaxLOD)
-	{
-		return false;
-	}
-
-	if (RequestedLODsPerComponent == Other.RequestedLODsPerComponent)
-	{
-		return true;
-	}
-
-	for (int32 ComponentIndex = 0; ComponentIndex < RequestedLODsPerComponent.Num(); ++ComponentIndex)
-	{
-		int32 RequestedLODs = RequestedLODsPerComponent[ComponentIndex];
-		int32 OtherRequestedLODs = Other.RequestedLODsPerComponent[ComponentIndex];
-		for (uint16 LODIndex = MinLOD; LODIndex <= MaxLOD; ++LODIndex)
-		{
-			// To be a subset all bits set in RequestedLODs must be set in OtherRequestedLODs. OtherRequestedLODs can have additional bits set
-			if (RequestedLODs & (1 << LODIndex) && !(OtherRequestedLODs & (1 << LODIndex)))
-			{
-				return false;
-			}
-		}
-	}
-
-	return true;
-}
-
-
-void FDescriptorRuntimeHash::UpdateMinMaxLOD(const int32 InMinLOD, const int32 InMaxLOD)
-{
-	MinLOD = InMinLOD;
-	MaxLOD = InMaxLOD;	
-}
-
-
-int32 FDescriptorRuntimeHash::GetMinLOD() const
-{
-	return MinLOD;
-}
-
-
-int32 FDescriptorRuntimeHash::GetMaxLOD() const
-{
-	return MaxLOD;
-}
-
-
-void FDescriptorRuntimeHash::UpdateRequestedLODs(const TArray<uint16>& InRequestedLODs)
-{
-	RequestedLODsPerComponent = InRequestedLODs;
-}
-
-
-const TArray<uint16>& FDescriptorRuntimeHash::GetRequestedLODs() const
-{
-	return RequestedLODsPerComponent;
-}
 
 #undef RETURN_ON_CO_UNCOMPILED

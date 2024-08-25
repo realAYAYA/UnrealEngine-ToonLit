@@ -231,10 +231,6 @@ protected:
 	}
 
 public:
-	//~ Begin UTextLayoutWidget Interface
-	UMG_API virtual void SetJustification(ETextJustify::Type InJustification) override;
-	//~ End UTextLayoutWidget Interface
-
 	//~ Begin UWidget Interface
 	UMG_API virtual void SynchronizeProperties() override;
 	//~ End UWidget Interface
@@ -256,12 +252,23 @@ public:
 #endif
 
 protected:
+	//~ Begin UTextLayoutWidget Interface
+	UMG_API virtual void OnShapedTextOptionsChanged(FShapedTextOptions InShapedTextOptions) override;
+	UMG_API virtual void OnJustificationChanged(ETextJustify::Type InJustification) override;
+	UMG_API virtual void OnWrappingPolicyChanged(ETextWrappingPolicy InWrappingPolicy) override;
+	UMG_API virtual void OnAutoWrapTextChanged(bool InAutoWrapText) override;
+	UMG_API virtual void OnWrapTextAtChanged(float InWrapTextAt) override;
+	UMG_API virtual void OnLineHeightPercentageChanged(float InLineHeightPercentage) override;
+	UMG_API virtual void OnApplyLineHeightToBottomLineChanged(bool InApplyLineHeightToBottomLine) override;
+	UMG_API virtual void OnMarginChanged(const FMargin& InMargin) override;
+	//~ End UTextLayoutWidget Interface
+
 	/**
 	 * If this is enabled, text shaping, wrapping, justification are disabled in favor of much faster text layout and measurement.
 	 * This feature is only suitable for "simple" text (ie, text containing only numbers or basic ASCII) as it disables the complex text rendering support required for certain languages (such as Arabic and Thai).
 	 * It is significantly faster for text that can take advantage of it (particularly if that text changes frequently), but shouldn't be used for localized user-facing text.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category=Performance, AdvancedDisplay, meta=(AllowPrivateAccess, DesignerRebuild))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category=Performance, AdvancedDisplay, meta=(AllowPrivateAccess = "true", DesignerRebuild))
 	bool bSimpleTextMode;
 
 	//~ Begin UWidget Interface

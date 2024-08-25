@@ -45,3 +45,13 @@ EOS_DECLARE_FUNC(uint32_t) EOS_Sanctions_GetPlayerSanctionCount(EOS_HSanctions H
  *         EOS_NotFound if the player achievement is not found
  */
 EOS_DECLARE_FUNC(EOS_EResult) EOS_Sanctions_CopyPlayerSanctionByIndex(EOS_HSanctions Handle, const EOS_Sanctions_CopyPlayerSanctionByIndexOptions* Options, EOS_Sanctions_PlayerSanction ** OutSanction);
+
+/**
+ * Create a sanction appeal on behalf of a local user.
+ * Note that for creating the sanction appeal you'll need the sanction reference id, which is available through CopyPlayerSanctionByIndex.
+ *
+ * @param Options Structure containing the player sanction appeal information.
+ * @param ClientData Optional client data provided by the user of the SDK.
+ * @param CompletionDelegate This function is called when the send operation completes.
+ */
+EOS_DECLARE_FUNC(void) EOS_Sanctions_CreatePlayerSanctionAppeal(EOS_HSanctions Handle, const EOS_Sanctions_CreatePlayerSanctionAppealOptions* Options, void* ClientData, const EOS_Sanctions_CreatePlayerSanctionAppealCallback CompletionDelegate);

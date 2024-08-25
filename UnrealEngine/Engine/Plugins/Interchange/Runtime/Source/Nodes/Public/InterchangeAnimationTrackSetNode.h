@@ -12,7 +12,7 @@ enum class EInterchangeAnimationPayLoadType : uint8
 {
 	NONE = 0,
 	CURVE,
-	MORPHTARGETCURVE, //handles/generates the same properties as the CURVE variation, but they way it is acquired might be different (depending on the Translator)
+	MORPHTARGETCURVE, // Handles/generates the same properties as the CURVE variation, but the way it is acquired might be different (depending on the Translator).
 	STEPCURVE,
 	BAKED,
 	MORPHTARGETCURVEWEIGHTINSTANCE	//Handled within UInterchangeAnimSequenceFactory, contrary to the others which are handled in the Translators
@@ -70,21 +70,21 @@ UENUM(BlueprintType)
 enum class EInterchangeAnimatedProperty : uint8
 {
 	None UMETA(DisplayName = "No property.", ToolTip = "The associated animation track will be ignored."),
-	Visibility UMETA(DisplayName = "Visibility property.", ToolTip = "The associated animation track is applied to the visibility property of the actor"),
+	Visibility UMETA(DisplayName = "Visibility property.", ToolTip = "The associated animation track is applied to the visibility property of the actor."),
 	MAX,
 };
 /**
- * Enumeration specifying how to handle the state of the animated property at the end of an animation track
+ * Enumeration specifying how to handle the state of the animated property at the end of an animation track.
  */
 enum class EInterchangeAimationCompletionMode : uint8
 {
 	KeepState UMETA(DisplayName = "Keep State", ToolTip = "Keep the animated property at the state set at the end of the animation track."),
 	RestoreState UMETA(DisplayName = "Restore State", ToolTip = "Restore the animated property to its state before the start of the animation track."),
-	ProjectDefault UMETA(DisplayName = "Project Default", ToolTip = "Restore the animated property to the state set in the project for such property."),
+	ProjectDefault UMETA(DisplayName = "Project Default", ToolTip = "Restore the animated property to the state set in the project for that property."),
 };
 
 /**
- * Class to represent a set of animation track nodes sharing the same frame rate
+ * Class to represent a set of animation track nodes that share the same frame rate.
  */
 UCLASS(BlueprintType)
 class INTERCHANGENODES_API UInterchangeAnimationTrackSetNode : public UInterchangeBaseNode
@@ -100,7 +100,7 @@ public:
 	}
 
 	/**
-	 * Return the node type name of the class, we use this when reporting errors
+	 * Return the node type name of the class. This is used when reporting errors.
 	 */
 	virtual FString GetTypeName() const override
 	{
@@ -109,19 +109,19 @@ public:
 	}
 
 	/**
-	 * This function allow to retrieve the number of track dependencies for this object.
+	 * Retrieve the number of track dependencies for this object.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimationTrackSet")
 	int32 GetCustomAnimationTrackUidCount() const;
 
 	/**
-	 * This function allow to retrieve the track dependency for this object.
+	 * Retrieve the track dependency for this object.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimationTrackSet")
 	void GetCustomAnimationTrackUids(TArray<FString>& OutAnimationTrackUids) const;
 
 	/**
-	 * This function allow to retrieve one track dependency for this object.
+	 * Retrieve one track dependency for this object.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimationTrackSet")
 	void GetCustomAnimationTrackUid(const int32 Index, FString& OutAnimationTrackUid) const;
@@ -157,9 +157,9 @@ private:
 };
 
 /**
- * Abstract class providing the minimal services required for an animation track node
+ * Abstract class providing the minimal services required for an animation track node.
  */
-UCLASS(Abstract, Experimental)
+UCLASS(Abstract)
 class INTERCHANGENODES_API UInterchangeAnimationTrackBaseNode : public UInterchangeBaseNode
 {
 	GENERATED_BODY()
@@ -171,7 +171,7 @@ public:
 	}
 
 	/**
-	* Return the node type name of the class, we use this when reporting errors
+	* Return the node type name of the class. This is used when reporting errors.
 	*/
 	virtual FString GetTypeName() const override
 	{
@@ -187,7 +187,7 @@ public:
 
 	/**
 	 * Get how the actor's animated property behaves once this animation is complete.
-	 * The output value will be clamped to the range of values defined in EInterchangeAimationCompletionMode
+	 * The output value will be clamped to the range of values defined in EInterchangeAimationCompletionMode.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimationTrack")
 	bool GetCustomCompletionMode(int32& AttributeValue) const;
@@ -197,9 +197,9 @@ private:
 };
 
 /**
- * Class to represent an animation which instances another animation track set node
+ * Class to represent an animation that instances another animation track set node.
  */
-UCLASS(BlueprintType, Experimental)
+UCLASS(BlueprintType)
 class INTERCHANGENODES_API UInterchangeAnimationTrackSetInstanceNode : public UInterchangeAnimationTrackBaseNode
 {
 	GENERATED_BODY()
@@ -211,7 +211,7 @@ public:
 	}
 
 	/**
-	 * Return the node type name of the class, we use this when reporting errors
+	 * Return the node type name of the class. This is used when reporting errors.
 	 */
 	virtual FString GetTypeName() const override
 	{
@@ -275,10 +275,10 @@ private:
 };
 
 /**
- * Class to represent an animation on the property of a camera, light or scene node
- * The list of supported properties is enumerated in EInterchangeAnimatedProperty
+ * Class to represent an animation on the property of a camera, light, or scene node
+ * The list of supported properties is enumerated in EInterchangeAnimatedProperty.
  */
-UCLASS(BlueprintType, Experimental)
+UCLASS(BlueprintType)
 class INTERCHANGENODES_API UInterchangeAnimationTrackNode : public UInterchangeAnimationTrackBaseNode
 {
 	GENERATED_BODY()
@@ -290,7 +290,7 @@ public:
 	}
 
 	/**
-	 * Return the node type name of the class, we use this when reporting errors
+	 * Return the node type name of the class. This is used when reporting errors.
 	 */
 	virtual FString GetTypeName() const override
 	{
@@ -313,14 +313,26 @@ public:
 	/**
 	 * Set the property animated by this track.
 	 */
+	UE_DEPRECATED(5.4, "SetCustomTargetedProperty has been deprecated, please use SetCustomPropertyTrack instead.")
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimationTrack")
 	bool SetCustomTargetedProperty(const int32& TargetedProperty);
 
 	/**
-	 * Get the property animated by this track.
+	 * Set the property animated by this track. Usually the name of a UMovieSceneTrack, e.g for UMovieSceneColorTrack -> Color
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimationTrack")
+	bool SetCustomPropertyTrack(const FName& PropertyTrack);
+
+	/**
+	 * Get the property animated by this track.
+	 */
+	UE_DEPRECATED(5.4, "SetCustomTargetedProperty has been deprecated, please use SetCustomPropertyTrack instead.")
+	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimationTrack")
 	bool GetCustomTargetedProperty(int32& TargetedProperty) const;
+
+
+	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | AnimationTrack")
+	bool GetCustomPropertyTrack(FName& PropertyTrack) const;
 
 	/**
 	 * Set the payload key needed to retrieve the animation for this track.
@@ -352,12 +364,13 @@ private:
 	const UE::Interchange::FAttributeKey Macro_CustomAnimationPayloadTypeKey = UE::Interchange::FAttributeKey(TEXT("AnimationPayloadType"));
 	const UE::Interchange::FAttributeKey Macro_CustomFrameCountKey = UE::Interchange::FAttributeKey(TEXT("FrameCount"));
 	const UE::Interchange::FAttributeKey Macro_CustomTargetedPropertyKey = UE::Interchange::FAttributeKey(TEXT("TargetedProperty"));
+	const UE::Interchange::FAttributeKey Macro_CustomPropertyTrackKey = UE::Interchange::FAttributeKey(TEXT("PropertyTrack"));
 };
 
 /**
- * Class to represent an animation on the transform of a camera, light or scene node
+ * Class to represent an animation on the transform of a camera, light, or scene node.
  */
-UCLASS(BlueprintType, Experimental)
+UCLASS(BlueprintType)
 class INTERCHANGENODES_API UInterchangeTransformAnimationTrackNode : public UInterchangeAnimationTrackNode
 {
 	GENERATED_BODY()
@@ -369,7 +382,7 @@ public:
 	}
 
 	/**
-	 * Return the node type name of the class, we use this when reporting errors
+	 * Return the node type name of the class. This is used when reporting errors.
 	 */
 	virtual FString GetTypeName() const override
 	{
@@ -414,7 +427,7 @@ private:
 /*
 * Class to hold onto the relationships between a set of animation tracks and the bones, morph targets of a skeleton.
 */
-UCLASS(BlueprintType, Experimental)
+UCLASS(BlueprintType)
 class INTERCHANGENODES_API UInterchangeSkeletalAnimationTrackNode : public UInterchangeAnimationTrackBaseNode
 {
 	GENERATED_BODY()
@@ -423,7 +436,7 @@ public:
 	UInterchangeSkeletalAnimationTrackNode();
 
 	/**
-	 * Override serialize to restore SlotMaterialDependencies on load.
+	 * Override Serialize() to restore SlotMaterialDependencies on load.
 	 */
 	virtual void Serialize(FArchive& Ar) override
 	{
@@ -445,7 +458,7 @@ public:
 	}
 
 	/**
-	* Return the node type name of the class, we use this when reporting errors
+	* Return the node type name of the class. This is used when reporting errors.
 	*/
 	virtual FString GetTypeName() const override
 	{
@@ -455,16 +468,16 @@ public:
 
 
 public:
-	/** Get the skeleton factory node unique id. Return false if the attribute is not set. */
+	/** Get the unique ID of the skeleton factory node. Return false if the attribute is not set. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | SkeletalAnimationTrack")
 	bool GetCustomSkeletonNodeUid(FString& AttributeValue) const;
 
-	/** Set the skeleton factory node unique id. Return false if the attribute cannot be set. */
+	/** Set the unique ID of the skeleton factory node. Return false if the attribute could not be set. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | SkeletalAnimationTrack")
 	bool SetCustomSkeletonNodeUid(const FString& AttributeValue);
 
 	/**
-	 * Set the animation sample rate. Return false if the attribute cannot be set.
+	 * Set the animation sample rate. Return false if the attribute could not be set.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | SkeletalAnimationTrack")
 	bool SetCustomAnimationSampleRate(const double& SampleRate);
@@ -476,7 +489,7 @@ public:
 	bool GetCustomAnimationSampleRate(double& SampleRate) const;
 
 	/**
-	 * Set the animation start time. Return false if the attribute cannot be set.
+	 * Set the animation start time. Return false if the attribute could not be set.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | SkeletalAnimationTrack")
 	bool SetCustomAnimationStartTime(const double& StartTime);
@@ -488,7 +501,7 @@ public:
 	bool GetCustomAnimationStartTime(double& StartTime) const;
 	
 	/**
-	 * Set the animation stop time. Return false if the attribute cannot be set.
+	 * Set the animation stop time. Return false if the attribute could not be set.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | SkeletalAnimationTrack")
 	bool SetCustomAnimationStopTime(const double& StopTime);

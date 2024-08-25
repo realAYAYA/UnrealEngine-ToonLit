@@ -52,7 +52,7 @@ public:
 		const TSharedRef<SWidget>& ChildWidget = ChildSlot.GetWidget();
 		if( ChildWidget->GetVisibility() != EVisibility::Collapsed )
 		{
-			const FVector2D& WidgetDesiredSize = ChildWidget->GetDesiredSize();
+			const FVector2f& WidgetDesiredSize = ChildWidget->GetDesiredSize();
 
 			// Update the zoom level, and clamp the pan offset based on our current geometry
 			SAtlasVisualizerPanel* const NonConstThis = const_cast<SAtlasVisualizerPanel*>(this);
@@ -130,12 +130,12 @@ public:
 			return false;
 		}
 
-		const FVector2D PrevPhysicalOffset = PhysicalOffset;
+		const FVector2f PrevPhysicalOffset = PhysicalOffset;
 		const float InverseZoom = 1.0f / ZoomLevel;
-		PhysicalOffset += (Offset * InverseZoom);
+		PhysicalOffset += (UE::Slate::CastToVector2f(Offset) * InverseZoom);
 
 		const TSharedRef<SWidget>& ChildWidget = ChildSlot.GetWidget();
-		const FVector2D& WidgetDesiredSize = ChildWidget->GetDesiredSize();
+		const FVector2f& WidgetDesiredSize = ChildWidget->GetDesiredSize();
 		ClampViewOffset(WidgetDesiredSize, CachedSize);
 
 		return PhysicalOffset != PrevPhysicalOffset;
@@ -161,7 +161,7 @@ public:
 	void FitToWindow()
 	{
 		bFitToWindow = true;
-		PhysicalOffset = FVector2D::ZeroVector;
+		PhysicalOffset = FVector2f::ZeroVector;
 	}
 
 	bool IsFitToWindow() const
@@ -173,11 +173,11 @@ public:
 	{
 		bFitToWindow = false;
 		ZoomLevel = 1.0f;
-		PhysicalOffset = FVector2D::ZeroVector;
+		PhysicalOffset = FVector2f::ZeroVector;
 	}
 
 private:
-	void UpdateFitToWindowZoom( const FVector2D& ViewportSize, const FVector2D& LocalSize )
+	void UpdateFitToWindowZoom( const FVector2f& ViewportSize, const FVector2f& LocalSize )
 	{
 		if( bFitToWindow )
 		{
@@ -187,7 +187,7 @@ private:
 		}
 	}
 
-	void ClampViewOffset( const FVector2D& ViewportSize, const FVector2D& LocalSize )
+	void ClampViewOffset( const FVector2f& ViewportSize, const FVector2f& LocalSize )
 	{
 		PhysicalOffset.X = ClampViewOffsetAxis(ViewportSize.X, LocalSize.X, PhysicalOffset.X);
 		PhysicalOffset.Y = ClampViewOffsetAxis(ViewportSize.Y, LocalSize.Y, PhysicalOffset.Y);
@@ -222,8 +222,8 @@ private:
 		return CurrentOffset;
 	}
 
-	FVector2D PhysicalOffset;
-	mutable FVector2D CachedSize;
+	FVector2f PhysicalOffset;
+	mutable FVector2f CachedSize;
 	float ZoomLevel;
 	bool bFitToWindow;
 

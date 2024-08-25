@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "AppleARKitLiveLinkConnectionSettings.h"
 #include "AppleARKitLiveLinkSourceFactory.h"
 #include "ILiveLinkClient.h"
 #include "LiveLinkTypes.h"
@@ -725,7 +726,7 @@ class FAppleARKitLiveLinkRemoteListener :
 	public FTickableGameObject
 {
 public:
-	FAppleARKitLiveLinkRemoteListener();
+	FAppleARKitLiveLinkRemoteListener(const TSharedPtr<ILiveLinkSourceARKit>& ArkitSource);
 	virtual ~FAppleARKitLiveLinkRemoteListener();
 
 	// FTickableGameObject interface
@@ -739,10 +740,9 @@ public:
 	virtual bool IsTickableWhenPaused() const override { return true; }
 	// End FTickableGameObject
 
-	bool InitReceiveSocket();
+	bool InitReceiveSocket(int32 Port);
 
 private:
-	void InitLiveLinkSource();
 
 	/** Socket that is read from to publish remote data to this local LiveLinkClient */
 	FSocket* RecvSocket;
@@ -752,7 +752,7 @@ private:
 	FARBlendShapeMap BlendShapes;
 
 	/** The source used to publish events from the remote socket */
-	TSharedPtr<ILiveLinkSourceARKit> Source;
+	TWeakPtr<ILiveLinkSourceARKit> Source;
 };
 
 /** Forwards face blend shapes to another machine for LiveLink publication */
@@ -870,15 +870,20 @@ private:
 
 /** Publishes face blend shapes to LiveLink for use locally */
 class FAppleARKitLiveLinkSource :
-	public ILiveLinkSourceARKit
+	public ILiveLinkSourceARKit, public TSharedFromThis<FAppleARKitLiveLinkSource>
 {
 public:
 	FAppleARKitLiveLinkSource();
+	// Constructor invoked from the AppleARKitLiveLinkSourceFactory wit the settings specified by the user.
+	FAppleARKitLiveLinkSource(FAppleARKitLiveLinkConnectionSettings InConnectionSettings);
 	virtual ~FAppleARKitLiveLinkSource() {}
 
+	// Bind the remote listener to the port provided by this source's connection settings.
+	void InitializeRemoteListener();
 private:
 	// ILiveLinkSource interface
 	virtual void ReceiveClient(ILiveLinkClient* InClient, FGuid InSourceGuid) override;
+	virtual void InitializeSettings(ULiveLinkSourceSettings* Settings) override;
 	virtual bool IsSourceStillValid() const override;
 	virtual bool RequestSourceShutdown() override;
 	virtual FText GetSourceMachineName() const override;
@@ -913,4 +918,10 @@ private:
 
 	/** Used to track names changes for a given device and keep track of property names contained in subject */
 	TMap<FName, FBlendShapeStaticData> BlendShapePerDeviceMap;
+
+	/** Used to listen on a socket for incoming face data and publishing this data to livelink. */
+	TUniquePtr<FAppleARKitLiveLinkRemoteListener> RemoteListener;
+
+	/** Connection settings for this source. */
+	FAppleARKitLiveLinkConnectionSettings ConnectionSettings;
 };

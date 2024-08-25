@@ -47,16 +47,3 @@ void UActorFactoryGeometryCache::PostSpawnActor(UObject* Asset, AActor* NewActor
 	GeometryCacheComponent->RegisterComponent();
 }
 
-void UActorFactoryGeometryCache::PostCreateBlueprint(UObject* Asset, AActor* CDO)
-{
-	if (Asset != NULL && CDO != NULL)
-	{
-		// Set GeometryCache (data) instance
-		UGeometryCache* GeometryCache = CastChecked<UGeometryCache>(Asset);
-		AGeometryCacheActor* GeometryCacheActor = CastChecked<AGeometryCacheActor>(CDO);
-		UGeometryCacheComponent* GeometryCacheComponent = GeometryCacheActor->GetGeometryCacheComponent();
-
-		GeometryCacheComponent->GeometryCache = GeometryCache;
-	}
-}
-

@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Dataflow/DataflowObjectInterface.h"
-#include "Framework/Commands/Commands.h"
+#include "BaseCharacterFXEditorCommands.h"
 #include "Styling/AppStyle.h"
 
 class FDragDropEvent;
@@ -16,6 +16,7 @@ class UDataflowEdNode;
 struct FDataflowNode;
 class UEdGraphNode;
 class SDataflowGraphEditor;
+class UDataflowBaseContent;
 
 typedef TSet<class UObject*> FGraphPanelSelectionSet;
 
@@ -23,20 +24,26 @@ typedef TSet<class UObject*> FGraphPanelSelectionSet;
 * FDataflowEditorCommandsImpl
 * 
 */
-class FDataflowEditorCommandsImpl : public TCommands<FDataflowEditorCommandsImpl>
+class DATAFLOWEDITOR_API FDataflowEditorCommandsImpl : public TBaseCharacterFXEditorCommands<FDataflowEditorCommandsImpl>
 {
 public:
 
-	FDataflowEditorCommandsImpl()
-		: TCommands<FDataflowEditorCommandsImpl>( TEXT("DataflowEditor"), NSLOCTEXT("Contexts", "DataflowEditor", "Scene Graph Editor"), NAME_None, FAppStyle::GetAppStyleSetName() )
-	{
-	}	
+	FDataflowEditorCommandsImpl();
 
-	virtual ~FDataflowEditorCommandsImpl()
-	{
-	}
+	// TBaseCharacterFXEditorCommands<> interface
+	 virtual void RegisterCommands() override;
 
-	DATAFLOWEDITOR_API virtual void RegisterCommands() override;
+	// TInteractiveToolCommands<>
+	 virtual void GetToolDefaultObjectList(TArray<UInteractiveTool*>& ToolCDOs) override;
+
+	/**
+	* Add or remove commands relevant to Tool to the given UICommandList.
+	* Call this when the active tool changes (eg on ToolManager.OnToolStarted / OnToolEnded)
+	* @param bUnbind if true, commands are removed, otherwise added
+	*/
+	 static void UpdateToolCommandBinding(UInteractiveTool* Tool, TSharedPtr<FUICommandList> UICommandList, bool bUnbind = false);
+
+
 
 	TSharedPtr< FUICommandInfo > EvaluateNode;
 	TSharedPtr< FUICommandInfo > CreateComment;
@@ -49,8 +56,21 @@ public:
 	TSharedPtr< FUICommandInfo > ZoomToFitGraph;
 
 	TMap< FName, TSharedPtr<FUICommandInfo> > CreateNodesMap;
+
+	const static FString BeginWeightMapPaintToolIdentifier;
+	TSharedPtr<FUICommandInfo> BeginWeightMapPaintTool;
+	const static FString AddWeightMapNodeIdentifier;
+	TSharedPtr<FUICommandInfo> AddWeightMapNode;
+
+	// @todo(brice) Remove Example Tools
+	//const static FString BeginAttributeEditorToolIdentifier;
+	//TSharedPtr<FUICommandInfo> BeginAttributeEditorTool;
+	//
+	//const static FString BeginMeshSelectionToolIdentifier;
+	//TSharedPtr<FUICommandInfo> BeginMeshSelectionTool;
 };
 
+//@todo(brice) Merge this into the above class
 class DATAFLOWEDITOR_API FDataflowEditorCommands
 {
 public:
@@ -97,7 +117,7 @@ public:
 	*  OnPropertyValueChanged
 	*/
 	static void OnPropertyValueChanged(UDataflow* Graph, TSharedPtr<Dataflow::FEngineContext>& Context, Dataflow::FTimestamp& OutLastNodeTimestamp, const FPropertyChangedEvent& PropertyChangedEvent, const TSet<UObject*>& SelectedNodes = TSet<UObject*>());
-	static void OnAssetPropertyValueChanged(UDataflow* Graph, TSharedPtr<Dataflow::FEngineContext>& Context, Dataflow::FTimestamp& OutLastNodeTimestamp, const FPropertyChangedEvent& PropertyChangedEvent);
+	static void OnAssetPropertyValueChanged(TObjectPtr<UDataflowBaseContent> Content, const FPropertyChangedEvent& PropertyChangedEvent);
 
 	/*
 	*  OnSelectedNodesChanged
@@ -114,6 +134,14 @@ public:
 	*/
 	static void DuplicateNodes(UDataflow* Graph, const TSharedPtr<SDataflowGraphEditor>& DataflowGraphEditor, const FGraphPanelSelectionSet& SelectedNodes);
 
+	/*
+	*  CopyNodes
+	*/
+	static void CopyNodes(UDataflow* Graph, const TSharedPtr<SDataflowGraphEditor>& DataflowGraphEditor, const FGraphPanelSelectionSet& SelectedNodes);
 
-
+	/*
+	*  PasteSelectedNodes
+	*/
+	static void PasteNodes(UDataflow* Graph, const TSharedPtr<SDataflowGraphEditor>& DataflowGraphEditor);
 };
+

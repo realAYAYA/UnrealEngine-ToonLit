@@ -446,8 +446,8 @@ protected:
 
 	/** Callback when a component item is double clicked. */
 	void HandleItemDoubleClicked(FSubobjectEditorTreeNodePtrType InItem);
-	
-	void OnFindReferences();
+
+	void OnFindReferences(bool bSearchAllBlueprints, const EGetFindReferenceSearchStringFlags Flags);
 
 	/** @return The visibility of the components filter box */
 	EVisibility GetComponentsFilterBoxVisibility() const;

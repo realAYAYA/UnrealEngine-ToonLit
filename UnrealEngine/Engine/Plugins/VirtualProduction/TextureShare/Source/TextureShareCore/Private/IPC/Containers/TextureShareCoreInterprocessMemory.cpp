@@ -1,6 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#pragma once
 #include "IPC/Containers/TextureShareCoreInterprocessMemory.h"
 #include "IPC/TextureShareCoreInterprocessHelpers.h"
 #include "Module/TextureShareCoreLog.h"

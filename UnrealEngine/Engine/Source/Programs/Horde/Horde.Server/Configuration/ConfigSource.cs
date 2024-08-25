@@ -10,7 +10,6 @@ using System.Threading.Tasks;
 using EpicGames.Core;
 using EpicGames.Perforce;
 using Horde.Server.Users;
-using Horde.Server.Utilities;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -26,6 +25,11 @@ namespace Horde.Server.Configuration
 		/// URI scheme for this config source
 		/// </summary>
 		string Scheme { get; }
+
+		/// <summary>
+		/// Update interval for this source
+		/// </summary>
+		TimeSpan UpdateInterval { get; }
 
 		/// <summary>
 		/// Reads a config file from this source
@@ -87,6 +91,9 @@ namespace Horde.Server.Configuration
 		/// <inheritdoc/>
 		string IConfigSource.Scheme => Scheme;
 
+		/// <inheritdoc/>
+		public TimeSpan UpdateInterval => TimeSpan.FromSeconds(1.0);
+
 		/// <summary>
 		/// Manually adds a new config file
 		/// </summary>
@@ -145,6 +152,9 @@ namespace Horde.Server.Configuration
 
 		/// <inheritdoc/>
 		string IConfigSource.Scheme => Scheme;
+
+		/// <inheritdoc/>
+		public TimeSpan UpdateInterval => TimeSpan.FromSeconds(5.0);
 
 		readonly DirectoryReference _baseDir;
 		readonly ConcurrentDictionary<FileReference, ConfigFileImpl> _files = new ConcurrentDictionary<FileReference, ConfigFileImpl>();
@@ -244,6 +254,9 @@ namespace Horde.Server.Configuration
 		/// <inheritdoc/>
 		string IConfigSource.Scheme => Scheme;
 
+		/// <inheritdoc/>
+		public TimeSpan UpdateInterval => TimeSpan.FromMinutes(1.0);
+
 		readonly IOptionsMonitor<ServerSettings> _settings;
 		readonly IUserCollection _userCollection;
 		readonly IMemoryCache _cache;
@@ -303,7 +316,7 @@ namespace Horde.Server.Configuration
 					entry.SetValue(record.User);
 				}
 			}
-			return (author != null)? await _userCollection.FindUserByLoginAsync(author) : null;
+			return (author != null) ? await _userCollection.FindUserByLoginAsync(author, cancellationToken) : null;
 		}
 
 		async ValueTask<ReadOnlyMemory<byte>> ReadAsync(Uri uri, int change, CancellationToken cancellationToken)
@@ -334,6 +347,8 @@ namespace Horde.Server.Configuration
 
 		async Task<IPerforceConnection> ConnectAsync(string host, CancellationToken cancellationToken)
 		{
+			_ = cancellationToken;
+
 			ServerSettings settings = _settings.CurrentValue;
 
 			PerforceConnectionId connectionId = new PerforceConnectionId();

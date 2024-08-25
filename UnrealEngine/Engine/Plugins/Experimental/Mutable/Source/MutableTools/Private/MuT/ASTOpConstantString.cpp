@@ -7,8 +7,6 @@
 #include "MuR/RefCounted.h"
 #include "MuR/Types.h"
 
-#include <string>
-
 
 namespace mu
 {
@@ -24,15 +22,16 @@ namespace mu
 
 	uint64 ASTOpConstantString::Hash() const
 	{
-		uint64 res = std::hash<std::string>()(value.c_str());
+		uint64 res = std::hash<int32>()(value.Len());
 		return res;
 	}
 
 
 	bool ASTOpConstantString::IsEqual(const ASTOp& otherUntyped) const
 	{
-		if (auto other = dynamic_cast<const ASTOpConstantString*>(&otherUntyped))
+		if (otherUntyped.GetOpType() == GetOpType())
 		{
+			const ASTOpConstantString* other = static_cast<const ASTOpConstantString*>(&otherUntyped);
 			return value == other->value;
 		}
 		return false;
@@ -52,7 +51,7 @@ namespace mu
 		if (!linkedAddress)
 		{
 			OP::ResourceConstantArgs args;
-			memset(&args, 0, sizeof(args));
+			FMemory::Memset(&args, 0, sizeof(args));
 			args.value = program.AddConstant(value);
 
 			linkedAddress = (OP::ADDRESS)program.m_opAddress.Num();

@@ -3,8 +3,9 @@
 #pragma once
 
 #include "Misc/StringBuilder.h"
-#include "UObject/UObjectBaseUtility.h"
 #include "UObject/ObjectHandleDefines.h"
+#include "UObject/ObjectFwd.h"
+#include "UObject/ObjectMacros.h"
 
 #if UE_WITH_OBJECT_HANDLE_LATE_RESOLVE || UE_WITH_OBJECT_HANDLE_TRACKING
 

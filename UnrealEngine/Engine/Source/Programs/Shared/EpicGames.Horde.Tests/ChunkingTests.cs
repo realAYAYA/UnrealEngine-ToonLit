@@ -1,17 +1,19 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
-using EpicGames.Horde.Storage.Nodes;
-using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
-using System.Linq;
-using System.Threading.Tasks;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
+using EpicGames.Core;
 using EpicGames.Horde.Storage;
-using EpicGames.Horde.Storage.Backends;
+using EpicGames.Horde.Storage.Clients;
+using EpicGames.Horde.Storage.Nodes;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace EpicGames.Horde.Tests
 {
@@ -48,7 +50,31 @@ namespace EpicGames.Horde.Tests
 		}
 
 		[TestMethod]
-		public async Task FixedSizeChunkingTests()
+		public async Task EmptyNodeTestAsync()
+		{
+			using KeyValueStorageClient store = KeyValueStorageClient.CreateInMemory();
+
+			const string RefName = "hello";
+			await using (IBlobWriter writer = store.CreateBlobWriter(RefName))
+			{
+				ChunkingOptions options = new ChunkingOptions();
+				options.LeafOptions = new LeafChunkedDataNodeOptions(64, 64, 64);
+				options.InteriorOptions = new InteriorChunkedDataNodeOptions(4, 4, 4);
+
+				using MemoryStream emptyStream = new MemoryStream();
+				LeafChunkedData leafChunkedData = await LeafChunkedDataNode.CreateFromStreamAsync(writer, emptyStream, new LeafChunkedDataNodeOptions(64, 64, 64), CancellationToken.None);
+				ChunkedData chunkedData = await InteriorChunkedDataNode.CreateTreeAsync(leafChunkedData, new InteriorChunkedDataNodeOptions(4, 4, 4), writer, CancellationToken.None);
+
+				DirectoryNode directory = new DirectoryNode();
+				directory.AddFile("test.foo", FileEntryFlags.None, 0, chunkedData);
+
+				IBlobRef handle = await writer.WriteBlobAsync(directory);
+				await store.WriteRefAsync(RefName, handle);
+			}
+		}
+
+		[TestMethod]
+		public async Task FixedSizeChunkingTestsAsync()
 		{
 			ChunkingOptions options = new ChunkingOptions();
 			options.LeafOptions = new LeafChunkedDataNodeOptions(64, 64, 64);
@@ -58,7 +84,7 @@ namespace EpicGames.Horde.Tests
 		}
 
 		[TestMethod]
-		public async Task VariableSizeChunkingTests()
+		public async Task VariableSizeChunkingTestsAsync()
 		{
 			ChunkingOptions options = new ChunkingOptions();
 			options.LeafOptions = new LeafChunkedDataNodeOptions(32, 64, 96);
@@ -67,13 +93,13 @@ namespace EpicGames.Horde.Tests
 			await TestChunkingAsync(options);
 		}
 
-		async Task TestChunkingAsync(ChunkingOptions options)
+		static async Task TestChunkingAsync(ChunkingOptions options)
 		{
 			using MemoryCache cache = new MemoryCache(new MemoryCacheOptions());
 
-			MemoryStorageClient store = new MemoryStorageClient();
-			BundleReader reader = new BundleReader(store, cache, NullLogger.Instance);
-			await using IStorageWriter writer = store.CreateWriter();
+			using KeyValueStorageClient store = KeyValueStorageClient.CreateInMemory();
+
+			await using IBlobWriter writer = store.CreateBlobWriter();
 
 			byte[] data = new byte[4096];
 			new Random(0).NextBytes(data);
@@ -83,26 +109,26 @@ namespace EpicGames.Horde.Tests
 				data[idx] = (byte)idx;
 			}
 
-			NodeRef<ChunkedDataNode> handle;
+			ChunkedDataNodeRef handle;
 
 			const int NumIterations = 100;
 			{
-				ChunkedDataWriter fileWriter = new ChunkedDataWriter(writer, options);
+				using ChunkedDataWriter fileWriter = new ChunkedDataWriter(writer, options);
 
 				for (int idx = 0; idx < NumIterations; idx++)
 				{
 					await fileWriter.AppendAsync(data, CancellationToken.None);
 				}
 
-				handle = await fileWriter.FlushAsync(CancellationToken.None);
+				handle = (await fileWriter.FlushAsync(CancellationToken.None)).Root;
 			}
 
-			ChunkedDataNode root = await handle.ExpandAsync();
+			ChunkedDataNode root = await handle.ReadBlobAsync();
 
 			byte[] result;
 			using (MemoryStream stream = new MemoryStream())
 			{
-				await root.CopyToStreamAsync(stream, CancellationToken.None);
+				await root.CopyToStreamAsync(stream);
 				result = stream.ToArray();
 			}
 
@@ -114,10 +140,10 @@ namespace EpicGames.Horde.Tests
 				Assert.IsTrue(spanData.Span.SequenceEqual(data));
 			}
 
-			await CheckSizes(reader, root, options, true);
+			await CheckSizesAsync(root, options, true);
 		}
 
-		async Task CheckSizes(BundleReader reader, ChunkedDataNode node, ChunkingOptions options, bool rightmost)
+		static async Task CheckSizesAsync(ChunkedDataNode node, ChunkingOptions options, bool rightmost)
 		{
 			if (node is LeafChunkedDataNode leafNode)
 			{
@@ -134,9 +160,94 @@ namespace EpicGames.Horde.Tests
 				int childCount = interiorNode.Children.Count;
 				for (int idx = 0; idx < childCount; idx++)
 				{
-					ChunkedDataNode childNode = await interiorNode.Children[idx].ExpandAsync(CancellationToken.None);
-					await CheckSizes(reader, childNode, options, idx == childCount - 1);
+					ChunkedDataNode childNode = await interiorNode.Children[idx].ReadBlobAsync();
+					await CheckSizesAsync(childNode, options, idx == childCount - 1);
 				}
+			}
+		}
+
+		[TestMethod]
+		public async Task ChunkingCompatV2Async()
+		{
+			ChunkingOptions chunkingOptions = new ChunkingOptions();
+			chunkingOptions.LeafOptions = new LeafChunkedDataNodeOptions(2, 2, 2);
+			chunkingOptions.InteriorOptions = new InteriorChunkedDataNodeOptions(2, 2, 2);
+
+			BlobSerializerOptions serializerOptions = new BlobSerializerOptions();
+			serializerOptions.Converters.Add(new InteriorChunkedDataNodeConverter(2)); // Does not include length fields in interior nodes
+
+			using KeyValueStorageClient store = KeyValueStorageClient.CreateInMemory();
+
+			byte[] data = Encoding.UTF8.GetBytes("hello world");
+
+			IBlobRef<DirectoryNode> handle;
+			await using (IBlobWriter writer = store.CreateBlobWriter(options: serializerOptions))
+			{
+				using ChunkedDataWriter chunkedWriter = new ChunkedDataWriter(writer, chunkingOptions);
+				await chunkedWriter.AppendAsync(data, CancellationToken.None);
+				ChunkedData chunkedData = await chunkedWriter.FlushAsync(CancellationToken.None);
+
+				DirectoryNode directoryNode = new DirectoryNode();
+				directoryNode.AddFile("test", FileEntryFlags.None, data.Length, chunkedData);
+				handle = await writer.WriteBlobAsync(directoryNode);
+			}
+
+			DirectoryInfo tempDir = new DirectoryInfo(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString()));
+			try
+			{
+				DirectoryNode expandedNode = await handle.ReadBlobAsync();
+				await expandedNode.CopyToDirectoryAsync(tempDir, null, NullLogger.Instance, CancellationToken.None);
+
+				byte[] outputData = await File.ReadAllBytesAsync(Path.Combine(tempDir.FullName, "test"));
+				Assert.IsTrue(outputData.SequenceEqual(data));
+			}
+			finally
+			{
+				tempDir.Delete(true);
+			}
+		}
+
+		[TestMethod]
+		public async Task ChunkOrderAsync()
+		{
+			InteriorChunkedDataNodeOptions interiorOptions = new InteriorChunkedDataNodeOptions(2, 2, 2);
+
+			BlobSerializerOptions serializerOptions = new BlobSerializerOptions();
+			serializerOptions.Converters.Add(new InteriorChunkedDataNodeConverter());
+
+			await using MemoryBlobWriter blobWriter = new MemoryBlobWriter(new BlobSerializerOptions());
+
+			IBlobRef<LeafChunkedDataNode> leafRef = await blobWriter.WriteBlobAsync(new LeafChunkedDataNode(new byte[] { 1, 2, 3 }));
+			int leafRefIndex = MemoryBlobWriter.GetIndex((IBlobRef)leafRef);
+			ChunkedDataNodeRef leafChunkedRef = new ChunkedDataNodeRef(3, leafRef);
+
+			List<ChunkedDataNodeRef> leafNodeRefs = Enumerable.Repeat(leafChunkedRef, 10000).ToList();
+			ChunkedDataNodeRef root = await InteriorChunkedDataNode.CreateTreeAsync(leafNodeRefs, interiorOptions, blobWriter, CancellationToken.None);
+
+			List<IBlobHandle> list = new List<IBlobHandle>();
+			await GetReadOrderAsync(root.Handle, list);
+
+			int prevIndex = Int32.MaxValue;
+			for (int idx = 0; idx < list.Count; idx++)
+			{
+				int index = MemoryBlobWriter.GetIndex((IBlobRef)list[idx].Innermost);
+				if (index != leafRefIndex)
+				{
+					Console.WriteLine("{0}", index);
+					Assert.IsTrue(index <= prevIndex);
+					prevIndex = index;
+				}
+			}
+		}
+
+		static async Task GetReadOrderAsync(IBlobHandle handle, List<IBlobHandle> list)
+		{
+			list.Add(handle);
+
+			using BlobData blobData = await handle.ReadBlobDataAsync(CancellationToken.None);
+			foreach (IBlobHandle childHandle in blobData.Imports)
+			{
+				await GetReadOrderAsync(childHandle, list);
 			}
 		}
 	}

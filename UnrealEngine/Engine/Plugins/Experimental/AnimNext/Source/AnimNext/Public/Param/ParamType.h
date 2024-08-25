@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
 
@@ -9,6 +9,7 @@
 #include "UObject/SoftObjectPtr.h"
 #include "UObject/ReflectedTypeAccessors.h"
 #include "Concepts/BaseStructureProvider.h"
+#include "RigVMCore/RigVMTemplate.h"
 #include "ParamType.generated.h"
 
 namespace UE::AnimNext
@@ -49,7 +50,7 @@ namespace UE::AnimNext::Private
 
 /**
  * Representation of a parameter's type. Serializable, but fairly heavyweight to pass around and compare.
- * Faster comparisons and other operations can be performed on UE::AnimNext::FTypeHandle, but they cannot be
+ * Faster comparisons and other operations can be performed on UE::AnimNext::FParamTypeHandle, but they cannot be
  * serialized as they are not stable across runs.
  */
 USTRUCT()
@@ -70,6 +71,8 @@ public:
 	/** Construct a parameter type from the passed in value, container and object type. */
 	FAnimNextParamType(EValueType InValueType, EContainerType InContainerType = EContainerType::None, const UObject* InValueTypeObject = nullptr);
 
+	/** Construct a parameter type from the passed in FRigVMTemplateArgumentType. */
+	static FAnimNextParamType FromRigVMTemplateArgument(const FRigVMTemplateArgumentType& RigVMType);
 private:
 	/** Pointer to object that defines the Enum, Struct, or Class. */
 	UPROPERTY()
@@ -88,6 +91,8 @@ private:
 	template<typename ParamType>
 	static constexpr void GetTypeInner(FAnimNextParamType& ParameterType)
 	{
+		using NonPtrParamType = std::remove_pointer_t<ParamType>;
+
 		if constexpr (std::is_same_v<ParamType, bool>)
 		{
 			ParameterType.ValueType = EValueType::Bool;
@@ -139,17 +144,17 @@ private:
 			ParameterType.ValueType = EValueType::Struct;
 			ParameterType.ValueTypeObject = TBaseStructure<ParamType>::Get();
 		}
-		else if constexpr (TModels<CStaticClassProvider, ParamType>::Value)
+		else if constexpr (TModels<CStaticClassProvider, NonPtrParamType>::Value)
 		{
-			if constexpr (std::is_same_v<ParamType, UClass>)
+			if constexpr (std::is_same_v<NonPtrParamType, UClass>)
 			{
 				ParameterType.ValueType = EValueType::Class;
-				ParameterType.ValueTypeObject = ParamType::StaticClass();
+				ParameterType.ValueTypeObject = NonPtrParamType::StaticClass();
 			}
 			else
 			{
 				ParameterType.ValueType = EValueType::Object;
-				ParameterType.ValueTypeObject = ParamType::StaticClass();
+				ParameterType.ValueTypeObject = NonPtrParamType::StaticClass();
 			}
 		}
 		else if constexpr (TIsTObjectPtr<ParamType>::Value)
@@ -179,6 +184,14 @@ private:
 		{
 			ParameterType.ValueType = EValueType::SoftClass;
 			ParameterType.ValueTypeObject = ParamType::ElementType::StaticClass();
+		}
+		else if constexpr (std::is_same_v<ParamType, uint32>)
+		{
+			ParameterType.ValueType = EValueType::UInt32;
+		}
+		else if constexpr (std::is_same_v<ParamType, uint64>)
+		{
+			ParameterType.ValueType = EValueType::UInt64;
 		}
 		else
 		{
@@ -262,8 +275,14 @@ public:
 	 */	
 	size_t GetValueTypeAlignment() const;
 
+	/** Append a string representing this type to the supplied string builder */
+	void ToString(FStringBuilderBase& InStringBuilder) const;
+
 	/** Get a string representing this type */
 	FString ToString() const;
+
+	/** Get a type from a string */
+	static FAnimNextParamType FromString(const FString& InString);
 
 	/** Equality operator */
 	friend bool operator==(const FAnimNextParamType& InLHS, const FAnimNextParamType& InRHS)
@@ -291,5 +310,8 @@ public:
 		const bool bHasValidObjectType = (ValueType < EValueType::Enum) || (ValueType >= EValueType::Enum && ValueType <= EValueType::SoftClass && IsValidObject());
 		return bHasValidValueType && bHasValidContainerType && bHasValidObjectType;
 	}
+
+	/** @return whether this type represents an object (object/class/softobject/softclass) */
+	bool IsObjectType() const;
 };
 

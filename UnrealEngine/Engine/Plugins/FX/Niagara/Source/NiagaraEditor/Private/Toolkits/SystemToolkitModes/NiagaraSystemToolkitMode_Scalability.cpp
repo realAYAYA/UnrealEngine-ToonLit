@@ -126,6 +126,7 @@ void FNiagaraSystemToolkitMode_Scalability::BindSystemPreviewOverrides(UNiagaraS
 	TSharedPtr<FNiagaraSystemViewModel> SystemViewModel = SystemToolkit.Pin()->GetSystemViewModel();
 	UNiagaraSystemScalabilityViewModel* ScalabilityViewModel = SystemViewModel->GetScalabilityViewModel();
 
+	SystemViewModel->GetSystem().GetScalabilityPlatformSet().OnOverrideQualityLevelDelegate.BindUObject(ScalabilityViewModel, &UNiagaraSystemScalabilityViewModel::GetPreviewQualityLevel);
 	for(FNiagaraSystemScalabilityOverride& SystemScalabilityOverride : SystemViewModel->GetSystem().GetSystemScalabilityOverrides().Overrides)
 	{
 		SystemScalabilityOverride.Platforms.OnOverrideQualityLevelDelegate.BindUObject(ScalabilityViewModel, &UNiagaraSystemScalabilityViewModel::GetPreviewQualityLevel);
@@ -162,6 +163,7 @@ void FNiagaraSystemToolkitMode_Scalability::UnbindSystemPreviewOverrides()
 {
 	TSharedPtr<FNiagaraSystemViewModel> SystemViewModel = SystemToolkit.Pin()->GetSystemViewModel();
 
+	SystemViewModel->GetSystem().GetScalabilityPlatformSet().OnOverrideQualityLevelDelegate.Unbind();
 	for(FNiagaraSystemScalabilityOverride& SystemScalabilityOverride : SystemViewModel->GetSystem().GetSystemScalabilityOverrides().Overrides)
 	{
 		SystemScalabilityOverride.Platforms.OnOverrideQualityLevelDelegate.Unbind();

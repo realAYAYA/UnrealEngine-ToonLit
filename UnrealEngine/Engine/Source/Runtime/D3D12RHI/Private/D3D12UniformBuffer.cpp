@@ -35,7 +35,7 @@ FUniformBufferRHIRef FD3D12DynamicRHI::RHICreateUniformBuffer(const void* Conten
 			check(Align(Contents, 16) == Contents);
 			check(NumBytesActualData <= D3D12_REQ_CONSTANT_BUFFER_ELEMENT_COUNT * 16);
 
-#if USE_STATIC_ROOT_SIGNATURE
+#if D3D12RHI_USE_CONSTANT_BUFFER_VIEWS
 			// Create an offline CBV descriptor
 			NewUniformBuffer->View = new FD3D12ConstantBufferView(Device);
 #endif
@@ -63,7 +63,7 @@ FUniformBufferRHIRef FD3D12DynamicRHI::RHICreateUniformBuffer(const void* Conten
 
 				UE::RHICore::UpdateUniformBufferConstants(MappedData, Contents, *Layout);
 
-#if USE_STATIC_ROOT_SIGNATURE
+#if D3D12RHI_USE_CONSTANT_BUFFER_VIEWS
 				NewUniformBuffer->View->CreateView(&NewUniformBuffer->ResourceLocation, 0, NumBytesActualData);
 #endif
 			}
@@ -135,7 +135,7 @@ FRHICOMMAND_MACRO(FRHICommandD3D12UpdateUniformBuffer)
 			check(UniformBuffer->GetResourceTable()[i]);
 		}
 		FD3D12ResourceLocation::TransferOwnership(UniformBuffer->ResourceLocation, UpdatedLocation);
-#if USE_STATIC_ROOT_SIGNATURE
+#if D3D12RHI_USE_CONSTANT_BUFFER_VIEWS
 		const uint32 NumBytes = Align(UniformBuffer->GetLayout().ConstantBufferSize, D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
 		UniformBuffer->View->CreateView(&UniformBuffer->ResourceLocation, 0, NumBytes);
 #endif
@@ -223,7 +223,7 @@ FD3D12UniformBuffer::~FD3D12UniformBuffer()
 	int64 BufferSize = ResourceLocation.GetSize();
 	DEC_MEMORY_STAT_BY(STAT_UniformBufferMemory, BufferSize);
 
-#if USE_STATIC_ROOT_SIGNATURE
+#if D3D12RHI_USE_CONSTANT_BUFFER_VIEWS
 	delete View;
 #endif
 }

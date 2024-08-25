@@ -12,7 +12,7 @@
 #include "DisplayClusterConfiguratorPropertyUtils.h"
 
 #include "DisplayClusterRootActor.h"
-#include "Components/DisplayClusterPreviewComponent.h"
+#include "ProceduralMeshComponent.h"
 #include "Components/DisplayClusterCameraComponent.h"
 #include "Components/LineBatchComponent.h"
 
@@ -213,7 +213,7 @@ namespace
 		}
 	}
 
-	// Determine whether or not the given node has a parent node that is not the root node, is movable and is selected
+	// Determine whether or not the given node has a parent node that is not the root node, is editable and is selected
 	bool IsMovableParentNodeSelected(const FSubobjectEditorTreeNodePtrType& NodePtr, const TArray<FSubobjectEditorTreeNodePtrType>& SelectedNodes)
 	{
 		if (NodePtr.IsValid())
@@ -560,7 +560,7 @@ bool FDisplayClusterConfiguratorSCSEditorViewportClient::InputWidgetDelta(FViewp
 					{
 						continue;
 					}
-					// Don't allow editing of a root node, inherited SCS node or child node that also has a movable (non-root) parent node selected
+					// Don't allow editing of a root node, inherited SCS node or child node that also has a editable (non-root) parent node selected
 					const bool bCanEdit = GUnrealEd->ComponentVisManager.IsActive() ||
 						(!Data->IsRootComponent() && !IsMovableParentNodeSelected(SelectedNodePtr, SelectedNodes));
 
@@ -708,6 +708,40 @@ void FDisplayClusterConfiguratorSCSEditorViewportClient::TrackingStopped()
 		// Restore component delta modification
 		GEditor->DisableDeltaModification(false);
 	}
+}
+
+bool FDisplayClusterConfiguratorSCSEditorViewportClient::BeginTransform(const FGizmoState& InState)
+{
+	// Suspend component modification during each delta step to avoid recording unnecessary overhead into the transaction buffer
+	GEditor->DisableDeltaModification(true);
+
+	// Begin transaction
+	BeginTransaction(NSLOCTEXT("UnrealEd", "ModifyComponents", "Modify Component(s)"));
+	bIsManipulating = true;
+	return true;
+}
+
+bool FDisplayClusterConfiguratorSCSEditorViewportClient::EndTransform(const FGizmoState& InState)
+{
+	// Re-run construction scripts if we haven't done so yet (so that the components in the preview actor can update their transforms)
+	AActor* PreviewActor = GetPreviewActor();
+	if (PreviewActor != nullptr)
+	{
+		UBlueprint* PreviewBlueprint = UBlueprint::GetBlueprintFromClass(PreviewActor->GetClass());
+		if (PreviewBlueprint != nullptr && !PreviewBlueprint->bRunConstructionScriptOnDrag)
+		{
+			PreviewActor->RerunConstructionScripts();
+		}
+	}
+
+	// End transaction
+	bIsManipulating = false;
+	EndTransaction();
+
+	// Restore component delta modification
+	GEditor->DisableDeltaModification(false);
+	
+	return true;
 }
 
 UE::Widget::EWidgetMode FDisplayClusterConfiguratorSCSEditorViewportClient::GetWidgetMode() const
@@ -1116,7 +1150,6 @@ void FDisplayClusterConfiguratorSCSEditorViewportClient::SyncShowPreview()
 				if (Actor->PreviewNodeId != DisplayClusterConfigurationStrings::gui::preview::PreviewNodeNone)
 				{
 					Actor->PreviewNodeId = DisplayClusterConfigurationStrings::gui::preview::PreviewNodeNone;
-					Actor->UpdatePreviewComponents();
 				}
 			}
 		}
@@ -1164,7 +1197,7 @@ void FDisplayClusterConfiguratorSCSEditorViewportClient::SetPreviewResolutionSca
 	{
 		if (ADisplayClusterRootActor* CDO = BlueprintEditor->GetDefaultRootActor())
 		{
-			DisplayClusterConfiguratorPropertyUtils::SetPropertyHandleValue(
+			UE::DisplayClusterConfiguratorPropertyUtils::SetPropertyHandleValue(
 				CDO, GET_MEMBER_NAME_CHECKED(ADisplayClusterRootActor, PreviewRenderTargetRatioMult), InScale);
 		}
 	}
@@ -1306,50 +1339,53 @@ void FDisplayClusterConfiguratorSCSEditorViewportClient::DisplayViewportInformat
 		return;
 	}
 
-	if (ADisplayClusterRootActor* RootActor = Cast<ADisplayClusterRootActor>(BlueprintEditorPtr.Pin()->GetPreviewActor()))
+	ADisplayClusterRootActor* RootActor = Cast<ADisplayClusterRootActor>(BlueprintEditorPtr.Pin()->GetPreviewActor());
+	if (IDisplayClusterViewportManager* ViewportManager = RootActor ? RootActor->GetViewportManager() : nullptr)
 	{
-		TArray<UDisplayClusterPreviewComponent*> PreviewComponents;
-		RootActor->GetComponents(PreviewComponents);
-
-		for (UDisplayClusterPreviewComponent* PreviewComp : PreviewComponents)
+		for (TSharedPtr<IDisplayClusterViewport, ESPMode::ThreadSafe>& ViewportIt : ViewportManager->GetEntireClusterViewports())
 		{
-			if (UDisplayClusterConfigurationViewport* ConfigViewport = PreviewComp->GetViewportConfig())
+			if (UMeshComponent* PreviewMesh = ViewportIt.IsValid() ? ViewportIt->GetViewportPreview().GetPreviewMeshComponent() : nullptr)
 			{
-				if (UMeshComponent* PreviewMesh = PreviewComp->GetPreviewMesh())
+				UFont* Font = GEngine->GetSmallFont();
+				const FLinearColor Color = FLinearColor::Red;
+				const FString DisplayText = ViewportIt->GetId();
+
+				// Display at center of bounding box of mesh with support for various pivot points.
+				FVector WorldLocation = PreviewMesh->GetComponentLocation();
+				if (UStaticMeshComponent* StaticMeshComponent = Cast<UStaticMeshComponent>(PreviewMesh))
 				{
-					UFont* Font = GEngine->GetSmallFont();
-					const FLinearColor Color = FLinearColor::Red;
-					const FString DisplayText = ConfigViewport->GetName();
-					
-					// Display at center of bounding box of mesh with support for various pivot points.
-					FVector WorldLocation = PreviewMesh->GetComponentLocation();
-					if (UStaticMeshComponent* StaticMeshComponent = Cast<UStaticMeshComponent>(PreviewMesh))
+					if (UStaticMesh* StaticMesh = StaticMeshComponent->GetStaticMesh())
 					{
-						if(UStaticMesh* StaticMesh = StaticMeshComponent->GetStaticMesh())
-						{
-							FVector MeshOrigin = StaticMesh->GetBounds().Origin * StaticMeshComponent->GetComponentScale();
-							FRotator ComponentRotation = StaticMeshComponent->GetComponentRotation();
-							WorldLocation += ComponentRotation.RotateVector(MeshOrigin);
-						}
+						FVector MeshOrigin = StaticMesh->GetBounds().Origin * StaticMeshComponent->GetComponentScale();
+						FRotator ComponentRotation = StaticMeshComponent->GetComponentRotation();
+						WorldLocation += ComponentRotation.RotateVector(MeshOrigin);
 					}
-					
-					const FPlane Proj = SceneView.Project(WorldLocation);
-					if (Proj.W > 0.0f)
-					{
-						int32 TextWidth, TextHeight;
-						StringSize(Font, TextWidth, TextHeight, *DisplayText);
-						
-						const int32 HalfX = 0.5f * Viewport->GetSizeXY().X;
-						const int32 HalfY = 0.5f * Viewport->GetSizeXY().Y;
-						const int32 XPos = HalfX + (HalfX * Proj.X) - TextWidth / 2;
-						const int32 YPos = HalfY + (HalfY * (Proj.Y * -1));
-						
-						const float DPI = UpdateViewportClientWindowDPIScale();
-						FVector2D AdjustedPosition(XPos / DPI, YPos / DPI);
-						
-						FCanvasTextItem TextItem(AdjustedPosition, FText::FromString(DisplayText), Font, Color);
-						TextItem.Draw(&Canvas);
-					}
+				}
+				else if (UProceduralMeshComponent* ProceduralMeshComponent = Cast<UProceduralMeshComponent>(PreviewMesh))
+				{
+					// All projection policies except "mesh" and "simple" use ProceduralMeshComponent to create the mesh at runtime.
+					const FBoxSphereBounds& Bounds = ProceduralMeshComponent->Bounds;
+					FVector MeshOrigin = Bounds.Origin * ProceduralMeshComponent->GetComponentScale();
+					FRotator ComponentRotation = ProceduralMeshComponent->GetComponentRotation();
+					WorldLocation += ComponentRotation.RotateVector(MeshOrigin);
+				}
+
+				const FPlane Proj = SceneView.Project(WorldLocation);
+				if (Proj.W > 0.0f)
+				{
+					int32 TextWidth, TextHeight;
+					StringSize(Font, TextWidth, TextHeight, *DisplayText);
+
+					const int32 HalfX = 0.5f * Viewport->GetSizeXY().X;
+					const int32 HalfY = 0.5f * Viewport->GetSizeXY().Y;
+					const int32 XPos = HalfX + (HalfX * Proj.X) - TextWidth / 2;
+					const int32 YPos = HalfY + (HalfY * (Proj.Y * -1));
+
+					const float DPI = UpdateViewportClientWindowDPIScale();
+					FVector2D AdjustedPosition(XPos / DPI, YPos / DPI);
+
+					FCanvasTextItem TextItem(AdjustedPosition, FText::FromString(DisplayText), Font, Color);
+					TextItem.Draw(&Canvas);
 				}
 			}
 		}

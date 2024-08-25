@@ -37,7 +37,10 @@ namespace Chaos
 		virtual ~FSuspensionConstraint() override {}
 
 
-		const FPBDSuspensionSettings& GetSuspensionSettings()const { return SuspensionSettings.Read(); }
+		CHAOS_API void SetParticleProxy(IPhysicsProxyBase* InParticleProxy);
+		CHAOS_API void SetPhysicsBody(FPhysicsObjectHandle& InBody);
+
+		const FPBDSuspensionSettings& GetSuspensionSettings() const { return SuspensionSettings.Read(); }
 
 #define CHAOS_INNER_SUSP_PROPERTY(OuterProp, Name, InnerType)\
 	void Set##Name(InnerType Val){ OuterProp.Modify(/*bInvalidate=*/true, DirtyFlags, Proxy, [&Val](auto& Data) { Data.Name = Val; }); }\
@@ -47,14 +50,16 @@ namespace Chaos
 
 	protected:
 		TChaosProperty<FPBDSuspensionSettings, EChaosProperty::SuspensionSettings> SuspensionSettings;
-		TChaosProperty<FParticleProxyProperty, EChaosProperty::SuspensionParticleProxy> SuspensionParticleProxy;
 		TChaosProperty<FSuspensionLocation, EChaosProperty::SuspensionLocation> SuspensionLocation; // location = spring local offset
+		TChaosProperty<FProxyBaseProperty, EChaosProperty::SuspensionParticleProxy> SuspensionProxy;
+		TChaosProperty<FPhysicsObjectProperty, EChaosProperty::SuspensionPhysicsObject> SuspensionBody;
 
 		virtual void SyncRemoteDataImp(FDirtyPropertiesManager& Manager, int32 DataIdx, FDirtyChaosProperties& RemoteData) override
 		{
 			SuspensionSettings.SyncRemote(Manager, DataIdx, RemoteData);
-			SuspensionParticleProxy.SyncRemote(Manager, DataIdx, RemoteData);
 			SuspensionLocation.SyncRemote(Manager, DataIdx, RemoteData);
+			SuspensionProxy.SyncRemote(Manager, DataIdx, RemoteData);
+			SuspensionBody.SyncRemote(Manager, DataIdx, RemoteData);
 		}
 	};
 

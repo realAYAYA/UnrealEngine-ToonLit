@@ -122,6 +122,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = CameraModifier)
 	ENGINE_API virtual bool IsDisabled() const;
 	
+	/** @return Returns true if modifier is pending disable, false otherwise. */
+	UFUNCTION(BlueprintCallable, Category = CameraModifier)
+	ENGINE_API virtual bool IsPendingDisable() const;
+	
 	/** @return Returns the actor the camera is currently viewing. */
 	UFUNCTION(BlueprintCallable, Category = CameraModifier)
 	ENGINE_API virtual AActor* GetViewTarget() const;

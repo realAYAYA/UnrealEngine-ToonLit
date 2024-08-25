@@ -62,7 +62,7 @@ namespace UnrealGameSync
 		{
 			_splitterMoved = true;
 
-			if(_logVisible && !_changingLogVisibility)
+			if (_logVisible && !_changingLogVisibility)
 			{
 				_logHeight = Height - (SplitterDistance + SplitterWidth);
 			}
@@ -72,14 +72,14 @@ namespace UnrealGameSync
 
 		public void SetLogVisibility(bool visible)
 		{
-			if(visible != _logVisible)
+			if (visible != _logVisible)
 			{
 				SuspendLayout();
 
 				_logVisible = visible;
 				_changingLogVisibility = true;
 				UpdateMetrics();
-				if(_logVisible)
+				if (_logVisible)
 				{
 					SplitterDistance = Math.Max(Height - _logHeight - SplitterWidth, Panel1MinSize);
 				}
@@ -92,7 +92,7 @@ namespace UnrealGameSync
 
 				ResumeLayout();
 
-				if(OnVisibilityChanged != null)
+				if (OnVisibilityChanged != null)
 				{
 					OnVisibilityChanged(visible);
 				}
@@ -101,7 +101,7 @@ namespace UnrealGameSync
 
 		private void UpdateMetrics()
 		{
-			if(_logVisible)
+			if (_logVisible)
 			{
 				IsSplitterFixed = false;
 				SplitterWidth = CaptionFont.Height + (CaptionPadding * 2) + 4;
@@ -122,11 +122,11 @@ namespace UnrealGameSync
 			base.OnSizeChanged(e);
 
 			// Check it's not minimized; if our minimum size is not being respected, we can't resize properly
-			if(Height >= SplitterWidth)
+			if (Height >= SplitterWidth)
 			{
 				UpdateMetrics();
 
-				if(!_logVisible)
+				if (!_logVisible)
 				{
 					SplitterDistance = Height - SplitterWidth;
 				}
@@ -137,7 +137,7 @@ namespace UnrealGameSync
 		{
 			base.OnLayout(e);
 
-			if(_logVisible && !_changingLogVisibility)
+			if (_logVisible && !_changingLogVisibility)
 			{
 				_logHeight = Height - (SplitterDistance + SplitterWidth);
 			}
@@ -160,7 +160,7 @@ namespace UnrealGameSync
 			base.OnMouseMove(e);
 
 			bool newHoverOverClose = CloseButtonRectangle.Contains(e.Location);
-			if(_hoverOverClose != newHoverOverClose)
+			if (_hoverOverClose != newHoverOverClose)
 			{
 				_hoverOverClose = newHoverOverClose;
 				Invalidate();
@@ -171,7 +171,7 @@ namespace UnrealGameSync
 		{
 			base.OnMouseLeave(e);
 
-			if(_hoverOverClose)
+			if (_hoverOverClose)
 			{
 				_hoverOverClose = false;
 				_mouseDownOverClose = false;
@@ -183,7 +183,7 @@ namespace UnrealGameSync
 		{
 			_splitterMoved = false;
 
-			if(CloseButtonRectangle.Contains(e.Location))
+			if (CloseButtonRectangle.Contains(e.Location))
 			{
 				_mouseDownOverClose = _hoverOverClose;
 			}
@@ -199,7 +199,7 @@ namespace UnrealGameSync
 
 			base.OnMouseUp(e);
 
-			if(e.Button.HasFlag(MouseButtons.Left) && !_splitterMoved)
+			if (e.Button.HasFlag(MouseButtons.Left) && !_splitterMoved)
 			{
 				SetLogVisibility(!IsLogVisible());
 			}
@@ -225,18 +225,18 @@ namespace UnrealGameSync
 			int captionMinY = SplitterDistance + CaptionPadding;
 			int captionMaxY = SplitterDistance + SplitterWidth;
 			int buttonSize = SplitterWidth - CaptionPadding - 2 - 4;
-			if(IsLogVisible())
+			if (IsLogVisible())
 			{
 				captionMaxY -= CaptionPadding;
 				buttonSize -= CaptionPadding;
 			}
 
-			using(Pen captionBorderPen = new Pen(SystemColors.ControlDark, 1.0f))
+			using (Pen captionBorderPen = new Pen(SystemColors.ControlDark, 1.0f))
 			{
 				e.Graphics.DrawRectangle(captionBorderPen, 0, captionMinY, ClientRectangle.Width - 1, captionMaxY - captionMinY - 1);
 			}
 
-			using(Brush backgroundBrush = new SolidBrush(BackColor))
+			using (Brush backgroundBrush = new SolidBrush(BackColor))
 			{
 				e.Graphics.FillRectangle(backgroundBrush, 0, 0, ClientRectangle.Width, captionMinY);
 				e.Graphics.FillRectangle(backgroundBrush, 0, captionMaxY, ClientRectangle.Width, Height - captionMaxY);
@@ -245,22 +245,22 @@ namespace UnrealGameSync
 
 			int crossX = ClientRectangle.Right - (buttonSize / 2) - 4;
 			int crossY = (captionMinY + captionMaxY) / 2;
-			if(_hoverOverClose)
+			if (_hoverOverClose)
 			{
 				e.Graphics.FillRectangle(SystemBrushes.ActiveCaption, crossX - buttonSize / 2, crossY - buttonSize / 2, buttonSize, buttonSize);
 			}
-			else if(_mouseDownOverClose)
+			else if (_mouseDownOverClose)
 			{
 				e.Graphics.FillRectangle(SystemBrushes.InactiveCaption, crossX - buttonSize / 2, crossY - buttonSize / 2, buttonSize - 2, buttonSize - 2);
 			}
-			if(_hoverOverClose || _mouseDownOverClose)
+			if (_hoverOverClose || _mouseDownOverClose)
 			{
-				using(Pen borderPen = new Pen(SystemColors.InactiveCaptionText, 1.0f))
+				using (Pen borderPen = new Pen(SystemColors.InactiveCaptionText, 1.0f))
 				{
 					e.Graphics.DrawRectangle(borderPen, crossX - buttonSize / 2, crossY - buttonSize / 2, buttonSize, buttonSize);
 				}
 			}
-			if(SplitterDistance >= Height - SplitterWidth)
+			if (SplitterDistance >= Height - SplitterWidth)
 			{
 				e.Graphics.DrawImage(Properties.Resources.Log, new Rectangle(crossX - (buttonSize / 2) - 1, crossY - (buttonSize / 2) - 1, buttonSize + 2, buttonSize + 2), new Rectangle(16, 0, 16, 16), GraphicsUnit.Pixel);
 			}
@@ -279,7 +279,7 @@ namespace UnrealGameSync
 			switch (message.Msg)
 			{
 				case WmSetcursor:
-					if(RectangleToScreen(CloseButtonRectangle).Contains(Cursor.Position))
+					if (RectangleToScreen(CloseButtonRectangle).Contains(Cursor.Position))
 					{
 						Cursor.Current = Cursors.Default;
 						message.Result = new IntPtr(1);

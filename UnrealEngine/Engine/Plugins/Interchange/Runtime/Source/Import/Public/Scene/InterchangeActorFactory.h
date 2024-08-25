@@ -4,6 +4,8 @@
 
 #include "CoreMinimal.h"
 #include "InterchangeFactoryBase.h"
+#include "InterchangeSourceData.h"
+//#include "InterchangeResult.h"
 #include "UObject/Object.h"
 #include "UObject/ObjectMacros.h"
 
@@ -36,7 +38,28 @@ protected:
 	 * child class to complete the creation of the actor.
 	 * This method is expected to return the UOBject to apply the factory node's custom attributes to.
 	 */
-	virtual UObject* ProcessActor(AActor& SpawnedActor, const UInterchangeActorFactoryNode& FactoryNode, const UInterchangeBaseNodeContainer& NodeContainer);
+	virtual UObject* ProcessActor(AActor& SpawnedActor, const UInterchangeActorFactoryNode& FactoryNode, const UInterchangeBaseNodeContainer& NodeContainer, const FImportSceneObjectsParams& Params);
+
+	template <typename T>
+	void LogMessage(const FImportSceneObjectsParams& Params, const FText& Message, const FString& ActorLabel)
+	{
+		T* Item = /*Super::*/AddMessage<T>();
+		FillMessage(Params, Message, ActorLabel, *Item);
+	}
+
+	template <typename T>
+	void FillMessage(const FImportSceneObjectsParams& Params, const FText& Message, const FString& ActorLabel, T& Result)
+	{
+		Result.SourceAssetName = Params.SourceData ? Params.SourceData->GetFilename() : TEXT("Unknown file");
+		Result.DestinationAssetName = Params.ObjectName;
+		Result.AssetType = GetFactoryClass();
+		Result.Text = Message;
+
+		if (!ActorLabel.IsEmpty())
+		{
+			Result.AssetFriendlyName = ActorLabel;
+		}
+	}
 };
 
 

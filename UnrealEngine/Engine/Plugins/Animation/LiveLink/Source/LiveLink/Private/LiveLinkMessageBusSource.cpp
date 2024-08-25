@@ -18,12 +18,27 @@
 #include "MessageEndpointBuilder.h"
 #include "Misc/App.h"
 
+FText FLiveLinkMessageBusSource::ValidSourceStatus()
+{
+	return NSLOCTEXT("LiveLinkMessageBusSource", "ActiveStatus", "Active");
+}
+
+FText FLiveLinkMessageBusSource::InvalidSourceStatus()
+{
+	return NSLOCTEXT("LiveLinkMessageBusSource", "InvalidConnection", "Waiting for connection");
+}
+
+FText FLiveLinkMessageBusSource::TimeoutSourceStatus()
+{
+	return NSLOCTEXT("LiveLinkMessageBusSource", "TimeoutStatus", "Not responding");
+}
+
 FLiveLinkMessageBusSource::FLiveLinkMessageBusSource(const FText& InSourceType, const FText& InSourceMachineName, const FMessageAddress& InConnectionAddress, double InMachineTimeOffset)
 	: ConnectionAddress(InConnectionAddress)
+	, bIsValid(false)
 	, SourceType(InSourceType)
 	, SourceMachineName(InSourceMachineName)
 	, ConnectionLastActive(0.0)
-	, bIsValid(false)
 	, MachineTimeOffset(InMachineTimeOffset)
 {}
 
@@ -88,7 +103,7 @@ void FLiveLinkMessageBusSource::Update()
 		bIsValid = CurrentTime - ConnectionLastActive < HeartbeatTimeout;
 		if (!bIsValid)
 		{
-			const double DeadSourceTimeout = GetDefault<ULiveLinkSettings>()->GetMessageBusTimeBeforeRemovingDeadSource();
+			const double DeadSourceTimeout = GetDeadSourceTimeout();
 			if (CurrentTime - ConnectionLastActive > DeadSourceTimeout)
 			{
 				if (RequestSourceShutdown())
@@ -205,18 +220,24 @@ FText FLiveLinkMessageBusSource::GetSourceStatus() const
 {
 	if (!ConnectionAddress.IsValid())
 	{
-		return NSLOCTEXT("LiveLinkMessageBusSource", "InvalidConnection", "Waiting for connection");
+		return InvalidSourceStatus();
 	}
 	else if (IsSourceStillValid())
 	{
-		return NSLOCTEXT("LiveLinkMessageBusSource", "ActiveStatus", "Active");
+		return ValidSourceStatus();
 	}
-	return NSLOCTEXT("LiveLinkMessageBusSource", "TimeoutStatus", "Not responding");
+	return TimeoutSourceStatus();
 }
 
 TSubclassOf<ULiveLinkSourceSettings> FLiveLinkMessageBusSource::GetSettingsClass() const
 {
 	return ULiveLinkMessageBusSourceSettings::StaticClass();
+}
+
+void FLiveLinkMessageBusSource::StartHeartbeatEmitter()
+{
+	FLiveLinkHeartbeatEmitter& HeartbeatEmitter = ILiveLinkModule::Get().GetHeartbeatEmitter();
+	HeartbeatEmitter.StartHeartbeat(ConnectionAddress, MessageEndpoint);
 }
 
 TSharedPtr<FMessageEndpoint, ESPMode::ThreadSafe> FLiveLinkMessageBusSource::CreateAndInitializeMessageEndpoint()
@@ -251,6 +272,11 @@ void FLiveLinkMessageBusSource::InitializeAndPushFrameData_AnyThread(FName Subje
 	DataStruct.InitializeWith(MessageTypeInfo, Message);
 	DataStruct.GetBaseData()->WorldTime = Message->WorldTime.GetOffsettedTime();
 	PushClientSubjectFrameData_AnyThread(SubjectKey, MoveTemp(DataStruct));
+}
+
+double FLiveLinkMessageBusSource::GetDeadSourceTimeout() const
+{
+	return GetDefault<ULiveLinkSettings>()->GetMessageBusTimeBeforeRemovingDeadSource();
 }
 
 void FLiveLinkMessageBusSource::PushClientSubjectStaticData_AnyThread(const FLiveLinkSubjectKey& SubjectKey,
@@ -294,8 +320,7 @@ void FLiveLinkMessageBusSource::SendConnectMessage()
 	FLiveLinkConnectMessage* ConnectMessage = FMessageEndpoint::MakeMessage<FLiveLinkConnectMessage>();
 	ConnectMessage->LiveLinkVersion = ILiveLinkClient::LIVELINK_VERSION;
 	SendMessage(ConnectMessage);
-	FLiveLinkHeartbeatEmitter& HeartbeatEmitter = ILiveLinkModule::Get().GetHeartbeatEmitter();
-	HeartbeatEmitter.StartHeartbeat(ConnectionAddress, MessageEndpoint);
+	StartHeartbeatEmitter();
 	bIsValid = true;
 }
 

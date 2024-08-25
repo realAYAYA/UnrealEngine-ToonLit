@@ -29,9 +29,6 @@
 #include "Engine/Engine.h"
 
 DEFINE_LOG_CATEGORY(LogK2Compiler);
-DECLARE_CYCLE_STAT(TEXT("Compile Time"), EKismetCompilerStats_CompileTime, STATGROUP_KismetCompiler);
-DECLARE_CYCLE_STAT(TEXT("Compile Skeleton Class"), EKismetCompilerStats_CompileSkeletonClass, STATGROUP_KismetCompiler);
-DECLARE_CYCLE_STAT(TEXT("Compile Generated Class"), EKismetCompilerStats_CompileGeneratedClass, STATGROUP_KismetCompiler);
 
 #define LOCTEXT_NAMESPACE "KismetCompiler"
 
@@ -51,15 +48,16 @@ public:
 	virtual void OverrideBPGCTypeForBPType(TSubclassOf<UBlueprint> BlueprintType, TSubclassOf<UBlueprintGeneratedClass> BPGCType) override;
 	virtual void ValidateBPAndClassType(UBlueprint* BP, FCompilerResultsLog& OutResults) override;
 	virtual void GetBlueprintTypesForClass(UClass* ParentClass, UClass*& OutBlueprintClass, UClass*& OutBlueprintGeneratedClass) const override;
+	virtual void GetSubclassesWithDifferingBlueprintTypes(UClass* Class, TSet<const UClass*>& OutMismatchedSubclasses) const override;
 	// End implementation
 
-	static TSubclassOf<UBlueprint> FindBlueprintType(UClass* ForClass, const TMap<UClass*, TSubclassOf<UBlueprint>>& FromMap);
+	static TSubclassOf<UBlueprint> FindBlueprintType(UClass* ForClass, const TMap<FTopLevelAssetPath, TSubclassOf<UBlueprint>>& FromMap);
 private:
 	// these are all pointers to native reflection data, so don't require gc visibility
 	// this will frustrate hotreload, though - hot reload of objects used as keys or values
 	// doesn't really work anyway:
-	TMap<UClass*, TSubclassOf<UBlueprint>> ClassToBPType;
-	TMap<UClass*, TSubclassOf<UBlueprint>> ClassToEditorBPType;
+	TMap<FTopLevelAssetPath, TSubclassOf<UBlueprint>> ClassToBPType;
+	TMap<FTopLevelAssetPath, TSubclassOf<UBlueprint>> ClassToEditorBPType;
 	TMap<TSubclassOf<UBlueprint>, TSubclassOf<UBlueprintGeneratedClass>> BPTypeToBPGCType;
 
 	TArray<IBlueprintCompiler*> Compilers;
@@ -67,34 +65,14 @@ private:
 
 IMPLEMENT_MODULE( FKismet2CompilerModule, KismetCompiler );
 
-struct FBlueprintIsBeingCompiledHelper
-{
-private:
-	UBlueprint* Blueprint;
-public:
-	FBlueprintIsBeingCompiledHelper(UBlueprint* InBlueprint) : Blueprint(InBlueprint)
-	{
-		check(NULL != Blueprint);
-		check(!Blueprint->bBeingCompiled);
-		Blueprint->bBeingCompiled = true;
-	}
-
-	~FBlueprintIsBeingCompiledHelper()
-	{
-		Blueprint->bBeingCompiled = false;
-	}
-};
-
 // Compiles a blueprint.
 
 void FKismet2CompilerModule::CompileStructure(UUserDefinedStruct* Struct, FCompilerResultsLog& Results)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FKismet2CompilerModule::CompileStructure);
 	Results.SetSourcePath(Struct->GetPathName());
-	BP_SCOPED_COMPILER_EVENT_STAT(EKismetCompilerStats_CompileTime);
 	FUserDefinedStructureCompilerUtils::CompileStruct(Struct, Results, true);
 }
-
-extern UNREALED_API FSecondsCounterData BlueprintCompileAndLoadTimerData;
 
 void FKismet2CompilerModule::RefreshVariables(UBlueprint* Blueprint)
 {
@@ -213,7 +191,7 @@ void FKismet2CompilerModule::OverrideBPTypeForClass(UClass* Class, TSubclassOf<U
 {
 	check(Class && BlueprintType);
 	#if DO_CHECK
-	if (const TSubclassOf<UBlueprint>* ExistingBlueprintType = ClassToBPType.Find(Class))
+	if (const TSubclassOf<UBlueprint>* ExistingBlueprintType = ClassToBPType.Find(Class->GetClassPathName()))
 	{
 		ensureMsgf(false,
 			TEXT("Ambiguous mapping attempting to add %s to %s when mapping to %s exists"),
@@ -223,14 +201,14 @@ void FKismet2CompilerModule::OverrideBPTypeForClass(UClass* Class, TSubclassOf<U
 	}
 	#endif // DO_CHECK
 
-	ClassToBPType.Add(Class, BlueprintType);
+	ClassToBPType.Add(Class->GetClassPathName(), BlueprintType);
 }
 
 void FKismet2CompilerModule::OverrideBPTypeForClassInEditor(UClass* Class, TSubclassOf<UBlueprint> BlueprintType)
 {
 	check(Class && BlueprintType);
 #if DO_CHECK
-	if (const TSubclassOf<UBlueprint>* ExistingBlueprintType = ClassToEditorBPType.Find(Class))
+	if (const TSubclassOf<UBlueprint>* ExistingBlueprintType = ClassToEditorBPType.Find(Class->GetClassPathName()))
 	{
 		ensureMsgf(false,
 			TEXT("Ambiguous mapping attempting to add %s to %s when mapping to %s exists"),
@@ -240,7 +218,7 @@ void FKismet2CompilerModule::OverrideBPTypeForClassInEditor(UClass* Class, TSubc
 	}
 #endif // DO_CHECK
 
-	ClassToEditorBPType.Add(Class, BlueprintType);
+	ClassToEditorBPType.Add(Class->GetClassPathName(), BlueprintType);
 }
 
 void FKismet2CompilerModule::OverrideBPGCTypeForBPType(TSubclassOf<UBlueprint> BlueprintType, TSubclassOf<UBlueprintGeneratedClass> BPGCType)
@@ -385,12 +363,33 @@ void FKismet2CompilerModule::GetBlueprintTypesForClass(UClass* ParentClass, UCla
 	OutBlueprintGeneratedClass = UBlueprintGeneratedClass::StaticClass();
 }
 
-TSubclassOf<UBlueprint> FKismet2CompilerModule::FindBlueprintType(UClass* ForClass, const TMap<UClass*, TSubclassOf<UBlueprint>>& FromMap)
+void FKismet2CompilerModule::GetSubclassesWithDifferingBlueprintTypes(UClass* Class, TSet<const UClass*>& OutMismatchedSubclasses) const
+{
+	UClass* BPClass;
+	UClass* BPGeneratedClass;
+	GetBlueprintTypesForClass(Class, BPClass, BPGeneratedClass);
+	
+	auto CheckClassToBPTypeMap = [](const TMap<FTopLevelAssetPath, TSubclassOf<UBlueprint>>& Map, const UClass* Class, const UClass* BPClass, TSet<const UClass*>& Result)
+	{
+		for (const TTuple<FTopLevelAssetPath, TSubclassOf<UBlueprint>>& Pair : Map)
+		{
+			if (const UClass* SupportedClass = FindObject<UClass>(Pair.Key);
+				Pair.Value != BPClass && SupportedClass && SupportedClass->IsChildOf(Class))
+			{
+				Result.Add(SupportedClass);
+			}
+		}
+	};
+	CheckClassToBPTypeMap(ClassToBPType, Class, BPClass, OutMismatchedSubclasses);
+	CheckClassToBPTypeMap(ClassToEditorBPType, Class, BPClass, OutMismatchedSubclasses);
+}
+
+TSubclassOf<UBlueprint> FKismet2CompilerModule::FindBlueprintType(UClass* ForClass, const TMap<FTopLevelAssetPath, TSubclassOf<UBlueprint>>& FromMap)
 {
 	UClass* Iter = ForClass;
 	while (Iter)
 	{
-		if (const TSubclassOf<UBlueprint>* BPType = FromMap.Find(Iter))
+		if (const TSubclassOf<UBlueprint>* BPType = FromMap.Find(Iter->GetClassPathName()))
 		{
 			return *BPType;
 		}

@@ -114,6 +114,9 @@ struct FExampleNetSerializer
 
 	/** Required if bHasCustomNetReference is true. Add object references to a collector. */
 	static void CollectNetReferences(FNetSerializationContext&, const FNetCollectReferencesArgs&);
+
+	/** Serializers that want to be selective about which members to modify in the target instance when applying state should implement Apply where the serializer is responsible for setting the members of the target instance. The function operates on non-quantized state. */
+	static void Apply(FNetSerializationContext&, const FNetApplyArgs&);
 };
 UE_NET_IMPLEMENT_SERIALIZER(FExampleNetSerializer);
 
@@ -325,6 +328,16 @@ struct FNetFreeDynamicStateArgs : FNetSerializerBaseArgs
 };
 typedef void(*NetFreeDynamicStateFunction)(FNetSerializationContext&, const FNetFreeDynamicStateArgs&);
 
+/** Serializers that want to be selective about which members to modify in the target instance when applying state should implement Apply where the serializer is responsible for setting the members of the target instance. The function operates on non-quantized state. */
+struct FNetApplyArgs : FNetSerializerBaseArgs
+{
+	/** A pointer to the non-quantized source data. */
+	NetSerializerValuePointer Source;
+	/** A pointer to the non-quantized target data. */
+	NetSerializerValuePointer Target;
+};
+typedef void(*NetApplyFunction)(FNetSerializationContext&, const FNetApplyArgs&);
+
 /**
  * Various traits that can be set for a FNetSerializer.
  * These traits are typically set via constexpr bool in the declaration of the serializer.
@@ -349,6 +362,9 @@ enum class ENetSerializerTraits : uint32
 
 	/** Data replicated using this serializer should use the IsEqual implementation in order to determine whether the data is dirty or not. */
 	UseSerializerIsEqual = HasCustomNetReference << 1U,
+
+	/** Has an Apply function which should be used when applying its dequantized data to another instance. Useful for custom struct serializers where not all of the struct properties are replicated. Without a custom Apply all values will be overwritten. */
+	HasApply = UseSerializerIsEqual << 1U,
 };
 ENUM_CLASS_FLAGS(ENetSerializerTraits);
 
@@ -373,6 +389,7 @@ struct FNetSerializer
 	NetCloneDynamicStateFunction CloneDynamicState;
 	NetFreeDynamicStateFunction FreeDynamicState;
 	NetCollectNetReferencesFunction CollectNetReferences;
+	NetApplyFunction Apply;
 	const FNetSerializerConfig* DefaultConfig;
 	uint16 QuantizedTypeSize;
 	uint16 QuantizedTypeAlignment;
@@ -413,6 +430,7 @@ public:
 		Serializer.CloneDynamicState = Builder.GetCloneDynamicStateFunction();
 		Serializer.FreeDynamicState = Builder.GetFreeDynamicStateFunction();
 		Serializer.CollectNetReferences = Builder.GetCollectNetReferencesFunction();
+		Serializer.Apply = Builder.GetApplyFunction();
 
 		Serializer.DefaultConfig = Builder.GetDefaultConfig();
 

@@ -1,0 +1,49 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<BuildGraph xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../../Build/Graph/Schema.xsd" xmlns="http://www.epicgames.com/BuildGraph">
+	<Property Name="TestNames" Value="$(TestNames);Web" />
+	<Property Name="WebDisabled" Value="False" />
+	<Property Name="WebShort" Value="Web" />
+	<Property Name="WebStagesWithProjectFile" Value="False" />
+	<Property Name="WebTarget" Value="WebTests" />
+	<Property Name="WebBinariesRelative" Value="Engine\Binaries" />
+	<Property Name="WebReportType" Value="xml" />
+	<Property Name="WebGauntletArgs" Value="" />
+	<Property Name="WebExtraArgs" Value="" />
+	<Property Name="WebInitialExtraArgs" />
+	<Property Name="WebHasAfterSteps" Value="True" />
+	<Property Name="WebUsesCatch2" Value="True" />
+	<Option Name="RunWebTests" DefaultValue="False" Description="Run Web Tests" />
+	<Property Name="WebSupportedPlatforms" Value="Win64;Linux;Android;IOS;Mac" />
+	<Property Name="Win64WebTags" Value="" />
+	<Property Name="MacWebTags" Value="" />
+	<Property Name="IOSWebTags" Value="" />
+	<Property Name="AndroidWebTags" Value="" />
+	<Property Name="LinuxWebTags" Value="" />
+	<Property Name="LinuxArm64WebTags" Value="" />
+	<Property Name="TVOSWebTags" Value="" />
+	<Property Name="Win64WebExtraCompilationArgs" Value="-allmodules" />
+	<Property Name="MacWebExtraCompilationArgs" Value="-allmodules" />
+	<Property Name="IOSWebExtraCompilationArgs" Value="-allmodules" />
+	<Property Name="AndroidWebExtraCompilationArgs" Value="-allmodules -architectures=arm64" />
+	<Property Name="LinuxWebExtraCompilationArgs" Value="-allmodules" />
+	<Property Name="LinuxArm64WebExtraCompilationArgs" Value="-allmodules" />
+	<Property Name="TVOSWebExtraCompilationArgs" Value="-allmodules" />
+	<Property Name="Win64WebRunSupported" Value="True" />
+	<Property Name="MacWebRunSupported" Value="True" />
+	<Property Name="IOSWebRunSupported" Value="False" />
+	<Property Name="AndroidWebRunSupported" Value="False" />
+	<Property Name="LinuxWebRunSupported" Value="True" />
+	<Property Name="LinuxArm64WebRunSupported" Value="True" />
+	<Property Name="TVOSWebRunSupported" Value="False" />
+	<Property Name="VisionOSWebTags" Value="" />
+	<Property Name="VisionOSWebExtraCompilationArgs" Value="-allmodules" />
+	<Property Name="VisionOSWebRunSupported" Value="False" />
+	<Property Name="Win64WebRunContainerized" Value="False" />
+	<Property Name="MacWebRunContainerized" Value="False" />
+	<Property Name="IOSWebRunContainerized" Value="False" />
+	<Property Name="AndroidWebRunContainerized" Value="False" />
+	<Property Name="LinuxWebRunContainerized" Value="False" />
+	<Property Name="LinuxArm64WebRunContainerized" Value="False" />
+	<Property Name="TVOSWebRunContainerized" Value="False" />
+	<Property Name="VisionOSWebRunContainerized" Value="False" />
+</BuildGraph>

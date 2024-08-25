@@ -33,7 +33,7 @@ namespace Chaos::Private
 	// The expected number of constraint types we support. Actually this is the number of constraint containers we 
 	// have, but currently we only have one container per constraint type.
 	// @todo(chaos): we need to do something better when we support user constraints.
-	constexpr int32 ConstraintGraphNumConstraintTypes = 5;
+	inline constexpr int32 ConstraintGraphNumConstraintTypes = 5;
 
 	// A typedef for arrays of items indexed by constraint type E.g., TConstraintTypeArray<int32> to hold a count of 
 	// constrains per type, or TConstraintTypeArray<FConstraintHandle*> to hold a set of constraint handles by type 

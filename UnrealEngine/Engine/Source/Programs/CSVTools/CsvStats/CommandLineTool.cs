@@ -26,7 +26,7 @@ namespace CSVStats
 		{
 			List<string> args = new List<string>();
 			bool bInQuotes = false;
-			string currentArg = "";
+			StringBuilder currentArgSb= new StringBuilder();
 			for (int i=0; i< inCommandLine.Length; i++)
 			{
 				char c = inCommandLine[i];
@@ -38,29 +38,29 @@ namespace CSVStats
 				{
 					if (bInQuotes)
 					{
-						currentArg += c;
+						currentArgSb.Append(c);
 					}
 					else
 					{ 
 						if (Char.IsWhiteSpace(c))
 						{
-							if (currentArg.Length > 0)
+							if (currentArgSb.Length > 0)
 							{
-								args.Add(currentArg);
-								currentArg = "";
+								args.Add(currentArgSb.ToString());
+								currentArgSb.Clear();
 							}
 						}
 						else
 						{
-							currentArg += c;
+							currentArgSb.Append(c);
 						}
 
 					}
 				}
 			}
-			if (currentArg.Length > 0)
+			if (currentArgSb.Length > 0)
 			{
-				args.Add(currentArg);
+				args.Add(currentArgSb.ToString());
 			}
 			return args;
 		}
@@ -123,6 +123,9 @@ namespace CSVStats
 						}
 						i++;
 					}
+
+					// Decode negative values. This is necessary otherwise negative values are interpreted as separate args.
+					val = val.Replace("&minus;", "-");
 
 					string argKey = arg.Substring(1).ToLower();
 					if (CommandLineArgs.ContainsKey(argKey))

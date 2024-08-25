@@ -108,7 +108,7 @@ void NUTUtil::SortUnitTestClassDefList(TArray<UUnitTest*>& InUnitTestClassDefaul
 	InUnitTestClassDefaults.Sort(FUnitTestTypeDateSort(ListTypes));
 }
 
-bool NUTUtil::ParseEnum(const TCHAR* Stream, const TCHAR* Match, const TCHAR* EnumName, uint32& Value)
+bool NUTUtil::ParseEnum(const TCHAR* Stream, const TCHAR* Match, const TCHAR* EnumName, uint64& Value)
 {
 	bool bReturnVal = false;
 	FString StrValue;

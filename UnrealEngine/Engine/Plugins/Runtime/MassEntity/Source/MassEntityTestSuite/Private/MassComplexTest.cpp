@@ -58,7 +58,7 @@ struct FComplex_AddingFragmentInstancesToDiscontinouousEntitiesCollection : FEnt
 			if (i != MiddleIndex)
 			{
 				const FTestFragment_Int& IntFragment = EntityManager->GetFragmentDataChecked<FTestFragment_Int>(EntitiesCreated[i]);
-				EntityManager->Defer().PushCommand<FMassCommandAddFragmentInstances>(EntitiesCreated[i], FTestFragment_Float(IntFragment.Value));
+				EntityManager->Defer().PushCommand<FMassCommandAddFragmentInstances>(EntitiesCreated[i], FTestFragment_Float(static_cast<float>(IntFragment.Value)));
 			}
 		}
 		EntityManager->FlushCommands();

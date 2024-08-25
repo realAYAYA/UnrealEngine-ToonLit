@@ -315,9 +315,6 @@ void FMaterialsCollectionTracker::SetMaterialsForMeshActor(const TSharedPtr<IDat
 }
 
 
-// Copied from
-// FDatasmithMaxSceneParser::MaterialEnum
-// FDatasmithMaxSceneParser::TexEnum
 // Collects actual materials that are used by the top-level material(assigned to node)
 class FMaterialEnum
 {
@@ -427,10 +424,15 @@ void FMaterialsCollectionTracker::ConvertMaterial(Mtl* Material, TSharedRef<IDat
 	TSharedPtr<IDatasmithBaseMaterialElement> DatasmithMaterial;
 	if (FDatasmithMaxMaterialsToUEPbr* MaterialConverter = FDatasmithMaxMaterialsToUEPbrManager::GetMaterialConverter(Material))
 	{
-		 
 		MaterialConverter->Convert(DatasmithScene, DatasmithMaterial, Material, AssetsPath);
-
 		AddDatasmithMaterialForUsedMaterial(DatasmithScene, Material, DatasmithMaterial);
+	}
+	else
+	{
+		MSTR Classname;
+		Material->GetClassName(Classname);
+		FString MaterialDesc = FString::Printf(TEXT("\"%s\" of type <%s> (0x%08x-0x%08x)"), Material->GetName().data(), Classname.data(), Material->ClassID().PartA(), Material->ClassID().PartB());
+		LogWarning(FString(TEXT("Material not supported: ")) + MaterialDesc);
 	}
 
 	// Tie texture used by an actual material to tracked material

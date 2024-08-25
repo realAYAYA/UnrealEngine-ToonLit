@@ -1343,7 +1343,11 @@ namespace SkeletalSimplifier
 
 		/**
 		* This class generates the interpolation coefficients vector (Vec3d) g  and distance (double) d
-		* defined over the face of a triangle.
+		* defined over the face of a triangle.  It does this in one of two ways.  The first constructs a local basis relative to the 
+		* triangle.  This is preferable.
+		* 
+		* The second is the so-called "legacy method" it uses position vectors for the vertices and will fall back to a crude approximation
+		* when the triangle lies on a plane that intersects the origin.
 		*
 		* *
 		* The actual system solved is:
@@ -1379,26 +1383,91 @@ namespace SkeletalSimplifier
 		*
 		*
 		* The computation is broken up do allow for reuse with multiple sets of per-vertex data.
+		* 
+		* ------------------------------------------
+		* Alternately when using the legacy method
+		* ------------------------------------------
+		* The Position Matrix is defined in terms of the three corners of triangle
+		*  {pa, pb, pc} with corresponding normal 'FaceNormal'
+		*
+		* Position Matrix =
+		*   ( pa_0, pa_1, pa_2 )
+		*   ( pb_0, pb_1, pb_2 )
+		*   ( pc_0, pc_1, pc_2 )
+		*
+		* The actual system solved is:
+		*  <pa | g> + d = s0
+		*  <pb | g> + d = s1
+		*  <pc | g> + d = s2
+		*  <FaceNormal | g> = 0
+		*
+		*
+		* In matrix form   ( PositionMatrix   Vec3(1) )   ( g )  = ( s )
+		*                  ( FaceNormal^T ,     0     )   ( d )    ( 0 )
+		*
+		* where the vector (Vec3d) 's' represents the per-vertex data that forms boundary conditions
+		* for the interpolation.
+		*
+		*  The actual solution is given by:
+		*  -- Distance
+		*  double d = < FaceNormal | InvsPositionMatrix * s> / <FaceNormal | InversePositionMatrix * Vec3d(1) >;
+		*  -- Gradient
+		*  Vec3d  g = InversePositionMatrix * s - d * InversePositionMatrix * Vec3d(1);
+		*
+		* The computation is broken up do allow for reuse with multiple sets of per-vertex data.
 		*/
 		class InverseGradientProjection
 		{
 		public:
-			InverseGradientProjection(const Vec3d& Pos0, const Vec3d& Pos1, const Vec3d& Pos2, const Vec3d& FaceNormal)
+			InverseGradientProjection(const Vec3d& Pos0, const Vec3d& Pos1, const Vec3d& Pos2, const Vec3d& FaceNormal, bool bUseLegacyGradientMethod)
+			: bLegacyGradientMethod(bUseLegacyGradientMethod)
 			{
-
 				// Threshold for computing the matrix inverse.
 				constexpr  double DetThreshold = 1.e-8;
 
-				Origin = Pos0;
+				if (bLegacyGradientMethod)
+				{
+					// re-use matrix and vector for the legacy version
+					DMatrix& PosInv = CoBasisMatrix;
+					Vec3d& Dhat = Origin; // n * Inverse(PositinoMatrix) / < n | Inverse(PositionMatrix) Vec3(1) >
 
-				const Vec3d Side20 = Pos2 - Pos0;
-				const Vec3d Side10 = Pos1 - Pos0;
+					// row initialization 
+					DMatrix PositionMatrix(Pos0, Pos1, Pos2);
 
-				DMatrix BasisMatrix(Side20,
-									Side10,
-									FaceNormal);
+					// Compute the inverse of the position matrix
+					PosInv = PositionMatrix.Inverse(bIsValid, DetThreshold);
+					if (bIsValid)
+					{
+						// InversePositionMatrix * Vec3(1)
+						MInv1 = PosInv.RowSum();
 
-				CoBasisMatrix = BasisMatrix.Inverse(bIsValid, DetThreshold);
+						// <FaceNormal | InversePositionMatrix 
+						Dhat = FaceNormal * PosInv;
+
+						// <FaceNormal | InvesePositionMatrix Vec3d(1)> 
+						double ReScale = Dhat[0] + Dhat[1] + Dhat[2];
+
+						bIsValid = bIsValid && (FMath::Abs(ReScale) > 1.e-8);
+
+						// divide by <FaceNormal | InvesePositionMatrix Vec3d(1)> 
+						Dhat *= (1. / ReScale);
+						//now:  Dhat =  <FaceNormal | InvPos  / <FaceNormal | InvPos. Vec3d(1) >
+					}
+
+				}
+				else // the standard method
+				{ 
+					Origin = Pos0;
+
+					const Vec3d Side20 = Pos2 - Pos0;
+					const Vec3d Side10 = Pos1 - Pos0;
+
+					DMatrix BasisMatrix(Side20,
+										Side10,
+										FaceNormal);
+
+					CoBasisMatrix = BasisMatrix.Inverse(bIsValid, DetThreshold);
+				}
 			}
 
 
@@ -1412,19 +1481,46 @@ namespace SkeletalSimplifier
 			// @return  Distance
 			double ComputeGradient(const Vec3d& PerVertexData, Vec3d& OutGradient) const
 			{
-				Vec3d DataVec(PerVertexData[2] - PerVertexData[0], PerVertexData[1] - PerVertexData[0], 0.);
+				if (bLegacyGradientMethod)
+				{
+					// re-use matrix and vector for the legacy version
+					const DMatrix& PosInv = CoBasisMatrix;
+					const Vec3d& Dhat = Origin;
 
-				OutGradient = CoBasisMatrix * DataVec;
-				double Distance = PerVertexData[0] - Origin.DotProduct(OutGradient);
+					// PosInv . s
+					Vec3d MInvS = PosInv * PerVertexData;
 
-				return Distance;
+					// Dist = <dhat | s>
+					double Distance = Dhat.DotProduct(PerVertexData);
+
+					// Grad =  PosInv . s - Dist * PosInv . (1, 1, 1} 
+					OutGradient = MInvS - Distance * MInv1;
+
+					return Distance;
+				}
+				else // the standard method
+				{ 
+					Vec3d DataVec(PerVertexData[2] - PerVertexData[0], PerVertexData[1] - PerVertexData[0], 0.);
+
+					OutGradient = CoBasisMatrix * DataVec;
+					double Distance = PerVertexData[0] - Origin.DotProduct(OutGradient);
+
+					return Distance;
+				}
 			}
 
 		private:
 
 			bool    bIsValid;  // Indicates if the inversions incurred a divide by very-small-number.
+		
+			bool    bLegacyGradientMethod = false;
+
+			// used by the standard method
 			DMatrix CoBasisMatrix;   // Inverse( {P2-P0}, {P1 - P0}, Normal}
-			Vec3d   Origin;    // corresponds to P0
+			Vec3d   Origin;          // corresponds to P0
+
+			// used by the legacy version only
+			Vec3d   MInv1;                   // Inverse(PositionMatrix) * Vec3(1)
 		};
 
 		template <typename SparseVecDOrDenseVecD>

@@ -54,7 +54,7 @@ public:
 	// FRHITexture overrides
 	virtual void* GetTextureBaseRHI() override final			{ return this; }
 	virtual void* GetNativeResource() const override final;
-	virtual FRHIDescriptorHandle GetDefaultBindlessHandle() const final;
+	virtual FRHIDescriptorHandle GetDefaultBindlessHandle() const override;
 			
 	// Accessors.
 	bool IsStreamable() const									{ return EnumHasAnyFlags(GetDesc().Flags, ETextureCreateFlags::Streamable); }
@@ -74,7 +74,7 @@ public:
 #endif // #if PLATFORM_REQUIRES_TYPELESS_RESOURCE_DISCARD_WORKAROUND
 		
 	// Setup functionality
-	void InitializeTextureData(class FRHICommandListImmediate* RHICmdList, const FRHITextureCreateDesc& CreateDesc, D3D12_RESOURCE_STATES DestinationState);
+	void InitializeTextureData(FRHICommandListBase& RHICmdList, const FRHITextureCreateDesc& CreateDesc, D3D12_RESOURCE_STATES DestinationState);
 	void CreateViews();
 	void SetCreatedRTVsPerSlice(bool Value, int32 InRTVArraySize)
 	{
@@ -196,24 +196,20 @@ class FD3D12Viewport;
 class FD3D12BackBufferReferenceTexture2D : public FD3D12Texture
 {
 public:
-
-	FD3D12BackBufferReferenceTexture2D(
-		const FRHITextureCreateDesc& InDesc,
-		FD3D12Viewport* InViewPort,
-		bool bInIsSDR,
-		FD3D12Device* InDevice) :
-		FD3D12Texture(InDesc, InDevice),
-		Viewport(InViewPort), bIsSDR(bInIsSDR)
+	FD3D12BackBufferReferenceTexture2D(const FRHITextureCreateDesc& InDesc, FD3D12Viewport* InViewPort, bool bInIsSDR, FD3D12Device* InDevice)
+		: FD3D12Texture(InDesc, InDevice)
+		, Viewport(InViewPort)
+		, bIsSDR(bInIsSDR)
 	{
 	}
 
-	FD3D12Viewport* GetViewPort() { return Viewport; }
+	FD3D12Viewport* GetViewPort() const { return Viewport; }
 	bool IsSDR() const { return bIsSDR; }
 
-	FRHITexture* GetBackBufferTexture();
+	FRHITexture* GetBackBufferTexture() const;
+	virtual FRHIDescriptorHandle GetDefaultBindlessHandle() const override;
 
 private:
-
 	FD3D12Viewport* Viewport = nullptr;
 	bool bIsSDR = false;
 };

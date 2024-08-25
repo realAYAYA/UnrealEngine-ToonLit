@@ -381,8 +381,8 @@ bool FStringFromStringViewTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FStringConstructWithSlackTest, "System.Core.String.ConstructWithSlack", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::SmokeFilter)
-bool FStringConstructWithSlackTest::RunTest(const FString& Parameters)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FStringConstructorWithSlackTest, "System.Core.String.ConstructorWithSlack", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::SmokeFilter)
+bool FStringConstructorWithSlackTest::RunTest(const FString& Parameters)
 {
 	// Note that the total capacity of a string might be greater than the string length + slack + a null terminator due to
 	// underlying malloc implementations which is why we poll FMemory to see what size of allocation we should be expecting.
@@ -786,6 +786,145 @@ bool FStringFindAndContainsTest::RunTest(const FString& Parameters)
 			(int32)ESearchCase::CaseSensitive, (int32)ESearchDir::FromEnd, 0, Actual));
 	}
 	// Negative SubStrLen are not allowed so we do not test them
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FStringConstructorWithLengthTest, "System.Core.String.ConstructorWithLength", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::SmokeFilter)
+bool FStringConstructorWithLengthTest::RunTest(const FString& Parameters)
+{
+	auto DoTest = [this](const TCHAR* Ptr, int32 Size, const TArray<TCHAR>& Expected)
+	{
+		FString Str(Size, Ptr);
+
+		const TArray<TCHAR>& StrArr = Str.GetCharArray();
+		if (StrArr != Expected)
+		{
+			AddError(
+				FString::Printf(
+					TEXT("FString(%d, TEXT(\"%s\")) failure: result '%s' (expected '%.*s')"),
+					Size,
+					Ptr,
+					*Str,
+					Expected.Num(),
+					Expected.GetData()
+				)
+			);
+		}
+	};
+
+	DoTest(TEXT("\0abc"),    4, {});
+	DoTest(TEXT("abc\0def"), 3, { TEXT('a'), TEXT('b'), TEXT('c'),                                                          TEXT('\0') });
+	DoTest(TEXT("abc\0def"), 4, { TEXT('a'), TEXT('b'), TEXT('c'), TEXT('\0'),                                              TEXT('\0') });
+	DoTest(TEXT("abc\0def"), 7, { TEXT('a'), TEXT('b'), TEXT('c'), TEXT('\0'), TEXT('d'), TEXT('e'), TEXT('f'),             TEXT('\0') });
+	DoTest(TEXT("abc\0def"), 8, { TEXT('a'), TEXT('b'), TEXT('c'), TEXT('\0'), TEXT('d'), TEXT('e'), TEXT('f'), TEXT('\0'), TEXT('\0') });
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FStringConstructWithSlackTest, "System.Core.String.ConstructWithSlack", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::SmokeFilter)
+bool FStringConstructWithSlackTest::RunTest(const FString& Parameters)
+{
+	auto DoTest = [this](const TCHAR* Ptr, int32 ExtraSlack, const TArray<TCHAR>& Expected)
+	{
+		FString Str = FString::ConstructWithSlack(Ptr, ExtraSlack);
+
+		const TArray<TCHAR>& StrArr = Str.GetCharArray();
+		int32 ActualSlack = StrArr.Max() - StrArr.Num();
+		bool  bValidSlack = (ExtraSlack == 0 && *Ptr == TEXT('\0')) ? (ActualSlack == 0) : (ActualSlack >= ExtraSlack);
+		if (StrArr != Expected || !bValidSlack)
+		{
+			AddError(
+				FString::Printf(
+					TEXT("FString::ConstructWithSlack(TEXT(\"%s\"), %d) failure: result '%s' (expected '%.*s'), slack '%d' (expected '%d')"),
+					Ptr,
+					ExtraSlack,
+					*Str,
+					Expected.Num(),
+					Expected.GetData(),
+					ActualSlack,
+					ExtraSlack
+				)
+			);
+		}
+	};
+
+	DoTest(TEXT("\0abc"), 0,  {});
+	DoTest(TEXT("\0abc"), 47, {});
+	DoTest(TEXT("abc"),   0,  { TEXT('a'), TEXT('b'), TEXT('c'), TEXT('\0') });
+	DoTest(TEXT("abc"),   47, { TEXT('a'), TEXT('b'), TEXT('c'), TEXT('\0') });
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FStringConstructFromPtrSizeTest, "System.Core.String.ConstructFromPtrSize", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::SmokeFilter)
+bool FStringConstructFromPtrSizeTest::RunTest(const FString& Parameters)
+{
+	auto DoTest = [this](const TCHAR* Ptr, int32 Size, const TArray<TCHAR>& Expected)
+	{
+		FString Str = FString::ConstructFromPtrSize(Ptr, Size);
+
+		const TArray<TCHAR>& StrArr = Str.GetCharArray();
+		if (StrArr != Expected)
+		{
+			AddError(
+				FString::Printf(
+					TEXT("FString::ConstructFromPtrSize(TEXT(\"%s\"), %d) failure: result '%s' (expected '%.*s')"),
+					Ptr,
+					Size,
+					*Str,
+					Expected.Num(),
+					Expected.GetData())
+			);
+		}
+	};
+
+	DoTest(TEXT("\0abc"),    4, { TEXT('\0'), TEXT('a'), TEXT('b'), TEXT('c'),                                               TEXT('\0') });
+	DoTest(TEXT("abc\0def"), 3, { TEXT('a'),  TEXT('b'), TEXT('c'),                                                          TEXT('\0') });
+	DoTest(TEXT("abc\0def"), 4, { TEXT('a'),  TEXT('b'), TEXT('c'), TEXT('\0'),                                              TEXT('\0') });
+	DoTest(TEXT("abc\0def"), 7, { TEXT('a'),  TEXT('b'), TEXT('c'), TEXT('\0'), TEXT('d'), TEXT('e'), TEXT('f'),             TEXT('\0') });
+	DoTest(TEXT("abc\0def"), 8, { TEXT('a'),  TEXT('b'), TEXT('c'), TEXT('\0'), TEXT('d'), TEXT('e'), TEXT('f'), TEXT('\0'), TEXT('\0') });
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FStringConstructFromPtrSizeWithSlackTest, "System.Core.String.ConstructFromPtrSizeWithSlack", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::SmokeFilter)
+bool FStringConstructFromPtrSizeWithSlackTest::RunTest(const FString& Parameters)
+{
+	auto DoTest = [this](const TCHAR* Ptr, int32 Size, int32 ExtraSlack, const TArray<TCHAR>& Expected)
+	{
+		FString Str = FString::ConstructFromPtrSizeWithSlack(Ptr, Size, ExtraSlack);
+
+		const TArray<TCHAR>& StrArr = Str.GetCharArray();
+		int32 ActualSlack = StrArr.Max() - StrArr.Num();
+		bool  bValidSlack = (ExtraSlack == 0 && *Ptr == TEXT('\0')) ? (ActualSlack == 0) : (ActualSlack >= ExtraSlack);
+		if (StrArr != Expected || !bValidSlack)
+		{
+			AddError(
+				FString::Printf(
+					TEXT("FString::ConstructFromPtrSizeWithSlack(TEXT(\"%s\"), %d) failure: result '%s' (expected '%.*s'), slack '%d' (expected '%d')"),
+					Ptr,
+					Size,
+					*Str,
+					Expected.Num(),
+					Expected.GetData(),
+					ActualSlack,
+					ExtraSlack
+				)
+			);
+		}
+	};
+
+	DoTest(TEXT("\0abc"),    4, 0,  { TEXT('\0'), TEXT('a'), TEXT('b'), TEXT('c'),                                               TEXT('\0') });
+	DoTest(TEXT("\0abc"),    4, 47, { TEXT('\0'), TEXT('a'), TEXT('b'), TEXT('c'),                                               TEXT('\0') });
+	DoTest(TEXT("abc\0def"), 3, 0,  { TEXT('a'),  TEXT('b'), TEXT('c'),                                                          TEXT('\0') });
+	DoTest(TEXT("abc\0def"), 3, 47, { TEXT('a'),  TEXT('b'), TEXT('c'),                                                          TEXT('\0') });
+	DoTest(TEXT("abc\0def"), 4, 0,  { TEXT('a'),  TEXT('b'), TEXT('c'), TEXT('\0'),                                              TEXT('\0') });
+	DoTest(TEXT("abc\0def"), 4, 47, { TEXT('a'),  TEXT('b'), TEXT('c'), TEXT('\0'),                                              TEXT('\0') });
+	DoTest(TEXT("abc\0def"), 7, 0,  { TEXT('a'),  TEXT('b'), TEXT('c'), TEXT('\0'), TEXT('d'), TEXT('e'), TEXT('f'),             TEXT('\0') });
+	DoTest(TEXT("abc\0def"), 7, 47, { TEXT('a'),  TEXT('b'), TEXT('c'), TEXT('\0'), TEXT('d'), TEXT('e'), TEXT('f'),             TEXT('\0') });
+	DoTest(TEXT("abc\0def"), 8, 0,  { TEXT('a'),  TEXT('b'), TEXT('c'), TEXT('\0'), TEXT('d'), TEXT('e'), TEXT('f'), TEXT('\0'), TEXT('\0') });
+	DoTest(TEXT("abc\0def"), 8, 47, { TEXT('a'),  TEXT('b'), TEXT('c'), TEXT('\0'), TEXT('d'), TEXT('e'), TEXT('f'), TEXT('\0'), TEXT('\0') });
 
 	return true;
 }

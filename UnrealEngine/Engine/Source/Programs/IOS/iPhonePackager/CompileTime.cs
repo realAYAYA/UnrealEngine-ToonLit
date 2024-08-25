@@ -107,7 +107,7 @@ namespace iPhonePackager
 		 */
 		static public void ConfigurePaths()
 		{
-			string MachineName = Environment.MachineName;
+			string MachineName = System.Net.Dns.GetHostName();
 
 			XcodeDeveloperDir = Utilities.GetEnvironmentVariable("ue.XcodeDeveloperDir", "/Applications/Xcode.app/Contents/Developer/");
 

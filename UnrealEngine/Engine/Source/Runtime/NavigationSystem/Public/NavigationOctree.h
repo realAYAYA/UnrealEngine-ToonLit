@@ -2,7 +2,9 @@
 
 #pragma once
 
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "CoreMinimal.h"
+#endif
 #include "Stats/Stats.h"
 #include "AI/Navigation/NavigationTypes.h"
 #include "Math/GenericOctreePublic.h"
@@ -10,11 +12,13 @@
 #include "EngineStats.h"
 #include "AI/NavigationModifier.h"
 #include "AI/Navigation/NavRelevantInterface.h"
+#include "AI/Navigation/NavigationRelevantData.h"
 #include "Math/GenericOctree.h"
 #include "HAL/LowLevelMemTracker.h"
 
 class INavRelevantInterface;
 class FNavigationOctree;
+class UActorComponent;
 typedef FNavigationRelevantDataFilter FNavigationOctreeFilter;
 
 LLM_DECLARE_TAG(NavigationOctree);
@@ -142,8 +146,15 @@ struct FNavigationOctreeSemantics
 class FNavigationOctree : public TOctree2<FNavigationOctreeElement, FNavigationOctreeSemantics>, public TSharedFromThis<FNavigationOctree, ESPMode::ThreadSafe>
 {
 public:
+	UE_DEPRECATED(5.4, "Use FNavRelevantGeometryExportDelegate.")
 	DECLARE_DELEGATE_TwoParams(FNavigableGeometryComponentExportDelegate, UActorComponent*, FNavigationRelevantData&);
+
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FNavigableGeometryComponentExportDelegate ComponentExportDelegate;
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+	DECLARE_DELEGATE_TwoParams(FNavRelevantGeometryExportDelegate, INavRelevantInterface&, FNavigationRelevantData&);
+	FNavRelevantGeometryExportDelegate NavRelevantGeometryExportDelegate;
 
 	enum ENavGeometryStoringMode {
 		SkipNavGeometry,

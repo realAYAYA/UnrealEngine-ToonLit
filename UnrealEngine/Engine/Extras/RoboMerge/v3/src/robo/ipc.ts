@@ -1,7 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 import { ContextualLogger, isNpmLogLevel, NpmLogLevelCompare, NpmLogLevelValues } from '../common/logger';
-import { getRunningPerforceCommands } from '../common/perforce';
+import { DescribeResult, getRunningPerforceCommands } from '../common/perforce';
 import { Trace } from '../new/graph';
 import { IPCControls, EdgeBotInterface, NodeBotInterface } from './bot-interfaces';
 import { OperationResult } from './branch-interfaces';
@@ -26,6 +26,10 @@ export interface Message {
 
 // roboserver.ts -- getQueryFromSecure()
 type Query = {[key: string]: string};
+
+const RobomergeMethodStrings = ['initialSubmit','merge_with_conflict','automerge'] as const;
+type RobomergeMethods = typeof RobomergeMethodStrings[number];
+type MergeMethod = RobomergeMethods|'populate'|'manual_merge'
 
 export type OperationReturnType = {
 	statusCode: number
@@ -56,8 +60,9 @@ export class IPC {
 			case 'getp4tasks': return { ...OPERATION_SUCCESS, data: getRunningPerforceCommands() } 
 			case 'getWorkspaces': return this.getWorkspaces(msg.args![0] as string)
 			case 'getPersistence': return this.getPersistence(msg.args![0] as string)
-			case 'traceRoute': return this.traceRoute(msg.args![0] as Query)
-			case 'dumpGraph': return this.dumpGraph()
+			case 'traceRoute': return this.traceRoute(msg.args![0] as Query, msg.args![1])
+			case 'trackChange': return this.trackChange(msg.args![0], msg.args![1])
+			case 'dumpGraph': return this.dumpGraph(msg.args![0])
 			case 'getIsRunning': return this.isRunning(msg.args![0] as string)
 			case 'restartBot': return this.restartBot(msg.args![0] as string, msg.args![1] as string)
 			case 'crashGraphBot': return this.crashGraphBot(msg.args![0] as string, msg.args![1] as string)
@@ -164,11 +169,213 @@ export class IPC {
 		return {statusCode: 400, message: `Unknown bot '${botname}'`}
 	}
 
-	private async traceRoute(query: Query): Promise<OperationReturnType> {
+
+	private async trackChange(queryObj: any, tagsObj: any): Promise<OperationReturnType> {
+
+		const clStr = queryObj.cl
+		if (!clStr) {
+			return {statusCode: 400, message: 'No CL parameter provided.'}
+		}
+
+		const cl = parseInt(clStr)
+		if (isNaN(cl)) {
+			return {statusCode: 400, message: `Invalid CL parameter: ${cl}`}
+		}
+
+		if (!this.robo.graph) {
+			return {statusCode: 503, message: 'Service is not ready to process request'}
+		}
+
+		let userTags = new Set<string>()
+		for (const tag in tagsObj) {
+			userTags.add(tag)
+		}
+
+		const streamFilter = (() => {
+			const streamsParam: string|undefined = queryObj.streams;
+			return (streamsParam ? streamsParam.toUpperCase().replace('*','.*').split(',').map(s => new RegExp(s)) : [])
+		})() 
+		const botFilter = (() => { 
+			const botsParam = queryObj.bots
+			return (botsParam ? botsParam.toUpperCase().split(',') : [])
+		})()
+		const depotFilter = (() => { 
+			const depotsParam: string = queryObj.depots
+			return (depotsParam ? depotsParam.toUpperCase().split(',').map(depot => `//${depot}`) : [])
+		})()
+
+		const graph = this.robo.graph.graph
+
+		const getStreamFromPath = (path: string) => {
+			const match = path.match(/\/\/[^\/]*\/[^\/]*/)
+			return (match ? match[0] : null)
+		}
+
+		const getNode = (desc: DescribeResult) => {
+			if (desc.path) {
+				const stream = getStreamFromPath(desc.path)
+				if (stream) {
+					return graph.findNodeForStream(stream)
+				}
+			}
+			return null
+		}
+
+		const getMergeMethod = (desc: string): MergeMethod => {
+			if (desc.includes("#ROBOMERGE-CONFLICT")) {
+				return 'merge_with_conflict'
+			} else if (desc.includes("#ROBOMERGE-SOURCE")) {
+				return 'automerge'
+			} else if (desc.includes("Populate")) {
+				return 'populate'
+			} else {
+				return 'manual_merge'
+			}
+		}
+
+		let changes = new Map<number, any>()
+
+		let data: any = {originalCL: cl, changes: {}}
+
+		let gatherCLInfo = async (cl: number, opts?: any) => {
+			let desc = await this.robo.p4.describe(cl, 1)
+			const mergeMethod = cl != data.originalCL ? getMergeMethod(desc.description) : 'initialSubmit'
+			const clNode = getNode(desc)
+			if (clNode || (RobomergeMethodStrings as readonly string[]).includes(mergeMethod)) {
+				changes.set(cl, {desc, node: clNode, sourceCL: opts ? opts.sourceCL : null, destCLs: (opts && opts.lastCL ? [opts.lastCL] : []) })
+				return true
+			}
+			return false
+		}
+
+		await gatherCLInfo(cl)
+
+		const sourceMatch = (changes.get(data.originalCL).desc as DescribeResult).description.match(/#ROBOMERGE-SOURCE: (.*)\n/g)
+		if (sourceMatch) {
+			let lastCL = cl
+			const matches = Array.from(sourceMatch[0].matchAll(/CL (\d+)/g))
+			for (let i=matches.length-1; i>=0;i--) {
+				let sourceCL = parseInt(matches[i][1])
+				if (i == 0) {
+					data.originalCL = sourceCL
+				}
+				await gatherCLInfo(sourceCL, {lastCL})
+				lastCL = sourceCL
+			}
+		}
+
+		const isFTE = userTags.has("fte")
+
+		let clsToConsider: number[] = [data.originalCL]
+		while (clsToConsider.length > 0) {
+			const clToConsider = clsToConsider[0]
+			clsToConsider = clsToConsider.slice(1)
+
+			let changeToConsider = changes.get(clToConsider)
+			if (!changeToConsider) {
+				continue
+			}
+
+			let includeInResults = false
+			let hasAutomergeTarget = false
+			let streamDisplayName = ""
+			if (changeToConsider.node) {
+				let edges = graph.getEdgesForNode(changeToConsider.node)
+				for (let edge of edges) {
+					if (!includeInResults) {
+						const bot = edge.sourceAnnotation as NodeBotInterface
+						if (botFilter.length == 0 || botFilter.includes(bot.branchGraph.botname)) {
+							if (Status.includeBranch(bot.branchGraph.config.visibility, userTags, this.ipcLogger)) {
+								streamDisplayName = changeToConsider.node.stream
+								includeInResults = true
+							}
+						}
+					}
+					if (edge.flags.has('automatic')) {
+						hasAutomergeTarget = true
+					}
+					if (includeInResults && hasAutomergeTarget) {
+						break
+					}
+				}
+			} else if (isFTE && botFilter.length == 0) {
+				includeInResults = true
+				if (changeToConsider.desc.path) {
+					streamDisplayName = getStreamFromPath(changeToConsider.desc.path) || changeToConsider.desc.path
+				} else if (changeToConsider.desc.entries.length > 0) {
+					streamDisplayName = getStreamFromPath(changeToConsider.desc.entries[0].depotFile) || streamDisplayName
+				}
+			}
+
+			if (streamDisplayName.length == 0) {
+				streamDisplayName = "//****/****"
+			}
+
+			if (includeInResults)
+			{
+				const upperSteamDisplayName = streamDisplayName.toUpperCase()
+				includeInResults = depotFilter.length == 0 || depotFilter.some(depot => upperSteamDisplayName.startsWith(depot))
+				includeInResults = includeInResults && (streamFilter.length == 0 || streamFilter.some(re => upperSteamDisplayName.match(re)))
+			}
+
+			// Can't cache this because the passed in changelist is incorrectly labelled initialSubmit the first time
+			// it is considered
+			const mergeMethod = clToConsider != data.originalCL ? getMergeMethod(changeToConsider.desc.description) : 'initialSubmit'
+
+			for (let i=0; i < changeToConsider.desc.entries.length; i++) {
+				const entry = changeToConsider.desc.entries[i]
+				// integrated for move/delete will point at the paired move/add not where it was merged to in another stream, so not useful to evaluate it
+				if (entry.action != 'move/delete') {
+					const integrated = await this.robo.p4.integrated(null, entry.depotFile, {intoOnly: true, startCL: clToConsider})
+					if (integrated.length > 0) {
+						for (let integ of integrated) {
+							const startToRev = integ.startToRev == "#none" ? 0 : parseInt(integ.startToRev.slice(1))
+							const endToRev = parseInt(integ.endToRev.slice(1))
+							if (entry.rev <= endToRev && entry.rev > startToRev)
+							{
+								const destChange = changes.get(integ.change)
+								if (destChange) {
+									destChange.sourceCL = clToConsider
+								} else {
+									changeToConsider.destCLs.push(integ.change)
+									await gatherCLInfo(integ.change, {sourceCL: clToConsider})
+								}
+							}
+						}
+						break
+					}
+				}
+				if (hasAutomergeTarget && changeToConsider.desc.entries.length == 1 && 
+							(RobomergeMethodStrings as readonly string[]).includes(mergeMethod)) {
+					// If we only have 1 entry and we didn't get integration info off of it
+					// and the graph suggests we are expecting there could be other changes
+					// get the full describe results
+					changeToConsider.desc = await this.robo.p4.describe(clToConsider)
+				}
+			}
+			clsToConsider = clsToConsider.concat(changeToConsider.destCLs)
+
+			if (includeInResults) {
+				data.changes[`${clToConsider}`] = {streamDisplayName, mergeMethod, sourceCL: changeToConsider.sourceCL}
+			}
+		}
+
+		return {...OPERATION_SUCCESS, data}
+	}
+
+	private async traceRoute(query: Query, tagsObj?: any): Promise<OperationReturnType> {
 
 		const cl = parseInt(query.cl)
 		if (isNaN(cl)) {
 			return {statusCode: 400, message: 'Invalid CL parameter: ' + query.cl}
+		}
+
+		let tags
+		if (tagsObj) {
+			tags = new Set<string>()
+			for (const tag in tagsObj) {
+				tags.add(tag)
+			}
 		}
 
 		const tracer = new Trace(this.robo.graph.graph, this.ipcLogger)
@@ -180,13 +387,24 @@ export class IPC {
 				return { statusCode: 400, message: routeOrError } 
 
 			const result: any[] = []
-			for (const edge of routeOrError) {
+			for (let edgeIdx=0; edgeIdx < routeOrError.length; edgeIdx++) {
+				let edge = routeOrError[edgeIdx]
 				const bot = edge.sourceAnnotation as NodeBotInterface
-				result.push({
-					name: bot.branchGraph.botname + ':' + bot.branch.name,
-					stream: edge.source.stream,
-					lastCl: bot.lastCl
-				})
+				let canShowResult = true
+				if (tags) {
+					canShowResult = Status.includeBranch(bot.branchGraph.config.visibility, tags, this.ipcLogger)
+				}
+				if (canShowResult) {
+					result.push({
+						name: bot.branchGraph.botname + ':' + bot.branch.name,
+						stream: edge.source.stream,
+						lastCl: bot.lastCl
+					})
+				} else if (edgeIdx == 0) {
+					return { statusCode: 400, message: "UNKNOWN_SOURCE_BRANCH" } 
+				} else if (edgeIdx == routeOrError.length - 1) {
+					return { statusCode: 400, message: "UNKNOWN_TARGET_BRANCH" } 
+				}
 			}
 
 			success = true
@@ -200,8 +418,12 @@ export class IPC {
 		}
 	}
 
-	private dumpGraph(): OperationReturnType {
-		return { ...OPERATION_SUCCESS, data: this.robo.graph.graph.dump() } 
+	private dumpGraph(tagsObj: any): OperationReturnType {
+		let tags = new Set<string>()
+		for (const tag in tagsObj) {
+			tags.add(tag)
+		}
+		return { ...OPERATION_SUCCESS, data: this.robo.graph.graph.dump(tags, this.ipcLogger) } 
 	}
 
 	private isRunning(botname: string): OperationReturnType {
@@ -364,7 +586,7 @@ export class IPC {
 				return {statusCode: 400, message: 'Invalid CL parameter: ' + cl}
 			}
 
-			let prevCl = generalOpTarget.forceSetLastClWithContext(cl, query.who, query.reason, !!query.unblock && query.unblock === 'true')
+			let prevCl = generalOpTarget.forceSetLastClWithContext(cl, query.who, query.reason, true)
 
 			this.ipcLogger.info(`Forcing last CL=${cl} on ${botname} : ${branch.name} (was CL ${prevCl}), ` +
 														`requested by ${query.who} (Reason: ${query.reason})`)
@@ -489,6 +711,53 @@ export class IPC {
 				return { statusCode: 200, message: operationResult.message }
 			}
 			this.ipcLogger.error('Error processing stomp: ' + operationResult.message)
+			return { statusCode: 500, message: operationResult.message }
+
+		// Requires: cl, target
+		case 'verifyunlock':
+			cl = parseInt(query.cl)
+			if (isNaN(cl)) {
+				return { statusCode: 400, message: 'Invalid CL parameter: ' + cl }
+			}
+
+			target = query.target
+			if (!target) {
+				return { statusCode: 400, message: 'Target parameter is required' }
+			}
+
+			// Attempt to stomp changes
+			let unlockVerification = await bot.verifyUnlock(cl, target)
+			if (unlockVerification.success) {
+				return { 
+					statusCode: 200,
+					message: JSON.stringify({
+						message: unlockVerification.message,
+						files: unlockVerification.lockedFiles,
+						validRequest: unlockVerification.validRequest
+					} )
+				}
+			}
+
+			this.ipcLogger.error('Error verifying unlock: ' + unlockVerification.message)
+			return { statusCode: 500, message: unlockVerification.message }
+
+		case 'unlockchanges':
+			cl = parseInt(query.cl)
+			if (isNaN(cl)) {
+				return { statusCode: 400, message: 'Invalid CL parameter: ' + cl }
+			}
+
+			target = query.target
+			if (!target) {
+				return { statusCode: 400, message: 'Target parameter is required' }
+			}
+
+			// Attempt to unlock changes
+			operationResult = await bot.unlockChanges(query.who, cl, target)
+			if (operationResult.success) {
+				return { statusCode: 200, message: operationResult.message }
+			}
+			this.ipcLogger.error('Error processing unlock: ' + operationResult.message)
 			return { statusCode: 500, message: operationResult.message }
 
 		case 'bypassgatewindow':

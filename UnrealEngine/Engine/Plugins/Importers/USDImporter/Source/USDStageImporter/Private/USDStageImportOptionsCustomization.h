@@ -24,7 +24,7 @@ public:
 
 private:
 	void OnComboBoxOpening();
-	void OnComboBoxSelectionChanged( TSharedPtr<FString> NewContext, ESelectInfo::Type SelectType );
+	void OnComboBoxSelectionChanged(TSharedPtr<FString> NewContext, ESelectInfo::Type SelectType);
 	FText GetComboBoxSelectedOptionText() const;
 	void ForceRefreshDetails();
 
@@ -36,4 +36,4 @@ private:
 	TArray<TSharedPtr<FString>> MaterialPurposeComboBoxItems;
 };
 
-#endif // WITH_EDITOR
+#endif	  // WITH_EDITOR

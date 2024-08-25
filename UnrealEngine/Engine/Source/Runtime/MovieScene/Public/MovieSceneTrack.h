@@ -25,8 +25,8 @@
 #include "UObject/UnrealNames.h"
 #include "UObject/UnrealType.h"
 
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "MovieSceneSection.h"
+#if WITH_EDITOR
+#include "Styling/SlateColor.h"
 #endif
 
 #include "MovieSceneTrack.generated.h"
@@ -156,6 +156,15 @@ enum class EMovieSceneSectionMovedResult
 	SectionsChanged = 1
 };
 ENUM_CLASS_FLAGS(EMovieSceneSectionMovedResult);
+
+/** Parameters for helping to determine dynamic label color/tooltip*/
+struct FMovieSceneLabelParams
+{
+	class IMovieScenePlayer* Player = nullptr;
+	FGuid BindingID;
+	FMovieSceneSequenceID SequenceID;
+	bool bIsDimmed = false;
+};
 #endif
 
 /**
@@ -262,6 +271,11 @@ protected:
 	};
 
 	ETreePopulationMode BuiltInTreePopulationMode;
+
+protected:
+
+	/** Forcibly update this evaluation tree without updating the signature. Does not invalidated any compiled data! */
+	MOVIESCENE_API void ForceUpdateEvaluationTree();
 
 private:
 
@@ -451,7 +465,14 @@ public:
 	 *
 	 * @return Display tooltip text.
 	 */
-	virtual FText GetDisplayNameToolTipText() const { return FText::GetEmpty(); }
+	virtual FText GetDisplayNameToolTipText(const FMovieSceneLabelParams& LabelParams) const { return FText::GetEmpty(); }
+
+	/**
+	 * Gets the track label's color.
+	 * 
+	 * @return Track label color.
+	 */
+	virtual FSlateColor GetLabelColor(const FMovieSceneLabelParams& LabelParams) const { return FSlateColor::UseForeground(); }
 
 	/**
 	 * Get this track's color tint.

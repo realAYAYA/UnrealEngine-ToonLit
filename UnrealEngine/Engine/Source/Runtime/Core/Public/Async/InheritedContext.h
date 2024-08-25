@@ -19,7 +19,9 @@ namespace UE
 		{
 			for (int32 TagSetIndex = 0; TagSetIndex < static_cast<int32>(ELLMTagSet::Max); ++TagSetIndex)
 			{
-				LLMTags[TagSetIndex] = FLowLevelMemTracker::bIsDisabled ? nullptr : FLowLevelMemTracker::Get().GetActiveTagData(ELLMTracker::Default, static_cast<ELLMTagSet>(TagSetIndex));
+				LLMTags[TagSetIndex] = FLowLevelMemTracker::IsEnabled() ?
+					FLowLevelMemTracker::Get().GetActiveTagData(ELLMTracker::Default, static_cast<ELLMTagSet>(TagSetIndex))
+					: nullptr;
 			}
 		}
 	};
@@ -132,7 +134,7 @@ namespace UE
 		}
 
 		// must be called where the inherited context should be restored, e.g. at the start of an async task execution
-		UE_NODISCARD CORE_API FInheritedContextScope RestoreInheritedContext();
+		[[nodiscard]] CORE_API FInheritedContextScope RestoreInheritedContext();
 
 	private:
 #if ENABLE_LOW_LEVEL_MEM_TRACKER

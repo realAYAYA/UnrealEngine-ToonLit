@@ -5,20 +5,32 @@
 #include "NiagaraDataSet.h"
 #include "NiagaraConstants.h"
 #include "NiagaraEmitter.h"
+#include "NiagaraParameterBinding.h"
 #include "NiagaraScriptSourceBase.h"
 #include "NiagaraSettings.h"
 #include "NiagaraSystem.h"
 #include "NiagaraSystemImpl.h"
 
+#include "Stateless/NiagaraStatelessEmitter.h"
+
 #include "Interfaces/ITargetPlatform.h"
 #include "Materials/MaterialInterface.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "SceneInterface.h"
+#include "SceneUtils.h"
 #include "Styling/SlateIconFinder.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(NiagaraRendererProperties)
 
 #define LOCTEXT_NAMESPACE "UNiagaraRendererProperties"
+
+static int GNiagaraPSOPrecacheReverseCulling = 1;
+static FAutoConsoleVariableRef CVarPSOPrecacheProjectedShadows(
+	TEXT("fx.Niagara.PSOPrecache.ReverseCulling"),
+	GNiagaraPSOPrecacheReverseCulling,
+	TEXT("Also Precache PSOs with with reverse culling set when not 2 sided. (default 1)"),
+	ECVF_Default
+);
 
 #if WITH_EDITORONLY_DATA
 int32 GNiagaraRendererCookOutStaticEnabledBinding = 1;
@@ -178,6 +190,17 @@ void FNiagaraRendererLayout::Finalize()
 }
 
 //////////////////////////////////////////////////////////////////////////
+
+void FNiagaraRendererMaterialParameters::ConditionalPostLoad()
+{
+	for (const FNiagaraRendererMaterialTextureParameter& TextureParameter : TextureParameters)
+	{
+		if (TextureParameter.Texture)
+		{
+			TextureParameter.Texture->ConditionalPostLoad();
+		}
+	}
+}
 
 #if WITH_EDITORONLY_DATA
 void FNiagaraRendererMaterialParameters::RenameVariable(const FNiagaraVariableBase& OldVariable, const FNiagaraVariableBase& NewVariable, const FVersionedNiagaraEmitter& InEmitter, ENiagaraRendererSourceDataMode SourceMode)
@@ -369,6 +392,10 @@ void UNiagaraRendererProperties::RenameEmitter(const FName& InOldName, const UNi
 {
 	const ENiagaraRendererSourceDataMode SourceMode = GetCurrentSourceMode();
 	UpdateSourceModeDerivates(SourceMode);
+	if (InRenamedEmitter)
+	{
+		FNiagaraParameterBinding::ForEachRenameEmitter(this, InRenamedEmitter->GetUniqueEmitterName());
+	}
 }
 
 TArray<FNiagaraVariable> UNiagaraRendererProperties::GetBoundAttributes() const
@@ -397,21 +424,22 @@ void UNiagaraRendererProperties::ChangeToPositionBinding(FNiagaraVariableAttribu
 	}
 }
 
-bool UNiagaraRendererProperties::UpdateMaterialStaticParameters(const FNiagaraRendererMaterialParameters& MaterialParameters, UMaterialInstanceConstant* MIC)
+bool UNiagaraRendererProperties::BuildMaterialStaticParameterSet(const FNiagaraRendererMaterialParameters& MaterialParameters, const UMaterialInterface* Material, FStaticParameterSet& StaticParameterSet) const
 {
-	UNiagaraEmitter* NiagaraEmitter = GetTypedOuter<UNiagaraEmitter>();
+	StaticParameterSet.Empty();
+
 	UNiagaraSystem* NiagaraSystem = GetTypedOuter<UNiagaraSystem>();
-	if (NiagaraEmitter == nullptr || NiagaraSystem == nullptr)
+	if (NiagaraSystem == nullptr)
 	{
 		return false;
 	}
+	UNiagaraEmitter* NiagaraEmitter = GetTypedOuter<UNiagaraEmitter>();
 
 	TArray<FMaterialParameterInfo> AllStaticSwitchParameterInfos;
 	{
 		TArray<FGuid> ParameterGuids;
-		MIC->GetAllStaticSwitchParameterInfo(AllStaticSwitchParameterInfos, ParameterGuids);
+		Material->GetAllStaticSwitchParameterInfo(AllStaticSwitchParameterInfos, ParameterGuids);
 	}
-	FStaticParameterSet StaticParameterSet;
 
 	bool bModified = false;
 	for (const FNiagaraRendererMaterialStaticBoolParameter& ParameterBinding : MaterialParameters.StaticBoolParameters)
@@ -419,7 +447,7 @@ bool UNiagaraRendererProperties::UpdateMaterialStaticParameters(const FNiagaraRe
 		NiagaraSystem->ForEachScript(
 			[&](UNiagaraScript* NiagaraScript)
 			{
-				for ( const FNiagaraVariable& StaticVariable : NiagaraScript->GetVMExecutableData().StaticVariablesWritten )
+				for (const FNiagaraVariable& StaticVariable : NiagaraScript->GetVMExecutableData().StaticVariablesWritten)
 				{
 					if (StaticVariable.GetType() != FNiagaraTypeDefinition::GetBoolDef().ToStaticDef())
 					{
@@ -427,7 +455,10 @@ bool UNiagaraRendererProperties::UpdateMaterialStaticParameters(const FNiagaraRe
 					}
 
 					FNiagaraVariableBase ResolvedStaticVariable = StaticVariable;
-					ResolvedStaticVariable.ReplaceRootNamespace(NiagaraEmitter->GetUniqueEmitterName(), FNiagaraConstants::EmitterNamespaceString);
+					if (NiagaraEmitter)
+					{
+						ResolvedStaticVariable.ReplaceRootNamespace(NiagaraEmitter->GetUniqueEmitterName(), FNiagaraConstants::EmitterNamespaceString);
+					}
 					if (ResolvedStaticVariable.GetName() != ParameterBinding.StaticVariableName)
 					{
 						continue;
@@ -452,7 +483,7 @@ bool UNiagaraRendererProperties::UpdateMaterialStaticParameters(const FNiagaraRe
 						{
 							FGuid ParameterGuid;
 							bool bDefaultValue = false;
-							if (MIC->GetStaticSwitchParameterDefaultValue(ParameterInfo, bDefaultValue, ParameterGuid))
+							if (Material->GetStaticSwitchParameterDefaultValue(ParameterInfo, bDefaultValue, ParameterGuid))
 							{
 								if (bDefaultValue != bNewValue)
 								{
@@ -475,12 +506,19 @@ bool UNiagaraRendererProperties::UpdateMaterialStaticParameters(const FNiagaraRe
 		);
 	}
 
-	if (bModified)
+	return bModified;
+}
+
+bool UNiagaraRendererProperties::UpdateMaterialStaticParameters(const FNiagaraRendererMaterialParameters& MaterialParameters, UMaterialInstanceConstant* MIC)
+{
+	FStaticParameterSet StaticParameterSet;
+	if (BuildMaterialStaticParameterSet(MaterialParameters, MIC, StaticParameterSet))
 	{
 		MIC->UpdateStaticPermutation(StaticParameterSet);
+		return true;
 	}
 
-	return bModified;
+	return false;
 }
 
 void UNiagaraRendererProperties::UpdateMaterialParametersMIC(const FNiagaraRendererMaterialParameters& MaterialParameters, TObjectPtr<UMaterialInterface>& InOutMaterial, TObjectPtr<UMaterialInstanceConstant>& InOutMIC)
@@ -491,22 +529,28 @@ void UNiagaraRendererProperties::UpdateMaterialParametersMIC(const FNiagaraRende
 		return;
 	}
 
-	FNameBuilder NameBuilder;
-	InOutMaterial->GetFName().ToString(NameBuilder);
-	NameBuilder.Append(TEXT("_MIC"));
-	if (InOutMIC == nullptr)
+	FStaticParameterSet MaterialParameterSet;
+	if (BuildMaterialStaticParameterSet(MaterialParameters, InOutMaterial, MaterialParameterSet))
 	{
-		InOutMIC = NewObject<UMaterialInstanceConstant>(this, FName(NameBuilder));
-		InOutMIC->SetParentEditorOnly(InOutMaterial);
-	}
-	else if (InOutMIC->Parent != InOutMaterial)
-	{
-		InOutMIC->Rename(NameBuilder.ToString());
-		InOutMIC->SetParentEditorOnly(InOutMaterial);
-	}
+		FNameBuilder NameBuilder;
+		InOutMaterial->GetFName().ToString(NameBuilder);
+		NameBuilder.Append(TEXT("_MIC"));
+		if (InOutMIC == nullptr)
+		{
+			InOutMIC = NewObject<UMaterialInstanceConstant>(this, FName(NameBuilder));
+			InOutMIC->SetParentEditorOnly(InOutMaterial);
+		}
+		else if (InOutMIC->Parent != InOutMaterial)
+		{
+			InOutMIC->Rename(NameBuilder.ToString());
+			InOutMIC->SetParentEditorOnly(InOutMaterial);
+		}
 
-	if (UpdateMaterialStaticParameters(MaterialParameters, InOutMIC) == false)
+		InOutMIC->UpdateStaticPermutation(MaterialParameterSet);
+	}
+	else if (InOutMIC)
 	{
+		InOutMIC->MarkAsGarbage();
 		InOutMIC = nullptr;
 	}
 }
@@ -540,44 +584,43 @@ void UNiagaraRendererProperties::UpdateMaterialParametersMIC(const FNiagaraRende
 			continue;
 		}
 
-		//-OPT: We should be able to reuse rather than create
-		FNameBuilder NameBuilder;
-		Material->GetFName().ToString(NameBuilder);
-		NameBuilder.Append(TEXT("_MIC"));
-
-		UMaterialInstanceConstant* MIC = nullptr;
-		bool bNeedsRename = false;
-		if (MICPool.Num() > 0)
+		FStaticParameterSet MaterialParameterSet;
+		if (BuildMaterialStaticParameterSet(MaterialParameters, Material, MaterialParameterSet))
 		{
-			FName MICName(NameBuilder);
-			const int32 ExistingIndex = MICPool.IndexOfByPredicate([&MICName](UMaterialInstanceConstant* MIC) { return MIC->GetFName() == MICName; });
-			if (ExistingIndex != INDEX_NONE)
+			//-OPT: We should be able to reuse rather than create
+			FNameBuilder NameBuilder;
+			Material->GetFName().ToString(NameBuilder);
+			NameBuilder.Append(TEXT("_MIC"));
+
+			UMaterialInstanceConstant* MIC = nullptr;
+			bool bNeedsRename = false;
+			if (MICPool.Num() > 0)
 			{
-				MIC = MICPool[ExistingIndex];
-				MICPool.RemoveAtSwap(ExistingIndex, 1, false);
+				FName MICName(NameBuilder);
+				const int32 ExistingIndex = MICPool.IndexOfByPredicate([&MICName](UMaterialInstanceConstant* MIC) { return MIC->GetFName() == MICName; });
+				if (ExistingIndex != INDEX_NONE)
+				{
+					MIC = MICPool[ExistingIndex];
+					MICPool.RemoveAtSwap(ExistingIndex, 1, EAllowShrinking::No);
+				}
+				else
+				{
+					bNeedsRename = true;
+					MIC = MICPool.Pop();
+				}
+				if (MIC->Parent != Material)
+				{
+					MIC->SetParentEditorOnly(Material);
+				}
 			}
 			else
 			{
-				bNeedsRename = true;
-				MIC = MICPool.Pop();
-			}
-			if (MIC->Parent != Material)
-			{
+				MIC = NewObject<UMaterialInstanceConstant>(this, FName(NameBuilder));
 				MIC->SetParentEditorOnly(Material);
 			}
-		}
-		else
-		{
-			MIC = NewObject<UMaterialInstanceConstant>(this, FName(NameBuilder));
-			MIC->SetParentEditorOnly(Material);
-		}
 
-		if (UpdateMaterialStaticParameters(MaterialParameters, MIC) == false)
-		{
-			MICPool.Add(MIC);
-		}
-		else
-		{
+			MIC->UpdateStaticPermutation(MaterialParameterSet);
+
 			InOutMICs.SetNum(i + 1);
 			InOutMICs[i] = MIC;
 			if (bNeedsRename)
@@ -615,7 +658,7 @@ int32 UNiagaraRendererProperties::GetDynamicParameterChannelMask(const FVersione
 			NameBuilder.Append(TEXT("ChannelMask"));
 
 			const FNiagaraVariableBase ChannelMaskVariable(FNiagaraTypeDefinition::GetIntDef().ToStaticDef(), FName(NameBuilder));
-			TOptional<int32> ChannelMaskValue = NiagaraScript->GetStaticVariableValue<int32>(ChannelMaskVariable);
+			TOptional<int32> ChannelMaskValue = NiagaraScript->GetCompiledStaticVariableValue<int32>(ChannelMaskVariable);
 			if (ChannelMaskValue.IsSet())
 			{
 				ChannelMask = ChannelMask.Get(0) | ChannelMaskValue.GetValue();
@@ -683,7 +726,12 @@ void UNiagaraRendererProperties::RenameVariable(const FNiagaraVariableBase& OldV
 		if (Binding)
 			Binding->RenameVariableIfMatching(OldVariable, NewVariable, InEmitter, GetCurrentSourceMode());
 	}
+	if (InEmitter.Emitter)
+	{
+		FNiagaraParameterBinding::ForEachRenameVariable(this, OldVariable, NewVariable, InEmitter.Emitter->GetUniqueEmitterName());
+	}
 }
+
 void UNiagaraRendererProperties::RemoveVariable(const FNiagaraVariableBase& OldVariable,const FVersionedNiagaraEmitter& InEmitter)
 {
 	// Handle the reset to defaults of generic renderer bindings
@@ -707,6 +755,11 @@ void UNiagaraRendererProperties::RemoveVariable(const FNiagaraVariableBase& OldV
 			}		
 		}
 			
+	}
+
+	if (InEmitter.Emitter)
+	{
+		FNiagaraParameterBinding::ForEachRemoveVariable(this, OldVariable, InEmitter.Emitter->GetUniqueEmitterName());
 	}
 }
 
@@ -808,6 +861,39 @@ bool UNiagaraRendererProperties::PopulateRequiredBindings(FNiagaraParameterStore
 	return bAnyAdded;
 }
 
+void UNiagaraRendererProperties::CollectPSOPrecacheData(FNiagaraEmitterInstance* EmitterInstance, FMaterialInterfacePSOPrecacheParamsList& MaterialInterfacePSOPrecacheParamsList) const
+{
+	const FVertexFactoryType* VFType = GetVertexFactoryType();
+	if (VFType == nullptr)
+	{
+		return;
+	}
+
+	FMaterialInterfacePSOPrecacheParams NewEntry;
+	NewEntry.PSOPrecacheParams.SetMobility(EComponentMobility::Movable);
+	NewEntry.PSOPrecacheParams.bDisableBackFaceCulling = IsBackfaceCullingDisabled();
+
+	UNiagaraRendererProperties::FPSOPrecacheParamsList PSOPrecacheParamsList;
+	CollectPSOPrecacheData(EmitterInstance, PSOPrecacheParamsList);
+
+	for (UNiagaraRendererProperties::FPSOPrecacheParams& PSOPrecacheParams : PSOPrecacheParamsList)
+	{
+		NewEntry.MaterialInterface = PSOPrecacheParams.MaterialInterface;
+		NewEntry.VertexFactoryDataList = PSOPrecacheParams.VertexFactoryDataList;
+
+		NewEntry.PSOPrecacheParams.bReverseCulling = false;
+		AddMaterialInterfacePSOPrecacheParamsToList(NewEntry, MaterialInterfacePSOPrecacheParamsList);
+
+		// Also precache with reverse culling if not two sided because we don't know of the component using the asset will have negative determinant
+		if (!NewEntry.PSOPrecacheParams.bDisableBackFaceCulling && GNiagaraPSOPrecacheReverseCulling > 0)
+		{
+			NewEntry.PSOPrecacheParams.bReverseCulling = true;
+			AddMaterialInterfacePSOPrecacheParamsToList(NewEntry, MaterialInterfacePSOPrecacheParamsList);
+		}
+	}
+}
+
+
 bool UNiagaraRendererProperties::NeedsLoadForTargetPlatform(const ITargetPlatform* TargetPlatform) const
 {
 	// only keep enabled renderers that are parented to valid emitters
@@ -828,6 +914,25 @@ bool UNiagaraRendererProperties::NeedsLoadForTargetPlatform(const ITargetPlatfor
 			}
 		}
 	}
+	//-TODO:Stateless: We need a base emitter type
+	else if (const UNiagaraStatelessEmitter* OwnerStatelessEmitter = GetTypedOuter<UNiagaraStatelessEmitter>())
+	{
+		if (OwnerStatelessEmitter->NeedsLoadForTargetPlatform(TargetPlatform))
+		{
+			if (bIsEnabled && Platforms.IsEnabledForPlatform(TargetPlatform->IniPlatformName()))
+			{
+//#if WITH_EDITORONLY_DATA
+//				if (GNiagaraRendererCookOutStaticEnabledBinding && RendererEnabledBinding.IsValid())
+//				{
+//					TOptional<bool> ResolvedStaticValue = TryResolveStaticVariableBool(OwnerEmitter, RendererEnabledBinding.GetParamMapBindableVariable());
+//					return ResolvedStaticValue.Get(true);
+//				}
+//#endif
+				return true;
+			}
+		}
+	}
+	//-TODO:Stateless: We need a base emitter type
 
 	return false;
 }
@@ -994,7 +1099,7 @@ bool UNiagaraRendererProperties::ShouldGpuTranslucentThisFrame(ENiagaraRendererG
 bool UNiagaraRendererProperties::IsGpuTranslucentThisFrame(ERHIFeatureLevel::Type FeatureLevel, ENiagaraRendererGpuTranslucentLatency Latency)
 {
 	// We can not support low latency on the mobile renderer path as it calls PostRenderOpaque after translucent in some paths
-	if (FSceneInterface::GetShadingPath(FeatureLevel) != EShadingPath::Deferred)
+	if (GetFeatureLevelShadingPath(FeatureLevel) != EShadingPath::Deferred)
 	{
 		return false;
 	}

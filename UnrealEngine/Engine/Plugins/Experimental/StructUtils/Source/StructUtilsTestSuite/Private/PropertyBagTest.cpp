@@ -15,6 +15,8 @@ struct FTest_CreatePropertyBag : FAITestBase
 		static const FName IsHotName(TEXT("bIsHot"));
 		static const FName TemperatureName(TEXT("Temperature"));
 		static const FName CountName(TEXT("Count"));
+		static const FName UInt32Name(TEXT("Unsigned32"));
+		static const FName UInt64Name(TEXT("Unsigned64"));
 
 		FInstancedPropertyBag Bag;
 
@@ -25,10 +27,21 @@ struct FTest_CreatePropertyBag : FAITestBase
 		// Amend the bag with new properties.
 		Bag.AddProperties({
 			{ TemperatureName, EPropertyBagPropertyType::Float },
-			{ CountName, EPropertyBagPropertyType::Int32 }
+			{ CountName, EPropertyBagPropertyType::Int32 },
+			{ UInt32Name, EPropertyBagPropertyType::UInt32 },
+			{ UInt64Name, EPropertyBagPropertyType::UInt64 }
 			});
 		AITEST_TRUE(TEXT("Set Temperature should succeed"), Bag.SetValueFloat(TemperatureName, 451.0f) == EPropertyBagResult::Success);
 		AITEST_TRUE(TEXT("Set Count should succeed"), Bag.SetValueFloat(CountName, 42) == EPropertyBagResult::Success);
+
+		AITEST_TRUE(TEXT("Set UInt32 should succeed"), Bag.SetValueUInt32(UInt32Name, MAX_uint32) == EPropertyBagResult::Success);
+		AITEST_TRUE(TEXT("Set UInt64 should succeed"), Bag.SetValueUInt64(UInt64Name, MAX_uint64) == EPropertyBagResult::Success);
+
+		AITEST_TRUE(TEXT("UInt32 value could not be retrieved"), Bag.GetValueUInt32(UInt32Name).HasError() == false);
+		AITEST_TRUE(TEXT("UInt32 value not correct"), Bag.GetValueUInt32(UInt32Name).GetValue() == MAX_uint32);
+
+		AITEST_TRUE(TEXT("UInt64 value could not be retrieved"), Bag.GetValueUInt64(UInt64Name).HasError() == false);
+		AITEST_TRUE(TEXT("UInt64 value not correct"), Bag.GetValueUInt64(UInt64Name).GetValue() == MAX_uint64);
 
 		Bag.RemovePropertyByName(IsHotName);
 		AITEST_TRUE(TEXT("Should not have bIsHot property"), Bag.FindPropertyDescByName(IsHotName) == nullptr);

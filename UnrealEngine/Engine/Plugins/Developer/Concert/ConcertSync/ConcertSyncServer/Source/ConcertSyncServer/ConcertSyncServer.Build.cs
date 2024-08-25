@@ -28,6 +28,7 @@ namespace UnrealBuildTool.Rules
 				{
 					"ConcertTransport",
 					"Serialization",
+					"JsonUtilities"
 				}
 			);
 		}

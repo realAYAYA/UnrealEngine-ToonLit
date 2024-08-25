@@ -22,5 +22,6 @@ namespace UE::Net
 	namespace Private
 	{
 		class FNetExportContext;
+		class FNetPendingBatches;
 	}
 }

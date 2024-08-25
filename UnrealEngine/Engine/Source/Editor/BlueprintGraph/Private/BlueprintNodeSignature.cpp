@@ -8,7 +8,6 @@
 #include "HAL/PlatformCrt.h"
 #include "Misc/CString.h"
 #include "Misc/SecureHash.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/Tuple.h"
 
 /*******************************************************************************

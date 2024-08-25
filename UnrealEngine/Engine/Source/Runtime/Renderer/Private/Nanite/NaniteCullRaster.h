@@ -3,6 +3,9 @@
 #pragma once
 
 #include "NaniteShared.h"
+#include "NaniteSceneProxy.h"
+#include "NaniteVisibility.h"
+#include "PSOPrecacheMaterial.h"
 
 class FVirtualShadowMapArray;
 class FViewFamilyInfo;
@@ -84,10 +87,10 @@ struct FRasterResults
 	uint32			MaxVisibleClusters;
 	uint32			MaxNodes;
 	uint32			RenderFlags;
-	uint32			FixedFunctionBin;
 
 	FRDGBufferRef	ViewsBuffer			= nullptr;
 	FRDGBufferRef	VisibleClustersSWHW	= nullptr;
+	FRDGBufferRef	RasterBinMeta		= nullptr;
 
 	FRDGTextureRef	VisBuffer64			= nullptr;
 	FRDGTextureRef	DbgBuffer64			= nullptr;
@@ -99,7 +102,7 @@ struct FRasterResults
 	FRDGBufferRef	ClearTileArgs		= nullptr;
 	FRDGBufferRef	ClearTileBuffer		= nullptr;
 
-	FNaniteVisibilityResults VisibilityResults;
+	FNaniteVisibilityQuery* VisibilityQuery = nullptr;
 
 	TArray<FVisualizeResult, TInlineAllocator<32>> Visualizations;
 };
@@ -109,6 +112,7 @@ void CollectRasterPSOInitializers(
 	const FMaterial& Material,
 	const FPSOPrecacheParams& PreCacheParams,
 	EShaderPlatform ShaderPlatform,
+	int32 PSOCollectorIndex,
 	TArray<FPSOPrecacheData>& PSOInitializers);
 
 FRasterContext InitRasterContext(
@@ -117,13 +121,14 @@ FRasterContext InitRasterContext(
 	const FViewFamilyInfo& ViewFamily,
 	FIntPoint TextureSize,
 	FIntRect TextureRect,
-	bool bVisualize,
 	EOutputBufferMode RasterMode = EOutputBufferMode::VisBuffer,
 	bool bClearTarget = true,
 	FRDGBufferSRVRef RectMinMaxBufferSRV = nullptr,
 	uint32 NumRects = 0,
 	FRDGTextureRef ExternalDepthBuffer = nullptr,
-	bool bCustomPass = false
+	bool bCustomPass = false,
+	bool bVisualize = false,
+	bool bVisualizeOverdraw = false
 );
 
 struct FConfiguration
@@ -133,7 +138,6 @@ struct FConfiguration
 	uint32 bSupportsMultiplePasses : 1;
 	uint32 bForceHWRaster : 1;
 	uint32 bPrimaryContext : 1;
-	uint32 bDrawOnlyVSMInvalidatingGeometry : 1;
 	uint32 bDrawOnlyRootGeometry : 1;
 	uint32 bIsSceneCapture : 1;
 	uint32 bIsReflectionCapture : 1;
@@ -143,6 +147,7 @@ struct FConfiguration
 	uint32 bGameShowFlag : 1;
 	uint32 bDisableProgrammable : 1;
 	uint32 bExtractStats : 1;
+	EFilterFlags HiddenFilterFlags;
 
 	void SetViewFlags(const FViewInfo& View);
 };
@@ -167,7 +172,7 @@ public:
 
 	virtual void DrawGeometry(
 		FNaniteRasterPipelines& RasterPipelines,
-		const FNaniteVisibilityResults& VisibilityResults,
+		const FNaniteVisibilityQuery* VisibilityQuery,
 		const FPackedViewArray& ViewArray,
 		FSceneInstanceCullingQuery* OptionalSceneInstanceCullingQuery,
 		const TConstArrayView<FInstanceDraw>* OptionalInstanceDraws) = 0;
@@ -177,21 +182,21 @@ public:
 	 * Draw scene geometry by brute-force culling against all instances in the scene.
 	 */
 	inline void DrawGeometry(FNaniteRasterPipelines& RasterPipelines,
-		const FNaniteVisibilityResults& VisibilityResults,
+		const FNaniteVisibilityQuery* VisibilityQuery,
 		const FPackedViewArray& ViewArray)
 	{
-		DrawGeometry(RasterPipelines, VisibilityResults, ViewArray, nullptr, nullptr);
+		DrawGeometry(RasterPipelines, VisibilityQuery, ViewArray, nullptr, nullptr);
 	}
 
 	/**
 	 * Draw scene geometry driven by an explicit list FInstanceDraw (instance-id / view-id pairs).
 	 */
 	inline void DrawGeometry(FNaniteRasterPipelines& RasterPipelines,
-		const FNaniteVisibilityResults& VisibilityResults,
+		const FNaniteVisibilityQuery* VisibilityQuery,
 		const FPackedViewArray& ViewArray,
 		const TConstArrayView<FInstanceDraw> &InstanceDraws)
 	{
-		DrawGeometry(RasterPipelines, VisibilityResults, ViewArray, nullptr, &InstanceDraws);
+		DrawGeometry(RasterPipelines, VisibilityQuery, ViewArray, nullptr, &InstanceDraws);
 	}
 
 	/**
@@ -199,11 +204,11 @@ public:
 	 * otherwise falls back to brute-force culling (as above). 
 	 */
 	inline void DrawGeometry(FNaniteRasterPipelines& RasterPipelines,
-		const FNaniteVisibilityResults& VisibilityResults,
+		const FNaniteVisibilityQuery* VisibilityQuery,
 		const FPackedViewArray& ViewArray,
 		FSceneInstanceCullingQuery* OptionalSceneInstanceCullingQuery)
 	{
-		DrawGeometry(RasterPipelines, VisibilityResults, ViewArray, OptionalSceneInstanceCullingQuery, nullptr);
+		DrawGeometry(RasterPipelines, VisibilityQuery, ViewArray, OptionalSceneInstanceCullingQuery, nullptr);
 	}
 
 	virtual void ExtractResults( FRasterResults& RasterResults ) = 0;

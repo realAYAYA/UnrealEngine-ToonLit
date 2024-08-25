@@ -16,19 +16,19 @@ class FSharedMemoryMediaPlatform
 public:
 
 	/** Creates a cross gpu texture */
-	virtual FTextureRHIRef CreateSharedCrossGpuTexture(EPixelFormat Format, bool bSrgb, int32 Width, int32 Height, const FGuid& Guid, uint32 BufferIdx)
+	virtual FTextureRHIRef CreateSharedTexture(EPixelFormat Format, bool bSrgb, int32 Width, int32 Height, const FGuid& Guid, uint32 BufferIdx, bool bCrossGpu)
 	{
 		return nullptr;
 	}
 
 	/** Opens a cross gpu texture specified by a Guid */
-	virtual FTextureRHIRef OpenSharedCrossGpuTextureByGuid(const FGuid& Guid, FSharedMemoryMediaTextureDescription& OutTextureDescription)
+	virtual FTextureRHIRef OpenSharedTextureByGuid(const FGuid& Guid, FSharedMemoryMediaTextureDescription& OutTextureDescription)
 	{
 		return nullptr;
 	}
 
 	/** Release any platform specific resources related to the indexed texture */
-	virtual void ReleaseSharedCrossGpuTexture(uint32 BufferIdx) {};
+	virtual void ReleaseSharedTexture(uint32 BufferIdx) {};
 };
 
 /** Factory of registered FSharedMemoryMediaPlatform RHI implementations. Use RegisterPlatformForRhi to register them. */

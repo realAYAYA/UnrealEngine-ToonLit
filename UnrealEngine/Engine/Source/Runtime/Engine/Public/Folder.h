@@ -30,7 +30,23 @@ struct FFolder
 		: bPathInitialized(true)
 		, Path(InPath)
 		, RootObject(InRootObject)
-	{}
+	{
+		if (Path != GetEmptyPath())
+		{
+			TStringBuilder<512> Result;
+			TArray<FString> Parts;
+			Path.ToString().ParseIntoArray(Parts, TEXT("/"), true);
+			for (FString& Part : Parts)
+			{
+				if (Result.Len())
+				{
+					Result += TEXT("/");
+				}
+				Result += Part.TrimStartAndEnd();
+			}
+			Path = *Result;
+		}
+	}
 
 	FFolder(const FRootObject& InRootObject, const FGuid& InActorFolderGuid)
 		: bPathInitialized(false)

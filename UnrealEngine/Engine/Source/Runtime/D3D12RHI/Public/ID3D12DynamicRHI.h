@@ -12,6 +12,12 @@ struct FD3D12MinimalAdapterDesc
 	uint32 NumDeviceNodes{};
 };
 
+enum class ED3D12RHIRunOnQueueType
+{
+	Graphics = 0,
+	Copy,
+};
+
 struct ID3D12DynamicRHI : public FDynamicRHI
 {
 	virtual ERHIInterfaceType     GetInterfaceType() const override final { return ERHIInterfaceType::D3D12; }
@@ -47,6 +53,8 @@ struct ID3D12DynamicRHI : public FDynamicRHI
 	virtual void                  RHIWaitManualFence(FRHICommandList& RHICmdList, ID3D12Fence* Fence, uint64 Value) = 0;
 
 	virtual void                  RHIVerifyResult(ID3D12Device* Device, HRESULT Result, const ANSICHAR* Code, const ANSICHAR* Filename, uint32 Line, FString Message = FString()) const = 0;
+
+	virtual void				  RHIRunOnQueue(ED3D12RHIRunOnQueueType QueueType, TFunction<void(ID3D12CommandQueue*)>&& CodeToRun, bool bWaitForSubmission) = 0;
 };
 
 inline bool IsRHID3D12()

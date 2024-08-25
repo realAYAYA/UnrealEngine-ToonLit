@@ -215,6 +215,7 @@ public:
 		: bFollowLocalPlayerCamera(false)
 		, bExitOnEsc(true)
 		, bOverrideViewportsFromExternalConfig(false)
+		, bOverrideTransformsFromExternalConfig(false)
 	{ }
 
 public:
@@ -226,6 +227,9 @@ public:
 
 	UPROPERTY()
 	bool bOverrideViewportsFromExternalConfig;
+
+	UPROPERTY()
+	bool bOverrideTransformsFromExternalConfig;
 };
 
 

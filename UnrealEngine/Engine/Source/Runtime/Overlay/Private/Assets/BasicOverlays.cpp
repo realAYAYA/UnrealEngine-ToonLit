@@ -4,6 +4,7 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(BasicOverlays)
 
+#include "UObject/AssetRegistryTagsContext.h"
 #if WITH_EDITORONLY_DATA
 #include "EditorFramework/AssetImportData.h"
 #endif
@@ -22,14 +23,21 @@ void UBasicOverlays::PostInitProperties()
 
 void UBasicOverlays::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UBasicOverlays::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
 #if WITH_EDITORONLY_DATA
 	if (AssetImportData)
 	{
-		OutTags.Add(FAssetRegistryTag(SourceFileTagName(), AssetImportData->GetSourceData().ToJson(), FAssetRegistryTag::TT_Hidden));
+		Context.AddTag(FAssetRegistryTag(SourceFileTagName(), AssetImportData->GetSourceData().ToJson(), FAssetRegistryTag::TT_Hidden));
 	}
 #endif	// WITH_EDITORONLY_DATA
 
-	Super::GetAssetRegistryTags(OutTags);
+	Super::GetAssetRegistryTags(Context);
 }
 
 TArray<FOverlayItem> UBasicOverlays::GetAllOverlays() const

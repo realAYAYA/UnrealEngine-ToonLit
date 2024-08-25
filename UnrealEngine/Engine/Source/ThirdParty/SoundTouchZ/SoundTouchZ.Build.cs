@@ -13,7 +13,9 @@ public class SoundTouchZ : ModuleRules
 		{
 			return Target.Platform.IsInGroup(UnrealPlatformGroup.Windows) ||
 				   Target.IsInPlatformGroup(UnrealPlatformGroup.Unix) ||
-				   Target.Platform == UnrealTargetPlatform.Android ||
+				   Target.Platform == UnrealTargetPlatform.Mac ||
+				   // we only have arm64 libs, so we can't enable it when building for x86 or x86+arm64, since there's only one #define possible
+				   (Target.Platform == UnrealTargetPlatform.Android && !Target.Architectures.bIsMultiArch && Target.Architecture == UnrealArch.Arm64) ||
 				   Target.Platform == UnrealTargetPlatform.IOS;
 		}
 	}
@@ -56,7 +58,7 @@ public class SoundTouchZ : ModuleRules
 		}
 		else if (Target.Platform == UnrealTargetPlatform.Mac)
 		{
-			//PublicAdditionalLibraries.Add(Path.Combine(LibraryRootDir, "lib", "Mac", "libSoundTouchZ-Mac-x86_64-Shipping.a"));
+			PublicAdditionalLibraries.Add(Path.Combine(LibraryRootDir, "lib", "Mac", "libSoundTouchZ.a"));
 		}
 		else if (Target.IsInPlatformGroup(UnrealPlatformGroup.Unix))
         {

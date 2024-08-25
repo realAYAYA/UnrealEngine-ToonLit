@@ -26,15 +26,15 @@ TArray<FOptimusCDIPinDefinition> UOptimusSkinnedMeshDataInterface::GetPinDefinit
 	FName Triangle(UOptimusSkinnedMeshComponentSource::Domains::Triangle);
 	
 	TArray<FOptimusCDIPinDefinition> Defs;
-	Defs.Add({"NumVertices", "ReadNumVertices"});
-	Defs.Add({"Position", "ReadPosition", Vertex, "ReadNumVertices"});
-	Defs.Add({"TangentX", "ReadTangentX", Vertex, "ReadNumVertices"});
-	Defs.Add({"TangentZ", "ReadTangentZ", Vertex, "ReadNumVertices"});
-	Defs.Add({"NumUVChannels", "ReadNumUVChannels"});
-	Defs.Add({"UV", "ReadUV", {{Vertex, "ReadNumVertices"}, {Optimus::DomainName::UVChannel, "ReadNumUVChannels"}}});
-	Defs.Add({"Color", "ReadColor", Vertex, "ReadColor" });
-	Defs.Add({"NumTriangles", "ReadNumTriangles" });
-	Defs.Add({"IndexBuffer", "ReadIndexBuffer", Triangle, 3, "ReadNumTriangles"});
+	Defs.Add({"NumVertices", "ReadNumVertices", false});
+	Defs.Add({"Position", "ReadPosition", Vertex, "ReadNumVertices", false});
+	Defs.Add({"TangentX", "ReadTangentX", Vertex, "ReadNumVertices", false});
+	Defs.Add({"TangentZ", "ReadTangentZ", Vertex, "ReadNumVertices", false});
+	Defs.Add({"NumUVChannels", "ReadNumUVChannels", false});
+	Defs.Add({"UV", "ReadUV", {{Vertex, "ReadNumVertices"}, {Optimus::DomainName::UVChannel, "ReadNumUVChannels"}}, false});
+	Defs.Add({"Color", "ReadColor", Vertex, "ReadColor", false});
+	Defs.Add({"NumTriangles", "ReadNumTriangles", false});
+	Defs.Add({"IndexBuffer", "ReadIndexBuffer", Triangle, 3, "ReadNumTriangles", false});
 	return Defs;
 }
 

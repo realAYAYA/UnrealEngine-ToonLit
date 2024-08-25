@@ -10,7 +10,8 @@ public class DisplayClusterProjection : ModuleRules
 		PublicIncludePathModuleNames.AddRange(
 			new string[] {
 				"DisplayClusterConfiguration",
-				"DisplayClusterShaders"
+				"DisplayClusterShaders",
+				"DisplayClusterWarp"
 			});
 
 		PublicDependencyModuleNames.AddRange(
@@ -20,7 +21,9 @@ public class DisplayClusterProjection : ModuleRules
 				"CoreUObject",
 				"DisplayCluster",
 				"Engine",
-				"Projects"
+				"Projects",
+				"Slate",
+				"SlateCore"
 			});
 
 		PrivateDependencyModuleNames.AddRange(
@@ -53,19 +56,20 @@ public class DisplayClusterProjection : ModuleRules
 
 	public void AddThirdPartyDependencies(ReadOnlyTargetRules ROTargetRules)
 	{
-		string ThirdPartyPath = Path.GetFullPath(Path.Combine(ModuleDirectory, "../../ThirdParty/"));
+		string ThirdPartyPath = Path.Combine(PluginDirectory, "Source", "ThirdParty");
 
 		if (Target.Platform == UnrealTargetPlatform.Win64)
 		{
-			// EasyBlend
+			// EasyBlend SDK
 			PrivateIncludePaths.Add(Path.Combine(ThirdPartyPath, "EasyBlend", "Include"));
 			RuntimeDependencies.Add(Path.Combine(ThirdPartyPath, "EasyBlend", "DLL", "mplEasyBlendSDKDX1164.dll"));
+			RuntimeDependencies.Add(Path.Combine(ThirdPartyPath, "EasyBlend", "DLL", "mplEasyBlendSDK.dll"));
 
-			// VIOSO
+			// VIOSO SDK
 			PrivateIncludePaths.Add(Path.Combine(ThirdPartyPath, "VIOSO", "Include"));
 			RuntimeDependencies.Add(Path.Combine(ThirdPartyPath, "VIOSO", "DLL", "VIOSOWarpBlend64.dll"));
 
-			// Domeprojection
+			// Domeprojection SDK
 			PrivateIncludePaths.Add(Path.Combine(ThirdPartyPath, "Domeprojection", "Include"));
 			RuntimeDependencies.Add(Path.Combine(ThirdPartyPath, "Domeprojection", "DLL", "dpLib.dll"));
 			RuntimeDependencies.Add(Path.Combine(ThirdPartyPath, "Domeprojection", "DLL", "WibuCm64.dll"));

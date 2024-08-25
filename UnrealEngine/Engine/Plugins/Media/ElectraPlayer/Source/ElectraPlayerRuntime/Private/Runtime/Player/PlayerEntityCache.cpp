@@ -10,7 +10,7 @@ namespace Electra
 class FPlayerEntityCache : public IPlayerEntityCache
 {
 public:
-	FPlayerEntityCache(IPlayerSessionServices* SessionServices, const FParamDict& Options);
+	FPlayerEntityCache(IPlayerSessionServices* SessionServices);
 	virtual ~FPlayerEntityCache();
 
 	virtual void HandleEntityExpiration() override;
@@ -28,7 +28,6 @@ private:
 
 	static const uint32 kMaxCacheEntries = 256;
 
-	FParamDict Options;
 	IPlayerSessionServices* SessionServices;
 
 	mutable FCriticalSection Lock;
@@ -40,18 +39,17 @@ private:
 /***************************************************************************************************************************************************/
 /***************************************************************************************************************************************************/
 
-TSharedPtrTS<IPlayerEntityCache> IPlayerEntityCache::Create(IPlayerSessionServices* SessionServices, const FParamDict& Options)
+TSharedPtrTS<IPlayerEntityCache> IPlayerEntityCache::Create(IPlayerSessionServices* SessionServices)
 {
-	return MakeSharedTS<FPlayerEntityCache>(SessionServices, Options);
+	return MakeSharedTS<FPlayerEntityCache>(SessionServices);
 }
 
 /***************************************************************************************************************************************************/
 /***************************************************************************************************************************************************/
 /***************************************************************************************************************************************************/
 
-FPlayerEntityCache::FPlayerEntityCache(IPlayerSessionServices* InSessionServices, const FParamDict& InOptions)
-	: Options(InOptions)
-	, SessionServices(InSessionServices)
+FPlayerEntityCache::FPlayerEntityCache(IPlayerSessionServices* InSessionServices)
+	: SessionServices(InSessionServices)
 	, Cache(kMaxCacheEntries)
 {
 }

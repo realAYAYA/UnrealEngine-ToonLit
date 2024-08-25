@@ -192,6 +192,7 @@ public:
 		, _NavigationScrollPadding(0.0f)
 		, _ScrollWhenFocusChanges(EScrollWhenFocusChanges::NoScroll)
 		, _OnUserScrolled()
+	    , _OnScrollBarVisibilityChanged()
 		, _ConsumeMouseWheel(EConsumeMouseWheel::WhenScrollingPossible)
 		{
 			_Clipping = EWidgetClipping::ClipToBounds;
@@ -244,6 +245,9 @@ public:
 
 		/** Called when the button is clicked */
 		SLATE_EVENT(FOnUserScrolled, OnUserScrolled)
+
+		/** Fired when scroll bar visibility changed */
+		SLATE_EVENT(FOnScrollBarVisibilityChanged, OnScrollBarVisibilityChanged)
 
 		SLATE_ARGUMENT(EConsumeMouseWheel, ConsumeMouseWheel);
 
@@ -405,6 +409,8 @@ private:
 	/** Invoked when the user scroll via the scrollbar */
 	void ScrollBar_OnUserScrolled( float InScrollOffsetFraction );
 
+	void ScrollBar_OnScrollBarVisibilityChanged( EVisibility NewVisibility);
+
 	/** Does the user need a hint that they can scroll to the start of the list? */
 	FSlateColor GetStartShadowOpacity() const;
 	
@@ -492,6 +498,9 @@ protected:
 
 	/** Fired when the user scrolls the scrollbox */
 	FOnUserScrolled OnUserScrolled;
+	
+	/** Fired when scroll bar visibility changed */
+	FOnScrollBarVisibilityChanged OnScrollBarVisibilityChanged;
 
 	/** The scrolling and stacking orientation. */
 	EOrientation Orientation;

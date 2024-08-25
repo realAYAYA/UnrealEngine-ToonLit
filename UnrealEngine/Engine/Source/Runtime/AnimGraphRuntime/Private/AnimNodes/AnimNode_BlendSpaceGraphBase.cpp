@@ -74,7 +74,7 @@ void FAnimNode_BlendSpaceGraphBase::UpdateInternal(const FAnimationUpdateContext
 
 	TRACE_BLENDSPACE(Context, *this);
 	TRACE_ANIM_NODE_VALUE(Context, TEXT("Name"), *BlendSpace->GetName());
-	TRACE_ANIM_NODE_VALUE(Context, TEXT("Blend Space"), BlendSpace);
+	TRACE_ANIM_NODE_VALUE(Context, TEXT("Asset"), BlendSpace);
 }
 
 void FAnimNode_BlendSpaceGraphBase::Update_AnyThread(const FAnimationUpdateContext& Context)

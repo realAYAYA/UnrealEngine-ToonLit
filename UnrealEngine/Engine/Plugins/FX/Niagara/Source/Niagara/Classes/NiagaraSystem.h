@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "NiagaraAssetTagDefinitions.h"
 
 #include "NiagaraDataSetCompiledData.h"
 #include "NiagaraDataSetAccessor.h"
@@ -11,6 +12,7 @@
 #include "NiagaraMessageStore.h"
 #include "NiagaraParameterCollection.h"
 #include "NiagaraParameterDefinitionsSubscriber.h"
+#include "NiagaraSystemEmitterState.h"
 #include "NiagaraUserRedirectionParameterStore.h"
 #include "Particles/ParticleSystem.h"
 #include "UObject/Object.h"
@@ -48,6 +50,7 @@ struct FNiagaraGraphCachedDataBase;
 #endif
 
 class UNiagaraDataChannel;
+class ITargetPlatform;
 
 USTRUCT()
 struct FNiagaraEmitterCompiledData
@@ -207,7 +210,7 @@ struct FNiagaraSystemScalabilityOverrides
 
 /** A Niagara System contains multiple Niagara Emitters to create various effects.
  * Niagara Systems can be placed in the world, unlike Emitters, and expose User Parameters to configure an effect at runtime.*/
-UCLASS(BlueprintType, meta= (LoadBehavior = "LazyOnDemand"), MinimalAPI)
+UCLASS(BlueprintType, MinimalAPI, meta = (LoadBehavior = "LazyOnDemand"))
 class UNiagaraSystem : public UFXSystemAsset, public INiagaraParameterDefinitionsSubscriber
 {
 	GENERATED_UCLASS_BODY()
@@ -235,12 +238,9 @@ public:
 #endif
 	NIAGARA_API virtual void BeginDestroy() override;
 	NIAGARA_API virtual bool IsReadyForFinishDestroy() override;
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS // Suppress compiler warning on override of deprecated function
-	UE_DEPRECATED(5.0, "Use version that takes FObjectPreSaveContext instead.")
-	NIAGARA_API virtual void PreSave(const class ITargetPlatform* TargetPlatform) override;
-	NIAGARA_API PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	virtual void PreSave(FObjectPreSaveContext ObjectSaveContext) override;
 #if WITH_EDITOR
+	NIAGARA_API virtual void PostRename(UObject* OldOuter, const FName OldName) override;
 	NIAGARA_API virtual void PreEditChange(FProperty* PropertyThatWillChange)override;
 	NIAGARA_API virtual void PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent) override; 
 	NIAGARA_API virtual void BeginCacheForCookedPlatformData(const ITargetPlatform *TargetPlatform) override;
@@ -371,15 +371,18 @@ public:
 	FORCEINLINE float GetWarmupTime()const { return WarmupTime; }
 	FORCEINLINE int32 GetWarmupTickCount()const { return WarmupTickCount; }
 	FORCEINLINE float GetWarmupTickDelta()const { return WarmupTickDelta; }
+
 	FORCEINLINE bool HasFixedTickDelta() const { return bFixedTickDelta; }
 	FORCEINLINE float GetFixedTickDeltaTime()const { return FixedTickDeltaTime; }
-	NIAGARA_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags)  const override;
+	NIAGARA_API virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
+	NIAGARA_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 
 	FORCEINLINE bool NeedsDeterminism() const { return bDeterminism; }
 	FORCEINLINE int32 GetRandomSeed() const { return RandomSeed; }
 
-	FORCEINLINE void SetWarmupTime(float InWarmupTime) { WarmupTime = InWarmupTime; ResolveWarmupTickCount(); }
-	FORCEINLINE void SetWarmupTickDelta(float InWarmupTickDelta) { WarmupTickDelta = InWarmupTickDelta; ResolveWarmupTickCount(); }
+	NIAGARA_API void SetWarmupTime(float InWarmupTime);
+	NIAGARA_API void SetWarmupTickDelta(float InWarmupTickDelta);
 	NIAGARA_API void ResolveWarmupTickCount();
 
 #if STATS
@@ -387,8 +390,12 @@ public:
 #endif
 
 #if WITH_EDITORONLY_DATA
+	NIAGARA_API virtual void GetAssetRegistryTagMetadata(TMap<FName, FAssetRegistryTagMetadata>& OutMetadata) const override;
+
 	/** Are there any pending compile requests?*/
 	NIAGARA_API bool HasOutstandingCompilationRequests(bool bIncludingGPUShaders = false) const;
+
+	NIAGARA_API bool CompileRequestsShouldBlockGC() const;
 
 	/** Determines if this system has the supplied emitter as an editable and simulating emitter instance. */
 	NIAGARA_API bool ReferencesInstanceEmitter(const FVersionedNiagaraEmitter& Emitter) const;
@@ -400,7 +407,7 @@ public:
 	NIAGARA_API void RemoveSystemParametersForEmitter(const FNiagaraEmitterHandle& EmitterHandle);
 
 	/** Request that any dirty scripts referenced by this system be compiled.*/
-	NIAGARA_API bool RequestCompile(bool bForce, FNiagaraSystemUpdateContext* OptionalUpdateContext = nullptr);
+	NIAGARA_API bool RequestCompile(bool bForce, FNiagaraSystemUpdateContext* OptionalUpdateContext = nullptr, const ITargetPlatform* TargetPlatform = nullptr);
 
 	/** If we have a pending compile request, is it done with yet? */
 	NIAGARA_API bool PollForCompilationComplete(bool bFlushRequestCompile = true);
@@ -441,7 +448,7 @@ public:
 	bool bExposeToLibrary_DEPRECATED;
 
 	/** If this system is exposed to the library, or should be explicitly hidden. */
-	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = "Asset Options", AssetRegistrySearchable, meta = (SkipSystemResetOnChange = "true"))
+	UPROPERTY(AssetRegistrySearchable, meta = (SkipSystemResetOnChange = "true"))
 	ENiagaraScriptLibraryVisibility LibraryVisibility;
 	
 	/** Deprecated template asset bool. Use the TemplateSpecification enum instead. */
@@ -449,15 +456,18 @@ public:
 	bool bIsTemplateAsset_DEPRECATED;
 
 	/** If this system is a regular system, a template or a behavior example. */
-	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = "Asset Options", AssetRegistrySearchable, meta = (SkipSystemResetOnChange = "true"))
-	ENiagaraScriptTemplateSpecification TemplateSpecification;
+	UPROPERTY()
+	ENiagaraScriptTemplateSpecification TemplateSpecification_DEPRECATED;
 
-	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = "Asset Options", AssetRegistrySearchable, meta = (SkipSystemResetOnChange = "true"))
+	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = "Asset Options", AssetRegistrySearchable, DisplayName="Asset Description", meta = (SkipSystemResetOnChange = "true"))
 	FText TemplateAssetDescription;
 
 	/** Category of this system. */
-	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = "Asset Options", AssetRegistrySearchable, meta = (SkipSystemResetOnChange = "true"))
+	UPROPERTY(AssetRegistrySearchable, meta = (SkipSystemResetOnChange = "true"))
 	FText Category;
+
+	UPROPERTY(meta = (SkipSystemResetOnChange = "true"))
+	TArray<FNiagaraAssetTagDefinitionReference> AssetTags;
 
 	UPROPERTY()
 	TArray<TObjectPtr<UNiagaraScript>> ScratchPadScripts;
@@ -478,7 +488,6 @@ public:
 	NIAGARA_API void UpdateSystemAfterLoad();
 	NIAGARA_API void EnsureFullyLoaded() const;
 
-	bool ShouldAutoDeactivate() const { return bAutoDeactivate; }
 	NIAGARA_API bool IsLooping() const;
 
 	const TArray<TSharedRef<const FNiagaraEmitterCompiledData>>& GetEmitterCompiledData() const { return EmitterCompiledData; };
@@ -490,11 +499,17 @@ public:
 	bool SupportsLargeWorldCoordinates() const { return bSupportLargeWorldCoordinates && bLwcEnabledSettingCached; }
 	FORCEINLINE bool ShouldDisableExperimentalVM() const { return bDisableExperimentalVM; }
 
+	FORCEINLINE bool IsInitialOwnerVelocityFromActor() const { return bInitialOwnerVelocityFromActor; }
+
+	NIAGARA_API void ReportAnalyticsData(bool bIsCooking);
+
 #if WITH_EDITORONLY_DATA
 	NIAGARA_API bool UsesEmitter(UNiagaraEmitter* Emitter) const;
 	NIAGARA_API bool UsesEmitter(const FVersionedNiagaraEmitter& VersionedEmitter) const;
 	NIAGARA_API bool UsesScript(const UNiagaraScript* Script)const; 
 	NIAGARA_API void ForceGraphToRecompileOnNextCheck();
+	NIAGARA_API void SetCompileForEdit(bool bNewCompileForEdit);
+	FORCEINLINE bool GetCompileForEdit() const { return bCompileForEdit; }
 
 	static NIAGARA_API void RequestCompileForEmitter(const FVersionedNiagaraEmitter& InEmitter);
 	static NIAGARA_API void RecomputeExecutionOrderForEmitter(const FVersionedNiagaraEmitter& InEmitter);
@@ -509,9 +524,8 @@ public:
 	FORCEINLINE void SetBakeOutRapidIterationOnCook(bool bBakeOut) { bBakeOutRapidIteration = bBakeOut; bBakeOutRapidIterationOnCook = bBakeOut; }
 	FORCEINLINE void SetTrimAttributesOnCook(bool bTrim) { bTrimAttributes = bTrim; bTrimAttributesOnCook = bTrim; }
 
-	/** When enabled we compile for the edit path, which can result in slower system performance but faster editor responsiveness. */
-	UPROPERTY(transient)
-	uint32 bCompileForEdit : 1;
+	/** returns true if the system, and it's underlying scripts support stat scopes and the collection of the timings */
+	NIAGARA_API bool SupportsStatScopedPerformanceMode() const;
 
 protected:
 	/** When enable constant values are baked into the scripts while editing the system, this will increase iteration times but improve performance. */
@@ -547,6 +561,9 @@ protected:
 
 	/* When set the system needs to compile before it can be activated. */
 	uint32 bNeedsRequestCompile : 1;
+
+	/** When enabled we compile for the edit path, which can result in slower system performance but faster editor responsiveness. */
+	uint32 bCompileForEdit : 1;
 
 public:
 	/** Subscriptions to definitions of parameters. */
@@ -602,10 +619,19 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Rendering", meta=(DisplayName="Default Render CustomDepth Pass", EditCondition="bOverrideRenderCustomDepth"))
 	uint8 bRenderCustomDepth : 1;
 
-	/** If true, disables experimental VM, if available */
-	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = "Performance", meta = (DisplayName = "Disable Experimental VM"))
+	/** If true, disables optimized VM, if available */
+	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = "Performance", meta = (DisplayName = "Disable Optimized VM"))
 	uint8 bDisableExperimentalVM : 1;
 
+private:
+	/*
+	When enabled we use the owner actor's velocity for the first frame.
+	If we do not have an owner actor, or this is disable then the first frame's velocity will be zero.
+	*/
+	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = "System")
+	uint8 bInitialOwnerVelocityFromActor : 1 = true;
+
+public:
 	/**
 	When enabled this is the default value set on the component.
 	Mask used for stencil buffer writes.
@@ -689,10 +715,9 @@ public:
 
 	/** When enabled, we follow the settings on the UNiagaraComponent for tick order. When this option is disabled, we ignore any dependencies from data interfaces or other variables and instead fire off the simulation as early in the frame as possible. This greatly
 	reduces overhead and allows the game thread to run faster, but comes at a tradeoff if the dependencies might leave gaps or other visual artifacts.*/
-	UPROPERTY(EditAnywhere, Category = "Performance")
+	UPROPERTY(EditAnywhere, Category = "Performance", AdvancedDisplay)
 	bool bRequireCurrentFrameData = true;
 
-	NIAGARA_API bool HasSystemScriptDIsWithPerInstanceData() const;
 	FORCEINLINE bool HasDIsWithPostSimulateTick() const { return bHasDIsWithPostSimulateTick; }
 	FORCEINLINE bool AllDIsPostSimulateCanOverlapFrames() const { return bAllDIsPostSimulateCanOverlapFrames; }
 	FORCEINLINE bool AsyncWorkCanOverlapTickGroups() const { return bAllDIsPostStageCanOverlapTickGroups; }
@@ -709,7 +734,6 @@ public:
 	FORCEINLINE bool GetOverrideScalabilitySettings()const { return bOverrideScalabilitySettings; }
 	FORCEINLINE void SetOverrideScalabilitySettings(bool bOverride) { bOverrideScalabilitySettings = bOverride; }
 
-
 	NIAGARA_API void GatherStaticVariables(TArray<FNiagaraVariable>& OutVars, TArray<FNiagaraVariable>& OutEmitterVars) const;
 #endif
 	NIAGARA_API UNiagaraEffectType* GetEffectType()const;
@@ -717,6 +741,12 @@ public:
 	NIAGARA_API const FNiagaraSystemScalabilityOverride& GetCurrentOverrideSettings() const;
 	FORCEINLINE bool NeedsSortedSignificanceCull()const{ return bNeedsSortedSignificanceCull; }
 	
+	NIAGARA_API FNiagaraPlatformSet& GetScalabilityPlatformSet() { return Platforms; }
+	NIAGARA_API const FNiagaraPlatformSet& GetScalabilityPlatformSet() const { return Platforms; }
+
+	/** Returns true if this emitter's platform filter allows it on this platform and quality level. */
+	NIAGARA_API bool IsAllowedByScalability() const;
+
 	NIAGARA_API void UpdateScalability();
 
 	NIAGARA_API ENiagaraCullProxyMode GetCullProxyMode()const;
@@ -763,7 +793,15 @@ public:
 
 	/** Updates the rapid iteration parameters for all scripts referenced by the system. */
 	NIAGARA_API void PrepareRapidIterationParametersForCompilation();
+
+	bool AllowValidation() const { return bAllowValidation; }
 #endif
+
+	/** Can we run the code only system state path, i.e. we don't need to invoke the VVM / store per instance data set? */
+	bool SystemStateFastPathEnabled() const { return bSystemStateFastPathEnabled && bAllowSystemStateFastPath; }
+
+	/** Access the code system state data. */
+	const FNiagaraSystemStateData& GetSystemStateData() const { return SystemStateData; }
 
 private:
 #if WITH_EDITORONLY_DATA
@@ -795,6 +833,8 @@ private:
 	NIAGARA_API void ResolveParameterStoreBindings();
 #endif
 
+
+	void ResolveRequiresScripts();
 	NIAGARA_API void ResolveScalabilitySettings();
 	NIAGARA_API void UpdatePostCompileDIInfo();
 	NIAGARA_API void UpdateDITickFlags();
@@ -820,6 +860,9 @@ protected:
 
 	UPROPERTY(EditAnywhere, Category = "Scalability", meta = (EditCondition="bOverrideScalabilitySettings", DisplayInScalabilityContext))
 	FNiagaraSystemScalabilityOverrides SystemScalabilityOverrides;
+
+	UPROPERTY(EditAnywhere, Category = "Scalability", meta = (DisplayInScalabilityContext))
+	FNiagaraPlatformSet Platforms;
 
 	/** Handles to the emitter this System will simulate. */
 	UPROPERTY()
@@ -885,31 +928,28 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "System", meta = (SkipSystemResetOnChange = "true", EditCondition = "bFixedBounds"))
 	FBox FixedBounds;
 
-	UPROPERTY(EditAnywhere, Category = Performance, meta = (ToolTip = "Auto-deactivate system if all emitters are determined to not spawn particles again, regardless of lifetime."))
-	bool bAutoDeactivate;
-
 	/**
 	When disabled we will generate a RandomSeed per instance on reset which is not deterministic.
 	When enabled we will always use the RandomSeed from the system plus the components RandomSeedOffset, this allows for determinism but variance between components.
 	*/
-	UPROPERTY(EditAnywhere, Category = "Random")
+	UPROPERTY(EditAnywhere, Category = "System")
 	bool bDeterminism = false;
 
 	/** Seed used for system script random number generator. */
-	UPROPERTY(EditAnywhere, Category = "Random", meta = (EditCondition = "bDeterminism"))
+	UPROPERTY(EditAnywhere, Category = "System", meta = (EditCondition = "bDeterminism", EditConditionHides))
 	int32 RandomSeed = 0;
 
 	/** Warm up time in seconds. Used to calculate WarmupTickCount. Rounds down to the nearest multiple of WarmupTickDelta. */
-	UPROPERTY(EditAnywhere, Category = Warmup, meta = (ForceUnits=s))
-	float WarmupTime;
+	UPROPERTY(EditAnywhere, Category = "System", meta = (ForceUnits=s))
+	float WarmupTime = 0.0f;
 
 	/** Number of ticks to process for warmup. You can set by this or by time via WarmupTime. */
-	UPROPERTY(EditAnywhere, Category = Warmup)
-	int32 WarmupTickCount;
+	UPROPERTY(EditAnywhere, Category = "System", meta = (EditCondition = "WarmupTime > 0.0", EditConditionHides))
+	int32 WarmupTickCount = 0;
 
 	/** Delta time to use for warmup ticks. */
-	UPROPERTY(EditAnywhere, Category = Warmup, meta = (ForceUnits=s))
-	float WarmupTickDelta;
+	UPROPERTY(EditAnywhere, Category = "System", meta = (ForceUnits=s, EditCondition = "WarmupTime > 0.0", EditConditionHides))
+	float WarmupTickDelta = 1.0f / 15.0f;
 
 	UPROPERTY(EditAnywhere, Category = "System", meta = (InlineEditConditionToggle))
 	bool bFixedTickDelta = false;
@@ -922,7 +962,7 @@ protected:
 	The max number of substeps per frame can be set via fx.Niagara.SystemSimulation.MaxTickSubsteps
 	*/
 	UPROPERTY(EditAnywhere, Category = "System", meta = (EditCondition = "bFixedTickDelta", ForceUnits=s))
-	float FixedTickDeltaTime = 0.01667;
+	float FixedTickDeltaTime = 0.01667f;
 
 #if WITH_EDITORONLY_DATA
 	/** Settings used inside the baker */
@@ -973,7 +1013,8 @@ public:
 	const FNiagaraSystemStaticBuffers* GetStaticBuffers() const { return StaticBuffers.Get(); }
 
 protected:
-	NIAGARA_API void GenerateStatID()const;
+	void UpdateStatID() const;
+	void GenerateStatID() const;
 #if STATS
 	mutable TStatId StatID_GT;
 	mutable TStatId StatID_GT_CNC;
@@ -997,7 +1038,17 @@ protected:
 	uint32 bHasAnyGPUEmitters : 1;
 	uint32 bNeedsSortedSignificanceCull : 1;
 
+	/** When enabled if all emitters don't require script execution and the system script is empty / constant we can invoke a faster CPU path. */
+	UPROPERTY(EditAnywhere, Category = "Performance", AdvancedDisplay)
+	uint32 bAllowSystemStateFastPath : 1 = true;
+
+	UPROPERTY()
+	uint32 bSystemStateFastPathEnabled : 1 = true;
+
 #if WITH_EDITORONLY_DATA
+	/* In some cases we can not run validation as the data has been stripped.  This is a temporary workaround to skip validation in those cases. */
+	uint32 bAllowValidation : 1 = true;
+
 	/** Messages associated with the System asset. */
 	UPROPERTY()
 	TMap<FGuid, TObjectPtr<UNiagaraMessageDataBase>> MessageKeyToMessageMap_DEPRECATED;
@@ -1013,6 +1064,9 @@ protected:
 
 	struct FStaticBuffersDeletor { void operator()(FNiagaraSystemStaticBuffers* Ptr) const; };
 	TUniquePtr<FNiagaraSystemStaticBuffers, FStaticBuffersDeletor> StaticBuffers;
+
+	UPROPERTY()
+	FNiagaraSystemStateData SystemStateData;
 
 	FRenderCommandFence WaitRenderCommandsFence;
 };

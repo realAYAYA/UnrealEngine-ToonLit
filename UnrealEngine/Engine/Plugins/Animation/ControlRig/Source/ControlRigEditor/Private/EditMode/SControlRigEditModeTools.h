@@ -31,7 +31,7 @@ public:
 	SLATE_BEGIN_ARGS(SControlRigEditModeTools) {}
 	SLATE_END_ARGS();
 
-	void Construct(const FArguments& InArgs, TSharedPtr<FControlRigEditModeToolkit> InOwningToolkit, FControlRigEditMode& InEditMode, UWorld* InWorld);
+	void Construct(const FArguments& InArgs, TSharedPtr<FControlRigEditModeToolkit> InOwningToolkit, FControlRigEditMode& InEditMode);
 	/** Set the objects to be displayed in the details panel */
 	void SetSettingsDetailsObject(const TWeakObjectPtr<>& InObject);
 #if USE_LOCAL_DETAILS
@@ -125,6 +125,11 @@ private:
 	EVisibility GetRigOptionExpanderVisibility() const;
 
 	void OnRigOptionFinishedChange(const FPropertyChangedEvent& PropertyChangedEvent);
+	
+	/** constraint type to show selection*/
+	void OnSelectShowConstraints(int32 Index);
+	FText GetShowConstraintsName() const;
+	FText GetShowConstraintsTooltip() const;
 
 private:
 	/** Toolbar functions and windows*/

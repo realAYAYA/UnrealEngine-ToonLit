@@ -8,24 +8,29 @@
 #include "Iris/Core/IrisProfiler.h"
 #include "Iris/Serialization/NetSerializationContext.h"
 #include "Iris/Serialization/InternalNetSerializationContext.h"
+#include "Net/Core/Trace/NetDebugName.h"
 #include "Net/Core/Trace/NetTrace.h"
 #include "UObject/CoreNetTypes.h"
 #include "UObject/Object.h"
 #include "UObject/UObjectGlobals.h"
 #include "UObject/CoreNetTypes.h"
+#include "ProfilingDebugging/CsvProfiler.h"
+
+CSV_DEFINE_CATEGORY(IrisCommon, true);
 
 namespace UE::Net::Private
 {
 
-FNetRefHandleManager::FNetRefHandleManager(FReplicationProtocolManager& InReplicationProtocolManager, uint32 InReplicationSystemId, uint32 InMaxActiveObjectCount)
+FNetRefHandleManager::FNetRefHandleManager(FReplicationProtocolManager& InReplicationProtocolManager, uint32 InReplicationSystemId, uint32 InMaxActiveObjectCount, uint32 InPreAllocatedObjectCount)
 : ActiveObjectCount(0)
 , MaxActiveObjectCount(InMaxActiveObjectCount)
+, PreAllocatedObjectCount(InPreAllocatedObjectCount > 0 ? InPreAllocatedObjectCount : 1)	// PreAllocatedObjectCount must be a minimum of 1 to account for InvalidInternalIndex.
 , ReplicationSystemId(InReplicationSystemId)
-, ScopableInternalIndices(MaxActiveObjectCount)
-, PrevFrameScopableInternalIndices(MaxActiveObjectCount)
+, GlobalScopableInternalIndices(MaxActiveObjectCount)
+, ScopeFrameData(MaxActiveObjectCount)
 , RelevantObjectsInternalIndices(MaxActiveObjectCount)
 , PolledObjectsInternalIndices(MaxActiveObjectCount)
-, DirtyObjectsToCopy(MaxActiveObjectCount)
+, DirtyObjectsToQuantize(MaxActiveObjectCount)
 , AssignedInternalIndices(MaxActiveObjectCount)
 , SubObjectInternalIndices(MaxActiveObjectCount)
 , DependentObjectInternalIndices(MaxActiveObjectCount)
@@ -36,18 +41,58 @@ FNetRefHandleManager::FNetRefHandleManager(FReplicationProtocolManager& InReplic
 , NextDynamicHandleIndex(1)
 , ReplicationProtocolManager(InReplicationProtocolManager)
 {
+	// Ensure that the pre-allocated object count is not greater than the maximum. If it is, just set it to the maximum.
+	if (PreAllocatedObjectCount > MaxActiveObjectCount)
+	{
+		UE_LOG(LogIris, Error, TEXT("PreAllocatedObjectCount (%d) must be smaller or equal to MaxActiveObjectCount (%d). Setting PreAllocatedObjectCount to MaxActiveObjectCount."), PreAllocatedObjectCount, MaxActiveObjectCount);
+		PreAllocatedObjectCount = MaxActiveObjectCount;
+	}
+
+	// Calculate the largest internal index and must be a minimum of 0 to support InvalidInternalIndex.
+	LargestInternalIndex = PreAllocatedObjectCount > 0 ? PreAllocatedObjectCount - 1 : 0;
+
+	UE_LOG(LogIris, Log, TEXT("NetRefHandleManager: Configured with MaxActiveObjectCount=%d, PreAllocatedObjectCount=%d and LargestInternalIndex=%d."), MaxActiveObjectCount, PreAllocatedObjectCount, LargestInternalIndex);
+
 	static_assert(InvalidInternalIndex == 0, "FNetRefHandleManager::InvalidInternalIndex has an unexpected value");
 	// Mark the invalid index as used
 	AssignedInternalIndices.SetBit(0);
 
-	ReplicatedObjectData.SetNumUninitialized(MaxActiveObjectCount);
-	ReplicatedObjectRefCount.SetNumZeroed(MaxActiveObjectCount);
-	ReplicatedObjectStateBuffers.SetNumZeroed(MaxActiveObjectCount);
-	
-	ReplicatedInstances.SetNumZeroed(MaxActiveObjectCount);
+	ReplicatedObjectData = TNetChunkedArray<FReplicatedObjectData>(PreAllocatedObjectCount, EInitMemory::Constructor);
+	ReplicatedObjectRefCount = TNetChunkedArray<uint16>(PreAllocatedObjectCount, EInitMemory::Zero);
+	ReplicatedObjectStateBuffers = TNetChunkedArray<uint8*>(PreAllocatedObjectCount, EInitMemory::Zero);
+
+	ReplicatedInstances = TNetChunkedArray<TObjectPtr<UObject>>(PreAllocatedObjectCount, EInitMemory::Zero);
 
 	// For convenience we initialize ReplicatedObjectData for InvalidInternalIndex so that GetReplicatedObjectDataNoCheck returns something useful.
 	ReplicatedObjectData[InvalidInternalIndex] = FReplicatedObjectData();
+}
+
+void FNetRefHandleManager::GrowBuffersToLargestIndex(uint32 InternalIndex)
+{
+	if (InternalIndex > LargestInternalIndex)
+	{
+		QUICK_SCOPE_CYCLE_COUNTER(STAT_FNetRefHandleManager_GrowBuffersToLargestIndex);
+		CSV_CUSTOM_STAT(IrisCommon, DynamicBufferGrowCount, 1, ECsvCustomStatOp::Accumulate);
+
+		// This call will add the neccessary number of elements and chunks to ReplicatedObjectRefCount
+		// to accomidate InternalIndex. Once this is done, we determine how many more elements could be
+		// added to the array without adding a new chunk and ensure all of the other buffers have this
+		// many elements. 
+		// 
+		// This optimization will reduce the number of calls to AddToIndexUninitialized() and AddToIndexZeroed()
+		// but assumes each buffer is going to have the same number of elements all the time.
+		ReplicatedObjectRefCount.AddToIndexUninitialized(InternalIndex);
+		const int32 LargestIndexInCurrentChunk = ReplicatedObjectRefCount.Capacity() - 1;
+
+		ReplicatedObjectRefCount.AddToIndexUninitialized(LargestIndexInCurrentChunk);
+		ReplicatedObjectStateBuffers.AddToIndexZeroed(LargestIndexInCurrentChunk);
+		ReplicatedInstances.AddToIndexZeroed(LargestIndexInCurrentChunk);
+		ReplicatedObjectData.AddToIndexZeroed(LargestIndexInCurrentChunk);
+		
+		LargestInternalIndex = static_cast<uint32>(LargestIndexInCurrentChunk);
+
+		OnLargestIndexIncreaseDelegate.Broadcast(LargestInternalIndex);
+	}
 }
 
 uint64 FNetRefHandleManager::GetNextNetRefHandleId(uint64 HandleId) const
@@ -73,19 +118,26 @@ FInternalNetRefIndex FNetRefHandleManager::InternalCreateNetObject(const FNetRef
 {
 	if (ActiveObjectCount >= MaxActiveObjectCount)
 	{
+		UE_LOG(LogIris, Error, TEXT("NetRefHandleManager: Maximum active object count reached (%d/%d)."), ActiveObjectCount, MaxActiveObjectCount);
+		ensureMsgf(false, TEXT("NetRefHandleManager: Maximum active object count reached (%d/%d)."), ActiveObjectCount, MaxActiveObjectCount);
 		return InvalidInternalIndex;
 	}
 
 	// Verify that the handle is free
 	if (RefHandleToInternalIndex.Contains(NetRefHandle))
 	{
-		ensureAlwaysMsgf(false, TEXT("NetRefHandleManager::InternalCreateNetObject %s already exists"), *NetRefHandle.ToString());
+		ensureMsgf(false, TEXT("NetRefHandleManager::InternalCreateNetObject %s already exists"), *NetRefHandle.ToString());
 		return InvalidInternalIndex;
 	}
 
 	const uint32 InternalIndex = GetNextFreeInternalIndex();
 	if (InternalIndex != InvalidInternalIndex)
 	{
+		UE_LOG(LogIris, Verbose, TEXT("FNetRefHandleManager::InternalCreateNetObject ( InternalIndex: %u ) %s"), InternalIndex, *NetRefHandle.ToString());
+
+		// Track the largest internal index and grow internal buffers if neccessary.
+		GrowBuffersToLargestIndex(InternalIndex);
+
 		// Store data;
 		FReplicatedObjectData& Data = ReplicatedObjectData[InternalIndex];
 
@@ -95,7 +147,7 @@ FInternalNetRefIndex FNetRefHandleManager::InternalCreateNetObject(const FNetRef
 		Data.NetHandle = GlobalHandle;
 		Data.Protocol = ReplicationProtocol;
 		Data.InstanceProtocol = nullptr;
-		ReplicatedObjectStateBuffers.GetData()[InternalIndex] = nullptr;
+		ReplicatedObjectStateBuffers[InternalIndex] = nullptr;
 		Data.ReceiveStateBuffer = nullptr;
 		Data.bShouldPropagateChangedStates = 1U;
 
@@ -112,7 +164,7 @@ FInternalNetRefIndex FNetRefHandleManager::InternalCreateNetObject(const FNetRef
 
 		// Mark Handle index as assigned and scopable for now
 		AssignedInternalIndices.SetBit(InternalIndex);
-		ScopableInternalIndices.SetBit(InternalIndex);
+		GlobalScopableInternalIndices.SetBit(InternalIndex);
 
 		// When a handle is first created, it is not set to be a subobject
 		SubObjectInternalIndices.ClearBit(InternalIndex);
@@ -126,6 +178,11 @@ FInternalNetRefIndex FNetRefHandleManager::InternalCreateNetObject(const FNetRef
 		ReplicatedObjectRefCount[InternalIndex] = 0;
 
 		return InternalIndex;
+	}
+	else
+	{
+		UE_LOG(LogIris, Error, TEXT("NetRefHandleManager: Cannot find free active object (%d/%d)."), ActiveObjectCount, MaxActiveObjectCount);
+		ensureMsgf(false, TEXT("NetRefHandleManager: Cannot find free active object (%d/%d)."), ActiveObjectCount, MaxActiveObjectCount);
 	}
 		
 	return InvalidInternalIndex;
@@ -149,6 +206,15 @@ const FReplicationInstanceProtocol* FNetRefHandleManager::DetachInstanceProtocol
 	{
 		FReplicatedObjectData& Data = ReplicatedObjectData[InternalIndex];
 		const FReplicationInstanceProtocol* InstanceProtocol = Data.InstanceProtocol;
+
+		// Detect if someone unexpectedly tries to detach replicated instance
+		const bool bDetachedInstancedIsPendingEndReplication = ReplicatedObjectData[InternalIndex].bPendingEndReplication == 1U;
+		if (!bDetachedInstancedIsPendingEndReplication)
+		{
+			UE_LOG(LogIris, Warning, TEXT("FNetRefHandleManager::DetachInstanceProtocol - DetachInstanceProtocol %s %s (%s) from client"), *PrintObjectFromIndex(InternalIndex),*Data.RefHandle.ToString(), Data.Protocol->DebugName->Name);
+			ensureMsgf(false, TEXT("DetachInstanceProtocol for %s %s (%s) from client"), *PrintObjectFromIndex(InternalIndex),*Data.RefHandle.ToString(), Data.Protocol->DebugName->Name);
+		}
+		
 		Data.InstanceProtocol = nullptr;
 		ReplicatedInstances[InternalIndex] = nullptr;
 		
@@ -197,7 +263,7 @@ FNetRefHandle FNetRefHandleManager::CreateNetObject(FNetRefHandle WantedHandle, 
 			ConditionalChangeMask.SetAllBits();
 		}
 
-		ReplicatedObjectStateBuffers.GetData()[InternalIndex] = StateBuffer;
+		ReplicatedObjectStateBuffers[InternalIndex] = StateBuffer;
 
 		// Bump protocol refcount
 		ReplicationProtocol->AddRef();
@@ -253,7 +319,7 @@ void FNetRefHandleManager::InternalDestroyNetObject(FInternalNetRefIndex Interna
 
 	UE_LOG(LogIris, Verbose, TEXT("FNetRefHandleManager::InternalDestroyNetObject ( InternalIndex: %u ) %s"), InternalIndex, *Data.RefHandle.ToString());
 
-	uint8* StateBuffer = ReplicatedObjectStateBuffers.GetData()[InternalIndex];
+	uint8* StateBuffer = ReplicatedObjectStateBuffers[InternalIndex];
 	// Free any allocated resources
 	if (EnumHasAnyFlags(Data.Protocol->ProtocolTraits, EReplicationProtocolTraits::HasDynamicState))
 	{
@@ -308,7 +374,7 @@ void FNetRefHandleManager::InternalDestroyNetObject(FInternalNetRefIndex Interna
 	FMemory::Free(Data.ReceiveStateBuffer);
 
 	// Clear pointer to state buffer
-	ReplicatedObjectStateBuffers.GetData()[InternalIndex] = nullptr;
+	ReplicatedObjectStateBuffers[InternalIndex] = nullptr;
 
 	UE_NET_TRACE_NETHANDLE_DESTROYED(Data.RefHandle);
 
@@ -370,7 +436,7 @@ void FNetRefHandleManager::RemoveFromScope(FInternalNetRefIndex InternalIndex)
 	// Can only remove an object from scope if it is assignable
 	if (ensure(AssignedInternalIndices.GetBit(InternalIndex)))
 	{
-		ScopableInternalIndices.ClearBit(InternalIndex);
+		GlobalScopableInternalIndices.ClearBit(InternalIndex);
 	}
 }
 
@@ -386,7 +452,7 @@ void FNetRefHandleManager::DestroyNetObject(FNetRefHandle RefHandle)
 		NetHandleToInternalIndex.Remove(Data.NetHandle);
 
 		// Remove from scopable objects if not already done
-		ScopableInternalIndices.ClearBit(InternalIndex);
+		GlobalScopableInternalIndices.ClearBit(InternalIndex);
 
 		// We always defer the actual destroy
 		PendingDestroyInternalIndices.Add(InternalIndex);
@@ -568,12 +634,17 @@ bool FNetRefHandleManager::SetSubObjectNetCondition(FInternalNetRefIndex SubObje
 	return false;
 }
 
-FNetRefHandle FNetRefHandleManager::GetSubObjectOwner(FNetRefHandle SubObjectRefHandle) const
+FNetRefHandle FNetRefHandleManager::GetRootObjectOfSubObject(FNetRefHandle SubObjectRefHandle) const
 {
 	const FInternalNetRefIndex SubObjectInternalIndex = GetInternalIndex(SubObjectRefHandle);
 	const FInternalNetRefIndex OwnerInternalIndex = SubObjectInternalIndex != InvalidInternalIndex ? ReplicatedObjectData[SubObjectInternalIndex].SubObjectRootIndex : InvalidInternalIndex;
 
 	return OwnerInternalIndex != InvalidInternalIndex ? ReplicatedObjectData[OwnerInternalIndex].RefHandle : FNetRefHandle();
+}
+
+FInternalNetRefIndex FNetRefHandleManager::GetRootObjectInternalIndexOfSubObject(FInternalNetRefIndex SubObjectIndex) const
+{
+	return SubObjectIndex != InvalidInternalIndex ? ReplicatedObjectData[SubObjectIndex].SubObjectRootIndex : InvalidInternalIndex;
 }
 
 bool FNetRefHandleManager::AddDependentObject(FNetRefHandle ParentRefHandle, FNetRefHandle DependentObjectRefHandle, EDependentObjectSchedulingHint SchedulingHint, EAddDependentObjectFlags Flags)
@@ -630,7 +701,7 @@ bool FNetRefHandleManager::AddDependentObject(FNetRefHandle ParentRefHandle, FNe
 	{
 		// If this gets out of sync something is messed up
 		check(bDependentHadParentAlready == bDependentIsAlreadyDependant);
-		ensureAlwaysMsgf(false, TEXT("FNetRefHandleManager::AddDependentObject %s already is a child of %s parent %s"), *DependentObjectRefHandle.ToString(), *GetReplicatedObjectDataNoCheck(DependentObjectData.SubObjectRootIndex).RefHandle.ToString(), *ParentRefHandle.ToString());
+		ensureMsgf(false, TEXT("FNetRefHandleManager::AddDependentObject %s already is a child of %s parent %s"), *PrintObjectFromNetRefHandle(DependentObjectRefHandle), *PrintObjectFromIndex(DependentObjectData.SubObjectRootIndex), *PrintObjectFromNetRefHandle(ParentRefHandle));
 	}
 
 	return true;
@@ -756,7 +827,10 @@ void FNetRefHandleManager::SetShouldPropagateChangedStates(FNetRefHandle Handle,
 
 void FNetRefHandleManager::AddReferencedObjects(FReferenceCollector& Collector)
 {
-	Collector.AddReferencedObjects(ReplicatedInstances);
+	for (TObjectPtr<UObject>& Object : ReplicatedInstances)
+	{
+		Collector.AddReferencedObject(Object);
+	}
 }
 
 uint64 FNetRefHandleManager::MakeNetRefHandleId(uint64 Id, bool bIsStatic)
@@ -790,5 +864,49 @@ FNetRefHandle FNetRefHandleManager::MakeNetRefHandleFromId(uint64 Id)
 	return Handle;
 }
 
+void FNetRefHandleManager::OnPreSendUpdate()
+{
+	// The current frame scope is based on all indexes assigned up to this point.
+	ScopeFrameData.CurrentFrameScopableInternalIndices.Copy(GlobalScopableInternalIndices);
 
+	// Allow the list to be read.
+	ScopeFrameData.bIsValid = true;
 }
+
+void FNetRefHandleManager::OnPostSendUpdate()
+{
+	// Store the scope for the next frame.
+	ScopeFrameData.PrevFrameScopableInternalIndices.Copy(ScopeFrameData.CurrentFrameScopableInternalIndices);
+
+	// From here no-one should access the ScopeFrameData
+	ScopeFrameData.bIsValid = false;
+
+	CSV_CUSTOM_STAT(IrisCommon, ActiveReplicatedObjectCount, (float)ActiveObjectCount, ECsvCustomStatOp::Set);
+}
+
+FString FNetRefHandleManager::PrintObjectFromIndex(FInternalNetRefIndex ObjectIndex) const
+{
+	if (ObjectIndex != InvalidInternalIndex)
+	{
+		const FNetRefHandle NetRefHandle = GetNetRefHandleFromInternalIndex(ObjectIndex);
+		const FReplicatedObjectData& ObjectData = GetReplicatedObjectDataNoCheck(ObjectIndex);
+
+		if (ObjectData.SubObjectRootIndex == InvalidInternalIndex)
+		{
+			return FString::Printf(TEXT("RootObject %s (InternalIndex: %u) (%s)"), *GetNameSafe(ReplicatedInstances[ObjectIndex]), ObjectIndex, *NetRefHandle.ToString());
+		}
+		else
+		{
+			const FNetRefHandle RootNetRefHandle = GetNetRefHandleFromInternalIndex(ObjectData.SubObjectRootIndex);
+			return FString::Printf(TEXT("SubObject %s (InternalIndex: %u) (%s) tied to RootObject %s (InternalIndex: %u) (%s)"), 
+								*GetNameSafe(ReplicatedInstances[ObjectIndex]), ObjectIndex, *NetRefHandle.ToString(),
+								*GetNameSafe(ReplicatedInstances[ObjectData.SubObjectRootIndex]), ObjectData.SubObjectRootIndex, *RootNetRefHandle.ToString());
+		}
+	}
+	else
+	{
+		return FString(TEXT("InvalidObject (InternalIndex: Invalid)"));
+	}
+}
+
+} // end namespace UE::Net::Private

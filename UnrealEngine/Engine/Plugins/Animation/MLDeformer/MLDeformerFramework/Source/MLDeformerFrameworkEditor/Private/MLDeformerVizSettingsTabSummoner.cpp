@@ -40,7 +40,7 @@ namespace UE::MLDeformer
 	{
 		return IDocumentation::Get()->CreateToolTip(
 			LOCTEXT("VizSettingsTooltip", "The visualization settings for the ML Deformer."), 
-			NULL, 
+			nullptr, 
 			TEXT("Shared/Editors/Persona"), 
 			TEXT("MLDeformerVizSettings_Window"));
 	}

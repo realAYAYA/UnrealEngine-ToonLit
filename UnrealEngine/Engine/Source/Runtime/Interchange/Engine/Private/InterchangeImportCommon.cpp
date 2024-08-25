@@ -9,8 +9,11 @@
 #include "InterchangePythonPipelineBase.h"
 #include "InterchangeSceneImportAsset.h"
 #include "InterchangeSourceData.h"
+#include "InterchangeTranslatorBase.h"
 #include "Nodes/InterchangeBaseNodeContainer.h"
 #include "Nodes/InterchangeFactoryBaseNode.h"
+#include "Types/AttributeStorage.h"
+
 #include "UObject/Object.h"
 #include "EditorFramework/AssetImportData.h"
 #include "HAL/FileManager.h"
@@ -21,7 +24,7 @@ namespace UE::Interchange
 	{
 		UInterchangeAssetImportData* BeginSetupAssetData(FFactoryCommon::FUpdateImportAssetDataParameters& Parameters)
 		{
-			TRACE_CPUPROFILER_EVENT_SCOPE("UE::Interchange::Private::ImportCommon::BeginSetupAssetData")
+			TRACE_CPUPROFILER_EVENT_SCOPE(UE::Interchange::Private::ImportCommon::BeginSetupAssetData)
 			if (!ensure(IsInGameThread()))
 			{
 				return nullptr;
@@ -66,7 +69,7 @@ namespace UE::Interchange
 
 		void EndSetupAssetData(FFactoryCommon::FUpdateImportAssetDataParameters& Parameters, UInterchangeAssetImportData* AssetImportData)
 		{
-			TRACE_CPUPROFILER_EVENT_SCOPE("UE::Interchange::Private::ImportCommon::EndSetupAssetData")
+			TRACE_CPUPROFILER_EVENT_SCOPE(UE::Interchange::Private::ImportCommon::EndSetupAssetData)
 			UInterchangeBaseNodeContainer* FactoryNodeContainer = NewObject<UInterchangeBaseNodeContainer>(AssetImportData);
 			//We copy only the factory node dependencies, we use this only 
 			if (UInterchangeFactoryBaseNode* FactoryNode = Cast<UInterchangeFactoryBaseNode>(Parameters.NodeContainer->GetFactoryNode(Parameters.NodeUniqueID)))
@@ -78,6 +81,11 @@ namespace UE::Interchange
 				RecursivelyDuplicateFactoryNodeDependencies(Parameters.NodeContainer, FactoryNodeContainer, FactoryDependencies);
 			}
 			AssetImportData->SetNodeContainer(FactoryNodeContainer);
+
+			if (UInterchangeTranslatorSettings* InterchangeTranslatorSettings = Parameters.Translator->GetSettings())
+			{
+				AssetImportData->SetTranslatorSettings(InterchangeTranslatorSettings);
+			}
 
 			TArray<UObject*> NewPipelines;
 			for (const UObject* Pipeline : Parameters.Pipelines)
@@ -114,23 +122,26 @@ namespace UE::Interchange
 																						, const UInterchangeSourceData* InSourceData
 																						, FString InNodeUniqueID
 																						, UInterchangeBaseNodeContainer* InNodeContainer
-																						, const TArray<UObject*>& InPipelines)
+																						, const TArray<UObject*>& InPipelines
+																						, const UInterchangeTranslatorBase* InTranslator)
 		: AssetImportDataOuter(InAssetImportDataOuter)
 		, AssetImportData(InAssetImportData)
 		, SourceData(InSourceData)
 		, NodeUniqueID(InNodeUniqueID)
 		, NodeContainer(InNodeContainer)
 		, Pipelines(InPipelines)
+		, Translator(InTranslator)
 	{
 		ensure(AssetImportDataOuter);
 		ensure(SourceData);
 		ensure(!NodeUniqueID.IsEmpty());
 		ensure(NodeContainer);
+		ensure(Translator);
 	}
 
 	UAssetImportData* FFactoryCommon::UpdateImportAssetData(FUpdateImportAssetDataParameters& Parameters)
 	{
-		TRACE_CPUPROFILER_EVENT_SCOPE("UE::Interchange::FFactoryCommon::UpdateImportAssetData")
+		TRACE_CPUPROFILER_EVENT_SCOPE(UE::Interchange::FFactoryCommon::UpdateImportAssetData)
 		return UpdateImportAssetData(Parameters, [&Parameters](UInterchangeAssetImportData* AssetImportData)
 			{
 #if WITH_EDITORONLY_DATA
@@ -146,7 +157,7 @@ namespace UE::Interchange
 
 	UAssetImportData* FFactoryCommon::UpdateImportAssetData(FUpdateImportAssetDataParameters& Parameters, TFunctionRef<void(UInterchangeAssetImportData*)> CustomFileSourceUpdate)
 	{
-		TRACE_CPUPROFILER_EVENT_SCOPE("UE::Interchange::FFactoryCommon::UpdateImportAssetData2")
+		TRACE_CPUPROFILER_EVENT_SCOPE(UE::Interchange::FFactoryCommon::UpdateImportAssetData2)
 #if WITH_EDITORONLY_DATA
 		if (!ensure(IsInGameThread()))
 		{
@@ -186,13 +197,15 @@ namespace UE::Interchange
 																				, const UInterchangeSourceData* InSourceData
 																				, FString InNodeUniqueID
 																				, UInterchangeBaseNodeContainer* InNodeContainer
-																				, const TArray<UObject*>& InPipelines)
+																				, const TArray<UObject*>& InPipelines
+																				, const UInterchangeTranslatorBase* InTranslator)
 		: FUpdateImportAssetDataParameters(InAssetImportDataOuter
 			, InAssetImportData
 			, InSourceData
 			, InNodeUniqueID
 			, InNodeContainer
 			, InPipelines
+			, InTranslator
 			)
 		, SourceFiles()
 	{
@@ -200,7 +213,7 @@ namespace UE::Interchange
 
 	UAssetImportData* FFactoryCommon::SetImportAssetData(FSetImportAssetDataParameters& Parameters)
 	{
-		TRACE_CPUPROFILER_EVENT_SCOPE("UE::Interchange::FFactoryCommon::SetImportAssetData")
+		TRACE_CPUPROFILER_EVENT_SCOPE(UE::Interchange::FFactoryCommon::SetImportAssetData)
 		UInterchangeAssetImportData* AssetImportData = Private::ImportCommon::BeginSetupAssetData(Parameters);
 
 		// Update the source files
@@ -236,7 +249,7 @@ namespace UE::Interchange
 
 	bool FFactoryCommon::GetSourceFilenames(const UAssetImportData* AssetImportData, TArray<FString>& OutSourceFilenames)
 	{
-		TRACE_CPUPROFILER_EVENT_SCOPE("UE::Interchange::FFactoryCommon::GetSourceFilenames")
+		TRACE_CPUPROFILER_EVENT_SCOPE(UE::Interchange::FFactoryCommon::GetSourceFilenames)
 		if (Cast<UInterchangeAssetImportData>(AssetImportData) != nullptr)
 		{
 			AssetImportData->ExtractFilenames(OutSourceFilenames);
@@ -247,7 +260,7 @@ namespace UE::Interchange
 
 	bool FFactoryCommon::SetSourceFilename(UAssetImportData* AssetImportData, const FString& SourceFilename, int32 SourceIndex, const FString& SourceLabel)
 	{
-		TRACE_CPUPROFILER_EVENT_SCOPE("UE::Interchange::FFactoryCommon::SetSourceFilename")
+		TRACE_CPUPROFILER_EVENT_SCOPE(UE::Interchange::FFactoryCommon::SetSourceFilename)
 		if (AssetImportData)
 		{
 			const int32 SafeSourceIndex = SourceIndex == INDEX_NONE ? 0 : SourceIndex;				
@@ -268,7 +281,7 @@ namespace UE::Interchange
 		
 	bool FFactoryCommon::SetReimportSourceIndex(const UObject* Object, UAssetImportData* AssetImportData, int32 SourceIndex)
 	{
-		TRACE_CPUPROFILER_EVENT_SCOPE("UE::Interchange::FFactoryCommon::SetReimportSourceIndex")
+		TRACE_CPUPROFILER_EVENT_SCOPE(UE::Interchange::FFactoryCommon::SetReimportSourceIndex)
 		UInterchangeAssetImportData* InterchangeAssetImportData = Cast<UInterchangeAssetImportData>(AssetImportData);
 		if (!InterchangeAssetImportData)
 		{
@@ -302,8 +315,8 @@ namespace UE::Interchange
 										, const UInterchangeFactoryBaseNode* CurrentAssetNode
 										, UInterchangeFactoryBaseNode* PipelineAssetNode)
 	{
-		TRACE_CPUPROFILER_EVENT_SCOPE("UE::Interchange::FFactoryCommon::ApplyReimportStrategyToAsset")
-		if (!ensure(PreviousAssetNode) || !ensure(PipelineAssetNode) || !ensure(CurrentAssetNode))
+		TRACE_CPUPROFILER_EVENT_SCOPE(UE::Interchange::FFactoryCommon::ApplyReimportStrategyToAsset)
+		if (!ensure(PipelineAssetNode) || !ensure(CurrentAssetNode))
 		{
 			return;
 		}
@@ -325,15 +338,29 @@ namespace UE::Interchange
 				
 			case EReimportStrategyFlags::ApplyEditorChangedProperties:
 			{
+				if (!PreviousAssetNode)
+				{
+					UE_LOG(LogInterchangeEngine, Error, TEXT("Cannot apply the reimport strategy for asset [%s], because there is no previous asset node in the import data."), *Asset->GetName());
+					return;
+				}
 				TArray<FAttributeKey> RemovedAttributes;
 				TArray<FAttributeKey> AddedAttributes;
 				TArray<FAttributeKey> ModifiedAttributes;
 				UInterchangeBaseNode::CompareNodeStorage(PreviousAssetNode, CurrentAssetNode, RemovedAttributes, AddedAttributes, ModifiedAttributes);
 
-				//set all ModifedAttributes from the CurrentAssetNode to the pipeline node. This will put back all user changes
+				//Cache all modified attributes from the pipeline node
+				UE::Interchange::FAttributeStorage CachedAttributes;
+				UInterchangeBaseNode::CopyStorageAttributes(PipelineAssetNode, CachedAttributes, ModifiedAttributes);
+
+				//Set all ModifedAttributes from the CurrentAssetNode to PipelineAssetNode
+				//This way, call to ApplyAllCustomAttributeToObject will preserve modified attributes from CurrentAssetNode
 				UInterchangeBaseNode::CopyStorageAttributes(CurrentAssetNode, PipelineAssetNode, ModifiedAttributes);
-				//Now apply the pipeline node attribute to the asset
+
+				//Apply the pipeline node's attributes to the asset
 				PipelineAssetNode->ApplyAllCustomAttributeToObject(Asset);
+
+				//Restore all modified attributes back to the pipeline node
+				UInterchangeBaseNode::CopyStorageAttributes(CachedAttributes, PipelineAssetNode, ModifiedAttributes);
 				break;
 			}
 		}
@@ -393,13 +420,13 @@ namespace UE::Interchange
 		// create a new static mesh or overwrite existing asset, if possible
 		if (!ExistingAsset)
 		{
-			UE_LOG(LogInterchangeEngine, Error, TEXT("Cannot import the %s asset [%s], because it was not create on the game thread."), *AssetClass->GetName(), *AssetName);
+			UE_LOG(LogInterchangeEngine, Error, TEXT("Cannot import the %s asset [%s] because it was not created on the game thread."), *AssetClass->GetName(), *AssetName);
 			return nullptr;
 		}
 
 		if (!ExistingAsset->GetClass()->IsChildOf(AssetClass))
 		{
-			UE_LOG(LogInterchangeEngine, Error, TEXT("Cannot import the %s asset [%s], because it will override an asset of a different class (%s)."), *AssetClass->GetName(), *AssetName, *ExistingAsset->GetClass()->GetName());
+			UE_LOG(LogInterchangeEngine, Error, TEXT("Cannot import the %s asset [%s] because it will override an asset of a different class (%s)."), *AssetClass->GetName(), *AssetName, *ExistingAsset->GetClass()->GetName());
 			return nullptr;
 		}
 		return ExistingAsset;

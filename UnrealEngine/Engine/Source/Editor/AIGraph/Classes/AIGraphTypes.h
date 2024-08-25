@@ -14,6 +14,7 @@ struct AIGRAPH_API FGraphNodeClassData
 
 	FGraphNodeClassData() {}
 	FGraphNodeClassData(UClass* InClass, const FString& InDeprecatedMessage);
+	FGraphNodeClassData(const FTopLevelAssetPath& InGeneratedClassPath, UClass* InClass);
 	FGraphNodeClassData(const FString& InAssetName, const FString& InGeneratedClassPackage, const FString& InClassName, UClass* InClass);
 
 	FString ToString() const;
@@ -114,7 +115,6 @@ private:
 	TSharedPtr<FGraphNodeClassNode> FindBaseClassNode(TSharedPtr<FGraphNodeClassNode> Node, const FString& ClassName);
 	void FindAllSubClasses(TSharedPtr<FGraphNodeClassNode> Node, TArray<FGraphNodeClassData>& AvailableClasses);
 
-	UClass* FindAssetClass(const FString& GeneratedClassPackage, const FString& AssetName);
 	void BuildClassGraph();
 	void AddClassGraphChildren(TSharedPtr<FGraphNodeClassNode> Node, TArray<TSharedPtr<FGraphNodeClassNode> >& NodeList);
 

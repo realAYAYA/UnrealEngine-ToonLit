@@ -70,6 +70,25 @@ namespace BuildPatchServices
 			static TArray<uint8> None;
 			return None;
 		}
+
+		virtual EHttpRequestStatus::Type GetStatus() const override
+		{
+			MOCK_FUNC_NOT_IMPLEMENTED("FMockHttpRequest::GetStatus");
+			return EHttpRequestStatus::Failed;
+		}
+
+		virtual EHttpFailureReason GetFailureReason() const override
+		{
+			MOCK_FUNC_NOT_IMPLEMENTED("FMockHttpRequest::GetFailureReason");
+			return EHttpFailureReason::Other;
+		}
+
+		virtual const FString& GetEffectiveURL() const override
+		{
+			MOCK_FUNC_NOT_IMPLEMENTED("FMockHttpRequest::GetEffectiveURL");
+			static FString None;
+			return None;
+		}
 	};
 }
 

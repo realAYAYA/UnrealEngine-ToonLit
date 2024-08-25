@@ -156,7 +156,7 @@ namespace Private
 	}
 
 	template <typename DelegateSignature, typename ObjectOrCallableType, typename... VarTypes>
-	UE_NODISCARD inline TDelegate<DelegateSignature> ConstructDelegate(ObjectOrCallableType&& ObjectOrCallable, VarTypes&&... Vars)
+	[[nodiscard]] inline TDelegate<DelegateSignature> ConstructDelegate(ObjectOrCallableType&& ObjectOrCallable, VarTypes&&... Vars)
 	{
 		if constexpr((std::is_pointer_v<std::remove_reference_t<ObjectOrCallableType>> && !std::is_function_v<std::remove_reference_t<std::remove_pointer_t<ObjectOrCallableType>>>) || TSharedPtrHelper<std::remove_reference_t<ObjectOrCallableType>>::bIsSharedPtr)
 		{
@@ -342,7 +342,7 @@ public:
 	 *
 	 */
 	template<typename... ConstructDelegateParamTypes>
-	UE_NODISCARD FOnlineEventDelegateHandle Add(ConstructDelegateParamTypes&&... Params)
+	[[nodiscard]] FOnlineEventDelegateHandle Add(ConstructDelegateParamTypes&&... Params)
 	{
 		return Event.Add(Forward<ConstructDelegateParamTypes>(Params)...);
 	}

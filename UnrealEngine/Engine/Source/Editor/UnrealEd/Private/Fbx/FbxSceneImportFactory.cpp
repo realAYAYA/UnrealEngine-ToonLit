@@ -1951,6 +1951,7 @@ UObject* UFbxSceneImportFactory::ImportOneSkeletalMesh(void* VoidRootNodeToImpor
 			}
 		}
 		FSkeletalMeshImportData OutData;
+		bool bMapMorphTargetToTimeZero = false;
 		if (LODIndex == 0 && SkelMeshNodeArray.Num() != 0)
 		{
 			FName OutputName = FbxImporter->MakeNameForMesh(SkelMeshNodeArray[0]->GetName(), SkelMeshNodeArray[0]);
@@ -1996,6 +1997,8 @@ UObject* UFbxSceneImportFactory::ImportOneSkeletalMesh(void* VoidRootNodeToImpor
 				//Set the data in the node info
 				RootNodeInfo->AttributeInfo->SetOriginalImportPath(PackageName);
 				RootNodeInfo->AttributeInfo->SetOriginalFullImportName(NewObject->GetPathName());
+
+				bMapMorphTargetToTimeZero = ImportSkeletalMeshArgs.bMapMorphTargetToTimeZero;
 			}
 		}
 		else if (NewObject && GlobalImportSettings->bImportSkeletalMeshLODs) // the base skeletal mesh is imported successfully
@@ -2032,6 +2035,10 @@ UObject* UFbxSceneImportFactory::ImportOneSkeletalMesh(void* VoidRootNodeToImpor
 				{
 					FbxImporter->AddTokenizedErrorMessage(FTokenizedMessage::Create(EMessageSeverity::Error, LOCTEXT("FailedToImport_SkeletalMeshLOD", "Failed to import Skeletal mesh LOD.")), FFbxErrors::SkeletalMesh_LOD_FailedToImport);
 				}
+				else
+				{
+					bMapMorphTargetToTimeZero = ImportSkeletalMeshArgs.bMapMorphTargetToTimeZero;
+				}
 			}
 		}
 
@@ -2049,7 +2056,7 @@ UObject* UFbxSceneImportFactory::ImportOneSkeletalMesh(void* VoidRootNodeToImpor
 				NewSkelMesh->GetImportedModel()->LODModels.IsValidIndex(LODIndex))
 			{
 				// TODO: Disable material importing when importing morph targets
-				FbxImporter->ImportFbxMorphTarget(SkelMeshNodeArray, NewSkelMesh, LODIndex, OutData);
+				FbxImporter->ImportFbxMorphTarget(SkelMeshNodeArray, NewSkelMesh, LODIndex, OutData, bMapMorphTargetToTimeZero);
 			}
 		}
 	}

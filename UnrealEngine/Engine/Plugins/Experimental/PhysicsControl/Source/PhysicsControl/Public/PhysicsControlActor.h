@@ -22,7 +22,7 @@ struct PHYSICSCONTROL_API FInitialPhysicsControl
 
 	/** The owner of the mesh that will be doing the driving. Blank/non-existent means it will happen in world space */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = PhysicsControl)
-	TObjectPtr<AActor> ParentActor;
+	TWeakObjectPtr<AActor> ParentActor;
 
 	/** 
 	 * The mesh that will be doing the driving. If this is blank but there is an actor, then we'll attempt to
@@ -40,7 +40,7 @@ struct PHYSICSCONTROL_API FInitialPhysicsControl
 
 	/** The owner of the mesh that the control will be driving */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = PhysicsControl)
-	TObjectPtr<AActor> ChildActor;
+	TWeakObjectPtr<AActor> ChildActor;
 
 	/** 
 	 * The mesh that the control will be driving. If this is blank but there is an actor, then we'll attempt 
@@ -77,12 +77,6 @@ struct PHYSICSCONTROL_API FInitialPhysicsControl
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = PhysicsControl)
 	FPhysicsControlTarget ControlTarget;
-
-	/**
-	 * More general settings for the control
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = PhysicsControl)
-	FPhysicsControlSettings ControlSettings;
 };
 
 /**
@@ -97,7 +91,7 @@ struct PHYSICSCONTROL_API FInitialBodyModifier
 
 	/** The owner of the mesh that that we will modify */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = PhysicsControl)
-	TObjectPtr<AActor> Actor;
+	TWeakObjectPtr<AActor> Actor;
 
 	/** 
 	 * The mesh that will be modify. If this is blank but there is an actor, then we'll attempt to
@@ -112,19 +106,9 @@ struct PHYSICSCONTROL_API FInitialBodyModifier
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = PhysicsControl)
 	FName BoneName;
 
-	/** How the associated body should move. */
+	/** How the body should move etc */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = PhysicsControl)
-	EPhysicsMovementType MovementType = EPhysicsMovementType::Kinematic;
-
-	/** How the associated body should collide/interact */
-	ECollisionEnabled::Type CollisionType = ECollisionEnabled::QueryAndPhysics;
-
-	/**
-	 * Multiplier for gravity applied to the body. Note that if the body itself has gravity disabled, then
-	 * setting this to 1 will not enable gravity.
-	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = PhysicsControl)
-	float GravityMultiplier = 1.0f;
+	FPhysicsControlModifierData BodyModifierData;
 
 	/**
 	 * The target position when kinematic. Note that this is applied on top of any animation
@@ -138,11 +122,7 @@ struct PHYSICSCONTROL_API FInitialBodyModifier
 	 * target if bUseSkeletalAnimation is set.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = PhysicsControl)
-	FQuat KinematicTargetOrientation = FQuat::Identity;
-
-	/** If true then the target will be applied on top of the skeletal animation (if there is any) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = PhysicsControl)
-	bool bUseSkeletalAnimation = true;
+	FRotator KinematicTargetOrientation = FRotator::ZeroRotator;
 };
 
 /**
@@ -153,11 +133,12 @@ struct PHYSICSCONTROL_API FInitialCharacterControls
 {
 	GENERATED_BODY()
 
-	FInitialCharacterControls() {}
+	FInitialCharacterControls();
+	~FInitialCharacterControls();
 
 	/** The owner of the character skeletal mesh */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = PhysicsControl)
-	TObjectPtr<AActor> CharacterActor;
+	TWeakObjectPtr<AActor> CharacterActor;
 
 	/**
 	 * The skeletal mesh that will have controls set up. If this is blank but there is an actor, then we'll attempt to
@@ -173,22 +154,10 @@ struct PHYSICSCONTROL_API FInitialCharacterControls
 	FPhysicsControlData WorldSpaceControlData;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = PhysicsControl)
-	FPhysicsControlSettings WorldSpaceControlSettings;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = PhysicsControl)
-	bool bEnableWorldSpaceControls = false;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = PhysicsControl)
 	FPhysicsControlData ParentSpaceControlData;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = PhysicsControl)
-	FPhysicsControlSettings ParentSpaceControlSettings;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = PhysicsControl)
-	bool bEnableParentSpaceControls = false;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = PhysicsControl)
-	EPhysicsMovementType PhysicsMovementType = EPhysicsMovementType::Kinematic;
+	FPhysicsControlModifierData BodyModifierData;
 };
 
 /**

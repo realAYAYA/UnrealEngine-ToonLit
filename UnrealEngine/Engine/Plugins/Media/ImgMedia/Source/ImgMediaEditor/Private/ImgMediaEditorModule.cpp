@@ -123,6 +123,7 @@ protected:
 		// Add ImgMedia group.
 		const IWorkspaceMenuStructure& MenuStructure = WorkspaceMenu::GetMenuStructure();
 		TSharedRef<FWorkspaceItem> MediaBrowserGroup = MenuStructure.GetLevelEditorCategory()->AddGroup(
+			"ImgMedia",
 			LOCTEXT("WorkspaceMenu_ImgMediaCategory", "ImgMedia"),
 			FSlateIcon(FAppStyle::GetAppStyleSetName(), "SequenceRecorder.TabIcon"),
 			true);

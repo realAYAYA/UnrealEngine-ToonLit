@@ -1,7 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "ActorPartition/PartitionActor.h"
-
+#include "ActorPartition/ActorPartitionSubsystem.h"
 #include UE_INLINE_GENERATED_CPP_BY_NAME(PartitionActor)
 
 #if WITH_EDITOR
@@ -71,32 +71,54 @@ void APartitionActor::SetGridSize(uint32 InGridSize)
 }
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
-FString APartitionActor::GetActorName(UWorld* World, const UClass* Class, const FGuid& GridGuid, const FActorPartitionIdentifier& ActorPartitionId, uint32 GridSize, int32 CellCoordsX, int32 CellCoordsY, int32 CellCoordsZ, uint32 DataLayerEditorContext)
+FString APartitionActor::GetActorName(UWorld* World, const UClass* Class, const FGuid& GridGuid, const FActorPartitionIdentifier& ActorPartitionId, uint32 GridSize, int32 CellCoordsX, int32 CellCoordsY, int32 CellCoordsZ, uint32 ContextHash)
+{
+	return GetActorName(World, ActorPartitionId, GridSize, CellCoordsX, CellCoordsY, CellCoordsZ);
+}
+
+FString APartitionActor::GetActorName(UWorld* World, const FActorPartitionIdentifier& ActorPartitionId, uint32 GridSize,  int32 CellCoordsX, int32 CellCoordsY, int32 CellCoordsZ)
 {
 	TStringBuilderWithBuffer<TCHAR, NAME_SIZE> ActorNameBuilder;
 
-	ActorNameBuilder += Class->GetName();
+	ActorNameBuilder += ActorPartitionId.GetClass()->GetName();
 	ActorNameBuilder += TEXT("_");
 
-	if (GridGuid.IsValid())
+	if (ActorPartitionId.GetGridGuid().IsValid())
 	{
-		ActorNameBuilder += GridGuid.ToString(EGuidFormats::Base36Encoded);
+		ActorNameBuilder += ActorPartitionId.GetGridGuid().ToString(EGuidFormats::Base36Encoded);
 		ActorNameBuilder += TEXT("_");
 	}
 
-	if (Class->GetDefaultObject<APartitionActor>()->ShouldIncludeGridSizeInName(World, ActorPartitionId))
+	if (ActorPartitionId.GetClass()->GetDefaultObject<APartitionActor>()->ShouldIncludeGridSizeInName(World, ActorPartitionId))
 	{
 		ActorNameBuilder += FString::Printf(TEXT("%d_"), GridSize);
 	}
 
 	ActorNameBuilder += FString::Printf(TEXT("%d_%d_%d"), CellCoordsX, CellCoordsY, CellCoordsZ);
 
-	if (DataLayerEditorContext != FDataLayerEditorContext::EmptyHash)
+	if (ActorPartitionId.GetContextHash() != FActorPartitionIdentifier::EmptyContextHash)
 	{
-		ActorNameBuilder += FString::Printf(TEXT("_%X"), DataLayerEditorContext);
+		ActorNameBuilder += FString::Printf(TEXT("_%X"), ActorPartitionId.GetContextHash());
 	}
 
 	return ActorNameBuilder.ToString();
+}
+
+void APartitionActor::SetLabelForActor(APartitionActor* Actor, const FActorPartitionIdentifier& ActorPartitionId, uint32 GridSize, int32 CellCoordsX, int32 CellCoordsY, int32 CellCoordsZ)
+{
+	// Once actor is created, update its label
+	TStringBuilderWithBuffer<TCHAR, NAME_SIZE> ActorLabelBuilder;
+	ActorLabelBuilder += FString::Printf(TEXT("%s"), *ActorPartitionId.GetClass()->GetName());
+	if (Actor->ShouldIncludeGridSizeInLabel())
+	{
+		ActorLabelBuilder += FString::Printf(TEXT("_%u"), GridSize);
+	}
+	ActorLabelBuilder += FString::Printf(TEXT("_%d_%d_%d"), CellCoordsX, CellCoordsY, CellCoordsZ);
+	if (ActorPartitionId.GetContextHash() != FActorPartitionIdentifier::EmptyContextHash)
+	{
+		ActorLabelBuilder += FString::Printf(TEXT("_%X"), ActorPartitionId.GetContextHash());
+	}
+	Actor->SetActorLabel(*ActorLabelBuilder);
 }
 #endif
 

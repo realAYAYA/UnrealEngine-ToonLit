@@ -2,28 +2,42 @@
 
 #pragma once
 
+#include "DoubleFloat.ush"
+
 struct FLWCScalar
 {
 	float Tile;
 	float Offset;
+#if !COMPILER_SUPPORTS_HLSL2021
+	int Dummy; // avoid problem with HLSL overloading/implicit cast (should be DCE'd)
+#endif
 };
 
 struct FLWCVector2
 {
 	float2 Tile;
 	float2 Offset;
+#if !COMPILER_SUPPORTS_HLSL2021
+	int Dummy; // avoid problem with HLSL overloading/implicit cast (should be DCE'd)
+#endif
 };
 
 struct FLWCVector3
 {
 	float3 Tile;
 	float3 Offset;
+#if !COMPILER_SUPPORTS_HLSL2021
+	int Dummy; // avoid problem with HLSL overloading/implicit cast (should be DCE'd)
+#endif
 };
 
 struct FLWCVector4
 {
 	float4 Tile;
 	float4 Offset;
+#if !COMPILER_SUPPORTS_HLSL2021
+	int Dummy; // avoid problem with HLSL overloading/implicit cast (should be DCE'd)
+#endif
 };
 
 struct FLWCScalarDeriv
@@ -59,6 +73,9 @@ struct FLWCMatrix
 {
 	float4x4 M;
 	float3 Tile; // Added to result, *after* multiplying 'M'
+#if !COMPILER_SUPPORTS_HLSL2021
+	int2 Dummy; // avoid problem with HLSL overloading/implicit cast (should be DCE'd)
+#endif
 };
 
 // Transforms *from* absolute world space
@@ -66,7 +83,9 @@ struct FLWCInverseMatrix
 {
 	float4x4 M;
 	float3 Tile; // Added to input position *before* multiplying 'M'
-	int Dummy; // avoid problem with stupid HLSL overloading
+#if !COMPILER_SUPPORTS_HLSL2021
+	int3 Dummy; // avoid problem with HLSL overloading/implicit cast (should be DCE'd)
+#endif
 };
 
 #define LWCSetTile(V, InTile) (V).Tile = (InTile)
@@ -79,32 +98,14 @@ float4 LWCGetTileOffset(FLWCVector4 V) { return LWCGetTile(V) * UE_LWC_RENDER_TI
 float3 LWCGetTileOffset(FLWCMatrix V) { return LWCGetTile(V) * UE_LWC_RENDER_TILE_SIZE; }
 float3 LWCGetTileOffset(FLWCInverseMatrix V) { return LWCGetTile(V) * UE_LWC_RENDER_TILE_SIZE; }
 
-float4x4 Make4x3Matrix(float4x4 M)
-{
-	// Explicitly ignore the 4th column of the input
-	float4x4 Result;
-	Result[0] = float4(M[0].xyz, 0.0f);
-	Result[1] = float4(M[1].xyz, 0.0f);
-	Result[2] = float4(M[2].xyz, 0.0f);
-	Result[3] = float4(M[3].xyz, 1.0f);
-	return Result;
-}
-
-float4x4 MakeTranslationMatrix(float3 Offset)
-{
-	float4x4 Result;
-	Result[0] = float4(1.0f, 0.0f, 0.0f, 0.0f);
-	Result[1] = float4(0.0f, 1.0f, 0.0f, 0.0f);
-	Result[2] = float4(0.0f, 0.0f, 1.0f, 0.0f);
-	Result[3] = float4(Offset, 1.0f);
-	return Result;
-}
-
 FLWCScalar MakeLWCScalar(float Tile, float Offset)
 {
 	FLWCScalar Result;
 	LWCSetTile(Result, Tile);
 	Result.Offset = Offset;
+#if !COMPILER_SUPPORTS_HLSL2021
+	Result.Dummy = 0;
+#endif
 	return Result;
 }
 
@@ -113,6 +114,9 @@ FLWCVector2 MakeLWCVector2(float2 Tile, float2 Offset)
 	FLWCVector2 Result;
 	LWCSetTile(Result, Tile);
 	Result.Offset = Offset;
+#if !COMPILER_SUPPORTS_HLSL2021
+	Result.Dummy = 0;
+#endif
 	return Result;
 }
 
@@ -121,6 +125,9 @@ FLWCVector3 MakeLWCVector3(float3 Tile, float3 Offset)
 	FLWCVector3 Result;
 	LWCSetTile(Result, Tile);
 	Result.Offset = Offset;
+#if !COMPILER_SUPPORTS_HLSL2021
+	Result.Dummy = 0;
+#endif
 	return Result;
 }
 
@@ -129,6 +136,9 @@ FLWCVector4 MakeLWCVector4(float4 Tile, float4 Offset)
 	FLWCVector4 Result;
 	LWCSetTile(Result, Tile);
 	Result.Offset = Offset;
+#if !COMPILER_SUPPORTS_HLSL2021
+	Result.Dummy = 0;
+#endif
 	return Result;
 }
 
@@ -163,6 +173,9 @@ FLWCMatrix MakeLWCMatrix(float3 Tile, float4x4 InMatrix)
 	FLWCMatrix Result;
 	LWCSetTile(Result, Tile);
 	Result.M = InMatrix;
+#if !COMPILER_SUPPORTS_HLSL2021
+	Result.Dummy = 0;
+#endif
 	return Result;
 }
 
@@ -171,6 +184,9 @@ FLWCMatrix MakeLWCMatrix4x3(float3 Tile, float4x4 InMatrix)
 	FLWCMatrix Result;
 	LWCSetTile(Result, Tile);
 	Result.M = Make4x3Matrix(InMatrix);
+#if !COMPILER_SUPPORTS_HLSL2021
+	Result.Dummy = 0;
+#endif
 	return Result;
 }
 
@@ -179,7 +195,9 @@ FLWCInverseMatrix MakeLWCInverseMatrix(float3 Tile, float4x4 InMatrix)
 	FLWCInverseMatrix Result;
 	LWCSetTile(Result, -Tile);
 	Result.M = InMatrix;
+#if !COMPILER_SUPPORTS_HLSL2021
 	Result.Dummy = 0;
+#endif
 	return Result;
 }
 
@@ -188,7 +206,9 @@ FLWCInverseMatrix MakeLWCInverseMatrix4x3(float3 Tile, float4x4 InMatrix)
 	FLWCInverseMatrix Result;
 	LWCSetTile(Result, -Tile);
 	Result.M = Make4x3Matrix(InMatrix);
+#if !COMPILER_SUPPORTS_HLSL2021
 	Result.Dummy = 0;
+#endif
 	return Result;
 }
 
@@ -491,4 +511,161 @@ float4x4 LWCHackToFloat(FLWCMatrix v) { return (float4x4)0.0f; }
 float4x4 LWCHackToFloat(FLWCInverseMatrix v) { return (float4x4)0.0f; }
 #else
 #define LWCHackToFloat(V) LWCToFloat(V)
+#endif
+
+#define DEFINE_DF_TO_TILEOFFSET_OPERATOR(FDFType, FLWCType, LWCConstructor, FFloatType) \
+	FLWCType DFToTileOffset(FDFType In)																							\
+	{																															\
+		/* CPU side defines MakeTile as floor(Value / TILE_SIZE + 0.5) which is not quite the same as round but */				\
+		/* divergent cases are extremely rare and result simply in rollover from one tile edge to the edge of the next tile */	\
+		/* Values greater than 2^(24+floor(log2(TILE_SIZE-1))) are not converted correctly, because In.Low is assumed to be */	\
+		/* less than half a tile. These values by definition exceed WORLD_MAX, so this is not an issue. */						\
+		FFloatType Tile = INVARIANT(round(In.High / UE_LWC_RENDER_TILE_SIZE));													\
+		FFloatType Offset = INVARIANT_ADD(INVARIANT_FMA(Tile, -UE_LWC_RENDER_TILE_SIZE, In.High), In.Low);						\
+																																\
+		return LWCConstructor(Tile, Offset);																					\
+	}	
+	
+#if UE_DF_NO_FAST_MATH
+#define DEFINE_DF_FAST_TO_TILEOFFSET_OPERATOR(FDFType, FLWCType, LWCConstructor, FFloatType) \
+	FLWCType DFFastToTileOffset(FDFType In)																						\
+	{																															\
+		return DFToTileOffset(In);																								\
+	}
+#else
+#define DEFINE_DF_FAST_TO_TILEOFFSET_OPERATOR(FDFType, FLWCType, LWCConstructor, FFloatType) \
+	FLWCType DFFastToTileOffset(FDFType In)																						\
+	{																															\
+		/* Produces a non-normalized tile-offset coordinate. */																	\
+		/* If we're not rounding, Tile has the full precision of In.High because UE_LWC_RENDER_TILE_SIZE is pow2 */				\
+		/* Therefore, we don't need to calculate the error term and can just use In.Low */										\
+		 FFloatType Tile = In.High * (1 / UE_LWC_RENDER_TILE_SIZE); 															\
+		 FFloatType Offset = In.Low; 																							\
+																																\
+		return LWCConstructor(Tile, Offset);																					\
+	}
+#endif
+
+DEFINE_DF_TO_TILEOFFSET_OPERATOR(FDFScalar, FLWCScalar, MakeLWCScalar, float)
+DEFINE_DF_TO_TILEOFFSET_OPERATOR(FDFVector2, FLWCVector2, MakeLWCVector2, float2)
+DEFINE_DF_TO_TILEOFFSET_OPERATOR(FDFVector3, FLWCVector3, MakeLWCVector3, float3)
+DEFINE_DF_TO_TILEOFFSET_OPERATOR(FDFVector4, FLWCVector4, MakeLWCVector4, float4)
+DEFINE_DF_FAST_TO_TILEOFFSET_OPERATOR(FDFScalar, FLWCScalar, MakeLWCScalar, float)
+DEFINE_DF_FAST_TO_TILEOFFSET_OPERATOR(FDFVector2, FLWCVector2, MakeLWCVector2, float2)
+DEFINE_DF_FAST_TO_TILEOFFSET_OPERATOR(FDFVector3, FLWCVector3, MakeLWCVector3, float3)
+DEFINE_DF_FAST_TO_TILEOFFSET_OPERATOR(FDFVector4, FLWCVector4, MakeLWCVector4, float4)
+#undef DEFINE_DF_TO_TILEOFFSET_OPERATOR
+#undef DEFINE_DF_FAST_TO_TILEOFFSET_OPERATOR
+
+FLWCMatrix DFToTileOffset(FDFMatrix In)
+{
+	FLWCVector3 PosHigh = DFToTileOffset(MakeDFVector3(In.PostTranslation, 0));
+
+	float4x4 M = MultiplyTranslation(In.M, PosHigh.Offset);
+	float3 Tile = PosHigh.Tile;
+	return MakeLWCMatrix(Tile, M);
+}
+
+FLWCMatrix DFFastToTileOffset(FDFMatrix In)
+{
+#if UE_DF_NO_FAST_MATH
+	return DFToTileOffset(In);
+#else
+	float4x4 M = In.M;
+	float3 Tile = In.PostTranslation / UE_LWC_RENDER_TILE_SIZE;
+	return MakeLWCMatrix(Tile, M);
+#endif
+}
+
+FLWCInverseMatrix DFToTileOffset(FDFInverseMatrix In)
+{
+	FLWCVector3 PosHigh = DFToTileOffset(MakeDFVector3(In.PreTranslation, 0));
+	float4x4 M = MultiplyTranslation(-PosHigh.Offset, In.M);
+	float3 Tile = PosHigh.Tile;
+	return MakeLWCInverseMatrix(Tile, M);
+}
+
+FLWCInverseMatrix DFFastToTileOffset(FDFInverseMatrix In)
+{
+#if UE_DF_NO_FAST_MATH
+	return DFToTileOffset(In);
+#else
+	float4x4 M = In.M;
+	float3 Tile = In.PreTranslation / UE_LWC_RENDER_TILE_SIZE;
+	return MakeLWCInverseMatrix(Tile, M);
+#endif
+}
+
+#define DFToTileOffset_Hack DFToTileOffset
+
+FDFScalar DFFromTileOffset(FLWCScalar In)
+{
+	float TileOffset = In.Tile * UE_LWC_RENDER_TILE_SIZE;
+	return DFFastTwoSum(TileOffset, In.Offset);
+}
+
+FDFVector2 DFFromTileOffset(FLWCVector2 In)
+{
+	float2 TileOffset = In.Tile * UE_LWC_RENDER_TILE_SIZE;
+	return DFFastTwoSum(TileOffset, In.Offset);
+}
+
+FDFVector3 DFFromTileOffset(FLWCVector3 In)
+{
+	float3 TileOffset = In.Tile * UE_LWC_RENDER_TILE_SIZE;
+	return DFFastTwoSum(TileOffset, In.Offset);
+}
+
+FDFVector4 DFFromTileOffset(FLWCVector4 In)
+{
+	float4 TileOffset = In.Tile * UE_LWC_RENDER_TILE_SIZE;
+	return DFFastTwoSum(TileOffset, In.Offset);
+}
+
+FDFMatrix DFFromTileOffset(FLWCMatrix In)
+{
+	float4x4 M = In.M;
+	float3 PostTranslation = In.Tile * UE_LWC_RENDER_TILE_SIZE;
+	return MakeDFMatrix(PostTranslation, M);
+}
+
+FDFInverseMatrix DFFromTileOffset(FLWCInverseMatrix In)
+{
+	float4x4 M = In.M;
+	float3 PreTranslation = -In.Tile * UE_LWC_RENDER_TILE_SIZE;
+	return MakeDFInverseMatrix(PreTranslation, M);
+}
+
+#define DFFromTileOffset_Hack DFFromTileOffset
+
+// Hacky LWCFunc(DFParam) shims for custom hlsl nodes in materials
+float LWCToFloat(FDFScalar Value)   { return DFDemote(Value); }
+float2 LWCToFloat(FDFVector2 Value) { return DFDemote(Value); }
+float3 LWCToFloat(FDFVector3 Value) { return DFDemote(Value); }
+float4 LWCToFloat(FDFVector4 Value) { return DFDemote(Value); }
+float4x4 LWCToFloat(FDFMatrix Value) { return DFDemote(Value); }
+float4x4 LWCToFloat(FDFInverseMatrix Value) { return DFDemote(Value); }
+
+#if FEATURE_LEVEL >= FEATURE_LEVEL_SM6 || PLATFORM_SUPPORTS_SM6_0_WAVE_OPERATIONS
+FLWCMatrix WaveReadLaneAt(FLWCMatrix In, uint SrcIndex)
+{
+	FLWCMatrix Result;
+	Result.M[0] = WaveReadLaneAt(In.M[0], SrcIndex);
+	Result.M[1] = WaveReadLaneAt(In.M[1], SrcIndex);
+	Result.M[2] = WaveReadLaneAt(In.M[2], SrcIndex);
+	Result.M[3] = WaveReadLaneAt(In.M[3], SrcIndex);
+	Result.Tile = WaveReadLaneAt(In.Tile, SrcIndex);
+	return Result;
+}
+
+FLWCInverseMatrix WaveReadLaneAt(FLWCInverseMatrix In, uint SrcIndex)
+{
+	FLWCInverseMatrix Result;
+	Result.M[0] = WaveReadLaneAt(In.M[0], SrcIndex);
+	Result.M[1] = WaveReadLaneAt(In.M[1], SrcIndex);
+	Result.M[2] = WaveReadLaneAt(In.M[2], SrcIndex);
+	Result.M[3] = WaveReadLaneAt(In.M[3], SrcIndex);
+	Result.Tile = WaveReadLaneAt(In.Tile, SrcIndex);
+	return Result;
+}
 #endif

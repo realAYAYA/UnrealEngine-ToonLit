@@ -17,7 +17,6 @@
 class ISequencer;
 class SExpandableArea;
 class SSearchableRigHierarchyTreeView;
-class UControlRig;
 
 class SMultiRigHierarchyTreeView;
 class SMultiRigHierarchyItem;
@@ -253,9 +252,12 @@ private:
 	virtual void HandleControlAdded(UControlRig* ControlRig, bool bIsAdded) override;
 	virtual void HandleControlSelected(UControlRig* Subject, FRigControlElement* InControl, bool bSelected) override;
 
+	//control rig delegates
+	void HandleOnControlRigBound(UControlRig* InControlRig);
+	void HandleOnObjectBoundToControlRig(UObject* InObject);
+
 	void OnObjectsReplaced(const TMap<UObject*, UObject*>& OldToNewInstanceMap);
 
-	const URigHierarchy* GetHierarchy() const;
 	void HandleSelectionChanged(TSharedPtr<FMultiRigTreeElement> Selection, ESelectInfo::Type SelectInfo);
 
 	/** Hierarchy picker for controls*/
@@ -265,7 +267,8 @@ private:
 	bool bIsChangingRigHierarchy = false;
 	TSharedPtr<SExpandableArea> PickerExpander;
 
-
+	//set of control rigs we are bound too and need to clear delegates from
+	TArray<TWeakObjectPtr<UControlRig>> BoundControlRigs;
 };
 
 

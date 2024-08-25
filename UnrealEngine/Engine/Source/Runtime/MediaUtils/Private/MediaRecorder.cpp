@@ -274,18 +274,7 @@ void FMediaRecorder::TickRecording()
 				{
 					check(bUseFMediaImagePixelData);
 
-					if (Sample->GetFormat() == EMediaTextureSampleFormat::FloatRGBA)
-					{
-						ImageTask->PixelPreProcessors.Add(TAsyncAlphaWrite<FFloat16Color>(1.f));
-					}
-					else if (Sample->GetFormat() == EMediaTextureSampleFormat::CharBGRA)
-					{
-						ImageTask->PixelPreProcessors.Add(TAsyncAlphaWrite<FColor>(255));
-					}
-					else
-					{
-						check(false);
-					}
+					ImageTask->AddPreProcessorToSetAlphaOpaque();
 				}
 			}
 			

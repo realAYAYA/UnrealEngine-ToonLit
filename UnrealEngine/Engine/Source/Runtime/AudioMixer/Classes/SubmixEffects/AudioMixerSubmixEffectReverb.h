@@ -163,6 +163,8 @@ private:
 
 	// Curve which maps old reverb times to new decay value
 	FRichCurve DecayCurve;
+
+	float SampleRate = 1.f;
 };
 
 UCLASS(MinimalAPI)

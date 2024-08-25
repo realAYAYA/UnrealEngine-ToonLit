@@ -8,7 +8,6 @@ THIRD_PARTY_INCLUDES_START
 
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
-#include "Windows/PreWindowsApi.h"
 #pragma warning(push)
 #pragma warning(disable : 4005)
 #endif //PLATFORM_WINDOWS
@@ -21,7 +20,6 @@ THIRD_PARTY_INCLUDES_START
 
 #if PLATFORM_WINDOWS
 #pragma warning(pop)
-#include "Windows/PostWindowsApi.h"
 #include "Windows/HideWindowsPlatformTypes.h"
 #endif //PLATFORM_WINDOWS
 

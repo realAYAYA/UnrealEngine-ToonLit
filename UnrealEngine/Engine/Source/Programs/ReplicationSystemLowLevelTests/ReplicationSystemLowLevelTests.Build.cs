@@ -27,6 +27,11 @@ public class ReplicationSystemLowLevelTests : TestModuleRules
 			}
 		);
 
-		UpdateBuildGraphPropertiesFile(new Metadata() { TestName = "ReplicationSystem", TestShortName = "Replication System" });
+		UpdateBuildGraphPropertiesFile(new Metadata() {
+			TestName = "ReplicationSystem",
+			TestShortName = "Replication System",
+			SupportedPlatforms = { UnrealTargetPlatform.Win64, UnrealTargetPlatform.Linux, UnrealTargetPlatform.LinuxArm64 },
+			PlatformRunContainerized = { { UnrealTargetPlatform.LinuxArm64, true } }
+		});
 	}
 }

@@ -3,38 +3,43 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "OnlineAsyncTaskManager.h"
 #include "OnlineStats.h"
-
-THIRD_PARTY_INCLUDES_START
-#include "gpg/leaderboard_manager.h"
-THIRD_PARTY_INCLUDES_END
+#include "OnlineAsyncTaskManager.h"
 
 class FOnlineSubsystemGooglePlay;
 
+/** Task object to keep track of writing achievement score data 
+ * Objects of this type are associated with a GooglePlayGamesWrapper method call that routes operations to the Java backend. 
+ * The GooglePlayGamesWrapper implementation will adapt and set the task result and mark the task as completed when the 
+ * Java operation is finished 
+ */
 class FOnlineAsyncTaskGooglePlayReadLeaderboard : public FOnlineAsyncTaskBasic<FOnlineSubsystemGooglePlay>
 {
 public:
-	FOnlineAsyncTaskGooglePlayReadLeaderboard(
-		FOnlineSubsystemGooglePlay* InSubsystem,
-		FOnlineLeaderboardReadRef& InReadObject,
+	/**
+	 * @brief Construct a new FOnlineAsyncTaskGooglePlayReadLeaderboard object
+	 * 
+	 * @param InSubsystem Owning subsystem 
+	 * @param InReadObject Destination object for the leaderboard information received
+	 * @param InLeaderboardId GooglePlay leaderboard id to request
+	 */
+	FOnlineAsyncTaskGooglePlayReadLeaderboard( 
+		FOnlineSubsystemGooglePlay* InSubsystem, 
+		const FOnlineLeaderboardReadRef& InReadObject, 
 		const FString& InLeaderboardId);
-
-	// FOnlineAsyncItem
-	virtual FString ToString() const override { return TEXT("ReadLeaderboard"); }
-	virtual void Finalize() override;
-	virtual void TriggerDelegates() override;
 
 	// FOnlineAsyncTask
 	virtual void Tick() override;
+	void Finalize() override;
+	void TriggerDelegates() override;
 
+	// FOnlineAsyncItem
+	virtual FString ToString() const override { return TEXT("ReadLeaderboard"); }
+
+	// Set task result data. Accessed trhough GooglePlayGamesWrapper implementation
+	void AddScore(const FString& DisplayName, const FString& PlayerId, int64 Rank, int64 RawScore);
 private:
-	/** Leaderboard read data */
-	FOnlineLeaderboardReadRef ReadObject;
-
-	/** Google Play leaderboard id */
 	FString LeaderboardId;
-
-	/** API query result */
-	gpg::LeaderboardManager::FetchScoreSummaryResponse Response;
+	bool bStarted = false;
+	FOnlineLeaderboardReadRef ReadObject;
 };

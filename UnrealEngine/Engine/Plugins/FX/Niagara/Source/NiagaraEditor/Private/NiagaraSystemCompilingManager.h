@@ -2,13 +2,14 @@
 
 #pragma once
 
-#include "AssetCompilingManager.h"
+#include "IAssetCompilingManager.h"
 
 #include "NiagaraCompilationPrivate.h"
 #include "NiagaraCompilationTypes.h"
 #include "NiagaraSystem.h"
 
 struct FNiagaraSystemCompilationTask;
+class ITargetPlatform;
 
 class FNiagaraSystemCompilingManager : public IAssetCompilingManager
 {
@@ -16,6 +17,9 @@ public:
 	struct FCompileOptions
 	{
 		TArray<TWeakObjectPtr<UNiagaraParameterCollection>> ParameterCollections;
+		const ITargetPlatform* TargetPlatform = nullptr;
+		EShaderPlatform PreviewShaderPlatform = EShaderPlatform::SP_NumPlatforms;
+		ERHIFeatureLevel::Type PreviewFeatureLevel = ERHIFeatureLevel::Num;
 		bool bForced = false;
 	};
 
@@ -24,6 +28,9 @@ public:
 	FNiagaraCompilationTaskHandle AddSystem(UNiagaraSystem* System, FCompileOptions CompileOptions);
 	bool PollSystemCompile(FNiagaraCompilationTaskHandle TaskHandle, bool bPeek, bool bWait, FNiagaraSystemAsyncCompileResults& Results);
 	void AbortSystemCompile(FNiagaraCompilationTaskHandle TaskHandle);
+
+	using FGameThreadFunction = TFunction<void()>;
+	void QueueGameThreadFunction(FGameThreadFunction GameThreadTask);
 
 protected:
 	// Begin - IAssetCompilingManager
@@ -39,13 +46,22 @@ protected:
 
 	bool ConditionalLaunchTask();
 
+	FNiagaraShaderType* NiagaraShaderType = nullptr;
+
+	using FPlatformFeatureLevelPair = TPair<EShaderPlatform, ERHIFeatureLevel::Type>;
+	TMap<const ITargetPlatform*, TArray<FPlatformFeatureLevelPair>> PlatformFeatureLevels;
+	void FindOrAddFeatureLevels(const FCompileOptions& CompileOptions, TArray<FPlatformFeatureLevelPair>& FeatureLevels);
+
 	using FTaskPtr = TSharedPtr<FNiagaraSystemCompilationTask, ESPMode::ThreadSafe>;
 
 	mutable FRWLock QueueLock;
-	TArray<FNiagaraCompilationTaskHandle> QueuedRequests;
 	TMap<FNiagaraCompilationTaskHandle, FTaskPtr> SystemRequestMap;
+	TArray<FNiagaraCompilationTaskHandle> ActiveTasks;
+	TArray<FNiagaraCompilationTaskHandle> QueuedRequests;
+	TArray<FNiagaraCompilationTaskHandle> RequestsAwaitingRetrieval;
 
 	std::atomic<FNiagaraCompilationTaskHandle> NextTaskHandle = { 0 };
 
-	TArray<FNiagaraCompilationTaskHandle> ActiveTasks;
+	mutable FRWLock GameThreadFunctionLock;
+	TArray<FGameThreadFunction> GameThreadFunctions;
 };

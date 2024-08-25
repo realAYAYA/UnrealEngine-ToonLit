@@ -949,16 +949,23 @@ namespace UnrealVS
 			Regex PortPattern = new Regex(@"Server address: (?<port>.*)$", RegexOptions.Compiled | RegexOptions.Multiline);
 			Regex ClientPattern = new Regex(@"Client name: (?<client>.*)$", RegexOptions.Compiled | RegexOptions.Multiline);
 			Regex ClientStream = new Regex(@"Client stream: (?<stream>.*)$", RegexOptions.Compiled | RegexOptions.Multiline);
+			Regex ServerEncryption = new Regex(@"Server encryption: (?<encryption>.*)$", RegexOptions.Compiled | RegexOptions.Multiline);
 
 			System.Text.RegularExpressions.Match UserMatch = UserPattern.Match(CaptureP4Output);
 			System.Text.RegularExpressions.Match PortMatch = PortPattern.Match(CaptureP4Output);
 			System.Text.RegularExpressions.Match ClientMatch = ClientPattern.Match(CaptureP4Output);
 			System.Text.RegularExpressions.Match StreamMatch = ClientStream.Match(CaptureP4Output);
+			System.Text.RegularExpressions.Match EncryptionMatch = ServerEncryption.Match(CaptureP4Output);
 
 			Port = PortMatch.Groups["port"].Value.Trim();
 			Username = UserMatch.Groups["user"].Value.Trim();
 			Client = ClientMatch.Groups["client"].Value.Trim();
 			Stream = StreamMatch.Groups["stream"].Value.Trim();
+
+			if (EncryptionMatch.Groups["encryption"].Value.Trim().Equals("encrypted", StringComparison.OrdinalIgnoreCase) && !Port.StartsWith("ssl:", StringComparison.OrdinalIgnoreCase))
+			{
+				Port = "ssl:" + Port;
+			}
 
 			UserInfoComplete = string.Format(" -p {0} -u {1} -c {2} ", Port, Username, Client);
 

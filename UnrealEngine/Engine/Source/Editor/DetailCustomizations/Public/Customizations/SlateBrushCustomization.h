@@ -52,11 +52,17 @@ private:
 	/** Slate Brush DrawAs property */
 	TSharedPtr<IPropertyHandle> DrawAsProperty;
 
-/** Slate Brush Image Size property */
+	/** Slate Brush Image Size property */
 	TSharedPtr<IPropertyHandle> ImageSizeProperty;
 
-/** Slate Brush Resource Object property */
+	/** Slate Brush Resource Object property */
 	TSharedPtr<IPropertyHandle> ResourceObjectProperty;
+
+	/** Slate Brush Resource Name property */
+	TSharedPtr<IPropertyHandle> ResourceNameProperty;
+
+	/** Slate Brush Image Type property */
+	TSharedPtr<IPropertyHandle> ImageTypeProperty;
 
 	/** Error text to display if the resource object is not valid*/
 	TSharedPtr<SErrorText> ResourceErrorText;

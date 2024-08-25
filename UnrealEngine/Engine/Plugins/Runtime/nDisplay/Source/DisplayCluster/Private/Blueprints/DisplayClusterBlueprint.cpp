@@ -123,6 +123,77 @@ void UDisplayClusterBlueprint::PreSave(FObjectPreSaveContext SaveContext)
 
 	UpdateConfigExportProperty();
 	DisplayClusterBlueprint::SendAnalytics(TEXT("Usage.nDisplay.ConfigSaved"), ConfigData);
+
+#if WITH_EDITOR
+
+	// Child blueprints need to re-generate their config export property as well
+	// Note: Using GetDerivedClasses will only get loaded classes, which is the normal case,
+	// and the rest will be caught when they get loaded as an out of date exported config
+	// will be detected.
+	if (GIsEditor)
+	{
+		TArray<UClass*> ChildClasses;
+		GetDerivedClasses(GeneratedClass, ChildClasses);
+
+		for (UClass* ChildClass : ChildClasses)
+		{
+			// CLASS_NewerVersionExists suggests there is a newer class that will update the asset, so we skip it.
+			if (ChildClass->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists))
+			{
+				continue;
+			}
+
+			UDisplayClusterBlueprint* ChildDCBP = Cast<UDisplayClusterBlueprint>(ChildClass->ClassGeneratedBy);
+			check(ChildDCBP); // We already know it is a derived class
+
+			// Only mark as dirty if the config needs updating, to avoid unnecessary re-saves.
+
+			const FString OriginalChildConfigExport = ChildDCBP->ConfigExport;
+			ChildDCBP->UpdateConfigExportProperty();
+
+			if (!ChildDCBP->ConfigExport.Equals(OriginalChildConfigExport))
+			{
+				if (ChildDCBP->MarkPackageDirty())
+				{
+					UE_LOG(LogDisplayClusterBlueprint, Display,
+						TEXT("ConfigExport of the child nDisplay blueprint actor '%s' is not up to date in the asset, so the package was marked as dirty and should be re-saved."),
+						*ChildDCBP->GetOutermost()->GetName() // If MarkPackageDirty succeeded then GetOutermost() must exist.
+					);
+				}
+			}
+		}
+	}
+
+#endif // WITH_EDITOR
+}
+
+void UDisplayClusterBlueprint::PostLoad()
+{
+	Super::PostLoad();
+
+#if WITH_EDITOR
+
+	// If the exported config is out of date, mark the package as dirty for the user
+	// to re-save. This may happen, for example, when the parent blueprint is updated, 
+	// or when the config export logic has changed.
+
+	if (GIsEditor)
+	{
+		const FString LoadedConfigExport = ConfigExport;
+		UpdateConfigExportProperty();
+
+		if (!ConfigExport.Equals(LoadedConfigExport))
+		{
+			if (MarkPackageDirty())
+			{			
+				UE_LOG(LogDisplayClusterBlueprint, Display,
+					TEXT("ConfigExport of the nDisplay actor '%s' was not up to date in the asset, so the package was marked as dirty and should be re-saved."),
+					*GetOutermost()->GetName() // If MarkPackageDirty succeeded then GetOutermost() must exist.
+				);
+			}
+		}
+	}
+#endif // WITH_EDITOR
 }
 
 UDisplayClusterBlueprintGeneratedClass* UDisplayClusterBlueprint::GetGeneratedClass() const

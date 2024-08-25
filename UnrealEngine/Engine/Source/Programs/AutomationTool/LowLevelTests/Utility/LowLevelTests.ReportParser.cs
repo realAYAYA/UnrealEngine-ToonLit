@@ -37,13 +37,14 @@ namespace LowLevelTests
 			int NrOverallResultsSuccesses = -1;
 			int NrOverallResultsCasesFailures = -1;
 			int NrOverallResultsCasesSuccesses = -1;
-			XElement OverallResults = ReportDoc.Descendants("OverallResults").FirstOrDefault();
+			// OverallResults also exists in each SECTION of every test case, we need to use the last one in the end of the xml report
+			XElement OverallResults = ReportDoc.Descendants("OverallResults").LastOrDefault();
 			if (OverallResults != null)
 			{
 				NrOverallResultsFailures = int.Parse(OverallResults.Attribute("failures").Value);
 				NrOverallResultsSuccesses = int.Parse(OverallResults.Attribute("successes").Value);
 			}
-			XElement OverallResultsCases = ReportDoc.Descendants("OverallResultsCases").FirstOrDefault();
+			XElement OverallResultsCases = ReportDoc.Descendants("OverallResultsCases").LastOrDefault();
 			if (OverallResultsCases != null)
 			{
 				NrOverallResultsCasesFailures = int.Parse(OverallResultsCases.Attribute("failures").Value);

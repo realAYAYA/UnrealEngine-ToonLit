@@ -76,6 +76,7 @@ class UK2Node_FunctionEntry : public UK2Node_FunctionTerminator
 	virtual void FindDiffs(UEdGraphNode* OtherNode, struct FDiffResults& Results) override;
 	virtual bool IsCompatibleWithGraph(const UEdGraph* InGraph) const override;
 	virtual void PostPasteNode() override;
+	virtual void AddSearchMetaDataInfo(TArray<struct FSearchTagDataPair>& OutTaggedMetaData) const override;
 	//~ End UEdGraphNode Interface
 
 	//~ Begin UK2Node Interface

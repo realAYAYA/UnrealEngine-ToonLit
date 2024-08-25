@@ -75,11 +75,6 @@ void UWorldPartitionStreamingSourceComponent::PostLoad()
 		{
 			TargetGrids.Add(TargetGrid_DEPRECATED);
 		}
-
-		if (TargetHLODLayer_DEPRECATED)
-		{
-			TargetHLODLayers.Add(TargetHLODLayer_DEPRECATED);
-		}
 	}
 }
 
@@ -105,15 +100,6 @@ bool UWorldPartitionStreamingSourceComponent::GetStreamingSource(FWorldPartition
 		if (!TargetGrids.IsEmpty())
 		{
 			OutStreamingSource.TargetGrids.Append(TargetGrids);
-		}
-
-		if (!TargetHLODLayers.IsEmpty())
-		{
-			OutStreamingSource.TargetHLODLayers.Reserve(TargetHLODLayers.Num());
-			for (const TObjectPtr<const UHLODLayer>& HLODLayer : TargetHLODLayers)
-			{
-				OutStreamingSource.TargetHLODLayers.Add(HLODLayer);
-			}
 		}
 		return true;
 	}

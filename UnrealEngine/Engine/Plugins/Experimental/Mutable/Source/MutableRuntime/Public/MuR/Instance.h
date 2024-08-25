@@ -33,7 +33,7 @@ namespace mu
 		Instance();
 
         //! Clone this instance
-        InstancePtr Clone() const;
+        Ptr<Instance> Clone() const;
 
 		// Resource interface
 		int32 GetDataSize() const override;
@@ -56,11 +56,6 @@ namespace mu
         //! Get the number of components in a level-of-detail
         //! \param lod Index of the level of detail, from 0 to GetLODCount()-1
         int32 GetComponentCount( int32 lod ) const;
-
-        //! Get the name of a component
-        //! \param lod Index of the level of detail, from 0 to GetLODCount()-1
-        //! \param comp Index of the component, from 0 to GetComponentCount(lod)-1
-        const char* GetComponentName( int32 lod, int32 comp ) const;
 		
 		//! Get the Id of a component
 		//! \param lod Index of the level of detail, from 0 to GetLODCount()-1
@@ -71,12 +66,6 @@ namespace mu
         //! \param lod Index of the level of detail, from 0 to GetLODCount()-1
         //! \param comp Index of the component, from 0 to GetComponentCount(lod)-1
         int32 GetSurfaceCount( int32 lod, int32 comp ) const;
-
-        //! Get the name of a surface
-        //! \param lod Index of the level of detail, from 0 to GetLODCount()-1
-        //! \param comp Index of the component, from 0 to GetComponentCount(lod)-1
-        //! \param surf Index of the surface, from 0 to GetSurfaceCount(lod,comp)-1
-        const char* GetSurfaceName( int32 lod, int32 comp, int32 surf ) const;
 
         //! Get an id that can be used to match the surface data with the mesh surface data.
         //! \param lod Index of the level of detail, from 0 to GetLODCount()-1
@@ -90,7 +79,6 @@ namespace mu
         //! \param id ID of the surface to look for.
         int32 FindSurfaceById( int32 lod, int32 comp, uint32 id ) const;
 
-
 		//! Find the base surface index and Lod index when reusing surfaces between LODs. Return the surface index
 		//! and the LOD it belongs to.
 		//! \param Comp - Index of the component, from 0 to GetComponentCount(lod)-1
@@ -99,13 +87,11 @@ namespace mu
 		//! \param OutLODIndex - Index of the first LOD where the surface can be found. 
 		void FindBaseSurfaceBySharedId(int32 CompIndex, int32 SharedId, int32& OutSurfaceIndex, int32& OutLODIndex) const;
 
-		
 		//! Get an id that can be used to find the same surface on other LODs
 		//! \param lod Index of the level of detail, from 0 to GetLODCount()-1
 		//! \param comp Index of the component, from 0 to GetComponentCount(lod)-1
 		//! \param surf Index of the surface, from 0 to GetSurfaceCount(lod,comp)-1
 		int32 GetSharedSurfaceId(int32 lod, int32 comp, int32 surf) const;
-
 
         //! Get an optional, opaque application-defined identifier for this surface. The meaning of
         //! this ID depends on each application, and it is specified when creating the source data
@@ -151,7 +137,7 @@ namespace mu
 		//! \param comp Index of the component, from 0 to GetComponentCount(lod)-1
         //! \param surf Index of the surface, from 0 to GetSurfaceCount(lod,comp)-1
         //! \param img Index of the image, from 0 to GetImageCount(lod,comp,surf)-1
-        const char* GetImageName( int32 lod, int32 comp, int32 surf, int32 img ) const;
+		FName GetImageName( int32 lod, int32 comp, int32 surf, int32 img ) const;
 
 		//! Get the number of vectors in a component
 		//! \param lod Index of the level of detail, from 0 to GetLODCount()
@@ -173,7 +159,7 @@ namespace mu
 		//! \param comp Index of the component, from 0 to GetComponentCount(lod)-1
         //! \param surf Index of the surface, from 0 to GetSurfaceCount(lod,comp)-1
         //! \param vec Index of the vector, from 0 to GetVectorCount(lod,comp)-1
-        const char* GetVectorName( int32 lod, int32 comp, int32 surf, int32 vec ) const;
+		FName GetVectorName( int32 lod, int32 comp, int32 surf, int32 vec ) const;
 
         //! Get the number of scalar values in a component
         //! \param lod Index of the level of detail, from 0 to GetLODCount()
@@ -193,7 +179,7 @@ namespace mu
         //! \param comp Index of the component, from 0 to GetComponentCount(lod)-1
         //! \param surf Index of the surface, from 0 to GetSurfaceCount(lod,comp)-1
         //! \param sca Index of the scalar, from 0 to GetScalarCount(lod,comp)-1
-        const char* GetScalarName( int32 lod, int32 comp, int32 surf, int32 sca ) const;
+		FName GetScalarName( int32 lod, int32 comp, int32 surf, int32 sca ) const;
 
         //! Get the number of string values in a component
         //! \param lod Index of the level of detail, from 0 to GetLODCount()
@@ -206,14 +192,14 @@ namespace mu
         //! \param comp Index of the component, from 0 to GetComponentCount(lod)-1
         //! \param surf Index of the surface, from 0 to GetSurfaceCount(lod,comp)-1
         //! \param sca Index of the string, from 0 to GetStringCount(lod,comp)-1
-        const char* GetString( int32 lod, int32 comp, int32 surf, int32 str ) const;
+        FString GetString( int32 lod, int32 comp, int32 surf, int32 str ) const;
 
         //! Get the name of a string from a component
         //! \param lod Index of the level of detail, from 0 to GetLODCount()-1
         //! \param comp Index of the component, from 0 to GetComponentCount(lod)-1
         //! \param surf Index of the surface, from 0 to GetSurfaceCount(lod,comp)-1
         //! \param sca Index of the string, from 0 to GetStringCount(lod,comp)-1
-        const char* GetStringName( int32 lod, int32 comp, int32 surf, int32 str ) const;
+        FName GetStringName( int32 lod, int32 comp, int32 surf, int32 str ) const;
 
 		//! Get the number of ExtensionData values in a component
 		int32 GetExtensionDataCount() const;
@@ -222,7 +208,7 @@ namespace mu
 		//! \param Index Index of the ExtensionData to fetch
 		//! \param OutExtensionData Receives the ExtensionData
 		//! \param OutName Receives the name associated with the ExtensionData. Guaranteed to be a valid string of non-zero length.
-		void GetExtensionData(int32 Index, ExtensionDataPtrConst& OutExtensionData, const char*& OutName) const;
+		void GetExtensionData(int32 Index, Ptr<const class ExtensionData>& OutExtensionData, FName& OutName) const;
 
         //-----------------------------------------------------------------------------------------
 		// Interface pattern

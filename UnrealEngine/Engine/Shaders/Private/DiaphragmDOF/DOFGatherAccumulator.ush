@@ -382,8 +382,9 @@ float ComputeSampleLayer(in FGatherAccumulator Accumulator, in FGatherSample A)
 
 	#if CONFIG_ACCUMULATOR_FULL_ALU
 		return smoothstep(0.0, 1.0, LayerId);
+	#else
+		return LayerId;
 	#endif
-	return LayerId;
 }
 
 float ComputeForegroundFading(in const FGatherInputParameters GatherParameters, float CocRadius)

@@ -8,6 +8,8 @@
 
 class AGeometryCollectionISMPoolActor;
 class UGeometryCollectionISMPoolComponent;
+class UGeometryCollectionComponent;
+class ULevel;
 
 /** Implementation of a geometry collection custom renderer that pushes AutoInstanceMeshes to an ISMPool. */
 UCLASS()
@@ -19,9 +21,10 @@ public:
 	//~ Begin IGeometryCollectionExternalRenderInterface Interface.
 	virtual void OnRegisterGeometryCollection(UGeometryCollectionComponent const& InComponent) override;
 	virtual void OnUnregisterGeometryCollection() override;
-	virtual void UpdateState(UGeometryCollection const& InGeometryCollection, FTransform const& InComponentTransform, bool bInIsBroken, bool bInIsVisible) override;
+	virtual void UpdateState(UGeometryCollection const& InGeometryCollection, FTransform const& InComponentTransform, uint32 InStateFlags) override;
 	virtual void UpdateRootTransform(UGeometryCollection const& InGeometryCollection, FTransform const& InRootTransform) override;
-	virtual void UpdateTransforms(UGeometryCollection const& InGeometryCollection, TArrayView<const FTransform> InTransforms) override;
+	virtual void UpdateRootTransforms(UGeometryCollection const& InGeometryCollection, FTransform const& InRootTransform, TArrayView<const FTransform3f> InRootLocalTransforms) override;
+	virtual void UpdateTransforms(UGeometryCollection const& InGeometryCollection, TArrayView<const FTransform3f> InTransforms) override;
 	//~ End IGeometryCollectionExternalRenderInterface Interface.
 
 	/** Description for a group of meshes that are added/updated together. */
@@ -43,11 +46,14 @@ protected:
 	FISMPoolGroup MergedMeshGroup;
 	FISMPoolGroup InstancesGroup;
 
+	/** level of the owning component of this renderer */
+	ULevel* OwningLevel = nullptr;
+
 private:
 	UGeometryCollectionISMPoolComponent* GetOrCreateISMPoolComponent();
 	void InitMergedMeshFromGeometryCollection(UGeometryCollection const& InGeometryCollection);
 	void InitInstancesFromGeometryCollection(UGeometryCollection const& InGeometryCollection);
-	void UpdateMergedMeshTransforms(FTransform const& InBaseTransform);
-	void UpdateInstanceTransforms(UGeometryCollection const& InGeometryCollection, FTransform const& InBaseTransform, TArrayView<const FTransform> InTransforms);
+	void UpdateMergedMeshTransforms(FTransform const& InBaseTransform, TArrayView<const FTransform3f> LocalTransforms);
+	void UpdateInstanceTransforms(UGeometryCollection const& InGeometryCollection, FTransform const& InBaseTransform, TArrayView<const FTransform3f> InTransforms);
 	void ReleaseGroup(FISMPoolGroup& InOutGroup);
 };

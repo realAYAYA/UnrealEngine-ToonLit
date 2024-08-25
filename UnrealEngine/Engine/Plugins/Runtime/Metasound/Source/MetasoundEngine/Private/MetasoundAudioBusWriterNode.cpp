@@ -75,27 +75,37 @@ namespace Metasound
 			return Interface;
 		}
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
 			using namespace Frontend;
 			using namespace AudioBusWriterNode;
 
-			const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 
 			bool bHasEnvironmentVars = InParams.Environment.Contains<Audio::FDeviceId>(SourceInterface::Environment::DeviceID);
 			bHasEnvironmentVars &= InParams.Environment.Contains<int32>(SourceInterface::Environment::AudioMixerNumOutputFrames);
 
 			if (bHasEnvironmentVars)
 			{
-				FAudioBusAssetReadRef AudioBusIn = InputCollection.GetDataReadReferenceOrConstruct<FAudioBusAsset>(METASOUND_GET_PARAM_NAME(InParamAudioBusOutput));
+				FAudioBusAssetReadRef AudioBusIn = InputData.GetOrConstructDataReadReference<FAudioBusAsset>(METASOUND_GET_PARAM_NAME(InParamAudioBusOutput));
 
 				TArray<FAudioBufferReadRef> AudioInputs;
 				for (int32 ChannelIndex = 0; ChannelIndex < NumChannels; ++ChannelIndex)
 				{
-					AudioInputs.Add(InputCollection.GetDataReadReferenceOrConstruct<FAudioBuffer>(METASOUND_GET_PARAM_NAME_WITH_INDEX(InParamAudio, ChannelIndex), InParams.OperatorSettings));
+					AudioInputs.Add(InputData.GetOrConstructDataReadReference<FAudioBuffer>(METASOUND_GET_PARAM_NAME_WITH_INDEX(InParamAudio, ChannelIndex), InParams.OperatorSettings));
 				}
 
-				return MakeUnique<TAudioBusWriterOperator<NumChannels>>(InParams, MoveTemp(AudioBusIn), MoveTemp(AudioInputs));
+				FString GraphName;
+				if (InParams.Environment.Contains<FString>(SourceInterface::Environment::GraphName))
+				{
+					GraphName = InParams.Environment.GetValue<FString>(SourceInterface::Environment::GraphName);
+				}
+				else
+				{
+					GraphName = TEXT("<Unknown>");
+				}
+
+				return MakeUnique<TAudioBusWriterOperator<NumChannels>>(InParams, MoveTemp(AudioBusIn), MoveTemp(AudioInputs), MoveTemp(GraphName));
 			}
 			else
 			{
@@ -105,9 +115,10 @@ namespace Metasound
 			}
 		}
 
-		TAudioBusWriterOperator(const FCreateOperatorParams& InParams, FAudioBusAssetReadRef InAudioBusAsset, TArray<FAudioBufferReadRef> InAudioInputs)
+		TAudioBusWriterOperator(const FBuildOperatorParams& InParams, FAudioBusAssetReadRef InAudioBusAsset, TArray<FAudioBufferReadRef> InAudioInputs, FString InGraphName)
 			: AudioBusAsset(MoveTemp(InAudioBusAsset))
 			, AudioInputs(MoveTemp(InAudioInputs))
+			, GraphName(MoveTemp(InGraphName))
 		{
 			Reset(InParams);
 		}
@@ -132,10 +143,12 @@ namespace Metasound
 						AudioBusSubsystem->StartAudioBus(AudioBusKey, AudioBusChannels, false);
 
 						InterleavedBuffer.Reset();
-						InterleavedBuffer.AddZeroed(BlockSizeFrames * AudioBusChannels);
+						InterleavedBuffer.Reserve(NumBlocksToNumSamples(InitialNumBlocks()));
 
 						// Create a bus patch input with enough room for the number of samples we expect and some buffering
 						AudioBusPatchInput = AudioBusSubsystem->AddPatchInputForAudioBus(AudioBusKey, BlockSizeFrames, AudioBusChannels);
+
+						ConnectionState = EConnectionState::Disconnected;
 					}
 				}
 			}
@@ -163,8 +176,9 @@ namespace Metasound
 			
 			BlockSizeFrames = InParams.OperatorSettings.GetNumFramesPerBlock();
 
+			bWasUnderrunReported = false;
+
 			CreatePatchInput();
-			bFirstBlock = true;
 		}
 
 
@@ -232,7 +246,9 @@ namespace Metasound
 			{
 				AudioInputBufferPtrs[ChannelIndex] = AudioInputs[ChannelIndex]->GetData();
 			}
-			float* InterleavedBufferPtr = InterleavedBuffer.GetData();
+			int32 InterleavedBufferOffset = InterleavedBuffer.Num();
+			InterleavedBuffer.SetNum(InterleavedBufferOffset + BlockSizeFrames * NumChannels);
+			float* InterleavedBufferPtr = InterleavedBuffer.GetData() + InterleavedBufferOffset;
 
 			if (AudioBusChannels == 1)
 			{
@@ -256,27 +272,78 @@ namespace Metasound
 				}
 			}
 
-			if (bFirstBlock)
+			switch (ConnectionState)
 			{
-				bFirstBlock = false;
-				if (AudioMixerOutputFrames != BlockSizeFrames)
+			case EConnectionState::Disconnected:
 				{
-					// Ensure there will be enough samples in the patch input to support the maximum metasound executions the mixer requires to fill its output frames after the next push.
-					AudioBusPatchInput.PushAudio(nullptr, (FMath::DivideAndRoundUp(FMath::Max(AudioMixerOutputFrames, BlockSizeFrames), FMath::Min(AudioMixerOutputFrames, BlockSizeFrames)) - 1) * BlockSizeFrames * AudioBusChannels);
+					// Wait until InterleavedBuffer contains enough samples to satisfy any mix eventualities!
+					// A single mix requires enough MetaSound executions to satisfy its buffer size.
+					// Mixing can occur concurrently with the first MetaSound execution intended for the next mix,
+					// and can steal that execution's patch output.
+					if (InterleavedBuffer.Num() < NumBlocksToNumSamples(InitialNumBlocks()))
+					{
+						return;
+					}
+
+					ConnectionState = EConnectionState::ConnectionPending;
+					break;
+				}
+
+			case EConnectionState::ConnectionPending:
+				{
+					int32 InitialNumSamples = NumBlocksToNumSamples(InitialNumBlocks());
+
+					// Determine if the pending connection has been established, by detecting if samples have been consumed.
+					if (AudioBusPatchInput.GetNumSamplesAvailable() == InitialNumSamples)
+					{
+						// If the connection hasn't been established by the time as many executions have occurred again,
+						// something has probably gone wrong.
+						if (InterleavedBuffer.Num() == InitialNumSamples)
+						{
+							UE_LOG(LogMetaSound, Warning, TEXT("Graph %s: Writer node executed before mixer patch connection established, with buffer size %d."), *GraphName, InterleavedBuffer.Num());
+							return;
+						}
+						return;
+					}
+
+					ConnectionState = EConnectionState::Connected;
+					break;
 				}
 			}
 
 			// Pushes the interleaved data to the audio bus
-			int32 SamplesPushed = AudioBusPatchInput.PushAudio(InterleavedBuffer.GetData(), InterleavedBuffer.Num());
-			if (SamplesPushed < InterleavedBuffer.Num())
+			const int32 SamplesPushed = AudioBusPatchInput.PushAudio(InterleavedBuffer.GetData(), InterleavedBuffer.Num());
+			if (SamplesPushed < InterleavedBuffer.Num() && !bWasUnderrunReported)
 			{
 				UE_LOG(LogMetaSound, Warning, TEXT("Underrun detected in audio bus writer node."));
+				bWasUnderrunReported = true;
 			}
+			InterleavedBuffer.Reset();
 		}
 
 	private:
+		int32 InitialNumBlocks() const
+		{
+			if (AudioMixerOutputFrames == BlockSizeFrames)
+			{
+				return 1;
+			}
+
+			// We need enough blocks for as many executions as the mixer can consume at once, plus one more,
+			// because the last execution can be concurrent with the mixer, and could contribute to either the
+			// current mix or the next.  That could leave us with one block too few if we didn't have an extra.
+			int32 MaxSizeFrames = FMath::Max(AudioMixerOutputFrames, BlockSizeFrames), MinSizeFrames = FMath::Min(AudioMixerOutputFrames, BlockSizeFrames);
+			return 1 + FMath::DivideAndRoundUp(MaxSizeFrames, MinSizeFrames);
+		}
+
+		int32 NumBlocksToNumSamples(int32 NumBlocks) const
+		{
+			return NumBlocks * BlockSizeFrames * AudioBusChannels;
+		}
+
 		FAudioBusAssetReadRef AudioBusAsset;
 		TArray<FAudioBufferReadRef> AudioInputs;
+		FString GraphName;
 
 		TArray<float> InterleavedBuffer;
 		int32 AudioMixerOutputFrames = INDEX_NONE;
@@ -285,8 +352,15 @@ namespace Metasound
 		Audio::FPatchInput AudioBusPatchInput;
 		uint32 AudioBusChannels = INDEX_NONE;
 		uint32 AudioBusId = 0;
+		bool bWasUnderrunReported = false;
 		int32 BlockSizeFrames = 0;
-		bool bFirstBlock = true;
+		enum class EConnectionState : uint8
+		{
+			Disconnected,
+			ConnectionPending,
+			Connected
+		}
+		ConnectionState = EConnectionState::Disconnected;
 	};
 
 	template<uint32 NumChannels>

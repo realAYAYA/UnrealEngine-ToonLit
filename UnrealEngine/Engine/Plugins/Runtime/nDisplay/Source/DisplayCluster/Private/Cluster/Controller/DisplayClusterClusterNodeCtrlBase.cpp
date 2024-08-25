@@ -17,7 +17,8 @@
 FDisplayClusterClusterNodeCtrlBase::FDisplayClusterClusterNodeCtrlBase(const FString& CtrlName, const FString& NodeName)
 	: NodeName(NodeName)
 	, ControllerName(CtrlName)
-	, ExternalEventsClientJson(MakeUnique<FDisplayClusterClusterEventsJsonClient>())
+	, ExternalEventsClientJson(new FDisplayClusterClusterEventsJsonClient(), FDisplayClusterClientDeleter())
+	, ExternalEventsClientBinary(new FDisplayClusterClusterEventsBinaryClient(), FDisplayClusterClientDeleter())
 {
 }
 

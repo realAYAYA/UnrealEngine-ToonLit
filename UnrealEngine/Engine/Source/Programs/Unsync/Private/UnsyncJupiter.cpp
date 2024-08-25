@@ -467,14 +467,14 @@ TResult<uint64>
 JupiterPush(const FDirectoryManifest& Manifest, const FRemoteDesc& RemoteDesc, FTlsClientSettings* TlsSettings)
 {
 	auto CreateConnection = [RemoteDesc, TlsSettings] {
-		return new FHttpConnection(RemoteDesc.HostAddress, RemoteDesc.HostPort, TlsSettings);
+		return new FHttpConnection(RemoteDesc.Host.Address, RemoteDesc.Host.Port, TlsSettings);
 	};
 
 	FSemaphore					 ChunkUploadSemaphore(8);  // up to 8 concurrent connections
 	TObjectPool<FHttpConnection> ConnectionPool(CreateConnection);
 
 	{
-		UNSYNC_VERBOSE(L"Connecting to Jupiter server '%hs:%d'", RemoteDesc.HostAddress.c_str(), RemoteDesc.HostPort);
+		UNSYNC_VERBOSE(L"Connecting to Jupiter server '%hs:%d'", RemoteDesc.Host.Address.c_str(), RemoteDesc.Host.Port);
 
 		// TODO: add an RAII helper to return connections to the pool
 		std::unique_ptr<FHttpConnection> Connection = ConnectionPool.Acquire();
@@ -538,7 +538,7 @@ JupiterPush(const FDirectoryManifest& Manifest, const FRemoteDesc& RemoteDesc, F
 
 		const FFileManifest& FileManifest = It.second;
 
-		NativeFile File(FileManifest.CurrentPath, EFileMode::ReadOnlyUnbuffered);
+		FNativeFile File(FileManifest.CurrentPath, EFileMode::ReadOnlyUnbuffered);
 		if (!File.IsValid())
 		{
 			UNSYNC_ERROR(L"Failed to open input file '%ls'", FileManifest.CurrentPath.wstring().c_str());
@@ -700,7 +700,7 @@ FJupiterProtocolImpl::FJupiterProtocolImpl(const FRemoteDesc&		 InSettings,
 										   const FTlsClientSettings* TlsSettings,
 										   std::string_view			 InHttpHeaders)
 : FRemoteProtocolBase(InSettings, InRequestMap)
-, Connection(InSettings.HostAddress, InSettings.HostPort, InSettings.bTlsEnable ? TlsSettings : nullptr)
+, Connection(InSettings.Host.Address, InSettings.Host.Port, InSettings.bTlsEnable ? TlsSettings : nullptr)
 , HttpHeaders(InHttpHeaders)
 , RemoteDesc(InSettings)
 {
@@ -823,12 +823,12 @@ FJupiterProtocolImpl::Download(const TArrayView<FNeedBlock> NeedBlocks, const FB
 {
 	if (!IsValid())
 	{
-		return FDownloadResult(EDownloadRetryMode::Abort);
+		return FDownloadError(EDownloadRetryMode::Abort);
 	}
 
 	if (NeedBlocks.Size() == 0)
 	{
-		return ResultOk<EDownloadRetryMode>();
+		return ResultOk<FDownloadError>();
 	}
 
 	UNSYNC_ASSERT(Connection.NumActiveRequests == 0);
@@ -1044,7 +1044,7 @@ FJupiterProtocolImpl::Download(const TArrayView<FNeedBlock> NeedBlocks, const FB
 	UNSYNC_ASSERT(Connection.NumActiveRequests == 0);
 	UNSYNC_ASSERT(Connection.ResponseQueue.empty());
 
-	return ResultOk<EDownloadRetryMode>();
+	return ResultOk<FDownloadError>();
 }
 
 void

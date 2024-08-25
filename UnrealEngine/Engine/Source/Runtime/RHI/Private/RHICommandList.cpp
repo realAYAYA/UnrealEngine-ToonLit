@@ -11,7 +11,6 @@
 #include "RHIResourceUpdates.h"
 #include "RHIContext.h"
 #include "RHIFwd.h"
-#include "RHITextureReference.h"
 #include "RHITransition.h"
 #include "Stats/StatsTrace.h"
 
@@ -136,8 +135,25 @@ static TStatId GCurrentExecuteStat;
 static FCriticalSection GRHIThreadOnTasksCritical;
 static std::atomic<int32> GRHIThreadStallRequestCount;
 
-FRHICommandListBase::FRHICommandListBase(FRHIGPUMask InGPUMask, ERecordingThread InRecordingThread)
-	: FRHICommandListBase(FPersistentState(InGPUMask, InRecordingThread))
+static std::atomic<int32> GRHIResourceLifetimeRefCount{0};
+
+void RHIResourceLifetimeAddRef(int32 NumRefs)
+{
+	GRHIResourceLifetimeRefCount.fetch_add(NumRefs, std::memory_order_relaxed);
+}
+
+void RHIResourceLifetimeReleaseRef(FRHICommandListImmediate& RHICmdList, int32 NumRefs)
+{
+	int32 RefCount = GRHIResourceLifetimeRefCount.fetch_sub(NumRefs, std::memory_order_release) - 1;
+	check(RefCount >= 0);
+	if (!RefCount)
+	{
+		RHICmdList.FlushExtendedLifetimeResourceDeletes();
+	}
+}
+
+FRHICommandListBase::FRHICommandListBase(FRHIGPUMask InGPUMask, ERecordingThread InRecordingThread, bool bImmediate)
+	: FRHICommandListBase(FPersistentState(InGPUMask, InRecordingThread, bImmediate))
 {}
 
 FRHICommandListBase::FRHICommandListBase(FPersistentState&& InPersistentState)
@@ -175,7 +191,7 @@ FRHICommandListBase::FRHICommandListBase(FRHICommandListBase&& Other)
     , bExecuting      (MoveTemp(Other.bExecuting))
     , ActivePipeline  (MoveTemp(Other.ActivePipeline))
 #if DO_CHECK
-	, AllowedPipelines(MoveTemp(AllowedPipelines))
+	, AllowedPipelines(MoveTemp(Other.AllowedPipelines))
 #endif			  
 	, DispatchEvent   (MoveTemp(Other.DispatchEvent))
     , ExecuteStat     (MoveTemp(Other.ExecuteStat))
@@ -707,7 +723,7 @@ void FRHICommandListImmediate::ExecuteAndReset(bool bFlushResources)
 		{
 			if (Context)
 			{
-				IRHIPlatformCommandList* CommandList = GDynamicRHI->RHIFinalizeContext(Context);
+				IRHIPlatformCommandList* CommandList = GDynamicRHI ? GDynamicRHI->RHIFinalizeContext(Context) : nullptr;
 				if (CommandList)
 				{
 					CommandLists.Add(CommandList);
@@ -1016,7 +1032,7 @@ int32 FRHICommandListImmediate::FlushPendingDeletes()
 
 	TArray<FRHIResource*, FConcurrentLinearArrayAllocator> DeletedResources;
 
-	TArray<FRHIResource*, FConcurrentLinearArrayAllocator>& DeletedResourcesWithLifetimeExtension = PersistentState.ExtendResourceLifetimeRefCount > 0
+	TArray<FRHIResource*, FConcurrentLinearArrayAllocator>& DeletedResourcesWithLifetimeExtension = GRHIResourceLifetimeRefCount > 0
 		? PersistentState.ExtendedLifetimeResources 
 		: DeletedResources;
 
@@ -1312,6 +1328,9 @@ void FRHICommandListImmediate::EndDrawingViewport(FRHIViewport* Viewport, bool b
 void FRHICommandListImmediate::BeginFrame()
 {
 	check(IsImmediate() && IsInRenderingThread());
+
+	GDynamicRHI->RHIBeginFrame(*this);
+
 	if (Bypass())
 	{
 		ProcessStats();
@@ -1432,13 +1451,6 @@ void FRHIComputeCommandList::BuildAccelerationStructures(const TArrayView<const 
 	BuildAccelerationStructures(Params, ScratchBufferRange);
 }
 #endif
-
-FBufferRHIRef FDynamicRHI::CreateBuffer_RenderThread(class FRHICommandListBase& RHICmdList, uint32 Size, EBufferUsageFlags Usage, uint32 Stride, ERHIAccess ResourceState, FRHIResourceCreateInfo& CreateInfo)
-{
-	CSV_SCOPED_TIMING_STAT(RHITStalls, CreateBuffer_RenderThread);
-	FScopedRHIThreadStaller StallRHIThread(RHICmdList.GetAsImmediate());
-	return GDynamicRHI->RHICreateBuffer(RHICmdList, FRHIBufferDesc(Size, Stride, Usage), ResourceState, CreateInfo);
-}
 
 static FLockTracker GLockTracker;
 
@@ -1711,13 +1723,6 @@ FRHIShaderLibraryRef FDynamicRHI::RHICreateShaderLibrary_RenderThread(class FRHI
 	return GDynamicRHI->RHICreateShaderLibrary(Platform, FilePath, Name);
 }
 
-FTextureRHIRef FDynamicRHI::RHICreateTexture_RenderThread(class FRHICommandListImmediate& RHICmdList, const FRHITextureCreateDesc& CreateDesc)
-{
-	CSV_SCOPED_TIMING_STAT(RHITStalls, RHICreateTexture_RenderThread);
-	FScopedRHIThreadStaller StallRHIThread(RHICmdList);
-	return GDynamicRHI->RHICreateTexture(CreateDesc);
-}
-
 void* FDynamicRHI::RHILockTextureCubeFace_RenderThread(class FRHICommandListImmediate& RHICmdList, FRHITextureCube* Texture, uint32 FaceIndex, uint32 ArrayIndex, uint32 MipIndex, EResourceLockMode LockMode, uint32& DestStride, bool bLockWithinMiptail)
 {
 	QUICK_SCOPE_CYCLE_COUNTER(STAT_RHIMETHOD_LockTextureCubeFace_Flush);
@@ -1784,7 +1789,7 @@ void FDynamicRHI::RHIReadSurfaceFloatData_RenderThread(class FRHICommandListImme
 	GDynamicRHI->RHIReadSurfaceFloatData(Texture, Rect, OutData, Flags);
 }
 
-void FRHICommandListImmediate::UpdateTextureReference(FRHITextureReference* TextureRef, FRHITexture* NewTexture)
+void FRHICommandListBase::UpdateTextureReference(FRHITextureReference* TextureRef, FRHITexture* NewTexture)
 {
 	if (TextureRef == nullptr)
 	{
@@ -1797,11 +1802,6 @@ void FRHICommandListImmediate::UpdateTextureReference(FRHITextureReference* Text
 	});
 
 	RHIThreadFence(true);
-	if (GetUsedMemory() > 256 * 1024)
-	{
-		// we could be loading a level or something, lets get this stuff going
-		ImmediateFlush(EImmediateFlushType::DispatchToRHIThread); 
-	}
 }
 
 void FRHICommandListImmediate::UpdateRHIResources(FRHIResourceUpdateInfo* UpdateInfos, int32 Num, bool bNeedReleaseRefs)

@@ -4,6 +4,7 @@
 #include "AI/NavigationSystemBase.h"
 #include "VisualLogger/VisualLogger.h"
 #include "VisualLoggerDatabase.h"
+#include "LogVisualizerSettings.h"
 #include "LogVisualizerPublic.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(VisualLoggerRenderingActor)
@@ -181,7 +182,7 @@ void AVisualLoggerRenderingActor::AddDebugRendering()
 		const FVector End = FVector(700, 0, 128+300);
 		const float Radius = 200;
 		const float HalfHeight = 150;
-		TestDebugShapes.Cylinders.Add(FDebugRenderSceneProxy::FWireCylinder(Start + FVector(0, 0, HalfHeight), Radius, HalfHeight, FColor::Magenta));
+		TestDebugShapes.Cylinders.Add(FDebugRenderSceneProxy::FWireCylinder(Start + FVector(0, 0, HalfHeight), (End - Start).GetSafeNormal(), Radius, HalfHeight, FColor::Magenta));
 	}
 
 	{
@@ -214,4 +215,9 @@ void AVisualLoggerRenderingActor::IterateDebugShapes(const TFunction<void(const 
 #if VLOG_TEST_DEBUG_RENDERING
 	Callback(TestDebugShapes);
 #endif
+}
+
+bool AVisualLoggerRenderingActor::MatchCategoryFilters(const FName& CategoryName, ELogVerbosity::Type Verbosity) const
+{
+	return FVisualLoggerFilters::Get().MatchCategoryFilters(CategoryName.ToString(), Verbosity);
 }

@@ -7,11 +7,11 @@
 #include "HAL/IConsoleManager.h"
 #include "EngineLogs.h"
 #include "Stats/StatsMisc.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/CoreNet.h"
 #include "UObject/CoreRedirects.h"
 #include "UObject/ObjectSaveContext.h"
 #include "Serialization/ObjectWriter.h"
-#include "CookedMetaData.h"
 #include "Curves/CurveFloat.h"
 #include "Engine/DynamicBlueprintBinding.h"
 #include "Components/TimelineComponent.h"
@@ -19,6 +19,7 @@
 #include "Engine/LevelScriptActor.h"
 #include "Engine/SCS_Node.h"
 #include "Engine/InheritableComponentHandler.h"
+#include "IAssetRegistryTagProviderInterface.h"
 #include "IFieldNotificationClassDescriptor.h"
 #include "INotifyFieldValueChanged.h"
 #include "Misc/ConfigCacheIni.h"
@@ -26,6 +27,7 @@
 #include "UObject/FortniteMainBranchObjectVersion.h"
 #include "UObject/Package.h" // IWYU pragma: keep
 #include "UObject/PrimaryAssetId.h"
+#include "UObject/SparseClassDataUtils.h"
 #include "UObject/UE5MainStreamObjectVersion.h"
 #include "GenericPlatform/GenericPlatformCrashContext.h"
 
@@ -36,7 +38,9 @@
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "BlueprintCompilationManager.h"
 #include "Engine/LevelScriptBlueprint.h"
+#include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "WorldPartition/WorldPartitionActorDescUtils.h"
+#include "UObject/CookedMetaData.h"
 #include "UObject/UObjectGlobals.h"
 extern UNREALED_API class UEditorEngine* GEditor;
 #else
@@ -54,13 +58,23 @@ static FAutoConsoleVariableRef CVarBlueprintNativePropertyInitFastPathDisabled(
 	ECVF_Default
 );
 
-int32 GBlueprintComponentInstancingFastPathDisabled = 0;
+static int32 GBlueprintComponentInstancingFastPathDisabled = 0;
 static FAutoConsoleVariableRef CVarBlueprintComponentInstancingFastPathDisabled(
 	TEXT("bp.ComponentInstancingFastPathDisabled"),
 	GBlueprintComponentInstancingFastPathDisabled,
 	TEXT("Disable the Blueprint component instancing fast path."),
 	ECVF_Default
 );
+
+#if WITH_EDITOR
+static int32 GBlueprintDefaultSubobjectValidationDisabled = 1;
+static FAutoConsoleVariableRef CVarBlueprintDefaultSubobjectValidationDisabled(
+	TEXT("bp.DefaultSubobjectValidationDisabled"),
+	GBlueprintDefaultSubobjectValidationDisabled,
+	TEXT("Disable Blueprint class default subobject validation at editor load/save time."),
+	ECVF_Default
+);
+#endif	// WITH_EDITOR
 
 #if WITH_ADDITIONAL_CRASH_CONTEXTS
 struct BPGCBreadcrumbsParams
@@ -193,10 +207,188 @@ namespace UE::Runtime::Engine::Private
 
 			return false;
 		}
+
+#if WITH_EDITOR
+	protected:
+		static void ValidateObjectPropertyValue(UObject* InOuter, const FObjectProperty* InProperty, void* InValuePtr, const void* InDefValuePtr)
+		{
+			check(InProperty);
+
+			// Get the reference assigned to the value address for the given property.
+			UObject* ObjValue = InProperty->GetObjectPropertyValue(InValuePtr);
+			if (!ObjValue)
+			{
+				// If the current reference value is NULL, grab the reference at the default value address for the same property.
+				ObjValue = InProperty->GetObjectPropertyValue(InDefValuePtr);
+				if (ObjValue && ObjValue->IsDefaultSubobject() && ObjValue->HasAllFlags(RF_DefaultSubObject))
+				{
+					check(InOuter);
+
+					// Attempt to find a matching instanced DSO within the current outer scope.
+					UObject* CurrentValue = InOuter->GetDefaultSubobjectByName(ObjValue->GetFName());
+					if (CurrentValue)
+					{
+						// In some cases, we might find a matching subobject instance that doesn't have the flag set to indicate that it was also
+						// instanced at construction time as a default subobject. Only fix up the value here if the instance also has that flag.
+						if (CurrentValue->HasAllFlags(RF_DefaultSubObject))
+						{
+							UE_LOG(LogBlueprint, Warning, TEXT("%s: Detected a NULL reference value for the class member named (%s). Changes to this property may not be restored on load. Check to see if any changes need to be re-applied, then re-save the asset to fix this warning."), *InOuter->GetPathName(), *InProperty->GetName());
+
+							// If the default reference is a non-NULL DSO, then the current container's reference should also be non-NULL. However,
+							// we want a reference to a matching subobject that exists within the current container. For DSOs, this should have
+							// been instanced at construction time (because we will have also run the container type's native constructor), but it's
+							// possible that this field has lost the reference somewhere along the way (e.g. at serialization time). So in order to
+							// ensure that we at least have a valid instanced DSO referenced by the property, reassign it to the current instance.
+							// Note that the current instance may not have been serialized if the reference was already NULL at save time, so this
+							// may result in data loss on load. However, this at least allows the object to be fixed up
+							InProperty->SetObjectPropertyValue(InValuePtr, CurrentValue);
+						}
+
+						// No need to validate nested DSOs here - we've simply returned the field to the initialized state of the container object.
+					}
+					else
+					{
+						// Could not find a matching DSO instance within the current container's scope; warn about this, but leave it set to NULL.
+						// We're not going to create a new instance here, because if we're in this situation, then it means the DSO was not
+						// instanced for the container object at construction time, which would occur for example if we started allowing users
+						// to mark inherited components as optional at the Blueprint editor level. So we'd want to determine why that occurred.
+						// @todo - If Blueprints ever add support to mark DSOs as optional at the editor level, we'll then need to revisit this.
+						UE_LOG(LogBlueprint, Warning, TEXT("%s: Missing a default subobject instance named \'%s\'. This should have been instanced at construction time for \'%s\'."), *InOuter->GetPathName(), *ObjValue->GetName(), *InProperty->GetOwnerStruct()->GetName());
+					}
+				}
+			}
+			else if(ObjValue->IsDefaultSubobject())
+			{
+				// If the current value is a default subobject, recursively validate any nested DSOs.
+				ValidateDefaultSubobjects(ObjValue);
+			}
+		}
+
+		static void ValidateInstancedObjectProperty(UObject* InOuter, const FProperty* InProperty, void* InDataPtr, const void* InDefaultDataPtr)
+		{
+			// It's possible for reference properties to be declared as a fixed array, so iterate over the fixed size (generally just one).
+			for (int32 ArrayIdx = 0; ArrayIdx < InProperty->ArrayDim; ++ArrayIdx)
+			{
+				if (const FObjectProperty* ObjProp = CastField<FObjectProperty>(InProperty))
+				{
+					// For a scalar reference type, validate the current value against the default value, and ensure that they match.
+					UObject* ObjValuePtr = ObjProp->ContainerPtrToValuePtr<UObject>(InDataPtr, ArrayIdx);
+					const UObject* DefValuePtr = ObjProp->ContainerPtrToValuePtr<UObject>(InDefaultDataPtr, ArrayIdx);
+					ValidateObjectPropertyValue(InOuter, ObjProp, ObjValuePtr, DefValuePtr);
+				}
+				else if (const FStructProperty* StructProp = CastField<FStructProperty>(InProperty))
+				{
+					// Recurse into struct properties, in case any members are assigned to a top-level DSO owned by the input object.
+					ValidateDefaultSubobjects_Inner(
+						InOuter,
+						StructProp->Struct,
+						StructProp->ContainerPtrToValuePtr<void>(InDataPtr, ArrayIdx),
+						StructProp->ContainerPtrToValuePtr<void>(InDefaultDataPtr, ArrayIdx));
+				}
+				else if (const FArrayProperty* ArrProp = CastField<FArrayProperty>(InProperty))
+				{
+					// For array types, validate each element's value against the default value, and ensure that all DSO elements match up.
+					// Note that it's possible for the default value to be larger or smaller than the current value in terms of the element
+					// count; in that case, we assume DSOs can't be removed at the Blueprint level, so the default will always include them.
+					FScriptArrayHelper_InContainer ArrValue(ArrProp, InDataPtr, ArrayIdx);
+					FScriptArrayHelper_InContainer DefValue(ArrProp, InDefaultDataPtr, ArrayIdx);
+					for (int32 ValueIdx = 0; ValueIdx < ArrValue.Num() && ValueIdx < DefValue.Num(); ++ValueIdx)
+					{
+						ValidateInstancedObjectProperty(InOuter, ArrProp->Inner, ArrValue.GetRawPtr(ValueIdx), DefValue.GetRawPtr(ValueIdx));
+					}
+				}
+				else if (const FSetProperty* SetProp = CastField<FSetProperty>(InProperty))
+				{
+					// For set containers, validate each element's value against the default value, and ensure that all DSO elements match up.
+					// As with arrays, we must also consider that the element counts may differ between current and default, but that all DSOs
+					// are at least always present in the default container, and match up with the elements in the current set container value.
+					FScriptSetHelper_InContainer SetValue(SetProp, InDataPtr, ArrayIdx);
+					FScriptSetHelper_InContainer DefValue(SetProp, InDefaultDataPtr, ArrayIdx);
+					for (int32 ValueIdx = 0; ValueIdx < SetValue.Num() && ValueIdx < DefValue.Num(); ++ValueIdx)
+					{
+						ValidateInstancedObjectProperty(InOuter, SetProp->ElementProp, SetValue.GetElementPtr(ValueIdx), DefValue.GetElementPtr(ValueIdx));
+					}
+				}
+				else if (const FMapProperty* MapProp = CastField<FMapProperty>(InProperty))
+				{
+					// For map containers, validate each pair's value against the default value, and ensure that all DSO elements match up.
+					// As above, we consider that the number of pairs in the map may differ between current and default, but that all DSOs
+					// are at least always present in the default container, and match up with the pairs in the current map container value.
+					FScriptMapHelper_InContainer MapValue(MapProp, InDataPtr, ArrayIdx);
+					FScriptMapHelper_InContainer DefValue(MapProp, InDefaultDataPtr, ArrayIdx);
+					for (int32 ValueIdx = 0; ValueIdx < MapValue.Num() && ValueIdx < DefValue.Num(); ++ValueIdx)
+					{
+						ValidateInstancedObjectProperty(InOuter, MapProp->ValueProp, MapValue.GetValuePtr(ValueIdx), DefValue.GetValuePtr(ValueIdx));
+					}
+				}
+			}
+		}
+
+		static void ValidateDefaultSubobjects_Inner(UObject* InOuter, UStruct* InStruct, void* InDataPtr, const void* InDefaultDataPtr)
+		{
+			// Iterate over all reference properties, including those inherited from the parent class hierarchy.
+			for (const FProperty* RefProp = InStruct->RefLink; RefProp; RefProp = RefProp->NextRef)
+			{
+				// We only need to consider 'Instanced' reference properties here (e.g. instanced subobjects created at construction time).
+				if (RefProp->ContainsInstancedObjectProperty())
+				{
+					ValidateInstancedObjectProperty(InOuter, RefProp, InDataPtr, InDefaultDataPtr);
+				}
+			}
+		}
+		
+	public:
+		/**
+		 * Utility method that iterates the reference property chain for a given object's underlying (non-native) type, and validates all
+		 * references to any instanced default subobjects (DSOs), or subobjects that are instanced natively when we first construct and
+		 * initialize the object through its native super class hierarchy. Current validation steps include:
+		 *
+		 *	a) Ensure that the given object has a non-NULL value for each reference property inherited from its native super chain, when
+		 *	   compared to its closest native parent class default object (CDO). Blueprints cannot mark default subobjects as "optional,"
+		 *	   which means that if the closest native parent CDO has a non-NULL value for a property that's referencing a default subobject
+		 *	   instance, then we expect that the Blueprint's CDO should also have a non-NULL value for the same property, but referencing
+		 *	   its own unique instance of a subobject with the same name. In some cases (due to reinstancing bugs perhaps), these references
+		 *	   can unintentionally be serialized as NULL to the Blueprint asset, which can lead to data loss and corrupted assets that are
+		 *	   otherwise unrecoverable. This both emits a warning to the log when validation fails, as well as attempts to restore these
+		 *	   references back to the unique instance that was constructed/initialized for the object, in order to allow for data recovery.
+		 *
+		 * Any additional validation steps that are implemented as part of this path in the future should be noted above for completeness.
+		 */
+		static void ValidateDefaultSubobjects(UObject* InObject)
+		{
+			TRACE_CPUPROFILER_EVENT_SCOPE(FBlueprintGeneratedClassUtils::ValidateDefaultSubobjects);
+
+			if (GBlueprintDefaultSubobjectValidationDisabled)
+			{
+				return;
+			}
+
+			check(InObject);
+
+			UClass* ObjClass = InObject->GetClass();
+			check(ObjClass);
+
+			// No need to validate non-native class types.
+			if (ObjClass->IsNative())
+			{
+				return;
+			}
+
+			// Find the closest native super class in the inheritance hierarchy.
+			UClass* NativeParentClass = FindFirstNativeClassInHierarchy(ObjClass);
+			check(NativeParentClass);
+
+			// Grab a reference to its default object. We'll use it as the basis for comparison below.
+			UObject* NativeParentCDO = NativeParentClass->GetDefaultObject(false);
+			check(NativeParentCDO);
+
+			// Validate this object's DSO member references against its closest native super class defaults.
+			ValidateDefaultSubobjects_Inner(InObject, NativeParentClass, InObject, NativeParentCDO);
+		}
+#endif	// WITH_EDITOR
 	};
 }
 
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
 UBlueprintGeneratedClass::UBlueprintGeneratedClass(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 #if VALIDATE_UBER_GRAPH_PERSISTENT_FRAME
@@ -204,15 +396,12 @@ UBlueprintGeneratedClass::UBlueprintGeneratedClass(const FObjectInitializer& Obj
 #endif//VALIDATE_UBER_GRAPH_PERSISTENT_FRAME
 {
 	NumReplicatedProperties = 0;
-	// @todo: BP2CPP_remove
-	bHasNativizedParent_DEPRECATED = false;
 	bHasCookedComponentInstancingData = false;
 	bCustomPropertyListForPostConstructionInitialized = false;
 #if WITH_EDITORONLY_DATA
 	bIsSparseClassDataSerializable = false;
 #endif
 }
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 void UBlueprintGeneratedClass::PostInitProperties()
 {
@@ -336,7 +525,14 @@ void UBlueprintGeneratedClass::InitializeFieldNotifies()
 
 void UBlueprintGeneratedClass::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
 	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UBlueprintGeneratedClass::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	Super::GetAssetRegistryTags(Context);
 
 	FString NativeParentClassName;
 	FString ParentClassName;
@@ -358,9 +554,9 @@ void UBlueprintGeneratedClass::GetAssetRegistryTags(TArray<FAssetRegistryTag>& O
 		NativeParentClassName = ParentClassName = TEXT("None");
 	}
 
-	OutTags.Add(FAssetRegistryTag(FBlueprintTags::ParentClassPath, ParentClassName, FAssetRegistryTag::TT_Alphabetical));
-	OutTags.Add(FAssetRegistryTag(FBlueprintTags::NativeParentClassPath, NativeParentClassName, FAssetRegistryTag::TT_Alphabetical));
-	OutTags.Add(FAssetRegistryTag(FBlueprintTags::ClassFlags, FString::FromInt((uint32)GetClassFlags()), FAssetRegistryTag::TT_Hidden));
+	Context.AddTag(FAssetRegistryTag(FBlueprintTags::ParentClassPath, ParentClassName, FAssetRegistryTag::TT_Alphabetical));
+	Context.AddTag(FAssetRegistryTag(FBlueprintTags::NativeParentClassPath, NativeParentClassName, FAssetRegistryTag::TT_Alphabetical));
+	Context.AddTag(FAssetRegistryTag(FBlueprintTags::ClassFlags, FString::FromInt((uint32)GetClassFlags()), FAssetRegistryTag::TT_Hidden));
 
 #if WITH_EDITORONLY_DATA
 	// Get editor-only tags; on a cooked BPGC, those tags are deserialized into CookedEditorTags, otherwise generate them for the BP
@@ -374,7 +570,18 @@ void UBlueprintGeneratedClass::GetAssetRegistryTags(TArray<FAssetRegistryTag>& O
 
 	for (const auto& EditorTag : *EditorTagsToAdd)
 	{
-		OutTags.Add(FAssetRegistryTag(EditorTag.Key, EditorTag.Value, FAssetRegistryTag::TT_Hidden));
+		Context.AddTag(FAssetRegistryTag(EditorTag.Key, EditorTag.Value, FAssetRegistryTag::TT_Hidden));
+	}
+
+	if (const UObject* CDO = GetDefaultObject())
+	{
+		if (const IAssetRegistryTagProviderInterface* AssetRegistryProvider = Cast<IAssetRegistryTagProviderInterface>(CDO))
+		{
+			if (AssetRegistryProvider->ShouldAddCDOTagsToBlueprintClass())
+			{
+				CDO->GetAssetRegistryTags(Context);
+			}
+		}
 	}
 #endif //#if WITH_EDITORONLY_DATA
 
@@ -387,7 +594,7 @@ void UBlueprintGeneratedClass::GetAssetRegistryTags(TArray<FAssetRegistryTag>& O
 	 *
 	 * See UBlueprint::GetExtendedAssetRegistryTagsForSave.
 	 */
-	if (GIsSavingPackage)
+	if (GIsSavingPackage && !IsRunningCookCommandlet())
 	{
 		if (AActor* BlueprintCDO = Cast<AActor>(ClassDefaultObject))
 		{
@@ -395,7 +602,7 @@ void UBlueprintGeneratedClass::GetAssetRegistryTags(TArray<FAssetRegistryTag>& O
 			{
 				if (!FPackageName::IsTempPackage(BlueprintCDOPackage->GetName()) && !BlueprintCDOPackage->HasAnyPackageFlags(PKG_PlayInEditor))
 				{
-					FWorldPartitionActorDescUtils::AppendAssetDataTagsFromActor(BlueprintCDO, OutTags);
+					FWorldPartitionActorDescUtils::AppendAssetDataTagsFromActor(BlueprintCDO, Context);
 				}
 			}
 		}
@@ -404,6 +611,17 @@ void UBlueprintGeneratedClass::GetAssetRegistryTags(TArray<FAssetRegistryTag>& O
 }
 
 #if WITH_EDITOR
+void UBlueprintGeneratedClass::GetAdditionalAssetDataObjectsForCook(FArchiveCookContext& CookContext,
+	TArray<UObject*>& OutObjects) const
+{
+	Super::GetAdditionalAssetDataObjectsForCook(CookContext, OutObjects);
+	UBlueprint* Blueprint = Cast<UBlueprint>(ClassGeneratedBy);
+	if (Blueprint && Blueprint->GetPackage() == GetPackage())
+	{
+		OutObjects.Add(Blueprint);
+	}
+}
+
 void UBlueprintGeneratedClass::PostLoadAssetRegistryTags(const FAssetData& InAssetData, TArray<FAssetRegistryTag>& OutTagsAndValuesToUpdate) const
 {
 	Super::PostLoadAssetRegistryTags(InAssetData, OutTagsAndValuesToUpdate);
@@ -455,7 +673,7 @@ FPrimaryAssetId UBlueprintGeneratedClass::GetPrimaryAssetId() const
 
 UClass* UBlueprintGeneratedClass::GetAuthoritativeClass()
 {
- 	if (nullptr == ClassGeneratedBy) // to track UE-11597 and UE-11595
+ 	if (nullptr == ClassGeneratedBy)
  	{
 		// If this is a cooked blueprint, the generatedby class will have been discarded so we'll just have to assume we're authoritative!
 		if (bCooked || RootPackageHasAnyFlags(PKG_Cooked))
@@ -470,62 +688,8 @@ UClass* UBlueprintGeneratedClass::GetAuthoritativeClass()
 
 	UBlueprint* GeneratingBP = CastChecked<UBlueprint>(ClassGeneratedBy);
 
-	check(GeneratingBP);
-
 	return (GeneratingBP->GeneratedClass != NULL) ? GeneratingBP->GeneratedClass : this;
 }
-
-struct FConditionalRecompileClassHepler
-{
-	enum class ENeededAction : uint8
-	{
-		None,
-		StaticLink,
-		Recompile,
-	};
-
-	static bool HasTheSameLayoutAsParent(const UStruct* Struct)
-	{
-		const UStruct* Parent = Struct ? Struct->GetSuperStruct() : NULL;
-		return FStructUtils::TheSameLayout(Struct, Parent);
-	}
-
-	static ENeededAction IsConditionalRecompilationNecessary(const UBlueprint* GeneratingBP)
-	{
-		if (FBlueprintEditorUtils::IsInterfaceBlueprint(GeneratingBP))
-		{
-			return ENeededAction::None;
-		}
-
-		if (FBlueprintEditorUtils::IsDataOnlyBlueprint(GeneratingBP))
-		{
-			// If my parent is native, my layout wasn't changed.
-			const UClass* ParentClass = *GeneratingBP->ParentClass;
-			if (!GeneratingBP->GeneratedClass || (GeneratingBP->GeneratedClass->GetSuperClass() != ParentClass))
-			{
-				return ENeededAction::Recompile;
-			}
-
-			if (ParentClass && ParentClass->HasAllClassFlags(CLASS_Native))
-			{
-				return ENeededAction::None;
-			}
-
-			if (HasTheSameLayoutAsParent(*GeneratingBP->GeneratedClass))
-			{
-				return ENeededAction::StaticLink;
-			}
-			else
-			{
-				UE_LOG(LogBlueprint, Log, TEXT("During ConditionalRecompilation the layout of DataOnly BP should not be changed. It will be handled, but it's bad for performence. Blueprint %s"), *GeneratingBP->GetName());
-			}
-		}
-
-		return ENeededAction::Recompile;
-	}
-};
-
-extern UNREALED_API FSecondsCounterData BlueprintCompileAndLoadTimerData;
 
 void UBlueprintGeneratedClass::ConditionalRecompileClass(FUObjectSerializeContext* InLoadContext)
 {
@@ -557,10 +721,24 @@ void UBlueprintGeneratedClass::SerializeDefaultObject(UObject* Object, FStructur
 	FScopeLock SerializeAndPostLoadLock(&SerializeAndPostLoadCritical);
 	FArchive& UnderlyingArchive = Slot.GetUnderlyingArchive();
 
+#if WITH_EDITOR
+	using namespace UE::Runtime::Engine::Private;
+	if (UnderlyingArchive.IsSaving() && !UnderlyingArchive.IsObjectReferenceCollector() && Object == ClassDefaultObject)
+	{
+		// Validate/fix up default subobjects prior to saving the CDO.
+		FBlueprintGeneratedClassUtils::ValidateDefaultSubobjects(Object);
+	}
+#endif	// WITH_EDITOR
+
 	Super::SerializeDefaultObject(Object, Slot);
 
 	if (UnderlyingArchive.IsLoading() && !UnderlyingArchive.IsObjectReferenceCollector() && Object == ClassDefaultObject)
 	{
+#if WITH_EDITOR
+		// Validate/fix up default subobjects after serializing the CDO (e.g. fix up any unexpected NULL refs).
+		FBlueprintGeneratedClassUtils::ValidateDefaultSubobjects(Object);
+#endif	// WITH_EDITOR
+
 		CreatePersistentUberGraphFrame(Object, true);
 
 		// On load, build the custom property list used in post-construct initialization logic. Note that in the editor, this will be refreshed during compile-on-load.
@@ -573,8 +751,10 @@ void UBlueprintGeneratedClass::SerializeDefaultObject(UObject* Object, FStructur
 			if (CookedData.bHasValidCookedData)
 			{
 				// This feature requires EDL at cook time, so ensure that the source template is also fully loaded at this point.
+				// Also ensure that the source template is not a class default object; it must always be a unique archetype object.
 				if (SourceTemplate != nullptr
-					&& ensure(!SourceTemplate->HasAnyFlags(RF_NeedLoad)))
+					&& ensure(!SourceTemplate->HasAnyFlags(RF_NeedLoad))
+					&& ensure(!SourceTemplate->HasAnyFlags(RF_ClassDefaultObject)))
 				{
 					CookedData.BuildCachedPropertyDataFromTemplate(SourceTemplate);
 				}
@@ -641,7 +821,7 @@ void UBlueprintGeneratedClass::SerializeDefaultObject(UObject* Object, FStructur
 		if (UnderlyingArchive.IsSaving())
 		{
 			UScriptStruct* SerializedSparseClassDataStruct = SparseClassDataStruct;
-			if (!OverridesSparseClassDataArchetype())
+			if (!UE::Reflection::DoesSparseClassDataOverrideArchetype(this, [&UnderlyingArchive](FProperty* P) { return P->ShouldSerializeValue(UnderlyingArchive);}))
 			{
 				// If this class doesn't override the sparse class data of its archetype, then we can skip saving it 
 				// since it can be lazily regenerated from the archetype data on load
@@ -799,7 +979,13 @@ void UBlueprintGeneratedClass::ConformSparseClassData(UObject* Object)
 			}
 			if (SparseClassDataStructToCopy)
 			{
-				SparseClassDataStructToCopy->CopyScriptStruct(GetOrCreateSparseClassData(), SparseClassDataPendingConform);
+				// Copy all properties from SparseClassDataPendingConform into the current sparse class data struct.
+				// NOTE: Avoids the copy assignment operators of the class properties, as they may not preserve all data.
+				void* const ThisSparseClassData = GetOrCreateSparseClassData();
+				for (TFieldIterator<FProperty> It(SparseClassDataStructToCopy); It; ++It)
+				{
+					It->CopyCompleteValue_InContainer(ThisSparseClassData, SparseClassDataPendingConform);
+				}
 			}
 		}
 
@@ -1654,7 +1840,6 @@ uint8* UBlueprintGeneratedClass::GetPersistentUberGraphFrame(UObject* Obj, UFunc
 
 void UBlueprintGeneratedClass::CreatePersistentUberGraphFrame(UObject* Obj, bool bCreateOnlyIfEmpty, bool bSkipSuperClass, UClass* OldClass) const
 {
-#if USE_UBER_GRAPH_PERSISTENT_FRAME
 #if WITH_EDITORONLY_DATA
 	/** Macros should not create uber graph frames as they have no uber graph. If UBlueprints are cooked out the macro class probably does not exist as well */
 	UBlueprint* Blueprint = Cast<UBlueprint>(ClassGeneratedBy);
@@ -1713,12 +1898,10 @@ void UBlueprintGeneratedClass::CreatePersistentUberGraphFrame(UObject* Obj, bool
 		checkSlow(ParentClass);
 		ParentClass->CreatePersistentUberGraphFrame(Obj, bCreateOnlyIfEmpty);
 	}
-#endif // USE_UBER_GRAPH_PERSISTENT_FRAME
 }
 
 void UBlueprintGeneratedClass::DestroyPersistentUberGraphFrame(UObject* Obj, bool bSkipSuperClass) const
 {
-#if USE_UBER_GRAPH_PERSISTENT_FRAME
 	ensure(!UberGraphFramePointerProperty == !UberGraphFunction);
 	if (Obj && UsePersistentUberGraphFrame() && UberGraphFramePointerProperty && UberGraphFunction)
 	{
@@ -1747,7 +1930,6 @@ void UBlueprintGeneratedClass::DestroyPersistentUberGraphFrame(UObject* Obj, boo
 		checkSlow(ParentClass);
 		ParentClass->DestroyPersistentUberGraphFrame(Obj);
 	}
-#endif // USE_UBER_GRAPH_PERSISTENT_FRAME
 }
 
 void UBlueprintGeneratedClass::GetPreloadDependencies(TArray<UObject*>& OutDeps)
@@ -2067,7 +2249,6 @@ void UBlueprintGeneratedClass::Link(FArchive& Ar, bool bRelinkExistingProperties
 {
 	Super::Link(Ar, bRelinkExistingProperties);
 
-#if USE_UBER_GRAPH_PERSISTENT_FRAME
 	if (UsePersistentUberGraphFrame())
 	{
 		if (UberGraphFunction)
@@ -2085,7 +2266,6 @@ void UBlueprintGeneratedClass::Link(FArchive& Ar, bool bRelinkExistingProperties
 			checkSlow(UberGraphFramePointerProperty);
 		}
 	}
-#endif
 
 	AssembleReferenceTokenStream(true);
 }
@@ -2106,7 +2286,7 @@ void UBlueprintGeneratedClass::PurgeClass(bool bRecompilingOnLoad)
 	FastCallPairs_DEPRECATED.Empty();
 #endif
 	CalledFunctions.Empty();
-#endif //WITH_EDITOR
+#endif //WITH_EDITORONLY_DATA
 }
 
 void UBlueprintGeneratedClass::Bind()
@@ -2126,16 +2306,16 @@ class FPersistentFrameCollector final : public FReferenceCollector //-V1052
 	FReferenceCollector& InnerCollector;
 #if UE_CHECK_BLUEPRINT_REFERENCES
 	const uint8* PersistentFrameDataAddr;
-	const UObject* Blueprint;
 #endif
+	UObject* Blueprint;
 
 public:
 	FPersistentFrameCollector(FReferenceCollector& Collector, uint8* Instance, UObject* InBlueprint)
 	: InnerCollector(Collector)
 #if UE_CHECK_BLUEPRINT_REFERENCES
 	, PersistentFrameDataAddr(Instance)
-	, Blueprint(InBlueprint)
 #endif
+	, Blueprint(InBlueprint)
 	{}
 
 
@@ -2210,7 +2390,7 @@ public:
 				if (const FObjectProperty* ObjectProperty = CastField<const FObjectProperty>(ReferencingProperty))
 				{
 					// This was a raw UObject* serialized by FObjectProperty, so just save the address
-					if (InnerCollector.MarkWeakObjectReferenceForClearing(&Object))
+					if (InnerCollector.MarkWeakObjectReferenceForClearing(&Object, Blueprint))
 					{
 						return;
 					}
@@ -2254,7 +2434,6 @@ void UBlueprintGeneratedClass::AddReferencedObjectsInUbergraphFrame(UObject* InT
 	
 	while (true)
 	{
-#if USE_UBER_GRAPH_PERSISTENT_FRAME
 		UFunction* UberGraphFunction = BPGC->UberGraphFunction;
 		if (BPGC->UberGraphFramePointerProperty)
 		{
@@ -2293,7 +2472,6 @@ void UBlueprintGeneratedClass::AddReferencedObjectsInUbergraphFrame(UObject* InT
 
 			}
 		}
-#endif // USE_UBER_GRAPH_PERSISTENT_FRAME
 
 		if (SuperClass->HasAllClassFlags(CLASS_Native))
 		{
@@ -2316,12 +2494,8 @@ FName UBlueprintGeneratedClass::GetUberGraphFrameName()
 
 bool UBlueprintGeneratedClass::UsePersistentUberGraphFrame()
 {
-#if USE_UBER_GRAPH_PERSISTENT_FRAME
 	static const FBoolConfigValueHelper PersistentUberGraphFrame(TEXT("Kismet"), TEXT("bPersistentUberGraphFrame"), GEngineIni);
 	return PersistentUberGraphFrame;
-#else
-	return false;
-#endif
 }
 
 #if VALIDATE_UBER_GRAPH_PERSISTENT_FRAME
@@ -2410,13 +2584,6 @@ void UBlueprintGeneratedClass::Serialize(FArchive& Ar)
 			ClassFlags |= CLASS_Deprecated;
 		}
 	}
-
-#if WITH_EDITORONLY_DATA
-	if (Ar.IsLoading())
-	{
-		UberGraphFramePointerProperty_DEPRECATED = nullptr;
-	}
-#endif
 
 #if WITH_EDITORONLY_DATA
 	if (Ar.IsSaving() && Ar.IsCooking() && Ar.IsObjectReferenceCollector())

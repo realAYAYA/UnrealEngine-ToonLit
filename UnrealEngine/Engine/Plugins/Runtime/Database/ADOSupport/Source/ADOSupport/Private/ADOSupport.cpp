@@ -14,7 +14,6 @@ DEFINE_LOG_CATEGORY_STATIC(LogADODataBase, Log, All);
 #endif
 
 #if USE_ADO_INTEGRATION
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include "Windows/AllowWindowsPlatformAtomics.h"
 

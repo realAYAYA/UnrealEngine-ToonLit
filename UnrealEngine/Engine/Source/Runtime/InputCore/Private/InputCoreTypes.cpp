@@ -159,13 +159,8 @@ const FKey EKeys::E_AccentAigu("E_AccentAigu");
 const FKey EKeys::C_Cedille("C_Cedille");
 const FKey EKeys::Section("Section");
 
-
 // Setup platform specific keys
-#if PLATFORM_MAC
-const FKey EKeys::Platform_Delete = EKeys::BackSpace;
-#else
-const FKey EKeys::Platform_Delete = EKeys::Delete;
-#endif
+const FKey EKeys::Platform_Delete = FPlatformInput::GetPlatformDeleteKey();
 
 // Ensure that the Gamepad_ names match those in GenericApplication.cpp
 const FKey EKeys::Gamepad_Left2D("Gamepad_Left2D");
@@ -1437,7 +1432,7 @@ void FKey::ConditionalLookupKeyDetails() const
 
 bool FKey::SerializeFromMismatchedTag(struct FPropertyTag const& Tag, FStructuredArchive::FSlot Slot)
 {
-	if (Tag.Type == NAME_ByteProperty && Tag.EnumName == TEXT("EKeys"))
+	if (Tag.GetType().IsEnum(TEXT("EKeys")))
 	{
 		Slot << KeyName;
 		const FString KeyNameString(KeyName.ToString());

@@ -63,8 +63,9 @@ public:
 	 * Adds header content to the category
 	 *
 	 * @param InHeaderContent	The header content widget
+	 * @param bWholeRowContent	The header content should span the whole row (hides category name)
 	 */
-	virtual IDetailCategoryBuilder& HeaderContent(TSharedRef<SWidget> InHeaderContent) = 0;
+	virtual IDetailCategoryBuilder& HeaderContent(TSharedRef<SWidget> InHeaderContent, bool bWholeRowContent = false) = 0;
 
 	/**
 	 * Gets the current sort order of the category
@@ -132,6 +133,7 @@ public:
 	 * @return A property row for customizing the property or NULL if the property could not be found
 	 */
 	virtual IDetailPropertyRow* AddExternalStructureProperty(TSharedPtr<FStructOnScope> StructData, FName PropertyName, EPropertyLocation::Type Location = EPropertyLocation::Default, const FAddPropertyParams& Params = FAddPropertyParams()) = 0;
+	virtual IDetailPropertyRow* AddExternalStructureProperty(TSharedPtr<IStructureDataProvider> StructData, FName PropertyName, EPropertyLocation::Type Location = EPropertyLocation::Default, const FAddPropertyParams& Params = FAddPropertyParams()) = 0;
 
 	/**
 	 * Adds all properties for the specified external structure to this category
@@ -142,6 +144,7 @@ public:
 	 * @return Array of all properties added to this category
 	 */
 	virtual TArray<TSharedPtr<IPropertyHandle>> AddAllExternalStructureProperties(TSharedRef<FStructOnScope> StructData, EPropertyLocation::Type Location = EPropertyLocation::Default, TArray<IDetailPropertyRow*>* OutPropertiesRow = nullptr) = 0;
+	virtual TArray<TSharedPtr<IPropertyHandle>> AddAllExternalStructureProperties(TSharedPtr<IStructureDataProvider> StructProvider, EPropertyLocation::Type Location = EPropertyLocation::Default, TArray<IDetailPropertyRow*>* OutPropertiesRow = nullptr) = 0;
 
 	/**
 	 * Adds a custom widget row to the category
@@ -215,4 +218,16 @@ public:
 
 	/** Optional PasteFromText delegate for this category */
 	virtual TSharedPtr<FOnPasteFromText> OnPasteFromText() const { return nullptr; }
+
+	/**
+	 * If true, this Category should have no UProperty data associated with it, and will be shown as an empty stub
+	 * with no expansion arrow
+	 */
+	virtual bool IsEmpty() const { return false; }
+
+	/**
+	 * Sets whether this Category is "Empty" ~ that is, should have no UProperty data associated with it, and will be shown
+	 * as an empty stub with no expansion arrow
+	 */
+	virtual void SetIsEmpty(bool bInIsEmpty) { }
 };

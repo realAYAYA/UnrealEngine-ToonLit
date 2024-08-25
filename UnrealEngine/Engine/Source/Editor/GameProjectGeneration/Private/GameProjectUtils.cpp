@@ -283,7 +283,7 @@ FText FNewClassInfo::GetClassDescription(const bool bFullDescription/* = true*/)
 					if(ClassDescription.FindChar('.', FullStopIndex))
 					{
 						// Only show the first sentence so as not to clutter up the UI with a detailed description of implementation details
-						ClassDescription.LeftInline(FullStopIndex + 1, false);
+						ClassDescription.LeftInline(FullStopIndex + 1, EAllowShrinking::No);
 					}
 
 					// Strip out any new-lines in the description
@@ -382,11 +382,11 @@ FString FNewClassInfo::GetCleanClassName(const FString& ClassName) const
 			// if our class ends with either Widget or WidgetStyle, we need to strip those out to avoid silly looking duplicates
 			if(CleanClassName.EndsWith(TEXT("Style")))
 			{
-				CleanClassName.LeftChopInline(5, false); // 5 for "Style"
+				CleanClassName.LeftChopInline(5, EAllowShrinking::No); // 5 for "Style"
 			}
 			if(CleanClassName.EndsWith(TEXT("Widget")))
 			{
-				CleanClassName.LeftChopInline(6, false); // 6 for "Widget"
+				CleanClassName.LeftChopInline(6, EAllowShrinking::No); // 6 for "Widget"
 			}
 		}
 		break;
@@ -2125,12 +2125,6 @@ bool GameProjectUtils::GenerateConfigFiles(const FProjectInformation& InProjectI
 		FileContents += TEXT("[Audio]") LINE_TERMINATOR;
 		FileContents += TEXT("UseAudioMixer=True") LINE_TERMINATOR;
 
-		/** 5.3 OnlineSubsystemEOS logic overrides */
-
-		FileContents += LINE_TERMINATOR;
-		FileContents += TEXT("[OnlineSubsystemEOS]") LINE_TERMINATOR;
-		FileContents += TEXT("bUseSessionPresenceAttribute=True") LINE_TERMINATOR;
-
 		if (InProjectInfo.bCopyStarterContent)
 		{
 			FileContents += LINE_TERMINATOR;
@@ -2777,7 +2771,7 @@ GameProjectUtils::EProjectDuplicateResult GameProjectUtils::DuplicateProjectForU
 			break;
 		}
 
-		NewDirectoryName.LeftInline(LastSpace, false);
+		NewDirectoryName.LeftInline(LastSpace, EAllowShrinking::No);
 		NewDirectoryName.TrimEndInline();
 	}
 
@@ -2969,7 +2963,7 @@ bool GameProjectUtils::UpdateAdditionalPluginDirectory(const FString& InDir, con
 
 const TCHAR* GameProjectUtils::GetDefaultBuildSettingsVersion()
 {
-	return TEXT("BuildSettingsVersion.V4");
+	return TEXT("BuildSettingsVersion.V5");
 }
 
 bool GameProjectUtils::ReadTemplateFile(const FString& TemplateFileName, FString& OutFileContents, FText& OutFailReason)
@@ -4287,6 +4281,15 @@ bool GameProjectUtils::InsertFeaturePacksIntoINIFile(const FProjectInformation& 
 		{
 			FileOutput += PackList[iLine] + LINE_TERMINATOR;
 		}
+
+		// Register 'StartupActions' as a section to save if one of the default value of its entries
+		// is modified. Otherwise, the mechanism which set 'bAddPacks' to 'False' after the
+		// first load will not be persisted and the selected pack files will be loaded on each launch of the editor.
+		FileOutput += LINE_TERMINATOR;
+		FileOutput += TEXT("[SectionsToSave]");
+		FileOutput += LINE_TERMINATOR;
+		FileOutput += TEXT("+Section=StartupActions");
+		FileOutput += LINE_TERMINATOR;
 
 		if (!FFileHelper::SaveStringToFile(FileOutput, *IniFilename))
 		{

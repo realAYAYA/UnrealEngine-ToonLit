@@ -18,7 +18,8 @@ class UInterchangeDatasmithLevelPipeline;
 class UInterchangeDatasmithMaterialPipeline;
 class UInterchangeDatasmithStaticMeshPipeline;
 class UInterchangeDatasmithSceneNode;
-class UInterchangeDatasmithTexturePipeline;
+class UInterchangeGenericTexturePipeline;
+class UInterchangeTextureFactoryNode;
 class UTexture;
 struct FDatasmithImportContext;
 
@@ -28,9 +29,6 @@ class DATASMITHINTERCHANGE_API UInterchangeDatasmithPipeline : public UInterchan
 	GENERATED_BODY()
 
 	UInterchangeDatasmithPipeline();
-
-	UPROPERTY(VisibleAnywhere, Instanced, Category = "Textures")
-	TObjectPtr<UInterchangeDatasmithTexturePipeline> TexturePipeline;
 
 	UPROPERTY(VisibleAnywhere, Instanced, Category = "Materials")
 	TObjectPtr<UInterchangeDatasmithMaterialPipeline> MaterialPipeline;
@@ -50,9 +48,23 @@ class DATASMITHINTERCHANGE_API UInterchangeDatasmithPipeline : public UInterchan
 	UPROPERTY(VisibleAnywhere, Instanced, Category = "Common Skeletal Meshes and Animations")
 	TObjectPtr<UInterchangeGenericCommonSkeletalMeshesAndAnimationsProperties> CommonSkeletalMeshesAndAnimationsProperties;
 
+#if WITH_EDITORONLY_DATA
+	UPROPERTY(EditAnywhere, Category = "Mesh")
+	bool bDeleteInvalidMeshes = true;
+#endif
+
+	UPROPERTY(EditAnywhere, Category = "Materials")
+	bool bCreateMaterialReferencesFolders = true;
+
+public:
+	/** Begin UObject overrides*/
+	virtual void PostDuplicate(bool bDuplicateForPIE) override;
+	/** End UObject overrides */
+
 protected:
-	virtual void ExecutePipeline(UInterchangeBaseNodeContainer* InBaseNodeContainer, const TArray<UInterchangeSourceData*>& SourceDatas) override;
+	virtual void ExecutePipeline(UInterchangeBaseNodeContainer* InBaseNodeContainer, const TArray<UInterchangeSourceData*>& SourceDatas, const FString& ContentBasePath) override;
 	virtual void ExecutePostImportPipeline(const UInterchangeBaseNodeContainer* InBaseNodeContainer, const FString& NodeKey, UObject* CreatedAsset, bool bIsAReimport) override;
+	virtual void AdjustSettingsForContext(EInterchangePipelineContext ImportType, TObjectPtr<UObject> ReimportAsset) override;
 
 	virtual bool CanExecuteOnAnyThread(EInterchangePipelineTask PipelineTask) override
 	{
@@ -61,8 +73,8 @@ protected:
 	}
 
 private:
-	UInterchangeBaseNodeContainer* BaseNodeContainer = nullptr;
+	void PreImportTextureFactoryNode(UInterchangeTextureFactoryNode* TextureFactoryNode) const;
 
-	// Fill up the UDatasmithScene with all the data its needs for DnD
-	void PostImportDatasmithSceneAsset(UDatasmithScene& DatasmithSceneAsset);
+private:
+	UInterchangeBaseNodeContainer* BaseNodeContainer = nullptr;
 };

@@ -15,6 +15,7 @@
 class AActor;
 class FDataLayerMode;
 class FWorldPartitionActorDesc;
+class FWorldPartitionActorDescInstance;
 class UDataLayerInstance;
 class ULevel;
 class UWorld;
@@ -36,7 +37,7 @@ public:
 	void SetShowOnlySelectedActors(bool bInbShowOnlySelectedActors) { bShowOnlySelectedActors = bInbShowOnlySelectedActors; }
 	void SetHighlightSelectedDataLayers(bool bInHighlightSelectedDataLayers) { bHighlightSelectedDataLayers = bInHighlightSelectedDataLayers; }
 	void SetShowLevelInstanceContent(bool bInShowLevelInstanceContent) { bShowLevelInstanceContent = bInShowLevelInstanceContent; }
-
+	bool GetShowLevelInstanceContent() const { return bShowLevelInstanceContent; }
 private:
 	UWorld* GetOwningWorld() const;
 	FDataLayerHierarchy(FDataLayerMode* Mode, const TWeakObjectPtr<UWorld>& Worlds);
@@ -55,8 +56,8 @@ private:
 	void OnLevelRemoved(ULevel* InLevel, UWorld* InWorld);
 	void OnLoadedActorAdded(AActor& InActor);
 	void OnLoadedActorRemoved(AActor& InActor);
-	void OnActorDescAdded(FWorldPartitionActorDesc* InActorDesc);
-	void OnActorDescRemoved(FWorldPartitionActorDesc* InActorDesc);
+	void OnActorDescInstanceAdded(FWorldPartitionActorDescInstance* InActorDescInstance);
+	void OnActorDescInstanceRemoved(FWorldPartitionActorDescInstance* InActorDescInstance);
 	void OnActorDataLayersChanged(const TWeakObjectPtr<AActor>& InActor);
 	void OnDataLayerChanged(const EDataLayerAction Action, const TWeakObjectPtr<const UDataLayerInstance>& ChangedDataLayer, const FName& ChangedProperty);
 	void FullRefreshEvent();

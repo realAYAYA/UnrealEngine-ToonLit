@@ -20,9 +20,9 @@ namespace ContentBrowserClassData
 
 	CONTENTBROWSERCLASSDATASOURCE_API bool IsPluginClass(const FName InPath);
 
-	CONTENTBROWSERCLASSDATASOURCE_API FContentBrowserItemData CreateClassFolderItem(UContentBrowserDataSource* InOwnerDataSource, const FName InVirtualPath, const FName InFolderPath);
+	CONTENTBROWSERCLASSDATASOURCE_API FContentBrowserItemData CreateClassFolderItem(UContentBrowserDataSource* InOwnerDataSource, const FName InVirtualPath, const FName InFolderPath, const bool bIsFromPlugin);
 
-	CONTENTBROWSERCLASSDATASOURCE_API FContentBrowserItemData CreateClassFileItem(UContentBrowserDataSource* InOwnerDataSource, const FName InVirtualPath, const FName InClassPath, UClass* InClass);
+	CONTENTBROWSERCLASSDATASOURCE_API FContentBrowserItemData CreateClassFileItem(UContentBrowserDataSource* InOwnerDataSource, const FName InVirtualPath, const FName InClassPath, UClass* InClass, const bool bIsFromPlugin);
 
 	CONTENTBROWSERCLASSDATASOURCE_API TSharedPtr<const FContentBrowserClassFolderItemDataPayload> GetClassFolderItemPayload(const UContentBrowserDataSource* InOwnerDataSource, const FContentBrowserItemData& InItem);
 

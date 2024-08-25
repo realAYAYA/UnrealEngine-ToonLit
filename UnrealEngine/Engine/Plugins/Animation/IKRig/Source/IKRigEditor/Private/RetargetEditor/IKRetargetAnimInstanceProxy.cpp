@@ -14,8 +14,10 @@ FIKRetargetAnimInstanceProxy::FIKRetargetAnimInstanceProxy(
 	: FAnimPreviewInstanceProxy(InAnimInstance),
 	PreviewPoseNode(InPreviewPoseNode),
 	RetargetNode(InRetargetNode),
-	OutputMode(ERetargeterOutputMode::ShowRetargetPose)
+	OutputMode(ERetargeterOutputMode::EditRetargetPose)
 {
+	// retargeting is all done in world space, moving the source component breaks root motion retargeting
+	bIgnoreRootMotion = true;
 }
 
 void FIKRetargetAnimInstanceProxy::Initialize(UAnimInstance* InAnimInstance)
@@ -42,6 +44,11 @@ void FIKRetargetAnimInstanceProxy::CacheBones()
 
 bool FIKRetargetAnimInstanceProxy::Evaluate(FPoseContext& Output)
 {
+	if (PreviewPoseNode->IKRetargeterAsset)
+	{
+		bIgnoreRootLock = PreviewPoseNode->IKRetargeterAsset->bIgnoreRootLockInPreview;	
+	}
+	
 	switch (OutputMode)
 	{
 	case ERetargeterOutputMode::RunRetarget:
@@ -57,7 +64,6 @@ bool FIKRetargetAnimInstanceProxy::Evaluate(FPoseContext& Output)
 			break;
 		}
 	case ERetargeterOutputMode::EditRetargetPose:
-	case ERetargeterOutputMode::ShowRetargetPose:
 		{
 			PreviewPoseNode->Evaluate_AnyThread(Output);
 			break;

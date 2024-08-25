@@ -11,7 +11,7 @@ namespace UE::NearestNeighborModel
 	{
 	public:
 		FNearestNeighborModelEditorStyle();
-		~FNearestNeighborModelEditorStyle();
+		virtual ~FNearestNeighborModelEditorStyle();
 
 		static FNearestNeighborModelEditorStyle& Get();
 	};

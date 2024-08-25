@@ -12,12 +12,10 @@
 #include "Engine/Texture2D.h"
 #include "UObject/ConstructorHelpers.h"
 #include "SmartObjectContainerRenderingComponent.h"
-#include "LevelUtils.h"
-#include "WorldPartition/WorldPartitionLevelStreamingDynamic.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(SmartObjectPersistentCollection)
 
-namespace UE::SmartObjects
+namespace UE::SmartObject
 {
 	struct FEntryFinder
 	{
@@ -32,62 +30,6 @@ namespace UE::SmartObjects
 		const FSmartObjectHandle Handle;
 	};
 }
-
-//----------------------------------------------------------------------//
-// FSmartObjectHandleFactory
-//----------------------------------------------------------------------//
-// Struct used as a friend to FSmartObjectHandle. Only this struct is
-// allowed to create a handle from a uint64.
-//----------------------------------------------------------------------//
-struct FSmartObjectHandleFactory
-{
-	static FSmartObjectHandle CreateSOHandle(const UWorld& World, const USmartObjectComponent& Component)
-	{
-		// When a component can't be part of a collection it indicates that we'll never need
-		// to bind persistent data to this component at runtime. In this case we simply assign
-		// a new incremental Id used to bind it to its runtime entry during the component lifetime and
-		// to unregister from the subsystem when it gets removed (e.g. streaming out, destroyed, etc.).
-		if (Component.GetCanBePartOfCollection() == false)
-		{
-			static std::atomic<uint64> NextDynamicId = 0;
-			const uint64 Id = FSmartObjectHandle::DynamicIdsBitMask | ++NextDynamicId;
-			return FSmartObjectHandle(Id);
-		}
-
-		const FSoftObjectPath ObjectPath = &Component;
-		FString AssetPathString = ObjectPath.GetAssetPathString();
-
-		bool bIsStreamedByWorldPartition = false;
-		if (World.IsPartitionedWorld())
-		{
-			if (const AActor* OwnerActor = Component.GetOwner())
-			{
-				if (ULevelStreaming* BaseLevelStreaming = FLevelUtils::FindStreamingLevel(OwnerActor->GetLevel()))
-				{
-					bIsStreamedByWorldPartition = BaseLevelStreaming->IsA<UWorldPartitionLevelStreamingDynamic>();
-				}
-			}
-		}
-
-		// We are not using asset path for partitioned world since they are not stable between editor and runtime.
-		// SubPathString should be enough since all actors are part of the main level.
-		if (bIsStreamedByWorldPartition)
-		{
-			AssetPathString.Reset();
-		}
-#if WITH_EDITOR
-		else if (World.WorldType == EWorldType::PIE)
-		{
-			AssetPathString = UWorld::RemovePIEPrefix(ObjectPath.GetAssetPathString());
-		}
-#endif // WITH_EDITOR
-
-		// Compute hash manually from strings since GetTypeHash(FSoftObjectPath) relies on a FName which implements run-dependent hash computations.
-		const uint64 PathHash(HashCombine(GetTypeHash(AssetPathString), GetTypeHash(ObjectPath.GetSubPathString())));
-		const uint64 Id = (~FSmartObjectHandle::DynamicIdsBitMask & PathHash);
-		return FSmartObjectHandle(Id);
-	}
-};
 
 //----------------------------------------------------------------------//
 // FSmartObjectCollectionEntry 
@@ -184,7 +126,7 @@ int32 FSmartObjectContainer::Remove(const FSmartObjectContainer& Other)
 			}
 
 			// not using *Swap flavor to maintain the order of appended entries in case we remove whole batches 
-			CollectionEntries.RemoveAt(LocalIndex, NumMatchingSequentialEntries, false);
+			CollectionEntries.RemoveAt(LocalIndex, NumMatchingSequentialEntries, EAllowShrinking::No);
 			EntriesRemovedCount += NumMatchingSequentialEntries;
 			InputIndex += NumMatchingSequentialEntries;
 		}
@@ -250,22 +192,23 @@ FSmartObjectCollectionEntry* FSmartObjectContainer::AddSmartObject(USmartObjectC
 	if (World == nullptr)
 	{
 		UE_VLOG_UELOG(Owner, LogSmartObject, Error, TEXT("'%s' can't be registered to collection '%s': no associated world")
-			, *GetFullNameSafe(&SOComponent), *GetFullNameSafe(Owner));
+			, *SOComponent.GetPathName(SOComponent.GetOwner()), *GetPathNameSafe(Owner));
 		return nullptr;
 	}
-	else if (SOComponent.GetRegisteredHandle().IsValid())
+	
+	if (SOComponent.GetRegisteredHandle().IsValid())
 	{
-		FSmartObjectCollectionEntry* Entry = CollectionEntries.FindByPredicate(UE::SmartObjects::FEntryFinder(SOComponent.GetRegisteredHandle()));
+		FSmartObjectCollectionEntry* Entry = CollectionEntries.FindByPredicate(UE::SmartObject::FEntryFinder(SOComponent.GetRegisteredHandle()));
 		
 		UE_CVLOG_UELOG(Entry == nullptr, Owner, LogSmartObject, Warning, TEXT("%s: Attempting to add '%s' to collection '%s', but it already seems registered with a different container. Adding a single SmartObjectComponent to multiple collections is not supported.")
-			, ANSI_TO_TCHAR(__FUNCTION__), *GetFullNameSafe(&SOComponent), *GetFullNameSafe(Owner));
+			, ANSI_TO_TCHAR(__FUNCTION__), *SOComponent.GetPathName(SOComponent.GetOwner()), *GetPathNameSafe(Owner));
 
 		bOutAlreadyInCollection = (Entry != nullptr);
 		return Entry;
 	}
 
 	check(World);
-	const FSmartObjectHandle Handle = FSmartObjectHandleFactory::CreateSOHandle(*World, SOComponent);
+	const FSmartObjectHandle Handle = FSmartObjectHandleFactory::CreateHandleForComponent(*World, SOComponent);
 
 	if (const FSoftObjectPath* ExistingSmartObjectPath = RegisteredIdToObjectMap.Find(Handle))
 	{
@@ -273,12 +216,12 @@ FSmartObjectCollectionEntry* FSmartObjectContainer::AddSmartObject(USmartObjectC
 		ensureMsgf(*ExistingSmartObjectPath == SmartObjectPath, TEXT("There's already an entry for a given handle that points to a different SmartObject. New SmartObject %s, Existing one %s")
 			, *ExistingSmartObjectPath->ToString(), *SmartObjectPath.ToString());
 
-		FSmartObjectCollectionEntry* Entry = CollectionEntries.FindByPredicate(UE::SmartObjects::FEntryFinder(Handle));
+		FSmartObjectCollectionEntry* Entry = CollectionEntries.FindByPredicate(UE::SmartObject::FEntryFinder(Handle));
 
 		if (ensureMsgf(Entry, TEXT("An Entry is expected to be found since the handle has already been found in the RegisteredIdToObjectMap")))
 		{
 			UE_VLOG_UELOG(Owner, LogSmartObject, VeryVerbose, TEXT("'%s[%s]' already registered to collection '%s'")
-				, *GetFullNameSafe(&SOComponent), *LexToString(Handle), *GetFullNameSafe(Owner));
+				, *SOComponent.GetPathName(SOComponent.GetOwner()), *LexToString(Handle), *GetPathNameSafe(Owner));
 
 			bOutAlreadyInCollection = true;
 			return Entry;
@@ -298,7 +241,7 @@ FSmartObjectCollectionEntry* FSmartObjectContainer::AddSmartObjectInternal(const
 		
 	const uint32 DefinitionIndex = Definitions.AddUnique(&Definition);
 
-	UE_VLOG_UELOG(Owner, LogSmartObject, Verbose, TEXT("Adding '%s[%s]' to collection '%s'"), *GetFullNameSafe(&SOComponent), *LexToString(Handle), *GetFullNameSafe(Owner));
+	UE_VLOG_UELOG(Owner, LogSmartObject, Verbose, TEXT("Adding '%s[%s]' to collection '%s'"), *SOComponent.GetPathName(SOComponent.GetOwner()), *LexToString(Handle), *GetPathNameSafe(Owner));
 	const int32 NewEntryIndex = CollectionEntries.Emplace(Handle, SOComponent, DefinitionIndex);
 
 	RegisteredIdToObjectMap.Add(Handle, CollectionEntries[NewEntryIndex].GetPath());
@@ -314,11 +257,11 @@ bool FSmartObjectContainer::RemoveSmartObject(USmartObjectComponent& SOComponent
 	if (!Handle.IsValid())
 	{
 		UE_VLOG_UELOG(Owner, LogSmartObject, Verbose, TEXT("Skipped removal of '%s[%s]' from collection '%s'. Handle is not valid"),
-			*GetFullNameSafe(&SOComponent), *LexToString(Handle), *GetFullNameSafe(Owner));
+			*SOComponent.GetPathName(SOComponent.GetOwner()), *LexToString(Handle), *GetPathNameSafe(Owner));
 		return false;
 	}
 
-	UE_VLOG_UELOG(Owner, LogSmartObject, Verbose, TEXT("Removing '%s[%s]' from collection '%s'"), *GetFullNameSafe(&SOComponent), *LexToString(Handle), *GetFullNameSafe(Owner));
+	UE_VLOG_UELOG(Owner, LogSmartObject, Verbose, TEXT("Removing '%s[%s]' from collection '%s'"), *SOComponent.GetPathName(SOComponent.GetOwner()), *LexToString(Handle), *GetPathNameSafe(Owner));
 	const int32 Index = CollectionEntries.IndexOfByPredicate(
 		[&Handle](const FSmartObjectCollectionEntry& Entry)
 		{
@@ -346,7 +289,7 @@ bool FSmartObjectContainer::UpdateSmartObject(const USmartObjectComponent& SOCom
 		return false;
 	}
 
-	FSmartObjectCollectionEntry* UpdatedEntry = CollectionEntries.FindByPredicate(UE::SmartObjects::FEntryFinder(SOHandle));
+	FSmartObjectCollectionEntry* UpdatedEntry = CollectionEntries.FindByPredicate(UE::SmartObject::FEntryFinder(SOHandle));
 
 	if (!ensureMsgf(UpdatedEntry, TEXT("FSmartObjectContainer.RegisteredIdToObjectMap contains the handle, but there's no entry for it. This is pretty serious.")))
 	{
@@ -357,7 +300,7 @@ bool FSmartObjectContainer::UpdateSmartObject(const USmartObjectComponent& SOCom
 	if (Definition == nullptr)
 	{
 		UE_VLOG_UELOG(Owner, LogSmartObject, Error, TEXT("Updating '%s[%s]' in collection '%s' while the SmartObjectDefinition is None. Maintaining the previous definition.")
-			, *GetFullNameSafe(&SOComponent), *LexToString(SOHandle), *GetFullNameSafe(Owner));
+			, *SOComponent.GetPathName(SOComponent.GetOwner()), *LexToString(SOHandle), *GetPathNameSafe(Owner));
 	}
 	else
 	{
@@ -393,7 +336,7 @@ bool FSmartObjectContainer::UpdateSmartObject(const USmartObjectComponent& SOCom
 					}
 				}
 			}
-			Definitions.RemoveAtSwap(PrevDefinitionIndex, 1, /*bAllowShrinking=*/false);
+			Definitions.RemoveAtSwap(PrevDefinitionIndex, 1, EAllowShrinking::No);
 		}
 	}
 
@@ -412,7 +355,7 @@ const USmartObjectDefinition* FSmartObjectContainer::GetDefinitionForEntry(const
 	const bool bIsValidIndex = Definitions.IsValidIndex(Entry.GetDefinitionIndex());
 	if (!bIsValidIndex)
 	{
-		UE_VLOG_UELOG(Owner, LogSmartObject, Error, TEXT("Using invalid index (%d) to retrieve definition from collection '%s'"), Entry.GetDefinitionIndex(), *GetFullNameSafe(Owner));
+		UE_VLOG_UELOG(Owner, LogSmartObject, Error, TEXT("Using invalid index (%d) to retrieve definition from collection '%s'"), Entry.GetDefinitionIndex(), *GetPathNameSafe(Owner));
 		return nullptr;
 	}
 
@@ -428,7 +371,7 @@ void FSmartObjectContainer::ValidateDefinitions()
 		UE_CVLOG_UELOG(Definition == nullptr, Owner, LogSmartObject, Warning
 			, TEXT("Null definition found at index (%d) in collection '%s'. Collection needs to be rebuilt and saved.")
 			, Definitions.IndexOfByKey(Definition)
-			, *GetFullNameSafe(Owner));
+			, *GetPathNameSafe(Owner));
 
 		if (Definition != nullptr)
 		{
@@ -560,13 +503,13 @@ bool ASmartObjectPersistentCollection::RegisterWithSubsystem(const FString& Cont
 {
 	if (bRegistered)
 	{
-		UE_VLOG_UELOG(this, LogSmartObject, Log, TEXT("'%s' %s - Failed: already registered"), *GetFullName(), *Context);
+		UE_VLOG_UELOG(this, LogSmartObject, Log, TEXT("'%s' %s - Failed: already registered"), *GetPathName(), *Context);
 		return false;
 	}
 
 	if (HasAnyFlags(RF_ClassDefaultObject))
 	{
-		UE_VLOG_UELOG(this, LogSmartObject, Log, TEXT("'%s' %s - Failed: ignoring default object"), *GetFullName(), *Context);
+		UE_VLOG_UELOG(this, LogSmartObject, Log, TEXT("'%s' %s - Failed: ignoring default object"), *GetPathName(), *Context);
 		return false;
 	}
 
@@ -575,12 +518,12 @@ bool ASmartObjectPersistentCollection::RegisterWithSubsystem(const FString& Cont
 	{
 		// Collection might attempt to register before the subsystem is created. At its initialization the subsystem gathers
 		// all collections and registers them. For this reason we use a log instead of an error.
-		UE_VLOG_UELOG(this, LogSmartObject, Log, TEXT("'%s' %s - Failed: unable to find smart object subsystem"), *GetFullName(), *Context);
+		UE_VLOG_UELOG(this, LogSmartObject, Log, TEXT("'%s' %s - Failed: unable to find smart object subsystem"), *GetPathName(), *Context);
 		return false;
 	}
 
 	const ESmartObjectCollectionRegistrationResult Result = SmartObjectSubsystem->RegisterCollection(*this);
-	UE_VLOG_UELOG(this, LogSmartObject, Log, TEXT("'%s' %s - %s"), *GetFullName(), *Context, *UEnum::GetValueAsString(Result));
+	UE_VLOG_UELOG(this, LogSmartObject, Log, TEXT("'%s' %s - %s"), *GetPathName(), *Context, *UEnum::GetValueAsString(Result));
 	return true;
 }
 
@@ -588,19 +531,19 @@ bool ASmartObjectPersistentCollection::UnregisterWithSubsystem(const FString& Co
 {
 	if (!bRegistered)
 	{
-		UE_VLOG_UELOG(this, LogSmartObject, Log, TEXT("'%s' %s - Failed: not registered"), *GetFullName(), *Context);
+		UE_VLOG_UELOG(this, LogSmartObject, Log, TEXT("'%s' %s - Failed: not registered"), *GetPathName(), *Context);
 		return false;
 	}
 
 	USmartObjectSubsystem* SmartObjectSubsystem = USmartObjectSubsystem::GetCurrent(GetWorld());
 	if (SmartObjectSubsystem == nullptr)
 	{
-		UE_VLOG_UELOG(this, LogSmartObject, Log, TEXT("'%s' %s - Failed: unable to find smart object subsystem"), *GetFullName(), *Context);
+		UE_VLOG_UELOG(this, LogSmartObject, Log, TEXT("'%s' %s - Failed: unable to find smart object subsystem"), *GetPathName(), *Context);
 		return false;
 	}
 
 	SmartObjectSubsystem->UnregisterCollection(*this);
-	UE_VLOG_UELOG(this, LogSmartObject, Log, TEXT("'%s' %s - Succeeded"), *GetFullName(), *Context);
+	UE_VLOG_UELOG(this, LogSmartObject, Log, TEXT("'%s' %s - Succeeded"), *GetPathName(), *Context);
 	return true;
 }
 
@@ -645,7 +588,7 @@ void ASmartObjectPersistentCollection::RebuildCollection()
 	{
 		const uint32 CollectionHash = GetTypeHash(SmartObjectContainer);
 
-		UE_VLOG_UELOG(this, LogSmartObject, Log, TEXT("Rebuilding collection '%s' from component list"), *GetFullName());
+		UE_VLOG_UELOG(this, LogSmartObject, Log, TEXT("Rebuilding collection '%s' from component list"), *GetPathName());
 
 		ResetCollection(SmartObjectContainer.CollectionEntries.Num());
 
@@ -678,29 +621,29 @@ void ASmartObjectPersistentCollection::AppendToCollection(const TConstArrayView<
 				const USmartObjectDefinition* Definition = Component->GetDefinition();
 				check(Definition);
 
-				const FSmartObjectHandle Handle = FSmartObjectHandleFactory::CreateSOHandle(*World, *Component);
+				const FSmartObjectHandle Handle = FSmartObjectHandleFactory::CreateHandleForComponent(*World, *Component);
 
 				const FSmartObjectCollectionEntry* Entry = SmartObjectContainer.AddSmartObjectInternal(Handle, *Definition, *Component);
 				check(Entry);
-				Component->SetRegisteredHandle(Entry->GetHandle(), ESmartObjectRegistrationType::WithCollection);
+				Component->SetRegisteredHandle(Entry->GetHandle(), ESmartObjectRegistrationType::BindToExistingInstance);
 			}
 			// costly tests below, but we only perform these when WITH_EDITOR
 			else if (InComponents.IsValidIndex(ComponentIndex + 1) 
 				&& MakeArrayView(&InComponents[ComponentIndex + 1], InComponents.Num() - (ComponentIndex + 1)).Find(Component) != INDEX_NONE)
 			{
 				UE_VLOG_UELOG(Owner, LogSmartObject, Warning, TEXT("%s: found '%s' duplicates while adding component array to %s.")
-					, ANSI_TO_TCHAR(__FUNCTION__), *GetFullNameSafe(Component), *GetFullName());
+					, ANSI_TO_TCHAR(__FUNCTION__), *Component->GetPathName(Component->GetOwner()), *GetPathName());
 			}
-			else if (SmartObjectContainer.CollectionEntries.ContainsByPredicate(UE::SmartObjects::FEntryFinder(Component->GetRegisteredHandle())))
+			else if (SmartObjectContainer.CollectionEntries.ContainsByPredicate(UE::SmartObject::FEntryFinder(Component->GetRegisteredHandle())))
 			{
 				// When populated by World building commandlet same actor can be loaded multiple time so simply use a verbose log when it happens
 				UE_VLOG_UELOG(Owner, LogSmartObject, Verbose, TEXT("%s: Attempting to add '%s' to collection '%s', but it has already been added previously.")
-					, ANSI_TO_TCHAR(__FUNCTION__), *GetFullNameSafe(Component), *GetFullName());
+					, ANSI_TO_TCHAR(__FUNCTION__), *Component->GetPathName(Component->GetOwner()), *GetPathName());
 			}
 			else
 			{
 				UE_VLOG_UELOG(Owner, LogSmartObject, Warning, TEXT("%s: Attempting to add '%s' to collection '%s', but it has already been added to a different container.")
-					, ANSI_TO_TCHAR(__FUNCTION__), *GetFullNameSafe(Component), *GetFullName());
+					, ANSI_TO_TCHAR(__FUNCTION__), *Component->GetPathName(Component->GetOwner()), *GetPathName());
 			}
 		}
 	}
@@ -712,7 +655,7 @@ void ASmartObjectPersistentCollection::AppendToCollection(const TConstArrayView<
 
 void ASmartObjectPersistentCollection::ResetCollection(const int32 ExpectedNumElements)
 {
-	UE_VLOG_UELOG(this, LogSmartObject, Log, TEXT("Reseting collection '%s'"), *GetFullName());
+	UE_VLOG_UELOG(this, LogSmartObject, Log, TEXT("Reseting collection '%s'"), *GetPathName());
 
 	SmartObjectContainer.Bounds = FBox(ForceInitToZero);
 	for (FSmartObjectCollectionEntry& Entry : SmartObjectContainer.CollectionEntries)

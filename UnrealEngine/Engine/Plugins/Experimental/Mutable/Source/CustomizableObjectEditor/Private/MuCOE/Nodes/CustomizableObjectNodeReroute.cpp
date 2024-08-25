@@ -4,6 +4,7 @@
 
 #include "SGraphNodeKnot.h"
 #include "MuCOE/EdGraphSchema_CustomizableObject.h"
+#include "MuCOE/RemapPins/CustomizableObjectNodeRemapPinsByPosition.h"
 
 #define LOCTEXT_NAMESPACE "CustomizableObjectEditor"
 
@@ -97,6 +98,12 @@ void UCustomizableObjectNodeReroute::PinConnectionListChanged(UEdGraphPin* Pin)
 {
 	Super::PinConnectionListChanged(Pin);
 	PropagatePinType();
+}
+
+
+UCustomizableObjectNodeRemapPins* UCustomizableObjectNodeReroute::CreateRemapPinsDefault() const
+{
+	return NewObject<UCustomizableObjectNodeRemapPinsByPosition>();
 }
 
 

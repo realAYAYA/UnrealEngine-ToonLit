@@ -1,0 +1,50 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../SceneData.ush"
+#include "VirtualShadowMapPageCacheCommon.ush"
+#include "VirtualShadowMapCacheInvalidation.ush"
+#include "../WaveOpUtil.ush"
+#include "../InstanceCulling/InstanceCullingLoadBalancer.ush"
+
+struct FInstanceInvalidationPayload
+{
+	int VirtualShadowMapId;
+	uint Flags;
+};
+
+FInstanceInvalidationPayload DecodeInstanceInvalidationPayload(uint Payload)
+{
+	FInstanceInvalidationPayload Result;
+	Result.VirtualShadowMapId = Payload >> VSM_INVALIDATION_PAYLOAD_FLAG_BITS;
+	Result.Flags = Payload & ((1U<<VSM_INVALIDATION_PAYLOAD_FLAG_BITS)-1U);
+	return Result;
+}
+
+[numthreads(CS_1D_GROUP_SIZE_X, 1, 1)]
+void InvalidateInstancePagesLoadBalancerCS(
+	uint3 GroupId : SV_GroupID,
+	uint GroupThreadIndex : SV_GroupIndex,
+	uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	FInstanceWorkSetup WorkSetup = InstanceCullingLoadBalancer_Setup(GroupId, GroupThreadIndex, 0U, true);
+	if (!WorkSetup.bValid)
+	{
+		return;
+	}
+	const uint InstanceId = WorkSetup.Item.InstanceDataOffset + uint(WorkSetup.LocalItemIndex);
+	const uint ShadowMapIndex = WorkSetup.GroupIndexPerBatch;
+
+	if (!IsValidInstanceAndCastShadows(InstanceId))
+	{
+		return;
+	}
+
+	checkSlow(ShadowMapIndex < VirtualShadowMap.NumFullShadowMaps);
+	const int VirtualShadowMapId = VSM_MAX_SINGLE_PAGE_SHADOW_MAPS + ShadowMapIndex;
+
+	FInstanceInvalidationPayload Payload = DecodeInstanceInvalidationPayload(WorkSetup.Item.Payload);
+	bool bForceStatic = (Payload.Flags & VSM_INVALIDATION_PAYLOAD_FLAG_FORCE_STATIC) != 0;
+
+	InvalidateInstancePages(Payload.VirtualShadowMapId, InstanceId, bForceStatic);
+}

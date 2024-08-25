@@ -1,6 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
 using System;
 
 namespace EpicGames.Serialization
@@ -40,6 +39,14 @@ namespace EpicGames.Serialization
 		{
 			Name = name;
 		}
+	}
+
+	/// <summary>
+	/// Attribute used to mark that a property should not be serialized to compact binary
+	/// </summary>
+	[AttributeUsage(AttributeTargets.Property)]
+	public sealed class CbIgnoreAttribute : Attribute
+	{
 	}
 
 	/// <summary>
@@ -166,7 +173,7 @@ namespace EpicGames.Serialization
 		/// <param name="writer"></param>
 		/// <param name="name"></param>
 		/// <param name="value"></param>
-		public static void Serialize<T>(CbWriter writer, Utf8String name, T value)
+		public static void Serialize<T>(CbWriter writer, CbFieldName name, T value)
 		{
 			CbConverter.GetConverter<T>().WriteNamed(writer, name, value);
 		}

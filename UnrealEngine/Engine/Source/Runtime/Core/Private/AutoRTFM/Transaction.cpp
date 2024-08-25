@@ -17,6 +17,7 @@ FTransaction::FTransaction(FContext* Context)
 bool FTransaction::IsFresh() const
 {
     return HitSet.IsEmpty()
+        && NewMemoryTracker.IsEmpty()
         && WriteLog.IsEmpty()
         && CommitTasks.IsEmpty()
         && AbortTasks.IsEmpty()
@@ -25,11 +26,9 @@ bool FTransaction::IsFresh() const
 
 void FTransaction::AbortWithoutThrowing()
 {
-	UE_LOG(LogAutoRTFM, Verbose, TEXT("Aborting '%s'!"), GetContextStatusName(Context->GetStatus()));
+	UE_LOG(LogAutoRTFM, Verbose, TEXT("Aborting '%hs'!"), GetContextStatusName(Context->GetStatus()));
 
-    ASSERT(Context->GetStatus() == EContextStatus::AbortedByFailedLockAcquisition
-           || Context->GetStatus() == EContextStatus::AbortedByLanguage
-           || Context->GetStatus() == EContextStatus::AbortedByRequest);
+    ASSERT(Context->IsAborting());
     ASSERT(Context->GetCurrentTransaction() == this);
 
     Stats.Collect<EStatsKind::Abort>();
@@ -54,7 +53,7 @@ void FTransaction::AbortAndThrow()
 
 bool FTransaction::AttemptToCommit()
 {
-    ASSERT(Context->GetStatus() == EContextStatus::OnTrack);
+    ASSERT(Context->GetStatus() == EContextStatus::Committing);
     ASSERT(Context->GetCurrentTransaction() == this);
 
     Stats.Collect<EStatsKind::Commit>();
@@ -147,17 +146,7 @@ void FTransaction::AbortOuterNest()
 
     AbortTasks.ForEachBackward([] (const TFunction<void()>& Task) -> bool { Task(); return true; });
 
-    switch (Context->GetStatus())
-    {
-    case EContextStatus::AbortedByFailedLockAcquisition:
-        break;
-    case EContextStatus::AbortedByRequest:
-    case EContextStatus::AbortedByLanguage:
-        break;
-    default:
-        ASSERT(!"Should not be reached");
-        break;
-    }
+	ASSERT(Context->IsAborting());
 }
 
 void FTransaction::CommitNested()
@@ -185,6 +174,8 @@ void FTransaction::CommitNested()
 
     Parent->CommitTasks.AddAll(MoveTemp(CommitTasks));
     Parent->AbortTasks.AddAll(MoveTemp(AbortTasks));
+
+    Parent->NewMemoryTracker.Merge(NewMemoryTracker);
 }
 
 bool FTransaction::AttemptToCommitOuterNest()
@@ -205,6 +196,7 @@ void FTransaction::Reset()
     CommitTasks.Reset();
     AbortTasks.Reset();
 	HitSet.Reset();
+    NewMemoryTracker.Reset();
 	WriteLog.Reset();
 	WriteLogBumpAllocator.Reset();
 }

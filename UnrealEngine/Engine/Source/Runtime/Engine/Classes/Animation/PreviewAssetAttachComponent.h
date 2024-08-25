@@ -139,7 +139,12 @@ public:
 	/** 
 	 * RemoveAtSwap passthrough
 	 */
-	ENGINE_API void RemoveAtSwap( int32 Index, int32 Count = 1, bool bAllowShrinking = true );
+	ENGINE_API void RemoveAtSwap( int32 Index, int32 Count = 1, EAllowShrinking AllowShrinking = EAllowShrinking::Yes);
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("RemoveAtSwap")
+	FORCEINLINE void RemoveAtSwap(int32 Index, int32 Count, bool bAllowShrinking)
+	{
+		RemoveAtSwap(Index, Count, bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
+	}
 
 	/**
 	 * Helper function to fix up attached objects after property deprecation

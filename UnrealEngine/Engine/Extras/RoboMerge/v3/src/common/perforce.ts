@@ -60,6 +60,7 @@ export interface OpenedFileRecord {
 	action: string
 	type: string
 	user: string
+	client: string
 
 	movedFile?: string
 }
@@ -75,6 +76,7 @@ export interface DescribeResult {
 	user: string
 	status: string
 	description: string
+	path: string
 	entries: DescribeEntry[]
 	date: Date | null
 }
@@ -106,9 +108,9 @@ export function parseZTag(buffer: string, opts?: ExecZtagOpts) {
 	let ztag_start = buffer.indexOf('...');
 	if (ztag_start > 0) {
 		// split the start off the buffer, then split it into newlines
-		let preamble = buffer.substr(0, ztag_start).trim();
+		let preamble = buffer.substring(0, ztag_start).trim();
 		output.push(preamble.split(newline_rex));
-		buffer = buffer.substr(ztag_start);
+		buffer = buffer.substring(ztag_start);
 	}
 	else if (ztag_start < 0) {
 		let preamble = buffer.trim();
@@ -146,8 +148,8 @@ export function parseZTag(buffer: string, opts?: ExecZtagOpts) {
 			let key, value;
 			let s = pair.indexOf(' ');
 			if (s >= 0) {
-				key = pair.substr(0, s);
-				value = pair.substr(s + 1);
+				key = pair.substring(0, s);
+				value = pair.substring(s + 1);
 				if (value.indexOf('\n') >= 0 && !(opts && opts.multiline)) {
 					let lines = value.split('\n');
 					value = lines.shift();
@@ -256,6 +258,7 @@ export type RoboWorkspace = Workspace | string | null;
 
 export interface ClientSpec {
 	client: string
+	Access: number
 	Stream?: string
 	IsUnloaded?: boolean
 }
@@ -299,6 +302,11 @@ export interface EditChangeOpts {
 export interface IntegrateOpts {
 	edgeServerAddress?: string
 	virtual?: boolean
+}
+
+export interface IntegratedOpts {
+	intoOnly?: boolean
+	startCL?: number
 }
 
 export interface SyncParams {
@@ -508,13 +516,14 @@ export class PerforceContext {
 
 	/** get a single change in the format of changes() */
 	async getChange(path_in: string, changenum: number, status?: ChangelistStatus) {
-		const list = await this.changes(`${path_in}@${changenum},${changenum}`, -1, 1, status) as Change[]
+		const list = await this.changes(`${path_in}@${changenum},${changenum}`, -1, 1, status, false) as Change[]
 		if (list.length <= 0) {
 			throw new Error(`Could not find changelist ${changenum} in ${path_in}`);
 		}
 		if (list.length > 1 || list[0].change !== changenum) {
 			// log for now
-			this.logger.error('p4.getChange unexpected result' +
+			const e = new Error();
+			this.logger.error(`${e.stack}\np4.getChange unexpected result for ${changenum}` +
 				list.map(change => `\n    ${change.change}: user ${change.user}, workspace ${change.client}`).join('')
 			)
 		}
@@ -525,14 +534,14 @@ export class PerforceContext {
 	 * Get a list of changes in a path since a specific CL
 	 * @return Promise to list of changelists
 	 */
-	changes(path_in: string, since: number, limit?: number, status?: ChangelistStatus): Promise<Change[]> {
+	changes(path_in: string, since: number, limit?: number, status?: ChangelistStatus, quiet?: boolean): Promise<Change[]> {
 		const path = since > 0 ? path_in + '@>' + since : path_in;
 		const args = ['changes', '-l',
 			(status ? `-s${status}` : '-ssubmitted'),
 			...(limit ? [`-m${limit}`] : []),
 			path];
 
-		return this.execAndParse(null, args, {quiet: true}, {
+		return this.execAndParse(null, args, {quiet: quiet ? quiet : true}, {
 			expected: {change: 'integer', client: 'string', user: 'string', desc: 'string'},
 			optional: {shelved: 'integer', oldChange: 'integer', IsPromoted: 'integer'}
 		}) as Promise<unknown> as Promise<Change[]>
@@ -603,21 +612,40 @@ export class PerforceContext {
 			opts.edgeServerAddress = edgeServerAddress
 		}
 
-		let parsedLoadedClients = this._execP4Ztag(null, args, opts);
-		let parsedUnloadedClients = (includeUnloaded ? this._execP4Ztag(null, [...args, '-U'], opts) : null)
 		let workspaces = [];
-		for (let clientDef of await parsedLoadedClients) {
-			if (clientDef.client) {
-				workspaces.push(clientDef);
-			}
-		}
-		if (includeUnloaded) {
-			for (let clientDef of await parsedUnloadedClients!) {
+		try {
+			let parsedLoadedClients = this._execP4Ztag(null, args, opts);
+			let parsedUnloadedClients = (includeUnloaded ? this._execP4Ztag(null, [...args, '-U'], opts) : null)
+			for (let clientDef of await parsedLoadedClients) {
 				if (clientDef.client) {
 					workspaces.push(clientDef);
 				}
 			}
+			if (includeUnloaded) {
+				for (let clientDef of await parsedUnloadedClients!) {
+					if (clientDef.client) {
+						workspaces.push(clientDef);
+					}
+				}
+			}
 		}
+		catch (reason) {
+			if (!isExecP4Error(reason)) {
+				throw reason
+			}
+
+			let [err, output] = reason
+
+			// if this change has already been integrated, this is a special return (still a success)
+			if (!output.includes("Revision chars (@, #) not allowed in")) {
+				throw err
+			}
+
+			const errorMsg = `Attempted to find workspaces for invalid user ${user || this.username}`
+			this.logger.error(errorMsg)
+			postToRobomergeAlerts(errorMsg)
+		}
+
 		return workspaces as ClientSpec[];
 	}
 
@@ -638,11 +666,11 @@ export class PerforceContext {
 		return null
 	}
 
-	async reloadWorkspace(workspaceName: string) {
-		return this._execP4Ztag(null, ['reload', '-c', workspaceName]);
+	reloadWorkspace(workspaceName: string, edgeServerAddress?: string) {
+		return this._execP4Ztag(null, ['reload', '-c', workspaceName], {edgeServerAddress});
 	}
 
-	getEdgeServerAddress(serverId: string): Promise<string> {
+	getEdgeServerAddress(serverId: string) {
 		return this._execP4(null, ['-ztag', '-F', '%Address%', 'server', '-o', serverId])
 	}
 
@@ -797,15 +825,32 @@ export class PerforceContext {
 
 		// run the P4 change command
 		this.logger.info("Executing: 'p4 change -i' to create a new CL");
-		const output = await this._execP4(workspace, ['change', '-i'], { stdin: form, quiet: true, edgeServerAddress });
-		// parse the CL out of output
-		const match = output.match(/Change (\d+) created./);
-		if (!match) {
-			throw new Error('Unable to parse new_cl output:\n' + output);
-		}
+		while (true) {
+			try {
+				const output = await this._execP4(workspace, ['change', '-i'], { stdin: form, quiet: true, edgeServerAddress });
+				// parse the CL out of output
+				const match = output.match(/Change (\d+) created./);
+				if (!match) {
+					throw new Error('Unable to parse new_cl output:\n' + output);
+				}
+				// return the changelist number
+				return parseInt(match![1]);
+			}
+			catch (reason) {
+				if (!isExecP4Error(reason)) {
+					throw reason
+				}
 
-		// return the changelist number
-		return parseInt(match[1]);
+				let [err, output] = reason
+				// If perforce timed out try again
+				if (output.includes("Operation took too long")) {
+					this.logger.info("p4 change -i timed out. Retrying.")
+					continue
+				}
+
+				throw err;			
+			}
+		}
 	}
 
 	// integrate a CL from source to destination, resolve, and place the results in a new CL
@@ -1021,11 +1066,11 @@ export class PerforceContext {
 
 	// submit a CL
 	// output format is final CL number or false if changes need more resolution
-	async submit(roboWorkspace: RoboWorkspace, changelist: number): Promise<number | string> {
+	async submit(roboWorkspace: RoboWorkspace, changelist: number, edgeServerAddress?: string): Promise<number | string> {
 		const workspace = coercePerforceWorkspace(roboWorkspace)
 		let rawOutput: string
 		try {
-			rawOutput = await this._execP4(workspace, ['-ztag', 'submit', '-f', 'submitunchanged', '-c', changelist.toString()])
+			rawOutput = await this._execP4(workspace, ['-ztag', 'submit', '-f', 'submitunchanged', '-c', changelist.toString()], {edgeServerAddress})
 		}
 		catch ([errArg, output]) {
 			const err = errArg.toString().trim()
@@ -1121,6 +1166,38 @@ export class PerforceContext {
 			args.push(exclusive && perforceMultiServerEnvironment ? '-x' : '-a', arg)
 		}
 		return this._execP4Ztag(workspace, args) as Promise<OpenedFileRecord[]>
+	}
+
+	async revertFile(file: string) {
+		let opened = await this.opened(null, file, true)
+		if (opened.length == 0) {
+			opened = await this.opened(null, file)
+			if (opened.length == 0) {
+				this.logger.warn(`${file} does not appear to be open, cannot revert`)
+				return null
+			}
+		}
+		const client = opened[0].client
+		return this.revertFiles([file],client)
+	}
+
+	async revertFiles(files: string[], client: string) {
+		const edgeServer = await this.getWorkspaceEdgeServer(client)
+		const args = ['revert', '-C', client, ...files]
+		try {
+			await this._execP4Ztag(null, args, {edgeServerAddress: edgeServer?.address})
+		}
+		catch (reason) {
+			if (!isExecP4Error(reason)) {
+				throw reason
+			}
+
+			let [err, output] = reason
+			// this happens if there's literally nothing in the CL. consider this a success
+			if (!output.match(/file\(s\) not opened (?:on this client|in that changelist)\./)) {
+				throw err;
+			}
+		}
 	}
 
 	// revert a CL deleting any files marked for add
@@ -1238,9 +1315,27 @@ export class PerforceContext {
 	}
 
 	/** Check out a file into a specific changelist ** ASYNC ** */
-	edit(roboWorkspace: RoboWorkspace, cl: number, filePath: string) {
+	edit(roboWorkspace: RoboWorkspace, cl: number, filePath: string, additionalArgs?: string[]) {
 		const workspace = coercePerforceWorkspace(roboWorkspace);
-		return this._execP4(workspace, ['edit', '-c', cl.toString(), filePath]);
+		const args = [
+			'edit', 
+			'-c', cl.toString(), 
+			...(additionalArgs || []),
+			filePath
+		]
+		return this._execP4(workspace, args);
+	}
+
+	/** Add a file into a specific changelist ** ASYNC ** */
+	add(roboWorkspace: RoboWorkspace, cl: number, filePath: string, filetype?: string) {
+		const workspace = coercePerforceWorkspace(roboWorkspace);
+		const args = [
+			'add', 
+			'-c', cl.toString(), 
+			...(filetype ? ['-t', filetype] : []),
+			filePath
+		]
+		return this._execP4(workspace, args);
 	}
 
 	async describe(cl: number, maxFiles?: number, includeShelved?: boolean) {
@@ -1259,6 +1354,7 @@ export class PerforceContext {
 			user: clInfo.user || '',
 			status: clInfo.status || '',
 			description: clInfo.desc || '',
+			path: clInfo.path || ztagResult[1].path,
 			date: clInfo.time ? new Date(clInfo.time * 1000) : null,
 			entries: []
 		};
@@ -1305,7 +1401,7 @@ export class PerforceContext {
 
 		// run the P4 change command to update
 		const changeFlag = opts.changeSubmitted ? '-f' : '-u';
-		this.logger.info(`Executing: 'p4 change -i ${changeFlag}' to edit CL${changelist}`);
+		this.logger.info(`Executing: 'p4 change -i ${changeFlag}' to edit CL ${changelist}`);
 
 		await this._execP4(workspace, ['change', '-i', changeFlag],
 				{ stdin: form, quiet: true, edgeServerAddress: opts.edgeServerAddress })
@@ -1351,6 +1447,54 @@ export class PerforceContext {
 				return []
 			}
 
+			throw err
+		}
+	}
+
+	async fstat(roboWorkspace: RoboWorkspace, depotPath: string) {
+		try {
+			return await this._execP4Ztag(roboWorkspace, ['fstat', depotPath])
+		}
+		catch (reason) {
+			if (!isExecP4Error(reason)) {
+				throw reason
+			}
+
+			let [err, output] = reason
+			if (output.includes('no such file')) {
+				return []
+			}
+			throw err
+		}
+	}
+
+	async integrated(roboWorkspace: RoboWorkspace, depotPath: string, opts?: IntegratedOpts)
+	{
+		let args = ['integrated']
+		if (opts) {
+			if (opts.intoOnly) {
+				args.push('--into-only')
+			}
+			if (opts.startCL) {
+				args.push('-s')
+				args.push(opts.startCL.toString())
+			}
+		}
+		args.push(depotPath)
+
+		try {
+			return await this._execP4Ztag(roboWorkspace, args)
+		}
+		catch (reason) {
+			if (!isExecP4Error(reason)) {
+				throw reason
+			}
+
+			let [err, output] = reason
+			// If perforce doesn't detect revisions in the given range, return an empty set of revisions
+			if (output.includes("no file(s) integrated.")) {
+				return []
+			}
 			throw err
 		}
 	}

@@ -79,6 +79,24 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | LightFactory")
 	bool SetCustomIESTexture(const FString& AttributeValue);
 
+	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | LightFactory")
+	bool GetCustomUseIESBrightness(bool& AttributeValue) const;
+
+	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | LightFactory")
+	bool SetCustomUseIESBrightness(const bool& AttributeValue, bool bAddApplyDelegate = true);
+
+	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | LightFactory")
+	bool GetCustomIESBrightnessScale(float& AttributeValue) const;
+
+	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | LightFactory")
+	bool SetCustomIESBrightnessScale(const float& AttributeValue, bool bAddApplyDelegate = true);
+
+	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | LightFactory")
+	bool GetCustomRotation(FRotator& AttributeValue) const;
+
+	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | LightFactory")
+	bool SetCustomRotation(const FRotator& AttributeValue, bool bAddApplyDelegate = true);
+
 	virtual void CopyWithObject(const UInterchangeFactoryBaseNode* SourceNode, UObject* Object) override;
 
 private:
@@ -86,6 +104,9 @@ private:
 	IMPLEMENT_NODE_ATTRIBUTE_KEY(IntensityUnits)
 	IMPLEMENT_NODE_ATTRIBUTE_KEY(AttenuationRadius)
 	IMPLEMENT_NODE_ATTRIBUTE_KEY(IESTexture)
+	IMPLEMENT_NODE_ATTRIBUTE_KEY(UseIESBrightness)
+	IMPLEMENT_NODE_ATTRIBUTE_KEY(IESBrightnessScale)
+	IMPLEMENT_NODE_ATTRIBUTE_KEY(Rotation)
 };
 
 UCLASS(BlueprintType)

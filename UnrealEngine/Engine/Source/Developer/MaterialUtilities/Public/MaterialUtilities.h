@@ -537,31 +537,6 @@ public:
 private:
 	
 	/**
-	* Private export material function to which unique signatures are mapped for unified code path
-	*
-	* @param InMaterialData			Target material data 
-	* @param OutFlattenMaterial		Output flattened material
-	* @return						Whether operation was successful
-	*/
-	UE_DEPRECATED(4.19, "Please use new functionality in MaterialBaking module")
-	static bool ExportMaterial(struct FMaterialMergeData& InMaterialData, FFlattenMaterial& OutFlattenMaterial, struct FExportMaterialProxyCache* ProxyCache = nullptr);
-
-	/**
-	* Renders out the specified material property with the given material data to a texture
-	*
-	* @param InMaterialData			Target material data
-	* @param InMaterialProperty		Target material property
-	* @param bInForceLinearGamma	Whether or not to force linear gamma (used for Normal property)
-	* @param InPixelFormat			Pixel format of the target texture
-	* @param InTargetSize			Dimensions of the target texture
-	* @param OutSampleSize			Dimensions of the rendered texture
-	* @param OutSamples				Array of FColor samples containing the rendered out texture pixel data
-	* @return						Whether operation was successful
-	*/
-	UE_DEPRECATED(4.19, "Please use new functionality in MaterialBaking module")
-	static bool RenderMaterialPropertyToTexture(struct FMaterialMergeData& InMaterialData, EMaterialProperty InMaterialProperty, bool bInForceLinearGamma, EPixelFormat InPixelFormat, const FIntPoint InTargetSize, FIntPoint& OutSampleSize, TArray<FColor>& OutSamples);
-
-	/**
 	* Creates and add or reuses a RenderTarget from the pool
 	*
 	* @param bInForceLinearGamma	Whether or not to force linear gamma

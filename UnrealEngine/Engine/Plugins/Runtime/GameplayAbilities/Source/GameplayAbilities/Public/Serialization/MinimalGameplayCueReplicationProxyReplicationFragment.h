@@ -32,7 +32,7 @@ protected:
 	virtual void CallRepNotifies(FReplicationStateApplyContext& Context) override;
 
 private:
-	void MimicMinimalGameplayCueReplicationProxyReceiveLogic(FReplicationStateApplyContext& Context);
+	void MimicMinimalGameplayCueReplicationProxyReceiveLogic(FReplicationStateApplyContext& Context) const;
 	void CallRepNotify(FReplicationStateApplyContext& Context);
 
 private:

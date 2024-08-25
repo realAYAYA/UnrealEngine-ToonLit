@@ -37,6 +37,13 @@ public:
 
 	virtual void ShowChangelistsTab() override;
 	virtual bool CanShowChangelistsTab() const override;
+
+	virtual void ShowSnapshotHistoryTab() override;
+	virtual bool CanShowSnapshotHistoryTab() const override;
+
+	virtual void ShowConflictResolutionTab() override;
+	virtual bool CanShowConflictResolutionTab() const override;
+
 	virtual void SelectFiles(const TArray<FString>& Filenames);
 
 	DECLARE_DERIVED_EVENT(FSourceControlWindowsModule, ISourceControlWindowsModule::FChangelistFileDoubleClickedEvent, FChangelistFileDoubleClickedEvent);
@@ -124,6 +131,36 @@ bool FSourceControlWindowsModule::CanShowChangelistsTab() const
 	ISourceControlModule& SourceControlModule = ISourceControlModule::Get();
 
 	return (SourceControlModule.IsEnabled() && SourceControlModule.GetProvider().IsAvailable() && SourceControlModule.GetProvider().UsesChangelists()) || (FUncontrolledChangelistsModule::Get().IsEnabled() && ISourceControlModule::Get().GetProvider().UsesUncontrolledChangelists());
+}
+
+void FSourceControlWindowsModule::ShowSnapshotHistoryTab()
+{
+	if (IConsoleObject* CObj = IConsoleManager::Get().FindConsoleObject(TEXT("UnrealRevisionControl.FocusSnapshotHistory")))
+	{
+		CObj->AsCommand()->Execute(/*Args=*/TArray<FString>(), /*InWorld=*/nullptr, *GLog);
+	}
+}
+
+bool FSourceControlWindowsModule::CanShowSnapshotHistoryTab() const
+{
+	ISourceControlModule& SourceControlModule = ISourceControlModule::Get();
+
+	return (SourceControlModule.IsEnabled() && SourceControlModule.GetProvider().IsAvailable() && SourceControlModule.GetProvider().GetName() == TEXT("Unreal Revision Control"));
+}
+
+void FSourceControlWindowsModule::ShowConflictResolutionTab()
+{
+	if (IConsoleObject* CObj = IConsoleManager::Get().FindConsoleObject(TEXT("UnrealRevisionControl.FocusConflictResolution")))
+	{
+		CObj->AsCommand()->Execute(/*Args=*/TArray<FString>(), /*InWorld=*/nullptr, *GLog);
+	}
+}
+
+bool FSourceControlWindowsModule::CanShowConflictResolutionTab() const
+{
+	ISourceControlModule& SourceControlModule = ISourceControlModule::Get();
+
+	return (SourceControlModule.IsEnabled() && SourceControlModule.GetProvider().IsAvailable() && SourceControlModule.GetProvider().GetName() == TEXT("Unreal Revision Control"));
 }
 
 void FSourceControlWindowsModule::SelectFiles(const TArray<FString>& Filenames)

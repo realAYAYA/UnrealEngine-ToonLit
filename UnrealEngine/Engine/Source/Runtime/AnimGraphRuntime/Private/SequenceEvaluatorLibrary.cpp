@@ -32,6 +32,21 @@ FSequenceEvaluatorReference USequenceEvaluatorLibrary::SetExplicitTime(const FSe
 	return SequenceEvaluator;
 }
 
+FSequenceEvaluatorReference USequenceEvaluatorLibrary::SetExplicitFrame(const FSequenceEvaluatorReference& SequenceEvaluator, int32 Frame)
+{
+	SequenceEvaluator.CallAnimNodeFunction<FAnimNode_SequenceEvaluator>(
+		TEXT("SetExplicitTime"),
+		[Frame](FAnimNode_SequenceEvaluator& InSequenceEvaluator)
+		{
+			if(!InSequenceEvaluator.SetExplicitFrame(Frame))
+			{
+				UE_LOG(LogSequenceEvaluatorLibrary, Warning, TEXT("Could not set explicit frame on sequence evaluator, value is not dynamic. Set it as Always Dynamic."));
+			}
+		});
+
+	return SequenceEvaluator;
+}
+
 FSequenceEvaluatorReference USequenceEvaluatorLibrary::AdvanceTime(const FAnimUpdateContext& UpdateContext, const FSequenceEvaluatorReference& SequenceEvaluator, float PlayRate)
 {
 	SequenceEvaluator.CallAnimNodeFunction<FAnimNode_SequenceEvaluator>(

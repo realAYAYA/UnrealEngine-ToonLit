@@ -470,7 +470,7 @@ void AAbilitySystemDebugHUD::DisplayDebugStrings(UCanvas* InCanvas, const AActor
 		InCanvas->TextSize(Font, DrawString, TextWidth, TextHeight);
 		MaxWidth = FMath::Max(MaxWidth, TextWidth);
 		TotalHeight += TextHeight;
-		new(StringsToDraw)FStringAndLineHeight(DrawString, TextHeight);
+		StringsToDraw.Emplace(FStringAndLineHeight(DrawString, TextHeight));
 	}
 
 	FVector ThisOrigin;
@@ -549,7 +549,7 @@ void AAbilitySystemDebugHUD::DrawDebugAbilitySystemComponent(UAbilitySystemCompo
 		// Draw Active GameplayEffect
 		for (FActiveGameplayEffect& Effect : &Component->ActiveGameplayEffects)
 		{
-			String = FString::Printf(TEXT("%s. [%d, %d] %.2f"), *Effect.Spec.ToSimpleString(), Effect.PredictionKey.Current, Effect.PredictionKey.Base, Effect.GetTimeRemaining(GameWorldTime));
+			String = FString::Printf(TEXT("%s. %s %.2f"), *Effect.Spec.ToSimpleString(), *Effect.PredictionKey.ToString(), Effect.GetTimeRemaining(GameWorldTime));
 			DrawWithBackground(Font, String, Color, EAlignHorizontal::Left, X, EAlignVertical::Top, Y);	
 		}
 	}

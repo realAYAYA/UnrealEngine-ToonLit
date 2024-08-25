@@ -28,6 +28,11 @@ public:
 		return Hash;
 	}
 
+	friend FArchive& operator<<(FArchive& InAr, FDataLayersID& InDataLayersID)
+	{
+		return InAr << InDataLayersID.Hash;
+	}
+
 	friend uint32 GetTypeHash(const FDataLayersID& InDataLayersID)
 	{
 		return InDataLayersID.Hash;

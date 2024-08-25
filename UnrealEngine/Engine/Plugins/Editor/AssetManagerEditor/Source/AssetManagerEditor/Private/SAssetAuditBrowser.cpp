@@ -299,7 +299,7 @@ void SAssetAuditBrowser::Construct(const FArguments& InArgs)
 	Config.CustomColumns.Emplace(FPrimaryAssetId::PrimaryAssetNameTag, LOCTEXT("AssetName", "Primary Name"), LOCTEXT("AssetNameTooltip", "Primary Asset Name of this asset, if set"), UObject::FAssetRegistryTag::TT_Alphabetical, FOnGetCustomAssetColumnData::CreateSP(this, &SAssetAuditBrowser::GetStringValueForCustomColumn), FOnGetCustomAssetColumnDisplayText::CreateSP(this, &SAssetAuditBrowser::GetDisplayTextForCustomColumn));
 	Config.CustomColumns.Emplace(IAssetManagerEditorModule::ManagedDiskSizeName, LOCTEXT("ManagedDiskSize", "Disk Size"), LOCTEXT("ManagedDiskSizeTooltip", "Total disk space used by both this and all managed assets"), UObject::FAssetRegistryTag::TT_Numerical, FOnGetCustomAssetColumnData::CreateSP(this, &SAssetAuditBrowser::GetStringValueForCustomColumn), FOnGetCustomAssetColumnDisplayText::CreateSP(this, &SAssetAuditBrowser::GetDisplayTextForCustomColumn));
 	Config.CustomColumns.Emplace(IAssetManagerEditorModule::DiskSizeName, LOCTEXT("DiskSize", "Exclusive Disk Size"), LOCTEXT("DiskSizeTooltip", "Size of saved file(s) on disk for this asset's package. If Asset Registry Writeback is enabled and a platform is selected, this will be the uncompressed size of the iostore chunks for the asset's package."), UObject::FAssetRegistryTag::TT_Numerical, FOnGetCustomAssetColumnData::CreateSP(this, &SAssetAuditBrowser::GetStringValueForCustomColumn), FOnGetCustomAssetColumnDisplayText::CreateSP(this, &SAssetAuditBrowser::GetDisplayTextForCustomColumn));
-	Config.CustomColumns.Emplace(IAssetManagerEditorModule::StageChunkCompressedSizeName, LOCTEXT("StagedCompressedSize", "Staged Compressed Size"), LOCTEXT("StagedCompressedSizeTooltip", "Compressed size of iostore chunks for this asset's package. Only visible after staging."), UObject::FAssetRegistryTag::TT_Numerical, FOnGetCustomAssetColumnData::CreateSP(this, &SAssetAuditBrowser::GetStringValueForCustomColumn), FOnGetCustomAssetColumnDisplayText::CreateSP(this, &SAssetAuditBrowser::GetDisplayTextForCustomColumn));
+	Config.CustomColumns.Emplace(UE::AssetRegistry::Stage_ChunkCompressedSizeFName, LOCTEXT("StagedCompressedSize", "Staged Compressed Size"), LOCTEXT("StagedCompressedSizeTooltip", "Compressed size of iostore chunks for this asset's package. Only visible after staging."), UObject::FAssetRegistryTag::TT_Numerical, FOnGetCustomAssetColumnData::CreateSP(this, &SAssetAuditBrowser::GetStringValueForCustomColumn), FOnGetCustomAssetColumnDisplayText::CreateSP(this, &SAssetAuditBrowser::GetDisplayTextForCustomColumn));
 	Config.CustomColumns.Emplace(IAssetManagerEditorModule::TotalUsageName, LOCTEXT("TotalUsage", "Total Usage"), LOCTEXT("TotalUsageTooltip", "Weighted count of Primary Assets that use this, higher usage means it's more likely to be in memory at runtime"), UObject::FAssetRegistryTag::TT_Numerical, FOnGetCustomAssetColumnData::CreateSP(this, &SAssetAuditBrowser::GetStringValueForCustomColumn), FOnGetCustomAssetColumnDisplayText::CreateSP(this, &SAssetAuditBrowser::GetDisplayTextForCustomColumn));
 	Config.CustomColumns.Emplace(IAssetManagerEditorModule::CookRuleName, LOCTEXT("CookRule", "Cook Rule"), LOCTEXT("CookRuleTooltip", "Whether this asset will be cooked or not"), UObject::FAssetRegistryTag::TT_Alphabetical, FOnGetCustomAssetColumnData::CreateSP(this, &SAssetAuditBrowser::GetStringValueForCustomColumn), FOnGetCustomAssetColumnDisplayText::CreateSP(this, &SAssetAuditBrowser::GetDisplayTextForCustomColumn));
 	Config.CustomColumns.Emplace(IAssetManagerEditorModule::ChunksName, LOCTEXT("Chunks", "Chunks"), LOCTEXT("ChunksTooltip", "List of chunks this will be added to when cooked"), UObject::FAssetRegistryTag::TT_Alphabetical, FOnGetCustomAssetColumnData::CreateSP(this, &SAssetAuditBrowser::GetStringValueForCustomColumn), FOnGetCustomAssetColumnDisplayText::CreateSP(this, &SAssetAuditBrowser::GetDisplayTextForCustomColumn));
@@ -432,6 +432,14 @@ void SAssetAuditBrowser::Construct(const FArguments& InArgs)
 							FOnGetPrimaryAssetDisplayText::CreateLambda([] { return LOCTEXT("AddManagedAssets", "Add Managed Assets"); }),
 							FOnSetPrimaryAssetId::CreateSP(this, &SAssetAuditBrowser::AddManagedAssets),
 							false)
+					]
+					+SHorizontalBox::Slot()
+					.AutoWidth()
+					[
+						IAssetManagerEditorModule::MakePrimaryAssetTypeSelector(
+							FOnGetPrimaryAssetDisplayText::CreateLambda([] { return LOCTEXT("AddManagedAssetsOfType", "Add Managed Assets of Type"); }),
+							FOnSetPrimaryAssetType::CreateSP(this, &SAssetAuditBrowser::AddManagedAssetsOfType),
+							false, false)
 					]
 					+SHorizontalBox::Slot()
 					.AutoWidth()
@@ -782,6 +790,26 @@ void SAssetAuditBrowser::AddManagedAssets(FPrimaryAssetId AssetId)
 
 		AssetManager->GetManagedPackageList(AssetId, AssetPackageArray);
 
+		AddAssetsToList(AssetPackageArray, false);
+	}
+}
+
+void SAssetAuditBrowser::AddManagedAssetsOfType(FPrimaryAssetType AssetType)
+{
+	if (AssetType.IsValid())
+	{
+		TArray<FSoftObjectPath> AssetArray;
+		AssetManager->GetPrimaryAssetPathList(AssetType, AssetArray);
+		AddAssetsToList(AssetArray, false);
+
+		TArray<FName> AssetPackageArray;
+		TArray<FPrimaryAssetId> PrimaryAssetIds;
+		AssetManager->GetPrimaryAssetIdList(AssetType, PrimaryAssetIds);
+		for (const FPrimaryAssetId& PrimaryAssetId : PrimaryAssetIds)
+		{
+			// Calling GetManagedPackageList rather than AddManagedAssets to reduce UI update calls
+			AssetManager->GetManagedPackageList(PrimaryAssetId, AssetPackageArray);
+		}
 		AddAssetsToList(AssetPackageArray, false);
 	}
 }

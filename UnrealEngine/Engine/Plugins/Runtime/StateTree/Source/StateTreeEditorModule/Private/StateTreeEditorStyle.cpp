@@ -12,8 +12,6 @@
 #include "Styling/SlateStyleMacros.h"
 
 
-#define CORE_FONT( RelativePath, ... ) FSlateFontInfo( RootToCoreContentDir( RelativePath, TEXT( ".ttf" ) ), __VA_ARGS__ )
-
 namespace UE::StateTree::Editor
 {
 
@@ -64,13 +62,13 @@ FStateTreeEditorStyle::FStateTreeEditorStyle()
 		Set("StateTree.DetailsIcon", StateDetailsIcon);
 
 		const FTextBlockStyle StateTitle = FTextBlockStyle(NormalText)
-			.SetFont(CORE_FONT("Fonts/Roboto-Bold", 12))
+			.SetFont(DEFAULT_FONT("Bold", 12))
 			.SetColorAndOpacity(FLinearColor(230.0f / 255.0f, 230.0f / 255.0f, 230.0f / 255.0f, 0.9f));
 		Set("StateTree.State.Title", StateTitle);
 
 		const FEditableTextBoxStyle StateTitleEditableText = FEditableTextBoxStyle()
 			.SetTextStyle(NormalText)
-			.SetFont(CORE_FONT("Fonts/Roboto-Bold", 12))
+			.SetFont(DEFAULT_FONT("Bold", 12))
 			.SetBackgroundImageNormal(CORE_BOX_BRUSH("Common/TextBox", FMargin(4.0f / 16.0f)))
 			.SetBackgroundImageHovered(CORE_BOX_BRUSH("Common/TextBox_Hovered", FMargin(4.0f / 16.0f)))
 			.SetBackgroundImageFocused(CORE_BOX_BRUSH("Common/TextBox_Hovered", FMargin(4.0f / 16.0f)))
@@ -90,7 +88,7 @@ FStateTreeEditorStyle::FStateTreeEditorStyle()
 	// Details
 	{
 		const FTextBlockStyle Details = FTextBlockStyle(NormalText)
-			.SetFont(CORE_FONT("Fonts/Roboto-Regular", 10))
+			.SetFont(DEFAULT_FONT("Regular", 10))
 			.SetColorAndOpacity(FLinearColor(230.0f / 255.0f, 230.0f / 255.0f, 230.0f / 255.0f, 0.75f));
 		Set("StateTree.Details", Details);
 
@@ -107,11 +105,12 @@ FStateTreeEditorStyle::FStateTreeEditorStyle()
 	// Task
 	{
 		const FTextBlockStyle TaskTitle = FTextBlockStyle(NormalText)
-			.SetFont(CORE_FONT("Fonts/Roboto-Regular", 10))
+			.SetFont(DEFAULT_FONT("Regular", 10))
 			.SetColorAndOpacity(FLinearColor(230.0f / 255.0f, 230.0f / 255.0f, 230.0f / 255.0f, 0.85f));
 		Set("StateTree.Task.Title", TaskTitle);
 
-		Set("StateTree.Task.Rect", new FSlateRoundedBoxBrush(FLinearColor(FColor(21, 104, 116)), 0.0f, FLinearColor(FColor(27, 138, 154)), 1.0f));
+		// Tasks to be show up a bit darker than the state
+		Set("StateTree.Task.Rect", new FSlateColorBrush(FLinearColor(FVector3f(0.67f))));
 	}
 	
 	// Details rich text
@@ -131,15 +130,15 @@ FStateTreeEditorStyle::FStateTreeEditorStyle()
 	{
 		Set("StateTreeDebugger.Element.Normal",
 			FTextBlockStyle(NormalText)
-			.SetFont(CORE_FONT("Fonts/Roboto-Regular", 10)));
+			.SetFont(DEFAULT_FONT("Regular", 10)));
 
 		Set("StateTreeDebugger.Element.Bold",
 			FTextBlockStyle(NormalText)
-			.SetFont(CORE_FONT("Fonts/Roboto-Bold", 10)));
+			.SetFont(DEFAULT_FONT("Bold", 10)));
 
 		Set("StateTreeDebugger.Element.Subdued",
 			FTextBlockStyle(NormalText)
-			.SetFont(CORE_FONT("Fonts/Roboto-Regular", 10))
+			.SetFont(DEFAULT_FONT("Regular", 10))
 			.SetColorAndOpacity(FSlateColor::UseSubduedForeground()));
 	}
 	
@@ -178,10 +177,13 @@ FStateTreeEditorStyle::FStateTreeEditorStyle()
 		.SetFont(FAppStyle::GetFontStyle(TEXT("PropertyWindow.NormalFont")))
 		.SetFontSize(12));
 
+	// Parameter labels
 	Set("StateTree.Param.Label", FTextBlockStyle(NormalText)
 		.SetFont(FAppStyle::GetFontStyle(TEXT("PropertyWindow.BoldFont")))
 		.SetFontSize(7));
 
+	Set("StateTree.Param.Background", new FSlateRoundedBoxBrush(FStyleColors::Hover, 6.f));
+	
 	// Condition Indent combo button
 	const FButtonStyle IndentButton = FButtonStyle()
 		.SetNormal(FSlateRoundedBoxBrush(FLinearColor::Transparent, 2.0f))

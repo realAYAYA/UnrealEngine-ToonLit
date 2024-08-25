@@ -21,6 +21,16 @@ namespace Chaos
 		Modifier->ConvertToProbeConstraint(*Constraint);
 	}
 
+	void FContactPairModifier::ConvertToNonProbe()
+	{
+		Modifier->ConvertToNonProbeConstraint(*Constraint);
+	}
+
+	bool FContactPairModifier::GetIsProbe() const
+	{
+		return Constraint->GetIsProbe();
+	}
+
 	int32 FContactPairModifier::GetNumContacts() const
 	{
 		return Constraint->GetManifoldPoints().Num();
@@ -218,7 +228,7 @@ namespace Chaos
 			return FVec3(0);
 		}
 
-		return KinematicHandle->V();
+		return KinematicHandle->GetV();
 	}
 
 	void FContactPairModifier::ModifyParticleVelocity(FVec3 Velocity, int32 ParticleIdx)
@@ -241,7 +251,7 @@ namespace Chaos
 			EObjectStateType State(RigidHandle->ObjectState());
 			if (State == EObjectStateType::Dynamic || State == EObjectStateType::Sleeping)
 			{
-				RigidHandle->SetX(RigidHandle->P() - Velocity * Modifier->Dt);
+				RigidHandle->SetX(RigidHandle->GetP() - Velocity * Modifier->Dt);
 			}
 		}
 	}
@@ -257,7 +267,7 @@ namespace Chaos
 			return FVec3(0);
 		}
 
-		return KinematicHandle->W();
+		return KinematicHandle->GetW();
 	}
 
 	void FContactPairModifier::ModifyParticleAngularVelocity(FVec3 AngularVelocity, int32 ParticleIdx)
@@ -279,7 +289,7 @@ namespace Chaos
 			EObjectStateType State(RigidHandle->ObjectState());
 			if (State == EObjectStateType::Dynamic || State == EObjectStateType::Sleeping)
 			{
-				RigidHandle->SetR(FRotation3::IntegrateRotationWithAngularVelocity(RigidHandle->Q(), -RigidHandle->W(), Modifier->Dt));
+				RigidHandle->SetR(FRotation3::IntegrateRotationWithAngularVelocity(RigidHandle->GetQ(), -RigidHandle->GetW(), Modifier->Dt));
 			}
 		}
 	}
@@ -291,10 +301,10 @@ namespace Chaos
 
 		if (RigidHandle)
 		{
-			return RigidHandle->P();
+			return RigidHandle->GetP();
 		}
 
-		return Particle->X();
+		return Particle->GetX();
 	}
 
 	void FContactPairModifier::UpdateConstraintShapeTransforms()
@@ -321,12 +331,12 @@ namespace Chaos
 
 				if (bMaintainVelocity)
 				{
-					RigidHandle->SetX(RigidHandle->P() - RigidHandle->V() * Modifier->Dt);
+					RigidHandle->SetX(RigidHandle->GetP() - RigidHandle->GetV() * Modifier->Dt);
 				}
 				else if(Modifier->Dt > 0.0f)
 				{
 					// Update V to new implicit velocity
-					RigidHandle->SetV((RigidHandle->P() - RigidHandle->X()) / Modifier->Dt);
+					RigidHandle->SetV((RigidHandle->GetP() - RigidHandle->GetX()) / Modifier->Dt);
 				}
 				UpdateConstraintShapeTransforms();
 				return;
@@ -363,10 +373,10 @@ namespace Chaos
 		// We give predicted position for simulated objects
 		if (RigidHandle)
 		{
-			return RigidHandle->Q();
+			return RigidHandle->GetQ();
 		}
 
-		return Particle->R();
+		return Particle->GetR();
 	}
 
 	void FContactPairModifier::ModifyParticleRotation(FRotation3 Rotation, bool bMaintainVelocity, int32 ParticleIdx)
@@ -386,21 +396,22 @@ namespace Chaos
 
 				if (bMaintainVelocity)
 				{
-					RigidHandle->SetR(FRotation3::IntegrateRotationWithAngularVelocity(RigidHandle->Q(), -RigidHandle->W(), Modifier->Dt));
+					RigidHandle->SetRf(FRotation3f::IntegrateRotationWithAngularVelocity(RigidHandle->GetQf(), -RigidHandle->GetWf(), FRealSingle(Modifier->Dt)));
 				}
 				else if (Modifier->Dt > 0.0f)
 				{
 					// Update W to new implicit velocity
-					RigidHandle->SetW(FRotation3::CalculateAngularVelocity(RigidHandle->R(), RigidHandle->Q(), Modifier->Dt));
+					RigidHandle->SetWf(FRotation3f::CalculateAngularVelocity(RigidHandle->GetRf(), RigidHandle->GetQf(), FRealSingle(Modifier->Dt)));
 				}
 				UpdateConstraintShapeTransforms();
 				return;
 			}
 			else
 			{
+				FRotation3f Rotationf(Rotation);
 				// Kinematic must keep Q/R in sync
-				RigidHandle->SetR(Rotation);
-				RigidHandle->SetQ(Rotation);
+				RigidHandle->SetRf(Rotationf);
+				RigidHandle->SetQf(Rotationf);
 				UpdateConstraintShapeTransforms();
 				return;
 			}
@@ -456,6 +467,19 @@ namespace Chaos
 		}
 	}
 
+	FGeometryParticleHandle* FContactPairModifier::GetOtherParticle(FGeometryParticleHandle* Particle) const
+	{
+		if (Particle == Constraint->GetParticle0())
+		{
+			return Constraint->GetParticle1();
+		}
+		else if (Particle == Constraint->GetParticle1())
+		{
+			return Constraint->GetParticle0();
+		}
+		return nullptr;
+	}
+
 	TVec2<FGeometryParticleHandle*> FContactPairModifier::GetParticlePair() const
 	{
 		return { Constraint->GetParticle0(), Constraint->GetParticle1() };
@@ -464,6 +488,16 @@ namespace Chaos
 	TVec2<const FPerShapeData*> FContactPairModifier::GetShapePair() const
 	{
 		return { Constraint->GetShape0(), Constraint->GetShape1() };
+	}
+
+	const FShapeInstance* FContactPairModifier::GetShape(int32 ParticleIdx) const
+	{
+		return Constraint->GetShape(ParticleIdx);
+	}
+
+	const FConstImplicitObjectRef FContactPairModifier::GetImplicit(int32 ParticleIdx) const
+	{
+		return Constraint->GetImplicit(ParticleIdx);
 	}
 
 	bool FContactPairModifier::IsEdgeContactPoint(int32 ContactPointIdx) const
@@ -483,6 +517,11 @@ namespace Chaos
 	void FContactPairModifier::SetContactPointDisabled(int32 ContactPointIdx) const
 	{
 		Constraint->DisableManifoldPoint(ContactPointIdx);
+	}
+
+	const FPBDCollisionConstraintContainerCookie& FContactPairModifier::GetConstraintContainerCookie() const
+	{
+		return Constraint->GetContainerCookie();
 	}
 
 	void FContactPairModifierIterator::SeekValidContact()
@@ -515,6 +554,71 @@ namespace Chaos
 		SetToEnd();
 	}
 
+	FContactPairModifierParticleRangeIterator FContactPairModifierParticleRange::begin()
+	{
+		return FContactPairModifierParticleRangeIterator(Modifier, Constraints, 0);
+	}
+
+	FContactPairModifierParticleRangeIterator FContactPairModifierParticleRange::end()
+	{
+		return FContactPairModifierParticleRangeIterator(Modifier, Constraints, Constraints.Num());
+	}
+
+	FContactPairModifierParticleRange::FContactPairModifierParticleRange(FCollisionContactModifier* InModifier, FGeometryParticleHandle* InParticle)
+		: Modifier(InModifier)
+		, Particle(InParticle)
+	{
+		// NOTE: We only visit constraints that were activated this tick because we use the ActiveConstraintIndex to determine which
+		// collisions we have already seen (see FVisitedContactPairsTracker::Visit) and this only works for collisions detected this tick.
+		// We explicitly do not want to visit sleeping collisions.
+		const ECollisionVisitorFlags VisitFlags = ECollisionVisitorFlags::VisitActiveAwake | ECollisionVisitorFlags::VisitDisabled;
+
+		FParticleCollisions& ParticleCollisions = Particle->ParticleCollisions();
+		ParticleCollisions.VisitCollisions([this](FPBDCollisionConstraint& Constraint)
+		{
+			if (Constraint.GetManifoldPoints().Num() > 0 && !Constraint.GetDisabled())
+			{
+				Constraints.Add(&Constraint);
+			}
+			return ECollisionVisitorResult::Continue;
+		}, VisitFlags);
+	}
+
+	bool FVisitedContactPairsTracker::Visit(const FContactPairModifier& ContactPair)
+	{
+		// We use the index in the ActiveConstraints list as an ID for this constraint. This requires
+		// that we are only visiting the active constraints (and not sleeping or expired constraints)
+		// in the VisitCollisions call in FContactPairModifierParticleRange
+		const int32 ConstraintIndex = ContactPair.GetConstraintContainerCookie().ConstraintIndex;
+		
+		// If we hit this, the constraint is not in the active list and the index is invalid
+		// Likely an error in the VisitCollisions call above
+		check(Constraints[ConstraintIndex] == ContactPair.Constraint);
+
+		// Get a reference object to the relevant bit
+		FBitReference BitRef = VisitedContacts[ConstraintIndex];
+
+		// Mark constraint visited and return true
+		if (BitRef == false)
+		{
+			BitRef = true;
+			return true;
+		}
+
+		// Return false - this constraint has already been marked visited
+		return false;
+	}
+
+	FContactPairModifierParticleRange FCollisionContactModifier::GetContacts(FGeometryParticleHandle* Particle)
+	{
+		return FContactPairModifierParticleRange(this, Particle);
+	}
+
+	FVisitedContactPairsTracker FCollisionContactModifier::MakeVisitedContactPairsTracker() const
+	{
+		return FVisitedContactPairsTracker(Constraints);
+	}
+
 	TArrayView<FPBDCollisionConstraint* const>& FCollisionContactModifier::GetConstraints()
 	{
 		return Constraints;
@@ -539,6 +643,13 @@ namespace Chaos
 		Constraint.SetModifierApplied();
 
 		Constraint.SetIsProbe(true);
+	}
+
+	void FCollisionContactModifier::ConvertToNonProbeConstraint(FPBDCollisionConstraint& Constraint)
+	{
+		Constraint.SetModifierApplied();
+
+		Constraint.SetIsProbe(false);
 	}
 
 	void FCollisionContactModifier::MarkConstraintForManifoldUpdate(FPBDCollisionConstraint& Constraint)

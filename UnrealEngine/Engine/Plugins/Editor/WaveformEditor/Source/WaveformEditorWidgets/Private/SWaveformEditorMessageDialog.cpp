@@ -34,7 +34,7 @@ void SWaveformEditorMessageDialog::Construct(const FArguments& InArgs)
 				]
 				+ SVerticalBox::Slot()
 				.VAlign(VAlign_Bottom)
-				.Padding(8.0f, 0.f, 8.0f, 16.0f)
+				.Padding(8.0f, 16.f, 8.0f, 16.0f)
 				[
 					SNew(SHorizontalBox)
 					+ SHorizontalBox::Slot()

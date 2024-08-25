@@ -51,6 +51,10 @@
 #define GPUSKIN_RWBUFFER_OFFSET_TANGENT_Z	1
 #endif
 
+#ifndef GPUSKIN_LIMIT_2BONE_INFLUENCES
+#define GPUSKIN_LIMIT_2BONE_INFLUENCES 0
+#endif
+
 // @return 0..255
 uint4 UnpackU8x4(uint Packed)
 {
@@ -107,3 +111,159 @@ uint PackS8x3N(float3 Unpacked)
 #define TangentBias_SkinCache(X)	(X)
 #define TangentUnbias_SkinCache(X)	(X)
 #endif // OPENGL_PROFILE
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Helpers for accessing vertex indices and weights
+
+int4 GetBlendIndices(Buffer<uint> InWeightBuffer, uint StreamOffset, uint ExtraInfluenceIndex)
+{
+	int4 UnpackedBlendIndices = 0;
+
+#if GPUSKIN_BONE_INDEX_UINT16
+	StreamOffset += GPUSKIN_VB_OFFSET_INFLUENCEBONES + 2 * ExtraInfluenceIndex;
+	UnpackedBlendIndices.xy = UnpackUInt2FromUInt(InWeightBuffer[StreamOffset   ]);
+	UnpackedBlendIndices.zw = UnpackUInt2FromUInt(InWeightBuffer[StreamOffset + 1]);
+#else // GPUSKIN_BONE_INDEX_UINT16
+	StreamOffset += GPUSKIN_VB_OFFSET_INFLUENCEBONES + ExtraInfluenceIndex;
+	UnpackedBlendIndices = UnpackUintToUint4(InWeightBuffer[StreamOffset]);
+#endif // GPUSKIN_BONE_INDEX_UINT16
+	return UnpackedBlendIndices;
+}
+
+float4 GetBlendWeights(Buffer<uint> InWeightBuffer, uint StreamOffset, uint ExtraInfluenceIndex, uint InNumBoneInfluences)
+{
+	StreamOffset += ((InNumBoneInfluences + 3) / 4) * (1 + GPUSKIN_BONE_INDEX_UINT16);
+
+	float4 UnpackedBlendWeights = 0;
+#if GPUSKIN_BONE_WEIGHTS_UINT16
+	StreamOffset += ExtraInfluenceIndex * 2;
+	UnpackedBlendWeights.xy = UnpackUnorm2x16(InWeightBuffer[StreamOffset   ]);
+	UnpackedBlendWeights.zw = UnpackUnorm2x16(InWeightBuffer[StreamOffset + 1]);	
+#else
+	StreamOffset += ExtraInfluenceIndex;
+	UnpackedBlendWeights = UnpackRGBA8(InWeightBuffer[StreamOffset]);
+#endif	
+	return UnpackedBlendWeights;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+// Retrieve vertex indices & weights and compute bone matrix
+
+struct FGPUSkinIndexAndWeight
+{
+	int4 BlendIndices;
+	int4 BlendIndices2;
+	float4 BlendWeights;
+	float4 BlendWeights2;
+};
+
+FGPUSkinIndexAndWeight GetBlendIndicesAndWeights(Buffer<uint> InWeightBuffer, uint InWeightOffset)
+{
+	FGPUSkinIndexAndWeight Out = (FGPUSkinIndexAndWeight)0;
+
+	// Indices
+#if GPUSKIN_BONE_INDEX_UINT16
+	Out.BlendIndices.xy = UnpackUInt2FromUInt(InWeightBuffer[InWeightOffset + GPUSKIN_VB_OFFSET_INFLUENCEBONES    ]);
+	Out.BlendIndices.zw = UnpackUInt2FromUInt(InWeightBuffer[InWeightOffset + GPUSKIN_VB_OFFSET_INFLUENCEBONES + 1]);
+	#if GPUSKIN_USE_EXTRA_INFLUENCES
+	Out.BlendIndices2.xy = UnpackUInt2FromUInt(InWeightBuffer[InWeightOffset + GPUSKIN_VB_OFFSET_INFLUENCEBONES + 2]);
+	Out.BlendIndices2.zw = UnpackUInt2FromUInt(InWeightBuffer[InWeightOffset + GPUSKIN_VB_OFFSET_INFLUENCEBONES + 3]);
+	#endif
+#else // GPUSKIN_BONE_INDEX_UINT16
+	Out.BlendIndices  = UnpackUintToUint4(InWeightBuffer[InWeightOffset + GPUSKIN_VB_OFFSET_INFLUENCEBONES]);
+	#if GPUSKIN_USE_EXTRA_INFLUENCES
+	Out.BlendIndices2 = UnpackUintToUint4(InWeightBuffer[InWeightOffset + GPUSKIN_VB_OFFSET_INFLUENCEBONES + 1]);
+	#endif
+#endif // GPUSKIN_BONE_INDEX_UINT16
+
+	// Weights
+#if GPUSKIN_BONE_WEIGHTS_UINT16
+	Out.BlendWeights.xy = UnpackUnorm2x16(InWeightBuffer[InWeightOffset + GPUSKIN_VB_OFFSET_INFLUENCEWEIGHTS    ]);
+	Out.BlendWeights.zw = UnpackUnorm2x16(InWeightBuffer[InWeightOffset + GPUSKIN_VB_OFFSET_INFLUENCEWEIGHTS + 1]);
+	#if GPUSKIN_USE_EXTRA_INFLUENCES
+	Out.BlendWeights2.xy = UnpackUnorm2x16(InWeightBuffer[InWeightOffset + GPUSKIN_VB_OFFSET_INFLUENCEWEIGHTS + 2]);
+	Out.BlendWeights2.zw = UnpackUnorm2x16(InWeightBuffer[InWeightOffset + GPUSKIN_VB_OFFSET_INFLUENCEWEIGHTS + 3]);
+	#endif
+#else // GPUSKIN_BONE_WEIGHTS_UINT16
+	Out.BlendWeights  = UnpackRGBA8(InWeightBuffer[InWeightOffset + GPUSKIN_VB_OFFSET_INFLUENCEWEIGHTS]);
+	#if GPUSKIN_USE_EXTRA_INFLUENCES
+	Out.BlendWeights2 = UnpackRGBA8(InWeightBuffer[InWeightOffset + GPUSKIN_VB_OFFSET_INFLUENCEWEIGHTS + 1]);
+	#endif
+#endif // GPUSKIN_BONE_WEIGHTS_UINT16
+
+	return Out;
+}
+
+#define FBoneMatrix float3x4
+
+FBoneMatrix InternalGetBoneMatrix(Buffer<float4> InBoneMatrices, uint In) 
+{ 
+	return FBoneMatrix(InBoneMatrices[In*3], InBoneMatrices[In*3 + 1], InBoneMatrices[In*3 + 2]); 
+} 
+
+// Get bone matrix with a bone matrix buffer
+FBoneMatrix ComputeBoneMatrixWithLimitedInfluences(Buffer<float4> InBoneMatrices, FGPUSkinIndexAndWeight In, bool bExtraInfluences = GPUSKIN_USE_EXTRA_INFLUENCES)
+{
+	FBoneMatrix 
+	BoneMatrix  = In.BlendWeights.x * InternalGetBoneMatrix(InBoneMatrices, In.BlendIndices.x);
+	BoneMatrix += In.BlendWeights.y * InternalGetBoneMatrix(InBoneMatrices, In.BlendIndices.y);
+#if !GPUSKIN_LIMIT_2BONE_INFLUENCES
+	BoneMatrix += In.BlendWeights.z * InternalGetBoneMatrix(InBoneMatrices, In.BlendIndices.z);
+	BoneMatrix += In.BlendWeights.w * InternalGetBoneMatrix(InBoneMatrices, In.BlendIndices.w);
+	if (bExtraInfluences)
+	{
+		BoneMatrix += In.BlendWeights2.x * InternalGetBoneMatrix(InBoneMatrices, In.BlendIndices2.x);
+		BoneMatrix += In.BlendWeights2.y * InternalGetBoneMatrix(InBoneMatrices, In.BlendIndices2.y);
+		BoneMatrix += In.BlendWeights2.z * InternalGetBoneMatrix(InBoneMatrices, In.BlendIndices2.z);
+		BoneMatrix += In.BlendWeights2.w * InternalGetBoneMatrix(InBoneMatrices, In.BlendIndices2.w);
+	}
+#endif // GPUSKIN_LIMIT_2BONE_INFLUENCES
+	return BoneMatrix;
+}
+
+FBoneMatrix ComputeBoneMatrixWithUnlimitedInfluences(Buffer<float4> InBoneMatrices, Buffer<uint> InVertexWeights, uint InWeightIndexSize, uint InBlendOffsetCount)
+{
+	int NumBoneInfluences = InBlendOffsetCount & 0xff;
+	int StreamOffset = InBlendOffsetCount >> 8;
+	int BoneIndexSize = InWeightIndexSize & 0xff;
+	int BoneWeightSize = InWeightIndexSize >> 8;
+	int WeightsOffset = StreamOffset + (BoneIndexSize * NumBoneInfluences);
+
+	FBoneMatrix BoneMatrix = FBoneMatrix(float4(0,0,0,0), float4(0,0,0,0), float4(0,0,0,0));
+	for (int InfluenceIdx = 0; InfluenceIdx < NumBoneInfluences; InfluenceIdx++)
+	{
+		int BoneIndexOffset = StreamOffset + (BoneIndexSize * InfluenceIdx);
+		int BoneWeightOffset = WeightsOffset + InfluenceIdx * BoneWeightSize;
+		int BoneIndex = InVertexWeights[BoneIndexOffset];
+		if (BoneIndexSize > 1)
+		{
+			BoneIndex = InVertexWeights[BoneIndexOffset + 1] << 8 | BoneIndex;
+			//@todo-lh: Workaround to fix issue in SPIRVEmitter of DXC; this block must be inside the if branch
+			float BoneWeight;
+			if (BoneWeightSize > 1)
+			{
+				BoneWeight = float(InVertexWeights[BoneWeightOffset + 1] << 8 | InVertexWeights[BoneWeightOffset]) / 65535.0;
+			}
+			else
+			{
+				BoneWeight = float(InVertexWeights[BoneWeightOffset]) / 255.0f;
+			}
+			BoneMatrix += BoneWeight * InternalGetBoneMatrix(InBoneMatrices, BoneIndex);
+		}
+		else
+		{
+			//@todo-lh: Workaround to fix issue in SPIRVEmitter of DXC; this block must be inside the if branch
+			float BoneWeight;
+			if (BoneWeightSize > 1)
+			{
+				BoneWeight = float(InVertexWeights[BoneWeightOffset + 1] << 8 | InVertexWeights[BoneWeightOffset]) / 65535.0;
+			}
+			else
+			{
+				BoneWeight = float(InVertexWeights[BoneWeightOffset]) / 255.0f;
+			}
+			BoneMatrix += BoneWeight * InternalGetBoneMatrix(InBoneMatrices, BoneIndex);
+		}
+	}
+	return BoneMatrix;
+}

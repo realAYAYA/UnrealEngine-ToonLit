@@ -14,5 +14,4 @@
 #include "LightMapDensityRendering.h"
 #include "ClearQuad.h"
 #include "ScenePrivate.h"
-#include "RenderTargetTemp.h"
 #include "RendererModule.h"

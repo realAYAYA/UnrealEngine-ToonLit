@@ -35,6 +35,11 @@ private:
 
 	void DoThreadedWork() final { Execute(); }
 	void Abandon() final { Execute(); }
+	EQueuedWorkFlags GetQueuedWorkFlags() const final
+	{
+		return EQueuedWorkFlags::DoNotRunInsideBusyWait;
+	}
+	
 	int64 GetRequiredMemory() const final
 	{
 		return int64(MemoryEstimate);

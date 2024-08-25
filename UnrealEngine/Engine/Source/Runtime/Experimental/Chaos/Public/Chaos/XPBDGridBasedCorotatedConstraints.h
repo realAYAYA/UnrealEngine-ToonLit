@@ -4,6 +4,7 @@
 // HEADER_UNIT_SKIP - Not included directly
 
 #include "Chaos/PBDSpringConstraintsBase.h"
+#include "Chaos/XPBDCorotatedConstraints.h"
 #include "ChaosStats.h"
 #include "Chaos/ImplicitQRSVD.h"
 #include "Chaos/GraphColoring.h"
@@ -122,23 +123,23 @@ namespace Chaos::Softs
 		{
 			for (T& Lambdas : LambdaArray) { Lambdas = (T)0.; }
 			{
-				TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("STAT_ChaosXPBDGridBasedCorotatedUpdateGrid"));
+				TRACE_CPUPROFILER_EVENT_SCOPE(STAT_ChaosXPBDGridBasedCorotatedUpdateGrid);
 				MPMTransfer.Grid.UpdateGridFromPositions(InParticles);
 			}
 			{
-				TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("STAT_ChaosXPBDGridBasedCorotatedInitialP2G"));
+				TRACE_CPUPROFILER_EVENT_SCOPE(STAT_ChaosXPBDGridBasedCorotatedInitialP2G);
 				MPMTransfer.InitialP2G(InParticles, GridData);
 			}
 			{
-				TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("STAT_ChaosXPBDGridBasedCorotatedMetaDataComputation"));
+				TRACE_CPUPROFILER_EVENT_SCOPE(STAT_ChaosXPBDGridBasedCorotatedMetaDataComputation);
 				MPMTransfer.ComputeElementMetaData(MeshConstraints);
 			}
 			{
-				TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("STAT_ChaosXPBDGridBasedCorotatedSubcoloring"));
+				TRACE_CPUPROFILER_EVENT_SCOPE(STAT_ChaosXPBDGridBasedCorotatedSubcoloring);
 				ComputeGridBasedGraphSubColoringPointer(ElementsPerColor, MPMTransfer.Grid, MPMTransfer.Grid.Size(), PreviousColoring, MPMTransfer.ElementGridNodesSet, ElementsPerSubColors);
 			}
 			{
-				TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("STAT_ChaosXPBDGridBasedCorotatedComputeGridPositions"));
+				TRACE_CPUPROFILER_EVENT_SCOPE(STAT_ChaosXPBDGridBasedCorotatedComputeGridPositions);
 				MPMTransfer.ComputeGridPositions(GridData, Dt, GridPositions);
 			}
 		}
@@ -146,17 +147,17 @@ namespace Chaos::Softs
 		void TimeStepPostprocessing(ParticleType& InParticles, const T Dt)
 		{
 			{
-				TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("STAT_ChaosXPBDGridBasedCorotatedGrid::FinalG2P"));
+				TRACE_CPUPROFILER_EVENT_SCOPE(STAT_ChaosXPBDGridBasedCorotatedGrid::FinalG2P);
 				FinalG2P(InParticles);
 			}
 			
 			{
-				TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("STAT_ChaosXPBDGridBasedCorotated::GridPositions2GridData"));
+				TRACE_CPUPROFILER_EVENT_SCOPE(STAT_ChaosXPBDGridBasedCorotated::GridPositions2GridData);
 				MPMTransfer.GridPositionsToGridData(GridPositions, Dt, GridData);
 			}
 
 			{
-				TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("STAT_ChaosXPBDGridBasedCorotated::ComputeAArray"));
+				TRACE_CPUPROFILER_EVENT_SCOPE(STAT_ChaosXPBDGridBasedCorotated::ComputeAArray);
 				MPMTransfer.ComputeAArray(GridData, InParticles);
 			}
 		

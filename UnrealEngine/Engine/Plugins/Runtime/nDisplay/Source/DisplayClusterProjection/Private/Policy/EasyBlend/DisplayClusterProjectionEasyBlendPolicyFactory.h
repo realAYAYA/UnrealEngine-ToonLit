@@ -16,4 +16,8 @@ public:
 	// IDisplayClusterProjectionPolicyFactory
 	//////////////////////////////////////////////////////////////////////////////////////////////
 	virtual TSharedPtr<IDisplayClusterProjectionPolicy, ESPMode::ThreadSafe> Create(const FString& ProjectionPolicyId, const FDisplayClusterConfigurationProjection* InConfigurationProjectionPolicy) override;
+
+private:
+	TSharedPtr<class FDisplayClusterProjectionEasyBlendLibraryDX11, ESPMode::ThreadSafe> EasyBlendLibraryDX11;
+	TSharedPtr<class FDisplayClusterProjectionEasyBlendLibraryDX12, ESPMode::ThreadSafe> EasyBlendLibraryDX12;
 };

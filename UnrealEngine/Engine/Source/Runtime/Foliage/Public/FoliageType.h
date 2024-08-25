@@ -116,6 +116,10 @@ class UFoliageType : public UObject
 	FOLIAGE_API FVector3f GetRandomScale() const;
 	
 #if WITH_EDITOR
+	virtual FString GetDefaultNewAssetName() const
+	{
+		return TEXT("NewFoliage");
+	}
 
 	virtual void SetSource(UObject* InSource) PURE_VIRTUAL(UFoliageType::SetSource, );
 	virtual void UpdateBounds() {}

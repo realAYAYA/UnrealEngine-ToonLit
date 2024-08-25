@@ -82,6 +82,12 @@ namespace SceneOutliner
 			Rename = 1 << 2,
 		};
 	}
+
+	namespace ExtensionHooks
+	{
+		static FName Hierarchy(TEXT("Hierarchy"));
+		static FName Show(TEXT("Show"));
+	}
 }
 
 /**
@@ -299,6 +305,12 @@ public:
 	 */
 	virtual int32 AddFilter(const TSharedRef<FSceneOutlinerFilter>& Filter) override;
 
+	/** 
+	 * Add a filter to the scene outliner's filter bar
+	 * @param Filter The filter to add
+	 */
+	virtual void AddFilterToFilterBar(const TSharedRef<FFilterBase<SceneOutliner::FilterBarType>>& InFilter) override;
+
 	/**
 	 * Remove a filter from the scene outliner
 	 * @param Filter The Filter to remove
@@ -385,6 +397,8 @@ public:
 	/** Check if a filter with the given name exists and is active in the filter bar for this Outliner (if this Outliner has a filter bar). */
 	virtual bool IsFilterActive(const FString& FilterName) const override;
 
+	/** Retrieve an ISceneOutlinerTreeItem by its ID if it exists in the tree */
+	virtual FSceneOutlinerTreeItemPtr GetTreeItem(FSceneOutlinerTreeItemID, bool bIncludePending = false) override;
 public:
 	/** Event to react to a user double click on a item */
 	SceneOutliner::FTreeItemPtrEvent& GetDoubleClickEvent() { return OnDoubleClickOnTreeEvent; }
@@ -461,6 +475,12 @@ public:
 	virtual bool CanUnpinSelectedItems() const override;
 	
 	/**
+	 * Scrolls the outliner to the selected item(s).
+	 * If more are selected, the chosen item is undeterministic.
+	 */
+	virtual void FrameSelectedItems() override;
+
+	/**
 	 * Returns the parent tree item for a given item if it exists, nullptr otherwise.
 	 */
 	FSceneOutlinerTreeItemPtr FindParent(const ISceneOutlinerTreeItem& InItem) const;
@@ -482,10 +502,7 @@ public:
 
 	/** Sets the next item to rename */
 	void SetPendingRenameItem(const FSceneOutlinerTreeItemPtr& InItem) { PendingRenameItem = InItem; Refresh(); }
-
-	/** Retrieve an ISceneOutlinerTreeItem by its ID if it exists in the tree */
-	FSceneOutlinerTreeItemPtr GetTreeItem(FSceneOutlinerTreeItemID, bool bIncludePending = false);
-
+	
 	/** Get the outliner filter collection */
 	TSharedPtr<FSceneOutlinerFilters>& GetFilters() { return Filters; }
 
@@ -509,6 +526,9 @@ public:
 
 	/** Get the unique identifier associated with this outliner */
 	FName GetOutlinerIdentifier() const { return OutlinerIdentifier; }
+
+	/** Toggle if SceneOutliner should show Transient objects */
+	void SetShowTransient(bool bInShowTransient) { SharedData.Get()->bShowTransient = bInShowTransient; }
 
 private:
 	/** Methods that implement structural modification logic for the tree */
@@ -847,6 +867,9 @@ private:
 	/** Pending tree items that are yet to be added the tree */
 	FSceneOutlinerTreeItemMap PendingTreeItemMap;
 
+	/** Pending tree items that are yet to be removed from the tree */
+	FSceneOutlinerTreeItemMap PendingTreeItemMap_Removal;
+
 	/** Folders pending selection */
 	TArray<FFolder> PendingFoldersSelect;
 
@@ -892,6 +915,9 @@ private:
 
 	/** True if the outliner should cache changes to column visibility into the config */
 	uint8 bShouldCacheColumnVisibility : 1;
+
+	/** True if we are forcing the underlying tree view to automatically expand all parents when searching */
+	mutable uint8 bForceParentItemsExpanded : 1;
 
 	/** Reentrancy guard */
 	bool bIsReentrant;

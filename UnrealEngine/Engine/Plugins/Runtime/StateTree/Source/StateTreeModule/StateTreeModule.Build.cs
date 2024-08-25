@@ -20,7 +20,7 @@ namespace UnrealBuildTool.Rules
 					"AIModule",
 					"GameplayTags",
 					"StructUtils",
-					"StructUtilsEngine"
+					"StructUtilsEngine",
 				}
 			);
 
@@ -34,7 +34,12 @@ namespace UnrealBuildTool.Rules
 
 			if (Target.bBuildEditor)
 			{
-				PublicDependencyModuleNames.Add("UnrealEd");
+				PublicDependencyModuleNames.AddRange(
+					new string[] {
+						"UnrealEd",
+						"BlueprintGraph",
+					}
+				);
 			}
 
 			if (Target.Platform == UnrealTargetPlatform.Win64 && 

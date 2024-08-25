@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#define HAIR_STRANDS_PARAMETERS 1
+#define HAIR_STRANDS_PARAMETERS 1 
 
 #include "../Common.ush"
 #include "../Common.ush"
@@ -15,6 +15,9 @@
 #include "HairStrandsVertexFactoryCommon.ush"
 #include "HairStrandsVoxelPageCommon.ush" 
 #include "HairStrandsDeepShadowCommonStruct.ush"
+
+#define GLOBAL_PAGE_COUNTER_INDEX 0
+#define GROUPS_PAGE_COUNTER_INDEX 1
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Page allocation
@@ -36,12 +39,12 @@ float4				CPU_TranslatedWorldMaxAABB[MAX_HAIR_MACROGROUP_COUNT];
 int4				CPU_PageIndexResolution[MAX_HAIR_MACROGROUP_COUNT];
 uint				CPU_bUseCPUData;
 
-Buffer<float>								GPUVoxelWorldSize;
-Buffer<float>								MacroGroupVoxelSizeBuffer;
-Buffer<int>									MacroGroupAABBBuffer;
-RWBuffer<int>								MacroGroupVoxelAlignedAABBBuffer;
-RWBuffer<uint4>								OutPageIndexResolutionAndOffsetBuffer;
-RWBuffer<uint>								OutPageIndexAllocationIndirectBufferArgs;
+Buffer<float>		GPUVoxelWorldSize;
+Buffer<float>		MacroGroupVoxelSizeBuffer;
+Buffer<int>			MacroGroupAABBBuffer;
+RWBuffer<int>		MacroGroupVoxelAlignedAABBBuffer;
+RWBuffer<uint4>		OutPageIndexResolutionAndOffsetBuffer;
+RWBuffer<uint>		OutPageIndexAllocationIndirectBufferArgs;
 
 
 #if GROUP_SIZE != MAX_HAIR_MACROGROUP_COUNT
@@ -105,8 +108,7 @@ void AllocatePageIndex(uint2 DispatchThreadId : SV_DispatchThreadID)
 			{
 				PageIndexResolution = ceil(MacroGroupSize / PageWorldSize);
 			}
-			MacroGroupSize = PageIndexResolution * PageWorldSize;
-			Bound.Max = MacroGroupSize + Bound.Min;
+			Bound.Max = (PageIndexResolution * PageWorldSize) + Bound.Min; // Snap Bound's Max to page size
 		}
 
 		const uint TotalPageIndex = PageIndexResolution.x * PageIndexResolution.y * PageIndexResolution.z;
@@ -159,7 +161,9 @@ void AllocatePageIndex(uint2 DispatchThreadId : SV_DispatchThreadID)
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #if SHADER_MARKVALID_PREPARE
-uint			MaxClusterCount;
+uint 			InstanceRegisteredIndex;
+uint			ClusterOffset;
+uint			ClusterCount;
 uint			MacroGroupId;
 uint			bUseMacroGroupBoundCPU;
 float3			MacroGroupBoundCPU_TranslatedWorldMinAABB;
@@ -180,10 +184,12 @@ RWBuffer<uint>	OutValidPageIndexBuffer;
 void MarkValid_PrepareCS(uint2 DispatchThreadId : SV_DispatchThreadID)
 {
 	const uint ClusterIndex = DispatchThreadId.x;
-	if (ClusterIndex >= MaxClusterCount)
+	if (ClusterIndex >= ClusterCount)
+	{
 		return;
+	}
 
-	const uint BaseClusterIndex = 6 * ClusterIndex;
+	const uint BaseClusterIndex = 6 * (ClusterOffset + ClusterIndex);
 
 	FHairAABB ClusterBound;
 	ClusterBound.Min.x = float(ClusterAABBsBuffer[BaseClusterIndex + 0]);
@@ -273,7 +279,7 @@ void MarkValid_PrepareCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	else
 	{
 		MacroGroupBound = ReadHairAABB(MacroGroupId, MacroGroupVoxelAlignedAABBBuffer);
-		GroupBound = ReadHairAABB(0, GroupAABBsBuffer);
+		GroupBound = ReadHairAABB(InstanceRegisteredIndex, GroupAABBsBuffer);
 	}
 
 	const uint3 MinCoord = PositionToCoord(GroupBound.Min, MacroGroupBound.Min, MacroGroupBound.Max, PageIndexResolution);
@@ -307,20 +313,21 @@ uint3 CPU_PageIndexResolution;
 Buffer<uint4> PageIndexResolutionAndOffsetBuffer;
 Buffer<int> IndirectBufferArgs;
 
-RWBuffer<uint> PageIndexGlobalCounter;
-RWBuffer<uint> PageIndexBuffer;
-RWBuffer<uint> PageToPageIndexBuffer;
-RWBuffer<uint4> PageIndexCoordBuffer;
+RWBuffer<uint> RWPageIndexGlobalCounter;
+RWBuffer<uint> RWPageIndexBuffer;
+RWBuffer<uint> RWPageToPageIndexBuffer;
+RWBuffer<uint4> RWPageIndexCoordBuffer;
 
 groupshared uint LocalCounter;
-groupshared uint GroupBase;
+groupshared uint GroupBase[2];
 
 [numthreads(GROUP_SIZE, 1, 1)]
 void AllocateCS(uint GroupIndex : SV_GroupIndex, uint3 DispatchThreadId : SV_DispatchThreadID)
 {
 	if (GroupIndex == 0)
 	{
-		GroupBase = 0;
+		GroupBase[0] = 0;
+		GroupBase[1] = 0;
 		LocalCounter = 0;
 	}
 	GroupMemoryBarrierWithGroupSync();
@@ -340,7 +347,7 @@ void AllocateCS(uint GroupIndex : SV_GroupIndex, uint3 DispatchThreadId : SV_Dis
 	bool bIsValid = false;
 	if (DispatchThreadId.x < PageIndexCount)
 	{
-		bIsValid = PageIndexBuffer[GridIndex] > 0;
+		bIsValid = RWPageIndexBuffer[GridIndex] > 0;
 	}
 
 	uint Offset = 0;
@@ -352,33 +359,36 @@ void AllocateCS(uint GroupIndex : SV_GroupIndex, uint3 DispatchThreadId : SV_Dis
 
 	if (GroupIndex == 0)
 	{
-		InterlockedAdd(PageIndexGlobalCounter[0], LocalCounter, GroupBase);
+		// * Add page count to global counter for global tacking
+		// * Add page count to the group for per group work
+		InterlockedAdd(RWPageIndexGlobalCounter[GLOBAL_PAGE_COUNTER_INDEX], LocalCounter, GroupBase[0]);
+		InterlockedAdd(RWPageIndexGlobalCounter[GROUPS_PAGE_COUNTER_INDEX + MacroGroupId], LocalCounter, GroupBase[1]);
 	}
 	GroupMemoryBarrierWithGroupSync();
 
 	if (bIsValid)
 	{
-		const uint PageIndex = GroupBase + Offset;
-		const bool bIsAllocationValid = PageIndex < PageCount;
+		const uint PageIndex0 = GroupBase[0] + Offset; // Global page index
+		const uint PageIndex1 = GroupBase[1] + Offset; // Group  page index
+		const bool bIsAllocationValid = PageIndex0 < PageCount;
 
-		PageIndexBuffer[GridIndex] = bIsAllocationValid ? PageIndex : INVALID_VOXEL_PAGE_INDEX;
+		RWPageIndexBuffer[GridIndex] = bIsAllocationValid ? PageIndex0 : INVALID_VOXEL_PAGE_INDEX;
 		if (bIsAllocationValid)
 		{
-			PageToPageIndexBuffer[PageIndex] = GridIndex;
+			RWPageToPageIndexBuffer[PageIndex0] = GridIndex;
 		}
 
 		// Output the coordinates of the allocated page for indirect dispatch usage
 		// If the allocated failed (run out of page), then we mark the IndexCoord with a invalid GroupID
 		const uint LinearIndex = DispatchThreadId.x;
 		const uint3 PageIndexCoord = IndexToCoord(LinearIndex, PageIndexResolution);
-		const uint IndexRelativeToMacroGroupIndexOffset = PageIndex - PageIndexGlobalCounter[1];
-		PageIndexCoordBuffer[PageIndexOffset + IndexRelativeToMacroGroupIndexOffset] = uint4(PageIndexCoord, bIsAllocationValid ? MacroGroupId : INVALID_MACRO_GROUP_ID);
+		RWPageIndexCoordBuffer[PageIndexOffset + PageIndex1] = uint4(PageIndexCoord, bIsAllocationValid ? MacroGroupId : INVALID_MACRO_GROUP_ID);
 	}
 	// Mark page index as invalid
 	// Insure that even if write more (due to larger dispatch count that needed), we do not stomp other instance group page index
 	else if (DispatchThreadId.x < PageIndexCount)
 	{
-		PageIndexBuffer[GridIndex] = INVALID_VOXEL_PAGE_INDEX;
+		RWPageIndexBuffer[GridIndex] = INVALID_VOXEL_PAGE_INDEX;
 	}
 }
 #endif
@@ -435,54 +445,35 @@ void AddDescCS(uint GroupIndex : SV_GroupIndex, uint3 DispatchThreadId : SV_Disp
 #if SHADER_ADDINDIRECTBUFFER
 
 uint PageResolution;
-uint MacroGroupId;
+uint MacroGroupCount;
 int3 IndirectGroupSize;
 
-RWBuffer<uint> OutPageIndexGlobalCounter;
-RWBuffer<uint> OutIndirectArgsBuffer;
-RWBuffer<uint> OutTotalRequestedPageAllocationBuffer;
-
-[numthreads(1, 1, 1)]
-void AddIndirectBufferCS(uint GroupIndex : SV_GroupIndex, uint3 DispatchThreadId : SV_DispatchThreadID)
-{
-	const uint TotalAllocatedPageCount = OutPageIndexGlobalCounter[0];
-	const uint PrevTotalAllocatedPageCount = OutPageIndexGlobalCounter[1];
-	const uint AllocatedPageCount = TotalAllocatedPageCount - PrevTotalAllocatedPageCount;
-	const uint VoxelCountPerPage = PageResolution * PageResolution * PageResolution;
-
-	const uint DispatchCountX = DivideAndRoundUp(VoxelCountPerPage, IndirectGroupSize.x);
-	const uint DispatchCountZ = DivideAndRoundUp(AllocatedPageCount, IndirectGroupSize.z);
-	WriteDispatchIndirectArgs(OutIndirectArgsBuffer, MacroGroupId, DispatchCountX, 1, DispatchCountZ);
-
-	// Copy current total to previous total
-	OutPageIndexGlobalCounter[1] = TotalAllocatedPageCount;
-
-	// The value will be written several times, but only the value written during the last macro group will give the final page count allocated/requested
-	OutTotalRequestedPageAllocationBuffer[0] = TotalAllocatedPageCount;
-}
-
-#endif
-
-///////////////////////////////////////////////////////////////////////////////////////////////////
-// Prepare indirect args for indirect clear
-
-#if SHADER_INDPAGECLEARBUFFERGEN
-
-uint PageResolution;
-int3 GroupSize;
 Buffer<uint> PageIndexGlobalCounter;
 RWBuffer<uint> OutIndirectArgsBuffer;
 
-[numthreads(1, 1, 1)]
-void VoxelIndPageClearBufferGenCS(uint GroupIndex : SV_GroupIndex, uint3 DispatchThreadId : SV_DispatchThreadID)
+void WriteArgs(uint WriteIndex, uint AllocatedPageCount)
 {
-	const uint TotalAllocatedPageCount = PageIndexGlobalCounter[0];
 	const uint VoxelCountPerPage = PageResolution * PageResolution * PageResolution;
+	const uint DispatchCountX = DivideAndRoundUp(VoxelCountPerPage, IndirectGroupSize.x);
+	const uint DispatchCountZ = DivideAndRoundUp(AllocatedPageCount, IndirectGroupSize.z);
+	WriteDispatchIndirectArgs(OutIndirectArgsBuffer, WriteIndex, DispatchCountX, 1, DispatchCountZ);
+}
 
-	const uint DispatchX = DivideAndRoundUp(VoxelCountPerPage, GroupSize.x);
-	const uint DispatchZ = DivideAndRoundUp(TotalAllocatedPageCount, GroupSize.z);
+[numthreads(GROUP_SIZE, 1, 1)]
+void AddIndirectBufferCS(uint GroupIndex : SV_GroupIndex, uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	// Total pages allocated across *all* macro groups
+	if (DispatchThreadId.x == 0)
+	{
+		WriteArgs(GLOBAL_PAGE_COUNTER_INDEX, PageIndexGlobalCounter[GLOBAL_PAGE_COUNTER_INDEX]);
+	}
 
-	WriteDispatchIndirectArgs(OutIndirectArgsBuffer, 0, DispatchX, 1, DispatchZ);
+	// Pages allocated for a particular macro group
+	const uint MacroGroupId = DispatchThreadId.x;
+	if (MacroGroupId < MacroGroupCount)
+	{
+		WriteArgs(GROUPS_PAGE_COUNTER_INDEX + MacroGroupId, PageIndexGlobalCounter[GROUPS_PAGE_COUNTER_INDEX + MacroGroupId]);
+	}
 }
 
 #endif
@@ -502,7 +493,7 @@ RWTexture3D<uint>	OutPageTexture;
 [numthreads(GROUP_SIZE_X, 1, GROUP_SIZE_Z)]
 void VoxelIndPageClearCS(uint3 DispatchThreadId : SV_DispatchThreadID, uint3 GroupId : SV_GroupID, uint3 GroupThreadId : SV_GroupThreadID)
 {
-	const uint TotalAllocatedPageCount = PageIndexGlobalCounter[0];
+	const uint TotalAllocatedPageCount = PageIndexGlobalCounter[GLOBAL_PAGE_COUNTER_INDEX];
 	const uint VoxelCountPerPage = VirtualVoxelParams_PageResolution * VirtualVoxelParams_PageResolution * VirtualVoxelParams_PageResolution;
 
 	const uint LinearVoxelCoord = DispatchThreadId.x;
@@ -538,7 +529,7 @@ float CPUMinVoxelWorldSize;
 float AdaptiveCorrectionThreshold;
 float AdaptiveCorrectionSpeed;
 
-Buffer<uint> TotalRequestedPageAllocationBuffer;
+Buffer<uint> PageIndexGlobalCounter;
 Buffer<float> CurrGPUMinVoxelWorldSize;
 RWBuffer<float> NextGPUMinVoxelWorldSize;
 
@@ -561,7 +552,7 @@ void FeedbackCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	//    MaxPage          MaxRes^3
 
 	// Ratio used for predicting voxel size increase
-	const uint GPUAllocatedPageCount = TotalRequestedPageAllocationBuffer[0];
+	const uint GPUAllocatedPageCount = PageIndexGlobalCounter[GLOBAL_PAGE_COUNTER_INDEX];
 	const float VolumeRatio = float(GPUAllocatedPageCount) / float(CPUAllocatedPageCount);
 	const float LinearRatio = pow(VolumeRatio, 1.f / 3.f);
 
@@ -687,8 +678,6 @@ void MainCS(uint2 DispatchThreadID : SV_DispatchThreadID)
 	if (!bIsValid)
 		return;
 
-	float LodRadiusScale0 = 1;
-	float LodRadiusScale1 = 1;
 #if PERMUTATION_CULLING == 1
 	if (HairStrandsVF_bCullingEnable)
 	{
@@ -703,34 +692,28 @@ void MainCS(uint2 DispatchThreadID : SV_DispatchThreadID)
 		FetchIndex1 = min(FetchIndex0 + 1, VertexCountAfterCulling - 1);
 
 		VertexIndex0 = HairStrandsVF_CullingIndexBuffer[FetchIndex0];
-		LodRadiusScale0 = HairStrandsVF_CullingRadiusScaleBuffer[FetchIndex0];
-
 		VertexIndex1 = HairStrandsVF_CullingIndexBuffer[FetchIndex1];
-		LodRadiusScale1 = HairStrandsVF_CullingRadiusScaleBuffer[FetchIndex1];
-
-		if (LodRadiusScale0 <= 0.0f)
-		{
-			return;
-		}
 	}
 #endif
 
-	const float3 PositionOffset = HairStrandsVF_PositionOffsetBuffer[0].xyz;
+	const float3 PositionOffset = HairStrandsVF_GetHairInstancePositionOffset();
 
-	const FHairControlPoint CP0 = UnpackHairControlPoint(
-		HairStrandsVF_PositionBuffer[VertexIndex0],
+	const FHairControlPoint CP0 = ReadHairControlPoint(
+		HairStrandsVF_PositionBuffer,
+		VertexIndex0,
 		PositionOffset,
-		HairStrandsVF_Radius * LodRadiusScale0,
+		HairStrandsVF_Radius,
 		HairStrandsVF_RootScale,
 		HairStrandsVF_TipScale);
 
 	if (CP0.Type == HAIR_CONTROLPOINT_END)
 		return;
 
-	const FHairControlPoint CP1 = UnpackHairControlPoint(
-		HairStrandsVF_PositionBuffer[VertexIndex1],
+	const FHairControlPoint CP1 = ReadHairControlPoint(
+		HairStrandsVF_PositionBuffer,
+		VertexIndex1,
 		PositionOffset,
-		HairStrandsVF_Radius * LodRadiusScale1,
+		HairStrandsVF_Radius,
 		HairStrandsVF_RootScale,
 		HairStrandsVF_TipScale);
 
@@ -824,7 +807,7 @@ void MainCS(uint2 DispatchThreadID : SV_DispatchThreadID)
 				// Groom having raytraced geometry will cast-shadow on opaque geomtry with their RT-geometry, not with their 
 				// voxelization. To avoid for doubling/incorrect shadowing, we mark voxel with no-shadow casting flag. 
 				// This adds a significant cost when used.
-				if (HairStrandsVF_bRaytracingGeometry)
+				if (HasHairFlags(HairStrandsVF_Flags, HAIR_FLAGS_RAYTRACING_GEOMETRY))
 				{
 					InterlockedOr(OutPageTexture[VoxelPageCoord], VOXEL_CAST_NO_SHADOW_MASK);
 				}
@@ -1021,7 +1004,6 @@ void MainVS(
 	OutPosition = mul(float4(TranslatedWorldPosition, 1), TranslatedWorldToClipMatrix);
 }
 
-#define VOXEL_TRAVERSAL_DEBUG_PAGEOCCUPANCY 0
 //#define VOXEL_TRAVERSAL_TYPE VOXEL_TRAVERSAL_LINEAR_MIPMAP
 #define VOXEL_TRAVERSAL_TYPE VOXEL_TRAVERSAL_LINEAR
 #include "HairStrandsVoxelPageTraversal.ush"
@@ -1070,7 +1052,6 @@ void MainPS(
 		CommonDesc,
 		NodeDesc,
 		VirtualVoxel.PageIndexBuffer,
-		VirtualVoxel.PageIndexOccupancyBuffer,
 		VirtualVoxel.PageTexture,
 		TraversalSettings);
 	bool bIsValid = TraversalResult.HairCount > 0;
@@ -1097,7 +1078,7 @@ void MainPS(
 ///////////////////////////////////////////////////////////////////////////
 // Common function for mipmapping voxels
 
-#if SHADER_MIP_VIRTUALVOXEL || SHADER_MIP_INDIRECTARGS || SHADER_UPDATE_PAGEINDEX
+#if SHADER_MIP_VIRTUALVOXEL || SHADER_MIP_INDIRECTARGS
 uint ComputeMipDensity(
 	const uint RawDensity0,
 	const uint RawDensity1,
@@ -1147,11 +1128,14 @@ uint ComputeMipDensity(
 	// could arise due to numerical precision).
 	return min(uint(VOXEL_HAIR_MASK), bHasData ? max(TotalHair, 1u) : 0u) | OutTotalOpaque | (bHasShadowCaster ? 0u : VOXEL_CAST_NO_SHADOW_MASK);
 }
-#endif // SHADER_MIP_VIRTUALVOXEL || SHADER_MIP_INDIRECTARGS || SHADER_UPDATE_PAGEINDEX
+#endif // SHADER_MIP_VIRTUALVOXEL || SHADER_MIP_INDIRECTARGS
 
 ///////////////////////////////////////////////////////////////////////////
 
 #if SHADER_MIP_VIRTUALVOXEL
+#include "../MortonCode.ush"
+
+uint bPatchEmptyPage;
 int3 PageCountResolution;
 uint PageResolution;
 uint SourceMip;
@@ -1161,59 +1145,147 @@ Buffer<uint> 	  AllocatedPageCountBuffer;
 Texture3D<uint>   InDensityTexture;
 RWTexture3D<uint> OutDensityTexture;
 
+uint MortonEncode3(uint3 Voxel)
+{
+	return MortonCode3(Voxel.x) | MortonCode3(Voxel.y) << 1 | MortonCode3(Voxel.z) << 2;
+}
+
+uint3 MortonDecode3(uint Morton)
+{
+	uint3 Voxel = uint3(ReverseMortonCode3(Morton), ReverseMortonCode3(Morton >> 1), ReverseMortonCode3(Morton >> 2));
+	return Voxel;
+}
+
+#if PERMUTATION_MIP_AGGREGATE
+Buffer<uint>	  PageToPageIndexBuffer;
+RWBuffer<uint>	  OutPageIndexBuffer;
+
+RWTexture3D<uint> OutDensityTexture2;
+RWTexture3D<uint> OutDensityTexture1;
+
+groupshared uint g_Density4[64][GROUP_SIZE_Z];
+groupshared uint g_Density2[8][GROUP_SIZE_Z];
+#endif
+
 [numthreads(GROUP_SIZE_X, 1, GROUP_SIZE_Z)]
-void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
+void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID, uint3 GroupThreadId : SV_GroupThreadID)
 {
 	const uint  PageIndex = DispatchThreadId.z;
-	if (PageIndex >= AllocatedPageCountBuffer[0])
-	{
-		return;
-	}
-
 	const uint3 PageCoord = IndexToCoord(PageIndex, PageCountResolution);
+	const bool bValid = PageIndex < AllocatedPageCountBuffer[0];
+	
+	uint Total = 0;
+	if (bValid)
+	{
+		const uint  InPageResolution = PageResolution >> SourceMip;
+		const uint OutPageResolution = PageResolution >> TargetMip;
+		const uint TotalVoxelPerOutPageResolution = OutPageResolution * OutPageResolution * OutPageResolution;	
+		if (DispatchThreadId.x < TotalVoxelPerOutPageResolution)
+		{
+			const uint VoxelIndex = DispatchThreadId.x;
+	
+			const uint3 OutVoxelCoordOffset = MortonDecode3(VoxelIndex);
+			const uint3  InVoxelCoordOffset = OutVoxelCoordOffset << 1;
+		
+			const uint3 OutVoxelCoord = PageCoord * OutPageResolution + OutVoxelCoordOffset;
+			const uint3  InVoxelCoord = PageCoord * InPageResolution + InVoxelCoordOffset;
+		
+			const uint3 InVoxelCoord0 = InVoxelCoord;
+			const uint3 InVoxelCoord1 = InVoxelCoord0 + uint3(1, 0, 0);
+			const uint3 InVoxelCoord2 = InVoxelCoord0 + uint3(0, 1, 0);
+			const uint3 InVoxelCoord3 = InVoxelCoord0 + uint3(1, 1, 0);
+			const uint3 InVoxelCoord4 = InVoxelCoord0 + uint3(0, 0, 1);
+			const uint3 InVoxelCoord5 = InVoxelCoord0 + uint3(1, 0, 1);
+			const uint3 InVoxelCoord6 = InVoxelCoord0 + uint3(0, 1, 1);
+			const uint3 InVoxelCoord7 = InVoxelCoord0 + uint3(1, 1, 1);
+		
+			const uint RawDensity0 = InDensityTexture[InVoxelCoord0];
+			const uint RawDensity1 = InDensityTexture[InVoxelCoord1];
+			const uint RawDensity2 = InDensityTexture[InVoxelCoord2];
+			const uint RawDensity3 = InDensityTexture[InVoxelCoord3];
+			const uint RawDensity4 = InDensityTexture[InVoxelCoord4];
+			const uint RawDensity5 = InDensityTexture[InVoxelCoord5];
+			const uint RawDensity6 = InDensityTexture[InVoxelCoord6];
+			const uint RawDensity7 = InDensityTexture[InVoxelCoord7];
+		
+			Total = ComputeMipDensity(
+				RawDensity0,
+				RawDensity1,
+				RawDensity2,
+				RawDensity3,
+				RawDensity4,
+				RawDensity5,
+				RawDensity6,
+				RawDensity7);
+		
+			OutDensityTexture[OutVoxelCoord] = Total;
+	
+			#if PERMUTATION_MIP_AGGREGATE
+			// Store 4x4x4 values
+			if (GroupThreadId.x < 64)
+			{
+				uint StoreIndex = MortonEncode3(OutVoxelCoordOffset);
+				g_Density4[StoreIndex][GroupThreadId.z] = Total;
+			}
+			#endif
+		}
+	}
+	
+	#if PERMUTATION_MIP_AGGREGATE
+	GroupMemoryBarrierWithGroupSync();
 
-	const uint  InPageResolution = PageResolution >> SourceMip;
-	const uint OutPageResolution = PageResolution >> TargetMip;
-	const uint TotalVoxelPerOutPageResolution = OutPageResolution * OutPageResolution * OutPageResolution;
-	const uint VoxelIndex = DispatchThreadId.x;
-	if (VoxelIndex >= TotalVoxelPerOutPageResolution)
-		return;
+	// Target Page Res: 2x2x2 
+	if (bValid && GroupThreadId.x < 8)
+	{
+		const uint Total4 = ComputeMipDensity(
+			g_Density4[GroupThreadId.x*8+0][GroupThreadId.z],
+			g_Density4[GroupThreadId.x*8+1][GroupThreadId.z],
+			g_Density4[GroupThreadId.x*8+2][GroupThreadId.z],
+			g_Density4[GroupThreadId.x*8+3][GroupThreadId.z],
+			g_Density4[GroupThreadId.x*8+4][GroupThreadId.z],
+			g_Density4[GroupThreadId.x*8+5][GroupThreadId.z],
+			g_Density4[GroupThreadId.x*8+6][GroupThreadId.z],
+			g_Density4[GroupThreadId.x*8+7][GroupThreadId.z]);
 
-	const uint3 OutVoxelCoordOffset = IndexToCoord(VoxelIndex, OutPageResolution);
-	const uint3  InVoxelCoordOffset = OutVoxelCoordOffset << 1;
 
-	const uint3 OutVoxelCoord = PageCoord * OutPageResolution + OutVoxelCoordOffset;
-	const uint3  InVoxelCoord = PageCoord * InPageResolution + InVoxelCoordOffset;
+		const uint3 StoreVoxel = MortonDecode3(GroupThreadId.x*8)>>1;
+		const uint StoreIndex  = MortonEncode3(StoreVoxel); // GroupThreadId.x >> 3;
+		g_Density2[StoreIndex][GroupThreadId.z] = Total4;
 
-	const uint3 InVoxelCoord0 = InVoxelCoord;
-	const uint3 InVoxelCoord1 = InVoxelCoord0 + uint3(1, 0, 0);
-	const uint3 InVoxelCoord2 = InVoxelCoord0 + uint3(0, 1, 0);
-	const uint3 InVoxelCoord3 = InVoxelCoord0 + uint3(1, 1, 0);
-	const uint3 InVoxelCoord4 = InVoxelCoord0 + uint3(0, 0, 1);
-	const uint3 InVoxelCoord5 = InVoxelCoord0 + uint3(1, 0, 1);
-	const uint3 InVoxelCoord6 = InVoxelCoord0 + uint3(0, 1, 1);
-	const uint3 InVoxelCoord7 = InVoxelCoord0 + uint3(1, 1, 1);
+		const uint OutPageResolution = 2;
+		const uint3 OutVoxelCoord = PageCoord * OutPageResolution + StoreVoxel;
+		OutDensityTexture2[OutVoxelCoord] = Total4;
+	}
+	GroupMemoryBarrierWithGroupSync();
 
-	const uint RawDensity0 = InDensityTexture[InVoxelCoord0];
-	const uint RawDensity1 = InDensityTexture[InVoxelCoord1];
-	const uint RawDensity2 = InDensityTexture[InVoxelCoord2];
-	const uint RawDensity3 = InDensityTexture[InVoxelCoord3];
-	const uint RawDensity4 = InDensityTexture[InVoxelCoord4];
-	const uint RawDensity5 = InDensityTexture[InVoxelCoord5];
-	const uint RawDensity6 = InDensityTexture[InVoxelCoord6];
-	const uint RawDensity7 = InDensityTexture[InVoxelCoord7];
+	// Target Page Res: 1x1x1 
+	if (bValid && GroupThreadId.x < 1)
+	{
+		const uint Total2 = ComputeMipDensity(
+			g_Density2[0][GroupThreadId.z],
+			g_Density2[1][GroupThreadId.z],
+			g_Density2[2][GroupThreadId.z],
+			g_Density2[3][GroupThreadId.z],
+			g_Density2[4][GroupThreadId.z],
+			g_Density2[5][GroupThreadId.z],
+			g_Density2[6][GroupThreadId.z],
+			g_Density2[7][GroupThreadId.z]);
 
-	const uint Total = ComputeMipDensity(
-		RawDensity0,
-		RawDensity1,
-		RawDensity2,
-		RawDensity3,
-		RawDensity4,
-		RawDensity5,
-		RawDensity6,
-		RawDensity7);
+		const uint OutPageResolution = 1;
+		const uint3 OutVoxelCoord = PageCoord * OutPageResolution + 0;
+		OutDensityTexture1[OutVoxelCoord] = Total2;
 
-	OutDensityTexture[OutVoxelCoord] = Total;
+		// Update the page index with invalid page index if the voxel does not contain any data.
+		// This allow to save tracing cost when evaluating the transmittance.
+
+		const bool bIsEmpty =(Total2 & VOXEL_HAIR_MASK) == 0;
+		if (bPatchEmptyPage > 0 && bIsEmpty)
+		{
+			const uint PageIndexOffset = PageToPageIndexBuffer[PageIndex];
+			OutPageIndexBuffer[PageIndexOffset] = INVALID_VOXEL_PAGE_INDEX;
+		}
+	}
+	#endif
 }
 #endif
 
@@ -1241,76 +1313,6 @@ void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 	WriteDispatchIndirectArgs(OutIndirectArgs, 0, DispatchX, InIndirectArgs[1], InIndirectArgs[2]);
 }
 
-#endif
-
-///////////////////////////////////////////////////////////////////////////
-
-#if SHADER_UPDATE_PAGEINDEX
-int3 PageCountResolution;
-uint PageResolution;
-uint MipIt;
-
-Buffer<uint>	  PageIndexGlobalCounter; // Allocated page counter
-Texture3D<uint>	  DensityTexture;
-Buffer<uint>	  PageToPageIndexBuffer;
-RWBuffer<uint>	  OutPageIndexBuffer;
-RWBuffer<uint2>	  OutPageIndexOccupancyBuffer;
-
-[numthreads(GROUP_SIZE_X, 1, GROUP_SIZE_Z)]
-void MainCS(uint3 DispatchThreadId : SV_DispatchThreadID)
-{
-	const uint  PageIndex = DispatchThreadId.z;
-	const uint3 PageCoord = IndexToCoord(PageIndex, PageCountResolution);
-
-	const uint AllocatedPageCount = PageIndexGlobalCounter[0];
-	if (PageIndex >= AllocatedPageCount)
-		return;
-
-	const uint OutPageResolution = PageResolution >> MipIt;
-	const uint TotalVoxelPerOutPageResolution = OutPageResolution * OutPageResolution * OutPageResolution;
-	const uint VoxelIndex = DispatchThreadId.x;
-	if (VoxelIndex >= TotalVoxelPerOutPageResolution)
-		return;
-
-	{
-		const uint3 OutVoxelCoordOffset = IndexToCoord(VoxelIndex, OutPageResolution);
-		const uint3 OutVoxelCoord = PageCoord * OutPageResolution + OutVoxelCoordOffset;
-
-		const uint Density = DensityTexture.Load(uint4(OutVoxelCoord, MipIt));
-		// Update the page index with invalid page index if the voxel does not contain any data.
-		// This allow to save tracing cost when evaluating the transmittance.
-		if (Density == 0)
-		{
-			const uint PageIndexOffset = PageToPageIndexBuffer[PageIndex];
-			OutPageIndexBuffer[PageIndexOffset] = INVALID_VOXEL_PAGE_INDEX;
-		}
-	}
-
-	// Fill in the occupancy table
-	{
-		const uint OccMipIt = 3; // A voxel at this mip has a size of 8x8x8
-		const uint OccPageResolution = PageResolution >> OccMipIt;
-		uint2 Occupancy = 0;
-		uint BitIndex = 0;
-		for (uint z = 0; z < 4; ++z)
-			for (uint y = 0; y < 4; ++y)
-				for (uint x = 0; x < 4; ++x)
-				{
-					const uint3 OutVoxelCoord = PageCoord * OccPageResolution + uint3(x, y, z);
-					const uint Density = DensityTexture.Load(uint4(OutVoxelCoord, OccMipIt));
-					if (Density > 0)
-					{
-						if (BitIndex < 32)
-							Occupancy.x = Occupancy.x | (1u << BitIndex);
-						else
-							Occupancy.y = Occupancy.y | (1u << (BitIndex - 32));
-					}
-					++BitIndex;
-				}
-		const uint PageIndexOffset = PageToPageIndexBuffer[PageIndex];
-		OutPageIndexOccupancyBuffer[PageIndexOffset] = Occupancy;
-	}
-}
 #endif
 
 ///////////////////////////////////////////////////////////////////////////

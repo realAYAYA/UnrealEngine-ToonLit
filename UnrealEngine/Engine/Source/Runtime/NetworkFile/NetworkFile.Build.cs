@@ -17,5 +17,7 @@ public class NetworkFile : ModuleRules
 			});
 
 		PublicDefinitions.Add("ENABLE_HTTP_FOR_NETWORK_FILE=0");
+
+		UnsafeTypeCastWarningLevel = WarningLevel.Error;
 	}
 }

@@ -574,8 +574,6 @@ namespace Audio
 			check(InitData.SoundWave->GetPrecacheState() == ESoundWavePrecacheState::Done);
 			return InitDecodingSourceInternal(InitData);
 		}
-
-		return false;
 	}
 
 	void FSoundSourceDecoder::RemoveDecodingSource(const FDecodingSoundSourceHandle& Handle)

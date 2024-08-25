@@ -9,6 +9,10 @@
 /////////////////////////////////////////////////////
 // FAnimNode_Root
 
+#if WITH_EDITORONLY_DATA
+FName FAnimNode_Root::DefaultSharedGroup("DefaultSharedGroup"); // All layers sharing the instance by default
+#endif
+
 FAnimNode_Root::FAnimNode_Root()
 {
 }
@@ -49,5 +53,5 @@ FName FAnimNode_Root::GetName() const
 
 FName FAnimNode_Root::GetGroup() const
 {
-	return GET_ANIM_NODE_DATA(FName, Group);
+	return GET_ANIM_NODE_DATA(FName, LayerGroup);
 }

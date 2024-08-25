@@ -123,7 +123,7 @@ void FShaderMapBase::UnfreezeContent()
 
 #define CHECK_SHADERMAP_DEPENDENCIES (WITH_EDITOR || !(UE_BUILD_SHIPPING || UE_BUILD_TEST))
 
-bool FShaderMapBase::Serialize(FArchive& Ar, bool bInlineShaderResources, bool bLoadedByCookedMaterial, bool bInlineShaderCode)
+bool FShaderMapBase::Serialize(FArchive& Ar, bool bInlineShaderResources, bool bLoadedByCookedMaterial, bool bInlineShaderCode, const FName& SerializingAsset)
 {
 	LLM_SCOPE(ELLMTag::Shaders);
 	if (Ar.IsSaving())
@@ -210,7 +210,9 @@ bool FShaderMapBase::Serialize(FArchive& Ar, bool bInlineShaderResources, bool b
 				// also do not warn for shader platforms other than current (if the game targets more than one RHI)
 				if (FApp::CanEverRender() && ShaderPlatform == GMaxRHIShaderPlatform)
 				{
-					UE_LOG(LogShaders, Error, TEXT("Missing shader resource for hash '%s' for shader platform '%s' in the shader library"), *ResourceHash.ToString(), *LexToString(ShaderPlatform));
+					UE_LOG(LogShaders, Error, TEXT("Missing shader resource for hash '%s' for shader platform '%s' in the shader library while serializing asset %s"), *ResourceHash.ToString(),
+						*LexToString(ShaderPlatform),
+						*SerializingAsset.ToString());
 				}
 			}
 		}
@@ -399,9 +401,9 @@ void FShaderMapContent::RemoveShaderTypePermutaion(const FHashedName& TypeName, 
 			DeleteObjectFromLayout(Shader);
 
 			// Replace the shader we're removing with the last shader in the list
-			Shaders.RemoveAtSwap(Index, 1, false);
-			ShaderTypes.RemoveAtSwap(Index, 1, false);
-			ShaderPermutations.RemoveAtSwap(Index, 1, false);
+			Shaders.RemoveAtSwap(Index, 1, EAllowShrinking::No);
+			ShaderTypes.RemoveAtSwap(Index, 1, EAllowShrinking::No);
+			ShaderPermutations.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 			check(ShaderTypes.Num() == Shaders.Num());
 			check(ShaderPermutations.Num() == Shaders.Num());
 			ShaderHash.Remove(Hash, Index);
@@ -429,7 +431,7 @@ void FShaderMapContent::RemoveShaderPipelineType(const FShaderPipelineType* Shad
 	{
 		FShaderPipeline* Pipeline = ShaderPipelines[Index];
 		delete Pipeline;
-		ShaderPipelines.RemoveAt(Index, 1, false);
+		ShaderPipelines.RemoveAt(Index, 1, EAllowShrinking::No);
 	}
 }
 
@@ -638,6 +640,21 @@ uint32 FShaderMapContent::GetMaxNumInstructionsForShader(const FShaderMapBase& I
 
 	return MaxNumInstructions;
 }
+
+#if WITH_EDITOR
+const FShader::FShaderStatisticMap FShaderMapContent::GetShaderStatisticsMapForShader(const FShaderMapBase& InShaderMap, FShaderType* ShaderType) const
+{
+	FShader::FShaderStatisticMap Statistics;
+
+	FShader* Shader = GetShader(ShaderType);
+	if (Shader)
+	{
+		Statistics = Shader->GetShaderStatistics();
+	}
+
+	return Statistics;
+}
+#endif // WITH_EDITOR
 
 struct FSortedShaderEntry
 {

@@ -12,15 +12,15 @@ namespace PerfSummaries
 {
 	class BucketSummary : Summary
 	{
-		public BucketSummary(XElement element, string baseXmlDirectory)
+		public BucketSummary(XElement element, XmlVariableMappings vars, string baseXmlDirectory)
 		{
-			ReadStatsFromXML(element);
-			Title = element.GetSafeAttibute("title", "Untitled Bucket Summary");
+			ReadStatsFromXML(element, vars);
+			Title = element.GetSafeAttribute(vars, "title", "Untitled Bucket Summary");
 
 			XElement BucketElement = element.Element("buckets");
-			bool ReportOutOfRangeDefault = BucketElement.GetSafeAttibute<bool>("reportOutOfRange", false);
-			ReportBelowRange = BucketElement.GetSafeAttibute<bool>("reportBelowRange", ReportOutOfRangeDefault);
-			ReportAboveRange = BucketElement.GetSafeAttibute<bool>("reportAboveRange", ReportOutOfRangeDefault);
+			bool ReportOutOfRangeDefault = BucketElement.GetSafeAttribute<bool>(vars, "reportOutOfRange", false);
+			ReportBelowRange = BucketElement.GetSafeAttribute<bool>(vars, "reportBelowRange", ReportOutOfRangeDefault);
+			ReportAboveRange = BucketElement.GetSafeAttribute<bool>(vars, "reportAboveRange", ReportOutOfRangeDefault);
 
 			string[] XmlBuckets = BucketElement.Value.Split(',');
 			Buckets = new double[XmlBuckets.Length];
@@ -34,36 +34,37 @@ namespace PerfSummaries
 			XElement ColorElement = element.Element("colorDisplay");
 			if (ColorElement != null)
 			{
-				LowEndColor = new Colour(ColorElement.GetSafeAttibute<string>("lowEndColor"));
-				HighEndColor = new Colour(ColorElement.GetSafeAttibute<string>("highEndColor"));
+				LowEndColor = new Colour(ColorElement.GetSafeAttribute<string>(vars, "lowEndColor"));
+				HighEndColor = new Colour(ColorElement.GetSafeAttribute<string>(vars, "highEndColor"));
 			}
 		}
 		public BucketSummary() { }
 
 		public override string GetName() { return "bucketsummary"; }
 
-		public override void WriteSummaryData(System.IO.StreamWriter htmlFile, CsvStats csvStats, CsvStats csvStatsUnstripped, bool bWriteSummaryCsv, SummaryTableRowData metadata, string htmlFileName)
+		public override HtmlSection WriteSummaryData(bool bWriteHtml, CsvStats csvStats, CsvStats csvStatsUnstripped, bool bWriteSummaryCsv, SummaryTableRowData rowData, string htmlFileName)
 		{
 			// Only HTML reporting is supported (does not summary table row data)
-			if (htmlFile == null)
+			if (!bWriteHtml)
 			{
-				return;
+				return null;
 			}
 
 			if (Buckets.Length == 0)
 			{
-				return;
+				return null;
 			}
 
-			htmlFile.WriteLine("  <h2>" + Title + "</h2>");
-			htmlFile.WriteLine("  <table border='0' style='width:1000'>");
-			htmlFile.WriteLine("  <tr><td></td>");
+			HtmlSection htmlSection = new HtmlSection(Title, bStartCollapsed);
+
+			htmlSection.WriteLine("  <table border='0' style='width:1000'>");
+			htmlSection.WriteLine("  <tr><td></td>");
 
 			List<string> Hitches = new List<string>();
 
 			if (ReportBelowRange)
 			{
-				htmlFile.WriteLine("  <th> <" + Buckets[0].ToString("0") + "</b></td>");
+				htmlSection.WriteLine("  <th> <" + Buckets[0].ToString("0") + "</b></td>");
 			}
 
 			for (int i = 1; i < Buckets.Length; ++i)
@@ -71,15 +72,15 @@ namespace PerfSummaries
 				double Begin = Buckets[i - 1];
 				double End = Buckets[i];
 
-				htmlFile.WriteLine("  <th> [" + Begin.ToString("0") + ", " + End.ToString("0") + ")"+ "</b></td>");
+				htmlSection.WriteLine("  <th> [" + Begin.ToString("0") + ", " + End.ToString("0") + ")"+ "</b></td>");
 			}
 
 			if (ReportAboveRange)
 			{
-				htmlFile.WriteLine("  <th> >=" + Buckets.Last().ToString("0") + "</b></td>");
+				htmlSection.WriteLine("  <th> >=" + Buckets.Last().ToString("0") + "</b></td>");
 			}
 
-			htmlFile.WriteLine("  </tr>");
+			htmlSection.WriteLine("  </tr>");
 
 			foreach (string unitStat in stats)
 			{
@@ -91,7 +92,7 @@ namespace PerfSummaries
 				}
 
 				Hitches.Clear();
-				htmlFile.WriteLine("  <tr><td><b>" + StatToCheck + "</b></td>");
+				htmlSection.WriteLine("  <tr><td><b>" + StatToCheck + "</b></td>");
 				Hitches.Add(StatToCheck);
 
 				int[] BucketCounts = new int[Buckets.Length + 1];
@@ -131,13 +132,14 @@ namespace PerfSummaries
 					Color = Colour.Lerp(White, Color, Intensity);
 					string ColorString = Color.ToHTMLString();
 
-					htmlFile.WriteLine("  <td bgcolor=" + ColorString + ">" + Count.ToString("0") + "</td>");
+					htmlSection.WriteLine("  <td bgcolor=" + ColorString + ">" + Count.ToString("0") + "</td>");
 					Hitches.Add(Count.ToString("0"));
 				}
 
-				htmlFile.WriteLine("  </tr>");
+				htmlSection.WriteLine("  </tr>");
 			}
-			htmlFile.WriteLine("  </table>");
+			htmlSection.WriteLine("  </table>");
+			return htmlSection;
 		}
 
 		public double[] Buckets;

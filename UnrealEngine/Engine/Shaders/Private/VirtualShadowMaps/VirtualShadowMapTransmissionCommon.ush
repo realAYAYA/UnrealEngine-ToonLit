@@ -10,19 +10,19 @@ VirtualShadowMaps/VirtualShadowMapTransmissionCommon.ush:
 #include "../DeferredShadingCommon.ush"
 #include "../TransmissionCommon.ush"
 #include "VirtualShadowMapProjectionCommon.ush"
-#include "../Strata/StrataSubsurface.ush"
+#include "../Substrate/SubstrateSubsurface.ush"
 
 FSubsurfaceOpacityMFP GetSubsurfaceOpacityFromGbuffer(uint2 PixelPos)
 {
 	FSubsurfaceOpacityMFP SubsurfaceOpacityMFP = GetInitialisedSubsurfaceOpacityMFP();
 
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 
-	FStrataSubsurfaceData LoadStrat = StrataLoadSubsurfaceData(Strata.MaterialTextureArray, Strata.FirstSliceStoringStrataSSSData, PixelPos);
+	FSubstrateSubsurfaceData LoadStrat = SubstrateLoadSubsurfaceData(Substrate.MaterialTextureArray, Substrate.FirstSliceStoringSubstrateSSSData, PixelPos);
 
-	SubsurfaceOpacityMFP = StrataGetSubsurfaceOpacityMFP(LoadStrat.Header);
+	SubsurfaceOpacityMFP = SubstrateGetSubsurfaceOpacityMFP(LoadStrat.Header);
 
-#else // STRATA_ENABLED
+#else // SUBSTRATE_ENABLED
 	FGBufferData GBufferData = GetGBufferDataUint(PixelPos);
 
 	// TODO: SUBSURFACE_PROFILE with fancy transmission
@@ -39,7 +39,7 @@ FSubsurfaceOpacityMFP GetSubsurfaceOpacityFromGbuffer(uint2 PixelPos)
 		SubsurfaceOpacityMFP.Data = min(GBufferData.CustomData.a, 0.99f);
 		SubsurfaceOpacityMFP.Density = SubsurfaceDensityFromOpacity(SubsurfaceOpacityMFP.Data);
 	}
-#endif // STRATA_ENABLED
+#endif // SUBSTRATE_ENABLED
 
 	return SubsurfaceOpacityMFP;
 }
@@ -49,7 +49,7 @@ float GetShadowFactorSubsurface(float ShadowFactor, float OccluderDistance, FSub
 {
 	if (ShadowFactor < 1.0f)
 	{
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 		float SSSTransmission = 1.0f;
 		if (SubsurfaceOpacityMFP.bDataIsOpacity)
 		{
@@ -59,7 +59,7 @@ float GetShadowFactorSubsurface(float ShadowFactor, float OccluderDistance, FSub
 		else
 		{
 			const float MFP = SubsurfaceOpacityMFP.Data;
-			const float Extinction = StrataShadowMFPToExtinction(MFP);
+			const float Extinction = SubstrateShadowMFPToExtinction(MFP);
 			const float OpticalDepth = OccluderDistance * Extinction;
 			SSSTransmission = saturate(FastExp(-OpticalDepth));
 		}

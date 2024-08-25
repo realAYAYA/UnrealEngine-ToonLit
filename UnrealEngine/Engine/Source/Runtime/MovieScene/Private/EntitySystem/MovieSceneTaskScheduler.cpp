@@ -494,7 +494,7 @@ void FEntitySystemScheduler::ExecuteTasks()
 	//              Initiate all tasks immediately. Their subsequents will be triggered inline
 	if (ThreadingModel == EEntityThreadingModel::NoThreading)
 	{
-		TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(TEXT("Run Scheduled Tasks"));
+		TRACE_CPUPROFILER_EVENT_SCOPE_STR("Run Scheduled Tasks");
 		for (int32 Index : InitialTasks)
 		{
 			Tasks[Index].Run(this, FTaskExecutionFlags());
@@ -508,7 +508,7 @@ void FEntitySystemScheduler::ExecuteTasks()
 	// Condition 2: Task graph threading
 	//              Schedule initial tasks tasks immediately. Gamethread tasks will be added to the GT queue to ensure that threaded work can be scheduled asap.
 	{
-		TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(TEXT("Dispatch Scheduled Tasks"));
+		TRACE_CPUPROFILER_EVENT_SCOPE_STR("Dispatch Scheduled Tasks");
 
 		int32 NumInitialTasks = 0;
 		for (int32 Index : InitialTasks)
@@ -537,7 +537,7 @@ void FEntitySystemScheduler::ExecuteTasks()
 		ensure(NumInitialTasks != 0);
 	}
 
-	TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(TEXT("Wait For Scheduled Tasks"));
+	TRACE_CPUPROFILER_EVENT_SCOPE("Wait For Scheduled Tasks");
 	for(;;)
 	{
 		while (const FScheduledTask* Task = GameThreadTaskList.Pop())

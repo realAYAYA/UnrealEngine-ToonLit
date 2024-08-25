@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Data/ManifestData.h"
+#include "Misc/Compression.h"
 #include "Misc/EnumClassFlags.h"
 #include "Serialization/Archive.h"
 #include "Serialization/MemoryWriter.h"
@@ -670,8 +671,7 @@ namespace BuildPatchServices
 						CompressionFlags);
 					if (bDataIsCompressed)
 					{
-						const bool bAllowShrinking = false;
-						TempCompressed.SetNum(Header.DataSizeCompressed, bAllowShrinking);
+						TempCompressed.SetNum(Header.DataSizeCompressed, EAllowShrinking::No);
 						ManifestRawData = MoveTemp(TempCompressed);
 						Header.StoredAs = EManifestStorageFlags::Compressed;
 					}

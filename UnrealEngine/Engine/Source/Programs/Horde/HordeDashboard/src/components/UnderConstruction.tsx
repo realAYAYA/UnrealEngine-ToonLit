@@ -1,21 +1,42 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-import { Image, Stack, Text } from '@fluentui/react';
+import { Stack, Text } from '@fluentui/react';
 import React from 'react';
+import { useWindowSize } from '../base/utilities/hooks';
+import { getHordeStyling } from '../styles/Styles';
+import { Breadcrumbs } from './Breadcrumbs';
+import { TopNav } from './TopNav';
 
 export const UnderConstruction: React.FC = () => {
 
-    return (<div style={{ position: 'absolute', left: '50%', top: '50%', transform: 'translate(-50%, -50%)' }}>
-        <Stack horizontalAlign="center" styles={{ root: { padding: 20, minWidth: 200, minHeight: 100 } }}>
-            <Stack horizontal>
-                <Stack styles={{ root: { paddingTop: 2, paddingRight: 6 } }}>
-                    <Image shouldFadeIn={false} shouldStartVisible={true} width={48} src="/images/horde.svg" />
-                </Stack>
-                <Stack styles={{ root: { paddingTop: 12 } }}>
-                    <Text styles={{ root: { fontFamily: "Horde Raleway Bold", fontSize: 24 } }}>HORDE</Text>
-                </Stack>
+   const windowSize = useWindowSize();
+   const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
+   const centerAlign = vw / 2 - 720;
+
+   const { hordeClasses, modeColors } = getHordeStyling();
+
+   const key = `windowsize_view_${windowSize.width}_${windowSize.height}`;
+
+   return <Stack className={hordeClasses.horde}>
+      <TopNav />
+      <Breadcrumbs items={[{ text: 'Analytics' }]} />
+      <Stack styles={{ root: { width: "100%", backgroundColor: modeColors.background } }}>
+         <Stack style={{ width: "100%", backgroundColor: modeColors.background }}>
+            <Stack style={{ position: "relative", width: "100%", height: 'calc(100vh - 148px)' }}>
+               <div style={{ overflowX: "auto", overflowY: "visible" }}>
+                  <Stack horizontal style={{ paddingTop: 30, paddingBottom: 48 }}>
+                     <Stack key={`${key}`} style={{ paddingLeft: centerAlign }} />
+                     <Stack style={{ width: 1440 }}>
+                        <Stack style={{ paddingBottom: 12 }}>
+                           <Stack horizontalAlign="center">
+                                 <Text variant="mediumPlus">Under Construction</Text>
+                              </Stack>
+                           </Stack>                        
+                     </Stack>
+                  </Stack>
+               </div>
             </Stack>
-            <Text variant="xLarge" styles={{ root: { paddingLeft: 16, paddingTop:10, fontFamily:"Horde Open Sans SemiBold" } }} >Under Construction</Text>
-        </Stack>
-    </div>);
+         </Stack>
+      </Stack>
+   </Stack>
 };

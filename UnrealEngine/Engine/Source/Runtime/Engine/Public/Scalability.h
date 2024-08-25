@@ -37,6 +37,7 @@ namespace Scalability
 		int32 EffectsQuality;
 		int32 FoliageQuality;
 		int32 ShadingQuality;
+		int32 LandscapeQuality;
 
 		float CPUBenchmarkResults;
 		float GPUBenchmarkResults;
@@ -66,7 +67,8 @@ namespace Scalability
 				TextureQuality == Other.TextureQuality &&
 				EffectsQuality == Other.EffectsQuality &&
 				FoliageQuality == Other.FoliageQuality &&
-				ShadingQuality == Other.ShadingQuality;
+				ShadingQuality == Other.ShadingQuality &&
+				LandscapeQuality == Other.LandscapeQuality;
 		}
 
 		bool operator!=(const FQualityLevels& Other ) const
@@ -87,7 +89,8 @@ namespace Scalability
 				FCrc::TypeCrc32<int32>(TextureQuality) ^
 				FCrc::TypeCrc32<int32>(EffectsQuality) ^
 				FCrc::TypeCrc32<int32>(FoliageQuality) ^
-				FCrc::TypeCrc32<int32>(ShadingQuality);
+				FCrc::TypeCrc32<int32>(ShadingQuality) ^
+				FCrc::TypeCrc32<int32>(LandscapeQuality);
 		}
 
 		// Sets all other settings based on an overall value
@@ -142,9 +145,13 @@ namespace Scalability
 		// @param Value 0:low, 1:medium, 2:high, 3:epic, 4:cinematic (gets clamped if needed)
 		ENGINE_API void SetFoliageQuality(int32 Value);
 
-		// Sets the sharing quality
+		// Sets the shading quality
 		// @param Value 0:low, 1:medium, 2:high, 3:epic, 4:cinematic (gets clamped if needed)
 		ENGINE_API void SetShadingQuality(int32 Value);
+
+		// Sets the landscape quality
+		// @param Value 0:low, 1:medium, 2:high, 3:epic, 4:cinematic (gets clamped if needed)
+		ENGINE_API void SetLandscapeQuality(int32 Value);
 
 		ENGINE_API void SetBenchmarkFallback();
 

@@ -1,109 +1,214 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "NearestNeighborOptimizedNetwork.h"
-#if NEARESTNEIGHBORMODEL_USE_ISPC
-#include "NearestNeighborOptimizedNetwork.ispc.generated.h"
-#endif
-//--------------------------------------------------------------------------
-// UNearestNeighborNetworkLayer
-//--------------------------------------------------------------------------
-void UNearestNeighborNetworkLayer::AddParameter(const TArray<float>& Values, const TArray<int32>& Shape)
-{
-	Parameters.Add({Values, Shape});
-}
 
-void UNearestNeighborNetworkLayer::Run(const float* RESTRICT InputBuffer, float* RESTRICT OutputBuffer) const
-{
-}
+#include "Misc/FileHelper.h"
+#include "Modules/ModuleManager.h"
 
-void UNearestNeighborNetworkLayer_Gemm_Prelu::Run(const float* RESTRICT InputBuffer, float* RESTRICT OutputBuffer) const
-{
-	const float* Gemm_Weights = Parameters[0].Values.GetData();
-	const float* Gemm_Bias = Parameters[1].Values.GetData();
-	const float PRelu_Slope = Parameters[2].Values[0];
-#if NEARESTNEIGHBORMODEL_USE_ISPC
-	ispc::Gemm_PRelu(OutputBuffer, InputBuffer, Gemm_Weights, Gemm_Bias, PRelu_Slope, NumInputs, NumOutputs);
-#endif
-}
-
-void UNearestNeighborNetworkLayer_Gemm::Run(const float* RESTRICT InputBuffer, float* RESTRICT OutputBuffer) const
-{
-	const float* Gemm_Weights = Parameters[0].Values.GetData();
-	const float* Gemm_Bias = Parameters[1].Values.GetData();
-#if NEARESTNEIGHBORMODEL_USE_ISPC
-	ispc::Gemm(OutputBuffer, InputBuffer, Gemm_Weights, Gemm_Bias, NumInputs, NumOutputs);
-#endif
-}
+#include "NNE.h"
+#include "NNERuntime.h"
+#include "NNERuntimeCPU.h"
+#include "NNEModelData.h"
+#include "NNERuntimeBasicCpuBuilder.h"
 
 //--------------------------------------------------------------------------
 // UNearestNeighborOptimizedNetwork
 //--------------------------------------------------------------------------
+
+namespace UE::NearestNeighborModel::Private
+{
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+
+	/** Creates the FileData from the legacy network format and clears it. */
+	static inline void CreateFileDataAndClearLayers(TArray<uint8>& OutFileData, TArray<TObjectPtr<UNearestNeighborNetworkLayer>>& Layers)
+	{
+		UE::NNE::RuntimeBasic::FModelBuilder Builder;
+
+		TArray<UE::NNE::RuntimeBasic::FModelBuilderElement, TInlineAllocator<32>> LayerElements;
+		LayerElements.Reserve(2 * Layers.Num());
+
+		for (UNearestNeighborNetworkLayer* Layer : Layers)
+		{
+			if (UNearestNeighborNetworkLayer_Gemm_Prelu* GemmPreluLayer = Cast<UNearestNeighborNetworkLayer_Gemm_Prelu>(Layer))
+			{
+				LayerElements.Add(Builder.MakeLinear(
+					GemmPreluLayer->NumInputs,
+					GemmPreluLayer->NumOutputs,
+					GemmPreluLayer->Parameters[0].Values,
+					GemmPreluLayer->Parameters[1].Values));
+
+				LayerElements.Add(Builder.MakePReLU(GemmPreluLayer->NumOutputs, Builder.MakeWeightsConstant(GemmPreluLayer->NumOutputs, GemmPreluLayer->Parameters[2].Values[0])));
+			}
+			else if (UNearestNeighborNetworkLayer_Gemm* GemmLayer = Cast<UNearestNeighborNetworkLayer_Gemm>(Layer))
+			{
+				LayerElements.Add(Builder.MakeLinear(
+					GemmLayer->NumInputs,
+					GemmLayer->NumOutputs,
+					GemmLayer->Parameters[0].Values,
+					GemmLayer->Parameters[1].Values));
+			}
+			else
+			{
+				checkf(false, TEXT("Unknown Layer Type"));
+			}
+		}
+
+		uint32 InputSize, OutputSize;
+		Builder.WriteFileDataAndReset(OutFileData, InputSize, OutputSize, Builder.MakeSequence(LayerElements));
+
+		Layers.Empty();
+	}
+
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+}
+
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+
+const TCHAR* UNearestNeighborOptimizedNetwork::RuntimeName = TEXT("NNERuntimeBasicCpu");
+const TCHAR* UNearestNeighborOptimizedNetwork::RuntimeModuleName = TEXT("NNERuntimeBasicCpu");
+
+
+void UNearestNeighborOptimizedNetwork::PostLoad()
+{
+	Super::PostLoad();
+
+	if (Layers_DEPRECATED.Num() > 0)
+	{
+		// NumInputs and NumOutputs are not used in the legacy format so we need to load them here.
+		NumInputs = Layers_DEPRECATED[0]->NumInputs;
+		NumOutputs = Layers_DEPRECATED.Last()->NumOutputs;
+
+		TArray<uint8> FileData;
+		UE::NearestNeighborModel::Private::CreateFileDataAndClearLayers(FileData, Layers_DEPRECATED);
+
+		if (!ModelData)
+		{
+			ModelData = NewObject<UNNEModelData>(this);
+		}
+
+		ModelData->Init(TEXT("ubnne"), FileData);
+
+		// The ModelData object stores a copy of the FileData so we manually clear this copy to avoid 
+		// having multiple copies of the network in memory at once during loading.
+		FileData.Empty();
+	}
+
+	// Create in-memory representation of network
+
+	ensureMsgf(FModuleManager::Get().LoadModule(RuntimeModuleName), TEXT("Unable to load runtime module."));
+
+	TWeakInterfacePtr<INNERuntimeCPU> RuntimeCPU = UE::NNE::GetRuntime<INNERuntimeCPU>(RuntimeName);
+
+	if (ensureMsgf(RuntimeCPU.IsValid(), TEXT("Could not find requested NNE Runtime")))
+	{
+		if (ModelData)
+		{
+			Model = RuntimeCPU->CreateModelCPU(ModelData);
+		}
+	}
+
+	// If we are not in the editor then we clear the FileData and FileType since these will be
+	// using additional memory if we are loading from the legacy format.
+
+#if !WITH_EDITOR
+	ModelData->ClearFileDataAndFileType();
+#endif
+}
+
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
 void UNearestNeighborOptimizedNetwork::Empty()
 {
-	Layers.Empty();
+	if (ModelData)
+	{
+		ModelData->ConditionalBeginDestroy();
+		ModelData = nullptr;
+		Model.Reset();
+	}
 }
 
 bool UNearestNeighborOptimizedNetwork::IsEmpty() const
 {
-	return Layers.IsEmpty();
-}
-
-int32 UNearestNeighborOptimizedNetwork::GetNumInputs() const
-{
-	return !Layers.IsEmpty() ? Layers[0]->NumInputs : 0;
-}
-
-int32 UNearestNeighborOptimizedNetwork::GetNumOutputs() const
-{
-	return !Layers.IsEmpty() ? Layers[Layers.Num()-1]->NumOutputs : 0;
+	return Model == nullptr;
 }
 
 bool UNearestNeighborOptimizedNetwork::Load(const FString& Filename)
 {
+	Empty();
+
+	TArray<uint8> FileData;
+	if (FFileHelper::LoadFileToArray(FileData, *Filename))
+	{
+		if (!ModelData)
+		{
+			ModelData = NewObject<UNNEModelData>(this);
+		}
+
+		ModelData->Init(TEXT("ubnne"), FileData);
+
+		// Clear FileData to avoid multiple copies in memory at once
+		FileData.Empty();
+
+		ensureMsgf(FModuleManager::Get().LoadModule(RuntimeModuleName), TEXT("Unable to load runtime module."));
+
+		TWeakInterfacePtr<INNERuntimeCPU> RuntimeCPU = UE::NNE::GetRuntime<INNERuntimeCPU>(RuntimeName);
+
+		if (ensureMsgf(RuntimeCPU.IsValid(), TEXT("Could not find requested NNE Runtime")))
+		{
+			if (ModelData)
+			{
+				Model = RuntimeCPU->CreateModelCPU(ModelData);
+			}
+		}
+	}
+	else
+	{
+		return false;
+	}
+
 	return true;
 }
 
-UNearestNeighborOptimizedNetworkInstance* UNearestNeighborOptimizedNetwork::CreateInstance()
+int32 UNearestNeighborOptimizedNetwork::GetNumInputs() const
 {
-	UNearestNeighborOptimizedNetworkInstance* Instance = NewObject<UNearestNeighborOptimizedNetworkInstance>(this);
+	return NumInputs;
+}
+
+int32 UNearestNeighborOptimizedNetwork::GetNumOutputs() const
+{
+	return NumOutputs;
+}
+
+void UNearestNeighborOptimizedNetwork::SetNumInputs(int32 InNumInputs)
+{
+	NumInputs = InNumInputs;
+}
+
+void UNearestNeighborOptimizedNetwork::SetNumOutputs(int32 InNumOutputs)
+{
+	NumOutputs = InNumOutputs;
+}
+
+UNearestNeighborOptimizedNetworkInstance* UNearestNeighborOptimizedNetwork::CreateInstance(UObject* Parent) const
+{
+	UNearestNeighborOptimizedNetworkInstance* Instance = NewObject<UNearestNeighborOptimizedNetworkInstance>(Parent);
 	Instance->Init(this);
 	return Instance;
 }
 
-const int32 UNearestNeighborOptimizedNetwork::GetNumLayers() const
+UE::NNE::IModelCPU* UNearestNeighborOptimizedNetwork::GetModel() const
 {
-	return Layers.Num();
-}
-
-UNearestNeighborNetworkLayer* UNearestNeighborOptimizedNetwork::GetLayer(int32 Index) const
-{
-	return Layers[Index].Get();
-}
-
-UNearestNeighborNetworkLayer* UNearestNeighborOptimizedNetwork::AddLayer(const int32 LayerType)
-{
-	UNearestNeighborNetworkLayer* Layer = nullptr;
-	switch ((ENearestNeighborNetworkLayerType)LayerType)
-	{
-		case ENearestNeighborNetworkLayerType::Gemm_Prelu:
-			Layer = NewObject<UNearestNeighborNetworkLayer_Gemm_Prelu>(this);
-			break;
-		case ENearestNeighborNetworkLayerType::Gemm:
-			Layer = NewObject<UNearestNeighborNetworkLayer_Gemm>(this);
-			break;
-		default:
-			break;
-	}
-	if (Layer)
-	{
-		Layers.Add(Layer);
-	}
-	return Layer;
+	return Model.Get();
 }
 
 //--------------------------------------------------------------------------
 // UNearestNeighborOptimizedNetworkInstance
 //--------------------------------------------------------------------------
+
+UNearestNeighborOptimizedNetworkInstance::UNearestNeighborOptimizedNetworkInstance() = default;
+UNearestNeighborOptimizedNetworkInstance::UNearestNeighborOptimizedNetworkInstance(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer) {}
+UNearestNeighborOptimizedNetworkInstance::UNearestNeighborOptimizedNetworkInstance(FVTableHelper& Helper) : Super(Helper) {}
+UNearestNeighborOptimizedNetworkInstance::~UNearestNeighborOptimizedNetworkInstance() = default;
 
 TArrayView<float> UNearestNeighborOptimizedNetworkInstance::GetInputs()
 { 
@@ -130,56 +235,27 @@ const UNearestNeighborOptimizedNetwork* UNearestNeighborOptimizedNetworkInstance
 	return Network.Get();
 }
 
-void UNearestNeighborOptimizedNetworkInstance::Init(UNearestNeighborOptimizedNetwork* InNeuralNetwork)
+void UNearestNeighborOptimizedNetworkInstance::Init(const UNearestNeighborOptimizedNetwork* InNeuralNetwork)
 {
 	Network = InNeuralNetwork;
 	Inputs.SetNumZeroed(Network->GetNumInputs());
 	Outputs.SetNumZeroed(Network->GetNumOutputs());
 
-	int32 MaxNumUnits = 0;
-	const int32 NumLayers = Network->GetNumLayers();
-	for (int32 LayerIndex = 0; LayerIndex < NumLayers; ++LayerIndex)
+	if (Network->GetModel())
 	{
-		const UNearestNeighborNetworkLayer* CurLayer = Network->GetLayer(LayerIndex);
-		const int32 NumInputUnits = CurLayer->NumInputs;
-		const int32 NumOutputUnits = CurLayer->NumOutputs;
-		MaxNumUnits = FMath::Max3<int32>(NumInputUnits, NumOutputUnits, MaxNumUnits);
+		Instance = Network->GetModel()->CreateModelInstanceCPU();
+		Instance->SetInputTensorShapes({ UE::NNE::FTensorShape::Make({ 1, (uint32)Inputs.Num() }) });
 	}
-
-	TempInputArray.SetNumZeroed(MaxNumUnits);
-	TempOutputArray.SetNumZeroed(MaxNumUnits);
 }
-
 
 void UNearestNeighborOptimizedNetworkInstance::Run()
 {	
-	TRACE_CPUPROFILER_EVENT_SCOPE(UNearestNeighborOptimizedNetwork::Run)
+	TRACE_CPUPROFILER_EVENT_SCOPE(UNearestNeighborOptimizedNetwork::Run);
 
-	// Setup the buffer pointers.
-	FRunSettings RunSettings;
-	RunSettings.TempInputBuffer  = TempInputArray.GetData();
-	RunSettings.TempOutputBuffer = TempOutputArray.GetData();
-	RunSettings.InputBuffer		 = Inputs.GetData();
-	RunSettings.OutputBuffer	 = Outputs.GetData();
-
-	// Run the network.
-	const int32 NumLayers = Network->GetNumLayers();
-	for (int32 LayerIndex = 0; LayerIndex < NumLayers; ++LayerIndex)
+	if (Instance)
 	{
-		const UNearestNeighborNetworkLayer* CurLayer = Network->GetLayer(LayerIndex);
-		if (LayerIndex == 0)
-		{
-			const float* const RESTRICT NetworkInputs = RunSettings.InputBuffer;
-			CurLayer->Run(RunSettings.InputBuffer, RunSettings.TempInputBuffer);
-		}
-		else if (LayerIndex == NumLayers - 1)
-		{
-			CurLayer->Run(RunSettings.TempInputBuffer, RunSettings.OutputBuffer);
-		}
-		else
-		{
-			CurLayer->Run(RunSettings.TempInputBuffer, RunSettings.TempOutputBuffer);
-			Swap(RunSettings.TempInputBuffer, RunSettings.TempOutputBuffer);
-		}
+		Instance->RunSync(
+			{ { (void*)Inputs.GetData(), Inputs.Num() * sizeof(float) } },
+			{ { (void*)Outputs.GetData(), Outputs.Num() * sizeof(float) } });
 	}
 }

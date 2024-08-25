@@ -39,7 +39,7 @@ ENGINE_ROOT=${0:a:h:h:h:h:h:h}
 for Config in ${LIB_CONFIGS}; do
 	for Arch in ${LIB_ARCHS}; do
 		echo "Building ${LIB_NAME}-${LIB_VERSION} for Mac ${Arch} in ${Config}..."
-		"${ENGINE_ROOT}/Build/BatchFiles/RunUAT.command" BuildCMakeLib -TargetPlatform=Mac -TargetArchitecture=${Arch} -TargetLib=${LIB_NAME} -TargetLibVersion=${LIB_VERSION} -TargetConfigs=${Config} -LibOutputPath=lib -BinOutputPath=bin -CMakeGenerator=Makefile -MakeTarget="${LIB_MAKE_TARGET}" -CMakeAdditionalArguments="-DCMAKE_OSX_DEPLOYMENT_TARGET=${LIB_DEPLOYMENT_TARGET} ${LIB_CMAKE_ARGS}" -SkipCreateChangelist
+		"${ENGINE_ROOT}/Build/BatchFiles/RunUAT.command" BuildCMakeLib -TargetPlatform=Mac -TargetArchitecture=${Arch} -TargetLib=${LIB_NAME} -TargetLibVersion=${LIB_VERSION} -TargetConfigs=${Config} -LibOutputPath=lib -BinOutputPath=bin -CMakeGenerator=Makefile -MakeTarget="${LIB_MAKE_TARGET}" -CMakeAdditionalArguments="-DCMAKE_OSX_DEPLOYMENT_TARGET=${LIB_DEPLOYMENT_TARGET} -DCMAKE_SYSTEM_PROCESSOR=${Arch} ${LIB_CMAKE_ARGS}" -SkipCreateChangelist
 	done
 	if [ -d ${LIB_DIR}/${LIB_ARCHS[-1]}/${Config} ]; then
 		mkdir -p ${LIB_DIR}/${Config}

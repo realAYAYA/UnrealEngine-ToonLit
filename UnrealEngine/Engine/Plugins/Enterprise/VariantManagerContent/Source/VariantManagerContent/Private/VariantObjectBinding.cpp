@@ -381,7 +381,11 @@ void UVariantObjectBinding::ExecuteAllTargetFunctions()
 void UVariantObjectBinding::UpdateFunctionCallerNames()
 {
 	ULevelVariantSets* ParentLVS = GetTypedOuter<ULevelVariantSets>();
-	UObject* DirectorInstance = ParentLVS->GetDirectorInstance(GetObject());
+	UObject* DirectorInstance = ParentLVS ? ParentLVS->GetDirectorInstance(GetObject()) : nullptr;
+	if (!DirectorInstance)
+	{
+		return;
+	}
 
 	bool bHasChanged = false;
 

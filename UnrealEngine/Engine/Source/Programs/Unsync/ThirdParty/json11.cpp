@@ -26,6 +26,13 @@
 #include <cstdio>
 #include <limits>
 
+// EPIC_MOD_BEGIN: Suppress warnings
+#ifdef __clang__
+#	pragma clang diagnostic push
+#	pragma clang diagnostic ignored "-Wunqualified-std-cast-call"
+#endif // __clang__
+// EPIC_MOD_END: Suppress warnings
+
 namespace json11 {
 
 static const int max_depth = 200;
@@ -788,3 +795,9 @@ bool Json::has_shape(const shape & types, string & err) const {
 }
 
 } // namespace json11
+
+// EPIC_MOD_BEGIN: Suppress warnings
+#ifdef __clang__
+#	pragma clang diagnostic pop
+#endif	// __clang__
+// EPIC_MOD_END: Suppress warnings

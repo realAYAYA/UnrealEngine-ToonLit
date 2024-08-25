@@ -604,7 +604,7 @@ void SDisplayClusterColorGradingDrawer::UnbindBlueprintCompiledDelegate(const UC
 #define CREATE_ON_ENABLED_CHANGED_LAMBDA(Object, IsEnabledProperty) FOnColorGradingItemEnabledChanged::CreateLambda([Object](FDisplayClusterColorGradingListItemRef ListItem, bool bIsEnabled) \
 	{ \
 		FScopedTransaction Transaction(LOCTEXT("ColorGradingToggledTransaction", "Color Grading Toggled")); \
-		Object->Modify(); \
+		Object->Modify(!Object->IsA<ABrush>()); \
 		IsEnabledProperty = bIsEnabled; \
 	})
 

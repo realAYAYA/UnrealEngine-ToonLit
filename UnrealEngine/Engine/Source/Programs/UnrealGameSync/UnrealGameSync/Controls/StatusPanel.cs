@@ -31,7 +31,7 @@ namespace UnrealGameSync
 		{
 			_fontCache.Add(FontStyle.Regular, baseFont);
 
-			using(Graphics graphics = Graphics.FromHwnd(IntPtr.Zero))
+			using (Graphics graphics = Graphics.FromHwnd(IntPtr.Zero))
 			{
 				BadgeFont = new Font(baseFont.FontFamily, 7.0f/* * Graphics.DpiY / 96.0f*/, FontStyle.Bold);
 			}
@@ -39,9 +39,9 @@ namespace UnrealGameSync
 
 		public void Dispose()
 		{
-			foreach(KeyValuePair<FontStyle, Font> fontPair in _fontCache)
+			foreach (KeyValuePair<FontStyle, Font> fontPair in _fontCache)
 			{
-				if(fontPair.Key != FontStyle.Regular)
+				if (fontPair.Key != FontStyle.Regular)
 				{
 					fontPair.Value.Dispose();
 				}
@@ -53,7 +53,7 @@ namespace UnrealGameSync
 		public Font FindOrAddFont(FontStyle style)
 		{
 			Font? result;
-			if(!_fontCache.TryGetValue(style, out result))
+			if (!_fontCache.TryGetValue(style, out result))
 			{
 				result = new Font(_fontCache[FontStyle.Regular], style);
 				_fontCache[style] = result;
@@ -179,11 +179,11 @@ namespace UnrealGameSync
 		public override void Draw(Graphics graphics, StatusElementResources resources)
 		{
 			Color textColor = SystemColors.HotTrack;
-			if(MouseDown)
+			if (MouseDown)
 			{
 				textColor = Color.FromArgb(textColor.B / 2, textColor.G / 2, textColor.R);
 			}
-			else if(MouseOver)
+			else if (MouseOver)
 			{
 				textColor = Color.FromArgb(textColor.B, textColor.G, textColor.R);
 			}
@@ -222,7 +222,7 @@ namespace UnrealGameSync
 			{
 				_hoverBackgroundColor = Color.FromArgb(Math.Min(_backgroundColor.R + 32, 255), Math.Min(_backgroundColor.G + 32, 255), Math.Min(_backgroundColor.B + 32, 255));
 			}
-			if(_clickAction != null)
+			if (_clickAction != null)
 			{
 				Cursor = NativeCursors.Hand;
 			}
@@ -230,7 +230,7 @@ namespace UnrealGameSync
 
 		public override void OnClick(Point location)
 		{
-			if(_clickAction != null)
+			if (_clickAction != null)
 			{
 				_clickAction(location, Bounds);
 			}
@@ -251,13 +251,13 @@ namespace UnrealGameSync
 			using (GraphicsPath path = new GraphicsPath())
 			{
 				path.StartFigure();
-				path.AddLine(Bounds.Left + (MergeLeft? 1 : 0), Bounds.Top, Bounds.Left - (MergeLeft? 1 : 0), Bounds.Bottom);
-				path.AddLine(Bounds.Left - (MergeLeft? 1 : 0), Bounds.Bottom, Bounds.Right - 2 - (MergeRight? 1 : 0), Bounds.Bottom);
-				path.AddLine(Bounds.Right - 2 - (MergeRight? 1 : 0), Bounds.Bottom, Bounds.Right - 2 + (MergeRight? 1 : 0), Bounds.Top);
-				path.AddLine(Bounds.Right - 2 + (MergeRight? 1 : 0), Bounds.Top, Bounds.Left + (MergeLeft? 1 : 0), Bounds.Top);
+				path.AddLine(Bounds.Left + (MergeLeft ? 1 : 0), Bounds.Top, Bounds.Left - (MergeLeft ? 1 : 0), Bounds.Bottom);
+				path.AddLine(Bounds.Left - (MergeLeft ? 1 : 0), Bounds.Bottom, Bounds.Right - 2 - (MergeRight ? 1 : 0), Bounds.Bottom);
+				path.AddLine(Bounds.Right - 2 - (MergeRight ? 1 : 0), Bounds.Bottom, Bounds.Right - 2 + (MergeRight ? 1 : 0), Bounds.Top);
+				path.AddLine(Bounds.Right - 2 + (MergeRight ? 1 : 0), Bounds.Top, Bounds.Left + (MergeLeft ? 1 : 0), Bounds.Top);
 				path.CloseFigure();
 
-				using(SolidBrush brush = new SolidBrush(MouseOver? _hoverBackgroundColor : _backgroundColor))
+				using (SolidBrush brush = new SolidBrush(MouseOver ? _hoverBackgroundColor : _backgroundColor))
 				{
 					graphics.FillPath(brush, path);
 				}
@@ -291,7 +291,7 @@ namespace UnrealGameSync
 			graphics.FillRectangle(Brushes.White, Bounds.Left + 1, Bounds.Top + 1, Bounds.Width - 2, Bounds.Height - 2);
 
 			int progressX = Bounds.Left + 2 + (int)((Bounds.Width - 4) * _progress);
-			using(Brush progressBarBrush = new SolidBrush(Color.FromArgb(112, 146, 190)))
+			using (Brush progressBarBrush = new SolidBrush(Color.FromArgb(112, 146, 190)))
 			{
 				graphics.FillRectangle(progressBarBrush, Bounds.Left + 2, Bounds.Y + 2, progressX - (Bounds.Left + 2), Bounds.Height - 4);
 			}
@@ -376,11 +376,11 @@ namespace UnrealGameSync
 		public void AddBadge(string inText, Color inBackgroundColor, Action<Point, Rectangle>? inClickAction)
 		{
 			_elements.Add(new BadgeStatusElement(inText, inBackgroundColor, inClickAction));
-			if(_elements.Count >= 2)
+			if (_elements.Count >= 2)
 			{
 				BadgeStatusElement? prevBadge = _elements[^2] as BadgeStatusElement;
 				BadgeStatusElement? nextBadge = _elements[^1] as BadgeStatusElement;
-				if(prevBadge != null && nextBadge != null)
+				if (prevBadge != null && nextBadge != null)
 				{
 					prevBadge.MergeRight = true;
 					nextBadge.MergeLeft = true;
@@ -398,11 +398,11 @@ namespace UnrealGameSync
 		public bool HitTest(Point location, [NotNullWhen(true)] out StatusElement? outElement)
 		{
 			outElement = null;
-			if(Bounds.Contains(location))
+			if (Bounds.Contains(location))
 			{
-				foreach(StatusElement element in _elements)
+				foreach (StatusElement element in _elements)
 				{
-					if(element.Bounds.Contains(location))
+					if (element.Bounds.Contains(location))
 					{
 						outElement = element;
 						return true;
@@ -417,7 +417,7 @@ namespace UnrealGameSync
 			Bounds = new Rectangle(location, new Size(0, 0));
 
 			Point nextLocation = location;
-			foreach(StatusElement element in _elements)
+			foreach (StatusElement element in _elements)
 			{
 				nextLocation = element.Layout(graphics, nextLocation, resources);
 				Bounds = Rectangle.Union(Bounds, element.Bounds);
@@ -428,7 +428,7 @@ namespace UnrealGameSync
 
 		public void Draw(Graphics graphics, StatusElementResources resources)
 		{
-			foreach(StatusElement element in _elements)
+			foreach (StatusElement element in _elements)
 			{
 				element.Draw(graphics, resources);
 			}
@@ -476,7 +476,7 @@ namespace UnrealGameSync
 
 		public void SetContentWidth(int newContentWidth)
 		{
-			if(_contentWidth != newContentWidth)
+			if (_contentWidth != newContentWidth)
 			{
 				_contentWidth = newContentWidth;
 				LayoutElements();
@@ -488,16 +488,16 @@ namespace UnrealGameSync
 		{
 			base.Dispose(disposing);
 
-			if(disposing)
+			if (disposing)
 			{
-				if(_alertDividerPen != null)
+				if (_alertDividerPen != null)
 				{
 					_alertDividerPen.Dispose();
 					_alertDividerPen = null;
 				}
-				if(_projectLogo != null)
+				if (_projectLogo != null)
 				{
-					if(_disposeProjectLogo)
+					if (_disposeProjectLogo)
 					{
 						_projectLogo.Dispose();
 					}
@@ -509,7 +509,7 @@ namespace UnrealGameSync
 
 		private void ResetFontCache()
 		{
-			if(_resources != null)
+			if (_resources != null)
 			{
 				_resources.Dispose();
 				_resources = null;
@@ -519,9 +519,9 @@ namespace UnrealGameSync
 
 		public void SetProjectLogo(Image newProjectLogo, bool dispose)
 		{
-			if(_projectLogo != null)
+			if (_projectLogo != null)
 			{
-				if(_disposeProjectLogo)
+				if (_disposeProjectLogo)
 				{
 					_projectLogo.Dispose();
 				}
@@ -542,7 +542,7 @@ namespace UnrealGameSync
 		{
 			_resources ??= new StatusElementResources(Font);
 
-			if(_tintColor != newTintColor)
+			if (_tintColor != newTintColor)
 			{
 				Invalidate();
 			}
@@ -566,15 +566,15 @@ namespace UnrealGameSync
 		{
 			Invalidate(_projectLogoBounds);
 
-			foreach(StatusLine line in _lines)
+			foreach (StatusLine line in _lines)
 			{
 				Invalidate(line.Bounds);
 			}
-			if(_caption != null)
+			if (_caption != null)
 			{
 				Invalidate(_caption.Bounds);
 			}
-			if(_alert != null)
+			if (_alert != null)
 			{
 				Invalidate(_alert.Bounds);
 			}
@@ -583,23 +583,23 @@ namespace UnrealGameSync
 		protected bool HitTest(Point location, [NotNullWhen(true)] out StatusElement? outElement)
 		{
 			outElement = null;
-			foreach(StatusLine line in _lines)
+			foreach (StatusLine line in _lines)
 			{
-				if(line.HitTest(location, out outElement))
+				if (line.HitTest(location, out outElement))
 				{
 					return true;
 				}
 			}
-			if(_caption != null)
+			if (_caption != null)
 			{
-				if(_caption.HitTest(location, out outElement))
+				if (_caption.HitTest(location, out outElement))
 				{
 					return true;
 				}
 			}
-			if(_alert != null)
+			if (_alert != null)
 			{
-				if(_alert.HitTest(location, out outElement))
+				if (_alert.HitTest(location, out outElement))
 				{
 					return true;
 				}
@@ -617,7 +617,7 @@ namespace UnrealGameSync
 
 		protected void LayoutElements()
 		{
-			using(Graphics graphics = CreateGraphics())
+			using (Graphics graphics = CreateGraphics())
 			{
 				LayoutElements(graphics);
 			}
@@ -627,7 +627,7 @@ namespace UnrealGameSync
 		{
 			// Layout the alert message
 			int bodyHeight = Height;
-			if(_alert != null)
+			if (_alert != null)
 			{
 				_alertDividerY = Height - (int)(Font.Height * 2);
 				_alert.Layout(graphics, Point.Empty, _resources!);
@@ -637,7 +637,7 @@ namespace UnrealGameSync
 
 			// Get the logo size
 			Image drawProjectLogo = _projectLogo ?? Properties.Resources.DefaultProjectLogo;
-			float logoScale = Math.Min((float)bodyHeight - ((_caption != null)? Font.Height : 0) / drawProjectLogo.Height, graphics.DpiY / 96.0f);
+			float logoScale = Math.Min((float)bodyHeight - ((_caption != null) ? Font.Height : 0) / drawProjectLogo.Height, graphics.DpiY / 96.0f);
 			int logoWidth = (int)(drawProjectLogo.Width * logoScale);
 			int logoHeight = (int)(drawProjectLogo.Height * logoScale);
 
@@ -650,7 +650,7 @@ namespace UnrealGameSync
 
 			// Layout the caption. We may move the logo to make room for this.
 			logoY -= Font.Height / 2;
-			if(_caption != null)
+			if (_caption != null)
 			{
 				_caption.Layout(graphics, Point.Empty, _resources!);
 				int captionWidth = _caption.Bounds.Width;
@@ -665,7 +665,7 @@ namespace UnrealGameSync
 
 			// Space out all the lines
 			float lineY = (bodyHeight - totalLineHeight * (int)(Font.Height * LineSpacing)) / 2;
-			foreach(StatusLine line in _lines)
+			foreach (StatusLine line in _lines)
 			{
 				lineY += (int)(Font.Height * LineSpacing * line.LineHeight * 0.5f);
 				line.Layout(graphics, new Point(dividerX + 5, (int)lineY), _resources!);
@@ -684,7 +684,7 @@ namespace UnrealGameSync
 		{
 			base.OnMouseDown(e);
 
-			if(e.Button == MouseButtons.Left)
+			if (e.Button == MouseButtons.Left)
 			{
 				SetMouseDownLocation(e.Location);
 			}
@@ -694,7 +694,7 @@ namespace UnrealGameSync
 		{
 			base.OnMouseUp(e);
 
-			if(_mouseDownElement != null && _mouseOverElement == _mouseDownElement)
+			if (_mouseDownElement != null && _mouseOverElement == _mouseDownElement)
 			{
 				_mouseDownElement.OnClick(e.Location);
 			}
@@ -722,10 +722,10 @@ namespace UnrealGameSync
 		{
 			base.OnPaintBackground(e);
 
-			if(_tintColor.HasValue)
+			if (_tintColor.HasValue)
 			{
 				int tintSize = Width / 2;
-				using(LinearGradientBrush backgroundBrush = new LinearGradientBrush(new Point(Width, 0), new Point(Width - tintSize, tintSize), _tintColor.Value, BackColor))
+				using (LinearGradientBrush backgroundBrush = new LinearGradientBrush(new Point(Width, 0), new Point(Width - tintSize, tintSize), _tintColor.Value, BackColor))
 				{
 					backgroundBrush.WrapMode = WrapMode.TileFlipXY;
 					using (GraphicsPath path = new GraphicsPath())
@@ -745,20 +745,20 @@ namespace UnrealGameSync
 		{
 			base.OnPaint(e);
 
-			if(_suspendDisplayCount == 0)
+			if (_suspendDisplayCount == 0)
 			{
 				e.Graphics.DrawImage(_projectLogo ?? Properties.Resources.DefaultProjectLogo, _projectLogoBounds);
 
 				e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
 
-				foreach(StatusLine line in _lines)
+				foreach (StatusLine line in _lines)
 				{
 					line.Draw(e.Graphics, _resources!);
 				}
 
 				_caption?.Draw(e.Graphics, _resources!);
 
-				if(_alert != null)
+				if (_alert != null)
 				{
 					e.Graphics.DrawLine(_alertDividerPen!, 0, _alertDividerY, Width, _alertDividerY);
 					_alert.Draw(e.Graphics, _resources!);
@@ -771,14 +771,14 @@ namespace UnrealGameSync
 			_mouseOverLocation = newMouseOverLocation;
 
 			StatusElement? newMouseOverElement = null;
-			if(_mouseOverLocation.HasValue)
+			if (_mouseOverLocation.HasValue)
 			{
 				HitTest(_mouseOverLocation.Value, out newMouseOverElement);
 			}
 
-			if(newMouseOverElement != _mouseOverElement)
+			if (newMouseOverElement != _mouseOverElement)
 			{
-				if(_mouseOverElement != null)
+				if (_mouseOverElement != null)
 				{
 					_mouseOverElement.MouseOver = false;
 					Cursor = Cursors.Arrow;
@@ -787,7 +787,7 @@ namespace UnrealGameSync
 
 				_mouseOverElement = newMouseOverElement;
 
-				if(_mouseOverElement != null)
+				if (_mouseOverElement != null)
 				{
 					_mouseOverElement.MouseOver = true;
 					Cursor = _mouseOverElement.Cursor;
@@ -801,14 +801,14 @@ namespace UnrealGameSync
 			_mouseDownLocation = newMouseDownLocation;
 
 			StatusElement? newMouseDownElement = null;
-			if(_mouseDownLocation.HasValue)
+			if (_mouseDownLocation.HasValue)
 			{
 				HitTest(_mouseDownLocation.Value, out newMouseDownElement);
 			}
 
-			if(newMouseDownElement != _mouseDownElement)
+			if (newMouseDownElement != _mouseDownElement)
 			{
-				if(_mouseDownElement != null)
+				if (_mouseDownElement != null)
 				{
 					_mouseDownElement.MouseDown = false;
 					Invalidate(_mouseDownElement.Bounds);
@@ -816,7 +816,7 @@ namespace UnrealGameSync
 
 				_mouseDownElement = newMouseDownElement;
 
-				if(_mouseDownElement != null)
+				if (_mouseDownElement != null)
 				{
 					_mouseDownElement.MouseDown = true;
 					Invalidate(_mouseDownElement.Bounds);

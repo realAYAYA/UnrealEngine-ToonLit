@@ -514,7 +514,7 @@ syms_prof_stringize_basic__dev(SYMS_Arena *arena, SYMS_ProfLock lock, SYMS_Strin
 #define syms_prof_push__dev(...)
 #define syms_prof_paste__dev(...)
 
-#define syms_prof_lock__dev(...) {0}
+#define syms_prof_lock__dev(...) {}
 #define syms_prof_clear__dev(...)
 #define syms_prof_unlock__dev(l) ((void)l)
 

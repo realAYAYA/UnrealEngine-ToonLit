@@ -88,11 +88,20 @@ FText FMultiRigData::GetDisplayName() const
 	{
 		if(ControlRig.IsValid())
 		{
-			if(const FRigControlElement* ControlElement = ControlRig->GetHierarchy()->Find<FRigControlElement>(Key.GetValue()))
+			if(const URigHierarchy* Hierarchy = ControlRig->GetHierarchy())
 			{
-				if(!ControlElement->Settings.DisplayName.IsNone())
+				const FText DisplayNameForUI = Hierarchy->GetDisplayNameForUI(Key.GetValue(), false);
+				if(!DisplayNameForUI.IsEmpty())
 				{
-					return FText::FromName(ControlElement->Settings.DisplayName);
+					return DisplayNameForUI;
+				}
+				
+				if(const FRigControlElement* ControlElement = Hierarchy->Find<FRigControlElement>(Key.GetValue()))
+				{
+					if(!ControlElement->Settings.DisplayName.IsNone())
+					{
+						return FText::FromName(ControlElement->Settings.DisplayName);
+					}
 				}
 			}
 		}
@@ -215,20 +224,18 @@ void SMultiRigHierarchyItem::Construct(const FArguments& InArgs, const TSharedRe
 		[
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot()
-		.MaxWidth(18)
-		.FillWidth(1.0)
-		.HAlign(HAlign_Left)
-		.VAlign(VAlign_Center)
-		.Padding(FMargin(0.f, 0.f, 3.f, 0.f))
-		[
-
-
-			SNew(SButton)
-			.ButtonStyle(FAppStyle::Get(), "NoBorder")
-			.OnClicked(this, &SMultiRigHierarchyItem::OnGetSelectedClicked)
+			.MaxWidth(24)
+			.FillWidth(1.0)
+			.HAlign(HAlign_Left)
+			.VAlign(VAlign_Center)
+			.Padding(FMargin(0.f, 0.f, 3.f, 0.f))
 			[
-				SNew(SImage)
-				.Image_Lambda([this]() -> const FSlateBrush*
+				SNew(SButton)
+				.ButtonStyle(FAppStyle::Get(), "NoBorder")
+				.OnClicked(this, &SMultiRigHierarchyItem::OnGetSelectedClicked)
+				[
+					SNew(SImage)
+					.Image_Lambda([this]() -> const FSlateBrush*
 					{
 						//if no key is set then it's the control rig so we get that based upon it's state
 						if (WeakRigTreeElement.Pin()->Data.Key.IsSet() == false)
@@ -252,16 +259,17 @@ void SMultiRigHierarchyItem::Construct(const FArguments& InArgs, const TSharedRe
 					{
 						return WeakRigTreeElement.Pin()->IconColor;
 					})
+					.DesiredSizeOverride(FVector2D(16, 16))
+				]
 			]
-		]
-		+ SHorizontalBox::Slot()
+			+ SHorizontalBox::Slot()
 			.AutoWidth()
 			.VAlign(VAlign_Center)
 			[
 				SAssignNew(InlineWidget, SInlineEditableTextBlock)
 				.Text(this, &SMultiRigHierarchyItem::GetDisplayName)
-			.MultiLine(false)
-			.ColorAndOpacity_Lambda([this]()
+				.MultiLine(false)
+				.ColorAndOpacity_Lambda([this]()
 				{
 					if (WeakRigTreeElement.IsValid())
 					{
@@ -270,7 +278,7 @@ void SMultiRigHierarchyItem::Construct(const FArguments& InArgs, const TSharedRe
 					return FSlateColor::UseForeground();
 				})
 			]
-			], OwnerTable);
+		], OwnerTable);
 
 }
 
@@ -526,6 +534,22 @@ bool SMultiRigHierarchyTreeView::AddElement(UControlRig* InControlRig, const FRi
 			case ERigElementType::Reference:
 			{
 				if (!Settings.bShowReferences)
+				{
+					return false;
+				}
+				break;
+			}
+			case ERigElementType::Socket:
+			{
+				if (!Settings.bShowSockets)
+				{
+					return false;
+				}
+				break;
+			}
+			case ERigElementType::Connector:
+			{
+				if (!Settings.bShowConnectors)
 				{
 					return false;
 				}
@@ -953,9 +977,11 @@ void SControlRigOutliner::Construct(const FArguments& InArgs, FControlRigEditMod
 	DisplaySettings.bShowControls = true;
 	DisplaySettings.bShowNulls = false;
 	DisplaySettings.bShowReferences = false;
+	DisplaySettings.bShowSockets = false;
 	DisplaySettings.bShowRigidBodies = false;
 	DisplaySettings.bHideParentsOnFilter = true;
 	DisplaySettings.bFlattenHierarchyOnFilter = true;
+	DisplaySettings.bShowConnectors = false;
 
 	FMultiRigTreeDelegates RigTreeDelegates;
 	RigTreeDelegates.OnGetDisplaySettings = FOnGetRigTreeDisplaySettings::CreateSP(this, &SControlRigOutliner::GetDisplaySettings);
@@ -1018,6 +1044,19 @@ SControlRigOutliner::SControlRigOutliner()
 SControlRigOutliner::~SControlRigOutliner()
 {
 	FCoreUObjectDelegates::OnObjectsReplaced.RemoveAll(this);
+	for(TWeakObjectPtr<UControlRig>& ControlRig: BoundControlRigs)
+	{ 
+		if (ControlRig.IsValid())
+		{
+			ControlRig.Get()->ControlRigBound().RemoveAll(this);
+			const TSharedPtr<IControlRigObjectBinding> Binding = ControlRig.Get()->GetObjectBinding();
+			if (Binding)
+			{
+				Binding->OnControlRigBind().RemoveAll(this);
+			}
+		}
+	}
+	BoundControlRigs.SetNum(0);
 }
 
 void SControlRigOutliner::HandleControlSelected(UControlRig* Subject, FRigControlElement* ControlElement, bool bSelected)
@@ -1071,7 +1110,7 @@ void SControlRigOutliner::HandleSelectionChanged(TSharedPtr<FMultiRigTreeElement
 	TGuardValue<bool> GuardRigHierarchyChanges(bIsChangingRigHierarchy, true);
 	FControlRigEditMode* EditMode = static_cast<FControlRigEditMode*>(ModeTools->GetActiveMode(FControlRigEditMode::ModeName));
 	bool bEndTransaction = false;
-	if (GEditor && EditMode && EditMode->IsInLevelEditor())
+	if (GEditor && !GIsTransacting && EditMode && EditMode->IsInLevelEditor())
 	{
 		GEditor->BeginTransaction(LOCTEXT("SelectControl", "Select Control"));
 		bEndTransaction = true;
@@ -1089,6 +1128,12 @@ void SControlRigOutliner::HandleSelectionChanged(TSharedPtr<FMultiRigTreeElement
 				{
 					CurrentSelection.Key->ClearControlSelection();
 				}
+			}
+			if (GEditor)
+			{
+				// Replicating the UEditorEngine::HandleSelectCommand, without the transaction to avoid ensure(!GIsTransacting)
+				GEditor->SelectNone(true, true);
+				GEditor->RedrawLevelEditingViewports();
 			}
 		}
 	}
@@ -1123,6 +1168,22 @@ void SControlRigOutliner::SetEditMode(FControlRigEditMode& InEditMode)
 	if (FControlRigEditMode* EditMode = static_cast<FControlRigEditMode*>(ModeTools->GetActiveMode(FControlRigEditMode::ModeName)))
 	{
 		TArrayView<TWeakObjectPtr<UControlRig>> ControlRigs = EditMode->GetControlRigs();
+		for (TWeakObjectPtr<UControlRig>& ControlRig : ControlRigs)
+		{
+			if (ControlRig.IsValid())
+			{
+				if (!ControlRig.Get()->ControlRigBound().IsBoundToObject(this))
+				{
+					ControlRig.Get()->ControlRigBound().AddRaw(this, &SControlRigOutliner::HandleOnControlRigBound);
+					BoundControlRigs.Add(ControlRig);
+				}
+				const TSharedPtr<IControlRigObjectBinding> Binding = ControlRig.Get()->GetObjectBinding();
+				if (Binding && !Binding->OnControlRigBind().IsBoundToObject(this))
+				{
+					Binding->OnControlRigBind().AddRaw(this, &SControlRigOutliner::HandleOnObjectBoundToControlRig);
+				}
+			}
+		}
 		HierarchyTreeView->GetTreeView()->SetControlRigs(ControlRigs); //will refresh tree
 	}
 }
@@ -1130,6 +1191,32 @@ void SControlRigOutliner::SetEditMode(FControlRigEditMode& InEditMode)
 void SControlRigOutliner::HandleControlAdded(UControlRig* ControlRig, bool bIsAdded)
 {
 	FControlRigBaseDockableView::HandleControlAdded(ControlRig, bIsAdded);
+	if (ControlRig)
+	{
+		if (bIsAdded == true )
+		{
+			if (!ControlRig->ControlRigBound().IsBoundToObject(this))
+			{
+				ControlRig->ControlRigBound().AddRaw(this, &SControlRigOutliner::HandleOnControlRigBound);
+				BoundControlRigs.Add(ControlRig);
+			}
+			const TSharedPtr<IControlRigObjectBinding> Binding = ControlRig->GetObjectBinding();
+			if (Binding && !Binding->OnControlRigBind().IsBoundToObject(this))
+			{
+				Binding->OnControlRigBind().AddRaw(this, &SControlRigOutliner::HandleOnObjectBoundToControlRig);
+			}
+		}
+		else
+		{
+			BoundControlRigs.Remove(ControlRig);
+			ControlRig->ControlRigBound().RemoveAll(this);
+			const TSharedPtr<IControlRigObjectBinding> Binding = ControlRig->GetObjectBinding();
+			if (Binding)
+			{
+				Binding->OnControlRigBind().RemoveAll(this);
+			}
+		}
+	}
 	if (FControlRigEditMode* EditMode = static_cast<FControlRigEditMode*>(ModeTools->GetActiveMode(FControlRigEditMode::ModeName)))
 	{
 		TArrayView<TWeakObjectPtr<UControlRig>> ControlRigs = EditMode->GetControlRigs();
@@ -1137,5 +1224,41 @@ void SControlRigOutliner::HandleControlAdded(UControlRig* ControlRig, bool bIsAd
 	}
 }
 
+void SControlRigOutliner::HandleOnControlRigBound(UControlRig* InControlRig)
+{
+	if (!InControlRig)
+	{
+		return;
+	}
+
+	const TSharedPtr<IControlRigObjectBinding> Binding = InControlRig->GetObjectBinding();
+
+	if (Binding && !Binding->OnControlRigBind().IsBoundToObject(this))
+	{
+		Binding->OnControlRigBind().AddRaw(this, &SControlRigOutliner::HandleOnObjectBoundToControlRig);
+	}
+}
+
+
+void SControlRigOutliner::HandleOnObjectBoundToControlRig(UObject* InObject)
+{
+	//just refresh the views, but do so on nex tick sine with FK control rig's the controls aren't set up
+	//until AFTER we are bound.
+	TWeakPtr<SControlRigOutliner> WeakPtr = StaticCastSharedRef<SControlRigOutliner>(this->AsShared());
+	GEditor->GetTimerManager()->SetTimerForNextTick([WeakPtr]()
+	{
+		if (WeakPtr.IsValid())
+		{
+			TSharedPtr<SControlRigOutliner> StrongPtr = WeakPtr.Pin();
+			if (FControlRigEditMode* EditMode = static_cast<FControlRigEditMode*>(StrongPtr->ModeTools->GetActiveMode(FControlRigEditMode::ModeName)))
+			{
+				TArrayView<TWeakObjectPtr<UControlRig>> ControlRigs = EditMode->GetControlRigs();
+				StrongPtr->HierarchyTreeView->GetTreeView()->SetControlRigs(ControlRigs); //will refresh tree
+			}
+		}
+	});
+
+
+}
 
 #undef LOCTEXT_NAMESPACE

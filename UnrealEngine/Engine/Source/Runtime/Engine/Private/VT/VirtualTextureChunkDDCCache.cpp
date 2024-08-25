@@ -242,7 +242,7 @@ void FVirtualTextureChunkDDCCache::UpdateRequests()
 	FScopeLock Lock(&ActiveTasksLock);
 
 	// Remove completed chunks from array.
-	ActiveChunks.RemoveAllSwap([](auto Chunk) -> bool {return Chunk->bFileAvailableInVTDDCDache == true; }, false);
+	ActiveChunks.RemoveAllSwap([](auto Chunk) -> bool {return Chunk->bFileAvailableInVTDDCDache == true; }, EAllowShrinking::No);
 
 	// Remove completed tasks from array.
 	for (int32 TaskIndex = 0; TaskIndex < ActiveTasks.Num(); ++TaskIndex)
@@ -252,7 +252,7 @@ void FVirtualTextureChunkDDCCache::UpdateRequests()
 		{
 			Task->EnsureCompletion();
 			delete Task;
-			ActiveTasks.RemoveAtSwap(TaskIndex--, 1, false);
+			ActiveTasks.RemoveAtSwap(TaskIndex--, 1, EAllowShrinking::No);
 		}
 	}
 }

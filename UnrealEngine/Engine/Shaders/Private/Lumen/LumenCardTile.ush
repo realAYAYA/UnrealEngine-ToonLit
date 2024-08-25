@@ -6,6 +6,8 @@
 
 #pragma once
 
+#include "/Engine/Shared/LumenDefinitions.h"
+
 #define CARD_TILE_SIZE 8
 #define NULL_PACKED_CARD_TILE 0xFFFFFFFF
 
@@ -113,8 +115,9 @@ uint2 PackLightTileForLightPass(FLightTileForLightPass Tile)
 	return PackedTile;
 }
 
-float4x4 WorldToClip[2]; // LUMEN_LWC_TODO
-float4 PreViewTranslation[2]; // LUMEN_LWC_TODO
+float4x4 WorldToClip[LUMEN_MAX_VIEWS]; // LUMEN_LWC_TODO
+float4 PreViewTranslation[LUMEN_MAX_VIEWS]; // LUMEN_LWC_TODO
+float2 ViewExposure;
 
 uint GetCardViewIndex(FLumenCardPageData CardPage, FLumenCardData Card, float2 UVMin, float2 UVMax, uint NumViews, bool bPrioritizeWhenInFrustum)
 {

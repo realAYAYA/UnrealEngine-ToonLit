@@ -7,6 +7,7 @@
 #include "SEditorViewportToolBarMenu.h"
 #include "SNiagaraSimCacheViewportToolbar.h"
 #include "NiagaraComponent.h"
+#include "NiagaraEditorCommands.h"
 
 //////////////////////////////////////////////////////////////////////////
 // Viewport Client
@@ -79,7 +80,7 @@ void FNiagaraSimCacheViewportClient::Draw(FViewport* InViewport, FCanvas* Canvas
 
 bool FNiagaraSimCacheViewportClient::ShouldOrbitCamera() const
 {
-	return FEditorViewportClient::ShouldOrbitCamera();
+	return bUsingOrbitCamera;
 }
 
 FSceneView* FNiagaraSimCacheViewportClient::CalcSceneView(FSceneViewFamily* ViewFamily, const int32 StereoViewIndex)
@@ -165,6 +166,8 @@ TSharedRef<FEditorViewportClient> SNiagaraSimCacheViewport::MakeEditorViewportCl
 
 	SimCacheViewportClient->SetRealtime(true);
 	SimCacheViewportClient->VisibilityDelegate.BindSP(this, &SNiagaraSimCacheViewport::IsVisible);
+	// Default to orbit camera for parity with the Niagara editor viewport.
+	SimCacheViewportClient->bUsingOrbitCamera = true;
 	
 	return SimCacheViewportClient.ToSharedRef();
 }
@@ -179,9 +182,27 @@ EVisibility SNiagaraSimCacheViewport::OnGetViewportContentVisibility() const
 	return SEditorViewport::OnGetViewportContentVisibility();
 }
 
+void SNiagaraSimCacheViewport::ToggleOrbit()
+{
+	SimCacheViewportClient->ToggleOrbitCamera(!SimCacheViewportClient->bUsingOrbitCamera);
+}
+
+bool SNiagaraSimCacheViewport::IsToggleOrbitChecked()
+{
+	return SimCacheViewportClient->bUsingOrbitCamera;
+}
+
 void SNiagaraSimCacheViewport::BindCommands()
 {
 	SEditorViewport::BindCommands();
+
+	const FNiagaraEditorCommands& Commands = FNiagaraEditorCommands::Get();
+
+	CommandList->MapAction(
+		Commands.ToggleOrbit,
+		FExecuteAction::CreateSP(this, &SNiagaraSimCacheViewport::ToggleOrbit),
+		FCanExecuteAction(),
+		FIsActionChecked::CreateSP(this, &SNiagaraSimCacheViewport::IsToggleOrbitChecked));
 }
 
 void SNiagaraSimCacheViewport::OnFocusViewportToSelection()

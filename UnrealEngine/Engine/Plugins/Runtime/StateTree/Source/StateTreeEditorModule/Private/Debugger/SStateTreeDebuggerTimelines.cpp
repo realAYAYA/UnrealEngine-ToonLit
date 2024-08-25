@@ -54,7 +54,7 @@ void SStateTreeDebuggerTimelines::SetSelection(const TSharedPtr<RewindDebugger::
 
 void SStateTreeDebuggerTimelines::ScrollTo(const double ScrollOffset)
 {
-	InstanceTreeView->SetScrollOffset(ScrollOffset);
+	InstanceTreeView->SetScrollOffset(static_cast<float>(ScrollOffset));
 }
 
 TSharedRef<ITableRow> SStateTreeDebuggerTimelines::GenerateTreeRow(TSharedPtr<RewindDebugger::FRewindDebuggerTrack> InItem, const TSharedRef<STableViewBase>& OwnerTable)
@@ -144,7 +144,7 @@ int32 SStateTreeDebuggerTimelines::OnPaint( const FPaintArgs& Args, const FGeome
 	DrawTicks(OutDrawElements, RangeToScreen, TickArgs);
     	
 	// Paint Cursor
-	const float XPos = RangeToScreen.InputToLocalX( ScrubPosition.Get() );
+	const float XPos = RangeToScreen.InputToLocalX(static_cast<float>(ScrubPosition.Get()));
 
 	const TArray<FVector2D> Points {{XPos, 0}, { XPos, AllottedGeometry.Size.Y}};
 

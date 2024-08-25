@@ -903,7 +903,7 @@ TSharedRef<ITableRow> SGameplayCueEditorImpl::OnGenerateWidgetForGameplayCueList
 					int32 idx;
 					if (ObjName.FindLastChar(TEXT('.'), idx))
 					{
-						ObjName.RightChopInline(idx + 1, false);
+						ObjName.RightChopInline(idx + 1, EAllowShrinking::No);
 						if (ObjName.FindLastChar(TEXT('_'), idx))
 						{
 							ObjName.LeftInline(idx);

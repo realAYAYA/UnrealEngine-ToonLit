@@ -24,6 +24,7 @@ public class DerivedDataEditor : ModuleRules
 				"WorkspaceMenuStructure",
 				"MessageLog",
 				"ToolWidgets",
+				"UATHelper",
 				"Zen"
 			});
 

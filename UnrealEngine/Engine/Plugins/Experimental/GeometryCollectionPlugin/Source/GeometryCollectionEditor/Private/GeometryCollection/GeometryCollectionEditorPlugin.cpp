@@ -11,7 +11,7 @@
 #include "GeometryCollection/GeometryCollectionComponent.h"
 #include "GeometryCollection/GeometryCollectionConversion.h"
 #include "GeometryCollection/GeometryCollectionCommands.h"
-#include "GeometryCollection/AssetTypeActions_GeometryCollection.h"
+#include "GeometryCollection/AssetDefinition_GeometryCollection.h"
 #include "GeometryCollection/AssetTypeActions_GeometryCollectionCache.h"
 #include "GeometryCollection/GeometryCollectionAssetBroker.h"
 #include "GeometryCollection/GeometryCollectionEditorStyle.h"
@@ -45,9 +45,7 @@ void IGeometryCollectionEditorPlugin::StartupModule()
 
 	FAssetToolsModule& AssetToolsModule = FAssetToolsModule::GetModule();
 	IAssetTools& AssetTools = AssetToolsModule.Get();
-	GeometryCollectionAssetActions = new FAssetTypeActions_GeometryCollection();
 	GeometryCollectionCacheAssetActions = new FAssetTypeActions_GeometryCollectionCache();
-	AssetTools.RegisterAssetTypeActions(MakeShareable(GeometryCollectionAssetActions));
 	AssetTools.RegisterAssetTypeActions(MakeShareable(GeometryCollectionCacheAssetActions));
 
 	AssetBroker = new FGeometryCollectionAssetBroker();
@@ -272,7 +270,6 @@ void IGeometryCollectionEditorPlugin::ShutdownModule()
 
 		FAssetToolsModule& AssetToolsModule = FAssetToolsModule::GetModule();
 		IAssetTools& AssetTools = AssetToolsModule.Get();
-		AssetTools.UnregisterAssetTypeActions(GeometryCollectionAssetActions->AsShared());
 		AssetTools.UnregisterAssetTypeActions(GeometryCollectionCacheAssetActions->AsShared());
 
 		FComponentAssetBrokerage::UnregisterBroker(MakeShareable(AssetBroker));

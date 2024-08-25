@@ -23,6 +23,10 @@ NETCORE_API bool WriteQuantizedVector(const int32 Scale, const FVector3f& Value,
 NETCORE_API bool ReadQuantizedVector(const int32 Scale, FVector3d& Value, FArchive& Ar);
 NETCORE_API bool ReadQuantizedVector(const int32 Scale, FVector3f& Value, FArchive& Ar);
 
+/* Quantize a vector using the same quantization as WriteQuantizedVector followed by ReadQuantizedVector. */
+NETCORE_API FVector3d QuantizeVector(const int32 Scale, const FVector3d& Value);
+NETCORE_API FVector3f QuantizeVector(const int32 Scale, const FVector3f& Value);
+
 template<int32 Scale>
 bool SerializeQuantizedVector(FVector& Value, FArchive& Ar)
 {

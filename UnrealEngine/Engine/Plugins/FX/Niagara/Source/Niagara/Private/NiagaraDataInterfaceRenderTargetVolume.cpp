@@ -12,6 +12,7 @@
 #include "NiagaraDataInterfaceRenderTargetCommon.h"
 #include "NiagaraGpuComputeDispatchInterface.h"
 #include "NiagaraSettings.h"
+#include "NiagaraSimCache.h"
 #include "NiagaraSVTShaders.h"
 #include "NiagaraSystemInstance.h"
 #include "NiagaraStats.h"
@@ -163,11 +164,12 @@ void UNiagaraDataInterfaceRenderTargetVolume::PostInitProperties()
 	}
 }
 
-void UNiagaraDataInterfaceRenderTargetVolume::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceRenderTargetVolume::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	using namespace NDIRenderTargetVolumeLocal;
 
-	Super::GetFunctions(OutFunctions);
+	Super::GetFunctionsInternal(OutFunctions);
 
 	const int32 EmitterSystemOnlyBitmask = ENiagaraScriptUsageMask::Emitter | ENiagaraScriptUsageMask::System;
 	OutFunctions.Reserve(OutFunctions.Num() + 7);
@@ -286,7 +288,6 @@ void UNiagaraDataInterfaceRenderTargetVolume::GetFunctions(TArray<FNiagaraFuncti
 	}
 }
 
-#if WITH_EDITORONLY_DATA
 bool UNiagaraDataInterfaceRenderTargetVolume::UpgradeFunctionCall(FNiagaraFunctionSignature& FunctionSignature)
 {
 	using namespace NDIRenderTargetVolumeLocal;
@@ -457,6 +458,7 @@ void UNiagaraDataInterfaceRenderTargetVolume::SetShaderParameters(const FNiagara
 		InstanceData_RT->TransientRDGTexture = GraphBuilder.RegisterExternalTexture(InstanceData_RT->RenderTarget);
 		InstanceData_RT->TransientRDGSRV = GraphBuilder.CreateSRV(InstanceData_RT->TransientRDGTexture);
 		InstanceData_RT->TransientRDGUAV = GraphBuilder.CreateUAV(InstanceData_RT->TransientRDGTexture);
+		GraphBuilder.UseInternalAccessMode(InstanceData_RT->TransientRDGTexture);
 		Context.GetRDGExternalAccessQueue().Add(InstanceData_RT->TransientRDGTexture);
 	}
 
@@ -604,8 +606,6 @@ UObject* UNiagaraDataInterfaceRenderTargetVolume::SimCacheBeginWrite(UObject* In
 
 		return SimCacheData;
 	}
-
-	return nullptr;
 }
 
 bool UNiagaraDataInterfaceRenderTargetVolume::SimCacheWriteFrame(UObject* StorageObject, int FrameIndex, FNiagaraSystemInstance* SystemInstance, const void* OptionalPerInstanceData, FNiagaraSimCacheFeedbackContext& FeedbackContext) const
@@ -692,7 +692,7 @@ bool UNiagaraDataInterfaceRenderTargetVolume::SimCacheWriteFrame(UObject* Storag
 					return false;
 				}
 
-				CurrCache->AppendFrame(SparseTextureData);
+				CurrCache->AppendFrame(SparseTextureData, FTransform::Identity);
 #endif
 			}
 			else
@@ -769,8 +769,10 @@ bool UNiagaraDataInterfaceRenderTargetVolume::SimCacheReadFrame(UObject* Storage
 		UAnimatedSparseVolumeTexture* SVT = Cast<UAnimatedSparseVolumeTexture>(StorageObject);
 		
 		const int32 MipLevel = 0;
+		const float FrameRate = 0.0f;
 		const bool bBlocking = true;
-		USparseVolumeTextureFrame *SVTFrame = USparseVolumeTextureFrame::GetFrameAndIssueStreamingRequest(SVT, FrameA + Interp, MipLevel, bBlocking);
+		const bool bHasFrameRate = false;
+		USparseVolumeTextureFrame *SVTFrame = USparseVolumeTextureFrame::GetFrameAndIssueStreamingRequest(SVT, GetTypeHash(this), MipLevel, FMath::RoundToInt(FrameA + Interp), MipLevel, bBlocking, bHasFrameRate);
 		
 		// The streaming manager normally ticks in FDeferredShadingSceneRenderer::Render(), but the SVT->DenseTexture conversion compute shader happens in a render command before that.
 		// At execution time of that command, the streamer hasn't had the chance to do any streaming yet, so we force another tick here.
@@ -846,12 +848,10 @@ bool UNiagaraDataInterfaceRenderTargetVolume::SimCacheReadFrame(UObject* Storage
 
 						FRHITexture* PageTableTexture = RT_SVTRenderResources->GetPageTableTexture();
 						FRHITexture* TextureA = RT_SVTRenderResources->GetPhysicalTileDataATexture();
-						FRHIShaderResourceView* StreamingInfoBufferSRV = RT_SVTRenderResources->GetStreamingInfoBufferSRV();
 
 						PassParameters->TileDataTextureSampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
 						PassParameters->SparseVolumeTexturePageTable = PageTableTexture ? PageTableTexture : GBlackUintVolumeTexture->TextureRHI.GetReference();
 						PassParameters->SparseVolumeTextureA = TextureA ? TextureA : GBlackVolumeTexture->TextureRHI.GetReference();
-						PassParameters->StreamingInfoBuffer = StreamingInfoBufferSRV ? StreamingInfoBufferSRV : GEmptyStructuredBufferWithUAV->ShaderResourceViewRHI.GetReference();
 							
 						PassParameters->PackedSVTUniforms0 = CurrentPackedUniforms0;
 						PassParameters->PackedSVTUniforms1 = CurrentPackedUniforms1;
@@ -934,7 +934,7 @@ bool UNiagaraDataInterfaceRenderTargetVolume::SimCacheReadFrame(UObject* Storage
 							TArray<uint8> Decompressed;
 							if (RT_CacheFrame->CompressedSize > 0)
 							{
-								Decompressed.AddUninitialized(sizeof(BlockBytes) * InstanceData_RT->Size.X * InstanceData_RT->Size.Y * InstanceData_RT->Size.Z);
+								Decompressed.AddUninitialized(BlockBytes * InstanceData_RT->Size.X * InstanceData_RT->Size.Y * InstanceData_RT->Size.Z);
 								FCompression::UncompressMemory(RT_CompressionType, Decompressed.GetData(), Decompressed.Num(), RT_CacheFrame->GetPixelData(), RT_CacheFrame->CompressedSize);
 							}
 

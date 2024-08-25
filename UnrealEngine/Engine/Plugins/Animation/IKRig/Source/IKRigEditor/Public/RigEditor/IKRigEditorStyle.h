@@ -38,10 +38,17 @@ public:
 		Set("IKRig.SolverStack", new IMAGE_BRUSH_SVG("Slate/SolverStack", Icon64x64));
 		Set("IKRig.IKRetargeting", new IMAGE_BRUSH_SVG("Slate/IKRetargeting", Icon64x64));
 		Set("IKRig.Hierarchy", new IMAGE_BRUSH_SVG("Slate/Hierarchy", Icon64x64));
+
+		Set("IKRig.AssetSettings", new IMAGE_BRUSH_SVG("Slate/AssetSettings", Icon64x64));
+		Set("IKRig.AutoRetarget", new IMAGE_BRUSH_SVG("Slate/AutoChainRetarget", Icon64x64));
+		Set("IKRig.AutoIK", new IMAGE_BRUSH_SVG("Slate/AutoFullBodyIK", Icon64x64));
 		
 		FTextBlockStyle NormalText = FAppStyle::GetWidgetStyle<FTextBlockStyle>("SkeletonTree.NormalFont");
 		Set( "IKRig.Tree.NormalText", FTextBlockStyle(NormalText));
 		Set( "IKRig.Tree.ItalicText", FTextBlockStyle(NormalText).SetFont(DEFAULT_FONT("Italic", 10)));
+
+		SetContentRoot(FPaths::EngineContentDir() / TEXT("Editor/Slate"));
+		Set( "IKRig.Viewport.Border", new BOX_BRUSH( "Old/Window/ViewportDebugBorder", 0.8f, FLinearColor(1.0f,1.0f,1.0f,1.0f) ) );
 		
 		FSlateStyleRegistry::RegisterSlateStyle(*this);
 	}

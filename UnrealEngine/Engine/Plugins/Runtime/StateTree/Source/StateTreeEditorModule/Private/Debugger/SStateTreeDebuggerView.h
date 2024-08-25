@@ -49,6 +49,7 @@ public:
 	void Construct(const FArguments& InArgs, const UStateTree& InStateTree, const TSharedRef<FStateTreeViewModel>& InStateTreeViewModel, const TSharedRef<FUICommandList>& InCommandList);
 
 private:
+	virtual FReply OnPreviewKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent) override;
 	virtual void Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime) override;
 
 	void RefreshTracks();
@@ -120,6 +121,7 @@ private:
 	TSharedPtr<FStateTreeViewModel> StateTreeViewModel;
 	TWeakObjectPtr<const UStateTree> StateTree;
 	TWeakObjectPtr<UStateTreeEditorData> StateTreeEditorData;
+	TSharedPtr<FUICommandList> CommandList;
 
 	/** Tracks for all statetree instance owners producing trace events for the associated state tree asset. */
 	TArray<TSharedPtr<RewindDebugger::FRewindDebuggerTrack>> InstanceOwnerTracks;
@@ -158,6 +160,9 @@ private:
 
 	/** In case tracks are not reset when a new analysis session is started we keep track of the longest duration to adjust our clamp range. */
 	double MaxTrackRecordingDuration = 0;
+
+	/** The recording duration time the UI was last updated from the debugger. Used to detect if new data has been collect while the UI was inactive. */
+	double LastUpdatedTrackRecordingDuration = 0;
 
 	/** Indicates that a live session was started (record button or auto record in PIE) to generate StateTree traces. */
 	bool bRecording = false;

@@ -6,6 +6,7 @@
 #include "Components/DisplayClusterICVFXCameraComponent.h"
 
 #include "CineCameraActor.h"
+#include "CineCameraComponent.h"
 #include "DisplayClusterRootActor.h"
 #include "UObject/SoftObjectPtr.h"
 
@@ -26,8 +27,10 @@ namespace DisplayClusterICVFXCameraComponentDetailsCustomizationUtils
 			TEXT("Variable"),
 			TEXT("TransformCommon"),
 			DisplayClusterConfigurationStrings::categories::ICVFXCategory,
+			DisplayClusterConfigurationStrings::categories::ICVFXCameraCategory,
 			DisplayClusterConfigurationStrings::categories::CameraColorGradingCategory,
 			DisplayClusterConfigurationStrings::categories::OCIOCategory,
+			DisplayClusterConfigurationStrings::categories::MediaCategory,
 			DisplayClusterConfigurationStrings::categories::ChromaKeyCategory,
 			DisplayClusterConfigurationStrings::categories::OverrideCategory,
 			DisplayClusterConfigurationStrings::categories::ConfigurationCategory
@@ -94,8 +97,27 @@ void FDisplayClusterICVFXCameraComponentDetailsCustomization::CustomizeDetails(I
 	// Sockets category must be hidden manually instead of through the HideCategories metadata specifier
 	InLayoutBuilder.HideCategory(TEXT("Sockets"));
 
-	// Manually label the ICVFX category to properly format it to have the dash in "In-Camera"
-	InLayoutBuilder.EditCategory(DisplayClusterConfigurationStrings::categories::ICVFXCategory, LOCTEXT("ICVFXCategoryLabel", "In-Camera VFX"));
+	// Rename "Inner Frustum Color Grading" to "Color Grading" for brevity, as the category itself needs to remain distinct from the camera's "Color Grading" category.
+	InLayoutBuilder.EditCategory(DisplayClusterConfigurationStrings::categories::CameraColorGradingCategory, LOCTEXT("ICVFXColorGradingCategoryLabel", "Color Grading"));
+
+	IDetailCategoryBuilder& CameraCategory = InLayoutBuilder.EditCategory(DisplayClusterConfigurationStrings::categories::ICVFXCameraCategory, LOCTEXT("ICVFXCameraCategoryLabel", "Camera"));
+
+	// Re-add the external camera to the category to ensure it is always above the camera's fiz properties in the details panel
+	CameraCategory.AddProperty(GET_MEMBER_NAME_CHECKED(UDisplayClusterICVFXCameraComponent, ExternalCameraActorRef));
+
+	if (EditedObject.IsValid() && EditedObject->CameraSettings.ExternalCameraActor.IsValid())
+	{
+		TArray<UObject*> ExternalCameraComponents = { EditedObject->CameraSettings.ExternalCameraActor.Get()->GetCineCameraComponent() };
+		CameraCategory.AddExternalObjectProperty(ExternalCameraComponents, GET_MEMBER_NAME_CHECKED(UCineCameraComponent, FocusSettings));
+		CameraCategory.AddExternalObjectProperty(ExternalCameraComponents, GET_MEMBER_NAME_CHECKED(UCineCameraComponent, CurrentFocalLength));
+		CameraCategory.AddExternalObjectProperty(ExternalCameraComponents, GET_MEMBER_NAME_CHECKED(UCineCameraComponent, CurrentAperture));
+	}
+	else
+	{
+		CameraCategory.AddProperty(GET_MEMBER_NAME_CHECKED(UDisplayClusterICVFXCameraComponent, FocusSettings), UCineCameraComponent::StaticClass());
+		CameraCategory.AddProperty(GET_MEMBER_NAME_CHECKED(UDisplayClusterICVFXCameraComponent, CurrentFocalLength), UCineCameraComponent::StaticClass());
+		CameraCategory.AddProperty(GET_MEMBER_NAME_CHECKED(UDisplayClusterICVFXCameraComponent, CurrentAperture), UCineCameraComponent::StaticClass());
+	}
 
 	InLayoutBuilder.SortCategories(DisplayClusterICVFXCameraComponentDetailsCustomizationUtils::SortCategories);
 

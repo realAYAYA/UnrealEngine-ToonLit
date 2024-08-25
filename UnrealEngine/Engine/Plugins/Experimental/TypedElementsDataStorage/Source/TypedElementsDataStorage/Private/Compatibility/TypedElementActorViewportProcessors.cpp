@@ -8,7 +8,7 @@
 #include "Elements/Framework/TypedElementQueryBuilder.h"
 #include "MassActorSubsystem.h"
 
-void UTypedElementActorViewportFactory::RegisterQueries(ITypedElementDataStorageInterface& DataStorage) const
+void UTypedElementActorViewportFactory::RegisterQueries(ITypedElementDataStorageInterface& DataStorage)
 {
 	RegisterSelectionOutlineColorColumnToActor(DataStorage);
 }

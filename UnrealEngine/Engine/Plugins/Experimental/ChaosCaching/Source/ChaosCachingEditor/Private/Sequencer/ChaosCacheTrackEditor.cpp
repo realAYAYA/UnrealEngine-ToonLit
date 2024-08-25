@@ -12,7 +12,8 @@
 #include "Rendering/SlateRenderer.h"
 #include "SequencerSectionPainter.h"
 #include "ScopedTransaction.h"
-#include "SequencerUtilities.h"
+#include "MVVM/Views/ViewUtilities.h"
+#include "MVVM/ViewModels/ViewDensity.h"
 #include "Styling/SlateIconFinder.h"
 #include "TimeToPixel.h"
 #include "Widgets/SBoxPanel.h"
@@ -20,7 +21,7 @@
 namespace ChaosCacheEditorConstants
 {
 	// @todo Sequencer Allow this to be customizable
-	constexpr float AnimationTrackHeight = 20.f;
+	constexpr float AnimationTrackHeight = 28.f;
 }
 
 #define LOCTEXT_NAMESPACE "FChaosCacheTrackEditor"
@@ -62,9 +63,9 @@ FText FChaosCacheSection::GetSectionTitle() const
 	return LOCTEXT("NoChaosCacheSection", "No ChaosCache");
 }
 
-float FChaosCacheSection::GetSectionHeight() const
+float FChaosCacheSection::GetSectionHeight(const UE::Sequencer::FViewDensityInfo& ViewDensity) const
 {
-	return ChaosCacheEditorConstants::AnimationTrackHeight;
+	return ViewDensity.UniformHeight.Get(ChaosCacheEditorConstants::AnimationTrackHeight);
 }
 
 int32 FChaosCacheSection::OnPaintSection(FSequencerSectionPainter& Painter) const
@@ -369,13 +370,10 @@ TSharedPtr<SWidget> FChaosCacheTrackEditor::BuildOutlinerEditWidget(const FGuid&
 			return MenuBuilder.MakeWidget();
 		};
 
-		return SNew(SHorizontalBox)
-			+ SHorizontalBox::Slot()
-			.AutoWidth()
-			.VAlign(VAlign_Center)
-			[
-				FSequencerUtilities::MakeAddButton(LOCTEXT("ChaosCacheText", "Chaos Cache"), FOnGetContent::CreateLambda(SubMenuCallback), Params.NodeIsHovered, GetSequencer())
-			];
+		return UE::Sequencer::MakeAddButton(
+			LOCTEXT("ChaosCacheText", "Chaos Cache"),
+			FOnGetContent::CreateLambda(SubMenuCallback),
+			Params.ViewModel);
 	}
 	else
 	{

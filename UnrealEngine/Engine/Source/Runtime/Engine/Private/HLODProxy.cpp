@@ -163,13 +163,6 @@ void UHLODProxy::DeletePackage()
 	ObjectTools::DeleteObjectsUnchecked({ Package });
 }
 
-void UHLODProxy::PreSave(const class ITargetPlatform* TargetPlatform)
-{
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
-	Super::PreSave(TargetPlatform);
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
-}
-
 void UHLODProxy::PreSave(FObjectPreSaveContext ObjectSaveContext)
 {
 	Super::PreSave(ObjectSaveContext);
@@ -502,7 +495,7 @@ uint32 UHLODProxy::GetCRC(UStaticMeshComponent* InComponent, uint32 InCRC, const
 }
 
 // Key that forms the basis of the HLOD proxy key. Bump this key (i.e. generate a new GUID) when you want to force a rebuild of ALL HLOD proxies
-#define HLOD_PROXY_BASE_KEY		TEXT("498A8FFD64744FA3B2E7C7589581F91A")
+#define HLOD_PROXY_BASE_KEY		TEXT("136F4B1AD66E47808C62C1F9CC87CC1F")
 
 FName UHLODProxy::GenerateKeyForActor(const ALODActor* LODActor, bool bMustUndoLevelTransform)
 {

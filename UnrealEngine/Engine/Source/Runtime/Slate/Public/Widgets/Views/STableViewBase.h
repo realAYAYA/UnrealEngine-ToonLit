@@ -170,14 +170,23 @@ public:
 	/** Sets whether the list should lerp between scroll offsets or jump instantly between them. */
 	SLATE_API void SetIsScrollAnimationEnabled(bool bInEnableScrollAnimation);
 
+	/** Sets whether the list should lerp between scroll offsets or jump instantly between them with touch. */
+	SLATE_API void SetEnableTouchAnimatedScrolling(bool bInEnableTouchAnimatedScrolling);
+
 	/** Sets whether to permit overscroll on this list view */
 	SLATE_API void SetAllowOverscroll(EAllowOverscroll InAllowOverscroll);
 
 	/** Enables/disables being able to scroll with the right mouse button. */
 	SLATE_API void SetIsRightClickScrollingEnabled(const bool bInEnableRightClickScrolling);
 
+	/** Enables/disables being able to scroll using touch input. */
+	SLATE_API void SetIsTouchScrollingEnabled(const bool bInEnableTouchScrolling);
+
 	/** Sets the multiplier applied when wheel scrolling. Higher numbers will cover more distance per click of the wheel. */
 	SLATE_API void SetWheelScrollMultiplier(float NewWheelScrollMultiplier);
+
+	/** Enables/disables being able to scroll. This should be use as a temporary mean to disable scrolling. */
+	SLATE_API void SetIsPointerScrollingEnabled(bool bInIsPointerScrollingEnabled);
 
 	/** Sets the Background Brush */
 	SLATE_API void SetBackgroundBrush(const TAttribute<const FSlateBrush*>& InBackgroundBrush);
@@ -408,8 +417,14 @@ protected:
 	/** True to lerp smoothly between offsets when the desired scroll offset changes. */
 	bool bEnableAnimatedScrolling = false;
 
+	/** True to lerp smoothly between offsets when the desired scroll offset changes with touch. */
+	bool bEnableTouchAnimatedScrolling = false;
+
 	/** True to allow right click drag scrolling. */
 	bool bEnableRightClickScrolling = true;
+
+	/** True to allow scrolling by using touch input. */
+	bool bEnableTouchScrolling = true;
 
 	/** The currently displayed scroll offset from the beginning of the list in items. */
 	double CurrentScrollOffset = 0.;
@@ -462,6 +477,9 @@ protected:
 
 	/** How much to scroll when using mouse wheel */
 	float WheelScrollMultiplier;
+
+	/** Wheter the list is allowed to scroll. */
+	bool bIsPointerScrollingEnabled = true;
 
 	/** The layout and scroll orientation of the list */
 	EOrientation Orientation = Orient_Vertical;

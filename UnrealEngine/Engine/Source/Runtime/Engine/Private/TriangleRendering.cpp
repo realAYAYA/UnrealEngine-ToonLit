@@ -31,7 +31,7 @@ void FCanvasTriangleRendererItem::FTriangleVertexFactory::InitResource(FRHIComma
 	VertexBuffers->StaticMeshVertexBuffer.BindPackedTexCoordVertexBuffer(this, VertexData);
 	VertexBuffers->StaticMeshVertexBuffer.BindLightMapVertexBuffer(this, VertexData, 0);
 	VertexBuffers->ColorVertexBuffer.BindColorVertexBuffer(this, VertexData);
-	SetData(VertexData);
+	SetData(RHICmdList, VertexData);
 
 	FLocalVertexFactory::InitResource(RHICmdList);
 }
@@ -199,8 +199,7 @@ bool FCanvasTriangleRendererItem::Render_RenderThread(FCanvasRenderContext& Rend
 		CanvasRenderTarget,
 		nullptr,
 		FEngineShowFlags(ESFIM_Game))
-		.SetTime(Time)
-		.SetGammaCorrection(CanvasRenderTarget->GetDisplayGamma()));
+		.SetTime(Time));
 
 	const FIntRect ViewRect(FIntPoint(0, 0), CanvasRenderTarget->GetSizeXY());
 
@@ -243,8 +242,7 @@ bool FCanvasTriangleRendererItem::Render_GameThread(const FCanvas* Canvas, FCanv
 		CanvasRenderTarget,
 		Canvas->GetScene(),
 		FEngineShowFlags(ESFIM_Game))
-		.SetTime(Time)
-		.SetGammaCorrection(CanvasRenderTarget->GetDisplayGamma()));
+		.SetTime(Time));
 
 	const FIntRect ViewRect(FIntPoint(0, 0), CanvasRenderTarget->GetSizeXY());
 

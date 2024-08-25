@@ -22,7 +22,7 @@
 #define CONCAT(A, B) CONCAT2(A, B)
 
 uint CONCAT(BitStreamReader_Read_, TYPE_SUFFIX)
-	(INPUT_BUFFER_PARAMS, inout FBitStreamReaderState State, int NumBits, int CompileTimeMaxBits)
+	(INPUT_BUFFER_TYPE InputBuffer, inout FBitStreamReaderState State, int NumBits, int CompileTimeMaxBits)
 {
 	if (CompileTimeMaxBits > State.CompileTimeMinBufferBits)
 	{
@@ -32,11 +32,7 @@ uint CONCAT(BitStreamReader_Read_, TYPE_SUFFIX)
 		State.BitOffsetFromAddress += State.BufferOffset;	
 		uint Address = State.AlignedByteAddress + ((State.BitOffsetFromAddress >> 5) << 2);
 
-#if RORW_ENABLED
-		uint4 Data = bRW ? InputBufferRW.Load4(Address) : InputBufferRO.Load4(Address);
-#else
 		uint4 Data = InputBuffer.Load4(Address);
-#endif
 
 		// Shift bits down to align
 		State.BufferBits.x												= BitAlignU32(Data.y,	Data.x,	State.BitOffsetFromAddress); // BitOffsetFromAddress implicitly &31
@@ -80,29 +76,29 @@ uint CONCAT(BitStreamReader_Read_, TYPE_SUFFIX)
 }
 
 uint2 CONCAT(BitStreamReader_Read2_, TYPE_SUFFIX)
-	(INPUT_BUFFER_PARAMS, inout FBitStreamReaderState State, int2 NumBits, int2 CompileTimeMaxBits)
+	(INPUT_BUFFER_TYPE InputBuffer, inout FBitStreamReaderState State, int2 NumBits, int2 CompileTimeMaxBits)
 {
-	uint ResultX = CONCAT(BitStreamReader_Read_, TYPE_SUFFIX)(INPUT_BUFFER_ARGS, State, NumBits.x, CompileTimeMaxBits.x);
-	uint ResultY = CONCAT(BitStreamReader_Read_, TYPE_SUFFIX)(INPUT_BUFFER_ARGS, State, NumBits.y, CompileTimeMaxBits.y);
+	uint ResultX = CONCAT(BitStreamReader_Read_, TYPE_SUFFIX)(InputBuffer, State, NumBits.x, CompileTimeMaxBits.x);
+	uint ResultY = CONCAT(BitStreamReader_Read_, TYPE_SUFFIX)(InputBuffer, State, NumBits.y, CompileTimeMaxBits.y);
 	return uint2(ResultX, ResultY);
 }
 
 uint3 CONCAT(BitStreamReader_Read3_, TYPE_SUFFIX)
-	(INPUT_BUFFER_PARAMS, inout FBitStreamReaderState State, int3 NumBits, int3 CompileTimeMaxBits)
+	(INPUT_BUFFER_TYPE InputBuffer, inout FBitStreamReaderState State, int3 NumBits, int3 CompileTimeMaxBits)
 {
-	uint ResultX = CONCAT(BitStreamReader_Read_, TYPE_SUFFIX)(INPUT_BUFFER_ARGS, State, NumBits.x, CompileTimeMaxBits.x);
-	uint ResultY = CONCAT(BitStreamReader_Read_, TYPE_SUFFIX)(INPUT_BUFFER_ARGS, State, NumBits.y, CompileTimeMaxBits.y);
-	uint ResultZ = CONCAT(BitStreamReader_Read_, TYPE_SUFFIX)(INPUT_BUFFER_ARGS, State, NumBits.z, CompileTimeMaxBits.z);
+	uint ResultX = CONCAT(BitStreamReader_Read_, TYPE_SUFFIX)(InputBuffer, State, NumBits.x, CompileTimeMaxBits.x);
+	uint ResultY = CONCAT(BitStreamReader_Read_, TYPE_SUFFIX)(InputBuffer, State, NumBits.y, CompileTimeMaxBits.y);
+	uint ResultZ = CONCAT(BitStreamReader_Read_, TYPE_SUFFIX)(InputBuffer, State, NumBits.z, CompileTimeMaxBits.z);
 	return uint3(ResultX, ResultY, ResultZ);
 }
 
 uint4 CONCAT(BitStreamReader_Read4_, TYPE_SUFFIX)
-	(INPUT_BUFFER_PARAMS, inout FBitStreamReaderState State, int4 NumBits, int4 CompileTimeMaxBits)
+	(INPUT_BUFFER_TYPE InputBuffer, inout FBitStreamReaderState State, int4 NumBits, int4 CompileTimeMaxBits)
 {
-	uint ResultX = CONCAT(BitStreamReader_Read_, TYPE_SUFFIX)(INPUT_BUFFER_ARGS, State, NumBits.x, CompileTimeMaxBits.x);
-	uint ResultY = CONCAT(BitStreamReader_Read_, TYPE_SUFFIX)(INPUT_BUFFER_ARGS, State, NumBits.y, CompileTimeMaxBits.y);
-	uint ResultZ = CONCAT(BitStreamReader_Read_, TYPE_SUFFIX)(INPUT_BUFFER_ARGS, State, NumBits.z, CompileTimeMaxBits.z);
-	uint ResultW = CONCAT(BitStreamReader_Read_, TYPE_SUFFIX)(INPUT_BUFFER_ARGS, State, NumBits.w, CompileTimeMaxBits.w);
+	uint ResultX = CONCAT(BitStreamReader_Read_, TYPE_SUFFIX)(InputBuffer, State, NumBits.x, CompileTimeMaxBits.x);
+	uint ResultY = CONCAT(BitStreamReader_Read_, TYPE_SUFFIX)(InputBuffer, State, NumBits.y, CompileTimeMaxBits.y);
+	uint ResultZ = CONCAT(BitStreamReader_Read_, TYPE_SUFFIX)(InputBuffer, State, NumBits.z, CompileTimeMaxBits.z);
+	uint ResultW = CONCAT(BitStreamReader_Read_, TYPE_SUFFIX)(InputBuffer, State, NumBits.w, CompileTimeMaxBits.w);
 	return uint4(ResultX, ResultY, ResultZ, ResultW);
 }
 

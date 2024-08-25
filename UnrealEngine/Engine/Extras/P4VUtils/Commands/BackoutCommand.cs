@@ -136,22 +136,25 @@ namespace P4VUtils.Commands
 				string ErrorString = String.Join("\r\n", ValidationResult.Errors); 
 				if (ErrorString.Length > MAX_ERROR_LENGTH)
 				{
-					ErrorString = ErrorString.Substring(0, MAX_ERROR_LENGTH);
-					ErrorString += "\r\n (...)";
+					ErrorString = $"{ErrorString.Substring(0, MAX_ERROR_LENGTH)}\r\n (...)";
+				}
+
+				StringBuilder MessageText = new StringBuilder();
+				MessageText.Append("This backout is potentially unsafe:\r\n");
+				MessageText.Append("\r\n");
+				MessageText.Append(ErrorString);
+				MessageText.Append("\r\n\r\n");
+				MessageText.Append("Are you sure you want to proceed with the backout operation?\r\n");
+				MessageText.Append("\r\n");
+
+				if (ConfigValues.TryGetValue("SafeBackoutHelpText", out string? HelpText))
+				{
+					MessageText.Append(HelpText);
+					MessageText.Append("\r\n");
 				}
 
 				// warn user
-				UserInterface.Button result = UserInterface.ShowDialog(
-					"This backout is potentially unsafe:\r\n" +
-					"\r\n" +
-					ErrorString +
-					"\r\n\r\n" +
-					"Are you sure you want to proceed with the backout operation?\r\n" +
-					"\r\n" +
-					"You can tag @p4backouthelp in #ue-build-health or #fn-build-health for assistance.\r\n" +
-					"\r\n",
-					"Unsafe backout detected",
-					UserInterface.YesNo, UserInterface.Button.No, Logger);
+				UserInterface.Button result = UserInterface.ShowDialog(MessageText.ToString(), "Unsafe backout detected", UserInterface.YesNo, UserInterface.Button.No, Logger);
 
 				if (result == UserInterface.Button.No)
 				{
@@ -170,7 +173,7 @@ namespace P4VUtils.Commands
 			List<OpenedRecord> OpenedRecords = await Perforce.OpenedAsync(OpenedOptions.AllWorkspaces | OpenedOptions.ShortOutput, ExistingChangeRecord.Files.Select(x => x.DepotFile).ToArray(), CancellationToken.None).ToListAsync();
 			if (OpenedRecords.Count > 0)
 			{
-				HashSet<string> UniqueDepotFiles = (OpenedRecords.Select(x => x.DepotFile)).ToHashSet();
+				HashSet<string> UniqueDepotFiles = (OpenedRecords.Where(x => !String.IsNullOrEmpty(x.DepotFile)).Select(x => x.DepotFile!)).ToHashSet();
 				string FileListString = string.Join("\r\n", UniqueDepotFiles);
 
 				Logger.LogInformation("\r\nSome files are checked out on another workspace, please confirm that you wish to continue.\r\n");
@@ -211,7 +214,7 @@ namespace P4VUtils.Commands
 			ChangeRecord NewChangeRecord = new ChangeRecord();
 			NewChangeRecord.User = Info.UserName;
 			NewChangeRecord.Client = Info.ClientName;
-			NewChangeRecord.Description = $"[Backout] - CL{Change}\n#fyi {ExistingChangeRecord.User}\nOriginal CL Desc\n-----------------------------------------------------------------\n{ExistingChangeRecord.Description.TrimEnd()}\n";
+			NewChangeRecord.Description = $"[Backout] - CL{Change}\n#fyi {ExistingChangeRecord.User}\n#submittool safebackout\nOriginal CL Desc\n-----------------------------------------------------------------\n{ExistingChangeRecord.Description.TrimEnd()}\n";
 			NewChangeRecord = await Perforce.CreateChangeAsync(NewChangeRecord, CancellationToken.None);
 
 			Logger.LogInformation("Created pending changelist {Change}", NewChangeRecord.Number);

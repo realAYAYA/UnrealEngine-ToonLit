@@ -393,7 +393,7 @@ bool TryLoadCbPackage(FCbPackage& Package, FArchive& Ar, FCbBufferAllocator Allo
 				Ar.SetError();
 				return false;
 			}
-			FCbAttachment Attachment(MoveTemp(CompBuf));
+			FCbAttachment Attachment(MoveTemp(CompBuf), Entry.AttachmentHash);
 			Package.AddAttachment(Attachment);
 		}
 		else if (Entry.Flags & CbAttachmentEntry::IsCompressed)
@@ -408,7 +408,7 @@ bool TryLoadCbPackage(FCbPackage& Package, FArchive& Ar, FCbBufferAllocator Allo
 			}
 			else
 			{
-				FCbAttachment Attachment(MoveTemp(CompBuf));
+				FCbAttachment Attachment(MoveTemp(CompBuf), Entry.AttachmentHash);
 				Package.AddAttachment(Attachment);
 			}
 		}
@@ -422,7 +422,7 @@ bool TryLoadCbPackage(FCbPackage& Package, FArchive& Ar, FCbBufferAllocator Allo
 			}
 			else
 			{
-				FCbAttachment Attachment(AttachmentData.MoveToShared());
+				FCbAttachment Attachment(AttachmentData.MoveToShared(), Entry.AttachmentHash);
 				Package.AddAttachment(Attachment);
 			}
 		}

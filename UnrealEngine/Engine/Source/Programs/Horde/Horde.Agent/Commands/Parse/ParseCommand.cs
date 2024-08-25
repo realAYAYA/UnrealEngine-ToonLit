@@ -1,12 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
-using System.Collections.Generic;
 using System.ComponentModel;
-using System.IO;
-using System.Threading.Tasks;
 using EpicGames.Core;
-using EpicGames.Perforce;
 using Horde.Agent.Parser;
 using Horde.Agent.Utility;
 using Microsoft.Extensions.Logging;
@@ -16,7 +11,7 @@ namespace Horde.Agent.Commands.Parse
 	/// <summary>
 	/// Installs the agent as a service
 	/// </summary>
-	[Command("parse", "Parses a file into structured logging output")]
+	[Command("parse", "Parses a file into structured logging output", Advertise = false)]
 	class ParseCommand : Command
 	{
 		[CommandLine("-File=", Required = true)]
@@ -51,7 +46,7 @@ namespace Horde.Agent.Commands.Parse
 				}
 
 				// Read all the ignore patterns
-				string[] lines = FileReference.ReadAllLines(IgnorePatternsFile);
+				string[] lines = await FileReference.ReadAllLinesAsync(IgnorePatternsFile);
 				foreach (string line in lines)
 				{
 					string trimLine = line.Trim();
@@ -74,7 +69,7 @@ namespace Horde.Agent.Commands.Parse
 					for (; ; )
 					{
 						int length = await inputStream.ReadAsync(data);
-						if(length == 0)
+						if (length == 0)
 						{
 							parser.Flush();
 							break;

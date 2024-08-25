@@ -24,6 +24,9 @@ namespace UE
 			CmdObject->SetStringField(GetCommandIDJsonKey(), GetAction());
 			CmdObject->SetStringField(GetTranslatorIDJsonKey(), GetTranslatorID());
 			ActionDataObject->SetStringField(GetSourceFilenameJsonKey(), GetSourceFilename());
+			ActionDataObject->SetBoolField(GetDoesConvertSceneJsonKey(), GetDoesConvertScene());
+			ActionDataObject->SetBoolField(GetDoesForceFrontXAxisJsonKey(), GetDoesForceFrontXAxis());
+			ActionDataObject->SetBoolField(GetDoesConvertSceneUnitJsonKey(), GetDoesConvertSceneUnit());
 			CmdObject->SetObjectField(GetCommandDataJsonKey(), ActionDataObject);
 
 			FString LoadSourceCmd;
@@ -72,6 +75,18 @@ namespace UE
 				return false;
 			}
 			if (!((*ActionDataObject)->TryGetStringField(GetSourceFilenameJsonKey(), SourceFilename)))
+			{
+				return false;
+			}
+			if (!((*ActionDataObject)->TryGetBoolField(GetDoesConvertSceneJsonKey(), bConvertScene)))
+			{
+				return false;
+			}
+			if (!((*ActionDataObject)->TryGetBoolField(GetDoesForceFrontXAxisJsonKey(), bForceFrontXAxis)))
+			{
+				return false;
+			}
+			if (!((*ActionDataObject)->TryGetBoolField(GetDoesConvertSceneUnitJsonKey(), bConvertSceneUnit)))
 			{
 				return false;
 			}

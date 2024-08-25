@@ -1,0 +1,17 @@
+{
+	"CompilerCommand": [ "${PLUGIN_DIR}/Source/ThirdParty/IREE/Bin/Mac/iree-compile" ],
+	"LinkerCommand": [ "${PLUGIN_DIR}/Source/ThirdParty/IREE/Bin/Mac/ld64.lld" ],
+	"SharedLibExt": ".dylib",
+	"Targets": [
+		{
+			"Architecture": "x86_64",
+			"CompilerArguments": "--iree-llvmcpu-target-triple=x86_64-apple-darwin --iree-input-type=auto --iree-hal-target-backends=llvm-cpu --iree-llvmcpu-link-embedded=false --iree-llvmcpu-link-static --output-format=vm-bytecode --iree-llvmcpu-static-library-output-path=${OBJECT_PATH} -o ${VMFB_PATH} ${INPUT_PATH}",
+			"LinkerArguments": "-dylib -platform_version macos 11.0.0 11.0.0 -arch x86_64 -o ${SHARED_LIB_PATH} ${OBJECT_PATH}"
+		},
+		{
+			"Architecture": "arm64",
+			"CompilerArguments": "--iree-llvmcpu-target-triple=arm64-apple-darwin --iree-input-type=auto --iree-hal-target-backends=llvm-cpu --iree-llvmcpu-link-embedded=false --iree-llvmcpu-link-static --output-format=vm-bytecode --iree-llvmcpu-static-library-output-path=${OBJECT_PATH} -o ${VMFB_PATH} ${INPUT_PATH}",
+			"LinkerArguments": "-dylib -platform_version macos 11.0.0 11.0.0 -arch arm64 -o ${SHARED_LIB_PATH} ${OBJECT_PATH}"
+		}
+	]
+}

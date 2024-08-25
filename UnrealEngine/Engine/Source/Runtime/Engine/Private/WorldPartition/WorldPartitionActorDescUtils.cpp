@@ -4,15 +4,19 @@
 #include "WorldPartition/WorldPartitionActorDescUtils.h"
 #include "AssetRegistry/ARFilter.h"
 #include "AssetRegistry/AssetData.h"
+#include "AssetRegistry/AssetRegistryHelpers.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Modules/ModuleManager.h"
 #include "WorldPartition/WorldPartitionLog.h"
 #include "Engine/Level.h"
 #include "GameFramework/Actor.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/CoreRedirects.h"
 #include "Misc/Base64.h"
 #include "WorldPartition/WorldPartitionActorDesc.h"
 #include "WorldPartition/WorldPartitionHelpers.h"
+#include "WorldPartition/ActorDescContainerInstance.h"
+#include "WorldPartition/WorldPartitionActorDescInstance.h"
 
 static FName NAME_ActorMetaDataClass(TEXT("ActorMetaDataClass"));
 static FName NAME_ActorMetaData(TEXT("ActorMetaData"));
@@ -73,10 +77,15 @@ TUniquePtr<FWorldPartitionActorDesc> FWorldPartitionActorDescUtils::GetActorDesc
 {
 	if (IsValidActorDescriptorFromAssetData(InAssetData))
 	{
+		// Fixing here for now until following jira tasks are closed to unblock users that are renaming plugins:
+		// @todo_ow: remove once https://jira.it.epicgames.com/browse/UE-168245 & https://jira.it.epicgames.com/browse/UE-144431 are closed
+		FSoftObjectPath ActorPath = InAssetData.GetSoftObjectPath();
+		ActorPath.FixupCoreRedirects();
+
 		FWorldPartitionActorDescInitData ActorDescInitData = FWorldPartitionActorDescInitData()
 			.SetNativeClass(GetActorNativeClassFromAssetData(InAssetData))
 			.SetPackageName(InAssetData.PackageName)
-			.SetActorPath(InAssetData.GetSoftObjectPath());
+			.SetActorPath(ActorPath);
 
 		FString ActorMetaDataStr;
 		verify(InAssetData.GetTagValue(NAME_ActorMetaData, ActorMetaDataStr));
@@ -100,6 +109,16 @@ TUniquePtr<FWorldPartitionActorDesc> FWorldPartitionActorDescUtils::GetActorDesc
 
 void FWorldPartitionActorDescUtils::AppendAssetDataTagsFromActor(const AActor* InActor, TArray<UObject::FAssetRegistryTag>& OutTags)
 {
+	FAssetRegistryTagsContextData Context(InActor, EAssetRegistryTagsCaller::Uncategorized);
+	AppendAssetDataTagsFromActor(InActor, Context);
+	for (TPair<FName, UObject::FAssetRegistryTag>& Pair : Context.Tags)
+	{
+		OutTags.Add(MoveTemp(Pair.Value));
+	}
+}
+
+void FWorldPartitionActorDescUtils::AppendAssetDataTagsFromActor(const AActor* InActor, FAssetRegistryTagsContext Context)
+{
 	// Avoid an assert when calling StaticFindObject during save to retrieve the actor's class.
 	// Since we are only looking for a native class, the call to StaticFindObject is legit.
 	TGuardValue<bool> GIsSavingPackageGuard(GIsSavingPackage, false);
@@ -115,7 +134,7 @@ void FWorldPartitionActorDescUtils::AppendAssetDataTagsFromActor(const AActor* I
 
 			FARFilter Filter;
 			Filter.bIncludeOnlyOnDiskAssets = true;
-			Filter.PackageNames.Add(InActor->GetPackage()->GetFName());
+			Filter.PackageNames.Add(InActor->GetPackage()->GetLoadedPath().GetPackageFName());
 
 			TArray<FAssetData> Assets;
 			AssetRegistry.GetAssets(Filter, Assets);
@@ -131,10 +150,10 @@ void FWorldPartitionActorDescUtils::AppendAssetDataTagsFromActor(const AActor* I
 	}
 
 	const FString ActorMetaDataClass = GetParentNativeClass(InActor->GetClass())->GetPathName();
-	OutTags.Add(UObject::FAssetRegistryTag(NAME_ActorMetaDataClass, ActorMetaDataClass, UObject::FAssetRegistryTag::TT_Hidden));
+	Context.AddTag(UObject::FAssetRegistryTag(NAME_ActorMetaDataClass, ActorMetaDataClass, UObject::FAssetRegistryTag::TT_Hidden));
 
 	const FString ActorMetaData = GetAssetDataFromActorDescriptor(ActorDesc);
-	OutTags.Add(UObject::FAssetRegistryTag(NAME_ActorMetaData, ActorMetaData, UObject::FAssetRegistryTag::TT_Hidden));
+	Context.AddTag(UObject::FAssetRegistryTag(NAME_ActorMetaData, ActorMetaData, UObject::FAssetRegistryTag::TT_Hidden));
 }
 
 FString FWorldPartitionActorDescUtils::GetAssetDataFromActorDescriptor(TUniquePtr<FWorldPartitionActorDesc>& InActorDesc)
@@ -142,6 +161,29 @@ FString FWorldPartitionActorDescUtils::GetAssetDataFromActorDescriptor(TUniquePt
 	TArray<uint8> SerializedData;
 	InActorDesc->SerializeTo(SerializedData);
 	return FBase64::Encode(SerializedData);
+}
+
+bool FWorldPartitionActorDescUtils::GetPatchedAssetDataFromAssetData(const FAssetData& InAssetData, FString& OutAssetData, FWorldPartitionAssetDataPatcher* InAssetDataPatcher)
+{
+	if (IsValidActorDescriptorFromAssetData(InAssetData))
+	{
+		FWorldPartitionActorDescInitData ActorDescInitData = FWorldPartitionActorDescInitData()
+			.SetNativeClass(GetActorNativeClassFromAssetData(InAssetData))
+			.SetPackageName(InAssetData.PackageName)
+			.SetActorPath(InAssetData.GetSoftObjectPath());
+
+		FString ActorMetaDataStr;
+		verify(InAssetData.GetTagValue(NAME_ActorMetaData, ActorMetaDataStr));
+		verify(FBase64::Decode(ActorMetaDataStr, ActorDescInitData.SerializedData));
+
+		TArray<uint8> PatchedData;
+		FWorldPartitionActorDesc::Patch(ActorDescInitData, PatchedData, InAssetDataPatcher);
+		OutAssetData = FBase64::Encode(PatchedData);
+
+		return OutAssetData != ActorMetaDataStr;
+	}
+
+	return false;
 }
 
 void FWorldPartitionActorDescUtils::UpdateActorDescriptorFromActor(const AActor* InActor, TUniquePtr<FWorldPartitionActorDesc>& OutActorDesc)
@@ -156,24 +198,25 @@ void FWorldPartitionActorDescUtils::UpdateActorDescriptorFromActorDescriptor(TUn
 	OutActorDesc = MoveTemp(InActorDesc);
 }
 
-void FWorldPartitionActorDescUtils::ReplaceActorDescriptorPointerFromActor(const AActor* InOldActor, AActor* InNewActor, FWorldPartitionActorDesc* InActorDesc)
+void FWorldPartitionActorDescUtils::ReplaceActorDescriptorPointerFromActor(const AActor* InOldActor, AActor* InNewActor, FWorldPartitionActorDescInstance* InActorDescInstance)
 {
 	if (InNewActor)
 	{
 		checkf(InOldActor->GetActorGuid() == InNewActor->GetActorGuid(), TEXT("Mismatching new actor GUID: old=%s new=%s"), *InOldActor->GetActorGuid().ToString(), *InNewActor->GetActorGuid().ToString());
-		checkf(InNewActor->GetActorGuid() == InActorDesc->GetGuid(), TEXT("Mismatching desc actor GUID: desc=%s new=%s"), *InActorDesc->GetGuid().ToString(), *InNewActor->GetActorGuid().ToString());
+		checkf(InNewActor->GetActorGuid() == InActorDescInstance->GetGuid(), TEXT("Mismatching desc actor GUID: desc=%s new=%s"), *InActorDescInstance->GetGuid().ToString(), *InNewActor->GetActorGuid().ToString());
 	}
 
-	if (InActorDesc->ActorPtr.IsValid())
+	if (InActorDescInstance->ActorPtr.IsValid())
 	{
-		checkf(InActorDesc->ActorPtr == InOldActor, TEXT("Mismatching old desc actor: desc=%s old=%s"), *InActorDesc->ActorPtr->GetActorNameOrLabel(), *InOldActor->GetActorNameOrLabel());
+		checkf(InActorDescInstance->ActorPtr == InOldActor, TEXT("Mismatching old desc actor: desc=%s old=%s"), *InActorDescInstance->ActorPtr->GetActorNameOrLabel(), *InOldActor->GetActorNameOrLabel());
 	}
 
-	InActorDesc->ActorPtr = InNewActor;
+	InActorDescInstance->ActorPtr = InNewActor;
 }
 
 bool FWorldPartitionActorDescUtils::FixupRedirectedAssetPath(FName& InOutAssetPath)
 {
-	return FWorldPartitionHelpers::FixupRedirectedAssetPath(InOutAssetPath);
+	UAssetRegistryHelpers::FixupRedirectedAssetPath(InOutAssetPath);
+	return true;
 }
 #endif

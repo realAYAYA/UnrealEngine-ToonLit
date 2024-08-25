@@ -151,7 +151,7 @@ bool UPackedVectorTest::ExecuteFloatTest(TMap<FString, bool>& TestResults)
 					else
 					{
 						const float ValueDiff = FMath::Abs(ReadValue.X - WriteValue.X);
-						LocalSuccess &= ValueDiff < 2.0f/Test.ScaleFactor; // The diff test might need some adjustment
+						LocalSuccess &= ValueDiff < 2.0f/static_cast<float>(Test.ScaleFactor); // The diff test might need some adjustment
 					}
 				}
 			}

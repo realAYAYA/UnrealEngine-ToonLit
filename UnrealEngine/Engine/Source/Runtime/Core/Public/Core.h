@@ -62,7 +62,6 @@ MONOLITHIC_HEADER_BOILERPLATE()
 #include "Templates/PointerIsConvertibleFromTo.h"
 #include "Templates/AlignmentTemplates.h"
 #include "Templates/RemoveReference.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/IntegralConstant.h"
 #include "Templates/IsClass.h"
 #include "Templates/TypeCompatibleBytes.h"

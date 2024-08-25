@@ -211,6 +211,149 @@ FRigVMStructUpgradeInfo FRigUnit_AimBone::GetUpgradeInfo() const
 	return Info;
 }
 
+#if WITH_EDITOR
+
+bool FRigUnit_AimItem::GetDirectManipulationTargets(const URigVMUnitNode* InNode, TSharedPtr<FStructOnScope> InInstance, URigHierarchy* InHierarchy, TArray<FRigDirectManipulationTarget>& InOutTargets, FString* OutFailureReason) const
+{
+	static TArray<FRigDirectManipulationTarget> Targets = {
+		{ TEXT("Primary Target"), ERigControlType::Position },
+		{ TEXT("Secondary Target"), ERigControlType::Position },
+		{ TEXT("Resulting Transform"), ERigControlType::EulerTransform }
+	};
+	InOutTargets.Append(Targets);
+	return true;
+}
+
+TArray<const URigVMPin*> FRigUnit_AimItem::GetPinsForDirectManipulation(const URigVMUnitNode* InNode, const FRigDirectManipulationTarget& InTarget) const
+{
+	if(InTarget.Name == TEXT("Primary Target"))
+	{
+		return {
+			InNode->FindPin(GET_MEMBER_NAME_STRING_CHECKED(FRigUnit_AimItem, Primary))->FindSubPin(GET_MEMBER_NAME_STRING_CHECKED(FRigUnit_AimItem_Target, Kind)),
+			InNode->FindPin(GET_MEMBER_NAME_STRING_CHECKED(FRigUnit_AimItem, Primary))->FindSubPin(GET_MEMBER_NAME_STRING_CHECKED(FRigUnit_AimItem_Target, Target)),
+		};
+	}
+	if(InTarget.Name == TEXT("Secondary Target"))
+	{
+		return {
+			InNode->FindPin(GET_MEMBER_NAME_STRING_CHECKED(FRigUnit_AimItem, Secondary))->FindSubPin(GET_MEMBER_NAME_STRING_CHECKED(FRigUnit_AimItem_Target, Kind)),
+			InNode->FindPin(GET_MEMBER_NAME_STRING_CHECKED(FRigUnit_AimItem, Secondary))->FindSubPin(GET_MEMBER_NAME_STRING_CHECKED(FRigUnit_AimItem_Target, Target)),
+		};
+	}
+	if(InTarget.Name == TEXT("Resulting Transform"))
+	{
+		return {
+			InNode->FindPin(GET_MEMBER_NAME_STRING_CHECKED(FRigUnit_AimItem, Primary))->FindSubPin(GET_MEMBER_NAME_STRING_CHECKED(FRigUnit_AimItem_Target, Target)),
+			InNode->FindPin(GET_MEMBER_NAME_STRING_CHECKED(FRigUnit_AimItem, Secondary))->FindSubPin(GET_MEMBER_NAME_STRING_CHECKED(FRigUnit_AimItem_Target, Target)),
+			InNode->FindPin(GET_MEMBER_NAME_STRING_CHECKED(FRigUnit_AimItem, Primary))->FindSubPin(GET_MEMBER_NAME_STRING_CHECKED(FRigUnit_AimItem_Target, Kind)),
+			InNode->FindPin(GET_MEMBER_NAME_STRING_CHECKED(FRigUnit_AimItem, Secondary))->FindSubPin(GET_MEMBER_NAME_STRING_CHECKED(FRigUnit_AimItem_Target, Kind)),
+		};
+	}
+	return FRigUnit_HighlevelBaseMutable::GetPinsForDirectManipulation(InNode, InTarget);
+}
+
+bool FRigUnit_AimItem::UpdateHierarchyForDirectManipulation(const URigVMUnitNode* InNode, TSharedPtr<FStructOnScope> InInstance, FControlRigExecuteContext& InContext, TSharedPtr<FRigDirectManipulationInfo> InInfo)
+{
+	URigHierarchy* Hierarchy = InContext.Hierarchy;
+	if(Hierarchy == nullptr)
+	{
+		return false;
+	}
+	
+	if(InInfo->Target.Name == TEXT("Primary Target"))
+	{
+		const FTransform ParentTransform = Hierarchy->GetGlobalTransform(Primary.Space, false);
+		Hierarchy->SetControlOffsetTransform(InInfo->ControlKey, ParentTransform, false);
+		Hierarchy->SetLocalTransform(InInfo->ControlKey, FTransform(Primary.Target), false);
+		if(!InInfo->bInitialized)
+		{
+			Hierarchy->SetLocalTransform(InInfo->ControlKey, FTransform(Primary.Target), true);
+		}
+		return true;
+	}
+	if(InInfo->Target.Name == TEXT("Secondary Target"))
+	{
+		const FTransform ParentTransform = Hierarchy->GetGlobalTransform(Secondary.Space, false);
+		Hierarchy->SetControlOffsetTransform(InInfo->ControlKey, ParentTransform, false);
+		Hierarchy->SetLocalTransform(InInfo->ControlKey, FTransform(Secondary.Target), false);
+		if(!InInfo->bInitialized)
+		{
+			Hierarchy->SetLocalTransform(InInfo->ControlKey, FTransform(Primary.Target), true);
+		}
+		return true;
+	}
+	if(InInfo->Target.Name == TEXT("Resulting Transform"))
+	{
+		// execute the aim
+		Execute(InContext);
+		
+		const FTransform ItemTransform = Hierarchy->GetGlobalTransform(CachedItem);
+		
+		if(!InInfo->bInitialized)
+		{
+			InInfo->OffsetTransform = ItemTransform;
+			
+			const FTransform PrimaryParentTransform = Hierarchy->GetGlobalTransform(Primary.Space, false);
+			const FTransform SecondaryParentTransform = Hierarchy->GetGlobalTransform(Secondary.Space, false);
+			InInfo->Transforms = { FTransform(Primary.Target), FTransform(Secondary.Target) };
+			InInfo->Transforms[0] = InInfo->Transforms[0] * PrimaryParentTransform;
+			InInfo->Transforms[1] = InInfo->Transforms[1] * SecondaryParentTransform;
+			InInfo->Transforms[0] = InInfo->Transforms[0].GetRelativeTransform(ItemTransform);
+			InInfo->Transforms[1] = InInfo->Transforms[1].GetRelativeTransform(ItemTransform);
+			InInfo->Transforms[0].NormalizeRotation();
+			InInfo->Transforms[1].NormalizeRotation();
+
+			Hierarchy->SetControlOffsetTransform(InInfo->ControlKey, InInfo->OffsetTransform, false);
+			Hierarchy->SetGlobalTransform(InInfo->ControlKey, FTransform::Identity, false);
+			Hierarchy->SetGlobalTransform(InInfo->ControlKey, FTransform::Identity, true);
+		}
+		else
+		{
+			Hierarchy->SetGlobalTransform(InInfo->ControlKey, ItemTransform, false);
+		}
+		return true;
+	}
+	return FRigUnit_HighlevelBaseMutable::UpdateHierarchyForDirectManipulation(InNode, InInstance, InContext, InInfo);
+}
+
+bool FRigUnit_AimItem::UpdateDirectManipulationFromHierarchy(const URigVMUnitNode* InNode, TSharedPtr<FStructOnScope> InInstance, FControlRigExecuteContext& InContext, TSharedPtr<FRigDirectManipulationInfo> InInfo)
+{
+	URigHierarchy* Hierarchy = InContext.Hierarchy;
+	if(Hierarchy == nullptr)
+	{
+		return false;
+	}
+
+	if(InInfo->Target.Name == TEXT("Primary Target"))
+	{
+		Primary.Kind = EControlRigVectorKind::Location;
+		Primary.Target = Hierarchy->GetLocalTransform(InInfo->ControlKey, false).GetTranslation();
+		return true;
+	}
+	if(InInfo->Target.Name == TEXT("Secondary Target"))
+	{
+		Primary.Kind = EControlRigVectorKind::Location;
+		Secondary.Target = Hierarchy->GetLocalTransform(InInfo->ControlKey, false).GetTranslation();
+		return true;
+	}
+	if(InInfo->Target.Name == TEXT("Resulting Transform"))
+	{
+		Primary.Kind = EControlRigVectorKind::Location;
+		Secondary.Kind = EControlRigVectorKind::Location;
+		const FTransform ControlTransform = Hierarchy->GetGlobalTransform(InInfo->ControlKey);
+		const FTransform GlobalPrimaryTransform = InInfo->Transforms[0] * ControlTransform;
+		const FTransform GlobalSecondaryTransform = InInfo->Transforms[1] * ControlTransform;
+		const FTransform LocalPrimaryTransform = GlobalPrimaryTransform.GetRelativeTransform(Hierarchy->GetGlobalTransform(Primary.Space));
+		const FTransform LocalSecondaryTransform = GlobalSecondaryTransform.GetRelativeTransform(Hierarchy->GetGlobalTransform(Secondary.Space));
+		Primary.Target = LocalPrimaryTransform.GetTranslation();
+		Secondary.Target = LocalSecondaryTransform.GetTranslation();
+		return true;
+	}
+	return FRigUnit_HighlevelBaseMutable::UpdateDirectManipulationFromHierarchy(InNode, InInstance, InContext, InInfo);
+}
+
+#endif
+
 FRigUnit_AimItem_Execute()
 {
     DECLARE_SCOPE_HIERARCHICAL_COUNTER_RIGUNIT()

@@ -24,6 +24,8 @@ DEFINE_STAT(STAT_GCSweep);
 DEFINE_STAT(STAT_GCCUpdateBounds);
 DEFINE_STAT(STAT_GCUpdateFilterData);
 DEFINE_STAT(STAT_GCCUGlobalMatrices);
+DEFINE_STAT(STAT_GCPostPhysicsSync);
+DEFINE_STAT(STAT_GCFullyDecayedBroadcast);
 DEFINE_STAT(STAT_GCInitDynamicData);
 DEFINE_STAT(STAT_GCTotalTransforms);
 DEFINE_STAT(STAT_GCChangedTransforms);
@@ -64,6 +66,14 @@ DEFINE_STAT(STAT_GatherTrailingEvent)
 DEFINE_STAT(STAT_GatherSleepingEvent)
 DEFINE_STAT(STAT_GatherCrumblingEvent)
 DEFINE_STAT(STAT_AccelerationStructureReset);
+
+DEFINE_STAT(STAT_FinalizeCallbacks);
+DEFINE_STAT(STAT_ResetClusteringEvents);
+DEFINE_STAT(STAT_RewindFinishFrame);
+DEFINE_STAT(STAT_ResetMarshallingData);
+DEFINE_STAT(STAT_ConditionalApplyRewind);
+DEFINE_STAT(STAT_FinalizePullData);
+DEFINE_STAT(STAT_DestroyPendingProxies);
 
 DEFINE_STAT(STAT_ParamUpdateObject);
 DEFINE_STAT(STAT_ParamUpdateField);
@@ -110,3 +120,4 @@ DEFINE_STAT(STAT_Collisions_Gather);
 DEFINE_STAT(STAT_Collisions_Scatter);
 DEFINE_STAT(STAT_Collisions_Apply);
 DEFINE_STAT(STAT_Collisions_ApplyPushOut);
+DEFINE_STAT(STAT_Collisions_SimplifyConvexes);

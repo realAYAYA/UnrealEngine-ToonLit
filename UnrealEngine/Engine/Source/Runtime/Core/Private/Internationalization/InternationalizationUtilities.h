@@ -5,6 +5,8 @@
 #include "CoreTypes.h"
 #include "Containers/UnrealString.h"
 
+class FInternationalization;
+
 namespace InternationalizationUtilities
 {
 	/** Sanitize the given culture code so that it is safe to use */
@@ -23,5 +25,5 @@ namespace InternationalizationUtilities
 	};
 
 	/** Get the canonical version of the given culture code (will also sanitize it) */
-	FString GetCanonicalCultureName(const FString& Name, const FString& FallbackCulture);
+	FString GetCanonicalCultureName(const FString& Name, const FString& FallbackCulture, FInternationalization& I18N);
 }

@@ -325,7 +325,7 @@ FSteamServerInstanceHandler::FSteamServerInstanceHandler(FSteamSharedModule* Ste
 		}
 	}
 
-	// Allow the command line to override the default query port for master server communications
+	// Allow the command line to override the default query port for server list queries
 	if (FParse::Value(FCommandLine::Get(), TEXT("QueryPort="), QueryPort) == false)
 	{
 		if (!GConfig->GetInt(TEXT("OnlineSubsystemSteam"), TEXT("GameServerQueryPort"), QueryPort, GEngineIni))
@@ -363,7 +363,7 @@ FSteamServerInstanceHandler::FSteamServerInstanceHandler(FSteamSharedModule* Ste
 
 void FSteamServerInstanceHandler::InternalShutdown()
 {
-	// Log off of the steam master servers, removes this server immediately from the backend.
+	// Log off of the steam coordinator servers, removes this server immediately from the backend.
 	if (SteamGameServer() && SteamGameServer()->BLoggedOn())
 	{
 		SteamGameServer()->LogOff();

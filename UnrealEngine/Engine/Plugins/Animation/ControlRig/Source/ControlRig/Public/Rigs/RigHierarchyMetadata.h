@@ -36,28 +36,15 @@ struct CONTROLRIG_API FRigBaseMetadata
 {
 	GENERATED_BODY()
 
-public:
-
-	FRigBaseMetadata()
-    	: Element(nullptr)
-		, Name(NAME_None)
-		, Type(ERigMetadataType::Invalid)
-		, ValueProperty(nullptr)
-	{}
-
-	virtual ~FRigBaseMetadata(){}
-
 protected:
-
-	const FRigBaseElement* Element;
 
 	UPROPERTY()
 	FName Name;
 
 	UPROPERTY()
-	ERigMetadataType Type;
+	ERigMetadataType Type = ERigMetadataType::Invalid;
 
-	mutable const FProperty* ValueProperty;
+	mutable const FProperty* ValueProperty = nullptr;
 
 	static bool IsClassOf(const FRigBaseMetadata* InMetadata)
 	{
@@ -65,15 +52,14 @@ protected:
 	}
 
 public:
+	virtual ~FRigBaseMetadata() = default;
 
 	UScriptStruct* GetMetadataStruct() const;
-	virtual void Serialize(FArchive& Ar, bool bIsLoading);
+	virtual void Serialize(FArchive& Ar);
 
-	bool IsValid() const { return (GetType() != ERigMetadataType::Invalid) && GetKey().IsValid(); }
-	const FRigBaseElement* GetElement() const { return Element; }
-	const FRigElementKey& GetKey() const;
+	bool IsValid() const { return GetType() != ERigMetadataType::Invalid; }
 	const FName& GetName() const { return Name; }
-	const ERigMetadataType& GetType() const { return Type; }
+	ERigMetadataType GetType() const { return Type; }
 	bool IsArray() const
 	{
 		return GetValueProperty()->IsA<FArrayProperty>();
@@ -146,7 +132,7 @@ public:
 protected:
 
 	static UScriptStruct* GetMetadataStruct(const ERigMetadataType& InType);
-	static FRigBaseMetadata* MakeMetadata(const FRigBaseElement* InElement, const FName& InName, ERigMetadataType InType);
+	static FRigBaseMetadata* MakeMetadata(const FName& InName, ERigMetadataType InType);
 	static void DestroyMetadata(FRigBaseMetadata** Metadata);
 
 	const FProperty* GetValueProperty() const
@@ -188,14 +174,9 @@ public:
 	GENERATED_BODY()
 	DECLARE_RIG_METADATA_METHODS(FRigBoolMetadata)
 
-	FRigBoolMetadata()
-		: FRigBaseMetadata()
-		, Value(false)
-	{}
-	virtual ~FRigBoolMetadata() override {}
-	virtual void Serialize(FArchive& Ar, bool bIsLoading) override
+	virtual void Serialize(FArchive& Ar) override
 	{
-		Super::Serialize(Ar, bIsLoading);
+		Super::Serialize(Ar);
 		Ar << Value;
 	}
 	const bool& GetValue() const { return Value; }
@@ -210,24 +191,18 @@ public:
 protected:
 
 	UPROPERTY()
-	bool Value;
+	bool Value = false;
 };
 
 USTRUCT()
 struct CONTROLRIG_API FRigBoolArrayMetadata : public FRigBaseMetadata
 {
-public:
-	
 	GENERATED_BODY()
 	DECLARE_RIG_METADATA_METHODS(FRigBoolArrayMetadata)
 
-	FRigBoolArrayMetadata()
-		: FRigBaseMetadata()
-	{}
-	virtual ~FRigBoolArrayMetadata() override {}
-	virtual void Serialize(FArchive& Ar, bool bIsLoading) override
+	virtual void Serialize(FArchive& Ar) override
 	{
-		Super::Serialize(Ar, bIsLoading);
+		Super::Serialize(Ar);
 		Ar << Value;
 	}
 	const TArray<bool>& GetValue() const { return Value; }
@@ -253,14 +228,9 @@ public:
 	GENERATED_BODY()
 	DECLARE_RIG_METADATA_METHODS(FRigFloatMetadata)
 
-	FRigFloatMetadata()
-		: FRigBaseMetadata()
-		, Value(0.f)
-	{}
-	virtual ~FRigFloatMetadata() override {}
-	virtual void Serialize(FArchive& Ar, bool bIsLoading) override
+	virtual void Serialize(FArchive& Ar) override
 	{
-		Super::Serialize(Ar, bIsLoading);
+		Super::Serialize(Ar);
 		Ar << Value;
 	}
 	const float& GetValue() const { return Value; } 
@@ -275,7 +245,7 @@ public:
 protected:
 
 	UPROPERTY()
-	float Value;
+	float Value = 0.f;
 };
 
 USTRUCT()
@@ -286,13 +256,9 @@ public:
 	GENERATED_BODY()
 	DECLARE_RIG_METADATA_METHODS(FRigFloatArrayMetadata)
 
-	FRigFloatArrayMetadata()
-		: FRigBaseMetadata()
-	{}
-	virtual ~FRigFloatArrayMetadata() override {}
-	virtual void Serialize(FArchive& Ar, bool bIsLoading) override
+	virtual void Serialize(FArchive& Ar) override
 	{
-		Super::Serialize(Ar, bIsLoading);
+		Super::Serialize(Ar);
 		Ar << Value;
 	}
 	const TArray<float>& GetValue() const { return Value; }
@@ -318,14 +284,9 @@ public:
 	GENERATED_BODY()
 	DECLARE_RIG_METADATA_METHODS(FRigInt32Metadata)
 
-	FRigInt32Metadata()
-		: FRigBaseMetadata()
-		, Value(0)
-	{}
-	virtual ~FRigInt32Metadata() override {}
-	virtual void Serialize(FArchive& Ar, bool bIsLoading) override
+	virtual void Serialize(FArchive& Ar) override
 	{
-		Super::Serialize(Ar, bIsLoading);
+		Super::Serialize(Ar);
 		Ar << Value;
 	}
 	const int32& GetValue() const { return Value; } 
@@ -340,7 +301,7 @@ public:
 protected:
 
 	UPROPERTY()
-	int32 Value;
+	int32 Value = 0;
 };
 
 USTRUCT()
@@ -351,13 +312,9 @@ public:
 	GENERATED_BODY()
 	DECLARE_RIG_METADATA_METHODS(FRigInt32ArrayMetadata)
 
-	FRigInt32ArrayMetadata()
-		: FRigBaseMetadata()
-	{}
-	virtual ~FRigInt32ArrayMetadata() override {}
-	virtual void Serialize(FArchive& Ar, bool bIsLoading) override
+	virtual void Serialize(FArchive& Ar) override
 	{
-		Super::Serialize(Ar, bIsLoading);
+		Super::Serialize(Ar);
 		Ar << Value;
 	}
 	const TArray<int32>& GetValue() const { return Value; }
@@ -383,14 +340,9 @@ public:
 	GENERATED_BODY()
 	DECLARE_RIG_METADATA_METHODS(FRigNameMetadata)
 
-	FRigNameMetadata()
-		: FRigBaseMetadata()
-		, Value(NAME_None)
-	{}
-	virtual ~FRigNameMetadata() override {}
-	virtual void Serialize(FArchive& Ar, bool bIsLoading) override
+	virtual void Serialize(FArchive& Ar) override
 	{
-		Super::Serialize(Ar, bIsLoading);
+		Super::Serialize(Ar);
 		Ar << Value;
 	}
 	const FName& GetValue() const { return Value; } 
@@ -416,13 +368,9 @@ public:
 	GENERATED_BODY()
 	DECLARE_RIG_METADATA_METHODS(FRigNameArrayMetadata)
 
-	FRigNameArrayMetadata()
-		: FRigBaseMetadata()
-	{}
-	virtual ~FRigNameArrayMetadata() override {}
-	virtual void Serialize(FArchive& Ar, bool bIsLoading) override
+	virtual void Serialize(FArchive& Ar) override
 	{
-		Super::Serialize(Ar, bIsLoading);
+		Super::Serialize(Ar);
 		Ar << Value;
 	}
 	const TArray<FName>& GetValue() const { return Value; }
@@ -448,14 +396,9 @@ public:
 	GENERATED_BODY()
 	DECLARE_RIG_METADATA_METHODS(FRigVectorMetadata)
 
-	FRigVectorMetadata()
-		: FRigBaseMetadata()
-		, Value(FVector::ZeroVector)
-	{}
-	virtual ~FRigVectorMetadata() override {}
-	virtual void Serialize(FArchive& Ar, bool bIsLoading) override
+	virtual void Serialize(FArchive& Ar) override
 	{
-		Super::Serialize(Ar, bIsLoading);
+		Super::Serialize(Ar);
 		Ar << Value;
 	}
 	const FVector& GetValue() const { return Value; } 
@@ -470,7 +413,7 @@ public:
 protected:
 
 	UPROPERTY()
-	FVector Value;
+	FVector Value = FVector::ZeroVector;
 };
 
 USTRUCT()
@@ -481,13 +424,9 @@ public:
 	GENERATED_BODY()
 	DECLARE_RIG_METADATA_METHODS(FRigVectorArrayMetadata)
 
-	FRigVectorArrayMetadata()
-		: FRigBaseMetadata()
-	{}
-	virtual ~FRigVectorArrayMetadata() override {}
-	virtual void Serialize(FArchive& Ar, bool bIsLoading) override
+	virtual void Serialize(FArchive& Ar) override
 	{
-		Super::Serialize(Ar, bIsLoading);
+		Super::Serialize(Ar);
 		Ar << Value;
 	}
 	const TArray<FVector>& GetValue() const { return Value; }
@@ -513,14 +452,9 @@ public:
 	GENERATED_BODY()
 	DECLARE_RIG_METADATA_METHODS(FRigRotatorMetadata)
 
-	FRigRotatorMetadata()
-		: FRigBaseMetadata()
-		, Value(FRotator::ZeroRotator)
-	{}
-	virtual ~FRigRotatorMetadata() override {}
-	virtual void Serialize(FArchive& Ar, bool bIsLoading) override
+	virtual void Serialize(FArchive& Ar) override
 	{
-		Super::Serialize(Ar, bIsLoading);
+		Super::Serialize(Ar);
 		Ar << Value;
 	}
 	const FRotator& GetValue() const { return Value; } 
@@ -535,7 +469,7 @@ public:
 protected:
 
 	UPROPERTY()
-	FRotator Value;
+	FRotator Value = FRotator::ZeroRotator;
 };
 
 USTRUCT()
@@ -546,13 +480,9 @@ public:
 	GENERATED_BODY()
 	DECLARE_RIG_METADATA_METHODS(FRigRotatorArrayMetadata)
 
-	FRigRotatorArrayMetadata()
-		: FRigBaseMetadata()
-	{}
-	virtual ~FRigRotatorArrayMetadata() override {}
-	virtual void Serialize(FArchive& Ar, bool bIsLoading) override
+	virtual void Serialize(FArchive& Ar) override
 	{
-		Super::Serialize(Ar, bIsLoading);
+		Super::Serialize(Ar);
 		Ar << Value;
 	}
 	const TArray<FRotator>& GetValue() const { return Value; }
@@ -578,14 +508,9 @@ public:
 	GENERATED_BODY()
 	DECLARE_RIG_METADATA_METHODS(FRigQuatMetadata)
 
-	FRigQuatMetadata()
-		: FRigBaseMetadata()
-		, Value(FQuat::Identity)
-	{}
-	virtual ~FRigQuatMetadata() override {}
-	virtual void Serialize(FArchive& Ar, bool bIsLoading) override
+	virtual void Serialize(FArchive& Ar) override
 	{
-		Super::Serialize(Ar, bIsLoading);
+		Super::Serialize(Ar);
 		Ar << Value;
 	}
 	const FQuat& GetValue() const { return Value; } 
@@ -600,7 +525,7 @@ public:
 protected:
 
 	UPROPERTY()
-	FQuat Value;
+	FQuat Value = FQuat::Identity;
 };
 
 USTRUCT()
@@ -611,13 +536,9 @@ public:
 	GENERATED_BODY()
 	DECLARE_RIG_METADATA_METHODS(FRigQuatArrayMetadata)
 
-	FRigQuatArrayMetadata()
-		: FRigBaseMetadata()
-	{}
-	virtual ~FRigQuatArrayMetadata() override {}
-	virtual void Serialize(FArchive& Ar, bool bIsLoading) override
+	virtual void Serialize(FArchive& Ar) override
 	{
-		Super::Serialize(Ar, bIsLoading);
+		Super::Serialize(Ar);
 		Ar << Value;
 	}
 	const TArray<FQuat>& GetValue() const { return Value; }
@@ -643,14 +564,9 @@ public:
 	GENERATED_BODY()
 	DECLARE_RIG_METADATA_METHODS(FRigTransformMetadata)
 
-	FRigTransformMetadata()
-		: FRigBaseMetadata()
-		, Value(FTransform::Identity)
-	{}
-	virtual ~FRigTransformMetadata() override {}
-	virtual void Serialize(FArchive& Ar, bool bIsLoading) override
+	virtual void Serialize(FArchive& Ar) override
 	{
-		Super::Serialize(Ar, bIsLoading);
+		Super::Serialize(Ar);
 		Ar << Value;
 	}
 	const FTransform& GetValue() const { return Value; } 
@@ -665,7 +581,7 @@ public:
 protected:
 
 	UPROPERTY()
-	FTransform Value;
+	FTransform Value = FTransform::Identity;
 };
 
 USTRUCT()
@@ -676,13 +592,9 @@ public:
 	GENERATED_BODY()
 	DECLARE_RIG_METADATA_METHODS(FRigTransformArrayMetadata)
 
-	FRigTransformArrayMetadata()
-		: FRigBaseMetadata()
-	{}
-	virtual ~FRigTransformArrayMetadata() override {}
-	virtual void Serialize(FArchive& Ar, bool bIsLoading) override
+	virtual void Serialize(FArchive& Ar) override
 	{
-		Super::Serialize(Ar, bIsLoading);
+		Super::Serialize(Ar);
 		Ar << Value;
 	}
 	const TArray<FTransform>& GetValue() const { return Value; }
@@ -708,14 +620,9 @@ public:
 	GENERATED_BODY()
 	DECLARE_RIG_METADATA_METHODS(FRigLinearColorMetadata)
 
-	FRigLinearColorMetadata()
-		: FRigBaseMetadata()
-		, Value(FLinearColor::White)
-	{}
-	virtual ~FRigLinearColorMetadata() override {}
-	virtual void Serialize(FArchive& Ar, bool bIsLoading) override
+	virtual void Serialize(FArchive& Ar) override
 	{
-		Super::Serialize(Ar, bIsLoading);
+		Super::Serialize(Ar);
 		Ar << Value;
 	}
 	const FLinearColor& GetValue() const { return Value; } 
@@ -730,7 +637,7 @@ public:
 protected:
 
 	UPROPERTY()
-	FLinearColor Value;
+	FLinearColor Value = FLinearColor::White;
 };
 
 USTRUCT()
@@ -741,13 +648,9 @@ public:
 	GENERATED_BODY()
 	DECLARE_RIG_METADATA_METHODS(FRigLinearColorArrayMetadata)
 
-	FRigLinearColorArrayMetadata()
-		: FRigBaseMetadata()
-	{}
-	virtual ~FRigLinearColorArrayMetadata() override {}
-	virtual void Serialize(FArchive& Ar, bool bIsLoading) override
+	virtual void Serialize(FArchive& Ar) override
 	{
-		Super::Serialize(Ar, bIsLoading);
+		Super::Serialize(Ar);
 		Ar << Value;
 	}
 	const TArray<FLinearColor>& GetValue() const { return Value; }
@@ -760,7 +663,6 @@ public:
 	}
 
 protected:
-
 	UPROPERTY()
 	TArray<FLinearColor> Value;
 };
@@ -773,13 +675,9 @@ public:
 	GENERATED_BODY()
 	DECLARE_RIG_METADATA_METHODS(FRigElementKeyMetadata)
 
-	FRigElementKeyMetadata()
-		: FRigBaseMetadata()
-	{}
-	virtual ~FRigElementKeyMetadata() override {}
-	virtual void Serialize(FArchive& Ar, bool bIsLoading) override
+	virtual void Serialize(FArchive& Ar) override
 	{
-		Super::Serialize(Ar, bIsLoading);
+		Super::Serialize(Ar);
 		Ar << Value;
 	}
 	const FRigElementKey& GetValue() const { return Value; } 
@@ -805,13 +703,9 @@ public:
 	GENERATED_BODY()
 	DECLARE_RIG_METADATA_METHODS(FRigElementKeyArrayMetadata)
 
-	FRigElementKeyArrayMetadata()
-		: FRigBaseMetadata()
-	{}
-	virtual ~FRigElementKeyArrayMetadata() override {}
-	virtual void Serialize(FArchive& Ar, bool bIsLoading) override
+	virtual void Serialize(FArchive& Ar) override
 	{
-		Super::Serialize(Ar, bIsLoading);
+		Super::Serialize(Ar);
 		Ar << Value;
 	}
 	const TArray<FRigElementKey>& GetValue() const { return Value; }

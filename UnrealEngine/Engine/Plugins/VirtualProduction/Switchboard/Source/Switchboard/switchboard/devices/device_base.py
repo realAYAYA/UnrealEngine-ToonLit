@@ -9,8 +9,8 @@ import socket
 import threading
 from typing import Optional, Type, TYPE_CHECKING
 
-from PySide2 import QtCore
-from PySide2 import QtGui
+from PySide6 import QtCore
+from PySide6 import QtGui
 
 import pythonosc.udp_client
 

@@ -6,6 +6,7 @@
 
 #include "WorldPartition/WorldPartitionActorDesc.h"
 #include "WorldPartition/DataLayer/DataLayerType.h"
+#include "Misc/Optional.h"
 
 class FDataLayerInstanceDesc
 {
@@ -53,6 +54,7 @@ private:
 	bool bDeprecatedIsRuntime;
 	//~ End UDeprecatedDataLayerInstance
 
+	friend class UDataLayerInstance;
 };
 
 /**
@@ -63,7 +65,7 @@ class FWorldDataLayersActorDesc : public FWorldPartitionActorDesc
 public:
 	ENGINE_API FWorldDataLayersActorDesc();
 	bool IsValid() const { return bIsValid; }
-	const TArray<FDataLayerInstanceDesc>& GetDataLayerInstances() const { return DataLayerInstances; }
+	ENGINE_API const TArray<FDataLayerInstanceDesc>& GetDataLayerInstances() const;
 	ENGINE_API const FDataLayerInstanceDesc* GetDataLayerInstanceFromInstanceName(FName InDataLayerInstanceName) const;
 	ENGINE_API const FDataLayerInstanceDesc* GetDataLayerInstanceFromAssetPath(FName InDataLayerAssetPath) const;
 
@@ -74,10 +76,21 @@ protected:
 	virtual uint32 GetSizeOf() const override { return sizeof(FWorldDataLayersActorDesc); }
 	ENGINE_API virtual void Serialize(FArchive& Ar) override;
 	virtual bool IsResaveNeeded() const override { return !IsValid(); }
+	virtual bool IsRuntimeRelevant(const FWorldPartitionActorDescInstance* InActorDescInstance) const override;
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	virtual void OnUnloadingInstance(const FWorldPartitionActorDescInstance* InActorDescInstance) const override;
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	//~ End FWorldPartitionActorDesc Interface.
 
 private:
+
+	void ForEachDataLayerInstanceDesc(TFunctionRef<bool(const FDataLayerInstanceDesc&)> Func) const;
+	const TArray<FDataLayerInstanceDesc>& GetExternalPackageDataLayerInstances() const;
+
 	TArray<FDataLayerInstanceDesc> DataLayerInstances;
+	mutable TOptional<TArray<FDataLayerInstanceDesc>> ExternalPackageDataLayerInstances;
 	bool bIsValid;
+	bool bIsExternalDataLayerWorldDataLayers;
+	bool bUseExternalPackageDataLayerInstances;
 };
 #endif

@@ -114,8 +114,9 @@ public:
 	 *
 	 * @param InSequence    The sequence to play
 	 * @param StartOffset   The offset to start at, in frames (display rate)
+	 * @param DurationOverride  A duration to use instead of the natural duration of the sequence
 	 */
-	void Initialize(UMovieSceneSequence* InSequence, int32 StartOffset = 0);
+	void Initialize(UMovieSceneSequence* InSequence, int32 StartOffset = 0, float DurationOverride = 0.f);
 
 	/**
 	 * Start playing the sequence
@@ -183,11 +184,13 @@ public:
 	virtual void GetViewportSettings(TMap<FViewportClient*, EMovieSceneViewportParams>& ViewportParamsMap) const override {}
 	virtual bool CanUpdateCameraCut() const override { return false; }
 	virtual void UpdateCameraCut(UObject* CameraObject, const EMovieSceneCameraCutParams& CameraCutParams) override {}
-	virtual void ResolveBoundObjects(const FGuid& InBindingId, FMovieSceneSequenceID InSequenceID, UMovieSceneSequence& InSequence, UObject* InResolutionContext, TArray<UObject*, TInlineAllocator<1>>& OutObjects) const override;
-
+	
 	// UObject interface 
 	virtual bool IsDestructionThreadSafe() const override { return false; }
 	virtual void BeginDestroy() override;
+
+protected:
+	virtual void ResolveBoundObjects(UE::UniversalObjectLocator::FResolveParams& ResolveParams, const FGuid& InBindingId, FMovieSceneSequenceID SequenceID, UMovieSceneSequence& Sequence, TArray<UObject*, TInlineAllocator<1>>& OutObjects) const override;
 
 private:
 
@@ -214,8 +217,17 @@ private:
 	/** The sequence duration in frames */
 	FFrameTime DurationFrames;
 
+	/** The total duration we need to play */
+	FFrameTime TotalDurationFrames;
+
+	/** Accumulated number of loops played so far */
+	uint16 LoopsPlayed = 0; 
+
 	/** Whether we should be looping */
-	bool bIsLooping;
+	bool bIsLooping = false;
+
+	/** Whether we need to loop due to a duration override */
+	bool bDurationRequiresLooping = false;
 
 	/** Movie player status. */
 	TEnumAsByte<EMovieScenePlayerStatus::Type> Status;

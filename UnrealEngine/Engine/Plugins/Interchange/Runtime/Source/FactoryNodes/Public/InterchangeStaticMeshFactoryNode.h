@@ -25,7 +25,7 @@ namespace UE
 } // namespace UE
 
 
-UCLASS(BlueprintType, Experimental)
+UCLASS(BlueprintType)
 class INTERCHANGEFACTORYNODES_API UInterchangeStaticMeshFactoryNode : public UInterchangeMeshFactoryNode
 {
 	GENERATED_BODY()
@@ -34,33 +34,40 @@ public:
 	UInterchangeStaticMeshFactoryNode();
 
 	/**
-	 * Initialize node data
-	 * @param UniqueID - The uniqueId for this node
-	 * @param DisplayLabel - The name of the node
+	 * Initialize node data.
+	 * @param UniqueID - The unique ID for this node.
+	 * @param DisplayLabel - The name of the node.
 	 * @param InAssetClass - The class the StaticMesh factory will create for this node.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	void InitializeStaticMeshNode(const FString& UniqueID, const FString& DisplayLabel, const FString& InAssetClass);
 
 	/**
-	 * Return the node type name of the class, we use this when reporting error
+	 * Return the node type name of the class. This is used when reporting errors.
 	 */
 	virtual FString GetTypeName() const override;
 
-	/** Get the class this node want to create */
+	/** Get the class this node creates. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	virtual class UClass* GetObjectClass() const override;
 
+#if WITH_EDITOR
+
+	virtual FString GetKeyDisplayName(const UE::Interchange::FAttributeKey& NodeAttributeKey) const override;
+	virtual FString GetAttributeCategory(const UE::Interchange::FAttributeKey& NodeAttributeKey) const override;
+
+#endif //WITH_EDITOR
+
 public:
-	/** Get weather the static mesh factory should set the nanite build settings. Return false if the attribute was not set.*/
+	/** Get whether the static mesh factory should set the Nanite build setting. Return false if the attribute was not set. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	bool GetCustomBuildNanite(bool& AttributeValue) const;
 
-	/** Set weather the static mesh factory should set the nanite build settings. Return false if the attribute was not set.*/
+	/** Set whether the static mesh factory should set the Nanite build setting. Return false if the attribute was not set. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	bool SetCustomBuildNanite(const bool& AttributeValue, bool bAddApplyDelegate = true);
 
-	/** Return The number of socket UIDs this static mesh has.*/
+	/** Return the number of socket UIDs this static mesh has. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	int32 GetSocketUidCount() const;
 
@@ -76,112 +83,112 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	bool RemoveSocketUd(const FString& SocketUid);
 
-	/** Get weather the static mesh should build build a reverse index buffer. */
+	/** Get whether the static mesh should build a reversed index buffer. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	bool GetCustomBuildReversedIndexBuffer(bool& AttributeValue) const;
 
-	/** Set weather the static mesh should build build a reverse index buffer. */
+	/** Set whether the static mesh should build a reversed index buffer. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	bool SetCustomBuildReversedIndexBuffer(const bool& AttributeValue, bool bAddApplyDelegate = true);
 
-	/** Get weather the static mesh should build build a reverse index buffer. */
+	/** Get whether the static mesh should generate lightmap UVs. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	bool GetCustomGenerateLightmapUVs(bool& AttributeValue) const;
 
-	/** Set weather the static mesh should build build a reverse index buffer. */
+	/** Set whether the static mesh should generate lightmap UVs. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	bool SetCustomGenerateLightmapUVs(const bool& AttributeValue, bool bAddApplyDelegate = true);
 
 	/**
-	 * Get Whether to generate the distance field treating every triangle hit as a front face.  
-	 * When enabled prevents the distance field from being discarded due to the mesh being open, but also lowers Distance Field AO quality.
+	 * Get whether to generate the distance field by treating every triangle hit as a front face.  
+	 * This prevents the distance field from being discarded due to the mesh being open, but also lowers distance field ambient occlusion quality.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	bool GetCustomGenerateDistanceFieldAsIfTwoSided(bool& AttributeValue) const;
 
 	/**
-	 * Set Whether to generate the distance field treating every triangle hit as a front face.
-	 * When enabled prevents the distance field from being discarded due to the mesh being open, but also lowers Distance Field AO quality.
+	 * Set whether to generate the distance field by treating every triangle hit as a front face.
+	 * This prevents the distance field from being discarded due to the mesh being open, but also lowers distance field ambient occlusion quality.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	bool SetCustomGenerateDistanceFieldAsIfTwoSided(const bool& AttributeValue, bool bAddApplyDelegate = true);
 
-	/** Get weather the static mesh ... (TODO add documentation) */
+	/** Get whether the static mesh is set up for use with physical material masks. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	bool GetCustomSupportFaceRemap(bool& AttributeValue) const;
 
-	/** Set weather the static mesh ... (TODO add documentation) */
+	/** Set whether the static mesh is set up for use with physical material masks. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	bool SetCustomSupportFaceRemap(const bool& AttributeValue, bool bAddApplyDelegate = true);
 
-	/** Get weather the static mesh ... (TODO add documentation) */
+	/** Get the amount of padding used to pack UVs for the static mesh. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	bool GetCustomMinLightmapResolution(int32& AttributeValue) const;
 
-	/** Set weather the static mesh ... (TODO add documentation) */
+	/** Set the amount of padding used to pack UVs for the static mesh. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	bool SetCustomMinLightmapResolution(const int32& AttributeValue, bool bAddApplyDelegate = true);
 
-	/** Get weather the static mesh ... (TODO add documentation) */
+	/** Get the index of the UV that is used as the source for generating lightmaps for the static mesh.  */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	bool GetCustomSrcLightmapIndex(int32& AttributeValue) const;
 
-	/** Set weather the static mesh ... (TODO add documentation) */
+	/** Set the index of the UV that is used as the source for generating lightmaps for the static mesh. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	bool SetCustomSrcLightmapIndex(const int32& AttributeValue, bool bAddApplyDelegate = true);
 
-	/** Get weather the static mesh ... (TODO add documentation) */
+	/** Get the index of the UV that is used to store generated lightmaps for the static mesh. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	bool GetCustomDstLightmapIndex(int32& AttributeValue) const;
 
-	/** Set weather the static mesh ... (TODO add documentation) */
+	/** Set the index of the UV that is used to store generated lightmaps for the static mesh. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	bool SetCustomDstLightmapIndex(const int32& AttributeValue, bool bAddApplyDelegate = true);
 
-	/** Get the static mesh local scale applied when building the static mesh. */
+	/** Get the local scale that is applied when building the static mesh. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	bool GetCustomBuildScale3D(FVector& AttributeValue) const;
 
-	/** Set the static mesh local scale applied when building the static mesh. */
+	/** Set the local scale that is applied when building the static mesh. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	bool SetCustomBuildScale3D(const FVector& AttributeValue, bool bAddApplyDelegate = true);
 
 	/**
-	 * Get the Scale to apply to the mesh when allocating the distance field volume texture.
-	 * The default scale is 1, which is assuming that the mesh will be placed unscaled in the world.
+	 * Get the scale to apply to the mesh when allocating the distance field volume texture.
+	 * The default scale is 1, which assumes that the mesh will be placed unscaled in the world.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	bool GetCustomDistanceFieldResolutionScale(float& AttributeValue) const;
 
 	/**
-	 * Set the Scale to apply to the mesh when allocating the distance field volume texture.
-	 * The default scale is 1, which is assuming that the mesh will be placed unscaled in the world.
+	 * Set the scale to apply to the mesh when allocating the distance field volume texture.
+	 * The default scale is 1, which assumes that the mesh will be placed unscaled in the world.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	bool SetCustomDistanceFieldResolutionScale(const float& AttributeValue, bool bAddApplyDelegate = true);
 
-	/** Get the static mesh local scale applied when building the static mesh. */
+	/** Get the static mesh asset whose distance field will be used as the distance field for the imported mesh. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	bool GetCustomDistanceFieldReplacementMesh(FSoftObjectPath& AttributeValue) const;
 
-	/** Set the static mesh local scale applied when building the static mesh. */
+	/** Set the static mesh asset whose distance field will be used as the distance field for the imported mesh. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	bool SetCustomDistanceFieldReplacementMesh(const FSoftObjectPath& AttributeValue, bool bAddApplyDelegate = true);
 
 	/**
-	 * Max Lumen mesh cards to generate for this mesh.
-	 * More cards means that surface will have better coverage, but will result in increased runtime overhead.
-	 * Set to 0 in order to disable mesh card generation for this mesh.
-	 * Default is 12.
+	 * Get the maximum number of Lumen mesh cards to generate for this mesh.
+	 * More cards means that the surface will have better coverage, but will result in increased runtime overhead.
+	 * Set this to 0 to disable mesh card generation for this mesh.
+	 * The default is 12.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	bool GetCustomMaxLumenMeshCards(int32& AttributeValue) const;
 
 	/**
-	 * Max Lumen mesh cards to generate for this mesh.
-	 * More cards means that surface will have better coverage, but will result in increased runtime overhead.
-	 * Set to 0 in order to disable mesh card generation for this mesh.
-	 * Default is 12.
+	 * Set the maximum number of Lumen mesh cards to generate for this mesh.
+	 * More cards means that the surface will have better coverage, but will result in increased runtime overhead.
+	 * Set this to 0 to disable mesh card generation for this mesh.
+	 * The default is 12.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | StaticMesh")
 	bool SetCustomMaxLumenMeshCards(const int32& AttributeValue, bool bAddApplyDelegate = true);

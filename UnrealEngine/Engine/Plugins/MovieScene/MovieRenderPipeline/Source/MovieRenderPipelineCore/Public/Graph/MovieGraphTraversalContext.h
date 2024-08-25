@@ -9,6 +9,7 @@
 // Forward Declares
 class UMovieGraphConfig;
 class UMoviePipelineExecutorJob;
+class UMoviePipelineExecutorShot;
 
 
 USTRUCT(BlueprintType)
@@ -33,9 +34,6 @@ public:
 		, ShotCount(0)
 	{}
 
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "MovieGraph")
-	FName RootBranch;
-
 	/** Which shot (out of ShotCount) is this time step for? */
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Movie Graph")
 	int32 ShotIndex;
@@ -47,6 +45,10 @@ public:
 	/** The job in the queue this traversal context is for. Needed to fetch variable values from the job. */
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Movie Graph")
 	TObjectPtr<UMoviePipelineExecutorJob> Job;
+
+	/** The shot in the queue this traversal context is for (if any). */
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Movie Graph")
+	TObjectPtr<UMoviePipelineExecutorShot> Shot;
 
 	/** The root graph to start our traversal from. This could be a shared config for the whole job, or a shot-specific override. */
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Movie Graph")

@@ -26,7 +26,10 @@ class TPBDParticles : public TDynamicParticles<T, d>
 
 	const TVector<T, d>& P(const int32 index) const { return MP[index]; }
 	TVector<T, d>& P(const int32 index) { return MP[index]; }
+	const TVector<T, d>& GetP(const int32 index)const  { return MP[index]; }
+	void SetP(const int32 index, const TVector<T, d>& InP) { MP[index] = InP; }
 	TArrayCollectionArray<TVector<T, d>>& GetP() { return MP; }
+
 
   private:
 	TArrayCollectionArray<TVector<T, d>> MP;

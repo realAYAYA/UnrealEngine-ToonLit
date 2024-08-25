@@ -2,37 +2,40 @@
 
 #pragma once
 
-
+#include "Misc/Optional.h"
+#include "Templates/FunctionFwd.h"
 #include "UObject/GCObject.h"
 
 class FConcertTakeRecorderClientSessionCustomization;
-class SWidget;
+class IConcertSyncClient;
+class IConcertClientSession;
 class ULevelSequence;
 class UTakePreset;
+class UTakeRecorder;
+class SWidget;
+
+enum class ECheckBoxState : uint8;
 enum class EConcertClientStatus : uint8;
 enum class EConcertConnectionStatus : uint8;
 enum class ETransactionFilterResult : uint8;
 enum class EPackageFilterResult : uint8;
+
+struct EVisibility;
 struct FConcertClientRecordSetting;
 struct FConcertMultiUserSyncChangeEvent;
 struct FConcertRecordSettingsChangeEvent;
 struct FConcertRecordingCancelledEvent;
 struct FConcertRecordingFinishedEvent;
 struct FConcertRecordingNamedLevelSequenceEvent;
+struct FConcertSessionContext;
 struct FConcertSessionClientInfo;
 struct FConcertTakeInitializedEvent;
 struct FConcertPackageInfo;
 struct FFrameNumber;
 struct FTakeRecorderParameters;
+struct FTakeRecordSettings;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogConcertTakeRecorder, Log, All);
-
-class IConcertSyncClient;
-class IConcertClientSession;
-struct FConcertSessionContext;
-class UTakeRecorder;
-enum class ECheckBoxState : uint8;
-struct EVisibility;
 
 /**
  * Take Recorder manager that is held by the client sync module that keeps track of when a take is started, stopped or cancelled.
@@ -41,15 +44,11 @@ struct EVisibility;
 class FConcertTakeRecorderManager : public FGCObject
 {
 public:
-	/**
-	 * Constructor - registers TakeRecorderInitialized handler with the take recorder module
-	 */
+	
+	/** Registers TakeRecorderInitialized handler with the take recorder module */
 	FConcertTakeRecorderManager();
-
-	/**
-	 * Destructor - unregisters TakeRecorderInitialized handler from the take recorder module
-	 */
-	~FConcertTakeRecorderManager();
+	/** Unregisters TakeRecorderInitialized handler from the take recorder module */
+	virtual ~FConcertTakeRecorderManager() override;
 
 	/**
 	 * Register all custom take recorder events for the specified client session
@@ -57,13 +56,24 @@ public:
 	 * @param InSession	The client session to register custom events with
 	 */
 	void Register(TSharedRef<IConcertClientSession> InSession);
-
 	/**
 	 * Unregister previously registered custom take recorder events from the specified client session
 	 *
 	 * @param InSession The client session to unregister custom events from
 	 */
 	void Unregister(TSharedRef<IConcertClientSession> InSession);
+
+	/** Attempts the client recorder settings for the given client. The other clients inform us when they are changed so they are somewhat in sync. Nullptr if the client is unknown. */
+	const FConcertClientRecordSetting* FindClientRecorderSetting(const FGuid& EndpointId) const;
+	/**
+	 * Modifies the settings of a client, if the client exists. Subsequently updates all the relevant systems of the change.
+	 * @return Whether the client was found.
+	 */
+	bool EditClientSettings(
+		const FGuid& EndpointId,
+		TFunctionRef<void(FTakeRecordSettings& Settings)> ModifierFunc,
+		TOptional<TFunctionRef<bool(const FTakeRecordSettings& Settings)>> Predicate = {}
+		);
 
 private:
 	//~ Take recorder delegate handlers

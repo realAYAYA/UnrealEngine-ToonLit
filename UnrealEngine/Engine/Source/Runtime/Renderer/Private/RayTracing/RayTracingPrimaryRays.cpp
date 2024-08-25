@@ -23,10 +23,9 @@ class FRayTracingPrimaryRaysRGS : public FGlobalShader
 	DECLARE_GLOBAL_SHADER(FRayTracingPrimaryRaysRGS)
 	SHADER_USE_ROOT_PARAMETER_STRUCT(FRayTracingPrimaryRaysRGS, FGlobalShader)
 
-	class FDenoiserOutput : SHADER_PERMUTATION_BOOL("DIM_DENOISER_OUTPUT");
 	class FEnableTwoSidedGeometryForShadowDim : SHADER_PERMUTATION_BOOL("ENABLE_TWO_SIDED_GEOMETRY");
 
-	using FPermutationDomain = TShaderPermutationDomain<FDenoiserOutput, FEnableTwoSidedGeometryForShadowDim>;
+	using FPermutationDomain = TShaderPermutationDomain<FEnableTwoSidedGeometryForShadowDim>;
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER(int32, SamplesPerPixel)
@@ -47,7 +46,7 @@ class FRayTracingPrimaryRaysRGS : public FGlobalShader
 		SHADER_PARAMETER_RDG_BUFFER_SRV(RaytracingAccelerationStructure, TLAS)
 
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, ViewUniformBuffer)
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FRaytracingLightDataPacked, LightDataPacked)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FRayTracingLightGrid, LightGridPacked)
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FReflectionUniformParameters, ReflectionStruct)
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FFogUniformParameters, FogUniformParameters)
 
@@ -152,7 +151,8 @@ void FDeferredShadingSceneRenderer::RenderRayTracingPrimaryRaysView(
 	PassParameters->PrimaryRayFlags = (uint32)Flags;
 	PassParameters->TLAS = View.GetRayTracingSceneLayerViewChecked(ERayTracingSceneLayer::Base);
 	PassParameters->ViewUniformBuffer = View.ViewUniformBuffer;
-	PassParameters->LightDataPacked = View.RayTracingLightDataUniformBuffer;
+
+	PassParameters->LightGridPacked = View.RayTracingLightGridUniformBuffer;
 
 	auto* LumenUniforms = GraphBuilder.AllocParameters<FLumenTranslucencyLightingUniforms>();
 	LumenUniforms->Parameters = GetLumenTranslucencyLightingParameters(GraphBuilder, View.GetLumenTranslucencyGIVolume(), View.LumenFrontLayerTranslucency);
@@ -160,7 +160,7 @@ void FDeferredShadingSceneRenderer::RenderRayTracingPrimaryRaysView(
 
 	PassParameters->SceneTextures = SceneTextureParameters;
 
-	PassParameters->SceneColorTexture = SceneTextures.Color.Resolve;
+	PassParameters->SceneColorTexture = GetIfProduced(SceneTextures.Color.Resolve, FRDGSystemTextures::Get(GraphBuilder).Black);
 
 	PassParameters->ReflectionStruct = CreateReflectionUniformBuffer(GraphBuilder, View);
 	PassParameters->FogUniformParameters = CreateFogUniformBuffer(GraphBuilder, View);

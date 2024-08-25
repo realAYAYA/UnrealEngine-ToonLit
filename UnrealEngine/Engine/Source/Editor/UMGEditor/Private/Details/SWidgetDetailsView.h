@@ -46,6 +46,10 @@ private:
 	/** Handles the callback from the property detail view confirming the list of objects being edited has changed */
 	void OnPropertyViewObjectArrayChanged(const FString& InTitle, const TArray<UObject*>& InObjects);
 
+	bool IsDetailsPanelEditingAllowed() const;
+
+	bool IsWidgetNameFieldEnabled() const;
+
 	void ClearFocusIfOwned();
 
 	bool IsPropertyVisible(const FPropertyAndParent& PropertyAndParent) const;

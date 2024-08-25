@@ -316,7 +316,7 @@ void SPaperExtractSpritesDialog::PreviewExtractedSprites()
 				DominatedSprites.Empty(SpritesLeft.Num());
 				while (SpritesLeft.Num())
 				{
-					FIntRect DominatingSprite = SpritesLeft.Pop(/*bAllowShrinking=*/ false);
+					FIntRect DominatingSprite = SpritesLeft.Pop(EAllowShrinking::No);
 					DominatedSprites.Add(DominatingSprite);
 
 					// Find the sprites that are dominated (intersect the infinite horizontal band described by the dominating sprite)
@@ -326,7 +326,7 @@ void SPaperExtractSpritesDialog::PreviewExtractedSprites()
 						if ((CurElement.Min.Y <= DominatingSprite.Max.Y) && (CurElement.Max.Y >= DominatingSprite.Min.Y))
 						{
 							DominatedSprites.Add(CurElement);
-							SpritesLeft.RemoveAt(Index, /*Count=*/ 1, /*bAllowShrinking=*/ false);
+							SpritesLeft.RemoveAt(Index, /*Count=*/ 1, EAllowShrinking::No);
 						}
 						else
 						{

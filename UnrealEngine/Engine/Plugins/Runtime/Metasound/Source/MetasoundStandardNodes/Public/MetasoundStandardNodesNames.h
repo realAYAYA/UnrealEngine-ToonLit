@@ -8,7 +8,7 @@ namespace Metasound
 {
 	namespace StandardNodes
 	{
-		extern const FName Namespace;
-		extern const FName AudioVariant;
+		METASOUNDSTANDARDNODES_API extern const FName Namespace;
+		METASOUNDSTANDARDNODES_API extern const FName AudioVariant;
 	}
 }

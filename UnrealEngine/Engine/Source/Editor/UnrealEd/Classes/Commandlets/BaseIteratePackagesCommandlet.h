@@ -11,6 +11,8 @@
 #include "WorldPartition/WorldPartitionBuilder.h"
 #include "WorldPartition/WorldPartitionActorDesc.h"
 
+class FWorldPartitionActorDescInstance;
+
 #include "BaseIteratePackagesCommandlet.generated.h"
 
 
@@ -242,7 +244,10 @@ protected:
 
 	virtual void PerformWorldBuilderAdditionalOperations(class AActor* Actor, bool& bSavePackage) { }
 	virtual void PerformWorldBuilderAdditionalOperations(class UObject* Object, bool& bSavePackage) { }
+	
+	UE_DEPRECATED(5.4, "Use WorldBuilderFailedLoadingActor with FWorldPartitionActorDescInstance")
 	virtual void WorldBuilderFailedLoadingActor(const FWorldPartitionActorDesc* ActorDesc) { } 
+	virtual void WorldBuilderFailedLoadingActor(const FWorldPartitionActorDescInstance* ActorDescInstance) { }
 
 	virtual void PostPerformAdditionalOperations(class UPackage* Package) { }
 

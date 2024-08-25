@@ -52,7 +52,7 @@ namespace Metasound
 		static constexpr float SoftKneeBandwitdh = 10.0f;
 		static constexpr float MaxInputGain = 100.0f;
 
-		FLimiterOperator(const FCreateOperatorParams& InParams,
+		FLimiterOperator(const FBuildOperatorParams& InParams,
 			const FAudioBufferReadRef& InAudio,
 			const FFloatReadRef& InGainDb,
 			const FFloatReadRef& InThresholdDb,
@@ -154,17 +154,17 @@ namespace Metasound
 			return {};
 		}
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
 			using namespace LimiterVertexNames;
-			const FDataReferenceCollection& Inputs = InParams.InputDataReferences;
-			const FInputVertexInterface& InputInterface = DeclareVertexInterface().GetInputInterface();
+			
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 
-			FAudioBufferReadRef AudioIn = Inputs.GetDataReadReferenceOrConstruct<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputAudio), InParams.OperatorSettings);
-			FFloatReadRef InGainDbIn = Inputs.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputInGainDb), InParams.OperatorSettings);
-			FFloatReadRef ThresholdDbIn = Inputs.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputThresholdDb), InParams.OperatorSettings);
-			FTimeReadRef ReleaseTimeIn = Inputs.GetDataReadReferenceOrConstructWithVertexDefault<FTime>(InputInterface, METASOUND_GET_PARAM_NAME(InputReleaseTime), InParams.OperatorSettings);
-			FKneeModeReadRef KneeModeIn = Inputs.GetDataReadReferenceOrConstructWithVertexDefault<FEnumKneeMode>(InputInterface, METASOUND_GET_PARAM_NAME(InputKneeMode), InParams.OperatorSettings);
+			FAudioBufferReadRef AudioIn = InputData.GetOrConstructDataReadReference<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputAudio), InParams.OperatorSettings);
+			FFloatReadRef InGainDbIn = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputInGainDb), InParams.OperatorSettings);
+			FFloatReadRef ThresholdDbIn = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputThresholdDb), InParams.OperatorSettings);
+			FTimeReadRef ReleaseTimeIn = InputData.GetOrCreateDefaultDataReadReference<FTime>(METASOUND_GET_PARAM_NAME(InputReleaseTime), InParams.OperatorSettings);
+			FKneeModeReadRef KneeModeIn = InputData.GetOrCreateDefaultDataReadReference<FEnumKneeMode>(METASOUND_GET_PARAM_NAME(InputKneeMode), InParams.OperatorSettings);
 
 			return MakeUnique<FLimiterOperator>(InParams, AudioIn, InGainDbIn, ThresholdDbIn, ReleaseTimeIn, KneeModeIn);
 		}

@@ -34,7 +34,7 @@ struct FOptimusParameterBinding
 	UPROPERTY(EditAnywhere, Category=Binding)
 	FOptimusValidatedName Name;
 
-	UPROPERTY(EditAnywhere, Category = Binding, meta=(UseInResource))
+	UPROPERTY(EditAnywhere, Category = Binding)
 	FOptimusDataTypeRef DataType;
 
 	/** Returns true if the binding is valid and has defined entries */
@@ -45,6 +45,14 @@ struct FOptimusParameterBinding
 	
 	UPROPERTY(EditAnywhere, Category = Binding)
 	FOptimusDataDomain DataDomain;
+
+	// Int type resource can optionally support atomic writes, memory is zero-initialized
+	UPROPERTY(EditAnywhere, DisplayName="Support Atomic", Category = Binding)
+	bool bSupportAtomicIfCompatibleDataType = false;
+
+	// Optionally support both read and write
+	UPROPERTY(EditAnywhere, DisplayName="Support Read", Category = Binding)
+	bool bSupportRead = false;
 };
 
 
@@ -60,6 +68,24 @@ struct FOptimusParameterBindingArray
 	const FOptimusParameterBinding* FindByPredicate(Predicate Pred) const
 	{
 		return InnerArray.FindByPredicate(Pred);
+	}
+
+	template <typename Predicate>
+	FOptimusParameterBinding* FindByPredicate(Predicate Pred)
+	{
+		return InnerArray.FindByPredicate(Pred);
+	}
+
+	template <typename Predicate>
+	int32 IndexOfByPredicate(Predicate Pred) const
+	{
+		return InnerArray.IndexOfByPredicate(Pred);
+	}
+
+	template <typename Predicate>
+	int32 IndexOfByPredicate(Predicate Pred)
+	{
+		return InnerArray.IndexOfByPredicate(Pred);
 	}
 
 	bool IsEmpty() const

@@ -9,6 +9,27 @@ FLookupProxy::FLookupProxy()
 	ProxyTable.InitializeAs(FProxyTableContextProperty::StaticStruct());
 }
 
+FObjectChooserBase::EIteratorStatus FLookupProxy::ChooseMulti(FChooserEvaluationContext& Context, FObjectChooserIteratorCallback Callback) const
+{
+	if (Proxy)
+	{
+		if (const FChooserParameterProxyTableBase* ProxyTableParameter = ProxyTable.GetPtr<FChooserParameterProxyTableBase>())
+		{
+			const UProxyTable* Table = nullptr;
+			if (ProxyTableParameter->GetValue(Context, Table))
+			{
+				if (Table)
+				{
+					return Table->FindProxyObjectMulti(Proxy->Guid, Context, Callback);
+				}
+			}
+		}
+		// fallback codepath will look up the table from the property binding on the proxy asset
+		return Proxy->FindProxyObjectMulti(Context, Callback);
+	}
+	return FObjectChooserBase::EIteratorStatus::Continue;
+}
+
 UObject* FLookupProxy::ChooseObject(FChooserEvaluationContext& Context) const
 {
 	if (Proxy)
@@ -39,19 +60,45 @@ UObject* FLookupProxyWithOverrideTable::ChooseObject(FChooserEvaluationContext& 
 	return nullptr;
 }
 
+FObjectChooserBase::EIteratorStatus FLookupProxyWithOverrideTable::ChooseMulti(FChooserEvaluationContext& Context, FObjectChooserIteratorCallback Callback) const
+{
+	if (Proxy && OverrideProxyTable)
+	{
+		return OverrideProxyTable->FindProxyObjectMulti(Proxy->Guid, Context, Callback);
+	}
+	return FObjectChooserBase::EIteratorStatus::Continue;
+}
+
 bool FProxyTableContextProperty::GetValue(FChooserEvaluationContext& Context, const UProxyTable*& OutResult) const
 {
-	const UStruct* StructType = nullptr;
-	const void* Container = nullptr;
-	
-	if (UE::Chooser::ResolvePropertyChain(Context, Binding,Container, StructType))
+	UProxyTable** ProxyTableReference;
+	if (Binding.GetValuePtr(Context, ProxyTableReference))
 	{
-		if (const FObjectProperty* Property = FindFProperty<FObjectProperty>(StructType, Binding.PropertyBindingChain.Last()))
+		OutResult = *ProxyTableReference;
+		return true;
+	}
+	else
+	{
+		return false;
+	}
+}
+
+void FLookupProxy::Compile(IHasContextClass* HasContext, bool bForce)
+{
+	if (Proxy)
+	{
+		if (FChooserParameterBase* ProxyTableParam = ProxyTable.GetMutablePtr<FChooserParameterBase>())
 		{
-			OutResult = *Property->ContainerPtrToValuePtr<UProxyTable*>(Container);
-			return true;
+			// todo: should also validate here that the ProxyAsset context is compatible with the passed in HasContext
+			ProxyTableParam->Compile(HasContext, bForce);
 		}
 	}
+}
 
-	return false;
+void FLookupProxy::GetDebugName(FString& OutName) const
+{
+	if (Proxy)
+	{
+		OutName = Proxy.GetName();
+	}
 }

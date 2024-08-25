@@ -204,6 +204,16 @@ bool ULegacyEdModeWrapper::InputDelta(FEditorViewportClient* InViewportClient, F
 	return LegacyEditorMode->InputDelta(InViewportClient, InViewport, InDrag, InRot, InScale);
 }
 
+bool ULegacyEdModeWrapper::BeginTransform(const FGizmoState& InState)
+{
+	return LegacyEditorMode->BeginTransform(InState);
+}
+
+bool ULegacyEdModeWrapper::EndTransform(const FGizmoState& InState)
+{
+	return LegacyEditorMode->EndTransform(InState);
+}
+
 bool ULegacyEdModeWrapper::StartTracking(FEditorViewportClient* InViewportClient, FViewport* InViewport)
 {
 	return LegacyEditorMode->StartTracking(InViewportClient, InViewport);

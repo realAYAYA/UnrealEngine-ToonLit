@@ -19,15 +19,6 @@
 #include "Widgets/Input/SComboBox.h"
 #include "Widgets/Input/SNumericEntryBox.h"
 
-#include <vector>
-
-#if WITH_OPENCV
-#include "PreOpenCVHeaders.h"
-#include "opencv2/calib3d.hpp"
-#include "opencv2/imgproc.hpp"
-#include "PostOpenCVHeaders.h"
-#endif
-
 
 #define LOCTEXT_NAMESPACE "CameraNodalOffsetAlgoOpticalAxis"
 
@@ -231,26 +222,20 @@ bool UCameraNodalOffsetAlgoOpticalAxis::GetNodalOffset(FNodalPointOffset& OutNod
 	OutFocus = CachedFocus;
 	OutZoom = CachedZoom;
 
-#if WITH_OPENCV
 	// Gather the 3D points from each of the calibration rows
-	std::vector<cv::Point3f> Points3d;
-	Points3d.reserve(CalibrationRows.Num());
+	const int32 NumPoints = CalibrationRows.Num();
+
+	TArray<FVector> Points3d;
+	Points3d.Reserve(NumPoints);
 
 	for (const TSharedPtr<FNodalOffsetPointsRowData>& Row : CalibrationRows)
 	{
-		Points3d.push_back(cv::Point3f(
-			Row->CalibratorPointData.Location.X,
-			Row->CalibratorPointData.Location.Y,
-			Row->CalibratorPointData.Location.Z
-		));
+		Points3d.Add(Row->CalibratorPointData.Location);
 	}
 
-	// Find a best fit line between the 3D points, producing a line (the optical axis) and a point on that line
-	cv::Vec6f LineAndPoint;
-	cv::fitLine(Points3d, LineAndPoint, cv::DIST_L2, 0, 0.01, 0.01);
-
-	OpticalAxis = FVector(LineAndPoint[0], LineAndPoint[1], LineAndPoint[2]);
-	PointAlongAxis = FVector(LineAndPoint[3], LineAndPoint[4], LineAndPoint[5]);
+	FVector FitLine;
+	FOpenCVHelper::FitLine3D(Points3d, FitLine, PointAlongAxis);
+	OpticalAxis = FitLine;
 
 	// Find a look at rotation for the camera
 	const FVector Point0 = PointAlongAxis + (0.0f * OpticalAxis.GetValue());
@@ -283,14 +268,8 @@ bool UCameraNodalOffsetAlgoOpticalAxis::GetNodalOffset(FNodalPointOffset& OutNod
 	// which would indicate that they were in roughly a straight line. 
 	const FLensDistortionState DistortionState = DistortionHandler->GetCurrentDistortionState();
 
-	cv::Mat CameraMatrix(3, 3, cv::DataType<double>::type);
-	cv::setIdentity(CameraMatrix);
-
-	CameraMatrix.at<double>(0, 0) = DistortionState.FocalLengthInfo.FxFy.X;
-	CameraMatrix.at<double>(1, 1) = DistortionState.FocalLengthInfo.FxFy.Y;
-
-	CameraMatrix.at<double>(0, 2) = DistortionState.ImageCenter.PrincipalPoint.X;
-	CameraMatrix.at<double>(1, 2) = DistortionState.ImageCenter.PrincipalPoint.Y;
+	const FVector2D FocalLength = DistortionState.FocalLengthInfo.FxFy;
+	const FVector2D ImageCenter = DistortionState.ImageCenter.PrincipalPoint;
 
 	// Compute the optimal camera pose using the new nodal offset and convert it to opencv's coordinate system
 	FTransform NewNodalOffsetTransform;
@@ -299,35 +278,15 @@ bool UCameraNodalOffsetAlgoOpticalAxis::GetNodalOffset(FNodalPointOffset& OutNod
 
 	FTransform OptimalCameraPose = NewNodalOffsetTransform * CachedNodalOffset.Inverse() * CameraPose;
 
-	FOpenCVHelper::ConvertUnrealToOpenCV(OptimalCameraPose);
-
-	// Transform the 3D points to opencv's coordinate system
-	for (int32 Index = 0; Index < Points3d.size(); ++Index)
-	{
-		FTransform PointTransform = FTransform::Identity;
-		PointTransform.SetLocation(FVector(Points3d[Index].x, Points3d[Index].y, Points3d[Index].z));
-		FOpenCVHelper::ConvertUnrealToOpenCV(PointTransform);
-		Points3d[Index] = cv::Point3f(PointTransform.GetLocation().X, PointTransform.GetLocation().Y, PointTransform.GetLocation().Z);
-	}
-
 	// Initialize all of the corresponding 2D points to be exactly at the principal point of the lens
-	std::vector<cv::Point2f> Points2d;
-	for (int32 Index = 0; Index < Points3d.size(); ++Index)
-	{
-		Points2d.push_back(cv::Point2f(DistortionState.ImageCenter.PrincipalPoint.X, DistortionState.ImageCenter.PrincipalPoint.Y));
-	}
+	TArray<FVector2f> ImagePoints;
+	ImagePoints.Init(FVector2f(ImageCenter.X, ImageCenter.Y), NumPoints);
 
-	OutError = FOpenCVHelper::ComputeReprojectionError(OptimalCameraPose, CameraMatrix, Points3d, Points2d);
+	OutError = FOpenCVHelper::ComputeReprojectionError(Points3d, ImagePoints, FocalLength, ImageCenter, OptimalCameraPose);
 
 	bFocusZoomWarningIssued = false;
 
 	return true;
-#else
-	{
-		OutErrorMessage = LOCTEXT("OpenCVRequired", "OpenCV is required");
-		return false;
-	}
-#endif // WITH_OPENCV
 }
 
 UMaterialInterface* UCameraNodalOffsetAlgoOpticalAxis::GetOverlayMaterial() const

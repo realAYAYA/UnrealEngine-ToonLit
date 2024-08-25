@@ -23,7 +23,7 @@ public:
 
 protected:
 	/** ~ FMovieSceneSpawnRegister interface */
-	LEVELSEQUENCE_API virtual UObject* SpawnObject(FMovieSceneSpawnable& Spawnable, FMovieSceneSequenceIDRef TemplateID, IMovieScenePlayer& Player) override;
+	LEVELSEQUENCE_API virtual UObject* SpawnObject(FMovieSceneSpawnable& Spawnable, FMovieSceneSequenceIDRef TemplateID, TSharedRef<const FSharedPlaybackState> SharedPlaybackState) override;
 	LEVELSEQUENCE_API virtual void DestroySpawnedObject(UObject& Object) override;
 
 #if WITH_EDITOR

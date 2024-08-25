@@ -35,7 +35,7 @@ bool USkinWeightModifier::SetSkeletalMesh(USkeletalMesh* InMesh)
 	
 	// store mesh description to edit
 	MeshDescription = MakeUnique<FMeshDescription>();
-	InMesh->GetMeshDescription(LODIndex, *MeshDescription);
+	InMesh->CloneMeshDescription(LODIndex, *MeshDescription);
 	if (MeshDescription->IsEmpty())
 	{
 		UE_LOG(LogAnimation, Error, TEXT("Skin Weight Modifier: mesh description is empty."));
@@ -70,8 +70,8 @@ bool USkinWeightModifier::SetSkeletalMesh(USkeletalMesh* InMesh)
 	
 #else
 	ensureMsgf(false, TEXT("Skin Weight Modifier: is an editor only feature."));
-#endif
 	return false;
+#endif
 }
 
 bool USkinWeightModifier::CommitWeightsToSkeletalMesh()
@@ -128,8 +128,11 @@ bool USkinWeightModifier::CommitWeightsToSkeletalMesh()
 	{
 		// flush any pending rendering commands, which might touch a component while we are rebuilding it's mesh
 		FlushRenderingCommands();
+		
 		// update skeletal mesh LOD (cf. USkeletalMesh::CommitMeshDescription)
-		Mesh->CommitMeshDescription(LODIndex, *MeshDescription);
+		Mesh->ModifyMeshDescription(LODIndex);
+		Mesh->CreateMeshDescription(LODIndex, MoveTemp(*MeshDescription));
+		Mesh->CommitMeshDescription(LODIndex);
 		// rebuilds mesh
 		Mesh->PostEditChange();
 	}

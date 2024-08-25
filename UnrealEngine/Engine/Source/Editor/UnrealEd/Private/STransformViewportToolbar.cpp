@@ -2,6 +2,8 @@
 
 
 #include "STransformViewportToolbar.h"
+
+#include "EditorInteractiveGizmoManager.h"
 #include "EngineDefines.h"
 #include "Modules/ModuleManager.h"
 #include "Widgets/SBoxPanel.h"
@@ -32,8 +34,6 @@
 #include "LevelEditorActions.h"
 #include "Styling/ToolBarStyle.h"
 #include "SEditorViewportToolBarMenu.h"
-#include "SEditorViewportToolBarButton.h"
-#include "Widgets/Layout/SSpacer.h"
 
 #define LOCTEXT_NAMESPACE "TransformToolBar"
 
@@ -211,10 +211,20 @@ TSharedRef< SWidget > STransformViewportToolBar::MakeTransformToolBar( const TSh
 
 		ToolbarBuilder.SetIsFocusable( true );
 
+		TAttribute<FText> CoordSystemToolTip = TAttribute<FText>::CreateLambda([]
+		{
+			if (UEditorInteractiveGizmoManager::UsesNewTRSGizmos())
+			{
+				return LOCTEXT(	"CycleTransformGizmoCoordSystemWithParent_ToolTip",
+								"Cycles the transform gizmo coordinate systems between world, local and parent space");
+			}
+			return FEditorViewportCommands::Get().CycleTransformGizmoCoordSystem->GetDescription();
+		});
+		
 		ToolbarBuilder.AddToolBarButton( FEditorViewportCommands::Get().CycleTransformGizmoCoordSystem,
 			NAME_None,
 			TAttribute<FText>(),
-			TAttribute<FText>(),
+			CoordSystemToolTip,
 			TAttribute<FSlateIcon>(this, &STransformViewportToolBar::GetLocalToWorldIcon),
 			FName(TEXT("CycleTransformGizmoCoordSystem")),
 
@@ -422,6 +432,8 @@ TSharedRef< SWidget > STransformViewportToolBar::MakeTransformToolBar( const TSh
 				.ToolTipText(LOCTEXT("CameraSpeed_ToolTip", "Camera Speed"))
 				.LabelIcon(FAppStyle::Get().GetBrush("EditorViewport.CamSpeedSetting"))
 				.Label(this, &STransformViewportToolBar::GetCameraSpeedLabel)
+				// Anchor to the right, otherwise the slider in this menu will jitter when the label width changes
+				.MenuPlacement(MenuPlacement_BelowRightAnchor)
 				.OnGetMenuContent(this, &STransformViewportToolBar::FillCameraSpeedMenu),
 			CameraSpeedName,
 			false,
@@ -471,17 +483,25 @@ TSharedRef<SWidget> STransformViewportToolBar::FillCameraSpeedMenu()
 			.FillWidth(1)
 			.Padding( FMargin(0.0f, 2.0f) )
 			[
-				SAssignNew(CamSpeedSlider, SSlider)
-				.Value(this, &STransformViewportToolBar::GetCamSpeedSliderPosition)
-				.OnValueChanged(this, &STransformViewportToolBar::OnSetCamSpeed)
+				SNew( SBox )
+				.MinDesiredWidth(220)
+				[
+					SAssignNew(CamSpeedSlider, SSlider)
+					.Value(this, &STransformViewportToolBar::GetCamSpeedSliderPosition)
+					.OnValueChanged(this, &STransformViewportToolBar::OnSetCamSpeed)
+				]
 			]
 			+SHorizontalBox::Slot()
 			.AutoWidth()
 			.Padding( 8.0f, 2.0f, 0.0f, 2.0f)
 			[
-				SNew( STextBlock )
-				.Text(this, &STransformViewportToolBar::GetCameraSpeedLabel )
-				.Font( FAppStyle::GetFontStyle( TEXT( "MenuItem.Font" ) ) )
+				SNew( SBox )
+				.WidthOverride(40)
+				[
+					SNew( STextBlock )
+					.Text(this, &STransformViewportToolBar::GetCameraSpeedLabel )
+					.Font( FAppStyle::GetFontStyle( TEXT( "MenuItem.Font" ) ) )
+				]
 			]
 		] // Camera Speed Scalar
 		+ SVerticalBox::Slot()
@@ -535,6 +555,12 @@ FSlateIcon STransformViewportToolBar::GetLocalToWorldIcon() const
 		return FSlateIcon(FAppStyle::GetAppStyleSetName(), WorldIcon);
 	}
 
+	if( Viewport.IsValid() && Viewport.Pin()->IsCoordSystemActive(COORD_Parent) )
+	{
+		static const FName ParentIcon("Icons.ConstraintManager.ParentHierarchy");
+		return FSlateIcon(FAppStyle::GetAppStyleSetName(), ParentIcon);
+	}
+	
 	static FName LocalIcon("Icons.Transform");
 	return FSlateIcon(FAppStyle::GetAppStyleSetName(), LocalIcon);
 }

@@ -27,13 +27,7 @@ namespace EditorAnimUtils
 			: Prefix(), Suffix(), ReplaceFrom(), ReplaceTo(), FolderPath(TEXT("/Game"))
 		{}
 
-		bool ShouldRename()
-		{
-			// should be able to replace "XXX" to ""
-			return ( !Prefix.IsEmpty() || !Suffix.IsEmpty() || !ReplaceFrom.IsEmpty());
-		}
-
-		FString Rename(const UObject* Asset) const;
+		UNREALED_API FString Rename(const UObject* Asset) const;
 	};
 
 	class FAnimationRetargetContext
@@ -87,12 +81,12 @@ namespace EditorAnimUtils
 	};
 
 	/**
-	 * Retargets the supplied UObjects (as long as they are an animation asset), optionally duplicating them and retargetting their reference assets too
+	 * Retargets the supplied UObjects (as long as they are an animation asset), optionally duplicating them and retargeting their reference assets too
 	 *
 	 * @param NewSkeleton						The skeleton the supplied assets should be retargeted to
 	 * @param AssetsToRetarget					The animation assets to copy/retarget
 	 * @param bRetargetReferredAssets			If true retargets any assets referred to by assets in AssetsToRetarget. If false then the references are cleared.
-	 * @param bDuplicatedAssetsBeforeRetarget	If true the assets are duplicated and then the duplicates are retargetted
+	 * @param bDuplicatedAssetsBeforeRetarget	If true the assets are duplicated and then the duplicates are retargeted
 	 * @param bConvertSpace						Do the conversion in component space of the animation to match new target
 	 */
 	UNREALED_API UObject* RetargetAnimations(USkeleton* OldSkeleton, USkeleton* NewSkeleton, TArray<TWeakObjectPtr<UObject>> AssetsToRetarget, bool bRetargetReferredAssets, const FNameDuplicationRule* NameRule, bool bConvertSpace);
@@ -103,18 +97,18 @@ namespace EditorAnimUtils
 	 * @param NewSkeleton						The skeleton the supplied assets should be retargeted to
 	 * @param AssetsToRetarget					The animation assets to copy/retarget
 	 * @param bRetargetReferredAssets			If true retargets any assets referred to by assets in AssetsToRetarget. If false then the references are cleared.
-	 * @param bDuplicatedAssetsBeforeRetarget	If true the assets are duplicated and then the duplicates are retargetted
+	 * @param bDuplicatedAssetsBeforeRetarget	If true the assets are duplicated and then the duplicates are retargeted
 	 * @param bConvertSpace						Do the conversion in component space of the animation to match new target
 	 */
 	UNREALED_API UObject* RetargetAnimations(USkeleton* OldSkeleton, USkeleton* NewSkeleton, const TArray<FAssetData>& AssetsToRetarget, bool bRetargetReferredAssets, const FNameDuplicationRule* NameRule, bool bConvertSpace);
 
 	/**
-	 * Retargets the supplied FAnimationRetargetContext, optionally duplicating the assets and retargetting the assets reference assets too. Is called by other overloads of RetargetAnimations
+	 * Retargets the supplied FAnimationRetargetContext, optionally duplicating the assets and retargeting the assets reference assets too. Is called by other overloads of RetargetAnimations
 	 *
 	 * @param NewSkeleton						The skeleton the supplied assets should be retargeted to
 	 * @param AssetsToRetarget					The animation assets to copy/retarget
 	 * @param bRetargetReferredAssets			If true retargets any assets referred to by assets in AssetsToRetarget. If false then the references are cleared.
-	 * @param bDuplicatedAssetsBeforeRetarget	If true the assets are duplicated and then the duplicates are retargetted
+	 * @param bDuplicatedAssetsBeforeRetarget	If true the assets are duplicated and then the duplicates are retargeted
 	 * @param bConvertSpace						Do the conversion in component space of the animation to match new target
 	 */
 	UNREALED_API UObject* RetargetAnimations(USkeleton* OldSkeleton, USkeleton* NewSkeleton, FAnimationRetargetContext& RetargetContext, bool bRetargetReferredAssets, const FNameDuplicationRule* NameRule);
@@ -130,16 +124,18 @@ namespace EditorAnimUtils
 	 *
 	 * @param	AssetsToDuplicate	The animations to duplicate
 	 * @param	DestinationPackage	The package that the duplicates should be placed in
+	 * @param	NameRule			Options for renaming the file, adding prefix/suffix or search/replace
 	 *
 	 * @return	TMap of original animation to duplicate
 	 */
-	UNREALED_API TMap<UObject*, UObject*> DuplicateAssetsInternal(const TArray<UObject*>& AssetsToDuplicate, UPackage* DestinationPackage, const FNameDuplicationRule* NameRule);
+	UNREALED_API TMap<UObject*, UObject*> DuplicateAssetsInternal( const TArray<UObject*>& AssetsToDuplicate, UPackage* DestinationPackage, const FNameDuplicationRule* NameRule);
 
 	/**
 	 * Duplicates the supplied AssetsToDuplicate and returns a map of original asset to duplicate. Templated wrapper that calls DuplicateAssetInternal.
 	 *
-	 * @param	AssetsToDuplicate	The animations to duplicate
+	* @param	AssetsToDuplicate	The animations to duplicate
 	 * @param	DestinationPackage	The package that the duplicates should be placed in
+	 * @param	NameRule			Options for renaming the file, adding prefix/suffix or search/replace
 	 *
 	 * @return	TMap of original animation to duplicate
 	 */

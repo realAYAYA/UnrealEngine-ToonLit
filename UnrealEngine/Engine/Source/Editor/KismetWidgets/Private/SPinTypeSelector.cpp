@@ -1,7 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #include "SPinTypeSelector.h"
 
+#include "Algo/AnyOf.h"
+#include "Algo/Count.h"
 #include "Algo/LevenshteinDistance.h"
+#include "Algo/RemoveIf.h"
 #include "BlueprintEditorSettings.h"
 #include "Containers/UnrealString.h"
 #include "EdGraph/EdGraphSchema.h"
@@ -349,6 +352,7 @@ void SPinTypeSelector::Construct(const FArguments& InArgs, FGetPinTypeTree GetPi
 	SelectorType = InArgs._SelectorType;
 
 	NumFilteredPinTypeItems = 0;
+	NumValidPinTypeItems = 0;
 
 	if(InArgs._CustomFilters.Num() > 0)
 	{
@@ -1062,40 +1066,8 @@ TSharedRef<SWidget>	SPinTypeSelector::GetMenuContent(bool bForSecondaryType)
 {
 	GetPinTypeTree.Execute(TypeTreeRoot, TypeTreeFilter);
 
-	// Remove read-only root items if they have no children; there will be no subtree to select non read-only items from in that case
-	int32 RootItemIndex = 0;
-	while(RootItemIndex < TypeTreeRoot.Num())
-	{
-		FPinTypeTreeItem TypeTreeItemPtr = TypeTreeRoot[RootItemIndex];
-		if(TypeTreeItemPtr.IsValid()
-			&& TypeTreeItemPtr->bReadOnly
-			&& TypeTreeItemPtr->Children.Num() == 0)
-		{
-			TypeTreeRoot.RemoveAt(RootItemIndex);
-		}
-		else
-		{
-			++RootItemIndex;
-		}
-	}
-
 	// Remove types not supported by schema
-	TArray<FPinTypeTreeItem> FilteredBySupportedTypes;
-	GetChildrenWithSupportedTypes(TypeTreeRoot, FilteredBySupportedTypes);
-	TypeTreeRoot = FilteredBySupportedTypes;
-
-	if (CustomFilters.Num() > 0)
-	{
-		NumFilteredPinTypeItems = 0;
-		FilteredTypeTreeRoot.Empty();
-
-		FTopLevenshteinResult<FPinTypeTreeItem> TopLevenshteinResult;
-		GetChildrenMatchingSearch(FText::GetEmpty(), TypeTreeRoot, FilteredTypeTreeRoot, TopLevenshteinResult);
-	}
-	else
-	{
-		FilteredTypeTreeRoot = TypeTreeRoot;
-	}
+	FilterUnsupportedTypes(TypeTreeRoot);
 
 	if( !MenuContent.IsValid() || (bForSecondaryType != bMenuContentIsSecondary) )
 	{
@@ -1399,8 +1371,8 @@ TOptional<T> FindBestMatch(FStringView SearchText, TArrayView<T> Container, TFun
 void SPinTypeSelector::OnFilterTextChanged(const FText& NewText)
 {
 	SearchText = NewText;
-	NumFilteredPinTypeItems = 0;
-	FilteredTypeTreeRoot.Empty();
+	NumFilteredPinTypeItems = NewText.IsEmpty() ? NumValidPinTypeItems : 0;
+	FilteredTypeTreeRoot.Reset();
 
 	FTopLevenshteinResult<FPinTypeTreeItem> TopLevenshteinResult;
 	GetChildrenMatchingSearch(NewText, TypeTreeRoot, FilteredTypeTreeRoot, TopLevenshteinResult);
@@ -1425,126 +1397,161 @@ void SPinTypeSelector::OnFilterTextCommitted(const FText& NewText, ETextCommit::
 	}
 }
 
-bool SPinTypeSelector::GetChildrenWithSupportedTypes(const TArray<FPinTypeTreeItem>& UnfilteredList,
-	TArray<FPinTypeTreeItem>& OutFilteredList)
+// helpers for dealing with the UEdGraphSchema_K2::FPinTypeTreeInfo tree:
+namespace PinTypeSelectorImpl
 {
-	bool bReturnVal = false;
-	
-	for( auto it = UnfilteredList.CreateConstIterator(); it; ++it )
-	{
-		FPinTypeTreeItem Item = *it;
-		FPinTypeTreeItem NewInfo = MakeShareable( new UEdGraphSchema_K2::FPinTypeTreeInfo(Item) );
-		TArray<FPinTypeTreeItem> ValidChildren;
+	template<typename T>
+	static void FilterUnsupportedTypesImpl(TArray<FPinTypeTreeItem>& ToFilter, const UEdGraphSchema* Schema, TWeakPtr<const FEdGraphSchemaAction> SchemaAction, T CustomFilter);
+	int32 CountValidTreeItemsImpl(const TArray<FPinTypeTreeItem>& ToCount);
+}
 
-		const bool bHasChildrenWithValidTypes = GetChildrenWithSupportedTypes(Item->Children, ValidChildren);
-		bool bSupportsType = true;
-
-		if (!bHasChildrenWithValidTypes)
+template<typename T>
+static void PinTypeSelectorImpl::FilterUnsupportedTypesImpl(TArray<FPinTypeTreeItem>& ToFilter, const UEdGraphSchema* Schema, TWeakPtr<const FEdGraphSchemaAction> SchemaAction, T CustomFilter)
+{
+	ToFilter.SetNum(Algo::StableRemoveIf(ToFilter,
+		[Schema, SchemaAction, &CustomFilter = CustomFilter](const FPinTypeTreeItem& Item)
 		{
-			bSupportsType = Schema->SupportsPinType(SchemaAction, Item->GetPinType(false));
-		}
-		
-		if (bHasChildrenWithValidTypes || bSupportsType)
-		{
-			NewInfo->Children = ValidChildren;
-			OutFilteredList.Add(NewInfo);
-
-			if (!NewInfo->bReadOnly)
+			if (Item->Children.Num() > 0)
 			{
-				++NumFilteredPinTypeItems;
+				FilterUnsupportedTypesImpl<T>(Item->Children, Schema, SchemaAction, CustomFilter);
 			}
+			const bool bSupportsType = (Item->Children.Num() != 0 ||
+				(	Schema->SupportsPinType(SchemaAction, Item->GetPinTypeNoResolve()) &&
+					CustomFilter(Item)));
+			return !bSupportsType;
+		}
+	));
+}
 
-			bReturnVal = true;
+int32 PinTypeSelectorImpl::CountValidTreeItemsImpl(const TArray<FPinTypeTreeItem>& ToCount)
+{
+	int32 Count = Algo::CountIf(ToCount, [](const FPinTypeTreeItem& Item) { return !Item->bReadOnly; });
+	for (const FPinTypeTreeItem& Item : ToCount)
+	{
+		Count += CountValidTreeItemsImpl(Item->Children);
+	}
+	return Count;
+}
+
+void SPinTypeSelector::FilterUnsupportedTypes(TArray<FPinTypeTreeItem>& ToFilter)
+{
+	// Remove read-only root items if they have no children; there will be no subtree to select non read-only items from in that case
+	int32 RootItemIndex = 0;
+	while (RootItemIndex < TypeTreeRoot.Num())
+	{
+		FPinTypeTreeItem TypeTreeItemPtr = TypeTreeRoot[RootItemIndex];
+		if (TypeTreeItemPtr.IsValid()
+			&& TypeTreeItemPtr->bReadOnly
+			&& TypeTreeItemPtr->Children.Num() == 0)
+		{
+			TypeTreeRoot.RemoveAt(RootItemIndex);
+		}
+		else
+		{
+			++RootItemIndex;
 		}
 	}
 
-	return bReturnVal;
+	const bool bHasCustomFilters = Algo::AnyOf(CustomFilters,
+		[](const TSharedPtr<IPinTypeSelectorFilter>& Filter)
+		{
+			return Filter.IsValid();
+		});
+
+	if (bHasCustomFilters)
+	{
+		PinTypeSelectorImpl::FilterUnsupportedTypesImpl(ToFilter, Schema, SchemaAction,
+			[&CustomFilters = CustomFilters](const FPinTypeTreeItem& Item)
+			{
+				bool bCustomFilterMatches = true;
+				for (const TSharedPtr<IPinTypeSelectorFilter>& CustomFilter : CustomFilters)
+				{
+					if (CustomFilter.IsValid())
+					{
+						bCustomFilterMatches &= CustomFilter->ShouldShowPinTypeTreeItem(Item);
+					}
+				}
+				return bCustomFilterMatches;
+			});
+	}
+	else
+	{
+		PinTypeSelectorImpl::FilterUnsupportedTypesImpl(ToFilter, Schema, SchemaAction, [](const FPinTypeTreeItem& Item) { return true; });
+	}
+
+	// count items after filtering invalid ones, set up the 'filtered view' to default to all the valid items:
+	NumValidPinTypeItems = PinTypeSelectorImpl::CountValidTreeItemsImpl(ToFilter);
+	NumFilteredPinTypeItems = NumValidPinTypeItems;
+	FilteredTypeTreeRoot = TypeTreeRoot;
 }
 
 bool SPinTypeSelector::GetChildrenMatchingSearch(const FText& InSearchText, const TArray<FPinTypeTreeItem>& UnfilteredList, TArray<FPinTypeTreeItem>& OutFilteredList, FTopLevenshteinResult<FPinTypeTreeItem>& OutTopLevenshteinResult)
 {
+	const bool bIsEmptySearch = InSearchText.IsEmpty();
+	if (bIsEmptySearch)
+	{
+		OutFilteredList = UnfilteredList;
+		return true;
+	}
+
 	FString TrimmedFilterString;
 	TArray<FString> FilterTerms;
 	TArray<FString> SanitizedFilterTerms;
 
-	const bool bIsEmptySearch = InSearchText.IsEmpty();
-	if (!bIsEmptySearch)
+	// Trim and sanitized the filter text (so that it more likely matches the action descriptions)
+	TrimmedFilterString = FText::TrimPrecedingAndTrailing(InSearchText).ToString();
+
+	// Tokenize the search box text into a set of terms; all of them must be present to pass the filter
+	TrimmedFilterString.ParseIntoArray(FilterTerms, TEXT(" "), true);
+
+	// Generate a list of sanitized versions of the strings
+	for (int32 iFilters = 0; iFilters < FilterTerms.Num(); iFilters++)
 	{
-		// Trim and sanitized the filter text (so that it more likely matches the action descriptions)
-		TrimmedFilterString = FText::TrimPrecedingAndTrailing(InSearchText).ToString();
-
-		// Tokenize the search box text into a set of terms; all of them must be present to pass the filter
-		TrimmedFilterString.ParseIntoArray(FilterTerms, TEXT(" "), true);
-
-		// Generate a list of sanitized versions of the strings
-		for (int32 iFilters = 0; iFilters < FilterTerms.Num(); iFilters++)
-		{
-			FString EachString = FName::NameToDisplayString(FilterTerms[iFilters], false);
-			EachString = EachString.Replace(TEXT(" "), TEXT(""));
-			SanitizedFilterTerms.Add(EachString);
-		}
-
-		// Both of these should match!
-		ensure(SanitizedFilterTerms.Num() == FilterTerms.Num());
+		FString EachString = FName::NameToDisplayString(FilterTerms[iFilters], false);
+		EachString = EachString.Replace(TEXT(" "), TEXT(""));
+		SanitizedFilterTerms.Add(EachString);
 	}
+
+	// Both of these should match!
+	ensure(SanitizedFilterTerms.Num() == FilterTerms.Num());
 
 	bool bReturnVal = false;
 
-	for( auto it = UnfilteredList.CreateConstIterator(); it; ++it )
+	for( const FPinTypeTreeItem& Item : UnfilteredList)
 	{
-		FPinTypeTreeItem Item = *it;
-		FPinTypeTreeItem NewInfo = MakeShareable( new UEdGraphSchema_K2::FPinTypeTreeInfo(Item) );
 		TArray<FPinTypeTreeItem> ValidChildren;
-
 		const bool bHasChildrenMatchingSearch = GetChildrenMatchingSearch(InSearchText, Item->Children, ValidChildren, OutTopLevenshteinResult);
-		bool bFilterMatches = bIsEmptySearch;
+		bool bFilterMatches = true;
 
 		// If children match the search filter, there's no need to do any additional checks
 		if (!bHasChildrenMatchingSearch)
 		{
-			// If valid, attempt to match the custom filters; otherwise, treat it as a match by default.
-			bool bHasValidCustomFilter = false;
-			bool bCustomFilterMatches = true;
-			for(const TSharedPtr<IPinTypeSelectorFilter>& CustomFilter : CustomFilters)
+			// but if they don't, we need to match the terms:
+			const FString& LocalizedDescriptionString = Item->GetCachedDescriptionString();
+			const FString* SourceDescriptionStringPtr = FTextInspector::GetSourceString(Item->GetDescription());
+
+			// Test both the localized and source strings for a match
+			const FString MangledLocalizedDescriptionString = LocalizedDescriptionString.Replace(TEXT(" "), TEXT(""));
+			const FString MangledSourceDescriptionString = (SourceDescriptionStringPtr && *SourceDescriptionStringPtr != LocalizedDescriptionString) ? SourceDescriptionStringPtr->Replace(TEXT(" "), TEXT("")) : FString();
+
+			for (int32 FilterIndex = 0; FilterIndex < FilterTerms.Num() && bFilterMatches; ++FilterIndex)
 			{
-				if(CustomFilter.IsValid())
-				{
-					bHasValidCustomFilter = true;
-					bCustomFilterMatches &= CustomFilter->ShouldShowPinTypeTreeItem(Item);
-				}
-			}
-
-			bFilterMatches = bHasValidCustomFilter ? bCustomFilterMatches : true;
-			
-			// If we didn't match the custom filter, or it's an empty search, let's not do any checks against the FilterTerms
-			if (bFilterMatches && !bIsEmptySearch)
-			{
-				const FText LocalizedDescription = Item->GetDescription();
-				const FString LocalizedDescriptionString = LocalizedDescription.ToString();
-				const FString* SourceDescriptionStringPtr = FTextInspector::GetSourceString(LocalizedDescription);
-
-				// Test both the localized and source strings for a match
-				const FString MangledLocalizedDescriptionString = LocalizedDescriptionString.Replace(TEXT(" "), TEXT(""));
-				const FString MangledSourceDescriptionString = (SourceDescriptionStringPtr && *SourceDescriptionStringPtr != LocalizedDescriptionString) ? SourceDescriptionStringPtr->Replace(TEXT(" "), TEXT("")) : FString();
-
-				for (int32 FilterIndex = 0; FilterIndex < FilterTerms.Num() && bFilterMatches; ++FilterIndex)
-				{
-					const bool bMatchesLocalizedTerm = MangledLocalizedDescriptionString.Contains(FilterTerms[FilterIndex]) || MangledLocalizedDescriptionString.Contains(SanitizedFilterTerms[FilterIndex]);
-					const bool bMatchesSourceTerm = !MangledSourceDescriptionString.IsEmpty() && (MangledSourceDescriptionString.Contains(FilterTerms[FilterIndex]) || MangledSourceDescriptionString.Contains(SanitizedFilterTerms[FilterIndex]));
-					bFilterMatches = bFilterMatches && (bMatchesLocalizedTerm || bMatchesSourceTerm);
-				}
+				const bool bMatchesLocalizedTerm = MangledLocalizedDescriptionString.Contains(FilterTerms[FilterIndex]) || MangledLocalizedDescriptionString.Contains(SanitizedFilterTerms[FilterIndex]);
+				const bool bMatchesSourceTerm = !MangledSourceDescriptionString.IsEmpty() && (MangledSourceDescriptionString.Contains(FilterTerms[FilterIndex]) || MangledSourceDescriptionString.Contains(SanitizedFilterTerms[FilterIndex]));
+				bFilterMatches &= (bMatchesLocalizedTerm || bMatchesSourceTerm);
 			}
 		}
-		if( bHasChildrenMatchingSearch
-			|| bFilterMatches )
+
+		if(bFilterMatches)
 		{
-			NewInfo->Children = ValidChildren;
+			FPinTypeTreeItem NewInfo = MakeShared<UEdGraphSchema_K2::FPinTypeTreeInfo>(Item);
+			NewInfo->Children = MoveTemp(ValidChildren);
 			OutFilteredList.Add(NewInfo);
 
 			// Skip anything with children, those are categories and we don't care about those.
 			if (Item->Children.Num() == 0)
 			{
-				OutTopLevenshteinResult.CompareAndUpdate(TrimmedFilterString, NewInfo, Item->GetDescription().ToString());
+				OutTopLevenshteinResult.CompareAndUpdate(TrimmedFilterString, NewInfo, Item->GetCachedDescriptionString());
 			}
 
 			if (TypeTreeView.IsValid())
@@ -1707,13 +1714,35 @@ void SPinTypeSelector::OnMouseLeave( const FPointerEvent& MouseEvent )
 
 void SPinTypeSelector::OnCustomFilterChanged()
 {
-	NumFilteredPinTypeItems = 0;
-	FilteredTypeTreeRoot.Empty();
+	// regenerate clean type treeroot:
+	GetPinTypeTree.Execute(TypeTreeRoot, TypeTreeFilter);
 
-	FTopLevenshteinResult<FPinTypeTreeItem> TopLevenshteinResult;
-	GetChildrenMatchingSearch(SearchText, TypeTreeRoot, FilteredTypeTreeRoot, TopLevenshteinResult);
+	// apply new filters
+	FilterUnsupportedTypes(TypeTreeRoot);
 
-	if (TypeTreeView.IsValid())
+	// if any search text is present, apply that to the new FilteredTypeTreeRoot
+	if(!SearchText.IsEmpty())
+	{
+		NumFilteredPinTypeItems = 0;
+		FilteredTypeTreeRoot.Reset();
+
+		FTopLevenshteinResult<FPinTypeTreeItem> TopLevenshteinResult;
+		GetChildrenMatchingSearch(SearchText, TypeTreeRoot, FilteredTypeTreeRoot, TopLevenshteinResult);
+		
+		// FilteredTypeTreeRoot now up to date, we can refresh
+		if (TypeTreeView.IsValid())
+		{
+			TypeTreeView->RequestTreeRefresh();
+		}
+
+		// and update focus:
+		if (TopLevenshteinResult.IsSet())
+		{
+			TypeTreeView->SetSelection(TopLevenshteinResult.Item, ESelectInfo::OnNavigation);
+			TypeTreeView->RequestScrollIntoView(TopLevenshteinResult.Item);
+		}
+	}
+	else if (TypeTreeView.IsValid())
 	{
 		TypeTreeView->RequestTreeRefresh();
 	}

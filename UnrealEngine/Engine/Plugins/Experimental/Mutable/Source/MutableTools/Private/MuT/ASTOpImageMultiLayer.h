@@ -17,7 +17,7 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	//!
 	//---------------------------------------------------------------------------------------------
-	class ASTOpImageMultiLayer : public ASTOp
+	class ASTOpImageMultiLayer final : public ASTOp
 	{
 	public:
 

@@ -194,6 +194,20 @@ private:
 		TArray<uint32> DepthHistogram;
 	};
 
+	class FRingBufferAllocator
+	{
+		uint32 BufferSize;
+		uint32 ReadOffset;
+		uint32 WriteOffset;
+#if DO_CHECK
+		TQueue<uint32> SizeQueue;
+#endif
+	public:		
+		void Init(uint32 Size);
+		bool TryAllocate(uint32 Size, uint32& AllocatedOffset);
+		void Free(uint32 Size);
+	};
+
 	struct FVirtualPage
 	{
 		uint32 Priority				= 0u;						// Priority != 0u means referenced this frame
@@ -201,7 +215,7 @@ private:
 
 		FORCEINLINE bool operator==(const FVirtualPage& Other) const
 		{
-			return Priority == Priority && RegisteredPageIndex == Other.RegisteredPageIndex;
+			return Priority == Other.Priority && RegisteredPageIndex == Other.RegisteredPageIndex;
 		}
 	};
 
@@ -247,6 +261,8 @@ private:
 
 	uint32					StreamingRequestsBufferVersion;
 	uint32					MaxStreamingPages;
+	uint32					MaxRootPages;
+	uint32					NumInitialRootPages;
 	uint32					MaxPendingPages;
 	uint32					MaxPageInstallsPerUpdate;
 	uint32					MaxStreamingReadbackBuffers;
@@ -292,6 +308,8 @@ private:
 
 	TArray<FPendingPage>				PendingPages;
 	TArray<uint8>						PendingPageStagingMemory;
+	FRingBufferAllocator				PendingPageStagingAllocator;
+	
 
 	FStreamingPageUploader*				PageUploader = nullptr;
 
@@ -340,6 +358,7 @@ private:
 	uint32 GPUPageIndexToGPUOffset(uint32 PageIndex) const;
 
 	void ProcessNewResources(FRDGBuilder& GraphBuilder);
+	FRDGBuffer* GrowPoolAllocationIfNeeded(FRDGBuilder& GraphBuilder);
 	
 	uint32 DetermineReadyPages(uint32& TotalPageSize);
 	void InstallReadyPages(uint32 NumReadyPages);

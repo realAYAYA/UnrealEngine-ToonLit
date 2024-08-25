@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/TextureDefines.h"
+#include "PerPlatformProperties.h"
 #include "RenderCommandFence.h"
 #include "SceneComponent.h"
 #include "RuntimeVirtualTextureComponent.generated.h"
@@ -14,50 +15,62 @@ class UVirtualTextureBuilder;
 enum class EShadingPath;
 
 /** Component used to place a URuntimeVirtualTexture in the world. */
-UCLASS(Blueprintable, ClassGroup = Rendering, HideCategories = (Activation, Collision, Cooking, Mobility, LOD, Object, Physics, Rendering), MinimalAPI)
+UCLASS(Blueprintable, ClassGroup = Rendering, HideCategories = (Activation, Collision, Cooking, HLOD, Mobility, LOD, Navigation, Object, Physics), MinimalAPI)
 class URuntimeVirtualTextureComponent : public USceneComponent
 {
 	GENERATED_UCLASS_BODY()
 
 protected:
 	/** Actor to align rotation to. If set this actor is always included in the bounds calculation. */
-	UPROPERTY(EditAnywhere, Category = TransformFromBounds)
+	UPROPERTY(EditAnywhere, Category = VolumeBounds)
 	TSoftObjectPtr<AActor> BoundsAlignActor = nullptr;
 
 	/** Placeholder for details customization button. */
-	UPROPERTY(VisibleAnywhere, Transient, Category = TransformFromBounds)
+	UPROPERTY(VisibleAnywhere, Transient, Category = VolumeBounds)
 	bool bSetBoundsButton;
 
 	/** If the Bounds Align Actor is a Landscape then this will snap the bounds so that virtual texture texels align with landscape vertex positions. */
-	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = TransformFromBounds, meta = (DisplayName = "Snap To Landscape"))
+	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = VolumeBounds, meta = (DisplayName = "Snap To Landscape"))
 	bool bSnapBoundsToLandscape;
 
+	/** Amount to expand the Bounds during calculation. */
+	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = VolumeBounds, meta = (UIMin = "0", ClampMin = "0"))
+	float ExpandBounds = 0;
+
 	/** The virtual texture object to use. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, TextExportTransient, Category = VirtualTexture)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, TextExportTransient, Category = RuntimeVirtualTexture)
 	TObjectPtr<URuntimeVirtualTexture> VirtualTexture = nullptr;
 
+	/** Per platform overrides for enabling the virtual texture. Only affects In-Game and PIE. */
+	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = RuntimeVirtualTexture)
+	FPerPlatformBool EnableInGamePerPlatform;
+
+	/** Enable the virtual texture only when Nanite is enabled. Can be used for a Displacement virtual texture with Nanite tessellation. */
+	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = RuntimeVirtualTexture)
+	bool bEnableForNaniteOnly = false;
+
 	/** Set to true to enable scalability settings for the virtual texture. */
-	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = VirtualTexture, meta = (InlineEditConditionToggle))
+	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = RuntimeVirtualTexture, meta = (InlineEditConditionToggle))
 	bool bEnableScalability = false;
 
 	/** Group index of the scalability settings to use for the virtual texture. */
-	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = VirtualTexture, meta = (UIMin = "0", UIMax = "2", EditCondition = bEnableScalability))
+	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = RuntimeVirtualTexture, meta = (UIMin = "0", UIMax = "2", EditCondition = bEnableScalability))
 	uint32 ScalabilityGroup = 0;
 
 	/** Hide primitives in the main pass. Hidden primitives will be those that draw to this virtual texture with 'Draw in Main Pass' set to 'From Virtual Texture'. */
-	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = VirtualTexture)
+	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = RuntimeVirtualTexture)
 	bool bHidePrimitives = false;
 
 	/** Texture object containing streamed low mips. This can reduce rendering update cost. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = VirtualTextureBuild)
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = StreamingVirtualTexture)
 	TObjectPtr<UVirtualTextureBuilder> StreamingTexture = nullptr;
 
 	/** Number of streaming low mips to build for the virtual texture. */
-	UPROPERTY(EditAnywhere, Category = VirtualTextureBuild, meta = (UIMin = "0", UIMax = "12", DisplayName = "Build Levels"))
+	UPROPERTY(EditAnywhere, Category = StreamingVirtualTexture, meta = (UIMin = "0", UIMax = "12", DisplayName = "Build Levels"))
 	int32 StreamLowMips = 0;
 
 	/** Placeholder for details customization button. */
-	UPROPERTY(VisibleAnywhere, Transient, Category = VirtualTextureBuild)
+	UPROPERTY(VisibleAnywhere, Transient, Category = StreamingVirtualTexture)
 	bool bBuildStreamingMipsButton;
 
 	/** 
@@ -65,16 +78,20 @@ protected:
 	 * For compressors that support EncodeSpeed (i.e. Oodle), this is only applied if enabled (see Project Settings -> Texture Encoding). 
 	 * Note that this is in addition to any unavoidable loss due to the target format. Selecting "No Lossy Compression" will not result in zero distortion for BCn formats.
 	*/
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, AdvancedDisplay, Category = VirtualTextureBuild)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, AdvancedDisplay, Category = StreamingVirtualTexture)
 	TEnumAsByte<ETextureLossyCompressionAmount> LossyCompressionAmount = TLCA_Default;
 
-	/** Use streaming low mips when rendering in editor. Set true to view and debug the baked streaming low mips. */
-	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = VirtualTextureBuild, meta = (DisplayName = "View in Editor"))
-	bool bUseStreamingLowMipsInEditor = false;
+	/** Build the streaming low mips using a fixed color. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, AdvancedDisplay, Category = StreamingVirtualTexture, meta = (InlineEditConditionToggle))
+	bool bUseStreamingMipsFixedColor = false;
 
-	/** Build the streaming low mips using debug coloring. This can help show where streaming mips are being used. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Transient, AdvancedDisplay, Category = VirtualTextureBuild, meta = (DisplayName = "Build Debug"))
-	bool bBuildDebugStreamingMips = false;
+	/** Fixed color to use when building the streaming low mips. This only affects BaseColor and Displacement attributes. The Red channel is used for fixed Displacement. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, AdvancedDisplay, Category = StreamingVirtualTexture, meta = (DisplayName = "Fixed Color", HideAlphaChannel, EditCondition = bUseStreamingMipsFixedColor))
+	FLinearColor StreamingMipsFixedColor;
+
+	/** Use streaming low mips when rendering in editor. Set true to view and debug the baked streaming low mips. */
+	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = StreamingVirtualTexture, meta = (DisplayName = "View in Editor"))
+	bool bUseStreamingLowMipsInEditor = false;
 
 #if WITH_EDITOR
 	/** Delegate handle for our function called on PIE end. */
@@ -93,7 +110,7 @@ public:
 	 * This function marks an area of the runtime virtual texture as dirty.
 	 * @param WorldBounds : The world space bounds of the pages to invalidate.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VirtualTexture")
+	UFUNCTION(BlueprintCallable, Category = VirtualTexture)
 	ENGINE_API void Invalidate(FBoxSphereBounds const& WorldBounds);
 
 	/** Set the runtime virtual texture object on this component. */
@@ -101,6 +118,9 @@ public:
 
 	/** Get the runtime virtual texture object on this component. */
 	URuntimeVirtualTexture* GetVirtualTexture() const { return VirtualTexture; }
+
+	/** Get if the runtime virtual texture should be fully instantiated by it's render proxy. */
+	ENGINE_API bool IsEnabledInScene() const;
 
 	/** Get if scalability settings are enabled. */
 	bool IsScalable() const { return bEnableScalability; }
@@ -123,8 +143,8 @@ public:
 	/** Get if we want to use any streaming low mips on this component. */
 	ENGINE_API bool IsStreamingLowMips(EShadingPath ShadingPath) const;
 
-	/** Public getter for debug streaming mips flag. */
-	bool IsBuildDebugStreamingMips() { return bBuildDebugStreamingMips; }
+	/** Public getter for streaming mips fixed color. */
+	ENGINE_API FLinearColor GetStreamingMipsFixedColor() const;
 
 	/** Public getter for lossy compression setting. */
 	TEnumAsByte<ETextureLossyCompressionAmount> GetLossyCompressionAmount() const { return LossyCompressionAmount; }
@@ -148,6 +168,8 @@ public:
 	TSoftObjectPtr<AActor>& GetBoundsAlignActor() { return BoundsAlignActor; }
 	/** Get if SnapBoundsToLandscape is set on this component. */
 	bool GetSnapBoundsToLandscape() const { return bSnapBoundsToLandscape; }
+	/** Get amount to expand the calculated bounds on this component. */
+	float GetExpandBounds() const { return ExpandBounds; }
 #endif
 	/** Get a translation to account for any vertex sample offset from the use of bSnapBoundsToLandscape. */
 	ENGINE_API FTransform GetTexelSnapTransform() const;
@@ -163,6 +185,7 @@ protected:
 	//~ End UObject Interface
 
 	//~ Begin UActorComponent Interface
+	ENGINE_API virtual bool ShouldCreateRenderState() const override;
 	ENGINE_API virtual void CreateRenderState_Concurrent(FRegisterComponentContext* Context) override;
 	ENGINE_API virtual void SendRenderTransform_Concurrent() override;
 	ENGINE_API virtual void DestroyRenderState_Concurrent() override;
@@ -176,7 +199,6 @@ protected:
 	ENGINE_API virtual void OnRegister() override;
 	ENGINE_API virtual void OnUnregister() override;
 #endif
-	ENGINE_API virtual bool IsVisible() const override;
 	ENGINE_API virtual FBoxSphereBounds CalcBounds(const FTransform& LocalToWorld) const override;
 	//~ End USceneComponent Interface
 

@@ -255,6 +255,19 @@ public:
 		return false;
 	}
 
+	/** Returns the names of the columns visualized in the RC Panel Entities list. */
+	static const TSet<FName>& GetExposedEntitiesColumnNames()
+	{
+		static TSet<FName> ColumnNames =
+			{ TEXT("PropertyID")
+			, TEXT("OwnerName")
+			, TEXT("Subobject Path")
+			, TEXT("Description")
+			, TEXT("Value")};
+
+		return ColumnNames;
+	}
+
 	/**
 	 * Should transactions be generated for events received through protocols (ie. MIDI, DMX etc.)
 	 * Disabling transactions improves performance but will prevent events from being transacted to Multi-User
@@ -307,6 +320,10 @@ public:
 	UPROPERTY(config)
 	float TreeBindingSplitRatio = 0.7;
 
+	/** The split widget control ratio between entity tree and details/protocol binding list. */
+	UPROPERTY(config)
+	float ActionPanelSplitRatio = 0.6;
+
 	UPROPERTY(config)
 	bool bUseRebindingContext = true;
 
@@ -353,6 +370,19 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Remote Control | Security", DisplayName = "Warn that Passphrase might be disabled ", meta=(EditCondition=bRestrictServerAccess))
 	bool bShowPassphraseDisabledWarning = true;
 
+	UPROPERTY(Config, EditAnywhere, Category = "Remote Control Preset", DisplayName = "Hide or Show the Logic panel by default")
+	bool bLogicPanelVisibility = false;
+
+	UPROPERTY(Config, EditAnywhere, Category = "Remote Control Preset", DisplayName = "Which columns to hide in the exposed entities list")
+	TSet<FName> EntitiesListHiddenColumns;
+	
+	UPROPERTY(Config, EditAnywhere, Category = "Remote Control Preset", DisplayName = "Default mode (e.g. Setup/Operation)")
+	FName DefaultPanelMode = TEXT("Setup");
+
+	/** Refresh all widgets in the exposed properties list when object properties are updated */
+	UPROPERTY(config, EditAnywhere, Category = "Remote Control Preset", DisplayName = "Refresh all exposed entities widgets on object properties update")
+	bool bRefreshExposedEntitiesOnObjectPropertyUpdate = true;
+	
 private:
 	UPROPERTY(config)
     bool bSecuritySettingsReviewed = false;

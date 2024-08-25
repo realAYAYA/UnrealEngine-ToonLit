@@ -16,6 +16,8 @@ namespace Gauntlet
 		public string DeviceName { get; set; }
 		[JsonPropertyName("instance")] 
 		public string Instance { get; set; }
+		[JsonPropertyName("instanceName")]
+		public string InstanceName { get; set; }
 		[JsonPropertyName("platform")]
 		public string Platform { get; set; }
 		[JsonPropertyName("oSversion")]

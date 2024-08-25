@@ -34,26 +34,55 @@ protected:
 public:
 	static TSharedRef<FWorkspaceItem> NewGroup( const FText& DisplayName, const FSlateIcon& Icon = FSlateIcon(), const bool bSortChildren = false )
 	{
-		return MakeShareable( new FWorkspaceItem( DisplayName, Icon, bSortChildren ) );
+		return MakeShareable( new FWorkspaceItem( NAME_None, DisplayName, Icon, bSortChildren ) );
+	}
+
+	static TSharedRef<FWorkspaceItem> NewGroup( const FName& Name, const FText& DisplayName, const FSlateIcon& Icon = FSlateIcon(), const bool bSortChildren = false )
+	{
+		return MakeShareable( new FWorkspaceItem( Name, DisplayName, Icon, bSortChildren ) );
 	}
 
 	static TSharedRef<FWorkspaceItem> NewGroup( const FText& DisplayName, const FText& TooltipText, const FSlateIcon& Icon = FSlateIcon(), const bool bSortChildren = false )
 	{
-		return MakeShareable( new FWorkspaceItem( DisplayName, TooltipText, Icon, bSortChildren ) );
+		return MakeShareable( new FWorkspaceItem( NAME_None, DisplayName, TooltipText, Icon, bSortChildren ) );
+	}
+
+	static TSharedRef<FWorkspaceItem> NewGroup( const FName& Name, const FText& DisplayName, const FText& TooltipText, const FSlateIcon& Icon = FSlateIcon(), const bool bSortChildren = false )
+	{
+		return MakeShareable( new FWorkspaceItem( Name, DisplayName, TooltipText, Icon, bSortChildren ) );
 	}
 
 	TSharedRef<FWorkspaceItem> AddGroup( const FText& InDisplayName, const FSlateIcon& InIcon = FSlateIcon(), const bool InSortChildren = false )
 	{
-		TSharedRef<FWorkspaceItem> NewItem = FWorkspaceItem::NewGroup(InDisplayName, InIcon, InSortChildren);
+		TSharedRef<FWorkspaceItem> NewItem = FWorkspaceItem::NewGroup(NAME_None, InDisplayName, InIcon, InSortChildren);
+		AddItem( NewItem );
+		return NewItem;
+	}
+
+	TSharedRef<FWorkspaceItem> AddGroup( const FName& InName, const FText& InDisplayName, const FSlateIcon& InIcon = FSlateIcon(), const bool InSortChildren = false )
+	{
+		TSharedRef<FWorkspaceItem> NewItem = FWorkspaceItem::NewGroup(InName, InDisplayName, InIcon, InSortChildren);
 		AddItem( NewItem );
 		return NewItem;
 	}
 
 	TSharedRef<FWorkspaceItem> AddGroup( const FText& InDisplayName, const FText& InTooltipText, const FSlateIcon& InIcon = FSlateIcon(), const bool InSortChildren = false )
 	{
-		TSharedRef<FWorkspaceItem> NewItem = FWorkspaceItem::NewGroup(InDisplayName, InTooltipText, InIcon, InSortChildren);
+		TSharedRef<FWorkspaceItem> NewItem = FWorkspaceItem::NewGroup(NAME_None, InDisplayName, InTooltipText, InIcon, InSortChildren);
 		AddItem( NewItem );
 		return NewItem;
+	}
+
+	TSharedRef<FWorkspaceItem> AddGroup( const FName& InName, const FText& InDisplayName, const FText& InTooltipText, const FSlateIcon& InIcon = FSlateIcon(), const bool InSortChildren = false )
+	{
+		TSharedRef<FWorkspaceItem> NewItem = FWorkspaceItem::NewGroup(InName, InDisplayName,InTooltipText, InIcon, InSortChildren);
+		AddItem( NewItem );
+		return NewItem;
+	}
+
+	const FName GetFName() const
+	{
+		return NameAttribute.Get();
 	}
 
 	const FText& GetDisplayName() const
@@ -149,6 +178,15 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 protected:
 	FWorkspaceItem( const FText& InDisplayName, const FSlateIcon& InIcon, const bool bInSortChildren )
 		: Icon(InIcon)
+		, NameAttribute(NAME_None)
+		, DisplayNameAttribute(InDisplayName)
+		, bSortChildren(bInSortChildren)
+	{
+	}
+
+	FWorkspaceItem( const FName& InName, const FText& InDisplayName, const FSlateIcon& InIcon, const bool bInSortChildren )
+		: Icon(InIcon)
+		, NameAttribute(InName)
 		, DisplayNameAttribute(InDisplayName)
 		, bSortChildren(bInSortChildren)
 	{
@@ -156,6 +194,16 @@ protected:
 
 	FWorkspaceItem( const FText& InDisplayName, const FText& InTooltipText, const FSlateIcon& InIcon, const bool bInSortChildren )
 		: Icon(InIcon)
+		, NameAttribute(NAME_None)
+		, DisplayNameAttribute(InDisplayName)
+		, TooltipTextAttribute(InTooltipText)
+		, bSortChildren(bInSortChildren)
+	{
+	}
+
+	FWorkspaceItem( const FName& InName, const FText& InDisplayName, const FText& InTooltipText, const FSlateIcon& InIcon, const bool bInSortChildren )
+		: Icon(InIcon)
+		, NameAttribute(InName)
 		, DisplayNameAttribute(InDisplayName)
 		, TooltipTextAttribute(InTooltipText)
 		, bSortChildren(bInSortChildren)
@@ -163,6 +211,7 @@ protected:
 	}
 
 	FSlateIcon Icon;
+	TAttribute<FName> NameAttribute;
 	TAttribute<FText> DisplayNameAttribute;
 	TAttribute<FText> TooltipTextAttribute;
 	UE_DEPRECATED(5.0, "Use DisplayNameAttribute instead.")

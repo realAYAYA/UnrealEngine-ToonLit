@@ -2,7 +2,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 
@@ -12,6 +14,7 @@ namespace EpicGames.Core
 	/// Representation of an absolute directory path. Allows fast hashing and comparisons.
 	/// </summary>
 	[Serializable]
+	[TypeConverter(typeof(DirectoryReferenceTypeConverter))]
 	public class DirectoryReference : FileSystemReference, IEquatable<DirectoryReference>, IComparable<DirectoryReference>
 	{
 		/// <summary>
@@ -51,6 +54,7 @@ namespace EpicGames.Core
 		public DirectoryReference(string fullName, Sanitize sanitize)
 			: base(fullName)
 		{
+			_ = sanitize;
 		}
 
 		/// <summary>
@@ -83,10 +87,7 @@ namespace EpicGames.Core
 		/// Gets the top level directory name
 		/// </summary>
 		/// <returns>The name of the directory</returns>
-		public string GetDirectoryName()
-		{
-			return Path.GetFileName(FullName);
-		}
+		public string GetDirectoryName() => Path.GetFileName(FullName);
 
 		/// <summary>
 		/// Gets the directory containing this object
@@ -139,17 +140,14 @@ namespace EpicGames.Core
 		public static DirectoryReference? GetSpecialFolder(Environment.SpecialFolder folder)
 		{
 			string folderPath = Environment.GetFolderPath(folder);
-			return String.IsNullOrEmpty(folderPath)? null : new DirectoryReference(folderPath);
+			return String.IsNullOrEmpty(folderPath) ? null : new DirectoryReference(folderPath);
 		}
 
 		/// <summary>
 		/// Determines whether this path represents a root directory in the filesystem
 		/// </summary>
 		/// <returns>True if this path is a root directory, false otherwise</returns>
-		public bool IsRootDirectory()
-		{
-			return FullName[^1] == Path.DirectorySeparatorChar;
-		}
+		public bool IsRootDirectory() => FullName[^1] == Path.DirectorySeparatorChar;
 
 		/// <summary>
 		/// Combine several fragments with a base directory, to form a new directory name
@@ -157,11 +155,7 @@ namespace EpicGames.Core
 		/// <param name="baseDirectory">The base directory</param>
 		/// <param name="fragments">Fragments to combine with the base directory</param>
 		/// <returns>The new directory name</returns>
-		public static DirectoryReference Combine(DirectoryReference baseDirectory, params string[] fragments)
-		{
-			string fullName = FileSystemReference.CombineStrings(baseDirectory, fragments);
-			return new DirectoryReference(fullName, Sanitize.None);
-		}
+		public static DirectoryReference Combine(DirectoryReference baseDirectory, params string[] fragments) => new DirectoryReference(CombineStrings(baseDirectory, fragments), Sanitize.None);
 
 		/// <summary>
 		/// Compares two filesystem object names for equality. Uses the canonical name representation, not the display name representation.
@@ -191,64 +185,49 @@ namespace EpicGames.Core
 		/// <param name="a">First object to compare.</param>
 		/// <param name="b">Second object to compare.</param>
 		/// <returns>False if the names represent the same object, true otherwise</returns>
-		public static bool operator !=(DirectoryReference? a, DirectoryReference? b)
-		{
-			return !(a == b);
-		}
+		public static bool operator !=(DirectoryReference? a, DirectoryReference? b) => !(a == b);
 
 		/// <summary>
 		/// Compares against another object for equality.
 		/// </summary>
 		/// <param name="obj">other instance to compare.</param>
 		/// <returns>True if the names represent the same object, false otherwise</returns>
-		public override bool Equals(object? obj)
-		{
-			return (obj is DirectoryReference dir) && dir == this;
-		}
+		public override bool Equals(object? obj) => (obj is DirectoryReference dir) && dir == this;
 
 		/// <summary>
 		/// Compares against another object for equality.
 		/// </summary>
 		/// <param name="obj">other instance to compare.</param>
 		/// <returns>True if the names represent the same object, false otherwise</returns>
-		public bool Equals(DirectoryReference? obj)
-		{
-			return obj == this;
-		}
+		public bool Equals(DirectoryReference? obj) => obj == this;
 
 		/// <summary>
 		/// Returns a hash code for this object
 		/// </summary>
 		/// <returns></returns>
-		public override int GetHashCode()
-		{
-			return Comparer.GetHashCode(FullName);
-		}
+		public override int GetHashCode() => Comparer.GetHashCode(FullName);
 
 		/// <inheritdoc/>
 		public int CompareTo(DirectoryReference? other) => Comparer.Compare(FullName, other?.FullName);
 
 		/// <inheritdoc/>
-		public static bool operator <(DirectoryReference left, DirectoryReference right) => ReferenceEquals(left, null) ? !ReferenceEquals(right, null) : left.CompareTo(right) < 0;
+		public static bool operator <(DirectoryReference left, DirectoryReference right) => left is null ? right is not null : left.CompareTo(right) < 0;
 
 		/// <inheritdoc/>
-		public static bool operator <=(DirectoryReference left, DirectoryReference right) => ReferenceEquals(left, null) || left.CompareTo(right) <= 0;
+		public static bool operator <=(DirectoryReference left, DirectoryReference right) => left is null || left.CompareTo(right) <= 0;
 
 		/// <inheritdoc/>
-		public static bool operator >(DirectoryReference left, DirectoryReference right) => !ReferenceEquals(left, null) && left.CompareTo(right) > 0;
+		public static bool operator >(DirectoryReference left, DirectoryReference right) => left is not null && left.CompareTo(right) > 0;
 
 		/// <inheritdoc/>
-		public static bool operator >=(DirectoryReference left, DirectoryReference right) => ReferenceEquals(left, null) ? ReferenceEquals(right, null) : left.CompareTo(right) >= 0;
+		public static bool operator >=(DirectoryReference left, DirectoryReference right) => left is null ? right is null : left.CompareTo(right) >= 0;
 
 		/// <summary>
 		/// Helper function to create a remote directory reference. Unlike normal DirectoryReference objects, these aren't converted to a full path in the local filesystem.
 		/// </summary>
 		/// <param name="absolutePath">The absolute path in the remote file system</param>
 		/// <returns>New directory reference</returns>
-		public static DirectoryReference MakeRemote(string absolutePath)
-		{
-			return new DirectoryReference(absolutePath, Sanitize.None);
-		}
+		public static DirectoryReference MakeRemote(string absolutePath) => new DirectoryReference(absolutePath, Sanitize.None);
 
 		/// <summary>
 		/// Gets the parent directory for a file, or returns null if it's null.
@@ -256,53 +235,27 @@ namespace EpicGames.Core
 		/// <param name="file">The file to create a directory reference for</param>
 		/// <returns>The directory containing the file  </returns>
 		[return: NotNullIfNotNull("file")]
-		public static DirectoryReference? FromFile(FileReference? file)
-		{
-			if(file == null)
-			{
-				return null;
-			}
-			else
-			{
-				return file.Directory;
-			}
-		}
+		public static DirectoryReference? FromFile(FileReference? file) => file?.Directory;
 
 		/// <summary>
 		/// Create a DirectoryReference from a string. If the string is null, returns a null DirectoryReference.
 		/// </summary>
 		/// <param name="directoryName">Path for the new object</param>
 		/// <returns>Returns a FileReference representing the given string, or null.</returns>
-		public static DirectoryReference? FromString(string? directoryName)
-		{
-			if(String.IsNullOrEmpty(directoryName))
-			{
-				return null;
-			}
-			else
-			{
-				return new DirectoryReference(directoryName);
-			}
-		}
+		public static DirectoryReference? FromString(string? directoryName) => String.IsNullOrEmpty(directoryName) ? null : new DirectoryReference(directoryName);
 
 		/// <summary>
 		/// Finds the correct case to match the location of this file on disk. Uses the given case for parts of the path that do not exist.
 		/// </summary>
 		/// <param name="location">The path to find the correct case for</param>
 		/// <returns>Location of the file with the correct case</returns>
-		public static DirectoryReference FindCorrectCase(DirectoryReference location)
-		{
-			return new DirectoryReference(DirectoryUtils.FindCorrectCase(location.ToDirectoryInfo()));
-		}
+		public static DirectoryReference FindCorrectCase(DirectoryReference location) => new DirectoryReference(DirectoryUtils.FindCorrectCase(location.ToDirectoryInfo()));
 
 		/// <summary>
 		/// Constructs a DirectoryInfo object from this reference
 		/// </summary>
 		/// <returns>New DirectoryInfo object</returns>
-		public DirectoryInfo ToDirectoryInfo()
-		{
-			return new DirectoryInfo(FullName);
-		}
+		public DirectoryInfo ToDirectoryInfo() => new DirectoryInfo(FullName);
 
 		#region System.IO.Directory Wrapper Methods
 
@@ -310,61 +263,40 @@ namespace EpicGames.Core
 		/// Finds the current directory
 		/// </summary>
 		/// <returns>The current directory</returns>
-		public static DirectoryReference GetCurrentDirectory()
-		{
-			return new DirectoryReference(Directory.GetCurrentDirectory());
-		}
+		public static DirectoryReference GetCurrentDirectory() => new DirectoryReference(Directory.GetCurrentDirectory());
 
 		/// <summary>
 		/// Creates a directory
 		/// </summary>
 		/// <param name="location">Location of the directory</param>
-		public static void CreateDirectory(DirectoryReference location)
-		{
-			Directory.CreateDirectory(location.FullName);
-		}
+		public static void CreateDirectory(DirectoryReference location) => Directory.CreateDirectory(location.FullName);
 
-        /// <summary>
-        /// Deletes a directory
-        /// </summary>
+		/// <summary>
+		/// Deletes a directory
+		/// </summary>
 		/// <param name="location">Location of the directory</param>
-        public static void Delete(DirectoryReference location)
-        {
-            Directory.Delete(location.FullName);
-        }
+		public static void Delete(DirectoryReference location) => Directory.Delete(location.FullName);
 
-        /// <summary>
-        /// Deletes a directory
-        /// </summary>
+		/// <summary>
+		/// Deletes a directory
+		/// </summary>
 		/// <param name="location">Location of the directory</param>
 		/// <param name="bRecursive">Whether to remove directories recursively</param>
-        public static void Delete(DirectoryReference location, bool bRecursive)
-        {
-            Directory.Delete(location.FullName, bRecursive);
-        }
+		public static void Delete(DirectoryReference location, bool bRecursive) => Directory.Delete(location.FullName, bRecursive);
 
-        /// <summary>
-        /// Checks whether the directory exists
-        /// </summary>
+		/// <summary>
+		/// Checks whether the directory exists
+		/// </summary>
 		/// <param name="location">Location of the directory</param>
-        /// <returns>True if this directory exists</returns>
-        public static bool Exists(DirectoryReference location)
-		{
-			return Directory.Exists(location.FullName);
-		}
+		/// <returns>True if this directory exists</returns>
+		public static bool Exists(DirectoryReference location) => Directory.Exists(location.FullName);
 
 		/// <summary>
 		/// Enumerate files from a given directory
 		/// </summary>
 		/// <param name="baseDir">Base directory to search in</param>
 		/// <returns>Sequence of file references</returns>
-		public static IEnumerable<FileReference> EnumerateFiles(DirectoryReference baseDir)
-		{
-			foreach (string fileName in Directory.EnumerateFiles(baseDir.FullName))
-			{
-				yield return new FileReference(fileName, FileReference.Sanitize.None);
-			}
-		}
+		public static IEnumerable<FileReference> EnumerateFiles(DirectoryReference baseDir) => Directory.EnumerateFiles(baseDir.FullName).Select(fileName => new FileReference(fileName, FileReference.Sanitize.None));
 
 		/// <summary>
 		/// Enumerate files from a given directory
@@ -372,13 +304,7 @@ namespace EpicGames.Core
 		/// <param name="baseDir">Base directory to search in</param>
 		/// <param name="pattern">Pattern for matching files</param>
 		/// <returns>Sequence of file references</returns>
-		public static IEnumerable<FileReference> EnumerateFiles(DirectoryReference baseDir, string pattern)
-		{
-			foreach (string fileName in Directory.EnumerateFiles(baseDir.FullName, pattern))
-			{
-				yield return new FileReference(fileName, FileReference.Sanitize.None);
-			}
-		}
+		public static IEnumerable<FileReference> EnumerateFiles(DirectoryReference baseDir, string pattern) => Directory.EnumerateFiles(baseDir.FullName, pattern).Select(fileName => new FileReference(fileName, FileReference.Sanitize.None));
 
 		/// <summary>
 		/// Enumerate files from a given directory
@@ -387,26 +313,14 @@ namespace EpicGames.Core
 		/// <param name="pattern">Pattern for matching files</param>
 		/// <param name="option">Options for the search</param>
 		/// <returns>Sequence of file references</returns>
-		public static IEnumerable<FileReference> EnumerateFiles(DirectoryReference baseDir, string pattern, SearchOption option)
-		{
-			foreach (string fileName in Directory.EnumerateFiles(baseDir.FullName, pattern, option))
-			{
-				yield return new FileReference(fileName, FileReference.Sanitize.None);
-			}
-		}
+		public static IEnumerable<FileReference> EnumerateFiles(DirectoryReference baseDir, string pattern, SearchOption option) => Directory.EnumerateFiles(baseDir.FullName, pattern, option).Select(fileName => new FileReference(fileName, FileReference.Sanitize.None));
 
 		/// <summary>
 		/// Enumerate subdirectories in a given directory
 		/// </summary>
 		/// <param name="baseDir">Base directory to search in</param>
 		/// <returns>Sequence of directory references</returns>
-		public static IEnumerable<DirectoryReference> EnumerateDirectories(DirectoryReference baseDir)
-		{
-			foreach (string directoryName in Directory.EnumerateDirectories(baseDir.FullName))
-			{
-				yield return new DirectoryReference(directoryName, Sanitize.None);
-			}
-		}
+		public static IEnumerable<DirectoryReference> EnumerateDirectories(DirectoryReference baseDir) => Directory.EnumerateDirectories(baseDir.FullName).Select(directoryName => new DirectoryReference(directoryName, Sanitize.None));
 
 		/// <summary>
 		/// Enumerate subdirectories in a given directory
@@ -414,13 +328,7 @@ namespace EpicGames.Core
 		/// <param name="baseDir">Base directory to search in</param>
 		/// <param name="pattern">Pattern for matching directories</param>
 		/// <returns>Sequence of directory references</returns>
-		public static IEnumerable<DirectoryReference> EnumerateDirectories(DirectoryReference baseDir, string pattern)
-		{
-			foreach (string directoryName in Directory.EnumerateDirectories(baseDir.FullName, pattern))
-			{
-				yield return new DirectoryReference(directoryName, Sanitize.None);
-			}
-		}
+		public static IEnumerable<DirectoryReference> EnumerateDirectories(DirectoryReference baseDir, string pattern) => Directory.EnumerateDirectories(baseDir.FullName, pattern).Select(directoryName => new DirectoryReference(directoryName, Sanitize.None));
 
 		/// <summary>
 		/// Enumerate subdirectories in a given directory
@@ -429,13 +337,7 @@ namespace EpicGames.Core
 		/// <param name="pattern">Pattern for matching files</param>
 		/// <param name="option">Options for the search</param>
 		/// <returns>Sequence of directory references</returns>
-		public static IEnumerable<DirectoryReference> EnumerateDirectories(DirectoryReference baseDir, string pattern, SearchOption option)
-		{
-			foreach (string directoryName in Directory.EnumerateDirectories(baseDir.FullName, pattern, option))
-			{
-				yield return new DirectoryReference(directoryName, Sanitize.None);
-			}
-		}
+		public static IEnumerable<DirectoryReference> EnumerateDirectories(DirectoryReference baseDir, string pattern, SearchOption option) => Directory.EnumerateDirectories(baseDir.FullName, pattern, option).Select(directoryName => new DirectoryReference(directoryName, Sanitize.None));
 
 		/// <summary>
 		/// Sets the current directory
@@ -456,6 +358,44 @@ namespace EpicGames.Core
 	}
 
 	/// <summary>
+	/// Type converter to/from strings
+	/// </summary>
+	class DirectoryReferenceTypeConverter : TypeConverter
+	{
+		/// <inheritdoc/>
+		public override bool CanConvertFrom(ITypeDescriptorContext? context, Type sourceType)
+		{
+			return sourceType == typeof(string) || base.CanConvertFrom(context, sourceType);
+		}
+
+		/// <inheritdoc/>
+		public override object? ConvertFrom(ITypeDescriptorContext? context, CultureInfo? culture, object value)
+		{
+			if (value is string stringValue)
+			{
+				return new DirectoryReference(stringValue);
+			}
+			return base.ConvertFrom(context, culture, value);
+		}
+
+		/// <inheritdoc/>
+		public override bool CanConvertTo(ITypeDescriptorContext? context, Type? destinationType)
+		{
+			return destinationType == typeof(string) || base.CanConvertTo(context, destinationType);
+		}
+
+		/// <inheritdoc/>
+		public override object? ConvertTo(ITypeDescriptorContext? context, CultureInfo? culture, object? value, Type destinationType)
+		{
+			if (destinationType == typeof(string))
+			{
+				return value?.ToString();
+			}
+			return base.ConvertTo(context, culture, value, destinationType);
+		}
+	}
+
+	/// <summary>
 	/// Extension methods for passing DirectoryReference arguments
 	/// </summary>
 	public static class DirectoryReferenceExtensionMethods
@@ -465,10 +405,7 @@ namespace EpicGames.Core
 		/// </summary>
 		/// <param name="writer">Binary writer to write to</param>
 		/// <param name="directory">The directory reference to write</param>
-		public static void Write(this BinaryWriter writer, DirectoryReference directory)
-		{
-			writer.Write((directory == null) ? String.Empty : directory.FullName);
-		}
+		public static void Write(this BinaryWriter writer, DirectoryReference directory) => writer.Write((directory == null) ? String.Empty : directory.FullName);
 
 		/// <summary>
 		/// Manually deserialize a directory reference from a binary stream.
@@ -486,20 +423,14 @@ namespace EpicGames.Core
 		/// </summary>
 		/// <param name="reader">Binary reader to read from</param>
 		/// <returns>New DirectoryReference object</returns>
-		public static DirectoryReference ReadDirectoryReferenceNotNull(this BinaryReader reader)
-		{
-			return BinaryArchiveReader.NotNull<DirectoryReference>(ReadDirectoryReference(reader));
-		}
+		public static DirectoryReference ReadDirectoryReferenceNotNull(this BinaryReader reader) => BinaryArchiveReader.NotNull(ReadDirectoryReference(reader));
 
 		/// <summary>
 		/// Writes a directory reference  to a binary archive
 		/// </summary>
 		/// <param name="writer">The writer to output data to</param>
 		/// <param name="directory">The item to write</param>
-		public static void WriteDirectoryReference(this BinaryArchiveWriter writer, DirectoryReference? directory)
-		{
-			writer.WriteString(directory?.FullName);
-		}
+		public static void WriteDirectoryReference(this BinaryArchiveWriter writer, DirectoryReference? directory) => writer.WriteString(directory?.FullName);
 
 		/// <summary>
 		/// Reads a directory reference from a binary archive
@@ -509,14 +440,7 @@ namespace EpicGames.Core
 		public static DirectoryReference? ReadDirectoryReference(this BinaryArchiveReader reader)
 		{
 			string? fullName = reader.ReadString();
-			if (fullName == null)
-			{
-				return null;
-			}
-			else
-			{
-				return new DirectoryReference(fullName, DirectoryReference.Sanitize.None);
-			}
+			return fullName == null ? null : new DirectoryReference(fullName, DirectoryReference.Sanitize.None);
 		}
 
 		/// <summary>
@@ -524,9 +448,6 @@ namespace EpicGames.Core
 		/// </summary>
 		/// <param name="reader">Reader to serialize data from</param>
 		/// <returns>New directory reference instance</returns>
-		public static DirectoryReference ReadDirectoryReferenceNotNull(this BinaryArchiveReader reader)
-		{
-			return BinaryArchiveReader.NotNull(ReadDirectoryReference(reader));
-		}
+		public static DirectoryReference ReadDirectoryReferenceNotNull(this BinaryArchiveReader reader) => BinaryArchiveReader.NotNull(ReadDirectoryReference(reader));
 	}
 }

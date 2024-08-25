@@ -2,7 +2,6 @@
 
 #include "Selection/StoredMeshSelectionUtil.h"
 #include "Selection/PersistentMeshSelection.h"
-#include "Selection/PersistentMeshSelectionManager.h"
 #include "TargetInterfaces/PrimitiveComponentBackedTarget.h"
 #include "InteractiveTool.h"
 #include "InteractiveToolManager.h"
@@ -57,39 +56,6 @@ bool UE::Geometry::SetToolOutputGeometrySelectionForTarget(UInteractiveTool* Too
 		return false;
 	}
 	return SelectionManager->SetSelectionForComponent(TargetInterface->GetOwnerComponent(), OutputSelection);
-}
-
-
-
-
-
-
-
-const UDEPRECATED_PersistentMeshSelection* UE::Geometry::GetCurrentToolInputSelection(const FToolBuilderState& SceneState, UToolTarget* Target)
-{
-	ensureMsgf(false, TEXT("This path no longer functions and will be removed"));
-	return nullptr;
-}
-
-
-
-bool UE::Geometry::GetStoredSelectionAsTriangles(
-	const UDEPRECATED_PersistentMeshSelection* Selection,
-	const FDynamicMesh3& Mesh,
-	TArray<int32>& TrianglesOut)
-{
-	return false;
-}
-
-
-void UE::Geometry::ClearActiveToolSelection(UInteractiveToolManager* ToolManager)
-{
-}
-
-
-bool UE::Geometry::SetToolOutputSelection(UInteractiveTool* Tool, UDEPRECATED_PersistentMeshSelection* Selection)
-{
-	return false;
 }
 
 

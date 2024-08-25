@@ -5,7 +5,7 @@
 #include "MuR/ExtensionData.h"
 
 struct FInstancedStruct;
-class UCustomizableObjectExtensionDataContainer;
+class UCustomizableObjectResourceDataContainer;
 struct FMutableGraphGenerationContext;
 
 /**
@@ -40,7 +40,7 @@ public:
 	 * TSoftObjectPtr, because the container will be moved to a different package during cooking
 	 * and your paths won't be automatically updated.
 	 */
-	mu::ExtensionDataPtrConst MakeStreamedExtensionData(UCustomizableObjectExtensionDataContainer*& OutContainer);
+	mu::ExtensionDataPtrConst MakeStreamedExtensionData(UCustomizableObjectResourceDataContainer*& OutContainer);
 
 	/**
 	 * Register a new Extension Data compile-time constant that will always be loaded.

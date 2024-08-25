@@ -788,7 +788,7 @@ void FLidarPointCloudLODManager::PrepareProxies()
 		// If the SceneProxy has been destroyed, remove it from the list and reiterate
 		if(!bValidProxy)
 		{
-			RegisteredProxies.RemoveAtSwap(i--, 1, false);
+			RegisteredProxies.RemoveAtSwap(i--, 1, EAllowShrinking::No);
 		}
 	}
 

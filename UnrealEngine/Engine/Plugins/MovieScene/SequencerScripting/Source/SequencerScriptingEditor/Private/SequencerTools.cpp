@@ -255,7 +255,7 @@ bool ExportFBXInternal(const FSequencerExportFBXParams& InParams, UMovieSceneSeq
 	if (SubSequenceData)
 	{
 		RootToLocalTransform = SubSequenceData->RootToSequenceTransform;
-		StartTime = UE::MovieScene::DiscreteInclusiveLower(SubSequenceData->PlayRange.Value) * RootToLocalTransform.InverseLinearOnly();
+		StartTime = UE::MovieScene::DiscreteInclusiveLower(SubSequenceData->PlayRange.Value) * RootToLocalTransform.InverseNoLooping();
 	}
 
 	bool bDidExport = false;
@@ -542,6 +542,7 @@ TArray<FGuid> AddActors(UWorld* World, UMovieSceneSequence* InSequence, UMovieSc
 				const FGuid PossessableGuid = InMovieScene->AddPossessable(Actor->GetActorLabel(), Actor->GetClass());
 				PossessableGuids.Add(PossessableGuid);
 				InSequence->BindPossessableObject(PossessableGuid, *Actor, World);
+				InMovieScene->FindPossessable(PossessableGuid)->FixupPossessedObjectClass(InSequence, World);
 
 				//TODO New to figure way to call void FLevelSequenceEditorToolkit::AddDefaultTracksForActor(AActor& Actor, const FGuid Binding)
 

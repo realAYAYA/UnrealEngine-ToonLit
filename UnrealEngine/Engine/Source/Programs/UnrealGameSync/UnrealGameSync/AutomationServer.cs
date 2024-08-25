@@ -1,7 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using Microsoft.Extensions.Logging;
-using Microsoft.Win32;
 using System;
 using System.IO;
 using System.IO.Pipes;
@@ -12,6 +10,8 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using Microsoft.Extensions.Logging;
+using Microsoft.Win32;
 
 namespace UnrealGameSync
 {
@@ -38,7 +38,7 @@ namespace UnrealGameSync
 		public static AutomationRequestInput Read(Stream inputStream)
 		{
 			using BinaryReader reader = new BinaryReader(inputStream);
-			
+
 			int type = reader.ReadInt32();
 			int inputSize = reader.ReadInt32();
 			byte[] input = reader.ReadBytes(inputSize);
@@ -85,7 +85,7 @@ namespace UnrealGameSync
 
 		public static AutomationRequestOutput Read(Stream inputStream)
 		{
-			using(BinaryReader reader = new BinaryReader(inputStream))
+			using (BinaryReader reader = new BinaryReader(inputStream))
 			{
 				AutomationRequestResult result = (AutomationRequestResult)reader.ReadInt32();
 				int dataSize = reader.ReadInt32();
@@ -96,7 +96,7 @@ namespace UnrealGameSync
 
 		public void Write(Stream outputStream)
 		{
-			using(BinaryWriter writer = new BinaryWriter(outputStream))
+			using (BinaryWriter writer = new BinaryWriter(outputStream))
 			{
 				writer.Write((int)Result);
 				writer.Write(Data.Length);
@@ -177,9 +177,9 @@ namespace UnrealGameSync
 
 		public static void SetPortNumber(int portNumber)
 		{
-			if(portNumber <= 0)
+			if (portNumber <= 0)
 			{
-				GlobalPerforceSettings.DeleteRegistryKey(Registry.CurrentUser, "Software\\Epic Games\\UnrealGameSync", "AutomationPort");
+				Utility.DeleteRegistryKey(Registry.CurrentUser, "Software\\Epic Games\\UnrealGameSync", "AutomationPort");
 			}
 			else
 			{

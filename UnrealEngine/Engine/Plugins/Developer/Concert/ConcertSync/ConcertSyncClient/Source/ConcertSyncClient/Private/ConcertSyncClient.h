@@ -2,10 +2,17 @@
 
 #pragma once
 
+#include "ConcertBridges.h"
 #include "IConcertSyncClient.h"
+
+namespace UE::ConcertSyncClient::Replication
+{
+	class FReplicationManager;
+}
 
 class IConcertClientSession;
 class IConcertClientPackageBridge;
+class IConcertClientReplicationBridge;
 class IConcertClientTransactionBridge;
 class FConcertSyncClientLiveSession;
 class FConcertClientWorkspace;
@@ -19,7 +26,7 @@ class FConcertSourceControlProxy;
 class FConcertSyncClient : public IConcertSyncClient
 {
 public:
-	FConcertSyncClient(const FString& InRole, IConcertClientPackageBridge* InPackageBridge, IConcertClientTransactionBridge* InTransactionBridge);
+	FConcertSyncClient(const FString& InRole, const UE::ConcertSyncClient::FConcertBridges& InBridges);
 	virtual ~FConcertSyncClient();
 
 	//~ IConcertSyncClient interface
@@ -29,6 +36,7 @@ public:
 	virtual TSharedPtr<IConcertClientWorkspace> GetWorkspace() const override;
 	virtual IConcertClientPresenceManager* GetPresenceManager() const override;
 	virtual IConcertClientSequencerManager* GetSequencerManager() const override;
+	virtual IConcertClientReplicationManager* GetReplicationManager() const override;
 
 	virtual FOnConcertClientWorkspaceStartupOrShutdown& OnWorkspaceStartup() override;
 	virtual FOnConcertClientWorkspaceStartupOrShutdown& OnWorkspaceShutdown() override;
@@ -43,6 +51,7 @@ public:
 	virtual void SetFileSharingService(TSharedPtr<IConcertFileSharingService> InFileSharingService) override;
 	virtual IConcertClientTransactionBridge* GetTransactionBridge() const override;
 	virtual IConcertClientPackageBridge* GetPackageBridge() const override;
+	virtual IConcertClientReplicationBridge* GetReplicationBridge() const override;
 
 private:
 	void CreateWorkspace(const TSharedRef<FConcertSyncClientLiveSession>& InLiveSession);
@@ -57,11 +66,8 @@ private:
 	/** Flags controlling what features are enabled for sessions within this client */
 	EConcertSyncSessionFlags SessionFlags;
 
-	/** Package bridge used by sessions of this client */
-	IConcertClientPackageBridge* PackageBridge;
-
-	/** Transaction bridge used by sessions of this client */
-	IConcertClientTransactionBridge* TransactionBridge;
+	/** Pointers to Concert Bridges used by this client. */
+	const UE::ConcertSyncClient::FConcertBridges Bridges;
 
 	/** Live session data for the current session. */
 	TSharedPtr<FConcertSyncClientLiveSession> LiveSession;
@@ -83,6 +89,9 @@ private:
 
 	/** Optional side channel to exchange large blobs (package data) with the server in a scalable way (ex. the request/response transport layer is not designed and doesn't support exchanging 3GB packages). */
 	TSharedPtr<IConcertFileSharingService> FileSharingService;
+	
+	/** Manages the client's replication system. Can be used to join & leave replication sessions. */
+	TUniquePtr<UE::ConcertSyncClient::Replication::FReplicationManager> ReplicationManager;
 
 #if WITH_EDITOR
 	/** Presence manager for the current session. */

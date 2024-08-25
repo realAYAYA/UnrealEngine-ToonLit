@@ -19,12 +19,13 @@
 #include "Trace/Detail/Channel.h"
 #include "Trace/Detail/Channel.inl"
 #include "Trace/Trace.h"
+#include "UObject/GarbageCollectionGlobals.h"
 #include "UObject/NameTypes.h"
-#include "UObject/ObjectMacros.h"
 #include "UObject/ObjectVersion.h"
 #include "UObject/UObjectArray.h"
 #include "UObject/UObjectBase.h"
 #include "UObject/UObjectMarks.h"
+#include "UObject/ObjectFwd.h"
 
 class UClass;
 class UObject;
@@ -38,49 +39,14 @@ struct FGuid;
 #endif
 
 /**
-* Enum which specifies the mode in which full object names are constructed
-*/
-enum class EObjectFullNameFlags
-{
-	// Standard object full name (i.e. "Type PackageName.ObjectName:SubobjectName")
-	None = 0,
-
-	// Adds package to the type portion (i.e. "TypePackage.TypeName PackageName.ObjectName:SubobjectName")
-	IncludeClassPackage = 1,
-};
-
-ENUM_CLASS_FLAGS(EObjectFullNameFlags);
-
-/**
  * Provides utility functions for UObject, this class should not be used directly
  */
 class UObjectBaseUtility : public UObjectBase
 {
-	FORCEINLINE void MarkPendingKillOnlyInternal()
-	{
-		AtomicallySetFlags(RF_InternalPendingKill);
-		GUObjectArray.IndexToObject(InternalIndex)->SetPendingKill();
-	}
-	FORCEINLINE void ClearPendingKillOnlyInternal()
-	{
-		AtomicallyClearFlags(RF_InternalPendingKill);
-		GUObjectArray.IndexToObject(InternalIndex)->ClearPendingKill();
-	}
-	FORCEINLINE void MarkAsGarbageOnlyInternal()
-	{
-		AtomicallySetFlags(RF_InternalGarbage);
-		GUObjectArray.IndexToObject(InternalIndex)->ThisThreadAtomicallySetFlag(EInternalObjectFlags::Garbage);
-	}
-	FORCEINLINE void ClearGarbageOnlyInternal()
-	{
-		AtomicallyClearFlags(RF_InternalGarbage);
-		GUObjectArray.IndexToObject(InternalIndex)->ThisThreadAtomicallyClearedFlag(EInternalObjectFlags::Garbage);
-	}
+	/** If true references to objects marked as Garbage will be automatically eliminated by Garbage Collector*/
+	static COREUOBJECT_API bool bGarbageEliminationEnabled;
 
-	/** If true, objects will never be marked as PendingKill so references to them will not be nulled automatically by the garbage collector */
-	static COREUOBJECT_API bool bPendingKillDisabled;
-
-	friend void InitNoPendingKill();
+	friend void InitGarbageElimination();
 	friend struct FInternalUObjectBaseUtilityIsValidFlagsChecker;
 
 public:
@@ -99,16 +65,16 @@ public:
 	/** Modifies object flags for a specific object */
 	FORCEINLINE void SetFlags( EObjectFlags NewFlags )
 	{
-		checkSlow(!(NewFlags & (RF_MarkAsNative | RF_MarkAsRootSet | RF_InternalPendingKill | RF_InternalGarbage))); // These flags can't be used outside of constructors / internal code
-		checkf(!(NewFlags & RF_InternalMirroredFlags) || (GetFlags() & (NewFlags & RF_InternalMirroredFlags)) == (NewFlags & RF_InternalMirroredFlags), TEXT("RF_PendingKill and RF_garbage can not be set through SetFlags function. Use MarkAsGarbage() instead"));
+		checkSlow(!(NewFlags & (RF_MarkAsNative | RF_MarkAsRootSet | RF_MirroredGarbage))); // These flags can't be used outside of constructors / internal code
+		checkf(!(NewFlags & RF_MirroredGarbage) || (GetFlags() & (NewFlags & RF_MirroredGarbage)) == (NewFlags & RF_MirroredGarbage), TEXT("RF_MirroredGarbage can not be set through SetFlags function. Use MarkAsGarbage() instead"));
 		AtomicallySetFlags(NewFlags);
 	}
 
 	/** Clears subset of flags for a specific object */
 	FORCEINLINE void ClearFlags( EObjectFlags FlagsToClear )
 	{
-		checkSlow(!(FlagsToClear & (RF_MarkAsNative | RF_MarkAsRootSet | RF_InternalPendingKill | RF_InternalGarbage)) || FlagsToClear == RF_AllFlags); // These flags can't be used outside of constructors / internal code
-		checkf(!(FlagsToClear & RF_InternalMirroredFlags) || (GetFlags() & (FlagsToClear & RF_InternalMirroredFlags)) == RF_NoFlags, TEXT("RF_PendingKill and RF_garbage can not be cleared through ClearFlags function. Use ClearGarbage() instead"));
+		checkSlow(!(FlagsToClear & (RF_MarkAsNative | RF_MarkAsRootSet | RF_MirroredGarbage)) || FlagsToClear == RF_AllFlags); // These flags can't be used outside of constructors / internal code
+		checkf(!(FlagsToClear & RF_MirroredGarbage) || (GetFlags() & (FlagsToClear & RF_MirroredGarbage)) == RF_NoFlags, TEXT("RF_MirroredGarbage can not be cleared through ClearFlags function. Use ClearGarbage() instead"));
 		AtomicallyClearFlags(FlagsToClear);
 	}
 
@@ -205,72 +171,13 @@ public:
 	}
 
 	/**
-	 * Checks the PendingKill flag to see if it is dead but memory still valid
-	 */
-	UE_DEPRECATED(5.0, "IsPendingKill() should no longer be used. Use IsValid(Object), IsValidChecked(Object) or GetValid(Object) instead.")
-	FORCEINLINE bool IsPendingKill() const
-	{
-		if (bPendingKillDisabled)
-		{
-			checkSlow(GUObjectArray.IndexToObject(InternalIndex)->HasAnyFlags(EInternalObjectFlags::Garbage) == HasAnyFlags(RF_InternalGarbage));
-			return HasAnyFlags(RF_InternalGarbage);
-		}
-		else
-		{
-			PRAGMA_DISABLE_DEPRECATION_WARNINGS
-			checkSlow(GUObjectArray.IndexToObject(InternalIndex)->HasAnyFlags(EInternalObjectFlags::PendingKill) == HasAnyFlags(RF_InternalPendingKill));
-			PRAGMA_ENABLE_DEPRECATION_WARNINGS
-			return HasAnyFlags(RF_InternalPendingKill);
-		}
-	}
-
-	/**
-	 * Marks this object as PendingKill.
-	 */
-	UE_DEPRECATED(5.0, "MarkPendingKill() should no longer be used. Use MarkAsGarbage() which will work just like MarkPendingKill() if Pending Kill support is enabled.")
-	FORCEINLINE void MarkPendingKill()
-	{
-		check(!IsRooted());
-		if (bPendingKillDisabled)
-		{
-			MarkAsGarbageOnlyInternal();
-		}
-		else
-		{
-			MarkPendingKillOnlyInternal();
-		}
-	}
-
-	/**
-	 * Unmarks this object as PendingKill.
-	 */
-	UE_DEPRECATED(5.0, "ClearPendingKill() should no longer be used. Use ClearGarbage() which will work just like ClearPendingKill() if Pending Kill support is enabled.")
-	FORCEINLINE void ClearPendingKill()
-	{
-		if (bPendingKillDisabled)
-		{
-			ClearGarbageOnlyInternal();
-		}
-		else
-		{
-			ClearPendingKillOnlyInternal();
-		}
-	}
-
-	/**
 	 * Marks this object as Garbage.
 	 */
 	FORCEINLINE void MarkAsGarbage()
 	{
 		check(!IsRooted());
-		if (bPendingKillDisabled)
-		{
-			MarkAsGarbageOnlyInternal();
-		}
-		else
-		{
-			MarkPendingKillOnlyInternal();
-		}
+		AtomicallySetFlags(RF_MirroredGarbage);
+		GUObjectArray.IndexToObject(InternalIndex)->SetGarbage();
 	}
 
 	/**
@@ -278,14 +185,8 @@ public:
 	 */
 	FORCEINLINE void ClearGarbage()
 	{
-		if (bPendingKillDisabled)
-		{
-			ClearGarbageOnlyInternal();
-		}
-		else
-		{
-			ClearPendingKillOnlyInternal();
-		}
+		AtomicallyClearFlags(RF_MirroredGarbage);
+		GUObjectArray.IndexToObject(InternalIndex)->ClearGarbage();
 	}
 
 	/**
@@ -329,15 +230,6 @@ public:
 		return GUObjectArray.IndexToObject(InternalIndex)->IsUnreachable();
 	}
 
-	/** Checks if the object is pending kill or unreachable. INTERNAL USE ONLY! If you want to check if your object is valid use IsValid(Object)/IsValidObjectChecked(Object)/GetValid(Object) instead. */
-	UE_DEPRECATED(5.0, "IsPendingKillOrUnreachable() should no longer be used. Use IsValid(Object), IsValidChecked(Object), GetValid(Object) and/or IsUnreachable() instead.")
-	FORCEINLINE bool IsPendingKillOrUnreachable() const
-	{
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		return GUObjectArray.IndexToObject(InternalIndex)->HasAnyFlags(EInternalObjectFlags::PendingKill | EInternalObjectFlags::Garbage | EInternalObjectFlags::Unreachable);
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
-	}
-
 	/** Checks if the object is native. */
 	FORCEINLINE bool IsNative() const
 	{
@@ -354,7 +246,7 @@ public:
 	{
 		FUObjectItem* ObjectItem = GUObjectArray.IndexToObject(InternalIndex);
 		PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		checkf(!(FlagsToSet & (EInternalObjectFlags::PendingKill | EInternalObjectFlags::Garbage)) || (FlagsToSet & (EInternalObjectFlags::PendingKill | EInternalObjectFlags::Garbage)) == (ObjectItem->GetFlags() & (EInternalObjectFlags::PendingKill | EInternalObjectFlags::Garbage)), TEXT("SetInternalFlags should not set the PendingKill or Garbage flag. Use MarkPendingKill or MarkAsGarbage instead"));
+		checkf(!(FlagsToSet & EInternalObjectFlags::Garbage) || (FlagsToSet & EInternalObjectFlags::Garbage) == (ObjectItem->GetFlags() & EInternalObjectFlags::Garbage), TEXT("SetInternalFlags should not set the Garbage flag. Use MarkAsGarbage instead"));
 		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		ObjectItem->SetFlags(FlagsToSet);
 	}
@@ -390,9 +282,7 @@ public:
 	FORCEINLINE void ClearInternalFlags(EInternalObjectFlags FlagsToClear) const
 	{
 		FUObjectItem* ObjectItem = GUObjectArray.IndexToObject(InternalIndex);
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		checkf(!(FlagsToClear & (EInternalObjectFlags::PendingKill | EInternalObjectFlags::Garbage)) || (ObjectItem->GetFlags() & (FlagsToClear & (EInternalObjectFlags::PendingKill | EInternalObjectFlags::Garbage))) == EInternalObjectFlags::None, TEXT("ClearInternalFlags should not clear PendingKill or Garbage flag. Use ClearGarbage() instead"));
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+		checkf(!(FlagsToClear & EInternalObjectFlags::Garbage) || (ObjectItem->GetFlags() & (FlagsToClear & EInternalObjectFlags::Garbage)) == EInternalObjectFlags::None, TEXT("ClearInternalFlags should not clear Garbage flag. Use ClearGarbage() instead"));
 		ObjectItem->ClearFlags(FlagsToClear);
 	}
 
@@ -405,9 +295,7 @@ public:
 	FORCEINLINE bool AtomicallyClearInternalFlags(EInternalObjectFlags FlagsToClear) const
 	{
 		FUObjectItem* ObjectItem = GUObjectArray.IndexToObject(InternalIndex);
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		checkf((ObjectItem->GetFlags() & (FlagsToClear & (EInternalObjectFlags::PendingKill | EInternalObjectFlags::Garbage))) == EInternalObjectFlags::None, TEXT("ClearInternalFlags should not clear PendingKill or Garbage flag. Use ClearGarbage() instead"));
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+		checkf((ObjectItem->GetFlags() & (FlagsToClear & EInternalObjectFlags::Garbage)) == EInternalObjectFlags::None, TEXT("ClearInternalFlags should not clear Garbage flag. Use ClearGarbage() instead"));
 		return ObjectItem->ThisThreadAtomicallyClearedFlag(FlagsToClear);
 	}
 
@@ -463,28 +351,22 @@ public:
 	COREUOBJECT_API void GetPathName(const UObject* StopOuter, FString& ResultString) const;
 	COREUOBJECT_API void GetPathName(const UObject* StopOuter, FStringBuilderBase& ResultString) const;
 
-	/** Helper function to access the private bPendingKillDisabled variable */
-	static inline bool IsPendingKillEnabled()
+	/** Helper function to access the private bGarbageEliminationEnabled variable */
+	static inline bool IsGarbageEliminationEnabled()
 	{
-		return !bPendingKillDisabled;
+		return bGarbageEliminationEnabled;
 	}
 
-	/** Helper function that sets the appropriate flag based on PK being enabled or not */
-	FORCEINLINE static EInternalObjectFlags FixGarbageOrPendingKillInternalObjectFlags(const EInternalObjectFlags InFlags)
+	UE_DEPRECATED(5.4, "Use IsGarbageEliminationEnabled()")
+	static inline bool IsPendingKillEnabled()
 	{
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		if (!(InFlags & (EInternalObjectFlags::Garbage | EInternalObjectFlags::PendingKill)))
-		{
-			// Pass through
-			return InFlags;
-		}
-		else
-		{
-			return bPendingKillDisabled ?
-				((InFlags & ~EInternalObjectFlags::PendingKill) | EInternalObjectFlags::Garbage) : // Replace PK with Garbage
-				((InFlags & ~EInternalObjectFlags::Garbage) | EInternalObjectFlags::PendingKill); // Replace Garbage with PK
-		}
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+		return IsGarbageEliminationEnabled();
+	}
+
+	/** Helper function to set the private bGarbageEliminationEnabled variable. */
+	static inline void SetGarbageEliminationEnabled(bool bEnabled)
+	{
+		bGarbageEliminationEnabled = bEnabled;
 	}
 
 public:
@@ -521,10 +403,6 @@ public:
 	* @param Add this object to the target cluster as a mutable object without adding this object's references.
 	*/
 	COREUOBJECT_API void AddToCluster(UObjectBaseUtility* ClusterRootOrObjectFromCluster, bool bAddAsMutableObject = false);
-
-protected:
-	/** Helper function to create a cluster from UObject */
-	static COREUOBJECT_API void CreateClusterFromObject(UObjectBaseUtility* ClusterRootObject, UObjectBaseUtility* ReferencingObject);
 
 public:
 	/**
@@ -593,14 +471,12 @@ public:
 	 */
 	COREUOBJECT_API UPackage* GetPackage() const;
 
-#if UE_USE_VERSE_PATHS
 	/**
 	 * Gets the versepath of the UObject.
 	 *
 	 * @return The VersePath of the object
 	 */
 	COREUOBJECT_API UE::Core::FVersePath GetVersePath() const;
-#endif
 
 	/** 
 	 * Legacy function, has the same behavior as GetPackage
@@ -619,11 +495,12 @@ public:
 	COREUOBJECT_API bool MarkPackageDirty() const;
 
 	/**
-	* Determines whether this object is a template object
-	*
-	* @return	true if this object is a template object (owned by a UClass)
-	*/
-	COREUOBJECT_API bool IsTemplate( EObjectFlags TemplateTypes = RF_ArchetypeObject|RF_ClassDefaultObject ) const;
+	 * Determines whether this object is a template object by checking flags on the object and the outer chain.
+	 *
+	 * @param	TemplateTypes	Specific flags to look for, the default checks class default and non-class templates
+	 * @return	true if this object is a template object that can be used as an archetype
+	 */
+	COREUOBJECT_API bool IsTemplate(EObjectFlags TemplateTypes = RF_ArchetypeObject|RF_ClassDefaultObject) const;
 
 	/**
 	 * Traverses the outer chain searching for the next object of a certain type.  (T must be derived from UObject)
@@ -777,9 +654,23 @@ public:
 	}
 
 	/**
-	 * Returns whether this component was instanced from a component/subobject template, or if it is a component/subobject template.
+	 * Returns whether this is a template that can be used to create instanced subobjects.
+	 * By default this includes subobjects of a class default object and other templates associated with a class.
+	 * 
+	 * @param	TemplateTypes	Specific flags to check on this object and the outer chain
+	 * @return	true if this is a template for creating instanced subobjects
+	 */
+	COREUOBJECT_API bool IsTemplateForSubobjects(EObjectFlags TemplateTypes = RF_ClassDefaultObject|RF_DefaultSubObject|RF_InheritableComponentTemplate) const;
+	
+	/**
+	 * Returns whether this is a subobject (template or instance) that was originally defined inside a default class object.
+	 * This will return true for all instanced objects created from an archetype that is not a class default object,
+	 * but will only return true for template objects nested directly inside a class default object.
 	 *
-	 * @return	true if this component was instanced from a template.  false if this component was created manually at runtime.
+	 * @warning The behavior of this function is inconsistent for historical reasons and is not equivalent to RF_DefaultSubobject.
+	 * 			Call IsTemplateSubobject to handle all types of subobject templates, or call GetArchetype() first if you have an instance.
+	 *
+	 * @return	true if this was instanced from a subobject template, or is the direct subobject of a class default object
 	 */
 	COREUOBJECT_API bool IsDefaultSubobject() const;
 	
@@ -892,6 +783,7 @@ public:
 			}
 			return StatID;
 		}
+		return TStatId(); // not doing stats at the moment, or ever
 #elif ENABLE_STATNAMEDEVENTS_UOBJECT
 		const TStatId& StatID = GUObjectArray.IndexToObject(InternalIndex)->StatID;
 		if (!StatID.IsValidStat() && (bForDeferredUse || GCycleStatsShouldEmitNamedEvents))
@@ -899,8 +791,9 @@ public:
 			CreateStatID();
 		}
 		return StatID;
-#endif // STATS
+#else
 		return TStatId(); // not doing stats at the moment, or ever
+#endif // STATS
 	}
 
 private:
@@ -939,13 +832,30 @@ FORCEINLINE bool IsPossiblyAllocatedUObjectPointer(UObject* Ptr)
 }
 
 /**
- * Returns the name of this object (with no path information)
- * @param Object object to retrieve the name for; NULL gives "None"
+ * Returns the logical name of this object.
+ * @param Object object to retrieve the name for; null gives NAME_None.
  * @return Name of the object.
 */
-FORCEINLINE FString GetNameSafe(const UObjectBaseUtility *Object)
+FORCEINLINE FName GetFNameSafe(const UObjectBaseUtility* Object)
 {
-	if( Object == NULL )
+	if (Object == nullptr)
+	{
+		return NAME_None;
+	}
+	else
+	{
+		return Object->GetFName();
+	}
+}
+
+/**
+ * Returns the name of this object (with no path information).
+ * @param Object object to retrieve the name for; null gives "None".
+ * @return Name of the object.
+*/
+FORCEINLINE FString GetNameSafe(const UObjectBaseUtility* Object)
+{
+	if (Object == nullptr)
 	{
 		return TEXT("None");
 	}
@@ -956,13 +866,13 @@ FORCEINLINE FString GetNameSafe(const UObjectBaseUtility *Object)
 }
 
 /**
- * Returns the path name of this object
- * @param Object object to retrieve the path name for; NULL gives "None"
+ * Returns the path name of this object.
+ * @param Object object to retrieve the path name for; null gives "None".
  * @return path name of the object.
 */
-FORCEINLINE FString GetPathNameSafe(const UObjectBaseUtility *Object)
+FORCEINLINE FString GetPathNameSafe(const UObjectBaseUtility* Object)
 {
-	if( Object == NULL )
+	if (Object == nullptr)
 	{
 		return TEXT("None");
 	}
@@ -973,13 +883,13 @@ FORCEINLINE FString GetPathNameSafe(const UObjectBaseUtility *Object)
 }
 
 /**
- * Returns the full name of this object
- * @param Object object to retrieve the full name for; NULL (or a null class!) gives "None"
+ * Returns the full name of this object.
+ * @param Object object to retrieve the full name for; null (or a null class!) gives "None".
  * @return full name of the object.
 */
-FORCEINLINE FString GetFullNameSafe(const UObjectBaseUtility *Object)
+FORCEINLINE FString GetFullNameSafe(const UObjectBaseUtility* Object)
 {
-	if( !Object || !Object->GetClass())
+	if (!Object || !Object->GetClass())
 	{
 		return TEXT("None");
 	}

@@ -20,10 +20,37 @@ private:
 
 	static TSet<FNetHandle> EmptyDirtyObjects;
 
+private:
+
+	struct FPollerStatus
+	{
+		// Is this status tied to an active registered poller
+		uint8 bIsActive:1;
+
+		// Has this poller read the dirty list this frame yet.
+		uint8 bHasGathered:1;
+
+		FPollerStatus() : bIsActive(false), bHasGathered(false) {}
+
+		void ClearStatus()
+		{
+			*this = FPollerStatus();
+		}
+	};
+
+private:
+
 	TSet<FNetHandle> DirtyObjects;
+
 	FNetBitArray AssignedHandleIndices;
 	FNetBitArray Pollers;
+
+	TArray<FPollerStatus> PollerStatuses;
+
 	uint32 PollerCount = 0;
+
+	/** When true detect and prevent illegal changes to the dirty object list. */
+	bool bLockDirtyList = false;
 };
 
 TSet<FNetHandle> FGlobalDirtyNetObjectTracker::FPimpl::EmptyDirtyObjects;
@@ -34,18 +61,11 @@ void FGlobalDirtyNetObjectTracker::MarkNetObjectStateDirty(FNetHandle NetHandle)
 {
 	if (Instance && Instance->PollerCount > 0)
 	{
-		Instance->DirtyObjects.Add(NetHandle);
+		if (ensureMsgf(!Instance->bLockDirtyList, TEXT("MarkNetObjectStateDirty was called while the dirty list was set to read-only.")))
+		{
+			Instance->DirtyObjects.Add(NetHandle);
+		}
 	}
-}
-
-bool FGlobalDirtyNetObjectTracker::IsNetObjectStateDirty(FNetHandle NetHandle)
-{
-	if (Instance)
-	{
-		return Instance->DirtyObjects.Find(NetHandle) != nullptr;
-	}
-
-	return false;
 }
 
 FGlobalDirtyNetObjectTracker::FPollHandle FGlobalDirtyNetObjectTracker::CreatePoller()
@@ -66,6 +86,10 @@ FGlobalDirtyNetObjectTracker::FPollHandle FGlobalDirtyNetObjectTracker::CreatePo
 
 		Instance->AssignedHandleIndices.SetBit(HandleIndex);
 		++Instance->PollerCount;
+
+		Instance->PollerStatuses.SetNum(Instance->PollerCount, EAllowShrinking::No);
+		Instance->PollerStatuses[HandleIndex].bIsActive = true;
+
 		return FPollHandle(HandleIndex);
 	}
 
@@ -79,18 +103,21 @@ void FGlobalDirtyNetObjectTracker::DestroyPoller(uint32 HandleIndex)
 		return;
 	}
 
-	if (ensureAlwaysMsgf((HandleIndex < Instance->AssignedHandleIndices.GetNumBits()) && Instance->AssignedHandleIndices.GetBit(HandleIndex), TEXT("Destroying unknown poller with handle index %u"), HandleIndex))
+	if (ensureMsgf((HandleIndex < Instance->AssignedHandleIndices.GetNumBits()) && Instance->AssignedHandleIndices.GetBit(HandleIndex), TEXT("Destroying unknown poller with handle index %u"), HandleIndex))
 	{
 		Instance->AssignedHandleIndices.ClearBit(HandleIndex);
 
 		const uint32 PollerCalled = Instance->Pollers.GetBit(HandleIndex);
-		ensureAlwaysMsgf(PollerCalled == 0U, TEXT("Destroying poller that called GetDirtyNetObjects() but not ResetDirtyNetObjects()"));
+		ensureMsgf(PollerCalled == 0U, TEXT("Destroying poller that called GetDirtyNetObjects() but not ResetDirtyNetObjects()"));
 		Instance->Pollers.ClearBit(HandleIndex);
+
+		Instance->PollerStatuses[HandleIndex].ClearStatus();
 
 		--Instance->PollerCount;
 		if (Instance->PollerCount <= 0)
 		{
 			Instance->DirtyObjects.Reset();
+			Instance->bLockDirtyList = false;
 		}
 	}
 }
@@ -99,23 +126,74 @@ const TSet<FNetHandle>& FGlobalDirtyNetObjectTracker::GetDirtyNetObjects(const F
 {
 	if (Instance && Handle.IsValid())
 	{
+		check(Instance->PollerStatuses[Handle.Index].bIsActive);
+
 		Instance->Pollers.SetBit(Handle.Index);
+		Instance->PollerStatuses[Handle.Index].bHasGathered = true;
 		return Instance->DirtyObjects;
 	}
 
 	return FPimpl::EmptyDirtyObjects;
 }
 
+void FGlobalDirtyNetObjectTracker::LockDirtyListUntilReset(const FPollHandle& Handle)
+{
+	if (Instance && Handle.IsValid())
+	{
+		check(Instance->PollerStatuses[Handle.Index].bIsActive);
+
+		// From here prevent new dirty objects until the list is reset.
+		Instance->bLockDirtyList = true;
+	}
+}
+
 void FGlobalDirtyNetObjectTracker::ResetDirtyNetObjects(const FPollHandle& Handle)
 {
 	if (Instance && Handle.IsValid())
 	{
+		check(Instance->PollerStatuses[Handle.Index].bIsActive);
+
 		Instance->Pollers.ClearBit(Handle.Index);
+
 		if (Instance->Pollers.IsNoBitSet())
 		{
+
+#if DO_CHECK
+			bool bAllPollersGathered = true;
+			for (const FPimpl::FPollerStatus& PollerStatus : Instance->PollerStatuses)
+			{
+				bAllPollersGathered &= !PollerStatus.bIsActive || PollerStatus.bHasGathered;
+			}
+			ensureMsgf(bAllPollersGathered, TEXT("Not all pollers gathered the dirty list before the list got reset. Those pollers will never know those objects were dirty."));
+#endif
+
+			Instance->bLockDirtyList = false;
 			Instance->DirtyObjects.Reset();
 		}
 	}
+}
+
+bool FGlobalDirtyNetObjectTracker::ResetDirtyNetObjectsIfSinglePoller(const FPollHandle& Handle)
+{
+	if (Instance && Handle.IsValid())
+	{
+		check(Instance->PollerStatuses[Handle.Index].bIsActive);
+
+		// Are we the only poller registered to read and reset the list
+		if (Instance->AssignedHandleIndices.CountSetBits() == 1)
+		{
+			check(Instance->Pollers.IsBitSet(Handle.Index));
+
+			Instance->bLockDirtyList = false;
+			Instance->DirtyObjects.Reset();
+
+			Instance->Pollers.ClearBit(Handle.Index);
+
+			return true;
+		}
+	}
+
+	return false;
 }
 
 void FGlobalDirtyNetObjectTracker::Init()
@@ -146,12 +224,14 @@ FGlobalDirtyNetObjectTracker::FPimpl::~FPimpl()
 
 void FGlobalDirtyNetObjectTracker::FPimpl::ResetDirtyNetObjects()
 {
-	if (!ensureMsgf(Pollers.IsNoBitSet(), TEXT("FGlobalDirtyNetObjectTracker poller %u forgot to call ResetDirtNetObjects."), Pollers.FindFirstOne()))
+	if (!ensureMsgf(Pollers.IsNoBitSet(), TEXT("FGlobalDirtyNetObjectTracker poller %u forgot to call ResetDirtyNetObjects."), Pollers.FindFirstOne()))
 	{
 		Pollers.Reset();
 
 		// DirtyObjects should already be reset if there are no pollers.
 		DirtyObjects.Reset();
+
+		bLockDirtyList = false;
 	}
 }
 

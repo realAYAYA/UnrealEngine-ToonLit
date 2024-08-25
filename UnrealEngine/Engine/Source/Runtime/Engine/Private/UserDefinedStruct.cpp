@@ -2,17 +2,18 @@
 
 #include "Engine/UserDefinedStruct.h"
 #include "Templates/SubclassOf.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/Package.h"
 #include "UObject/Package.h"
 #include "UObject/UnrealType.h"
 #include "UObject/LinkerLoad.h"
 #include "UObject/ObjectSaveContext.h"
-#include "CookedMetaData.h"
 #include "UObject/FrameworkObjectVersion.h"
 #include "Misc/PackageName.h"
 #include "Blueprint/BlueprintSupport.h"
 
 #if WITH_EDITOR
+#include "UObject/CookedMetaData.h"
 #include "UserDefinedStructure/UserDefinedStructEditorData.h"
 #endif //WITH_EDITOR
 
@@ -193,9 +194,16 @@ void UUserDefinedStruct::PostSaveRoot(FObjectPostSaveRootContext ObjectSaveConte
 
 void UUserDefinedStruct::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
 	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
 
-	OutTags.Add(FAssetRegistryTag(TEXT("Tooltip"), FStructureEditorUtils::GetTooltip(this), FAssetRegistryTag::TT_Hidden));
+void UUserDefinedStruct::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	Super::GetAssetRegistryTags(Context);
+
+	Context.AddTag(FAssetRegistryTag(TEXT("Tooltip"), FStructureEditorUtils::GetTooltip(this), FAssetRegistryTag::TT_Hidden));
 }
 
 void UUserDefinedStruct::ValidateGuid()
@@ -224,13 +232,16 @@ void UUserDefinedStruct::OnChanged()
 FProperty* UUserDefinedStruct::CustomFindProperty(const FName Name) const
 {
 #if WITH_EDITOR
-	// If we have the editor data, check that first as it's more up to date
-	const FGuid PropertyGuid = FStructureEditorUtils::GetGuidFromPropertyName(Name);
-	FProperty* EditorProperty = PropertyGuid.IsValid() ? FStructureEditorUtils::GetPropertyByGuid(this, PropertyGuid) : FStructureEditorUtils::GetPropertyByFriendlyName(this, Name.ToString());
-	ensure(!EditorProperty || !PropertyGuid.IsValid() || PropertyGuid == FStructureEditorUtils::GetGuidForProperty(EditorProperty));
-	if (EditorProperty)
+	if (EditorData != nullptr)
 	{
-		return EditorProperty;
+		// If we have the editor data, check that first as it's more up to date
+		const FGuid PropertyGuid = FStructureEditorUtils::GetGuidFromPropertyName(Name);
+		FProperty* EditorProperty = PropertyGuid.IsValid() ? FStructureEditorUtils::GetPropertyByGuid(this, PropertyGuid) : FStructureEditorUtils::GetPropertyByFriendlyName(this, Name.ToString());
+		ensure(!EditorProperty || !PropertyGuid.IsValid() || PropertyGuid == FStructureEditorUtils::GetGuidForProperty(EditorProperty));
+		if (EditorProperty)
+		{
+			return EditorProperty;
+		}
 	}
 #endif // WITH_EDITOR
 

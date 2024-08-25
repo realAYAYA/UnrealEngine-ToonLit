@@ -24,6 +24,7 @@
 // SOFTWARE.
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "acl/version.h"
 #include "acl/core/impl/compiler_utils.h"
 
 #include <rtm/quatf.h>
@@ -42,9 +43,11 @@ ACL_IMPL_FILE_PRAGMA_PUSH
 
 namespace acl
 {
+	ACL_IMPL_VERSION_NAMESPACE_BEGIN
+
 	namespace acl_impl
 	{
-		template<typename cached_type, uint32_t cache_size>
+		template<typename cached_type, uint32_t cache_size, uint32_t num_rounding_modes>
 		struct track_cache_v0
 		{
 			// Our cached type
@@ -53,8 +56,11 @@ namespace acl
 			// Our cache size
 			static constexpr uint32_t k_cache_size = cache_size;
 
+			// How many rounding modes we cache
+			static constexpr uint32_t k_num_rounding_modes = num_rounding_modes;
+
 			// Our cached values
-			type			cached_samples[cache_size];
+			type			cached_samples[num_rounding_modes][cache_size];
 
 			// The index to write the next cache entry when we unpack
 			// Effective index value is modulo k_cache_size what is stored here, guaranteed to never wrap
@@ -84,12 +90,14 @@ namespace acl
 			using type = rtm::vector4f;
 		};
 
-		template<uint32_t cache_size>
-		using track_cache_quatf_v0 = track_cache_v0<track_cache_quatf_trait, cache_size>;
+		template<uint32_t cache_size, uint32_t num_rounding_modes>
+		using track_cache_quatf_v0 = track_cache_v0<track_cache_quatf_trait, cache_size, num_rounding_modes>;
 
-		template<uint32_t cache_size>
-		using track_cache_vector4f_v0 = track_cache_v0<track_cache_vector4f_trait, cache_size>;
+		template<uint32_t cache_size, uint32_t num_rounding_modes>
+		using track_cache_vector4f_v0 = track_cache_v0<track_cache_vector4f_trait, cache_size, num_rounding_modes>;
 	}
+
+	ACL_IMPL_VERSION_NAMESPACE_END
 }
 
 #if defined(RTM_COMPILER_MSVC)

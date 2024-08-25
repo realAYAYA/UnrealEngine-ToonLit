@@ -36,10 +36,6 @@ public:
 	{
 		bWillEverBeLit = false;
 
-		FColor NewPropertyColor;
-		GEngine->GetPropertyColorationColor((UObject*)InComponent, NewPropertyColor);
-		SetPropertyColor(NewPropertyColor);
-
 		StaticMeshVertexBuffers.PositionVertexBuffer.Init(1);
 		StaticMeshVertexBuffers.StaticMeshVertexBuffer.Init(1, 1);
 		StaticMeshVertexBuffers.ColorVertexBuffer.Init(1);
@@ -57,7 +53,7 @@ public:
 			this->StaticMeshVertexBuffers.StaticMeshVertexBuffer.BindPackedTexCoordVertexBuffer(&this->VertexFactory, Data);
 			this->StaticMeshVertexBuffers.StaticMeshVertexBuffer.BindLightMapVertexBuffer(&this->VertexFactory, Data, 0);
 			this->StaticMeshVertexBuffers.ColorVertexBuffer.BindColorVertexBuffer(&this->VertexFactory, Data);
-			this->VertexFactory.SetData(Data);
+			this->VertexFactory.SetData(RHICmdList, Data);
 
 			this->VertexFactory.InitResource(RHICmdList);
 		});
@@ -172,23 +168,20 @@ public:
 			}
 
 			FLocalVertexFactory* VertexFactoryPtr = &VertexFactory;
-			ENQUEUE_RENDER_COMMAND(FWidgetBillboardProxyLegacyInit)(
-				[VertexFactoryPtr, this](FRHICommandListImmediate& RHICmdList)
-			{
-				this->StaticMeshVertexBuffers.PositionVertexBuffer.UpdateRHI(RHICmdList);
-				this->StaticMeshVertexBuffers.StaticMeshVertexBuffer.UpdateRHI(RHICmdList);
-				this->StaticMeshVertexBuffers.ColorVertexBuffer.UpdateRHI(RHICmdList);
+			FRHICommandListBase& RHICmdList = Collector.GetRHICommandList();
 
-				FLocalVertexFactory::FDataType Data;
-				this->StaticMeshVertexBuffers.PositionVertexBuffer.BindPositionVertexBuffer(VertexFactoryPtr, Data);
-				this->StaticMeshVertexBuffers.StaticMeshVertexBuffer.BindTangentVertexBuffer(VertexFactoryPtr, Data);
-				this->StaticMeshVertexBuffers.StaticMeshVertexBuffer.BindPackedTexCoordVertexBuffer(VertexFactoryPtr, Data);
-				this->StaticMeshVertexBuffers.StaticMeshVertexBuffer.BindLightMapVertexBuffer(VertexFactoryPtr, Data, 0);
-				this->StaticMeshVertexBuffers.ColorVertexBuffer.BindColorVertexBuffer(VertexFactoryPtr, Data);
-				VertexFactoryPtr->SetData(Data);
+			StaticMeshVertexBuffers.PositionVertexBuffer.UpdateRHI(RHICmdList);
+			StaticMeshVertexBuffers.StaticMeshVertexBuffer.UpdateRHI(RHICmdList);
+			StaticMeshVertexBuffers.ColorVertexBuffer.UpdateRHI(RHICmdList);
 
-				VertexFactoryPtr->UpdateRHI(RHICmdList);
-			});
+			FLocalVertexFactory::FDataType Data;
+			StaticMeshVertexBuffers.PositionVertexBuffer.BindPositionVertexBuffer(VertexFactoryPtr, Data);
+			StaticMeshVertexBuffers.StaticMeshVertexBuffer.BindTangentVertexBuffer(VertexFactoryPtr, Data);
+			StaticMeshVertexBuffers.StaticMeshVertexBuffer.BindPackedTexCoordVertexBuffer(VertexFactoryPtr, Data);
+			StaticMeshVertexBuffers.StaticMeshVertexBuffer.BindLightMapVertexBuffer(VertexFactoryPtr, Data, 0);
+			StaticMeshVertexBuffers.ColorVertexBuffer.BindColorVertexBuffer(VertexFactoryPtr, Data);
+			VertexFactoryPtr->SetData(RHICmdList, Data);
+			VertexFactoryPtr->UpdateRHI(RHICmdList);
 		}
 	}
 

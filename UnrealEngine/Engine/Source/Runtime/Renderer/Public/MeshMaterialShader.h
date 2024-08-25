@@ -29,6 +29,7 @@ public:
 	FRHIUniformBuffer* FadeUniformBuffer = nullptr;
 	FRHIUniformBuffer* DitherUniformBuffer = nullptr;
 
+	RENDERER_API void InitializeMeshMaterialData();
 	RENDERER_API void InitializeMeshMaterialData(const FSceneView* SceneView, const FPrimitiveSceneProxy* RESTRICT PrimitiveSceneProxy, const FMeshBatch& RESTRICT MeshBatch, int32 StaticMeshId, bool bAllowStencilDither);
 	RENDERER_API void InitializeMeshMaterialData(const FSceneView* SceneView, const FPrimitiveSceneProxy* RESTRICT PrimitiveSceneProxy, int32 StaticMeshId, bool bDitheredLODTransition, bool bAllowStencilDither);
 };
@@ -85,9 +86,22 @@ public:
 		const FPrimitiveSceneProxy* PrimitiveSceneProxy,
 		const FMaterialRenderProxy& MaterialRenderProxy,
 		const FMaterial& Material,
-		const FMeshPassProcessorRenderState& DrawRenderState,
 		const FMeshMaterialShaderElementData& ShaderElementData,
 		FMeshDrawSingleShaderBindings& ShaderBindings) const;
+
+	UE_DEPRECATED(5.4, "GetShaderBindings no longer has a DrawRenderState argument. Please update your shader type to use the new function signature to ensure it is set up correctly.")
+	void GetShaderBindings(
+		const FScene* Scene,
+		ERHIFeatureLevel::Type FeatureLevel,
+		const FPrimitiveSceneProxy* PrimitiveSceneProxy,
+		const FMaterialRenderProxy& MaterialRenderProxy,
+		const FMaterial& Material,
+		const FMeshPassProcessorRenderState& DrawRenderState,
+		const FMeshMaterialShaderElementData& ShaderElementData,
+		FMeshDrawSingleShaderBindings& ShaderBindings) const
+	{
+		checkNoEntry();
+	}
 
 	RENDERER_API void GetElementShaderBindings(
 		const FShaderMapPointerTable& PointerTable,

@@ -15,7 +15,7 @@ class UTypedElementActorViewportFactory : public UTypedElementDataStorageFactory
 public:
 	~UTypedElementActorViewportFactory() override = default;
 
-	void RegisterQueries(ITypedElementDataStorageInterface& DataStorage) const override;
+	void RegisterQueries(ITypedElementDataStorageInterface& DataStorage) override;
 
 private:
 	void RegisterSelectionOutlineColorColumnToActor(ITypedElementDataStorageInterface& DataStorage) const;

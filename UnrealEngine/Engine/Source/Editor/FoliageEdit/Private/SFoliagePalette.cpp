@@ -16,6 +16,7 @@
 #include "Editor/EditorEngine.h"
 #include "Engine/Blueprint.h"
 #include "Engine/StaticMesh.h"
+#include "InstancedFoliageActor.h"
 #include "FoliageEdMode.h"
 #include "FoliagePaletteCommands.h"
 #include "FoliagePaletteItem.h"
@@ -62,6 +63,7 @@
 #include "UObject/Package.h"
 #include "UObject/TopLevelAssetPath.h"
 #include "UObject/UnrealNames.h"
+#include "UObject/UObjectIterator.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Input/SComboButton.h"
@@ -80,8 +82,9 @@
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Views/ITableRow.h"
 #include "Widgets/Views/SListView.h"
+#include "Input/DragAndDrop.h"
+#include "DragAndDrop/ExternalContentDragDropOp.h"
 
-class FDragDropEvent;
 class UObject;
 struct FGeometry;
 struct FKeyEvent;
@@ -218,6 +221,8 @@ void SFoliagePalette::Construct(const FArguments& InArgs)
 	FoliageEditMode = InArgs._FoliageEdMode;
 
 	FoliageEditMode->OnToolChanged.AddSP(this, &SFoliagePalette::HandleOnToolChanged);
+
+	FEditorDelegates::OnExternalContentResolved.AddSP(this, &SFoliagePalette::OnExternalContentResolved);
 
 	FFoliagePaletteCommands::Register();
 	UICommandList = MakeShareable(new FUICommandList);
@@ -529,10 +534,6 @@ void SFoliagePalette::BindCommands()
 		FExecuteAction::CreateSP(this, &SFoliagePalette::OnShowFoliageTypeInCB));
 
 	UICommandList->MapAction(
-		Commands.ReflectSelectionInPalette,
-		FExecuteAction::CreateSP(this, &SFoliagePalette::OnReflectSelectionInPalette));
-
-	UICommandList->MapAction(
 		Commands.SelectAllInstances,
 		FExecuteAction::CreateSP(this, &SFoliagePalette::OnSelectAllInstances),
 		FCanExecuteAction::CreateSP(this, &SFoliagePalette::CanSelectInstances));
@@ -560,7 +561,7 @@ void SFoliagePalette::RefreshActivePaletteViewWidget()
 	}
 }
 
-void SFoliagePalette::AddFoliageType(const FAssetData& AssetData)
+UFoliageType* SFoliagePalette::AddFoliageType(const FAssetData& AssetData, bool bPlaceholderAsset)
 {
 	if (AddFoliageTypeCombo.IsValid())
 	{
@@ -571,7 +572,7 @@ void SFoliagePalette::AddFoliageType(const FAssetData& AssetData)
 	UObject* Asset = AssetData.GetAsset();
 	GWarn->EndSlowTask();
 
-	FoliageEditMode->AddFoliageAsset(Asset);
+	return FoliageEditMode->AddFoliageAsset(Asset, bPlaceholderAsset);
 }
 
 TSharedRef<SWidgetSwitcher> SFoliagePalette::CreatePaletteViews()
@@ -678,6 +679,11 @@ void SFoliagePalette::OnSearchTextChanged(const FText& InFilterText)
 	UpdatePalette();
 }
 
+void SFoliagePalette::AddFoliageTypePicker(const FAssetData& AssetData)
+{
+	AddFoliageType(AssetData);
+}
+
 TSharedRef<SWidget> SFoliagePalette::GetAddFoliageTypePicker()
 {
 	TArray<const UClass*> ClassFilters;
@@ -689,7 +695,7 @@ TSharedRef<SWidget> SFoliagePalette::GetAddFoliageTypePicker()
 		ClassFilters,
 		PropertyCustomizationHelpers::GetNewAssetFactoriesForClasses(ClassFilters),
 		FOnShouldFilterAsset(),
-		FOnAssetSelected::CreateSP(this, &SFoliagePalette::AddFoliageType),
+		FOnAssetSelected::CreateSP(this, &SFoliagePalette::AddFoliageTypePicker),
 		FSimpleDelegate());
 }
 
@@ -895,16 +901,69 @@ FReply SFoliagePalette::HandleFoliageDropped(const FGeometry& DropZoneGeometry, 
 	TArray<FAssetData> DroppedAssetData = AssetUtil::ExtractAssetDataFromDrag(DragDropEvent);
 	if (DroppedAssetData.Num() > 0)
 	{
+		const bool bIsExternalContent = DragDropEvent.GetOperation().IsValid() && DragDropEvent.GetOperation()->IsOfType<FExternalContentDragDropOp>();
+
 		// Treat the entire drop as a transaction (in case multiples types are being added)
 		const FScopedTransaction Transaction(NSLOCTEXT("UnrealEd", "FoliageMode_DragDropTypesTransaction", "Drag-drop Foliage"));
 
+		TArray<TWeakObjectPtr<UFoliageType>> AddedFoliageTypes;
+
 		for (auto& AssetData : DroppedAssetData)
 		{
-			AddFoliageType(AssetData);
+			if (UFoliageType* FoliageType = AddFoliageType(AssetData, bIsExternalContent))
+			{
+				AddedFoliageTypes.Add(FoliageType);
+			}
+		}
+
+		if (AddedFoliageTypes.Num() > 0 && bIsExternalContent)
+		{
+			TSharedPtr<const FExternalContentDragDropOp> DragDropOp = StaticCastSharedPtr<const FExternalContentDragDropOp>(DragDropEvent.GetOperation());
+			ExternalContentFoliageTypes.Add(DragDropOp->GetGuid(), AddedFoliageTypes);
 		}
 	}
 
 	return FReply::Handled();
+}
+
+void SFoliagePalette::OnExternalContentResolved(const FGuid& Identifier, const FAssetData& PlaceHolderAsset, const FAssetData& ResolvedAsset)
+{
+	if (TArray<TWeakObjectPtr<UFoliageType>>* FoliageTypes = ExternalContentFoliageTypes.Find(Identifier))
+	{
+		TArray<UFoliageType*> ModifiedFoliageTypes;
+
+		for (TWeakObjectPtr<UFoliageType> FoliageTypePtr : *FoliageTypes)
+		{
+			if (UFoliageType_InstancedStaticMesh* FoliageType = Cast<UFoliageType_InstancedStaticMesh>(FoliageTypePtr.Get()))
+			{
+				FAssetData AssetData(FoliageType->GetStaticMesh());
+				if (AssetData == PlaceHolderAsset)
+				{
+					if (UStaticMesh* ResolvedMesh = Cast<UStaticMesh>(ResolvedAsset.GetAsset()))
+					{
+						FoliageType->Modify();
+						FoliageType->SetStaticMesh(ResolvedMesh);
+						ModifiedFoliageTypes.Add(FoliageType);
+					}
+				}
+			}
+		}
+		ExternalContentFoliageTypes.Remove(Identifier);
+
+		if (ModifiedFoliageTypes.Num() > 0)
+		{
+			for (TObjectIterator<AInstancedFoliageActor> It(RF_ClassDefaultObject, /** bIncludeDerivedClasses */ true, /** InternalExcludeFlags */ EInternalObjectFlags::Garbage); It; ++It)
+			{
+				if (It->GetWorld() != nullptr)
+				{
+					for (UFoliageType* ModifiedFoliageType : ModifiedFoliageTypes)
+					{
+						It->NotifyFoliageTypeChanged(ModifiedFoliageType, true);
+					}
+				}
+			}
+		}
+	}
 }
 
 //	CONTEXT MENU
@@ -1200,7 +1259,7 @@ void SFoliagePalette::OnShowFoliageTypeInCB()
 	}
 }
 
-void SFoliagePalette::OnReflectSelectionInPalette()
+void SFoliagePalette::ReflectSelectionInPalette()
 {
 	TArray<const UFoliageType*> SelectedFoliageTypes;
 	FoliageEditMode->GetSelectedInstanceFoliageTypes(SelectedFoliageTypes);

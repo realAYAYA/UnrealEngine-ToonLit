@@ -415,6 +415,9 @@ public:
 	FORCEINLINE float GetLineHeightPercentage() const { return LineHeightPercentage; }
 	SLATE_API void SetLineHeightPercentage( float Value );
 
+	FORCEINLINE bool GetApplyLineHeightToBottomLine() const { return ApplyLineHeightToBottomLine; }
+	SLATE_API void SetApplyLineHeightToBottomLine( bool Value );
+
 	FORCEINLINE ETextJustify::Type GetJustification() const { return Justification; }
 	SLATE_API void SetJustification( ETextJustify::Type Value );
 
@@ -748,8 +751,14 @@ protected:
 	/** The percentage to modify a line height by. */
 	float LineHeightPercentage;
 
+	/** Whether or not line height should be applied to the last line. */
+	bool ApplyLineHeightToBottomLine;
+
 	/** The final size of the text layout on screen. */
 	FTextLayoutSize TextLayoutSize;
+
+	/** Extra height of the last line due to line height. */
+	float OverHeight;
 
 	/** The size of the text layout that can actually be seen from the parent widget */
 	FVector2D ViewSize;

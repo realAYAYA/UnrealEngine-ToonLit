@@ -81,7 +81,7 @@ namespace UE::AnimNext
 		TemplateUIDToHandleMap.Remove(TemplateUID);
 	}
 
-	FNodeTemplate* FNodeTemplateRegistry::Find(FNodeTemplateRegistryHandle TemplateHandle)
+	FNodeTemplate* FNodeTemplateRegistry::FindMutable(FNodeTemplateRegistryHandle TemplateHandle)
 	{
 		if (!TemplateHandle.IsValid())
 		{
@@ -104,11 +104,5 @@ namespace UE::AnimNext
 	uint32 FNodeTemplateRegistry::GetNum() const
 	{
 		return TemplateUIDToHandleMap.Num();
-	}
-
-	void FNodeTemplateRegistry::Clear()
-	{
-		TemplateBuffer.Empty(0);
-		TemplateUIDToHandleMap.Empty(0);
 	}
 }

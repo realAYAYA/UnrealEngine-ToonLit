@@ -133,6 +133,8 @@ public:
 	TSharedPtr<FTimerFrameStatsTrackSeries> AddTimerFrameStatSeries(ETraceFrameType FrameType, uint32 TimerId, FLinearColor Color, FText Name);
 	bool RemoveTimerFrameStatSeries(ETraceFrameType FrameType, uint32 TimerId);
 
+	uint32 GetNumSeriesForTimer(uint32 TimerId);
+
 protected:
 	TSharedRef<FFrameTrackSeries> FindOrAddSeries(ETraceFrameType FrameType);
 	TSharedPtr<FFrameTrackSeries> FindSeries(ETraceFrameType FrameType) const;

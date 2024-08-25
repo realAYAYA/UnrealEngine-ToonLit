@@ -41,11 +41,17 @@ class UMaterialExpressionRuntimeVirtualTextureOutput : public UMaterialExpressio
 	UPROPERTY()
 	FExpressionInput Mask;
 
+	/** Input for World Height to output to virtual texture. */
+	UPROPERTY()
+	FExpressionInput Displacement;
+
 public:
 #if WITH_EDITOR
 	//~ Begin UMaterialExpression Interface
 	virtual int32 Compile(class FMaterialCompiler* Compiler, int32 OutputIndex) override;
 	virtual void GetCaption(TArray<FString>& OutCaptions) const override;
+
+	virtual bool GenerateHLSLExpression(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope, int32 OutputIndex, UE::HLSLTree::FExpression const*& OutExpression) const override;
 	//~ End UMaterialExpression Interface
 #endif
 
@@ -53,5 +59,9 @@ public:
 	virtual int32 GetNumOutputs() const override;
 	virtual FString GetFunctionName() const override;
 	virtual FString GetDisplayName() const override;
+
+#if WITH_EDITOR
+	virtual UE::Shader::EValueType GetCustomOutputType(int32 OutputIndex) const override;
+#endif
 	//~ End UMaterialExpressionCustomOutput Interface
 };

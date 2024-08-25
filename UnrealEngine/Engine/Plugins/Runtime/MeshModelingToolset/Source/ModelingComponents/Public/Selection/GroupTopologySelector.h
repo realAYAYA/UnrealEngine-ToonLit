@@ -103,6 +103,8 @@ struct FGroupTopologyUtils
 {
 	bool GetNextEdgeLoopEdge(int32 IncomingEdgeID, int32 CornerID, int32& NextEdgeIDOut) const;
 	void AddNewEdgeLoopEdgesFromCorner(int32 EdgeID, int32 CornerID, TSet<int32>& EdgeSet) const;
+	void AddNewBoundaryLoopEdges(int32 StartEdgeID, int32 ForwardCornerID, TSet<int32>& EdgeSet) const;
+	bool GetNextBoundaryLoopEdge(int32 IncomingEdgeID, int32 CornerID, int32& NextEdgeIDOut) const;
 	void AddNewEdgeRingEdges(int32 StartEdgeID, int32 ForwardGroupID, TSet<int32>& EdgeSet) const;
 	bool GetQuadOppositeEdge(int32 EdgeIDIn, int32 GroupID, int32& OppositeEdgeIDOut) const;
 	FIndex2i GetEdgeEndpointCorners(int EdgeID) const;
@@ -149,6 +151,17 @@ public:
 	bool ExpandSelectionByEdgeLoops(FGroupTopologySelection& Selection);
 
 	/**
+	 * Using the edges in the given selection as starting points, add any "boundary loops" containing the edges. A
+	 * boundary loop is just the sequence of edges that surrounds a hole in the mesh, or the outside of an open mesh.
+	 * The loop may not complete if it hits a bowtie vertex (a vertex with more than two incident boundary edges).
+	 *
+	 * @param Selection Selection to expand.
+	 * @returns true if selection was modified (i.e., were the already selected edges part of any boundary loops whose
+	 *  member edges were not yet all selected).
+	 */
+	bool ExpandSelectionByBoundaryLoops(FGroupTopologySelection& Selection);
+
+	/**
 	 * Using the edges in the given selection as starting points, add any "edge rings" containing the edges. An
 	 * edge ring is a sequence of edges that lie on opposite sides of quad-like faces, meaning faces that have four
 	 * corners.
@@ -158,11 +171,6 @@ public:
 	 *  member edges were not yet all selected).
 	 */
 	bool ExpandSelectionByEdgeRings(FGroupTopologySelection& Selection);
-
-protected:
-
-	UE_DEPRECATED(5.2, "Use TopologyProvider in the base class")
-	const FGroupTopology* Topology = nullptr;
 
 private:
 

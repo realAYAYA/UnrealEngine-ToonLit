@@ -24,12 +24,12 @@ FAVResult FVideoDecoderConfigAMF::Parse(TSharedRef<FAVInstance> const& Instance,
 
 		FVideoDecoderConfigH265& H265 = Instance->Edit<FVideoDecoderConfigH265>();
 
-		TArray<TSharedPtr<FNaluH265>> Nalus;
-		FAVResult const Result = H265.Parse(Instance, Packet, Nalus);
-		if (Result.IsNotSuccess())
-		{
-			return FAVResult(EAVResult::ErrorResolving, TEXT("Failed to parse H265 Bitstream"));
-		}
+		// TArray<TSharedPtr<FNaluH265>> Nalus;
+		// FAVResult const Result = H265.Parse(Packet, Nalus);
+		// if (Result.IsNotSuccess())
+		// {
+		// 	return FAVResult(EAVResult::ErrorResolving, TEXT("Failed to parse H265 Bitstream"));
+		// }
 
 		// TODO (Aidan) Write SPS+PPS in contiguous block to each FParsedPicture in OutPictures
 

@@ -15,6 +15,7 @@ struct FCurveExpressionCustomVersion
 
 		// Serialized expressions
 		SerializedExpressions,
+		ExpressionDataInSharedObject,
 		
 		VersionPlusOne,
 		LatestVersion = VersionPlusOne - 1,

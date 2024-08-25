@@ -9,6 +9,7 @@
 #include "Interfaces/ITargetPlatformManagerModule.h"
 #include "Materials/MaterialInterface.h"
 #include "MessageLogModule.h"
+#include "MuCO/CustomizableObjectPrivate.h"
 #include "MuCO/CustomizableObjectInstance.h"
 #include "MuCO/CustomizableObjectSystem.h"
 #include "MuCO/ICustomizableObjectModule.h"
@@ -18,22 +19,32 @@
 #include "MuCOE/GraphTraversal.h"
 #include "MuCOE/ICustomizableObjectPopulationModule.h"
 #include "MuCOE/Nodes/CustomizableObjectNodeObjectGroup.h"
+#include "MuCOE/Nodes/CustomizableObjectNodeTable.h"
+#include "MuCOE/CustomizableObjectEditorModule.h"
 #include "UObject/ICookInfo.h"
 #include "UObject/UObjectIterator.h"
 #include "Widgets/Notifications/SNotificationList.h"
 #include "Interfaces/ITargetPlatform.h"
+#include "Misc/App.h"
+#include "MuCO/CustomizableObjectPrivate.h"
+#include "MuCO/CustomizableObjectSystemPrivate.h"
+#include "MuR/Model.h"
+#include "MuR/ModelPrivate.h"
+#include "MuCOE/CustomizableObjectVersionBridge.h"
 
 class UTexture2D;
 
 #define LOCTEXT_NAMESPACE "CustomizableObjectEditor"
 
+#define UE_MUTABLE_COMPILE_REGION		TEXT("Mutable Compile")
+#define UE_MUTABLE_PRELOAD_REGION		TEXT("Mutable Preload")
+#define UE_MUTABLE_SAVEDD_REGION		TEXT("Mutable SaveDD")
 
 UCustomizableObjectNodeObject* GetRootNode(UCustomizableObject* Object, bool &bOutMultipleBaseObjectsFound);
 
 
 
 FCustomizableObjectCompiler::FCustomizableObjectCompiler() : FCustomizableObjectCompilerBase()
-	, PendingTexturesToLoad(false)
 	, CompilationLaunchPending(false)
 	, PreloadingReferencerAssets(false)
 	, CurrentGAsyncLoadingTimeLimit(-1.0f)
@@ -47,6 +58,11 @@ FCustomizableObjectCompiler::FCustomizableObjectCompiler() : FCustomizableObject
 
 bool FCustomizableObjectCompiler::Tick()
 {
+	if (CompileTask)
+	{
+		CompileTask->Tick();
+	}
+	
 	bool bUpdated = false;
 
 	if (CompileTask.IsValid() && CompileTask->IsCompleted())
@@ -57,7 +73,7 @@ bool FCustomizableObjectCompiler::Tick()
 
 		if (SaveDDTask.IsValid())
 		{
-			SaveCODerivedData(true);
+			SaveCODerivedData();
 		}
 		else
 		{
@@ -76,8 +92,6 @@ bool FCustomizableObjectCompiler::Tick()
 		UpdateArrayGCProtect();
 
 		CompilationLogsContainer.ClearMessagesArray();
-
-
 	}
 
 	if (SaveDDTask.IsValid() && SaveDDTask->IsCompleted())
@@ -88,47 +102,19 @@ bool FCustomizableObjectCompiler::Tick()
 
 		FinishSavingDerivedData();
 	
-		CurrentObject->PostCompile();
+		CurrentObject->GetPrivate()->PostCompile();
 
 		UE_LOG(LogMutable, Verbose, TEXT("PROFILE: [ %16.8f ] Finished Saving Derived Data task."), FPlatformTime::Seconds());
 		UE_LOG(LogMutable, Verbose, TEXT("PROFILE: -----------------------------------------------------------"));
 	}
 
-	// In editor, when compiling a CO, referencer assets and Unreal to Mutable texture conversion are performed asynchronously
-	UpdatePendingTextureConversion(true);
-
-	if (!PendingTexturesToLoad && CompilationLaunchPending)
+	if (CompilationLaunchPending)
 	{
 		CompilationLaunchPending = false;
-		LaunchMutableCompile(true);
+		LaunchMutableCompile();
 	}
 
 	return bUpdated;
-}
-
-void FCustomizableObjectCompiler::MutableIsDisabledCase(UCustomizableObject* Object)
-{
-	if (Object->IsLocked())
-	{
-		return;
-	}
-
-	if (!Object->IsLocked())
-	{
-		UCustomizableObjectSystem::GetInstance()->LockObject(Object);
-	}
-
-	CurrentObject = Object;
-
-	if (CompileTask.IsValid()) // Don't start compilation if there's a compilation running
-	{
-		return;
-	}
-
-	UE_LOG(LogMutable, Log, TEXT("Mutable has been disabled. To reenable it, please deactivate the Disable Mutale Option in the Plugins -> Mutable option"), FPlatformTime::Seconds());
-	CompileTask = MakeShareable(new FCustomizableObjectCompileRunnable(nullptr));
-	CompileTask->MutableIsDisabled = true;
-	LaunchMutableCompile(false);
 }
 
 
@@ -175,20 +161,34 @@ void FCustomizableObjectCompiler::PreloadingReferencerAssetsCallback(UCustomizab
 	CustomizableObjectCompiler->SetPreloadingReferencerAssets(false);
 	UCustomizableObjectSystem::GetInstance()->UnlockObject(Object);
 
+	TRACE_END_REGION(UE_MUTABLE_PRELOAD_REGION);
+
 	CustomizableObjectCompiler->CompileInternal(Object, Options, bAsync);
 }
 
 
 void FCustomizableObjectCompiler::Compile(UCustomizableObject& Object, const FCompilationOptions& InOptions, bool bAsync)
 {
-	UCustomizableObjectSystem* System = UCustomizableObjectSystem::GetInstance();
-	check(System);
+	TRACE_BEGIN_REGION(UE_MUTABLE_COMPILE_REGION);
 
-	if (System->IsCompilationDisabled())
+	if (!UCustomizableObjectSystem::IsActive())
 	{
-		CompileInternal(&Object, InOptions, bAsync);
+		UE_LOG(LogMutable, Warning, TEXT("Failed to compile Customizable Object [%s]. Mutable is disabled. To enable it set the CVar Mutable.Enabled to true."), *Object.GetName());
+		SetCompilationState(ECustomizableObjectCompilationState::Failed);
+
 		return;
 	}
+
+	if (Object.VersionBridge && !Object.VersionBridge->GetClass()->ImplementsInterface(UCustomizableObjectVersionBridgeInterface::StaticClass()))
+	{
+		UE_LOG(LogMutable, Warning, TEXT("In Customizable Object [%s], the VersionBridge asset [%s] does not implement the required UCustomizableObjectVersionBridgeInterface."), 
+			*Object.GetName(), *Object.VersionBridge.GetName());
+		SetCompilationState(ECustomizableObjectCompilationState::Failed);
+
+		return;
+	}
+
+	UCustomizableObjectSystem* System = UCustomizableObjectSystem::GetInstanceChecked();
 
 	UE_LOG(LogMutable, Verbose, TEXT("PROFILE: [ %16.8f ] Preload asynchronously assets start."), FPlatformTime::Seconds());
 
@@ -199,7 +199,7 @@ void FCustomizableObjectCompiler::Compile(UCustomizableObject& Object, const FCo
 	Info.FadeOutDuration = 1.0f;
 	Info.ExpireDuration = 1.0f;
 
-	if (PreloadingReferencerAssets || CompilationLaunchPending || (Object.IsLocked()))
+	if (PreloadingReferencerAssets || CompilationLaunchPending || (Object.GetPrivate()->IsLocked()))
 	{
 		UE_LOG(LogMutable, Warning, TEXT("%s"), *Message);
 		FSlateNotificationManager::Get().AddNotification(Info);
@@ -223,7 +223,7 @@ void FCustomizableObjectCompiler::Compile(UCustomizableObject& Object, const FCo
 	for (TObjectIterator<UCustomizableObjectInstance> It; It; ++It)
 	{
 		UCustomizableObjectInstance* Instance = *It;
-		if (Instance &&
+		if (IsValid(Instance) &&
 			Instance->GetCustomizableObject() == &Object)
 		{
 			Instance->DestroyLiveUpdateInstance();
@@ -233,6 +233,7 @@ void FCustomizableObjectCompiler::Compile(UCustomizableObject& Object, const FCo
 	CurrentObject = &Object;
 
 	PreloadingReferencerAssets = true;
+	TRACE_BEGIN_REGION(UE_MUTABLE_PRELOAD_REGION);
 
 	CleanCachedReferencers();
 	UpdateArrayGCProtect();
@@ -255,7 +256,7 @@ void FCustomizableObjectCompiler::Compile(UCustomizableObject& Object, const FCo
 	FCookLoadScope CookLoadScope(ECookLoadType::EditorOnly);
 	if (ArrayAssetToStream.Num() > 0)
 	{
-		FStreamableManager& Streamable = System->GetStreamableManager();
+		FStreamableManager& Streamable = System->GetPrivate()->StreamableManager;
 
 		if (bAsync) 
 		{
@@ -316,67 +317,88 @@ void FCustomizableObjectCompiler::UpdateArrayGCProtect()
 }
 
 
-void FCustomizableObjectCompiler::ProcessChildObjectsRecursively(UCustomizableObject* Object, FAssetRegistryModule& AssetRegistryModule, FMutableGraphGenerationContext &GenerationContext)
+void FCustomizableObjectCompiler::ProcessChildObjectsRecursively(UCustomizableObject* ParentObject, FMutableGraphGenerationContext& GenerationContext)
 {
 	TArray<FName> ArrayReferenceNames;
-	AddCachedReferencers(*Object->GetOuter()->GetPathName(), ArrayReferenceNames);
+	AddCachedReferencers(*ParentObject->GetOuter()->GetPathName(), ArrayReferenceNames);
 	UpdateArrayGCProtect();
 
 	bool bMultipleBaseObjectsFound = false;
 
-	FAssetData* AssetData;
-	UCustomizableObject* ChildObject;
-
 	for (const FName& ReferenceName : ArrayReferenceNames)
 	{
-		AssetData = GetCachedAssetData(ReferenceName.ToString());
-
-		if (AssetData != nullptr) // Elements in ArrayAssetData are already of static class UCustomizableObject
+		if (ArrayAlreadyProcessedChild.Contains(ReferenceName))
 		{
-			ChildObject = Cast<UCustomizableObject>(AssetData->GetAsset());
-			
-			if (!ChildObject)
-				continue;
+			continue;
+		}
 
-			if (ChildObject != Object && !ChildObject->HasAnyFlags(RF_Transient))
+		const FAssetData* AssetData = GetCachedAssetData(ReferenceName.ToString());
+
+		UCustomizableObject* ChildObject = AssetData ? Cast<UCustomizableObject>(AssetData->GetAsset()) : nullptr;
+		if (!ChildObject || ChildObject->HasAnyFlags(RF_Transient))
+		{
+			ArrayAlreadyProcessedChild.Add(ReferenceName);
+			continue;
+		}
+
+		UCustomizableObjectNodeObject* Root = GetRootNode(ChildObject, bMultipleBaseObjectsFound);
+		if (Root->ParentObject != ParentObject)
+		{
+			continue;
+		}
+
+		if (ChildObject->VersionStruct.IsValid())
+		{
+			if (!GenerationContext.Object->VersionBridge)
 			{
-				UCustomizableObjectNodeObject* ChildRoot = GetRootNode(ChildObject, bMultipleBaseObjectsFound);
+				UE_LOG(LogMutable, Warning, TEXT("The child Customizable Object [%s] defines its VersionStruct Property but its root CustomizableObject doesn't define the VersionBridge property. There's no way to verify the VersionStruct has to be included in this compilation, so the child CustomizableObject will be omitted."), 
+					*ChildObject->GetName());
+				continue;
+			}
 
-				if (ChildRoot && !bMultipleBaseObjectsFound)
+			ICustomizableObjectVersionBridgeInterface* CustomizableObjectVersionBridgeInterface = Cast<ICustomizableObjectVersionBridgeInterface>(GenerationContext.Object->VersionBridge);
+
+			if (CustomizableObjectVersionBridgeInterface)
+			{
+				if (!CustomizableObjectVersionBridgeInterface->IsVersionStructIncludedInCurrentRelease(ChildObject->VersionStruct))
 				{
-					if (ChildRoot->ParentObject == Object)
-					{
-						if (const FGroupNodeIdsTempData* GroupGuid = GenerationContext.DuplicatedGroupNodeIds.FindPair(Object, FGroupNodeIdsTempData(ChildRoot->ParentObjectGroupId)))
-						{
-							ChildRoot->ParentObjectGroupId = GroupGuid->NewGroupNodeId;
-						}
-
-						GenerationContext.GroupIdToExternalNodeMap.Add(ChildRoot->ParentObjectGroupId, ChildRoot);
-						GenerationContext.CustomizableObjectGuidsInCompilation.Add(ChildObject->GetVersionId());
-					}
+					continue;
 				}
 			}
+			else
+			{
+				// This should never happen as the ICustomizableObjectVersionBridgeInterface was already checked at the start of the compilation
+				ensure(false);
+			}
+		}
+
+		ArrayAlreadyProcessedChild.Add(ReferenceName);
+
+		if (!bMultipleBaseObjectsFound)
+		{
+			if (const FGroupNodeIdsTempData* GroupGuid = GenerationContext.DuplicatedGroupNodeIds.FindPair(ParentObject, FGroupNodeIdsTempData(Root->ParentObjectGroupId)))
+			{
+				Root->ParentObjectGroupId = GroupGuid->NewGroupNodeId;
+			}
+
+			GenerationContext.GroupIdToExternalNodeMap.Add(Root->ParentObjectGroupId, Root);
 
 			TArray<UCustomizableObjectNodeObjectGroup*> GroupNodes;
 			ChildObject->Source->GetNodesOfClass<UCustomizableObjectNodeObjectGroup>(GroupNodes);
 
 			if (GroupNodes.Num() > 0) // Only grafs with group nodes should have child grafs
 			{
-				if (ArrayAlreadyProcessedChild.Find(ReferenceName) == INDEX_NONE)
+				for (int32 i = 0; i < GroupNodes.Num(); ++i)
 				{
-					for (int32 i = 0; i < GroupNodes.Num(); ++i)
+					const FGuid NodeId = GenerationContext.GetNodeIdUnique(GroupNodes[i]);
+					if (NodeId != GroupNodes[i]->NodeGuid)
 					{
-						const FGuid NodeId = GenerationContext.GetNodeIdUnique(GroupNodes[i]);
-						if (NodeId != GroupNodes[i]->NodeGuid)
-						{
-							GenerationContext.DuplicatedGroupNodeIds.Add(ChildObject, FGroupNodeIdsTempData(GroupNodes[i]->NodeGuid, NodeId));
-							GroupNodes[i]->NodeGuid = NodeId;
-						}
+						GenerationContext.DuplicatedGroupNodeIds.Add(ChildObject, FGroupNodeIdsTempData(GroupNodes[i]->NodeGuid, NodeId));
+						GroupNodes[i]->NodeGuid = NodeId;
 					}
-
-					ArrayAlreadyProcessedChild.Add(ReferenceName);
-					ProcessChildObjectsRecursively(ChildObject, AssetRegistryModule, GenerationContext);
 				}
+
+				ProcessChildObjectsRecursively(ChildObject, GenerationContext);
 			}
 		}
 	}
@@ -385,7 +407,7 @@ void FCustomizableObjectCompiler::ProcessChildObjectsRecursively(UCustomizableOb
 
 void FCustomizableObjectCompiler::DisplayParameterWarning(FMutableGraphGenerationContext& GenerationContext)
 {
-	for (const TPair<FString, TArray<const UCustomizableObjectNode*>>& It : GenerationContext.ParameterNamesMap)
+	for (const TPair<FString, TArray<const UObject*>>& It : GenerationContext.ParameterNamesMap)
 	{
 		if (It.Key == "")
 		{
@@ -403,7 +425,7 @@ void FCustomizableObjectCompiler::DisplayParameterWarning(FMutableGraphGeneratio
 
 void FCustomizableObjectCompiler::DisplayDuplicatedNodeIdsWarning(FMutableGraphGenerationContext & GenerationContext)
 {
-	for (const TPair<FGuid, TArray<const UCustomizableObjectNode*>>& It : GenerationContext.NodeIdsMap)
+	for (const TPair<FGuid, TArray<const UObject*>>& It : GenerationContext.NodeIdsMap)
 	{
 		if (It.Value.Num() > 1)
 		{
@@ -467,30 +489,14 @@ void FCustomizableObjectCompiler::DisplayOrphanNodesWarning(FMutableGraphGenerat
 }
 
 
-UCustomizableObject* FCustomizableObjectCompiler::GetRootObject( UCustomizableObject* InObject)
-{
-	// Grab a node to start the search -> Get the root since it should be always present
-	bool bMultipleBaseObjectsFound = false;
-	UCustomizableObjectNodeObject* ObjectRootNode = GetRootNode(InObject, bMultipleBaseObjectsFound);
-
-	if (ObjectRootNode && ObjectRootNode->ParentObject)
-	{
-		TArray<UCustomizableObject*> VisitedNodes;
-		return GetFullGraphRootObject(ObjectRootNode,VisitedNodes);
-	}
-
-	// No parent object found, return input as the parent of the graph
-	// This can also mean the ObjectRootNode does not exist because it has not been opened yet (so no nodes have been generated)
-	return InObject;
-}
-
-
 mu::NodeObjectPtr FCustomizableObjectCompiler::GenerateMutableRoot( 
 	UCustomizableObject* Object, 
 	FMutableGraphGenerationContext& GenerationContext, 
 	FText& ErrorMsg, 
 	bool& bOutIsRootObject)
 {
+	check(Object);
+	
 	if (!Object->Source)
 	{
 		ErrorMsg = LOCTEXT("NoSource", "Object with no valid graph found. Object not build.");
@@ -555,7 +561,7 @@ mu::NodeObjectPtr FCustomizableObjectCompiler::GenerateMutableRoot(
 
 			// The object doesn't reference a root object but is a root object, look for all the objects that reference it and get their root nodes
 			FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-			ProcessChildObjectsRecursively(ActualRootObject, AssetRegistryModule, GenerationContext);
+			ProcessChildObjectsRecursively(ActualRootObject, GenerationContext);
 			UE_LOG(LogMutable, Verbose, TEXT("PROFILE: [ %16.8f ] End search for children."), FPlatformTime::Seconds());
 		}
 	}
@@ -596,10 +602,10 @@ mu::NodeObjectPtr FCustomizableObjectCompiler::GenerateMutableRoot(
 			TArray<UCustomizableObjectNodeObjectGroup*> GroupNodes;
 			Object->Source->GetNodesOfClass<UCustomizableObjectNodeObjectGroup>(GroupNodes);
 
-			if (GroupNodes.Num() > 0) // Only grafs with group nodes should have child grafs
+			if (GroupNodes.Num() > 0) // Only graphs with group nodes should have child graphs
 			{
 				FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-				ProcessChildObjectsRecursively(Object, AssetRegistryModule, GenerationContext);
+				ProcessChildObjectsRecursively(Object, GenerationContext);
 			}
 		}
 
@@ -659,6 +665,8 @@ mu::NodeObjectPtr FCustomizableObjectCompiler::GenerateMutableRoot(
 
 	Object->ReferenceSkeletalMeshes = ActualRootObject->ReferenceSkeletalMeshes;
 
+	GenerationContext.AddParticipatingObject(Object->ReferenceSkeletalMeshes);
+
     GenerationContext.RealTimeMorphTargetsOverrides = ActualRoot->RealTimeMorphSelectionOverrides;
     GenerationContext.RealTimeMorphTargetsOverrides.Reset();
 
@@ -669,6 +677,8 @@ mu::NodeObjectPtr FCustomizableObjectCompiler::GenerateMutableRoot(
 
     ActualRoot->RealTimeMorphSelectionOverrides = GenerationContext.RealTimeMorphTargetsOverrides;
 	GenerationContext.GenerateClippingCOInternalTags();
+
+	GenerationContext.GenerateSharedSurfacesUniqueIds();
 
 	// Generate ReferenceSkeletalMeshes data;
 	PopulateReferenceSkeletalMeshesData(GenerationContext);
@@ -692,10 +702,6 @@ mu::NodeObjectPtr FCustomizableObjectCompiler::GenerateMutableRoot(
 		return nullptr;
 	}
 
-	// Apply the platform specific transform
-	// Format and mips are done per-image now.
-	//MutableRoot = GenerateMutableTransform(MutableRoot, GenerationContext);
-
 	return MutableRoot;
 }
 
@@ -706,6 +712,12 @@ void FCustomizableObjectCompiler::AddCachedReferencers(const FName& PathName, TA
 	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
 	AssetRegistryModule.Get().GetReferencers(PathName, ArrayReferenceNames, UE::AssetRegistry::EDependencyCategory::Package, UE::AssetRegistry::EDependencyQuery::Hard);
 
+	// Required to make compilations deterministic within editor runs.
+	ArrayReferenceNames.Sort([](const FName& A, const FName& B)
+	{
+		return A.LexicalLess(B);
+	});
+	
 	FARFilter Filter;
 	for (const FName& ReferenceName : ArrayReferenceNames)
 	{
@@ -732,12 +744,9 @@ void FCustomizableObjectCompiler::AddCachedReferencers(const FName& PathName, TA
 }
 
 
-void FCustomizableObjectCompiler::LaunchMutableCompile(bool bShowNotification)
+void FCustomizableObjectCompiler::LaunchMutableCompile()
 {
-	if(bShowNotification)
-	{
-		AddCompileNotification(LOCTEXT("CustomizableObjectCompileInProgress", "Compiling"));
-	}
+	AddCompileNotification(LOCTEXT("CustomizableObjectCompileInProgress", "Compiling"));
 
 	// Even for async build, we spawn a thread, so that we can set a large stack. 
 	// Thread names need to be unique, apparently.
@@ -747,17 +756,14 @@ void FCustomizableObjectCompiler::LaunchMutableCompile(bool bShowNotification)
 }
 
 
-void FCustomizableObjectCompiler::SaveCODerivedData(bool bShowNotification)
+void FCustomizableObjectCompiler::SaveCODerivedData()
 {
 	if (!SaveDDTask.IsValid())
 	{
 		return;
 	}
 
-	if (bShowNotification)
-	{
-		AddCompileNotification(LOCTEXT("SavingCustomizableObjectDerivedData", "Saving Data"));
-	}
+	AddCompileNotification(LOCTEXT("SavingCustomizableObjectDerivedData", "Saving Data"));
 
 	// Even for async saving derived data.
 	static int SDDThreadCount = 0;
@@ -804,71 +810,6 @@ FAssetData* FCustomizableObjectCompiler::GetCachedAssetData(const FString& Packa
 }
 
 
-void FCustomizableObjectCompiler::UpdatePendingTextureConversion(bool UseTimeLimit)
-{
-	// In editor, when compiling a CO, referencer assets and Unreal to Mutable texture conversion are performed asynchronously
-	if (PendingTexturesToLoad)
-	{
-		float initialTime = FPlatformTime::Seconds();
-		while ( CompletedUnrealToMutableTask < ArrayTextureUnrealToMutableTask.Num() )
-		{
-			UTexture2D* Texture = ArrayTextureUnrealToMutableTask[CompletedUnrealToMutableTask].Texture;
-
-			// If the texture has been set to null, it means it was a duplicate that we already processed.
-			if (!Texture)
-			{ 
-				CompletedUnrealToMutableTask++;
-				continue;
-			}
-
-			// Convert the texture
-			mu::ImagePtr Image = ConvertTextureUnrealToMutable( 
-				Texture, 
-				ArrayTextureUnrealToMutableTask[CompletedUnrealToMutableTask].Node,
-				this,
-				ArrayTextureUnrealToMutableTask[CompletedUnrealToMutableTask].bIsNormalComposite );
-
-			// Assign to all tasks referring to the same texture
-			for (int32 j = CompletedUnrealToMutableTask; j < ArrayTextureUnrealToMutableTask.Num(); ++j)
-			{
-				if (ArrayTextureUnrealToMutableTask[j].Texture == Texture)
-				{
-					if (ArrayTextureUnrealToMutableTask[j].ImageNode.get())
-					{
-						ArrayTextureUnrealToMutableTask[j].ImageNode->SetValue(Image.get());
-						ArrayTextureUnrealToMutableTask[j].Texture = nullptr;
-					}
-
-					else if (ArrayTextureUnrealToMutableTask[j].TableNode.get())
-					{
-						int32 ColumnIndx = ArrayTextureUnrealToMutableTask[j].TableColumn;
-						int32 RowIndx = ArrayTextureUnrealToMutableTask[j].TableRow;
-
-						ArrayTextureUnrealToMutableTask[j].TableNode->SetCell(ColumnIndx, RowIndx, Image.get());
-
-						ArrayTextureUnrealToMutableTask[j].Texture = nullptr;
-					}
-				}
-			}
-
-			CompletedUnrealToMutableTask++;
-
-			if (UseTimeLimit && ((FPlatformTime::Seconds() - initialTime) > MaxConvertToMutableTextureTime))
-			{
-				break;
-			}
-		}
-
-		if (CompletedUnrealToMutableTask >= ArrayTextureUnrealToMutableTask.Num())
-		{
-			PendingTexturesToLoad = false;
-			ArrayTextureUnrealToMutableTask.Empty();
-			CompletedUnrealToMutableTask = 0;
-		}
-	}
-}
-
-
 float FCustomizableObjectCompiler::ComputeAsyncLoadingTimeLimit()
 {
 	float DeltaTimeSeconds = FApp::GetDeltaTime();
@@ -896,7 +837,7 @@ void FCustomizableObjectCompiler::SetCompilationState(ECustomizableObjectCompila
 	
 	if (CurrentObject)
 	{
-		CurrentObject->CompilationState = InState;
+		CurrentObject->GetPrivate()->CompilationState = InState;
 	}
 }
 
@@ -908,12 +849,6 @@ void FCustomizableObjectCompiler::CompileInternal(UCustomizableObject* Object, c
 	SetCompilationState(ECustomizableObjectCompilationState::Failed);
 
 	if (!Object) return;
-
-	if(UCustomizableObjectSystem::GetInstance()->IsCompilationDisabled())
-	{
-		MutableIsDisabledCase(Object);
-		return;
-	}
 
 	if (bAsync && CompileTask.IsValid()) // Don't start compilation if there's a compilation running
 	{
@@ -944,7 +879,7 @@ void FCustomizableObjectCompiler::CompileInternal(UCustomizableObject* Object, c
 		return;
 	}
 
-	if (Object->IsLocked() || !UCustomizableObjectSystem::GetInstance()->LockObject(Object))
+	if (Object->GetPrivate()->IsLocked() || !UCustomizableObjectSystem::GetInstance()->LockObject(Object))
 	{
 		UE_LOG(LogMutable, Display, TEXT("Customizable Object is already being compiled or updated %s. Please wait a few seconds and try again."), *Object->GetName());
 		return;
@@ -964,11 +899,6 @@ void FCustomizableObjectCompiler::CompileInternal(UCustomizableObject* Object, c
 
 	FMutableGraphGenerationContext GenerationContext(Object, this, Options);
 	GenerationContext.ParamNamesToSelectedOptions = ParamNamesToSelectedOptions;
-	if (ParamNamesToSelectedOptions.Num() > 0)
-	{
-		// A partial compilation shouldn't update the derived data cache, because it would force a recompilation at the next restart of the editor
-		Options.bDontUpdateStreamedDataAndCache = true;
-	}
 
 	// If we don't have the target platform yet (in editor) we need to get it
 	if (!GenerationContext.Options.TargetPlatform)
@@ -1001,7 +931,7 @@ void FCustomizableObjectCompiler::CompileInternal(UCustomizableObject* Object, c
 			CompilerLog(FText::FromString(TEXT("Failed to generate the mutable node graph. Object not built.")), nullptr);
 		}
 
-		if (Object->IsLocked())
+		if (Object->GetPrivate()->IsLocked())
 		{
 			UCustomizableObjectSystem::GetInstance()->UnlockObject(Object);
 		}
@@ -1010,32 +940,95 @@ void FCustomizableObjectCompiler::CompileInternal(UCustomizableObject* Object, c
 	}
 	else
 	{
-		if (Options.bCheckChildrenGuids)
-		{
-			// Check if all children are exactly the same as in the last compilation, if not, mark the object as modified and change VersionId to force a cache recompilation in other pcs
-			if ((GenerationContext.CustomizableObjectGuidsInCompilation.Num() != Object->CustomizableObjectGuidsInCompilation.Num()) ||
-				(GenerationContext.CustomizableObjectGuidsInCompilation.Intersect(Object->CustomizableObjectGuidsInCompilation).Num() != GenerationContext.CustomizableObjectGuidsInCompilation.Num()))
-			{
-				if (!ParamNamesToSelectedOptions.Num()) // Don't marked the object as modified because of a partial compilation
-				{
-					Object->CustomizableObjectGuidsInCompilation = GenerationContext.CustomizableObjectGuidsInCompilation;
+		// Always work with the ModelResources (Editor) when compiling. They'll be copied to the cooked version during PreSave.
+		FModelResources& ModelResources = Object->GetPrivate()->GetModelResources(false);
+		ModelResources = FModelResources();
+		
+		ModelResources.ReferenceSkeletalMeshesData = MoveTemp(GenerationContext.ReferenceSkeletalMeshesData);
 
-					if (!Options.bIsCooking)
-					{
-						Object->UpdateVersionId();
-						Object->MarkPackageDirty();
-					}
-				}
-			}
+		ModelResources.Skeletons.Reserve(GenerationContext.ReferencedSkeletons.Num());
+		for (const USkeleton* Skeleton : GenerationContext.ReferencedSkeletons)
+		{
+			ModelResources.Skeletons.Emplace(Skeleton);
+		}
+		
+		ModelResources.Materials.Reserve(GenerationContext.ReferencedMaterials.Num());
+		for (const UMaterialInterface* Material : GenerationContext.ReferencedMaterials)
+		{
+			ModelResources.Materials.Emplace(Material);
 		}
 
-		// Morph target generated data does not need extra processing so move semantics can be used
-		// to avoid a possibly expensive copy.
-		Object->ContributingMorphTargetsInfo = MoveTemp(GenerationContext.ContributingMorphTargetsInfo);
-		Object->MorphTargetReconstructionData = MoveTemp(GenerationContext.MorphTargetReconstructionData);
+		for (const TPair<TSoftObjectPtr<UTexture>, FMutableGraphGenerationContext::FGeneratedReferencedTexture>& Pair : GenerationContext.RuntimeReferencedTextureMap)
+		{
+			check(Pair.Value.ID == ModelResources.PassThroughTextures.Num());
+			ModelResources.PassThroughTextures.Add(Pair.Key);
+		}
+
+		ModelResources.PhysicsAssets = MoveTemp(GenerationContext.PhysicsAssets);
+
+		ModelResources.AnimBPs = MoveTemp(GenerationContext.AnimBPAssets);
+		ModelResources.AnimBpOverridePhysiscAssetsInfo = MoveTemp(GenerationContext.AnimBpOverridePhysicsAssetsInfo);
+
+		ModelResources.MaterialSlotNames = MoveTemp(GenerationContext.ReferencedMaterialSlotNames);
+		ModelResources.BoneNames = MoveTemp(GenerationContext.BoneNames);
+		ModelResources.SocketArray = MoveTemp(GenerationContext.SocketArray);
+
+		ModelResources.SkinWeightProfilesInfo = MoveTemp(GenerationContext.SkinWeightProfilesInfo);
+
+		TArray<FGeneratedImageProperties> ImageProperties;
+		GenerationContext.ImageProperties.GenerateValueArray(ImageProperties);
 		
-		Object->SkinWeightProfilesInfo = MoveTemp(GenerationContext.SkinWeightProfilesInfo);
-		Object->AnimBpOverridePhysiscAssetsInfo = MoveTemp(GenerationContext.AnimBpOverridePhysicsAssetsInfo);
+		// Must sort image properties by ImagePropertiesIndex so that ImageNames point to the right properties.
+		ImageProperties.Sort([](const FGeneratedImageProperties& PropsA, const FGeneratedImageProperties& PropsB)
+			{ return PropsA.ImagePropertiesIndex < PropsB.ImagePropertiesIndex;	});
+
+		ModelResources.ImageProperties.Empty(ImageProperties.Num());
+
+		for (const FGeneratedImageProperties& ImageProp : ImageProperties)
+		{
+			ModelResources.ImageProperties.Add({ ImageProp.TextureParameterName,
+										ImageProp.Filter,
+										ImageProp.SRGB,
+										ImageProp.bFlipGreenChannel,
+										ImageProp.bIsPassThrough,
+										ImageProp.LODBias,
+										ImageProp.LODGroup,
+										ImageProp.AddressX, ImageProp.AddressY });
+		}
+
+		ModelResources.ParameterUIDataMap = MoveTemp(GenerationContext.ParameterUIDataMap);
+		ModelResources.StateUIDataMap = MoveTemp(GenerationContext.StateUIDataMap);
+
+		ModelResources.RealTimeMorphTargetNames = MoveTemp(GenerationContext.RealTimeMorphTargetsNames);
+
+		if (GenerationContext.RealTimeMorphTargetPerMeshData.Num() >= TNumericLimits<uint16>::Max())
+		{
+			UE_LOG(LogMutable, Warning, TEXT("Maximum number of meshes with realtime morph targets reached. Some morphs may not work."));
+		}
+
+		// Create the RealTimeMorphsTargets Blocks from the per mesh Morph data.
+		uint64 RealTimeMorphDataSize = 0;
+		for (const TArray<FMorphTargetVertexData>& VertexDataArray : GenerationContext.RealTimeMorphTargetPerMeshData)
+		{
+			RealTimeMorphDataSize += VertexDataArray.Num();
+		}
+		
+		ModelResources.RealTimeMorphStreamableBlocks.Empty(32);
+		ModelResources.EditorOnlyMorphTargetReconstructionData.Empty(RealTimeMorphDataSize);
+
+		uint64 RealTimeMorphDataOffset = 0;
+		for (const TArray<FMorphTargetVertexData>& VertexDataArray : GenerationContext.RealTimeMorphTargetPerMeshData)
+		{
+			ModelResources.RealTimeMorphStreamableBlocks.Emplace(FMutableStreamableBlock
+					{
+						uint32(0),
+						(uint32)VertexDataArray.Num()*sizeof(FMorphTargetVertexData), 
+						RealTimeMorphDataOffset, 
+					});
+
+			RealTimeMorphDataOffset += VertexDataArray.Num()*sizeof(FMorphTargetVertexData);
+			ModelResources.EditorOnlyMorphTargetReconstructionData.Append(VertexDataArray);
+		}
 		
 		// Clothing	
 		Object->ClothMeshToMeshVertData = MoveTemp(GenerationContext.ClothMeshToMeshVertData);
@@ -1050,7 +1043,7 @@ void FCustomizableObjectCompiler::CompileInternal(UCustomizableObject* Object, c
 		auto IsSharedConfigData = [](const FCustomizableObjectClothConfigData& ConfigData) -> bool
 		{
 			 const UClass* ConfigClass = FindObject<UClass>(nullptr, *ConfigData.ClassPath);
-			 return ConfigClass ? static_cast<bool>( Cast<UClothSharedConfigCommon>(ConfigClass->GetDefaultObject() ) ) : false;
+			 return ConfigClass ? static_cast<bool>(Cast<UClothSharedConfigCommon>(ConfigClass->GetDefaultObject())) : false;
 		};
 		
 		// Find shared configs to be used (One of each type) 
@@ -1080,209 +1073,71 @@ void FCustomizableObjectCompiler::CompileInternal(UCustomizableObject* Object, c
 			 ClothingAssetData.ConfigsData.RemoveAllSwap(IsSharedConfigData);
 		}
 
-		// Mark the object as modified, used to avoid missing assets in packages. 
-		if (!ParamNamesToSelectedOptions.Num()) // Don't mark the objects as modified because of a partial compilation
+		Object->GetPrivate()->GroupNodeMap = GenerationContext.GroupNodeMap;
+
+		if (GenerationContext.Options.OptimizationLevel == 0)
 		{
-			if (Object->ReferencedMaterials.Num() != GenerationContext.ReferencedMaterials.Num())
-			{
-				Object->MarkPackageDirty();
-			}
-			else
-			{
-				for (int32 i = 0; i < Object->ReferencedMaterials.Num(); ++i)
-				{
-					if (Object->ReferencedMaterials[i] != GenerationContext.ReferencedMaterials[i])
-					{
-						Object->MarkPackageDirty();
-						break;
-					}
-				}
-			}
-		}
-
-		Object->ReferenceSkeletalMeshesData = GenerationContext.ReferenceSkeletalMeshesData;
-		
-		Object->ReferencedMaterials.Empty(GenerationContext.ReferencedMaterials.Num());
-
-		for (const UMaterialInterface* Material : GenerationContext.ReferencedMaterials)
-		{
-			Object->ReferencedMaterials.Add(Material);
-		}
-
-		Object->ReferencedMaterialSlotNames.Empty(GenerationContext.ReferencedMaterialSlotNames.Num());
-
-		for (const FName& MaterialSlotName : GenerationContext.ReferencedMaterialSlotNames)
-		{
-			Object->ReferencedMaterialSlotNames.Add(MaterialSlotName);
-		}
-
-		Object->ImageProperties.Empty(GenerationContext.ImageProperties.Num());
-
-		for (const FGeneratedImageProperties& ImageProp : GenerationContext.ImageProperties)
-		{
-			Object->ImageProperties.Add({ ImageProp.TextureParameterName,
-										ImageProp.Filter,
-										ImageProp.SRGB,
-										ImageProp.bFlipGreenChannel,
-										ImageProp.LODBias,
-										ImageProp.LODGroup,
-										ImageProp.AddressX, ImageProp.AddressY });
-		}
-
-		Object->GroupNodeMap = GenerationContext.GroupNodeMap;
-		Object->ParameterUIDataMap = GenerationContext.ParameterUIDataMap;
-		Object->StateUIDataMap = GenerationContext.StateUIDataMap;
-		Object->AlwaysLoadedExtensionData = MoveTemp(GenerationContext.AlwaysLoadedExtensionData);
-
-		Object->StreamedExtensionData.Empty(GenerationContext.StreamedExtensionData.Num());
-		for (UCustomizableObjectExtensionDataContainer* Container : GenerationContext.StreamedExtensionData)
-		{
-			Object->StreamedExtensionData.Emplace(Container);
-		}
-
-#if WITH_EDITORONLY_DATA
-		Object->CustomizableObjectPathMap = GenerationContext.CustomizableObjectPathMap;
-#endif
-
-		Object->LODSettings.NumLODsInRoot = GenerationContext.NumLODsInRoot;
-		
-		Object->NumMeshComponentsInRoot = GenerationContext.NumMeshComponentsInRoot;
-		
-		Object->LODSettings.FirstLODAvailable = GenerationContext.FirstLODAvailable;
-
-		Object->LODSettings.bLODStreamingEnabled = GenerationContext.bEnableLODStreaming;
-		Object->LODSettings.NumLODsToStream = GenerationContext.NumMaxLODsToStream;
-
-		// Mark the object as modified, used to avoid missing assets in packages. 
-		if (!Object->PhysicsAssetsMap.OrderIndependentCompareEqual(GenerationContext.PhysicsAssetMap))
-		{
-			if (!ParamNamesToSelectedOptions.Num()) // Don't mark the objects as modified because of a partial compilation
-			{
-				Object->MarkPackageDirty();
-			}
-		}
-
-		Object->PhysicsAssetsMap = GenerationContext.PhysicsAssetMap;
-
-		// Mark the object as modified, used to avoid missing assets in packages. 
-		if (!Object->AnimBPAssetsMap.OrderIndependentCompareEqual(GenerationContext.AnimBPAssetsMap))
-		{
-			if (!ParamNamesToSelectedOptions.Num()) // Don't mark the objects as modified because of a partial compilation
-			{
-				Object->MarkPackageDirty();
-			}
-		}
-	
-		Object->AnimBPAssetsMap = GenerationContext.AnimBPAssetsMap;
-
-		// Mark the object as modified, used to avoid missing assets in packages.
-		if (Object->SocketArray != GenerationContext.SocketArray)
-		{
-			if (!ParamNamesToSelectedOptions.Num()) // Don't mark the objects as modified because of a partial compilation
-			{
-				Object->MarkPackageDirty();
-			}
-		}
-
-		Object->SocketArray = GenerationContext.SocketArray;
-
-		// 
-		if (!ParamNamesToSelectedOptions.Num()) // Don't mark the objects as modified because of a partial compilation
-		{
-			if (Object->ReferencedSkeletons.Num() != GenerationContext.ReferencedSkeletons.Num())
-			{
-				Object->MarkPackageDirty();
-			}
-			else
-			{
-				for (int32 SkeletonIndex = 0; SkeletonIndex < Object->ReferencedSkeletons.Num(); ++SkeletonIndex)
-				{
-					if (Object->ReferencedSkeletons[SkeletonIndex] != GenerationContext.ReferencedSkeletons[SkeletonIndex])
-					{
-						Object->MarkPackageDirty();
-						break;
-					}
-				}
-			}
-		}
-
-		Object->ReferencedSkeletons.Empty(GenerationContext.ReferencedSkeletons.Num());
-
-		for (const USkeleton* Skeleton : GenerationContext.ReferencedSkeletons)
-		{
-			Object->ReferencedSkeletons.Add(Skeleton);
-		}
-
-		Object->SetBoneNamesArray(GenerationContext.BoneNames);
-
-		// Pass-through textures
-		TArray<TSoftObjectPtr<UTexture>> NewReferencedPassThroughTextures;
-
-		for (const TPair<TSoftObjectPtr<UTexture>, uint32>& Pair : GenerationContext.PassThroughTextureToIndexMap)
-		{
-			check(Pair.Value == NewReferencedPassThroughTextures.Num());
-			NewReferencedPassThroughTextures.Add(Pair.Key);
-		}
-
-		// Mark the object as modified, used to avoid missing assets in packages.
-		if (Object->ReferencedPassThroughTextures != NewReferencedPassThroughTextures)
-		{
-			Object->ReferencedPassThroughTextures.Empty(NewReferencedPassThroughTextures.Num());
-			Object->ReferencedPassThroughTextures = NewReferencedPassThroughTextures;
-
-			if (!ParamNamesToSelectedOptions.Num()) // Don't mark the objects as modified because of a partial compilation
-			{
-				Object->MarkPackageDirty();
-			}
-		}
-
-		if (bIsRootObject && (GenerationContext.MaskOutMaterialCache.Num() > 0 || GenerationContext.MaskOutTextureCache.Num() > 0))
-		{
-			// Load MaskOutCache, if can't, create it.
-			if (!Object->MaskOutCache.Get())
-			{
-				if (!Object->MaskOutCache.LoadSynchronous())
-				{
-					FString MaskOutCacheName = TEXT("MaskOutCache");
-					FString PackageName = Object->GetOutermost()->GetPathName() + FString("_") + MaskOutCacheName;
-					UPackage* Package = CreatePackage(*PackageName);
-					Package->FullyLoad();
-
-					FString ObjectName = Object->GetName() + FString("_") + MaskOutCacheName;
-					Object->MaskOutCache = NewObject<UMutableMaskOutCache>(Package, *ObjectName, RF_Public | RF_Standalone);
-
-					if (!ParamNamesToSelectedOptions.Num()) // Don't marked the object as modified because of a partial compilation
-					{
-						Object->MarkPackageDirty();
-					}
-				}
-			}
-
-			check(Object->MaskOutCache.Get());
-
-			if (!Object->MaskOutCache->Materials.OrderIndependentCompareEqual(GenerationContext.MaskOutMaterialCache) ||
-				!Object->MaskOutCache->Textures.OrderIndependentCompareEqual(GenerationContext.MaskOutTextureCache))
-			{
-				Object->MaskOutCache->Materials = GenerationContext.MaskOutMaterialCache;
-				Object->MaskOutCache->Textures = GenerationContext.MaskOutTextureCache;
-
-				if (!ParamNamesToSelectedOptions.Num()) // Don't marked the object as modified because of a partial compilation
-				{
-					Object->MarkPackageDirty();
-					Object->MaskOutCache->Modify();
-				}
-			}
+			// If the optimization level is "none" disable texture streaming, because textures are all referenced
+			// unreal assets and progressive generation is not supported.
+			Object->GetPrivate()->bDisableTextureStreaming = true;
 		}
 		else
 		{
-			if (!Object->MaskOutCache.ToString().IsEmpty() || Object->MaskOutCache.Get())
+			Object->GetPrivate()->bDisableTextureStreaming = false;
+		}
+		
+		Object->GetPrivate()->bIsCompiledWithoutOptimization = GenerationContext.Options.OptimizationLevel < UE_MUTABLE_MAX_OPTIMIZATION;
+
+		Object->GetPrivate()->GetAlwaysLoadedExtensionData() = MoveTemp(GenerationContext.AlwaysLoadedExtensionData);
+
+		Object->GetPrivate()->GetStreamedExtensionData().Empty(GenerationContext.StreamedExtensionData.Num());
+		for (UCustomizableObjectResourceDataContainer* Container : GenerationContext.StreamedExtensionData)
+		{
+			Object->GetPrivate()->GetStreamedExtensionData().Emplace(Container);
+		}
+
+#if WITH_EDITORONLY_DATA
+		Object->GetPrivate()->CustomizableObjectPathMap = GenerationContext.CustomizableObjectPathMap;
+#endif
+
+		ModelResources.NumComponents = GenerationContext.NumMeshComponentsInRoot;
+		ModelResources.NumLODs = GenerationContext.NumLODsInRoot;
+		ModelResources.NumLODsToStream = GenerationContext.bEnableLODStreaming ? GenerationContext.NumMaxLODsToStream : 0;
+		ModelResources.FirstLODAvailable = GenerationContext.FirstLODAvailable;
+
+		Object->GetPrivate()->GetStreamedResourceData() = MoveTemp(GenerationContext.StreamedResourceData);
+
+		// Pass-through textures
+		TArray<TSoftObjectPtr<UTexture>> NewCompileTimeReferencedTextures;
+		for (const TPair<TSoftObjectPtr<UTexture>, FMutableGraphGenerationContext::FGeneratedReferencedTexture>& Pair : GenerationContext.CompileTimeTextureMap)
+		{
+			check(Pair.Value.ID == NewCompileTimeReferencedTextures.Num());
+			NewCompileTimeReferencedTextures.Add(Pair.Key);
+		}
+
+		if (!ParamNamesToSelectedOptions.Num())
+		{
+			// Get possible objects used in the compilation that are not directly referenced.
+			// Due to this check being done also in PIE (to detect out of date compilations), it has to be performant. Therefore we are gathering a relaxed set.
+			// For example, a referencing Customizable Object may not be used if it is not assigned in any Group Node. In the relaxed set we include those regardless.
+			// Notice that, to avoid automatic compilations/warnings, the set of referencing objects set found here must coincide with the set found when loading the
+			// model (discard previous compilations) or when showing PIE warnings.
+			TArray<FName> ReferencingObjectNames;
+			GetReferencingPackages(*Object, ReferencingObjectNames);
+
+			for (const FName& ReferencingObjectName : ReferencingObjectNames)
 			{
-				if (!ParamNamesToSelectedOptions.Num()) // Don't marked the object as modified because of a partial compilation
+				const TSoftObjectPtr SoftObjectPtr(ReferencingObjectName.ToString());
+
+				if (const UObject* ReferencingObject = SoftObjectPtr.LoadSynchronous())
 				{
-					Object->MaskOutCache = nullptr;
-					Object->MarkPackageDirty();
+					GenerationContext.AddParticipatingObject(*ReferencingObject);					
 				}
 			}
+			
+			// Copy final array of participating objects
+			Object->GetPrivate()->ParticipatingObjects = MoveTemp(GenerationContext.ParticipatingObjects);
+			Object->GetPrivate()->DirtyParticipatingObjects.Empty();
 		}
 
 		if (CompileTask.IsValid()) // Don't start compilation if there's a compilation running
@@ -1294,41 +1149,34 @@ void FCustomizableObjectCompiler::CompileInternal(UCustomizableObject* Object, c
 
 		// Lock the object to prevent instance updates while compiling. It's ignored and returns false if it's already locked
 		// Will unlock in the FinishCompilation call.
-		if (!Object->IsLocked())
+		if (!Object->GetPrivate()->IsLocked())
 		{
 			UCustomizableObjectSystem::GetInstance()->LockObject(Object);
 		}
 
 		CompileTask = MakeShareable(new FCustomizableObjectCompileRunnable(MutableRoot));
 		CompileTask->Options = Options;
+		CompileTask->ReferencedTextures = NewCompileTimeReferencedTextures;
 		SetCompilationState(ECustomizableObjectCompilationState::InProgress);
 
-		if (GenerationContext.ArrayTextureUnrealToMutableTask.Num() > 0)
-		{
-			ArrayTextureUnrealToMutableTask.Insert(GenerationContext.ArrayTextureUnrealToMutableTask, ArrayTextureUnrealToMutableTask.Num());
-			PendingTexturesToLoad = true;
-		}
-
-		// If synchronous compilation is requested, proceed the same way if in editor and if packaging
 		if (!bAsync)
 		{
-			UpdatePendingTextureConversion(false);
-			LaunchMutableCompile(false);
-			MUTABLE_CPUPROFILER_SCOPE(WaitForCompletion);
-			CompileThread->WaitForCompletion();
+			CompileTask->Init();
+			CompileTask->Run();
 			FinishCompilation();
 
 			if (SaveDDTask.IsValid())
 			{
-				SaveCODerivedData(false);
-				SaveDDThread->WaitForCompletion();
+				SaveDDTask->Init();
+				SaveDDTask->Run();
+				CurrentObject->GetPrivate()->GetModel()->GetPrivate()->UnloadRoms();
 				FinishSavingDerivedData();
 			}
 
 			CleanCachedReferencers();
 			UpdateArrayGCProtect();
 
-			CurrentObject->PostCompile(); 
+			CurrentObject->GetPrivate()->PostCompile(); 
 
 			SetCompilationState(ECustomizableObjectCompilationState::Completed);
 		}
@@ -1337,28 +1185,19 @@ void FCustomizableObjectCompiler::CompileInternal(UCustomizableObject* Object, c
 			// If packaging, convert textures and launch Mutable compile thread
 			if (IsRunningCommandlet())
 			{
-				UpdatePendingTextureConversion(false);
-				LaunchMutableCompile(false);
+				LaunchMutableCompile();
 			}
 			else
 			{
 				// If asynchronous compilation and not packaging, set CompilationLaunchPending to true and FCustomizableObjectCompiler::Tick()
 				// will do the remaining steps (convert textures asynchronously and launch the Mutable compile thread)
 				CompilationLaunchPending = true;
-
-				if (PendingTexturesToLoad)
-				{
-					AddCompileNotification(LOCTEXT("ConvertingToMutableTexture", "Converting textures"));
-				}
 			}
 		}
 	}
 
-	// Get a list of generated nodes, to be able to understand error messages later.
 	for (UCustomizableObjectNode* Node : GenerationContext.GeneratedNodes)
 	{
-		GeneratedNodes.Add(Node, Node);
-
 		Node->ResetAttachedErrorData();
 	}
 
@@ -1376,7 +1215,9 @@ void FCustomizableObjectCompiler::CompileInternal(UCustomizableObject* Object, c
 }
 
 
-mu::NodePtr FCustomizableObjectCompiler::Export(UCustomizableObject* Object, const FCompilationOptions& InCompilerOptions)
+mu::NodePtr FCustomizableObjectCompiler::Export(UCustomizableObject* Object, const FCompilationOptions& InCompilerOptions, 
+	TArray<TSoftObjectPtr<UTexture>>& OutRuntimeReferencedTextures,
+	TArray<TSoftObjectPtr<UTexture>>& OutCompilerReferencedTextures )
 {
 	UE_LOG(LogMutable, Log, TEXT("Started Customizable Object Export %s."), *Object->GetName());
 
@@ -1411,12 +1252,19 @@ mu::NodePtr FCustomizableObjectCompiler::Export(UCustomizableObject* Object, con
 		return nullptr;
 	}
 
-	// Ensure the images are converted
-	if (GenerationContext.ArrayTextureUnrealToMutableTask.Num() > 0)
+	// Pass out the references textures
+	OutRuntimeReferencedTextures.Empty();
+	for (const TPair<TSoftObjectPtr<UTexture>, FMutableGraphGenerationContext::FGeneratedReferencedTexture>& Pair : GenerationContext.RuntimeReferencedTextureMap)
 	{
-		ArrayTextureUnrealToMutableTask.Insert(GenerationContext.ArrayTextureUnrealToMutableTask, ArrayTextureUnrealToMutableTask.Num());
-		PendingTexturesToLoad = true;
-		UpdatePendingTextureConversion(false);
+		check(Pair.Value.ID == OutRuntimeReferencedTextures.Num());
+		OutRuntimeReferencedTextures.Add(Pair.Key);
+	}
+
+	OutCompilerReferencedTextures.Empty();
+	for (const TPair<TSoftObjectPtr<UTexture>, FMutableGraphGenerationContext::FGeneratedReferencedTexture>& Pair : GenerationContext.CompileTimeTextureMap)
+	{
+		check(Pair.Value.ID == OutCompilerReferencedTextures.Num());
+		OutCompilerReferencedTextures.Add(Pair.Key);
 	}
 
 	return MutableRoot;
@@ -1430,13 +1278,37 @@ void FCustomizableObjectCompiler::FinishCompilation()
 	UpdateCompilerLogData();
 	TSharedPtr<mu::Model, ESPMode::ThreadSafe> Model = CompileTask->Model;
 
-	CurrentObject->SetModel(Model);
+	// Generate a map that using the resource id tells the offset and size of the resource inside the bulk data
+	// At this point it is assumed that all data goes into a single file.
+	if (Model)
+	{
+		// Always work with the ModelResources (Editor) when compiling. They'll be copied to the cooked version during PreSave.
+		FModelResources& ModelResources = CurrentObject->GetPrivate()->GetModelResources(false);
+		
+		const int32 NumStreamingFiles = Model->GetRomCount();
+		ModelResources.HashToStreamableBlock.Empty(NumStreamingFiles);
 
+		uint64 Offset = 0;
+		for (int32 FileIndex = 0; FileIndex < NumStreamingFiles; ++FileIndex)
+		{
+			const uint32 ResourceId = Model->GetRomId(FileIndex);
+			const uint32 ResourceSize = Model->GetRomSize(FileIndex);
+
+			ModelResources.HashToStreamableBlock.Add(ResourceId, FMutableStreamableBlock{0, ResourceSize, Offset });
+			Offset += ResourceSize;
+		}
+	}
+
+	// Generate ParameterProperties and IntParameterLookUpTable
+	CurrentObject->GetPrivate()->UpdateParameterPropertiesFromModel(Model);
+
+	CurrentObject->GetPrivate()->SetModel(Model, GenerateIdentifier(*CurrentObject));
+	
 	// Reset all instances, as the parameters may need to be rebuilt.
 	for (TObjectIterator<UCustomizableObjectInstance> It; It; ++It)
 	{
 		UCustomizableObjectInstance* Instance = *It;
-		if (Instance &&
+		if (IsValid(Instance) &&
 			Instance->GetCustomizableObject() == CurrentObject)
 		{
 			Instance->SetObject(CurrentObject);
@@ -1447,12 +1319,18 @@ void FCustomizableObjectCompiler::FinishCompilation()
 	CompileThread.Reset();
 	CompileTask.Reset();
 
+	TRACE_END_REGION(UE_MUTABLE_COMPILE_REGION);
+
 	if (!Options.bDontUpdateStreamedDataAndCache)
 	{
+		TRACE_BEGIN_REGION(UE_MUTABLE_SAVEDD_REGION);
+
 		SaveDDTask = MakeShareable(new FCustomizableObjectSaveDDRunnable(CurrentObject, Options));
 	}
 	else
 	{
+		CurrentObject->GetPrivate()->GetModel()->GetPrivate()->UnloadRoms();
+
 		// when skipping the SaveDerivedData task unlock the object so that instances can be updated
 		UCustomizableObjectSystem::GetInstance()->UnlockObject(CurrentObject);
 	}
@@ -1462,23 +1340,34 @@ void FCustomizableObjectCompiler::FinishCompilation()
 
 void FCustomizableObjectCompiler::FinishSavingDerivedData()
 {
+	MUTABLE_CPUPROFILER_SCOPE(FinishSavingDerivedData)
+
 	check(SaveDDTask.IsValid());
 
 	if (Options.bIsCooking)
 	{
-		CurrentObject->CachePlatformData(SaveDDTask->GetTargetPlatform(), SaveDDTask->GetModelBytes(), SaveDDTask->GetBulkBytes());
+		CurrentObject->GetPrivate()->CachePlatformData(
+				SaveDDTask->GetTargetPlatform(), 
+				SaveDDTask->Bytes, 
+				SaveDDTask->BulkDataBytes,
+				SaveDDTask->MorphDataBytes);
 	}
 
 	// Order matters
 	SaveDDThread.Reset();
 	SaveDDTask.Reset();
 
+	CurrentObject->GetPrivate()->GetModel()->GetPrivate()->UnloadRoms();
+	
 	// Unlock the object so that instances can be updated
 	UCustomizableObjectSystem::GetInstance()->UnlockObject(CurrentObject);
 
 	RemoveCompileNotification();
 
 	NotifyCompilationErrors();
+
+	TRACE_END_REGION(UE_MUTABLE_SAVEDD_REGION);
+
 }
 
 
@@ -1486,9 +1375,12 @@ void FCustomizableObjectCompiler::ForceFinishCompilation()
 {
 	if (CompileTask.IsValid())
 	{
-		if (CompileThread.IsValid())
+		// Compilation needs game thread tasks every now and then. Wait for compilation to finish while
+		// giving execution time for these tasks.
+		// TODO: interruptible compilations?
+		while (!CompileTask->IsCompleted())
 		{
-			CompileThread->WaitForCompletion();
+			FTaskGraphInterface::Get().ProcessThreadUntilIdle(ENamedThreads::GameThread);
 		}
 
 		CleanCachedReferencers();
@@ -1524,7 +1416,7 @@ void FCustomizableObjectCompiler::ForceFinishBeforeStartCompilation(UCustomizabl
 	CleanCachedReferencers();
 	UpdateArrayGCProtect();
 
-	if (Object && Object->IsLocked())
+	if (Object && Object->GetPrivate()->IsLocked())
 	{
 		UCustomizableObjectSystem::GetInstance()->UnlockObject(Object);
 	}
@@ -1535,16 +1427,12 @@ void FCustomizableObjectCompiler::ForceFinishBeforeStartCompilation(UCustomizabl
 
 void FCustomizableObjectCompiler::AddCompileNotification(const FText& CompilationStep) const
 {
-	if (Options.bSilentCompilation)
-	{
-		return;
-	}
-
 	const FText Text = CurrentObject ? FText::FromString(FString::Printf(TEXT("Compiling %s"), *CurrentObject->GetName())) : LOCTEXT("CustomizableObjectCompileInProgressNotification", "Compiling Customizable Object");
 	
 	FCustomizableObjectEditorLogger::CreateLog(Text)
 	.SubText(CompilationStep)
 	.Category(ELoggerCategory::Compilation)
+	.Notification(!Options.bSilentCompilation)
 	.CustomNotification()
 	.FixNotification()
 	.Log();
@@ -1564,11 +1452,6 @@ void FCustomizableObjectCompiler::NotifyCompilationErrors() const
 	const uint32 NumIgnoreds = CompilationLogsContainer.GetIgnoredCount();
 	const bool NoWarningsOrErrors = !(NumWarnings || NumErrors);
 
-	if (Options.bSilentCompilation && NoWarningsOrErrors)
-	{
-		return;
-	}
-	
 	const EMessageSeverity::Type Severity = [&]
 	{
 		if (NumErrors)
@@ -1597,18 +1480,19 @@ void FCustomizableObjectCompiler::NotifyCompilationErrors() const
 	FCustomizableObjectEditorLogger::CreateLog(Message)
 	.Category(ELoggerCategory::Compilation)
 	.Severity(Severity)
+	.Notification(!Options.bSilentCompilation || !NoWarningsOrErrors)
 	.CustomNotification()
 	.Log();
 }
 
 
-void FCustomizableObjectCompiler::CompilerLog(const FText& Message, const TArray<const UCustomizableObjectNode*>& ArrayNode, const EMessageSeverity::Type MessageSeverity, const bool bAddBaseObjectInfo, const ELoggerSpamBin SpamBin)
+void FCustomizableObjectCompiler::CompilerLog(const FText& Message, const TArray<const UObject*>& Context, const EMessageSeverity::Type MessageSeverity, const bool bAddBaseObjectInfo, const ELoggerSpamBin SpamBin)
 {
-	if (CompilationLogsContainer.AddMessage(Message, ArrayNode, MessageSeverity, SpamBin)) // Cache the message for later reference
+	if (CompilationLogsContainer.AddMessage(Message, Context, MessageSeverity, SpamBin)) // Cache the message for later reference
 	{
 		FCustomizableObjectEditorLogger::CreateLog(Message)
 			.Severity(MessageSeverity)
-			.Nodes(ArrayNode)
+			.Context(Context)
 			.BaseObject(bAddBaseObjectInfo)
 			.SpamBin(SpamBin)
 			.Log();
@@ -1616,14 +1500,14 @@ void FCustomizableObjectCompiler::CompilerLog(const FText& Message, const TArray
 }
 
 
-void FCustomizableObjectCompiler::CompilerLog(const FText& Message, const UCustomizableObjectNode* Node, const EMessageSeverity::Type MessageSeverity, const bool bAddBaseObjectInfo, const ELoggerSpamBin SpamBin)
+void FCustomizableObjectCompiler::CompilerLog(const FText& Message, const UObject* Context, const EMessageSeverity::Type MessageSeverity, const bool bAddBaseObjectInfo, const ELoggerSpamBin SpamBin)
 {
-	TArray<const UCustomizableObjectNode*> ArrayNode;
-	if (Node)
+	TArray<const UObject*> ContextArray;
+	if (Context)
 	{
-		ArrayNode.Add(Node);
+		ContextArray.Add(Context);
 	}
-	CompilerLog(Message, ArrayNode, MessageSeverity, bAddBaseObjectInfo, SpamBin);
+	CompilerLog(Message, ContextArray, MessageSeverity, bAddBaseObjectInfo, SpamBin);
 }
 
 
@@ -1633,25 +1517,26 @@ void FCustomizableObjectCompiler::UpdateCompilerLogData()
 	MessageLogModule.RegisterLogListing(FName("Mutable"), LOCTEXT("MutableLog", "Mutable"));
 	const TArray<FCustomizableObjectCompileRunnable::FError>& ArrayCompileErrors = CompileTask->GetArrayErrors();
 
-	FText ObjectName = CurrentObject ? FText::FromString(CurrentObject->GetName()) : LOCTEXT("Unknown Object", "Unknown Object");
+	const FText ObjectName = CurrentObject ? FText::FromString(CurrentObject->GetName()) : LOCTEXT("Unknown Object", "Unknown Object");
 
-	int32 i;
-	for (i = 0; i < ArrayCompileErrors.Num(); ++i)
+	for (const FCustomizableObjectCompileRunnable::FError& CompileError : ArrayCompileErrors)
 	{
-		const UCustomizableObjectNode** pNode = GeneratedNodes.Find(ArrayCompileErrors[i].Context);
+		const UObject* Object = static_cast<const UObject*>(CompileError.Context); // Context are always UObjects
 
-		if (ArrayCompileErrors[i].AttachedData && pNode)
+		if (const UCustomizableObjectNode* Node = Cast<UCustomizableObjectNode>(Object))
 		{
-			UCustomizableObjectNode::FAttachedErrorDataView ErrorDataView;
-			ErrorDataView.UnassignedUVs = { ArrayCompileErrors[i].AttachedData->UnassignedUVs.GetData(),
-											ArrayCompileErrors[i].AttachedData->UnassignedUVs.Num() };
+			if (CompileError.AttachedData)
+			{
+				UCustomizableObjectNode::FAttachedErrorDataView ErrorDataView;
+				ErrorDataView.UnassignedUVs = { CompileError.AttachedData->UnassignedUVs.GetData(),
+												CompileError.AttachedData->UnassignedUVs.Num() };
 
-			const UCustomizableObjectNode* Node = Cast<UCustomizableObjectNode>(*pNode);
-			const_cast<UCustomizableObjectNode*>(Node)->AddAttachedErrorData(ErrorDataView);
+				const_cast<UCustomizableObjectNode*>(Node)->AddAttachedErrorData(ErrorDataView);
+			}			
 		}
 
-		FText FullMsg = FText::Format(LOCTEXT("MutableMessage", "{0} : {1}"), ObjectName, ArrayCompileErrors[i].Message);
-		CompilerLog(FullMsg, pNode ? *pNode : nullptr, ArrayCompileErrors[i].Severity, true, ArrayCompileErrors[i].SpamBin);
+		FText FullMsg = FText::Format(LOCTEXT("MutableMessage", "{0} : {1}"), ObjectName, CompileError.Message);
+		CompilerLog(FullMsg, Object, CompileError.Severity, true, CompileError.SpamBin);
 	}
 }
 

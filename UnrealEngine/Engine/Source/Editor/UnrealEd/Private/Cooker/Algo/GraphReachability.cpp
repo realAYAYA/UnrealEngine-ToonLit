@@ -23,7 +23,7 @@ void ReserveGrowth(ArrayType& Array, NumToAddSizeType NumToAdd)
 {
 	typename ArrayType::SizeType OriginalCount = Array.Num();
 	Array.AddUninitialized(NumToAdd); // this will grow the array geometrically using CalculateSlackGrow
-	Array.SetNum(OriginalCount, false /* bAllowShrinking */);
+	Array.SetNum(OriginalCount, EAllowShrinking::No);
 }
 
 namespace Algo::Graph
@@ -247,7 +247,7 @@ void FReachabilityBuilder::BuildAcyclic(bool bShrink)
 	Stack.Reset(NumVertices);
 	SeparateBuffers.Reset(NumVertices);
 	VertexDatas.Reset(NumVertices);
-	VertexDatas.SetNum(NumVertices, false /* bAllowShrinking */);
+	VertexDatas.SetNum(NumVertices, EAllowShrinking::No);
 	ReachabilityBuffer.Reset();
 	IsReachable.Init(false, NumVertices);
 
@@ -525,7 +525,7 @@ void FReachabilityBuilder::FinishVertex()
 	// Mark our status complete and pop the stack
 	VertexData.Status = EVertexStatus::Done;
 	FStackData* StackDataPointer = Stack.GetData();
-	Stack.Pop(false /* bAllowShrinking */);
+	Stack.Pop(EAllowShrinking::No);
 	// StackDatas have pointers to TArrays higher on the stack so we cannot let it reallocate
 	check(Stack.GetData() == StackDataPointer);
 }

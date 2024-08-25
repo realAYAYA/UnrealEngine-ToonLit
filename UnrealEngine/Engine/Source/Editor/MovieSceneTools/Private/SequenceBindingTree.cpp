@@ -42,7 +42,7 @@ struct FSequenceBindingTree::FSequenceIDStack
 	void Push(FMovieSceneSequenceID InSequenceID) { IDs.Add(InSequenceID); }
 
 	/** Pop the last sequence ID off the stack */
-	void Pop() { IDs.RemoveAt(IDs.Num() - 1, 1, false); }
+	void Pop() { IDs.RemoveAt(IDs.Num() - 1, 1, EAllowShrinking::No); }
 	
 private:
 	TArray<FMovieSceneSequenceID> IDs;

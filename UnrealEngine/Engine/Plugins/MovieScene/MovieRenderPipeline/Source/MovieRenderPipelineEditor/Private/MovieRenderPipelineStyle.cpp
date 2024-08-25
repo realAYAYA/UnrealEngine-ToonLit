@@ -5,6 +5,8 @@
 #include "Styling/SlateTypes.h"
 #include "Styling/CoreStyle.h"
 #include "Styling/AppStyle.h"
+#include "Styling/SlateStyleMacros.h"
+#include "Styling/StyleColors.h"
 
 FName FMovieRenderPipelineStyle::StyleName("MovieRenderPipelineStyle");
 
@@ -101,6 +103,8 @@ FMovieRenderPipelineStyle::FMovieRenderPipelineStyle()
 
 	Set("MovieRenderPipeline.TabIcon", new FSlateImageBrush(RootToContentDir(TEXT("TabIcon_24x.png")), Icon16x16));
 
+	Set("MovieRenderGraph.CollectionsTree.SmallComboButton", FComboButtonStyle(FAppStyle::Get().GetWidgetStyle<FComboButtonStyle>("SimpleComboButton"))
+		.SetDownArrowPadding(FMargin(0)));
 
 	FSlateStyleRegistry::RegisterSlateStyle(*this);
 }

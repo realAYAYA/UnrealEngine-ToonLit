@@ -1,0 +1,41 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../NiagaraStatelessCommon.ush"
+
+int MeshIndex_Index;
+int MeshIndex_TableOffset;
+int MeshIndex_TableNumElements;	// -1 to avoid added instructions
+
+struct FStatelessModule_MeshIndex
+{
+};
+
+void MeshIndex_Initialize(inout FStatelessModule_MeshIndex ModuleData, inout FStatelessParticle Particle)
+{
+}
+	
+void MeshIndex_Simulate(in FStatelessModule_MeshIndex ModuleData, inout FStatelessParticle Particle)
+{
+	const bool bIsParameter = (MeshIndex_Index & 0x80000000) != 0;
+	int MeshIndex = MeshIndex_Index & ~0x80000000;
+	
+	if (bIsParameter)
+	{
+		MeshIndex = GetParameterBufferInt(MeshIndex, 0);
+	}
+	else
+	{
+		if ( MeshIndex_TableNumElements > 0 )
+		{
+			const float2 Rand = RandomFloat2(Particle);
+			MeshIndex = round(Rand.x * float(MeshIndex_TableNumElements));
+			const float Probability = GetStaticFloat(MeshIndex_TableOffset, (MeshIndex * 2) + 0);
+			if (Rand.y > Probability)
+			{
+				MeshIndex = int(GetStaticFloat(MeshIndex_TableOffset, (MeshIndex * 2) + 1));
+			}
+		}
+	}
+	Particle.MeshIndex = MeshIndex;
+}
+

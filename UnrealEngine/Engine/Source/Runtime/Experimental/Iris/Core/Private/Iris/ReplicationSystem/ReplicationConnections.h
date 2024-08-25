@@ -81,7 +81,7 @@ public:
 	void InitDataStreams(uint32 ReplicationSystemId, uint32 ConnectionId, UDataStreamManager* DataStreamManager);
 
 	void SetReplicationView(uint32 ConnectionId, const FReplicationView& ViewInfo);
-	FReplicationView GetReplicationView(uint32 ConnectionId) const { return ReplicationViews[ConnectionId]; }
+	const FReplicationView& GetReplicationView(uint32 ConnectionId) const { return ReplicationViews[ConnectionId]; }
 
 	const FNetTokenStoreState& GetRemoteNetTokenStoreState(uint32 ConnectionId) const { return RemoteNetTokenStoreStates[ConnectionId]; }
 	FNetTokenStoreState& GetRemoteNetTokenStoreState(uint32 ConnectionId) { return RemoteNetTokenStoreStates[ConnectionId]; }

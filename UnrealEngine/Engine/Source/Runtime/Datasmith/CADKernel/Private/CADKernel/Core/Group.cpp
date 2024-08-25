@@ -40,12 +40,13 @@ void FGroup::ReplaceEntitiesWithMap(const TMap<TSharedPtr<FEntity>, TSharedPtr<F
 
 void FGroup::RemoveNonTopologicalEntities()
 {
-	for (const TSharedPtr<FEntity>& Entity : Entities)
+	for (auto It = Entities.CreateIterator(); It; ++It)
 	{
+		const TSharedPtr<FEntity>& Entity = *It;
 		EEntity Type = Entity->GetEntityType();
 		if (Type != EEntity::TopologicalFace && Type != EEntity::TopologicalEdge && Type != EEntity::TopologicalVertex) 
 		{
-			Entities.Remove(Entity);
+			It.RemoveCurrent();
 		}
 	}
 }

@@ -55,6 +55,7 @@ FSequencerNodeTree::~FSequencerNodeTree()
 
 FSequencerNodeTree::FSequencerNodeTree(FSequencer& InSequencer)
 	: Sequencer(InSequencer)
+	, DisplayNodeCount(0)
 	, bFilterUpdateRequested(false)
 {
 	TrackFilters = MakeShared<FSequencerTrackFilterCollection>();
@@ -153,9 +154,6 @@ void FSequencerNodeTree::Update()
 	// Cache pinned state of nodes, needs to happen after OnTreeRefreshed
 	FPinnableExtensionShim::UpdateCachedPinnedState(RootNode);
 
-	// Update mute/solo markers and cache final state
-	UpdateMuteSolo(MovieScene);
-
 	// Update curve editor tree based on new filtered hierarchy
 	auto CurveEditorIntegration = SequenceModel->CastDynamic<FCurveEditorIntegrationExtension>();
 	if (CurveEditorIntegration)
@@ -246,6 +244,20 @@ TArray<UE::Sequencer::TViewModelPtr<UE::Sequencer::IOutlinerExtension>> FSequenc
 	return RootNodes;
 }
 
+void FSequencerNodeTree::ClearCustomSortOrders()
+{
+	using namespace UE::Sequencer;
+
+	const bool bIncludeRootNode = true;
+	for (TSharedPtr<FViewModel> Child : RootNode->GetDescendants(bIncludeRootNode))
+	{
+		if (ISortableExtension* SortableExtension = Child->CastThis<ISortableExtension>())
+		{
+			SortableExtension->SetCustomOrder(-1);
+		}
+	}
+}
+
 void FSequencerNodeTree::SortAllNodesAndDescendants()
 {
 	using namespace UE::Sequencer;
@@ -256,7 +268,6 @@ void FSequencerNodeTree::SortAllNodesAndDescendants()
 	{
 		if (ISortableExtension* SortableExtension = Child->CastThis<ISortableExtension>())
 		{
-			SortableExtension->SetCustomOrder(-1);
 			SortableChildren.Add(SortableExtension);
 		}
 	}
@@ -264,10 +275,6 @@ void FSequencerNodeTree::SortAllNodesAndDescendants()
 	{
 		SortableChild->SortChildren();
 	}
-
-	// Refresh the tree so that our changes are visible.
-	// @todo: Is this necessary any more?
-	//GetSequencer().RefreshTree();
 }
 
 void FSequencerNodeTree::AddFilter(TSharedPtr<FSequencerTrackFilter> TrackFilter)
@@ -313,226 +320,6 @@ void FSequencerNodeTree::RemoveLevelFilter(const FString& LevelName)
 bool FSequencerNodeTree::IsTrackLevelFilterActive(const FString& LevelName) const
 {
 	return !TrackFilterLevelFilter->IsLevelHidden(LevelName);
-}
-
-bool FSequencerNodeTree::IsNodeSolo(const UE::Sequencer::TViewModelPtr<UE::Sequencer::IOutlinerExtension>& InNode) const
-{
-	using namespace UE::Sequencer;
-
-	const TArray<FString>& SoloNodes = Sequencer.GetFocusedMovieSceneSequence()->GetMovieScene()->GetSoloNodes();
-	const FString NodePath = IOutlinerExtension::GetPathName(InNode);
-
-	if (SoloNodes.Contains(NodePath))
-	{
-		return true;
-	}
-
-	// If parent is solo'd, then this node should also be solo'd
-	TViewModelPtr<IOutlinerExtension> ParentNode = InNode.AsModel()->FindAncestorOfType<IOutlinerExtension>();
-	while (ParentNode)
-	{
-		const FString ParentNodePath = IOutlinerExtension::GetPathName(ParentNode);
-		if (SoloNodes.Contains(ParentNodePath))
-		{
-			return true;
-		}
-
-		ParentNode = ParentNode.AsModel()->FindAncestorOfType<IOutlinerExtension>();
-	}
-
-	// If any child is solo'd then this node needs to also be solo'd so that the child can be evaluated later during playback
-	for (TViewModelPtr<IOutlinerExtension> ChildNode : InNode.AsModel()->GetChildrenOfType<IOutlinerExtension>())
-	{
-		if (ChildNode)
-		{
-			const FString ChildNodePath = IOutlinerExtension::GetPathName(ChildNode);
-			if (SoloNodes.Contains(ChildNodePath))
-			{
-				return true;
-			}
-		}
-	}
-
-	return false;
-}
-
-bool FSequencerNodeTree::HasSoloNodes() const
-{
-	return bHasSoloNodes;
-}
-
-bool FSequencerNodeTree::IsSelectedNodesSolo() const
-{
-	using namespace UE::Sequencer;
-
-	if (Sequencer.GetViewModel()->GetSelection()->Outliner.Num() == 0)
-	{
-		return false;
-	}
-
-	const TArray<FString>& SoloNodes = Sequencer.GetFocusedMovieSceneSequence()->GetMovieScene()->GetSoloNodes();
-
-	bool bIsSolo = true;
-	for (FViewModelPtr Node : Sequencer.GetViewModel()->GetSelection()->Outliner)
-	{
-		if (!SoloNodes.Contains(IOutlinerExtension::GetPathName(Node)))
-		{
-			bIsSolo = false;
-			break;
-		}
-	}
-
-	return bIsSolo;
-}
-
-void FSequencerNodeTree::ToggleSelectedNodesSolo()
-{
-	using namespace UE::Sequencer;
-
-	UMovieScene* MovieScene = Sequencer.GetFocusedMovieSceneSequence()->GetMovieScene();
-	
-	if (MovieScene->IsReadOnly())
-	{
-		return;
-	}
-	
-	TArray<FString>& SoloNodes = MovieScene->GetSoloNodes();
-
-	if (Sequencer.GetViewModel()->GetSelection()->Outliner.Num() == 0)
-	{
-		return;
-	}
-
-	// First, determine if any of the selected nodes are not marked as solo
-	// If we have a mix, we should default to setting them all as solo
-	bool bIsSolo = true;
-	for (FViewModelPtr Node : Sequencer.GetViewModel()->GetSelection()->Outliner)
-	{
-		if (!SoloNodes.Contains(IOutlinerExtension::GetPathName(Node)))
-		{
-			bIsSolo = false;
-			break;
-		}
-	}
-
-	const FScopedTransaction Transaction(NSLOCTEXT("Sequencer", "ToggleSolo", "Toggle Solo"));
-
-	MovieScene->Modify();
-
-	for (FViewModelPtr Node : Sequencer.GetViewModel()->GetSelection()->Outliner)
-	{
-		FString NodePath = IOutlinerExtension::GetPathName(Node);
-		if (bIsSolo)
-		{
-			// If we're currently solo, unsolo
-			SoloNodes.Remove(NodePath);
-		}
-		else
-		{
-			// Mark solo, being careful as we might be re-marking an already solo node
-			SoloNodes.AddUnique(NodePath);
-		}
-	}
-	
-	GetSequencer().RefreshTree();
-}
-
-bool FSequencerNodeTree::IsNodeMute(const UE::Sequencer::TViewModelPtr<UE::Sequencer::IOutlinerExtension>& InNode) const
-{
-	using namespace UE::Sequencer;
-
-	const TArray<FString>& MuteNodes = Sequencer.GetFocusedMovieSceneSequence()->GetMovieScene()->GetMuteNodes();
-	const FString NodePath = IOutlinerExtension::GetPathName(InNode);
-
-	if (MuteNodes.Contains(NodePath))
-	{
-		return true;
-	}
-	
-	// Children should follow their parent's behavior unless told otherwise.
-	TViewModelPtr<IOutlinerExtension> ParentNode = InNode.AsModel()->FindAncestorOfType<IOutlinerExtension>();
-	if (ParentNode)
-	{
-		return IsNodeMute(ParentNode);
-	}
-	
-	return false;
-}
-
-bool FSequencerNodeTree::IsSelectedNodesMute() const
-{
-	using namespace UE::Sequencer;
-
-	if (Sequencer.GetViewModel()->GetSelection()->Outliner.Num() == 0)
-	{
-		return false;
-	}
-
-	const TArray<FString>& MuteNodes = Sequencer.GetFocusedMovieSceneSequence()->GetMovieScene()->GetMuteNodes();
-
-	bool bIsMute = true;
-	for (FViewModelPtr Node : Sequencer.GetViewModel()->GetSelection()->Outliner)
-	{
-		if (!MuteNodes.Contains(IOutlinerExtension::GetPathName(Node)))
-		{
-			bIsMute = false;
-			break;
-		}
-	}
-
-	return bIsMute;
-}
-
-void FSequencerNodeTree::ToggleSelectedNodesMute()
-{
-	using namespace UE::Sequencer;
-
-	UMovieScene* MovieScene = Sequencer.GetFocusedMovieSceneSequence()->GetMovieScene();
-	
-	if (MovieScene->IsReadOnly())
-	{
-		return;
-	}
-
-	TArray<FString>& MuteNodes = MovieScene->GetMuteNodes();
-
-	if (Sequencer.GetViewModel()->GetSelection()->Outliner.Num() == 0)
-	{
-		return;
-	}
-
-	// First, determine if any of the selected nodes are not marked as Mute
-	// If we have a mix, we should default to setting them all as Mute
-	bool bIsMute = true;
-	for (FViewModelPtr Node : Sequencer.GetViewModel()->GetSelection()->Outliner)
-	{
-		if (!MuteNodes.Contains(IOutlinerExtension::GetPathName(Node)))
-		{
-			bIsMute = false;
-			break;
-		}
-	}
-
-	const FScopedTransaction Transaction(NSLOCTEXT("Sequencer", "ToggleMute", "Toggle Mute"));
-
-	MovieScene->Modify();
-
-	for (FViewModelPtr Node : Sequencer.GetViewModel()->GetSelection()->Outliner)
-	{
-		FString NodePath = IOutlinerExtension::GetPathName(Node);
-		if (bIsMute)
-		{
-			// If we're currently Mute, unMute
-			MuteNodes.Remove(NodePath);
-		}
-		else
-		{
-			// Mark Mute, being careful as we might be re-marking an already Mute node
-			MuteNodes.AddUnique(NodePath);
-		}
-	}
-
-	GetSequencer().RefreshTree();
 }
 
 void FSequencerNodeTree::SaveExpansionState(const UE::Sequencer::FViewModel& Node, bool bExpanded)
@@ -592,7 +379,6 @@ bool FSequencerNodeTree::IsNodeFiltered(const TSharedPtr<UE::Sequencer::FViewMod
 
 	TViewModelPtr<IOutlinerExtension> OutlinerItem = CastViewModel<IOutlinerExtension>(Node);
 	return OutlinerItem && FilteredNodes.Contains(OutlinerItem);
-	return FilteredNodes.Contains(CastViewModel<IOutlinerExtension>(Node));
 }
 
 TSharedPtr<UE::Sequencer::FSectionModel> FSequencerNodeTree::GetSectionModel(const UMovieSceneSection* Section) const
@@ -1041,25 +827,6 @@ void FSequencerNodeTree::CleanupMuteSolo(UMovieScene* MovieScene)
 			if (!GetNodeAtPath(*It))
 			{
 				It.RemoveCurrent();
-			}
-		}
-	}
-}
-
-void FSequencerNodeTree::UpdateMuteSolo(UMovieScene* MovieScene)
-{
-	// Muting overrides soloing, so a solo node only counts if it's not muted.
-	bHasSoloNodes = false;
-	TArray<FString>& SoloNodes = Sequencer.GetFocusedMovieSceneSequence()->GetMovieScene()->GetSoloNodes();
-	for (const FString& NodePath : SoloNodes)
-	{
-		UE::Sequencer::TViewModelPtr<UE::Sequencer::IOutlinerExtension> Node = GetNodeAtPath(NodePath);
-		if (Node)
-		{
-			if (!IsNodeMute(Node))
-			{
-				bHasSoloNodes = true;
-				break;
 			}
 		}
 	}

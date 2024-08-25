@@ -170,7 +170,7 @@ private:
 				if (bSuccess)
 				{
 					check(CompressedSize <= MaxCompressedSize);
-					CompressedArray.SetNum(CompressedSize, /* bAllowShrinking = */ false);
+					CompressedArray.SetNum(CompressedSize, EAllowShrinking::No);
 					UE_LOG(LogDumpGPUServices, Verbose, TEXT("Compress %s completed"), *RelativeFilePath);
 				}
 				else

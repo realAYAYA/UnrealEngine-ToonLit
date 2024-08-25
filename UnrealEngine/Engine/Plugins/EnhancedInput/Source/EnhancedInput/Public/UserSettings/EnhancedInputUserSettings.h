@@ -316,7 +316,7 @@ public:
 
 	/** Resets every player key mapping to this mapping back to it's default value */
 	UFUNCTION(BlueprintCallable, Category="Enhanced Input|User Settings")
-	void ResetMappingToDefault(const FName InMappingName);
+	void ResetMappingToDefault(UPARAM(Meta=(GetOptions="EnhancedInput.PlayerMappableKeySettings.GetKnownMappingNames")) const FName InMappingName);
 	
 	/** Get all the key mappings associated with the given mapping name on this profile */
 	FKeyMappingRow* FindKeyMappingRowMutable(const FName InMappingName);
@@ -338,7 +338,7 @@ public:
 	 * Returns the number of keys for the given mapping name
 	 */
 	UFUNCTION(BlueprintCallable, Category="Enhanced Input|User Settings", meta = (ReturnDisplayName = "Number of keys"))
-	virtual int32 GetMappedKeysInRow(const FName MappingName, /*OUT*/ TArray<FKey>& OutKeys) const;
+	virtual int32 GetMappedKeysInRow(UPARAM(Meta=(GetOptions="EnhancedInput.PlayerMappableKeySettings.GetKnownMappingNames")) const FName MappingName, /*OUT*/ TArray<FKey>& OutKeys) const;
 
 	/**
 	 * Called during IEnhancedInputSubsystemInterface::RebuildControlMappings, this provides your user settings
@@ -591,7 +591,7 @@ public:
 
 	/** Returns a set of all player key mappings for the given mapping name. */
 	UFUNCTION(BlueprintCallable, Category="Enhanced Input|User Settings")
-	virtual const TSet<FPlayerKeyMapping>& FindMappingsInRow(const FName MappingName) const;
+	virtual const TSet<FPlayerKeyMapping>& FindMappingsInRow(UPARAM(Meta=(GetOptions="EnhancedInput.PlayerMappableKeySettings.GetKnownMappingNames")) const FName MappingName) const;
 
 	/** Returns the current player key mapping for the given row name in the given slot */
 	virtual const FPlayerKeyMapping* FindCurrentMappingForSlot(const FName MappingName, const EPlayerMappableKeySlot InSlot) const;
@@ -719,7 +719,7 @@ protected:
 	/**
 	 * All of the known Key Profiles for this user, including the currently active profile.
 	 */
-	UPROPERTY(SaveGame)
+	UPROPERTY(Transient)
 	TMap<FGameplayTag, TObjectPtr<UEnhancedPlayerMappableKeyProfile>> SavedKeyProfiles;
 	
 	/** The owning Local Player object of these settings */

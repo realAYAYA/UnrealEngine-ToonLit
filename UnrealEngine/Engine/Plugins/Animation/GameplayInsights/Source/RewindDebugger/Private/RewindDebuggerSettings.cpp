@@ -5,7 +5,7 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(RewindDebuggerSettings)
 
-URewindDebuggerSettings::URewindDebuggerSettings() : CameraMode(ERewindDebuggerCameraMode::Replay), /*bShouldAutoDetach(false),*/ bShouldAutoRecordOnPIE(false)
+URewindDebuggerSettings::URewindDebuggerSettings() : CameraMode(ERewindDebuggerCameraMode::Replay), bShouldAutoEject(false), bShouldAutoRecordOnPIE(false)
 {
 	FCoreDelegates::OnPreExit.AddLambda([]()
 	{

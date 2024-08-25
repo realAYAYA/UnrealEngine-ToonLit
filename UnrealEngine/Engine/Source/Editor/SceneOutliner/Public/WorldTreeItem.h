@@ -56,6 +56,10 @@ public:
 
 	/** Open the world settings for the contained world */
 	void OpenWorldSettings() const;
+	/** Browse to world asset in content browser */
+	void BrowseToAsset() const;
+	bool CanBrowseToAsset() const;
+
 	/** Get just the name of the world, for tooltip use */
 	FString GetWorldName() const;
 };

@@ -5,7 +5,7 @@
 /**
  * ThreadGroupPrefixSum(Value, GroupThreadIndex [, GroupSumOut])
  *
- * Calculates the prefix sum (and optionally group sum) of a given value across threads of a thread group.
+ * Calculates the exclusive prefix sum (and optionally group sum) of a given value across threads of a thread group.
  *
  * EXAMPLE USES:
  *	float GroupSum;
@@ -14,7 +14,7 @@
  *	int PrefixSum = ThreadGroupPrefixSum(ValueInt, GroupThreadIndex);
  *
  * NOTES:
- * - PrefixSum means the sum of the value for all threads whose group thread index is LESS than the current
+ * - (Exclusive) Prefix Sum means the sum of the value for all threads whose group thread index is LESS than the current
  * - Only scalar types are currently supported
  * - All threads in the group must be active when calling this method; it cannot be used in a branch (or after an early return)
  *	 that doesn't include the entire group.
@@ -52,7 +52,14 @@ groupshared uint ThreadGroupPrefixSumWorkspace[2][NUM_THREADS_PER_GROUP];
 			GroupMemoryBarrierWithGroupSync(); \
 		} \
 		GroupSum = CastFromUint(ThreadGroupPrefixSumWorkspace[Curr][NUM_THREADS_PER_GROUP - 1]); \
-		return (GroupThreadIndex == 0U) ? CastFromUint(0) : CastFromUint(ThreadGroupPrefixSumWorkspace[Curr][GroupThreadIndex - 1]); \
+		if (GroupThreadIndex == 0U) \
+		{ \
+			return CastFromUint(0); \
+		} \
+		else \
+		{ \
+			return CastFromUint(ThreadGroupPrefixSumWorkspace[Curr][GroupThreadIndex - 1]); \
+		} \
 	} \
 	ValType ThreadGroupPrefixSum(ValType Value, uint GroupThreadIndex) \
 	{ \
@@ -64,4 +71,75 @@ DECLARE_THREAD_GROUP_PREFIX_SUM(float, asuint, asfloat)
 DECLARE_THREAD_GROUP_PREFIX_SUM(int, uint, int)
 DECLARE_THREAD_GROUP_PREFIX_SUM(uint, uint, uint)
 
-#undef DECLARE_THREAD_GROUP_PREFIX_SUM
+
+#define DECLARE_THREAD_GROUP_REDUCE_SUM(ValType, CastToUint, CastFromUint) \
+	ValType ThreadGroupReduceSum(ValType Value, uint GroupThreadIndex) \
+	{ \
+		ValType Result = Value; \
+		ThreadGroupPrefixSumWorkspace[0][GroupThreadIndex] = CastToUint(Value); \
+		GroupMemoryBarrierWithGroupSync(); \
+		for (uint Index = NUM_THREADS_PER_GROUP / 2U; Index > 0U; Index >>= 1U) \
+		{ \
+			if (GroupThreadIndex < Index) \
+			{ \
+				Result += CastFromUint(ThreadGroupPrefixSumWorkspace[0][GroupThreadIndex + Index]); \
+				ThreadGroupPrefixSumWorkspace[0][GroupThreadIndex] = CastToUint(Result); \
+			} \
+			GroupMemoryBarrierWithGroupSync(); \
+		} \
+		return CastFromUint(ThreadGroupPrefixSumWorkspace[0][0]); \
+	}
+
+DECLARE_THREAD_GROUP_REDUCE_SUM(float, asuint, asfloat)
+DECLARE_THREAD_GROUP_REDUCE_SUM(int, uint, int)
+DECLARE_THREAD_GROUP_REDUCE_SUM(uint, uint, uint)
+
+#undef DECLARE_THREAD_GROUP_REDUCE_SUM
+
+
+#define DECLARE_THREAD_GROUP_REDUCE_MAX(ValType, CastToUint, CastFromUint) \
+	ValType ThreadGroupReduceMax(ValType Value, uint GroupThreadIndex) \
+	{ \
+		ValType Result = Value; \
+		ThreadGroupPrefixSumWorkspace[0][GroupThreadIndex] = CastToUint(Value); \
+		GroupMemoryBarrierWithGroupSync(); \
+		for (uint Index = NUM_THREADS_PER_GROUP / 2U; Index > 0U; Index >>= 1U) \
+		{ \
+			if (GroupThreadIndex < Index) \
+			{ \
+				Result = max(Result, CastFromUint(ThreadGroupPrefixSumWorkspace[0][GroupThreadIndex + Index])); \
+				ThreadGroupPrefixSumWorkspace[0][GroupThreadIndex] = CastToUint(Result); \
+			} \
+			GroupMemoryBarrierWithGroupSync(); \
+		} \
+		return CastFromUint(ThreadGroupPrefixSumWorkspace[0][0]); \
+	} 
+
+
+DECLARE_THREAD_GROUP_REDUCE_MAX(float, asuint, asfloat)
+DECLARE_THREAD_GROUP_REDUCE_MAX(int, uint, int)
+DECLARE_THREAD_GROUP_REDUCE_MAX(uint, uint, uint)
+
+#undef DECLARE_THREAD_GROUP_REDUCE_MAX
+
+#define DECLARE_THREAD_GROUP_REDUCE_MIN(ValType, CastToUint, CastFromUint) \
+	ValType ThreadGroupReduceMin(ValType Value, uint GroupThreadIndex) \
+	{ \
+		ValType Result = Value; \
+		ThreadGroupPrefixSumWorkspace[0][GroupThreadIndex] = CastToUint(Value); \
+		GroupMemoryBarrierWithGroupSync(); \
+		for (uint Index = NUM_THREADS_PER_GROUP / 2U; Index > 0U; Index >>= 1U) \
+		{ \
+			if (GroupThreadIndex < Index) \
+			{ \
+				Result = min(Result, CastFromUint(ThreadGroupPrefixSumWorkspace[0][GroupThreadIndex + Index])); \
+				ThreadGroupPrefixSumWorkspace[0][GroupThreadIndex] = CastToUint(Result); \
+			} \
+			GroupMemoryBarrierWithGroupSync(); \
+		} \
+		return CastFromUint(ThreadGroupPrefixSumWorkspace[0][0]); \
+	} 
+
+DECLARE_THREAD_GROUP_REDUCE_MIN(float, asuint, asfloat)
+DECLARE_THREAD_GROUP_REDUCE_MIN(int, uint, int)
+DECLARE_THREAD_GROUP_REDUCE_MIN(uint, uint, uint)

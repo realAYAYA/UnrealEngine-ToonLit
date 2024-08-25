@@ -17,7 +17,7 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	//!
 	//---------------------------------------------------------------------------------------------
-	class ASTOpImageLayerColor : public ASTOp
+	class ASTOpImageLayerColor final : public ASTOp
 	{
 	public:
 

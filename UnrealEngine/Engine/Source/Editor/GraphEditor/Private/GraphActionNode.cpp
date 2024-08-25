@@ -280,6 +280,19 @@ void FGraphActionNode::GetAllNodes(TArray< TSharedPtr<FGraphActionNode> >& OutNo
 	}
 }
 
+void FGraphActionNode::GetAllActionNodes(TArray<TSharedPtr<FGraphActionNode>>& OutNodeArray) const
+{	
+	for (TSharedPtr<FGraphActionNode> const& ChildNode : Children)
+	{
+		if(ChildNode->IsActionNode())
+		{
+			OutNodeArray.Add(ChildNode);
+		}
+		
+		ChildNode->GetAllActionNodes(OutNodeArray);
+	}
+}
+
 //------------------------------------------------------------------------------
 void FGraphActionNode::GetLeafNodes(TArray< TSharedPtr<FGraphActionNode> >& OutLeafArray) const
 {

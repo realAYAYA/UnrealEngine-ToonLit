@@ -46,7 +46,7 @@ float FractalBenchmark()
 	{
 		for(int x = 0; x < Extent; ++x)
 		{
-			Sum += EvaluateJuliaFractalAt(x / (float)Extent * 2 - 1, y / (float)Extent * 2 - 1);
+			Sum += (float)EvaluateJuliaFractalAt((float)x / (float)Extent * 2.0f - 1.0f, (float)y / (float)Extent * 2.0f - 1.0f);
 		}
 	}
 	

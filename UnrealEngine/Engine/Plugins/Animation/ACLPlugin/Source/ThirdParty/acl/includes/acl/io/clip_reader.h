@@ -24,8 +24,9 @@
 // SOFTWARE.
 ////////////////////////////////////////////////////////////////////////////////
 
-#if defined(SJSON_CPP_PARSER)
+#if defined(ACL_USE_SJSON)
 
+#include "acl/version.h"
 #include "acl/io/clip_reader_error.h"
 #include "acl/compression/compression_settings.h"
 #include "acl/compression/track_array.h"
@@ -44,12 +45,16 @@
 #include <rtm/qvvd.h>
 #include <rtm/qvvf.h>
 
+#include <sjson/parser.h>
+
 #include <cstdint>
 
 ACL_IMPL_FILE_PRAGMA_PUSH
 
 namespace acl
 {
+	ACL_IMPL_VERSION_NAMESPACE_BEGIN
+
 	//////////////////////////////////////////////////////////////////////////
 	// Enum to describe each type of raw content that an SJSON ACL file might contain.
 	enum class sjson_file_type
@@ -58,6 +63,16 @@ namespace acl
 		raw_clip,
 		raw_track_list,
 	};
+
+	// Disable warning for implicit constructor using deprecated members
+	// Also remove warning suppression added for RTM_COMPILER_MSVC_2015 in acl_compressor.cpp and test_reader_writer.cpp
+#if defined(RTM_COMPILER_CLANG)
+	#pragma clang diagnostic push
+	#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#elif defined(RTM_COMPILER_GCC)
+	#pragma GCC diagnostic push
+	#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#endif
 
 	//////////////////////////////////////////////////////////////////////////
 	// Raw transform tracks
@@ -68,6 +83,7 @@ namespace acl
 		track_array_qvvf additive_base_track_list;
 		additive_clip_format8 additive_format = additive_clip_format8::none;
 
+		ACL_DEPRECATED("No longer used, see track description, to be removed in v3.0")
 		track_qvvf bind_pose;
 
 		bool has_settings = false;
@@ -80,11 +96,18 @@ namespace acl
 	{
 		track_array track_list;
 
+		ACL_DEPRECATED("No longer used, see track description, to be removed in v3.0")
 		track_qvvf bind_pose;
 
 		bool has_settings = false;
 		compression_settings settings;
 	};
+
+#if defined(RTM_COMPILER_CLANG)
+	#pragma clang diagnostic pop
+#elif defined(RTM_COMPILER_GCC)
+	#pragma GCC diagnostic pop
+#endif
 
 	//////////////////////////////////////////////////////////////////////////
 	// An SJSON ACL file reader.
@@ -131,7 +154,7 @@ namespace acl
 			if (!read_settings(&out_data.has_settings, &out_data.settings))
 				return false;
 
-			if (!create_skeleton(out_data.track_list, out_data.bind_pose))
+			if (!create_skeleton(out_data.track_list))
 				return false;
 
 			if (!read_tracks(out_data.track_list, out_data.additive_base_track_list))
@@ -155,7 +178,7 @@ namespace acl
 			if (!read_settings(&out_data.has_settings, &out_data.settings))
 				return false;
 
-			if (!create_track_list(out_data.track_list, out_data.bind_pose))
+			if (!create_track_list(out_data.track_list))
 				return false;
 
 			return nothing_follows();
@@ -182,9 +205,6 @@ namespace acl
 		float m_additive_base_sample_rate				= 0.0F;
 
 		bool m_has_settings								= false;
-		float m_constant_rotation_threshold_angle		= 0.0F;
-		float m_constant_translation_threshold			= 0.0F;
-		float m_constant_scale_threshold				= 0.0F;
 		float m_error_threshold							= 0.0F;
 
 		sjson::StringView* m_bone_names					= nullptr;
@@ -415,9 +435,6 @@ namespace acl
 				if (!get_vector_format(scale_format.c_str(), out_settings->scale_format))
 					goto invalid_value_error;
 
-				m_constant_rotation_threshold_angle = float(constant_rotation_threshold_angle);
-				m_constant_translation_threshold = float(constant_translation_threshold);
-				m_constant_scale_threshold = float(constant_scale_threshold);
 				m_error_threshold = float(error_threshold);
 			}
 
@@ -434,12 +451,12 @@ namespace acl
 			return false;
 		}
 
-		bool create_skeleton(track_array_qvvf& track_list, track_qvvf& bind_pose)
+		bool create_skeleton(track_array_qvvf& track_list)
 		{
 			sjson::ParserState before_bones = m_parser.save_state();
 
 			uint32_t num_bones;
-			if (!process_each_bone(nullptr, nullptr, num_bones))
+			if (!process_each_bone(nullptr, num_bones))
 				return false;
 
 			m_parser.restore_state(before_bones);
@@ -449,12 +466,10 @@ namespace acl
 
 			track_list = track_array_qvvf(m_allocator, num_bones);
 			track_list.set_name(convert_string(m_clip_name));
-			bind_pose = track_qvvf::make_reserve(track_desc_transformf{}, m_allocator, num_bones, 30.0F);	// 1 sample per track
-			bind_pose.set_name(string(m_allocator, "bind pose"));
 
 			const uint32_t num_allocated_bones = num_bones;
 
-			if (!process_each_bone(&track_list, &bind_pose, num_bones))
+			if (!process_each_bone(&track_list, num_bones))
 				return false;
 
 			(void)num_allocated_bones;
@@ -516,7 +531,7 @@ namespace acl
 			return result;
 		}
 
-		bool process_each_bone(track_array_qvvf* tracks, track_qvvf* bind_pose, uint32_t& num_bones)
+		bool process_each_bone(track_array_qvvf* tracks, uint32_t& num_bones)
 		{
 			bool counting = tracks == nullptr;
 			num_bones = 0;
@@ -592,21 +607,16 @@ namespace acl
 					desc.shell_distance = vertex_distance;
 
 					if (m_has_settings)
-					{
 						desc.precision = m_error_threshold;
-						desc.constant_rotation_threshold_angle = m_constant_rotation_threshold_angle;
-						desc.constant_translation_threshold = m_constant_translation_threshold;
-						desc.constant_scale_threshold = m_constant_scale_threshold;
-					}
 
 					// Create a dummy track for now to hold our arguments
 					(*tracks)[i] = track_qvvf::make_ref(desc, nullptr, 0, 30.0F);
 					(*tracks)[i].set_name(convert_string(name));
 
 					rtm::qvvf bind_transform_ = rtm::qvv_cast(bind_transform);
-					bind_transform_.rotation = rtm::quat_normalize(bind_transform_.rotation);
+					bind_transform_.rotation = rtm::quat_normalize_deterministic(bind_transform_.rotation);
 
-					(*bind_pose)[i] = bind_transform_;
+					(*tracks)[i].get_description().default_value = bind_transform_;
 				}
 
 				if (!m_parser.object_ends())
@@ -748,7 +758,7 @@ namespace acl
 			return true;
 		}
 
-		bool process_track_list(track* tracks, track_qvvf* bind_pose, uint32_t& num_tracks)
+		bool process_track_list(track* tracks, uint32_t& num_tracks)
 		{
 			const bool counting = tracks == nullptr;
 			track dummy;
@@ -809,9 +819,11 @@ namespace acl
 				m_parser.try_read("parent_index", transform_desc.parent_index, k_invalid_track_index);
 
 				transform_desc.shell_distance = read_optional_float("shell_distance", transform_desc.shell_distance);
-				transform_desc.constant_rotation_threshold_angle = read_optional_float("constant_rotation_threshold_angle", transform_desc.constant_rotation_threshold_angle);
-				transform_desc.constant_translation_threshold = read_optional_float("constant_translation_threshold", transform_desc.constant_translation_threshold);
-				transform_desc.constant_scale_threshold = read_optional_float("constant_scale_threshold", transform_desc.constant_scale_threshold);
+
+				// Deprecated, no longer used
+				read_optional_float("constant_rotation_threshold_angle", -1.0F);
+				read_optional_float("constant_translation_threshold", -1.0F);
+				read_optional_float("constant_scale_threshold", -1.0F);
 
 				scalar_desc.output_index = output_index;
 				transform_desc.output_index = output_index;
@@ -849,7 +861,7 @@ namespace acl
 				{
 					double rotation[4] = { 0.0, 0.0, 0.0, 0.0 };
 					if (m_parser.try_read("bind_rotation", rotation, 4, 0.0) && !counting)
-						bind_transform.rotation = rtm::quat_normalize(rtm::quat_cast(rtm::quat_load(&rotation[0])));
+						bind_transform.rotation = rtm::quat_normalize_deterministic(rtm::quat_cast(rtm::quat_load(&rotation[0])));
 
 					double translation[3] = { 0.0, 0.0, 0.0 };
 					if (m_parser.try_read("bind_translation", translation, 3, 0.0) && !counting)
@@ -860,8 +872,7 @@ namespace acl
 						bind_transform.scale = rtm::vector_cast(rtm::vector_load3(&scale[0]));
 				}
 
-				if (bind_pose != nullptr)
-					(*bind_pose)[i] = bind_transform;
+				transform_desc.default_value = bind_transform;
 
 				if (!m_parser.array_begins("data"))
 					goto error;
@@ -1076,22 +1087,20 @@ namespace acl
 			return false;
 		}
 
-		bool create_track_list(track_array& track_list, track_qvvf& bind_pose)
+		bool create_track_list(track_array& track_list)
 		{
 			const sjson::ParserState before_tracks = m_parser.save_state();
 
 			uint32_t num_tracks;
-			if (!process_track_list(nullptr, nullptr, num_tracks))
+			if (!process_track_list(nullptr, num_tracks))
 				return false;
 
 			m_parser.restore_state(before_tracks);
 
 			track_list = track_array(m_allocator, num_tracks);
 			track_list.set_name(convert_string(m_clip_name));
-			bind_pose = track_qvvf::make_reserve(track_desc_transformf{}, m_allocator, num_tracks, 30.0F);	// 1 sample per track
-			bind_pose.set_name(string(m_allocator, "bind pose"));
 
-			if (!process_track_list(track_list.begin(), &bind_pose, num_tracks))
+			if (!process_track_list(track_list.begin(), num_tracks))
 				return false;
 
 			ACL_ASSERT(num_tracks == track_list.get_num_tracks(), "Number of tracks read mismatch");
@@ -1273,7 +1282,7 @@ namespace acl
 				if (!m_parser.array_ends())
 					return false;
 
-				track[i].rotation = rtm::quat_normalize(rtm::quat_cast(rotation));
+				track[i].rotation = rtm::quat_normalize_deterministic(rtm::quat_cast(rotation));
 			}
 
 			return true;
@@ -1366,8 +1375,10 @@ namespace acl
 			m_error.error = reason;
 		}
 	};
+
+	ACL_IMPL_VERSION_NAMESPACE_END
 }
 
 ACL_IMPL_FILE_PRAGMA_POP
 
-#endif	// #if defined(SJSON_CPP_PARSER)
+#endif	// #if defined(ACL_USE_SJSON)

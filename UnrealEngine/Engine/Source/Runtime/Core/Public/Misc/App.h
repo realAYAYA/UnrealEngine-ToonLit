@@ -23,6 +23,8 @@
 #include "Templates/UnrealTemplate.h"
 #include "UObject/NameTypes.h"
 
+class FCbObjectId;
+
 /**
  * Provides information about the application.
  */
@@ -280,6 +282,14 @@ public:
 	}
 
 	/**
+	 * Gets the identifier of the session that this application is part of as a FCbObject.
+	 *
+	 * @return Session identifier
+	 * @see GetSessionId
+	 */
+	static CORE_API const FCbObjectId& GetSessionObjectId();
+
+	/**
 	 * Gets the name of the session that this application is part of, if any.
 	 *
 	 * @return Session name string.
@@ -392,6 +402,20 @@ public:
 		static bool bHasNullRHIOnCommandline = FParse::Param(FCommandLine::Get(), TEXT("nullrhi"));
 		return (!IsRunningCommandlet() || IsAllowCommandletRendering()) && !IsRunningDedicatedServer() && !(USE_NULL_RHI || bHasNullRHIOnCommandline);
 #endif // UE_SERVER
+	}
+
+	/**
+	 * Checks whether this application can render anything or produce a derived data needed for rednering.
+	 * Certain application types never render, but produce DDC used during rendering and as such need to step into some rendering paths.
+	 *
+	 * A meaningful distinction from FApp::CanEverRender() is that commandlets like cooker will have FApp::CanEverRender() == false, but FApp::CanEverRenderOrProduceRenderData() == true.
+	 * As such, this function can be used to guard paths that e.g. load assets' render data.
+	 *
+	 * @return true if the application can render, false otherwise.
+	 */
+	INLINE_CANEVERRENDER static bool CanEverRenderOrProduceRenderData()
+	{
+		return !FPlatformProperties::RequiresCookedData() || FApp::CanEverRender();
 	}
 
 	/**

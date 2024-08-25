@@ -394,7 +394,7 @@ TSet<FName> FObjectMixerEditorModule::GetPropertiesThatRequireRefresh() const
 
 	if (ListModel.IsValid())
 	{
-		for (const TObjectPtr<UObjectMixerObjectFilter> Instance : ListModel->GetObjectFilterInstances())
+		for (const TObjectPtr<UObjectMixerObjectFilter>& Instance : ListModel->GetObjectFilterInstances())
 		{
 			ReturnValue.Append(Instance->GetPropertiesThatRequireListRefresh());
 		}

@@ -20,6 +20,14 @@ static TAutoConsoleVariable<float> GClothMaxDeltaTimeTeleportMultiplier(
 	TEXT("A multiplier of the MaxPhysicsDelta time at which we will automatically just teleport cloth to its new location\n")
 	TEXT(" default: 1.5"));
 
+static TAutoConsoleVariable<float> GClothMaxVelocityScale(
+	TEXT("p.Cloth.MaxVelocityScale"),
+	1.f,
+	TEXT("The maximum amount of the component induced velocity allowed on all cloths.\n")
+	TEXT("Use 1.0 for fully induced velocity(default), or use 0.0 for no induced velocity, and any other values in between for a reduced induced velocity.\n")
+	TEXT("When set to 0.0, it also provides a way to force the clothing to simulate in local space.\n")
+	TEXT(" default: 1.0"));
+
 PRAGMA_DISABLE_DEPRECATION_WARNINGS // CachedPositions, CachedVelocities
 FClothingSimulationContextCommon::FClothingSimulationContextCommon()
 	: ComponentToWorld(FTransform::Identity)
@@ -172,8 +180,11 @@ void FClothingSimulationContextCommon::FillTeleportMode(const USkeletalMeshCompo
 		EClothingTeleportMode::Teleport :
 		InComponent->ClothTeleportMode;
 
+	const float MaxVelocityScale = FMath::Clamp(GClothMaxVelocityScale.GetValueOnGameThread(), 0.f, 1.f);
+	const float ComponentVelocityScale = InComponent->ClothVelocityScale;
+
 	VelocityScale = (TeleportMode == EClothingTeleportMode::None && InDeltaSeconds > 0.f) ?
-		FMath::Min(InDeltaSeconds, InMaxPhysicsDelta) / InDeltaSeconds : 0.f;
+		FMath::Clamp(ComponentVelocityScale, 0.f, MaxVelocityScale) * FMath::Min(InDeltaSeconds, InMaxPhysicsDelta) / InDeltaSeconds : 0.f;
 }
 
 void FClothingSimulationContextCommon::FillMaxDistanceScale(const USkeletalMeshComponent* InComponent)

@@ -295,6 +295,9 @@ void UDrawSplineTool::Setup()
 	ClickOrDragBehavior->Initialize(this, this);
 	AddInputBehavior(ClickOrDragBehavior);
 
+	// Make sure the plane mechanic captures clicks first, to ensure it sees ctrl+clicks to reposition the plane
+	PlaneMechanic->UpdateClickPriority(ClickOrDragBehavior->GetPriority().MakeHigher());
+
 	Settings->WatchProperty(Settings->bLoop, [this](bool) {
 		if (ensure(WorkingSpline.IsValid()))
 		{
@@ -468,6 +471,11 @@ void UDrawSplineTool::TransitionOutputMode()
 				// Important that we don't use the default (RF_Transactional) here, or else we'll end up
 				// issuing an undo transaction in this call.
 				EObjectFlags::RF_Transient);
+			if (!PreviewActor)
+			{
+				FallbackSplinePlacement();
+				break;
+			}
 
 			WorkingSpline = GetOrCreateTargetSpline(PreviewActor, Settings->ExistingSplineIndexToReplace);
 			break;
@@ -516,6 +524,8 @@ void UDrawSplineTool::TransitionOutputMode()
 
 void UDrawSplineTool::Shutdown(EToolShutdownType ShutdownType)
 {
+	LongTransactions.CloseAll(GetToolManager());
+
 	Settings->SaveProperties(this);
 
 	if (PreviousTargetActor)
@@ -622,6 +632,11 @@ void UDrawSplineTool::GenerateAsset()
 		AActor* NewActor = FActorFactoryAssetProxy::AddActorForAsset(
 			Settings->BlueprintToCreate.Get(),
 			/*bSelectActors =*/ false);
+		if (!NewActor)
+		{
+			CreateSplineInEmptyActor();
+			break;
+		}
 
 		OutputSpline = GetOrCreateTargetSpline(NewActor, Settings->ExistingSplineIndexToReplace, true);
 		CopySplineToSpline(*WorkingSpline, *OutputSpline, true);
@@ -739,6 +754,17 @@ bool UDrawSplineTool::Raycast(const FRay& WorldRay, FVector3d& HitLocationOut, F
 			BestHitT = HitTOut;
 		}
 	}
+
+	if (Settings->ClickOffset != 0.0)
+	{
+		FVector3d OffsetDirection = HitNormalOut;
+		if (Settings->OffsetMethod == ESplineOffsetMethod::Custom)
+		{
+			OffsetDirection = Settings->OffsetDirection.GetSafeNormal(UE_SMALL_NUMBER, FVector3d::UnitZ());
+		}
+
+		HitLocationOut += OffsetDirection * Settings->ClickOffset;
+	}
 	
 	return BestHitT < TNumericLimits<double>::Max();
 }
@@ -815,6 +841,8 @@ void UDrawSplineTool::OnClickPress(const FInputDeviceRay& PressPos)
 {
 	FVector3d HitLocation, HitNormal;
 	double HitT;
+
+	LongTransactions.Open(DrawSplineToolLocals::AddPointTransactionName, GetToolManager());
 
 	// Regardless of DrawMode, start by placing a point, though don't emit a transaction until mouse up
 	if (ensure(Raycast(PressPos.WorldRay, HitLocation, HitNormal, HitT)))
@@ -954,6 +982,8 @@ void UDrawSplineTool::OnTerminateDragSequence()
 		break;
 	}
 	}
+
+	LongTransactions.Close(GetToolManager());
 }
 
 
@@ -962,6 +992,12 @@ void UDrawSplineTool::OnTick(float DeltaTime)
 	if (PlaneMechanic)
 	{
 		PlaneMechanic->Tick(DeltaTime);
+	}
+
+	// check if we've invalidated the WorkingSpline
+	if (PreviewActor && !WorkingSpline.IsValid())
+	{
+		bNeedToRerunConstructionScript = true;
 	}
 
 	if (bNeedToRerunConstructionScript)

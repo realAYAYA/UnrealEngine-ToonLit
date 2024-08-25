@@ -79,8 +79,6 @@ void FTrackAreaViewModel::SetHotspot(TSharedPtr<ITrackAreaHotspot> NewHotspot)
 
 void FTrackAreaViewModel::AddHotspot(TSharedPtr<ITrackAreaHotspot> NewHotspot)
 {
-	using namespace UE::Sequencer;
-
 	// We always set a hotspot if there is none
 	if (bHotspotLocked == false)
 	{

@@ -12,6 +12,7 @@
 class ACameraActor;
 class FExtender;
 class SExtensionPanel;
+class SActionableMessageViewportWidget;
 class STransformViewportToolBar;
 class FMenuBuilder;
 class UToolMenu;
@@ -235,6 +236,11 @@ private:
 	EVisibility GetScalabilityWarningVisibility() const;
 	TSharedRef<SWidget> GetScalabilityWarningMenuContent() const;
 
+	double OnGetHLODInEditorMinDrawDistanceValue() const;
+	void OnHLODInEditorMinDrawDistanceValueChanged(double NewValue) const;
+	double OnGetHLODInEditorMaxDrawDistanceValue() const;
+	void OnHLODInEditorMaxDrawDistanceValueChanged(double NewValue) const;
+
 private:
 	/**
 	 * Generates the toolbar show layers menu content 
@@ -250,6 +256,14 @@ private:
 	 * @param Viewport		target vieport
 	 */
 	static void FillShowFoliageTypesMenu(UToolMenu* Menu, TWeakPtr<class SLevelViewport> Viewport);
+
+	/**
+	 * Generates 'Show HLODs' menu content for a viewport
+	 *
+	 * @param Menu		The tool menu
+	 * @param Viewport	Target vieport
+	 */
+	void FillShowHLODsMenu(UToolMenu* Menu) const;
 
 	/** Generates the layout sub-menu content */
 	void GenerateViewportConfigsMenu(UToolMenu* Menu) const;
@@ -273,6 +287,9 @@ private:
 
 	/** STransformViewportToolBar menu */
 	TSharedPtr<STransformViewportToolBar> TransformToolbar;
+
+	/** Viewport widget for warning messages */
+	TSharedPtr<SActionableMessageViewportWidget> ActionableMessageViewportWidget;
 
 	/** The previous max STransformViewportToolBar width to allow deterministic size calculations */
 	mutable float TransformToolbar_CachedMaxWidth = 0.0f;

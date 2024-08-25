@@ -6,7 +6,6 @@
 
 #if DVP_SUPPORTED_PLATFORM
 #include "Windows/AllowWindowsPlatformTypes.h"
-#include "Windows/MinWindows.h"
 #include "Windows/HideWindowsPlatformTypes.h"
 
 

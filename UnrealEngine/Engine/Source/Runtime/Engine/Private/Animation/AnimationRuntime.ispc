@@ -51,6 +51,27 @@ export void BlendTransformAccumulate(const uniform FTransform SourcePose[],
 	}
 }
 
+export void ConvertPoseToAdditive(uniform FTransform TargetPose[],
+								const uniform FTransform BasePose[],
+								const uniform int NumBones)
+{
+	for(uniform int BoneIndex = 0; BoneIndex < NumBones; ++BoneIndex)
+	{
+		uniform FTransform& TargetTransform = TargetPose[BoneIndex];
+		const uniform FTransform BaseTransform = BasePose[BoneIndex];
+
+		TargetTransform.Rotation = VectorQuaternionMultiply2(TargetTransform.Rotation, QuatInverse(BaseTransform.Rotation));
+		TargetTransform.Translation = VectorSubtract(TargetTransform.Translation, BaseTransform.Translation);
+		// additive scale considers how much it grow or lower
+		// in order to support blending between different additive scale, we save [(target scale)/(source scale) - 1.f], and this can blend with 
+		// other delta scale value
+		// when we apply to the another scale, we apply scale * (1 + [additive scale])
+		TargetTransform.Scale3D = VectorSubtract(VectorMultiply(TargetTransform.Scale3D, TransformGetSafeScaleReciprocal(BaseTransform.Scale3D, SMALL_NUMBER)), Vector1110);
+		TargetTransform.Rotation = VectorNormalizeQuaternion(TargetTransform.Rotation);
+	}
+}
+
+
 export void ConvertPoseToMeshRotation(uniform FTransform LocalPoses[],
 									const uniform int ParentBones[],
 									const uniform int NumBones)
@@ -243,6 +264,193 @@ export void BlendPosesPerBoneFilterScaleRotation(uniform FTransform OutPose[],
 
 		BlendRotations[BoneIndex] = BlendRotation;
 		BlendScales[BoneIndex] = BlendScale;
+
+		OutPose[BoneIndex] = BlendAtom;
+	}
+}
+
+
+// blend poses with both mesh space rotation (we assume uniform scale)
+export void BlendPosesPerBoneFilterRotation(uniform FTransform OutPose[],
+										const uniform FTransform BasePose[],
+										const uniform unsigned int8 *uniform BlendPoseBase,
+										uniform FVector4 SourceRotations[],
+										uniform FVector4 TargetRotations[],
+										uniform FVector4 BlendRotations[],
+										uniform float MaxPoseWeights[],
+										const uniform FPerBoneBlendWeight BoneBlendWeights[],
+										const uniform int ParentBoneArray[],
+										const uniform int NumBones)
+{
+	for(uniform int BoneIndex = 0; BoneIndex < NumBones; BoneIndex++)
+	{
+		const uniform int PoseIndex = BoneBlendWeights[BoneIndex].SourceIndex;
+		const uniform int ParentIndex = ParentBoneArray[BoneIndex];
+
+		const uniform FTransform BaseAtom = BasePose[BoneIndex];
+		const uniform FTransform TargetAtom = *((const uniform FTransform *uniform)GetTransformFromArray(BlendPoseBase, PoseIndex, BoneIndex));
+
+		uniform FVector4 SourceRotation, TargetRotation;
+	
+		if (ParentIndex != INDEX_NONE)
+		{
+			SourceRotation = VectorQuaternionMultiply2(SourceRotations[ParentIndex], BaseAtom.Rotation);
+			TargetRotation = VectorQuaternionMultiply2(TargetRotations[ParentIndex], TargetAtom.Rotation);
+		}
+		else
+		{
+			SourceRotation = VectorQuaternionMultiply2(Vector0001, BaseAtom.Rotation);
+			TargetRotation = VectorQuaternionMultiply2(Vector0001, TargetAtom.Rotation);
+		}
+
+		const uniform float BlendWeight = clamp(BoneBlendWeights[BoneIndex].BlendWeight, 0.f, 1.f);
+		MaxPoseWeights[PoseIndex] = max(MaxPoseWeights[PoseIndex], BlendWeight);
+
+		uniform FTransform BlendAtom;
+		uniform FVector4 BlendRotation;
+
+		if (!IsRelevant(BlendWeight))
+		{
+			BlendAtom = BaseAtom;
+			BlendRotation = SourceRotation;
+		}
+		else if (IsFullWeight(BlendWeight))
+		{
+			BlendAtom = TargetAtom;
+			BlendRotation = TargetRotation;
+		}
+		else
+		{
+			BlendAtom = BaseAtom;
+			BlendWith(BlendAtom, TargetAtom, BlendWeight);
+
+			BlendRotation = VectorNormalizeQuaternion(QuatFastLerp(SourceRotation, TargetRotation, BlendWeight));
+		}
+
+		SourceRotations[BoneIndex] = SourceRotation;
+		TargetRotations[BoneIndex] = TargetRotation;
+
+		if (ParentIndex != INDEX_NONE)
+		{
+			// local -> mesh -> local transformations can cause loss of precision for long bone chains, we have to normalize rotation there.
+			const uniform FVector4 LocalBlendQuat = VectorQuaternionMultiply2(QuatInverse(BlendRotations[ParentIndex]), BlendRotation);
+			BlendAtom.Rotation = VectorNormalizeQuaternion(LocalBlendQuat);
+		}
+
+		BlendRotations[BoneIndex] = BlendRotation;
+
+		OutPose[BoneIndex] = BlendAtom;
+	}
+}
+
+// blend poses with mesh space scaling (we assume uniform scale)
+export void BlendPosesPerBoneFilterScale(uniform FTransform OutPose[],
+										const uniform FTransform BasePose[],
+										const uniform unsigned int8 *uniform BlendPoseBase,
+										uniform FVector SourceScales[],
+										uniform FVector TargetScales[],
+										uniform FVector BlendScales[],
+										uniform float MaxPoseWeights[],
+										const uniform FPerBoneBlendWeight BoneBlendWeights[],
+										const uniform int ParentBoneArray[],
+										const uniform int NumBones)
+{
+	for(uniform int BoneIndex = 0; BoneIndex < NumBones; BoneIndex++)
+	{
+		const uniform int PoseIndex = BoneBlendWeights[BoneIndex].SourceIndex;
+		const uniform int ParentIndex = ParentBoneArray[BoneIndex];
+
+		const uniform FTransform BaseAtom = BasePose[BoneIndex];
+		const uniform FTransform TargetAtom = *((const uniform FTransform *uniform)GetTransformFromArray(BlendPoseBase, PoseIndex, BoneIndex));
+
+		uniform FVector SourceScale, TargetScale;
+	
+		if (ParentIndex != INDEX_NONE)
+		{
+			SourceScale = SourceScales[ParentIndex] * SetVector(BaseAtom.Scale3D);
+			TargetScale = TargetScales[ParentIndex] * SetVector(TargetAtom.Scale3D);
+		}
+		else
+		{
+			SourceScale = OneVector * SetVector(BaseAtom.Scale3D);
+			TargetScale = OneVector * SetVector(TargetAtom.Scale3D);
+		}
+
+		const uniform float BlendWeight = clamp(BoneBlendWeights[BoneIndex].BlendWeight, 0.f, 1.f);
+		MaxPoseWeights[PoseIndex] = max(MaxPoseWeights[PoseIndex], BlendWeight);
+
+		uniform FTransform BlendAtom;
+		uniform FVector BlendScale;
+	
+		if (!IsRelevant(BlendWeight))
+		{
+			BlendAtom = BaseAtom;
+			BlendScale = SourceScale;
+		}
+		else if (IsFullWeight(BlendWeight))
+		{
+			BlendAtom = TargetAtom;
+			BlendScale = TargetScale;
+		}
+		else
+		{
+			BlendAtom = BaseAtom;
+			BlendWith(BlendAtom, TargetAtom, BlendWeight);
+
+			BlendScale = VectorLerp(SourceScale, TargetScale, BlendWeight);
+		}
+
+		SourceScales[BoneIndex] = SourceScale;
+		TargetScales[BoneIndex] = TargetScale;
+		
+		if (ParentIndex != INDEX_NONE)
+		{
+			const uniform FVector ParentScaleInv = TransformGetSafeScaleReciprocal(BlendScales[ParentIndex], SMALL_NUMBER);
+			const uniform FVector LocalBlendScale = ParentScaleInv * BlendScale;
+			BlendAtom.Scale3D = SetVector4(LocalBlendScale.V[0], LocalBlendScale.V[1], LocalBlendScale.V[2], ZERO);
+		}
+
+		BlendScales[BoneIndex] = BlendScale;
+
+		OutPose[BoneIndex] = BlendAtom;
+	}
+}
+
+// blend poses in local space
+export void BlendPosesPerBoneFilter(uniform FTransform OutPose[],
+									const uniform FTransform BasePose[],
+									const uniform unsigned int8 *uniform BlendPoseBase,
+									uniform float MaxPoseWeights[],
+									const uniform FPerBoneBlendWeight BoneBlendWeights[],
+									const uniform int ParentBoneArray[],
+									const uniform int NumBones)
+{
+	for(uniform int BoneIndex = 0; BoneIndex < NumBones; BoneIndex++)
+	{
+		const uniform int PoseIndex = BoneBlendWeights[BoneIndex].SourceIndex;
+		const uniform int ParentIndex = ParentBoneArray[BoneIndex];
+
+		const uniform FTransform BaseAtom = BasePose[BoneIndex];
+		const uniform FTransform TargetAtom = *((const uniform FTransform *uniform)GetTransformFromArray(BlendPoseBase, PoseIndex, BoneIndex));
+
+		const uniform float BlendWeight = clamp(BoneBlendWeights[BoneIndex].BlendWeight, 0.f, 1.f);
+		MaxPoseWeights[PoseIndex] = max(MaxPoseWeights[PoseIndex], BlendWeight);
+
+		uniform FTransform BlendAtom;
+	
+		if (!IsRelevant(BlendWeight))
+		{
+			BlendAtom = BaseAtom;
+		}
+		else if (IsFullWeight(BlendWeight))
+		{
+			BlendAtom = TargetAtom;
+		}
+		else
+		{
+			BlendAtom = BaseAtom;
+			BlendWith(BlendAtom, TargetAtom, BlendWeight);
+		}
 
 		OutPose[BoneIndex] = BlendAtom;
 	}

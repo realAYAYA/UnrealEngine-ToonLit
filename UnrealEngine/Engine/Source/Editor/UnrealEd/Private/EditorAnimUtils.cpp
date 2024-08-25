@@ -469,24 +469,24 @@ namespace EditorAnimUtils
 		FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools");
 
 		TMap<UObject*, UObject*> DuplicateMap;
-
-		for(auto Iter = AssetsToDuplicate.CreateConstIterator(); Iter; ++Iter)
+		for(UObject* AssetToDuplicate : AssetsToDuplicate)
 		{
-			UObject* Asset = (*Iter);
-			if(!DuplicateMap.Contains(Asset))
+			if(DuplicateMap.Contains(AssetToDuplicate))
 			{
-				FString PathName = (NameRule)? NameRule->FolderPath : FPackageName::GetLongPackagePath(DestinationPackage->GetName());
+				continue; // ignore duplicates (shouldn't happen though)
+			}
+			
+			// create unique name in case of existing asset with same name
+			FString PathName = (NameRule)? NameRule->FolderPath : FPackageName::GetLongPackagePath(DestinationPackage->GetName());
+			FString ObjectName = CreateDesiredName(AssetToDuplicate, NameRule);
+			FString PackageName;
+			FString BasePackageName = PathName+"/"+ObjectName;
+			AssetToolsModule.Get().CreateUniqueAssetName(BasePackageName, TEXT(""), PackageName, ObjectName);
 
-				FString ObjectName;
-				FString NewPackageName;
-				AssetToolsModule.Get().CreateUniqueAssetName(PathName+"/"+ CreateDesiredName(Asset, NameRule), TEXT(""), NewPackageName, ObjectName);
-
-				// create one on skeleton folder
-				UObject* NewAsset = AssetToolsModule.Get().DuplicateAsset(ObjectName, PathName, Asset);
-				if ( NewAsset )
-				{
-					DuplicateMap.Add(Asset, NewAsset);
-				}
+			// create a new asset
+			if (UObject* NewAsset = AssetToolsModule.Get().DuplicateAsset(ObjectName, PathName, AssetToDuplicate))
+			{
+				DuplicateMap.Add(AssetToDuplicate, NewAsset);
 			}
 		}
 

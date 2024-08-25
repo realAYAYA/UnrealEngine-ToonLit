@@ -613,7 +613,7 @@ namespace CoroTask_Detail
 * TCoroTask serves as the ReturnType for Coroutine Tasks
 */
 template<typename ReturnType>
-class UE_NODISCARD TCoroTask
+class [[nodiscard]] TCoroTask
 {
 	friend class CoroTask_Detail::IPromise;
 	friend class CoroTask_Detail::FPromise;
@@ -716,7 +716,7 @@ public:
 /*
 * FLockedTask is a special use case Task that cannot be expedited
 */
-class UE_NODISCARD FLockedTask : private TCoroTask<void>
+class [[nodiscard]] FLockedTask : private TCoroTask<void>
 {
 	FLockedTask(promise_type* InPromise) : TCoroTask<void>(InPromise)
 	{
@@ -773,7 +773,7 @@ public:
 * TLaunchedCoroTask is the moved result of a Launched TCoroTask this way uniqueness is guranteed
 */
 template<typename ReturnType>
-class UE_NODISCARD TLaunchedCoroTask : protected TCoroTask<ReturnType>
+class [[nodiscard]] TLaunchedCoroTask : protected TCoroTask<ReturnType>
 {
 	friend class CoroTask_Detail::IPromise;
 	friend class CoroTask_Detail::FPromise;
@@ -870,7 +870,7 @@ inline TLaunchedCoroTask<ReturnType> TCoroTask<ReturnType>::Launch(const TCHAR* 
 * TCoroFrame just serves as storage for a Stackframe and therefore allowing the stackless Coroutines to have a Stack
 */
 template<typename ReturnType>
-class UE_NODISCARD TCoroFrame
+class [[nodiscard]] TCoroFrame
 {
 public:
 	using promise_type = CoroTask_Detail::TFramePromise<ReturnType>;

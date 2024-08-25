@@ -44,6 +44,7 @@ FPrimitiveSceneProxy* UCapsuleComponent::CreateSceneProxy()
 			,	CapsuleRadius( InComponent->GetScaledCapsuleRadius() )
 			,	CapsuleHalfHeight( InComponent->GetScaledCapsuleHalfHeight() )
 			,	ShapeColor( InComponent->ShapeColor )
+			,	LineThickness( InComponent->LineThickness )
 		{
 			bWillEverBeLit = false;
 		}
@@ -65,7 +66,7 @@ FPrimitiveSceneProxy* UCapsuleComponent::CreateSceneProxy()
 					const FLinearColor DrawCapsuleColor = GetViewSelectionColor(ShapeColor, *View, IsSelected(), IsHovered(), false, IsIndividuallySelected() );
 
 					FPrimitiveDrawInterface* PDI = Collector.GetPDI(ViewIndex);
-					DrawWireCapsule( PDI, LocalToWorld.GetOrigin(), LocalToWorld.GetUnitAxis(EAxis::X), LocalToWorld.GetUnitAxis(EAxis::Y), LocalToWorld.GetUnitAxis(EAxis::Z), DrawCapsuleColor, CapsuleRadius, CapsuleHalfHeight, CapsuleSides, SDPG_World );
+					DrawWireCapsule( PDI, LocalToWorld.GetOrigin(), LocalToWorld.GetUnitAxis(EAxis::X), LocalToWorld.GetUnitAxis(EAxis::Y), LocalToWorld.GetUnitAxis(EAxis::Z), DrawCapsuleColor, CapsuleRadius, CapsuleHalfHeight, CapsuleSides, SDPG_World, LineThickness );
 				}
 			}
 		}
@@ -92,6 +93,7 @@ FPrimitiveSceneProxy* UCapsuleComponent::CreateSceneProxy()
 		const float		CapsuleRadius;
 		const float		CapsuleHalfHeight;
 		const FColor	ShapeColor;
+		const float		LineThickness;
 	};
 
 	return new FDrawCylinderSceneProxy( this );

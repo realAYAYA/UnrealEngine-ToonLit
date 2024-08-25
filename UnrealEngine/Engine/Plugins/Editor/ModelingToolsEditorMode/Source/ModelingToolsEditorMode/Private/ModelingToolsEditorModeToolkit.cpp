@@ -275,6 +275,7 @@ void FModelingToolsEditorModeToolkit::RegisterPalettes()
 			Commands.BeginSelectionAction_Delete,
 			Commands.BeginSelectionAction_Extrude,
 			Commands.BeginSelectionAction_Offset,
+			Commands.BeginPolyModelTool_ExtrudeEdges,
 			Commands.BeginPolyModelTool_PushPull,
 
 			Commands.BeginPolyModelTool_Inset,
@@ -309,6 +310,7 @@ void FModelingToolsEditorModeToolkit::RegisterPalettes()
 		Commands.BeginSplitMeshesTool,
 		Commands.BeginPatternTool,
 		
+		Commands.BeginHarvestInstancesTool,
 		Commands.BeginISMEditorTool
 	});
 	ToolkitBuilder->AddPalette(
@@ -652,6 +654,119 @@ void FModelingToolsEditorModeToolkit::MakeToolShutdownOverlayWidget()
 		OverlayBrush = FModelingToolsEditorModeStyle::Get()->GetBrush("ModelingMode.OpaqueOverlayBrush");
 	}
 
+	// Helpers to determine button/label visibility based on overrides
+	auto GetSubActionIcon = [this]() -> const FSlateBrush*
+	{
+		if (AcceptCancelButtonParams.IsSet())
+		{
+			if (AcceptCancelButtonParams->IconName.IsSet())
+			{
+				return FModelingToolsEditorModeStyle::Get()->GetOptionalBrush(AcceptCancelButtonParams->IconName.GetValue(), nullptr, nullptr);
+			}
+		}
+		else if (CompleteButtonParams.IsSet() && CompleteButtonParams->IconName.IsSet())
+		{
+			return FModelingToolsEditorModeStyle::Get()->GetOptionalBrush(CompleteButtonParams->IconName.GetValue(), nullptr, nullptr);
+		}
+		return nullptr;
+	};
+	auto GetSubActionIconVisibility = [this]()
+	{
+		if (AcceptCancelButtonParams.IsSet())
+		{
+			if (AcceptCancelButtonParams->IconName.IsSet() 
+				&& FModelingToolsEditorModeStyle::Get()->GetOptionalBrush(AcceptCancelButtonParams->IconName.GetValue(), nullptr, nullptr))
+			{
+				return EVisibility::Visible;
+			}
+		}
+		else if (CompleteButtonParams.IsSet() && CompleteButtonParams->IconName.IsSet()
+			&& FModelingToolsEditorModeStyle::Get()->GetOptionalBrush(CompleteButtonParams->IconName.GetValue(), nullptr, nullptr))
+		{
+			return EVisibility::Visible;
+		}
+		return EVisibility::Collapsed;
+	};
+	auto GetSubActionLabel = [this]()
+	{
+		return AcceptCancelButtonParams.IsSet() ? AcceptCancelButtonParams->Label
+			: CompleteButtonParams.IsSet() ? CompleteButtonParams->Label
+			: FText::GetEmpty();
+	};
+	auto GetSubActionLabelVisibility = [this]()
+	{
+		return (AcceptCancelButtonParams.IsSet() || CompleteButtonParams.IsSet()) ?
+			EVisibility::Visible : EVisibility::Collapsed;
+	};
+	auto GetAcceptButtonText = [this]()
+	{
+		return AcceptCancelButtonParams.IsSet() && AcceptCancelButtonParams->OverrideAcceptButtonText.IsSet() ?
+			AcceptCancelButtonParams->OverrideAcceptButtonText.GetValue() : LOCTEXT("OverlayAccept", "Accept");
+	};
+	auto GetAcceptButtonTooltip = [this]()
+	{
+		return AcceptCancelButtonParams.IsSet() && AcceptCancelButtonParams->OverrideAcceptButtonTooltip.IsSet() ?
+			AcceptCancelButtonParams->OverrideAcceptButtonTooltip.GetValue()
+			: LOCTEXT("OverlayAcceptTooltip", "Accept/Commit the results of the active Tool [Enter]");
+	};
+	auto GetAcceptButtonEnabled = [this]()
+	{
+		return AcceptCancelButtonParams.IsSet() ? AcceptCancelButtonParams->CanAccept()
+			: GetScriptableEditorMode()->GetInteractiveToolsContext(EToolsContextScope::EdMode)->CanAcceptActiveTool();
+	};
+	auto GetAcceptCancelButtonVisibility = [this]()
+	{
+		if (AcceptCancelButtonParams.IsSet()
+			|| (!CompleteButtonParams.IsSet()
+				&& GetScriptableEditorMode()->GetInteractiveToolsContext(EToolsContextScope::EdMode)->ActiveToolHasAccept()))
+		{
+			return EVisibility::Visible;
+		}
+		return EVisibility::Collapsed;
+	};
+	auto GetCancelButtonText = [this]()
+	{
+		return AcceptCancelButtonParams.IsSet() && AcceptCancelButtonParams->OverrideCancelButtonText.IsSet() ?
+			AcceptCancelButtonParams->OverrideCancelButtonText.GetValue() : LOCTEXT("OverlayCancel", "Cancel");
+	};
+	auto GetCancelButtonTooltip = [this]()
+	{
+		return AcceptCancelButtonParams.IsSet() && AcceptCancelButtonParams->OverrideCancelButtonTooltip.IsSet() ?
+			AcceptCancelButtonParams->OverrideCancelButtonTooltip.GetValue()
+			: LOCTEXT("OverlayCancelTooltip", "Cancel the active Tool [Esc]");
+	};
+	auto GetCancelButtonEnabled = [this]() 
+	{
+		return AcceptCancelButtonParams.IsSet()
+			|| GetScriptableEditorMode()->GetInteractiveToolsContext(EToolsContextScope::EdMode)->CanCancelActiveTool();
+	};
+	auto GetCompleteButtonText = [this]()
+	{
+		return CompleteButtonParams.IsSet() && CompleteButtonParams->OverrideCompleteButtonText.IsSet() ?
+			CompleteButtonParams->OverrideCompleteButtonText.GetValue() : LOCTEXT("OverlayComplete", "Complete");
+	};
+	auto GetCompleteButtonTooltip = [this]()
+	{
+		return CompleteButtonParams.IsSet() && CompleteButtonParams->OverrideCompleteButtonTooltip.IsSet() ?
+			CompleteButtonParams->OverrideCompleteButtonTooltip.GetValue()
+			: LOCTEXT("OverlayCompleteTooltip", "Exit the active Tool [Enter]");
+	};
+	auto GetCompleteButtonEnabled = [this]()
+	{
+		return CompleteButtonParams.IsSet()
+			|| GetScriptableEditorMode()->GetInteractiveToolsContext(EToolsContextScope::EdMode)->CanCompleteActiveTool();
+	};
+	auto GetCompleteButtonVisibility = [this]()
+	{
+		if (CompleteButtonParams.IsSet()
+			|| (!AcceptCancelButtonParams.IsSet()
+				&& GetScriptableEditorMode()->GetInteractiveToolsContext(EToolsContextScope::EdMode)->CanCompleteActiveTool()))
+		{
+			return EVisibility::Visible;
+		}
+		return EVisibility::Collapsed;
+	};
+
 	SAssignNew(ToolShutdownViewportOverlayWidget, SHorizontalBox)
 
 	+SHorizontalBox::Slot()
@@ -665,6 +780,7 @@ void FModelingToolsEditorModeToolkit::MakeToolShutdownOverlayWidget()
 		[
 			SNew(SHorizontalBox)
 
+			// Tool icon and name
 			+SHorizontalBox::Slot()
 			.AutoWidth()
 			.VAlign(VAlign_Center)
@@ -673,7 +789,6 @@ void FModelingToolsEditorModeToolkit::MakeToolShutdownOverlayWidget()
 				SNew(SImage)
 				.Image_Lambda([this] () { return ActiveToolIcon; })
 			]
-
 			+SHorizontalBox::Slot()
 			.AutoWidth()
 			.VAlign(VAlign_Center)
@@ -683,41 +798,76 @@ void FModelingToolsEditorModeToolkit::MakeToolShutdownOverlayWidget()
 				.Text(this, &FModelingToolsEditorModeToolkit::GetActiveToolDisplayName)
 			]
 
+			// Optional: "-> [icon] SubtoolAction"
+			// arrow
+			+SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(EVerticalAlignment::VAlign_Center)
+			.Padding(FMargin(0., 0.f, 8.f, 0.f))
+			[
+				SNew(SImage)
+				.Image(FModelingToolsEditorModeStyle::Get()->GetBrush("ModelingMode.SubToolArrow"))
+				.ColorAndOpacity(FSlateColor::UseForeground())
+				.Visibility_Lambda(GetSubActionLabelVisibility)
+			]
+			// subaction icon
+			+SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			.Padding(FMargin(0.f, 0.f, 8.f, 0.f))
+			[
+				SNew(SImage)
+				.Image_Lambda(GetSubActionIcon)
+				.Visibility_Lambda(GetSubActionIconVisibility)
+			]
+			// subaction label
+			+SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			.Padding(FMargin(0.f, 0.f, 8.f, 0.f))
+			[
+				SNew(STextBlock)
+				.Text_Lambda(GetSubActionLabel)
+				.Visibility_Lambda(GetSubActionLabelVisibility)
+			]
+
+			// Buttons:
+			// Accept
 			+SHorizontalBox::Slot()
 			.AutoWidth()
 			.Padding(FMargin(0.0, 0.f, 2.f, 0.f))
 			[
 				SNew(SPrimaryButton)
-				.Text(LOCTEXT("OverlayAccept", "Accept"))
-				.ToolTipText(LOCTEXT("OverlayAcceptTooltip", "Accept/Commit the results of the active Tool [Enter]"))
-				.OnClicked_Lambda([this]() { GetScriptableEditorMode()->GetInteractiveToolsContext(EToolsContextScope::EdMode)->EndTool(EToolShutdownType::Accept); return FReply::Handled(); })
-				.IsEnabled_Lambda([this]() { return GetScriptableEditorMode()->GetInteractiveToolsContext(EToolsContextScope::EdMode)->CanAcceptActiveTool(); })
-				.Visibility_Lambda([this]() { return GetScriptableEditorMode()->GetInteractiveToolsContext(EToolsContextScope::EdMode)->ActiveToolHasAccept() ? EVisibility::Visible : EVisibility::Collapsed; })
+				.Text_Lambda(GetAcceptButtonText)
+				.ToolTipText_Lambda(GetAcceptButtonTooltip)
+				.OnClicked_Raw(this, &FModelingToolsEditorModeToolkit::HandleAcceptCancelClick, true)
+				.IsEnabled_Lambda(GetAcceptButtonEnabled)
+				.Visibility_Lambda(GetAcceptCancelButtonVisibility)
 			]
-
+			// Cancel
 			+SHorizontalBox::Slot()
 			.AutoWidth()
 			.Padding(FMargin(2.0, 0.f, 0.f, 0.f))
 			[
 				SNew(SButton)
-				.Text(LOCTEXT("OverlayCancel", "Cancel"))
-				.ToolTipText(LOCTEXT("OverlayCancelTooltip", "Cancel the active Tool [Esc]"))
+				.Text_Lambda(GetCancelButtonText)
+				.ToolTipText_Lambda(GetCancelButtonTooltip)
 				.HAlign(HAlign_Center)
-				.OnClicked_Lambda([this]() { GetScriptableEditorMode()->GetInteractiveToolsContext(EToolsContextScope::EdMode)->EndTool(EToolShutdownType::Cancel); return FReply::Handled(); })
-				.IsEnabled_Lambda([this]() { return GetScriptableEditorMode()->GetInteractiveToolsContext(EToolsContextScope::EdMode)->CanCancelActiveTool(); })
-				.Visibility_Lambda([this]() { return GetScriptableEditorMode()->GetInteractiveToolsContext(EToolsContextScope::EdMode)->ActiveToolHasAccept() ? EVisibility::Visible : EVisibility::Collapsed; })
+				.OnClicked_Raw(this, &FModelingToolsEditorModeToolkit::HandleAcceptCancelClick, false)
+				.IsEnabled_Lambda(GetCancelButtonEnabled)
+				.Visibility_Lambda(GetAcceptCancelButtonVisibility)
 			]
-
+			// Complete
 			+SHorizontalBox::Slot()
 			.AutoWidth()
 			.Padding(FMargin(2.0, 0.f, 0.f, 0.f))
 			[
 				SNew(SPrimaryButton)
-				.Text(LOCTEXT("OverlayComplete", "Complete"))
-				.ToolTipText(LOCTEXT("OverlayCompleteTooltip", "Exit the active Tool [Enter]"))
-				.OnClicked_Lambda([this]() { GetScriptableEditorMode()->GetInteractiveToolsContext(EToolsContextScope::EdMode)->EndTool(EToolShutdownType::Completed); return FReply::Handled(); })
-				.IsEnabled_Lambda([this]() { return GetScriptableEditorMode()->GetInteractiveToolsContext(EToolsContextScope::EdMode)->CanCompleteActiveTool(); })
-				.Visibility_Lambda([this]() { return GetScriptableEditorMode()->GetInteractiveToolsContext(EToolsContextScope::EdMode)->CanCompleteActiveTool() ? EVisibility::Visible : EVisibility::Collapsed; })
+				.Text_Lambda(GetCompleteButtonText)
+				.ToolTipText_Lambda(GetCompleteButtonTooltip)
+				.OnClicked_Raw(this, &FModelingToolsEditorModeToolkit::HandleCompleteClick)
+				.IsEnabled_Lambda(GetCompleteButtonEnabled)
+				.Visibility_Lambda(GetCompleteButtonVisibility)
 			]
 		]	
 	];
@@ -741,15 +891,15 @@ TSharedPtr<SWidget> FModelingToolsEditorModeToolkit::MakeAssetConfigPanel()
 	// New Asset Location drop-down
 	//
 
-	AssetLocationModes.Add(MakeShared<FString>(TEXT("AutoGen Folder (World-Relative)")));
-	AssetLocationModes.Add(MakeShared<FString>(TEXT("AutoGen Folder (Global)")));
-	AssetLocationModes.Add(MakeShared<FString>(TEXT("Current Folder")));
+	AssetLocationModes.Add(MakeShared<FString>(LOCTEXT("AssetLocationModeAutoGenWorldRelative", "AutoGen Folder (World-Relative)").ToString()));
+	AssetLocationModes.Add(MakeShared<FString>(LOCTEXT("AssetLocationModeAutoGenGlobal", "AutoGen Folder (Global)").ToString()));
+	AssetLocationModes.Add(MakeShared<FString>(LOCTEXT("AssetLocationModeCurrentFolder", "Current Folder").ToString()));
 	AssetLocationMode = SNew(STextComboBox)
 		.OptionsSource(&AssetLocationModes)
 		.OnSelectionChanged_Lambda([&](TSharedPtr<FString> String, ESelectInfo::Type) { UpdateAssetLocationMode(String); });
-	AssetSaveModes.Add(MakeShared<FString>(TEXT("AutoSave New Assets")));
-	AssetSaveModes.Add(MakeShared<FString>(TEXT("Manual Save")));
-	AssetSaveModes.Add(MakeShared<FString>(TEXT("Interactive")));
+	AssetSaveModes.Add(MakeShared<FString>(LOCTEXT("AssetSaveModeAutoSave", "AutoSave New Assets").ToString()));
+	AssetSaveModes.Add(MakeShared<FString>(LOCTEXT("AssetSaveModeManualSave", "Manual Save").ToString()));
+	AssetSaveModes.Add(MakeShared<FString>(LOCTEXT("AssetSaveModeInteractive", "Interactive").ToString()));
 	AssetSaveMode = SNew(STextComboBox)
 		.OptionsSource(&AssetSaveModes)
 		.OnSelectionChanged_Lambda([&](TSharedPtr<FString> String, ESelectInfo::Type) { UpdateAssetSaveMode(String); });
@@ -766,16 +916,16 @@ TSharedPtr<SWidget> FModelingToolsEditorModeToolkit::MakeAssetConfigPanel()
 	// LOD selection dropdown
 	//
 
-	AssetLODModes.Add(MakeShared<FString>(TEXT("Max Available")));
-	AssetLODModes.Add(MakeShared<FString>(TEXT("HiRes")));
-	AssetLODModes.Add(MakeShared<FString>(TEXT("LOD0")));
-	AssetLODModes.Add(MakeShared<FString>(TEXT("LOD1")));
-	AssetLODModes.Add(MakeShared<FString>(TEXT("LOD2")));
-	AssetLODModes.Add(MakeShared<FString>(TEXT("LOD3")));
-	AssetLODModes.Add(MakeShared<FString>(TEXT("LOD4")));
-	AssetLODModes.Add(MakeShared<FString>(TEXT("LOD5")));
-	AssetLODModes.Add(MakeShared<FString>(TEXT("LOD6")));
-	AssetLODModes.Add(MakeShared<FString>(TEXT("LOD7")));
+	AssetLODModes.Add(MakeShared<FString>(LOCTEXT("AssetLODModeMaxAvailable", "Max Available").ToString()));
+	AssetLODModes.Add(MakeShared<FString>(LOCTEXT("AssetLODModeHiRes", "HiRes").ToString()));
+	AssetLODModes.Add(MakeShared<FString>(LOCTEXT("AssetLODModeLOD0", "LOD0").ToString()));
+	AssetLODModes.Add(MakeShared<FString>(LOCTEXT("AssetLODModeLOD1", "LOD1").ToString()));
+	AssetLODModes.Add(MakeShared<FString>(LOCTEXT("AssetLODModeLOD2", "LOD2").ToString()));
+	AssetLODModes.Add(MakeShared<FString>(LOCTEXT("AssetLODModeLOD3", "LOD3").ToString()));
+	AssetLODModes.Add(MakeShared<FString>(LOCTEXT("AssetLODModeLOD4", "LOD4").ToString()));
+	AssetLODModes.Add(MakeShared<FString>(LOCTEXT("AssetLODModeLOD5", "LOD5").ToString()));
+	AssetLODModes.Add(MakeShared<FString>(LOCTEXT("AssetLODModeLOD6", "LOD6").ToString()));
+	AssetLODModes.Add(MakeShared<FString>(LOCTEXT("AssetLODModeLOD7", "LOD7").ToString()));
 	AssetLODMode = SNew(STextComboBox)
 		.OptionsSource(&AssetLODModes)
 		.OnSelectionChanged_Lambda([&](TSharedPtr<FString> String, ESelectInfo::Type)
@@ -1098,6 +1248,7 @@ TSharedRef<SWidget> FModelingToolsEditorModeToolkit::GetPresetCreateButtonConten
 					.AssetThumbnailLabel(EThumbnailLabel::AssetName)
 					.bForceShowPluginContent(true)
 					.bForceShowEngineContent(true)
+					.AssetViewType(EAssetViewType::List)
 				]
 				+ SHorizontalBox::Slot()
 				[
@@ -1683,6 +1834,7 @@ void FModelingToolsEditorModeToolkit::BuildToolPalette(FName PaletteIndex, class
 		ToolbarBuilder.AddToolBarButton(Commands.BeginSelectionAction_Extrude);
 		ToolbarBuilder.AddToolBarButton(Commands.BeginSelectionAction_Offset);
 
+		ToolbarBuilder.AddToolBarButton(Commands.BeginPolyModelTool_ExtrudeEdges);
 		ToolbarBuilder.AddToolBarButton(Commands.BeginPolyModelTool_PushPull);
 		ToolbarBuilder.AddToolBarButton(Commands.BeginPolyModelTool_Inset);
 		ToolbarBuilder.AddToolBarButton(Commands.BeginPolyModelTool_Outset);
@@ -2415,6 +2567,98 @@ void FModelingToolsEditorModeToolkit::NotifySelectionSystemEnabledStateModified(
 	//}
 }
 
+bool FModelingToolsEditorModeToolkit::RequestAcceptCancelButtonOverride(IToolHostCustomizationAPI::FAcceptCancelButtonOverrideParams& Params)
+{
+	if (!Params.OnAcceptCancelTriggered || !Params.CanAccept || Params.Label.IsEmpty())
+	{
+		UE_LOG(LogGeometry, Warning, TEXT("FModelingToolsEditorModeToolkit::RequestAcceptCancelButtonOverride received request with insufficient parameters."));
+		return false;
+	}
 
+	AcceptCancelButtonParams = Params;
+	CompleteButtonParams.Reset();
+	bCurrentOverrideButtonsWereClicked = false;
+
+	if (ToolShutdownViewportOverlayWidget)
+	{
+		ToolShutdownViewportOverlayWidget->Invalidate(EInvalidateWidgetReason::Layout);
+	}
+	return true;
+}
+bool FModelingToolsEditorModeToolkit::RequestCompleteButtonOverride(IToolHostCustomizationAPI::FCompleteButtonOverrideParams& Params)
+{
+	if (!Params.OnCompleteTriggered || Params.Label.IsEmpty())
+	{
+		UE_LOG(LogGeometry, Warning, TEXT("FModelingToolsEditorModeToolkit::RequestCompleteButtonOverride received request with insufficient parameters."));
+		return false;
+	}
+
+	CompleteButtonParams = Params;
+	AcceptCancelButtonParams.Reset();
+	bCurrentOverrideButtonsWereClicked = false;
+
+	if (ToolShutdownViewportOverlayWidget)
+	{
+		ToolShutdownViewportOverlayWidget->Invalidate(EInvalidateWidgetReason::Layout);
+	}
+	return true;
+}
+void FModelingToolsEditorModeToolkit::ClearButtonOverrides()
+{
+	AcceptCancelButtonParams.Reset();
+	CompleteButtonParams.Reset();
+	if (ToolShutdownViewportOverlayWidget)
+	{
+		ToolShutdownViewportOverlayWidget->Invalidate(EInvalidateWidgetReason::Layout);
+	}
+}
+
+
+FReply FModelingToolsEditorModeToolkit::HandleAcceptCancelClick(bool bAccept)
+{
+	if (AcceptCancelButtonParams.IsSet())
+	{
+		bCurrentOverrideButtonsWereClicked = true;
+		if (ensure(AcceptCancelButtonParams->OnAcceptCancelTriggered))
+		{
+			AcceptCancelButtonParams->OnAcceptCancelTriggered(bAccept);
+		}
+		
+		// This will be reset back to false if the callback above triggers another override request.
+		if (bCurrentOverrideButtonsWereClicked)
+		{
+			ClearButtonOverrides();
+		}
+	}
+	else
+	{
+		GetScriptableEditorMode()->GetInteractiveToolsContext(EToolsContextScope::EdMode)->EndTool(
+			bAccept ? EToolShutdownType::Accept : EToolShutdownType::Cancel);
+	}
+	return FReply::Handled();
+}
+FReply FModelingToolsEditorModeToolkit::HandleCompleteClick()
+{
+	if (CompleteButtonParams.IsSet())
+	{
+		bCurrentOverrideButtonsWereClicked = true;
+		if (ensure(CompleteButtonParams->OnCompleteTriggered))
+		{
+			CompleteButtonParams->OnCompleteTriggered();
+		}
+
+		// This will be reset back to false if the callback above triggers another override request.
+		if (bCurrentOverrideButtonsWereClicked)
+		{
+			ClearButtonOverrides();
+		}
+	}
+	else
+	{
+		GetScriptableEditorMode()->GetInteractiveToolsContext(EToolsContextScope::EdMode)->EndTool(EToolShutdownType::Completed);
+	}
+
+	return FReply::Handled();
+}
 
 #undef LOCTEXT_NAMESPACE

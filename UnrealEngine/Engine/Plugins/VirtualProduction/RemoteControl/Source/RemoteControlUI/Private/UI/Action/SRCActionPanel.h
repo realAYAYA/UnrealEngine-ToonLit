@@ -1,14 +1,10 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
 
 #include "UI/BaseLogicUI/SRCLogicPanelBase.h"
 
-enum class ECheckBoxState : uint8;
-
-struct FRCPanelStyle;
 class FRCActionModel;
-struct FRemoteControlField;
 class FRCBehaviourModel;
 class SBox;
 class SCheckBox;
@@ -17,6 +13,11 @@ class SRCLogicPanelListBase;
 class SRemoteControlPanel;
 class URCAction;
 class URCBehaviour;
+
+struct FRCPanelStyle;
+struct FRemoteControlField;
+
+enum class ECheckBoxState : uint8;
 
 /*
 * ~ SRCActionPanel ~
@@ -36,32 +37,41 @@ public:
 	/** Constructs this widget with InArgs */
 	void Construct(const FArguments& InArgs, const TSharedRef<SRemoteControlPanel>& InPanel);
 
-	/** Shutdown panel */
-	static void Shutdown();
-
 	/** Whether the Actions list widget currently has focus.*/
 	bool IsListFocused() const;
 
-	/** Delete Item UI command implementation for this panel */
-	virtual void DeleteSelectedPanelItem() override;
+	/** Delete Items UI command implementation for this panel */
+	virtual void DeleteSelectedPanelItems() override;
 
-	/** Returns the UI item currently selected by the user (if any)*/
-	virtual TSharedPtr<FRCLogicModeBase> GetSelectedLogicItem() override;
+	/** Returns the UI items currently selected by the user (if any). To be implemented per child panel */
+	virtual TArray<TSharedPtr<FRCLogicModeBase>> GetSelectedLogicItems() const override;
 
-	/** "Duplicate Item" UI command implementation for Action panel*/
-	virtual void DuplicateSelectedPanelItem() override;
+	/** "Duplicate Items" UI command implementation for Action panel*/
+	virtual void DuplicateSelectedPanelItems() override;
 
-	/** "Copy Item" UI command implementation for Action panel*/
-	virtual void CopySelectedPanelItem() override;
+	/** "Copy Items" UI command implementation for Action panel*/
+	virtual void CopySelectedPanelItems() override;
 
-	/** "Paste Item" UI command implementation for Action panel*/
-	virtual void PasteItemFromClipboard() override;
+	/** "Paste Items" UI command implementation for Action panel*/
+	virtual void PasteItemsFromClipboard() override;
 
-	/** Whether a given clipboard item can be successfully pasted into this panel */
-	virtual bool CanPasteClipboardItem(UObject* InLogicClipboardItem) override;
+	/** Whether clipboard items can be successfully pasted into this panel */
+	virtual bool CanPasteClipboardItems(const TArrayView<const TObjectPtr<UObject>> InLogicClipboardItems) const override;
+
+	/** "Update Value" UI command implementation for panels */
+	virtual void UpdateValue() override;
+
+	/** Whether this panel can call the UpdateValue command */
+	virtual bool CanUpdateValue() const override;
 
 	/** Provides an item suffix for the Paste context menu to provide users with useful context on the nature of the item being pasted */
 	virtual FText GetPasteItemMenuEntrySuffix() override;
+
+	/** Adds an PropertyId Action for the currently active Behaviour and broadcasts to parent panels */
+	URCAction* AddAction();
+
+	/** Adds an PropertyId Action for the currently active Behaviour and broadcasts to parent panels */
+	URCAction* AddAction(FName InFieldId);
 
 	/** Adds an Action for the currently active Behaviour and broadcasts to parent panels */
 	URCAction* AddAction(const TSharedRef<const FRemoteControlField> InRemoteControlField);
@@ -118,11 +128,20 @@ private:
 	/** Handles click event for Add Action button*/
 	void OnAddActionClicked(TSharedPtr<FRemoteControlField> InRemoteControlField);
 
+	/** Handles click event for Add Action (PropertyId) button */
+	void OnAddActionClicked();
+
+	/** Handles click event for Add specific PropertyId Action buttons */
+	void OnAddActionClicked(FName InFieldId);
+
 	/** Handles click event for Empty button; clear all Actions from the panel*/
 	FReply OnClickEmptyButton();
 
 	/** Handles click event for Add All button; Adds all possible actions for the active Remote Control Preset*/
 	FReply OnAddAllFields();
+
+	/** Handles click event for Add All Selected button; Adds all selected actions for the active Remote Control Preset*/
+	FReply OnAddAllSelectedFields();
 
 	/** Event invoked when a new remote control field has been added to the Remote Control Preset associated with this Action panel */
 	void OnRemoteControlFieldAdded(const FGuid& GroupId, const FGuid& FieldId, int32 FieldPosition);
@@ -131,6 +150,8 @@ private:
 	void OnRemoteControlFieldDeleted(const FGuid& GroupId, const FGuid& FieldId, int32 FieldPosition);
 
 private:
+	/** Helper widget for behavior details. */
+	static TSharedRef<SBox> CreateNoneSelectedWidget();
 
 	void DuplicateAction(URCAction* InAction);
 
@@ -148,11 +169,8 @@ private:
 	/** Behaviour specific details widget*/
 	TSharedPtr<SRCBehaviourDetails> BehaviourDetailsWidget;
 
-	/** Helper widget for behavior details. */
-	static TSharedPtr<SBox> NoneSelectedWidget;
-
 	/** Panel Style reference. */
-	const FRCPanelStyle* RCPanelStyle;
+	const FRCPanelStyle* RCPanelStyle = nullptr;
 
 	/** Cached menu widget for Add New Action */
 	TSharedPtr<SWidget> AddNewActionMenuWidget;

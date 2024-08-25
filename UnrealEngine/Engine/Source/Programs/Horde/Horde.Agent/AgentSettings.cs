@@ -1,12 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
-using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
-using System.Linq;
 using EpicGames.Core;
-using EpicGames.Horde.Storage;
-using Horde.Agent.Services;
+using EpicGames.Horde;
 using Microsoft.Extensions.Configuration;
 
 namespace Horde.Agent
@@ -35,11 +31,10 @@ namespace Horde.Agent
 		/// <summary>
 		/// Name of this server profile
 		/// </summary>
-		[Required]
-		public string Name { get; set; } = null!;
+		public string? Name { get; set; }
 
 		/// <summary>
-		/// Name of the environment (currrently just used for tracing)
+		/// Name of the environment (currently just used for tracing)
 		/// </summary>
 		[Required]
 		public string Environment { get; set; } = "prod";
@@ -101,7 +96,7 @@ namespace Horde.Agent
 	}
 
 	/// <summary>
-	/// Setttings for the perforce executor
+	/// Settings for the perforce executor
 	/// </summary>
 	public class PerforceExecutorSettings
 	{
@@ -177,13 +172,13 @@ namespace Horde.Agent
 		/// <summary>
 		/// Known servers to connect to
 		/// </summary>
-		public List<ServerProfile> ServerProfiles { get; } = new List<ServerProfile>();
+		public Dictionary<string, ServerProfile> ServerProfiles { get; } = new Dictionary<string, ServerProfile>(StringComparer.OrdinalIgnoreCase);
 
 		/// <summary>
 		/// The default server, unless overridden from the command line
 		/// </summary>
 		public string? Server { get; set; }
-		
+
 		/// <summary>
 		/// Name of agent to report as when connecting to server.
 		/// By default, the computer's hostname will be used.
@@ -191,9 +186,24 @@ namespace Horde.Agent
 		public string? Name { get; set; }
 
 		/// <summary>
-		/// The executor to use for jobs. Defaults to the Perforce executor.
+		/// Whether the server is running in 'installed' mode. In this mode, on Windows, the default data directory will use the common 
+		/// application data folder (C:\ProgramData\Epic\Horde), and configuration data will be read from here and the registry.
+		/// This setting is overridden to false for local builds from appsettings.Local.json.
 		/// </summary>
-		public string Executor { get; set; } = Execution.PerforceExecutor.Name;
+		public bool Installed { get; set; } = true;
+
+		/// <summary>
+		/// Whether agent should register as being ephemeral.
+		/// Doing so will not persist any long-lived data on the server and
+		/// once disconnected it's assumed to have been deleted permanently.
+		/// Ideal for short-lived agents, such as spot instances on AWS EC2.
+		/// </summary>
+		public bool Ephemeral { get; set; } = false;
+
+		/// <summary>
+		/// The executor to use for jobs
+		/// </summary>
+		public string Executor { get; set; } = Execution.WorkspaceExecutor.Name;
 
 		/// <summary>
 		/// Settings for the local executor
@@ -208,13 +218,13 @@ namespace Horde.Agent
 		/// <summary>
 		/// Working directory
 		/// </summary>
-		public string? WorkingDir { get; set; } = DirectoryReference.Combine(Program.DataDir, "Data").FullName;
+		public DirectoryReference WorkingDir { get; set; } = DirectoryReference.Combine(AgentApp.DataDir, "Sandbox");
 
 		/// <summary>
 		/// Whether to mount the specified list of network shares
 		/// </summary>
 		public bool ShareMountingEnabled { get; set; } = true;
-		
+
 		/// <summary>
 		/// List of network shares to mount
 		/// </summary>
@@ -230,6 +240,16 @@ namespace Horde.Agent
 		/// List of process names to terminate after a lease completes, but not after a job step
 		/// </summary>
 		public List<ProcessToTerminate> ProcessesToTerminate { get; } = new List<ProcessToTerminate>();
+
+		/// <summary>
+		/// Path to Wine executable. If null, execution under Wine is disabled
+		/// </summary>
+		public string? WineExecutablePath { get; set; }
+
+		/// <summary>
+		/// Path to container engine executable, such as /usr/bin/podman. If null, execution of compute workloads inside a container is disabled
+		/// </summary>
+		public string? ContainerEngineExecutablePath { get; set; }
 
 		/// <summary>
 		/// Whether to write step output to the logging device
@@ -250,11 +270,21 @@ namespace Horde.Agent
 		/// Incoming port for listening for compute work. Needs to be tied with a lease.
 		/// </summary>
 		public int ComputePort { get; set; } = 7000;
-		
+
+		/// <summary>
+		/// Whether to send telemetry back to Horde server
+		/// </summary>
+		public bool EnableTelemetry { get; set; } = false;
+
 		/// <summary>
 		/// How often to report telemetry events to server in milliseconds
 		/// </summary>
 		public int TelemetryReportInterval { get; set; } = 30 * 1000;
+
+		/// <summary>
+		/// Maximum size of the bundle cache, in megabytes.
+		/// </summary>
+		public long BundleCacheSize { get; set; } = 1024;
 
 		/// <summary>
 		/// Key/value properties in addition to those set internally by the agent
@@ -267,19 +297,40 @@ namespace Horde.Agent
 		/// <returns>The current server settings</returns>
 		public ServerProfile GetServerProfile(string name)
 		{
-			ServerProfile? serverProfile = ServerProfiles.FirstOrDefault(x => x.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-			if (serverProfile == null)
+			ServerProfile? serverProfile;
+			if (!ServerProfiles.TryGetValue(name, out serverProfile))
 			{
-				if (ServerProfiles.Count == 0)
+				serverProfile = ServerProfiles.Values.FirstOrDefault(x => name.Equals(x.Name, StringComparison.OrdinalIgnoreCase));
+				if (serverProfile == null)
 				{
-					throw new Exception("No server profiles are defined (missing configuration?)");
-				}
-				else
-				{
-					throw new Exception($"Unknown server profile name '{name}' (valid profiles: {String.Join("/", ServerProfiles.Select(x => x.Name))})");
+					if (ServerProfiles.Count == 0)
+					{
+						throw new Exception("No server profiles are defined (missing configuration?)");
+					}
+					else
+					{
+						throw new Exception($"Unknown server profile name '{name}' (valid profiles: {GetServerProfileNames()})");
+					}
 				}
 			}
 			return serverProfile;
+		}
+
+		string GetServerProfileNames()
+		{
+			HashSet<string> names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+			foreach ((string key, ServerProfile profile) in ServerProfiles)
+			{
+				if (!String.IsNullOrEmpty(profile.Name) && Int32.TryParse(key, out _))
+				{
+					names.Add(profile.Name);
+				}
+				else
+				{
+					names.Add(key);
+				}
+			}
+			return String.Join("/", names);
 		}
 
 		/// <summary>
@@ -290,7 +341,13 @@ namespace Horde.Agent
 		{
 			if (Server == null)
 			{
-				throw new Exception("Server is not set");
+				Uri? defaultServerUrl = Installed ? HordeOptions.GetDefaultServerUrl() : null;
+
+				ServerProfile defaultServerProfile = new ServerProfile();
+				defaultServerProfile.Name = "Default";
+				defaultServerProfile.Environment = "Development";
+				defaultServerProfile.Url = defaultServerUrl ?? new Uri("http://localhost:5000");
+				return defaultServerProfile;
 			}
 
 			return GetServerProfile(Server);
@@ -323,6 +380,15 @@ namespace Horde.Agent
 			return processesToTerminate;
 		}
 
+		/// <summary>
+		/// Path to file used for signaling impending termination and shutdown of the agent
+		/// </summary>
+		/// <returns>Path to file which may or may not exist</returns>
+		public FileReference GetTerminationSignalFile()
+		{
+			return FileReference.Combine(WorkingDir, ".horde-termination-signal");
+		}
+
 		internal string GetAgentName()
 		{
 			return Name ?? Environment.MachineName;
@@ -341,7 +407,12 @@ namespace Horde.Agent
 		/// <returns></returns>
 		public static IConfigurationSection GetCurrentServerProfile(this IConfigurationSection configSection)
 		{
-			string profileName = configSection[nameof(AgentSettings.Server)];
+			string? profileName = configSection[nameof(AgentSettings.Server)];
+			if (profileName == null)
+			{
+				throw new Exception("Server is not set");
+			}
+
 			return configSection.GetSection(nameof(AgentSettings.ServerProfiles)).GetChildren().First(x => x[nameof(ServerProfile.Name)] == profileName);
 		}
 	}

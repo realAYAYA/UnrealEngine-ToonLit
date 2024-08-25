@@ -2,6 +2,7 @@
 
 #include "Input/AimAssistTargetManagerComponent.h"
 #include "CommonInputTypeEnum.h"
+#include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 #include "GameFramework/InputSettings.h"
 #include "GameFramework/Character.h"
@@ -264,7 +265,7 @@ void UAimAssistTargetManagerComponent::GetVisibleTargets(const FAimAssistFilter&
 			return (TargetA.SortScore > TargetB.SortScore);
 		});
 		
-		OutNewTargets.SetNum(Settings.MaxNumberOfTargets, false);
+		OutNewTargets.SetNum(Settings.MaxNumberOfTargets, EAllowShrinking::No);
 	}
 
 	// Do visibliity traces on the targets

@@ -5,6 +5,7 @@
 
 #include "Components/AudioComponent.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/Pawn.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AudioComponentGroup)
 
@@ -34,6 +35,13 @@ UAudioComponentGroup* UAudioComponentGroup::StaticGetOrCreateComponentGroup(AAct
 		}
 
 		HighestValidOwner = Owner;
+
+		// prevents sound groups on pawns from spawning on owning playercontrollers
+		if (HighestValidOwner->IsA(APawn::StaticClass()))
+		{
+			break;
+		}
+		
 		Owner = Owner->GetOwner();
 	}
 
@@ -123,11 +131,11 @@ UAudioComponent* UAudioComponentGroup::GetNextAvailableComponent()
 	if (ReturnComponent == nullptr)
 	{
 		ReturnComponent = AddComponent();
-	}
 
-	for (TScriptInterface<IAudioComponentGroupExtension> Extension : Extensions)
-	{
-		Extension->OnComponentAdded(ReturnComponent);
+		for (TScriptInterface<IAudioComponentGroupExtension> Extension : Extensions)
+		{
+			Extension->OnComponentAdded(ReturnComponent);
+		}
 	}
 
 	return ReturnComponent;
@@ -140,15 +148,24 @@ UAudioComponent* UAudioComponentGroup::AddComponent()
 	{
 		NewComponent = NewObject<UAudioComponent>(Owner);
 		NewComponent->bAutoActivate = false;
+		NewComponent->bAutoManageAttachment = true;
 
-		NewComponent->AttachToComponent(Owner->GetRootComponent(), FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+		USceneComponent* RootComponent = Owner->GetRootComponent();
+		NewComponent->AttachToComponent(RootComponent, FAttachmentTransformRules::SnapToTargetNotIncludingScale);
+
+		if (RootComponent)
+		{
+			NewComponent->AutoAttachParent = RootComponent->GetAttachParent();
+		}
+		
+		NewComponent->AutoAttachLocationRule = EAttachmentRule::KeepRelative;
+		NewComponent->AutoAttachRotationRule = EAttachmentRule::KeepRelative;
+		
 		NewComponent->RegisterComponent();
 
 		ApplyParams(NewComponent);
 
-		FAudioComponentModifier Modifier = CachedModifier;
-		Modifier.Volume = GetComponentVolume();
-		ApplyModifiers(NewComponent, Modifier);
+		ApplyModifiers(NewComponent, CachedModifier);
 
 		Components.Add(NewComponent);
 	}
@@ -166,9 +183,7 @@ UAudioComponent* UAudioComponentGroup::ResetComponent(UAudioComponent* Component
 
 		ApplyParams(Component);
 
-		FAudioComponentModifier Modifier = CachedModifier;
-		Modifier.Volume = GetComponentVolume();
-		ApplyModifiers(Component, Modifier);
+		ApplyModifiers(Component, CachedModifier);
 	}
 
 	return Component;
@@ -193,12 +208,20 @@ void UAudioComponentGroup::AddExternalComponent(UAudioComponent* ComponentToAdd)
 	{
 		ApplyParams(ComponentToAdd);
 
-		FAudioComponentModifier Modifier = CachedModifier;
-		Modifier.Volume = GetComponentVolume();
-		ApplyModifiers(ComponentToAdd, Modifier);
+		ApplyModifiers(ComponentToAdd, CachedModifier);
 
 		ExternalComponents.Add(TWeakObjectPtr<UAudioComponent>(ComponentToAdd));
 	}
+}
+
+void UAudioComponentGroup::RemoveExternalComponent(UAudioComponent* ComponentToRemove)
+{
+	if (ComponentToRemove == nullptr)
+	{
+		return;
+	}
+
+	ExternalComponents.Remove(ComponentToRemove);
 }
 
 void UAudioComponentGroup::EnableVirtualization()
@@ -214,6 +237,12 @@ void UAudioComponentGroup::DisableVirtualization()
 {
 	if (bIsVirtualized)
 	{
+		// update ParamsToSet so that all parameters are updated next go-around, but merge any pending values first
+		TArray<FAudioParameter> Values = ParamsToSet;
+		FAudioParameter::Merge(MoveTemp(Values), PersistentParams);
+		
+		ParamsToSet = PersistentParams;
+		
 		bIsVirtualized = false;
 		OnUnvirtualized.Broadcast();
 	}
@@ -531,10 +560,7 @@ void UAudioComponentGroup::IterateComponents(const TFunction<void(UAudioComponen
 	ExternalComponents.RemoveAll([](const TWeakObjectPtr<UAudioComponent> WeakComponent) { return !WeakComponent.IsValid(); });
 	for (TWeakObjectPtr<UAudioComponent>& WeakComponent : ExternalComponents)
 	{
-		if (WeakComponent->IsActive())
-		{
-			OnIterate(WeakComponent.Get());
-		}
+		OnIterate(WeakComponent.Get());
 	}
 }
 
@@ -547,15 +573,17 @@ void UAudioComponentGroup::UpdateComponentParameters()
 
 	TRACE_CPUPROFILER_EVENT_SCOPE(UAudioComponentGroup::UpdateComponentParameters);
 
-	IterateComponents([this](UAudioComponent* Component)
+	if (bIsVirtualized == false)
 	{
-		// todo: this could be a LOT of tiny allocs... can anything be done about that?
-		TArray<FAudioParameter> Values = ParamsToSet;
-		Component->SetParameters(MoveTemp(Values));
-	});
+		IterateComponents([this](UAudioComponent* Component)
+    	{
+    		// todo: this could be a LOT of tiny allocs... can anything be done about that?
+    		TArray<FAudioParameter> Values = ParamsToSet;
+    		Component->SetParameters(MoveTemp(Values));
+    	});
+	}
 	
-	TArray<FAudioParameter> Values = ParamsToSet;
-	FAudioParameter::Merge(MoveTemp(Values), PersistentParams);
+	FAudioParameter::Merge(MoveTemp(ParamsToSet), PersistentParams);
 	ParamsToSet.Reset();
 }
 

@@ -17,7 +17,7 @@ struct FNavigableGeometryExport;
 class UBodySetup;
 
 // Helper for packing spline mesh shader parameters into a float4 buffer
-void PackSplineMeshParams(const FSplineMeshShaderParams& Params, const TArrayView<FVector4f>& Output);
+ENGINE_API void PackSplineMeshParams(const FSplineMeshShaderParams& Params, const TArrayView<FVector4f>& Output);
 
 UENUM(BlueprintType)
 namespace ESplineMeshAxis
@@ -79,6 +79,14 @@ struct FSplineMeshParams
 	UPROPERTY(EditAnywhere, Category=SplineMesh, AdvancedDisplay)
 	FVector2D EndOffset;
 
+	/**
+	 * How much to scale the calculated culling bounds of Nanite clusters after deformation.
+	 * NOTE: This should only be set greater than 1.0 if it fixes visible issues with clusters being
+	 * incorrectly culled.
+	 */
+	UPROPERTY(EditAnywhere, Category=SplineMesh, AdvancedDisplay, meta=(ClampMin=1.0))
+	float NaniteClusterBoundsScale;
+
 
 	FSplineMeshParams()
 		: StartPos(ForceInit)
@@ -91,6 +99,7 @@ struct FSplineMeshParams
 		, EndTangent(ForceInit)
 		, EndRoll(0)
 		, EndOffset(ForceInit)
+		, NaniteClusterBoundsScale(1.0f)
 	{
 	}
 
@@ -120,6 +129,9 @@ class USplineMeshComponent : public UStaticMeshComponent, public IInterface_Coll
 	// Used to automatically trigger rebuild of collision data
 	UPROPERTY()
 	FGuid CachedMeshBodySetupGuid;
+
+	// Navigation bounds can differ from primitive bounds since NavCollision can hold more geometry
+	FBox CachedNavigationBounds;
 
 	// Physics data.
 	UPROPERTY()
@@ -167,6 +179,8 @@ private:
 	uint8 bNeverNeedsCookedCollisionData:1;
 
 public:
+	ENGINE_API void InitVertexFactory(int32 InLODIndex, FColorVertexBuffer* InOverrideColorVertexBuffer);
+
 	//Begin UObject Interface
 	ENGINE_API virtual void Serialize(FArchive& Ar) override;
 #if WITH_EDITOR
@@ -185,11 +199,30 @@ public:
 	//Begin USceneComponent Interface
 	ENGINE_API virtual FBoxSphereBounds CalcBounds(const FTransform& LocalToWorld) const override;
 	ENGINE_API virtual FTransform GetSocketTransform(FName InSocketName, ERelativeTransformSpace TransformSpace = RTS_World) const override;
+	ENGINE_API virtual void UpdateBounds() override;
 	//End USceneComponent Interface
 
 	//Begin UPrimitiveComponent Interface
 protected:
 	ENGINE_API virtual void OnCreatePhysicsState() override;
+
+	float ComputeRatioAlongSpline(float DistanceAlong) const;
+
+	/** Returns the normalized range on the spline where the visual mesh is located taking custom range into account. */
+	void ComputeVisualMeshSplineTRange(float& MinT, float& MaxT) const;
+
+	/**
+	 * Computes the bounding box, in world space, for a given bounding box distorted by the spline in local space.
+	 * By default this method uses the provided mesh bounds that were used to define the spline range [0,1] so all points are expected
+	 * to stay in that range. In case the bounds to deform are overriden by the optional parameter then linear extrapolation
+	 * will be applied at the beginning and at the end of the spline for the exceeding part.
+	 * @param InLocalToWorld Transformation to apply to the computed bounds to convert them from local space to world space.
+	 * @param InMeshBounds Bounds of the static mesh that get distorted by the spline.
+	 * @param InBoundsToDistort Optional bounds to distort instead of using the mesh bounds.
+	 * @return Bounds, in world space, of the provided bounds distorted by the spline.
+	 */
+	FBox ComputeDistortedBounds(const FTransform& InLocalToWorld, const FBoxSphereBounds& InMeshBounds, const FBoxSphereBounds* InBoundsToDistort = nullptr) const;
+
 public:
 	ENGINE_API virtual class UBodySetup* GetBodySetup() override;
 #if WITH_EDITOR
@@ -217,6 +250,10 @@ public:
 	ENGINE_API virtual void GetMeshId(FString& OutMeshId) override;
 	ENGINE_API virtual bool GetTriMeshSizeEstimates(struct FTriMeshCollisionDataEstimates& OutTriMeshEstimates, bool bInUseAllTriData) const override;
 	//~ End Interface_CollisionDataProvider Interface
+
+	//~ Begin INavRelevantInterface
+	ENGINE_API virtual FBox GetNavigationBounds() const override;
+	//~ End  INavRelevantInterface
 
 	/** Generates FSplineMeshShaderParams for the current state of the component */
 	ENGINE_API FSplineMeshShaderParams CalculateShaderParams() const;
@@ -375,17 +412,7 @@ public:
 	 * Calculates the spline transform, including roll, scale, and offset along the spline at a specified alpha interpolation parameter along the spline
 	 * @Note:  This is mirrored to Lightmass::CalcSliceTransform() and LocalVertexShader.usf.  If you update one of these, please update them all!
 	 */
-	ENGINE_API FTransform CalcSliceTransformAtSplineOffset(const float Alpha) const;
-
-	UE_DEPRECATED(5.2, "Use GetAxisValueRef() instead.")
-	static const double& GetAxisValue(const FVector3d& InVector, ESplineMeshAxis::Type InAxis) { return GetAxisValueRef(InVector, InAxis); }
-	UE_DEPRECATED(5.2, "Use GetAxisValueRef() instead.")
-	static double& GetAxisValue(FVector3d& InVector, ESplineMeshAxis::Type InAxis) { return GetAxisValueRef(InVector, InAxis); }
-
-	UE_DEPRECATED(5.2, "Use GetAxisValueRef() instead.")
-	static const float& GetAxisValue(const FVector3f& InVector, ESplineMeshAxis::Type InAxis) { return GetAxisValueRef(InVector, InAxis); }
-	UE_DEPRECATED(5.2, "Use GetAxisValueRef() instead.")
-	static float& GetAxisValue(FVector3f& InVector, ESplineMeshAxis::Type InAxis) { return GetAxisValueRef(InVector, InAxis); }
+	ENGINE_API FTransform CalcSliceTransformAtSplineOffset(const float Alpha, const float MinT=0.f, const float MaxT=1.0f) const;
 
 	inline static const double& GetAxisValueRef(const FVector3d& InVector, ESplineMeshAxis::Type InAxis);
 	inline static double& GetAxisValueRef(FVector3d& InVector, ESplineMeshAxis::Type InAxis);
@@ -398,7 +425,7 @@ public:
 
 	ENGINE_API virtual float GetTextureStreamingTransformScale() const override;
 
-	ENGINE_API virtual void CollectPSOPrecacheData(const FPSOPrecacheParams& BasePrecachePSOParams, FComponentPSOPrecacheParamsList& OutParams) override;
+	ENGINE_API virtual void CollectPSOPrecacheData(const FPSOPrecacheParams& BasePrecachePSOParams, FMaterialInterfacePSOPrecacheParamsList& OutParams) override;
 
 private:
 	ENGINE_API void UpdateRenderStateAndCollision_Internal(bool bConcurrent);

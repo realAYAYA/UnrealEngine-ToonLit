@@ -11,7 +11,6 @@
 #include "CoreMinimal.h"
 #include "Delegates/IntegerSequence.h"
 #include "HAL/PlatformCrt.h"
-#include "Math/UnrealMathSSE.h"
 #include "Math/Vector.h"
 #include "Math/Vector2D.h"
 #include "Math/Vector4.h"
@@ -22,8 +21,6 @@
 #include "Misc/EnumClassFlags.h"
 #include "Misc/TVariant.h"
 #include "Serialization/Archive.h"
-#include "Serialization/StructuredArchiveAdapters.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/CopyQualifiersFromTo.h"
 #include "Templates/EnableIf.h"
 #include "Templates/IsArray.h"
@@ -31,7 +28,7 @@
 #include "Templates/UniquePtr.h"
 #include "Templates/UnrealTemplate.h"
 #include "Templates/UnrealTypeTraits.h"
-#include "UObject/EditorObjectVersion.h"
+#include "UObject/FortniteMainBranchObjectVersion.h"
 #include "UObject/NameTypes.h"
 #include "UObject/ReleaseObjectVersion.h"
 #include "UObject/UE5MainStreamObjectVersion.h"
@@ -71,6 +68,7 @@ template <typename... Ts> struct TVariantFromTuple<TTuple<Ts...>> { using Type =
  */
 template <typename T> struct TIsBulkSerializable { static const bool Value = true; };
 template <> struct TIsBulkSerializable<FName> { static const bool Value = false; };
+template <> struct TIsBulkSerializable<FTransform> { static const bool Value = false; };
 
 
 /**
@@ -231,6 +229,25 @@ inline typename TEnableIf<!TIsBulkSerializable<T>::Value, FArchive>::Type& opera
 	else
 	{
 		Ar << Array.Extent;
+	}
+	
+	// A little bit prior to skeletal meshes storing their model data as mesh description, FTransform attributes were added but marked,
+	// by default, as bulk-serializable, even though FTransform doesn't support it. Therefore, this serialization path only worked on empty 
+	// FTransform attributes. However, there are still static mesh assets in the wild that contain empty FTransform attributes, and we need 
+	// to be able to successfully load them -- hence this check.
+	if constexpr (std::is_same_v<T, FTransform>)
+	{
+		if (Ar.IsLoading())
+		{
+			// This version check works because saved UStaticMesh assets set this on their archive, which is then inherited by the
+			// mesh description bulk storage.
+			const FCustomVersion* PossiblySavedVersion = Ar.GetCustomVersions().GetVersion(FFortniteMainBranchObjectVersion::GUID);
+			if (PossiblySavedVersion && PossiblySavedVersion->Version < FFortniteMainBranchObjectVersion::MeshDescriptionForSkeletalMesh)
+			{
+				Array.Container.BulkSerialize( Ar );
+				return Ar;
+			}
+		}
 	}
 
 	// Serialize types which aren't bulk serializable, which need to be serialized element-by-element
@@ -731,7 +748,7 @@ template <typename T>
 struct TMeshAttributesRefTypeBase
 {
 	using AttributeType = T;
-	using RealAttributeType = typename TChooseClass<TIsDerivedFrom<AttributeType, FElementID>::Value, int32, AttributeType>::Result;
+	using RealAttributeType = std::conditional_t<TIsDerivedFrom<AttributeType, FElementID>::Value, int32, AttributeType>;
 };
 
 template <typename T>
@@ -1007,7 +1024,7 @@ template <typename ElementIDType, typename AttributeType>
 void TMeshAttributesRef<ElementIDType, AttributeType>::Copy(TMeshAttributesRef<ElementIDType, const AttributeType> Src, const int32 DestChannel, const int32 SrcChannel)
 {
 	check(Src.IsValid());
-	const TMeshAttributeArrayBase<AttributeType>& SrcArray = static_cast<const ArrayType*>(Src->ArrayPtr)->GetArrayForChannel(SrcChannel);
+	const TMeshAttributeArrayBase<AttributeType>& SrcArray = static_cast<const ArrayType*>(Src.ArrayPtr)->GetArrayForChannel(SrcChannel);
 	TMeshAttributeArrayBase<AttributeType>& DestArray = static_cast<ArrayType*>(ArrayPtr)->GetArrayForChannel(DestChannel);
 	const int32 Num = FMath::Min(SrcArray.Num(), DestArray.Num());
 	for (int32 Index = 0; Index < Num; Index++)
@@ -1280,7 +1297,7 @@ void TMeshAttributesRef<ElementIDType, TArrayView<AttributeType>>::Copy(TMeshAtt
 	check(Extent > 0);
 	check(Src.IsValid());
 	check(Src.Extent == Extent);
-	const TMeshAttributeArrayBase<AttributeType>& SrcArray = static_cast<const BoundedArrayType*>(Src->ArrayPtr)->GetArrayForChannel(SrcChannel);
+	const TMeshAttributeArrayBase<AttributeType>& SrcArray = static_cast<const BoundedArrayType*>(Src.ArrayPtr)->GetArrayForChannel(SrcChannel);
 	TMeshAttributeArrayBase<AttributeType>& DestArray = static_cast<BoundedArrayType*>(ArrayPtr)->GetArrayForChannel(DestChannel);
 	const int32 Num = FMath::Min(SrcArray.Num(), DestArray.Num());
 	for (int32 Index = 0; Index < Num; Index++)

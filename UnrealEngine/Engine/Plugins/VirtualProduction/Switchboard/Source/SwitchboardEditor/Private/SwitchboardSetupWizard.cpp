@@ -98,7 +98,7 @@ TSharedRef<SWidget> SSwitchboardSetupWizard::Construct_Page_Intro()
 		.AutoHeight()
 		[
 			SNew(STextBlock)
-			.Text(LOCTEXT("Wizard_Intro_TextBlock", "Switchboard requires the following library/framework dependencies to launch:\n\n\t\u25CF  PySide2\n\n\t\u25CF  python-osc\n\n\t\u25CF  requests\n\n\t\u25CF  six\n\n\t\u25CF  cwRsync\n\n\nUnreal Engine will install the dependencies into the following directory:\n"))
+			.Text(LOCTEXT("Wizard_Intro_TextBlock", "Switchboard requires the following library/framework dependencies to launch:\n\n\t\u25CF  aioquic\n\n\t\u25CF  PySide6\n\n\t\u25CF  python-osc\n\n\t\u25CF  requests\n\n\t\u25CF  six\n\n\t\u25CF  cwRsync\n\n\nUnreal Engine will install the dependencies into the following directory:\n"))
 		]
 		+ SVerticalBox::Slot()
 		.AutoHeight()
@@ -367,7 +367,7 @@ TSharedRef<SWidget> SSwitchboardSetupWizard::Construct_Page_Autolaunch()
 			.Padding(24.0f, 0.0f, 12.0f, 0.0f)
 			[
 				SAssignNew(AutolaunchCheckbox, SCheckBox)
-#if SB_LISTENER_AUTOLAUNCH
+#if SWITCHBOARD_LISTENER_AUTOLAUNCH
 				.IsChecked(FSwitchboardEditorModule::Get().IsListenerAutolaunchEnabled() ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
 #else
 				.IsEnabled(false)
@@ -377,7 +377,7 @@ TSharedRef<SWidget> SSwitchboardSetupWizard::Construct_Page_Autolaunch()
 			.AutoWidth()
 			[
 				SNew(STextBlock)
-#if SB_LISTENER_AUTOLAUNCH
+#if SWITCHBOARD_LISTENER_AUTOLAUNCH
 				.Text(LOCTEXT("Wizard_Autolaunch_CheckboxLabel", "Launch Switchboard Listener on Login"))
 #else
 				.IsEnabled(false)
@@ -401,7 +401,7 @@ TSharedRef<SWidget> SSwitchboardSetupWizard::Construct_Page_Autolaunch()
 				SNew(SPrimaryButton)
 				.Text(LOCTEXT("Wizard_Autolaunch_ContinueButton", "Continue"))
 				.OnClicked_Lambda([this]() {
-#if SB_LISTENER_AUTOLAUNCH
+#if SWITCHBOARD_LISTENER_AUTOLAUNCH
 					FSwitchboardEditorModule::Get().SetListenerAutolaunchEnabled(AutolaunchCheckbox->IsChecked());
 #endif
 					SwitchToPage(EWizardPage::Complete);

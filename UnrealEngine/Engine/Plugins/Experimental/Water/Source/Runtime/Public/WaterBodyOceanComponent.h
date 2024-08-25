@@ -79,6 +79,10 @@ protected:
 	UPROPERTY()
 	FVector2D SavedZoneLocation;
 
+	/** If enabled, oceans will always center their mesh/bounds on the owning water zone by using a saved location that is updated whenever the ocean mesh is rebuilt. */
+	UPROPERTY(EditAnywhere, Category = Water, AdvancedDisplay)
+	bool bCenterOnWaterZone = true;
+
 	UPROPERTY(Transient)
 	float HeightOffset = 0.0f;
 

@@ -16,13 +16,16 @@ class USparseVolumeTexture;
 /**
  * A component that represents a heterogeneous volume.
  */
-UCLASS(Blueprintable, ClassGroup = (Rendering, Common), hidecategories = (Object, Activation, "Components|Activation"), ShowCategories = (Mobility), editinlinenew, meta = (BlueprintSpawnableComponent))
+UCLASS(Blueprintable, ClassGroup = (Rendering, Common), hidecategories = (Object, Activation, "Components|Activation"), ShowCategories = (Mobility), editinlinenew, meta = (BlueprintSpawnableComponent),MinimalAPI)
 class UHeterogeneousVolumeComponent : public UMeshComponent
 {
 	GENERATED_UCLASS_BODY()
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Volume)
 	FIntVector VolumeResolution;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadWrite, Category = Animation, AdvancedDisplay)
+	FTransform FrameTransform;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Animation, meta = (EditCondition = "bPlaying == false"))
 	float Frame;
@@ -42,11 +45,16 @@ class UHeterogeneousVolumeComponent : public UMeshComponent
 	UPROPERTY(EditAnywhere, Category = Animation)
 	uint32 bLooping : 1;
 
+	// Bias to apply to the calculated mip level to stream at. This property essentially influences the distance from the
+	// volume at which certain mip levels are no longer requested. Higher values result in earlier mip level transitions.
 	UPROPERTY(EditAnywhere, Category = SparseVolumeTextureStreaming, AdvancedDisplay)
-	uint32 MipLevel = 0;
+	float StreamingMipBias;
 
 	UPROPERTY(EditAnywhere, Category = SparseVolumeTextureStreaming)
 	uint32 bIssueBlockingRequests : 1;
+
+	UPROPERTY(EditAnywhere, Category = Volume)
+	uint32 bPivotAtCentroid : 1;
 
 	UPROPERTY(EditAnywhere, Category = Lighting)
 	float StepFactor;
@@ -62,6 +70,9 @@ class UHeterogeneousVolumeComponent : public UMeshComponent
 
 	UPROPERTY(Transient)
 	TObjectPtr<UMaterialInstanceDynamic> MaterialInstanceDynamic;
+
+	UFUNCTION(BlueprintCallable, Category = "Volume")
+	ENGINE_API void SetVolumeResolution(FIntVector NewValue);
 
 	UFUNCTION(BlueprintCallable, Category = "Animation")
 	ENGINE_API void SetFrame(float NewValue);
@@ -84,6 +95,9 @@ class UHeterogeneousVolumeComponent : public UMeshComponent
 	UFUNCTION(BlueprintCallable, Category = "Animation")
 	ENGINE_API void Play();
 
+	UFUNCTION(BlueprintCallable, Category = "SparseVolumeTextureStreaming")
+	ENGINE_API void SetStreamingMipBias(int32 NewValue);
+
 	~UHeterogeneousVolumeComponent() {}
 
 public:
@@ -103,13 +117,16 @@ public:
 	virtual int32 GetNumMaterials() const override { return 1; }
 	virtual bool ShouldRenderSelected() const override { return true; }
 	virtual void GetUsedMaterials(TArray<UMaterialInterface*>& OutMaterials, bool bGetDebugMaterials = false) const override;
+	virtual void SetMaterial(int32 ElementIndex, class UMaterialInterface* Material) override;
 	//~ End UPrimitiveComponent Interface.
 
 private:
 	const USparseVolumeTexture* PreviousSVT;
 
-	const USparseVolumeTexture* GetSparseVolumeTexture() const;
+	static USparseVolumeTexture* GetSparseVolumeTexture(UMaterialInterface* MaterialInterface, int32 ParameterIndex, FName* OutParamName = nullptr);
+	static UMaterialInstanceDynamic* CreateOrCastToMID(UMaterialInterface* MaterialInterface);
 	void OnSparseVolumeTextureChanged(const USparseVolumeTexture* SparseVolumeTexture);
+	UMaterialInterface* GetHeterogeneousVolumeMaterial() const; // Gets the UMaterialInterface* returned by GetMaterial(0), but returns nullptr if the material is incompatible with HeterogeneousVolumes.
 };
 
 /**
@@ -126,7 +143,7 @@ private:
 	TObjectPtr<class UHeterogeneousVolumeComponent> HeterogeneousVolumeComponent;
 
 #if WITH_EDITOR
-	virtual bool IsDataLayerTypeSupported(TSubclassOf<UDataLayerInstance> DataLayerType)  const override { return true; }
+	virtual bool ActorTypeSupportsDataLayer()  const override { return true; }
 #endif
 
 };

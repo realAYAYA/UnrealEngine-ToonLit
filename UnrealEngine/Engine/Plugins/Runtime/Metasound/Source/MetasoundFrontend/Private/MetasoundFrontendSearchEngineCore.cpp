@@ -316,7 +316,7 @@ namespace Metasound::Frontend
 		using namespace SearchEngineQuerySteps;
 
 		FMetasoundFrontendVersionNumber HighestVersionNumber{-1, -1};
-		FNodeRegistryKey Key = NodeRegistryKey::GetInvalid();
+		FNodeRegistryKey Key = FNodeRegistryKey::GetInvalid();
 		for (const FFrontendQueryEntry& InEntry : InPartition)
 		{
 			if (InEntry.Value.IsType<FNodeRegistryTransaction>())

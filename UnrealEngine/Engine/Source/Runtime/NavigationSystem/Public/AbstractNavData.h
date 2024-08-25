@@ -3,12 +3,18 @@
 #pragma once
 
 #include "AI/Navigation/NavQueryFilter.h"
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "AI/Navigation/NavigationTypes.h"
+#endif
 #include "Containers/Array.h"
 #include "Containers/ContainersFwd.h"
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "CoreMinimal.h"
+#endif
 #include "Math/Box.h"
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "Math/UnrealMathSSE.h"
+#endif
 #include "Math/Vector.h"
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
 #include "NavFilters/NavigationQueryFilter.h"

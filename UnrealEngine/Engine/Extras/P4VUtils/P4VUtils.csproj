@@ -33,6 +33,13 @@
         <PublishDir>$(NFLPrefix)Binaries/Win64</PublishDir>
         <RuntimeIdentifier>win-x64</RuntimeIdentifier>
       </PropertyGroup>
+      <Choose>
+        <When Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'Arm64'">
+          <PropertyGroup>
+            <RuntimeIdentifier>win-arm64</RuntimeIdentifier>
+          </PropertyGroup>
+        </When>
+      </Choose>
     </When>
     <Otherwise>
       <PropertyGroup>
@@ -65,9 +72,15 @@
       <Link>Restricted\Commands\%(Filename)%(Extension)</Link>
     </Compile>
   </ItemGroup>
+    
+  <ItemGroup>
+    <Content Include="UgsTool.json">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="5.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="6.0.0" />
   </ItemGroup>
 
   <ItemGroup>

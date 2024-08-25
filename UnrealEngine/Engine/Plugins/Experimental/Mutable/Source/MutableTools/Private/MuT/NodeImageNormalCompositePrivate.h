@@ -14,11 +14,7 @@ namespace mu
 	{
 	public:
 
-		MUTABLE_DEFINE_CONST_VISITABLE()
-
-	public:
-
-		static NODE_TYPE s_type;
+		static FNodeType s_type;
 
 		NodeImagePtr m_pBase;
 		NodeImagePtr m_pNormal;

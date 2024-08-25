@@ -74,7 +74,7 @@ void FPBDEvolution::ResetGroups()
 
 FPBDEvolution::FPBDEvolution(
 	FSolverParticles&& InParticles,
-	FSolverRigidParticles&& InGeometryParticles,
+	FSolverCollisionParticles&& InGeometryParticles,
 	TArray<TVec3<int32>>&& CollisionTriangles,
 	int32 NumIterations, FSolverReal CollisionThickness,
 	FSolverReal SelfCollisionThickness,
@@ -343,7 +343,7 @@ void FPBDEvolution::PreIterationUpdate(
 					const int32 Index = Offset + i;
 					if (MParticles.InvM(Index) != (FSolverReal)0.)  // Process dynamic particles
 					{
-						MParticles.P(Index) = MParticles.X(Index);
+						MParticles.SetP(Index, MParticles.GetX(Index));
 					}
 					else  // Process kinematic particles
 					{
@@ -406,7 +406,7 @@ void FPBDEvolution::PreIterationUpdate(
 						}
 
 						// Euler Step with point damping integration
-						MParticles.P(Index) = MParticles.X(Index) + MParticles.V(Index) * ParticleDampingIntegrated;
+						MParticles.SetP(Index, MParticles.GetX(Index) + MParticles.GetV(Index) * ParticleDampingIntegrated);
 
 						MParticles.V(Index) *= ParticleDampingPowDt;
 					}
@@ -452,7 +452,7 @@ void FPBDEvolution::PreIterationUpdate(
 						}
 
 						// Euler Step with point damping integration
-						MParticles.P(Index) = MParticles.X(Index) + MParticles.V(Index) * DampingIntegrated;
+						MParticles.SetP(Index, MParticles.GetX(Index) + MParticles.GetV(Index) * DampingIntegrated);
 
 						MParticles.V(Index) *= DampingPowDt;
 					}
@@ -550,10 +550,10 @@ void FPBDEvolution::AdvanceOneTimeStep(const FSolverReal Dt)
 			SCOPE_CYCLE_COUNTER(STAT_ChaosPBDCollisionKinematicUpdate);
 
 			MCollisionParticlesActiveView.SequentialFor(
-				[this, Dt](FSolverRigidParticles& CollisionParticles, int32 Index)
+				[this, Dt](FSolverCollisionParticles& CollisionParticles, int32 Index)
 				{
 					// Store active collision particle frames prior to the kinematic update for CCD collisions
-					MCollisionTransforms[Index] = FSolverRigidTransform3(CollisionParticles.X(Index), CollisionParticles.R(Index));
+					MCollisionTransforms[Index] = FSolverRigidTransform3(CollisionParticles.GetX(Index), CollisionParticles.GetR(Index));
 
 					// Update collision transform and velocity
 					MCollisionKinematicUpdate(CollisionParticles, Dt, MTime, Index); // This expects Sequential update.
@@ -696,8 +696,8 @@ void FPBDEvolution::AdvanceOneTimeStep(const FSolverReal Dt)
 				MParticlesActiveView.ParallelFor(
 					[Dt](FSolverParticles& Particles, int32 Index)
 					{
-						Particles.V(Index) = (Particles.P(Index) - Particles.X(Index)) / Dt;
-						Particles.X(Index) = Particles.P(Index);
+						Particles.SetV(Index, (Particles.GetP(Index) - Particles.GetX(Index)) / Dt);
+						Particles.SetX(Index, Particles.GetP(Index));
 					}, MinParallelBatchSize);
 			}
 		}

@@ -6,9 +6,6 @@ namespace UnrealBuildTool.Rules
     {
         public ControlRigDeveloper(ReadOnlyTargetRules Target) : base(Target)
         {
-            PrivateIncludePaths.Add("ControlRig/Private");
-			PrivateIncludePaths.Add("ControlRigEditor/Private");
-
 			// Copying some these from ControlRig.build.cs, our deps are likely leaner
 			// and therefore these could be pruned if needed:
 			PrivateDependencyModuleNames.AddRange(

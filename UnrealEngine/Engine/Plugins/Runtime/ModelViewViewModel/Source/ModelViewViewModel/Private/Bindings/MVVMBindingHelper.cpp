@@ -112,6 +112,21 @@ namespace UE::MVVM::BindingHelper
 	}
 
 
+	bool IsValidForEventBinding(const FMVVMConstFieldVariant InVariant)
+	{
+		if (InVariant.IsProperty())
+		{
+			// Same rules as other bindings apply for event binding to properties.
+			return IsValidForDestinationBinding(InVariant.GetProperty());
+		}
+		else if (InVariant.IsFunction())
+		{
+			return IsValidForEventBinding(InVariant.GetFunction());
+		}
+		return false;
+	}
+
+
 	bool IsValidForSimpleRuntimeConversion(const UFunction* InFunction)
 	{
 		if (Private::IsValidCommon(InFunction)
@@ -137,6 +152,12 @@ namespace UE::MVVM::BindingHelper
 			return ReturnProperty && FirstArgumentProperty == nullptr;
 		}
 		return false;
+	}
+
+
+	bool IsValidForEventBinding(const UFunction* InFunction)
+	{
+		return Private::IsValidCommon(InFunction) && !InFunction->HasAnyFunctionFlags(FUNC_Const | FUNC_BlueprintPure | FUNC_BlueprintEvent);
 	}
 
 
@@ -461,7 +482,11 @@ namespace UE::MVVM::BindingHelper
 				&& DestinationObjectProperty
 				&& SourceObjectProperty->PropertyClass
 				&& DestinationObjectProperty->PropertyClass
-				&& SourceObjectProperty->PropertyClass->IsChildOf(DestinationObjectProperty->PropertyClass);
+				&& SourceObjectProperty->PropertyClass->IsChildOf(DestinationObjectProperty->PropertyClass)
+				&& (
+					SourceObjectProperty->GetClass() == DestinationObjectProperty->GetClass()
+					|| SourceObjectProperty->AllowObjectTypeReinterpretationTo(DestinationObjectProperty) // prevents TWeakObjectPtr to UObject*, allow TObjectPtr to UObject*
+				);
 		}
 
 		bool IsObjectArrayPropertyCompatible(const FProperty* Source, const FProperty* Destination)

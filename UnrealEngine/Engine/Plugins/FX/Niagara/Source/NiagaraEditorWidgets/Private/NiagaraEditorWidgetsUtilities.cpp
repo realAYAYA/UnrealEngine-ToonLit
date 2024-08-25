@@ -125,6 +125,10 @@ FName FNiagaraStackEditorWidgetsUtilities::GetIconColorNameForExecutionCategory(
 	{
 		return "NiagaraEditor.Stack.IconColor.Emitter";
 	}
+	else if (ExecutionCategoryName == UNiagaraStackEntry::FExecutionCategoryNames::StatelessEmitter)
+	{
+		return "NiagaraEditor.Stack.IconColor.StatelessEmitter";
+	}
 	else if (ExecutionCategoryName == UNiagaraStackEntry::FExecutionCategoryNames::Particle)
 	{
 		return "NiagaraEditor.Stack.IconColor.Particle";
@@ -353,12 +357,6 @@ void ToggleShouldDebugDraw(TWeakObjectPtr<UNiagaraStackItem> StackItemWeak)
 	}
 }
 
-void EnableNoteMode(TWeakObjectPtr<UNiagaraStackModuleItem> ModuleItem)
-{
-	ModuleItem->GetSystemViewModel()->GetSelectionViewModel()->UpdateSelectedEntries({ModuleItem.Get()}, {}, true);
-	ModuleItem->SetNoteMode(true);
-}
-
 bool FNiagaraStackEditorWidgetsUtilities::AddStackItemContextMenuActions(FMenuBuilder& MenuBuilder, UNiagaraStackItem& StackItem)
 {
 	if (StackItem.SupportsChangeEnabled())
@@ -388,23 +386,27 @@ bool FNiagaraStackEditorWidgetsUtilities::AddStackItemContextMenuActions(FMenuBu
 				
 				if (ModuleItem->GetModuleNode().ContainsDebugSwitch())
 				{
+					FText TooltipText = FNiagaraEditorSharedTexts::DebugDrawUIActionBaseText;
+
+					if(FVersionedNiagaraScriptData* ScriptData = ModuleItem->GetModuleNode().GetScriptData())
+					{
+						if(ScriptData->DebugDrawMessage.IsEmpty() == false)
+						{
+							TooltipText = ScriptData->DebugDrawMessage;
+						}
+					}
+					
 					FUIAction Action(FExecuteAction::CreateStatic(&ToggleShouldDebugDraw, TWeakObjectPtr<UNiagaraStackItem>(&StackItem)),
 						FCanExecuteAction(),
 						FIsActionChecked::CreateUObject(ModuleItem, &UNiagaraStackModuleItem::IsDebugDrawEnabled));
 					MenuBuilder.AddMenuEntry(
 						LOCTEXT("ShouldDebugDraw", "Enable Debug Draw"),
-						LOCTEXT("ToggleShouldDebugDrawToolTip", "Toggle debug draw enable/disabled"),
+						TooltipText,
 						FSlateIcon(),
 						Action,
 						NAME_None,
 						EUserInterfaceActionType::Check);
 				}
-
-				MenuBuilder.AddMenuEntry(
-					LOCTEXT("AddNote", "Add Note"),
-					LOCTEXT("AddNoteToolTip", "Add a note to this module item."),
-					FSlateIcon(),
-					FUIAction(FExecuteAction::CreateStatic(&EnableNoteMode, TWeakObjectPtr<UNiagaraStackModuleItem>(ModuleItem))));
 			}
 
 			if (UNiagaraStackRendererItem* RendererItem = Cast<UNiagaraStackRendererItem>(&StackItem))

@@ -9,11 +9,11 @@ import backend from '../../backend';
 import { GetExternalIssueResponse, GetIssueResponse, IssueData } from '../../backend/Api';
 import { ISideRailLink } from '../../base/components/SideRail';
 import { getElapsedString, getShortNiceTime } from '../../base/utilities/timeUtils';
-import { hordeClasses } from '../../styles/Styles';
 import { IssueModalV2 } from '../IssueViewV2';
 import { useQuery } from '../JobDetailCommon';
 import { IssueStatusIcon } from '../StatusIcon';
 import { JobDataView, JobDetailsV2 } from "./JobDetailsViewCommon";
+import { getHordeStyling } from '../../styles/Styles';
 
 const sideRail: ISideRailLink = { text: "Health", url: "rail_health" };
 
@@ -171,14 +171,21 @@ export const HealthPanel: React.FC<{ jobDetails: JobDetailsV2 }> = observer(({ j
 
    dataView.subscribe();
 
+   const { hordeClasses } = getHordeStyling();
+
    // query changes and immediately initializes
    dataView.set(stepId, labelIdx ? parseInt(labelIdx) : undefined);
 
    let issues: GetIssueResponse[] = Object.assign([], dataView.issues);
 
-   if (!jobDetails.jobData || !issues.length || !jobDetails?.viewsReady) {
+   if (!jobDetails.jobData || !issues.length) {
       return null;
    }
+
+   if (!jobDetails.viewReady(dataView.order)) {
+      return null;
+   }
+
 
    type HealthItem = {
       issue: GetIssueResponse;

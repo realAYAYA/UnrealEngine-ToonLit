@@ -10,20 +10,25 @@
 void ATP_VehicleAdvPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
-
-	// get the enhanced input subsystem
-	if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer()))
-	{
-		// add the mapping context so we get controls
-		Subsystem->AddMappingContext(InputMappingContext, 0);
-	}
-
+	
 	// spawn the UI widget and add it to the viewport
 	VehicleUI = CreateWidget<UTP_VehicleAdvUI>(this, VehicleUIClass);
 
 	check(VehicleUI);
 
 	VehicleUI->AddToViewport();
+}
+
+void ATP_VehicleAdvPlayerController::SetupInputComponent()
+{
+	Super::SetupInputComponent();
+	
+	// get the enhanced input subsystem
+	if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer()))
+	{
+		// add the mapping context so we get controls
+		Subsystem->AddMappingContext(InputMappingContext, 0);
+	}
 }
 
 void ATP_VehicleAdvPlayerController::Tick(float Delta)

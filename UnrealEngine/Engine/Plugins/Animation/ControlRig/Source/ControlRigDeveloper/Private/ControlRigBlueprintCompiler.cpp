@@ -3,6 +3,7 @@
 #include "ControlRigBlueprintCompiler.h"
 #include "ControlRig.h"
 #include "ControlRigBlueprint.h"
+#include "Kismet2/KismetReinstanceUtilities.h"
 
 bool FControlRigBlueprintCompiler::CanCompile(const UBlueprint* Blueprint)
 {
@@ -22,6 +23,24 @@ void FControlRigBlueprintCompiler::Compile(UBlueprint* Blueprint, const FKismetC
 
 	FControlRigBlueprintCompilerContext Compiler(Blueprint, Results, CompileOptions);
 	Compiler.Compile();
+}
+
+void FControlRigBlueprintCompilerContext::SpawnNewClass(const FString& NewClassName)
+{
+	DECLARE_SCOPE_HIERARCHICAL_COUNTER_FUNC()
+
+	NewRigVMBlueprintGeneratedClass = FindObject<UControlRigBlueprintGeneratedClass>(Blueprint->GetOutermost(), *NewClassName);
+
+	if (NewRigVMBlueprintGeneratedClass == nullptr)
+	{
+		NewRigVMBlueprintGeneratedClass = NewObject<UControlRigBlueprintGeneratedClass>(Blueprint->GetOutermost(), FName(*NewClassName), RF_Public | RF_Transactional);
+	}
+	else
+	{
+		// Already existed, but wasn't linked in the Blueprint yet due to load ordering issues
+		FBlueprintCompileReinstancer::Create(NewRigVMBlueprintGeneratedClass);
+	}
+	NewClass = NewRigVMBlueprintGeneratedClass;
 }
 
 void FControlRigBlueprintCompilerContext::CopyTermDefaultsToDefaultObject(UObject* DefaultObject)

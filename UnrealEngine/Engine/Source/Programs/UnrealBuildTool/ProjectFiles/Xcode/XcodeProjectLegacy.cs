@@ -1237,7 +1237,7 @@ namespace UnrealBuildTool.XcodeProjectLegacy
 					if (bCreateMacInfoPlist)
 					{
 						Directory.CreateDirectory(Path.GetDirectoryName(MacInfoPlistPath)!);
-						UEDeployMac.GeneratePList(ProjectPath.FullName, bIsUnrealGame, GameName, Config.BuildTarget, EngineDir.FullName, MacExecutableFileName);
+						UEDeployMac.GeneratePList(ProjectPath.FullName, bIsUnrealGame, GameName, Config.BuildTarget, EngineDir.FullName, MacExecutableFileName, Config.ProjectTarget!.TargetRules!.Type);
 					}
 					if (bCreateIOSInfoPlist)
 					{
@@ -1269,7 +1269,7 @@ namespace UnrealBuildTool.XcodeProjectLegacy
 			// #jira UE-143619: Pre Monterey macOS requires this option for a packaged app to run on iOS15 due to new code signature format. Could be removed once Monterey is minimum OS.
 			Content.Append("\t\t\t\tOTHER_CODE_SIGN_FLAGS = \"--generate-entitlement-der --deep\";" + ProjectFileGenerator.NewLine);
 
-			Content.Append("\t\t\t\tMACOSX_DEPLOYMENT_TARGET = " + MacToolChain.Settings.MacOSVersion + ";" + ProjectFileGenerator.NewLine);
+			Content.Append("\t\t\t\tMACOSX_DEPLOYMENT_TARGET = " + MacToolChain.Settings.MinMacDeploymentVersion(Config.ProjectTarget!.TargetRules!.Type) + ";" + ProjectFileGenerator.NewLine);
 			Content.Append("\t\t\t\tINFOPLIST_OUTPUT_FORMAT = xml;" + ProjectFileGenerator.NewLine);
 			Content.Append("\t\t\t\tCOMBINE_HIDPI_IMAGES = YES;" + ProjectFileGenerator.NewLine);
 

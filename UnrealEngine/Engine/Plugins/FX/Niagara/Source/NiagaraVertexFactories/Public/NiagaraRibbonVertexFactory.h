@@ -74,6 +74,7 @@ BEGIN_GLOBAL_SHADER_PARAMETER_STRUCT(FNiagaraRibbonVFLooseParameters, NIAGARAVER
 	SHADER_PARAMETER(uint32, FacingMode)
 	SHADER_PARAMETER(uint32, Shape)
 	SHADER_PARAMETER(uint32, NeedsPreciseMotionVectors)
+	SHADER_PARAMETER(uint32, UseGeometryNormals)
 	SHADER_PARAMETER_SRV(Buffer<uint>, SortedIndices)
 	SHADER_PARAMETER_SRV(Buffer<float>, TangentsAndDistances)
 	SHADER_PARAMETER_SRV(Buffer<uint>, MultiRibbonIndices)

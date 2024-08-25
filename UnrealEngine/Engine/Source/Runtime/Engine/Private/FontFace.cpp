@@ -7,6 +7,7 @@
 #include "Framework/Application/SlateApplication.h"
 #include "Fonts/FontCache.h"
 #include "Rendering/SlateRenderer.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/Package.h"
 #include "Misc/PackageName.h"
 #include "UObject/EditorObjectVersion.h"
@@ -130,11 +131,18 @@ void UFontFace::PostEditUndo()
 
 void UFontFace::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
 	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UFontFace::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	Super::GetAssetRegistryTags(Context);
 
 	FAssetImportInfo ImportInfo;
 	ImportInfo.Insert(FAssetImportInfo::FSourceFile(SourceFilename));
-	OutTags.Add(FAssetRegistryTag(SourceFileTagName(), ImportInfo.ToJson(), FAssetRegistryTag::TT_Hidden));
+	Context.AddTag(FAssetRegistryTag(SourceFileTagName(), ImportInfo.ToJson(), FAssetRegistryTag::TT_Hidden));
 }
 
 void UFontFace::CookAdditionalFilesOverride(const TCHAR* PackageFilename, const ITargetPlatform* TargetPlatform,

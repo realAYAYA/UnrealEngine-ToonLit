@@ -1,8 +1,18 @@
 #!/bin/bash
 
+#
+# This script is configured based on the following environment variables:
+#    ANDROID_NDK     - If present, it needs to point to the root directory of the Android NDK.
+#                      In such case, cross compilation for the Android platform will be enabled.
+#                      Typically, the path will be like:
+#                      /users/<user>/library/Android/sdk/ndk/<version>
+#
+
 set -e
 
-ISPC_VERSION=1.18.0
+ISPC_VERSION=1.21.0
+
+BUILD_UNIVERSAL=true
 
 UE_THIRD_PARTY_LOCATION=`cd $(pwd)/..; pwd`
 
@@ -24,7 +34,7 @@ mkdir $ISPC_BUILD_LOCATION
 
 CMAKE_ARGS=(
     -DCMAKE_INSTALL_PREFIX="$ISPC_INSTALL_LOCATION"
-    -DCMAKE_OSX_DEPLOYMENT_TARGET="10.14"
+    -DCMAKE_OSX_DEPLOYMENT_TARGET="11.0"
     -DCMAKE_BUILD_TYPE=Release
     -DARM_ENABLED=ON
     -DWASM_ENABLED=OFF
@@ -41,10 +51,15 @@ CMAKE_ARGS=(
     -DISPC_FREEBSD_TARGET=OFF
     -DISPC_MACOS_TARGET=ON
     -DISPC_IOS_TARGET=ON
-    -DISPC_ANDROID_TARGET=OFF
-    -DISPC_PS4_TARGET=OFF
-    -DISPC_PS5_TARGET=OFF
+    -DISPC_PS_TARGET=OFF
 )
+
+if [ "$ANDROID_NDK" != "" ] ; then
+    CMAKE_ARGS+=(-DISPC_ANDROID_TARGET=ON)
+    CMAKE_ARGS+=(-DISPC_ANDROID_NDK_PATH=$ANDROID_NDK/toolchains/llvm/prebuilt/darwin-x86_64)
+else
+    CMAKE_ARGS+=(-DISPC_ANDROID_TARGET=OFF)
+fi
 
 if [ "$BUILD_UNIVERSAL" = true ] ; then
     CMAKE_ARGS+=(-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64")
@@ -62,13 +77,13 @@ echo Configuring build for ISPC version $ISPC_VERSION...
 cmake -G "Xcode" $ISPC_SOURCE_LOCATION "${CMAKE_ARGS[@]}"
 
 echo Building ISPC for Release...
-cmake --build . --config Release
+cmake --build . --config Release --parallel 8
 
 echo Installing ISPC for Release...
 cmake --install . --config Release
 
-echo Copying ISPC for ISPCTexComp...
-cp "$ISPC_INSTALL_LOCATION/bin/ispc" "$UE_MODULE_LOCATION/../ISPCTexComp/ispc_osx"
+echo Copying ISPC into the bin directory...
+cp "$ISPC_INSTALL_LOCATION/bin/ispc" "$UE_MODULE_LOCATION/bin/Mac/ispc"
 
 popd
 

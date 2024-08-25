@@ -84,6 +84,7 @@ namespace UE::MLDeformer
 		SLATE_BEGIN_ARGS(SMLDeformerBonePickerDialog) {}
 		SLATE_ARGUMENT(FReferenceSkeleton*, RefSkeleton)		// The reference skeleton to grab the bone names and hierarchy from.
 		SLATE_ARGUMENT(TArray<FName>, HighlightBoneNames)		// Highlight bones in this list.
+		SLATE_ARGUMENT(TArray<FName>, InitialSelectedBoneNames)	// Select all bones in this list.
 		SLATE_ARGUMENT(FSlateColor, HighlightBoneNamesColor)	// Bones inside the HighlightBoneNames list will use this color.
 		SLATE_ARGUMENT(TArray<FName>, IncludeList)				// If empty, all bones can be picked. If not empty, only show bones with names inside this list.
 		SLATE_ARGUMENT(FText, Title)							// The window title.
@@ -107,11 +108,14 @@ namespace UE::MLDeformer
 		void OnCancelClicked();
 		void OnFilterTextChanged(const FText& InFilterText);
 		void RefreshBoneTreeElements();
+		void SelectInitialItems();
+		void SelectInitialItemsRecursive(const TSharedPtr<FMLDeformerBonePickerTreeElement>& Item);
 
 	private:
 		TSharedPtr<SMLDeformerBonePickerTreeWidget> BoneTreeWidget;
 		TSharedPtr<SWidget> ExtraWidget;
 		TArray<FName> HighlightBoneNames;
+		TArray<FName> InitialSelectedBoneNames;
 		TArray<FName> IncludeList;
 		FReferenceSkeleton* RefSkeleton = nullptr;
 		TArray<FName> PickedBoneNames;

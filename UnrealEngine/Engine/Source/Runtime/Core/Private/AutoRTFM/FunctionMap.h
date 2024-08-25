@@ -62,9 +62,9 @@ inline void* FunctionMapTryLookup(void* OldFunction)
 }
 
 template<typename TReturnType, typename... TParameterTypes>
-auto FunctionMapTryLookup(TReturnType (*Function)(TParameterTypes...)) -> TReturnType (*)(TParameterTypes..., FContext*)
+auto FunctionMapTryLookup(TReturnType (*Function)(TParameterTypes...)) -> TReturnType (*)(TParameterTypes...)
 {
-    return reinterpret_cast<TReturnType (*)(TParameterTypes..., FContext*)>(FunctionMapTryLookup(reinterpret_cast<void*>(Function)));
+    return reinterpret_cast<TReturnType (*)(TParameterTypes...)>(FunctionMapTryLookup(reinterpret_cast<void*>(Function)));
 }
 
 } // namespace AutoRTFM

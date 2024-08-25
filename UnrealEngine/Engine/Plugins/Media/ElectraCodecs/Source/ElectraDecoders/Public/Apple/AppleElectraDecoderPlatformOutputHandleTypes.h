@@ -40,6 +40,13 @@ enum class EElectraDecoderPlatformPixelEncoding
 	ARGB_BigEndian,	//!< Interpret as ARGB, big endian
 };
 
+class FElectraDecoderOutputSync final
+{
+public:
+	FElectraDecoderOutputSync() = default;
+	~FElectraDecoderOutputSync() = default;
+};
+
 class IElectraDecoderVideoOutputImageBuffers
 {
 public:
@@ -54,6 +61,9 @@ public:
 	
 	// Returns the n'th CFImageBuffer ("texture") reference.
 	virtual void* GetBufferTextureByIndex(int32 InBufferIndex) const = 0;
+
+	// Returns the n'th image buffer's GPU sync object to signal texture data as being ready to be read
+	virtual bool GetBufferTextureSyncByIndex(int32 InBufferIndex, FElectraDecoderOutputSync& SyncObject) const = 0;
 
 	// Returns the n'th image buffer format
 	virtual EElectraDecoderPlatformPixelFormat GetBufferFormatByIndex(int32 InBufferIndex) const = 0;

@@ -62,8 +62,9 @@ public:
 	FUniqueNetIdRef UserId;
 	/** Any addition account data associated with the friend */
 	TMap<FString, FString> AccountData;
-	/** @temp presence info */
-	FOnlineUserPresence Presence;
+
+	/** A backup presence we can use if we are unable to get a friend's presence for any reason. */
+	static const FOnlineUserPresence EmptyPresence;
 };
 
 /**

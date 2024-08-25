@@ -3,6 +3,7 @@
 #include "InterchangeResult.h"
 #include "Dom/JsonValue.h"
 #include "Dom/JsonObject.h"
+#include "Misc/Paths.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonWriter.h"
 #include "Serialization/JsonSerializer.h"
@@ -99,3 +100,29 @@ UInterchangeResult* UInterchangeResult::FromJson(const FString& JsonString)
 	return Result;
 }
 
+FText UInterchangeResult::GetMessageLogText() const
+{
+	FString SourceText = SourceAssetName;
+
+	// Make sure file path is not taking the whole line
+	const int32 MaximumSourceNameLength = 64;
+	if (SourceText.Len() > MaximumSourceNameLength)
+	{
+		SourceText = TEXT("...") + SourceText.RightChop(MaximumSourceNameLength-3);
+	}
+
+	const FText AssetTypeName = FText::FromString(AssetType ? AssetType->GetName() : TEXT("Unknown"));
+	FString AssetName = AssetFriendlyName;
+	
+	if (AssetName.IsEmpty())
+	{
+		FSoftObjectPath AssetSoftPath(DestinationAssetName);
+		AssetName = AssetSoftPath.GetAssetName();
+		if (AssetSoftPath.IsSubobject())
+		{
+			AssetName = FPaths::GetExtension(AssetSoftPath.GetSubPathString());
+		}
+	}
+
+	return FText::Format(NSLOCTEXT("InterchangeManager", "MessageLog", "[{0} : '{1}', {2}] {3}"), FText::FromString(SourceText), FText::FromString(AssetName), AssetTypeName, GetText());
+}

@@ -10,7 +10,6 @@
 #include "Serialization/StructuredArchiveAdapters.h"
 #include "Serialization/StructuredArchiveNameHelpers.h"
 #include "Serialization/StructuredArchiveSlots.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/Less.h"
 #include "Templates/Tuple.h"
 #include "Trace/Detail/Channel.h"

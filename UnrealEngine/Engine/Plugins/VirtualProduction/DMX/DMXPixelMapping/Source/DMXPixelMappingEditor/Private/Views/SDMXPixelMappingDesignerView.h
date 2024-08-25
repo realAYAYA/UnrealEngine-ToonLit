@@ -2,32 +2,29 @@
 
 #pragma once
 
-#include "Widgets/SDMXPixelMappingSurface.h"
-
-
 #include "EditorUndoClient.h"
-
-class UDMXPixelMapping;
+#include "Widgets/SDMXPixelMappingSurface.h"
 
 class FDMXPixelMappingComponentReference;
 class FDMXPixelMappingDragDropOp;
 class FDMXPixelMappingToolkit;
-class IDMXPixelMappingOutputComponentWidgetInterface;
-class SDMXPixelMappingRuler;
-class SDMXPixelMappingSourceTextureViewport;
-class SDMXPixelMappingTransformHandle;
-class SDMXPixelMappingZoomPan;
-class UDMXPixelMappingBaseComponent;
-class UDMXPixelMappingOutputComponent;
-class UDMXPixelMappingRendererComponent;
-
-class FHittestGrid;
-struct FOptionalSize;
 class SBorder;
 class SBox;
 class SCanvas;
 class SConstraintCanvas;
+class SDMXPixelMappingRuler;
+class SDMXPixelMappingSourceTextureViewport;
+class SDMXPixelMappingTransformHandle;
+class SDMXPixelMappingZoomPan;
 class SOverlay;
+class UDMXPixelMapping;
+class UDMXPixelMappingBaseComponent;
+class UDMXPixelMappingOutputComponent;
+class UDMXPixelMappingRendererComponent;
+namespace UE::DMX
+{
+	class IDMXPixelMappingOutputComponentWidgetInterface;
+}
 
 
 class SDMXPixelMappingDesignerView
@@ -58,36 +55,36 @@ public:
 	 *
 	 * @param InArgs The construction arguments.
 	 */
-	void Construct(const FArguments& InArgs, const TSharedPtr<FDMXPixelMappingToolkit>& InToolkit);
+	void Construct(const FArguments& InArgs, const TSharedRef<FDMXPixelMappingToolkit>& InToolkit);
 
 	/** Returns the geometry of the graph */
 	const FGeometry& GetGraphTickSpaceGeometry() const;
 
 protected:
-	// Begin SWidget interface
+	//~ Begin SWidget interface
+	virtual int32 OnPaint(const FPaintArgs& Args, const FGeometry& AllottedGeometry, const FSlateRect& MyCullingRect, FSlateWindowElementList& OutDrawElements, int32 LayerId, const FWidgetStyle& InWidgetStyle, bool bParentEnabled) const override;
+	virtual void Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime) override;
 	virtual FReply OnMouseButtonDown(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override;
 	virtual FReply OnMouseButtonUp(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override;
-	virtual FReply OnMouseMove(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override;
 	virtual FReply OnKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent) override;
-	virtual void Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime) override;
 	virtual FReply OnDragDetected(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override;
 	virtual void OnDragEnter(const FGeometry& MyGeometry, const FDragDropEvent& DragDropEvent) override;
 	virtual void OnDragLeave(const FDragDropEvent& DragDropEvent) override;
 	virtual FReply OnDragOver(const FGeometry& MyGeometry, const FDragDropEvent& DragDropEvent) override;
 	virtual FReply OnDrop(const FGeometry& MyGeometry, const FDragDropEvent& DragDropEvent) override;
-	// End of SWidget interface
+	//~ End of SWidget interface
 
 	//~ Begin SDMXPixelMappingSurface interface
 	virtual FSlateRect ComputeAreaBounds() const override;
 	virtual int32 GetGraphRulePeriod() const override;
 	virtual float GetGridScaleAmount() const override;
-	virtual int32 GetSnapGridSize() const override;
+	virtual int32 GetGridSize() const override;
 	//~ End SDMXPixelMappingSurface interface
 
-	//~ Begin FEditorUndoClient Interface
+	//~ Begin FEditorUndoClient interface
 	virtual void PostUndo(bool bSuccess) override;
 	virtual void PostRedo(bool bSuccess) override;
-	// End of FEditorUndoClient
+	//~ End FEditorUndoClient interface
 
 private:
 	/** Rebuilds the designer widget */
@@ -98,6 +95,9 @@ private:
 
 	/** Clears the extension widgets */
 	void ClearExtensionWidgets();
+
+	/** Opens the designer context menu */
+	void OpenContextMenu();
 
 	/** Returns if the extension widget canvas should be visible */
 	EVisibility GetExtensionCanvasVisibility() const;
@@ -126,7 +126,6 @@ private:
 	/** Returns the visibility of the ZoomPan widget */
 	EVisibility GetZoomPanVisibility() const;
 
-private:
 	/** Called when zoom to fit was clicked */
 	FReply OnZoomToFitClicked();
 
@@ -146,7 +145,6 @@ private:
 
 	void PopulateWidgetGeometryCache_Loop(FArrangedWidget& Parent);
 
-private:
 	/** Returns the component under the cursor */
 	UDMXPixelMappingOutputComponent* GetComponentUnderCursor() const;
 
@@ -172,7 +170,6 @@ private:
 	/** Updates the drag drop op to use the patches selected in the Palette */
 	void HandleDragEnterFromDetailsOrPalette(const TSharedPtr<FDMXPixelMappingDragDropOp>& DragDropOp);
 
-private:
 	/** The component that should be selected, but isn't selected yet */
 	TWeakObjectPtr<UDMXPixelMappingBaseComponent> PendingSelectedComponent;
 
@@ -188,19 +185,20 @@ private:
 	/** Canvas that holds the component widgets */
 	TSharedPtr<SConstraintCanvas> DesignCanvas;
 
-	TSharedPtr<SBox> PreviewSizeConstraint;
-
 	TSharedPtr<SOverlay> PreviewHitTestRoot;
 
 	/** Borer that contains the Design Canvas */
 	TSharedPtr<SBorder> DesignCanvasBorder;
 
-	TSharedPtr<FHittestGrid> HittestGrid;
+	/** Cached cursor position in graph space */
+	FVector2D CursorPositionGraphSpace = FVector2D::ZeroVector;
 
 	TMap<TWeakPtr<SWidget>, FArrangedWidget> CachedWidgetGeometry;
 
+	/** Cached current renderer component */
 	TWeakObjectPtr<UDMXPixelMappingRendererComponent> CachedRendererComponent;
 
+	/** The widget that handles zoom and pan */
 	TSharedPtr<SDMXPixelMappingZoomPan> ZoomPan;
 
 	/** The ruler bar at the top of the designer. */
@@ -212,21 +210,8 @@ private:
 	/** The position in local space where the user began dragging a widget */
 	FVector2D DragAnchor;
 
-	/** Oupput component views currently displayed */
-	TArray<TSharedRef<IDMXPixelMappingOutputComponentWidgetInterface>> OutputComponentWidgets;
+	/** Output component views currently displayed */
+	TArray<TSharedRef<UE::DMX::IDMXPixelMappingOutputComponentWidgetInterface>> OutputComponentWidgets;
 
 	TArray<TSharedPtr<SDMXPixelMappingTransformHandle>> TransformHandles;
-
-	/** Helper class to restore selection on scope */
-	class FScopedRestoreSelection
-	{
-	public:
-		FScopedRestoreSelection(TSharedRef<FDMXPixelMappingToolkit> ToolkitPtr, TSharedRef<SDMXPixelMappingDesignerView> DesignerView);
-		~FScopedRestoreSelection();
-
-	private:
-		TWeakPtr<FDMXPixelMappingToolkit> WeakToolkit;
-		TWeakPtr<SDMXPixelMappingDesignerView> WeakDesignerView;
-		TArray<TWeakObjectPtr<UDMXPixelMappingBaseComponent>> CachedSelectedComponents;
-	};
 };

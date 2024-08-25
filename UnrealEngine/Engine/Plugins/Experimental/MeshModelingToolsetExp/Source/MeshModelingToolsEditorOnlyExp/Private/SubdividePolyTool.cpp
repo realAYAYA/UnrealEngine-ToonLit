@@ -349,7 +349,7 @@ void USubdividePolyTool::Setup()
 	{
 		if (bNewRenderGroups)
 		{
-			PreviewMesh->SetOverrideRenderMaterial(ToolSetupUtil::GetSelectionMaterial(GetToolManager()));
+			PreviewMesh->SetOverrideRenderMaterial(ToolSetupUtil::GetVertexColorMaterial(GetToolManager()));
 			PreviewMesh->SetTriangleColorFunction([](const FDynamicMesh3* Mesh, int TriangleID)
 			{
 				return LinearColors::SelectFColor(Mesh->GetTriangleGroup(TriangleID));

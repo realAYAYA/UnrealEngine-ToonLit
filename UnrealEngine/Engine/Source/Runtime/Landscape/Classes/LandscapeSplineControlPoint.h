@@ -252,7 +252,7 @@ public:
 	virtual void SetSplineSelected(bool bInSelected);
 
 	/** Calculates rotation from connected segments */
-	virtual void AutoCalcRotation();
+	virtual void AutoCalcRotation(bool bAlwaysRotateForward);
 
 	/**  */
 	virtual void AutoFlipTangents();

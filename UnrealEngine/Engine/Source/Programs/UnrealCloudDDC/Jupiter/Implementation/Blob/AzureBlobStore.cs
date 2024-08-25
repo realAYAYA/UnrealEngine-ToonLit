@@ -22,306 +22,335 @@ using OpenTelemetry.Trace;
 
 namespace Jupiter.Implementation
 {
-    public class AzureBlobStore : IBlobStore
-    {
-        private readonly IOptionsMonitor<AzureSettings> _settings;
-        private readonly ISecretResolver _secretResolver;
-        private readonly INamespacePolicyResolver _namespacePolicyResolver;
-        private readonly IServiceProvider _provider;
-        private readonly ConcurrentDictionary<NamespaceId, AzureStorageBackend> _backends = new ConcurrentDictionary<NamespaceId, AzureStorageBackend>();
+	public class AzureBlobStore : IBlobStore
+	{
+		private readonly IOptionsMonitor<AzureSettings> _settings;
+		private readonly ISecretResolver _secretResolver;
+		private readonly INamespacePolicyResolver _namespacePolicyResolver;
+		private readonly IServiceProvider _provider;
+		private readonly ConcurrentDictionary<NamespaceId, AzureStorageBackend> _backends = new ConcurrentDictionary<NamespaceId, AzureStorageBackend>();
 
-        public AzureBlobStore(IOptionsMonitor<AzureSettings> settings, ISecretResolver secretResolver, INamespacePolicyResolver namespacePolicyResolver, IServiceProvider provider)
-        {
-            _settings = settings;
-            _secretResolver = secretResolver;
-            _namespacePolicyResolver = namespacePolicyResolver;
-            _provider = provider;
-        }
+		public AzureBlobStore(IOptionsMonitor<AzureSettings> settings, ISecretResolver secretResolver, INamespacePolicyResolver namespacePolicyResolver, IServiceProvider provider)
+		{
+			_settings = settings;
+			_secretResolver = secretResolver;
+			_namespacePolicyResolver = namespacePolicyResolver;
+			_provider = provider;
+		}
 
-        private AzureStorageBackend GetBackend(NamespaceId ns)
-        {
-            return _backends.GetOrAdd(ns, x => ActivatorUtilities.CreateInstance<AzureStorageBackend>(_provider, GetConnectionString(ns), ns, GetContainerName(ns)));
-        }
+		private AzureStorageBackend GetBackend(NamespaceId ns)
+		{
+			return _backends.GetOrAdd(ns, x => ActivatorUtilities.CreateInstance<AzureStorageBackend>(_provider, GetConnectionString(ns), ns, GetContainerName(ns)));
+		}
 
-        private string GetContainerName(NamespaceId ns)
-        {
-            NamespacePolicy policy = _namespacePolicyResolver.GetPoliciesForNs(ns);
+		private string GetContainerName(NamespaceId ns)
+		{
+			NamespacePolicy policy = _namespacePolicyResolver.GetPoliciesForNs(ns);
 
-            string containerName = !string.IsNullOrEmpty(policy.StoragePool) ? $"jupiter-{policy.StoragePool}" : "jupiter";
-            if (_settings.CurrentValue.StoragePoolContainerOverride.TryGetValue(policy.StoragePool, out string? overriddenContainerName))
-            {
-                containerName = overriddenContainerName;
-            }
+			string containerName = !string.IsNullOrEmpty(policy.StoragePool) ? $"jupiter-{policy.StoragePool}" : "jupiter";
+			if (_settings.CurrentValue.StoragePoolContainerOverride.TryGetValue(policy.StoragePool, out string? overriddenContainerName))
+			{
+				containerName = overriddenContainerName;
+			}
 
-            return SanitizeContainerName(containerName);
-        }
+			return SanitizeContainerName(containerName);
+		}
 
-        private string GetConnectionString(NamespaceId ns)
-        {
-            NamespacePolicy policy = _namespacePolicyResolver.GetPoliciesForNs(ns);
-            string connectionString = _settings.CurrentValue.ConnectionString;
-            if (_settings.CurrentValue.StoragePoolConnectionStrings.TryGetValue(policy.StoragePool, out string? connectionStringForPool))
-            {
-                connectionString = connectionStringForPool;
-            }
+		private string GetConnectionString(NamespaceId ns)
+		{
+			NamespacePolicy policy = _namespacePolicyResolver.GetPoliciesForNs(ns);
+			string connectionString = _settings.CurrentValue.ConnectionString;
+			if (_settings.CurrentValue.StoragePoolConnectionStrings.TryGetValue(policy.StoragePool, out string? connectionStringForPool))
+			{
+				connectionString = connectionStringForPool;
+			}
 
-            string resolvedConnectionString = _secretResolver.Resolve(connectionString);
-            return resolvedConnectionString;
-        }
+			string resolvedConnectionString = _secretResolver.Resolve(connectionString);
+			return resolvedConnectionString;
+		}
 
-        private static string GetPath(BlobIdentifier blobIdentifier) => blobIdentifier.ToString();
+		private static string GetPath(BlobId blobIdentifier) => blobIdentifier.ToString();
 
-        public async Task<Uri?> GetObjectByRedirect(NamespaceId ns, BlobIdentifier identifier)
-        {
-            Uri? redirectUri = await GetBackend(ns).GetReadRedirectAsync(GetPath(identifier));
+		public async Task<Uri?> GetObjectByRedirectAsync(NamespaceId ns, BlobId identifier)
+		{
+			Uri? redirectUri = await GetBackend(ns).GetReadRedirectAsync(GetPath(identifier));
 
-            return redirectUri;
-        }
+			return redirectUri;
+		}
 
-        public async Task<Uri?> PutObjectWithRedirect(NamespaceId ns, BlobIdentifier identifier)
-        {
-            Uri? redirectUri = await GetBackend(ns).GetWriteRedirectAsync(GetPath(identifier));
+		public async Task<BlobMetadata> GetObjectMetadataAsync(NamespaceId ns, BlobId blobId)
+		{
+			BlobMetadata? metadata = await GetBackend(ns).GetMetadataAsync(GetPath(blobId), CancellationToken.None);
 
-            return redirectUri;
-        }
+			if (metadata == null)
+			{
+				throw new BlobNotFoundException(ns, blobId);
+			}
 
-        public async Task<BlobIdentifier> PutObject(NamespaceId ns, ReadOnlyMemory<byte> content, BlobIdentifier blobIdentifier)
-        {
-            // TODO: this is not ideal as we copy the buffer, but there is no upload from memory available so we would need this copy anyway
-            await using MemoryStream stream = new MemoryStream(content.ToArray());
-            return await PutObject(ns, stream, blobIdentifier);
-        }
+			return metadata;
+		}
 
-        public async Task<BlobIdentifier> PutObject(NamespaceId ns, Stream content, BlobIdentifier blobIdentifier)
-        {
-            await GetBackend(ns).WriteAsync(GetPath(blobIdentifier), content, CancellationToken.None);
-            return blobIdentifier;
-        }
+		public async Task<Uri?> PutObjectWithRedirectAsync(NamespaceId ns, BlobId identifier)
+		{
+			Uri? redirectUri = await GetBackend(ns).GetWriteRedirectAsync(GetPath(identifier));
 
-        public async Task<BlobIdentifier> PutObject(NamespaceId ns, byte[] content, BlobIdentifier blobIdentifier)
-        {
-            await using MemoryStream stream = new MemoryStream(content);
-            return await PutObject(ns, stream, blobIdentifier);
-        }
+			return redirectUri;
+		}
 
-        public async Task<BlobContents> GetObject(NamespaceId ns, BlobIdentifier blobIdentifier, LastAccessTrackingFlags flags, bool supportsRedirectUri = false)
-        {
-            NamespacePolicy policies = _namespacePolicyResolver.GetPoliciesForNs(ns);
-            if (supportsRedirectUri && policies.AllowRedirectUris)
-            {
-                Uri? redirectUri = await GetBackend(ns).GetReadRedirectAsync(GetPath(blobIdentifier));
-                if (redirectUri != null)
-                {
-                    return new BlobContents(redirectUri);
-                }
-            }
-            
-            BlobContents? contents = await GetBackend(ns).TryReadAsync(GetPath(blobIdentifier), flags, CancellationToken.None);
-            if (contents == null)
-            {
-                throw new BlobNotFoundException(ns, blobIdentifier);
-            }
-            return contents;
-        }
+		public async Task<BlobId> PutObjectAsync(NamespaceId ns, ReadOnlyMemory<byte> content, BlobId blobIdentifier)
+		{
+			// TODO: this is not ideal as we copy the buffer, but there is no upload from memory available so we would need this copy anyway
+			await using MemoryStream stream = new MemoryStream(content.ToArray());
+			return await PutObjectAsync(ns, stream, blobIdentifier);
+		}
 
-        public async Task<bool> Exists(NamespaceId ns, BlobIdentifier blobIdentifier, bool forceCheck)
-        {
-            return await GetBackend(ns).ExistsAsync(GetPath(blobIdentifier), CancellationToken.None);
-        }
+		public async Task<BlobId> PutObjectAsync(NamespaceId ns, Stream content, BlobId blobIdentifier)
+		{
+			await GetBackend(ns).WriteAsync(GetPath(blobIdentifier), content, CancellationToken.None);
+			return blobIdentifier;
+		}
 
-        public async Task DeleteObject(NamespaceId ns, BlobIdentifier blobIdentifier)
-        {
-            await GetBackend(ns).DeleteAsync(GetPath(blobIdentifier), CancellationToken.None);
-        }
+		public async Task<BlobId> PutObjectAsync(NamespaceId ns, byte[] content, BlobId blobIdentifier)
+		{
+			await using MemoryStream stream = new MemoryStream(content);
+			return await PutObjectAsync(ns, stream, blobIdentifier);
+		}
 
-        public async Task DeleteNamespace(NamespaceId ns)
-        {
-            string fixedNamespace = GetContainerName(ns);
-            BlobContainerClient container = new BlobContainerClient(GetConnectionString(ns), fixedNamespace);
-            if (await container.ExistsAsync())
-            {
-                // we can only delete it if the container exists
-                await container.DeleteAsync();
-            }
-        }
+		public async Task<BlobContents> GetObjectAsync(NamespaceId ns, BlobId blobIdentifier, LastAccessTrackingFlags flags, bool supportsRedirectUri = false)
+		{
+			NamespacePolicy policies = _namespacePolicyResolver.GetPoliciesForNs(ns);
+			if (supportsRedirectUri && policies.AllowRedirectUris)
+			{
+				Uri? redirectUri = await GetBackend(ns).GetReadRedirectAsync(GetPath(blobIdentifier));
+				if (redirectUri != null)
+				{
+					return new BlobContents(redirectUri);
+				}
+			}
+			
+			BlobContents? contents = await GetBackend(ns).TryReadAsync(GetPath(blobIdentifier), flags, CancellationToken.None);
+			if (contents == null)
+			{
+				throw new BlobNotFoundException(ns, blobIdentifier);
+			}
+			return contents;
+		}
 
-        public async IAsyncEnumerable<(BlobIdentifier, DateTime)> ListObjects(NamespaceId ns)
-        {
-            await foreach ((string path, DateTime time) in GetBackend(ns).ListAsync(CancellationToken.None))
-            {
-                yield return (new BlobIdentifier(path), time);
-            }
-        }
+		public async Task<bool> ExistsAsync(NamespaceId ns, BlobId blobIdentifier, bool forceCheck)
+		{
+			return await GetBackend(ns).ExistsAsync(GetPath(blobIdentifier), CancellationToken.None);
+		}
 
-        private static string SanitizeContainerName(string containerName)
-        {
-            return containerName.Replace(".", "-", StringComparison.OrdinalIgnoreCase).Replace("_", "-", StringComparison.OrdinalIgnoreCase).ToLower();
-        }
-    }
+		public async Task DeleteObjectAsync(NamespaceId ns, BlobId blobIdentifier)
+		{
+			await GetBackend(ns).DeleteAsync(GetPath(blobIdentifier), CancellationToken.None);
+		}
 
-    public class AzureStorageBackend : IStorageBackend
-    {
-        private readonly NamespaceId _namespaceId;
-        private readonly ILogger<AzureStorageBackend> _logger;
-        private readonly Tracer _tracer;
-        private readonly BlobContainerClient _blobContainer;
+		public async Task DeleteNamespaceAsync(NamespaceId ns)
+		{
+			string fixedNamespace = GetContainerName(ns);
+			BlobContainerClient container = new BlobContainerClient(GetConnectionString(ns), fixedNamespace);
+			if (await container.ExistsAsync())
+			{
+				// we can only delete it if the container exists
+				await container.DeleteAsync();
+			}
+		}
 
-        private const string LastTouchedKey = "Io_LastTouched";
-        private const string NamespaceKey = "Io_Namespace";
+		public async IAsyncEnumerable<(BlobId, DateTime)> ListObjectsAsync(NamespaceId ns)
+		{
+			await foreach ((string path, DateTime time) in GetBackend(ns).ListAsync(CancellationToken.None))
+			{
+				yield return (new BlobId(path), time);
+			}
+		}
 
-        public AzureStorageBackend(string connectionString, NamespaceId namespaceId, string containerName, ILogger<AzureStorageBackend> logger, Tracer tracer)
-        {
-            _namespaceId = namespaceId;
-            _logger = logger;
-            _tracer = tracer;
-            _blobContainer = new BlobContainerClient(connectionString, containerName);
-        }
+		private static string SanitizeContainerName(string containerName)
+		{
+			return containerName.Replace(".", "-", StringComparison.OrdinalIgnoreCase).Replace("_", "-", StringComparison.OrdinalIgnoreCase).ToLower();
+		}
+	}
 
-        public async Task WriteAsync(string path, Stream content, CancellationToken cancellationToken)
-        {
-            Dictionary<string, string> metadata = new Dictionary<string, string> { { NamespaceKey, _namespaceId.ToString() } };
-            await _blobContainer.CreateIfNotExistsAsync(metadata: metadata, cancellationToken: cancellationToken);
+	public class AzureStorageBackend : IStorageBackend
+	{
+		private readonly NamespaceId _namespaceId;
+		private readonly ILogger<AzureStorageBackend> _logger;
+		private readonly Tracer _tracer;
+		private readonly BlobContainerClient _blobContainer;
 
-            _logger.LogDebug("Fetching blob reference with name {ObjectName}", path);
-            try
-            {
+		private const string LastTouchedKey = "Io_LastTouched";
+		private const string NamespaceKey = "Io_Namespace";
 
-                await _blobContainer.GetBlobClient(path).UploadAsync(content, cancellationToken);
-            }
-            catch (RequestFailedException e)
-            {
-                if (e.Status == 409)
-                {
-                    // the object already existed, that is fine, no need to do anything
-                    return;
-                }
+		public AzureStorageBackend(string connectionString, NamespaceId namespaceId, string containerName, ILogger<AzureStorageBackend> logger, Tracer tracer)
+		{
+			_namespaceId = namespaceId;
+			_logger = logger;
+			_tracer = tracer;
+			_blobContainer = new BlobContainerClient(connectionString, containerName);
+		}
 
-                throw;
-            }
-            finally
-            {
-                // we touch the blob so that the last access time is always refreshed even if we didnt actually mutate it to make sure the gc knows this is a active blob
-                // see delete operation in Leda blob store cleanup
-                await TouchBlob(_blobContainer.GetBlobClient(path));
-                _logger.LogDebug("Upload of blob {ObjectName} completed", path);
-            }
-        }
+		public async Task WriteAsync(string path, Stream content, CancellationToken cancellationToken)
+		{
+			Dictionary<string, string> metadata = new Dictionary<string, string> { { NamespaceKey, _namespaceId.ToString() } };
+			await _blobContainer.CreateIfNotExistsAsync(metadata: metadata, cancellationToken: cancellationToken);
 
-        private static async Task TouchBlob(BlobClient blob)
-        {
-            Dictionary<string, string> metadata = new Dictionary<string, string>
-            {
-                {
-                    LastTouchedKey, DateTime.Now.ToString(CultureInfo.InvariantCulture)
-                }
-            };
-            // we update the metadata, we don''t really care about the field being specified as we just want to touch the blob to update its last modified date property which we can not set
-            await blob.SetMetadataAsync(metadata);
-        }
+			_logger.LogDebug("Fetching blob reference with name {ObjectName}", path);
+			try
+			{
 
-        public async Task<BlobContents?> TryReadAsync(string path, LastAccessTrackingFlags flags, CancellationToken cancellationToken)
-        {
+				await _blobContainer.GetBlobClient(path).UploadAsync(content, cancellationToken);
+			}
+			catch (RequestFailedException e)
+			{
+				if (e.Status == 409)
+				{
+					// the object already existed, that is fine, no need to do anything
+					return;
+				}
 
-            if (!await _blobContainer.ExistsAsync(cancellationToken))
-            {
-                throw new InvalidOperationException($"Container {_blobContainer.Name} did not exist");
-            }
+				throw;
+			}
+			finally
+			{
+				// we touch the blob so that the last access time is always refreshed even if we didnt actually mutate it to make sure the gc knows this is a active blob
+				// see delete operation in Leda blob store cleanup
+				await TouchBlobAsync(_blobContainer.GetBlobClient(path));
+				_logger.LogDebug("Upload of blob {ObjectName} completed", path);
+			}
+		}
 
-            try
-            {
-                BlobClient blob = _blobContainer.GetBlobClient(path);
-                Response<BlobDownloadInfo> blobInfo = await blob.DownloadAsync(cancellationToken);
-                return new BlobContents(blobInfo.Value.Content, blobInfo.Value.ContentLength);
-            }
-            catch (RequestFailedException e)
-            {
-                if (e.Status == 404)
-                {
-                    return null;
-                }
+		private static async Task TouchBlobAsync(BlobClient blob)
+		{
+			Dictionary<string, string> metadata = new Dictionary<string, string>
+			{
+				{
+					LastTouchedKey, DateTime.Now.ToString(CultureInfo.InvariantCulture)
+				}
+			};
+			// we update the metadata, we don''t really care about the field being specified as we just want to touch the blob to update its last modified date property which we can not set
+			await blob.SetMetadataAsync(metadata);
+		}
 
-                throw;
-            }
-        }
+		public async Task<BlobContents?> TryReadAsync(string path, LastAccessTrackingFlags flags, CancellationToken cancellationToken)
+		{
 
-        public async Task<bool> ExistsAsync(string path, CancellationToken cancellationToken)
-        {
-            if (!await _blobContainer.ExistsAsync(cancellationToken))
-            {
-                return false;
-            }
+			if (!await _blobContainer.ExistsAsync(cancellationToken))
+			{
+				throw new InvalidOperationException($"Container {_blobContainer.Name} did not exist");
+			}
 
-            BlobClient blob = _blobContainer.GetBlobClient(path);
-            return await blob.ExistsAsync(cancellationToken);
-        }
+			try
+			{
+				BlobClient blob = _blobContainer.GetBlobClient(path);
+				Response<BlobDownloadInfo> blobInfo = await blob.DownloadAsync(cancellationToken);
+				return new BlobContents(blobInfo.Value.Content, blobInfo.Value.ContentLength);
+			}
+			catch (RequestFailedException e)
+			{
+				if (e.Status == 404)
+				{
+					return null;
+				}
 
-        public async Task DeleteAsync(string path, CancellationToken cancellationToken)
-        {
-            if (!await _blobContainer.ExistsAsync(cancellationToken))
-            {
-                throw new InvalidOperationException($"Container {_blobContainer.Name} did not exist");
-            }
+				throw;
+			}
+		}
 
-            await _blobContainer.DeleteBlobAsync(path, cancellationToken: cancellationToken);
-        }
+		public async Task<bool> ExistsAsync(string path, CancellationToken cancellationToken)
+		{
+			if (!await _blobContainer.ExistsAsync(cancellationToken))
+			{
+				return false;
+			}
 
-        public async IAsyncEnumerable<(string, DateTime)> ListAsync([EnumeratorCancellation] CancellationToken cancellationToken)
-        {
-            bool exists = await _blobContainer.ExistsAsync(cancellationToken);
-            if (!exists)
-            {
-                yield break;
-            }
+			BlobClient blob = _blobContainer.GetBlobClient(path);
+			return await blob.ExistsAsync(cancellationToken);
+		}
 
-            await foreach (BlobItem? item in _blobContainer.GetBlobsAsync(BlobTraits.Metadata, cancellationToken: cancellationToken))
-            {
-                yield return (item.Name, item.Properties?.LastModified?.DateTime ?? DateTime.Now);
-            }
-        }
+		public async Task DeleteAsync(string path, CancellationToken cancellationToken)
+		{
+			if (!await _blobContainer.ExistsAsync(cancellationToken))
+			{
+				throw new InvalidOperationException($"Container {_blobContainer.Name} did not exist");
+			}
 
-        public async ValueTask<Uri?> GetReadRedirectAsync(string path)
-        {
-            if (!await _blobContainer.ExistsAsync())
-            {
-                throw new InvalidOperationException($"Container {_blobContainer.Name} did not exist");
-            }
+			await _blobContainer.DeleteBlobAsync(path, cancellationToken: cancellationToken);
+		}
 
-            return GetPresignedUrl(path, BlobSasPermissions.Read);
-        }
+		public async IAsyncEnumerable<(string, DateTime)> ListAsync([EnumeratorCancellation] CancellationToken cancellationToken)
+		{
+			bool exists = await _blobContainer.ExistsAsync(cancellationToken);
+			if (!exists)
+			{
+				yield break;
+			}
 
-        public async ValueTask<Uri?> GetWriteRedirectAsync(string path)
-        {
-            if (!await _blobContainer.ExistsAsync())
-            {
-                throw new InvalidOperationException($"Container {_blobContainer.Name} did not exist");
-            }
+			await foreach (BlobItem? item in _blobContainer.GetBlobsAsync(BlobTraits.Metadata, cancellationToken: cancellationToken))
+			{
+				yield return (item.Name, item.Properties?.LastModified?.DateTime ?? DateTime.Now);
+			}
+		}
 
-            return GetPresignedUrl(path, BlobSasPermissions.Write);
-        }
+		public async ValueTask<Uri?> GetReadRedirectAsync(string path)
+		{
+			if (!await _blobContainer.ExistsAsync())
+			{
+				throw new InvalidOperationException($"Container {_blobContainer.Name} did not exist");
+			}
 
-        /// <summary>
-        /// Helper method to generate a presigned URL for a request
-        /// </summary>
-        Uri? GetPresignedUrl(string path, BlobSasPermissions permissions)
-        {
-            using TelemetrySpan span = _tracer.StartActiveSpan("azure.BuildPresignedUrl")
-                    .SetAttribute("Path", path)
-                ;
+			return GetPresignedUrl(path, BlobSasPermissions.Read);
+		}
 
-            try
-            {
-                BlobClient blob = _blobContainer.GetBlobClient(path);
-                return blob.GenerateSasUri(permissions, DateTimeOffset.Now.AddHours(1.0));
-            }
-            catch (RequestFailedException e)
-            {
-                if (e.Status == 404)
-                {
-                    return null;
-                }
+		public async ValueTask<Uri?> GetWriteRedirectAsync(string path)
+		{
+			if (!await _blobContainer.ExistsAsync())
+			{
+				throw new InvalidOperationException($"Container {_blobContainer.Name} did not exist");
+			}
 
-                throw;
-            }
-        }
-    }
+			return GetPresignedUrl(path, BlobSasPermissions.Write);
+		}
+
+		/// <summary>
+		/// Helper method to generate a presigned URL for a request
+		/// </summary>
+		Uri? GetPresignedUrl(string path, BlobSasPermissions permissions)
+		{
+			using TelemetrySpan span = _tracer.StartActiveSpan("azure.BuildPresignedUrl")
+					.SetAttribute("Path", path)
+				;
+
+			try
+			{
+				BlobClient blob = _blobContainer.GetBlobClient(path);
+				return blob.GenerateSasUri(permissions, DateTimeOffset.Now.AddHours(1.0));
+			}
+			catch (RequestFailedException e)
+			{
+				if (e.Status == 404)
+				{
+					return null;
+				}
+
+				throw;
+			}
+		}
+
+		public async Task<BlobMetadata?> GetMetadataAsync(string path, CancellationToken cancellationToken)
+		{
+			if (!await _blobContainer.ExistsAsync(cancellationToken))
+			{
+				throw new InvalidOperationException($"Container {_blobContainer.Name} did not exist");
+			}
+
+			BlobClient blob = _blobContainer.GetBlobClient(path);
+			Response<BlobProperties>? response = await blob.GetPropertiesAsync(cancellationToken: cancellationToken);
+			if (response == null)
+			{
+				return null;
+			}
+
+			return new BlobMetadata(response.Value.ContentLength, response.Value.CreatedOn.DateTime);
+		}
+	}
 }

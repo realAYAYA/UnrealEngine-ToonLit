@@ -3,8 +3,8 @@
 	"logo": "ue5.project.png",
 	"streams": [
 		{
-		  "id": "ue5-main",
-		  "path": "ue5-main.stream.json"
+		  "id": "ue5-release-5.4",
+		  "path": "ue5-release-5.4.stream.json"
 		}
 	],
 	"categories": [
@@ -13,7 +13,7 @@
 			"row": 0,
 			"showOnNavMenu": true,
 			"includePatterns": [
-				"//UE5/Main"
+				"//UE5/Release-5.4"
 			]
 		}
 	]

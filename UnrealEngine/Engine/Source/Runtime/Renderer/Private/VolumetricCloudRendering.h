@@ -30,6 +30,7 @@ BEGIN_SHADER_PARAMETER_STRUCT(FVolumetricCloudCommonShaderParameters, )
 	SHADER_PARAMETER(float, PlanetRadiusKm)
 	SHADER_PARAMETER(float, BottomRadiusKm)
 	SHADER_PARAMETER(float, TopRadiusKm)
+	SHADER_PARAMETER(float, TracingStartDistanceFromCamera)
 	SHADER_PARAMETER(float, TracingStartMaxDistance)
 	SHADER_PARAMETER(int32, TracingMaxDistanceMode)
 	SHADER_PARAMETER(float, TracingMaxDistance)
@@ -76,7 +77,7 @@ END_SHADER_PARAMETER_STRUCT()
 
 bool SetupLightCloudTransmittanceParameters(FRDGBuilder& GraphBuilder, const FScene* Scene, const FViewInfo& View, const FLightSceneInfo* LightSceneInfo, FLightCloudTransmittanceParameters& OutParameters);
 
-bool LightHasCloudShadow(const FScene* Scene, const FViewInfo& View, const FLightSceneInfo* LightSceneInfo);
+bool LightMayCastCloudShadow(const FScene* Scene, const FViewInfo& View, const FLightSceneInfo* LightSceneInfo);
 
 /** Contains render data created render side for a FVolumetricCloudSceneProxy objects. */
 class FVolumetricCloudRenderSceneInfo
@@ -137,6 +138,7 @@ struct FCloudRenderContext
 
 	bool bShouldViewRenderVolumetricRenderTarget;
 	bool bSkipAerialPerspective;
+	bool bSkipHeightFog;
 	bool bIsReflectionRendering;				// Reflection capture and real time sky capture
 	bool bIsSkyRealTimeReflectionRendering;		// Real time sky capture only
 	bool bSkipAtmosphericLightShadowmap;
@@ -144,6 +146,7 @@ struct FCloudRenderContext
 
 	bool bAsyncCompute;
 	bool bCloudDebugViewModeEnabled;
+	bool bAccumulateAlphaHoldOut;
 
 	FUintVector4 TracingCoordToZbufferCoordScaleBias;
 	FUintVector4 TracingCoordToFullResPixelCoordScaleBias;

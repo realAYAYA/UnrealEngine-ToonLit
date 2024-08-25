@@ -68,6 +68,8 @@ public:
 	//~ UObject interface
 
 	OVERLAY_API virtual void PostInitProperties() override;
+	OVERLAY_API virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	OVERLAY_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 
 private:

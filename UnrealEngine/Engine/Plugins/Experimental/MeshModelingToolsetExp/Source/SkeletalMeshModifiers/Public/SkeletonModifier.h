@@ -48,24 +48,36 @@ struct SKELETALMESHMODIFIERS_API FMirrorOptions
  * FOrientOptions
  */
 
+UENUM()
+enum class EOrientAxis : uint8
+{
+	None,
+	PositiveX	UMETA(DisplayName = "+X", ToolTip = "Orients axis in the positive X direction"),
+	PositiveY	UMETA(DisplayName = "+Y", ToolTip = "Orients axis in the positive Y direction"),
+	PositiveZ	UMETA(DisplayName = "+Z", ToolTip = "Orients axis in the positive Z direction"),
+	NegativeX	UMETA(DisplayName = "-X", ToolTip = "Orients axis in the negative X direction"),
+	NegativeY	UMETA(DisplayName = "-Y", ToolTip = "Orients axis in the negative Y direction"),
+	NegativeZ	UMETA(DisplayName = "-Z", ToolTip = "Orients axis in the negative Z direction"),
+};
+
 USTRUCT(BlueprintType)
 struct SKELETALMESHMODIFIERS_API FOrientOptions
 {
 	GENERATED_USTRUCT_BODY()
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Orient")
-	TEnumAsByte<EAxis::Type> Primary = EAxis::X;
+	EOrientAxis Primary = EOrientAxis::PositiveX;
 
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Orient")
-	TEnumAsByte<EAxis::Type> Secondary = EAxis::Y;
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Orient", meta=(EditCondition="Primary != EOrientAxis::None"))
+	EOrientAxis Secondary = EOrientAxis::PositiveY;
 
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Orient")
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Orient", meta=(EditCondition="Primary != EOrientAxis::None"))
 	bool bUsePlaneAsSecondary = true;
 	
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Orient")
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Orient", meta=(EditCondition="Primary != EOrientAxis::None && !bUsePlaneAsSecondary"))
 	FVector SecondaryTarget = FVector::YAxisVector;
 
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Orient")
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Orient", meta=(EditCondition="Primary != EOrientAxis::None"))
 	bool bOrientChildren = true;
 
 	FTransform OrientTransform(const FVector& InPrimaryTarget, const FTransform& InTransform) const;

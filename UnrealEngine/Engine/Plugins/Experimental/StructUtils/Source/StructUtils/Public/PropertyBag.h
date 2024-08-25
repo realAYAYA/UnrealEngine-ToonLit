@@ -28,6 +28,8 @@ enum class EPropertyBagPropertyType : uint8
 	SoftObject UMETA(Hidden),
 	Class UMETA(Hidden),
 	SoftClass UMETA(Hidden),
+	UInt32,	// Type not fully supported at UI, will work with restrictions to type editing
+	UInt64, // Type not fully supported at UI, will work with restrictions to type editing
 
 	Count UMETA(Hidden)
 };
@@ -141,10 +143,10 @@ struct STRUCTUTILS_API FPropertyBagContainerTypes
 		return GetArrayHash(PropertyBagContainerTypes.Types.GetData(), PropertyBagContainerTypes.NumContainers);
 	}
 
-	EPropertyBagContainerType* begin() { return &Types[0]; }
-	const EPropertyBagContainerType* begin() const { return &Types[0]; }
-	EPropertyBagContainerType* end()  { return &Types[NumContainers]; }
-	const EPropertyBagContainerType* end() const { return &Types[NumContainers]; }
+	EPropertyBagContainerType* begin() { return Types.GetData(); }
+	const EPropertyBagContainerType* begin() const { return Types.GetData(); }
+	EPropertyBagContainerType* end()  { return Types.GetData() + NumContainers; }
+	const EPropertyBagContainerType* end() const { return Types.GetData() + NumContainers; }
 
 protected:
 	static constexpr uint8 MaxNestedTypes = 2;
@@ -243,8 +245,11 @@ struct STRUCTUTILS_API FPropertyBagPropertyDesc
 	/** @return true if the two descriptors have the same type. Object types are compatible if Other can be cast to this type. */
 	bool CompatibleType(const FPropertyBagPropertyDesc& Other) const;
 
-	/** @return true if the property type is numeric (bool, int32, int64, float, double, enum) */
+	/** @return true if the property type is numeric (bool, (u)int32, (u)int64, float, double, enum) */
 	bool IsNumericType() const;
+
+	/** @return true if the property type is unsigned (uint32, uint64) */
+	bool IsUnsignedNumericType() const;
 	
 	/** @return true if the property type is floating point numeric (float, double) */
 	bool IsNumericFloatType() const;
@@ -279,6 +284,10 @@ struct STRUCTUTILS_API FPropertyBagPropertyDesc
 	/** Editor-only meta data for CachedProperty */
 	UPROPERTY(EditAnywhere, Category="Default")
 	TArray<FPropertyBagPropertyDescMetaData> MetaData;
+
+	/** Editor-only meta class for IClassViewer */
+	UPROPERTY(EditAnywhere, Category = "Default")
+	TObjectPtr<class UClass> MetaClass;
 #endif
 
 	/** Cached property pointer, set in UPropertyBag::GetOrCreateFromDescs. */
@@ -425,11 +434,21 @@ struct STRUCTUTILS_API FInstancedPropertyBag
 	void MigrateToNewBagStruct(const UPropertyBag* NewBagStruct);
 
 	/**
-	 * Changes the type of this bag to the specified other bag, copies base values from the other bag, and migrates existing values over.
+	 * Changes the type of this bag to the InNewBagInstance, and migrates existing values over.
+	 * Properties that do not exist in this bag will get values from NewBagInstance.
 	 * The properties are matched between the bags based on the property ID.
-	 * @param NewBagInstance Reference to the new type.
+	 * @param InNewBagInstance New bag composition and values used for new properties.
 	 */
-	void MigrateToNewBagInstance(const FInstancedPropertyBag& NewBagInstance);
+	void MigrateToNewBagInstance(const FInstancedPropertyBag& InNewBagInstance);
+
+	/**
+	 * Changes the type of this bag to the InNewBagInstance, and migrates existing values over if marked as overridden in the OverriddenPropertyIDs.
+	 * Properties that does not exist in this bag, or are not overridden, will get values from InNewBagInstance.
+	 * The properties are matched between the bags based on the property ID.
+	 * @param InNewBagInstance New bag composition and values used for new properties.
+	 * @param OverriddenPropertyIDs Array if property IDs which should be copied over to the new instance. 
+	 */
+	void MigrateToNewBagInstanceWithOverrides(const FInstancedPropertyBag& InNewBagInstance, TConstArrayView<FGuid> OverriddenPropertyIDs);
 
 	/** @return pointer to the property bag struct. */ 
 	const UPropertyBag* GetPropertyBagStruct() const;
@@ -448,13 +467,15 @@ struct STRUCTUTILS_API FInstancedPropertyBag
 	
 	/**
 	 * Getters
-	 * Numeric types (bool, int32, int64, float, double) support type conversion.
+	 * Numeric types (bool, (u)int32, (u)int64, float, double) support type conversion.
 	 */
 
 	TValueOrError<bool, EPropertyBagResult> GetValueBool(const FName Name) const;
 	TValueOrError<uint8, EPropertyBagResult> GetValueByte(const FName Name) const;
 	TValueOrError<int32, EPropertyBagResult> GetValueInt32(const FName Name) const;
+	TValueOrError<uint32, EPropertyBagResult> GetValueUInt32(const FName Name) const;
 	TValueOrError<int64, EPropertyBagResult> GetValueInt64(const FName Name) const;
+	TValueOrError<uint64, EPropertyBagResult> GetValueUInt64(const FName Name) const;
 	TValueOrError<float, EPropertyBagResult> GetValueFloat(const FName Name) const;
 	TValueOrError<double, EPropertyBagResult> GetValueDouble(const FName Name) const;
 	TValueOrError<FName, EPropertyBagResult> GetValueName(const FName Name) const;
@@ -523,12 +544,14 @@ struct STRUCTUTILS_API FInstancedPropertyBag
 
 	/**
 	 * Value Setters. A property must exists in that bag before it can be set.  
-	 * Numeric types (bool, int32, int64, float, double) support type conversion.
+	 * Numeric types (bool, (u)int32, (u)int64, float, double) support type conversion.
 	 */
 	EPropertyBagResult SetValueBool(const FName Name, const bool bInValue);
 	EPropertyBagResult SetValueByte(const FName Name, const uint8 InValue);
 	EPropertyBagResult SetValueInt32(const FName Name, const int32 InValue);
+	EPropertyBagResult SetValueUInt32(const FName Name, const uint32 InValue);
 	EPropertyBagResult SetValueInt64(const FName Name, const int64 InValue);
+	EPropertyBagResult SetValueUInt64(const FName Name, const uint64 InValue);
 	EPropertyBagResult SetValueFloat(const FName Name, const float InValue);
 	EPropertyBagResult SetValueDouble(const FName Name, const double InValue);
 	EPropertyBagResult SetValueName(const FName Name, const FName InValue);
@@ -589,8 +612,10 @@ struct STRUCTUTILS_API FInstancedPropertyBag
 	*/
 	TValueOrError<const FPropertyBagArrayRef, EPropertyBagResult> GetArrayRef(const FName Name) const;
 
+	bool Identical(const FInstancedPropertyBag* Other, uint32 PortFlags) const;
 	bool Serialize(FArchive& Ar);
 	void AddStructReferencedObjects(FReferenceCollector& Collector);
+	void GetPreloadDependencies(TArray<UObject*>& OutDeps);
 
 protected:
 	const void* GetValueAddress(const FPropertyBagPropertyDesc* Desc) const;
@@ -604,8 +629,10 @@ template<> struct TStructOpsTypeTraits<FInstancedPropertyBag> : public TStructOp
 {
 	enum
 	{
+		WithIdentical = true,
 		WithSerializer = true,
 		WithAddStructReferencedObjects = true,
+		WithGetPreloadDependencies = true,
 	};
 };
 
@@ -671,13 +698,15 @@ public:
 
 	/**
 	 * Getters
-	 * Numeric types (bool, int32, int64, float, double) support type conversion.
+	 * Numeric types (bool, (u)int32, (u)int64, float, double) support type conversion.
 	 */
 	
 	TValueOrError<bool, EPropertyBagResult> GetValueBool(const int32 Index) const;
 	TValueOrError<uint8, EPropertyBagResult> GetValueByte(const int32 Index) const;
 	TValueOrError<int32, EPropertyBagResult> GetValueInt32(const int32 Index) const;
+	TValueOrError<uint32, EPropertyBagResult> GetValueUInt32(const int32 Index) const;
 	TValueOrError<int64, EPropertyBagResult> GetValueInt64(const int32 Index) const;
+	TValueOrError<uint64, EPropertyBagResult> GetValueUInt64(const int32 Index) const;
 	TValueOrError<float, EPropertyBagResult> GetValueFloat(const int32 Index) const;
 	TValueOrError<double, EPropertyBagResult> GetValueDouble(const int32 Index) const;
 	TValueOrError<FName, EPropertyBagResult> GetValueName(const int32 Index) const;
@@ -757,12 +786,14 @@ public:
 
 	/**
 	 * Value Setters. A property must exists in that bag before it can be set.  
-	 * Numeric types (bool, int32, int64, float, double) support type conversion.
+	 * Numeric types (bool, (u)int32, (u)int64, float, double) support type conversion.
 	 */
 	EPropertyBagResult SetValueBool(const int32 Index, const bool bInValue);
 	EPropertyBagResult SetValueByte(const int32 Index, const uint8 InValue);
 	EPropertyBagResult SetValueInt32(const int32 Index, const int32 InValue);
+	EPropertyBagResult SetValueUInt32(const int32 Index, const uint32 InValue);
 	EPropertyBagResult SetValueInt64(const int32 Index, const int64 InValue);
+	EPropertyBagResult SetValueUInt64(const int32 Index, const uint64 InValue);
 	EPropertyBagResult SetValueFloat(const int32 Index, const float InValue);
 	EPropertyBagResult SetValueDouble(const int32 Index, const double InValue);
 	EPropertyBagResult SetValueName(const int32 Index, const FName InValue);
@@ -835,10 +866,14 @@ public:
 	GENERATED_BODY()
 
 	/**
-	 * Creates new UPropertyBag struct based on the properties passed in.
-	 * If there are multiple properties that have the same name, only the first one is added.
+	 * Returns UPropertyBag struct based on the property descriptions passed in.
+	 * UPropertyBag struct names will be auto-generated by prefixing 'PropertyBag_' to the hash of the descriptions.
+	 * If a UPropertyBag with same name already exists, the existing object is returned.
+	 * This means that a property bags which share same layout (same descriptions) will share the same UPropertyBag.
+	 * If there are multiple properties that have the same name, only the first property is added.
+	 * The caller is expected to ensure unique names for the property descriptions.
 	 */
-	static const UPropertyBag* GetOrCreateFromDescs(const TConstArrayView<FPropertyBagPropertyDesc> InPropertyDescs);
+	static const UPropertyBag* GetOrCreateFromDescs(const TConstArrayView<FPropertyBagPropertyDesc> InPropertyDescs, const TCHAR* PrefixName = nullptr);
 
 	/** Returns property descriptions that specify this struct. */
 	TConstArrayView<FPropertyBagPropertyDesc> GetPropertyDescs() const { return PropertyDescs; }
@@ -848,6 +883,12 @@ public:
 
 	/** @return property description based on name. */
 	const FPropertyBagPropertyDesc* FindPropertyDescByName(const FName Name) const;
+
+	/** @return property description based on the created property name. The name can be different from the descriptor name due to name sanitization. */
+	const FPropertyBagPropertyDesc* FindPropertyDescByPropertyName(const FName PropertyName) const;
+
+	/** @return property description based on pointer to property. */
+	const FPropertyBagPropertyDesc* FindPropertyDescByProperty(const FProperty* Property) const;
 
 #if WITH_ENGINE && WITH_EDITOR
 	/** @return true if any of the properties on the bag has type of the specified user defined struct. */

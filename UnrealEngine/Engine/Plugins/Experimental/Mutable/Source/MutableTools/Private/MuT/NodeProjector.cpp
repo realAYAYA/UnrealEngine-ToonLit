@@ -1,14 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-
 #include "MuT/NodeProjector.h"
 
 #include "Misc/AssertionMacros.h"
 #include "MuR/Serialisation.h"
 #include "MuR/SerialisationPrivate.h"
 #include "MuT/Node.h"
-
-#include <stdint.h>
 
 
 namespace mu
@@ -17,13 +14,13 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	static NODE_TYPE s_nodeProjectorType = NODE_TYPE( "NodeProjector", Node::GetStaticType() );
+	static FNodeType s_nodeProjectorType = FNodeType( "NodeProjector", Node::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
 	void NodeProjector::Serialise( const NodeProjector* p, OutputArchive& arch )
 	{
-        uint32_t ver = 0;
+        uint32 ver = 0;
 		arch << ver;
 
 		arch << uint32_t(p->Type);
@@ -34,11 +31,11 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	NodeProjectorPtr NodeProjector::StaticUnserialise( InputArchive& arch )
 	{
-        uint32_t ver;
+        uint32 ver;
 		arch >> ver;
 		check( ver == 0 );
 
-        uint32_t id;
+        uint32 id;
 		arch >> id;
 
 		switch (id)
@@ -53,14 +50,14 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	const NODE_TYPE* NodeProjector::GetType() const
+	const FNodeType* NodeProjector::GetType() const
 	{
 		return GetStaticType();
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-	const NODE_TYPE* NodeProjector::GetStaticType()
+	const FNodeType* NodeProjector::GetStaticType()
 	{
 		return &s_nodeProjectorType;
 	}

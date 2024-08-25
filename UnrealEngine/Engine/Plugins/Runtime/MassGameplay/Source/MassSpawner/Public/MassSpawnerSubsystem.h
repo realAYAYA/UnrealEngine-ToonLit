@@ -4,7 +4,7 @@
 
 #include "MassEntityManager.h"
 #include "InstancedStruct.h"
-#include "Subsystems/WorldSubsystem.h"
+#include "MassSubsystemBase.h"
 #include "MassEntityTemplateRegistry.h"
 #include "MassSpawnerSubsystem.generated.h"
 
@@ -16,7 +16,7 @@ struct FMassEntityTemplateID;
 class UMassSimulationSubsystem;
 
 UCLASS()
-class MASSSPAWNER_API UMassSpawnerSubsystem : public UWorldSubsystem
+class MASSSPAWNER_API UMassSpawnerSubsystem : public UMassSubsystemBase
 {
 	GENERATED_BODY()
 
@@ -47,8 +47,10 @@ public:
 	const FMassEntityTemplate* GetMassEntityTemplate(FMassEntityTemplateID TemplateID) const;
 
 protected:
+	// UWorldSubsystem BEGIN
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
+	// UWorldSubsystem END
 
 	void DoSpawning(const FMassEntityTemplate& EntityTemplate, const int32 NumToSpawn, FConstStructView SpawnData, TSubclassOf<UMassProcessor> InitializerClass, TArray<FMassEntityHandle>& OutEntities);
 

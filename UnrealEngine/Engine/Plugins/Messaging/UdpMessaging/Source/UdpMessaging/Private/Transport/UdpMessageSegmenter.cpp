@@ -39,7 +39,7 @@ bool FUdpMessageSegmenter::GetNextPendingSegment(TArray<uint8>& OutData, uint32&
 		return false;
 	}
 
-	for (TConstSetBitIterator<> It(PendingSendSegments); It; ++It)
+	if (TConstSetBitIterator<> It(PendingSendSegments); It)
 	{
 		OutSegment = It.GetIndex();
 

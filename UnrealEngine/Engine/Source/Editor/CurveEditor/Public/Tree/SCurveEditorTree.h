@@ -59,6 +59,8 @@ private:
 
 	void SetItemExpansionRecursive(FCurveEditorTreeItemID Model, bool bInExpansionState);
 
+	void OnExpansionChanged(FCurveEditorTreeItemID Model, bool bInExpansionState);
+
 	void RefreshTree();
 
 	void RefreshTreeWidgetSelection();

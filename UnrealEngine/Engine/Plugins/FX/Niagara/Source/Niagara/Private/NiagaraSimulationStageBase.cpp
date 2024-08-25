@@ -2,6 +2,7 @@
 
 #include "NiagaraSimulationStageBase.h"
 #include "NiagaraCompileHashVisitor.h"
+#include "NiagaraCustomVersion.h"
 #include "NiagaraEmitter.h"
 #include "NiagaraSimulationStageCompileData.h"
 #include "NiagaraSystem.h"
@@ -223,6 +224,7 @@ void UNiagaraSimulationStageGeneric::PostLoad()
 
 #if WITH_EDITORONLY_DATA
 	const int32 UE5Version = GetLinkerCustomVersion(FUE5MainStreamObjectVersion::GUID);
+	const int32 NiagaraVersion = GetLinkerCustomVersion(FNiagaraCustomVersion::GUID);
 
 	// Ensure data wasn't somehow saved incorrectly
 	using namespace NiagaraSimulationStageLocal;
@@ -275,6 +277,23 @@ void UNiagaraSimulationStageGeneric::PostLoad()
 		OverrideGpuDispatchNumThreadsX.SetDefaultValueEditorOnly(OverrideGpuDispatchNumThreads_DEPRECATED.X);
 		OverrideGpuDispatchNumThreadsY.SetDefaultValueEditorOnly(OverrideGpuDispatchNumThreads_DEPRECATED.Y);
 		OverrideGpuDispatchNumThreadsZ.SetDefaultValueEditorOnly(OverrideGpuDispatchNumThreads_DEPRECATED.Z);
+	}
+
+	if (NiagaraVersion < FNiagaraCustomVersion::ParameterBindingWithValueRenameFixup)
+	{
+		if (UNiagaraEmitter* Emitter = GetTypedOuter<UNiagaraEmitter>())
+		{
+			const FString& EmitterName = Emitter->GetUniqueEmitterName();
+
+			NumIterations.OnRenameEmitter(EmitterName);
+			NumIterations.OnRenameEmitter(EmitterName);
+			OverrideGpuDispatchNumThreadsX.OnRenameEmitter(EmitterName);
+			OverrideGpuDispatchNumThreadsY.OnRenameEmitter(EmitterName);
+			OverrideGpuDispatchNumThreadsZ.OnRenameEmitter(EmitterName);
+			ElementCountX.OnRenameEmitter(EmitterName);
+			ElementCountY.OnRenameEmitter(EmitterName);
+			ElementCountZ.OnRenameEmitter(EmitterName);
+		}
 	}
 #endif
 }

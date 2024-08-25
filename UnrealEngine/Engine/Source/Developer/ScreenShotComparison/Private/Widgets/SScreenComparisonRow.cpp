@@ -176,13 +176,6 @@ TSharedRef<SWidget> SScreenComparisonRow::GenerateWidgetForColumn(const FName& C
 
 			FSlateColor TextColor = FSlateColor::UseForeground();
 
-			FString Name = FString::Printf(TEXT("%s.%s"), *ModelMetaData->Context, *ModelMetaData->ScreenShotName);
-			if ((ModelMetaData->Context.Len() && ModelMetaData->TestName.Len())
-				|| !ModelMetaData->ScreenShotName.Len())
-			{
-				Name = FString::Printf(TEXT("%s.%s"), *ModelMetaData->Context, *ModelMetaData->TestName);
-			}
-
 			if (ComparisonResult.IsNew())
 			{
 				TextColor = FSlateColor(FLinearColor::Yellow);
@@ -193,12 +186,12 @@ TSharedRef<SWidget> SScreenComparisonRow::GenerateWidgetForColumn(const FName& C
 			}
 
 			return SNew(STextBlock)
-				.Text(FText::FromString(Name))
+				.Text(GetName())
 				.ColorAndOpacity(TextColor);
 		}
 		else
 		{
-			return SNew(STextBlock).Text(LOCTEXT("Unknown", "Unknown Test, no metadata discovered."));
+			return SNew(STextBlock).Text(GetName());
 		}
 	}
 	else if (ColumnName == "Date")
@@ -653,6 +646,24 @@ FReply SScreenComparisonRow::OnImageClicked(const FGeometry& InGeometry, const F
 	FSlateApplication::Get().AddWindowAsNativeChild(PopupWindow, ParentWindow, true);
 
 	return FReply::Handled();
+}
+
+FText SScreenComparisonRow::GetName() const
+{
+	if (!Name.IsSet())
+	{
+		FString ModelName = Model->GetName();
+		if (!ModelName.IsEmpty())
+		{
+			Name = FText::FromString(ModelName);
+		}
+		else
+		{
+			Name = LOCTEXT("Unknown", "Unknown Test, no metadata discovered.");
+		}
+	}
+
+	return Name.GetValue();
 }
 
 #undef LOCTEXT_NAMESPACE

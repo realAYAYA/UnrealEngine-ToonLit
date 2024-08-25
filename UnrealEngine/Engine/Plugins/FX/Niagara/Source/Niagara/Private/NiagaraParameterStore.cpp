@@ -1310,18 +1310,29 @@ void FNiagaraParameterStore::OnLayoutChange()
 #endif
 }
 
-const FNiagaraVariableBase* FNiagaraParameterStore::FindVariable(const UNiagaraDataInterface* Interface) const
+const FNiagaraVariableBase* FNiagaraParameterStore::FindVariableFromDataInterfaceIndex(int32 DataInterfaceIndex) const
 {
 	SCOPE_CYCLE_COUNTER(STAT_NiagaraParameterStoreFindVar);
-	int32 Idx = DataInterfaces.IndexOfByKey(Interface);
+	for (const FNiagaraVariableWithOffset& ParamWithOffset : ReadParameterVariables())
+	{
+		if (ParamWithOffset.Offset == DataInterfaceIndex && ParamWithOffset.GetType().IsDataInterface())
+		{
+			return &ParamWithOffset;
+		}
+	}
+	return nullptr;
+}
+
+const FNiagaraVariableBase* FNiagaraParameterStore::FindVariableFromDataInterface(const UNiagaraDataInterface* Interface) const
+{
+	SCOPE_CYCLE_COUNTER(STAT_NiagaraParameterStoreFindVar);
+	const int32 Idx = DataInterfaces.IndexOfByKey(Interface);
 	if (Idx != INDEX_NONE)
 	{
-		for (const FNiagaraVariableWithOffset& ParamWithOffset : ReadParameterVariables())
+		const FNiagaraVariableBase* Variable = FindVariableFromDataInterfaceIndex(Idx);
+		if (Variable && ensure(Variable->GetType().GetClass() == Interface->GetClass()))
 		{
-			if (ParamWithOffset.Offset == Idx && ParamWithOffset.GetType().GetClass() == Interface->GetClass())
-			{
-				return &ParamWithOffset;
-			}
+			return Variable;
 		}
 	}
 	return nullptr;
@@ -1437,7 +1448,7 @@ const int32* FNiagaraParameterStore::FindParameterOffset(const FNiagaraVariableB
 	return nullptr;
 }
 
-void FNiagaraParameterStore::PostLoad()
+void FNiagaraParameterStore::PostLoad(UObject* InOwner)
 {
 #if WITH_EDITORONLY_DATA
 	// Convert ParameterOffsets map to the new SortedParameterOffsets array.
@@ -1462,6 +1473,8 @@ void FNiagaraParameterStore::PostLoad()
 		SeenGuids.Add(Entry.Value);
 	}
 #endif
+
+	SetOwner(InOwner);
 
 	// Not always required if NIAGARA_VARIABLE_LEXICAL_SORTING
 	SortParameters();

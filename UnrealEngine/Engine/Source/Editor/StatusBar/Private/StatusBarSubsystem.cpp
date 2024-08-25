@@ -271,9 +271,9 @@ bool UStatusBarSubsystem::ToggleDebugConsole(TSharedRef<SWindow> ParentWindow, b
 	
 	const bool bCycleToOutputLogDrawer = OutputLogModule.ShouldCycleToOutputLogDrawer() || bAlwaysToggleDrawer;
 	
-	for (auto StatusBar : StatusBars)
+	for (const TPair<FName, FStatusBarData>& StatusBar : StatusBars)
 	{
-		FStatusBarData& SBData = StatusBar.Value;
+		const FStatusBarData& SBData = StatusBar.Value;
 		if (TSharedPtr<SStatusBar> StatusBarPinned = SBData.StatusBarWidget.Pin())
 		{
 			TSharedPtr<SDockTab> ParentTab = StatusBarPinned->GetParentTab();
@@ -333,8 +333,32 @@ bool UStatusBarSubsystem::OpenContentBrowserDrawer()
 
 	if (ParentWindow.IsValid() && ParentWindow->GetType() == EWindowType::Normal)
 	{
-		TSharedRef<SWindow> WindowRef = ParentWindow.ToSharedRef();
-		return ToggleContentBrowser(ParentWindow.ToSharedRef());
+		bool bDrawerIsAlreadyOpened = false;
+		for (const TPair<FName, FStatusBarData>& StatusBar : StatusBars)
+		{
+			if (TSharedPtr<SStatusBar> StatusBarPinned = StatusBar.Value.StatusBarWidget.Pin())
+			{
+				if (StatusBarPinned->IsDrawerOpened(StatusBarDrawerIds::ContentBrowser))
+				{
+					TSharedPtr<SDockTab> ParentTab = StatusBarPinned->GetParentTab();
+					if (ParentTab && ParentTab->IsForeground() && ParentTab->GetParentWindow() == ParentWindow)
+					{
+						bDrawerIsAlreadyOpened = true;
+						break;
+					}
+				}
+			}
+		}
+
+		if (!bDrawerIsAlreadyOpened)
+		{
+			TSharedRef<SWindow> WindowRef = ParentWindow.ToSharedRef();
+			return ToggleContentBrowser(ParentWindow.ToSharedRef());
+		}
+		else
+		{
+			return true;
+		}
 	}
 
 	return false;
@@ -366,9 +390,9 @@ bool UStatusBarSubsystem::TryToggleDrawer(const FName DrawerId)
 
 	if (ParentWindow.IsValid() && ParentWindow->GetType() == EWindowType::Normal)
 	{
-		for (auto StatusBar : StatusBars)
+		for (const TPair<FName, FStatusBarData>& StatusBar : StatusBars)
 		{
-			FStatusBarData& SBData = StatusBar.Value;
+			const FStatusBarData& SBData = StatusBar.Value;
 			if (TSharedPtr<SStatusBar> StatusBarPinned = SBData.StatusBarWidget.Pin())
 			{
 				TSharedPtr<SDockTab> ParentTab = StatusBarPinned->GetParentTab();
@@ -396,7 +420,7 @@ bool UStatusBarSubsystem::TryToggleDrawer(const FName DrawerId)
 bool UStatusBarSubsystem::ForceDismissDrawer()
 {
 	bool bWasDismissed = false;
-	for (auto StatusBar : StatusBars)
+	for (const TPair<FName, FStatusBarData>& StatusBar : StatusBars)
 	{
 		if (TSharedPtr<SStatusBar> StatusBarPinned = StatusBar.Value.StatusBarWidget.Pin())
 		{
@@ -413,7 +437,7 @@ bool UStatusBarSubsystem::ToggleContentBrowser(TSharedRef<SWindow> ParentWindow)
 
 	SNewUserTipNotification::Dismiss();
 
-	for (auto StatusBar : StatusBars)
+	for (const TPair<FName, FStatusBarData>& StatusBar : StatusBars)
 	{
 		if (TSharedPtr<SStatusBar> StatusBarPinned = StatusBar.Value.StatusBarWidget.Pin())
 		{
@@ -454,6 +478,11 @@ TSharedRef<SWidget> UStatusBarSubsystem::MakeStatusBarWidget(FName StatusBarName
 	ContentBrowserDrawer.ButtonText = LOCTEXT("StatusBar_ContentBrowserButton", "Content Drawer");
 	ContentBrowserDrawer.ToolTipText = FText::Format(LOCTEXT("StatusBar_ContentBrowserDrawerToolTip", "Opens a temporary content browser above this status which will dismiss when it loses focus ({0})"), FGlobalEditorCommonCommands::Get().OpenContentBrowserDrawer->GetInputText());
 	ContentBrowserDrawer.Icon = FAppStyle::Get().GetBrush("ContentBrowser.TabIcon");
+
+	for (const TUniquePtr<IGlobalStatusBarExtension>& Extension : GlobalStatusBarExtensions)
+	{
+		Extension->ExtendContentBrowserDrawer(ContentBrowserDrawer);
+	}
 
 	StatusBar->RegisterDrawer(MoveTemp(ContentBrowserDrawer));
 
@@ -506,6 +535,12 @@ TSharedRef<SWidget> UStatusBarSubsystem::MakeStatusBarWidget(FName StatusBarName
 	OutputLogDrawer.ButtonText = LOCTEXT("StatusBar_OutputLogButton", "Output Log");
 	OutputLogDrawer.ToolTipText = FText::Format(LOCTEXT("StatusBar_OutputLogButtonTip", "Opens the output log drawer. ({0}) cycles between focusing the console command box, opening the output log drawer, and closing it.\nThe output log drawer may also be toggled directly with ({1})"), FGlobalEditorCommonCommands::Get().OpenConsoleCommandBox->GetInputText(), FGlobalEditorCommonCommands::Get().OpenOutputLogDrawer->GetInputText());
 	OutputLogDrawer.Icon = FAppStyle::Get().GetBrush("Log.TabIcon");
+
+	for (const TUniquePtr<IGlobalStatusBarExtension>& Extension : GlobalStatusBarExtensions)
+	{
+		Extension->ExtendOutputLogDrawer(OutputLogDrawer);
+	}
+
 	StatusBar->RegisterDrawer(MoveTemp(OutputLogDrawer));
 
 	// Clean up stale status bars
@@ -624,6 +659,25 @@ void UStatusBarSubsystem::ClearStatusBarMessages(FName StatusBarName)
 	}
 }
 
+IGlobalStatusBarExtension& UStatusBarSubsystem::RegisterGlobalStatusBarExtension(TUniquePtr<IGlobalStatusBarExtension>&& Extension)
+{
+	int32 Index = GlobalStatusBarExtensions.Add(MoveTemp(Extension));
+	// NOTE: It is safe to return this reference because it's stored in a TUniquePtr which is
+	// guaranteed not to change its address if the array reallocates.
+	return *GlobalStatusBarExtensions[Index];
+}
+
+TUniquePtr<IGlobalStatusBarExtension> UStatusBarSubsystem::UnregisterGlobalStatusBarExtension(IGlobalStatusBarExtension* Extension)
+{
+	int32 Index = GlobalStatusBarExtensions.IndexOfByPredicate([Extension](const TUniquePtr<IGlobalStatusBarExtension>& Other)
+	{
+		return &*Other == Extension;
+	});
+	TUniquePtr<IGlobalStatusBarExtension> RemovedExtension = MoveTemp(GlobalStatusBarExtensions[Index]);
+	GlobalStatusBarExtensions.RemoveAtSwap(Index);
+	return RemovedExtension;
+}
+
 void UStatusBarSubsystem::StartProgressNotification(FProgressNotificationHandle Handle, FText DisplayText, int32 TotalWorkToDo)
 {
 	// Avoid crashing when starting progress notification while slate is still uninitialized. (i.e. commandlet)
@@ -638,7 +692,7 @@ void UStatusBarSubsystem::StartProgressNotification(FProgressNotificationHandle 
 		}
 
 		// Find the active status bar to display the progress in
-		for (auto StatusBar : StatusBars)
+		for (const TPair<FName, FStatusBarData>& StatusBar : StatusBars)
 		{
 			if (TSharedPtr<SStatusBar> StatusBarPinned = StatusBar.Value.StatusBarWidget.Pin())
 			{
@@ -655,7 +709,7 @@ void UStatusBarSubsystem::StartProgressNotification(FProgressNotificationHandle 
 
 void UStatusBarSubsystem::UpdateProgressNotification(FProgressNotificationHandle Handle, int32 TotalWorkDone, int32 UpdatedTotalWorkToDo, FText UpdatedDisplayText)
 {
-	for (auto StatusBar : StatusBars)
+	for (const TPair<FName, FStatusBarData>& StatusBar : StatusBars)
 	{
 		if (TSharedPtr<SStatusBar> StatusBarPinned = StatusBar.Value.StatusBarWidget.Pin())
 		{
@@ -670,7 +724,7 @@ void UStatusBarSubsystem::UpdateProgressNotification(FProgressNotificationHandle
 
 void UStatusBarSubsystem::CancelProgressNotification(FProgressNotificationHandle Handle)
 {
-	for (auto StatusBar : StatusBars)
+	for (const TPair<FName, FStatusBarData>& StatusBar : StatusBars)
 	{
 		if (TSharedPtr<SStatusBar> StatusBarPinned = StatusBar.Value.StatusBarWidget.Pin())
 		{
@@ -704,7 +758,7 @@ void UStatusBarSubsystem::CreateContentBrowserIfNeeded()
 			[this]() -> TSharedPtr<SDockTab>
 			{
 				UE_LOG(LogStatusBar, Log, TEXT("Looking status bar with open content browser drawer..."))
-				for (auto StatusBar : StatusBars)
+				for (const TPair<FName, FStatusBarData>& StatusBar : StatusBars)
 				{
 					if (TSharedPtr<SStatusBar> StatusBarPinned = StatusBar.Value.StatusBarWidget.Pin())
 					{
@@ -835,7 +889,7 @@ void UStatusBarSubsystem::OnContentBrowserOpened(FName StatusBarWithDrawerName)
 	SNewUserTipNotification::Dismiss();
 
 	// Dismiss any other content browser that is opened when one status bar opens it.  The content browser is a shared resource and shouldn't be in the layout twice
-	for (auto StatusBar : StatusBars)
+	for (const TPair<FName, FStatusBarData>& StatusBar : StatusBars)
 	{
 		if (TSharedPtr<SStatusBar> StatusBarPinned = StatusBar.Value.StatusBarWidget.Pin())
 		{
@@ -869,7 +923,7 @@ void UStatusBarSubsystem::OnContentBrowserDismissed(const TSharedPtr<SWidget>& N
 
 void UStatusBarSubsystem::HandleDeferredOpenContentBrowser(TSharedPtr<SWindow> ParentWindow)
 {
-	for (auto StatusBar : StatusBars)
+	for (const TPair<FName, FStatusBarData>& StatusBar : StatusBars)
 	{
 		if (TSharedPtr<SStatusBar> StatusBarPinned = StatusBar.Value.StatusBarWidget.Pin())
 		{
@@ -898,7 +952,7 @@ TSharedRef<SWidget> UStatusBarSubsystem::OnGetOutputLog()
 void UStatusBarSubsystem::OnOutputLogOpened(FName StatusBarWithDrawerName)
 {
 	// Dismiss any other content browser that is opened when one status bar opens it.  The content browser is a shared resource and shouldn't be in the layout twice
-	for (auto StatusBar : StatusBars)
+	for (const TPair<FName, FStatusBarData>& StatusBar : StatusBars)
 	{
 		if (TSharedPtr<SStatusBar> StatusBarPinned = StatusBar.Value.StatusBarWidget.Pin())
 		{
@@ -925,7 +979,7 @@ void UStatusBarSubsystem::OnOutputLogDismised(const TSharedPtr<SWidget>& NewlyFo
 
 void UStatusBarSubsystem::OnDebugConsoleDrawerClosed()
 {
-	for (auto StatusBar : StatusBars)
+	for (const TPair<FName, FStatusBarData>& StatusBar : StatusBars)
 	{
 		if (TSharedPtr<SStatusBar> StatusBarPinned = StatusBar.Value.StatusBarWidget.Pin())
 		{

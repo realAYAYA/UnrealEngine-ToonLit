@@ -10,6 +10,42 @@
 #include "OpenGLDrvPrivate.h"
 #include "RHICoreStats.h"
 
+#if ENABLE_DEBUG_OUTPUT
+
+// Enable GL debug output
+static int32 GOGLDebugOutputLevel = -1;
+
+bool IsOGLDebugOutputEnabled()
+{
+	return GetOGLDebugOutputLevel() != 0;
+}
+
+int32 GetOGLDebugOutputLevel()
+{
+	if (GOGLDebugOutputLevel < 0)
+	{
+		// this can happen super early
+		if(FCommandLine::IsInitialized())
+		{
+			int32 DebugLevel = 0;
+			GOGLDebugOutputLevel = FParse::Value(FCommandLine::Get(), TEXT("OpenGLDebugLevel="), DebugLevel) ? DebugLevel : 0;
+
+			if(FParse::Param(FCommandLine::Get(), TEXT("openglDebug")))
+			{
+				GOGLDebugOutputLevel = 1;
+			}
+		}
+		else
+		{
+			return 0;
+		}
+	}
+
+	return GOGLDebugOutputLevel;
+}
+#endif
+
+
 void VerifyOpenGLResult(GLenum ErrorCode, const TCHAR* Msg1, const TCHAR* Msg2, const TCHAR* Filename, uint32 Line)
 {
 	if (ErrorCode != GL_NO_ERROR)

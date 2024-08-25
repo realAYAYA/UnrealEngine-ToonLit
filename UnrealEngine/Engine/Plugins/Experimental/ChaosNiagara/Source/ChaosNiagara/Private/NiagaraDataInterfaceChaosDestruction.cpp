@@ -25,7 +25,7 @@
 #define LOCTEXT_NAMESPACE "ChaosNiagaraDestructionDataInterface"
 //#pragma optimize("", off)
 
-DECLARE_STATS_GROUP(TEXT("ChaosNiagara"), STATGROUP_ChaosNiagara, STATCAT_Advanced);
+DECLARE_STATS_GROUP(TEXT("ChaosNiagara"), STATGROUP_ChaosNiagara, STATCAT_Niagara);
 DECLARE_CYCLE_STAT(TEXT("CollisionCallback"), STAT_CollisionCallback, STATGROUP_ChaosNiagara);
 DECLARE_CYCLE_STAT(TEXT("TrailingCallback"), STAT_NiagaraTrailingCallback, STATGROUP_ChaosNiagara);
 DECLARE_CYCLE_STAT(TEXT("BreakingCallback"), STAT_NiagaraBreakingCallback, STATGROUP_ChaosNiagara);
@@ -1912,16 +1912,11 @@ bool UNiagaraDataInterfaceChaosDestruction::BreakingCallback(FNDIChaosDestructio
 		if (SolverData.Solver->GetEventFilters()->IsBreakingEventEnabled() && BreakingEvents.Num() > 0 && SolverData.Solver->GetSolverTime() > 0.f && MaxNumberOfDataEntriesToSpawn > 0)
 		{
 			TArray<Chaos::FBreakingDataExt>& AllBreakingsArray = BreakingEvents;
-			TMap<IPhysicsProxyBase*, TArray<int32>> AllBreakingsIndicesByPhysicsProxyMap;
 			float TimeData_MapsCreated = SolverData.Solver->GetSolverTime();
 
 			{
 				size_t SizeOfAllBreakings = sizeof(Chaos::FBreakingData) * AllBreakingsArray.Num();
 				size_t SizeOfAllBreakingsIndicesByPhysicsProxy = 0;
-				for (auto& Elem : AllBreakingsIndicesByPhysicsProxyMap)
-				{
-					SizeOfAllBreakingsIndicesByPhysicsProxy += sizeof(int32) * (Elem.Value).Num();
-				}
 				SET_MEMORY_STAT(STAT_AllBreakingsDataMemory, SizeOfAllBreakings);
 				SET_MEMORY_STAT(STAT_AllBreakingsIndicesByPhysicsProxyMemory, SizeOfAllBreakingsIndicesByPhysicsProxy);
 			}
@@ -2052,7 +2047,7 @@ void UNiagaraDataInterfaceChaosDestruction::HandleTrailingEvents(const Chaos::FT
 						}
 					}
 
-					const TArray<FTransform>& ComponentSpaceTransforms = GeometryCollectionComponent->GetComponentSpaceTransforms();
+					const TArray<FTransform3f>& ComponentSpaceTransforms = GeometryCollectionComponent->GetComponentSpaceTransforms3f();
 					const FTransform ActorTransform = GeometryCollectionComponent->GetComponentToWorld();
 
 					const FGeometryDynamicCollection* DynamicCollection = GeometryCollectionComponent->GetDynamicCollection();
@@ -2085,7 +2080,7 @@ void UNiagaraDataInterfaceChaosDestruction::HandleTrailingEvents(const Chaos::FT
 									{
 										Chaos::FTrailingDataExt TrailingData;
 
-										const FTransform CurrTransform = CollectionMassToLocal[Idx] * ComponentSpaceTransforms[Idx] * ActorTransform;
+										const FTransform CurrTransform = CollectionMassToLocal[Idx] * FTransform(ComponentSpaceTransforms[Idx]) * ActorTransform;
 										TrailingData.Location = CurrTransform.GetTranslation();
 
 										TrailingData.Velocity = (*LinearVelocity)[Idx];
@@ -2384,16 +2379,11 @@ bool UNiagaraDataInterfaceChaosDestruction::TrailingCallback(FNDIChaosDestructio
 		if (SolverData.Solver->GetEventFilters()->IsTrailingEventEnabled() && TrailingEvents.Num() > 0 && SolverData.Solver->GetSolverTime() > 0.f && MaxNumberOfDataEntriesToSpawn > 0)
 		{
 			TArray<Chaos::FTrailingDataExt>& AllTrailingsArray = TrailingEvents;
-			TMap<IPhysicsProxyBase*, TArray<int32>> AllTrailingsIndicesByPhysicsProxyMap;
 			float TimeData_MapsCreated = SolverData.Solver->GetSolverTime();
 
 			{
 				size_t SizeOfAllTrailings = sizeof(Chaos::FTrailingData) * AllTrailingsArray.Num();
 				size_t SizeOfAllTrailingsIndicesByPhysicsProxy = 0;
-				for (auto& Elem : AllTrailingsIndicesByPhysicsProxyMap)
-				{
-					SizeOfAllTrailingsIndicesByPhysicsProxy += sizeof(int32) * (Elem.Value).Num();
-				}
 				SET_MEMORY_STAT(STAT_AllTrailingsDataMemory, SizeOfAllTrailings);
 				SET_MEMORY_STAT(STAT_AllTrailingsIndicesByPhysicsProxyMemory, SizeOfAllTrailingsIndicesByPhysicsProxy);
 			}
@@ -2540,8 +2530,9 @@ bool UNiagaraDataInterfaceChaosDestruction::PerInstanceTick(void* PerInstanceDat
 	return false;
 }
 
+#if WITH_EDITORONLY_DATA
 // Returns the signature of all the functions available in the data interface
-void UNiagaraDataInterfaceChaosDestruction::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+void UNiagaraDataInterfaceChaosDestruction::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	using namespace NDIChaosDestructionLocal;
 	{
@@ -2864,6 +2855,7 @@ void UNiagaraDataInterfaceChaosDestruction::GetFunctions(TArray<FNiagaraFunction
 		OutFunctions.Add(Sig);
 	}
 }
+#endif
 
 DEFINE_NDI_FUNC_BINDER(UNiagaraDataInterfaceChaosDestruction, GetPosition);
 DEFINE_NDI_FUNC_BINDER(UNiagaraDataInterfaceChaosDestruction, GetNormal);

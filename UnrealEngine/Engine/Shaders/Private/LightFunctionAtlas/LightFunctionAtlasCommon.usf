@@ -1,0 +1,107 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+/*=============================================================================
+	LightFunctionAtlasCommon.usf
+=============================================================================*/
+
+#pragma once
+
+#include "../Common.ush"
+#include "/Engine/Shared/LightDefinitions.h"
+
+// In order to use function from that file, one must use FLightFunctionAtlasGlobalParameters
+
+// Trick so that we can sample from LightFunctionAtlas when it is a global UB or when it is a Struct part of another UB.
+#ifdef LightFunctionAtlasStruct
+#undef  LightFunctionAtlas
+#define LightFunctionAtlas LightFunctionAtlasStruct
+#endif
+
+#if COLORED_LIGHT_FUNCTION_ATLAS
+#define FLightFunctionColor float3
+#else
+#define FLightFunctionColor float
+#endif
+
+FLightFunctionColor GetLocalLightFunctionCommon(float3 TranslatedWorldPosition, uint LightFunctionAtlasLightIndex)
+{
+	if (LightFunctionAtlasLightIndex == 0)
+	{
+		// No valid light function assigned to the light.
+		return 1.0f;
+	}
+
+	const uint BaseBufferIndex = LightFunctionAtlasLightIndex * 5; // See FAtlasLightInfoData
+
+	float4 LightFunctionLightDataParameters = LightFunctionAtlas.LightInfoDataBuffer[BaseBufferIndex + 0];
+	const float  FadeDistance				= LightFunctionLightDataParameters.x;
+	const uint   PackedLightInfoDataParams0 = asuint(LightFunctionLightDataParameters.y);
+	const uint   PackedLightInfoDataParams1 = asuint(LightFunctionLightDataParameters.z);
+	const float	 TanOuterAngle				= LightFunctionLightDataParameters.w;
+
+	const uint   LightType					= PackedLightInfoDataParams0 & 0xFF;
+	const float  DisabledBrightness			= f16tof32((PackedLightInfoDataParams0 >> 8) & 0xFFFF);
+
+	const float2 Slot_MinUV					= float2(((PackedLightInfoDataParams1) & 0xFFFF) * rcp(65536.0f), ((PackedLightInfoDataParams1 >> 16) & 0xFFFF) * rcp(65536.0f));
+
+	float4x4 ActualLightFunctionMatrix = float4x4(
+		LightFunctionAtlas.LightInfoDataBuffer[BaseBufferIndex + 1],
+		LightFunctionAtlas.LightInfoDataBuffer[BaseBufferIndex + 2],
+		LightFunctionAtlas.LightInfoDataBuffer[BaseBufferIndex + 3],
+		LightFunctionAtlas.LightInfoDataBuffer[BaseBufferIndex + 4]);
+	float4 HomogeneousShadowPosition = mul(float4(TranslatedWorldPosition, 1), ActualLightFunctionMatrix);
+
+	float3 LightVector = HomogeneousShadowPosition.zyx / HomogeneousShadowPosition.w;
+	float2 LightFunctionUV = LightVector.xy;
+
+	switch (LightType)
+	{
+
+	case LIGHT_TYPE_SPOT:
+	{
+		LightFunctionUV = LightVector.xy / (LightVector.z * TanOuterAngle) * .5f + .5f;
+		break;
+	}
+
+	case LIGHT_TYPE_POINT:
+	{
+		float3 UnitLightVector = normalize(LightVector);
+		// Setup 2d UVs for a point light that map the texture using spherical coordinates, which is how max handles a 2d texture projector on a point light
+		// Artists should use a cubemap indexed by a light vector to get better quality
+		LightFunctionUV = float2((atan2(UnitLightVector.y, UnitLightVector.x) + PI) / (2 * PI), acos(UnitLightVector.z) / PI);
+		break;
+	}
+
+	//case LIGHT_TYPE_RECT:
+	//case LIGHT_TYPE_DIRECTIONAL:
+	default:
+	{
+		// no op
+		break;
+	}
+
+	}
+
+	LightFunctionUV = frac(LightFunctionUV);
+
+	// Slot min uv and size already account for half texel offsets
+	float2 AtlasUV = Slot_MinUV + saturate(LightFunctionUV) * LightFunctionAtlas.Slot_UVSize.xx;
+
+#if COLORED_LIGHT_FUNCTION_ATLAS
+	FLightFunctionColor LightFunctionColor = Texture2DSampleLevel(LightFunctionAtlas.LightFunctionAtlasTexture, LightFunctionAtlas.LightFunctionAtlasSampler, AtlasUV, 0).rgb;
+#else
+	FLightFunctionColor LightFunctionColor = Texture2DSampleLevel(LightFunctionAtlas.LightFunctionAtlasTexture, LightFunctionAtlas.LightFunctionAtlasSampler, AtlasUV, 0).x;
+#endif
+	LightFunctionColor = LightFunctionColor * LightFunctionColor; // Simple Gamma decompression
+
+	// Calculate radial view distance for stable fading
+	float ViewDistance = length(PrimaryView.TranslatedWorldCameraOrigin - TranslatedWorldPosition);
+	float DistanceFadeAlpha = saturate((FadeDistance - ViewDistance) / (FadeDistance * .2f));
+	// Fade to disabled based on FadeDistance
+	LightFunctionColor = lerp(DisabledBrightness, LightFunctionColor, DistanceFadeAlpha);
+	// Fade to disabled based on ShadowFadeFraction
+	const float ShadowFadeFraction = 1.0f; // Not setup
+	LightFunctionColor = LightFunctionColor; // lerp(DisabledBrightness, LightFunctionColor, ShadowFadeFraction);
+
+	return LightFunctionColor;
+}

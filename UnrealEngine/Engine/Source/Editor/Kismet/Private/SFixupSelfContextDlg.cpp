@@ -30,7 +30,6 @@
 #include "SlotBase.h"
 #include "Styling/AppStyle.h"
 #include "Styling/SlateColor.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SubclassOf.h"
 #include "Types/SlateEnums.h"
 #include "Types/SlateStructs.h"

@@ -17,6 +17,7 @@
 #include "MovieScene.h"
 #include "Recorder/TakeRecorder.h"
 #include "Recorder/TakeRecorderBlueprintLibrary.h"
+#include "Recorder/TakeRecorderSubsystem.h"
 #include "LevelSequence.h"
 #include "Algo/Find.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
@@ -1005,6 +1006,10 @@ FReply STakeRecorderCockpit::OnAddMarkedFrame()
 		
 		int32 MarkedFrameIndex = MovieScene->AddMarkedFrame(MarkedFrame);
 		UTakeRecorderBlueprintLibrary::OnTakeRecorderMarkedFrameAdded(MovieScene->GetMarkedFrames()[MarkedFrameIndex]);
+		if (UTakeRecorderSubsystem* TakeRecorderSubsystem = GEngine->GetEngineSubsystem<UTakeRecorderSubsystem>())
+		{
+			TakeRecorderSubsystem->TakeRecorderMarkedFrameAdded.Broadcast(MovieScene->GetMarkedFrames()[MarkedFrameIndex]);
+		}
 	}
 
 	return FReply::Handled();

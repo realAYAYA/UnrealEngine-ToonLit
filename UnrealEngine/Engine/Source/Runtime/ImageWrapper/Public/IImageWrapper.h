@@ -59,6 +59,12 @@ enum class EImageFormat : int8
 
 	/** DirectDraw Surface */
 	DDS,
+
+	/** UE JPEG format. */
+	UEJPEG,
+
+	/** Single channel UE JPEG. */
+	GrayscaleUEJPEG,
 };
 
 
@@ -180,6 +186,18 @@ public:
 	 * 
 	 */
 	virtual TArray64<uint8> GetCompressed(int32 Quality = 0) = 0;
+
+	/**
+	 * Gets the data for export. 
+	 * Usually the same thing as GetCompressed.
+	 * 
+	 * @return Array of the data to export.  returns empty array on failure
+	 * 
+	 */
+	virtual TArray64<uint8> GetExportData(int32 Quality = 0)
+	{
+		return GetCompressed(Quality);
+	}
 
 	/**
 	* GetRaw after SetCompressed

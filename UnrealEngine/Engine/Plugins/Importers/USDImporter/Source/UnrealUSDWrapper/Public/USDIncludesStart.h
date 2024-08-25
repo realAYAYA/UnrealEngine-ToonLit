@@ -2,6 +2,8 @@
 
 // HEADER_UNIT_SKIP - Special include
 
+// clang-format off
+
 #if USE_USD_SDK
 
 #include "CoreMinimal.h"
@@ -68,3 +70,5 @@ THIRD_PARTY_INCLUDES_START
 #include "pxr/pxr.h"
 
 #endif // #if USE_USD_SDK
+
+// clang-format on

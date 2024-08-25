@@ -14,6 +14,7 @@
 #include "HAL/LowLevelMemStats.h"
 #include "RHIUtilities.h"
 #include "UObject/Package.h"
+#include "ProfilingDebugging/AssetMetadataTrace.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(TextureRenderTargetVolume)
 
@@ -28,6 +29,30 @@ UTextureRenderTargetVolume::UTextureRenderTargetVolume(const FObjectInitializer&
 	ClearColor = FLinearColor(0.0f, 1.0f, 0.0f, 1.0f);
 	OverrideFormat = PF_Unknown;
 	bForceLinearGamma = true;
+}
+
+EPixelFormat UTextureRenderTargetVolume::GetFormat() const
+{
+	if(OverrideFormat == PF_Unknown)
+	{
+		return bHDR ? PF_FloatRGBA : PF_B8G8R8A8;
+	}
+	else
+	{
+		return OverrideFormat;
+	}
+}
+
+bool UTextureRenderTargetVolume::IsSRGB() const
+{
+	bool bIsSRGB = true;
+	// if render target gamma used was 1.0 then disable SRGB for the static texture
+	if(FMath::Abs(GetDisplayGamma() - 1.0f) < UE_KINDA_SMALL_NUMBER)
+	{
+		bIsSRGB = false;
+	}
+	
+	return bIsSRGB;
 }
 
 void UTextureRenderTargetVolume::Init(uint32 InSizeX, uint32 InSizeY, uint32 InSizeZ, EPixelFormat InFormat)
@@ -138,84 +163,60 @@ FString UTextureRenderTargetVolume::GetDesc()
 	return FString::Printf( TEXT("Render to Texture Volume %dx%d[%s]"), SizeX, SizeX, GPixelFormats[GetFormat()].Name);
 }
 
-UVolumeTexture* UTextureRenderTargetVolume::ConstructTextureVolume(UObject* ObjOuter, const FString& NewTexName, EObjectFlags InFlags)
+TSubclassOf<UTexture> UTextureRenderTargetVolume::GetTextureUClass() const
 {
-#if WITH_EDITOR
-	if (SizeX == 0 || SizeY == 0 || SizeZ == 0)
+	return UVolumeTexture::StaticClass();
+}
+
+bool UTextureRenderTargetVolume::CanConvertToTexture(ETextureSourceFormat& OutTextureSourceFormat, EPixelFormat& OutPixelFormat, FText* OutErrorMessage) const
+{
+	const EPixelFormat LocalFormat = GetFormat();
+
+	// Formats limited by support in Read3DSurfaceFloatData (see FTextureRenderTargetVolumeResource::ReadFloat16Pixels) :
+	ETextureSourceFormat TextureSourceFormat = ValidateTextureFormatForConversionToTextureInternal(LocalFormat, 
+		{ PF_R32_FLOAT, PF_FloatRGBA, PF_R16F }, OutErrorMessage);
+	if (TextureSourceFormat == TSF_Invalid)
 	{
-		return nullptr;
+		return false;
 	}
 
+	// this is not actually required, TextureSourceFormat is a free choice
+	// volumes will always use the 16F read path, that comes from GetReadPixelsFormat()
+	TextureSourceFormat = TSF_RGBA16F;
 
-	const EPixelFormat PixelFormat = GetFormat();
-	ETextureSourceFormat TextureFormat = TSF_Invalid;
-	switch (PixelFormat)
+	if ((SizeX <= 0) || (SizeY <= 0) || (SizeZ <= 0))
 	{
-		case PF_R32_FLOAT:
-		case PF_FloatRGBA:
-			TextureFormat = TSF_RGBA16F;
-			break;
-	}
-
-	if (TextureFormat == TSF_Invalid)
-	{
-		return nullptr;
-	}
-
-	FTextureRenderTargetVolumeResource* TextureResource = (FTextureRenderTargetVolumeResource*)GameThread_GetRenderTargetResource();
-	if (TextureResource == nullptr)
-	{
-		return nullptr;
-	}
-
-	// Create texture
-	UVolumeTexture* VolumeTexture = NewObject<UVolumeTexture>(ObjOuter, FName(*NewTexName), InFlags);
-
-	bool bSRGB = true;
-	// if render target gamma used was 1.0 then disable SRGB for the static texture
-	if (FMath::Abs(TextureResource->GetDisplayGamma() - 1.0f) < UE_KINDA_SMALL_NUMBER)
-	{
-		bSRGB = false;
-	}
-	VolumeTexture->Source.Init(SizeX, SizeX, SizeZ, 1, TextureFormat);
-
-	const int32 SrcMipSize = CalculateImageBytes(SizeX, SizeX, 1, PixelFormat);
-	const int32 DstMipSize = CalculateImageBytes(SizeX, SizeX, 1, PF_FloatRGBA);
-	uint8* SliceData = VolumeTexture->Source.LockMip(0);
-	switch (TextureFormat)
-	{
-		case TSF_RGBA16F:
+		if (OutErrorMessage != nullptr)
 		{
-			for (int i = 0; i < SizeZ; ++i)
-			{
-				TArray<FFloat16Color> OutputBuffer;
-				FReadSurfaceDataFlags ReadSurfaceDataFlags(RCM_UNorm);
-				if (TextureResource->ReadPixels(OutputBuffer, i))
-				{
-					FMemory::Memcpy((FFloat16Color*)(SliceData + i * DstMipSize), OutputBuffer.GetData(), DstMipSize);
-				}
-			}
-			break;
+			*OutErrorMessage = FText::Format(NSLOCTEXT("TextureRenderTargetVolume", "InvalidSizeForConversionToTexture", "Invalid size ({0},{1},{2}) for converting {3} to {4}"),
+				FText::AsNumber(SizeX),
+				FText::AsNumber(SizeY),
+				FText::AsNumber(SizeZ),
+				FText::FromString(GetClass()->GetName()),
+				FText::FromString(GetTextureUClass()->GetName()));
 		}
-
-		default:
-			// Missing conversion from PF -> TSF
-			check(false);
-			break;
+		return false;
 	}
 
-	VolumeTexture->Source.UnlockMip(0);
-	VolumeTexture->SRGB = bSRGB;
-	// If HDR source image then choose HDR compression settings..
-	VolumeTexture->CompressionSettings = TextureFormat == TSF_RGBA16F ? TextureCompressionSettings::TC_HDR : TextureCompressionSettings::TC_Default; //-V547 - future proofing
-	// Default to no mip generation for cube render target captures.
-	VolumeTexture->MipGenSettings = TextureMipGenSettings::TMGS_NoMipmaps;
-	VolumeTexture->PostEditChange();
+	OutPixelFormat = LocalFormat;
+	OutTextureSourceFormat = TextureSourceFormat;
+	return true;
+}
 
-	return VolumeTexture;
-#else
-	return nullptr;
+UVolumeTexture* UTextureRenderTargetVolume::ConstructTextureVolume(UObject* InOuter, const FString& InNewTextureName, EObjectFlags InObjectFlags, uint32 InFlags, TArray<uint8>* InAlphaOverride)
+{
+	UVolumeTexture* Result = nullptr;
+
+#if WITH_EDITOR
+	FText ErrorMessage;
+	Result = Cast<UVolumeTexture>(ConstructTexture(InOuter, InNewTextureName, InObjectFlags, static_cast<EConstructTextureFlags>(InFlags), InAlphaOverride, &ErrorMessage));
+	if (Result == nullptr)
+	{
+		UE_LOG(LogTexture, Error, TEXT("Couldn't construct texture : %s"), *ErrorMessage.ToString());
+	}
 #endif // #if WITH_EDITOR
+
+	return Result;
 }
 
 /*-----------------------------------------------------------------------------
@@ -229,20 +230,13 @@ UVolumeTexture* UTextureRenderTargetVolume::ConstructTextureVolume(UObject* ObjO
  */
 void FTextureRenderTargetVolumeResource::InitRHI(FRHICommandListBase& RHICmdList)
 {
-	LLM_SCOPED_TAG_WITH_OBJECT_IN_SET(Owner->GetOutermost(), ELLMTagSet::Assets);
+	LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH(Owner->GetPackage(), ELLMTagSet::Assets);
+	UE_TRACE_METADATA_SCOPE_ASSET_FNAME(NAME_None, NAME_None, Owner->GetPackage()->GetFName());
 
 	if((Owner->SizeX > 0) && (Owner->SizeY > 0) && (Owner->SizeZ > 0))
 	{
-		bool bIsSRGB = true;
-
-		// if render target gamma used was 1.0 then disable SRGB for the static texture
-		if(FMath::Abs(GetDisplayGamma() - 1.0f) < UE_KINDA_SMALL_NUMBER)
-		{
-			bIsSRGB = false;
-		}
-
 		// Create the RHI texture. Only one mip is used and the texture is targetable for resolve.
-		ETextureCreateFlags TexCreateFlags = bIsSRGB ? TexCreate_SRGB : TexCreate_None;
+		ETextureCreateFlags TexCreateFlags = Owner->IsSRGB() ? TexCreate_SRGB : TexCreate_None;
 
 		if (Owner->bCanCreateUAV)
 		{
@@ -268,9 +262,6 @@ void FTextureRenderTargetVolumeResource::InitRHI(FRHICommandListBase& RHICmdList
 		}
 
 		RHIUpdateTextureReference(Owner->TextureReference.TextureReferenceRHI,TextureRHI);
-
-		// Can't set this as it's a texture 2D
-		//RenderTargetTextureRHI = VolumeSurfaceRHI;
 
 		AddToDeferredUpdateList(true);
 	}
@@ -310,7 +301,8 @@ void FTextureRenderTargetVolumeResource::ReleaseRHI()
  */
 void FTextureRenderTargetVolumeResource::UpdateDeferredResource(FRHICommandListImmediate& RHICmdList, bool bClearRenderTarget/*=true*/)
 {
-	LLM_SCOPED_TAG_WITH_OBJECT_IN_SET(Owner->GetOutermost(), ELLMTagSet::Assets);
+	LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH(Owner->GetPackage(), ELLMTagSet::Assets);
+	UE_TRACE_METADATA_SCOPE_ASSET_FNAME(NAME_None, NAME_None, Owner->GetPackage()->GetFName());
 
 	RemoveFromDeferredUpdateList();
 
@@ -322,88 +314,114 @@ void FTextureRenderTargetVolumeResource::UpdateDeferredResource(FRHICommandListI
 	}
 }
 
-/** 
- * @return width of target
- */
 uint32 FTextureRenderTargetVolumeResource::GetSizeX() const
 {
 	return Owner->SizeX;
 }
 
-/** 
- * @return height of target
- */
 uint32 FTextureRenderTargetVolumeResource::GetSizeY() const
 {
-	return Owner->SizeX;
+	return Owner->SizeY;
 }
 
-/** 
- * @return dimensions of target surface
- */
+uint32 FTextureRenderTargetVolumeResource::GetSizeZ() const
+{
+	return Owner->SizeZ;
+}
+
 FIntPoint FTextureRenderTargetVolumeResource::GetSizeXY() const
 {
-	return FIntPoint(Owner->SizeX, Owner->SizeX);
+	return FIntPoint(Owner->SizeX, Owner->SizeY);
+}
+
+float UTextureRenderTargetVolume::GetDisplayGamma() const
+{
+	// code dupe ; move this up to the top level, it's duped everywhere
+
+	if(TargetGamma > UE_KINDA_SMALL_NUMBER * 10.0f)
+	{
+		return TargetGamma;
+	}
+	EPixelFormat Format = GetFormat();
+	// ?? hard-coding a few formats but not others, likely wrong
+	if(Format == PF_R32_FLOAT || Format == PF_FloatRGBA || bForceLinearGamma)
+	{
+		return 1.0f;
+	}
+
+	return UTextureRenderTarget::GetDefaultDisplayGamma();
 }
 
 float FTextureRenderTargetVolumeResource::GetDisplayGamma() const
 {
-	if(Owner->TargetGamma > UE_KINDA_SMALL_NUMBER * 10.0f)
-	{
-		return Owner->TargetGamma;
-	}
-	EPixelFormat Format = Owner->GetFormat();
-	if(Format == PF_FloatRGB || Format == PF_FloatRGBA || Owner->bForceLinearGamma)
-	{
-		return 1.0f;
-	}
-	return FTextureRenderTargetResource::GetDisplayGamma();
+	return Owner->GetDisplayGamma();
 }
 
-bool FTextureRenderTargetVolumeResource::ReadPixels(TArray<FColor>& OutImageData, int32 InDepthSlice, FIntRect InRect)
+bool FTextureRenderTargetVolumeResource::ReadPixels(TArray<FColor>& OutImageData, FReadSurfaceDataFlags InFlags, FIntRect InSrcRect)
 {
-	if (InRect == FIntRect(0, 0, 0, 0))
+	checkf(false, TEXT("Not implemented : volume textures only support float16 ATM. Use ReadFloat16Pixels and convert to the desired format"));
+	return false;
+}
+
+bool FTextureRenderTargetVolumeResource::ReadFloat16Pixels(TArray<FFloat16Color>& OutImageData, FReadSurfaceDataFlags InFlags, FIntRect InSrcRect)
+{
+	if (InSrcRect == FIntRect(0, 0, 0, 0))
 	{
-		InRect = FIntRect(0, 0, GetSizeXY().X, GetSizeXY().Y);
+		InSrcRect = FIntRect(0, 0, GetSizeXY().X, GetSizeXY().Y);
+	}
+	
+	check( Owner->GetFormat() == GetRenderTargetTexture()->GetFormat() );
+	EPixelFormat PF = GetRenderTargetTexture()->GetFormat();
+
+	if ( PF != PF_FloatRGBA && PF != PF_R16F && PF != PF_R32_FLOAT )
+	{
+		// limitation of RHIRead3DSurfaceFloatData
+
+		return false;
 	}
 
 	OutImageData.Reset();
 
+	// Read the render target surface data back.	
 	ENQUEUE_RENDER_COMMAND(ReadSurfaceCommand)
 	(
-		[RenderTarget_RT=this, OutData_RT=&OutImageData, Rect_RT=InRect, DepthSlice_RT=InDepthSlice, bSRGB_RT= bSRGB](FRHICommandListImmediate& RHICmdList)
+		[RenderTarget_RT = this, SrcRect_RT = InSrcRect, OutData_RT = &OutImageData, Flags_RT = InFlags](FRHICommandListImmediate& RHICmdList)
 		{
-			TArray<FFloat16Color> TempData;
-			RHICmdList.Read3DSurfaceFloatData(RenderTarget_RT->TextureRHI, Rect_RT, FIntPoint(DepthSlice_RT, DepthSlice_RT + 1), TempData);
-			for (const FFloat16Color& SrcColor : TempData)
-			{
-				OutData_RT->Emplace(FLinearColor(SrcColor).ToFColor(bSRGB_RT));
-			}
+			RHICmdList.Read3DSurfaceFloatData(RenderTarget_RT->GetRenderTargetTexture(), SrcRect_RT, FIntPoint(Flags_RT.GetArrayIndex(), Flags_RT.GetArrayIndex() + 1), *OutData_RT);
 		}
 	);
 	FlushRenderingCommands();
+
+	return true;
+}
+
+bool FTextureRenderTargetVolumeResource::ReadLinearColorPixels(TArray<FLinearColor>& OutImageData, FReadSurfaceDataFlags InFlags, FIntRect InSrcRect)
+{
+	checkf(false, TEXT("Not implemented : volume textures only support float16 ATM. Use ReadFloat16Pixels and convert to the desired format"));
+	return false;
+}
+
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+bool FTextureRenderTargetVolumeResource::ReadPixels(TArray<FColor>& OutImageData, int32 InDepthSlice, FIntRect InRect)
+{
+	FReadSurfaceDataFlags Flags;
+	Flags.SetArrayIndex(InDepthSlice);
+	TArray<FFloat16Color> TempData;
+	if (FRenderTarget::ReadFloat16Pixels(TempData, Flags, InRect))
+	{
+		for (const FFloat16Color& SrcColor : TempData)
+		{
+			OutImageData.Emplace(FLinearColor(SrcColor).ToFColor(bSRGB));
+		}
+	}
 
 	return true;
 }
 
 bool FTextureRenderTargetVolumeResource::ReadPixels(TArray<FFloat16Color>& OutImageData, int32 InDepthSlice, FIntRect InRect)
 {
-	if (InRect == FIntRect(0, 0, 0, 0))
-	{
-		InRect = FIntRect(0, 0, GetSizeXY().X, GetSizeXY().Y);
-	}
-
-	OutImageData.Reset();
-
-	ENQUEUE_RENDER_COMMAND(ReadSurfaceCommand)
-	(
-		[RenderTarget_RT=this, OutData_RT=&OutImageData, Rect_RT=InRect, DepthSlice_RT=InDepthSlice](FRHICommandListImmediate& RHICmdList)
-		{
-			RHICmdList.Read3DSurfaceFloatData(RenderTarget_RT->TextureRHI, Rect_RT, FIntPoint(DepthSlice_RT, DepthSlice_RT+1), *OutData_RT);
-		}
-	);
-	FlushRenderingCommands();
-
-	return true;
+	FReadSurfaceDataFlags Flags;
+	Flags.SetArrayIndex(InDepthSlice);
+	return FRenderTarget::ReadFloat16Pixels(OutImageData, Flags, InRect);
 }
-
+PRAGMA_ENABLE_DEPRECATION_WARNINGS

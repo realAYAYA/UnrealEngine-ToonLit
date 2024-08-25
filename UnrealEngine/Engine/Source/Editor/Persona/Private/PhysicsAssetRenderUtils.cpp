@@ -55,6 +55,7 @@ FPhysicsAssetRenderSettings::FPhysicsAssetRenderSettings()
 	, bRenderOnlySelectedConstraints(false)
 	, bShowCOM(false)
 	, bShowConstraintsAsPoints(false)
+	, bDrawViolatedLimits(false)
 	, BoneUnselectedColor(170, 155, 225)
 	, NoCollisionColor(200, 200, 200)
 	, COMRenderColor(255, 255, 100)
@@ -260,6 +261,7 @@ void FPhysicsAssetRenderSettings::ResetEditorViewportOptions()
 	bHideSimulatedBodies = DefaultObject.bHideSimulatedBodies;
 	bRenderOnlySelectedConstraints = DefaultObject.bRenderOnlySelectedConstraints;
 	bShowConstraintsAsPoints = DefaultObject.bShowConstraintsAsPoints;
+	bDrawViolatedLimits = DefaultObject.bDrawViolatedLimits;
 }
 
 namespace PhysicsAssetRender
@@ -478,7 +480,7 @@ namespace PhysicsAssetRender
 							Con1Frame.RemoveScaling();
 							Con2Frame.RemoveScaling();
 
-							ConstraintSetup->DefaultInstance.DrawConstraint(PDI, RenderSettings->ConstraintDrawSize, DrawScale, bDrawLimits, bDrawSelected, Con1Frame, Con2Frame, RenderSettings->bShowConstraintsAsPoints);
+							ConstraintSetup->DefaultInstance.DrawConstraint(PDI, RenderSettings->ConstraintDrawSize, DrawScale, bDrawLimits, bDrawSelected, Con1Frame, Con2Frame, RenderSettings->bShowConstraintsAsPoints, RenderSettings->bDrawViolatedLimits);
 
 						}
 					}

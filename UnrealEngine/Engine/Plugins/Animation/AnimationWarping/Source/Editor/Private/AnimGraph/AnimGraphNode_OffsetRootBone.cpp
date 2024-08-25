@@ -13,11 +13,6 @@ UAnimGraphNode_OffsetRootBone::UAnimGraphNode_OffsetRootBone(const FObjectInitia
 {
 }
 
-FText UAnimGraphNode_OffsetRootBone::GetControllerDescription() const
-{
-	return LOCTEXT("OffsetRootBone", "Offset Root Bone");
-}
-
 FText UAnimGraphNode_OffsetRootBone::GetTooltipText() const
 {
 	return LOCTEXT("OffsetRootBoneTooltip", "Applies an offset to the root bone");
@@ -25,7 +20,7 @@ FText UAnimGraphNode_OffsetRootBone::GetTooltipText() const
 
 FText UAnimGraphNode_OffsetRootBone::GetNodeTitle(ENodeTitleType::Type TitleType) const
 {
-	return GetControllerDescription();
+	return LOCTEXT("OffsetRootBone", "Offset Root Bone");
 }
 
 FLinearColor UAnimGraphNode_OffsetRootBone::GetNodeTitleColor() const

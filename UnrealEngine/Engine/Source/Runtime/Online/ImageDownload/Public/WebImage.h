@@ -56,7 +56,8 @@ public:
 	FORCEINLINE FWebImage& SetStandInBrush(TAttribute<const FSlateBrush*> StandInBrushIn) { StandInBrush = StandInBrushIn; DownloadedBrush.Reset(); return *this; }
 
 	/** Sets the RGB format used to read the downloaded image data (ERGBFormat::RGBA by default) */
-	void SetRGBFormat(const ERGBFormat InRGBFormat) { RGBFormat = InRGBFormat; }
+	UE_DEPRECATED(5.4, "ERGBFormat format is detected from downloaded image")
+	void SetRGBFormat(const ERGBFormat InRGBFormat) {}
 
 	/** Begin downloading an image. This will automatically set the current brush to the downloaded image when it completes (if successful) */
 	IMAGEDOWNLOAD_API bool BeginDownload(const FString& InUrl, const TOptional<FString>& StandInETag = TOptional<FString>(), const FOnImageDownloaded& DownloadCallback = FOnImageDownloaded());
@@ -125,7 +126,4 @@ private:
 
 	/** The ETag of the downloaded image */
 	TOptional<FString> ETag;
-
-	/** RGB format used to read the downloaded image data */
-	ERGBFormat RGBFormat;
 };

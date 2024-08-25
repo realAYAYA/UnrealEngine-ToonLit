@@ -9,6 +9,7 @@
 #include "Framework/Views/TableViewMetadata.h"
 #include "Misc/Paths.h"
 #include "MuCO/CustomizableObject.h"
+#include "MuCO/UnrealToMutableTextureConversionUtils.h"
 #include "MuCOE/SMutableBoolViewer.h"
 #include "MuCOE/SMutableColorViewer.h"
 #include "MuCOE/SMutableConstantsWidget.h"
@@ -24,7 +25,7 @@
 #include "MuCOE/SMutableStringViewer.h"
 #include "MuCOE/UnrealEditorPortabilityHelpers.h"
 #include "MuR/SystemPrivate.h"
-#include "MuT/ErrorLogPrivate.h"
+#include "MuT/ErrorLog.h"
 #include "MuT/Streams.h"
 #include "MuT/TypeInfo.h"
 #include "Widgets/SNullWidget.h"
@@ -136,9 +137,6 @@ public:
 		// Primary column showing the name of the operation and tye type
 		if (ColumnName == MutableCodeTreeViewColumns::OperationsColumnID)
 		{
-			// TODO:
-			const FSlateBrush* IconBrush = nullptr;
-			
 			// Prepare a ui container for all the UI objects required by this row element
 			TSharedRef<SHorizontalBox> RowContainer = SNew(SHorizontalBox)
 				
@@ -158,26 +156,12 @@ public:
 				[
 					SNew(SHorizontalBox)
 					+ SHorizontalBox::Slot()
-					.VAlign(VAlign_Center)
 					.AutoWidth()
 					[
 						SNew(SExpanderArrow, SharedThis(this))
+						.ShouldDrawWires(true)
 					]
-
-					+ SHorizontalBox::Slot()
-					.VAlign(VAlign_Center)
-					.Padding(FMargin(5.f, 0.f, 5.f, 0.f))
-					.AutoWidth()
-					[
-						SNew(SOverlay)
-						+ SOverlay::Slot()
-						[
-							SNew(SImage)
-							.Image(IconBrush ? IconBrush : FCoreStyle::Get().GetDefaultBrush())
-							.ColorAndOpacity(IconBrush ? FLinearColor::White : FLinearColor::Transparent)
-						]
-					]
-
+					
 					+ SHorizontalBox::Slot()
 					[
 						SNew(STextBlock)
@@ -309,9 +293,10 @@ void SMutableCodeViewer::ClearSelectedTreeRow() const
 	TreeView->ClearSelection();
 }
 
-void SMutableCodeViewer::SetCurrentModel(const TSharedPtr<mu::Model, ESPMode::ThreadSafe>& InMutableModel)
+void SMutableCodeViewer::SetCurrentModel(const TSharedPtr<mu::Model, ESPMode::ThreadSafe>& InMutableModel, const TArray<TSoftObjectPtr<UTexture>>& InReferencedTextures)
 {
 	MutableModel = InMutableModel;
+	ReferencedTextures = InReferencedTextures;
 	PreviewParameters = mu::Model::NewParameters(MutableModel);
 
 	RootNodes.Empty();
@@ -356,13 +341,14 @@ void SMutableCodeViewer::SetCurrentModel(const TSharedPtr<mu::Model, ESPMode::Th
 }
 
 
-void SMutableCodeViewer::Construct(const FArguments& InArgs, const TSharedPtr<mu::Model, ESPMode::ThreadSafe>& InMutableModel/*, const TSharedPtr<SDockTab>& ConstructUnderMajorTab*/)
+void SMutableCodeViewer::Construct(const FArguments& InArgs, const TSharedPtr<mu::Model, ESPMode::ThreadSafe>& InMutableModel,
+	const TArray<TSoftObjectPtr<UTexture>>& InReferencedTextures )
 {
 	// Min width allowed for the column. Needed to avoid having issues with the constants space being to small
 	// and then getting too tall on the y axis crashing the UI drawer.
 	constexpr float MinParametersCollWidth = 400;
 
-	SetCurrentModel(InMutableModel);
+	SetCurrentModel(InMutableModel, InReferencedTextures);
 	
 	FToolBarBuilder ToolbarBuilder(TSharedPtr<const FUICommandList>(), FMultiBoxCustomization::None, TSharedPtr<FExtender>(), true);
 	ToolbarBuilder.SetLabelVisibility(EVisibility::Visible);
@@ -401,7 +387,7 @@ void SMutableCodeViewer::Construct(const FArguments& InArgs, const TSharedPtr<mu
 					{
 						const FString SaveFileName = FString(SaveFilenames[0]);
 
-						mu::OutputFileStream Stream(StringCast<ANSICHAR>(*SaveFileName).Get());
+						mu::OutputFileStream Stream(SaveFileName);
 						Stream.Write(MUTABLE_COMPILED_MODEL_FILETAG, 4);
 						mu::OutputArchive Archive(&Stream);
 						mu::Model::Serialise(InMutableModel.Get(), Archive);
@@ -1022,7 +1008,7 @@ void SMutableCodeViewer::GenerateNavigationDropdownElements()
 	
 	// Add an extra operation type that will represent the constant resource based navigation type
 	{
-		const FText EntryName = FText::FromString("CONST_RESOURCE_BASED_NAV");	
+		const FText EntryName = FText::FromString("Selected Constant");	
 		const FSlateColor EntryColor = FSlateColor(FLinearColor(0.35f ,0.35f,1.0f,1));
 		ConstantBasedNavigationEntry = MakeShared<FMutableOperationElement>(mu::OP_TYPE::NONE,EntryName,0,EntryColor);
 		
@@ -1225,7 +1211,7 @@ void SMutableCodeViewer::CacheOperationTypesPresentOnModel()
 			const mu::OP_TYPE OperationType = Program.GetOpType(ProgramAddressesIndex);
 			
 			// Increase the counter for this operation type
-			const uint16 TypeAsInteger = StaticCast<uint16>(OperationType);;
+			const uint16 TypeAsInteger = StaticCast<uint16>(OperationType);
 			ModelOperationTypes[TypeAsInteger].Value++;
 		}
 	}
@@ -1393,7 +1379,7 @@ void SMutableCodeViewer::GenerateAllTreeElements()
 	for ( uint32 StateIndex=0; StateIndex<StateCount; ++StateIndex )
 	{
 		const mu::FProgram::FState& State = ModelPrivate->m_program.m_states[StateIndex];
-		FString Caption = FString::Printf( TEXT("state [%s]"), StringCast<TCHAR>(State.m_name.c_str()).Get() );
+		FString Caption = FString::Printf( TEXT("state [%s]"), *State.Name );
 
 		const FSlateColor LabelColor = ColorPerComputationalCost[StaticCast<uint8>(GetOperationTypeComputationalCost(
 			ModelPrivate->m_program.GetOpType(State.m_root)))];
@@ -1433,7 +1419,6 @@ void SMutableCodeViewer::GenerateElementRecursive(const int32& InStateIndex, mu:
 
 					const FSlateColor LabelColor = ColorPerComputationalCost[StaticCast<uint8>(GetOperationTypeComputationalCost(InProgram.GetOpType(ChildAddress)))];
 
-					// No caption for the generic tree
 					const TSharedPtr<FMutableCodeTreeElement> Item = MakeShareable(new FMutableCodeTreeElement(ItemCache.Num(),InStateIndex, MutableModel, ChildAddress, Caption, LabelColor, MainItemPtr));
 
 					// Cache this element for later access
@@ -1453,6 +1438,7 @@ void SMutableCodeViewer::GenerateElementRecursive(const int32& InStateIndex, mu:
 
 	
 	// For some specific parent operation types we create more detailed subtrees.
+	bool bUseGeneric = false;
 	const mu::OP_TYPE ParentOperationType = InProgram.GetOpType(InParentAddress);
 	switch (ParentOperationType)
 	{
@@ -1491,8 +1477,12 @@ void SMutableCodeViewer::GenerateElementRecursive(const int32& InStateIndex, mu:
 			FMemory::Memcpy(&At, OpData, sizeof(mu::OP::ADDRESS));
 			OpData += sizeof(mu::OP::ADDRESS);
 
-			FString Caption = FString::Printf(TEXT("case %d "),Condition);
-			AddOpFunc(At, Caption);
+			// This conditional is necessary to exactly match the generic op behaviour (see ForEachReference in Operations.cpp)
+			if (At)
+			{
+				FString Caption = FString::Printf(TEXT("case %d "), Condition);
+				AddOpFunc(At, Caption);
+			}
 		}
 
 		break;
@@ -1557,18 +1547,61 @@ void SMutableCodeViewer::GenerateElementRecursive(const int32& InStateIndex, mu:
 		break;
 	}
 
+	case mu::OP_TYPE::ME_ADDTAGS:
+	{
+		const uint8* OpData = InProgram.GetOpArgsPointer(InParentAddress);
+
+		mu::OP::ADDRESS SourceAddress;
+		FMemory::Memcpy(&SourceAddress, OpData, sizeof(mu::OP::ADDRESS));
+		OpData += sizeof(mu::OP::ADDRESS);
+
+		uint16 TagCount;
+		FMemory::Memcpy(&TagCount, OpData, sizeof(uint16));
+		OpData += sizeof(uint16);
+
+		FString Caption = FString::Printf(TEXT("add %d tags to "), TagCount);
+		AddOpFunc(SourceAddress, Caption);
+
+		break;
+	}
+
 	default:
 	{
 		// Generic list of child operations
+		bUseGeneric = true;
+		break;
+	}
 
+	}
+
+	if (bUseGeneric)
+	{
 		// Find children of the provided element
 		mu::ForEachReference(InProgram, InParentAddress, [this, &InProgram, AddOpFunc](mu::OP::ADDRESS ChildAddress)
 			{
 				AddOpFunc(ChildAddress,TEXT(""));
 			});
-		break;
 	}
+	else
+	{
+		// Validate in case there is a mismatch in the custom processing of children and the generic one, which would cause problems.
+		ChildIndex = 0;
 
+		auto ValidateOpFunc = [this, InParentAddress, &ChildIndex](mu::OP::ADDRESS ChildAddress)
+		{
+			if (ChildAddress)
+			{
+				const FItemCacheKey Key = { InParentAddress, ChildAddress, ChildIndex };
+				const TSharedPtr<FMutableCodeTreeElement>* CachedItem = ItemCache.Find(Key);
+				check(CachedItem);
+			}
+			++ChildIndex;
+		};
+
+		mu::ForEachReference(InProgram, InParentAddress, [this, &InProgram, ValidateOpFunc](mu::OP::ADDRESS ChildAddress)
+			{
+				ValidateOpFunc(ChildAddress);
+			});
 	}
 }
 
@@ -1693,7 +1726,7 @@ void SMutableCodeViewer::OnExpansionChanged(TSharedPtr<FMutableCodeTreeElement> 
 void SMutableCodeViewer::GetVisibleChildren(TSharedPtr<FMutableCodeTreeElement> InInfo, TSet<TSharedPtr<FMutableCodeTreeElement>>& OutChildren)
 {
 	check(MutableModel);
-	const mu::FProgram MutableProgram = MutableModel->GetPrivate()->m_program;
+	const mu::FProgram& MutableProgram = MutableModel->GetPrivate()->m_program;
 	
 	TArray<TSharedPtr<FMutableCodeTreeElement>> ToSearchForChildren;
 	ToSearchForChildren.Add(InInfo);
@@ -2457,13 +2490,16 @@ namespace
 	{
 		static inline const mu::FImageDesc IMAGE_DESC = 
 			mu::FImageDesc(mu::FImageSize(1024, 1024), mu::EImageFormat::IF_RGBA_UBYTE, 1);
-		
+
 	public:
-#ifdef MUTABLE_USE_NEW_TASKGRAPH
+
+		/** */
+		TArray<TSoftObjectPtr<UTexture>> ReferencedTextures;
+
+	public:
+
+
 		TTuple<UE::Tasks::FTask, TFunction<void()>> GetImageAsync(FName Id, uint8 MipmapsToSkip, TFunction<void(mu::Ptr<mu::Image>)>& ResultCallback) override
-#else
-		TTuple<FGraphEventRef, TFunction<void()>> GetImageAsync(FName Id, uint8 MipmapsToSkip, TFunction<void(mu::Ptr<mu::Image>)>& ResultCallback) override
-#endif
 		{
 			MUTABLE_CPUPROFILER_SCOPE(TestImageProvider_GetImage);
 
@@ -2476,10 +2512,10 @@ namespace
 				mu::EInitializationType::NotInitialized);
 
 			// Generate an alpha-tested circle with an horizontal gradient color.
-			uint8* Data = Image->GetData();
+			uint8* Data = Image->GetLODData(0);
 			int32 CircleRadius = (Size * 2) / 5;
 			int32 CircleRadius2 = CircleRadius * CircleRadius;
-			int32 Color[3] = { 255,128,0 };
+			int32 Color[3] = {255, 128, 0};
 
 			int32 LogSize = FMath::CeilLogTwo(Size);
 
@@ -2502,21 +2538,42 @@ namespace
 
 			ResultCallback(Image);
 
-#ifdef MUTABLE_USE_NEW_TASKGRAPH
-			UE::Tasks::FTaskEvent CompletionEvent(TEXT("TestImageProvider_GetImageAsunc_Completed"));
-			CompletionEvent.Trigger();
-#else
-			FGraphEventRef CompletionEvent = FGraphEvent::CreateGraphEvent();
-			CompletionEvent->DispatchSubsequents();
-#endif
-
-			return MakeTuple(CompletionEvent, []() -> void {});
+			return MakeTuple(UE::Tasks::MakeCompletedTask<void>(), []() -> void {});
 		}
 
 		mu::FImageDesc GetImageDesc(FName Id, uint8 MipmapsToSkip) override
 		{
 			return IMAGE_DESC;
 		}
+
+
+		TTuple<UE::Tasks::FTask, TFunction<void()>> GetReferencedImageAsync(const void* ModelPtr, int32 Id, uint8 MipmapsToSkip, TFunction<void(mu::Ptr<mu::Image>)>& ResultCallback)
+		{
+			check(ReferencedTextures.IsValidIndex(Id));
+
+			TSoftObjectPtr<UTexture> TexturePtr = ReferencedTextures[Id].Get();
+			UTexture2D* Texture = Cast<UTexture2D>( TexturePtr.Get() );
+			check(Texture);
+			
+			// In the editor the src data can be directly accessed
+			int32 MipIndex = (MipmapsToSkip < Texture->GetPlatformData()->Mips.Num()) ? MipmapsToSkip : Texture->GetPlatformData()->Mips.Num() - 1;
+			check(MipIndex >= 0);
+
+			mu::Ptr<mu::Image> ResultImage = new mu::Image();
+			bool bIsNormalComposite = false; // TODO?
+			EUnrealToMutableConversionError Error = ConvertTextureUnrealSourceToMutable(ResultImage.get(), Texture, bIsNormalComposite, MipmapsToSkip);
+			check(Error == EUnrealToMutableConversionError::Success);
+
+			ResultCallback(ResultImage);
+
+			auto TrivialReturn = []() -> TTuple<UE::Tasks::FTask, TFunction<void()>>
+			{
+				return MakeTuple(UE::Tasks::MakeCompletedTask<void>(), []() -> void {});
+			};
+
+			return Invoke(TrivialReturn);
+		}
+
 	};
 }
 
@@ -2552,6 +2609,7 @@ void SMutableCodeViewer::Tick(const FGeometry& AllottedGeometry, const double In
 	const mu::Ptr<mu::System> System = new mu::System(Settings);
 
 	TSharedPtr<TestImageProvider> ImageProvider = MakeShared<TestImageProvider>();
+	ImageProvider->ReferencedTextures = ReferencedTextures;
 	System->SetImageParameterGenerator(ImageProvider);
 
 	System->GetPrivate()->BeginBuild(MutableModel);
@@ -2703,19 +2761,13 @@ void SMutableCodeViewer::PrepareProjectorViewer()
 }
 
 
-void SMutableCodeViewer::PreviewMutableString(const mu::string* InStringPtr)
+void SMutableCodeViewer::PreviewMutableString(const FString& InString)
 {
-	if (!InStringPtr)
-	{
-		UE_LOG(LogTemp,Error,TEXT("Unable to preview data on null String pointer."))
-		return;
-	}
-	
 	// Prepare the previewer object to receive data 
 	PrepareStringViewer();
 	
 	//  Provide the desired data to the previewer object
-	const FText TextToShow = FText::FromString(FString(InStringPtr->c_str()));
+	const FText TextToShow = FText::FromString(InString);
 	PreviewStringViewer->SetString(TextToShow);
 }
 
@@ -2786,7 +2838,7 @@ void SMutableCodeViewer::PreviewMutableCurve(const mu::Curve* Curve)
 }
 
 // TODO: Implement matrix viewer
-void SMutableCodeViewer::PreviewMutableMatrix(const mu::mat4f* Mat)
+void SMutableCodeViewer::PreviewMutableMatrix(const FMatrix44f& Mat)
 {
 	UE_LOG(LogMutable, Warning, TEXT("Previewer for Mutable Matrices not yet implemented"))
 }
@@ -2813,7 +2865,7 @@ FReply SMutableCodeViewer::OnDragOver(const FGeometry& MyGeometry, const FDragDr
 				if (DraggedFileExtension == TEXT(".mutable_compiled"))
 				{
 					// Dump source model to a file.
-					mu::InputFileStream stream(StringCast<ANSICHAR>(*Files[0]).Get());
+					mu::InputFileStream stream(Files[0]);
 
 					char MutableSourceTag[4] = {};
 					stream.Read(MutableSourceTag, 4);
@@ -2849,7 +2901,7 @@ FReply SMutableCodeViewer::OnDrop(const FGeometry& MyGeometry, const FDragDropEv
 				if (DraggedFileExtension == TEXT(".mutable_compiled"))
 				{
 					// Read a mutable compiled model file.
-					mu::InputFileStream stream(StringCast<ANSICHAR>(*Files[0]).Get());
+					mu::InputFileStream stream(Files[0]);
 
 					char MutableSourceTag[4] = {};
 					stream.Read(MutableSourceTag, 4);
@@ -2858,7 +2910,8 @@ FReply SMutableCodeViewer::OnDrop(const FGeometry& MyGeometry, const FDragDropEv
 					{
 						mu::InputArchive arch(&stream);
 						TSharedPtr<mu::Model, ESPMode::ThreadSafe> Model = mu::Model::StaticUnserialise(arch);
-						SetCurrentModel(Model);
+						TArray<TSoftObjectPtr<UTexture>> DummyReferencedTextures;
+						SetCurrentModel(Model, DummyReferencedTextures);
 
 						TreeView->RequestTreeRefresh();
 
@@ -2870,6 +2923,215 @@ FReply SMutableCodeViewer::OnDrop(const FGeometry& MyGeometry, const FDragDropEv
 	}
 
 	return FReply::Unhandled();
+}
+
+
+FMutableCodeTreeElement::FMutableCodeTreeElement(int32 InIndexOnTree, const int32& InMutableStateIndex, const TSharedPtr<mu::Model, ESPMode::ThreadSafe>& InModel, mu::OP::ADDRESS InOperation, const FString& InCaption, const FSlateColor InLabelColor, const TSharedPtr<FMutableCodeTreeElement>* InDuplicatedOf)
+{
+	MutableModel = InModel;
+	MutableOperation = InOperation;
+	Caption = InCaption;
+	LabelColor = InLabelColor;
+	IndexOnTree = InIndexOnTree;
+	if (InDuplicatedOf)
+	{
+		DuplicatedOf = *InDuplicatedOf;
+	}
+
+	// Generate the label to be used to display this operation in the operation tree
+	GenerateLabelText();
+
+	// Process the data that can be extracted from the current state
+	SetElementCurrentState(InMutableStateIndex);
+}
+
+
+void FMutableCodeTreeElement::SetElementCurrentState(const int32& InStateIndex)
+{
+	// Skip operation if state is the same
+	if (InStateIndex == CurrentMutableStateIndex)
+	{
+		return;
+	}
+
+	// Check for an out of bounds value
+	check(MutableModel);
+	mu::FProgram& MutableProgram = MutableModel->GetPrivate()->m_program;
+	check(InStateIndex >= 0 && InStateIndex < MutableProgram.m_states.Num());
+
+	CurrentMutableStateIndex = InStateIndex;
+	const mu::FProgram::FState& CurrentState = MutableProgram.m_states[CurrentMutableStateIndex];
+
+	// Check if it is a dynamic resource
+	for (auto& DynamicResource : CurrentState.m_dynamicResources)
+	{
+		// If the operation gets located then mark it as dynamic resource
+		if (DynamicResource.Key == MutableOperation)
+		{
+			bIsDynamicResource = true;
+			break;
+		}
+	}
+	// Early exit: A dynamic resource can not be at the same time a state constant
+	if (bIsDynamicResource)
+	{
+		return;
+	}
+
+	// Check if it is a state constant
+	bIsStateConstant = CurrentState.m_updateCache.Contains(MutableOperation);
+}
+
+
+void FMutableCodeTreeElement::GenerateLabelText()
+{
+	const mu::FProgram& Program = MutableModel->GetPrivate()->m_program;
+	const mu::OP_TYPE Type = Program.GetOpType(MutableOperation);
+	FString OpName = mu::s_opNames[static_cast<int32>(Type)];
+	OpName.TrimEndInline();
+
+	// See if the operation type accepts additional information in the label
+	switch (Type)
+	{
+	case mu::OP_TYPE::BO_PARAMETER:
+	case mu::OP_TYPE::NU_PARAMETER:
+	case mu::OP_TYPE::SC_PARAMETER:
+	case mu::OP_TYPE::CO_PARAMETER:
+	case mu::OP_TYPE::PR_PARAMETER:
+	case mu::OP_TYPE::IM_PARAMETER:
+	case mu::OP_TYPE::ST_PARAMETER:
+	{
+		mu::OP::ParameterArgs Args = Program.GetOpArgs<mu::OP::ParameterArgs>(MutableOperation);
+		OpName += TEXT(" ");
+		OpName += Program.m_parameters[int32(Args.variable)].m_name;
+		break;
+	}
+
+	case mu::OP_TYPE::IM_SWIZZLE:
+	{
+		mu::OP::ImageSwizzleArgs Args = Program.GetOpArgs<mu::OP::ImageSwizzleArgs>(MutableOperation);
+		OpName += TEXT(" ");
+		OpName += StringCast<TCHAR>(mu::TypeInfo::s_imageFormatName[int32(Args.format)]).Get();
+		break;
+	}
+
+	case mu::OP_TYPE::IM_PIXELFORMAT:
+	{
+		mu::OP::ImagePixelFormatArgs Args = Program.GetOpArgs<mu::OP::ImagePixelFormatArgs>(MutableOperation);
+		OpName += TEXT(" ");
+		OpName += StringCast<TCHAR>(mu::TypeInfo::s_imageFormatName[int32(Args.format)]).Get();
+		OpName += TEXT(" or ");
+		OpName += StringCast<TCHAR>(mu::TypeInfo::s_imageFormatName[int32(Args.formatIfAlpha)]).Get();
+		break;
+	}
+
+	case mu::OP_TYPE::IM_MIPMAP:
+	{
+		mu::OP::ImageMipmapArgs Args = Program.GetOpArgs<mu::OP::ImageMipmapArgs>(MutableOperation);
+		OpName += FString::Printf(TEXT(" levels: %d-%d tail: %d"), Args.levels, Args.blockLevels, int32(Args.onlyTail));
+		break;
+	}
+
+	case mu::OP_TYPE::IM_RESIZE:
+	{
+		mu::OP::ImageResizeArgs Args = Program.GetOpArgs<mu::OP::ImageResizeArgs>(MutableOperation);
+		OpName += FString::Printf(TEXT(" %d x %d"), int32(Args.size[0]), int32(Args.size[1]));
+		break;
+	}
+
+	case mu::OP_TYPE::IM_RESIZEREL:
+	{
+		mu::OP::ImageResizeRelArgs Args = Program.GetOpArgs<mu::OP::ImageResizeRelArgs>(MutableOperation);
+		OpName += FString::Printf(TEXT(" %.3f x %.3f"), Args.factor[0], Args.factor[1]);
+		break;
+	}
+
+	case mu::OP_TYPE::IM_MULTILAYER:
+	{
+		mu::OP::ImageMultiLayerArgs Args = Program.GetOpArgs<mu::OP::ImageMultiLayerArgs>(MutableOperation);
+		OpName += TEXT(" rgb: ");
+		OpName += mu::TypeInfo::s_blendModeName[int32(Args.blendType)];
+		OpName += TEXT(", a: ");
+		OpName += mu::TypeInfo::s_blendModeName[int32(Args.blendTypeAlpha)];
+		OpName += FString::Printf(TEXT(" a from %d "), Args.BlendAlphaSourceChannel);
+		OpName += FString::Printf(TEXT(" range-id: %d"), Args.rangeId);
+		OpName += FString::Printf(TEXT(" mask-from-alpha: %d"), int32(Args.bUseMaskFromBlended));
+		break;
+	}
+
+	case mu::OP_TYPE::IM_LAYER:
+	{
+		mu::OP::ImageLayerArgs Args = Program.GetOpArgs<mu::OP::ImageLayerArgs>(MutableOperation);
+		OpName += TEXT(" rgb: ");
+		OpName += mu::TypeInfo::s_blendModeName[int32(Args.blendType)];
+		OpName += TEXT(", a: ");
+		OpName += mu::TypeInfo::s_blendModeName[int32(Args.blendTypeAlpha)];
+		OpName += FString::Printf(TEXT(" a from %d "), Args.BlendAlphaSourceChannel);
+		OpName += FString::Printf(TEXT(" flags %d"), Args.flags);
+		break;
+	}
+
+	case mu::OP_TYPE::IM_LAYERCOLOUR:
+	{
+		mu::OP::ImageLayerColourArgs Args = Program.GetOpArgs<mu::OP::ImageLayerColourArgs>(MutableOperation);
+		OpName += TEXT(" rgb: ");
+		OpName += mu::TypeInfo::s_blendModeName[int32(Args.blendType)];
+		OpName += TEXT(" a: ");
+		OpName += mu::TypeInfo::s_blendModeName[int32(Args.blendTypeAlpha)];
+		OpName += TEXT(" a from ");
+		OpName += FString::Printf(TEXT(" a from %d "), Args.BlendAlphaSourceChannel);
+		OpName += FString::Printf(TEXT(" flags %d"), Args.flags);
+		break;
+	}
+
+	case mu::OP_TYPE::IM_PLAINCOLOUR:
+	{
+		mu::OP::ImagePlainColourArgs Args = Program.GetOpArgs<mu::OP::ImagePlainColourArgs>(MutableOperation);
+		OpName += TEXT(" format: ");
+		OpName += StringCast<TCHAR>(mu::TypeInfo::s_imageFormatName[int32(Args.format)]).Get();
+		OpName += FString::Printf(TEXT(" size %d x %d"), Args.size[0], Args.size[1]);
+		OpName += FString::Printf(TEXT(" mips %d"), Args.LODs);
+		break;
+	}
+
+	case mu::OP_TYPE::IN_ADDIMAGE:
+	{
+		mu::OP::InstanceAddArgs Args = Program.GetOpArgs<mu::OP::InstanceAddArgs>(MutableOperation);
+		if (Program.m_constantStrings.IsValidIndex(Args.name))
+		{
+			OpName += TEXT(" name: ");
+			OpName += Program.m_constantStrings[Args.name];
+		}
+		break;
+	}
+
+	default:
+		break;
+	}
+
+	// Prepare the text shown on the UI side of the operation tree
+	MainLabel = FString::Printf(TEXT("%s %d : %s"), *Caption, int32(MutableOperation), *OpName);
+
+	// DEBUG : 
+	// FString IndexOnTree = FString::FromInt(IndexOnTree);
+	// IndexOnTree.Append(TEXT("- "));
+	// MainLabel.InsertAt(0,IndexOnTree);
+
+	// DEBUG : 
+	// FString RowStateIndex = FString::FromInt(GetStateIndex());
+	// RowStateIndex.Append(TEXT(" st "));
+	// MainLabel.InsertAt(0,RowStateIndex);
+
+	if (DuplicatedOf)
+	{
+		MainLabel.Append(TEXT(" (duplicated)"));
+	}
+}
+
+
+int32 FMutableCodeTreeElement::GetStateIndex() const
+{
+	return CurrentMutableStateIndex;
 }
 
 

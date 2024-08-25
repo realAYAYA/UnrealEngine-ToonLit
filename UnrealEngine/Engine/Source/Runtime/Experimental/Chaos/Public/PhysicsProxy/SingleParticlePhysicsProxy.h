@@ -208,7 +208,8 @@ public:
 	}
 
 	//API for static particle
-	const FVec3& X() const { return ReadRef([](auto* Particle) -> const auto& { return Particle->X(); }); }
+	const FVec3& X() const { return ReadRef([](auto* Particle) -> const auto& { return Particle->GetX(); }); }
+	const FVec3& GetX() const { return ReadRef([](auto* Particle) -> const auto& { return Particle->GetX(); }); }
 
 protected:
 	void SetXBase(const FVec3& InX, bool bInvalidate = true) { Write([&InX, bInvalidate, this](auto* Particle)
@@ -228,7 +229,8 @@ public:
 	FUniqueIdx UniqueIdx() const { return Read([](auto* Particle) { return Particle->UniqueIdx(); }); }
 	void SetUniqueIdx(const FUniqueIdx UniqueIdx, bool bInvalidate = true) { Write([UniqueIdx, bInvalidate](auto* Particle) { Particle->SetUniqueIdx(UniqueIdx, bInvalidate); }); }
 
-	const FRotation3& R() const { return ReadRef([](auto* Particle) -> const auto& { return Particle->R(); }); }
+	FRotation3 R() const { return Read([](auto* Particle) -> const auto { return Particle->GetR(); }); }
+	FRotation3 GetR() const { return Read([](auto* Particle) -> const auto { return Particle->GetR(); }); }
 
 protected:
 	void SetRBase(const FRotation3& InR, bool bInvalidate = true){ Write([&InR, bInvalidate, this](auto* Particle)
@@ -244,15 +246,25 @@ protected:
 			Particle->SetR(InR, bInvalidate);
 	});}
 public:
+	
+	UE_DEPRECATED(5.4, "Use GetGeometry instead.")
+	const TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>& SharedGeometryLowLevel() const
+	{
+		check(false);
+		static TSharedPtr<FImplicitObject, ESPMode::ThreadSafe> DummyPtr(nullptr);
+		return DummyPtr;
+	}
 
-	const TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>& SharedGeometryLowLevel() const { return ReadRef([](auto* Ptr) -> const auto& { return Ptr->SharedGeometryLowLevel(); });}
-
+	
 #if CHAOS_DEBUG_NAME
 	const TSharedPtr<FString, ESPMode::ThreadSafe>& DebugName() const { return ReadRef([](auto* Ptr) -> const auto& { return Ptr->DebugName(); }); }
 	void SetDebugName(const TSharedPtr<FString, ESPMode::ThreadSafe>& InDebugName) { Write([&InDebugName](auto* Ptr) { Ptr->SetDebugName(InDebugName); }); }
 #endif
 
-	TSerializablePtr<FImplicitObject> Geometry() const { return Read([](auto* Ptr) { return Ptr->Geometry(); }); }
+	const FImplicitObjectRef GetGeometry() const { return Read([](auto* Ptr) { FImplicitObjectRef ImplicitRef = Ptr->GetGeometry(); return ImplicitRef; }); }
+
+	UE_DEPRECATED(5.4, "Please use GetGeometry instead")
+	TSerializablePtr<FImplicitObject> Geometry() const { check(false); return TSerializablePtr<FImplicitObject>(); }
 
 	const FShapesArray& ShapesArray() const { return ReadRef([](auto* Ptr) -> const auto& { return Ptr->ShapesArray(); }); }
 
@@ -270,11 +282,15 @@ public:
 		{
 			if (auto Kinematic = Particle->CastToKinematicParticle())
 			{
-				return Kinematic->V();
+				return Kinematic->GetV();
 			}
 			
 			return FVec3(0);
 		});
+	}
+	const FVec3 GetV() const
+	{
+		return V();
 	}
 
 protected:
@@ -305,11 +321,16 @@ public:
 		{
 			if (auto Kinematic = Particle->CastToKinematicParticle())
 			{
-				return Kinematic->W();
+				return Kinematic->GetW();
 			}
 
 			return FVec3(0);
 		});
+	}
+
+	const FVec3 GetW() const
+	{
+		return W();
 	}
 
 protected:
@@ -420,6 +441,30 @@ public:
 				if (auto Rigid = Particle->CastToRigidParticle())
 				{
 					return Rigid->SetCCDEnabled(InCCDEnabled);
+				}
+			});
+	}
+
+	bool MACDEnabled() const
+	{
+		return Read([](auto* Particle)
+			{
+				if (auto Rigid = Particle->CastToRigidParticle())
+				{
+					return Rigid->MACDEnabled();
+				}
+
+				return false;
+			});
+	}
+
+	void SetMACDEnabled(const bool InCCDEnabled)
+	{
+		Write([InCCDEnabled](auto* Particle)
+			{
+				if (auto Rigid = Particle->CastToRigidParticle())
+				{
+					return Rigid->SetMACDEnabled(InCCDEnabled);
 				}
 			});
 	}
@@ -666,7 +711,7 @@ public:
 		{
 			if (auto Rigid = Particle->CastToRigidParticle())
 			{
-				const FMatrix33 WorldI = Utilities::ComputeWorldSpaceInertia(Rigid->R() * Rigid->RotationOfMass(), Rigid->I());
+				const FMatrix33 WorldI = Utilities::ComputeWorldSpaceInertia(Rigid->GetR() * Rigid->RotationOfMass(), Rigid->I());
 				return WorldI * Rigid->AngularImpulseVelocity();
 			}
 
@@ -693,7 +738,7 @@ public:
 					}
 					else
 					{
-						const FMatrix33 WorldInvI = Utilities::ComputeWorldSpaceInertia(Rigid->R() * Rigid->RotationOfMass(), Rigid->InvI());
+						const FMatrix33 WorldInvI = Utilities::ComputeWorldSpaceInertia(Rigid->GetR() * Rigid->RotationOfMass(), Rigid->InvI());
 						Rigid->SetAngularImpulseVelocity(WorldInvI * InAngularImpulse, bInvalidate);
 					}
 				}
@@ -1143,30 +1188,33 @@ public:
 
 	void* UserData() const { VerifyContext(); return GetParticle_LowLevel()->UserData(); }
 	void SetUserData(void* InUserData) { VerifyContext(); GetParticle_LowLevel()->SetUserData(InUserData); }
-
-
-	//todo: geometry should not be owned by particle
+	
+	void SetGeometry(const Chaos::FImplicitObjectPtr& ImplicitGeometryPtr)
+	{
+		VerifyContext();
+		GetParticle_LowLevel()->SetGeometry(ImplicitGeometryPtr);
+	}
+	
+	UE_DEPRECATED(5.4, "Use SetGeometry with FImplicitObjectPtr instead.")
 	void SetGeometry(TUniquePtr<FImplicitObject>&& UniqueGeometry)
 	{
-		VerifyContext();
-		FImplicitObject* RawGeometry = UniqueGeometry.Release();
-		SetGeometry(TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(RawGeometry));
+		check(false);
 	}
-
+	
+	UE_DEPRECATED(5.4, "Use SetGeometry with FImplicitObjectPtr instead.")
 	void SetGeometry(TSharedPtr<const FImplicitObject, ESPMode::ThreadSafe> SharedGeometry)
 	{
-		VerifyContext();
-		GetParticle_LowLevel()->SetGeometry(ConstCastSharedPtr<FImplicitObject, const FImplicitObject, ESPMode::ThreadSafe>(SharedGeometry));
+		check(false);
 	}
-
-	//Note: this must be called after setting geometry. This API seems bad. Should probably be part of setting geometry
-	void SetShapesArray(FShapesArray&& InShapesArray) { VerifyContext(); GetParticle_LowLevel()->SetShapesArray(MoveTemp(InShapesArray)); }
-
+	
 	void RemoveShape(FPerShapeData* InShape, bool bWakeTouching) { VerifyContext(); GetParticle_LowLevel()->RemoveShape(InShape, bWakeTouching); }
 
 	void MergeShapesArray(FShapesArray&& OtherShapesArray) { VerifyContext(); GetParticle_LowLevel()->MergeShapesArray(MoveTemp(OtherShapesArray)); }
 
-	void MergeGeometry(TArray<TUniquePtr<FImplicitObject>>&& Objects) { VerifyContext(); GetParticle_LowLevel()->MergeGeometry(MoveTemp(Objects)); }
+	void MergeGeometry(TArray<Chaos::FImplicitObjectPtr>&& Objects) { VerifyContext(); GetParticle_LowLevel()->MergeGeometry(MoveTemp(Objects)); }
+
+    UE_DEPRECATED(5.4, "Please use MergeGeometry with FImplicitObjectPtr instead.")
+	void MergeGeometry(TArray<TUniquePtr<FImplicitObject>>&& Objects) { check(false); }
 
 	bool IsKinematicTargetDirty() const
 	{
@@ -1223,6 +1271,26 @@ public:
 		return false;
 	}
 
+	void SetMACDEnabled(bool bEnabled)
+	{
+		VerifyContext();
+		if (TPBDRigidParticle<FReal, 3>*Rigid = GetParticle_LowLevel()->CastToRigidParticle())
+		{
+			Rigid->SetMACDEnabled(bEnabled);
+		}
+	}
+
+	bool MACDEnabled() const
+	{
+		VerifyContext();
+		if (const TPBDRigidParticle<FReal, 3>*Rigid = GetParticle_LowLevel()->CastToRigidParticle())
+		{
+			return Rigid->MACDEnabled();
+		}
+
+		return false;
+	}
+
 	void SetMaxLinearSpeedSq(FReal InNewSpeed)
 	{
 		VerifyContext();
@@ -1263,6 +1331,35 @@ public:
 		return TNumericLimits<FReal>::Max();
 	}
 
+	FRealSingle GetInitialOverlapDepenetrationVelocity()
+	{
+		VerifyContext();
+		if (const TPBDRigidParticle<FReal, 3>* Rigid = GetParticle_LowLevel()->CastToRigidParticle())
+		{
+			return Rigid->InitialOverlapDepenetrationVelocity();
+		}
+
+		return 0;
+	}
+
+	void SetInitialOverlapDepenetrationVelocity(FRealSingle InNewSpeed)
+	{
+		VerifyContext();
+		if (TPBDRigidParticle<FReal, 3>* Rigid = GetParticle_LowLevel()->CastToRigidParticle())
+		{
+			Rigid->SetInitialOverlapDepenetrationVelocity(InNewSpeed);
+		}
+	}
+
+	void SetSleepThresholdMultiplier(FRealSingle Multiplier)
+	{
+		VerifyContext();
+		if (TPBDRigidParticle<FReal, 3>* Rigid = GetParticle_LowLevel()->CastToRigidParticle())
+		{
+			Rigid->SetSleepThresholdMultiplier(Multiplier);
+		}
+	}
+
 	void SetDisabled(bool bDisable)
 	{
 		VerifyContext();
@@ -1299,7 +1396,7 @@ public:
 		VerifyContext();
 		if (auto Rigid = GetHandle_LowLevel()->CastToRigidParticle())
 		{
-			return Rigid->PreV();
+			return Rigid->GetPreV();
 		}
 		return FVec3(0);
 	}
@@ -1309,7 +1406,7 @@ public:
 		VerifyContext();
 		if (auto Rigid = GetHandle_LowLevel()->CastToRigidParticle())
 		{
-			return Rigid->PreW();
+			return Rigid->GetPreW();
 		}
 		return FVec3(0);
 	}

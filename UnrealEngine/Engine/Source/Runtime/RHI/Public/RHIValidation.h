@@ -35,10 +35,6 @@ public:
 
 	static inline void ValidateThreadGroupCount(uint32 ThreadGroupCountX, uint32 ThreadGroupCountY, uint32 ThreadGroupCountZ)
 	{
-		RHI_VALIDATION_CHECK(ThreadGroupCountX > 0, TEXT("ThreadGroupCount X must be greater than 0."));
-		RHI_VALIDATION_CHECK(ThreadGroupCountY > 0, TEXT("ThreadGroupCount Y must be greater than 0."));
-		RHI_VALIDATION_CHECK(ThreadGroupCountZ > 0, TEXT("ThreadGroupCount Z must be greater than 0."));
-
 		RHI_VALIDATION_CHECK((ThreadGroupCountX <= (uint32)GRHIMaxDispatchThreadGroupsPerDimension.X), *FString::Printf(TEXT("ThreadGroupCountX is invalid: %u. Must be greater than 0 and less than %d"), ThreadGroupCountX, GRHIMaxDispatchThreadGroupsPerDimension.X));
 		RHI_VALIDATION_CHECK((ThreadGroupCountY <= (uint32)GRHIMaxDispatchThreadGroupsPerDimension.Y), *FString::Printf(TEXT("ThreadGroupCountY is invalid: %u. Must be greater than 0 and less than %d"), ThreadGroupCountY, GRHIMaxDispatchThreadGroupsPerDimension.Y));
 		RHI_VALIDATION_CHECK((ThreadGroupCountZ <= (uint32)GRHIMaxDispatchThreadGroupsPerDimension.Z), *FString::Printf(TEXT("ThreadGroupCountZ is invalid: %u. Must be greater than 0 and less than %d"), ThreadGroupCountZ, GRHIMaxDispatchThreadGroupsPerDimension.Z));
@@ -47,7 +43,7 @@ public:
 	static inline void ValidateIndirectArgsBuffer(FRHIBuffer* ArgumentBuffer, uint32 ArgumentOffset, uint32 ArgumentSize, uint32 ArgumentsBoundarySize)
 	{
 		auto GetBufferDesc = [&]() -> FString { return FString::Printf(TEXT("Buffer: %s, Size: %u, Stride: %u, Offset: %u, ArgSize: %u"), ArgumentBuffer->GetDebugName(), ArgumentBuffer->GetSize(), ArgumentBuffer->GetStride(), ArgumentOffset, ArgumentSize); };
-		RHI_VALIDATION_CHECK(EnumHasAnyFlags(ArgumentBuffer->GetUsage(), EBufferUsageFlags::VertexBuffer), *FString::Printf(TEXT("Indirect argument buffer must be a vertex buffer to be used as an indirect dispatch parameter. %s"), *GetBufferDesc()));
+		RHI_VALIDATION_CHECK(EnumHasAnyFlags(ArgumentBuffer->GetUsage(), EBufferUsageFlags::VertexBuffer | EBufferUsageFlags::ByteAddressBuffer), *FString::Printf(TEXT("Indirect argument buffer must be a vertex or byte address buffer to be used as an indirect dispatch parameter. %s"), *GetBufferDesc()));
 		RHI_VALIDATION_CHECK(EnumHasAnyFlags(ArgumentBuffer->GetUsage(), EBufferUsageFlags::DrawIndirect), *FString::Printf(TEXT("Indirect dispatch parameter buffer was not flagged with BUF_DrawIndirect. %s"), *GetBufferDesc()));
 		RHI_VALIDATION_CHECK((ArgumentOffset % 4) == 0, *FString::Printf(TEXT("Indirect argument offset must be a multiple of 4. %s"), *GetBufferDesc()));
 		RHI_VALIDATION_CHECK((ArgumentOffset + ArgumentSize) <= ArgumentBuffer->GetSize(), *FString::Printf(TEXT("Indirect argument doesn't fit in the buffer. %s"), *GetBufferDesc()));
@@ -361,7 +357,10 @@ public:
 	{
 		ValidatePipeline(Initializer);
 		FGraphicsPipelineStateRHIRef PSO = RHI->RHICreateGraphicsPipelineState(Initializer);
-		PSO->DSMode = Initializer.DepthStencilState->ActualDSMode;
+		if (PSO.IsValid())
+		{
+			PSO->DSMode = Initializer.DepthStencilState->ActualDSMode;
+		}
 		return PSO;
 	}
 
@@ -374,7 +373,10 @@ public:
 	{
 		ValidatePipeline(Initializer);
 		FGraphicsPipelineStateRHIRef PSO = RHI->RHICreateGraphicsPipelineState(Initializer);
-		PSO->DSMode = Initializer.DepthStencilState->ActualDSMode;
+		if (PSO.IsValid())
+		{
+			PSO->DSMode = Initializer.DepthStencilState->ActualDSMode;
+		}
 		return PSO;
 	}
 
@@ -414,6 +416,13 @@ public:
 	*/
 	virtual FBufferRHIRef RHICreateBuffer(FRHICommandListBase& RHICmdList, FRHIBufferDesc const& Desc, ERHIAccess ResourceState, FRHIResourceCreateInfo& CreateInfo) override final
 	{
+		if (EnumHasAnyFlags(Desc.Usage, BUF_ReservedResource))
+		{
+			RHI_VALIDATION_CHECK(GRHIGlobals.ReservedResources.Supported, TEXT("Reserved buffers are not supported by current RHI"));
+			RHI_VALIDATION_CHECK(!EnumHasAnyFlags(Desc.Usage, BUF_AnyDynamic), TEXT("Reserved buffers must not be dynamic"));
+			RHI_VALIDATION_CHECK(Desc.Stride <= GRHIGlobals.ReservedResources.TileSizeInBytes, TEXT("Reserved buffer stride must not be greater than reserved resource tile size"));
+		}
+
 		if (CreateInfo.ResourceArray && RHICmdList.IsInsideRenderPass())
 		{
 			FString Msg = FString::Printf(TEXT("Creating buffers with initial data during a render pass is not supported, buffer name: \"%s\""), CreateInfo.DebugName);
@@ -493,10 +502,10 @@ public:
 	/**
 	* Creates an RHI texture resource.
 	*/
-	virtual FTextureRHIRef RHICreateTexture(const FRHITextureCreateDesc& CreateDesc) override final
+	virtual FTextureRHIRef RHICreateTexture(FRHICommandListBase& RHICmdList, const FRHITextureCreateDesc& CreateDesc) override final
 	{
 		CreateDesc.CheckValidity();
-		FTextureRHIRef Texture = RHI->RHICreateTexture(CreateDesc);
+		FTextureRHIRef Texture = RHI->RHICreateTexture(RHICmdList, CreateDesc);
 		ensure(Texture->IsBarrierTrackingInitialized());
 		return Texture;
 	}
@@ -516,18 +525,18 @@ public:
 	* @returns a reference to a 2D texture resource
 	*/
 	// FlushType: Thread safe
-	virtual FTextureRHIRef RHIAsyncCreateTexture2D(uint32 SizeX, uint32 SizeY, uint8 Format, uint32 NumMips, ETextureCreateFlags Flags, ERHIAccess InResourceState, void** InitialMipData, uint32 NumInitialMips, FGraphEventRef& OutCompletionEvent) override final
+	virtual FTextureRHIRef RHIAsyncCreateTexture2D(uint32 SizeX, uint32 SizeY, uint8 Format, uint32 NumMips, ETextureCreateFlags Flags, ERHIAccess InResourceState, void** InitialMipData, uint32 NumInitialMips, const TCHAR* DebugName, FGraphEventRef& OutCompletionEvent) override final
 	{
 		check(GRHISupportsAsyncTextureCreation);
 		ensure(FMath::Max(SizeX, SizeY) >= (1u << (FMath::Max(1u, NumMips) - 1)));
-		FTextureRHIRef Texture = RHI->RHIAsyncCreateTexture2D(SizeX, SizeY, Format, NumMips, Flags, InResourceState, InitialMipData, NumInitialMips, OutCompletionEvent);
+		FTextureRHIRef Texture = RHI->RHIAsyncCreateTexture2D(SizeX, SizeY, Format, NumMips, Flags, InResourceState, InitialMipData, NumInitialMips, DebugName, OutCompletionEvent);
 		ensure(Texture->IsBarrierTrackingInitialized());
 		return Texture;
 	}
 
-	void RHITransferBufferUnderlyingResource(FRHIBuffer* DestBuffer, FRHIBuffer* SrcBuffer) override final
+	void RHITransferBufferUnderlyingResource(FRHICommandListBase& RHICmdList, FRHIBuffer* DestBuffer, FRHIBuffer* SrcBuffer) override final
 	{
-		RHI->RHITransferBufferUnderlyingResource(DestBuffer, SrcBuffer);
+		RHI->RHITransferBufferUnderlyingResource(RHICmdList, DestBuffer, SrcBuffer);
 	}
 
 	/**
@@ -730,11 +739,11 @@ public:
 	}
 
 	// FlushType: Thread safe
-	virtual void RHIBindDebugLabelName(FRHITexture* Texture, const TCHAR* Name) override final;
+	virtual void RHIBindDebugLabelName(FRHICommandListBase& RHICmdList, FRHITexture* Texture, const TCHAR* Name) override final;
 
-	virtual void RHIBindDebugLabelName(FRHIBuffer* Buffer, const TCHAR* Name) override final;
+	virtual void RHIBindDebugLabelName(FRHICommandListBase& RHICmdList, FRHIBuffer* Buffer, const TCHAR* Name) override final;
 
-	virtual void RHIBindDebugLabelName(FRHIUnorderedAccessView* UnorderedAccessViewRHI, const TCHAR* Name) override final;
+	virtual void RHIBindDebugLabelName(FRHICommandListBase& RHICmdList, FRHIUnorderedAccessView* UnorderedAccessViewRHI, const TCHAR* Name) override final;
 
 	/**
 	* Reads the contents of a texture to an output buffer (non MSAA and MSAA) and returns it as a FColor array.
@@ -1188,14 +1197,6 @@ public:
 		return RHI->RHICreateShaderLibrary_RenderThread(RHICmdList, Platform, FilePath, Name);
 	}
 
-	virtual FTextureRHIRef RHICreateTexture_RenderThread(class FRHICommandListImmediate& RHICmdList, const FRHITextureCreateDesc& CreateDesc) override final
-	{
-		CreateDesc.CheckValidity();
-		FTextureRHIRef Texture = RHI->RHICreateTexture_RenderThread(RHICmdList, CreateDesc);
-		ensure(Texture->IsBarrierTrackingInitialized());
-		return Texture;
-	}
-
 	virtual void* RHILockTextureCubeFace_RenderThread(class FRHICommandListImmediate& RHICmdList, FRHITextureCube* Texture, uint32 FaceIndex, uint32 ArrayIndex, uint32 MipIndex, EResourceLockMode LockMode, uint32& DestStride, bool bLockWithinMiptail) override final
 	{
 		return RHI->RHILockTextureCubeFace_RenderThread(RHICmdList, Texture, FaceIndex, ArrayIndex, MipIndex, LockMode, DestStride, bLockWithinMiptail);
@@ -1279,17 +1280,21 @@ public:
 		return RHI->RHICalcRayTracingSceneSize(MaxInstances, Flags);
 	}
 
-	virtual FRayTracingAccelerationStructureSize RHICalcRayTracingGeometrySize(const FRayTracingGeometryInitializer& Initializer) override final
+	virtual FRayTracingAccelerationStructureSize RHICalcRayTracingGeometrySize(FRHICommandListBase& RHICmdList, const FRayTracingGeometryInitializer& Initializer) override final
 	{
-		return RHI->RHICalcRayTracingGeometrySize(Initializer);
+		return RHI->RHICalcRayTracingGeometrySize(RHICmdList, Initializer);
 	}
 
-	void RHITransferRayTracingGeometryUnderlyingResource(FRHIRayTracingGeometry* DestGeometry, FRHIRayTracingGeometry* SrcGeometry) override final
+	void RHITransferRayTracingGeometryUnderlyingResource(FRHICommandListBase& RHICmdList, FRHIRayTracingGeometry* DestGeometry, FRHIRayTracingGeometry* SrcGeometry) override final
 	{
-		RHI->RHITransferRayTracingGeometryUnderlyingResource(DestGeometry, SrcGeometry);
+		RHI->RHITransferRayTracingGeometryUnderlyingResource(RHICmdList, DestGeometry, SrcGeometry);
 	}
 #endif // RHI_RAYTRACING
 
+	virtual FShaderBundleRHIRef RHICreateShaderBundle(uint32 NumRecords) override final
+	{
+		return RHI->RHICreateShaderBundle(NumRecords);
+	}
 
 //protected:
 	static void ReportValidationFailure(const TCHAR* InMessage);

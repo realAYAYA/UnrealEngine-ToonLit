@@ -14,10 +14,11 @@
 #include "ScenePrivate.h"
 #include "ScreenPass.h"
 #include "MeshPassProcessor.inl"
-#include "Strata/Strata.h"
+#include "Substrate/Substrate.h"
 #include "ScreenRendering.h"
 #include "PostProcess/TemporalAA.h"
 #include "ShaderPlatformCachedIniValue.h"
+#include "HeterogeneousVolumes/HeterogeneousVolumes.h"
 
 DECLARE_GPU_DRAWCALL_STAT(Distortion);
 
@@ -57,9 +58,27 @@ static TAutoConsoleVariable<float> CVarRefractionBlurMaxExposedLuminance(
 	TEXT("Clamp scene pre-exposed luminance to this maximum value. It helps to reduce bright specular highlight flickering, even when r.Refraction.Blur.TemporalAA=1."),
 	ECVF_Scalability | ECVF_RenderThreadSafe);
 
+static TAutoConsoleVariable<int32> CVarRefractionUseAVSM(
+	TEXT("r.HeterogeneousVolumes.CompositeWithTranslucency.Refraction.UseAVSM"),
+	1,
+	TEXT("Enables AVSM lookup (Default = 1)\n")
+	TEXT("Requires enabling Heterogeneous Volumes Project Setting: 'Composite with Translucency'"),
+	ECVF_RenderThreadSafe);
+
+static TAutoConsoleVariable<float> CVarRefractionTransmittanceThreshold(
+	TEXT("r.HeterogeneousVolumes.CompositeWithTranslucency.Refraction.TransmittanceThreshold"),
+	0.9,
+	TEXT("Minimum transmittance threshold to apply distortion (Default = 0.9)\n")
+	TEXT("Requires enabling Heterogeneous Volumes Project Setting: 'Composite with Translucency'"),
+	ECVF_RenderThreadSafe);
+
 BEGIN_GLOBAL_SHADER_PARAMETER_STRUCT(FDistortionPassUniformParameters, RENDERER_API)
 	SHADER_PARAMETER_STRUCT(FSceneTextureUniformParameters, SceneTextures)
+	SHADER_PARAMETER_STRUCT(FSubstrateForwardPassUniformParameters, Substrate)
 	SHADER_PARAMETER(FVector4f, DistortionParams)
+	SHADER_PARAMETER_STRUCT(FAdaptiveVolumetricShadowMapUniformBufferParameters, AVSM)
+	SHADER_PARAMETER(int32, UseAVSM)
+	SHADER_PARAMETER(float, TransmittanceThreshold)
 END_GLOBAL_SHADER_PARAMETER_STRUCT()
 
 IMPLEMENT_STATIC_UNIFORM_BUFFER_STRUCT(FDistortionPassUniformParameters, "DistortionPass", SceneTextures);
@@ -108,12 +127,17 @@ TRDGUniformBufferRef<FDistortionPassUniformParameters> CreateDistortionPassUnifo
 	auto* Parameters = GraphBuilder.AllocParameters<FDistortionPassUniformParameters>();
 	SetupSceneTextureUniformParameters(GraphBuilder, View.GetSceneTexturesChecked(), View.FeatureLevel, ESceneTextureSetupMode::All, Parameters->SceneTextures);
 	SetupDistortionParams(Parameters->DistortionParams, View);
+	Substrate::BindSubstrateForwardPasslUniformParameters(GraphBuilder, View, Parameters->Substrate);
+	Parameters->AVSM = HeterogeneousVolumes::GetAdaptiveVolumetricCameraMapParameters(GraphBuilder, View.ViewState);
+	Parameters->UseAVSM = CVarRefractionUseAVSM.GetValueOnRenderThread() != 0;
+	Parameters->TransmittanceThreshold = FMath::Clamp(CVarRefractionTransmittanceThreshold.GetValueOnRenderThread(), 0.0, 1.0);
+
 	return GraphBuilder.CreateUniformBuffer(Parameters);
 }
 
 static bool GetUseRoughRefraction()
 {
-	return Strata::IsStrataEnabled() && CVarRefractionBlur.GetValueOnRenderThread() > 0;
+	return Substrate::IsSubstrateEnabled() && CVarRefractionBlur.GetValueOnAnyThread() > 0; // Any thread since it can be called when creating the PassProcessor
 }
 
 class FDistortionScreenPS : public FGlobalShader
@@ -225,6 +249,7 @@ public:
 
 		// Skip the material clip if depth test should not be done
 		OutEnvironment.SetDefine(TEXT("MATERIAL_SHOULD_DISABLE_DEPTH_TEST"), Parameters.MaterialParameters.bShouldDisableDepthTest ? 1 : 0);
+		OutEnvironment.SetDefine(TEXT("ADAPTIVE_VOLUMETRIC_SHADOW_MAP"), ShouldCompositeHeterogeneousVolumesWithTranslucency());
 	}
 };
 
@@ -571,7 +596,7 @@ void FDeferredShadingSceneRenderer::RenderDistortion(
 			}
 
 			// Now render the mip chain
-			// STRATA_TODO we could optimize that pass by doing one pass with a tile of 16x16 writing out the 8x8, 4x4, 2x2 and 1x1 down sampled output
+			// SUBSTRATE_TODO we could optimize that pass by doing one pass with a tile of 16x16 writing out the 8x8, 4x4, 2x2 and 1x1 down sampled output
 
 			{
 				RDG_EVENT_SCOPE(GraphBuilder, "SceneColorMipChain");

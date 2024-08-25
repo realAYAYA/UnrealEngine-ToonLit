@@ -7,10 +7,10 @@
 #include "Video/Encoders/Configs/VideoEncoderConfigH264.h"
 #include "Video/Encoders/Configs/VideoEncoderConfigH265.h"
 
-#include "Video/Resources/VideoResourceVulkan.h"
+#include "Video/Resources/Vulkan/VideoResourceVulkan.h"
 
 #if PLATFORM_WINDOWS
-#include "Video/Resources/Windows/VideoResourceD3D.h"
+#include "Video/Resources/D3D/VideoResourceD3D.h"
 #endif
 
 #include "Video/Decoders/VideoDecoderAMF.h"
@@ -36,6 +36,8 @@ public:
 					return FAPI::Get<FAMF>().IsValid();
 				});
 
+		// TODO (william.belcher): H265 decoding doesn't currently work with AMD
+		/* 
 		FVideoDecoder::RegisterPermutationsOf<TVideoDecoderAMF<FVideoResourceD3D11>>
 			::With<FVideoResourceD3D11>
 			::And<FVideoDecoderConfigAMF, FVideoDecoderConfigH264, FVideoDecoderConfigH265>([](TSharedRef<FAVDevice> const& NewDevice, TSharedRef<FAVInstance> const& NewInstance)
@@ -49,6 +51,7 @@ public:
 				{
 					return FAPI::Get<FAMF>().IsValid();
 				});
+		*/
 #endif
 
 		/*FVideoEncoder::RegisterPermutationsOf<TVideoEncoderAMF<FVideoResourceVulkan>>

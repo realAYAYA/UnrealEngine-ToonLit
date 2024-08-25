@@ -5,7 +5,7 @@ using System.IO;
 
 public class LibVpx : ModuleRules
 {
-	protected virtual string LibVpxVersion { get { return Target.IsInPlatformGroup(UnrealPlatformGroup.Unix)? "libvpx-1.6.1":"libvpx-1.10.0"; } }
+	protected virtual string LibVpxVersion { get { return "libvpx-1.13.1"; } }
 	protected virtual string RootDirectory { get { return Target.UEThirdPartySourceDirectory; } }
 
 	protected virtual string LibvpxIncludePath { get { return Path.Combine(RootDirectory, "libvpx", LibVpxVersion, "include"); } }

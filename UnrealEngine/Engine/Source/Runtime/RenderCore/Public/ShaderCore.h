@@ -33,6 +33,7 @@
 #include "Stats/Stats.h"
 #include "Stats/Stats2.h"
 #include "Templates/Function.h"
+#include "Templates/PimplPtr.h"
 #include "Templates/RefCounting.h"
 #include "Templates/SharedPointer.h"
 #include "Templates/UnrealTemplate.h"
@@ -40,14 +41,21 @@
 #include "UObject/UnrealNames.h"
 #include "UniformBuffer.h"
 
+// Temporarily included here until we can fully deprecate access to FShaderCompilerDefinitions in a future version
+#include "ShaderCompilerDefinitions.h"
+
 class Error;
 class FMemoryImageWriter;
 class FMemoryUnfreezeContent;
 class FPointerTableBase;
+class FShaderCompilerDefinitions;
 class FShaderCompileUtilities;
 class FShaderPreprocessorUtilities;
 class FSHA1;
 class ITargetPlatform;
+
+using FShaderStatVariant = TVariant<bool, float, int32, uint32>;
+DECLARE_INTRINSIC_TYPE_LAYOUT(FShaderStatVariant);
 
 /**
  * Controls whether shader related logs are visible.
@@ -70,7 +78,7 @@ DECLARE_FLOAT_ACCUMULATOR_STAT_EXTERN(TEXT("Total Global Shader Compiling Time")
 DECLARE_FLOAT_ACCUMULATOR_STAT_EXTERN(TEXT("RHI Compile Time"),STAT_ShaderCompiling_RHI,STATGROUP_ShaderCompiling, RENDERCORE_API);
 DECLARE_FLOAT_ACCUMULATOR_STAT_EXTERN(TEXT("Loading Shader Files"),STAT_ShaderCompiling_LoadingShaderFiles,STATGROUP_ShaderCompiling, RENDERCORE_API);
 DECLARE_FLOAT_ACCUMULATOR_STAT_EXTERN(TEXT("CRCing Shader Files"),STAT_ShaderCompiling_HashingShaderFiles,STATGROUP_ShaderCompiling, RENDERCORE_API);
-DECLARE_FLOAT_ACCUMULATOR_STAT_EXTERN(TEXT("HLSL Translation"),STAT_ShaderCompiling_HLSLTranslation,STATGROUP_ShaderCompiling, RENDERCORE_API);
+DECLARE_FLOAT_ACCUMULATOR_STAT_EXTERN(TEXT("HLSL Translation"), STAT_ShaderCompiling_HLSLTranslation, STATGROUP_ShaderCompiling, RENDERCORE_API);
 DECLARE_FLOAT_ACCUMULATOR_STAT_EXTERN(TEXT("DDC Loading"),STAT_ShaderCompiling_DDCLoading,STATGROUP_ShaderCompiling, RENDERCORE_API);
 DECLARE_FLOAT_ACCUMULATOR_STAT_EXTERN(TEXT("Material Loading"),STAT_ShaderCompiling_MaterialLoading,STATGROUP_ShaderCompiling, RENDERCORE_API);
 DECLARE_FLOAT_ACCUMULATOR_STAT_EXTERN(TEXT("Material Compiling"),STAT_ShaderCompiling_MaterialCompiling,STATGROUP_ShaderCompiling, RENDERCORE_API);
@@ -211,11 +219,33 @@ enum class EShaderParameterType : uint8
 	SRV,
 	UAV,
 
-	BindlessResourceIndex,
-	BindlessSamplerIndex,
+	BindlessSampler,
+	BindlessSRV,
+	BindlessUAV,
 
 	Num
 };
+
+enum class EShaderParameterTypeMask : uint16
+{
+	LooseDataMask = 1 << uint16(EShaderParameterType::LooseData),
+	UniformBufferMask = 1 << uint16(EShaderParameterType::UniformBuffer),
+	SamplerMask = 1 << uint16(EShaderParameterType::Sampler),
+	SRVMask = 1 << uint16(EShaderParameterType::SRV),
+	UAVMask = 1 << uint16(EShaderParameterType::UAV),
+	BindlessSamplerMask = 1 << uint16(EShaderParameterType::BindlessSampler),
+	BindlessSRVMask = 1 << uint16(EShaderParameterType::BindlessSRV),
+	BindlessUAVMask = 1 << uint16(EShaderParameterType::BindlessUAV),
+};
+ENUM_CLASS_FLAGS(EShaderParameterTypeMask);
+
+inline bool IsParameterBindless(EShaderParameterType ParameterType)
+{
+	return ParameterType == EShaderParameterType::BindlessSampler
+		|| ParameterType == EShaderParameterType::BindlessSRV
+		|| ParameterType == EShaderParameterType::BindlessUAV
+		;
+}
 
 struct FParameterAllocation
 {
@@ -295,85 +325,6 @@ public:
 	inline const TMap<FString, FParameterAllocation>& GetParameterMap() const { return ParameterMap; }
 
 	TMap<FString,FParameterAllocation> ParameterMap;
-};
-
-/** Container for shader compiler definitions. */
-class FShaderCompilerDefinitions
-{
-public:
-
-	FShaderCompilerDefinitions()
-	{
-		// Presize to reduce re-hashing while building shader jobs
-		Definitions.Empty(50);
-	}
-
-	/**
-	 * Works for TCHAR
-	 * e.g. SetDefine(TEXT("NUM_SAMPLES"), TEXT("1"));
-	 */
-	void SetDefine(const TCHAR* Name, const TCHAR* Value)
-	{
-		Definitions.Add(Name, Value);
-	}
-
-	void SetDefine(const TCHAR* Name, const FString& Value)
-	{
-		Definitions.Add(Name, Value);
-	}
-
-	void SetDefine(const TCHAR* Name, bool Value)
-	{
-		Definitions.Add(Name, Value ? TEXT("1") : TEXT("0"));
-	}
-
-	void SetDefine(const TCHAR* Name, uint32 Value)
-	{
-		// can be optimized
-		switch (Value)
-		{
-		// Avoid Printf for common cases
-		case 0u: Definitions.Add(Name, TEXT("0")); break;
-		case 1u: Definitions.Add(Name, TEXT("1")); break;
-		default: Definitions.Add(Name, FString::Printf(TEXT("%u"), Value)); break;
-		}
-	}
-
-	void SetDefine(const TCHAR* Name, int32 Value)
-	{
-		// can be optimized
-		switch (Value)
-		{
-		case 0: Definitions.Add(Name, TEXT("0")); break;
-		case 1: Definitions.Add(Name, TEXT("1")); break;
-		default: Definitions.Add(Name, FString::Printf(TEXT("%d"), Value));
-		}
-	}
-
-	/**
-	 * Works for float
-	 */
-	RENDERCORE_API void SetFloatDefine(const TCHAR* Name, float Value);
-
-	const TMap<FString,FString>& GetDefinitionMap() const
-	{
-		return Definitions;
-	}
-
-	friend FArchive& operator<<(FArchive& Ar,FShaderCompilerDefinitions& Defs)
-	{
-		return Ar << Defs.Definitions;
-	}
-
-	void Merge(const FShaderCompilerDefinitions& Other)
-	{
-		Definitions.Append(Other.Definitions);
-	}
-
-private:
-
-	/** Map: definition -> value. */
-	TMap<FString,FString> Definitions;
 };
 
 struct FShaderResourceTable
@@ -482,6 +433,12 @@ public:
 		Data = Data | FlagBit;
 	}
 
+	inline void Remove(uint32 InFlag)
+	{
+		const uint64 FlagBit = (uint64)1 << (uint64)InFlag;
+		Data = Data & ~FlagBit;
+	}
+
 	inline bool Contains(uint32 InFlag) const
 	{
 		const uint64 FlagBit = (uint64)1 << (uint64)InFlag;
@@ -532,7 +489,10 @@ struct FShaderCompilerEnvironment
 	// Map of the virtual file path -> content.
 	// The virtual file paths are the ones that USF files query through the #include "<The Virtual Path of the file>"
 	TMap<FString,FString> IncludeVirtualPathToContentsMap;
-	
+
+	TMap<FString, FThreadSafeSharedAnsiStringPtr> IncludeVirtualPathToSharedContentsMap;
+
+	UE_DEPRECATED(5.4, "IncludeVirtualPathToExternalContentsMap has been replaced with IncludeVirtualPathToSharedContentsMap (type change from FString to ANSI string).")
 	TMap<FString, FThreadSafeSharedStringPtr> IncludeVirtualPathToExternalContentsMap;
 
 	FShaderCompilerFlags CompilerFlags;
@@ -549,17 +509,13 @@ struct FShaderCompilerEnvironment
 	bool FullPrecisionInPS = 0;
 
 	/** Default constructor. */
-	FShaderCompilerEnvironment()
-	{
-		// Presize to reduce re-hashing while building shader jobs
-		IncludeVirtualPathToContentsMap.Empty(15);
-	}
+	RENDERCORE_API FShaderCompilerEnvironment();
 
 	/** Initialization constructor. */
-	explicit FShaderCompilerEnvironment(const FShaderCompilerDefinitions& InDefinitions)
-		: Definitions(InDefinitions)
-	{
-	}
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	UE_DEPRECATED(5.4, "FShaderCompilerDefinitions is being made private in the future, do not use this constructor.")
+	RENDERCORE_API explicit FShaderCompilerEnvironment(const FShaderCompilerDefinitions& InDefinitions);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	// Used as a baseclass, make sure we're not incorrectly destroyed through a baseclass pointer
 	// This will be expensive to destroy anyway, additional vcall overhead should be small
@@ -581,19 +537,44 @@ struct FShaderCompilerEnvironment
 	 * e.g. SetDefine(TEXT("NAME"), TEXT("Test"));
 	 * e.g. SetDefine(TEXT("NUM_SAMPLES"), 1);
 	 * e.g. SetDefine(TEXT("DOIT"), true);
+	 *
+	 * Or use optimized macros, which can cache FName and map lookups to improve performance:
+	 * e.g. SET_SHADER_DEFINE(NAME, TEXT("Test"));
+	 * e.g. SET_SHADER_DEFINE(NUM_SAMPLES, 1);
+	 * e.g. SET_SHADER_DEFINE(DOIT, true);
 	 */
-	void SetDefine(const TCHAR* Name, const TCHAR* Value)	{ Definitions.SetDefine(Name, Value); }
-	void SetDefine(const TCHAR* Name, const FString& Value) { Definitions.SetDefine(Name, Value); }
-	void SetDefine(const TCHAR* Name, uint32 Value)			{ Definitions.SetDefine(Name, Value); }
-	void SetDefine(const TCHAR* Name, int32 Value)			{ Definitions.SetDefine(Name, Value); }
-	void SetDefine(const TCHAR* Name, bool Value)			{ Definitions.SetDefine(Name, Value); }
-	void SetDefine(const TCHAR* Name, float Value)			{ Definitions.SetFloatDefine(Name, Value); }
+	RENDERCORE_API void SetDefine(const TCHAR* Name, const TCHAR* Value);
+	RENDERCORE_API void SetDefine(const TCHAR* Name, const FString& Value);
+	RENDERCORE_API void SetDefine(const TCHAR* Name, uint32 Value);
+	RENDERCORE_API void SetDefine(const TCHAR* Name, int32 Value);
+	RENDERCORE_API void SetDefine(const TCHAR* Name, bool Value);
+	RENDERCORE_API void SetDefine(const TCHAR* Name, float Value);
+
+	RENDERCORE_API void SetDefine(FName Name, const TCHAR* Value);
+	RENDERCORE_API void SetDefine(FName Name, const FString& Value);
+	RENDERCORE_API void SetDefine(FName Name, uint32 Value);
+	RENDERCORE_API void SetDefine(FName Name, int32 Value);
+	RENDERCORE_API void SetDefine(FName Name, bool Value);
+	RENDERCORE_API void SetDefine(FName Name, float Value);
+
+	RENDERCORE_API void SetDefine(FShaderCompilerDefineNameCache& Name, const TCHAR* Value);
+	RENDERCORE_API void SetDefine(FShaderCompilerDefineNameCache& Name, const FString& Value);
+	RENDERCORE_API void SetDefine(FShaderCompilerDefineNameCache& Name, uint32 Value);
+	RENDERCORE_API void SetDefine(FShaderCompilerDefineNameCache& Name, int32 Value);
+	RENDERCORE_API void SetDefine(FShaderCompilerDefineNameCache& Name, bool Value);
+	RENDERCORE_API void SetDefine(FShaderCompilerDefineNameCache& Name, float Value);
+
+	RENDERCORE_API int32 GetIntegerValue(FName Name) const;
+	RENDERCORE_API int32 GetIntegerValue(FShaderCompilerDefineNameCache& NameCache, int32 ResultIfNotFound = 0) const;
+
+	RENDERCORE_API bool ContainsDefinition(FName Name) const;
 
 	template <typename ValueType> void SetDefineIfUnset(const TCHAR* Name, ValueType Value)
 	{
-		if (!Definitions.GetDefinitionMap().Contains(Name))
+		FName NameKey(Name);
+		if (!ContainsDefinition(NameKey))
 		{
-			SetDefine(Name, Value);
+			SetDefine(NameKey, Value);
 		}
 	}
 
@@ -603,6 +584,12 @@ struct FShaderCompilerEnvironment
 	template <typename ValueType> void SetCompileArgument(const TCHAR* Name, ValueType Value)
 	{
 		CompileArgs.Add(Name, TVariant<bool, float, int32, uint32, FString>(TInPlaceType<ValueType>(), Value));
+	}
+	
+	// Like above, but this overload takes in the define value variant explicitly.
+	void SetCompileArgument(const TCHAR* Name, TVariant<bool, float, int32, uint32, FString> Value)
+	{
+		CompileArgs.Add(Name, MoveTempIfPossible(Value));
 	}
 
 	// Helper to set both a define and a compile argument to the same value. Useful for various parameters which
@@ -652,7 +639,7 @@ struct FShaderCompilerEnvironment
 	UE_DEPRECATED(5.3, "GetDefinitions is deprecated; preprocessor defines must now only be accessed by core shader system code. Use Get/SetCompileArgument for generic params instead.")
 	const TMap<FString,FString>& GetDefinitions() const
 	{
-		return Definitions.GetDefinitionMap();
+		return UnusedStringDefinitions;
 	}
 
 	void SetRenderTargetOutputFormat(uint32 RenderTargetIndex, EPixelFormat PixelFormat)
@@ -661,94 +648,90 @@ struct FShaderCompilerEnvironment
 	}
 
 	/** This "core" serialization is also used for the hashing the compiler job (where files are handled differently). Should stay in sync with the ShaderCompileWorker. */
-	inline void SerializeEverythingButFiles(FArchive& Ar)
-	{
-		Ar << Definitions;
-		Ar << CompileArgs;
-		Ar << CompilerFlags;
-		Ar << RenderTargetOutputFormatsMap;
-		Ar << ResourceTableMap.Resources;
-		Ar << UniformBufferMap;
-		Ar << FullPrecisionInPS;
-		if (Ar.IsLoading())
-		{
-			ResourceTableMap.FixupOnLoad(UniformBufferMap);
-		}
-	}
+	RENDERCORE_API void SerializeEverythingButFiles(FArchive& Ar);
 
 	// Serializes the portions of the environment that are used as input to the backend compilation process (i.e. after all preprocessing)
-	inline void SerializeCompilationDependencies(FArchive& Ar)
-	{
-		Ar << CompileArgs;
-		Ar << CompilerFlags;
-		Ar << ResourceTableMap.Resources;
-		Ar << UniformBufferMap;
-		Ar << FullPrecisionInPS;
-		if (Ar.IsLoading())
-		{
-			ResourceTableMap.FixupOnLoad(UniformBufferMap);
-		}
-	}
+	RENDERCORE_API void SerializeCompilationDependencies(FArchive& Ar);
 
 	friend FArchive& operator<<(FArchive& Ar,FShaderCompilerEnvironment& Environment)
 	{
 		// Note: this serialize is used to pass between UE and the shader compile worker, recompile both when modifying
 		Ar << Environment.IncludeVirtualPathToContentsMap;
 
-		// Note: skipping Environment.IncludeVirtualPathToExternalContentsMap, which is handled by FShaderCompileUtilities::DoWriteTasks in order to maintain sharing
+		// Note: skipping Environment.IncludeVirtualPathToSharedContentsMap, which is handled by FShaderCompileUtilities::DoWriteTasks in order to maintain sharing
 
 		Environment.SerializeEverythingButFiles(Ar);
 		return Ar;
 	}
 	
-	void Merge(const FShaderCompilerEnvironment& Other)
-	{
-		// Merge the include maps
-		// Merge the values of any existing keys
-		for (TMap<FString,FString>::TConstIterator It(Other.IncludeVirtualPathToContentsMap); It; ++It )
-		{
-			FString* ExistingContents = IncludeVirtualPathToContentsMap.Find(It.Key());
+	RENDERCORE_API void Merge(const FShaderCompilerEnvironment& Other);
 
-			if (ExistingContents)
-			{
-				ExistingContents->Append(It.Value());
-			}
-			else
-			{
-				IncludeVirtualPathToContentsMap.Add(It.Key(), It.Value());
-			}
-		}
-
-		check(Other.IncludeVirtualPathToExternalContentsMap.Num() == 0);
-
-		CompilerFlags.Append(Other.CompilerFlags);
-		ResourceTableMap.Append(Other.ResourceTableMap);
-		UniformBufferMap.Append(Other.UniformBufferMap);
-		Definitions.Merge(Other.Definitions);
-		CompileArgs.Append(Other.CompileArgs);
-		RenderTargetOutputFormatsMap.Append(Other.RenderTargetOutputFormatsMap);
-		FullPrecisionInPS |= Other.FullPrecisionInPS;
-	}
+	RENDERCORE_API FString GetDefinitionsAsCommentedCode() const;
 
 private:
 
 	friend class FShaderCompileUtilities;
 	friend class FShaderPreprocessorUtilities;
 
-	FShaderCompilerDefinitions Definitions;
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS		// FShaderCompilerDefinitions will be made internal in the future, marked deprecated until then
+	TPimplPtr<FShaderCompilerDefinitions, EPimplPtrMode::DeepCopy> Definitions;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
 	TMap<FString, TVariant<bool, float, int32, uint32, FString>> CompileArgs;
+
+	/** Unused data kept around for deprecated FShaderCompilerEnvironment::GetDefinitions call */
+	TMap<FString, FString> UnusedStringDefinitions;
 };
+
+
+/** Optimized define setting macros that cache the FName lookup, and potentially the map index. */
+#define SET_SHADER_DEFINE(ENVIRONMENT, NAME, VALUE) \
+	do {																	\
+		static FShaderCompilerDefineNameCache Cache_##NAME(TEXT(#NAME));	\
+		(ENVIRONMENT).SetDefine(Cache_##NAME, VALUE);						\
+	} while(0)
+
+#define SET_SHADER_DEFINE_AND_COMPILE_ARGUMENT(ENVIRONMENT, NAME, VALUE) \
+	do {																	\
+		static FShaderCompilerDefineNameCache Cache_##NAME(TEXT(#NAME));	\
+		(ENVIRONMENT).SetDefine(Cache_##NAME, VALUE);						\
+		(ENVIRONMENT).SetCompileArgument(TEXT(#NAME), VALUE);				\
+	} while(0)
+
 
 struct FSharedShaderCompilerEnvironment final : public FShaderCompilerEnvironment, public FRefCountBase
 {
 	virtual ~FSharedShaderCompilerEnvironment() = default;
 };
 
+enum class EShaderOptionalDataKey : uint8
+{
+	AttributeInputs      = uint8('i'),
+	AttributeOutputs     = uint8('o'),
+	CompressedDebugCode  = uint8('z'),
+	Diagnostic           = uint8('D'),
+	Features             = uint8('x'),
+	Name                 = uint8('n'),
+	NativePath           = uint8('P'),
+	ObjectFile           = uint8('O'),
+	PackedResourceCounts = uint8('p'),
+	ResourceMasks        = uint8('m'),
+	ShaderModel6         = uint8('6'),
+	SourceCode           = uint8('c'),
+	UncompressedSize     = uint8('U'),
+	UniformBuffers       = uint8('u'),
+	Validation           = uint8('V'),
+	VendorExtension      = uint8('v'),
+};
+
 enum class EShaderResourceUsageFlags : uint8
 {
-	GlobalUniformBuffer = 1 << 0,
-	BindlessResources   = 1 << 1,
-	BindlessSamplers    = 1 << 2,
+	GlobalUniformBuffer   = 1 << 0,
+	BindlessResources     = 1 << 1,
+	BindlessSamplers      = 1 << 2,
+	RootConstants         = 1 << 3,
+	NoDerivativeOps       = 1 << 4,
+	ShaderBundle          = 1 << 5,
 };
 ENUM_CLASS_FLAGS(EShaderResourceUsageFlags)
 
@@ -756,7 +739,7 @@ ENUM_CLASS_FLAGS(EShaderResourceUsageFlags)
 struct FShaderCodePackedResourceCounts
 {
 	// for FindOptionalData() and AddOptionalData()
-	static const uint8 Key = 'p';
+	static const EShaderOptionalDataKey Key = EShaderOptionalDataKey::PackedResourceCounts;
 
 	EShaderResourceUsageFlags UsageFlags;
 	uint8 NumSamplers;
@@ -768,7 +751,7 @@ struct FShaderCodePackedResourceCounts
 struct FShaderCodeResourceMasks
 {
 	// for FindOptionalData() and AddOptionalData()
-	static const uint8 Key = 'm';
+	static const EShaderOptionalDataKey Key = EShaderOptionalDataKey::ResourceMasks;
 
 	uint32 UAVMask; // Mask of UAVs bound
 };
@@ -785,13 +768,14 @@ enum class EShaderCodeFeatures : uint16
 	BindlessResources       = 1 << 5,
 	BindlessSamplers        = 1 << 6,
 	StencilRef              = 1 << 7,
+	BarycentricsSemantic    = 1 << 8,
 };
 ENUM_CLASS_FLAGS(EShaderCodeFeatures);
 
 struct FShaderCodeFeatures
 {
 	// for FindOptionalData() and AddOptionalData()
-	static const uint8 Key = 'x';
+	static const EShaderOptionalDataKey Key = EShaderOptionalDataKey::Features;
 
 	EShaderCodeFeatures CodeFeatures = EShaderCodeFeatures::None;
 };
@@ -799,14 +783,14 @@ struct FShaderCodeFeatures
 // if this changes you need to make sure all shaders get invalidated
 struct FShaderCodeName
 {
-	static const uint8 Key = 'n';
+	static const EShaderOptionalDataKey Key = EShaderOptionalDataKey::Name;
 
 	// We store the straight ANSICHAR zero-terminated string
 };
 
 struct FShaderCodeUniformBuffers
 {
-	static const uint8 Key = 'u';
+	static const EShaderOptionalDataKey Key = EShaderOptionalDataKey::UniformBuffers;
 	// We store an array of FString objects
 };
 
@@ -814,7 +798,7 @@ struct FShaderCodeUniformBuffers
 struct FShaderCodeVendorExtension
 {
 	// for FindOptionalData() and AddOptionalData()
-	static const uint8 Key = 'v';
+	static const EShaderOptionalDataKey Key = EShaderOptionalDataKey::VendorExtension;
 
 	EGpuVendorId VendorId = EGpuVendorId::NotQueried;
 	FParameterAllocation Parameter;
@@ -849,19 +833,63 @@ inline FArchive& operator<<(FArchive& Ar, FShaderCodeValidationStride& ShaderCod
 	return Ar << ShaderCodeValidationStride.BindPoint << ShaderCodeValidationStride.Stride;
 }
 
+inline FArchive& operator<<(FArchive& Ar, FShaderCodeValidationType& ShaderCodeValidationType)
+{
+	return Ar << ShaderCodeValidationType.BindPoint << ShaderCodeValidationType.Type;
+}
+
+inline FArchive& operator<<(FArchive& Ar, FShaderCodeValidationUBSize& ShaderCodeValidationSize)
+{
+	return Ar << ShaderCodeValidationSize.BindPoint << ShaderCodeValidationSize.Size;
+}
+
 struct FShaderCodeValidationExtension
 {
 	// for FindOptionalData() and AddOptionalData()
-	static constexpr uint8 Key = 'V';
+	static constexpr EShaderOptionalDataKey Key = EShaderOptionalDataKey::Validation;
 	static constexpr uint16 StaticVersion = 0;
 
 	TArray<FShaderCodeValidationStride> ShaderCodeValidationStride;
+	TArray<FShaderCodeValidationType> ShaderCodeValidationSRVType;
+	TArray<FShaderCodeValidationType> ShaderCodeValidationUAVType;
+	TArray<FShaderCodeValidationUBSize> ShaderCodeValidationUBSize;
 	uint16 Version = StaticVersion;
 
 	friend FArchive& operator<<(FArchive& Ar, FShaderCodeValidationExtension& Extension)
 	{
 		Ar << Extension.Version;
 		Ar << Extension.ShaderCodeValidationStride;
+		Ar << Extension.ShaderCodeValidationSRVType;
+		Ar << Extension.ShaderCodeValidationUAVType;
+		Ar << Extension.ShaderCodeValidationUBSize;
+		return Ar;
+	}
+};
+
+struct FShaderDiagnosticData
+{
+	uint32 Hash;
+	FString Message;
+};
+
+inline FArchive& operator<<(FArchive& Ar, FShaderDiagnosticData& ShaderCodeDiagnosticData)
+{
+	return Ar << ShaderCodeDiagnosticData.Hash << ShaderCodeDiagnosticData.Message;
+}
+
+struct FShaderDiagnosticExtension
+{
+	// for FindOptionalData() and AddOptionalData()
+	static constexpr EShaderOptionalDataKey Key = EShaderOptionalDataKey::Diagnostic;
+	static constexpr uint16 StaticVersion = 0;
+
+	TArray<FShaderDiagnosticData> ShaderDiagnosticDatas;
+	uint16 Version = StaticVersion;
+
+	friend FArchive& operator<<(FArchive& Ar, FShaderDiagnosticExtension& Extension)
+	{
+		Ar << Extension.Version;
+		Ar << Extension.ShaderDiagnosticDatas;
 		return Ar;
 	}
 };
@@ -905,7 +933,7 @@ public:
 
 	// @param InKey e.g. FShaderCodePackedResourceCounts::Key
 	// @return 0 if not found
-	const uint8* FindOptionalData(uint8 InKey, uint8 ValueSize) const
+	const uint8* FindOptionalData(EShaderOptionalDataKey InKey, uint8 ValueSize) const
 	{
 		check(ValueSize);
 
@@ -920,7 +948,7 @@ public:
 
 		while(Current < End)
 		{
-			uint8 Key = *Current++;
+			EShaderOptionalDataKey Key = EShaderOptionalDataKey(*Current++);
 			uint32 Size = *((const unaligned_uint32*)Current);
 			Current += sizeof(Size);
 
@@ -935,7 +963,7 @@ public:
 		return 0;
 	}
 
-	const ANSICHAR* FindOptionalData(uint8 InKey) const
+	const ANSICHAR* FindOptionalData(EShaderOptionalDataKey InKey) const
 	{
 		check(ShaderCode.Num() >= 4);
 
@@ -950,7 +978,7 @@ public:
 
 		while(Current < End)
 		{
-			uint8 Key = *Current++;
+			EShaderOptionalDataKey Key = EShaderOptionalDataKey(*Current++);
 			uint32 Size = *((const unaligned_uint32*)Current);
 			Current += sizeof(Size);
 
@@ -966,7 +994,7 @@ public:
 	}
 
 	// Returns nullptr and Size -1 if key was not found
-	const uint8* FindOptionalDataAndSize(uint8 InKey, int32& OutSize) const
+	const uint8* FindOptionalDataAndSize(EShaderOptionalDataKey InKey, int32& OutSize) const
 	{
 		check(ShaderCode.Num() >= 4);
 
@@ -981,7 +1009,7 @@ public:
 
 		while (Current < End)
 		{
-			uint8 Key = *Current++;
+			EShaderOptionalDataKey Key = EShaderOptionalDataKey(*Current++);
 			uint32 Size = *((const unaligned_uint32*)Current);
 			Current += sizeof(Size);
 
@@ -1137,14 +1165,14 @@ public:
 	// can be called after the non optional data was stored in ShaderData
 	// @param Key uint8 to save memory so max 255, e.g. FShaderCodePackedResourceCounts::Key
 	// @param Size >0, only restriction is that sum of all optional data values must be < 4GB
-	void AddOptionalData(uint8 Key, const uint8* ValuePtr, uint32 ValueSize)
+	void AddOptionalData(EShaderOptionalDataKey Key, const uint8* ValuePtr, uint32 ValueSize)
 	{
 		check(ValuePtr);
 
 		// don't add after Finalize happened
 		check(OptionalDataSize >= 0);
 
-		ShaderCodeWithOptionalData.Add(Key);
+		ShaderCodeWithOptionalData.Add(uint8(Key));
 		ShaderCodeWithOptionalData.Append((const uint8*)&ValueSize, sizeof(ValueSize));
 		ShaderCodeWithOptionalData.Append(ValuePtr, ValueSize);
 		OptionalDataSize += sizeof(uint8) + sizeof(ValueSize) + (uint32)ValueSize;
@@ -1153,7 +1181,7 @@ public:
 	// Note: we don't hash the optional attachments in GenerateOutputHash() as they would prevent sharing (e.g. many material share the save VS)
 	// convenience, silently drops the data if string is too long
 	// @param e.g. 'n' for the ShaderSourceFileName
-	void AddOptionalData(uint8 Key, const ANSICHAR* InString)
+	void AddOptionalData(EShaderOptionalDataKey Key, const ANSICHAR* InString)
 	{
 		uint32 Size = FCStringAnsi::Strlen(InString) + 1;
 		AddOptionalData(Key, (uint8*)InString, Size);
@@ -1219,12 +1247,6 @@ extern RENDERCORE_API const class FSHAHash& GetShaderFilesHash(const TArray<FStr
  */
 extern RENDERCORE_API void FlushShaderFileCache();
 
-UE_DEPRECATED(5.2, "FlushShaderFileCache no longer needs a ShaderPlatformName argument")
-inline void FlushShaderFileCache(const FName* ShaderPlatformName)
-{
-	FlushShaderFileCache();
-}
-
 extern RENDERCORE_API void VerifyShaderSourceFiles(EShaderPlatform ShaderPlatform);
 
 #if WITH_EDITOR
@@ -1233,17 +1255,14 @@ class FShaderType;
 class FVertexFactoryType;
 class FShaderPipelineType;
 
+// Text to use as line terminator for HLSL files (may differ from platform LINE_TERMINATOR)
+#define HLSL_LINE_TERMINATOR TEXT("\n")
+
 /** Force updates each shader/pipeline type provided to update their list of referenced uniform buffers. */
 RENDERCORE_API void UpdateReferencedUniformBufferNames(
 	TArrayView<const FShaderType*> OutdatedShaderTypes,
 	TArrayView<const FVertexFactoryType*> OutdatedFactoryTypes,
 	TArrayView<const FShaderPipelineType*> OutdatedShaderPipelineTypes);
-
-struct FCachedUniformBufferDeclaration
-{
-	// Using SharedPtr so we can hand off lifetime ownership to FShaderCompilerEnvironment::IncludeVirtualPathToExternalContentsMap when invalidating this cache
-	FThreadSafeSharedStringPtr Declaration;
-};
 
 /** Parses the given source file and its includes for references of uniform buffers. */
 extern void GenerateReferencedUniformBufferNames(
@@ -1259,14 +1278,6 @@ struct FUniformBufferNameSortOrder
 		return FCString::Strcmp(Name1, Name2) < 0;
 	}
 };
-
-using FSortedMapUniformBufferDeclaration = TSortedMap<const TCHAR*, FCachedUniformBufferDeclaration, FDefaultAllocator, FUniformBufferNameSortOrder>;
-
-/** Records information about all the uniform buffer layouts referenced by UniformBufferEntries. This function is now deprecated as there now a unified way of preparing
- * shadermap keys that includes this and more: AppendKeyStringShaderDependencies.
- */
-UE_DEPRECATED(5.2, "SerializeUniformBufferInfo is depreceated. For creating shadermap keys please use AppendKeyStringShaderDependencies")
-extern RENDERCORE_API void SerializeUniformBufferInfo(class FShaderSaveArchive& Ar, const FSortedMapUniformBufferDeclaration& UniformBufferEntries);
 
 /**
  * Return the hash of the given type layout for a partical platform type layout. This function employs caching to avoid re-hashing the same parameters several times.

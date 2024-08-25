@@ -6,12 +6,15 @@
 #include "ToolSetupUtil.h"
 #include "BaseGizmos/TransformGizmoUtil.h"
 
+#include "Components/StaticMeshComponent.h"
 #include "DynamicMesh/MeshNormals.h"
 #include "DynamicMesh/MeshTransforms.h"
 #include "DynamicMeshToMeshDescription.h"
 
 #include "ModelingObjectsCreationAPI.h"
+#include "Physics/ComponentCollisionUtil.h"
 #include "Selection/ToolSelectionUtil.h"
+#include "ShapeApproximation/SimpleShapeSet3.h"
 
 #include "TargetInterfaces/PrimitiveComponentBackedTarget.h"
 #include "TargetInterfaces/MaterialProvider.h"
@@ -74,6 +77,13 @@ void UBaseCreateFromSelectedTool::Setup()
 	HandleSourcesProperties = NewObject<UBaseCreateFromSelectedHandleSourceProperties>(this);
 	HandleSourcesProperties->RestoreProperties(this);
 	AddToolPropertySource(HandleSourcesProperties);
+
+	if (SupportsCollisionTransfer())
+	{
+		CollisionProperties = NewObject<UBaseCreateFromSelectedCollisionProperties>(this);
+		CollisionProperties->RestoreProperties(this);
+		AddToolPropertySource(CollisionProperties);
+	}
 
 	Preview = NewObject<UMeshOpPreviewWithBackgroundCompute>(this);
 	Preview->Setup(GetTargetWorld(), this);
@@ -227,6 +237,43 @@ void UBaseCreateFromSelectedTool::GenerateAsset(const FDynamicMeshOpResult& OpRe
 	{
 		OutputTypeProperties->ConfigureCreateMeshObjectParams(NewMeshObjectParams);
 	}
+
+	bool bOutputSupportsCustomCollision = NewMeshObjectParams.TypeHint != ECreateObjectTypeHint::Volume;
+	if (SupportsCollisionTransfer() && CollisionProperties->bTransferCollision && bOutputSupportsCustomCollision)
+	{
+		for (int32 TargetIdx = 0; TargetIdx < Targets.Num(); ++TargetIdx)
+		{
+			if (!KeepCollisionFrom(TargetIdx))
+			{
+				continue;
+			}
+			UPrimitiveComponent* SourceComponent = UE::ToolTarget::GetTargetComponent(Targets[TargetIdx]);
+			if (UE::Geometry::ComponentTypeSupportsCollision(SourceComponent, UE::Geometry::EComponentCollisionSupportLevel::ReadOnly))
+			{
+				NewMeshObjectParams.bEnableCollision = true;
+				FComponentCollisionSettings CollisionSettings = UE::Geometry::GetCollisionSettings(SourceComponent);
+				// flag will be set to match the last selection that had collision
+				NewMeshObjectParams.CollisionMode = (ECollisionTraceFlag)CollisionSettings.CollisionTypeFlag;
+
+				FSimpleShapeSet3d ShapeSet;
+				FTransform Transform = FTransform::Identity;
+				if (Targets.Num() > 1)
+				{
+					// Note: NewTransform in the multi-target case is constructed to have uniform scale, so should have a valid inverse
+					Transform = TransformProxies[TargetIdx]->GetTransform() * NewTransform.Inverse();
+				}
+				if (UE::Geometry::GetCollisionShapes(SourceComponent, ShapeSet))
+				{
+					if (!NewMeshObjectParams.CollisionShapeSet.IsSet())
+					{
+						NewMeshObjectParams.CollisionShapeSet.Emplace();
+					}
+					NewMeshObjectParams.CollisionShapeSet->Append(ShapeSet, Transform);
+				}
+			}
+		}
+	}
+
 	FCreateMeshObjectResult Result = UE::Modeling::CreateMeshObject(GetToolManager(), MoveTemp(NewMeshObjectParams));
 	if (Result.IsOK() && Result.NewActor != nullptr)
 	{
@@ -250,7 +297,10 @@ void UBaseCreateFromSelectedTool::UpdateAsset(const FDynamicMeshOpResult& Result
 
 	FComponentMaterialSet MaterialSet;
 	MaterialSet.Materials = GetOutputMaterials();
+	// apply updated materials to both asset and component, to ensure that they appear in the result
+	// TODO: consider adding a method to the material provider interface that more-directly handles this use case
 	Cast<IMaterialProvider>(UpdateTarget)->CommitMaterialSetUpdate(MaterialSet, true);
+	Cast<IMaterialProvider>(UpdateTarget)->CommitMaterialSetUpdate(MaterialSet, false);
 }
 
 
@@ -291,6 +341,10 @@ void UBaseCreateFromSelectedTool::OnShutdown(EToolShutdownType ShutdownType)
 {
 	SaveProperties();
 	HandleSourcesProperties->SaveProperties(this);
+	if (SupportsCollisionTransfer())
+	{
+		CollisionProperties->SaveProperties(this);
+	}
 	OutputTypeProperties->SaveProperties(this, TEXT("OutputTypeFromInputTool"));
 	TransformProperties->SaveProperties(this);
 
@@ -303,7 +357,70 @@ void UBaseCreateFromSelectedTool::OnShutdown(EToolShutdownType ShutdownType)
 
 	if (ShutdownType == EToolShutdownType::Accept)
 	{
-		GetToolManager()->BeginUndoTransaction(GetActionName());
+		// Test if we need to pre-update the collision shapes, if we are updating an asset and have multiple targets
+		// Note: For static meshes, this must be done as a separate transaction due to a long-standing bug where undo/redo 
+		// will crash if an asset updates both its collision and geometry in the same transaction
+		// TODO: If/when that static mesh bug is fixed, this collision updating code can be separated out into the UpdateAsset() method
+		constexpr bool bWorkaroundForCrashIfConvexAndMeshModifiedInSameTransaction = false;
+		bool bAlreadyOpenedMainTransaction = false;
+		if (SupportsCollisionTransfer() && HandleSourcesProperties->OutputWriteTo != EBaseCreateFromSelectedTargetType::NewObject && Targets.Num() > 1)
+		{
+			int32 KeepTargetIndex = (HandleSourcesProperties->OutputWriteTo == EBaseCreateFromSelectedTargetType::FirstInputObject) ? 0 : (Targets.Num() - 1);
+			UPrimitiveComponent* TargetComponent = UE::ToolTarget::GetTargetComponent(Targets[KeepTargetIndex]);
+
+			if (CollisionProperties->bTransferCollision && UE::Geometry::ComponentTypeSupportsCollision(TargetComponent, UE::Geometry::EComponentCollisionSupportLevel::ReadWrite))
+			{
+				bool bHasAddedShapes = false;
+				FSimpleShapeSet3d AccumulateShapes;
+				UE::Geometry::GetCollisionShapes(TargetComponent, AccumulateShapes);
+
+				FTransform3d TargetToWorld = UE::ToolTarget::GetLocalToWorldTransform(Targets[KeepTargetIndex]);
+				FTransformSequence3d InvKeepTargetTransform;
+				InvKeepTargetTransform.AppendInverse(TargetToWorld);
+
+				for (int32 TargetIdx = 0; TargetIdx < Targets.Num(); ++TargetIdx)
+				{
+					if (TargetIdx == KeepTargetIndex || !KeepCollisionFrom(TargetIdx))
+					{
+						continue;
+					}
+					UPrimitiveComponent* SourceComponent = UE::ToolTarget::GetTargetComponent(Targets[TargetIdx]);
+					FSimpleShapeSet3d ShapeSet;
+					if (UE::Geometry::ComponentTypeSupportsCollision(SourceComponent, UE::Geometry::EComponentCollisionSupportLevel::ReadOnly) &&
+						UE::Geometry::GetCollisionShapes(SourceComponent, ShapeSet))
+					{
+						bHasAddedShapes = true;
+						// Create a best-effort transform sequence to take the collision shapes from their proxy transform space to world, and then back to the local space of the target
+						// Note because transforms cannot be fully applied to some collision shape types (e.g. spheres), this will still give weird results in non-uniform scale cases (but this is somewhat unavoidable)
+						FTransformSequence3d TransformSeq;
+						TransformSeq.Append(TransformProxies[TargetIdx]->GetTransform());
+						TransformSeq.Append(InvKeepTargetTransform);
+						AccumulateShapes.Append(ShapeSet, TransformSeq);
+					}
+				}
+
+				if (bHasAddedShapes)
+				{
+					bool bWorkaroundNotNeeded = !bWorkaroundForCrashIfConvexAndMeshModifiedInSameTransaction | !Cast<UStaticMeshComponent>(TargetComponent); // slightly odd conditional to workaround compiler warning
+					if (bWorkaroundNotNeeded)
+					{
+						// If we're not operating on a static mesh, we can open the main transaction here so the collision transaction becomes part of it ...
+						// for static mesh, we need the collision update to be a separate transaction to avoid crashing on undo/redo :(
+						bAlreadyOpenedMainTransaction = true;
+						GetToolManager()->BeginUndoTransaction(GetActionName());
+					}
+					GetToolManager()->BeginUndoTransaction(FText::Format(LOCTEXT("SplitTransactionCollisionUpdatePart", "Update Collision ({0})"), GetActionName()));
+					TargetComponent->Modify();
+					FComponentCollisionSettings Settings = GetCollisionSettings(TargetComponent);
+					UE::Geometry::SetSimpleCollision(TargetComponent, &AccumulateShapes, Settings);
+					GetToolManager()->EndUndoTransaction();
+				}
+			}
+		}
+		if (!bAlreadyOpenedMainTransaction)
+		{
+			GetToolManager()->BeginUndoTransaction(GetActionName());
+		}
 
 		// Generate the result
 		AActor* KeepActor = nullptr;

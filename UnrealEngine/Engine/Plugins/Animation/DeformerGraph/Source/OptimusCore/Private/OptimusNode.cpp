@@ -17,6 +17,9 @@
 #include "Actions/OptimusNodeGraphActions.h"
 
 #include "Algo/Reverse.h"
+#include "Serialization/MemoryReader.h"
+#include "Serialization/MemoryWriter.h"
+#include "Serialization/ObjectAndNameAsStringProxyArchive.h"
 #include "UObject/Package.h"
 #include "UObject/UObjectIterator.h"
 #include "UObject/UObjectGlobals.h"
@@ -107,10 +110,8 @@ bool UOptimusNode::SetGraphPositionDirect(
 
 	GraphPosition = InPosition;
 
-	if (bSendNotifications)
-	{
-		Notify(EOptimusGraphNotifyType::NodePositionChanged);
-	}
+
+	Notify(EOptimusGraphNotifyType::NodePositionChanged);
 
 	return true;
 }
@@ -122,16 +123,39 @@ FString UOptimusNode::GetNodePath() const
 	FString GraphPath(TEXT("<Unknown>"));
 	if (Graph)
 	{
-		GraphPath = Graph->GetGraphPath();
+		GraphPath = Graph->GetCollectionPath();
 	}
 
-	return FString::Printf(TEXT("%s/%s"), *GraphPath, *GetName());
+	return UOptimusNodeGraph::ConstructPath(GraphPath, GetName(), {});
 }
 
 
 UOptimusNodeGraph* UOptimusNode::GetOwningGraph() const
 {
 	return Cast<UOptimusNodeGraph>(GetOuter());
+}
+
+TArray<UOptimusNodePin*> UOptimusNode::GetPinsByDirection(EOptimusNodePinDirection InDirection,
+	bool bInRecursive) const
+{
+	TArray<UOptimusNodePin*> Results;
+
+	for (UOptimusNodePin* Pin : Pins)
+	{
+		if (Pin->GetDirection() == InDirection)
+		{
+			if (bInRecursive)
+			{
+				Results.Append(Pin->GetSubPinsRecursively(true));
+			}
+			else
+			{
+				Results.Add(Pin);
+			}
+		}
+	}
+
+	return Results;
 }
 
 bool UOptimusNode::CanConnectPinToPin(
@@ -351,9 +375,33 @@ TArray<UClass*> UOptimusNode::GetAllNodeClasses()
 	return NodeClasses;
 }
 
+FName UOptimusNode::GetAvailablePinNameStable(const UObject* InNodeOrPin, FName InName)
+{
+	TArray<const UOptimusNodePin*> PinsToCompare;
+	if (const UOptimusNode* Node = Cast<const UOptimusNode>(InNodeOrPin))
+	{
+		PinsToCompare.Append(Node->GetPins());
+	}
+	else if (const UOptimusNodePin* Pin = Cast<const UOptimusNodePin>(InNodeOrPin))
+	{
+		PinsToCompare.Append(Pin->GetSubPins());
+	}
+
+	TArray<FName> PinNames;
+
+	for(const UOptimusNodePin* Pin : PinsToCompare)
+	{
+		PinNames.Add(Pin->GetFName());
+	}
+
+	return Optimus::GenerateUniqueNameFromExistingNames(InName, PinNames);
+}
+
 
 void UOptimusNode::PostCreateNode()
 {
+	InitializeTransientData();
+	
 	CachedPinLookup.Empty();
 	Pins.Empty();
 
@@ -383,6 +431,8 @@ void UOptimusNode::PostLoad()
 	{
 		Pin->ConditionalPostLoad();
 	}
+	
+	InitializeTransientData();
 }
 
 #if WITH_EDITOR
@@ -421,6 +471,37 @@ void UOptimusNode::ConstructNode()
 	CreatePinsFromStructLayout(GetClass(), nullptr);
 }
 
+void UOptimusNode::InitializeTransientData()
+{
+	// Called from three places, which are all possible way a node object can be created
+	// 1. PostCreateNode
+	// 2. PostLoad
+	// 3. FOptimusEditorClipboard::ProcessPostCreateObject
+}
+
+
+void UOptimusNode::SaveState(FArchive& Ar) const
+{
+	// Take a copy of the node's contents but not sub-data (like pins).
+	// Derived nodes may add additional data to the archive
+	
+	// This fella does the heavy lifting of serializing object references. 
+	// FMemoryWriter and fam do not handle UObject* serialization on their own.
+	FObjectAndNameAsStringProxyArchive NodeProxyArchive(
+			Ar, /* bInLoadIfFindFails=*/ false);
+	SerializeScriptProperties(NodeProxyArchive);
+}
+
+void UOptimusNode::RestoreState(FArchive& Ar)
+{
+	// Currently a warning appears when it can't find objects like pins and data interface data
+	// that were present during SaveState. However, they are harmless since we recreate those objects.
+	// But ideally there should be a better way to specify what should be saved/restored and what can be skipped/recreated
+	
+	FObjectAndNameAsStringProxyArchive NodeProxyArchive(
+		Ar, /* bInLoadIfFindFails=*/true);
+	SerializeScriptProperties(NodeProxyArchive);
+}
 
 void UOptimusNode::EnableDynamicPins()
 {
@@ -481,6 +562,10 @@ UOptimusNodePin* UOptimusNode::AddPin(
 	return AddPinAction->GetPin(GetActionStack()->GetGraphCollectionRoot());
 }
 
+UOptimusNodePin* UOptimusNode::AddPin(const FOptimusParameterBinding& InBinding, EOptimusNodePinDirection InDirection, UOptimusNodePin* InBeforePin)
+{
+	return AddPin(InBinding.Name, InDirection, InBinding.DataDomain, InBinding.DataType, InBeforePin);
+}
 
 UOptimusNodePin* UOptimusNode::AddPinDirect(
     FName InName,
@@ -925,11 +1010,17 @@ bool UOptimusNode::SetPinDataDomain(
 			{
 				if (Pin->GetDirection() == EOptimusNodePinDirection::Input)
 				{
-					Action->AddSubAction<FOptimusNodeGraphAction_RemoveLink>(ConnectedPin, Pin);
+					if (!FOptimusDataDomain::AreCompatible(ConnectedPin->GetDataDomain(), InDataDomain, nullptr))
+					{
+						Action->AddSubAction<FOptimusNodeGraphAction_RemoveLink>(ConnectedPin, Pin);
+					}
 				}
 				else
 				{
-					Action->AddSubAction<FOptimusNodeGraphAction_RemoveLink>(Pin, ConnectedPin);
+					if (!FOptimusDataDomain::AreCompatible(InDataDomain, ConnectedPin->GetDataDomain(), nullptr))
+					{
+						Action->AddSubAction<FOptimusNodeGraphAction_RemoveLink>(Pin, ConnectedPin);
+					}
 				}
 			}
 		}

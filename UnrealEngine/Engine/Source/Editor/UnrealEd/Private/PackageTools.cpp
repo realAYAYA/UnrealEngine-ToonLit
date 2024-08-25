@@ -45,6 +45,7 @@
 #include "AssetRegistry/AssetData.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "ComponentReregisterContext.h"
+#include "Engine/AssetManager.h"
 #include "Engine/BlueprintGeneratedClass.h"
 #include "Engine/GameEngine.h"
 #include "Engine/LevelStreaming.h"
@@ -68,6 +69,12 @@
 #define LOCTEXT_NAMESPACE "PackageTools"
 
 DEFINE_LOG_CATEGORY_STATIC(LogPackageTools, Log, All);
+
+namespace PackageTools_Private
+{
+	static bool bUnloadPackagesUnloadsPrimaryAssets = true;
+	FAutoConsoleVariableRef CVarUnloadPackagesUnloadsPrimaryAssets(TEXT("PackageTools.UnloadPackagesUnloadsPrimaryAssets"), bUnloadPackagesUnloadsPrimaryAssets, TEXT("During unload packages, also unload primary assets"), ECVF_Default);
+}
 
 /** State passed to RestoreStandaloneOnReachableObjects. */
 TSet<UPackage*>* UPackageTools::PackagesBeingUnloaded = nullptr;
@@ -156,7 +163,7 @@ UPackageTools::UPackageTools(const FObjectInitializer& ObjectInitializer)
 						Object->SetFlags(RF_Standalone);
 					}
 					return true;
-				}, true, RF_NoFlags, EInternalObjectFlags::Unreachable);
+				}, true, RF_NoFlags, UE::GC::GUnreachableObjectFlag);
 			}
 		}
 	}
@@ -484,9 +491,19 @@ UPackageTools::UPackageTools(const FObjectInitializer& ObjectInitializer)
 				}
 
 				GetObjectsWithPackage(PackageBeingUnloaded, ObjectsInPackage, true, RF_Transient, EInternalObjectFlags::Garbage);
-				// Notify any Blueprints that are about to be unloaded, and destroy any leftover worlds.
+				// Notify any Blueprints and other systems that are about to be unloaded, also destroy any leftover worlds.
 				for (UObject* Obj : ObjectsInPackage)
 				{
+					// Asset manager can hold hard references to this object and prevent GC
+					if (PackageTools_Private::bUnloadPackagesUnloadsPrimaryAssets)
+					{
+						const FPrimaryAssetId PrimaryAssetId = UAssetManager::Get().GetPrimaryAssetIdForObject(Obj);
+						if (PrimaryAssetId.IsValid())
+						{
+							UAssetManager::Get().UnloadPrimaryAsset(PrimaryAssetId);
+						}
+					}
+
 					if (UBlueprint* BP = Cast<UBlueprint>(Obj))
 					{
 						BP->ClearEditorReferences();
@@ -840,6 +857,7 @@ UPackageTools::UPackageTools(const FObjectInitializer& ObjectInitializer)
 
 		// Check to see if we need to reload the current world.
 		FName WorldNameToReload;
+		FName CurrentWorldPackageName;
 		TArray<ULevelStreaming*> RemovedStreamingLevels;
 		if (UWorld* CurrentWorldPtr = CurrentWorld.Get())
 		{
@@ -850,6 +868,7 @@ UPackageTools::UPackageTools(const FObjectInitializer& ObjectInitializer)
 			{
 				// Cache this so we can reload the world later
 				WorldNameToReload = *CurrentWorldPtr->GetPathName();
+				CurrentWorldPackageName = CurrentWorldPtr->GetPackage()->GetFName();
 
 				// Remove the world package from the reload list
 				Filtered.Remove(CurrentWorldPtr->GetOutermost());
@@ -975,9 +994,13 @@ UPackageTools::UPackageTools(const FObjectInitializer& ObjectInitializer)
 		{
 			if (GIsEditor)
 			{
+				UWorld::WorldTypePreLoadMap.FindOrAdd(CurrentWorldPackageName) = EWorldType::Editor;
+
 				TArray<FName> WorldNamesToReload;
 				WorldNamesToReload.Add(WorldNameToReload);
 				GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorsForAssets(WorldNamesToReload);
+
+				UWorld::WorldTypePreLoadMap.Remove(CurrentWorldPackageName);
 			}
 			else if (UGameEngine* GameEngine = Cast<UGameEngine>(GEngine))
 			{
@@ -1487,7 +1510,7 @@ UPackageTools::UPackageTools(const FObjectInitializer& ObjectInitializer)
 
 				if (SlashCount > 1)
 				{
-					SanitizedName.RemoveAt(CharIndex + 1, SlashCount - 1, false);
+					SanitizedName.RemoveAt(CharIndex + 1, SlashCount - 1, EAllowShrinking::No);
 				}
 			}
 

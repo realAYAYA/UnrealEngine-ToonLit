@@ -120,10 +120,10 @@ public:
 
 IMPLEMENT_GLOBAL_SHADER(FComputeVariableRateShadingImageGeneration, "/Engine/Private/VariableRateShading/VRSShadingRateFoveated.usf", "GenerateShadingRateTexture", SF_Compute);
 
-FRDGTextureRef FFoveatedImageGenerator::GetImage(FRDGBuilder& GraphBuilder, const FViewInfo& ViewInfo, FVariableRateShadingImageManager::EVRSImageType ImageType)
+FRDGTextureRef FFoveatedImageGenerator::GetImage(FRDGBuilder& GraphBuilder, const FViewInfo& ViewInfo, FVariableRateShadingImageManager::EVRSImageType ImageType, bool bGetSoftwareImage)
 {
 	// Generator only supports up to two side-by-side views
-	if (ImageType == FVariableRateShadingImageManager::EVRSImageType::Disabled || ViewInfo.StereoViewIndex > 1)
+	if (ImageType == FVariableRateShadingImageManager::EVRSImageType::Disabled || ViewInfo.StereoViewIndex > 1 || bGetSoftwareImage)
 	{
 		return nullptr;
 	}
@@ -133,8 +133,13 @@ FRDGTextureRef FFoveatedImageGenerator::GetImage(FRDGBuilder& GraphBuilder, cons
 	}
 }
 
-void FFoveatedImageGenerator::PrepareImages(FRDGBuilder& GraphBuilder, const FSceneViewFamily& ViewFamily, const FMinimalSceneTextures& SceneTextures)
+void FFoveatedImageGenerator::PrepareImages(FRDGBuilder& GraphBuilder, const FSceneViewFamily& ViewFamily, const FMinimalSceneTextures& SceneTextures, bool bPrepareHardwareImages, bool bPrepareSoftwareImages)
 {
+	if (!bPrepareHardwareImages)
+	{
+		// Software images unsupported for now
+		return;
+	}
 
 	// VRS level parameters - pretty arbitrary right now, later should depend on device characteristics
 	static const TArray<float> kFoveationFullRateCutoffs = { 1.0f, 0.7f, 0.50f, 0.35f, 0.35f };
@@ -191,10 +196,10 @@ void FFoveatedImageGenerator::PrepareImages(FRDGBuilder& GraphBuilder, const FSc
 	}
 
 	// Sanity check VRS tile size.
-	check(GRHIVariableRateShadingImageTileMinWidth >= 8 && GRHIVariableRateShadingImageTileMinWidth <= 64 && GRHIVariableRateShadingImageTileMinHeight >= 8 && GRHIVariableRateShadingImageTileMaxHeight <= 64);
+	check(GRHIVariableRateShadingImageTileMinWidth >= 8 && GRHIVariableRateShadingImageTileMinWidth <= 64 && GRHIVariableRateShadingImageTileMinHeight >= 8 && GRHIVariableRateShadingImageTileMinHeight <= 64);
 
 	// Create texture to hold shading rate image
-	FRDGTextureDesc Desc = FVariableRateShadingImageManager::GetSRIDesc();
+	FRDGTextureDesc Desc = FVariableRateShadingImageManager::GetSRIDesc(ViewFamily);
 	FRDGTextureRef ShadingRateTexture = GraphBuilder.CreateTexture(Desc, TEXT("FoveatedShadingRateTexture"));
 
 	// Setup shader parameters and flags
@@ -204,7 +209,7 @@ void FFoveatedImageGenerator::PrepareImages(FRDGBuilder& GraphBuilder, const FSc
 	PassParameters->HMDFieldOfView = HMDFieldOfView;
 
 	PassParameters->FoveationFullRateCutoffSquared = FoveationFullRateCutoff * FoveationFullRateCutoff;
-	PassParameters->FoveationHalfRateCutoffSquared = FoveationHalfRateCutoff * FoveationHalfRateCutoff;
+	PassParameters->FoveationHalfRateCutoffSquared = GRHISupportsLargerVariableRateShadingSizes ? (FoveationHalfRateCutoff * FoveationHalfRateCutoff) : 2.0f; // Set cutoff to outside screen edge if quarter-rate is unsupported
 
 	PassParameters->LeftEyeCenterPixelXY = FVector2f(Desc.Extent.X * FoveationCenterX, Desc.Extent.Y * FoveationCenterY);
 	PassParameters->RightEyeCenterPixelXY = PassParameters->LeftEyeCenterPixelXY;
@@ -241,10 +246,15 @@ void FFoveatedImageGenerator::PrepareImages(FRDGBuilder& GraphBuilder, const FSc
 	CachedImage = ShadingRateTexture;
 }
 
-bool FFoveatedImageGenerator::IsEnabledForView(const FSceneView& View) const
+bool FFoveatedImageGenerator::IsEnabled() const
 {
-	// Enabled for stereo (XR or emulated)
-	return IStereoRendering::IsStereoEyeView(View) && CVarFoveationLevel.GetValueOnRenderThread() > 0;
+	return CVarFoveationLevel.GetValueOnRenderThread() > 0;
+}
+
+bool FFoveatedImageGenerator::IsSupportedByView(const FSceneView& View) const
+{
+	// Only used for XR views
+	return true; // IStereoRendering::IsStereoEyeView(View);
 }
 
 FVariableRateShadingImageManager::EVRSSourceType FFoveatedImageGenerator::GetType() const
@@ -252,7 +262,7 @@ FVariableRateShadingImageManager::EVRSSourceType FFoveatedImageGenerator::GetTyp
 	return IsGazeTrackingEnabled() ? FVariableRateShadingImageManager::EVRSSourceType::FixedFoveation : FVariableRateShadingImageManager::EVRSSourceType::EyeTrackedFoveation;
 }
 
-FRDGTextureRef FFoveatedImageGenerator::GetDebugImage(FRDGBuilder& GraphBuilder, const FViewInfo& ViewInfo, FVariableRateShadingImageManager::EVRSImageType ImageType)
+FRDGTextureRef FFoveatedImageGenerator::GetDebugImage(FRDGBuilder& GraphBuilder, const FViewInfo& ViewInfo, FVariableRateShadingImageManager::EVRSImageType ImageType, bool bGetSoftwareImage)
 {
 	if (CVarFoveationPreview.GetValueOnRenderThread() && ImageType != FVariableRateShadingImageManager::EVRSImageType::Disabled)
 	{

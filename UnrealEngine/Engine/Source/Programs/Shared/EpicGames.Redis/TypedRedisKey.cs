@@ -1,8 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System.Collections.Generic;
-using System.Threading.Tasks;
 using System;
+using System.Threading.Tasks;
 using StackExchange.Redis;
 
 namespace EpicGames.Redis
@@ -67,13 +66,13 @@ namespace EpicGames.Redis
 		{
 			return target.KeyExistsAsync(key.Inner, flags);
 		}
-/*
-		/// <inheritdoc cref="IDatabaseAsync.KeyExistsAsync(RedisKey[], CommandFlags)"/>
-		public static Task<long> KeyExistsAsync(this IDatabaseAsync target, IEnumerable<RedisKey> keys, CommandFlags flags = CommandFlags.None)
-		{
-			return target.KeyExistsAsync(keys.ToArray(), flags);
-		}
-*/
+		/*
+				/// <inheritdoc cref="IDatabaseAsync.KeyExistsAsync(RedisKey[], CommandFlags)"/>
+				public static Task<long> KeyExistsAsync(this IDatabaseAsync target, IEnumerable<RedisKey> keys, CommandFlags flags = CommandFlags.None)
+				{
+					return target.KeyExistsAsync(keys.ToArray(), flags);
+				}
+		*/
 		#endregion
 
 		#region KeyExpireAsync

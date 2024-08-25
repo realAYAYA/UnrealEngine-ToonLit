@@ -895,7 +895,7 @@ namespace ChaosTest {
 				Heights[Row * Columns + Col] = 5.0;
 			}
 		}
-		// Submit
+		// Summit
 		Heights[(Rows / 2) * Columns + Columns / 2] = 10.0;
 
 		return Heights;
@@ -1237,6 +1237,42 @@ namespace ChaosTest {
 			bool CapsuleResult = Heightfield.OverlapGeom(Capsule, QueryTM, 0.0, nullptr);
 			EXPECT_TRUE(BoxResult);
 			EXPECT_TRUE(CapsuleResult);
+		}
+
+		HeightsCopy = Heights;
+		const float UniformScale = 10.0f;
+		FHeightField HeightfieldScaled(MoveTemp(HeightsCopy), TArray<uint8>(), Rows, Columns, FVec3(UniformScale, UniformScale, UniformScale));
+		const auto& Bounds2 = HeightfieldScaled.BoundingBox();	//Current API forces us to do this to cache the bounds
+		// Small sphere intersecting plane area of mountain with a scaled heightfield
+		{
+			Chaos::FSphere Sphere1(FVec3(0.0, 0.0, 0.0), 0.2);
+			int32 Row = 2;
+			int32 Col = 2;
+			
+			const FVec3 Translation(Col* UniformScale, Row * UniformScale, 0.1f);
+			FRigidTransform3 QueryTM(Translation, TRotation<FReal, 3>::Identity);
+			bool SphereResult = HeightfieldScaled.OverlapGeom(Sphere1, QueryTM, 0.0, nullptr);
+			EXPECT_TRUE(SphereResult);
+		}
+
+		// Small convex intersecting plane area of mountain with a scaled heightfield
+		{
+			//Tetrahedron
+			TArray<FConvex::FVec3Type> HullParticles;
+			HullParticles.SetNum(4);
+			HullParticles[0] = { -1,-1,-1 };
+			HullParticles[1] = { 1,-1,-1 };
+			HullParticles[2] = { 0,1,-1 };
+			HullParticles[3] = { 0,0,1 };
+			FConvex Tet(HullParticles, 0.0f);
+			
+			int32 Row = 2;
+			int32 Col = 2;
+
+			const FVec3 Translation(Col * UniformScale, Row * UniformScale, 1.1f);
+			FRigidTransform3 QueryTM(Translation, TRotation<FReal, 3>::Identity);
+			bool TetResult = HeightfieldScaled.OverlapGeom(Tet, QueryTM, 0.2, nullptr);
+			EXPECT_TRUE(TetResult);
 		}
 	}
 	

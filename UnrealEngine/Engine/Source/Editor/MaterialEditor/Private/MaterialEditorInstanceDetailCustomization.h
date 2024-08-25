@@ -47,6 +47,9 @@ private:
 	/** Builds the widget for an individual parameter group */
 	void CreateSingleGroupWidget(struct FEditorParameterGroup& ParameterGroup, TSharedPtr<IPropertyHandle> ParameterGroupProperty, class IDetailGroup& DetailGroup);
 
+	/** Enable/Disable all parameter properties in a group */
+	static void EnableGroupParameters(struct FEditorParameterGroup& ParameterGroup, bool ShouldEnable);
+
 	/** These methods generate the custom widgets for the various parameter types */
 	void CreateParameterValueWidget(class UDEditorParameterValue* Parameter, TSharedPtr<IPropertyHandle> ParameterProperty, IDetailGroup& DetailGroup);
 	void CreateMaskParameterValueWidget(class UDEditorParameterValue* Parameter, TSharedPtr<IPropertyHandle> ParameterProperty, IDetailGroup& DetailGroup);
@@ -114,6 +117,8 @@ private:
 	bool OverrideIsThinSurfaceEnabled() const;
 	bool OverrideDitheredLODTransitionEnabled() const;
 	bool OverrideOutputTranslucentVelocityEnabled() const;
+	bool OverrideHasPixelAnimationEnabled() const;
+	bool OverrideTessellationEnabled() const;
 	bool OverrideDisplacementScalingEnabled() const;
 	bool OverrideMaxWorldPositionOffsetDisplacementEnabled() const;
 	void OnOverrideOpacityClipMaskValueChanged(bool NewValue);
@@ -123,8 +128,12 @@ private:
 	void OnOverrideIsThinSurfaceChanged(bool NewValue);
 	void OnOverrideDitheredLODTransitionChanged(bool NewValue);
 	void OnOverrideOutputTranslucentVelocityChanged(bool NewValue);
+	void OnOverrideHasPixelAnimationChanged(bool NewValue);
+	void OnOverrideEnableTessellationChanged(bool NewValue);
 	void OnOverrideDisplacementScalingChanged(bool NewValue);
 	void OnOverrideMaxWorldPositionOffsetDisplacementChanged(bool NewValue);
+	bool OverrideCastDynamicShadowAsMaskedEnabled() const;
+	void OnOverrideCastDynamicShadowAsMaskedChanged(bool NewValue);
 
 	// Change-begin
 	bool OnOverrideUseToonOutlineEnabled() const;

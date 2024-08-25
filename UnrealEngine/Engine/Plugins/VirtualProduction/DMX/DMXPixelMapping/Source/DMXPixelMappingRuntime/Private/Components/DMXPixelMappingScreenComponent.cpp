@@ -94,25 +94,6 @@ void UDMXPixelMappingScreenComponent::PostEditChangeChainProperty(FPropertyChang
 			ScreenComponentBox->RebuildGrid(GridParams);
 		}
 	}
-	if (PropertyChangedChainEvent.ChangeType != EPropertyChangeType::Interactive)
-	{
-		if (PropertyChangedChainEvent.GetPropertyName() == UDMXPixelMappingOutputComponent::GetPositionXPropertyName() ||
-			PropertyChangedChainEvent.GetPropertyName() == UDMXPixelMappingOutputComponent::GetPositionYPropertyName())
-		{
-			if (ComponentWidget_DEPRECATED.IsValid())
-			{
-				ComponentWidget_DEPRECATED->SetPosition(GetPosition());
-			}
-		}
-		else if (PropertyChangedChainEvent.GetPropertyName() == UDMXPixelMappingOutputComponent::GetSizeXPropertyName() ||
-			PropertyChangedChainEvent.GetPropertyName() == UDMXPixelMappingOutputComponent::GetSizeYPropertyName())
-		{
-			if (ComponentWidget_DEPRECATED.IsValid())
-			{
-				ComponentWidget_DEPRECATED->SetSize(GetPosition());
-			}
-		}
-	}
 	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 #endif // WITH_EDITOR
@@ -122,37 +103,6 @@ const FText UDMXPixelMappingScreenComponent::GetPaletteCategory()
 {
 	return LOCTEXT("Common", "Common");
 }
-#endif // WITH_EDITOR
-
-#if WITH_EDITOR
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-TSharedRef<FDMXPixelMappingComponentWidget> UDMXPixelMappingScreenComponent::BuildSlot(TSharedRef<SConstraintCanvas> InCanvas)
-{
-	if (!ComponentWidget_DEPRECATED.IsValid())
-	{
-		ScreenComponentBox = 
-			SNew(SDMXPixelMappingScreenComponentBox)
-			.NumXCells(NumXCells)
-			.NumYCells(NumYCells)
-			.Distribution(Distribution)
-			.PixelFormat(PixelFormat)
-			.LocalUniverse(LocalUniverse)
-			.StartAddress(StartAddress)
-			.bShowAddresses(bShowAddresses)
-			.bShowUniverse(bShowUniverse);
-
-		ComponentWidget_DEPRECATED = MakeShared<FDMXPixelMappingComponentWidget>(ScreenComponentBox, nullptr);
-
-		ComponentWidget_DEPRECATED->AddToCanvas(InCanvas, ZOrder);
-		ComponentWidget_DEPRECATED->SetPosition(GetPosition());
-		ComponentWidget_DEPRECATED->SetSize(GetSize());
-		ComponentWidget_DEPRECATED->SetColor(GetEditorColor());
-		ComponentWidget_DEPRECATED->SetLabelText(FText::FromString(GetUserFriendlyName()));
-	}
-	
-	return ComponentWidget_DEPRECATED.ToSharedRef();
-}
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
 #endif // WITH_EDITOR
 
 const FName& UDMXPixelMappingScreenComponent::GetNamePrefix()
@@ -262,11 +212,6 @@ void UDMXPixelMappingScreenComponent::AddColorToSendBuffer(const FColor& InColor
 UDMXPixelMappingRendererComponent* UDMXPixelMappingScreenComponent::GetRendererComponent() const
 {
 	return Cast<UDMXPixelMappingRendererComponent>(GetParent());
-}
-
-void UDMXPixelMappingScreenComponent::ResetDMX()
-{
-	SendDMX();
 }
 
 void UDMXPixelMappingScreenComponent::SendDMX()
@@ -461,34 +406,6 @@ void UDMXPixelMappingScreenComponent::ForEachPixel(ForEachPixelCallback InCallba
 			IndexXY++;
 		}
 	}
-}
-
-void UDMXPixelMappingScreenComponent::SetPosition(const FVector2D& NewPosition)
-{
-	Super::SetPosition(NewPosition);
-
-#if WITH_EDITOR
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	if (ComponentWidget_DEPRECATED.IsValid())
-	{
-		ComponentWidget_DEPRECATED->SetPosition(GetPosition());
-	}
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
-#endif
-}
-
-void UDMXPixelMappingScreenComponent::SetSize(const FVector2D& NewSize)
-{
-	Super::SetSize(NewSize);
-
-#if WITH_EDITOR
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	if (ComponentWidget_DEPRECATED.IsValid())
-	{
-		ComponentWidget_DEPRECATED->SetSize(GetSize());
-	}
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
-#endif
 }
 
 #undef LOCTEXT_NAMESPACE

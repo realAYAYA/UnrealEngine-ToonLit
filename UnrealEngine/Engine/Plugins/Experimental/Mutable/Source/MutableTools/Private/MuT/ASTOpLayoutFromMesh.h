@@ -12,7 +12,7 @@ namespace mu
 {
 	struct FProgram;
 	
-	class ASTOpLayoutFromMesh : public ASTOp
+	class ASTOpLayoutFromMesh final : public ASTOp
 	{
 	public:
 

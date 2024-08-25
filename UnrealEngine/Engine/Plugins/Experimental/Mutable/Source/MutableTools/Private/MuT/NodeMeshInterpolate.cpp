@@ -17,8 +17,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeMeshInterpolate::Private::s_type =
-			NODE_TYPE( "MeshInterpolate", NodeMesh::GetStaticType() );
+	FNodeType NodeMeshInterpolate::Private::s_type =
+			FNodeType( "MeshInterpolate", NodeMesh::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -26,55 +26,6 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 
 	MUTABLE_IMPLEMENT_NODE( NodeMeshInterpolate, EType::Interpolate, Node, Node::EType::Mesh)
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	int NodeMeshInterpolate::GetInputCount() const
-	{
-		return 1 + m_pD->m_targets.Num();
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	Node* NodeMeshInterpolate::GetInputNode( int i ) const
-	{
-		check( i>=0 && i<GetInputCount() );
-
-		Node* pResult = 0;
-
-		switch (i)
-		{
-		case 0:
-			pResult = m_pD->m_pFactor.get();
-			break;
-
-		default:
-			pResult = m_pD->m_targets[i-1].get();
-			break;
-		}
-
-		return pResult;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeMeshInterpolate::SetInputNode( int i, NodePtr pNode )
-	{
-		check( i>=0 && i<GetInputCount() );
-
-		switch (i)
-		{
-		case 0:
-			m_pD->m_pFactor = dynamic_cast<NodeScalar*>(pNode.get());
-			break;
-
-		default:
-			m_pD->m_targets[i-1] = dynamic_cast<NodeMesh*>(pNode.get());
-			break;
-		}
-	}
 
 
 	//---------------------------------------------------------------------------------------------
@@ -154,9 +105,7 @@ namespace mu
 		// TODO: Substract layouts too? Usually they are ignored.
 		if ( m_targets.Num()>0 && m_targets[0] )
 		{
-			NodeMesh::Private* pPrivate =
-					dynamic_cast<NodeMesh::Private*>( m_targets[0]->GetBasePrivate() );
-
+			NodeMesh::Private* pPrivate = static_cast<NodeMesh::Private*>( m_targets[0]->GetBasePrivate() );
 			pResult = pPrivate->GetLayout( index );
 		}
 

@@ -106,9 +106,17 @@ struct FGenericPlatformMemoryConstants
 	/** This is the "allocation granularity" in Binned malloc terms, i.e. BinnedMalloc will allocate the memory in increments of this value. If zero, Binned will use BinnedPageSize for this value. */
 	SIZE_T BinnedAllocationGranularity = 0;
 
-	// AddressLimit - Second parameter is estimate of the range of addresses expected to be returns by BinnedAllocFromOS(). Binned
-	// Malloc will adjust its internal structures to make lookups for memory allocations O(1) for this range. 
-	// It is ok to go outside this range, lookups will just be a little slower
+	/**
+	 * Starting address for the available virtual address space.
+	 * Can be used with AddressLimit to determine address space range for binned allocators
+	 */
+	uint64 AddressStart = 0;
+
+	/**
+	 * An estimate of the range of addresses expected to be returned by BinnedAllocFromOS(). Binned
+	 * Malloc will adjust its internal structures to make lookups for memory allocations O(1) for this range. 
+	 * It is ok to go outside this range, lookups will just be a little slower
+	 */
 	uint64 AddressLimit = (uint64)0xffffffff + 1;
 
 	/** Approximate physical RAM in GB; 1 on everything except PC. Used for "course tuning", like FPlatformMisc::NumberOfCores(). */
@@ -174,6 +182,24 @@ struct FGenericPlatformMemoryStats : public FPlatformMemoryConstants
 	void SetEndFrameCsvStats() const {}
 };
 
+// Contains shared/private information for a single page allocation from the kernel. A page
+// allocation may contain many pages.
+struct FForkedPageAllocation
+{
+	// Start/End virtual address for the allocation.
+	uint64 PageStart;
+	uint64 PageEnd;
+
+	// The amount of memory in this allocation range that is shared across the forked
+	// child processes.
+	uint64 SharedCleanKiB;
+	uint64 SharedDirtyKiB;
+
+	// The amount of memory in this allocation range that has been written to by the child
+	// process, and as a result has been made unique to the process.
+	uint64 PrivateCleanKiB;
+	uint64 PrivateDirtyKiB;
+};
 
 
 
@@ -245,6 +271,7 @@ struct FGenericPlatformMemory
 		Binned3, // Newer VM-based binned malloc, 64 bit only
 		Platform, // Custom platform specific allocator
 		Mimalloc, // mimalloc
+		Libpas, // libpas
 	};
 
 	/** Current allocator */
@@ -325,9 +352,14 @@ struct FGenericPlatformMemory
 	static CORE_API FMalloc* BaseAllocator();
 
 	/**
-	 * @return platform specific current memory statistics.
+	 * @return platform specific current memory statistics. Note: On some platforms, unused allocator cached memory is taken into account in AvailablePhysical. 
 	 */
 	static CORE_API FPlatformMemoryStats GetStats();
+
+	/**
+	 * @return platform specific raw stats.
+	 */
+	static CORE_API FPlatformMemoryStats GetStatsRaw();
 
 	/**
 	* @return memory used for platforms that can do it quickly (without affecting stat unit much)
@@ -762,6 +794,16 @@ public:
 	* Only supported on platforms that support forking
 	*/
 	static bool HasForkPageProtectorEnabled() { return false; }
+
+	/**
+	* Return the page allocations from the operating system (/proc/self/smaps). This only means something on
+	* platforms that can fork and have Copy On Write behavior. 
+	*/
+	static CORE_API bool GetForkedPageAllocationInfo(TArray<FForkedPageAllocation>& OutPageAllocationInfos)
+	{
+		return false; // Most platform do not implement this.
+	}
+
 
 protected:
 	friend struct FGenericStatsUpdater;

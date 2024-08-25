@@ -64,7 +64,6 @@ public:
 	uint8 MaxBrightness;
 };
 
-
 USTRUCT(BlueprintType)
 struct FAutomationScreenshotOptions
 {
@@ -143,16 +142,17 @@ public:
 	/**
 	 * Disables Anti-Aliasing, Motion Blur, Screen Space Reflections, Eye Adaptation, Tonemapper and Contact
 	 * Shadows, because those features contribute a lot to the noise in the final rendered image.  If you're
-	 * explicitly looking for changes 
+	 * explicitly looking for changes. Unchecking the option will make accessible the Disable Eye Adaptation
+	 * checkbox.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Screenshot")
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Screenshot")
 	bool bDisableNoisyRenderingFeatures;
 
 	/**
 	 * Disables Eye Adaptation and sets Tonemapper to fixed gamma curve. Should generally be on unless
-	 * testing tone mapping or other post-processing results
+	 * testing tone mapping or other post-processing results.
 	 */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="Screenshot", meta=(DisplayName = "Fixed Exposure"))
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Screenshot", meta = (EditCondition = "!bDisableNoisyRenderingFeatures", DisplayName = "Disable Eye Adaptation"))
 	bool bDisableTonemapping;
 
 	/**

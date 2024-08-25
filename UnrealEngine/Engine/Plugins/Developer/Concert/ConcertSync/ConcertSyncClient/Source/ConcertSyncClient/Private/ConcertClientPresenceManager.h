@@ -318,10 +318,10 @@ private:
 
 #else
 
-namespace FConcertClientPresenceManager
+class FConcertClientPresenceManager
 {
-	/** Get location update frequency */
-	double GetLocationUpdateFrequency();
-}
+public:
+	static double GetLocationUpdateFrequency();
+};
 
 #endif

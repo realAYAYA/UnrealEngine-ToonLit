@@ -17,6 +17,8 @@
 #include "DecalRenderingShared.h"
 #include "RenderCore.h"
 #include "DataDrivenShaderPlatformInfo.h"
+#include "CompositionLighting/PostProcessDeferredDecals.h"
+#include "DBufferTextures.h"
 
 void RenderMeshDecalsMobile(FRHICommandList& RHICmdList, const FViewInfo& View, EDecalRenderStage DecalRenderStage, EDecalRenderTargetMode RenderTargetMode);
 extern void RenderDeferredDecalsMobile(FRHICommandList& RHICmdList, const FScene& Scene, const FViewInfo& View, EDecalRenderStage DecalRenderStage, EDecalRenderTargetMode RenderTargetMode);
@@ -42,7 +44,7 @@ static bool DoesPlatformSupportDecals(EShaderPlatform ShaderPlatform)
 	return true;
 }
 
-void FMobileSceneRenderer::RenderDecals(FRHICommandList& RHICmdList, const FViewInfo& View)
+void FMobileSceneRenderer::RenderDecals(FRHICommandList& RHICmdList, const FViewInfo& View, const FInstanceCullingDrawParams* InstanceCullingDrawParams)
 {
 	if (!DoesPlatformSupportDecals(View.GetShaderPlatform()) || !ViewFamily.EngineShowFlags.Decals || View.bIsPlanarReflection)
 	{
@@ -53,7 +55,7 @@ void FMobileSceneRenderer::RenderDecals(FRHICommandList& RHICmdList, const FView
 	SCOPE_CYCLE_COUNTER(STAT_DecalsDrawTime);
 
 	const bool bIsMobileDeferred = IsMobileDeferredShadingEnabled(View.GetShaderPlatform());
-	const EDecalRenderStage DecalRenderStage = bIsMobileDeferred ? EDecalRenderStage::MobileBeforeLighting : EDecalRenderStage::Mobile;
+	const EDecalRenderStage DecalRenderStage = bIsMobileDeferred ? EDecalRenderStage::MobileBeforeLighting : bRequiresDBufferDecals ? EDecalRenderStage::Emissive : EDecalRenderStage::Mobile;
 	const EDecalRenderTargetMode RenderTargetMode = bIsMobileDeferred ? EDecalRenderTargetMode::SceneColorAndGBuffer : EDecalRenderTargetMode::SceneColor;
 
 	// Deferred decals
@@ -68,19 +70,29 @@ void FMobileSceneRenderer::RenderDecals(FRHICommandList& RHICmdList, const FView
 	{
 		SCOPED_DRAW_EVENT(RHICmdList, MeshDecals);
 		RenderMeshDecalsMobile(RHICmdList, View, DecalRenderStage, RenderTargetMode);
+
+		// MeshDecals use DrawDynamicMeshPass which may change BatchedPrimitive binding, so we need to restore it
+		FUniformBufferStaticSlot BatchedPrimitiveSlot = FInstanceCullingContext::GetUniformBufferViewStaticSlot(View.GetShaderPlatform());
+		if (IsUniformBufferStaticSlotValid(BatchedPrimitiveSlot) && InstanceCullingDrawParams->BatchedPrimitive)
+		{
+			FRHIUniformBuffer* BatchedPrimitiveBufferRHI = InstanceCullingDrawParams->BatchedPrimitive.GetUniformBuffer()->GetRHI();
+			check(BatchedPrimitiveBufferRHI);
+			RHICmdList.SetStaticUniformBuffer(BatchedPrimitiveSlot, BatchedPrimitiveBufferRHI);
+		}
 	}
 }
 
 void RenderDeferredDecalsMobile(FRHICommandList& RHICmdList, const FScene& Scene, const FViewInfo& View, EDecalRenderStage DecalRenderStage, EDecalRenderTargetMode RenderTargetMode)
 {
-	const uint32 DecalCount = Scene.Decals.Num();
 	int32 SortedDecalCount = 0;
 	FTransientDecalRenderDataList SortedDecals;
 
-	if (DecalCount > 0)
+	if (!Scene.Decals.IsEmpty())
 	{
+		FTransientDecalRenderDataList VisibleDecals = DecalRendering::BuildVisibleDecalList(Scene.Decals, View);
+
 		// Build a list of decals that need to be rendered for this view
-		DecalRendering::BuildVisibleDecalList(Scene, View, DecalRenderStage, &SortedDecals);
+		DecalRendering::BuildRelevantDecalList(VisibleDecals, DecalRenderStage, &SortedDecals);
 		SortedDecalCount = SortedDecals.Num();
 		INC_DWORD_STAT_BY(STAT_Decals, SortedDecalCount);
 	}
@@ -96,7 +108,7 @@ void RenderDeferredDecalsMobile(FRHICommandList& RHICmdList, const FScene& Scene
 		for (int32 DecalIndex = 0; DecalIndex < SortedDecalCount; DecalIndex++)
 		{
 			const FTransientDecalRenderData& DecalData = SortedDecals[DecalIndex];
-			const FDeferredDecalProxy& DecalProxy = DecalData.Proxy;
+			const FDeferredDecalProxy& DecalProxy = *DecalData.Proxy;
 			const FMatrix ComponentToWorldMatrix = DecalProxy.ComponentTrans.ToMatrixWithScale();
 			const FMatrix FrustumComponentToClip = DecalRendering::ComputeComponentToClipMatrix(View, ComponentToWorldMatrix);
 
@@ -135,5 +147,28 @@ void RenderDeferredDecalsMobile(FRHICommandList& RHICmdList, const FScene& Scene
 
 			RHICmdList.DrawIndexedPrimitive(GetUnitCubeIndexBuffer(), 0, 0, 8, 0, UE_ARRAY_COUNT(GCubeIndices) / 3, 1);
 		}
+	}
+}
+
+void FMobileSceneRenderer::RenderDBuffer(FRDGBuilder& GraphBuilder, FSceneTextures& SceneTextures, FDBufferTextures& DBufferTextures, FInstanceCullingManager& InstanceCullingManager)
+{
+	RDG_EVENT_SCOPE(GraphBuilder, "RenderDBuffer");
+	QUICK_SCOPE_CYCLE_COUNTER(STAT_RenderDBuffer);
+
+	const EShaderPlatform Platform = GetViewFamilyInfo(Views).GetShaderPlatform();
+
+	for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ++ViewIndex)
+	{
+		FViewInfo& View = Views[ViewIndex];
+
+		if (!View.ShouldRenderView())
+		{
+			continue;
+		}
+
+		FTransientDecalRenderDataList VisibleDecals = DecalRendering::BuildVisibleDecalList(Scene->Decals, View);
+
+		FDeferredDecalPassTextures DecalPassTextures = GetDeferredDecalPassTextures(GraphBuilder, View, SceneTextures, &DBufferTextures);
+		AddDeferredDecalPass(GraphBuilder, View, VisibleDecals, DecalPassTextures, InstanceCullingManager, EDecalRenderStage::BeforeBasePass);
 	}
 }

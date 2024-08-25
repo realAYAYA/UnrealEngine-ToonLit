@@ -45,7 +45,7 @@ EMaskingType SRCProtocolMask::GetMaskingType()
 			{
 				if (const FStructProperty* StructProperty = CastField<FStructProperty>(RCProperty->GetProperty()))
 				{
-					if (const EMaskingType* StructToMaskingType = RemoteControlProtocolMasking::StructsToMaskingTypes.Find(StructProperty->Struct))
+					if (const EMaskingType* StructToMaskingType = FRemoteControlProtocolMasking::GetStructsToMaskingTypes().Find(StructProperty->Struct))
 					{
 						return *StructToMaskingType;
 					}
@@ -65,7 +65,7 @@ bool SRCProtocolMask::HasOptionalMask() const
 		{
 			if (const FStructProperty* StructProperty = CastField<FStructProperty>(RCProperty->GetProperty()))
 			{
-				return RemoteControlProtocolMasking::OptionalMaskStructs.Contains(StructProperty->Struct);
+				return FRemoteControlProtocolMasking::GetOptionalMaskStructs().Contains(StructProperty->Struct);
 			}
 		}
 	}

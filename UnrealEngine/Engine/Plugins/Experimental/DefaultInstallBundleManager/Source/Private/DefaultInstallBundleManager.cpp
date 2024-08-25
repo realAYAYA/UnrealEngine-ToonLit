@@ -185,16 +185,12 @@ void LoadKeychainFromInI(FKeyChain& OutCryptoSettings)
 }
 #endif // WITH_EDITOR
 
-FDefaultInstallBundleManager::FDefaultInstallBundleManager(const TCHAR* InConfigBaseName, FInstallBundleSourceFactoryFunction InInstallBundleSourceFactory)
+FDefaultInstallBundleManager::FDefaultInstallBundleManager(FInstallBundleSourceFactoryFunction InInstallBundleSourceFactory)
 	: InstallBundleSourceFactory(InInstallBundleSourceFactory ? InInstallBundleSourceFactory : InstallBundleManagerUtil::MakeBundleSource )
 	, PersistentStats(MakeShared<InstallBundleManagerUtil::FPersistentStatContainer>())
 	, AnalyticsProvider(nullptr)
 	, StatsMap(MakeShared<InstallBundleUtil::FContentRequestStatsMap>())
 {
-	// Init Config Settings
-	const TCHAR* DefaultConfigBaseName = TEXT("InstallBundleManager");
-	FConfigContext::ReadIntoGConfig().Load(InConfigBaseName ? InConfigBaseName : DefaultConfigBaseName, GInstallBundleManagerIni);
-
 #if WITH_EDITOR
 	// -UsePaks needs to be specified on the command line for valid pak to be created.
 	// To support mounting pak files in the editor binary add the encryption key.
@@ -886,10 +882,25 @@ void FDefaultInstallBundleManager::TryReserveCache(FContentRequestRef Request)
 	bool bMustWaitForCacheEvict = false;
 	TMap<FName, EInstallBundleCacheReserveResult> ReserveResults;
 	ReserveResults.Reserve(BundleCaches.Num());
-	for (const TPair<FName, TSharedRef<FInstallBundleCache>>& Pair : BundleCaches)
+
+	TSet<FName> EnabledBundleCaches;
 	{
-		FInstallBundleCacheReserveResult Result = Pair.Value->Reserve(Request->BundleName);
-		ReserveResults.Add(Pair.Key, Result.Result);
+		TArray<TSharedPtr<IInstallBundleSource>> EnabledBundleSources = GetEnabledBundleSourcesForRequest(Request);
+		for (const TSharedPtr<IInstallBundleSource>& Source : EnabledBundleSources)
+		{
+			FName* BundleCacheName = BundleSourceCaches.Find(Source->GetSourceType());
+			if (BundleCacheName)
+			{
+				EnabledBundleCaches.Add(*BundleCacheName);
+			}
+		}
+	}
+	// we will try reserve cache space for only enabled bundle sources.  Each bundle source knows how much cache it should require for the bundle. 
+	for (const FName& BundleCacheName : EnabledBundleCaches)
+	{
+		TSharedRef<FInstallBundleCache> BundleCache = BundleCaches.FindRef(BundleCacheName);
+		FInstallBundleCacheReserveResult Result = BundleCache->Reserve(Request->BundleName);
+		ReserveResults.Add(BundleCacheName, Result.Result);
 		switch (Result.Result)
 		{
 		case EInstallBundleCacheReserveResult::Fail_CacheFull:
@@ -1037,6 +1048,7 @@ void FDefaultInstallBundleManager::CacheEvictionComplete(TSharedRef<IInstallBund
 
 		// Update current size in cache size if eviction succeeded
 		CacheInfo->CurrentInstallSize = 0;
+		CacheInfo->InstallOverheadSize = 0; // Current contract is that overhead only exists for content that may be patched
 		CacheInfo->TimeStamp = FDateTime::MinValue();
 		BundleCache->AddOrUpdateBundle(Source->GetSourceType(), *CacheInfo);
 	}
@@ -1044,7 +1056,7 @@ void FDefaultInstallBundleManager::CacheEvictionComplete(TSharedRef<IInstallBund
 	// Check to clear PendingEvict status
 	auto CacheEvictKey = MakeTuple(BundleCache->GetName(), InResultInfo.BundleName);
 	TArray<EInstallBundleSourceType> SourcesForCache = CachesPendingEvictToSources.FindChecked(CacheEvictKey);
-	SourcesForCache.RemoveSwap(Source->GetSourceType(), false);
+	SourcesForCache.RemoveSwap(Source->GetSourceType(), EAllowShrinking::No);
 	if (SourcesForCache.Num() == 0)
 	{
 		CachesPendingEvictToSources.Remove(CacheEvictKey);
@@ -1091,7 +1103,7 @@ void FDefaultInstallBundleManager::CacheEvictionComplete(TSharedRef<IInstallBund
 void FDefaultInstallBundleManager::CacheEvictionComplete(TSharedRef<IInstallBundleSource> Source, const FInstallBundleSourceReleaseContentResultInfo& InResultInfo, FCacheEvictionRequestorRef Requestor)
 {
 	TArray<EInstallBundleSourceType>& EvictFromSources = Requestor->BundlesToEvictFromSourcesMap.FindChecked(InResultInfo.BundleName);
-	EvictFromSources.RemoveSwap(Source->GetSourceType(), false);
+	EvictFromSources.RemoveSwap(Source->GetSourceType(), EAllowShrinking::No);
 	if (EvictFromSources.Num() == 0)
 	{
 		Requestor->BundlesToEvictFromSourcesMap.Remove(InResultInfo.BundleName);
@@ -1126,15 +1138,33 @@ void FDefaultInstallBundleManager::CacheEvictionComplete(TSharedRef<IInstallBund
 	}
 }
 
+TArray<TSharedPtr<IInstallBundleSource>> FDefaultInstallBundleManager::GetEnabledBundleSourcesForRequest(FContentRequestRef Request) const
+{
+	const FBundleInfo& BundleInfo = BundleInfoMap.FindChecked(Request->BundleName);
+	return GetEnabledBundleSourcesForRequest(BundleInfo);
+}
+
+TArray<TSharedPtr<IInstallBundleSource>> FDefaultInstallBundleManager::GetEnabledBundleSourcesForRequest(const FBundleInfo& BundleInfo) const
+{
+	TArray<TSharedPtr<IInstallBundleSource>> EnabledSources;
+	EnabledSources.Reserve(BundleInfo.ContributingSources.Num());
+	for (const FBundleSourceRelevance& SourceRel : BundleInfo.ContributingSources)
+	{
+		EnabledSources.Add(BundleSources.FindChecked(SourceRel.SourceType));
+	}
+	return EnabledSources;
+}
+
 void FDefaultInstallBundleManager::UpdateBundleSources(FContentRequestRef Request)
 {
 	StatsBegin(Request->BundleName, EContentRequestState::UpdatingBundleSources);
 
 	Request->StepResult = EContentRequestStepResult::Waiting;
-
-	for (const TPair<EInstallBundleSourceType, TSharedPtr<IInstallBundleSource>>& Pair : BundleSources)
+	TArray<TSharedPtr<IInstallBundleSource>> EnabledBundleSources = GetEnabledBundleSourcesForRequest(Request);
+	Request->RequiredSourceRequestResultsCount = EnabledBundleSources.Num();
+	for (const TSharedPtr<IInstallBundleSource>& Source : EnabledBundleSources)
 	{
-		Request->SourcePauseFlags.Emplace(Pair.Key, EInstallBundlePauseFlags::None);
+		Request->SourcePauseFlags.Emplace(Source->GetSourceType(), EInstallBundlePauseFlags::None);
 
 		IInstallBundleSource::FRequestUpdateContentBundleContext Context;
 		Context.BundleName = Request->BundleName;
@@ -1144,7 +1174,7 @@ void FDefaultInstallBundleManager::UpdateBundleSources(FContentRequestRef Reques
 		Context.CompleteCallback.BindRaw(this, &FDefaultInstallBundleManager::UpdateBundleSourceComplete, Request);
 		Context.RequestSharedContext = Request->RequestSharedContext;
 
-		Pair.Value->RequestUpdateContent(MoveTemp(Context));
+		Source->RequestUpdateContent(MoveTemp(Context));
 	}
 
 	// Release shared context here.  We want to free it ASAP so we aren't pinning items added by
@@ -1167,7 +1197,7 @@ void FDefaultInstallBundleManager::UpdateBundleSourceComplete(TSharedRef<IInstal
 		Request->CachedSourceProgress.Emplace(SourceType, MoveTemp(*Progress));
 	}
 
-	if (Request->SourceRequestResults.Num() != BundleSources.Num())
+	if (Request->SourceRequestResults.Num() != Request->RequiredSourceRequestResultsCount)
 		return;
 
 	LOG_INSTALL_BUNDLE_MAN_OVERRIDE(Request->LogVerbosityOverride, Display, TEXT("Bundle %s done waiting for all bundle sources!"), *Request->BundleName.ToString());
@@ -1186,13 +1216,12 @@ void FDefaultInstallBundleManager::UpdateBundleSourceComplete(TSharedRef<IInstal
 
 			if (TOptional<FInstallBundleCacheBundleInfo> CacheBundleInfo = BundleCache->GetBundleInfo(Pair.Key, Request->BundleName))
 			{
-				// Cache Analytics
 				if (ResultInfo.Result == EInstallBundleResult::OK)
 				{
+					// Cache Analytics
 					// Only, send on success - if the request were canceled or something, there is no way to tell if the source got far enough
 					// to tell us if we had a cache hit.  We could just go by sizes in the cache, but that will
 					// be wrong in the case that we need to patch but the size stayed the same.
-
 					const bool bCacheHit = !InResultInfo.bContentWasInstalled;
 					if (bCacheHit)
 					{
@@ -1209,6 +1238,9 @@ void FDefaultInstallBundleManager::UpdateBundleSourceComplete(TSharedRef<IInstal
 						InstallBundleManagerAnalytics::FireEvent_BundleCacheMiss(AnalyticsProvider.Get(),
 							BundleInfo.BundleNameString, LexToString(Pair.Key), bWasPatchRequired);
 					}
+
+					// Since the update succeeded, we know that there is no longer any install overhead
+					CacheBundleInfo->InstallOverheadSize = 0;
 				}
 
 				CacheBundleInfo->CurrentInstallSize = ResultInfo.CurrentInstallSize;
@@ -1243,6 +1275,21 @@ void FDefaultInstallBundleManager::UpdateBundleSourceComplete(TSharedRef<IInstal
 	}
 	Request->SourceRequestResults.Empty();
 
+	// If there are no content paths, its likely this is a chunk that doesn't exist on the current platfrom, so set bContainsChunks true.
+	// This is a corner case but as far as I know there is no other situation that would allow for an empty bundle that was not chunked.
+	// If such a case were to arise, then bContainsChunks would need to be determined by each bundle source individually.
+	BundleInfo.ContentPaths.bContainsChunks = BundleInfo.ContentPaths.ContentPaths.IsEmpty();
+	for (const FString& ContentPath : BundleInfo.ContentPaths.ContentPaths)
+	{
+		BundleInfo.ContentPaths.bContainsChunks = 
+			ContentPath.EndsWith(TEXTVIEW(".pak")) &&
+			FPlatformMisc::GetPakchunkIndexFromPakFile(ContentPath) != INDEX_NONE;
+		if (BundleInfo.ContentPaths.bContainsChunks)
+		{
+			break;
+		}
+	}
+
 	if (StateSignifiesNeedsInstall(GetBundleStatus(BundleInfo)))
 	{
 		if (Request->Result == EInstallBundleResult::OK)
@@ -1275,6 +1322,12 @@ void FDefaultInstallBundleManager::UpdateBundleSources(FContentReleaseRequestRef
 	{
 		Request->StepResult = EContentRequestStepResult::Done;
 		return;
+	}
+
+	// Release from any caches that were reserved
+	for (const TPair<FName, TSharedRef<FInstallBundleCache>>& Pair : BundleCaches)
+	{
+		Pair.Value->Release(Request->BundleName);
 	}
 
 	for (const TPair<EInstallBundleSourceType, TSharedPtr<IInstallBundleSource>>& Pair : BundleSources)
@@ -1435,7 +1488,7 @@ void FDefaultInstallBundleManager::MountPaks(FContentRequestRef Request)
 
 	LOG_INSTALL_BUNDLE_MAN_OVERRIDE(Request->LogVerbosityOverride, Display, TEXT("Mounting Paks for Request %s"), *BundleInfo.BundleNameString);
 
-	TSharedRef<bool, ESPMode::ThreadSafe> bMountedPaks = MakeShared<bool, ESPMode::ThreadSafe>(false);
+	TSharedRef<bool> bMountedPaks = MakeShared<bool>(false);
 
 	TUniqueFunction<void()> WorkFunc =
 		[ContentPaths = BundleInfo.ContentPaths.ContentPaths
@@ -1484,34 +1537,37 @@ void FDefaultInstallBundleManager::MountPaks(FContentRequestRef Request)
 
 bool FDefaultInstallBundleManager::MountPaksInList(TArrayView<FString> Paths, ELogVerbosity::Type LogVerbosityOverride)
 {
-	if (!FCoreDelegates::MountPak.IsBound())
+	FPakPlatformFile* PakPlatformFile = static_cast<FPakPlatformFile*>(FPlatformFileManager::Get().FindPlatformFile(TEXT("PakFile")));
+	if (!PakPlatformFile)
 	{
 		ensureMsgf(false, TEXT("Pak files have not been correctly initalized. Use -UsePaks on the cmdline if you are using the UnrealEditor.exe"));
 		return false; // if FCoreDelegates::MountPak is unbound there is a major issue.
 	}
 
+	// Sort in descending order.
+	Paths.Sort(TGreater<FString>());
+
 	// Find already mounted paks
-	TArray<FString> MountedPaks;
-	FPakPlatformFile* PakPlatformFile = static_cast<FPakPlatformFile*>(FPlatformFileManager::Get().FindPlatformFile(TEXT("PakFile")));
-	check(PakPlatformFile);
+	TSet<FString> MountedPaks;
 	PakPlatformFile->GetMountedPakFilenames(MountedPaks);
 
-	// Sort in descending order.
 	bool bMountedPaks = false;
-	Paths.Sort(TGreater<FString>());
 	for (const FString& File : Paths)
 	{
-		if (!File.EndsWith(TEXT(".pak")))
+		if (!File.EndsWith(TEXTVIEW(".pak")))
+		{
 			continue;
+		}
 
 		if (MountedPaks.Contains(File))
 		{
-			LOG_INSTALL_BUNDLE_MAN_OVERRIDE(LogVerbosityOverride, Display, TEXT("Pak file: %s already mounted, skipping. \n"), *File);
+			LOG_INSTALL_BUNDLE_MAN_OVERRIDE(LogVerbosityOverride, Warning, TEXT("Pak file: %s already mounted, skipping. \n"), *File);
 			continue;
 		}
 
 		LOG_INSTALL_BUNDLE_MAN_OVERRIDE(LogVerbosityOverride, Verbose, TEXT("Mounting pak file: %s \n"), *File);
-		if (FCoreDelegates::MountPak.Execute(File, INDEX_NONE)) //May fail  on encrypted Paks
+
+		if (FCoreDelegates::MountPak.Execute(File, INDEX_NONE)) //May fail on encrypted Paks
 		{
 			bMountedPaks = true;
 		}
@@ -1523,13 +1579,17 @@ bool FDefaultInstallBundleManager::MountPaksInList(TArrayView<FString> Paths, EL
 bool FDefaultInstallBundleManager::UnmountPaksInList(TArrayView<FString> Paths, ELogVerbosity::Type LogVerbosityOverride)
 {
 	if (!FCoreDelegates::OnUnmountPak.IsBound())
+	{
 		return false;
+	}
 
 	bool bUnmountedPaks = false;
 	for (const FString& File : Paths)
 	{
-		if (!File.EndsWith(TEXT(".pak")))
+		if (!File.EndsWith(TEXTVIEW(".pak")))
+		{
 			continue;
+		}
 
 		LOG_INSTALL_BUNDLE_MAN_OVERRIDE(LogVerbosityOverride, Display, TEXT("Unmounting pak file: %s \n"), *File);
 
@@ -1559,12 +1619,6 @@ void FDefaultInstallBundleManager::UnmountPaks(FContentReleaseRequestRef Request
 	OnPaksUnmountedInternal(Request, BundleInfo);
 
 	SetBundleStatus(BundleInfo, EBundleState::NeedsMount);
-
-	// Release from any caches that were reserved
-	for (const TPair<FName, TSharedRef<FInstallBundleCache>>& Pair : BundleCaches)
-	{
-		Pair.Value->Release(Request->BundleName);
-	}
 
 	Request->StepResult = EContentRequestStepResult::Done;
 }
@@ -1643,6 +1697,7 @@ void FDefaultInstallBundleManager::FinishRequest(FContentRequestRef Request)
 		ResultInfo.Result = Request->Result;
 		ResultInfo.bIsStartup = BundleInfo.bIsStartup;
 		ResultInfo.bContentWasInstalled = Request->bContentWasInstalled;
+		ResultInfo.bContainsChunks = BundleInfo.ContentPaths.bContainsChunks;
 		ResultInfo.OptionalErrorText = Request->OptionalErrorText;
 		ResultInfo.OptionalErrorCode = Request->OptionalErrorCode;
 
@@ -2713,6 +2768,7 @@ EInstallBundleSourceUpdateBundleInfoResult FDefaultInstallBundleManager::OnUpdat
 
 				CacheBundleInfo->BundleName = UpdateInfoPair.Key;
 				CacheBundleInfo->FullInstallSize = SourceBundleInfo.FullInstallSize;
+				CacheBundleInfo->InstallOverheadSize = SourceBundleInfo.InstallOverheadSize;
 				CacheBundleInfo->TimeStamp = SourceBundleInfo.LastAccessTime;
 				CacheBundleInfo->AgeScalar = Source->GetSourceCacheAgeScalar();
 				BundleCache->AddOrUpdateBundle(SourceType, *CacheBundleInfo);
@@ -3049,20 +3105,49 @@ TValueOrError<FInstallBundleRequestInfo, EInstallBundleResult> FDefaultInstallBu
 		// Don't request finished bundles
 		if (ActiveQueuedRequest == nullptr)
 		{
+			bool bIsFinished = false;
+
 			// If we canceled a release during an async op, that op could change bundle status when it completes, so enqueue the request to run after the 
 			// canceled release has finished.
 			if (!bCanceledRelease && EnumHasAnyFlags(Flags, EInstallBundleRequestFlags::SkipMount) && GetBundleStatus(*BundleInfo) == EBundleState::NeedsMount)
 			{
-				RetInfo.InfoFlags |= EInstallBundleRequestInfoFlags::SkippedAlreadyUpdatedBundles;
-				LOG_INSTALL_BUNDLE_MAN_OVERRIDE(LogVerbosityOverride, Verbose, TEXT("RequestUpdateContent Bundle %s  - Already Updated"), *BundleInfo->BundleNameString);
-				continue;
-			}
+				// If this bundle is not reserved in a cache, an  install request cannot be skipped
+				bool bNeedsCacheReserve = false;
+				for (const FBundleSourceRelevance& SourceRelevance : BundleInfo->ContributingSources)
+				{
+					if (FName* CacheName = BundleSourceCaches.Find(SourceRelevance.SourceType))
+					{
+						const TSharedRef<FInstallBundleCache>& BundleCache = BundleCaches.FindChecked(*CacheName);
+						if (BundleCache->Contains(BundleName) && !BundleCache->IsReserved(BundleName))
+						{
+							bNeedsCacheReserve = true;
+							break;
+						}
+					}
+				}
 
+				if (!bNeedsCacheReserve)
+				{
+					RetInfo.InfoFlags |= EInstallBundleRequestInfoFlags::SkippedAlreadyUpdatedBundles;
+					LOG_INSTALL_BUNDLE_MAN_OVERRIDE(LogVerbosityOverride, Verbose, TEXT("RequestUpdateContent Bundle %s  - Already Updated"), *BundleInfo->BundleNameString);
+					bIsFinished = true;
+				}
+			}
 			// No need to check bCanceledRelease here.  Unmounting is not Async so if we canceled it early enough we will remain mounted
-			if (!GetMustWaitForPSOCache(*BundleInfo) && GetBundleStatus(*BundleInfo) == EBundleState::Mounted)
+			else if (!GetMustWaitForPSOCache(*BundleInfo) && GetBundleStatus(*BundleInfo) == EBundleState::Mounted)
 			{
 				RetInfo.InfoFlags |= EInstallBundleRequestInfoFlags::SkippedAlreadyMountedBundles;
 				LOG_INSTALL_BUNDLE_MAN_OVERRIDE(LogVerbosityOverride, Verbose, TEXT("RequestUpdateContent Bundle %s  - Already Mounted"), *BundleInfo->BundleNameString);
+				bIsFinished = true;
+			}
+
+			if (bIsFinished)
+			{
+				FInstallBundleRequestResultInfo& ResultInfo = RetInfo.BundleResults.Emplace_GetRef();
+				ResultInfo.BundleName = BundleName;
+				ResultInfo.Result = EInstallBundleResult::OK;
+				ResultInfo.bIsStartup = BundleInfo->bIsStartup;
+				ResultInfo.bContainsChunks = BundleInfo->ContentPaths.bContainsChunks;
 				continue;
 			}
 		}
@@ -3321,12 +3406,12 @@ void FDefaultInstallBundleManager::CancelAllGetInstallStateRequests(FDelegateHan
 	}
 }
 
-TValueOrError<FInstallBundleRequestInfo, EInstallBundleResult> FDefaultInstallBundleManager::RequestReleaseContent(
+TValueOrError<FInstallBundleReleaseRequestInfo, EInstallBundleResult> FDefaultInstallBundleManager::RequestReleaseContent(
 	TArrayView<const FName> ReleaseNames, EInstallBundleReleaseRequestFlags Flags, TArrayView<const FName> KeepNames /*= TArrayView<const FName>()*/, ELogVerbosity::Type LogVerbosityOverride /*= ELogVerbosity::NoLogging*/)
 {
 	CSV_SCOPED_TIMING_STAT(InstallBundleManager, InstallBundleManager_RequestReleaseContent);
 
-	FInstallBundleRequestInfo RetInfo;
+	FInstallBundleReleaseRequestInfo RetInfo;
 
 	// Check for failing init, this is not recoverable and we can't safely enqueue requests.
 	// bUnrecoverableInitError usually means something is wrong with the build.
@@ -3399,14 +3484,29 @@ TValueOrError<FInstallBundleRequestInfo, EInstallBundleResult> FDefaultInstallBu
 		// canceled update has finished.
 		if (ActiveQueuedRequest == nullptr && !bCanceledUpdate)
 		{
-			if (!EnumHasAnyFlags(Flags, EInstallBundleReleaseRequestFlags::RemoveFilesIfPossible) && GetBundleStatus(*BundleInfo) != EBundleState::Mounted)
+			// If this bundle is reserved in a cache, a release request cannot be skipped
+			bool bIsReserved = false;
+			for (const FBundleSourceRelevance& SourceRelevance : BundleInfo->ContributingSources)
+			{
+				if (FName* CacheName = BundleSourceCaches.Find(SourceRelevance.SourceType))
+				{
+					const TSharedRef<FInstallBundleCache>& BundleCache = BundleCaches.FindChecked(*CacheName);
+					if (BundleCache->IsReserved(BundleName))
+					{
+						bIsReserved = true;
+						break;
+					}
+				}
+			}
+
+			if (!bIsReserved && !EnumHasAnyFlags(Flags, EInstallBundleReleaseRequestFlags::RemoveFilesIfPossible) && GetBundleStatus(*BundleInfo) != EBundleState::Mounted)
 			{
 				RetInfo.InfoFlags |= EInstallBundleRequestInfoFlags::SkippedAlreadyReleasedBundles;
 				LOG_INSTALL_BUNDLE_MAN_OVERRIDE(LogVerbosityOverride, Verbose, TEXT("BundlesToRelease Bundle %s  - Already Released"), *BundleInfo->BundleNameString);
 				continue;
 			}
 
-			if (GetBundleStatus(*BundleInfo) == EBundleState::NotInstalled)
+			if (!bIsReserved && GetBundleStatus(*BundleInfo) == EBundleState::NotInstalled)
 			{
 				RetInfo.InfoFlags |= EInstallBundleRequestInfoFlags::SkippedAlreadyRemovedBundles;
 				LOG_INSTALL_BUNDLE_MAN_OVERRIDE(LogVerbosityOverride, Verbose, TEXT("BundlesToRelease Bundle %s  - Already Removed"), *BundleInfo->BundleNameString);
@@ -3932,6 +4032,14 @@ void FDefaultInstallBundleManager::UpdateContentRequestFlags(TArrayView<const FN
 	}
 }
 
+void FDefaultInstallBundleManager::SetCacheSize(FName CacheName, uint64 CacheSize)
+{
+	if (ensureMsgf(!BundleCaches.Contains(CacheName), TEXT("FDefaultInstallBundleManager::SetCacheSize is only supported prior to initialization, for now")))
+	{
+		BundleCacheSizeOverrides.Add(CacheName, CacheSize);
+	}
+}
+
 void FDefaultInstallBundleManager::StartPatchCheck()
 {
 	if (bIsCheckingForPatch)
@@ -4349,6 +4457,16 @@ void FDefaultInstallBundleManager::AsyncInit_InitBundleCaches()
 		InitInfo.Size = CacheSize;
 	}
 
+	// Apply cache size runtime overrides
+	for (const TPair<FName, uint64>& BundleCacheSizeOverride : BundleCacheSizeOverrides)
+	{
+		FInstallBundleCacheInitInfo* InitInfo = BundleCacheInitInfo.Find(BundleCacheSizeOverride.Key);
+		if (ensureMsgf(InitInfo, TEXT("Size override cannot be applied on cache '%s' because it doesn't exist"), *BundleCacheSizeOverride.Key.ToString()))
+		{
+			InitInfo->Size = BundleCacheSizeOverride.Value;
+		}
+	}
+
 	// Check to override cache size from command line
 	{
 		FString Mapping;
@@ -4487,6 +4605,7 @@ void FDefaultInstallBundleManager::AsyncInit_OnQueryBundleInfoComplete(TSharedRe
 				FInstallBundleCacheBundleInfo CacheBundleInfo;
 				CacheBundleInfo.BundleName = BundleName;
 				CacheBundleInfo.FullInstallSize = SourceBundleInfo.FullInstallSize;
+				CacheBundleInfo.InstallOverheadSize = SourceBundleInfo.InstallOverheadSize;
 				CacheBundleInfo.CurrentInstallSize = SourceBundleInfo.CurrentInstallSize;
 				CacheBundleInfo.TimeStamp = SourceBundleInfo.LastAccessTime;
 				CacheBundleInfo.AgeScalar = BundleSource->GetSourceCacheAgeScalar();

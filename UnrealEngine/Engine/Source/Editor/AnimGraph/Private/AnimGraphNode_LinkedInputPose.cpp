@@ -289,6 +289,8 @@ void UAnimGraphNode_LinkedInputPose::ReallocatePinsDuringReconstruction(TArray<U
 	Super::ReallocatePinsDuringReconstruction(OldPins);
 
 	AllocatePinsInternal();
+
+	RestoreSplitPins(OldPins);
 }
 
 void UAnimGraphNode_LinkedInputPose::CreateUserDefinedPins()

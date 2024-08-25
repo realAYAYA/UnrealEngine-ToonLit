@@ -106,6 +106,25 @@ bool FProjectManager::LoadModulesForProject( const ELoadingPhase::Type LoadingPh
 	return bSuccess;
 } 
 
+bool FProjectManager::SubstituteModule(const FString& OriginalModuleName, const FString& NewModuleName)
+{
+	if (!CurrentProject.IsValid())
+	{
+		return false;
+	}
+	const int ModuleCount = CurrentProject->Modules.Num();
+	for (int32 Idx = 0; Idx < ModuleCount; Idx++)
+	{
+		if (CurrentProject->Modules[Idx].Name.IsEqual(*OriginalModuleName))
+		{
+			CurrentProject->Modules[Idx].Name = FName(*NewModuleName);
+			return true;
+		}
+	}
+	return false;
+}
+
+
 #if !IS_MONOLITHIC
 bool FProjectManager::CheckModuleCompatibility(TArray<FString>& OutIncompatibleModules)
 {

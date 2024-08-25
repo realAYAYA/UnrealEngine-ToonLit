@@ -3,8 +3,11 @@
 #include "Kismet/KismetSystemLibrary.h"
 #include "AssetRegistry/ARFilter.h"
 #include "Blueprint/BlueprintSupport.h"
+#include "Blueprint/BlueprintExceptionInfo.h"
 #include "Engine/AssetManagerTypes.h"
+#include "Engine/BlueprintGeneratedClass.h"
 #include "HAL/FileManager.h"
+#include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 #include "Misc/EngineVersion.h"
 #include "EngineLogs.h"
@@ -255,10 +258,25 @@ FString UKismetSystemLibrary::GetPlatformUserDir()
 
 bool UKismetSystemLibrary::DoesImplementInterface(const UObject* TestObject, TSubclassOf<UInterface> Interface)
 {
-	if (Interface != NULL && TestObject != NULL)
+	if (TestObject)
 	{
-		checkf(Interface->IsChildOf(UInterface::StaticClass()), TEXT("Interface parameter %s is not actually an interface."), *Interface->GetName());
-		return TestObject->GetClass()->ImplementsInterface(Interface);
+		return UKismetSystemLibrary::DoesClassImplementInterface(TestObject->GetClass(), Interface);
+	}
+
+	return false;
+}
+
+bool UKismetSystemLibrary::DoesClassImplementInterface(const UClass* TestClass, TSubclassOf<UInterface> Interface)
+{
+	if (TestClass && Interface)
+	{
+		if (!Interface->IsChildOf(UInterface::StaticClass()))
+		{
+			LogRuntimeError(FText::Format(LOCTEXT("DoesClassImplementInterface.InvalidInterface", "Interface parameter {0} is not actually an interface."), FText::AsCultureInvariant(Interface->GetName())));
+			return false;
+		}
+
+		return TestClass->ImplementsInterface(Interface);
 	}
 
 	return false;
@@ -338,6 +356,11 @@ UClass* UKismetSystemLibrary::Conv_ObjectToClass(UObject* Object, TSubclassOf<UO
 UObject* UKismetSystemLibrary::Conv_InterfaceToObject(const FScriptInterface& Interface)
 {
 	return Interface.GetObject();
+}
+
+bool UKismetSystemLibrary::IsValidInterface(const FScriptInterface& Interface)
+{
+	return IsValid(Interface.GetObject());
 }
 
 void UKismetSystemLibrary::LogString(const FString& InString, bool bPrintToLog)
@@ -589,7 +612,7 @@ FTimerHandle UKismetSystemLibrary::K2_InvalidateTimerHandle(FTimerHandle& TimerH
 	return TimerHandle;
 }
 
-FTimerHandle UKismetSystemLibrary::K2_SetTimer(UObject* Object, FString FunctionName, float Time, bool bLooping, float InitialStartDelay, float InitialStartDelayVariance)
+FTimerHandle UKismetSystemLibrary::K2_SetTimer(UObject* Object, FString FunctionName, float Time, bool bLooping, bool bMaxOncePerFrame, float InitialStartDelay, float InitialStartDelayVariance)
 {
 	FName const FunctionFName(*FunctionName);
 
@@ -608,7 +631,7 @@ FTimerHandle UKismetSystemLibrary::K2_SetTimer(UObject* Object, FString Function
 
 	FTimerDynamicDelegate Delegate;
 	Delegate.BindUFunction(Object, FunctionFName);
-	return K2_SetTimerDelegate(Delegate, Time, bLooping, InitialStartDelay);
+	return K2_SetTimerDelegate(Delegate, Time, bLooping, bMaxOncePerFrame, InitialStartDelay);
 }
 
 FTimerHandle UKismetSystemLibrary::K2_SetTimerForNextTick(UObject* Object, FString FunctionName)
@@ -633,7 +656,7 @@ FTimerHandle UKismetSystemLibrary::K2_SetTimerForNextTick(UObject* Object, FStri
 	return K2_SetTimerForNextTickDelegate(Delegate);
 }
 
-FTimerHandle UKismetSystemLibrary::K2_SetTimerDelegate(FTimerDynamicDelegate Delegate, float Time, bool bLooping, float InitialStartDelay, float InitialStartDelayVariance)
+FTimerHandle UKismetSystemLibrary::K2_SetTimerDelegate(FTimerDynamicDelegate Delegate, float Time, bool bLooping, bool bMaxOncePerFrame, float InitialStartDelay, float InitialStartDelayVariance)
 {
 	FTimerHandle Handle;
 	if (Delegate.IsBound())
@@ -651,7 +674,7 @@ FTimerHandle UKismetSystemLibrary::K2_SetTimerDelegate(FTimerDynamicDelegate Del
 
 			FTimerManager& TimerManager = World->GetTimerManager();
 			Handle = TimerManager.K2_FindDynamicTimerHandle(Delegate);
-			TimerManager.SetTimer(Handle, Delegate, Time, bLooping, (Time + InitialStartDelay));
+			TimerManager.SetTimer(Handle, Delegate, Time, FTimerManagerTimerParameters { .bLoop = bLooping, .bMaxOncePerFrame = bMaxOncePerFrame, .FirstDelay = Time + InitialStartDelay });
 		}
 	}
 	else
@@ -2215,6 +2238,25 @@ bool UKismetSystemLibrary::CapsuleTraceMultiByProfile(const UObject* WorldContex
 	return bHit;
 }
 
+#if WITH_EDITOR
+TArray<FName> UKismetSystemLibrary::GetCollisionProfileNames()
+{
+	TArray<TSharedPtr<FName>> SharedNames;
+	UCollisionProfile::GetProfileNames(SharedNames);
+
+	TArray<FName> Names;
+	Names.Reserve(SharedNames.Num());
+	for (const TSharedPtr<FName>& SharedName : SharedNames)
+	{
+		if (const FName* Name = SharedName.Get())
+		{
+			Names.Add(*Name);
+		}
+	}
+
+	return Names;
+}
+#endif
 
 /** Draw a debug line */
 void UKismetSystemLibrary::DrawDebugLine(const UObject* WorldContextObject, FVector const LineStart, FVector const LineEnd, FLinearColor Color, float LifeTime, float Thickness)
@@ -3082,9 +3124,41 @@ bool UKismetSystemLibrary::GetEditorProperty(UObject* Object, const FName Proper
 	return false;
 }
 
-bool UKismetSystemLibrary::Generic_GetEditorProperty(const UObject* Object, const FProperty* ObjectProp, void* ValuePtr, const FProperty* ValueProp)
+bool UKismetSystemLibrary::Generic_GetEditorProperty(const UObject* Object, const FName PropertyName, void* ValuePtr, const FProperty* ValueProp)
 {
-	const EPropertyAccessResultFlags AccessResult = PropertyAccessUtil::GetPropertyValue_Object(ObjectProp, Object, ValueProp, ValuePtr, INDEX_NONE);
+	const FProperty* ObjectProp = PropertyAccessUtil::FindPropertyByName(PropertyName, Object->GetClass());
+	TOptional<EPropertyAccessResultFlags> SparseDataAccessResult;
+	if ((!ObjectProp || ObjectProp->HasAnyPropertyFlags(CPF_Deprecated)) && Object->HasAllFlags(RF_ClassDefaultObject))
+	{
+		// look for a sparse member of the same name - the sparse data is treated as an extension
+		// of the class default object by the details panel:
+		const UStruct* SparseDataStruct = Object->GetClass()->GetSparseClassDataStruct();
+		if (SparseDataStruct)
+		{
+			const FProperty* SparseProp = PropertyAccessUtil::FindPropertyByName(PropertyName, SparseDataStruct);
+			if (SparseProp)
+			{
+				void* SparseDest = Object->GetClass()->GetOrCreateSparseClassData();
+
+				SparseDataAccessResult = PropertyAccessUtil::GetPropertyValue_InContainer(
+					SparseProp,
+					SparseDest,
+					ValueProp,
+					ValuePtr,
+					INDEX_NONE);
+			}
+		}
+	}
+
+	if (!ObjectProp && !SparseDataAccessResult.IsSet())
+	{
+		FFrame::KismetExecutionMessage(*FString::Printf(TEXT("Property '%s' on '%s' (%s) was missing"), *PropertyName.ToString(), *Object->GetPathName(), *Object->GetClass()->GetName()), ELogVerbosity::Warning, UE::Blueprint::Private::PropertyGetFailedWarning);
+		return false;
+	}
+
+	const EPropertyAccessResultFlags AccessResult = SparseDataAccessResult.IsSet() ?
+		SparseDataAccessResult.GetValue() : 
+		PropertyAccessUtil::GetPropertyValue_Object(ObjectProp, Object, ValueProp, ValuePtr, INDEX_NONE);
 
 	if (EnumHasAnyFlags(AccessResult, EPropertyAccessResultFlags::PermissionDenied))
 	{
@@ -3140,17 +3214,9 @@ DEFINE_FUNCTION(UKismetSystemLibrary::execGetEditorProperty)
 
 	if (Object)
 	{
-		const FProperty* ObjectProp = PropertyAccessUtil::FindPropertyByName(PropertyName, Object->GetClass());
-		if (ObjectProp)
-		{
-			P_NATIVE_BEGIN;
-			bResult = Generic_GetEditorProperty(Object, ObjectProp, ValuePtr, ValueProp);
-			P_NATIVE_END;
-		}
-		else
-		{
-			FFrame::KismetExecutionMessage(*FString::Printf(TEXT("Property '%s' on '%s' (%s) was missing"), *PropertyName.ToString(), *Object->GetPathName(), *Object->GetClass()->GetName()), ELogVerbosity::Warning, UE::Blueprint::Private::PropertyGetFailedWarning);
-		}
+		P_NATIVE_BEGIN;
+		bResult = Generic_GetEditorProperty(Object, PropertyName, ValuePtr, ValueProp);
+		P_NATIVE_END;
 	}
 
 	*(bool*)RESULT_PARAM = bResult;
@@ -3163,9 +3229,58 @@ bool UKismetSystemLibrary::SetEditorProperty(UObject* Object, const FName Proper
 	return false;
 }
 
-bool UKismetSystemLibrary::Generic_SetEditorProperty(UObject* Object, const FProperty* ObjectProp, const void* ValuePtr, const FProperty* ValueProp, const EPropertyAccessChangeNotifyMode ChangeNotifyMode)
+bool UKismetSystemLibrary::Generic_SetEditorProperty(UObject* Object, const FName PropertyName, const void* ValuePtr, const FProperty* ValueProp, const EPropertyAccessChangeNotifyMode ChangeNotifyMode)
 {
-	const EPropertyAccessResultFlags AccessResult = PropertyAccessUtil::SetPropertyValue_Object(ObjectProp, Object, ValueProp, ValuePtr, INDEX_NONE, PropertyAccessUtil::EditorReadOnlyFlags, ChangeNotifyMode);
+	TOptional<EPropertyAccessResultFlags> SparseDataAccessResult;
+	const FProperty* ObjectProp = PropertyAccessUtil::FindPropertyByName(PropertyName, Object->GetClass());
+	if ((!ObjectProp || ObjectProp->HasAnyPropertyFlags(CPF_Deprecated)) && Object->HasAllFlags(RF_ClassDefaultObject))
+	{
+		// look for a sparse member of the same name - the sparse data is treated as an extension
+		// of the class default object by the details panel:
+		const UStruct* SparseDataStruct = Object->GetClass()->GetSparseClassDataStruct();
+		if (SparseDataStruct)
+		{
+			const FProperty* SparseProp = PropertyAccessUtil::FindPropertyByName(PropertyName, SparseDataStruct);
+			if (SparseProp)
+			{
+				void* SparseDest = Object->GetClass()->GetOrCreateSparseClassData();
+
+				SparseDataAccessResult = PropertyAccessUtil::SetPropertyValue_InContainer(
+					SparseProp,
+					SparseDest,
+					ValueProp,
+					ValuePtr,
+					INDEX_NONE,
+					PropertyAccessUtil::EditorReadOnlyFlags,
+					PropertyAccessUtil::IsObjectTemplate(Object),
+					[SparseProp, Object, ChangeNotifyMode]()
+					{
+						return PropertyAccessUtil::BuildBasicChangeNotify(SparseProp, Object, ChangeNotifyMode);
+					});
+				if (*SparseDataAccessResult == EPropertyAccessResultFlags::Success)
+				{
+					if(UBlueprintGeneratedClass* AsBPGC = Cast<UBlueprintGeneratedClass>(Object->GetClass()))
+					{
+						AsBPGC->bIsSparseClassDataSerializable = true;
+					}
+					else
+					{
+						FFrame::KismetExecutionMessage(*FString::Printf(TEXT("Property '%s' on '%s' (%s) is in sparse class data but not owned by a BlueprintGeneratedClass and may not be saved"), *ObjectProp->GetName(), *Object->GetPathName(), *Object->GetClass()->GetName()), ELogVerbosity::Warning, UE::Blueprint::Private::PropertySetFailedWarning);
+					}
+				}
+			}
+		}
+	}
+
+	if(!ObjectProp && !SparseDataAccessResult.IsSet())
+	{
+		FFrame::KismetExecutionMessage(*FString::Printf(TEXT("Property '%s' on '%s' (%s) was missing"), *PropertyName.ToString(), *Object->GetPathName(), *Object->GetClass()->GetName()), ELogVerbosity::Warning, UE::Blueprint::Private::PropertySetFailedWarning);
+		return false;
+	}
+
+	const EPropertyAccessResultFlags AccessResult = SparseDataAccessResult.IsSet() ?
+		SparseDataAccessResult.GetValue() :
+		PropertyAccessUtil::SetPropertyValue_Object(ObjectProp, Object, ValueProp, ValuePtr, INDEX_NONE, PropertyAccessUtil::EditorReadOnlyFlags, ChangeNotifyMode);
 
 	if (EnumHasAnyFlags(AccessResult, EPropertyAccessResultFlags::PermissionDenied))
 	{
@@ -3241,20 +3356,66 @@ DEFINE_FUNCTION(UKismetSystemLibrary::execSetEditorProperty)
 
 	if (Object)
 	{
-		const FProperty* ObjectProp = PropertyAccessUtil::FindPropertyByName(PropertyName, Object->GetClass());
-		if (ObjectProp)
-		{
-			P_NATIVE_BEGIN;
-			bResult = Generic_SetEditorProperty(Object, ObjectProp, ValuePtr, ValueProp, ChangeNotifyMode);
-			P_NATIVE_END;
-		}
-		else
-		{
-			FFrame::KismetExecutionMessage(*FString::Printf(TEXT("Property '%s' on '%s' (%s) was missing"), *PropertyName.ToString(), *Object->GetPathName(), *Object->GetClass()->GetName()), ELogVerbosity::Warning, UE::Blueprint::Private::PropertySetFailedWarning);
-		}
+		P_NATIVE_BEGIN;
+		bResult = Generic_SetEditorProperty(Object, PropertyName, ValuePtr, ValueProp, ChangeNotifyMode);
+		P_NATIVE_END;
 	}
 
 	*(bool*)RESULT_PARAM = bResult;
+}
+
+bool UKismetSystemLibrary::ResetEditorProperty(UObject* Object, const FName PropertyName, const EPropertyAccessChangeNotifyMode ChangeNotifyMode)
+{
+	if (!Object)
+	{
+		LogRuntimeError(NSLOCTEXT("KismetSystemLibrary", "ResetEditorProperty_AccessNone", "Accessed None attempting to call ResetEditorProperty."));
+		return false;
+	}
+
+	auto FindArchetypeValue = [Object, PropertyName](const FProperty*& OutArchetypeProperty, const void*& OutArchetypeValuePtr)
+	{
+		OutArchetypeProperty = nullptr;
+		OutArchetypeValuePtr = nullptr;
+
+		const FProperty* ObjectProp = PropertyAccessUtil::FindPropertyByName(PropertyName, Object->GetClass());
+		if ((!ObjectProp || ObjectProp->HasAnyPropertyFlags(CPF_Deprecated)) && Object->HasAllFlags(RF_ClassDefaultObject))
+		{
+			// look for a sparse member of the same name - the sparse data is treated as an extension
+			// of the class default object by the details panel:
+			if (const UScriptStruct* SparseDataStruct = Object->GetClass()->GetSparseClassDataStruct())
+			{
+				if (const FProperty* SparseProp = PropertyAccessUtil::FindPropertyByName(PropertyName, SparseDataStruct))
+				{
+					if (UScriptStruct* SparseDataArchetypeStruct = Object->GetClass()->GetSparseClassDataArchetypeStruct())
+					{
+						OutArchetypeProperty = SparseProp;
+						OutArchetypeValuePtr = SparseProp->ContainerPtrToValuePtrForDefaults<const void>(SparseDataArchetypeStruct, Object->GetClass()->GetArchetypeForSparseClassData());
+					}
+					return;
+				}
+			}
+		}
+
+		if (ObjectProp)
+		{
+			if (const UObject* ObjectArchetype = Object->GetArchetype())
+			{
+				OutArchetypeProperty = ObjectProp;
+				OutArchetypeValuePtr = ObjectProp->ContainerPtrToValuePtrForDefaults<const void>(ObjectArchetype->GetClass(), ObjectArchetype);
+			}
+		}
+	};
+
+	const FProperty* ArchetypeProperty = nullptr;
+	const void* ArchetypeValuePtr = nullptr;
+	FindArchetypeValue(ArchetypeProperty, ArchetypeValuePtr);
+	if (!ArchetypeValuePtr)
+	{
+		FFrame::KismetExecutionMessage(*FString::Printf(TEXT("Property '%s' on '%s' (%s) had no archetype value to reset to"), *PropertyName.ToString(), *Object->GetPathName(), *Object->GetClass()->GetName()), ELogVerbosity::Warning, UE::Blueprint::Private::PropertySetFailedWarning);
+		return false;
+	}
+
+	return Generic_SetEditorProperty(Object, PropertyName, ArchetypeValuePtr, ArchetypeProperty, ChangeNotifyMode);
 }
 
 #endif	// WITH_EDITOR

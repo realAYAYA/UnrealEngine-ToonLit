@@ -210,6 +210,18 @@ struct FRequestAnimCompressionParams
 	const ITargetPlatform* TargetPlatform;
 };
 
+/** Enum used to decide whether we should strip animation data on dedicated server */
+UENUM()
+enum class EStripAnimDataOnDedicatedServerSettings : uint8
+{
+	/** Strip track data on dedicated server if 'Strip Animation Data on Dedicated Server' option in Project Settings is true and EnableRootMotion is false */
+	UseProjectSetting,
+	/** Strip track data on dedicated server regardless of the value of 'Strip Animation Data on Dedicated Server' option in Project Settings as long as EnableRootMotion is false  */
+	StripAnimDataOnDedicatedServer,
+	/** Do not strip track data on dedicated server regardless of the value of 'Strip Animation Data on Dedicated Server' option in Project Settings  */
+	DoNotStripAnimDataOnDedicatedServer
+};
+
 UCLASS(config=Engine, hidecategories=(UObject, Length), BlueprintType, MinimalAPI)
 class UAnimSequence : public UAnimSequenceBase
 {
@@ -252,7 +264,7 @@ protected:
 	 * This is name of RawAnimationData tracks for editoronly - if we lose skeleton, we'll need relink them
 	 */
 	UE_DEPRECATED(5.0, "Animation track names has been deprecated see FBoneAnimationTrack::Name")
-	UPROPERTY(VisibleAnywhere, Category="Animation")
+	UPROPERTY(VisibleAnywhere, DuplicateTransient, Category="Animation")
 	TArray<FName> AnimationTrackNames;
 
 	/**
@@ -373,7 +385,9 @@ public:
 	int32 MarkerDataUpdateCounter;
 #endif // WITH_EDITORONLY_DATA
 
-
+	/** Enum used to decide whether we should strip animation data on dedicated server */
+	UPROPERTY(EditAnywhere, Category = Compression)
+	EStripAnimDataOnDedicatedServerSettings StripAnimDataOnDedicatedServer = EStripAnimDataOnDedicatedServerSettings::UseProjectSetting;
 
 public:
 	//~ Begin UObject Interface
@@ -396,6 +410,8 @@ public:
 #endif // WITH_EDITOR
 	ENGINE_API virtual void BeginDestroy() override;
 	ENGINE_API virtual bool IsReadyForFinishDestroy() override;
+	ENGINE_API virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	ENGINE_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 	static ENGINE_API void AddReferencedObjects(UObject* This, FReferenceCollector& Collector);
 	//~ End UObject Interface
@@ -685,6 +701,7 @@ public:
 
 	// to support anim sequence base to all montages
 	ENGINE_API virtual void EnableRootMotionSettingFromMontage(bool bInEnableRootMotion, const ERootMotionRootLock::Type InRootMotionRootLock) override;
+	ENGINE_API virtual bool GetEnableRootMotionSettingFromMontage() const override;
 
 #if WITH_EDITOR
 	virtual class UAnimSequence* GetAdditiveBasePose() const override 
@@ -768,9 +785,11 @@ private:
 
 	ENGINE_API void GetBonePose_AdditiveMeshRotationOnly(FAnimationPoseData& OutAnimationPoseData, const FAnimExtractContext& ExtractionContext) const;
 
+protected:
 	/** Returns whether or not evaluation of the raw (source) animation data is possible according to whether or not the (editor only) data has been stripped */
-	ENGINE_API bool CanEvaluateRawAnimationData() const;
+	ENGINE_API virtual bool CanEvaluateRawAnimationData() const;
 
+private:
 #if WITH_EDITOR
 	/**
 	 * Remap Tracks to New Skeleton
@@ -778,9 +797,7 @@ private:
 	ENGINE_API virtual void RemapTracksToNewSkeleton( USkeleton* NewSkeleton, bool bConvertSpaces ) override;
 
 	/** Retargeting functions */
-	ENGINE_API bool ConvertAnimationDataToRiggingData(FAnimSequenceTrackContainer & RiggingAnimationData);
-	ENGINE_API bool ConvertRiggingDataToAnimationData(FAnimSequenceTrackContainer & RiggingAnimationData);
-	ENGINE_API int32 GetSpaceBasedAnimationData(TArray< TArray<FTransform> > & AnimationDataInComponentSpace, FAnimSequenceTrackContainer * RiggingAnimationData) const;
+	ENGINE_API int32 GetSpaceBasedAnimationData(TArray< TArray<FTransform> > & AnimationDataInComponentSpace) const;
 #endif
 
 public:
@@ -921,4 +938,6 @@ public:
 	friend struct UE::Anim::Compression::FScopedCompressionGuard;
 	friend class FAnimDataControllerTestBase;
 	friend class UE::Anim::FAnimSequenceCompilingManager;
+	friend struct FAnimNextAnimSequenceKeyframeTask;
+	friend class FAnimSequenceDetails;
 };

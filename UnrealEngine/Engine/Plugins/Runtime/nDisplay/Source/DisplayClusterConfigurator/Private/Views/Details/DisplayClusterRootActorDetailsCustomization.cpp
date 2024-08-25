@@ -2,6 +2,9 @@
 
 #include "DisplayClusterRootActorDetailsCustomization.h"
 
+#include "Widgets/SDisplayClusterConfiguratorComponentPicker.h"
+
+#include "Render/DisplayDevice/Components/DisplayClusterDisplayDeviceBaseComponent.h"
 #include "DisplayClusterRootActor.h"
 #include "DisplayClusterConfigurationStrings.h"
 #include "DisplayClusterConfigurationTypes.h"
@@ -155,6 +158,27 @@ void FDisplayClusterRootActorDetailsCustomization::CustomizeDetails(IDetailLayou
 
 	// Update the selected item in the NodeId combo box to match the current value on the root actor
 	UpdateNodeIdSelection();
+
+	// Default Display Device component selection
+	TSharedPtr<IPropertyHandle> DisplayDeviceHandle = InLayoutBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(ADisplayClusterRootActor, DefaultDisplayDeviceName));
+	if (DisplayDeviceHandle.IsValid() && DisplayDeviceHandle->IsValidHandle())
+	{
+		if (IDetailPropertyRow* DisplayDevicePropertyRow = InLayoutBuilder.EditDefaultProperty(DisplayDeviceHandle))
+		{
+			DisplayDevicePropertyRow->CustomWidget()
+				.NameContent()
+				[
+					DisplayDeviceHandle->CreatePropertyNameWidget()
+				]
+				.ValueContent()
+				[
+					SNew(SDisplayClusterConfiguratorComponentPicker,
+						UDisplayClusterDisplayDeviceBaseComponent::StaticClass(),
+						GetRootActor(),
+						DisplayDeviceHandle)
+				];
+		}
+	}
 }
 
 TSharedRef<SWidget> FDisplayClusterRootActorDetailsCustomization::CreateCustomNodeIdWidget()

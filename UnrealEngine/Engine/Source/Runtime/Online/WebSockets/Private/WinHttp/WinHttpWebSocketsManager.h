@@ -8,7 +8,7 @@
 #include "IWebSocketsManager.h"
 #include "Containers/Ticker.h"
 
-class FHttpManager;
+class FWinHttpHttpManager;
 class FWinHttpWebSocket;
 
 class FWinHttpWebSocketsManager
@@ -31,7 +31,7 @@ protected:
 protected:
 	FTSTicker::FDelegateHandle TickHandle;
 
-	FHttpManager* HttpManager = nullptr;
+	FWinHttpHttpManager* WinHttpHttpManager = nullptr;
 
 	TArray<TWeakPtr<FWinHttpWebSocket>> ActiveWebSockets;
 };

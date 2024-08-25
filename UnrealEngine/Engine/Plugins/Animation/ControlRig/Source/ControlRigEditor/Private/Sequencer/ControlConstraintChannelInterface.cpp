@@ -12,7 +12,7 @@
 
 #include "TransformConstraint.h"
 #include "Algo/Copy.h"
-
+#include "ConstraintsManager.h"
 #include "ScopedTransaction.h"
 #include "Channels/MovieSceneFloatChannel.h"
 #include "Constraints/MovieSceneConstraintChannelHelper.inl"
@@ -91,11 +91,17 @@ bool FControlConstraintChannelInterface::SmartConstraintKey(
 	// set constraint as dynamic
 	InConstraint->bDynamicOffset = true;
 	
+	//check if static if so we need to delete it from world, will get added later again
+	if (UConstraintsManager* Manager = InConstraint->GetTypedOuter<UConstraintsManager>())
+	{
+		Manager->RemoveStaticConstraint(InConstraint);
+	}
+
 	// add the channel
 	ConstraintSection->AddConstraintChannel(InConstraint);
 
 	// add key if needed
-	if (FConstraintAndActiveChannel* Channel = ConstraintSection->GetConstraintChannel(InConstraint->GetFName()))
+	if (FConstraintAndActiveChannel* Channel = ConstraintSection->GetConstraintChannel(InConstraint->ConstraintID))
 	{
 		bool ActiveValueToBeSet = false;
 		//add key if we can and make sure the key we are setting is what we want
@@ -159,7 +165,7 @@ bool FControlConstraintChannelInterface::SmartConstraintKey(
 					{ ChildLocals[0] }, ChannelsToKey, TickResolution, nullptr,true);
 
 				// set tangents at Time-1
-				if (NumChannels > 0)
+				if (NumChannels > 0) //-V547
 				{
 					SetTangentsAtThisTime<FMovieSceneFloatChannel>(ChannelIndex, NumChannels, TransformSection, TimeMinusOne, Tangents);
 				}

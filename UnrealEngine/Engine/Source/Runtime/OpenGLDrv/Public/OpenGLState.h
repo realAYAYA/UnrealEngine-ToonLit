@@ -465,6 +465,7 @@ struct FOpenGLRHIState final : public FOpenGLCommonState
 
 	/** Track the currently bound uniform buffers. */
 	FRHIUniformBuffer* BoundUniformBuffers[SF_NumStandardFrequencies][MAX_UNIFORM_BUFFERS_PER_SHADER_STAGE];
+	uint32 BoundUniformBuffersDynamicOffset[SF_NumStandardFrequencies][MAX_UNIFORM_BUFFERS_PER_SHADER_STAGE];
 
 	/** Array to track if any real (not emulated) uniform buffers have been bound since the last draw call */
 	bool bAnyDirtyRealUniformBuffers[SF_NumStandardFrequencies];
@@ -517,6 +518,7 @@ struct FOpenGLRHIState final : public FOpenGLCommonState
 		FMemory::Memset( RenderTargetMipmapLevels, 0, sizeof(RenderTargetMipmapLevels) );	// setting all to 0 at start
 		FMemory::Memset( RenderTargetArrayIndex, 0, sizeof(RenderTargetArrayIndex) );	// setting all to 0 at start
 		FMemory::Memset(BoundUniformBuffers, 0, sizeof(BoundUniformBuffers));
+		FMemory::Memset(BoundUniformBuffersDynamicOffset, 0u, sizeof(BoundUniformBuffersDynamicOffset));
 	}
 
 	~FOpenGLRHIState()
@@ -531,6 +533,7 @@ struct FOpenGLRHIState final : public FOpenGLCommonState
 		delete [] ShaderParameters;
 		ShaderParameters = NULL;
 		FMemory::Memset(BoundUniformBuffers, 0, sizeof(BoundUniformBuffers));
+		FMemory::Memset(BoundUniformBuffersDynamicOffset, 0u, sizeof(BoundUniformBuffersDynamicOffset));
 		FOpenGLCommonState::CleanupResources();
 	}
 };

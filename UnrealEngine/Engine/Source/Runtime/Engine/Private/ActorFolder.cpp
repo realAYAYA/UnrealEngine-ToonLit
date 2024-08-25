@@ -14,6 +14,7 @@
 #include "Engine/Level.h"
 #include "ExternalPackageHelper.h"
 #include "ActorFolderDesc.h"
+#include "UObject/AssetRegistryTagsContext.h"
 
 UActorFolder* UActorFolder::Create(ULevel* InLevel, const FString& InFolderLabel, UActorFolder* InParent)
 {
@@ -31,7 +32,7 @@ UActorFolder* UActorFolder::Create(ULevel* InLevel, const FString& InFolderLabel
 	const bool bShouldDirtyLevel = !bUseExternalObject;
 	const EObjectFlags Flags = (bIsTransientFolder ? RF_Transient : RF_NoFlags) | RF_Transactional;
 
-	UPackage* ExternalPackage = bUseExternalObject ? FExternalPackageHelper::CreateExternalPackage(InLevel, *GloballyUniqueObjectPath, GetExternalPackageFlags()) : nullptr;
+	UPackage* ExternalPackage = bUseExternalObject ? FExternalPackageHelper::CreateExternalPackage(InLevel, *GloballyUniqueObjectPath) : nullptr;
 
 	UActorFolder* ActorFolder = NewObject<UActorFolder>(InLevel, UActorFolder::StaticClass(), FName(FolderShortName), Flags, nullptr, /*bCopyTransientsFromClassDefaults*/false, /*InstanceGraph*/nullptr, ExternalPackage);
 	check(ActorFolder);
@@ -51,6 +52,13 @@ bool UActorFolder::IsAsset() const
 	return IsPackageExternal() && !GetPackage()->HasAnyFlags(RF_Transient) && !HasAnyFlags(RF_Transient | RF_ClassDefaultObject) && !GetPackage()->HasAnyPackageFlags(PKG_PlayInEditor);
 }
 
+void UActorFolder::PostLoad()
+{
+	Super::PostLoad();
+
+	FolderLabel.TrimStartAndEndInline();
+}
+
 namespace ActorFolder
 {
 	static const FName NAME_FolderGuid(TEXT("FolderGuid"));
@@ -63,12 +71,21 @@ namespace ActorFolder
 
 void UActorFolder::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
-	OutTags.Add(FAssetRegistryTag(ActorFolder::NAME_FolderGuid, *FolderGuid.ToString(), FAssetRegistryTag::TT_Hidden));
-	OutTags.Add(FAssetRegistryTag(ActorFolder::NAME_ParentFolderGuid, *ParentFolderGuid.ToString(), FAssetRegistryTag::TT_Hidden));
-	OutTags.Add(FAssetRegistryTag(ActorFolder::NAME_FolderLabel, *FolderLabel, FAssetRegistryTag::TT_Hidden));
-	OutTags.Add(FAssetRegistryTag(ActorFolder::NAME_FolderInitiallyExpanded, bFolderInitiallyExpanded ? TEXT("1") : TEXT("0"), FAssetRegistryTag::TT_Hidden));
-	OutTags.Add(FAssetRegistryTag(ActorFolder::NAME_FolderIsDeleted, bIsDeleted ? TEXT("1") : TEXT("0"), FAssetRegistryTag::TT_Hidden));
-	OutTags.Add(FAssetRegistryTag(ActorFolder::NAME_OuterPackageName, *GetOuterULevel()->GetPackage()->GetName(), FAssetRegistryTag::TT_Hidden));
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UActorFolder::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	Super::GetAssetRegistryTags(Context);
+
+	Context.AddTag(FAssetRegistryTag(ActorFolder::NAME_FolderGuid, *FolderGuid.ToString(), FAssetRegistryTag::TT_Hidden));
+	Context.AddTag(FAssetRegistryTag(ActorFolder::NAME_ParentFolderGuid, *ParentFolderGuid.ToString(), FAssetRegistryTag::TT_Hidden));
+	Context.AddTag(FAssetRegistryTag(ActorFolder::NAME_FolderLabel, *FolderLabel, FAssetRegistryTag::TT_Hidden));
+	Context.AddTag(FAssetRegistryTag(ActorFolder::NAME_FolderInitiallyExpanded, bFolderInitiallyExpanded ? TEXT("1") : TEXT("0"), FAssetRegistryTag::TT_Hidden));
+	Context.AddTag(FAssetRegistryTag(ActorFolder::NAME_FolderIsDeleted, bIsDeleted ? TEXT("1") : TEXT("0"), FAssetRegistryTag::TT_Hidden));
+	Context.AddTag(FAssetRegistryTag(ActorFolder::NAME_OuterPackageName, *GetOuterULevel()->GetPackage()->GetName(), FAssetRegistryTag::TT_Hidden));
 }
 
 FActorFolderDesc UActorFolder::GetAssetRegistryInfoFromPackage(FName ActorFolderPackageName)
@@ -116,12 +133,13 @@ FActorFolderDesc UActorFolder::GetAssetRegistryInfoFromPackage(FName ActorFolder
 
 void UActorFolder::SetLabel(const FString& InFolderLabel)
 {
+	FString TrimmedFolderLabel = InFolderLabel.TrimStartAndEnd();
 	check(IsValid());
-	if (!FolderLabel.Equals(InFolderLabel, ESearchCase::CaseSensitive))
+	if (!FolderLabel.Equals(TrimmedFolderLabel, ESearchCase::CaseSensitive))
 	{
 		Modify();
 		FString OldFolderLabel = FolderLabel;
-		FolderLabel = InFolderLabel;
+		FolderLabel = TrimmedFolderLabel;
 		GetTypedOuter<ULevel>()->OnFolderLabelChanged(this, OldFolderLabel);
 	}
 }
@@ -309,7 +327,7 @@ FFolder UActorFolder::GetFolder() const
 
 void UActorFolder::SetPackageExternal(bool bInExternal, bool bShouldDirty)
 {
-	FExternalPackageHelper::SetPackagingMode(this, GetOuterULevel(), bInExternal, bShouldDirty, GetExternalPackageFlags());
+	FExternalPackageHelper::SetPackagingMode(this, GetOuterULevel(), bInExternal, bShouldDirty);
 }
 
 #endif

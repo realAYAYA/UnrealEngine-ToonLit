@@ -35,14 +35,6 @@ SGameplayTagContainerCombo::SGameplayTagContainerCombo()
 {
 }
 
-SGameplayTagContainerCombo::~SGameplayTagContainerCombo()
-{
-	if (bRegisteredForUndo)
-	{
-		GEditor->UnregisterForUndo(this);
-	}
-}
-
 void SGameplayTagContainerCombo::Construct(const FArguments& InArgs)
 {
 	Filter = InArgs._Filter;
@@ -55,8 +47,6 @@ void SGameplayTagContainerCombo::Construct(const FArguments& InArgs)
 	{
 		PropertyHandle->SetOnPropertyValueChanged(FSimpleDelegate::CreateSP(this, &SGameplayTagContainerCombo::RefreshTagContainers));
 		RefreshTagContainers();
-		GEditor->RegisterForUndo(this);
-		bRegisteredForUndo = true;
 
 		if (Filter.IsEmpty())
 		{
@@ -114,6 +104,15 @@ void SGameplayTagContainerCombo::Construct(const FArguments& InArgs)
 					SNew(SBorder)
 					.Padding(FMargin(6,2))
 					.BorderImage(FGameplayTagStyle::GetBrush("GameplayTags.Container"))
+					.OnMouseButtonDown_Lambda([WeakSelf](const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
+					{
+						const TSharedPtr<SGameplayTagContainerCombo> Self = WeakSelf.Pin();
+						if (Self.IsValid() && MouseEvent.IsMouseButtonDown(EKeys::RightMouseButton) && Self->TagsToEdit.Num() <= 0)
+						{
+							return Self->OnEmptyMenu(MouseEvent);
+						}
+						return FReply::Unhandled();
+					})
 					[
 						SNew(SHorizontalBox)
 
@@ -293,6 +292,23 @@ FReply SGameplayTagContainerCombo::OnTagMenu(const FPointerEvent& MouseEvent, co
 
 	return FReply::Handled();
 
+}
+
+FReply SGameplayTagContainerCombo::OnEmptyMenu(const FPointerEvent& MouseEvent)
+{
+	FMenuBuilder MenuBuilder(/*bShouldCloseWindowAfterMenuSelection=*/ true, /*CommandList=*/ nullptr);
+	
+	MenuBuilder.AddMenuEntry(
+	NSLOCTEXT("PropertyView", "PasteProperty", "Paste"),
+		LOCTEXT("GameplayTagContainerCombo_PasteTagTooltip", "Paste tags from clipboard."),
+		FSlateIcon(FAppStyle::GetAppStyleSetName(), "GenericCommands.Paste"),
+		FUIAction(FExecuteAction::CreateSP(this, &SGameplayTagContainerCombo::OnPasteTag), FCanExecuteAction::CreateSP(this, &SGameplayTagContainerCombo::CanPaste)));
+
+	// Spawn context menu
+	const FWidgetPath WidgetPath = MouseEvent.GetEventPath() != nullptr ? *MouseEvent.GetEventPath() : FWidgetPath();
+	FSlateApplication::Get().PushMenu(AsShared(), WidgetPath, MenuBuilder.MakeWidget(), MouseEvent.GetScreenSpacePosition(), FPopupTransitionEffect(FPopupTransitionEffect::ContextMenu));
+	
+	return FReply::Handled();
 }
 
 void SGameplayTagContainerCombo::OnSearchForAnyReferences() const
@@ -511,17 +527,37 @@ FReply SGameplayTagContainerCombo::OnClearTagClicked(const FGameplayTag TagToCle
 	return FReply::Handled();
 }
 
-void SGameplayTagContainerCombo::PostUndo(bool bSuccess)
+void SGameplayTagContainerCombo::Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime)
 {
-	if (bSuccess)
+	if (!PropertyHandle.IsValid()
+		|| !PropertyHandle->IsValidHandle())
 	{
-		RefreshTagContainers();
+		return;
 	}
-}
 
-void SGameplayTagContainerCombo::PostRedo(bool bSuccess)
-{
-	if (bSuccess)
+	// Check if cached data has changed, and update it.
+	bool bShouldUpdate = false;
+		
+	TArray<const void*> RawStructData;
+	PropertyHandle->AccessRawData(RawStructData);
+
+	if (RawStructData.Num() == CachedTagContainers.Num())
+	{
+		for (int32 Idx = 0; Idx < RawStructData.Num(); ++Idx)
+		{
+			if (RawStructData[Idx])
+			{
+				const FGameplayTagContainer& TagContainer = *(FGameplayTagContainer*)RawStructData[Idx];
+				if (TagContainer != CachedTagContainers[Idx])
+				{
+					bShouldUpdate = true;
+					break;
+				}
+			}
+		}
+	}
+
+	if (bShouldUpdate)
 	{
 		RefreshTagContainers();
 	}
@@ -534,30 +570,33 @@ void SGameplayTagContainerCombo::RefreshTagContainers()
 
 	if (PropertyHandle.IsValid())
 	{
-		// From property
-		SGameplayTagPicker::EnumerateEditableTagContainersFromPropertyHandle(PropertyHandle.ToSharedRef(), [this](const FGameplayTagContainer& InTagContainer)
+		if (PropertyHandle->IsValidHandle())
 		{
-			CachedTagContainers.Add(InTagContainer);
-
-			for (auto It = InTagContainer.CreateConstIterator(); It; ++It)
+			// From property
+			SGameplayTagPicker::EnumerateEditableTagContainersFromPropertyHandle(PropertyHandle.ToSharedRef(), [this](const FGameplayTagContainer& InTagContainer)
 			{
-				const FGameplayTag Tag = *It;
-				const int32 ExistingItemIndex = TagsToEdit.IndexOfByPredicate([Tag](const TSharedPtr<FEditableItem>& Item)
+				CachedTagContainers.Add(InTagContainer);
+
+				for (auto It = InTagContainer.CreateConstIterator(); It; ++It)
 				{
-					return Item.IsValid() && Item->Tag == Tag;
-				});
-				if (ExistingItemIndex != INDEX_NONE)
-				{
-					TagsToEdit[ExistingItemIndex]->Count++;
+					const FGameplayTag Tag = *It;
+					const int32 ExistingItemIndex = TagsToEdit.IndexOfByPredicate([Tag](const TSharedPtr<FEditableItem>& Item)
+					{
+						return Item.IsValid() && Item->Tag == Tag;
+					});
+					if (ExistingItemIndex != INDEX_NONE)
+					{
+						TagsToEdit[ExistingItemIndex]->Count++;
+					}
+					else
+					{
+						TagsToEdit.Add(MakeShared<FEditableItem>(Tag));
+					}
 				}
-				else
-				{
-					TagsToEdit.Add(MakeShared<FEditableItem>(Tag));
-				}
-			}
-			
-			return true;
-		});
+				
+				return true;
+			});
+		}
 	}
 	else
 	{

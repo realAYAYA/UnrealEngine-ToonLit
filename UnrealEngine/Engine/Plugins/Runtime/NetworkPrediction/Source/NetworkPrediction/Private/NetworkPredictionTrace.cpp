@@ -324,7 +324,7 @@ void FNetworkPredictionTrace::TraceOOBStateMod(int32 TraceID, int32 Frame, const
 \
 	/* first, try using the stack buffer */ \
 	Buffer = StackBuffer; \
-	GET_VARARGS_RESULT( Buffer, UE_ARRAY_COUNT(StackBuffer), UE_ARRAY_COUNT(StackBuffer) - 1, Fmt, Fmt, Result ); \
+	GET_TYPED_VARARGS_RESULT( TCHAR, Buffer, UE_ARRAY_COUNT(StackBuffer), UE_ARRAY_COUNT(StackBuffer) - 1, Fmt, Fmt, Result ); \
 \
 	/* if that fails, then use heap allocation to make enough space */ \
 	while(Result == -1) \
@@ -336,7 +336,7 @@ void FNetworkPredictionTrace::TraceOOBStateMod(int32 TraceID, int32 Frame, const
 		{ \
 			return; \
 		} \
-		GET_VARARGS_RESULT( Buffer, BufferSize, BufferSize-1, Fmt, Fmt, Result ); \
+		GET_TYPED_VARARGS_RESULT( TCHAR, Buffer, BufferSize, BufferSize-1, Fmt, Fmt, Result ); \
 		BufferSize *= 2; \
 	}; \
 	Buffer[Result] = 0; \

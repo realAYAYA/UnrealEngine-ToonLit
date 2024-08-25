@@ -26,6 +26,17 @@ FText UAnimGraphNode_BlendSpaceEvaluator::GetNodeTitle(ENodeTitleType::Type Titl
 	return GetNodeTitleHelper(TitleType, BlendSpacePin, LOCTEXT("PlayerDesc", "Blendspace Evaluator"));
 }
 
+FText UAnimGraphNode_BlendSpaceEvaluator::GetTooltipText() const
+{
+	return LOCTEXT("BlendSpaceEvaluatorTooltip", 
+		"Evaluates a BlendSpace at a specific using a specific time input rather than advancing time "
+		"internally. Typically the playback position of the animation for this node will represent "
+		"something other than time, like jump height. Note that events output from the sequences playing "
+		"and being blended together should not be used. In addition, synchronisation of animations "
+		"will potentially be discontinuous if the blend weights are updated, as the leader/follower changes.");
+}
+
+
 void UAnimGraphNode_BlendSpaceEvaluator::GetMenuActions(FBlueprintActionDatabaseRegistrar& InActionRegistrar) const
 {
 	GetMenuActionsHelper(

@@ -837,20 +837,31 @@ public:
 	/** Multi-cast delegate serialization */
 	friend FArchive& operator<<( FArchive& Ar, TMulticastScriptDelegate& D )
 	{
-		FWriteAccessScope WriteScope = D.GetWriteAccessScope();
-
-		if( Ar.IsSaving() )
+		// Special case to avoid taking a lock on empty script delegate.
+		// This is required for avoiding asserts on EmptyDelegate serialization.
+		if (Ar.IsSaving() && D.InvocationList.Num() == 0)
 		{
-			// When saving the delegate, clean up the list to make sure there are no bad object references
-			D.CompactInvocationList();
+			FReadAccessScope ReadScope = D.GetReadAccessScope();
+
+			Ar << D.InvocationList;
 		}
-
-		Ar << D.InvocationList;
-
-		if( Ar.IsLoading() )
+		else
 		{
-			// After loading the delegate, clean up the list to make sure there are no bad object references
-			D.CompactInvocationList();
+			FWriteAccessScope WriteScope = D.GetWriteAccessScope();
+
+			if( Ar.IsSaving() )
+			{
+				// When saving the delegate, clean up the list to make sure there are no bad object references
+				D.CompactInvocationList();
+			}
+
+			Ar << D.InvocationList;
+
+			if( Ar.IsLoading() )
+			{
+				// After loading the delegate, clean up the list to make sure there are no bad object references
+				D.CompactInvocationList();
+			}
 		}
 
 		return Ar;
@@ -1033,7 +1044,7 @@ protected:
 
 		if (FoundDelegate != INDEX_NONE)
 		{
-			InvocationList.RemoveAtSwap(FoundDelegate, 1, false);
+			InvocationList.RemoveAtSwap(FoundDelegate, 1, EAllowShrinking::No);
 		}
 	}
 

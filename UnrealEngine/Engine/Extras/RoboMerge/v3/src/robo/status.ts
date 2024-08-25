@@ -2,7 +2,7 @@
 
 import { ContextualLogger } from '../common/logger';
 import { Branch } from './branch-interfaces';
-import { BranchDefForStatus, BranchStatus, GraphBotState, UserStatusData } from './status-types';
+import { BranchStatus, GraphBotState, UserStatusData } from './status-types';
 import { OperationReturnType } from './ipc';
 import { AuthData } from './session';
 
@@ -49,7 +49,7 @@ export class Status {
 		result.botStates = botStates
 		for (const status of this.allBranches) {
 			// @todo: check for list of tags
-			if (this.includeBranch(status.def, user.tags)) {
+			if (Status.includeBranch(status.def.visibility, user.tags, this.statusLogger)) {
 				branches.push(status)
 				includedBotNames.add(status.bot)
 			}
@@ -84,22 +84,24 @@ export class Status {
 		return result
 	}
 
-	private includeBranch(branch: BranchDefForStatus, userPrivileges: Set<string>) {
-		if (branch.visibility === 'all') {
+	static includeBranch(branchVisibility: string | string[], userPrivileges: Set<string>, logger?: ContextualLogger) {
+		if (branchVisibility === 'all') {
 			return true
 		}
 
-		if (branch.visibility === 'none') {
+		if (branchVisibility === 'none') {
 			return false
 		}
 
-		if (!Array.isArray(branch.visibility)) {
+		if (!Array.isArray(branchVisibility)) {
 			// for now, only keywords 'all' and 'none' supported
-			this.statusLogger.warn('Unknown visibility keyword: ' + branch.visibility)
+			if (logger) {
+				logger.warn('Unknown visibility keyword: ' + branchVisibility)
+			}
 			return false
 		}
 
-		for (const vis of branch.visibility) {
+		for (const vis of branchVisibility) {
 			if (userPrivileges.has(vis)) {
 				// @todo filter flow lists if individual branch bot filtered
 				return true

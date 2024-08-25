@@ -75,7 +75,7 @@ void FNewtonEvolution::ResetGroups()
 
 FNewtonEvolution::FNewtonEvolution(
 	FSolverParticles&& InParticles,
-	FSolverRigidParticles&& InGeometryParticles,
+	FSolverCollisionParticles&& InGeometryParticles,
 	TArray<TVec3<int32>>&& CollisionTriangles,
 	const TArray<TVector<int32, 4>>& InMesh,
 	TArray<TArray<TVector<int32, 2>>>&& InIncidentElements,
@@ -91,7 +91,7 @@ FNewtonEvolution::FNewtonEvolution(
 	FSolverReal EMesh,
 	FSolverReal NuMesh,
 	FSolverReal NewtonTol,
-	FSolverReal CGTol,
+	FSolverReal CGTolIn,
 	bool bWriteDebugInfoIn)
 	: MParticles(MoveTemp(InParticles))
 	, MParticlesActiveView(MParticles)
@@ -112,7 +112,7 @@ FNewtonEvolution::FNewtonEvolution(
 	, MTime(0)
 	, MSmoothDt(1.f / 30.f)  // Initialize filtered timestep at 30fps
 	, MNewtonTol(NewtonTol)
-	, MCGTol(CGTol)
+	, MCGTol(CGTolIn)
 	, MConstrainedVertices(ConstrainedVertices)
 	, MBCPositions(BCPositions)
 	, bWriteDebugInfo(bWriteDebugInfoIn)
@@ -320,7 +320,7 @@ void FNewtonEvolution::WriteOutputLog(const int32 Frame)
 		for (int32 i = 0; i < int32(InParticles.Size()); ++i) {
 			for (int32 alpha = 0; alpha < 3; alpha++) {
 				Residual[i][alpha] *= DtSquared;
-				Residual[i][alpha] -= NodalMass[i] * (InParticles.P(i)[alpha] - InParticles.X(i)[alpha] - Dt * Vn[i][alpha]);
+				Residual[i][alpha] -= NodalMass[i] * (InParticles.GetP(i)[alpha] - InParticles.GetX(i)[alpha] - Dt * Vn[i][alpha]);
 			}
 		}
 	}
@@ -668,7 +668,7 @@ void FNewtonEvolution::WriteOutputLog(const int32 Frame)
 						//MParticles.V(Index) *= DampingPowDt;
 
 						//new code:
-						MParticles.P(Index) = MParticles.X(Index) + MParticles.V(Index) * Dt;
+						MParticles.SetP(Index, MParticles.GetX(Index) + MParticles.GetV(Index) * Dt);
 
 						MParticles.V(Index) *= 1.f;
 
@@ -776,10 +776,10 @@ void FNewtonEvolution::WriteOutputLog(const int32 Frame)
 				//SCOPE_CYCLE_COUNTER(STAT_ChaosNewtonCollisionKinematicUpdate);
 
 				MCollisionParticlesActiveView.SequentialFor(
-					[this, Dt](FSolverRigidParticles& CollisionParticles, int32 Index)
+					[this, Dt](FSolverCollisionParticles& CollisionParticles, int32 Index)
 					{
 						// Store active collision particle frames prior to the kinematic update for CCD collisions
-						MCollisionTransforms[Index] = FSolverRigidTransform3(CollisionParticles.X(Index), CollisionParticles.R(Index));
+						MCollisionTransforms[Index] = FSolverRigidTransform3(CollisionParticles.GetX(Index), CollisionParticles.GetR(Index));
 
 						// Update collision transform and velocity
 						MCollisionKinematicUpdate(CollisionParticles, Dt, MTime, Index);
@@ -826,9 +826,9 @@ void FNewtonEvolution::WriteOutputLog(const int32 Frame)
 					MParticlesActiveView.ParallelFor(
 						[Dt, this](FSolverParticles& Particles, int32 Index)
 						{
-							Particles.V(Index) = (Particles.P(Index) - Particles.X(Index)) / Dt;
-							Particles.X(Index) = Particles.P(Index);
-							this->MVn[Index] = Particles.V(Index);
+							Particles.SetV(Index, (Particles.P(Index) - Particles.GetX(Index)) / Dt);
+							Particles.SetX(Index, Particles.P(Index));
+							this->MVn[Index] = Particles.GetV(Index);
 						}, MinParallelBatchSize);
 				}
 			}

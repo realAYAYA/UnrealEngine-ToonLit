@@ -11,7 +11,10 @@
 #include "RigVMCore/RigVMExecuteContext.h"
 #include "RigUnitContext.generated.h"
 
+class UControlRig;
 class UControlRigShapeLibrary;
+struct FRigModuleInstance;
+
 /**
  * The type of interaction happening on a rig
  */
@@ -23,6 +26,20 @@ enum class EControlRigInteractionType : uint8
 	Rotate = (1 << 1),
 	Scale = (1 << 2),
 	All = Translate | Rotate | Scale
+};
+
+UENUM(BlueprintType, meta = (RigVMTypeAllowed))
+enum class ERigMetaDataNameSpace : uint8
+{
+	// Use no namespace - store the metadata directly on the item
+	None,
+	// Store the metadata for item relative to its module
+	Self,
+	// Store the metadata relative to its parent model
+	Parent,
+	// Store the metadata under the root module
+	Root,
+	Last UMETA(Hidden)
 };
 
 USTRUCT()
@@ -67,6 +84,9 @@ struct FRigUnitContext
 	/** The elements being interacted with. */
 	TArray<FRigElementKey> ElementsBeingInteracted;
 
+	/** Acceptable subset of connection matches */
+	FModularRigResolveResult ConnectionResolve;
+
 	/**
 	 * Returns a given data source and cast it to the expected class.
 	 *
@@ -97,9 +117,13 @@ struct FControlRigExecuteContext : public FRigVMExecuteContext
 {
 	GENERATED_BODY()
 
+public:
+	
 	FControlRigExecuteContext()
 		: FRigVMExecuteContext()
 		, Hierarchy(nullptr)
+		, RigModuleNameSpace()
+		, RigModuleNameSpaceHash(0)
 	{
 	}
 
@@ -135,10 +159,61 @@ struct FControlRigExecuteContext : public FRigVMExecuteContext
 		return nullptr;
 	}
 
+	/**
+	 * Add the namespace from a given name
+	 */
+	FName AddRigModuleNameSpace(const FName& InName) const;
+	FString AddRigModuleNameSpace(const FString& InName) const;
+
+	/**
+	 * Remove the namespace from a given name
+	 */
+	FName RemoveRigModuleNameSpace(const FName& InName) const;
+	FString RemoveRigModuleNameSpace(const FString& InName) const;
+
+	/**
+	 * Returns true if this context is used on a module currently
+	 */
+	bool IsRigModule() const
+	{
+		return !GetRigModuleNameSpace().IsEmpty();
+	}
+
+	/**
+	 * Returns the namespace of the currently running rig module
+	 */
+	FString GetRigModuleNameSpace() const
+	{
+		return RigModuleNameSpace;
+	}
+
+	/**
+	 * Returns the namespace given a namespace type
+	 */
+	FString GetElementNameSpace(ERigMetaDataNameSpace InNameSpaceType) const;
+	
+	/**
+	 * Returns the module this unit is running inside of (or nullptr)
+	 */
+	const FRigModuleInstance* GetRigModuleInstance() const
+	{
+		return RigModuleInstance;
+	}
+	
+	/**
+	 * Returns the module this unit is running inside of (or nullptr)
+	 */
+	const FRigModuleInstance* GetRigModuleInstance(ERigMetaDataNameSpace InNameSpaceType) const;
+
+	/**
+	 * Adapts a metadata name according to rig module namespace.
+	 */
+	FName AdaptMetadataName(ERigMetaDataNameSpace InNameSpaceType, const FName& InMetadataName) const;
+
 	/** The list of available asset user data object */
 	TArray<const UAssetUserData*> AssetUserData;
 
-	DECLARE_DELEGATE_FiveParams(FOnAddShapeLibrary, const FControlRigExecuteContext* InContext, const FString&, UControlRigShapeLibrary*, bool /* replace? */, bool /* log results */);
+	DECLARE_DELEGATE_FourParams(FOnAddShapeLibrary, const FControlRigExecuteContext* InContext, const FString&, UControlRigShapeLibrary*, bool /* log results */);
 	FOnAddShapeLibrary OnAddShapeLibraryDelegate;
 
 	DECLARE_DELEGATE_RetVal_OneParam(bool, FOnShapeExists, const FName&);
@@ -146,14 +221,50 @@ struct FControlRigExecuteContext : public FRigVMExecuteContext
 	
 	FRigUnitContext UnitContext;
 	URigHierarchy* Hierarchy;
+
+#if WITH_EDITOR
+	virtual void Report(const FRigVMLogSettings& InLogSettings, const FName& InFunctionName, int32 InInstructionIndex, const FString& InMessage) const override
+	{
+		FString Prefix = GetRigModuleNameSpace();
+		if (!Prefix.IsEmpty())
+		{
+			const FString Name = FString::Printf(TEXT("%s %s"), *Prefix, *InFunctionName.ToString());
+			FRigVMExecuteContext::Report(InLogSettings, *Name, InInstructionIndex, InMessage);
+		}
+		else
+		{
+			FRigVMExecuteContext::Report(InLogSettings, InFunctionName, InInstructionIndex, InMessage);
+		}
+	}
+#endif
+
+private:
+	FString RigModuleNameSpace;
+	uint32 RigModuleNameSpaceHash;
+	const FRigModuleInstance* RigModuleInstance;
+
+	friend class FControlRigExecuteContextRigModuleGuard;
+	friend class UModularRig;
+};
+
+class CONTROLRIG_API FControlRigExecuteContextRigModuleGuard
+{
+public:
+	FControlRigExecuteContextRigModuleGuard(FControlRigExecuteContext& InContext, const UControlRig* InControlRig);
+	FControlRigExecuteContextRigModuleGuard(FControlRigExecuteContext& InContext, const FString& InNewModuleNameSpace);
+	~FControlRigExecuteContextRigModuleGuard();
+
+private:
+
+	FControlRigExecuteContext& Context;
+	FString PreviousRigModuleNameSpace;
+	uint32 PreviousRigModuleNameSpaceHash;
 };
 
 #if WITH_EDITOR
 #define UE_CONTROLRIG_RIGUNIT_REPORT(Severity, Format, ...) \
-if(ExecuteContext.GetLog() != nullptr) \
-{ \
-	ExecuteContext.GetLog()->Report(EMessageSeverity::Severity, ExecuteContext.GetFunctionName(), ExecuteContext.GetInstructionIndex(), FString::Printf((Format), ##__VA_ARGS__)); \
-}
+ExecuteContext.Report(EMessageSeverity::Severity, ExecuteContext.GetFunctionName(), ExecuteContext.GetInstructionIndex(), FString::Printf((Format), ##__VA_ARGS__)); 
+
 #define UE_CONTROLRIG_RIGUNIT_LOG_MESSAGE(Format, ...) UE_CONTROLRIG_RIGUNIT_REPORT(Info, (Format), ##__VA_ARGS__)
 #define UE_CONTROLRIG_RIGUNIT_REPORT_WARNING(Format, ...) UE_CONTROLRIG_RIGUNIT_REPORT(Warning, (Format), ##__VA_ARGS__)
 #define UE_CONTROLRIG_RIGUNIT_REPORT_ERROR(Format, ...) UE_CONTROLRIG_RIGUNIT_REPORT(Error, (Format), ##__VA_ARGS__)

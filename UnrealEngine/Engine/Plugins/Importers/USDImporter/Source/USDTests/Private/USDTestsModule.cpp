@@ -4,8 +4,6 @@
 
 #include "USDMemory.h"
 
-#include "Modules/ModuleManager.h"
-
 class FUsdTestsModule : public IUsdTestsModule
 {
 public:
@@ -19,4 +17,4 @@ public:
 	}
 };
 
-IMPLEMENT_MODULE_USD( FUsdTestsModule, USDTests );
+IMPLEMENT_MODULE_USD(FUsdTestsModule, USDTests);

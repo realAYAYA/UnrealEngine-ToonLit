@@ -10,6 +10,7 @@
 #include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Images/SImage.h"
 #include "GraphEditorSettings.h"
+#include "ScopedTransaction.h"
 
 #define LOCTEXT_NAMESPACE "BoolColumnEditor"
 
@@ -20,7 +21,11 @@ TSharedRef<SWidget> CreateBoolColumnWidget(UChooserTable* Chooser, FChooserColum
 {
 	FBoolColumn* BoolColumn = static_cast<FBoolColumn*>(Column);
 	
-	if (Row < 0)
+	if (Row == ColumnWidget_SpecialIndex_Fallback)
+	{
+		return SNullWidget::NullWidget;
+	}
+	if (Row == ColumnWidget_SpecialIndex_Header)
 	{
 		// create column header widget
 		TSharedPtr<SWidget> InputValueWidget = nullptr;
@@ -110,7 +115,7 @@ TSharedRef<SWidget> CreateOutputBoolColumnWidget(UChooserTable* Chooser, FChoose
 {
 	FOutputBoolColumn* BoolColumn = static_cast<FOutputBoolColumn*>(Column);
 
-	if (Row < 0)
+	if (Row == ColumnWidget_SpecialIndex_Header)
 	{
 		// create column header widget
 		TSharedPtr<SWidget> InputValueWidget = nullptr;
@@ -158,6 +163,19 @@ TSharedRef<SWidget> CreateOutputBoolColumnWidget(UChooserTable* Chooser, FChoose
 
 		return ColumnHeaderWidget;
 	}
+	else if (Row == ColumnWidget_SpecialIndex_Fallback) 
+	{
+		// create fallback value widget
+		return SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot().FillWidth(1)
+		+ SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+		[
+			SNew(SCheckBox)
+			.IsChecked_Lambda([BoolColumn]() { return BoolColumn->bFallbackValue ? ECheckBoxState::Checked : ECheckBoxState::Unchecked; })
+			.OnCheckStateChanged_Lambda([BoolColumn](ECheckBoxState State) { BoolColumn->bFallbackValue = State == ECheckBoxState::Checked; })
+		]
+		+ SHorizontalBox::Slot().FillWidth(1);
+	}
 
 	return
 	SNew(SHorizontalBox)
@@ -191,14 +209,7 @@ TSharedRef<SWidget> CreateBoolPropertyWidget(bool bReadOnly, UObject* Transactio
 
 	return SNew(SPropertyAccessChainWidget).ContextClassOwner(HasContextClass).AllowFunctions(true).BindingColor("BooleanPinTypeColor").TypeFilter("bool")
 	.PropertyBindingValue(&ContextProperty->Binding)
-	.OnAddBinding_Lambda(
-		[ContextProperty, TransactionObject, ValueChanged](FName InPropertyName, const TArray<FBindingChainElement>& InBindingChain)
-		{
-			const FScopedTransaction Transaction(NSLOCTEXT("ContextPropertyWidget", "Change Property Binding", "Change Property Binding"));
-			TransactionObject->Modify(true);
-			ContextProperty->SetBinding(InBindingChain);
-			ValueChanged.ExecuteIfBound();
-		});
+	.OnValueChanged(ValueChanged);
 }
 	
 void RegisterBoolWidgets()

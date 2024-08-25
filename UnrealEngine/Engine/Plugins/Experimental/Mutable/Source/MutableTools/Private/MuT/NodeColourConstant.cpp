@@ -15,8 +15,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeColourConstant::Private::s_type =
-			NODE_TYPE( "ColourConstant", NodeColour::GetStaticType() );
+	FNodeType NodeColourConstant::Private::s_type =
+			FNodeType( "ColourConstant", NodeColour::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -28,36 +28,12 @@ namespace mu
 	NodeColourConstantPtr NodeColourConstant::OldStaticUnserialise(InputArchive& arch)
 	{
 		NodeColourConstantPtr pResult = new NodeColourConstant();
-		vec3<float> Value;
+		FVector3f Value;
 
 		arch >> Value;
 		pResult->GetPrivate()->m_value = FVector4f(Value[0], Value[1], Value[2], 1.0f);
 
 		return pResult;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	int NodeColourConstant::GetInputCount() const
-	{
-		return 0;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    Node* NodeColourConstant::GetInputNode( int ) const
-	{
-		check( false );
-		return 0;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    void NodeColourConstant::SetInputNode( int, NodePtr )
-	{
-		check( false );
 	}
 
 

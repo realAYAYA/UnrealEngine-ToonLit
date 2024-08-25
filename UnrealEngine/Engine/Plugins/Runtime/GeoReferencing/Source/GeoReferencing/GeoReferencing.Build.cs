@@ -35,7 +35,7 @@ public class GeoReferencing : ModuleRules
 			}
 		);
 
-		string ProjRedistFolder = Path.Combine(PluginDirectory, @"Resources\PROJ\*");
+		string ProjRedistFolder = Path.Combine(PluginDirectory, @"Resources/PROJ/*");
 		RuntimeDependencies.Add(ProjRedistFolder, StagedFileType.UFS);
 	}
 }

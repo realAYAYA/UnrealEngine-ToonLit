@@ -903,7 +903,7 @@ public:
 
 /**
 *
-* Linearly interpolates between A and B based on Alpha. (100% of A when Alpha = 0 and 100% of B when Alpha = 100)
+* Linearly interpolates between A and B based on Alpha. (100% of A when Alpha = 0.0 and 100% of B when Alpha = 1.0)
 *
 */
 USTRUCT(meta = (DataflowGeometryCollection))
@@ -1717,61 +1717,33 @@ public:
 
 };
 
+/**
+*
+* Returns 1.0 - A
+*
+*/
+USTRUCT(meta = (DataflowGeometryCollection))
+struct FOneMinusDataflowNode : public FDataflowNode
+{
+	GENERATED_USTRUCT_BODY()
+	DATAFLOW_NODE_DEFINE_INTERNAL(FOneMinusDataflowNode, "OneMinus", "Math|Float", "")
 
+public:
+	UPROPERTY(EditAnywhere, Category = "OneMinus", meta = (DataflowInput));
+	float A = 0.f;
 
+	UPROPERTY(meta = (DataflowOutput))
+	float ReturnValue = 0.f;
 
+	FOneMinusDataflowNode(const Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid())
+		: FDataflowNode(InParam, InGuid)
+	{
+		RegisterInputConnection(&A);
+		RegisterOutputConnection(&ReturnValue);
+	}
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+	virtual void Evaluate(Dataflow::FContext& Context, const FDataflowOutput* Out) const override;
+};
 
 
 namespace Dataflow

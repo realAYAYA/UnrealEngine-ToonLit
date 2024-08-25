@@ -22,35 +22,37 @@ namespace UnrealBuildTool
 		{
 		}
 
-		/// <summary>
-		/// Enumerate all the platforms that this generator supports
-		/// </summary>
+		/// <inheritdoc/>
 		public override IEnumerable<UnrealTargetPlatform> GetPlatforms()
 		{
 			yield return UnrealTargetPlatform.Win64;
 		}
 
-		///
-		///	VisualStudio project generation functions
-		///	
-		/// <summary>
-		/// Return the VisualStudio platform name for this build platform
-		/// </summary>
-		/// <param name="InPlatform">  The UnrealTargetPlatform being built</param>
-		/// <param name="InConfiguration"> The UnrealTargetConfiguration being built</param>
-		/// <returns>string    The name of the platform that VisualStudio recognizes</returns>
-		public override string GetVisualStudioPlatformName(UnrealTargetPlatform InPlatform, UnrealTargetConfiguration InConfiguration)
+		/// <inheritdoc/>
+		public override string GetVisualStudioPlatformName(VSSettings InVSSettings)
 		{
-			if (InPlatform == UnrealTargetPlatform.Win64)
+			if (InVSSettings.Platform == UnrealTargetPlatform.Win64)
 			{
+				if (InVSSettings.Architecture == UnrealArch.Arm64)
+				{
+					return "arm64";
+				}
+				else if (InVSSettings.Architecture == UnrealArch.Arm64ec)
+				{
+					return "arm64ec";
+				}
 				return "x64";
 			}
-			return InPlatform.ToString();
+			return InVSSettings.Platform.ToString();
 		}
 
-		public override string GetVisualStudioUserFileStrings(UnrealTargetPlatform InPlatform, UnrealTargetConfiguration InConfiguration, string InConditionString, TargetRules InTargetRules, FileReference TargetRulesPath, FileReference ProjectFilePath, string ProjectName, string? ForeignUProjectPath)
+		/// <inheritdoc/>
+		public override string GetVisualStudioUserFileStrings(VisualStudioUserFileSettings VCUserFileSettings, VSSettings InVSSettings, string InConditionString, TargetRules InTargetRules, FileReference TargetRulesPath, FileReference ProjectFilePath, FileReference? NMakeOutputPath, string ProjectName, string? ForeignUProjectPath)
 		{
 			StringBuilder VCUserFileContent = new StringBuilder();
+
+			string LocalOrRemoteString = InVSSettings.Architecture == null || InVSSettings.Architecture.Value == UnrealArch.Host.Value
+				? "Local" : "Remote";
 
 			VCUserFileContent.AppendLine("  <PropertyGroup {0}>", InConditionString);
 			if (InTargetRules.Type != TargetType.Game)
@@ -67,17 +69,31 @@ namespace UnrealBuildTool
 					DebugOptions += ProjectName;
 				}
 
-				VCUserFileContent.AppendLine("    <LocalDebuggerCommandArguments>{0}</LocalDebuggerCommandArguments>", DebugOptions);
+				VCUserFileContent.AppendLine($"    <{LocalOrRemoteString}DebuggerCommandArguments>{DebugOptions}</{LocalOrRemoteString}DebuggerCommandArguments>");
 			}
-			VCUserFileContent.AppendLine("    <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>");
+
+			VCUserFileContent.AppendLine($"    <DebuggerFlavor>Windows{LocalOrRemoteString}Debugger</DebuggerFlavor>");
 			VCUserFileContent.AppendLine("  </PropertyGroup>");
 
 			return VCUserFileContent.ToString();
 		}
 
+		/// <inheritdoc/>
 		public override bool RequiresVSUserFileGeneration()
 		{
 			return true;
+		}
+
+		/// <inheritdoc/>
+		public override IList<string> GetSystemIncludePaths(UEBuildTarget InTarget)
+		{
+			List<string> Result = new List<string>();
+			foreach (DirectoryReference Path in InTarget.Rules.WindowsPlatform.Environment!.IncludePaths)
+			{
+				Result.Add(Path.FullName);
+			}
+
+			return Result;
 		}
 	}
 }

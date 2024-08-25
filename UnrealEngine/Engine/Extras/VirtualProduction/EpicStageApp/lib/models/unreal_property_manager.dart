@@ -2,14 +2,14 @@
 
 import 'dart:async';
 
-import 'package:flutter/cupertino.dart';
+import 'package:flutter/material.dart';
 import 'package:logging/logging.dart';
 import 'package:provider/provider.dart';
 
+import '../utilities/unreal_utilities.dart';
 import './engine_connection.dart';
 import './property_modify_operations.dart';
 import './unreal_types.dart';
-import '../utilities/unreal_utilities.dart';
 import 'unreal_transaction_manager.dart';
 
 final _log = Logger('UnrealPropertyManager');
@@ -487,24 +487,21 @@ class UnrealPropertyManager {
 
     property.bIsPendingUnexpose = false;
 
-    if (response.code != HttpResponseCode.ok) {
-      if (property.exposeCompleter != null) {
+    if (property.exposeCompleter != null) {
+      if (response.code == HttpResponseCode.ok) {
+        // We started tracking this property again after requesting unexpose, so we need to send a new expose request
+        // instead of removing it
+        _exposeProperty(propertyId);
+      } else {
         // Treat the property as re-exposed since we failed to remove it anyway
         property.exposeCompleter!.complete();
         property.exposeCompleter = null;
-        return;
       }
-
-      /// TODO: Handle this case better. We should try again to remove it, but maybe with exponential backoff
       return;
     }
 
-    if (property.exposeCompleter != null) {
-      // We started tracking this property again after requesting unexpose, so we need to send a new expose request
-      // instead of removing it
-      _exposeProperty(propertyId);
-      return;
-    }
+    // If we aren't intending to re-expose this property right away and got an error, the property was likely unexposed
+    // without our knowledge, so we can just forget about it
 
     _propertyIdsByLabel.remove(property.label);
     _trackedProperties.remove(propertyId);
@@ -512,6 +509,10 @@ class UnrealPropertyManager {
 
   /// Called each tick, when we're ready to send updates back to the engine.
   void _onTick(Timer timer) {
+    if (_connectionManager.bIsInDemoMode) {
+      return;
+    }
+
     final List<dynamic> messages = _finalizeTickChanges();
 
     if (_transientPresetName == null) {
@@ -653,7 +654,10 @@ class UnrealPropertyManager {
           final beginMessage = _transactionManager.createBeginTransactionMessage(
             transaction.description,
             // If the transaction ends prematurely, flag it to be re-created
-            prematureEndCallback: () => transaction.bWasCreatedInEngine = false,
+            prematureEndCallback: () {
+              _activeTransactionId = UnrealTransactionManager.invalidId;
+              transaction.bWasCreatedInEngine = false;
+            },
           );
           assert(beginMessage != null);
           messages.add(beginMessage);

@@ -74,6 +74,24 @@ class MessageBox01
 	protected void createAlert()
 	{
 		dismissAlert();
+
+		if (GameApplication.getAppContext() == null)
+		{
+			GameActivity.Log.error("GameApplication.getAppContext() is NULL and cannot create Alert for Caption=" + Caption + ", text=" + Text);
+			return;
+		}
+		if (!GameActivity.isValidGameActivity() || GameActivity.Get().getApplicationContext() == null || GameActivity.getCurrentActivityContext() == null)
+		{
+			GameActivity.Log.error("GameActivity Application Context is not VALID yet! Cannot create Alert for Caption=" + Caption + ", text=" + Text);
+			return;
+		}
+		
+		if (GameActivity.isStandaloneMode())
+		{
+			GameActivity.Log.warn("AlertBox messages are not allowed in Standalone Mode (ASIS)! Caption=" + Caption + ", text=" + Text);
+			return;
+		}
+		
 		ButtonIdToIndex.clear();
 		Builder = new AlertDialog.Builder(GameActivity.Get());
 		Builder.setTitle(Caption);

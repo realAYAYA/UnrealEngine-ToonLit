@@ -596,9 +596,10 @@ void UNiagaraDataInterfaceAudioSpectrum::GetNumChannels(FVectorVMExternalFunctio
 	}
 }
 
-void UNiagaraDataInterfaceAudioSpectrum::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceAudioSpectrum::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
-	Super::GetFunctions(OutFunctions);
+	Super::GetFunctionsInternal(OutFunctions);
 
 	{
 		FNiagaraFunctionSignature GetSpectrumSignature;
@@ -623,9 +624,8 @@ void UNiagaraDataInterfaceAudioSpectrum::GetFunctions(TArray<FNiagaraFunctionSig
 		NumChannelsSignature.bRequiresContext = false;
 		OutFunctions.Add(NumChannelsSignature);
 	}
-
-
 }
+#endif
 
 DEFINE_NDI_DIRECT_FUNC_BINDER(UNiagaraDataInterfaceAudioSpectrum, GetSpectrumValue);
 DEFINE_NDI_DIRECT_FUNC_BINDER(UNiagaraDataInterfaceAudioSpectrum, GetNumChannels);

@@ -6,7 +6,7 @@ set -e
 
 cd "`dirname "$0"`/../../../.." 
 
-# Setup Environment and Mono
+# Setup Environment and dotnet
 source Engine/Build/BatchFiles/Linux/SetupEnvironment.sh -dotnet Engine/Build/BatchFiles/Linux
 
 # Skip UBT and SCW compile step if this is an installed build.

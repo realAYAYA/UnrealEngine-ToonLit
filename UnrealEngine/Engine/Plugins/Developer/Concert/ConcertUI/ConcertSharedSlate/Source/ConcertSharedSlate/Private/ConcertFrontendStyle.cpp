@@ -147,6 +147,11 @@ void FConcertFrontendStyle::Initialize()
 
 	// Colors
 	StyleSet->Set("Concert.DisconnectedColor", FLinearColor(0.672f, 0.672f, 0.672f));
+
+	// Floats
+	StyleSet->Set("Concert.Replication.Tree.RowHeight", 22.f);
+	StyleSet->Set("Concert.Replication.Tree.Object.LabelRowWidth", 255.f);
+	StyleSet->Set("Concert.Replication.Tree.Property.LabelRowWidth", 300.f);
 	
 	FSlateStyleRegistry::RegisterSlateStyle(*StyleSet.Get());
 };

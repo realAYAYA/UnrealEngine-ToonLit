@@ -70,7 +70,7 @@ public:
 
 	bool AreElementsPresentInMesh(const FDynamicMesh3& Mesh) const;
 
-	FAxisAlignedBox3d ToBoundingBox(const FDynamicMesh3& Mesh) const;
+	FAxisAlignedBox3d ToBoundingBox(const FDynamicMesh3& Mesh, const FTransform Transform = FTransform3d::Identity) const;
 
 	/**
 	 * Utility method to construct a new selection from an existing reference selection, only with a new geometry type.

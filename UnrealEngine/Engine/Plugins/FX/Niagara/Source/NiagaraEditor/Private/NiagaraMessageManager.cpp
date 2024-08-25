@@ -68,7 +68,7 @@ void FNiagaraMessageManager::ClearAssetMessagesForTopic(const FGuid& AssetKey, c
 			if (TopicBitflag & AssetMessageInfo->Messages[i]->GetMessageTopicBitflag())
 			{
 				AssetMessageInfo->DirtyTopicBitfield |= AssetMessageInfo->Messages[i]->GetMessageTopicBitflag();
-				AssetMessageInfo->Messages.RemoveAt(i, 1, false);
+				AssetMessageInfo->Messages.RemoveAt(i, 1, EAllowShrinking::No);
 				AssetMessageInfo->bDirty = true;
 				bNeedFlushMessages = true;
 			}
@@ -87,7 +87,7 @@ void FNiagaraMessageManager::ClearAssetMessagesForObject(const FGuid& AssetKey, 
 			if (MessageObjectKeys.Contains(ObjectKeys))
 			{
 				AssetMessageInfo->DirtyTopicBitfield |= AssetMessageInfo->Messages[i]->GetMessageTopicBitflag();
-				AssetMessageInfo->Messages.RemoveAt(i, 1, false);
+				AssetMessageInfo->Messages.RemoveAt(i, 1, EAllowShrinking::No);
 				AssetMessageInfo->bDirty = true;
 				bNeedFlushMessages = true;
 			}
@@ -139,7 +139,6 @@ const TOptional<const FString> FNiagaraMessageManager::GetStringForScriptUsageIn
 		ensureMsgf(false, TEXT("Tried to get script usage text for usage that is not handled!"));
 		return TOptional<const FString>();
 	}
-	return TOptional<const FString>();
 }
 
 void FNiagaraMessageManager::RegisterMessageTopic(FName TopicName)
@@ -189,7 +188,7 @@ void FNiagaraMessageManager::DoMessageJobsTick()
 
 		while(MessageJobs.Num() > 0)
 		{ 
-			FMessageJobAndAssetKey CurrentMessageJobAndAssetKey = MessageJobs.Pop(false);
+			FMessageJobAndAssetKey CurrentMessageJobAndAssetKey = MessageJobs.Pop(EAllowShrinking::No);
 			TSharedRef<const INiagaraMessage> GeneratedMessage = CurrentMessageJobAndAssetKey.MessageJob->GenerateNiagaraMessage();
 			AddMessage(GeneratedMessage, CurrentMessageJobAndAssetKey.AssetKey);
 			CurrentWorkLoopTime = FPlatformTime::Seconds();

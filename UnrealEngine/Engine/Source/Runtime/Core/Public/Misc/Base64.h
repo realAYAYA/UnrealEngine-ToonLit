@@ -57,7 +57,7 @@ struct FBase64
 	 *
 	 * @param Source The binary data to encode
 	 * @param Length Length of the binary data to be encoded
-	 * @param Dest Buffer to receive the encoded data. Must be large enough to contain the entire output data (see GetEncodedDataSize()).
+	 * @param Dest Buffer to receive the encoded data. Must be large enough to contain the entire output data (see GetEncodedDataSize()). Can point to the same buffer as Source
 	 * @param Mode The mode to use for encoding. Default is EBase64Mode::Standard
 	 *
 	 * @return The length of the encoded data
@@ -103,7 +103,7 @@ struct FBase64
 	 *
 	 * @param Source The Base64 encoded string
 	 * @param Length Length of the Base64 encoded string
-	 * @param Dest Buffer to receive the decoded data
+	 * @param Dest Buffer to receive the decoded data.  Must be large enough to contain the entire output data (see GetDecodedDataSize()). Can point to the same buffer as Source
 	 * @param Mode The mode to use for decoding. Default is EBase64Mode::Standard
 	 *
 	 * @return true if the buffer was decoded, false if it was invalid.

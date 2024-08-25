@@ -20,14 +20,7 @@ class IShaderFormat
 {
 public:
 
-	/** 
-	 * Compile the specified shader. Only called if SupportsIndependentPreprocessing returns false.
-	 *
-	 * @param Format The desired format
-	 * @param Input The input to the shader compiler.
-	 * @param Output The output from shader compiler.
-	 * @param WorkingDirectory The working directory.
-	 */
+	UE_DEPRECATED(5.4, "Monolithic CompileShader is deprecated. Please implement separate compilation and preprocess via PreprocessShader/CompilePreprocessedShader")
 	virtual void CompileShader(FName Format, const FShaderCompilerInput& Input, FShaderCompilerOutput& Output, const FString& WorkingDirectory) const {};
 
 	/**
@@ -134,12 +127,12 @@ public:
 	virtual bool UsesHLSLcc(const FShaderCompilerInput& Input) const { return false; }
 
 	/**
-	 * Executes all shader preprocessing steps; only called if SupportsIndependentPreprocessing returns true
+	 * Execute all shader preprocessing steps, storing the output in the PreprocessOutput struct
 	 */
 	virtual bool PreprocessShader(const FShaderCompilerInput& Input, const FShaderCompilerEnvironment& Environment, FShaderPreprocessOutput& PreprocessOutput) const { return false; };
 
 	/**
-	 * Compile the specified preprocessed shader; only called if SupportsIndependentPreprocessing returns true
+	 * Compile the specified preprocessed shader.
 	 */
 	virtual void CompilePreprocessedShader(
 		const FShaderCompilerInput& Input, 
@@ -148,9 +141,8 @@ public:
 		const FString& WorkingDirectory) const {}
 
 	/**
-	 * Compile the specified preprocessed shaders; only called if SupportsIndependentPreprocessing returns true, and the call to
-	 * RequiresSecondaryCompile given the first preprocess output also returns true. The shader system will pack these outputs together
-	 * in the following format: 
+	 * Compile the specified preprocessed shaders; only called if the call to RequiresSecondaryCompile given the first preprocess 
+	 * output returns true. The shader system will pack these outputs together in the following format: 
 	 * [int32 key][uint32 primary length][uint32 secondary length][full primary shader code][full secondary shader code]
 	 * where "key" is the return value of the GetPackedShaderKey function (this should also be implemented by any backends which
 	 * require secondary compilation and is used by the RHI to differentiate packed shader code from single shaders)
@@ -165,7 +157,6 @@ public:
 
 	/**
 	 * Predicate which should return true if a second preprocess & compilation is required given the initial preprocess output.
-	 * Only called if SupportsIndependentPreprocessing returns true.
 	 * This is generally be determined by analyzing the directives on the given preprocess output (which are set by the presence
 	 * of UESHADERMETADATA directives in the original source), though other conditions are possible and up to the implementation.
 	 *  In the event this returns true, PreprocessShader will be called an additional time, with the bIsSecondary field on the 
@@ -187,7 +178,7 @@ public:
 	virtual int32 GetPackedShaderKey() const { return 0; }
 
 	/* 
-	 * Implement to output debug info for a single compile job; only called if SupportsIndependentPreprocessing returns true.
+	 * Implement to output debug info for a single compile job.
 	 * This will be called for all jobs (including those found in the job cache) but only if debug info is enabled for the job.
 	 * Note that any debug info output in CompilePreprocessedShader will only be done for the job that actually executes the
 	 * compile step, as such any debug outputs that are desirable for all jobs should be written by this function.
@@ -213,10 +204,7 @@ public:
 		const FShaderCompilerOutput& Output,
 		const FShaderCompilerOutput& SecondaryOutput) const {};
 
-	/**
-	 * Return true if preprocessing for this format can be executed independent of compilation (i.e. the format has an
-	 * implementation of the PreprocessShader function). 
-	 */
+	UE_DEPRECATED(5.4, "SupportsIndependentPreprocessing is no longer called now that all shader backends have been migrated.")
 	virtual bool SupportsIndependentPreprocessing() const { return false; }
 
 public:

@@ -298,7 +298,7 @@ void UGameplayTasksComponent::TickComponent(float DeltaTime, enum ELevelTick Tic
 	// Stop ticking if no more active tasks
 	if (NumActuallyTicked == 0)
 	{
-		TickingTasks.SetNum(0, false);
+		TickingTasks.SetNum(0, EAllowShrinking::No);
 		UpdateShouldTick();
 	}
 }
@@ -524,7 +524,7 @@ void UGameplayTasksComponent::RemoveTaskFromPriorityQueue(UGameplayTask& Task)
 	const int32 RemovedTaskIndex = TaskPriorityQueue.Find(&Task);
 	if (RemovedTaskIndex != INDEX_NONE)
 	{
-		TaskPriorityQueue.RemoveAt(RemovedTaskIndex, 1, /*bAllowShrinking=*/false);
+		TaskPriorityQueue.RemoveAt(RemovedTaskIndex, 1, EAllowShrinking::No);
 	}
 	else
 	{
@@ -722,7 +722,7 @@ void UGameplayTasksComponent::DescribeSelfToVisLog(FVisualLogEntry* Snapshot) co
 		}
 	}
 
-	for (TObjectPtr<UGameplayTask> Task : SimulatedTasks)
+	for (const TObjectPtr<UGameplayTask>& Task : SimulatedTasks)
 	{
 		if (Task && !KnownTasks.Contains(Task))
 		{

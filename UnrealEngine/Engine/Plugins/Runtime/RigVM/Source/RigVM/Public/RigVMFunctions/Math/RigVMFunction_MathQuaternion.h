@@ -264,6 +264,36 @@ struct RIGVM_API FRigVMFunction_MathQuaternionToAxisAndAngle : public FRigVMFunc
 };
 
 /**
+ * Retrieves the forward, right and up vectors of a quaternion
+ */
+USTRUCT(meta=(DisplayName="To Vectors", TemplateName="ToVectors", Keywords="Forward,Right,Up"))
+struct RIGVM_API FRigVMFunction_MathQuaternionToVectors : public FRigVMFunction_MathQuaternionBase
+{
+	GENERATED_BODY()
+
+	FRigVMFunction_MathQuaternionToVectors()
+	{
+		Value = FQuat::Identity;
+		Forward = Right = Up = FVector(0.f, 0.f, 0.f);
+	}
+
+	RIGVM_METHOD()
+	virtual void Execute() override;
+
+	UPROPERTY(meta=(Input))
+	FQuat Value;
+
+	UPROPERTY(meta=(Output))
+	FVector Forward;
+
+	UPROPERTY(meta=(Output))
+	FVector Right;
+
+	UPROPERTY(meta=(Output))
+	FVector Up;
+};
+
+/**
  * Scales a quaternion's angle
  */
 USTRUCT(meta=(DisplayName="Scale", Keywords="Multiply,Angle,Scale", Constant, Deprecated = "5.0.1"))

@@ -14,7 +14,7 @@
 #include "Components/SpotLightComponent.h"
 #include "Components/StereoLayerComponent.h"
 #include "Components/WorldPartitionStreamingSourceComponent.h"
-#include "Components/LocalHeightFogComponent.h"
+#include "Components/LocalFogVolumeComponent.h"
 #include "ConstraintComponentVisualizer.h"
 #include "DecalComponentVisualizer.h"
 #include "Editor/UnrealEdEngine.h"
@@ -41,7 +41,7 @@
 #include "UObject/Class.h"
 #include "UnrealEdGlobals.h"
 #include "WorldPartitionStreamingSourceComponentVisualizer.h"
-#include "LocalHeightFogComponentVisualizer.h"
+#include "LocalFogVolumeComponentVisualizer.h"
 
 IMPLEMENT_MODULE( FComponentVisualizersModule, ComponentVisualizers );
 
@@ -63,7 +63,7 @@ void FComponentVisualizersModule::StartupModule()
 	RegisterComponentVisualizer(UDecalComponent::StaticClass()->GetFName(), MakeShareable(new FDecalComponentVisualizer));
 	RegisterComponentVisualizer(UStereoLayerComponent::StaticClass()->GetFName(), MakeShareable(new FStereoLayerComponentVisualizer));
 	RegisterComponentVisualizer(UWorldPartitionStreamingSourceComponent::StaticClass()->GetFName(), MakeShareable(new FWorldPartitionStreamingSourceComponentVisualizer));
-	RegisterComponentVisualizer(ULocalHeightFogComponent::StaticClass()->GetFName(), MakeShareable(new FLocalHeightFogComponentVisualizer));
+	RegisterComponentVisualizer(ULocalFogVolumeComponent::StaticClass()->GetFName(), MakeShareable(new FLocalFogVolumeComponentVisualizer));
 }
 
 void FComponentVisualizersModule::ShutdownModule()

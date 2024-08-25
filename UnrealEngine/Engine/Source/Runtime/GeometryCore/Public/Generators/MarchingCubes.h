@@ -726,7 +726,7 @@ protected:
 
 				while (LocalStack.Num() > 0 && CellsProcessed++ < MaxNeighboursPerActiveCell)
 				{
-					FVector3i CellIndex = LocalStack.Pop(false);
+					FVector3i CellIndex = LocalStack.Pop(EAllowShrinking::No);
 
 					initialize_cell(TempCell, CellIndex);
 					if (polygonize_cell(TempCell, TempArray))

@@ -14,6 +14,7 @@
 #include "DataDrivenShaderPlatformInfo.h"
 #include "SceneTexturesConfig.h"
 #include "SimpleMeshDrawCommandPass.h"
+#include "SceneRendererInterface.h"
 
 DEFINE_LOG_CATEGORY(LogRenderTrace);
 
@@ -190,12 +191,11 @@ public:
 		const FPrimitiveSceneProxy* PrimitiveSceneProxy,
 		const FMaterialRenderProxy& MaterialRenderProxy,
 		const FMaterial& Material,
-		const FMeshPassProcessorRenderState& DrawRenderState,
 		const FPhysicalMaterialSamplerShaderElementData& ShaderElementData,
 		FMeshDrawSingleShaderBindings& ShaderBindings) const
 	{
 		check(ShaderElementData.MaterialMapIndex != -1);
-		FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, DrawRenderState, ShaderElementData, ShaderBindings);
+		FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, ShaderElementData, ShaderBindings);
 
 		ShaderBindings.Add(SerialNumberParameter, ShaderElementData.MaterialMapIndex);
 	}
@@ -352,6 +352,7 @@ namespace
 	
 	BEGIN_SHADER_PARAMETER_STRUCT(FPhysicalMaterialSamplerPassParameters, )
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneUniformParameters, Scene)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FInstanceCullingDrawParams, InstanceCullingDrawParams)
 		RENDER_TARGET_BINDING_SLOTS()
 	END_SHADER_PARAMETER_STRUCT()
@@ -403,6 +404,7 @@ namespace
 
 			auto* PassParameters = GraphBuilder.AllocParameters<FPhysicalMaterialSamplerPassParameters>();
 			PassParameters->View = View->ViewUniformBuffer;
+			PassParameters->Scene = GetSceneUniformBufferRef(GraphBuilder, *View);
 			PassParameters->RenderTargets[0] = FRenderTargetBinding(OutputTexture, ERenderTargetLoadAction::EClear);
 			PassParameters->RenderTargets.DepthStencil = FDepthStencilBinding(DepthTexture, ERenderTargetLoadAction::EClear, ERenderTargetLoadAction::ENoAction, FExclusiveDepthStencil::DepthWrite_StencilNop);
 
@@ -643,6 +645,8 @@ void FRenderTraceQueue::Tick(float DeltaTime)
 
 	if (RequestsToUpdate.Num() > 0)
 	{
+		UE::RenderCommandPipe::FSyncScope SyncScope;
+
 		ENQUEUE_RENDER_COMMAND(FRenderTraceUpdaterTick)(
 			[InRequestsToUpdate=MoveTemp(RequestsToUpdate)](FRHICommandListImmediate& RHICmdList)
 			{

@@ -21,7 +21,7 @@ struct FRasterForwardCullingOutput
 	FRDGTextureRef		NodeIndex = nullptr;
 	FRDGBufferRef		NodeCoord = nullptr;
 	FRDGBufferRef		NodeVis = nullptr;
-	FRDGTextureRef		PointCount = nullptr;
+	FRDGBufferRef		PointCount = nullptr;
 	FRDGBufferRef		Points = nullptr;
 	FRDGBufferSRVRef	PointsSRV = nullptr;
 };

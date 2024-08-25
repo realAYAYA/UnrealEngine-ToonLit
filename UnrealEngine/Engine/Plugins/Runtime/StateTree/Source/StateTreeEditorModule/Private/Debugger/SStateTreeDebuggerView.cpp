@@ -19,6 +19,7 @@
 #include "StateTreeCompiler.h"
 #include "StateTreeDebuggerCommands.h"
 #include "StateTreeDebuggerTrack.h"
+#include "StateTreeDelegates.h"
 #include "StateTreeEditorData.h"
 #include "StateTreeEditorSettings.h"
 #include "StateTreeEditorStyle.h"
@@ -161,7 +162,7 @@ void GenerateElementForProperties(const TCHAR* TypeAsText, const TCHAR* ValueAsT
 		{
 			const FProperty* const Property = PropertyIt.Key();
 			check(Property);
-			const EStateTreePropertyUsage Usage = UE::StateTree::Compiler::GetUsageFromMetaData(Property);
+			const EStateTreePropertyUsage Usage = UE::StateTree::GetUsageFromMetaData(Property);
 
 			// If the property is set to one of these usages, display it even if it is not edit on instance.
 			// It is a common mistake to forget to set the "eye" on these properties it and wonder why it does not show up.
@@ -180,7 +181,8 @@ void GenerateElementForProperties(const TCHAR* TypeAsText, const TCHAR* ValueAsT
 				// Create Tree element to hold the event
 				const TSharedPtr<FStateTreeDebuggerEventTreeElement> NewChildElement = MakeShareable(new FStateTreeDebuggerEventTreeElement(
 						ParentElement->Frame,
-						FStateTreeTraceEventVariantType(TInPlaceType<FStateTreeTracePropertyEvent>(), PropertyEvent)));
+						FStateTreeTraceEventVariantType(TInPlaceType<FStateTreeTracePropertyEvent>(), PropertyEvent),
+						ParentElement->WeakStateTree.Get()));
 
 				ParentElement->Children.Add(NewChildElement);
 			}
@@ -204,6 +206,8 @@ SStateTreeDebuggerView::SStateTreeDebuggerView()
 
 SStateTreeDebuggerView::~SStateTreeDebuggerView()
 {
+	UE::StateTree::Delegates::OnTracingStateChanged.RemoveAll(this);
+
 	check(Debugger);
 	Debugger->OnScrubStateChanged.Unbind();
 	Debugger->OnBreakpointHit.Unbind();
@@ -334,13 +338,18 @@ void SStateTreeDebuggerView::Construct(const FArguments& InArgs, const UStateTre
 {
 	StateTreeViewModel = InStateTreeViewModel;
 	StateTree = &InStateTree;
-	StateTreeEditorData = Cast<UStateTreeEditorData>(InStateTree.EditorData.Get()); 
+	StateTreeEditorData = Cast<UStateTreeEditorData>(InStateTree.EditorData.Get());
+	CommandList = InCommandList;
 
 	Debugger = InStateTreeViewModel->GetDebugger();
 	check(Debugger);
 
 	IStateTreeModule& StateTreeModule = FModuleManager::GetModuleChecked<IStateTreeModule>("StateTreeModule");
 	bRecording = StateTreeModule.IsTracing();
+	UE::StateTree::Delegates::OnTracingStateChanged.AddSPLambda(this, [&bRecording=bRecording](const bool bTracesEnabled)
+		{
+			bRecording = bTracesEnabled;
+		});
 
 	// Bind callbacks to the debugger delegates
 	Debugger->OnNewSession.BindSP(this, &SStateTreeDebuggerView::OnNewSession);
@@ -497,8 +506,7 @@ void SStateTreeDebuggerView::Construct(const FArguments& InArgs, const UStateTre
 	EventsTreeView = SNew(STreeView<TSharedPtr<FStateTreeDebuggerEventTreeElement>>)
 			.OnGenerateRow_Lambda([this](const TSharedPtr<FStateTreeDebuggerEventTreeElement>& InElement, const TSharedRef<STableViewBase>& InOwnerTableView)
 			{
-				check(StateTreeViewModel);
-				return SNew(SStateTreeDebuggerViewRow, InOwnerTableView, InElement, StateTreeViewModel.ToSharedRef());
+				return SNew(SStateTreeDebuggerViewRow, InOwnerTableView, InElement);
 			})
 			.OnGetChildren_Lambda([](const TSharedPtr<const FStateTreeDebuggerEventTreeElement>& InParent, TArray<TSharedPtr<FStateTreeDebuggerEventTreeElement>>& OutChildren)
 			{
@@ -642,10 +650,32 @@ void SStateTreeDebuggerView::Construct(const FArguments& InArgs, const UStateTre
 	// Do that after creating all our widgets in case we receive a callback
 	TArray<FStateTreeDebugger::FTraceDescriptor> TraceDescriptors;
 	Debugger->GetLiveTraces(TraceDescriptors);
-	if (TraceDescriptors.Num() == 1 && StateTreeModule.IsTracing())
+	if (TraceDescriptors.Num() == 1 && bRecording)
 	{
 		Debugger->RequestSessionAnalysis(TraceDescriptors.Last());
 	}
+}
+
+FReply SStateTreeDebuggerView::OnPreviewKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent)
+{
+	// We consider the key as handled regardless if the action can be executed or not since we don't want
+	// some of them affecting other widgets once the action can no longer be executed
+	// (e.g. can no longer scrub once reaching beginning or end of the timeline)
+	// This is why we test the input manually instead of relying on ProcessCommandBindings.
+	const FInputChord InputChord(
+		InKeyEvent.GetKey(),
+		EModifierKey::FromBools(InKeyEvent.IsControlDown(), InKeyEvent.IsAltDown(), InKeyEvent.IsShiftDown(), InKeyEvent.IsCommandDown()));
+
+	const TSharedPtr<FUICommandInfo> CommandInfo = FInputBindingManager::Get().FindCommandInContext(
+		FStateTreeDebuggerCommands::Get().GetContextName(), InputChord, /*bCheckDefault*/false);
+
+	if (CommandInfo.IsValid())
+	{
+		CommandList->TryExecuteAction(CommandInfo.ToSharedRef());
+		return FReply::Handled();
+	}
+
+	return SCompoundWidget::OnPreviewKeyDown(MyGeometry, InKeyEvent);
 }
 
 void SStateTreeDebuggerView::Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime)
@@ -653,14 +683,27 @@ void SStateTreeDebuggerView::Tick(const FGeometry& AllottedGeometry, const doubl
 	QUICK_SCOPE_CYCLE_COUNTER(STAT_StateTreeDebuggerView_TickView);
 
 	check(Debugger);
-	if (Debugger->IsAnalysisSessionActive() && !Debugger->IsAnalysisSessionPaused())
-	{
-		MaxTrackRecordingDuration = FMath::Max(MaxTrackRecordingDuration, Debugger->GetRecordingDuration());
 
-		// Stick to most recent data if required
+	const double RecordingDuration = Debugger->GetRecordingDuration();
+	const bool bHasMoreRecentData = LastUpdatedTrackRecordingDuration != RecordingDuration;
+	LastUpdatedTrackRecordingDuration = RecordingDuration;
+	MaxTrackRecordingDuration = FMath::Max(MaxTrackRecordingDuration, RecordingDuration);
+	
+	if ((Debugger->IsAnalysisSessionActive() && !Debugger->IsAnalysisSessionPaused())
+		|| bHasMoreRecentData)
+	{
 		if (bAutoScroll)
 		{
+			// Stick to most recent data if auto scroll is enabled.
+			// Autoscroll is disabled when paused.
+			// This allows the user to pause the analysis, inspect the data, and continue and the autoscroll will catch up with latest.
+			// Complementary logic in OnTimeLineScrubPositionChanged().
 			Debugger->SetScrubTime(Debugger->GetRecordingDuration());
+		}
+		else
+		{
+			// Set scrub time to self to request update the UI.
+			Debugger->SetScrubTime(Debugger->GetScrubTime());
 		}
 	}
 	
@@ -734,8 +777,8 @@ void SStateTreeDebuggerView::BindDebuggerToolbarCommands(const TSharedRef<FUICom
 
 bool SStateTreeDebuggerView::CanUseScrubButtons() const
 {
-	check(Debugger);
-	return (bAutoScroll == false || Debugger->IsAnalysisSessionPaused() || !Debugger->IsAnalysisSessionActive());
+	// Nothing preventing use of scrub buttons on the Editor side at the moment.
+	return true;
 }
 
 bool SStateTreeDebuggerView::CanStepBackToPreviousStateWithEvents() const
@@ -748,6 +791,7 @@ void SStateTreeDebuggerView::StepBackToPreviousStateWithEvents()
 {
 	check(Debugger);
 	Debugger->StepBackToPreviousStateWithEvents();
+	bAutoScroll = false;
 }
 
 bool SStateTreeDebuggerView::CanStepForwardToNextStateWithEvents() const
@@ -760,6 +804,7 @@ void SStateTreeDebuggerView::StepForwardToNextStateWithEvents()
 {
 	check(Debugger);
 	Debugger->StepForwardToNextStateWithEvents();
+	bAutoScroll = false;
 }
 
 bool SStateTreeDebuggerView::CanStepBackToPreviousStateChange() const
@@ -772,6 +817,7 @@ void SStateTreeDebuggerView::StepBackToPreviousStateChange()
 {
 	check(Debugger);
 	Debugger->StepBackToPreviousStateChange();
+	bAutoScroll = false;
 }
 
 bool SStateTreeDebuggerView::CanStepForwardToNextStateChange() const
@@ -784,6 +830,7 @@ void SStateTreeDebuggerView::StepForwardToNextStateChange()
 {
 	check(Debugger);
 	Debugger->StepForwardToNextStateChange();
+	bAutoScroll = false;
 }
 
 bool SStateTreeDebuggerView::CanAddStateBreakpoint(const EStateTreeBreakpointType Type) const
@@ -984,6 +1031,10 @@ UStateTreeState* SStateTreeDebuggerView::FindStateAssociatedToBreakpoint(FStateT
 void SStateTreeDebuggerView::OnTimeLineScrubPositionChanged(double Time, bool bIsScrubbing)
 {
 	check(Debugger);
+	// Disable auto scroll when scrubbing.
+	// But, do not disable it if the analysis is in progress but paused.
+	// This allows the user to pause the analysis, inspect the data, and continue and the autoscroll will catch up with latest.
+	// Complementary logic in Tick().
 	if (Debugger->IsAnalysisSessionActive() && !Debugger->IsAnalysisSessionPaused())
 	{
 		bAutoScroll = false;
@@ -1022,6 +1073,9 @@ void SStateTreeDebuggerView::OnDebuggerScrubStateChanged(const UE::StateTreeDebu
 	const int32 FirstEventIdx = Spans[SpanIdx].EventIdx;
 	const TraceServices::FFrame Frame = Spans[SpanIdx].Frame;
 	const int32 MaxEventIdx = Spans.IsValidIndex(SpanIdx+1) ? Spans[SpanIdx+1].EventIdx : Events.Num();
+
+	const UStateTree* const RootTree = StateTree.Get();
+	const UStateTree* ActiveTree = RootTree;
 	
 	for (int32 EventIdx = FirstEventIdx; EventIdx < MaxEventIdx; EventIdx++)
 	{
@@ -1047,31 +1101,20 @@ void SStateTreeDebuggerView::OnDebuggerScrubStateChanged(const UE::StateTreeDebu
 		{
 			if (PhaseEvent->EventType == EStateTreeTraceEventType::Push)
 			{
-				if (PhaseEvent->Phase != EStateTreeUpdatePhase::Unset)
-				{
-					CustomDescription = UEnum::GetDisplayValueAsText(PhaseEvent->Phase).ToString();
-				}
-
-				if (PhaseEvent->StateHandle.IsValid())
-				{
-					const FCompactStateTreeState* CompactState = StateTree->GetStateFromHandle(PhaseEvent->StateHandle);
-					if (CustomDescription.IsEmpty())
-					{
-						CustomDescription += FString::Printf(TEXT("%s"),
-								CompactState != nullptr ? *CompactState->Name.ToString() : *PhaseEvent->StateHandle.Describe());	
-					}
-					else
-					{
-						CustomDescription += FString::Printf(TEXT(" '%s'"),
-								CompactState != nullptr ? *CompactState->Name.ToString() : *PhaseEvent->StateHandle.Describe());
-					}
-				}
 				bShouldAddToScopeStack = true;
 			}
 			else if (PhaseEvent->EventType == EStateTreeTraceEventType::Pop)
 			{
 				bShouldPopScopeStack = true;
 			}
+		}
+		else if (const FStateTreeTraceInstanceFrameEvent* FrameEvent = Event.TryGet<FStateTreeTraceInstanceFrameEvent>())
+		{
+			ActiveTree = FrameEvent->WeakStateTree.Get();
+			check(ActiveTree);
+
+			// We don't want to create an entry.
+			continue;
 		}
 
 		if (bShouldPopScopeStack)
@@ -1087,7 +1130,7 @@ void SStateTreeDebuggerView::OnDebuggerScrubStateChanged(const UE::StateTreeDebu
 			continue;
 		}
 
-		const TSharedRef<FStateTreeDebuggerEventTreeElement> NewElement = MakeShareable(new FStateTreeDebuggerEventTreeElement(Frame, Event));
+		const TSharedRef<FStateTreeDebuggerEventTreeElement> NewElement = MakeShareable(new FStateTreeDebuggerEventTreeElement(Frame, Event, ActiveTree));
 		NewElement->Description = CustomDescription;
 
 		TArray<TSharedPtr<FStateTreeDebuggerEventTreeElement>>& TreeElements = ScopeStack.IsEmpty() ? EventsTreeElements : ScopeStack.Top()->Children;
@@ -1129,7 +1172,8 @@ void SStateTreeDebuggerView::GenerateElementsForProperties(const FStateTreeTrace
 				// Create Tree element to hold the event
 				const TSharedPtr<FStateTreeDebuggerEventTreeElement> NewChildElement = MakeShareable(new FStateTreeDebuggerEventTreeElement(
 					ParentElement->Frame,
-					FStateTreeTraceEventVariantType(TInPlaceType<FStateTreeTracePropertyEvent>(), PropertyEvent)));
+					FStateTreeTraceEventVariantType(TInPlaceType<FStateTreeTracePropertyEvent>(), PropertyEvent),
+					ParentElement->WeakStateTree.Get()));
 
 				ParentElement->Children.Add(NewChildElement);
 			};
@@ -1166,7 +1210,11 @@ void SStateTreeDebuggerView::GenerateElementsForProperties(const FStateTreeTrace
 				NextToken = ViewIt+1;
 				NestedCount += LocalNestedCount;
 			}
-			CreatePropertyElement(FStringView(NextToken, UE_PTRDIFF_TO_INT32(ViewIt - NextToken)), NestedCount);
+
+			if (ViewIt != NextToken)
+			{
+				CreatePropertyElement(FStringView(NextToken, UE_PTRDIFF_TO_INT32(ViewIt - NextToken)), NestedCount);
+			}
 		}
 		else
 		{

@@ -6,6 +6,7 @@
 #include "Misc/AssertionMacros.h"
 #include "MuT/NodeImageNormalCompositePrivate.h"
 #include "MuT/NodePrivate.h"
+#include "MuR/Image.h"
 
 
 namespace mu
@@ -14,8 +15,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeImageNormalComposite::Private::s_type =
-			NODE_TYPE( "ImageNormalComposite", NodeImage::GetStaticType() );
+	FNodeType NodeImageNormalComposite::Private::s_type =
+			FNodeType( "ImageNormalComposite", NodeImage::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -23,45 +24,6 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 
 	MUTABLE_IMPLEMENT_NODE( NodeImageNormalComposite, EType::NormalComposite, Node, Node::EType::Image )
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	int NodeImageNormalComposite::GetInputCount() const
-	{
-		return 2;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	Node* NodeImageNormalComposite::GetInputNode( int i ) const
-	{
-		check( i>=0 && i< GetInputCount());
-
-		Node* pResult = 0;
-
-		switch (i)
-		{
-        case 0: pResult = m_pD->m_pBase.get(); break;
-        case 1: pResult = m_pD->m_pNormal.get(); break;
-		}
-
-		return pResult;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeImageNormalComposite::SetInputNode( int i, NodePtr pNode )
-	{
-		check( i>=0 && i< GetInputCount());
-
-		switch (i)
-		{
-        case 0: m_pD->m_pBase = dynamic_cast<NodeImage*>( pNode.get() ); break;
-        case 1: m_pD->m_pNormal = dynamic_cast<NodeImage*>( pNode.get() ); break;
-		}
-	}
 
 
 	//---------------------------------------------------------------------------------------------

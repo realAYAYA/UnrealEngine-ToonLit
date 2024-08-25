@@ -9,14 +9,22 @@
 #include "IEOSSDKManager.h"
 #include "Misc/CoreMisc.h"
 
+#if WITH_ENGINE
+#include "Widgets/SWindow.h"
+#include "Rendering/SlateRenderer.h"
+#endif
+
 #if defined(EOS_PLATFORM_BASE_FILE_NAME)
 #include EOS_PLATFORM_BASE_FILE_NAME
 #endif
 
+#include "eos_sdk.h"
 #include "eos_auth_types.h"
 #include "eos_common.h"
 #include "eos_connect_types.h"
 #include "eos_init.h"
+#include "eos_integratedplatform.h"
+#include "eos_ui.h"
 
 struct FEOSPlatformHandle;
 
@@ -41,6 +49,7 @@ public:
 
 	virtual IEOSPlatformHandlePtr CreatePlatform(const FString& PlatformConfigName, FName InstanceName = NAME_None) override;
 	virtual IEOSPlatformHandlePtr CreatePlatform(EOS_Platform_Options& PlatformOptions) override;
+	virtual TArray<IEOSPlatformHandlePtr> GetActivePlatforms() override;
 
 	virtual FString GetProductName() const override;
 	virtual FString GetProductVersion() const override;
@@ -69,6 +78,24 @@ protected:
 	virtual EOS_EResult EOSInitialize(EOS_InitializeOptions& Options);
 	virtual IEOSPlatformHandlePtr CreatePlatform(const FEOSSDKPlatformConfig& PlatformConfig, EOS_Platform_Options& PlatformOptions);
 	virtual bool Tick(float);
+	virtual const void* GetIntegratedPlatformOptions();
+	virtual EOS_IntegratedPlatformType GetIntegratedPlatformType();
+
+#if WITH_ENGINE
+	/** Provided to `OnBackBufferReadyToPresent` to get access to the render thread. */
+	virtual void OnBackBufferReady_RenderThread(SWindow& SlateWindow, const FTexture2DRHIRef& BackBuffer);
+	/**
+	 * Check that the overlay is ready to be rendered.
+	 * This will also add the Back Buffer Ready To Present handler.
+	 */
+	virtual bool IsRenderReady();
+#endif
+
+	void SetInvokeOverlayButton(const EOS_HPlatform PlatformHandle);
+	EOS_HIntegratedPlatformOptionsContainer CreateIntegratedPlatformOptionsContainer();
+	void ApplyIntegratedPlatformOptions(EOS_HIntegratedPlatformOptionsContainer& Container);
+	virtual void ApplySystemSpecificOptions(const void*& SystemSpecificOptions);
+	void CallUIPrePresent(const EOS_UI_PrePresentOptions& Options);
 
 	static EOS_ENetworkStatus ConvertNetworkStatus(ENetworkConnectionStatus Status);
 	void OnNetworkConnectionStatusChanged(ENetworkConnectionStatus LastConnectionState, ENetworkConnectionStatus ConnectionState);
@@ -88,14 +115,18 @@ protected:
 	void* SDKHandle = nullptr;
 #endif
 
+	/** Critical Section to make sure the ActivePlatforms and ReleasedPlatforms arrays are thread safe */
+	mutable FRWLock ActivePlatformsCS;
+
 	/** Are we currently initialized */
 	bool bInitialized = false;
 	/** Index of the last ticked platform, used for round-robin ticking when ConfigTickIntervalSeconds > 0 */
 	uint8 PlatformTickIdx = 0;
 	/** Created platforms actively ticking */
-	TArray<EOS_HPlatform> ActivePlatforms;
+	TMap<EOS_HPlatform, IEOSPlatformHandleWeakPtr> ActivePlatforms;
 	/** Contains platforms released with ReleasePlatform, which we will release on the next Tick. */
 	TArray<EOS_HPlatform> ReleasedPlatforms;
+
 	/** Handle to ticker delegate for Tick(), valid whenever there are ActivePlatforms to tick, or ReleasedPlatforms to release. */
 	FTSTicker::FDelegateHandle TickerHandle;
 	/** Callback objects, to be released after EOS_Shutdown */
@@ -110,6 +141,18 @@ protected:
 	// Config
 	/** Interval between platform ticks. 0 means we tick every frame. */
 	double ConfigTickIntervalSeconds = 0.f;
+
+	/** Tracks if the render init has completed. */
+	bool bRenderReady = false;
+
+	/** Whether or not the integrated platform options container will be set at platform creation time */
+	bool bEnablePlatformIntegration = false;
+
+	/** Button combination to bring up the overlay (only used in certain platforms) */
+	EOS_UI_EInputStateButtonFlags InvokeOverlayButtonCombination;
+
+	/** Management flags passed on as options in integrated platform setup */
+	EOS_EIntegratedPlatformManagementFlags IntegratedPlatformManagementFlags = {};
 };
 
 struct FEOSPlatformHandle : public IEOSPlatformHandle
@@ -122,6 +165,7 @@ struct FEOSPlatformHandle : public IEOSPlatformHandle
 	virtual ~FEOSPlatformHandle();
 	virtual void Tick() override;
 
+	virtual FString GetConfigName() const override;
 	virtual FString GetOverrideCountryCode() const override;
 	virtual FString GetOverrideLocaleCode() const override;
 
@@ -134,6 +178,9 @@ struct FEOSPlatformHandle : public IEOSPlatformHandle
 
 	/* Reference to the EOSSDK manager */
 	FEOSSDKManager& Manager;
+
+	/* The name of the config used to instantiate this handle */
+	FString ConfigName;
 };
 
 #endif // WITH_EOS_SDK

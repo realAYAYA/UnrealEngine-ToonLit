@@ -24,6 +24,7 @@
 #include "Framework/MultiBox/MultiBoxExtender.h"
 #include "Framework/SlateDelegates.h"
 #include "HAL/IConsoleManager.h"
+#include "HAL/PlatformApplicationMisc.h"
 #include "HAL/PlatformCrt.h"
 #include "IContentBrowserDataModule.h"
 #include "Math/Vector2D.h"
@@ -160,6 +161,18 @@ void FPathContextMenu::MakePathViewContextMenu(UToolMenu* Menu)
 					);
 			}
 
+			// Assume paths with an on-disk representation also have an internal path to copy
+			if (!Context->bNoFolderOnDisk)
+			{
+				Section.AddMenuEntry(
+					"CopyPath",
+					LOCTEXT("CopyFolderPath", "Copy Path"),
+					LOCTEXT("CopyFolderTooltip", "Copy the paths of the selected folder(s)"),
+					FSlateIcon(FAppStyle::GetAppStyleSetName(), "GenericCommands.Copy"),
+					FExecuteAction::CreateSP(this, &FPathContextMenu::CopySelectedFolder)
+				);
+			}
+
 			if (Context->bCanBeModified)
 			{
 				Section.AddMenuEntry(FGenericCommands::Get().Rename,
@@ -219,13 +232,8 @@ void FPathContextMenu::MakePathViewContextMenu(UToolMenu* Menu)
 				);
 			}
 
-			static const auto PublicAssetUIEnabledCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("ContentBrowser.PublicAsset.EnablePublicAssetFeature"));
-			bool bIsPublicAssetUIEnabled = false;
-
-			if (PublicAssetUIEnabledCVar)
-			{
-				bIsPublicAssetUIEnabled = PublicAssetUIEnabledCVar->GetBool();
-			}
+			static const IConsoleVariable* EnablePublicAssetFeatureCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("AssetTools.EnablePublicAssetFeature"));
+			const bool bIsPublicAssetUIEnabled = EnablePublicAssetFeatureCVar && EnablePublicAssetFeatureCVar->GetBool();
 
 			FStringView SelectedFolderPathView(SelectedFolderPath);
 			if (bIsPublicAssetUIEnabled && FContentBrowserSingleton::Get().IsFolderShowPrivateContentToggleable(SelectedFolderPathView))
@@ -461,6 +469,11 @@ void FPathContextMenu::ExecuteResaveFolder()
 	SaveFilesWithinSelectedFolders(EContentBrowserItemSaveFlags::None);
 }
 
+void FPathContextMenu::CopySelectedFolder()
+{
+	CopySelectedFoldersToClipoard();
+}
+
 void FPathContextMenu::SaveFilesWithinSelectedFolders(EContentBrowserItemSaveFlags InSaveFlags)
 {
 	UContentBrowserDataSubsystem* ContentBrowserData = IContentBrowserDataModule::Get().GetSubsystem();
@@ -494,6 +507,11 @@ void FPathContextMenu::SaveFilesWithinSelectedFolders(EContentBrowserItemSaveFla
 	{
 		SourceAndItemsPair.Key->BulkSaveItems(SourceAndItemsPair.Value, InSaveFlags);
 	}
+}
+
+void FPathContextMenu::CopySelectedFoldersToClipoard()
+{
+	ContentBrowserUtils::CopyFolderReferencesToClipboard(SelectedFolders);
 }
 
 bool FPathContextMenu::CanExecuteDelete() const

@@ -70,6 +70,11 @@ private:
 
 	void HandleMeshChanged(const FAssetData& InAssetData);
 
+	void HandlePreviewAnimBlueprintChanged(const FAssetData& InAssetData);
+	
+	// Called when the anim blueprint being edited is compiled.
+	void HandleAnimBlueprintCompiled(UBlueprint* Blueprint);
+
 	void HandleAdditionalMeshesChanged(const FAssetData& InAssetData, IDetailLayoutBuilder* DetailLayoutBuilder);
 
 	void HandleAllowDifferentSkeletonsCheckedStateChanged(ECheckBoxState CheckState);

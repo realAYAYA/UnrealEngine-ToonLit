@@ -258,13 +258,13 @@ bool UMinimalClient::SendRawBunch(FOutBunch& Bunch, bool bAllowPartial/*=false*/
 	{
 		TArray<FOutBunch*> SendBunches;
 		const int32 MAX_SINGLE_BUNCH_SIZE_BITS = UnitConn->GetMaxSingleBunchSizeBits();
-		int32 BunchNumBits = Bunch.GetNumBits();
+		int64 BunchNumBits = Bunch.GetNumBits();
 
 		if (bAllowPartial && BunchNumBits > MAX_SINGLE_BUNCH_SIZE_BITS)
 		{
 			const int32 MAX_SINGLE_BUNCH_SIZE_BYTES = MAX_SINGLE_BUNCH_SIZE_BITS / 8;
 			const int32 MAX_PARTIAL_BUNCH_SIZE_BITS = MAX_SINGLE_BUNCH_SIZE_BYTES * 8;
-			int32 NumSerializedBits = 0;
+			int64 NumSerializedBits = 0;
 
 			// Discard the original bunch before splitting it, in order to have the correct packet sequence for the new packets
 			DiscardChannelBunch(&Bunch);
@@ -272,7 +272,7 @@ bool UMinimalClient::SendRawBunch(FOutBunch& Bunch, bool bAllowPartial/*=false*/
 			while (NumSerializedBits < BunchNumBits)
 			{
 				FOutBunch* NewBunch = CreateChannelBunchByName(Bunch.ChName, Bunch.ChIndex);
-				int32 NewNumBits = FMath::Min(BunchNumBits - NumSerializedBits, MAX_PARTIAL_BUNCH_SIZE_BITS);
+				int64 NewNumBits = FMath::Min(BunchNumBits - NumSerializedBits, MAX_PARTIAL_BUNCH_SIZE_BITS);
 
 				NewBunch->SerializeBits(Bunch.GetData() + (NumSerializedBits >> 3), NewNumBits);
 				NumSerializedBits += NewNumBits;

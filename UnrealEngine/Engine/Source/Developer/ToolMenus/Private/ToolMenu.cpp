@@ -58,7 +58,18 @@ FReply UToolMenu::OnKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyE
 	return FReply::Unhandled();
 }
 
+const ISlateStyle* UToolMenu::GetStyleSet() const
+{
+	return StyleSet;
+}
 
+void UToolMenu::SetStyleSet(const ISlateStyle* InStyleSet)
+{
+	if (InStyleSet && InStyleSet != StyleSet)
+	{
+		StyleSet = InStyleSet;
+	}
+}
 
 void UToolMenu::InitGeneratedCopy(const UToolMenu* Source, const FName InMenuName, const FToolMenuContext* InContext)
 {
@@ -194,7 +205,7 @@ FToolMenuSection& UToolMenu::AddSection(const FName SectionName, const TAttribut
 					FToolMenuSection RemovedSection;
 					Swap(Sections[InsertIndex], RemovedSection);
 					Sections.Insert(MoveTempIfPossible(RemovedSection), i);
-					Sections.RemoveAt(InsertIndex + 1, 1, false);
+					Sections.RemoveAt(InsertIndex + 1, 1, EAllowShrinking::No);
 					InsertIndex = i;
 				}
 			}
@@ -295,6 +306,19 @@ FToolMenuSection& UToolMenu::FindOrAddSection(const FName SectionName)
 	}
 	
 	return AddSection(SectionName);
+}
+
+FToolMenuSection& UToolMenu::FindOrAddSection(
+	const FName SectionName,
+	const TAttribute<FText>& InLabel,
+	const FToolMenuInsert InPosition)
+{
+	if (FToolMenuSection* FoundSection = FindSection(SectionName))
+	{
+		return *FoundSection;
+	}
+
+	return AddSection(SectionName, InLabel, InPosition);
 }
 
 void UToolMenu::RemoveSection(const FName SectionName)
@@ -466,6 +490,38 @@ FCustomizedToolMenuHierarchy UToolMenu::GetMenuCustomizationHierarchy() const
 		if (FCustomizedToolMenu* FoundRuntime = ToolMenus->FindRuntimeMenuCustomization(ItName))
 		{
 			Result.RuntimeHierarchy.Add(FoundRuntime);
+		}
+	}
+
+	return Result;
+}
+
+FToolMenuProfile* UToolMenu::FindMenuProfile(const FName& ProfileName) const
+{
+	return UToolMenus::Get()->FindMenuProfile(MenuName, ProfileName);
+}
+
+FToolMenuProfile* UToolMenu::AddMenuProfile(const FName& ProfileName) const
+{
+	return UToolMenus::Get()->AddMenuProfile(MenuName, ProfileName);
+}
+
+FToolMenuProfileHierarchy UToolMenu::GetMenuProfileHierarchy(const FName& ProfileName) const
+{
+	FToolMenuProfileHierarchy Result;
+	
+	UToolMenus* ToolMenus = UToolMenus::Get();
+	TArray<FName> HierarchyNames = GetMenuHierarchyNames(true);
+	for (const FName& ItName : HierarchyNames)
+	{
+		if (FToolMenuProfile* Found = ToolMenus->FindMenuProfile(ItName, ProfileName))
+		{
+			Result.ProfileHierarchy.Add(Found);
+		}
+
+		if (FToolMenuProfile* FoundRuntime = ToolMenus->FindRuntimeMenuProfile(ItName, ProfileName))
+		{
+			Result.RuntimeProfileHierarchy.Add(FoundRuntime);
 		}
 	}
 

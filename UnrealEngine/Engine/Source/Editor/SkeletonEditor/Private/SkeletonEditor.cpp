@@ -39,6 +39,7 @@ const FName SkeletonEditorTabs::ViewportTab(TEXT("Viewport"));
 const FName SkeletonEditorTabs::AssetBrowserTab(TEXT("SequenceBrowser"));
 const FName SkeletonEditorTabs::AnimNotifiesTab(TEXT("SkeletonAnimNotifies"));
 const FName SkeletonEditorTabs::CurveMetadataTab(TEXT("AnimCurveMetadataEditorTab"));
+const FName SkeletonEditorTabs::CurveDebuggerTab("AnimCurveViewerTab");
 const FName SkeletonEditorTabs::AdvancedPreviewTab(TEXT("AdvancedPreviewTab"));
 const FName SkeletonEditorTabs::RetargetManagerTab(TEXT("RetargetManager"));
 const FName SkeletonEditorTabs::SlotNamesTab("SkeletonSlotNames");

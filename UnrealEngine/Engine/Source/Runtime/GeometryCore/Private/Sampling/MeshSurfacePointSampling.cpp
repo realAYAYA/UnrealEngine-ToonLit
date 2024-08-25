@@ -496,7 +496,7 @@ void NonUniformMeshPointSampling(
 
 				if (IsValidPoint[VertexID] == false)		// if point is expired, discard it
 				{
-					PointOrdering.RemoveAtSwap(k, 1, false);
+					PointOrdering.RemoveAtSwap(k, 1, EAllowShrinking::No);
 					NumRemaining--;
 					k--;		// reconsider point we just swapped to index k
 					continue;
@@ -569,7 +569,7 @@ void NonUniformMeshPointSampling(
 				// if this is a method w/ no random variation or decay, this (point,radius) pair will never fit and can be removed
 				if (bIsFixedRadiusMethod)
 				{
-					PointOrdering.RemoveAtSwap(k, 1, false);
+					PointOrdering.RemoveAtSwap(k, 1, EAllowShrinking::No);
 					NumRemaining--;
 					k--;		// reconsider point we just swapped to index k
 				}
@@ -581,7 +581,7 @@ void NonUniformMeshPointSampling(
 			}
 
 			// remove selected point from ordering
-			PointOrdering.RemoveAtSwap(PointOrderingIndex, 1, false);
+			PointOrdering.RemoveAtSwap(PointOrderingIndex, 1, EAllowShrinking::No);
 
 			// emit our valid (point, triangle, radius) sample
 			FVector3d SamplePoint = DensePointSet.DensePoints[UseVertexID];

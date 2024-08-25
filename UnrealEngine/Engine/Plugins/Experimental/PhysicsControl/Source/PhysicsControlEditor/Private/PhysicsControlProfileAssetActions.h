@@ -16,5 +16,4 @@ public:
 	void OpenAssetEditor(
 		const TArray<UObject*>& InObjects, 
 		TSharedPtr<class IToolkitHost> EditWithinLevelEditor = TSharedPtr<IToolkitHost>()) override;
-
 };

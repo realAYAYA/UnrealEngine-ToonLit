@@ -2,9 +2,11 @@
 
 #pragma once
 
+#include "RigVMObjectVersion.h"
 #include "RigVMCore/RigVMExternalVariable.h"
 #include "RigVMCore/RigVMByteCode.h"
 #include "UObject/UE5MainStreamObjectVersion.h"
+#include "UObject/FortniteMainBranchObjectVersion.h"
 #include "UObject/UE5ReleaseStreamObjectVersion.h"
 #include "RigVMGraphFunctionDefinition.generated.h"
 
@@ -34,9 +36,10 @@ struct FRigVMFunctionCompilationPropertyDescription
 
 	friend uint32 GetTypeHash(const FRigVMFunctionCompilationPropertyDescription& Description) 
 	{
-		uint32 Hash = GetTypeHash(Description.Name);
+		uint32 Hash = GetTypeHash(Description.Name.ToString());
 		Hash = HashCombine(Hash, GetTypeHash(Description.CPPType));
-		Hash = HashCombine(Hash, GetTypeHash(Description.CPPTypeObject));
+		// we can't hash based on the pointer since that's not deterministic across sessions
+		// Hash = HashCombine(Hash, GetTypeHash(Description.CPPTypeObject));
 		Hash = HashCombine(Hash, GetTypeHash(Description.DefaultValue));
 		return Hash;
 	}
@@ -87,7 +90,10 @@ struct RIGVM_API FRigVMFunctionCompilationData
 {
 	GENERATED_BODY()
 
-	FRigVMFunctionCompilationData() : Hash(0) {}
+	FRigVMFunctionCompilationData()
+	: Hash(0)
+	, bEncounteredSurpressedErrors(false)
+	{}
 
 	UPROPERTY()
 	FRigVMByteCode ByteCode;
@@ -128,6 +134,9 @@ struct RIGVM_API FRigVMFunctionCompilationData
 	UPROPERTY()
 	uint32 Hash;
 
+	UPROPERTY(Transient)
+	bool bEncounteredSurpressedErrors;
+
 	TMap<FRigVMOperand, TArray<FRigVMOperand>> OperandToDebugRegisters;
 
 	bool IsValid() const
@@ -135,12 +144,17 @@ struct RIGVM_API FRigVMFunctionCompilationData
 		return Hash != 0;
 	}
 
+	bool RequiresRecompilation() const
+	{
+		return bEncounteredSurpressedErrors;
+	}
+
 	friend uint32 GetTypeHash(const FRigVMFunctionCompilationData& Data) 
 	{
 		uint32 DataHash = Data.ByteCode.GetByteCodeHash();
 		for (const FName& Name : Data.FunctionNames)
 		{
-			DataHash = HashCombine(DataHash, GetTypeHash(Name));
+			DataHash = HashCombine(DataHash, GetTypeHash(Name.ToString()));
 		}
 
 		for (const FRigVMFunctionCompilationPropertyDescription& Description : Data.WorkPropertyDescriptions)
@@ -182,7 +196,7 @@ struct RIGVM_API FRigVMFunctionCompilationData
 		for (const TPair<int32,FName>& Pair : Data.ExternalRegisterIndexToVariable)
 		{
 			DataHash = HashCombine(DataHash, GetTypeHash(Pair.Key));
-			DataHash = HashCombine(DataHash, GetTypeHash(Pair.Value));
+			DataHash = HashCombine(DataHash, GetTypeHash(Pair.Value.ToString()));
 		}
 
 		for (const TPair<FString, FRigVMOperand>& Pair : Data.Operands)
@@ -197,6 +211,7 @@ struct RIGVM_API FRigVMFunctionCompilationData
 	friend FArchive& operator<<(FArchive& Ar, FRigVMFunctionCompilationData& Data)
 	{
 		Ar.UsingCustomVersion(FUE5ReleaseStreamObjectVersion::GUID);
+		Ar.UsingCustomVersion(FFortniteMainBranchObjectVersion::GUID);
 		
 		Ar << Data.ByteCode;
 		Ar << Data.FunctionNames;
@@ -212,7 +227,13 @@ struct RIGVM_API FRigVMFunctionCompilationData
 		Ar << Data.Operands;
 		Ar << Data.Hash;
 
-		if (Ar.CustomVer(FUE5ReleaseStreamObjectVersion::GUID) < FUE5ReleaseStreamObjectVersion::RigVMSaveDebugMapInGraphFunctionData)
+		if(Ar.IsLoading())
+		{
+			Data.bEncounteredSurpressedErrors = false;
+		}
+
+		if (Ar.CustomVer(FUE5ReleaseStreamObjectVersion::GUID) < FUE5ReleaseStreamObjectVersion::RigVMSaveDebugMapInGraphFunctionData &&
+		    Ar.CustomVer(FFortniteMainBranchObjectVersion::GUID) < FFortniteMainBranchObjectVersion::RigVMSaveDebugMapInGraphFunctionData)
 		{
 			return Ar;
 		}
@@ -272,28 +293,28 @@ struct RIGVM_API FRigVMGraphFunctionArgument
 	, bIsConst(false)
 	{}
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category=FunctionArgument)
 	FName Name;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category=FunctionArgument)
 	FName DisplayName;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category=FunctionArgument)
 	FName CPPType;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category=FunctionArgument)
 	TSoftObjectPtr<UObject> CPPTypeObject;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category=FunctionArgument)
 	bool bIsArray;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category=FunctionArgument)
 	ERigVMPinDirection Direction;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category=FunctionArgument)
 	FString DefaultValue;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category=FunctionArgument)
 	bool bIsConst;
 	
 	UPROPERTY()
@@ -349,11 +370,11 @@ struct RIGVM_API FRigVMGraphFunctionIdentifier
 {
 	GENERATED_BODY()
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category=FunctionIdentifier)
 	FSoftObjectPath LibraryNode;
 
-	// A path to the IRigVMGraphFunctionHost that stores the function information, and compilation data (e.g. ControlRigBlueprintGeneratedClass)
-	UPROPERTY()
+	// A path to the IRigVMGraphFunctionHost that stores the function information, and compilation data (e.g. RigVMBlueprintGeneratedClass)
+	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category=FunctionIdentifier)
 	FSoftObjectPath HostObject;
 
 	FRigVMGraphFunctionIdentifier()
@@ -390,28 +411,31 @@ struct RIGVM_API FRigVMGraphFunctionHeader
 		, Name(NAME_None)
 	{}
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category=FunctionHeader)
 	FRigVMGraphFunctionIdentifier LibraryPointer;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category=FunctionHeader)
 	FName Name;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category=FunctionHeader)
 	FString NodeTitle;
 	
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category=FunctionHeader)
 	FLinearColor NodeColor = FLinearColor::White;
 
-	UPROPERTY()
-	FText Tooltip;
+	UPROPERTY(meta=(DeprecatedProperty))
+	FText Tooltip_DEPRECATED;
+
+	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category=FunctionHeader)
+	FString Description;
 	
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category=FunctionHeader)
 	FString Category;
 
-	UPROPERTY()
-	FString Keywords;	
+	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category=FunctionHeader)
+	FString Keywords;
 
-	UPROPERTY()
+	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category=FunctionHeader)
 	TArray<FRigVMGraphFunctionArgument> Arguments;
 
 	UPROPERTY()
@@ -443,13 +467,40 @@ struct RIGVM_API FRigVMGraphFunctionHeader
 
 	FRigVMGraphFunctionData* GetFunctionData(bool bLoadIfNecessary = true) const;
 
+	FText GetTooltip() const
+	{
+		FString TooltipStr = FString::Printf(TEXT("%s (%s)\n%s"),
+		*NodeTitle,
+		*LibraryPointer.LibraryNode.GetAssetPathString(),
+		*Description);
+		return FText::FromString(TooltipStr);
+	}
+
 	friend FArchive& operator<<(FArchive& Ar, FRigVMGraphFunctionHeader& Data)
 	{
+		Ar.UsingCustomVersion(FRigVMObjectVersion::GUID);
+		
 		Ar << Data.LibraryPointer;
 		Ar << Data.Name;
 		Ar << Data.NodeTitle;
 		Ar << Data.NodeColor;
-		Ar << Data.Tooltip;
+
+		if (Ar.IsLoading())
+		{
+			if (Ar.CustomVer(FRigVMObjectVersion::GUID) < FRigVMObjectVersion::VMRemoveTooltipFromFunctionHeader)
+			{
+				Ar << Data.Tooltip_DEPRECATED;
+			}
+			else
+			{
+				Ar << Data.Description;
+			}
+		}
+		else
+		{
+			Ar << Data.Description;
+		}
+		
 		Ar << Data.Category;
 		Ar << Data.Keywords;
 		Ar << Data.Arguments;

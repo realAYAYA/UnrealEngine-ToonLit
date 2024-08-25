@@ -16,14 +16,13 @@ namespace UnrealBuildTool
 	/// <summary>
 	/// Generates project files for one or more projects
 	/// </summary>
-	[ToolMode("GenerateProjectFiles", ToolModeOptions.XmlConfig | ToolModeOptions.BuildPlatforms | ToolModeOptions.SingleInstance | ToolModeOptions.UseStartupTraceListener | ToolModeOptions.StartPrefetchingEngine)]
+	[ToolMode("GenerateProjectFiles", ToolModeOptions.XmlConfig | ToolModeOptions.BuildPlatforms | ToolModeOptions.SingleInstance | ToolModeOptions.UseStartupTraceListener | ToolModeOptions.StartPrefetchingEngine | ToolModeOptions.ShowExecutionTime)]
 	class GenerateProjectFilesMode : ToolMode
 	{
 		/// <summary>
 		/// Types of project files to generate
 		/// </summary>
 		[CommandLine("-ProjectFileFormat")]
-		[CommandLine("-2019", Value = nameof(ProjectFileFormat.VisualStudio2019))] // + override compiler
 		[CommandLine("-2022", Value = nameof(ProjectFileFormat.VisualStudio2022))] // + override compiler
 		[CommandLine("-Makefile", Value = nameof(ProjectFileFormat.Make))]
 		[CommandLine("-CMakefile", Value = nameof(ProjectFileFormat.CMake))]
@@ -34,6 +33,7 @@ namespace UnrealBuildTool
 		[CommandLine("-EddieProjectFiles", Value = nameof(ProjectFileFormat.Eddie))]
 		[CommandLine("-VSCode", Value = nameof(ProjectFileFormat.VisualStudioCode))]
 		[CommandLine("-VSMac", Value = nameof(ProjectFileFormat.VisualStudioMac))]
+		[CommandLine("-VSWorkspace", Value = nameof(ProjectFileFormat.VisualStudioWorkspace))]
 		[CommandLine("-CLion", Value = nameof(ProjectFileFormat.CLion))]
 		[CommandLine("-Rider", Value = nameof(ProjectFileFormat.Rider))]
 #if __VPROJECT_AVAILABLE__
@@ -205,9 +205,6 @@ namespace UnrealBuildTool
 					case ProjectFileFormat.VisualStudio:
 						Generator = new VCProjectFileGenerator(ProjectFile, VCProjectFileFormat.Default, Arguments);
 						break;
-					case ProjectFileFormat.VisualStudio2019:
-						Generator = new VCProjectFileGenerator(ProjectFile, VCProjectFileFormat.VisualStudio2019, Arguments);
-						break;
 					case ProjectFileFormat.VisualStudio2022:
 						Generator = new VCProjectFileGenerator(ProjectFile, VCProjectFileFormat.VisualStudio2022, Arguments);
 						break;
@@ -219,6 +216,9 @@ namespace UnrealBuildTool
 						break;
 					case ProjectFileFormat.VisualStudioCode:
 						Generator = new VSCodeProjectFileGenerator(ProjectFile);
+						break;
+					case ProjectFileFormat.VisualStudioWorkspace:
+						Generator = new VSWorkspaceProjectFileGenerator(ProjectFile, Arguments);
 						break;
 					case ProjectFileFormat.CLion:
 						Generator = new CLionGenerator(ProjectFile);

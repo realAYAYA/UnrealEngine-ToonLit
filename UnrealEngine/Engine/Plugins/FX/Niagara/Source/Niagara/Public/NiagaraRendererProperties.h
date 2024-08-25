@@ -25,6 +25,7 @@ class SWidget;
 class FAssetThumbnailPool;
 struct FNiagaraDataSetCompiledData;
 struct FSlateBrush;
+struct FStaticParameterSet;
 struct FStreamingRenderAssetPrimitiveInfo;
 
 #if WITH_EDITOR
@@ -107,9 +108,9 @@ struct FNiagaraRendererVariableInfo
 
 	FNiagaraRendererVariableInfo() {}
 	FNiagaraRendererVariableInfo(int32 InDataOffset, int32 InGPUBufferOffset, int32 InNumComponents, bool bInUpload, bool bInHalfType)
-		: DatasetOffset(InDataOffset)
-		, GPUBufferOffset(InGPUBufferOffset)
-		, NumComponents(InNumComponents)
+		: DatasetOffset(static_cast<uint16>(InDataOffset))
+		, GPUBufferOffset(static_cast<uint16>(InGPUBufferOffset))
+		, NumComponents(static_cast<uint16>(InNumComponents))
 		, bUpload(bInUpload)
 		, bHalfType(bInHalfType)
 	{
@@ -146,9 +147,9 @@ struct FNiagaraRendererLayout
 	NIAGARA_API void Finalize();
 
 	TConstArrayView<FNiagaraRendererVariableInfo> GetVFVariables_GameThread() const { check(IsInGameThread() || IsInParallelGameThread()); return MakeArrayView(VFVariables_GT); }
-	TConstArrayView<FNiagaraRendererVariableInfo> GetVFVariables_RenderThread() const { check(IsInRenderingThread()); return MakeArrayView(VFVariables_RT); }
-	int32 GetTotalFloatComponents_RenderThread() const { check(IsInRenderingThread()); return TotalFloatComponents_RT; }
-	int32 GetTotalHalfComponents_RenderThread() const { check(IsInRenderingThread()); return TotalHalfComponents_RT; }
+	TConstArrayView<FNiagaraRendererVariableInfo> GetVFVariables_RenderThread() const { check(IsInParallelRenderingThread()); return MakeArrayView(VFVariables_RT); }
+	int32 GetTotalFloatComponents_RenderThread() const { check(IsInParallelRenderingThread()); return TotalFloatComponents_RT; }
+	int32 GetTotalHalfComponents_RenderThread() const { check(IsInParallelRenderingThread()); return TotalHalfComponents_RT; }
 
 	SIZE_T GetAllocatedSize() const { return VFVariables_GT.GetAllocatedSize() + VFVariables_RT.GetAllocatedSize(); }
 
@@ -258,6 +259,7 @@ struct FNiagaraRendererMaterialParameters
 	UPROPERTY(EditAnywhere, Category = "Material")
 	TArray<FNiagaraRendererMaterialStaticBoolParameter> StaticBoolParameters;
 
+	NIAGARA_API void ConditionalPostLoad();
 #if WITH_EDITORONLY_DATA
 	NIAGARA_API void RenameVariable(const FNiagaraVariableBase& OldVariable, const FNiagaraVariableBase& NewVariable, const FVersionedNiagaraEmitter& InEmitter, ENiagaraRendererSourceDataMode SourceMode);
 	NIAGARA_API void RemoveVariable(const FNiagaraVariableBase& OldVariable, const FVersionedNiagaraEmitter& InEmitter, ENiagaraRendererSourceDataMode SourceMode);
@@ -307,6 +309,7 @@ public:
 	virtual const FVertexFactoryType* GetVertexFactoryType() const { return nullptr; }
 	virtual bool IsBackfaceCullingDisabled() const { return false; }
 
+	virtual float GetMaterialStreamingScale() const { return 1.0f; }
 	virtual void GetStreamingMeshInfo(const FBoxSphereBounds& OwnerBounds, const FNiagaraEmitterInstance* InEmitter, TArray<FStreamingRenderAssetPrimitiveInfo>& OutStreamingRenderAssets) const {}
 
 	virtual bool IsSimTargetSupported(ENiagaraSimTarget InSimTarget) const { return false; };
@@ -322,7 +325,9 @@ public:
 	/** In the case that we need parameters bound in that aren't Particle variables, these should be set up here so that the data is appropriately populated after the simulation.*/
 	NIAGARA_API virtual bool PopulateRequiredBindings(FNiagaraParameterStore& InParameterStore);
 
-	
+	/** Collect PSO precache data using the optional emitter instance */
+	NIAGARA_API void CollectPSOPrecacheData(FNiagaraEmitterInstance* EmitterInstance, FMaterialInterfacePSOPrecacheParamsList& MaterialInterfacePSOPrecacheParamsList) const;
+
 	/**
 	* Collect all the data required for PSO precaching 
 	*/
@@ -332,7 +337,7 @@ public:
 		FPSOPrecacheVertexFactoryDataList VertexFactoryDataList;
 	};
 	typedef TArray<FPSOPrecacheParams, TInlineAllocator<2> > FPSOPrecacheParamsList;
-	virtual void CollectPSOPrecacheData(FPSOPrecacheParamsList& OutParams) {};
+	virtual void CollectPSOPrecacheData(const FNiagaraEmitterInstance* InEmitter, FPSOPrecacheParamsList& OutParams) const {};
 
 #if WITH_EDITORONLY_DATA
 
@@ -452,7 +457,11 @@ protected:
 	/** utility function that can be used to fix up old vec3 bindings into position bindings. */
 	static NIAGARA_API void ChangeToPositionBinding(FNiagaraVariableAttributeBinding& Binding);
 
+	/** Generates the static parameter set for the parent emitter */
+	bool BuildMaterialStaticParameterSet(const FNiagaraRendererMaterialParameters& MaterialParameters, const UMaterialInterface* Material, FStaticParameterSet& StaticParameterSet) const;
+
 	/** Update MIC Static Parameters. */
+	UE_DEPRECATED(5.5, "This helper function has been deprecated.  Use BuildMaterialStaticParameterSet instead.")
 	NIAGARA_API bool UpdateMaterialStaticParameters(const FNiagaraRendererMaterialParameters& MaterialParameters, UMaterialInstanceConstant* MIC);
 
 	/** Utility function to updates MICs. */

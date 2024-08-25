@@ -13,7 +13,7 @@
 #include "ChaosWheeledVehicleMovementComponent.generated.h"
 
 #if VEHICLE_DEBUGGING_ENABLED
-PRAGMA_DISABLE_OPTIMIZATION
+UE_DISABLE_OPTIMIZATION
 #endif
 
 struct CHAOSVEHICLES_API FWheeledVehicleDebugParams
@@ -536,15 +536,13 @@ struct CHAOSVEHICLES_API FChaosWheelSetup
 /** Commonly used Wheel state - evaluated once used wherever required for that frame */
 struct CHAOSVEHICLES_API FWheelState
 {
-	void Init(int NumWheels)
-	{
-		WheelLocalLocation.Init(FVector::ZeroVector, NumWheels);
-		WheelWorldLocation.Init(FVector::ZeroVector, NumWheels);
-		WorldWheelVelocity.Init(FVector::ZeroVector, NumWheels);
-		LocalWheelVelocity.Init(FVector::ZeroVector, NumWheels);
-		Trace.SetNum(NumWheels);
-		TraceResult.SetNum(NumWheels);
-	}
+	FWheelState();
+	~FWheelState();
+
+	FWheelState(const FWheelState& Other);
+	FWheelState& operator=(const FWheelState& Other);
+
+	void Init(int NumWheels);
 
 	/** Commonly used Wheel state - evaluated once used wherever required for that frame */
 	void CaptureState(int WheelIdx, const FVector& WheelOffset, const FBodyInstance* TargetInstance);
@@ -566,15 +564,9 @@ class CHAOSVEHICLES_API UChaosWheeledVehicleSimulation : public UChaosVehicleSim
 {
 public:
 
-	UChaosWheeledVehicleSimulation()
-		: bOverlapHit(false)
-	{
-		QueryBox.Init();
-	}
+	UChaosWheeledVehicleSimulation();
 
-	virtual ~UChaosWheeledVehicleSimulation()
-	{
-	}
+	virtual ~UChaosWheeledVehicleSimulation();
 
 	virtual void Init(TUniquePtr<Chaos::FSimpleWheeledVehicle>& PVehicleIn) override
 	{
@@ -961,5 +953,5 @@ protected:
 };
 
 #if VEHICLE_DEBUGGING_ENABLED
-PRAGMA_ENABLE_OPTIMIZATION
+UE_ENABLE_OPTIMIZATION
 #endif

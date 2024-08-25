@@ -263,6 +263,8 @@ int TextureComputeVirtualMipLevel(
 	const float GlobalMipBias = GetGlobalVirtualTextureMipBias();
 #if VIRTUAL_TEXTURE_MANUAL_TRILINEAR_FILTERING
 	const float Noise = 0.f;
+#elif VIRTUAL_TEXTURE_FORCE_BILINEAR_FILTERING
+	const float Noise = 0.5f;
 #else
 	const float Noise = GetStochasticMipNoise(SvPositionXY);
 #endif
@@ -760,12 +762,28 @@ MaterialFloat4 TextureVirtualSample(
 {
 	float2 pUV = VTComputePhysicalUVs(PageTableResult, LayerIndex, Uniform);
 	bool bValid = IsValid(PageTableResult, LayerIndex);
-	const MaterialFloat4 Sample1 = bValid ? TextureVirtualSampleAniso(Physical, PhysicalSampler, pUV, PageTableResult.dUVdx, PageTableResult.dUVdy) : Uniform.FallbackValue;
+	MaterialFloat4 Sample1;
+	if (bValid)
+	{
+		Sample1 = TextureVirtualSampleAniso(Physical, PhysicalSampler, pUV, PageTableResult.dUVdx, PageTableResult.dUVdy);
+	}
+	else
+	{
+		Sample1 = Uniform.FallbackValue;
+	}
 
 #if VIRTUAL_TEXTURE_MANUAL_TRILINEAR_FILTERING
 	pUV = VTComputePhysicalUVs(PageTableResult, LayerIndex + 8u, Uniform);
 	bValid = IsValid(PageTableResult, LayerIndex + 8u);
-	const MaterialFloat4 Sample2 = bValid ? TextureVirtualSampleAniso(Physical, PhysicalSampler, pUV, PageTableResult.dUVdx, PageTableResult.dUVdy) : Sample1;
+	MaterialFloat4 Sample2;
+	if (bValid)
+	{
+		Sample2 = TextureVirtualSampleAniso(Physical, PhysicalSampler, pUV, PageTableResult.dUVdx, PageTableResult.dUVdy);
+	}
+	else
+	{
+		Sample2 = Sample1;
+	}
 	return lerp(Sample1, Sample2, PageTableResult.MipLevelFrac);
 #else
 	return Sample1;
@@ -781,10 +799,21 @@ MaterialFloat4 TextureVirtualSampleLevel(
 	const float2 pUV = VTComputePhysicalUVs(PageTableResult, LayerIndex, Uniform);
 	const bool bValid = IsValid(PageTableResult, LayerIndex);
 	// No need to apply dUVdx/dUVdy, don't support anisotropic when sampling a specific level
-
-	return bValid ? Physical.SampleLevel(PhysicalSampler, pUV, 0.0f) : Uniform.FallbackValue;
+	if (bValid)
+	{
+		return Physical.SampleLevel(PhysicalSampler, pUV, 0.0f);
+	}
+	return Uniform.FallbackValue;
 }
 
+
+/**	Helper function to convert world space to virtual texture UV space. */
+float2 VirtualTextureWorldToUV(in FDFVector3 WorldPos, in FDFVector3 O, in float3 U, in float3 V)
+{
+	// After the subtract we can assume that the offset is small enough for float maths.
+	float3 P = DFFastSubtractDemote(WorldPos, O);
+	return float2(dot(P, U), dot(P, V));
+}
 
 /**	Helper function to convert world space to virtual texture UV space. */
 float2 VirtualTextureWorldToUV(in FLWCVector3 WorldPos, in FLWCVector3 O, in float3 U, in float3 V)
@@ -794,8 +823,35 @@ float2 VirtualTextureWorldToUV(in FLWCVector3 WorldPos, in FLWCVector3 O, in flo
 	return float2(dot(P, U), dot(P, V));
 }
 
+/**	Helper function to convert translated world space to virtual texture UV space (requires O to be in translated space). */
+float2 VirtualTextureWorldToUV(in float3 TranslatedWorldPos, in float3 O, in float3 U, in float3 V)
+{
+	float3 P = TranslatedWorldPos - O;
+	return float2(dot(P, U), dot(P, V));
+}
+
+/**	Derivative-aware helper function to convert world space to virtual texture UV space. */
+FloatDeriv2 VirtualTextureWorldToUVDeriv(in FDFVector3Deriv WorldPos, in FDFVector3 O, in float3 U, in float3 V)
+{
+	FloatDeriv2 Result;
+	Result.Value = VirtualTextureWorldToUV(WorldPos.Value, O, U, V);
+	Result.Ddx = float2(dot(WorldPos.Ddx, U), dot(WorldPos.Ddx, V));
+	Result.Ddy = float2(dot(WorldPos.Ddy, U), dot(WorldPos.Ddy, V));
+	return Result;
+}
+
 /**	Derivative-aware helper function to convert world space to virtual texture UV space. */
 FloatDeriv2 VirtualTextureWorldToUVDeriv(in FLWCVector3Deriv WorldPos, in FLWCVector3 O, in float3 U, in float3 V)
+{
+	FloatDeriv2 Result;
+	Result.Value = VirtualTextureWorldToUV(WorldPos.Value, O, U, V);
+	Result.Ddx = float2(dot(WorldPos.Ddx, U), dot(WorldPos.Ddx, V));
+	Result.Ddy = float2(dot(WorldPos.Ddy, U), dot(WorldPos.Ddy, V));
+	return Result;
+}
+
+/**	Derivative-aware helper function to convert translated world space to virtual texture UV space (requires O to be in translated space). */
+FloatDeriv2 VirtualTextureWorldToUVDeriv(in FloatDeriv3 WorldPos, in float3 O, in float3 U, in float3 V)
 {
 	FloatDeriv2 Result;
 	Result.Value = VirtualTextureWorldToUV(WorldPos.Value, O, U, V);

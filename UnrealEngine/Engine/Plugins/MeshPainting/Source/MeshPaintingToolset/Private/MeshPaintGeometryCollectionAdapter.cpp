@@ -86,15 +86,15 @@ bool FMeshPaintGeometryCollectionComponentAdapter::InitializeVertexData()
 	const TManagedArray<int32>& BoneMap = Collection->BoneMap;
 	const TManagedArray<int32>& SimTypes = Collection->SimulationType;
 	const TManagedArray<bool>& Visible = Collection->Visible;
-	const TArray<FTransform>& ComponentSpaceTransforms = GeometryCollectionComponent->GetComponentSpaceTransforms();
+	const TArray<FTransform3f>& ComponentSpaceTransforms = GeometryCollectionComponent->GetComponentSpaceTransforms3f();
 	const int32 NumVertices = Vertices.Num();
 	MeshVertices.Reset();
 	MeshVertices.AddZeroed(NumVertices);
 	for (int32 Index = 0; Index < NumVertices; ++Index)
 	{
 		const int32 BoneIndex = BoneMap[Index];
-		const FTransform& Transform = ComponentSpaceTransforms[BoneIndex];
-		const FVector Position = Transform.TransformPosition((FVector)Vertices[Index]);
+		const FTransform3f& Transform = ComponentSpaceTransforms[BoneIndex];
+		const FVector Position = FVector(Transform.TransformPosition(Vertices[Index]));
 		MeshVertices[Index] = Position;
 	}
 
@@ -243,7 +243,7 @@ void FMeshPaintGeometryCollectionComponentAdapter::ApplyOrRemoveTextureOverride(
 {
 	if (GeometryCollectionComponent.IsValid())
 	{
-		DefaultApplyOrRemoveTextureOverride(GeometryCollectionComponent.Get(), SourceTexture, OverrideTexture);
+		TextureOverridesState.ApplyOrRemoveTextureOverride(GeometryCollectionComponent.Get(), SourceTexture, OverrideTexture);
 	}
 }
 

@@ -21,15 +21,6 @@ template <typename ItemType> class SListView;
 class STableViewBase;
 class SVerticalBox;
 
-/** Collumn IDs in the Functions Editor */
-struct FDMXFixtureTypeFunctionsEditorCollumnIDs 
-{
-	static const FName Status;
-	static const FName Channel;
-	static const FName Name;
-	static const FName Attribute;
-};
-
 
 using FDMXFixtureTypeFunctionsEditorFunctionListType = SListView<TSharedPtr<FDMXFixtureTypeFunctionsEditorItemBase>>;
 
@@ -38,6 +29,16 @@ class SDMXFixtureTypeFunctionsEditor
 	: public SCompoundWidget
 {
 public:
+	/** Collumn IDs in the Functions Editor */
+	struct FCollumnID
+	{
+		static const FName Status;
+		static const FName Channel;
+		static const FName Name;
+		static const FName Attribute;
+		static const FName DeleteAttribute;
+	};
+
 	SLATE_BEGIN_ARGS(SDMXFixtureTypeFunctionsEditor)
 	{}
 		

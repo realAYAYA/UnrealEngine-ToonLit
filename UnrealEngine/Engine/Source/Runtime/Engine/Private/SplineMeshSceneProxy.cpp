@@ -32,6 +32,7 @@ void FSplineMeshVertexFactory::ModifyCompilationEnvironment(const FVertexFactory
 	FLocalVertexFactory::ModifyCompilationEnvironment(Parameters, OutEnvironment);
 
 	OutEnvironment.SetDefine(TEXT("USE_SPLINEDEFORM"), TEXT("1"));
+	OutEnvironment.SetDefine(TEXT("USE_SPLINE_MESH_SCENE_RESOURCES"), UseSplineMeshSceneResources(Parameters.Platform));
 }
 
 /**
@@ -39,34 +40,7 @@ void FSplineMeshVertexFactory::ModifyCompilationEnvironment(const FVertexFactory
  */
 void FSplineMeshVertexFactory::GetPSOPrecacheVertexFetchElements(EVertexInputStreamType VertexInputStreamType, FVertexDeclarationElementList& Elements)
 {
-	if (VertexInputStreamType == EVertexInputStreamType::PositionOnly || VertexInputStreamType == EVertexInputStreamType::PositionAndNormalOnly)
-	{
-		FLocalVertexFactory::GetPSOPrecacheVertexFetchElements(VertexInputStreamType, Elements);
-	}
-	else
-	{
-		// Position
-		Elements.Add(FVertexElement(0, 0, VET_Float3, 0, 12, false));
-
-		// Normals
-		Elements.Add(FVertexElement(1, 0, VET_PackedNormal, 1, 0, false));
-		Elements.Add(FVertexElement(2, 0, VET_PackedNormal, 2, 0, false));
-
-		// Color
-		Elements.Add(FVertexElement(3, 0, VET_Color, 3, 0, false));
-
-		// Texcoords
-		Elements.Add(FVertexElement(4, 0, VET_Float4, 4, 0, false));
-		Elements.Add(FVertexElement(5, 0, VET_Float4, 5, 0, false));
-		Elements.Add(FVertexElement(6, 0, VET_Float4, 6, 0, false));
-		Elements.Add(FVertexElement(7, 0, VET_Float4, 7, 0, false));
-
-		// Lightmap coords
-		Elements.Add(FVertexElement(8, 0, VET_Float2, 15, 0, false));
-		
-		// Primitive ID
-		Elements.Add(FVertexElement(9, 0, VET_UInt, 13, 0, true));
-	}
+	FLocalVertexFactory::GetPSOPrecacheVertexFetchElements(VertexInputStreamType, Elements);
 }
 
 FSplineMeshSceneProxy::FSplineMeshSceneProxy(USplineMeshComponent* InComponent) :
@@ -100,26 +74,21 @@ FSplineMeshSceneProxy::FSplineMeshSceneProxy(USplineMeshComponent* InComponent) 
 	// Copy spline params from component
 	SplineParams = InComponent->CalculateShaderParams();
 
-	// If we're using GPU Scene, we place the spline mesh parameters in the instance data buffer
-	if (UseGPUScene(GetScene().GetShaderPlatform(), GetScene().GetFeatureLevel()))
+	// If we're using GPU Scene, we place the spline mesh parameters in the instance data buffer, with the
+	// exception of mobile platforms that are unable to pull this data from the structured buffer in the VS
+	const ERHIFeatureLevel::Type FeatureLevel = GetScene().GetFeatureLevel();
+	if (FeatureLevel > ERHIFeatureLevel::ES3_1 && UseGPUScene(GetScene().GetShaderPlatform(), FeatureLevel))
 	{
-		InstancePayloadExtension.SetNumUninitialized(SPLINE_MESH_PARAMS_FLOAT4_SIZE);
-		PackSplineMeshParams(SplineParams, InstancePayloadExtension);	
-		bHasPerInstancePayloadExtension = true;
-
-		// We don't actually move the InstanceSceneData, but we have to add at least one to provide the spline
-		// mesh params to the payload
-		InstanceSceneData.SetNum(1);
-		InstanceSceneData[0].LocalToPrimitive.SetIdentity();
-		bSupportsInstanceDataBuffer = true;
+		SplineMeshInstanceData.Setup(SplineParams);
+		SetupInstanceSceneDataBuffers(&SplineMeshInstanceData);
 	}
 
 	for (int32 LODIndex = 0; LODIndex < LODs.Num(); LODIndex++)
 	{
-		InitVertexFactory(InComponent, LODIndex, nullptr); // we always need this one for shadows etc
+		InComponent->InitVertexFactory(LODIndex, nullptr); // we always need this one for shadows etc
 		if (InComponent->LODData.IsValidIndex(LODIndex) && InComponent->LODData[LODIndex].OverrideVertexColors)
 		{
-			InitVertexFactory(InComponent, LODIndex, InComponent->LODData[LODIndex].OverrideVertexColors);
+			InComponent->InitVertexFactory(LODIndex, InComponent->LODData[LODIndex].OverrideVertexColors);
 		}
 	}
 }
@@ -238,13 +207,16 @@ void FSplineMeshSceneProxy::GetDynamicRayTracingInstances(struct FRayTracingMate
 
 		CachedRayTracingMaterialsLODIndex = LODIndex;
 	}
+	else
+	{
+		RayTracingInstance.bInstanceMaskAndFlagsDirty = false;
+	}
 
 	RayTracingInstance.Geometry = &Geometry;
 	// scene proxies live for the duration of Render(), making array views below safe
 	const FMatrix& ThisLocalToWorld = GetLocalToWorld();
 	RayTracingInstance.InstanceTransformsView = MakeArrayView(&ThisLocalToWorld, 1);
 	RayTracingInstance.MaterialsView = MakeArrayView(CachedRayTracingMaterials);
-	CachedRayTracingInstanceMaskAndFlags = Context.BuildInstanceMaskAndFlags(RayTracingInstance, *this);
 
 	if (RenderData->LODVertexFactories[LODIndex].VertexFactory.GetType()->SupportsRayTracingDynamicGeometry())
 	{
@@ -270,6 +242,33 @@ void FSplineMeshSceneProxy::GetDynamicRayTracingInstances(struct FRayTracingMate
 		LODIndex);
 }
 #endif // RHI_RAYTRACING
+
+
+void FSplineMeshSceneProxy::OnTransformChanged(FRHICommandListBase& RHICmdList)
+{
+	// Call parent implementation
+	FStaticMeshSceneProxy::OnTransformChanged(RHICmdList);
+
+	// NOTE: The proxy's local bounds have already been padded for WPO/Displacement
+	SplineMeshInstanceData.UpdateDefaultInstance(GetLocalToWorld(), GetLocalBounds());
+}
+
+void FSplineMeshSceneInstanceDataBuffers::Setup(const FSplineMeshShaderParams& InSplineMeshShaderParams)
+{
+	InstancePayloadExtension.SetNumUninitialized(SPLINE_MESH_PARAMS_FLOAT4_SIZE);
+	Flags.bHasPerInstancePayloadExtension = true;
+	Update(InSplineMeshShaderParams);
+}
+
+bool FSplineMeshSceneInstanceDataBuffers::Update(const FSplineMeshShaderParams& InSplineMeshShaderParams)
+{
+	if (!InstancePayloadExtension.IsEmpty())
+	{
+		PackSplineMeshParams(InSplineMeshShaderParams, InstancePayloadExtension);
+		return true;
+	}
+	return false;
+}
 
 FNaniteSplineMeshSceneProxy::FNaniteSplineMeshSceneProxy(const Nanite::FMaterialAudit& NaniteMaterials, USplineMeshComponent* InComponent) :
 	Nanite::FSceneProxy(NaniteMaterials, InComponent)
@@ -302,11 +301,25 @@ FNaniteSplineMeshSceneProxy::FNaniteSplineMeshSceneProxy(const Nanite::FMaterial
 
 	// Copy spline params from component
 	SplineParams = InComponent->CalculateShaderParams();
+	SplineMeshInstanceData.Setup(SplineParams);
+	SetupInstanceSceneDataBuffers(&SplineMeshInstanceData);
 
-	// Place the spline mesh parameters in the payload extension
-	InstancePayloadExtension.SetNumUninitialized(SPLINE_MESH_PARAMS_FLOAT4_SIZE);
-	PackSplineMeshParams(SplineParams, InstancePayloadExtension);
-	bHasPerInstancePayloadExtension = true;
+#if RHI_RAYTRACING
+	bNeedsDynamicRayTracingGeometries = true;
+
+	// We only need to init vertex factories for Nanite spline meshes if they can be ray traced
+	if (IsRayTracingAllowed())
+	{
+		for (int32 LODIndex = 0; LODIndex < RenderData->LODResources.Num(); LODIndex++)
+		{
+			InComponent->InitVertexFactory(LODIndex, nullptr); // we always need this one for shadows etc
+			if (InComponent->LODData.IsValidIndex(LODIndex) && InComponent->LODData[LODIndex].OverrideVertexColors)
+			{
+				InComponent->InitVertexFactory(LODIndex, InComponent->LODData[LODIndex].OverrideVertexColors);
+			}
+		}
+	}
+#endif
 }
 
 SIZE_T FNaniteSplineMeshSceneProxy::GetTypeHash() const
@@ -315,43 +328,60 @@ SIZE_T FNaniteSplineMeshSceneProxy::GetTypeHash() const
 	return reinterpret_cast<size_t>(&UniquePointer);
 }
 
-void FNaniteSplineMeshSceneProxy::OnTransformChanged()
+void FNaniteSplineMeshSceneProxy::OnTransformChanged(FRHICommandListBase& RHICmdList)
 {
 	// Call Nanite parent implementation
-	Nanite::FSceneProxy::OnTransformChanged();
+	Nanite::FSceneProxy::OnTransformChanged(RHICmdList);
 
-	// Override the instance local bounds with the bounds that were calculated (as opposed to using the mesh bounds)
 	// NOTE: The proxy's local bounds have already been padded for WPO/Displacement
-	check(InstanceLocalBounds.Num() == 1);
-	SetInstanceLocalBounds(0, GetLocalBounds(), false);
+	SplineMeshInstanceData.UpdateDefaultInstance(GetLocalToWorld(), GetLocalBounds());
 }
+
+#if RHI_RAYTRACING
+
+ERayTracingPrimitiveFlags FNaniteSplineMeshSceneProxy::GetCachedRayTracingInstance(FRayTracingInstance& OutRayTracingInstance)
+{
+	// Skip Nanite implementation and return to default implementation
+	return FPrimitiveSceneProxy::GetCachedRayTracingInstance(OutRayTracingInstance);
+}
+
+void FNaniteSplineMeshSceneProxy::GetDynamicRayTracingInstances(struct FRayTracingMaterialGatheringContext& Context, TArray<FRayTracingInstance>& OutRayTracingInstances)
+{
+	if (CVarRayTracingSplineMeshes.GetValueOnRenderThread() == 0)
+	{
+		return;
+	}
+
+	return Nanite::FSceneProxy::GetDynamicRayTracingInstances(Context, OutRayTracingInstances);
+}
+
+void FNaniteSplineMeshSceneProxy::SetupFallbackRayTracingMaterials(int32 LODIndex, TArray<FMeshBatch>& OutMaterials) const
+{
+	Nanite::FSceneProxy::SetupFallbackRayTracingMaterials(LODIndex, OutMaterials);
+
+	// set up the vertex factories
+	const FStaticMeshVertexFactories& VFs = RenderData->LODVertexFactories[LODIndex];
+	for (auto& MeshBatch : OutMaterials)
+	{
+		MeshBatch.VertexFactory = MeshBatch.Elements[0].bUserDataIsColorVertexBuffer ? VFs.SplineVertexFactoryOverrideColorVertexBuffer : VFs.SplineVertexFactory;
+		check(MeshBatch.VertexFactory);
+		MeshBatch.ReverseCulling ^= (SplineParams.StartScale.X < 0) ^ (SplineParams.StartScale.Y < 0);
+	}
+}
+
+#endif // RHI_RAYTRACING
+
 
 void UpdateSplineMeshParams_RenderThread(FPrimitiveSceneProxy* SceneProxy, const FSplineMeshShaderParams& Params)
 {
 	check(SceneProxy->IsSplineMesh());
 
-	TArrayView<FVector4f> InstancePayloadExtension;
 	if (SceneProxy->IsNaniteMesh())
 	{
-		auto* Proxy = static_cast<FNaniteSplineMeshSceneProxy*>(SceneProxy);
-		Proxy->SplineParams = Params;
-		InstancePayloadExtension = Proxy->InstancePayloadExtension;
+		static_cast<FNaniteSplineMeshSceneProxy*>(SceneProxy)->UpdateSplineMeshParams_RenderThread(Params);
 	}
 	else
 	{
-		auto* Proxy = static_cast<FSplineMeshSceneProxy*>(SceneProxy);
-		Proxy->SplineParams = Params;
-		InstancePayloadExtension = Proxy->InstancePayloadExtension;
-	}
-
-	// Re-pack the shader params and request a GPU Scene update for this primitive so it updates its instance data
-	// NOTE: The payload extension could be empty if not using GPU Scene
-	if (InstancePayloadExtension.Num() == SPLINE_MESH_PARAMS_FLOAT4_SIZE)
-	{
-		PackSplineMeshParams(Params, InstancePayloadExtension);
-
-		FSceneInterface& Scene = SceneProxy->GetScene();
-		FPrimitiveSceneInfo& SceneInfo = *SceneProxy->GetPrimitiveSceneInfo();
-		Scene.RequestGPUSceneUpdate(SceneInfo, EPrimitiveDirtyState::ChangedOther);
+		static_cast<FSplineMeshSceneProxy*>(SceneProxy)->UpdateSplineMeshParams_RenderThread(Params);
 	}
 }

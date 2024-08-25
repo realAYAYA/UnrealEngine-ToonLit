@@ -2,6 +2,7 @@
 
 #include "PaperGroupedSpriteComponent.h"
 #include "AI/NavigationSystemBase.h"
+#include "AI/Navigation/NavigationRelevantData.h"
 #include "Engine/CollisionProfile.h"
 
 #include "GroupedSpriteSceneProxy.h"

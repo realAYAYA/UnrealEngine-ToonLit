@@ -28,7 +28,9 @@ public class XRCreative : ModuleRules
 				"InputCore",
 				"InteractiveToolsFramework",
 				"LevelSequence",
+				"ModelViewViewModel",
 				"RenderCore", // TODO: Kill this? Only for FlushRenderingCommands
+				"Settings",
 				"Slate",
 				"SlateCore",
 				"TypedElementFramework",

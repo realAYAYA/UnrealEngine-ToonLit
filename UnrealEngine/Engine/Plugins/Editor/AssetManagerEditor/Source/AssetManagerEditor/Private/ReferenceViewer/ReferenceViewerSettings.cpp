@@ -34,6 +34,11 @@ bool UReferenceViewerSettings::IsCompactMode() const
 	return bIsCompactMode;
 }
 
+bool UReferenceViewerSettings::IsShowExternalReferencers() const
+{
+	return bIsShowExternalReferencers;
+}
+
 bool UReferenceViewerSettings::IsShowDuplicates() const
 {
 	return bIsShowDuplicates;
@@ -102,6 +107,12 @@ void UReferenceViewerSettings::SetShowFilteredPackagesOnlyEnabled(bool bNewEnabl
 void UReferenceViewerSettings::SetCompactModeEnabled(bool bNewEnabled)
 {
 	bIsCompactMode = bNewEnabled;
+	SaveConfig();
+}
+
+void UReferenceViewerSettings::SetShowExternalReferencersEnabled(bool bEnabled)
+{
+	bIsShowExternalReferencers = bEnabled;
 	SaveConfig();
 }
 
@@ -194,6 +205,17 @@ bool UReferenceViewerSettings::GetEnableCollectionFilter() const
 void UReferenceViewerSettings::SetEnableCollectionFilter(bool bEnabled)
 {
 	bEnableCollectionFilter = bEnabled;
+	SaveConfig();
+}
+
+bool UReferenceViewerSettings::GetEnablePluginFilter() const
+{
+	return bEnablePluginFilter;
+}
+
+void UReferenceViewerSettings::SetEnablePluginFilter(bool bEnabled)
+{
+	bEnablePluginFilter = bEnabled;
 	SaveConfig();
 }
 

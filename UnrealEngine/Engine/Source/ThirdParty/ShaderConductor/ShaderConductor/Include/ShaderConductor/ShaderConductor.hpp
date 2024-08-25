@@ -70,6 +70,11 @@ namespace ShaderConductor
         RayCallable,
         // UE Change End: Add ray tracing stages.
 
+        // UE Change Begin: Add mesh shading stages,
+        MeshShader,
+        AmplificationShader,
+        // UE Change Begin: Add mesh shading stages,
+        
         NumShaderStages,
     };
 
@@ -133,13 +138,15 @@ namespace ShaderConductor
     public:
         struct ShaderModel
         {
-            uint8_t major_ver : 6;
-            uint8_t minor_ver : 2;
+            // UE Change Begin: Spread the bits more evenly to support shader models such as 6.6
+            uint8_t major_ver : 4; // originally 6
+            uint8_t minor_ver : 4; // originally 2
 
             uint32_t FullVersion() const noexcept
             {
-                return (major_ver << 2) | minor_ver;
+                return (major_ver << 4) | minor_ver;
             }
+            // UE Change End: Spread the bits more evenly to support shader models such as 6.6
 
             bool operator<(const ShaderModel& other) const noexcept
             {

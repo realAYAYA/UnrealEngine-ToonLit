@@ -92,7 +92,7 @@ public:
 	void SetDescription(const FText& InDescription) { Description = InDescription; }
 
 	bool IsVisible() const { return bIsVisible; }
-	void SetVisibility(bool bOnOff) { bIsVisible = bOnOff; }
+	virtual void SetVisibility(bool bOnOff) { bIsVisible = bOnOff; }
 
 	bool IsDirty() const { return bIsDirty; }
 	void SetDirtyFlag() { bIsDirty = true; }

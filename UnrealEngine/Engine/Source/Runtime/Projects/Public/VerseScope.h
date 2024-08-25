@@ -13,9 +13,10 @@ namespace EVerseScope
 {
 	enum Type : uint8
 	{
-		InternalAPI, // Created by Epic and is entirely hidden from public users
-		PublicAPI,   // Created by Epic and only public definitions will be visible to public users
-		User,        // Created by a public user
+		PublicAPI,    // Created by Epic and only public definitions will be visible to public users
+		InternalAPI,  // Created by Epic and is entirely hidden from public users
+		PublicUser,   // Created by a public user
+		InternalUser, // Created by an Epic internal user
 	};
 
 	/**

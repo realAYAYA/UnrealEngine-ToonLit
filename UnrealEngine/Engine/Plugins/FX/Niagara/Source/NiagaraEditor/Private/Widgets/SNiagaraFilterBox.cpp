@@ -444,9 +444,9 @@ FText SNiagaraTemplateTabBox::DetermineControlTooltip(ENiagaraScriptTemplateSpec
 				return LOCTEXT("EmitterTemplateTabTooltip", "Templates are intended as starting points for building functional emitters of different types,\n"
 			"Emitter templates are copied into a system as a unique emitter with no inheritance");
 			case ENiagaraScriptTemplateSpecification::Behavior:
-				return LOCTEXT("EmitterBehaviorExampleTabTooltip", "Behavior Examples are intended to serve as a guide to how Niagara works at a feature level.\n"
+				return LOCTEXT("EmitterBehaviorExampleTabTooltip", "Learning Examples are intended to serve as a guide to how Niagara works at a feature level.\n"
 			"Each example shows a simplified setup used to achieve specific outcomes and are intended as starting points, building blocks, or simply as reference.\n"
-			"Behavior Example emitters are copied into a system as a unique emitter with no inheritance");
+			"Learning Example emitters are copied into a system as a unique emitter with no inheritance");
 			default:
 				return FText::GetEmpty();
 			}
@@ -460,7 +460,7 @@ FText SNiagaraTemplateTabBox::DetermineControlTooltip(ENiagaraScriptTemplateSpec
 			case ENiagaraScriptTemplateSpecification::Template:
 				return LOCTEXT("SystemTemplateTabTooltip", "Template systems ");
 			case ENiagaraScriptTemplateSpecification::Behavior:
-				return LOCTEXT("SystemBehaviorExampleTabTooltip", "Behavior Example systems serve to demonstrate different Niagara features that rely on multiple emitters interacting in some way.");
+				return LOCTEXT("SystemBehaviorExampleTabTooltip", "Learning Example systems serve to demonstrate different Niagara features that rely on multiple emitters interacting in some way.");
 			default:
 				return FText::GetEmpty();				
 			}

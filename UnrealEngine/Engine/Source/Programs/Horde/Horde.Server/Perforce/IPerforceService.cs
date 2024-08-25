@@ -3,11 +3,9 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using EpicGames.Perforce;
-using Horde.Server.Jobs.Templates;
 using Horde.Server.Streams;
 using Horde.Server.Users;
 

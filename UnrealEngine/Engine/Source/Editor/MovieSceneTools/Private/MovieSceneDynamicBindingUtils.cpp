@@ -39,7 +39,7 @@ void FMovieSceneDynamicBindingUtils::EnsureBlueprintExtensionCreated(UMovieScene
 
 	check(MovieSceneSequence);
 
-	for (TObjectPtr<UBlueprintExtension> Extension : Blueprint->GetExtensions())
+	for (const TObjectPtr<UBlueprintExtension>& Extension : Blueprint->GetExtensions())
 	{
 		UMovieSceneDynamicBindingBlueprintExtension* DynamidBindingExtension = Cast<UMovieSceneDynamicBindingBlueprintExtension>(Extension);
 		if (DynamidBindingExtension)

@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
+using System.Text.Json;
 using EpicGames.Core;
 using Microsoft.Extensions.Logging;
 using OpenTracing.Util;
@@ -658,9 +659,9 @@ namespace UnrealBuildTool
 				{
 					Result = Mode.ExecuteAsync(Arguments, Logger).GetAwaiter().GetResult();
 				}
-				catch (AggregateException AggEx) when (AggEx.InnerExceptions.Count == 1)
+				catch (AggregateException AggEx) when (AggEx.InnerExceptions.Count == 1 && AggEx.InnerExceptions.FirstOrDefault() != null)
 				{
-					throw AggEx.InnerExceptions[0];
+					throw AggEx.InnerExceptions.First();
 				}
 				finally
 				{
@@ -674,22 +675,28 @@ namespace UnrealBuildTool
 			}
 			catch (CompilationResultException Ex)
 			{
-				// Used to return a propagate a specific exit code after an error has occurred. Does not log any message.
-				Logger.LogDebug(Ex, "{Ex}", ExceptionUtils.FormatExceptionDetails(Ex));
+				// Used to return a propagate a specific exit code after an error has occurred.
+				Ex.LogException(Logger);
 				return (int)Ex.Result;
 			}
 			catch (BuildLogEventException Ex)
 			{
-				// BuildExceptions should have nicely formatted messages. We can log these directly.
-				Logger.Log(Ex.Event.Level, Ex.Event.Id, Ex.Event, Ex, (s, e) => s.ToString());
-				Logger.LogDebug(Ex, "{Ex}", ExceptionUtils.FormatExceptionDetails(Ex));
+				// BuildExceptions should have nicely formatted messages.
+				Ex.LogException(Logger);
+				return (int)CompilationResult.OtherCompilationError;
+			}
+			catch (JsonException Ex)
+			{
+				FileReference source = new FileReference(Ex.Source ?? "unknown");
+				LogValue FileValue = LogValue.SourceFile(source, source.GetFileName());
+				Logger.LogError(KnownLogEvents.Compiler, "{File}({Line}): error:{Message}", FileValue, Ex.LineNumber ?? 0, ExceptionUtils.FormatException(Ex));
+				Logger.LogDebug(KnownLogEvents.Compiler, "{File}({Line}): error:{Message}", FileValue, Ex.LineNumber ?? 0, ExceptionUtils.FormatExceptionDetails(Ex));
 				return (int)CompilationResult.OtherCompilationError;
 			}
 			catch (BuildException Ex)
 			{
-				// BuildExceptions should have nicely formatted messages. We can log these directly.
-				Logger.LogError(Ex, "{Ex}", ExceptionUtils.FormatException(Ex));
-				Logger.LogDebug(Ex, "{Ex}", ExceptionUtils.FormatExceptionDetails(Ex));
+				// BuildExceptions should have nicely formatted messages.
+				Ex.LogException(Logger);
 				return (int)CompilationResult.OtherCompilationError;
 			}
 			catch (Exception Ex)

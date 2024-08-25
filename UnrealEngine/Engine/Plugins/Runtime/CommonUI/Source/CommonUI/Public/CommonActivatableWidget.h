@@ -66,6 +66,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = ActivatableWidget)
 	UWidget* GetDesiredFocusTarget() const;
 
+	/** Clears the cached focus target that's set when bAutoRestoreFocus is true */
+	UFUNCTION(BlueprintCallable, Category = ActivatableWidget)
+	void ClearFocusRestorationTarget();
+
 	FSimpleMulticastDelegate& OnActivated() const { return OnActivatedEvent; }
 	FSimpleMulticastDelegate& OnDeactivated() const { return OnDeactivatedEvent; }
 
@@ -96,6 +100,7 @@ public:
 	bool SetsVisibilityOnActivated() const { return bSetVisibilityOnActivated; }
 	bool SetsVisibilityOnDeactivated() const { return bSetVisibilityOnDeactivated; }
 
+	TWeakPtr<FActivatableTreeNode> GetInputTreeNode() const;
 	void RegisterInputTreeNode(const TSharedPtr<FActivatableTreeNode>& OwnerNode);
 	void ClearActiveHoldInputs();
 
@@ -138,6 +143,7 @@ protected:
 	 * or the buttons are deeply nested in a multi-switcher hierarchy and it would be burdensome
 	 * to wrap each element in a CommonActivatableWidget.
 	 */
+	UFUNCTION(BlueprintCallable, Category = ActivatableWidget)
 	void RequestRefreshFocus();
 
 	UFUNCTION(BlueprintImplementableEvent, Category = ActivatableWidget, meta = (DisplayName = "On Activated"))

@@ -2,21 +2,6 @@
 
 import 'package:flutter/material.dart';
 
-/// Radius of the corners for top-level UI elements.
-const double outerCornerRadius = 16;
-
-/// Margin between the cards in a tab.
-const double cardMargin = 8;
-
-/// Radius between sections within cards.
-const double sectionMargin = 4;
-
-/// Radius of the corners for cards in a tab.
-const double cardCornerRadius = 8;
-
-/// Padding for scrollable list views within cards.
-const EdgeInsetsGeometry cardListViewPadding = EdgeInsets.only(top: 2);
-
 /// The Unreal class for nDisplay root actors.
 const String nDisplayRootActorClassName = '/Script/DisplayCluster.DisplayClusterRootActor';
 

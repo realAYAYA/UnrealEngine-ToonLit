@@ -135,7 +135,7 @@ public:
 	 * @return This instance (for method chaining).
 	 * @see BoundToAddress, BoundToEndpoint
 	 */
-	FTcpSocketBuilder BoundToPort(int32 Port)
+	FTcpSocketBuilder BoundToPort(uint16 Port)
 	{
 		BoundEndpoint = FIPv4Endpoint(BoundEndpoint.Address, Port);
 		Bound = true;

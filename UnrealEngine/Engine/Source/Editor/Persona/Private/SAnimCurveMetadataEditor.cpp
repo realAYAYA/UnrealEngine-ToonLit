@@ -437,17 +437,7 @@ void SAnimCurveMetadataEditor::Construct(const FArguments& InArgs, UObject* InAn
 				.Icon(FAppStyle::GetBrush("Kismet.Tabs.FindResults"))
 				.OnClicked_Lambda([this]()
 				{
-					if(TSharedPtr<SDockTab> ActiveTab = FGlobalTabmanager::Get()->GetActiveTab())
-					{
-						if(TSharedPtr<FTabManager> TabManager = ActiveTab->GetTabManagerPtr())
-						{
-							if(TSharedPtr<SDockTab> Tab = TabManager->TryInvokeTab(FPersonaTabs::FindReplaceID))
-							{
-								TSharedRef<IAnimAssetFindReplace> FindReplaceWidget = StaticCastSharedRef<IAnimAssetFindReplace>(Tab->GetContent());
-								FindReplaceWidget->SetCurrentProcessor(UAnimAssetFindReplaceCurves::StaticClass());
-							}
-						}
-					}
+					FindReplaceCurves();
 					return FReply::Handled();
 				})
 			]
@@ -575,6 +565,11 @@ void SAnimCurveMetadataEditor::BindCommands()
 		MenuActions.AddCurve,
 		FExecuteAction::CreateSP(this, &SAnimCurveMetadataEditor::OnAddClicked),
 		FCanExecuteAction());
+
+	CommandList.MapAction(
+		MenuActions.FindCurveUses,
+		FExecuteAction::CreateSP(this, &SAnimCurveMetadataEditor::OnFindCurveUsesClicked),
+		FCanExecuteAction::CreateSP(this, &SAnimCurveMetadataEditor::CanFindCurveUses));
 }
 
 void SAnimCurveMetadataEditor::OnPreviewMeshChanged(class USkeletalMesh* OldPreviewMesh, class USkeletalMesh* NewPreviewMesh)
@@ -624,6 +619,7 @@ TSharedPtr<SWidget> SAnimCurveMetadataEditor::OnGetContextMenuContent() const
 	MenuBuilder.AddMenuEntry(FGenericCommands::Get().Copy);
 	MenuBuilder.AddMenuEntry(FGenericCommands::Get().Paste);
 	MenuBuilder.AddMenuEntry(Actions.AddCurve);
+	MenuBuilder.AddMenuEntry(Actions.FindCurveUses);
 
 	MenuBuilder.EndSection();
 
@@ -657,6 +653,52 @@ void SAnimCurveMetadataEditor::OnAddClicked()
 		SlateApp.GetCursorPos(),
 		FPopupTransitionEffect::TypeInPopup
 		);
+}
+
+void SAnimCurveMetadataEditor::OnFindCurveUsesClicked()
+{
+	FindReplaceCurves();
+}
+
+bool SAnimCurveMetadataEditor::CanFindCurveUses()
+{
+	return AnimCurveListView->GetNumItemsSelected() == 1;
+}
+
+void SAnimCurveMetadataEditor::FindReplaceCurves()
+{
+	FName CurveName = NAME_None;
+	bool bMorphTarget = false;
+	bool bMaterial = false;
+	TArray<TSharedPtr<FAnimCurveMetadataEditorItem>> SelectedItems = AnimCurveListView->GetSelectedItems();
+	if(SelectedItems.Num() > 0)
+	{
+		CurveName = SelectedItems[0]->CurveName;
+		bMorphTarget = EnumHasAnyFlags(SelectedItems[0]->Flags, EAnimCurveMetadataEditorFilterFlags::MorphTarget);
+		bMaterial = EnumHasAnyFlags(SelectedItems[0]->Flags, EAnimCurveMetadataEditorFilterFlags::Material);
+	}
+
+	if(TSharedPtr<SDockTab> ActiveTab = FGlobalTabmanager::Get()->GetActiveTab())
+	{
+		if(TSharedPtr<FTabManager> TabManager = ActiveTab->GetTabManagerPtr())
+		{
+			if(TSharedPtr<SDockTab> Tab = TabManager->TryInvokeTab(FPersonaTabs::FindReplaceID))
+			{
+				TSharedRef<IAnimAssetFindReplace> FindReplaceWidget = StaticCastSharedRef<IAnimAssetFindReplace>(Tab->GetContent());
+				FindReplaceWidget->SetCurrentProcessor(UAnimAssetFindReplaceCurves::StaticClass());
+				if(CurveName != NAME_None)
+				{
+					if(UAnimAssetFindReplaceCurves* Processor = FindReplaceWidget->GetProcessor<UAnimAssetFindReplaceCurves>())
+					{
+						Processor->SetFindString(CurveName.ToString());
+						Processor->SetFindWholeWord(true);
+						Processor->SetSearchMaterials(bMaterial);
+						Processor->SetSearchMorphTargets(bMorphTarget);
+					}
+				}
+			}
+		}
+	}
 }
 
 void SAnimCurveMetadataEditor::CreateNewNameEntry(const FText& CommittedText, ETextCommit::Type CommitType)

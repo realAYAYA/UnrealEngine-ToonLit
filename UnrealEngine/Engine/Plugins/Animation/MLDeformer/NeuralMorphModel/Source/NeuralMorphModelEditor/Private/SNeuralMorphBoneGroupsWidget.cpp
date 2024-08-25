@@ -88,11 +88,6 @@ namespace UE::NeuralMorphModel
 			{			
 				Menu.AddMenuEntry(Actions.DeleteSelectedItems);
 			}
-
-			if (!GetRootItems().IsEmpty())
-			{
-				Menu.AddMenuEntry(Actions.ClearGroups);
-			}
 		}
 		Menu.EndSection();
 
@@ -279,42 +274,8 @@ namespace UE::NeuralMorphModel
 				BoneGroup.BoneNames.AddUnique(BoneName);
 			}
 
-			USkeletalMesh* SkeletalMesh = NeuralMorphModel->GetSkeletalMesh();	
-			const FReferenceSkeleton& RefSkel = SkeletalMesh->GetRefSkeleton();
-			const TArray<FName>& EditorInfoBoneNames = InputInfo->GetBoneNames();
-			const TArray<int32> VirtualParentTable = EditorModel->BuildVirtualParentTable(RefSkel, EditorInfoBoneNames);	
 			const int32 HierarchyDepth = StaticCastSharedPtr<SNeuralMorphInputWidget>(InputWidget)->GetHierarchyDepth();
-
-			// Build a list of bone indices that need to be added.
-			// These can be more than just the picked bones, as we grow the mask based on a hierarchy depth as well.
-			TArray<int32> NewMaskBones;
-			for (const FName BoneName : BoneNames)
-			{
-				const int32 SkeletonBoneIndex = RefSkel.FindBoneIndex(BoneName);
-				if (SkeletonBoneIndex == INDEX_NONE)
-				{
-					UE_LOG(LogNeuralMorphModel, Warning, TEXT("Bone '%s' cannot be found in the SkeletalMesh '%s', ignoring the bone inside the group's mask."), *BoneName.ToString(), *SkeletalMesh->GetName());
-					continue;
-				}
-
-				EditorModel->RecursiveAddBoneToMaskUpwards(RefSkel, SkeletonBoneIndex, HierarchyDepth, VirtualParentTable, NewMaskBones);
-				EditorModel->RecursiveAddBoneToMaskDownwards(RefSkel, SkeletonBoneIndex, HierarchyDepth, VirtualParentTable, NewMaskBones);
-				EditorModel->AddRequiredBones(RefSkel, SkeletonBoneIndex, VirtualParentTable, NewMaskBones);
-			}
-
-			// Add the new bones to the mask.
-			FNeuralMorphMaskInfo* MaskInfo = NeuralMorphModel->BoneGroupMaskInfos.Find(BoneGroup.GroupName);
-			if (MaskInfo != nullptr)
-			{
-				for (const int32 BoneIndex : NewMaskBones)
-				{
-					const FName BoneName = RefSkel.GetBoneName(BoneIndex);
-					if (BoneName.IsValid() && !BoneName.IsNone())
-					{
-						MaskInfo->BoneNames.AddUnique(BoneName);
-					}
-				}
-			}
+			EditorModel->GenerateBoneGroupMaskInfo(GroupIndex, HierarchyDepth);
 
 			RefreshTree(true);
 			EditorModel->RebuildEditorMaskInfo();

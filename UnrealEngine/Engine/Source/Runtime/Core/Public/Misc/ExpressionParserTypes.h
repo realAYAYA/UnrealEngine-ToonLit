@@ -41,7 +41,10 @@ public:
 	FStringToken() : TokenStart(nullptr), TokenEnd(nullptr), LineNumber(0), CharacterIndex(0) {}
 
 	/** Get the string representation of this token */
-	FString GetString() const { return FString((int32)(TokenEnd - TokenStart), TokenStart); }
+	FString GetString() const
+	{
+		return FString::ConstructFromPtrSize(TokenStart, (int32)(TokenEnd - TokenStart));
+	}
 
 	/** Check if this token is valid */
 	bool IsValid() const { return TokenEnd != TokenStart; }

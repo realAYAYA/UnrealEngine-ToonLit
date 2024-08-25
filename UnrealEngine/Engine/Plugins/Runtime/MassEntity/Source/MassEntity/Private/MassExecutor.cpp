@@ -133,7 +133,7 @@ void RunProcessorsView(TArrayView<UMassProcessor* const> Processors, FMassProces
 		}
 		else if (CommandBuffer.Get() != &EntityManager.Defer())
 		{
-			EntityManager.Defer().MoveAppend(*CommandBuffer.Get());
+			EntityManager.AppendCommands(CommandBuffer);
 		}
 	}
 }
@@ -156,6 +156,7 @@ struct FMassExecutorDoneTask
 	void DoTask(ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent)
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE_STR("Flush Deferred Commands Parallel");
+		SCOPE_CYCLE_COUNTER(STAT_Mass_Total);
 
 		FMassEntityManager& EntityManagerRef = ExecutionContext.GetEntityManagerChecked();
 

@@ -136,10 +136,23 @@ void FXRTrackingSystemBase::GetMotionControllerData(UObject* WorldContext, const
 	MotionControllerData.bValid = false;
 	MotionControllerData.HandIndex = Hand;
 
+#if WITH_EDITOR
+	const UWorld* const MyWorld = WorldContext ? WorldContext->GetWorld() : nullptr;
+#endif // WITH_EDITOR
+
 	for (int32 MotionControllerIndex = 0; MotionControllerIndex < MotionControllers.Num(); ++MotionControllerIndex)
 	{
 		UMotionControllerComponent* MotionController = Cast<UMotionControllerComponent>(MotionControllers[MotionControllerIndex]);
 		check(MotionController);
+
+#if WITH_EDITOR
+		// In PIE there could be motion controller components that are not part of the world. We need to ignore those.
+		// If no world context is provided it's hard to tell what world we care about. 
+		if (MyWorld && (MotionController->GetWorld() != MyWorld))
+		{
+			continue;
+		}
+#endif // WITH_EDITOR
 
 		AActor* Owner = MotionController->GetOwner();
 		if ((Owner!= nullptr) && (MotionController->GetTrackingSource() == Hand) && (Owner->GetLocalRole() == ROLE_Authority))

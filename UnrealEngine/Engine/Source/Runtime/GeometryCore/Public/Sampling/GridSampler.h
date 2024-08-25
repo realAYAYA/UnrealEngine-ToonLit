@@ -41,8 +41,8 @@ public:
 	UE::Math::TVector2<RealType> Sample(int32 Index) const
 	{
 		checkSlow(Index >= 0 && Index < Num());
-		RealType X = (static_cast<RealType>(Index % Size) + RealType{ 1 } / RealType{ 2 }) / static_cast<RealType>(Size);
-		RealType Y = (static_cast<RealType>(Index / Size) + RealType{ 1 } / RealType{ 2 }) / static_cast<RealType>(Size);
+		RealType X = (static_cast<RealType>(Index % Size) + RealType{ 1 } / RealType{ 2 }) / static_cast<RealType>(Size); //-V1064
+		RealType Y = (static_cast<RealType>(Index / Size) + RealType{ 1 } / RealType{ 2 }) / static_cast<RealType>(Size); //-V1064
 		return UE::Math::TVector2<RealType>(X, Y);
 	}
 };

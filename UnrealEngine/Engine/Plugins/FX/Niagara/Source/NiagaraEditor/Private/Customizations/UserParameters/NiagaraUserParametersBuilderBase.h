@@ -84,7 +84,7 @@ protected:
 	 * This is done because the types the parameter editors operate on are not the same as the struct on scopes we are editing (bool vs. FNiagaraBool etc.) */
 	TMap<FNiagaraVariable, TSharedRef<FStructOnScope>> DisplayData;
 	TMap<FNiagaraVariable, TSharedPtr<IPropertyHandle>> DisplayDataPropertyHandles;
-	TArray<UObject*> ObjectAssetHelpers;
+	TArray<TObjectPtr<UObject>> ObjectAssetHelpers;
 };
 
 /** The category builder will display all sub-categories & parameters contained within a given category in the details panel. */

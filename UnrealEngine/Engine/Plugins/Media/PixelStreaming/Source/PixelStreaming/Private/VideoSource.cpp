@@ -24,6 +24,11 @@ namespace UE::PixelStreaming
 			{
 				PushFrame();
 			}
+			// We always send a frame for WebRTC purposes, but empty frames early exit out of the encoder.
+			else
+			{
+				PushEmptyFrame();
+			}
 		}
 	}
 
@@ -42,4 +47,20 @@ namespace UE::PixelStreaming
 									   .build();
 		OnFrame(Frame);
 	}
+
+	void FVideoSource::PushEmptyFrame()
+	{
+		TRACE_CPUPROFILER_EVENT_SCOPE_ON_CHANNEL_STR("PixelStreaming Push Empty Video Frame", PixelStreamingChannel);
+		static int32 EmptyFrameId = 1;
+
+		rtc::scoped_refptr<webrtc::VideoFrameBuffer> FrameBuffer = VideoInput->GetEmptyFrameBuffer();
+		webrtc::VideoFrame Frame = webrtc::VideoFrame::Builder()
+									   .set_video_frame_buffer(FrameBuffer)
+									   .set_timestamp_us(rtc::TimeMicros())
+									   .set_rotation(webrtc::VideoRotation::kVideoRotation_0)
+									   .set_id(EmptyFrameId++)
+									   .build();
+		OnFrame(Frame);
+	}
+
 } // namespace UE::PixelStreaming

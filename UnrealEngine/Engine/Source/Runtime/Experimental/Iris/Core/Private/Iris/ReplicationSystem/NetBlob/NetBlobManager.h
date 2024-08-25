@@ -2,6 +2,7 @@
 
 #pragma once
 #include "CoreTypes.h"
+#include "Iris/ReplicationSystem/ReplicationSystemTypes.h"
 #include "Iris/ReplicationSystem/NetBlob/NetBlob.h"
 #include "Iris/ReplicationSystem/NetBlob/NetBlobHandlerManager.h"
 #include "Iris/ReplicationSystem/NetRefHandleManager.h" // For FInternalNetRefIndex
@@ -15,6 +16,7 @@ class UNetRPCHandler;
 namespace UE::Net
 {
 	class FNetObjectReference;
+
 	namespace Private
 	{
 		class FNetRefHandleManager;
@@ -32,7 +34,6 @@ struct FNetBlobManagerInitParams
 	bool bSendAttachmentsWithObject = false;
 };
 
-
 class FNetBlobManager
 {
 public:
@@ -42,9 +43,11 @@ public:
 
 	bool RegisterNetBlobHandler(UNetBlobHandler* Handler);
 
-	bool QueueNetObjectAttachment(uint32 ConnectionId, const FNetObjectReference& TargetRef, const TRefCountPtr<FNetObjectAttachment>& Attachment);
-	bool SendRPC(const UObject* Object, const UObject* SubObject, const UFunction* Function, const void* Parameters);
-	bool SendRPC(uint32 ConnectionId, const UObject* Object, const UObject* SubObject, const UFunction* Function, const void* Parameters);
+	bool AllowObjectReplication() const { return bAllowObjectReplication; }
+
+	bool QueueNetObjectAttachment(uint32 ConnectionId, const FNetObjectReference& TargetRef, const TRefCountPtr<FNetObjectAttachment>& Attachment, ENetObjectAttachmentSendPolicyFlags SendFlags = ENetObjectAttachmentSendPolicyFlags::None);
+	bool SendRPC(const UObject* Object, const UObject* SubObject, const UFunction* Function, const void* Parameters, ENetObjectAttachmentSendPolicyFlags SendFlags = ENetObjectAttachmentSendPolicyFlags::None);
+	bool SendRPC(uint32 ConnectionId, const UObject* Object, const UObject* SubObject, const UFunction* Function, const void* Parameters, ENetObjectAttachmentSendPolicyFlags SendFlags = ENetObjectAttachmentSendPolicyFlags::None);
 
 	enum class EProcessMode 
 	{
@@ -52,6 +55,9 @@ public:
 		ProcessObjectsInScope,
 	};
 
+	FNetBitArrayView GetConnectionsPendingImmediateSend() const;
+
+	void ProcessOOBNetObjectAttachmentSendQueue(FNetBitArray& OutConnectionsPendingImmediateSend);
 	void ProcessNetObjectAttachmentSendQueue(EProcessMode ProcessMode);
 	void ResetNetObjectAttachmentSendQueue();
 
@@ -68,7 +74,36 @@ public:
 private:
 	void RegisterDefaultHandlers();
 
-	bool GetOwnerAndSubObjectIndicesFromHandle(FNetRefHandle RefHandle, FInternalNetRefIndex& OutOwnerIndex, FInternalNetRefIndex& OutSubObjectIndex);
+	struct FRPCOwner
+	{
+		// The replicated object responsible for carrying (sending) the RPC.
+		FNetObjectReference CallerRef;
+
+		// The object the RPC will be applied to.
+		FNetObjectReference TargetRef;
+
+		FInternalNetRefIndex RootObjectIndex = FNetRefHandleManager::InvalidInternalIndex;
+		FInternalNetRefIndex SubObjectIndex = FNetRefHandleManager::InvalidInternalIndex;
+	};
+	bool GetRPCOwner(FRPCOwner& OutOwnerInfo, const UObject* RootObject, const UObject* SubObject, const UFunction* Function) const;
+
+	/** 
+	* Validates that RootObjectRefHandle is a true root object and return it's index
+	* @return True if the root object handle is valid and has been replicated.
+	*/
+	bool GetRootObjectIndicesFromHandle(FNetRefHandle RootObjectRefHandle, FInternalNetRefIndex& OutRootObjectIndex) const;
+
+	/**
+	* Validates that the SubObjectRefHandle is a true subobject and return it's index and the index of it's root object.
+	* @return True if the subobject handle is valid and has been replicated.
+	*/
+	bool GetRootObjectAndSubObjectIndicesFromSubObjectHandle(FNetRefHandle SubObjectRefHandle, FInternalNetRefIndex& OutRootObjectIndex, FInternalNetRefIndex& OutSubObjectIndex) const;
+
+	/**
+	 * Receives the handle of a root object or a sub object and returns the index of the root object and subobject if there is one.
+	 * @return True if the object handle is valid has been replicated.
+	 */
+	bool GetRootObjectAndSubObjectIndicesFromAnyHandle(FNetRefHandle AnyRefHandle, FInternalNetRefIndex& OutRootObjectIndex, FInternalNetRefIndex& OutSubObjectIndex) const;
 
 	class FNetObjectAttachmentSendQueue
 	{
@@ -78,14 +113,15 @@ private:
 		void Init(FNetBlobManager* Manager);
 
 		// Unicast
-		void Enqueue(uint32 ConnectionId, FInternalNetRefIndex OwnerIndex, FInternalNetRefIndex SubObjectIndex, const TRefCountPtr<FNetObjectAttachment>& Attachment);
+		void Enqueue(uint32 ConnectionId, FInternalNetRefIndex OwnerIndex, FInternalNetRefIndex SubObjectIndex, const TRefCountPtr<FNetObjectAttachment>& Attachment, ENetObjectAttachmentSendPolicyFlags SendFlags);
 
 		// Multicast
-		void Enqueue(FInternalNetRefIndex OwnerIndex, FInternalNetRefIndex SubObjectIndex, const TRefCountPtr<FNetObjectAttachment>& Attachment);
+		void Enqueue(FInternalNetRefIndex OwnerIndex, FInternalNetRefIndex SubObjectIndex, const TRefCountPtr<FNetObjectAttachment>& Attachment, ENetObjectAttachmentSendPolicyFlags SendFlags);
 
 		void PrepareProcessQueue(FReplicationConnections* InConnections, const FNetRefHandleManager* InNetRefHandleManager);
 		void ProcessQueue(EProcessMode ProcessMode);
 		void ResetProcessQueue();
+		void PrepareAndProcessOOBAttachmentQueue(FReplicationConnections* InConnections, const FNetRefHandleManager* InNetRefHandleManager, FNetBitArray& OutConnetionsPendingImmediateSend);
 	
 	private:
 		struct FNetObjectAttachmentQueueEntry
@@ -93,29 +129,35 @@ private:
 			uint32 ConnectionId;
 			FInternalNetRefIndex OwnerIndex;
 			FInternalNetRefIndex SubObjectIndex;
+			ENetObjectAttachmentSendPolicyFlags SendFlags;
 			TRefCountPtr<FNetObjectAttachment> Attachment;
 		};
 		typedef TArray<FNetObjectAttachmentQueueEntry> FQueue;
 
-		bool PreSerializeAndSplitNetBlob(uint32 ConnectionId, const TRefCountPtr<FNetObjectAttachment>& Attachment, TArray<TRefCountPtr<FNetBlob>>& OutPartialNetBlobs) const;
+		bool PreSerializeAndSplitNetBlob(uint32 ConnectionId, const TRefCountPtr<FNetObjectAttachment>& Attachment, TArray<TRefCountPtr<FNetBlob>>& OutPartialNetBlobs, bool bInSendAttachmentsWithObject) const;
 
 		FNetBlobManager* Manager;
 		FQueue AttachmentQueue;
+		FQueue ScheduleAsOOBAttachmentQueue;		
 		bool bHasMulticastAttachments;
 
 		struct FProcessQueueContext
 		{
 			FNetBitArray AttachmentsToObjectsGoingOutOfScope;
 			FNetBitArray AttachmentsToObjectsInScope;
+			FNetBitArray ConnectionsPendingSendInPostDispatch;
 
 			TArray<uint32> ConnectionIds;
 			FReplicationConnections* Connections = nullptr;
 			const FNetRefHandleManager* NetRefHandleManager = nullptr;
+			FQueue* QueueToProcess = nullptr;
 
 			void Reset()
 			{
 				Connections = nullptr;
 				NetRefHandleManager = nullptr;
+				QueueToProcess = nullptr;
+				ConnectionsPendingSendInPostDispatch.Reset();
 			}
 
 			bool IsValid() const { return NetRefHandleManager != nullptr; }
@@ -130,13 +172,14 @@ private:
 	TStrongObjectPtr<UPartialNetObjectAttachmentHandler> PartialNetObjectAttachmentHandler;
 	TStrongObjectPtr<UNetObjectBlobHandler> NetObjectBlobHandler;
 
-	UReplicationSystem* ReplicationSystem;
-	FObjectReferenceCache* ObjectReferenceCache;
-	FReplicationConnections* Connections;
-	const UPartialNetObjectAttachmentHandlerConfig* PartialNetObjectAttachmentHandlerConfig;
-	const FNetRefHandleManager* NetRefHandleManager;
-	bool bIsServer;
-	bool bSendAttachmentsWithObject;
+	UReplicationSystem* ReplicationSystem = nullptr;
+	FObjectReferenceCache* ObjectReferenceCache = nullptr;
+	FReplicationConnections* Connections = nullptr;
+	const UPartialNetObjectAttachmentHandlerConfig* PartialNetObjectAttachmentHandlerConfig = nullptr;
+	const FNetRefHandleManager* NetRefHandleManager = nullptr;
+	bool bIsServer = false;
+	bool bSendAttachmentsWithObject = false;
+	bool bAllowObjectReplication = false;
 };
 
 }

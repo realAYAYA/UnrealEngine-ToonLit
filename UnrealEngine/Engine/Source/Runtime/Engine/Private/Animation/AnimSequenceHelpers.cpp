@@ -6,6 +6,9 @@
 
 
 #include "Animation/AnimSequence.h"
+#include "Animation/AnimMontage.h"
+#include "Animation/AnimComposite.h"
+#include "Animation/MirrorDataTable.h"
 #include "BonePose.h"
 
 #include "AnimationRuntime.h"
@@ -191,13 +194,74 @@ void CopyCurveDataToModel(const FRawCurveTracks& CurveData, const USkeleton* Ske
 		OutTransform.SetScale3D(DefaultScale3D);
 	}	
 }
+
+FTransform MirrorTransform(const FTransform& Transform, const UMirrorDataTable& MirrorDataTable)
+{
+	FVector T = Transform.GetTranslation();
+	T = FAnimationRuntime::MirrorVector(T, MirrorDataTable.MirrorAxis);
+
+	FQuat Q = Transform.GetRotation();
+	Q = FAnimationRuntime::MirrorQuat(Q, MirrorDataTable.MirrorAxis);
+
+	const FVector S = Transform.GetScale3D();
+	return FTransform(Q, T, S);
+}
+
+FTransform ExtractRootMotionFromAnimationAsset(const UAnimationAsset* Animation, const UMirrorDataTable* MirrorDataTable, float StartPosition, float EndPosition)
+{
+	FTransform Result = FTransform::Identity;
 	
+	if (const UAnimMontage* Montage = Cast<UAnimMontage>(Animation))
+	{
+		Result = Montage->ExtractRootMotionFromTrackRange(StartPosition, EndPosition);
+	}
+	else if (const UAnimComposite* AnimComposite = Cast<UAnimComposite>(Animation))
+	{
+		FRootMotionMovementParams RootMotion;
+		AnimComposite->ExtractRootMotionFromTrack(AnimComposite->AnimationTrack, StartPosition, EndPosition, RootMotion);
+		Result = RootMotion.GetRootMotionTransform();
+	}
+	else if (const UAnimSequence* AnimSequence = Cast<UAnimSequence>(Animation))
+	{
+		Result = AnimSequence->ExtractRootMotionFromRange(StartPosition, EndPosition);
+	}
+
+	if (MirrorDataTable)
+	{
+		Result =  MirrorTransform(Result, *MirrorDataTable);
+	}
+
+	return Result;
+}
+
+FTransform ExtractRootTransformFromAnimationAsset(const UAnimationAsset* Animation, float Time)
+{
+	FTransform Result = FTransform::Identity;
+	if (const UAnimMontage* AnimMontage = Cast<UAnimMontage>(Animation))
+	{
+		if (const FAnimSegment* Segment = AnimMontage->SlotAnimTracks[0].AnimTrack.GetSegmentAtTime(Time))
+		{
+			if (const UAnimSequence* AnimSequence = Cast<UAnimSequence>(Segment->GetAnimReference()))
+			{
+				const float AnimSequenceTime = Segment->ConvertTrackPosToAnimPos(Time);
+				Result = AnimSequence->ExtractRootTrackTransform(AnimSequenceTime, nullptr);
+			}	
+		}
+	}
+	else if (const UAnimSequence* AnimSequence = Cast<UAnimSequence>(Animation))
+	{
+		Result = AnimSequence->ExtractRootTrackTransform(Time, nullptr);
+	}
+
+	return Result;
+}
+
 Retargeting::FRetargetingScope::FRetargetingScope(const USkeleton* InSourceSkeleton, FCompactPose& ToRetargetPose, const DataModel::FEvaluationContext& InEvaluationContext)
 	: SourceSkeleton(InSourceSkeleton),
 	RetargetPose(ToRetargetPose),
 	EvaluationContext(InEvaluationContext),
 	RetargetTracking(FBuildRawPoseScratchArea::Get().RetargetTracking),
-	bShouldRetarget(!ToRetargetPose.GetBoneContainer().GetDisableRetargeting() && EvaluationContext.RetargetTransforms.Num())
+	bShouldRetarget((!ToRetargetPose.GetBoneContainer().GetDisableRetargeting() && EvaluationContext.RetargetTransforms.Num()) || (SourceSkeleton != ToRetargetPose.GetBoneContainer().GetSkeletonAsset()))
 {
 	check(SourceSkeleton);
 	RetargetTracking.Reset();
@@ -385,7 +449,59 @@ bool Compression::CompressAnimationDataTracks(TArray<FRawAnimSequenceTrack>& Raw
 			if (RawData.ScaleKeys.Num() > 0)
 			{
 				// if scale key exists, see if we can just empty it
-				if ((RawData.ScaleKeys.Num() > 1) || (RawData.ScaleKeys[0].Equals(FVector3f::OneVector) == false))
+				const bool bHaveMultipleKeys = RawData.ScaleKeys.Num() > 1;
+				const bool bHaveNonIdentityKey = !RawData.ScaleKeys[0].Equals(FVector3f::OneVector);
+				if (bHaveMultipleKeys|| bHaveNonIdentityKey)
+				{
+					bCompressScaleKeys = true;
+					break;
+				}
+			}
+		}
+
+		// if we don't have scale, we should delete all scale keys
+		// if you have one track that has scale, we still should support scale, so compress scale
+		if (!bCompressScaleKeys)
+		{
+			// then remove all scale keys
+			for (int32 TrackIndex = 0; TrackIndex < RawAnimationData.Num(); TrackIndex++)
+			{
+				FRawAnimSequenceTrack& RawData = RawAnimationData[TrackIndex];
+				RawData.ScaleKeys.Empty();
+			}
+		}
+	}
+#endif
+	return bRemovedKeys;
+}
+
+bool Compression::CompressAnimationDataTracks(const USkeleton* Skeleton, const TArray<FTrackToSkeletonMap>& TrackToSkeleton, TArray<FRawAnimSequenceTrack>& RawAnimationData, int32 NumberOfKeys, FName ErrorName, float MaxPosDiff /*= 0.0001f*/, float MaxAngleDiff /*= 0.0003f*/)
+{
+	bool bRemovedKeys = false;
+
+#if WITH_EDITORONLY_DATA
+	if (ensureMsgf(RawAnimationData.Num() > 0, TEXT("%s is trying to compress while raw animation is missing"), * ErrorName.ToString()))
+	{
+		// This removes trivial keys, and this has to happen before the removing tracks
+		for (int32 TrackIndex = 0; TrackIndex < RawAnimationData.Num(); TrackIndex++)
+		{
+			bRemovedKeys |= CompressRawAnimSequenceTrack(RawAnimationData[TrackIndex], NumberOfKeys, ErrorName, MaxPosDiff, MaxAngleDiff);
+		}
+
+		bool bCompressScaleKeys = false;
+		// go through remove keys if not needed
+		for (int32 TrackIndex = 0; TrackIndex < RawAnimationData.Num(); TrackIndex++)
+		{
+			FRawAnimSequenceTrack const& RawData = RawAnimationData[TrackIndex];
+			if (RawData.ScaleKeys.Num() > 0)
+			{
+				// if scale key exists, see if we can just empty it
+				const bool bHaveMultipleKeys = RawData.ScaleKeys.Num() > 1;
+				const bool bHaveNonIdentityKey = !RawData.ScaleKeys[0].Equals(FVector3f::OneVector);
+				const FReferenceSkeleton& ReferenceSkeleton = Skeleton->GetReferenceSkeleton();
+				const int32 TrackBoneIndex = TrackToSkeleton[TrackIndex].BoneTreeIndex;				
+				const bool bHaveNonRefPoseKey = ReferenceSkeleton.IsValidIndex(TrackBoneIndex) && !RawData.ScaleKeys[0].Equals(FVector3f(ReferenceSkeleton.GetRefBonePose()[TrackBoneIndex].GetScale3D()));
+				if (bHaveMultipleKeys|| bHaveNonIdentityKey || bHaveNonRefPoseKey)
 				{
 					bCompressScaleKeys = true;
 					break;

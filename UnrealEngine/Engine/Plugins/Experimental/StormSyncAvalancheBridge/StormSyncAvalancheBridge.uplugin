@@ -1,0 +1,40 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Storm Sync Motion Design Bridge",
+	"Description": "Plugin bridge between Motion Design Plugin and Storm Sync to provide in-editor integration to synchronize assets",
+	"Category": "Experimental",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "https://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": true,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": true,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "StormSyncAvaBridgeEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "StormSyncAvaBridge",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"TargetDenyList": [ "Server" ]
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "Avalanche",
+			"Enabled": true
+		},
+		{
+			"Name": "StormSync",
+			"Enabled": true
+		}
+	]
+}

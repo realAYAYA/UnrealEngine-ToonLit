@@ -117,7 +117,6 @@ private:
 	struct FICUCachedFileData
 	{
 		FICUCachedFileData(const int64 FileSize);
-		FICUCachedFileData(void* ExistingBuffer);
 		FICUCachedFileData(FICUCachedFileData&& Source);
 		~FICUCachedFileData();
 
@@ -130,6 +129,7 @@ private:
 
 	// Map for associating ICU data file paths with cached file data, to prevent multiple copies of immutable ICU data files from residing in memory.
 	TMap<FString, FICUCachedFileData> PathToCachedFileDataMap;
+	FCriticalSection PathToCachedFileDataMapCS;
 };
 
 #endif

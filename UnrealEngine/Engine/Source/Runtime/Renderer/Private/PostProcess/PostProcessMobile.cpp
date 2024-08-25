@@ -675,6 +675,8 @@ public:
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SceneColorTexture)
 		SHADER_PARAMETER_SAMPLER(SamplerState, SceneColorSampler)
 		SHADER_PARAMETER(FVector4f, SunColorApertureDiv2)
+		SHADER_PARAMETER(float, BloomMaxBrightness)
+		SHADER_PARAMETER(float, BloomThreshold)
 		RENDER_TARGET_BINDING_SLOTS()
 	END_SHADER_PARAMETER_STRUCT()
 
@@ -774,6 +776,9 @@ FMobileSunMaskOutputs AddMobileSunMaskPass(FRDGBuilder& GraphBuilder, const FVie
 	PassParameters->SunColorApertureDiv2.Y = MobileLightShaft.ColorMask.G;
 	PassParameters->SunColorApertureDiv2.Z = MobileLightShaft.ColorMask.B;
 	PassParameters->SunColorApertureDiv2.W = GetMobileDepthOfFieldScale(View) * 0.5f;
+
+	PassParameters->BloomMaxBrightness = MobileLightShaft.BloomMaxBrightness;
+	PassParameters->BloomThreshold = View.FinalPostProcessSettings.BloomThreshold;
 
 	FMobileSunMaskPS::FPermutationDomain PermutationVector = FMobileSunMaskPS::BuildPermutationVector(Inputs.bUseSun, Inputs.bUseDof, Inputs.bUseDepthTexture, Inputs.bUseMetalMSAAHDRDecode);
 	TShaderMapRef<FMobileSunMaskPS> PixelShader(View.ShaderMap, PermutationVector);

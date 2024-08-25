@@ -48,6 +48,7 @@
 
 #include "Android/AndroidPlatformStackWalk.h"
 #include "Android/AndroidSignals.h"
+#include "AndroidScudoMemoryTrace.h"
 
 #include "Misc/OutputDevice.h"
 #include "Logging/LogMacros.h"
@@ -122,6 +123,7 @@ FString FAndroidMisc::DeviceMake; // make of the device we are running on eg. "s
 FString FAndroidMisc::DeviceModel; // model of the device we are running on eg "SAMSUNG-SGH-I437"
 FString FAndroidMisc::DeviceBuildNumber; // platform image build number of device "R16NW.G960NKSU1ARD6"
 FString FAndroidMisc::OSLanguage; // language code the device is set to eg "deu"
+FString FAndroidMisc::ProductName; // product/marketing name of the device, if available.
 
 // Build/API level we are running.
 int32 FAndroidMisc::AndroidBuildVersion = 0;
@@ -348,7 +350,7 @@ static struct
 	double	TimeOfChange;
 } CurrentVolume;
 
-#if USE_ANDROID_JNI
+#if USE_ANDROID_JNI && !USE_ANDROID_STANDALONE
 extern "C"
 {
 
@@ -396,7 +398,7 @@ extern "C"
 }
 #endif
 
-#if USE_ANDROID_JNI
+#if USE_ANDROID_JNI && !USE_ANDROID_STANDALONE
 
 // Manage Java side OS event receivers.
 static struct
@@ -415,6 +417,8 @@ static struct
 
 void InitializeJavaEventReceivers()
 {
+	UE_LOG(LogAndroid, Log, TEXT("InitializeJavaEventReceivers"));
+
 	// Register natives to receive Volume, Battery, Headphones events
 	JNIEnv* JEnv = AndroidJavaEnv::GetJavaEnv();
 	if (nullptr != JEnv)
@@ -577,7 +581,7 @@ void FAndroidMisc::PlatformInit()
 	}
 #endif
 
-#if USE_ANDROID_JNI
+#if USE_ANDROID_JNI && !USE_ANDROID_STANDALONE
 	InitializeJavaEventReceivers();
 	AndroidOnBackgroundBinding = FCoreDelegates::ApplicationWillEnterBackgroundDelegate.AddStatic(EnableJavaEventReceivers, false);
 	AndroidOnForegroundBinding = FCoreDelegates::ApplicationHasEnteredForegroundDelegate.AddStatic(EnableJavaEventReceivers, true);
@@ -586,8 +590,9 @@ void FAndroidMisc::PlatformInit()
 	AndroidThunkJava_AddNetworkListener();
 #endif
 
-
 	InitCpuThermalSensor();
+
+	AndroidScudoMemoryTrace::Init();
 }
 
 extern void AndroidThunkCpp_DismissSplashScreen();
@@ -614,48 +619,25 @@ void FAndroidMisc::PlatformTearDown()
 void FAndroidMisc::UpdateDeviceOrientation()
 {
 	QUICK_SCOPE_CYCLE_COUNTER(STAT_FAndroidMisc_UpdateDeviceOrientation);
-#if USE_ANDROID_JNI
+#if USE_ANDROID_JNI && !USE_ANDROID_STANDALONE
 	JNIEnv* JEnv = AndroidJavaEnv::GetJavaEnv();
 	if (JEnv)
 	{
-		static jmethodID getRotationMethod = 0;
 		static jmethodID getOrientationMethod = 0;
 
-		if (getRotationMethod == 0 || getOrientationMethod == 0)
+		if (getOrientationMethod == 0)
 		{
 			jclass MainClass = AndroidJavaEnv::FindJavaClassGlobalRef("com/epicgames/unreal/GameActivity");
 			if (MainClass != nullptr)
 			{
-				getRotationMethod = JEnv->GetMethodID(MainClass, "AndroidThunkJava_GetDeviceRotation", "()I");
-				getOrientationMethod = JEnv->GetMethodID(MainClass, "AndroidThunkJava_GetConfigurationOrientation", "()I");
+				getOrientationMethod = JEnv->GetMethodID(MainClass, "AndroidThunkJava_GetDeviceOrientation", "()I");
 				JEnv->DeleteGlobalRef(MainClass);
 			}
 		}
 
-		if (getRotationMethod != 0 && getOrientationMethod != 0)
+		if (getOrientationMethod != 0)
 		{
-			const int Rotation = JEnv->CallIntMethod(AndroidJavaEnv::GetGameActivityThis(), getRotationMethod);
-			const int Orientation = JEnv->CallIntMethod(AndroidJavaEnv::GetGameActivityThis(), getOrientationMethod);
-			if (Orientation == EAndroidConfigurationOrientation::ORIENTATION_PORTRAIT)
-			{
-				switch (Rotation)
-				{
-				case EAndroidSurfaceRotation::ROTATION_0:	DeviceOrientation = EDeviceScreenOrientation::Portrait;             break;
-				case EAndroidSurfaceRotation::ROTATION_90:	DeviceOrientation = EDeviceScreenOrientation::LandscapeLeft;        break;
-				case EAndroidSurfaceRotation::ROTATION_180:	DeviceOrientation = EDeviceScreenOrientation::PortraitUpsideDown;   break;
-				case EAndroidSurfaceRotation::ROTATION_270:	DeviceOrientation = EDeviceScreenOrientation::LandscapeRight;       break;
-				}
-			}
-			else if (Orientation == EAndroidConfigurationOrientation::ORIENTATION_LANDSCAPE)
-			{
-				switch (Rotation)
-				{
-				case EAndroidSurfaceRotation::ROTATION_0:	DeviceOrientation = EDeviceScreenOrientation::LandscapeLeft;        break;
-				case EAndroidSurfaceRotation::ROTATION_90:	DeviceOrientation = EDeviceScreenOrientation::PortraitUpsideDown;				break;
-				case EAndroidSurfaceRotation::ROTATION_180:	DeviceOrientation = EDeviceScreenOrientation::LandscapeRight;		break;
-				case EAndroidSurfaceRotation::ROTATION_270:	DeviceOrientation = EDeviceScreenOrientation::Portrait;   break;
-				}
-			}
+			DeviceOrientation = (EDeviceScreenOrientation)JEnv->CallIntMethod(AndroidJavaEnv::GetGameActivityThis(), getOrientationMethod);
 		}
 	}
 #endif
@@ -663,7 +645,7 @@ void FAndroidMisc::UpdateDeviceOrientation()
 
 void FAndroidMisc::PlatformHandleSplashScreen(bool ShowSplashScreen)
 {
-#if USE_ANDROID_JNI
+#if USE_ANDROID_JNI && !USE_ANDROID_STANDALONE
 	if (!ShowSplashScreen)
 	{
 		AndroidThunkCpp_DismissSplashScreen();
@@ -1719,7 +1701,7 @@ bool FAndroidMisc::FileExistsInPlatformPackage(const FString& RelativePath)
 	return false;
 }
 
-void FAndroidMisc::SetVersionInfo( FString InAndroidVersion, int32 InTargetSDKVersion, FString InDeviceMake, FString InDeviceModel, FString InDeviceBuildNumber, FString InOSLanguage )
+void FAndroidMisc::SetVersionInfo( FString InAndroidVersion, int32 InTargetSDKVersion, FString InDeviceMake, FString InDeviceModel, FString InDeviceBuildNumber, FString InOSLanguage, FString InProductName)
 {
 	AndroidVersion = InAndroidVersion;
 	AndroidMajorVersion = FCString::Atoi(*InAndroidVersion);
@@ -1728,8 +1710,8 @@ void FAndroidMisc::SetVersionInfo( FString InAndroidVersion, int32 InTargetSDKVe
 	DeviceModel = InDeviceModel;
 	DeviceBuildNumber = InDeviceBuildNumber;
 	OSLanguage = InOSLanguage;
-
-	UE_LOG(LogAndroid, Display, TEXT("Android Version Make Model BuildNumber Language: %s %s %s %s %s"), *AndroidVersion, *DeviceMake, *DeviceModel, *DeviceBuildNumber, *OSLanguage);
+	ProductName = InProductName;
+	UE_LOG(LogAndroid, Display, TEXT("Android Version: %s, Make: %s, Model: %s, BuildNumber: %s, Language: %s, Product name: %s"), *AndroidVersion, *DeviceMake, *DeviceModel, *DeviceBuildNumber, *OSLanguage, ProductName.IsEmpty() ? TEXT("[not set]") : *ProductName);
 }
 
 const FString FAndroidMisc::GetAndroidVersion()
@@ -1765,6 +1747,11 @@ const FString FAndroidMisc::GetDeviceBuildNumber()
 const FString FAndroidMisc::GetOSLanguage()
 {
 	return OSLanguage;
+}
+
+const FString FAndroidMisc::GetProductName()
+{
+	return ProductName;
 }
 
 const FString FAndroidMisc::GetProjectVersion() {
@@ -1853,18 +1840,6 @@ bool FAndroidMisc::IsSupportedAndroidDevice()
 	return !bForceUnsupported;
 }
 #endif
-
-bool FAndroidMisc::ShouldDisablePluginAtRuntime(const FString& PluginName)
-{
-#if PLATFORM_ANDROID_ARM64 || PLATFORM_ANDROID_X64
-	// disable OnlineSubsystemGooglePlay for unsupported Android architectures
-	if (PluginName.Equals(TEXT("OnlineSubsystemGooglePlay")))
-	{
-		return true;
-	}
-#endif
-	return false;
-}
 
 ///////////////////////////////////////////////////////////////////////////////
 //
@@ -2332,7 +2307,7 @@ static void EstablishVulkanDeviceSupport()
 	}
 }
 
-bool IsDesktopVulkanAvailable()
+bool FAndroidMisc::IsDesktopVulkanAvailable()
 {
 	static int CachedDesktopVulkanAvailable = -1;
 
@@ -2823,7 +2798,10 @@ bool FAndroidMisc::AreHeadPhonesPluggedIn()
 #define ANDROIDTHUNK_CONNECTION_TYPE_WIMAX 5
 #define ANDROIDTHUNK_CONNECTION_TYPE_BLUETOOTH 6
 
-ENetworkConnectionType FAndroidMisc::GetNetworkConnectionType()
+static bool bLastConnectionTypeValid = false;
+static ENetworkConnectionType LastNetworkConnectionType = ENetworkConnectionType::None;
+
+static ENetworkConnectionType PrivateGetNetworkConnectionType()
 {
 #if USE_ANDROID_JNI
 	extern int32 AndroidThunkCpp_GetNetworkConnectionType();
@@ -2842,6 +2820,16 @@ ENetworkConnectionType FAndroidMisc::GetNetworkConnectionType()
 	return ENetworkConnectionType::Unknown;
 }
 
+ENetworkConnectionType FAndroidMisc::GetNetworkConnectionType()
+{
+	if (!bLastConnectionTypeValid)
+	{
+		LastNetworkConnectionType = PrivateGetNetworkConnectionType();
+		bLastConnectionTypeValid = true;
+	}
+	return LastNetworkConnectionType;
+}
+
 #if USE_ANDROID_JNI
 bool FAndroidMisc::HasActiveWiFiConnection()
 {
@@ -2853,6 +2841,9 @@ bool FAndroidMisc::HasActiveWiFiConnection()
 
 JNI_METHOD void Java_com_epicgames_unreal_GameActivity_nativeNetworkChanged(JNIEnv* jenv, jobject thiz)
 {
+	LastNetworkConnectionType = PrivateGetNetworkConnectionType();
+	bLastConnectionTypeValid = true;
+	
 	if (FTaskGraphInterface::IsRunning())
 	{
 		FFunctionGraphTask::CreateAndDispatchWhenReady([]()
@@ -3037,7 +3028,7 @@ int FAndroidMisc::GetMobilePropagateAlphaSetting()
 TArray<int32> FAndroidMisc::GetSupportedNativeDisplayRefreshRates()
 {
 	TArray<int32> Result;
-#if USE_ANDROID_JNI
+#if USE_ANDROID_JNI && !USE_ANDROID_STANDALONE
 	extern TArray<int32> AndroidThunkCpp_GetSupportedNativeDisplayRefreshRates();
 	Result = AndroidThunkCpp_GetSupportedNativeDisplayRefreshRates();
 #else
@@ -3048,7 +3039,7 @@ TArray<int32> FAndroidMisc::GetSupportedNativeDisplayRefreshRates()
 
 bool FAndroidMisc::SetNativeDisplayRefreshRate(int32 RefreshRate)
 {
-#if USE_ANDROID_JNI
+#if USE_ANDROID_JNI && !USE_ANDROID_STANDALONE
 	extern bool AndroidThunkCpp_SetNativeDisplayRefreshRate(int32 RefreshRate);
 	return AndroidThunkCpp_SetNativeDisplayRefreshRate(RefreshRate);
 #else
@@ -3058,7 +3049,7 @@ bool FAndroidMisc::SetNativeDisplayRefreshRate(int32 RefreshRate)
 
 int32 FAndroidMisc::GetNativeDisplayRefreshRate()
 {
-#if USE_ANDROID_JNI
+#if USE_ANDROID_JNI && !USE_ANDROID_STANDALONE
 	extern int32 AndroidThunkCpp_GetNativeDisplayRefreshRate();
 	return AndroidThunkCpp_GetNativeDisplayRefreshRate();
 #else
@@ -3156,12 +3147,12 @@ void FAndroidMisc::SetAllowedDeviceOrientation(EDeviceScreenOrientation NewAllow
 {
 	AllowedDeviceOrientation = NewAllowedDeviceOrientation;
 
-#if USE_ANDROID_JNI
+#if USE_ANDROID_JNI && !USE_ANDROID_STANDALONE
 	AndroidThunkCpp_SetOrientation(GetAndroidScreenOrientation(NewAllowedDeviceOrientation));
 #endif // USE_ANDROID_JNI
 }
 
-#if USE_ANDROID_JNI
+#if USE_ANDROID_JNI && !USE_ANDROID_STANDALONE
 int32 FAndroidMisc::GetAndroidScreenOrientation(EDeviceScreenOrientation ScreenOrientation)
 {
 	EAndroidScreenOrientation AndroidScreenOrientation = EAndroidScreenOrientation::SCREEN_ORIENTATION_UNSPECIFIED;
@@ -3201,7 +3192,7 @@ int32 FAndroidMisc::GetAndroidScreenOrientation(EDeviceScreenOrientation ScreenO
 
 	return static_cast<int32>(AndroidScreenOrientation);
 }
-#endif // USE_ANDROID_JNI
+#endif // USE_ANDROID_JNI && !USE_ANDROID_STANDALONE
 
 extern void AndroidThunkCpp_ShowConsoleWindow();
 void FAndroidMisc::ShowConsoleWindow()
@@ -3213,6 +3204,7 @@ void FAndroidMisc::ShowConsoleWindow()
 
 FDelegateHandle FAndroidMisc::AddNetworkListener(FCoreDelegates::FOnNetworkConnectionChanged::FDelegate&& InNewDelegate)
 {
+	// not really necessary since PlatformInit calls AddNetworkListener but doesn't hurt anything
 	if (!FCoreDelegates::OnNetworkConnectionChanged.IsBound())
 	{
 #if USE_ANDROID_JNI
@@ -3228,13 +3220,14 @@ bool FAndroidMisc::RemoveNetworkListener(FDelegateHandle Handle)
 {
 	bool bSuccess = FCoreDelegates::OnNetworkConnectionChanged.Remove(Handle);
 
-	if (!FCoreDelegates::OnNetworkConnectionChanged.IsBound())
-	{
-#if USE_ANDROID_JNI
-		extern void AndroidThunkJava_RemoveNetworkListener();
-		AndroidThunkJava_RemoveNetworkListener();
-#endif
-	}
+	// we don't really want to remove listener since we're using it for GetNetworkConnectionType
+//	if (!FCoreDelegates::OnNetworkConnectionChanged.IsBound())
+//	{
+//#if USE_ANDROID_JNI
+//		extern void AndroidThunkJava_RemoveNetworkListener();
+//		AndroidThunkJava_RemoveNetworkListener();
+//#endif
+//	}
 
 	return bSuccess;
 }

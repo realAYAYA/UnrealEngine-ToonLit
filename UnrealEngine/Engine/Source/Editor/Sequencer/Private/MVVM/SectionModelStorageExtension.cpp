@@ -4,7 +4,6 @@
 
 #include "MVVM/ViewModels/SectionModel.h"
 #include "MovieSceneSection.h"
-#include "Templates/ChooseClass.h"
 
 namespace UE
 {

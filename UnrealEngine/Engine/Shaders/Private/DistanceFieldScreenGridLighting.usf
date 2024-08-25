@@ -5,7 +5,7 @@
 #include "DistanceFieldLightingShared.ush"
 #include "DistanceFieldAOShared.ush"
 #include "DistanceField/GlobalDistanceFieldShared.ush"
-#include "Strata/Strata.ush"
+#include "Substrate/Substrate.ush"
 
 // Pass a debug value through the pipeline instead of a bent normal
 #define PASS_THROUGH_DEBUG_VALUE 0
@@ -22,8 +22,8 @@ void ComputeDistanceFieldNormalPS(
 
 	float SceneDepth = CalcSceneDepth(ScreenUV);
 
-#if STRATA_ENABLED
-	float3 WorldNormal = StrataUnpackTopLayerData(Strata.TopLayerTexture.Load(uint3(PixelCoord, 0))).WorldNormal;
+#if SUBSTRATE_ENABLED
+	float3 WorldNormal = SubstrateUnpackTopLayerData(Substrate.TopLayerTexture.Load(uint3(PixelCoord, 0))).WorldNormal;
 #else
 	float3 WorldNormal = GetGBufferData(ScreenUV).WorldNormal.xyz;
 #endif
@@ -44,8 +44,8 @@ void ComputeDistanceFieldNormalCS(
 
 	float SceneDepth = CalcSceneDepth(ScreenUV);
 
-#if STRATA_ENABLED
-	float3 WorldNormal = StrataUnpackTopLayerData(Strata.TopLayerTexture.Load(uint3(PixelCoord, 0))).WorldNormal;
+#if SUBSTRATE_ENABLED
+	float3 WorldNormal = SubstrateUnpackTopLayerData(Substrate.TopLayerTexture.Load(uint3(PixelCoord, 0))).WorldNormal;
 #else
 	float3 WorldNormal = GetGBufferData(ScreenUV).WorldNormal.xyz;
 #endif
@@ -58,7 +58,7 @@ float TanConeHalfAngle;
 RWBuffer<uint> RWScreenGridConeVisibility;
 RWBuffer<float> RWConeDepthVisibilityFunction;
 
-void HemisphereConeTraceAgainstTileCulledObjects(uint ObjectIndex, uint OutputBaseIndex, FLWCVector3 WorldShadingPosition, float SceneDepth, float3 WorldNormal, float3 TangentX, float3 TangentY)
+void HemisphereConeTraceAgainstTileCulledObjects(uint ObjectIndex, uint OutputBaseIndex, FDFVector3 WorldShadingPosition, float SceneDepth, float3 WorldNormal, float3 TangentX, float3 TangentY)
 {
 	float MaxWorldStepOffset = GetStepOffset(NUM_CONE_STEPS);
 	float InvMaxOcclusionDistance = 1.0f / AOObjectMaxDistance;
@@ -69,7 +69,7 @@ void HemisphereConeTraceAgainstTileCulledObjects(uint ObjectIndex, uint OutputBa
 
 	FDFObjectBounds ObjectBounds = LoadDFObjectBounds(ObjectIndex);
 
-	const float3 CenterToCamera = LWCToFloat(LWCSubtract(ObjectBounds.Center, WorldShadingPosition));
+	const float3 CenterToCamera = DFFastSubtractDemote(ObjectBounds.Center, WorldShadingPosition);
 	float ObjectDistanceSq = dot(CenterToCamera, CenterToCamera);
 
 	BRANCH
@@ -78,7 +78,7 @@ void HemisphereConeTraceAgainstTileCulledObjects(uint ObjectIndex, uint OutputBa
 	{
 		FDFObjectData DFObjectData = LoadDFObjectData(ObjectIndex);
 
-		float3 VolumeShadingPosition = LWCMultiply(WorldShadingPosition, DFObjectData.WorldToVolume);
+		float3 VolumeShadingPosition = DFMultiplyDemote(WorldShadingPosition, DFObjectData.WorldToVolume);
 		float BoxDistance = ComputeDistanceFromBoxToPoint(-DFObjectData.VolumePositionExtent, DFObjectData.VolumePositionExtent, VolumeShadingPosition) * DFObjectData.VolumeScale;
 
 		BRANCH
@@ -102,7 +102,7 @@ void HemisphereConeTraceAgainstTileCulledObjects(uint ObjectIndex, uint OutputBa
 			{
 				float3 ConeDirection = SampleDirections[ConeIndex].xyz;
 				float3 RotatedConeDirection = ConeDirection.x * TangentX + ConeDirection.y * TangentY + ConeDirection.z * WorldNormal;
-				float3 ScaledLocalConeDirection = LWCMultiplyVector(RotatedConeDirection, DFObjectData.WorldToVolume);
+				float3 ScaledLocalConeDirection = DFMultiplyVector(RotatedConeDirection, DFObjectData.WorldToVolume);
 		
 				float MinVisibility = 1;
 				float WorldStepOffset = GetStepOffset(0);
@@ -217,7 +217,7 @@ void ConeTraceObjectOcclusionCS(
 			float2 ScreenUV = GetScreenUVFromScreenGrid(OutputCoordinate);
 			float2 ScreenPosition = (ScreenUV.xy - View.ScreenPositionScaleBias.wz) / View.ScreenPositionScaleBias.xy;
 		
-			FLWCVector3 WorldShadingPosition = LWCMultiply(float3(GetScreenPositionForProjectionType(ScreenPosition, SceneDepth), SceneDepth), PrimaryView.ScreenToWorld);
+			FDFVector3 WorldShadingPosition = DFMultiply(float3(GetScreenPositionForProjectionType(ScreenPosition, SceneDepth), SceneDepth), PrimaryView.ScreenToWorld);
 
 			HemisphereConeTraceAgainstTileCulledObjects(ObjectIndex, OutputBaseIndex, WorldShadingPosition, SceneDepth, WorldNormal, TangentX, TangentY);
 		}

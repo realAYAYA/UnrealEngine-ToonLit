@@ -275,6 +275,15 @@ public:
 	virtual FString GetDeviceTypeName(const int32 ClusterIndex) const = 0;
 
 	/**
+	 * Get a game instance ID.
+	 *
+	 * @param ClusterIndex The cluster Index.
+	 * @param DeviceIndex The Device Index.
+	 * @return identifier of a game.
+	 */
+	virtual FGuid GetGameInstanceId(const int32 ClusterIndex, const int32 DeviceIndex) const = 0;
+
+	/**
 	 * Get a game instance name.
 	 *
 	 * @param ClusterIndex The cluster Index.

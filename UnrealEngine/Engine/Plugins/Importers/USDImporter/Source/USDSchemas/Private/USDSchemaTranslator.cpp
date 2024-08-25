@@ -3,7 +3,6 @@
 #include "USDSchemaTranslator.h"
 
 #include "USDInfoCache.h"
-#include "USDErrorUtils.h"
 #include "USDSchemasModule.h"
 #include "USDTypesConversion.h"
 
@@ -20,35 +19,38 @@
 int32 FRegisteredSchemaTranslatorHandle::CurrentSchemaTranslatorId = 0;
 
 #if USE_USD_SDK
-
 #include "USDIncludesStart.h"
-	#include "pxr/base/tf/token.h"
-	#include "pxr/usd/usd/typed.h"
-	#include "pxr/usd/usdShade/tokens.h"
+#include "pxr/base/tf/token.h"
+#include "pxr/base/tf/type.h"
+#include "pxr/usd/usd/prim.h"
+#include "pxr/usd/usdShade/tokens.h"
 #include "USDIncludesEnd.h"
 
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
-TSharedPtr< FUsdSchemaTranslator > FUsdSchemaTranslatorRegistry::CreateTranslatorForSchema( TSharedRef< FUsdSchemaTranslationContext > InTranslationContext, const UE::FUsdTyped& InSchema )
+TSharedPtr<FUsdSchemaTranslator> FUsdSchemaTranslatorRegistry::CreateTranslatorForSchema(
+	TSharedRef<FUsdSchemaTranslationContext> InTranslationContext,
+	const UE::FUsdTyped& InSchema
+)
 {
 #if USE_USD_SDK
-	TUsdStore< pxr::UsdPrim > Prim = pxr::UsdPrim( InSchema.GetPrim() );
-	if ( !Prim.Get() )
+	TUsdStore<pxr::UsdPrim> Prim = pxr::UsdPrim(InSchema.GetPrim());
+	if (!Prim.Get())
 	{
 		return {};
 	}
 
-	for ( TPair< FString, FSchemaTranslatorsStack >& RegisteredSchemasStack : RegisteredSchemaTranslators )
+	for (TPair<FString, FSchemaTranslatorsStack>& RegisteredSchemasStack : RegisteredSchemaTranslators)
 	{
-		pxr::TfToken RegisteredSchemaToken( UnrealToUsd::ConvertString( *RegisteredSchemasStack.Key ).Get() );
-		pxr::TfType RegisteredSchemaType = pxr::UsdSchemaRegistry::GetTypeFromName( RegisteredSchemaToken );
+		pxr::TfToken RegisteredSchemaToken(UnrealToUsd::ConvertString(*RegisteredSchemasStack.Key).Get());
+		pxr::TfType RegisteredSchemaType = pxr::UsdSchemaRegistry::GetTypeFromName(RegisteredSchemaToken);
 
-		if ( !RegisteredSchemaType.IsUnknown() &&  Prim.Get().IsA( RegisteredSchemaType ) && RegisteredSchemasStack.Value.Num() > 0 )
+		if (!RegisteredSchemaType.IsUnknown() && Prim.Get().IsA(RegisteredSchemaType) && RegisteredSchemasStack.Value.Num() > 0)
 		{
-			return RegisteredSchemasStack.Value.Top().CreateFunction( InTranslationContext, InSchema );
+			return RegisteredSchemasStack.Value.Top().CreateFunction(InTranslationContext, InSchema);
 		}
 	}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 	return {};
 }
@@ -58,33 +60,33 @@ FUsdRenderContextRegistry::FUsdRenderContextRegistry()
 #if USE_USD_SDK
 	LLM_SCOPE_BYTAG(Usd);
 
-	UniversalRenderContext = FName( UsdToUnreal::ConvertToken( pxr::UsdShadeTokens->universalRenderContext ) );
-	Register( UniversalRenderContext );
+	UniversalRenderContext = FName(UsdToUnreal::ConvertToken(pxr::UsdShadeTokens->universalRenderContext));
+	Register(UniversalRenderContext);
 
-	UnrealRenderContext = FName( UsdToUnreal::ConvertToken( UnrealIdentifiers::Unreal ) );
-	Register( UnrealRenderContext );
-#endif // #if USE_USD_SDK
+	UnrealRenderContext = FName(UsdToUnreal::ConvertToken(UnrealIdentifiers::Unreal));
+	Register(UnrealRenderContext);
+#endif	  // #if USE_USD_SDK
 }
 
-FRegisteredSchemaTranslatorHandle FUsdSchemaTranslatorRegistry::Register( const FString& SchemaName, FCreateTranslator CreateFunction )
+FRegisteredSchemaTranslatorHandle FUsdSchemaTranslatorRegistry::Register(const FString& SchemaName, FCreateTranslator CreateFunction)
 {
 #if USE_USD_SDK
-	FSchemaTranslatorsStack* SchemaTranslatorsStack = FindSchemaTranslatorStack( SchemaName );
+	FSchemaTranslatorsStack* SchemaTranslatorsStack = FindSchemaTranslatorStack(SchemaName);
 
-	if ( !SchemaTranslatorsStack )
+	if (!SchemaTranslatorsStack)
 	{
 		// Insert most specialized first
 		int32 SchemaRegistryIndex = 0;
 
-		pxr::TfToken SchemaToRegisterToken( UnrealToUsd::ConvertString( *SchemaName ).Get() );
-		pxr::TfType SchemaToRegisterType = pxr::UsdSchemaRegistry::GetTypeFromName( SchemaToRegisterToken );
+		pxr::TfToken SchemaToRegisterToken(UnrealToUsd::ConvertString(*SchemaName).Get());
+		pxr::TfType SchemaToRegisterType = pxr::UsdSchemaRegistry::GetTypeFromName(SchemaToRegisterToken);
 
-		for ( TPair< FString, FSchemaTranslatorsStack >& RegisteredSchemasStack : RegisteredSchemaTranslators )
+		for (TPair<FString, FSchemaTranslatorsStack>& RegisteredSchemasStack : RegisteredSchemaTranslators)
 		{
-			pxr::TfToken RegisteredSchemaToken( UnrealToUsd::ConvertString( *RegisteredSchemasStack.Key ).Get() );
-			pxr::TfType RegisteredSchemaType = pxr::UsdSchemaRegistry::GetTypeFromName( RegisteredSchemaToken );
+			pxr::TfToken RegisteredSchemaToken(UnrealToUsd::ConvertString(*RegisteredSchemasStack.Key).Get());
+			pxr::TfType RegisteredSchemaType = pxr::UsdSchemaRegistry::GetTypeFromName(RegisteredSchemaToken);
 
-			if ( SchemaToRegisterType.IsA( RegisteredSchemaType ) )
+			if (SchemaToRegisterType.IsA(RegisteredSchemaType))
 			{
 				// We need to be registered before our ancestor types
 				break;
@@ -95,34 +97,34 @@ FRegisteredSchemaTranslatorHandle FUsdSchemaTranslatorRegistry::Register( const 
 			}
 		}
 
-		SchemaTranslatorsStack = &RegisteredSchemaTranslators.EmplaceAt_GetRef( SchemaRegistryIndex, SchemaName, FSchemaTranslatorsStack() ).Value;
+		SchemaTranslatorsStack = &RegisteredSchemaTranslators.EmplaceAt_GetRef(SchemaRegistryIndex, SchemaName, FSchemaTranslatorsStack()).Value;
 	}
 
 	FRegisteredSchemaTranslator RegisteredSchemaTranslator;
-	RegisteredSchemaTranslator.Handle = FRegisteredSchemaTranslatorHandle( SchemaName );
+	RegisteredSchemaTranslator.Handle = FRegisteredSchemaTranslatorHandle(SchemaName);
 	RegisteredSchemaTranslator.CreateFunction = CreateFunction;
 
-	SchemaTranslatorsStack->Push( RegisteredSchemaTranslator );
+	SchemaTranslatorsStack->Push(RegisteredSchemaTranslator);
 
 	return RegisteredSchemaTranslator.Handle;
 #else
 	return FRegisteredSchemaTranslatorHandle();
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 }
 
-void FUsdSchemaTranslatorRegistry::Unregister( const FRegisteredSchemaTranslatorHandle& TranslatorHandle )
+void FUsdSchemaTranslatorRegistry::Unregister(const FRegisteredSchemaTranslatorHandle& TranslatorHandle)
 {
-	FSchemaTranslatorsStack* SchemaTranslatorsStack = FindSchemaTranslatorStack( TranslatorHandle.GetSchemaName() );
+	FSchemaTranslatorsStack* SchemaTranslatorsStack = FindSchemaTranslatorStack(TranslatorHandle.GetSchemaName());
 
-	if ( !SchemaTranslatorsStack )
+	if (!SchemaTranslatorsStack)
 	{
 		return;
 	}
 
-	for ( FSchemaTranslatorsStack::TIterator RegisteredSchemaTranslatorIt = SchemaTranslatorsStack->CreateIterator();
-		RegisteredSchemaTranslatorIt; ++RegisteredSchemaTranslatorIt )
+	for (FSchemaTranslatorsStack::TIterator RegisteredSchemaTranslatorIt = SchemaTranslatorsStack->CreateIterator(); RegisteredSchemaTranslatorIt;
+		 ++RegisteredSchemaTranslatorIt)
 	{
-		if ( RegisteredSchemaTranslatorIt->Handle.GetId() == TranslatorHandle.GetId() )
+		if (RegisteredSchemaTranslatorIt->Handle.GetId() == TranslatorHandle.GetId())
 		{
 			RegisteredSchemaTranslatorIt.RemoveCurrent();
 			break;
@@ -130,23 +132,25 @@ void FUsdSchemaTranslatorRegistry::Unregister( const FRegisteredSchemaTranslator
 	}
 }
 
-FUsdSchemaTranslationContext::FUsdSchemaTranslationContext( const UE::FUsdStage& InStage, UUsdAssetCache2& InAssetCache )
-	: Stage( InStage )
-	, AssetCache( &InAssetCache )
+FUsdSchemaTranslationContext::FUsdSchemaTranslationContext(const UE::FUsdStage& InStage, UUsdAssetCache2& InAssetCache)
+	: Stage(InStage)
+	, AssetCache(&InAssetCache)
 {
-	IUsdSchemasModule& UsdSchemasModule = FModuleManager::Get().LoadModuleChecked< IUsdSchemasModule >( TEXT("USDSchemas") );
+	IUsdSchemasModule& UsdSchemasModule = FModuleManager::Get().LoadModuleChecked<IUsdSchemasModule>(TEXT("USDSchemas"));
 	RenderContext = UsdSchemasModule.GetRenderContextRegistry().GetUniversalRenderContext();
 }
 
-FUsdSchemaTranslatorRegistry::FSchemaTranslatorsStack* FUsdSchemaTranslatorRegistry::FindSchemaTranslatorStack( const FString& SchemaName )
+FUsdSchemaTranslatorRegistry::FSchemaTranslatorsStack* FUsdSchemaTranslatorRegistry::FindSchemaTranslatorStack(const FString& SchemaName)
 {
-	TPair< FString, FSchemaTranslatorsStack >* Result = Algo::FindByPredicate( RegisteredSchemaTranslators,
-		[ &SchemaName ]( const TPair< FString, FSchemaTranslatorsStack >& Element ) -> bool
+	TPair<FString, FSchemaTranslatorsStack>* Result = Algo::FindByPredicate(
+		RegisteredSchemaTranslators,
+		[&SchemaName](const TPair<FString, FSchemaTranslatorsStack>& Element) -> bool
 		{
 			return Element.Key == SchemaName;
-		} );
+		}
+	);
 
-	if ( Result )
+	if (Result)
 	{
 		return &Result->Value;
 	}
@@ -158,38 +162,39 @@ FUsdSchemaTranslatorRegistry::FSchemaTranslatorsStack* FUsdSchemaTranslatorRegis
 
 void FUsdSchemaTranslationContext::CompleteTasks()
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE( FUsdSchemaTranslationContext::CompleteTasks );
+	TRACE_CPUPROFILER_EVENT_SCOPE(FUsdSchemaTranslationContext::CompleteTasks);
 
-	FScopedSlowTask SlowTask( TranslatorTasks.Num(), LOCTEXT( "TasksProgress", "Executing USD Schema tasks" ) );
+	FScopedSlowTask SlowTask(TranslatorTasks.Num(), LOCTEXT("TasksProgress", "Executing USD Schema tasks"));
 
 	// These are just pointers into the TranslatorTasks items that are task chains that are in the ESchemaTranslationStatus::Pending state.
 	// We'll use this below to execute tasks until all items in TranslatorTasks are pending, and then we switch to/from an ExclusiveSync pass.
 	// This because we need to ensure that all ExclusiveSync tasks are run in isolation.
-	TSet< FUsdSchemaTranslatorTaskChain* > PendingTaskChains;
+	TSet<FUsdSchemaTranslatorTaskChain*> PendingTaskChains;
 
 	// Note that this first pass is for tasks that allow concurrent execution (so *not* exclusive sync tasks). If this is ever changed,
 	// we would also need to change the behavior of StartIfAsync to delay until the proper async pass, and not start right away
 	bool bExclusiveSyncTasks = false;
 
-	bool bFinished = ( TranslatorTasks.Num() == 0 );
-	while ( !bFinished )
+	bool bFinished = (TranslatorTasks.Num() == 0);
+	while (!bFinished)
 	{
 		while (TranslatorTasks.Num() > PendingTaskChains.Num())
 		{
-			for ( TArray< TSharedPtr< FUsdSchemaTranslatorTaskChain > >::TIterator TaskChainIterator = TranslatorTasks.CreateIterator(); TaskChainIterator; ++TaskChainIterator )
+			for (TArray<TSharedPtr<FUsdSchemaTranslatorTaskChain>>::TIterator TaskChainIterator = TranslatorTasks.CreateIterator(); TaskChainIterator;
+				 ++TaskChainIterator)
 			{
-				TSharedPtr< FUsdSchemaTranslatorTaskChain >& TaskChain = *TaskChainIterator;
+				TSharedPtr<FUsdSchemaTranslatorTaskChain>& TaskChain = *TaskChainIterator;
 
-				ESchemaTranslationStatus TaskChainStatus = TaskChain->Execute( bExclusiveSyncTasks );
+				ESchemaTranslationStatus TaskChainStatus = TaskChain->Execute(bExclusiveSyncTasks);
 
-				if ( TaskChainStatus == ESchemaTranslationStatus::Done )
+				if (TaskChainStatus == ESchemaTranslationStatus::Done)
 				{
- 					SlowTask.EnterProgressFrame();
+					SlowTask.EnterProgressFrame();
 					TaskChainIterator.RemoveCurrent();
 				}
-				else if ( TaskChainStatus == ESchemaTranslationStatus::Pending )
+				else if (TaskChainStatus == ESchemaTranslationStatus::Pending)
 				{
-					PendingTaskChains.Add( TaskChain.Get() );
+					PendingTaskChains.Add(TaskChain.Get());
 				}
 			}
 		}
@@ -197,14 +202,14 @@ void FUsdSchemaTranslationContext::CompleteTasks()
 		bExclusiveSyncTasks = !bExclusiveSyncTasks;
 		PendingTaskChains.Reset();
 
-		bFinished = ( TranslatorTasks.Num() == 0 );
+		bFinished = (TranslatorTasks.Num() == 0);
 	}
 }
 
-bool FUsdSchemaTranslator::IsCollapsed( ECollapsingType CollapsingType ) const
+bool FUsdSchemaTranslator::IsCollapsed(ECollapsingType CollapsingType) const
 {
 #if USE_USD_SDK
-	TRACE_CPUPROFILER_EVENT_SCOPE( FUsdSchemaTranslator::IsCollapsed );
+	TRACE_CPUPROFILER_EVENT_SCOPE(FUsdSchemaTranslator::IsCollapsed);
 
 	if (!Context->bIsBuildingInfoCache)
 	{
@@ -212,31 +217,32 @@ bool FUsdSchemaTranslator::IsCollapsed( ECollapsingType CollapsingType ) const
 	}
 
 	// This is merely a fallback, and we should never need this
-	return CanBeCollapsed( CollapsingType );
-#endif // #if USE_USD_SDK
+	return CanBeCollapsed(CollapsingType);
+#endif	  // #if USE_USD_SDK
 
 	return false;
 }
 
 void FSchemaTranslatorTask::Start()
 {
-	if ( LaunchPolicy == ESchemaTranslationLaunchPolicy::Async && IsInGameThread() )
+	if (LaunchPolicy == ESchemaTranslationLaunchPolicy::Async && IsInGameThread())
 	{
 		Result = Async(
 #if WITH_EDITOR
 			EAsyncExecution::LargeThreadPool,
 #else
 			EAsyncExecution::ThreadPool,
-#endif // WITH_EDITOR
-			[ this ]() -> bool
+#endif	  // WITH_EDITOR
+			[this]() -> bool
 			{
 				return DoWork();
-			} );
+			}
+		);
 	}
 	else
 	{
 		// Execute on this thread
-		if ( !DoWork() )
+		if (!DoWork())
 		{
 			Continuation.Reset();
 		}
@@ -245,7 +251,7 @@ void FSchemaTranslatorTask::Start()
 
 void FSchemaTranslatorTask::StartIfAsync()
 {
-	if ( LaunchPolicy == ESchemaTranslationLaunchPolicy::Async )
+	if (LaunchPolicy == ESchemaTranslationLaunchPolicy::Async)
 	{
 		Start();
 	}
@@ -253,41 +259,41 @@ void FSchemaTranslatorTask::StartIfAsync()
 
 bool FSchemaTranslatorTask::DoWork()
 {
-	ensure( bIsDone == false );
+	ensure(bIsDone == false);
 	bool bContinue = Callable();
 	bIsDone = true;
 
 	return bContinue;
 }
 
-FUsdSchemaTranslatorTaskChain& FUsdSchemaTranslatorTaskChain::Do( ESchemaTranslationLaunchPolicy InPolicy, TFunction< bool() > Callable )
+FUsdSchemaTranslatorTaskChain& FUsdSchemaTranslatorTaskChain::Do(ESchemaTranslationLaunchPolicy InPolicy, TFunction<bool()> Callable)
 {
-	if ( !CurrentTask )
+	if (!CurrentTask)
 	{
-		CurrentTask = MakeShared< FSchemaTranslatorTask >( InPolicy, Callable );
+		CurrentTask = MakeShared<FSchemaTranslatorTask>(InPolicy, Callable);
 
-		CurrentTask->StartIfAsync(); // Queue it right now if async
+		CurrentTask->StartIfAsync();	// Queue it right now if async
 	}
 	else
 	{
-		Then( InPolicy, Callable );
+		Then(InPolicy, Callable);
 	}
 
 	return *this;
 }
 
-FUsdSchemaTranslatorTaskChain& FUsdSchemaTranslatorTaskChain::Then( ESchemaTranslationLaunchPolicy InPolicy, TFunction< bool() > Callable )
+FUsdSchemaTranslatorTaskChain& FUsdSchemaTranslatorTaskChain::Then(ESchemaTranslationLaunchPolicy InPolicy, TFunction<bool()> Callable)
 {
-	TSharedPtr< FSchemaTranslatorTask > LastTask = CurrentTask;
+	TSharedPtr<FSchemaTranslatorTask> LastTask = CurrentTask;
 
-	while ( LastTask->Continuation.IsValid() )
+	while (LastTask->Continuation.IsValid())
 	{
 		LastTask = LastTask->Continuation;
 	}
 
-	if ( LastTask )
+	if (LastTask)
 	{
-		LastTask->Continuation = MakeShared< FSchemaTranslatorTask >( InPolicy, Callable );
+		LastTask->Continuation = MakeShared<FSchemaTranslatorTask>(InPolicy, Callable);
 	}
 
 	return *this;
@@ -295,9 +301,9 @@ FUsdSchemaTranslatorTaskChain& FUsdSchemaTranslatorTaskChain::Then( ESchemaTrans
 
 namespace UsdSchemaTranslatorTaskChainImpl
 {
-	FORCEINLINE bool CanStart( FSchemaTranslatorTask* Task, bool bExclusiveSyncTasks )
+	FORCEINLINE bool CanStart(FSchemaTranslatorTask* Task, bool bExclusiveSyncTasks)
 	{
-		return ( Task->LaunchPolicy == ESchemaTranslationLaunchPolicy::ExclusiveSync ) == bExclusiveSyncTasks;
+		return (Task->LaunchPolicy == ESchemaTranslationLaunchPolicy::ExclusiveSync) == bExclusiveSyncTasks;
 	}
 }
 
@@ -305,16 +311,16 @@ ESchemaTranslationStatus FUsdSchemaTranslatorTaskChain::Execute(bool bExclusiveS
 {
 	FSchemaTranslatorTask* TranslatorTask = CurrentTask.Get();
 
-	if ( TranslatorTask == nullptr )
+	if (TranslatorTask == nullptr)
 	{
 		return ESchemaTranslationStatus::Done;
 	}
 
-	if ( !TranslatorTask->IsDone() )
+	if (!TranslatorTask->IsDone())
 	{
-		if ( !TranslatorTask->IsStarted() )
+		if (!TranslatorTask->IsStarted())
 		{
-			if ( UsdSchemaTranslatorTaskChainImpl::CanStart( TranslatorTask, bExclusiveSyncTasks ) )
+			if (UsdSchemaTranslatorTaskChainImpl::CanStart(TranslatorTask, bExclusiveSyncTasks))
 			{
 				TranslatorTask->Start();
 			}
@@ -328,7 +334,7 @@ ESchemaTranslationStatus FUsdSchemaTranslatorTaskChain::Execute(bool bExclusiveS
 	}
 	else
 	{
-		if ( CurrentTask->Result.IsSet() )
+		if (CurrentTask->Result.IsSet())
 		{
 			CurrentTask = CurrentTask->Result->Get() ? CurrentTask->Continuation : nullptr;
 		}
@@ -337,13 +343,13 @@ ESchemaTranslationStatus FUsdSchemaTranslatorTaskChain::Execute(bool bExclusiveS
 			CurrentTask = CurrentTask->Continuation;
 		}
 
-		if (( TranslatorTask = CurrentTask.Get()) != nullptr )
+		if ((TranslatorTask = CurrentTask.Get()) != nullptr)
 		{
-			if ( UsdSchemaTranslatorTaskChainImpl::CanStart( TranslatorTask, bExclusiveSyncTasks ) )
+			if (UsdSchemaTranslatorTaskChainImpl::CanStart(TranslatorTask, bExclusiveSyncTasks))
 			{
-				if ( IsInGameThread() )
+				if (IsInGameThread())
 				{
-					TranslatorTask->StartIfAsync(); // Queue the next task asap if async
+					TranslatorTask->StartIfAsync();	   // Queue the next task asap if async
 				}
 				else
 				{

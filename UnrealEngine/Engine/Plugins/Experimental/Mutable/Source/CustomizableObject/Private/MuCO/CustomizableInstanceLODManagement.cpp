@@ -11,10 +11,12 @@
 #include "MuCO/CustomizableObject.h"
 #include "MuCO/CustomizableObjectInstance.h"
 #include "MuCO/CustomizableObjectSystem.h"
-#include "MuCO/CustomizableSkeletalComponent.h"
 #include "MuCO/UnrealPortabilityHelpers.h"
+#include "MuCO/CustomizableObjectInstanceUsage.h"
 #include "UObject/UObjectIterator.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "MuCO/CustomizableObjectInstancePrivate.h"
+#include "MuCO/CustomizableObjectPrivate.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(CustomizableInstanceLODManagement)
 
@@ -70,11 +72,18 @@ UCustomizableInstanceLODManagement::~UCustomizableInstanceLODManagement()
 // ViewCenter is the origin where the distances will be measured from.
 void UpdatePawnToInstancesDistances(const class UCustomizableObjectInstance* OnlyForInstance, const TWeakObjectPtr<const AActor> ViewCenter)
 {
-	for (TObjectIterator<UCustomizableSkeletalComponent> CustomizableSkeletalComponent; CustomizableSkeletalComponent; ++CustomizableSkeletalComponent)
+	for (TObjectIterator<UCustomizableObjectInstanceUsage> CustomizableObjectInstanceUsage; CustomizableObjectInstanceUsage; ++CustomizableObjectInstanceUsage)
 	{
-		if (CustomizableSkeletalComponent->IsValidLowLevel() && (OnlyForInstance == nullptr || CustomizableSkeletalComponent->CustomizableObjectInstance == OnlyForInstance))
+#if WITH_EDITOR
+		if (IsValid(*CustomizableObjectInstanceUsage) && CustomizableObjectInstanceUsage->IsNetMode(NM_DedicatedServer))
 		{
-			CustomizableSkeletalComponent->UpdateDistFromComponentToPlayer(ViewCenter.IsValid() ? ViewCenter.Get() : nullptr, OnlyForInstance != nullptr);
+			continue;
+		}
+#endif
+
+		if (IsValid(*CustomizableObjectInstanceUsage) && (OnlyForInstance == nullptr || CustomizableObjectInstanceUsage->GetCustomizableObjectInstance() == OnlyForInstance))
+		{
+			CustomizableObjectInstanceUsage->UpdateDistFromComponentToPlayer(ViewCenter.IsValid() ? ViewCenter.Get() : nullptr, OnlyForInstance != nullptr);
 		}
 	}
 }
@@ -83,11 +92,17 @@ void UpdatePawnToInstancesDistances(const class UCustomizableObjectInstance* Onl
 // Used to manually update instances in the level editor
 void UpdateCameraToInstancesDistance(const FVector CameraPosition)
 {
-	for (TObjectIterator<UCustomizableSkeletalComponent> CustomizableSkeletalComponent; CustomizableSkeletalComponent; ++CustomizableSkeletalComponent)
+	for (TObjectIterator<UCustomizableObjectInstanceUsage> CustomizableObjectInstanceUsage; CustomizableObjectInstanceUsage; ++CustomizableObjectInstanceUsage)
 	{
-		if (CustomizableSkeletalComponent->IsValidLowLevel() && !CustomizableSkeletalComponent->IsTemplate())
+#if WITH_EDITOR
+		if (IsValid(*CustomizableObjectInstanceUsage) && CustomizableObjectInstanceUsage->IsNetMode(NM_DedicatedServer))
 		{
-			CustomizableSkeletalComponent->UpdateDistFromComponentToLevelEditorCamera(CameraPosition);
+			continue;
+		}
+#endif
+		if (IsValid(*CustomizableObjectInstanceUsage) && !CustomizableObjectInstanceUsage->IsTemplate())
+		{
+			CustomizableObjectInstanceUsage->UpdateDistFromComponentToLevelEditorCamera(CameraPosition);
 		}
 	}
 }
@@ -103,17 +118,30 @@ void UCustomizableInstanceLODManagement::UpdateInstanceDistsAndLODs(FMutableInst
 
 		if (ViewCenters.Num() == 0) // Just use the first pawn
 		{
-			UCustomizableSkeletalComponent* FirstCustomizableSkeletalComponent = nullptr;
+			UCustomizableObjectInstanceUsage* FirstCustomizableObjectInstanceUsage = nullptr;
 
 	#if WITH_EDITOR
 			bool bLevelEditorInstancesUpdated = false;
 	#endif
 
-			for (TObjectIterator<UCustomizableSkeletalComponent> CustomizableSkeletalComponent; CustomizableSkeletalComponent; ++CustomizableSkeletalComponent)
+			for (TObjectIterator<UCustomizableObjectInstanceUsage> CustomizableObjectInstanceUsage; CustomizableObjectInstanceUsage; ++CustomizableObjectInstanceUsage)
 			{
-				if (CustomizableSkeletalComponent && !CustomizableSkeletalComponent->IsTemplate())
+#if WITH_EDITOR
+				if (IsValid(*CustomizableObjectInstanceUsage) && CustomizableObjectInstanceUsage->IsNetMode(NM_DedicatedServer))
 				{
-					UWorld* LocalWorld = CustomizableSkeletalComponent->GetWorld();
+					continue;
+				}
+#endif
+				if (!IsValid(*CustomizableObjectInstanceUsage))
+				{
+					continue;
+				}
+
+				USkeletalMeshComponent* Parent = Cast<USkeletalMeshComponent>(CustomizableObjectInstanceUsage->GetAttachParent());
+
+				if (!CustomizableObjectInstanceUsage->IsTemplate())
+				{
+					UWorld* LocalWorld = Parent ? Parent->GetWorld() : nullptr;
 					APlayerController* Controller = LocalWorld ? LocalWorld->GetFirstPlayerController() : nullptr;
 					TWeakObjectPtr<const AActor> ViewCenter = Controller ? TWeakObjectPtr<const AActor>(Controller->GetPawn()) : nullptr;
 
@@ -124,12 +152,12 @@ void UCustomizableInstanceLODManagement::UpdateInstanceDistsAndLODs(FMutableInst
 					}
 
 	#if WITH_EDITOR
-					else if (CustomizableSkeletalComponent->GetWorld())
+					else if (Parent && Parent->GetWorld())
 					{
-						EWorldType::Type worldType = CustomizableSkeletalComponent->GetWorld()->WorldType;
+						EWorldType::Type WorldType = Parent->GetWorld()->WorldType;
 					
 						// Level Editor Instances (non PIE)
-						if (!bLevelEditorInstancesUpdated && worldType == EWorldType::Editor)
+						if (!bLevelEditorInstancesUpdated && WorldType == EWorldType::Editor)
 						{
 							for (FLevelEditorViewportClient* LevelVC : GEditor->GetLevelViewportClients())
 							{
@@ -143,9 +171,9 @@ void UCustomizableInstanceLODManagement::UpdateInstanceDistsAndLODs(FMutableInst
 						}
 
 						// Blueprint instances
-						else if (worldType == EWorldType::EditorPreview)
+						else if (WorldType == EWorldType::EditorPreview)
 						{
-							CustomizableSkeletalComponent->EditorUpdateComponent();
+							CustomizableObjectInstanceUsage->EditorUpdateComponent();
 						}
 					}
 	#endif // WITH_EDITOR
@@ -174,13 +202,13 @@ void UCustomizableInstanceLODManagement::UpdateInstanceDistsAndLODs(FMutableInst
 
 		for (TObjectIterator<UCustomizableObjectInstance> CustomizableObjectInstance; CustomizableObjectInstance; ++CustomizableObjectInstance)
 		{
-			if (IsValidChecked(*CustomizableObjectInstance) &&
+			if (IsValid(*CustomizableObjectInstance) &&
 				CustomizableObjectInstance->GetPrivate() &&
 				CustomizableObjectInstance->GetIsBeingUsedByComponentInPlay())
 			{
 				if (const UCustomizableObject* CustomizableObject = CustomizableObjectInstance->GetCustomizableObject();
 					CustomizableObject &&
-					!CustomizableObject->IsLocked())
+					!CustomizableObject->GetPrivate()->IsLocked())
 				{
 					UCustomizableObjectInstance* Ptr = *CustomizableObjectInstance;
 					Ptr->SetIsDiscardedBecauseOfTooManyInstances(false);
@@ -213,12 +241,12 @@ void UCustomizableInstanceLODManagement::UpdateInstanceDistsAndLODs(FMutableInst
 				if (!bAlreadyReachedFixedLOD && SortedInstances[i]->GetMinSquareDistToPlayer() < DistanceForFixedLODSquared)
 				{
 					RequestedLODs.Init(MAX_uint16, SortedInstances[i]->GetNumComponents());
-					SortedInstances[i]->SetRequestedLODs(0, MAX_int32, RequestedLODs, InOutRequestedUpdates);
+					SortedInstances[i]->SetRequestedLODs(0, 0, RequestedLODs, InOutRequestedUpdates);
 				}
 				else
 				{
 					RequestedLODs.Init(MAX_uint16, SortedInstances[i]->GetNumComponents());
-					SortedInstances[i]->SetRequestedLODs(2, 2, RequestedLODs, InOutRequestedUpdates);
+					SortedInstances[i]->SetRequestedLODs(2, 0, RequestedLODs, InOutRequestedUpdates);
 					bAlreadyReachedFixedLOD = true;
 				}
 			}
@@ -228,12 +256,12 @@ void UCustomizableInstanceLODManagement::UpdateInstanceDistsAndLODs(FMutableInst
 				if (!bAlreadyReachedFixedLOD && SortedInstances[i]->GetMinSquareDistToPlayer() < DistanceForFixedLODSquared)
 				{
 					RequestedLODs.Init(MAX_uint16, SortedInstances[i]->GetNumComponents());
-					SortedInstances[i]->SetRequestedLODs(1, MAX_int32, RequestedLODs, InOutRequestedUpdates);
+					SortedInstances[i]->SetRequestedLODs(1, 0, RequestedLODs, InOutRequestedUpdates);
 				}
 				else
 				{
 					RequestedLODs.Init(MAX_uint16, SortedInstances[i]->GetNumComponents());
-					SortedInstances[i]->SetRequestedLODs(2, MAX_int32, RequestedLODs, InOutRequestedUpdates);
+					SortedInstances[i]->SetRequestedLODs(2, 0, RequestedLODs, InOutRequestedUpdates);
 					bAlreadyReachedFixedLOD = true;
 				}
 			}
@@ -241,7 +269,7 @@ void UCustomizableInstanceLODManagement::UpdateInstanceDistsAndLODs(FMutableInst
 			for (int32 i = NumGeneratedInstancesLimitLODs + NumGeneratedInstancesLimitLOD1; i < NumGeneratedInstancesLimitLODs + NumGeneratedInstancesLimitLOD1 + NumGeneratedInstancesLimitLOD2 && i < SortedInstances.Num(); ++i)
 			{
 				RequestedLODs.Init(MAX_uint16, SortedInstances[i]->GetNumComponents());
-				SortedInstances[i]->SetRequestedLODs(2, MAX_int32, RequestedLODs, InOutRequestedUpdates);
+				SortedInstances[i]->SetRequestedLODs(2, 0, RequestedLODs, InOutRequestedUpdates);
 			}
 
 			for (int32 i = NumGeneratedInstancesLimitLODs + NumGeneratedInstancesLimitLOD1 + NumGeneratedInstancesLimitLOD2; i < SortedInstances.Num(); ++i)
@@ -255,7 +283,7 @@ void UCustomizableInstanceLODManagement::UpdateInstanceDistsAndLODs(FMutableInst
 			for (int32 i = 0; i < SortedInstances.Num(); ++i)
 			{
 				RequestedLODs.Init(MAX_uint16, SortedInstances[i]->GetNumComponents());
-				SortedInstances[i]->SetRequestedLODs(2, MAX_int32, RequestedLODs, InOutRequestedUpdates);
+				SortedInstances[i]->SetRequestedLODs(2, 0, RequestedLODs, InOutRequestedUpdates);
 			}
 		}
 	}
@@ -264,30 +292,38 @@ void UCustomizableInstanceLODManagement::UpdateInstanceDistsAndLODs(FMutableInst
 		struct FLODTracker
 		{
 			int32 MinLOD = MAX_int32;
-			int32 MaxLOD = MAX_int32;
 
 			bool bInitialized = false;
-			TArray<uint16> RequestedLODsPerComponent;
+			TArray<uint16> RequestedLODPerComponent;
 		};
 
 		TMap<TObjectPtr<UCustomizableObjectInstance>, FLODTracker> InstancesMinLOD;
 		InstancesMinLOD.Reserve(100);
 
-		for (TObjectIterator<UCustomizableSkeletalComponent> CustomizableSkeletalComponent; CustomizableSkeletalComponent; ++CustomizableSkeletalComponent)
+		for (TObjectIterator<UCustomizableObjectInstanceUsage> CustomizableObjectInstanceUsage; CustomizableObjectInstanceUsage; ++CustomizableObjectInstanceUsage)
 		{
-			if (CustomizableSkeletalComponent && !CustomizableSkeletalComponent->IsTemplate())
+#if WITH_EDITOR
+			if (IsValid(*CustomizableObjectInstanceUsage) && CustomizableObjectInstanceUsage->IsNetMode(NM_DedicatedServer))
 			{
-				UCustomizableObjectInstance* COI = CustomizableSkeletalComponent->CustomizableObjectInstance;
+				continue;
+			}
+#endif
+
+			if (IsValid(*CustomizableObjectInstanceUsage) && !CustomizableObjectInstanceUsage->IsTemplate())
+			{
+				UCustomizableObjectInstance* COI = CustomizableObjectInstanceUsage->GetCustomizableObjectInstance();
 				if (!COI || !COI->GetCustomizableObject())
 				{
 					continue;
 				}
 
+				USkeletalMeshComponent* Parent = Cast<USkeletalMeshComponent>(CustomizableObjectInstanceUsage->GetAttachParent());
+
 #if WITH_EDITOR
 
 				EWorldType::Type WorldType = EWorldType::Type::None;
 
-				UWorld* World = CustomizableSkeletalComponent->GetWorld();
+				UWorld* World = Parent ? Parent->GetWorld() : nullptr;
 				if (World)
 				{
 					WorldType = World->WorldType;
@@ -295,12 +331,12 @@ void UCustomizableInstanceLODManagement::UpdateInstanceDistsAndLODs(FMutableInst
 
 				// Blueprint instances and CO Editors
 				
-				const USceneComponent* const AttachParentComponent = CustomizableSkeletalComponent->GetAttachParent();
+				const USceneComponent* const AttachParentComponent = CustomizableObjectInstanceUsage->GetAttachParent();
 				bool bAttachParentActor = AttachParentComponent ? AttachParentComponent->GetOwner()!=nullptr : false;
 
 				if (WorldType == EWorldType::EditorPreview || (!World && !bAttachParentActor))
 				{
-					CustomizableSkeletalComponent->EditorUpdateComponent();
+					CustomizableObjectInstanceUsage->EditorUpdateComponent();
 					continue;
 				}
 
@@ -315,14 +351,26 @@ void UCustomizableInstanceLODManagement::UpdateInstanceDistsAndLODs(FMutableInst
 
 				if (!LODTracker.bInitialized)
 				{
-					LODTracker.RequestedLODsPerComponent.AddZeroed(COI->GetCustomizableObject()->GetComponentCount());
+					LODTracker.RequestedLODPerComponent.Init(MAX_uint16, COI->GetCustomizableObject()->GetComponentCount());
 					LODTracker.bInitialized = true;
 				}
 
-				USkeletalMeshComponent* Parent = Cast<USkeletalMeshComponent>(CustomizableSkeletalComponent->GetAttachParent());
 				if (Parent)
 				{
 					COI->SetIsBeingUsedByComponentInPlay(true);
+
+					int32 ComponentIndex = CustomizableObjectInstanceUsage->GetComponentIndex();
+
+#if WITH_EDITOR
+					// If the instance is generated but the component doesn't have a mesh, set it.
+					// Can happen when duplicating instances in the editor.
+					const USkeletalMesh* SkeletalMesh = COI->GetSkeletalMesh(ComponentIndex);
+					if (SkeletalMesh && !Parent->GetSkeletalMeshAsset())
+					{
+						// As the instance is already generated, this will be very fast and just set the mesh and call the delegates
+						COI->UpdateSkeletalMeshAsync();
+					}
+#endif
 
 					// If it's the local player set max priority
 					const USceneComponent* const AttachParentParentComponent = Parent->GetAttachParent();
@@ -333,19 +381,15 @@ void UCustomizableInstanceLODManagement::UpdateInstanceDistsAndLODs(FMutableInst
 					{
 						COI->SetMinSquareDistToPlayer(-1.f);
 					}
-					else
-					{
-						LODTracker.MaxLOD = COI->GetNumLODsAvailable() - 1;
-					}
-
 
 					// Use the component minLOD to set the minimum LOD to generate
 					LODTracker.MinLOD = FMath::Min(LODTracker.MinLOD, Parent->bOverrideMinLod ? Parent->MinLodModel : 0);
 
 					// If the parent component have a SkeletalMesh use the RequestedLODLevel of the component as reference to know which LODs mutable should generate.
-					if (UE_MUTABLE_GETSKELETALMESHASSET(Parent) && LODTracker.RequestedLODsPerComponent.IsValidIndex(CustomizableSkeletalComponent->ComponentIndex))
+					if (UE_MUTABLE_GETSKELETALMESHASSET(Parent) && LODTracker.RequestedLODPerComponent.IsValidIndex(ComponentIndex))
 					{
-						LODTracker.RequestedLODsPerComponent[CustomizableSkeletalComponent->ComponentIndex] |= 1 << Parent->GetPredictedLODLevel();
+						uint16& RequestedLOD = LODTracker.RequestedLODPerComponent[ComponentIndex];
+						RequestedLOD = FMath::Min((int32)RequestedLOD, Parent->GetPredictedLODLevel());
 					}
 				}
 			}
@@ -356,12 +400,12 @@ void UCustomizableInstanceLODManagement::UpdateInstanceDistsAndLODs(FMutableInst
 			if (IsValidChecked(It.Key) && It.Key->GetPrivate())
 			{
 				const UCustomizableObject* CustomizableObject = It.Key->GetCustomizableObject();
-				if (!CustomizableObject || CustomizableObject->IsLocked())
+				if (!CustomizableObject || CustomizableObject->GetPrivate()->IsLocked())
 				{
 					continue;
 				}
 
-				if (IsOnlyUpdateCloseCustomizableObjectsEnabled() && (It.Key->GetMinSquareDistToPlayer() > FMath::Square(CloseCustomizableObjectsDist) || !It.Key->NearestToActor.IsValid()))
+				if (IsOnlyUpdateCloseCustomizableObjectsEnabled() && (It.Key->GetMinSquareDistToPlayer() > FMath::Square(CloseCustomizableObjectsDist) || !It.Key->GetPrivate()->NearestToActor.IsValid()))
 				{
 					continue;
 				}
@@ -369,13 +413,7 @@ void UCustomizableInstanceLODManagement::UpdateInstanceDistsAndLODs(FMutableInst
 				// Limit MinLOD
 				It.Value.MinLOD = FMath::Min(It.Value.MinLOD, CustomizableObject->GetNumLODs() - 1);
 
-				// If it's the player generate only the first LOD
-				if (It.Key->GetMinSquareDistToPlayer() == -1.f && It.Value.MaxLOD == MAX_int32)
-				{
-					It.Value.MaxLOD = It.Value.MinLOD;
-				}
-
-				It.Key->SetRequestedLODs(It.Value.MinLOD, It.Value.MaxLOD, It.Value.RequestedLODsPerComponent, InOutRequestedUpdates);
+				It.Key->SetRequestedLODs(It.Value.MinLOD, 0, It.Value.RequestedLODPerComponent, InOutRequestedUpdates);
 			}
 		}
 	}

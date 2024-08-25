@@ -54,9 +54,7 @@ namespace UnrealBuildTool.Rules
 		protected virtual bool IsSupportedPlatform(ReadOnlyTargetRules Target)
         {
 			return Target.IsInPlatformGroup(UnrealPlatformGroup.Windows)
-				|| Target.Platform == UnrealTargetPlatform.Mac
-				|| Target.Platform == UnrealTargetPlatform.IOS
-                || Target.Platform == UnrealTargetPlatform.TVOS
+				|| Target.IsInPlatformGroup(UnrealPlatformGroup.Apple)
 				|| Target.IsInPlatformGroup(UnrealPlatformGroup.Android)
 				|| Target.IsInPlatformGroup(UnrealPlatformGroup.Unix)
 				;

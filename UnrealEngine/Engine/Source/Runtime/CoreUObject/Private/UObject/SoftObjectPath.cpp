@@ -338,15 +338,17 @@ bool FSoftObjectPath::ExportTextItem(FString& ValueStr, FSoftObjectPath const& D
 		FSoftObjectPath Temp = *this;
 		Temp.PreSavePath();
 
+		const FString UndelimitedValue = (PortFlags & PPF_SimpleObjectText) ? Temp.GetAssetName() : Temp.ToString();
+
 		if (PortFlags & PPF_Delimited)
 		{
 			ValueStr += TEXT("\"");
-			ValueStr += Temp.ToString().ReplaceQuotesWithEscapedQuotes();
+			ValueStr += UndelimitedValue.ReplaceQuotesWithEscapedQuotes();
 			ValueStr += TEXT("\"");
 		}
 		else
 		{
-			ValueStr += Temp.ToString();
+			ValueStr += UndelimitedValue;
 		}
 	}
 	else
@@ -776,7 +778,7 @@ bool FSoftObjectPathThreadContext::GetSerializationOptions(FName& OutPackageName
 	}
 	
 	// Check UObject serialize context as a backup
-	FUObjectSerializeContext* LoadContext = Archive ? Archive->GetSerializeContext() : nullptr;
+	FUObjectSerializeContext* LoadContext = FUObjectThreadContext::Get().GetSerializeContext();
 	if (LoadContext && LoadContext->SerializedObject)
 	{
 		FLinkerLoad* Linker = LoadContext->SerializedObject->GetLinker();

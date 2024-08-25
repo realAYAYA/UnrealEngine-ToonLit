@@ -22,14 +22,16 @@ bool FRigUnit_GetAnimationChannelBase::UpdateCache(const URigHierarchy* InHierar
 	{
 		if(const FRigControlElement* ControlElement = InHierarchy->Find<FRigControlElement>(FRigElementKey(Control, ERigElementType::Control)))
 		{
-			FRigBaseElementChildrenArray Children = InHierarchy->GetChildren(ControlElement);
-			for(const FRigBaseElement* Child : Children)
+			FString Namespace, ChannelName = Channel.ToString();
+			URigHierarchy::SplitNameSpace(ChannelName, &Namespace, &ChannelName);
+			
+			for(const FRigBaseElement* Child : InHierarchy->GetChildren(ControlElement))
 			{
 				if(const FRigControlElement* ChildControl = Cast<FRigControlElement>(Child))
 				{
 					if(ChildControl->IsAnimationChannel())
 					{
-						if(ChildControl->GetDisplayName() == Channel)
+						if(ChildControl->GetDisplayName().ToString().Equals(ChannelName))
 						{
 							Key = ChildControl->GetKey();
 							Hash = ExpectedHash;
@@ -80,7 +82,7 @@ FRigUnit_GetFloatAnimationChannel_Execute()
 
 	if(const FRigControlElement* ChannelElement = ExecuteContext.Hierarchy->Find<FRigControlElement>(CachedChannelKey))
 	{
-		if(ChannelElement->Settings.ControlType == ERigControlType::Float)
+		if(ChannelElement->Settings.ControlType == ERigControlType::Float || ChannelElement->Settings.ControlType == ERigControlType::ScaleFloat)
 		{
 			const FRigControlValue StoredValue = ExecuteContext.Hierarchy->GetControlValueByIndex(ChannelElement->GetIndex(), bInitial ? ERigControlValueType::Initial : ERigControlValueType::Current);
 			Value = StoredValue.Get<float>();
@@ -242,7 +244,7 @@ FRigUnit_SetFloatAnimationChannel_Execute()
 
 	if(const FRigControlElement* ChannelElement = ExecuteContext.Hierarchy->Find<FRigControlElement>(CachedChannelKey))
 	{
-		if(ChannelElement->Settings.ControlType == ERigControlType::Float)
+		if(ChannelElement->Settings.ControlType == ERigControlType::Float || ChannelElement->Settings.ControlType == ERigControlType::ScaleFloat)
 		{
 			const FRigControlValue ValueToStore = FRigControlValue::Make<float>(Value);
 			ExecuteContext.Hierarchy->SetControlValueByIndex(ChannelElement->GetIndex(), ValueToStore, bInitial ? ERigControlValueType::Initial : ERigControlValueType::Current);

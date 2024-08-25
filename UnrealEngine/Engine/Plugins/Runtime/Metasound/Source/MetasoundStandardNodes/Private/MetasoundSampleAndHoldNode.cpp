@@ -76,18 +76,18 @@ namespace Metasound
 			return Interface;
 		}
 		
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
 			using namespace SampleAndHoldVertexNames;
-			const FDataReferenceCollection& Inputs = InParams.InputDataReferences;
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 
-			FTriggerReadRef InputTriggerSampleAndHold = Inputs.GetDataReadReferenceOrConstruct<FTrigger>(METASOUND_GET_PARAM_NAME(InputTriggerSampleAndHold), InParams.OperatorSettings);
-			FAudioBufferReadRef InputAudio = Inputs.GetDataReadReferenceOrConstruct<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputAudio), InParams.OperatorSettings);
+			FTriggerReadRef InputTriggerSampleAndHold = InputData.GetOrConstructDataReadReference<FTrigger>(METASOUND_GET_PARAM_NAME(InputTriggerSampleAndHold), InParams.OperatorSettings);
+			FAudioBufferReadRef InputAudio = InputData.GetOrConstructDataReadReference<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputAudio), InParams.OperatorSettings);
 
 			return MakeUnique<FSampleAndHoldOperator>(InParams, InputTriggerSampleAndHold, InputAudio);
 		}
 
-		FSampleAndHoldOperator(const FCreateOperatorParams& InParams, const FTriggerReadRef& InTriggerSampleAndHold, const FAudioBufferReadRef& InAudioInput)
+		FSampleAndHoldOperator(const FBuildOperatorParams& InParams, const FTriggerReadRef& InTriggerSampleAndHold, const FAudioBufferReadRef& InAudioInput)
 			: AudioInput(InAudioInput)
 			, TriggerSampleAndHold(InTriggerSampleAndHold)
 			, AudioOutput(FAudioBufferWriteRef::CreateNew(InParams.OperatorSettings))

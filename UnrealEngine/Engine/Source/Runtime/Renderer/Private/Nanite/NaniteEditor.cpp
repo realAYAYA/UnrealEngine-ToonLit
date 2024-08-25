@@ -9,6 +9,7 @@
 #include "PixelShaderUtils.h"
 #include "ScreenPass.h"
 #include "SystemTextures.h"
+#include "Nanite/NaniteMaterialsSceneExtension.h"
 
 DEFINE_GPU_STAT(NaniteEditor);
 
@@ -25,7 +26,7 @@ BEGIN_SHADER_PARAMETER_STRUCT(FNaniteSelectionOutlineParameters, )
 
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D<uint2>, VisBuffer64)
 
-	SHADER_PARAMETER_SRV(ByteAddressBuffer, MaterialHitProxyTable)
+	SHADER_PARAMETER_RDG_BUFFER_SRV(ByteAddressBuffer, MaterialHitProxyTable)
 	RENDER_TARGET_BINDING_SLOTS()
 END_SHADER_PARAMETER_STRUCT()
 
@@ -49,8 +50,8 @@ class FEmitHitProxyIdPS : public FNaniteGlobalShader
 
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<UlongType>, VisBuffer64)
 
-		SHADER_PARAMETER_SRV(ByteAddressBuffer, MaterialHitProxyTable)
-		
+		SHADER_PARAMETER_RDG_BUFFER_SRV(ByteAddressBuffer, MaterialHitProxyTable)
+	
 		RENDER_TARGET_BINDING_SLOTS()
 	END_SHADER_PARAMETER_STRUCT()
 };
@@ -96,6 +97,7 @@ void DrawHitProxies(
 	FRDGBufferRef VisibleClustersSWHW = RasterResults.VisibleClustersSWHW;
 
 	{
+		auto& MaterialsExtension = Scene.GetExtension<Nanite::FMaterialsSceneExtension>();
 		auto* PassParameters = GraphBuilder.AllocParameters<FEmitHitProxyIdPS::FParameters>();
 
 		PassParameters->View = View.ViewUniformBuffer;
@@ -104,7 +106,7 @@ void DrawHitProxies(
 		PassParameters->PageConstants = RasterResults.PageConstants;
 		PassParameters->ClusterPageData = Nanite::GStreamingManager.GetClusterPageDataSRV(GraphBuilder);
 		PassParameters->VisBuffer64 = VisBuffer64;
-		PassParameters->MaterialHitProxyTable = Scene.NaniteMaterials[ENaniteMeshPass::BasePass].GetHitProxyTableSRV();
+		PassParameters->MaterialHitProxyTable = GraphBuilder.CreateSRV(MaterialsExtension.CreateHitProxyIDBuffer(GraphBuilder));
 
 		PassParameters->RenderTargets[0]			= FRenderTargetBinding(HitProxyTexture, ERenderTargetLoadAction::ELoad);
 		PassParameters->RenderTargets.DepthStencil	= FDepthStencilBinding(HitProxyDepthTexture, ERenderTargetLoadAction::ELoad, FExclusiveDepthStencil::DepthWrite_StencilWrite);
@@ -156,7 +158,6 @@ static void GetEditorSelectionVisBuffer(
 		*(const FViewFamilyInfo*)SceneView.Family,
 		RasterTextureSize,
 		RasterViewRect,
-		false, // bVisualize
 		Nanite::EOutputBufferMode::VisBuffer,
 		true // bClearTarget
 	);
@@ -190,7 +191,7 @@ static void GetEditorSelectionVisBuffer(
 
 		NaniteRenderer->DrawGeometry(
 			Scene.NaniteRasterPipelines[ENaniteMeshPass::BasePass],
-			NaniteRasterResults.VisibilityResults,
+			NaniteRasterResults.VisibilityQuery,
 			*Nanite::FPackedViewArray::Create(GraphBuilder, NaniteView),
 			DrawList
 		);
@@ -224,6 +225,7 @@ static void AddEditorSelectionDepthPass(
 	RDG_GPU_STAT_SCOPE(GraphBuilder, NaniteEditor);
 	FRDGEventScopeGuard RDGEventScope(GraphBuilder, MoveTemp(EventName));
 
+	auto& MaterialsExtension = Scene.GetExtension<Nanite::FMaterialsSceneExtension>();
 	auto PassParameters = GraphBuilder.AllocParameters<FNaniteSelectionOutlineParameters>();
 
 	GetEditorSelectionVisBuffer(
@@ -241,7 +243,7 @@ static void AddEditorSelectionDepthPass(
 	PassParameters->MaxVisibleClusters		= Nanite::FGlobalResources::GetMaxVisibleClusters();
 	PassParameters->PageConstants			= NaniteRasterResults.PageConstants;
 	PassParameters->ClusterPageData			= Nanite::GStreamingManager.GetClusterPageDataSRV(GraphBuilder);
-	PassParameters->MaterialHitProxyTable	= Scene.NaniteMaterials[ENaniteMeshPass::BasePass].GetHitProxyTableSRV();
+	PassParameters->MaterialHitProxyTable	= GraphBuilder.CreateSRV(MaterialsExtension.CreateHitProxyIDBuffer(GraphBuilder));
 	PassParameters->RenderTargets.DepthStencil = FDepthStencilBinding(
 		DepthTarget,
 		ERenderTargetLoadAction::ELoad,

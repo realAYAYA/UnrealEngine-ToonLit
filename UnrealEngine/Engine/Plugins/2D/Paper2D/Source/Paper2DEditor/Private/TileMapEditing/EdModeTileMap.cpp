@@ -933,7 +933,7 @@ bool FEdModeTileMap::FloodFillTiles(const FViewportCursorLocation& Ray)
 		// Process the list of outstanding spans until it is empty
 		while (OutstandingSpans.Num())
 		{
-			FHorizontalSpan Span = OutstandingSpans.Pop(/*bAllowShrinking=*/ false);
+			FHorizontalSpan Span = OutstandingSpans.Pop(EAllowShrinking::No);
 
 			// Create spans below and above
 			for (int32 DY = -1; DY <= 1; DY += 2)

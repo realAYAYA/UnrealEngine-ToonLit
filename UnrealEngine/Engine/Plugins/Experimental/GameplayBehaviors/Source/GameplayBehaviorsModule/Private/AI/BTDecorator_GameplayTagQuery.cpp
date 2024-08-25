@@ -66,10 +66,16 @@ FString UBTDecorator_GameplayTagQuery::GetStaticDescription() const
 	return FString::Printf(TEXT("%s: %s"), *Super::GetStaticDescription(), *GameplayTagQuery.GetDescription());
 }
 
+void UBTDecorator_GameplayTagQuery::InitializeMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryInit::Type InitType) const
+{
+	InitializeNodeMemory<FBTDecorator_GameplayTagQueryMemory>(NodeMemory, InitType);
+}
+
 void UBTDecorator_GameplayTagQuery::CleanupMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryClear::Type CleanupType) const
 {
 	const FBTDecorator_GameplayTagQueryMemory* MyMemory = CastInstanceNodeMemory<FBTDecorator_GameplayTagQueryMemory>(NodeMemory);
 	ensureMsgf(MyMemory->GameplayTagEventHandles.Num() == 0, TEXT("Dangling gameplay tag event handles for decorator %s"), *GetStaticDescription());
+	CleanupNodeMemory<FBTDecorator_GameplayTagQueryMemory>(NodeMemory, CleanupType);
 }
 
 void UBTDecorator_GameplayTagQuery::OnBecomeRelevant(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)

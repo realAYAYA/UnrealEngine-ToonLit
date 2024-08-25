@@ -2,7 +2,7 @@ Availability: NoPublish
 Title: BuildGraph Predefined Tasks
 Crumbs: %ROOT%, Programming, Programming/Development, Programming/Development/BuildGraph, Programming/Development/BuildGraph/BuildGraphScriptTasks
 Description: This is a procedurally generated markdown page.
-version: 5.3
+version: 5.4
 parent:Programming/Development/BuildGraph/BuildGraphScriptTasks
 
 ### AgeStore
@@ -60,6 +60,15 @@ Creates a new AWS ECS task definition and updates the ECS service to use this ne
 | LogOutput          | Boolean   | Optional | Write output to the log                                                                      |
 | If                 | Condition | Optional | Whether to execute this task. It is ignored if this condition evaluates to false.            |
 
+### CheckMarkdown
+
+Checks that all markdown links between the given files are valid.
+
+|       |           |          |                                                                                   |
+| ----- | --------- | -------- | --------------------------------------------------------------------------------- |
+| Files | FileSpec  | Optional | Optional filter to be applied to the list of input files.                         |
+| If    | Condition | Optional | Whether to execute this task. It is ignored if this condition evaluates to false. |
+
 ### Command
 
 Invokes an AutomationTool child process to run the given command.
@@ -96,7 +105,7 @@ Compiles a target with UnrealBuildTool.
 | Project               | FileSpec                  | Optional | The project to compile with.                                                                                                     |
 | Arguments             | String                    | Optional | Additional arguments for UnrealBuildTool.                                                                                        |
 | AllowXGE              | Boolean                   | Optional | Whether to allow using XGE for compilation.                                                                                      |
-| AllowParallelExecutor | Boolean                   | Optional | Whether to allow using the parallel executor for this compile.                                                                   |
+| AllowParallelExecutor | Boolean                   | Optional | No longer necessary as UnrealBuildTool is run to compile targets.                                                                |
 | AllowAllCores         | Boolean                   | Optional | Whether to allow UBT to use all available cores, when AllowXGE is disabled.                                                      |
 | Clean                 | Boolean                   | Optional | Whether to allow cleaning this target. If unspecified, targets are cleaned if the -Clean argument is passed on the command line. |
 | Tag                   | TagList                   | Optional | Tag to be applied to build products of this task.                                                                                |
@@ -131,6 +140,20 @@ Copies files from one directory to another.
 | Tag             | TagList   | Optional | Tag to be applied to build products of this task.                                 |
 | ErrorIfNotFound | Boolean   | Optional | Whether or not to throw an error if no files were found to copy                   |
 | If              | Condition | Optional | Whether to execute this task. It is ignored if this condition evaluates to false. |
+
+### CreateArtifact
+
+Deploys a tool update through Horde
+
+|             |           |          |                                                                                   |
+| ----------- | --------- | -------- | --------------------------------------------------------------------------------- |
+| Name        | String    | Required | Name for the artifact                                                             |
+| Type        | String    | Optional | Type of the artifact                                                              |
+| Description | String    | Optional | Description for the artifact                                                      |
+| BaseDir     | String    | Required | Base directory to resolve relative paths for input files.                         |
+| Change      | Integer   | Optional | Changelist number for this artifact                                               |
+| Files       | FileSpec  | Optional | Files to be uploaded.                                                             |
+| If          | Condition | Optional | Whether to execute this task. It is ignored if this condition evaluates to false. |
 
 ### CsCompile
 
@@ -202,6 +225,8 @@ Spawns Docker and waits for it to complete.
 | UseBuildKit      | Boolean   | Optional | Use BuildKit in Docker                                                                                         |
 | ProgressOutput   | String    | Optional | Type of progress output (--progress)                                                                           |
 | Tag              | String    | Optional | Tag for the image                                                                                              |
+| Target           | String    | Optional | Set the target build stage to build (--target)                                                                 |
+| Output           | String    | Optional | Custom output exporter. Requires BuildKit (--output)                                                           |
 | Arguments        | String    | Optional | Optional arguments                                                                                             |
 | OverlayDirs      | String    | Optional | List of additional directories to overlay into the staged input files. Allows credentials to be staged, etc... |
 | Environment      | String    | Optional | Environment variables to set                                                                                   |
@@ -398,13 +423,15 @@ Executes MsBuild
 
 ### NuGet-LicenseCheck
 
-Spawns Docker and waits for it to complete.
+Verifies which licenses are in use by nuget dependencies
 
 |                |                    |          |                                                                                                                                                          |
 | -------------- | ------------------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | BaseDir        | String             | Required | Base directory for running the command                                                                                                                   |
 | IgnorePackages | String             | Optional | Specifies a list of packages to ignore for version checks, separated by semicolons. Optional version number may be specified with 'name@version' syntax. |
 | LicenseDir     | DirectoryReference | Optional | Directory containing allowed licenses                                                                                                                    |
+| CsvFile        | FileReference      | Optional | Path to a csv file to write with list of packages and their licenses                                                                                     |
+| DotNetPath     | FileReference      | Optional | Override path to dotnet executable                                                                                                                       |
 | If             | Condition          | Optional | Whether to execute this task. It is ignored if this condition evaluates to false.                                                                        |
 
 ### OnExit
@@ -502,11 +529,13 @@ Updates the local version files (Engine/Source/Runtime/Launch/Resources/Version.
 
 Signs a set of executable files with an installed certificate.
 
-|       |           |          |                                                                                                                      |
-| ----- | --------- | -------- | -------------------------------------------------------------------------------------------------------------------- |
-| Files | FileSpec  | Required | List of file specifications separated by semicolons (for example, *.cpp;Engine/.../*.bat), or the name of a tag set. |
-| Tag   | TagList   | Optional | Tag to be applied to build products of this task.                                                                    |
-| If    | Condition | Optional | Whether to execute this task. It is ignored if this condition evaluates to false.                                    |
+|             |           |          |                                                                                                                      |
+| ----------- | --------- | -------- | -------------------------------------------------------------------------------------------------------------------- |
+| Files       | FileSpec  | Required | List of file specifications separated by semicolons (for example, *.cpp;Engine/.../*.bat), or the name of a tag set. |
+| Description | String    | Optional | Optional description for the signed content                                                                          |
+| Tag         | TagList   | Optional | Tag to be applied to build products of this task.                                                                    |
+| Parallel    | Boolean   | Optional | If true, the calls to the signing tool will be performed in parallel.                                                |
+| If          | Condition | Optional | Whether to execute this task. It is ignored if this condition evaluates to false.                                    |
 
 ### Spawn
 
@@ -686,17 +715,46 @@ Writes text to a file.
 
 Exports an snapshot from Zen to a specified destination.
 
-|                            |               |          |                                                                                   |
-| -------------------------- | ------------- | -------- | --------------------------------------------------------------------------------- |
-| Project                    | FileReference | Optional | The project from which to export the snapshot                                     |
-| Platform                   | String        | Optional | The target platform(s) to export the snapshot for                                 |
-| SnapshotDescriptorFile     | FileReference | Optional | A file to create with information about the snapshot that was exported            |
-| DestinationStorageType     | String        | Required | The type of destination to export the snapshot to (cloud, ...)                    |
-| DestinationCloudHost       | String        | Optional | The host name to use when exporting to a cloud destination                        |
-| DestinationCloudNamespace  | String        | Optional | The namespace to use when exporting to a cloud destination                        |
-| DestinationCloudIdentifier | String        | Optional | The identifier to use when exporting to a cloud destination                       |
-| DestinationCloudBucket     | String        | Optional | A custom bucket name to use when exporting to a cloud destination                 |
-| If                         | Condition     | Optional | Whether to execute this task. It is ignored if this condition evaluates to false. |
+|                                    |                    |          |                                                                                                                              |
+| ---------------------------------- | ------------------ | -------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Project                            | FileReference      | Optional | The project from which to export the snapshot                                                                                |
+| Platform                           | String             | Optional | The target platform(s) to export the snapshot for                                                                            |
+| SnapshotBaseDescriptorFile         | FileReference      | Optional | A file to read with information about the snapshot that should be used as a base when exporting this new snapshot            |
+| SnapshotDescriptorFile             | FileReference      | Optional | A file to create with information about the snapshot that was exported                                                       |
+| DestinationStorageType             | String             | Required | The type of destination to export the snapshot to (cloud, ...)                                                               |
+| DestinationIdentifier              | String             | Optional | The identifier to use when exporting to a destination                                                                        |
+| DestinationCloudHost               | String             | Optional | The host name to use when exporting to a cloud destination                                                                   |
+| SnapshotDescriptorCloudHost        | String             | Optional | The host name to use when writing a snapshot descriptor for a cloud destination                                              |
+| DestinationCloudHttpVersion        | String             | Optional | The http version to use when exporting to a cloud destination                                                                |
+| SnapshotDescriptorCloudHttpVersion | String             | Optional | The http version to use when writing a snapshot descriptor for a cloud destination                                           |
+| DestinationCloudNamespace          | String             | Optional | The namespace to use when exporting to a cloud destination                                                                   |
+| DestinationCloudBucket             | String             | Optional | A custom bucket name to use when exporting to a cloud destination                                                            |
+| DestinationFileDir                 | DirectoryReference | Optional | The directory to use when exporting to a file destination                                                                    |
+| DestinationFileName                | String             | Optional | The filename to use when exporting to a file destination                                                                     |
+| OverridePlatformCookedDir          | String             | Optional | Optional. Where to look for the ue.projectstore The pattern {Platform} can be used for exporting multiple platforms at once. |
+| Force                              | Boolean            | Optional | Optional. Whether to force export of data even if the destination claims to have them.                                       |
+| If                                 | Condition          | Optional | Whether to execute this task. It is ignored if this condition evaluates to false.                                            |
+
+### ZenImportOplog
+
+Imports an oplog from Zen to a specified destination.
+
+|             |               |          |                                                                                                    |
+| ----------- | ------------- | -------- | -------------------------------------------------------------------------------------------------- |
+| ImportType  | String        | Required | The type of destination to import from to (cloud, file...)                                         |
+| Files       | String        | Optional | comma separated full path to the oplog dir to import into the local zen server Files="Path1,Path2" |
+| Project     | FileReference | Optional | The project from which to import for                                                               |
+| ProjectName | String        | Optional | The name of the newly created Zen Project we will be importing into                                |
+| Platform    | String        | Optional | The target platform to import the snapshot for                                                     |
+| RootDir     | String        | Optional | Root dir for the UE project. Used to derive the Enging folder and the Project folder               |
+| OplogName   | String        | Optional | The name of the imported oplog                                                                     |
+| HostName    | String        | Optional | The host URL for the zen server we are importing from                                              |
+| HostPort    | String        | Optional | The host port for the zen server we are importing from                                             |
+| CloudURL    | String        | Optional | The cloud URL to import from                                                                       |
+| Namespace   | String        | Optional | what namespace to use when importing from cloud                                                    |
+| Bucket      | String        | Optional | what bucket to use when importing from cloud                                                       |
+| Key         | String        | Optional | What key to use when importing from cloud                                                          |
+| If          | Condition     | Optional | Whether to execute this task. It is ignored if this condition evaluates to false.                  |
 
 ### Zip
 

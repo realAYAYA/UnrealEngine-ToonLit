@@ -117,7 +117,7 @@ bool UGeometrySelectionVisualizationProperties::ShowFaceSelectionTriangleSet() c
 
 bool UGeometrySelectionVisualizationProperties::ShowEdgeSelectionVerticesPointSet() const
 {
-	if (ShowEdgeSelectionLineSet())
+	if (bShowSelection == false)
 	{
 		return false;
 	}

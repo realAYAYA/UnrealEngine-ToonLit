@@ -10,6 +10,7 @@
 #include "ScopedTransaction.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "EdGraphSchema_Niagara.h"
+#include "NiagaraAnalytics.h"
 #include "NiagaraNodeCustomHlsl.h"
 #include "Layout/Margin.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
@@ -245,6 +246,15 @@ void FNiagaraFunctionCallNodeDetails::SwitchToVersion(FNiagaraAssetVersion Versi
 	UpgradeContext.bSkipPythonScript = true;
 	Node->ChangeScriptVersion(Version.VersionGuid, UpgradeContext);
 	Node->RefreshFromExternalChanges();
+
+	// analytics
+	TArray<FAnalyticsEventAttribute> Attributes;
+	Attributes.Add(FAnalyticsEventAttribute(TEXT("Type"), TEXT("FunctionNode")));
+	if (NiagaraAnalytics::IsPluginAsset(Node->FunctionScript))
+	{
+		Attributes.Add(FAnalyticsEventAttribute(TEXT("AssetName"), Node->FunctionScript->GetPackage()->GetName()));
+	}
+	NiagaraAnalytics::RecordEvent(TEXT("Versioning.ScriptVersionChanged"), Attributes);
 }
 
 bool FNiagaraFunctionCallNodeDetails::IsVersionSelected(FNiagaraAssetVersion Version) const

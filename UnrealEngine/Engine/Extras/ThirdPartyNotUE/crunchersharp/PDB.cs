@@ -68,8 +68,15 @@ namespace PDBReader
 
 		internal static TypeBasicInfo MakeArray(TypeBasicInfo elementType, ulong size, uint internalId)
 		{
-			var count = size / elementType.Size;
-			return new TypeBasicInfo($"{elementType.Name}[{count}]", size, internalId);
+			if (elementType.Size > 0)
+			{
+				var count = size / elementType.Size;
+				return new TypeBasicInfo($"{elementType.Name}[{count}]", size, internalId);
+			}
+			else
+			{
+				return new TypeBasicInfo($"{elementType.Name}[?]", size, internalId);
+			}
 		}
 		
 		internal static TypeBasicInfo MakePointer(TypeBasicInfo pointedToType, ulong size, uint internalId)

@@ -360,44 +360,76 @@ UENUM(BlueprintType)
 enum class EUnit : uint8
 {
 	/** Scalar distance/length unit. */
-	Micrometers, Millimeters, Centimeters, Meters, Kilometers, Inches, Feet, Yards, Miles, Lightyears,
-	
-	/** Angular units */
+	Micrometers, Millimeters, Centimeters, Meters, Kilometers,
+	Inches, Feet, Yards, Miles,
+	Lightyears,
+
+	/** Angular unit. */
 	Degrees, Radians,
-	
-	/** Speed units */
+
+	/** Speed unit. */
 	CentimetersPerSecond, MetersPerSecond, KilometersPerHour, MilesPerHour,
-	
-	/** Temperature units */
+
+	/** Angular speed unit. */
+	DegreesPerSecond, RadiansPerSecond,
+
+	/** Acceleration unit. */
+	CentimetersPerSecondSquared, MetersPerSecondSquared,
+
+	/** Temperature unit. */
 	Celsius, Farenheit, Kelvin,
-	
-	/** Mass units */
-	Micrograms, Milligrams, Grams, Kilograms, MetricTons, Ounces, Pounds, Stones,
-	
-	/** Force units */
+
+	/** Mass unit. */
+	Micrograms, Milligrams, Grams, Kilograms, MetricTons,
+	Ounces, Pounds, Stones,
+
+	/** Density unit. */
+	GramsPerCubicCentimeter, GramsPerCubicMeter, KilogramsPerCubicCentimeter, KilogramsPerCubicMeter,
+
+	/** Force unit. */
 	Newtons, PoundsForce, KilogramsForce, KilogramCentimetersPerSecondSquared,
 
-	/** Torque units */
+	/** Torque unit. */
 	NewtonMeters, KilogramCentimetersSquaredPerSecondSquared,
-	
-	/** Frequency units */
+
+	/** Impulse unit. */
+	NewtonSeconds, KilogramCentimeters, KilogramMeters,
+
+	/** Frequency unit. */
 	Hertz, Kilohertz, Megahertz, Gigahertz, RevolutionsPerMinute,
-	
-	/** Data Size units */	
+
+	/** Data Size unit. */
 	Bytes, Kilobytes, Megabytes, Gigabytes, Terabytes,
-	
-	/** Luminous flux units */	
+
+	/** Luminous flux unit. */
 	Lumens,
 	
-	/** Time units */	
-	Milliseconds, Seconds, Minutes, Hours, Days, Months, Years,
+	/** Luminous intensity unit. */
+	Candela,
+	
+	/** Illuminance unit. */
+	Lux,
+	
+	/** Luminance unit. */
+	CandelaPerMeter2,
+	
+	/** Exposure value unit. */
+	ExposureValue,
 
-	/** Arbitrary multiplier */	
+	/** Time unit. */
+	Nanoseconds, Microseconds, Milliseconds, Seconds, Minutes, Hours, Days, Months, Years,
+
+	/** Pixel density unit. */
+	PixelsPerInch,
+
+	/** Percentage. */
+	Percentage,
+
+	/** Arbitrary multiplier. */
 	Multiplier,
 
-
-	/** Percentage */
-	Percentage,
+	/** Stress unit. */
+	Pascals, KiloPascals, MegaPascals, GigaPascals,
 
 	/** Symbolic entry, not specifiable on meta data. */
 	Unspecified
@@ -541,7 +573,7 @@ USTRUCT(immutable, noexport, BlueprintType, IsAlwaysAccessible, HasDefaults, Has
 struct FVector
 {
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Vector, SaveGame)
-	FLargeWorldCoordinatesReal X;		// Alias for float/double depending on LWC status. Note: Will be refactored to double before UE5 ships.
+	FLargeWorldCoordinatesReal X;		//~ Alias for float/double depending on LWC status. Note: Will be refactored to double before UE5 ships.
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Vector, SaveGame)
 	FLargeWorldCoordinatesReal Y;
@@ -600,7 +632,7 @@ USTRUCT(immutable, noexport, BlueprintType, IsAlwaysAccessible, HasDefaults, Has
 struct FVector4
 {
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Vector4, SaveGame)
-	FLargeWorldCoordinatesReal X;		// Alias for float/double depending on LWC status. Note: Will be refactored to double before UE5 ships.
+	FLargeWorldCoordinatesReal X;		//~ Alias for float/double depending on LWC status. Note: Will be refactored to double before UE5 ships.
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Vector4, SaveGame)
 	FLargeWorldCoordinatesReal Y;
@@ -905,7 +937,7 @@ USTRUCT(immutable, noexport, BlueprintType, IsAlwaysAccessible, HasDefaults, Has
 struct FQuat
 {
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Quat, SaveGame)
-	FLargeWorldCoordinatesReal X;		// Alias for float/double depending on LWC status. Note: Will be refactored to double before UE5 ships.
+	FLargeWorldCoordinatesReal X;		//~ Alias for float/double depending on LWC status. Note: Will be refactored to double before UE5 ships.
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Quat, SaveGame)
 	FLargeWorldCoordinatesReal Y;

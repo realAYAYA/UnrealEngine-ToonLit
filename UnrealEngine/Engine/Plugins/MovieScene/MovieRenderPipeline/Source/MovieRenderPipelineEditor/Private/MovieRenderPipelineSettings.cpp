@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "MovieRenderPipelineSettings.h"
+
 #include "MoviePipelinePIEExecutor.h"
 #include "MoviePipelineNewProcessExecutor.h"
 #include "MoviePipeline.h"
@@ -12,12 +13,20 @@
 
 UMovieRenderPipelineProjectSettings::UMovieRenderPipelineProjectSettings()
 {
+	DefaultPipeline = UMoviePipeline::StaticClass();
 	PresetSaveDir.Path = TEXT("/Game/Cinematics/MoviePipeline/Presets/");
 	DefaultLocalExecutor = UMoviePipelinePIEExecutor::StaticClass();
 	DefaultRemoteExecutor = UMoviePipelineNewProcessExecutor::StaticClass();
 	DefaultExecutorJob = UMoviePipelineExecutorJob::StaticClass();
-	DefaultPipeline = UMoviePipeline::StaticClass();
+	DefaultGraph = GetDefaultGraphPath();
 
 	DefaultClasses.Add(UMoviePipelineImageSequenceOutput_JPG::StaticClass());
 	DefaultClasses.Add(UMoviePipelineDeferredPassBase::StaticClass());
+}
+
+FSoftObjectPath UMovieRenderPipelineProjectSettings::GetDefaultGraphPath()
+{
+	static const FSoftObjectPath DefaultGraphPath(TEXT("/MovieRenderPipeline/DefaultRenderGraph.DefaultRenderGraph"));
+	
+	return DefaultGraphPath;
 }

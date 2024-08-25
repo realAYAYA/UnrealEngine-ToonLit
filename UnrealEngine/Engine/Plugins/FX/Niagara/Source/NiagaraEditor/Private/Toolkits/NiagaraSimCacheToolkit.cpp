@@ -5,6 +5,9 @@
 
 // Widgets & ViewModels
 #include "AdvancedPreviewSceneModule.h"
+#include "ContentBrowserModule.h"
+#include "IContentBrowserSingleton.h"
+#include "NiagaraSystem.h"
 #include "Widgets/Docking/SDockTab.h"
 #include "ViewModels/NiagaraSimCacheViewModel.h"
 #include "Widgets/SNiagaraSimCacheTreeView.h"
@@ -99,8 +102,8 @@ void FNiagaraSimCacheToolkit::Initialize(const EToolkitMode::Type Mode, const TS
 
 		constexpr bool bCreateDefaultStandaloneMenu = true;
 		constexpr bool bCreateDefaultToolbar = true;
-		FAssetEditorToolkit::InitAssetEditor(Mode, InitToolkitHost, FNiagaraEditorModule::NiagaraEditorAppIdentifier, StandaloneDefaultLayout, bCreateDefaultStandaloneMenu, bCreateDefaultToolbar, SimCache.Get());
-
+		InitAssetEditor(Mode, InitToolkitHost, FNiagaraEditorModule::NiagaraEditorAppIdentifier, StandaloneDefaultLayout, bCreateDefaultStandaloneMenu, bCreateDefaultToolbar, SimCache.Get());
+		ExtendToolbar();
 		RegenerateMenusAndToolbars();
 	}
 }
@@ -225,6 +228,55 @@ TSharedRef<SDockTab> FNiagaraSimCacheToolkit::SpawnTab_Overview(const FSpawnTabA
 		];
 
 	return SpawnedTab;
+}
+
+void FNiagaraSimCacheToolkit::ExtendToolbar()
+{
+	struct Local
+	{
+		static void FillToolbar(FToolBarBuilder& ToolbarBuilder, FNiagaraSimCacheToolkit* Toolkit)
+		{
+			if (Toolkit->SimCache.IsValid() && Toolkit->SimCache->GetSystem())
+			{
+				ToolbarBuilder.BeginSection("System");
+				{
+					TWeakObjectPtr<UNiagaraSystem> NiagaraSystem = Toolkit->SimCache->GetSystem();
+					FUIAction GotoAction = FUIAction(
+						FExecuteAction::CreateLambda([NiagaraSystem] ()
+						{
+							if (NiagaraSystem.IsValid())
+							{
+								const TArray<FAssetData>& Assets = { NiagaraSystem.Get() };
+								const FContentBrowserModule& ContentBrowserModule = FModuleManager::Get().LoadModuleChecked<FContentBrowserModule>("ContentBrowser");
+								ContentBrowserModule.Get().SyncBrowserToAssets(Assets);
+							}
+						}),
+						FCanExecuteAction::CreateLambda([] () { return true; })
+					);
+					ToolbarBuilder.AddToolBarButton(
+						GotoAction,
+						NAME_None,
+						FText::FromString(NiagaraSystem->GetName()),
+						LOCTEXT("GotoSystem", "Browses to the associated Niagara system asset"),
+						FSlateIcon(FAppStyle::GetAppStyleSetName(), "SystemWideCommands.FindInContentBrowser.Small")
+					);
+				}
+				ToolbarBuilder.EndSection();
+			}
+		}
+	};
+	
+	TSharedPtr<FExtender> ToolbarExtender = MakeShareable(new FExtender);
+	ToolbarExtender->AddToolBarExtension(
+		"Asset",
+		EExtensionHook::After,
+		GetToolkitCommands(),
+		FToolBarExtensionDelegate::CreateStatic(&Local::FillToolbar, this)
+	);
+
+	AddToolbarExtender(ToolbarExtender);
+	FNiagaraEditorModule& NiagaraEditorModule = FModuleManager::LoadModuleChecked<FNiagaraEditorModule>("NiagaraEditor");
+	AddToolbarExtender(NiagaraEditorModule.GetToolBarExtensibilityManager()->GetAllExtenders(GetToolkitCommands(), GetEditingObjects()));
 }
 
 #undef LOCTEXT_NAMESPACE /** NiagaraSimCacheToolkit **/

@@ -31,7 +31,7 @@
 #include "ShaderParameterUtils.h"
 #include "LightRendering.h"
 #include "HairStrands/HairStrandsRendering.h"
-#include "Strata/Strata.h"
+#include "Substrate/Substrate.h"
 #include "SimpleMeshDrawCommandPass.h"
 #include "Engine/SubsurfaceProfile.h"
 
@@ -206,9 +206,15 @@ inline bool IsShadowCacheModeOcclusionQueryable(EShadowDepthCacheMode CacheMode)
 
 struct FTiledShadowRendering
 {
+	enum class ETileType : uint8
+	{
+		Tile16bits,
+		Tile12bits
+	};
 	FRDGBufferRef		DrawIndirectParametersBuffer;
 	FRDGBufferSRVRef	TileListDataBufferSRV;
 	uint32				TileSize;
+	ETileType			TileType = ETileType::Tile16bits;
 };
 
 class FShadowMapRenderTargets
@@ -430,6 +436,9 @@ public:
 	/** Whether the the shadow overlaps any nanite primitives */
 	uint32 bContainsNaniteSubjects : 1;
 	uint32 bShouldRenderVSM : 1;
+
+	/** Whether this shadow should support casting shadows from volumetric surfaces. */
+	uint32 bVolumetricShadow : 1;
 	
 	/** Used to fetch the correct cached static mesh draw commands */
 	EMeshPass::Type MeshPassTargetType = EMeshPass::CSMShadowDepth;
@@ -626,7 +635,8 @@ public:
 		FRDGBuilder& GraphBuilder,
 		bool bAsyncCompute,
 		const FMinimalSceneTextures& SceneTextures,
-		const FViewInfo& View);
+		const FViewInfo& View,
+		const FIntRect& ScissorRect);
 
 	/** 
 	* Renders ray traced distance field shadows into an existing texture.
@@ -687,9 +697,20 @@ public:
 	 */
 	void AddReceiverPrimitive(FPrimitiveSceneInfo* PrimitiveSceneInfo);
 
+	enum class EGatherDynamicMeshElementsPass : uint8
+	{
+		// Processes all operations in a single pass.
+		All,
+
+		// Parallel pass runs first and processes elements in parallel with other shadows.
+		Parallel,
+
+		// Serial pass runs second and processes elements serially other shadows.
+		Serial,
+	};
+
 	/** Gathers dynamic mesh elements for all the shadow's primitives arrays. */
-	void GatherDynamicMeshElements(FSceneRenderer& Renderer, class FVisibleLightInfo& VisibleLightInfo, TArray<const FSceneView*>& ReusedViewsArray, 
-		FGlobalDynamicIndexBuffer& DynamicIndexBuffer, FGlobalDynamicVertexBuffer& DynamicVertexBuffer, FGlobalDynamicReadBuffer& DynamicReadBuffer, FInstanceCullingManager& InstanceCullingManager);
+	bool GatherDynamicMeshElements(FMeshElementCollector& MeshCollector, FSceneRenderer& Renderer, class FVisibleLightInfo& VisibleLightInfo, TArray<const FSceneView*>& ReusedViewsArray, EGatherDynamicMeshElementsPass Pass);
 
 	void SetupMeshDrawCommandsForShadowDepth(FSceneRenderer& Renderer, FInstanceCullingManager& InstanceCullingManager);
 
@@ -786,6 +807,8 @@ public:
 	/** Check if we need to set the scissor rect to exclude portion of the CSM slices outside the view frustum */
 	bool ShouldUseCSMScissorOptim() const;
 
+	const TArray<FMeshBatchAndRelevance, SceneRenderingAllocator>& GetDynamicSubjectHeterogeneousVolumeMeshElements() const { return DynamicSubjectHeterogeneousVolumeMeshElements; }
+
 private:
 	// 0 if Setup...() wasn't called yet
 	FLightSceneInfo* LightSceneInfo;
@@ -803,13 +826,18 @@ private:
 	PrimitiveArrayType ReceiverPrimitives;
 	/** Subject primitives with translucent relevance. */
 	PrimitiveArrayType SubjectTranslucentPrimitives;
+	/** Subject primitives for heterogeneous volume shadows. */
+	PrimitiveArrayType SubjectHeterogeneousVolumePrimitives;
 
 	/** Dynamic mesh elements for subject primitives. */
 	TArray<FMeshBatchAndRelevance,SceneRenderingAllocator> DynamicSubjectMeshElements;
 	/** Dynamic mesh elements for translucent subject primitives. */
 	TArray<FMeshBatchAndRelevance,SceneRenderingAllocator> DynamicSubjectTranslucentMeshElements;
+	/** Dynamic mesh elements for heterogeneous volume primitives. */
+	TArray<FMeshBatchAndRelevance, SceneRenderingAllocator> DynamicSubjectHeterogeneousVolumeMeshElements;
 
 	TArray<const FStaticMeshBatch*, SceneRenderingAllocator> SubjectMeshCommandBuildRequests;
+	TArray<EMeshDrawCommandCullingPayloadFlags, SceneRenderingAllocator> SubjectMeshCommandBuildFlags;
 
 	/** Number of elements of DynamicSubjectMeshElements meshes. */
 	int32 NumDynamicSubjectMeshElements;
@@ -856,6 +884,8 @@ private:
 		const FRenderTargetBindingSlots& RenderTargets,
 		const FMeshPassProcessorRenderState& DrawRenderState);
 
+	float GetLODDistanceFactor() const;
+
 	/**
 	* Modifies the passed in view for this shadow
 	*/
@@ -874,10 +904,12 @@ private:
 		const FPrimitiveSceneInfo* InPrimitiveSceneInfo,
 		const FStaticMeshBatchRelevance& RESTRICT StaticMeshRelevance,
 		const FStaticMeshBatch& StaticMesh,
+		EMeshDrawCommandCullingPayloadFlags CullingPayloadFlags,
 		const FScene* Scene,
 		EMeshPass::Type PassType,
 		FMeshCommandOneFrameArray& VisibleMeshCommands,
 		TArray<const FStaticMeshBatch*, SceneRenderingAllocator>& MeshCommandBuildRequests,
+		TArray<EMeshDrawCommandCullingPayloadFlags, SceneRenderingAllocator> MeshCommandBuildFlags,
 		int32& NumMeshCommandBuildRequestElements);
 
 	void AddCachedMeshDrawCommands_AnyThread(
@@ -921,15 +953,24 @@ private:
 	int32 UpdateShadowCastingObjectBuffers() const;
 
 	/** Gathers dynamic mesh elements for the given primitive array. */
-	void GatherDynamicMeshElementsArray(
-		FSceneRenderer& Renderer, 
-		FGlobalDynamicIndexBuffer& DynamicIndexBuffer,
-		FGlobalDynamicVertexBuffer& DynamicVertexBuffer,
-		FGlobalDynamicReadBuffer& DynamicReadBuffer,
+	bool GatherDynamicMeshElementsArray(
+		FMeshElementCollector& Collector,
 		const PrimitiveArrayType& PrimitiveArray, 
-		const TArray<const FSceneView*>& ReusedViewsArray,
+		const TArray<const FSceneView*>& Views,
+		const FSceneViewFamily& ViewFamily,
 		TArray<FMeshBatchAndRelevance,SceneRenderingAllocator>& OutDynamicMeshElements,
-		int32& OutNumDynamicSubjectMeshElements);
+		int32& OutNumDynamicSubjectMeshElements,
+		EGatherDynamicMeshElementsPass Pass);
+
+	bool GatherDynamicHeterogeneousVolumeMeshElementsArray(
+		FSceneRenderer& Renderer,
+		FMeshElementCollector& Collector,
+		const PrimitiveArrayType& PrimitiveArray,
+		const TArray<const FSceneView*>& Views,
+		const FSceneViewFamily& ViewFamily,
+		TArray<FMeshBatchAndRelevance, SceneRenderingAllocator>& OutDynamicMeshElements,
+		int32& OutNumDynamicSubjectMeshElements,
+		EGatherDynamicMeshElementsPass Pass);
 
 	void SetupFrustumForProjection(const FViewInfo* View, TArray<FVector4f, TInlineAllocator<8>>& OutFrustumVertices, bool& bOutCameraInsideShadowFrustum, FPlane* OutPlanes) const;
 
@@ -1230,7 +1271,8 @@ public:
 		FRHIBatchedShaderParameters& BatchedParameters,
 		int32 ViewIndex,
 		const FSceneView& View,
-		const FProjectedShadowInfo* ShadowInfo)
+		const FProjectedShadowInfo* ShadowInfo,
+		bool bUseLightFunctionAtlas)
 	{
 		const FVector PreViewTranslation = View.ViewMatrices.GetPreViewTranslation();
 		const bool bUseFadePlaneEnable = ShadowInfo->CascadeSettings.FadePlaneLength > 0;
@@ -1246,7 +1288,7 @@ public:
 
 		if (DeferredLightParameter.IsBound())
 		{
-			SetDeferredLightParameters(BatchedParameters, DeferredLightParameter, &ShadowInfo->GetLightSceneInfo(), View);
+			SetDeferredLightParameters(BatchedParameters, DeferredLightParameter, &ShadowInfo->GetLightSceneInfo(), View, bUseLightFunctionAtlas);
 		}
 
 
@@ -1293,9 +1335,10 @@ public:
 		FRHIBatchedShaderParameters& BatchedParameters,
 		int32 ViewIndex,
 		const FSceneView& View,
-		const FProjectedShadowInfo* ShadowInfo)
+		const FProjectedShadowInfo* ShadowInfo,
+		bool bUseLightFunctionAtlas)
 	{
-		TShadowProjectionPS<Quality, false, true>::SetParameters(BatchedParameters, ViewIndex, View, ShadowInfo);
+		TShadowProjectionPS<Quality, false, true>::SetParameters(BatchedParameters, ViewIndex, View, ShadowInfo, bUseLightFunctionAtlas);
 		SetShaderValue(BatchedParameters, ModulatedShadowColorParameter, ShadowInfo->GetLightSceneInfo().Proxy->GetModulatedShadowColor());
 	}
 
@@ -1360,9 +1403,10 @@ public:
 		FRHIBatchedShaderParameters& BatchedParameters,
 		int32 ViewIndex,
 		const FSceneView& View,
-		const FProjectedShadowInfo* ShadowInfo)
+		const FProjectedShadowInfo* ShadowInfo,
+		bool bUseLightFunctionAtlas)
 	{
-		TShadowProjectionPS<Quality>::SetParameters(BatchedParameters, ViewIndex, View, ShadowInfo);
+		TShadowProjectionPS<Quality>::SetParameters(BatchedParameters, ViewIndex, View, ShadowInfo, bUseLightFunctionAtlas);
 
 		FTranslucentSelfShadowUniformParameters TranslucentSelfShadowUniformParameters;
 		SetupTranslucentSelfShadowUniformParameters(ShadowInfo, TranslucentSelfShadowUniformParameters);
@@ -1504,7 +1548,7 @@ public:
 		FGlobalShader(Initializer)
 	{
 		HairStrandsParameters.Bind(Initializer.ParameterMap, FHairStrandsViewUniformParameters::FTypeInfo::GetStructMetadata()->GetShaderVariableName());
-		StrataGlobalParameters.Bind(Initializer.ParameterMap, FStrataGlobalUniformParameters::FTypeInfo::GetStructMetadata()->GetShaderVariableName());
+		SubstrateGlobalParameters.Bind(Initializer.ParameterMap, FSubstrateGlobalUniformParameters::FTypeInfo::GetStructMetadata()->GetShaderVariableName());
 		OnePassShadowParameters.Bind(Initializer.ParameterMap);
 		ShadowDepthTextureSampler.Bind(Initializer.ParameterMap,TEXT("ShadowDepthTextureSampler"));
 		LightPosition.Bind(Initializer.ParameterMap,TEXT("LightPositionAndInvRadius"));
@@ -1555,10 +1599,10 @@ public:
 			SetUniformBufferParameter(BatchedParameters, HairStrandsParameters, HairStrandsUniformBuffer);
 		}
 
-		if (StrataGlobalParameters.IsBound())
+		if (SubstrateGlobalParameters.IsBound())
 		{
-			TRDGUniformBufferRef<FStrataGlobalUniformParameters> StrataUniformBuffer = Strata::BindStrataGlobalUniformParameters(View);
-			SetUniformBufferParameter(BatchedParameters, StrataGlobalParameters, StrataUniformBuffer->GetRHIRef());
+			TRDGUniformBufferRef<FSubstrateGlobalUniformParameters> SubstrateUniformBuffer = Substrate::BindSubstrateGlobalUniformParameters(View);
+			SetUniformBufferParameter(BatchedParameters, SubstrateGlobalParameters, SubstrateUniformBuffer->GetRHIRef());
 		}
 
 		FScene* Scene = nullptr;
@@ -1574,7 +1618,7 @@ public:
 
 		if (DeferredLightParameter.IsBound())
 		{
-			SetDeferredLightParameters(BatchedParameters, DeferredLightParameter, &ShadowInfo->GetLightSceneInfo(), View);
+			SetDeferredLightParameters(BatchedParameters, DeferredLightParameter, &ShadowInfo->GetLightSceneInfo(), View, LightFunctionAtlas::IsEnabled(View, LightFunctionAtlas::ELightFunctionAtlasSystem::DeferredLighting));
 		}
 	}
 
@@ -1587,7 +1631,7 @@ private:
 	LAYOUT_FIELD(FShaderParameter, PointLightDepthBias);
 	LAYOUT_FIELD(FShaderParameter, PointLightProjParameters);
 	LAYOUT_FIELD(FShaderUniformBufferParameter, HairStrandsParameters);
-	LAYOUT_FIELD(FShaderUniformBufferParameter, StrataGlobalParameters);
+	LAYOUT_FIELD(FShaderUniformBufferParameter, SubstrateGlobalParameters);
 };
 
 // Reversed Z
@@ -1652,9 +1696,10 @@ public:
 		FRHIBatchedShaderParameters& BatchedParameters,
 		int32 ViewIndex,
 		const FSceneView& View,
-		const FProjectedShadowInfo* ShadowInfo)
+		const FProjectedShadowInfo* ShadowInfo,
+		bool bUseLightFunctionAtlas)
 	{
-		TShadowProjectionPS<Quality, bUseFadePlane>::SetParameters(BatchedParameters, ViewIndex, View, ShadowInfo);
+		TShadowProjectionPS<Quality, bUseFadePlane>::SetParameters(BatchedParameters, ViewIndex, View, ShadowInfo, bUseLightFunctionAtlas);
 
 		// GetLightSourceAngle returns the full angle.
 		float TanLightSourceAngle = FMath::Tan(0.5 * FMath::DegreesToRadians(ShadowInfo->GetLightSceneInfo().Proxy->GetLightSourceAngle()));
@@ -1706,11 +1751,12 @@ public:
 		FRHIBatchedShaderParameters& BatchedParameters,
 		int32 ViewIndex,
 		const FSceneView& View,
-		const FProjectedShadowInfo* ShadowInfo)
+		const FProjectedShadowInfo* ShadowInfo,
+		bool bUseLightFunctionAtlas)
 	{
 		check(ShadowInfo->GetLightSceneInfo().Proxy->GetLightType() == LightType_Spot);
 
-		TShadowProjectionPS<Quality, bUseFadePlane>::SetParameters(BatchedParameters, ViewIndex, View, ShadowInfo);
+		TShadowProjectionPS<Quality, bUseFadePlane>::SetParameters(BatchedParameters, ViewIndex, View, ShadowInfo, bUseLightFunctionAtlas);
 
 		static IConsoleVariable* CVarMaxSoftShadowKernelSize = IConsoleManager::Get().FindConsoleVariable(TEXT("r.Shadow.MaxSoftKernelSize"));
 		check(CVarMaxSoftShadowKernelSize);

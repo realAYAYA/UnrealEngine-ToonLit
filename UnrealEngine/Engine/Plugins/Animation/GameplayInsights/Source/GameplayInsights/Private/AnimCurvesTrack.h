@@ -1,9 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #pragma once
 
+#include <RewindDebuggerPlaceholderTrack.h>
+
 #include "IAnimationProvider.h"
 #include "IRewindDebuggerTrackCreator.h"
 #include "RewindDebuggerTrack.h"
+#include "RewindDebuggerPlaceholderTrack.h"
 #include "SCurveTimelineView.h"
 #include "Textures/SlateIcon.h"
 
@@ -60,6 +63,7 @@ private:
 	FSlateIcon Icon;
 	uint64 ObjectId;
 
+	TSharedPtr<FRewindDebuggerPlaceholderTrack> ChildPlaceholder;
 	TArray<TSharedPtr<FAnimCurveTrack>> Children;
 };
 
@@ -69,6 +73,7 @@ class FAnimationCurvesTrackCreator : public IRewindDebuggerTrackCreator
 private:
 	virtual FName GetTargetTypeNameInternal() const override;
 	virtual FName GetNameInternal() const override;
+	virtual void GetTrackTypesInternal(TArray<FRewindDebuggerTrackType>& Types) const override;
 	virtual TSharedPtr<FRewindDebuggerTrack> CreateTrackInternal(uint64 ObjectId) const override;
 	virtual bool HasDebugInfoInternal(uint64 ObjectId) const override;
 };

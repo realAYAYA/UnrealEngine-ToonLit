@@ -86,6 +86,7 @@ public:
 	}
 
 	/** Constructor that allows initializing by assignment from 0 */
+	UE_DEPRECATED(5.4, "Implicitly constructing a TStaticBitArray from 0 has been deprecated - please use the default constructor instead")
 	FORCEINLINE TStaticBitArray(UnspecifiedZeroType)
 	{
 		Clear_();
@@ -145,8 +146,7 @@ public:
 		}
 	}
 
-	// Conversion to bool
-	FORCEINLINE operator UnspecifiedBoolType() const
+	FORCEINLINE bool HasAnyBitsSet() const
 	{
 		WordType And = 0;
 		for(int32 Index = 0; Index < NumWords; ++Index)
@@ -154,7 +154,13 @@ public:
 			And |= Words[Index];
 		}
 
-		return And ? &FBoolType::Valid : NULL;
+		return And != 0;
+	}
+
+	// Explicit conversion to bool
+	FORCEINLINE explicit operator bool() const
+	{
+		return this->HasAnyBitsSet();
 	}
 
 	// Accessors.
@@ -247,7 +253,7 @@ public:
 		Results ^= B;
 		return Results;
 	}
-	FORCEINLINE bool operator==(const TStaticBitArray<NumBits>& B)
+	FORCEINLINE bool operator==(const TStaticBitArray<NumBits>& B) const
 	{
 		for(int32 Index = 0; Index < NumWords; ++Index)
 		{
@@ -259,6 +265,7 @@ public:
 		return true;
 	}
 	/** This operator only exists to disambiguate == in statements of the form (flags == 0) */
+	UE_DEPRECATED(5.4, "Comparing a TStaticBitArray to zero has been deprecated - please use !BitArray.HasAnyBitsSet() instead")
 	friend FORCEINLINE bool operator==(const TStaticBitArray<NumBits>& A, UnspecifiedBoolType Value)
 	{
 		return (UnspecifiedBoolType)A == Value;
@@ -269,6 +276,7 @@ public:
 		return !(*this == B);
 	}
 	/** != simple maps to == */
+	UE_DEPRECATED(5.4, "Comparing a TStaticBitArray to zero has been deprecated - please use BitArray.HasAnyBitsSet() instead")
 	friend FORCEINLINE bool operator!=(const TStaticBitArray<NumBits>& A, UnspecifiedBoolType Value)
 	{
 		return !(A == Value);

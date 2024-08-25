@@ -59,30 +59,52 @@ class TPBDRigidParticles : public TRigidParticles<T, d>
 		TArrayCollection::AddArray(&MSolverBodyIndex);
 	}
 
+	UE_DEPRECATED(5.4, "Use GetP instead")
 	FORCEINLINE const TVector<T, d>& P(const int32 index) const { return MP[index]; }
+	UE_DEPRECATED(5.4, "Use GetP or SetP instead")
 	FORCEINLINE TVector<T, d>& P(const int32 index) { return MP[index]; }
+	FORCEINLINE const TVector<T, d>& GetP(const int32 index) const { return MP[index]; }
+	FORCEINLINE void SetP(const int32 index, const TVector<T, d>& InP) { MP[index] = InP; }
 
-	FORCEINLINE const TRotation<T, d>& Q(const int32 index) const { return MQ[index]; }
-	FORCEINLINE TRotation<T, d>& Q(const int32 index) { return MQ[index]; }
+	UE_DEPRECATED(5.4, "Use GetQ instead")
+	FORCEINLINE const TRotation<T, d> Q(const int32 index) const { return TRotation<T, d>(MQ[index]); }
+	UE_DEPRECATED(5.4, "Use GetQ or SetQ instead")
+	FORCEINLINE TRotation<T, d> Q(const int32 index) { return TRotation<T, d>(MQ[index]); }
+	FORCEINLINE const TRotation<T, d> GetQ(const int32 index) const { return TRotation<T, d>(MQ[index]); }
+	FORCEINLINE void SetQ(const int32 index, const TRotation<T, d>& InQ) { MQ[index] = TRotation<FRealSingle, d>(InQ); }
+	FORCEINLINE const TRotation<FRealSingle, d> GetQf(const int32 index) const { return MQ[index]; }
+	FORCEINLINE void SetQf(const int32 index, const TRotation<FRealSingle, d>& InQ) { MQ[index] = InQ; }
 
-	const TVector<T, d>& PreV(const int32 index) const { return MPreV[index]; }
-	TVector<T, d>& PreV(const int32 index) { return MPreV[index]; }
+	UE_DEPRECATED(5.4, "Use GetPreV instead")
+	const TVector<T, d> PreV(const int32 index) const { return TVector<T, d>(MPreV[index]); }
+	UE_DEPRECATED(5.4, "Use GetPreV or SetPreV instead")
+	TVector<T, d> PreV(const int32 index) { return TVector<T, d>(MPreV[index]); }
+	const TVector<T, d> GetPreV(const int32 index) const { return TVector<T, d>(MPreV[index]); }
+	void SetPreV(const int32 index, const TVector<T, d>& InPreV) { MPreV[index] = TVector<FRealSingle, d>(InPreV); }
+	const TVector<FRealSingle, d> GetPreVf(const int32 index) const { return MPreV[index]; }
+	void SetPreVf(const int32 index, const TVector<FRealSingle, d>& InPreV) { MPreV[index] = InPreV; }
 
-	const TVector<T, d>& PreW(const int32 index) const { return MPreW[index]; }
-	TVector<T, d>& PreW(const int32 index) { return MPreW[index]; }
+	UE_DEPRECATED(5.4, "Use GetPreW instead")
+	const TVector<T, d> PreW(const int32 index) const { return MPreW[index]; }
+	UE_DEPRECATED(5.4, "Use GetPreW or SetPreW instead")
+	TVector<T, d> PreW(const int32 index) { return MPreW[index]; }
+	const TVector<T, d> GetPreW(const int32 index) const { return MPreW[index]; }
+	void SetPreW(const int32 index, const TVector<T, d>& InPreW) { MPreW[index] = TVector<FRealSingle, d>(InPreW); }
+	const TVector<FRealSingle, d> GetPreWf(const int32 index) const { return MPreW[index]; }
+	void SetPreWf(const int32 index, const TVector<FRealSingle, d>& InPreW) { MPreW[index] = InPreW; }
 
 	// World-space center of mass location
-	const TVector<T, d> XCom(const int32 index) const { return this->X(index) + this->R(index).RotateVector(CenterOfMass(index)); }
-	const TVector<T, d> PCom(const int32 index) const { return this->P(index) + this->Q(index).RotateVector(CenterOfMass(index)); }
+	const TVector<T, d> XCom(const int32 index) const { return this->GetX(index) + this->GetR(index).RotateVector(CenterOfMass(index)); }
+	const TVector<T, d> PCom(const int32 index) const { return this->GetP(index) + this->GetQ(index).RotateVector(CenterOfMass(index)); }
 
 	// World-space center of mass rotation
-	const TRotation<T, d> RCom(const int32 index) const { return this->R(index) * RotationOfMass(index); }
-	const TRotation<T, d> QCom(const int32 index) const { return this->Q(index) * RotationOfMass(index); }
+	const TRotation<T, d> RCom(const int32 index) const { return this->GetR(index) * RotationOfMass(index); }
+	const TRotation<T, d> QCom(const int32 index) const { return this->GetQ(index) * RotationOfMass(index); }
 
 	void SetTransformPQCom(const int32 index, const TVector<T, d>& InPCom, const TRotation<T, d>& InQCom)
 	{
-		Q(index) = InQCom * RotationOfMass(index).Inverse();
-		P(index) = InPCom - Q(index) * CenterOfMass(index);
+		SetQ(index, InQCom * RotationOfMass(index).Inverse());
+		SetP(index, InPCom - GetQ(index) * CenterOfMass(index));
 	}
 
 	// The index into an FSolverBodyContainer (for dynamic particles only), or INDEX_NONE.
@@ -101,14 +123,14 @@ class TPBDRigidParticles : public TRigidParticles<T, d>
 	{
 		if (Sleeping(Index) && bSleeping == false)
 		{
-			PreV(Index) = this->V(Index);
-			PreW(Index) = this->W(Index);
+			SetPreV(Index, this->GetV(Index));
+			SetPreW(Index, this->GetW(Index));
 		}
-		else if(bSleeping)
+		else if (bSleeping)
 		{
 			//being put to sleep, so zero out velocities
-			this->V(Index) = FVec3(0);
-			this->W(Index) = FVec3(0);
+			this->SetV(Index, FVec3(0));
+			this->SetW(Index, FVec3(0));
 		}
 
 		bool CurrentlySleeping = this->ObjectState(Index) == EObjectStateType::Sleeping;
@@ -156,18 +178,15 @@ class TPBDRigidParticles : public TRigidParticles<T, d>
 		else if ((CurrentState == EObjectStateType::Kinematic || CurrentState == EObjectStateType::Static || CurrentState == EObjectStateType::Uninitialized) && (InObjectState == EObjectStateType::Dynamic || InObjectState == EObjectStateType::Sleeping))
 		{
 			// Transitioning from kinematic or static to dynamic, compute the inverses.
-			checkSlow(this->M(Index) != 0.0);
-			checkSlow(this->I(Index)[0] != 0.0);
-			checkSlow(this->I(Index)[1] != 0.0);
-			checkSlow(this->I(Index)[2] != 0.0);
-			this->InvM(Index) = 1.f / this->M(Index);
-			this->InvI(Index) = TVec3<FRealSingle>(
-				1.f / this->I(Index)[0], 
+			this->InvM(Index) = FMath::IsNearlyZero(this->M(Index)) ? 0.0f : 1.f / this->M(Index);
+			this->InvI(Index) = this->I(Index).IsNearlyZero() ? TVec3<FRealSingle>::ZeroVector :
+				TVec3<FRealSingle>(
+				1.f / this->I(Index)[0],
 				1.f / this->I(Index)[1],
 				1.f / this->I(Index)[2]);
 
-			this->P(Index) = this->X(Index);
-			this->Q(Index) = this->R(Index);
+			this->SetP(Index, this->GetX(Index));
+			this->SetQf(Index, this->GetRf(Index));
 		}
 		else if (InObjectState == EObjectStateType::Sleeping)
 		{
@@ -199,32 +218,66 @@ class TPBDRigidParticles : public TRigidParticles<T, d>
 	FString ToString(int32 index) const
 	{
 		FString BaseString = TRigidParticles<T, d>::ToString(index);
-		return FString::Printf(TEXT("%s, MP:%s, MQ:%s, MPreV:%s, MPreW:%s"), *BaseString, *P(index).ToString(), *Q(index).ToString(), *PreV(index).ToString(), *PreW(index).ToString());
+		return FString::Printf(TEXT("%s, MP:%s, MQ:%s, MPreV:%s, MPreW:%s"), *BaseString, *GetP(index).ToString(), *GetQ(index).ToString(), *GetPreV(index).ToString(), *GetPreW(index).ToString());
 	}
 
 	virtual void Serialize(FChaosArchive& Ar) override
 	{
 		TRigidParticles<T, d>::Serialize(Ar);
-		Ar << MP << MQ << MPreV << MPreW;
+		
+		Ar << MP;
+
+		Ar.UsingCustomVersion(FUE5ReleaseStreamObjectVersion::GUID);
+		if (Ar.CustomVer(FUE5ReleaseStreamObjectVersion::GUID) >= FUE5ReleaseStreamObjectVersion::SinglePrecisonParticleDataPT)
+		{
+			Ar << MQ << MPreV << MPreW; 
+		}
+		else
+		{
+			TArrayCollectionArray<TRotation<FReal, d>> QDouble;
+			QDouble.Resize(MQ.Num());
+			for (int32 Index = 0; Index < MQ.Num(); ++Index)
+			{
+				QDouble[Index] = TRotation<FReal, d >(MQ[Index]);
+			}
+			TArrayCollectionArray<TVector<FReal, d>> PreVDouble;
+			PreVDouble.Resize(MPreV.Num());
+			for (int32 Index = 0; Index < MPreV.Num(); ++Index)
+			{
+				PreVDouble[Index] = TVector<FReal, d >(MPreV[Index]);
+			}
+			TArrayCollectionArray<TVector<FReal, d>> PreWDouble;
+			PreWDouble.Resize(MPreW.Num());
+			for (int32 Index = 0; Index < MPreW.Num(); ++Index)
+			{
+				PreWDouble[Index] = TVector<FReal, d >(MPreW[Index]);
+			}
+
+			Ar << QDouble << PreVDouble << PreWDouble;
+
+			MQ.Resize(QDouble.Num());
+			for (int32 Index = 0; Index < QDouble.Num(); ++Index)
+			{
+				MQ[Index] = TRotation<FRealSingle, d >(QDouble[Index]);
+			}
+			MPreV.Resize(PreVDouble.Num());
+			for (int32 Index = 0; Index < PreVDouble.Num(); ++Index)
+			{
+				MPreV[Index] = TVector<FRealSingle, d >(PreVDouble[Index]);
+			}
+			MPreW.Resize(PreWDouble.Num());
+			for (int32 Index = 0; Index < PreWDouble.Num(); ++Index)
+			{
+				MPreW[Index] = TVector<FRealSingle, d >(PreWDouble[Index]);
+			}
+		}
 	}
-
-	UE_DEPRECATED(5.2, "To be removed")
-	FORCEINLINE TArray<TVector<T, d>>& AllP() { return MP; }
-
-	UE_DEPRECATED(5.2, "To be removed")
-	FORCEINLINE TArray<TRotation<T, d>>& AllQ() { return MQ; }
-	
-	UE_DEPRECATED(5.2, "To be removed")
-	FORCEINLINE TArray<TVector<T, d>>& AllPreV() { return MPreV; }
-	
-	UE_DEPRECATED(5.2, "To be removed")
-	FORCEINLINE TArray<TVector<T, d>>& AllPreW() { return MPreW; }
 
   private:
 	TArrayCollectionArray<TVector<T, d>> MP;
-	TArrayCollectionArray<TRotation<T, d>> MQ;
-	TArrayCollectionArray<TVector<T, d>> MPreV;
-	TArrayCollectionArray<TVector<T, d>> MPreW;
+	TArrayCollectionArray<TRotation<FRealSingle, d>> MQ;
+	TArrayCollectionArray<TVector<FRealSingle, d>> MPreV;
+	TArrayCollectionArray<TVector<FRealSingle, d>> MPreW;
 	TArrayCollectionArray<int32> MSolverBodyIndex;	// Transient for use in constraint solver
 };
 

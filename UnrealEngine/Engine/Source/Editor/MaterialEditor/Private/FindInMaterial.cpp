@@ -58,11 +58,8 @@ FText FFindInMaterialResult::GetCategory() const
 	{
 		return LOCTEXT("PinCategory", "Pin");
 	}
-	else
-	{
-		return LOCTEXT("NodeCategory", "Node");
-	}
-	return FText::GetEmpty();
+
+	return LOCTEXT("NodeCategory", "Node");
 }
 
 TSharedRef<SWidget> FFindInMaterialResult::CreateIcon() const

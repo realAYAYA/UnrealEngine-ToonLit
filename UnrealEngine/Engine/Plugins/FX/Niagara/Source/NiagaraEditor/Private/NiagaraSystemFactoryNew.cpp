@@ -10,15 +10,16 @@
 #include "ContentBrowserModule.h"
 #include "ImageUtils.h"
 #include "ViewModels/Stack/NiagaraStackGraphUtilities.h"
-#include "SNewSystemDialog.h"
 #include "Misc/MessageDialog.h"
 #include "ViewModels/NiagaraSystemViewModel.h"
 #include "Modules/ModuleManager.h"
 #include "Interfaces/IMainFrameModule.h"
 #include "Framework/Application/SlateApplication.h"
 #include "NiagaraEditorUtilities.h"
+#include "NiagaraRecentAndFavoritesManager.h"
 #include "NiagaraSettings.h"
 #include "ObjectTools.h"
+#include "Widgets/AssetBrowser/SNiagaraAssetBrowser.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(NiagaraSystemFactoryNew)
 
@@ -37,74 +38,42 @@ bool UNiagaraSystemFactoryNew::ConfigureProperties()
 	IMainFrameModule& MainFrame = FModuleManager::LoadModuleChecked<IMainFrameModule>("MainFrame");
 	TSharedPtr<SWindow>	ParentWindow = MainFrame.GetParentWindow();
 
-	TSharedRef<SNewSystemDialog> NewSystemDialog = SNew(SNewSystemDialog);
-	FSlateApplication::Get().AddModalWindow(NewSystemDialog, ParentWindow);
+	SNiagaraAssetBrowser::FArguments AssetBrowserArgs;
+	AssetBrowserArgs.AvailableClasses({UNiagaraEmitter::StaticClass(), UNiagaraSystem::StaticClass()})
+	.RecentAndFavoritesList(FNiagaraEditorModule::Get().GetRecentsManager()->GetRecentEmitterAndSystemsList())
+	.EmptySelectionMessage(LOCTEXT("EmptySystemFactorySelectionMessage", "Select an emitter or system as a starting point for your new system.\nA system consists of one or more emitters."));
 
-	if (NewSystemDialog->GetUserConfirmedSelection() == false)
+	SNiagaraAssetBrowserWindow::FArguments AssetBrowserWindowArgs;
+	AssetBrowserWindowArgs.AssetBrowserArgs(AssetBrowserArgs)
+	.WindowTitle(LOCTEXT("SystemAssetBrowserWindowTitle", "Create Niagara System - Select an emitter or system as a base"));
+	
+	TSharedRef<SNiagaraCreateAssetWindow> CreateAssetBrowserWindow = SNew(SNiagaraCreateAssetWindow, *UNiagaraSystem::StaticClass()).AssetBrowserWindowArgs(AssetBrowserWindowArgs);
+
+	FSlateApplication::Get().AddModalWindow(CreateAssetBrowserWindow, ParentWindow);
+
+	if(CreateAssetBrowserWindow->ShouldProceedWithAction() == false)
 	{
-		// User cancelled or closed the dialog so abort asset creation.
 		return false;
 	}
 
-	TOptional<FAssetData> SelectedSystemAsset = NewSystemDialog->GetSelectedSystemAsset();
-	TArray<FAssetData> EmitterAssetsToAddToNewSystem = NewSystemDialog->GetSelectedEmitterAssets();
-	if (SelectedSystemAsset.IsSet())
+	TArray<FAssetData> SelectedAssetData = CreateAssetBrowserWindow->GetSelectedAssets();
+	
+	if(SelectedAssetData.Num() == 1)
 	{
-		SystemToCopy = Cast<UNiagaraSystem>(SelectedSystemAsset.GetValue().GetAsset());
-		if (SystemToCopy == nullptr)
+		FAssetData AssetData = SelectedAssetData[0];
+		if(AssetData.GetClass() == UNiagaraSystem::StaticClass())
 		{
-			EAppReturnType::Type DialogResult = FMessageDialog::Open(EAppMsgType::OkCancel, EAppReturnType::Cancel,
-				LOCTEXT("FailedToLoadEmitterMessage", "The selected system failed to load.\nWould you like to create an empty system?"),
-				LOCTEXT("FailedToLoadSystemTitle", "Create Default?"));
-			if (DialogResult == EAppReturnType::Cancel)
-			{
-				return false;
-			}
-			else
-			{
-				SystemToCopy = nullptr;
-				EmitterAssetsToAddToNewSystem.Empty();
-			}
+			SystemToCopy = Cast<UNiagaraSystem>(AssetData.GetAsset());
+		}
+		else if(AssetData.GetClass() == UNiagaraEmitter::StaticClass())
+		{
+			UNiagaraEmitter* EmitterAsset = Cast<UNiagaraEmitter>(AssetData.GetAsset());
+			FVersionedNiagaraEmitter VersionedNiagaraEmitter(EmitterAsset, EmitterAsset->GetExposedVersion().VersionGuid);
+			
+			EmittersToAddToNewSystem.Add(VersionedNiagaraEmitter);
 		}
 	}
-	else if (EmitterAssetsToAddToNewSystem.Num() > 0)
-	{
-		bool bAllEmittersLoaded = true;
-		for (const FAssetData& EmitterAssetToAdd : EmitterAssetsToAddToNewSystem)
-		{
-			UNiagaraEmitter* EmitterToAdd = Cast<UNiagaraEmitter>(EmitterAssetToAdd.GetAsset());
-			if (EmitterToAdd != nullptr)
-			{
-				EmittersToAddToNewSystem.Add(FVersionedNiagaraEmitter(EmitterToAdd, EmitterToAdd->GetExposedVersion().VersionGuid));
-			}
-			else
-			{
-				bAllEmittersLoaded = false;
-				break;
-			}
-		}
-
-		if(bAllEmittersLoaded == false)
-		{
-			EAppReturnType::Type DialogResult = FMessageDialog::Open(EAppMsgType::OkCancel, EAppReturnType::Cancel,
-				LOCTEXT("FailedToLoadMessage", "A selected emitter failed to load.\nWould you like to create an empty system system?"),
-				LOCTEXT("FailedToLoadEmitterTitle", "Create Default?"));
-			if (DialogResult == EAppReturnType::Cancel)
-			{
-				return false;
-			}
-			else
-			{
-				EmittersToAddToNewSystem.Empty();
-			}
-		}
-	}
-	else
-	{
-		SystemToCopy = nullptr;
-		EmittersToAddToNewSystem.Empty();
-	}
-
+	
 	return true;
 }
 
@@ -123,10 +92,13 @@ UObject* UNiagaraSystemFactoryNew::FactoryCreateNew(UClass* Class, UObject* InPa
 		{
 			SystemToCopy->WaitForCompilationComplete();
 		}
+		
+		FNiagaraEditorModule::Get().GetRecentsManager()->SystemUsed(*SystemToCopy);
+
 		NewSystem = Cast<UNiagaraSystem>(StaticDuplicateObject(SystemToCopy, InParent, Name, Flags, Class));
-		NewSystem->TemplateSpecification = ENiagaraScriptTemplateSpecification::None;
 		NewSystem->TemplateAssetDescription = FText();
 		NewSystem->Category = FText();
+		NewSystem->AssetTags.Empty();
 
 		// if the new system doesn't have a thumbnail image, check the thumbnail map of the original asset's upackage
 		if(NewSystem->ThumbnailImage == nullptr)
@@ -168,6 +140,7 @@ UObject* UNiagaraSystemFactoryNew::FactoryCreateNew(UClass* Class, UObject* InPa
 
 	NewSystem->RequestCompile(false);
 
+	FNiagaraEditorModule::Get().GetRecentsManager()->SystemUsed(*NewSystem);
 	return NewSystem;
 }
 
@@ -182,8 +155,7 @@ void UNiagaraSystemFactoryNew::InitializeSystem(UNiagaraSystem* System, bool bCr
 	{
 		SystemScriptSource->NodeGraph = NewObject<UNiagaraGraph>(SystemScriptSource, "SystemScriptGraph", RF_Transactional);
 	}
-
-	System->TemplateSpecification = ENiagaraScriptTemplateSpecification::None;
+	
 	SystemSpawnScript->SetLatestSource(SystemScriptSource);
 	SystemUpdateScript->SetLatestSource(SystemScriptSource);
 

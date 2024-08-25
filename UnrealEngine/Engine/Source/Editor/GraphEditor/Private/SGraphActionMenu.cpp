@@ -311,6 +311,8 @@ void SGraphActionMenu::Construct( const FArguments& InArgs, bool bIsReadOnly/* =
 	this->bIgnoreUIUpdate = false;
 	this->bUseSectionStyling = InArgs._UseSectionStyling;
 	this->bAllowPreselectedItemActivation = InArgs._bAllowPreselectedItemActivation;
+	this->bAutomaticallySelectSingleAction = InArgs._bAutomaticallySelectSingleAction;
+	this->DefaultRowExpanderBaseIndentLevel = InArgs._DefaultRowExpanderBaseIndentLevel;
 
 	this->bAutoExpandActionMenu = InArgs._AutoExpandActionMenu;
 	this->bShowFilterTextBox = InArgs._ShowFilterTextBox;
@@ -405,6 +407,17 @@ void SGraphActionMenu::Construct( const FArguments& InArgs, bool bIsReadOnly/* =
 
 	// Get all actions.
 	RefreshAllActions(false);
+
+	if(bAutomaticallySelectSingleAction)
+	{
+		TArray<TSharedPtr<FGraphActionNode>> ActionNodes;
+		FilteredRootAction->GetAllActionNodes(ActionNodes);
+
+		if(ActionNodes.Num() == 1)
+		{
+			OnItemSelected(ActionNodes[0], ESelectInfo::Direct);
+		}
+	}
 }
 
 void SGraphActionMenu::RefreshAllActions(bool bPreserveExpansion, bool bHandleOnSelectionEvent/*=true*/)
@@ -1022,7 +1035,7 @@ TSharedRef<ITableRow> SGraphActionMenu::MakeWidget( TSharedPtr<FGraphActionNode>
 	{
 		ExpanderWidget =
 			SNew(SExpanderArrow, TableRow)
-			.BaseIndentLevel(1);
+			.BaseIndentLevel(DefaultRowExpanderBaseIndentLevel);
 	}
 
 	RowContainer->AddSlot()

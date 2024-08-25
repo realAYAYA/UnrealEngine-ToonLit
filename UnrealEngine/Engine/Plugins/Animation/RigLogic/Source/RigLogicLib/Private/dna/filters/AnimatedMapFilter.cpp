@@ -18,6 +18,7 @@ AnimatedMapFilter::AnimatedMapFilter(MemoryResource* memRes_) :
 void AnimatedMapFilter::configure(std::uint16_t animatedMapCount, UnorderedSet<std::uint16_t> allowedAnimatedMapIndices) {
     passingIndices = std::move(allowedAnimatedMapIndices);
     // Fill the structure that maps indices prior to deletion to indices after deletion
+    remappedIndices.clear();
     remap(animatedMapCount, passingIndices, remappedIndices);
 }
 

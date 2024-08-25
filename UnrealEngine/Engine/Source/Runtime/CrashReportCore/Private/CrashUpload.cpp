@@ -3,6 +3,7 @@
 #include "CrashUpload.h"
 #include "CrashReportCoreModule.h"
 #include "HAL/FileManager.h"
+#include "Misc/Compression.h"
 #include "Misc/FileHelper.h"
 #include "Internationalization/Internationalization.h"
 #include "Misc/Guid.h"
@@ -493,7 +494,7 @@ void FCrashUploadToReceiver::CompressAndSendData()
 	Request->SetHeader(TEXT("CompressedSize"), TTypeToString<int32>::ToString(CompressedData.CompressedSize) );
 	Request->SetHeader(TEXT("UncompressedSize"), TTypeToString<int32>::ToString(CompressedData.UncompressedSize) );
 	Request->SetHeader(TEXT("NumberOfFiles"), TTypeToString<int32>::ToString(CompressedData.FileCount) );
-	UE_LOG( CrashReportCoreLog, Log, TEXT( "Sending HTTP request: %s" ), *Request->GetURL() );
+	UE_LOG( CrashReportCoreLog, Log, TEXT( "Sending HTTP request: %s, Payload size: %d" ), *Request->GetURL(), CompressedData.Data.Num());
 
 	if (Request->ProcessRequest())
 	{
@@ -533,7 +534,7 @@ void FCrashUploadToReceiver::PostReportComplete()
 	Request->SetURL(UrlPrefix / TEXT("UploadComplete"));
 	Request->SetHeader( TEXT( "Content-Type" ), TEXT( "text/plain; charset=us-ascii" ) );
 	Request->SetContent(PostData);
-	UE_LOG( CrashReportCoreLog, Log, TEXT( "Sending HTTP request: %s" ), *Request->GetURL() );
+	UE_LOG( CrashReportCoreLog, Log, TEXT( "Sending HTTP request: %s, Payload size: %d" ), *Request->GetURL(), PostData.Num());
 
 	if (Request->ProcessRequest())
 	{
@@ -788,7 +789,7 @@ void FCrashUploadToDataRouter::CompressAndSendData()
 	Request->SetHeader(TEXT("Content-Type"), TEXT("application/octet-stream"));
 	Request->SetURL(DataRouterUrl + UrlParams);
 	Request->SetContent(CompressedData.Data);
-	UE_LOG(CrashReportCoreLog, Log, TEXT("Sending HTTP request: %s"), *Request->GetURL());
+	UE_LOG(CrashReportCoreLog, Log, TEXT("Sending HTTP request: %s, Payload size: %d"), *Request->GetURL(), CompressedData.Data.Num());
 
 	if (Request->ProcessRequest())
 	{

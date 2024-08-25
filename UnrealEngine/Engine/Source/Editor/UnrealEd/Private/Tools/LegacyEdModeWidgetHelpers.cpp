@@ -11,6 +11,7 @@
 #include "EngineUtils.h"
 #include "CanvasTypes.h"
 #include "CanvasItem.h"
+#include "Settings/LevelEditorViewportSettings.h"
 
 const FName FLegacyEdModeWidgetHelper::MD_MakeEditWidget(TEXT("MakeEditWidget"));
 const FName FLegacyEdModeWidgetHelper::MD_ValidateWidgetUsing(TEXT("ValidateWidgetUsing"));
@@ -271,7 +272,7 @@ struct FPropertyWidgetInfoChainElement
 					, StructProp->ContainerPtrToValuePtr<void>(InContainer)
 					, OutInfos
 					, Chain);
-				Chain.Pop(false);
+				Chain.Pop(EAllowShrinking::No);
 			}
 			else if (FArrayProperty* ArrayProp = CastField<FArrayProperty>(CurrentProp))
 			{
@@ -292,7 +293,7 @@ struct FPropertyWidgetInfoChainElement
 								, ArrayHelper.GetRawPtr(ArrayIndex)
 								, OutInfos
 								, Chain);
-							Chain.Pop(false);
+							Chain.Pop(EAllowShrinking::No);
 						}
 					}
 				}
@@ -635,6 +636,9 @@ void FLegacyEdModeWidgetHelper::Render(const FSceneView* View, FViewport* Viewpo
 			UClass* Class = BestSelectedItem->GetClass();
 			TArray<FPropertyWidgetInfo> WidgetInfos;
 			GetPropertyWidgetInfos(Class, BestSelectedItem, WidgetInfos);
+
+			const bool bAllowEditWidgetAxisDisplay = GetDefault<ULevelEditorViewportSettings>()->bAllowEditWidgetAxisDisplay;
+
 			FEditorScriptExecutionGuard ScriptGuard;
 			for (const FPropertyWidgetInfo& WidgetInfo : WidgetInfos)
 			{
@@ -654,6 +658,11 @@ void FLegacyEdModeWidgetHelper::Render(const FSceneView* View, FViewport* Viewpo
 
 				if (bHitTesting) PDI->SetHitProxy(new HPropertyWidgetProxy(WidgetInfo.PropertyName, WidgetInfo.PropertyIndex, WidgetInfo.bIsTransform));
 				DrawWireDiamond(PDI, WidgetTM, WidgetRadius, WidgetColor, SDPG_Foreground);
+				if (bAllowEditWidgetAxisDisplay && WidgetInfo.bIsTransform)
+				{
+					constexpr float AxisScale = 1.5f;
+					DrawCoordinateSystem(PDI, WorldWidgetTransform.GetTranslation(), WorldWidgetTransform.GetRotation().Rotator(), AxisScale * WidgetRadius, SDPG_Foreground);
+				}
 				if (bHitTesting) PDI->SetHitProxy(NULL);
 			}
 		}

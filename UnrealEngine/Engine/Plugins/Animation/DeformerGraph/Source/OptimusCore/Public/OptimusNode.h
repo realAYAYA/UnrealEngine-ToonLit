@@ -105,6 +105,9 @@ public:
 	/** Returns the list of all the pins on this node */
 	TArrayView<UOptimusNodePin* const> GetPins() const { return Pins; }
 
+	/** Returns the list of pins on this node filtered by direction */
+	TArray<UOptimusNodePin*> GetPinsByDirection(EOptimusNodePinDirection InDirection, bool bInRecursive) const;
+	
 	/**
 	 * Preliminary check for whether valid connection can be made between two existing pins.
 	 * Can be overridden by derived nodes to add their own additional checks. 
@@ -185,7 +188,9 @@ public:
 #endif
 	
 protected:
+	friend class FOptimusEditorClipboard;
 	friend class UOptimusNodeGraph;
+	friend class UOptimusNodeSubGraph;
 	friend class UOptimusNodePin;
 	friend class UOptimusDeformer;
 	friend struct FOptimusNodeAction_AddRemovePin;
@@ -196,12 +201,25 @@ protected:
 	friend struct FOptimusNodeAction_SetPinDataDomain;
 	friend struct FOptimusNodeGraphAction_PackageKernelFunction;
 	friend struct FOptimusNodeGraphAction_UnpackageKernelFunction;
+	friend struct FOptimusNodeGraphAction_RemoveNode;
 
+	/**
+	 * Returns a unique name for pin. If given the same pins to compare to, the output
+	 * name will always be the same, unlike Optimus::GetUniqueNameForScope, which gives
+	 * a different name each time it is called, use this function if pin names are generated during
+	 * an action instead of prior to an action. Though ideally there should be only one way to generate
+	 * pin names
+	 */
+	static FName GetAvailablePinNameStable(const UObject* InNodeOrPin, FName InName);
+	
 	// Return the action stack for this node.
 	UOptimusActionStack* GetActionStack() const;
 
 	// Called when the node is being constructed
 	virtual void ConstructNode();
+
+	// Allows the node to initialize any transient data that can be derived from serialized properties
+	virtual void InitializeTransientData();
 
 	virtual bool ValidateConnection(
 		const UOptimusNodePin& InThisNodesPin,
@@ -216,7 +234,7 @@ protected:
 	 *  reason as a part of the optional return value. If success return an empty optional
 	 *  object.
 	 */
-	virtual TOptional<FText> ValidateForCompile() const
+	virtual TOptional<FText> ValidateForCompile(const FOptimusPinTraversalContext& InContext) const
 	{
 		return {};
 	}
@@ -227,7 +245,9 @@ protected:
 	virtual void PreDuplicateRequirementActions(
 		const UOptimusNodeGraph* InTargetGraph, 
 		FOptimusCompoundAction *InCompoundAction) {}
-	
+
+	virtual void SaveState(FArchive& Ar) const;
+	virtual void RestoreState(FArchive& Ar);
 
 	void EnableDynamicPins();
 
@@ -240,6 +260,13 @@ protected:
 		FOptimusDataTypeRef InDataType,
 		UOptimusNodePin* InBeforePin = nullptr,
 		UOptimusNodePin* InGroupingPin = nullptr
+		);
+
+	/** Add a new pin based on a parameter binding definition. Only allowed for top-level pins. */
+	UOptimusNodePin* AddPin(
+		const FOptimusParameterBinding& InBinding,
+		EOptimusNodePinDirection InDirection,
+		UOptimusNodePin* InBeforePin = nullptr
 		);
 
 	/** Create a pin and add it to the node in the location specified. */ 

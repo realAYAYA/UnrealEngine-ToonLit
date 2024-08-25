@@ -44,8 +44,17 @@ public:
 	virtual FFrameRate GetTickResolution() const override;
 	virtual FFrameRate GetDisplayRate() const override;
 	virtual void SyncDataSourceTime(const FFrameTime& InTime) override;
-	virtual void InitializeShot(UMoviePipelineExecutorShot* InShot) override;
+	virtual void PlayDataSource() override;
+	virtual void PauseDataSource() override;
+	virtual void JumpDataSource(const FFrameTime& InTimeToJumpTo) override;
+	virtual void CacheHierarchyForShot(const TObjectPtr<UMoviePipelineExecutorShot>& InShot) override;
+	virtual void RestoreHierarchyForShot(const TObjectPtr<UMoviePipelineExecutorShot>& InShot) override;
+	virtual void MuteShot(const TObjectPtr<UMoviePipelineExecutorShot>& InShot) override;
+	virtual void UnmuteShot(const TObjectPtr<UMoviePipelineExecutorShot>& InShot) override;
+	virtual void ExpandShot(const TObjectPtr<UMoviePipelineExecutorShot>& InShot, const int32 InLeftDeltaFrames, const int32 InLeftDeltaFramesUserPoV,
+		const int32 InRightDeltaFrames, const bool bInPrepass) override;
 protected:
+	void OverrideSequencePlaybackRangeFromGlobalOutputSettings(ULevelSequence* InSequence);
 	void CacheLevelSequenceData(ULevelSequence* InSequence);
 	void OnSequenceEvaluated(const UMovieSceneSequencePlayer& Player, FFrameTime CurrentTime, FFrameTime PreviousTime);
 
@@ -55,4 +64,6 @@ protected:
 
 	/** Custom Time Controller for the Sequence Player, used to match Custom TimeStep without any floating point accumulation errors. */
 	TSharedPtr<UE::MovieGraph::FMovieGraphSequenceTimeController> CustomSequenceTimeController;
+
+	TSharedPtr<MoviePipeline::FCameraCutSubSectionHierarchyNode> CachedSequenceHierarchyRoot;
 };

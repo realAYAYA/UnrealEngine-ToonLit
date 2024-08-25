@@ -14,6 +14,7 @@ namespace Insights
 {
 
 class FTable;
+class FTreeNodeGrouping;
 class STableTreeView;
 
 struct FTableRowId
@@ -149,6 +150,13 @@ public:
 	virtual void SetIsFiltered(bool InValue) { bIsFiltered = InValue; }
 
 	virtual bool OnLazyCreateChildren(TSharedPtr<STableTreeView> InTableTreeView) { return false; }
+
+	/**
+	 * The grouping that has generated this node.
+	 * This is used to correctly apply further groupings for the lazy created children.
+	 * If this returns nullptr, grouping is not applied for lazy created children.
+	 */
+	virtual const FTreeNodeGrouping* GetAuthorGrouping() const { return nullptr; }
 
 protected:
 	TWeakPtr<FTable> ParentTable;

@@ -42,6 +42,14 @@ public:
 	
 	virtual TSharedRef<SWidget> GenerateWidgetForColumn(const FName& ColumnName) override;
 
+	
+	/**
+	 * Get content of the Name column.
+	 *
+	 * @return FText object corresponding to the current object's content of the Name column.
+	 */
+	FText GetName() const;
+
 private:
 	bool CanUseSourceControl() const;
 	bool IsComparingAgainstPlatformFallback() const;
@@ -72,6 +80,8 @@ private:
 
 	//Holds the screen shot info.
 	TSharedPtr<FScreenComparisonModel> Model;
+
+	mutable TOptional<FText> Name;
 
 	// The manager containing the screen shots
 	IScreenShotManagerPtr ScreenshotManager;

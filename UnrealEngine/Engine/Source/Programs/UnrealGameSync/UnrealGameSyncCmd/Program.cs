@@ -1,28 +1,30 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
-using EpicGames.Perforce;
-using Microsoft.Extensions.Logging;
-using Serilog;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
+using System.Net.Http.Json;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using EpicGames.Core;
+using EpicGames.Horde;
 using EpicGames.OIDC;
+using EpicGames.Perforce;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Serilog;
 using UnrealGameSync;
-using System.Text;
-using System.Globalization;
-using System.Net.Http;
-using System.Net.Http.Json;
-using System.IO.Compression;
 
 namespace UnrealGameSyncCmd
 {
@@ -118,8 +120,8 @@ namespace UnrealGameSyncCmd
 				"ugs version",
 				"Prints the current application version"
 			),
-			new CommandInfo("install", typeof(InstallCommand), null, 
-				null, 
+			new CommandInfo("install", typeof(InstallCommand), null,
+				null,
 				null
 			),
 			new CommandInfo("upgrade", typeof(UpgradeCommand), typeof(UpgradeCommandOptions),
@@ -135,12 +137,15 @@ namespace UnrealGameSyncCmd
 			public ILoggerFactory LoggerFactory { get; }
 			public GlobalSettingsFile UserSettings { get; }
 
-			public CommandContext(CommandLineArguments arguments, ILogger logger, ILoggerFactory loggerFactory, GlobalSettingsFile userSettings)
+			public IHordeClient? HordeClient { get; }
+
+			public CommandContext(CommandLineArguments arguments, ILogger logger, ILoggerFactory loggerFactory, GlobalSettingsFile userSettings, IHordeClient? hordeClient)
 			{
 				Arguments = arguments;
 				Logger = logger;
 				LoggerFactory = loggerFactory;
 				UserSettings = userSettings;
+				HordeClient = hordeClient;
 			}
 		}
 
@@ -227,6 +232,18 @@ namespace UnrealGameSyncCmd
 			ILogger logger = loggerFactory.CreateLogger("Main");
 			try
 			{
+				LauncherSettings launcherSettings = new LauncherSettings();
+				launcherSettings.Read();
+
+				ServiceCollection services = new ServiceCollection();
+
+				if (launcherSettings.HordeServer != null)
+				{
+					services.AddHorde(options => options.ServerUrl = new Uri(launcherSettings.HordeServer));
+				}
+				ServiceProvider serviceProvider = services.BuildServiceProvider();
+				IHordeClient? hordeClient = serviceProvider.GetService<IHordeClient>();
+
 				GlobalSettingsFile settings;
 				if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
 				{
@@ -301,7 +318,7 @@ namespace UnrealGameSyncCmd
 				}
 
 				Command instance = (Command)Activator.CreateInstance(command.Type)!;
-				await instance.ExecuteAsync(new CommandContext(args, logger, loggerFactory, settings));
+				await instance.ExecuteAsync(new CommandContext(args, logger, loggerFactory, settings, hordeClient));
 				return 0;
 			}
 			catch (UserErrorException ex)
@@ -384,7 +401,14 @@ namespace UnrealGameSyncCmd
 		{
 			if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
 			{
-				return "ugs-mac";
+				if (RuntimeInformation.OSArchitecture == Architecture.Arm64)
+				{
+					return "ugs-mac-arm64";
+				}
+				else
+				{
+					return "ugs-mac";
+				}
 			}
 			else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
 			{
@@ -807,7 +831,7 @@ namespace UnrealGameSyncCmd
 					}
 				}
 
-				WorkspaceUpdateOptions options = syncOptions.SingleChange? WorkspaceUpdateOptions.SyncSingleChange : WorkspaceUpdateOptions.Sync;
+				WorkspaceUpdateOptions options = syncOptions.SingleChange ? WorkspaceUpdateOptions.SyncSingleChange : WorkspaceUpdateOptions.Sync;
 				if (syncOptions.Clean)
 				{
 					options |= WorkspaceUpdateOptions.Clean;
@@ -834,7 +858,7 @@ namespace UnrealGameSyncCmd
 				string[] syncFilter = ReadSyncFilter(settings, context.UserSettings, projectConfig);
 
 				using WorkspaceLock? workspaceLock = CreateWorkspaceLock(settings.RootDir);
-				if(workspaceLock != null && !await workspaceLock.TryAcquireAsync())
+				if (workspaceLock != null && !await workspaceLock.TryAcquireAsync())
 				{
 					logger.LogError("Another process is already syncing this workspace.");
 					return;
@@ -845,15 +869,15 @@ namespace UnrealGameSyncCmd
 
 				if (syncOptions.Binaries)
 				{
-					List<PerforceArchiveInfo> archives = await PerforceArchive.EnumerateAsync(perforceClient, projectConfig, state.Current.ProjectIdentifier, CancellationToken.None);
+					List<BaseArchiveChannel> archives = await BaseArchive.EnumerateChannelsAsync(perforceClient, context.HordeClient, projectConfig, state.Current.ProjectIdentifier, CancellationToken.None);
 
-					PerforceArchiveInfo? editorArchiveInfo = archives.FirstOrDefault(x => x.Name == IArchiveInfo.EditorArchiveType);
+					BaseArchiveChannel? editorArchiveInfo = archives.FirstOrDefault(x => x.Name == IArchiveChannel.EditorArchiveType);
 					if (editorArchiveInfo == null)
 					{
 						throw new UserErrorException("No editor archives found for project");
 					}
 
-					KeyValuePair<int, string> revision = editorArchiveInfo.ChangeNumberToFileRevision.LastOrDefault(x => x.Key <= change);
+					KeyValuePair<int, IArchive> revision = editorArchiveInfo.ChangeNumberToArchive.LastOrDefault(x => x.Key <= change);
 					if (revision.Key == 0)
 					{
 						throw new UserErrorException($"No editor archives found for CL {change}");
@@ -883,7 +907,7 @@ namespace UnrealGameSyncCmd
 					}
 
 					updateContext.Options |= WorkspaceUpdateOptions.SyncArchives;
-					updateContext.ArchiveTypeToArchive[IArchiveInfo.EditorArchiveType] = Tuple.Create<IArchiveInfo, string>(editorArchiveInfo, revision.Value);
+					updateContext.ArchiveTypeToArchive[IArchiveChannel.EditorArchiveType] = revision.Value;
 				}
 
 				WorkspaceUpdate update = new WorkspaceUpdate(updateContext);
@@ -1021,7 +1045,7 @@ namespace UnrealGameSyncCmd
 				using IPerforceConnection perforceClient = await ConnectAsync(settings, context.LoggerFactory);
 
 				List<ChangesRecord> changes = await perforceClient.GetChangesAsync(EpicGames.Perforce.ChangesOptions.None, options.Count, ChangeStatus.Submitted, $"//{settings.ClientName}/...");
-				foreach(IEnumerable<ChangesRecord> changesBatch in changes.Batch(10))
+				foreach (IEnumerable<ChangesRecord> changesBatch in changes.Batch(10))
 				{
 					List<DescribeRecord> describeRecords = await perforceClient.DescribeAsync(changesBatch.Select(x => x.Number).ToArray());
 
@@ -1076,7 +1100,7 @@ namespace UnrealGameSyncCmd
 
 		class ConfigCommand : Command
 		{
-			public override Task ExecuteAsync(CommandContext context)
+			public override async Task ExecuteAsync(CommandContext context)
 			{
 				ILogger logger = context.Logger;
 
@@ -1090,7 +1114,7 @@ namespace UnrealGameSyncCmd
 					{
 						if (editor != null)
 						{
-							editor.WaitForExit();
+							await editor.WaitForExitAsync();
 						}
 					}
 				}
@@ -1105,8 +1129,6 @@ namespace UnrealGameSyncCmd
 
 					logger.LogInformation("Updated {ConfigFile}", settings.ConfigFile);
 				}
-				
-				return Task.CompletedTask;
 			}
 		}
 
@@ -1195,7 +1217,7 @@ namespace UnrealGameSyncCmd
 						enabled = syncCategory.Enable;
 					}
 
-					logger.LogInformation("  {Id,30} {Enabled,3} {Scope,-9} {Name}", syncCategory.UniqueId, enabled? "Yes" : "No", scope, syncCategory.Name);
+					logger.LogInformation("  {Id,30} {Enabled,3} {Scope,-9} {Name}", syncCategory.UniqueId, enabled ? "Yes" : "No", scope, syncCategory.Name);
 				}
 
 				if (globalFilter.View.Count > 0)
@@ -1348,7 +1370,7 @@ namespace UnrealGameSyncCmd
 
 				if (result != WorkspaceUpdateResult.Success)
 				{
-					throw new UserErrorException("{Message}", message); 
+					throw new UserErrorException("{Message}", message);
 				}
 			}
 		}
@@ -1405,13 +1427,13 @@ namespace UnrealGameSyncCmd
 				context.Arguments.CheckAllArgumentsUsed();
 
 				UserWorkspaceSettings settings = ReadRequiredUserWorkspaceSettings();
-				
+
 				// Find the valid config file paths
 				DirectoryInfo engineDir = DirectoryReference.Combine(settings.RootDir, "Engine").ToDirectoryInfo();
 				DirectoryInfo gameDir = new DirectoryInfo(settings.ProjectPath);
 				using ITokenStore tokenStore = TokenStoreFactory.CreateTokenStore();
 				IConfiguration providerConfiguration = ProviderConfigurationFactory.ReadConfiguration(engineDir, gameDir);
-				OidcTokenManager oidcTokenManager = OidcTokenManager.CreateTokenManager(providerConfiguration, tokenStore, new List<string>() {providerIdentifier});
+				OidcTokenManager oidcTokenManager = OidcTokenManager.CreateTokenManager(providerConfiguration, tokenStore, new List<string>() { providerIdentifier });
 				OidcTokenInfo result = await oidcTokenManager.Login(providerIdentifier);
 
 				logger.LogInformation("Logged in to provider {ProviderIdentifier}", providerIdentifier);
@@ -1550,7 +1572,7 @@ namespace UnrealGameSyncCmd
 			public override async Task ExecuteAsync(CommandContext context)
 			{
 				ILogger logger = context.Logger;
-				
+
 				UpgradeCommandOptions options = new UpgradeCommandOptions();
 				context.Arguments.ApplyTo(options);
 				string? targetDirStr = context.Arguments.GetStringOrDefault("-TargetDir=", null);
@@ -1580,7 +1602,7 @@ namespace UnrealGameSyncCmd
 
 					DirectoryReference currentDir = new FileReference(Assembly.GetExecutingAssembly().Location).Directory;
 
-					DirectoryReference targetDir = (targetDirStr == null)? currentDir : DirectoryReference.Combine(currentDir, targetDirStr);
+					DirectoryReference targetDir = (targetDirStr == null) ? currentDir : DirectoryReference.Combine(currentDir, targetDirStr);
 					DirectoryReference.CreateDirectory(targetDir);
 
 					FileReference tempFile = FileReference.Combine(targetDir, "update.zip");

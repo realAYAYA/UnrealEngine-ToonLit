@@ -12,6 +12,28 @@ class FRigVMEditor;
 
 DECLARE_MULTICAST_DELEGATE_TwoParams(FRigVMEditorClosed, const FRigVMEditor*, URigVMBlueprint*);
 
+struct FRigVMEditorModes
+{
+	// Mode constants
+	static const FName RigVMEditorMode;
+	static FText GetLocalizedMode(const FName InMode)
+	{
+		static TMap< FName, FText > LocModes;
+
+		if (LocModes.Num() == 0)
+		{
+			LocModes.Add(RigVMEditorMode, NSLOCTEXT("RigVMEditorModes", "RigVMEditorMode", "RigVM"));
+		}
+
+		check(InMode != NAME_None);
+		const FText* OutDesc = LocModes.Find(InMode);
+		check(OutDesc);
+		return *OutDesc;
+	}
+private:
+	FRigVMEditorModes() {}
+};
+
 class RIGVMEDITOR_API FRigVMEditor : public FBlueprintEditor
 {
 public:
@@ -28,6 +50,10 @@ public:
 	 */
 	virtual void InitRigVMEditor(const EToolkitMode::Type Mode, const TSharedPtr< class IToolkitHost >& InitToolkitHost, class URigVMBlueprint* InRigVMBlueprint);
 
+	virtual void HandleAssetRequestedOpen(UObject* InObject);
+	virtual void HandleAssetRequestClose(UObject* InObject, EAssetEditorCloseReason InReason);
+	bool bRequestedReopen = false;
+
 	virtual const FName GetEditorAppName() const;
 	virtual const FName GetEditorModeName() const;
 	virtual TSharedPtr<FApplicationMode> CreateEditorMode();
@@ -35,11 +61,13 @@ public:
 	// FBlueprintEditor interface
 	virtual UBlueprint* GetBlueprintObj() const override;
 	virtual TSubclassOf<UEdGraphSchema> GetDefaultSchemaClass() const override;
+	virtual bool InEditingMode() const override;
 
 	//  FTickableEditorObject Interface
 	virtual void Tick(float DeltaTime) override;
 
 	// IToolkit Interface
+	virtual void BringToolkitToFront() override;
 	virtual FName GetToolkitFName() const override;
 	virtual FName GetToolkitContextFName() const override;
 	virtual FText GetBaseToolkitName() const override;
@@ -64,6 +92,7 @@ public:
 	virtual FReply OnSpawnGraphNodeByShortcut(FInputChord InChord, const FVector2D& InPosition, UEdGraph* InGraph) override;
 	virtual bool ShouldLoadBPLibrariesFromAssetRegistry() override { return false; }
 	virtual void JumpToHyperlink(const UObject* ObjectReference, bool bRequestRename = false) override;
+	virtual bool ShouldOpenGraphByDefault() const { return true; }
 
 	// FEditorUndoClient Interface
 	virtual void PostUndo(bool bSuccess) override;
@@ -127,6 +156,10 @@ protected:
 	virtual void CreateDefaultTabContents(const TArray<UBlueprint*>& InBlueprints) override;
 	virtual void NewDocument_OnClicked(ECreatedDocumentType GraphType) override;
 	virtual bool IsSectionVisible(NodeSectionID::Type InSectionID) const override;
+	virtual bool AreEventGraphsAllowed() const override;
+	virtual bool AreMacrosAllowed() const override;
+	virtual bool AreDelegatesAllowed() const override;
+	virtual bool NewDocument_IsVisibleForType(ECreatedDocumentType GraphType) const;
 	virtual FGraphAppearanceInfo GetGraphAppearance(class UEdGraph* InGraph) const override;
 	virtual bool IsEditable(UEdGraph* InGraph) const override;
 	virtual bool IsCompilingEnabled() const override;
@@ -139,7 +172,9 @@ protected:
 	virtual void FocusInspectorOnGraphSelection(const TSet<class UObject*>& NewSelection, bool bForceRefresh = false) override;
 
 	virtual void HandleModifiedEvent(ERigVMGraphNotifType InNotifType, URigVMGraph* InGraph, UObject* InSubject);
-	virtual void HandleVMCompiledEvent(UObject* InCompiledObject, URigVM* InVM);
+	UE_DEPRECATED(5.4, "Please use HandleVMCompiledEvent with ExtendedExecuteContext param.")
+	virtual void HandleVMCompiledEvent(UObject* InCompiledObject, URigVM* InVM) {}
+	virtual void HandleVMCompiledEvent(UObject* InCompiledObject, URigVM* InVM, FRigVMExtendedExecuteContext& InContext);
 	virtual void HandleVMExecutedEvent(URigVMHost* InHost, const FName& InEventName);
 	virtual void HandleVMExecutionHalted(const int32 InstructionIndex, UObject* InNode, const FName& InEntryName);
 	void SetHaltedNode(URigVMNode* Node);
@@ -197,6 +232,7 @@ protected:
 	bool& GetSuspendDetailsPanelRefreshFlag() { return bSuspendDetailsPanelRefresh; }
 	virtual void SetDetailObjects(const TArray<UObject*>& InObjects);
 	virtual void SetDetailObjects(const TArray<UObject*>& InObjects, bool bChangeUISelectionState);
+	virtual void SetMemoryStorageDetails(const TArray<FRigVMMemoryStorageStruct*>& InStructs);
 	virtual void SetDetailViewForGraph(URigVMGraph* InGraph);
 	virtual void SetDetailViewForFocusedGraph();
 	virtual void SetDetailViewForLocalVariable();
@@ -269,10 +305,15 @@ protected:
 	/** Once the log is collected update the graph */
 	void UpdateGraphCompilerErrors();
 
+	/** Returns true if PIE is currently running */
+	static bool IsPIERunning();
+
 private:
 
+	void OnPIEStopped(bool bSimulation);
+
 	/** Our currently running rig vm instance */
-	TObjectPtr<URigVMHost> Host;
+	//TObjectPtr<URigVMHost> Host;
 
 	FPreviewHostUpdated PreviewHostUpdated;
 
@@ -289,8 +330,11 @@ private:
 	bool bSuspendDetailsPanelRefresh;
 	bool bAllowBulkEdits;
 	bool bIsSettingObjectBeingDebugged;
+
+protected:
 	bool bRigVMEditorInitialized;
-	
+
+private:
 	/** Are we currently compiling through the user interface */
 	bool bIsCompilingThroughUI;
 

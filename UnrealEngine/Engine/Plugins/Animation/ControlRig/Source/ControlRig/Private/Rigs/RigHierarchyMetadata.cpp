@@ -1,8 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Rigs/RigHierarchyMetadata.h"
-#include "Rigs/RigHierarchyElements.h"
-#include "Rigs/RigHierarchy.h"
+
 #include "ControlRigObjectVersion.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(RigHierarchyMetadata)
@@ -108,17 +107,16 @@ UScriptStruct* FRigBaseMetadata::GetMetadataStruct(const ERigMetadataType& InTyp
 	return StaticStruct();
 }
 
-FRigBaseMetadata* FRigBaseMetadata::MakeMetadata(const FRigBaseElement* InElement, const FName& InName, ERigMetadataType InType)
+FRigBaseMetadata* FRigBaseMetadata::MakeMetadata(const FName& InName, ERigMetadataType InType)
 {
 	check(InType != ERigMetadataType::Invalid);
 	
-	UScriptStruct* Struct = GetMetadataStruct(InType);
+	const UScriptStruct* Struct = GetMetadataStruct(InType);
 	check(Struct);
 	
-	FRigBaseMetadata* Md = (FRigBaseMetadata*)FMemory::Malloc(Struct->GetStructureSize());
+	FRigBaseMetadata* Md = static_cast<FRigBaseMetadata*>(FMemory::Malloc(Struct->GetStructureSize()));
 	Struct->InitializeStruct(Md, 1);
 
-	Md->Element = InElement;
 	Md->Name = InName;
 	Md->Type = InType;
 	return Md;
@@ -137,22 +135,9 @@ void FRigBaseMetadata::DestroyMetadata(FRigBaseMetadata** Metadata)
 	Md = nullptr;
 }
 
-void FRigBaseMetadata::Serialize(FArchive& Ar, bool bIsLoading)
+void FRigBaseMetadata::Serialize(FArchive& Ar)
 {
 	Ar.UsingCustomVersion(FControlRigObjectVersion::GUID);
 	Ar << Name;
 	Ar << Type;
 }
-
-const FRigElementKey& FRigBaseMetadata::GetKey() const
-{
-	if(Element)
-	{
-		return Element->GetKey();
-	}
-
-	static const FRigElementKey EmptyKey;
-	return EmptyKey;
-}
-
-

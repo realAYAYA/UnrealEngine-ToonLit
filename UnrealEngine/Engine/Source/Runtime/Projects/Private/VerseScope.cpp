@@ -4,17 +4,21 @@
 
 TOptional<EVerseScope::Type> EVerseScope::FromString(const TCHAR* Text)
 {
-	if (!FCString::Stricmp(Text, TEXT("InternalAPI")))
+	if (!FCString::Stricmp(Text, TEXT("PublicAPI")))
 	{
-		return {EVerseScope::InternalAPI};
+		return { EVerseScope::PublicAPI };
 	}
-	else if (!FCString::Stricmp(Text, TEXT("PublicAPI")))
+	else if (!FCString::Stricmp(Text, TEXT("InternalAPI")))
 	{
-		return {EVerseScope::PublicAPI};
+		return { EVerseScope::InternalAPI };
 	}
-	else if (!FCString::Stricmp(Text, TEXT("User")))
+	else if (!FCString::Stricmp(Text, TEXT("PublicUser")))
 	{
-		return {EVerseScope::User};
+		return { EVerseScope::PublicUser };
+	}
+	else if (!FCString::Stricmp(Text, TEXT("InternalUser")))
+	{
+		return { EVerseScope::InternalUser };
 	}
 	else
 	{
@@ -26,9 +30,10 @@ const TCHAR* EVerseScope::ToString(const Type Value)
 {
 	switch (Value)
 	{
-	case InternalAPI: return TEXT("InternalAPI");
-	case PublicAPI:   return TEXT("PublicAPI");
-	case User:        return TEXT("User");
+	case PublicAPI:    return TEXT("PublicAPI");
+	case InternalAPI:  return TEXT("InternalAPI");
+	case PublicUser:   return TEXT("PublicUser");
+	case InternalUser: return TEXT("InternalUser");
 	default:
 		ensure(false);
 		return TEXT("<unknown>");

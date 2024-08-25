@@ -4,36 +4,36 @@ using UnrealBuildTool;
 
 public class EditorTraceUtilities : ModuleRules
 {
-    public EditorTraceUtilities(ReadOnlyTargetRules Target) : base(Target)
-    {
-        PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
+	public EditorTraceUtilities(ReadOnlyTargetRules Target) : base(Target)
+	{
+		UnsafeTypeCastWarningLevel = WarningLevel.Error;
 
-        PublicDependencyModuleNames.AddRange(
-            new string[]
-            {
-                "Core",
-            }
-        );
+		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
+
+		PublicDependencyModuleNames.AddRange(
+			new string[] {
+				"Core",
+			}
+		);
 
 		PrivateIncludePathModuleNames.AddRange(
-			new string[]
-			{
+			new string[] {
 				"MessageLog",
 			}
 		);
 
 		PrivateDependencyModuleNames.AddRange(
-            new string[]
-            {
-                "Engine",
+			new string[] {
+				"Engine",
 				"InputCore",
 				"Slate",
-                "SlateCore",
-                "ToolMenus",
-                "UATHelper",
-                "TraceAnalysis",
+				"SlateCore",
+				"ToolMenus",
+				"TraceAnalysis",
+				"TraceInsights",
 				"TraceLog",
+				"UATHelper",
 			}
-        );
-    }
+		);
+	}
 }

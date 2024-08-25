@@ -322,6 +322,23 @@ public:
 	}
 
 	/**
+	 * Returns the value associated with a specified key.
+	 *
+	 * @param Key The key to search for.
+	 * @param DefaultValue The fallback value if the key is not found.
+	 * @return The value associated with the specified key, or DefaultValue if the key isn't contained in this map.
+	 */
+	FORCEINLINE ValueType FindRef(KeyConstPointerType Key, ValueType DefaultValue) const
+	{
+		if (const ValueType* Value = Find(Key))
+		{
+			return *Value;
+		}
+
+		return DefaultValue;
+	}
+
+	/**
 	 * Checks if map contains the specified key.
 	 *
 	 * @param Key The key to check for.
@@ -548,12 +565,12 @@ private:
 	class TBaseIterator
 	{
 	public:
-		typedef typename TChooseClass<bConst,typename ElementArrayType::TConstIterator,typename ElementArrayType::TIterator>::Result PairItType;
+		typedef std::conditional_t<bConst,typename ElementArrayType::TConstIterator,typename ElementArrayType::TIterator> PairItType;
 	private:
-		typedef typename TChooseClass<bConst,const TSortedMap,TSortedMap>::Result MapType;
-		typedef typename TChooseClass<bConst,const KeyType,KeyType>::Result ItKeyType;
-		typedef typename TChooseClass<bConst,const ValueType,ValueType>::Result ItValueType;
-		typedef typename TChooseClass<bConst,const typename ElementArrayType::ElementType, typename ElementArrayType::ElementType>::Result PairType;
+		typedef std::conditional_t<bConst,const TSortedMap,TSortedMap> MapType;
+		typedef std::conditional_t<bConst,const KeyType,KeyType> ItKeyType;
+		typedef std::conditional_t<bConst,const ValueType,ValueType> ItValueType;
+		typedef std::conditional_t<bConst,const typename ElementArrayType::ElementType, typename ElementArrayType::ElementType> PairType;
 
 	protected:
 		FORCEINLINE TBaseIterator(const PairItType& InElementIt)
@@ -598,13 +615,13 @@ private:
 	{
 		// Once we add reverse iterator to TArray, this class and TBaseIterator could be merged with a template parameter for forward vs reverse.
 	private:
-		typedef typename TChooseClass<bConst, const TSortedMap, TSortedMap>::Result MapType;
-		typedef typename TChooseClass<bConst, const KeyType, KeyType>::Result ItKeyType;
-		typedef typename TChooseClass<bConst, const ValueType, ValueType>::Result ItValueType;
+		typedef std::conditional_t<bConst, const TSortedMap, TSortedMap> MapType;
+		typedef std::conditional_t<bConst, const KeyType, KeyType> ItKeyType;
+		typedef std::conditional_t<bConst, const ValueType, ValueType> ItValueType;
 		typedef typename ElementArrayType::SizeType SizeType;
 
 	public:
-		typedef typename TChooseClass<bConst, const typename ElementArrayType::ElementType, typename ElementArrayType::ElementType>::Result PairType;
+		typedef std::conditional_t<bConst, const typename ElementArrayType::ElementType, typename ElementArrayType::ElementType> PairType;
 
 	protected:
 		FORCEINLINE TBaseReverseIterator(PairType* InData, SizeType InNum)

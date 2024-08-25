@@ -206,7 +206,7 @@ void FSlateAttributeMetaData::RegisterContainAttributeImpl(ISlateAttributeContai
 	const FName ContainerName = OwningContainer.GetContainerName();
 	const FSlateAttributeDescriptor::OffsetType AttributeOffset = UE::Private::FindContainOffset(OwningContainer, Attribute);
 	const FSlateAttributeDescriptor::FAttribute* FoundAttribute = Descriptor.FindContainedAttribute(ContainerName, AttributeOffset);
-	ensureAlwaysMsgf(FoundAttribute, TEXT("Attribute with offset '%d' is not registered. All Slot Attributes needs to be registered."));
+	ensureAlwaysMsgf(FoundAttribute, TEXT("Attribute with offset '%d' is not registered. All Slot Attributes needs to be registered."), AttributeOffset);
 	if (FoundAttribute)
 	{
 		const FSlateAttributeDescriptor::FContainer* FoundCountainer = Descriptor.FindContainer(ContainerName);

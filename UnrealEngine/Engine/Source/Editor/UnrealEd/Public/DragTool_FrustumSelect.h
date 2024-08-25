@@ -17,9 +17,16 @@ class UModel;
 class FDragTool_ActorFrustumSelect : public FDragTool
 {
 public:
-	explicit FDragTool_ActorFrustumSelect(FLevelEditorViewportClient* InLevelViewportClient)
+	UNREALED_API explicit FDragTool_ActorFrustumSelect(FLevelEditorViewportClient* InLevelViewportClient)
 		: FDragTool(InLevelViewportClient->GetModeTools())
 		, LevelViewportClient( InLevelViewportClient )
+		, EditorViewportClient( InLevelViewportClient)
+	{}
+
+	UNREALED_API explicit FDragTool_ActorFrustumSelect(FEditorViewportClient* InEditorViewportClient)
+	: FDragTool(InEditorViewportClient->GetModeTools())
+	, LevelViewportClient( nullptr )
+	, EditorViewportClient( InEditorViewportClient)
 	{}
 
 	/* Updates the drag tool's end location with the specified delta.  The end location is
@@ -81,4 +88,5 @@ private:
 	TArray<UModel*> ModelsToCheck;
 
 	FLevelEditorViewportClient* LevelViewportClient;
+	FEditorViewportClient* EditorViewportClient;
 };

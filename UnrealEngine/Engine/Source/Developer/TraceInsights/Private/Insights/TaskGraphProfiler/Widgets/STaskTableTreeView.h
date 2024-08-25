@@ -120,6 +120,8 @@ private:
 	bool ContextMenu_OpenInIDE_CanExecute() const;
 	void ContextMenu_OpenInIDE_Execute();
 
+	bool GetSourceFileAndLineForSelectedTask(FString& OutFile, uint32& OutLine) const;
+
 private:
 	double QueryStartTime = 0.0f;
 	double QueryEndTime = 0.0f;

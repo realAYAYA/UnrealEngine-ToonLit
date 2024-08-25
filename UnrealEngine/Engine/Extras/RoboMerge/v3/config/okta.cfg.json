@@ -1,0 +1,6 @@
+{
+    "clientId": "<okta clientId>",
+    "redirectUri": "/login",
+    "issuer": "https://yourcompany.okta.com/oauth2/authorizationServerURL",
+    "scopes": ["openid", "profile", "email"]
+}

@@ -132,7 +132,7 @@ void FShaderCookerStats::Initialize(uint32 Index)
 			FString FormatName = ShaderFormatName.ToString();
 			if (FormatName.StartsWith(TEXT("SF_")))
 			{
-				FormatName.MidInline(3, MAX_int32, false);
+				FormatName.MidInline(3, MAX_int32, EAllowShrinking::No);
 			}
 			PlatformNames.Add(MoveTemp(FormatName));
 		}

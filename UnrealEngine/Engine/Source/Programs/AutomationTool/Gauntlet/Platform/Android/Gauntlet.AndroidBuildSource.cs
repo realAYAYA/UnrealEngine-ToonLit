@@ -14,6 +14,8 @@ namespace Gauntlet
 {
 	public class AndroidBuild : IBuild
 	{
+		public int PreferenceOrder { get { return 0; } }
+
 		public UnrealTargetConfiguration Configuration { get; protected set; }
 
 		public string SourceApkPath;

@@ -12,6 +12,7 @@
 #include "WorldPartition/WorldPartitionReplay.h"
 #include "WorldPartition/WorldPartitionDraw2DContext.h"
 #include "WorldPartition/WorldPartitionStreamingPolicy.h"
+#include "WorldPartition/ActorDescContainerSubsystem.h"
 #include "WorldPartition/DataLayer/WorldDataLayersActorDesc.h"
 #include "WorldPartition/DataLayer/DataLayerManager.h"
 #include "WorldPartition/DataLayer/DataLayerAsset.h"
@@ -27,6 +28,7 @@
 #include "Engine/LevelBounds.h"
 #include "Debug/DebugDrawService.h"
 #include "GameFramework/PlayerController.h"
+#include "GameFramework/WorldSettings.h"
 #include "Async/ParallelFor.h"
 #include "Algo/ForEach.h"
 #include "Misc/HashBuilder.h"
@@ -40,6 +42,22 @@
 
 extern int32 GBlockOnSlowStreaming;
 static const FName NAME_WorldPartitionRuntimeHash("WorldPartitionRuntimeHash");
+
+static int32 GServerStreamingSourceMinimumExtraRadius = 400;
+static FAutoConsoleVariableRef CVarServerStreamingSourceMinimumExtraRadius(
+	TEXT("wp.Runtime.ServerStreamingSourceMinimumExtraRadius"),
+	GServerStreamingSourceMinimumExtraRadius,
+	TEXT("Minimum value added to the radius of the streaming sources used by the server (in Unreal unit)."),
+	ECVF_Default
+);
+
+static int32 GServerStreamingSourceMinimumExtraAngle = 1;
+static FAutoConsoleVariableRef CVarServerStreamingSourceMinimumExtraAngle(
+	TEXT("wp.Runtime.ServerStreamingSourceMinimumExtraAngle"),
+	GServerStreamingSourceMinimumExtraAngle,
+	TEXT("Minimum value added to the angle of the streaming source shape sector used by the server (in degree)."),
+	ECVF_Default
+);
 
 static int32 GDrawWorldPartitionIndex = -1;
 static FAutoConsoleCommand CVarDrawWorldPartitionIndex(
@@ -111,7 +129,7 @@ static FAutoConsoleVariableRef CVarGLevelStreamingContinuouslyIncrementalGCWhile
 );
 
 static FAutoConsoleCommandWithOutputDevice GDumpStreamingSourcesCmd(
-	TEXT("wp.DumpstreamingSources"),
+	TEXT("wp.Runtime.DumpStreamingSources"),
 	TEXT("Dumps active streaming sources to the log"),
 	FConsoleCommandWithOutputDeviceDelegate::CreateStatic([](FOutputDevice& OutputDevice)
 	{
@@ -123,6 +141,25 @@ static FAutoConsoleCommandWithOutputDevice GDumpStreamingSourcesCmd(
 				if (const UWorldPartitionSubsystem* WorldPartitionSubsystem = World->GetSubsystem<UWorldPartitionSubsystem>())
 				{				
 					WorldPartitionSubsystem->DumpStreamingSources(OutputDevice);
+				}
+			}
+		}
+	})
+);
+
+static FAutoConsoleCommandWithOutputDevice GDumpWorldPartitionsCmd(
+	TEXT("wp.Runtime.DumpWorldPartitions"),
+	TEXT("Dumps active world partitions to the log"),
+	FConsoleCommandWithOutputDeviceDelegate::CreateStatic([](FOutputDevice& OutputDevice)
+	{
+		for (const FWorldContext& Context : GEngine->GetWorldContexts())
+		{
+			UWorld* World = Context.World();
+			if (World && World->IsGameWorld())
+			{
+				if (const UWorldPartitionSubsystem* WorldPartitionSubsystem = World->GetSubsystem<UWorldPartitionSubsystem>())
+				{
+					WorldPartitionSubsystem->DumpWorldPartitions(OutputDevice);
 				}
 			}
 		}
@@ -143,6 +180,9 @@ static FAutoConsoleVariableRef CVarUdateStreamingStateTimeLimit(
 	ECVF_Default
 );
 
+TMulticastDelegate<void(UWorldPartitionSubsystem*, UWorld*)> UWorldPartitionSubsystem::OnWorldPartitionSubsystemInitialized;
+TMulticastDelegate<void(UWorldPartitionSubsystem*, UWorld*)> UWorldPartitionSubsystem::OnWorldPartitionSubsystemDeinitialized;
+
 UWorldPartitionSubsystem::UWorldPartitionSubsystem()
 : StreamingSourcesHash(0)
 , NumWorldPartitionServerStreamingEnabled(0)
@@ -160,34 +200,27 @@ const UWorldPartition* UWorldPartitionSubsystem::GetWorldPartition() const
 }
 
 #if WITH_EDITOR
-void UWorldPartitionSubsystem::AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector)
-{
-	UWorldPartitionSubsystem* This = CastChecked<UWorldPartitionSubsystem>(InThis);
-
-	This->ActorDescContainerInstanceManager.AddReferencedObjects(Collector);
-}
-
 FWorldPartitionActorFilter UWorldPartitionSubsystem::GetWorldPartitionActorFilter(const FString& InWorldPackage, EWorldPartitionActorFilterType InFilterTypes) const
 {
-	TSet<FString> VisitedPackages;
-	return GetWorldPartitionActorFilterInternal(InWorldPackage, InFilterTypes, VisitedPackages);
+	TSet<FString> VisitedPackageStack;
+	return GetWorldPartitionActorFilterInternal(InWorldPackage, InFilterTypes, VisitedPackageStack);
 }
 
 
-FWorldPartitionActorFilter UWorldPartitionSubsystem::GetWorldPartitionActorFilterInternal(const FString& InWorldPackage, EWorldPartitionActorFilterType InFilterTypes, TSet<FString>& InOutVisitedPackages) const
+FWorldPartitionActorFilter UWorldPartitionSubsystem::GetWorldPartitionActorFilterInternal(const FString& InWorldPackage, EWorldPartitionActorFilterType InFilterTypes, TSet<FString>& InOutVisitedPackageStack) const
 {
-	if (InOutVisitedPackages.Contains(InWorldPackage))
+	if (InOutVisitedPackageStack.Contains(InWorldPackage))
 	{
 		return FWorldPartitionActorFilter(InWorldPackage);
 	}
 
-	InOutVisitedPackages.Add(InWorldPackage);
-
+	InOutVisitedPackageStack.Add(InWorldPackage);
+	
 	// Most of the time if this will return an existing Container but when loading a new LevelInstance (Content Browser Drag&Drop, Create LI) 
 	// This will make sure Container exists.
-	UActorDescContainer* LevelContainer = ActorDescContainerInstanceManager.RegisterContainer(*InWorldPackage, GetWorld());
+	UActorDescContainer* LevelContainer = UActorDescContainerSubsystem::GetChecked().RegisterContainer(UActorDescContainer::FInitializeParams{ *InWorldPackage });
 	check(LevelContainer);
-	ON_SCOPE_EXIT{ ActorDescContainerInstanceManager.UnregisterContainer(LevelContainer); };
+	ON_SCOPE_EXIT{ UActorDescContainerSubsystem::GetChecked().UnregisterContainer(LevelContainer); };
 
 	// Lazy create filter for now
 	TArray<const FWorldPartitionActorDesc*> ContainerActorDescs;
@@ -200,7 +233,7 @@ FWorldPartitionActorFilter UWorldPartitionSubsystem::GetWorldPartitionActorFilte
 			check(!WorldDataLayersActorDesc);
 			WorldDataLayersActorDesc = static_cast<const FWorldDataLayersActorDesc*>(*ActorDescIt);
 		}
-		else if ((ActorDescIt->GetContainerFilterType() & InFilterTypes) != EWorldPartitionActorFilterType::None)
+		else if ((ActorDescIt->GetChildContainerFilterType() & InFilterTypes) != EWorldPartitionActorFilterType::None)
 		{
 			ContainerActorDescs.Add(*ActorDescIt);
 		}
@@ -222,20 +255,20 @@ FWorldPartitionActorFilter UWorldPartitionSubsystem::GetWorldPartitionActorFilte
 
 	for (const FWorldPartitionActorDesc* ContainerActorDesc : ContainerActorDescs)
 	{
-		TSet<FString> VisitedPackagesCopy(InOutVisitedPackages);
-
 		// Get World Default Filter
-		FWorldPartitionActorFilter* ChildFilter = new FWorldPartitionActorFilter(GetWorldPartitionActorFilterInternal(ContainerActorDesc->GetContainerPackage().ToString(), InFilterTypes, VisitedPackagesCopy));
+		FWorldPartitionActorFilter* ChildFilter = new FWorldPartitionActorFilter(GetWorldPartitionActorFilterInternal(ContainerActorDesc->GetChildContainerPackage().ToString(), InFilterTypes, InOutVisitedPackageStack));
 		ChildFilter->DisplayName = ContainerActorDesc->GetActorLabelOrName().ToString();
 
 		// Apply Filter to Default
-		if (const FWorldPartitionActorFilter* ContainerFilter = ContainerActorDesc->GetContainerFilter())
+		if (const FWorldPartitionActorFilter* ContainerFilter = ContainerActorDesc->GetChildContainerFilter())
 		{
 			ChildFilter->Override(*ContainerFilter);
 		}
 
 		Filter.AddChildFilter(ContainerActorDesc->GetGuid(), ChildFilter);
 	}
+
+	verify(InOutVisitedPackageStack.Remove(InWorldPackage));
 
 	return Filter;
 }
@@ -276,14 +309,20 @@ TMap<FActorContainerID, TSet<FGuid>> UWorldPartitionSubsystem::GetFilteredActors
 		{
 			return *FoundContainer;
 		}
-		
-		UActorDescContainer* RegisteredContainer = RegisterContainer(ContainerPackage);
+	
+		UActorDescContainer* RegisteredContainer = UActorDescContainerSubsystem::GetChecked().RegisterContainer(UActorDescContainer::FInitializeParams{ ContainerPackage });
 		RegisteredContainers.Add(ContainerPackage, RegisteredContainer);
 		return RegisteredContainer;
 	};
 
-	TFunction<void(const FActorContainerID&, const UActorDescContainer*)> ProcessContainers = [&FindOrRegisterContainer, &DataLayerFiltersPerContainer, &FilteredActors, &ProcessContainers, &InFilterTypes](const FActorContainerID& InContainerID, const UActorDescContainer* InContainer)
+	TFunction<void(const FActorContainerID&, const UActorDescContainer*, TSet<FName>&)> ProcessContainers = [&FindOrRegisterContainer, &DataLayerFiltersPerContainer, &FilteredActors, &ProcessContainers, &InFilterTypes](const FActorContainerID& InContainerID, const UActorDescContainer* InContainer, TSet<FName>& InOutVisitedPackageStack)
 	{
+		if(InOutVisitedPackageStack.Contains(InContainer->GetContainerPackage()))
+		{
+			return;
+		}
+		InOutVisitedPackageStack.Add(InContainer->GetContainerPackage());
+
 		const TMap<FSoftObjectPath, FWorldPartitionActorFilter::FDataLayerFilter>& DataLayerFilters = DataLayerFiltersPerContainer.FindChecked(InContainerID);
 		for (FActorDescList::TConstIterator<> ActorDescIt(InContainer); ActorDescIt; ++ActorDescIt)
 		{
@@ -313,25 +352,31 @@ TMap<FActorContainerID, TSet<FGuid>> UWorldPartitionSubsystem::GetFilteredActors
 				}
 			}
 
-			if ((ActorDescIt->GetContainerFilterType() & InFilterTypes) != EWorldPartitionActorFilterType::None)
+			if ((ActorDescIt->GetChildContainerFilterType() & InFilterTypes) != EWorldPartitionActorFilterType::None)
 			{
-				if (const FWorldPartitionActorFilter* ChildFilter = ActorDescIt->GetContainerFilter())
+				if (const FWorldPartitionActorFilter* ChildFilter = ActorDescIt->GetChildContainerFilter())
 				{
-					UActorDescContainer* ChildContainer = FindOrRegisterContainer(ActorDescIt->GetContainerPackage());
+					UActorDescContainer* ChildContainer = FindOrRegisterContainer(ActorDescIt->GetChildContainerPackage());
 					check(ChildContainer);
-					ProcessContainers(FActorContainerID(InContainerID, ActorDescIt->GetGuid()), ChildContainer);
+					ProcessContainers(FActorContainerID(InContainerID, ActorDescIt->GetGuid()), ChildContainer, InOutVisitedPackageStack);
 				}
 			}
 		}
+
+		verify(InOutVisitedPackageStack.Remove(InContainer->GetContainerPackage()));
 	};
 
 	UActorDescContainer* Container = FindOrRegisterContainer(*InWorldPackage);
-	ProcessContainers(InContainerID, Container);
+
+	TSet<FName> VisitedPackageStack;
+	ProcessContainers(InContainerID, Container, VisitedPackageStack);
+	verify(VisitedPackageStack.IsEmpty());
 	
 	// Unregister Containers
+	UActorDescContainerSubsystem& ContainerSubsystem = UActorDescContainerSubsystem::GetChecked();
 	for (auto& [Name, RegisteredContainer] : RegisteredContainers)
 	{
-		UnregisterContainer(RegisteredContainer);
+		ContainerSubsystem.UnregisterContainer(RegisteredContainer);
 	}
 
 	return FilteredActors;
@@ -345,87 +390,6 @@ bool UWorldPartitionSubsystem::IsRunningConvertWorldPartitionCommandlet()
 	return GetRunningCommandletClass() && GetRunningCommandletClass()->IsChildOf(WorldPartitionConvertCommandletClass);
 }
 
-void UWorldPartitionSubsystem::FActorDescContainerInstanceManager::FActorDescContainerInstance::AddReferencedObjects(FReferenceCollector& Collector)
-{
-	Collector.AddReferencedObject(Container);
-}
-
-void UWorldPartitionSubsystem::FActorDescContainerInstanceManager::FActorDescContainerInstance::UpdateBounds()
-{
-	Bounds.Init();
-	for (FActorDescList::TIterator<> ActorDescIt(Container); ActorDescIt; ++ActorDescIt)
-	{
-		// FActorDescContainerInstance are currently only used by FLevelInstanceActorDescs and so we don't consider actors that should exit only in the main world.
-		if (ActorDescIt->IsMainWorldOnly())
-		{
-			continue;
-		}
-
-		const FBox RuntimeBounds = ActorDescIt->GetRuntimeBounds();
-		if (RuntimeBounds.IsValid)
-		{
-			Bounds += RuntimeBounds;
-		}
-	}
-}
-
-void UWorldPartitionSubsystem::FActorDescContainerInstanceManager::AddReferencedObjects(FReferenceCollector& Collector)
-{
-	for (auto& [Name, ContainerInstance] : ActorDescContainers)
-	{
-		ContainerInstance.AddReferencedObjects(Collector);
-	}
-}
-
-UActorDescContainer* UWorldPartitionSubsystem::FActorDescContainerInstanceManager::RegisterContainer(FName PackageName, UWorld* InWorld)
-{
-	FActorDescContainerInstance* ExistingContainerInstance = &ActorDescContainers.FindOrAdd(PackageName);
-	UActorDescContainer* ActorDescContainer = ExistingContainerInstance->Container;
-
-	if (ExistingContainerInstance->RefCount++ == 0)
-	{
-		ActorDescContainer = NewObject<UActorDescContainer>(GetTransientPackage());
-		ExistingContainerInstance->Container = ActorDescContainer;
-
-		// This will potentially invalidate ExistingContainerInstance due to ActorDescContainers reallocation
-		ActorDescContainer->Initialize({ InWorld, PackageName });
-
-		ExistingContainerInstance = &ActorDescContainers.FindChecked(PackageName);
-		ExistingContainerInstance->UpdateBounds();
-	}
-
-	check(ActorDescContainer->IsTemplateContainer());
-	return ActorDescContainer;
-}
-
-void UWorldPartitionSubsystem::FActorDescContainerInstanceManager::UnregisterContainer(UActorDescContainer* Container)
-{
-	FName PackageName = Container->GetContainerPackage();
-	FActorDescContainerInstance& ExistingContainerInstance = ActorDescContainers.FindChecked(PackageName);
-
-	if (--ExistingContainerInstance.RefCount == 0)
-	{
-		ExistingContainerInstance.Container->Uninitialize();
-		ActorDescContainers.FindAndRemoveChecked(PackageName);
-	}
-}
-
-FBox UWorldPartitionSubsystem::FActorDescContainerInstanceManager::GetContainerBounds(FName PackageName) const
-{
-	if (const FActorDescContainerInstance* ActorDescContainerInstance = ActorDescContainers.Find(PackageName))
-	{
-		return ActorDescContainerInstance->Bounds;
-	}
-	return FBox(ForceInit);
-}
-
-void UWorldPartitionSubsystem::FActorDescContainerInstanceManager::UpdateContainerBounds(FName PackageName)
-{
-	if (FActorDescContainerInstance* ActorDescContainerInstance = ActorDescContainers.Find(PackageName))
-	{
-		ActorDescContainerInstance->UpdateBounds();
-	}
-}
 #endif
 
 void UWorldPartitionSubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -440,6 +404,13 @@ void UWorldPartitionSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	}
 #endif
 
+	if (UWorldPartition* WorldPartition = GetWorld()->GetWorldPartition())
+	{
+		if (WorldPartition->IsInitialized())
+		{
+			OnWorldPartitionInitialized(WorldPartition);
+		}
+	}
 	GetWorld()->OnWorldPartitionInitialized().AddUObject(this, &UWorldPartitionSubsystem::OnWorldPartitionInitialized);
 	GetWorld()->OnWorldPartitionUninitialized().AddUObject(this, &UWorldPartitionSubsystem::OnWorldPartitionUninitialized);
 	if (GetWorld()->IsGameWorld())
@@ -449,6 +420,8 @@ void UWorldPartitionSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 		FLevelStreamingDelegates::OnLevelStreamingTargetStateChanged.AddUObject(this, &UWorldPartitionSubsystem::OnLevelStreamingTargetStateChanged);
 		FLevelStreamingDelegates::OnLevelStreamingStateChanged.AddUObject(this, &UWorldPartitionSubsystem::OnLevelStreamingStateChanged);
 	}
+
+	OnWorldPartitionSubsystemInitialized.Broadcast(this, GetWorld());
 }
 
 void UWorldPartitionSubsystem::Deinitialize()
@@ -459,7 +432,9 @@ void UWorldPartitionSubsystem::Deinitialize()
 		Super::Deinitialize();
 		return;
 	}
-#endif 
+#endif
+
+	OnWorldPartitionSubsystemDeinitialized.Broadcast(this, GetWorld());
 
 	GetWorld()->OnWorldPartitionInitialized().RemoveAll(this);
 	GetWorld()->OnWorldPartitionUninitialized().RemoveAll(this);
@@ -477,8 +452,7 @@ void UWorldPartitionSubsystem::Deinitialize()
 	Super::Deinitialize();
 }
 
-// We allow creating UWorldPartitionSubsystem for inactive worlds as WorldPartition initialization is necessary 
-// because DataLayerManager is required to be initialized when duplicating a partitioned world.
+// WorldPartitionSubsystem is required for WorldPartition to be properly initialized (even when world is Inactive like during Cook or world duplication).
 bool UWorldPartitionSubsystem::DoesSupportWorldType(const EWorldType::Type WorldType) const
 {
 	return Super::DoesSupportWorldType(WorldType) || WorldType == EWorldType::Inactive || WorldType == EWorldType::EditorPreview;
@@ -528,8 +502,8 @@ void UWorldPartitionSubsystem::OnWorldPartitionUninitialized(UWorldPartition* In
 	const UWorld* OwningWorld = GetWorld();
 	if (OwningWorld->IsGameWorld())
 	{
-		TOptional<TSet<TWeakObjectPtr<ULevelStreaming>>*> PendingStreamingLevels;
-		auto GetPendingStreamingLevels = [this, InWorldPartition, &PendingStreamingLevels]() -> TSet<TWeakObjectPtr<ULevelStreaming>>&
+		TOptional<TSet<TWeakObjectPtr<UWorldPartitionLevelStreamingDynamic>>*> PendingStreamingLevels;
+		auto GetPendingStreamingLevels = [this, InWorldPartition, &PendingStreamingLevels]() -> TSet<TWeakObjectPtr<UWorldPartitionLevelStreamingDynamic>>&
 		{
 			if (!PendingStreamingLevels.IsSet())
 			{
@@ -538,14 +512,15 @@ void UWorldPartitionSubsystem::OnWorldPartitionUninitialized(UWorldPartition* In
 			return *PendingStreamingLevels.GetValue();
 		};
 
-		const UWorld* WorldPartitionOuterWorld = InWorldPartition->GetTypedOuter<UWorld>();
-		if (WorldPartitionOuterWorld != OwningWorld)
+		if (InWorldPartition->GetTypedOuter<UWorld>() != OwningWorld)
 		{
+			const FSoftObjectPath WorldPartition(InWorldPartition);
 			for (ULevelStreaming* StreamingLevel : OwningWorld->GetStreamingLevels())
 			{
-				if (StreamingLevel->GetStreamingWorld() == WorldPartitionOuterWorld)
+				UWorldPartitionLevelStreamingDynamic* WorldPartitionStreamingLevel = Cast<UWorldPartitionLevelStreamingDynamic>(StreamingLevel);
+				if (WorldPartitionStreamingLevel && (WorldPartitionStreamingLevel->GetOuterWorldPartition() == WorldPartition))
 				{
-					GetPendingStreamingLevels().Add(StreamingLevel);
+					GetPendingStreamingLevels().Add(WorldPartitionStreamingLevel);
 				}
 			}
 		}
@@ -571,7 +546,7 @@ void UWorldPartitionSubsystem::OnWorldPartitionUninitialized(UWorldPartition* In
 
 bool UWorldPartitionSubsystem::HasUninitializationPendingStreamingLevels(const UWorldPartition* InWorldPartition) const
 {
-	if (const TSet<TWeakObjectPtr<ULevelStreaming>>* PendingStreamingLevels = InWorldPartition ? WorldPartitionUninitializationPendingStreamingLevels.Find(FSoftObjectPath(InWorldPartition)) : nullptr)
+	if (const TSet<TWeakObjectPtr<UWorldPartitionLevelStreamingDynamic>>* PendingStreamingLevels = InWorldPartition ? WorldPartitionUninitializationPendingStreamingLevels.Find(FSoftObjectPath(InWorldPartition)) : nullptr)
 	{
 		if (ensure(!PendingStreamingLevels->IsEmpty()))
 		{
@@ -644,16 +619,17 @@ void UWorldPartitionSubsystem::OnLevelStreamingStateChanged(UWorld* InWorld, con
 
 	if (NewState == ELevelStreamingState::Removed)
 	{
-		const UWorld* OuterWorld = InStreamingLevel->GetStreamingWorld();
-		if (const UWorldPartition* OuterWorldPartition = OuterWorld && OuterWorld->IsGameWorld() ? OuterWorld->GetWorldPartition() : nullptr)
+		if (const UWorldPartitionLevelStreamingDynamic* WorldPartitionStreamingLevel = Cast<const UWorldPartitionLevelStreamingDynamic>(InStreamingLevel))
 		{
-			if (TSet<TWeakObjectPtr<ULevelStreaming>>* PendingStreamingLevels = WorldPartitionUninitializationPendingStreamingLevels.Find(FSoftObjectPath(OuterWorldPartition)))
+			check(InWorld->IsGameWorld());
+			const FSoftObjectPath& WorldPartition = WorldPartitionStreamingLevel->GetOuterWorldPartition();
+			if (TSet<TWeakObjectPtr<UWorldPartitionLevelStreamingDynamic>>* PendingStreamingLevels = WorldPartitionUninitializationPendingStreamingLevels.Find(WorldPartition))
 			{
-				if (PendingStreamingLevels->Remove(InStreamingLevel))
+				if (PendingStreamingLevels->Remove(WorldPartitionStreamingLevel))
 				{
 					if (PendingStreamingLevels->IsEmpty())
 					{
-						WorldPartitionUninitializationPendingStreamingLevels.Remove(OuterWorldPartition);
+						WorldPartitionUninitializationPendingStreamingLevels.Remove(WorldPartition);
 					}
 				}
 			}
@@ -786,12 +762,11 @@ bool UWorldPartitionSubsystem::IsStreamingCompleted(const IWorldPartitionStreami
 {
 	// Convert specified/optional streaming source provider to a world partition 
 	// streaming source and pass it along to each registered world partition
-	TArray<FWorldPartitionStreamingSource> LocalStreamingSources;
-	TArray<FWorldPartitionStreamingSource>* StreamingSourcesPtr = nullptr;
+	TArray<FWorldPartitionStreamingSource> WorldStreamingSources;
+
 	if (InStreamingSourceProvider)
 	{
-		StreamingSourcesPtr = &LocalStreamingSources;
-		if (!InStreamingSourceProvider->GetStreamingSources(LocalStreamingSources))
+		if (!InStreamingSourceProvider->GetStreamingSources(WorldStreamingSources))
 		{
 			return true;
 		}
@@ -799,7 +774,21 @@ bool UWorldPartitionSubsystem::IsStreamingCompleted(const IWorldPartitionStreami
 
 	for (UWorldPartition* RegisteredWorldPartition : RegisteredWorldPartitions)
 	{
-		if (!RegisteredWorldPartition->IsStreamingCompleted(StreamingSourcesPtr))
+		TArray<FWorldPartitionStreamingSource> LocalStreamingSources;
+
+		if (InStreamingSourceProvider)
+		{
+			const FTransform WorldToLocal = RegisteredWorldPartition->GetInstanceTransform().Inverse();
+			
+			LocalStreamingSources = WorldStreamingSources;
+			for (FWorldPartitionStreamingSource& StreamingSource : LocalStreamingSources)
+			{
+				StreamingSource.Location = WorldToLocal.TransformPosition(StreamingSource.Location);
+				StreamingSource.Rotation = WorldToLocal.TransformRotation(StreamingSource.Rotation.Quaternion()).Rotator();
+			}
+		}
+
+		if (!RegisteredWorldPartition->IsStreamingCompleted(InStreamingSourceProvider ? &LocalStreamingSources : nullptr))
 		{
 			return false;
 		}
@@ -811,7 +800,16 @@ bool UWorldPartitionSubsystem::IsStreamingCompleted(EWorldPartitionRuntimeCellSt
 {
 	for (UWorldPartition* RegisteredWorldPartition : RegisteredWorldPartitions)
 	{
-		if (!RegisteredWorldPartition->IsStreamingCompleted(QueryState, QuerySources, bExactState))
+		const FTransform WorldToLocal = RegisteredWorldPartition->GetInstanceTransform().Inverse();
+
+		TArray<FWorldPartitionStreamingQuerySource> LocalQuerySources = QuerySources;
+		for (FWorldPartitionStreamingQuerySource& QuerySource : LocalQuerySources)
+		{
+			QuerySource.Location = WorldToLocal.TransformPosition(QuerySource.Location);
+			QuerySource.Rotation = WorldToLocal.TransformRotation(QuerySource.Rotation.Quaternion()).Rotator();
+		}
+
+		if (!RegisteredWorldPartition->IsStreamingCompleted(QueryState, LocalQuerySources, bExactState))
 		{
 			return false;
 		}
@@ -820,11 +818,23 @@ bool UWorldPartitionSubsystem::IsStreamingCompleted(EWorldPartitionRuntimeCellSt
 	return true;
 }
 
+void UWorldPartitionSubsystem::DumpWorldPartitions(FOutputDevice& OutputDevice) const
+{
+	if (RegisteredWorldPartitions.Num() > 0)
+	{
+		OutputDevice.Logf(TEXT("Registered World Partitions for %s:"), *GetWorld()->GetPathName());
+		TArray<FString> WorldPartitions;
+		Algo::ForEach(RegisteredWorldPartitions, [&WorldPartitions](const UWorldPartition* WorldPartition) { WorldPartitions.Add(WorldPartition->GetPathName()); });
+		WorldPartitions.Sort();
+		Algo::ForEach(WorldPartitions, [&OutputDevice](const FString& WorldPartition) { OutputDevice.Logf(TEXT("  - %s"), *WorldPartition); });
+	}
+}
+
 void UWorldPartitionSubsystem::DumpStreamingSources(FOutputDevice& OutputDevice) const
 {
 	if (StreamingSources.Num() > 0)
 	{
-		OutputDevice.Logf(TEXT("Streaming Sources:"));
+		OutputDevice.Logf(TEXT("Streaming Sources for %s:"), *GetWorld()->GetPathName());
 		for (const FWorldPartitionStreamingSource& StreamingSource : StreamingSources)
 		{
 			OutputDevice.Logf(TEXT("  - %s: %s"), *StreamingSource.Name.ToString(), *StreamingSource.ToString());
@@ -901,7 +911,9 @@ void UWorldPartitionSubsystem::UpdateStreamingSources()
 
 	if (!bIsUsingReplayStreamingSources)
 	{
-		if (!IsServer(World) || HasAnyWorldPartitionServerStreamingEnabled() || AWorldPartitionReplay::IsRecordingEnabled(World))
+		const bool bIsServer = IsServer(World);
+		const bool bServerStreamingEnabled = HasAnyWorldPartitionServerStreamingEnabled();
+		if (!bIsServer || bServerStreamingEnabled || AWorldPartitionReplay::IsRecordingEnabled(World))
 		{
 			bool bAllowPlayerControllerStreamingSources = true;
 #if WITH_EDITOR
@@ -930,6 +942,26 @@ void UWorldPartitionSubsystem::UpdateStreamingSources()
 				}
 			}
 		}
+
+		// Make sure the server streaming always loads a bit more than the client.
+		// This is necessary to avoid making the client wait indefinitly for the server to finish loading cells
+		// that are not even requested by the server because of a slight difference between client and server
+		// streaming source locations / rotation.
+		// Network quantization and world partition location/rotation quantization can contribute to this difference.
+		if (bIsServer && bServerStreamingEnabled)
+		{
+			// Double location quantization for safety
+			const int32 LocationQuantization = UWorldPartitionStreamingPolicy::IsUpdateStreamingOptimEnabled() && (FWorldPartitionStreamingSource::GetLocationQuantization() > 0.f) ? FWorldPartitionStreamingSource::GetLocationQuantization() : 0.f;
+			const float ExtraRadius = FMath::Max<int32>(FMath::Max<int32>(GServerStreamingSourceMinimumExtraRadius, LocationQuantization * 2), 0);
+			// Double rotation quantization for safety
+			const int32 RotationQuantization = UWorldPartitionStreamingPolicy::IsUpdateStreamingOptimEnabled() && (FWorldPartitionStreamingSource::GetRotationQuantization() > 0.f) ? FWorldPartitionStreamingSource::GetRotationQuantization() : 0.f;
+			const float ExtraAngle = FMath::Max<int32>(FMath::Max<int32>(GServerStreamingSourceMinimumExtraAngle, RotationQuantization * 2), 0);
+			for (FWorldPartitionStreamingSource& StreamingSource : StreamingSources)
+			{
+				FSetStreamingSourceExtraRadius SetExtraRadius(StreamingSource, ExtraRadius);
+				FSetStreamingSourceExtraAngle SetExtraAngle(StreamingSource, ExtraAngle);
+			}
+		}
 	}
 
 	for (auto& Pair : StreamingSourcesVelocity)
@@ -938,7 +970,7 @@ void UWorldPartitionSubsystem::UpdateStreamingSources()
 	}
 
 	StreamingSourcesHash = 0;
-	const float CurrentTime = World->GetTimeSeconds();
+	const double CurrentTime = World->GetTimeSeconds();
 	for (FWorldPartitionStreamingSource& StreamingSource : StreamingSources)
 	{
 		// Update streaming sources velocity
@@ -1042,6 +1074,13 @@ bool UWorldPartitionSubsystem::IncrementalUpdateStreamingState()
 	return IncrementalUpdateWorldPartitions.IsEmpty();
 }
 
+static bool IsHighPriorityLoading(const UWorld* InWorld)
+{
+	const AWorldSettings* WorldSettings = InWorld ? InWorld->GetWorldSettings(false, false) : nullptr;
+	const bool bHighPriorityLoading = ensure(WorldSettings) ? (WorldSettings->bHighPriorityLoadingLocal || WorldSettings->bHighPriorityLoading) : false;
+	return bHighPriorityLoading;
+}
+
 void UWorldPartitionSubsystem::UpdateStreamingStateInternal(const UWorld* InWorld, UWorldPartition* InWorldPartition)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(UWorldPartitionSubsystem::UpdateStreamingState);
@@ -1055,7 +1094,7 @@ void UWorldPartitionSubsystem::UpdateStreamingStateInternal(const UWorld* InWorl
 	// Subsystem can be null during EndPlayMap. WorldPartition::Uninitialize will still call UpdateStreamingStateInternal to cleanup it's streaming levels
 	UWorldPartitionSubsystem* WorldPartitionSubsystem = UWorld::GetSubsystem<UWorldPartitionSubsystem>(World);
 	check(WorldPartitionSubsystem || InWorldPartition);
-	if (!InWorldPartition && WorldPartitionSubsystem->RegisteredWorldPartitions.IsEmpty())
+	if (!InWorldPartition && (WorldPartitionSubsystem == nullptr || WorldPartitionSubsystem->RegisteredWorldPartitions.IsEmpty()))
 	{
 		return;
 	}
@@ -1082,11 +1121,13 @@ void UWorldPartitionSubsystem::UpdateStreamingStateInternal(const UWorld* InWorl
 	const bool bIsServer = IsServer(InWorld);
 	const bool bServerStreamingEnabled = bIsServer && WorldPartitionSubsystem && WorldPartitionSubsystem->HasAnyWorldPartitionServerStreamingEnabled();
 	const int32 WorldPartitionUpdateCount = InWorldPartition ? 1 : WorldPartitionSubsystem->RegisteredWorldPartitions.Num();
+
+	const bool bForceDisableIncrementalUpdate = IsHighPriorityLoading(InWorld) || !InWorld->bMatchStarted || InWorld->IsInSeamlessTravel() || InWorld->GetIsInBlockTillLevelStreamingCompleted();
 	const bool bIncrementalUpdate = (GUpdateStreamingStateTimeLimit > 0.f) &&
 									(WorldPartitionUpdateCount > 1) &&
-									(!bIsServer || bServerStreamingEnabled) &&
-									!InWorld->GetIsInBlockTillLevelStreamingCompleted();
-	
+									!bForceDisableIncrementalUpdate &&
+									(!bIsServer || bServerStreamingEnabled); // No increment on server except if server streaming is enabled
+
 	// Update streaming state of all registered world partitions
 	if (bIncrementalUpdate)
 	{
@@ -1252,7 +1293,7 @@ void UWorldPartitionSubsystem::Draw(UCanvas* Canvas, class APlayerController* PC
 		const FVector2D PartitionCanvasSize = FVector2D(CanvasMaxScreenSize.X, CanvasMaxScreenSize.Y);
 
 		FBox2D WorldRegion(ForceInit);
-		WorldPartitionsDraw2DContext.SetNum(RegisteredWorldPartitions.Num(), false);
+		WorldPartitionsDraw2DContext.SetNum(RegisteredWorldPartitions.Num(), EAllowShrinking::No);
 		Algo::ForEach(WorldPartitionsDraw2DContext, [&](FWorldPartitionDraw2DContext& Context) { if (const FBox2D& Bounds = Context.GetDesiredWorldBounds(); Bounds.bIsValid) { WorldRegion += Bounds; } });
 		if (!WorldRegion.bIsValid)
 		{
@@ -1330,6 +1371,7 @@ void UWorldPartitionSubsystem::Draw(UCanvas* Canvas, class APlayerController* PC
 			if (IsIncrementalUnhashPending()) { StatusText += TEXT("(Unhashing) "); }
 			if (IsAsyncLoading()) { StatusText += TEXT("(AsyncLoading) "); }
 			if (StatusText.IsEmpty()) { StatusText = TEXT("(Idle) "); }
+			if (IsHighPriorityLoading(GetWorld())) { StatusText += TEXT("(HighPriorityLoading) "); }
 
 			FString DebugWorldText = FString::Printf(TEXT("(%s)"), *GetDebugStringForWorld(GetWorld()));
 			if (SingleWorldPartition && SingleWorldPartition->IsServer())
@@ -1494,49 +1536,56 @@ void UWorldPartitionSubsystem::DrawStreamingStatusLegend(class UCanvas* Canvas, 
 FStreamingSourceVelocity::FStreamingSourceVelocity(const FName& InSourceName)
 	: bIsValid(false)
 	, SourceName(InSourceName)
-	, LastIndex(INDEX_NONE)
 	, LastUpdateTime(-1.0)
-	, VelocityHistorySum(0.f)
-{
-	VelocityHistory.SetNumZeroed(VELOCITY_HISTORY_SAMPLE_COUNT);
-}
+	, LastPosition(FVector::Zero())
+{}
 
-float FStreamingSourceVelocity::GetAverageVelocity(const FVector& NewPosition, const float CurrentTime)
+FVector FStreamingSourceVelocity::GetAverageVelocity(const FVector& NewPosition, double CurrentTime)
 {
 	bIsValid = true;
 
-	const double TeleportDistance = 100;
-	const float MaxDeltaSeconds = 5.f;
-	const bool bIsFirstCall = (LastIndex == INDEX_NONE);
-	const float DeltaSeconds = bIsFirstCall ? 0.f : (CurrentTime - LastUpdateTime);
-	const double Distance = bIsFirstCall ? 0.f : ((NewPosition - LastPosition) * 0.01).Size();
-	if (bIsFirstCall)
-	{
-		UE_LOG(LogWorldPartition, Verbose, TEXT("New Streaming Source: %s -> Position: %s"), *SourceName.ToString(), *NewPosition.ToString());
-		LastIndex = 0;
-	}
+	const bool bNewSource = (LastUpdateTime <= 0.0);
+	const double DeltaSeconds = bNewSource ? 1.0 : (CurrentTime - LastUpdateTime);
 
-	ON_SCOPE_EXIT
+	if (DeltaSeconds <= 0.0)
+	{
+		UE_LOG(LogWorldPartition, Verbose, TEXT("Detected Invalid Delta Time: %s"), *SourceName.ToString());
+		AvgVelocity = FVector::Zero();
+	}
+	else
 	{
 		LastUpdateTime = CurrentTime;
-		LastPosition = NewPosition;
-	};
 
-	// Handle invalid cases
-	if (bIsFirstCall || (DeltaSeconds <= 0.f) || (DeltaSeconds > MaxDeltaSeconds) || (Distance > TeleportDistance))
-	{
-		UE_CLOG(Distance > TeleportDistance, LogWorldPartition, Verbose, TEXT("Detected Streaming Source Teleport: %s -> Last Position: %s -> New Position: %s"), *SourceName.ToString(), *LastPosition.ToString(), *NewPosition.ToString());
-		return 0.f;
+		const FVector AbsMovement = (NewPosition - LastPosition);
+		const FVector AbsVelocity = AbsMovement / DeltaSeconds;
+		LastPosition = NewPosition;
+
+		const double TeleportDistance = 10000;
+		const double MaxDeltaSeconds = 5.0;
+		const double Distance = AbsMovement.Size();
+
+		if (bNewSource)
+		{
+			UE_LOG(LogWorldPartition, Verbose, TEXT("New Streaming Source: %s -> Position: %s"), *SourceName.ToString(), *NewPosition.ToString());
+			AvgVelocity = FVector::Zero();
+		}
+		else if (Distance > TeleportDistance)
+		{
+			UE_LOG(LogWorldPartition, Verbose, TEXT("Detected Streaming Source Teleport: %s -> Last Position: %s -> New Position: %s"), *SourceName.ToString(), *LastPosition.ToString(), *NewPosition.ToString());
+			AvgVelocity = FVector::Zero();
+		}
+		else if  (DeltaSeconds > MaxDeltaSeconds)
+		{
+			UE_LOG(LogWorldPartition, Verbose, TEXT("Detected Inactive Streaming Source: %s -> Last Position: %s -> New Position: %s"), *SourceName.ToString(), *LastPosition.ToString(), *NewPosition.ToString());
+			AvgVelocity = FVector::Zero();
+		}
+		else
+		{
+			// Compute the new value in a weighted moving average series
+			const double AvgWeight = FMath::Clamp(DeltaSeconds * 100, 0, 1);
+			AvgVelocity = AvgVelocity * (1.0 - AvgWeight) + AbsVelocity * AvgWeight;
+		}
 	}
 
-	// Compute velocity (m/s)
-	ensureMsgf(Distance < MAX_flt, TEXT("Invalid distance %lf computed using position %s and position %s"), Distance, *NewPosition.ToString(), *LastPosition.ToString());
-	const float Velocity = (float)Distance / DeltaSeconds;
-	// Update velocity history buffer and sum
-	LastIndex = (LastIndex + 1) % VELOCITY_HISTORY_SAMPLE_COUNT;
-	VelocityHistorySum = FMath::Max<float>(0.f, (VelocityHistorySum + Velocity - VelocityHistory[LastIndex]));
-	VelocityHistory[LastIndex] = Velocity;
-
-	// return average
-	return (VelocityHistorySum / (float)VELOCITY_HISTORY_SAMPLE_COUNT);
+	return AvgVelocity;
 }

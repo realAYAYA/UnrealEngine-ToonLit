@@ -55,6 +55,7 @@ enum ELauncherVersion
 	LAUNCHERSERVICES_ADDEDORIGINALRELEASEVERSION = 33,
 	LAUNCHERSERVICES_ADDBUILDTARGETNAME = 34,
 	LAUNCHERSERVICED_ADDEDRETAINSTAGEDDIRECTORY = 35,
+	LAUNCHERSERVICED_REMOVEDRETAINSTAGEDDIRECTORY = 36,
 	//ADD NEW STUFF HERE
 
 
@@ -75,7 +76,7 @@ inline bool TryGetDefaultTargetName(const FString& ProjectFile, EBuildTargetType
 	const TArray<FTargetInfo>& Targets = FDesktopPlatformModule::Get()->GetTargetsForProject(ProjectFile);
 	for (const FTargetInfo& Target : Targets)
 	{
-		if (Target.Type == TargetType)
+		if (Target.Type == TargetType && Target.DefaultTarget.Get(true))
 		{
 			OutTargetName = Target.Name;
 			return true;
@@ -168,26 +169,26 @@ public:
 		int32 Version = LAUNCHERSERVICES_SIMPLEFILEFORMATCHANGE;
 
 		Writer.WriteObjectStart();
-		Writer.WriteValue("Version", Version);
-		Writer.WriteValue("DeviceName", DeviceName);
-		Writer.WriteValue("Variant", Variant.ToString());
-		Writer.WriteValue("BuildConfiguration", (int32)BuildConfiguration);
-		Writer.WriteValue("CookMode", CookMode);
+		Writer.WriteValue(TEXT("Version"), Version);
+		Writer.WriteValue(TEXT("DeviceName"), DeviceName);
+		Writer.WriteValue(TEXT("Variant"), Variant.ToString());
+		Writer.WriteValue(TEXT("BuildConfiguration"), (int32)BuildConfiguration);
+		Writer.WriteValue(TEXT("CookMode"), CookMode);
 		Writer.WriteObjectEnd();
 	}
 
 	virtual bool Load(const FJsonObject& Object) override
 	{
-		int32 Version = (int32)Object.GetNumberField("Version");
+		int32 Version = (int32)Object.GetNumberField(TEXT("Version"));
 		if (Version < LAUNCHERSERVICES_SIMPLEFILEFORMATCHANGE)
 		{
 			return false;
 		}
 
-		DeviceName = Object.GetStringField("DeviceName");
-		Variant = *(Object.GetStringField("Variant"));
-		BuildConfiguration = (EBuildConfiguration)((int32)Object.GetNumberField("BuildConfiguration"));
-		CookMode = (TEnumAsByte<ELauncherProfileCookModes::Type>)((int32)Object.GetNumberField("CookMode"));
+		DeviceName = Object.GetStringField(TEXT("DeviceName"));
+		Variant = *(Object.GetStringField(TEXT("Variant")));
+		BuildConfiguration = (EBuildConfiguration)((int32)Object.GetNumberField(TEXT("BuildConfiguration")));
+		CookMode = (TEnumAsByte<ELauncherProfileCookModes::Type>)((int32)Object.GetNumberField(TEXT("CookMode")));
 
 		return true;
 	}
@@ -577,14 +578,6 @@ public:
 	virtual void SetReferenceContainerCryptoKeysFileName(const FString& InReferenceContainerCryptoKeysFileName) override
 	{
 		ReferenceContainerCryptoKeysFileName = InReferenceContainerCryptoKeysFileName;
-	}
-	virtual bool IsRetainStagedDirectory() const override
-	{
-		return bRetainStagedDirectory;
-	}
-	virtual void SetRetainStagedDirectory(bool bInRetainStagedDirectory) override
-	{
-		bRetainStagedDirectory = bInRetainStagedDirectory;
 	}
 
 	virtual ELauncherProfileDeploymentModes::Type GetDeploymentMode( ) const override
@@ -1106,10 +1099,11 @@ public:
 			Archive << BuildTargetName;
 		}
 
-		if (Version >= LAUNCHERSERVICED_ADDEDRETAINSTAGEDDIRECTORY)
+		if (Version >= LAUNCHERSERVICED_ADDEDRETAINSTAGEDDIRECTORY && Version < LAUNCHERSERVICED_REMOVEDRETAINSTAGEDDIRECTORY)
 		{
+			bool bRetainStagedDirectory = false;
 			Archive << bRetainStagedDirectory;
-		}		
+		}
 
 		DefaultLaunchRole->Serialize(Archive);
 
@@ -1241,7 +1235,6 @@ public:
 		Writer.WriteValue("BasedOnReleaseVersionName", BasedOnReleaseVersionName);
 		Writer.WriteValue("ReferenceContainerGlobalFileName", ReferenceContainerGlobalFileName);
 		Writer.WriteValue("ReferenceContainerCryptoKeysFileName", ReferenceContainerCryptoKeysFileName);
-		Writer.WriteValue("RetainStagedDirectory", bRetainStagedDirectory);
 		Writer.WriteValue("OriginalReleaseVersionName", OriginalReleaseVersionName);
 		Writer.WriteValue("CreateDLC", CreateDLC);
 		Writer.WriteValue("DLCName", DLCName);
@@ -1582,12 +1575,6 @@ public:
 			}
 		}
 
-		if (bIsStaging)
-		{
-			// (only iostore uses this)
-			Writer.WriteValue("RetainStagedDirectory", IsRetainStagedDirectory());
-		}
-
 		/*
 		"script", ""
 		"project", ""
@@ -1795,27 +1782,27 @@ public:
 
 	virtual bool Load(const FJsonObject& Object) override
 	{
-		int32 Version = (int32)Object.GetNumberField("Version");
+		int32 Version = (int32)Object.GetNumberField(TEXT("Version"));
 		if (Version < LAUNCHERSERVICES_FILEFORMATCHANGE || Version > LAUNCHERSERVICES_FINAL)
 		{
 			return false;
 		}
 
-		FGuid::Parse(Object.GetStringField("Id"), Id);
-		Name = Object.GetStringField("Name");
-		Description = Object.GetStringField("Description");
-		BuildConfiguration = (EBuildConfiguration)((int32)Object.GetNumberField("BuildConfiguration"));
-		ProjectSpecified = Object.GetBoolField("ProjectSpecified");
-		ShareableProjectPath = Object.GetStringField("ShareableProjectPath");
-		CookConfiguration = (EBuildConfiguration)((int32)Object.GetNumberField("CookConfiguration"));
-		CookIncremental = Object.GetBoolField("CookIncremental");
-		CookOptions = Object.GetStringField("CookOptions");
-		CookMode = (TEnumAsByte<ELauncherProfileCookModes::Type>)((int32)Object.GetNumberField("CookMode"));
-		CookUnversioned = Object.GetBoolField("CookUnversioned");
+		FGuid::Parse(Object.GetStringField(TEXT("Id")), Id);
+		Name = Object.GetStringField(TEXT("Name"));
+		Description = Object.GetStringField(TEXT("Description"));
+		BuildConfiguration = (EBuildConfiguration)((int32)Object.GetNumberField(TEXT("BuildConfiguration")));
+		ProjectSpecified = Object.GetBoolField(TEXT("ProjectSpecified"));
+		ShareableProjectPath = Object.GetStringField(TEXT("ShareableProjectPath"));
+		CookConfiguration = (EBuildConfiguration)((int32)Object.GetNumberField(TEXT("CookConfiguration")));
+		CookIncremental = Object.GetBoolField(TEXT("CookIncremental"));
+		CookOptions = Object.GetStringField(TEXT("CookOptions"));
+		CookMode = (TEnumAsByte<ELauncherProfileCookModes::Type>)((int32)Object.GetNumberField(TEXT("CookMode")));
+		CookUnversioned = Object.GetBoolField(TEXT("CookUnversioned"));
 
 		CookedCultures.Reset();
 		const TArray<TSharedPtr<FJsonValue>>* Cultures = NULL;
-		if (Object.TryGetArrayField("CookedCultures", Cultures))
+		if (Object.TryGetArrayField(TEXT("CookedCultures"), Cultures))
 		{
 			for (auto Value : *Cultures)
 			{
@@ -1825,7 +1812,7 @@ public:
 
 		CookedMaps.Reset();
 		const TArray<TSharedPtr<FJsonValue>>* Maps = NULL;
-		if (Object.TryGetArrayField("CookedMaps", Maps))
+		if (Object.TryGetArrayField(TEXT("CookedMaps"), Maps))
 		{
 			for (auto Value : *Maps)
 			{
@@ -1835,7 +1822,7 @@ public:
 
 		CookedPlatforms.Reset();
 		const TArray<TSharedPtr<FJsonValue>>* Platforms = NULL;
-		if (Object.TryGetArrayField("CookedPlatforms", Platforms))
+		if (Object.TryGetArrayField(TEXT("CookedPlatforms"), Platforms))
 		{
 			for (auto Value : *Platforms)
 			{
@@ -1843,33 +1830,33 @@ public:
 			}
 		}
 
-		DeployStreamingServer = Object.GetBoolField("DeployStreamingServer");
-		DeployWithUnrealPak = Object.GetBoolField("DeployWithUnrealPak");
-		FGuid::Parse(Object.GetStringField("DeployedDeviceGroupId"), DeployedDeviceGroupId);
-		DeploymentMode = (TEnumAsByte<ELauncherProfileDeploymentModes::Type>)((int32)Object.GetNumberField("DeploymentMode"));
-		HideFileServerWindow = Object.GetBoolField("HideFileServerWindow");
-		LaunchMode = (TEnumAsByte<ELauncherProfileLaunchModes::Type>)((int32)Object.GetNumberField("LaunchMode"));
-		PackagingMode = (TEnumAsByte<ELauncherProfilePackagingModes::Type>)((int32)Object.GetNumberField("PackagingMode"));
-		PackageDir = Object.GetStringField("PackageDir");
+		DeployStreamingServer = Object.GetBoolField(TEXT("DeployStreamingServer"));
+		DeployWithUnrealPak = Object.GetBoolField(TEXT("DeployWithUnrealPak"));
+		FGuid::Parse(Object.GetStringField(TEXT("DeployedDeviceGroupId")), DeployedDeviceGroupId);
+		DeploymentMode = (TEnumAsByte<ELauncherProfileDeploymentModes::Type>)((int32)Object.GetNumberField(TEXT("DeploymentMode")));
+		HideFileServerWindow = Object.GetBoolField(TEXT("HideFileServerWindow"));
+		LaunchMode = (TEnumAsByte<ELauncherProfileLaunchModes::Type>)((int32)Object.GetNumberField(TEXT("LaunchMode")));
+		PackagingMode = (TEnumAsByte<ELauncherProfilePackagingModes::Type>)((int32)Object.GetNumberField(TEXT("PackagingMode")));
+		PackageDir = Object.GetStringField(TEXT("PackageDir"));
 
 		int64 BuildModeValue;
-		if (Object.TryGetNumberField("BuildMode", BuildModeValue))
+		if (Object.TryGetNumberField(TEXT("BuildMode"), BuildModeValue))
 		{
 			BuildMode = (TEnumAsByte<ELauncherProfileBuildModes::Type>)(int32)BuildModeValue;
 		}
 		else
 		{
-			BuildMode = Object.GetBoolField("BuildGame") ? ELauncherProfileBuildModes::Build : ELauncherProfileBuildModes::DoNotBuild;
+			BuildMode = Object.GetBoolField(TEXT("BuildGame")) ? ELauncherProfileBuildModes::Build : ELauncherProfileBuildModes::DoNotBuild;
 		}
 
-		ForceClose = Object.GetBoolField("ForceClose");
-		Timeout = (uint32)Object.GetNumberField("Timeout");
-		Compressed = Object.GetBoolField("Compressed");
+		ForceClose = Object.GetBoolField(TEXT("ForceClose"));
+		Timeout = (uint32)Object.GetNumberField(TEXT("Timeout"));
+		Compressed = Object.GetBoolField(TEXT("Compressed"));
 
 		if (Version >= LAUNCHERSERVICES_ADDEDENCRYPTINIFILES)
 		{
-			EncryptIniFiles = Object.GetBoolField("EncryptIniFiles");
-			ForDistribution = Object.GetBoolField("ForDistribution");
+			EncryptIniFiles = Object.GetBoolField(TEXT("EncryptIniFiles"));
+			ForDistribution = Object.GetBoolField(TEXT("ForDistribution"));
 		}
 		else
 		{
@@ -1877,15 +1864,15 @@ public:
 			ForDistribution = false;
 		}
 
-		DefaultDeployPlatform = *(Object.GetStringField("DeployPlatform"));
-		bSkipCookingEditorContent = Object.GetBoolField("SkipCookingEditorContent");
-		DeployIncremental = Object.GetBoolField("DeployIncremental");
-		GeneratePatch = Object.GetBoolField("GeneratePatch");
+		DefaultDeployPlatform = *(Object.GetStringField(TEXT("DeployPlatform")));
+		bSkipCookingEditorContent = Object.GetBoolField(TEXT("SkipCookingEditorContent"));
+		DeployIncremental = Object.GetBoolField(TEXT("DeployIncremental"));
+		GeneratePatch = Object.GetBoolField(TEXT("GeneratePatch"));
 
 		if (Version >= LAUNCHERSERVICES_ADDEDMULTILEVELPATCHING)
 		{
-			AddPatchLevel = Object.GetBoolField("AddPatchLevel");
-			StageBaseReleasePaks = Object.GetBoolField("StageBaseReleasePaks");
+			AddPatchLevel = Object.GetBoolField(TEXT("AddPatchLevel"));
+			StageBaseReleasePaks = Object.GetBoolField(TEXT("StageBaseReleasePaks"));
 		}
 		else
 		{
@@ -1893,15 +1880,15 @@ public:
 			StageBaseReleasePaks = false;
 		}
 
-		DLCIncludeEngineContent = Object.GetBoolField("DLCIncludeEngineContent");
-		CreateReleaseVersion = Object.GetBoolField("CreateReleaseVersion");
-		CreateReleaseVersionName = Object.GetStringField("CreateReleaseVersionName");
-		BasedOnReleaseVersionName = Object.GetStringField("BasedOnReleaseVersionName");
+		DLCIncludeEngineContent = Object.GetBoolField(TEXT("DLCIncludeEngineContent"));
+		CreateReleaseVersion = Object.GetBoolField(TEXT("CreateReleaseVersion"));
+		CreateReleaseVersionName = Object.GetStringField(TEXT("CreateReleaseVersionName"));
+		BasedOnReleaseVersionName = Object.GetStringField(TEXT("BasedOnReleaseVersionName"));
 
 		if (Version >= LAUNCHERSERVICES_ADDEDREFERENCECONTAINERS)
 		{
-			ReferenceContainerCryptoKeysFileName = Object.GetStringField("ReferenceContainerCryptoKeysFileName");
-			ReferenceContainerGlobalFileName = Object.GetStringField("ReferenceContainerGlobalFileName");
+			ReferenceContainerCryptoKeysFileName = Object.GetStringField(TEXT("ReferenceContainerCryptoKeysFileName"));
+			ReferenceContainerGlobalFileName = Object.GetStringField(TEXT("ReferenceContainerGlobalFileName"));
 		}
 		else
 		{
@@ -1911,29 +1898,24 @@ public:
 
 		if (Version >= LAUNCHERSERVICES_ADDEDORIGINALRELEASEVERSION)
 		{
-			OriginalReleaseVersionName = Object.GetStringField("OriginalReleaseVersionName");
+			OriginalReleaseVersionName = Object.GetStringField(TEXT("OriginalReleaseVersionName"));
 		}
 		else
 		{
 			OriginalReleaseVersionName.Empty();
 		}
 
-		if (Version >= LAUNCHERSERVICED_ADDEDRETAINSTAGEDDIRECTORY)
-		{
-			bRetainStagedDirectory = Object.GetBoolField("RetainStagedDirectory");
-		}
-
-		CreateDLC = Object.GetBoolField("CreateDLC");
-		DLCName = Object.GetStringField("DLCName");
-		bGenerateChunks = Object.GetBoolField("GenerateChunks");
-		bGenerateHttpChunkData = Object.GetBoolField("GenerateHttpChunkData");
-		HttpChunkDataDirectory = Object.GetStringField("HttpChunkDataDirectory");
-		HttpChunkDataReleaseName = Object.GetStringField("HttpChunkDataReleaseName");
+		CreateDLC = Object.GetBoolField(TEXT("CreateDLC"));
+		DLCName = Object.GetStringField(TEXT("DLCName"));
+		bGenerateChunks = Object.GetBoolField(TEXT("GenerateChunks"));
+		bGenerateHttpChunkData = Object.GetBoolField(TEXT("GenerateHttpChunkData"));
+		HttpChunkDataDirectory = Object.GetStringField(TEXT("HttpChunkDataDirectory"));
+		HttpChunkDataReleaseName = Object.GetStringField(TEXT("HttpChunkDataReleaseName"));
 
 		if (Version >= LAUNCHERSERVICES_ADDARCHIVE)
 		{
-			bArchive = Object.GetBoolField("Archive");
-			ArchiveDir = Object.GetStringField("ArchiveDirectory");
+			bArchive = Object.GetBoolField(TEXT("Archive"));
+			ArchiveDir = Object.GetStringField(TEXT("ArchiveDirectory"));
 		}
 		else
 		{
@@ -1943,7 +1925,7 @@ public:
 
 		if (Version >= LAUNCHERSERVICES_ADDEDADDITIONALCOMMANDLINE)
 		{
-			AdditionalCommandLineParameters = Object.GetStringField("AdditionalCommandLineParameters");
+			AdditionalCommandLineParameters = Object.GetStringField(TEXT("AdditionalCommandLineParameters"));
 		}
 		else
 		{
@@ -1952,34 +1934,34 @@ public:
 
 		if (Version >= LAUNCHERSERVICES_ADDEDINCLUDEPREREQUISITES)
 		{
-			IncludePrerequisites = Object.GetBoolField("IncludePrerequisites");
+			IncludePrerequisites = Object.GetBoolField(TEXT("IncludePrerequisites"));
 		}
 
 		if (Version >= LAUNCHERSERVICES_ADDEDUSEIOSTORE)
 		{
-			bUseIoStore = Object.GetBoolField("UseIoStore");
+			bUseIoStore = Object.GetBoolField(TEXT("UseIoStore"));
 		}
 
 		if (Version >= LAUNCHERSERVICES_ADDEDMAKEBINARYCONFIG)
 		{
-			bMakeBinaryConfig = Object.GetBoolField("MakeBinaryConfig");
+			bMakeBinaryConfig = Object.GetBoolField(TEXT("MakeBinaryConfig"));
 		}
 
 		if (Version >= LAUNCHERSERVICES_ADDBUILDTARGETNAME)
 		{
-			BuildTargetSpecified = Object.GetBoolField("BuildTargetSpecified");
-			BuildTargetName = Object.GetStringField("BuildTargetName");
+			BuildTargetSpecified = Object.GetBoolField(TEXT("BuildTargetSpecified"));
+			BuildTargetName = Object.GetStringField(TEXT("BuildTargetName"));
 		}
 
 		// load the default launch role
-		TSharedPtr<FJsonObject> Role = Object.GetObjectField("DefaultRole");
+		TSharedPtr<FJsonObject> Role = Object.GetObjectField(TEXT("DefaultRole"));
 		DefaultLaunchRole->Load(*(Role.Get()));
 
 		// serialize the launch roles
 		DeployedDeviceGroup.Reset();
 		LaunchRoles.Reset();
 		const TArray<TSharedPtr<FJsonValue>>* Roles = NULL;
-		if (Object.TryGetArrayField("LaunchRoles", Roles))
+		if (Object.TryGetArrayField(TEXT("LaunchRoles"), Roles))
 		{
 			for (auto Value : *Roles)
 			{
@@ -2119,6 +2101,7 @@ public:
 		bUseIoStore = false;
 		bUseZenStore = false;
 		bShouldUpdateFlash = false;
+		bIsDeviceASimulator = false;
 		bMakeBinaryConfig = false;
 
 		RefreshValidBuildTargets();
@@ -2650,6 +2633,19 @@ public:
 		return bShouldUpdateFlash;
 	}
 
+	virtual void SetDeviceIsASimulator(bool bInIsDeviceASimualtor) override
+	{
+		bIsDeviceASimulator = bInIsDeviceASimualtor;
+	}
+
+	/**
+	 * Is the Launch device actually a simulator?
+	 */
+	virtual bool IsDeviceASimulator() const override
+	{
+		return bIsDeviceASimulator;
+	}
+
 	virtual void SetMakeBinaryConfig(bool bInMakeBinaryConfig) override
 	{
 		bMakeBinaryConfig = bInMakeBinaryConfig;
@@ -3152,10 +3148,6 @@ private:
 	// the json file containing the keys.
 	FString ReferenceContainerCryptoKeysFileName;
 
-	// Some platforms modify iostore containers such that they can't be read as a reference container - if this is true,
-	// the deployment stage will save the staged directory beforehand..
-	bool bRetainStagedDirectory;
-
 	// create a release version of the content (this can be used to base dlc / patches from)
 	bool CreateReleaseVersion;
 
@@ -3274,6 +3266,9 @@ private:
 
 	// Update flash on device before running
 	bool bShouldUpdateFlash;
+
+	// Is the launch device actually a Simulator
+	bool bIsDeviceASimulator;
 
 private:
 

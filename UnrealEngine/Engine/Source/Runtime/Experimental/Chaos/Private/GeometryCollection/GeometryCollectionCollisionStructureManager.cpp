@@ -63,7 +63,7 @@ FCollisionStructureManager::NewSimplicial(
 			OutsideVertices.AddUninitialized(IndicesArray.Num());
 			for (int32 Idx : IndicesArray)
 			{
-				const Chaos::FVec3& SamplePoint = Vertices.X(Idx);
+				const Chaos::FVec3& SamplePoint = Vertices.GetX(Idx);
 				if (Implicit->SignedDistance(SamplePoint) > Threshold)
 				{
 					OutsideVertices[LSVCounter] = SamplePoint;
@@ -82,8 +82,8 @@ FCollisionStructureManager::NewSimplicial(
 			OutsideVertices.AddUninitialized(IndicesArray.Num());
 			for (int32 Idx=0;Idx<IndicesArray.Num();Idx++)
 			{
-				Bounds += FVector(Vertices.X(IndicesArray[Idx]));
-				OutsideVertices[Idx] = Vertices.X(IndicesArray[Idx]);
+				Bounds += FVector(Vertices.GetX(IndicesArray[Idx]));
+				OutsideVertices[Idx] = Vertices.GetX(IndicesArray[Idx]);
 			}
 			Extent = Bounds.GetExtent().Size();
 		}
@@ -104,7 +104,7 @@ FCollisionStructureManager::NewSimplicial(
 			{
 				if (!OutsideVertices[i].ContainsNaN())
 				{
-					Simplicial->X(i) = OutsideVertices[i];
+					Simplicial->SetX(i, OutsideVertices[i]);
 					VertexCounter++;
 				}
 			}
@@ -114,7 +114,7 @@ FCollisionStructureManager::NewSimplicial(
 		if(!Simplicial->Size())
 		{
 			Simplicial->AddParticles(1);
-			Simplicial->X(0) = Chaos::FVec3(0);
+			Simplicial->SetX(0, Chaos::FVec3(0));
 		}
 
 		Simplicial->UpdateAccelerationStructures();
@@ -140,7 +140,7 @@ FCollisionStructureManager::NewSimplicial(
 		// @todo : Clean collision particles need to operate on the collision mask from the DynamicCollection,
 		//         then transfer only the good collision particles during the initialization. `
 		FCollisionStructureManager::FSimplicial * Simplicial = new FCollisionStructureManager::FSimplicial();
-		const TArrayView<const Chaos::FVec3> ArrayView(&AllParticles.X(0), AllParticles.Size());
+		const TArrayView<const Chaos::FVec3> ArrayView(&AllParticles.GetX(0), AllParticles.Size());
 		const TArray<Chaos::FVec3>& Result = Chaos::CleanCollisionParticles(TriMesh, ArrayView, CollisionParticlesFraction);
 
 		if (Result.Num())
@@ -151,7 +151,7 @@ FCollisionStructureManager::NewSimplicial(
 			{
 				if (!Result[Index].ContainsNaN())
 				{
-					Simplicial->X(Index) = Result[Index];
+					Simplicial->SetX(Index, Result[Index]);
 					VertexCounter++;
 				}
 			}
@@ -161,7 +161,7 @@ FCollisionStructureManager::NewSimplicial(
 		if (!Simplicial->Size())
 		{
 			Simplicial->AddParticles(1);
-			Simplicial->X(0) = Chaos::FVec3(0);
+			Simplicial->SetX(0, Chaos::FVec3(0));
 		}
 
 		Simplicial->UpdateAccelerationStructures();
@@ -186,7 +186,7 @@ void FCollisionStructureManager::UpdateImplicitFlags(
 	}
 }
 
-FCollisionStructureManager::FImplicit* 
+Chaos::FImplicitObjectRef
 FCollisionStructureManager::NewImplicit(
 	Chaos::FErrorReporter ErrorReporter,
 	const Chaos::FParticles& MeshParticles,
@@ -215,7 +215,7 @@ FCollisionStructureManager::NewImplicit(
 	return nullptr;
 }
 
-FCollisionStructureManager::FImplicit*
+Chaos::FImplicitObjectRef
 FCollisionStructureManager::NewImplicitBox(
 	const FBox& CollisionBounds,
 	const float CollisionObjectReduction,
@@ -230,26 +230,26 @@ FCollisionStructureManager::NewImplicitBox(
 	float CollisionMarginMax = 10.0f;// FMath::Max(0.0f, UPhysicsSettingsCore::Get()->SolverOptions.CollisionMarginMax);
 	const Chaos::FReal Margin = FMath::Min(CollisionMarginFraction * 0.5f * HalfExtents.GetMin(), CollisionMarginMax);
 
-	Chaos::FImplicitObject* Implicit = new Chaos::TBox<Chaos::FReal, 3>(Center - HalfExtents, Center + HalfExtents, Margin);
+	Chaos::FImplicitObjectRef Implicit = new Chaos::TBox<Chaos::FReal, 3>(Center - HalfExtents, Center + HalfExtents, Margin);
 	UpdateImplicitFlags(Implicit, CollisionType);
 	return Implicit;
 }
 
-FCollisionStructureManager::FImplicit*
+Chaos::FImplicitObjectRef
 FCollisionStructureManager::NewImplicitSphere(
 	const Chaos::FReal Radius,
 	const float CollisionObjectReduction,
 	const ECollisionTypeEnum CollisionType)
 {
-	Chaos::FImplicitObject* Implicit = new Chaos::TSphere<Chaos::FReal, 3>(Chaos::FVec3(0), Radius * (1 - CollisionObjectReduction / 100.f));
+	Chaos::FImplicitObjectRef Implicit = new Chaos::TSphere<Chaos::FReal, 3>(Chaos::FVec3(0), Radius * (1 - CollisionObjectReduction / 100.f));
 	UpdateImplicitFlags(Implicit, CollisionType);
 	return Implicit;
 }
 
-FCollisionStructureManager::FImplicit*
+Chaos::FImplicitObjectRef
 FCollisionStructureManager::NewImplicitConvex(
 	const TArray<int32>& ConvexIndices,
-	const TManagedArray<TUniquePtr<Chaos::FConvex>>* ConvexGeometry,
+	const TManagedArray<Chaos::FConvexPtr>* ConvexGeometry,
 	const ECollisionTypeEnum CollisionType,
 	const FTransform& MassTransform,
 	const Chaos::FReal CollisionMarginFraction,
@@ -259,28 +259,31 @@ FCollisionStructureManager::NewImplicitConvex(
 
 	if (ConvexIndices.Num())
 	{
-		TArray<TUniquePtr<Chaos::FImplicitObject>> Implicits;
+		TArray<Chaos::FImplicitObjectRef> Implicits;
 		for (auto& Index : ConvexIndices)
 		{
-			TArray<FConvexVec3> ConvexVertices = (*ConvexGeometry)[Index]->GetVertices();
-			FConvexVec3 COM = MassTransform.InverseTransformPosition((*ConvexGeometry)[Index]->GetCenterOfMass());
-			FConvexVec3::FReal ScaleFactor = 1 - CollisionObjectReduction / 100.f;
-			for (int32 Idx = 0; Idx < ConvexVertices.Num(); Idx++)
+			if((*ConvexGeometry)[Index])
 			{
-				ConvexVertices[Idx] = ((FConvexVec3)MassTransform.InverseTransformPosition(FVector(ConvexVertices[Idx])) - COM) * ScaleFactor + COM;
-			}
+				TArray<FConvexVec3> ConvexVertices = (*ConvexGeometry)[Index]->GetVertices();
+				FConvexVec3 COM = MassTransform.InverseTransformPosition((*ConvexGeometry)[Index]->GetCenterOfMass());
+				FConvexVec3::FReal ScaleFactor = 1 - CollisionObjectReduction / 100.f;
+				for (int32 Idx = 0; Idx < ConvexVertices.Num(); Idx++)
+				{
+					ConvexVertices[Idx] = ((FConvexVec3)MassTransform.InverseTransformPosition(FVector(ConvexVertices[Idx])) - COM) * ScaleFactor + COM;
+				}
 
-			Chaos::FReal Margin = (Chaos::FReal)(*ConvexGeometry)[Index]->BoundingBox().Extents().Min() * CollisionMarginFraction;
-			Chaos::FConvex* MarginConvex = new Chaos::FConvex(ConvexVertices, Margin);
-			if (MarginConvex->NumVertices() > 0)
-			{
-				Chaos::FImplicitObject* Implicit = MarginConvex;
-				UpdateImplicitFlags(Implicit, CollisionType);
-				Implicits.Add(TUniquePtr<Chaos::FImplicitObject>(Implicit));
-			}
-			else
-			{
-				delete MarginConvex;
+				Chaos::FReal Margin = (Chaos::FReal)(*ConvexGeometry)[Index]->BoundingBox().Extents().Min() * CollisionMarginFraction;
+				Chaos::FConvex* MarginConvex = new Chaos::FConvex(ConvexVertices, Margin);
+				if (MarginConvex->NumVertices() > 0)
+				{
+					Chaos::FImplicitObject* Implicit = MarginConvex;
+					UpdateImplicitFlags(Implicit, CollisionType);
+					Implicits.Add(Implicit);
+				}
+				else
+				{
+					delete MarginConvex;
+				}
 			}
 		}
 
@@ -290,18 +293,23 @@ FCollisionStructureManager::NewImplicitConvex(
 		}
 		else if (Implicits.Num() == 1)
 		{
-			return Implicits[0].Release();
+			return Implicits[0];
 		}
 		else
 		{
-			Chaos::FImplicitObjectUnion* ImplicitUnion = new Chaos::FImplicitObjectUnion(MoveTemp(Implicits));
-			return ImplicitUnion;
+			TArray<Chaos::FImplicitObjectPtr> ImplicitsPtrs;
+			for(Chaos::FImplicitObjectRef ImplicitRef : Implicits)
+			{
+				Chaos::FImplicitObjectPtr ImplicitPtr(ImplicitRef);
+				ImplicitsPtrs.Add(ImplicitPtr);
+			}
+			return new Chaos::FImplicitObjectUnion(MoveTemp(ImplicitsPtrs));
 		}
 	}
 	return nullptr;
 }
 
-FCollisionStructureManager::FImplicit*
+Chaos::FImplicitObjectRef
 FCollisionStructureManager::NewImplicitCapsule(
 	const Chaos::FReal Radius,
 	const Chaos::FReal Length,
@@ -315,12 +323,12 @@ FCollisionStructureManager::NewImplicitCapsule(
 	}
 	
 	const Chaos::FReal HalfLength = (Chaos::FReal)Length * (Chaos::FReal)0.5;
-	Chaos::FImplicitObject* Implicit = new Chaos::FCapsule(Chaos::FVec3(0, 0, -HalfLength), Chaos::FVec3(0, 0, +HalfLength), Radius * (1 - CollisionObjectReduction / 100.f));
+	Chaos::FImplicitObjectRef Implicit = new Chaos::FCapsule(Chaos::FVec3(0, 0, -HalfLength), Chaos::FVec3(0, 0, +HalfLength), Radius * (1 - CollisionObjectReduction / 100.f));
 	UpdateImplicitFlags(Implicit, CollisionType);
 	return Implicit;
 }
 
-FCollisionStructureManager::FImplicit*
+Chaos::FImplicitObjectRef
 FCollisionStructureManager::NewImplicitCapsule(
 	const FBox& CollisionBounds,
 	const float CollisionObjectReduction,
@@ -359,12 +367,12 @@ FCollisionStructureManager::NewImplicitCapsule(
 	Chaos::FVec3 X1 = BBoxCenter - HalfLengthVector;
 	Chaos::FVec3 X2 = BBoxCenter + HalfLengthVector;
 
-	Chaos::FImplicitObject* Implicit = new Chaos::FCapsule(X1, X2, Radius * (1 - CollisionObjectReduction / 100.f));
+	Chaos::FImplicitObjectRef Implicit = new Chaos::FCapsule(X1, X2, Radius * (1 - CollisionObjectReduction / 100.f));
 	UpdateImplicitFlags(Implicit, CollisionType);
 	return Implicit;
 }
 
-FCollisionStructureManager::FImplicit*
+Chaos::FImplicitObjectRef
 FCollisionStructureManager::NewImplicitLevelset(
 	Chaos::FErrorReporter ErrorReporter,
 	const Chaos::FParticles& MeshParticles,
@@ -380,7 +388,7 @@ FCollisionStructureManager::NewImplicitLevelset(
 	{
 		return nullptr;
 	}
-	Chaos::FLevelSet* LevelSet = NewLevelset(ErrorReporter, MeshParticles, TriMesh, CollisionBounds, MinRes, MaxRes, CollisionType);
+	Chaos::FLevelSetRef LevelSet = NewLevelset(ErrorReporter, MeshParticles, TriMesh, CollisionBounds, MinRes, MaxRes, CollisionType);
 	if (LevelSet)
 	{
 		const Chaos::FReal DomainVolume = LevelSet->BoundingBox().GetVolume();
@@ -410,7 +418,8 @@ FCollisionStructureManager::NewImplicitLevelset(
 	return LevelSet;
 }
 
-Chaos::FLevelSet* FCollisionStructureManager::NewLevelset(
+Chaos::FLevelSetRef
+FCollisionStructureManager::NewLevelset(
 	Chaos::FErrorReporter ErrorReporter,
 	const Chaos::FParticles& MeshParticles,
 	const Chaos::FTriangleMesh& TriMesh,
@@ -458,7 +467,7 @@ Chaos::FLevelSet* FCollisionStructureManager::NewLevelset(
 		Counts.Z = MaxRes;
 	}
 	Chaos::TUniformGrid<Chaos::FReal, 3> Grid(CollisionBounds.Min, CollisionBounds.Max, Counts, 1);
-	Chaos::FLevelSet* Implicit = new Chaos::FLevelSet(ErrorReporter, Grid, MeshParticles, TriMesh);
+	Chaos::FLevelSetRef Implicit = new Chaos::FLevelSet(ErrorReporter, Grid, MeshParticles, TriMesh);
 	if (ErrorReporter.ContainsUnhandledError())
 	{
 		ErrorReporter.HandleLatestError();	//Allow future levelsets to attempt to cook

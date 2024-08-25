@@ -10,15 +10,18 @@
 
 const FName FRigVMDispatch_Constant::ValueName = TEXT("Value");
 
-const TArray<FRigVMTemplateArgument>& FRigVMDispatch_Constant::GetArguments() const
+const TArray<FRigVMTemplateArgumentInfo>& FRigVMDispatch_Constant::GetArgumentInfos() const
 {
-	static const TArray<FRigVMTemplateArgument::ETypeCategory> Categories = {
-		FRigVMTemplateArgument::ETypeCategory_SingleAnyValue
-	};
-	static const TArray<FRigVMTemplateArgument> Arguments = {
-		{ValueName, ERigVMPinDirection::IO, Categories}
-	};
-	return Arguments;
+	static TArray<FRigVMTemplateArgumentInfo> Infos;
+	if (Infos.IsEmpty())
+	{
+		static const TArray<FRigVMTemplateArgument::ETypeCategory> Categories = {
+			FRigVMTemplateArgument::ETypeCategory_SingleAnyValue
+		};
+		
+		Infos.Emplace(FRigVMTemplateArgumentInfo(ValueName, ERigVMPinDirection::IO, Categories));
+	}
+	return Infos;
 }
 
 FRigVMTemplateTypeMap FRigVMDispatch_Constant::OnNewArgumentType(const FName& InArgumentName, TRigVMTypeIndex InTypeIndex) const

@@ -103,11 +103,12 @@ struct FUniqueObjectGuid
 		Slot << ObjectGuid.Guid;
 	}
 
-	/** These will be deprecated in a followup change as they are no longer in use */
+	UE_DEPRECATED(5.4, "The current object tag is no longer used by TSoftObjectPtr, you can remove all calls")
 	static int32 GetCurrentTag()
 	{
 		return 0;
 	}
+	UE_DEPRECATED(5.4, "The current object tag is no longer used by TSoftObjectPtr, you can remove all calls")
 	static int32 InvalidateTag()
 	{
 		return 0;

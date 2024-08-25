@@ -3,6 +3,7 @@
 
 #include "AssetRegistry/AssetData.h"
 #include "CoreMinimal.h"
+#include "IRemoteControlModule.h"
 #include "RemoteControlField.h"
 #include "RemoteControlModels.h"
 #include "RemoteControlPreset.h"
@@ -607,5 +608,32 @@ struct FRCTransactionEndedEvent
 	 */
 	UPROPERTY()
 	int64 SequenceNumber = -1;
+};
+
+/**
+ * Event sent to confirm that the WebSocket compression mode has changed.
+ * This will be sent using the previous compression mode, and messages after this point will use the new one indicated in this event.
+ */
+USTRUCT()
+struct FRCCompressionChangedEvent
+{
+	GENERATED_BODY()
+
+	FRCCompressionChangedEvent()
+	: Type(TEXT("CompressionChanged"))
+	{
+	}
+
+	/**
+	 * Type of the event.
+	 */
+	UPROPERTY()
+	FString Type;
+
+	/**
+	 * The new compression mode which will be used by future messages.
+	 */
+	UPROPERTY()
+	ERCWebSocketCompressionMode Mode = ERCWebSocketCompressionMode::NONE;
 };
 

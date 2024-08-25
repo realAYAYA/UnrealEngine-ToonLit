@@ -64,7 +64,7 @@ const FExternalAuthTokenTranslationTraits* GetExternalAuthTokenTranslationTraits
 		{ TEXT("PS5"), { { ExternalLoginType::PsnIdToken, EExternalAuthTokenMethod::Primary, EExternalAuthTokenTranslationFlags::TokenString } } },
 		{ SWITCH_SUBSYSTEM, { { ExternalLoginType::NintendoNsaIdToken, EExternalAuthTokenMethod::Primary, EExternalAuthTokenTranslationFlags::AuthToken },
 							  { ExternalLoginType::NintendoIdToken, EExternalAuthTokenMethod::Secondary, EExternalAuthTokenTranslationFlags::TokenString } } },
-		{ STEAM_SUBSYSTEM, { { ExternalLoginType::SteamAppTicket, EExternalAuthTokenMethod::Primary, EExternalAuthTokenTranslationFlags::TokenBinary } } },
+		{ STEAM_SUBSYSTEM, { { ExternalLoginType::SteamSessionTicket, EExternalAuthTokenMethod::Primary, EExternalAuthTokenTranslationFlags::TokenString } } },
 	};
 
 	if (const TArray<FExternalAuthTokenTranslationTraits>* TraitsArray = SupportedExternalAuthTranslatorTraits.Find(SubsystemType))
@@ -144,6 +144,13 @@ void FAuthOSSAdapter::PostInitialize()
 							TranslateLoginStatus(NewStatus) });
 					}
 				});
+			if (FUniqueNetIdPtr NetId = Identity->GetUniquePlayerId(LocalPlayerNum))
+			{
+				HandleLoginStatusChangedImplOp(FAuthHandleLoginStatusChangedImpl::Params{
+								FPlatformMisc::GetPlatformUserForUserIndex(LocalPlayerNum),
+								static_cast<FOnlineServicesOSSAdapter&>(Services).GetAccountIdRegistry().FindOrAddHandle(NetId.ToSharedRef()),
+								TranslateLoginStatus(Identity->GetLoginStatus(LocalPlayerNum)) });
+			}			
 		}
 	}
 }
@@ -258,6 +265,11 @@ TOnlineAsyncOpHandle<FAuthLogin> FAuthOSSAdapter::Login(FAuthLogin::Params&& Par
 		if (TSharedPtr<FUserOnlineAccount> UserOnlineAccount = GetIdentityInterface()->GetUserAccount(*AccountInfoOSSAdapter->UniqueNetId))
 		{
 			AccountInfoOSSAdapter->Attributes.Emplace(AccountAttributeData::DisplayName, UserOnlineAccount->GetDisplayName());
+			return MakeFulfilledPromise<void>().GetFuture();
+		}
+		else if (!GetIdentityInterface()->GetPlayerNickname(*AccountInfoOSSAdapter->UniqueNetId).IsEmpty())
+		{
+			AccountInfoOSSAdapter->Attributes.Emplace(AccountAttributeData::DisplayName, GetIdentityInterface()->GetPlayerNickname(*AccountInfoOSSAdapter->UniqueNetId));
 			return MakeFulfilledPromise<void>().GetFuture();
 		}
 		else
@@ -521,7 +533,7 @@ TOnlineAsyncOpHandle<FAuthQueryExternalAuthToken> FAuthOSSAdapter::QueryExternal
 
 FUniqueNetIdPtr FAuthOSSAdapter::GetUniqueNetId(FAccountId AccountId) const
 {
-	check(AccountId.GetOnlineServicesType() == GetOnlineServicesOSSAdapter().GetServicesProvider());
+	check(!AccountId.IsValid() || AccountId.GetOnlineServicesType() == GetOnlineServicesOSSAdapter().GetServicesProvider());
 
 	return GetOnlineServicesOSSAdapter().GetAccountIdRegistry().GetIdValue(AccountId);
 }
@@ -584,6 +596,21 @@ TOnlineAsyncOpHandle<FAuthHandleLoginStatusChangedImpl> FAuthOSSAdapter::HandleL
 	{
 		const FAuthHandleLoginStatusChangedImpl::Params& Params = InAsyncOp.GetParams();
 		TSharedPtr<FAccountInfoOSSAdapter> AccountInfoOSSAdapter = AccountInfoRegistryOSSAdapter.Find(Params.AccountId);
+		if (!AccountInfoOSSAdapter)
+		{
+			TSharedPtr<FAccountInfoOSSAdapter> NewAccountInfoOSSAdapter = MakeShared<FAccountInfoOSSAdapter>();
+			NewAccountInfoOSSAdapter->AccountId = Params.AccountId;
+			NewAccountInfoOSSAdapter->PlatformUserId = Params.PlatformUserId;
+			NewAccountInfoOSSAdapter->LocalUserNum = GetIdentityInterface()->GetLocalUserNumFromPlatformUserId(Params.PlatformUserId);
+
+			UE_LOG(LogOnlineServices, Log, TEXT("[FAuthOSSAdapter::HandleLoginStatusChangedImplOp][%s] Attempt to register [%s] account that have been initialized before the adapter has fully initialize."),
+				*GetSubsystem().GetSubsystemName().ToString(), *ToLogString(NewAccountInfoOSSAdapter->AccountId));
+
+			// Add the user to the registry if they happen to be signed in before initilization
+			AccountInfoRegistryOSSAdapter.Register(NewAccountInfoOSSAdapter.ToSharedRef());
+			AccountInfoOSSAdapter = AccountInfoRegistryOSSAdapter.Find(Params.AccountId);
+		}
+
 		if (!AccountInfoOSSAdapter)
 		{
 			InAsyncOp.SetError(Errors::InvalidUser());

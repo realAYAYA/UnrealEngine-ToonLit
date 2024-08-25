@@ -3,7 +3,16 @@
 #include "Param/AnimNextParameterBlock_EdGraph.h"
 #include "Param/AnimNextParameterBlock_EditorData.h"
 
-void UAnimNextParameterBlock_EdGraph::Initialize(UAnimNextParameterBlock_EditorData* InEditorData)
+void UAnimNextParameterBlock_EdGraph::PostLoad()
+{
+	Super::PostLoad();
+
+	UAnimNextRigVMAssetEditorData* EditorData = GetTypedOuter<UAnimNextRigVMAssetEditorData>();
+	check(EditorData);
+	Initialize(EditorData);
+}
+
+void UAnimNextParameterBlock_EdGraph::Initialize(UAnimNextRigVMAssetEditorData* InEditorData)
 {
 	InEditorData->RigVMGraphModifiedEvent.RemoveAll(this);
 	InEditorData->RigVMGraphModifiedEvent.AddUObject(this, &UAnimNextParameterBlock_EdGraph::HandleModifiedEvent);

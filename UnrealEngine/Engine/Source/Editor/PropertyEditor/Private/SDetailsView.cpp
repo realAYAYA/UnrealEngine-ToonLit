@@ -1,12 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-
 #include "SDetailsView.h"
 
 #include "CategoryPropertyNode.h"
 #include "Settings/EditorStyleSettings.h"
 #include "DetailCategoryBuilderImpl.h"
 #include "DetailLayoutBuilderImpl.h"
+#include "DetailsNameWidgetOverrideCustomization.h"
 #include "DetailsViewGenericObjectFilter.h"
 #include "DetailsViewPropertyGenerationUtilities.h"
 #include "Editor.h"
@@ -32,6 +32,12 @@
 
 #define LOCTEXT_NAMESPACE "SDetailsView"
 
+static TAutoConsoleVariable<bool> CVarDetailsPanelEnableCardLayout(
+	TEXT("DetailsPanel.Style.EnableCardLayout"),
+	false,
+	TEXT("Specifies whether the card layout is in effect for the Details View."),
+	ECVF_Default);
+
 SDetailsView::~SDetailsView()
 {
 	const FRootPropertyNodeList& RootNodes = GetRootNodes();
@@ -51,6 +57,7 @@ SDetailsView::~SDetailsView()
 void SDetailsView::Construct(const FArguments& InArgs, const FDetailsViewArgs& InDetailsViewArgs)
 {
 	DetailsViewArgs = InDetailsViewArgs;
+	DetailsNameWidgetOverrideCustomization = DetailsViewArgs.DetailsNameWidgetOverrideCustomization;
 
 	const FDetailsViewConfig* ViewConfig = GetConstViewConfig();
 	if (ViewConfig != nullptr)
@@ -267,7 +274,7 @@ void SDetailsView::Construct(const FArguments& InArgs, const FDetailsViewArgs& I
 		SNew( SHorizontalBox )
 		+SHorizontalBox::Slot()
 		.Padding(6.f)
-		.FillWidth(1)
+		.FillWidth(1.0f)
 		[
 			// Create the search box
 			SAssignNew(SearchBox, SSearchBox)
@@ -279,7 +286,7 @@ void SDetailsView::Construct(const FArguments& InArgs, const FDetailsViewArgs& I
 	
 	{
 		FilterRowHBox->AddSlot()
-			.Padding(0)
+			.Padding(0.0f)
 			.HAlign(HAlign_Right)
 			.VAlign(VAlign_Center)
 			.AutoWidth()
@@ -302,7 +309,7 @@ void SDetailsView::Construct(const FArguments& InArgs, const FDetailsViewArgs& I
 	if (DetailsViewArgs.bAllowFavoriteSystem)
 	{
 		FilterRowHBox->AddSlot()
-			.Padding(0)
+			.Padding(0.0f)
 			.HAlign(HAlign_Right)
 			.VAlign(VAlign_Center)
 			.AutoWidth()
@@ -330,14 +337,14 @@ void SDetailsView::Construct(const FArguments& InArgs, const FDetailsViewArgs& I
 		FilterImage->AddLayer(TAttribute<const FSlateBrush*>(this, &SDetailsView::GetViewOptionsBadgeIcon));
 		
 		FilterRowHBox->AddSlot()
-			.Padding(0)
+			.Padding(0.0f)
 			.HAlign(HAlign_Right)
 			.VAlign(VAlign_Center)
 			.AutoWidth()
 			[
 				SNew( SComboButton )
 				.HasDownArrow(false)
-				.ContentPadding(0)
+				.ContentPadding(0.0f)
 				.ForegroundColor( FSlateColor::UseForeground() )
 				.ButtonStyle( FAppStyle::Get(), "SimpleButton" )
 				.AddMetaData<FTagMetaData>(FTagMetaData(TEXT("ViewOptions")))
@@ -361,12 +368,12 @@ void SDetailsView::Construct(const FArguments& InArgs, const FDetailsViewArgs& I
 		];
 
 	FilterRowVBox->AddSlot()
-		.Padding(8, 2, 8, 7)
+		.Padding(8.0f, 2.0f, 8.0f, 7.0f)
 		.AutoHeight()
 		[
 			SAssignNew(SectionSelectorBox, SWrapBox)
 			.UseAllottedSize(true)
-			.InnerSlotPadding(FVector2D(4,4))
+			.InnerSlotPadding(FVector2D(4.0f,4.0f))
 		];
 
 	RebuildSectionSelector();
@@ -387,8 +394,8 @@ void SDetailsView::Construct(const FArguments& InArgs, const FDetailsViewArgs& I
 	}
 
 	VerticalBox->AddSlot()
-	.FillHeight(1)
-	.Padding(0)
+	.FillHeight(1.0f)
+	.Padding(0.0f)
 	[
 		SNew(SOverlay)
 		+ SOverlay::Slot()
@@ -407,7 +414,25 @@ void SDetailsView::Construct(const FArguments& InArgs, const FDetailsViewArgs& I
 			]
 			+SHorizontalBox::Slot()
 			[
-				ConstructTreeView(ExternalScrollbar)
+	           SNew(SBorder)
+				.Padding_Lambda([this]
+				{
+					if (DisplayManager.IsValid())
+					{
+						return DisplayManager->GetTablePadding();
+					}
+					static const FMargin Margin{0};
+					return Margin;
+				})
+				.BorderImage_Lambda([this]
+				{
+					static const FSlateBrush* Background = FAppStyle::GetBrush("DetailsView.GridLine");
+					static const FSlateBrush* Panel = FAppStyle::GetBrush("Brushes.Panel");
+					
+					return RootPropertyNodes.Num() == 0 ? Panel : Background;
+				})
+				.Visibility(this, &SDetailsView::GetTreeVisibility)
+				[ ConstructTreeView(ExternalScrollbar) ]
 			]
 		]
 		+ SOverlay::Slot()
@@ -489,6 +514,10 @@ EVisibility SDetailsView::GetActorNameAreaVisibility() const
 
 void SDetailsView::ForceRefresh()
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE_STR("SDetailsView::ForceRefresh");
+
+	ClearPendingRefreshTimer();
+
 	TArray<UObject*> NewObjectList;
 	NewObjectList.Reserve(UnfilteredSelectedObjects.Num());
 	TArray<TWeakObjectPtr<UObject>> ValidSelectedObjects;
@@ -515,6 +544,7 @@ void SDetailsView::MoveScrollOffset(int32 DeltaOffset)
 
 void SDetailsView::SetObjects(const TArray<UObject*>& InObjects, bool bForceRefresh/* = false*/, bool bOverrideLock/* = false*/)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE_STR("SDetailsView::SetObjects");
 	if (!IsLocked() || bOverrideLock)
 	{
 		if( bForceRefresh || ShouldSetNewObjects(InObjects) )
@@ -597,6 +627,12 @@ void SDetailsView::SetObjectFilter(TSharedPtr<FDetailsViewObjectFilter> InFilter
 	{
 		ObjectFilter = MakeShared<FDetailsViewDefaultObjectFilter>(!!DetailsViewArgs.bAllowMultipleTopLevelObjects);
 	}
+
+	RefreshDisplayManager();
+
+	// hook up the OnDetailsNeedsUpdate to the details panel refresh function so that when the display data
+	// is updated, the details panel will reflect it
+	DisplayManager->OnDetailsNeedsUpdate.BindSP(this, &SDetailsView::ForceRefresh);
 }
 
 void SDetailsView::SetClassViewerFilters(const TArray<TSharedRef<class IClassViewerFilter>>& InFilters)
@@ -719,6 +755,8 @@ void SDetailsView::SetObjectArrayPrivate(const TArray<UObject*>& InObjects)
 	double StartTime = FPlatformTime::Seconds();
 
 	const TArray<FDetailsViewObjectRoot> Roots = ObjectFilter->FilterObjects(InObjects);
+	
+	UpdateStyleKey();
 
 	PreSetObject(Roots.Num());
 
@@ -1285,7 +1323,7 @@ void SDetailsView::RebuildSectionSelector()
 		-> TSharedRef<SWidget>
 	{
 		return SNew(SBox)
-			.Padding(FMargin(0))
+			.Padding(FMargin(0.0f))
 			[
 				SNew(SCheckBox)
 				.Style(FAppStyle::Get(), "DetailsView.SectionButton")
@@ -1469,6 +1507,69 @@ const FSlateBrush* SDetailsView::GetViewOptionsBadgeIcon() const
 					|| (DetailsViewArgs.bShowAnimatedPropertiesOption && IsShowAnimatedChecked() );
 
 	return bHasBadge ? FAppStyle::Get().GetBrush("Icons.BadgeModified") : nullptr;
+}
+
+bool SDetailsView::IsDefaultStyle() const
+{
+	return StyleKeySP.IsValid() && *StyleKeySP.Get() == GetPrimaryDetailsViewStyleKey();
+}
+
+TSharedPtr<FDetailsNameWidgetOverrideCustomization> SDetailsView::GetDetailsNameWidgetOverrideCustomization()
+{
+	return DetailsNameWidgetOverrideCustomization;
+}
+
+void SDetailsView::UpdateStyleKey()
+{
+	const bool IsDefault = FDetailsViewStyleKeys::IsDefault(DisplayManager->GetDetailsViewStyleKey());
+
+	if (IsDefault && DetailsViewArgs.StyleKey.IsValid()) 
+	{
+		StyleKeySP = DetailsViewArgs.StyleKey;
+	}
+	else if (!IsDefault)
+	{
+		FDetailsViewStyleKey Key = DisplayManager->GetDetailsViewStyleKey(); 
+		StyleKeySP = MakeShared<FDetailsViewStyleKey>(Key);
+	}
+	else
+	{
+		// convert the const shared pointer value into a non-const the pointer can hold
+		StyleKeySP = MakeShared<FDetailsViewStyleKey>(GetPrimaryDetailsViewStyleKey());
+	} 
+}
+
+const FDetailsViewStyleKey& SDetailsView::GetStyleKey()
+{
+	const FDetailsViewStyleKey& PrimaryKey = GetPrimaryDetailsViewStyleKey();
+	return StyleKeySP.IsValid() ? *StyleKeySP.Get() : PrimaryKey;
+}
+
+void SDetailsView::RefreshDisplayManager()
+{
+	if (ObjectFilter.IsValid())
+	{
+		DisplayManager = ObjectFilter->GetDisplayManager();
+	}
+	if (!DisplayManager.IsValid())
+	{
+		DisplayManager = MakeShared<FDetailsDisplayManager>();
+	}
+}
+
+TSharedPtr<FDetailsDisplayManager> SDetailsView::GetDisplayManager()
+{
+	RefreshDisplayManager();
+	return DisplayManager;
+}
+
+const FDetailsViewStyleKey& SDetailsView::GetPrimaryDetailsViewStyleKey()
+{
+	if (CVarDetailsPanelEnableCardLayout.GetValueOnAnyThread())
+	{
+		return FDetailsViewStyleKeys::Card();
+	}
+	return FDetailsViewStyleKeys::Classic();
 }
 
 #undef LOCTEXT_NAMESPACE

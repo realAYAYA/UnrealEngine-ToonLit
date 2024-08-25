@@ -6,11 +6,12 @@
 
 #include "HlslParser.h"
 #include "HlslExpressionParser.inl"
+#include "ShaderCompilerCommon.h"
 
 namespace CrossCompiler
 {
 	EParseResult ParseExpressionStatement(class FHlslParser& Parser, FLinearAllocator* Allocator, AST::FNode** OutStatement);
-	EParseResult ParseStructBody(FHlslParser& Parser, FSymbolScope* SymbolScope, FLinearAllocator* Allocator, AST::FTypeSpecifier** OutTypeSpecifier);
+	EParseResult ParseStructDeclaration(FHlslParser& Parser, FSymbolScope* SymbolScope, FLinearAllocator* Allocator, AST::FTypeSpecifier** OutTypeSpecifier);
 	EParseResult TryParseAttribute(FHlslParser& Parser, FLinearAllocator* Allocator, AST::FAttribute** OutAttribute);
 	EParseResult ParseFunctionDeclaration(FHlslParser& Parser, FLinearAllocator* Allocator, TLinearArray<AST::FAttribute*>& Attributes, AST::FNode** OutFunction);
 
@@ -28,7 +29,7 @@ namespace CrossCompiler
 	class FHlslParser
 	{
 	public:
-		FHlslParser(FLinearAllocator* InAllocator, FCompilerMessages& InCompilerMessages);
+		FHlslParser(FLinearAllocator* InAllocator, FCompilerMessages& InCompilerMessages, TConstArrayView<FScopedDeclarations> InScopedDeclarations);
 		FHlslScanner Scanner;
 		FCompilerMessages& CompilerMessages;
 		FSymbolScope GlobalScope;
@@ -220,8 +221,6 @@ namespace CrossCompiler
 
 			return Result;
 		}
-
-		return EParseResult::NotMatched;
 	}
 
 	EParseResult ParseColonSpecifier(FHlslScanner& Scanner, FLinearAllocator* Allocator, int32 EDFFlags, AST::FSemanticSpecifier** OutSpecifier)
@@ -749,7 +748,7 @@ namespace CrossCompiler
 
 		if (Parser.Scanner.MatchToken(EHlslToken::Struct))
 		{
-			auto Result = ParseStructBody(Parser, SymbolScope, Allocator, &FullType->Specifier);
+			auto Result = ParseStructDeclaration(Parser, SymbolScope, Allocator, &FullType->Specifier);
 			if (Result != EParseResult::Matched)
 			{
 				return ParseResultError();
@@ -850,7 +849,7 @@ namespace CrossCompiler
 			}
 			else if (Result == EParseResult::Error)
 			{
-				return EParseResult::Error;
+				return ParseResultError();
 			}
 			else if (bCanBeUnmatched && Result == EParseResult::NotMatched)
 			{
@@ -931,44 +930,11 @@ namespace CrossCompiler
 		return ParseResultError();
 	}
 
-	EParseResult ParseStructBody(FHlslParser& Parser, FSymbolScope* SymbolScope, FLinearAllocator* Allocator, AST::FTypeSpecifier** OutTypeSpecifier)
+	static EParseResult ParseStructBody(FHlslParser& Parser, FSymbolScope* SymbolScope, FLinearAllocator* Allocator, AST::FStructSpecifier* Struct)
 	{
-		const auto* Name = Parser.Scanner.GetCurrentToken();
-		if (!Name)
-		{
-			return ParseResultError();
-		}
-
-		bool bAnonymous = true;
-		if (Parser.Scanner.MatchToken(EHlslToken::Identifier))
-		{
-			bAnonymous = false;
-			SymbolScope->Add(Name->String);
-		}
-
-		const TCHAR* Parent = nullptr;
-		if (Parser.Scanner.MatchToken(EHlslToken::Colon))
-		{
-			const auto* ParentToken = Parser.Scanner.GetCurrentToken();
-			if (!Parser.Scanner.MatchToken(EHlslToken::Identifier))
-			{
-				Parser.Scanner.SourceError(TEXT("Identifier expected!\n"));
-				return ParseResultError();
-			}
-
-			Parent = Allocator->Strdup(ParentToken->String);
-		}
-
-		if (!Parser.Scanner.MatchToken(EHlslToken::LeftBrace))
-		{
-			Parser.Scanner.SourceError(TEXT("Expected '{'!"));
-			return ParseResultError();
-		}
-
-		auto* Struct = new(Allocator) AST::FStructSpecifier(Allocator, Name->SourceInfo);
-		Struct->ParentName = Allocator->Strdup(Parent);
-		//@todo-rco: Differentiate anonymous!
-		Struct->Name = bAnonymous ? nullptr : Allocator->Strdup(Name->String);
+		check(SymbolScope != nullptr);
+		check(Allocator != nullptr);
+		check(Struct != nullptr);
 
 		bool bFoundRightBrace = false;
 		while (Parser.Scanner.HasMoreTokens())
@@ -980,9 +946,9 @@ namespace CrossCompiler
 			}
 
 			// Greedily eat a member declaration, and backtrack if it's a member function
-			auto OriginalToken = Parser.Scanner.GetCurrentTokenIndex();
+			const uint32 OriginalToken = Parser.Scanner.GetCurrentTokenIndex();
 			AST::FDeclaratorList* Declaration = nullptr;
-			auto Result = ParseGeneralDeclarationNoSemicolon(Parser, SymbolScope, 0, EDF_CONST_ROW_MAJOR | EDF_SEMANTIC | EDF_MULTIPLE | EDF_TEXTURE_SAMPLER_OR_BUFFER | EDF_INTERPOLATION, Allocator, &Declaration);
+			EParseResult Result = ParseGeneralDeclarationNoSemicolon(Parser, SymbolScope, 0, EDF_CONST_ROW_MAJOR | EDF_SEMANTIC | EDF_MULTIPLE | EDF_TEXTURE_SAMPLER_OR_BUFFER | EDF_INTERPOLATION, Allocator, &Declaration);
 			bool bTryMemberFunction = false;
 			if (Result == EParseResult::Error)
 			{
@@ -1042,6 +1008,59 @@ namespace CrossCompiler
 			return ParseResultError();
 		}
 
+		return EParseResult::Matched;
+	}
+		
+	EParseResult ParseStructDeclaration(FHlslParser& Parser, FSymbolScope* SymbolScope, FLinearAllocator* Allocator, AST::FTypeSpecifier** OutTypeSpecifier)
+	{
+		const auto* Name = Parser.Scanner.GetCurrentToken();
+		if (!Name)
+		{
+			return ParseResultError();
+		}
+
+		bool bAnonymous = true;
+		if (Parser.Scanner.MatchToken(EHlslToken::Identifier))
+		{
+			bAnonymous = false;
+			SymbolScope->Add(Name->String);
+		}
+
+		const TCHAR* Parent = nullptr;
+		if (Parser.Scanner.MatchToken(EHlslToken::Colon))
+		{
+			const auto* ParentToken = Parser.Scanner.GetCurrentToken();
+			if (!Parser.Scanner.MatchToken(EHlslToken::Identifier))
+			{
+				Parser.Scanner.SourceError(TEXT("Identifier expected!\n"));
+				return ParseResultError();
+			}
+
+			Parent = Allocator->Strdup(ParentToken->String);
+		}
+
+		const bool bForwardDeclaration = !Parser.Scanner.MatchToken(EHlslToken::LeftBrace);
+		if (bForwardDeclaration && bAnonymous)
+		{
+			Parser.Scanner.SourceError(TEXT("Anonymous struct must have a body definition"));
+			return ParseResultError();
+		}
+
+		auto* Struct = new(Allocator) AST::FStructSpecifier(Allocator, Name->SourceInfo);
+		Struct->ParentName = Allocator->Strdup(Parent);
+		//@todo-rco: Differentiate anonymous!
+		Struct->Name = bAnonymous ? nullptr : Allocator->Strdup(Name->String);
+		Struct->bForwardDeclaration = bForwardDeclaration;
+
+		if (!bForwardDeclaration)
+		{
+			const EParseResult Result = ParseStructBody(Parser, SymbolScope, Allocator, Struct);
+			if (Result != EParseResult::Matched)
+			{
+				return Result;
+			}
+		}
+
 		auto* TypeSpecifier = new(Allocator) AST::FTypeSpecifier(Allocator, Struct->SourceInfo);
 		TypeSpecifier->Structure = Struct;
 		*OutTypeSpecifier = TypeSpecifier;
@@ -1094,11 +1113,98 @@ namespace CrossCompiler
 		return EParseResult::Matched;
 	}
 
+	static bool IsOverloadableOperatorToken(EHlslToken Token)
+	{
+		switch (Token)
+		{
+		// Math
+		case EHlslToken::Plus:
+		case EHlslToken::PlusEqual:
+		case EHlslToken::Minus:
+		case EHlslToken::MinusEqual:
+		case EHlslToken::Times:
+		case EHlslToken::TimesEqual:
+		case EHlslToken::Div:
+		case EHlslToken::DivEqual:
+		case EHlslToken::Mod:
+		case EHlslToken::ModEqual:
+
+		// Logical
+		case EHlslToken::EqualEqual:
+		case EHlslToken::NotEqual:
+		case EHlslToken::Lower:
+		case EHlslToken::LowerEqual:
+		case EHlslToken::Greater:
+		case EHlslToken::GreaterEqual:
+
+		// Bit
+		case EHlslToken::LowerLower:
+		case EHlslToken::LowerLowerEqual:
+		case EHlslToken::GreaterGreater:
+		case EHlslToken::GreaterGreaterEqual:
+		case EHlslToken::And:
+		case EHlslToken::AndEqual:
+		case EHlslToken::Or:
+		case EHlslToken::OrEqual:
+		case EHlslToken::Xor:
+		case EHlslToken::XorEqual:
+		case EHlslToken::Not:
+		case EHlslToken::Neg:
+
+		// Statements
+		case EHlslToken::Equal:
+
+		// Unary
+		case EHlslToken::PlusPlus:
+		case EHlslToken::MinusMinus:
+			return true;
+
+		default:
+			return false;
+		}
+	}
+
+	static const TCHAR* TryParseOverloadableOperator(FHlslParser& Parser, FLinearAllocator* Allocator)
+	{
+		const FHlslToken* Token = Parser.Scanner.GetCurrentToken();
+		if (!Token)
+		{
+			return nullptr;
+		}
+	
+		if (Parser.Scanner.MatchToken(EHlslToken::LeftParenthesis))
+		{
+			// Match invocation operator '()'
+			if (!Parser.Scanner.MatchToken(EHlslToken::RightParenthesis))
+			{
+				Parser.Scanner.SourceError(TEXT("Missing closing ')' token for invocation operator '()'"));
+				return nullptr;
+			}
+			return TEXT("()");
+		}
+		else if (Parser.Scanner.MatchToken(EHlslToken::LeftSquareBracket))
+		{
+			// Match subscript operator '[]'
+			if (!Parser.Scanner.MatchToken(EHlslToken::RightSquareBracket))
+			{
+				Parser.Scanner.SourceError(TEXT("Missing closing ']' token for subscript operator '[]'"));
+				return nullptr;
+			}
+			return TEXT("[]");
+		}
+		else if (IsOverloadableOperatorToken(Token->Token))
+		{
+			Parser.Scanner.Advance();
+			return Allocator->Strdup(Token->String);
+		}
+		return nullptr;
+	}
+
 	EParseResult ParseFunctionDeclarator(FHlslParser& Parser, FLinearAllocator* Allocator, AST::FFunction** OutFunction)
 	{
-		auto OriginalToken = Parser.Scanner.GetCurrentTokenIndex();
+		uint32 OriginalToken = Parser.Scanner.GetCurrentTokenIndex();
 		AST::FTypeSpecifier* TypeSpecifier = nullptr;
-		auto Result = ParseGeneralType(Parser.Scanner, ETF_BUILTIN_NUMERIC | ETF_SAMPLER_TEXTURE_BUFFER | ETF_USER_TYPES | ETF_ERROR_IF_NOT_USER_TYPE | ETF_VOID, Parser.CurrentScope, Allocator, &TypeSpecifier);
+		EParseResult Result = ParseGeneralType(Parser.Scanner, ETF_BUILTIN_NUMERIC | ETF_SAMPLER_TEXTURE_BUFFER | ETF_USER_TYPES | ETF_ERROR_IF_NOT_USER_TYPE | ETF_VOID, Parser.CurrentScope, Allocator, &TypeSpecifier);
 		if (Result == EParseResult::NotMatched)
 		{
 			Parser.Scanner.SetCurrentTokenIndex(OriginalToken);
@@ -1111,12 +1217,46 @@ namespace CrossCompiler
 
 		check(Result == EParseResult::Matched);
 
-		auto* Identifier = Parser.Scanner.GetCurrentToken();
-		if (!Parser.Scanner.MatchToken(EHlslToken::Identifier))
+		const TCHAR* OperatorIdentifier = nullptr;
+		const FHlslToken* Identifier = nullptr;
+
+		auto MatchIdentifierOrOperator = [OriginalToken, Allocator](FHlslParser& Parser, const FHlslToken*& Identifier, const TCHAR*& OperatorIdentifier) -> EParseResult
 		{
-			// This could be an error... But we should allow testing for a global variable before any rash decisions
-			Parser.Scanner.SetCurrentTokenIndex(OriginalToken);
-			return EParseResult::NotMatched;
+			if (Parser.Scanner.MatchToken(EHlslToken::Operator))
+			{
+				OperatorIdentifier = TryParseOverloadableOperator(Parser, Allocator);
+				if (!OperatorIdentifier)
+				{
+					Parser.Scanner.SourceError(TEXT("Expected operator token after 'operator' keyword!\n"));
+					return ParseResultError();
+				}
+			}
+			else if (!Parser.Scanner.MatchToken(EHlslToken::Identifier))
+			{
+				// This could be an error... But we should allow testing for a global variable before any rash decisions
+				Parser.Scanner.SetCurrentTokenIndex(OriginalToken);
+				return EParseResult::NotMatched;
+			}
+			return EParseResult::Matched;
+		};
+
+		Identifier = Parser.Scanner.GetCurrentToken();
+		Result = MatchIdentifierOrOperator(Parser, Identifier, OperatorIdentifier);
+		if (Result != EParseResult::Matched)
+		{
+			return Result;
+		}
+
+		// Check for scoped function declarations, e.g. "MyStruct::MyFunction() ..."
+		const FHlslToken* ScopeIdentifier = nullptr;
+		if (OperatorIdentifier == nullptr && Parser.Scanner.MatchToken(EHlslToken::ColonColon))
+		{
+			ScopeIdentifier = Identifier;
+			Result = MatchIdentifierOrOperator(Parser, Identifier, OperatorIdentifier);
+			if (Result != EParseResult::Matched)
+			{
+				return Result;
+			}
 		}
 
 		if (!Parser.Scanner.MatchToken(EHlslToken::LeftParenthesis))
@@ -1129,7 +1269,19 @@ namespace CrossCompiler
 		// At this point, any unknown identifiers could be a type being used without forward declaring, so it's a real error
 
 		auto* Function = new(Allocator) AST::FFunction(Allocator, Identifier->SourceInfo);
-		Function->Identifier = Allocator->Strdup(Identifier->String);
+		if (OperatorIdentifier)
+		{
+			Function->Identifier = OperatorIdentifier;
+			Function->bIsOperator = true;
+		}
+		else
+		{
+			Function->Identifier = Allocator->Strdup(Identifier->String);
+		}
+		if (ScopeIdentifier)
+		{
+			Function->ScopeIdentifier = Allocator->Strdup(ScopeIdentifier->String);
+		}
 		Function->ReturnType = new(Allocator) AST::FFullySpecifiedType(Allocator, TypeSpecifier->SourceInfo);
 		Function->ReturnType->Specifier = TypeSpecifier;
 
@@ -1218,12 +1370,48 @@ Done:
 		return ParseResultError();
 	}
 
+	bool ParseFunctionStorageSpecifiers(FHlslParser& Parser, bool& bOutInline, bool& bOutStatic)
+	{
+		bOutInline = false;
+		bOutStatic = false;
+		while (true)
+		{
+			if (Parser.Scanner.MatchToken(EHlslToken::Inline))
+			{
+				if (bOutInline)
+				{
+					Parser.Scanner.SourceError(TEXT("Duplicate storage qualifier found: 'inline'"));
+					return false;
+				}
+				bOutInline = true;
+			}
+			else if (Parser.Scanner.MatchToken(EHlslToken::Static))
+			{
+				if (bOutStatic)
+				{
+					Parser.Scanner.SourceError(TEXT("Duplicate storage qualifier found: 'static'"));
+					return false;
+				}
+				bOutStatic = true;
+			}
+			else
+			{
+				break;
+			}
+		}
+		return true;
+	}
+
 	EParseResult ParseFunctionDeclaration(FHlslParser& Parser, FLinearAllocator* Allocator, TLinearArray<AST::FAttribute*>& Attributes, AST::FNode** OutFunction)
 	{
 		const auto* CurrentToken = Parser.Scanner.GetCurrentToken();
 
 		// Inline could be used but will be ignored per the hlsl spec. If found then this HAS to be a function.
-		bool bFoundInline = Parser.Scanner.MatchToken(EHlslToken::Inline);
+		bool bFoundInline = false, bFoundStatic = false;
+		if (!ParseFunctionStorageSpecifiers(Parser, bFoundInline, bFoundStatic))
+		{
+			return ParseResultError();
+		}
 
 		AST::FFunction* Function = nullptr;
 		EParseResult Result = ParseFunctionDeclarator(Parser, Allocator, &Function);
@@ -1241,6 +1429,7 @@ Done:
 		{
 			return Result;
 		}
+		Function->bIsStatic = bFoundStatic;
 
 		if (Parser.Scanner.MatchToken(EHlslToken::Semicolon))
 		{
@@ -1919,6 +2108,22 @@ Done:
 		return EParseResult::Matched;
 	}
 
+	bool MatchConstantBufferNoTemplate(FHlslParser& Parser)
+	{
+		const FHlslToken* Peek = Parser.Scanner.PeekToken();
+		if (Peek && Peek->Token == EHlslToken::ConstantBuffer)
+		{
+			const FHlslToken* Peek1 = Parser.Scanner.PeekToken(1);
+			if (!Peek1 || Peek1->Token != EHlslToken::Lower)
+			{
+				// it's a standard one, make sure we match it
+				return Parser.Scanner.MatchToken(EHlslToken::ConstantBuffer);
+			}
+		}
+
+		return false;
+	}
+
 	EParseResult TryTranslationUnit(FHlslParser& Parser, FLinearAllocator* Allocator, AST::FNode** OutNode)
 	{
 		if (MatchPragma(Parser, Allocator, OutNode))
@@ -1926,7 +2131,7 @@ Done:
 			return EParseResult::Matched;
 		}
 
-		if (Parser.Scanner.MatchToken(EHlslToken::ConstantBuffer) || Parser.Scanner.MatchToken(EHlslToken::CBuffer))
+		if (Parser.Scanner.MatchToken(EHlslToken::CBuffer) || MatchConstantBufferNoTemplate(Parser))
 		{
 			auto Result = ParseCBuffer(Parser, Allocator, OutNode);
 			if (Result == EParseResult::Error || Result == EParseResult::Matched)
@@ -2009,7 +2214,7 @@ Done:
 		} GStaticInitializer;
 	}
 
-	FHlslParser::FHlslParser(FLinearAllocator* InAllocator, FCompilerMessages& InCompilerMessages) :
+	FHlslParser::FHlslParser(FLinearAllocator* InAllocator, FCompilerMessages& InCompilerMessages, TConstArrayView<FScopedDeclarations> InScopedDeclarations) :
 		Scanner(InCompilerMessages),
 		CompilerMessages(InCompilerMessages),
 		GlobalScope(InAllocator, nullptr),
@@ -2018,22 +2223,21 @@ Done:
 	{
 		CurrentScope = &GlobalScope;
 
+		for (const FScopedDeclarations& ScopedDeclarations : InScopedDeclarations)
 		{
-			FCreateSymbolScope SceScope(Allocator, &CurrentScope);
-			CurrentScope->Name = TEXT("sce");
+			TArray<FCreateSymbolScope> ScopeStack;
+
+			FSymbolScope* IterScope = CurrentScope;
+			for (FStringView Scope : ScopedDeclarations.Scope)
 			{
-				FCreateSymbolScope GnmScope(Allocator, &CurrentScope);
-				CurrentScope->Name = TEXT("Gnm");
-
-				CurrentScope->Add(TEXT("Sampler"));	// sce::Gnm::Sampler
-
-				CurrentScope->Add(TEXT("kAnisotropyRatio1"));	// sce::Gnm::kAnisotropyRatio1
-				CurrentScope->Add(TEXT("kBorderColorTransBlack"));	// sce::Gnm::kBorderColorTransBlack
-				CurrentScope->Add(TEXT("kDepthCompareNever"));	// sce::Gnm::kDepthCompareNever
+				ScopeStack.Emplace(Allocator, &IterScope);
+				IterScope->Name = Scope.GetData();
 			}
-			//auto* Found = CurrentScope->FindGlobalNamespace(TEXT("sce"), CurrentScope);
-			//Found = Found->FindNamespace(TEXT("Gnm"));
-			//Found->FindType(Found, TEXT("Sampler"), false);
+
+			for (FStringView Symbol : ScopedDeclarations.Symbols)
+			{
+				IterScope->Add(Symbol);
+			}
 		}
 
 		// Register built-in structure for DXR in SM6
@@ -2042,10 +2246,10 @@ Done:
 
 	namespace Parser
 	{
-		bool Parse(const FString& Input, const FString& Filename, FCompilerMessages& OutCompilerMessages, TCallback* Callback, void* CallbackData)
+		bool Parse(const FString& Input, const FString& Filename, FCompilerMessages& OutCompilerMessages, TConstArrayView<FScopedDeclarations> InScopedDeclarations, TCallback* Callback, void* CallbackData)
 		{
 			FLinearAllocator Allocator;
-			FHlslParser Parser(&Allocator, OutCompilerMessages);
+			FHlslParser Parser(&Allocator, OutCompilerMessages, InScopedDeclarations);
 			if (!Parser.Scanner.Lex(Input, Filename))
 			{
 				return false;
@@ -2084,10 +2288,10 @@ Done:
 			return bSuccess;
 		}
 
-		bool Parse(const FString& Input, const FString& Filename, FCompilerMessages& OutCompilerMessages, TFunction< void(CrossCompiler::FLinearAllocator* Allocator, CrossCompiler::TLinearArray<CrossCompiler::AST::FNode*>& ASTNodes)> Function)
+		bool Parse(const FString& Input, const FString& Filename, FCompilerMessages& OutCompilerMessages, TConstArrayView<FScopedDeclarations> InScopedDeclarations, TFunction< void(CrossCompiler::FLinearAllocator* Allocator, CrossCompiler::TLinearArray<CrossCompiler::AST::FNode*>& ASTNodes)> Function)
 		{
 			FLinearAllocator Allocator;
-			FHlslParser Parser(&Allocator, OutCompilerMessages);
+			FHlslParser Parser(&Allocator, OutCompilerMessages, InScopedDeclarations);
 			if (!Parser.Scanner.Lex(Input, Filename))
 			{
 				return false;

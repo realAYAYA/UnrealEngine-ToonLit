@@ -81,7 +81,7 @@ namespace RemoteControlTest
 	}
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRemoteControlPresetIntegrationTest, "Plugin.RemoteControl.Expose", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRemoteControlPresetIntegrationTest, "Plugins.RemoteControl.Expose", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FRemoteControlPresetIntegrationTest::RunTest(const FString& Parameters)
 {
 	// Test expose whole container

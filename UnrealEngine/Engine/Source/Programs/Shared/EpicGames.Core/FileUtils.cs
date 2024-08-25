@@ -278,6 +278,10 @@ namespace EpicGames.Core
 			{
 				directory.Delete(true);
 			}
+			catch (DirectoryNotFoundException)
+			{
+				// Race condition with something else deleting the same directory.
+			}
 			catch (Exception ex)
 			{
 				throw new WrappedFileOrDirectoryException(ex, String.Format("Unable to delete '{0}': {1}", directory.FullName, ex.Message.TrimEnd()));
@@ -307,20 +311,27 @@ namespace EpicGames.Core
 			{
 				if (directory.Exists)
 				{
-					foreach (FileInfo file in directory.EnumerateFiles())
+					try
 					{
-						ForceDeleteFile(file);
+						foreach (FileInfo file in directory.EnumerateFiles())
+						{
+							ForceDeleteFile(file);
+						}
+						foreach (DirectoryInfo subDirectory in directory.EnumerateDirectories())
+						{
+							if (subDirectory.Attributes.HasFlag(FileAttributes.ReparsePoint))
+							{
+								ForceDeleteDirectoryInternal(subDirectory);
+							}
+							else
+							{
+								ForceDeleteDirectory(subDirectory);
+							}
+						}
 					}
-					foreach (DirectoryInfo subDirectory in directory.EnumerateDirectories())
+					catch (DirectoryNotFoundException)
 					{
-						if (subDirectory.Attributes.HasFlag(FileAttributes.ReparsePoint))
-						{
-							ForceDeleteDirectoryInternal(subDirectory);
-						}
-						else
-						{
-							ForceDeleteDirectory(subDirectory);
-						}
+						// Race condition with something else deleting the same directory.
 					}
 				}
 			}
@@ -385,11 +396,11 @@ namespace EpicGames.Core
 				}
 				catch (Exception deleteEx)
 				{
-					throw new WrappedFileOrDirectoryException(new AggregateException(ex, deleteEx), String.Format("Unable to move {0} to {1} (also tried delete/move)", sourceLocation, targetLocation));
+					throw new WrappedFileOrDirectoryException(new AggregateException(ex, deleteEx), $"Unable to move {sourceLocation} to {targetLocation} (also tried delete/move): {ex.Message}");
 				}
 
 				// Throw the original exception
-				throw new WrappedFileOrDirectoryException(ex, String.Format("Unable to move {0} to {1}", sourceLocation, targetLocation));
+				throw new WrappedFileOrDirectoryException(ex, $"Unable to move {sourceLocation} to {targetLocation}: {ex.Message}");
 			}
 		}
 

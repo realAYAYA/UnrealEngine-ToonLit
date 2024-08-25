@@ -62,11 +62,10 @@ SFilterList::FCustomTextFilterEvent SFilterList::CustomTextFilterEvent;
 void SFilterList::Construct( const FArguments& InArgs )
 {
 	bUseSharedSettings = InArgs._UseSharedSettings;
-	OnGetContextMenu = InArgs._OnGetContextMenu;
 	OnFilterBarLayoutChanging = InArgs._OnFilterBarLayoutChanging;
 	this->OnFilterChanged = InArgs._OnFilterChanged;
 	this->ActiveFilters = InArgs._FrontendFilters;
-	InitialClassFilters = InArgs._InitialClassFilters;
+	InitialClassFilters = InArgs._InitialClassFilters; 
 
 	TSharedPtr<FFrontendFilterCategory> DefaultCategory = MakeShareable( new FFrontendFilterCategory(LOCTEXT("FrontendFiltersCategory", "Other Filters"), LOCTEXT("FrontendFiltersCategoryTooltip", "Filter assets by all filters in this category.")) );
 	
@@ -80,6 +79,7 @@ void SFilterList::Construct( const FArguments& InArgs )
 	AllFrontendFilters_Internal.Add( MakeShareable(new FFrontendFilter_InUseByLoadedLevels(DefaultCategory)) );
 	AllFrontendFilters_Internal.Add( MakeShareable(new FFrontendFilter_UsedInAnyLevel(DefaultCategory)) );
 	AllFrontendFilters_Internal.Add( MakeShareable(new FFrontendFilter_NotUsedInAnyLevel(DefaultCategory)) );
+	AllFrontendFilters_Internal.Add( MakeShareable(new FFrontendFilter_NotUsedInAnyAsset(DefaultCategory)) );
 	AllFrontendFilters_Internal.Add( MakeShareable(new FFrontendFilter_ArbitraryComparisonOperation(DefaultCategory)) );
 	AllFrontendFilters_Internal.Add(MakeShareable(new FFrontendFilter_Recent(DefaultCategory)));
 	AllFrontendFilters_Internal.Add( MakeShareable(new FFrontendFilter_NotSourceControlled(DefaultCategory)) );
@@ -139,6 +139,10 @@ void SFilterList::Construct( const FArguments& InArgs )
 	Args._FilterBarIdentifier = InArgs._FilterBarIdentifier;
 	Args._FilterBarLayout = InArgs._FilterBarLayout;
 	Args._CanChangeOrientation = InArgs._CanChangeOrientation;
+	Args._OnExtendAddFilterMenu = InArgs._OnExtendAddFilterMenu;
+	Args._FilterMenuName = FName("ContentBrowser.FilterMenu");
+	Args._DefaultMenuExpansionCategory = InArgs._DefaultMenuExpansionCategory;
+	Args._bUseSectionsForCustomCategories = InArgs._bUseSectionsForCustomCategories;
 
 	SAssetFilterBar<FAssetFilterType>::Construct(Args);
 
@@ -153,31 +157,6 @@ void SFilterList::Construct( const FArguments& InArgs )
 		CustomTextFilterEvent.AddSP(this, &SFilterList::OnExternalCustomTextFilterCreated);
 	}
 	
-}
-
-FReply SFilterList::OnMouseButtonUp( const FGeometry& MyGeometry, const FPointerEvent& MouseEvent )
-{
-	if ( MouseEvent.GetEffectingButton() == EKeys::RightMouseButton )
-	{
-		if ( OnGetContextMenu.IsBound() )
-		{
-			FReply Reply = FReply::Handled().ReleaseMouseCapture();
-
-			// Get the context menu content. If NULL, don't open a menu.
-			TSharedPtr<SWidget> MenuContent = OnGetContextMenu.Execute();
-
-			if ( MenuContent.IsValid() )
-			{
-				FVector2D SummonLocation = MouseEvent.GetScreenSpacePosition();
-				FWidgetPath WidgetPath = MouseEvent.GetEventPath() != nullptr ? *MouseEvent.GetEventPath() : FWidgetPath();
-				FSlateApplication::Get().PushMenu(AsShared(), WidgetPath, MenuContent.ToSharedRef(), SummonLocation, FPopupTransitionEffect(FPopupTransitionEffect::ContextMenu));
-			}
-
-			return Reply;
-		}
-	}
-
-	return FReply::Unhandled();
 }
 
 const TArray<UClass*>& SFilterList::GetInitialClassFilters()
@@ -197,9 +176,9 @@ TSharedPtr<FFrontendFilter> SFilterList::GetFrontendFilter(const FString& InName
 	return TSharedPtr<FFrontendFilter>();
 }
 
-TSharedRef<SWidget> SFilterList::ExternalMakeAddFilterMenu(EAssetTypeCategories::Type MenuExpansion)
+TSharedRef<SWidget> SFilterList::ExternalMakeAddFilterMenu()
 {
-	return MakeAddFilterMenu(MenuExpansion);
+	return SAssetFilterBar<FAssetFilterType>::MakeAddFilterMenu();
 }
 
 void SFilterList::DisableFiltersThatHideItems(TArrayView<const FContentBrowserItem> ItemList)
@@ -328,78 +307,16 @@ bool IsFilteredByPicker(const TArray<UClass*>& FilterClassList, UClass* TestClas
 	return true;
 }
 
-void SFilterList::PopulateAddFilterMenu_Internal(UToolMenu* Menu)
+UAssetFilterBarContext* SFilterList::CreateAssetFilterBarContext()
 {
-	EAssetTypeCategories::Type MenuExpansion = EAssetTypeCategories::Basic;
-	if (UContentBrowserFilterListContext* Context = Menu->FindContext<UContentBrowserFilterListContext>())
-	{
-		MenuExpansion = Context->MenuExpansion;
-	}
+	UAssetFilterBarContext* AssetFilterBarContext = SAssetFilterBar<const FContentBrowserItem&>::CreateAssetFilterBarContext();
 
-	this->PopulateAddFilterMenu(Menu, AssetFilterCategories.FindChecked(EAssetCategoryPaths::Basic.GetCategory()), FOnFilterAssetType::CreateLambda([this](UClass *TestClass)
+	AssetFilterBarContext->OnFilterAssetType = FOnFilterAssetType::CreateLambda([this](UClass *TestClass)
 	{
 		return !IsFilteredByPicker(this->InitialClassFilters, TestClass);
-	}));
+	});
 	
-	Menu->AddSection("ContentBrowserFilterMiscAsset", LOCTEXT("MiscAssetsMenuHeading", "Misc Options") );
-}
-
-TSharedRef<SWidget> SFilterList::MakeAddFilterMenu()
-{
-	const FName FilterMenuName = "ContentBrowser.FilterMenu";
-	if (!UToolMenus::Get()->IsMenuRegistered(FilterMenuName))
-	{
-		UToolMenu* Menu = UToolMenus::Get()->RegisterMenu(FilterMenuName);
-		Menu->bShouldCloseWindowAfterMenuSelection = true;
-		Menu->bCloseSelfOnly = true;
-
-		Menu->AddDynamicSection(NAME_None, FNewToolMenuDelegate::CreateLambda([](UToolMenu* InMenu)
-		{
-			if (UContentBrowserFilterListContext* Context = InMenu->FindContext<UContentBrowserFilterListContext>())
-			{
-				if (TSharedPtr<SFilterList> FilterList = Context->FilterList.Pin())
-				{
-					FilterList->PopulateAddFilterMenu_Internal(InMenu);
-				}
-			}
-		}));
-	}
-
-	UContentBrowserFilterListContext* ContentBrowserFilterListContext = NewObject<UContentBrowserFilterListContext>();
-	ContentBrowserFilterListContext->FilterList = SharedThis(this);
-	ContentBrowserFilterListContext->MenuExpansion = EAssetTypeCategories::Basic;
-	FToolMenuContext ToolMenuContext(ContentBrowserFilterListContext);
-
-	return UToolMenus::Get()->GenerateWidget(FilterMenuName, ToolMenuContext);
-}
-
-TSharedRef<SWidget> SFilterList::MakeAddFilterMenu(EAssetTypeCategories::Type MenuExpansion)
-{
-	const FName FilterMenuName = "ContentBrowser.FilterMenu";
-	if (!UToolMenus::Get()->IsMenuRegistered(FilterMenuName))
-	{
-		UToolMenu* Menu = UToolMenus::Get()->RegisterMenu(FilterMenuName);
-		Menu->bShouldCloseWindowAfterMenuSelection = true;
-		Menu->bCloseSelfOnly = true;
-
-		Menu->AddDynamicSection(NAME_None, FNewToolMenuDelegate::CreateLambda([](UToolMenu* InMenu)
-		{
-			if (UContentBrowserFilterListContext* Context = InMenu->FindContext<UContentBrowserFilterListContext>())
-			{
-				if (TSharedPtr<SFilterList> FilterList = Context->FilterList.Pin())
-				{
-					FilterList->PopulateAddFilterMenu_Internal(InMenu);
-				}
-			}
-		}));
-	}
-
-	UContentBrowserFilterListContext* ContentBrowserFilterListContext = NewObject<UContentBrowserFilterListContext>();
-	ContentBrowserFilterListContext->FilterList = SharedThis(this);
-	ContentBrowserFilterListContext->MenuExpansion = MenuExpansion;
-	FToolMenuContext ToolMenuContext(ContentBrowserFilterListContext);
-
-	return UToolMenus::Get()->GenerateWidget(FilterMenuName, ToolMenuContext);
+	return AssetFilterBarContext;
 }
 
 void SFilterList::CreateCustomFilterDialog(const FText& InText)

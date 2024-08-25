@@ -50,4 +50,6 @@ class UAnimGraphNode_SequenceEvaluator : public UAnimGraphNode_AssetPlayerBase
 	virtual void SetAnimationAsset(UAnimationAsset* Asset) override;
 	virtual void CopySettingsFromAnimationAsset(UAnimationAsset* Asset) override;
 	// End of UAnimGraphNode_AssetPlayerBase interface
+	
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 };

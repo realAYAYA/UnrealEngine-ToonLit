@@ -9,7 +9,12 @@
 #include "Layout/ArrangedChildren.h"
 #include "SWorldPartitionEditorGrid.h"
 #include "SWorldPartitionViewportWidget.h"
+#include "Widgets/Text/STextBlock.h"
+#include "SViewportToolBar.h"
+#include "WorldPartition/WorldPartition.h"
+#include "WorldPartition/ActorDescContainerInstance.h"
 #include "WorldPartition/WorldPartitionActorLoaderInterface.h"
+#include "ExternalDirtyActorsTracker.h"
 
 class SWorldPartitionEditorGrid2D : public SWorldPartitionEditorGrid
 {
@@ -19,6 +24,7 @@ protected:
 	public:
 		FEditorCommands();
 	
+		// Context Menu
 		TSharedPtr<FUICommandInfo> CreateRegionFromSelection;
 		TSharedPtr<FUICommandInfo> LoadSelectedRegions;
 		TSharedPtr<FUICommandInfo> UnloadSelectedRegions;
@@ -29,11 +35,52 @@ protected:
 		TSharedPtr<FUICommandInfo> LoadFromHere;
 		TSharedPtr<FUICommandInfo> BugItHere;
 
+		// Toolbar
+		// Options
+		TSharedPtr<FUICommandInfo> FollowPlayerInPIE;
+		TSharedPtr<FUICommandInfo> BugItGoLoadRegion;
+
+		// Show toggles
+		TSharedPtr<FUICommandInfo> ShowActors;
+		TSharedPtr<FUICommandInfo> ShowHLODActors;
+		TSharedPtr<FUICommandInfo> ShowGrid;
+		TSharedPtr<FUICommandInfo> ShowMiniMap;
+		TSharedPtr<FUICommandInfo> ShowCoords;
+
+		// Quick Actions
+		TSharedPtr<FUICommandInfo> FocusSelection;
+		TSharedPtr<FUICommandInfo> FocusLoadedRegions;
+		TSharedPtr<FUICommandInfo> FocusWorld;
+		
 		/**
 		 * Initialize commands
 		 */
 		virtual void RegisterCommands() override;
 	};
+
+	// In-viewport toolbar widget used in the world partition editor
+	class SToolBar : public SViewportToolBar
+	{
+	public:
+		SLATE_BEGIN_ARGS(SToolBar) {}
+			SLATE_ARGUMENT(SWorldPartitionEditorGrid2D*, WPEditorGrid2D)
+		SLATE_END_ARGS()
+
+		void Construct(const FArguments& InArgs);
+
+	private:
+		EVisibility IsOptionsMenuVisible() const;
+		
+		TSharedRef<SWidget> GenerateUnloadedOpacitySlider() const;
+
+		TSharedRef<SWidget> GenerateOptionsMenu() const;
+		TSharedRef<SWidget> GenerateShowMenu() const;
+		TSharedRef<SWidget> GenerateBuildMenu() const;
+		
+		TSharedPtr<FUICommandList> CommandList;
+		SWorldPartitionEditorGrid2D* WPEditorGrid2D;
+	};
+
 
 public:
 	SWorldPartitionEditorGrid2D();
@@ -41,6 +88,7 @@ public:
 
 protected:
 	void Construct(const FArguments& InArgs);
+	void BindCommands();
 
 	void CreateRegionFromSelection();
 	void LoadSelectedRegions();
@@ -56,6 +104,10 @@ protected:
 	bool IsInteractive() const;
 
 	virtual int64 GetSelectionSnap() const;
+	
+	TSharedRef<SWidget> GenerateContextualMenu() const;
+
+	void OnActorAdded(AActor* Actor);
 
 	virtual void Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime) override;
 	virtual FReply OnMouseButtonDown(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override;
@@ -76,13 +128,17 @@ protected:
 	virtual int32 PaintMeasureTool(const FGeometry& AllottedGeometry, const FSlateRect& MyCullingRect, FSlateWindowElementList& OutDrawElements, int32 LayerId) const;
 
 	int32 DrawTextLabel(FSlateWindowElementList& OutDrawElements, int32 LayerId, const FGeometry& AllottedGeometry, const FString& Label, const FVector2D& Pos, const FLinearColor& Color, const FSlateFontInfo& Font) const;
-
-	virtual FReply FocusSelection();
-	virtual FReply FocusLoadedRegions();
+	
+	void FocusSelection();
+	void FocusLoadedRegions();
+	void FocusWorld();
 
 	void UpdateTransform() const;
 	void UpdateSelectionBox(bool bSnap);
 	void ClearSelection();
+
+	bool ShouldShowActorBounds(AActor* InActor) const;
+	bool ShouldShowActorBounds(FWorldPartitionActorDescInstance* ActorDescInstance) const;
 
 	const TSharedRef<FUICommandList> CommandList;
 
@@ -111,7 +167,9 @@ protected:
 	bool bIsPanning;
 	bool bIsMeasuring;
 	bool bShowActors;
+	bool bShowHLODActors;
 	bool bShowGrid;
+	bool bShowMiniMap;
 	bool bFollowPlayerInPIE;
 	FVector2D MouseCursorPos;
 	FVector2D MouseCursorPosWorld;
@@ -152,13 +210,25 @@ protected:
 	// Updated every tick
 	TSet<FGuid> ShownActorGuids;
 	TSet<FGuid> DirtyActorGuids;
+	TSet<FGuid> SelectedActorGuids;
 	FLoaderInterfaceSet ShownLoaderInterfaces;
 	FLoaderInterfaceSet HoveredLoaderInterfaces;
 	FLoaderInterfaceStack HoveredLoaderInterfacesStack;
 	FLoaderInterface HoveredLoaderInterface;
 
+	// Shown actors cache
+	FBox ViewRectWorldCache;
+	TSet<FGuid> ShownActorGuidsCache;
+	FLoaderInterfaceSet ShownLoaderInterfacesCache;
+	void InvalidateShownActorsCache() { ViewRectWorldCache.Init(); }
+
 	// Minimap
 	void UpdateWorldMiniMapDetails();
+	void SaveMiniMapUnloadedOpacityUserSetting();
+	bool IsMiniMapUnloadedOpacityEnabled() const;
+	float GetMiniMapUnloadedOpacity() const { return MiniMapUnloadedOpacity; };
+	void SetMiniMapUnloadedOpacity(float InOpacity) { MiniMapUnloadedOpacity = InOpacity; };
+	float MiniMapUnloadedOpacity;
 	FBox2D WorldMiniMapBounds;
 	FSlateBrush WorldMiniMapBrush;
 
@@ -167,4 +237,16 @@ protected:
 	mutable double PaintTime;
 
 	TSharedPtr<SWorldPartitionViewportWidget> ViewportWidget;
+	TSharedPtr<STextBlock> TextWorldBoundsInKMWidget;
+	TSharedPtr<STextBlock> TextRulerWidget;
+
+	struct FExternalDirtyActorTrackerGuid
+	{
+		using Type = FGuid;
+		using OwnerType = SWorldPartitionEditorGrid2D;
+		static FGuid Store(SWorldPartitionEditorGrid2D* InOwner, AActor* InActor) { return InActor->GetActorGuid(); }
+	};
+
+	using FExternalDirtyActorsTracker = TExternalDirtyActorsTracker<FExternalDirtyActorTrackerGuid>;
+	TUniquePtr<FExternalDirtyActorsTracker> ExternalDirtyActorsTracker;
 };

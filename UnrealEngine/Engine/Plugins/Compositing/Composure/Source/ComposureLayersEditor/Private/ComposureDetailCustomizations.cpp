@@ -363,7 +363,7 @@ void FCompElementDetailsCustomization::CustomizeDetails(IDetailLayoutBuilder& De
 
 		if (TRINARY_IS_FALSE(bShowCameraProp))
 		{
-			DetailBuilder.HideProperty(GET_MEMBER_NAME_CHECKED(ACompositingElement, TargetCameraActor));
+			DetailBuilder.HideProperty(GET_MEMBER_NAME_CHECKED(ACompositingElement, TargetCameraActorPtr));
 		}
 
 		TSharedPtr<IPropertyHandle> PreviewTransformSource = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(ACompositingElement, PreviewTransformSource));

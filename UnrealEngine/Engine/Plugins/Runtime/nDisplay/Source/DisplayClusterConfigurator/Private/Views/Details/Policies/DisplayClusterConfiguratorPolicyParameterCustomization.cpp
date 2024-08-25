@@ -163,7 +163,7 @@ void FPolicyParameterInfo::UpdateCustomParameterValueText(const FString& NewValu
 		FStructProperty* StructProperty = FindFProperty<FStructProperty>(ConfigurationViewport->GetClass(), GET_MEMBER_NAME_CHECKED(UDisplayClusterConfigurationViewport, ProjectionPolicy));
 		check(StructProperty);
 
-		const TSharedPtr<ISinglePropertyView> ProjectionPolicyView = DisplayClusterConfiguratorPropertyUtils::GetPropertyView(
+		const TSharedPtr<ISinglePropertyView> ProjectionPolicyView = UE::DisplayClusterConfiguratorPropertyUtils::GetPropertyView(
 			ConfigurationViewport, GET_MEMBER_NAME_CHECKED(UDisplayClusterConfigurationViewport, ProjectionPolicy));
 
 		check(ProjectionPolicyView.IsValid());
@@ -172,7 +172,7 @@ void FPolicyParameterInfo::UpdateCustomParameterValueText(const FString& NewValu
 		check(PropertyHandle.IsValid());
 		
 		uint8* MapContainer = StructProperty->ContainerPtrToValuePtr<uint8>(ConfigurationViewport);
-		DisplayClusterConfiguratorPropertyUtils::AddKeyValueToMap(MapContainer, PropertyHandle, Key, NewValue);
+		UE::DisplayClusterConfiguratorPropertyUtils::AddKeyValueToMap(MapContainer, PropertyHandle, Key, NewValue);
 	}
 
 	if (bNotify && bHasChanged)
@@ -414,7 +414,7 @@ void FPolicyParameterInfoFile::CreateCustomRowWidget(IDetailChildrenBuilder& InD
 		];
 }
 
-FString FPolicyParameterInfoFile::OpenSelectFileDialogue()
+void FPolicyParameterInfoFile::OpenSelectFileDialogue()
 {
 	FString FileTypes;
 	FString AllExtensions;
@@ -461,24 +461,37 @@ FString FPolicyParameterInfoFile::OpenSelectFileDialogue()
 			OpenedFiles
 		);
 
-		if (bOpened && OpenedFiles.Num() > 0)
+		if (bOpened)
 		{
-			const FString& OpenedFile = OpenedFiles[0];
-			FEditorDirectories::Get().SetLastDirectory(ELastDirectory::GENERIC_IMPORT, FPaths::GetPath(OpenedFile));
+			FString NewPathToFile;
+			if (!OpenedFiles.IsEmpty())
+			{
+				const FString& OpenedFile = OpenedFiles[0];
+				FEditorDirectories::Get().SetLastDirectory(ELastDirectory::GENERIC_IMPORT, FPaths::GetPath(OpenedFile));
 
-			return FPaths::ConvertRelativePathToFull(OpenedFile);
+				// Gets the full path to the selected file
+				const FString OutFullPath = FPaths::ConvertRelativePathToFull(OpenedFile);
+
+				// Gets the relative path to the selected file if it is possible.
+				NewPathToFile = DisplayClusterHelpers::filesystem::GetRelativePathForConfigResource(OutFullPath);
+			}
+
+			// The file path is updated only if the OpenSelectFileDialogue() function returns a valid value
+			UpdateCustomParameterValueText(NewPathToFile);
+		}
+		else
+		{
+			// When we close the file select dialog box using the cancel or close button, we do nothing.
 		}
 	}
-
-	return FString();
 }
 
 FReply FPolicyParameterInfoFile::OnChangePathClicked()
 {
-	UpdateCustomParameterValueText(OpenSelectFileDialogue());
+	OpenSelectFileDialogue();
+
 	return FReply::Handled();
 }
-
 
 TSharedRef<SWidget> FPolicyParameterInfoFloatReference::MakeFloatInputWidget(TSharedRef<TOptional<float>>& ProxyValue, const FText& Label,
                                                                      bool bRotationInDegrees,

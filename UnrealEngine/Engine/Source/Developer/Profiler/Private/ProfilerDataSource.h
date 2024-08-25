@@ -322,7 +322,7 @@ public:
 
 			for( uint32 NewValueIndex = ChunkStartIndex; NewValueIndex < ChunkEndIndex; NewValueIndex++ )
 			{
-				const float SampleStartTimeMS = NewValueIndex * TimeAccuracyMS;
+				const float SampleStartTimeMS = (float)NewValueIndex * TimeAccuracyMS;
 				ThisCacheDataContainer::CachedValues(NewValueIndex) = (Type)static_cast<const ManagerClass*>(this)->GetUncachedValueFromTimeRange( SampleStartTimeMS, SampleStartTimeMS+TimeAccuracyMS );
 			}
 
@@ -1241,7 +1241,6 @@ public:
 	template< typename TFunc > 
 	FORCEINLINE_DEBUGGABLE void ExecuteOperationForAllChildren( TFunc FuncToCall )
 	{
-		const bool bAllowShrinking = false;
 		TArray<FEventGraphSample*>& Stack = FProfilerScratchArea::Get().ExecuteOperationArray;
 
 		Stack.Add( &AsShared().Get() );
@@ -1250,7 +1249,7 @@ public:
 		while (Stack.Num() > 0)
 		{
 			// Get the parent and assign events.
-			FEventGraphSample* Current = Stack.Pop( bAllowShrinking );
+			FEventGraphSample* Current = Stack.Pop( EAllowShrinking::No );
 			FuncToCall( Current );
 
 			// Push children onto the stack.
@@ -1270,7 +1269,6 @@ public:
 	template< typename TFunc, typename TArg0 > 
 	FORCEINLINE_DEBUGGABLE void ExecuteOperationForAllChildren( TFunc FuncToCall, TArg0 Arg0 )
 	{
-		const bool bAllowShrinking = false;
 		TArray<FEventGraphSample*>& Stack = FProfilerScratchArea::Get().ExecuteOperationArray;
 
 		Stack.Add( &AsShared().Get() );
@@ -1279,7 +1277,7 @@ public:
 		while (Stack.Num() > 0)
 		{
 			// Get the parent and assign events.
-			FEventGraphSample* Current = Stack.Pop( bAllowShrinking );
+			FEventGraphSample* Current = Stack.Pop( EAllowShrinking::No );
 			FuncToCall( Current, Arg0 );
 
 			// Push children onto the stack.
@@ -1299,7 +1297,6 @@ public:
 	template< typename TFunc, typename TArg0, typename TArg1 >
 	FORCEINLINE_DEBUGGABLE void ExecuteOperationForAllChildren( TFunc FuncToCall, TArg0 Arg0, TArg1 Arg1 )
 	{
-		const bool bAllowShrinking = false;
 		TArray<FEventGraphSample*>& Stack = FProfilerScratchArea::Get().ExecuteOperationArray;
 
 		Stack.Add( &AsShared().Get() );
@@ -1308,7 +1305,7 @@ public:
 		while (Stack.Num() > 0)
 		{
 			// Get the parent and assign events.
-			FEventGraphSample* Current = Stack.Pop( bAllowShrinking );
+			FEventGraphSample* Current = Stack.Pop( EAllowShrinking::No );
 			FuncToCall( Current, Arg0, Arg1 );
 
 			// Push children onto the stack.
@@ -1355,7 +1352,6 @@ protected:
 #if	0
 	FORCEINLINE_DEBUGGABLE void SetRootAndThreadEvents_Iterative( FEventGraphSample* RootEvent, FEventGraphSample* ThreadEvent )
 	{
-		const bool bAllowShrinking = false;
 		TArray<FEventGraphSample*>& Stack = FProfilerScratchArea::Get().ExecuteOperationArray;
 
 		Stack.Add( &AsShared().Get() );
@@ -1364,7 +1360,7 @@ protected:
 		while (Stack.Num() > 0)
 		{
 			// Get the parent and assign events.
-			FEventGraphSample* Current = Stack.Pop( bAllowShrinking );
+			FEventGraphSample* Current = Stack.Pop(EAllowShrinking::No);
 			FSetRootAndThread()(Current, RootEvent, ThreadEvent);
 
 			// Push children onto the stack.

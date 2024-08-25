@@ -369,7 +369,47 @@ void FSmallListSet::Enumerate(int32 ListIndex, TFunctionRef<void(int32)> ApplyFu
 	}
 }
 
-
+bool FSmallListSet::EnumerateEarlyOut(int32 ListIndex, TFunctionRef<bool(int32)> ApplyFunc) const
+{
+	int32 block_ptr = ListHeads[ListIndex];
+	if (block_ptr != NullValue)
+	{
+		int32 N = ListBlocks[block_ptr];
+		if (N < BLOCKSIZE)
+		{
+			int32 iEnd = block_ptr + N;
+			for (int32 i = block_ptr + 1; i <= iEnd; ++i)
+			{
+				if (!ApplyFunc(ListBlocks[i]))
+				{
+					return false;
+				}
+			}
+		}
+		else
+		{
+			// we spilled to linked list, have to iterate through it as well
+			int32 iEnd = block_ptr + BLOCKSIZE;
+			for (int32 i = block_ptr + 1; i <= iEnd; ++i)
+			{
+				if (!ApplyFunc(ListBlocks[i]))
+				{
+					return false;
+				}
+			}
+			int32 cur_ptr = ListBlocks[block_ptr + BLOCK_LIST_OFFSET];
+			while (cur_ptr != NullValue)
+			{
+				if (!ApplyFunc(LinkedListElements[cur_ptr]))
+				{
+					return false;
+				}
+				cur_ptr = LinkedListElements[cur_ptr + 1];
+			}
+		}
+	}
+	return true;
+}
 
 
 int32 FSmallListSet::AllocateBlock()

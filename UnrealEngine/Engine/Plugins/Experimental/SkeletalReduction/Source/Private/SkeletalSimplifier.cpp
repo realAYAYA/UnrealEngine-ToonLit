@@ -15,13 +15,14 @@ const int32 SkeletalSimplifier::LinearAlgebra::SymmetricMatrix::Mapping[9] = { 0
 SkeletalSimplifier::FMeshSimplifier::FMeshSimplifier(const MeshVertType* InSrcVerts, const uint32 InNumSrcVerts,
 	const uint32* InSrcIndexes, const uint32 InNumSrcIndexes,
 	const float CoAlignmentLimit, const float VolumeImportanceValue, const bool VolumeConservation, const bool bEnforceBoundaries, 
-	const bool bMergeCoincidentVertBones)
+	const bool bMergeCoincidentVertBones, const bool bUseLegacyAttrGradient)
 	:
 	coAlignmentLimit(CoAlignmentLimit),
 	VolumeImportance(VolumeImportanceValue),
 	bPreserveVolume(VolumeConservation),
 	bCheckBoneBoundaries(bEnforceBoundaries),
 	bMergeBonesOnCoincidentVerts(bMergeCoincidentVertBones),
+	bUseLegacyAttrGrad(bUseLegacyAttrGradient),
 	MeshManager(InSrcVerts, InNumSrcVerts, InSrcIndexes, InNumSrcIndexes, bMergeCoincidentVertBones)
 {
 

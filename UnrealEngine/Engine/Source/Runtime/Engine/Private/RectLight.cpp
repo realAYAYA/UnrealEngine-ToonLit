@@ -14,16 +14,6 @@ ARectLight::ARectLight(const FObjectInitializer& ObjectInitializer)
 	RootComponent = RectLightComponent;
 }
 
-void ARectLight::PostLoad()
-{
-	Super::PostLoad();
-
-	if (GetLightComponent()->Mobility == EComponentMobility::Static)
-	{
-		GetLightComponent()->ClearLightFunctionMaterial();
-	}
-}
-
 #if WITH_EDITOR
 void ARectLight::EditorApplyScale(const FVector& DeltaScale, const FVector* PivotLocation, bool bAltDown, bool bShiftDown, bool bCtrlDown)
 {

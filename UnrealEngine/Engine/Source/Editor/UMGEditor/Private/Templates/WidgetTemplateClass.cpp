@@ -11,6 +11,7 @@
 #include "UObject/CoreRedirects.h"
 #include "WidgetBlueprintEditorUtils.h"
 
+#include "Blueprint/WidgetBlueprintGeneratedClass.h"
 #include "Blueprint/WidgetTree.h"
 #include "Styling/SlateIconFinder.h"
 
@@ -108,7 +109,6 @@ const FSlateBrush* FWidgetTemplateClass::GetIcon() const
 	{
 		return FSlateIconFinder::FindIconBrushForClass(UWidget::StaticClass());
 	}
-	return nullptr;
 }
 
 TSharedRef<IToolTip> FWidgetTemplateClass::GetToolTip() const
@@ -163,6 +163,21 @@ UWidget* FWidgetTemplateClass::CreateNamed(class UWidgetTree* Tree, FName NameOv
 	if (Tree == nullptr || !WidgetClass.IsValid() || WidgetClass.Get()->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated))
 	{
 		return nullptr;
+	}
+
+	// For inherited widget trees, we need to make sure the name is unique for the parent tree
+	// We do this even if NameOverride is not set as the default name could exist in the parent tree
+	if (Tree->RootWidget == nullptr)
+	{
+		if (const UWidgetBlueprint* WidgetBP = Cast<UWidgetBlueprint>(Tree->GetOuter()))
+		{
+			const UWidgetBlueprintGeneratedClass* BaseWidgetClass = Cast<UWidgetBlueprintGeneratedClass>(WidgetBP->GeneratedClass);
+			const UWidgetBlueprintGeneratedClass* ParentWidgetClass = BaseWidgetClass ? BaseWidgetClass->FindWidgetTreeOwningClass() : nullptr;
+			if (ParentWidgetClass != BaseWidgetClass && ParentWidgetClass != nullptr)
+			{
+				NameOverride = MakeUniqueObjectName(ParentWidgetClass->GetWidgetTreeArchetype(), WidgetClass.Get(), NameOverride);
+			}
+		}
 	}
 
 	if (NameOverride != NAME_None)

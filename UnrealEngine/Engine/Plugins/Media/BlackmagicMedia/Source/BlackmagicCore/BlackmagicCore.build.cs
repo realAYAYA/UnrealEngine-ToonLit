@@ -1,7 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using Microsoft.CodeAnalysis;
-using System.IO;
 using UnrealBuildTool;
 
 public class BlackmagicCore : ModuleRules

@@ -26,7 +26,7 @@ namespace UnrealBuildTool
 		public CommandLineArguments AdditionalArguments;
 		public bool IsTestsTarget = false;
 
-		public static string GetTestedTargetName(string Name)
+		public static string GetTestedName(string Name)
 		{
 			if (Name.EndsWith(TEST_TARGETS_SUFFIX))
 			{
@@ -46,6 +46,12 @@ namespace UnrealBuildTool
 		/// </summary>
 		[CommandLine("-BuildPluginAsLocal")]
 		public bool bBuildPluginAsLocal = false;
+
+		/// <summary>
+		/// When building a foreign plugin, whether to build plugins it depends on as well.
+		/// </summary>
+		[CommandLine("-BuildDependantPlugins")]
+		public bool bBuildDependantPlugins = false;
 
 		/// <summary>
 		/// Set of module names to compile.
@@ -166,7 +172,7 @@ namespace UnrealBuildTool
 				}
 				return UnrealIntermediateEnvironment.Default;
 			}
-			set { IntermediateEnvironmentOverride = value; }
+			set => IntermediateEnvironmentOverride = value;
 		}
 		private UnrealIntermediateEnvironment? IntermediateEnvironmentOverride;
 
@@ -315,6 +321,13 @@ namespace UnrealBuildTool
 			return TargetDescriptors;
 		}
 
+		public static IEnumerable<FileReference?> ParseCommandLineForProjects(CommandLineArguments Arguments, ILogger Logger)
+		{
+			List<TargetDescriptor> SimplifiedTargetDescriptors = new List<TargetDescriptor>();
+			ParseCommandLine(Arguments, false, true, false, bCreateSimplifiedDescriptors: true, SimplifiedTargetDescriptors, Logger);
+			return SimplifiedTargetDescriptors.Select(x => x.ProjectFile);
+		}
+
 		/// <summary>
 		/// Parse a list of target descriptors from the command line
 		/// </summary>
@@ -325,6 +338,12 @@ namespace UnrealBuildTool
 		/// <param name="TargetDescriptors">Receives the list of parsed target descriptors</param>
 		/// <param name="Logger">Logger for output</param>
 		public static void ParseCommandLine(CommandLineArguments Arguments, bool bUsePrecompiled, bool bSkipRulesCompile, bool bForceRulesCompile, List<TargetDescriptor> TargetDescriptors, ILogger Logger)
+		{
+			// call the internal one
+			ParseCommandLine(Arguments, bUsePrecompiled, bSkipRulesCompile, bForceRulesCompile, bCreateSimplifiedDescriptors: false, TargetDescriptors, Logger);
+		}
+
+		private static void ParseCommandLine(CommandLineArguments Arguments, bool bUsePrecompiled, bool bSkipRulesCompile, bool bForceRulesCompile, bool bCreateSimplifiedDescriptors, List<TargetDescriptor> TargetDescriptors, ILogger Logger)
 		{
 			List<string> TargetLists;
 			Arguments = Arguments.Remove("-TargetList=", out TargetLists);
@@ -344,7 +363,7 @@ namespace UnrealBuildTool
 						if (TrimLine.Length > 0 && TrimLine[0] != ';')
 						{
 							CommandLineArguments NewArguments = Arguments.Append(CommandLineArguments.Split(TrimLine));
-							ParseCommandLine(NewArguments, bUsePrecompiled, bSkipRulesCompile, bForceRulesCompile, TargetDescriptors, Logger);
+							ParseCommandLine(NewArguments, bUsePrecompiled, bSkipRulesCompile, bForceRulesCompile, bCreateSimplifiedDescriptors, TargetDescriptors, Logger);
 						}
 					}
 				}
@@ -352,13 +371,13 @@ namespace UnrealBuildTool
 				foreach (string Target in Targets)
 				{
 					CommandLineArguments NewArguments = Arguments.Append(CommandLineArguments.Split(Target));
-					ParseCommandLine(NewArguments, bUsePrecompiled, bSkipRulesCompile, bForceRulesCompile, TargetDescriptors, Logger);
+					ParseCommandLine(NewArguments, bUsePrecompiled, bSkipRulesCompile, bForceRulesCompile, bCreateSimplifiedDescriptors, TargetDescriptors, Logger);
 				}
 			}
 			else
 			{
 				// Otherwise just process the whole command line together
-				ParseSingleCommandLine(Arguments, bUsePrecompiled, bSkipRulesCompile, bForceRulesCompile, TargetDescriptors, Logger);
+				ParseSingleCommandLine(Arguments, bUsePrecompiled, bSkipRulesCompile, bForceRulesCompile, bCreateSimplifiedDescriptors, TargetDescriptors, Logger);
 			}
 		}
 
@@ -372,6 +391,12 @@ namespace UnrealBuildTool
 		/// <param name="TargetDescriptors">List of target descriptors</param>
 		/// <param name="Logger">Logger for output</param>
 		public static void ParseSingleCommandLine(CommandLineArguments Arguments, bool bUsePrecompiled, bool bSkipRulesCompile, bool bForceRulesCompile, List<TargetDescriptor> TargetDescriptors, ILogger Logger)
+		{
+			// call the internal one
+			ParseSingleCommandLine(Arguments, bUsePrecompiled, bSkipRulesCompile, bForceRulesCompile, bCreateSimplifiedDescriptors: false, TargetDescriptors, Logger);
+		}
+
+		private static void ParseSingleCommandLine(CommandLineArguments Arguments, bool bUsePrecompiled, bool bSkipRulesCompile, bool bForceRulesCompile, bool bCreateSimplifiedDescriptors, List<TargetDescriptor> TargetDescriptors, ILogger Logger)
 		{
 			List<UnrealTargetPlatform> Platforms = new List<UnrealTargetPlatform>();
 			List<UnrealTargetConfiguration> Configurations = new List<UnrealTargetConfiguration>();
@@ -445,6 +470,32 @@ namespace UnrealBuildTool
 				throw new BuildException("No configurations specified for target");
 			}
 
+			// make a single simple descriptor with out a lot of processing or rules assembly creation
+			if (bCreateSimplifiedDescriptors)
+			{
+				// we expect either a targetname from the above loop, or -targetype combined with -project, so we should have -project or a TargetName already
+				string? TargetName = TargetNames.FirstOrDefault();
+				if (TargetName == null)
+				{
+					if (ProjectFile == null)
+					{
+						Logger.LogInformation("When looking for per-project SDK overrides, we got a commandline that could not be used to find a target project ({CmdLine})", Arguments.ToString());
+						return;
+					}
+					// just assume Game target type, it doesn't matter
+					TargetName = ProjectFile.GetFileNameWithoutAnyExtensions() + "Game";
+				}
+				if (ProjectFile == null)
+				{
+					NativeProjects.TryGetProjectForTarget(TargetName, Logger, out ProjectFile);
+				}
+
+				TargetDescriptors.Add(new TargetDescriptor(ProjectFile, TargetName, Platforms.First(), Configurations.First(), new UnrealArchitectures(UnrealArch.X64), Arguments));
+
+				// we are done now with simple descriptors
+				return;
+			}
+
 			// Make sure the project file exists, and make sure we're using the correct case.
 			if (ProjectFile != null)
 			{
@@ -472,10 +523,7 @@ namespace UnrealBuildTool
 					}
 				}
 
-				// there are times that this can be run before we have setup build platforms (ie Per-Project AutoSDK version), in which case we
-				// cannot get Architecture info, but it's not needed yet
-				UEBuildPlatform? BuildPlatform;
-				UEBuildPlatform.TryGetBuildPlatform(Platform, out BuildPlatform);
+				UEBuildPlatform BuildPlatform = UEBuildPlatform.GetBuildPlatform(Platform);
 
 				// Parse the architecture parameter, or use null to look up platform defaults later
 				string ParamArchitectureList = Arguments.GetStringOrDefault("-Architecture=", "") + Arguments.GetStringOrDefault("-Architectures=", "");
@@ -538,11 +586,6 @@ namespace UnrealBuildTool
 						{
 							Architectures = ParamArchitectures;
 						}
-						else if (BuildPlatform == null)
-						{
-							// if we can't use BuildPlatform yet, we just use any random architecture, since we need _something_
-							Architectures = new UnrealArchitectures(UnrealArch.X64);
-						}
 						else
 						{
 							// ask the platform what achitectures it wants for this project
@@ -550,7 +593,7 @@ namespace UnrealBuildTool
 						}
 
 						// If the platform wants a target for each architecture, make a target descriptor for each architecture, otherwise one target for all architectures
-						if (BuildPlatform != null && BuildPlatform.ArchitectureConfig.Mode == UnrealArchitectureMode.OneTargetPerArchitecture)
+						if (BuildPlatform.ArchitectureConfig.Mode == UnrealArchitectureMode.OneTargetPerArchitecture)
 						{
 							foreach (UnrealArch Architecture in Architectures.Architectures)
 							{

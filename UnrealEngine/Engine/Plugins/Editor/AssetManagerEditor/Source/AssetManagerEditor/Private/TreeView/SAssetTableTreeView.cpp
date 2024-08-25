@@ -7,6 +7,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Containers/Set.h"
 #include "ContentBrowserModule.h"
+#include "CookMetadata.h"
 #include "DesktopPlatformModule.h"
 #include "Editor.h"
 #include "Engine/AssetManager.h"
@@ -24,7 +25,9 @@
 #include "Insights/Table/ViewModels/TreeNodeGrouping.h"
 #include "Interfaces/IPluginManager.h"
 #include "Logging/MessageLog.h"
+#include "Misc/FileHelper.h"
 #include "Modules/ModuleManager.h"
+#include "Serialization/ArrayReader.h"
 #include "SlateOptMacros.h"
 #include "Styling/AppStyle.h"
 #include "Styling/StyleColors.h"
@@ -63,7 +66,6 @@ void SAssetTableTreeView::Construct(const FArguments& InArgs, TSharedPtr<FAssetT
 	this->OnSelectionChanged = InArgs._OnSelectionChanged;
 
 	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
-	AssetRegistry = &AssetRegistryModule.Get();
 	AssetManager = &UAssetManager::Get();
 	EditorModule = &IAssetManagerEditorModule::Get();
 
@@ -72,7 +74,7 @@ void SAssetTableTreeView::Construct(const FArguments& InArgs, TSharedPtr<FAssetT
 	CreateGroupings();
 	CreateSortings();
 
-	RegistrySourceTimeText->SetText(LOCTEXT("RegistrySourceTimeText_None", "No registry loaded."));
+	RegistryInfoText->SetText(LOCTEXT("RegistrySourceTimeText_None", "No registry loaded."));
 
 	RequestOpenRegistry();
 }
@@ -98,7 +100,7 @@ void SAssetTableTreeView::Tick(const FGeometry& AllottedGeometry, const double I
 			bNeedsToOpenRegistry = false;
 			OpenRegistry();
 		}
-		if (bNeedsToRefreshAssets && !AssetRegistry->IsLoadingAssets())
+		if (bNeedsToRefreshAssets)
 		{
 			bNeedsToRefreshAssets = false;
 			RefreshAssets();
@@ -107,6 +109,14 @@ void SAssetTableTreeView::Tick(const FGeometry& AllottedGeometry, const double I
 		{
 			bNeedsToRebuild = false;
 			RebuildTree(true);
+			if (bNeedsToRebuildColumns)
+			{
+				// This resets the column information only. It does NOT nuke the table data.
+				GetAssetTable()->Reset();
+				RebuildColumns();
+				bNeedsToRebuildColumns = false;
+			}
+			ApplyViewPreset(*SelectedViewPreset);
 		}
 	}
 }
@@ -165,16 +175,9 @@ void SAssetTableTreeView::ConstructHeaderArea(TSharedRef<SVerticalBox> InWidgetC
 			.FillWidth(1.0f)
 			.VAlign(VAlign_Center)
 			[
-				ConstructSearchBox()
+				SAssignNew(RegistryInfoText, STextBlock)
 			]
 
-			+ SHorizontalBox::Slot()
-			.AutoWidth()
-			.Padding(4.0f, 0.0f, 0.0f, 0.0f)
-			.VAlign(VAlign_Center)
-			[
-				ConstructFilterConfiguratorButton()
-			]
 		];
 
 	InWidgetContent->AddSlot()
@@ -188,7 +191,15 @@ void SAssetTableTreeView::ConstructHeaderArea(TSharedRef<SVerticalBox> InWidgetC
 			.FillWidth(1.0f)
 			.VAlign(VAlign_Center)
 			[
-				SAssignNew(RegistrySourceTimeText, STextBlock)
+				ConstructSearchBox()
+			]
+
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(4.0f, 0.0f, 0.0f, 0.0f)
+			.VAlign(VAlign_Center)
+			[
+				ConstructFilterConfiguratorButton()
 			]
 		];
 
@@ -242,198 +253,231 @@ END_SLATE_FUNCTION_BUILD_OPTIMIZATION
 void SAssetTableTreeView::InitAvailableViewPresets()
 {
 	//////////////////////////////////////////////////
-	// Default View
+	// Plugin Dependency View
 
-	//class FDefaultViewPreset : public UE::Insights::ITableTreeViewPreset
-	//{
-	//public:
-	//	virtual FText GetName() const override
-	//	{
-	//		return LOCTEXT("Default_PresetName", "Default");
-	//	}
-	//	virtual FText GetToolTip() const override
-	//	{
-	//		return LOCTEXT("Default_PresetToolTip", "Default View\nConfigure the tree view to show default asset info.");
-	//	}
-	//	virtual FName GetSortColumn() const override
-	//	{
-	//		return UE::Insights::FTable::GetHierarchyColumnId();
-	//	}
-	//	virtual EColumnSortMode::Type GetSortMode() const override
-	//	{
-	//		return EColumnSortMode::Type::Ascending;
-	//	}
-	//	virtual void SetCurrentGroupings(const TArray<TSharedPtr<UE::Insights::FTreeNodeGrouping>>& InAvailableGroupings, TArray<TSharedPtr<UE::Insights::FTreeNodeGrouping>>& InOutCurrentGroupings) const override
-	//	{
-	//		InOutCurrentGroupings.Reset();
+	class FPluginDependencyView : public UE::Insights::ITableTreeViewPreset
+	{
+	public:
+		virtual FText GetName() const override
+		{
+			return LOCTEXT("PluginDepView_PresetName", "Plugin Dependency Analysis");
+		}
+		virtual FText GetToolTip() const override
+		{
+			return LOCTEXT("PluginDepView_PresetToolTip", "Plugin Dependency Analysis View\nConfigure the tree view to show a breakdown of assets by Plugin, showing also the dependencies between plugins.");
+		}
+		virtual FName GetSortColumn() const override
+		{
+			return FAssetTableColumns::StagedCompressedSizeRequiredInstallColumnId;
+		}
+		virtual EColumnSortMode::Type GetSortMode() const override
+		{
+			return EColumnSortMode::Type::Descending;
+		}
+		virtual void SetCurrentGroupings(const TArray<TSharedPtr<UE::Insights::FTreeNodeGrouping>>& InAvailableGroupings, TArray<TSharedPtr<UE::Insights::FTreeNodeGrouping>>& InOutCurrentGroupings) const override
+		{
+			InOutCurrentGroupings.Reset();
 
-	//		check(InAvailableGroupings[0]->Is<UE::Insights::FTreeNodeGroupingFlat>());
-	//		InOutCurrentGroupings.Add(InAvailableGroupings[0]);
-	//	}
-	//	virtual void GetColumnConfigSet(TArray<UE::Insights::FTableColumnConfig>& InOutConfigSet) const override
-	//	{
-	//		InOutConfigSet.Add({ UE::Insights::FTable::GetHierarchyColumnId(),              true, 400.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::CountColumnId,                         true, 100.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::TypeColumnId,                         !true, 200.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::NameColumnId,                         !true, 200.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::PathColumnId,                         !true, 400.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::PrimaryTypeColumnId,                   true, 200.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::PrimaryNameColumnId,                   true, 200.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::StagedCompressedSizeColumnId,          true, 100.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::TotalSizeUniqueDependenciesColumnId,  !true, 100.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::TotalSizeSharedDependenciesColumnId,  !true, 100.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::TotalSizeExternalDependenciesColumnId,!true, 100.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::TotalUsageCountColumnId,               true, 100.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::ChunksColumnId,                       !true, 200.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::NativeClassColumnId,                   true, 200.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::PluginNameColumnId,                    true, 200.0f });
-	//	}
-	//};
-	//AvailableViewPresets.Add(MakeShared<FDefaultViewPreset>());
+			check(InAvailableGroupings[0]->Is<UE::Insights::FTreeNodeGroupingFlat>());
+			InOutCurrentGroupings.Add(InAvailableGroupings[0]);
 
+			const TSharedPtr<UE::Insights::FTreeNodeGrouping>* PrimaryGrouping = InAvailableGroupings.FindByPredicate(
+				[](TSharedPtr<UE::Insights::FTreeNodeGrouping>& Grouping)
+				{
+					return Grouping->Is<FPluginDependencyGrouping>();
+				});
+			if (PrimaryGrouping)
+			{
+				InOutCurrentGroupings.Add(*PrimaryGrouping);
+			}
+
+			const TSharedPtr<UE::Insights::FTreeNodeGrouping>* SecondaryGrouping = InAvailableGroupings.FindByPredicate(
+				[](TSharedPtr<UE::Insights::FTreeNodeGrouping>& Grouping)
+				{
+					return Grouping->Is<UE::Insights::FTreeNodeGroupingByUniqueValueCString>() &&
+						Grouping->As<UE::Insights::FTreeNodeGroupingByUniqueValueCString>().GetColumnId() == FAssetTableColumns::TypeColumnId;
+				});
+			if (SecondaryGrouping)
+			{
+				InOutCurrentGroupings.Add(*SecondaryGrouping);
+			}
+		}
+		virtual void GetColumnConfigSet(TArray<UE::Insights::FTableColumnConfig>& InOutConfigSet) const override
+		{
+
+			InOutConfigSet.Add({ UE::Insights::FTable::GetHierarchyColumnId(),              true, 400.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::CountColumnId,                         true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::StagedCompressedSizeRequiredInstallColumnId,          true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::PluginInclusiveSizeColumnId,	        true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::TypeColumnId,                          true, 200.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::NameColumnId,                         !true, 200.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::PathColumnId,                         !true, 400.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::PrimaryTypeColumnId,                  !true, 200.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::PrimaryNameColumnId,                  !true, 200.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::TotalSizeUniqueDependenciesColumnId,  !true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::TotalSizeSharedDependenciesColumnId,  !true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::TotalSizeExternalDependenciesColumnId,!true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::TotalUsageCountColumnId,              !true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::ChunksColumnId,                       !true, 200.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::NativeClassColumnId,                  !true, 200.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::PluginNameColumnId,                    true, 200.0f });
+		}
+	};
+
+	//////////////////////////////////////////////////
+	// Plugin, Type, Dependency View
+	
+	class FPluginTypeDependencyView : public UE::Insights::ITableTreeViewPreset
+	{
+	public:
+		virtual FText GetName() const override
+		{
+			return LOCTEXT("PluginTypeDepView_PresetName", "Asset Dependency Analysis");
+		}
+
+		virtual FText GetToolTip() const override
+		{
+			return LOCTEXT("PluginTypeDepView_PresetToolTip", "Asset Dependency Analysis View\nConfigure the tree view to show a breakdown of assets by Plugin, Type, and Dependencies.");
+		}
+		virtual FName GetSortColumn() const override
+		{
+			return UE::Insights::FTable::GetHierarchyColumnId();
+		}
+		virtual EColumnSortMode::Type GetSortMode() const override
+		{
+			return EColumnSortMode::Type::Ascending;
+		}
+		virtual void SetCurrentGroupings(const TArray<TSharedPtr<UE::Insights::FTreeNodeGrouping>>& InAvailableGroupings, TArray<TSharedPtr<UE::Insights::FTreeNodeGrouping>>& InOutCurrentGroupings) const override
+		{
+			InOutCurrentGroupings.Reset();
+
+			check(InAvailableGroupings[0]->Is<UE::Insights::FTreeNodeGroupingFlat>());
+			InOutCurrentGroupings.Add(InAvailableGroupings[0]);
+
+			const TSharedPtr<UE::Insights::FTreeNodeGrouping>* GameFeaturePluginGrouping = InAvailableGroupings.FindByPredicate(
+				[](TSharedPtr<UE::Insights::FTreeNodeGrouping>& Grouping)
+				{
+					return Grouping->Is<UE::Insights::FTreeNodeGroupingByUniqueValueCString>() &&
+						Grouping->As<UE::Insights::FTreeNodeGroupingByUniqueValueCString>().GetColumnId() == FAssetTableColumns::PluginNameColumnId;
+				});
+			if (GameFeaturePluginGrouping)
+			{
+				InOutCurrentGroupings.Add(*GameFeaturePluginGrouping);
+			}
+
+			const TSharedPtr<UE::Insights::FTreeNodeGrouping>* PrimaryTypeGrouping = InAvailableGroupings.FindByPredicate(
+				[](TSharedPtr<UE::Insights::FTreeNodeGrouping>& Grouping)
+				{
+					return Grouping->Is<UE::Insights::FTreeNodeGroupingByUniqueValueCString>() &&
+						Grouping->As<UE::Insights::FTreeNodeGroupingByUniqueValueCString>().GetColumnId() == FAssetTableColumns::TypeColumnId;
+				});
+			if (PrimaryTypeGrouping)
+			{
+				InOutCurrentGroupings.Add(*PrimaryTypeGrouping);
+			}
+
+			const TSharedPtr<UE::Insights::FTreeNodeGrouping>* DependencyGrouping = InAvailableGroupings.FindByPredicate(
+				[](TSharedPtr<UE::Insights::FTreeNodeGrouping>& Grouping)
+				{
+					return Grouping->Is<FAssetDependencyGrouping>();
+				});
+			if (DependencyGrouping)
+			{
+				InOutCurrentGroupings.Add(*DependencyGrouping);
+			}
+		}
+		virtual void GetColumnConfigSet(TArray<UE::Insights::FTableColumnConfig>& InOutConfigSet) const override
+		{
+			InOutConfigSet.Add({ UE::Insights::FTable::GetHierarchyColumnId(),              true, 400.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::CountColumnId,                         true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::StagedCompressedSizeRequiredInstallColumnId,          true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::TypeColumnId,                          true, 200.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::NameColumnId,                         !true, 200.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::PathColumnId,                         !true, 400.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::PrimaryTypeColumnId,                   true, 200.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::PrimaryNameColumnId,                  !true, 200.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::StagedCompressedSizeRequiredInstallColumnId,          true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::TotalSizeUniqueDependenciesColumnId,   true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::TotalSizeSharedDependenciesColumnId,   true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::TotalSizeExternalDependenciesColumnId,!true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::TotalUsageCountColumnId,              !true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::ChunksColumnId,                       !true, 200.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::NativeClassColumnId,                   true, 200.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::PluginNameColumnId,                    true, 200.0f });
+		}
+	};
+	 
 	////////////////////////////////////////////////////
-	//// GameFeaturePlugin, Type, Dependency View
-	//
-	//class FGameFeaturePluginTypeDependencyView : public UE::Insights::ITableTreeViewPreset
-	//{
-	//public:
-	//	virtual FText GetName() const override
-	//	{
-	//		return LOCTEXT("GFPTypeDepView_PresetName", "Dependency Analysis");
-	//	}
+	//// Asset Type Breakdown View
 
-	//	virtual FText GetToolTip() const override
-	//	{
-	//		return LOCTEXT("GFPTypeDepView_PresetToolTip", "Dependency Analysis View\nConfigure the tree view to show a breakdown of assets by Game Feature Plugin, Type, and Dependencies.");
-	//	}
-	//	virtual FName GetSortColumn() const override
-	//	{
-	//		return UE::Insights::FTable::GetHierarchyColumnId();
-	//	}
-	//	virtual EColumnSortMode::Type GetSortMode() const override
-	//	{
-	//		return EColumnSortMode::Type::Ascending;
-	//	}
-	//	virtual void SetCurrentGroupings(const TArray<TSharedPtr<UE::Insights::FTreeNodeGrouping>>& InAvailableGroupings, TArray<TSharedPtr<UE::Insights::FTreeNodeGrouping>>& InOutCurrentGroupings) const override
-	//	{
-	//		InOutCurrentGroupings.Reset();
+	class FAssetTypeViewPreset : public UE::Insights::ITableTreeViewPreset
+	{
+	public:
+		virtual FText GetName() const override
+		{
+			return LOCTEXT("AssetType_PresetName", "Group By Asset Type");
+		}
 
-	//		check(InAvailableGroupings[0]->Is<UE::Insights::FTreeNodeGroupingFlat>());
-	//		InOutCurrentGroupings.Add(InAvailableGroupings[0]);
+		virtual FText GetToolTip() const override
+		{
+			return LOCTEXT("AssetType_PresetToolTip", "Asset Type Breakdown View\nConfigure the tree view to show a breakdown of assets by their asset type.");
+		}
+		virtual FName GetSortColumn() const override
+		{
+			return FAssetTableColumns::StagedCompressedSizeRequiredInstallColumnId;
+		}
+		virtual EColumnSortMode::Type GetSortMode() const override
+		{
+			return EColumnSortMode::Type::Descending;
+		}
+		virtual void SetCurrentGroupings(const TArray<TSharedPtr<UE::Insights::FTreeNodeGrouping>>& InAvailableGroupings, TArray<TSharedPtr<UE::Insights::FTreeNodeGrouping>>& InOutCurrentGroupings) const override
+		{
+			InOutCurrentGroupings.Reset();
 
-	//		const TSharedPtr<UE::Insights::FTreeNodeGrouping>* GameFeaturePluginGrouping = InAvailableGroupings.FindByPredicate(
-	//			[](TSharedPtr<UE::Insights::FTreeNodeGrouping>& Grouping)
-	//			{
-	//				return Grouping->Is<UE::Insights::FTreeNodeGroupingByUniqueValueCString>() &&
-	//					Grouping->As<UE::Insights::FTreeNodeGroupingByUniqueValueCString>().GetColumnId() == FAssetTableColumns::PluginNameColumnId;
-	//			});
-	//		if (GameFeaturePluginGrouping)
-	//		{
-	//			InOutCurrentGroupings.Add(*GameFeaturePluginGrouping);
-	//		}
+			check(InAvailableGroupings[0]->Is<UE::Insights::FTreeNodeGroupingFlat>());
+			InOutCurrentGroupings.Add(InAvailableGroupings[0]);
 
-	//		const TSharedPtr<UE::Insights::FTreeNodeGrouping>* PrimaryTypeGrouping = InAvailableGroupings.FindByPredicate(
-	//			[](TSharedPtr<UE::Insights::FTreeNodeGrouping>& Grouping)
-	//			{
-	//				return Grouping->Is<UE::Insights::FTreeNodeGroupingByUniqueValueCString>() &&
-	//					Grouping->As<UE::Insights::FTreeNodeGroupingByUniqueValueCString>().GetColumnId() == FAssetTableColumns::TypeColumnId;
-	//			});
-	//		if (PrimaryTypeGrouping)
-	//		{
-	//			InOutCurrentGroupings.Add(*PrimaryTypeGrouping);
-	//		}
+			const TSharedPtr<UE::Insights::FTreeNodeGrouping>* TypeGrouping = InAvailableGroupings.FindByPredicate(
+				[](TSharedPtr<UE::Insights::FTreeNodeGrouping>& Grouping)
+				{
+					return Grouping->Is<UE::Insights::FTreeNodeGroupingByUniqueValueCString>() &&
+						Grouping->As<UE::Insights::FTreeNodeGroupingByUniqueValueCString>().GetColumnId() == FAssetTableColumns::TypeColumnId;
+				});
+			if (TypeGrouping)
+			{
+				InOutCurrentGroupings.Add(*TypeGrouping);
+			}
 
-	//		const TSharedPtr<UE::Insights::FTreeNodeGrouping>* DependencyGrouping = InAvailableGroupings.FindByPredicate(
-	//			[](TSharedPtr<UE::Insights::FTreeNodeGrouping>& Grouping)
-	//			{
-	//				return Grouping->Is<FAssetDependencyGrouping>();
-	//			});
-	//		if (DependencyGrouping)
-	//		{
-	//			InOutCurrentGroupings.Add(*DependencyGrouping);
-	//		}
-	//	}
-	//	virtual void GetColumnConfigSet(TArray<UE::Insights::FTableColumnConfig>& InOutConfigSet) const override
-	//	{
-	//		InOutConfigSet.Add({ UE::Insights::FTable::GetHierarchyColumnId(),              true, 400.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::CountColumnId,                         true, 100.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::TypeColumnId,                         !true, 200.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::NameColumnId,                         !true, 200.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::PathColumnId,                         !true, 400.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::PrimaryTypeColumnId,                   true, 200.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::PrimaryNameColumnId,                  !true, 200.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::StagedCompressedSizeColumnId,          true, 100.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::TotalSizeUniqueDependenciesColumnId,   true, 100.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::TotalSizeSharedDependenciesColumnId,   true, 100.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::TotalSizeExternalDependenciesColumnId,!true, 100.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::TotalUsageCountColumnId,              !true, 100.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::ChunksColumnId,                       !true, 200.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::NativeClassColumnId,                   true, 200.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::PluginNameColumnId,                    true, 200.0f });
-	//	}
-	//};
-	//AvailableViewPresets.Add(MakeShared<FGameFeaturePluginTypeDependencyView>());
-
-	////////////////////////////////////////////////////
-	//// Path Breakdown View
-
-	//class FAssetPathViewPreset : public UE::Insights::ITableTreeViewPreset
-	//{
-	//public:
-	//	virtual FText GetName() const override
-	//	{
-	//		return LOCTEXT("Path_PresetName", "Path");
-	//	}
-	//	virtual FText GetToolTip() const override
-	//	{
-	//		return LOCTEXT("Path_PresetToolTip", "Path Breakdown View\nConfigure the tree view to show a breakdown of assets by their path.");
-	//	}
-	//	virtual FName GetSortColumn() const override
-	//	{
-	//		return UE::Insights::FTable::GetHierarchyColumnId();
-	//	}
-	//	virtual EColumnSortMode::Type GetSortMode() const override
-	//	{
-	//		return EColumnSortMode::Type::Ascending;
-	//	}
-	//	virtual void SetCurrentGroupings(const TArray<TSharedPtr<UE::Insights::FTreeNodeGrouping>>& InAvailableGroupings, TArray<TSharedPtr<UE::Insights::FTreeNodeGrouping>>& InOutCurrentGroupings) const override
-	//	{
-	//		InOutCurrentGroupings.Reset();
-
-	//		check(InAvailableGroupings[0]->Is<UE::Insights::FTreeNodeGroupingFlat>());
-	//		InOutCurrentGroupings.Add(InAvailableGroupings[0]);
-
-	//		const TSharedPtr<UE::Insights::FTreeNodeGrouping>* PathGrouping = InAvailableGroupings.FindByPredicate(
-	//			[](TSharedPtr<UE::Insights::FTreeNodeGrouping>& Grouping)
-	//			{
-	//				return Grouping->Is<UE::Insights::FTreeNodeGroupingByPathBreakdown>() &&
-	//					   Grouping->As<UE::Insights::FTreeNodeGroupingByPathBreakdown>().GetColumnId() == FAssetTableColumns::PathColumnId;
-	//			});
-	//		if (PathGrouping)
-	//		{
-	//			InOutCurrentGroupings.Add(*PathGrouping);
-	//		}
-	//	}
-	//	virtual void GetColumnConfigSet(TArray<UE::Insights::FTableColumnConfig>& InOutConfigSet) const override
-	//	{
-	//		InOutConfigSet.Add({ UE::Insights::FTable::GetHierarchyColumnId(),              true, 400.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::CountColumnId,                         true, 100.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::TypeColumnId,                         !true, 200.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::NameColumnId,                         !true, 200.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::PathColumnId,                         !true, 400.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::PrimaryTypeColumnId,                   true, 200.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::PrimaryNameColumnId,                   true, 200.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::StagedCompressedSizeColumnId,          true, 100.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::TotalSizeUniqueDependenciesColumnId,   true, 100.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::TotalSizeSharedDependenciesColumnId,   true, 100.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::TotalSizeExternalDependenciesColumnId,!true, 100.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::TotalUsageCountColumnId,               true, 100.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::ChunksColumnId,                       !true, 200.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::NativeClassColumnId,                   true, 200.0f });
-	//		InOutConfigSet.Add({ FAssetTableColumns::PluginNameColumnId,                    true, 200.0f });
-	//	}
-	//};
-	//AvailableViewPresets.Add(MakeShared<FAssetPathViewPreset>());
+			const TSharedPtr<UE::Insights::FTreeNodeGrouping>* PluginNameGrouping = InAvailableGroupings.FindByPredicate(
+				[](TSharedPtr<UE::Insights::FTreeNodeGrouping>& Grouping)
+				{
+					return Grouping->Is<UE::Insights::FTreeNodeGroupingByUniqueValueCString>() &&
+						Grouping->As<UE::Insights::FTreeNodeGroupingByUniqueValueCString>().GetColumnId() == FAssetTableColumns::PluginNameColumnId;
+				});
+			if (PluginNameGrouping)
+			{
+				InOutCurrentGroupings.Add(*PluginNameGrouping);
+			}
+		}
+		virtual void GetColumnConfigSet(TArray<UE::Insights::FTableColumnConfig>& InOutConfigSet) const override
+		{
+			InOutConfigSet.Add({ UE::Insights::FTable::GetHierarchyColumnId(),              true, 400.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::CountColumnId,                         true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::StagedCompressedSizeRequiredInstallColumnId,          true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::TypeColumnId,                          true, 200.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::NameColumnId,                         !true, 200.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::PathColumnId,                         !true, 400.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::PrimaryTypeColumnId,                   true, 200.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::PrimaryNameColumnId,                   true, 200.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::TotalSizeUniqueDependenciesColumnId,   true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::TotalSizeSharedDependenciesColumnId,   true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::TotalSizeExternalDependenciesColumnId, true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::TotalUsageCountColumnId,              !true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::ChunksColumnId,                       !true, 200.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::NativeClassColumnId,                   true, 200.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::PluginNameColumnId,                    true, 200.0f });
+		}
+	};
 
 	////////////////////////////////////////////////////
 	//// Primary Type Breakdown View
@@ -451,7 +495,7 @@ void SAssetTableTreeView::InitAvailableViewPresets()
 		}
 		virtual FName GetSortColumn() const override
 		{
-			return FAssetTableColumns::StagedCompressedSizeColumnId;
+			return FAssetTableColumns::StagedCompressedSizeRequiredInstallColumnId;
 		}
 		virtual EColumnSortMode::Type GetSortMode() const override
 		{
@@ -474,27 +518,37 @@ void SAssetTableTreeView::InitAvailableViewPresets()
 			{
 				InOutCurrentGroupings.Add(*PrimaryTypeGrouping);
 			}
+
+			const TSharedPtr<UE::Insights::FTreeNodeGrouping>* SecondaryTypeGrouping = InAvailableGroupings.FindByPredicate(
+				[](TSharedPtr<UE::Insights::FTreeNodeGrouping>& Grouping)
+				{
+					return Grouping->Is<UE::Insights::FTreeNodeGroupingByUniqueValueCString>() &&
+						Grouping->As<UE::Insights::FTreeNodeGroupingByUniqueValueCString>().GetColumnId() == FAssetTableColumns::PluginNameColumnId;
+				});
+			if (SecondaryTypeGrouping)
+			{
+				InOutCurrentGroupings.Add(*SecondaryTypeGrouping);
+			}
 		}
 		virtual void GetColumnConfigSet(TArray<UE::Insights::FTableColumnConfig>& InOutConfigSet) const override
 		{
 			InOutConfigSet.Add({ UE::Insights::FTable::GetHierarchyColumnId(),              true, 400.0f });
 			InOutConfigSet.Add({ FAssetTableColumns::CountColumnId,                         true, 100.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::StagedCompressedSizeColumnId,          true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::StagedCompressedSizeRequiredInstallColumnId,          true, 100.0f });
 			InOutConfigSet.Add({ FAssetTableColumns::TypeColumnId,                          true, 200.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::NameColumnId,                          true, 200.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::NameColumnId,                         !true, 200.0f });
 			InOutConfigSet.Add({ FAssetTableColumns::PathColumnId,                         !true, 400.0f });
 			InOutConfigSet.Add({ FAssetTableColumns::PrimaryTypeColumnId,                   true, 200.0f });
 			InOutConfigSet.Add({ FAssetTableColumns::PrimaryNameColumnId,                   true, 200.0f });
 			InOutConfigSet.Add({ FAssetTableColumns::TotalSizeUniqueDependenciesColumnId,   true, 100.0f });
 			InOutConfigSet.Add({ FAssetTableColumns::TotalSizeSharedDependenciesColumnId,   true, 100.0f });
 			InOutConfigSet.Add({ FAssetTableColumns::TotalSizeExternalDependenciesColumnId, true, 100.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::TotalUsageCountColumnId,               true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::TotalUsageCountColumnId,              !true, 100.0f });
 			InOutConfigSet.Add({ FAssetTableColumns::ChunksColumnId,                       !true, 200.0f });
 			InOutConfigSet.Add({ FAssetTableColumns::NativeClassColumnId,                   true, 200.0f });
 			InOutConfigSet.Add({ FAssetTableColumns::PluginNameColumnId,                    true, 200.0f });
 		}
 	};
-	AvailableViewPresets.Add(MakeShared<FPrimaryTypeViewPreset>());
 
 
 	////////////////////////////////////////////////////
@@ -513,7 +567,7 @@ void SAssetTableTreeView::InitAvailableViewPresets()
 		}
 		virtual FName GetSortColumn() const override
 		{
-			return FAssetTableColumns::StagedCompressedSizeColumnId;
+			return FAssetTableColumns::StagedCompressedSizeRequiredInstallColumnId;
 		}
 		virtual EColumnSortMode::Type GetSortMode() const override
 		{
@@ -536,88 +590,38 @@ void SAssetTableTreeView::InitAvailableViewPresets()
 			{
 				InOutCurrentGroupings.Add(*PrimaryTypeGrouping);
 			}
-		}
-		virtual void GetColumnConfigSet(TArray<UE::Insights::FTableColumnConfig>& InOutConfigSet) const override
-		{
-			InOutConfigSet.Add({ UE::Insights::FTable::GetHierarchyColumnId(),              true, 400.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::CountColumnId,                         true, 100.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::StagedCompressedSizeColumnId,          true, 100.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::TypeColumnId,                          true, 200.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::NameColumnId,                          true, 200.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::PathColumnId,                         !true, 400.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::PrimaryTypeColumnId,                   true, 200.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::PrimaryNameColumnId,                   true, 200.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::TotalSizeUniqueDependenciesColumnId,   true, 100.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::TotalSizeSharedDependenciesColumnId,   true, 100.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::TotalSizeExternalDependenciesColumnId, true, 100.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::TotalUsageCountColumnId,               true, 100.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::ChunksColumnId,                       !true, 200.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::NativeClassColumnId,                   true, 200.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::PluginNameColumnId,                    true, 200.0f });
-		}
-	};
-	AvailableViewPresets.Add(MakeShared<FClassTypeViewPreset>());
 
-	////////////////////////////////////////////////////
-	//// Asset Type Breakdown View
-
-	class FAssetTypeViewPreset : public UE::Insights::ITableTreeViewPreset
-	{
-	public:
-		virtual FText GetName() const override
-		{
-			return LOCTEXT("AssetType_PresetName", "Group By Asset Type");
-		}
-		virtual FText GetToolTip() const override
-		{
-			return LOCTEXT("AssetType_PresetToolTip", "Asset Type Breakdown View\nConfigure the tree view to show a breakdown of assets by their asset type.");
-		}
-		virtual FName GetSortColumn() const override
-		{
-			return FAssetTableColumns::StagedCompressedSizeColumnId;
-		}
-		virtual EColumnSortMode::Type GetSortMode() const override
-		{
-			return EColumnSortMode::Type::Descending;
-		}
-		virtual void SetCurrentGroupings(const TArray<TSharedPtr<UE::Insights::FTreeNodeGrouping>>& InAvailableGroupings, TArray<TSharedPtr<UE::Insights::FTreeNodeGrouping>>& InOutCurrentGroupings) const override
-		{
-			InOutCurrentGroupings.Reset();
-
-			check(InAvailableGroupings[0]->Is<UE::Insights::FTreeNodeGroupingFlat>());
-			InOutCurrentGroupings.Add(InAvailableGroupings[0]);
-
-			const TSharedPtr<UE::Insights::FTreeNodeGrouping>* PrimaryTypeGrouping = InAvailableGroupings.FindByPredicate(
+			const TSharedPtr<UE::Insights::FTreeNodeGrouping>* SecondaryTypeGrouping = InAvailableGroupings.FindByPredicate(
 				[](TSharedPtr<UE::Insights::FTreeNodeGrouping>& Grouping)
 				{
 					return Grouping->Is<UE::Insights::FTreeNodeGroupingByUniqueValueCString>() &&
-						Grouping->As<UE::Insights::FTreeNodeGroupingByUniqueValueCString>().GetColumnId() == FAssetTableColumns::TypeColumnId;
+						Grouping->As<UE::Insights::FTreeNodeGroupingByUniqueValueCString>().GetColumnId() == FAssetTableColumns::PluginNameColumnId;
 				});
-			if (PrimaryTypeGrouping)
+			if (SecondaryTypeGrouping)
 			{
-				InOutCurrentGroupings.Add(*PrimaryTypeGrouping);
+				InOutCurrentGroupings.Add(*SecondaryTypeGrouping);
 			}
 		}
 		virtual void GetColumnConfigSet(TArray<UE::Insights::FTableColumnConfig>& InOutConfigSet) const override
 		{
 			InOutConfigSet.Add({ UE::Insights::FTable::GetHierarchyColumnId(),              true, 400.0f });
 			InOutConfigSet.Add({ FAssetTableColumns::CountColumnId,                         true, 100.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::StagedCompressedSizeColumnId,          true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::StagedCompressedSizeRequiredInstallColumnId,          true, 100.0f });
 			InOutConfigSet.Add({ FAssetTableColumns::TypeColumnId,                          true, 200.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::NameColumnId,                          true, 200.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::NameColumnId,                         !true, 200.0f });
 			InOutConfigSet.Add({ FAssetTableColumns::PathColumnId,                         !true, 400.0f });
 			InOutConfigSet.Add({ FAssetTableColumns::PrimaryTypeColumnId,                   true, 200.0f });
 			InOutConfigSet.Add({ FAssetTableColumns::PrimaryNameColumnId,                   true, 200.0f });
 			InOutConfigSet.Add({ FAssetTableColumns::TotalSizeUniqueDependenciesColumnId,   true, 100.0f });
 			InOutConfigSet.Add({ FAssetTableColumns::TotalSizeSharedDependenciesColumnId,   true, 100.0f });
 			InOutConfigSet.Add({ FAssetTableColumns::TotalSizeExternalDependenciesColumnId, true, 100.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::TotalUsageCountColumnId,               true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::TotalUsageCountColumnId,              !true, 100.0f });
 			InOutConfigSet.Add({ FAssetTableColumns::ChunksColumnId,                       !true, 200.0f });
 			InOutConfigSet.Add({ FAssetTableColumns::NativeClassColumnId,                   true, 200.0f });
 			InOutConfigSet.Add({ FAssetTableColumns::PluginNameColumnId,                    true, 200.0f });
 		}
 	};
-	AvailableViewPresets.Add(MakeShared<FAssetTypeViewPreset>());
+
 
 	//////////////////////////////////////////////////
 	// Plugin Group View
@@ -636,7 +640,7 @@ void SAssetTableTreeView::InitAvailableViewPresets()
 		}
 		virtual FName GetSortColumn() const override
 		{
-			return FAssetTableColumns::StagedCompressedSizeColumnId;
+			return FAssetTableColumns::StagedCompressedSizeRequiredInstallColumnId;
 		}
 		virtual EColumnSortMode::Type GetSortMode() const override
 		{
@@ -673,100 +677,35 @@ void SAssetTableTreeView::InitAvailableViewPresets()
 		}
 		virtual void GetColumnConfigSet(TArray<UE::Insights::FTableColumnConfig>& InOutConfigSet) const override
 		{
-			InOutConfigSet.Add({ UE::Insights::FTable::GetHierarchyColumnId(),              true, 400.0f });	
-			InOutConfigSet.Add({ FAssetTableColumns::CountColumnId,                         true, 100.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::StagedCompressedSizeColumnId,          true, 100.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::TypeColumnId,                         !true, 200.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::NameColumnId,                         !true, 200.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::PathColumnId,                         !true, 400.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::PrimaryTypeColumnId,                  !true, 200.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::PrimaryNameColumnId,                  !true, 200.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::TotalSizeUniqueDependenciesColumnId,   true, 100.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::TotalSizeSharedDependenciesColumnId,   true, 100.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::TotalSizeExternalDependenciesColumnId,!true, 100.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::TotalUsageCountColumnId,               true, 100.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::ChunksColumnId,                       !true, 200.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::NativeClassColumnId,                   true, 200.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::PluginNameColumnId,                   !true, 200.0f });
-		}
-	};
-	AvailableViewPresets.Add(MakeShared<FPluginView>());
-
-	//////////////////////////////////////////////////
-	// Plugin Dependency View
-
-	class FPluginDependencyView : public UE::Insights::ITableTreeViewPreset
-	{
-	public:
-		virtual FText GetName() const override
-		{
-			return LOCTEXT("PluginDepView_PresetName", "Plugin Dependency Analysis");
-		}
-
-		virtual FText GetToolTip() const override
-		{
-			return LOCTEXT("PluginDepView_PresetToolTip", "Plugin Dependency Analysis View\nConfigure the tree view to show a breakdown of assets by Game Feature Plugin, showing also the dependencies between plugins.");
-		}
-		virtual FName GetSortColumn() const override
-		{
-			return FAssetTableColumns::StagedCompressedSizeColumnId;
-		}
-		virtual EColumnSortMode::Type GetSortMode() const override
-		{
-			return EColumnSortMode::Type::Descending;
-		}
-		virtual void SetCurrentGroupings(const TArray<TSharedPtr<UE::Insights::FTreeNodeGrouping>>& InAvailableGroupings, TArray<TSharedPtr<UE::Insights::FTreeNodeGrouping>>& InOutCurrentGroupings) const override
-		{
-			InOutCurrentGroupings.Reset();
-
-			check(InAvailableGroupings[0]->Is<UE::Insights::FTreeNodeGroupingFlat>());
-			InOutCurrentGroupings.Add(InAvailableGroupings[0]);
-
-			const TSharedPtr<UE::Insights::FTreeNodeGrouping>* PrimaryGrouping = InAvailableGroupings.FindByPredicate(
-				[](TSharedPtr<UE::Insights::FTreeNodeGrouping>& Grouping)
-				{
-					return Grouping->Is<FPluginDependencyGrouping>();
-				});
-			if (PrimaryGrouping)
-			{
-				InOutCurrentGroupings.Add(*PrimaryGrouping);
-			}
-
-			const TSharedPtr<UE::Insights::FTreeNodeGrouping>* SecondaryGrouping = InAvailableGroupings.FindByPredicate(
-				[](TSharedPtr<UE::Insights::FTreeNodeGrouping>& Grouping)
-				{
-					return Grouping->Is<UE::Insights::FTreeNodeGroupingByUniqueValueCString>() &&
-						Grouping->As<UE::Insights::FTreeNodeGroupingByUniqueValueCString>().GetColumnId() == FAssetTableColumns::TypeColumnId;
-				});
-			if (SecondaryGrouping)
-			{
-				InOutCurrentGroupings.Add(*SecondaryGrouping);
-			}
-		}
-		virtual void GetColumnConfigSet(TArray<UE::Insights::FTableColumnConfig>& InOutConfigSet) const override
-		{
 			InOutConfigSet.Add({ UE::Insights::FTable::GetHierarchyColumnId(),              true, 400.0f });
 			InOutConfigSet.Add({ FAssetTableColumns::CountColumnId,                         true, 100.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::TotalSizeUniqueDependenciesColumnId,   true, 100.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::TypeColumnId,                         !true, 200.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::NameColumnId,                         !true, 200.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::StagedCompressedSizeRequiredInstallColumnId,          true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::PluginInclusiveSizeColumnId,	        true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::TypeColumnId,                          true, 200.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::NameColumnId,                          true, 200.0f });
 			InOutConfigSet.Add({ FAssetTableColumns::PathColumnId,                         !true, 400.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::PrimaryTypeColumnId,                  !true, 200.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::PrimaryNameColumnId,                  !true, 200.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::StagedCompressedSizeColumnId,          true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::PrimaryTypeColumnId,                   true, 200.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::PrimaryNameColumnId,                   true, 200.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::TotalSizeUniqueDependenciesColumnId,   true, 100.0f });
 			InOutConfigSet.Add({ FAssetTableColumns::TotalSizeSharedDependenciesColumnId,   true, 100.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::TotalSizeExternalDependenciesColumnId,!true, 100.0f });
-			InOutConfigSet.Add({ FAssetTableColumns::TotalUsageCountColumnId,               true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::TotalSizeExternalDependenciesColumnId, true, 100.0f });
+			InOutConfigSet.Add({ FAssetTableColumns::TotalUsageCountColumnId,              !true, 100.0f });
 			InOutConfigSet.Add({ FAssetTableColumns::ChunksColumnId,                       !true, 200.0f });
 			InOutConfigSet.Add({ FAssetTableColumns::NativeClassColumnId,                   true, 200.0f });
 			InOutConfigSet.Add({ FAssetTableColumns::PluginNameColumnId,                    true, 200.0f });
 		}
 	};
-	AvailableViewPresets.Add(MakeShared<FPluginDependencyView>());
-
-	
 
 	//////////////////////////////////////////////////
+
+	AvailableViewPresets.Add(MakeShared<FPluginDependencyView>());
+	AvailableViewPresets.Add(MakeShared<FPluginTypeDependencyView>());
+	AvailableViewPresets.Add(MakeShared<FAssetTypeViewPreset>());
+	AvailableViewPresets.Add(MakeShared<FPluginView>());
+	AvailableViewPresets.Add(MakeShared<FPrimaryTypeViewPreset>());
+	AvailableViewPresets.Add(MakeShared<FClassTypeViewPreset>());
+
+	/////////////////////////////////////////////////
 
 	SelectedViewPreset = AvailableViewPresets[0];
 }
@@ -863,7 +802,7 @@ static void WriteDependencyLine(const FAssetTable& AssetTable, const TMap<int32,
 	ReusableLineBuffer->Appendf("%s%s,%s,%s,%s", *WriteToAnsiString<512>(Row.GetPath()),
 												*WriteToAnsiString<64>(Row.GetName()), 
 												*WriteToAnsiString<64>(Row.GetType()),
-												*WriteToAnsiString<32>(LexToString(Row.GetStagedCompressedSize())),
+												*WriteToAnsiString<32>(LexToString(Row.GetStagedCompressedSizeRequiredInstall())),
 												*WriteToAnsiString<16>(*DependencyType));
 
 	if (const TArray<int32>* Route = RouteMap.Find(RowIndex))
@@ -896,13 +835,13 @@ void SAssetTableTreeView::ExportDependencyData() const
 		void* ParentWindowHandle = (ParentWindow.IsValid() && ParentWindow->GetNativeWindow().IsValid()) ? ParentWindow->GetNativeWindow()->GetOSWindowHandle() : nullptr;
 
 		FString DefaultFileName;
-		if (SelectedIndices.Num() > 1)
+		if (SelectedAssetIndices.Num() > 1)
 		{
 			DefaultFileName = "Batch Dependency Export.csv";
 		}
 		else
 		{
-			int32 RootIndex = *SelectedIndices.CreateConstIterator();
+			int32 RootIndex = *SelectedAssetIndices.CreateConstIterator();
 			DefaultFileName = FString::Printf(TEXT("%s Dependencies.csv"), GetAssetTable()->GetAssetChecked(RootIndex).GetName());
 		}
 
@@ -926,11 +865,11 @@ void SAssetTableTreeView::ExportDependencyData() const
 
 		TSet<int32> ExternalDependencies;
 		TMap<int32, TArray<int32>> RouteMap;
-		FAssetTableRow::ComputeTotalSizeExternalDependencies(*GetAssetTable(), SelectedIndices, &ExternalDependencies, &RouteMap);
+		FAssetTableRow::ComputeTotalSizeExternalDependencies(*GetAssetTable(), SelectedAssetIndices, &ExternalDependencies, &RouteMap);
 
 		TSet<int32> UniqueDependencies;
 		TSet<int32> SharedDependencies;
-		FAssetTableRow::ComputeDependencySizes(*GetAssetTable(), SelectedIndices, &UniqueDependencies, &SharedDependencies);
+		FAssetTableRow::ComputeDependencySizes(*GetAssetTable(), SelectedAssetIndices, &UniqueDependencies, &SharedDependencies);
 
 		FString TimeSuffix = FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S"));
 
@@ -939,7 +878,7 @@ void SAssetTableTreeView::ExportDependencyData() const
 
 		StringBuilder.Appendf("Asset,Asset Type,Self Size,Dependency Type,Dependency Chain\n");
 		{
-			for (int32 RootIndex : SelectedIndices)
+			for (int32 RootIndex : SelectedAssetIndices)
 			{
 				WriteDependencyLine(*GetAssetTable(), RouteMap, RootIndex, &StringBuilder, DependencyFile.Get(), TEXT("Root"));
 			}
@@ -967,7 +906,7 @@ void SAssetTableTreeView::ExportDependencyData() const
 TArray<FAssetData> SAssetTableTreeView::GetAssetDataForSelection() const
 {
 	TArray<FAssetData> Assets;
-	for (int32 SelectionIndex : SelectedIndices)
+	for (int32 SelectionIndex : SelectedAssetIndices)
 	{
 		const FSoftObjectPath& SoftObjectPath = GetAssetTable()->GetAssetChecked(SelectionIndex).GetSoftObjectPath();
 		FAssetData AssetData;
@@ -987,12 +926,12 @@ void SAssetTableTreeView::ExtendMenu(FMenuBuilder& MenuBuilder)
 {
 	FCanExecuteAction HasSelectionAndCanExecute = FCanExecuteAction::CreateLambda([this]()
 		{
-			return GetAssetTable() && (SelectedIndices.Num() > 0);
+			return GetAssetTable() && (SelectedAssetIndices.Num() > 0);
 		});
 
 	FCanExecuteAction HasSelectionAndRegistrySourceAndCanExecute = FCanExecuteAction::CreateLambda([this]()
 		{
-			return IsRegistrySourceValid() && GetAssetTable() && (SelectedIndices.Num() > 0);
+			return IsRegistrySourceValid() && GetAssetTable() && (SelectedAssetIndices.Num() > 0);
 		});
 
 	MenuBuilder.BeginSection("Asset", LOCTEXT("ContextMenu_Section_Asset", "Asset"));
@@ -1005,7 +944,7 @@ void SAssetTableTreeView::ExtendMenu(FMenuBuilder& MenuBuilder)
 		EditSelectedAssets.ExecuteAction = FExecuteAction::CreateLambda([this]()
 			{
 				TArray<FSoftObjectPath> AssetPaths;
-				for (int32 SelectionIndex : SelectedIndices)
+				for (int32 SelectionIndex : SelectedAssetIndices)
 				{
 					AssetPaths.Add(GetAssetTable()->GetAssetChecked(SelectionIndex).GetSoftObjectPath());
 				}
@@ -1102,27 +1041,340 @@ void SAssetTableTreeView::RequestOpenRegistry()
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+bool HashRegistryFile(const FString& FilePath, uint64* HashOut)
+{
+	check(HashOut != nullptr);
+
+	bool Success = false;
+	FArrayReader SerializedAssetData;
+	if (FFileHelper::LoadFileToArray(SerializedAssetData, *FilePath))
+	{
+		*HashOut = UE::Cook::FCookMetadataState::ComputeHashOfDevelopmentAssetRegistry(MakeMemoryView(static_cast<TArray<uint8>&>(SerializedAssetData)));
+		Success = true;
+	}
+	return Success;	
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+bool LoadCookMetadata(const FString& FilePath, UE::Cook::FCookMetadataState& OutMetadataState)
+{
+	const bool Success = OutMetadataState.ReadFromFile(FilePath);
+	if (!Success)
+	{
+		OutMetadataState.Reset();
+	}
+	return Success;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 void SAssetTableTreeView::OpenRegistry()
 {
-	RegistrySource.SourceName = FAssetManagerEditorRegistrySource::CustomSourceName;
-	if (EditorModule->PopulateRegistrySource(&RegistrySource))
-	{
-		IFileManager& FileManager = IFileManager::Get();
-		const FString RegistryFilePath = FileManager.GetFilenameOnDisk(*FileManager.ConvertToAbsolutePathForExternalAppForRead(*RegistrySource.SourceFilename));
-		RegistrySourceTimeText->SetText(FText::Format(LOCTEXT("RegistrySourceTimeText", "Loaded: {0} from {1}"), 
-			FText::FromString(RegistryFilePath),
-			FText::FromString(RegistrySource.SourceTimestamp)));
+	// Ideally, we will load two files: a DevelopmentAssetRegistry.bin and a matching .ucookmeta file. However, it may happen that no ucookmeta is available
+	// We will pop a dialog that asks the user to select either a .bin or a .ucookmeta. If they pick the .bin, we will attempt to find an appropriate ucookmeta
+	// and vice versa.
 
-		RequestRefreshAssets();
-	}
-	else if (!IsRegistrySourceValid())
+	IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
+	const void* ParentWindowWindowHandle = FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr);
+	extern const TCHAR* GetDevelopmentAssetRegistryFilename();
+	const TCHAR* DevelopmentAssetRegistryCanonicalFilename = GetDevelopmentAssetRegistryFilename();
+	const TCHAR* CookMetadataCanonicalFilename = *UE::Cook::GetCookMetadataFilename();
+	const FString CookMetadataExtension = FPaths::GetExtension(CookMetadataCanonicalFilename);
+	const FString DevelopmentAssetRegistryExtension = FPaths::GetExtension(DevelopmentAssetRegistryCanonicalFilename);;
+	const FText Title = LOCTEXT("LoadAssetRegistryOrCookMetadata", "Load DevelopmentAssetRegistry or CookMetadata");
+	const FString FileTypes = FString::Printf(TEXT("%s|*.%s|%s|*.%s"), 
+		CookMetadataCanonicalFilename, *CookMetadataExtension, DevelopmentAssetRegistryCanonicalFilename, *DevelopmentAssetRegistryExtension);
+
+	TArray<FString> OutFilenames;
+
+	bool CanceledOpenDialog = !DesktopPlatform->OpenFileDialog(
+		ParentWindowWindowHandle,
+		Title.ToString(),
+		TEXT(""),
+		UE::Cook::GetCookMetadataFilename(),
+		FileTypes,
+		EFileDialogFlags::None,
+		OutFilenames
+	);
+
+	if (CanceledOpenDialog)
 	{
-		FooterLeftText = LOCTEXT("FooterLeftTextFmt_OpenRegistry_Failed", "No registry selected or load failed.");
-		RegistrySourceTimeText->SetText(LOCTEXT("RegistrySourceTimeText_None", "No registry loaded."));
+		FooterLeftText = FooterLeftTextStoredPreOpen;
+		return;
+	}
+
+	FString RegistryFilename;
+	FString MetadataFilename;
+
+	bool FoundOtherFileByInference = false;
+
+	UE::Cook::FCookMetadataState MetadataTemporaryStorage;
+	ECheckFilesExistAndHashMatchesResult HashCheckResult = ECheckFilesExistAndHashMatchesResult::Unknown;
+
+	if (OutFilenames.Num() == 1)
+	{
+		const FString& Filename = OutFilenames[0];
+		FString FileExtension = FPaths::GetExtension(Filename);
+		bool IsRegistryFile = FileExtension.Equals(DevelopmentAssetRegistryExtension, ESearchCase::IgnoreCase);
+		bool IsMetadataFile = FileExtension.Equals(CookMetadataExtension, ESearchCase::IgnoreCase);
+
+		// Try to automatically find the corresponding file
+		const FString Directory = FPaths::GetPath(Filename);
+		const FString InitialBaseFilename = FPaths::GetBaseFilename(Filename);
+		FString NewFilenameToTry;
+		if (IsRegistryFile)
+		{
+			RegistryFilename = Filename;
+			NewFilenameToTry = Directory / InitialBaseFilename.Replace(TEXT("DevelopmentAssetRegistry"), TEXT("CookMetadata"));
+			NewFilenameToTry += TEXT(".ucookmeta");
+			if (IFileManager::Get().FileExists(*NewFilenameToTry))
+			{
+				MetadataFilename = NewFilenameToTry;
+				FoundOtherFileByInference = true;
+			}
+		}
+		else if (IsMetadataFile)
+		{
+			MetadataFilename = Filename;
+			NewFilenameToTry = Directory / InitialBaseFilename.Replace(TEXT("CookMetadata"), TEXT("DevelopmentAssetRegistry"));
+			NewFilenameToTry += TEXT(".bin");
+			if (IFileManager::Get().FileExists(*NewFilenameToTry))
+			{
+				RegistryFilename = NewFilenameToTry;
+				FoundOtherFileByInference = true;
+			}
+		}
+
+		// We think we found the other file by inference. Let's check the hashes and see  if they match. If not, we'll prompt for the matching file
+		if (FoundOtherFileByInference)
+		{
+			HashCheckResult = CheckFilesExistAndHashMatches(MetadataFilename, RegistryFilename, MetadataTemporaryStorage);
+			FoundOtherFileByInference = HashCheckResult == ECheckFilesExistAndHashMatchesResult::Okay;
+		}
+
+		if (!FoundOtherFileByInference)
+		{
+			TArray<FString> OutFollowupFilenames;
+			const FText FollowupTitle = IsRegistryFile ? LOCTEXT("LoadCookMetadata", "Load CookMetadata") : LOCTEXT("LoadAssetRegistry", "Load DevelopmentAssetRegistry");
+			const FString FollowupFileTypes = FString::Printf(TEXT("%s|*.%s"), 
+				IsRegistryFile ? CookMetadataCanonicalFilename : DevelopmentAssetRegistryCanonicalFilename, 
+				IsRegistryFile ? *CookMetadataExtension : *DevelopmentAssetRegistryExtension);
+			FString DefaultFilename = IsRegistryFile ? CookMetadataCanonicalFilename : DevelopmentAssetRegistryCanonicalFilename;
+		
+			CanceledOpenDialog = !DesktopPlatform->OpenFileDialog(
+				ParentWindowWindowHandle,
+				FollowupTitle.ToString(),
+				TEXT(""),
+				DefaultFilename,
+				FollowupFileTypes,
+				EFileDialogFlags::None,
+				OutFollowupFilenames
+			);
+
+			if (CanceledOpenDialog && !IsRegistryFile)
+			{
+				FooterLeftText = FooterLeftTextStoredPreOpen;
+				return;
+			}
+
+			if (OutFollowupFilenames.Num() == 1)
+			{
+				const FString& FollowupFilename = OutFollowupFilenames[0];
+				const FString FollowupFileExtension = FPaths::GetExtension(FollowupFilename);
+				bool FollowupIsRegistryFile = FollowupFileExtension.Equals(DevelopmentAssetRegistryExtension, ESearchCase::IgnoreCase);
+				bool FollowupIsMetadataFile = FollowupFileExtension.Equals(CookMetadataExtension, ESearchCase::IgnoreCase);
+
+				if (IsRegistryFile && FollowupIsMetadataFile)
+				{
+					MetadataFilename = FollowupFilename;
+				}
+				else if (IsMetadataFile && FollowupIsRegistryFile)
+				{
+					RegistryFilename = FollowupFilename;
+				}
+				else if (!IsMetadataFile && !IsRegistryFile && FollowupIsRegistryFile)
+				{
+					// Weird case where the user picked a bad metadata file (not ending in .ucookmeta) but a valid registry
+					// Just treat this as though they only picked the registry file and report a missing metadata file.
+					RegistryFilename = FollowupFilename;
+				}
+			}
+		}
+	}
+
+
+	// We didn't find the other file by inference, at least not successfully, so we need to check again using the new filename from the user
+	if (!FoundOtherFileByInference)
+	{
+		HashCheckResult = CheckFilesExistAndHashMatches(MetadataFilename, RegistryFilename, MetadataTemporaryStorage);
+	}
+
+	// We can continue loading if:
+	// (a) We have both files and the hashes match
+	// (b) We only got the development asset registry file
+	const bool MetadataFileExists = FPaths::FileExists(*MetadataFilename);
+	const bool RegistryFileExists = FPaths::FileExists(*RegistryFilename);
+	bool ShouldTryFullLoad = (HashCheckResult == ECheckFilesExistAndHashMatchesResult::Okay) || (RegistryFileExists && !MetadataFileExists);
+	
+	bool Success = false;
+	if (ShouldTryFullLoad)
+	{
+		// It's okay to stomp the SourceName since it will always be either uninitialized or CustomSourceName
+		RegistrySource.SourceName = FAssetManagerEditorRegistrySource::CustomSourceName;
+		if (EditorModule->PopulateRegistrySource(&RegistrySource, &RegistryFilename))
+		{
+			RequestRefreshAssets();
+			Success = true;
+		}
+	}
+
+	if (Success && (HashCheckResult == ECheckFilesExistAndHashMatchesResult::Okay))
+	{
+		CookMetadata = std::move(MetadataTemporaryStorage);
+		UpdateRegistryInfoTextPostLoad(HashCheckResult);
+	}
+	else if (Success)
+	{
+		CookMetadata.Reset();
+		UpdateRegistryInfoTextPostLoad(ECheckFilesExistAndHashMatchesResult::CookMetadataDoesNotExist);
 	}
 	else
 	{
-		FooterLeftText = FooterLeftTextStoredPreOpen;
+		ECheckFilesExistAndHashMatchesResult StatusResult = ECheckFilesExistAndHashMatchesResult::Unknown;
+
+		if (ShouldTryFullLoad)
+		{
+			StatusResult = ECheckFilesExistAndHashMatchesResult::FailedToLoadRegistry;
+		}
+		else if (CanceledOpenDialog)
+		{
+			FooterLeftText = FooterLeftTextStoredPreOpen;
+		}
+		else if (!RegistryFileExists)
+		{
+			StatusResult = ECheckFilesExistAndHashMatchesResult::RegistryDoesNotExist;
+		}
+		else
+		{
+			StatusResult = HashCheckResult;
+		}
+
+		if (!CanceledOpenDialog)
+		{
+			CookMetadata.Reset();
+			RegistrySource.ClearRegistry();
+			UpdateRegistryInfoTextPostLoad(StatusResult);
+			ClearTableAndTree();
+		}
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+SAssetTableTreeView::ECheckFilesExistAndHashMatchesResult SAssetTableTreeView::CheckFilesExistAndHashMatches(const FString& MetadataFilename, const FString& RegistryFilename, UE::Cook::FCookMetadataState& MetadataTemporaryStorage)
+{
+	const bool MetadataFileExists = FPaths::FileExists(*MetadataFilename);
+	const bool RegistryFileExists = FPaths::FileExists(*RegistryFilename);
+	if (RegistryFileExists && MetadataFileExists)
+	{
+		uint64 RegistryFileActualHash = -1;
+		bool GotActualRegistryFileHash = HashRegistryFile(RegistryFilename, &RegistryFileActualHash);
+		if (GotActualRegistryFileHash)
+		{
+			uint64 RegistryFileStoredHash = -1;
+			if (LoadCookMetadata(MetadataFilename, MetadataTemporaryStorage))
+			{
+				bool HashesMatch = MetadataTemporaryStorage.GetAssociatedDevelopmentAssetRegistryHashPostWriteback() == RegistryFileActualHash;
+				if (!HashesMatch)
+				{
+					HashesMatch = MetadataTemporaryStorage.GetAssociatedDevelopmentAssetRegistryHash() == RegistryFileActualHash;
+				}
+				return HashesMatch ? ECheckFilesExistAndHashMatchesResult::Okay : ECheckFilesExistAndHashMatchesResult::HashesDoNotMatch;
+			}
+			else
+			{
+				return ECheckFilesExistAndHashMatchesResult::FailedToLoadCookMetadata;
+			}
+		}
+		else
+		{
+			return ECheckFilesExistAndHashMatchesResult::FailedToHashRegistry;
+		}
+	}	
+	else
+	{
+		if (!RegistryFileExists)
+		{
+			return ECheckFilesExistAndHashMatchesResult::RegistryDoesNotExist;
+		}
+		else
+		{
+			return ECheckFilesExistAndHashMatchesResult::CookMetadataDoesNotExist;
+		}
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void SAssetTableTreeView::UpdateRegistryInfoTextPostLoad(ECheckFilesExistAndHashMatchesResult StatusResult)
+{
+	if (StatusResult == ECheckFilesExistAndHashMatchesResult::Okay || StatusResult == ECheckFilesExistAndHashMatchesResult::CookMetadataDoesNotExist)
+	{
+		IFileManager& FileManager = IFileManager::Get();
+		const FString RegistryFilePath = FileManager.GetFilenameOnDisk(*FileManager.ConvertToAbsolutePathForExternalAppForRead(*RegistrySource.SourceFilename));
+
+		if (!CookMetadata.IsValid())
+		{
+			RegistryInfoText->SetText(FText::Format(
+				LOCTEXT("RegistrySourceInfoText_Loaded_RegistryOnly", "Loaded: {0} from {1}. No cook metadata available."),
+				FText::FromString(RegistryFilePath),
+				FText::FromString(RegistrySource.SourceTimestamp)));
+		}
+		else
+		{
+			FString HordeJobIdString = (CookMetadata.GetHordeJobId().Len() > 0) ? CookMetadata.GetHordeJobId() : TEXT("<Unavailable>");
+			RegistryInfoText->SetText(FText::Format(
+				LOCTEXT("RegistrySourceInfoText_Loaded_WithMetadata", 
+					"Loaded: {0} from build {1} on {2} with HordeJobId {3}. Platform: {4} (Sizes are {5})"),
+				FText::FromString(RegistryFilePath),
+				FText::FromString(CookMetadata.GetBuildVersion()),
+				FText::FromString(RegistrySource.SourceTimestamp),
+				FText::FromString(HordeJobIdString),
+				FText::FromString(CookMetadata.GetPlatform()),
+				CookMetadata.GetSizesPresentAsText()
+			));
+		}
+	}
+	else
+	{
+		FText InfoText;
+		switch (StatusResult)
+		{
+		case ECheckFilesExistAndHashMatchesResult::RegistryDoesNotExist:
+			InfoText = LOCTEXT("RegistrySourceInfoText_OpenRegistry_RegistryDoesNotExist", "Selected asset registry does not exist or is invalid.");
+			break;
+		case ECheckFilesExistAndHashMatchesResult::FailedToLoadCookMetadata:
+			InfoText = LOCTEXT("RegistrySourceInfoText_OpenRegistry_CouldNotLoadMetadata", "Unable to load cook metadata.");
+			break;
+		case ECheckFilesExistAndHashMatchesResult::FailedToHashRegistry:
+			InfoText = LOCTEXT("RegistrySourceInfoText_OpenRegistry_CouldNotHashAssetRegistry", "Unable to load registry to hash it.");
+			break;
+		case ECheckFilesExistAndHashMatchesResult::HashesDoNotMatch:
+			InfoText = LOCTEXT("RegistrySourceInfoText_OpenRegistry_HashesDoNotMatch", "Hash of asset registry does not match either hash provided by the cook metadata file.");
+			break;
+		case ECheckFilesExistAndHashMatchesResult::FailedToLoadRegistry:
+			InfoText = LOCTEXT("RegistrySourceInfoText_OpenRegistry_DevARLoadFailed", "Selected asset registry could not be loaded/parsed.");
+			break;
+		case ECheckFilesExistAndHashMatchesResult::Unknown:
+			InfoText = LOCTEXT("RegistrySourceInfoText_OpenRegistry_Failed", "No registry selected or load failed. Reason unknown.");
+			break;
+		default:
+			ensureAlwaysMsgf(false, TEXT("Unexpected status result in UpdateRegistryInfoTextPostLoad"));
+			InfoText = LOCTEXT("RegistrySourceInfoText_OpenRegistry_UnknownError", "Internal error.");
+			break;
+		};
+		RegistryInfoText->SetText(InfoText);
 	}
 }
 
@@ -1228,11 +1480,11 @@ void SAssetTableTreeView::CalculateBaseAndMarginalCostForSelection(TSet<int32>& 
 	{
 		if (ReferenceCountPair.Value > 1)
 		{
-			*OutTotalSizeMultiplyUsed += GetAssetTable()->GetAssetChecked(ReferenceCountPair.Key).GetStagedCompressedSize();
+			*OutTotalSizeMultiplyUsed += GetAssetTable()->GetAssetChecked(ReferenceCountPair.Key).GetStagedCompressedSizeRequiredInstall();
 		}
 		else if (ReferenceCountPair.Value == 1)
 		{
-			*OutTotalSizeSingleUse += GetAssetTable()->GetAssetChecked(ReferenceCountPair.Key).GetStagedCompressedSize();
+			*OutTotalSizeSingleUse += GetAssetTable()->GetAssetChecked(ReferenceCountPair.Key).GetStagedCompressedSizeRequiredInstall();
 		}
 	}
 }
@@ -1243,38 +1495,67 @@ void SAssetTableTreeView::TreeView_OnSelectionChanged(UE::Insights::FTableTreeNo
 {
 	TArray<UE::Insights::FTableTreeNodePtr> SelectedNodes;
 	const int32 NumSelectedNodes = TreeView->GetSelectedItems(SelectedNodes);
-	int32 NumSelectedAssets = 0;
-	FAssetTreeNodePtr NewSelectedAssetNode;
 	int32 NewlySelectedAssetRowIndex = -1;
-	TSet<int32> SelectionSetIndices;
+	int32 NewlySelectedPluginIndex = -1;
+	SelectedAssetIndices.Empty();
+	SelectedPluginIndices.Empty();
 
 	for (const UE::Insights::FTableTreeNodePtr& Node : SelectedNodes)
 	{
-		if (Node->Is<FAssetTreeNode>() && Node->As<FAssetTreeNode>().IsValidAsset())
+		if (Node->Is<FPluginSimpleGroupNode>())
 		{
-			NewSelectedAssetNode = StaticCastSharedPtr<FAssetTreeNode>(Node);
-			NewlySelectedAssetRowIndex = NewSelectedAssetNode->GetRowIndex();
-			SelectionSetIndices.Add(NewlySelectedAssetRowIndex);
-			++NumSelectedAssets;
+			// A plugin or its wrapper is selected
+			const FPluginSimpleGroupNode& PluginNode = Node->As<FPluginSimpleGroupNode>();
+			NewlySelectedPluginIndex = PluginNode.GetPluginIndex();
+			SelectedPluginIndices.Add(NewlySelectedPluginIndex);
+		}
+		else if (Node->Is<FAssetTreeNode>())
+		{
+			if (Node->As<FAssetTreeNode>().IsValidAsset())
+			{
+				NewlySelectedAssetRowIndex = StaticCastSharedPtr<FAssetTreeNode>(Node)->GetRowIndex();
+				SelectedAssetIndices.Add(NewlySelectedAssetRowIndex);
+			}
 		}
 	}
+
+	int32 NumSelectedAssets = SelectedAssetIndices.Num();
+	int32 NumSelectedPlugins = SelectedPluginIndices.Num();
 
 	const int32 FilteredAssetCount = FilteredNodesPtr->Num();
 	const int32 VisibleAssetCount = GetAssetTable()->GetVisibleAssetCount();
 
 	if (NumSelectedAssets == 0)
 	{
-		if (FilteredAssetCount != VisibleAssetCount)
+		FooterCenterText1 = FText();
+		FooterCenterText2 = FText();
+
+		if (NumSelectedPlugins > 0)
 		{
-			FooterLeftText = FText::Format(LOCTEXT("FooterLeftTextFmt_NoSelected_Filtered", "{0} / {1} assets"), FText::AsNumber(FilteredAssetCount), FText::AsNumber(VisibleAssetCount));
+			FooterLeftText = FText::Format(LOCTEXT("FootLeftTextFmt_PluginsSelected", "{0} Plugins ({1} Selected)"),
+								FText::AsNumber(GetAssetTable()->GetNumPlugins()),
+								FText::AsNumber(NumSelectedPlugins));
+
+			int64 TotalSelfSize = 0;
+			int64 TotalInclusiveSize = 0;
+			FAssetTablePluginInfo::ComputeTotalSelfAndInclusiveSizes(*GetAssetTable(), SelectedPluginIndices, TotalSelfSize, TotalInclusiveSize);
+			FooterRightText1 = FText::Format(LOCTEXT("FooterRightTextFmt_PluginsSelected", "Self: {0} Inclusive: {1}"),
+								FText::AsMemory(TotalSelfSize),
+								FText::AsMemory(TotalInclusiveSize));
+
 		}
 		else
 		{
-			FooterLeftText = FText::Format(LOCTEXT("FooterLeftTextFmt_NoSelected_NoFiltered", "{0} assets"), FText::AsNumber(VisibleAssetCount));
+			if (FilteredAssetCount != VisibleAssetCount)
+			{
+				FooterLeftText = FText::Format(LOCTEXT("FooterLeftTextFmt_NoSelected_Filtered", "{0} / {1} assets"), FText::AsNumber(FilteredAssetCount), FText::AsNumber(VisibleAssetCount));
+			}
+			else
+			{
+				FooterLeftText = FText::Format(LOCTEXT("FooterLeftTextFmt_NoSelected_NoFiltered", "{0} assets"), FText::AsNumber(VisibleAssetCount));
+			}
+			FooterRightText1 = FText();
 		}
-		FooterCenterText1 = FText();
-		FooterCenterText2 = FText();
-		FooterRightText1 = FText();
 	}
 	else if (NumSelectedAssets == 1)
 	{
@@ -1290,7 +1571,7 @@ void SAssetTableTreeView::TreeView_OnSelectionChanged(UE::Insights::FTableTreeNo
 		FooterCenterText1 = FText::FromString(AssetTableRow.GetPath());
 		FooterCenterText2 = FText::FromString(AssetTableRow.GetName());
 		FooterRightText1 = FText::Format(LOCTEXT("FooterRightFmt", "Self: {0}    Unique: {1}    Shared: {2}    External: {3}"),
-			FText::AsMemory(AssetTableRow.GetStagedCompressedSize()),
+			FText::AsMemory(AssetTableRow.GetStagedCompressedSizeRequiredInstall()),
 			FText::AsMemory(AssetTableRow.GetOrComputeTotalSizeUniqueDependencies(*GetAssetTable(), NewlySelectedAssetRowIndex)),
 			FText::AsMemory(AssetTableRow.GetOrComputeTotalSizeSharedDependencies(*GetAssetTable(), NewlySelectedAssetRowIndex)),
 			FText::AsMemory(AssetTableRow.GetOrComputeTotalSizeExternalDependencies(*GetAssetTable(), NewlySelectedAssetRowIndex)));
@@ -1303,7 +1584,7 @@ void SAssetTableTreeView::TreeView_OnSelectionChanged(UE::Insights::FTableTreeNo
 			// whether a FortWeaponRangedItemDefinition is comparable to a FortWeaponMeleeDualWieldItemDefinition
 			const TCHAR* FirstType = nullptr;
 			bool FirstIndex = true;
-			for (int32 SelectedNodeIndex : SelectionSetIndices)
+			for (int32 SelectedNodeIndex : SelectedAssetIndices)
 			{
 				const FAssetTableRow& AssetTableRow = GetAssetTable()->GetAssetChecked(SelectedNodeIndex);
 				const TCHAR* Type = AssetTableRow.GetType();
@@ -1321,13 +1602,13 @@ void SAssetTableTreeView::TreeView_OnSelectionChanged(UE::Insights::FTableTreeNo
 		}
 
 
-		int64 TotalExternalDependencySize = FAssetTableRow::ComputeTotalSizeExternalDependencies(*GetAssetTable(), SelectionSetIndices);
-		FAssetTableDependencySizes Sizes = FAssetTableRow::ComputeDependencySizes(*GetAssetTable(), SelectionSetIndices, nullptr, nullptr);
+		int64 TotalExternalDependencySize = FAssetTableRow::ComputeTotalSizeExternalDependencies(*GetAssetTable(), SelectedAssetIndices);
+		FAssetTableDependencySizes Sizes = FAssetTableRow::ComputeDependencySizes(*GetAssetTable(), SelectedAssetIndices, nullptr, nullptr);
 
 		int64 TotalSelfSize = 0;
-		for (int32 Index : SelectionSetIndices)
+		for (int32 Index : SelectedAssetIndices)
 		{
-			TotalSelfSize += GetAssetTable()->GetAssetChecked(Index).GetStagedCompressedSize();
+			TotalSelfSize += GetAssetTable()->GetAssetChecked(Index).GetStagedCompressedSizeRequiredInstall();
 		}
 
 		FText BaseAndMarginalCost;
@@ -1335,11 +1616,11 @@ void SAssetTableTreeView::TreeView_OnSelectionChanged(UE::Insights::FTableTreeNo
 		{
 			int64 TotalSizeMultiplyUsed = 0;
 			int64 TotalSizeSingleUse = 0;
-			CalculateBaseAndMarginalCostForSelection(SelectionSetIndices, &TotalSizeMultiplyUsed, &TotalSizeSingleUse);
+			CalculateBaseAndMarginalCostForSelection(SelectedAssetIndices, &TotalSizeMultiplyUsed, &TotalSizeSingleUse);
 
 			BaseAndMarginalCost = FText::Format(LOCTEXT("FooterLeft_BaseAndMarginalCost", " -- Base Cost: {0}  Per Asset Cost: {1}"),
 				FText::AsMemory(TotalSizeMultiplyUsed),
-				FText::AsMemory((TotalSelfSize + TotalSizeSingleUse) / SelectionSetIndices.Num()));
+				FText::AsMemory((TotalSelfSize + TotalSizeSingleUse) / SelectedAssetIndices.Num()));
 		}
 		else
 		{
@@ -1363,18 +1644,6 @@ void SAssetTableTreeView::TreeView_OnSelectionChanged(UE::Insights::FTableTreeNo
 			FText::AsMemory(Sizes.SharedDependenciesSize),
 			FText::AsMemory(TotalExternalDependencySize));
 	}
-
-	if (NumSelectedAssets != 1)
-	{
-		NewSelectedAssetNode.Reset();
-	}
-
-	if (SelectedAssetNode != NewSelectedAssetNode)
-	{
-		SelectedAssetNode = NewSelectedAssetNode;
-	}
-
-	SelectedIndices = SelectionSetIndices;
 
 	if (OnSelectionChanged.IsBound())
 	{
@@ -1439,7 +1708,12 @@ void SAssetTableTreeView::PopulateAssetTableRow(FAssetTableRow& OutRow, const FA
 		OutRow.PrimaryName = AssetTable.StoreStr(Str);
 	}
 
-	EditorModule->GetIntegerValueForCustomColumn(AssetData, IAssetManagerEditorModule::StageChunkCompressedSizeName, OutRow.StagedCompressedSize, &RegistrySource);
+	bool RegistryHasSeparateCompressedSizes = EditorModule->GetIntegerValueForCustomColumn(AssetData, UE::AssetRegistry::Stage_ChunkInstalledSizeFName, OutRow.StagedCompressedSizeRequiredInstall, &RegistrySource);
+	if (!RegistryHasSeparateCompressedSizes)
+	{
+		// This should only apply to legacy asset registries (before ~6/28/23).
+		EditorModule->GetIntegerValueForCustomColumn(AssetData, UE::AssetRegistry::Stage_ChunkCompressedSizeFName, OutRow.StagedCompressedSizeRequiredInstall, &RegistrySource);
+	}
 	EditorModule->GetIntegerValueForCustomColumn(AssetData, IAssetManagerEditorModule::TotalUsageName, OutRow.TotalUsageCount, &RegistrySource);
 
 	if (EditorModule->GetStringValueForCustomColumn(AssetData, IAssetManagerEditorModule::ChunksName, Str, &RegistrySource))
@@ -1456,7 +1730,7 @@ void SAssetTableTreeView::PopulateAssetTableRow(FAssetTableRow& OutRow, const FA
 
 	// Sets the color based on asset type.
 	const uint32 AssetTypeHash = GetTypeHash(FStringView(OutRow.Type));
-	OutRow.Color = USlateThemeManager::Get().GetColor((EStyleColor)((uint32)EStyleColor::AccentBlue + AssetTypeHash % 8));
+	OutRow.Color = USlateThemeManager::Get().GetColor((EStyleColor)((uint32)EStyleColor::AccentBlue + AssetTypeHash % ((uint32)EStyleColor::AccentGreen - (uint32)EStyleColor::AccentBlue)));
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1464,6 +1738,7 @@ void SAssetTableTreeView::PopulateAssetTableRow(FAssetTableRow& OutRow, const FA
 // Refresh list of assets for the tree view
 void SAssetTableTreeView::RefreshAssets()
 {
+	CancelCurrentAsyncOp();
 	TSharedPtr<FAssetTable> AssetTable = GetAssetTable();
 	if (!AssetTable.IsValid())
 	{
@@ -1475,47 +1750,39 @@ void SAssetTableTreeView::RefreshAssets()
 	UE::Insights::FStopwatch Stopwatch;
 	Stopwatch.Start();
 
-	// Clears all tree nodes (that references the previous assets).
-	AssetTable->SetVisibleAssetCount(0);
-	RebuildTree(true);
-
-	// Now is safe to clear the previous assets.
-	AssetTable->ClearAllData();
+	ClearTableAndTree();
 
 	TMap<FString, int64> PluginToSizeMap;
 
-	typedef TSet<const TCHAR*, TStringPointerSetKeyFuncs_DEPRECATED<const TCHAR*>> DeprecatedTCharSetType;
 	TMap<const TCHAR*, DeprecatedTCharSetType, FDefaultSetAllocator, TStringPointerMapKeyFuncs_DEPRECATED<const TCHAR*, DeprecatedTCharSetType>> DiscoveredPluginDependencyEdges;
+
+	TMap<FAssetData, int32> AssetToIndexMap;
+	TArray<FAssetData> SourceAssets;
 
 	if (IsRegistrySourceValid())
 	{
-		TMap<FAssetData, int32> AssetToIndexMap;
-
-		TArray<FAssetData> SourceAssets;
-
 		RegistrySource.GetOwnedRegistryState()->GetAllAssets(TSet<FName>(), SourceAssets);
 
 		for (int32 SourceAssetIndex = 0; SourceAssetIndex < SourceAssets.Num(); SourceAssetIndex++)
 		{
-			TArray<FAssetData> AssetsInSourcePackage;
-			AssetRegistry->GetAssetsByPackageName(SourceAssets[SourceAssetIndex].PackageName, AssetsInSourcePackage, /*bIncludeOnlyOnDiskAssets*/ true); // Only use on disk assets to avoid creating FAssetData for everything in memory
+			TArrayView<FAssetData const* const> AssetsInSourcePackage = RegistrySource.GetOwnedRegistryState()->GetAssetsByPackageName(SourceAssets[SourceAssetIndex].PackageName);
 
-			for (FAssetData& SourceAsset : AssetsInSourcePackage)
+			for (FAssetData const* const SourceAsset : AssetsInSourcePackage)
 			{
-				if (AssetToIndexMap.Find(SourceAsset) == nullptr)
+				if (AssetToIndexMap.Find(*SourceAsset) == nullptr)
 				{
 					FAssetTableRow AssetRow;
-					PopulateAssetTableRow(AssetRow, SourceAsset, *AssetTable);
+					PopulateAssetTableRow(AssetRow, *SourceAsset, *AssetTable);
 					AssetTable->AddAsset(AssetRow);
-					AssetToIndexMap.Add(SourceAsset, AssetTable->GetTotalAssetCount() - 1);
+					AssetToIndexMap.Add(*SourceAsset, AssetTable->GetTotalAssetCount() - 1);
 
 					if (int64* PluginSize = PluginToSizeMap.Find(AssetRow.GetPluginName()))
 					{
-						(*PluginSize) += AssetRow.GetStagedCompressedSize();
+						(*PluginSize) += AssetRow.GetStagedCompressedSizeRequiredInstall();
 					}
 					else
 					{
-						PluginToSizeMap.Add(AssetRow.GetPluginName(), AssetRow.GetStagedCompressedSize());
+						PluginToSizeMap.Add(AssetRow.GetPluginName(), AssetRow.GetStagedCompressedSizeRequiredInstall());
 					}
 				}
 			}
@@ -1541,8 +1808,7 @@ void SAssetTableTreeView::RefreshAssets()
 
 			FAssetIdentifier CurrentIdentifier(SourceAssets[SourceAssetIndex].PackageName);
 			// We'll have to add the dependencies to all these entries
-			TArray<FAssetData> AssetsInSourcePackage;
-			AssetRegistry->GetAssetsByPackageName(SourceAssets[SourceAssetIndex].PackageName, AssetsInSourcePackage, /*bIncludeOnlyOnDiskAssets*/ true); // Only use on disk assets to avoid creating FAssetData for everything in memory
+			TArrayView<FAssetData const* const> AssetsInSourcePackage = RegistrySource.GetOwnedRegistryState()->GetAssetsByPackageName(SourceAssets[SourceAssetIndex].PackageName);
 
 			// Get the dependencies
 			TArray<FAssetIdentifier> DependencyList;
@@ -1571,11 +1837,11 @@ void SAssetTableTreeView::RefreshAssets()
 						SourceAssets.Add(*DependencyAsset);
 						if (int64* PluginSize = PluginToSizeMap.Find(NewRow.GetPluginName()))
 						{
-							(*PluginSize) += NewRow.GetStagedCompressedSize();
+							(*PluginSize) += NewRow.GetStagedCompressedSizeRequiredInstall();
 						}
 						else
 						{
-							PluginToSizeMap.Add(NewRow.GetPluginName(), NewRow.GetStagedCompressedSize());
+							PluginToSizeMap.Add(NewRow.GetPluginName(), NewRow.GetStagedCompressedSizeRequiredInstall());
 						}
 					}
 				}
@@ -1584,13 +1850,14 @@ void SAssetTableTreeView::RefreshAssets()
 			if (IndicesOfDependenciesInRowTableToAddToCurrentSourceAssetRow.Num())
 			{
 				// We found some dependencies. Let's add them.
-				for (const FAssetData& SourceAssetData : AssetsInSourcePackage)
+				for (const FAssetData* const SourceAssetData : AssetsInSourcePackage)
 				{
-					int32* RowIndex = AssetToIndexMap.Find(SourceAssetData);
+					int32* RowIndex = AssetToIndexMap.Find(*SourceAssetData);
 					if (RowIndex == nullptr)
 					{
-						UE_LOG(LogInsights, Warning, TEXT("Failed to find asset %s in package %s, source asset index %d. Asset registry loading was %s"), *SourceAssetData.AssetName.ToString(), *SourceAssetData.PackageName.ToString(), SourceAssetIndex, AssetRegistry->IsLoadingAssets() ? TEXT("INCOMPLETE") : TEXT("complete"));
+						UE_LOG(LogInsights, Warning, TEXT("Failed to find asset %s in package %s, source asset index %d."), *SourceAssetData->AssetName.ToString(), *SourceAssetData->PackageName.ToString(), SourceAssetIndex);
 					}
+
 					if (ensure(RowIndex != nullptr))
 					{
 						const TCHAR* CurrentPlugin = AssetTable->GetAssetChecked(*RowIndex).GetPluginName();
@@ -1607,7 +1874,6 @@ void SAssetTableTreeView::RefreshAssets()
 							}
 						}
 
-
 						DeprecatedTCharSetType& DiscoveredPluginDependencyList = DiscoveredPluginDependencyEdges.FindOrAdd(CurrentPlugin);
 						for (const TCHAR* DependencyPlugin : DependencyPlugins)
 						{
@@ -1621,9 +1887,9 @@ void SAssetTableTreeView::RefreshAssets()
 					// Now for each of those dependencies, add this source asset row as a referencer
 					if (FAssetTableRow* DependentRow = AssetTable->GetAsset(Index))
 					{
-						for (const FAssetData& SourceAssetData : AssetsInSourcePackage)
+						for (const FAssetData* SourceAssetData : AssetsInSourcePackage)
 						{
-							int32* RowIndex = AssetToIndexMap.Find(SourceAssetData);
+							int32* RowIndex = AssetToIndexMap.Find(*SourceAssetData);
 							if (ensure(RowIndex != nullptr))
 							{
 								DependentRow->Referencers.AddUnique(*RowIndex);
@@ -1636,76 +1902,235 @@ void SAssetTableTreeView::RefreshAssets()
 		}
 	}
 
-	// Setup plugin infos and dependencies. This will eventually be replaced by data from the asset registry
-	for (TPair<FString, int64>& PluginEntry : PluginToSizeMap)
+	if (CookMetadata.IsValid())
 	{
-		const TCHAR* StoredPluginName = AssetTable->StoreStr(PluginEntry.Key);
-		FAssetTablePluginInfo& PluginInfo = AssetTable->GetOrCreatePluginInfo(StoredPluginName);
-		PluginInfo.Size = PluginEntry.Value;
-		if (TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(PluginEntry.Key))
+		// Shader data
 		{
-			TArray<FPluginReferenceDescriptor> PluginReferences;
-			IPluginManager::Get().GetPluginDependencies(PluginEntry.Key, PluginReferences);
-			for (const FPluginReferenceDescriptor& ReferenceDescriptor : PluginReferences)
+			const UE::Cook::FCookMetadataShaderPseudoHierarchy& ShaderHierarchy = CookMetadata.GetShaderPseudoHierarchy();
+
+			const TCHAR* ShaderAssetType = AssetTable->StoreStr(TEXT("Shader Pseudo Asset"));
+			const uint32 AssetTypeHash = GetTypeHash(FStringView(ShaderAssetType));
+			FLinearColor ShaderColor = USlateThemeManager::Get().GetColor((EStyleColor)((uint32)EStyleColor::AccentBlue + AssetTypeHash % ((uint32)EStyleColor::AccentGreen - (uint32)EStyleColor::AccentBlue)));
+
+			uint64 ShaderStartIndexInAssetTable = AssetTable->GetAssets().Num();
+
+			// Build all the additional asset rows for the ShaderAssets.
+			for (const UE::Cook::FCookMetadataShaderPseudoAsset& ShaderAsset : ShaderHierarchy.ShaderAssets)
 			{
-				const TCHAR* StoredReferencePluginName = AssetTable->StoreStr(ReferenceDescriptor.Name);
-				int32 DependencyIndex = AssetTable->GetIndexForPlugin(StoredReferencePluginName);
-				if (DependencyIndex == -1)
+				FAssetTableRow AssetRow;
 				{
-					DependencyIndex = AssetTable->GetNumPlugins();
-					AssetTable->GetOrCreatePluginInfo(StoredReferencePluginName);
+					int FirstSlashIndex = INDEX_NONE;
+					ShaderAsset.Name.FindChar(TEXT('/'), FirstSlashIndex);
+					FString PluginName;
+					if (FirstSlashIndex != INDEX_NONE)
+					{
+						PluginName = ShaderAsset.Name.Left(FirstSlashIndex);
+					}
+					AssetRow.PluginName = AssetTable->StoreStr(PluginName);
+
+					int LastSlashIndex = INDEX_NONE;
+					ShaderAsset.Name.FindLastChar(TEXT('/'), LastSlashIndex);
+					FString AssetName;
+					if (FirstSlashIndex != INDEX_NONE)
+					{
+						AssetName = ShaderAsset.Name.Right(ShaderAsset.Name.Len() - LastSlashIndex - 1);
+					}
+					AssetRow.Name = AssetTable->StoreStr(AssetName);
 				}
-				// Note that we can't use PluginInfo directly because the above code could have grown the array 
-				// and that would invalidate the reference
-				AssetTable->GetOrCreatePluginInfo(StoredPluginName).PluginDependencies.Add(DependencyIndex);
+				AssetRow.Type = ShaderAssetType;
+				AssetRow.Color = ShaderColor;
+				AssetRow.StagedCompressedSizeRequiredInstall = ShaderAsset.CompressedSize;
+				AssetTable->AddAsset(AssetRow);
+			}
+			
+			// This is not efficient as most packages don't have shader dependencies at all
+			for (const FAssetData& SourceAsset : SourceAssets)
+			{
+				if (const TPair<int32, int32>* ShaderDependencyRange = ShaderHierarchy.PackageShaderDependencyMap.Find(SourceAsset.PackageName))
+				{
+					if (int32* AssetIndex = AssetToIndexMap.Find(SourceAsset))
+					{
+						FAssetTableRow* OwningAssetRow = AssetTable->GetAsset(*AssetIndex);
+
+						for (int32 ShaderPseudoAssetIndex = ShaderDependencyRange->Key; ShaderPseudoAssetIndex < ShaderDependencyRange->Value; ShaderPseudoAssetIndex++)
+						{
+							int64 ShaderIndexInAssetTable = ShaderStartIndexInAssetTable + ShaderHierarchy.DependencyList[ShaderPseudoAssetIndex];
+							if (ensure(ShaderIndexInAssetTable < AssetTable->GetAssets().Num()))
+							{
+								OwningAssetRow->Dependencies.AddUnique(ShaderIndexInAssetTable);
+								AssetTable->GetAsset(ShaderIndexInAssetTable)->Referencers.AddUnique(*AssetIndex);
+							}
+						}
+					}
+				}
+			}
+
+			AssetTable->SetVisibleAssetCount(AssetTable->GetAssets().Num());
+		}
+		
+		// Plugin Data
+		{
+			const UE::Cook::FCookMetadataPluginHierarchy& PluginHierarchy = CookMetadata.GetPluginHierarchy();
+
+			for (int32 CustomColumnIndex = 0; CustomColumnIndex < PluginHierarchy.CustomFieldEntries.Num(); CustomColumnIndex++)
+			{
+				FAssetTable::FCustomColumnDefinition CustomColumnDefinition;
+				CustomColumnDefinition.ColumnId = FName(PluginHierarchy.CustomFieldEntries[CustomColumnIndex].Name);
+				UE::Cook::ECookMetadataCustomFieldType FieldType = PluginHierarchy.CustomFieldEntries[CustomColumnIndex].Type;
+				if (ensureMsgf(FieldType != UE::Cook::ECookMetadataCustomFieldType::Unknown, TEXT("Unknown field type encountered")))
+				{
+					if (FieldType == UE::Cook::ECookMetadataCustomFieldType::String)
+					{
+						CustomColumnDefinition.Type = FAssetTable::ECustomColumnDefinitionType::String;
+					}
+					else if (FieldType == UE::Cook::ECookMetadataCustomFieldType::Bool)
+					{
+						CustomColumnDefinition.Type = FAssetTable::ECustomColumnDefinitionType::Boolean;
+					}
+				}
+				CustomColumnDefinition.Key = CustomColumnIndex;
+				AssetTable->AddCustomColumn(CustomColumnDefinition);
+			}
+
+			int64 TotalMismatch = 0;
+			int64 TotalSize = 0;
+			for (const UE::Cook::FCookMetadataPluginEntry& PluginEntry : PluginHierarchy.PluginsEnabledAtCook)
+			{
+				const TCHAR* StoredPluginName = AssetTable->StoreStr(PluginEntry.Name);
+				FAssetTablePluginInfo& PluginInfo = AssetTable->GetOrCreatePluginInfo(StoredPluginName);
+				if (CookMetadata.GetSizesPresent() != UE::Cook::ECookMetadataSizesPresent::NotPresent)
+				{
+					PluginInfo.Size = PluginEntry.ExclusiveSizes[UE::Cook::EPluginSizeTypes::Installed];
+				}
+				else if (const int64* SizePtr = PluginToSizeMap.Find(PluginEntry.Name))
+				{
+					PluginInfo.Size = *SizePtr;
+				}
+
+				PluginInfo.PluginTypeString = AssetTable->StoreStr(*PluginEntry.GetPluginTypeAsText().ToString());
+
+				for (int32 CustomColumnIndex = 0; CustomColumnIndex < PluginHierarchy.CustomFieldEntries.Num(); CustomColumnIndex++)
+				{
+					if (const UE::Cook::FCookMetadataPluginEntry::CustomFieldVariantType* VariantEntry = PluginEntry.CustomFields.Find(CustomColumnIndex))
+					{
+						FAssetTablePluginInfo::FCustomColumnData ColumnData;
+						ColumnData.Key = CustomColumnIndex;
+
+						if (PluginHierarchy.CustomFieldEntries[CustomColumnIndex].Type == UE::Cook::ECookMetadataCustomFieldType::Bool)
+						{
+							ColumnData.Value.Set<bool>(VariantEntry->Get<bool>());
+						}
+						else if (PluginHierarchy.CustomFieldEntries[CustomColumnIndex].Type == UE::Cook::ECookMetadataCustomFieldType::String)
+						{
+							ColumnData.Value.Set<const TCHAR*>(AssetTable->StoreStr(*VariantEntry->Get<FString>()));
+						}
+
+						PluginInfo.CustomColumnData.Add(ColumnData);
+					}
+				}
+
+				///
+				/// validation
+				///
+				if (const int64* SizePtr = PluginToSizeMap.Find(PluginEntry.Name))
+				{
+					if (CookMetadata.GetSizesPresent() != UE::Cook::ECookMetadataSizesPresent::NotPresent)
+					{
+						int64 TotalSizeOfPluginInMetadata = PluginEntry.ExclusiveSizes[UE::Cook::EPluginSizeTypes::Installed];
+						if (*SizePtr != TotalSizeOfPluginInMetadata)
+						{
+							UE_LOG(LogInsights, Warning, TEXT("Plugin %s found with mismatched ucookmetadata and internal asset size calculation. Metadata size: %lld Calculated size: %lld"),
+								StoredPluginName, PluginInfo.Size, *SizePtr);
+						}
+						TotalMismatch += FMath::Abs(*SizePtr - TotalSizeOfPluginInMetadata);
+						TotalSize += TotalSizeOfPluginInMetadata;
+					}
+				}
+
+				const int32 PluginIndex = AssetTable->GetIndexForPlugin(StoredPluginName);
+				for (uint32 DependencyIndexInMetadata = PluginEntry.DependencyIndexStart; DependencyIndexInMetadata < PluginEntry.DependencyIndexEnd; DependencyIndexInMetadata++)
+				{
+					const UE::Cook::FCookMetadataPluginEntry& DependentPluginEntry = PluginHierarchy.PluginsEnabledAtCook[PluginHierarchy.PluginDependencies[DependencyIndexInMetadata]];
+					const TCHAR* StoredReferencePluginName = AssetTable->StoreStr(DependentPluginEntry.Name);
+					int32 DependencyIndex = AssetTable->GetIndexForPlugin(StoredReferencePluginName);
+					if (DependencyIndex == -1)
+					{
+						DependencyIndex = AssetTable->GetNumPlugins();
+						AssetTable->GetOrCreatePluginInfo(StoredReferencePluginName);
+					}
+					// Note that we can't use PluginInfo directly because the above code could have grown the array 
+					// and that would invalidate the reference
+					AssetTable->GetOrCreatePluginInfo(StoredPluginName).PluginDependencies.AddUnique(DependencyIndex);
+					AssetTable->GetPluginInfoByIndex(DependencyIndex).PluginReferencers.AddUnique(AssetTable->GetIndexForPlugin(StoredPluginName));
+				}
+			}
+
+			if (TotalMismatch != 0)
+			{
+				UE_LOG(LogInsights, Warning, TEXT("Total Size of Plugins from Metadata: %lld // Total Discrepancy (vs calculated size from assets): %lld"), TotalSize, TotalMismatch);
+			}
+
+			for (uint16 RootPluginIndex : PluginHierarchy.RootPlugins)
+			{
+				const UE::Cook::FCookMetadataPluginEntry& PluginEntry = PluginHierarchy.PluginsEnabledAtCook[RootPluginIndex];
+				const TCHAR* StoredPluginName = AssetTable->StoreStr(PluginEntry.Name);
+				FAssetTablePluginInfo& PluginInfo = AssetTable->GetOrCreatePluginInfo(StoredPluginName);
+				UE_LOG(LogInsights, Display, TEXT("Found root plugin %s"), StoredPluginName);
+				PluginInfo.bIsRootPlugin = true;
 			}
 		}
-		else
-		{
-			UE_LOG(LogInsights, Warning, TEXT("Could not find plugin %s in plugin manager."), PluginInfo.PluginName);
-		}
 	}
-
-	// Discovered version
-	for (const TPair<const TCHAR*, DeprecatedTCharSetType>& DiscoveredDependencies : DiscoveredPluginDependencyEdges)
+	else
 	{
-		const TCHAR* StoredPluginName = AssetTable->StoreStr(DiscoveredDependencies.Key);
-		FAssetTablePluginInfo& PluginInfo = AssetTable->GetOrCreatePluginInfo(StoredPluginName);
-
-		for (const TCHAR* DependencyName : DiscoveredDependencies.Value)
+		UE_LOG(LogInsights, Warning, TEXT("CookMetadata not available, deriving plugin dependencies and sizes from loaded asset registry instead."));
+		// Setup plugin infos and dependencies. This will eventually be replaced by data from the asset registry
+		for (TPair<FString, int64>& PluginEntry : PluginToSizeMap)
 		{
-			int32 DependencyIndex = AssetTable->GetIndexForPlugin(DependencyName);
-			ensureAlways(DependencyIndex != -1); // These were created above.
-			PluginInfo.DiscoveredPluginDependencies.Add(DependencyIndex);
+			const TCHAR* StoredPluginName = AssetTable->StoreStr(PluginEntry.Key);
+			FAssetTablePluginInfo& PluginInfo = AssetTable->GetOrCreatePluginInfo(StoredPluginName);
+			PluginInfo.Size = PluginEntry.Value;
+			if (TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(PluginEntry.Key))
+			{
+				TArray<FPluginReferenceDescriptor> PluginReferences;
+				IPluginManager::Get().GetPluginDependencies(PluginEntry.Key, PluginReferences);
+				const int32 PluginIndex = AssetTable->GetIndexForPlugin(StoredPluginName);
+				for (const FPluginReferenceDescriptor& ReferenceDescriptor : PluginReferences)
+				{
+					const TCHAR* StoredReferencePluginName = AssetTable->StoreStr(ReferenceDescriptor.Name);
+					int32 DependencyIndex = AssetTable->GetIndexForPlugin(StoredReferencePluginName);
+					if (DependencyIndex == -1)
+					{
+						DependencyIndex = AssetTable->GetNumPlugins();
+						AssetTable->GetOrCreatePluginInfo(StoredReferencePluginName);
+					}
+					// Note that we can't use PluginInfo directly because the above code could have grown the array 
+					// and that would invalidate the reference
+					AssetTable->GetOrCreatePluginInfo(StoredPluginName).PluginDependencies.AddUnique(DependencyIndex);
+					AssetTable->GetPluginInfoByIndex(DependencyIndex).PluginReferencers.AddUnique(AssetTable->GetIndexForPlugin(StoredPluginName));
+				}
+			}
+			else
+			{
+				UE_LOG(LogInsights, Warning, TEXT("Could not find plugin %s in plugin manager."), PluginInfo.PluginName);
+			}
 		}
 	}
 
-	// TODO: Once we have the dependency data from the uplugin files in the cook we can 
-	// compare them to the discovered dependencies to see if there are plugins we're dependending on
-	// that, perhaps, we shouldn't be. That said, we shouldn't storer the discovered dependencies on the 
-	// plugin infos at that point.
+	for (int32 PluginIndex = 0; PluginIndex < AssetTable->GetNumPlugins(); PluginIndex++)
+	{
+		const FAssetTablePluginInfo& PluginInfo = AssetTable->GetPluginInfoByIndex(PluginIndex);
+		if (!PluginInfo.IsRootPlugin() && PluginInfo.GetNumReferencers() == 0 && PluginInfo.GetSize() > 0)
+		{
+			UE_LOG(LogInsights, Warning, TEXT("Found orphaned plugin %s"), PluginInfo.GetName());
+		}
+	}
 
-	//// Analyze difference
-	//UE_LOG(LogInsights, Warning, TEXT("Registry Deps-------"));
-	//for (int32 PluginIndex = 0; PluginIndex < AssetTable->GetNumPlugins(); PluginIndex++)
-	//{
-	//	const FAssetTablePluginInfo& PluginInfo = AssetTable->GetPluginInfoByIndex(PluginIndex);
-	//	UE_LOG(LogInsights, Warning, TEXT("Plugin: %s"), PluginInfo.PluginName);
-	//	for (int32 DependencyIndex : PluginInfo.PluginDependencies)
-	//	{
-	//		UE_LOG(LogInsights, Warning, TEXT("\t%s"), AssetTable->GetPluginInfoByIndex(DependencyIndex).PluginName);
-	//	}
-	//}
-	//UE_LOG(LogInsights, Warning, TEXT("Discovered Deps-------"));
-	//for (int32 PluginIndex = 0; PluginIndex < AssetTable->GetNumPlugins(); PluginIndex++)
-	//{
-	//	const FAssetTablePluginInfo& PluginInfo = AssetTable->GetPluginInfoByIndex(PluginIndex);
-	//	UE_LOG(LogInsights, Warning, TEXT("Plugin: %s"), PluginInfo.PluginName);
-	//	for (int32 DependencyIndex : PluginInfo.DiscoveredPluginDependencies)
-	//	{
-	//		UE_LOG(LogInsights, Warning, TEXT("\t%s"), AssetTable->GetPluginInfoByIndex(DependencyIndex).PluginName);
-	//	}
-	//}
+	// Disabling this for now as there are too many differences at the moment. Keeping the code because eventually
+	// we probably do want to use it to discover spurious dependencies or dependencies on code+content where content should
+	// get separated from code
+	// 
+	// DumpDifferencesBetweenDiscoveredDataAndLoadedMetadata(DiscoveredPluginDependencyEdges);
+
 
 	Stopwatch.Stop();
 	const double TotalTime = Stopwatch.GetAccumulatedTime();
@@ -1718,14 +2143,134 @@ void SAssetTableTreeView::RefreshAssets()
 		StringStore.GetNumStrings(), StringStore.GetTotalStringSize(), StringStore.GetAllocatedSize(),
 		(double)StringStore.GetAllocatedSize() * 100.0 / (double)StringStore.GetTotalInputStringSize());
 
-	RequestRebuildTree();
+	RequestRebuildTree(/*NeedsColumnRebuild =*/true);
+}
+
+void SAssetTableTreeView::ClearTableAndTree()
+{
+	TSharedPtr<FAssetTable> AssetTable = GetAssetTable();
+
+	// Clears all tree nodes (that references the previous assets).
+	AssetTable->SetVisibleAssetCount(0);
+	RebuildTree(true);
+
+	// Now is safe to clear the previous assets.
+	AssetTable->ClearAllData();
+}
+
+void SAssetTableTreeView::DumpDifferencesBetweenDiscoveredDataAndLoadedMetadata(TMap<const TCHAR*, DeprecatedTCharSetType, FDefaultSetAllocator, TStringPointerMapKeyFuncs_DEPRECATED<const TCHAR*, DeprecatedTCharSetType>>& DiscoveredPluginDependencyEdges) const
+{
+	TSharedPtr<FAssetTable> AssetTable = GetAssetTable();
+
+	if (CookMetadata.IsValid())
+	{
+		// Report discrepancies
+		TArray<TPair<FString, FString>> DependenciesInMetadataNotAssets;
+		TArray<TPair<FString, FString>> DependenciesInAssetsNotMetadata;
+
+		TMap<FString, int32> PluginNameToIndexInHierarchyMetadata;
+		for (int32 IndexInHierarchyMetadata = 0; IndexInHierarchyMetadata < CookMetadata.GetPluginHierarchy().PluginsEnabledAtCook.Num(); IndexInHierarchyMetadata++)
+		{
+			PluginNameToIndexInHierarchyMetadata.Add(CookMetadata.GetPluginHierarchy().PluginsEnabledAtCook[IndexInHierarchyMetadata].Name, IndexInHierarchyMetadata);
+		}
+
+		// Search through our discovered dependencies and ensure that we have a matching dependency in the metadata
+		for (const TPair<const TCHAR*, DeprecatedTCharSetType>& DiscoveredDependencies : DiscoveredPluginDependencyEdges)
+		{
+			int32* IndexInMetadata = PluginNameToIndexInHierarchyMetadata.Find(DiscoveredDependencies.Key);
+			if (IndexInMetadata == nullptr)
+			{
+				UE_LOG(LogInsights, Warning, TEXT("Unable to find plugin %s, known from asset traversal, in cook metadata."), DiscoveredDependencies.Key);
+			}
+			else
+			{
+				for (const TCHAR* DiscoveredDependency : DiscoveredDependencies.Value)
+				{
+					if (int32* IndexOfDependencyInMetadata = PluginNameToIndexInHierarchyMetadata.Find(DiscoveredDependency))
+					{
+						// Now make sure it's actually in the list of dependencies
+						bool FoundDependency = false;
+						int32 StartIndex = CookMetadata.GetPluginHierarchy().PluginsEnabledAtCook[*IndexInMetadata].DependencyIndexStart;
+						int32 EndIndex = CookMetadata.GetPluginHierarchy().PluginsEnabledAtCook[*IndexInMetadata].DependencyIndexEnd;
+						for (int32 MetadataDependencyIndex = StartIndex; MetadataDependencyIndex < EndIndex; MetadataDependencyIndex++)
+						{
+							if (*IndexOfDependencyInMetadata == MetadataDependencyIndex)
+							{
+								FoundDependency = true;
+								break;
+							}
+						}
+
+						if (!FoundDependency)
+						{
+							DependenciesInAssetsNotMetadata.Add(TPair<FString, FString>(DiscoveredDependencies.Key, DiscoveredDependency));
+						}
+					}
+					else
+					{
+						UE_LOG(LogInsights, Warning, TEXT("Unable to find plugin %s, known from asset traversal, in cook metadata."), DiscoveredDependency);
+					}
+				}
+
+			}
+		}
+
+		// Search through the metadata and ensure that we've found a corresponding asset dependency
+		for (int32 PluginIndex = 0; PluginIndex < AssetTable->GetNumPlugins(); PluginIndex++)
+		{
+			int32* IndexInMetadata = PluginNameToIndexInHierarchyMetadata.Find(AssetTable->GetPluginInfoByIndex(PluginIndex).GetName());
+			const FAssetTablePluginInfo& PluginInfoInTable = AssetTable->GetPluginInfoByIndex(PluginIndex);
+			if (IndexInMetadata == nullptr)
+			{
+				UE_LOG(LogInsights, Warning, TEXT("Unable to find plugin %s in metadata."), PluginInfoInTable.GetName());
+			}
+			else
+			{
+				const TCHAR* PluginName = AssetTable->GetPluginInfoByIndex(PluginIndex).GetName();
+				if (DeprecatedTCharSetType* DependencySet = DiscoveredPluginDependencyEdges.Find(PluginName))
+				{
+					for (int32 DependencyIndex : PluginInfoInTable.GetDependencies())
+					{
+						const TCHAR* DependencyName = AssetTable->GetPluginInfoByIndex(DependencyIndex).GetName();
+						if (!DependencySet->Contains(DependencyName))
+						{
+							DependenciesInMetadataNotAssets.Add(TPair<FString, FString>(PluginName, DependencyName));
+						}
+					}
+				}
+				else
+				{
+					UE_LOG(LogInsights, Warning, TEXT("Unable to find plugin %s, known from metadata, in asset traversal data"), PluginInfoInTable.GetName());
+				}
+			}
+		}
+
+		if (DependenciesInAssetsNotMetadata.Num() > 0)
+		{
+			UE_LOG(LogInsights, Warning, TEXT("Dependencies in assets but not in cook metadata:"));
+			for (const TPair<FString, FString>& Edge : DependenciesInAssetsNotMetadata)
+			{
+				UE_LOG(LogInsights, Warning, TEXT("%s-->%s"), *Edge.Key, *Edge.Value);
+			}
+		}
+
+		if (DependenciesInMetadataNotAssets.Num() > 0)
+		{
+			UE_LOG(LogInsights, Warning, TEXT("Dependencies in cook metadata but not in assets:"));
+			for (const TPair<FString, FString>& Edge : DependenciesInMetadataNotAssets)
+			{
+				UE_LOG(LogInsights, Warning, TEXT("%s-->%s"), *Edge.Key, *Edge.Value);
+			}
+		}
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void SAssetTableTreeView::RequestRebuildTree()
+void SAssetTableTreeView::RequestRebuildTree(bool NeedsColumnRebuild)
 {
 	bNeedsToRebuild = true;
+	bNeedsToRebuildColumns = NeedsColumnRebuild;
 	FooterLeftText = LOCTEXT("FooterLeftTextFmt_RebuildTree_Filtered", "Rebuilding tree... please wait...");
 }
 
@@ -1739,13 +2284,13 @@ void SAssetTableTreeView::RebuildTree(bool bResync)
 		return;
 	}
 
+	CancelCurrentAsyncOp();
+
 	UE::Insights::FStopwatch Stopwatch;
 	Stopwatch.Start();
 
 	UE::Insights::FStopwatch SyncStopwatch;
 	SyncStopwatch.Start();
-
-	CancelCurrentAsyncOp();
 
 	const int32 PreviousNodeCount = TableRowNodes.Num();
 	TableRowNodes.Empty();

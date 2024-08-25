@@ -1442,10 +1442,12 @@ namespace ChaosTest
 
 	FVector WorldVelocityAtPoint(TPBDRigidParticleHandle<FReal, 3>* Rigid, const FVector& InPoint)
 	{
-		const Chaos::FVec3 COM = Rigid ? Chaos::FParticleUtilitiesGT::GetCoMWorldPosition(Rigid) : Chaos::FParticleUtilitiesGT::GetActorWorldTransform(Rigid).GetTranslation();
+		check(Rigid);
+		const Chaos::FVec3 COM = Chaos::FParticleUtilitiesGT::GetCoMWorldPosition(Rigid);
 		const Chaos::FVec3 Diff = InPoint - COM;
-		return Rigid->V() - Chaos::FVec3::CrossProduct(Diff, Rigid->W());
-
+		const Chaos::FVec3 V = Rigid->GetV();
+		const Chaos::FVec3 W = Rigid->GetW();
+		return V - Chaos::FVec3::CrossProduct(Diff, W);
 	}
 
 	// #todo: break out vehicle simulation setup so it can be used across number of tests
@@ -1514,12 +1516,12 @@ namespace ChaosTest
 		TUniquePtr<FChaosPhysicsMaterial> PhysicsMaterial = MakeUnique<FChaosPhysicsMaterial>();
 		PhysicsMaterial->SleepCounterThreshold = 2;
 
-		TUniquePtr<FImplicitObject> Box(new TSphere<FReal, 3>(FVec3(0, 0, 0), 50));
-		Dynamic->SetGeometry(MakeSerializable(Box));
+		Chaos::FImplicitObjectPtr Box(new TSphere<FReal, 3>(FVec3(0, 0, 0), 50));
+		Dynamic->SetGeometry(Box);
 
 		Evolution.SetPhysicsMaterial(Dynamic, MakeSerializable(PhysicsMaterial));
 
-		Dynamic->X() = FVec3(10, 10, 20);
+		Dynamic->SetX(FVec3(10, 10, 20));
 		Dynamic->M() = BodyMass;
 		Dynamic->InvM() = 1.0f / BodyMass;
 		Dynamic->I() = TVec3<FRealSingle>(100000.0f);
@@ -1532,7 +1534,7 @@ namespace ChaosTest
 		for (int i = 0; i < 500; ++i)
 		{
 			// latest body transform
-			const FTransform BodyTM(Dynamic->R(), Dynamic->X());
+			const FTransform BodyTM(Dynamic->GetR(), Dynamic->GetX());
 
 			for (int SpringIdx = 0; SpringIdx < 4; SpringIdx++)
 			{
@@ -1567,7 +1569,7 @@ namespace ChaosTest
 
 		float Tolerance = 0.5f; // half cm
 		float ExpectedRestingPosition = (10.f + PlaneZPos + WheelRadius);
-		EXPECT_LT(Dynamic->X().Z - ExpectedRestingPosition, Tolerance);
+		EXPECT_LT(Dynamic->GetX().Z - ExpectedRestingPosition, Tolerance);
 	}
 
 	GTEST_TEST(AllTraits, VehicleTest_WheelAcceleratingLongitudinalSlip_VaryingDelta)

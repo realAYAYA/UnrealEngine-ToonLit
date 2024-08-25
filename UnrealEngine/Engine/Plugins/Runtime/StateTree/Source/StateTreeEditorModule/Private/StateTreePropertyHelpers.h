@@ -14,12 +14,38 @@ struct FSlateBrush;
 namespace UE::StateTree::PropertyHelpers {
 
 /**
+ * Dispatches PostEditChange to all FState
+ * Assumes property chain head is member property of Owner. 
+ */
+void DispatchPostEditToNodes(UObject& Owner, FPropertyChangedChainEvent& PropertyChangedEvent);
+
+/** Makes deterministic ID from the owners property path, a property path (or any string), and a seed value (e.g. array index). */
+FGuid MakeDeterministicID(const UObject& Owner, const FString& PropertyPath, const uint64 Seed);
+
+/* @return true if the property handle points to struct property of specified type.*/
+template<typename T>
+bool IsScriptStruct(const TSharedPtr<IPropertyHandle>& PropertyHandle)
+{
+	if (!PropertyHandle)
+	{
+		return false;
+	}
+
+	FStructProperty* StructProperty = CastField<FStructProperty>(PropertyHandle->GetProperty());
+	return StructProperty && StructProperty->Struct->IsA(TBaseStructure<T>::Get()->GetClass());
+}
+/**
+ * @return true if provided Property contains "Optional" metadata
+ */
+bool HasOptionalMetadata(const FProperty& Property);
+
+/**
  * Gets a struct value from property handle, checks type before access. Expects T is struct.
  * @param ValueProperty Handle to property where value is got from.
  * @return Requested value as optional, in case of multiple values the optional is unset.
  */
 template<typename T>
-FPropertyAccess::Result GetStructValue(const TSharedPtr<IPropertyHandle>& ValueProperty, T& OutValue)
+FPropertyAccess::Result GetStructValue(const TSharedPtr<const IPropertyHandle>& ValueProperty, T& OutValue)
 {
 	if (!ValueProperty)
 	{
@@ -33,13 +59,13 @@ FPropertyAccess::Result GetStructValue(const TSharedPtr<IPropertyHandle>& ValueP
 	T Value = T();
 	bool bValueSet = false;
 
-	TArray<void*> RawData;
+	TArray<const void*> RawData;
 	ValueProperty->AccessRawData(RawData);
-	for (void* Data : RawData)
+	for (const void* Data : RawData)
 	{
 		if (Data)
 		{
-			const T& CurValue = *reinterpret_cast<T*>(Data);
+			const T& CurValue = *static_cast<const T*>(Data);
 			if (!bValueSet)
 			{
 				bValueSet = true;
@@ -118,7 +144,7 @@ FPropertyAccess::Result SetStructValue(const TSharedPtr<IPropertyHandle>& ValueP
 	return FPropertyAccess::Success;
 }
 
-} // UE::StateTree::PropertyHelpers
+}; // UE::StateTree::PropertyHelpers
 
 /**
  * Helper class to deal with relative property paths in PostEditChangeChainProperty().
@@ -145,93 +171,19 @@ public:
 	FStateTreeEditPropertyPath() = default;
 
 	/** Makes property path relative to BaseStruct. Checks if the path is not part of the type. */
-	explicit FStateTreeEditPropertyPath(const UStruct* BaseStruct, const FString& InPath)
-	{
-		TArray<FString> PathSegments;
-		InPath.ParseIntoArray(PathSegments, TEXT("."));
-
-		const UStruct* CurrBase = BaseStruct;
-		for (const FString& Segment : PathSegments)
-		{
-			const FName PropertyName(Segment);
-			if (const FProperty* Property = CurrBase->FindPropertyByName(PropertyName))
-			{
-				Path.Emplace(Property, PropertyName);
-
-				if (const FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Property))
-				{
-					Property = ArrayProperty->Inner;
-				}
-
-				if (const FStructProperty* StructProperty = CastField<FStructProperty>(Property))
-				{
-					CurrBase = StructProperty->Struct;
-				}
-				else if (const FObjectProperty* ObjectProperty = CastField<FObjectProperty>(Property))
-				{
-					CurrBase = ObjectProperty->PropertyClass;
-				}
-			}
-			else
-			{
-				checkf(TEXT("Path %s id not part of type %s."), *InPath, *GetNameSafe(BaseStruct));
-				Path.Reset();
-				break;
-			}
-		}
-	}
+	explicit FStateTreeEditPropertyPath(const UStruct* BaseStruct, const FString& InPath);
 
 	/** Makes property path from property change event. */
-	explicit FStateTreeEditPropertyPath(const FPropertyChangedChainEvent& PropertyChangedEvent)
-	{
-		FEditPropertyChain::TDoubleLinkedListNode* PropertyNode = PropertyChangedEvent.PropertyChain.GetActiveMemberNode();
-		while (PropertyNode != nullptr)
-		{
-			if (FProperty* Property = PropertyNode->GetValue())
-			{
-				const FName PropertyName = Property->GetFName(); 
-				const int32 ArrayIndex = PropertyChangedEvent.GetArrayIndex(PropertyName.ToString());
-				Path.Emplace(Property, PropertyName, ArrayIndex);
-			}
-			PropertyNode = PropertyNode->GetNextNode();
-		}
-	}
+	explicit FStateTreeEditPropertyPath(const FPropertyChangedChainEvent& PropertyChangedEvent);
+
+	/** Makes property path from property chain. */
+	explicit FStateTreeEditPropertyPath(const FEditPropertyChain& PropertyChain);
 
 	/** @return true if the property path contains specified path. */
-	bool ContainsPath(const FStateTreeEditPropertyPath& InPath) const
-	{
-		if (InPath.Path.Num() > Path.Num())
-    	{
-    		return false;
-    	}
-
-    	for (TConstEnumerateRef<FStateTreeEditPropertySegment> Segment : EnumerateRange(InPath.Path))
-    	{
-    		if (Segment->PropertyName != Path[Segment.GetIndex()].PropertyName)
-    		{
-    			return false;
-    		}
-    	}
-    	return true;
-	}
+	bool ContainsPath(const FStateTreeEditPropertyPath& InPath) const;
 
 	/** @return true if the property path is exactly the specified path. */
-	bool IsPathExact(const FStateTreeEditPropertyPath& InPath) const
-	{
-		if (InPath.Path.Num() != Path.Num())
-		{
-			return false;
-		}
-
-		for (TConstEnumerateRef<FStateTreeEditPropertySegment> Segment : EnumerateRange(InPath.Path))
-		{
-			if (Segment->PropertyName != Path[Segment.GetIndex()].PropertyName)
-			{
-				return false;
-			}
-		}
-		return true;
-	}
+	bool IsPathExact(const FStateTreeEditPropertyPath& InPath) const;
 
 	/** @return array index at specified property, or INDEX_NONE, if the property is not array or property not found.  */
 	int32 GetPropertyArrayIndex(const FStateTreeEditPropertyPath& InPath) const

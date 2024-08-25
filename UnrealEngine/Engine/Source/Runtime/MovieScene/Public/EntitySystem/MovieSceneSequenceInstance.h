@@ -31,6 +31,7 @@ namespace MovieScene
 struct FCompiledDataVolatilityManager;
 struct FPreAnimatedStateExtension;
 struct FSequenceInstance;
+struct FSharedPlaybackState;
 struct FSubSequencePath;
 struct ISequenceUpdater;
 
@@ -59,8 +60,9 @@ public:
 	 * Conditionally recompile this sequence if it needs to be
 	 *
 	 * @param Linker     The linker that owns this sequence instance
+	 * @return true if a recompile has ocurred, false otherwise
 	 */
-	MOVIESCENE_API void ConditionalRecompile(UMovieSceneEntitySystemLinker* Linker);
+	MOVIESCENE_API bool ConditionalRecompile();
 
 	/**
 	 * Called only for top-level sequence instances before any updates to it with the specified context.
@@ -70,8 +72,7 @@ public:
 	 * @param Context    The overall context that this sequence instance is being evaluated with
 	 * @param OutDissections   An array to populate with dissected time ranges that should be evaluated separately, in order.
 	 */
-	MOVIESCENE_API void DissectContext(UMovieSceneEntitySystemLinker* Linker, const FMovieSceneContext& Context, TArray<TRange<FFrameTime>>& OutDissections);
-
+	MOVIESCENE_API void DissectContext(const FMovieSceneContext& Context, TArray<TRange<FFrameTime>>& OutDissections);
 
 	/**
 	 * Called for root level instances that have either never evaluated, or have previously finished evaluating
@@ -79,16 +80,14 @@ public:
 	 * @param Linker     The linker that owns this sequence instance
 	 * @param InContext  The context that this sequence instance is to be evaluated with
 	 */
-	MOVIESCENE_API void Start(UMovieSceneEntitySystemLinker* Linker, const FMovieSceneContext& InContext);
-
+	MOVIESCENE_API void Start(const FMovieSceneContext& InContext);
 
 	/**
 	 * Called when this instance has been queued for evaluation in order for it to do any pre-work setup.
 	 *
 	 * @param Linker     The linker that owns this sequence instance
 	 */
-	MOVIESCENE_API void PreEvaluation(UMovieSceneEntitySystemLinker* Linker);
-
+	MOVIESCENE_API void PreEvaluation();
 
 	/**
 	 * Called after dissection for root level instances in order for this sequence instacne to update any entities it needs for evaluation.
@@ -96,8 +95,7 @@ public:
 	 * @param Linker     The linker that owns this sequence instance
 	 * @param InContext  The (potentially dissected) context that this sequence instance is to be evaluated with
 	 */
-	MOVIESCENE_API void Update(UMovieSceneEntitySystemLinker* Linker, const FMovieSceneContext& InContext);
-
+	MOVIESCENE_API void Update(const FMovieSceneContext& InContext);
 
 	/**
 	 * Returns whether this instance can be finished immediately without any last update.
@@ -105,22 +103,21 @@ public:
 	 * @param Linker     The linker that owns this sequence instance
 	 * @return           Whether the instance can be finished immediately
 	 */
-	MOVIESCENE_API bool CanFinishImmediately(UMovieSceneEntitySystemLinker* Linker) const;
-
+	MOVIESCENE_API bool CanFinishImmediately() const;
 
 	/**
 	 * Mark this instance as finished, causing all its entities to be unlinked and the instance to become inactive at the end of the next update.
 	 *
 	 * @param Linker     The linker that owns this sequence instance
 	 */
-	MOVIESCENE_API void Finish(UMovieSceneEntitySystemLinker* Linker);
+	MOVIESCENE_API void Finish();
 
 	/**
 	 * Called when this sequence instance has been evaluated in order for it to do any clean-up or other post-update work
 	 *
 	 * @param Linker     The linker that owns this sequence instance
 	 */
-	MOVIESCENE_API void PostEvaluation(UMovieSceneEntitySystemLinker* Linker);
+	MOVIESCENE_API void PostEvaluation();
 
 	/**
 	 * Called to run legacy track templates
@@ -128,6 +125,14 @@ public:
 	MOVIESCENE_API void RunLegacyTrackTemplates();
 
 public:
+
+	/**
+	 * Retrieve the shared playback state for this instance's hierarchy
+	 */
+	TSharedRef<FSharedPlaybackState> GetSharedPlaybackState() const
+	{
+		return SharedPlaybackState;
+	}
 
 	/**
 	 * Retrieve the IMovieScenePlayer that is playing back the top level sequence for this instance
@@ -139,10 +144,7 @@ public:
 	/**
 	 * Retrieve the IMovieScenePlayer's unique index
 	 */
-	uint16 GetPlayerIndex() const
-	{
-		return PlayerIndex;
-	}
+	MOVIESCENE_API uint16 GetPlayerIndex() const;
 
 	/**
 	 * Retrieve the SequenceID for this instance
@@ -295,25 +297,28 @@ public:
 	/**
 	 * Invalidate any cached data that may be being used for evaluation due to a change in the source asset data
 	 */
-	MOVIESCENE_API void InvalidateCachedData(UMovieSceneEntitySystemLinker* Linker);
+	MOVIESCENE_API void InvalidateCachedData();
 
 	/**
 	 * Destroy this sequence instance immediately - Finish must previously have been called
 	 */
-	MOVIESCENE_API void DestroyImmediately(UMovieSceneEntitySystemLinker* Linker);
+	MOVIESCENE_API void DestroyImmediately();
 
 	/**
 	 * Called to override the simulated root sequence ID for this instance. Only valid for IsRootSequence() instances.
 	 */
-	MOVIESCENE_API void OverrideRootSequence(UMovieSceneEntitySystemLinker* Linker, FMovieSceneSequenceID NewRootSequenceID);
+	MOVIESCENE_API void OverrideRootSequence(FMovieSceneSequenceID NewRootSequenceID);
 
 public:
 
 	/** Constructor for top level sequences */
-	MOVIESCENE_API explicit FSequenceInstance(UMovieSceneEntitySystemLinker* Linker, IMovieScenePlayer* Player, FRootInstanceHandle ThisInstanceHandle);
+	MOVIESCENE_API explicit FSequenceInstance(TSharedRef<FSharedPlaybackState> PlaybackState);
 
 	/** Constructor for sub sequences */
-	MOVIESCENE_API explicit FSequenceInstance(UMovieSceneEntitySystemLinker* Linker, IMovieScenePlayer* Player, FInstanceHandle ThisInstanceHandle, FInstanceHandle InParentInstanceHandle, FRootInstanceHandle RootInstanceHandle, FMovieSceneSequenceID InSequenceID);
+	MOVIESCENE_API explicit FSequenceInstance(TSharedRef<FSharedPlaybackState> PlaybackState, FInstanceHandle ThisInstanceHandle, FInstanceHandle InParentInstanceHandle, FMovieSceneSequenceID InSequenceID);
+
+	/** Finish initializing this sequence instance */
+	MOVIESCENE_API void Initialize();
 
 	/** Destructor */
 	MOVIESCENE_API ~FSequenceInstance();
@@ -326,9 +331,34 @@ public:
 	MOVIESCENE_API FSequenceInstance(FSequenceInstance&&);
 	MOVIESCENE_API FSequenceInstance& operator=(FSequenceInstance&&);
 
+public:
+
+	UE_DEPRECATED(5.4, "Please use the version of this method without a Linker parameter")
+	bool ConditionalRecompile(UMovieSceneEntitySystemLinker* Linker);
+	UE_DEPRECATED(5.4, "Please use the version of this method without a Linker parameter")
+	void DissectContext(UMovieSceneEntitySystemLinker* Linker, const FMovieSceneContext& Context, TArray<TRange<FFrameTime>>& OutDissections);
+	UE_DEPRECATED(5.4, "Please use the version of this method without a Linker parameter")
+	void Start(UMovieSceneEntitySystemLinker* Linker, const FMovieSceneContext& InContext);
+	UE_DEPRECATED(5.4, "Please use the version of this method without a Linker parameter")
+	void PreEvaluation(UMovieSceneEntitySystemLinker* Linker);
+	UE_DEPRECATED(5.4, "Please use the version of this method without a Linker parameter")
+	void Update(UMovieSceneEntitySystemLinker* Linker, const FMovieSceneContext& InContext);
+	UE_DEPRECATED(5.4, "Please use the version of this method without a Linker parameter")
+	bool CanFinishImmediately(UMovieSceneEntitySystemLinker* Linker) const;
+	UE_DEPRECATED(5.4, "Please use the version of this method without a Linker parameter")
+	void Finish(UMovieSceneEntitySystemLinker* Linker);
+	UE_DEPRECATED(5.4, "Please use the version of this method without a Linker parameter")
+	void PostEvaluation(UMovieSceneEntitySystemLinker* Linker);
+	UE_DEPRECATED(5.4, "Please use the version of this method without a Linker parameter")
+	void InvalidateCachedData(UMovieSceneEntitySystemLinker* Linker);
+	UE_DEPRECATED(5.4, "Please use the version of this method without a Linker parameter")
+	void DestroyImmediately(UMovieSceneEntitySystemLinker* Linker);
+	UE_DEPRECATED(5.4, "Please use the version of this method without a Linker parameter")
+	void OverrideRootSequence(UMovieSceneEntitySystemLinker* Linker, FMovieSceneSequenceID NewRootSequenceID);
+
 private:
 
-	MOVIESCENE_API void InitializeLegacyEvaluator(UMovieSceneEntitySystemLinker* Linker);
+	void InitializeLegacyEvaluator();
 
 private:
 
@@ -346,15 +376,13 @@ private:
 	/** For top-level sequences only - a utility class that is used to ensure that volatile sequences are up to date. Only valid in editor, or for sequences that have the volatile flag. */
 	TUniquePtr<FCompiledDataVolatilityManager> VolatilityManager;
 
+	/** Playback state shared by the entire sequence hierarchy */
+	TSharedRef<FSharedPlaybackState> SharedPlaybackState;
 
-	/** Delegate Binding for when an object binding is invalidated in this instance . */
-	FDelegateHandle OnInvalidateObjectBindingHandle;
 	/** This sequence instances sequence ID, or MovieSceneSequenceID::Root for top-level sequences. */
 	FMovieSceneSequenceID SequenceID;
 	/** When SequenceID != MovieSceneSequenceID::Root, specifies an ID to override as a simulated root. */
 	FMovieSceneSequenceID RootOverrideSequenceID;
-	/** The index of this instance's IMovieScenePlayer retrievable through IMovieScenePlayer::Get(). */
-	uint16 PlayerIndex;
 	/** Cached update flags denoting what kinds of updates are required by this instance */
 	ESequenceInstanceUpdateFlags UpdateFlags;
 	/** This instance's handle. */
@@ -363,10 +391,14 @@ private:
 	FInstanceHandle ParentInstanceHandle;
 	/** This instance's root handle, if it is a sub sequence. */
 	FRootInstanceHandle RootInstanceHandle;
+	/** Flag that indicates whether this instance was initialized */
+	bool bInitialized : 1;
 	/** Flag that is set when this sequence has or (will be) finished. */
 	bool bFinished : 1;
 	/** Flag that is set if this sequence has ever updated. */
 	bool bHasEverUpdated : 1;
+
+	friend struct FScopedVolatilityManagerSuppression;
 };
 
 

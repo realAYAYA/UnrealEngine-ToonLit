@@ -2,6 +2,8 @@
 
 #include "LensDistortionTool.h"
 
+#include "AssetToolsModule.h"
+#include "Calibrators/CameraCalibrationSolver.h"
 #include "CameraCalibrationEditorLog.h"
 #include "CameraCalibrationSettings.h"
 #include "CameraCalibrationStepsController.h"
@@ -29,7 +31,6 @@
 
 namespace UE::CameraCalibration::Private::LensDistortionTool
 {
-	static const FString SaveDir = FPaths::ProjectSavedDir() / TEXT("CameraCalibration") / TEXT("LensDistortion");
 	static const FString SessionDateTimeField(TEXT("SessionDateTime"));
 	static const FString AlgoNameField(TEXT("AlgoName"));
 }
@@ -37,6 +38,15 @@ namespace UE::CameraCalibration::Private::LensDistortionTool
 void ULensDistortionTool::Initialize(TWeakPtr<FCameraCalibrationStepsController> InCameraCalibrationStepController)
 {
 	CameraCalibrationStepsController = InCameraCalibrationStepController;
+
+	// Find available solver classes
+
+	TArray<UClass*> DerivedSolverClasses;
+	GetDerivedClasses(ULensDistortionSolver::StaticClass(), DerivedSolverClasses);
+
+	check(!DerivedSolverClasses.IsEmpty());
+
+	SetSolverClass(DerivedSolverClasses[0]);
 
 	// Find available algos
 
@@ -66,6 +76,8 @@ void ULensDistortionTool::Initialize(TWeakPtr<FCameraCalibrationStepsController>
 			UpdateAlgoMap(LensFile->LensInfo.LensModel);
 		}
 	}
+
+	BuildProgressWindowWidgets();
 }
 
 void ULensDistortionTool::OnLensModelChanged(const TSubclassOf<ULensModel>& LensModel)
@@ -95,6 +107,13 @@ void ULensDistortionTool::Shutdown()
 {
 	if (CurrentAlgo)
 	{
+		if (CalibrationTask.IsValid())
+		{
+			CurrentAlgo->CancelCalibration();
+			CalibrationTask = {};
+			ProgressWindow->HideWindow();
+		}
+
 		CurrentAlgo->Shutdown();
 		CurrentAlgo = nullptr;
 
@@ -116,6 +135,45 @@ void ULensDistortionTool::Tick(float DeltaTime)
 	{
 		CurrentAlgo->Tick(DeltaTime);
 	}
+
+	// A valid task handle implies that there is an asynchronous calibration happening on another thread.
+	// The tool will poll the task to determine when it has finished so that the results can be saved.
+	if (CalibrationTask.IsValid())
+	{
+		if (CalibrationTask.IsCompleted())
+		{
+			// Extract the return value from the task and release the task resource
+			CalibrationResult = CalibrationTask.GetResult();
+			CalibrationTask = {};
+
+			if (!CalibrationResult.ErrorMessage.IsEmpty())
+			{
+				const FText Message = FText::Format(LOCTEXT("CalibrationErrorResult", "Calibration Error: {0}"), CalibrationResult.ErrorMessage);
+				ProgressTextWidget->SetText(Message);
+			}
+			else
+			{
+				// Update progress window with final reprojection error
+				FFormatOrderedArguments Arguments;
+				Arguments.Add(FText::FromString(FString::Printf(TEXT("%.3f"), CalibrationResult.ReprojectionError)));
+
+				const FText Message = FText::Format(LOCTEXT("CalibrationTaskResult", "Reprojection Error: {0} pixels"), Arguments);
+				ProgressTextWidget->SetText(Message);
+			}
+
+			OkayButton->SetEnabled(true);
+		}
+		else
+		{
+			FText StatusText = FText::GetEmpty();
+			const bool bIsStatusNew = CurrentAlgo->GetCalibrationStatus(StatusText);
+
+			if (bIsStatusNew)
+			{
+				ProgressTextWidget->SetText(StatusText);
+			}
+		}
+	}
 }
 
 bool ULensDistortionTool::OnViewportClicked(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent)
@@ -130,6 +188,12 @@ bool ULensDistortionTool::OnViewportClicked(const FGeometry& MyGeometry, const F
 		return false;
 	}
 
+	// Block user interaction with the simulcam viewport while an async calibration task is executing
+	if (CalibrationTask.IsValid())
+	{
+		return false;
+	}
+
 	return CurrentAlgo->OnViewportClicked(MyGeometry, MouseEvent);
 }
 
@@ -137,6 +201,66 @@ TSharedRef<SWidget> ULensDistortionTool::BuildUI()
 {
 	DistortionWidget = SNew(SLensDistortionToolPanel, this);
 	return DistortionWidget.ToSharedRef();
+}
+
+void ULensDistortionTool::BuildProgressWindowWidgets()
+{
+	ProgressWindow = SNew(SWindow)
+		.Title(LOCTEXT("ProgressWindowTitle", "Distortion Calibration Progress"))
+		.SizingRule(ESizingRule::Autosized)
+		.IsTopmostWindow(true)
+		.HasCloseButton(false)
+		.SupportsMaximize(false)
+		.SupportsMinimize(true);
+
+	ProgressTextWidget = SNew(STextBlock).Text(FText::GetEmpty());
+
+	OkayButton = SNew(SButton)
+		.IsEnabled(false)
+		.HAlign(HAlign_Center)
+		.VAlign(VAlign_Center)
+		.Text(LOCTEXT("OkText", "Ok"))
+		.OnClicked_UObject(this, &ULensDistortionTool::OnOkPressed);
+
+	TSharedRef<SWidget> WindowContent = SNew(SVerticalBox)
+
+		// Text widget to display the current progress of the calibration
+		+ SVerticalBox::Slot()
+		.HAlign(EHorizontalAlignment::HAlign_Center)
+		.VAlign(EVerticalAlignment::VAlign_Center)
+		[
+			ProgressTextWidget.ToSharedRef()
+		]
+
+		// Ok and Cancel buttons
+		+ SVerticalBox::Slot()
+		.HAlign(EHorizontalAlignment::HAlign_Center)
+		.VAlign(EVerticalAlignment::VAlign_Center)
+		[
+			SNew(SHorizontalBox)
+
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			[
+				OkayButton.ToSharedRef()
+			]
+
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			[
+				SNew(SButton)
+				.Text(LOCTEXT("CancelText", "Cancel"))
+				.HAlign(HAlign_Center)
+				.VAlign(VAlign_Center)
+				.OnClicked_UObject(this, &ULensDistortionTool::OnCancelPressed)
+			]
+		];
+
+	ProgressWindow->SetContent(WindowContent);
+
+	// Create the window, but start with it hidden. When the user initiates a calibration, the progress window will be shown.
+	FSlateApplication::Get().AddWindow(ProgressWindow.ToSharedRef());
+	ProgressWindow->HideWindow();
 }
 
 bool ULensDistortionTool::DependsOnStep(UCameraCalibrationStep* Step) const
@@ -158,6 +282,16 @@ void ULensDistortionTool::Activate()
 void ULensDistortionTool::Deactivate()
 {
 	bIsActive = false;
+}
+
+UClass* ULensDistortionTool::GetSolverClass()
+{
+	return SolverClass;
+}
+
+void ULensDistortionTool::SetSolverClass(UClass* InSolverClass)
+{
+	SolverClass = InSolverClass;
 }
 
 void ULensDistortionTool::ResetAlgo()
@@ -244,80 +378,157 @@ UCameraLensDistortionAlgo* ULensDistortionTool::GetAlgo() const
 
 void ULensDistortionTool::OnSaveCurrentCalibrationData()
 {
-	if (!CameraCalibrationStepsController.IsValid())
+	if (!CurrentAlgo)
 	{
-		return;
-	}
-
-	UCameraLensDistortionAlgo* Algo = GetAlgo();
-	
-	if (!Algo)
-	{
-		FText ErrorMessage = LOCTEXT("NoAlgoFound", "No algo found");
-		FMessageDialog::Open(EAppMsgType::Ok, ErrorMessage);
-		return;
-	}
-	
-	ULensFile* LensFile = CameraCalibrationStepsController.Pin()->GetLensFile();
-
-	if (!LensFile)
-	{
-		FText ErrorMessage = LOCTEXT("NoLensFile", "No Lens File");
-		FMessageDialog::Open(EAppMsgType::Ok, ErrorMessage);
 		return;
 	}
 
 	const FText TitleError = LOCTEXT("LensCalibrationError", "Lens Calibration Error");
-	const FText TitleInfo = LOCTEXT("LensCalibrationInfo", "Lens Calibration Info");
+	const FText UnknownError = LOCTEXT("UnknownError", "An unknown error occurred initiating the distortion calibration. Check the output log for details.");
 
-	float Focus;
-	float Zoom;
-	FDistortionInfo DistortionInfo;
-	FFocalLengthInfo FocalLengthInfo;
-	FImageCenterInfo ImageCenterInfo;
-	TSubclassOf<ULensModel> LensModel;
-	double Error;
-
-	// Get distortion value, and if errors, inform the user.
+	if (CurrentAlgo->SupportsAsyncCalibration())
 	{
 		FText ErrorMessage;
+		CalibrationTask = CurrentAlgo->BeginCalibration(ErrorMessage);
 
-		if (!Algo->GetLensDistortion(Focus, Zoom, DistortionInfo, FocalLengthInfo, ImageCenterInfo, LensModel, Error, ErrorMessage))
+		if (!CalibrationTask.IsValid())
 		{
-			FMessageDialog::Open(EAppMsgType::Ok, ErrorMessage, TitleError);
+			if (!ErrorMessage.IsEmpty())
+			{
+				FMessageDialog::Open(EAppMsgType::Ok, ErrorMessage, TitleError);
+			}
+			else
+			{
+				FMessageDialog::Open(EAppMsgType::Ok, UnknownError, TitleError);
+			}
 			return;
 		}
-	}
 
-	// Show reprojection error
+		// TODO: This text is temporary. Update to register a delegate with the algo to provide implementation-specific status text
+		ProgressTextWidget->SetText(LOCTEXT("CalibrationProgressText", "Calibrating Lens Distortion..."));
+
+		// Ensure that the Ok button is disabled and show the progress window
+		OkayButton->SetEnabled(false);
+		ProgressWindow->ShowWindow();
+
+		DistortionWidget->SetEnabled(false);
+	}
+	else
 	{
+		TSubclassOf<ULensModel> LensModel;
+		bool bResult = CurrentAlgo->GetLensDistortion(
+			CalibrationResult.EvaluatedFocus, 
+			CalibrationResult.EvaluatedZoom, 
+			CalibrationResult.Parameters, 
+			CalibrationResult.FocalLength, 
+			CalibrationResult.ImageCenter, 
+			LensModel, 
+			CalibrationResult.ReprojectionError, 
+			CalibrationResult.ErrorMessage);
+
+		if (!bResult)
+		{
+			if (CalibrationResult.ErrorMessage.IsEmpty())
+			{
+				CalibrationResult.ErrorMessage = UnknownError;
+			}
+
+			FMessageDialog::Open(EAppMsgType::Ok, CalibrationResult.ErrorMessage, TitleError);
+			return;
+		}
+
+		// Update progress window with final reprojection error
+		ProgressWindow->ShowWindow();
+
 		FFormatOrderedArguments Arguments;
-		Arguments.Add(FText::FromString(FString::Printf(TEXT("%.2f"), Error)));
+		Arguments.Add(FText::FromString(FString::Printf(TEXT("%.3f"), CalibrationResult.ReprojectionError)));
 
-		const FText Message = FText::Format(LOCTEXT("ReprojectionError", "RMS Reprojection Error: {0} pixels"), Arguments);
+		const FText Message = FText::Format(LOCTEXT("ReprojectionError", "Reprojection Error: {0} pixels"), Arguments);
+		ProgressTextWidget->SetText(Message);
 
-		// Allow the user to cancel adding to the LUT if the reprojection error is unacceptable.
-		if (FMessageDialog::Open(EAppMsgType::OkCancel, Message, TitleInfo) != EAppReturnType::Ok)
-		{
-			return;
-		}
+		OkayButton->SetEnabled(true);
 	}
+}
 
-	if (LensFile->HasSamples(ELensDataCategory::Distortion) && LensFile->LensInfo.LensModel != LensModel)
+FReply ULensDistortionTool::OnCancelPressed()
+{
+	CurrentAlgo->CancelCalibration();
+
+	CalibrationTask = {};
+	ProgressWindow->HideWindow();
+	DistortionWidget->SetEnabled(true);
+
+	return FReply::Handled();
+}
+
+FReply ULensDistortionTool::OnOkPressed()
+{
+	SaveCalibrationResult();
+
+	ProgressWindow->HideWindow();
+	DistortionWidget->SetEnabled(true);
+
+	return FReply::Handled();
+}
+
+void ULensDistortionTool::SaveCalibrationResult()
+{
+	ULensFile* LensFile = CameraCalibrationStepsController.Pin()->GetLensFile();
+
+	if (!LensFile)
 	{
-		const FText ErrorMessage = LOCTEXT("LensDistortionModelMismatch", "There is a distortion model mismatch between the new and existing samples");
-		FMessageDialog::Open(EAppMsgType::Ok, ErrorMessage, TitleError);
 		return;
 	}
 
-	FScopedTransaction Transaction(LOCTEXT("SaveCurrentDistortionData", "Save Current Distortion Data"));
+	// If the calibration result contains the name of an ST Map file on disk instead of a UTexture, then we attempt to import it for the user
+	if (!CalibrationResult.STMap.DistortionMap && !CalibrationResult.STMapFullPath.IsEmpty())
+	{
+		FAssetToolsModule& AssetToolsModule = FModuleManager::GetModuleChecked<FAssetToolsModule>("AssetTools");
 
- 	LensFile->Modify();
+		TArray<FString> TextureFileNames;
+		TextureFileNames.Add(CalibrationResult.STMapFullPath);
+		TArray<UObject*> ImportedImages = AssetToolsModule.Get().ImportAssets(TextureFileNames, FPaths::ProjectContentDir());
 
-	LensFile->AddDistortionPoint(Focus, Zoom, DistortionInfo, FocalLengthInfo);
-	LensFile->AddImageCenterPoint(Focus, Zoom, ImageCenterInfo);
+		CalibrationResult.STMap.DistortionMap = (ImportedImages.Num() > 0) ? Cast<UTexture>(ImportedImages[0]) : nullptr;
+	}
 
-	Algo->OnDistortionSavedToLens();
+	// Depending on the algo, it is possible that the result feature calibrated distortion parameters or an ST Map.
+	// If the result contains any distortion parameters, then the results will be written as a distortion point in the Lens File
+	// Otherwise, if the result contains a valid ST Map, then it will be added to the Lens File
+	if (CalibrationResult.Parameters.Parameters.Num() > 0)
+	{
+		if (LensFile->DataMode != ELensDataMode::Parameters)
+		{
+			LensFile->DataMode = ELensDataMode::Parameters;
+			UE_LOG(LogCameraCalibrationEditor, Log, TEXT("The LensFile's data mode was set to ST Map, but the latest calibration result returned distortion parameters. Data mode will change to Parameters."));
+		}
+
+		FScopedTransaction Transaction(LOCTEXT("SaveCurrentDistortionData", "Save Current Distortion Data"));
+		LensFile->Modify();
+
+		LensFile->AddDistortionPoint(CalibrationResult.EvaluatedFocus, CalibrationResult.EvaluatedZoom, CalibrationResult.Parameters, CalibrationResult.FocalLength);
+		LensFile->AddImageCenterPoint(CalibrationResult.EvaluatedFocus, CalibrationResult.EvaluatedZoom, CalibrationResult.ImageCenter);
+	}
+	else if (CalibrationResult.STMap.DistortionMap)
+	{
+		if (LensFile->DataMode != ELensDataMode::STMap)
+		{
+			LensFile->DataMode = ELensDataMode::STMap;
+			UE_LOG(LogCameraCalibrationEditor, Log, TEXT("The LensFile's data mode was set to Parameters, but the latest calibration result returned an ST Map. Data mode will change to ST Map."));
+		}
+
+		FScopedTransaction Transaction(LOCTEXT("SaveCurrentDistortionData", "Save Current Distortion Data"));
+		LensFile->Modify();
+
+		LensFile->AddSTMapPoint(CalibrationResult.EvaluatedFocus, CalibrationResult.EvaluatedZoom, CalibrationResult.STMap);
+		LensFile->AddFocalLengthPoint(CalibrationResult.EvaluatedFocus, CalibrationResult.EvaluatedZoom, CalibrationResult.FocalLength);
+		LensFile->AddImageCenterPoint(CalibrationResult.EvaluatedFocus, CalibrationResult.EvaluatedZoom, CalibrationResult.ImageCenter);
+	}
+
+	if (UCameraLensDistortionAlgo* Algo = GetAlgo())
+	{
+		Algo->OnDistortionSavedToLens();
+	}
 }
 
 FCameraCalibrationStepsController* ULensDistortionTool::GetCameraCalibrationStepsController() const
@@ -395,7 +606,9 @@ FString ULensDistortionTool::GetSessionSaveDir() const
 	const FString DatasetPrefix = TEXT("Dataset-") + CurrentAlgo->ShortName().ToString() + TEXT("Algorithm-");
 	const FString DatasetDir = DatasetPrefix + SessionTimeString;
 
-	return LensDistortionTool::SaveDir / SessionDateString / DatasetDir;
+	const FString ProjectSaveDir = FPaths::ProjectSavedDir() / TEXT("CameraCalibration") / TEXT("LensDistortion");
+
+	return ProjectSaveDir / SessionDateString / DatasetDir;
 }
 
 FString ULensDistortionTool::GetRowFilename(int32 RowIndex) const
@@ -534,7 +747,7 @@ void ULensDistortionTool::ImportCalibrationDataset()
 	IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
 	const void* ParentWindowHandle = FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr);
 	const FString Title = TEXT("Import Camera Calibration Dataset");
-	const FString DefaultPath = LensDistortionTool::SaveDir;
+	const FString DefaultPath = FPaths::ProjectSavedDir() / TEXT("CameraCalibration") / TEXT("LensDistortion");;
 	const FString DefaultFile = TEXT("");
 	const FString FileTypes = TEXT("Camera Calibration Dataset|*.ucamcalib");
 	const uint32 OpenFileFlags = 0;

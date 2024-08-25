@@ -1,16 +1,15 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #pragma once
 
-#include "ScopedTransaction.h"
 #include "IPropertyAccessEditor.h"
-#include "Features/IModularFeatures.h"
 #include "Kismet2/BlueprintEditorUtils.h"
-#include "Styling/AppStyle.h"
 #include "Widgets/SCompoundWidget.h"
+#include "IHasContext.h"
 #include "ChooserPropertyAccess.h"
 
 namespace UE::ChooserEditor
 {
+DECLARE_DELEGATE(FPropertyAccessChainChanged)
 		
 // Wrapper widget for Property access widget, which can update when the target Class changes
 class CHOOSEREDITOR_API SPropertyAccessChainWidget : public SCompoundWidget
@@ -24,7 +23,8 @@ public:
 	SLATE_ARGUMENT(FString, BindingColor);
 	SLATE_ARGUMENT(bool, AllowFunctions);
 	SLATE_EVENT(FOnAddBinding, OnAddBinding);
-	SLATE_ATTRIBUTE(const FChooserPropertyBinding*, PropertyBindingValue);
+	SLATE_EVENT(FPropertyAccessChainChanged, OnValueChanged);
+	SLATE_ATTRIBUTE(FChooserPropertyBinding*, PropertyBindingValue);
             
 	SLATE_END_ARGS()
 
@@ -37,11 +37,13 @@ private:
 	void ContextClassChanged();
 		
 	FString TypeFilter;
+	FString AlternateTypeFilter;
 	FString BindingColor;
 	FDelegateHandle ContextClassChangedHandle();
 	IHasContextClass* ContextClassOwner = nullptr;
 	FOnAddBinding OnAddBinding;
-	TAttribute<const FChooserPropertyBinding*> PropertyBindingValue;
+	FPropertyAccessChainChanged OnValueChanged;
+	TAttribute<FChooserPropertyBinding*> PropertyBindingValue;
 	bool bAllowFunctions;
 };
 	

@@ -37,16 +37,17 @@ enum class EContentBrowserItemFlags : uint16
 	Category_Asset = 1<<2,
 	Category_Class = 1<<3,
 	Category_Collection = 1<<4,
-	Category_Misc = 1<<5,
-	Category_MASK = Category_Asset | Category_Class | Category_Collection | Category_Misc,
+	Category_Plugin = 1 << 5, // Plugin content or classes - note that folders containing plugins do not have this flag set 
+	Category_Misc = 1<<6,
+	Category_MASK = Category_Asset | Category_Class | Category_Collection | Category_Plugin | Category_Misc,
 
 	/** Flags denoting additional information for temporary items (mutually exclusive) */
-	Temporary_Creation = 1<<6,
-	Temporary_Duplication = 1<<7,
+	Temporary_Creation = 1<<7,
+	Temporary_Duplication = 1<<8,
 	Temporary_MASK = Temporary_Creation | Temporary_Duplication,
 
 	/** Flag to mark the item as showing something that is unsupported */
-	Misc_Unsupported = 1 << 8,
+	Misc_Unsupported = 1 << 9,
 };
 ENUM_CLASS_FLAGS(EContentBrowserItemFlags);
 
@@ -167,6 +168,12 @@ public:
 	 * @note Equivalent to testing whether EContentBrowserItemFlags::Type_File is set on GetItemFlags().
 	 */
 	bool IsFile() const;
+
+	/**
+	 * Check to see whether this item is in a plugin. Folders and files inside plugins return true, folders which
+	 * contain and organize plugins do not.
+	 */
+	bool IsPlugin() const;
 
 	/**
 	 * Check if the item is representing a supported item

@@ -608,6 +608,14 @@ void FDisplayClusterConfiguratorProjectionCustomization::CreateEasyBlendPolicy(U
 		"Scale",
 		DisplayClusterProjectionStrings::cfg::easyblend::Scale,
 		Blueprint,
+		ConfigurationViewports,
+		1.f, 0.0001f));
+
+	// EasyBlend D3D12 supports export of geometry
+	CustomPolicyParameters.Add(MakeShared<FPolicyParameterInfoBool>(
+		"Enable Preview",
+		DisplayClusterProjectionStrings::cfg::mpcdi::EnablePreview,
+		Blueprint,
 		ConfigurationViewports));
 }
 
@@ -815,6 +823,12 @@ void FDisplayClusterConfiguratorProjectionCustomization::CreateMPCDIPolicy(UDisp
 		CustomPolicyParameters.Add(MakeShared<FPolicyParameterInfoText>(
 			"Region",
 			DisplayClusterProjectionStrings::cfg::mpcdi::Region,
+			Blueprint,
+			ConfigurationViewports));
+
+		CustomPolicyParameters.Add(MakeShared<FPolicyParameterInfoText>(
+			"Screen",
+			DisplayClusterProjectionStrings::cfg::mpcdi::Component,
 			Blueprint,
 			ConfigurationViewports));
 	}
@@ -1263,7 +1277,7 @@ void FDisplayClusterConfiguratorRenderSyncPolicyCustomization::AddToParameterMap
 	check(RenderStructProperty);
 
 	uint8* MapContainer = RenderStructProperty->ContainerPtrToValuePtr<uint8>(&ConfigurationCluster->Sync);
-	DisplayClusterConfiguratorPropertyUtils::AddKeyValueToMap(MapContainer, ParametersHandle, Key, Value);
+	UE::DisplayClusterConfiguratorPropertyUtils::AddKeyValueToMap(MapContainer, ParametersHandle, Key, Value);
 }
 
 void FDisplayClusterConfiguratorRenderSyncPolicyCustomization::RemoveFromParameterMap(const FString& Key)
@@ -1278,7 +1292,7 @@ void FDisplayClusterConfiguratorRenderSyncPolicyCustomization::RemoveFromParamet
 	check(RenderStructProperty);
 
 	uint8* MapContainer = RenderStructProperty->ContainerPtrToValuePtr<uint8>(&ConfigurationCluster->Sync);
-	DisplayClusterConfiguratorPropertyUtils::RemoveKeyFromMap(MapContainer, ParametersHandle, Key);
+	UE::DisplayClusterConfiguratorPropertyUtils::RemoveKeyFromMap(MapContainer, ParametersHandle, Key);
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////

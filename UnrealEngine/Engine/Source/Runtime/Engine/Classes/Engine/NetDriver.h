@@ -7,6 +7,7 @@
 #include "CoreMinimal.h"
 #include "Engine/EngineBaseTypes.h"
 #include "Engine/EngineTypes.h"
+#include "Net/NetworkMetricsDatabase.h"
 #include "HAL/IConsoleManager.h"
 #include "Math/RandomStream.h"
 #include "UObject/ObjectMacros.h"
@@ -352,7 +353,7 @@ class UReplicationSystem;
 class UReplicationBridge;
 namespace UE::Net
 {
-	typedef uint16 FNetObjectGroupHandle;
+	class FNetObjectGroupHandle;
 }
 #endif // UE_WITH_IRIS
 
@@ -388,6 +389,12 @@ extern ENGINE_API double GReplicationGatherPrioritizeTimeSeconds;
 extern ENGINE_API double GServerReplicateActorTimeSeconds;
 extern ENGINE_API int32 GNumClientConnections;
 extern ENGINE_API int32 GNumClientUpdateLevelVisibility;
+
+namespace UE::Net::Private
+{
+	/** Allow other internal systems to check this cvar */
+	extern int32 SerializeNewActorOverrideLevel;
+}
 
 // Delegates
 
@@ -626,9 +633,25 @@ struct FNetDriverReplicationSystemConfig
 {
 	GENERATED_USTRUCT_BODY()
 
-	/** Override the max object count. If 0 use the default system value. */
+	/** Override the max object count when running as a client. If 0 use the default system value. */
 	UPROPERTY()
-	uint32 MaxReplicatedObjectCount = 0;
+	uint32 MaxReplicatedObjectClientCount = 0;
+
+	/** Override the max object count when running as a server. If 0 use the default system value. */
+	UPROPERTY()
+	uint32 MaxReplicatedObjectServerCount = 0;
+
+	/** Override the number of pre-allocated objects when running as a client. */
+	UPROPERTY()
+	uint32 PreAllocatedReplicatedObjectClientCount = 0;
+
+	/** Override the number of pre-allocated objects when running as a server. */
+	UPROPERTY()
+	uint32 PreAllocatedReplicatedObjectServerCount = 0;
+
+	/** Override the number of pre-allocated objects in FReplicationWriter on the client. */
+	UPROPERTY()
+	uint32 MaxReplicatedWriterObjectClientCount = 0;
 	
 	/** Override the max compressed object count. If 0 use the default system value. */
 	UPROPERTY()
@@ -739,6 +762,21 @@ enum class EProcessRemoteFunctionFlags : uint32
 								//! while processing the remote function.
 };
 ENUM_CLASS_FLAGS(EProcessRemoteFunctionFlags);
+
+/** A metrics listener that writes a metric to the 'Replication' CSV category. */
+UCLASS()
+class ENGINE_API UNetworkMetricsCSV_Replication : public UNetworkMetricsCSV
+{
+	GENERATED_BODY()
+
+public:
+	UNetworkMetricsCSV_Replication()
+	{
+		SetCategory("Replication");
+	}
+
+	virtual ~UNetworkMetricsCSV_Replication() = default;
+};
 
 UCLASS(Abstract, customConstructor, transient, MinimalAPI, config=Engine)
 class UNetDriver : public UObject, public FExec
@@ -972,6 +1010,26 @@ private:
 	/** Cached copy of MaxChannelsOverride from the net driver definition to avoid extra lookups */
 	int32 MaxChannelsOverride;
 
+	/** A metrics database that holds statistics calcluated by the networking system. */
+	UPROPERTY()
+	TObjectPtr<UNetworkMetricsDatabase> NetworkMetricsDatabase;
+
+	/** A cache of UNetworkMetricsBaseListener sub-class instances provided by the *.ini file (one instance per sub-class). */
+	UPROPERTY()
+	TMap<FName, TObjectPtr<UNetworkMetricsBaseListener>> NetworkMetricsListeners;
+
+	/** Register each metric used by the networking system. */
+	void SetupNetworkMetrics();
+
+	/** Register metric listeners provided by the *.ini file. */
+	void SetupNetworkMetricsListeners();
+
+	/** Create an instance of UNetworkMetricsStats that is associated with a given Stat and cached with other listeners in NetworkMetricsListeners. */
+	void RegisterStatsListener(const FName MetricName, const FName StatName);
+
+	/** Reset any network metrics database values at the beginning of a frame. */
+	void ResetNetworkMetrics();
+
 public:
 	/** Get the value of MaxChannelsOverride cached from the net driver definition */
 	int32 GetMaxChannelsOverride() const { return MaxChannelsOverride; }
@@ -987,9 +1045,6 @@ public:
 
 	/** Set the NetDriver's NetDriverDefintion. */
 	void SetNetDriverDefinition(FName NewNetDriverDefinition);
-
-	UE_DEPRECATED(5.1, "Use GetNetDriverDefinition instead.")
-	FName GetNetDriverDefintion() const { return NetDriverDefinition; }
 
 	/** Get the NetDriver's NetDriverDefintion. */
 	FName GetNetDriverDefinition() const { return NetDriverDefinition; }
@@ -1104,6 +1159,10 @@ public:
 	uint32						InTotalBunches;
 	/** Total bunches sent since the net driver's creation  */
 	uint32						OutTotalBunches;
+	/** Total number of outgoing reliable bunches */
+	uint32						OutTotalReliableBunches;
+	/** Total number of incoming reliable bunches */
+	uint32						InTotalReliableBunches;
 	/** todo document */
 	uint32						InPacketsLost;
 	/** Total packets lost that have been sent by clients since the net driver's creation  */
@@ -1173,14 +1232,27 @@ public:
 	TMap<FNetworkGUID, TUniquePtr<FActorDestructionInfo>>	DestroyedStartupOrDormantActors;
 
 private:
+
 	/** Tracks the network guids in DestroyedStartupOrDormantActors above, but keyed on the streaming level name. */
 	TMap<FName, TSet<FNetworkGUID>> DestroyedStartupOrDormantActorsByLevel;
 
+	/** Cached list of analytic attributes that can be appended via FNetAnalyticsAggregator::AppendGameInstanceAttributes */
+	TMap<FString, FString> CachedNetAnalyticsAttributes;
+
 public:
+
 	const TSet<FNetworkGUID>& GetDestroyedStartupOrDormantActors(const FName& LevelName)
 	{
 		return DestroyedStartupOrDormantActorsByLevel.FindOrAdd(LevelName);
 	}
+
+	/** 
+	 * Add or overwrite an analytics attribute that will be appended via FNetAnalyticsAggregator::AppendGameInstanceAttributes
+	 * Useful to add game specific attributes to your analytics.
+	 * @param AttributeKey The key of the attribute. Stored in a case-insensitive map
+	 * @param AttributeValue Value of the attribute to store. Only supports strings.
+	 */
+	void SetNetAnalyticsAttributes(const FString& AttributeKey, const FString& AttributeValue) { CachedNetAnalyticsAttributes.Add(AttributeKey, AttributeValue); }
 
 	/** The server adds an entry into this map for every startup actor that has been renamed, and will
 	 *  always map from current name to original name
@@ -1218,7 +1290,7 @@ public:
 	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	/** Used to invalidate properties marked "unchanged" in FRepChangedPropertyTracker's */
-	uint32																		ReplicationFrame;
+	uint32 ReplicationFrame;
 
 	/** Maps FRepLayout to the respective UClass */
 	TMap<TWeakObjectPtr<UObject>, TSharedPtr<FRepLayout>, FDefaultSetAllocator, TWeakObjectPtrMapKeyFuncs<TWeakObjectPtr<UObject>, TSharedPtr<FRepLayout> > >	RepLayoutMap;
@@ -1455,8 +1527,10 @@ public:
 	 */
 	ENGINE_API virtual void ProcessRemoteFunction(class AActor* Actor, class UFunction* Function, void* Parameters, struct FOutParmRec* OutParms, struct FFrame* Stack, class UObject* SubObject = nullptr );
 
+	/** Return a reference to the database that holds metrics calcluated by the networking system. */
+	ENGINE_API TObjectPtr<UNetworkMetricsDatabase> GetMetrics() { return NetworkMetricsDatabase; };
 
-	enum ERemoteFunctionSendPolicy
+	enum class ERemoteFunctionSendPolicy
 	{		
 		/** Unreliable multicast are queued. Everything else is send immediately */
 		Default, 
@@ -1466,7 +1540,13 @@ public:
 
 		/** Bunch is queued until next actor replication, no matter what */
 		ForceQueue,
-	};	
+	};
+	UE_DEPRECATED(5.4, "Use fully scoped enum class value UNetDriver::ERemoteFunctionSendPolicy::Default")
+	static constexpr ERemoteFunctionSendPolicy Default = ERemoteFunctionSendPolicy::Default;
+	UE_DEPRECATED(5.4, "Use fully scoped enum class value UNetDriver::ERemoteFunctionSendPolicy::ForceSend")
+	static constexpr ERemoteFunctionSendPolicy ForceSend = ERemoteFunctionSendPolicy::ForceSend;
+	UE_DEPRECATED(5.4, "Use fully scoped enum class value UNetDriver::ERemoteFunctionSendPolicy::ForceQueue")
+	static constexpr ERemoteFunctionSendPolicy ForceQueue = ERemoteFunctionSendPolicy::ForceQueue;
 
 	/** Process a remote function on given actor channel. This is called by ::ProcessRemoteFunction.*/
 	ENGINE_API void ProcessRemoteFunctionForChannel(
@@ -1615,7 +1695,11 @@ public:
 	void NotifySubObjectDestroyed(UObject* SubObject);
 
 	/** Called when an actor is renamed. */
+	UE_DEPRECATED(5.4, "Replaced by overload that takes the PreviousOuter")
 	ENGINE_API virtual void NotifyActorRenamed(AActor* Actor, FName PreviousName);
+	
+	/** Called when an actor is renamed. */
+	ENGINE_API virtual void NotifyActorRenamed(AActor* Actor, UObject* PreviousOuter, FName PreviousName);
 
 	ENGINE_API void RemoveNetworkActor(AActor* Actor);
 
@@ -1647,7 +1731,7 @@ public:
 	/** @return String that uniquely describes the net driver instance */
 	FString GetDescription() const
 	{ 
-		return FString::Printf(TEXT("%s %s%s"), *NetDriverName.ToString(), *GetName(), bIsPeer ? TEXT("(PEER)") : TEXT(""));
+		return FString::Printf(TEXT("Name:%s Def:%s %s%s"), *NetDriverName.ToString(), *NetDriverDefinition.ToString(), *GetName(), bIsPeer ? TEXT("(PEER)") : TEXT(""));
 	}
 
 	/** @return true if this netdriver is handling accepting connections */
@@ -1888,6 +1972,12 @@ public:
 	/** Sends a message to a client to destroy an actor to the client.  The actor may already be destroyed locally. */
 	ENGINE_API int64 SendDestructionInfo(UNetConnection* Connection, FActorDestructionInfo* DestructionInfo);
 
+	/**
+	 * Creates and sends a destruction info with the LevelUnloaded reason, only if ThisActor is dormant or recently dormant on Connection.
+	 * Returns true if the destruction info was sent, false if the actor isn't replicated or dormant/recently dormant.
+	 */
+	bool SendDestructionInfoForLevelUnloadIfDormant(AActor* ThisActor, UNetConnection* Connection);
+
 protected:
 
 	void SetIsInTick(bool bIsInTick) { bInTick = bIsInTick; }
@@ -2086,6 +2176,18 @@ public:
 	 */
 	ENGINE_API virtual bool IsEncryptionRequired() const;
 
+	/** Returns the value of cvar net.ClientIncomingBunchFrameTimeLimitMS on clients, or 0 otherwise. 0 = no limit. */
+	ENGINE_API float GetIncomingBunchFrameProcessingTimeLimit() const;
+
+	/** Returns true if the cvar net.ClientIncomingBunchFrameTimeLimitMS is set and the limit was exceeded */
+	ENGINE_API bool HasExceededIncomingBunchFrameProcessingTime() const;
+
+	/** Called internally by channels to track processing time for net.ClientIncomingBunchFrameTimeLimitMS and HasExceededIncomingBunchFrameProcessingTime() */
+	void AddBunchProcessingFrameTimeMS(float Milliseconds) { IncomingBunchProcessingElapsedFrameTimeMS += Milliseconds; }
+
+	/** Called internally by channels to track how many hit net.QueuedBunchTimeFailsafeSeconds */
+	void AddQueuedBunchFailsafeChannel() { ++QueuedBunchFailsafeNumChannels; }
+
 protected:
 	
 	/** Stream of random numbers to be used by this instance of UNetDriver */
@@ -2094,7 +2196,11 @@ protected:
 	/** Creates a trace event that updates the name and properties of the associated Game Instance */
 	void NotifyGameInstanceUpdated();
 
+	/** Indicates whether ticking throttle is enabled for this instance of NetDriver */
+	bool bTickingThrottleEnabled = true;
 private:
+	// Only for ForwardRemoteFunction
+	friend FObjectReplicator;
 
 	ENGINE_API virtual ECreateReplicationChangelistMgrFlags GetCreateReplicationChangelistMgrFlags() const;
 
@@ -2112,7 +2218,13 @@ private:
 	/** Used with FNetDelegates::OnSyncLoadDetected to log sync loads */
 	void ReportSyncLoad(const FNetSyncLoadReport& Report);
 
-	void UpdateCrashContext();
+	enum class ECrashContextUpdate
+	{
+		Default,
+		UpdateRepModel,
+		ClearRepModel,
+	};
+	void UpdateCrashContext(ECrashContextUpdate UpdateType=ECrashContextUpdate::Default);
 
 	void RemoveDestroyedGuidsByLevel(const ULevel* Level, const TArray<FNetworkGUID>& RemovedGUIDs);
 
@@ -2123,11 +2235,29 @@ private:
 	void InitIrisSettings(FName NewDriverName);
 	void SetReplicationSystem(UReplicationSystem* ReplicationSystem);
 	void CreateReplicationSystem(bool bInitAsClient);
-	void UpdateReplicationViews() const;
+	void UpdateIrisReplicationViews() const;
 	void SendClientMoveAdjustments();
+	void PostDispatchSendUpdate();
 #endif
 
+	/** Tell the registered NetAnalytics to send their analytics via the provider */
+	void SendNetAnalytics();
+
+	/** Description of the replication model used by this Driver (RepGraph, Iris or Generic) */
+	FString GetReplicationModelName() const;
+
 	void InitNetTraceId();
+
+	/** Called from RPC processing code to forward RPC to other NetDrivers if ShouldForwardFunction returns true. */
+	void ForwardRemoteFunction(UObject* RootObject, UObject* SubObject, UFunction* Function, void* Parms);
+
+	/** Go over imported network guids and map them to the newly created object. */
+	void UpdateUnmappedObjects();
+
+	/** Periodically look for invalid dormant replicators tied to destroyed objects. */
+	void CleanupStaleDormantReplicators();
+
+private:
 
 	UPROPERTY(transient)
 	TObjectPtr<UReplicationDriver> ReplicationDriver;
@@ -2175,7 +2305,19 @@ private:
 	/** Stat tracking for the total number of out of order packets that were duplicates */
 	int32 TotalOutOfOrderPacketsDuplicate = 0;
 
-
 	/** Cached value for UEngine.GlobalNetTravelCount, at the time of NetDriver initialization */
 	uint32 CachedGlobalNetTravelCount = 0;
+	
+	/** Accumulated number of frames in the current stat gathering period */
+	uint32 StatUpdateFrames = 0;
+
+	/** Milliseconds spent processing incoming bunches in the current frame, directly from the network and queued on channels. */
+	float IncomingBunchProcessingElapsedFrameTimeMS = 0.0f;
+	
+	/** Accumulated number of frames in the current stat period for which HasExceededIncomingBunchFrameProcessingTime would return true */
+	uint32 NumFramesOverIncomingBunchTimeLimit = 0;
+
+	/** Accumulated number of channels that hit the net.QueuedBunchTimeFailsafeSeconds this frame */
+	uint32 QueuedBunchFailsafeNumChannels = 0;
+
 };

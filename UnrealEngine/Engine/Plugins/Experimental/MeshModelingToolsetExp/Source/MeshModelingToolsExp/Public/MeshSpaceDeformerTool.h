@@ -196,7 +196,7 @@ public:
  * Applies non-linear deformations to a mesh 
  */
 UCLASS()
-class MESHMODELINGTOOLSEXP_API UMeshSpaceDeformerTool : public USingleSelectionMeshEditingTool
+class MESHMODELINGTOOLSEXP_API UMeshSpaceDeformerTool : public USingleSelectionMeshEditingTool, public IInteractiveToolManageGeometrySelectionAPI
 {
 	GENERATED_BODY()
 public:
@@ -218,6 +218,12 @@ public:
 
 	// sync the parameters owned by the MeshSpaceDeformerOp 
 	void UpdateOpParameters(UE::Geometry::FMeshSpaceDeformerOp& MeshSpaceDeformerOp) const;
+
+	// IInteractiveToolManageGeometrySelectionAPI -- this tool won't update external geometry selection or change selection-relevant mesh IDs
+	virtual bool IsInputSelectionValidOnOutput() override
+	{
+		return true;
+	}
 
 protected:
 

@@ -357,6 +357,13 @@ namespace FUdpMessageSegment
 		{
 			Ar << MessageId << Segments;
 		}
+
+		int32 GetMessageId(FArchive& Ar)
+		{
+			int32 Id;
+			Ar << Id;
+			return Id;
+		}
 	};
 
 

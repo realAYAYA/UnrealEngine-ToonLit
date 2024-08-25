@@ -59,7 +59,7 @@ EOS_RESULT_VALUE(EOS_MissingParameters_DEPRECATED, 25)
 EOS_RESULT_VALUE(EOS_InvalidSandboxId, 26)
 /** Request timed out */
 EOS_RESULT_VALUE(EOS_TimedOut, 27)
-/** A query returned some but not all of the requested results.  */
+/** A query returned some but not all of the requested results. */
 EOS_RESULT_VALUE(EOS_PartialResult, 28)
 /** Client is missing the whitelisted role */
 EOS_RESULT_VALUE(EOS_Missing_Role, 29)
@@ -166,6 +166,9 @@ EOS_RESULT_VALUE(EOS_Auth_ParentalControls, 1070)
 /** Korea real ID association required but missing */
 EOS_RESULT_VALUE(EOS_Auth_NoRealId, 1080)
 
+/** Silent login failed when EOS_LF_NO_USER_INTERFACE was specified, and user interaction is needed before the user can be logged in. */
+EOS_RESULT_VALUE(EOS_Auth_UserInterfaceRequired, 1090)
+
 /** An outgoing friend invitation is awaiting acceptance; sending another invite to the same user is erroneous */
 EOS_RESULT_VALUE(EOS_Friends_InviteAwaitingAcceptance, 2000)
 /** There is no friend invitation to accept/reject */
@@ -212,6 +215,8 @@ EOS_RESULT_VALUE(EOS_Ecom_CatalogItemStale, 4002)
 EOS_RESULT_VALUE(EOS_Ecom_CatalogOfferPriceInvalid, 4003)
 /** The checkout page failed to load */
 EOS_RESULT_VALUE(EOS_Ecom_CheckoutLoadError, 4004)
+/** The player closed the purchase flow overlay after clicking the purchase button. The purchase may still go through, and the game needs to query unredeemed entitlements for a short time. */
+EOS_RESULT_VALUE(EOS_Ecom_PurchaseProcessing, 4005)
 
 /** Session is already in progress */
 EOS_RESULT_VALUE(EOS_Sessions_SessionInProgress, 5000)
@@ -274,9 +279,9 @@ EOS_RESULT_VALUE(EOS_PlayerDataStorage_DataLengthInvalid, 6007)
 EOS_RESULT_VALUE(EOS_PlayerDataStorage_StartIndexInvalid, 6008)
 /** Request is in progress */
 EOS_RESULT_VALUE(EOS_PlayerDataStorage_RequestInProgress, 6009)
-/** User is marked as throttled which means he can't perform some operations because limits are exceeded.  */
+/** User is marked as throttled which means he can't perform some operations because limits are exceeded. */
 EOS_RESULT_VALUE(EOS_PlayerDataStorage_UserThrottled, 6010)
-/** Encryption key is not set during SDK init.  */
+/** Encryption key is not set during SDK init. */
 EOS_RESULT_VALUE(EOS_PlayerDataStorage_EncryptionKeyNotSet, 6011)
 /** User data callback returned error (EOS_PlayerDataStorage_EWriteResult::EOS_WR_FailRequest or EOS_PlayerDataStorage_EReadResult::EOS_RR_FailRequest) */
 EOS_RESULT_VALUE(EOS_PlayerDataStorage_UserErrorFromDataCallback, 6012)
@@ -306,6 +311,8 @@ EOS_RESULT_VALUE(EOS_Connect_LinkAccountFailedMissingNintendoIdAccount_DEPRECATE
 
 /** The social overlay page failed to load */
 EOS_RESULT_VALUE(EOS_UI_SocialOverlayLoadError, 8000)
+/** Virtual Memory Functions are an inconsistent mix of functions and nullptrs */
+EOS_RESULT_VALUE(EOS_UI_InconsistentVirtualMemoryFunctions, 8001)
 
 /** Client has no permissions to modify this lobby */
 EOS_RESULT_VALUE(EOS_Lobby_NotOwner, 9000)
@@ -347,6 +354,8 @@ EOS_RESULT_VALUE(EOS_Lobby_MemberUpdateOnly, 9017)
 EOS_RESULT_VALUE(EOS_Lobby_PresenceLobbyExists, 9018)
 /** Operation requires lobby with voice enabled */
 EOS_RESULT_VALUE(EOS_Lobby_VoiceNotEnabled, 9019)
+/** The client platform does not match the allowed platform list for the lobby. */
+EOS_RESULT_VALUE(EOS_Lobby_PlatformNotAllowed, 9020)
 
 /** User callback that receives data from storage returned error. */
 EOS_RESULT_VALUE(EOS_TitleStorage_UserErrorFromDataCallback, 10000)
@@ -444,6 +453,10 @@ EOS_RESULT_VALUE(EOS_KWS_UserGraduated, 15001)
 
 /** EOS Android VM not stored */
 EOS_RESULT_VALUE(EOS_Android_JavaVMNotStored, 17000)
+/** EOS Android if Reserved is set it must reference stored VM */
+EOS_RESULT_VALUE(EOS_Android_ReservedMustReferenceLocalVM, 17001)
+/** EOS Android Reserved must not be provided */
+EOS_RESULT_VALUE(EOS_Android_ReservedMustBeNull, 17002)
 
 /** Patch required before the user can use the privilege */
 EOS_RESULT_VALUE(EOS_Permission_RequiredPatchAvailable, 18000)
@@ -468,6 +481,23 @@ EOS_RESULT_VALUE(EOS_DesktopCrossplay_ServiceNotInstalled, 19001)
 EOS_RESULT_VALUE(EOS_DesktopCrossplay_ServiceStartFailed, 19002)
 /** The desktop crossplay service is no longer running for an unknown reason. */
 EOS_RESULT_VALUE(EOS_DesktopCrossplay_ServiceNotRunning, 19003)
+
+/** When sending the custom invite failed. */
+EOS_RESULT_VALUE(EOS_CustomInvites_InviteFailed, 20000)
+
+/** The best display name could not be safely determined. */
+EOS_RESULT_VALUE(EOS_UserInfo_BestDisplayNameIndeterminate, 22000)
+
+/** OnNetworkRequested_DEPRECATED callback not set when initializing platform */
+EOS_RESULT_VALUE(EOS_ConsoleInit_OnNetworkRequestedDeprecatedCallbackNotSet, 23000)
+/** CacheStorageSizeKB must be a multiple of 16 **/
+EOS_RESULT_VALUE(EOS_ConsoleInit_CacheStorage_SizeKBNotMultipleOf16, 23001)
+/** CacheStorageSizeKB is less than the minimum allowed **/
+EOS_RESULT_VALUE(EOS_ConsoleInit_CacheStorage_SizeKBBelowMinimumSize, 23002)
+/** CacheStorageSizeKB is greater than the maximum allowed (4000 MB) **/
+EOS_RESULT_VALUE(EOS_ConsoleInit_CacheStorage_SizeKBExceedsMaximumSize, 23003)
+/** CacheStorageIndex is out of its allowed range **/
+EOS_RESULT_VALUE(EOS_ConsoleInit_CacheStorage_IndexOutOfRangeRange, 23004)
 
 /** An unexpected error that we cannot identify has occurred. */
 EOS_RESULT_VALUE_LAST(EOS_UnexpectedError, 0x7FFFFFFF)

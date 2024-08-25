@@ -78,17 +78,17 @@ namespace UE::MVVM
 			Binding = VariantType(TInPlaceType<UScriptStructType>(), InScriptStruct, InValue);
 		}
 
-		UE_NODISCARD bool IsUObject() const
+		[[nodiscard]] bool IsUObject() const
 		{
 			return Binding.template IsType<UObjectType*>();
 		}
 
-		UE_NODISCARD UObjectType* GetUObject() const
+		[[nodiscard]] UObjectType* GetUObject() const
 		{
 			return Binding.template Get<UObjectType*>();
 		}
 
-		UE_NODISCARD const UClass* GetUClass() const
+		[[nodiscard]] const UClass* GetUClass() const
 		{
 			UObjectType* Instance = Binding.template Get<UObjectType*>();
 			return Instance ? Instance->GetClass() : nullptr;
@@ -99,17 +99,17 @@ namespace UE::MVVM
 			Binding.template Set<UObjectType*>(InValue);
 		}
 
-		UE_NODISCARD bool IsUScriptStruct() const
+		[[nodiscard]] bool IsUScriptStruct() const
 		{
 			return Binding.template IsType<UScriptStructType>();
 		}
 
-		UE_NODISCARD ContainerType GetUScriptStructData() const
+		[[nodiscard]] ContainerType GetUScriptStructData() const
 		{
 			return Binding.template Get<UScriptStructType>().Container;
 		}
 
-		UE_NODISCARD const UScriptStruct* GetUScriptStruct() const
+		[[nodiscard]] const UScriptStruct* GetUScriptStruct() const
 		{
 			return Binding.template Get<UScriptStructType>().ScriptStruct;
 		}
@@ -119,12 +119,12 @@ namespace UE::MVVM
 			Binding.template Set<UScriptStructType>(FScriptStructStackedContainer(InScriptStruct, InValue));
 		}
 
-		UE_NODISCARD ContainerType GetData() const
+		[[nodiscard]] ContainerType GetData() const
 		{
 			return IsUObject() ? reinterpret_cast<ContainerType>(GetUObject()) : IsUScriptStruct() ? GetUScriptStructData() : nullptr;
 		}
 
-		UE_NODISCARD const UStruct* GetOwner() const
+		[[nodiscard]] const UStruct* GetOwner() const
 		{
 			if (IsUObject())
 			{
@@ -137,12 +137,12 @@ namespace UE::MVVM
 			return nullptr;
 		}
 
-		UE_NODISCARD bool IsEmpty() const
+		[[nodiscard]] bool IsEmpty() const
 		{
 			return Binding.template IsType<FEmptyVariantState>();
 		}
 
-		UE_NODISCARD bool IsNull() const
+		[[nodiscard]] bool IsNull() const
 		{
 			return IsUObject() ? GetUObject() == nullptr : IsUScriptStruct() ? GetUScriptStructData() == nullptr : true;
 		}

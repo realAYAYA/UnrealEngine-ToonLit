@@ -184,7 +184,7 @@ public:
 				SetCurBlock(Count);
 
 				// Remove empty block.
-				Blocks.Truncate(int32(Count / BlockSize), false);
+				Blocks.Truncate(int32(Count / BlockSize), EAllowShrinking::No);
 			}
 		}
 		else
@@ -387,14 +387,14 @@ private:
 			Elements.Add(NewElement);
 		}
 
-		void Truncate(int32 NewElementCount, bool bAllowShrinking)
+		void Truncate(int32 NewElementCount, EAllowShrinking AllowShrinking)
 		{
 			for (int32 k = NewElementCount; k < Elements.Num(); ++k)
 			{
 				delete Elements[k];
 				Elements[k] = nullptr;
 			}
-			Elements.RemoveAt(NewElementCount, Elements.Num() - NewElementCount, bAllowShrinking);
+			Elements.RemoveAt(NewElementCount, Elements.Num() - NewElementCount, AllowShrinking);
 		}
 
 		void Empty(int32 NewReservedSize = 0)
@@ -740,7 +740,7 @@ using  TDynamicVector2i = TDynamicVectorN<int, 2>;
 template <class Type>
 void TDynamicVector<Type>::Clear()
 {
-	Blocks.Truncate(1, false);
+	Blocks.Truncate(1, EAllowShrinking::No);
 	CurBlock = 0;
 	CurBlockUsed = 0;
 	if (Blocks.Num() == 0)
@@ -787,7 +787,7 @@ void TDynamicVector<Type>::Resize(unsigned int Count)
 	// Remove unneeded blocks.
 	if (NumBlocksCurrent > NumBlocksNeeded)
 	{
-		Blocks.Truncate(NumBlocksNeeded, false);
+		Blocks.Truncate(NumBlocksNeeded, EAllowShrinking::No);
 	}
 
 	// Set current block.

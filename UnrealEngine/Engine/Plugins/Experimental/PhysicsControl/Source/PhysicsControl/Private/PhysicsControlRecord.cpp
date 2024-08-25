@@ -1,76 +1,87 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "PhysicsControlRecord.h"
-#include "PhysicsControlComponentLog.h"
+#include "PhysicsControlLog.h"
 #include "PhysicsControlComponentHelpers.h"
 
 #include "PhysicsEngine/ConstraintInstance.h"
 #include "PhysicsEngine/BodyInstance.h"
 
 //======================================================================================================================
-void FPhysicsControlState::Reset()
+void FPhysicsControlRecord::ResetConstraint()
 {
 	if (ConstraintInstance)
 	{
 		ConstraintInstance->TermConstraint();
 	}
-	*this = FPhysicsControlState();
+	ConstraintInstance.Reset();
 }
 
 //======================================================================================================================
-// A constraint created with identity frames will just have the child frame at the mesh origin,
-// which is not necessarily where the center of gravity is.
-FConstraintInstance* FPhysicsControlRecord::CreateConstraint(UObject* ConstraintDebugOwner, FName ControlName)
+FVector FPhysicsControlRecord::GetControlPoint() const
 {
-	if (!PhysicsControlState.ConstraintInstance)
+	if (PhysicsControl.ControlData.bUseCustomControlPoint)
 	{
-		PhysicsControlState.ConstraintInstance = MakeShared<FConstraintInstance>();
+		return PhysicsControl.ControlData.CustomControlPoint;
 	}
-	FConstraintInstance* ConstraintInstance = PhysicsControlState.ConstraintInstance.Get();
 
-	FBodyInstance* ParentBody = UE::PhysicsControlComponent::GetBodyInstance(
-		PhysicsControl.ParentMeshComponent, PhysicsControl.ParentBoneName);
-	FBodyInstance* ChildBody = UE::PhysicsControlComponent::GetBodyInstance(
-		PhysicsControl.ChildMeshComponent, PhysicsControl.ChildBoneName);
+	FBodyInstance* ChildBodyInstance = UE::PhysicsControl::GetBodyInstance(
+		ChildMeshComponent.Get(), PhysicsControl.ChildBoneName);
 
-	if (PhysicsControl.ParentMeshComponent && !PhysicsControl.ParentBoneName.IsNone() && !ParentBody)
+	return ChildBodyInstance ? ChildBodyInstance->GetMassSpaceLocal().GetTranslation() : FVector::ZeroVector;
+}
+
+//======================================================================================================================
+bool FPhysicsControlRecord::InitConstraint(UObject* ConstraintDebugOwner, FName ControlName)
+{
+	if (!ConstraintInstance)
 	{
-		UE_LOG(LogPhysicsControlComponent, Warning, 
-			TEXT("Failed to find expected parent body %s when making constraint for control %s"), 
+		ConstraintInstance = MakeShared<FConstraintInstance>();
+	}
+	check(ConstraintInstance);
+
+	FBodyInstance* ParentBody = UE::PhysicsControl::GetBodyInstance(
+		ParentMeshComponent.Get(), PhysicsControl.ParentBoneName);
+	FBodyInstance* ChildBody = UE::PhysicsControl::GetBodyInstance(
+		ChildMeshComponent.Get(), PhysicsControl.ChildBoneName);
+
+	if (ParentMeshComponent.IsValid() && !PhysicsControl.ParentBoneName.IsNone() && !ParentBody)
+	{
+		UE_LOG(LogPhysicsControl, Warning,
+			TEXT("Failed to find expected parent body %s when making constraint for control %s"),
 			*PhysicsControl.ParentBoneName.ToString(),
 			*ControlName.ToString());
-		return nullptr;
+		return false;
 	}
-	if (PhysicsControl.ChildMeshComponent && !PhysicsControl.ChildBoneName.IsNone() && !ChildBody)
+	if (ChildMeshComponent.IsValid() && !PhysicsControl.ChildBoneName.IsNone() && !ChildBody)
 	{
-		UE_LOG(LogPhysicsControlComponent, Warning, 
-			TEXT("Failed to find expected child body %s when making constraint for control %s"), 
+		UE_LOG(LogPhysicsControl, Warning,
+			TEXT("Failed to find expected child body %s when making constraint for control %s"),
 			*PhysicsControl.ChildBoneName.ToString(),
 			*ControlName.ToString());
-		return nullptr;
+		return false;
 	}
 
 	ConstraintInstance->InitConstraint(ChildBody, ParentBody, 1.0f, ConstraintDebugOwner);
-
-	// Ensure the control point is set
-	UpdateConstraintControlPoint();
-
+	ConstraintInstance->SetDisableCollision(PhysicsControl.ControlData.bDisableCollision);
+	// These things won't change so set them once here
 	ConstraintInstance->SetLinearXMotion(ELinearConstraintMotion::LCM_Free);
 	ConstraintInstance->SetLinearYMotion(ELinearConstraintMotion::LCM_Free);
 	ConstraintInstance->SetLinearZMotion(ELinearConstraintMotion::LCM_Free);
 	ConstraintInstance->SetAngularSwing1Motion(EAngularConstraintMotion::ACM_Free);
 	ConstraintInstance->SetAngularSwing2Motion(EAngularConstraintMotion::ACM_Free);
 	ConstraintInstance->SetAngularTwistMotion(EAngularConstraintMotion::ACM_Free);
-
-	ConstraintInstance->SetLinearPositionDrive(true, true, true);
-	ConstraintInstance->SetLinearVelocityDrive(true, true, true);
 	ConstraintInstance->SetAngularDriveMode(EAngularDriveMode::SLERP);
+
 	ConstraintInstance->SetOrientationDriveSLERP(true);
 	ConstraintInstance->SetAngularVelocityDriveSLERP(true);
+	ConstraintInstance->SetLinearPositionDrive(true, true, true);
+	ConstraintInstance->SetLinearVelocityDrive(true, true, true);
 
-	ConstraintInstance->SetDisableCollision(PhysicsControl.ControlSettings.bDisableCollision);
+	// Ensure the control point is set
+	UpdateConstraintControlPoint();
 
-	return ConstraintInstance;
+	return true;
 }
 
 //======================================================================================================================
@@ -78,12 +89,11 @@ FConstraintInstance* FPhysicsControlRecord::CreateConstraint(UObject* Constraint
 // corresponds to the child frame. Frame2 will always be identity, because we never change it.
 void FPhysicsControlRecord::UpdateConstraintControlPoint()
 {
-	FConstraintInstance* ConstraintInstance = PhysicsControlState.ConstraintInstance.Get();
 	if (ConstraintInstance)
 	{
 		// Constraints are child then parent
 		FTransform Frame1 = ConstraintInstance->GetRefFrame(EConstraintFrame::Frame1);
-		Frame1.SetTranslation(PhysicsControl.ControlSettings.ControlPoint);
+		Frame1.SetTranslation(GetControlPoint());
 		ConstraintInstance->SetRefFrame(EConstraintFrame::Frame1, Frame1);
 	}
 }
@@ -91,12 +101,7 @@ void FPhysicsControlRecord::UpdateConstraintControlPoint()
 //======================================================================================================================
 void FPhysicsControlRecord::ResetControlPoint()
 {
-	FBodyInstance* ChildBodyInstance = UE::PhysicsControlComponent::GetBodyInstance(
-		PhysicsControl.ChildMeshComponent, PhysicsControl.ChildBoneName);
-
-	PhysicsControl.ControlSettings.ControlPoint = ChildBodyInstance
-		? ChildBodyInstance->GetMassSpaceLocal().GetTranslation() : FVector::ZeroVector;
-
+	PhysicsControl.ControlData.bUseCustomControlPoint = false;
 	UpdateConstraintControlPoint();
 }
 

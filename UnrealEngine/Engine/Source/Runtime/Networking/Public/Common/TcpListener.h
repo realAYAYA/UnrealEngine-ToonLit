@@ -189,7 +189,7 @@ public:
 			}
 			else
 			{
-				FPlatformProcess::Sleep(SleepTime.GetSeconds());
+				FPlatformProcess::Sleep(static_cast<float>(SleepTime.GetSeconds()));
 			}
 		}
 

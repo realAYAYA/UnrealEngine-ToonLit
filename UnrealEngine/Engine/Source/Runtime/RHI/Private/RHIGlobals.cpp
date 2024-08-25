@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "RHIGlobals.h"
+#include "RHIShaderPlatform.h"
 
 FRHIGlobals GRHIGlobals;
 

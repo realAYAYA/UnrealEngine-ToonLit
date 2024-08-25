@@ -332,7 +332,7 @@ void AddHairStrandsRasterPass(
 		ViewInfo->CachedViewUniformShaderParameters->ViewForward = SavedViewForward;
 	}
 
-	AddSimpleMeshPass(GraphBuilder, PassParameters, Scene, *ViewInfo, &InstanceCullingManager, GetPassName(RasterPassType), ViewportRect,
+	AddSimpleMeshPass(GraphBuilder, PassParameters, Scene, *ViewInfo, &InstanceCullingManager, GetPassName(RasterPassType), ViewportRect, false /*bAllowOverrideIndirectArgs*/,
 		[PassParameters, Scene = Scene, ViewInfo, RasterPassType, &PrimitiveSceneInfos, HairRenderInfo, HairRenderInfoBits, RasterDirection](FDynamicPassMeshDrawListContext* ShadowContext)
 	{
 		SCOPE_CYCLE_COUNTER(STAT_RenderPerObjectShadowDepthsTime);

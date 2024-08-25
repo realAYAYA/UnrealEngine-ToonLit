@@ -56,7 +56,7 @@ private:
 
 public:
 	/** The value of World.RealTimeSeconds as of the last time the client was marked as still alive */
-	float LastAliveTime;
+	double LastAliveTime;
 
 	/** A delegate property, used solely for converting strings to delegates */
 	UPROPERTY()

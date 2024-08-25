@@ -24,7 +24,8 @@ void UIKRigAnimInstance::SetProcessorNeedsInitialized()
 
 UIKRigProcessor* UIKRigAnimInstance::GetCurrentlyRunningProcessor()
 {
-	return IKRigNode.IKRigProcessor;
+	IKRigNode.CreateIKRigProcessorIfNeeded(this);
+	return IKRigNode.GetIKRigProcessor();
 }
 
 FAnimInstanceProxy* UIKRigAnimInstance::CreateAnimInstanceProxy()

@@ -15,6 +15,11 @@ enum class EAllowEditsMode : uint8;
 enum class EKeyGroupMode : uint8;
 enum class EMovieSceneKeyInterpolation : uint8;
 
+namespace UE::Sequencer
+{
+	enum class EViewDensity;
+}
+
 UENUM()
 enum ESequencerSpawnPosition : int
 {
@@ -35,7 +40,7 @@ enum ESequencerZoomPosition : int
 	SZP_MousePosition UMETA(DisplayName="Mouse Position"),
 };
 
-UENUM()
+UENUM(BlueprintType)
 enum ESequencerLoopMode : int
 {
 	/** No Looping. */
@@ -80,6 +85,33 @@ public:
 	}
 };
 
+/** Struct for storing reorderable and hidden/visible outliner columns */
+USTRUCT(BlueprintType)
+struct FColumnVisibilitySetting
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, Category=General)
+	FName ColumnName;
+
+	UPROPERTY(EditAnywhere, Category=General)
+	bool bIsVisible;
+
+	bool operator==(const FColumnVisibilitySetting& Other) const
+	{
+		return ColumnName == Other.ColumnName && bIsVisible == Other.bIsVisible;
+	}
+
+	FColumnVisibilitySetting(FName InColumnName, bool InbIsVisible)
+		: ColumnName(InColumnName)
+		, bIsVisible(InbIsVisible)
+	{}
+
+	FColumnVisibilitySetting()
+		: ColumnName(NAME_None)
+		, bIsVisible(false)
+	{}
+};
 
 /** Serializable options for sequencer. */
 UCLASS(config=EditorPerProjectUserSettings, PerObjectConfig)
@@ -255,9 +287,9 @@ public:
 	/** Set whether or not the cursor should be reset when navigating in and out of subsequences */
 	void SetResetPlayheadWhenNavigating(bool bInResetPlayheadWhenNavigating);
 
-	/** @return true if the cursor should be kept within the playback range while scrubbing in sequencer, false otherwise */
+	/** @return true if the cursor should be kept within the playback (or subsequence/shot) range while scrubbing in sequencer, false otherwise */
 	bool ShouldKeepCursorInPlayRangeWhileScrubbing() const;
-	/** Set whether or not the cursor should be kept within the playback range while scrubbing in sequencer */
+	/** Set whether or not the cursor should be kept within the playback (or subsequence/shot) range while scrubbing in sequencer */
 	void SetKeepCursorInPlayRangeWhileScrubbing(bool bInKeepCursorInPlayRangeWhileScrubbing);
 
 	/** @return true if the playback range should be synced to the section bounds, false otherwise */
@@ -295,10 +327,10 @@ public:
 	/** Set whether to show channel colors for the key bars */
 	void SetShowChannelColors(bool bInShowChannelColors);
 
-	/** @return true if showing status bar */
-	bool GetShowStatusBar() const;
-	/** Set whether to show status bar */
-	void SetShowStatusBar(bool bInShowStatusBar);
+	/** @return true if showing the info button in the playback controls */
+	bool GetShowInfoButton() const;
+	/** Set whether to show the info button in the playback controls */
+	void SetShowInfoButton(bool bInShowInfoButton);
 
 	/** @return true if showing tick lines */
 	bool GetShowTickLines() const;
@@ -410,15 +442,37 @@ public:
 	/** Sets whether or not to expand the outliner tree view when a child element is selected (from outside of the tree view). */
 	void SetAutoExpandNodesOnSelection(bool bInAutoExpandNodesOnSelection);
 
+
+	/**
+	 * Gets whether unlocking a camera cut track should return the viewport to its original location, or keep it where
+	 * the camera cut was.
+	 */
+	bool GetRestoreOriginalViewportOnCameraCutUnlock() const { return bRestoreOriginalViewportOnCameraCutUnlock; }
+	/**
+	 * Sets whether unlocking a camera cut track should return the viewport to its original location, or keep it where
+	 * the camera cut was.
+	 */
+	void SetRestoreOriginalViewportOnCameraCutUnlock(bool bInRestoreOriginalViewportOnCameraCutUnlock);
+
 	/** Gets the tree view width percentage */
 	float GetTreeViewWidth() const { return TreeViewWidth; }
 	/** Sets the tree view width percentage */
 	void SetTreeViewWidth(float InTreeViewWidth);
 
+	/** Gets the saved view density */
+	UE::Sequencer::EViewDensity GetViewDensity() const;
+	/** Sets the saved view density */
+	void SetViewDensity(FName InViewDensity);
+
 	/** Gets whether the given track filter is enabled */
 	bool IsTrackFilterEnabled(const FString& TrackFilter) const;
 	/** Sets whether the track filter should be enabled/disabled */
 	void SetTrackFilterEnabled(const FString& TrackFilter, bool bEnabled);
+
+	/** Get outliner column visibility in display order */
+	TArray<FColumnVisibilitySetting> GetOutlinerColumnSettings() const { return ColumnVisibilitySettings; }
+	/** Sets the visibility of outliner columns in display order */
+	void SetOutlinerColumnVisibility(const TArray<FColumnVisibilitySetting>& InColumnVisibilitySettings);
 
 protected:
 
@@ -584,9 +638,9 @@ protected:
 	UPROPERTY(config, EditAnywhere, Category = Timeline)
 	bool bShowChannelColors;
 
-	/** Enable or disable displaying the status bar for number of items. */
+	/** Enable or disable displaying the info button in the playback controls. */
 	UPROPERTY(config, EditAnywhere, Category = Timeline)
-	bool bShowStatusBar;
+	bool bShowInfoButton;
 
 	/** Enable or disable displaying the tick lines. */
 	UPROPERTY(config, EditAnywhere, Category = Timeline)
@@ -664,13 +718,28 @@ protected:
 	UPROPERTY(config, EditAnywhere, Category = General)
 	bool bAutoExpandNodesOnSelection;
 
+	/**
+	 * Whether unlocking a camera cut track should return the viewport to its original location, or keep it where the
+	 * camera cut was.
+	 * WARNING: Disabling this will make previewing camera cut blends useless, since it will blend to the same position.
+	 */
+	UPROPERTY(config, EditAnywhere, Category=General)
+	bool bRestoreOriginalViewportOnCameraCutUnlock;
+
 	/** The tree view width percentage */
 	UPROPERTY(config, EditAnywhere, Category = General)
 	float TreeViewWidth;
 
+	UPROPERTY(config, EditAnywhere, Category = General)
+	FName ViewDensity;
+
 	/** The track filters that are enabled */
 	UPROPERTY(config, EditAnywhere, Category = General)
 	TArray<FString> TrackFilters;
+
+	/** List of all columns and their visibility, in the order to be displayed in the outliner view */
+	UPROPERTY(config, EditAnywhere, Category = General)
+	TArray<FColumnVisibilitySetting> ColumnVisibilitySettings;
 
 	FOnEvaluateSubSequencesInIsolationChanged OnEvaluateSubSequencesInIsolationChangedEvent;
 	FOnShowSelectedNodesOnlyChanged OnShowSelectedNodesOnlyChangedEvent;

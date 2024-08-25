@@ -52,7 +52,7 @@ void VisualizeVolumetricLightmapVS(
 	Output.CellSphere.w = BrickOffsetAndSize.w * DetailVoxelWorldSize * VisualizationRadiusScale;
 	
 	{
-		float DistanceToCamera = length(Output.CellSphere.xyz - LWCHackToFloat(PrimaryView.WorldViewOrigin));
+		float DistanceToCamera = length(Output.CellSphere.xyz - DFHackToFloat(PrimaryView.WorldViewOrigin));
 		float SizeOnScreen = Output.CellSphere.w * View.ViewToClip[0][0] / DistanceToCamera;
 		Output.FadeToAmbient = saturate(SizeOnScreen * 100 - .01f);
 		// Maintain a minimum size on screen to reduce aliasing
@@ -67,7 +67,7 @@ void VisualizeVolumetricLightmapVS(
 	float2 RescaledTexCoord = TexCoord * Output.CellSphere.w * sqrt(2.0);
 
 	Output.VertexPosition = Output.CellSphere.xyz + RescaledTexCoord.x * View.ViewRight + RescaledTexCoord.y * View.ViewUp;
-	OutPosition = mul(float4(Output.VertexPosition, 1), LWCHackToFloat(PrimaryView.WorldToClip));
+	OutPosition = mul(float4(Output.VertexPosition, 1), DFHackToFloat(PrimaryView.WorldToClip));
 	
 	if (!bValidCell)
 	{
@@ -88,9 +88,9 @@ void VisualizeVolumetricLightmapPS(
 #endif
 )
 {
-	float3 RayDirection = Input.VertexPosition - LWCHackToFloat(PrimaryView.WorldViewOrigin);
-	float2 SphereIntersections = RayIntersectSphere(LWCHackToFloat(PrimaryView.WorldViewOrigin), RayDirection, Input.CellSphere);
-	float3 IntersectionPosition = LWCHackToFloat(PrimaryView.WorldViewOrigin) + SphereIntersections.x * RayDirection;
+	float3 RayDirection = Input.VertexPosition - DFHackToFloat(PrimaryView.WorldViewOrigin);
+	float2 SphereIntersections = RayIntersectSphere(DFHackToFloat(PrimaryView.WorldViewOrigin), RayDirection, Input.CellSphere);
+	float3 IntersectionPosition = DFHackToFloat(PrimaryView.WorldViewOrigin) + SphereIntersections.x * RayDirection;
 	clip(SphereIntersections.x);
 
 	FThreeBandSHVectorRGB IrradianceSH = GetVolumetricLightmapSH3(Input.BrickUVs);

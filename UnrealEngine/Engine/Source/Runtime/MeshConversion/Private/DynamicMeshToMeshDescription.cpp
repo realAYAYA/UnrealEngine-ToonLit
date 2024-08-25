@@ -711,14 +711,22 @@ void FDynamicMeshToMeshDescription::Convert_NoSharedInstances(const FDynamicMesh
 		FSkeletalMeshAttributes MeshOutAttributes(MeshOut);
 		MeshOutAttributes.Register();
 		MeshOutAttributes.RegisterColorAttribute();
+		
+		// If there was an attribute to map from the mesh description index to the imported mesh index, remove that
+		// now, since we don't carry this mapping over through the dynamic mesh.
+		MeshOutAttributes.UnregisterImportPointIndexAttribute();
 	}
 
 	if (bHasBones)
 	{
 		FSkeletalMeshAttributes MeshOutAttributes(MeshOut);
 		checkSlow(MeshOutAttributes.HasBones()); // FSkeletalMeshAttributes::Register() must have been called
+
+		
 		
 		const int32 NumBones = MeshIn->Attributes()->GetNumBones();
+
+		MeshOutAttributes.BoneAttributes();
 		MeshOutAttributes.ReserveNewBones(NumBones);
 
 		for (int Idx = 0; Idx < NumBones; ++Idx)
@@ -743,6 +751,7 @@ void FDynamicMeshToMeshDescription::Convert_NoSharedInstances(const FDynamicMesh
 			VertexBoneWeightsMap.Add(ProfileName, MeshOutAttributes.GetVertexSkinWeights(ProfileName));
 		}
 	}
+
 
 	// always copy when we are baking new mesh? should this be a config option?
 	bool bCopyInstanceColors = (ColorOverlay != nullptr); 

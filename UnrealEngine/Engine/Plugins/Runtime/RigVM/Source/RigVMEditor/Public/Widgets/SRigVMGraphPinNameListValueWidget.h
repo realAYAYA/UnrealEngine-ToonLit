@@ -9,6 +9,7 @@
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Views/SListView.h"
 #include "Widgets/Input/SComboBox.h"
+#include "EdGraph/RigVMEdGraph.h"
 
 /**
  * A searchable text combo box
@@ -17,10 +18,10 @@ class RIGVMEDITOR_API SRigVMGraphPinNameListValueWidget : public SComboButton
 {
 public:
 	/** Type of list used for showing menu options. */
-	typedef SListView< TSharedPtr<FString> > SComboListType;
+	typedef SListView< TSharedPtr<FRigVMStringWithTag> > SComboListType;
 	/** Delegate type used to generate widgets that represent Options */
-	typedef typename TSlateDelegates< TSharedPtr<FString> >::FOnGenerateWidget FOnGenerateWidget;
-	typedef typename TSlateDelegates< TSharedPtr<FString> >::FOnSelectionChanged FOnSelectionChanged;
+	typedef typename TSlateDelegates< TSharedPtr<FRigVMStringWithTag> >::FOnGenerateWidget FOnGenerateWidget;
+	typedef typename TSlateDelegates< TSharedPtr<FRigVMStringWithTag> >::FOnSelectionChanged FOnSelectionChanged;
 
 	SLATE_BEGIN_ARGS(SRigVMGraphPinNameListValueWidget)
 		: _Content()
@@ -41,7 +42,7 @@ public:
 
 		SLATE_ATTRIBUTE(FMargin, ContentPadding)
 
-		SLATE_ARGUMENT(const TArray< TSharedPtr<FString> >*, OptionsSource)
+		SLATE_ARGUMENT(const TArray< TSharedPtr<FRigVMStringWithTag> >*, OptionsSource)
 		SLATE_EVENT(FOnSelectionChanged, OnSelectionChanged)
 		SLATE_EVENT(FOnGenerateWidget, OnGenerateWidget)
 
@@ -52,7 +53,7 @@ public:
 		SLATE_ARGUMENT(TSharedPtr<SScrollBar>, CustomScrollbar)
 
 		/** The option that should be selected when the combo box is first created */
-		SLATE_ARGUMENT(TSharedPtr<FString>, InitiallySelectedItem)
+		SLATE_ARGUMENT(TSharedPtr<FRigVMStringWithTag>, InitiallySelectedItem)
 
 		SLATE_ARGUMENT(TOptional<EPopupMethod>, Method)
 
@@ -86,11 +87,11 @@ public:
 
 	void ClearSelection();
 
-	void SetSelectedItem(TSharedPtr<FString> InSelectedItem);
-	void SetOptionsSource(const TArray< TSharedPtr<FString> >* InOptionsSource);
+	void SetSelectedItem(TSharedPtr<FRigVMStringWithTag> InSelectedItem);
+	void SetOptionsSource(const TArray< TSharedPtr<FRigVMStringWithTag> >* InOptionsSource);
 
 	/** @return the item currently selected by the combo box. */
-	TSharedPtr<FString> GetSelectedItem();
+	TSharedPtr<FRigVMStringWithTag> GetSelectedItem();
 
 	/**
 	 * Requests a list refresh after updating options
@@ -102,13 +103,13 @@ public:
 private:
 
 	/** Generate a row for the InItem in the combo box's list (passed in as OwnerTable). Do this by calling the user-specified OnGenerateWidget */
-	TSharedRef<ITableRow> GenerateMenuItemRow(TSharedPtr<FString> InItem, const TSharedRef<STableViewBase>& OwnerTable);
+	TSharedRef<ITableRow> GenerateMenuItemRow(TSharedPtr<FRigVMStringWithTag> InItem, const TSharedRef<STableViewBase>& OwnerTable);
 
 	//** Called if the menu is closed
 	void OnMenuOpenChanged(bool bOpen);
 
 	/** Invoked when the selection in the list changes */
-	void OnSelectionChanged_Internal(TSharedPtr<FString> ProposedSelection, ESelectInfo::Type SelectInfo, bool bForce = false);
+	void OnSelectionChanged_Internal(TSharedPtr<FRigVMStringWithTag> ProposedSelection, ESelectInfo::Type SelectInfo, bool bForce = false);
 
 	/** Invoked when the search text changes */
 	void OnSearchTextChanged(const FText& ChangedText);
@@ -132,7 +133,7 @@ private:
 	/** Delegate that is invoked when the selected item in the combo box changes */
 	FOnSelectionChanged OnSelectionChanged;
 	/** The item currently selected in the combo box */
-	TSharedPtr<FString> SelectedItem;
+	TSharedPtr<FRigVMStringWithTag> SelectedItem;
 	/** The search field used for the combox box's contents */
 	TSharedPtr< SEditableTextBox > SearchField;
 	/** The ListView that we pop up; visualized the available options. */
@@ -144,7 +145,7 @@ private:
 	/** Delegate to invoke when we need to visualize an option as a widget. */
 	FOnGenerateWidget OnGenerateWidget;
 
-	const TArray< TSharedPtr<FString> >* OptionsSource;
+	const TArray< TSharedPtr<FRigVMStringWithTag> >* OptionsSource;
 	bool AllowUserProvidedText;
 
 	/** Used to focus the name box immediately following construction */

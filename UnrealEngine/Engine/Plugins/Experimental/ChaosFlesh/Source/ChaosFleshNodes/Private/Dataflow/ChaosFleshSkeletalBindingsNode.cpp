@@ -159,9 +159,9 @@ FGenerateSkeletalBindings::Evaluate(Dataflow::FContext& Context, const FDataflow
 						}
 					}
 				}
-				TetIndex.SetNum(CurrentIndex, false);
-				Weights.SetNum(CurrentIndex, false);
-				IndexKey.SetNum(CurrentIndex, false);
+				TetIndex.SetNum(CurrentIndex, EAllowShrinking::No);
+				Weights.SetNum(CurrentIndex, EAllowShrinking::No);
+				IndexKey.SetNum(CurrentIndex, EAllowShrinking::No);
 
 				UE_LOG(LogSkeletalBindings, Display,
 					   TEXT("'%s' - Generated mesh bindings between tet mesh index %d and skeletal mesh - stats:\n"

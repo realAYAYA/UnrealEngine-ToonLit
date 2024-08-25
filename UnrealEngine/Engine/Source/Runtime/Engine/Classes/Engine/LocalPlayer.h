@@ -238,7 +238,6 @@ private:
 
 public:
 	// UObject interface
-	ENGINE_API virtual void FinishDestroy() override;
 	static ENGINE_API void AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector);
 	// End of UObject interface
 
@@ -420,7 +419,14 @@ public:
 	 * @return False if an error occurred, true if the play actor was successfully spawned.	 
 	 */
 	ENGINE_API virtual bool SpawnPlayActor(const FString& URL,FString& OutError, UWorld* InWorld);
-	
+
+	DECLARE_DELEGATE(FOnPreBeginHandshakeCompleteDelegate);
+
+	/**
+	 * Allow local player to run any async tasks needed before starting travel to a server.
+	 */
+	virtual void PreBeginHandshake(const FOnPreBeginHandshakeCompleteDelegate& OnComplete) { OnComplete.ExecuteIfBound(); }
+
 	/** Send a splitscreen join command to the server to allow a splitscreen player to connect to the game
 	 * the client must already be connected to a server for this function to work
 	 * @note this happens automatically for all viewports that exist during the initial server connect

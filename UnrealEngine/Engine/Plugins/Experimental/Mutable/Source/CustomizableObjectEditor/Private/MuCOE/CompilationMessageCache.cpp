@@ -7,10 +7,10 @@ FCompilationMessageCache::FCompilationMessageCache()
 	ClearMessageCounters();
 }
 
-bool FCompilationMessageCache::AddMessage(const FText& InMessage, const TArray<const UCustomizableObjectNode*>& InArrayNode, EMessageSeverity::Type MessageSeverity /* = EMessageSeverity::Warning */, const ELoggerSpamBin SpamBin /*= ELoggerSpamBin::ShowAll*/)
+bool FCompilationMessageCache::AddMessage(const FText& InMessage, const TArray<const UObject*>& InContext, EMessageSeverity::Type MessageSeverity /* = EMessageSeverity::Warning */, const ELoggerSpamBin SpamBin /*= ELoggerSpamBin::ShowAll*/)
 {
 	// Skip message if an identical one has already been reported
-	const FLoggedMessage Cached = { InMessage, InArrayNode, MessageSeverity };
+	const FLoggedMessage Cached = { InMessage, InContext, MessageSeverity };
 	if (LoggedMessages.Contains(Cached))
 	{
 		return false;
@@ -100,7 +100,7 @@ void FCompilationMessageCache::ClearMessageCounters()
 	ErrorCount = 0;
 	IgnoredCount = 0;
 	SpamBinCounts.Empty();
-	SpamBinCounts.SetNumZeroed(static_cast<uint8>(ELoggerSpamBin::ShowAll), false);
+	SpamBinCounts.SetNumZeroed(static_cast<uint8>(ELoggerSpamBin::ShowAll), EAllowShrinking::No);
 }
 
 uint32 FCompilationMessageCache::GetWarningCount(bool bIncludePerformanceWarnings) const

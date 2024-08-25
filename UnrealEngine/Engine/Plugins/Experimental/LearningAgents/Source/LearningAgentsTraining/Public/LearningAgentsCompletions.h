@@ -2,258 +2,257 @@
 
 #pragma once
 
-#include "LearningArray.h"
-#include "LearningAgentsTrainer.h" // Required for ELearningAgentsCompletion::Termination
-#include "LearningAgentsDebug.h"
-
-#include "Templates/SharedPointer.h"
-#include "UObject/Object.h"
+#include "Kismet/BlueprintFunctionLibrary.h"
 
 #include "LearningAgentsCompletions.generated.h"
 
+class ULearningAgentsManagerListener;
+
 namespace UE::Learning
 {
-	struct FCompletionObject;
-	struct FConditionalCompletion;
-	struct FTimeElapsedCompletion;
-	struct FPlanarPositionDifferenceCompletion;
-	struct FPlanarPositionSimilarityCompletion;
+	enum class ECompletionMode : uint8;
 }
 
-// For functions in this file, we are favoring having more verbose names such as "AddConditionalCompletion" vs simply "Add" in 
-// order to keep it easy to find the correct function in blueprints.
-
-//------------------------------------------------------------------
-
-/**
- * The base class for all completions. Completions contain logic that determines if an agent's current episode should
- * end, e.g. because the agent achieved the normal win/loss condition for the game. Additionally, completions can speed
- * up training by ending episodes early if the agent has gotten into a state where training data is no longer useful,
- * e.g. the agent is stuck somewhere. These two modes of completions are expressed with the following enum values:
- *   ELearningAgentsCompletion::Termination - used when the episode ends in an expected way and no further rewards
- *       should be expected, i.e. do not use the value function to estimate future rewards.
- *   ELearningAgentsCompletion::Truncation - used when the episode ends in an unexpected way, mainly to speed up the 
- *       training process. The agent should expect additional rewards if training were to continue, so it should use
- *       its value function to estimate future rewards.
- */
-UCLASS(Abstract, BlueprintType)
-class LEARNINGAGENTSTRAINING_API ULearningAgentsCompletion : public UObject
+/** Completion modes for episodes. */
+UENUM(BlueprintType, Category = "LearningAgents", meta = (ScriptName = "LearningAgentsCompletionEnum"))
+enum class ELearningAgentsCompletion : uint8
 {
-	GENERATED_BODY()
+	/** Episode is still running. */
+	Running 	UMETA(DisplayName = "Running"),
 
-public:
+	/** Episode ended while in progress. Critic will be used to estimate final return. */
+	Truncation	UMETA(DisplayName = "Truncation"),
 
-	/** Reference to the Trainer this completion is associated with. */
-	UPROPERTY(VisibleAnywhere, Transient, Category = "LearningAgents")
-	TObjectPtr<ULearningAgentsTrainer> AgentTrainer;
-
-public:
-
-	/** Initialize the internal state for a given maximum number of agents */
-	void Init(const int32 MaxAgentNum);
-
-	/**
-	 * Called whenever agents are added to the associated ULearningAgentsTrainer object.
-	 * @param AgentIds Array of agent ids which have been added
-	 */
-	virtual void OnAgentsAdded(const TArray<int32>& AgentIds);
-
-	/**
-	 * Called whenever agents are removed from the associated ULearningAgentsTrainer object.
-	 * @param AgentIds Array of agent ids which have been removed
-	 */
-	virtual void OnAgentsRemoved(const TArray<int32>& AgentIds);
-
-	/**
-	 * Called whenever agents are reset on the associated ULearningAgentsTrainer object.
-	 * @param AgentIds Array of agent ids which have been reset
-	 */
-	virtual void OnAgentsReset(const TArray<int32>& AgentIds);
-
-	/** Get the number of times a completion has been set for the given agent id. */
-	uint64 GetAgentIteration(const int32 AgentId) const;
-
-public:
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Color used to draw this completion in the visual log */
-	FLinearColor VisualLogColor = FColor::Yellow;
-
-	/** Describes this completion to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const {}
-#endif
-
-protected:
-
-	/** Number of times this completion has been set for all agents */
-	TLearningArray<1, uint64, TInlineAllocator<32>> AgentIteration;
+	/** Episode ended and zero reward was expected for all future steps. */
+	Termination	UMETA(DisplayName = "Termination"),
 };
 
-//------------------------------------------------------------------
+namespace UE::Learning::Agents
+{
+	/** Get the learning agents completion from the UE::Learning completion. */
+	LEARNINGAGENTSTRAINING_API ELearningAgentsCompletion GetLearningAgentsCompletion(const ECompletionMode CompletionMode);
 
-/** A simple boolean completion. Used as a catch-all for situations where a more type-specific completion does not exist yet. */
-UCLASS()
-class LEARNINGAGENTSTRAINING_API UConditionalCompletion : public ULearningAgentsCompletion
+	/** Get the UE::Learning completion from the learning agents completion. */
+	LEARNINGAGENTSTRAINING_API ECompletionMode GetCompletionMode(const ELearningAgentsCompletion Completion);
+}
+
+UCLASS(BlueprintType)
+class LEARNINGAGENTSTRAINING_API ULearningAgentsCompletions : public UBlueprintFunctionLibrary
 {
 	GENERATED_BODY()
 
 public:
 
-	/**
-	 * Adds a new conditional completion to the given trainer. Call during ULearningAgentsTrainer::SetupCompletions event.
-	 * @param InAgentTrainer The trainer to add this completion to.
-	 * @param Name The name of this new completion. Used for debugging.
-	 * @param InCompletionMode The completion mode.
-	 * @return The newly created completion.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InAgentTrainer"))
-	static UConditionalCompletion* AddConditionalCompletion(ULearningAgentsTrainer* InAgentTrainer, const FName Name = NAME_None, const ELearningAgentsCompletion InCompletionMode = ELearningAgentsCompletion::Termination);
+	/** Returns true if a completion is running, otherwise false. */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents")
+	static bool IsCompletionRunning(const ELearningAgentsCompletion Completion);
+
+	/** Returns true if a completion is either truncated or terminated, otherwise false. */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents")
+	static bool IsCompletionCompleted(const ELearningAgentsCompletion Completion);
+
+	/** Returns true if a completion is truncated, otherwise false. */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents")
+	static bool IsCompletionTruncation(const ELearningAgentsCompletion Completion);
+
+	/** Returns true if a completion is terminated, otherwise false. */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents")
+	static bool IsCompletionTermination(const ELearningAgentsCompletion Completion);
+
+
+	/** Returns a termination if either input is a termination, otherwise a truncation if either input is a truncation, otherwise returns running. */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (CommutativeAssociativeBinaryOperator, DisplayName="Completion OR", CompactNodeTitle = "OR"))
+	static ELearningAgentsCompletion CompletionOr(ELearningAgentsCompletion A, ELearningAgentsCompletion B);
+
+	/** Returns a termination if both inputs are a termination, otherwise a truncation if both inputs are either a truncation or termination, otherwise returns running. */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (CommutativeAssociativeBinaryOperator, DisplayName = "Completion AND", CompactNodeTitle="AND"))
+	static ELearningAgentsCompletion CompletionAnd(ELearningAgentsCompletion A, ELearningAgentsCompletion B);
+
+	/** Returns running if the input A is either a termination or truncation, otherwise returns the completion specified by NotRunningType */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (DisplayName = "Completion NOT", CompactNodeTitle = "NOT"))
+	static ELearningAgentsCompletion CompletionNot(ELearningAgentsCompletion A, ELearningAgentsCompletion NotRunningType = ELearningAgentsCompletion::Termination);
 
 	/**
-	 * Sets the data for this completion. Call during ULearningAgentsTrainer::SetCompletions event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param bIsCompleted Pass in true if condition is met. Otherwise, false.
+	 * Make a completion.
+	 *
+	 * @param CompletionType The type of completion to make.
+	 * @param Tag The tag for the completion. Used for debugging.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this completion. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this completion.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The resulting completion.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetConditionalCompletion(const int32 AgentId, const bool bIsCompleted);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this completion to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FConditionalCompletion> CompletionObject;
-};
-
-//------------------------------------------------------------------
-
-/** A completion for if a given amount of time has elapsed. */
-UCLASS()
-class LEARNINGAGENTSTRAINING_API UTimeElapsedCompletion : public ULearningAgentsCompletion
-{
-	GENERATED_BODY()
-
-public:
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 1, DefaultToSelf = "VisualLoggerListener"))
+	static ELearningAgentsCompletion MakeCompletion(
+		const ELearningAgentsCompletion CompletionType = ELearningAgentsCompletion::Termination,
+		const FName Tag = TEXT("Completion"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Yellow);
 
 	/**
-	 * Adds a new time elapsed completion to the given trainer. Call during ULearningAgentsTrainer::SetupCompletions event.
-	 * @param InAgentTrainer The trainer to add this completion to.
-	 * @param Name The name of this new completion. Used for debugging.
-	 * @param Threshold How much time should be elapsed for the completion to trigger.
-	 * @param InCompletionMode The completion mode.
-	 * @return The newly created completion.
+	 * Make a completion based on some condition.
+	 *
+	 * @param bCondition When true, returns the given CompletionType, otherwise returns Running.
+	 * @param CompletionType The type of completion to make.
+	 * @param Tag The tag for the completion. Used for debugging.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this completion. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this completion.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The resulting completion.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InAgentTrainer"))
-	static UTimeElapsedCompletion* AddTimeElapsedCompletion(ULearningAgentsTrainer* InAgentTrainer, const FName Name = NAME_None, const float Threshold = 10.0f, const ELearningAgentsCompletion InCompletionMode = ELearningAgentsCompletion::Termination);
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2, DefaultToSelf = "VisualLoggerListener"))
+	static ELearningAgentsCompletion MakeCompletionOnCondition(
+		const bool bCondition, 
+		const ELearningAgentsCompletion CompletionType = ELearningAgentsCompletion::Termination,
+		const FName Tag = TEXT("ConditionCompletion"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Yellow);
 
 	/**
-	 * Sets the data for this completion. Call during ULearningAgentsTrainer::SetCompletions event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Time The amount of time that has passed
+	 * Make a completion when a time goes above a threshold.
+	 *
+	 * @param Time The current time.
+	 * @param TimeThreshold The time threshold above which to complete with the given CompletionType.
+	 * @param CompletionType The type of completion to make
+	 * @param Tag The tag for the completion. Used for debugging.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this completion. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this completion.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The resulting completion.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetTimeElapsedCompletion(const int32 AgentId, const float Time);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this completion to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FTimeElapsedCompletion> CompletionObject;
-};
-
-//------------------------------------------------------------------
-
-/**
- * A completion for if two positions differ by some threshold in a plane, e.g. if the agent gets too far from a
- * starting position.
- */
-UCLASS()
-class LEARNINGAGENTSTRAINING_API UPlanarPositionDifferenceCompletion : public ULearningAgentsCompletion
-{
-	GENERATED_BODY()
-
-public:
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3, DefaultToSelf = "VisualLoggerListener"))
+	static ELearningAgentsCompletion MakeCompletionOnTimeElapsed(
+		const float Time, 
+		const float TimeThreshold = 10.0f, 
+		const ELearningAgentsCompletion CompletionType = ELearningAgentsCompletion::Truncation,
+		const FName Tag = TEXT("TimeElapsedCompletion"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Yellow);
 
 	/**
-	 * Adds a new planar position difference completion to the given trainer. The axis parameters define the plane.
-	 * Call during ULearningAgentsTrainer::SetupCompletions event.
-	 * @param InAgentTrainer The trainer to add this completion to.
-	 * @param Name The name of this new completion. Used for debugging.
-	 * @param Threshold If the distance becomes greater than this threshold, then the episode will complete.
-	 * @param InCompletionMode The completion mode.
-	 * @param Axis0 The forward axis of the plane.
-	 * @param Axis1 The right axis of the plane.
-	 * @return The newly created completion.
+	 * Make a completion when the number of episode steps recorded exceeds some threshold.
+	 *
+	 * @param EpisodeSteps The number of steps recorded.
+	 * @param MaxEpisodeSteps The step threshold above which to complete with the given CompletionType.
+	 * @param CompletionType The type of completion to make
+	 * @param Tag The tag for the completion. Used for debugging.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this completion. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this completion.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The resulting completion.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InAgentTrainer"))
-	static UPlanarPositionDifferenceCompletion* AddPlanarPositionDifferenceCompletion(
-		ULearningAgentsTrainer* InAgentTrainer,
-		const FName Name = NAME_None,
-		const float Threshold = 100.0f,
-		const ELearningAgentsCompletion InCompletionMode = ELearningAgentsCompletion::Termination,
-		const FVector Axis0 = FVector::ForwardVector,
-		const FVector Axis1 = FVector::RightVector);
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3, DefaultToSelf = "VisualLoggerListener"))
+	static ELearningAgentsCompletion MakeCompletionOnEpisodeStepsRecorded(
+		const int32 EpisodeSteps, 
+		const int32 MaxEpisodeSteps = 64, 
+		const ELearningAgentsCompletion CompletionType = ELearningAgentsCompletion::Truncation,
+		const FName Tag = TEXT("EpisodeStepsRecordedCompletion"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Yellow);
 
 	/**
-	 * Sets the data for this completion. Call during ULearningAgentsTrainer::SetCompletions event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Position0 The first position.
-	 * @param Position1 The second position.
+	 * Make a completion when the distance between two locations is below some threshold.
+	 *
+	 * @param LocationA The first location.
+	 * @param LocationB The second location.
+	 * @param DistanceThreshold The distance threshold.
+	 * @param CompletionType The type of completion to make
+	 * @param Tag The tag for the completion. Used for debugging.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this completion. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this completion.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The resulting completion.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetPlanarPositionDifferenceCompletion(const int32 AgentId, const FVector Position0, const FVector Position1);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this completion to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FPlanarPositionDifferenceCompletion> CompletionObject;
-};
-
-/**
- * A completion for if two positions are near by some threshold in a plane, e.g. if the agent gets close to a position.
- */
-UCLASS()
-class LEARNINGAGENTSTRAINING_API UPlanarPositionSimilarityCompletion : public ULearningAgentsCompletion
-{
-	GENERATED_BODY()
-
-public:
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 4, DefaultToSelf = "VisualLoggerListener"))
+	static ELearningAgentsCompletion MakeCompletionOnLocationDifferenceBelowThreshold(
+		const FVector LocationA, 
+		const FVector LocationB, 
+		const float DistanceThreshold = 100.0f, 
+		const ELearningAgentsCompletion CompletionType = ELearningAgentsCompletion::Termination,
+		const FName Tag = TEXT("LocationDifferenceBelowThresholdCompletion"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Yellow);
 
 	/**
-	 * Adds a new planar position difference completion to the given trainer. The axis parameters define the plane.
-	 * Call during ULearningAgentsTrainer::SetupCompletions event.
-	 * @param InAgentTrainer The trainer to add this completion to.
-	 * @param Name The name of this new completion. Used for debugging.
-	 * @param Threshold If the distance becomes greater than this threshold, then the episode will complete.
-	 * @param InCompletionMode The completion mode.
-	 * @param Axis0 The forward axis of the plane.
-	 * @param Axis1 The right axis of the plane.
-	 * @return The newly created completion.
+	 * Make a completion when the distance between two locations is above some threshold.
+	 *
+	 * @param LocationA The first location.
+	 * @param LocationB The second location.
+	 * @param DistanceThreshold The distance threshold.
+	 * @param CompletionType The type of completion to make
+	 * @param Tag The tag for the completion. Used for debugging.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this completion. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this completion.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The resulting completion.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InAgentTrainer"))
-	static UPlanarPositionSimilarityCompletion* AddPlanarPositionSimilarityCompletion(
-		ULearningAgentsTrainer* InAgentTrainer,
-		const FName Name = NAME_None,
-		const float Threshold = 100.0f,
-		const ELearningAgentsCompletion InCompletionMode = ELearningAgentsCompletion::Termination,
-		const FVector Axis0 = FVector::ForwardVector,
-		const FVector Axis1 = FVector::RightVector);
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 4, DefaultToSelf = "VisualLoggerListener"))
+	static ELearningAgentsCompletion MakeCompletionOnLocationDifferenceAboveThreshold(
+		const FVector LocationA, 
+		const FVector LocationB, 
+		const float DistanceThreshold = 100.0f, 
+		const ELearningAgentsCompletion CompletionType = ELearningAgentsCompletion::Termination,
+		const FName Tag = TEXT("LocationDifferenceAboveThresholdCompletion"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Yellow);
 
 	/**
-	 * Sets the data for this completion. Call during ULearningAgentsTrainer::SetCompletions event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Position0 The first position.
-	 * @param Position1 The second position.
+	 * Make a completion when a location moves outside of sound bounds.
+	 *
+	 * @param Location The location.
+	 * @param BoundsTransform The transform of the bounds object.
+	 * @param BoundsMins The minimums of the bounds object.
+	 * @param BoundsMaxs The maximums of the bounds object.
+	 * @param CompletionType The type of completion to make
+	 * @param Tag The tag for the completion. Used for debugging.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this completion. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this completion.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The resulting completion.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetPlanarPositionSimilarityCompletion(const int32 AgentId, const FVector Position0, const FVector Position1);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this completion to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FPlanarPositionSimilarityCompletion> CompletionObject;
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 5, DefaultToSelf = "VisualLoggerListener"))
+	static ELearningAgentsCompletion MakeCompletionOnLocationOutsideBounds(
+		const FVector Location, 
+		const FTransform BoundsTransform = FTransform(),
+		const FVector BoundsMins = FVector(-100.0f, -100.0f, -100.0f),
+		const FVector BoundsMaxs = FVector(+100.0f, +100.0f, +100.0f),
+		const ELearningAgentsCompletion CompletionType = ELearningAgentsCompletion::Termination,
+		const FName Tag = TEXT("LocationOutsideBoundsCompletion"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Yellow);
 };

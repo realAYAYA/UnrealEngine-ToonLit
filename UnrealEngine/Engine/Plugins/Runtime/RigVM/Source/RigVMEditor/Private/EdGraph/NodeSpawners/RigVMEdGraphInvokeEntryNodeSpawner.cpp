@@ -65,7 +65,6 @@ UEdGraphNode* URigVMEdGraphInvokeEntryNodeSpawner::Invoke(UEdGraph* ParentGraph,
 	URigVMEdGraphNode* NewNode = nullptr;
 
 	bool const bIsTemplateNode = FBlueprintNodeTemplateCache::IsTemplateOuter(ParentGraph);
-	bool const bIsUserFacingNode = !bIsTemplateNode;
 
 	// First create a backing member for our node
 	URigVMEdGraph* RigGraph = Cast<URigVMEdGraph>(ParentGraph);
@@ -80,13 +79,6 @@ UEdGraphNode* URigVMEdGraphInvokeEntryNodeSpawner::Invoke(UEdGraph* ParentGraph,
 	}
 #endif
 
-	URigVMController* Controller = bIsTemplateNode ? RigGraph->GetTemplateController() : RigBlueprint->GetController(ParentGraph);
-
-	if (bIsUserFacingNode)
-	{
-		Controller->OpenUndoBracket(TEXT("Add Run Event"));
-	}
-
 	FString NodeName;
 	if(bIsTemplateNode)
 	{
@@ -94,9 +86,20 @@ UEdGraphNode* URigVMEdGraphInvokeEntryNodeSpawner::Invoke(UEdGraph* ParentGraph,
 		// we need to create a unique here.
 		static constexpr TCHAR InvokeEntryNodeNameFormat[] = TEXT("InvokeEntryNode_%s");
 		NodeName = FString::Printf(InvokeEntryNodeNameFormat, *EntryName.ToString());
+
+		TArray<FPinInfo> Pins;
+
+		static UScriptStruct* ExecuteScriptStruct = FRigVMExecuteContext::StaticStruct();
+		static const FName ExecuteStructName = *ExecuteScriptStruct->GetStructCPPName();
+		Pins.Emplace(FRigVMStruct::ExecuteName, ERigVMPinDirection::IO, ExecuteStructName, ExecuteScriptStruct);
+
+		return SpawnTemplateNode(ParentGraph, Pins, *NodeName);
 	}
 
-	if (URigVMNode* ModelNode = Controller->AddInvokeEntryNode(EntryName, Location, NodeName, !bIsTemplateNode, !bIsTemplateNode))
+	URigVMController* Controller = RigBlueprint->GetController(ParentGraph);
+	Controller->OpenUndoBracket(TEXT("Add Run Event"));
+
+	if (URigVMNode* ModelNode = Controller->AddInvokeEntryNode(EntryName, Location, NodeName, true, true))
 	{
 		for (UEdGraphNode* Node : ParentGraph->Nodes)
 		{
@@ -110,32 +113,37 @@ UEdGraphNode* URigVMEdGraphInvokeEntryNodeSpawner::Invoke(UEdGraph* ParentGraph,
 			}
 		}
 
-		if (bIsUserFacingNode)
+		if (NewNode)
 		{
-			if (NewNode)
-			{
-				Controller->ClearNodeSelection(true);
-				Controller->SelectNode(ModelNode, true, true);
-			}
-			Controller->CloseUndoBracket();
+			Controller->ClearNodeSelection(true);
+			Controller->SelectNode(ModelNode, true, true);
 		}
-		else
-		{
-			// similar to UBlueprintNodeSpawner::Invoke -> UBlueprintNodeSpawner::SpawnEdGraphNode
-			// we simply want the node, but not actually adding it to a graph
-			Controller->RemoveNode(ModelNode, false);
-		}
+		Controller->CloseUndoBracket();
 	}
 	else
 	{
-		if (!bIsTemplateNode)
-		{
-			Controller->CancelUndoBracket();
-		}
+		Controller->CancelUndoBracket();
 	}
 
 
 	return NewNode;
+}
+
+bool URigVMEdGraphInvokeEntryNodeSpawner::IsTemplateNodeFilteredOut(FBlueprintActionFilter const& Filter) const
+{
+	if(URigVMEdGraphNodeSpawner::IsTemplateNodeFilteredOut(Filter))
+	{
+		return true;
+	}
+
+	if (Blueprint.IsValid())
+	{
+		if (!Filter.Context.Blueprints.Contains(Blueprint.Get()))
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 #undef LOCTEXT_NAMESPACE

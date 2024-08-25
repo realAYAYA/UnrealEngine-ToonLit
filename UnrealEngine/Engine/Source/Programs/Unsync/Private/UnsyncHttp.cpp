@@ -4,6 +4,7 @@
 #include "UnsyncCore.h"
 #include "UnsyncUtil.h"
 #include "UnsyncRemote.h"
+#include "UnsyncAuth.h"
 
 #include <http_parser.h>
 #include <string.h>
@@ -42,8 +43,13 @@ struct FHttpParser
 {
 	static FHttpParser* ToThis(http_parser* Parser) { return (FHttpParser*)(Parser->data); }
 
-	FHttpParser(HttpMessageCallback InResponseCallback, uint8* InScratchBuffer, uint64 InScratchSize, http_parser_type Type)
+	FHttpParser(HttpMessageCallback InResponseCallback,
+				uint8*				InScratchBuffer,
+				uint64				InScratchSize,
+				http_parser_type	Type,
+				EHttpMethod			InMethod)
 	: ResponseCallback(InResponseCallback)
+	, Method(InMethod)
 	, ScratchBuffer(InScratchBuffer)
 	, ScratchSize(InScratchSize)
 	{
@@ -111,7 +117,8 @@ struct FHttpParser
 
 		if (MatchUncased(PendingHeader, "content-length"))
 		{
-			ContentLength = atoi(Data);
+			ContentLength		   = strtoull(Data, nullptr, 10);
+			Response.ContentLength = uint64(ContentLength);
 			Response.Buffer.Reserve(ContentLength);
 		}
 		else if (MatchUncased(PendingHeader, "content-type"))
@@ -127,6 +134,10 @@ struct FHttpParser
 			else if (MatchUncased(PendingValue, "application/x-ue-cb"))
 			{
 				Response.ContentType = EHttpContentType::Application_UECB;
+			}
+			else if (MatchUncased(PendingValue, "application/x-www-form-urlencoded"))
+			{
+				Response.ContentType = EHttpContentType::Application_WWWFormUrlEncoded;
 			}
 			else if (MatchUncased(PendingValue, "text/html"))
 			{
@@ -145,7 +156,14 @@ struct FHttpParser
 		Response.Code	= Parser.status_code;
 		bHeaderComplete = true;
 
-		return 0;
+		if (Method == EHttpMethod::HEAD)
+		{
+			return 1;
+		}
+		else
+		{
+			return 0;
+		}
 	}
 
 	int OnStatus(const char* Data, size_t Size) { return 0; }
@@ -198,6 +216,8 @@ struct FHttpParser
 	HttpMessageCallback ResponseCallback;
 	FHttpResponse		Response;
 
+	EHttpMethod Method = EHttpMethod::GET;
+
 	http_parser_settings Settings;
 	http_parser			 Parser;
 
@@ -211,7 +231,7 @@ struct FHttpParser
 	std::string_view PendingHeader = {};
 	std::string_view PendingValue  = {};
 
-	int32 ContentLength = 0;
+	uint64 ContentLength = 0;
 
 	uint64 TotalReceivedBytes = 0;
 	uint64 TotalParsedBytes	  = 0;
@@ -235,10 +255,11 @@ HttpRequest(const FRemoteDesc& RemoteDesc,
 			EHttpMethod		   Method,
 			std::string_view   RequestUrl,
 			EHttpContentType   PayloadContentType,
-			FBufferView		   Payload)
+			FBufferView		   Payload,
+			std::string_view   BearerToken)
 {
 	FTlsClientSettings TlsSettings = RemoteDesc.GetTlsClientSettings();
-	FHttpConnection	   Connection(RemoteDesc.HostAddress, RemoteDesc.HostPort, RemoteDesc.bTlsEnable ? &TlsSettings : nullptr);
+	FHttpConnection	   Connection(RemoteDesc.Host.Address, RemoteDesc.Host.Port, RemoteDesc.bTlsEnable ? &TlsSettings : nullptr);
 
 	FHttpRequest Request;
 
@@ -247,6 +268,7 @@ HttpRequest(const FRemoteDesc& RemoteDesc,
 	Request.Url				   = RequestUrl;
 	Request.PayloadContentType = PayloadContentType;
 	Request.Payload			   = Payload;
+	Request.BearerToken		   = BearerToken;
 
 	FHttpResponse Response = HttpRequest(Connection, Request);
 
@@ -254,9 +276,9 @@ HttpRequest(const FRemoteDesc& RemoteDesc,
 }
 
 FHttpResponse
-HttpRequest(const FRemoteDesc& RemoteDesc, EHttpMethod Method, std::string_view RequestUrl)
+HttpRequest(const FRemoteDesc& RemoteDesc, EHttpMethod Method, std::string_view RequestUrl, std::string_view BearerToken)
 {
-	return HttpRequest(RemoteDesc, Method, RequestUrl, EHttpContentType::Unknown, {});
+	return HttpRequest(RemoteDesc, Method, RequestUrl, EHttpContentType::Unknown, /*Payload*/ {}, BearerToken);
 }
 
 bool
@@ -268,6 +290,14 @@ HttpRequestBegin(FHttpConnection& Connection, const FHttpRequest& Request)
 		return false;
 	}
 
+	if (Connection.NumActiveRequests > 0 && Connection.Method != Request.Method)
+	{
+		UNSYNC_ERROR(L"HTTP connection must not have outstanding requests when request method is changed");
+		return false;
+	}
+
+	Connection.Method = Request.Method;
+
 	// TODO: use a string builder
 	std::string HttpHeader;
 	switch (Request.Method)
@@ -278,9 +308,9 @@ HttpRequestBegin(FHttpConnection& Connection, const FHttpRequest& Request)
 		case EHttpMethod::GET:
 			HttpHeader = "GET ";
 			break;
-			// 	case HttpMethod::HEAD: // < TODO: support requests that don't return a body
-			// 		http_header = "HEAD";
-			// 		break;
+		case EHttpMethod::HEAD:
+			HttpHeader = "HEAD ";
+			break;
 		case EHttpMethod::POST:
 			HttpHeader = "POST ";
 			break;
@@ -300,6 +330,13 @@ HttpRequestBegin(FHttpConnection& Connection, const FHttpRequest& Request)
 		{
 			HttpHeader += "\r\n";
 		}
+	}
+
+	if (!Request.BearerToken.empty())
+	{
+		HttpHeader += "Authorization: Bearer ";
+		HttpHeader += Request.BearerToken;
+		HttpHeader += "\r\n";
 	}
 
 	HttpHeader += "Host: " + Connection.HostAddress + "\r\n";
@@ -326,6 +363,9 @@ HttpRequestBegin(FHttpConnection& Connection, const FHttpRequest& Request)
 				break;
 			case EHttpContentType::Application_UECB:
 				HttpHeader += "Content-type: application/x-ue-cb\r\n";
+				break;
+			case EHttpContentType::Application_WWWFormUrlEncoded:
+				HttpHeader += "Content-type: application/x-www-form-urlencoded\r\n";
 				break;
 			case EHttpContentType::Application_Json:
 				HttpHeader += "Content-type: application/json\r\n";
@@ -422,7 +462,7 @@ HttpRequestEnd(FHttpConnection& Connection)
 	// TODO: user-provided scratch buffer
 	uint8 ScratchBuffer[256_KB];
 	ScratchBuffer[0] = 0;
-	FHttpParser Parser(MessageCallback, ScratchBuffer, sizeof(ScratchBuffer), HTTP_RESPONSE);
+	FHttpParser Parser(MessageCallback, ScratchBuffer, sizeof(ScratchBuffer), HTTP_RESPONSE, Connection.Method);
 
 	while (!Parser.bComplete)
 	{
@@ -451,12 +491,21 @@ FHttpConnection::FHttpConnection(const std::string_view InHostAddress, uint16 In
 {
 	if (InTlsSettings)
 	{
-		TlsSubject			  = InTlsSettings->Subject ? InTlsSettings->Subject : std::string();
+		if (InTlsSettings->Subject.empty())
+		{
+			TlsSubject = std::string(InHostAddress);
+		}
+		else
+		{
+			TlsSubject = std::string(InTlsSettings->Subject);
+		}
+
 		bTlsVerifyCertificate = InTlsSettings->bVerifyCertificate;
-		if (InTlsSettings->CacertData)
+		bTlsVerifySubject	  = InTlsSettings->bVerifySubject;
+		if (InTlsSettings->CACert.Data)
 		{
 			TlsCacert = std::make_shared<FBuffer>();
-			TlsCacert->Append(InTlsSettings->CacertData, InTlsSettings->CacertSize);
+			TlsCacert->Append(InTlsSettings->CACert.Data, InTlsSettings->CACert.Size);
 		}
 	}
 }
@@ -466,10 +515,32 @@ FHttpConnection::FHttpConnection(const FHttpConnection& Other)
 , HostPort(Other.HostPort)
 , bUseTls(Other.bUseTls)
 , bKeepAlive(Other.bKeepAlive)
+, bTlsVerifySubject(Other.bTlsVerifySubject)
 , TlsSubject(Other.TlsSubject)
 , bTlsVerifyCertificate(Other.bTlsVerifyCertificate)
 , TlsCacert(Other.TlsCacert)
 {
+}
+
+FHttpConnection
+FHttpConnection::CreateDefaultHttp(const std::string_view InHostAddress, uint16 Port)
+{
+	return FHttpConnection(InHostAddress, Port, nullptr);
+}
+
+FHttpConnection
+FHttpConnection::CreateDefaultHttps(const std::string_view InHostAddress, uint16 Port)
+{
+	FTlsClientSettings TlsSettings;
+	TlsSettings.Subject = InHostAddress.data();
+	return FHttpConnection(InHostAddress, Port, &TlsSettings);
+}
+
+FHttpConnection
+FHttpConnection::CreateDefaultHttps(const FRemoteDesc& RemoteDesc)
+{
+	FTlsClientSettings TlsSettings = RemoteDesc.GetTlsClientSettings();
+	return FHttpConnection(RemoteDesc.Host.Address, RemoteDesc.Host.Port, &TlsSettings);
 }
 
 bool
@@ -485,26 +556,21 @@ FHttpConnection::Open()
 
 	FSocketHandle RawSocketHandle = SocketConnectTcp(HostAddress.c_str(), HostPort);
 
-	if (RawSocketHandle < 0)
+	if (RawSocketHandle == InvalidSocketHandle)
 	{
 		return false;
 	}
 
 	if (bUseTls)
 	{
-#if UNSYNC_USE_TLS
 		FTlsClientSettings ClientSettings;
 		ClientSettings.bVerifyCertificate = bTlsVerifyCertificate;
-
-		if (bTlsVerifyCertificate && !TlsSubject.empty())
-		{
-			ClientSettings.Subject = TlsSubject.c_str();
-		}
+		ClientSettings.bVerifySubject	  = bTlsVerifySubject;
+		ClientSettings.Subject			  = TlsSubject;
 
 		if (TlsCacert && !TlsCacert->Empty())
 		{
-			ClientSettings.CacertData = TlsCacert->Data();
-			ClientSettings.CacertSize = TlsCacert->Size();
+			ClientSettings.CACert = TlsCacert->View();
 		}
 
 		FSocketTls* TlsSocket = new FSocketTls(RawSocketHandle, ClientSettings);
@@ -516,9 +582,6 @@ FHttpConnection::Open()
 		{
 			delete TlsSocket;
 		}
-#else	// UNSYNC_USE_TLS
-		UNSYNC_ERROR(L"Unsync is not compiled with TLS support");
-#endif	// UNSYNC_USE_TLS
 	}
 	else
 	{

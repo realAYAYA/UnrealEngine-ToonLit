@@ -9,6 +9,8 @@ using System.Text;
 using System.Text.RegularExpressions;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using UnrealBuildBase;
+
 
 #pragma warning disable SYSLIB0014
 
@@ -37,6 +39,9 @@ namespace AutomationTool.DeviceReservation
 
 		private Reservation ActiveReservation;
 		private List<Device> ReservedDevices;
+
+		// Whether the reservation requires an installation
+		public bool? InstallRequired => ActiveReservation?.InstallRequired;
 
 		public IReadOnlyList<Device> Devices
 		{
@@ -244,6 +249,7 @@ namespace AutomationTool.DeviceReservation
 		public TimeSpan Duration { get; set; }
 		public Guid Guid { get; set; }
 		public static string ReservationDetails = "";
+		public bool? InstallRequired { get; set; } = null;
 
 		private sealed class CreateReservationData
 		{
@@ -280,7 +286,7 @@ namespace AutomationTool.DeviceReservation
 					return Utils.InvokeAPI<Reservation>(BaseUri.AppendPath("api/v1/reservations"), "POST", new CreateReservationData()
 					{
 						DeviceTypes = DeviceTypes,
-						Hostname = Environment.MachineName,
+						Hostname = Unreal.MachineName,
 						Duration = Duration,
 						ReservationDetails = ReservationDetails,
 						PoolId = PoolID,

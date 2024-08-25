@@ -225,6 +225,20 @@ namespace AutomationTool
 		public string Path;
 	}
 
+	public class P4HaveRecord
+	{
+		public string DepotFile;
+		public string ClientFile;
+		public int    Revision;
+
+		public P4HaveRecord(string DepotFile, string ClientFile, int Revision)
+		{
+			this.DepotFile = DepotFile;
+			this.ClientFile = ClientFile;
+			this.Revision = Revision;
+		}
+	}
+
 	public class P4Spec
 	{
 		public List<KeyValuePair<string, string>> Sections;
@@ -2231,6 +2245,16 @@ namespace AutomationTool
 		}
 
 		/// <summary>
+		/// Invokes p4 add command with a list of files.
+		/// </summary>
+		/// <param name="CL">Changelist where the checked out files should be added.</param>
+		/// <param name="Files">The list of files to add.</param>
+		public void Add(int CL, List<string> Files, bool AllowSpew = true)
+		{
+			BatchedCommand($"add -c {CL}", Files, AllowSpew: AllowSpew);
+		}
+
+		/// <summary>
 		/// Invokes p4 delete command.
 		/// </summary>
 		/// <param name="CL">Changelist where the files should be added to.</param>
@@ -2238,6 +2262,16 @@ namespace AutomationTool
 		public void Delete(int CL, string CommandLine)
 		{
 			LogP4("", "delete " + String.Format("-c {0} ", CL) + CommandLine);
+		}
+
+		/// <summary>
+		/// Invokes p4 delete command with a list of files.
+		/// </summary>
+		/// <param name="CL">Changelist where the checked out files should be added.</param>
+		/// <param name="Files">List of files to be deleted.</param>
+		public void Delete(int CL, List<string> Files, bool AllowSpew = true)
+		{
+			BatchedCommand($"delete -c {CL}", Files, AllowSpew: AllowSpew);
 		}
 
 		/// <summary>
@@ -4072,6 +4106,58 @@ namespace AutomationTool
 			return Records;
 		}
 
+		static readonly Regex HaveFilesOutputPattern = new Regex(@"(?<depot>.+)#(?<revision>\d+) - (?<client>.+)", RegexOptions.Compiled);
+
+		/// <summary>
+		/// Get a information about synced files (p4 have) matching the given pattern.
+		/// The information for each file includes the local path, depot path and the synced revision number.
+		/// </summary>
+		/// <param name="Pattern">Local or depot path e.g. .../Source/...</param>
+		/// <returns>Collection of information about synced files.</returns>
+		public List<P4HaveRecord> HaveFiles(string Pattern)
+		{
+			List<P4HaveRecord> Files = new ();
+
+			string CommandToRun = $"have \"{Pattern}\"";
+			string CommandLine  = $"{GlobalOptions} {CommandToRun}";
+
+			// We run the process manually because 'p4 have' may generate a very long output (even hundreds of MB)
+			// and gathering all of this into a single string is wasteful. Instead, we process the output line by line
+			// as it arrives. Neither P4Output nor CommandUtils.Run allow achieving this.
+			Process Process = new Process();
+
+			Process.StartInfo.FileName = HostPlatform.Current.P4Exe;
+			Process.StartInfo.Arguments = CommandLine;
+			Process.StartInfo.UseShellExecute = false;
+			Process.StartInfo.RedirectStandardOutput = true;
+			Process.StartInfo.StandardOutputEncoding = Encoding.UTF8;
+			Process.StartInfo.RedirectStandardError = false;
+			Process.StartInfo.RedirectStandardInput = false;
+			Process.StartInfo.CreateNoWindow = true;
+			Process.OutputDataReceived += (s, e) =>
+			{
+				if (e.Data != null)
+				{
+					Match Match = HaveFilesOutputPattern.Match(e.Data);
+
+					if (Match.Success)
+					{
+						Files.Add(new P4HaveRecord(Match.Groups["depot"].Value, Match.Groups["client"].Value, Int32.Parse(Match.Groups["revision"].Value)));
+					}
+				}
+			};
+			Process.Start();
+			Process.BeginOutputReadLine();
+			Process.WaitForExit();
+
+			if (Process.ExitCode != 0)
+			{
+				throw new P4Exception($"p4.exe {CommandLine} failed with code {Process.ExitCode}.");
+			}
+
+			return Files;
+		}
+
 		/// <summary>
 		/// Parse a nullable boolean
 		/// </summary>
@@ -4333,6 +4419,28 @@ namespace AutomationTool
 				Text = "+" + Text;
 			}
 			return Text;
+		}
+
+		public bool CheckClientHasPendingChanges(string P4Client = null)
+		{
+			if (P4Client == null)
+			{
+				P4Client = P4Env.Client;
+			}
+
+			if (String.IsNullOrEmpty(P4Client))
+			{
+				Logger.LogWarning("No Perforce client found.");
+				return false;
+			}
+
+			List<ChangeRecord> PendingChanges;
+			string P4GetPendingChangesArgs = $"-s pending -c {P4Client}";
+
+			Logger.LogInformation("Checking for pending changes...");
+			Changes(out PendingChanges, P4GetPendingChangesArgs);
+
+			return PendingChanges.Count > 0;
 		}
 	}
 }

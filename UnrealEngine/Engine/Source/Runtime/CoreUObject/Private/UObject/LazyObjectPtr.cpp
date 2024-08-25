@@ -158,10 +158,11 @@ void FLazyObjectPtr::PossiblySerializeObjectGuid(UObject *Object, FStructuredArc
 						{
 							if (!bReassigning)
 							{
-								// Always warn for non-map packages, skip map packages in PIE or game
+								// Always warn for non-map packages, skip map packages in PIE, game, or when editor only. Editor-only maps are usually instances, and do not affect the game.
 								const bool bInGame = FApp::IsGame() || Package->HasAnyPackageFlags(PKG_PlayInEditor);
+								const bool bIsMapOrMapData = Package->ContainsMap() || Package->HasAnyPackageFlags(PKG_ContainsMapData);
 
-								UE_CLOG(!Package->ContainsMap() || !bInGame, LogUObjectGlobals, Warning,
+								UE_CLOG(!bIsMapOrMapData || (!bInGame && !Package->HasAnyPackageFlags(PKG_EditorOnly)), LogUObjectGlobals, Warning,
 									TEXT("Guid referenced by %s is already used by %s, which should never happen in the editor but could happen at runtime with duplicate level loading or PIE"),
 									*Object->GetFullName(), *OtherObject->GetFullName());
 							}
@@ -177,7 +178,6 @@ void FLazyObjectPtr::PossiblySerializeObjectGuid(UObject *Object, FStructuredArc
 					{
 						GuidAnnotation.AddAnnotation(Object, Guid);
 					}
-					FUniqueObjectGuid::InvalidateTag();
 				}
 			}
 		}

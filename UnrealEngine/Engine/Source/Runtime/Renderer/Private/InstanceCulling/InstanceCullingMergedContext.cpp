@@ -30,11 +30,10 @@ void FInstanceCullingMergedContext::MergeBatches()
 	CompactionBlockDataIndices.Empty(TotalCompactionBlocks);
 
 	BatchInfos.Reserve(Batches.Num());
-	uint32 InstanceIdBufferOffset = 0U;
+	uint32 InstanceIdBufferOffset = 0U; // in buffer elements
 	uint32 InstanceDataByteOffset = 0U;
 	uint32 TempCompactionInstanceOffset = 0U;
-	const uint32 InstanceIdBufferStride = FInstanceCullingContext::GetInstanceIdBufferStride(FeatureLevel);
-
+	
 	// Index that maps from each command to the corresponding batch - maybe not the utmost efficiency
 	for (int32 BatchIndex = 0; BatchIndex < Batches.Num(); ++BatchIndex)
 	{
@@ -49,9 +48,8 @@ void FInstanceCullingMergedContext::MergeBatches()
 
 		BatchInfo.IndirectArgsOffset = IndirectArgs.Num();
 		//BatchInfo.NumIndirectArgs = InstanceCullingContext.IndirectArgs.Num();
-		IndirectArgs.Append(InstanceCullingContext.IndirectArgs);
-
 		check(InstanceCullingContext.DrawCommandDescs.Num() == InstanceCullingContext.IndirectArgs.Num());
+		IndirectArgs.Append(InstanceCullingContext.IndirectArgs);
 		DrawCommandDescs.Append(InstanceCullingContext.DrawCommandDescs);
 
 		BatchInfo.PayloadDataOffset = PayloadData.Num();
@@ -123,8 +121,8 @@ void FInstanceCullingMergedContext::MergeBatches()
 		TempCompactionInstanceOffset += InstanceCullingContext.NumCompactionInstances;
 
 		// Advance offset into instance ID and per-instance buffer
-		InstanceIdBufferOffset += BatchTotalInstances;
-		InstanceDataByteOffset += FInstanceCullingContext::StepInstanceDataOffset(FeatureLevel, BatchTotalInstances, BatchTotalDraws) * InstanceIdBufferStride;
+		InstanceIdBufferOffset += InstanceCullingContext.GetInstanceIdNumElements();
+		InstanceDataByteOffset += InstanceCullingContext.StepInstanceDataOffsetBytes(BatchTotalDraws);
 	}
 }
 
@@ -183,7 +181,7 @@ void FInstanceCullingMergedContext::AddBatchItem(const FBatchItem& BatchItem)
 		TotalIndirectArgs += Context->IndirectArgs.Num();
 		TotalPayloads += Context->PayloadData.Num();
 		TotalViewIds += Context->ViewIds.Num();
-		InstanceIdBufferSize += Context->TotalInstances * Context->ViewIds.Num();
+		InstanceIdBufferElements += Context->GetInstanceIdNumElements();
 		TotalInstances += Context->TotalInstances;
 		TotalCompactionDrawCommands += Context->DrawCommandCompactionData.Num();
 		TotalCompactionBlocks += Context->CompactionBlockDataIndices.Num();

@@ -540,13 +540,38 @@ void FArrayPropertyNetSerializer::Dequantize(FNetSerializationContext& Context, 
 	ElementArgs.Source = NetSerializerValuePointer(SourceArray.ElementStorage);
 	ElementArgs.Target = 0;
 
+	const FNetBitArrayView* ChangeMask = Args.ChangeMaskInfo.BitCount > 1U ? Context.GetChangeMask() : nullptr;
+
 	const FNetSerializer* ElementSerializer = ElementSerializerDescriptor.Serializer;
 	const uint32 ElementSize = ElementStateDescriptor->InternalSize;
-	for (uint32 ElementIt = 0, ElementEndIt = ElementCount; ElementIt < ElementEndIt; ++ElementIt)
+
+	// Currently we do not support partial dequantize using changemask for array properties due to complexities elsewhere (FastArrayReplicationFragment and PropertyReplicationState::ApplyState)
+	if (!ChangeMask)
 	{
-		ElementArgs.Target = NetSerializerValuePointer(static_cast<const void*>(ScriptArrayHelper.GetRawPtr(ElementIt)));
-		ElementSerializer->Dequantize(Context, ElementArgs);
-		ElementArgs.Source += ElementSize;
+		for (uint32 ElementIt = 0, ElementEndIt = ElementCount; ElementIt < ElementEndIt; ++ElementIt)
+		{
+			ElementArgs.Target = NetSerializerValuePointer(static_cast<const void*>(ScriptArrayHelper.GetRawPtr(ElementIt)));
+			ElementSerializer->Dequantize(Context, ElementArgs);
+			ElementArgs.Source += ElementSize;
+		}
+	}
+	else
+	{
+		// We currently use a simple modulo scheme for bits in the changemask, if we have more elements in the array then is covered by the changemask
+		// several entries in the array will be considered dirty and be serialized
+		// As the first bit is used by the owning property we need to offset by one and deduct one from the usable bits
+		const uint32 ChangeMaskBitOffset = ChangeMask ? Args.ChangeMaskInfo.BitOffset + 1U : 0U;
+		const uint32 ChangeMaskBitCount = ChangeMask ? Args.ChangeMaskInfo.BitCount - 1U : 0U;
+
+		for (uint32 ElementIt = 0, ElementEndIt = ElementCount; ElementIt < ElementEndIt; ++ElementIt)
+		{
+			if (ChangeMask->GetBit(ChangeMaskBitOffset + (ElementIt % ChangeMaskBitCount)))
+			{
+				ElementArgs.Target = NetSerializerValuePointer(static_cast<const void*>(ScriptArrayHelper.GetRawPtr(ElementIt)));
+				ElementSerializer->Dequantize(Context, ElementArgs);
+			}
+			ElementArgs.Source += ElementSize;
+		}
 	}
 }
 

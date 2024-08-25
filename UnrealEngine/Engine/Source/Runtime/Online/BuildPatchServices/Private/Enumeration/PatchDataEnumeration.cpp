@@ -57,7 +57,7 @@ namespace EnumerationHelpers
 			DeDupeSet.Add(DataGuid, &bAlreadyInSet);
 			if (!bAlreadyInSet)
 			{
-				FString OutputLine = FBuildPatchUtils::GetDataFilename(Manifest, FString(), DataGuid);
+				FString OutputLine = FBuildPatchUtils::GetDataFilename(Manifest, DataGuid);
 				if (bIncludeSizes)
 				{
 					uint64 FileSize = Manifest.GetDataSize(DataGuid);

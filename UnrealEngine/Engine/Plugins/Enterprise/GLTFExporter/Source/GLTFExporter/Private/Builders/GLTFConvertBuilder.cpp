@@ -6,9 +6,13 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/Texture2D.h"
 #include "Engine/TextureRenderTarget2D.h"
+#include "LandscapeComponent.h"
+#include "Components/SplineMeshComponent.h"
+#include "Converters/GLTFNormalArray.h"
+#include "Converters/GLTFUVArray.h"
 
 FGLTFConvertBuilder::FGLTFConvertBuilder(const FString& FileName, const UGLTFExportOptions* ExportOptions, const TSet<AActor*>& SelectedActors)
-	: FGLTFBufferBuilder(FileName, ExportOptions)
+	: FGLTFAnalyticsBuilder(FileName, ExportOptions)
 	, SelectedActors(SelectedActors)
 {
 }
@@ -34,6 +38,16 @@ FGLTFJsonAccessor* FGLTFConvertBuilder::AddUniquePositionAccessor(const FGLTFMes
 	return PositionBufferConverter->GetOrAdd(MeshSection, VertexBuffer);
 }
 
+FGLTFJsonAccessor* FGLTFConvertBuilder::AddUniquePositionAccessor(const FPositionVertexBuffer* VertexBuffer)
+{
+	if (VertexBuffer == nullptr)
+	{
+		return nullptr;
+	}
+
+	return PositionBufferConverterRaw->GetOrAdd(VertexBuffer);
+}
+
 FGLTFJsonAccessor* FGLTFConvertBuilder::AddUniqueColorAccessor(const FGLTFMeshSection* MeshSection, const FColorVertexBuffer* VertexBuffer)
 {
 	if (VertexBuffer == nullptr)
@@ -54,6 +68,16 @@ FGLTFJsonAccessor* FGLTFConvertBuilder::AddUniqueNormalAccessor(const FGLTFMeshS
 	return NormalBufferConverter->GetOrAdd(MeshSection, VertexBuffer);
 }
 
+FGLTFJsonAccessor* FGLTFConvertBuilder::AddUniqueNormalAccessor(const FGLTFNormalArray* Normals)
+{
+	if (Normals == nullptr)
+	{
+		return nullptr;
+	}
+
+	return NormalBufferConverterRaw->GetOrAdd(Normals);
+}
+
 FGLTFJsonAccessor* FGLTFConvertBuilder::AddUniqueTangentAccessor(const FGLTFMeshSection* MeshSection, const FStaticMeshVertexBuffer* VertexBuffer)
 {
 	if (VertexBuffer == nullptr)
@@ -72,6 +96,16 @@ FGLTFJsonAccessor* FGLTFConvertBuilder::AddUniqueUVAccessor(const FGLTFMeshSecti
 	}
 
 	return UVBufferConverter->GetOrAdd(MeshSection, VertexBuffer, UVIndex);
+}
+
+FGLTFJsonAccessor* FGLTFConvertBuilder::AddUniqueUVAccessor(const FGLTFUVArray* UVs)
+{
+	if (UVs == nullptr)
+	{
+		return nullptr;
+	}
+
+	return UVBufferConverterRaw->GetOrAdd(UVs);
 }
 
 FGLTFJsonAccessor* FGLTFConvertBuilder::AddUniqueJointAccessor(const FGLTFMeshSection* MeshSection, const FSkinWeightVertexBuffer* VertexBuffer, int32 InfluenceOffset)
@@ -104,12 +138,24 @@ FGLTFJsonAccessor* FGLTFConvertBuilder::AddUniqueIndexAccessor(const FGLTFMeshSe
 	return IndexBufferConverter->GetOrAdd(MeshSection);
 }
 
+FGLTFJsonAccessor* FGLTFConvertBuilder::AddUniqueIndexAccessor(const FGLTFIndexArray* IndexBuffer, const FString& MeshName)
+{
+	if (IndexBuffer == nullptr)
+	{
+		return nullptr;
+	}
+
+	return IndexBufferConverterRaw->GetOrAdd(IndexBuffer, MeshName);
+}
+
 FGLTFJsonMesh* FGLTFConvertBuilder::AddUniqueMesh(const UStaticMesh* StaticMesh, const FGLTFMaterialArray& Materials, int32 LODIndex)
 {
 	if (StaticMesh == nullptr)
 	{
 		return nullptr;
 	}
+
+	RecordStaticMesh(StaticMesh);
 
 	return StaticMeshConverter->GetOrAdd(StaticMesh, nullptr, Materials, LODIndex);
 }
@@ -120,6 +166,8 @@ FGLTFJsonMesh* FGLTFConvertBuilder::AddUniqueMesh(const USkeletalMesh* SkeletalM
 	{
 		return nullptr;
 	}
+
+	RecordSkeletalMesh(SkeletalMesh);
 
 	return SkeletalMeshConverter->GetOrAdd(SkeletalMesh, nullptr, Materials, LODIndex);
 }
@@ -152,6 +200,8 @@ FGLTFJsonMesh* FGLTFConvertBuilder::AddUniqueMesh(const UStaticMeshComponent* St
 		return nullptr;
 	}
 
+	RecordStaticMesh(StaticMesh);
+
 	return StaticMeshConverter->GetOrAdd(StaticMesh, StaticMeshComponent, Materials, LODIndex);
 }
 
@@ -168,16 +218,52 @@ FGLTFJsonMesh* FGLTFConvertBuilder::AddUniqueMesh(const USkeletalMeshComponent* 
 		return nullptr;
 	}
 
+	RecordSkeletalMesh(SkeletalMesh);
+
 	return SkeletalMeshConverter->GetOrAdd(SkeletalMesh, SkeletalMeshComponent, Materials, LODIndex);
+}
+
+FGLTFJsonMesh* FGLTFConvertBuilder::AddUniqueMesh(const ULandscapeComponent* LandscapeComponent, const UMaterialInterface* LandscapeMaterial)
+{
+	if (LandscapeComponent == nullptr)
+	{
+		return nullptr;
+	}
+
+	RecordLandscapeComponent(LandscapeComponent);
+
+	return LandscapeConverter->GetOrAdd(LandscapeComponent, LandscapeMaterial);
+}
+
+FGLTFJsonMesh* FGLTFConvertBuilder::AddUniqueMesh(const USplineMeshComponent* SplineMeshComponent, const FGLTFMaterialArray& Materials, int32 LODIndex)
+{
+	if (SplineMeshComponent == nullptr)
+	{
+		return nullptr;
+	}
+
+	const UStaticMesh* StaticMesh = SplineMeshComponent->GetStaticMesh();
+	if (StaticMesh == nullptr)
+	{
+		return nullptr;
+	}
+
+	RecordSplineStaticMesh(StaticMesh);
+
+	return SplineMeshConverter->GetOrAdd(StaticMesh, SplineMeshComponent, Materials, LODIndex);
 }
 
 const FGLTFMeshData* FGLTFConvertBuilder::AddUniqueMeshData(const UStaticMesh* StaticMesh, const UStaticMeshComponent* StaticMeshComponent, int32 LODIndex)
 {
+	RecordStaticMesh(StaticMesh);
+
 	return StaticMeshDataConverter->GetOrAdd(StaticMesh, StaticMeshComponent, LODIndex);
 }
 
 const FGLTFMeshData* FGLTFConvertBuilder::AddUniqueMeshData(const USkeletalMesh* SkeletalMesh, const USkeletalMeshComponent* SkeletalMeshComponent, int32 LODIndex)
 {
+	RecordSkeletalMesh(SkeletalMesh);
+
 	return SkeletalMeshDataConverter->GetOrAdd(SkeletalMesh, SkeletalMeshComponent, LODIndex);
 }
 
@@ -237,6 +323,8 @@ FGLTFJsonMaterial* FGLTFConvertBuilder::AddUniqueMaterial(const UMaterialInterfa
 		return nullptr;
 	}
 
+	RecordMaterial(Material);
+
 	return MaterialConverter->GetOrAdd(Material, MeshData, SectionIndices);
 }
 
@@ -275,29 +363,31 @@ FGLTFJsonTexture* FGLTFConvertBuilder::AddUniqueTexture(const UTextureRenderTarg
 	return AddUniqueTexture(Texture, Texture->SRGB);
 }
 
-FGLTFJsonTexture* FGLTFConvertBuilder::AddUniqueTexture(const UTexture* Texture, bool bToSRGB)
+FGLTFJsonTexture* FGLTFConvertBuilder::AddUniqueTexture(const UTexture* Texture, bool bToSRGB, TextureAddress TextureAddressX, TextureAddress TextureAddressY)
 {
 	if (const UTexture2D* Texture2D = Cast<UTexture2D>(Texture))
 	{
-		return AddUniqueTexture(Texture2D, bToSRGB);
+		return AddUniqueTexture(Texture2D, bToSRGB, TextureAddressX, TextureAddressY);
 	}
 
 	if (const UTextureRenderTarget2D* RenderTarget2D = Cast<UTextureRenderTarget2D>(Texture))
 	{
-		return AddUniqueTexture(RenderTarget2D, bToSRGB);
+		return AddUniqueTexture(RenderTarget2D, bToSRGB, TextureAddressX, TextureAddressY);
 	}
 
 	return nullptr;
 }
 
-FGLTFJsonTexture* FGLTFConvertBuilder::AddUniqueTexture(const UTexture2D* Texture, bool bToSRGB)
+FGLTFJsonTexture* FGLTFConvertBuilder::AddUniqueTexture(const UTexture2D* Texture, bool bToSRGB, TextureAddress TextureAddressX, TextureAddress TextureAddressY)
 {
 	if (Texture == nullptr)
 	{
 		return nullptr;
 	}
 
-	return Texture2DConverter->GetOrAdd(Texture, bToSRGB);
+	RecordTexture(Texture);
+
+	return Texture2DConverter->GetOrAdd(Texture, bToSRGB, TextureAddressX, TextureAddressY);
 }
 
 FGLTFJsonTexture* FGLTFConvertBuilder::AddUniqueTexture(const UTextureRenderTarget2D* Texture, bool bToSRGB)
@@ -306,6 +396,8 @@ FGLTFJsonTexture* FGLTFConvertBuilder::AddUniqueTexture(const UTextureRenderTarg
 	{
 		return nullptr;
 	}
+
+	RecordTexture(Texture);
 
 	return TextureRenderTarget2DConverter->GetOrAdd(Texture, bToSRGB);
 }
@@ -349,6 +441,8 @@ FGLTFJsonAnimation* FGLTFConvertBuilder::AddUniqueAnimation(FGLTFJsonNode* RootN
 		return nullptr;
 	}
 
+	RecordAnimSequence(AnimSequence);
+
 	return AnimationConverter->GetOrAdd(RootNode, SkeletalMesh, AnimSequence);
 }
 
@@ -369,6 +463,8 @@ FGLTFJsonAnimation* FGLTFConvertBuilder::AddUniqueAnimation(const ULevel* Level,
 		return nullptr;
 	}
 
+	RecordLevelSequence(LevelSequence);
+
 	return LevelSequenceConverter->GetOrAdd(Level, LevelSequence);
 }
 
@@ -387,6 +483,11 @@ FGLTFJsonNode* FGLTFConvertBuilder::AddUniqueNode(const AActor* Actor)
 	if (Actor == nullptr)
 	{
 		return nullptr;
+	}
+
+	if (IsSelectedActor(Actor))
+	{
+		RecordActor(Actor);
 	}
 
 	return ActorConverter->GetOrAdd(Actor);
@@ -459,6 +560,8 @@ FGLTFJsonCamera* FGLTFConvertBuilder::AddUniqueCamera(const UCameraComponent* Ca
 		return nullptr;
 	}
 
+	RecordCamera(CameraComponent);
+
 	return CameraConverter->GetOrAdd(CameraComponent);
 }
 
@@ -468,6 +571,8 @@ FGLTFJsonLight* FGLTFConvertBuilder::AddUniqueLight(const ULightComponent* Light
 	{
 		return nullptr;
 	}
+
+	RecordLight(LightComponent);
 
 	return LightConverter->GetOrAdd(LightComponent);
 }

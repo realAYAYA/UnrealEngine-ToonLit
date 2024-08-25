@@ -10,7 +10,7 @@ namespace AutomationUtils.Matchers
 {
 	class MsTestEventMatcher : ILogEventMatcher
 	{
-		static readonly Regex s_failedPattern = new Regex(@"^  \s*Failed [A-Za-z0-9_]+ \[\d+ ms\]$");
+		static readonly Regex s_failedPattern = new Regex(@"^  \s*Failed [A-Za-z0-9_]+ \[\d+ (?:s|ms)\]$");
 		static readonly Regex s_detailPattern = new Regex(@"^  \s*(?:Error Message|Stack Trace):$");
 
 		public LogEventMatch? Match(ILogCursor cursor)

@@ -4,6 +4,9 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:epic_common/preferences.dart';
+import 'package:epic_common/theme.dart';
+import 'package:epic_common/widgets.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
@@ -23,13 +26,6 @@ import '../../models/unreal_property_manager.dart';
 import '../../models/unreal_types.dart';
 import '../../utilities/constants.dart';
 import '../../utilities/guarded_refresh_state.dart';
-import '../../utilities/transient_preference.dart';
-import '../../utilities/unreal_colors.dart';
-import '../../utilities/unreal_utilities.dart';
-import 'asset_icon.dart';
-import 'dropdown_button.dart';
-import 'dropdown_list_menu.dart';
-import 'epic_icon_button.dart';
 import 'place_actor_menu.dart';
 import 'spinner_overlay.dart';
 import 'transform_gesture_detector.dart';
@@ -107,9 +103,6 @@ class StageMapState extends State<StageMap> with PreviewRenderConsumer, GuardedR
   /// The stream for the current preview image, used to listen for when it's ready
   ImageStream? _previewImageStream;
 
-  /// The last sequence number we sent the engine for a drag update.
-  int _sequenceNumber = 0;
-
   /// Timer used to regularly send changes back to the engine while connected.
   Timer? _engineUpdateTimer;
 
@@ -158,7 +151,7 @@ class StageMapState extends State<StageMap> with PreviewRenderConsumer, GuardedR
   /// Actor positions which we've received from the engine, but are waiting for the latest preview image to load before
   /// displaying them to the user. This prevents the positions from updating before the image and appearing out of sync.
   /// If null, there's no pending change.
-  List<dynamic>? _pendingActorPositions = [];
+  List<dynamic> _pendingActorPositions = [];
 
   /// Stream subscriptions to user settings.
   final List<StreamSubscription> _settingSubscriptions = [];
@@ -172,9 +165,10 @@ class StageMapState extends State<StageMap> with PreviewRenderConsumer, GuardedR
   /// Map from actor path to the data we have stored about it.
   final Map<String, _MapActorData> _mapActorDataByPath = {};
 
-  /// Paths of actors whose positions have been changed by the user since [_pendingActorPositions] was last updated.
+  /// Paths of actors that have been directly placed by users.
   /// Their new positions in _pendingActorPositions won't be applied when the image loads to prevent jittering.
-  final Set<String> _stalePendingActors = {};
+  /// This list is cleared whenever we receive a render that occurred after all drag inputs so far.
+  final Set<String> _recentDirectDragPins = {};
 
   /// Connection manager to communicate with the engine.
   late final EngineConnectionManager _connectionManager;
@@ -417,20 +411,23 @@ class StageMapState extends State<StageMap> with PreviewRenderConsumer, GuardedR
 
     _settingSubscriptions.addAll([
       selectedActorSettings.displayClusterRootPath.listen(_onDisplayClusterRootPathChanged),
+      selectedActorSettings.selectedActors.listen((_) => _updateActorTransformRegistration()),
       stageMapSettings.bIsInTransformMode.listen(_onTransformModeChanged),
     ]);
 
     _actorManager = Provider.of<UnrealActorManager>(context, listen: false);
     _actorManager.currentRootActorLightCards.addListener(guardedRefresh);
+    _actorManager.watchExistingSubscriptions(_onActorUpdate);
 
     _propertyManager = Provider.of<UnrealPropertyManager>(context, listen: false);
     _updateActorTransformRegistration();
+
+    _previewImageStreamListener = ImageStreamListener(_onPreviewImageLoaded, onError: _onPreviewImageError);
 
     _previewRenderManager = Provider.of<PreviewRenderManager>(context, listen: false);
     _previewRenderManager.addConsumer(this);
 
     _mapTransform.addListener(_saveMapTransformToUserSettings);
-    _previewImageStreamListener = ImageStreamListener(_onPreviewImageLoaded, onError: _onPreviewImageError);
   }
 
   @override
@@ -440,6 +437,7 @@ class StageMapState extends State<StageMap> with PreviewRenderConsumer, GuardedR
     }
 
     _actorManager.currentRootActorLightCards.removeListener(guardedRefresh);
+    _actorManager.stopWatchingExistingSubscriptions(_onActorUpdate);
 
     _evictImage();
 
@@ -459,7 +457,7 @@ class StageMapState extends State<StageMap> with PreviewRenderConsumer, GuardedR
 
   @override
   void onPreviewRenderCompleted({
-    required int sequenceNumber,
+    required bool bIsForLatestRequest,
     required Size resolution,
     required Uint8List imageData,
     required List<PreviewActorData> actorPositions,
@@ -487,13 +485,14 @@ class StageMapState extends State<StageMap> with PreviewRenderConsumer, GuardedR
       });
     }
 
-    // Only apply the received position changes if the data is more recent than our last message to the engine
-    if (sequenceNumber >= _sequenceNumber) {
-      // Save the latest positions so we can display them as soon as the image finishes decoding.
-      // If we were to update them right now, they would be out of sync with the old image.
-      _stalePendingActors.clear();
+    // Save the latest actor positions so we can display them as soon as the image finishes decoding.
+    // If we were to update them right now, they would be out of sync with the old image.
+    _pendingActorPositions = actorPositions;
 
-      _pendingActorPositions = actorPositions;
+    if (bIsForLatestRequest) {
+      // This render takes into account all drag operations so far, so we can now safely override the position of pins
+      // placed directly by the user without them jumping back to an old position
+      _recentDirectDragPins.clear();
     }
   }
 
@@ -562,7 +561,7 @@ class StageMapState extends State<StageMap> with PreviewRenderConsumer, GuardedR
     _previewImage = null;
     _previewSize = null;
     _pendingPreviewSize = Size.zero;
-    _pendingActorPositions = null;
+    _pendingActorPositions.clear();
 
     _mapActorDataByPath.clear();
     _bShowRealTimeDisabledWarning = false;
@@ -622,20 +621,14 @@ class StageMapState extends State<StageMap> with PreviewRenderConsumer, GuardedR
     setState(() {
       _previewSize = _pendingPreviewSize;
 
-      if (_pendingActorPositions == null) {
-        // This will be null if the positions were out of date, in which case we don't want to update them
-        return;
-      }
-
       final missingActorPaths = Set<String>.from(_mapActorDataByPath.keys);
 
       // Update positions for all received paths
-      for (final PreviewActorData actorData in _pendingActorPositions!) {
+      for (final PreviewActorData actorData in _pendingActorPositions) {
         missingActorPaths.remove(actorData.path);
 
-        // Don't try to update positions of any actors that the user has already moved since the data
-        // was received
-        if (_stalePendingActors.contains(actorData.path)) {
+        if (_recentDirectDragPins.contains(actorData.path)) {
+          // These actors were manually placed by the user after this render was generated, so don't move them
           continue;
         }
 
@@ -649,8 +642,7 @@ class StageMapState extends State<StageMap> with PreviewRenderConsumer, GuardedR
       }
     });
 
-    _stalePendingActors.clear();
-    _pendingActorPositions = null;
+    _pendingActorPositions.clear();
   }
 
   /// Called when the preview image failed to decode.
@@ -677,13 +669,7 @@ class StageMapState extends State<StageMap> with PreviewRenderConsumer, GuardedR
 
     if (_tickDragPosition != null) {
       // Send the latest actor drag position
-      ++_sequenceNumber;
-      _connectionManager.sendMessage('ndisplay.preview.actor.drag.move', {
-        'RendererId': _previewRenderManager.rendererId!,
-        'DragPosition': offsetToJson(_tickDragPosition!),
-        'SequenceNumber': _sequenceNumber,
-      });
-
+      _previewRenderManager.updateActorDrag(_tickDragPosition!);
       _tickDragPosition = null;
     }
   }
@@ -771,13 +757,10 @@ class StageMapState extends State<StageMap> with PreviewRenderConsumer, GuardedR
       _dragPointerOffset = Offset.zero;
     }
 
-    ++_sequenceNumber;
-    _connectionManager.sendMessage('ndisplay.preview.actor.drag.begin', {
-      'RendererId': _previewRenderManager.rendererId!,
-      'Actors': draggedActors,
-      'PrimaryActor': primaryPinPath,
-      'SequenceNumber': _sequenceNumber,
-    });
+    _previewRenderManager.beginActorDrag(
+      actors: draggedActors,
+      primaryActor: primaryPinPath,
+    );
 
     setState(() {
       _draggedPinPath = primaryPinPath;
@@ -827,12 +810,7 @@ class StageMapState extends State<StageMap> with PreviewRenderConsumer, GuardedR
       return;
     }
 
-    ++_sequenceNumber;
-    _connectionManager.sendMessage('ndisplay.preview.actor.drag.end', {
-      'RendererId': _previewRenderManager.rendererId!,
-      'DragPosition': offsetToJson(mapPosition),
-      'SequenceNumber': _sequenceNumber,
-    });
+    _previewRenderManager.endActorDrag(mapPosition);
   }
 
   /// Check whether a pointer event is a right-click from a mouse.
@@ -996,6 +974,7 @@ class StageMapState extends State<StageMap> with PreviewRenderConsumer, GuardedR
   /// Called when the user performs a long press gesture on the map.
   void _onLongPressStart(LongPressStartDetails details) {
     DropDownListMenu.showAtPosition(
+      context,
       pivotPosition: details.globalPosition,
       builder: (context) => PlaceActorDropDownMenu(
         actorMapPosition: _globalToMapPosition(details.globalPosition),
@@ -1425,8 +1404,10 @@ class StageMapState extends State<StageMap> with PreviewRenderConsumer, GuardedR
     return Offset(transformed.x, transformed.y);
   }
 
-  /// Drag a pin based on a new screen position and return the drag position that should be reported to the engine over
+  /// Drag a pin based on a new [screenPosition] and return the drag position that should be reported to the engine over
   /// WebSocket (or return null if dragging the pin is invalid).
+  /// If the map is in object transform mode, the pin's actual location will not be updated (since we need to wait for
+  /// the engine to tell us its final position).
   Offset? _dragPin(Offset screenPosition) {
     if (_draggedPinPath == null) {
       return null;
@@ -1439,10 +1420,16 @@ class StageMapState extends State<StageMap> with PreviewRenderConsumer, GuardedR
       return null;
     }
 
-    // Update the pin's position. setState() is unnecessary here since the dragged pin follows the drag position
-    // regardless of whether the widget is updated, and the pin's "actual" position is hidden on the map.
-    _getOrCreateMapActorData(_draggedPinPath!).position = mapPosition;
-    _stalePendingActors.add(_draggedPinPath!);
+    final stageMapSettings = Provider.of<StageMapSettings>(context, listen: false);
+    if (!stageMapSettings.bIsInTransformMode.getValue()) {
+      // In this mode, the user is directly dragging a specific pin, so we want to immediately update its position and
+      // keep it there until the engine sends a new enough render. Otherwise, the pin will snap back to its old position
+      // if the user releases it before the engine sends a new render.
+      // Note that we only do this for the primary pin (_draggedPinPath), as any other multi-selected pins are moved
+      // indirectly in the engine and we can't predict their final positions.
+      _getOrCreateMapActorData(_draggedPinPath!).position = mapPosition;
+      _recentDirectDragPins.add(_draggedPinPath!);
+    }
 
     return mapPosition;
   }
@@ -1491,6 +1478,23 @@ class StageMapState extends State<StageMap> with PreviewRenderConsumer, GuardedR
       (mapLocalPosition.dx / mapRenderBox.size.width).clamp(0, 1),
       (mapLocalPosition.dy / mapRenderBox.size.height).clamp(0, 1),
     );
+  }
+
+  /// Called when any actor is added/renamed/deleted.
+  void _onActorUpdate(ActorUpdateDetails details) {
+    if (Provider.of<StageMapSettings>(context, listen: false).bIsInTransformMode.getValue() != true) {
+      return;
+    }
+
+    for (final UnrealObject actor in details.addedActors) {
+      if (Provider.of<SelectedActorSettings>(context, listen: false).isActorSelected(actor.path)) {
+        // An actor we had selected has been added, meaning we need to expose its transform properties. This can happen
+        // if we added an actor from the app and immediately selected it before the actor manager received its creation
+        // event data.
+        _updateActorTransformRegistration();
+        return;
+      }
+    }
   }
 }
 
@@ -1909,13 +1913,13 @@ class _StageMapControlModeToggle extends StatelessWidget {
         preference: stageMapSettings.bIsInTransformMode,
         builder: (_, final bool bIsInTransformMode) => Row(children: [
           _StageMapControlModeToggleButton(
-            iconPath: 'assets/images/icons/world_flat.svg',
+            iconPath: 'packages/epic_common/assets/icons/world_flat.svg',
             tooltipMessage: AppLocalizations.of(context)!.stageMapControlModeMap,
             bIsActive: !bIsInTransformMode,
             onPressed: () => stageMapSettings.bIsInTransformMode.setValue(false),
           ),
           _StageMapControlModeToggleButton(
-            iconPath: 'assets/images/icons/object.svg',
+            iconPath: 'packages/epic_common/assets/icons/object.svg',
             tooltipMessage: AppLocalizations.of(context)!.stageMapControlModeObject,
             bIsActive: bIsInTransformMode,
             onPressed: () => stageMapSettings.bIsInTransformMode.setValue(true),

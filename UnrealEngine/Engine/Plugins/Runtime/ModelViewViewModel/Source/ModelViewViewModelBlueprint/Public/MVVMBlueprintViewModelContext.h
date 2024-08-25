@@ -7,6 +7,7 @@
 
 #include "MVVMBlueprintViewModelContext.generated.h"
 
+class UMVVMBlueprintInstancedViewModelBase;
 class UMVVMViewModelContextResolver;
 
 /**
@@ -30,7 +31,7 @@ enum class EMVVMBlueprintViewModelContextCreationType : uint8
 namespace UE::MVVM
 {
 #if WITH_EDITOR
-	UE_NODISCARD MODELVIEWVIEWMODELBLUEPRINT_API TArray<EMVVMBlueprintViewModelContextCreationType> GetAllowedContextCreationType(const UClass* Class);
+	[[nodiscard]] MODELVIEWVIEWMODELBLUEPRINT_API TArray<EMVVMBlueprintViewModelContextCreationType> GetAllowedContextCreationType(const UClass* Class);
 #endif
 }
 
@@ -79,6 +80,15 @@ public:
 			{
 				NotifyFieldValueClass = ViewModelClass_DEPRECATED.Get();
 			}
+			if (!bCreateSetterFunction_Deprecation)
+			{
+				bCreateSetterFunction_Deprecation = true;
+				if (CreationType == EMVVMBlueprintViewModelContextCreationType::Manual)
+				{
+					bOptional = true;
+					bCreateSetterFunction = true;
+				}
+			}
 		}
 	}
 
@@ -89,10 +99,11 @@ public:
 
 private:
 	/** When the view is spawn, create an instance of the viewmodel. */
-	UPROPERTY(VisibleAnywhere, AdvancedDisplay, Category = "Viewmodel", meta = (DisplayName = "Viewmodel Context Id"))
+	UPROPERTY(VisibleAnywhere, AdvancedDisplay, Category = "Viewmodel", meta = (DisplayName = "Viewmodel Context Id", NoResetToDefault))
 	FGuid ViewModelContextId;
 
-	UPROPERTY(VisibleAnywhere, Category = "Viewmodel", NoClear, meta = (DisallowCreateNew, AllowedClasses = "/Script/UMG.NotifyFieldValueChanged", DisallowedClasses = "/Script/UMG.Widget"))
+public:
+	UPROPERTY(EditAnywhere, Category = "Viewmodel", NoClear, meta = (DisallowCreateNew, AllowedClasses = "/Script/FieldNotification.NotifyFieldValueChanged", DisallowedClasses = "/Script/UMG.Widget", NoResetToDefault))
 	TObjectPtr<UClass> NotifyFieldValueClass = nullptr;
 
 	UPROPERTY()
@@ -103,7 +114,7 @@ private:
 
 public:
 	/** Property name that will be generated. */
-	UPROPERTY(EditAnywhere, Category = "Viewmodel", meta = (DisplayName = "Viewmodel Name"))
+	UPROPERTY(EditAnywhere, Category = "Viewmodel", meta = (DisplayName = "Viewmodel Name", NoResetToDefault))
 	FName ViewModelName;
 
 	/** When the view is spawn, create an instance of the viewmodel. */
@@ -111,29 +122,43 @@ public:
 	EMVVMBlueprintViewModelContextCreationType CreationType = EMVVMBlueprintViewModelContextCreationType::CreateInstance;
 
 	/** Identifier of an already registered viewmodel. */
-	UPROPERTY(EditAnywhere, Category = "Viewmodel", AdvancedDisplay, meta = (DisplayName = "Global Viewmodel Identifier", EditCondition = "CreationType == EMVVMBlueprintViewModelContextCreationType::GlobalViewModelCollection && bCanEdit", EditConditionHides))
+	UPROPERTY(EditAnywhere, Category = "Viewmodel", meta = (DisplayName = "Global Viewmodel Identifier"))
 	FName GlobalViewModelIdentifier;
 
 	/** The Path to get the viewmodel instance. */
-	UPROPERTY(EditAnywhere, Category = "Viewmodel", AdvancedDisplay, meta = (DisplayName = "Viewmodel Property Path", EditCondition = "CreationType == EMVVMBlueprintViewModelContextCreationType::PropertyPath && bCanEdit", EditConditionHides))
+	UPROPERTY(EditAnywhere, Category = "Viewmodel", meta = (DisplayName = "Viewmodel Property Path"))
 	FString ViewModelPropertyPath;
 
-	UPROPERTY(EditAnywhere, Category = "Viewmodel", Instanced, AdvancedDisplay, meta = (EditInline, EditCondition = "CreationType == EMVVMBlueprintViewModelContextCreationType::Resolver && bCanEdit", EditConditionHides))
+	UPROPERTY(EditAnywhere, Category = "Viewmodel", Instanced, meta = (EditInline))
 	TObjectPtr<UMVVMViewModelContextResolver> Resolver = nullptr;
+
+	UPROPERTY(EditAnywhere, Category = "Viewmodel", Instanced, NoClear, meta = (ShowOnlyInnerProperties))
+	TObjectPtr<UMVVMBlueprintInstancedViewModelBase> InstancedViewModel;
 
 	/**
 	 * Generate a public setter for this viewmodel.
 	 * @note Always true when the Creation Type is Manual.
 	 */
-	UPROPERTY(EditAnywhere, Category = "Viewmodel", AdvancedDisplay, meta = (DisplanName="Create Public Setter", EditCondition = "CreationType != EMVVMBlueprintViewModelContextCreationType::Manual && bCanEdit", EditConditionHides))
+	UPROPERTY(EditAnywhere, Category = "Viewmodel", AdvancedDisplay, meta = (DisplanName="Create Public Setter"))
 	bool bCreateSetterFunction = false;
+
+	/**
+	 * Generate a public getter for this viewmodel.
+	 * @note Always false when using a Instanced viewmodel.
+	 */
+	UPROPERTY(EditAnywhere, Category = "Viewmodel", AdvancedDisplay, meta = (DisplanName = "Create Public Getter"))
+	bool bCreateGetterFunction = true;
 
 	/**
 	 * Optional. Will not warn if the instance is not set or found.
 	 * @note Always true when the Creation Type is Manual.
 	 */
-	UPROPERTY(EditAnywhere, Category = "Viewmodel", AdvancedDisplay, meta = (EditCondition = "(CreationType == EMVVMBlueprintViewModelContextCreationType::GlobalViewModelCollection || CreationType == EMVVMBlueprintViewModelContextCreationType::PropertyPath) && bCanEdit", EditConditionHides))
+	UPROPERTY(EditAnywhere, Category = "Viewmodel", AdvancedDisplay)
 	bool bOptional = false;
+
+	/** Expose the viewmodel instance on every instance of the user widget for modification in editor. */
+	UPROPERTY(EditAnywhere, Category = "Viewmodel", AdvancedDisplay)
+	bool bExposeInstanceInEditor = false;
 
 	/** Can change the name in the editor. */
 	UPROPERTY()
@@ -146,6 +171,10 @@ public:
 	/** Can remove the viewmodel in the editor. */
 	UPROPERTY()
 	bool bCanRemove = true;
+
+private:
+	UPROPERTY()
+	bool bCreateSetterFunction_Deprecation = false;
 };
 
 template<>

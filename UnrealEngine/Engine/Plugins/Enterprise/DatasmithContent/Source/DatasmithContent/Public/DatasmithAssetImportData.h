@@ -42,6 +42,8 @@ struct DATASMITHCONTENT_API FDatasmithImportInfo
 	UPROPERTY()
 	FString SourceHash;
 
+	void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const;
+	UE_DEPRECATED(5.4, "Call the version that takes FAssetRegistryTagsContext instead.")
 	void GetAssetRegistryTags(TArray<UObject::FAssetRegistryTag>& OutTags) const;
 #endif // WITH_EDITORONLY_DATA
 };

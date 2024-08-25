@@ -70,6 +70,13 @@ struct HAIRSTRANDSCORE_API FGroomBuilder
 		FHairStrandsDatas& OutGuides,
 		bool bAllowCurveReordering=true);
 
+	static void BuildData(
+		const FHairDescriptionGroup& InHairDescriptionGroup,
+		const FHairGroupsInterpolation& InSettings,
+		FHairStrandsDatas& OutStrands,
+		FHairStrandsDatas& OutGuides,
+		bool bAllowCurveReordering=true);
+
 	// 2.b Build FHairStrandsDatas for Strands or Guides. 
 	// This version:
 	// * Suppose OutStrands already contains curves & points data. 
@@ -80,7 +87,8 @@ struct HAIRSTRANDSCORE_API FGroomBuilder
 	static void BuildBulkData(
 		const FHairGroupInfo& InInfo,
 		const FHairStrandsDatas& InData,
-		FHairStrandsBulkData& OutBulkData);
+		FHairStrandsBulkData& OutBulkData,
+		bool bAllowCompression);
 
 	// 4. Build interplation data based on the hairStrands data
 	static void BuildInterplationData(

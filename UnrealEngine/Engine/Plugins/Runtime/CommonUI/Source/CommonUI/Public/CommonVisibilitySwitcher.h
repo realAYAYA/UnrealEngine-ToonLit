@@ -40,6 +40,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = CommonVisibilitySwitcher)
 	void DeactivateVisibleSlot();
 
+	UFUNCTION(BlueprintPure, Category = CommonVisibilitySwitcher)
+	bool IsCurrentlySwitching() const { return bCurrentlySwitching; }
+
 	UWidget* GetWidgetAtIndex(int32 Index) const;
 
 	virtual void SynchronizeProperties() override;
@@ -92,6 +95,8 @@ protected:
 	// Whether or not to activate the first slot if one is added dynamically
 	UPROPERTY(EditAnywhere, Category = CommonVisibilitySwitcher)
 	bool bActivateFirstSlotOnAdding = false;
+
+	bool bCurrentlySwitching = false;
 
 	mutable FOnActiveWidgetIndexChanged OnActiveWidgetIndexChangedEvent;
 };

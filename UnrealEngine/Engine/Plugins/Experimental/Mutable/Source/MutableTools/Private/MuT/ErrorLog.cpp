@@ -20,12 +20,10 @@
 #include "MuR/Platform.h"
 #include "MuR/Skeleton.h"
 #include "MuR/System.h"
+#include "MuR/MutableRuntimeModule.h"
 #include "MuT/ErrorLogPrivate.h"
 #include "Templates/Tuple.h"
 #include "Trace/Detail/Channel.h"
-
-#include <memory>
-#include <utility>
 
 namespace mu
 {
@@ -202,7 +200,7 @@ namespace mu
     
     // clang-format off
 
-    const TCHAR* s_opNames[ size_t(OP_TYPE::COUNT) ] =
+    const TCHAR* s_opNames[ int32(OP_TYPE::COUNT) ] =
 	{
 		TEXT("NONE             "),
 
@@ -257,8 +255,6 @@ namespace mu
 		
 		TEXT("CO_SAMPLEIMAGE   "),
 		TEXT("CO_SWIZZLE       "),
-		TEXT("CO_IMAGESIZE     "),
-		TEXT("CO_LAYOUTBLOCKTR "),
 		TEXT("CO_FROMSCALARS   "),
 		TEXT("CO_ARITHMETIC    "),
 
@@ -291,28 +287,28 @@ namespace mu
 
 		TEXT("ME_APPLYLAYOUT   "),
 		TEXT("ME_DIFFERENCE    "),
-		TEXT("ME_MORPH2        "),
+		TEXT("ME_MORPH         "),
 		TEXT("ME_MERGE         "),
 		TEXT("ME_INTERPOLATE   "),
 		TEXT("ME_MASKCLIPMESH  "),
+		TEXT("ME_MASKCLIPUVMASK"),
 		TEXT("ME_MASKDIFF      "),
         TEXT("ME_REMOVEMASK    "),
         TEXT("ME_FORMAT        "),
         TEXT("ME_EXTRACTLABLOCK"),
-        TEXT("ME_EXTRACTFACEGRP"),
 		TEXT("ME_TRANSFORM     "),
 		TEXT("ME_CLIPMORPHPLANE"),
         TEXT("ME_CLIPWITHMESH  "),
         TEXT("ME_SETSKELETON   "),
         TEXT("ME_PROJECT       "),
         TEXT("ME_APPLYPOSE     "),
-        TEXT("ME_REMAPINDICES  "),
 		TEXT("ME_GEOMETRYOP	   "),
 		TEXT("ME_BINDSHAPE	   "),
 		TEXT("ME_APPLYSHAPE	   "),
 		TEXT("ME_CLIPDEFORM	   "),
 		TEXT("ME_MORPHRESHAPE  "),
 		TEXT("ME_OPTIMIZESKIN  "),
+		TEXT("ME_ADDTAGS       "),
 
 		TEXT("IN_ADDMESH       "),
 		TEXT("IN_ADDIMAGE      "),
@@ -329,6 +325,8 @@ namespace mu
 		TEXT("LA_REMOVEBLOCKS  "),
 		TEXT("LA_FROMMESH	   "),
 	};
+
+	static_assert(sizeof(s_opNames) / sizeof(void*) == int32(OP_TYPE::COUNT));
 
     // clang-format on
 

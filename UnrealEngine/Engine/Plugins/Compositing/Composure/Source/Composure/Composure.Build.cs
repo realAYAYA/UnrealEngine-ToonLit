@@ -22,6 +22,7 @@ namespace UnrealBuildTool.Rules
 					"Core",
                     "CoreUObject",
                     "Engine",
+					"LensComponent",
 					"MediaIOCore",
 					"MovieScene",
 					"MovieSceneTracks",

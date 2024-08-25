@@ -5,7 +5,7 @@
 #include "MassExecutionContext.h"
 #include "Engine/World.h"
 #include "MassMovementFragments.h"
-
+#include "MassCommonUtils.h"
 
 //----------------------------------------------------------------------//
 //  UMassVelocityRandomizerTrait
@@ -28,6 +28,7 @@ UMassRandomVelocityInitializer::UMassRandomVelocityInitializer()
 {
 	ObservedType = FMassVelocityFragment::StaticStruct();
 	Operation = EMassObservedOperation::Add;
+	RandomStream.Initialize(UE::Mass::Utils::GenerateRandomSeed());
 }
 
 void UMassRandomVelocityInitializer::ConfigureQueries()
@@ -46,10 +47,10 @@ void UMassRandomVelocityInitializer::Execute(FMassEntityManager& EntityManager, 
 				// the given VelocityFragment's value is encoding the initialization parameters, as per comment in
 				// UMassVelocityRandomizerTrait::BuildTemplate
 				const FVector RandomVector = VelocityFragment.Value.Z != 0.f 
-					? FVector(FMath::FRandRange(-1.f, 1.f), FMath::FRandRange(-1.f, 1.f), FMath::FRandRange(-1.f, 1.f)).GetSafeNormal()
-					: FVector(FMath::FRandRange(-1.f, 1.f), FMath::FRandRange(-1.f, 1.f), 0).GetSafeNormal();
+					? FVector(RandomStream.FRandRange(-1.f, 1.f), RandomStream.FRandRange(-1.f, 1.f), RandomStream.FRandRange(-1.f, 1.f)).GetSafeNormal()
+					: FVector(RandomStream.FRandRange(-1.f, 1.f), RandomStream.FRandRange(-1.f, 1.f), 0).GetSafeNormal();
 
-				VelocityFragment.Value = RandomVector * FMath::FRandRange(VelocityFragment.Value.X, VelocityFragment.Value.Y);
+				VelocityFragment.Value = RandomVector * RandomStream.FRandRange(VelocityFragment.Value.X, VelocityFragment.Value.Y);
 			}
 		}));
 }

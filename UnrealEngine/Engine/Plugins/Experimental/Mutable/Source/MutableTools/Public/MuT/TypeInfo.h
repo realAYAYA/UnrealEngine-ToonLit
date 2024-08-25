@@ -2,11 +2,11 @@
 
 #pragma once
 
-#include "../Private/MuR/ParametersPrivate.h"
 #include "HAL/PlatformMath.h"
 #include "MuR/Image.h"
 #include "MuR/MeshBufferSet.h"
 #include "MuR/Parameters.h"
+#include "MuR/ParametersPrivate.h"
 
 // This header file provides additional information about data types defined in the runtime, that
 // can be useful only for the tools. For instance, it provides strings for some enumeration values.

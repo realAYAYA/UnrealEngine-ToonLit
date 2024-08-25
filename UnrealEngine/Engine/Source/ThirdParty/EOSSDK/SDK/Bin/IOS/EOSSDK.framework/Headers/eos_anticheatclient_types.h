@@ -81,11 +81,17 @@ EOS_STRUCT(EOS_AntiCheatClient_OnClientIntegrityViolatedCallbackInfo, (
 ));
 
 /**
+ * Maximum size of an individual message provided through EOS_AntiCheatClient_OnMessageToServerCallback.
+ */
+#define EOS_ANTICHEATCLIENT_ONMESSAGETOSERVERCALLBACK_MAX_MESSAGE_SIZE 512
+
+/**
  * Callback issued when a new message must be dispatched to the game server.
  *
- * Messages contain opaque binary data of up to 256 bytes and must be transmitted
+ * Messages contain opaque binary data and must be transmitted
  * to the game server using the game's own networking layer, then delivered
  * to the server anti-cheat instance using the EOS_AntiCheatServer_ReceiveMessageFromClient function.
+ * The upper limit of the message size is EOS_ANTICHEATCLIENT_ONMESSAGETOSERVERCALLBACK_MAX_MESSAGE_SIZE.
  *
  * This callback is always issued from within EOS_Platform_Tick on its calling thread.
  */
@@ -101,11 +107,17 @@ EOS_DECLARE_CALLBACK(EOS_AntiCheatClient_OnMessageToServerCallback, const EOS_An
 EOS_DECLARE_CALLBACK(EOS_AntiCheatClient_OnClientIntegrityViolatedCallback, const EOS_AntiCheatClient_OnClientIntegrityViolatedCallbackInfo* Data);
 
 /**
+ * Maximum size of an individual message provided through EOS_AntiCheatClient_OnMessageToPeerCallback.
+ */
+#define EOS_ANTICHEATCLIENT_ONMESSAGETOPEERCALLBACK_MAX_MESSAGE_SIZE 512
+
+/**
  * Callback issued when a new message must be dispatched to a connected peer.
  *
- * Messages contain opaque binary data of up to 256 bytes and must be transmitted
+ * Messages contain opaque binary data and must be transmitted
  * to the correct peer using the game's own networking layer, then delivered
  * to the client anti-cheat instance using the EOS_AntiCheatClient_ReceiveMessageFromPeer function.
+ * The upper limit of the message size is EOS_ANTICHEATCLIENT_ONMESSAGETOPEERCALLBACK_MAX_MESSAGE_SIZE.
  *
  * This callback is always issued from within EOS_Platform_Tick on its calling thread.
  */
@@ -242,7 +254,6 @@ EOS_STRUCT(EOS_AntiCheatClient_RegisterPeerOptions, (
 	EOS_EAntiCheatCommonClientPlatform ClientPlatform;
 	/**
 	 * Time in seconds to allow newly registered peers to send the initial message containing their token.
-	 * Recommended value: 60
 	 */
 	uint32_t AuthenticationTimeout;
 	/** Deprecated - use PeerProductUserId instead */

@@ -47,7 +47,7 @@ struct FRTInfo : public FRefCountedObject
 		// Current Desc Info format: (DIM W[xH[xD]] FMT[ RT]) NUM NAME SIZEkB
 		if ( !Text.IsEmpty() && Text.Split(TEXT(" "), &Dimensions, &Text, ESearchCase::CaseSensitive))
 		{
-			Dimensions.MidInline(1, MAX_int32, false);
+			Dimensions.MidInline(1, MAX_int32, EAllowShrinking::No);
 			if (Dimensions.StartsWith(TEXT("Cube")))
 			{
 				if (!Text.Split(TEXT(" "), &Width, &Text, ESearchCase::CaseSensitive))
@@ -95,7 +95,7 @@ struct FRTInfo : public FRefCountedObject
 						if (Found > 0)
 						{
 							Type = Format.Mid(Found + 1);
-							Format.MidInline(0, Found, false);
+							Format.MidInline(0, Found, EAllowShrinking::No);
 						}
 						return true;
 					}

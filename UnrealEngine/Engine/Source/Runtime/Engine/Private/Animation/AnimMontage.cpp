@@ -96,6 +96,21 @@ bool UAnimMontage::IsValidSlot(FName InSlotName) const
 	return false;
 }
 
+bool UAnimMontage::IsDynamicMontage() const
+{
+	return GetPackage() == GetTransientPackage();
+}
+
+UAnimSequenceBase* UAnimMontage::GetFirstAnimReference() const
+{
+	if(!SlotAnimTracks.IsEmpty() && !SlotAnimTracks[0].AnimTrack.AnimSegments.IsEmpty())
+	{
+		return SlotAnimTracks[0].AnimTrack.AnimSegments[0].GetAnimReference();
+	}
+
+	return nullptr;
+}
+
 const FAnimTrack* UAnimMontage::GetAnimationData(FName InSlotName) const
 {
 	for (int32 I=0; I<SlotAnimTracks.Num(); ++I)
@@ -385,6 +400,29 @@ FFrameRate UAnimMontage::GetSamplingFrameRate() const
 
 void UAnimMontage::PostLoad()
 {
+	// Link notifies before we call the Super::PostLoad (and eventually RefreshCacheData). This is to ensure that branching points get correctly
+	// picked up as FAnimNotifyEvent::IsBranchingPoint() relies on the LinkedMontage being valid, and due to an issue where (since deprecated)
+	// LinkSequence() was called instead of LinkMontage() there exists content for which LinkedMontage is saved as a null reference.
+	for(FAnimNotifyEvent& Notify : Notifies)
+	{
+#if WITH_EDITORONLY_DATA
+		if(Notify.DisplayTime_DEPRECATED != 0.0f)
+		{
+			Notify.Clear();
+			Notify.Link(this, Notify.DisplayTime_DEPRECATED);
+		}
+		else
+#endif
+		{
+			Notify.Link(this, Notify.GetTime());
+		}
+
+		if(Notify.Duration != 0.0f)
+		{
+			Notify.EndLink.Link(this, Notify.GetTime() + Notify.Duration);
+		}
+	}
+	
 	Super::PostLoad();
 
 	// copy deprecated variable to new one, temporary code to keep data copied. Am deleting it right after this
@@ -438,6 +476,12 @@ void UAnimMontage::PostLoad()
 			{
 				if (UAnimSequenceBase* AnimReference = Segment.GetAnimReference())
 				{
+#if WITH_EDITOR
+					if (!AnimReference->GetEnableRootMotionSettingFromMontage())
+					{
+						UE_LOG(LogAnimation, Warning, TEXT("[Montage %s] has RootMotionEnabled, but [AnimationSequence %s] has not been saved after setting the flag. Please open the Montage and the AnimationSequence and save the AnimationSequence as this will generate non determistic cooks."), *GetFullName(), *AnimReference->GetFullName());
+					}
+#endif // WITH_EDITOR
 					AnimReference->EnableRootMotionSettingFromMontage(true, RootMotionRootLock);
 				}
 			}
@@ -490,26 +534,6 @@ void UAnimMontage::PostLoad()
 				FName SlotName = SlotAnimTracks[SlotIndex].SlotName;
 				MySkeleton->RegisterSlotNode(SlotName);
 			}
-		}
-	}
-
-	for(FAnimNotifyEvent& Notify : Notifies)
-	{
-#if WITH_EDITORONLY_DATA
-		if(Notify.DisplayTime_DEPRECATED != 0.0f)
-		{
-			Notify.Clear();
-			Notify.Link(this, Notify.DisplayTime_DEPRECATED);
-		}
-		else
-#endif
-		{
-			Notify.Link(this, Notify.GetTime());
-		}
-
-		if(Notify.Duration != 0.0f)
-		{
-			Notify.EndLink.Link(this, Notify.GetTime() + Notify.Duration);
 		}
 	}
 
@@ -1436,7 +1460,7 @@ void FAnimMontageInstance::Play(float InPlayRate)
 		BlendInSettings.Blend = Montage->BlendIn;
 		BlendInSettings.BlendMode = Montage->BlendModeIn;
 		BlendInSettings.BlendProfile = Montage->BlendProfileIn;
-}
+	}
 
 	Play(InPlayRate, BlendInSettings);
 }
@@ -1914,6 +1938,7 @@ void FAnimMontageInstance::UpdateWeight(float DeltaTime)
 	if ( IsValid() )
 	{
 		PreviousWeight = Blend.GetBlendedValue();
+		const bool bWasComplete = Blend.IsComplete();
 
 		// update weight
 		Blend.Update(DeltaTime);
@@ -1921,6 +1946,14 @@ void FAnimMontageInstance::UpdateWeight(float DeltaTime)
 		if (Blend.GetBlendTimeRemaining() < 0.0001f)
 		{
 			ActiveBlendProfile = nullptr;
+		}
+
+		if (!IsStopped() && !bWasComplete && Blend.IsComplete())
+		{
+			if (UAnimInstance* Inst = AnimInstance.Get())
+			{
+				Inst->QueueMontageBlendedInEvent(FQueuedMontageBlendedInEvent(Montage, OnMontageBlendedInEnded));
+			}
 		}
 
 		// Notify weight is max of previous and current as notify could have come
@@ -2523,19 +2556,31 @@ void FAnimMontageInstance::Advance(float DeltaTime, struct FRootMotionMovementPa
 						// Get recent NextSectionIndex in case it's been changed by previous events.
 						const int32 CurrentSectionIndex = MontageSubStepper.GetCurrentSectionIndex();
 						const int32 RecentNextSectionIndex = bPlayingForward ? NextSections[CurrentSectionIndex] : PrevSections[CurrentSectionIndex];
+						const float EndOffset = UE_KINDA_SMALL_NUMBER / 2.f; //KINDA_SMALL_NUMBER/2 because we use KINDA_SMALL_NUMBER to offset notifies for triggering and SMALL_NUMBER is too small
+
 						if (RecentNextSectionIndex != INDEX_NONE)
 						{
 							float LatestNextSectionStartTime, LatestNextSectionEndTime;
 							Montage->GetSectionStartAndEndTime(RecentNextSectionIndex, LatestNextSectionStartTime, LatestNextSectionEndTime);
 
 							// Jump to next section's appropriate starting point (start or end).
-							const float EndOffset = UE_KINDA_SMALL_NUMBER / 2.f; //KINDA_SMALL_NUMBER/2 because we use KINDA_SMALL_NUMBER to offset notifies for triggering and SMALL_NUMBER is too small
 							Position = bPlayingForward ? LatestNextSectionStartTime : (LatestNextSectionEndTime - EndOffset);
 							SubStepResult = EMontageSubStepResult::Moved;
 						}
 						else
 						{
 							// If there is no next section and we've reached the end of this one, exit
+
+							// Stop playing and clamp position to prevent playing animation data past the end of the current section
+							// We already called Stop above if needed, like if bEnableAutoBlendOut is true
+							bPlaying = false;
+
+							float CurrentSectionStartTime, CurrentSectionEndTime;
+							Montage->GetSectionStartAndEndTime(CurrentSectionIndex, CurrentSectionStartTime, CurrentSectionEndTime);
+
+							Position = bPlayingForward ? (CurrentSectionEndTime - EndOffset) : CurrentSectionStartTime;
+							SubStepResult = EMontageSubStepResult::Moved;
+
 							break;
 						}
 					}
@@ -2848,6 +2893,7 @@ UAnimMontage* FAnimMontageInstance::SetSequencerMontagePosition(FName SlotName, 
 
 		if (MontageInstanceToUpdate)
 		{
+			PlayingMontage = MontageInstanceToUpdate->Montage;
 			InOutInstanceId = MontageInstanceToUpdate->GetInstanceID();
 
 			// ensure full weighting to this instance

@@ -6,6 +6,9 @@
 
 namespace UE::AnimNext
 {
+	// Type alias for a raw decorator UID, not typesafe
+	using FDecoratorUIDRaw = uint32;
+
 	/**
 	 * FDecoratorUID
 	 *
@@ -18,46 +21,49 @@ namespace UE::AnimNext
 	struct FDecoratorUID final
 	{
 		// Constructs an invalid UID
-		constexpr FDecoratorUID()
-			: UID(0)
+		constexpr FDecoratorUID() noexcept
+			: UID(INVALID_UID)
 #if !UE_BUILD_SHIPPING
 			, DecoratorName(TEXT("<Invalid decorator UID>"))
 #endif
-		{}
+		{
+		}
 
 		// Constructs a decorator UID
-		constexpr FDecoratorUID(const TCHAR* DecoratorName_, uint32 UID_)
-			: UID(UID_)
+		explicit constexpr FDecoratorUID(FDecoratorUIDRaw InUID, const TCHAR* InDecoratorName = TEXT("<Unknown Decorator Name>")) noexcept
+			: UID(InUID)
 #if !UE_BUILD_SHIPPING
-			, DecoratorName(DecoratorName_)
+			, DecoratorName(InDecoratorName)
 #endif
 		{
 		}
 
 #if !UE_BUILD_SHIPPING
 		// Returns a literal string to the interface name
-		constexpr const TCHAR* GetDecoratorName() const { return DecoratorName; }
+		constexpr const TCHAR* GetDecoratorName() const noexcept { return DecoratorName; }
 #endif
 
 		// Returns the decorator global UID
-		constexpr uint32 GetUID() const { return UID; }
+		constexpr FDecoratorUIDRaw GetUID() const noexcept { return UID; }
 
 		// Returns whether this UID is valid or not
-		constexpr bool IsValid() const { return UID != 0; }
+		constexpr bool IsValid() const noexcept { return UID != INVALID_UID; }
 
 	private:
-		uint32	UID;
+		static constexpr FDecoratorUIDRaw INVALID_UID = 0;
+
+		FDecoratorUIDRaw	UID;
 
 #if !UE_BUILD_SHIPPING
-		const TCHAR* DecoratorName;
+		const TCHAR*		DecoratorName;
 #endif
 	};
 
 	// Compares for equality and inequality
-	constexpr bool operator==(FDecoratorUID LHS, FDecoratorUID RHS) { return LHS.GetUID() == RHS.GetUID(); }
-	constexpr bool operator!=(FDecoratorUID LHS, FDecoratorUID RHS) { return LHS.GetUID() != RHS.GetUID(); }
-	constexpr bool operator==(FDecoratorUID LHS, uint32 RHS) { return LHS.GetUID() == RHS; }
-	constexpr bool operator!=(FDecoratorUID LHS, uint32 RHS) { return LHS.GetUID() != RHS; }
-	constexpr bool operator==(uint32 LHS, FDecoratorUID RHS) { return LHS == RHS.GetUID(); }
-	constexpr bool operator!=(uint32 LHS, FDecoratorUID RHS) { return LHS != RHS.GetUID(); }
+	constexpr bool operator==(FDecoratorUID LHS, FDecoratorUID RHS) noexcept { return LHS.GetUID() == RHS.GetUID(); }
+	constexpr bool operator!=(FDecoratorUID LHS, FDecoratorUID RHS) noexcept { return LHS.GetUID() != RHS.GetUID(); }
+	constexpr bool operator==(FDecoratorUID LHS, FDecoratorUIDRaw RHS) noexcept { return LHS.GetUID() == RHS; }
+	constexpr bool operator!=(FDecoratorUID LHS, FDecoratorUIDRaw RHS) noexcept { return LHS.GetUID() != RHS; }
+	constexpr bool operator==(FDecoratorUIDRaw LHS, FDecoratorUID RHS) noexcept { return LHS == RHS.GetUID(); }
+	constexpr bool operator!=(FDecoratorUIDRaw LHS, FDecoratorUID RHS) noexcept { return LHS != RHS.GetUID(); }
 }

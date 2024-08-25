@@ -430,25 +430,25 @@ export abstract class FunctionalTest {
 	}
 
 	async ensureNotBlocked(sourceStream: string, targetStream?: string) {
-		const branchState = await this.getBranchState(sourceStream)
-		if (targetStream) {
-			const edgeDisplayName = `${sourceStream} -> ${targetStream}`
-			this.info(`Ensuring ${edgeDisplayName} is not blocked`)
-			if (branchState.isBlocked()) {
-				throw new Error(`${sourceStream} (node) is blocked!`)
-			}
+			const branchState = await this.getBranchState(sourceStream)
+			if (targetStream) {
+				const edgeDisplayName = `${sourceStream} -> ${targetStream}`
+				this.info(`Ensuring ${edgeDisplayName} is not blocked`)
+				if (branchState.isBlocked()) {
+					throw new Error(`${sourceStream} (node) is blocked!`)
+				}
 
-			const edgeState = branchState.getEdgeState(this.fullBranchName(targetStream))
-			if (edgeState.isBlocked()) {
-				throw new Error(`${edgeDisplayName} is blocked!`)
+				const edgeState = branchState.getEdgeState(this.fullBranchName(targetStream))
+				if (edgeState.isBlocked()) {
+					throw new Error(`${edgeDisplayName} is blocked!`)
+				}
 			}
-		}
-		else {
-			this.info(`Ensuring ${sourceStream} isn't blocked`)
-			if (branchState.isBlocked()) {
-				throw new Error(`${sourceStream} (node) is blocked!`)
+			else {
+				this.info(`Ensuring ${sourceStream} isn't blocked`)
+				if (branchState.isBlocked()) {
+					throw new Error(`${sourceStream} (node) is blocked!`)
+				}
 			}
-		}
 	}
 
 	/**
@@ -652,6 +652,61 @@ export abstract class FunctionalTest {
 		}
 	}
 
+	async verifyUnlockRequest(source: string, target: string, edgeState: EdgeState) {
+		if (!edgeState.isBlocked()) {
+			throw new Error('edge must be blocked to unlock!')
+		}
+
+		const conflictCl = edgeState.conflict && edgeState.conflict.change
+		const sourceBranchName = this.fullBranchName(source)
+		const targetBranchName = this.fullBranchName(target)
+
+		// verify unlock
+		const endpoint = OPERATION_URL_TEMPLATE
+			.replace('<bot>', this.botName)
+			.replace('<node>', sourceBranchName)
+			.replace('<op>', 'verifyunlock')
+		const url = `${endpoint}?cl=${conflictCl}&target=${targetBranchName}`
+		let verifyResult: any
+
+		try {
+			const post = bent('POST', 'json', 200, 400)
+			verifyResult = await post(url)
+		}
+		catch (err) {
+			this.error(err)
+			throw new Error(`Verifying Unlock with Url "${url}" returned an error.`)
+		}
+
+		return verifyResult
+	}
+
+	async performUnlockRequest(source: string, target: string, edgeState: EdgeState) {
+		const conflictCl = edgeState.conflict && edgeState.conflict.change
+		const sourceBranchName = this.fullBranchName(source)
+		const targetBranchName = this.fullBranchName(target)
+
+		const unlockEndpoint = OPERATION_URL_TEMPLATE
+			.replace('<bot>', this.botName)
+			.replace('<node>', sourceBranchName)
+			.replace('<op>', 'unlockchanges')
+		const url = `${unlockEndpoint}?cl=${conflictCl}&target=${targetBranchName}`
+
+		const post = bent('POST', 200, 400, 500)
+		let response: bent.BentResponse
+		try {
+			response = await post(url) as bent.BentResponse
+		}
+		catch(err) {
+			this.error(err)
+			throw new Error(`Performing Unlock with Url "${url}" returned an error.`)
+		}
+		return {
+			statusCode: response.statusCode,
+			body: response
+		}
+	}
+
 	async reconsider(source: string, cl: number, target?: string, commandOverride?: string) {
 		const sourceBranchName = this.fullBranchName(source)
 
@@ -756,16 +811,55 @@ export abstract class FunctionalTest {
 		if (!verifyResult.validRequest)
 		{
 			this.warn(verifyResult.message)
-			// this.warn("nonBinaryFilesResolved=" + verifyResult.nonBinaryFilesResolved)
-			// this.warn("remainingAllBinary=" + verifyResult.remainingAllBinary)
-			// this.warn("files=" + (Array.isArray(verifyResult.files)
-				// ? verifyResult.files[0].targetFileName : `no files (${verifyResult.files})`))
 			throw new Error('Stomp verify returned unexpected values')
 		}
 
 		// attempt stomp
 		const stompResult = await this.performStompRequest(source, target, edgeState)
 		this.verbose('Waiting for RoboMerge to process Stomp')
+		await this.waitForRobomergeIdle()
+
+		return { verify: verifyResult, stomp: stompResult }
+	}
+
+	async verifyAndPerformUnlock(source: string, target: string, additionalSlackChannel?: string) {
+		const edgeState: EdgeState = await this.getEdgeState(source, target)
+
+		const conflictCl: number | undefined = edgeState.conflict && edgeState.conflict.change
+		if (!conflictCl) {
+			throw new Error('no conflict cl in edge state')
+		}
+
+		const checkSlack = async () => {
+			const slackChannel = this.botName.toLowerCase()
+			const channelsStr = slackChannel + (additionalSlackChannel ? ' and ' + additionalSlackChannel : '')
+
+			this.info(`Ensuring Slack message sent to ${channelsStr} for CL#${conflictCl}`)
+
+			const channels = [slackChannel]
+			if (additionalSlackChannel) {
+				channels.push(additionalSlackChannel)
+			}
+
+			await Promise.all(channels.map(channel =>
+				this.ensureConflictMessagePostedToSlack(source, target, channel)))
+		}
+
+		this.info(`Unlock ${source} -> ${target} @ CL#${conflictCl}`)
+		const [verifyResult] = await Promise.all([
+			this.verifyUnlockRequest(source, target, edgeState),
+			checkSlack()
+		])
+
+		if (!verifyResult.validRequest)
+		{
+			this.warn(verifyResult.message)
+			throw new Error('Unlock verify returned unexpected values')
+		}
+
+		// attempt stomp
+		const stompResult = await this.performUnlockRequest(source, target, edgeState)
+		this.verbose('Waiting for RoboMerge to process Unlock')
 		await this.waitForRobomergeIdle()
 
 		return { verify: verifyResult, stomp: stompResult }
@@ -921,7 +1015,7 @@ export abstract class FunctionalTest {
 
 		// when idle, produce a map of edge names to tick counts for edges neither blocked nor waiting for a gate
 		const ticksToWaitFor = new Map<string, number>([...unblockedBranchStates]
-			.filter(([_, node]) => !node.getEdges().every(e => e.getGateClosedMessage() || e.isBlocked()))
+			.filter(([_, node]) => !node.getEdges().every(e => e.getGateClosedMessage()))
 			.map(([name, node]) => [name, node.getTickCount()]))
 
 		return ticksToWaitFor.size > 0 ? ticksToWaitFor : true

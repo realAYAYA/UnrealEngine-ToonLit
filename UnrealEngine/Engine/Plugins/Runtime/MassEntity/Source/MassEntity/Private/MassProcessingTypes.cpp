@@ -58,8 +58,12 @@ void FMassRuntimePipeline::Initialize(UObject& Owner)
 	{
 		if (Proc)
 		{
-			REDIRECT_OBJECT_TO_VLOG(Proc, &Owner);
-			Proc->Initialize(Owner);
+			if (Proc->IsInitialized() == false)
+			{
+				REDIRECT_OBJECT_TO_VLOG(Proc, &Owner);
+				Proc->Initialize(Owner);
+				ensureMsgf(Proc->IsInitialized(), TEXT("Missing Super::Initialize call for %s"), *Proc->GetFullName());
+			}
 		}
 		else
 		{
@@ -96,7 +100,7 @@ void FMassRuntimePipeline::InitializeFromClassArray(TConstArrayView<TSubclassOf<
 	Reset();
 
 	const UWorld* World = InOwner.GetWorld();
-	const EProcessorExecutionFlags WorldExecutionFlags = World ? UE::Mass::Utils::GetProcessorExecutionFlagsForWorld(*World) : EProcessorExecutionFlags::All;
+	const EProcessorExecutionFlags WorldExecutionFlags = UE::Mass::Utils::DetermineProcessorExecutionFlags(World, ExecutionFlags);
 
 	for (const TSubclassOf<UMassProcessor>& ProcessorClass : InProcessorClasses)
 	{
@@ -127,7 +131,7 @@ bool FMassRuntimePipeline::HasProcessorOfExactClass(TSubclassOf<UMassProcessor> 
 void FMassRuntimePipeline::AppendUniqueRuntimeProcessorCopies(TConstArrayView<const UMassProcessor*> InProcessors, UObject& InOwner)
 {
 	const UWorld* World = InOwner.GetWorld();
-	const EProcessorExecutionFlags WorldExecutionFlags = World ? UE::Mass::Utils::GetProcessorExecutionFlagsForWorld(*World) : EProcessorExecutionFlags::All;
+	const EProcessorExecutionFlags WorldExecutionFlags = UE::Mass::Utils::DetermineProcessorExecutionFlags(World, ExecutionFlags);
 	const int32 StartingCount = Processors.Num();
 		
 	for (const UMassProcessor* Proc : InProcessors)
@@ -158,16 +162,21 @@ void FMassRuntimePipeline::AppendUniqueRuntimeProcessorCopies(TConstArrayView<co
 	{
 		UMassProcessor* Proc = Processors[NewProcIndex];
 		check(Proc);
-		REDIRECT_OBJECT_TO_VLOG(Proc, &InOwner);
-		Proc->Initialize(InOwner);
+		
+		if (Proc->IsInitialized() == false)
+		{
+			REDIRECT_OBJECT_TO_VLOG(Proc, &InOwner);
+			Proc->Initialize(InOwner);
+			ensureMsgf(Proc->IsInitialized(), TEXT("Missing Super::Initialize call for %s"), *Proc->GetFullName());
+		}
 	}
 }
 
 void FMassRuntimePipeline::AppendOrOverrideRuntimeProcessorCopies(TConstArrayView<const UMassProcessor*> InProcessors, UObject& InOwner)
 {
 	const UWorld* World = InOwner.GetWorld();
-	const EProcessorExecutionFlags WorldExecutionFlags = World ? UE::Mass::Utils::GetProcessorExecutionFlagsForWorld(*World) : EProcessorExecutionFlags::All;
-	
+	const EProcessorExecutionFlags WorldExecutionFlags = UE::Mass::Utils::DetermineProcessorExecutionFlags(World, ExecutionFlags);
+
 	for (const UMassProcessor* Proc : InProcessors)
 	{
 		if (Proc && Proc->ShouldExecute(WorldExecutionFlags))

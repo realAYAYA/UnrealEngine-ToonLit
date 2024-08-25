@@ -34,6 +34,10 @@ public:
 	/** Enable this to begin using search. */
 	UPROPERTY(config, EditAnywhere, Category = General)
 	bool bEnableSearch;
+	
+	/** Enable sqlite integrity checks on database load/setup. Slow. */
+	UPROPERTY(config, EditAnywhere, Category=General)
+	bool bEnableIntegrityChecks;
 
 	UPROPERTY(config, EditAnywhere, Category=General)
 	TArray<FDirectoryPath> IgnoredPaths;

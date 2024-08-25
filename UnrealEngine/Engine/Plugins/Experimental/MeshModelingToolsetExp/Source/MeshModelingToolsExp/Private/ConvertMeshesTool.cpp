@@ -1,20 +1,24 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "ConvertMeshesTool.h"
+
+#include "Algo/Accumulate.h"
+#include "Algo/Count.h"
+#include "ConversionUtils/SceneComponentToDynamicMesh.h"
 #include "ComponentSourceInterfaces.h"
 #include "InteractiveToolManager.h"
 #include "ToolTargetManager.h"
 #include "ToolBuilderUtil.h"
 #include "ToolSetupUtil.h"
-#include "ModelingToolTargetUtil.h"
 #include "ModelingObjectsCreationAPI.h"
 #include "Selection/ToolSelectionUtil.h"
 #include "Physics/ComponentCollisionUtil.h"
 #include "ShapeApproximation/SimpleShapeSet3.h"
 #include "DynamicMesh/DynamicMeshAttributeSet.h"
 
-#include "TargetInterfaces/MeshDescriptionProvider.h"
-#include "TargetInterfaces/PrimitiveComponentBackedTarget.h"
+#if WITH_EDITOR
+#include "ToolTargets/StaticMeshComponentToolTarget.h" // for GetActiveEditingLOD
+#endif
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ConvertMeshesTool)
 
@@ -25,21 +29,71 @@ using namespace UE::Geometry;
 /*
  * ToolBuilder
  */
-const FToolTargetTypeRequirements& UConvertMeshesToolBuilder::GetTargetRequirements() const
+UInteractiveTool* UConvertMeshesToolBuilder::BuildTool(const FToolBuilderState& SceneState) const
 {
-	static FToolTargetTypeRequirements TypeRequirements({
-		UMaterialProvider::StaticClass(),
-		UMeshDescriptionProvider::StaticClass(),
-		UPrimitiveComponentBackedTarget::StaticClass()
-		});
-	return TypeRequirements;
+	UConvertMeshesTool* Tool = NewObject<UConvertMeshesTool>(SceneState.ToolManager);
+	TArray<TWeakObjectPtr<UPrimitiveComponent>> Inputs;
+	auto TryAddSelected = [&Inputs](UActorComponent* Selected)
+	{
+		if (UPrimitiveComponent* PrimComponent = Cast<UPrimitiveComponent>(Selected))
+		{
+			if (UE::Conversion::CanConvertSceneComponentToDynamicMesh(PrimComponent))
+			{
+				Inputs.Emplace(PrimComponent);
+			}
+		}
+	};
+	if (SceneState.SelectedComponents.Num() > 0)
+	{
+		for (UActorComponent* Selected : SceneState.SelectedComponents)
+		{
+			TryAddSelected(Selected);
+		}
+	}
+	else
+	{
+		for (AActor* SelectedActor : SceneState.SelectedActors)
+		{
+			for (UActorComponent* Selected : SelectedActor->GetComponents())
+			{
+				TryAddSelected(Selected);
+			}
+		}
+	}
+	Tool->InitializeInputs(MoveTemp(Inputs));
+
+#if WITH_EDITOR
+	 
+	if (UStaticMeshComponentToolTargetFactory* StaticMeshComponentTargetFactory = SceneState.TargetManager->FindFirstFactoryByType<UStaticMeshComponentToolTargetFactory>())
+	{
+		EMeshLODIdentifier LOD = StaticMeshComponentTargetFactory->GetActiveEditingLOD();
+		Tool->SetTargetLOD(LOD);
+	}
+#endif
+
+	return Tool;
 }
 
-UMultiSelectionMeshEditingTool* UConvertMeshesToolBuilder::CreateNewTool(const FToolBuilderState& SceneState) const
+bool UConvertMeshesToolBuilder::CanBuildTool(const FToolBuilderState& SceneState) const
 {
-	return NewObject<UConvertMeshesTool>(SceneState.ToolManager);
+	int32 CanConvertCount = 0;
+	auto CanConvert = [](UActorComponent* Comp)->bool { return UE::Conversion::CanConvertSceneComponentToDynamicMesh(Cast<USceneComponent>(Comp)); };
+	if (SceneState.SelectedComponents.Num() > 0)
+	{
+		CanConvertCount = static_cast<int32>(Algo::CountIf(SceneState.SelectedComponents, CanConvert));
+	}
+	else
+	{
+		CanConvertCount =
+			Algo::TransformAccumulate(SceneState.SelectedActors,
+				[&CanConvert](AActor* Actor)
+				{
+					return static_cast<int>(Algo::CountIf(Actor->GetComponents(), CanConvert));
+				},
+				0);
+	}
+	return CanConvertCount > 0;
 }
-
 
 
 /*
@@ -75,10 +129,18 @@ void UConvertMeshesTool::Setup()
 
 bool UConvertMeshesTool::CanAccept() const
 {
-	return Super::CanAccept();
+	// Refuse to accept if we have any invalid inputs
+	for (const TWeakObjectPtr<UPrimitiveComponent>& Input : Inputs)
+	{
+		if (!Input.IsValid())
+		{
+			return false;
+		}
+	}
+	return true;
 }
 
-void UConvertMeshesTool::OnShutdown(EToolShutdownType ShutdownType)
+void UConvertMeshesTool::Shutdown(EToolShutdownType ShutdownType)
 {
 	OutputTypeProperties->SaveProperties(this, TEXT("ConvertMeshesTool"));
 	BasicProperties->SaveProperties(this);
@@ -94,14 +156,46 @@ void UConvertMeshesTool::OnShutdown(EToolShutdownType ShutdownType)
 		// Accumulate info for new mesh objects. Do not immediately create them because then
 		// the new Actors will get a unique-name incremented suffix, because the convert-from
 		// Actors still exist.
-		for (int32 k = 0; k < Targets.Num(); ++k)
+		for (TWeakObjectPtr<UPrimitiveComponent> Input : Inputs)
 		{
-			AActor* TargetActor = UE::ToolTarget::GetTargetActor(Targets[k]);
+			if (!Input.IsValid())
+			{
+				continue;
+			}
+			UPrimitiveComponent* InputComponent = Input.Get();
+			FDynamicMesh3 SourceMesh;
+			FTransform SourceTransform;
+			TArray<UMaterialInterface*> ComponentMaterials;
+			TArray<UMaterialInterface*> AssetMaterials;
+			FText ErrorMessage;
+
+			UE::Conversion::FToMeshOptions Options;
+			Options.LODType = UE::Conversion::EMeshLODType::SourceModel;
+			Options.LODIndex = 0;
+			Options.bUseClosestLOD = true;
+			if ((int32)TargetLOD <= (int32)EMeshLODIdentifier::LOD7)
+			{
+				Options.LODIndex = (int32)TargetLOD;
+			}
+			else if (TargetLOD == EMeshLODIdentifier::MaxQuality)
+			{
+				Options.LODType = UE::Conversion::EMeshLODType::MaxAvailable;
+			}
+			else if (TargetLOD == EMeshLODIdentifier::HiResSource)
+			{
+				Options.LODType = UE::Conversion::EMeshLODType::HiResSourceModel;
+			}
+
+			bool bSuccess = UE::Conversion::SceneComponentToDynamicMesh(InputComponent, Options, false, SourceMesh, SourceTransform, ErrorMessage, &ComponentMaterials, &AssetMaterials);
+			if (!bSuccess)
+			{
+				UE_LOG(LogGeometry, Warning, TEXT("Convert Tool failed to convert %s: %s"), *InputComponent->GetName(), *ErrorMessage.ToString());
+				continue;
+			}
+
+			AActor* TargetActor = InputComponent->GetOwner();
 			check(TargetActor != nullptr);
 			DeleteActors.Add(TargetActor);
-
-			FTransform SourceTransform = (FTransform)UE::ToolTarget::GetLocalToWorldTransform(Targets[k]);
-			FDynamicMesh3 SourceMesh = UE::ToolTarget::GetDynamicMeshCopy(Targets[k], true);
 
 			// if not transferring materials, need to clear out any existing MaterialIDs
 			if (BasicProperties->bTransferMaterials == false && SourceMesh.HasAttributes())
@@ -116,30 +210,28 @@ void UConvertMeshesTool::OnShutdown(EToolShutdownType ShutdownType)
 			}
 
 			FString AssetName = TargetActor->GetActorNameOrLabel();
-			FComponentMaterialSet Materials = UE::ToolTarget::GetMaterialSet(Targets[k]);
-			const FComponentMaterialSet* TransferMaterials = (BasicProperties->bTransferMaterials) ? &Materials : nullptr;
 
 			FCreateMeshObjectParams NewMeshObjectParams;
-			NewMeshObjectParams.TargetWorld = GetTargetWorld();
+			NewMeshObjectParams.TargetWorld = InputComponent->GetWorld();
 			NewMeshObjectParams.Transform = (FTransform)SourceTransform;
 			NewMeshObjectParams.BaseName = AssetName;
-			if (TransferMaterials != nullptr)
+			if (BasicProperties->bTransferMaterials)
 			{
-				NewMeshObjectParams.Materials = TransferMaterials->Materials;
+				NewMeshObjectParams.Materials = ComponentMaterials;
+				NewMeshObjectParams.AssetMaterials = AssetMaterials;
 			}
 			NewMeshObjectParams.SetMesh(MoveTemp(SourceMesh));
 			
 			if (BasicProperties->bTransferCollision)
 			{
-				UPrimitiveComponent* SourceComponent = UE::ToolTarget::GetTargetComponent(Targets[k]);
-				if (UE::Geometry::ComponentTypeSupportsCollision(SourceComponent, UE::Geometry::EComponentCollisionSupportLevel::ReadOnly))
+				if (UE::Geometry::ComponentTypeSupportsCollision(InputComponent, UE::Geometry::EComponentCollisionSupportLevel::ReadOnly))
 				{
 					NewMeshObjectParams.bEnableCollision = true;
-					FComponentCollisionSettings CollisionSettings = UE::Geometry::GetCollisionSettings(SourceComponent);
+					FComponentCollisionSettings CollisionSettings = UE::Geometry::GetCollisionSettings(InputComponent);
 					NewMeshObjectParams.CollisionMode = (ECollisionTraceFlag)CollisionSettings.CollisionTypeFlag;
 
 					FSimpleShapeSet3d ShapeSet;
-					if (UE::Geometry::GetCollisionShapes(SourceComponent, ShapeSet))
+					if (UE::Geometry::GetCollisionShapes(InputComponent, ShapeSet))
 					{
 						NewMeshObjectParams.CollisionShapeSet = MoveTemp(ShapeSet);
 					}

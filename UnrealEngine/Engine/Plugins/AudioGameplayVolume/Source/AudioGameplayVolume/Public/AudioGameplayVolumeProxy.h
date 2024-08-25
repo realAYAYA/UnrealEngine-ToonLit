@@ -6,12 +6,15 @@
 #include "AudioGameplayVolumeProxy.generated.h"
 
 // Forward Declarations 
-struct FBodyInstance;
+class FPrimitiveDrawInterface;
+class FProxyVolumeMutator;
+class FSceneView;
+class UActorComponent;
+class UAudioGameplayVolumeComponent;
+class UPrimitiveComponent;
 struct FAudioProxyMutatorPriorities;
 struct FAudioProxyMutatorSearchResult;
-class FProxyVolumeMutator;
-class UPrimitiveComponent;
-class UAudioGameplayVolumeComponent;
+struct FBodyInstance;
 
 /**
  *  UAudioGameplayVolumeProxy - Abstract proxy used on audio thread to represent audio gameplay volumes.
@@ -39,6 +42,9 @@ public:
 
 	uint32 GetVolumeID() const;
 	uint32 GetWorldID() const;
+
+	/** Used for debug visualization of UAudioGameplayVolumeProxy in the editor */
+	virtual void DrawVisualization(const UActorComponent* Component, const FSceneView* View, FPrimitiveDrawInterface* PDI) {}
 
 protected:
 

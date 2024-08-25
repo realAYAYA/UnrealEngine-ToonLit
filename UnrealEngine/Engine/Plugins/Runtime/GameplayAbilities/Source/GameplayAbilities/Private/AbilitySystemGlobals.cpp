@@ -36,9 +36,6 @@ namespace UE::AbilitySystemGlobals
 
 	FAutoConsoleVariableRef CVarAbilitySystemIgnoreCooldowns(TEXT("AbilitySystem.IgnoreCooldowns"), bIgnoreAbilitySystemCooldowns, TEXT("Ignore cooldowns for all Gameplay Abilities."), ECVF_Cheat);
 	FAutoConsoleVariableRef CVarAbilitySystemIgnoreCosts(TEXT("AbilitySystem.IgnoreCosts"), bIgnoreAbilitySystemCosts, TEXT("Ignore costs for all Gameplay Abilities."), ECVF_Cheat);
-
-	template<typename ClassToFind>
-	TSubclassOf<ClassToFind> FuzzyFindClass(FString SearchString);
 }
 
 UAbilitySystemGlobals::UAbilitySystemGlobals(const FObjectInitializer& ObjectInitializer)
@@ -365,14 +362,62 @@ FAttributeSetInitter* UAbilitySystemGlobals::GetAttributeSetInitter() const
 	return GlobalAttributeSetInitter.Get();
 }
 
-void UAbilitySystemGlobals::AddAttributeDefaultTables(const TArray<FSoftObjectPath>& AttribDefaultTableNames)
+void UAbilitySystemGlobals::AddAttributeDefaultTables(const FName OwnerName, const TArray<FSoftObjectPath>& AttribDefaultTableNames)
 {
 	for (const FSoftObjectPath& TableName : AttribDefaultTableNames)
 	{
-		GlobalAttributeSetDefaultsTableNames.AddUnique(TableName);
+		if (TArray<FName>* Found = GlobalAttributeSetDefaultsTableNamesWithOwners.Find(TableName))
+		{
+			Found->Add(OwnerName);
+		}
+		else
+		{
+			TArray<FName> Owners = { OwnerName };
+			GlobalAttributeSetDefaultsTableNamesWithOwners.Add(TableName, MoveTemp(Owners));
+		}
 	}
 
 	InitAttributeDefaults();
+}
+
+void UAbilitySystemGlobals::RemoveAttributeDefaultTables(const FName OwnerName, const TArray<FSoftObjectPath>& AttribDefaultTableNames)
+{
+	bool bModified = false;
+
+	for (const FSoftObjectPath& TableName : AttribDefaultTableNames)
+	{
+		if (TableName.IsValid())
+		{
+			if (TArray<FName>* Found = GlobalAttributeSetDefaultsTableNamesWithOwners.Find(TableName))
+			{
+				Found->RemoveSingle(OwnerName);
+
+				// If no references remain, clear the pointer in GlobalAttributeDefaultsTables to allow GC
+				if (Found->IsEmpty())
+				{
+					GlobalAttributeSetDefaultsTableNamesWithOwners.Remove(TableName);
+
+					// Only if not listed in config file
+					if (!GlobalAttributeSetDefaultsTableNames.Contains(TableName))
+					{
+						// Remove reference to allow GC so package can be unloaded
+						if (UCurveTable* AttribTable = Cast<UCurveTable>(TableName.ResolveObject()))
+						{
+							if (GlobalAttributeDefaultsTables.Remove(AttribTable) > 0)
+							{
+								bModified = true;
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if (bModified)
+	{
+		ReloadAttributeDefaults();
+	}
 }
 
 void UAbilitySystemGlobals::InitAttributeDefaults()
@@ -404,6 +449,21 @@ void UAbilitySystemGlobals::InitAttributeDefaults()
 		}
  	}
 	
+	// Handle global curve tables for attribute defaults not defined by config file (registered by plugins or other systems calling AddAttributeDefaultTables)
+	for (const TPair<FSoftObjectPath, TArray<FName>>& It : GlobalAttributeSetDefaultsTableNamesWithOwners)
+	{
+		const FSoftObjectPath& AttribDefaultTableName = It.Key;
+		if (AttribDefaultTableName.IsValid() && !GlobalAttributeSetDefaultsTableNames.Contains(AttribDefaultTableName))
+		{
+			UCurveTable* AttribTable = Cast<UCurveTable>(AttribDefaultTableName.TryLoad());
+			if (AttribTable)
+			{
+				GlobalAttributeDefaultsTables.AddUnique(AttribTable);
+				bLoadedAnyDefaults = true;
+			}
+		}
+	}
+
 	if (bLoadedAnyDefaults)
 	{
 		// Subscribe for reimports if in the editor
@@ -522,6 +582,21 @@ void UAbilitySystemGlobals::HandlePreLoadMap(const FWorldContext& WorldContext, 
 		return;
 	}
 
+	// If we are preloading a map but coming from an existing map, then we should wait until the previous map is cleaned up,
+	// otherwise we'll end up stomping FActiveGameplayEffectHandle map.
+	if (const UWorld* InWorld = WorldContext.World())
+	{
+		FWorldDelegates::OnPostWorldCleanup.AddWeakLambda(InWorld, [InWorld](UWorld* WorldParam, bool bSessionEnded, bool bCleanupResources)
+			{
+				if (WorldParam == InWorld)
+				{
+					ResetCachedData();
+				}
+			});
+
+		return;
+	}
+
 	ResetCachedData();
 }
 
@@ -603,447 +678,3 @@ bool FNetSerializeScriptStructCache::NetSerialize(FArchive& Ar, UScriptStruct*& 
 		return false;
 	}
 }
-
-namespace UE::AbilitySystemGlobals
-{
-	/**
-	 * Common logic used to fuzzy-find a requested class (or alternatively, a passed-in asset path).
-	 */
-	template<typename ClassToFind>
-	TSubclassOf<ClassToFind> FuzzyFindClass(FString SearchString)
-	{
-		TSubclassOf<ClassToFind> FoundClass;
-
-		// See if we passed in a class name of a Class that already exists in memory.
-		// If we passed-in Default__, just remove that part since we're looking for Classes, not CDO names.
-		SearchString.RemoveFromStart(TEXT("Default__"));
-		const int SearchStringLen = SearchString.Len();
-		int BestClassMatchLen = INT_MAX;
-		for (TObjectIterator<UClass> ClassIt; ClassIt; ++ClassIt)
-		{
-			const bool bClassMatches = ClassIt->IsChildOf(ClassToFind::StaticClass());
-			if (!bClassMatches)
-			{
-				continue;
-			}
-
-			// Class name search
-			const FString ClassName = ClassIt->GetName();
-			const int ClassNameLen = ClassName.Len();
-			if (ClassNameLen < BestClassMatchLen && ClassNameLen >= SearchStringLen)
-			{
-				bool bContains = ClassName.Contains(SearchString);
-				if (bContains)
-				{
-					FoundClass = *ClassIt;
-					BestClassMatchLen = ClassNameLen;
-				}
-			}
-		}
-
-		// If it wasn't a class name, then perhaps it was the path to a specific asset
-		if (!FoundClass)
-		{
-			FSoftObjectPath SoftObjectPath{ SearchString };
-			if (UObject* ReferencedObject = SoftObjectPath.ResolveObject())
-			{
-				if (UPackage* ReferencedPackage = Cast<UPackage>(ReferencedObject))
-				{
-					ReferencedObject = ReferencedPackage->FindAssetInPackage();
-				}
-
-				if (UBlueprint* ReferencedBlueprint = Cast<UBlueprint>(ReferencedObject))
-				{
-					FoundClass = ReferencedBlueprint->GeneratedClass;
-				}
-				else if (ClassToFind* ReferencedGA = Cast<ClassToFind>(ReferencedObject))
-				{
-					FoundClass = ReferencedGA->GetClass();
-				}
-			}
-		}
-
-		return FoundClass;
-	}
-}
-
-//
-// AbilitySystem.Ability Debug Commands
-//
-
-FAutoConsoleCommand DebugAbilitySystemAbilityListGrantedCommand(TEXT("AbilitySystem.Ability.Grant"), TEXT("Include a param [ClassName/AssetName] to Grant an Ability to the Player.  Omit parameters to lists all of the Gameplay Abilities currently granted to the Player."),
-	FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World, FOutputDevice& OutputDevice)
-	{
-		UAbilitySystemGlobals& AbilitySystemGlobals = UAbilitySystemGlobals::Get();
-
-		APlayerController* PC = World->GetFirstPlayerController();
-		UAbilitySystemComponent* ASC = PC ? AbilitySystemGlobals.GetAbilitySystemComponentFromActor(PC->GetPawn()) : nullptr;
-		if (!ASC)
-		{
-			OutputDevice.Logf(TEXT("Could not find Player (%s) with AbilitySystemComponent in World (%s)"), *GetNameSafe(PC), *GetNameSafe(World));
-			return;
-		}
-
-		if (Args.Num() > 1)
-		{
-			OutputDevice.Logf(TEXT("Expected a single parameter (ClassName or AssetName).  Use no parameters to list all granted abilities."));
-			return;
-		}
-
-		// List already granted
-		if (Args.Num() < 1)
-		{
-			const UEnum* ExecutionEnumPtr = FindObject<UEnum>(nullptr, TEXT("/Script/GameplayAbilities.EGameplayAbilityNetExecutionPolicy"), true);
-			check(ExecutionEnumPtr&& TEXT("Couldn't locate EGameplayAbilityNetExecutionPolicy enum!"));
-
-			const UEnum* SecurityEnumPtr = FindObject<UEnum>(nullptr, TEXT("/Script/GameplayAbilities.EGameplayAbilityNetSecurityPolicy"), true);
-			check(SecurityEnumPtr&& TEXT("Couldn't locate EGameplayAbilityNetSecurityPolicy enum!"));
-
-			OutputDevice.Logf(TEXT("Granted abilities to %s (ASC: '%s'):"), *PC->GetName(), *ASC->GetFullName());
-
-			for (FGameplayAbilitySpec& Activatable : ASC->GetActivatableAbilities())
-			{
-				const TCHAR* ActiveText = Activatable.IsActive() ? TEXT("**ACTIVE**") : TEXT("");
-				OutputDevice.Logf(TEXT("   %s (%s - %s) %s"), *Activatable.Ability->GetName(), *ExecutionEnumPtr->GetDisplayNameTextByIndex(Activatable.Ability->GetNetExecutionPolicy()).ToString(), *SecurityEnumPtr->GetDisplayNameTextByIndex(Activatable.Ability->GetNetSecurityPolicy()).ToString(), ActiveText);
-			}
-
-			return;
-		}
-
-		FString SearchString = Args[0];
-
-		// We couldn't find anything the user was searching for, so early out
-		TSubclassOf<UGameplayAbility> ActivateAbilityClass = UE::AbilitySystemGlobals::FuzzyFindClass<UGameplayAbility>(SearchString);
-		if (!ActivateAbilityClass)
-		{
-			OutputDevice.Logf(TEXT("Could not find a valid Gameplay Ability based on Search String '%s'"), *SearchString);
-			return;
-		}
-
-		// Check if it's already granted
-		if (const FGameplayAbilitySpec* ExistingSpec = ASC->FindAbilitySpecFromClass(ActivateAbilityClass))
-		{
-			OutputDevice.Logf(TEXT("Existing Ability Spec '%s' on Player '%s' (It is already granted)."), *GetNameSafe(*ActivateAbilityClass), *GetNameSafe(PC));
-			return;
-		}
-
-		// If we're not the authority, we need to send the command to the server because we can't grant locally.
-		if (!ASC->IsOwnerActorAuthoritative())
-		{
-			const FString ServerCommand = FString::Printf(TEXT("AbilitySystem.Ability.Grant %s"), *SearchString);
-			PC->ServerExec(ServerCommand);
-
-			OutputDevice.Logf(TEXT("Sent Command '%s' from Player '%s' to Server (Reason: Cannot Grant if not Authority)."), *ServerCommand, *GetNameSafe(PC));
-			return;
-		}
-
-		// It wasn't granted, let's grant it now.
-		FGameplayAbilitySpec AbilitySpec{ ActivateAbilityClass };
-		FGameplayAbilitySpecHandle SpecHandle = ASC->GiveAbility(AbilitySpec);
-		if (SpecHandle.IsValid())
-		{
-			OutputDevice.Logf(TEXT("Successfully Granted '%s' on Player '%s'."), *GetNameSafe(ActivateAbilityClass.Get()), *GetNameSafe(PC));
-		}
-		else
-		{
-			OutputDevice.Logf(TEXT("Failed to Grant '%s' on Player '%s'."), *GetNameSafe(ActivateAbilityClass.Get()), *GetNameSafe(PC));
-		}
-		}), ECVF_Cheat);
-
-FAutoConsoleCommand DebugAbilitySystemAbilityCancelCommand(TEXT("AbilitySystem.Ability.Cancel"), TEXT("<Name>. Cancels (prematurely Ends) a currently executing Gameplay Ability"),
-	FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World, FOutputDevice& OutputDevice)
-		{
-			UAbilitySystemGlobals& AbilitySystemGlobals = UAbilitySystemGlobals::Get();
-
-			APlayerController* PC = World->GetFirstPlayerController();
-			UAbilitySystemComponent* ASC = PC ? AbilitySystemGlobals.GetAbilitySystemComponentFromActor(PC->GetPawn()) : nullptr;
-			if (!ASC)
-			{
-				OutputDevice.Logf(TEXT("Could not find Player (%s) with AbilitySystemComponent in World (%s)"), *GetNameSafe(PC), *GetNameSafe(World));
-				return;
-			}
-
-			if (Args.Num() < 1)
-			{
-				if (IConsoleObject* GetGrantedCommand = IConsoleManager::Get().FindConsoleObject(TEXT("AbilitySystem.Ability.ListGranted"), false))
-				{
-					GetGrantedCommand->AsCommand()->Execute(Args, World, OutputDevice);
-				}
-				return;
-			}
-
-			FString SearchString = Args[0];
-			SearchString.RemoveFromStart(TEXT("Default__"));
-
-			bool bFound = false;
-			for (FGameplayAbilitySpec& GASpec : ASC->GetActivatableAbilities())
-			{
-				if (GASpec.IsActive())
-				{
-					if (!GASpec.Ability || !GASpec.Ability->GetName().Contains(SearchString))
-					{
-						continue;
-					}
-
-					TArray<UGameplayAbility*> ActiveAbilities = GASpec.GetAbilityInstances();
-					if (ActiveAbilities.Num() > 0)
-					{
-						for (UGameplayAbility* Instance : ActiveAbilities)
-						{
-							if (Instance)
-							{
-								OutputDevice.Logf(TEXT("%s (%s): Cancelling (instanced) %s"), *PC->GetName(), *ASC->GetName(), *Instance->GetName());
-								Instance->CancelAbility(GASpec.Handle, ASC->AbilityActorInfo.Get(), GASpec.ActivationInfo, true);
-								bFound = true;
-							}
-						}
-					}
-					else
-					{
-						OutputDevice.Logf(TEXT("%s (%s): Cancelling (non-instanced) %s"), *PC->GetName(), *ASC->GetName(), *GASpec.Ability->GetName());
-						GASpec.Ability->CancelAbility(GASpec.Handle, ASC->AbilityActorInfo.Get(), GASpec.ActivationInfo, true);
-						bFound = true;
-					}
-				}
-			}
-
-			if (!bFound)
-			{
-				OutputDevice.Logf(TEXT("Found no Active Gameplay Abilities on %s (%s) that matched '%s'"), *PC->GetName(), *ASC->GetName(), *SearchString);
-			}
-	}), ECVF_Cheat);
-
-FAutoConsoleCommand DebugAbilitySystemAbilityActivateCommand(TEXT("AbilitySystem.Ability.Activate"), TEXT("<TagName/ClassName/AssetName>. Activate a Gameplay Ability.\nSubstring name matching works for Activation Tags (on already granted abilities), Asset Paths (on non-granted abilities), or Class Names on both."),
-	FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World, FOutputDevice& OutputDevice)
-	{
-		UAbilitySystemGlobals& AbilitySystemGlobals = UAbilitySystemGlobals::Get();
-
-		APlayerController* PC = World->GetFirstPlayerController();
-		UAbilitySystemComponent* ASC = PC ? AbilitySystemGlobals.GetAbilitySystemComponentFromActor(PC->GetPawn()) : nullptr;
-		if (!ASC)
-		{
-			OutputDevice.Logf(TEXT("Could not find Player (%s) with AbilitySystemComponent in World (%s)"), *GetNameSafe(PC), *GetNameSafe(World));
-			return;
-		}
-
-		if (Args.Num() < 1)
-		{
-			if (IConsoleObject* GetGrantedCommand = IConsoleManager::Get().FindConsoleObject(TEXT("AbilitySystem.Ability.Grant"), false))
-			{
-				GetGrantedCommand->AsCommand()->Execute(Args, World, OutputDevice);
-			}
-
-			return;
-		}
-
-		const FString SearchString = Args[0];
-
-		// Start by figuring out if we're trying to execute by GameplayTag.
-		const FName SearchName{ TCHAR_TO_ANSI(*SearchString), FNAME_Find };
-		if (SearchName != NAME_None)
-		{
-			const FGameplayTag GameplayTag = FGameplayTag::RequestGameplayTag(SearchName, false);
-			if (GameplayTag.IsValid())
-			{
-				FGameplayTagContainer GameplayTagContainer{ GameplayTag };
-				TArray<FGameplayAbilitySpec*> MatchingSpecs;
-				constexpr bool bTagRequirementsMustMatch = false;
-				ASC->GetActivatableGameplayAbilitySpecsByAllMatchingTags(GameplayTagContainer, MatchingSpecs, bTagRequirementsMustMatch);
-				if (MatchingSpecs.Num() > 0)
-				{
-					FString MatchingAbilitiesString = FString::JoinBy(MatchingSpecs, TEXT(", "), [](FGameplayAbilitySpec* Item) { return Item->GetDebugString(); });
-
-					bool bSuccess = ASC->TryActivateAbilitiesByTag(GameplayTagContainer);
-					if (bSuccess)
-					{
-						OutputDevice.Logf(TEXT("Requested Tag '%s' successfully executed one of: %s."), *SearchName.ToString(), *MatchingAbilitiesString);
-					}
-					else
-					{
-						OutputDevice.Logf(TEXT("Requested Tag '%s' was expected to execute one of: %s. But it failed to do so due to tag requirements."), *SearchName.ToString(), *MatchingAbilitiesString);
-					}
-				}
-				else
-				{
-					OutputDevice.Logf(TEXT("Requested Tag '%s' matched no given Gameplay Abilities to %s."), *SearchName.ToString(), *GetNameSafe(PC));
-				}
-
-				return;
-			}
-		}
-
-		// We couldn't find anything the user was searching for, so early out
-		TSubclassOf<UGameplayAbility> ActivateAbilityClass = UE::AbilitySystemGlobals::FuzzyFindClass<UGameplayAbility>(SearchString);
-		if (!ActivateAbilityClass)
-		{
-			OutputDevice.Logf(TEXT("Could not find a valid Gameplay Ability based on Search String '%s'"), *SearchString);
-			return;
-		}
-
-		// If we're not the authority, we should check if we need to send the command to the server
-		if (!ASC->IsOwnerActorAuthoritative())
-		{
-			const UGameplayAbility* Ability = ActivateAbilityClass.GetDefaultObject();
-			const bool bSendToServer = Ability && (Ability->GetNetExecutionPolicy() >= EGameplayAbilityNetExecutionPolicy::ServerInitiated);
-			if (bSendToServer)
-			{
-				const FString ServerCommand = FString::Printf(TEXT("AbilitySystem.Ability.Activate %s"), *SearchString);
-				PC->ServerExec(ServerCommand);
-
-				OutputDevice.Logf(TEXT("Sent Command '%s' from Player '%s' to Server (Reason: Net Execution Policy)."), *ServerCommand, *GetNameSafe(PC), *GetNameSafe(ActivateAbilityClass.Get()));
-				return;
-			}
-		}
-
-		// We found what the user was searching for, so let's try to activate it.  First, let's assume the Ability was already granted.
-		bool bSuccess = ASC->TryActivateAbilityByClass(ActivateAbilityClass);
-		if (bSuccess)
-		{
-			OutputDevice.Logf(TEXT("Successfully Activated Granted Ability '%s' on Player '%s'."), *GetNameSafe(ActivateAbilityClass.Get()), *GetNameSafe(PC));
-			return;
-		}
-
-		// It wasn't granted (or we failed to activate it even though it was granted).  We can't really differentiate those two, so let's grant it, then activate it.
-		FGameplayAbilitySpec AbilitySpec{ ActivateAbilityClass };
-		FGameplayAbilitySpecHandle SpecHandle = ASC->GiveAbilityAndActivateOnce(AbilitySpec);
-		if (SpecHandle.IsValid())
-		{
-			OutputDevice.Logf(TEXT("Successfully Granted, then Activated '%s' on Player '%s'."), *GetNameSafe(ActivateAbilityClass.Get()), *GetNameSafe(PC));
-		}
-		else
-		{
-			OutputDevice.Logf(TEXT("Failed to Grant & Activate '%s' on Player '%s'."), *GetNameSafe(ActivateAbilityClass.Get()), *GetNameSafe(PC));
-		}
-	}), ECVF_Cheat);
-
-
-//
-// AbilitySystem.Effect Debug Commands
-//
-
-FAutoConsoleCommand DebugAbilitySystemEffectListActiveCommand(TEXT("AbilitySystem.Effect.ListActive"), TEXT("Lists all of the Gameplay Effects currently active on the Player"),
-	FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World, FOutputDevice& OutputDevice)
-	{
-		UAbilitySystemGlobals& AbilitySystemGlobals = UAbilitySystemGlobals::Get();
-
-		APlayerController* PC = World->GetFirstPlayerController();
-		UAbilitySystemComponent* ASC = PC ? AbilitySystemGlobals.GetAbilitySystemComponentFromActor(PC->GetPawn()) : nullptr;
-		if (!ASC)
-		{
-			OutputDevice.Logf(TEXT("Could not find Player (%s) with AbilitySystemComponent in World (%s)"), *GetNameSafe(PC), *GetNameSafe(World));
-			return;
-		}
-
-		OutputDevice.Logf(TEXT("Active Gameplay Effects on %s (%s):"), *PC->GetName(), *ASC->GetName());
-
-		const FActiveGameplayEffectsContainer& ActiveGEContainer = ASC->GetActiveGameplayEffects();
-		for (const FActiveGameplayEffectHandle& ActiveGEHandle : ActiveGEContainer.GetAllActiveEffectHandles())
-		{
-			if (const FActiveGameplayEffect* ActiveGE = ASC->GetActiveGameplayEffect(ActiveGEHandle))
-			{
-				const UGameplayEffect* GESpecDef = ActiveGE->Spec.Def;
-				const FString ActiveState = ActiveGE->bIsInhibited ? FString(TEXT("Inhibited")) : FString::Printf(TEXT("Active (Stack: %d)"), ActiveGE->Spec.GetStackCount());
-
-				OutputDevice.Logf(TEXT(" [%u] %s: %s"), GetTypeHash(ActiveGEHandle), *GetNameSafe(GESpecDef), *ActiveState);
-			}
-		}
-	}), ECVF_Cheat);
-
-FAutoConsoleCommand DebugAbilitySystemEffectRemoveCommand(TEXT("AbilitySystem.Effect.Remove"), TEXT("<Handle/Name>. Remove a Gameplay Effect that is currently active on the Player"),
-	FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World, FOutputDevice& OutputDevice)
-		{
-			UAbilitySystemGlobals& AbilitySystemGlobals = UAbilitySystemGlobals::Get();
-
-			APlayerController* PC = World->GetFirstPlayerController();
-			UAbilitySystemComponent* ASC = PC ? AbilitySystemGlobals.GetAbilitySystemComponentFromActor(PC->GetPawn()) : nullptr;
-			if (!ASC)
-			{
-				OutputDevice.Logf(TEXT("Could not find Player (%s) with AbilitySystemComponent in World (%s)"), *GetNameSafe(PC), *GetNameSafe(World));
-				return;
-			}
-
-			if (Args.Num() < 1)
-			{
-				if (IConsoleObject* ListActiveCommand = IConsoleManager::Get().FindConsoleObject(TEXT("AbilitySystem.Effect.ListActive"), false))
-				{
-					ListActiveCommand->AsCommand()->Execute(Args, World, OutputDevice);
-				}
-
-				return;
-			}
-
-			uint32 SearchHandleValue = 0;
-			FString SearchString = Args[0];
-			if (SearchString.IsNumeric())
-			{
-				int64 SearchHash64 = FCString::Atoi64(*SearchString);
-				if (SearchHash64 > 0)
-				{
-					SearchHandleValue = static_cast<uint32>(SearchHash64 & UINT_MAX);
-				}
-			}
-
-			bool bAnyMatch = false;
-			const FActiveGameplayEffectsContainer& ActiveGEContainer = ASC->GetActiveGameplayEffects();
-			for (const FActiveGameplayEffectHandle& ActiveGEHandle : ActiveGEContainer.GetAllActiveEffectHandles())
-			{
-				if (const FActiveGameplayEffect* ActiveGE = ASC->GetActiveGameplayEffect(ActiveGEHandle))
-				{
-					const UGameplayEffect* GESpecDef = ActiveGE->Spec.Def;
-					const uint32 ActiveGEHandleValue = GetTypeHash(ActiveGEHandle);
-
-					const bool bMatch = (SearchHandleValue > 0) ? (ActiveGEHandleValue == SearchHandleValue) : GESpecDef->GetName().Contains(SearchString);
-					if (bMatch)
-					{
-						OutputDevice.Logf(TEXT("Removing Active GE Handle %u (%s)"), ActiveGEHandleValue, *GESpecDef->GetName());
-						ASC->RemoveActiveGameplayEffect(ActiveGEHandle);
-						bAnyMatch = true;
-					}
-				}
-			}
-
-			if (!bAnyMatch)
-			{
-				OutputDevice.Logf(TEXT("Found no Active Gameplay Effects on %s (%s) that matched '%s'"), *PC->GetName(), *ASC->GetName(), *SearchString);
-			}
-		}), ECVF_Cheat);
-
-FAutoConsoleCommand DebugAbilitySystemEffectApply(TEXT("AbilitySystem.Effect.Apply"), TEXT("<Class/AssetName> [Level]. Apply a Gameplay Effect on the Player.  Substring name matching works for Asset Tags, Asset Paths, or Class Names."),
-	FConsoleCommandWithWorldArgsAndOutputDeviceDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World, FOutputDevice& OutputDevice)
-	{
-		UAbilitySystemGlobals& AbilitySystemGlobals = UAbilitySystemGlobals::Get();
-
-		APlayerController* PC = World->GetFirstPlayerController();
-		UAbilitySystemComponent* ASC = PC ? AbilitySystemGlobals.GetAbilitySystemComponentFromActor(PC->GetPawn()) : nullptr;
-		if (!ASC)
-		{
-			OutputDevice.Logf(TEXT("Could not find Player (%s) with AbilitySystemComponent in World (%s)"), *GetNameSafe(PC), *GetNameSafe(World));
-			return;
-		}
-
-		// We couldn't find anything the user was searching for, so early out
-		const FString SearchString = Args[0];
-		TSubclassOf<UGameplayEffect> GameplayEffectClass = UE::AbilitySystemGlobals::FuzzyFindClass<UGameplayEffect>(SearchString);
-		if (!GameplayEffectClass)
-		{
-			OutputDevice.Logf(TEXT("Could not find a valid Gameplay Effect based on Search String '%s'"), *SearchString);
-			return;
-		}
-
-		// Create a GameplayEffectSpec that executes the passed-in parameters
-		FGameplayEffectContextHandle GEContextHandle = ASC->MakeEffectContext();
-		const float Level = FMath::Max(FGameplayEffectConstants::INVALID_LEVEL, (Args.Num() > 1) ? FPlatformString::Atof(*Args[1]) : FGameplayEffectConstants::INVALID_LEVEL);
-		FGameplayEffectSpec GESpec{ GameplayEffectClass.GetDefaultObject(), GEContextHandle, Level };
-
-		// We need to create a new valid prediction key (as if we just started activating an ability) so the GE will fire even if we are not the authority.
-		FPredictionKey FakePredictionKey = (PC->GetLocalRole() == ENetRole::ROLE_Authority) ? FPredictionKey() : FPredictionKey::CreateNewPredictionKey(ASC);
-		FActiveGameplayEffectHandle ActiveGEHandle = ASC->ApplyGameplayEffectSpecToSelf(GESpec, FakePredictionKey);
-		if (ActiveGEHandle.IsValid())
-		{
-			OutputDevice.Logf(TEXT("Successfully Applied Gameplay Effect '%s' on Player '%s'."), *GameplayEffectClass->GetName(), *PC->GetName());
-		}
-		else
-		{
-			OutputDevice.Logf(TEXT("Failed to Apply Gameplay Effect '%s' on Player '%s'."), *GameplayEffectClass->GetName(), *PC->GetName());
-		}
-	}), ECVF_Cheat);

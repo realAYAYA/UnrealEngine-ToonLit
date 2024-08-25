@@ -1,11 +1,14 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "NavigationData.h"
+
+#include "AssetCompilingManager.h"
 #include "EngineGlobals.h"
 #include "AI/Navigation/NavAgentInterface.h"
 #include "Components/PrimitiveComponent.h"
 #include "AI/NavDataGenerator.h"
 #include "NavigationSystem.h"
+#include "NavFilters/NavigationQueryFilter.h"
 #include "Engine/Engine.h"
 #include "NavAreas/NavArea.h"
 #include "AI/Navigation/NavAreaBase.h"
@@ -267,7 +270,7 @@ void ANavigationData::TickActor(float DeltaTime, enum ELevelTick TickType, FActo
 					switch (Result)
 					{
 					case EPathObservationResult::NoLongerObserving:
-						ObservedPaths.RemoveAtSwap(PathIndex, 1, /*bAllowShrinking=*/false);
+						ObservedPaths.RemoveAtSwap(PathIndex, 1, EAllowShrinking::No);
 						break;
 
 					case EPathObservationResult::NoChange:
@@ -285,7 +288,7 @@ void ANavigationData::TickActor(float DeltaTime, enum ELevelTick TickType, FActo
 				}
 				else
 				{
-					ObservedPaths.RemoveAtSwap(PathIndex, 1, /*bAllowShrinking=*/false);
+					ObservedPaths.RemoveAtSwap(PathIndex, 1, EAllowShrinking::No);
 				}
 			}
 
@@ -428,7 +431,7 @@ void ANavigationData::PurgeUnusedPaths()
 		FNavPathWeakPtr* WeakPathPtr = &ActivePaths[PathIndex];
 		if (WeakPathPtr->IsValid() == false)
 		{
-			ActivePaths.RemoveAtSwap(PathIndex, 1, /*bAllowShrinking=*/false);
+			ActivePaths.RemoveAtSwap(PathIndex, 1, EAllowShrinking::No);
 		}
 	}
 }
@@ -540,6 +543,7 @@ void ANavigationData::RebuildAll()
 {
 	const double LoadTime = FPlatformTime::Seconds();
 	LoadBeforeGeneratorRebuild();
+	FAssetCompilingManager::Get().FinishAllCompilation();
 	UE_LOG(LogNavigationDataBuild, Display, TEXT("   %s load time: %.2fs"), ANSI_TO_TCHAR(__FUNCTION__), (FPlatformTime::Seconds() - LoadTime));
 	
 	ConditionalConstructGenerator(); //recreate generator

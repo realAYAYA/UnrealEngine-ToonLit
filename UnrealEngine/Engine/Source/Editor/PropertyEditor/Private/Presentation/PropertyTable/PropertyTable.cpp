@@ -84,6 +84,12 @@ void FPropertyTable::RequestRefresh()
 	bRefreshRequested = true;
 }
 
+void FPropertyTable::RequestForceRefresh()
+{
+	// RequestRefresh is already a deferred ForceRefresh
+	RequestRefresh();
+}
+
 class FNotifyHook* FPropertyTable::GetNotifyHook() const
 {
 	return NULL;

@@ -113,13 +113,14 @@ export void GetVariableKeyLerpPoseTranslations(
 		const int NumTransKeys = TrackData[1];
 		const unsigned int8* TransStream = CompressedByteStream + TransKeysOffset;
 
-		const unsigned int8* Frames= TransStream +(NumTransKeys*CompressedTranslationStrideNum);
+		const int32 TransStreamOffset = ((FORMAT == ACF_IntervalFixed32NoW) && NumTransKeys > 1) ? (sizeof(uniform float)*6) : 0; // offset past Min and Range data
+
+		const unsigned int8* Frames = TransStream + TransStreamOffset + (NumTransKeys * CompressedTranslationStrideNum);
 		const unsigned int8* FrameTable= Align(Frames, 4);
 
 		int32 Index0;
 		int32 Index1;
 		const float Alpha = TimeToIndex(InterpolationType, CompressedNumberOfFrames, FrameTable, RelativePos, NumTransKeys, Index0, Index1);
-		const int32 TransStreamOffset = ((FORMAT == ACF_IntervalFixed32NoW) && NumTransKeys > 1) ? (sizeof(uniform float)*6) : 0; // offset past Min and Range data
 
 		const unsigned int8* KeyData0 = TransStream + TransStreamOffset + Index0*CompressedTranslationStrideNum;
 		FVector3f P0;
@@ -178,13 +179,14 @@ export void GetVariableKeyLerpPoseScales(
 		const int NumScaleKeys = ScaleData[1];
 		const unsigned int8* ScaleStream = CompressedByteStream + ScaleKeysOffset;
 
-		const unsigned int8* Frames= ScaleStream +(NumScaleKeys*CompressedScaleStrideNum);
+		const int32 ScaleStreamOffset = ((FORMAT == ACF_IntervalFixed32NoW) && NumScaleKeys > 1) ? (sizeof(uniform float)*6) : 0; // offset past Min and Range data
+
+		const unsigned int8* Frames= ScaleStream + ScaleStreamOffset + (NumScaleKeys * CompressedScaleStrideNum);
 		const unsigned int8* FrameTable= Align(Frames, 4);
 
 		int32 Index0;
 		int32 Index1;
 		const float Alpha = TimeToIndex(InterpolationType, CompressedNumberOfFrames, FrameTable, RelativePos, NumScaleKeys, Index0, Index1);
-		const int32 ScaleStreamOffset = ((FORMAT == ACF_IntervalFixed32NoW) && NumScaleKeys > 1) ? (sizeof(uniform float)*6) : 0; // offset past Min and Range data
 
 		const unsigned int8* KeyData0 = ScaleStream + ScaleStreamOffset + Index0*CompressedScaleStrideNum;
 		FVector3f P0;

@@ -194,8 +194,13 @@ const FOnlineAccountIdString* FOnlineAccountIdRegistryNull::FindNoLock(const FAc
 
 const FOnlineAccountIdString* FOnlineAccountIdRegistryNull::FindNoLock(const FString& AccountId) const
 {
-	FOnlineAccountIdString* const* Entry = StringToIdIndex.Find(AccountId);
-	return Entry ? *Entry : nullptr;
+	const uint32* Index = StringToIdIndex.Find(AccountId);
+	if (!Index)
+	{
+		return nullptr;
+	}
+
+	return &Ids[*Index];
 }
 
 FAccountId FOnlineAccountIdRegistryNull::FindOrAddAccountId(const FString& AccountId)
@@ -222,7 +227,7 @@ FAccountId FOnlineAccountIdRegistryNull::FindOrAddAccountId(const FString& Accou
 		Id.Data = AccountId;
 		Id.AccountId = FAccountId(EOnlineServices::Null, Id.AccountIndex);
 
-		StringToIdIndex.Add(AccountId, &Id);
+		StringToIdIndex.Add(AccountId, Ids.Num() - 1);
 		return Id.AccountId;
 	}
 }

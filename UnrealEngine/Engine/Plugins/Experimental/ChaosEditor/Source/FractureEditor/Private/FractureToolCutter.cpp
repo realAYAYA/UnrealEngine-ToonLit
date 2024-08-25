@@ -173,7 +173,7 @@ TArray<FFractureToolContext> UFractureToolCutterBase::GetFractureToolContexts() 
 			FullSelection.RandomReduceSelection(CutterSettings->ChanceToFracture);
 
 			// Update global transforms and bounds		
-			const TManagedArray<FTransform>& Transform = FullSelection.GetGeometryCollection()->GetAttribute<FTransform>("Transform", FGeometryCollection::TransformGroup);
+			const TManagedArray<FTransform3f>& Transform = FullSelection.GetGeometryCollection()->GetAttribute<FTransform3f>("Transform", FGeometryCollection::TransformGroup);
 			const TManagedArray<int32>& TransformToGeometryIndex = FullSelection.GetGeometryCollection()->GetAttribute<int32>("TransformToGeometryIndex", FGeometryCollection::TransformGroup);
 			const TManagedArray<FBox>& BoundingBoxes = FullSelection.GetGeometryCollection()->GetAttribute<FBox>("BoundingBox", FGeometryCollection::GeometryGroup);
 

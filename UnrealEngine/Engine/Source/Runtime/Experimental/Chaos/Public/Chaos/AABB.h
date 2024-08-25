@@ -19,6 +19,12 @@ namespace Chaos
 		}
 	};
 
+	struct CHAOS_API FAABBEdge
+	{
+		int8 VertexIndex0;
+		int8 VertexIndex1;
+	};
+
 	template<class T, int d>
 	class TAABB
 	{
@@ -305,7 +311,7 @@ namespace Chaos
 			return BestNormal;
 		}
 		
-		FORCEINLINE_DEBUGGABLE TVector<T, d> Support(const TVector<T, d>& Direction, const T Thickness, int32& VertexIndex) const
+		FORCEINLINE_DEBUGGABLE TVector<T, d> Support(const TVector<T, d>& Direction, const T Thickness, int32& OutVertexIndex) const
 		{
 			TVector<T, d> ChosenPt;
 			FIntVector ChosenAxis;
@@ -322,7 +328,8 @@ namespace Chaos
 					ChosenAxis[Axis] = 1;
 				}
 			}
-			VertexIndex =  ChosenAxis[0] * 4 + ChosenAxis[1] * 2 + ChosenAxis[2];
+
+			OutVertexIndex = GetIndex(ChosenAxis);
 
 			if (Thickness != (T)0)
 			{
@@ -343,7 +350,7 @@ namespace Chaos
 		}
 
 		// Support vertex in the specified direction, assuming each face has been moved inwards by InMargin
-		FORCEINLINE_DEBUGGABLE FVec3 SupportCore(const FVec3& Direction, const FReal InMargin, FReal* OutSupportDelta, int32& VertexIndex) const
+		FORCEINLINE_DEBUGGABLE FVec3 SupportCore(const FVec3& Direction, const FReal InMargin, FReal* OutSupportDelta, int32& OutVertexIndex) const
 		{
 			FVec3 ChosenPt;
 			FIntVector ChosenAxis;
@@ -360,7 +367,9 @@ namespace Chaos
 					ChosenAxis[Axis] = 1;
 				}
 			}
-			VertexIndex = ChosenAxis[0] * 4 + ChosenAxis[1] * 2 + ChosenAxis[2];
+
+			OutVertexIndex = GetIndex(ChosenAxis);
+
 			// Maximum distance between the Core+Margin position and the original outer vertex
 			constexpr FReal RootThreeMinusOne = FReal(1.7320508075688772935274463415059 - 1.0);
 			if (OutSupportDelta != nullptr)
@@ -380,7 +389,7 @@ namespace Chaos
 			return MakeVectorRegisterFloatFromDouble(MakeVectorRegister(SupportVert.X, SupportVert.Y, SupportVert.Z, 0.0));
 		}
 
-		FORCEINLINE_DEBUGGABLE TVector<T, d> SupportCoreScaled(const TVector<T, d>& Direction, const T InMargin, const TVector<T, d>& Scale, T* OutSupportDelta, int32& VertexIndex) const
+		FORCEINLINE_DEBUGGABLE TVector<T, d> SupportCoreScaled(const TVector<T, d>& Direction, const T InMargin, const TVector<T, d>& Scale, T* OutSupportDelta, int32& OutVertexIndex) const
 		{
 			const TVector<T, d> ScaledDirection = Direction * Scale; // Compensate for Negative scales, only the signs really matter here
 
@@ -399,8 +408,9 @@ namespace Chaos
 					ChosenAxis[Axis] = 1;
 				}
 			}
-			VertexIndex = ChosenAxis[0] * 4 + ChosenAxis[1] * 2 + ChosenAxis[2];
-			
+
+			OutVertexIndex = GetIndex(ChosenAxis);
+
 			constexpr T RootThreeMinusOne = T(1.7320508075688772935274463415059 - 1.0);
 			if (OutSupportDelta != nullptr)
 			{
@@ -465,6 +475,83 @@ namespace Chaos
 		FORCEINLINE TVector<T, d> GetCenter() const { return Center(); }
 		FORCEINLINE TVector<T, d> GetCenterOfMass() const { return GetCenter(); }
 		FORCEINLINE TVector<T, d> Extents() const { return MMax - MMin; }
+
+		/**
+		*	Get a vector one of the eight corners of the box.
+		*	
+		*	Each of the first three bits in an index are used to pick
+		*	an axis value from either the min or max vector of the AABB.
+		*	0 = min, 1 = max.
+		*	
+		*	This algorithm produces the following index scheme, where
+		*	the vertex at 0 is the "min" vertex and 7 is the "max":
+		*	
+		*	   6---------7
+		*	  /|        /|
+		*	 / |       / |
+		*	4---------5  |
+		*	|  |      |  |
+		*	|  2------|--3
+		*	| /       | /
+		*	|/        |/
+		*	0---------1
+		*/
+		FORCEINLINE TVector<T, d> GetVertex(const int32 Index) const
+		{
+			check(0 <= Index && Index < 8);
+
+			// See GetIndex() for reverse logic
+			return TVector<T, d>(
+				(Index & (1 << 0)) == 0 ? MMin.X : MMax.X,
+				(Index & (1 << 1)) == 0 ? MMin.Y : MMax.Y,
+				(Index & (1 << 2)) == 0 ? MMin.Z : MMax.Z);
+		}
+
+		/**
+		* Given a point on a unit cube expressed as an IntVector of 0s and 1s, get the vertex index of that point.
+		* 0 represents a negative axis and 1 represents a positive axis. All other values are invalid, but we do 
+		* not check this as it would add overhead to support functions. This is used by the support functions and 
+		* must invert the index logic in GetVertex().
+		*/
+		FORCEINLINE int32 GetIndex(const FIntVector& AxisSelector) const
+		{
+			// See GetVertex() for reverse logic
+			return AxisSelector[0] + AxisSelector[1] * 2 + AxisSelector[2] * 4;
+		}
+
+		/**
+		*	Get an array of two indices into the vertex list for one of the
+		*	twelve edges of the box. Edges are ordered by increasing vertex
+		*	indices.
+		*	
+		*	This algorithm produces the following index scheme, where the
+		*	bottom left vertex is the "min" vertex and the top right is "max":
+		*	
+		*	        *-----11------*
+		*	       /|            /|
+		*	      9 |          10 |
+		*	     /  6          /  7
+		*	    *------8------*   |
+		*	    |   |         |   |
+		*	    |   *------5--|---*
+		*	    2  /          4  /
+		*	    | 1           | 3
+		*	    |/            |/
+		*	    *------0------*
+		*/
+		FORCEINLINE FAABBEdge GetEdge(const int32 Index) const
+		{
+			// See "GetVertex(int32)"
+			check(0 <= Index && Index < 12);
+			static constexpr FAABBEdge Edges[]
+			{
+				{ 0, 1 }, { 0, 2 }, { 0, 4 },
+				{ 1, 3 }, { 1, 5 }, { 2, 3 },
+				{ 2, 6 }, { 3, 7 }, { 4, 5 },
+				{ 4, 6 }, { 5, 7 }, { 6, 7 }
+			};
+			return Edges[Index];
+		}
 
 		FORCEINLINE int LargestAxis() const
 		{

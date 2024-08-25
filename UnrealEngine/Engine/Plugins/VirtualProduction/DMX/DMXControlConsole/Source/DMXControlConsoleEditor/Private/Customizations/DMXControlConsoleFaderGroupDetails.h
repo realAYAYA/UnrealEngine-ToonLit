@@ -2,55 +2,45 @@
 
 #pragma once
 
-#include "CoreMinimal.h"
 #include "IDetailCustomization.h"
+#include "UObject/WeakObjectPtr.h"
 
-enum class ECheckBoxState : uint8;
-struct EVisibility;
-class FReply;
 class IPropertyUtilities;
+class UDMXControlConsoleEditorModel;
+class UDMXControlConsoleFaderGroup;
 
 
-/** Details Customization for DMX DMX Control Console */
-class FDMXControlConsoleFaderGroupDetails
-	: public IDetailCustomization
+namespace UE::DMX::Private
 {
-public:
-	/** Makes an instance of this Details Customization */
-	static TSharedRef<IDetailCustomization> MakeInstance()
+	/** Details Customization for DMX Control Console fader groups */
+	class FDMXControlConsoleFaderGroupDetails
+		: public IDetailCustomization
 	{
-		return MakeShared<FDMXControlConsoleFaderGroupDetails>();
-	}
+	public:
+		/** Constructor */
+		FDMXControlConsoleFaderGroupDetails(const TWeakObjectPtr<UDMXControlConsoleEditorModel> InWeakEditorModel);
 
-	//~ Begin of IDetailCustomization interface
-	virtual void CustomizeDetails(IDetailLayoutBuilder& InDetailLayout) override;
-	//~ End of IDetailCustomization interface
+		/** Makes an instance of this Details Customization */
+		static TSharedRef<IDetailCustomization> MakeInstance(const TWeakObjectPtr<UDMXControlConsoleEditorModel> InWeakEditorModel);
 
-private:
-	/** Forces refresh of the entire Details View */
-	void ForceRefresh() const;
+		//~ Begin of IDetailCustomization interface
+		virtual void CustomizeDetails(IDetailLayoutBuilder& InDetailLayout) override;
+		//~ End of IDetailCustomization interface
 
-	/** True if at least one selected Fader Group have any Fixture Patch bound */
-	bool DoSelectedFaderGroupsHaveAnyFixturePatches() const;
+	private:
+		/** True if at least one selected fader group has any fixture patch bound */
+		bool IsAnyFaderGroupPatched() const;
 
-	/** Called when Clear button is clicked */
-	FReply OnClearButtonClicked();
+		/** Gets the name of the current selected fader group's Fixture Patch */
+		FText GetFixturePatchText() const;
 
-	/** Called to toggle the lock state of selected Fader Groups */
-	void OnLockToggleChanged(ECheckBoxState CheckState);
+		/** Returns the fader groups being edited in these details. Only returns currently valid objects. */
+		TArray<UDMXControlConsoleFaderGroup*> GetValidFaderGroupsBeingEdited() const;
 
-	/** Gets the current lock state of selected Fader Groups */
-	ECheckBoxState IsLockChecked() const;
+		/** Property Utilities for this Details Customization layout */
+		TSharedPtr<IPropertyUtilities> PropertyUtilities;
 
-	/** Gets current selected FaderGroup Fixture Patch name */
-	FText GetFixturePatchText() const;
-
-	/** Gets visibility attribute of the Editor Color Property */
-	EVisibility GetEditorColorVisibility() const;
-
-	/** Gets visibility attribute of the Clear button */
-	EVisibility GetClearButtonVisibility() const;
-
-	/** Property Utilities for this Details Customization layout */
-	TSharedPtr<IPropertyUtilities> PropertyUtilities;
-};
+		/** Weak reference to the Control Console editor model */
+		TWeakObjectPtr<UDMXControlConsoleEditorModel> WeakEditorModel;
+	};
+}

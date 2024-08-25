@@ -1,12 +1,17 @@
 #!/bin/bash
 
-# Check that this script has been "sourced" into a host shell
+# Check whether this script has been "sourced" into a host shell
 if [ $0 = "$BASH_SOURCE" ]; then
-    echo You must source ushell into your host shell\;
-    echo
-    echo "    source $0"
-    echo
-    exit 1
+    # The script was not sourced, so source it in a child shell and propagate
+    # any arguments
+    args=""
+    for arg in "$@"
+    do
+        escaped=$(printf '%q' "$arg")
+        args="$args $escaped"
+    done
+    bash --init-file <(echo "source \"$HOME/.bashrc\"; source \"$BASH_SOURCE\" $args")
+    exit $?
 fi
 
 # Determine the host shell
@@ -33,7 +38,7 @@ else
     cookie=/tmp/ushell_$$_shell_cookie
 fi
 
-$(dirname ${BASH_SOURCE:-$0})/channels/flow/$channel/boot.sh --bootarg=$host_shell,$cookie $@
+$(dirname ${BASH_SOURCE:-$0})/channels/flow/$channel/boot.sh --bootarg=$host_shell,$cookie "$@"
 
 if [ -f $cookie ]; then
     chmod u+x $cookie

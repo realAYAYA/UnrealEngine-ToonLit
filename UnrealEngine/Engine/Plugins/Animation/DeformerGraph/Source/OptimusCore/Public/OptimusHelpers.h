@@ -45,6 +45,21 @@ namespace Optimus
 	    If the name is already unique, it will be returned unchanged. */
 	FName GetUniqueNameForScope(UObject *InScopeObj, FName InName);
 
+	/** Given an object scope, generate names that is not only unique within the scope,
+	 * but also unique among all names generated before.
+	 * Note: It uses GetUniqueNameForScope so using the same scope object and
+	 * the same input name does not guarantee the same output name
+	 */
+	struct FUniqueNameGenerator
+	{
+		explicit FUniqueNameGenerator(UObject* InScopeObject);
+		FName GetUniqueName(FName InName);
+		
+	private:	
+		UObject* ScopeObject = nullptr;
+		TArray<FName> GeneratedName;
+	};
+	
 	/** A small helper class to enable binary reads on an archive, since the 
 		FObjectReader::Serialize(TArray<uint8>& InBytes) constructor is protected */
 	class FBinaryObjectReader : public FObjectReader
@@ -100,4 +115,18 @@ namespace Optimus
 	void ConvertObjectPathToShaderFilePath(FString& InOutPath);
 	/** Helpers to convert a virtual shader path back to a UObject path. Returns false if the virtual shader path wasn't recognized as a UObject path. */
 	bool ConvertShaderFilePathToObjectPath(FString& InOutPath);
+
+	FString GetCookedKernelSource(
+		const FString& InObjectPathName,
+		const FString& InShaderSource,
+		const FString& InKernelName,
+		FIntVector InGroupSize
+	);
+
+	bool FindMovedItemInNameArray(const TArray<FName>& Old, const TArray<FName>& New, FName& OutSubjectName, FName& OutNextName);
+
+	FName GenerateUniqueNameFromExistingNames(FName InBaseName, const TArray<FName>& InExistingNames);
+
+	FString MakeUniqueValueName(const FString& InValueName, int32 InUniqueIndex);
+	FString ExtractSourceValueName(const FString& InUniqueValueName);
 }

@@ -1,7 +1,7 @@
 {
 	"FileVersion" : 3,
 	"Version" : 1,
-	"VersionName" : "0.1",
+	"VersionName" : "1.0",
 	"FriendlyName" : "Chooser",
 	"Description" : "Chooser",
 	"Category" : "Animation",
@@ -11,9 +11,9 @@
 	"MarketplaceURL" : "",
 	"SupportURL" : "",
 	"EnabledByDefault" : false,
-	"CanContainContent" : false,
-	"IsBetaVersion" : false,
-	"IsExperimentalVersion" : true,
+	"CanContainContent" : true,
+	"IsBetaVersion" : true,
+	"IsExperimentalVersion" : false,
 	"Installed" : false,
 	"Plugins": [
 		{
@@ -22,6 +22,14 @@
 		},
 		{
 			"Name": "StructUtils",
+			"Enabled": true
+		},
+		{
+			"Name": "BlendStack",
+			"Enabled": true
+		},
+		{
+			"Name": "GameplayInsights",
 			"Enabled": true
 		}
 	],

@@ -52,13 +52,15 @@ UInterchangeStaticMeshLodDataNode::UInterchangeStaticMeshLodDataNode()
 }
 
 /**
- * Return the node type name of the class, we use this when reporting error
+ * Return the node type name of the class. This is used when reporting errors.
  */
 FString UInterchangeStaticMeshLodDataNode::GetTypeName() const
 {
 	const FString TypeName = TEXT("StaticMeshLodDataNode");
 	return TypeName;
 }
+
+#if WITH_EDITOR
 
 FString UInterchangeStaticMeshLodDataNode::GetKeyDisplayName(const UE::Interchange::FAttributeKey& NodeAttributeKey) const
 {
@@ -80,6 +82,80 @@ FString UInterchangeStaticMeshLodDataNode::GetKeyDisplayName(const UE::Interchan
 		}
 		return KeyDisplayName;
 	}
+	else if (NodeAttributeKey == UE::Interchange::FStaticMeshNodeLodDataStaticData::GetBoxCollisionMeshUidsBaseKey())
+	{
+		KeyDisplayName = TEXT("Box collision count");
+		return KeyDisplayName;
+	}
+	else if (NodeAttributeKeyString.StartsWith(UE::Interchange::FStaticMeshNodeLodDataStaticData::GetBoxCollisionMeshUidsBaseKey().ToString()))
+	{
+		KeyDisplayName = TEXT("Box collision index ");
+		const FString IndexKey = UE::Interchange::TArrayAttributeHelper<FString>::IndexKey();
+		int32 IndexPosition = NodeAttributeKeyString.Find(IndexKey) + IndexKey.Len();
+		if (IndexPosition < NodeAttributeKeyString.Len())
+		{
+			KeyDisplayName += NodeAttributeKeyString.RightChop(IndexPosition);
+		}
+		return KeyDisplayName;
+	}
+	else if (NodeAttributeKey == UE::Interchange::FStaticMeshNodeLodDataStaticData::GetCapsuleCollisionMeshUidsBaseKey())
+	{
+		KeyDisplayName = TEXT("Capsule collision count");
+		return KeyDisplayName;
+	}
+	else if (NodeAttributeKeyString.StartsWith(UE::Interchange::FStaticMeshNodeLodDataStaticData::GetCapsuleCollisionMeshUidsBaseKey().ToString()))
+	{
+		KeyDisplayName = TEXT("Capsule collision index ");
+		const FString IndexKey = UE::Interchange::TArrayAttributeHelper<FString>::IndexKey();
+		int32 IndexPosition = NodeAttributeKeyString.Find(IndexKey) + IndexKey.Len();
+		if (IndexPosition < NodeAttributeKeyString.Len())
+		{
+			KeyDisplayName += NodeAttributeKeyString.RightChop(IndexPosition);
+		}
+		return KeyDisplayName;
+	}
+	else if (NodeAttributeKey == UE::Interchange::FStaticMeshNodeLodDataStaticData::GetSphereCollisionMeshUidsBaseKey())
+	{
+		KeyDisplayName = TEXT("Sphere collision count");
+		return KeyDisplayName;
+	}
+	else if (NodeAttributeKeyString.StartsWith(UE::Interchange::FStaticMeshNodeLodDataStaticData::GetSphereCollisionMeshUidsBaseKey().ToString()))
+	{
+		KeyDisplayName = TEXT("Sphere collision index ");
+		const FString IndexKey = UE::Interchange::TArrayAttributeHelper<FString>::IndexKey();
+		int32 IndexPosition = NodeAttributeKeyString.Find(IndexKey) + IndexKey.Len();
+		if (IndexPosition < NodeAttributeKeyString.Len())
+		{
+			KeyDisplayName += NodeAttributeKeyString.RightChop(IndexPosition);
+		}
+		return KeyDisplayName;
+	}
+	else if (NodeAttributeKey == UE::Interchange::FStaticMeshNodeLodDataStaticData::GetConvexCollisionMeshUidsBaseKey())
+	{
+		KeyDisplayName = TEXT("Convex collision count");
+		return KeyDisplayName;
+	}
+	else if (NodeAttributeKeyString.StartsWith(UE::Interchange::FStaticMeshNodeLodDataStaticData::GetConvexCollisionMeshUidsBaseKey().ToString()))
+	{
+		KeyDisplayName = TEXT("Convex collision index ");
+		const FString IndexKey = UE::Interchange::TArrayAttributeHelper<FString>::IndexKey();
+		int32 IndexPosition = NodeAttributeKeyString.Find(IndexKey) + IndexKey.Len();
+		if (IndexPosition < NodeAttributeKeyString.Len())
+		{
+			KeyDisplayName += NodeAttributeKeyString.RightChop(IndexPosition);
+		}
+		return KeyDisplayName;
+	}
+	else if (NodeAttributeKey == Macro_CustomOneConvexHullPerUCXKey)
+	{
+		KeyDisplayName = TEXT("One Convex Hull Per UCX");
+		return KeyDisplayName;
+	}
+	else if (NodeAttributeKey == Macro_CustomImportCollisionKey)
+	{
+		KeyDisplayName = TEXT("Import Collision");
+		return KeyDisplayName;
+	}
 
 	return Super::GetKeyDisplayName(NodeAttributeKey);
 }
@@ -90,8 +166,26 @@ FString UInterchangeStaticMeshLodDataNode::GetAttributeCategory(const UE::Interc
 	{
 		return FString(TEXT("Meshes"));
 	}
+	else if (NodeAttributeKey.ToString().StartsWith(UE::Interchange::FStaticMeshNodeLodDataStaticData::GetBoxCollisionMeshUidsBaseKey().ToString()))
+	{
+		return FString(TEXT("Box Collisions"));
+	}
+	else if (NodeAttributeKey.ToString().StartsWith(UE::Interchange::FStaticMeshNodeLodDataStaticData::GetCapsuleCollisionMeshUidsBaseKey().ToString()))
+	{
+		return FString(TEXT("Capsule Collisions"));
+	}
+	else if (NodeAttributeKey.ToString().StartsWith(UE::Interchange::FStaticMeshNodeLodDataStaticData::GetSphereCollisionMeshUidsBaseKey().ToString()))
+	{
+		return FString(TEXT("Sphere Collisions"));
+	}
+	else if (NodeAttributeKey.ToString().StartsWith(UE::Interchange::FStaticMeshNodeLodDataStaticData::GetConvexCollisionMeshUidsBaseKey().ToString()))
+	{
+		return FString(TEXT("Convex Collisions"));
+	}
 	return Super::GetAttributeCategory(NodeAttributeKey);
 }
+
+#endif //WITH_EDITOR
 
 int32 UInterchangeStaticMeshLodDataNode::GetMeshUidsCount() const
 {

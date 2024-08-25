@@ -278,6 +278,7 @@ public:
 
 	virtual void GatherSummaryStats(FDerivedDataCacheSummaryStats& DDCSummaryStats) const = 0;
 
+	UE_DEPRECATED(5.4, "This is no longer used. Use GatherUsageStats/GatherResourceStats/GatherSummaryStats instead")
 	virtual void GatherAnalytics(TArray<FAnalyticsEventAttribute>& Attributes) const = 0;
 
 	//-----------------------

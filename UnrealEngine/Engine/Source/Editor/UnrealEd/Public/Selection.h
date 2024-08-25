@@ -166,7 +166,7 @@ public:
 	 * @param	bArchetypesOnly		[opt] true to only return archetype objects, false otherwise
 	 * @return						The first selected object of the specified class.
 	 */
-	UObject* GetTop(UClass* InClass, UClass* RequiredInterface=nullptr, bool bArchetypesOnly=false)
+	UObject* GetTop(const UClass* InClass, const UClass* RequiredInterface=nullptr, bool bArchetypesOnly=false)
 	{
 		check( InClass );
 		for( int32 i=0; i<Num(); ++i )
@@ -207,7 +207,7 @@ public:
 	* @param	InClass		The class of object to return.  Must be non-NULL.
 	* @return				The last selected object of the specified class.
 	*/
-	UObject* GetBottom(UClass* InClass)
+	UObject* GetBottom(const UClass* InClass)
 	{
 		check( InClass );
 		for( int32 i = Num()-1 ; i > -1 ; --i )

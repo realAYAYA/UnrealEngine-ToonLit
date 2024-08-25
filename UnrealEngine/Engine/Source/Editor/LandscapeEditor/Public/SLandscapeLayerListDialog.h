@@ -18,8 +18,6 @@ typedef SListView<TSharedPtr<FWidgetLayerListItem> > SWidgetLayerListView;
 class SLandscapeLayerListDialog : public SCustomDialog
 {
 public:
-	friend class FLandscapeEditorServices;
-	
 	virtual ~SLandscapeLayerListDialog() {}
 	
 	SLATE_BEGIN_ARGS( SLandscapeLayerListDialog	){}
@@ -31,6 +29,8 @@ public:
 	 * @param InLayers The array of landscape layers which should be displayed
 	 */
 	void Construct(const FArguments& InArgs, TArray<FLandscapeLayer>& InLayers);
+
+	int32 GetInsertedLayerIndex() const { return InsertedLayerIndex; }
 
 private:
 	/* Called when LayerList is changed to update WidgetLayerList and the dialog window. */

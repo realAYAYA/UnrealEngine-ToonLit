@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "AssetCompilingManager.h"
+#include "AsyncCompilationHelpers.h"
 
 #include "HAL/LowLevelMemStats.h" // IWYU pragma: keep
 #include "HAL/LowLevelMemTracker.h" // IWYU pragma: keep
@@ -27,6 +28,8 @@ LLM_DEFINE_TAG(AssetCompilation, NAME_None, NAME_None, GET_STATFNAME(STAT_AssetC
 #include "DerivedDataBuildSchedulerQueue.h"
 #include "DerivedDataThreadPoolTask.h"
 #include "Features/IModularFeatures.h"
+#include "Interfaces/Interface_AsyncCompilation.h"
+#include "Logging/StructuredLog.h"
 #endif
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AssetCompilingManager)
@@ -251,7 +254,8 @@ public:
 		
 		// Add next work memory requirement to see if it still fits in available memory
 		EQueuedWorkPriority Priority;
-		if (IQueuedWork* NextWork = QueuedWork.Peek(&Priority))
+		IQueuedWork* NextWork = QueuedWork.Peek(&Priority);
+		if (NextWork)
 		{
 			NewRequiredMemory += GetRequiredMemory(NextWork);
 		}
@@ -262,22 +266,70 @@ public:
 
 		int32 DynamicMaxConcurrency = GetAdjustedMaxConcurrency(Priority);
 		int32 Concurrency = FQueuedThreadPoolWrapper::GetCurrentConcurrency();
+		
+		int64 MemoryLimit = GetMemoryLimit();
 
-		// Never limit below a concurrency of 1 or else we'll starve the asset processing and never be scheduled again
-		// The idea for now is to let assets get built one by one when starving on memory, which should not increase OOM compared to the old synchronous behavior.
-		if ( TotalRequiredMemory > 0 && Concurrency > 0 )
+		// we check MemoryLimit which uses current system available memory against TotalRequiredMemory
+		//	which includes already running tasks
+		// those tasks may have already allocated, so they have been counted twice
+		//  this means we can count tasks as using twice as much memory as they actually do
+		//  eg. one 4 GB task can block all concurrency when there was 8 GB of room
+		//    because after it allocated there is 4 GB free but we also then subtract off the 4 GB the task requires
+		// this is conservative, so okay if we want to avoid OOM and are okay with less concurrency than possible
+
+		if ( TotalRequiredMemory > 0 && TotalRequiredMemory >= MemoryLimit )
 		{
-			int64 MemoryLimit = GetMemoryLimit();
+			if ( Concurrency == 0 )
+			{
+				// Never limit below a concurrency of 1 or else we'll starve the asset processing and never be scheduled again
+				// The idea for now is to let assets get built one by one when starving on memory, which should not increase OOM compared to the old synchronous behavior.
+				const TCHAR* DebugName = nullptr;
+				if (NextWork)
+				{
+					DebugName = NextWork->GetDebugName();
+				}
+				if (DebugName == nullptr)
+				{
+					DebugName = TEXT("No DebugName");
+				}
 
-			// we check MemoryLimit which uses current system available memory against TotalRequiredMemory
-			//	which includes already running tasks
-			// those tasks may have already allocated, so they have been counted twice
-			//  this means we can count tasks as using twice as much memory as they actually do
-			//  eg. one 4 GB task can block all concurrency when there was 8 GB of room
-			//    because after it allocated there is 4 GB free but we also then subtract off the 4 GB the task requires
-			// this is conservative, so okay if we want to avoid OOM and are okay with less concurrency than possible
+				const bool bHasMemoryEstimate = NextWork && NextWork->GetRequiredMemory() >= 0;
+				if (bHasMemoryEstimate)
+				{
+					const int64 HardMemoryLimit = GetHardMemoryLimit();
+					if (NewRequiredMemory > HardMemoryLimit && HardMemoryLimit > 0)
+					{
+						// Separately report the case if an asset was bigger than our manually set memory limit. Such assets are always too big,
+						// and don't just exceed the currently available memory.
+						UE_LOGFMT_NSLOC(LogAsyncCompilation, Warning, "AsyncAssetCompilation", "HardMemoryLimitExceeded",
+							"BEWARE: AssetCompile memory estimate is greater than the hard memory limit, but we're running it [{TaskName}] anyway! "
+							"RequiredMemory = {TotalEstimatedMemory} MiB + {RequiredMemory} MiB, MemoryLimit = {MemoryLimit} MiB, HardMemoryLimit = {HardMemoryLimit} MiB",
+							("TaskName", DebugName),
+							("RequiredMemory", FString::SanitizeFloat(NewRequiredMemory / (1024 * 1024.f), 3)),
+							("TotalEstimatedMemory", FString::SanitizeFloat(TotalEstimatedMemory / (1024 * 1024.f), 3)),
+							("MemoryLimit", FString::SanitizeFloat(MemoryLimit / (1024 * 1024.f), 3)),
+							("HardMemoryLimit", FString::SanitizeFloat(HardMemoryLimit / (1024 * 1024.f), 3))
+						);
+					}
+					else
+					{
+						UE_LOGFMT_NSLOC(LogAsyncCompilation, Display, "AsyncAssetCompilation", "MemoryLimitExceeded",
+							"BEWARE: AssetCompile memory estimate is greater than available, but we're running it [{TaskName}] anyway! "
+							"RequiredMemory = {TotalEstimatedMemory} MiB + {RequiredMemory} MiB, MemoryLimit = {MemoryLimit} MiB ",
+							("TaskName", DebugName),
+							("RequiredMemory", FString::SanitizeFloat(NewRequiredMemory / (1024 * 1024.f), 3)),
+							("TotalEstimatedMemory", FString::SanitizeFloat(TotalEstimatedMemory / (1024 * 1024.f), 3)),
+							("MemoryLimit", FString::SanitizeFloat(MemoryLimit / (1024 * 1024.f), 3))
+						);
+					}
+				}
 
-			if ( TotalRequiredMemory >= MemoryLimit )
+				// @todo : ? pause the main thread? pause shader compilers? trigger a GC ?
+
+				DynamicMaxConcurrency = 1;
+				// this will cause CanSchedule() to return true
+			}
+			else
 			{
 				UE_LOG(LogAsyncCompilation, Verbose, TEXT("CONCURRENCY LIMITED to %d/%d; RequiredMemory = %.3f MB + %.3f MB MemoryLimit = %.3f MB "),
 					Concurrency,DynamicMaxConcurrency,
@@ -475,6 +527,7 @@ int32 FAssetCompilingManager::GetNumRemainingAssets() const
  */
 void FAssetCompilingManager::FinishAllCompilation()
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE_STR("FAssetCompilingManager::FinishAllCompilation");
 	for (IAssetCompilingManager* AssetCompilingManager : AssetCompilingManagers)
 	{
 		AssetCompilingManager->FinishAllCompilation();

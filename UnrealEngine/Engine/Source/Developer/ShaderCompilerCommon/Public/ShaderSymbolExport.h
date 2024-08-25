@@ -32,17 +32,25 @@ public:
 
 private:
 	void Initialize();
-	void WriteSymbolData(const FString& Filename, TConstArrayView<uint8> Contents);
+	void WriteSymbolData(const FString& Filename, const FString& DebugInfo, TConstArrayView<uint8> Contents);
 
 	const FName ShaderFormat;
 
 	TUniquePtr<FZipArchiveWriter> ZipWriter;
 	TSet<FString> ExportedShaders;
 	FString ExportPath;
+	FString InfoFilePath;
 
 	uint64 TotalSymbolDataBytes{ 0 };
 	uint64 TotalSymbolData{ 0 };
 	bool bExportShaderSymbols{ false };
+
+	struct FShaderInfo
+	{
+		FString Hash;
+		FString Data;
+	};
+	TArray<FShaderInfo> ShaderInfos;
 
 	/**
 	 * If true, the current process is the first process in a multiprocess group, or is not in a group,
@@ -73,12 +81,11 @@ inline void FShaderSymbolExport::NotifyShaderCompiled(const TConstArrayView<uint
 
 		for (const auto& SymbolData : FullSymbolData.GetAllSymbolData())
 		{
-			if (TConstArrayView<uint8> Contents = SymbolData.GetContents(); !Contents.IsEmpty())
-			{
-				const FString FileName = SymbolData.GetFilename();
+			const FString FileName = SymbolData.GetFilename();
+			const FString DebugInfo = SymbolData.GetDebugInfo();
+			TConstArrayView<uint8> Contents = SymbolData.GetContents();
 
-				WriteSymbolData(FileName, Contents);
-			}
+			WriteSymbolData(FileName, DebugInfo, Contents);
 		}
 	}
 }

@@ -273,10 +273,6 @@ namespace UnrealBuildTool
 			{
 				return TryGetDependencyInfoInternal(InputFile, out OutInfo);
 			}
-			catch (BuildException Ex)
-			{
-				throw Ex;
-			}
 			catch (Exception Ex)
 			{
 				Logger.LogDebug("Unable to read {File}:\n{Ex}", InputFile, ExceptionUtils.FormatExceptionDetails(Ex));

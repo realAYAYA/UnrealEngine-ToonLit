@@ -32,17 +32,19 @@ public:
 
 #if WITH_EDITORONLY_DATA
 	/** If true, Address field is used in place of object name for address used when applying mix changes using filtering. */
-	UPROPERTY(EditAnywhere, Category = Mix, BlueprintReadWrite)
+	UPROPERTY(EditAnywhere, Category = "Advanced|Mix", BlueprintReadWrite)
 	bool bOverrideAddress;
 #endif // WITH_EDITORONLY_DATA
 
 	/** Address to use when applying mix changes. */
-	UPROPERTY(EditAnywhere, Category = Mix, BlueprintReadWrite, meta = (EditCondition = "bOverrideAddress"))
+	UPROPERTY(EditAnywhere, Category = "Advanced|Mix", BlueprintReadWrite, meta = (EditCondition = "bOverrideAddress"))
 	FString Address;
 
-	UPROPERTY(EditAnywhere, Category = Generators, BlueprintReadWrite)
+	/** The Modulation Generators which modulate this Control Bus. */
+	UPROPERTY(EditAnywhere, Category = "Advanced|Generators", BlueprintReadWrite)
 	TArray<TObjectPtr<USoundModulationGenerator>> Generators;
 
+	/** The Modulation Parameter to use with this Control Bus. This determines how the control bus will be mixed with other modulators as well as its unit range. */
 	UPROPERTY(EditAnywhere, Category = General, BlueprintReadOnly)
 	TObjectPtr<USoundModulationParameter> Parameter;
 

@@ -1,11 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
-using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
-using System.IO;
-using System.Linq;
 using System.Security.Cryptography;
+using EpicGames.Horde.Agents.Leases;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Logs;
+using EpicGames.Horde.Streams;
 using Google.Protobuf;
 using Google.Protobuf.Collections;
 
@@ -64,81 +64,81 @@ namespace HordeCommon.Rpc
 
 	partial class GetStreamRequest
 	{
-		public GetStreamRequest(string streamId)
+		public GetStreamRequest(StreamId streamId)
 		{
-			StreamId = streamId;
+			StreamId = streamId.ToString();
 		}
 	}
 
 	partial class UpdateStreamRequest
 	{
-		public UpdateStreamRequest(string streamId, Dictionary<string, string?> properties)
+		public UpdateStreamRequest(StreamId streamId, Dictionary<string, string?> properties)
 		{
-			StreamId = streamId;
+			StreamId = streamId.ToString();
 			Properties.AddRange(properties.Select(x => new PropertyUpdate(x.Key, x.Value)));
 		}
 	}
 
 	partial class GetJobRequest
 	{
-		public GetJobRequest(string jobId)
+		public GetJobRequest(JobId jobId)
 		{
-			JobId = jobId;
+			JobId = jobId.ToString();
 		}
 	}
 
 	partial class BeginBatchRequest
 	{
-		public BeginBatchRequest(string jobId, string batchId, string leaseId)
+		public BeginBatchRequest(JobId jobId, JobStepBatchId batchId, LeaseId leaseId)
 		{
-			JobId = jobId;
-			BatchId = batchId;
-			LeaseId = leaseId;
+			JobId = jobId.ToString();
+			BatchId = batchId.ToString();
+			LeaseId = leaseId.ToString();
 		}
 	}
 
 	partial class FinishBatchRequest
 	{
-		public FinishBatchRequest(string jobId, string batchId, string leaseId)
+		public FinishBatchRequest(JobId jobId, JobStepBatchId batchId, LeaseId leaseId)
 		{
-			JobId = jobId;
-			BatchId = batchId;
-			LeaseId = leaseId;
+			JobId = jobId.ToString();
+			BatchId = batchId.ToString();
+			LeaseId = leaseId.ToString();
 		}
 	}
 
 	partial class BeginStepRequest
 	{
-		public BeginStepRequest(string jobId, string batchId, string leaseId)
+		public BeginStepRequest(JobId jobId, JobStepBatchId batchId, LeaseId leaseId)
 		{
-			JobId = jobId;
-			BatchId = batchId;
-			LeaseId = leaseId;
+			JobId = jobId.ToString();
+			BatchId = batchId.ToString();
+			LeaseId = leaseId.ToString();
 		}
 	}
 
 	partial class UpdateStepRequest
 	{
-		public UpdateStepRequest(string jobId, string batchId, string stepId, JobStepState state, JobStepOutcome outcome)
+		public UpdateStepRequest(JobId jobId, JobStepBatchId batchId, JobStepId stepId, JobStepState state, JobStepOutcome outcome)
 		{
-			JobId = jobId;
-			BatchId = batchId;
-			StepId = stepId;
+			JobId = jobId.ToString();
+			BatchId = batchId.ToString();
+			StepId = stepId.ToString();
 			State = state;
 			Outcome = outcome;
 		}
 	}
-	
+
 	partial class GetStepRequest
 	{
-		public GetStepRequest(string jobId, string batchId, string stepId)
+		public GetStepRequest(JobId jobId, JobStepBatchId batchId, JobStepId stepId)
 		{
-			JobId = jobId;
-			BatchId = batchId;
-			StepId = stepId;
+			JobId = jobId.ToString();
+			BatchId = batchId.ToString();
+			StepId = stepId.ToString();
 		}
 	}
-	
+
 	partial class GetStepResponse
 	{
 		public GetStepResponse(JobStepOutcome outcome, JobStepState state, bool abortRequested)
@@ -151,10 +151,10 @@ namespace HordeCommon.Rpc
 
 	partial class CreateEventRequest
 	{
-		public CreateEventRequest(EventSeverity severity, string logId, int lineIndex, int lineCount)
+		public CreateEventRequest(EventSeverity severity, LogId logId, int lineIndex, int lineCount)
 		{
 			Severity = severity;
-			LogId = logId;
+			LogId = logId.ToString();
 			LineIndex = lineIndex;
 			LineCount = lineCount;
 		}
@@ -170,9 +170,9 @@ namespace HordeCommon.Rpc
 
 	partial class WriteOutputRequest
 	{
-		public WriteOutputRequest(string logId, long offset, int lineIndex, ByteString data, bool flush)
+		public WriteOutputRequest(LogId logId, long offset, int lineIndex, ByteString data, bool flush)
 		{
-			LogId = logId;
+			LogId = logId.ToString();
 			Offset = offset;
 			LineIndex = lineIndex;
 			Data = data;
@@ -197,12 +197,12 @@ namespace HordeCommon.Rpc.Messages.Telemetry
 		/// Calculate an agent ID
 		/// </summary>
 		/// <returns>A unique hash for all fields</returns>
-		public ulong CalculateAgentId()
+		public long CalculateAgentId()
 		{
 			using SHA256 sha256 = SHA256.Create();
 			using MemoryStream ms = new(200);
 			using BinaryWriter bw = new(ms);
-			
+
 			bw.Write(Ip ?? "<empty ip>");
 			bw.Write(Hostname ?? "<empty hostname>");
 			bw.Write(Region ?? "<empty region>");
@@ -212,21 +212,21 @@ namespace HordeCommon.Rpc.Messages.Telemetry
 			bw.Write(Os ?? "<empty os>");
 			bw.Write(OsVersion ?? "<empty os version>");
 			bw.Write(Architecture ?? "<empty os architecture>");
-			
+
 			foreach (KeyValuePair<string, string> pair in Properties)
 			{
 				bw.Write(pair.Key ?? "<empty key>");
 				bw.Write(pair.Value ?? "<empty value>");
 			}
-			
+
 			foreach (string poolId in PoolIds)
 			{
 				bw.Write(poolId);
 			}
-			
+
 			ms.Position = 0;
 			byte[] hash = sha256.ComputeHash(ms);
-			return BitConverter.ToUInt64(hash, 0);
+			return BitConverter.ToInt64(hash, 0);
 		}
 	}
 }

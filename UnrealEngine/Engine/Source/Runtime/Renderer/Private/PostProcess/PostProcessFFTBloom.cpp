@@ -275,7 +275,7 @@ FRDGTextureRef TransformKernelFFT(
 		GraphBuilder,
 		View.ShaderMap,
 		FrequencySize, bDoHorizontalFirst,
-		ResizedKernel, SrcRect,
+		GraphBuilder.CreateSRV(FRDGTextureSRVDesc(ResizedKernel)), SrcRect,
 		SpectralKernel);
 
 	return SpectralKernel;
@@ -708,7 +708,7 @@ void InitDomainAndGetKernel(
 FFFTBloomOutput AddFFTBloomPass(
 	FRDGBuilder& GraphBuilder,
 	const FViewInfo& View,
-	const FScreenPassTexture& InputSceneColor,
+	const FScreenPassTextureSlice& InputSceneColor,
 	float InputResolutionFraction,
 	const FEyeAdaptationParameters& EyeAdaptationParameters,
 	FRDGBufferRef EyeAdaptationBuffer,
@@ -792,7 +792,7 @@ FFFTBloomOutput AddFFTBloomPass(
 	RDG_EVENT_SCOPE(GraphBuilder, "Bloom %dx%d", Intermediates.ImageSize.X, Intermediates.ImageSize.Y);
 
 	// Downscale the input to the final resolution fraction
-	FScreenPassTexture FFTInputSceneColor;
+	FScreenPassTextureSlice FFTInputSceneColor;
 	if (ResolutionFraction != InputResolutionFraction)
 	{
 		FIntPoint Extent;
@@ -800,14 +800,15 @@ FFFTBloomOutput AddFFTBloomPass(
 
 		FRDGTextureDesc Desc = FRDGTextureDesc::Create2D(
 			Extent,
-			InputSceneColor.Texture->Desc.Format,
+			InputSceneColor.TextureSRV->Desc.Texture->Desc.Format,
 			FClearValueBinding::None,
 			TexCreate_ShaderResource | TexCreate_UAV);
 
-		FFTInputSceneColor.Texture = GraphBuilder.CreateTexture(Desc, TEXT("Bloom.FFT.Input"));
+		FFTInputSceneColor.TextureSRV = GraphBuilder.CreateSRV(FRDGTextureSRVDesc(
+			GraphBuilder.CreateTexture(Desc, TEXT("Bloom.FFT.Input"))));
 		FFTInputSceneColor.ViewRect = FIntRect(FIntPoint::ZeroValue, Intermediates.ImageSize);
 
-		AddDownsampleComputePass(GraphBuilder, View, InputSceneColor, FFTInputSceneColor, EDownsampleQuality::Low, Intermediates.ComputePassFlags);
+		AddDownsampleComputePass(GraphBuilder, View, InputSceneColor, FScreenPassTexture(FFTInputSceneColor.TextureSRV->Desc.Texture, FFTInputSceneColor.ViewRect), EDownsampleQuality::Low, Intermediates.ComputePassFlags);
 	}
 	else
 	{
@@ -816,12 +817,16 @@ FFFTBloomOutput AddFFTBloomPass(
 
 	if (LocalExposureTexture != nullptr)
 	{
-		FScreenPassTexture Temp = FFTInputSceneColor;
+		FScreenPassTextureSlice Temp = FFTInputSceneColor;
 
-		FRDGTextureDesc Desc = Temp.Texture->Desc;
-		Desc.Flags = TexCreate_ShaderResource | TexCreate_UAV;
+		FRDGTextureDesc Desc = FRDGTextureDesc::Create2D(
+			Temp.TextureSRV->Desc.Texture->Desc.Extent,
+			Temp.TextureSRV->Desc.Texture->Desc.Format,
+			FClearValueBinding::None,
+			TexCreate_ShaderResource | TexCreate_UAV);
 
-		FFTInputSceneColor.Texture = GraphBuilder.CreateTexture(Desc, TEXT("Bloom.FFT.Input"));
+		FFTInputSceneColor.TextureSRV = GraphBuilder.CreateSRV(FRDGTextureSRVDesc(
+			GraphBuilder.CreateTexture(Desc, TEXT("Bloom.FFT.Input"))));
 
 		AddApplyLocalExposurePass(
 			GraphBuilder,
@@ -875,8 +880,8 @@ FFFTBloomOutput AddFFTBloomPass(
 	}
 
 	FRDGTextureDesc OutputSceneColorDesc = FRDGTextureDesc::Create2D(
-		FFTInputSceneColor.Texture->Desc.Extent,
-		FFTInputSceneColor.Texture->Desc.Format,
+		FFTInputSceneColor.TextureSRV->Desc.Texture->Desc.Extent,
+		FFTInputSceneColor.TextureSRV->Desc.Texture->Desc.Format,
 		FClearValueBinding::None,
 		TexCreate_ShaderResource | TexCreate_UAV | GFastVRamConfig.Bloom);
 		
@@ -890,7 +895,7 @@ FFFTBloomOutput AddFFTBloomPass(
 		Intermediates.FrequencySize,
 		Intermediates.bDoHorizontalFirst,
 		SpectralKernelTexture,
-		FFTInputSceneColor.Texture, FFTInputSceneColor.ViewRect,
+		FFTInputSceneColor.TextureSRV, FFTInputSceneColor.ViewRect,
 		BloomOutput.BloomTexture.Texture, BloomOutput.BloomTexture.ViewRect,
 		Intermediates.PreFilter,
 		FFTMulitplyParameters,

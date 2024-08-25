@@ -8,6 +8,7 @@
 #include "MVVMBlueprintView.generated.h"
 
 class UMVVMWidgetBlueprintExtension_View;
+class UMVVMBlueprintViewEvent;
 
 class UWidget;
 class UWidgetBlueprint;
@@ -42,8 +43,9 @@ public:
 	 * If false, the user will have to initialize the sources manually.
 	 * It prevents the sources evaluating until you are ready.
 	 */
-	UPROPERTY(EditAnywhere, Category = "Viewmodel")
+	UPROPERTY(EditAnywhere, Category = "View")
 	bool bInitializeSourcesOnConstruct = true;
+
 	/**
 	 * Auto initialize the view bindings when the Widget is constructed.
 	 * If false, the user will have to initialize the bindings manually.
@@ -52,8 +54,15 @@ public:
 	 * @note Sources needs to be initialized before initializing the bindings.
 	 * @note When Sources is manually initialized, the bindings will also be initialized if this is true.
 	 */
-	UPROPERTY(EditAnywhere, Category = "Viewmodel", meta=(EditCondition="bInitializeSourcesOnConstruct"))
+	UPROPERTY(EditAnywhere, Category = "View", meta=(EditCondition="bInitializeSourcesOnConstruct"))
 	bool bInitializeBindingsOnConstruct = true;
+
+	/**
+	 * Auto initialize the view events when the Widget is constructed.
+	 * If false, the user will have to initialize the event manually.
+	 */
+	UPROPERTY(EditAnywhere, Category = "View")
+	bool bInitializeEventsOnConstruct = true;
 };
 
 /**
@@ -81,6 +90,7 @@ public:
 	bool RemoveViewModel(FGuid ViewModelId);
 	int32 RemoveViewModels(const TArrayView<FGuid> ViewModelIds);
 	bool RenameViewModel(FName OldViewModelName, FName NewViewModelName);
+	bool ReparentViewModel(FGuid ViewModelId, const UClass* ViewModelClass);
 
 	const TArrayView<const FMVVMBlueprintViewModelContext> GetViewModels() const
 	{
@@ -93,7 +103,6 @@ public:
 	void RemoveBinding(const FMVVMBlueprintViewBinding* Binding);
 	void RemoveBindingAt(int32 Index);
 
-	FMVVMBlueprintViewBinding& AddBinding(const UWidget* Widget, const FProperty* Property);
 	FMVVMBlueprintViewBinding& AddDefaultBinding();
 
 	int32 GetNumBindings() const
@@ -116,10 +125,28 @@ public:
 		return Bindings;
 	}
 
+	UMVVMBlueprintViewEvent* AddDefaultEvent();
+	void RemoveEvent(UMVVMBlueprintViewEvent* Event);
+
+	TArrayView<TObjectPtr<UMVVMBlueprintViewEvent>> GetEvents()
+	{
+		return Events;
+	}
+
+	const TArrayView<const TObjectPtr<UMVVMBlueprintViewEvent>> GetEvents() const
+	{
+		return Events;
+	}
+
 	TArray<FText> GetBindingMessages(FGuid Id, UE::MVVM::EBindingMessageType InMessageType) const;
 	bool HasBindingMessage(FGuid Id, UE::MVVM::EBindingMessageType InMessageType) const;
 	void AddMessageToBinding(FGuid Id, UE::MVVM::FBindingMessage MessageToAdd);
 	void ResetBindingMessages();
+
+	FGuid GetCompiledBindingLibraryId() const
+	{
+		return CompiledBindingLibraryId;
+	}
 
 #if WITH_EDITOR
 	virtual void PostLoad() override;
@@ -127,6 +154,8 @@ public:
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 	virtual void PostEditChangeChainProperty(FPropertyChangedChainEvent& PropertyChainEvent) override;
 
+	void AddAssetTags(FAssetRegistryTagsContext Context) const;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	void AddAssetTags(TArray<FAssetRegistryTag>& OutTags) const;
 	void WidgetRenamed(FName OldObjectName, FName NewObjectName);
 #endif
@@ -138,6 +167,9 @@ public:
 
 	DECLARE_EVENT(UMVVMBlueprintView, FOnBindingsAdded);
 	FOnBindingsAdded OnBindingsAdded;
+
+	DECLARE_EVENT(UMVVMBlueprintView, FOnEventsUpdated);
+	FOnEventsUpdated OnEventsUpdated;
 
 	DECLARE_EVENT(UMVVMBlueprintView, FOnViewModelsUpdated);
 	FOnViewModelsUpdated OnViewModelsUpdated;
@@ -152,9 +184,15 @@ private:
 
 	UPROPERTY(EditAnywhere, Category = "Viewmodel")
 	TArray<FMVVMBlueprintViewBinding> Bindings;
+	
+	UPROPERTY(Instanced, EditAnywhere, Category = "Viewmodel")
+	TArray<TObjectPtr<UMVVMBlueprintViewEvent>> Events;
 
 	UPROPERTY(EditAnywhere, Category = "Viewmodel")
 	TArray<FMVVMBlueprintViewModelContext> AvailableViewModels;
+
+	UPROPERTY(VisibleAnywhere, Category = "Viewmodel", meta = (IgnoreForMemberInitializationTest))
+	FGuid CompiledBindingLibraryId;
 
 	TMap<FGuid, TArray<UE::MVVM::FBindingMessage>> BindingMessages;
 

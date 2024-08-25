@@ -8,8 +8,12 @@
 #include "Styling/SlateIconFinder.h"
 #include "SMontageView.h"
 #if WITH_EDITOR
+#include "AnimPreviewInstance.h"
 #include "Animation/AnimMontage.h"
+#include "Animation/DebugSkelMeshComponent.h"
 #include "Editor.h"
+#include "IAnimationEditor.h"
+#include "IPersonaToolkit.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #endif
 
@@ -35,6 +39,7 @@ void FMontagesTrack::IterateSubTracksInternal(TFunction<void(TSharedPtr<FRewindD
 
 bool FMontagesTrack::UpdateInternal()
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FMontagesTrack::UpdateInternal);
 	TArray<uint64> UniqueTrackIds;
 
 	IRewindDebugger* RewindDebugger = IRewindDebugger::Instance();
@@ -56,7 +61,7 @@ bool FMontagesTrack::UpdateInternal()
 	if(GameplayProvider && AnimationProvider)
 	{
 		TraceServices::FAnalysisSessionReadScope SessionReadScope(*AnalysisSession);
-		UniqueTrackIds.SetNum(0, false);
+		UniqueTrackIds.SetNum(0, EAllowShrinking::No);
 
 		AnimationProvider->ReadMontageTimeline(ObjectId, [&UniqueTrackIds,&GameplayProvider, StartTime, EndTime](const FAnimationProvider::AnimMontageTimeline& InTimeline)
 		{
@@ -87,7 +92,10 @@ bool FMontagesTrack::UpdateInternal()
 				bChanged = true;
 			}
 
-			bChanged = bChanged || Children[i]->Update();
+			if (Children[i]->Update())
+			{
+				bChanged = true;
+			}
 		}
 	}
 
@@ -149,7 +157,7 @@ bool FMontageTrack::UpdateInternal()
 	if(CurvesUpdateRequested > 10 && GameplayProvider && AnimationProvider)
 	{
 		auto& CurvePoints = CurveData->Points;
-		CurvePoints.SetNum(0,false);
+		CurvePoints.SetNum(0,EAllowShrinking::No);
 		
 		TraceServices::FAnalysisSessionReadScope SessionReadScope(*AnalysisSession);
 		
@@ -298,8 +306,76 @@ bool FMontageTrack::HandleDoubleClickInternal()
 		const FGameplayProvider* GameplayProvider = AnalysisSession->ReadProvider<FGameplayProvider>(FGameplayProvider::ProviderName);
 
 		const FObjectInfo& AssetInfo = GameplayProvider->GetObjectInfo(GetAssetId());
+	
+		UObject* Asset = nullptr;
+		bool bMessageFound = false;
+		float PlaybackTime = 0;
 
-		GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(AssetInfo.PathName);
+		float CurrentTraceTime = IRewindDebugger::Instance()->CurrentTraceTime();
+		
+		const FAnimationProvider* AnimationProvider = AnalysisSession->ReadProvider<FAnimationProvider>(FAnimationProvider::ProviderName);
+		const TraceServices::IFrameProvider& FrameProvider = TraceServices::ReadFrameProvider(*AnalysisSession);
+		TraceServices::FFrame Frame;
+		if (FrameProvider.GetFrameFromTime(ETraceFrameType::TraceFrameType_Game, CurrentTraceTime, Frame))
+		{
+			AnimationProvider->ReadMontageTimeline(ObjectId, [this, &bMessageFound, &PlaybackTime, &GameplayProvider, &Frame](const FAnimationProvider::AnimMontageTimeline& InTimeline)
+			{
+				InTimeline.EnumerateEvents(Frame.StartTime, Frame.EndTime, [this, &bMessageFound, &PlaybackTime, &GameplayProvider, &Frame](double InStartTime, double InEndTime, uint32 InDepth, const FAnimMontageMessage& InMessage)
+				{
+					if(InStartTime >= Frame.StartTime && InEndTime <= Frame.EndTime)
+					{
+						if (InMessage.MontageId == AssetId)
+						{
+							bMessageFound = true;
+							PlaybackTime = InMessage.Position;
+							return TraceServices::EEventEnumerate::Stop;
+						}
+					}
+					return TraceServices::EEventEnumerate::Continue;
+				});
+			});
+		}
+		
+		FString PackagePathString = FPackageName::ObjectPathToPackageName(FString(AssetInfo.PathName));
+
+		UPackage* Package = LoadPackage(NULL, ToCStr(PackagePathString), LOAD_NoRedirects);
+		if (Package)
+		{
+			Package->FullyLoad();
+                
+			FString AssetName = FPaths::GetBaseFilename(AssetInfo.PathName);
+			Asset = FindObject<UObject>(Package, *AssetName);
+		}
+		else
+		{
+			// fallback for unsaved assets
+			Asset = FindObject<UObject>(nullptr, AssetInfo.PathName);
+		}
+                    	
+		if (Asset != nullptr)
+		{
+			if (UAssetEditorSubsystem* AssetEditorSS = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>())
+			{
+				AssetEditorSS->OpenEditorForAsset(Asset);
+
+				if (bMessageFound)
+				{
+					// if the asset is playing on the current frame, scrub to the appropriate time
+					if (IAssetEditorInstance* Editor = AssetEditorSS->FindEditorForAsset(Asset, true))
+					{
+						if (Editor->GetEditorName()=="AnimationEditor")
+						{
+							IAnimationEditor* AnimationEditor = static_cast<IAnimationEditor*>(Editor);
+							UDebugSkelMeshComponent* PreviewComponent = AnimationEditor->GetPersonaToolkit()->GetPreviewMeshComponent();
+							PreviewComponent->PreviewInstance->SetPosition(PlaybackTime);
+							PreviewComponent->PreviewInstance->SetPlaying(false);
+						}
+					}
+				}
+			}
+		}
+
+		
 
 		return true;
 	}
@@ -319,6 +395,11 @@ FName FMontagesTrackCreator::GetNameInternal() const
 	return MontagesName;
 }
 	
+void FMontagesTrackCreator::GetTrackTypesInternal(TArray<FRewindDebuggerTrackType>& Types) const 
+{
+	Types.Add({MontagesName, LOCTEXT("Montages", "Montages")});
+}
+	
 FName FMontagesTrack::GetNameInternal() const
 {
 	return MontagesName;
@@ -331,6 +412,7 @@ TSharedPtr<RewindDebugger::FRewindDebuggerTrack> FMontagesTrackCreator::CreateTr
 
 bool FMontagesTrackCreator::HasDebugInfoInternal(uint64 ObjectId) const
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FMontagesTrack::HasDebugInfoInternal);
 	const TraceServices::IAnalysisSession* AnalysisSession = IRewindDebugger::Instance()->GetAnalysisSession();
 	TraceServices::FAnalysisSessionReadScope SessionReadScope(*AnalysisSession);
 	bool bHasData = false;

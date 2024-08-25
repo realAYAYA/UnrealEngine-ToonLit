@@ -8,7 +8,6 @@
 #include "Module/TextureShareCoreLog.h"
 
 // Platform Windows
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 
 namespace UE::TextureShareCore::InterprocessEvent

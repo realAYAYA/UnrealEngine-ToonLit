@@ -205,6 +205,7 @@ public:
 	ENGINE_API void InitSoundSubmixes();
 
 	/** Initialize all sound effect presets. */
+	UE_DEPRECATED(5.4, "Will be removed in upcoming versions of this code")
 	ENGINE_API void InitSoundEffectPresets();
 
 	/** Updates source effect chain on all sources currently using the source effect chain. */

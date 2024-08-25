@@ -7,7 +7,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/ObjectMacros.h"
+#include "UObject/GarbageCollectionGlobals.h"
 #include "UObject/UObjectHash.h"
 #include "UObject/UObjectArray.h"
 #include "UObject/Object.h"
@@ -57,9 +57,7 @@ enum class EObjectIteratorThreadSafetyOptions : uint8
 
 inline EInternalObjectFlags GetObjectIteratorDefaultInternalExclusionFlags(EInternalObjectFlags InternalExclusionFlags)
 {
-	InternalExclusionFlags = UObjectBaseUtility::FixGarbageOrPendingKillInternalObjectFlags(InternalExclusionFlags);
-
-	InternalExclusionFlags |= EInternalObjectFlags::Unreachable | EInternalObjectFlags::PendingConstruction;
+	InternalExclusionFlags |= UE::GC::GUnreachableObjectFlag | EInternalObjectFlags::PendingConstruction;
 	if (!IsInAsyncLoadingThread())
 	{
 		// We don't want to return any objects that are currently being background loaded unless we're using the object iterator during async loading.

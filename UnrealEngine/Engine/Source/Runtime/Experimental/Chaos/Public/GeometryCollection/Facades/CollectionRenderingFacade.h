@@ -74,13 +74,19 @@ namespace GeometryCollection::Facades
 
 		/** GetVertices */
 		const TManagedArray< FVector3f >& GetVertices() const { return VertexAttribute.Get(); }
+		TManagedArray< FVector3f >& ModifyVertices() { check(!IsConst()); return VertexAttribute.Modify(); }
+		
+		/** GetNormals */
+		const TManagedArray< FVector3f >& GetNormals() const { return VertexNormalAttribute.Get(); }
+		TManagedArray< FVector3f >& ModifyNormals() { check(!IsConst()); return VertexNormalAttribute.Modify(); }
 
 		/** GetVertexSelectionAttribute */
 		const TManagedArray< int32 >& GetVertexSelection() const { return VertexSelectionAttribute.Get(); }
-		      TManagedArray< int32 >& ModifyVertexSelection() { check(!IsConst()); return VertexSelectionAttribute.Modify(); }
+		TManagedArray< int32 >& ModifyVertexSelection() { check(!IsConst()); return VertexSelectionAttribute.Modify(); }
 
 		/** GetVertexToGeometryIndexAttribute */
 		const TManagedArray< int32 >& GetVertexToGeometryIndex() const { return VertexToGeometryIndexAttribute.Get(); }
+		TManagedArray< int32 >& ModifyVertexToGeometryIndex() { check(!IsConst()); return VertexToGeometryIndexAttribute.Modify(); }
 
 		/** HitProxyIDAttribute */
 		const TManagedArray< int32 >& GetVertexHitProxyIndex() const { return VertexHitProxyIndexAttribute.Get(); }

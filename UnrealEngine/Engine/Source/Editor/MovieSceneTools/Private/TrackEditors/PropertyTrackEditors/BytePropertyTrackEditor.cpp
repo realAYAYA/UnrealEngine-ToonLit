@@ -28,8 +28,7 @@ TSharedRef<ISequencerTrackEditor> FBytePropertyTrackEditor::CreateTrackEditor( T
 	return MakeShareable(new FBytePropertyTrackEditor(OwningSequencer));
 }
 
-
-UEnum* GetEnumForByteTrack(TSharedPtr<ISequencer> Sequencer, const FGuid& OwnerObjectHandle, FName PropertyName, UMovieSceneByteTrack* ByteTrack)
+UEnum* GetEnumForByteTrack(TSharedPtr<ISequencer> Sequencer, const FGuid& OwnerObjectHandle, const FPropertyChangedParams& PropertyChangedParams, UMovieSceneByteTrack* ByteTrack)
 {
 	TSet<UEnum*> PropertyEnums;
 
@@ -41,7 +40,7 @@ UEnum* GetEnumForByteTrack(TSharedPtr<ISequencer> Sequencer, const FGuid& OwnerO
 			continue;
 		}
 
-		FProperty* Property = RuntimeObject->GetClass()->FindPropertyByName(PropertyName);
+		FProperty* Property = PropertyChangedParams.PropertyPath.GetLeafMostProperty().Property.Get();
 		if (Property != nullptr)
 		{
 			UEnum* Enum = nullptr;
@@ -77,23 +76,23 @@ UEnum* GetEnumForByteTrack(TSharedPtr<ISequencer> Sequencer, const FGuid& OwnerO
 }
 
 
-UMovieSceneTrack* FBytePropertyTrackEditor::AddTrack(UMovieScene* FocusedMovieScene, const FGuid& ObjectHandle, TSubclassOf<class UMovieSceneTrack> TrackClass, FName UniqueTypeName)
-{
-	UMovieSceneTrack* NewTrack = FPropertyTrackEditor::AddTrack(FocusedMovieScene, ObjectHandle, TrackClass, UniqueTypeName);
-	UMovieSceneByteTrack* ByteTrack = Cast<UMovieSceneByteTrack>(NewTrack);
-	UEnum* TrackEnum = GetEnumForByteTrack(GetSequencer(), ObjectHandle, UniqueTypeName, ByteTrack);
-
-	if (TrackEnum != nullptr)
-	{
-		ByteTrack->SetEnum(TrackEnum);
-	}
-
-	return NewTrack;
-}
-
-
 void FBytePropertyTrackEditor::GenerateKeysFromPropertyChanged( const FPropertyChangedParams& PropertyChangedParams, UMovieSceneSection* SectionToKey, FGeneratedTrackKeys& OutGeneratedKeys )
 {
 	uint8 KeyedValue = PropertyChangedParams.GetPropertyValue<uint8>();
 	OutGeneratedKeys.Add(FMovieSceneChannelValueSetter::Create<FMovieSceneByteChannel>(0, KeyedValue, true));
+}
+
+void FBytePropertyTrackEditor::InitializeNewTrack(UMovieSceneByteTrack* NewTrack, FPropertyChangedParams PropertyChangedParams)
+{
+	FPropertyTrackEditor<UMovieSceneByteTrack>::InitializeNewTrack(NewTrack, PropertyChangedParams);
+	if (NewTrack)
+	{
+		UEnum* TrackEnum = GetEnumForByteTrack(GetSequencer(), NewTrack->FindObjectBindingGuid(), PropertyChangedParams, NewTrack);
+
+		if (TrackEnum != nullptr)
+		{
+			NewTrack->SetEnum(TrackEnum);
+		}
+	}
+
 }

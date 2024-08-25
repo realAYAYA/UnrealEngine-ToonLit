@@ -52,7 +52,7 @@ FText UIKRigDefinitionFactory::GetToolTip() const
 
 FString UIKRigDefinitionFactory::GetDefaultNewAssetName() const
 {
-	return FString(TEXT("NewIKRig"));
+	return FString(TEXT("IK_NewIKRig"));
 }
 #undef LOCTEXT_NAMESPACE
 

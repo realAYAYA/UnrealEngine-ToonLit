@@ -8,9 +8,6 @@
 #include "MuR/Types.h"
 #include "MuT/StreamsPrivate.h"
 
-#include <memory>
-#include <utility>
-
 
 namespace mu
 {
@@ -32,8 +29,9 @@ namespace mu
 
 	bool ASTOpMeshClipDeform::IsEqual(const ASTOp& OtherUntyped) const
 	{
-		if (const ASTOpMeshClipDeform* Other = dynamic_cast<const ASTOpMeshClipDeform*>(&OtherUntyped))
+		if (OtherUntyped.GetOpType()==GetOpType())
 		{
+			const ASTOpMeshClipDeform* Other = static_cast<const ASTOpMeshClipDeform*>(&OtherUntyped);
 			return Mesh == Other->Mesh && ClipShape == Other->ClipShape;
 		}
 

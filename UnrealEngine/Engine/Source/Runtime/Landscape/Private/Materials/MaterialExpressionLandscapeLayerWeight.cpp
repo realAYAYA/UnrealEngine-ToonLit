@@ -6,6 +6,7 @@
 #include "EngineGlobals.h"
 #include "MaterialCompiler.h"
 #include "Materials/Material.h"
+#include "LandscapeUtils.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MaterialExpressionLandscapeLayerWeight)
 
@@ -58,10 +59,11 @@ bool UMaterialExpressionLandscapeLayerWeight::IsResultMaterialAttributes(int32 O
 
 int32 UMaterialExpressionLandscapeLayerWeight::Compile(class FMaterialCompiler* Compiler, int32 OutputIndex)
 {
+	const bool bTextureArrayEnabled = UE::Landscape::UseWeightmapTextureArray(Compiler->GetShaderPlatform());
 	const int32 BaseCode = Base.Expression
 		                       ? Base.Compile(Compiler)
 		                       : Compiler->Constant3(static_cast<float>(ConstBase.X), static_cast<float>(ConstBase.Y), static_cast<float>(ConstBase.Z));
-	const int32 WeightCode = Compiler->StaticTerrainLayerWeight(ParameterName, Compiler->Constant(PreviewWeight));
+	const int32 WeightCode = Compiler->StaticTerrainLayerWeight(ParameterName, Compiler->Constant(PreviewWeight), bTextureArrayEnabled);
 
 	int32 ReturnCode = INDEX_NONE;
 	if (WeightCode == INDEX_NONE)
@@ -88,6 +90,11 @@ int32 UMaterialExpressionLandscapeLayerWeight::Compile(class FMaterialCompiler* 
 UObject* UMaterialExpressionLandscapeLayerWeight::GetReferencedTexture() const
 {
 	return GEngine->WeightMapPlaceholderTexture;
+}
+
+UMaterialExpression::ReferencedTextureArray UMaterialExpressionLandscapeLayerWeight::GetReferencedTextures() const
+{
+	return { GEngine->WeightMapPlaceholderTexture, GEngine->WeightMapArrayPlaceholderTexture };
 }
 
 #if WITH_EDITOR

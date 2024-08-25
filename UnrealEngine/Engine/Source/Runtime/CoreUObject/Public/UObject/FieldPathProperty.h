@@ -63,6 +63,7 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	// UHT interface
 	COREUOBJECT_API virtual FString GetCPPMacroType(FString& ExtendedTypeText) const  override;
+	UE_DEPRECATED(5.4, "UnrealHeaderTool only API.  No replacement available.")
 	COREUOBJECT_API virtual FString GetCPPTypeForwardDeclaration() const override;
 	COREUOBJECT_API virtual FString GetCPPType(FString* ExtendedTypeText = nullptr, uint32 CPPExportFlags = 0) const override;
 	// End of UHT interface

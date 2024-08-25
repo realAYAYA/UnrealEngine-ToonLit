@@ -97,7 +97,7 @@ FString FOnlineAuthSteam::GetAuthTicket(uint32& AuthTokenHandle)
 	{
 		uint8 AuthToken[STEAM_AUTH_MAX_TICKET_LENGTH_IN_BYTES];
 		uint32 AuthTokenSize = 0;
-		AuthTokenHandle = SteamUserPtr->GetAuthSessionTicket(AuthToken, UE_ARRAY_COUNT(AuthToken), &AuthTokenSize);
+		AuthTokenHandle = SteamUserPtr->GetAuthSessionTicket(AuthToken, UE_ARRAY_COUNT(AuthToken), &AuthTokenSize, nullptr);
 		if (AuthTokenHandle != k_HAuthTicketInvalid && AuthTokenSize > 0)
 		{
 			ResultToken = BytesToHex(AuthToken, AuthTokenSize);
@@ -110,6 +110,20 @@ FString FOnlineAuthSteam::GetAuthTicket(uint32& AuthTokenHandle)
 		}
 	}
 	return ResultToken;
+}
+
+void FOnlineAuthSteam::GetAuthTicketForWebApi(const FString& RemoteServiceIdentity, FOnGetAuthTicketForWebApiCompleteDelegate CompletionDelegate)
+{
+	if (SteamUserPtr != NULL && SteamUserPtr->BLoggedOn())
+	{
+		HAuthTicket TicketHandle = SteamUserPtr->GetAuthTicketForWebApi((const char*)StringCast<UTF8CHAR>(*RemoteServiceIdentity).Get());
+		ActiveAuthTicketForWebApiRequests.Emplace(TicketHandle, CompletionDelegate);
+	}
+	else
+	{
+		UE_LOG_ONLINE(Warning, TEXT("AUTH: Failed to get Steam auth ticket for web api"));
+		CompletionDelegate.ExecuteIfBound(k_HAuthTicketInvalid, TEXT(""));
+	}
 }
 
 FOnlineAuthSteam::SharedAuthUserSteamPtr FOnlineAuthSteam::GetUser(const FUniqueNetId& InUserId)
@@ -488,6 +502,19 @@ bool FOnlineAuthSteam::Exec(const TCHAR* Cmd)
 
 	return bWasHandled;
 #endif
+}
+
+void FOnlineAuthSteam::OnGetTicketForWebResponse(uint32 AuthTicketHandle, const FString& ResultToken)
+{
+	FOnGetAuthTicketForWebApiCompleteDelegate Delegate;
+	if (ActiveAuthTicketForWebApiRequests.RemoveAndCopyValue(AuthTicketHandle, Delegate))
+	{
+		Delegate.ExecuteIfBound(AuthTicketHandle, ResultToken);
+	}
+	else
+	{
+		UE_LOG_ONLINE(Warning, TEXT("AUTH: Unexpected TicketForWebResponse."));
+	}
 }
 
 void FOnlineAuthSteam::OnAuthResult(const FUniqueNetId& TargetId, int32 Response)

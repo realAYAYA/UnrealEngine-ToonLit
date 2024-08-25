@@ -16,6 +16,9 @@
 
 static inline DXGI_FORMAT ConvertTypelessToUnorm(DXGI_FORMAT Format)
 {
+	// prefer DXGIUtilities::FindSharedResourceFormat ?
+	//	or something? lots of these mappers in DXGIUtilities already
+
 	// required to prevent 
 	// D3D11: ERROR: ID3D11DeviceContext::ResolveSubresource: The Format (0x1b, R8G8B8A8_TYPELESS) is never able to resolve multisampled resources. [ RESOURCE_MANIPULATION ERROR #294: DEVICE_RESOLVESUBRESOURCE_FORMAT_INVALID ]
 	// D3D11: **BREAK** enabled for the previous D3D11 message, which was: [ RESOURCE_MANIPULATION ERROR #294: DEVICE_RESOLVESUBRESOURCE_FORMAT_INVALID ]
@@ -188,7 +191,7 @@ void FD3D11DynamicRHI::ResolveTextureUsingShader(
 }
 
 // Only supports the formats that are supported by ConvertRAWSurfaceDataToFColor()
-static uint32 ComputeBytesPerPixel(DXGI_FORMAT Format)
+static uint32 D3D11RT_ComputeBytesPerPixel(DXGI_FORMAT Format)
 {
 	uint32 BytesPerPixel = 0;
 
@@ -273,10 +276,15 @@ static uint32 ComputeBytesPerPixel(DXGI_FORMAT Format)
 		case DXGI_FORMAT_R32G32B32A32_SINT:
 			BytesPerPixel = 16;
 			break;
+
+		default:
+			// format not supported yet
+			check(false);
+			break;
 	}
 
-	// format not supported yet
-	check(BytesPerPixel);
+	// this function is superceded by DXGIUtilities, delete me ??
+	check(BytesPerPixel == UE::DXGIUtilities::GetFormatSizeInBytes(Format) );
 
 	return BytesPerPixel;
 }
@@ -336,11 +344,12 @@ TRefCountPtr<ID3D11Texture2D> FD3D11DynamicRHI::GetStagingTexture(FRHITexture* T
 	if( SourceDesc.MiscFlags == D3D11_RESOURCE_MISC_TEXTURECUBE )
 	{
 		uint32 D3DFace = GetD3D11CubeFace(InFlags.GetCubeFace());
-		Subresource = D3D11CalcSubresource(InFlags.GetMip(),D3DFace,TextureRHI->GetNumMips());
+		Subresource = D3D11CalcSubresource(InFlags.GetMip(), InFlags.GetArrayIndex() * 6 + D3DFace, TextureRHI->GetNumMips());
 	}
 	else
 	{
-		Subresource = D3D11CalcSubresource(InFlags.GetMip(), 0, TextureRHI->GetNumMips());
+		const bool bIsTextureArray = Texture->GetDesc().IsTextureArray();
+		Subresource = D3D11CalcSubresource(InFlags.GetMip(), bIsTextureArray ? InFlags.GetArrayIndex() : 0, TextureRHI->GetNumMips());
 	}
 
 	D3D11_BOX* RectPtr = NULL; // API prefers NULL for entire texture.
@@ -369,11 +378,10 @@ void FD3D11DynamicRHI::ReadSurfaceDataNoMSAARaw(FRHITexture* TextureRHI,FIntRect
 	D3D11_TEXTURE2D_DESC TextureDesc;
 	Texture->GetD3D11Texture2D()->GetDesc(&TextureDesc);
 	
-	uint32 BytesPerPixel = ComputeBytesPerPixel(TextureDesc.Format);
+	uint32 BytesPerPixel = D3D11RT_ComputeBytesPerPixel(TextureDesc.Format);
 	
 	// Allocate the output buffer.
-	OutData.Empty();
-	OutData.AddUninitialized(SizeX * SizeY * BytesPerPixel);
+	OutData.SetNumUninitialized(SizeX * SizeY * BytesPerPixel);
 
 	bool bIsUsingTempStagingTexture = TextureDesc.Usage != D3D11_USAGE_STAGING;
 	FIntRect StagingRect;
@@ -395,97 +403,6 @@ void FD3D11DynamicRHI::ReadSurfaceDataNoMSAARaw(FRHITexture* TextureRHI,FIntRect
 	}
 
 	Direct3DDeviceIMContext->Unmap(TempTexture2D, MappedSubresource);
-}
-
-
-/** Helper for accessing R10G10B10A2 colors. */
-struct FD3DR10G10B10A2
-{
-	uint32 R : 10;
-	uint32 G : 10;
-	uint32 B : 10;
-	uint32 A : 2;
-};
-
-struct FD3DR32G8
-{
-	uint32 R : 32;
-	uint32 G : 8;
-};
-
-struct FD3DR24G8
-{
-	uint32 R : 24;
-	uint32 G : 8;
-};
-
-
-/** Helper for accessing R16G16 colors. */
-struct FD3DRG16
-{
-	uint16 R;
-	uint16 G;
-};
-
-/** Helper for accessing R16G16B16A16 colors. */
-struct FD3DRGBA16
-{
-	uint16 R;
-	uint16 G;
-	uint16 B;
-	uint16 A;
-};
-
-/** Convert D3D format type to general pixel format type*/
-static void ConvertDXGIToFColor(DXGI_FORMAT Format, uint32 Width, uint32 Height, uint8 *In, uint32 SrcPitch, FColor* Out, FReadSurfaceDataFlags InFlags)
-{
-	bool bLinearToGamma = InFlags.GetLinearToGamma();
-	switch (Format)
-	{
-		case DXGI_FORMAT_R16_TYPELESS:
-			ConvertRawR16DataToFColor(Width, Height, In, SrcPitch, Out);
-			break;
-		case DXGI_FORMAT_R8G8B8A8_TYPELESS:
-		case DXGI_FORMAT_R8G8B8A8_UNORM:
-		case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
-			ConvertRawR8G8B8A8DataToFColor(Width, Height, In, SrcPitch, Out);
-			break;
-		case DXGI_FORMAT_B8G8R8A8_TYPELESS:
-		case DXGI_FORMAT_B8G8R8A8_UNORM:
-		case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
-			ConvertRawB8G8R8A8DataToFColor(Width, Height, In, SrcPitch, Out);
-			break;
-		case DXGI_FORMAT_R10G10B10A2_UNORM:
-			ConvertRawR10G10B10A2DataToFColor(Width, Height, In, SrcPitch, Out);
-			break;
-		case DXGI_FORMAT_R16G16B16A16_FLOAT:
-			ConvertRawR16G16B16A16FDataToFColor(Width, Height, In, SrcPitch, Out, bLinearToGamma);
-			break;
-		case DXGI_FORMAT_R11G11B10_FLOAT:
-			ConvertRawR11G11B10DataToFColor(Width, Height, In, SrcPitch, Out, bLinearToGamma);
-			break;
-		case DXGI_FORMAT_R32G32B32A32_FLOAT:
-			ConvertRawR32G32B32A32DataToFColor(Width, Height, In, SrcPitch, Out, bLinearToGamma);
-			break;
-		case DXGI_FORMAT_R24G8_TYPELESS:
-			ConvertRawR24G8DataToFColor(Width, Height, In, SrcPitch, Out, InFlags);
-			break;
-		case DXGI_FORMAT_R32G8X24_TYPELESS:
-			ConvertRawR32DataToFColor(Width, Height, In, SrcPitch, Out, InFlags);
-			break;
-		case DXGI_FORMAT_R16G16B16A16_UNORM:
-			ConvertRawR16G16B16A16DataToFColor(Width, Height, In, SrcPitch, Out);
-			break;
-		case DXGI_FORMAT_R16G16_UNORM:
-			ConvertRawR16G16DataToFColor(Width, Height, In, SrcPitch, Out);
-			break;
-		case DXGI_FORMAT_R8_UNORM:
-			ConvertRawR8DataToFColor(Width, Height, In, SrcPitch, Out);
-			break;
-		default:
-			checkf(0, TEXT("Unknown surface format!"));
-			break;
-	}
 }
 
 void FD3D11DynamicRHI::RHIReadSurfaceData(FRHITexture* TextureRHI,FIntRect InRect,TArray<FColor>& OutData, FReadSurfaceDataFlags InFlags)
@@ -522,10 +439,23 @@ void FD3D11DynamicRHI::RHIReadSurfaceData(FRHITexture* TextureRHI,FIntRect InRec
 	// Allocate the output buffer.
 	OutData.SetNumUninitialized(SizeX * SizeY);
 
-	uint32 BytesPerPixel = ComputeBytesPerPixel(TextureDesc.Format);
+	uint32 BytesPerPixel = D3D11RT_ComputeBytesPerPixel(TextureDesc.Format);
 	uint32 SrcPitch = SizeX * BytesPerPixel;
+	
+	// switching on the EPixelFormat is risky if the mapping is not what you expect
+	//	verify against TextureDesc.Format
 
-	ConvertDXGIToFColor(TextureDesc.Format, SizeX, SizeY, OutDataRaw.GetData(), SrcPitch, OutData.GetData(), InFlags);
+	EPixelFormat Format = TextureRHI->GetFormat();
+	check( GPixelFormats[Format].PlatformFormat == TextureDesc.Format );
+	check( GPixelFormats[Format].BlockBytes == D3D11RT_ComputeBytesPerPixel(TextureDesc.Format) );
+
+	// ConvertDXGIToFColor switches on the hardware format, not the EPixelFormat :
+
+	if ( ! ConvertDXGIToFColor(TextureDesc.Format, SizeX, SizeY, OutDataRaw.GetData(), SrcPitch, OutData.GetData(), InFlags) )
+	{
+		checkf(0, TEXT("Unsupported surface format!"));
+		OutData.Empty();
+	}
 }
 
 void FD3D11DynamicRHI::ReadSurfaceDataMSAARaw(FRHITexture* TextureRHI,FIntRect InRect,TArray<uint8>& OutData, FReadSurfaceDataFlags InFlags)
@@ -539,7 +469,7 @@ void FD3D11DynamicRHI::ReadSurfaceDataMSAARaw(FRHITexture* TextureRHI,FIntRect I
 	D3D11_TEXTURE2D_DESC TextureDesc;
 	Texture->GetD3D11Texture2D()->GetDesc(&TextureDesc);
 
-	uint32 BytesPerPixel = ComputeBytesPerPixel(TextureDesc.Format);
+	uint32 BytesPerPixel = D3D11RT_ComputeBytesPerPixel(TextureDesc.Format);
 
 	const uint32 NumSamples = TextureDesc.SampleDesc.Count;
 
@@ -598,16 +528,20 @@ void FD3D11DynamicRHI::ReadSurfaceDataMSAARaw(FRHITexture* TextureRHI,FIntRect I
 	VERIFYD3D11RESULT_EX(Direct3DDevice->CreateTexture2D(&StagingDesc,NULL,StagingTexture2D.GetInitReference()), Direct3DDevice);
 
 	// Determine the subresource index for cubemaps.
-	uint32 Subresource = InFlags.GetMip();
-	if( TextureDesc.MiscFlags == D3D11_RESOURCE_MISC_TEXTURECUBE )
+	uint32 Subresource = 0;
+	if (TextureDesc.MiscFlags == D3D11_RESOURCE_MISC_TEXTURECUBE)
 	{
 		uint32 D3DFace = GetD3D11CubeFace(InFlags.GetCubeFace());
-		Subresource = D3D11CalcSubresource(0,D3DFace,1);
+		Subresource = D3D11CalcSubresource(InFlags.GetMip(), InFlags.GetArrayIndex() * 6 + D3DFace, TextureRHI->GetNumMips());
+	}
+	else
+	{
+		const bool bIsTextureArray = Texture->GetDesc().IsTextureArray();
+		Subresource = D3D11CalcSubresource(InFlags.GetMip(), bIsTextureArray ? InFlags.GetArrayIndex() : 0, TextureRHI->GetNumMips());
 	}
 	
 	// Allocate the output buffer.
-	OutData.Empty();
-	OutData.AddUninitialized(SizeX * SizeY * NumSamples * BytesPerPixel);
+	OutData.SetNumUninitialized(SizeX * SizeY * NumSamples * BytesPerPixel);
 
 	// Can be optimized by doing all subsamples into a large enough rendertarget in one pass (multiple draw calls)
 	for(uint32 SampleIndex = 0;SampleIndex < NumSamples;++SampleIndex)
@@ -658,7 +592,7 @@ void FD3D11DynamicRHI::RHIMapStagingSurface(FRHITexture* TextureRHI, FRHIGPUFenc
 	ID3D11Resource* Resource = ResourceCast(TextureRHI)->GetResource();
 
 	DXGI_FORMAT Format = (DXGI_FORMAT)GPixelFormats[TextureRHI->GetDesc().Format].PlatformFormat;
-	uint32 BytesPerPixel = ComputeBytesPerPixel(Format);
+	uint32 BytesPerPixel = D3D11RT_ComputeBytesPerPixel(Format);
 
 	D3D11_MAPPED_SUBRESOURCE LockedRect;
 	VERIFYD3D11RESULT_EX(Direct3DDeviceIMContext->Map(Resource, 0, D3D11_MAP_READ, 0, &LockedRect), Direct3DDevice);
@@ -687,7 +621,13 @@ void FD3D11DynamicRHI::RHIReadSurfaceFloatData(FRHITexture* TextureRHI,FIntRect 
 	D3D11_TEXTURE2D_DESC TextureDesc;
 	Texture->GetD3D11Texture2D()->GetDesc(&TextureDesc);
 
-	check(TextureDesc.Format == GPixelFormats[PF_FloatRGBA].PlatformFormat);
+	// only supports exactly RGBA16F textures
+	if ( ! ensure(TextureDesc.Format == GPixelFormats[PF_FloatRGBA].PlatformFormat) )
+	{
+		checkf(0, TEXT("Unsupported surface format!"));
+		OutData.Empty();
+		return;
+	}
 
 	// Allocate the output buffer.
 	OutData.SetNumUninitialized(SizeX * SizeY);
@@ -749,61 +689,6 @@ void FD3D11DynamicRHI::RHIReadSurfaceFloatData(FRHITexture* TextureRHI,FIntRect 
 	Direct3DDeviceIMContext->Unmap(TempTexture2D,0);
 }
 
-static void ConvertRAWSurfaceDataToFLinearColor(EPixelFormat Format, uint32 Width, uint32 Height, uint8 *In, uint32 SrcPitch, FLinearColor* Out, FReadSurfaceDataFlags InFlags)
-{
-	bool bLinearToGamma = InFlags.GetLinearToGamma();
-	if (Format == PF_R16F || Format == PF_R16F_FILTER)
-	{
-		ConvertRawR16DataToFLinearColor(Width, Height, In, SrcPitch, Out);
-	}
-	else if (Format == PF_R8G8B8A8)
-	{
-		ConvertRawR8G8B8A8DataToFLinearColor(Width, Height, In, SrcPitch, Out);
-	}
-	else if (Format == PF_B8G8R8A8)
-	{
-		ConvertRawB8G8R8A8DataToFLinearColor(Width, Height, In, SrcPitch, Out);
-	}
-	else if (Format == PF_A2B10G10R10)
-	{
-		ConvertRawA2B10G10R10DataToFLinearColor(Width, Height, In, SrcPitch, Out);
-	}
-	else if (Format == PF_FloatRGBA)
-	{
-		ConvertRawR16G16B16A16FDataToFLinearColor(Width, Height, In, SrcPitch, Out, InFlags);
-	}
-	else if (Format == PF_FloatRGB || Format == PF_FloatR11G11B10)
-	{
-		ConvertRawRR11G11B10DataToFLinearColor(Width, Height, In, SrcPitch, Out);
-	}
-	else if (Format == PF_A32B32G32R32F)
-	{
-		ConvertRawR32G32B32A32DataToFLinearColor(Width, Height, In, SrcPitch, Out, InFlags);
-	}
-	else if (Format == PF_D24)
-	{
-		ConvertRawR24G8DataToFLinearColor(Width, Height, In, SrcPitch, Out, InFlags);
-	}
-	// Changing Depth Buffers to 32 bit on Dingo as D24S8 is actually implemented as a 32 bit buffer in the hardware
-	else if (Format == PF_DepthStencil)
-	{
-		ConvertRawR32DataToFLinearColor(Width, Height, In, SrcPitch, Out, InFlags);
-	}
-	else if (Format == PF_A16B16G16R16)
-	{
-		ConvertRawR16G16B16A16DataToFLinearColor(Width, Height, In, SrcPitch, Out);
-	}
-	else if (Format == PF_G16R16)
-	{
-		ConvertRawR16G16DataToFLinearColor(Width, Height, In, SrcPitch, Out);
-	}
-	else
-	{
-		// not supported yet
-		check(0);
-	}
-}
-
 void FD3D11DynamicRHI::RHIReadSurfaceData(FRHITexture* TextureRHI, FIntRect InRect, TArray<FLinearColor>& OutData, FReadSurfaceDataFlags InFlags)
 {
 	TArray<uint8> OutDataRaw;
@@ -831,12 +716,21 @@ void FD3D11DynamicRHI::RHIReadSurfaceData(FRHITexture* TextureRHI, FIntRect InRe
 	// Allocate the output buffer.
 	OutData.SetNumUninitialized(SizeX * SizeY);
 
-	uint32 BytesPerPixel = ComputeBytesPerPixel(TextureDesc.Format);
+	uint32 BytesPerPixel = D3D11RT_ComputeBytesPerPixel(TextureDesc.Format);
 	uint32 SrcPitch = SizeX * BytesPerPixel;
 	EPixelFormat Format = TextureRHI->GetFormat();
-	if (Format != PF_Unknown)
+
+	check( GPixelFormats[Format].PlatformFormat == TextureDesc.Format );
+
+	// switching on the EPixelFormat is risky if the mapping is not what you expect
+	//	verify against TextureDesc.Format
+
+	check( GPixelFormats[Format].BlockBytes == D3D11RT_ComputeBytesPerPixel(TextureDesc.Format) );
+
+	if ( ! ConvertRAWSurfaceDataToFLinearColor(Format, SizeX, SizeY, OutDataRaw.GetData(), SrcPitch, OutData.GetData(), InFlags) )
 	{
-		ConvertRAWSurfaceDataToFLinearColor(Format, SizeX, SizeY, OutDataRaw.GetData(), SrcPitch, OutData.GetData(), InFlags);
+		checkf(0, TEXT("Unsupported surface format!"));
+		OutData.Empty();
 	}
 }
 
@@ -855,7 +749,11 @@ void FD3D11DynamicRHI::RHIRead3DSurfaceFloatData(FRHITexture* TextureRHI,FIntRec
 	bool bIsRGBAFmt = TextureDesc.Format == GPixelFormats[PF_FloatRGBA].PlatformFormat;
 	bool bIsR16FFmt = TextureDesc.Format == GPixelFormats[PF_R16F].PlatformFormat;	
 	bool bIsR32FFmt = TextureDesc.Format == GPixelFormats[PF_R32_FLOAT].PlatformFormat;
-	check(bIsRGBAFmt || bIsR16FFmt || bIsR32FFmt);
+	if ( ! ensure(bIsRGBAFmt || bIsR16FFmt || bIsR32FFmt) )
+	{
+		OutData.Empty();
+		return;
+	}
 
 	// Allocate the output buffer.
 	OutData.SetNumUninitialized(SizeX * SizeY * SizeZ);
@@ -943,6 +841,11 @@ void FD3D11DynamicRHI::RHIRead3DSurfaceFloatData(FRHITexture* TextureRHI,FIntRec
 				}
 			}
 		}
+	}
+	else
+	{
+		// unsupported format; checked for this earlier
+		check(0);
 	}
 
 	Direct3DDeviceIMContext->Unmap(TempTexture3D,0);

@@ -3,7 +3,7 @@
 #pragma once
 
 #include "MassStateTreeTypes.h"
-#include "Subsystems/WorldSubsystem.h"
+#include "MassSubsystemBase.h"
 #include "StateTreeExecutionContext.h"
 #include "MassExternalSubsystemTraits.h"
 #include "MassStateTreeSubsystem.generated.h"
@@ -26,16 +26,16 @@ struct MASSAIBEHAVIOR_API FMassStateTreeInstanceDataItem
 * A subsystem managing StateTree assets in Mass
 */
 UCLASS()
-class MASSAIBEHAVIOR_API UMassStateTreeSubsystem : public UWorldSubsystem
+class MASSAIBEHAVIOR_API UMassStateTreeSubsystem : public UMassSubsystemBase
 {
 	GENERATED_BODY()
 	
-public:
-
+protected:
 	// USubsystem BEGIN
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	// USubsystem END
 
+public:
 	/**
 	 * Allocates new instance data for specified StateTree.
 	 * @param StateTree StateTree to allocated the data for.

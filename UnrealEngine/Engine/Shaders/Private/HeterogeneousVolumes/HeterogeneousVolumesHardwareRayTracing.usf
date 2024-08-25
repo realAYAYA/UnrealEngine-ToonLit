@@ -26,7 +26,7 @@
 
 #define VOXEL_COUNT_MAX 6
 
-#define SHADOW_BIT 0x80000000
+#define SHADOW_BIT 0x80000000u
 
 struct FSparseVoxelPayload
 {
@@ -182,7 +182,8 @@ RAY_TRACING_ENTRY_INTERSECTION(SparseVoxelsIntersectionShader)
 	if (HitT.y > HitT.x)
 	{
 		uint HitKind = 0;
-		ReportHit(HitT.x, HitKind, CreateVolumeIntersectionAttributes(HitT));
+		FSparseVoxelIntersectionAttributes IntersectionAttributes = CreateVolumeIntersectionAttributes(HitT);
+		ReportHit(HitT.x, HitKind, IntersectionAttributes);
 	}
 }
 
@@ -337,8 +338,8 @@ RAY_TRACING_ENTRY_RAYGEN(SparseVoxelsRayGenerationShader1)
 
 	// Intersect ray with bounding volume
 	// TODO: LWC integration..
-	float3 WorldRayOrigin = LWCHackToFloat(LWCSubtract(View.TranslatedWorldCameraOrigin, PrimaryView.PreViewTranslation));
-	float3 WorldRayEnd = LWCHackToFloat(SvPositionToWorld(float4(PixelCoord + 0.5, DeviceZ, 1)));
+	float3 WorldRayOrigin = DFHackToFloat(DFFastSubtract(View.TranslatedWorldCameraOrigin, PrimaryView.PreViewTranslation));
+	float3 WorldRayEnd = DFHackToFloat(SvPositionToWorld(float4(PixelCoord + 0.5, DeviceZ, 1)));
 	float3 WorldRayDirection = WorldRayEnd - WorldRayOrigin;
 	float WorldRayLength = length(WorldRayDirection); // SceneDepth
 
@@ -453,7 +454,7 @@ RAY_TRACING_ENTRY_RAYGEN(RenderLightingCacheWithPreshadingRGS)
 	if (LightType != LIGHT_TYPE_DIRECTIONAL)
 	{
 		// Note: this function also permutes ToLight and L
-		float3 TranslatedWorldPosition = LWCHackToFloat(LWCAdd(WorldRayOrigin, PrimaryView.PreViewTranslation));
+		float3 TranslatedWorldPosition = DFFastToTranslatedWorld(WorldRayOrigin, PrimaryView.PreViewTranslation);
 		GetLocalLightAttenuation(TranslatedWorldPosition, LightData, ToLight, L);
 
 		if (LightData.bRectLight)
@@ -503,8 +504,8 @@ RAY_TRACING_ENTRY_RAYGEN(RenderSingleScatteringWithPreshadingRGS)
 
 	// Intersect ray with bounding volume
 	// TODO: LWC integration..
-	float3 WorldRayOrigin = LWCHackToFloat(LWCSubtract(View.TranslatedWorldCameraOrigin, PrimaryView.PreViewTranslation));
-	float3 WorldRayEnd = LWCHackToFloat(SvPositionToWorld(float4(PixelCoord + 0.5, DeviceZ, 1)));
+	float3 WorldRayOrigin = DFHackToFloat(DFFastSubtract(View.TranslatedWorldCameraOrigin, PrimaryView.PreViewTranslation));
+	float3 WorldRayEnd = DFHackToFloat(SvPositionToWorld(float4(PixelCoord + 0.5, DeviceZ, 1)));
 	float3 WorldRayDirection = WorldRayEnd - WorldRayOrigin;
 	float WorldRayLength = length(WorldRayDirection);
 	WorldRayDirection /= WorldRayLength;
@@ -556,11 +557,13 @@ RAY_TRACING_ENTRY_RAYGEN(RenderSingleScatteringWithPreshadingRGS)
 		const FDeferredLightData LightData = InitDeferredLightFromUniforms(LightType, VolumetricScatteringIntensity);
 		uint StepCount = CalcStepCount(RayMarchingContext);
 
+		float ScatterHitT = Payload.HitT[1];
 		RayMarchSingleScattering(
 			RayMarchingContext,
 			LightData,
 			LightType,
 			StepCount,
+			ScatterHitT,
 			Radiance,
 			Transmittance
 		);

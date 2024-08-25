@@ -3,6 +3,7 @@
 #pragma once
 
 #include <Metal/Metal.h>
+#include "MetalProfiler.h"
 
 class FMetalCommandQueue;
 
@@ -31,7 +32,7 @@ public:
 	 * Command buffer failure reporting function.
 	 * @param CompletedBuffer The buffer to check for failure.
 	 */
-	static void HandleMetalCommandBufferFailure(mtlpp::CommandBuffer const& CompletedBuffer);
+	static void HandleMetalCommandBufferFailure(MTL::CommandBuffer* CompletedBuffer);
 	
 #pragma mark - Public Command List Mutators -
 
@@ -42,7 +43,7 @@ public:
 	 * @param bWait Whether to wait for the command buffer to complete - it is an error to set this to true on a deferred command-list.
 	 * @param bIsLastCommandBuffer True if this is the final command buffer in a frame.
 	 */
-	void Commit(mtlpp::CommandBuffer& Buffer, TArray<ns::Object<mtlpp::CommandBufferHandler>> CompletionHandlers, bool const bWait, bool const bIsLastCommandBuffer);
+	void Commit(FMetalCommandBuffer* Buffer, TArray<FMetalCommandBufferCompletionHandler> CompletionHandlers, bool const bWait, bool const bIsLastCommandBuffer);
 	
 	/**
 	 * Submits all outstanding command-buffers in the proper commit order to the command-queue.

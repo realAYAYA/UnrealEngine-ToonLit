@@ -33,6 +33,7 @@ private:
 	inline static constexpr int ComboSucceeded = -2;
 	inline static constexpr int ComboFailed = -3;
 	inline static constexpr int ComboNextState = -4;
+	inline static constexpr int ComboNextSelectableState = -5;
 
 	void CacheStates();
 	void CacheStates(const UStateTreeState* State);

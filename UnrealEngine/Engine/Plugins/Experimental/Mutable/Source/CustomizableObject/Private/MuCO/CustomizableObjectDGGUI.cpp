@@ -7,7 +7,7 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(CustomizableObjectDGGUI)
 
-void UDGGUI::OpenDGGUI(const int32 SlotID, UCustomizableSkeletalComponent* SelectedCustomizableSkeletalComponent, const UWorld* CurrentWorld, const int32 PlayerIndex)
+void UDGGUI::OpenDGGUI(const int32 SlotID, UCustomizableObjectInstanceUsage* SelectedCustomizableObjectInstanceUsage, const UWorld* CurrentWorld, const int32 PlayerIndex)
 {
 #if !UE_BUILD_SHIPPING
 	if (APlayerController* Player = UGameplayStatics::GetPlayerController(CurrentWorld, PlayerIndex))
@@ -18,7 +18,7 @@ void UDGGUI::OpenDGGUI(const int32 SlotID, UCustomizableSkeletalComponent* Selec
 			UDGGUI* WDGUI = CreateWidget<UDGGUI>(Player, DGUI);
 			if (WDGUI)
 			{
-				WDGUI->SetCustomizableSkeletalComponent(SelectedCustomizableSkeletalComponent);
+				WDGUI->SetCustomizableObjectInstanceUsage(SelectedCustomizableObjectInstanceUsage);
 				WDGUI->AddToViewport();
 				Player->SetShowMouseCursor(true);
 			}
@@ -35,9 +35,9 @@ bool UDGGUI::CloseExistingDGGUI(const UWorld* CurrentWorld)
 	{
 		if (PreviousGUI->IsValidLowLevel())
 		{
-			if (UCustomizableSkeletalComponent* CustomizableComponent = PreviousGUI->GetCustomizableSkeletalComponent())
+			if (UCustomizableObjectInstanceUsage* CustomizableObjectInstanceUsage = PreviousGUI->GetCustomizableObjectInstanceUsage())
 			{
-				PreviousGUI->SetCustomizableSkeletalComponent(nullptr);
+				PreviousGUI->SetCustomizableObjectInstanceUsage(nullptr);
 				bClosing = true;
 			}
 			PreviousGUI->RemoveFromParent();

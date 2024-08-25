@@ -88,7 +88,7 @@ TGlobalResource<FDummyCulledDispatchVertexIdsBuffer> GDummyCulledDispatchVertexI
 /////////////////////////////////////////////////////////////////////////////////////////
 
 FHairGroupPublicData::FVertexFactoryInput ComputeHairStrandsVertexInputData(const FHairGroupInstance* Instance, EGroomViewMode ViewMode);
-int GetHairRaytracingProceduralSplits();
+uint32 GetHairRaytracingProceduralSplits();
 FHairStrandsVertexFactoryUniformShaderParameters FHairGroupInstance::GetHairStandsUniformShaderParameters(EGroomViewMode ViewMode) const
 {
 	const FHairGroupPublicData::FVertexFactoryInput VFInput = ComputeHairStrandsVertexInputData(this, ViewMode);
@@ -107,27 +107,25 @@ FHairStrandsVertexFactoryUniformShaderParameters FHairGroupInstance::GetHairStan
 	Out.PrevResources.PreviousPositionOffsetBuffer	= VFInput.Strands.PrevPositionOffsetBufferRHISRV;
 
 	// swap in some default data for those buffers that are not valid yet
-	if (!Out.Resources.PositionBuffer) 						{ Out.Resources.PositionBuffer = GDummyCulledDispatchVertexIdsBuffer.SRVFloat; }
+	if (!Out.Resources.PositionBuffer) 						{ Out.Resources.PositionBuffer = GDummyCulledDispatchVertexIdsBuffer.SRVByteAddress; }
 	if (!Out.Resources.PositionOffsetBuffer) 				{ Out.Resources.PositionOffsetBuffer = GDummyCulledDispatchVertexIdsBuffer.SRVFloat; }
 	if (!Out.Resources.CurveAttributeBuffer) 				{ Out.Resources.CurveAttributeBuffer = GDummyCulledDispatchVertexIdsBuffer.SRVByteAddress; }
 	if (!Out.Resources.PointAttributeBuffer) 				{ Out.Resources.PointAttributeBuffer = GDummyCulledDispatchVertexIdsBuffer.SRVByteAddress; }
 	if (!Out.Resources.CurveBuffer) 						{ Out.Resources.CurveBuffer = GDummyCulledDispatchVertexIdsBuffer.SRVByteAddress; }
-	if (!Out.Resources.PointToCurveBuffer) 					{ Out.Resources.PointToCurveBuffer = GDummyCulledDispatchVertexIdsBuffer.SRVUint; }
+	if (!Out.Resources.PointToCurveBuffer) 					{ Out.Resources.PointToCurveBuffer = GDummyCulledDispatchVertexIdsBuffer.SRVByteAddress; }
 	if (!Out.Resources.TangentBuffer) 						{ Out.Resources.TangentBuffer = GDummyCulledDispatchVertexIdsBuffer.SRVFloat; }
 
-	if (!Out.PrevResources.PreviousPositionBuffer) 			{ Out.PrevResources.PreviousPositionBuffer = GDummyCulledDispatchVertexIdsBuffer.SRVFloat; }
+	if (!Out.PrevResources.PreviousPositionBuffer) 			{ Out.PrevResources.PreviousPositionBuffer = GDummyCulledDispatchVertexIdsBuffer.SRVByteAddress; }
 	if (!Out.PrevResources.PreviousPositionOffsetBuffer) 	{ Out.PrevResources.PreviousPositionOffsetBuffer = GDummyCulledDispatchVertexIdsBuffer.SRVFloat; }
 
 	Out.Culling.bCullingEnable = HairGroupPublicData->GetCullingResultAvailable();
 	if (Out.Culling.bCullingEnable)
 	{
 		Out.Culling.CullingIndexBuffer = HairGroupPublicData->GetCulledVertexIdBuffer().SRV;
-		Out.Culling.CullingRadiusScaleBuffer = HairGroupPublicData->GetCulledVertexRadiusScaleBuffer().SRV;
 	}
 	else
 	{
 		Out.Culling.CullingIndexBuffer = GDummyCulledDispatchVertexIdsBuffer.SRVUint;
-		Out.Culling.CullingRadiusScaleBuffer = GDummyCulledDispatchVertexIdsBuffer.SRVFloat;
 	}
 	return Out;
 }
@@ -214,7 +212,7 @@ void FHairStrandsVertexFactory::Copy(const FHairStrandsVertexFactory& Other)
 {
 	FHairStrandsVertexFactory* VertexFactory = this;
 	const FDataType* DataCopy = &Other.Data;
-	ENQUEUE_RENDER_COMMAND(FHairStrandsVertexFactoryCopyData)(
+	ENQUEUE_RENDER_COMMAND(FHairStrandsVertexFactoryCopyData)(/*UE::RenderCommandPipe::Groom,*/
 		[VertexFactory, DataCopy](FRHICommandListImmediate& RHICmdList)
 		{
 			VertexFactory->Data = *DataCopy;
@@ -255,6 +253,18 @@ void FHairStrandsVertexFactory::InitResources(FRHICommandListBase& RHICmdList)
 	Data.Instance->Strands.UniformBuffer = FHairStrandsUniformBuffer::CreateUniformBufferImmediate(Parameters, UniformBuffer_MultiFrame);
 }
 
+void FHairStrandsVertexFactory::GetPSOPrecacheVertexFetchElements(EVertexInputStreamType VertexInputStreamType, FVertexDeclarationElementList& Elements)
+{
+#if VF_STRANDS_SUPPORT_GPU_SCENE
+	Elements.Add(FVertexElement(0, 0, VET_UInt, 13, sizeof(uint32), true));
+#endif
+}
+
+EPrimitiveIdMode FHairStrandsVertexFactory::GetPrimitiveIdMode(ERHIFeatureLevel::Type In) const
+{
+	return PrimID_ForceZero;
+}
+
 IMPLEMENT_VERTEX_FACTORY_PARAMETER_TYPE(FHairStrandsVertexFactory, SF_Vertex,		FHairStrandsVertexFactoryShaderParameters);
 IMPLEMENT_VERTEX_FACTORY_PARAMETER_TYPE(FHairStrandsVertexFactory, SF_Pixel,		FHairStrandsVertexFactoryShaderParameters);
 IMPLEMENT_VERTEX_FACTORY_PARAMETER_TYPE(FHairStrandsVertexFactory, SF_Compute,		FHairStrandsVertexFactoryShaderParameters);
@@ -281,4 +291,5 @@ IMPLEMENT_VERTEX_FACTORY_TYPE(FHairStrandsVertexFactory, "/Engine/Private/HairSt
 	| EVertexFactoryFlags::SupportsRayTracing
 	| (VF_STRANDS_PROCEDURAL_INTERSECTOR ? EVertexFactoryFlags::SupportsRayTracingProceduralPrimitive : EVertexFactoryFlags::None)
 	| EVertexFactoryFlags::SupportsManualVertexFetch
+	| EVertexFactoryFlags::SupportsPSOPrecaching
 );

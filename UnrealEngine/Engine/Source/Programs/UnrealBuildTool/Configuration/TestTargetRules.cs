@@ -15,34 +15,35 @@ namespace UnrealBuildTool
 	public class TestTargetRules : TargetRules
 	{
 		/// <summary>
+		/// Configuration mapping to control build graph test metadata generation during project files generation.
+		/// </summary>
+		[ConfigFile(ConfigHierarchyType.Engine, "LowLevelTestsSettings")]
+		public bool bUpdateBuildGraphPropertiesFile { get; set; }
+
+		/// <summary>
 		/// Keeps track if low level tests executable must build with the Editor.
 		/// </summary>
-		internal bool bTestsRequireEditor = false;
+		public static bool bTestsRequireEditor { get; set; }
 
 		/// <summary>
 		/// Keeps track if low level tests executable must build with the Engine.
 		/// </summary>
-		internal bool bTestsRequireEngine = false;
+		public static bool bTestsRequireEngine { get; set; }
 
 		/// <summary>
 		/// Keeps track if low level tests executable must build with the ApplicationCore.
 		/// </summary>
-		internal bool bTestsRequireApplicationCore = false;
+		public static bool bTestsRequireApplicationCore { get; set; }
 
 		/// <summary>
 		/// Keeps track if low level tests executable must build with the CoreUObject.
 		/// </summary>
-		internal bool bTestsRequireCoreUObject = false;
-
-		/// <summary>
-		/// Keep track of low level test runner module instance.
-		/// </summary>
-		internal ModuleRules? LowLevelTestsRunnerModule;
+		public static bool bTestsRequireCoreUObject { get; set; }
 
 		/// <summary>
 		/// Associated tested target of this test target, if defined.
 		/// </summary>
-		protected TargetRules? TestedTarget { get; private set; }
+		public TargetRules? TestedTarget { get; private set; }
 
 		/// <summary>
 		/// Test target override for bCompileAgainstApplicationCore.
@@ -57,7 +58,7 @@ namespace UnrealBuildTool
 		/// <summary>
 		/// If set to true, it will not compile against ApplicationCore even if "ApplicationCore" is in the dependency graph.
 		/// </summary>
-		public static bool bNeverCompileAgainstApplicationCore = false;
+		public bool bNeverCompileAgainstApplicationCore { get; set; }
 
 		/// <summary>
 		/// Test target override for bCompileAgainstCoreUObject.
@@ -72,7 +73,7 @@ namespace UnrealBuildTool
 		/// <summary>
 		/// If set to true, it will not compile against CoreUObject even if "CoreUObject" is in the dependency graph.
 		/// </summary>
-		public static bool bNeverCompileAgainstCoreUObject = false;
+		public bool bNeverCompileAgainstCoreUObject { get; set; }
 
 		/// <summary>
 		/// Test target override for bCompileAgainstEngine.
@@ -87,7 +88,7 @@ namespace UnrealBuildTool
 		/// <summary>
 		/// If set to true, it will not compile against engine even if "Engine" is in the dependency graph.
 		/// </summary>
-		public static bool bNeverCompileAgainstEngine = false;
+		public bool bNeverCompileAgainstEngine { get; set; }
 
 		/// <summary>
 		/// Test target override for bCompileAgainstEditor.
@@ -102,7 +103,7 @@ namespace UnrealBuildTool
 		/// <summary>
 		/// If set to true, it will not compile against editor even if "UnrealEd" is in the dependency graph.
 		/// </summary>
-		public static bool bNeverCompileAgainstEditor = false;
+		public bool bNeverCompileAgainstEditor { get; set; }
 
 		/// <summary>
 		/// Whether to stub the platform file.
@@ -118,7 +119,7 @@ namespace UnrealBuildTool
 				GlobalDefinitions.Add($"UE_LLT_USE_PLATFORM_FILE_STUB={Convert.ToInt32(bUsePlatformFileStubPrivate)}");
 			}
 		}
-		private bool bUsePlatformFileStubPrivate = false;
+		private bool bUsePlatformFileStubPrivate { get; set; }
 
 		/// <summary>
 		/// Whether to mock engine default instances for materials, AI controller etc.
@@ -134,15 +135,15 @@ namespace UnrealBuildTool
 				GlobalDefinitions.Add($"UE_LLT_WITH_MOCK_ENGINE_DEFAULTS={Convert.ToInt32(bMockEngineDefaultsPrivate)}");
 			}
 		}
-		private bool bMockEngineDefaultsPrivate = false;
+		private bool bMockEngineDefaultsPrivate { get; set; }
 
 		/// <summary>
 		/// Constructor that explicit targets can inherit from.
 		/// </summary>
-		/// <param name="Target"></param>
-		public TestTargetRules(TargetInfo Target) : base(Target)
+		/// <param name="target"></param>
+		public TestTargetRules(TargetInfo target) : base(target)
 		{
-			SetupCommonProperties(Target);
+			SetupCommonProperties(target);
 
 			ExeBinariesSubFolder = LaunchModuleName = Name + (ExplicitTestsTarget ? String.Empty : "Tests");
 
@@ -151,10 +152,10 @@ namespace UnrealBuildTool
 				bBuildInSolutionByDefault = true;
 				if (ProjectFile != null)
 				{
-					DirectoryReference SamplesDirectory = DirectoryReference.Combine(Unreal.RootDirectory, "Samples");
+					DirectoryReference samplesDirectory = DirectoryReference.Combine(Unreal.RootDirectory, "Samples");
 					if (!ProjectFile.IsUnderDirectory(Unreal.EngineDirectory))
 					{
-						if (ProjectFile.IsUnderDirectory(SamplesDirectory))
+						if (ProjectFile.IsUnderDirectory(samplesDirectory))
 						{
 							SolutionDirectory = Path.Combine("Samples", ProjectFile.Directory.GetDirectoryName(), "LowLevelTests");
 						}
@@ -178,26 +179,26 @@ namespace UnrealBuildTool
 				bNeverCompileAgainstEngine = true;
 			}
 
-			if (Target.Platform == UnrealTargetPlatform.Win64)
+			if (target.Platform == UnrealTargetPlatform.Win64)
 			{
-				string OutputName = "$(TargetName)";
-				if (Target.Configuration != UndecoratedConfiguration)
+				string outputName = "$(TargetName)";
+				if (target.Configuration != UndecoratedConfiguration)
 				{
-					OutputName = OutputName + "-" + Target.Platform + "-" + Target.Configuration;
+					outputName = outputName + "-" + target.Platform + "-" + target.Configuration;
 				}
 				if (File != null)
 				{
-					DirectoryReference OutputDirectory;
+					DirectoryReference outputDirectory;
 					if (ProjectFile != null && File.IsUnderDirectory(ProjectFile.Directory))
 					{
-						OutputDirectory = UEBuildTarget.GetOutputDirectoryForExecutable(ProjectFile.Directory, File);
+						outputDirectory = UEBuildTarget.GetOutputDirectoryForExecutable(ProjectFile.Directory, File);
 					}
 					else
 					{
-						OutputDirectory = UEBuildTarget.GetOutputDirectoryForExecutable(Unreal.EngineDirectory, File);
+						outputDirectory = UEBuildTarget.GetOutputDirectoryForExecutable(Unreal.EngineDirectory, File);
 					}
-					FileReference OutputTestFile = FileReference.Combine(OutputDirectory, "Binaries", Target.Platform.ToString(), ExeBinariesSubFolder, $"{OutputName}.exe.is_unreal_test");
-					PostBuildSteps.Add("echo > " + OutputTestFile.FullName);
+					FileReference outputTestFile = FileReference.Combine(outputDirectory, "Binaries", target.Platform.ToString(), ExeBinariesSubFolder, $"{outputName}.exe.is_unreal_test");
+					PostBuildSteps.Add("echo > " + outputTestFile.FullName);
 				}
 			}
 		}
@@ -205,63 +206,61 @@ namespace UnrealBuildTool
 		/// <summary>
 		/// Constructs a valid TestTargetRules instance from an existent TargetRules instance.
 		/// </summary>
-		public static TestTargetRules Create(TargetRules Rules, TargetInfo TargetInfo)
+		public static TestTargetRules Create(TargetRules rules, TargetInfo targetInfo)
 		{
-			Type TestTargetRulesType = typeof(TestTargetRules);
-			TestTargetRules TestRules = (TestTargetRules)FormatterServices.GetUninitializedObject(TestTargetRulesType);
+			Type testTargetRulesType = typeof(TestTargetRules);
+			TestTargetRules testRules = (TestTargetRules)FormatterServices.GetUninitializedObject(testTargetRulesType);
 
 			// Initialize the logger before calling the constructor
-			TestRules.Logger = Rules.Logger;
+			testRules.Logger = rules.Logger;
 
-			ConstructorInfo? Constructor = TestTargetRulesType.GetConstructor(new Type[] { typeof(TargetRules), typeof(TargetInfo) });
-			if (Constructor == null)
-			{
-				throw new BuildException("No constructor found on {0} which takes first argument of type TargetRules and second of type TargetInfo.", TestTargetRulesType.Name);
-			}
-
+			ConstructorInfo? constructor = testTargetRulesType.GetConstructor(new Type[] { typeof(TargetRules), typeof(TargetInfo) })
+				?? throw new BuildException("No constructor found on {0} which takes first argument of type TargetRules and second of type TargetInfo.", testTargetRulesType.Name);
 			try
 			{
-				Constructor.Invoke(TestRules, new object[] { Rules, TargetInfo });
+				constructor.Invoke(testRules, new object[] { rules, targetInfo });
 			}
-			catch (Exception Ex)
+			catch (Exception ex)
 			{
-				throw new BuildException(Ex, "Unable to instantiate instance of '{0}' object type from compiled assembly '{1}'.  Unreal Build Tool creates an instance of your module's 'Rules' object in order to find out about your module's requirements.  The CLR exception details may provide more information:  {2}", TestTargetRulesType.Name, Path.GetFileNameWithoutExtension(TestTargetRulesType.Assembly?.Location), Ex.ToString());
+				throw new BuildException(ex, "Unable to instantiate instance of '{0}' object type from compiled assembly '{1}'.  Unreal Build Tool creates an instance of your module's 'Rules' object in order to find out about your module's requirements.  The CLR exception details may provide more information:  {2}", testTargetRulesType.Name, Path.GetFileNameWithoutExtension(testTargetRulesType.Assembly?.Location), ex.ToString());
 			}
 
-			return TestRules;
+			return testRules;
 		}
 
 		/// <summary>
-		/// Constructor for TestTargetRules based on existing target.
+		/// Constructor for TestTargetRules based on existing target a.k.a Implicit test target.
 		/// TestTargetRules is setup as a program and is linked monolithically.
 		/// It removes a lot of default compilation behavior in order to produce a minimal test environment.
 		/// </summary>
-		public TestTargetRules(TargetRules TestedTarget, TargetInfo Target) : base(Target)
+		public TestTargetRules(TargetRules testedTarget, TargetInfo target) : base(target)
 		{
-			if (TestedTarget is TestTargetRules)
+			if (testedTarget is TestTargetRules)
 			{
 				throw new BuildException("TestedTarget can't be of type TestTargetRules.");
 			}
 
-			this.TestedTarget = TestedTarget;
+			TestedTarget = testedTarget;
 
-			TargetFiles = TestedTarget.TargetFiles;
+			TargetFiles = testedTarget.TargetFiles;
 
-			ExeBinariesSubFolder = Name = TestedTarget.Name + "Tests";
-			TargetSourceFile = File = TestedTarget.File;
-			if (TestedTarget.LaunchModuleName != null)
+			ExeBinariesSubFolder = Name = testedTarget.Name + "Tests";
+			TargetSourceFile = File = testedTarget.File;
+			if (testedTarget.LaunchModuleName != null)
 			{
-				LaunchModuleName = TestedTarget.LaunchModuleName + "Tests";
+				LaunchModuleName = testedTarget.LaunchModuleName + "Tests";
 			}
 
-			ManifestFileNames = TestedTarget.ManifestFileNames;
+			ManifestFileNames.Clear();
+			ManifestFileNames.AddRange(testedTarget.ManifestFileNames);
 
-			WindowsPlatform = TestedTarget.WindowsPlatform;
+			WindowsPlatform = testedTarget.WindowsPlatform;
 
-			SetupCommonProperties(Target);
+			SetupCommonProperties(target);
+			SetupImplicitTestProperties(testedTarget);
 		}
 
-		private void SetupCommonProperties(TargetInfo Target)
+		private void SetupCommonProperties(TargetInfo target)
 		{
 			IncludeOrderVersion = EngineIncludeOrderVersion.Latest;
 
@@ -276,7 +275,7 @@ namespace UnrealBuildTool
 
 			bBuildInSolutionByDefault = false;
 
-			bDeployAfterCompile = Target.Platform != UnrealTargetPlatform.Android;
+			bDeployAfterCompile = target.Platform != UnrealTargetPlatform.Android;
 			bIsBuildingConsoleApplication = true;
 
 			// Disabling default true flags that aren't necessary for tests
@@ -291,10 +290,10 @@ namespace UnrealBuildTool
 			bForceBuildShaderFormats = false;
 
 			// Do not compile against the engine, editor etc
-			bCompileAgainstEngine = false;
-			bCompileAgainstEditor = false;
-			bCompileAgainstCoreUObject = false;
-			bCompileAgainstApplicationCore = false;
+			bCompileAgainstEngine = bTestsRequireEngine;
+			bCompileAgainstEditor = bTestsRequireEditor;
+			bCompileAgainstCoreUObject = bTestsRequireCoreUObject;
+			bCompileAgainstApplicationCore = bTestsRequireApplicationCore;
 			bCompileCEF3 = false;
 
 			// No mixing with Functional Test framework
@@ -313,7 +312,7 @@ namespace UnrealBuildTool
 			bBuildDeveloperTools = false;
 
 			// Useful for debugging test failures
-			if (Target.Configuration == UnrealTargetConfiguration.Debug)
+			if (target.Configuration == UnrealTargetConfiguration.Debug)
 			{
 				bDebugBuildsActuallyUseDebugCRT = true;
 			}
@@ -331,19 +330,36 @@ namespace UnrealBuildTool
 			GlobalDefinitions.Add("UE_LLT_WITH_MOCK_ENGINE_DEFAULTS=0");
 
 			// Platform specific setup
-			if (Target.Platform == UnrealTargetPlatform.Android)
+			if (target.Platform == UnrealTargetPlatform.Android)
 			{
-				UndecoratedConfiguration = Target.Configuration;
+				UndecoratedConfiguration = target.Configuration;
 
 				GlobalDefinitions.Add("USE_ANDROID_INPUT=0");
 				GlobalDefinitions.Add("USE_ANDROID_OPENGL=0");
 				GlobalDefinitions.Add("USE_ANDROID_LAUNCH=0");
 				GlobalDefinitions.Add("USE_ANDROID_JNI=0");
+
+				// Workaround for a linker bug when building LowLevelTests for Android
+				// TODO: This should be written to the intermediate directory, somewhere else not when TargetRules are being created
+				FileReference versionScriptFile = new FileReference(Path.GetTempPath() + $"LLTWorkaroundScrip-{Name}.ldscript");
+				FileReference.WriteAllTextIfDifferent(versionScriptFile, "{ local: *; };");
+				AdditionalLinkerArguments = " -Wl,--version-script=\"" + versionScriptFile.FullName + "\"";
 			}
-			else if (Target.Platform == UnrealTargetPlatform.IOS)
+			else if (target.Platform == UnrealTargetPlatform.IOS)
 			{
 				bIsBuildingConsoleApplication = false;
 			}
+		}
+
+		private void SetupImplicitTestProperties(TargetRules testedTarget)
+		{
+			bool isEditorTestedTarget = (testedTarget.Type == TargetType.Editor);
+			bBuildWithEditorOnlyData = bCompileAgainstEditor = isEditorTestedTarget;
+			bBuildDeveloperTools = bCompileAgainstEngine && isEditorTestedTarget;
+
+			bUsePlatformFileStub = bCompileAgainstEngine;
+			bMockEngineDefaults = bCompileAgainstEngine;
+			bCompileWithPluginSupport = bCompileAgainstEngine;
 		}
 	}
 }

@@ -360,7 +360,7 @@ bool ShouldInitializePreSlate()
 void Shutdown()
 {
 	GVirtualizationSystem.Reset();
-	UE_LOG(LogVirtualization, Log, TEXT("UE::Virtualization was shutdown"));
+	UE_LOG(LogVirtualization, Verbose, TEXT("UE::Virtualization was shutdown"));
 }
 
 

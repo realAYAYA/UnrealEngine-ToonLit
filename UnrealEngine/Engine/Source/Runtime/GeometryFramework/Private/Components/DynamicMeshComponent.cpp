@@ -155,7 +155,10 @@ void UDynamicMeshComponent::PostEditChangeProperty(FPropertyChangedEvent& Proper
 
 void UDynamicMeshComponent::SetMesh(UE::Geometry::FDynamicMesh3&& MoveMesh)
 {
-	MeshObject->SetMesh(MoveTemp(MoveMesh));
+	if (ensureMsgf(IsEditable(), TEXT("Attempted to modify the internal mesh of a UDynamicMeshComponent that is not editable")))
+	{
+		MeshObject->SetMesh(MoveTemp(MoveMesh));
+	}
 }
 
 
@@ -169,10 +172,13 @@ void UDynamicMeshComponent::ProcessMesh(
 void UDynamicMeshComponent::EditMesh(TFunctionRef<void(UE::Geometry::FDynamicMesh3&)> EditFunc,
 										   EDynamicMeshComponentRenderUpdateMode UpdateMode )
 {
-	MeshObject->EditMesh(EditFunc);
-	if (UpdateMode != EDynamicMeshComponentRenderUpdateMode::NoUpdate)
+	if (ensureMsgf(IsEditable(), TEXT("Attempted to modify the internal mesh of a UDynamicMeshComponent that is not editable")))
 	{
-		NotifyMeshUpdated();
+		MeshObject->EditMesh(EditFunc);
+		if (UpdateMode != EDynamicMeshComponentRenderUpdateMode::NoUpdate)
+		{
+			NotifyMeshUpdated();
+		}
 	}
 }
 
@@ -223,17 +229,20 @@ const FDynamicMesh3* UDynamicMeshComponent::GetRenderMesh() const
 
 void UDynamicMeshComponent::ApplyTransform(const FTransform3d& Transform, bool bInvert)
 {
-	MeshObject->EditMesh([&](FDynamicMesh3& EditMesh)
+	if (ensureMsgf(IsEditable(), TEXT("Attempted to modify the internal mesh of a UDynamicMeshComponent that is not editable")))
 	{
-		if (bInvert)
+		MeshObject->EditMesh([&](FDynamicMesh3& EditMesh)
 		{
-			MeshTransforms::ApplyTransformInverse(EditMesh, Transform, true);
-		}
-		else
-		{
-			MeshTransforms::ApplyTransform(EditMesh, Transform, true);
-		}
-	}, EDynamicMeshChangeType::DeformationEdit);
+			if (bInvert)
+			{
+				MeshTransforms::ApplyTransformInverse(EditMesh, Transform, true);
+			}
+			else
+			{
+				MeshTransforms::ApplyTransform(EditMesh, Transform, true);
+			}
+		}, EDynamicMeshChangeType::DeformationEdit);
+	}
 }
 
 
@@ -322,11 +331,10 @@ void UDynamicMeshComponent::UpdateAutoCalculatedTangents()
 					AutoCalculatedTangents.SetMesh(&Mesh);
 					AutoCalculatedTangents.ComputeTriVertexTangents(NormalOverlay, UVOverlay, FComputeTangentsOptions());
 					AutoCalculatedTangents.SetMesh(nullptr);
+					bAutoCalculatedTangentsValid = true;
 				}
 			}
 		});
-
-		bAutoCalculatedTangentsValid = true;
 	}
 }
 
@@ -1240,7 +1248,6 @@ void UDynamicMeshComponent::OnChildDetached(USceneComponent* ChildComponent)
 
 bool UDynamicMeshComponent::GetPhysicsTriMeshData(struct FTriMeshCollisionData* CollisionData, bool InUseAllTriData)
 {
-	// todo: support physical materials
 	// todo: support UPhysicsSettings::Get()->bSupportUVFromHitResults
 
 	// this is something we currently assume, if you hit this ensure, we made a mistake
@@ -1248,6 +1255,8 @@ bool UDynamicMeshComponent::GetPhysicsTriMeshData(struct FTriMeshCollisionData* 
 
 	ProcessMesh([&](const FDynamicMesh3& Mesh)
 	{
+		const FDynamicMeshMaterialAttribute* MaterialAttrib = Mesh.HasAttributes() && Mesh.Attributes()->HasMaterialID() ? Mesh.Attributes()->GetMaterialID() : nullptr;
+
 		TArray<int32> VertexMap;
 		bool bIsSparseV = !Mesh.IsCompactV();
 		if (bIsSparseV)
@@ -1299,7 +1308,8 @@ bool UDynamicMeshComponent::GetPhysicsTriMeshData(struct FTriMeshCollisionData* 
 
 			CollisionData->Indices.Add(Triangle);
 
-			CollisionData->MaterialIndices.Add(0);		// not supporting physical materials yet
+			int32 MaterialID = MaterialAttrib ? MaterialAttrib->GetValue(tid) : 0;
+			CollisionData->MaterialIndices.Add(MaterialID);
 		}
 
 		CollisionData->bFlipNormals = true;

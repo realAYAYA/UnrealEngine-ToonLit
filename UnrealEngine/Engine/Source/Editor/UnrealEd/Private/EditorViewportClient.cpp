@@ -1,6 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "EditorViewportClient.h"
+
+#include "ActorFactories/ActorFactory.h"
+#include "Elements/Framework/EngineElementsLibrary.h"
+#include "Elements/Framework/TypedElementRegistry.h"
+#include "Elements/Interfaces/TypedElementObjectInterface.h"
 #include "PreviewScene.h"
 #include "HAL/FileManager.h"
 #include "Misc/FileHelper.h"
@@ -56,7 +61,7 @@
 #include "BufferVisualizationData.h"
 #include "NaniteVisualizationData.h"
 #include "LumenVisualizationData.h"
-#include "StrataVisualizationData.h"
+#include "SubstrateVisualizationData.h"
 #include "GroomVisualizationData.h"
 #include "VirtualShadowMapVisualizationData.h"
 #include "GPUSkinCacheVisualizationData.h"
@@ -70,6 +75,7 @@
 #include "HDRHelper.h"
 #include "GlobalRenderResources.h"
 #include "Settings/EditorStyleSettings.h"
+#include "GameFramework/ActorPrimitiveColorHandler.h"
 
 #define LOCTEXT_NAMESPACE "EditorViewportClient"
 
@@ -90,6 +96,15 @@ static TAutoConsoleVariable<int32> CVarEditorViewportTest(
 	TEXT("Allows to test different viewport rectangle configuations (in game only) as they can happen when using cinematics/Editor.\n")
 	TEXT("0: off(default)\n")
 	TEXT("1..7: Various Configuations"),
+	ECVF_RenderThreadSafe);
+
+static TAutoConsoleVariable<float> CVarOrthoEditorDebugClipPlaneScale(
+	TEXT("r.Ortho.EditorDebugClipPlaneScale"),
+	1.0f,
+	TEXT("Only affects the editor ortho viewports in Lit modes.\n")
+	TEXT("Set the scale to proportionally alter the near plane based on current Ortho width that is set.\n")
+	TEXT("This changes when geometry clips in the scene as the Orthozoom is changed. Helpful for varying mesh sizes.\n")
+	TEXT("Other light artefacts may appear when this value changes, this is unavoidable for now.\n"),
 	ECVF_RenderThreadSafe);
 
 static bool GetDefaultLowDPIPreviewValue()
@@ -131,9 +146,6 @@ namespace EditorViewportClient
 	static const int8 CellSize = 16;
 	static const float LightRotSpeed = 0.22f;
 }
-
-// MIN_ORTHOZOOM defined in ULevelEditorViewportSettings
-#define MAX_ORTHOZOOM				MAX_FLT					/* Limit of 2D viewport zoom out */
 
 namespace OrbitConstants
 {
@@ -399,7 +411,7 @@ FEditorViewportClient::FEditorViewportClient(FEditorModeTools* InModeTools, FPre
 	, CurrentBufferVisualizationMode(NAME_None)
 	, CurrentNaniteVisualizationMode(NAME_None)
 	, CurrentLumenVisualizationMode(NAME_None)
-	, CurrentStrataVisualizationMode(NAME_None)
+	, CurrentSubstrateVisualizationMode(NAME_None)
 	, CurrentGroomVisualizationMode(NAME_None)
 	, CurrentVirtualShadowMapVisualizationMode(NAME_None)
 	, CurrentRayTracingDebugVisualizationMode(NAME_None)
@@ -882,7 +894,6 @@ void FEditorViewportClient::CenterViewportAtPoint(const FVector& NewLookAt, bool
 //////////////////////////////////////////////////////////////////////////
 //
 // Configures the specified FSceneView object with the view and projection matrices for this viewport.
-
 FSceneView* FEditorViewportClient::CalcSceneView(FSceneViewFamily* ViewFamily, const int32 StereoViewIndex)
 {
     const bool bStereoRendering = StereoViewIndex != INDEX_NONE;
@@ -895,6 +906,7 @@ FSceneView* FEditorViewportClient::CalcSceneView(FSceneViewFamily* ViewFamily, c
 	// Apply view modifiers.
 	FEditorViewportViewModifierParams ViewModifierParams;
 	{
+		ViewModifierParams.ViewportClient = this;
 		ViewModifierParams.ViewInfo.Location = ViewTransform.GetLocation();
 		ViewModifierParams.ViewInfo.Rotation = ViewTransform.GetRotation();
 
@@ -1114,14 +1126,12 @@ FSceneView* FEditorViewportClient::CalcSceneView(FSceneViewFamily* ViewFamily, c
 		else
 		{
 			static_assert((bool)ERHIZBuffer::IsInverted, "Check all the Rotation Matrix transformations!");
-			FMatrix::FReal ZScale = 0.5f / UE_OLD_HALF_WORLD_MAX;	// LWC_TODO: WORLD_MAX misuse?
-			FMatrix::FReal ZOffset = UE_OLD_HALF_WORLD_MAX;
 
 			//The divisor for the matrix needs to match the translation code.
 			const float Zoom = GetOrthoUnitsPerPixel(Viewport);
+			float OrthoWidth = FMath::Clamp(Zoom * ViewportSize.X/2.0f, 0.0f, UE_LARGE_HALF_WORLD_MAX);
+			float OrthoHeight = FMath::Clamp(Zoom * ViewportSize.Y/2.0f, 0.0f, UE_LARGE_HALF_WORLD_MAX);
 
-			float OrthoWidth = Zoom * ViewportSize.X / 2.0f;
-			float OrthoHeight = Zoom * ViewportSize.Y / 2.0f;
 
 			if (EffectiveViewportType == LVT_OrthoXY)
 			{
@@ -1185,12 +1195,38 @@ FSceneView* FEditorViewportClient::CalcSceneView(FSceneViewFamily* ViewFamily, c
 				check(false);
 			}
 
+			FMatrix::FReal ZScale = 0.5f / UE_OLD_WORLD_MAX;
+			FMatrix::FReal ZOffset = UE_OLD_WORLD_MAX;
+			if(!ViewFamily->EngineShowFlags.Wireframe)
+			{
+				FMinimalViewInfo CalculatePlanesViewInfo;
+				CalculatePlanesViewInfo.Rotation = ViewInitOptions.ViewRotationMatrix.Rotator();
+				CalculatePlanesViewInfo.AspectRatio = AspectRatio;
+				CalculatePlanesViewInfo.bConstrainAspectRatio = false;
+
+				CalculatePlanesViewInfo.ProjectionMode = ECameraProjectionMode::Orthographic;				
+				CalculatePlanesViewInfo.OrthoWidth = OrthoWidth;
+				CalculatePlanesViewInfo.bAutoCalculateOrthoPlanes = true;
+				CalculatePlanesViewInfo.AutoPlaneShift = 0.0f;
+				CalculatePlanesViewInfo.bUpdateOrthoPlanes = true;
+				CalculatePlanesViewInfo.bUseCameraHeightAsViewTarget = true;
+				CalculatePlanesViewInfo.OrthoNearClipPlane = OrthoWidth * -CVarOrthoEditorDebugClipPlaneScale.GetValueOnAnyThread();
+				CalculatePlanesViewInfo.OrthoFarClipPlane = FarPlane - NearPlane + CalculatePlanesViewInfo.OrthoNearClipPlane;
+
+				CalculatePlanesViewInfo.AutoCalculateOrthoPlanes(ViewInitOptions);
+				if(ViewInitOptions.UpdateOrthoPlanes(CalculatePlanesViewInfo))
+				{
+					ZScale = 1.0f / (CalculatePlanesViewInfo.OrthoFarClipPlane - CalculatePlanesViewInfo.OrthoNearClipPlane);
+					ZOffset = -CalculatePlanesViewInfo.OrthoNearClipPlane;
+				}
+			}			
+
 			ViewInitOptions.ProjectionMatrix = FReversedZOrthoMatrix(
 				OrthoWidth,
 				OrthoHeight,
 				ZScale,
 				ZOffset
-				);
+			);
 		}
 
 		if (bConstrainAspectRatio)
@@ -1230,9 +1266,6 @@ FSceneView* FEditorViewportClient::CalcSceneView(FSceneViewFamily* ViewFamily, c
 	ViewInitOptions.BackgroundColor = GetBackgroundColor();
 
 	ViewInitOptions.EditorViewBitflag = (uint64)1 << ViewIndex, // send the bit for this view - each actor will check it's visibility bits against this
-
-	// for ortho views to steal perspective view origin
-	ViewInitOptions.OverrideLODViewOrigin = FVector::ZeroVector;
 
 	ViewInitOptions.FOV = ModifiedViewFOV;
 	if (bUseControllingActorViewInfo)
@@ -1563,6 +1596,10 @@ void FEditorViewportClient::UpdateCameraMovementFromJoystick(const bool bRelativ
 				const bool bPressed = (KeyState==IE_Pressed);
 				const bool bRepeat = (KeyState == IE_Repeat);
 
+				static const float MultiplierIncrement = 0.25f;
+				static const float MaxTranslationMultiplier = 5.0f;
+				static const float MaxRotationMultiplier = 3.0f;
+
 				if ((Key == EKeys::Gamepad_LeftShoulder) && (bPressed || bRepeat))
 				{
 					CameraUserImpulseData->ZoomOutInImpulse +=  InConfig.ZoomMultiplier;
@@ -1570,6 +1607,22 @@ void FEditorViewportClient::UpdateCameraMovementFromJoystick(const bool bRelativ
 				else if ((Key == EKeys::Gamepad_RightShoulder) && (bPressed || bRepeat))
 				{
 					CameraUserImpulseData->ZoomOutInImpulse -= InConfig.ZoomMultiplier;
+				}
+				else if ((Key == EKeys::Gamepad_DPad_Up) && (bPressed && !bRepeat))
+				{
+					InConfig.TranslationMultiplier = FMath::Clamp(InConfig.TranslationMultiplier + MultiplierIncrement, MultiplierIncrement, MaxTranslationMultiplier);
+				}
+				else if ((Key == EKeys::Gamepad_DPad_Down) && (bPressed && !bRepeat))
+				{
+					InConfig.TranslationMultiplier = FMath::Clamp(InConfig.TranslationMultiplier - MultiplierIncrement, MultiplierIncrement, MaxTranslationMultiplier);
+				}
+				else if ((Key == EKeys::Gamepad_DPad_Right) && (bPressed && !bRepeat))
+				{
+					InConfig.RotationMultiplier = FMath::Clamp(InConfig.RotationMultiplier + MultiplierIncrement, MultiplierIncrement, MaxRotationMultiplier);
+				}
+				else if ((Key == EKeys::Gamepad_DPad_Left) && (bPressed && !bRepeat))
+				{
+					InConfig.RotationMultiplier = FMath::Clamp(InConfig.RotationMultiplier - MultiplierIncrement, MultiplierIncrement, MaxRotationMultiplier);
 				}
 				
 				if (bPressed)
@@ -1625,7 +1678,7 @@ EMouseCursor::Type FEditorViewportClient::GetCursor(FViewport* InViewport,int32 
 		MouseCursor = EMouseCursor::CardinalCross;
 	}
 	// Don't select widget axes by mouse over while they're being controlled by a mouse drag.
-	else if( InViewport->IsCursorVisible() && !bWidgetAxisControlledByDrag )
+	else if( InViewport->IsCursorVisible() && !bWidgetAxisControlledByDrag && !ModeTools->HasOngoingTransform())
 	{
 		// allow editor modes to override cursor
 		EMouseCursor::Type EditorModeCursor = EMouseCursor::Default;
@@ -1784,6 +1837,11 @@ void FEditorViewportClient::UpdateCameraMovement( float DeltaTime )
 		bool bDownKeyState = false;
 		bool bZoomOutKeyState = false;
 		bool bZoomInKeyState = false;
+
+		bool bRotateUpKeyState = false;
+		bool bRotateDownKeyState = false;
+		bool bRotateLeftKeyState = false;
+		bool bRotateRightKeyState = false;
 		// Iterate through all key mappings to generate key state flags
 		for (uint32 i = 0; i < static_cast<uint8>(EMultipleKeyBindingIndex::NumChords); ++i)
 		{
@@ -1797,6 +1855,16 @@ void FEditorViewportClient::UpdateCameraMovement( float DeltaTime )
 			bDownKeyState |= Viewport->KeyState(FViewportNavigationCommands::Get().Down->GetActiveChord(ChordIndex)->Key);
 			bZoomOutKeyState |= Viewport->KeyState(FViewportNavigationCommands::Get().FovZoomOut->GetActiveChord(ChordIndex)->Key);
 			bZoomInKeyState |= Viewport->KeyState(FViewportNavigationCommands::Get().FovZoomIn->GetActiveChord(ChordIndex)->Key);
+
+			bRotateUpKeyState |= Viewport->KeyState(FViewportNavigationCommands::Get().RotateUp->GetActiveChord(ChordIndex)->Key);
+			bRotateDownKeyState |= Viewport->KeyState(FViewportNavigationCommands::Get().RotateDown->GetActiveChord(ChordIndex)->Key);
+			bRotateLeftKeyState |= Viewport->KeyState(FViewportNavigationCommands::Get().RotateLeft->GetActiveChord(ChordIndex)->Key);
+			bRotateRightKeyState |= Viewport->KeyState(FViewportNavigationCommands::Get().RotateRight->GetActiveChord(ChordIndex)->Key);
+		}
+
+		if (!CameraController->IsRotating())
+		{
+			CameraController->GetConfig().bForceRotationalPhysics = false;
 		}
 
 		// Forward/back
@@ -1853,6 +1921,30 @@ void FEditorViewportClient::UpdateCameraMovement( float DeltaTime )
 			CameraUserImpulseData->ZoomOutInImpulse -= 1.0f;
 		}
 
+		// Rotate up/down
+		if (bRemapWASDKeys && bRotateUpKeyState)
+		{
+			CameraUserImpulseData->RotatePitchImpulse += 1.0f * CameraController->GetConfig().RotationMultiplier;
+			CameraController->GetConfig().bForceRotationalPhysics = true;
+		}
+		if (bRemapWASDKeys && bRotateDownKeyState)
+		{
+			CameraUserImpulseData->RotatePitchImpulse -= 1.0f * CameraController->GetConfig().RotationMultiplier;
+			CameraController->GetConfig().bForceRotationalPhysics = true;
+		}
+
+		// Rotate left/right
+		if (bRemapWASDKeys && bRotateLeftKeyState)
+		{
+			CameraUserImpulseData->RotateYawImpulse -= 1.0f * CameraController->GetConfig().RotationMultiplier;
+			CameraController->GetConfig().bForceRotationalPhysics = true;
+		}
+		if (bRemapWASDKeys && bRotateRightKeyState)
+		{
+			CameraUserImpulseData->RotateYawImpulse += 1.0f * CameraController->GetConfig().RotationMultiplier;
+			CameraController->GetConfig().bForceRotationalPhysics = true;
+		}
+
 		// Record Stats
 		if ( CameraUserImpulseData->MoveForwardBackwardImpulse != 0 || CameraUserImpulseData->MoveRightLeftImpulse != 0 )
 		{
@@ -1865,11 +1957,6 @@ void FEditorViewportClient::UpdateCameraMovement( float DeltaTime )
 		else if ( CameraUserImpulseData->ZoomOutInImpulse != 0 )
 		{
 			FEditorViewportStats::Using(FEditorViewportStats::CAT_PERSPECTIVE_KEYBOARD_FOV_ZOOM);
-		}
-
-		if (!CameraController->IsRotating())
-		{
-			CameraController->GetConfig().bForceRotationalPhysics = false;
 		}
 
 		if( GetDefault<ULevelEditorViewportSettings>()->bLevelEditorJoystickControls )
@@ -2594,7 +2681,11 @@ bool FEditorViewportClient::IsFlightCameraActive() const
 			|| Viewport->KeyState(FViewportNavigationCommands::Get().Up->GetActiveChord(ChordIndex)->Key)
 			|| Viewport->KeyState(FViewportNavigationCommands::Get().Down->GetActiveChord(ChordIndex)->Key)
 			|| Viewport->KeyState(FViewportNavigationCommands::Get().FovZoomIn->GetActiveChord(ChordIndex)->Key)
-			|| Viewport->KeyState(FViewportNavigationCommands::Get().FovZoomOut->GetActiveChord(ChordIndex)->Key));
+			|| Viewport->KeyState(FViewportNavigationCommands::Get().FovZoomOut->GetActiveChord(ChordIndex)->Key)
+			|| Viewport->KeyState(FViewportNavigationCommands::Get().RotateUp->GetActiveChord(ChordIndex)->Key)
+			|| Viewport->KeyState(FViewportNavigationCommands::Get().RotateDown->GetActiveChord(ChordIndex)->Key)
+			|| Viewport->KeyState(FViewportNavigationCommands::Get().RotateLeft->GetActiveChord(ChordIndex)->Key)
+			|| Viewport->KeyState(FViewportNavigationCommands::Get().RotateRight->GetActiveChord(ChordIndex)->Key));
 	}
 	const bool bIsUsingTrackpad = FSlateApplication::Get().IsUsingTrackpad();
 
@@ -2700,21 +2791,21 @@ FText FEditorViewportClient::GetCurrentVirtualShadowMapVisualizationModeDisplayN
 	return GetVirtualShadowMapVisualizationData().GetModeDisplayName(CurrentVirtualShadowMapVisualizationMode);
 }
 
-void FEditorViewportClient::ChangeStrataVisualizationMode(FName InName)
+void FEditorViewportClient::ChangeSubstrateVisualizationMode(FName InName)
 {
 	SetViewMode(VMI_VisualizeSubstrate);
-	CurrentStrataVisualizationMode = InName;
+	CurrentSubstrateVisualizationMode = InName;
 }
 
-bool FEditorViewportClient::IsStrataVisualizationModeSelected(FName InName) const
+bool FEditorViewportClient::IsSubstrateVisualizationModeSelected(FName InName) const
 {
-	return IsViewModeEnabled(VMI_VisualizeSubstrate) && CurrentStrataVisualizationMode == InName;
+	return IsViewModeEnabled(VMI_VisualizeSubstrate) && CurrentSubstrateVisualizationMode == InName;
 }
 
-FText FEditorViewportClient::GetCurrentStrataVisualizationModeDisplayName() const
+FText FEditorViewportClient::GetCurrentSubstrateVisualizationModeDisplayName() const
 {
 	checkf(IsViewModeEnabled(VMI_VisualizeSubstrate), TEXT("In order to call GetCurrentSubstrateVisualizationMode(), first you must set ViewMode to VMI_VisualizeSubstrate."));
-	return GetStrataVisualizationData().GetModeDisplayName(CurrentStrataVisualizationMode);
+	return GetSubstrateVisualizationData().GetModeDisplayName(CurrentSubstrateVisualizationMode);
 }
 
 void FEditorViewportClient::ChangeGroomVisualizationMode(FName InName)
@@ -2933,9 +3024,9 @@ bool FEditorViewportClient::Internal_InputKey(const FInputKeyEventArgs& EventArg
 		return true;
 	}
 	
-	FKey Key = EventArgs.Key;
-	EInputEvent Event = EventArgs.Event;
-	FViewport* InViewport = EventArgs.Viewport;
+	const FKey& Key = EventArgs.Key;
+	const EInputEvent& Event = EventArgs.Event;
+	const FViewport* InViewport = EventArgs.Viewport;
 
 	// Let the current mode have a look at the input before reacting to it. 
 	// Note that bIsTracking tells us whether the viewport client is capturing mouse behavior to fly around,
@@ -2950,7 +3041,7 @@ bool FEditorViewportClient::Internal_InputKey(const FInputKeyEventArgs& EventArg
 		return true;
 	}
 
-	FInputEventState InputState(EventArgs.Viewport, EventArgs.Key, EventArgs.Event);
+	const FInputEventState InputState(EventArgs.Viewport, Key, Event);
 	
 	bool bHandled = false;
 
@@ -2982,21 +3073,13 @@ bool FEditorViewportClient::Internal_InputKey(const FInputKeyEventArgs& EventArg
 		ModeTools->SetWidgetModeOverride(UE::Widget::WM_None);
 	}
 
-	const int32	HitX = InViewport->GetMouseX();
-	const int32	HitY = InViewport->GetMouseY();
-
-	FCachedJoystickState* JoystickState = GetJoystickState(EventArgs.InputDevice.GetId());
-	if (JoystickState)
+	if (FCachedJoystickState* JoystickState = GetJoystickState(EventArgs.InputDevice.GetId()))
 	{
 		JoystickState->KeyEventValues.Add(Key, Event);
 	}
 
 	const bool bWasCursorVisible = InViewport->IsCursorVisible();
 	const bool bWasSoftwareCursorVisible = InViewport->IsSoftwareCursorVisible();
-
-	const bool AltDown = InputState.IsAltButtonPressed();
-	const bool ShiftDown = InputState.IsShiftButtonPressed();
-	const bool ControlDown = InputState.IsCtrlButtonPressed();
 
 	RequiredCursorVisibiltyAndAppearance.bDontResetCursor = false;
 	UpdateRequiredCursorVisibility();
@@ -3708,14 +3791,9 @@ void FEditorViewportClient::OnChangeCameraSpeed( const struct FInputEventState& 
 
 	if (GetDefault<ULevelEditorViewportSettings>()->FlightCameraControlExperimentalNavigation)
 	{
-		if( Key == EKeys::MouseScrollUp )
-		{
-			GetMutableDefault<ULevelEditorViewportSettings>()->CameraSpeed = FMath::Clamp<int32>(GetDefault<ULevelEditorViewportSettings>()->CameraSpeed + 1, 1, MaxCameraSpeeds);
-		}
-		else
-		{
-			GetMutableDefault<ULevelEditorViewportSettings>()->CameraSpeed = FMath::Clamp<int32>(GetDefault<ULevelEditorViewportSettings>()->CameraSpeed - 1, 1, MaxCameraSpeeds);
-		}
+		const int32 SpeedOffset = Key == EKeys::MouseScrollUp ? 1 : -1;
+		const int32 NewSpeed = FMath::Clamp<int32>(GetCameraSpeedSetting() + SpeedOffset, 1, MaxCameraSpeeds);;
+		SetCameraSpeedSetting(NewSpeed);
 	}
 	else
 	{
@@ -3817,6 +3895,19 @@ bool FEditorViewportClient::InputWidgetDelta(FViewport* InViewport, EAxisList::T
 
 void FEditorViewportClient::SetWidgetMode(UE::Widget::EWidgetMode NewMode)
 {
+	// Don't set hit proxies or redraw collapsed viewport widgets
+	if (TSharedPtr<SEditorViewport> EditorViewportWidgetPinned = EditorViewportWidget.Pin())
+	{
+		if (!EditorViewportWidgetPinned->IsVisible() || EditorViewportWidgetPinned->GetVisibility() != EVisibility::Visible)
+		{
+			return;
+		}
+	}
+	else
+	{
+		return;
+	}
+
 	if (!ModeTools->IsTracking() && !IsFlightCameraActive())
 	{
 		ModeTools->SetWidgetMode(NewMode);
@@ -3966,7 +4057,7 @@ void FEditorViewportClient::SetupViewForRendering(FSceneViewFamily& ViewFamily, 
 	View.CurrentBufferVisualizationMode = CurrentBufferVisualizationMode;
 	View.CurrentNaniteVisualizationMode = CurrentNaniteVisualizationMode;
 	View.CurrentLumenVisualizationMode = CurrentLumenVisualizationMode;
-	View.CurrentStrataVisualizationMode = CurrentStrataVisualizationMode;
+	View.CurrentSubstrateVisualizationMode = CurrentSubstrateVisualizationMode;
 	View.CurrentGroomVisualizationMode = CurrentGroomVisualizationMode;
 	View.CurrentVirtualShadowMapVisualizationMode = CurrentVirtualShadowMapVisualizationMode;
 	View.CurrentGPUSkinCacheVisualizationMode = CurrentGPUSkinCacheVisualizationMode;
@@ -5016,6 +5107,29 @@ bool FEditorViewportClient::IsMovingCamera() const
 	return bUsingOrbitCamera || IsFlightCameraActive();
 }
 
+bool FEditorViewportClient::DropObjectsAtCoordinates(int32 MouseX, int32 MouseY, const TArray<UObject*>& DroppedObjects, 
+	TArray<FTypedElementHandle>& OutNewObjects, const FDropObjectOptions& Options)
+{
+	// Forward things to the deprecated overload while it still exists, so that we don't break any
+	// existing derivations of FEditorViewportClient. Once removed, this function will just return false.
+	TArray<AActor*> OutputActors;
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	bool bSuccess = DropObjectsAtCoordinates(MouseX, MouseY, DroppedObjects, OutputActors,
+		Options.bOnlyDropOnTarget, Options.bCreateDropPreview, Options.bSelectOutput,
+		Cast<UActorFactory>(Options.FactoryToUse.GetObject()));
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+	TArray<FTypedElementHandle> OutputElements;
+
+	for (const AActor* Actor : OutputActors)
+	{
+		FTypedElementHandle Handle = UEngineElementsLibrary::AcquireEditorActorElementHandle(Actor);
+		OutputElements.Add(Handle);
+	}
+
+	return bSuccess;
+}
+
 /** True if the window is maximized or floating */
 bool FEditorViewportClient::IsVisible() const
 {
@@ -5794,13 +5908,13 @@ void FEditorViewportClient::TakeScreenshot(FViewport* InViewport, bool bInValida
 		ImageTask->PixelData = MoveTemp(PixelData);
 
 		// Ensure the alpha channel is full alpha (this happens on the background thread)
-		ImageTask->PixelPreProcessors.Add(TAsyncAlphaWrite<FColor>(255));
+		ImageTask->AddPreProcessorToSetAlphaOpaque();
 	}
 	else
 	{
 		TArray<FLinearColor> RawPixels;
 		RawPixels.SetNum(CaptureRect.Area());
-		if (!InViewport->ReadLinearColorPixels(RawPixels, FReadSurfaceDataFlags(RCM_UNorm, CubeFace_MAX), CaptureRect))
+		if (!InViewport->ReadLinearColorPixels(RawPixels, FReadSurfaceDataFlags(RCM_MinMax, CubeFace_MAX), CaptureRect))
 		{
 			// Failed to read the image from the viewport
 			SaveMessagePtr->SetText(NSLOCTEXT("UnrealEd", "ScreenshotFailedViewport", "Screenshot failed, unable to read image from viewport"));
@@ -5815,7 +5929,7 @@ void FEditorViewportClient::TakeScreenshot(FViewport* InViewport, bool bInValida
 		ImageTask->PixelData = MoveTemp(PixelData);
 
 		// Ensure the alpha channel is full alpha (this happens on the background thread)
-		ImageTask->PixelPreProcessors.Add(TAsyncAlphaWrite<FLinearColor>(1.0f));
+		ImageTask->AddPreProcessorToSetAlphaOpaque();
 	}
 
 	// Create screenshot folder if not already present.
@@ -5968,7 +6082,7 @@ void ClipBitmapDataScreenshotDataEditor(bool& bWriteAlpha, TArray<FColorType>& B
 				FMemory::Memmove(Data + Row * NewWidth, Data + (Row + CaptureMinY) * OldWidth + CaptureMinX, NewWidth * sizeof(*Data));
 			}
 
-			Bitmap.RemoveAt(NewWidth * NewHeight, OldWidth * OldHeight - NewWidth * NewHeight, false);
+			Bitmap.RemoveAt(NewWidth * NewHeight, OldWidth * OldHeight - NewWidth * NewHeight, EAllowShrinking::No);
 			BitmapSize = FIntPoint(NewWidth, NewHeight);
 		}
 	}
@@ -5994,7 +6108,7 @@ bool RequestSaveScreenshot(bool bWriteAlpha, TArray<FColorType>& Bitmap, FIntPoi
 		// Set full alpha on the bitmap
 		if (!bWriteAlpha)
 		{
-			ImageTask->PixelPreProcessors.Add(TAsyncAlphaWrite<FColorType>(OpaqueAlphaValue));
+			ImageTask->AddPreProcessorToSetAlphaOpaque();
 		}
 
 		HighResScreenshotConfig.PopulateImageTaskParams(*ImageTask);
@@ -6271,8 +6385,9 @@ void FEditorViewportClient::SetGameView(bool bGameViewEnable)
 	//reset game engine show flags that may have been turned on by making a selection in game view
 	if(bGameViewEnable)
 	{
-		EngineShowFlags.SetModeWidgets(false);
+		EngineShowFlags.SetModeWidgets(true); // Enable "Mode Widgets" by default when entering game mode
 		EngineShowFlags.SetSelection(false);
+		ShowWidget(false); // Hide the widget
 	}
 
 	EngineShowFlags.SetSelectionOutline(bGameViewEnable ? false : GetDefault<ULevelEditorViewportSettings>()->bUseSelectionOutline);
@@ -6423,7 +6538,7 @@ void FEditorViewportClient::DisableOverrideEngineShowFlags()
 
 float FEditorViewportClient::GetMinimumOrthoZoom() const
 {
-	return FMath::Max(GetDefault<ULevelEditorViewportSettings>()->MinimumOrthographicZoom, 1.0f);
+	return FMath::Max(GetDefault<ULevelEditorViewportSettings>()->MinimumOrthographicZoom, MIN_ORTHOZOOM);
 }
 
 ////////////////
@@ -6546,6 +6661,11 @@ void FViewportNavigationCommands::RegisterCommands()
 
 	UI_COMMAND(FovZoomIn, "FOV Zoom In", "Narrows the camers FOV", EUserInterfaceActionType::Button, FInputChord(EKeys::C));
 	UI_COMMAND(FovZoomOut, "FOV Zoom Out", "Widens the camera FOV", EUserInterfaceActionType::Button, FInputChord(EKeys::Z));
+
+	UI_COMMAND(RotateUp, "Rotate Up", "Rotates the camera Up", EUserInterfaceActionType::Button, FInputChord());
+	UI_COMMAND(RotateDown, "Rotate Down", "Rotates the camera Down", EUserInterfaceActionType::Button, FInputChord());
+	UI_COMMAND(RotateLeft, "Rotate Left", "Rotates the camera Left", EUserInterfaceActionType::Button, FInputChord());
+	UI_COMMAND(RotateRight, "Rotate Right", "Rotates the camera Right", EUserInterfaceActionType::Button, FInputChord());
 }
 
 #undef LOCTEXT_NAMESPACE

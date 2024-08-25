@@ -5,12 +5,16 @@
 #include "AssetRegistry/AssetRegistryHelpers.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
+#include "Blueprint/BlueprintSupport.h"
 #include "DataValidationModule.h"
 #include "Editor.h"
+#include "EditorUtilityBlueprint.h"
+#include "EditorValidatorBase.h"
 #include "EditorValidatorSubsystem.h"
 #include "Misc/PackageName.h"
-#include "Misc/Paths.h"
 #include "Misc/PathViews.h"
+#include "Misc/Paths.h"
+#include "UObject/UnrealType.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(DataValidationCommandlet)
 
@@ -20,6 +24,9 @@ DEFINE_LOG_CATEGORY_STATIC(LogDataValidation, Warning, All);
 // Commandlet for validating data
 int32 UDataValidationCommandlet::Main(const FString& FullCommandLine)
 {
+	// This commandlet won't work properly when use outside of an editor executable
+	check(GEditor);
+
 	UE_LOG(LogDataValidation, Log, TEXT("--------------------------------------------------------------------------------------------"));
 	UE_LOG(LogDataValidation, Log, TEXT("Running DataValidation Commandlet"));
 
@@ -95,6 +102,33 @@ bool UDataValidationCommandlet::ValidateData(const FString& FullCommandLine)
 				return FPathViews::IsParentPathOf(EngineDir, FileName);
 			});
 	}
+
+
+	if (!GEditor->IsInitialized())
+	{
+		// Check if we have some BP validator that were created using an editor utility
+		const FTopLevelAssetPath EditorUtilityClassPath = UEditorUtilityBlueprint::StaticClass()->GetClassPathName();
+		const FString EditorValidatorBaseClassExportPath = FObjectPropertyBase::GetExportPath(UEditorValidatorBase::StaticClass());
+		const bool bHasAnEditorUtilityDataValidator = AssetDataList.ContainsByPredicate([EditorUtilityClassPath, &EditorValidatorBaseClassExportPath](const FAssetData& AssetData)
+			{
+				if (AssetData.AssetClassPath == EditorUtilityClassPath)
+				{
+					if (AssetData.TagsAndValues.ContainsKeyValue(FBlueprintTags::NativeParentClassPath, EditorValidatorBaseClassExportPath))
+					{
+						return true;
+					}
+				}
+
+				return false;
+			});
+
+		if (bHasAnEditorUtilityDataValidator)
+		{
+			// Those Editor Utilities Validator might have an dependency to an editor module that is loaded during the editor initialization.
+			GEditor->LoadDefaultEditorModules();
+		}
+	}
+
 
 	UEditorValidatorSubsystem* EditorValidationSubsystem = GEditor->GetEditorSubsystem<UEditorValidatorSubsystem>();
 	check(EditorValidationSubsystem);

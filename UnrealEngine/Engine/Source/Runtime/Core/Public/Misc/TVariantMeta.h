@@ -7,7 +7,6 @@
 #include "Templates/UnrealTemplate.h"
 #include "Templates/UnrealTypeTraits.h"
 #include "Delegates/IntegerSequence.h"
-#include "Templates/AndOrNot.h"
 #include "Concepts/Insertable.h"
 
 #include "Misc/AssertionMacros.h"
@@ -15,11 +14,42 @@
 template <typename T, typename... Ts>
 class TVariant;
 
+/** Determine if a type is a variant */
 template <typename T>
-struct TIsVariant;
+constexpr bool TIsVariant_V = false;
+
+template <typename... Ts>
+constexpr bool TIsVariant_V<TVariant<Ts...>> = true;
+
+template <typename T> constexpr bool TIsVariant_V<const          T> = TIsVariant_V<T>;
+template <typename T> constexpr bool TIsVariant_V<      volatile T> = TIsVariant_V<T>;
+template <typename T> constexpr bool TIsVariant_V<const volatile T> = TIsVariant_V<T>;
+
+/** Determine the number of types in a TVariant */
+template <typename>
+constexpr SIZE_T TVariantSize_V = 0;
+
+template <typename... Ts>
+constexpr SIZE_T TVariantSize_V<TVariant<Ts...>> = sizeof...(Ts);
+
+template <typename T> constexpr SIZE_T TVariantSize_V<const          T> = TVariantSize_V<T>;
+template <typename T> constexpr SIZE_T TVariantSize_V<      volatile T> = TVariantSize_V<T>;
+template <typename T> constexpr SIZE_T TVariantSize_V<const volatile T> = TVariantSize_V<T>;
 
 template <typename T>
-struct TVariantSize;
+struct UE_DEPRECATED(5.4, "TIsVariant<T> has been deprecated, please use TIsVariant_V<std::remove_reference_t<T>> instead") TIsVariant
+{
+	static constexpr inline bool Value = TIsVariant_V<T>;
+};
+
+/** Determine the number of types in a TVariant */
+template <typename> struct TVariantSize;
+
+template <typename T>
+struct UE_DEPRECATED(5.4, "TVariantSize<T> has been deprecated, please use TVariantSize_V<std::remove_reference_t<T>> instead") TVariantSize
+{
+	static constexpr inline SIZE_T Value = TVariantSize_V<std::remove_reference_t<T>>;
+};
 
 namespace UE
 {
@@ -66,7 +96,7 @@ namespace Private
 	template <typename... Ts>
 	struct TContainsReferenceType
 	{
-		static constexpr inline bool Value = TOr<TIsReferenceType<Ts>...>::Value;
+		static constexpr inline bool Value = (std::is_reference_v<Ts> || ...);
 	};
 
 	/** Determine the max alignof and sizeof of all types in a template parameter pack and provide a type that is compatible with those sizes */
@@ -245,7 +275,7 @@ namespace Private
 	struct TVariantLoadFromArchiveLookup
 	{
 		using VariantType = TVariant<Ts...>;
-		static_assert((std::is_default_constructible<Ts>::value && ...), "Each type in TVariant template parameter pack must be default constructible in order to use FArchive serialization");
+		static_assert((std::is_default_constructible_v<Ts> && ...), "Each type in TVariant template parameter pack must be default constructible in order to use FArchive serialization");
 		static_assert((TModels_V<CInsertable<FArchive&>, Ts> && ...), "Each type in TVariant template parameter pack must be able to use operator<< with an FArchive");
 
 		/** Load the type at the specified index from the FArchive and emplace it into the TVariant */
@@ -270,10 +300,6 @@ namespace Private
 		}
 	};
 
-	/** Determine if all the types are TVariant<...> */
-	template <typename... Ts>
-	using TIsAllVariant = TAnd<TIsVariant<Ts>...>;
-
 	/** Encode the stored index of a bunch of variants into a single value used to lookup a Visit invocation function */
 	template <typename T>
 	inline SIZE_T EncodeIndices(const T& Variant)
@@ -284,7 +310,7 @@ namespace Private
 	template <typename Variant0, typename... Variants>
 	inline SIZE_T EncodeIndices(const Variant0& First, const Variants&... Rest)
 	{
-		return First.GetIndex() + TVariantSize<Variant0>::Value * EncodeIndices(Rest...);
+		return First.GetIndex() + TVariantSize_V<Variant0> * EncodeIndices(Rest...);
 	}
 
 	/** Inverse operation of EncodeIndices. Decodes an encoded index into the individual index for the specified variant index. */
@@ -298,20 +324,6 @@ namespace Private
 		}
 		return EncodedIndex % *VariantSizes;
 	}
-
-#if !PLATFORM_COMPILER_HAS_FOLD_EXPRESSIONS
-	/** Used to determine the total number of possible Visit invocations when fold expressions are not available. */
-	constexpr SIZE_T Multiply(const SIZE_T* Args, SIZE_T Num)
-	{
-		SIZE_T Result = 1;
-		while (Num)
-		{
-			Result *= *Args++;
-			--Num;
-		}
-		return Result;
-	}
-#endif
 
 	/** Cast a TVariant to its private base */
 	template <typename... Ts>
@@ -336,7 +348,7 @@ namespace Private
 	template <SIZE_T EncodedIndex, SIZE_T... VariantIndices, typename Func, typename... Variants>
 	inline decltype(auto) VisitApplyEncoded(Func&& Callable, Variants&&... Args)
 	{
-		constexpr SIZE_T VariantSizes[] = { TVariantSize<Variants>::Value... };
+		constexpr SIZE_T VariantSizes[] = { TVariantSize_V<std::decay_t<Variants>>... };
 		return Callable(CastToStorage(Forward<Variants>(Args)).template GetValueAsIndexedType<DecodeIndex(EncodedIndex, VariantIndices, VariantSizes)>()...);
 	}
 

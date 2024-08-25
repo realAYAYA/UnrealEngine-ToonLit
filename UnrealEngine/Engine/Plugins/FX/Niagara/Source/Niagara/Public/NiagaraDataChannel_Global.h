@@ -6,7 +6,9 @@
 #include "NiagaraDataChannelHandler.h"
 #include "NiagaraDataChannel_Global.generated.h"
 
-
+/**
+Simple DataChannel handler that makes all data visible globally.
+*/
 UCLASS(Experimental, MinimalAPI)
 class UNiagaraDataChannel_Global : public UNiagaraDataChannel
 {

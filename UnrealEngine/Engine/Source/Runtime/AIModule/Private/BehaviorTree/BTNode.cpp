@@ -7,6 +7,7 @@
 #include "BehaviorTree/BehaviorTree.h"
 #include "GameplayTasksComponent.h"
 #include "UObject/Package.h"
+#include "Styling/AppStyle.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(BTNode)
 
@@ -205,6 +206,11 @@ void UBTNode::DescribeRuntimeValues(const UBehaviorTreeComponent& OwnerComp, uin
 
 #if WITH_EDITOR
 
+const ISlateStyle& UBTNode::GetNodeIconStyleSet() const
+{
+	return FAppStyle::Get();
+}
+
 FName UBTNode::GetNodeIconName() const
 {
 	return NAME_None;
@@ -213,6 +219,11 @@ FName UBTNode::GetNodeIconName() const
 bool UBTNode::UsesBlueprint() const
 {
 	return false;
+}
+
+FString UBTNode::GetErrorMessage() const
+{
+	return FString();
 }
 
 #endif

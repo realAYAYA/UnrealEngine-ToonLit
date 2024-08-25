@@ -184,6 +184,7 @@ void UMoviePipelineCommandLineEncoder::StartEncodingProcess(TArray<FMoviePipelin
 		{
 			FMoviePipelineFilenameResolveParams ResolveParams;
 			ResolveParams.InitializationTime = GetPipeline()->GetInitializationTime();
+			ResolveParams.InitializationTimeOffset = GetPipeline()->GetInitializationTimeOffset();
 			ResolveParams.Job = GetPipeline()->GetCurrentJob();
 			ResolveParams.ShotOverride = RenderPass.Value.Shot.Get();
 			ResolveParams.FileNameOverride = FileNameFormatString;

@@ -17,6 +17,9 @@ namespace UE::PixelStreamingServers
 	protected:
 		virtual void SendPlayerMessage(uint16 PlayerId, TSharedPtr<FJsonObject> JSONObj) override;
 		virtual void SendStreamerMessage(uint16 StreamerId, TSharedPtr<FJsonObject> JSONObj) override;
+		
+		virtual void OnStreamerConnected(uint16 ConnectionId) override;
+		virtual void OnPlayerMessage(uint16 ConnectionId, TArrayView<uint8> Message) override;
 	};
 
 } // namespace UE::PixelStreamingServers

@@ -43,6 +43,7 @@ TSharedRef<SWidget> SNiagaraSystemViewportToolBar::GenerateShowMenu() const
 		ShowMenuBuilder.AddMenuEntry(Commands.ToggleInstructionCounts);
 		ShowMenuBuilder.AddMenuEntry(Commands.ToggleMemoryInfo);
 		ShowMenuBuilder.AddMenuEntry(Commands.ToggleParticleCounts);
+		ShowMenuBuilder.AddMenuEntry(Commands.ToggleStatelessInfo);
 	}
 
 	return ShowMenuBuilder.MakeWidget();
@@ -59,7 +60,6 @@ bool SNiagaraSystemViewportToolBar::IsViewModeSupported(EViewModeIndex ViewModeI
 	default:
 		return true;
 	}
-	return true; 
 }
 
 EVisibility SNiagaraSystemViewportToolBar::GetSimulationRealtimeWarningVisibility() const

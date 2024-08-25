@@ -49,6 +49,13 @@ namespace UnrealBuildTool
 		/// </summary>
 		[ConfigFile(ConfigHierarchyType.Engine, "/Script/AndroidTargetPlatform.AndroidTargetSettings")]
 		public bool bEnableRayTracing = false;
+
+		/// <summary>
+		/// Enables ASIS plugin and STANDALONE support.
+		/// </summary>
+		[ConfigFile(ConfigHierarchyType.Engine, "/Script/AndroidSingleInstanceServiceEditor.AndroidSingleInstanceServiceRuntimeSettings")]
+		public bool bEnableASISPlugin = false;
+
 	}
 
 	/// <summary>
@@ -88,6 +95,8 @@ namespace UnrealBuildTool
 
 		public bool bEnableRayTracing => Inner.bEnableRayTracing;
 
+		public bool bEnableASISPlugin => Inner.bEnableASISPlugin;
+
 		public AndroidTargetRules TargetRules => Inner;
 
 #pragma warning restore CS1591
@@ -97,7 +106,7 @@ namespace UnrealBuildTool
 	class AndroidArchitectureConfig : UnrealArchitectureConfig
 	{
 		public AndroidArchitectureConfig()
-			: base(UnrealArchitectureMode.SingleTargetLinkSeparately, new[] { UnrealArch.X64, UnrealArch.Arm64 })
+			: base(UnrealArchitectureMode.SingleTargetLinkSeparately, new[] { UnrealArch.Arm64, UnrealArch.X64 })
 		{
 
 		}
@@ -129,15 +138,7 @@ namespace UnrealBuildTool
 				}
 				if (Ini.GetBool("/Script/AndroidRuntimeSettings.AndroidRuntimeSettings", "bBuildForx8664", out bBuild) && bBuild)
 				{
-					if (File.Exists(Path.Combine(Unreal.EngineDirectory.FullName, "Build", "InstalledBuild.txt")))
-					{
-						bUnsupportedBinaryBuildArch = true;
-						Log.TraceWarningOnce("Please install source to build for x86_64 (-x64); ignoring this architecture target.");
-					}
-					else
-					{
-						ActiveArches.Add("x64");
-					}
+					ActiveArches.Add("x64");
 				}
 
 				// we expect one to be specified
@@ -186,7 +187,7 @@ namespace UnrealBuildTool
 			{
 				Target.StaticAnalyzer = StaticAnalyzer.Default;
 				Target.StaticAnalyzerOutputType = (Environment.GetEnvironmentVariable("CLANG_ANALYZER_OUTPUT")?.Contains("html", StringComparison.OrdinalIgnoreCase) == true) ? StaticAnalyzerOutputType.Html : StaticAnalyzerOutputType.Text;
-				Target.StaticAnalyzerMode = String.Equals(Environment.GetEnvironmentVariable("CLANG_STATIC_ANALYZER_MODE"), "shallow") ? StaticAnalyzerMode.Shallow : StaticAnalyzerMode.Deep;
+				Target.StaticAnalyzerMode = String.Equals(Environment.GetEnvironmentVariable("CLANG_STATIC_ANALYZER_MODE"), "shallow", StringComparison.OrdinalIgnoreCase) ? StaticAnalyzerMode.Shallow : StaticAnalyzerMode.Deep;
 			}
 			else if (Target.StaticAnalyzer == StaticAnalyzer.Clang)
 			{
@@ -198,6 +199,9 @@ namespace UnrealBuildTool
 			{
 				Target.bDisableLinking = true;
 				Target.bIgnoreBuildOutputs = true;
+
+				// Clang static analysis requires non unity builds
+				Target.bUseUnityBuild = false;
 			}
 
 			Target.bCompileRecast = true;
@@ -323,7 +327,7 @@ namespace UnrealBuildTool
 		{
 			// don't do any target platform stuff if not available for host and opted in
 			// do not require SDK to build it since we don't necessarily need it for editor building
-			if (!(TryGetBuildPlatform(Platform, out _) && Target.IsPlatformOptedIn(Platform)))
+			if (!UEBuildPlatform.IsPlatformAvailableForTarget(Platform, Target, bIgnoreSDKCheck: true))
 			{
 				return;
 			}
@@ -338,6 +342,8 @@ namespace UnrealBuildTool
 						if (Target.bBuildDeveloperTools)
 						{
 							Rules.DynamicallyLoadedModuleNames.Add("AndroidTargetPlatform");
+							Rules.DynamicallyLoadedModuleNames.Add("AndroidTargetPlatformSettings");
+							Rules.DynamicallyLoadedModuleNames.Add("AndroidTargetPlatformControls");
 						}
 					}
 					else if (ModuleName == "TargetPlatform")
@@ -359,6 +365,8 @@ namespace UnrealBuildTool
 					if (Target.bForceBuildTargetPlatforms)
 					{
 						Rules.DynamicallyLoadedModuleNames.Add("AndroidTargetPlatform");
+						Rules.DynamicallyLoadedModuleNames.Add("AndroidTargetPlatformSettings");
+						Rules.DynamicallyLoadedModuleNames.Add("AndroidTargetPlatformControls");
 					}
 
 					if (bBuildShaderFormats)
@@ -415,6 +423,12 @@ namespace UnrealBuildTool
 		{
 		}
 
+		public static bool IsMakeAAREnabled(ReadOnlyTargetRules Target)
+		{
+			return Target.AndroidPlatform.bEnableASISPlugin;
+		}
+
+
 		public virtual void SetUpSpecificEnvironment(ReadOnlyTargetRules Target, CppCompileEnvironment CompileEnvironment, LinkEnvironment LinkEnvironment, ILogger Logger)
 		{
 			string NDKPath = Environment.GetEnvironmentVariable("NDKROOT")!;
@@ -445,6 +459,7 @@ namespace UnrealBuildTool
 
 			CompileEnvironment.Definitions.Add("WITH_EDITOR=0");
 			CompileEnvironment.Definitions.Add("USE_NULL_RHI=0");
+
 
 			DirectoryReference NdkDir = new DirectoryReference(NDKPath);
 			//CompileEnvironment.SystemIncludePaths.Add(DirectoryReference.Combine(NdkDir, "sources/cxx-stl/llvm-libc++/include"));
@@ -496,12 +511,18 @@ namespace UnrealBuildTool
 				CompileEnvironment.Definitions.Add("RHI_RAYTRACING=1");
 			}
 
-			if ((Target.bPGOOptimize || Target.bPGOProfile) && Target.ProjectFile != null)
+			if (Target.AndroidPlatform.bEnableASISPlugin)
+			{
+				Logger.LogInformation("Compiling with USE_ANDROID_STANDALONE");
+				CompileEnvironment.Definitions.Add("USE_ANDROID_STANDALONE=1");
+			}
+
+			if (Target.bPGOOptimize || Target.bPGOProfile)
 			{
 				Logger.LogInformation("PGO {PgoType} build", Target.bPGOOptimize ? "optimize" : "profile");
 				if (Target.bPGOOptimize)
 				{
-					CompileEnvironment.PGODirectory = DirectoryReference.Combine(Target.ProjectFile.Directory, "Platforms", "Android", "Build", "PGO").FullName;
+					CompileEnvironment.PGODirectory = DirectoryReference.Combine(Target.ProjectFile?.Directory ?? Unreal.WritableEngineDirectory, "Platforms", "Android", "Build", "PGO").FullName;
 					CompileEnvironment.PGOFilenamePrefix = String.Format("{0}-Android", Target.Name);
 
 					LinkEnvironment.PGODirectory = CompileEnvironment.PGODirectory;

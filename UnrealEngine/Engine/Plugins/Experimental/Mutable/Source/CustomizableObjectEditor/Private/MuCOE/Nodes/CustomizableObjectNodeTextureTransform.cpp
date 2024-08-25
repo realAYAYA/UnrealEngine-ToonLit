@@ -60,7 +60,11 @@ FLinearColor UCustomizableObjectNodeTextureTransform::GetNodeTitleColor() const
 
 FText UCustomizableObjectNodeTextureTransform::GetTooltipText() const
 {
-	return LOCTEXT("Texture_Transform_Tooltip", "Applies linear transform, Offset followed by Scale followed by Rotation, to the content of Base Texture. Samples outside the image get tiled.");
+	return LOCTEXT("Texture_Transform_Tooltip", 
+			"Applies a linear transform, rotation and scale around the center of the image plus translation, "
+			"to the content of Base Texture. Rotation is in the range [0 .. 1], 1 being full rotation, offset " 
+			"and scale are in output image normalized coordinates with origin at the center of the image. " 
+			"If Keep Aspect Ratio is set, an scaling factor preserving aspect ratio will be used as identity.");
 }
 
 void UCustomizableObjectNodeTextureTransform::Serialize(FArchive& Ar)

@@ -75,10 +75,7 @@ public:
 
 
 private:
-	//Fixup the curve and get the right proxy later when we access it due to the fact the constraints channels may not be setup correctly
-	//These functions all need to be const since they can be called by const functions so we need to specify the things they change as mutable
-	void FixupCurve() const;
-	void NeedNewProxy() const;
+	void FixupCurve();
 	FMovieSceneConstraintChannel* GetChannel() const;
 
 private:
@@ -88,6 +85,5 @@ private:
 	TWeakPtr<ISequencer> WeakSequencer;
 	TWeakObjectPtr<UTickableConstraint> Constraint;
 
-	mutable FDelegateHandle OnDestroyHandle;
-	mutable bool bNeedNewProxy = false; 
+	FDelegateHandle OnDestroyHandle;
 };

@@ -23,6 +23,7 @@
 #include "LevelSequence.h"
 #include "LevelSequenceEditorBlueprintLibrary.h"
 #include "PropertyEditorModule.h"
+#include "SControlRigBaseListWidget.h"
 #include "UnrealClient.h"
 
 #define LOCTEXT_NAMESPACE "ControlRigBaseListWidget"
@@ -190,6 +191,7 @@ bool SControlRigPoseView::bIsMirror = false;
 void SControlRigPoseView::Construct(const FArguments& InArgs)
 {
 	PoseAsset = InArgs._PoseAsset;
+	OwningWidget = InArgs._OwningWidget;
 
 	PoseBlendValue = 0.0f;
 	bIsBlending = false;
@@ -441,7 +443,7 @@ void SControlRigPoseView::Construct(const FArguments& InArgs)
 			]
 	];
 
-	if (FControlRigEditMode* EditMode = static_cast<FControlRigEditMode*>(GLevelEditorModeTools().GetActiveMode(FControlRigEditMode::ModeName)))
+	if (FControlRigEditMode* EditMode = OwningWidget->GetEditMode())
 	{
 		EditMode->OnControlRigAddedOrRemoved().AddRaw(this, &SControlRigPoseView::HandleControlAdded);
 		TArray<UControlRig*> ControlRigs = GetControlRigs();
@@ -454,7 +456,7 @@ void SControlRigPoseView::Construct(const FArguments& InArgs)
 
 SControlRigPoseView::~SControlRigPoseView()
 {
-	if (FControlRigEditMode* EditMode = static_cast<FControlRigEditMode*>(GLevelEditorModeTools().GetActiveMode(FControlRigEditMode::ModeName)))
+	if (FControlRigEditMode* EditMode = OwningWidget->GetEditMode())
 	{
 		EditMode->OnControlRigAddedOrRemoved().RemoveAll(this);
 		TArray<UControlRig*> EditModeRigs = EditMode->GetControlRigsArray(false /*bIsVisible*/);
@@ -566,12 +568,25 @@ FReply SControlRigPoseView::OnSelectControls()
 
 void SControlRigPoseView::OnPoseBlendChanged(float ChangedVal)
 {
+	auto ControlRigContainsControls = [this] (const UControlRig* InControlRig)
+	{
+		TArray<FName> ControlNames = PoseAsset->GetControlNames();
+		for (FName ControlName : ControlNames)
+		{
+			if (InControlRig->FindControl(ControlName))
+			{
+				return true;
+			}
+		}
+		return false;
+	};
+	
 	if (PoseAsset.IsValid())
 	{
 		TArray<UControlRig*> ControlRigs = GetControlRigs();
 		for (UControlRig* ControlRig : ControlRigs)
 		{
-			if (ControlRig)
+			if (ControlRig && ControlRigContainsControls(ControlRig))
 			{
 				PoseBlendValue = ChangedVal;
 				if (!bIsBlending)
@@ -662,25 +677,28 @@ TSharedRef<SWidget> SControlRigPoseView::GetThumbnailWidget()
 
 TArray<UControlRig*> SControlRigPoseView::GetControlRigs()
 {
-	FControlRigEditMode* EditMode = static_cast<FControlRigEditMode*>(GLevelEditorModeTools().GetActiveMode(FControlRigEditMode::ModeName));
 	TArray<UControlRig*> NewControlRigs;
-	if (EditMode)
+	if (OwningWidget.IsValid())
 	{
-		NewControlRigs =  EditMode->GetControlRigsArray(false /*bIsVisible*/);
-	}
-	for (TWeakObjectPtr<UControlRig> ControlRigPtr : CurrentControlRigs)
-	{
-		if (ControlRigPtr.IsValid())
+		FControlRigEditMode* EditMode = OwningWidget->GetEditMode();
+		if (EditMode)
 		{
-			if (NewControlRigs.Contains(ControlRigPtr.Get()) == false)
+			NewControlRigs =  EditMode->GetControlRigsArray(false /*bIsVisible*/);
+		}
+		for (TWeakObjectPtr<UControlRig> ControlRigPtr : CurrentControlRigs)
+		{
+			if (ControlRigPtr.IsValid())
 			{
-				(ControlRigPtr.Get())->ControlSelected().RemoveAll(this);
+				if (NewControlRigs.Contains(ControlRigPtr.Get()) == false)
+				{
+					(ControlRigPtr.Get())->ControlSelected().RemoveAll(this);
+				}
 			}
 		}
-	}
-	if (EditMode)
-	{
-		CurrentControlRigs = EditMode->GetControlRigs();
+		if (EditMode)
+		{
+			CurrentControlRigs = EditMode->GetControlRigs();
+		}
 	}
 	
 	return NewControlRigs;

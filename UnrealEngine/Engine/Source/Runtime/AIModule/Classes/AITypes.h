@@ -6,13 +6,18 @@
 #include "Stats/Stats.h"
 #include "UObject/ObjectMacros.h"
 #include "Templates/SubclassOf.h"
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "NavFilters/NavigationQueryFilter.h"
 #include "AI/Navigation/NavigationTypes.h"
+#endif
 #include "NavigationSystemTypes.h"
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "GameFramework/Actor.h"
+#endif
 #include "AITypes.generated.h"
 
 class AActor;
+typedef TSharedPtr<FMoveRequestCustomData, ESPMode::ThreadSafe> FCustomMoveSharedPtr;
 
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Overall AI Time"), STAT_AI_Overall, STATGROUP_AI, AIMODULE_API);
 
@@ -525,7 +530,7 @@ struct FAIMoveRequest
 	FVector GetGoalLocation() const { return GoalLocation; }
 	/** retrieves request's requested destination location, GoalActor's location 
 	 *	or GoalLocation, depending on the request itself */
-	FVector GetDestination() const { return bMoveToActor ? (GoalActor.IsValid() ? GoalActor->GetActorLocation() : FAISystem::InvalidLocation) : GoalLocation; }
+	AIMODULE_API FVector GetDestination() const;
 
 	bool IsUsingPathfinding() const { return bUsePathfinding; }
 	bool IsUsingPartialPaths() const { return bAllowPartialPath; }

@@ -33,6 +33,36 @@ namespace UE::MediaPlateComponent
 		ForceUpdateResource = 0x2,
 	};
 	ENUM_CLASS_FLAGS(ESetUpTexturesFlags);
+
+	// Runs through media textures and sets Media Plate settings corresponding to Media Texture.
+	void ApplyMediaTextureMipGenProperties(const FMediaTextureResourceSettings MediaTextureSettings, const TArray<TObjectPtr<UMediaTexture>>& MediaTextures)
+	{
+		for (TObjectPtr<UMediaTexture> MediaTexture : MediaTextures)
+		{
+			if (MediaTexture != nullptr
+				&& (MediaTexture->EnableGenMips != MediaTextureSettings.bEnableGenMips || MediaTexture->NumMips != MediaTextureSettings.CurrentNumMips))
+			{
+				MediaTexture->EnableGenMips = MediaTextureSettings.bEnableGenMips;
+				MediaTexture->NumMips = MediaTextureSettings.CurrentNumMips;
+				MediaTexture->UpdateResource();
+			}
+		}
+	}
+
+	void EnsureMediaTexturePropertiesInSync(const FMediaTextureResourceSettings MediaTextureSettings, const TArray<TObjectPtr<UMediaTexture>>& MediaTextures)
+	{
+#if !UE_BUILD_SHIPPING
+		for (TObjectPtr<UMediaTexture> MediaTexture : MediaTextures)
+		{
+			if (MediaTexture != nullptr)
+			{
+				bool bMediaTextureMipGenPropertiesInSync = MediaTexture->EnableGenMips == MediaTextureSettings.bEnableGenMips && MediaTexture->NumMips == MediaTextureSettings.CurrentNumMips;
+				ensureMsgf(bMediaTextureMipGenPropertiesInSync, TEXT("Mip Generation properties set on Media Plate are different from the properties set on Media Texture. \n\
+					Media Texture mip generation properites are not meant to be modified directly."));
+			}
+		}
+#endif
+	}
 };
 
 /**
@@ -88,6 +118,9 @@ UMediaPlateComponent::UMediaPlateComponent(const FObjectInitializer& ObjectIniti
 
 	// Default to plane since AMediaPlate defaults to SM_MediaPlateScreen
 	VisibleMipsTilesCalculations = EMediaTextureVisibleMipsTiles::Plane;
+
+	MediaTextureSettings.bEnableGenMips = false;
+	MediaTextureSettings.CurrentNumMips = 1;
 }
 
 #if WITH_EDITOR
@@ -104,6 +137,9 @@ void UMediaPlateComponent::PostLoad()
 		}
 		MediaTexture_DEPRECATED = nullptr;
 	}
+
+	UE::MediaPlateComponent::ApplyMediaTextureMipGenProperties(MediaTextureSettings, MediaTextures);
+
 }
 #endif // WITH_EDITOR
 
@@ -126,6 +162,8 @@ void UMediaPlateComponent::OnRegister()
 	}
 	MediaPlayer->OnMediaOpened.AddUniqueDynamic(this, &UMediaPlateComponent::OnMediaOpened);
 	MediaPlayer->OnEndReached.AddUniqueDynamic(this, &UMediaPlateComponent::OnMediaEnd);
+	MediaPlayer->OnPlaybackResumed.AddUniqueDynamic(this, &UMediaPlateComponent::OnMediaResumed);
+	MediaPlayer->OnPlaybackSuspended.AddUniqueDynamic(this, &UMediaPlateComponent::OnMediaSuspended);
 
 	// Set up media texture.
 	SetUpTextures(UE::MediaPlateComponent::ESetUpTexturesFlags::AllowSetPlayer);
@@ -177,21 +215,52 @@ void UMediaPlateComponent::TickComponent(float DeltaTime, enum ELevelTick TickTy
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
+	// Making sure that Media Plate enforces the same settings to Media textures in case these settings were modified externally.
+	UE::MediaPlateComponent::EnsureMediaTexturePropertiesInSync(MediaTextureSettings, MediaTextures);
+
 	if (MediaPlayer != nullptr)
 	{
-		if ((CurrentRate != 0.0f) || (bWantsToPlayWhenVisible))
+		// Pending rate changes?
+		if (IntendedPlaybackState != ActualPlaybackState)
 		{
-			bool bIsVisible = IsVisible();
-			if (bIsVisible)
+			if (IntendedPlaybackState != PendingPlaybackState)
 			{
-				ResumeWhenVisible();
-			}
-			else
-			{
-				if (MediaPlayer->IsPlaying())
+				if (IntendedPlaybackState == EPlaybackState::Resume)
+				{
+					FTimespan PlayTime = GetResumeTime();
+					MediaPlayer->Seek(PlayTime);
+					IntendedPlaybackState = EPlaybackState::Playing;
+				}
+				PendingPlaybackState = IntendedPlaybackState;
+				if (IntendedPlaybackState == EPlaybackState::Playing)
+				{
+					MediaPlayer->Play();
+				}
+				else
 				{
 					MediaPlayer->Pause();
-					TimeWhenPlaybackPaused = static_cast<float>(FApp::GetGameTime());
+				}
+			}
+		}
+		else
+		{
+			PendingPlaybackState = EPlaybackState::Unset;
+		}
+
+		// Perform visibility check only when not currently transitioning.
+		if (PendingPlaybackState == EPlaybackState::Unset)
+		{
+			if ((CurrentRate != 0.0f) || bWantsToPlayWhenVisible)
+			{
+				bool bIsVisible = IsVisible();
+				if (bIsVisible)
+				{
+					ResumeWhenVisible();
+				}
+				else if (ActualPlaybackState == EPlaybackState::Playing)
+				{
+					IntendedPlaybackState = EPlaybackState::Paused;
+					TimeWhenPlaybackPaused = FApp::GetGameTime();
 				}
 			}
 		}
@@ -232,6 +301,11 @@ void UMediaPlateComponent::Open()
 {
 	bIsMediaPlatePlaying = true;
 	CurrentRate = bPlayOnOpen ? 1.0f : 0.0f;
+	IntendedPlaybackState = bPlayOnOpen ? EPlaybackState::Playing : EPlaybackState::Paused;
+	PendingPlaybackState = EPlaybackState::Unset;
+	ActualPlaybackState = EPlaybackState::Paused;
+	TimeWhenPlaybackPaused = -1.0;
+
 	PlaylistIndex = 0;
 	SetNormalMode(true);
 
@@ -257,7 +331,7 @@ void UMediaPlateComponent::Open()
 	else
 	{
 		bWantsToPlayWhenVisible = true;
-		TimeWhenPlaybackPaused = static_cast<float>(FApp::GetGameTime());
+		TimeWhenPlaybackPaused = FApp::GetGameTime();
 	}
 
 	UpdateTicking();
@@ -286,19 +360,13 @@ bool UMediaPlateComponent::Next()
 
 void UMediaPlateComponent::Play()
 {
-	if (MediaPlayer != nullptr)
-	{
-		MediaPlayer->Play();
-	}
+	IntendedPlaybackState = EPlaybackState::Playing;
 	CurrentRate = 1.0f;
 }
 
 void UMediaPlateComponent::Pause()
 {
-	if (MediaPlayer != nullptr)
-	{
-		MediaPlayer->Pause();
-	}
+	IntendedPlaybackState = EPlaybackState::Paused;
 	CurrentRate = 0.0f;
 }
 
@@ -419,6 +487,7 @@ void UMediaPlateComponent::RegisterWithMediaTextureTracker()
 	MediaTextureTrackerObject->VisibleMipsTilesCalculations = VisibleMipsTilesCalculations;
 	MediaTextureTrackerObject->MeshRange = MeshRange;
 	MediaTextureTrackerObject->MipLevelToUpscale = bEnableMipMapUpscaling ? MipLevelToUpscale : -1;
+	MediaTextureTrackerObject->bAdaptivePoleMipUpscaling = bAdaptivePoleMipUpscaling;
 
 	// Add our textures.
 	FMediaTextureTracker& MediaTextureTracker = FMediaTextureTracker::Get();
@@ -452,7 +521,7 @@ bool UMediaPlateComponent::PlayMediaSource(UMediaSource* InMediaSource, bool bIn
 	{
 		// Set cache settings.
 		InMediaSource->SetCacheSettings(CacheSettings);
-		
+
 		// Set media options.
 		if (MediaPlayer != nullptr)
 		{
@@ -461,10 +530,9 @@ bool UMediaPlateComponent::PlayMediaSource(UMediaSource* InMediaSource, bool bIn
 			// Play the source.
 			FMediaPlayerOptions Options;
 			Options.SeekTime = FTimespan::FromSeconds(StartTime);
-			Options.PlayOnOpen = bInPlayOnOpen ? EMediaPlayerOptionBooleanOverride::Enabled :
-				EMediaPlayerOptionBooleanOverride::Disabled;
-			Options.Loop = (bLoop && (bIsPlaylist == false)) ?
-				EMediaPlayerOptionBooleanOverride::Enabled : EMediaPlayerOptionBooleanOverride::Disabled;
+			Options.PlayOnOpen = bInPlayOnOpen ? EMediaPlayerOptionBooleanOverride::Enabled : EMediaPlayerOptionBooleanOverride::Disabled;
+			Options.Loop = (bLoop && (bIsPlaylist == false)) ? EMediaPlayerOptionBooleanOverride::Enabled : EMediaPlayerOptionBooleanOverride::Disabled;
+			Options.InternalCustomOptions.Emplace(MediaPlayerOptionValues::Environment(), MediaPlayerOptionValues::Environment_Preview());
 			bIsPlaying = MediaPlayer->OpenSourceWithOptions(InMediaSource, Options);
 
 			// Did we play anything?
@@ -605,14 +673,8 @@ float UMediaPlateComponent::GetProxyRate() const
 bool UMediaPlateComponent::SetProxyRate(float Rate)
 {
 	CurrentRate = Rate;
-
-	bool bSuccess = true;
-	if (MediaPlayer != nullptr)
-	{
-		bSuccess = MediaPlayer->SetRate(Rate);
-	}
-
-	return bSuccess;
+	IntendedPlaybackState = Rate == 0.0f ? EPlaybackState::Paused : EPlaybackState::Playing;
+	return MediaPlayer ? MediaPlayer->SetRate(Rate) : true;
 }
 
 bool UMediaPlateComponent::IsExternalControlAllowed()
@@ -784,7 +846,7 @@ void UMediaPlateComponent::RestartPlayer()
 {
 	if (MediaPlayer != nullptr)
 	{
-		if (MediaPlayer->IsPlaying())
+		if (IntendedPlaybackState == EPlaybackState::Playing)
 		{
 			MediaPlayer->Close();
 			Open();
@@ -820,21 +882,19 @@ void UMediaPlateComponent::ResumeWhenVisible()
 {
 	if (MediaPlayer != nullptr)
 	{
-		if (MediaPlayer->IsPaused())
+		if (ActualPlaybackState == EPlaybackState::Paused)
 		{
 			// Should we be playing?
-			if (CurrentRate != 0.0f)
+			if (CurrentRate != 0.0f && PendingPlaybackState == EPlaybackState::Unset)
 			{
-				FTimespan PlayTime = GetResumeTime();
-				MediaPlayer->Seek(PlayTime);
-				MediaPlayer->Play();
+				IntendedPlaybackState = EPlaybackState::Resume;
 			}
 		}
 		else if (bWantsToPlayWhenVisible)
 		{
 			if ((bResumeWhenOpened == false) &&
 				(MediaPlayer->IsPreparing() == false) &&
-				(MediaPlayer->IsPlaying() == false))
+				(ActualPlaybackState == EPlaybackState::Paused))
 			{
 				bResumeWhenOpened = true;
 				bWantsToPlayWhenVisible = false;
@@ -850,27 +910,30 @@ FTimespan UMediaPlateComponent::GetResumeTime()
 	if (MediaPlayer != nullptr)
 	{
 		PlayerTime = MediaPlayer->GetTime();
-		float CurrentTime = static_cast<float>(FApp::GetGameTime());
-		float ElapsedTime = CurrentTime - TimeWhenPlaybackPaused;
-		PlayerTime += FTimespan::FromSeconds(ElapsedTime);
-		
-		// Are we over the length of the media?
-		FTimespan MediaDuration = MediaPlayer->GetDuration();
-		if ((PlayerTime > MediaDuration) && (MediaDuration > FTimespan::Zero()))
+		if (TimeWhenPlaybackPaused > 0.0)
 		{
-			bool bIsPlaylist = (MediaPlaylist != nullptr) && (MediaPlaylist->Num() > 1);
-			if ((bLoop) && (bIsPlaylist == false))
+			double CurrentTime = FApp::GetGameTime();
+			double ElapsedTime = CurrentTime - TimeWhenPlaybackPaused;
+			PlayerTime += FTimespan::FromSeconds(ElapsedTime);
+
+			// Are we over the length of the media?
+			FTimespan MediaDuration = MediaPlayer->GetDuration();
+			if ((PlayerTime > MediaDuration) && (MediaDuration > FTimespan::Zero()))
 			{
-				PlayerTime %= MediaDuration;
+				bool bIsPlaylist = (MediaPlaylist != nullptr) && (MediaPlaylist->Num() > 1);
+				if ((bLoop) && (bIsPlaylist == false))
+				{
+					PlayerTime %= MediaDuration;
+				}
+				else
+				{
+					// It wont play if we seek to the very end, so go back a little bit.
+					PlayerTime = MediaDuration - FTimespan::FromSeconds(0.001f);
+				}
 			}
-			else
-			{
-				// It wont play if we seek to the very end, so go back a little bit.
-				PlayerTime = MediaDuration - FTimespan::FromSeconds(0.001f);
-			}
+			TimeWhenPlaybackPaused = -1.0;
 		}
 	}
-
 	return PlayerTime;
 }
 
@@ -886,7 +949,7 @@ void UMediaPlateComponent::UpdateLetterboxes()
 	float AspectRatio = GetAspectRatio();
 	if ((AspectRatio <= LetterboxAspectRatio) || (LetterboxAspectRatio <= 0.0f))
 	{
-		for (TObjectPtr<UStaticMeshComponent> Letterbox : Letterboxes)
+		for (const TObjectPtr<UStaticMeshComponent>& Letterbox : Letterboxes)
 		{
 			if (Letterbox != nullptr)
 			{
@@ -908,7 +971,7 @@ void UMediaPlateComponent::UpdateLetterboxes()
 
 		FVector Location(0.0f, 0.0f, VideoHeight + LetterboxHeight);
 
-		for (TObjectPtr<UStaticMeshComponent> Letterbox : Letterboxes)
+		for (const TObjectPtr<UStaticMeshComponent>& Letterbox : Letterboxes)
 		{
 			if (Letterbox != nullptr)
 			{
@@ -960,10 +1023,10 @@ void UMediaPlateComponent::AddLetterboxes()
 
 void UMediaPlateComponent::RemoveLetterboxes()
 {
-	for (TObjectPtr<UStaticMeshComponent> Letterbox : Letterboxes)
+	for (const TObjectPtr<UStaticMeshComponent>& Letterbox : Letterboxes)
 	{
 		if (Letterbox != nullptr)
-		{	
+		{
 			Letterbox->DestroyComponent();
 		}
 	}
@@ -992,6 +1055,16 @@ void UMediaPlateComponent::OnMediaEnd()
 	Next();
 }
 
+void UMediaPlateComponent::OnMediaResumed()
+{
+	ActualPlaybackState = EPlaybackState::Playing;
+}
+
+void UMediaPlateComponent::OnMediaSuspended()
+{
+	ActualPlaybackState = EPlaybackState::Paused;
+}
+
 void UMediaPlateComponent::SetUpTextures(UE::MediaPlateComponent::ESetUpTexturesFlags Flags)
 {
 	// Prevent media texture blackouts by only updating resource and material uniforms on relevant changes.
@@ -1001,6 +1074,14 @@ void UMediaPlateComponent::SetUpTextures(UE::MediaPlateComponent::ESetUpTextures
 		if (MediaTexture != nullptr)
 		{
 			bool bApplyTextureUpdate = false;
+
+			if (MediaTexture->EnableGenMips != MediaTextureSettings.bEnableGenMips
+				|| MediaTexture->NumMips != MediaTextureSettings.CurrentNumMips)
+			{
+				MediaTexture->EnableGenMips = MediaTextureSettings.bEnableGenMips;
+				MediaTexture->NumMips = MediaTextureSettings.CurrentNumMips;
+				bApplyTextureUpdate = true;
+			}
 
 			if (FMath::IsNearlyEqual(MediaTexture->GetMipMapBias(), MipMapBias) == false)
 			{
@@ -1057,7 +1138,7 @@ void UMediaPlateComponent::SetNormalMode(bool bInIsNormalMode)
 			}
 			TextureLayers[0].Textures[0] = 0;
 			UpdateTextureLayers();
-			
+
 			ProxySetTextureBlend(0, 0, 1.0f);
 			MediaTextures[0]->SetMediaPlayer(MediaPlayer);
 		}
@@ -1074,6 +1155,8 @@ void UMediaPlateComponent::UpdateTextureLayers()
 {
 	if (AMediaPlate* MediaPlate = GetOwner<AMediaPlate>())
 	{
+		static const FString BaseTextureName = TEXT("MediaTexture");
+
 		if (UMaterialInterface* Material = MediaPlate->GetCurrentMaterial())
 		{
 			UMaterialInstanceDynamic* MID = Cast<UMaterialInstanceDynamic>(Material);
@@ -1081,7 +1164,6 @@ void UMediaPlateComponent::UpdateTextureLayers()
 			{
 				// Go through each layer.
 				int32 MatNumLayers = MediaTextures.Num() / MatNumTexPerLayer;
-				static const FString BaseTextureName = TEXT("MediaTexture");
 				int32 NumLayers = TextureLayers.Num();
 				int32 MaterialLayerIndex = 0;
 				for (int32 LayerIndex = 0; LayerIndex < NumLayers; ++LayerIndex)
@@ -1098,7 +1180,7 @@ void UMediaPlateComponent::UpdateTextureLayers()
 						{
 							// Assign the next layer in the material to this layer.
 							TextureLayers[LayerIndex].MaterialLayerIndex = MaterialLayerIndex;
-							
+
 							int32 MatTexIndex = MaterialLayerIndex * MatNumTexPerLayer +
 								LayerTexIndex;
 							FString TextureName = BaseTextureName;
@@ -1121,6 +1203,17 @@ void UMediaPlateComponent::UpdateTextureLayers()
 						}
 					}
 				}
+			}
+		}
+
+		UMaterialInterface* OverlayMaterial = MediaPlate->GetCurrentOverlayMaterial();
+		if (OverlayMaterial != nullptr)
+		{
+			UMaterialInstanceDynamic* MID = Cast<UMaterialInstanceDynamic>(OverlayMaterial);
+			if (MID != nullptr && !MediaTextures.IsEmpty())
+			{
+
+				MID->SetTextureParameterValue(FName(*BaseTextureName), MediaTextures[0]);
 			}
 		}
 	}
@@ -1191,7 +1284,7 @@ void UMediaPlateComponent::PostEditChangeProperty(FPropertyChangedEvent& Propert
 		if (MediaTextureTrackerObject != nullptr)
 		{
 			MediaTextureTrackerObject->VisibleMipsTilesCalculations = VisibleMipsTilesCalculations;
-			
+
 			RestartPlayer();
 		}
 	}
@@ -1211,6 +1304,12 @@ void UMediaPlateComponent::PostEditChangeProperty(FPropertyChangedEvent& Propert
 		{
 			MediaTextureTrackerObject->MipLevelToUpscale = bEnableMipMapUpscaling ? MipLevelToUpscale : -1;
 		}
+	}
+	else if (PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(FMediaTextureResourceSettings, bEnableGenMips)
+		|| PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(FMediaTextureResourceSettings, CurrentNumMips))
+	{
+		UE::MediaPlateComponent::ApplyMediaTextureMipGenProperties(MediaTextureSettings, MediaTextures);
+		RestartPlayer();
 	}
 }
 

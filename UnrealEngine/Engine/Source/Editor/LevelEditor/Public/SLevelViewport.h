@@ -410,6 +410,13 @@ public:
 	void OnSetBookmark( int32 BookmarkIndex );
 
 	/**
+	 * Called to check if a bookmark is set
+	 *
+	 * @param BookmarkIndex	The index of the bookmark to check
+	 */
+	bool OnHasBookmarkSet(int32 BookmarkIndex);
+
+	/**
 	 * Called to jump to a bookmark
 	 *
 	 * @param BookmarkIndex	The index of the bookmark to jump to
@@ -582,6 +589,14 @@ private:
 	/** Can we find the currently selected actor in the level script. */
 	bool CanFindSelectedInLevelScript() const;
 
+	/** Called to select the currently locked actor */
+	void OnSelectLockedActor();
+
+	/**
+	 * @return true if the currently locked actor is selectable
+	 */
+	bool CanExecuteSelectLockedActor() const;
+
 	/** Called to clear the current actor lock */
 	void OnActorUnlock();
 
@@ -685,6 +700,8 @@ private:
 
 	/** Called in response to an actor being deleted in the level */
 	void OnLevelActorsRemoved(AActor* InActor);
+	
+	void OnEditorClose();
 
 	/** Gets whether the locked icon should be shown in the viewport because it is locked to an actor */
 	EVisibility GetLockedIconVisibility() const;

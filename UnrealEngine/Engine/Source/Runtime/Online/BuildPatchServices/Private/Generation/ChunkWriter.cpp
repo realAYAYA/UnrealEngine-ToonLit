@@ -165,7 +165,7 @@ namespace BuildPatchServices
 					ChunkHeader.RollingHash = ChunkHash;
 					ChunkHeader.SHAHash = ChunkSha;
 					TUniquePtr<FWriterChunkDataAccess> ChunkDataAccess(new FWriterChunkDataAccess(ChunkData, ChunkHeader));
-					const FString NewChunkFilename = FBuildPatchUtils::GetChunkNewFilename(Config.FeatureLevel, Config.ChunkDirectory, ChunkGuid, ChunkHash);
+					const FString NewChunkFilename = Config.ChunkDirectory / FBuildPatchUtils::GetChunkNewFilename(Config.FeatureLevel, ChunkGuid, ChunkHash);
 					int64 ExistingChunkFilesize = INDEX_NONE;
 					const bool bFileExists = FileSystem->GetFileSize(*NewChunkFilename, ExistingChunkFilesize);
 					if (!bFileExists)

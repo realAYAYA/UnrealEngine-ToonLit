@@ -16,7 +16,7 @@ public:
 	NIAGARA_API ~FNiagaraRendererVolumes();
 
 	//FNiagaraRenderer interface
-	NIAGARA_API virtual void CreateRenderThreadResources() override;
+	NIAGARA_API virtual void CreateRenderThreadResources(FRHICommandListBase& RHICmdList) override;
 	NIAGARA_API virtual void ReleaseRenderThreadResources() override;
 
 	NIAGARA_API virtual bool IsMaterialValid(const UMaterialInterface* Material) const override;

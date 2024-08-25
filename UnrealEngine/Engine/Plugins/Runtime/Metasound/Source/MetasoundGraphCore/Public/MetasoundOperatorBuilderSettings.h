@@ -85,6 +85,12 @@ namespace Metasound
 		 */
 		bool bEnableOperatorRebind = false;
 
+		/** If true, the graph's operators will be wrapped in ProfilingOperator 
+		* instances and insights events will be generated for their Execute
+		* functions.
+		*/
+		bool bProfileOperators = false;
+
 		/** Return the default settings for the current build environment. */
 		static const FOperatorBuilderSettings& GetDefaultSettings();
 

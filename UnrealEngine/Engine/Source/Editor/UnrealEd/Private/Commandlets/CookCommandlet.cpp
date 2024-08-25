@@ -66,6 +66,12 @@ struct FScopeRootObject
 	}
 };
 
+bool bAllowContentValidation = true;
+FAutoConsoleVariableRef AllowContentValidationCVar(
+	TEXT("Cook.AllowContentValidation"),
+	bAllowContentValidation,
+	TEXT("True to allow content validation to run during cook (if requested), or false to disable it."));
+
 }
 
 UCookCommandlet::UCookCommandlet( const FObjectInitializer& ObjectInitializer )
@@ -248,18 +254,9 @@ bool UCookCommandlet::CookByTheBook(const TArray<ITargetPlatform*>& Platforms)
 	TRACE_CPUPROFILER_EVENT_SCOPE_ON_CHANNEL(CookByTheBook, CookChannel);
 #endif // OUTPUT_COOKTIMING
 
-	COOK_STAT(TOptional<FScopedDurationTimer> CookByTheBookTimer);
-	COOK_STAT(CookByTheBookTimer.Emplace(DetailedCookStats::CookByTheBookTimeSec));
-
 	UCookOnTheFlyServer* CookOnTheFlyServer = NewObject<UCookOnTheFlyServer>();
 	// make sure that the cookonthefly server doesn't get cleaned up while we are garbage collecting below :)
 	UE::Cook::FScopeRootObject S(CookOnTheFlyServer);
-
-	ON_SCOPE_EXIT
-	{
-		COOK_STAT(CookByTheBookTimer.Reset()); // Destruct the timer and write its duration
-		COOK_STAT(CookOnTheFlyServer->PrintDetailedCookStats());
-	};
 
 	UCookerSettings const* CookerSettings = GetDefault<UCookerSettings>();
 	const UProjectPackagingSettings* const PackagingSettings = GetDefault<UProjectPackagingSettings>();
@@ -321,7 +318,7 @@ bool UCookCommandlet::CookByTheBook(const TArray<ITargetPlatform*>& Platforms)
 					const FString ValueElement = ValuesList.Left(PlusIdx);
 					ValueElements.Add(ValueElement);
 
-					ValuesList.RightInline(ValuesList.Len() - (PlusIdx + 1), false);
+					ValuesList.RightInline(ValuesList.Len() - (PlusIdx + 1), EAllowShrinking::No);
 				}
 				ValueElements.Add(ValuesList);
 			}
@@ -415,6 +412,13 @@ bool UCookCommandlet::CookByTheBook(const TArray<ITargetPlatform*>& Platforms)
 	CookOptions |= (Switches.Contains(TEXT("DlcLoadMainAssetRegistry")) || !bErrorOnEngineContentUse) ? ECookByTheBookOptions::DlcLoadMainAssetRegistry : ECookByTheBookOptions::None;
 	CookOptions |= Switches.Contains(TEXT("DlcReevaluateUncookedAssets")) ? ECookByTheBookOptions::DlcReevaluateUncookedAssets : ECookByTheBookOptions::None;
 	bool bCookList = Switches.Contains(TEXT("CookList"));
+
+	if (UE::Cook::bAllowContentValidation)
+	{
+		CookOptions |= Switches.Contains(TEXT("RunAssetValidation")) ? ECookByTheBookOptions::RunAssetValidation : ECookByTheBookOptions::None;
+		CookOptions |= Switches.Contains(TEXT("RunMapValidation")) ? ECookByTheBookOptions::RunMapValidation : ECookByTheBookOptions::None;
+		CookOptions |= Switches.Contains(TEXT("ValidationErrorsAreFatal")) ? ECookByTheBookOptions::ValidationErrorsAreFatal : ECookByTheBookOptions::None;
+	}
 
 	if (bCookSinglePackage)
 	{
@@ -525,6 +529,14 @@ void UCookCommandlet::RunCookByTheBookCook(UCookOnTheFlyServer* CookOnTheFlyServ
 	bool bTestCook = EnumHasAnyFlags(CookOnTheFlyServer->GetCookFlags(), ECookInitializationFlags::TestCook);
 
 #if ENABLE_LOW_LEVEL_MEM_TRACKER
+	FDelegateHandle FlushUpdateHandle = FCoreDelegates::OnAsyncLoadingFlushUpdate.AddLambda([]()
+		{
+			FLowLevelMemTracker::Get().UpdateStatsPerFrame();
+		});
+	FDelegateHandle FlushHandle = FCoreDelegates::OnAsyncLoadingFlush.AddLambda([]()
+		{
+			FLowLevelMemTracker::Get().UpdateStatsPerFrame();
+		});
 	FLowLevelMemTracker::Get().UpdateStatsPerFrame();
 #endif
 	bool bShouldVerifyEDLCookInfo = false;
@@ -538,7 +550,7 @@ void UCookCommandlet::RunCookByTheBookCook(UCookOnTheFlyServer* CookOnTheFlyServ
 		DECLARE_SCOPE_CYCLE_COUNTER(TEXT("CookByTheBook.MainLoop"), STAT_CookByTheBook_MainLoop, STATGROUP_LoadTime);
 		while (CookOnTheFlyServer->IsInSession())
 		{
-			uint32 TickResults = TickResults = CookOnTheFlyServer->TickCookByTheBook(MAX_flt,
+			uint32 TickResults = CookOnTheFlyServer->TickCookByTheBook(MAX_flt,
 				ShowProgress ? ECookTickFlags::None : ECookTickFlags::HideProgressDisplay);
 			ConditionalCollectGarbage(TickResults, *CookOnTheFlyServer);
 		}
@@ -551,8 +563,19 @@ void UCookCommandlet::RunCookByTheBookCook(UCookOnTheFlyServer* CookOnTheFlyServ
 	if (bShouldVerifyEDLCookInfo)
 	{
 		bool bFullReferencesExpected = !(CookOptions & ECookByTheBookOptions::SkipHardReferences);
-		UE::SavePackageUtilities::VerifyEDLCookInfo(bFullReferencesExpected);
+		UE::SavePackageUtilities::VerifyEDLCookInfo([](ELogVerbosity::Type Verbosity, FStringView Message)
+			{
+#if !NO_LOGGING
+				FMsg::Logf(__FILE__, __LINE__, LogCook.GetCategoryName(), Verbosity, TEXT("%.*s"),
+				Message.Len(), Message.GetData());
+#endif
+			}, bFullReferencesExpected);
 	}
+
+#if ENABLE_LOW_LEVEL_MEM_TRACKER
+	FCoreDelegates::OnAsyncLoadingFlushUpdate.Remove(FlushUpdateHandle);
+	FCoreDelegates::OnAsyncLoadingFlush.Remove(FlushHandle);
+#endif
 }
 
 bool UCookCommandlet::CookAsCookWorker()

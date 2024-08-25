@@ -11,6 +11,7 @@
 #include "GameFramework/Info.h"
 #include "Engine/ServerStatReplicator.h"
 #include "Online/CoreOnline.h"
+#include "Net/Core/Connection/NetEnums.h"
 #include "GameFramework/PlayerController.h"
 #include "GameModeBase.generated.h"
 
@@ -116,6 +117,9 @@ public:
 
 	UPROPERTY(EditAnywhere, NoClear, BlueprintReadOnly, Category = Classes)
 	TSubclassOf<AServerStatReplicator> ServerStatReplicatorClass;
+
+	/** Return if the game mode is requesting a specific replication system to be used for the GameNetDriver */
+	EReplicationSystem GetGameNetDriverReplicationSystem() const { return GameNetDriverReplicationSystem; }
 
 	//~=============================================================================
 	// Accessors for current state
@@ -587,6 +591,14 @@ protected:
 	/** Whether the game is pauseable. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=GameMode)
 	uint32 bPauseable : 1;
+
+	/** 
+	 * Can be used to request a specific replication system for a GameNetDriver that will replicate this game mode.
+	 * Leave to Default to use the game engine's preferred system. 
+	 * Useful when migrating from one repsystem to another and a game mode does not fully support both repsystem yet.
+	 */
+	UPROPERTY(Config, EditAnywhere, BlueprintReadWrite, Category = GameMode)
+	EReplicationSystem GameNetDriverReplicationSystem = EReplicationSystem::Default;
 
 	/** The list of delegates to check before unpausing a game */
 	TArray<FCanUnpause> Pausers;

@@ -35,10 +35,10 @@ public:
 	FText GetHlslText() const;
 	void OnCustomHlslTextCommitted(const FText& InText, ETextCommit::Type InType);
 
-	bool GetTokens(TArray<FString>& OutTokens, bool IncludeComments = true, bool IncludeWhitespace = true) const;
+	bool GetTokens(TArray<FStringView>& OutTokens, bool IncludeComments = true, bool IncludeWhitespace = true) const;
 
 	virtual void BuildParameterMapHistory(FNiagaraParameterMapHistoryBuilder& OutHistory, bool bRecursive = true, bool bFilterForCompilation = true) const override;
-	virtual void GatherExternalDependencyData(ENiagaraScriptUsage InUsage, const FGuid& InUsageId, TArray<FNiagaraCompileHash>& InReferencedCompileHashes, TArray<FString>& InReferencedObjs) const override;
+	virtual void GatherExternalDependencyData(ENiagaraScriptUsage InUsage, const FGuid& InUsageId, FNiagaraScriptHashCollector& HashCollector) const override;
 
 	// Replace items in the tokens array if they start with the src string or optionally src string and a namespace delimiter
 	static uint32 ReplaceExactMatchTokens(TArray<FString>& Tokens, FStringView SrcString, FStringView ReplaceString, bool bAllowNamespaceSeparation);
@@ -48,11 +48,13 @@ public:
 
 	virtual bool ReferencesVariable(const FNiagaraVariableBase& InVar) const;
 
-	static bool GetTokensFromString(const FString& InHlsl, TArray<FString>& OutTokens, bool IncludeComments = true, bool IncludeWhitespace = true);
+	static bool GetTokensFromString(const FString& InHlsl, TArray<FStringView>& OutTokens, bool IncludeComments = true, bool IncludeWhitespace = true);
 
 	virtual void PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent) override;
 
 	void InitAsCustomHlslDynamicInput(const FNiagaraTypeDefinition& OutputType);
+
+	bool CallsImpureDataInterfaceFunctions() const;
 
 protected:
 	virtual bool AllowDynamicPins() const override { return true; }

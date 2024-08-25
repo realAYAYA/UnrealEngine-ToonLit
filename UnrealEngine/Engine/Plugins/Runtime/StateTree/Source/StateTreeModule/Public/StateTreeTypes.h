@@ -13,6 +13,8 @@ STATETREEMODULE_API DECLARE_LOG_CATEGORY_EXTERN(LogStateTree, Warning, All);
 #define WITH_STATETREE_DEBUG (!(UE_BUILD_SHIPPING || UE_BUILD_SHIPPING_WITH_EDITOR || UE_BUILD_TEST) && 1)
 #endif // WITH_STATETREE_DEBUG
 
+class UStateTree;
+
 namespace UE::StateTree
 {
 	inline constexpr int32 MaxConditionIndent = 4;
@@ -40,6 +42,9 @@ enum class EStateTreeTransitionType : uint8
 	
 	/** Transition to the next sibling state. */
 	NextState,
+
+	/** Transition to the next selectable sibling state */
+	NextSelectableState,
 
 	NotSet UE_DEPRECATED(5.0, "Use None instead."),
 };
@@ -69,7 +74,10 @@ enum class EStateTreeStateType : uint8
 	
 	/** A State that is linked to another state in the tree (the execution continues on the linked state). */
 	Linked,
-	
+
+	/** A State that is linked to another StateTree asset (the execution continues on the Root state of the linked asset). */
+	LinkedAsset,
+
 	/** A subtree that can be linked to. */
 	Subtree,
 };
@@ -165,7 +173,12 @@ struct STATETREEMODULE_API FStateTreeStateHandle
 	{
 		return Index >= 0 && Index < (int32)MAX_uint16;
 	}
-	
+
+	friend FORCEINLINE uint32 GetTypeHash(const FStateTreeStateHandle& Handle)
+	{
+		return GetTypeHash(Handle.Index);
+	}
+
 	FStateTreeStateHandle() = default;
 	explicit FStateTreeStateHandle(const uint16 InIndex) : Index(InIndex) {}
 	explicit FStateTreeStateHandle(const int32 InIndex) : Index()
@@ -197,6 +210,200 @@ struct STATETREEMODULE_API FStateTreeStateHandle
 
 	UPROPERTY()
 	uint16 Index = InvalidIndex;
+};
+
+
+/** Data type the FStateTreeDataHandle is pointing at. */
+UENUM(BlueprintType)
+enum class EStateTreeDataSourceType : uint8
+{
+	None UMETA(Hidden),
+
+	/** Global Tasks, Evaluators */
+	GlobalInstanceData,
+
+	/** Global Tasks, Evaluators*/
+	GlobalInstanceDataObject,
+
+	/** Active State Tasks */
+	ActiveInstanceData,
+
+	/** Active State Tasks */
+	ActiveInstanceDataObject,
+
+	/** Conditions */
+	SharedInstanceData,
+
+	/** Conditions */
+	SharedInstanceDataObject,
+
+	/** Context Data, Tree Parameters */
+	ContextData,
+
+	/** External Data required by the nodes. */
+	ExternalData,
+
+	/** Global parameters */
+	GlobalParameterData,
+
+	/** Parameters for subtree (may resolve to a linked state's parameters or default params) */
+	SubtreeParameterData,
+
+	/** Parameters for regular and linked states */
+	StateParameterData,
+};
+
+/** Handle to a StateTree data */
+USTRUCT(BlueprintType)
+struct STATETREEMODULE_API FStateTreeDataHandle
+{
+	GENERATED_BODY()
+
+	static const FStateTreeDataHandle Invalid;
+	static constexpr uint16 InvalidIndex = MAX_uint16;
+
+	/** @return true if the given index can be represented by the type. */
+	static bool IsValidIndex(const int32 Index)
+	{
+		return Index >= 0 && Index < (int32)InvalidIndex;
+	}
+
+	friend FORCEINLINE uint32 GetTypeHash(const FStateTreeDataHandle& Handle)
+	{
+		uint32 Hash = GetTypeHash(Handle.Source);
+		Hash = HashCombineFast(Hash, GetTypeHash(Handle.Source));
+		Hash = HashCombineFast(Hash, GetTypeHash(Handle.StateHandle));
+		return Hash;
+	}
+	
+	FStateTreeDataHandle() = default;
+	
+	explicit FStateTreeDataHandle(const EStateTreeDataSourceType InSource, const uint16 InIndex, const FStateTreeStateHandle InStateHandle = FStateTreeStateHandle::Invalid)
+		: Source(InSource)
+		, Index(InIndex)
+		, StateHandle(InStateHandle)
+	{
+		// Require valid state for active instance data
+		check(Source != EStateTreeDataSourceType::ActiveInstanceData || (Source == EStateTreeDataSourceType::ActiveInstanceData && StateHandle.IsValid()));
+		check(Source != EStateTreeDataSourceType::ActiveInstanceDataObject || (Source == EStateTreeDataSourceType::ActiveInstanceDataObject && StateHandle.IsValid()));
+		check(Source == EStateTreeDataSourceType::GlobalParameterData || InIndex != InvalidIndex);
+	}
+
+	explicit FStateTreeDataHandle(const EStateTreeDataSourceType InSource, const int32 InIndex, const FStateTreeStateHandle InStateHandle = FStateTreeStateHandle::Invalid)
+		: Source(InSource)
+		, StateHandle(InStateHandle)
+	{
+		// Require valid state for active instance data
+		check(Source != EStateTreeDataSourceType::ActiveInstanceData || (Source == EStateTreeDataSourceType::ActiveInstanceData && StateHandle.IsValid()));
+		check(Source != EStateTreeDataSourceType::ActiveInstanceDataObject || (Source == EStateTreeDataSourceType::ActiveInstanceDataObject && StateHandle.IsValid()));
+		check(Source == EStateTreeDataSourceType::GlobalParameterData || IsValidIndex(InIndex));
+		Index = static_cast<uint16>(InIndex);
+	}
+
+	explicit FStateTreeDataHandle(const EStateTreeDataSourceType InSource)
+		: FStateTreeDataHandle(InSource, FStateTreeDataHandle::InvalidIndex)
+	{}
+
+	bool IsValid() const
+	{
+		return Source != EStateTreeDataSourceType::None;
+	}
+
+	void Reset()
+	{
+		Source = EStateTreeDataSourceType::None;
+		Index = InvalidIndex;
+		StateHandle = FStateTreeStateHandle::Invalid;
+	}
+
+	bool operator==(const FStateTreeDataHandle& RHS) const
+	{
+		return Source == RHS.Source && Index == RHS.Index && StateHandle == RHS.StateHandle;
+	}
+	
+	bool operator!=(const FStateTreeDataHandle& RHS) const
+	{
+		return !(*this == RHS);
+	}
+
+	EStateTreeDataSourceType GetSource() const
+	{
+		return Source;
+	}
+
+	int32 GetIndex() const
+	{
+		return Index;
+	}
+
+	FStateTreeStateHandle GetState() const
+	{
+		return StateHandle;
+	}
+
+	bool IsObjectSource() const
+	{
+		return Source == EStateTreeDataSourceType::GlobalInstanceDataObject
+			|| Source == EStateTreeDataSourceType::ActiveInstanceDataObject
+			|| Source == EStateTreeDataSourceType::SharedInstanceDataObject;
+	}
+	
+	FStateTreeDataHandle ToObjectSource() const
+	{
+		switch (Source)
+		{
+		case EStateTreeDataSourceType::GlobalInstanceData:
+			return FStateTreeDataHandle(EStateTreeDataSourceType::GlobalInstanceDataObject, Index, StateHandle);
+		case EStateTreeDataSourceType::ActiveInstanceData:
+			return FStateTreeDataHandle(EStateTreeDataSourceType::ActiveInstanceDataObject, Index, StateHandle);
+		case EStateTreeDataSourceType::SharedInstanceData:
+			return FStateTreeDataHandle(EStateTreeDataSourceType::SharedInstanceDataObject, Index, StateHandle);
+		default:
+			return *this;
+		}
+	}
+	
+	FString Describe() const
+	{
+
+		switch (Source)
+		{
+		case EStateTreeDataSourceType::None:
+			return TEXT("None");
+		case EStateTreeDataSourceType::GlobalInstanceData:
+			return FString::Printf(TEXT("Global[%d]"), Index);
+		case EStateTreeDataSourceType::GlobalInstanceDataObject:
+			return FString::Printf(TEXT("GlobalO[%d]"), Index);
+		case EStateTreeDataSourceType::ActiveInstanceData:
+			return FString::Printf(TEXT("Active[%d]"), Index);
+		case EStateTreeDataSourceType::ActiveInstanceDataObject:
+			return FString::Printf(TEXT("ActiveO[%d]"), Index);
+		case EStateTreeDataSourceType::SharedInstanceData:
+			return FString::Printf(TEXT("Shared[%d]"), Index);
+		case EStateTreeDataSourceType::SharedInstanceDataObject:
+			return FString::Printf(TEXT("SharedO[%d]"), Index);
+		case EStateTreeDataSourceType::ContextData:
+			return FString::Printf(TEXT("Context[%d]"), Index);
+		case EStateTreeDataSourceType::GlobalParameterData:
+			return FString::Printf(TEXT("GlobalParam"));
+		case EStateTreeDataSourceType::SubtreeParameterData:
+			return FString::Printf(TEXT("SubtreeParam[%d]"), Index);
+		case EStateTreeDataSourceType::StateParameterData:
+			return FString::Printf(TEXT("LinkedParam[%d]"), Index);
+		default:
+			return TEXT("---");
+		}
+	}
+	
+private:
+	UPROPERTY()
+	EStateTreeDataSourceType Source = EStateTreeDataSourceType::None;
+
+	UPROPERTY()
+	uint16 Index = InvalidIndex;
+
+	UPROPERTY()
+	FStateTreeStateHandle StateHandle = FStateTreeStateHandle::Invalid; 
 };
 
 
@@ -262,6 +469,16 @@ protected:
 	uint16 RandomVariance = 0;
 };
 
+/** Fallback behavior indicating what to do after failing to select a state */
+UENUM()
+enum class EStateTreeSelectionFallback : uint8
+{
+	/** No fallback */
+	None,
+
+	/** Find next selectable sibling, if any, and select it */
+	NextSelectableSibling,
+};
 
 /**
  *  Runtime representation of a StateTree transition.
@@ -306,6 +523,10 @@ struct STATETREEMODULE_API FCompactStateTransition
 	UPROPERTY()
 	EStateTreeTransitionPriority Priority = EStateTreeTransitionPriority::Normal;
 
+	/** Fallback of the transition if it fails to select the target state */
+	UPROPERTY()
+	EStateTreeSelectionFallback Fallback = EStateTreeSelectionFallback::None;
+
 	/** Number of conditions to test. */
 	UPROPERTY()
 	uint8 ConditionsNum = 0;
@@ -343,6 +564,9 @@ struct STATETREEMODULE_API FCompactStateTreeState
 	UPROPERTY()
 	FStateTreeStateHandle LinkedState = FStateTreeStateHandle::Invalid; 
 
+	UPROPERTY()
+	TObjectPtr<UStateTree> LinkedAsset = nullptr;
+	
 	/** Parent state handle, invalid if root state. */
 	UPROPERTY()
 	FStateTreeStateHandle Parent = FStateTreeStateHandle::Invalid;
@@ -369,11 +593,13 @@ struct STATETREEMODULE_API FCompactStateTreeState
 
 	/** Index to state instance data. */
 	UPROPERTY()
-	FStateTreeIndex16 ParameterInstanceIndex = FStateTreeIndex16::Invalid;
+	FStateTreeIndex16 ParameterTemplateIndex = FStateTreeIndex16::Invalid;
 
-	/** Data view index of the input parameters. */
 	UPROPERTY()
-	FStateTreeIndex16 ParameterDataViewIndex = FStateTreeIndex16::Invalid;
+	FStateTreeDataHandle ParameterDataHandle = FStateTreeDataHandle::Invalid;
+
+	UPROPERTY()
+	FStateTreeIndex16 ParameterBindingsBatch = FStateTreeIndex16::Invalid;
 
 	/** Number of enter conditions */
 	UPROPERTY()
@@ -387,13 +613,9 @@ struct STATETREEMODULE_API FCompactStateTreeState
 	UPROPERTY()
 	uint8 TasksNum = 0;
 
-	/** Number of tasks with struct instance data. */
+	/** Number of instance data */
 	UPROPERTY()
-	uint8 TaskInstanceStructNum = 0;
-
-	/** Number of tasks with object instance data. */
-	UPROPERTY()
-	uint8 TaskInstanceObjectNum = 0;
+	uint8 InstanceDataNum = 0;
 
 	/** Type of the state */
 	UPROPERTY()
@@ -417,9 +639,13 @@ struct STATETREEMODULE_API FCompactStateTreeParameters
 {
 	GENERATED_BODY()
 
-	UPROPERTY()
-	FStateTreeIndex16 BindingsBatch = FStateTreeIndex16::Invalid;
+	FCompactStateTreeParameters() = default;
 
+	FCompactStateTreeParameters(const FInstancedPropertyBag& InParameters)
+		: Parameters(InParameters)
+	{
+	}
+	
 	UPROPERTY()
 	FInstancedPropertyBag Parameters;
 };
@@ -671,7 +897,7 @@ struct STATETREEMODULE_API FStateTreeDataView
 	 * USTRUCT() getters (reference & pointer, const & mutable)
 	 */
 	template <typename T>
-	typename TEnableIf<!TIsDerivedFrom<T, UObject>::IsDerived, const T&>::Type Get() const
+	typename TEnableIf<!TIsDerivedFrom<T, UObject>::IsDerived && !TIsIInterface<T>::Value, const T&>::Type Get() const
 	{
 		check(Memory != nullptr);
 		check(Struct != nullptr);
@@ -680,7 +906,7 @@ struct STATETREEMODULE_API FStateTreeDataView
 	}
 
 	template <typename T>
-    typename TEnableIf<!TIsDerivedFrom<T, UObject>::IsDerived, T&>::Type GetMutable() const
+    typename TEnableIf<!TIsDerivedFrom<T, UObject>::IsDerived && !TIsIInterface<T>::Value, T&>::Type GetMutable() const
 	{
 		check(Memory != nullptr);
 		check(Struct != nullptr);
@@ -689,7 +915,7 @@ struct STATETREEMODULE_API FStateTreeDataView
 	}
 
 	template <typename T>
-    typename TEnableIf<!TIsDerivedFrom<T, UObject>::IsDerived, const T*>::Type GetPtr() const
+    typename TEnableIf<!TIsDerivedFrom<T, UObject>::IsDerived && !TIsIInterface<T>::Value, const T*>::Type GetPtr() const
 	{
 		// If Memory is set, expect Struct too. Otherwise, let nulls pass through.
 		check(!Memory || (Memory && Struct));
@@ -698,12 +924,47 @@ struct STATETREEMODULE_API FStateTreeDataView
 	}
 
 	template <typename T>
-    typename TEnableIf<!TIsDerivedFrom<T, UObject>::IsDerived, T*>::Type GetMutablePtr() const
+    typename TEnableIf<!TIsDerivedFrom<T, UObject>::IsDerived && !TIsIInterface<T>::Value, T*>::Type GetMutablePtr() const
 	{
 		// If Memory is set, expect Struct too. Otherwise, let nulls pass through.
 		check(!Memory || (Memory && Struct));
 		check(!Struct || Struct->IsChildOf(T::StaticStruct()));
 		return ((T*)Memory);
+	}
+
+	/*
+	 * IInterface() getters (reference & pointer, const & mutable)
+	 */
+	template <typename T>
+	typename TEnableIf<TIsIInterface<T>::Value, const T&>::Type Get() const
+	{
+		check(!Memory || (Memory && Struct));
+		check(Struct->IsChildOf(UObject::StaticClass()) && ((UClass*)Struct)->ImplementsInterface(T::UClassType::StaticClass()));
+		return *(T*)((UObject*)Memory)->GetInterfaceAddress(T::UClassType::StaticClass());
+	}
+
+	template <typename T>
+    typename TEnableIf<TIsIInterface<T>::Value, T&>::Type GetMutable() const
+	{
+		check(!Memory || (Memory && Struct));
+		check(Struct->IsChildOf(UObject::StaticClass()) && ((UClass*)Struct)->ImplementsInterface(T::UClassType::StaticClass()));
+		return *(T*)((UObject*)Memory)->GetInterfaceAddress(T::UClassType::StaticClass());
+	}
+
+	template <typename T>
+    typename TEnableIf<TIsIInterface<T>::Value, const T*>::Type GetPtr() const
+	{
+		check(!Memory || (Memory && Struct));
+		check(Struct->IsChildOf(UObject::StaticClass()) && ((UClass*)Struct)->ImplementsInterface(T::UClassType::StaticClass()));
+		return (T*)((UObject*)Memory)->GetInterfaceAddress(T::UClassType::StaticClass());
+	}
+
+	template <typename T>
+    typename TEnableIf<TIsIInterface<T>::Value, T*>::Type GetMutablePtr() const
+	{
+		check(!Memory || (Memory && Struct));
+		check(Struct->IsChildOf(UObject::StaticClass()) && ((UClass*)Struct)->ImplementsInterface(T::UClassType::StaticClass()));
+		return (T*)((UObject*)Memory)->GetInterfaceAddress(T::UClassType::StaticClass());
 	}
 
 	/** @return Struct describing the data type. */
@@ -722,13 +983,6 @@ protected:
 	/** Memory pointing at the class or struct */
 	uint8* Memory = nullptr;
 };
-
-struct STATETREEMODULE_API FStateTreeTransitionDelayedState
-{
-	FStateTreeIndex16 TransitionIndex = FStateTreeIndex16::Invalid;
-	float TimeLeft = 0.0f;
-};
-
 
 /**
  * Link to another state in StateTree

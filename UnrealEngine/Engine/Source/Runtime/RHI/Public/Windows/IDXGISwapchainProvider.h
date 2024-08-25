@@ -2,8 +2,16 @@
 
 #pragma once
 
+#include "HAL/Platform.h"
 #include "Features/IModularFeature.h"
 #include "RHIDefinitions.h"
+#include "UObject/NameTypes.h"
+
+#include "Microsoft/AllowMicrosoftPlatformTypes.h"
+THIRD_PARTY_INCLUDES_START
+	#include <dxgi1_6.h>
+THIRD_PARTY_INCLUDES_END
+#include "Microsoft/HideMicrosoftPlatformTypes.h"
 
 class IDXGISwapchainProvider : public IModularFeature
 {

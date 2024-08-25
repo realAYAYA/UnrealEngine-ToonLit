@@ -11,6 +11,7 @@
 #include "Input/NavigationReply.h"
 #include "Input/PopupMethodReply.h"
 #include "Rendering/DrawElementCoreTypes.h"
+#include "Rendering/SlateRendererTypes.h"
 #include "SlateGlobals.h"
 #include <utility>
 
@@ -56,7 +57,7 @@ enum class ESlateShader : uint8
 	Border = 1,
 	/** Grayscale font shader. Uses an alpha only texture */
 	GrayscaleFont = 2,
-	/** Grayscale font shader. Uses an color texture */
+	/** Color font shader. Uses an sRGB texture */
 	ColorFont = 3,
 	/** Line segment shader. For drawing anti-aliased lines */
 	LineSegment = 4,
@@ -66,6 +67,10 @@ enum class ESlateShader : uint8
 	PostProcess = 6,
 	/** Rounded Box shader. **/
 	RoundedBox = 7,
+	/** Signed distance field font shader */
+	SdfFont = 8,
+	/** Multi-channel signed distance field font shader */
+	MsdfFont = 9,
 };
 
 /**
@@ -102,7 +107,7 @@ enum class ESlateDrawEffect : uint8
 ENUM_CLASS_FLAGS(ESlateDrawEffect);
 
 /** Flags for drawing a batch */
-enum class ESlateBatchDrawFlag : uint8
+enum class ESlateBatchDrawFlag : uint16
 {
 	/** No draw flags */
 	None					= 0,
@@ -124,7 +129,9 @@ enum class ESlateBatchDrawFlag : uint8
 	/** The element should be tiled vertically */
 	TileV				= 1 << 6,
 	/** Reverse gamma correction */
-	ReverseGamma			 = 1 << 7
+	ReverseGamma		= 1 << 7,
+	/** Potentially apply to HDR batch when composition is active*/
+	HDR					= 1 << 8
 };
 
 ENUM_CLASS_FLAGS(ESlateBatchDrawFlag);
@@ -155,6 +162,12 @@ enum class ESlateVertexRounding : uint8
 {
 	Disabled,
 	Enabled
+};
+
+enum class ESlateViewportDynamicRange : uint8
+{
+	SDR,
+	HDR
 };
 
 class FSlateRenderBatch;
@@ -477,6 +490,14 @@ public:
 	virtual bool IsViewportTextureAlphaOnly() const
 	{
 		return false;
+	}
+
+	/**
+	 * Does the texture contain SDR/HDR information
+	 */
+	virtual ESlateViewportDynamicRange GetViewportDynamicRange() const
+	{
+		return ESlateViewportDynamicRange::SDR;
 	}
 
 	/**
@@ -855,14 +876,68 @@ public:
 class ICustomSlateElement
 {
 public:
+
+	/** Struct describing current draw state for the custom drawer */
+	struct FSlateCustomDrawParams
+	{
+		FMatrix44f ViewProjectionMatrix;
+		FVector2f ViewOffset;
+		FIntRect ViewRect;
+		EDisplayColorGamut HDRDisplayColorGamut;
+		ESlatePostRT UsedSlatePostBuffers;
+		bool bWireFrame;
+		bool bIsHDR;
+
+		FSlateCustomDrawParams()
+			: ViewProjectionMatrix(FMatrix44f())
+			, ViewOffset(0.f, 0.f)
+			, ViewRect(FIntRect())
+			, HDRDisplayColorGamut(EDisplayColorGamut::sRGB_D65)
+			, UsedSlatePostBuffers(ESlatePostRT::None)
+			, bWireFrame(false)
+			, bIsHDR(false)
+		{
+		}
+	};
+
+public:
 	virtual ~ICustomSlateElement() {}
+
+	UE_DEPRECATED(5.4, "Please override Draw_RenderThread instead and modify your function signature to accept 'FSlateCustomParams& Params'")
+	virtual void DrawRenderThread(class FRHICommandListImmediate& RHICmdList, const void* RenderTarget) 
+	{
+	}
 
 	/** 
 	 * Called from the rendering thread when it is time to render the element
 	 *
-	 * @param RenderTarget	handle to the platform specific render target implementation.  Note this is already bound by Slate initially 
+	 * @param RenderTarget				handle to the platform specific render target implementation.  Note this is already bound by Slate initially 
+	 * @param Params					Params about current draw state 
+	 * @param RenderingPolicyInterface	Interface to current rendering policy
 	 */
-	virtual void DrawRenderThread(class FRHICommandListImmediate& RHICmdList, const void* RenderTarget) = 0;
+	virtual void Draw_RenderThread(class FRHICommandListImmediate& RHICmdList, const void* RenderTarget, const FSlateCustomDrawParams& Params)
+	{
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+		DrawRenderThread(RHICmdList, RenderTarget);
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	}
+
+	/**
+	 * Called from the game thread during element batching
+	 *
+	 * @param ElementBatcher	Elementbatcher that added the custom element
+	 */
+	virtual void PostCustomElementAdded(class FSlateElementBatcher& ElementBatcher) const {}
+
+	/**
+	 * If true will cast to an ICustomSlateElementRHI & call Draw_RenderThread with additional RHI params on that instead.
+	 * 
+	 * Note: While a bool to determine cast is not desirable, it is needed due to RHI module reference constraints
+	 */
+	virtual bool UsesAdditionalRHIParams() const 
+	{
+		return false;
+	}
 };
 
 /*

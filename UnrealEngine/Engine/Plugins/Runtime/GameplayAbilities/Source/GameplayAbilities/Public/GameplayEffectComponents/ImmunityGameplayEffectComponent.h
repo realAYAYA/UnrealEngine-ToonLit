@@ -10,7 +10,7 @@
  * Immunity is blocking the application of _other_ GameplayEffectSpecs.
  * This registers a global handler on the ASC to block the application of other GameplayEffectSpecs.
  */
-UCLASS()
+UCLASS(DisplayName="Immunity to Other Effects")
 class GAMEPLAYABILITIES_API UImmunityGameplayEffectComponent : public UGameplayEffectComponent
 {
 	friend class UGameplayEffect; // Needed for upgrade path

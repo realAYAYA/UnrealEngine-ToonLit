@@ -18,11 +18,11 @@ UsageAndExit()
     echo
     echo "Usage examples:"
     echo
-    echo "    $BUILD_SCRIPT_NAME 3.1.3 x86_64-unknown-linux-gnu"
-    echo "      -- Installs $LIBRARY_NAME version 3.1.3 for x86_64 architecture."
+    echo "    $BUILD_SCRIPT_NAME 3.1.9 x86_64-unknown-linux-gnu"
+    echo "      -- Installs $LIBRARY_NAME version 3.1.9 for x86_64 architecture."
     echo
-    echo "    $BUILD_SCRIPT_NAME 3.1.3 aarch64-unknown-linux-gnueabi"
-    echo "      -- Installs $LIBRARY_NAME version 3.1.3 for arm64 architecture."
+    echo "    $BUILD_SCRIPT_NAME 3.1.9 aarch64-unknown-linux-gnueabi"
+    echo "      -- Installs $LIBRARY_NAME version 3.1.9 for arm64 architecture."
     echo
     exit 1
 }
@@ -67,7 +67,7 @@ pushd $BUILD_LOCATION > /dev/null
 
 # Run Engine/Build/BatchFiles/Linux/SetupToolchain.sh first to ensure
 # that the toolchain is setup and verify that this name matches.
-TOOLCHAIN_NAME=v20_clang-13.0.1-centos7
+TOOLCHAIN_NAME=v22_clang-16.0.6-centos7
 
 UE_TOOLCHAIN_LOCATION="$UE_ENGINE_LOCATION/Extras/ThirdPartyNotUE/SDKs/HostLinux/Linux_x64/$TOOLCHAIN_NAME"
 
@@ -112,7 +112,7 @@ fi
     set(CMAKE_MODULE_LINKER_FLAGS "${LINKER_FLAGS}")
     set(CMAKE_SHARED_LINKER_FLAGS "${LINKER_FLAGS}")
 
-    set(CMAKE_FIND_ROOT_PATH ${UE_TOOLCHAIN_LOCATION})
+    set(CMAKE_FIND_ROOT_PATH "${UE_TOOLCHAIN_LOCATION}")
     set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
     set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
     set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
@@ -127,9 +127,9 @@ CMAKE_ARGS=(
     -DCMAKE_INSTALL_BINDIR="$INSTALL_BIN_DIR"
     -DCMAKE_INSTALL_LIBDIR="$INSTALL_LIB_DIR"
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON
-    -DBUILD_SHARED_LIBS=FALSE
-    -DIMATH_INSTALL_PKG_CONFIG=FALSE
     -DBUILD_TESTING=OFF
+    -DBUILD_SHARED_LIBS=OFF
+    -DIMATH_INSTALL_PKG_CONFIG=OFF
 )
 
 NUM_CPU=`grep -c ^processor /proc/cpuinfo`

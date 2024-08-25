@@ -7,9 +7,9 @@
 #include "Templates/RefCounting.h"
 #include "Containers/Queue.h"
 #include "Misc/ScopeLock.h"
+#include "HAL/PlatformProcess.h"
 
 #include "ParameterDictionary.h"
-
 
 struct FDecoderTimeStamp
 {
@@ -47,6 +47,8 @@ class TDecoderOutputObjectPool
 	/** Object pool storage. */
 	class TStorage
 	{
+		static float constexpr kStorageBusyWaitPollInterval = 0.002f;
+
 	public:
 		TStorage(ObjectFactory* InObjectFactoryInstance)
 			: ObjectFactoryInstance(InObjectFactoryInstance)
@@ -56,11 +58,30 @@ class TDecoderOutputObjectPool
 		~TStorage()
 		{
 			Reserve(0);
+
+			double StartTime = FPlatformTime::Seconds();
+			bool bDidWait = false;
 			ObjectType* Object;
 			while (WaitReadyForReuse.Dequeue(Object))
 			{
+				while (!Object->IsReadyForReuse() && GIsRunning)
+				{
+					// If we encounter an object that is still busy, we wait a bit and try again
+					// (Assumptions:
+					//  - there will not be that many busy objects
+					//  - usually the state of a busy object should become idle quite quickly)
+					bDidWait = true;
+					FPlatformProcess::Sleep(kStorageBusyWaitPollInterval);
+				}
+
 				Object->ShutdownPoolable();
 				delete Object;
+			}
+
+			if (bDidWait)
+			{
+				double EndTime = FPlatformTime::Seconds();
+				UE_LOG(LogTemp, Log, TEXT("[%p] TDecoderOutputObjectPool::TStorage::~TStorage() finished after %.3f msec!"), this, (EndTime - StartTime) * 1000.0);
 			}
 		}
 
@@ -75,20 +96,29 @@ class TDecoderOutputObjectPool
 
 				if (Pool.Num() > 0)
 				{
-					Result = Pool.Pop(false);
+					Result = Pool.Pop(EAllowShrinking::No);
 				}
 				else
 				{
-					if (WaitReadyForReuse.Peek(Result))
+					// Check for objects to ready to enter the pool & grab the first we find as our result...
+					// (we move all into the pool, we can to possibly safe on resources allocated by the objects)
+					ObjectType* PeekObject;
+					while (WaitReadyForReuse.Peek(PeekObject))
 					{
-						if (Result->IsReadyForReuse())
+						if (!PeekObject->IsReadyForReuse())
 						{
-							WaitReadyForReuse.Pop();
-							Result->ShutdownPoolable();
+							break;
+						}
+
+						WaitReadyForReuse.Pop();
+						PeekObject->ShutdownPoolable();
+						if (!Result)
+						{
+							Result = PeekObject;
 						}
 						else
 						{
-							Result = nullptr;
+							Pool.Add(PeekObject);
 						}
 					}
 				}
@@ -139,7 +169,7 @@ class TDecoderOutputObjectPool
 
 			while (NumObjects < (uint32)Pool.Num())
 			{
-				delete Pool.Pop(false);
+				delete Pool.Pop(EAllowShrinking::No);
 			}
 
 			while (NumObjects > (uint32)Pool.Num())
@@ -300,3 +330,29 @@ public:
 private:
 	Electra::FParamDict PropertyDictionary;
 };
+
+
+namespace IDecoderOutputOptionNames
+{
+static const FName PTS(TEXT("pts"));
+static const FName Duration(TEXT("duration"));
+static const FName Width(TEXT("width"));
+static const FName Height(TEXT("height"));
+static const FName Pitch(TEXT("pitch"));
+static const FName AspectRatio(TEXT("aspect_ratio"));
+static const FName CropLeft(TEXT("crop_left"));
+static const FName CropTop(TEXT("crop_top"));
+static const FName CropRight(TEXT("crop_right"));
+static const FName CropBottom(TEXT("crop_bottom"));
+static const FName PixelFormat(TEXT("pixelfmt"));
+static const FName PixelEncoding(TEXT("pixelenc"));
+static const FName Orientation(TEXT("orientation"));
+static const FName BitsPerComponent(TEXT("bits_per"));
+static const FName HDRInfo(TEXT("hdr_info"));
+static const FName Colorimetry(TEXT("colorimetry"));
+static const FName AspectW(TEXT("aspect_w"));
+static const FName AspectH(TEXT("aspect_h"));
+static const FName FPSNumerator(TEXT("fps_num"));
+static const FName FPSDenominator(TEXT("fps_denom"));
+static const FName PixelDataScale(TEXT("pix_datascale"));
+}

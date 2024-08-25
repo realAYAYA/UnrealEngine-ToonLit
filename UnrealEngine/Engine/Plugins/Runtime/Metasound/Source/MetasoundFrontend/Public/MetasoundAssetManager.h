@@ -2,6 +2,7 @@
 #pragma once
 
 #include "MetasoundVertex.h"
+#include "MetasoundFrontendRegistryKey.h"
 #include "UObject/SoftObjectPath.h"
 #include "UObject/WeakObjectPtrTemplates.h"
 
@@ -14,8 +15,6 @@ namespace Metasound
 {
 	namespace Frontend
 	{
-		using FNodeRegistryKey = FString;
-
 		namespace AssetTags
 		{
 			extern const FString METASOUNDFRONTEND_API ArrayDelim;
@@ -56,9 +55,16 @@ namespace Metasound
 			bool bAutoUpdateLogWarningOnDroppedConnection = false;
 
 #if WITH_EDITOR
+			// Soft deprecated. Preprocessing now handled contextually if cooking or serializing.
+			bool bPreprocessDocument = true;
+
 			// Attempt to rebuild referenced classes (only run if class not registered or set to force re-register)
 			bool bRebuildReferencedAssetClasses = true;
-#endif
+
+			// If true and the registration will be perform asynchronously, a copy of the graph will be used for
+			// async registration. 
+			bool bRegisterCopyIfAsync = false;
+#endif // WITH_EDITOR
 		};
 
 		class METASOUNDFRONTEND_API IMetaSoundAssetManager
@@ -73,6 +79,10 @@ namespace Metasound
 					check(!Instance);
 				}
 				Instance = &InInterface;
+
+#if WITH_SERVER_CODE
+				OnManagerSet.Broadcast();
+#endif //WITH_SERVER_CODE
 			}
 
 			static IMetaSoundAssetManager* Get()
@@ -85,6 +95,11 @@ namespace Metasound
 				check(Instance);
 				return *Instance;
 			}
+
+#if WITH_SERVER_CODE
+			//to allow the server to preload UMetaSoundSource objects before the manager has been set up
+			static TMulticastDelegate<void()> OnManagerSet;
+#endif //WITH_SERVER_CODE
 
 			struct FAssetInfo
 			{

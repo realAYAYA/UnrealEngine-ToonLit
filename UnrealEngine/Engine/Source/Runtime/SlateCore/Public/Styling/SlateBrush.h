@@ -135,7 +135,7 @@ struct FSlateBrushOutlineSettings
 	GENERATED_USTRUCT_BODY()
 
 	FSlateBrushOutlineSettings()
-		: CornerRadii(0.0)
+		: CornerRadii(FVector4(0.0, 0.0, 0.0, 0.0))
 		, Color(FLinearColor::Transparent)
 		, Width(0.0)
 		, RoundingType(ESlateBrushRoundingType::HalfHeightRadius)
@@ -159,7 +159,7 @@ struct FSlateBrushOutlineSettings
 	{}
 
 	FSlateBrushOutlineSettings(const FSlateColor& InColor, float InWidth)
-		: CornerRadii(0.0)
+		: CornerRadii(FVector4(0.0, 0.0, 0.0, 0.0))
 		, Color(InColor)
 		, Width(InWidth)
 		, RoundingType(ESlateBrushRoundingType::HalfHeightRadius)
@@ -181,6 +181,22 @@ struct FSlateBrushOutlineSettings
 		, RoundingType(ESlateBrushRoundingType::FixedRadius)
 		, bUseBrushTransparency(false)
 	{}
+
+	/**
+	 * Compares these outline settings with another for equality.
+	 *
+	 * @param Other The other outline settings.
+	 *
+	 * @return true if settings are equal, false otherwise.
+	 */
+	bool operator==(const FSlateBrushOutlineSettings& Other) const
+	{
+		return CornerRadii == Other.CornerRadii
+			&& Color == Other.Color
+			&& Width == Other.Width
+			&& RoundingType == Other.RoundingType
+			&& bUseBrushTransparency == Other.bUseBrushTransparency;
+	}
 
 	/** Radius in Slate Units applied to the outline at each corner. X = Top Left, Y = Top Right, Z = Bottom Right, W = Bottom Left */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Brush)
@@ -247,7 +263,7 @@ public:
 	TEnumAsByte<enum ESlateBrushMirrorType::Type> Mirroring;
 
 	/** The type of image */
-	UPROPERTY()
+	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = Brush)
 	TEnumAsByte<enum ESlateBrushImageType::Type> ImageType;
 
 	/** Size of the resource in Slate Units */
@@ -409,7 +425,8 @@ public:
 			&& ResourceObject == Other.ResourceObject
 			&& ResourceName == Other.ResourceName
 			&& bIsDynamicallyLoaded == Other.bIsDynamicallyLoaded
-			&& UVRegion == Other.UVRegion;
+			&& UVRegion == Other.UVRegion
+			&& (DrawAs != ESlateBrushDrawType::RoundedBox || OutlineSettings == Other.OutlineSettings); // Compare outline settings for equality only if we have a rounded box brush.
 	}
 
 	/**
@@ -470,7 +487,7 @@ private:
 
 protected:
 	/** The name of the rendering resource to use */
-	UPROPERTY()
+	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = Brush)
 	FName ResourceName;
 
 	/** 
@@ -509,5 +526,6 @@ protected:
 class ISlateBrushSource
 {
 public:
+	virtual ~ISlateBrushSource() = default;
 	virtual const FSlateBrush* GetSlateBrush() const = 0;
 };

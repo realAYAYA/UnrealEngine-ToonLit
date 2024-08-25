@@ -4,6 +4,7 @@
 
 #include "Containers/Array.h"
 #include "Containers/ContainerAllocationPolicies.h"
+#include "UniversalObjectLocatorFwd.h"
 #include "CoreMinimal.h"
 #include "CoreTypes.h"
 #include "Evaluation/MovieSceneCompletionMode.h"
@@ -15,6 +16,7 @@
 #include "MovieSceneSection.h" // only for FMovieSceneTimecodeSource in .gen.cpp
 #include "MovieSceneSequenceID.h"
 #include "MovieSceneSignedObject.h"
+#include "UniversalObjectLocatorResolveParams.h"
 #include "MovieSceneTrack.h"
 #include "Templates/SubclassOf.h"
 #include "UObject/NameTypes.h"
@@ -37,6 +39,13 @@ struct FFrame;
 struct FMovieSceneObjectCache;
 struct FMovieScenePossessable;
 struct FMovieSceneTimecodeSource;
+struct FUniversalObjectLocator;
+struct FMovieSceneBindingReferences;
+
+namespace UE::MovieScene
+{
+	struct FSharedPlaybackState;
+}
 
 enum class ETrackSupport
 {
@@ -58,6 +67,8 @@ class UMovieSceneSequence
 {
 public:
 
+	using FSharedPlaybackState = UE::MovieScene::FSharedPlaybackState;
+
 	GENERATED_BODY()
 
 	MOVIESCENE_API UMovieSceneSequence(const FObjectInitializer& Init);
@@ -72,8 +83,33 @@ public:
 	 * @param Context Optional context required to bind the specified object (for instance, a parent spawnable object)
 	 * @see UnbindPossessableObjects
 	 */
+	MOVIESCENE_API virtual bool MakeLocatorForObject(UObject* Object, UObject* Context, FUniversalObjectLocator& OutLocator) const;
+
+	/**
+	 * Retrieve core UOL-based binding references for this sequence type.
+	 */
+	MOVIESCENE_API FMovieSceneBindingReferences* GetBindingReferences();
+
+	/**
+	 * (Optional) Retrieve core UOL-based binding references for this sequence type.
+	 */
+	MOVIESCENE_API virtual const FMovieSceneBindingReferences* GetBindingReferences() const;
+
+	/**
+	 * Unloads an object that has been loaded via a locator.
+	 */
+	MOVIESCENE_API void UnloadBoundObject(const UE::UniversalObjectLocator::FResolveParams& ResolveParams, const FGuid& ObjectId, int32 BindingIndex);
+
+	/**
+	 * Called when Sequencer has created an object binding for a possessable object
+	 * 
+	 * @param ObjectId The guid used to map to the possessable object.  Note the guid can be bound to multiple objects at once
+	 * @param PossessedObject The runtime object which was possessed.
+	 * @param Context Optional context required to bind the specified object (for instance, a parent spawnable object)
+	 * @see UnbindPossessableObjects
+	 */
 	virtual void BindPossessableObject(const FGuid& ObjectId, UObject& PossessedObject, UObject* Context) PURE_VIRTUAL(UMovieSceneSequence::BindPossessableObject,);
-	
+
 	/**
 	 * Check whether the given object can be possessed by this animation.
 	 *
@@ -84,13 +120,23 @@ public:
 	virtual bool CanPossessObject(UObject& Object, UObject* InPlaybackContext) const PURE_VIRTUAL(UMovieSceneSequence::CanPossessObject, return false;);
 
 	/**
-	 * Locate all the objects that correspond to the specified object ID, using the specified context
+	 * Locate all the objects that correspond to the specified object ID, using the specified context. Called when GetBindingReferences() is null.
 	 *
 	 * @param ObjectId				The unique identifier of the object.
 	 * @param Context				Optional context to use to find the required object (for instance, a parent spawnable object)
 	 * @param OutObjects			Destination array to add found objects to
 	 */
-	virtual void LocateBoundObjects(const FGuid& ObjectId, UObject* Context, TArray<UObject*, TInlineAllocator<1>>& OutObjects) const PURE_VIRTUAL(UMovieSceneSequence::LocateBoundObjects, );
+	UE_DEPRECATED(5.4, "Please call the FResolveParams overload")
+	virtual void LocateBoundObjects(const FGuid& ObjectId, UObject* Context, TArray<UObject*, TInlineAllocator<1>>& OutObjects) const {}
+
+	/**
+	 * Locate all the objects that correspond to the specified object ID, using the specified parameters
+	 *
+	 * @param ObjectId				The unique identifier of the object.
+	 * @param Params				Resolve parameters specifying the context and fragment-specific parameters
+	 * @param OutObjects			Destination array to add found objects to
+	 */
+	MOVIESCENE_API void LocateBoundObjects(const FGuid& ObjectId, const UE::UniversalObjectLocator::FResolveParams& ResolveParams, TArray<UObject*, TInlineAllocator<1>>& OutObjects) const;
 
 	/**
 	 * Locate all the objects that correspond to the specified object ID, using the specified context
@@ -99,7 +145,7 @@ public:
 	 * @param Context				Optional context to use to find the required object (for instance, a parent spawnable object)
 	 * @return An array of all bound objects
 	 */
-	TArray<UObject*, TInlineAllocator<1>> LocateBoundObjects(const FGuid& ObjectId, UObject* Context) const
+	TArray<UObject*, TInlineAllocator<1>> LocateBoundObjects(const FGuid& ObjectId, const UE::UniversalObjectLocator::FResolveParams& Context) const
 	{
 		TArray<UObject*, TInlineAllocator<1>> OutObjects;
 		LocateBoundObjects(ObjectId, Context, OutObjects);
@@ -220,7 +266,10 @@ public:
 	/**
 	 * Called to retrieve or construct a director instance to be used for the specified player
 	 */
-	virtual UObject* CreateDirectorInstance(IMovieScenePlayer& Player, FMovieSceneSequenceID SequenceID) { return nullptr; }
+	virtual UObject* CreateDirectorInstance(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, FMovieSceneSequenceID SequenceID) { return nullptr; }
+
+	UE_DEPRECATED(5.4, "Please use the version that takes a SharedPlaybackState")
+	UObject* CreateDirectorInstance(IMovieScenePlayer& Player, FMovieSceneSequenceID SequenceID);
 
 	MOVIESCENE_API virtual EMovieSceneServerClientMask OverrideNetworkMask(EMovieSceneServerClientMask InDefaultMask) const;
 

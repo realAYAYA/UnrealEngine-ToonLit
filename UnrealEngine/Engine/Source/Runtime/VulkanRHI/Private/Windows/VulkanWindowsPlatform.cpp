@@ -5,6 +5,7 @@
 #include "../VulkanDevice.h"
 #include "../VulkanRayTracing.h"
 #include "../VulkanExtensions.h"
+#include "Misc/CommandLine.h"
 
 // Disable warning about forward declared enumeration without a type, since the D3D specific enums are not used in this translation unit
 #if WITH_AMD_AGS

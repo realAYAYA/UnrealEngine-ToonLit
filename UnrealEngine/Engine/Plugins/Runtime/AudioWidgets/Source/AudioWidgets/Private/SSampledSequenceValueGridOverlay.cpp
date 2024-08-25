@@ -47,8 +47,7 @@ int32 SSampledSequenceValueGridOverlay::OnPaint(const FPaintArgs& Args, const FG
 	for (int32 SlotIndex = 0; SlotIndex < CachedGridSlotData.Num(); ++SlotIndex)
 	{
 		const SampledSequenceDrawingUtils::FGridData& SlotData = CachedGridSlotData[SlotIndex];
-		const FGridLabelData& LabelData = CachedLabelData[SlotIndex];
-
+		
 		for (int32 LineIndex = 0; LineIndex < SlotData.DrawCoordinates.Num(); ++LineIndex)
 		{
 			LinePoints[0] = SlotData.DrawCoordinates[LineIndex].A;
@@ -56,6 +55,7 @@ int32 SSampledSequenceValueGridOverlay::OnPaint(const FPaintArgs& Args, const FG
 
 			if (!bHideLabels)
 			{
+				const FGridLabelData& LabelData = CachedLabelData[SlotIndex];
 				const FVector2D LabelSize = FontMeasureService->Measure(LabelData.LabelTexts[LineIndex], FSlateFontInfo(FAppStyle::GetFontStyle("Regular")));
 				const FSlateLayoutTransform LabelLayoutTransform(1.0f, LabelData.LabelCoordinates[LineIndex]);
 				float LabelRotation = 0.f;

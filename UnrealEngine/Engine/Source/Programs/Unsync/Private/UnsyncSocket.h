@@ -5,17 +5,17 @@
 #include <stdint.h>
 
 #include "UnsyncCommon.h"
+#include "UnsyncBuffer.h"
 
 struct tls;
 
 namespace unsync {
 
-#ifndef UNSYNC_USE_TLS
-#	define UNSYNC_USE_TLS 0
-#endif
-
 class FBuffer;
+struct FBufferView;
 using FSocketHandle = uintptr_t;
+
+extern const FSocketHandle InvalidSocketHandle;
 
 struct FSocketAddress  // opaque buffer that holds socket address
 {
@@ -37,6 +37,9 @@ struct FSocketAddress  // opaque buffer that holds socket address
 // Returns current host name or empty string if it could not be determined.
 std::string GetCurrentHostName();
 
+FSocketHandle SocketListenTcp(const char* Address, uint16 Port);
+FSocketHandle SocketAccept(FSocketHandle ListenSocket);
+
 FSocketHandle SocketConnectTcp(const char* DestAddress, uint16 Port);
 void		  SocketClose(FSocketHandle Socket);
 
@@ -44,6 +47,8 @@ int			   SocketSend(FSocketHandle Socket, const void* Data, size_t DataSize);
 int			   SocketRecvAll(FSocketHandle Socket, void* Data, size_t DataSize);
 int			   SocketRecvAny(FSocketHandle Socket, void* Data, size_t DataSize);
 FSocketAddress SocketMakeAddress(const char* Address, uint16 Port);
+
+bool SocketSetRecvTimeout(FSocketHandle Socket, uint32 Seconds);
 
 bool SocketValid(FSocketHandle Socket);
 
@@ -65,10 +70,8 @@ SocketRecvT(FSocketHandle Socket, T& Data)
 enum class ESocketSecurity
 {
 	None,
-#if UNSYNC_USE_TLS
 	TLSv1_2,
 	TLSv1_3,
-#endif	// UNSYNC_USE_TLS
 	Unknown
 };
 
@@ -101,13 +104,12 @@ struct FSocketRaw : FSocketBase
 
 struct FTlsClientSettings
 {
-	const char*	 Subject			= nullptr;
-	bool		 bVerifyCertificate = true;
-	const uint8* CacertData			= nullptr;
-	uint64		 CacertSize			= 0;
+	std::string_view Subject			= {};
+	FBufferView		 CACert				= {};
+	bool			 bVerifyCertificate = true;
+	bool			 bVerifySubject		= true;
 };
 
-#if UNSYNC_USE_TLS
 struct FSocketTls : FSocketBase
 {
 	FSocketTls(FSocketHandle InHandle, FTlsClientSettings ClientSettings);
@@ -121,7 +123,6 @@ struct FSocketTls : FSocketBase
 
 	tls* TlsCtx = {};
 };
-#endif	// UNSYNC_USE_TLS
 
 template<typename T>
 bool
@@ -173,6 +174,7 @@ SendStruct(FSocketBase& Socket, const T& Data)
 	return bOk;
 }
 
+bool SendBuffer(FSocketBase& Socket, const FBufferView& Data);
 bool SendBuffer(FSocketBase& Socket, const FBuffer& Data);
 
 template<typename T>

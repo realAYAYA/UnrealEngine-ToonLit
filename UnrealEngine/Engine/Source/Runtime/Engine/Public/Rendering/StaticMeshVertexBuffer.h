@@ -437,9 +437,16 @@ public:
 	}
 
 	/** Create an RHI vertex buffer with CPU data. CPU data may be discarded after creation (see TResourceArray::Discard) */
+	FBufferRHIRef CreateTangentsRHIBuffer(FRHICommandListBase& RHICmdList);
+	FBufferRHIRef CreateTexCoordRHIBuffer(FRHICommandListBase& RHICmdList);
+
+	UE_DEPRECATED(5.4, "Use CreateTangentsRHIBuffer instead.")
 	FBufferRHIRef CreateTangentsRHIBuffer_RenderThread();
+	UE_DEPRECATED(5.4, "Use CreateTangentsRHIBuffer instead.")
 	FBufferRHIRef CreateTangentsRHIBuffer_Async();
+	UE_DEPRECATED(5.4, "Use CreateTexCoordRHIBuffer instead.")
 	FBufferRHIRef CreateTexCoordRHIBuffer_RenderThread();
+	UE_DEPRECATED(5.4, "Use CreateTexCoordRHIBuffer instead.")
 	FBufferRHIRef CreateTexCoordRHIBuffer_Async();
 
 	/** Similar to Init/ReleaseRHI but only update existing SRV so references to the SRV stays valid */
@@ -533,12 +540,6 @@ private:
 	* @param InData - optional half float source data to convert into full float texture coordinate buffer. if null, convert existing half float texture coordinates to a new float buffer.
 	*/
 	void ConvertHalfTexcoordsToFloat(const uint8* InData);
-
-	template <bool bRenderThread>
-	FBufferRHIRef CreateTangentsRHIBuffer_Internal();
-
-	template<bool bRenderThread>
-	FBufferRHIRef CreateTexCoordRHIBuffer_Internal();
 
 	void InitTangentAndTexCoordStrides();
 };

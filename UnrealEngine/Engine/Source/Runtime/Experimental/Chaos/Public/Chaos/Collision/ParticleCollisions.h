@@ -112,7 +112,7 @@ namespace Chaos
 		 * @note do not delete constraint from the lambda. You may disable them though.
 		*/
 		template<typename TLambda>
-		inline ECollisionVisitorResult VisitCollisions(const TLambda& Visitor);
+		inline ECollisionVisitorResult VisitCollisions(const TLambda& Visitor, const ECollisionVisitorFlags VisitFlags = ECollisionVisitorFlags::VisitDefault);
 
 		/**
 		 * @brief Visit all the collisions on this particle
@@ -121,7 +121,7 @@ namespace Chaos
 		 * @note do not delete constraint from the lambda. You may disable them though.
 		*/
 		template<typename TLambda>
-		inline ECollisionVisitorResult VisitConstCollisions(const TLambda& Visitor) const;
+		inline ECollisionVisitorResult VisitConstCollisions(const TLambda& Visitor, const ECollisionVisitorFlags VisitFlags = ECollisionVisitorFlags::VisitDefault) const;
 
 	private:
 		FContainerType MidPhases;

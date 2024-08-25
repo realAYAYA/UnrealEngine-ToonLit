@@ -93,9 +93,10 @@ FOptimusEditorStyle::FOptimusEditorStyle() :
 
 	// Graph type icons
 	{
-		Set("GraphType.Setup", new IMAGE_BRUSH_SVG("Icons/Graph_Setup", IconSize20x20, DefaultForeground));
-		Set("GraphType.Trigger", new IMAGE_BRUSH_SVG("Icons/Graph_Trigger", IconSize20x20, DefaultForeground));
-		Set("GraphType.Update", new IMAGE_BRUSH_SVG("Icons/Graph_Update", IconSize20x20, DefaultForeground));
+		Set("GraphType.Setup", new IMAGE_BRUSH_SVG("Icons/Graph_Setup", IconSize16x16, DefaultForeground));
+		Set("GraphType.Trigger", new IMAGE_BRUSH_SVG("Icons/Graph_Trigger", IconSize16x16, DefaultForeground));
+		Set("GraphType.Update", new IMAGE_BRUSH_SVG("Icons/Graph_Update", IconSize16x16, DefaultForeground));
+		Set("GraphType.SubGraph", new IMAGE_BRUSH_SVG("Icons/Graph_SubGraph", IconSize16x16, DefaultForeground));
 	}
 
 	// Graph styles

@@ -25,6 +25,7 @@ struct FEOSSDKPlatformConfig
 	FString OverrideLocaleCode;
 	FString DeploymentId;
 	FString CacheDirectory;
+	EOS_ERTCBackgroundMode RTCBackgroundMode = EOS_ERTCBackgroundMode::EOS_RTCBM_KeepRoomsAlive;
 	bool bIsServer = false;
 	bool bLoadingInEditor = false;
 	bool bDisableOverlay = false;
@@ -45,13 +46,17 @@ DECLARE_MULTICAST_DELEGATE_OneParam(FEOSSDKManagerOnPreCreatePlatform, EOS_Platf
 class IEOSPlatformHandle
 {
 public:
-	IEOSPlatformHandle(EOS_HPlatform InPlatformHandle) : PlatformHandle(InPlatformHandle) {}
+	IEOSPlatformHandle(EOS_HPlatform InPlatformHandle)
+		: PlatformHandle(InPlatformHandle)
+	{}
+
 	virtual ~IEOSPlatformHandle() = default;
 
 	virtual void Tick() = 0;
 
 	operator EOS_HPlatform() const { return PlatformHandle; }
 
+	virtual FString GetConfigName() const = 0;
 	virtual FString GetOverrideCountryCode() const = 0;
 	virtual FString GetOverrideLocaleCode() const = 0;
 
@@ -106,6 +111,9 @@ public:
 
 	/** Create a platform handle using EOSSDK options directly. */
 	virtual IEOSPlatformHandlePtr CreatePlatform(EOS_Platform_Options& PlatformOptions) = 0;
+
+	/** Retrieves the array of platform handles for all active platforms */
+	virtual TArray<IEOSPlatformHandlePtr> GetActivePlatforms() = 0;
 
 	virtual FString GetProductName() const = 0;
 	virtual FString GetProductVersion() const = 0;

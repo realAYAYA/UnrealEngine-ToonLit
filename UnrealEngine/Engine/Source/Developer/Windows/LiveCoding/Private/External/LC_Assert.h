@@ -4,9 +4,7 @@
 
 // BEGIN EPIC MOD
 #include "LC_Platform.h"
-// END EPIC MOD
-#include LC_PLATFORM_INCLUDE(LC_Debugger)
-// BEGIN EPIC MOD
+#include "LC_Debugger_Windows.h"
 #include "LC_Logging.h"
 // END EPIC MOD
 

@@ -33,13 +33,14 @@ public:
 	/**
 	 * Initialize this work item.
 	 *
+	 * @param InJobID An ID to identify the job while in flight
 	 * @param InFrameNumber The number of the image frame.
 	 * @param InMipLevel Will read in this level and all higher levels.
 	 * @param InTileSelection Which tiles to read.
 	 * @param InExistingFrame If set, then use this frame to load into.
 	 * @see Shutdown
 	 */
-	void Initialize(int32 InFrameNumber, TMap<int32, FImgMediaTileSelection> InMipTiles, TSharedPtr<FImgMediaFrame, ESPMode::ThreadSafe> InExistingFrame);
+	void Initialize(int32 InJobID, int32 InFrameNumber, TMap<int32, FImgMediaTileSelection> InMipTiles, TSharedPtr<FImgMediaFrame, ESPMode::ThreadSafe> InExistingFrame);
 
 public:
 
@@ -59,6 +60,9 @@ protected:
 	void Finalize(TSharedPtr<FImgMediaFrame, ESPMode::ThreadSafe> Frame, float WorkTime);
 
 private:
+
+	/** ID to identify this workload instance when in flight */
+	int32 JobID;
 
 	/** The number of the image frame. */
 	int32 FrameNumber;

@@ -115,7 +115,7 @@ namespace ChaosTest
 	}
 
 	// Start with a kinematic connected to a dynamic. Verify that removing the
-	// constraint removed both particles.
+	// constraint removes both particles.
 	// This version explicitly removes the constraint from the graph.
 	// 
 	//		(d=dynamic, s=sleeping, k=kinematic)
@@ -151,7 +151,7 @@ namespace ChaosTest
 	}
 
 	// Start with a kinematic connected to a dynamic. Verify that removing the
-	// constraint removed both particles.
+	// constraint removes both particles.
 	// This version has the constraint removed by making all particles kinematic
 	//		(d=dynamic, s=sleeping, k=kinematic)
 	//		Ak - Bd
@@ -183,6 +183,62 @@ namespace ChaosTest
 		EXPECT_FALSE(Test.ParticleHandles[0]->IsInConstraintGraph());
 		EXPECT_FALSE(Test.ParticleHandles[1]->IsInConstraintGraph());
 		EXPECT_FALSE(Test.ConstraintHandles[0]->IsInConstraintGraph());
+	}
+
+	// Start with a kinematic connected to a sleeping dynamic. Verify that removing the
+	// kinematic removes both particles from the graph (because we do not keep islands 
+	// unless there are constraints in them), but the dynamic particle is now awake.
+	//		(d=dynamic, s=sleeping, k=kinematic)
+	//		Ak - Bs
+	// =>	{} (B is dynamic/awake but the graph is empty)
+	//
+	// This tests a bug where we were not waking a particle if we removed all other particles 
+	// from its island. We now defer island destruction to after sleep handling.
+	//
+	GTEST_TEST(GraphEvolutionTests, TestConstraintGraph_KinematicDynamic_RemoveKinematic)
+	{
+		FGraphEvolutionTest Test(2);
+		Test.MakeChain();
+
+		Test.Evolution.SetParticleObjectState(Test.ParticleHandles[0], EObjectStateType::Kinematic);
+
+		Test.AdvanceUntilSleeping();
+
+		// Should have 1 island
+		EXPECT_EQ(Test.IslandManager->GetNumIslands(), 1);
+		EXPECT_TRUE(Test.ParticleHandles[0]->IsInConstraintGraph());
+		EXPECT_TRUE(Test.ParticleHandles[1]->IsInConstraintGraph());
+		EXPECT_TRUE(Test.ConstraintHandles[0]->IsInConstraintGraph());
+
+		// B should be asleep
+		EXPECT_TRUE(Test.ParticleHandles[1]->IsSleeping());
+
+		// Remove A
+		Test.Evolution.DisableParticle(Test.ParticleHandles[0]);
+
+		// A and the constraint should have been removed from the graph
+		EXPECT_FALSE(Test.ParticleHandles[0]->IsInConstraintGraph());
+		EXPECT_FALSE(Test.ConstraintHandles[0]->IsInConstraintGraph());
+
+		// B will be removed from the graph because we do not track islands without
+		// constraints, but not until the next tick. For now it will still be in
+		// the graph and still asleep.
+		EXPECT_EQ(Test.IslandManager->GetNumIslands(), 1);
+		EXPECT_TRUE(Test.ParticleHandles[1]->IsInConstraintGraph());
+		EXPECT_TRUE(Test.ParticleHandles[1]->IsSleeping());
+
+		// Tick physics. This will update the graph, waking B's island and therefore B.
+		// B's island will then be destroyed because it has no constraints.
+		Test.Advance();
+
+		// Graph should be empty
+		EXPECT_EQ(Test.IslandManager->GetNumIslands(), 0);
+		EXPECT_FALSE(Test.ParticleHandles[0]->IsInConstraintGraph());
+		EXPECT_FALSE(Test.ParticleHandles[1]->IsInConstraintGraph());
+		EXPECT_FALSE(Test.ConstraintHandles[0]->IsInConstraintGraph());
+		
+		// B should be awake
+		EXPECT_FALSE(Test.ParticleHandles[1]->IsSleeping());
 	}
 
 	// Start with an island containing 4 particle connected in a chain, then make the second one kinematic.
@@ -323,8 +379,8 @@ namespace ChaosTest
 	}
 
 	// Start with an island containing 4 particle connected in a chain, then make the middle two kinematic.
-	// This makes the B-C constraint kinematic ("invalid" in the Constraint Graph terminolgy) which means
-	// it does not belong in any island and is kicked out of the graph (the edge is deleted).
+	// This makes the B-C constraint kinematic which means it does not belong in any island and is kicked 
+	// out of the graph (the edge is deleted).
 	// Check that the island manager handles kinematic-kinematic constraints
 	//		A-B-C-D 
 	// =>	A-B  C-D
@@ -641,80 +697,38 @@ namespace ChaosTest
 		EXPECT_FALSE(FConstGenericParticleHandle(Test.ParticleHandles[3])->Sleeping());
 	}
 
-	// Start with an island containing 4 sleeping particles connected in a chain. Then wake the island
-	// using the WakeIsland method.
-	//
-	//		(d=dynamic, s=sleeping, k=kinematic)
-	//		As - Bs - Cs - Ds  =>	Ad - Bd - Cd - Dd
-	//
-	// @todo(chaos): Explicit waking of islands is not currently supported
-	GTEST_TEST(GraphEvolutionTests, DISABLED_TestConstraintGraph_WakeIsland)
-	{
-		FGraphEvolutionTest Test(4);
-		Test.MakeChain();
-
-		Test.AdvanceUntilSleeping();
-
-		// All particles asleep
-		EXPECT_TRUE(FConstGenericParticleHandle(Test.ParticleHandles[0])->Sleeping());
-		EXPECT_TRUE(FConstGenericParticleHandle(Test.ParticleHandles[1])->Sleeping());
-		EXPECT_TRUE(FConstGenericParticleHandle(Test.ParticleHandles[2])->Sleeping());
-		EXPECT_TRUE(FConstGenericParticleHandle(Test.ParticleHandles[3])->Sleeping());
-		EXPECT_EQ(Test.IslandManager->GetNumIslands(), 1);
-
-		// Flag the island for wake up
-		if (Test.IslandManager->GetNumIslands() == 1)
-		{
-			EXPECT_TRUE(Test.IslandManager->GetIsland(0)->IsSleeping());
-			EXPECT_TRUE(false);	// Should be calling WakeIsland here
-			//Test.IslandManager->WakeIsland(Test.Particles, 0);
-		}
-
-		Test.Advance();
-
-		// Island and all particles should now be awake
-		EXPECT_EQ(Test.IslandManager->GetNumIslands(), 1);
-		if (Test.IslandManager->GetNumIslands() == 1)
-		{
-			EXPECT_FALSE(Test.IslandManager->GetIsland(0)->IsSleeping());
-		}
-		EXPECT_FALSE(FConstGenericParticleHandle(Test.ParticleHandles[0])->Sleeping());
-		EXPECT_FALSE(FConstGenericParticleHandle(Test.ParticleHandles[1])->Sleeping());
-		EXPECT_FALSE(FConstGenericParticleHandle(Test.ParticleHandles[2])->Sleeping());
-		EXPECT_FALSE(FConstGenericParticleHandle(Test.ParticleHandles[3])->Sleeping());
-	}
-
 	// Start with an island containing 4 awake particles connected in a chain. Then sleep the island
-	// using the SleepIsland method.
+	// by explicitly putting all particles to sleep
 	//
 	//		(d=dynamic, s=sleeping, k=kinematic)
 	//		Ad - Bd - Cd - Dd  =>	As - Bs - Cs - Ds
 	//
-	// @todo(chaos): this test fails. Explicit call to SleepIsland do not work atm
-	GTEST_TEST(GraphEvolutionTests, DISABLED_TestConstraintGraph_SleepIsland)
+	GTEST_TEST(GraphEvolutionTests, TestConstraintGraph_SleepIsland)
 	{
 		FGraphEvolutionTest Test(4);
 		Test.MakeChain();
 
 		Test.Advance();
 
-		// All particles awake
+		// All particles and costraints are awake
 		EXPECT_FALSE(FConstGenericParticleHandle(Test.ParticleHandles[0])->Sleeping());
 		EXPECT_FALSE(FConstGenericParticleHandle(Test.ParticleHandles[1])->Sleeping());
 		EXPECT_FALSE(FConstGenericParticleHandle(Test.ParticleHandles[2])->Sleeping());
 		EXPECT_FALSE(FConstGenericParticleHandle(Test.ParticleHandles[3])->Sleeping());
+		EXPECT_FALSE(Test.ConstraintHandles[0]->IsSleeping());
+		EXPECT_FALSE(Test.ConstraintHandles[1]->IsSleeping());
+		EXPECT_FALSE(Test.ConstraintHandles[2]->IsSleeping());
 		EXPECT_EQ(Test.IslandManager->GetNumIslands(), 1);
 
-		// Flag the island for sleep
-		if (Test.IslandManager->GetNumIslands() == 1)
-		{
-			EXPECT_FALSE(Test.IslandManager->GetIsland(0)->IsSleeping());
-			Test.IslandManager->SetParticleIslandIsSleeping(Test.ParticleHandles[0], true);
-		}
+		// Put all of the particles to sleep
+		Test.Evolution.SetParticleObjectState(Test.ParticleHandles[0], EObjectStateType::Sleeping);
+		Test.Evolution.SetParticleObjectState(Test.ParticleHandles[1], EObjectStateType::Sleeping);
+		Test.Evolution.SetParticleObjectState(Test.ParticleHandles[2], EObjectStateType::Sleeping);
+		Test.Evolution.SetParticleObjectState(Test.ParticleHandles[3], EObjectStateType::Sleeping);
 
 		Test.Advance();
 
-		// Island and all particles should now be asleep
+		// Island and all particles and constraints should now be asleep
 		EXPECT_EQ(Test.IslandManager->GetNumIslands(), 1);
 		if (Test.IslandManager->GetNumIslands() == 1)
 		{
@@ -724,6 +738,23 @@ namespace ChaosTest
 		EXPECT_TRUE(FConstGenericParticleHandle(Test.ParticleHandles[1])->Sleeping());
 		EXPECT_TRUE(FConstGenericParticleHandle(Test.ParticleHandles[2])->Sleeping());
 		EXPECT_TRUE(FConstGenericParticleHandle(Test.ParticleHandles[3])->Sleeping());
+
+		EXPECT_TRUE(Test.ConstraintHandles[0]->IsInConstraintGraph());
+		EXPECT_TRUE(Test.ConstraintHandles[1]->IsInConstraintGraph());
+		EXPECT_TRUE(Test.ConstraintHandles[2]->IsInConstraintGraph());
+
+		EXPECT_TRUE(Test.ConstraintHandles[0]->IsSleeping());
+		EXPECT_TRUE(Test.ConstraintHandles[1]->IsSleeping());
+		EXPECT_TRUE(Test.ConstraintHandles[2]->IsSleeping());
+	}
+
+	// @todo(chaos): Implement this. TestConstraintGraph_SleepIsland is intended to reproduce a bug 
+	// exp[osed by collision constraints where collisions were being destroyed on particles that were 
+	// explicitly put to sleep. However that bug was a result of how collision constraints are 
+	// destroyed (i.e., when they are not updated this tick) and the NullConstraints don't have that same 
+	// behaviour. We need a unit testing constraint that can reproduce that behaviour. 
+	GTEST_TEST(GraphEvolutionTests, DISABLED_TestConstraintGraph_SleepIsland_Collisions)
+	{
 	}
 
 	// Add a constraint between a sleeping and a kinematic body and tick.

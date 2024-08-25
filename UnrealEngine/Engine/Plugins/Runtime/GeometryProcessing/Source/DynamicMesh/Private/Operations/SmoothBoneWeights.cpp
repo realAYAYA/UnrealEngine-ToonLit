@@ -6,7 +6,6 @@
 #include "DynamicMesh/DynamicMeshAttributeSet.h"
 #include "DynamicMesh/NonManifoldMappingSupport.h"
 #include "Util/ProgressCancel.h"
-#include "BoneWeights.h"
 #include "Math/UnrealMathUtility.h"
 #include "Parameterization/MeshLocalParam.h"
 #include "DynamicMesh/MeshNormals.h"
@@ -237,6 +236,11 @@ EOperationValidationResult FSmoothDynamicMeshVertexSkinWeights::Validate()
 		return EOperationValidationResult::Failed_UnknownReason;
 	}
 
+	if (MaxNumInfluences <= 0)
+	{
+		return EOperationValidationResult::Failed_UnknownReason;
+	}
+
 	return TSmoothBoneWeights::Validate();
 }
 
@@ -254,6 +258,12 @@ bool FSmoothDynamicMeshVertexSkinWeights::SmoothWeightsAtVertex(const int32 Vert
 			WeightArray.SetBoneWeight(FBoneWeight(FinalWeight.Key, FinalWeight.Value), BoneSettings);
 		}
 		
+		BoneSettings.SetNormalizeType(EBoneWeightNormalizeType::Always);
+		BoneSettings.SetMaxWeightCount(MaxNumInfluences);
+
+		// make sure we do not exceed the max influence limit
+		WeightArray.Renormalize(BoneSettings);
+
 		Attribute->SetValue(VertexID, WeightArray);
 
 		return true;

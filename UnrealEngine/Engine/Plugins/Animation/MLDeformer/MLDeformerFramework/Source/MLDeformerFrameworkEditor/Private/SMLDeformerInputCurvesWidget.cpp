@@ -53,11 +53,6 @@ namespace UE::MLDeformer
 			{
 				Menu.AddMenuEntry(Actions.DeleteInputCurves);
 			}
-
-			if (!GetElements().IsEmpty())
-			{
-				Menu.AddMenuEntry(Actions.ClearInputCurves);
-			}
 		}
 		Menu.EndSection();
 

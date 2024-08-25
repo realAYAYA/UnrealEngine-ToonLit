@@ -1,13 +1,13 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 /*=============================================================================
-	SkyAtmosphere.usf: Sky and atmosphere rendering functions. 
+	SkyAtmosphere.usf: Sky and atmosphere rendering functions.  
 =============================================================================*/
 
 
 #include "Common.ush"
 #include "SceneTexturesCommon.ush"
-#include "SkyAtmosphereCommon.ush"
+#include "/Engine/Shared/EnvironmentComponentsFlags.h"
 
 #ifndef COLORED_TRANSMITTANCE_ENABLED	// Never used, UE4 does not supports dual blending
 #define COLORED_TRANSMITTANCE_ENABLED 0 
@@ -103,6 +103,7 @@
 #include "VolumetricCloudCommon.ush" 
 #endif
 
+#include "SkyAtmosphereCommon.ush"
 
 #if SAMPLE_ATMOSPHERE_ON_CLOUDS
 Texture2D<float>	VolumetricCloudDepthTexture;
@@ -163,8 +164,8 @@ float3 GetScreenWorldDir(in float4 SVPos)
 {
 	float2 ScreenPosition = SvPositionToScreenPosition(SVPos).xy;
 	const float Depth = 1000000.0f;
-	float4 WorldPos = mul(float4(ScreenPosition * Depth, Depth, 1), View.ScreenToTranslatedWorld);
-	return normalize(WorldPos.xyz - View.TranslatedWorldCameraOrigin);
+	float4 WorldPos = mul(float4(GetScreenPositionForProjectionType(ScreenPosition, Depth), Depth, 1), View.ScreenToTranslatedWorld);
+	return GetCameraVectorFromTranslatedWorldPosition(WorldPos.xyz);
 }
 
 // This is the world position of the camera. It is also force to be at the top of the virutal planet surface. 
@@ -654,6 +655,12 @@ SingleScatteringResult IntegrateSingleScatteredLuminance(
 #if MULTISCATTERING_APPROX_SAMPLING_ENABLED
 		MultiScatteredLuminance0 = GetMultipleScattering(P, Light0ZenithCosAngle);
 #endif
+#if SECOND_ATMOSPHERE_LIGHT_ENABLED
+		float3 MultiScatteredLuminance1 = 0.0f;
+	#if MULTISCATTERING_APPROX_SAMPLING_ENABLED
+		MultiScatteredLuminance1 = GetMultipleScattering(P, Light1ZenithCosAngle);
+	#endif
+#endif
 
 		// Planet shadow
 		float tPlanet0 = RaySphereIntersectNearest(P, Light0Dir, PlanetO + PLANET_RADIUS_OFFSET * UpVector, Atmosphere.BottomRadiusKm);
@@ -666,12 +673,12 @@ SingleScatteringResult IntegrateSingleScatteredLuminance(
 #if SAMPLE_OPAQUE_SHADOW
 		{
 			float3 ShadowSampleWorldPosition0 = ShadowP0 * SKY_UNIT_TO_CM + View.SkyPlanetTranslatedWorldCenterAndViewHeight.xyz;
-			PlanetShadow0 *= ComputeLight0VolumeShadowing(ShadowSampleWorldPosition0 /* - LWCHackToFloat(PrimaryView.PreViewTranslation)*/, false, false, bUnused);
+			PlanetShadow0 *= ComputeLight0VolumeShadowing(ShadowSampleWorldPosition0 /* - DFHackToFloat(PrimaryView.PreViewTranslation)*/, false, false, bUnused);
 
 		#if VIRTUAL_SHADOW_MAP
 			if (VirtualShadowMapId0 != INDEX_NONE)
 			{
-				FVirtualShadowMapSampleResult VirtualShadowMapSample = SampleVirtualShadowMapTranslatedWorld(VirtualShadowMapId0, ShadowSampleWorldPosition0);
+				FVirtualShadowMapSampleResult VirtualShadowMapSample = SampleVirtualShadowMapDirectional(VirtualShadowMapId0, ShadowSampleWorldPosition0);
 				PlanetShadow0 *= VirtualShadowMapSample.ShadowFactor;
 			}
 		#endif // VIRTUALSHADOW_MAP
@@ -703,11 +710,11 @@ SingleScatteringResult IntegrateSingleScatteredLuminance(
 	#endif
 		{
 			float3 ShadowSampleWorldPosition1 = ShadowP1 * SKY_UNIT_TO_CM + View.SkyPlanetTranslatedWorldCenterAndViewHeight.xyz;
-			PlanetShadow1 *= ComputeLight1VolumeShadowing(ShadowSampleWorldPosition1/* - LWCHackToFloat(PrimaryView.PreViewTranslation)*/, false, false, bUnused);
+			PlanetShadow1 *= ComputeLight1VolumeShadowing(ShadowSampleWorldPosition1/* - DFHackToFloat(PrimaryView.PreViewTranslation)*/, false, false, bUnused);
 		#if VIRTUAL_SHADOW_MAP
 			if (VirtualShadowMapId1 != INDEX_NONE)
 			{
-				FVirtualShadowMapSampleResult VirtualShadowMapSample = SampleVirtualShadowMapTranslatedWorld(VirtualShadowMapId1, ShadowSampleWorldPosition1);
+				FVirtualShadowMapSampleResult VirtualShadowMapSample = SampleVirtualShadowMapDirectional(VirtualShadowMapId1, ShadowSampleWorldPosition1);
 				PlanetShadow1 *= VirtualShadowMapSample.ShadowFactor;
 			}
 		#endif // VIRTUALSHADOW_MAP
@@ -719,9 +726,9 @@ SingleScatteringResult IntegrateSingleScatteredLuminance(
 			VolumetricCloudCommonParameters.CloudShadowmapFarDepthKm[1].x, VolumetricCloudShadowMapTexture1, VolumetricCloudShadowMapTexture1Sampler, OutOpticalDepth3), VolumetricCloudShadowStrength1));
 #endif
 		//  Multi-scattering can work for the second light but it is disabled for the sake of performance.
-		S		+= ExposedLight1Illuminance * PlanetShadow1 * TransmittanceToLight1 * PhaseTimesScattering1			;// +MultiScatteredLuminance * Medium.Scattering);
-		SMieOnly+= ExposedLight1Illuminance * PlanetShadow1 * TransmittanceToLight1 * PhaseTimesScattering1MieOnly	;// +MultiScatteredLuminance * Medium.Scattering);
-		SRayOnly+= ExposedLight1Illuminance * PlanetShadow1 * TransmittanceToLight1 * PhaseTimesScattering1RayOnly	;// +MultiScatteredLuminance * Medium.Scattering);
+		S		 += ExposedLight1Illuminance * (PlanetShadow1 * TransmittanceToLight1 * PhaseTimesScattering1		 + MultiScatteredLuminance1 * Medium.Scattering);
+		SMieOnly += ExposedLight1Illuminance * (PlanetShadow1 * TransmittanceToLight1 * PhaseTimesScattering1MieOnly + MultiScatteredLuminance1 * Medium.ScatteringMie);
+		SRayOnly += ExposedLight1Illuminance * (PlanetShadow1 * TransmittanceToLight1 * PhaseTimesScattering1RayOnly + MultiScatteredLuminance1 * Medium.ScatteringRay);
 #endif
 
 		// When using the power serie to accumulate all sattering order, serie r must be <1 for a serie to converge. 
@@ -816,10 +823,21 @@ float4 PrepareOutput(float3 PreExposedLuminance, float3 Transmittance = float3(1
 	// Sky materials can result in high luminance values, e.g. the sun disk. 
 	// This is so we make sure to at least stay within the boundaries of fp10 and not cause NaN on some platforms.
 	// We also half that range to also make sure we have room for other additive elements such as bloom, clouds or particle visual effects.
-	float3 SafePreExposedLuminance = min(PreExposedLuminance, Max10BitsFloat.xxx * 0.5f);
-
+	const float3 SafePreExposedLuminance = min(PreExposedLuminance, Max10BitsFloat.xxx * 0.5f);
+	
 	const float GreyScaleTransmittance = dot(Transmittance, float3(1.0f / 3.0f, 1.0f / 3.0f, 1.0f / 3.0f));
-	return float4(SafePreExposedLuminance, GreyScaleTransmittance);
+	float4 LuminanceAlpha = float4(SafePreExposedLuminance, GreyScaleTransmittance);
+	
+#if POST_PROCESS_ALPHA
+	if (View.RenderingReflectionCaptureMask == 0.0f)
+	{
+		LuminanceAlpha.rgb	= IsSkyAtmosphereHoldout(View.EnvironmentComponentsFlags) ? 0.0f : LuminanceAlpha.rgb;
+		LuminanceAlpha.a	= 1 - GreyScaleTransmittance;
+	}
+#endif
+	
+	return LuminanceAlpha;
+
 }
 
 uint DepthReadDisabled;
@@ -914,7 +932,8 @@ void RenderSkyAtmosphereRayMarchingPS(
 
 	float ViewHeight = length(WorldPos);
 #if FASTSKY_ENABLED && RENDERSKY_ENABLED
-	if (ViewHeight < (Atmosphere.TopRadiusKm * PLANET_RADIUS_RATIO_SAFE_EDGE) && DeviceZ == FarDepthValue)
+	if (ViewHeight < (Atmosphere.TopRadiusKm * PLANET_RADIUS_RATIO_SAFE_EDGE) && DeviceZ == FarDepthValue
+		&& (View.RenderingReflectionCaptureMask > 0.0f || IsSkyAtmosphereRenderedInMain(View.EnvironmentComponentsFlags)))
 	{
 		float2 UV;
 
@@ -931,10 +950,20 @@ void RenderSkyAtmosphereRayMarchingPS(
 		bool IntersectGround = RaySphereIntersectNearest(WorldPosLocal, WorldDirLocal, float3(0, 0, 0), Atmosphere.BottomRadiusKm) >= 0.0f;
 
 		SkyViewLutParamsToUv(IntersectGround, ViewZenithCosAngle, WorldDirLocal, ViewHeight, Atmosphere.BottomRadiusKm, SkyAtmosphere.SkyViewLutSizeAndInvSize, UV);
-		float3 SkyLuminance = SkyViewLutTexture.SampleLevel(SkyViewLutTextureSampler, UV, 0).rgb;
+		float4 SkyLuminanceTransmittance = SkyViewLutTexture.SampleLevel(SkyViewLutTextureSampler, UV, 0);
+		float3 SkyLuminance = SkyLuminanceTransmittance.rgb;
+
+		float3 SkyGreyTransmittance = 1.0f;
+	#if POST_PROCESS_ALPHA
+		if (View.RenderingReflectionCaptureMask == 0.0f)
+		{
+			SkyGreyTransmittance = SkyLuminanceTransmittance.aaa;
+		}
+	#endif
 
 		PreExposedL += SkyLuminance * LuminanceScale * (ViewOneOverPreExposure * OutputPreExposure);
-		OutLuminance = PrepareOutput(PreExposedL);
+	
+		OutLuminance = PrepareOutput(PreExposedL, SkyGreyTransmittance);
 		return;
 	}
 #endif
@@ -1000,6 +1029,11 @@ void RenderSkyAtmosphereRayMarchingPS(
 		AerialPespectiveViewDistanceScale);
 
 	PreExposedL += ss.L * LuminanceScale;
+	
+	if (View.RenderingReflectionCaptureMask == 0.0f && !IsSkyAtmosphereRenderedInMain(View.EnvironmentComponentsFlags))
+	{
+		PreExposedL = 0.0f;
+	}
 
 #if SAMPLE_ATMOSPHERE_ON_CLOUDS
 	// We use gray scale transmittance to match the rendering when applying the AerialPerspective texture
@@ -1032,7 +1066,12 @@ void RenderSkyAtmosphereRayMarchingPS(
 #define THREADGROUP_SIZE 1
 #endif
 
+// see SkyAtmosphereRendering.cpp GetSkyLutTextureFormat
+#if SHADING_PATH_MOBILE
+RWTexture2D<float4> TransmittanceLutUAV;
+#else
 RWTexture2D<float3> TransmittanceLutUAV;
+#endif
 
 [numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
 void RenderTransmittanceLutCS(uint3 ThreadId : SV_DispatchThreadID)
@@ -1068,7 +1107,11 @@ void RenderTransmittanceLutCS(uint3 ThreadId : SV_DispatchThreadID)
 
 	float3 transmittance = exp(-ss.OpticalDepth);
 
+#if SHADING_PATH_MOBILE
+	TransmittanceLutUAV[int2(PixPos)] = float4(transmittance, 0.0f);
+#else
 	TransmittanceLutUAV[int2(PixPos)] = transmittance;
+#endif
 }
 
 
@@ -1077,7 +1120,12 @@ void RenderTransmittanceLutCS(uint3 ThreadId : SV_DispatchThreadID)
 // Multi-scattering LUT
 ////////////////////////////////////////////////////////////
 
+// see SkyAtmosphereRendering.cpp GetSkyLutTextureFormat
+#if SHADING_PATH_MOBILE
+RWTexture2D<float4> MultiScatteredLuminanceLutUAV;
+#else
 RWTexture2D<float3> MultiScatteredLuminanceLutUAV;
+#endif
 Buffer<float4> UniformSphereSamplesBuffer;
 uint UniformSphereSamplesBufferSampleCount;
 
@@ -1190,7 +1238,11 @@ void RenderMultiScatteredLuminanceLutCS(uint3 ThreadId : SV_DispatchThreadID)
 
 	// MultipleScatteringFactor can be applied here because the LUT is compute every frame
 	// L is pre-exposed since InScatteredLuminance is computed from pre-exposed sun light. So multi-scattering contribution is pre-exposed.
+#if SHADING_PATH_MOBILE
+	MultiScatteredLuminanceLutUAV[int2(PixPos)] = float4(L * Atmosphere.MultiScatteringFactor, 0.0f);
+#else
 	MultiScatteredLuminanceLutUAV[int2(PixPos)] = L * Atmosphere.MultiScatteringFactor;
+#endif
 }
 
 
@@ -1199,7 +1251,9 @@ void RenderMultiScatteredLuminanceLutCS(uint3 ThreadId : SV_DispatchThreadID)
 // Sky View LUT
 ////////////////////////////////////////////////////////////
 
-RWTexture2D<float3> SkyViewLutUAV;
+// Even thought the texture can have 3 channels only (see SkyAtmosphereRendering.cpp GetSkyLutTextureFormat)
+// We always write 4 channels as the grey scale transmittance can be used when alpha propagation is enabled.
+RWTexture2D<float4> SkyViewLutUAV;
 
 [numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
 void RenderSkyViewLutCS(uint3 ThreadId : SV_DispatchThreadID)
@@ -1256,7 +1310,8 @@ void RenderSkyViewLutCS(uint3 ThreadId : SV_DispatchThreadID)
 		View.AtmosphereLightIlluminanceOuterSpace[0].rgb, View.AtmosphereLightIlluminanceOuterSpace[1].rgb,
 		AerialPespectiveViewDistanceScale);
 
-	SkyViewLutUAV[int2(PixPos)] = ss.L;
+	const float Transmittance = dot(ss.Transmittance, float3(1.0f / 3.0f, 1.0f / 3.0f, 1.0f / 3.0f));
+	SkyViewLutUAV[int2(PixPos)] = float4(ss.L, Transmittance);
 }
 
 
@@ -1265,7 +1320,12 @@ void RenderSkyViewLutCS(uint3 ThreadId : SV_DispatchThreadID)
 // Distant sky light LUT
 ////////////////////////////////////////////////////////////
 
+// see SkyAtmosphereRendering.cpp GetSkyLutTextureFormat
+#if SHADING_PATH_MOBILE
+RWTexture2D<float4> DistantSkyLightLutUAV;
+#else
 RWTexture2D<float3> DistantSkyLightLutUAV;
+#endif
 //Buffer<float4> UniformSphereSamplesBuffer;
 float4 AtmosphereLightDirection0;
 float4 AtmosphereLightDirection1;
@@ -1356,7 +1416,12 @@ void RenderDistantSkyLightLutCS(uint3 ThreadId : SV_DispatchThreadID)
 		const float SamplerSolidAngle = 4.0f * PI / float(THREADGROUP_SIZE * THREADGROUP_SIZE);
 		const float3 Illuminance = AccumulatedLuminanceSamples * SamplerSolidAngle;
 		const float3 UniformPhaseFunction = 1.0f / (4.0f * PI);
-		DistantSkyLightLutUAV[int2(PixPos)] = Illuminance * UniformPhaseFunction; // Luminance assuming scattering in a medium with a uniform phase function.
+		// Luminance assuming scattering in a medium with a uniform phase function.
+#if SHADING_PATH_MOBILE
+		DistantSkyLightLutUAV[int2(PixPos)] = float4(Illuminance * UniformPhaseFunction, 0.0f);
+#else
+		DistantSkyLightLutUAV[int2(PixPos)] = Illuminance * UniformPhaseFunction;
+#endif
 		// Since this is ran once per scene, we do not have access to view data (VIEWDATA_AVAILABLE==0). 
 		// So this buffer is not pre-exposed today.
 	}
@@ -1526,6 +1591,15 @@ void RenderCameraAerialPerspectiveVolumeCS(uint3 ThreadId : SV_DispatchThreadID)
 		View.AtmosphereLightIlluminanceOuterSpace[0].rgb, View.AtmosphereLightIlluminanceOuterSpace[1].rgb,
 		AerialPespectiveViewDistanceScale,
 		tMaxMax);
+
+#if POST_PROCESS_ALPHA
+	if (IsSkyAtmosphereHoldout(View.EnvironmentComponentsFlags) && !RealTimeReflection360Mode)
+	{
+		ss.L *= 0;
+		ss.LMieOnly *= 0;
+		ss.LRayOnly *= 0;
+	}
+#endif
 
 	const float Transmittance = dot(ss.Transmittance, float3(1.0f / 3.0f, 1.0f / 3.0f, 1.0f / 3.0f));
 	CameraAerialPerspectiveVolumeUAV[ThreadId] = float4(ss.L, Transmittance);

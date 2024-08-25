@@ -51,8 +51,11 @@ public:
 	
 	//~ Begin IEnhancedInputSubsystemInterface
 	virtual UEnhancedPlayerInput* GetPlayerInput() const override;
+protected:
+	virtual TMap<TObjectPtr<const UInputAction>, FInjectedInput>& GetContinuouslyInjectedInputs() override { return ContinuouslyInjectedInputs; }
 	//~ End IEnhancedInputSubsystemInterface
-
+	
+public:
 	/** Pushes this input component onto the stack to be processed by this subsystem's tick function */
 	UFUNCTION(BlueprintCallable, Category = "Input|Editor")
 	void PushInputComponent(UInputComponent* InInputComponent);
@@ -100,6 +103,11 @@ private:
 	/** Internal. This is the current stack of InputComponents that is being processed by the PlayerInput. */
 	UPROPERTY(Transient)
 	TArray<TWeakObjectPtr<UInputComponent>> CurrentInputStack;
+
+protected:
+	// Map of inputs that should be injected every frame. These inputs will be injected when ForcedInput is ticked. 
+	UPROPERTY(Transient) 
+	TMap<TObjectPtr<const UInputAction>, FInjectedInput> ContinuouslyInjectedInputs;
 };
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2

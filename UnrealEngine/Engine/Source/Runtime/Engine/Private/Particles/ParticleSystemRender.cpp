@@ -35,6 +35,7 @@
 #include "RenderCore.h"
 #include "DataDrivenShaderPlatformInfo.h"
 #include "PrimitiveUniformShaderParametersBuilder.h"
+#include "Experimental/ConcurrentLinearAllocator.h"
 
 DECLARE_CYCLE_STAT(TEXT("ParticleSystemSceneProxy Create GT"), STAT_FParticleSystemSceneProxy_Create, STATGROUP_Particles);
 DECLARE_CYCLE_STAT(TEXT("ParticleSystemSceneProxy GetMeshElements RT"), STAT_FParticleSystemSceneProxy_GetMeshElements, STATGROUP_Particles);
@@ -99,9 +100,6 @@ float GMinParticleDrawTimeToTrack = .0001f;
 
 /** Whether to do LOD calculation on GameThread in game */
 extern bool GbEnableGameThreadLODCalculation;
-
-///////////////////////////////////////////////////////////////////////////////
-FParticleOrderPool GParticleOrderPool;
 
 ///////////////////////////////////////////////////////////////////////////////
 
@@ -845,6 +843,8 @@ void FDynamicSpriteEmitterData::GetDynamicMeshElementsEmitter(const FParticleSys
 
 	const auto FeatureLevel = View->GetFeatureLevel();
 
+	FRHICommandListBase& RHICmdList = Collector.GetRHICommandList();
+
 	// Sort and generate particles for this view.
 	const FDynamicSpriteEmitterReplayDataBase* SourceData = GetSourceData();
 
@@ -876,11 +876,11 @@ void FDynamicSpriteEmitterData::GetDynamicMeshElementsEmitter(const FParticleSys
 			SpriteVertexFactory->SetParticleFactoryType(PVFT_Sprite);
 			SpriteVertexFactory->SetNumVertsInInstanceBuffer(SourceData->RequiredModule->bCutoutTexureIsValid ? SourceData->RequiredModule->NumBoundingVertices : 4);
 			SpriteVertexFactory->SetUsesDynamicParameter(bUsesDynamicParameter, bUsesDynamicParameter ? GetDynamicParameterVertexStride() : 0);
-			SpriteVertexFactory->InitResource(FRHICommandListImmediate::Get());
+			SpriteVertexFactory->InitResource(RHICmdList);
 
 			if (SourceData->bUseLocalSpace == false)
 			{
-				Proxy->UpdateWorldSpacePrimitiveUniformBuffer();
+				Proxy->UpdateWorldSpacePrimitiveUniformBuffer(RHICmdList);
 			}
 
 			FGlobalDynamicVertexBuffer& DynamicVertexBuffer = Collector.GetDynamicVertexBuffer();
@@ -925,11 +925,11 @@ void FDynamicSpriteEmitterData::GetDynamicMeshElementsEmitter(const FParticleSys
 				{
 					SCOPE_CYCLE_COUNTER(STAT_FDynamicSpriteEmitterData_PerParticleWorkOrTasks);
 					{
-						FParticleOrder* ParticleOrder = NULL;
+						FParticleOrder* ParticleOrder = nullptr;
 
 						if (bSort)
 						{
-							ParticleOrder = GParticleOrderPool.GetParticleOrderData(ParticleCount);
+							ParticleOrder = (FParticleOrder*)FConcurrentLinearAllocator::Malloc(sizeof(FParticleOrder) * ParticleCount, 16);
 							SortSpriteParticles(SourceData->SortMode, SourceData->bUseLocalSpace, SourceData->ActiveParticleCount, 
 								SourceData->DataContainer.ParticleData, SourceData->ParticleStride, SourceData->DataContainer.ParticleIndices,
 								View, Proxy->GetLocalToWorld(), ParticleOrder);
@@ -937,6 +937,7 @@ void FDynamicSpriteEmitterData::GetDynamicMeshElementsEmitter(const FParticleSys
 
 						// Fill vertex buffers.
 						GetVertexAndIndexData(Allocation.Buffer, DynamicParameterAllocation.Buffer, NULL, ParticleOrder, View->ViewMatrices.GetViewOrigin(), Proxy->GetLocalToWorld(), InstanceFactor);
+						FConcurrentLinearAllocator::Free(ParticleOrder);
 					}
 				}
 
@@ -1316,7 +1317,6 @@ public:
 uint32 FDynamicMeshEmitterData::GetMeshLODIndexFromProxy(const FParticleSystemSceneProxy *InOwnerProxy) const
 {
 	// Determine first available LOD level, top level can be stripped per platform
-	check(IsInRenderingThread());
 	int32 FirstAvailableLOD = StaticMesh->GetRenderData()->CurrentFirstLODIdx;
 	for (; FirstAvailableLOD < StaticMesh->GetRenderData()->LODResources.Num(); FirstAvailableLOD++)
 	{
@@ -1345,7 +1345,7 @@ void FDynamicMeshEmitterData::GetDynamicMeshElementsEmitter(const FParticleSyste
 	{
 		if (Source.EmitterRenderMode == ERM_Normal)
 		{
-			FRHICommandListBase& RHICmdList = FRHICommandListImmediate::Get();
+			FRHICommandListBase& RHICmdList = Collector.GetRHICommandList();
 
 			const auto FeatureLevel = ViewFamily.GetFeatureLevel();
 			const auto ShaderPlatform = GShaderPlatformForFeatureLevel[FeatureLevel];
@@ -1369,10 +1369,10 @@ void FDynamicMeshEmitterData::GetDynamicMeshElementsEmitter(const FParticleSyste
 
 			FDynamicMeshEmitterCollectorResources& CollectorResources = Collector.AllocateOneFrameResource<FDynamicMeshEmitterCollectorResources>(FeatureLevel);
 			FMeshParticleVertexFactory* MeshVertexFactory = &CollectorResources.VertexFactory;
-			SetupVertexFactory(MeshVertexFactory, LODModel, ChosenLODIdx);
+			SetupVertexFactory(RHICmdList, MeshVertexFactory, LODModel, ChosenLODIdx);
 
 			MeshVertexFactory->SetStrides(InstanceVertexStride, bUsesDynamicParameter ? DynamicParameterVertexStride : 0);
-			MeshVertexFactory->InitResource(FRHICommandListImmediate::Get());
+			MeshVertexFactory->InitResource(RHICmdList);
 
 			const FDynamicSpriteEmitterReplayDataBase* SourceData = GetSourceData();
 			FMeshParticleUniformParameters UniformParameters;
@@ -1471,7 +1471,7 @@ void FDynamicMeshEmitterData::GetDynamicMeshElementsEmitter(const FParticleSyste
 			MeshVertexFactory->SetInstanceBuffer(Allocation.VertexBuffer, Allocation.VertexOffset, InstanceVertexStride);
 			MeshVertexFactory->SetDynamicParameterBuffer(DynamicParameterAllocation.VertexBuffer, DynamicParameterAllocation.VertexOffset, GetDynamicParameterVertexStride());
 
-			Proxy->UpdateWorldSpacePrimitiveUniformBuffer();
+			Proxy->UpdateWorldSpacePrimitiveUniformBuffer(RHICmdList);
 			MeshVertexFactory->GetInstanceVerticesCPU() = InstanceVerticesCPU;
 
 			const bool bIsWireframe = AllowDebugViewmodes() && View->Family->EngineShowFlags.Wireframe;
@@ -2281,11 +2281,11 @@ void InitMeshParticleVertexFactoryComponents(FMeshParticleVertexFactory* InVerte
 	Data.bInitialized = true;
 }
 
-void FDynamicMeshEmitterData::SetupVertexFactory( FMeshParticleVertexFactory* InVertexFactory, const FStaticMeshLODResources& LODResources, uint32 LODIdx) const
+void FDynamicMeshEmitterData::SetupVertexFactory( FRHICommandListBase& RHICmdList, FMeshParticleVertexFactory* InVertexFactory, const FStaticMeshLODResources& LODResources, uint32 LODIdx) const
 {
 	FMeshParticleVertexFactory::FDataType Data;
 	InitMeshParticleVertexFactoryComponents(InVertexFactory, LODResources, Data);
-	InVertexFactory->SetData(Data);
+	InVertexFactory->SetData(RHICmdList, Data);
 	InVertexFactory->SetLODIdx((uint8)LODIdx);
 }
 
@@ -2407,6 +2407,8 @@ void FDynamicBeam2EmitterData::GetDynamicMeshElementsEmitter(const FParticleSyst
 		return;
 	}
 
+	FRHICommandListBase& RHICmdList = Collector.GetRHICommandList();
+
 	FIndexBuffer* IndexBuffer = nullptr;
 	uint32 FirstIndex = 0;
 	int32 OutTriangleCount = 0;
@@ -2431,7 +2433,7 @@ void FDynamicBeam2EmitterData::GetDynamicMeshElementsEmitter(const FParticleSyst
 
 	if (Source.bUseLocalSpace == false)
 	{
-		Proxy->UpdateWorldSpacePrimitiveUniformBuffer();
+		Proxy->UpdateWorldSpacePrimitiveUniformBuffer(RHICmdList);
 	}
 
 	auto FeatureLevel = View->GetFeatureLevel();
@@ -2439,7 +2441,7 @@ void FDynamicBeam2EmitterData::GetDynamicMeshElementsEmitter(const FParticleSyst
 	FParticleBeamTrailVertexFactory* BeamTrailVertexFactory = &CollectorResources.VertexFactory;
 	BeamTrailVertexFactory->SetParticleFactoryType(PVFT_BeamTrail);
 	BeamTrailVertexFactory->SetUsesDynamicParameter(bUsesDynamicParameter);
-	BeamTrailVertexFactory->InitResource(FRHICommandListImmediate::Get());
+	BeamTrailVertexFactory->InitResource(RHICmdList);
 
 	// Create and set the uniform buffer for this emitter.
 	BeamTrailVertexFactory->SetBeamTrailUniformBuffer(CreateBeamTrailUniformBuffer(Proxy, &Source, View));
@@ -5167,6 +5169,8 @@ void FDynamicTrailsEmitterData::GetDynamicMeshElementsEmitter(const FParticleSys
 		return;
 	}
 
+	FRHICommandListBase& RHICmdList = Collector.GetRHICommandList();
+
 	const bool bIsWireframe = ViewFamily.EngineShowFlags.Wireframe;
 	FIndexBuffer* IndexBuffer = nullptr;
 	uint32 FirstIndex = 0;
@@ -5197,14 +5201,14 @@ void FDynamicTrailsEmitterData::GetDynamicMeshElementsEmitter(const FParticleSys
 
 	if (SourcePointer->bUseLocalSpace == false)
 	{
-		Proxy->UpdateWorldSpacePrimitiveUniformBuffer();
+		Proxy->UpdateWorldSpacePrimitiveUniformBuffer(RHICmdList);
 	}
 
 	FDynamicBeamTrailCollectorResources& CollectorResources = Collector.AllocateOneFrameResource<FDynamicBeamTrailCollectorResources>(FeatureLevel);
 	FParticleBeamTrailVertexFactory* BeamTrailVertexFactory = &CollectorResources.VertexFactory;
 	BeamTrailVertexFactory->SetParticleFactoryType(PVFT_BeamTrail);
 	BeamTrailVertexFactory->SetUsesDynamicParameter(bUsesDynamicParameter);
-	BeamTrailVertexFactory->InitResource(FRHICommandListImmediate::Get());
+	BeamTrailVertexFactory->InitResource(RHICmdList);
 
 	// Create and set the uniform buffer for this emitter.
 	BeamTrailVertexFactory->SetBeamTrailUniformBuffer(CreateBeamTrailUniformBuffer(Proxy, SourcePointer, View));
@@ -6529,8 +6533,6 @@ FParticleSystemSceneProxy::FParticleSystemSceneProxy(UParticleSystemComponent* C
 	, FirstFreeMeshBatch(0)
 {
 	SetWireframeColor(FLinearColor(3.0f, 0.0f, 0.0f));
-	SetLevelColor(FLinearColor(1.0f, 1.0f, 0.0f));
-	SetPropertyColor(FLinearColor(1.0f, 1.0f, 1.0f));
 
 	LODMethod = Component->LODMethod;
 
@@ -6653,7 +6655,7 @@ void FParticleSystemSceneProxy::GetDynamicMeshElements(const TArray<const FScene
 	}
 }
 
-void FParticleSystemSceneProxy::CreateRenderThreadResources()
+void FParticleSystemSceneProxy::CreateRenderThreadResources(FRHICommandListBase& RHICmdList)
 {
 	CreateRenderThreadResourcesForEmitterData();
 }
@@ -6877,13 +6879,13 @@ FPrimitiveViewRelevance FParticleSystemSceneProxy::GetViewRelevance(const FScene
 	return Result;
 }
 
-void FParticleSystemSceneProxy::OnTransformChanged()
+void FParticleSystemSceneProxy::OnTransformChanged(FRHICommandListBase& RHICmdList)
 {
 	WorldSpacePrimitiveUniformBuffer.ReleaseResource();
 	WorldSpaceUBHash = 0;
 }
 
-void FParticleSystemSceneProxy::UpdateWorldSpacePrimitiveUniformBuffer() const
+void FParticleSystemSceneProxy::UpdateWorldSpacePrimitiveUniformBuffer(FRHICommandListBase& RHICmdList) const
 {
 	// Hash custom floats because we need to invalidate this UB if they don't match otherwise updates to the buffer won't work
 	uint32 NewWorldSpaceUBHash = 0;
@@ -6893,12 +6895,15 @@ void FParticleSystemSceneProxy::UpdateWorldSpacePrimitiveUniformBuffer() const
 		NewWorldSpaceUBHash = FCrc::MemCrc32(LocalCustomPrimitiveData->Data.GetData(), LocalCustomPrimitiveData->Data.Num() * LocalCustomPrimitiveData->Data.GetTypeSize());
 	}
 
+	UE::TScopeLock Lock(WorldSpacePrimitiveUniformBufferMutex);
+
 	const bool bNeedsInit = !WorldSpacePrimitiveUniformBuffer.IsInitialized();
 
 	if (bNeedsInit || (WorldSpaceUBHash != NewWorldSpaceUBHash))
 	{
 		WorldSpaceUBHash = NewWorldSpaceUBHash;
 		WorldSpacePrimitiveUniformBuffer.SetContents(
+			RHICmdList,
 			FPrimitiveUniformShaderParametersBuilder{}
 			.Defaults()
 				.LocalToWorld(FMatrix::Identity)
@@ -6911,13 +6916,14 @@ void FParticleSystemSceneProxy::UpdateWorldSpacePrimitiveUniformBuffer() const
 				.UseSingleSampleShadowFromStationaryLights(UseSingleSampleShadowFromStationaryLights())
 				.UseVolumetricLightmap(GetScene().HasPrecomputedVolumetricLightmap_RenderThread())
 				.CustomPrimitiveData(GetCustomPrimitiveData())
+				.HasPixelAnimation(AnyMaterialHasPixelAnimation())
 			.Build()
 		);
 	}
 
 	if ( bNeedsInit)
 	{
-		WorldSpacePrimitiveUniformBuffer.InitResource(FRHICommandListImmediate::Get());
+		WorldSpacePrimitiveUniformBuffer.InitResource(RHICmdList);
 	}
 }
 
@@ -6951,6 +6957,7 @@ FPrimitiveSceneProxy* UParticleSystemComponent::CreateSceneProxy()
 	//@fixme Get non-instanced path working in ES!
 	if ((IsActive() == true)/** && (EmitterInstances.Num() > 0)*/ && Template)
 	{
+#if UE_WITH_PSO_PRECACHING
 		if (!bPSOPrecacheCalled)
 		{
 			PrecacheAssetPSOs(Template);
@@ -6961,6 +6968,7 @@ FPrimitiveSceneProxy* UParticleSystemComponent::CreateSceneProxy()
 			UE_LOG(LogParticles, Verbose, TEXT("Skipping CreateSceneProxy for UParticleSystemComponent %s (UParticleSystem PSOs are still compiling)"), *GetFullName());
 			return nullptr;
 		}
+#endif // UE_WITH_PSO_PRECACHING
 
 		FInGameScopedCycleCounter InGameCycleCounter(GetWorld(), EInGamePerfTrackers::VFXSignificance, EInGamePerfTrackerThreads::GameThread, bIsManagingSignificance);
 

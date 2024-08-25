@@ -370,7 +370,7 @@ void UGeomModifier::StartTrans()
 		FGeomObjectPtr go = *Itor;
 		ABrush* Actor = go->GetActualBrush();
 
-		Actor->Modify();
+		Actor->Modify(false);
 	}
 }
 
@@ -1973,8 +1973,8 @@ static ABrush* ClipBrushAgainstPlane( const FPlane& InPlane, ABrush* InBrush)
 	// Intersect the giant brush with the source brush's BSP.  This will give us the finished, clipping brush
 	// contained inside of the giant brush.
 
-	ClippedBrush->Modify();
-	InBrush->Brush->Modify();
+	ClippedBrush->Modify(false);
+	InBrush->Brush->Modify(false);
 	GEditor->bspBrushCSG( ClippedBrush, InBrush->Brush, 0, Brush_MAX, CSG_Intersect, false, false, true );
 	FBSPOps::bspUnlinkPolys( ClippedBrush->Brush );
 
@@ -2051,7 +2051,7 @@ static ABrush* ClipBrushAgainstPlane( const FPlane& InPlane, ABrush* InBrush)
 		// Special-case behavior for the builder brush.
 
 		// Copy the temporary brush back over onto the builder brush (keeping object flags)
-		BuilderBrush->Modify();
+		BuilderBrush->Modify(false);
 		FBSPOps::csgCopyBrush( BuilderBrush, ClippedBrush, BuilderBrush->PolyFlags, BuilderBrush->GetFlags(), 0, true );
 		ULayersSubsystem* Layers = GEditor->GetEditorSubsystem<ULayersSubsystem>();
 		Layers->DisassociateActorFromLayers( ClippedBrush );

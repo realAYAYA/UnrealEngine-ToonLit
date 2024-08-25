@@ -1,0 +1,40 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../NiagaraStatelessCommon.ush"
+
+float	RotateAroundPoint_RateScale;
+float	RotateAroundPoint_RateBias;
+float	RotateAroundPoint_RadiusScale;
+float	RotateAroundPoint_RadiusBias;
+float	RotateAroundPoint_InitialPhaseScale;
+float	RotateAroundPoint_InitialPhaseBias;
+
+struct FStatelessModule_RotateAroundPoint
+{
+	float Rate;
+	float Radius;
+	float InitialPhase;
+};
+
+void RotateAroundPoint_IntegratePosition(in FStatelessModule_RotateAroundPoint ModuleData, float Age, inout float3 Position)
+{
+	const float Tau		= 3.14f * 2.0f;
+	const float3 AxisX	= float3(1.0f, 0.0f, 0.0f);
+	const float3 AxisY	= float3(0.0f, 1.0f, 0.0f);
+
+	Position += sin(ModuleData.InitialPhase + Age * ModuleData.Rate) * ModuleData.Radius * AxisX;
+	Position += cos(ModuleData.InitialPhase + Age * ModuleData.Rate) * ModuleData.Radius * AxisY;
+}
+
+void RotateAroundPoint_Initialize(inout FStatelessModule_RotateAroundPoint ModuleData, inout FStatelessParticle Particle)
+{
+	ModuleData.Rate			= RandomScaleBiasFloat(Particle, RotateAroundPoint_RateScale, RotateAroundPoint_RateBias);
+	ModuleData.Radius		= RandomScaleBiasFloat(Particle, RotateAroundPoint_RadiusScale, RotateAroundPoint_RadiusBias);
+	ModuleData.InitialPhase	= RandomScaleBiasFloat(Particle, RotateAroundPoint_InitialPhaseScale, RotateAroundPoint_InitialPhaseBias);
+}
+	
+void RotateAroundPoint_Simulate(in FStatelessModule_RotateAroundPoint ModuleData, inout FStatelessParticle Particle)
+{
+	RotateAroundPoint_IntegratePosition(ModuleData, Particle.NormalizedAge, Particle.Position);
+	RotateAroundPoint_IntegratePosition(ModuleData, Particle.PreviousNormalizedAge, Particle.PreviousPosition);
+}

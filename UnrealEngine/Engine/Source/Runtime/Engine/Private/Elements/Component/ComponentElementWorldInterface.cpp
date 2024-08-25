@@ -67,6 +67,22 @@ bool UComponentElementWorldInterface::CanMoveElement(const FTypedElementHandle& 
 	return false;
 }
 
+bool UComponentElementWorldInterface::CanScaleElement(const FTypedElementHandle& InElementHandle)
+{
+#if WITH_EDITOR
+	if (const UActorComponent* Component = ComponentElementDataUtil::GetComponentFromHandle(InElementHandle))
+	{
+		if (const USceneComponent* SceneComponent = Cast<USceneComponent>(Component))
+		{
+			FProperty* const RelativeScale3DProperty = USceneComponent::StaticClass()->FindPropertyByName(USceneComponent::GetRelativeScale3DPropertyName());
+			return SceneComponent->CanEditChange(RelativeScale3DProperty);
+		}
+	}
+#endif // WITH_EDITOR
+
+	return false;
+}
+
 bool UComponentElementWorldInterface::GetWorldTransform(const FTypedElementHandle& InElementHandle, FTransform& OutTransform)
 {
 	if (const UActorComponent* Component = ComponentElementDataUtil::GetComponentFromHandle(InElementHandle))

@@ -7,11 +7,17 @@
 #include "CustomizableObjectNodePassThroughTexture.generated.h"
 
 
-UCLASS()
+UCLASS(hidecategories = ("Texture2D"))
 class CUSTOMIZABLEOBJECTEDITOR_API UCustomizableObjectNodePassThroughTexture : public UCustomizableObjectNodeTextureBase
 {
 public:
 	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = Texture, Meta = (DisplayName = Texture))
+	TObjectPtr<UTexture> PassThroughTexture = nullptr;
+
+	// UCustomizableObjectNode interface
+	virtual void BackwardsCompatibleFixup() override;
 
 	// UCustomizableObjectNode interface
 	void AllocateDefaultPins(UCustomizableObjectNodeRemapPins* RemapPins) override;

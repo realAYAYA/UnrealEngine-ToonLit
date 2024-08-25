@@ -6,9 +6,20 @@
 #include "IChooserParameterEnum.h"
 #include "InstancedStruct.h"
 #include "ChooserPropertyAccess.h"
+#include "Serialization/MemoryReader.h"
 #include "EnumColumn.generated.h"
 
 struct FBindingChainElement;
+
+UENUM()
+enum class EEnumColumnCellValueComparison
+{
+	MatchEqual,
+	MatchNotEqual,
+	MatchAny,
+
+	Modulus // used for cycling through the other values
+};
 
 USTRUCT(DisplayName = "Enum Property Binding")
 struct CHOOSER_API FEnumContextProperty : public FChooserParameterEnumBase
@@ -37,34 +48,10 @@ struct CHOOSER_API FEnumContextProperty : public FChooserParameterEnumBase
 		}
 	}
 
+	CHOOSER_PARAMETER_BOILERPLATE();
+
 #if WITH_EDITOR
-	static bool CanBind(const FProperty& Property)
-	{
-		if (Property.IsA<FEnumProperty>())
-		{
-			return true;
-		}
-
-		if (const FByteProperty* ByteProperty = CastField<FByteProperty>(&Property))
-		{
-			return ByteProperty->Enum != nullptr;
-		}
-
-		return false;
-	}
-
-	void SetBinding(const TArray<FBindingChainElement>& InBindingChain);
-
-	virtual void GetDisplayName(FText& OutName) const override
-	{
-		if (!Binding.PropertyBindingChain.IsEmpty())
-		{
-			OutName = FText::FromName(Binding.PropertyBindingChain.Last());
-		}
-	}
-
 	virtual const UEnum* GetEnum() const override { return Binding.Enum; }
-
 #endif
 	
 private:
@@ -79,8 +66,13 @@ struct FChooserEnumRowData
 {
 	GENERATED_BODY()
 
-	UPROPERTY(EditAnywhere, Category = Runtime)
-	bool CompareNotEqual = false;
+#if WITH_EDITORONLY_DATA
+	UPROPERTY()
+	bool CompareNotEqual_DEPRECATED = false;
+#endif
+	
+	UPROPERTY(EditAnywhere, Category = Runtime, Meta = (ValidEnumValues = "MatchEqual, MatchNotEqual, MatchAny"))
+	EEnumColumnCellValueComparison Comparison = EEnumColumnCellValueComparison::MatchEqual;
 	
 	UPROPERTY(EditAnywhere, Category = Runtime)
 	uint8 Value = 0;
@@ -109,28 +101,29 @@ public:
 	// should match the length of the Results array
 	TArray<FChooserEnumRowData> RowValues;
 
-	virtual void Filter(FChooserEvaluationContext& Context, const TArray<uint32>& IndexListIn, TArray<uint32>& IndexListOut) const override;
+	virtual void Filter(FChooserEvaluationContext& Context, const FChooserIndexArray& IndexListIn, FChooserIndexArray& IndexListOut) const override;
 	
 #if WITH_EDITOR
-	mutable int32 TestValue;
+	mutable uint8 TestValue = 0;
 	virtual bool EditorTestFilter(int32 RowIndex) const override
 	{
 		return RowValues.IsValidIndex(RowIndex) && RowValues[RowIndex].Evaluate(TestValue);
 	}
+	
+	virtual void SetTestValue(TArrayView<const uint8> Value) override
+	{
+		FMemoryReaderView Reader(Value);
+		Reader << TestValue;
+	}
+	
+	virtual void AddToDetails (FInstancedPropertyBag& PropertyBag, int32 ColumnIndex, int32 RowIndex);
+	virtual void SetFromDetails(FInstancedPropertyBag& PropertyBag, int32 ColumnIndex, int32 RowIndex);
 #endif
 	
 	CHOOSER_COLUMN_BOILERPLATE(FChooserParameterEnumBase);
 
-#if WITH_EDITOR
-	virtual void PostLoad() override
-	{
-		Super::PostLoad();
-		
-		if (InputValue.IsValid())
-		{
-			InputValue.GetMutable<FChooserParameterBase>().PostLoad();
-		}
-	}
+#if WITH_EDITORONLY_DATA
+	virtual void PostLoad() override;
 #endif
 };
 

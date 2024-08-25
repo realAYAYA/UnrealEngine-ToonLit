@@ -5,6 +5,7 @@
 #include "Kismet/BlueprintFunctionLibrary.h"
 #include "MovieSceneObjectBindingID.h" // for EMovieSceneObjectBindingSpace
 #include "MovieSceneTrack.h"
+#include "MovieSceneTimeUnit.h"
 #include "MovieSceneSequenceExtensions.generated.h"
 
 class UMovieScene;
@@ -260,7 +261,7 @@ public:
 	 * @param StartTimeInSeconds The desired view range start time in seconds for this sequence
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Sequencer|Sequence", meta = (ScriptMethod, DevelopmentOnly))
-	static void SetViewRangeStart(UMovieSceneSequence* InSequence, float StartTimeInSeconds);
+	static void SetViewRangeStart(UMovieSceneSequence* InSequence, double StartTimeInSeconds);
 
 	/**
 	 * Get the sequence view range start in seconds
@@ -269,7 +270,7 @@ public:
 	 * @return The view range start time in seconds for this sequence
 	 */
 	UFUNCTION(BlueprintPure, Category = "Sequencer|Sequence", meta = (ScriptMethod, DevelopmentOnly))
-	static float GetViewRangeStart(UMovieSceneSequence* InSequence);
+	static double GetViewRangeStart(UMovieSceneSequence* InSequence);
 
 	/**
 	 * Set the sequence view range end in seconds
@@ -278,7 +279,7 @@ public:
 	 * @param StartTimeInSeconds The desired view range end time in seconds for this sequence
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Sequencer|Sequence", meta = (ScriptMethod, DevelopmentOnly))
-	static void SetViewRangeEnd(UMovieSceneSequence* InSequence, float EndTimeInSeconds);
+	static void SetViewRangeEnd(UMovieSceneSequence* InSequence, double EndTimeInSeconds);
 
 	/**
 	 * Get the sequence view range end in seconds
@@ -287,7 +288,7 @@ public:
 	 * @return The view range end time in seconds for this sequence
 	 */
 	UFUNCTION(BlueprintPure, Category = "Sequencer|Sequence", meta = (ScriptMethod, DevelopmentOnly))
-	static float GetViewRangeEnd(UMovieSceneSequence* InSequence);
+	static double GetViewRangeEnd(UMovieSceneSequence* InSequence);
 
 	/**
 	 * Set the sequence work range start in seconds
@@ -296,7 +297,7 @@ public:
 	 * @param StartTimeInSeconds The desired work range start time in seconds for this sequence
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Sequencer|Sequence", meta = (ScriptMethod, DevelopmentOnly))
-	static void SetWorkRangeStart(UMovieSceneSequence* InSequence, float StartTimeInSeconds);
+	static void SetWorkRangeStart(UMovieSceneSequence* InSequence, double StartTimeInSeconds);
 
 	/**
 	 * Get the sequence work range start in seconds
@@ -305,7 +306,7 @@ public:
 	 * @return The work range start time in seconds for this sequence
 	 */
 	UFUNCTION(BlueprintPure, Category = "Sequencer|Sequence", meta = (ScriptMethod, DevelopmentOnly))
-	static float GetWorkRangeStart(UMovieSceneSequence* InSequence);
+	static double GetWorkRangeStart(UMovieSceneSequence* InSequence);
 
 	/**
 	 * Set the sequence work range end in seconds
@@ -314,7 +315,7 @@ public:
 	 * @param StartTimeInSeconds The desired work range end time in seconds for this sequence
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Sequencer|Sequence", meta = (ScriptMethod, DevelopmentOnly))
-	static void SetWorkRangeEnd(UMovieSceneSequence* InSequence, float EndTimeInSeconds);
+	static void SetWorkRangeEnd(UMovieSceneSequence* InSequence, double EndTimeInSeconds);
 
 	/**
 	 * Get the sequence work range end in seconds
@@ -323,7 +324,7 @@ public:
 	 * @return The work range end time in seconds for this sequence
 	 */
 	UFUNCTION(BlueprintPure, Category = "Sequencer|Sequence", meta = (ScriptMethod, DevelopmentOnly))
-	static float GetWorkRangeEnd(UMovieSceneSequence* InSequence);
+	static double GetWorkRangeEnd(UMovieSceneSequence* InSequence);
 
 	/**
 	 * Set the evaluation type for this sequence
@@ -528,10 +529,16 @@ public:
 public:
 
 	/*
+	 * Get the marked frames for this sequence
+	 *
 	 * @return Return the user marked frames
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Sequencer|Sequence", meta = (ScriptMethod))
-	static TArray<FMovieSceneMarkedFrame> GetMarkedFrames(UMovieSceneSequence* Sequence);
+	UFUNCTION(BlueprintCallable, Category = "Sequencer|Sequence", meta = (ScriptMethod, DisplayName = "Get Marked Frames"))
+	static TArray<FMovieSceneMarkedFrame> GetMarkedFramesFromSequence(UMovieSceneSequence* Sequence, EMovieSceneTimeUnit TimeUnit = EMovieSceneTimeUnit::DisplayRate);
+
+	UE_DEPRECATED(5.4, "GetMarkedFrames is deprecated. Please use GetMarkedFrames that takes a time unit and defaults to display rate instead")
+	UFUNCTION(BlueprintCallable, Category = "Sequencer|Sequence", meta = (ScriptMethod, DeprecatedFunction, DeprecationMessage = "GetMarkedFrames is deprecated. Please use GetMarkedFrames that takes a time unit instead"))
+	static TArray<FMovieSceneMarkedFrame> GetMarkedFrames(UMovieSceneSequence* Sequence) { return GetMarkedFramesFromSequence(Sequence, EMovieSceneTimeUnit::TickResolution); }
 
 	/*
 	 * Add a given user marked frame.
@@ -540,8 +547,12 @@ public:
 	 * @InMarkedFrame The given user marked frame to add
 	 * @return The index to the newly added marked frame
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Sequencer|Sequence", meta = (ScriptMethod))
-	static int32 AddMarkedFrame(UMovieSceneSequence* Sequence, const FMovieSceneMarkedFrame& InMarkedFrame);
+	UFUNCTION(BlueprintCallable, Category = "Sequencer|Sequence", meta = (ScriptMethod, DisplayName = "Add Marked Frame"))
+	static int32 AddMarkedFrameToSequence(UMovieSceneSequence* Sequence, const FMovieSceneMarkedFrame& InMarkedFrame, EMovieSceneTimeUnit TimeUnit = EMovieSceneTimeUnit::DisplayRate);
+
+	UE_DEPRECATED(5.4, "AddMarkedFrame is deprecated. Please use AddMarkedFrame that takes a time unit and defaults to display rate instead")
+	UFUNCTION(BlueprintCallable, Category = "Sequencer|Sequence", meta = (ScriptMethod, DeprecatedFunction, DeprecationMessage = "AddMarkedFrame is deprecated. Please use AddMarkedFrame that takes a time unit instead"))
+	static int32 AddMarkedFrame(UMovieSceneSequence* Sequence, const FMovieSceneMarkedFrame& InMarkedFrame) { return AddMarkedFrameToSequence(Sequence, InMarkedFrame, EMovieSceneTimeUnit::TickResolution); }
 
 	/*
 	 * Sets the frame number for the given marked frame index. Does not maintain sort. Call SortMarkedFrames
@@ -549,8 +560,12 @@ public:
 	 * @InMarkIndex The given user marked frame index to edit
 	 * @InFrameNumber The frame number to set
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Sequencer|Sequence", meta = (ScriptMethod))
-	static void SetMarkedFrame(UMovieSceneSequence* Sequence, int32 InMarkIndex, FFrameNumber InFrameNumber);
+	UFUNCTION(BlueprintCallable, Category = "Sequencer|Sequence", meta = (ScriptMethod, DisplayName = "Set Marked Frame"))
+	static void SetMarkedFrameInSequence(UMovieSceneSequence* Sequence, int32 InMarkIndex, FFrameNumber InFrameNumber, EMovieSceneTimeUnit TimeUnit = EMovieSceneTimeUnit::DisplayRate);
+
+	UE_DEPRECATED(5.4, "SetMarkedFrame is deprecated. Please use SetMarkedFrame that takes a time unit and defaults to display rate instead")
+	UFUNCTION(BlueprintCallable, Category = "Sequencer|Sequence", meta = (ScriptMethod, DeprecatedFunction, DeprecationMessage = "SetMarkedFrame is deprecated. Please use SetMarkedFrame that takes a time unit instead"))
+	static void SetMarkedFrame(UMovieSceneSequence* Sequence, int32 InMarkIndex, FFrameNumber InFrameNumber) { SetMarkedFrameInSequence(Sequence, InMarkIndex, InFrameNumber, EMovieSceneTimeUnit::TickResolution); }
 
 	/*
 	 * Delete the user marked frame by index.
@@ -585,8 +600,12 @@ public:
 	 *
 	 * @InFrameNumber The frame number of the user marked frame to find
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Sequencer|Sequence", meta = (ScriptMethod))
-	static int32 FindMarkedFrameByFrameNumber(UMovieSceneSequence* Sequence, FFrameNumber InFrameNumber);
+	UFUNCTION(BlueprintCallable, Category = "Sequencer|Sequence", meta = (ScriptMethod, DisplayName = "Find Marked Frame By Frame Number"))
+	static int32 FindMarkedFrameByFrameNumberInSequence(UMovieSceneSequence* Sequence, FFrameNumber InFrameNumber, EMovieSceneTimeUnit TimeUnit = EMovieSceneTimeUnit::DisplayRate);
+
+	UE_DEPRECATED(5.4, "FindMarkedFrameByFrameNumber is deprecated. Please use FindMarkedFrameByFrameNumber that takes a time unit and defaults to display rate instead")
+	UFUNCTION(BlueprintCallable, Category = "Sequencer|Sequence", meta = (ScriptMethod, DeprecatedFunction, DeprecationMessage = "FindMarkedFrameByFrameNumber is deprecated. Please use FindMarkedFrameByFrameNumber that takes a time unit instead"))
+	static int32 FindMarkedFrameByFrameNumber(UMovieSceneSequence* Sequence, FFrameNumber InFrameNumber) { return FindMarkedFrameByFrameNumberInSequence(Sequence, InFrameNumber, EMovieSceneTimeUnit::TickResolution); }
 
 	/*
 	 * Find the next/previous user marked frame from the given frame number
@@ -594,8 +613,12 @@ public:
 	 * @InFrameNumber The frame number to find the next/previous user marked frame from
 	 * @bForward Find forward from the given frame number.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Sequencer|Sequence", meta = (ScriptMethod))
-	static int32 FindNextMarkedFrame(UMovieSceneSequence* Sequence, FFrameNumber InFrameNumber, bool bForward);
+	UFUNCTION(BlueprintCallable, Category = "Sequencer|Sequence", meta = (ScriptMethod, DisplayName = "Find Next Marked Frame"))
+	static int32 FindNextMarkedFrameInSequence(UMovieSceneSequence* Sequence, FFrameNumber InFrameNumber, bool bForward, EMovieSceneTimeUnit TimeUnit = EMovieSceneTimeUnit::DisplayRate);
+
+	UE_DEPRECATED(5.4, "FindNextMarkedFrame is deprecated. Please use FindNextMarkedFrame that takes a time unit instead")
+	UFUNCTION(BlueprintCallable, Category = "Sequencer|Sequence", meta = (ScriptMethod, DeprecatedFunction, DeprecationMessage = "FindNextMarkedFrame is deprecated. Please use FindNextMarkedFrame that takes a time unit and defaults to display rate instead"))
+	static int32 FindNextMarkedFrame(UMovieSceneSequence* Sequence, FFrameNumber InFrameNumber, bool bForward) { return FindNextMarkedFrameInSequence(Sequence, InFrameNumber, bForward, EMovieSceneTimeUnit::TickResolution); }
 
 	/*
 	 * Set read only

@@ -24,11 +24,14 @@
 // SOFTWARE.
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "acl/version.h"
+#include "acl/compression/track_array.h"
 #include "acl/core/impl/compiler_utils.h"
 #include "acl/core/iallocator.h"
 #include "acl/core/track_types.h"
 #include "acl/core/track_writer.h"
 
+#include <rtm/qvvf.h>
 #include <rtm/scalarf.h>
 #include <rtm/vector4f.h>
 
@@ -38,9 +41,14 @@ ACL_IMPL_FILE_PRAGMA_PUSH
 
 namespace acl
 {
+	ACL_IMPL_VERSION_NAMESPACE_BEGIN
+
 	namespace acl_impl
 	{
-		struct debug_track_writer final : public track_writer
+		//////////////////////////////////////////////////////////////////////////
+		// The debug_track_writer supports every track type and adds runtime type safety.
+		//////////////////////////////////////////////////////////////////////////
+		struct debug_track_writer : public track_writer
 		{
 			debug_track_writer(iallocator& allocator_, track_type8 type_, uint32_t num_tracks_)
 				: allocator(allocator_)
@@ -48,6 +56,7 @@ namespace acl
 				, buffer_size(0)
 				, num_tracks(num_tracks_)
 				, type(type_)
+				, padding()
 			{
 				// Large enough to accommodate the largest type
 				buffer_size = sizeof(rtm::qvvf) * num_tracks_;
@@ -57,6 +66,32 @@ namespace acl
 			~debug_track_writer()
 			{
 				allocator.deallocate(tracks_typed.any, buffer_size);
+			}
+			
+			//////////////////////////////////////////////////////////////////////////
+			// For performance reasons, this writer skips all default sub-tracks.
+			// It is the responsibility of the caller to pre-populate them by calling initialize_with_defaults().
+			static constexpr default_sub_track_mode get_default_rotation_mode() { return default_sub_track_mode::skipped; }
+			static constexpr default_sub_track_mode get_default_translation_mode() { return default_sub_track_mode::skipped; }
+			static constexpr default_sub_track_mode get_default_scale_mode() { return default_sub_track_mode::skipped; }
+
+			//////////////////////////////////////////////////////////////////////////
+			// Initializes the internal buffer with the sub-track default values provided.
+			// This assumes that the debug_track_writer was allocated with the number of tracks
+			// from the compressed tracks instance used to populate it and that the provided
+			// track_array remaps to it properly with matching output indices.
+			void initialize_with_defaults(const track_array& tracks)
+			{
+				const track_array_qvvf& tracks_ = track_array_cast<track_array_qvvf>(tracks);
+
+				for (const track_qvvf& track : tracks_)
+				{
+					const track_desc_transformf& desc = track.get_description();
+					if (desc.output_index == k_invalid_track_index)
+						continue;	// Stripped, skip it
+
+					tracks_typed.qvvf[desc.output_index] = desc.default_value;
+				}
 			}
 
 			//////////////////////////////////////////////////////////////////////////
@@ -177,8 +212,81 @@ namespace acl
 			uint32_t num_tracks;
 
 			track_type8 type;
+
+			// Must pad to a multiple of 16 bytes for derived types
+			uint8_t padding[sizeof(void*) == 4 ? 15 : 3];
+		};
+
+		//////////////////////////////////////////////////////////////////////////
+		// Same as debug_track_writer but default sub-tracks are constant instead of skipped.
+		// Only supports qvvf tracks.
+		//////////////////////////////////////////////////////////////////////////
+		struct debug_track_writer_constant_defaults final : public debug_track_writer
+		{
+			debug_track_writer_constant_defaults(iallocator& allocator_, track_type8 type_, uint32_t num_tracks_)
+				: debug_track_writer(allocator_, type_, num_tracks_)
+				, default_rotation(rtm::quat_identity())
+				, default_translation(rtm::vector_zero())
+				, default_scale(rtm::vector_set(1.0F))
+			{
+				ACL_ASSERT(type_ == track_type8::qvvf, "Only qvvf tracks are supported");
+			}
+
+			static constexpr default_sub_track_mode get_default_rotation_mode() { return default_sub_track_mode::constant; }
+			static constexpr default_sub_track_mode get_default_translation_mode() { return default_sub_track_mode::constant; }
+			static constexpr default_sub_track_mode get_default_scale_mode() { return default_sub_track_mode::constant; }
+
+			rtm::quatf RTM_SIMD_CALL get_constant_default_rotation() const { return default_rotation; }
+			rtm::vector4f RTM_SIMD_CALL get_constant_default_translation() const { return default_translation; }
+			rtm::vector4f RTM_SIMD_CALL get_constant_default_scale() const { return default_scale; }
+
+			rtm::quatf default_rotation;
+			rtm::vector4f default_translation;
+			rtm::vector4f default_scale;
+		};
+
+		//////////////////////////////////////////////////////////////////////////
+		// Same as debug_track_writer but default sub-tracks are variable instead of skipped.
+		// Only supports qvvf tracks.
+		//////////////////////////////////////////////////////////////////////////
+		struct debug_track_writer_variable_defaults final : public debug_track_writer
+		{
+			debug_track_writer_variable_defaults(iallocator& allocator_, track_type8 type_, uint32_t num_tracks_)
+				: debug_track_writer(allocator_, type_, num_tracks_)
+				, default_sub_tracks(nullptr)
+			{
+				ACL_ASSERT(type_ == track_type8::qvvf, "Only qvvf tracks are supported");
+			}
+
+			static constexpr default_sub_track_mode get_default_rotation_mode() { return default_sub_track_mode::variable; }
+			static constexpr default_sub_track_mode get_default_translation_mode() { return default_sub_track_mode::variable; }
+			static constexpr default_sub_track_mode get_default_scale_mode() { return default_sub_track_mode::variable; }
+
+			rtm::quatf RTM_SIMD_CALL get_variable_default_rotation(uint32_t track_index) const { return default_sub_tracks[track_index].rotation; }
+			rtm::vector4f RTM_SIMD_CALL get_variable_default_translation(uint32_t track_index) const { return default_sub_tracks[track_index].translation; }
+			rtm::vector4f RTM_SIMD_CALL get_variable_default_scale(uint32_t track_index) const { return default_sub_tracks[track_index].scale; }
+
+			const rtm::qvvf* default_sub_tracks;
+		};
+
+		//////////////////////////////////////////////////////////////////////////
+		// Same as debug_track_writer but the rounding policy is supported per track.
+		//////////////////////////////////////////////////////////////////////////
+		struct debug_track_writer_per_track_rounding final : public debug_track_writer
+		{
+			debug_track_writer_per_track_rounding(iallocator& allocator_, track_type8 type_, uint32_t num_tracks_)
+				: debug_track_writer(allocator_, type_, num_tracks_)
+				, rounding_policy(sample_rounding_policy::per_track)
+			{
+			}
+
+			sample_rounding_policy get_rounding_policy(sample_rounding_policy /*seek_policy*/, uint32_t /*track_index*/) const { return rounding_policy; }
+
+			sample_rounding_policy rounding_policy;
 		};
 	}
+
+	ACL_IMPL_VERSION_NAMESPACE_END
 }
 
 ACL_IMPL_FILE_PRAGMA_POP

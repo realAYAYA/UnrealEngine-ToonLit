@@ -39,7 +39,7 @@ struct FGroupProjectorParameterPose
 };
 
 
-UCLASS(hideCategories = (CustomizableObjectHide))
+UCLASS()
 class CUSTOMIZABLEOBJECTEDITOR_API UCustomizableObjectNodeGroupProjectorParameter : public UCustomizableObjectNodeProjectorParameter
 {
 public:
@@ -76,6 +76,7 @@ public:
 	UPROPERTY(EditAnywhere, Category = ProjectorGroup)
 	TArray<FGroupProjectorParameterImage> OptionImages;
 
+	/** Poses will only affect component 0 of the CO */ // TODO UE-206803
 	UPROPERTY(EditAnywhere, Category = ProjectorGroup)
 	TArray<FGroupProjectorParameterPose> OptionPoses;
 

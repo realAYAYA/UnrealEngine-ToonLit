@@ -152,6 +152,9 @@ struct FRHIGlobals
 	/** true if mobile framebuffer fetch is supported from MRT's*/
 	bool SupportsShaderMRTFramebufferFetch = false;
 
+	/** true if mobile framebuffer fetch can be used for programmable blending, does not imply that framebuffer fetch is supported*/
+	bool SupportsShaderFramebufferFetchProgrammableBlending = true;
+
 	/** true if mobile pixel local storage is supported */
 	bool SupportsPixelLocalStorage = false;
 
@@ -211,6 +214,9 @@ struct FRHIGlobals
 
 	/** True if the RHI supports separate blend states per render target. */
 	bool SupportsSeparateRenderTargetBlendState = false;
+
+	/** True if the RHI supports dual src blending. */
+	bool SupportsDualSrcBlending = true;
 
 	/** True if the RHI has artifacts with atlased CSM depths. */
 	bool NeedsUnatlasedCSMDepthsWorkaround = false;
@@ -353,6 +359,9 @@ struct FRHIGlobals
 
 	/** Whether we are profiling GPU hitches. */
 	bool TriggerGPUHitchProfile = false;
+
+	/** Whether an intentional GPU crash has been scheduled. */
+	ERequestedGPUCrash TriggerGPUCrash = ERequestedGPUCrash::None;
 
 	/** Non-empty if we are performing a gpu trace. Also says where to place trace file. */
 	FString GPUTraceFileName;
@@ -557,8 +566,17 @@ struct FRHIGlobals
 	/** True if the RHI supports setting the stencil ref at pixel granularity from the pixel shader */
 	bool SupportsStencilRefFromPixelShader = false;
 
+	/** True if the RHI supports raster order views. */
+	bool SupportsRasterOrderViews = false;
+
 	/** Whether current RHI supports overestimated conservative rasterization. */
 	bool SupportsConservativeRasterization = false;
+
+	/** Whether current RHI supports shader root constants. */
+	bool SupportsShaderRootConstants = false;
+
+	/** Whether current RHI supports shader bundle dispatch. */
+	bool SupportsShaderBundleDispatch = false;
 
 	/** true if the RHI supports Mesh and Amplification shaders with tier0 capability */
 	bool SupportsMeshShadersTier0 = false;
@@ -586,17 +604,53 @@ struct FRHIGlobals
 	/** Whether dynamic (bindless) resources are supported */
 	ERHIBindlessSupport BindlessSupport = ERHIBindlessSupport::Unsupported;
 
-	UE_DEPRECATED(5.2, "You must use BindlessSupport instead.")
-	bool SupportsBindless = false;
+	struct FReservedResources
+	{
+		/**
+		* True if the RHI supports reserved (AKA tiled, virtual or sparse) resources and operations related to them.
+		* Buffers and 2D textures (without mips) can be created with ReservedResource flag.
+		*/
+		bool Supported = false;
 
-	/** True if the RHI supports reserved (AKA tiled, virtual or sparse) resources and operations related to them*/
-	bool SupportsReservedResources = false;
+		/**
+		* True if the RHI supports creating volume textures with ReservedResource flag.
+		*/
+		bool SupportsVolumeTextures = false;
+
+		/**
+		* Smallest mip dimension of reserved texture arrays must be greater or equal to this value.
+		* Tiled/reserved resources with both more than one array slice and any mipmap that
+		* has a dimension less than a tile in extent are not supported by some hardware.
+		* This is a conservative value chosen by the engine, independent of the texture format for simplicity.
+		*/
+		int32 TextureArrayMinimumMipDimension = 256;
+
+		/**
+		* Size that corresponds to a minimum unit of physical memory that may be mapped to a region of a reserved resource.
+		* High-level code should aim to allocate reserved resources such that their size is a multiple of this tile size.
+		* Guaranteed to be the same value on all platforms, regardless of the native virtual memory page size.
+		*/
+		static constexpr int32 TileSizeInBytes = 65536;
+
+	} ReservedResources;
 
 	/** Table for finding out which shader platform corresponds to a given feature level for this RHI. */
 	EShaderPlatform ShaderPlatformForFeatureLevel[ERHIFeatureLevel::Num];
 	
 	/** True if the RHI has initialized a device with the debug layer enabled. */
 	bool IsDebugLayerEnabled = false;
+
+	/** True if the RHI needs shader unbinds (SetShaderUnbinds). RHIs that don't need them can avoid creating extra commands. */
+	bool NeedsShaderUnbinds = false;
+
+	/** True if the RHI supports shaders with barycentrics */
+	bool SupportsBarycentricsSemantic = false;
+
+	/** True if HDR requires vendor specific extensions */
+	bool HDRNeedsVendorExtensions = false;
+
+	/** True if RHI supports MSAA resolve with a custom shader */
+	bool SupportsMSAAShaderResolve = false;
 };
 
 extern RHI_API FRHIGlobals GRHIGlobals;
@@ -626,6 +680,7 @@ extern RHI_API FRHIGlobals GRHIGlobals;
 #define GSupportsRenderTargetFormat_PF_G8                      GRHIGlobals.SupportsRenderTargetFormat_PF_G8
 #define GSupportsRenderTargetFormat_PF_FloatRGBA               GRHIGlobals.SupportsRenderTargetFormat_PF_FloatRGBA
 #define GSupportsShaderFramebufferFetch                        GRHIGlobals.SupportsShaderFramebufferFetch
+#define GSupportsShaderFramebufferFetchProgrammableBlending    GRHIGlobals.SupportsShaderFramebufferFetchProgrammableBlending
 #define GSupportsShaderMRTFramebufferFetch                     GRHIGlobals.SupportsShaderMRTFramebufferFetch
 #define GSupportsPixelLocalStorage                             GRHIGlobals.SupportsPixelLocalStorage
 #define GSupportsShaderDepthStencilFetch                       GRHIGlobals.SupportsShaderDepthStencilFetch
@@ -647,6 +702,7 @@ extern RHI_API FRHIGlobals GRHIGlobals;
 #define GRHISupportsExactOcclusionQueries                      GRHIGlobals.SupportsExactOcclusionQueries
 #define GSupportsVolumeTextureRendering                        GRHIGlobals.SupportsVolumeTextureRendering
 #define GSupportsSeparateRenderTargetBlendState                GRHIGlobals.SupportsSeparateRenderTargetBlendState
+#define GSupportsDualSrcBlending                               GRHIGlobals.SupportsDualSrcBlending
 #define GRHINeedsUnatlasedCSMDepthsWorkaround                  GRHIGlobals.NeedsUnatlasedCSMDepthsWorkaround
 #define GSupportsTexture3D                                     GRHIGlobals.SupportsTexture3D
 #define GUseTexture3DBulkDataRHI                               GRHIGlobals.UseTexture3DBulkData
@@ -693,6 +749,7 @@ extern RHI_API FRHIGlobals GRHIGlobals;
 #define GVertexElementTypeSupport                              GRHIGlobals.VertexElementTypeSupport
 #define GTriggerGPUProfile                                     GRHIGlobals.TriggerGPUProfile
 #define GTriggerGPUHitchProfile                                GRHIGlobals.TriggerGPUHitchProfile
+#define GTriggerGPUCrash                                       GRHIGlobals.TriggerGPUCrash
 #define GGPUTraceFileName                                      GRHIGlobals.GPUTraceFileName
 #define GRHISupportsTextureStreaming                           GRHIGlobals.SupportsTextureStreaming
 #define GCurrentTextureMemorySize                              GRHIGlobals.CurrentTextureMemorySize
@@ -746,7 +803,10 @@ extern RHI_API FRHIGlobals GRHIGlobals;
 #define GRHISupportsPipelineFileCache                          GRHIGlobals.SupportsPipelineFileCache
 #define GRHISupportsPSOPrecaching                              GRHIGlobals.SupportsPSOPrecaching
 #define GRHISupportsStencilRefFromPixelShader                  GRHIGlobals.SupportsStencilRefFromPixelShader
+#define GRHISupportsRasterOrderViews                           GRHIGlobals.SupportsRasterOrderViews
 #define GRHISupportsConservativeRasterization                  GRHIGlobals.SupportsConservativeRasterization
+#define GRHISupportsShaderRootConstants                        GRHIGlobals.SupportsShaderRootConstants
+#define GRHISupportsShaderBundleDispatch                       GRHIGlobals.SupportsShaderBundleDispatch
 #define GRHISupportsMeshShadersTier0                           GRHIGlobals.SupportsMeshShadersTier0
 #define GRHISupportsMeshShadersTier1                           GRHIGlobals.SupportsMeshShadersTier1
 #define GRHISupportsShaderTimestamp                            GRHIGlobals.SupportsShaderTimestamp
@@ -755,10 +815,11 @@ extern RHI_API FRHIGlobals GRHIGlobals;
 #define GRHIDefaultMSAASampleOffsets                           GRHIGlobals.DefaultMSAASampleOffsets
 #define GRHISupportsAsyncPipelinePrecompile                    GRHIGlobals.SupportsAsyncPipelinePrecompile
 #define GRHIBindlessSupport                                    GRHIGlobals.BindlessSupport
-#define GRHISupportsBindless                                   GRHIGlobals.SupportsBindless
-#define GRHISupportsReservedResources                          GRHIGlobals.SupportsReservedResources
+#define GRHISupportsReservedResources                          GRHIGlobals.ReservedResources.Supported UE_DEPRECATED_MACRO(5.4, "GRHISupportsReservedResources has been deprecated - please use GRHIGlobals.ReservedResources.Supported instead.")
 #define GShaderPlatformForFeatureLevel                         GRHIGlobals.ShaderPlatformForFeatureLevel
 #define GRHIIsDebugLayerEnabled                                GRHIGlobals.IsDebugLayerEnabled
+#define GRHIHDRNeedsVendorExtensions						   GRHIGlobals.HDRNeedsVendorExtensions
+#define GRHISupportsMSAAShaderResolve						   GRHIGlobals.SupportsMSAAShaderResolve
 
 // Utility Getters
 

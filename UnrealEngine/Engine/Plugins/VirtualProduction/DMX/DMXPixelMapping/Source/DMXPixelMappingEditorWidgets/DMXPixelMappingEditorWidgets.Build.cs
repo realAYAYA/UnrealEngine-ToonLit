@@ -9,6 +9,7 @@ public class DMXPixelMappingEditorWidgets : ModuleRules
 	{
 		PublicDependencyModuleNames.AddRange( new string[] {
 			"Core",
+			"CoreUObject",
 			"Slate",
 			"SlateCore",
 		});

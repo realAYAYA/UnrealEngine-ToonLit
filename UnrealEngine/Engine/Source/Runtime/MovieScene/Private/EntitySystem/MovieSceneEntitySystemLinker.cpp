@@ -379,9 +379,14 @@ void UMovieSceneEntitySystemLinker::HandlePostGarbageCollection()
 	// Allow any other system to tag garbage
 	Events.TagGarbage.Broadcast(this);
 
-	auto RouteTagGarbage = [](UMovieSceneEntitySystem* System){ System->TagGarbage(); };
-	SystemGraph.IteratePhase(ESystemPhase::Spawn, RouteTagGarbage);
-	SystemGraph.IteratePhase(ESystemPhase::Instantiation, RouteTagGarbage);
+	TSet<UMovieSceneEntitySystem*> SystemsToTag;
+	auto GatherSystemsToTag = [&SystemsToTag](UMovieSceneEntitySystem* System){ SystemsToTag.Add(System); };
+	SystemGraph.IteratePhase(ESystemPhase::Spawn, GatherSystemsToTag);
+	SystemGraph.IteratePhase(ESystemPhase::Instantiation, GatherSystemsToTag);
+	for (UMovieSceneEntitySystem* System : SystemsToTag)
+	{
+		System->TagGarbage();
+	}
 
 	CleanGarbage();
 }
@@ -389,6 +394,9 @@ void UMovieSceneEntitySystemLinker::HandlePostGarbageCollection()
 void UMovieSceneEntitySystemLinker::CleanGarbage()
 {
 	using namespace UE::MovieScene;
+
+	// Cleanup any stale preanimated state. This can exist even without Entities being marked as NeedsUnlink.
+	PreAnimatedState.DiscardStaleObjectState();
 
 	FBuiltInComponentTypes* BuiltInComponents = FBuiltInComponentTypes::Get();
 	FComponentTypeID NeedsUnlink = BuiltInComponents->Tags.NeedsUnlink;
@@ -401,15 +409,23 @@ void UMovieSceneEntitySystemLinker::CleanGarbage()
 	// the next time a runner gets flushed
 	LastInstantiationVersion = 0;
 
-	auto RouteCleanTaggedGarbage = [](UMovieSceneEntitySystem* System){ System->CleanTaggedGarbage(); };
-	SystemGraph.IteratePhase(ESystemPhase::Spawn, RouteCleanTaggedGarbage);
-	SystemGraph.IteratePhase(ESystemPhase::Instantiation, RouteCleanTaggedGarbage);
+	// Since some systems might belong to both Spawn and Instantiation phase, we need to gather them in a Set
+	// to prevent calling CleanTaggedGarbage twice on those.
+	TSet<UMovieSceneEntitySystem*> SystemsToClean;
+	auto GatherSystemsToClean = [&SystemsToClean](UMovieSceneEntitySystem* System){ SystemsToClean.Add(System); };
+	SystemGraph.IteratePhase(ESystemPhase::Spawn, GatherSystemsToClean);
+	SystemGraph.IteratePhase(ESystemPhase::Instantiation, GatherSystemsToClean);
+	for (UMovieSceneEntitySystem* System : SystemsToClean)
+	{
+		System->CleanTaggedGarbage();
+	}
 
 	// Allow any other system to cleanup garbage
 	// NOTE: Order is important here - we need to broadcast this after systems have CleanTaggedGarbage called
 	//       since systems are able to (and more likely to) cause additional entities to be unlinked in response
 	//       to finding entities tagged NeedsUnlink.
 	Events.CleanTaggedGarbage.Broadcast(this);
+
 
 	TArray<FMovieSceneEntityID> UnresolvedEntities;
 
@@ -452,6 +468,17 @@ void UMovieSceneEntitySystemLinker::ResetActiveRunners()
 	{
 		ActiveRunners[Index]->ResetFlushState();
 	}
+}
+
+void UMovieSceneEntitySystemLinker::DestroyInstanceImmediately(UE::MovieScene::FRootInstanceHandle Instance)
+{
+	// Ensure that any changes are under a new serial
+	EntityManager.IncrementSystemSerial();
+
+	// Destroy the instance and any sub sequences. Any pre-existing NeedsLink entities will be forcibly made NeedsUnlink and cleaned as garbage
+	GetInstanceRegistry()->DestroyInstance(Instance);
+	CleanGarbage();
+	ResetActiveRunners();
 }
 
 void UMovieSceneEntitySystemLinker::OnObjectsReplaced(const TMap<UObject*, UObject*>& ReplacementMap)

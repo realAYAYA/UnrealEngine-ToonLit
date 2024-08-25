@@ -209,13 +209,14 @@ TSharedRef<ITableRow> SNiagaraSimCacheTreeView::OnGenerateRow(TSharedRef<FNiagar
 	{
 		"NiagaraEditor.SimCache.SystemItem",
 		"NiagaraEditor.SimCache.EmitterItem",
-		"NiagaraEditor.SimCache.ComponentItem"
+		"NiagaraEditor.SimCache.ComponentItem",
+		"NiagaraEditor.SimCache.DataInterfaceItem"
 	};
 
 	ENiagaraSimCacheOverviewItemType StyleType = Item->GetType();
 	
 	return SNew(STableRow<TSharedRef<FNiagaraSimCacheTreeItem>>, OwnerTable)
-	.Style(FNiagaraEditorStyle::Get(), ItemStyles[(int32)StyleType])
+	.Style(FNiagaraEditorStyle::Get(), ItemStyles[static_cast<int32>(StyleType)])
 	[
 		SNew(SNiagaraSimCacheTreeItem)
 		.Item(Item)
@@ -332,6 +333,15 @@ void SNiagaraSimCacheTreeView::SelectAll()
 	RecursiveAddToSelectionFilter(*ViewModel->GetCurrentRootEntries());
 
 	UpdateStringFilters();
+}
+
+bool SNiagaraSimCacheTreeView::IsDataInterfaceViewActive() const
+{
+	if (ViewModel)
+	{
+		return ViewModel->GetActiveDataInterface().IsValid();
+	}
+	return false;
 }
 
 #undef LOCTEXT_NAMESPACE

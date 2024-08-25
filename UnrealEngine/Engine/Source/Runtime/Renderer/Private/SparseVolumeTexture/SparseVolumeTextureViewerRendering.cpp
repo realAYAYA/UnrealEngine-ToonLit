@@ -60,7 +60,6 @@ class FVisualizeSparseVolumeTexturePS : public FGlobalShader
 		SHADER_PARAMETER_TEXTURE(Texture3D<uint>, SparseVolumeTexturePageTable)
 		SHADER_PARAMETER_TEXTURE(Texture3D, SparseVolumeTextureA)
 		SHADER_PARAMETER_TEXTURE(Texture3D, SparseVolumeTextureB)
-		SHADER_PARAMETER_SRV(ByteAddressBuffer, StreamingInfoBuffer)
 		SHADER_PARAMETER(FUintVector4, PackedSVTUniforms0)
 		SHADER_PARAMETER(FUintVector4, PackedSVTUniforms1)
 		SHADER_PARAMETER(FVector3f, SparseVolumeTextureResolution)
@@ -68,9 +67,9 @@ class FVisualizeSparseVolumeTexturePS : public FGlobalShader
 		SHADER_PARAMETER(FVector4f, WorldToLocal0)
 		SHADER_PARAMETER(FVector4f, WorldToLocal1)
 		SHADER_PARAMETER(FVector4f, WorldToLocal2)
-		SHADER_PARAMETER(FVector3f, WorldToLocalNoScale0)
-		SHADER_PARAMETER(FVector3f, WorldToLocalNoScale1)
-		SHADER_PARAMETER(FVector3f, WorldToLocalNoScale2)
+		SHADER_PARAMETER(FVector3f, WorldToLocalRotation0)
+		SHADER_PARAMETER(FVector3f, WorldToLocalRotation1)
+		SHADER_PARAMETER(FVector3f, WorldToLocalRotation2)
 		SHADER_PARAMETER(uint32, ComponentToVisualize)
 		SHADER_PARAMETER(float, Extinction)
 	END_SHADER_PARAMETER_STRUCT()
@@ -119,8 +118,28 @@ void AddSparseVolumeTextureViewerRenderPass(FRDGBuilder& GraphBuilder, FSceneRen
 
 		for (auto& SVTSceneProxy : Scene->SparseVolumeTextureViewers)
 		{
-			const FMatrix44f& WorldToLocal = SVTSceneProxy->WorldToLocal;
-			const FMatrix44f& WorldToLocalNoScale = SVTSceneProxy->WorldToLocalNoScale;
+			const FVector& PreViewTranslation = View.ViewMatrices.GetPreViewTranslation();
+
+			FTransform GlobalTransform = SVTSceneProxy->GlobalTransform;
+			GlobalTransform.AddToTranslation(PreViewTranslation); // Move into translated world space
+
+			FTransform FrameTransform = SVTSceneProxy->FrameTransform;
+			FrameTransform.MultiplyScale3D(FVector(SVTSceneProxy->VoxelSizeFactor));
+			FrameTransform.ScaleTranslation(SVTSceneProxy->VoxelSizeFactor);
+
+			const FTransform Transform = FrameTransform * GlobalTransform;
+			const FMatrix InvTransformMat = Transform.ToMatrixWithScale().Inverse();
+			const FQuat InvRotation = Transform.GetRotation().Inverse();
+
+			const FVector RcpVolumeRes = FVector(SVTSceneProxy->VolumeResolution).Reciprocal();
+			FMatrix UnitSpaceMat = FMatrix::Identity;
+			UnitSpaceMat.SetColumn(0, FVector(RcpVolumeRes.X * 2.0, 0.0, 0.0));
+			UnitSpaceMat.SetColumn(1, FVector(0.0, RcpVolumeRes.Y * 2.0, 0.0));
+			UnitSpaceMat.SetColumn(2, FVector(0.0, 0.0, RcpVolumeRes.Z * 2.0));
+			UnitSpaceMat.SetOrigin(FVector(SVTSceneProxy->bPivotAtCentroid ? 0.0  : -1.0));
+
+			const FMatrix44f WorldToLocal = FMatrix44f(InvTransformMat * UnitSpaceMat);
+			const FMatrix44f WorldToLocalRot = FMatrix44f(InvRotation.ToMatrix());
 			
 			FGlobalShaderMap* GlobalShaderMap = GetGlobalShaderMap(GMaxRHIFeatureLevel);
 			FVisualizeSparseVolumeTextureVS::FPermutationDomain VsPermutationVector;
@@ -135,7 +154,6 @@ void AddSparseVolumeTextureViewerRenderPass(FRDGBuilder& GraphBuilder, FSceneRen
 			PsPassParameters->SparseVolumeTexturePageTable = GBlackUintVolumeTexture->TextureRHI;
 			PsPassParameters->SparseVolumeTextureA = GBlackVolumeTexture->TextureRHI;
 			PsPassParameters->SparseVolumeTextureB = GBlackVolumeTexture->TextureRHI;
-			PsPassParameters->StreamingInfoBuffer = GEmptyStructuredBufferWithUAV->ShaderResourceViewRHI;
 			PsPassParameters->PackedSVTUniforms0 = FUintVector4(0);
 			PsPassParameters->PackedSVTUniforms1 = FUintVector4(0);
 			PsPassParameters->SparseVolumeTextureResolution = SVTSceneProxy->VolumeResolution;
@@ -143,9 +161,9 @@ void AddSparseVolumeTextureViewerRenderPass(FRDGBuilder& GraphBuilder, FSceneRen
 			PsPassParameters->WorldToLocal0 = FVector4f(WorldToLocal.M[0][0], WorldToLocal.M[1][0], WorldToLocal.M[2][0], WorldToLocal.M[3][0]);
 			PsPassParameters->WorldToLocal1 = FVector4f(WorldToLocal.M[0][1], WorldToLocal.M[1][1], WorldToLocal.M[2][1], WorldToLocal.M[3][1]);
 			PsPassParameters->WorldToLocal2 = FVector4f(WorldToLocal.M[0][2], WorldToLocal.M[1][2], WorldToLocal.M[2][2], WorldToLocal.M[3][2]);
-			PsPassParameters->WorldToLocalNoScale0 = FVector3f(WorldToLocalNoScale.M[0][0], WorldToLocalNoScale.M[1][0], WorldToLocalNoScale.M[2][0]);
-			PsPassParameters->WorldToLocalNoScale1 = FVector3f(WorldToLocalNoScale.M[0][1], WorldToLocalNoScale.M[1][1], WorldToLocalNoScale.M[2][1]);
-			PsPassParameters->WorldToLocalNoScale2 = FVector3f(WorldToLocalNoScale.M[0][2], WorldToLocalNoScale.M[1][2], WorldToLocalNoScale.M[2][2]);
+			PsPassParameters->WorldToLocalRotation0 = FVector3f(WorldToLocalRot.M[0][0], WorldToLocalRot.M[1][0], WorldToLocalRot.M[2][0]);
+			PsPassParameters->WorldToLocalRotation1 = FVector3f(WorldToLocalRot.M[0][1], WorldToLocalRot.M[1][1], WorldToLocalRot.M[2][1]);
+			PsPassParameters->WorldToLocalRotation2 = FVector3f(WorldToLocalRot.M[0][2], WorldToLocalRot.M[1][2], WorldToLocalRot.M[2][2]);
 			PsPassParameters->ComponentToVisualize = SVTSceneProxy->ComponentToVisualize;
 			PsPassParameters->Extinction = SVTSceneProxy->Extinction;
 			
@@ -155,12 +173,10 @@ void AddSparseVolumeTextureViewerRenderPass(FRDGBuilder& GraphBuilder, FSceneRen
 				FRHITexture* PageTableTexture = RenderResources->GetPageTableTexture();
 				FRHITexture* TextureA = RenderResources->GetPhysicalTileDataATexture();
 				FRHITexture* TextureB = RenderResources->GetPhysicalTileDataBTexture();
-				FRHIShaderResourceView* StreamingInfoBufferSRV = RenderResources->GetStreamingInfoBufferSRV();
 
 				PsPassParameters->SparseVolumeTexturePageTable = PageTableTexture ? PageTableTexture : PsPassParameters->SparseVolumeTexturePageTable;
 				PsPassParameters->SparseVolumeTextureA = TextureA ? TextureA : PsPassParameters->SparseVolumeTextureA;
 				PsPassParameters->SparseVolumeTextureB = TextureB ? TextureB : PsPassParameters->SparseVolumeTextureB;
-				PsPassParameters->StreamingInfoBuffer = StreamingInfoBufferSRV ? StreamingInfoBufferSRV : PsPassParameters->StreamingInfoBuffer;
 
 				SVTSceneProxy->TextureRenderResources->GetPackedUniforms(PsPassParameters->PackedSVTUniforms0, PsPassParameters->PackedSVTUniforms1);
 			}

@@ -621,7 +621,7 @@ void UAudioComponent::PlayQueuedQuantizedInternal(const UObject* WorldContextObj
 
 			// remove the pending quartz command data from the audio component
 			bFoundQuantizedCommand = true;
-			PendingQuartzCommandData.RemoveAtSwap(i, 1, false);
+			PendingQuartzCommandData.RemoveAtSwap(i, 1, EAllowShrinking::No);
 			break;
 		}
 	}
@@ -727,6 +727,9 @@ void UAudioComponent::PlayInternal(const PlayInternalRequestData& InPlayRequestD
 	NewActiveSound.SetSound(SoundToPlay);
 	NewActiveSound.SetSourceEffectChain(SourceEffectChain);
 	NewActiveSound.SetSoundClass(SoundClassOverride);
+	NewActiveSound.SetAttenuationSettingsAsset(GetAttenuationSettingsAsset());
+	NewActiveSound.SetAttenuationSettingsOverride(bOverrideAttenuation);
+
 	NewActiveSound.ConcurrencySet = ConcurrencySet;
 
 	const float Volume = (VolumeModulationMax + ((VolumeModulationMin - VolumeModulationMax) * RandomStream.FRand())) * VolumeMultiplier;
@@ -1265,6 +1268,19 @@ void UAudioComponent::PostEditChangeProperty(FPropertyChangedEvent& PropertyChan
 }
 #endif // WITH_EDITOR
 
+const TObjectPtr<USoundAttenuation> UAudioComponent::GetAttenuationSettingsAsset() const
+{
+	if (AttenuationSettings)
+	{
+		return AttenuationSettings;
+	}
+	else if (Sound)
+	{
+		return Sound->AttenuationSettings;
+	}
+	return nullptr;
+}
+
 const FSoundAttenuationSettings* UAudioComponent::GetAttenuationSettingsToApply() const
 {
 	if (bOverrideAttenuation)
@@ -1280,6 +1296,54 @@ const FSoundAttenuationSettings* UAudioComponent::GetAttenuationSettingsToApply(
 		return Sound->GetAttenuationSettingsToApply();
 	}
 	return nullptr;
+}
+
+void UAudioComponent::SetAttenuationSettings(USoundAttenuation* InSoundAttenuation)
+{
+	AttenuationSettings = InSoundAttenuation;
+
+	if (FAudioDevice* AudioDevice = GetAudioDevice())
+	{
+		if (IsActive())
+		{
+			AudioDevice->SendCommandToActiveSounds(AudioComponentID, [InSoundAttenuation](FActiveSound& ActiveSound)
+			{
+				ActiveSound.SetAttenuationSettingsAsset(InSoundAttenuation);
+			});
+		}
+	}
+}
+
+void UAudioComponent::SetAttenuationOverrides(const FSoundAttenuationSettings& InAttenuationOverrides)
+{
+	AttenuationOverrides = InAttenuationOverrides;
+
+	if (FAudioDevice* AudioDevice = GetAudioDevice())
+	{
+		if (IsActive())
+		{
+			AudioDevice->SendCommandToActiveSounds(AudioComponentID, [InAttenuationOverrides](FActiveSound& ActiveSound)
+			{
+				ActiveSound.AttenuationSettings = InAttenuationOverrides;
+			});
+		}
+	}
+}
+
+void UAudioComponent::SetOverrideAttenuation(bool bInOverrideAttenuation)
+{
+	bOverrideAttenuation = bInOverrideAttenuation;
+
+	if (FAudioDevice* AudioDevice = GetAudioDevice())
+	{
+		if (IsActive())
+		{
+			AudioDevice->SendCommandToActiveSounds(AudioComponentID, [bInOverrideAttenuation](FActiveSound& ActiveSound)
+			{
+				ActiveSound.bIsAttenuationSettingsOverridden = bInOverrideAttenuation;
+			});
+		}
+	}
 }
 
 bool UAudioComponent::BP_GetAttenuationSettingsToApply(FSoundAttenuationSettings& OutAttenuationSettings)

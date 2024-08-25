@@ -1,31 +1,39 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
-using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using EpicGames.Core;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace EpicGames.Serialization.Tests
 {
 	[TestClass]
 	public class SerializerTests
 	{
+		enum TestEnum
+		{
+			Value1,
+			Value2,
+			Value3
+		}
+
 		class TestObject : IEquatable<TestObject>
 		{
-			[CbField]
 			public int A { get; set; }
-
-			[CbField]
 			public string B { get; set; } = String.Empty;
-
-			[CbField]
 			public IoHash C { get; set; }
-
-			[CbField]
 			public List<TestObject> Children { get; set; } = new List<TestObject>();
+
+			[CbField("D")]
+			public string PropertyWithCustomName { get; set; } = "hello";
+
+			[CbIgnore]
+			public string IgnoredProperty { get; set; } = "world";
+
+			public TestEnum Enum { get; set; } = TestEnum.Value3;
 
 			public override bool Equals(object? obj) => obj is TestObject other && Equals(other);
 
@@ -47,6 +55,12 @@ namespace EpicGames.Serialization.Tests
 
 			Assert.AreEqual(obj1, obj2);
 			Assert.IsTrue(mem1.Span.SequenceEqual(mem2.Span));
+
+			Assert.AreEqual(cbObj1.Find("D").AsString(), "hello");
+			Assert.IsFalse(cbObj1.Find(nameof(TestObject.PropertyWithCustomName)).HasValue());
+			Assert.IsFalse(cbObj1.Find(nameof(TestObject.IgnoredProperty)).HasValue());
+
+			Assert.AreEqual(cbObj2.Find("Enum").AsInt32(), (int)TestEnum.Value3);
 		}
 
 		[TestMethod]

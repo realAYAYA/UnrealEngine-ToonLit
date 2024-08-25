@@ -194,7 +194,7 @@ namespace UE
 
 		/**
 		 * Enumerates the built-in types that can be stored in instances of FAttributeStorage.
-		 * We cannot change the value of a type to make sure the serialization of old asset is always working
+		 * We cannot change the value of a type to make sure the serialization of old assets is always working.
 		 */
 		enum class EAttributeTypes : int32
 		{
@@ -262,12 +262,12 @@ namespace UE
 		};
 
 		/**
-		 * Return the FString for the specified AttributeType
+		 * Return the FString for the specified AttributeType.
 		 */
 		INTERCHANGECORE_API FString AttributeTypeToString(EAttributeTypes AttributeType);
 
 		/**
-		 * Return the AttributeType for the specified FString, return EAttributeTypes::None if the string do not match any
+		 * Return the AttributeType for the specified FString, or return EAttributeTypes::None if the string does not match any
 		 * supported attribute type.
 		 */
 		INTERCHANGECORE_API EAttributeTypes StringToAttributeType(const FString& AttributeTypeString);
@@ -279,7 +279,7 @@ namespace UE
 		 * data types that are to be used internally by FAttributeStorage. Traits for the most commonly used built-in
 		 * types are declared below.
 		 *
-		 * Complex types, such as structures and classes can be serialized into a byte array
+		 * Complex types, such as structures and classes, can be serialized into a byte array
 		 * and then assigned to an attribute. Note that you will be responsible for ensuring
 		 * correct byte ordering when serializing those types.
 		 *
@@ -287,7 +287,7 @@ namespace UE
 		 */
 		template<typename T, typename Enable = void> struct TAttributeTypeTraits
 		{
-			static CONSTEXPR EAttributeTypes GetType()
+			static constexpr EAttributeTypes GetType()
 			{
 				static_assert(!sizeof(T), "Attribute type trait must be specialized for this type.");
 				return EAttributeTypes::None;
@@ -307,28 +307,28 @@ namespace UE
 		}
 
 		/**
-		 * Enum to return complete status of a storage operation
-		 * It support success with additional information
-		 * It support multiple errors
+		 * Enum to return complete status of a storage operation.
+		 * It supports success with additional information.
+		 * It supports multiple errors.
 		 */
 		enum class EAttributeStorageResult : uint64
 		{
 			None											= 0x0,
-			//success result
+			//Success result.
 			Operation_Success								= 0x1,
 		
 
-			//Operation error result from here
+			//Operation error results from here.
 
-			//The type of the value was not matching the existing type. We cannot change the type of an existing attribute
+			//The type of the value was not matching the existing type. We cannot change the type of an existing attribute.
 			Operation_Error_WrongType						= (0x1 << 20),
-			//The size of the value is different from the existing size. We cannot have a different size
+			//The size of the value is different from the existing size. We cannot have a different size.
 			Operation_Error_WrongSize						= (0x1 << 21),
-			//The AttributeAllocationTable has an attribute that the offset is no valid in the storage
+			//The AttributeAllocationTable has an attribute whose offset is not valid in the storage.
 			Operation_Error_AttributeAllocationCorrupted	= (0x1 << 22),
-			//We cannot find the specified key
+			//We cannot find the specified key.
 			Operation_Error_CannotFoundKey					= (0x1 << 23),
-			//There was an error when removing an attribute from the AttributeAllocationTable. The TArray remove has failed
+			//There was an error when removing an attribute from the AttributeAllocationTable. The TArray remove has failed.
 			Operation_Error_CannotRemoveAttribute			= (0x1 << 24),
 			//We try to override an attribute but the specified options do not allow override.
 			Operation_Error_CannotOverrideAttribute			= (0x1 << 25),
@@ -341,8 +341,8 @@ namespace UE
 		ENUM_CLASS_FLAGS(EAttributeStorageResult)
 
 		/**
-		 * Helper function to interpret storage result
-		 * @return true if the Result contain at least one of the RefResult flags
+		 * Helper function to interpret storage results.
+		 * @return true if the result contains at least one of the RefResult flags.
 		 */
 		FORCEINLINE bool HasAttributeStorageResult(const EAttributeStorageResult Result, const EAttributeStorageResult RefResult)
 		{
@@ -350,8 +350,8 @@ namespace UE
 		}
 	
 		/**
-		 * Helper function to determine if the storage result is success
-		 * @return true if result contain Operation_Success
+		 * Helper function to determine if the storage result is success.
+		 * @return true if the result contains Operation_Success.
 		 */
 		FORCEINLINE bool IsAttributeStorageResultSuccess(const EAttributeStorageResult Result)
 		{
@@ -360,27 +360,27 @@ namespace UE
 
 		/**
 		 * Helper function to transform an operation result into a LOG.
-		 * @param Result - The result we want to output a log for
-		 * @param OperationName - The operation name that end up with the speicified Result.
-		 * @param AttributeKey - The attribute we did apply the operation on.
+		 * @param Result - The result we want to output a log for.
+		 * @param OperationName - The operation name that ended up with the specified result.
+		 * @param AttributeKey - The attribute we applied the operation to.
 		 */
 		INTERCHANGECORE_API void LogAttributeStorageErrors(const EAttributeStorageResult Result, const FString OperationName, const FAttributeKey AttributeKey );
 
 
 		/**
-		 * Enum to pass options when we add an attribute
+		 * Enum to pass options when we add an attribute.
 		 */
 		enum class EAttributeStorageAddOptions : uint32
 		{
 			None					= 0x0,
 			Option_Override			= 0x1,
-			//allow the AddAttribute to override the value if it exist.
+			//allow the AddAttribute to override the value if it exists.
 		};
 
 		ENUM_CLASS_FLAGS(EAttributeStorageAddOptions)
 
 		/**
-		 * Helper function to interpret storage add options
+		 * Helper function to interpret storage add options.
 		 */
 		FORCEINLINE bool HasAttributeStorageAddOption(const EAttributeStorageAddOptions Options, const EAttributeStorageAddOptions RefOptions)
 		{
@@ -388,18 +388,18 @@ namespace UE
 		}
 
 		/**
-		 * Enumerates the attribute properties. Those properties affect how the attribute are stored or what they are use for
+		 * Enumerates the attribute properties. Those properties affect how the attribute are stored or what they are used for.
 		 */
 		enum class EAttributeProperty : uint32
 		{
 			None						= 0x0,
-			NoHash						= 0x1, /*No hash attribute will not be part of the hash result when calling GetStorageHash*/
+			NoHash						= 0x1, /* No hash attribute will not be part of the hash result when calling GetStorageHash. */
 		};
 
 		ENUM_CLASS_FLAGS(EAttributeProperty)
 
 		/**
-		 * Helper function to interpret attribute property
+		 * Helper function to interpret an attribute property.
 		 */
 		FORCEINLINE bool HasAttributeProperty(const EAttributeProperty PropertyA, const EAttributeProperty PropertyB)
 		{
@@ -407,7 +407,7 @@ namespace UE
 		}
 
 		/**
-		 * This is a helper class to specialize template function inside a class, it allow specialize template to not be static
+		 * This is a helper class to specialize template functions inside a class. It allows specialized templates to not be static.
 		 */
 		template<typename T>
 		struct TSpecializeType
@@ -417,19 +417,19 @@ namespace UE
 
 	
 		/**
-		 * This class is a Key/Value storage inside a TArray64<uint8>
-		 * The keys are of type FAttributeKey which is a FString, each key is unique and have only one value.
-		 * The value can be of any type contain in EAttributeTypes.
+		 * This class is a Key/Value storage inside a TArray64<uint8>.
+		 * The keys are of type FAttributeKey, which is an FString. Each key is unique and has only one value.
+		 * The value can be of any type contained in EAttributeTypes.
 		 * 
-		 * @notes
-		 * The storage is multi thread safe, it use a mutex to lock the storage for every read/write operation.
-		 * The hash of the storage is deterministic because it sort the attributes before calculating the hash.
+		 * @note
+		 * The storage is multi-thread safe. It uses a mutex to lock the storage for every read/write operation.
+		 * The hash of the storage is deterministic because it sorts the attributes before calculating the hash.
 		 */
 		class FAttributeStorage
 		{
 		public:
 			/**
-			 * Class to Get/Set an attribute of the storage 
+			 * Class to get/set an attribute of the storage.
 			 */
 			template<typename T>
 			class TAttributeHandle
@@ -443,7 +443,7 @@ namespace UE
 				{}
 
 				/**
-				* Return true if the storage contain a valid attribute key, false otherwise. 
+				* Return true if the storage contains a valid attribute key, or false otherwise. 
 				*/
 				FORCEINLINE bool IsValid() const
 				{
@@ -516,14 +516,14 @@ namespace UE
 
 			/**
 			 * Register an attribute in the storage. Return success if the attribute was properly added, or there is an existing
-			 * attribute of the same type, return error otherwise.
+			 * attribute of the same type. Return an error otherwise.
 			 *
-			 * @Param ElementAttributeKey - is the storage key (the path) of the attribute
-			 * @Param DefaultValue - is the default value for the registered attribute
+			 * @Param ElementAttributeKey - the storage key (the path) of the attribute.
+			 * @Param DefaultValue - the default value for the registered attribute.
 			 *
-			 * @note Possible errors
-			 * - Key exist with a different type
-			 * - Storage is corrupted
+			 * @note Possible errors:
+			 * - Key exists with a different type.
+			 * - Storage is corrupted.
 			 */
 			template<typename T>
 			EAttributeStorageResult RegisterAttribute(const FAttributeKey& ElementAttributeKey, const T& DefaultValue, EAttributeProperty AttributeProperty = EAttributeProperty::None)
@@ -573,19 +573,19 @@ namespace UE
 			/**
 			 * Remove an attribute from the storage.
 			 *
-			 * @param ElementAttributeKey - is the storage key (the path) of the attribute to remove.
+			 * @param ElementAttributeKey - the storage key (the path) of the attribute to remove.
 			 *
-			 * @note Possible errors
-			 * - Key do not exist
-			 * - Internal storage structure remove error
+			 * @note Possible errors:
+			 * - Key does not exist.
+			 * - Internal storage structure removal error.
 			 */
 			INTERCHANGECORE_API EAttributeStorageResult UnregisterAttribute(const FAttributeKey& ElementAttributeKey);
 
 			/**
-			 * Return an attribute handle for the specified attribute. This handle is compile type check and is use to Get and Set the attribute value type.
-			 * The function will assert if the key is missing or the type doesnt match the specified template type.
+			 * Return an attribute handle for the specified attribute. This handle is a compile type check and is use to get and set the attribute value type.
+			 * The function will assert if the key is missing or the type doesn't match the specified template type.
 			 *
-			 * @param ElementAttributeKey is the storage key (the path) of the attribute.
+			 * @param ElementAttributeKey - the storage key (the path) of the attribute.
 			 */
 			template<typename T>
 			TAttributeHandle<T> GetAttributeHandle(const FAttributeKey& ElementAttributeKey) const
@@ -596,87 +596,87 @@ namespace UE
 
 
 			/**
-			 * Return the attribute type if the key exist, return None if the key is missing
+			 * Return the attribute type if the key exists, or None if the key is missing.
 			 *
-			 * @param ElementAttributeKey - is the storage key (the path) of the attribute.
+			 * @param ElementAttributeKey - the storage key (the path) of the attribute.
 			 *
 			 */
 			INTERCHANGECORE_API EAttributeTypes GetAttributeType(const FAttributeKey& ElementAttributeKey) const;
 
 			/**
-			 * Return true if the attribute key point on an existing attribute in the storage. Return false otherwise
+			 * Return true if the attribute key points to an existing attribute in the storage. Return false otherwise.
 			 *
-			 * @param ElementAttributeKey - is the storage key (the path) of the attribute.
+			 * @param ElementAttributeKey - the storage key (the path) of the attribute.
 			 *
 			 */
 			INTERCHANGECORE_API bool ContainAttribute(const FAttributeKey& ElementAttributeKey) const;
 
 			/**
-			 * This function allow the user to retrieve the array of keys to iterate and do reflection on the storage content
+			 * Retrieve the array of keys that can be used to iterate and do reflection on the storage content.
 			 *
 			 */
 			INTERCHANGECORE_API void GetAttributeKeys(TArray<FAttributeKey>& AttributeKeys) const;
 	
 			/**
-			 * Return a FGuid build from the FSHA1 of the specified attribute data. If the Attribute do not exist it return an empty FGUID
+			 * Return an FGuid built from the FSHA1 of the specified attribute data. If the attribute does not exist, return an empty FGUID.
 			 *
-			 * @param ElementAttributeKey is the storage key (the path) of the attribute.
+			 * @param ElementAttributeKey - the storage key (the path) of the attribute.
 			 *
 			 */
 			INTERCHANGECORE_API FGuid GetAttributeHash(const FAttributeKey& ElementAttributeKey) const;
 	
 			/**
-			 * This function fill the OutGuid with the hash of the specified attribute. Return true if the attribute exist and the OutGuid was assign, return false otherwise without touching the OutGuid.
+			 * This function fills the OutGuid with the hash of the specified attribute. Return true if the attribute exists and the OutGuid was assigned, or false otherwise without touching the OutGuid.
 			 *
-			 * @param ElementAttributeKey - is the storage key (the path) of the attribute.
-			 * @param OutGuid - is where we put the attribute hash.
+			 * @param ElementAttributeKey - the storage key (the path) of the attribute.
+			 * @param OutGuid - where we put the attribute hash.
 			 *
 			 */
 			INTERCHANGECORE_API bool GetAttributeHash(const FAttributeKey& ElementAttributeKey, FGuid& OutGuid) const;
 
 			/**
-			 * Return a FGuid build from the FSHA1 of all the attribute data contain in the node.
-			 * The data include the UniqueID and the DisplayLabel.
+			 * Return an FGuid built from the FSHA1 of all the attribute data contained in the node.
+			 * The data includes the UniqueID and the DisplayLabel.
 			 *
-			 * @note the attribute are sorted by key when building the FSHA1 data. The hash will be deterministic for the same data whatever
+			 * @note the attributes are sorted by key when building the FSHA1 data. The hash will be deterministic for the same data whatever
 			 * the order we add the attributes.
 			 */
 			INTERCHANGECORE_API FGuid GetStorageHash() const;
 
 			/**
-			 * Compare two storage to know which properties was modified/added/removed.
+			 * Compare two storage objects to know which properties were modified/added/removed.
 			 *
-			 * @param BaseStorage - The storage reference
-			 * @param VersionStorage - The storage with the changes
-			 * @param RemovedAttribute - All attributes that are in base storage but not in version storage, contain key only valid for base storage
-			 * @param AddedAttributes - All attributes that are in version storage but not in base storage, contain key only valid for version storage
-			 * @param ModifiedAttributes - All attributes that are in both storage base storage but have a different hash (different value)
+			 * @param BaseStorage - The reference storage.
+			 * @param VersionStorage - The storage with the changes.
+			 * @param RemovedAttribute - All attributes that are in base storage but not in version storage. Contains keys that are only valid for the base storage.
+			 * @param AddedAttributes - All attributes that are in version storage but not in base storage. Contains keys that are only valid for the version storage.
+			 * @param ModifiedAttributes - All attributes that are in both storage but have a different hash (different value).
 			 *
 			 */
 			static INTERCHANGECORE_API void CompareStorage(const FAttributeStorage& BaseStorage, const FAttributeStorage& VersionStorage, TArray<FAttributeKey>& RemovedAttributes, TArray<FAttributeKey>& AddedAttributes, TArray<FAttributeKey>& ModifiedAttributes);
 
 			/**
-			 * Copy an array of attributes from the source storage to the destination storage. If the attribute already exist in the destination, the value will be updated.
-			 * If a key do not exist in the source it will not be copy/created in the destination
+			 * Copy an array of attributes from the source storage to the destination storage. If the attribute already exists in the destination, the value will be updated.
+			 * If a key does not exist in the source it will not be copied/created in the destination.
 			 *
-			 * @param SourceStorage - The storage source
-			 * @param DestinationStorage - The storage destination
-			 * @param AttributeKeys - All attributes that must be copy from the source to the destination.
+			 * @param SourceStorage - The storage source.
+			 * @param DestinationStorage - The storage destination.
+			 * @param AttributeKeys - All attributes that must be copied from the source to the destination.
 			 *
 			 */
 			static INTERCHANGECORE_API void CopyStorageAttributes(const FAttributeStorage& SourceStorage, FAttributeStorage& DestinationStorage, const TArray<FAttributeKey>& AttributeKeys);
 
 			/**
-			 * Return the defrag ratio. This ratio is use to know when we need to defrag the storage
+			 * Return the defrag ratio. This ratio is used to know when we need to defrag the storage.
 			 * @example - a ratio of 0.1f will defrag the storage if the memory lost is bigger then 10% of the storage allocation.
-			 * Defrag is call when we remove an attribute or when we set the defrag ratio
+			 * Defrag is called when we remove an attribute or when we set the defrag ratio.
 			 */
 			FORCEINLINE float GetDefragRatio() const
 			{
 				return DefragRatio;
 			}
 	
-			/** Set the defrag ratio. See the GetDefragRatio for the defrag documentation. */
+			/** Set the defrag ratio. See GetDefragRatio() for the defrag documentation. */
 			INTERCHANGECORE_API void SetDefragRatio(const float InDefragRatio);
 	
 			friend FArchive& operator<<(FArchive& Ar, FAttributeStorage& Storage)
@@ -691,13 +691,13 @@ namespace UE
 			/**
 			 * Reserve the allocation table and the storage data.
 			 * 
-			 * @param NewAttributeCount: The number of attribute we want to reserve. Zero value do not reserve attribute count
-			 * @param NewStorageSize: The size on the storage all those new attribute will need. Passing zero value do not reserve storage size
+			 * @param NewAttributeCount: The number of attributes we want to reserve. Passing a zero value does not reserve attribute count.
+			 * @param NewStorageSize: The size of the storage all the new attributes will need. Passing a zero value do not reserve storage size.
 			 */
 			INTERCHANGECORE_API void Reserve(int64 NewAttributeCount, int64 NewStorageSize);
 
 		protected:
-			/** Structure use to hold the attribute information store in the attribute allocation table. */
+			/** Structure used to hold the attribute information stored in the attribute allocation table. */
 			struct FAttributeAllocationInfo
 			{
         		//The offset in the storage
@@ -1102,7 +1102,7 @@ namespace UE
 		/** Implements variant type traits for the built-in bool type. */
 		template<> struct TAttributeTypeTraits<bool>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Bool; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Bool; }
 			static FString ToString(const bool& Value) { return Value ? TEXT("true") : TEXT("false"); }
 		};
 
@@ -1116,14 +1116,14 @@ namespace UE
 		/** Implements variant type traits for byte arrays. */
 		template<> struct TAttributeTypeTraits<TArray<uint8> >
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::ByteArray; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::ByteArray; }
 			static FString ToString(const TArray<uint8>& Value) {return TEXT("Array<uint8>"); }
 		};
 
 		/** Implements variant type traits for byte array64s. */
 		template<> struct TAttributeTypeTraits<TArray64<uint8> >
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::ByteArray64; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::ByteArray64; }
 			static FString ToString(const TArray64<uint8>& Value) { return TEXT("Array64<uint8>"); }
 		};
 
@@ -1131,7 +1131,7 @@ namespace UE
 		/** Implements variant type traits for the built-in FColor type. */
 		template<> struct TAttributeTypeTraits<FColor>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Color; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Color; }
 			static FString ToString(const FColor& Value) { return Value.ToString(); }
 		};
 
@@ -1139,7 +1139,7 @@ namespace UE
 		/** Implements variant type traits for the built-in FDateTime type. */
 		template<> struct TAttributeTypeTraits<FDateTime>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::DateTime; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::DateTime; }
 			static FString ToString(const FDateTime& Value) { return Value.ToString(); }
 		};
 
@@ -1147,7 +1147,7 @@ namespace UE
 		/** Implements variant type traits for the built-in double type. */
 		template<> struct TAttributeTypeTraits<double>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Double; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Double; }
 			static FString ToString(const double& Value)
 			{
 				FStringFormatOrderedArguments OrderedArguments;
@@ -1160,7 +1160,7 @@ namespace UE
 		/** Implements variant type traits for enumeration types. */
 		template<typename EnumType> struct TAttributeTypeTraits<TEnumAsByte<EnumType> >
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Enum; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Enum; }
 			static FString ToString(const TEnumAsByte<EnumType>& Value)
 			{
 				uint32 ValueConv = static_cast<uint32>(static_cast<uint8>(Value));
@@ -1174,7 +1174,7 @@ namespace UE
 		/** Implements variant type traits for the built-in float type. */
 		template<> struct TAttributeTypeTraits<float>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Float; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Float; }
 			static FString ToString(const float& Value)
 			{
 				FStringFormatOrderedArguments OrderedArguments;
@@ -1187,7 +1187,7 @@ namespace UE
 		/** Implements variant type traits for the built-in FGuid type. */
 		template<> struct TAttributeTypeTraits<FGuid>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Guid; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Guid; }
 			static FString ToString(const FGuid& Value) { return Value.ToString(EGuidFormats::DigitsLower); }
 		};
 
@@ -1195,7 +1195,7 @@ namespace UE
 		/** Implements variant type traits for the built-in int8 type. */
 		template<> struct TAttributeTypeTraits<int8>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Int8; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Int8; }
 			static FString ToString(const int8& Value) { return FString::FromInt(Value); }
 		};
 
@@ -1203,7 +1203,7 @@ namespace UE
 		/** Implements variant type traits for the built-in int16 type. */
 		template<> struct TAttributeTypeTraits<int16>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Int16; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Int16; }
 			static FString ToString(const int16& Value) { return FString::FromInt(Value); }
 		};
 
@@ -1211,7 +1211,7 @@ namespace UE
 		/** Implements variant type traits for the built-in int32 type. */
 		template<> struct TAttributeTypeTraits<int32>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Int32; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Int32; }
 			static FString ToString(const int32& Value) { return FString::FromInt(Value); }
 		};
 
@@ -1219,7 +1219,7 @@ namespace UE
 		/** Implements variant type traits for the built-in int64 type. */
 		template<> struct TAttributeTypeTraits<int64>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Int64; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Int64; }
 			static FString ToString(const int64& Value)
 			{
 				FStringFormatOrderedArguments OrderedArguments;
@@ -1231,7 +1231,7 @@ namespace UE
 		/** Implements variant type traits for the built-in FIntRect type. */
 		template<> struct TAttributeTypeTraits<FIntRect>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::IntRect; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::IntRect; }
 			static FString ToString(const FIntRect& Value) { return Value.ToString(); }
 		};
 
@@ -1239,7 +1239,7 @@ namespace UE
 		/** Implements variant type traits for the built-in FLinearColor type. */
 		template<> struct TAttributeTypeTraits<FLinearColor>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::LinearColor; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::LinearColor; }
 			static FString ToString(const FLinearColor& Value) { return Value.ToString(); }
 		};
 
@@ -1249,7 +1249,7 @@ namespace UE
 		/** Implements variant type traits for the built-in FName type. */
 		template<> struct TAttributeTypeTraits<FName>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Name; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Name; }
 			static FString ToString(const FName& Value) { return Value.ToString(); }
 		};
 
@@ -1261,7 +1261,7 @@ namespace UE
 		/** Implements variant type traits for the built-in FRandomStream type. */
 		template<> struct TAttributeTypeTraits<FRandomStream>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::RandomStream; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::RandomStream; }
 			static FString ToString(const FRandomStream& Value) { return Value.ToString(); }
 		};
 
@@ -1272,7 +1272,7 @@ namespace UE
 		/** Implements variant type traits for the built-in FString type. */
 		template<> struct TAttributeTypeTraits<FString>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::String; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::String; }
 			static FString ToString(const FString& Value) { return Value; }
 		};
 
@@ -1280,7 +1280,7 @@ namespace UE
 		/** Implements variant type traits for the built-in FTimespan type. */
 		template<> struct TAttributeTypeTraits<FTimespan>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Timespan; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Timespan; }
 			static FString ToString(const FTimespan& Value) { return Value.ToString(); }
 		};
 
@@ -1291,7 +1291,7 @@ namespace UE
 		/** Implements variant type traits for the built-in FTwoVectors type. */
 		template<> struct TAttributeTypeTraits<FTwoVectors>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::TwoVectors; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::TwoVectors; }
 			static FString ToString(const FTwoVectors& Value) { return Value.ToString(); }
 		};
 
@@ -1299,7 +1299,7 @@ namespace UE
 		/** Implements variant type traits for the built-in uint8 type. */
 		template<> struct TAttributeTypeTraits<uint8>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::UInt8; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::UInt8; }
 			static FString ToString(const uint8& Value)
 			{
 				uint32 ValueConv = Value;
@@ -1321,7 +1321,7 @@ namespace UE
 				>::type
 			>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::UInt8; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::UInt8; }
 			static FString ToString(const EnumClassType& Value)
 			{
 				uint32 ValueConv = (uint8)Value;
@@ -1334,7 +1334,7 @@ namespace UE
 		/** Implements variant type traits for the built-in uint16 type. */
 		template<> struct TAttributeTypeTraits<uint16>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::UInt16; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::UInt16; }
 			static FString ToString(const uint16& Value)
 			{
 				uint32 ValueConv = Value;
@@ -1348,7 +1348,7 @@ namespace UE
 		/** Implements variant type traits for the built-in uint32 type. */
 		template<> struct TAttributeTypeTraits<uint32>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::UInt32; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::UInt32; }
 			static FString ToString(const uint32& Value)
 			{
 				FStringFormatOrderedArguments OrderedArguments;
@@ -1361,7 +1361,7 @@ namespace UE
 		/** Implements variant type traits for the built-in uint64 type. */
 		template<> struct TAttributeTypeTraits<uint64>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::UInt64; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::UInt64; }
 			static FString ToString(const uint64& Value)
 			{
 				FStringFormatOrderedArguments OrderedArguments;
@@ -1377,7 +1377,7 @@ namespace UE
 		/** Implements variant type traits for the built-in FVector2D type. */
 		template<> struct TAttributeTypeTraits<FVector2D>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Vector2d; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Vector2d; }
 			static FString ToString(const FVector2D& Value) { return Value.ToString(); }
 		};
 
@@ -1386,28 +1386,28 @@ namespace UE
 		/** Implements variant type traits for the built-in Vector2DHalf type. */
 		template<> struct TAttributeTypeTraits<FIntPoint>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::IntPoint; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::IntPoint; }
 			static FString ToString(const FIntPoint& Value) { return Value.ToString(); }
 		};
 
 		/** Implements variant type traits for the built-in Vector2DHalf type. */
 		template<> struct TAttributeTypeTraits<FIntVector>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::IntVector; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::IntVector; }
 			static FString ToString(const FIntVector& Value) { return Value.ToString(); }
 		};
 
 		/** Implements variant type traits for the built-in Vector2DHalf type. */
 		template<> struct TAttributeTypeTraits<FVector2DHalf>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Vector2DHalf; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Vector2DHalf; }
 			static FString ToString(const FVector2DHalf& Value) { return Value.ToString(); }
 		};
 
 		/** Implements variant type traits for the built-in Float16 type. */
 		template<> struct TAttributeTypeTraits<FFloat16>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Float16; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Float16; }
 			static FString ToString(const FFloat16& Value)
 			{
 				float ValueConvert = Value.GetFloat();
@@ -1420,7 +1420,7 @@ namespace UE
 		/** Implements variant type traits for the built-in OrientedBox type. */
 		template<> struct TAttributeTypeTraits<FOrientedBox>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::OrientedBox; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::OrientedBox; }
 			static FString ToString(const FOrientedBox& Value) { return TEXT("FOrientedBox"); }
 		};
 
@@ -1429,7 +1429,7 @@ namespace UE
 		/** Implements variant type traits for the built-in FrameNumber type. */
 		template<> struct TAttributeTypeTraits<FFrameNumber>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::FrameNumber; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::FrameNumber; }
 			static FString ToString(const FFrameNumber& Value)
 			{
 				int32 ValueConvert = Value.Value;
@@ -1442,181 +1442,181 @@ namespace UE
 		/** Implements variant type traits for the built-in FrameRate type. */
 		template<> struct TAttributeTypeTraits<FFrameRate>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::FrameRate; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::FrameRate; }
 			static FString ToString(const FFrameRate& Value) { return Value.ToPrettyText().ToString(); }
 		};
 
 		/** Implements variant type traits for the built-in FrameTime type. */
 		template<> struct TAttributeTypeTraits<FFrameTime>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::FrameTime; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::FrameTime; }
 		};
 
 		/** Implements variant type traits for the built-in SoftObjectPath type. */
 		template<> struct TAttributeTypeTraits<FSoftObjectPath>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::SoftObjectPath; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::SoftObjectPath; }
 			static FString ToString(const FSoftObjectPath& Value) { return Value.ToString(); }
 		};
 
 		/** Implements variant type traits for the built-in Matrix44f type. */
 		template<> struct TAttributeTypeTraits<FMatrix44f>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Matrix44f; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Matrix44f; }
 			static FString ToString(const FMatrix44f& Value) { return Value.ToString(); }
 		};
 
 		/** Implements variant type traits for the built-in Matrix44f type. */
 		template<> struct TAttributeTypeTraits<FMatrix44d>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Matrix44d; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Matrix44d; }
 			static FString ToString(const FMatrix44d& Value) { return Value.ToString(); }
 		};
 
 		/** Implements variant type traits for the built-in Plane4f type. */
 		template<> struct TAttributeTypeTraits<FPlane4f>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Plane4f; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Plane4f; }
 			static FString ToString(const FPlane4f& Value) { return Value.ToString(); }
 		};
 
 		/** Implements variant type traits for the built-in Plane4d type. */
 		template<> struct TAttributeTypeTraits<FPlane4d>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Plane4d; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Plane4d; }
 			static FString ToString(const FPlane4d& Value) { return Value.ToString(); }
 		};
 
 		/** Implements variant type traits for the built-in Quat4f type. */
 		template<> struct TAttributeTypeTraits<FQuat4f>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Quat4f; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Quat4f; }
 			static FString ToString(const FQuat4f& Value) { return Value.ToString(); }
 		};
 
 		/** Implements variant type traits for the built-in Quat4d type. */
 		template<> struct TAttributeTypeTraits<FQuat4d>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Quat4d; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Quat4d; }
 			static FString ToString(const FQuat4d& Value) { return Value.ToString(); }
 		};
 
 		/** Implements variant type traits for the built-in Rotator3f type. */
 		template<> struct TAttributeTypeTraits<FRotator3f>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Rotator3f; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Rotator3f; }
 			static FString ToString(const FRotator3f& Value) { return Value.ToString(); }
 		};
 
 		/** Implements variant type traits for the built-in Rotator3d type. */
 		template<> struct TAttributeTypeTraits<FRotator3d>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Rotator3d; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Rotator3d; }
 			static FString ToString(const FRotator3d& Value) { return Value.ToString(); }
 		};
 
 		/** Implements variant type traits for the built-in Rotator3f type. */
 		template<> struct TAttributeTypeTraits<FTransform3f>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Transform3f; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Transform3f; }
 			static FString ToString(const FTransform3f& Value) { return Value.ToString(); }
 		};
 
 		/** Implements variant type traits for the built-in Transform3d type. */
 		template<> struct TAttributeTypeTraits<FTransform3d>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Transform3d; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Transform3d; }
 			static FString ToString(const FTransform3d& Value) { return Value.ToString(); }
 		};
 
 		/** Implements variant type traits for the built-in Vector3f type. */
 		template<> struct TAttributeTypeTraits<FVector3f>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Vector3f; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Vector3f; }
 			static FString ToString(const FVector3f& Value) { return Value.ToString(); }
 		};
 
 		/** Implements variant type traits for the built-in Vector3d type. */
 		template<> struct TAttributeTypeTraits<FVector3d>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Vector3d; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Vector3d; }
 			static FString ToString(const FVector3d& Value) { return Value.ToString(); }
 		};
 
 		/** Implements variant type traits for the built-in Vector2f type. */
 		template<> struct TAttributeTypeTraits<FVector2f>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Vector2f; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Vector2f; }
 			static FString ToString(const FVector2f& Value) { return Value.ToString(); }
 		};
 
 		/** Implements variant type traits for the built-in Vector4f type. */
 		template<> struct TAttributeTypeTraits<FVector4f>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Vector4f; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Vector4f; }
 			static FString ToString(const FVector4f& Value) { return Value.ToString(); }
 		};
 
 		/** Implements variant type traits for the built-in Vector4d type. */
 		template<> struct TAttributeTypeTraits<FVector4d>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Vector4d; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Vector4d; }
 			static FString ToString(const FVector4d& Value) { return Value.ToString(); }
 		};
 
 		/** Implements variant type traits for the built-in Box2f type. */
 		template<> struct TAttributeTypeTraits<FBox2f>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Box2f; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Box2f; }
 			static FString ToString(const FBox2f& Value) { return Value.ToString(); }
 		};
 
 		/** Implements variant type traits for the built-in Box2D type. */
 		template<> struct TAttributeTypeTraits<FBox2D>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Box2D; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Box2D; }
 			static FString ToString(const FBox2D& Value) { return Value.ToString(); }
 		};
 
 		/** Implements variant type traits for the built-in Box3f type. */
 		template<> struct TAttributeTypeTraits<FBox3f>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Box3f; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Box3f; }
 			static FString ToString(const FBox3f& Value) { return Value.ToString(); }
 		};
 
 		/** Implements variant type traits for the built-in Box3d type. */
 		template<> struct TAttributeTypeTraits<FBox3d>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Box3d; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Box3d; }
 			static FString ToString(const FBox3d& Value) { return Value.ToString(); }
 		};
 
 		/** Implements variant type traits for the built-in BoxSphereBounds3f type. */
 		template<> struct TAttributeTypeTraits<FBoxSphereBounds3f>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::BoxSphereBounds3f; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::BoxSphereBounds3f; }
 			static FString ToString(const FBoxSphereBounds3f& Value) { return Value.ToString(); }
 		};
 
 		/** Implements variant type traits for the built-in BoxSphereBounds3d type. */
 		template<> struct TAttributeTypeTraits<FBoxSphereBounds3d>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::BoxSphereBounds3d; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::BoxSphereBounds3d; }
 			static FString ToString(const FBoxSphereBounds3d& Value) { return Value.ToString(); }
 		};
 
 		/** Implements variant type traits for the built-in Sphere3f type. */
 		template<> struct TAttributeTypeTraits<FSphere3f>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Sphere3f; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Sphere3f; }
 			static FString ToString(const FSphere3f& Value) { return TEXT("FSphere3f"); }
 		};
 
 		/** Implements variant type traits for the built-in Sphere3d type. */
 		template<> struct TAttributeTypeTraits<FSphere3d>
 		{
-			static CONSTEXPR EAttributeTypes GetType() { return EAttributeTypes::Sphere3d; }
+			static constexpr EAttributeTypes GetType() { return EAttributeTypes::Sphere3d; }
 			static FString ToString(const FSphere3d& Value) { return TEXT("FSphere3d"); }
 		};
 	} //ns interchange

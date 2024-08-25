@@ -29,7 +29,7 @@ namespace ChaosTest {
 		const Softs::FSolverReal Damping=0.04)
 	{
 		Chaos::Softs::FSolverParticles Particles;
-		Chaos::Softs::FSolverRigidParticles RigidParticles;
+		Chaos::Softs::FSolverCollisionParticles RigidParticles;
 		TUniquePtr<Softs::FPBDEvolution> Evolution(
 			new Softs::FPBDEvolution(
 				MoveTemp(Particles),
@@ -53,7 +53,7 @@ namespace ChaosTest {
 		auto& Particles = Evolution->Particles();
 		const uint32 Idx = Particles.Size();
 		Particles.AddParticles(1);
-		Particles.X(Idx) = Position;
+		Particles.SetX(Idx, Position);
 		Particles.V(Idx) = Velocity;
 		Particles.M(Idx) = Mass;
 		Particles.InvM(Idx) = 1.0 / Mass;
@@ -73,15 +73,15 @@ namespace ChaosTest {
 		// Initialize particles.  Use 1/3 area of connected triangles for particle mass.
 		for (uint32 i = InitialNumParticles; i < Particles.Size(); i++)
 		{
-			Particles.X(i) += XOffset;
+			Particles.SetX(i, Particles.GetX(i) + XOffset);
 			Particles.V(i) = Chaos::Softs::FSolverVec3(0);
 			Particles.M(i) = 0;
 		}
 		for (const Chaos::TVec3<int32>& Tri : TriMesh.GetElements())
 		{
 			const Softs::FSolverReal TriArea = 0.5 * Chaos::Softs::FSolverVec3::CrossProduct(
-				Particles.X(Tri[1]) - Particles.X(Tri[0]),
-				Particles.X(Tri[2]) - Particles.X(Tri[0])).Size();
+				Particles.GetX(Tri[1]) - Particles.GetX(Tri[0]),
+				Particles.GetX(Tri[2]) - Particles.GetX(Tri[0])).Size();
 			for (int32 i = 0; i < 3; i++)
 			{
 				Particles.M(Tri[i]) += TriArea / 3;
@@ -153,7 +153,7 @@ namespace ChaosTest {
 		Points.SetNum(Particles.Size());
 
 		for (uint32 i = 0; i < Particles.Size(); i++)
-			Points[i] = Particles.X(i);
+			Points[i] = Particles.GetX(i);
 
 		return Points;
 	}
@@ -163,7 +163,7 @@ namespace ChaosTest {
 	{
 		for (uint32 i = 0; i < Particles.Size(); i++)
 		{
-			Particles.X(i) = Points[i];
+			Particles.SetX(i, Points[i]);
 			Particles.V(i) = Chaos::Softs::FSolverVec3(0);
 		}
 	}

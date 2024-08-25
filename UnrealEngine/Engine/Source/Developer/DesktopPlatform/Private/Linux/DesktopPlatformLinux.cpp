@@ -134,8 +134,6 @@ bool FDesktopPlatformLinux::RegisterEngineInstallation(const FString &RootDir, F
 		FString ConfigPath = FString(FPlatformProcess::ApplicationSettingsDir()) / FString(TEXT("UnrealEngine")) / FString(TEXT("Install.ini"));
 		ConfigFile.Read(ConfigPath);
 
-		FConfigSection &Section = ConfigFile.FindOrAdd(TEXT("Installations"));
-
 		// If this is an installed build, use that Guid instead of generating a new one
 		FString InstallationIdPath = FString(RootDir / "Engine" / "Build" / "InstalledBuild.txt");
 		FArchive* File = IFileManager::Get().CreateFileReader(*InstallationIdPath, FILEREAD_Silent);
@@ -157,7 +155,7 @@ bool FDesktopPlatformLinux::RegisterEngineInstallation(const FString &RootDir, F
 			OutIdentifier = FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens);
 		}
 
-		Section.AddUnique(*OutIdentifier, RootDir);
+		ConfigFile.AddToSection(TEXT("Installations"), *OutIdentifier, RootDir);
 		OutIdentifier.RemoveFromStart(TEXT("UE_"));
 
 		ConfigFile.Dirty = true;
@@ -188,11 +186,11 @@ void FDesktopPlatformLinux::EnumerateEngineInstallations(TMap<FString, FString> 
 	FString ConfigPath = FString(FPlatformProcess::ApplicationSettingsDir()) / FString(TEXT("UnrealEngine")) / FString(TEXT("Install.ini"));
 	ConfigFile.Read(ConfigPath);
 
-	FConfigSection &Section = ConfigFile.FindOrAdd(TEXT("Installations"));
+	const FConfigSection* Section = ConfigFile.FindOrAddConfigSection(TEXT("Installations"));
 	// Remove invalid entries
 	// @todo The installations list might contain multiple keys for the same value. Do we have to remove them?
 	TArray<FName> KeysToRemove;
-	for (auto It : Section)
+	for (auto It : *Section)
 	{
 		const FString& RootDir = It.Value.GetValue();
 		// We remove entries pointing to a folder that doesn't exist or was using the wrong path.
@@ -204,20 +202,20 @@ void FDesktopPlatformLinux::EnumerateEngineInstallations(TMap<FString, FString> 
 	}
 	for (auto Key : KeysToRemove)
 	{
-		Section.Remove(Key);
+		ConfigFile.RemoveKeyFromSection(TEXT("Installations"), Key);
 	}
 
 	FConfigSection SectionsToAdd;
 
 	// Iterate through all entries.
-	for (auto It : Section)
+	for (auto It : *Section)
 	{
 		FString NormalizedRootDir = It.Value.GetValue();
 		FPaths::NormalizeDirectoryName(NormalizedRootDir);
 		FPaths::CollapseRelativeDirectories(NormalizedRootDir);
 
 		FString EngineId;
-		const FName* Key = Section.FindKey(NormalizedRootDir);
+		const FName* Key = Section->FindKey(NormalizedRootDir);
 		if (Key == nullptr)
 		{
 			Key = SectionsToAdd.FindKey(NormalizedRootDir);
@@ -249,7 +247,7 @@ void FDesktopPlatformLinux::EnumerateEngineInstallations(TMap<FString, FString> 
 
 	for (auto It : SectionsToAdd)
 	{
-		Section.AddUnique(It.Key, It.Value.GetValue());
+		ConfigFile.AddUniqueToSection(TEXT("Installations"), It.Key, It.Value.GetValue());
 	}
 
 	ConfigFile.Write(ConfigPath);
@@ -263,7 +261,7 @@ void FDesktopPlatformLinux::EnumerateLauncherEngineInstallations(TMap<FString, F
 	FString ConfigPath = FString(FPlatformProcess::ApplicationSettingsDir()) / FString(TEXT("UnrealEngine")) / FString(TEXT("Install.ini"));
 	ConfigFile.Read(ConfigPath);
 	
-	FConfigSection &Section = ConfigFile.FindOrAdd(TEXT("Installations"));
+	const FConfigSection* Section = ConfigFile.FindOrAddConfigSection(TEXT("Installations"));
 
 	FString InstallationIdPath = FString(FPaths::EngineDir() / "Build" / "InstalledBuild.txt");
 	FArchive* File = IFileManager::Get().CreateFileReader(*InstallationIdPath, FILEREAD_Silent);
@@ -278,12 +276,11 @@ void FDesktopPlatformLinux::EnumerateLauncherEngineInstallations(TMap<FString, F
 		Id.TrimEndInline();
 
 		// if the user unzipped a new installed build into a previously registered directory, we need to fix up the key
-		const FName* OldKey = Section.FindKey(NormalizedRootDir);
+		const FName* OldKey = Section->FindKey(NormalizedRootDir);
 		if(OldKey && Id != OldKey->ToString())
 		{
-			Section.Remove(*OldKey);
-			Section.Add(*Id, *NormalizedRootDir);
-			ConfigFile.Dirty = true;
+			ConfigFile.RemoveKeyFromSection(TEXT("Installations"), *OldKey);
+			ConfigFile.AddToSection(TEXT("Installations"), *Id, NormalizedRootDir);
 			ConfigFile.Write(ConfigPath);
 		}
 		File->Close();
@@ -291,7 +288,7 @@ void FDesktopPlatformLinux::EnumerateLauncherEngineInstallations(TMap<FString, F
 	}
 
 	// now fill OutInstallations with only released builds
-	for (auto It : Section)
+	for (auto It : *Section)
 	{
 		const FString RootDir = It.Value.GetValue();
 		FString GuidOrId = It.Key.ToString();

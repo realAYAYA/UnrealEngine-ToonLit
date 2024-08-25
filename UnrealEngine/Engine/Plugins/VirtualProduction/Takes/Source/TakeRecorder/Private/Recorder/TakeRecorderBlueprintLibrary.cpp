@@ -13,7 +13,7 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(TakeRecorderBlueprintLibrary)
 
-namespace
+namespace TakeRecorderBlueprintLibrary
 {
 	static UTakeRecorderPanel* CurrentTakeRecorderPanel;
 	static FOnTakeRecorderPanelChanged TakeRecorderPanelChanged;
@@ -141,93 +141,93 @@ UTakeRecorderPanel* UTakeRecorderBlueprintLibrary::OpenTakeRecorderPanel()
 
 UTakeRecorderPanel* UTakeRecorderBlueprintLibrary::GetTakeRecorderPanel()
 {
-	return CurrentTakeRecorderPanel;
+	return TakeRecorderBlueprintLibrary::CurrentTakeRecorderPanel;
 }
 
 void UTakeRecorderBlueprintLibrary::SetOnTakeRecorderPanelChanged(FOnTakeRecorderPanelChanged OnTakeRecorderPanelChanged)
 {
-	TakeRecorderPanelChanged = OnTakeRecorderPanelChanged;
+	TakeRecorderBlueprintLibrary::TakeRecorderPanelChanged = OnTakeRecorderPanelChanged;
 };
 
 void UTakeRecorderBlueprintLibrary::SetOnTakeRecorderPreInitialize(FOnTakeRecorderPreInitialize OnTakeRecorderPreInitialize)
 {
-	TakeRecorderPreInitialize = OnTakeRecorderPreInitialize;
+	TakeRecorderBlueprintLibrary::TakeRecorderPreInitialize = OnTakeRecorderPreInitialize;
 };
 
 void UTakeRecorderBlueprintLibrary::SetOnTakeRecorderStarted(FOnTakeRecorderStarted OnTakeRecorderStarted)
 {
-	TakeRecorderStarted = OnTakeRecorderStarted;
+	TakeRecorderBlueprintLibrary::TakeRecorderStarted = OnTakeRecorderStarted;
 };
 
 void UTakeRecorderBlueprintLibrary::SetOnTakeRecorderStopped(FOnTakeRecorderStopped OnTakeRecorderStopped)
 {
-	TakeRecorderStopped = OnTakeRecorderStopped;
+	TakeRecorderBlueprintLibrary::TakeRecorderStopped = OnTakeRecorderStopped;
 };
 
 void UTakeRecorderBlueprintLibrary::SetOnTakeRecorderFinished(FOnTakeRecorderFinished OnTakeRecorderFinished)
 {
-	TakeRecorderFinished = OnTakeRecorderFinished;
+	TakeRecorderBlueprintLibrary::TakeRecorderFinished = OnTakeRecorderFinished;
 };
 
 void UTakeRecorderBlueprintLibrary::SetOnTakeRecorderCancelled(FOnTakeRecorderCancelled OnTakeRecorderCancelled)
 {
-	TakeRecorderCancelled = OnTakeRecorderCancelled;
+	TakeRecorderBlueprintLibrary::TakeRecorderCancelled = OnTakeRecorderCancelled;
 };
 
 void UTakeRecorderBlueprintLibrary::SetOnTakeRecorderMarkedFrameAdded(FOnTakeRecorderMarkedFrameAdded OnTakeRecorderMarkedFrameAdded)
 {
-	TakeRecorderMarkedFrameAdded = OnTakeRecorderMarkedFrameAdded;
+	TakeRecorderBlueprintLibrary::TakeRecorderMarkedFrameAdded = OnTakeRecorderMarkedFrameAdded;
 };
 
 void UTakeRecorderBlueprintLibrary::OnTakeRecorderPreInitialize()
 {
-	TakeRecorderPreInitialize.ExecuteIfBound();
+	TakeRecorderBlueprintLibrary::TakeRecorderPreInitialize.ExecuteIfBound();
 }
 
 void UTakeRecorderBlueprintLibrary::OnTakeRecorderStarted()
 {
-	TakeRecorderStarted.ExecuteIfBound();
+	TakeRecorderBlueprintLibrary::TakeRecorderStarted.ExecuteIfBound();
 }
 
 void UTakeRecorderBlueprintLibrary::OnTakeRecorderStopped()
 {
-	TakeRecorderStopped.ExecuteIfBound();
+	TakeRecorderBlueprintLibrary::TakeRecorderStopped.ExecuteIfBound();
 }
 
 void UTakeRecorderBlueprintLibrary::OnTakeRecorderFinished(ULevelSequence* InSequenceAsset)
 {
-	TakeRecorderFinished.ExecuteIfBound(InSequenceAsset);
+	TakeRecorderBlueprintLibrary::TakeRecorderFinished.ExecuteIfBound(InSequenceAsset);
 }
 
 void UTakeRecorderBlueprintLibrary::OnTakeRecorderCancelled()
 {
-	TakeRecorderCancelled.ExecuteIfBound();
+	TakeRecorderBlueprintLibrary::TakeRecorderCancelled.ExecuteIfBound();
 }
 
 void UTakeRecorderBlueprintLibrary::OnTakeRecorderMarkedFrameAdded(const FMovieSceneMarkedFrame& InMarkedFrame)
 {
-	TakeRecorderMarkedFrameAdded.ExecuteIfBound(InMarkedFrame);
+	TakeRecorderBlueprintLibrary::TakeRecorderMarkedFrameAdded.ExecuteIfBound(InMarkedFrame);
 }
 
 void UTakeRecorderBlueprintLibrary::SetTakeRecorderPanel(UTakeRecorderPanel* InNewPanel)
 {
-	if (CurrentTakeRecorderPanel != InNewPanel)
+	if (TakeRecorderBlueprintLibrary::CurrentTakeRecorderPanel != InNewPanel)
 	{
-		if (CurrentTakeRecorderPanel)
+		if (TakeRecorderBlueprintLibrary::CurrentTakeRecorderPanel)
 		{
 			// Old panel is no longer valid
-			CurrentTakeRecorderPanel->ClosePanel();
+			TakeRecorderBlueprintLibrary::CurrentTakeRecorderPanel->ClosePanel();
 
-			CurrentTakeRecorderPanel->RemoveFromRoot();
-			CurrentTakeRecorderPanel = nullptr;
+			TakeRecorderBlueprintLibrary::CurrentTakeRecorderPanel->RemoveFromRoot();
+			TakeRecorderBlueprintLibrary::CurrentTakeRecorderPanel = nullptr;
 		}
 
 		if (InNewPanel && InNewPanel->IsPanelOpen())
 		{
 			InNewPanel->AddToRoot();
-			CurrentTakeRecorderPanel = InNewPanel;
+			TakeRecorderBlueprintLibrary::CurrentTakeRecorderPanel = InNewPanel;
 		}
 
-		TakeRecorderPanelChanged.ExecuteIfBound();
+		TakeRecorderBlueprintLibrary::TakeRecorderPanelChanged.ExecuteIfBound();
 	}
 }

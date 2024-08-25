@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+#include "/Engine/Shared/RayTracingTypes.h"
 #include "../Common.ush"
 #include "../MonteCarlo.ush"
 #include "../MortonCode.ush"
@@ -92,7 +93,7 @@ LUMEN_HARDWARE_RAY_TRACING_ENTRY(LumenSceneDirectLightingHardwareRayTracing)
 	{
 		uint2 TexelInCardPageCoord = LightTile.TileCoord * CARD_TILE_SIZE + CoordInCardTile;
 
-		const FLumenLight LumenLight = LoadLumenLight(LightTile.LightIndex, LWCHackToFloat(PrimaryView.PreViewTranslation));
+		const FLumenLight LumenLight = LoadLumenLight(LightTile.LightIndex, DFHackToFloat(PrimaryView.PreViewTranslation), PrimaryView.PreExposure);
 
 		if (all(CoordInCardTile < CARD_TILE_SIZE))
 		{
@@ -111,7 +112,7 @@ LUMEN_HARDWARE_RAY_TRACING_ENTRY(LumenSceneDirectLightingHardwareRayTracing)
 
 				float3 WorldPosition = SurfaceCacheData.WorldPosition;
 				float3 WorldNormal = SurfaceCacheData.WorldNormal;
-				float3 TranslatedWorldPosition = WorldPosition + LWCHackToFloat(PrimaryView.PreViewTranslation); // LUMEN_LWC_TODO
+				float3 TranslatedWorldPosition = WorldPosition + DFHackToFloat(PrimaryView.PreViewTranslation); // LUMEN_LWC_TODO
 
 				float3 L = LumenLight.DeferredLightData.Direction;
 				float3 ToLight = L;
@@ -208,7 +209,8 @@ LUMEN_HARDWARE_RAY_TRACING_ENTRY(LumenSceneDirectLightingHardwareRayTracing)
 
 					if (!bRayOccluded)
 					{						
-						Context.InstanceMask = RAY_TRACING_MASK_OPAQUE;
+						Context.InstanceMask = RAY_TRACING_MASK_OPAQUE_SHADOW;
+						Context.bIsShadowRay = true;
 						Context.bSkipClosestHitShader = false;
 
 						FRayTracedLightingResult RayResult = TraceSurfaceCacheRay(TLAS, Ray, Context);

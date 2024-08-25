@@ -21,9 +21,13 @@ public:
 	UPROPERTY()
 	FString DeviceName;
 
-	/** The instance name */
+	/** The instance ID */
 	UPROPERTY()
-	FString Instance;
+	FGuid Instance;
+
+	/** The instance Name */
+	UPROPERTY()
+	FString InstanceName;
 
 	/** The name of the platform */
 	UPROPERTY()
@@ -80,8 +84,16 @@ public:
 	 */
 	void AddDeviceFromMessage(const FMessageAddress& MessageAddress, const FAutomationWorkerFindWorkersResponse& Message, const uint32 GroupFlags);
 
+	/**
+	 * Update existing device's network address.
+	 *
+	 * @param MessageAddress The network address of an available worker.
+	 * @param Message The message that contains the device info.
+	 */
+	void UpdateDeviceFromMessage(const FMessageAddress& MessageAddress, const FAutomationWorkerMessageBase& Message);
+
 	/** Remove a device (went offline, etc). */
-	void Remove(const FMessageAddress& MessageAddress);
+	void Remove(const FGuid& DeviceInstanceId);
 
 	/** Returns number of unique device types. */
 	int32 GetNumClusters() const;
@@ -107,18 +119,21 @@ public:
 	/** Returns the instance of the game within a cluster. */
 	FString GetClusterGameInstance(const int32 ClusterIndex, const int32 DeviceIndex) const;
 
+	/** Returns the instance identifier of the game within a cluster. */
+	FGuid GetClusterGameInstanceId(const int32 ClusterIndex, const int32 DeviceIndex) const;
+
 	/** Returns the name of a device within a cluster. */
 	const FAutomationDeviceInfo& GetDeviceInfo(const int32 ClusterIndex, const int32 DeviceIndex) const;
 
-	/** 
+	/**
 	 * Finds the cluster/device index for a particular GUID.
 	 *
-	 * @param MessageAddress Network address of the device.
+	 * @param InstanceId The device instance identifier.
 	 * @param OutClusterIndex The index of the platform this device was in.
 	 * @param OutDeviceIndex The index of the device within OutClusterIndex.
 	 * @return true if the device was found within a cluster.
 	 */
-	bool FindDevice(const FMessageAddress& MessageAddress, int32& OutClusterIndex, int32& OutDeviceIndex);
+	bool FindDevice(const FGuid& InstanceId, int32& OutClusterIndex, int32& OutDeviceIndex);
 
 	/** 
 	 * Returns the message address of the device specified.
@@ -209,7 +224,8 @@ private:
 			Info.RAMInGB = Message.RAMInGB;
 			Info.RenderMode = Message.RenderModeName;
 			Info.RHI = Message.RHIName;
-			Info.Instance = Message.InstanceName;
+			Info.Instance = Message.InstanceId;
+			Info.InstanceName = Message.InstanceName;
 			Report.Reset();
 			IsDeviceAvailable = true;
 		}

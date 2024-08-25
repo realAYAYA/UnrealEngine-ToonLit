@@ -7,13 +7,29 @@
 #include "Math/Box.h"
 #include "WorldConditionQuery.h"
 #include "WorldConditions/SmartObjectWorldConditionSchema.h"
+#include "SmartObjectTypes.h"
+#include "PropertyBag.h"
+#include "PropertyBindingPath.h"
 #include "SmartObjectDefinition.generated.h"
 
 struct FSmartObjectSlotIndex;
 class UGameplayBehaviorConfig;
 class USmartObjectSlotValidationFilter;
+class USmartObjectDefinition;
 enum class ESmartObjectTagFilteringPolicy: uint8;
 enum class ESmartObjectTagMergingPolicy: uint8;
+
+
+namespace UE::SmartObject::Delegates
+{
+#if WITH_EDITOR
+
+	/** Called in editor when parameters for a specific SmartObjectDefinition changes. */
+	DECLARE_MULTICAST_DELEGATE_OneParam(FOnParametersChanged, const USmartObjectDefinition& /*SmartObjectDefinition*/);
+	extern SMARTOBJECTSMODULE_API FOnParametersChanged OnParametersChanged;
+
+#endif
+}; //
 
 /** Indicates how Tags from slots and parent object are combined to be evaluated by a TagQuery from a find request. */
 UENUM()
@@ -33,41 +49,126 @@ class SMARTOBJECTSMODULE_API USmartObjectBehaviorDefinition : public UObject
 	GENERATED_BODY()
 };
 
+/** Helper struct for definition data, which allows to identify items based on GUID in editor (even empty ones). */
+USTRUCT()
+struct SMARTOBJECTSMODULE_API FSmartObjectDefinitionDataProxy
+{
+	GENERATED_BODY()
+
+	FSmartObjectDefinitionDataProxy() = default;
+
+	template<typename T, typename = std::enable_if_t<std::is_base_of_v<FSmartObjectDefinitionData, std::decay_t<T>>>>
+	static FSmartObjectDefinitionDataProxy Make(const T& Struct)
+	{
+		FSmartObjectDefinitionDataProxy NewProxy;
+		NewProxy.Data.InitializeAsScriptStruct(TBaseStructure<T>::Get(), reinterpret_cast<const uint8*>(&Struct));
+#if WITH_EDITORONLY_DATA
+		NewProxy.ID = FGuid::NewGuid();
+#endif
+		return NewProxy;
+	}
+	
+	UPROPERTY(EditDefaultsOnly, Category = "Slot", meta = (ExcludeBaseStruct))
+	TInstancedStruct<FSmartObjectDefinitionData> Data;
+	
+#if WITH_EDITORONLY_DATA
+	UPROPERTY(EditDefaultsOnly, Category = "Slot", meta = (Hidden))
+	FGuid ID;
+#endif	
+};
+
+using FSmartObjectSlotDefinitionDataProxy UE_DEPRECATED(5.4, "Deprecated struct. Please use FSmartObjectDefinitionDataProxy instead.") = FSmartObjectDefinitionDataProxy;
+
 /**
  * Persistent and sharable definition of a smart object slot.
  */
-USTRUCT()
+USTRUCT(BlueprintType)
 struct SMARTOBJECTSMODULE_API FSmartObjectSlotDefinition
 {
 	GENERATED_BODY()
 
+	// Macro needed to avoid deprecation errors with "Data" being copied or created in the default methods
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	FSmartObjectSlotDefinition() = default;
+	FSmartObjectSlotDefinition(const FSmartObjectSlotDefinition&) = default;
+	FSmartObjectSlotDefinition(FSmartObjectSlotDefinition&&) = default;
+	FSmartObjectSlotDefinition& operator=(const FSmartObjectSlotDefinition&) = default;
+	FSmartObjectSlotDefinition& operator=(FSmartObjectSlotDefinition&&) = default;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+	/**
+	 * Returns a reference to the definition data of the specified type.
+	 * Method will fail a check if the slot definition doesn't contain the given type.
+	 */
+	template<typename T>
+	const T& GetDefinitionData() const
+	{
+		static_assert(TIsDerivedFrom<T, FSmartObjectDefinitionData>::IsDerived,
+					"Given struct doesn't represent a valid definition data type. Make sure to inherit from FSmartObjectDefinitionData or one of its child-types.");
+
+		for (const FSmartObjectDefinitionDataProxy& DataProxy : DefinitionData)
+		{
+			if (DataProxy.Data.GetScriptStruct()->IsChildOf(T::StaticStruct()))
+			{
+				return DataProxy.Data.Get<T>();
+			}
+		}
+		checkf(false, TEXT("Failed to find slot definition data"));
+		return nullptr;
+	}
+
+	/**
+	 * Returns a pointer to the definition data of the specified type.
+	 * Method will return null if the slot doesn't contain the given type.
+	 */
+	template<typename T>
+	const T* GetDefinitionDataPtr() const
+	{
+		static_assert(TIsDerivedFrom<T, FSmartObjectDefinitionData>::IsDerived,
+					"Given struct doesn't represent a valid definition data type. Make sure to inherit from FSmartObjectDefinitionData or one of its child-types.");
+
+		for (const FSmartObjectDefinitionDataProxy& DataProxy : DefinitionData)
+		{
+			if (DataProxy.Data.GetScriptStruct()->IsChildOf(T::StaticStruct()))
+			{
+				return DataProxy.Data.GetPtr<T>();
+			}
+		}
+
+		return nullptr;
+	}
+	
 #if WITH_EDITORONLY_DATA
-	UPROPERTY(EditDefaultsOnly, Category = "SmartObject")
+	UPROPERTY(EditDefaultsOnly, Category = "Slot")
 	FName Name;
 
-	UPROPERTY(EditAnywhere, Category = "SmartObject", meta = (DisplayName = "Color"))
+	UPROPERTY(EditAnywhere, Category = "Slot", meta = (DisplayName = "Color"))
 	FColor DEBUG_DrawColor = FColor::Yellow;
 
-	UPROPERTY(EditAnywhere, Category = "SmartObject", meta = (DisplayName = "Shape"))
+	UPROPERTY(EditAnywhere, Category = "Slot", meta = (DisplayName = "Shape"))
 	ESmartObjectSlotShape DEBUG_DrawShape = ESmartObjectSlotShape::Circle;
 	
-	UPROPERTY(EditAnywhere, Category = "SmartObject", meta = (DisplayName = "Size"))
+	UPROPERTY(EditAnywhere, Category = "Slot", meta = (DisplayName = "Size"))
 	float DEBUG_DrawSize = 40.0f;
 
-	UPROPERTY(EditAnywhere, Category = "SmartObject", meta = (Hidden))
+	UPROPERTY(EditAnywhere, Category = "Slot", meta = (Hidden))
 	FGuid ID;
 #endif // WITH_EDITORONLY_DATA
 
+	/** Offset relative to the parent object where the slot is located. */
+	UPROPERTY(BlueprintReadOnly, EditDefaultsOnly, Category = "Slot")
+	FVector3f Offset = FVector3f::ZeroVector;
+
+	/** Rotation relative to the parent object. */
+	UPROPERTY(BlueprintReadOnly, EditDefaultsOnly, Category = "Slot")
+	FRotator3f Rotation = FRotator3f::ZeroRotator;
+	
 	/** Whether the slot is enable initially. */
-	UPROPERTY(EditDefaultsOnly, Category = "SmartObject")
+	UPROPERTY(BlueprintReadOnly, EditDefaultsOnly, Category = "Slot")
 	bool bEnabled = true;
 
-	/** Initial runtime tags. */
-	UPROPERTY(EditDefaultsOnly, Category = "SmartObject")
-	FGameplayTagContainer RuntimeTags;
-
 	/** This slot is available only for users matching this query. */
-	UPROPERTY(EditDefaultsOnly, Category = "SmartObject")
+	UPROPERTY(BlueprintReadOnly, EditDefaultsOnly, Category = "Slot")
 	FGameplayTagQuery UserTagFilter;
 
 	/**
@@ -75,32 +176,34 @@ struct SMARTOBJECTSMODULE_API FSmartObjectSlotDefinition
 	 * Depending on the tag filtering policy these tags can override the parent object's tags
 	 * or be combined with them while applying filters from requests.
 	 */
-	UPROPERTY(EditDefaultsOnly, Category = "SmartObject")
+	UPROPERTY(BlueprintReadOnly, EditDefaultsOnly, Category = "Slot")
 	FGameplayTagContainer ActivityTags;
 
+	/** Initial runtime tags. */
+	UPROPERTY(BlueprintReadOnly, EditDefaultsOnly, Category = "Slot")
+	FGameplayTagContainer RuntimeTags;
+
 	/** Preconditions that must pass for the slot to be selected. */
-	UPROPERTY(EditDefaultsOnly, Category = "SmartObject")
+	UPROPERTY(EditDefaultsOnly, Category = "Slot")
 	FWorldConditionQueryDefinition SelectionPreconditions;
-
-	/** Offset relative to the parent object where the slot is located. */
-	UPROPERTY(EditDefaultsOnly, Category = "SmartObject")
-	FVector3f Offset = FVector3f::ZeroVector;
-
-	/** Rotation relative to the parent object. */
-	UPROPERTY(EditDefaultsOnly, Category = "SmartObject")
-	FRotator3f Rotation = FRotator3f::ZeroRotator;
-
-	/** Custom data (struct inheriting from SmartObjectSlotDefinitionData) that can be added to the slot definition and accessed through a FSmartObjectSlotView */
-	UPROPERTY(EditDefaultsOnly, Category = "SmartObject", meta = (BaseStruct = "/Script/SmartObjectsModule.SmartObjectSlotDefinitionData", ExcludeBaseStruct))
-	TArray<FInstancedStruct> Data;
 
 	/**
 	 * All available definitions associated to this slot.
 	 * This allows multiple frameworks to provide their specific behavior definition to the slot.
 	 * Note that there should be only one definition of each type since the first one will be selected.
 	 */
-	UPROPERTY(EditDefaultsOnly, Category = "SmartObject", Instanced)
+	UPROPERTY(BlueprintReadOnly, EditDefaultsOnly, Category = "Slot", Instanced)
 	TArray<TObjectPtr<USmartObjectBehaviorDefinition>> BehaviorDefinitions;
+
+	/** Custom definition data items (struct inheriting from SmartObjecDefinitionData) that can be added to the slot definition and accessed through a FSmartObjectSlotView */
+	UPROPERTY(EditDefaultsOnly, Category = "Slot")
+	TArray<FSmartObjectDefinitionDataProxy> DefinitionData;
+	
+#if WITH_EDITORONLY_DATA
+	UE_DEPRECATED(5.4, "Use DefinitionData instead.")
+	UPROPERTY()
+	TArray<FInstancedStruct> Data_DEPRECATED;
+#endif	
 };
 
 
@@ -127,6 +230,126 @@ struct SMARTOBJECTSMODULE_API FSmartObjectDefinitionPreviewData
 	/** Validation filter used for previewing the smart object user in the asset editor. */
 	UPROPERTY(EditDefaultsOnly, Category = "User Preview")
 	TSoftClassPtr<USmartObjectSlotValidationFilter> UserValidationFilterClass;
+};
+
+/** Used internally by USmartObjectDefinition to point to a specific piece of data. */
+USTRUCT()
+struct SMARTOBJECTSMODULE_API FSmartObjectDefinitionDataHandle
+{
+	GENERATED_BODY()
+
+	static const FSmartObjectDefinitionDataHandle Invalid;
+	static const FSmartObjectDefinitionDataHandle Root;
+	static const FSmartObjectDefinitionDataHandle Parameters;
+
+	FSmartObjectDefinitionDataHandle() = default;
+	
+	explicit FSmartObjectDefinitionDataHandle(const int32 InSlotIndex, const int32 InDataIndex = INDEX_NONE)
+	{
+		check(InSlotIndex < InvalidIndex || InSlotIndex == INDEX_NONE);
+		check(InDataIndex < InvalidIndex || InDataIndex == INDEX_NONE);
+		SlotIndex = InSlotIndex == INDEX_NONE ? InvalidIndex : (uint16)InSlotIndex;
+		DataIndex = InDataIndex == INDEX_NONE ? InvalidIndex : (uint16)InDataIndex;
+	}
+
+	FSmartObjectDefinitionDataHandle& operator=(const FSmartObjectDefinitionDataHandle& Other)
+	{
+		SlotIndex = Other.SlotIndex;
+		DataIndex = Other.DataIndex;
+		return *this;
+	}
+
+	bool operator==(const FSmartObjectDefinitionDataHandle& Other) const
+	{
+		return SlotIndex == Other.SlotIndex && DataIndex == Other.DataIndex;
+	}
+
+	bool operator!=(const FSmartObjectDefinitionDataHandle& Other) const
+	{
+		return !(*this == Other);
+	}
+
+	bool IsSlotValid() const
+	{
+		return SlotIndex != InvalidIndex;
+	}
+
+	bool IsDataValid() const
+	{
+		return DataIndex != InvalidIndex;
+	}
+
+	bool IsRoot() const
+	{
+		return SlotIndex == RootIndex;
+	}
+
+	bool IsParameters() const
+	{
+		return SlotIndex == ParametersIndex;
+	}
+
+	int32 GetSlotIndex() const
+	{
+		return SlotIndex == InvalidIndex ? INDEX_NONE : SlotIndex;
+	}
+
+	int32 GetDataIndex() const
+	{
+		return DataIndex == InvalidIndex ? INDEX_NONE : DataIndex;
+	}
+	
+protected:
+
+	static constexpr uint16 InvalidIndex = MAX_uint16;
+	static constexpr uint16 RootIndex = MAX_uint16 - 1;
+	static constexpr uint16 ParametersIndex = MAX_uint16 - 2;
+	
+	UPROPERTY()
+	uint16 SlotIndex = InvalidIndex;
+	
+	UPROPERTY()
+	uint16 DataIndex = InvalidIndex;
+};
+
+/** Used internally by USmartObjectDefinition to store a property binding. */
+USTRUCT()
+struct SMARTOBJECTSMODULE_API FSmartObjectDefinitionPropertyBinding
+{
+	GENERATED_BODY()
+
+	FSmartObjectDefinitionPropertyBinding() = default;
+
+	FSmartObjectDefinitionPropertyBinding(const FPropertyBindingPath& InSourcePath, const FPropertyBindingPath& InTargetPath)
+		: SourcePath(InSourcePath)
+		, TargetPath(InTargetPath)
+	{
+	}
+
+	const FPropertyBindingPath& GetSourcePath() const
+	{
+		return SourcePath;
+	}
+
+	const FPropertyBindingPath& GetTargetPath() const
+	{
+		return TargetPath;
+	}
+
+protected:
+	UPROPERTY()
+	FPropertyBindingPath SourcePath;
+
+	UPROPERTY()
+	FPropertyBindingPath TargetPath;
+
+	UPROPERTY()
+	FSmartObjectDefinitionDataHandle SourceDataHandle;
+
+	UPROPERTY()
+	FSmartObjectDefinitionDataHandle TargetDataHandle;
+
+	friend USmartObjectDefinition;
 };
 
 /**
@@ -164,10 +387,15 @@ public:
 	const FSmartObjectSlotDefinition& GetSlot(const int32 Index) const { return Slots[Index]; }
 
 	/** @return mutable slot definition stored at a given index */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="SmartObject")
 	FSmartObjectSlotDefinition& GetMutableSlot(const int32 Index) { return Slots[Index]; }
 
 	/** @return True if specified slot index is valid. */
-	bool IsValidSlotIndex(const int32 SlotIndex) const { return Slots.IsValidIndex(SlotIndex); } 
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="SmartObject")
+	bool IsValidSlotIndex(const int32 SlotIndex) const { return Slots.IsValidIndex(SlotIndex); }
+
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="SmartObject", meta=(DisplayName="Get Smart Object Slot Definitions"))
+	const TArray<FSmartObjectSlotDefinition>& K2_GetSlots() const { return Slots; }
 
 #if WITH_EDITOR
 	/** Returns a view on all the slot definitions */
@@ -176,9 +404,20 @@ public:
 	/** @return validation filter class for preview. */
 	TSubclassOf<USmartObjectSlotValidationFilter> GetPreviewValidationFilterClass() const;
 
+	/** @return Index of the slot that has the specified ID, or INDEX_NONE if not found. */
+	int32 FindSlotByID(const FGuid ID) const;
+
+	/**
+	 * Returns slot and definition data indices the ID represents.
+	 * @param ID ID of the slots or definition data to find
+	 * @param OutSlotIndex Index of the slot the ID points to
+	 * @param OutDefinitionDataIndex Index of the definition data the ID points to, or INDEX_NONE, if ID points directly to a slot.
+	 * @return true if ID matches data in the definition. */
+	bool FindSlotAndDefinitionDataIndexByID(const FGuid ID, int32& OutSlotIndex, int32& OutDefinitionDataIndex) const;
 #endif
 
 	/** Return bounds encapsulating all slots */
+	UFUNCTION(BlueprintCallable, Category="SmartObject")
 	FBox GetBounds() const;
 
 	/** Adds and returns a reference to a defaulted slot (used for testing purposes) */
@@ -189,7 +428,7 @@ public:
 	 * @param OwnerTransform Transform (in world space) of the slot owner.
 	 * @param SlotIndex Index within the list of slots.
 	 * @return Transform (in world space) of the slot associated to SlotIndex.
-	 * @note Method will ensure on invalid invalid index.
+	 * @note Method will ensure on invalid slot index.
 	 */
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	UE_DEPRECATED(5.3, "Please use GetSlotWorldTransform() instead.")
@@ -201,8 +440,9 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	 * @param OwnerTransform Transform (in world space) of the slot owner.
 	 * @param SlotIndex Index within the list of slots.
 	 * @return Transform (in world space) of the slot associated to SlotIndex, or OwnerTransform if index is invalid.
-	 * @note Method will ensure on invalid invalid index.
+	 * @note Method will ensure on invalid slot index.
 	 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="SmartObject")
 	FTransform GetSlotWorldTransform(const int32 SlotIndex, const FTransform& OwnerTransform) const;
 
 	/**
@@ -210,6 +450,7 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	 * @param SlotIndex	Index of the slot for which the tags are requested
 	 * @param OutActivityTags Tag container to fill with the activity tags associated to the slot
 	 */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="SmartObject", meta = (DisplayName="Get Slot Activity Tags (By Index)", ScriptName="GetSlotActivityTagsByIndex", AutoCreateRefTerm = "OutActivityTags"))
 	void GetSlotActivityTags(const int32 SlotIndex, FGameplayTagContainer& OutActivityTags) const;
 
 	/**
@@ -220,9 +461,11 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	void GetSlotActivityTags(const FSmartObjectSlotDefinition& SlotDefinition, FGameplayTagContainer& OutActivityTags) const;
 
 	/** Returns the tag query to run on the user tags provided by a request to accept this definition */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="SmartObject")
 	const FGameplayTagQuery& GetUserTagFilter() const { return UserTagFilter; }
 
 	/** Sets the tag query to run on the user tags provided by a request to accept this definition */
+	UFUNCTION(BlueprintCallable, Category="SmartObject")
 	void SetUserTagFilter(const FGameplayTagQuery& InUserTagFilter) { UserTagFilter = InUserTagFilter; }
 
 	/** Returns the tag query to run on the runtime tags of a smart object instance to accept it */
@@ -234,12 +477,14 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	void SetObjectTagFilter(const FGameplayTagQuery& InObjectTagFilter) {}
 
 	/** Returns the list of tags describing the activity associated to this definition */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="SmartObject")
 	const FGameplayTagContainer& GetActivityTags() const { return ActivityTags; }
 
 	/** Sets the list of tags describing the activity associated to this definition */
 	void SetActivityTags(const FGameplayTagContainer& InActivityTags) { ActivityTags = InActivityTags; }
 
 	/** Returns the tag filtering policy that should be applied on User tags by this definition */
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category="SmartObject")
 	ESmartObjectTagFilteringPolicy GetUserTagsFilteringPolicy() const { return UserTagsFilteringPolicy; }
 
 	/** Sets the tag filtering policy to apply on User tags by this definition */
@@ -292,26 +537,142 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	const USmartObjectWorldConditionSchema* GetWorldConditionSchema() const { return WorldConditionSchemaClass.GetDefaultObject(); }
 	const TSubclassOf<USmartObjectWorldConditionSchema>& GetWorldConditionSchemaClass() const { return WorldConditionSchemaClass; }
-	
+
+	/**
+	 * Returns a reference to the definition data of the specified type.
+	 * Method will fail a check if the slot definition doesn't contain the given type.
+	 */
+	template<typename T>
+	const T& GetDefinitionData() const
+	{
+		static_assert(TIsDerivedFrom<T, FSmartObjectDefinitionData>::IsDerived,
+					"Given struct doesn't represent a valid definition data type. Make sure to inherit from FSmartObjectDefinitionData or one of its child-types.");
+
+		for (const FSmartObjectDefinitionDataProxy& DataProxy : DefinitionData)
+		{
+			if (DataProxy.Data.GetScriptStruct()->IsChildOf(T::StaticStruct()))
+			{
+				return DataProxy.Data.Get<T>();
+			}
+		}
+		
+		checkf(false, TEXT("Failed to find definition data"));
+		return nullptr;
+	}
+
+	/**
+	 * Returns a pointer to the definition data of the specified type.
+	 * Method will return null if the slot doesn't contain the given type.
+	 */
+	template<typename T>
+	const T* GetDefinitionDataPtr() const
+	{
+		static_assert(TIsDerivedFrom<T, FSmartObjectDefinitionData>::IsDerived,
+					"Given struct doesn't represent a valid definition data type. Make sure to inherit from FSmartObjectDefinitionData or one of its child-types.");
+
+		for (const FSmartObjectDefinitionDataProxy& DataProxy : DefinitionData)
+		{
+			if (DataProxy.Data.GetScriptStruct()->IsChildOf(T::StaticStruct()))
+			{
+				return DataProxy.Data.GetPtr<T>();
+			}
+		}
+
+		return nullptr;
+	}
+
+	/** @return reference to definition default parameters. */
+	const FInstancedPropertyBag& GetDefaultParameters() const
+	{
+		return Parameters;
+	}
+
+	/**
+	 * Returns a variation of this asset with specified parameters applied.
+	 * The variations are cached, and if a variation with same parameters is already in use, the existing asset is returned.
+	 * @return Pointer to an asset variation.
+	*/
+	USmartObjectDefinition* GetAssetVariation(const FInstancedPropertyBag& Parameters);
+
+	static bool ArePropertiesCompatible(const FProperty* SourceProperty, const FProperty* TargetProperty);
+
+#if WITH_EDITOR
+	void AddPropertyBinding(const FPropertyBindingPath& SourcePath, const FPropertyBindingPath& TargetPath);
+	void RemovePropertyBindings(const FPropertyBindingPath& TargetPath);
+	const FPropertyBindingPath* GetPropertyBindingSource(const FPropertyBindingPath& TargetPath);
+	void GetAccessibleStructs(const FGuid TargetStructID, TArray<FBindableStructDesc>& OutStructDescs);
+	bool GetDataViewByID(const FGuid StructID, FPropertyBindingDataView& OutDataView);
+	bool GetStructDescByID(const FGuid StructID, FBindableStructDesc& OutDesc);
+	FGuid GetDataRootID() const;
+	bool AddParameterAndBindingFromPropertyPath(const FPropertyBindingPath& TargetPath);
+#endif // WITH_EDITOR
+
 protected:
 
 #if WITH_EDITOR
-	/** @return Index of the slot that has the specified ID, or INDEX_NONE if not found. */
-	int32 FindSlotByID(const FGuid ID) const;
-
 	void UpdateSlotReferences();
+	void UpdateBindingPaths();
+	bool UpdateAndValidatePath(FPropertyBindingPath& Path);
+	FSmartObjectDefinitionDataHandle GetDataHandleByID(const FGuid StructID);
 
 	virtual void PostEditChangeChainProperty(FPropertyChangedChainEvent& PropertyChangedEvent) override;
 	virtual void PreSave(FObjectPreSaveContext SaveContext) override;
 	virtual EDataValidationResult IsDataValid(class FDataValidationContext& Context) const override;
 #endif // WITH_EDITOR
 
+	virtual void PostInitProperties() override;
 	virtual void PostLoad() override;
 
 private:
 	/** Finds first behavior definition of a given class in the provided list of definitions. */
 	static const USmartObjectBehaviorDefinition* GetBehaviorDefinitionByType(const TArray<USmartObjectBehaviorDefinition*>& BehaviorDefinitions, const TSubclassOf<USmartObjectBehaviorDefinition>& DefinitionClass);
 
+	void ApplyParameters();
+	bool CopyProperty(FPropertyBindingDataView SourceDataView, const FPropertyBindingPath& SourcePath, FPropertyBindingDataView TargetDataView, const FPropertyBindingPath& TargetPath);
+	bool GetDataView(const FSmartObjectDefinitionDataHandle DataHandle, FPropertyBindingDataView& OutDataView);
+
+#if WITH_EDITOR
+	void EnsureValidGuids();
+	void UpdateBindingDataHandles();
+#endif // WITH_EDITOR
+
+	/** Used internally by USmartObjectDefinition to store a variation of a definition asset. */
+	struct FSmartObjectDefinitionAssetVariation
+	{
+		FSmartObjectDefinitionAssetVariation() = default;
+	
+		FSmartObjectDefinitionAssetVariation(USmartObjectDefinition* InDefinitionAsset, uint64 InParametersHash)
+			: DefinitionAsset(InDefinitionAsset)
+			, ParametersHash(InParametersHash)
+		{
+		}
+	
+		/** Pointer to the asset variation which has the parameters applied to it. Stored as weak pointer, so that we can prune variations which are not used anymore. */
+		TWeakObjectPtr<USmartObjectDefinition> DefinitionAsset = nullptr;
+
+		/** Hash of the variation properties. */
+		uint64 ParametersHash = 0;
+	};
+	
+	/** Variations of the asset based on provided parameters, created on demand via GetAssetVariation(). */
+	TArray<FSmartObjectDefinitionAssetVariation> Variations;
+	
+	/** Parameters for the SmartObject definition */
+	UPROPERTY(EditDefaultsOnly, Category = "SmartObject", meta = (NoBinding))
+	FInstancedPropertyBag Parameters;
+
+	/** Binding ID for the parameters. */
+	UPROPERTY()
+	FGuid ParametersID;
+
+	/** Binding ID for the whole asset. */
+	UPROPERTY()
+	FGuid RootID;
+
+	/** Property bindings. */
+	UPROPERTY()
+	TArray<FSmartObjectDefinitionPropertyBinding> PropertyBindings;
+	
 	/**
 	 * Where SmartObject's user needs to stay to be able to activate it. These
 	 * will be used by AI to approach the object. Locations are relative to object's location.
@@ -335,7 +696,7 @@ private:
 #endif // WITH_EDITORONLY_DATA
 
 	/** Preconditions that must pass for the object to be found/used. */
-	UPROPERTY(EditDefaultsOnly, Category = "SmartObject")
+	UPROPERTY(EditDefaultsOnly, Category = "SmartObject", meta = (NoBinding))
 	FWorldConditionQueryDefinition Preconditions;
 
 private:
@@ -343,20 +704,27 @@ private:
 	UPROPERTY(EditDefaultsOnly, Category = "SmartObject")
 	FGameplayTagContainer ActivityTags;
 
-	UPROPERTY(EditDefaultsOnly, Category = "SmartObject", AdvancedDisplay)
+	/** Custom definition data items (struct inheriting from SmartObjectDefinitionData) for the whole Smart Object. */
+	UPROPERTY(EditDefaultsOnly, Category = "SmartObject", meta=(DisallowedStructs="/Script/SmartObjectsModule.SmartObjectSlotAnnotation"))
+	TArray<FSmartObjectDefinitionDataProxy> DefinitionData;
+
+	UPROPERTY(EditDefaultsOnly, Category = "SmartObject", AdvancedDisplay, meta = (NoBinding))
 	TSubclassOf<USmartObjectWorldConditionSchema> WorldConditionSchemaClass;
 	
 	/** Indicates how Tags from slots and parent object are combined to be evaluated by a TagQuery from a find request. */
-	UPROPERTY(EditAnywhere, Category = "SmartObject", AdvancedDisplay)
+	UPROPERTY(EditAnywhere, Category = "SmartObject", AdvancedDisplay, meta = (NoBinding))
 	ESmartObjectTagMergingPolicy ActivityTagsMergingPolicy;
 
 	/** Indicates how TagQueries from slots and parent object will be processed against User Tags from a find request. */
-	UPROPERTY(EditAnywhere, Category = "SmartObject", AdvancedDisplay)
+	UPROPERTY(EditAnywhere, Category = "SmartObject", AdvancedDisplay, meta = (NoBinding))
 	ESmartObjectTagFilteringPolicy UserTagsFilteringPolicy;
 	
 	mutable TOptional<bool> bValid;
 
 	friend class FSmartObjectSlotReferenceDetails;
+	friend class FSmartObjectViewModel;
+	friend class FSmartObjectAssetToolkit;
+	friend class FSmartObjectDefinitionDetails;
 };
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2

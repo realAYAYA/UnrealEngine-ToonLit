@@ -7,7 +7,9 @@
 #include "UObject/UObjectGlobals.h"
 #include "Templates/SubclassOf.h"
 #include "EngineDefines.h"
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "NavFilters/NavigationQueryFilter.h"
+#endif
 #include "AITypes.h"
 #include "GameplayTaskOwnerInterface.h"
 #include "GameplayTask.h"

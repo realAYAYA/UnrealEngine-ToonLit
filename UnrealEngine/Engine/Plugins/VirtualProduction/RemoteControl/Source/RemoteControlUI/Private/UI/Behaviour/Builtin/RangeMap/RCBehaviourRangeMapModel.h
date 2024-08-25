@@ -21,6 +21,9 @@ class FRCRangeMapBehaviourModel : public FRCBehaviourModel
 public:
 	FRCRangeMapBehaviourModel(URCRangeMapBehaviour* RangeMapBehaviour);
 
+	/** Returns true if this behaviour have a details widget or false if not*/
+	virtual bool HasBehaviourDetailsWidget() override;
+
 	/** Builds a Behaviour specific widget as required for Range Mapping behaviour*/
 	virtual TSharedRef<SWidget> GetBehaviourDetailsWidget() override;
 

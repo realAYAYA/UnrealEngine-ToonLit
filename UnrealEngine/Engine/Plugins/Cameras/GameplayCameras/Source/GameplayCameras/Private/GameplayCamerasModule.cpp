@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "GameplayCamerasModule.h"
+#include "IGameplayCamerasModule.h"
+
 #include "Camera/CameraModularFeature.h"
 #include "CameraAnimationCameraModifier.h"
 #include "CameraAnimationSequencePlayer.h"
@@ -9,7 +10,7 @@
 
 IGameplayCamerasModule& IGameplayCamerasModule::Get()
 {
-	return FModuleManager::LoadModuleChecked<IGameplayCamerasModule>("Camera");
+	return FModuleManager::LoadModuleChecked<IGameplayCamerasModule>("GameplayCameras");
 }
 
 class FGameplayCamerasModule : public IGameplayCamerasModule
@@ -35,6 +36,19 @@ public:
 		}
 	}
 
+	// IGameplayCamerasModule interface
+#if WITH_EDITOR
+	virtual TSharedPtr<IGameplayCamerasLiveEditManager> GetLiveEditManager() const override
+	{
+		return LiveEditManager;
+	}
+
+	virtual void SetLiveEditManager(TSharedPtr<IGameplayCamerasLiveEditManager> InLiveEditManager) override
+	{
+		LiveEditManager = InLiveEditManager;
+	}
+#endif
+
 private:
 	class FCameraModularFeature : public ICameraModularFeature
 	{
@@ -46,6 +60,10 @@ private:
 	};
 
 	TSharedPtr<FCameraModularFeature> CameraModularFeature;
+
+#if WITH_EDITOR
+	TSharedPtr<IGameplayCamerasLiveEditManager> LiveEditManager;
+#endif
 };
 
 IMPLEMENT_MODULE(FGameplayCamerasModule, GameplayCameras);

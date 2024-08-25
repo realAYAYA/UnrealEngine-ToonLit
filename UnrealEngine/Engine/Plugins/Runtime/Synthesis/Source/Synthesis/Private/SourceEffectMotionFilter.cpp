@@ -169,7 +169,7 @@ void FSourceEffectMotionFilter::OnPresetChanged()
 	// Reset Mod Matrix
 	for (int32 i = 0; i < ModMatrix.Num(); i++)
 	{
-		ModMatrix[i].SetNumZeroed((uint8)ESourceEffectMotionFilterModDestination::Count, true);
+		ModMatrix[i].SetNumZeroed((uint8)ESourceEffectMotionFilterModDestination::Count, EAllowShrinking::Yes);
 	}
 
 	for (int32 i = 0; i < LinearEaseMatrixInit.Num(); i++)

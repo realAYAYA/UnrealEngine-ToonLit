@@ -12,17 +12,97 @@ function getCookie(name) {
 	return null;
 }
 
-$(() => {
+var authClient;
 
-	const $form = $('.login-form form');
+$(async () => {
+
+	const $ldapForm = $('.login-form .ldap-form');
 
 	const clearError = () => $('#login-error').hide();
 
-	const $nameInput = $('input[name=user]', $form).on('input', clearError);
-	const $passwordInput = $('input[name=password]', $form).on('input', clearError);
+	const $nameInput = $('input[name=user]', $ldapForm).on('input', clearError);
+	const $passwordInput = $('input[name=password]', $ldapForm).on('input', clearError);
 
-	$form.on('submit', () => {
-		const $submitButton = $('button', $form).prop('disabled', true).text('Signing in ...');
+	const $oktaForm = $('.login-form .okta-form');
+	const $oktaError = $('#okta-login-error');
+
+	const signInMethod = await $.get('/signInMethod');
+
+	if (signInMethod.okta) {
+		$oktaForm.show();
+
+		try {
+			const config = await $.get('/oktaConfig');
+			authClient = new OktaAuth(JSON.parse(config));
+		}
+		catch(error) {
+			console.error(error);
+			$('html').show();
+			$oktaError.text("OktaAuth is not configured").show();
+		}
+
+		// If this is a login redirect from Okta we can parse the tokens returned from Okta
+		if (authClient && authClient.isLoginRedirect()) {
+
+			try {
+				const { tokens } = await authClient.token.parseFromUrl();
+				authClient.tokenManager.setTokens(tokens);
+
+				const { accessToken, idToken } = await authClient.tokenManager.getTokens();
+				const user = await authClient.token.getUserInfo(accessToken, idToken);
+
+				const postData = {
+					user: user.preferred_username,
+					displayName: user.name,
+					groups: JSON.stringify(user.groups)
+				};
+
+				$.post('/oktaLogin', postData)
+				.done((token) => {
+					// Check to see if we have a redirect request from the website
+					var urlParams = new URLSearchParams(window.location.search);
+					var redirectString = "/"
+					if (urlParams.has("redirect")) {
+						redirectString = decodeURIComponent(urlParams.get("redirect"))
+					}
+
+					document.cookie = `auth=${token}; secure=true; path=/;`;
+					document.cookie = 'redirect_to=;';
+					window.location = window.origin + redirectString;
+				})
+				.fail((xhr, status, error) => {
+					$('html').show();
+					$oktaError.text(error + ": " + xhr.responseText).show();
+				});
+
+			}
+			catch(error) {
+				$('html').show();
+				$oktaError.text(error).show();
+			}
+
+		}
+		else {
+			// Check to see if user just signed out
+			if (getCookie('signedOut')) {
+				$('html').show();
+				document.cookie = 'signedOut=;';
+			}
+			else if (authClient) {
+				oktaSignIn();
+			}
+		}
+	}
+
+	if (signInMethod.ldap) {
+		if (!signInMethod.okta) {
+			$('html').show();
+		}
+		$ldapForm.show();
+	}
+
+	$ldapForm.on('submit', () => {
+		const $submitButton = $('button', $ldapForm).prop('disabled', true).text('Signing in ...');
 
 		// clear auth on attempt to log in
 		document.cookie = 'auth=;';
@@ -62,4 +142,16 @@ $(() => {
 
 		return false;
 	});
+
+	
 });
+
+async function oktaSignIn() {
+	// Clear auth cookie on attempt to sign in
+	document.cookie = 'auth=;';
+
+	// Start full-page redirect to Okta
+	if (authClient) {
+		authClient.token.getWithRedirect();
+	}
+}

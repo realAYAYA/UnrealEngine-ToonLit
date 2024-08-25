@@ -12,9 +12,6 @@
 #include "MuR/Types.h"
 #include "MuT/StreamsPrivate.h"
 
-#include <memory>
-#include <utility>
-
 
 namespace mu
 {
@@ -39,8 +36,9 @@ namespace mu
 	//-------------------------------------------------------------------------------------------------
 	bool ASTOpSwitch::IsEqual(const ASTOp& otherUntyped) const
 	{
-		if (auto other = dynamic_cast<const ASTOpSwitch*>(&otherUntyped))
+		if (GetOpType()==otherUntyped.GetOpType())
 		{
+			const ASTOpSwitch* other = static_cast<const ASTOpSwitch*>(&otherUntyped);
 			return type == other->type && variable == other->variable &&
 				cases == other->cases && def == other->def;
 		}
@@ -195,20 +193,20 @@ namespace mu
 	}
 
 	//-------------------------------------------------------------------------------------------------
-	FImageDesc ASTOpSwitch::GetImageDesc(bool returnBestOption, class FGetImageDescContext* context) const
+	FImageDesc ASTOpSwitch::GetImageDesc(bool bReturnBestOption, class FGetImageDescContext* Context) const
 	{
-		FImageDesc res;
+		FImageDesc Result;
 
 		// Local context in case it is necessary
-		FGetImageDescContext localContext;
-		if (!context)
+		FGetImageDescContext LocalContext;
+		if (!Context)
 		{
-			context = &localContext;
+			Context = &LocalContext;
 		}
 		else
 		{
 			// Cached result?
-			FImageDesc* PtrValue = context->m_results.Find(this);
+			FImageDesc* PtrValue = Context->m_results.Find(this);
 			if (PtrValue)
 			{
 				return *PtrValue;
@@ -221,69 +219,70 @@ namespace mu
 		// In some places this will force re-formatting of the image.
 		// The code optimiser will take care then of moving the format operations down to each
 		// branch and remove the unnecessary ones.
-		FImageDesc candidate;
-		bool sameSize = true;
-		bool sameFormat = true;
-		bool sameLods = true;
-		bool first = true;
+		FImageDesc Candidate;
+
+		bool bSameSize = true;
+		bool bSameFormat = true;
+		bool bSameLods = true;
+		bool bFirst = true;
 
 		if (def)
 		{
-			FImageDesc childDesc = def->GetImageDesc(returnBestOption, context);
-			candidate = childDesc;
-			first = false;
+			FImageDesc ChildDesc = def->GetImageDesc(bReturnBestOption, Context);
+			Candidate = ChildDesc;
+			bFirst = false;
 		}
 
-		for (int i = 0; i < cases.Num(); ++i)
+		for (int32 CaseIndex = 0; CaseIndex < cases.Num(); ++CaseIndex)
 		{
-			if (cases[i].branch)
+			if (cases[CaseIndex].branch)
 			{
-				FImageDesc childDesc = cases[i].branch->GetImageDesc(returnBestOption, context);
-				if (first)
+				FImageDesc ChildDesc = cases[CaseIndex].branch->GetImageDesc(bReturnBestOption, Context);
+				if (bFirst)
 				{
-					candidate = childDesc;
-					first = false;
+					Candidate = ChildDesc;
+					bFirst = false;
 				}
 				else
 				{
-					sameSize = (candidate.m_size == childDesc.m_size);
-					sameFormat = (candidate.m_format == childDesc.m_format);
-					sameLods = (candidate.m_lods == childDesc.m_lods);
+					bSameSize = bSameSize && (Candidate.m_size == ChildDesc.m_size);
+					bSameFormat = bSameFormat && (Candidate.m_format == ChildDesc.m_format);
+					bSameLods = bSameLods && (Candidate.m_lods == ChildDesc.m_lods);
 
-					if (returnBestOption)
+					if (bReturnBestOption)
 					{
-						candidate.m_format =
-							GetMostGenericFormat(candidate.m_format, childDesc.m_format);
+						Candidate.m_format = GetMostGenericFormat(Candidate.m_format, ChildDesc.m_format);
 					}
 				}
 			}
 		}
 
+		Result = Candidate;
 
-		res = candidate;
-
-		if (!sameFormat && !returnBestOption)
+		// In case of ReturnBestOption the first valid case will be used to determine size and lods.
+		// Format will be the most generic from all cases.
+		if (!bSameFormat && !bReturnBestOption)
 		{
-			res.m_format = EImageFormat::IF_NONE;
+			Result.m_format = EImageFormat::IF_NONE;
 		}
 
-		if (!sameSize && !returnBestOption)
+		if (!bSameSize && !bReturnBestOption)
 		{
-			res.m_size = FImageSize(0, 0);
+			Result.m_size = FImageSize(0, 0);
 		}
 
-		if (!sameLods && !returnBestOption)
+		if (!bSameLods && !bReturnBestOption)
 		{
-			res.m_lods = 0;
+			Result.m_lods = 0;
 		}
 
 		// Cache the result
-		if (context)
+		if (Context)
 		{
-			context->m_results.Add(this, res);
+			Context->m_results.Add(this, Result);
 		}
 
-		return res;
+		return Result;
 	}
 
 
@@ -419,7 +418,7 @@ namespace mu
 		{
 			Ptr<ASTOp> Branch = def.child();
 
-			auto typedCondition = dynamic_cast<const ASTOpFixed*>(variable.child().get());
+			auto typedCondition = static_cast<const ASTOpFixed*>(variable.child().get());
 			for (int32 o = 0; o < cases.Num(); ++o)
 			{
 				if (cases[o].branch &&
@@ -438,14 +437,14 @@ namespace mu
 		else if (variable->GetOpType() == OP_TYPE::NU_PARAMETER)
 		{
 			// If all the branches for the possible values are the same op remove the instruction
-			const ASTOpParameter* ParamOp = dynamic_cast<const ASTOpParameter*>(variable.child().get());
+			const ASTOpParameter* ParamOp = static_cast<const ASTOpParameter*>(variable.child().get());
 			check(ParamOp);
 			check(!ParamOp->parameter.m_possibleValues.IsEmpty());
 
 			bool bFirstValue = true;
 			bool bAllSame = true;
 			Ptr<ASTOp> SameBranch = nullptr;
-			for (const FParameterDesc::INT_VALUE_DESC& Value : ParamOp->parameter.m_possibleValues)
+			for (const FParameterDesc::FIntValueDesc& Value : ParamOp->parameter.m_possibleValues)
 			{
 				// Look for the switch branch it would take
 				Ptr<ASTOp> Branch = def.child();
@@ -518,7 +517,7 @@ namespace mu
 					// TODO: Probably it could be a any switch, it doesn't need to be of the same type.
 					if (Parent->GetOpType() == GetOpType())
 					{
-						const ASTOpSwitch* ParentSwitch = dynamic_cast<const ASTOpSwitch*>(Parent);
+						const ASTOpSwitch* ParentSwitch = static_cast<const ASTOpSwitch*>(Parent);
 						check(ParentSwitch);
 
 						// To be compatible the switch must be on the same variable

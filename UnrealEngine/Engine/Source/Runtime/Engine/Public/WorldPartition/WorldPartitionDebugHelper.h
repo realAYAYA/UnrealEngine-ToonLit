@@ -22,8 +22,8 @@ public:
 	static bool IsDebugCellNameShown(const FString& Name);
 	static void DrawText(UCanvas* Canvas, const FString& Text, const UFont* Font, const FColor& Color, FVector2D& Pos, float* MaxTextWidth = nullptr);
 	static void DrawLegendItem(UCanvas* Canvas, const FString& Text, const UFont* Font, const FColor& Color, const FColor& TextColor, FVector2D& Pos, float* MaxItemWidth = nullptr);
-	static FLinearColor GetHeatMapColor(float Value);
-	FORCEINLINE static bool IsRuntimeSpatialHashCellStreamingPriorityShown() { return bShowRuntimeSpatialHashCellStreamingPriority; }
+	FORCEINLINE static bool IsRuntimeSpatialHashCellStreamingPriorityShown() { return ShowRuntimeSpatialHashCellStreamingPriorityMode != 0; }
+	FORCEINLINE static int32 GetRuntimeSpatialHashCellStreamingPriorityMode() { return ShowRuntimeSpatialHashCellStreamingPriorityMode; }
 	FORCEINLINE static bool CanDrawContentBundles() { return bCanDrawContentBundles; }
 
 private:
@@ -39,8 +39,8 @@ private:
 	static FAutoConsoleCommand DebugFilterByCellNameCommand;
 	static TArray<FString> DebugCellNameFilter;
 
-	static FAutoConsoleVariableRef ShowRuntimeSpatialHashCellStreamingPriorityCommand;
-	static bool bShowRuntimeSpatialHashCellStreamingPriority;
+	static FAutoConsoleVariableRef ShowRuntimeSpatialHashCellStreamingPriorityModeCommand;
+	static int32 ShowRuntimeSpatialHashCellStreamingPriorityMode;
 
 	static FAutoConsoleVariableRef DrawContentBundlesCommand;
 	static bool bCanDrawContentBundles;

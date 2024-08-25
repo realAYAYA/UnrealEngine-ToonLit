@@ -64,7 +64,7 @@ FString FTokenStream::GetErrorContext() const
 	}
 
 	static const int32 MaxChars = 32;
-	FString Context(FMath::Min(int32(EndPos - StartPos), MaxChars), StartPos);
+	FString Context = FString::ConstructFromPtrSize(StartPos, FMath::Min(int32(EndPos - StartPos), MaxChars));
 	if (EndPos - StartPos > MaxChars)
 	{
 		Context += TEXT("...");
@@ -474,7 +474,7 @@ struct FExpressionCompiler
 		{
 			int32 ShortCircuitIndex = OperatorStack.Last().ShortCircuitIndex;
 
-			Commands.Add(OperatorStack.Pop(false).Steal());
+			Commands.Add(OperatorStack.Pop(EAllowShrinking::No).Steal());
 			if (ShortCircuitIndex != INDEX_NONE)
 			{
 				Commands[ShortCircuitIndex].ShortCircuitIndex = Commands.Num() - 1;

@@ -2,13 +2,14 @@
 
 #pragma once
 
+#include "RenderGraphDefinitions.h"
 #include "OptimusComputeDataInterface.h"
 #include "ComputeFramework/ComputeDataProvider.h"
 #include "RenderCommandFence.h"
 #include "OptimusDataInterfaceHalfEdge.generated.h"
 
 class FHalfEdgeDataInterfaceParameters;
-class FHalfEdgeBufferResources;
+class FHalfEdgeBuffers;
 class FRDGBuffer;
 class FRDGBufferSRV;
 class FSkeletalMeshObject;
@@ -62,7 +63,7 @@ public:
 	FComputeDataProviderRenderProxy* GetRenderProxy() override;
 	//~ End UComputeDataProvider Interface
 
-	TSharedPtr<FHalfEdgeBufferResources> HalfEdgeBuffers;
+	TArray<FHalfEdgeBuffers> OnDemandHalfEdgeBuffers;
 	FRenderCommandFence DestroyFence;
 };
 
@@ -71,7 +72,7 @@ class FOptimusHalfEdgeDataProviderProxy : public FComputeDataProviderRenderProxy
 public:
 	FOptimusHalfEdgeDataProviderProxy(
 		USkinnedMeshComponent* InSkinnedMeshComponent, 
-		TSharedPtr<FHalfEdgeBufferResources>& InHalfEdgeBuffers);
+		TArray<FHalfEdgeBuffers>& InOnDemandHalfEdgeBuffers);
 
 	//~ Begin FComputeDataProviderRenderProxy Interface
 	bool IsValid(FValidationData const& InValidationData) const override;
@@ -83,8 +84,12 @@ private:
 	using FParameters = FHalfEdgeDataInterfaceParameters;
 
 	FSkeletalMeshObject* SkeletalMeshObject = nullptr;
-	TSharedPtr<FHalfEdgeBufferResources> HalfEdgeBuffers;
-
+	
+	TArray<FHalfEdgeBuffers>& OnDemandHalfEdgeBuffers;
+	
+	bool bUseBufferFromRenderData = false;
 	FRDGBufferSRV* VertexToEdgeBufferSRV = nullptr;
 	FRDGBufferSRV* EdgeToTwinEdgeBufferSRV = nullptr;
+	
+	FRDGBufferSRVRef FallbackSRV = nullptr;
 };

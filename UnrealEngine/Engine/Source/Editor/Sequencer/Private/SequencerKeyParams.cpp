@@ -88,6 +88,11 @@ void FKeyOperation::Populate(UMovieSceneTrack* InTrack, TSharedPtr<ISequencerSec
 		return;
 	}
 
+	if (!MovieSceneHelpers::IsSectionKeyable(SectionObject))
+	{
+		return;
+	}
+
 	FSectionCandidates&   Candidates        = CandidatesByTrack.FindOrAdd(InTrack);
 	FKeySectionOperation* ExistingOperation = Algo::FindBy(Candidates.Operations, InSection, &FKeySectionOperation::Section);
 	if (ExistingOperation)
@@ -161,7 +166,7 @@ void FKeyOperation::FSectionCandidates::FilterOperations(UMovieSceneTrack* Track
 
 				const int32 ThisSectionToKeyIndex = Algo::IndexOfBy(OldOperations, ThisSectionToKey, [](const FKeySectionOperation& In) { return In.Section->GetSectionObject(); });
 				Operations.Add(MoveTemp(OldOperations[ThisSectionToKeyIndex]));
-				OldOperations.RemoveAt(ThisSectionToKeyIndex, 1, false);
+				OldOperations.RemoveAt(ThisSectionToKeyIndex, 1, EAllowShrinking::No);
 			}
 		}
 
@@ -184,7 +189,7 @@ void FKeyOperation::FSectionCandidates::FilterOperations(UMovieSceneTrack* Track
 				{
 					const int32 ThisSectionToKeyIndex = Algo::IndexOfBy(OldOperations, ThisSectionToKey, [](const FKeySectionOperation& In) { return In.Section->GetSectionObject(); });
 					Operations.Add(MoveTemp(OldOperations[ThisSectionToKeyIndex]));
-					OldOperations.RemoveAt(ThisSectionToKeyIndex, 1, false);
+					OldOperations.RemoveAt(ThisSectionToKeyIndex, 1, EAllowShrinking::No);
 				}
 			}
 		}

@@ -636,7 +636,7 @@ void ExportObjectMetadataToBones(const UObject* ObjectToExport, const TArray<Fbx
 					NodeName = TagAsString.Left(CharPos);
 
 					// The remaining part is the actual metadata tag
-					TagAsString.RightChopInline(CharPos + 1, false); // exclude the period
+					TagAsString.RightChopInline(CharPos + 1, EAllowShrinking::No); // exclude the period
 				}
 
 				// Try to attach the metadata to its associated node by name
@@ -767,8 +767,6 @@ FbxNode* FFbxExporter::ExportSkeletalMeshToFbx(const USkeletalMesh* SkeletalMesh
 		Scene->RemoveNode(TmpNodeNoTransform);
 		return SkeletonRootNode;
 	}
-
-	return nullptr;
 }
 
 } // namespace UnFbx

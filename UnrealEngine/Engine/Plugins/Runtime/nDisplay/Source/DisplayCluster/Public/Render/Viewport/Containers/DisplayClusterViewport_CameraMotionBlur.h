@@ -4,6 +4,9 @@
 
 #include "CoreMinimal.h"
 
+/**
+* Camera motion blur mode.
+*/
 enum class EDisplayClusterViewport_CameraMotionBlur : uint8
 {
 	Undefined = 0,
@@ -12,6 +15,9 @@ enum class EDisplayClusterViewport_CameraMotionBlur : uint8
 	Override
 };
 
+/**
+* Settings for the CameraMotion blur.
+*/
 struct FDisplayClusterViewport_CameraMotionBlur
 {
 	EDisplayClusterViewport_CameraMotionBlur Mode = EDisplayClusterViewport_CameraMotionBlur::Undefined;
@@ -21,4 +27,3 @@ struct FDisplayClusterViewport_CameraMotionBlur
 
 	float    TranslationScale = 1.f;
 };
-

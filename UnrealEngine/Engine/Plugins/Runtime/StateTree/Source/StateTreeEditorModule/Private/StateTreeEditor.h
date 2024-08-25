@@ -87,7 +87,7 @@ private:
 	void HandleModelAssetChanged();
 	void OnIdentifierChanged(const UStateTree& StateTree);
 	void OnSchemaChanged(const UStateTree& StateTree);
-	void OnParametersChanged(const UStateTree& StateTree);
+	void OnRefreshDetailsView(const UStateTree& StateTree);
 	void OnStateParametersChanged(const UStateTree& StateTree, const FGuid StateID);
 
 	FText GetStatisticsText() const;

@@ -62,8 +62,7 @@ protected:
 
 	static bool ShouldCompilePermutation(const FMeshMaterialShaderPermutationParameters& Parameters)
 	{
-		static const auto AllowStaticLightingVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-		const bool bAllowStaticLighting = (!AllowStaticLightingVar || AllowStaticLightingVar->GetValueOnAnyThread() != 0);
+		const bool bAllowStaticLighting = IsStaticLightingAllowed();
 
 		if (EnumHasAllFlags(Parameters.Flags, EShaderPermutationFlags::HasEditorOnlyData)
 			&& IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5)
@@ -86,11 +85,10 @@ public:
 		const FPrimitiveSceneProxy* PrimitiveSceneProxy,
 		const FMaterialRenderProxy& MaterialRenderProxy,
 		const FMaterial& Material,
-		const FMeshPassProcessorRenderState& DrawRenderState,
 		const FLightmapElementData& ShaderElementData,
 		FMeshDrawSingleShaderBindings& ShaderBindings) const
 	{
-		FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, DrawRenderState, ShaderElementData, ShaderBindings);
+		FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, ShaderElementData, ShaderBindings);
 
 		if (PrecomputedLightingBufferParameter.IsBound())
 		{
@@ -118,8 +116,7 @@ class FLightmapGBufferPS : public FMeshMaterialShader
 public:
 	static bool ShouldCompilePermutation(const FMeshMaterialShaderPermutationParameters& Parameters)
 	{
-		static const auto AllowStaticLightingVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-		const bool bAllowStaticLighting = (!AllowStaticLightingVar || AllowStaticLightingVar->GetValueOnAnyThread() != 0);
+		const bool bAllowStaticLighting = IsStaticLightingAllowed();
 
 		if (EnumHasAllFlags(Parameters.Flags, EShaderPermutationFlags::HasEditorOnlyData)
 			&& IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5)
@@ -159,11 +156,10 @@ public:
 		const FPrimitiveSceneProxy* PrimitiveSceneProxy,
 		const FMaterialRenderProxy& MaterialRenderProxy,
 		const FMaterial& Material,
-		const FMeshPassProcessorRenderState& DrawRenderState,
 		const FLightmapElementData& ShaderElementData,
 		FMeshDrawSingleShaderBindings& ShaderBindings) const
 	{
-		FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, DrawRenderState, ShaderElementData, ShaderBindings);
+		FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, ShaderElementData, ShaderBindings);
 		ShaderBindings.Add(ScratchTilePoolOffset, ShaderElementData.ScratchTilePoolOffset);
 		ShaderBindings.Add(bMaterialTwoSided, ShaderElementData.bMaterialTwoSided);
 	}
@@ -180,7 +176,7 @@ public:
 		int32 RenderPassIndex,
 		FIntPoint ScratchTilePoolOffset
 	)
-		: FMeshPassProcessor(InScene, InView->GetFeatureLevel(), InView, InDrawListContext)
+		: FMeshPassProcessor(TEXT("LightmapGBuffer"), InScene, InView->GetFeatureLevel(), InView, InDrawListContext)
 		, VirtualTexturePhysicalTileCoordinateScaleAndBias(VirtualTexturePhysicalTileCoordinateScaleAndBias)
 		, RenderPassIndex(RenderPassIndex)
 		, ScratchTilePoolOffset(ScratchTilePoolOffset)

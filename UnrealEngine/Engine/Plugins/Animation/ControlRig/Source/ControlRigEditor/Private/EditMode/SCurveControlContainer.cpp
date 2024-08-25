@@ -245,10 +245,10 @@ void SCurveControlContainer::CreateCurveControlList( const FString& SearchText )
 		// Iterate through all curves..
 		Hierarchy->ForEach<FRigCurveElement>([CTRLName, this](FRigCurveElement* CurveElement) -> bool
         {
-			const FString Name = CurveElement->GetName().ToString();
+			const FString Name = CurveElement->GetName();
 			if (Name.Contains(CTRLName))
 			{
-				const FString CurveString = CurveElement->GetName().ToString();
+				const FString CurveString = CurveElement->GetName();
 
 				// See if we pass the search filter
 				if (!FilterText.IsEmpty() && !CurveString.Contains(*FilterText.ToString()))
@@ -256,7 +256,7 @@ void SCurveControlContainer::CreateCurveControlList( const FString& SearchText )
 					return true;
 				}
 
-				const TSharedRef<FDisplayedCurveControlInfo> NewItem = FDisplayedCurveControlInfo::Make(CurveElement->GetName());
+				const TSharedRef<FDisplayedCurveControlInfo> NewItem = FDisplayedCurveControlInfo::Make(CurveElement->GetFName());
 				CurveControlList.Add(NewItem);
 			}
 
@@ -354,7 +354,7 @@ void SCurveControlContainer::OnRigElementSelected(UControlRig* Subject, FRigCont
 {
 	for(const FDisplayedCurveControlInfoPtr& Item : CurveControlList)
 	{
-		if (Item->CurveName == ControlElement->GetName())
+		if (Item->CurveName == ControlElement->GetFName())
 		{
 			CurveControlListView->SetItemSelection(Item, bSelected);
 			break;

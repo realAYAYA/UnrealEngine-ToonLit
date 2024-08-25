@@ -95,6 +95,9 @@ public:
 	/** Called when a destruction info is created for an actor. Can be used to override some of the destruction info struct */
 	ENGINE_API virtual void NotifyDestructionInfoCreated(AActor* Actor, FActorDestructionInfo& DestructionInfo) PURE_VIRTUAL(UReplicationDriver::NotifyDestructionInfoCreated, );
 
+	/** Called when an actor is renamed. The implementation should update any cached actor/level mapping if the actor's outer changed. */
+	ENGINE_API virtual void NotifyActorRenamed(AActor* Actor, UObject* PreviousOuter, FName PreviousName) PURE_VIRTUAL(UReplicationDriver::NotifyActorRenamed, );
+
 	ENGINE_API virtual void SetRoleSwapOnReplicate(AActor* Actor, bool bSwapRoles) PURE_VIRTUAL(UReplicationDriver::SetRoleSwapOnReplicate, );
 
 	/** Handles an RPC. Returns true if it actually handled it. Returning false will cause the rep driver function to handle it instead */

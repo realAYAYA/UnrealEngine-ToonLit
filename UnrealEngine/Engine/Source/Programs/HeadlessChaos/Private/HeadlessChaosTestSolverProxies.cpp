@@ -22,7 +22,7 @@ namespace ChaosTest {
 
 	void SingleParticleProxySingleThreadTest()
 	{
-		auto Sphere = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TSphere<FReal, 3>(FVec3(0), 10));
+		auto Sphere = Chaos::FImplicitObjectPtr(new TSphere<FReal, 3>(FVec3(0), 10));
 
 		FChaosSolversModule* Module = FChaosSolversModule::GetModule();
 
@@ -64,7 +64,7 @@ namespace ChaosTest {
 	void SingleParticleProxyWakeEventPropagationTest()
 	{
 		using namespace Chaos;
-		auto Sphere = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TSphere<FReal, 3>(FVec3(0), 10));
+		auto Sphere = Chaos::FImplicitObjectPtr(new TSphere<FReal, 3>(FVec3(0), 10));
 
 		FChaosSolversModule* Module = FChaosSolversModule::GetModule();
 
@@ -122,7 +122,7 @@ namespace ChaosTest {
 	{
 		// this test make sure that we are not leaking uniqueIdx when creating and destroying particle in one frame (without PT running)
 
-		auto Sphere = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TSphere<FReal, 3>(FVec3(0), 10));
+		auto Sphere = Chaos::FImplicitObjectPtr(new TSphere<FReal, 3>(FVec3(0), 10));
 
 		FChaosSolversModule* Module = FChaosSolversModule::GetModule();
 
@@ -170,7 +170,7 @@ namespace ChaosTest {
 		// This array is physics thread only, it should only be added after ticking solver.
 
 		using namespace Chaos;
-		auto Sphere = TSharedPtr<FImplicitObject, ESPMode::ThreadSafe>(new TSphere<FReal, 3>(FVec3(0), 10));
+		auto Sphere = Chaos::FImplicitObjectPtr(new TSphere<FReal, 3>(FVec3(0), 10));
 		FChaosSolversModule* Module = FChaosSolversModule::GetModule();
 
 		// Make a solver

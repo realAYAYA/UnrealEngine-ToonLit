@@ -473,10 +473,10 @@ void UMetaData::InitializeRedirectMap()
 		{
 			const FName MetadataRedirectsName(TEXT("MetadataRedirects"));
 
-			FConfigSection* PackageRedirects = GConfig->GetSectionPrivate(TEXT("CoreUObject.Metadata"), false, true, GEngineIni);
+			const FConfigSection* PackageRedirects = GConfig->GetSection(TEXT("CoreUObject.Metadata"), false, GEngineIni);
 			if (PackageRedirects)
 			{
-				for (FConfigSection::TIterator It(*PackageRedirects); It; ++It)
+				for (FConfigSection::TConstIterator It(*PackageRedirects); It; ++It)
 				{
 					if (It.Key() == MetadataRedirectsName)
 					{

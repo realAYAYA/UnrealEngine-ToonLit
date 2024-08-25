@@ -27,6 +27,12 @@ namespace EpicGames.UHT.Types
 		}
 
 		/// <inheritdoc/>
+		protected override bool NeedsGCBarrierWhenPassedToFunctionImpl(UhtFunction function)
+		{
+			return ValueProperty.NeedsGCBarrierWhenPassedToFunction(function);
+		}
+		
+		/// <inheritdoc/>
 		public override void Validate(UhtStruct outerStruct, UhtProperty outermostProperty, UhtValidationOptions options)
 		{
 			base.Validate(outerStruct, outermostProperty, options);

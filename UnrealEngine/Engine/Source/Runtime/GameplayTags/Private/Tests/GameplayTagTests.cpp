@@ -221,6 +221,18 @@ public:
 	
 		TestTrueExpr(FilteredTagContainer.HasTagExact(CueTag));
 		TestTrueExpr(!FilteredTagContainer.HasTagExact(EffectDamage1Tag));
+
+		FGameplayTagContainer SingleTagContainer = EffectDamage1Tag.GetSingleTagContainer();
+		FGameplayTagContainer ParentContainer = EffectDamage1Tag.GetGameplayTagParents();
+
+		TestTrueExpr(SingleTagContainer.HasTagExact(EffectDamage1Tag));
+		TestTrueExpr(SingleTagContainer.HasTag(EffectDamageTag));
+		TestTrueExpr(!SingleTagContainer.HasTagExact(EffectDamageTag));
+
+		TestTrueExpr(ParentContainer.HasTagExact(EffectDamage1Tag));
+		TestTrueExpr(ParentContainer.HasTag(EffectDamageTag));
+		TestTrueExpr(ParentContainer.HasTagExact(EffectDamageTag));
+
 	}
 
 	void GameplayTagTest_PerfTest()
@@ -279,6 +291,22 @@ public:
 				TagContainerNew.AppendTags(TagContainer);
 			}
 		}
+
+		{
+			FScopeLogTime LogTimePtr(*FString::Printf(TEXT("10000 container gets")), nullptr, FScopeLogTime::ScopeLog_Milliseconds);
+			for (int32 i = 0; i < 10000; i++)
+			{
+				FGameplayTagContainer TagContainerNew = EffectDamage1Tag.GetSingleTagContainer();
+			}
+		}
+
+		{
+			FScopeLogTime LogTimePtr(*FString::Printf(TEXT("10000 parent gets")), nullptr, FScopeLogTime::ScopeLog_Milliseconds);
+			for (int32 i = 0; i < 10000; i++)
+			{
+				FGameplayTagContainer TagContainerParents = EffectDamage1Tag.GetGameplayTagParents();
+			}
+		}
 	
 		FGameplayTagContainer TagContainer2;
 		TagContainer2.AddTag(EffectDamage1Tag);
@@ -298,6 +326,14 @@ public:
 			for (int32 i = 0; i < 10000; i++)
 			{
 				bResult &= EffectDamage1Tag.MatchesAny(TagContainer);
+			}
+		}
+
+		{
+			FScopeLogTime LogTimePtr(*FString::Printf(TEXT("10000 MatchesTag checks")), nullptr, FScopeLogTime::ScopeLog_Milliseconds);
+			for (int32 i = 0; i < 10000; i++)
+			{
+				bResult &= EffectDamage1Tag.MatchesTag(EffectDamageTag);
 			}
 		}
 

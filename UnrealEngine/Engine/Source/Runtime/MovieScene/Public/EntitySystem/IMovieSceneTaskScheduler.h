@@ -68,15 +68,30 @@ struct FTaskParams
 		bForceConsumeUpstream = false;
 	}
 
+	/**
+	 * Set a custom stat ID for this task
+	 */
 	FTaskParams& Stat(const TStatId& InStatId)
 	{
 		StatId = InStatId;
 		return *this;
 	}
 
+	/**
+	 * Force this task to run on the game thread
+	 */
 	FTaskParams& ForceGameThread()
 	{
 		bForceGameThread = true;
+		return *this;
+	}
+
+	/**
+	 * Force this task to run Pre/Post callbacks even if there is no meaningful work to be done in the body
+	 */
+	FTaskParams& ForcePrePostTask()
+	{
+		bForcePrePostTask = true;
 		return *this;
 	}
 
@@ -86,6 +101,7 @@ struct FTaskParams
 	TStatId StatId;
 	uint8 bForceGameThread : 1;
 	uint8 bSerialTasks : 1;
+	uint8 bForcePrePostTask : 1;
 	uint8 bForcePropagateDownstream : 1;
 	uint8 bForceConsumeUpstream : 1;
 };

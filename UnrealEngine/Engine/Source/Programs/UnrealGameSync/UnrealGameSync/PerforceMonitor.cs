@@ -1,24 +1,23 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
-using EpicGames.OIDC;
-using EpicGames.Perforce;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using EpicGames.Core;
+using EpicGames.Horde;
+using EpicGames.Perforce;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace UnrealGameSync
 {
 	interface IArchiveInfoSource
 	{
-		IReadOnlyList<IArchiveInfo> AvailableArchives { get; }
+		IReadOnlyList<IArchiveChannel> AvailableArchiveChannels { get; }
 	}
 
 	class PerforceMonitor : IDisposable, IArchiveInfoSource
@@ -44,16 +43,16 @@ namespace UnrealGameSync
 #pragma warning restore CA2213
 		int _pendingMaxChangesValue;
 		SortedSet<ChangesRecord> _changes = new SortedSet<ChangesRecord>(new PerforceChangeSorter());
-		readonly SortedDictionary<int, PerforceChangeDetails> _changeDetails = new SortedDictionary<int,PerforceChangeDetails>();
+		readonly SortedDictionary<int, PerforceChangeDetails> _changeDetails = new SortedDictionary<int, PerforceChangeDetails>();
 		readonly SortedSet<int> _promotedChangeNumbers = new SortedSet<int>();
-		List<PerforceArchiveInfo> _archives = new List<PerforceArchiveInfo>();
+		List<BaseArchiveChannel> _archives = new List<BaseArchiveChannel>();
 		readonly AsyncEvent _refreshEvent = new AsyncEvent();
 		readonly ILogger _logger;
 		readonly bool _isEnterpriseProject;
 		readonly DirectoryReference _cacheFolder;
 		readonly List<KeyValuePair<FileReference, DateTime>> _localConfigFiles;
 		readonly IAsyncDisposer _asyncDisposeTasks;
-		readonly OidcTokenManager _oidcTokenManager;
+		readonly IHordeClient? _hordeClient;
 
 		string[] prevCodeRules = Array.Empty<string>();
 
@@ -71,7 +70,7 @@ namespace UnrealGameSync
 			private set;
 		}
 
-		public PerforceMonitor(IPerforceSettings perforceSettings, ProjectInfo projectInfo, ConfigFile projectConfigFile, DirectoryReference cacheFolder, List<KeyValuePair<FileReference, DateTime>> localConfigFiles, OidcTokenClient? oidcTokenClient, IServiceProvider serviceProvider)
+		public PerforceMonitor(IPerforceSettings perforceSettings, ProjectInfo projectInfo, ConfigFile projectConfigFile, DirectoryReference cacheFolder, List<KeyValuePair<FileReference, DateTime>> localConfigFiles, IServiceProvider serviceProvider)
 		{
 			_perforceSettings = perforceSettings;
 			_branchClientPath = projectInfo.ClientRootPath;
@@ -88,10 +87,9 @@ namespace UnrealGameSync
 			_asyncDisposeTasks = serviceProvider.GetRequiredService<IAsyncDisposer>();
 			_synchronizationContext = SynchronizationContext.Current!;
 			_cancellationSource = new CancellationTokenSource();
-			_oidcTokenManager = serviceProvider.GetRequiredService<OidcTokenManager>();
+			_hordeClient = serviceProvider.GetService<IHordeClient>();
 
-			AvailableArchives = (new List<IArchiveInfo>()).AsReadOnly();
-			LatestOidcTokenClient = oidcTokenClient;
+			AvailableArchiveChannels = (new List<IArchiveChannel>()).AsReadOnly();
 		}
 
 		public void Start()
@@ -135,16 +133,16 @@ namespace UnrealGameSync
 		public int PendingMaxChanges
 		{
 			get => _pendingMaxChangesValue;
-			set 
-			{ 
-				lock(_lockObject)
-				{ 
-					if(value != _pendingMaxChangesValue)
-					{ 
-						_pendingMaxChangesValue = value; 
-						_refreshEvent.Set(); 
-					} 
-				} 
+			set
+			{
+				lock (_lockObject)
+				{
+					if (value != _pendingMaxChangesValue)
+					{
+						_pendingMaxChangesValue = value;
+						_refreshEvent.Set();
+					}
+				}
 			}
 		}
 
@@ -194,7 +192,7 @@ namespace UnrealGameSync
 				await UpdateArchivesAsync(perforce, cancellationToken);
 			}
 
-			while(!cancellationToken.IsCancellationRequested)
+			while (!cancellationToken.IsCancellationRequested)
 			{
 				Stopwatch timer = Stopwatch.StartNew();
 				Task nextRefreshTask = _refreshEvent.Task;
@@ -237,14 +235,14 @@ namespace UnrealGameSync
 					}
 				}
 
-                // Wait for another request, or scan for new builds after a timeout
+				// Wait for another request, or scan for new builds after a timeout
 				// Add random deviation to refresh event, to try and combat many UGS clients getting in sync and DDoSing Perforce
-                TimeSpan baseDelay = TimeSpan.FromMinutes(IsActive ? 5 : 30);
+				TimeSpan baseDelay = TimeSpan.FromMinutes(IsActive ? 5 : 30);
 
-                Random random = new Random();
-                TimeSpan randomDeviation = TimeSpan.FromSeconds(random.Next(0, 60));
+				Random random = new Random();
+				TimeSpan randomDeviation = TimeSpan.FromSeconds(random.Next(0, 60));
 
-                Task delayTask = Task.Delay(baseDelay + randomDeviation, cancellationToken);
+				Task delayTask = Task.Delay(baseDelay + randomDeviation, cancellationToken);
 				await Task.WhenAny(nextRefreshTask, delayTask);
 			}
 		}
@@ -299,17 +297,8 @@ namespace UnrealGameSync
 			}
 
 			// Read any new changes
-			List<ChangesRecord> newChanges;
-			if (maxChanges > CurrentMaxChanges || newestChangeNumber == -1)
-			{
-				newChanges = await perforce.GetChangesAsync(ChangesOptions.IncludeTimes | ChangesOptions.LongOutput, maxChanges, ChangeStatus.Submitted, depotPaths, cancellationToken);
-			}
-			else
-			{
-				List<string> depotPathsWithRange = depotPaths.ConvertAll(x => $"{x}@{newestChangeNumber + 1},#head");
-				//				newChanges = await perforce.GetChangesAsync(ChangesOptions.IncludeTimes | ChangesOptions.LongOutput, maxChanges, ChangeStatus.Submitted, depotPaths.Select(x => $"{x}@>{newestChangeNumber}").ToArray(), cancellationToken);
-				newChanges = await perforce.GetChangesAsync(ChangesOptions.IncludeTimes | ChangesOptions.LongOutput, clientName: null, minChangeNumber: newestChangeNumber + 1, maxChanges: maxChanges, status: ChangeStatus.Submitted, userName: null, fileSpecs: depotPathsWithRange, cancellationToken);
-			}
+			int? minChangeNumber = (maxChanges > CurrentMaxChanges || newestChangeNumber == -1) ? null : (newestChangeNumber + 1);
+			List<ChangesRecord> newChanges = await Utility.EnumerateChanges(perforce, depotPaths, minChangeNumber, null, maxChanges, cancellationToken).ToListAsync(cancellationToken);
 
 			// Remove anything we already have
 			newChanges.RemoveAll(x => currentChangelists.Contains(x.Number));
@@ -327,9 +316,9 @@ namespace UnrealGameSync
 			if (perforceConfigSection != null && perforceConfigSection.GetValue("FindAllChangesForPCBs", false))
 			{
 				int minZippedChangeNumber = -1;
-				foreach (PerforceArchiveInfo archive in _archives)
+				foreach (BaseArchiveChannel archive in _archives)
 				{
-					foreach (int changeNumber in archive.ChangeNumberToFileRevision.Keys)
+					foreach (int changeNumber in archive.ChangeNumberToArchive.Keys)
 					{
 						if (changeNumber > minZippedChangeNumber && changeNumber <= oldestChangeNumber)
 						{
@@ -349,21 +338,21 @@ namespace UnrealGameSync
 			const string roboMergePrefix = "#ROBOMERGE-AUTHOR:";
 			foreach (ChangesRecord change in newChanges)
 			{
-				if(change.Description != null && change.Description.StartsWith(roboMergePrefix, StringComparison.Ordinal))
+				if (change.Description != null && change.Description.StartsWith(roboMergePrefix, StringComparison.Ordinal))
 				{
 					int startIdx = roboMergePrefix.Length;
-					while(startIdx < change.Description.Length && change.Description[startIdx] == ' ')
+					while (startIdx < change.Description.Length && change.Description[startIdx] == ' ')
 					{
 						startIdx++;
 					}
 
 					int endIdx = startIdx;
-					while(endIdx < change.Description.Length && !Char.IsWhiteSpace(change.Description[endIdx]))
+					while (endIdx < change.Description.Length && !Char.IsWhiteSpace(change.Description[endIdx]))
 					{
 						endIdx++;
 					}
 
-					if(endIdx > startIdx)
+					if (endIdx > startIdx)
 					{
 						change.User = change.Description.Substring(startIdx, endIdx - startIdx);
 						change.Description = "ROBOMERGE: " + change.Description.Substring(endIdx).TrimStart();
@@ -372,21 +361,21 @@ namespace UnrealGameSync
 			}
 
 			// Process the new changes received
-			if(newChanges.Count > 0 || maxChanges < CurrentMaxChanges)
+			if (newChanges.Count > 0 || maxChanges < CurrentMaxChanges)
 			{
 				// Insert them into the builds list
-				lock(_lockObject)
+				lock (_lockObject)
 				{
 					_changes.UnionWith(newChanges);
-					if(_changes.Count > maxChanges)
+					if (_changes.Count > maxChanges)
 					{
 						// Remove changes to shrink it to the max requested size, being careful to avoid removing changes that would affect our ability to correctly
 						// show the availability for content changes using zipped binaries.
 						SortedSet<ChangesRecord> trimmedChanges = new SortedSet<ChangesRecord>(new PerforceChangeSorter());
-						foreach(ChangesRecord change in _changes)
+						foreach (ChangesRecord change in _changes)
 						{
 							trimmedChanges.Add(change);
-							if(trimmedChanges.Count >= maxChanges && _archives.Any(x => x.ChangeNumberToFileRevision.Count == 0 || x.ChangeNumberToFileRevision.ContainsKey(change.Number) || x.ChangeNumberToFileRevision.First().Key > change.Number))
+							if (trimmedChanges.Count >= maxChanges && _archives.Any(x => x.ChangeNumberToArchive.Count == 0 || x.ChangeNumberToArchive.ContainsKey(change.Number) || x.ChangeNumberToArchive.First().Key > change.Number))
 							{
 								break;
 							}
@@ -398,9 +387,9 @@ namespace UnrealGameSync
 
 				// Find the last submitted change by the current user
 				int newLastChangeByCurrentUser = -1;
-				foreach(ChangesRecord change in _changes)
+				foreach (ChangesRecord change in _changes)
 				{
-					if(String.Equals(change.User, perforce.Settings.UserName, StringComparison.OrdinalIgnoreCase))
+					if (String.Equals(change.User, perforce.Settings.UserName, StringComparison.OrdinalIgnoreCase))
 					{
 						newLastChangeByCurrentUser = Math.Max(newLastChangeByCurrentUser, change.Number);
 					}
@@ -416,33 +405,20 @@ namespace UnrealGameSync
 		public async Task<bool> UpdateChangeTypesAsync(IPerforceConnection perforce, CancellationToken cancellationToken)
 		{
 			// Get the filter for code changes
-			ConfigSection? projectConfigSection = LatestProjectConfigFile.FindSection("Perforce");
-
-			string[] codeRules = projectConfigSection?.GetValues("CodeFilter", (string[]?)null) ?? Array.Empty<string>();
+			string[] codeRules = Utility.GetCodeFilter(LatestProjectConfigFile);
 			if (!Enumerable.SequenceEqual(codeRules, prevCodeRules))
 			{
 				_changeDetails.Clear();
 				prevCodeRules = codeRules;
 			}
 
-			Func<string, bool>? isCodeFile = null;
-			if (codeRules.Length > 0)
-			{
-				FileFilter filter = new FileFilter(PerforceUtils.CodeExtensions.Select(x => $"*{x}"));
-				foreach (string codeRule in codeRules)
-				{
-					filter.AddRule(codeRule);
-				}
-				isCodeFile = filter.Matches;
-			}
-
 			// Find the changes we need to query
 			List<int> queryChangeNumbers = new List<int>();
-			lock(_lockObject)
+			lock (_lockObject)
 			{
-				foreach(ChangesRecord change in _changes)
+				foreach (ChangesRecord change in _changes)
 				{
-					if(!_changeDetails.ContainsKey(change.Number))
+					if (!_changeDetails.ContainsKey(change.Number))
 					{
 						queryChangeNumbers.Add(change.Number);
 					}
@@ -454,7 +430,7 @@ namespace UnrealGameSync
 			using (CancellationTokenSource cancellationSource = new CancellationTokenSource())
 			{
 				Task notifyTask = Task.CompletedTask;
-				foreach (IReadOnlyList<int> queryChangeNumberBatch in queryChangeNumbers.OrderByDescending(x => x).Batch(10))
+				await foreach (PerforceChangeDetails details in Utility.EnumerateChangeDetails(perforce, queryChangeNumbers.ToAsyncEnumerable(), codeRules, cancellationToken))
 				{
 					cancellationToken.ThrowIfCancellationRequested();
 
@@ -464,54 +440,26 @@ namespace UnrealGameSync
 						break;
 					}
 
-					// If there's something to check for, find all the content changes after this changelist
-					const int InitialMaxFiles = 100;
-
-					List<DescribeRecord> describeRecords = await perforce.DescribeAsync(DescribeOptions.None, InitialMaxFiles, queryChangeNumberBatch.ToArray(), cancellationToken);
-					foreach (DescribeRecord describeRecordLoop in describeRecords.OrderByDescending(x => x.Number))
+					// Add this change to the cache
+					lock (_lockObject)
 					{
-						DescribeRecord describeRecord = describeRecordLoop;
-						int queryChangeNumber = describeRecord.Number;
-
-						PerforceChangeDetails details = new PerforceChangeDetails(describeRecord, isCodeFile);
-
-						// Content only changes must be flagged accurately, because code changes invalidate precompiled binaries. Increase the number of files fetched until we can classify it correctly.
-						int currentMaxFiles = InitialMaxFiles;
-						while (describeRecord.Files.Count >= currentMaxFiles && !details.ContainsCode)
+						if (!_changeDetails.ContainsKey(details.Number))
 						{
-							cancellationToken.ThrowIfCancellationRequested();
-							currentMaxFiles *= 10;
-
-							List<DescribeRecord> newDescribeRecords = await perforce.DescribeAsync(DescribeOptions.None, currentMaxFiles, new int[] { queryChangeNumber }, cancellationToken);
-							if (newDescribeRecords.Count == 0)
-							{
-								break;
-							}
-
-							describeRecord = newDescribeRecords[0];
-							details = new PerforceChangeDetails(describeRecord, isCodeFile);
+							_changeDetails.Add(details.Number, details);
 						}
+					}
 
-						lock (_lockObject)
-						{
-							if (!_changeDetails.ContainsKey(queryChangeNumber))
-							{
-								_changeDetails.Add(queryChangeNumber, details);
-							}
-						}
+					// Reload the config file if it changes
+					if (details.ContainsUgsConfig && !updatedConfigFile)
+					{
+						await UpdateProjectConfigFileAsync(perforce, cancellationToken);
+						updatedConfigFile = true;
+					}
 
-						// Reload the config file if it changes
-						if (describeRecord.Files.Any(x => x.DepotFile.EndsWith("/UnrealGameSync.ini", StringComparison.OrdinalIgnoreCase)) && !updatedConfigFile)
-						{
-							await UpdateProjectConfigFileAsync(perforce, cancellationToken);
-							updatedConfigFile = true;
-						}
-
-						// Notify the caller after a fixed period of time, in case further updates are slow to arrive
-						if (notifyTask.IsCompleted)
-						{
-							notifyTask = Task.Delay(TimeSpan.FromSeconds(5.0), cancellationSource.Token).ContinueWith(_ => _synchronizationContext.Post(_ => OnUpdateMetadata?.Invoke(), null), cancellationSource.Token, new TaskContinuationOptions(), TaskScheduler.Default);
-						}
+					// Notify the caller after a fixed period of time, in case further updates are slow to arrive
+					if (notifyTask.IsCompleted)
+					{
+						notifyTask = Task.Delay(TimeSpan.FromSeconds(5.0), cancellationSource.Token).ContinueWith(_ => _synchronizationContext.Post(_ => OnUpdateMetadata?.Invoke(), null), cancellationSource.Token, new TaskContinuationOptions(), TaskScheduler.Default);
 					}
 				}
 				cancellationSource.Cancel();
@@ -520,12 +468,12 @@ namespace UnrealGameSync
 
 			// Find the last submitted code change by the current user
 			int newLastCodeChangeByCurrentUser = -1;
-			foreach(ChangesRecord change in _changes)
+			foreach (ChangesRecord change in _changes)
 			{
-				if(String.Equals(change.User, perforce.Settings.UserName, StringComparison.OrdinalIgnoreCase))
+				if (String.Equals(change.User, perforce.Settings.UserName, StringComparison.OrdinalIgnoreCase))
 				{
 					PerforceChangeDetails? otherDetails;
-					if(_changeDetails.TryGetValue(change.Number, out otherDetails) && otherDetails.ContainsCode)
+					if (_changeDetails.TryGetValue(change.Number, out otherDetails) && otherDetails.ContainsCode)
 					{
 						newLastCodeChangeByCurrentUser = Math.Max(newLastCodeChangeByCurrentUser, change.Number);
 					}
@@ -536,10 +484,9 @@ namespace UnrealGameSync
 			// Notify the main window that we've got an update
 			_synchronizationContext.Post(_ => OnUpdateMetadata?.Invoke(), null);
 
-			if(_localConfigFiles.Any(x => FileReference.GetLastWriteTimeUtc(x.Key) != x.Value))
+			if (_localConfigFiles.Any(x => FileReference.GetLastWriteTimeUtc(x.Key) != x.Value))
 			{
 				await UpdateProjectConfigFileAsync(perforce, cancellationToken);
-				// TODO: Also check OIDC config
 				_synchronizationContext.Post(_ => OnUpdateMetadata?.Invoke(), null);
 			}
 
@@ -548,13 +495,13 @@ namespace UnrealGameSync
 
 		async Task<bool> UpdateArchivesAsync(IPerforceConnection perforce, CancellationToken cancellationToken)
 		{
-			List<PerforceArchiveInfo> newArchives = await PerforceArchive.EnumerateAsync(perforce, LatestProjectConfigFile, _selectedProjectIdentifier, cancellationToken);
+			List<BaseArchiveChannel> newArchives = await BaseArchive.EnumerateChannelsAsync(perforce, _hordeClient, LatestProjectConfigFile, _selectedProjectIdentifier, cancellationToken);
 
 			// Check if the information has changed
 			if (!Enumerable.SequenceEqual(_archives, newArchives))
 			{
 				_archives = newArchives;
-				AvailableArchives = _archives.Select(x => (IArchiveInfo)x).ToList();
+				AvailableArchiveChannels = _archives.Select(x => (IArchiveChannel)x).ToList();
 
 				if (_changes.Count > 0)
 				{
@@ -569,12 +516,11 @@ namespace UnrealGameSync
 		{
 			_localConfigFiles.Clear();
 			LatestProjectConfigFile = await ConfigUtils.ReadProjectConfigFileAsync(perforce, _branchClientPath, _selectedClientFileName, _cacheFolder, _localConfigFiles, _logger, cancellationToken);
-			LatestOidcTokenClient = await ConfigUtils.CreateOidcTokenClientAsync(_oidcTokenManager, LatestProjectConfigFile, _selectedProjectIdentifier, perforce, _branchClientPath, _selectedClientFileName, _localConfigFiles, _cacheFolder, _logger, cancellationToken);
 		}
 
 		public List<ChangesRecord> GetChanges()
 		{
-			lock(_lockObject)
+			lock (_lockObject)
 			{
 				return new List<ChangesRecord>(_changes);
 			}
@@ -582,7 +528,7 @@ namespace UnrealGameSync
 
 		public bool TryGetChangeDetails(int number, [NotNullWhen(true)] out PerforceChangeDetails? details)
 		{
-			lock(_lockObject)
+			lock (_lockObject)
 			{
 				return _changeDetails.TryGetValue(number, out details);
 			}
@@ -590,7 +536,7 @@ namespace UnrealGameSync
 
 		public HashSet<int> GetPromotedChangeNumbers()
 		{
-			lock(_lockObject)
+			lock (_lockObject)
 			{
 				return new HashSet<int>(_promotedChangeNumbers);
 			}
@@ -619,13 +565,7 @@ namespace UnrealGameSync
 			private set;
 		}
 
-		public OidcTokenClient? LatestOidcTokenClient
-		{
-			get;
-			private set;
-		}
-
-		public IReadOnlyList<IArchiveInfo> AvailableArchives
+		public IReadOnlyList<IArchiveChannel> AvailableArchiveChannels
 		{
 			get;
 			private set;

@@ -15,30 +15,30 @@ using Microsoft.Net.Http.Headers;
 
 namespace Jupiter
 {
-    class ServiceAccountAuthOptions : AuthenticationSchemeOptions
-    {
-        public class ServiceAccounts
-        {
-            [Required] public string Token { get; set; } = null!;
+	class ServiceAccountAuthOptions : AuthenticationSchemeOptions
+	{
+		public class ServiceAccounts
+		{
+			[Required] public string Token { get; set; } = null!;
 
-            public List<string> Claims { get; set; } = new List<string>();
-        }
+			public List<string> Claims { get; set; } = new List<string>();
+		}
 
-        public List<ServiceAccounts> Accounts { get; set; } = new List<ServiceAccounts>();
-    }
+		public List<ServiceAccounts> Accounts { get; set; } = new List<ServiceAccounts>();
+	}
 
 	class ServiceAccountAuthHandler : AuthenticationHandler<ServiceAccountAuthOptions>
 	{
-        private readonly IOptionsMonitor<ServiceAccountAuthOptions> _options;
-        public const string AuthenticationScheme = "ServiceAccount";
+		private readonly IOptionsMonitor<ServiceAccountAuthOptions> _options;
+		public const string AuthenticationScheme = "ServiceAccount";
 		public const string Prefix = "ServiceAccount";
 
 		public ServiceAccountAuthHandler(IOptionsMonitor<ServiceAccountAuthOptions> options,
-			ILoggerFactory logger, UrlEncoder encoder, ISystemClock clock)
-			: base(options, logger, encoder, clock)
-        {
-            _options = options;
-        }
+			ILoggerFactory logger, UrlEncoder encoder)
+			: base(options, logger, encoder)
+		{
+			_options = options;
+		}
 		
 		protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
 		{
@@ -52,30 +52,36 @@ namespace Jupiter
 				return AuthenticateResult.NoResult();
 			}
 
-			if (!headerValue[0].StartsWith(Prefix, StringComparison.Ordinal))
+			string? header = headerValue[0];
+			if (string.IsNullOrEmpty(header))
+			{
+				return AuthenticateResult.NoResult();
+			}
+
+			if (!header.StartsWith(Prefix, StringComparison.Ordinal))
 			{
 				return AuthenticateResult.NoResult();
 			}
 			
-            await Task.CompletedTask;
+			await Task.CompletedTask;
 			
-            string token = headerValue[0].Replace(Prefix, "", StringComparison.Ordinal).Trim();
-            ServiceAccountAuthOptions.ServiceAccounts? serviceAccount = _options.CurrentValue.Accounts.FirstOrDefault(account => account.Token == token);
-            if (serviceAccount == null)
+			string token = header.Replace(Prefix, "", StringComparison.Ordinal).Trim();
+			ServiceAccountAuthOptions.ServiceAccounts? serviceAccount = _options.CurrentValue.Accounts.FirstOrDefault(account => account.Token == token);
+			if (serviceAccount == null)
 			{
 				return AuthenticateResult.Fail($"Service account for token {token} not found");
 			}
 
-            List<Claim> claims = new List<Claim>
-            {
-                new Claim(ClaimTypes.Name, AuthenticationScheme)
-            };
-            claims.Add(new Claim("sub", serviceAccount.Token));
-            foreach (string claim in serviceAccount.Claims)
-            {
-                string[] tokens = claim.Split(":", 2);
-                claims.Add(new Claim(tokens[0], tokens[1]));
-            }
+			List<Claim> claims = new List<Claim>
+			{
+				new Claim(ClaimTypes.Name, AuthenticationScheme)
+			};
+			claims.Add(new Claim("sub", serviceAccount.Token));
+			foreach (string claim in serviceAccount.Claims)
+			{
+				string[] tokens = claim.Split(":", 2);
+				claims.Add(new Claim(tokens[0], tokens[1]));
+			}
 
 			ClaimsIdentity identity = new ClaimsIdentity(claims, Scheme.Name);
 			ClaimsPrincipal principal = new ClaimsPrincipal(identity);

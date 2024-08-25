@@ -26,7 +26,7 @@ public:
 	ENGINE_API virtual int32 IsNetReady(bool Saturate) override;
 	ENGINE_API virtual void HandleClientPlayer(APlayerController* PC, UNetConnection* NetConnection) override;
 	ENGINE_API virtual TSharedPtr<const FInternetAddr> GetRemoteAddr() override;
-	ENGINE_API virtual bool ClientHasInitializedLevelFor(const AActor* TestActor) const override;
+	ENGINE_API virtual bool ClientHasInitializedLevel(const ULevel* TestLevel) const override;
 	virtual FString RemoteAddressToString() override { return TEXT("Replay"); }
 	ENGINE_API virtual void CleanUp() override;
 	ENGINE_API virtual void Serialize(FArchive& Ar) override;

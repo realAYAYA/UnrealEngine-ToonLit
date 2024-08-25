@@ -133,7 +133,7 @@ FNiagaraDynamicDataBase* FNiagaraRendererDecals::GenerateDynamicData(const FNiag
 	using namespace NiagaraRendererDecalsLocal;
 
 	// Get DataToRender
-	const FNiagaraDataSet& DataSet = Emitter->GetData();
+	const FNiagaraDataSet& DataSet = Emitter->GetParticleData();
 	const FNiagaraDataBuffer* DataToRender = DataSet.GetCurrentData();
 	FNiagaraSystemInstance* SystemInstance = Emitter->GetParentSystemInstance();
 	if (DataToRender == nullptr || SystemInstance == nullptr || !IsRendererEnabled(InProperties, Emitter))

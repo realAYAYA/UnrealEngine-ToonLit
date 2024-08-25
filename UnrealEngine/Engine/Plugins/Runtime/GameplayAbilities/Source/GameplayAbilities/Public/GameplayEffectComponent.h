@@ -66,6 +66,9 @@ public:
 	/**
 	 * Let us know that the owning GameplayEffect has been modified, thus apply an asset-related changes to the owning GameplayEffect (e.g. any of its fields)
 	 */
+	virtual void OnGameplayEffectChanged() {}
+
+	UE_DEPRECATED(5.4, "Use OnGameplayEffectChanged without const -- we often want to cache data on GEComponent when the GE changes")
 	virtual void OnGameplayEffectChanged() const {}
 
 #if WITH_EDITOR

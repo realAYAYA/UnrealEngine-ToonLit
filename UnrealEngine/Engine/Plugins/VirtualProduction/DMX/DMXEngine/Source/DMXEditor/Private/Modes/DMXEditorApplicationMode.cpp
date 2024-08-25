@@ -28,6 +28,8 @@ FDMXEditorDefaultApplicationMode::FDMXEditorDefaultApplicationMode(TSharedPtr<FD
 	: FApplicationMode(FDMXEditorApplicationMode::DefaultsMode, FDMXEditorApplicationMode::GetLocalizedMode)
 	, DMXEditorCachedPtr(InDMXEditor)
 {
+	using namespace UE::DMX;
+
 	// 1. Create and register Tabs Factories
 	DefaultsTabFactories.RegisterFactory(MakeShared<FDMXLibraryEditorTabSummoner>(InDMXEditor));
 	DefaultsTabFactories.RegisterFactory(MakeShared<FDMXEditorFixtureTypesSummoner>(InDMXEditor));

@@ -7,7 +7,7 @@
 #include "BlockAbilityTagsGameplayEffectComponent.generated.h"
 
 /** Handles blocking the activation of Gameplay Abilities based on Gameplay Tags for the Target actor of the owner Gameplay Effect */
-UCLASS()
+UCLASS(DisplayName="Block Abilities with Tags")
 class GAMEPLAYABILITIES_API UBlockAbilityTagsGameplayEffectComponent : public UGameplayEffectComponent
 {
 	GENERATED_BODY()
@@ -17,7 +17,7 @@ public:
 	virtual void PostInitProperties() override;
 
 	/** Needed to properly apply FInheritedTagContainer properties */
-	virtual void OnGameplayEffectChanged() const override;
+	virtual void OnGameplayEffectChanged() override;
 
 	/** Gets the Blocked Ability Tags inherited tag structure (as configured) */
 	const FInheritedTagContainer& GetConfiguredBlockedAbilityTagChanges() const { return InheritableBlockedAbilityTagsContainer; }
@@ -28,6 +28,9 @@ public:
 #if WITH_EDITOR
 	/** Needed to properly update FInheritedTagContainer properties */
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+
+	/** Validate incompatible configurations */
+	virtual EDataValidationResult IsDataValid(class FDataValidationContext& Context) const override;
 
 private:
 	/** Get a cached version of the FProperty Name for PostEditChangeProperty */

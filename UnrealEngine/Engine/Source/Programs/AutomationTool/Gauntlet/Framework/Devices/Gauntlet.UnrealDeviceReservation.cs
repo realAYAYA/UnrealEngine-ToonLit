@@ -141,16 +141,47 @@ namespace Gauntlet
 		{
 			if ((ReservedDevices != null) && (ReservedDevices.Count() > 0))
 			{
-				foreach (ITargetDevice device in ReservedDevices)
+				foreach (ITargetDevice Device in ReservedDevices)
 				{
-					IDeviceUsageReporter.RecordEnd(device.Name, device.Platform, IDeviceUsageReporter.EventType.Device);
+					IDeviceUsageReporter.RecordEnd(Device.Name, Device.Platform, IDeviceUsageReporter.EventType.Device);
 				}
 				DevicePool.Instance.ReleaseDevices(ReservedDevices);
 				ReservedDevices.Clear();
 			}
 		}
 
-		public void MarkProblemDevice(ITargetDevice Device)
+		public IEnumerable<ITargetDevice> ReleaseProblemDevices()
+		{
+			List<ITargetDevice> Devices = new();
+			bool bReservedDevices = ReservedDevices != null && ReservedDevices.Any();
+			bool bProblemDevices = ProblemDevices != null && ProblemDevices.Any();
+
+			if(bReservedDevices && bProblemDevices)
+			{
+				foreach(ProblemDevice Problem in ProblemDevices)
+				{
+					foreach(ITargetDevice Device in ReservedDevices)
+					{
+						if (Problem.Name == Device.Name && Problem.Platform == Device.Platform)
+						{
+							Devices.Add(Device);
+						}
+					}
+				}
+
+				DevicePool.Instance.ReleaseDevices(Devices);
+				ProblemDevices.Clear();
+
+				foreach (ITargetDevice Device in Devices)
+				{
+					ReservedDevices.Remove(Device);
+					IDeviceUsageReporter.RecordEnd(Device.Name, Device.Platform, IDeviceUsageReporter.EventType.Device);
+				}
+			}
+			return Devices;
+		}
+
+		public void MarkProblemDevice(ITargetDevice Device, string ErrorMessage = "MarkProblemDevice")
 		{
 			if (ProblemDevices.Where(D => D.Name == Device.Name && D.Platform == Device.Platform).Count() > 0)
 			{
@@ -158,7 +189,7 @@ namespace Gauntlet
 			}
 
 			// report device has a problem to the pool
-			DevicePool.Instance.ReportDeviceError(Device, "MarkProblemDevice");
+			DevicePool.Instance.ReportDeviceError(Device, ErrorMessage);
 
 			if (Device.Platform != null)
 			{
@@ -167,4 +198,3 @@ namespace Gauntlet
 		}
 	}
 }
- 

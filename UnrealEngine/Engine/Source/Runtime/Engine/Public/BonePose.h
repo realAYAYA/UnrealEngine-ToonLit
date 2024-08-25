@@ -408,7 +408,8 @@ struct FCSPose
 {
 	// Set up our index type based on the type of pose we are manipulating
 	typedef typename PoseType::BoneIndexType BoneIndexType;
-
+	typedef typename PoseType::Allocator AllocatorType;
+	
 	// Init Pose
 	void InitPose(const FBoneContainer* InBoneContainer)
 	{
@@ -458,7 +459,7 @@ struct FCSPose
 	}
 
 	const PoseType& GetPose() const { return Pose; }
-	const TCustomBoneIndexArray<uint8, BoneIndexType>& GetComponentSpaceFlags() const { return ComponentSpaceFlags; }
+	const TCustomBoneIndexArray<uint8, BoneIndexType, AllocatorType>& GetComponentSpaceFlags() const { return ComponentSpaceFlags; }
 
 	// Get transform for supplied bone in local space
 	FTransform GetLocalSpaceTransform(BoneIndexType BoneIndex);
@@ -482,7 +483,7 @@ struct FCSPose
 	* Do this safely by insuring that Parents are already in Component Space,
 	* and any Component Space children are converted back to Local Space before hand.
 	*/
-	void SafeSetCSBoneTransforms(const TArray<struct FBoneTransform> & BoneTransforms);
+	void SafeSetCSBoneTransforms(TConstArrayView<FBoneTransform> BoneTransforms);
 
 	/**
 	* Blends Component Space transforms to MeshPose in Local Space.
@@ -492,7 +493,7 @@ struct FCSPose
 	* But the blending is done in Local Space. Also we need to refresh any Children they have
 	* that has been previously converted to Component Space.
 	*/
-	void LocalBlendCSBoneTransforms(const TArray<struct FBoneTransform>& BoneTransforms, float Alpha);
+	void LocalBlendCSBoneTransforms(TConstArrayView<FBoneTransform> BoneTransforms, float Alpha);
 
 	/** This function convert component space to local space to OutPose 
 	 *
@@ -529,13 +530,13 @@ protected:
 	PoseType Pose;
 
 	// Flags to track each bones current state (0 means local pose, 1 means component space pose)
-	TCustomBoneIndexArray<uint8, BoneIndexType> ComponentSpaceFlags;
+	TCustomBoneIndexArray<uint8, BoneIndexType, AllocatorType> ComponentSpaceFlags;
 
 	// Cached bone mask array to avoid reallocations
-	TCustomBoneIndexArray<uint8, BoneIndexType> BoneMask;
+	TCustomBoneIndexArray<uint8, BoneIndexType, AllocatorType> BoneMask;
 
 	// Cached conversion array for this pose, to save on allocations each frame
-	TArray<FCompactPoseBoneIndex> BonesToConvert;
+	TArray<FCompactPoseBoneIndex, AllocatorType> BonesToConvert;
 };
 
 template<class PoseType>
@@ -595,46 +596,56 @@ void FCSPose<PoseType>::CalculateComponentSpaceTransform(BoneIndexType BoneIndex
 	checkSlow(Pose.IsValid());
 	check(ComponentSpaceFlags[BoneIndex] == 0);
 
-	// root is already verified, so root should not come here
-	// check AllocateLocalPoses
-	const BoneIndexType ParentIndex = Pose.GetParentBoneIndex(BoneIndex);
+	TArray<BoneIndexType> BoneIndexStack;
+	BoneIndexStack.Reserve(ComponentSpaceFlags.Num());
+	BoneIndexStack.Add(BoneIndex);	//Add a dummy index to avoid last element checks in the loop
 
-	// if Parent already has been calculated, use it
-	if (ComponentSpaceFlags[ParentIndex] == 0)
+	do
 	{
-		// if Parent hasn't been calculated, also calculate parents
-		CalculateComponentSpaceTransform(ParentIndex);
-	}
+		// root is already verified, so root should not come here
+		// check AllocateLocalPoses
+		const BoneIndexType ParentIndex = Pose.GetParentBoneIndex(BoneIndex);
 
-	// current Bones(Index) should contain LocalPoses.
-	FTransform& Bone = Pose[BoneIndex];
-	FTransform& ParentBone = Pose[ParentIndex];
-	check(!Pose[BoneIndex].ContainsNaN());
-	check(!Pose[ParentIndex].ContainsNaN());
+		// if Parent already has been calculated, use it
+		if (ComponentSpaceFlags[ParentIndex] == 0)
+		{
+			BoneIndexStack.Add(BoneIndex);
+			BoneIndex = ParentIndex;
+			continue;
+		}
 
-	FTransform ComponentTransform = Pose[BoneIndex] * Pose[ParentIndex];
-	if (ComponentTransform.ContainsNaN())
-	{
-		// We've failed, output as much info as we can....
-		// Added for Jira UE-55511
-		auto BoolToStr = [](const bool& bValue) { return bValue ? TEXT("true") : TEXT("false"); };
-		
-		const TCHAR* BoneHasNaN = BoolToStr(Pose[BoneIndex].ContainsNaN());
-		const TCHAR* ParentHasNaN = BoolToStr(Pose[ParentIndex].ContainsNaN());
-		FString ErrorMsg = FString(TEXT("NaN created in during FTransform Multiplication\n"));
-		ErrorMsg += FString::Format(TEXT("\tBoneIndex {0} : ParentBoneIndex {1} BoneTransformNaN={2} : ParentTransformNaN={3}\n"), { BoneIndex.GetInt(), ParentIndex.GetInt(), BoneHasNaN, ParentHasNaN });
-		ErrorMsg += FString::Format(TEXT("\tBone {0}\n"), { Pose[BoneIndex].ToString() });
-		ErrorMsg += FString::Format(TEXT("\tParent {0}\n"), { Pose[ParentIndex].ToString() });
-		ErrorMsg += FString::Format(TEXT("\tResult {0}\n"), { ComponentTransform.ToString() });
-		ErrorMsg += FString::Format(TEXT("\tBone B64 {0}\n"), { FBase64::Encode((uint8*)&Pose[BoneIndex], sizeof(FTransform)) });
-		ErrorMsg += FString::Format(TEXT("\tParent B64 {0}\n"), { FBase64::Encode((uint8*)&Pose[ParentIndex], sizeof(FTransform)) });
-		ErrorMsg += FString::Format(TEXT("\tResult B64 {0}\n"), { FBase64::Encode((uint8*)&ComponentTransform, sizeof(FTransform)) });
-		checkf(false, TEXT("Error during CalculateComponentSpaceTransform\n%s"), *ErrorMsg); // Failed during multiplication
-	}
-	Pose[BoneIndex] = ComponentTransform;
-	Pose[BoneIndex].NormalizeRotation();
-	check(!Pose[BoneIndex].ContainsNaN());
-	ComponentSpaceFlags[BoneIndex] = 1;
+		// current Bones(Index) should contain LocalPoses.
+		FTransform& Bone = Pose[BoneIndex];
+		FTransform& ParentBone = Pose[ParentIndex];
+		check(!Pose[BoneIndex].ContainsNaN());
+		check(!Pose[ParentIndex].ContainsNaN());
+
+		FTransform ComponentTransform = Pose[BoneIndex] * Pose[ParentIndex];
+		if (ComponentTransform.ContainsNaN())
+		{
+			// We've failed, output as much info as we can....
+			// Added for Jira UE-55511
+			auto BoolToStr = [](const bool& bValue) { return bValue ? TEXT("true") : TEXT("false"); };
+
+			const TCHAR* BoneHasNaN = BoolToStr(Pose[BoneIndex].ContainsNaN());
+			const TCHAR* ParentHasNaN = BoolToStr(Pose[ParentIndex].ContainsNaN());
+			FString ErrorMsg = FString(TEXT("NaN created in during FTransform Multiplication\n"));
+			ErrorMsg += FString::Format(TEXT("\tBoneIndex {0} : ParentBoneIndex {1} BoneTransformNaN={2} : ParentTransformNaN={3}\n"), { BoneIndex.GetInt(), ParentIndex.GetInt(), BoneHasNaN, ParentHasNaN });
+			ErrorMsg += FString::Format(TEXT("\tBone {0}\n"), { Pose[BoneIndex].ToString() });
+			ErrorMsg += FString::Format(TEXT("\tParent {0}\n"), { Pose[ParentIndex].ToString() });
+			ErrorMsg += FString::Format(TEXT("\tResult {0}\n"), { ComponentTransform.ToString() });
+			ErrorMsg += FString::Format(TEXT("\tBone B64 {0}\n"), { FBase64::Encode((uint8*)&Pose[BoneIndex], sizeof(FTransform)) });
+			ErrorMsg += FString::Format(TEXT("\tParent B64 {0}\n"), { FBase64::Encode((uint8*)&Pose[ParentIndex], sizeof(FTransform)) });
+			ErrorMsg += FString::Format(TEXT("\tResult B64 {0}\n"), { FBase64::Encode((uint8*)&ComponentTransform, sizeof(FTransform)) });
+			checkf(false, TEXT("Error during CalculateComponentSpaceTransform\n%s"), *ErrorMsg); // Failed during multiplication
+		}
+		Pose[BoneIndex] = ComponentTransform;
+		Pose[BoneIndex].NormalizeRotation();
+		check(!Pose[BoneIndex].ContainsNaN());
+		ComponentSpaceFlags[BoneIndex] = 1;
+
+		BoneIndex = BoneIndexStack.Pop(EAllowShrinking::No);
+	} while (BoneIndexStack.Num());
 }
 
 template<class PoseType>
@@ -658,7 +669,7 @@ void FCSPose<PoseType>::ConvertBoneToLocalSpace(BoneIndexType BoneIndex)
 }
 
 template<class PoseType>
-void FCSPose<PoseType>::SafeSetCSBoneTransforms(const TArray<struct FBoneTransform> & BoneTransforms)
+void FCSPose<PoseType>::SafeSetCSBoneTransforms(TConstArrayView<FBoneTransform> BoneTransforms)
 {
 	checkSlow(Pose.IsValid());
 
@@ -723,7 +734,7 @@ void FCSPose<PoseType>::SafeSetCSBoneTransforms(const TArray<struct FBoneTransfo
 }
 
 template<class PoseType>
-void FCSPose<PoseType>::LocalBlendCSBoneTransforms(const TArray<struct FBoneTransform>& BoneTransforms, float Alpha)
+void FCSPose<PoseType>::LocalBlendCSBoneTransforms(TConstArrayView<FBoneTransform> BoneTransforms, float Alpha)
 {
 	// if Alpha is small enough, skip
 	if (Alpha < ZERO_ANIMWEIGHT_THRESH)

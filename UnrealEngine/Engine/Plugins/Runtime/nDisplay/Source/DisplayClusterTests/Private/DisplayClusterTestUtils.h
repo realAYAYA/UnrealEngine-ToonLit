@@ -1,12 +1,14 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
+
 #include "DisplayClusterConfigurationTypes_Viewport.h"
 
 #if WITH_DEV_AUTOMATION_TESTS
 
-#include "DisplayClusterConfiguratorPropertyUtils.h"
 #include "Kismet2/BlueprintEditorUtils.h"
+#include "PropertyEditorModule.h"
+#include "PropertyHandle.h"
 
 class UDisplayClusterBlueprint;
 class UDisplayClusterConfigurationCluster;

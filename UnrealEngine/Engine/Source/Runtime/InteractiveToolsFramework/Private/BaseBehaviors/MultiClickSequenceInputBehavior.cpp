@@ -63,6 +63,13 @@ FInputCaptureUpdate UMultiClickSequenceInputBehavior::UpdateCapture(const FInput
 
 	Modifiers.UpdateModifiers(input, Target);
 
+	// We have to check the device before going further because we get passed captures from 
+	// keyboard for modifier key press/releases, and those don't have valid mouse data.
+	if (!input.IsFromDevice(GetSupportedDevices()))
+	{
+		return FInputCaptureUpdate::Continue();
+	}
+
 	// Allow target to abort click sequence
 	if (State == ESequenceState::WaitingForNextClick && Target->RequestAbortClickSequence())
 	{
@@ -135,6 +142,13 @@ FInputCaptureUpdate UMultiClickSequenceInputBehavior::UpdateHoverCapture(const F
 	check(Target);
 
 	Modifiers.UpdateModifiers(InputState, Target);
+
+	// We have to check the device before going further because we get passed captures from 
+	// keyboard for modifier key press/releases, and those don't have valid mouse data.
+	if (!InputState.IsFromDevice(GetSupportedDevices()))
+	{
+		return FInputCaptureUpdate::Continue();
+	}
 
 	// Allow target to abort click sequence
 	if (State == ESequenceState::WaitingForNextClick && Target->RequestAbortClickSequence())

@@ -4,7 +4,7 @@
 
 #include "MassCrowdTypes.h"
 #include "ZoneGraphTypes.h"
-#include "Subsystems/WorldSubsystem.h"
+#include "MassSubsystemBase.h"
 #include "MassCrowdSubsystem.generated.h"
 
 class UZoneGraphAnnotationSubsystem;
@@ -59,7 +59,7 @@ struct FRegisteredCrowdLaneData
  * It will create custom runtime lane data to allow branching decisions.
  */
 UCLASS()
-class MASSCROWD_API UMassCrowdSubsystem : public UWorldSubsystem
+class MASSCROWD_API UMassCrowdSubsystem : public UMassSubsystemBase
 {
 	GENERATED_BODY()
 public:
@@ -166,9 +166,12 @@ protected:
 	friend class UZoneGraphCrowdLaneAnnotations;
 
 	void UpdateDensityMask();
+
+	// USubsystem BEGIN
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void PostInitialize() override;
 	virtual void Deinitialize() override;
+	// USubsystem END
 
 	void PostZoneGraphDataAdded(const AZoneGraphData* ZoneGraphData);
 	void PreZoneGraphDataRemoved(const AZoneGraphData* ZoneGraphData);

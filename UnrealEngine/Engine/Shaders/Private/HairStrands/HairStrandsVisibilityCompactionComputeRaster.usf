@@ -45,7 +45,7 @@ uint SamplerPerPixel;
 float CoverageThreshold;
 uint bSortSampleByDepth;
 
-RWTexture2D<uint> 					OutCompactNodeCounter;
+RWStructuredBuffer<uint> 			OutCompactNodeCounter;
 RWTexture2D<uint> 					OutCompactNodeIndex;
 RWStructuredBuffer<FPackedHairVis> 	OutCompactNodeVis;
 RWBuffer<uint2>						OutCompactNodeCoord;
@@ -204,7 +204,7 @@ void MainCS(uint GroupIndex : SV_GroupIndex, uint3 GroupId : SV_GroupID, uint3 G
 	GroupMemoryBarrierWithGroupSync();
 	if (GroupIndex == 0 && AllocationNodeCount > 0)
 	{
-		InterlockedAdd(OutCompactNodeCounter[uint2(0, 0)], AllocationNodeCount, AllocationNodeOffset);
+		InterlockedAdd(OutCompactNodeCounter[0], AllocationNodeCount, AllocationNodeOffset);
 	}
 	GroupMemoryBarrierWithGroupSync();
 

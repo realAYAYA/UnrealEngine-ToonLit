@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>ROBOMERGE</title>
+<link rel="icon" href="/img/robo-r.png" type="image/png">
+<link rel="stylesheet" href="/css/fontawesome.5.9.0.all.min.css">
+<link rel="stylesheet" href="/css/bootstrap.min.css">
+<link rel="stylesheet" href="/css/main.css">
+<link rel="stylesheet" href="/css/table.css">
+
+	<script src="/js/jquery-3.4.1.min.js"></script>
+	<script src="/js/bootstrap.bundle.min.js"></script>
+
+<script src="/js/boilerplate.js"></script>
+<script src="/js/unlock.js"></script>
+<script language="javascript">
+
+    $(function() {
+        unlockVerify()
+    });
+
+</script>
+</head>
+<body>
+
+<div style="margin-bottom: 1em;">
+    <h2 class="centered-text" style="text-align:center;  margin-bottom: .5em;"><a title="What's This?" data-toggle="collapse" href="#whatsthis" aria-expanded="false">Unlocking Changes</a></h2>
+    <div id="whatsthis" class="collapse">
+        <div class="card card-single border-info centered-text" style="margin:auto">
+            <div class="card-header">What's Unlock Changes?</div>
+            <div class="card-body centered-text">
+                <p>When a merge is blocked by files that are exclusively locked, Robomerge will offer to 'unlock' those files.</p>
+                <p>Once your unlock request is verified and you elect to unlock, the users who had those files locked will be notified in slack.</p>
+                <p>Please report any issues to <a href="https://epic.slack.com/messages/dt-robomerge-help-ext/"><code>#dt-robomerge-help-ext</code></a> on Slack.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- This div will hold everything to display to the user while the lengthy verification process starts. -->
+<div id="beforeVerification" class="text" >
+    <div id="branchPreviewBeforeVerify"></div>
+</div>
+
+<div id="loadingDiv" class="card card-single border-dark loading-box">
+    <div class="text-center card-body">
+        <h1 id="loadingText" class="align-self-center">Verifying Unlock Request...</h1>
+        <img id="loadingimg" class="mx-auto d-block" style="width:128px;" src="/img/robo-r-rotating.gif">
+    </div>
+</div>
+
+<!-- This div will hold the results of the verification process. -->
+<div class="text" id="afterVerification" style="display:none;">
+   <div id="verificationComplete">
+        <!-- This heading gets changed by the javascript. If the user sees this text without the Javascript being changed, it should warn the user. -->
+        <h2 class="centered-text" id="afterVerificationResultText" style="text-align:center; margin-bottom: .5em;">Unlock Verification May Have Encountered Issues.</h2>
+
+        <!-- Dynamically generated div to hold visualization of unlock verification JSON -->
+        <div id="resultVisualization"></div>
+    </div>
+
+    <div id="formButtons" style="text-align:center;"></div>
+
+    <!-- End afterVerification -->
+</div>
+
+<div class="centered-text" id="afterUnlock" style="display:none;">
+    <h2 style="text-align:center; margin-bottom: .5em;">Unlock Request Processed.</h2>
+    <p>Robomerge will unlock the blocking files and retry the integration.</p>
+</div>
+
+<div id="singleBranchDisplay" style="display:none;"></div>
+
+<button id="returnbutton" class="centered-text initiallyHidden btn btn-lg btn-block btn-info" onclick="goHome()" style="margin-top: 2em;">Return to RoboMerge homepage</button>
+
+</body>
+</html>

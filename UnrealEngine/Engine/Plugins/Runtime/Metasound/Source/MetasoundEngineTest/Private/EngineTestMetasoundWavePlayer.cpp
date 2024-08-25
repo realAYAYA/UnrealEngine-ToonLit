@@ -14,9 +14,6 @@
 #include "MetasoundWave.h"
 #include "MetasoundAudioBuffer.h"
 
-#include "IAudioCodec.h"
-#include "IAudioCodecRegistry.h"
-
 #if WITH_DEV_AUTOMATION_TESTS
 
 // Disabled for now until waveplayer implementation is extracted and place in a better location for testing

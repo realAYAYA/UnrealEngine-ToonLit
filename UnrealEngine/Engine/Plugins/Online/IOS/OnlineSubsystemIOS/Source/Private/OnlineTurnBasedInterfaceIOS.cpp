@@ -167,7 +167,7 @@ int32 FTurnBasedMatchIOS::GetPlayerIndexForPlayer(NSString* PlayerID) const
 			return playerIndex;
 		}
 	}
-	UE_LOG(LogTurnBasedInterfaceIOS, Warning, TEXT("Failed to find participant %s in match"), PlayerID.UTF8String);
+	UE_LOG(LogTurnBasedInterfaceIOS, Warning, TEXT("Failed to find participant %s in match"), StringCast<TCHAR>(reinterpret_cast<const UTF8CHAR*>(PlayerID.UTF8String)).Get());
 	return 0;
 }
 

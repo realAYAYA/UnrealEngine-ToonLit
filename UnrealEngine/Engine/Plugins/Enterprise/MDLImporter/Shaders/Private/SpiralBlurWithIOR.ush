@@ -1,3 +1,5 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
 /*
 Spiral blur function with IOR used to emulate BTDF of the material.
 

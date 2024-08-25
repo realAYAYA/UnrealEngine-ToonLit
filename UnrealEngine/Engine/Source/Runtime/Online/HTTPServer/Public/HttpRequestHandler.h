@@ -16,5 +16,5 @@ struct FHttpServerRequest;
  * @param OnComplete The callback to invoke to write an http response
  * @return True if the request has been handled, false otherwise
  */
-typedef TFunction<bool(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)> FHttpRequestHandler;
+using FHttpRequestHandler = TDelegate<bool(const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)>;
 

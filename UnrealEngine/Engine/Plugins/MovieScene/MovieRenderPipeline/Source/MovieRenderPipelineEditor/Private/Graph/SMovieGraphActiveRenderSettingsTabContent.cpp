@@ -47,6 +47,23 @@ FString FActiveRenderSettingsTreeElement::GetValue() const
 		}
 	}
 
+	// If the property implements IMovieGraphTraversableObject, get the value via GetMergedProperties().
+	// Value will be formatted as a newline-delimited list of "PropertyName = PropertyValue" strings.
+	const FObjectProperty* ObjectProperty = CastField<FObjectProperty>(SettingsProperty);
+	if (ObjectProperty && ObjectProperty->PropertyClass->ImplementsInterface(UMovieGraphTraversableObject::StaticClass()))
+	{
+		const IMovieGraphTraversableObject* MergeableProperty = Cast<IMovieGraphTraversableObject>(
+			ObjectProperty->GetObjectPropertyValue(ObjectProperty->ContainerPtrToValuePtr<void>(SettingsNode)));
+		
+		TArray<FString> MergedValues;
+		Algo::Transform(MergeableProperty->GetMergedProperties(), MergedValues, [](const TPair<FString, FString>& Pair)
+		{
+			return FString::Format(TEXT("{0} = {1}"), {Pair.Key, Pair.Value});
+		});
+		
+		return FString::Join(MergedValues, TEXT("\n"));
+	}
+
 	// Otherwise, ask the property for its value directly
 	SettingsProperty->ExportTextItem_InContainer(ValueString, SettingsNode, nullptr, nullptr, PPF_None);
 	return ValueString;
@@ -163,7 +180,7 @@ const TArray<TSharedPtr<FActiveRenderSettingsTreeElement>>& FActiveRenderSetting
 		for (const FProperty* Property : SettingsNode->GetAllOverrideableProperties())
 		{
 			TSharedPtr<FActiveRenderSettingsTreeElement> Element =
-				MakeShared<FActiveRenderSettingsTreeElement>(Property->GetFName(), EElementType::Property);
+				MakeShared<FActiveRenderSettingsTreeElement>(FName(Property->GetDisplayNameText().ToString()), EElementType::Property);
 			Element->SettingsNode = SettingsNode;
 			Element->SettingsProperty = Property;
 			Element->FlattenedGraph = FlattenedGraph;
@@ -242,7 +259,7 @@ TSharedRef<SWidget> SMovieGraphActiveRenderSettingsTreeItem::GenerateWidgetForCo
 
 			+ SHorizontalBox::Slot()
 			.AutoWidth()
-			.VAlign(VAlign_Center)
+			.VAlign(VAlign_Top)
 			.HAlign(HAlign_Right)
 			[
 				SNew(STextBlock)
@@ -332,20 +349,55 @@ void SMovieGraphActiveRenderSettingsTabContent::Construct(const FArguments& InAr
 				.OnClicked(this, &SMovieGraphActiveRenderSettingsTabContent::OnEvaluateGraphClicked)
 			]
 
-			+SHorizontalBox::Slot()
-			.Padding(5, 0, 0, 0)
+			// +SHorizontalBox::Slot()
+			// .Padding(5, 0, 0, 0)
+			// .AutoWidth()
+			// [
+			// 	SNew(SPositiveActionButton)
+			// 	.Text(LOCTEXT("Button_EvaluationContext", "Evaluation Context..."))
+			// 	.Icon(FAppStyle::GetBrush("EditorPreferences.TabIcon"))
+			// 	.OnGetMenuContent(this, &SMovieGraphActiveRenderSettingsTabContent::GenerateEvaluationContextMenu)
+			// ]
+		]
+
+		+ SVerticalBox::Slot()
+		.Padding(0, 10, 10, 0)
+		.AutoHeight()
+		[
+			SNew(SHorizontalBox)
+			.Visibility_Lambda([this]()
+			{
+				return TraversalError.IsEmpty() ? EVisibility::Collapsed : EVisibility::Visible;
+			})
+
+			+ SHorizontalBox::Slot()
+			.VAlign(VAlign_Center)
+			.Padding(10)
 			.AutoWidth()
 			[
-				SNew(SPositiveActionButton)
-				.Text(LOCTEXT("Button_EvaluationContext", "Evaluation Context..."))
-				.Icon(FAppStyle::GetBrush("EditorPreferences.TabIcon"))
-				.OnGetMenuContent(this, &SMovieGraphActiveRenderSettingsTabContent::GenerateEvaluationContextMenu)
+				SNew(SImage)
+				.Image(FAppStyle::GetBrush("Icons.ErrorWithColor"))
+			]
+
+			+ SHorizontalBox::Slot()
+			.VAlign(VAlign_Center)
+			[
+				SNew(STextBlock)
+				.Font(FAppStyle::Get().GetFontStyle("NormalFontBold"))
+				.Text_Lambda([this]()
+				{
+					return FText::FromString(TraversalError);
+				})
 			]
 		]
 
 		+ SVerticalBox::Slot()
 		[
 			SAssignNew(TreeView, STreeView<TSharedPtr<FActiveRenderSettingsTreeElement>>)
+			.Visibility_Lambda([this]()
+			{
+				return TraversalError.IsEmpty() ? EVisibility::Visible : EVisibility::Collapsed;
+			})
 			.ItemHeight(28)
 			.TreeItemsSource(&RootElements)
 			.SelectionMode(ESelectionMode::Single)
@@ -380,6 +432,12 @@ void SMovieGraphActiveRenderSettingsTabContent::Construct(const FArguments& InAr
 			.Font(FCoreStyle::GetDefaultFontStyle("Italic", 10))
 			.Visibility_Lambda([this]()
 			{
+				// If there's a traversal error, only show the error and not this warning
+				if (!TraversalError.IsEmpty())
+				{
+					return EVisibility::Collapsed;					
+				}
+				
 				return FlattenedGraph.IsValid() ? EVisibility::Collapsed : EVisibility::Visible;
 			})
 		]
@@ -401,9 +459,16 @@ void SMovieGraphActiveRenderSettingsTabContent::TraverseGraph()
 
 	FMovieGraphTraversalContext Context;
 	Context.Job = TraversalJob.Get();
+	// Context.Shot = ?	// TODO: The shot should be exposed in the UI at some point
 
 	// Traverse the graph, and update the root elements
-	FlattenedGraph = TStrongObjectPtr(CurrentGraph->CreateFlattenedGraph(Context));
+	FlattenedGraph = TStrongObjectPtr(CurrentGraph->CreateFlattenedGraph(Context, TraversalError));
+	if (!FlattenedGraph.IsValid())
+	{
+		// TraversalError was set, which will be picked up by the UI and displayed instead of the tree
+		return;
+	}
+	
 	for (const TSharedPtr<FActiveRenderSettingsTreeElement>& RootElement : RootElements)
 	{
 		RootElement->FlattenedGraph = MakeWeakObjectPtr(FlattenedGraph.Get());

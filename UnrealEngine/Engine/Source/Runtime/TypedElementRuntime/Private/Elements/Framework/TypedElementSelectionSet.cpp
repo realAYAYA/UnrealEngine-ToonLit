@@ -112,7 +112,8 @@ void UTypedElementSelectionSet::BeginDestroy()
 
 void UTypedElementSelectionSet::Serialize(FArchive& Ar)
 {
-	checkf(!Ar.IsPersistent(), TEXT("UTypedElementSelectionSet can only be serialized by transient archives!"));
+	checkf(!Ar.IsPersistent() || this->HasAnyFlags(RF_ClassDefaultObject),
+		TEXT("UTypedElementSelectionSet can only be serialized by transient archives!"));
 
 	const bool bIsUndoRedo = PendingUndoRedoState && Ar.IsTransacting();
 
@@ -330,10 +331,13 @@ bool UTypedElementSelectionSet::ClearSelection(const FTypedElementSelectionOptio
 		// Take a copy of the currently selected elements to avoid mutating the selection set while iterating
 		TArray<FTypedElementHandle, TInlineAllocator<8>> ElementsCopy;
 		ElementList->GetElementHandles(ElementsCopy);
+		FTypedElementSelectionOptions CopySelectionOptions(InSelectionOptions);
 
+		// Always support SubRootSelection when clearing
+		CopySelectionOptions.SetAllowSubRootSelection(true);
 		for (const FTypedElementHandle& ElementHandle : ElementsCopy)
 		{
-			bSelectionChanged |= DeselectElement(ElementHandle, InSelectionOptions);
+			bSelectionChanged |= DeselectElement(ElementHandle, CopySelectionOptions);
 		}
 	}
 
@@ -382,6 +386,11 @@ bool UTypedElementSelectionSet::AllowSelectionModifiers(const FTypedElementHandl
 {
 	FTypedElementSelectionSetElement SelectionSetElement = ResolveSelectionSetElement(InElementHandle);
 	return SelectionSetElement && SelectionSetElement.AllowSelectionModifiers();
+}
+
+void UTypedElementSelectionSet::SetNameForTedsIntegration(FName InNameForIntegration)
+{
+	ListNameForTedsIntegration = InNameForIntegration;
 }
 
 FTypedElementHandle UTypedElementSelectionSet::GetSelectionElement(const FTypedElementHandle& InElementHandle, const ETypedElementSelectionMethod InSelectionMethod) const
@@ -462,7 +471,9 @@ void UTypedElementSelectionSet::RestoreSelectionState(const FTypedElementSelecti
 				.SetAllowHidden(true)
 				.SetAllowGroups(false)
 				.SetAllowLegacyNotifications(false)
-				.SetWarnIfLocked(false);
+				.SetWarnIfLocked(false)
+				.SetNameForTEDSIntegration(ListNameForTedsIntegration);
+
 
 			// TODO: Work out the intersection of the before and after state instead of clearing and reselecting?
 			SetSelection(SelectedElements, SelectionOptions);

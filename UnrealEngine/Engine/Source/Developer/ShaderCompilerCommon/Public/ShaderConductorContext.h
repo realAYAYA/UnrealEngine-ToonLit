@@ -13,6 +13,8 @@
 #include "ShaderCore.h"
 #include "Templates/Function.h"
 
+class FShaderCompilerDefinitions;
+
 // Cross compiler support/common functionality
 namespace CrossCompiler
 {
@@ -79,7 +81,7 @@ namespace CrossCompiler
 		bool bEnableFMAPass = false;
 
 		/** Disables scalar block layout for structured buffers. True for Vulkan mobile due to low coverage of 'VK_EXT_scalar_block_layout' extension. */
-		bool bDisableScalarBlockLayout = false;
+		bool bDisableScalarBlockLayout = true;
 
 		/** Enables separate samplers in GLSL via extensions. */
 		bool bEnableSeparateSamplersInGlsl = false;
@@ -89,6 +91,9 @@ namespace CrossCompiler
 
 		/** Decorate SV_Position implicitly as invariant. This can drastically reduce Z-fighting but also prevent certain optimizations. */
 		bool bSvPositionImplicitInvariant = true;
+
+		/** Decorate output semantics as precise. */
+		bool bSupportPreciseOutputs = false;
 
 		/** Preserve storage inputs used for OpenGL */
 		bool bPreserveStorageInput = false;
@@ -108,6 +113,12 @@ namespace CrossCompiler
 
 		/** HLSL language input version: 2015, 2016, 2017, 2018 (Default), 2021 (Breaking changes in short-circuiting evaluation). */
 		uint32 HlslVersion = 2018;
+
+		/**
+		 * SPIR-V specific optimization passes to override the default '-O' argument. This will be passed to DXC via the '-Oconfig=...' argument.
+		 * Use "preset(relax-nested-expr)" for pre-defined set of optimization passes to relax nested expressions.
+		 */
+		FString SpirvCustomOptimizationPasses;
 	};
 
 	/** Target high level languages for ShaderConductor output. */
@@ -130,6 +141,8 @@ namespace CrossCompiler
 	/** Shader conductor output target descriptor. */
 	struct SHADERCOMPILERCOMMON_API FShaderConductorTarget
 	{
+		FShaderConductorTarget();
+
 		/** Target shader semantics, e.g. "macOS" or "iOS" for Metal GPU semantics. */
 		EShaderConductorLanguage Language = EShaderConductorLanguage::Glsl;
 
@@ -142,7 +155,9 @@ namespace CrossCompiler
 		int32 Version = 0;
 
 		/** Cross compilation flags. This is used for high-level cross compilation (such as Metal output) that is send over to SPIRV-Cross, e.g. { "invariant_float_math", "1" }. */
-		FShaderCompilerDefinitions CompileFlags;
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS		// FShaderCompilerDefinitions will be made internal in the future, marked deprecated until then
+		TPimplPtr<FShaderCompilerDefinitions> CompileFlags;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		/** Optional callback to rename certain variable types. */
 		TFunction<bool(const FAnsiStringView& VariableName, const FAnsiStringView& TypeName, FString& OutRenamedTypeName)> VariableTypeRenameCallback;
@@ -184,13 +199,20 @@ namespace CrossCompiler
 		FShaderConductorContext& operator = (const FShaderConductorContext&) = delete;
 
 		/** Loads the shader source and converts the input descriptor to a format suitable for ShaderConductor. If 'Definitions' is null, the previously loaded definitions are not modified. */
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS		// FShaderCompilerDefinitions will be made internal in the future, marked deprecated until then
 		bool LoadSource(const FString& ShaderSource, const FString& Filename, const FString& EntryPoint, EShaderFrequency ShaderStage, const FShaderCompilerDefinitions* Definitions = nullptr, const TArray<FString>* ExtraDxcArgs = nullptr);
+		bool LoadSource(FStringView ShaderSource, const FString& Filename, const FString& EntryPoint, EShaderFrequency ShaderStage, const FShaderCompilerDefinitions* Definitions = nullptr, const TArray<FString>* ExtraDxcArgs = nullptr);
+		bool LoadSource(FAnsiStringView ShaderSource, const FString& Filename, const FString& EntryPoint, EShaderFrequency ShaderStage, const FShaderCompilerDefinitions* Definitions = nullptr, const TArray<FString>* ExtraDxcArgs = nullptr);
 		bool LoadSource(const ANSICHAR* ShaderSource, const ANSICHAR* Filename, const ANSICHAR* EntryPoint, EShaderFrequency ShaderStage, const FShaderCompilerDefinitions* Definitions = nullptr, const TArray<FString>* ExtraDxcArgs = nullptr);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		/** Rewrites the specified HLSL shader source code. This allows to reduce the HLSL code by removing unused global resources for instance.
 		This will update the internally loaded source (see 'LoadSource'), so the output parameter 'OutSource' is optional. */
 		bool RewriteHlsl(const FShaderConductorOptions& Options, FString* OutSource = nullptr);
 
+        /** Compiles the specified HLSL shader source code to DXIL. */
+        bool CompileHlslToDxil(const FShaderConductorOptions& Options, TArray<uint32>& OutDxil);
+        
 		/** Compiles the specified HLSL shader source code to SPIR-V. */
 		bool CompileHlslToSpirv(const FShaderConductorOptions& Options, TArray<uint32>& OutSpirv);
 
@@ -214,6 +236,9 @@ namespace CrossCompiler
 
 		/** Returns a length of the internal loaded sources (excluding the null terminator). This is automatically updated when RewriteHlsl() is called. */
 		int32 GetSourceLength() const;
+
+		/** Returns the DXC command line arguments for the specified options. This does not include an output file, i.e. "-Fo" argument is not included. */
+		FString GenerateDxcArguments(const FShaderConductorOptions& Options) const;
 
 		/** Returns the list of current compile errors. */
 		inline const TArray<FShaderCompilerError>& GetErrors() const

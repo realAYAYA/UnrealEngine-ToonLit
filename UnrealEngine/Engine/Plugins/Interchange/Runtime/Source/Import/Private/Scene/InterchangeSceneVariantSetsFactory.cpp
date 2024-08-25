@@ -98,10 +98,10 @@ namespace UE::Interchange::Private
 		FString DisplayText;
 		VariantSetNode.GetCustomDisplayText(DisplayText);
 
-		const TOptional<UE::Interchange::FVariantSetPayloadData>& PayloadData = PayloadInterface.GetVariantSetPayloadData(PayloadKey).Get();
+		const TOptional<UE::Interchange::FVariantSetPayloadData> PayloadData = PayloadInterface.GetVariantSetPayloadData(PayloadKey).Consume();
 		if (!PayloadData.IsSet())
 		{
-			UE_LOG(LogInterchangeImport, Warning, TEXT("No payload for variant set %s"), *DisplayText);
+			UE_LOG(LogInterchangeImport, Warning, TEXT("No payload for variant set %s."), *DisplayText);
 			return;
 		}
 
@@ -133,7 +133,7 @@ namespace UE::Interchange::Private
 		AActor* Actor = GetActor(Binding.TargetUid);
 		if (!Actor)
 		{
-			UE_LOG(LogInterchangeImport, Warning, TEXT("Cannot find actor for variant %s"), *Variant.GetDisplayText().ToString());
+			UE_LOG(LogInterchangeImport, Warning, TEXT("Cannot find actor for variant %s."), *Variant.GetDisplayText().ToString());
 			return;
 		}
 
@@ -261,12 +261,12 @@ namespace UE::Interchange::Private
 					}
 					else
 					{
-						UE_LOG(LogInterchangeImport, Warning, TEXT("Did not find material '%s' when creating variant asset."), *TargetFactoryNode->GetDisplayLabel());
+						UE_LOG(LogInterchangeImport, Warning, TEXT("Could not find material '%s' when creating variant asset."), *TargetFactoryNode->GetDisplayLabel());
 					}
 				}
 				else
 				{
-					UE_LOG(LogInterchangeImport, Warning, TEXT("Did not find factory when creating variant assets."));
+					UE_LOG(LogInterchangeImport, Warning, TEXT("Could not find factory when creating variant assets."));
 				}
 			}
 		}
@@ -296,10 +296,11 @@ UClass* UInterchangeSceneVariantSetsFactory::GetFactoryClass() const
 
 UInterchangeFactoryBase::FImportAssetResult UInterchangeSceneVariantSetsFactory::BeginImportAsset_GameThread(const FImportAssetObjectParams& Arguments)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(UInterchangeSceneVariantSetsFactory::BeginImportAsset_GameThread);
 	FImportAssetResult ImportAssetResult;
 #if !WITH_EDITOR || !WITH_EDITORONLY_DATA
 
-	UE_LOG(LogInterchangeImport, Error, TEXT("Cannot import levelsequence asset in runtime, this is an editor only feature."));
+	UE_LOG(LogInterchangeImport, Error, TEXT("Cannot import LevelSequence asset at runtime. This is an editor-only feature."));
 	return ImportAssetResult;
 #else
 	auto CannotReimportMessage = [&Arguments, this]()
@@ -308,7 +309,7 @@ UInterchangeFactoryBase::FImportAssetResult UInterchangeSceneVariantSetsFactory:
 		Message->SourceAssetName = Arguments.SourceData->GetFilename();
 		Message->DestinationAssetName = Arguments.AssetName;
 		Message->AssetType = ULevelVariantSets::StaticClass();
-		Message->Text = LOCTEXT("CreateEmptyAssetUnsupportedReimport", "Re-import of ULevelVariantSets not supported yet.");
+		Message->Text = LOCTEXT("CreateEmptyAssetUnsupportedReimport", "Reimport of ULevelVariantSets is not supported.");
 		Arguments.AssetNode->SetSkipNodeImport();
 	};
 
@@ -320,7 +321,7 @@ UInterchangeFactoryBase::FImportAssetResult UInterchangeSceneVariantSetsFactory:
 
 	if (!Cast<IInterchangeVariantSetPayloadInterface>(Arguments.Translator))
 	{
-		UE_LOG(LogInterchangeImport, Error, TEXT("Cannot import LevelVariantSets, the translator do not implement the IInterchangeVariantSetPayloadInterface interface."));
+		UE_LOG(LogInterchangeImport, Error, TEXT("Cannot import LevelVariantSets. The translator does not implement the IInterchangeVariantSetPayloadInterface interface."));
 		return ImportAssetResult;
 	}
 
@@ -362,7 +363,7 @@ UInterchangeFactoryBase::FImportAssetResult UInterchangeSceneVariantSetsFactory:
 
 	if (!LevelVariantSets)
 	{
-		UE_LOG(LogInterchangeImport, Warning, TEXT("Could not create LevelVariantSets asset %s"), *Arguments.AssetName);
+		UE_LOG(LogInterchangeImport, Warning, TEXT("Could not create LevelVariantSets asset %s."), *Arguments.AssetName);
 		return ImportAssetResult;
 	}
 
@@ -373,9 +374,10 @@ UInterchangeFactoryBase::FImportAssetResult UInterchangeSceneVariantSetsFactory:
 
 UObject* UInterchangeSceneVariantSetsFactory::ImportObjectSourceData(const FImportAssetObjectParams& Arguments, ULevelVariantSets* LevelVariantSets)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(UInterchangeSceneVariantSetsFactory::ImportObjectSourceData);
 #if !WITH_EDITOR || !WITH_EDITORONLY_DATA
 	// TODO: Can we import ULevelVariantSets at runtime
-	UE_LOG(LogInterchangeImport, Error, TEXT("Cannot import LevelVariantSets asset in runtime, this is an editor only feature."));
+	UE_LOG(LogInterchangeImport, Error, TEXT("Cannot import LevelVariantSets asset at runtime. This is an editor-only feature."));
 	return nullptr;
 
 #else
@@ -397,7 +399,7 @@ UObject* UInterchangeSceneVariantSetsFactory::ImportObjectSourceData(const FImpo
 	const IInterchangeVariantSetPayloadInterface* LevelVariantSetsPayloadInterface = Cast<IInterchangeVariantSetPayloadInterface>(Arguments.Translator);
 	if (!LevelVariantSetsPayloadInterface)
 	{
-		UE_LOG(LogInterchangeImport, Error, TEXT("Cannot import LevelVariantSets, the translator do not implement the IInterchangeVariantSetPayloadInterface interface."));
+		UE_LOG(LogInterchangeImport, Error, TEXT("Cannot import LevelVariantSets. The translator does not implement the IInterchangeVariantSetPayloadInterface interface."));
 		return nullptr;
 	}
 
@@ -420,6 +422,7 @@ UObject* UInterchangeSceneVariantSetsFactory::ImportObjectSourceData(const FImpo
 
 void UInterchangeSceneVariantSetsFactory::SetupObject_GameThread(const FSetupObjectParams& Arguments)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(UInterchangeSceneVariantSetsFactory::SetupObject_GameThread);
 	check(IsInGameThread());
 	Super::SetupObject_GameThread(Arguments);
 

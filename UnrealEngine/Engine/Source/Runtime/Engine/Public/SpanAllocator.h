@@ -30,6 +30,8 @@ public:
 			FoundIndex = SearchFreeList(Num, FirstNonEmptySpan);
 		}
 
+		CurrentSize += Num;
+
 		// Use an existing free span if one is found
 		if (FoundIndex != INDEX_NONE)
 		{
@@ -61,23 +63,18 @@ public:
 	FORCEINLINE void Free(int32 BaseOffset, int32 Num = 1)
 	{
 		checkSlow(BaseOffset + Num <= CurrentMaxSize);
+		checkSlow(Num <= CurrentSize);
 		PendingFreeSpans.Add(FLinearAllocation{ BaseOffset, Num });
+		CurrentSize -= Num;
 	}
 
 	ENGINE_API void Reset();
 
 	ENGINE_API void Empty();
 
-	inline int32 GetSparselyAllocatedSize() const
+	FORCEINLINE int32 GetSparselyAllocatedSize() const
 	{
-		int32 AllocatedSize = CurrentMaxSize;
-
-		for (int32 i = 0; i < FreeSpans.Num(); i++)
-		{
-			AllocatedSize -= FreeSpans[i].Num;
-		}
-
-		return AllocatedSize;
+		return CurrentSize;
 	}
 
 	FORCEINLINE int32 GetMaxSize() const
@@ -126,7 +123,9 @@ private:
 			return StartOffset < Other.StartOffset;
 		}
 	};
-
+	
+	// Total of number of items currently allocated
+	int32 CurrentSize;
 	// Size of the linear range used by the allocator
 	int32 CurrentMaxSize;
 	// Peak tracked size since last Reset or Empty

@@ -2,9 +2,7 @@
 
 #include "USDInfoCache.h"
 
-#include "USDAssetCache2.h"
 #include "USDGeomMeshConversion.h"
-#include "USDGeomXformableTranslator.h"
 #include "USDLog.h"
 #include "USDSchemasModule.h"
 #include "USDSchemaTranslator.h"
@@ -14,46 +12,49 @@
 #include "UsdWrappers/UsdPrim.h"
 
 #include "Async/ParallelFor.h"
-#include "Math/NumericLimits.h"
 #include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
 
 #if USE_USD_SDK
 #include "USDIncludesStart.h"
-	#include "pxr/usd/pcp/layerStack.h"
-	#include "pxr/usd/sdf/path.h"
-	#include "pxr/usd/usd/collectionAPI.h"
-	#include "pxr/usd/usd/prim.h"
-	#include "pxr/usd/usd/primCompositionQuery.h"
-	#include "pxr/usd/usdGeom/mesh.h"
-	#include "pxr/usd/usdGeom/pointInstancer.h"
-	#include "pxr/usd/usdGeom/scope.h"
-	#include "pxr/usd/usdGeom/subset.h"
-	#include "pxr/usd/usdGeom/xform.h"
-	#include "pxr/usd/usdShade/materialBindingAPI.h"
-	#include "pxr/usd/usdSkel/root.h"
-	#include "pxr/usd/usd/primRange.h"
+#include "pxr/usd/pcp/layerStack.h"
+#include "pxr/usd/sdf/path.h"
+#include "pxr/usd/usd/collectionAPI.h"
+#include "pxr/usd/usd/prim.h"
+#include "pxr/usd/usd/primCompositionQuery.h"
+#include "pxr/usd/usd/primRange.h"
+#include "pxr/usd/usdGeom/mesh.h"
+#include "pxr/usd/usdGeom/pointInstancer.h"
+#include "pxr/usd/usdGeom/scope.h"
+#include "pxr/usd/usdGeom/subset.h"
+#include "pxr/usd/usdGeom/xform.h"
+#include "pxr/usd/usdShade/materialBindingAPI.h"
+#include "pxr/usd/usdSkel/bindingAPI.h"
+#include "pxr/usd/usdSkel/root.h"
 #include "USDIncludesEnd.h"
-#endif // USE_USD_SDK
+#endif	  // USE_USD_SDK
 
 static int32 GMaxNumVerticesCollapsedMesh = 5000000;
 static FAutoConsoleVariableRef CVarMaxNumVerticesCollapsedMesh(
 	TEXT("USD.MaxNumVerticesCollapsedMesh"),
 	GMaxNumVerticesCollapsedMesh,
-	TEXT("Maximum number of vertices that a combined Mesh can have for us to collapse it into a single StaticMesh"));
+	TEXT("Maximum number of vertices that a combined Mesh can have for us to collapse it into a single StaticMesh")
+);
 
 // Can toggle on/off to compare performance with StaticMesh instead of GeometryCache
 static bool GUseGeometryCacheUSD = true;
 static FAutoConsoleVariableRef CVarUsdUseGeometryCache(
 	TEXT("USD.GeometryCache.Enable"),
 	GUseGeometryCacheUSD,
-	TEXT("Use GeometryCache instead of static meshes for loading animated meshes"));
+	TEXT("Use GeometryCache instead of static meshes for loading animated meshes")
+);
 
 static int32 GGeometryCacheMaxDepth = 15;
 static FAutoConsoleVariableRef CVarGeometryCacheMaxDepth(
 	TEXT("USD.GeometryCache.MaxDepth"),
 	GGeometryCacheMaxDepth,
-	TEXT("Maximum distance between an animated mesh prim to its collapsed geometry cache root"));
+	TEXT("Maximum distance between an animated mesh prim to its collapsed geometry cache root")
+);
 
 namespace UE::UsdInfoCache::Private
 {
@@ -61,11 +62,11 @@ namespace UE::UsdInfoCache::Private
 	enum class EGeometryCachePrimState : uint8
 	{
 		None = 0x00,
-		Uncollapsible = 0x01,		// prim cannot be collapsed as part of a geometry cache
-		Mesh = 0x02,				// prim is a mesh, animated or not
-		Xform = 0x04,				// prim is a xform, animated or not
-		Collapsible = Mesh | Xform,	// only meshes and xforms can be collapsed into a geometry cache
-		ValidRoot = 0x08			// prim can collapse itself and its children into a geometry cache
+		Uncollapsible = 0x01,		   // prim cannot be collapsed as part of a geometry cache
+		Mesh = 0x02,				   // prim is a mesh, animated or not
+		Xform = 0x04,				   // prim is a xform, animated or not
+		Collapsible = Mesh | Xform,	   // only meshes and xforms can be collapsed into a geometry cache
+		ValidRoot = 0x08			   // prim can collapse itself and its children into a geometry cache
 	};
 	ENUM_CLASS_FLAGS(EGeometryCachePrimState)
 
@@ -80,7 +81,7 @@ namespace UE::UsdInfoCache::Private
 	};
 }
 
-FArchive& operator <<( FArchive& Ar, UE::UsdInfoCache::Private::FUsdPrimInfo& Info )
+FArchive& operator<<(FArchive& Ar, UE::UsdInfoCache::Private::FUsdPrimInfo& Info)
 {
 	Ar << Info.AssetCollapsedRoot;
 	Ar << Info.ComponentCollapsedRoot;
@@ -95,7 +96,7 @@ FArchive& operator <<( FArchive& Ar, UE::UsdInfoCache::Private::FUsdPrimInfo& In
 struct FUsdInfoCache::FUsdInfoCacheImpl
 {
 	FUsdInfoCacheImpl()
-	: AllowedExtensionsForGeometryCacheSource(UnrealUSDWrapper::GetNativeFileFormats())
+		: AllowedExtensionsForGeometryCacheSource(UnrealUSDWrapper::GetNativeFileFormats())
 	{
 		AllowedExtensionsForGeometryCacheSource.Add(TEXT("abc"));
 	}
@@ -119,7 +120,7 @@ struct FUsdInfoCache::FUsdInfoCacheImpl
 	}
 
 	// Information we must have about all prims on the stage
-	TMap< UE::FSdfPath, UE::UsdInfoCache::Private::FUsdPrimInfo > InfoMap;
+	TMap<UE::FSdfPath, UE::UsdInfoCache::Private::FUsdPrimInfo> InfoMap;
 	mutable FRWLock InfoMapLock;
 
 	// Information we may have about a subset of prims
@@ -144,6 +145,8 @@ struct FUsdInfoCache::FUsdInfoCacheImpl
 public:
 	void RegisterAuxiliaryPrims(const UE::FSdfPath& MainPrimPath, const TSet<UE::FSdfPath>& AuxPrimPaths)
 	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(RegisterAuxiliaryPrims);
+
 		if (AuxPrimPaths.Num() == 0)
 		{
 			return;
@@ -155,10 +158,7 @@ public:
 
 		for (const UE::FSdfPath& AuxPrimPath : AuxPrimPaths)
 		{
-			UE_LOG(LogUsd, Verbose, TEXT("Registering main prim '%s' and aux prim '%s'"),
-				*MainPrimPath.GetString(),
-				*AuxPrimPath.GetString()
-			);
+			UE_LOG(LogUsd, Verbose, TEXT("Registering main prim '%s' and aux prim '%s'"), *MainPrimPath.GetString(), *AuxPrimPath.GetString());
 
 			AuxToMainPrims.FindOrAdd(AuxPrimPath).Add(MainPrimPath);
 		}
@@ -179,9 +179,9 @@ FUsdInfoCache::~FUsdInfoCache()
 {
 }
 
-bool FUsdInfoCache::Serialize( FArchive& Ar )
+bool FUsdInfoCache::Serialize(FArchive& Ar)
 {
-	if ( FUsdInfoCacheImpl* ImplPtr = Impl.Get() )
+	if (FUsdInfoCacheImpl* ImplPtr = Impl.Get())
 	{
 		{
 			FWriteScopeLock ScopeLock(ImplPtr->InfoMapLock);
@@ -206,12 +206,12 @@ bool FUsdInfoCache::Serialize( FArchive& Ar )
 	return true;
 }
 
-bool FUsdInfoCache::ContainsInfoAboutPrim( const UE::FSdfPath& Path ) const
+bool FUsdInfoCache::ContainsInfoAboutPrim(const UE::FSdfPath& Path) const
 {
-	if ( FUsdInfoCacheImpl* ImplPtr = Impl.Get() )
+	if (FUsdInfoCacheImpl* ImplPtr = Impl.Get())
 	{
 		FReadScopeLock ScopeLock(ImplPtr->InfoMapLock);
-		return ImplPtr->InfoMap.Contains( Path );
+		return ImplPtr->InfoMap.Contains(Path);
 	}
 
 	return false;
@@ -232,40 +232,38 @@ TSet<UE::FSdfPath> FUsdInfoCache::GetKnownPrims() const
 	return Result;
 }
 
-bool FUsdInfoCache::IsPathCollapsed( const UE::FSdfPath& Path, ECollapsingType CollapsingType ) const
+bool FUsdInfoCache::IsPathCollapsed(const UE::FSdfPath& Path, ECollapsingType CollapsingType) const
 {
-	if ( FUsdInfoCacheImpl* ImplPtr = Impl.Get() )
+	if (FUsdInfoCacheImpl* ImplPtr = Impl.Get())
 	{
 		FReadScopeLock ScopeLock(ImplPtr->InfoMapLock);
 
-		if ( const UE::UsdInfoCache::Private::FUsdPrimInfo* FoundInfo = ImplPtr->InfoMap.Find( Path ) )
+		if (const UE::UsdInfoCache::Private::FUsdPrimInfo* FoundInfo = ImplPtr->InfoMap.Find(Path))
 		{
-			const UE::FSdfPath* CollapsedRoot = CollapsingType == ECollapsingType::Assets
-				? &FoundInfo->AssetCollapsedRoot
-				: &FoundInfo->ComponentCollapsedRoot;
+			const UE::FSdfPath* CollapsedRoot = CollapsingType == ECollapsingType::Assets ? &FoundInfo->AssetCollapsedRoot
+																						  : &FoundInfo->ComponentCollapsedRoot;
 
 			// A non-empty path to another prim means this prim is collapsed into that one
 			return !CollapsedRoot->IsEmpty() && *CollapsedRoot != Path;
 		}
 
 		// This should never happen: We should have cached the entire tree
-		ensureMsgf( false, TEXT( "Prim path '%s' has not been cached!" ), *Path.GetString() );
+		ensureMsgf(false, TEXT("Prim path '%s' has not been cached!"), *Path.GetString());
 	}
 
 	return false;
 }
 
-bool FUsdInfoCache::DoesPathCollapseChildren( const UE::FSdfPath& Path, ECollapsingType CollapsingType ) const
+bool FUsdInfoCache::DoesPathCollapseChildren(const UE::FSdfPath& Path, ECollapsingType CollapsingType) const
 {
-	if ( FUsdInfoCacheImpl* ImplPtr = Impl.Get() )
+	if (FUsdInfoCacheImpl* ImplPtr = Impl.Get())
 	{
 		FReadScopeLock ScopeLock(ImplPtr->InfoMapLock);
 
-		if ( const UE::UsdInfoCache::Private::FUsdPrimInfo* FoundInfo = ImplPtr->InfoMap.Find( Path ) )
+		if (const UE::UsdInfoCache::Private::FUsdPrimInfo* FoundInfo = ImplPtr->InfoMap.Find(Path))
 		{
-			const UE::FSdfPath* CollapsedRoot = CollapsingType == ECollapsingType::Assets
-				? &FoundInfo->AssetCollapsedRoot
-				: &FoundInfo->ComponentCollapsedRoot;
+			const UE::FSdfPath* CollapsedRoot = CollapsingType == ECollapsingType::Assets ? &FoundInfo->AssetCollapsedRoot
+																						  : &FoundInfo->ComponentCollapsedRoot;
 
 			// We store our own Path in there when we collapse children.
 			// Otherwise we hold the path of our collapse root, or empty (in case nothing is collapsed up to here)
@@ -273,26 +271,25 @@ bool FUsdInfoCache::DoesPathCollapseChildren( const UE::FSdfPath& Path, ECollaps
 		}
 
 		// This should never happen: We should have cached the entire tree
-		ensureMsgf( false, TEXT( "Prim path '%s' has not been cached!" ), *Path.GetString() );
+		ensureMsgf(false, TEXT("Prim path '%s' has not been cached!"), *Path.GetString());
 	}
 
 	return false;
 }
 
-UE::FSdfPath FUsdInfoCache::UnwindToNonCollapsedPath( const UE::FSdfPath& Path, ECollapsingType CollapsingType ) const
+UE::FSdfPath FUsdInfoCache::UnwindToNonCollapsedPath(const UE::FSdfPath& Path, ECollapsingType CollapsingType) const
 {
-	if ( FUsdInfoCacheImpl* ImplPtr = Impl.Get() )
+	if (FUsdInfoCacheImpl* ImplPtr = Impl.Get())
 	{
 		FReadScopeLock ScopeLock(ImplPtr->InfoMapLock);
 
-		if ( const UE::UsdInfoCache::Private::FUsdPrimInfo* FoundInfo = ImplPtr->InfoMap.Find( Path ) )
+		if (const UE::UsdInfoCache::Private::FUsdPrimInfo* FoundInfo = ImplPtr->InfoMap.Find(Path))
 		{
-			const UE::FSdfPath* CollapsedRoot = CollapsingType == ECollapsingType::Assets
-				? &FoundInfo->AssetCollapsedRoot
-				: &FoundInfo->ComponentCollapsedRoot;
+			const UE::FSdfPath* CollapsedRoot = CollapsingType == ECollapsingType::Assets ? &FoundInfo->AssetCollapsedRoot
+																						  : &FoundInfo->ComponentCollapsedRoot;
 
 			// An empty path here means that we are not collapsed at all
-			if ( CollapsedRoot->IsEmpty() )
+			if (CollapsedRoot->IsEmpty())
 			{
 				return Path;
 			}
@@ -304,7 +301,7 @@ UE::FSdfPath FUsdInfoCache::UnwindToNonCollapsedPath( const UE::FSdfPath& Path, 
 		}
 
 		// This should never happen: We should have cached the entire tree
-		ensureMsgf( false, TEXT( "Prim path '%s' has not been cached!" ), *Path.GetString() );
+		ensureMsgf(false, TEXT("Prim path '%s' has not been cached!"), *Path.GetString());
 	}
 
 	return Path;
@@ -378,35 +375,27 @@ namespace UE::USDInfoCacheImpl::Private
 		const pxr::UsdPrim& UsdPrim,
 		const FUsdSchemaTranslationContext& Context,
 		const FUsdInfoCache::FUsdInfoCacheImpl& Impl,
-		const TMap< UE::FSdfPath, TArray<UsdUtils::FUsdPrimMaterialSlot> >& InSubtreeToMaterialSlots,
+		const TMap<UE::FSdfPath, TArray<UsdUtils::FUsdPrimMaterialSlot>>& InSubtreeToMaterialSlots,
 		uint64& OutVertexCount,
 		TArray<UsdUtils::FUsdPrimMaterialSlot>& OutMaterialSlots
 	)
 	{
-		TRACE_CPUPROFILER_EVENT_SCOPE( UE::USDInfoCacheImpl::Private::GetPrimVertexCountAndSlots );
+		TRACE_CPUPROFILER_EVENT_SCOPE(UE::USDInfoCacheImpl::Private::GetPrimVertexCountAndSlots);
 
-		if ( UsdPrim.IsA<pxr::UsdGeomMesh>() || UsdPrim.IsA<pxr::UsdGeomSubset>() )
+		if (UsdPrim.IsA<pxr::UsdGeomGprim>() || UsdPrim.IsA<pxr::UsdGeomSubset>())
 		{
-			if ( pxr::UsdGeomMesh Mesh{ UsdPrim } )
-			{
-				if ( pxr::UsdAttribute Points = Mesh.GetPointsAttr() )
-				{
-					pxr::VtArray< pxr::GfVec3f > PointsArray;
-					Points.Get( &PointsArray, pxr::UsdTimeCode( Context.Time ) );
-					OutVertexCount = PointsArray.size();
-				}
-			}
+			OutVertexCount = UsdUtils::GetGprimVertexCount(pxr::UsdGeomGprim{UsdPrim}, Context.Time);
 
 			pxr::TfToken RenderContextToken = pxr::UsdShadeTokens->universalRenderContext;
-			if ( !Context.RenderContext.IsNone() )
+			if (!Context.RenderContext.IsNone())
 			{
-				RenderContextToken = UnrealToUsd::ConvertToken( *Context.RenderContext.ToString() ).Get();
+				RenderContextToken = UnrealToUsd::ConvertToken(*Context.RenderContext.ToString()).Get();
 			}
 
 			pxr::TfToken MaterialPurposeToken = pxr::UsdShadeTokens->allPurpose;
-			if ( !Context.MaterialPurpose.IsNone() )
+			if (!Context.MaterialPurpose.IsNone())
 			{
-				MaterialPurposeToken = UnrealToUsd::ConvertToken( *Context.MaterialPurpose.ToString() ).Get();
+				MaterialPurposeToken = UnrealToUsd::ConvertToken(*Context.MaterialPurpose.ToString()).Get();
 			}
 
 			const bool bProvideMaterialIndices = false;
@@ -418,23 +407,23 @@ namespace UE::USDInfoCacheImpl::Private
 				MaterialPurposeToken
 			);
 
-			OutMaterialSlots.Append( MoveTemp( LocalInfo.Slots ) );
+			OutMaterialSlots.Append(MoveTemp(LocalInfo.Slots));
 		}
-		else if ( pxr::UsdGeomPointInstancer PointInstancer{ UsdPrim } )
+		else if (pxr::UsdGeomPointInstancer PointInstancer{UsdPrim})
 		{
 			const pxr::UsdRelationship& Prototypes = PointInstancer.GetPrototypesRel();
 
 			pxr::SdfPathVector PrototypePaths;
-			if ( Prototypes.GetTargets( &PrototypePaths ) )
+			if (Prototypes.GetTargets(&PrototypePaths))
 			{
 				TArray<uint64> PrototypeVertexCounts;
-				PrototypeVertexCounts.SetNumZeroed( PrototypePaths.size() );
+				PrototypeVertexCounts.SetNumZeroed(PrototypePaths.size());
 
 				{
 					FReadScopeLock ScopeLock(Impl.InfoMapLock);
-					for ( uint32 PrototypeIndex = 0; PrototypeIndex < PrototypePaths.size(); ++PrototypeIndex )
+					for (uint32 PrototypeIndex = 0; PrototypeIndex < PrototypePaths.size(); ++PrototypeIndex)
 					{
-						const pxr::SdfPath& PrototypePath = PrototypePaths[ PrototypeIndex ];
+						const pxr::SdfPath& PrototypePath = PrototypePaths[PrototypeIndex];
 
 						// Skip invisible prototypes here to mirror how they're skipped within
 						// USDGeomMeshConversion.cpp, in the RecursivelyCollapseChildMeshes function. Those two
@@ -456,26 +445,27 @@ namespace UE::USDInfoCacheImpl::Private
 
 						// If we're calling this for a point instancer we should have parsed the results for our
 						// prototype subtrees already
-						if ( const UE::UsdInfoCache::Private::FUsdPrimInfo* FoundInfo = Impl.InfoMap.Find( UE::FSdfPath{ PrototypePath } ) )
+						if (const UE::UsdInfoCache::Private::FUsdPrimInfo* FoundInfo = Impl.InfoMap.Find(UE::FSdfPath{PrototypePath}))
 						{
-							PrototypeVertexCounts[ PrototypeIndex ] = FoundInfo->ExpectedVertexCountForSubtree;
+							PrototypeVertexCounts[PrototypeIndex] = FoundInfo->ExpectedVertexCountForSubtree;
 						}
 
-						if ( const TArray<UsdUtils::FUsdPrimMaterialSlot>* FoundPrototypeSlots = InSubtreeToMaterialSlots.Find( UE::FSdfPath{ PrototypePath } ) )
+						if (const TArray<UsdUtils::FUsdPrimMaterialSlot>* FoundPrototypeSlots = InSubtreeToMaterialSlots.Find(UE::FSdfPath{
+								PrototypePath}))
 						{
-							OutMaterialSlots.Append( *FoundPrototypeSlots );
+							OutMaterialSlots.Append(*FoundPrototypeSlots);
 						}
 					}
 				}
 
-				if ( pxr::UsdAttribute ProtoIndicesAttr = PointInstancer.GetProtoIndicesAttr() )
+				if (pxr::UsdAttribute ProtoIndicesAttr = PointInstancer.GetProtoIndicesAttr())
 				{
 					pxr::VtArray<int> ProtoIndicesArr;
-					if ( ProtoIndicesAttr.Get( &ProtoIndicesArr, pxr::UsdTimeCode::EarliestTime() ) )
+					if (ProtoIndicesAttr.Get(&ProtoIndicesArr, pxr::UsdTimeCode::EarliestTime()))
 					{
-						for ( int ProtoIndex : ProtoIndicesArr )
+						for (int ProtoIndex : ProtoIndicesArr)
 						{
-							OutVertexCount += PrototypeVertexCounts[ ProtoIndex ];
+							OutVertexCount += PrototypeVertexCounts[ProtoIndex];
 						}
 					}
 				}
@@ -489,14 +479,14 @@ namespace UE::USDInfoCacheImpl::Private
 		const pxr::TfToken& MaterialPurposeToken,
 		FUsdInfoCache::FUsdInfoCacheImpl& Impl,
 		FUsdSchemaTranslatorRegistry& Registry,
-		TMap< UE::FSdfPath, TArray<UsdUtils::FUsdPrimMaterialSlot>>& InOutSubtreeToMaterialSlots,
-		TArray< FString >& InOutPointInstancerPaths,
+		TMap<UE::FSdfPath, TArray<UsdUtils::FUsdPrimMaterialSlot>>& InOutSubtreeToMaterialSlots,
+		TArray<FString>& InOutPointInstancerPaths,
 		uint64& OutSubtreeVertexCount,
 		TArray<UsdUtils::FUsdPrimMaterialSlot>& OutSubtreeSlots,
 		bool bPossibleInheritedBindings
 	)
 	{
-		TRACE_CPUPROFILER_EVENT_SCOPE( UE::USDInfoCacheImpl::Private::RecursivePropagateVertexAndMaterialSlotCounts );
+		TRACE_CPUPROFILER_EVENT_SCOPE(UE::USDInfoCacheImpl::Private::RecursivePropagateVertexAndMaterialSlotCounts);
 
 		if (!UsdPrim)
 		{
@@ -530,9 +520,8 @@ namespace UE::USDInfoCacheImpl::Private
 					// manually, as it won't automatically "compute the fallback" for us like when we ComputeBoundMaterial()
 					std::unordered_set<pxr::TfToken, pxr::TfHash> MaterialPurposeTokens{
 						MaterialPurposeToken,
-						pxr::UsdShadeTokens->universalRenderContext
-					};
-					for(const pxr::TfToken& SomeMaterialPurposeToken : MaterialPurposeTokens)
+						pxr::UsdShadeTokens->universalRenderContext};
+					for (const pxr::TfToken& SomeMaterialPurposeToken : MaterialPurposeTokens)
 					{
 						// Each one of those relationships must have two targets: A collection, and a material
 						for (const pxr::UsdRelationship& Rel : BindingAPI.GetCollectionBindingRels(SomeMaterialPurposeToken))
@@ -562,7 +551,8 @@ namespace UE::USDInfoCacheImpl::Private
 								UE_LOG(
 									LogUsd,
 									Warning,
-									TEXT("Prim '%s' describes a collection-based material binding, but the relationship '%s' is invalid: It should contain exactly one Material path and one path to a collection relationship"),
+									TEXT("Prim '%s' describes a collection-based material binding, but the relationship '%s' is invalid: It should "
+										 "contain exactly one Material path and one path to a collection relationship"),
 									*PrimPath.GetString(),
 									*UsdToUnreal::ConvertToken(Rel.GetName())
 								);
@@ -621,7 +611,7 @@ namespace UE::USDInfoCacheImpl::Private
 			}
 
 			FWriteScopeLock ScopeLock(Impl.MaterialUsersLock);
-			for(const TPair<UE::FSdfPath, TSet<UE::FSdfPath>>& NewMaterialToUsers : NewMaterialUsers)
+			for (const TPair<UE::FSdfPath, TSet<UE::FSdfPath>>& NewMaterialToUsers : NewMaterialUsers)
 			{
 				TSet<UE::FSdfPath>& UserPrimPaths = Impl.MaterialUsers.FindOrAdd(NewMaterialToUsers.Key);
 				UserPrimPaths.Reserve(UserPrimPaths.Num() + NewMaterialToUsers.Value.Num());
@@ -666,37 +656,40 @@ namespace UE::USDInfoCacheImpl::Private
 			}
 		}
 
-		pxr::UsdPrimSiblingRange PrimChildren = UsdPrim.GetFilteredChildren( pxr::UsdTraverseInstanceProxies( pxr::UsdPrimAllPrimsPredicate ) );
+		pxr::UsdPrimSiblingRange PrimChildren = UsdPrim.GetFilteredChildren(pxr::UsdTraverseInstanceProxies(pxr::UsdPrimAllPrimsPredicate));
 
 		TArray<pxr::UsdPrim> Prims;
-		for ( pxr::UsdPrim Child : PrimChildren )
+		for (pxr::UsdPrim Child : PrimChildren)
 		{
-			Prims.Emplace( Child );
+			Prims.Emplace(Child);
 		}
 
 		const uint32 NumChildren = Prims.Num();
 
 		TArray<uint64> ChildSubtreeVertexCounts;
-		ChildSubtreeVertexCounts.SetNumUninitialized( NumChildren );
+		ChildSubtreeVertexCounts.SetNumUninitialized(NumChildren);
 
 		TArray<TArray<UsdUtils::FUsdPrimMaterialSlot>> ChildSubtreeMaterialSlots;
-		ChildSubtreeMaterialSlots.SetNum( NumChildren );
+		ChildSubtreeMaterialSlots.SetNum(NumChildren);
 
 		const int32 MinBatchSize = 1;
 
-		ParallelFor( TEXT( "RecursivePropagateVertexAndMaterialSlotCounts" ), Prims.Num(), MinBatchSize,
-			[&]( int32 Index )
+		ParallelFor(
+			TEXT("RecursivePropagateVertexAndMaterialSlotCounts"),
+			Prims.Num(),
+			MinBatchSize,
+			[&](int32 Index)
 			{
 				RecursivePropagateVertexAndMaterialSlotCounts(
-					Prims[ Index ],
+					Prims[Index],
 					Context,
 					MaterialPurposeToken,
 					Impl,
 					Registry,
 					InOutSubtreeToMaterialSlots,
 					InOutPointInstancerPaths,
-					ChildSubtreeVertexCounts[ Index ],
-					ChildSubtreeMaterialSlots[ Index ],
+					ChildSubtreeVertexCounts[Index],
+					ChildSubtreeMaterialSlots[Index],
 					bPrimHasInheritableMaterialBindings || bPossibleInheritedBindings
 				);
 			}
@@ -728,38 +721,31 @@ namespace UE::USDInfoCacheImpl::Private
 		}
 
 		bool bIsPointInstancer = false;
-		if ( pxr::UsdGeomPointInstancer PointInstancer{ UsdPrim } )
+		if (pxr::UsdGeomPointInstancer PointInstancer{UsdPrim})
 		{
 			bIsPointInstancer = true;
 		}
 		else if (!bPrimIsInvisible)
 		{
-			GetPrimVertexCountAndSlots(
-				UsdPrim,
-				Context,
-				Impl,
-				InOutSubtreeToMaterialSlots,
-				OutSubtreeVertexCount,
-				OutSubtreeSlots
-			);
+			GetPrimVertexCountAndSlots(UsdPrim, Context, Impl, InOutSubtreeToMaterialSlots, OutSubtreeVertexCount, OutSubtreeSlots);
 
-			for ( uint32 ChildIndex = 0; ChildIndex < NumChildren; ++ChildIndex )
+			for (uint32 ChildIndex = 0; ChildIndex < NumChildren; ++ChildIndex)
 			{
-				OutSubtreeVertexCount += ChildSubtreeVertexCounts[ ChildIndex ];
-				OutSubtreeSlots.Append( ChildSubtreeMaterialSlots[ ChildIndex ] );
+				OutSubtreeVertexCount += ChildSubtreeVertexCounts[ChildIndex];
+				OutSubtreeSlots.Append(ChildSubtreeMaterialSlots[ChildIndex]);
 			}
 		}
 
 		{
 			FWriteScopeLock ScopeLock(Impl.InfoMapLock);
 
-			UE::UsdInfoCache::Private::FUsdPrimInfo& Info = Impl.InfoMap.FindOrAdd( UE::FSdfPath{ UsdPrimPath } );
+			UE::UsdInfoCache::Private::FUsdPrimInfo& Info = Impl.InfoMap.FindOrAdd(UE::FSdfPath{UsdPrimPath});
 
 			// For point instancers we can't guarantee we parsed the prototypes yet because they
 			// could technically be anywhere, so store them here for a later pass
-			if ( bIsPointInstancer )
+			if (bIsPointInstancer)
 			{
-				InOutPointInstancerPaths.Emplace( UE::FSdfPath{ UsdPrimPath }.GetString() );
+				InOutPointInstancerPaths.Emplace(UE::FSdfPath{UsdPrimPath}.GetString());
 			}
 			// While we will compute the totals for any and all children normally, don't just append the regular
 			// traversal vertex count to the point instancer prim itself just yet, as that doesn't really represent
@@ -768,7 +754,7 @@ namespace UE::USDInfoCacheImpl::Private
 			else
 			{
 				Info.ExpectedVertexCountForSubtree = OutSubtreeVertexCount;
-				InOutSubtreeToMaterialSlots.Emplace( UsdPrimPath, OutSubtreeSlots );
+				InOutSubtreeToMaterialSlots.Emplace(UsdPrimPath, OutSubtreeSlots);
 			}
 		}
 	}
@@ -786,36 +772,36 @@ namespace UE::USDInfoCacheImpl::Private
 		const pxr::UsdStageRefPtr& Stage,
 		const FUsdSchemaTranslationContext& Context,
 		FUsdInfoCache::FUsdInfoCacheImpl& Impl,
-		TArray< FString >& PointInstancerPaths,
-		TMap< UE::FSdfPath, TArray<UsdUtils::FUsdPrimMaterialSlot>>& InOutSubtreeMaterialSlots
+		TArray<FString>& PointInstancerPaths,
+		TMap<UE::FSdfPath, TArray<UsdUtils::FUsdPrimMaterialSlot>>& InOutSubtreeMaterialSlots
 	)
 	{
 		// We must sort point instancers in a particular order in case they depend on each other.
 		// At least we know that an ordering like this should be possible, because A with B as a prototype and B with A
 		// as a prototype leads to an invalid USD stage.
-		TFunction<bool(const FString&, const FString&)> SortFunction = [Stage]( const FString& LHS, const FString& RHS )
+		TFunction<bool(const FString&, const FString&)> SortFunction = [Stage](const FString& LHS, const FString& RHS)
 		{
 			FScopedUsdAllocs Allocs;
 
-			pxr::SdfPath LPath = UnrealToUsd::ConvertPath( *LHS ).Get();
-			pxr::SdfPath RPath = UnrealToUsd::ConvertPath( *RHS ).Get();
+			pxr::SdfPath LPath = UnrealToUsd::ConvertPath(*LHS).Get();
+			pxr::SdfPath RPath = UnrealToUsd::ConvertPath(*RHS).Get();
 
-			pxr::UsdGeomPointInstancer LPointInstancer = pxr::UsdGeomPointInstancer{ Stage->GetPrimAtPath( LPath ) };
-			pxr::UsdGeomPointInstancer RPointInstancer = pxr::UsdGeomPointInstancer{ Stage->GetPrimAtPath( RPath ) };
-			if ( LPointInstancer && RPointInstancer )
+			pxr::UsdGeomPointInstancer LPointInstancer = pxr::UsdGeomPointInstancer{Stage->GetPrimAtPath(LPath)};
+			pxr::UsdGeomPointInstancer RPointInstancer = pxr::UsdGeomPointInstancer{Stage->GetPrimAtPath(RPath)};
+			if (LPointInstancer && RPointInstancer)
 			{
 				const pxr::UsdRelationship& LPrototypes = LPointInstancer.GetPrototypesRel();
 				pxr::SdfPathVector LPrototypePaths;
-				if ( LPrototypes.GetTargets( &LPrototypePaths ) )
+				if (LPrototypes.GetTargets(&LPrototypePaths))
 				{
-					for ( const pxr::SdfPath& LPrototypePath : LPrototypePaths )
+					for (const pxr::SdfPath& LPrototypePath : LPrototypePaths)
 					{
 						// Consider RPointInstancer at RPath "/LPointInstancer/Prototypes/Nest/RPointInstancer", and
 						// LPointInstancer has prototype "/LPointInstancer/Prototypes/Nest". If RPath has the LPrototypePath as prefix,
 						// we should have R come before L in the sort order.
 						// Of course, in this scenario we could get away with just sorting by length, but that wouldn't help if the
 						// point instancers were not inside each other (e.g. siblings).
-						if ( RPath.HasPrefix( LPrototypePath ) )
+						if (RPath.HasPrefix(LPrototypePath))
 						{
 							return false;
 						}
@@ -831,11 +817,11 @@ namespace UE::USDInfoCacheImpl::Private
 		};
 		PointInstancerPaths.Sort(SortFunction);
 
-		for ( const FString& PointInstancerPath : PointInstancerPaths )
+		for (const FString& PointInstancerPath : PointInstancerPaths)
 		{
-			UE::FSdfPath UsdPointInstancerPath{ *PointInstancerPath };
+			UE::FSdfPath UsdPointInstancerPath{*PointInstancerPath};
 
-			if ( pxr::UsdPrim PointInstancer = Stage->GetPrimAtPath( UnrealToUsd::ConvertPath( *PointInstancerPath ).Get() ) )
+			if (pxr::UsdPrim PointInstancer = Stage->GetPrimAtPath(UnrealToUsd::ConvertPath(*PointInstancerPath).Get()))
 			{
 				uint64 PointInstancerVertexCount = 0;
 				TArray<UsdUtils::FUsdPrimMaterialSlot> PointInstancerMaterialSlots;
@@ -850,39 +836,39 @@ namespace UE::USDInfoCacheImpl::Private
 				);
 
 				FWriteScopeLock Lock{Impl.InfoMapLock};
-				UE::UsdInfoCache::Private::FUsdPrimInfo& Info = Impl.InfoMap.FindOrAdd( UsdPointInstancerPath );
+				UE::UsdInfoCache::Private::FUsdPrimInfo& Info = Impl.InfoMap.FindOrAdd(UsdPointInstancerPath);
 
 				Info.ExpectedVertexCountForSubtree = PointInstancerVertexCount;
-				InOutSubtreeMaterialSlots.Emplace( UsdPointInstancerPath, PointInstancerMaterialSlots );
+				InOutSubtreeMaterialSlots.Emplace(UsdPointInstancerPath, PointInstancerMaterialSlots);
 
 				// Now that we have info on the point instancer itself, update the counts of all ancestors.
 				// Note: The vertex/material slot count for the entire point instancer subtree are just the counts
 				// for the point instancer itself, as we stop regular traversal when we hit them
 				UE::FSdfPath ParentPath = UsdPointInstancerPath.GetParentPath();
-				pxr::UsdPrim Prim = Stage->GetPrimAtPath( ParentPath );
-				while ( Prim )
+				pxr::UsdPrim Prim = Stage->GetPrimAtPath(ParentPath);
+				while (Prim)
 				{
 					// If our ancestor is a point instancer itself, just abort as we'll only get the actual counts
 					// when we handle that ancestor directly. We don't want to update the ancestor point instancer's
 					// ancestors with incorrect values
-					if ( Prim.IsA<pxr::UsdGeomPointInstancer>() )
+					if (Prim.IsA<pxr::UsdGeomPointInstancer>())
 					{
 						break;
 					}
 
-					UE::UsdInfoCache::Private::FUsdPrimInfo& ParentInfo = Impl.InfoMap.FindOrAdd( ParentPath );
+					UE::UsdInfoCache::Private::FUsdPrimInfo& ParentInfo = Impl.InfoMap.FindOrAdd(ParentPath);
 					ParentInfo.ExpectedVertexCountForSubtree += PointInstancerVertexCount;
 
-					InOutSubtreeMaterialSlots[ ParentPath ].Append( PointInstancerMaterialSlots );
+					InOutSubtreeMaterialSlots[ParentPath].Append(PointInstancerMaterialSlots);
 
 					// Break only here so we update the pseudoroot too
-					if ( Prim.IsPseudoRoot() )
+					if (Prim.IsPseudoRoot())
 					{
 						break;
 					}
 
 					ParentPath = ParentPath.GetParentPath();
-					Prim = Stage->GetPrimAtPath( ParentPath );
+					Prim = Stage->GetPrimAtPath(ParentPath);
 				}
 			}
 		}
@@ -898,7 +884,7 @@ namespace UE::USDInfoCacheImpl::Private
 	 */
 	void CollectMaterialSlotCounts(
 		FUsdInfoCache::FUsdInfoCacheImpl& Impl,
-		const TMap< UE::FSdfPath, TArray<UsdUtils::FUsdPrimMaterialSlot>>& SubtreeMaterialSlots,
+		const TMap<UE::FSdfPath, TArray<UsdUtils::FUsdPrimMaterialSlot>>& SubtreeMaterialSlots,
 		bool bContextMergeIdenticalSlots
 	)
 	{
@@ -916,7 +902,8 @@ namespace UE::USDInfoCacheImpl::Private
 				// We only merge slots in the context of collapsing
 				const bool bPrimIsCollapsedOrCollapseRoot = !CollapsedRoot->IsEmpty() || PrimPath.IsAbsoluteRootPath();
 
-				const bool bPrimIsPotentialGeometryCacheRoot = FoundInfo->GeometryCacheState == UE::UsdInfoCache::Private::EGeometryCachePrimState::ValidRoot;
+				const bool bPrimIsPotentialGeometryCacheRoot = FoundInfo->GeometryCacheState
+															   == UE::UsdInfoCache::Private::EGeometryCachePrimState::ValidRoot;
 				bCanMergeSlotsForThisPrim = bPrimIsCollapsedOrCollapseRoot && !bPrimIsPotentialGeometryCacheRoot;
 			}
 
@@ -938,7 +925,7 @@ namespace UE::USDInfoCacheImpl::Private
 		const pxr::UsdPrim& UsdPrim,
 		FUsdSchemaTranslationContext& Context,
 		FUsdInfoCache::FUsdInfoCacheImpl& Impl,
-		const TSharedPtr< FUsdSchemaTranslator >& Translator
+		const TSharedPtr<FUsdSchemaTranslator>& Translator
 	)
 	{
 		if (!UsdPrim)
@@ -946,15 +933,15 @@ namespace UE::USDInfoCacheImpl::Private
 			return false;
 		}
 
-		// Only care about collapsing into a StaticMesh: We should always collapse into a SkeletalMesh as we have
-		// no real alternative for handling them
+		// We should never be able to collapse SkelRoots because the UsdSkelSkeletonTranslator doesn't collapse
 		if (UsdPrim.IsA<pxr::UsdSkelRoot>())
 		{
-			return true;
+			return false;
 		}
 
 		pxr::SdfPath UsdPrimPath = UsdPrim.GetPrimPath();
 
+		FWriteScopeLock ScopeLock(Impl.InfoMapLock);
 		UE::UsdInfoCache::Private::FUsdPrimInfo& Info = Impl.InfoMap.FindOrAdd(UE::FSdfPath{UsdPrimPath});
 
 		if (Info.ExpectedVertexCountForSubtree > GMaxNumVerticesCollapsedMesh)
@@ -987,7 +974,7 @@ namespace UE::USDInfoCacheImpl::Private
 		bool bIsAssetCollapsed = !AssetCollapsedRoot.IsEmpty();
 		bool bIsComponentCollapsed = !ComponentCollapsedRoot.IsEmpty();
 
-		TSharedPtr< FUsdSchemaTranslator > SchemaTranslator = Registry.CreateTranslatorForSchema(Context.AsShared(), UE::FUsdTyped(UsdPrim));
+		TSharedPtr<FUsdSchemaTranslator> SchemaTranslator = Registry.CreateTranslatorForSchema(Context.AsShared(), UE::FUsdTyped(UsdPrim));
 		if (SchemaTranslator)
 		{
 			if (!bIsAssetCollapsed || !bIsComponentCollapsed)
@@ -995,11 +982,12 @@ namespace UE::USDInfoCacheImpl::Private
 				const bool bCanMeshSubtreeBeCollapsed = CanMeshSubtreeBeCollapsed(UsdPrim, Context, Impl, SchemaTranslator);
 
 				const UE::UsdInfoCache::Private::FUsdPrimInfo& Info = Impl.InfoMap.FindChecked(UE::FSdfPath{UsdPrimPath});
-				const bool bIsPotentialGeometryCacheRoot = Info.GeometryCacheState ==  UE::UsdInfoCache::Private::EGeometryCachePrimState::ValidRoot;
+				const bool bIsPotentialGeometryCacheRoot = Info.GeometryCacheState == UE::UsdInfoCache::Private::EGeometryCachePrimState::ValidRoot;
 
 				if (!bIsAssetCollapsed)
 				{
-					// The potential geometry cache root is checked first since the FUsdGeometryCacheTranslator::CollapsesChildren has no logic of its own
+					// The potential geometry cache root is checked first since the FUsdGeometryCacheTranslator::CollapsesChildren has no logic of its
+					// own
 					if (bIsPotentialGeometryCacheRoot || (SchemaTranslator->CollapsesChildren(ECollapsingType::Assets) && bCanMeshSubtreeBeCollapsed))
 					{
 						AssetCollapsedRootOverride = &UsdPrimPath;
@@ -1008,7 +996,8 @@ namespace UE::USDInfoCacheImpl::Private
 
 				if (!bIsComponentCollapsed)
 				{
-					if (bIsPotentialGeometryCacheRoot || (SchemaTranslator->CollapsesChildren(ECollapsingType::Components) && bCanMeshSubtreeBeCollapsed))
+					if (bIsPotentialGeometryCacheRoot
+						|| (SchemaTranslator->CollapsesChildren(ECollapsingType::Components) && bCanMeshSubtreeBeCollapsed))
 					{
 						ComponentCollapsedRootOverride = &UsdPrimPath;
 					}
@@ -1026,17 +1015,13 @@ namespace UE::USDInfoCacheImpl::Private
 
 		const int32 MinBatchSize = 1;
 
-		ParallelFor(TEXT("RecursiveQueryCollapsesChildren"), Prims.Num(), MinBatchSize,
+		ParallelFor(
+			TEXT("RecursiveQueryCollapsesChildren"),
+			Prims.Num(),
+			MinBatchSize,
 			[&](int32 Index)
 			{
-				RecursiveQueryCollapsesChildren(
-					Prims[Index],
-					Context,
-					Impl,
-					Registry,
-					*AssetCollapsedRootOverride,
-					*ComponentCollapsedRootOverride
-				);
+				RecursiveQueryCollapsesChildren(Prims[Index], Context, Impl, Registry, *AssetCollapsedRootOverride, *ComponentCollapsedRootOverride);
 			}
 		);
 
@@ -1076,6 +1061,8 @@ namespace UE::USDInfoCacheImpl::Private
 	// In other words, "instanceable composition arcs from local prims"
 	TSet<UE::FSdfPath> GetLocalNonRootCompositionArcSourcePaths(const pxr::UsdPrim& UsdPrim)
 	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(GetLocalNonRootCompositionArcSourcePaths);
+
 		TSet<UE::FSdfPath> Result;
 
 		if (!UsdPrim)
@@ -1108,19 +1095,17 @@ namespace UE::USDInfoCacheImpl::Private
 		return Result;
 	}
 
-	void RegisterInstanceableAuxPrims(
-		const pxr::UsdPrim& UsdPrim,
-		FUsdSchemaTranslationContext& Context,
-		FUsdInfoCache::FUsdInfoCacheImpl& Impl
-	)
+	void RegisterInstanceableAuxPrims(const pxr::UsdPrim& UsdPrim, FUsdSchemaTranslationContext& Context, FUsdInfoCache::FUsdInfoCacheImpl& Impl)
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(UE::USDInfoCacheImpl::Private::RegisterInstanceableAuxPrims);
 		FScopedUsdAllocs Allocs;
 
 		pxr::UsdStageRefPtr Stage = UsdPrim.GetStage();
-		for(const pxr::UsdPrim& Prototype : Stage->GetPrototypes())
+		for (const pxr::UsdPrim& Prototype : Stage->GetPrototypes())
 		{
-			if(!Prototype)
+			TRACE_CPUPROFILER_EVENT_SCOPE(RegisterInstanceableAuxPrims::Prototype);
+
+			if (!Prototype)
 			{
 				continue;
 			}
@@ -1128,6 +1113,8 @@ namespace UE::USDInfoCacheImpl::Private
 			// Step into every instance of this prototype on the stage
 			for (const pxr::UsdPrim& Instance : Prototype.GetInstances())
 			{
+				TRACE_CPUPROFILER_EVENT_SCOPE(RegisterInstanceableAuxPrims::PrototypeInstance);
+
 				UE::FSdfPath InstancePath{Instance.GetPrimPath()};
 
 				// Adding a dependency on the prototype directly is interesting, even though we currently don't display those.
@@ -1143,6 +1130,8 @@ namespace UE::USDInfoCacheImpl::Private
 				pxr::UsdPrimRange PrimRange(Instance, pxr::UsdTraverseInstanceProxies());
 				for (pxr::UsdPrimRange::iterator InstanceChildIt = ++PrimRange.begin(); InstanceChildIt != PrimRange.end(); ++InstanceChildIt)
 				{
+					TRACE_CPUPROFILER_EVENT_SCOPE(RegisterInstanceableAuxPrims::InstanceChild);
+
 					pxr::SdfPath SdfChildPrimPath = InstanceChildIt->GetPrimPath();
 					UE::FSdfPath ChildPrimPath{SdfChildPrimPath};
 
@@ -1165,7 +1154,12 @@ namespace UE::USDInfoCacheImpl::Private
 		}
 	}
 
-	void FindValidGeometryCacheRoot(const pxr::UsdPrim& UsdPrim, FUsdSchemaTranslationContext& Context, FUsdInfoCache::FUsdInfoCacheImpl& Impl, UE::UsdInfoCache::Private::EGeometryCachePrimState& OutState)
+	void FindValidGeometryCacheRoot(
+		const pxr::UsdPrim& UsdPrim,
+		FUsdSchemaTranslationContext& Context,
+		FUsdInfoCache::FUsdInfoCacheImpl& Impl,
+		UE::UsdInfoCache::Private::EGeometryCachePrimState& OutState
+	)
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(FindValidGeometryCacheRoot);
 
@@ -1217,7 +1211,14 @@ namespace UE::USDInfoCacheImpl::Private
 		OutState = EGeometryCachePrimState::Uncollapsible;
 	}
 
-	void RecursiveCheckForGeometryCache(const pxr::UsdPrim& UsdPrim, FUsdSchemaTranslationContext& Context, FUsdInfoCache::FUsdInfoCacheImpl& Impl, int32& OutDepth, UE::UsdInfoCache::Private::EGeometryCachePrimState& OutState)
+	void RecursiveCheckForGeometryCache(
+		const pxr::UsdPrim& UsdPrim,
+		FUsdSchemaTranslationContext& Context,
+		FUsdInfoCache::FUsdInfoCacheImpl& Impl,
+		bool bIsInsideSkelRoot,
+		int32& OutDepth,
+		UE::UsdInfoCache::Private::EGeometryCachePrimState& OutState
+	)
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(RecursiveCheckForGeometryCache);
 
@@ -1225,8 +1226,8 @@ namespace UE::USDInfoCacheImpl::Private
 
 		FScopedUsdAllocs Allocs;
 
-		// With this recursive check for geometry cache, we want to find branches with an animated mesh at the leaf and find the root where they can meet.
-		// This root prim will collapses the static and animated meshes under it into a single geometry cache.
+		// With this recursive check for geometry cache, we want to find branches with an animated mesh at the leaf and find the root where they can
+		// meet. This root prim will collapses the static and animated meshes under it into a single geometry cache.
 
 		pxr::SdfPath UsdPrimPath = UsdPrim.GetPrimPath();
 		UE::FSdfPath PrimPath{UsdPrimPath};
@@ -1246,10 +1247,20 @@ namespace UE::USDInfoCacheImpl::Private
 		States.SetNum(Prims.Num());
 
 		const int32 MinBatchSize = 1;
-		ParallelFor(TEXT("RecursiveCheckForGeometryCache"), Prims.Num(), MinBatchSize,
-			[&Prims, &Context, &Impl, &Depths, &States](int32 Index)
+		ParallelFor(
+			TEXT("RecursiveCheckForGeometryCache"),
+			Prims.Num(),
+			MinBatchSize,
+			[&Prims, &Context, &Impl, bIsInsideSkelRoot, &Depths, &States](int32 Index)
 			{
-				RecursiveCheckForGeometryCache(Prims[Index], Context, Impl, Depths[Index], States[Index]);
+				RecursiveCheckForGeometryCache(
+					Prims[Index],
+					Context,
+					Impl,
+					bIsInsideSkelRoot || Prims[Index].IsA<pxr::UsdSkelRoot>(),
+					Depths[Index],
+					States[Index]
+				);
 			}
 		);
 
@@ -1305,15 +1316,26 @@ namespace UE::USDInfoCacheImpl::Private
 		const bool bIsXform = !!pxr::UsdGeomXform(UsdPrim);
 		if (bIsMesh)
 		{
-			// Animated or static mesh. Static meshes could potentially be animated by transforms in their hierarchy.
-			// A mesh prim should be a leaf, but it can have GeomSubset prims as children, but those don't
-			// affect the collapsibility status.
-			PrimState = EGeometryCachePrimState::Mesh;
+			// A skinned mesh can never be considered part of a geometry cache.
+			// Now that we use the UsdSkelSkeletonTranslator instead of the old UsdSkelRootTranslator we may run into these
+			// skinned meshes that were already handled by a SkeletonTranslator elsewhere, and need to manually skip them
+			if (GIsEditor && bIsInsideSkelRoot && UsdPrim.HasAPI<pxr::UsdSkelBindingAPI>())
+			{
+				PrimState = EGeometryCachePrimState::Uncollapsible;
+			}
+			else
+			{
+				// Animated or static mesh. Static meshes could potentially be animated by transforms in their hierarchy.
+				// A mesh prim should be a leaf, but it can have GeomSubset prims as children, but those don't
+				// affect the collapsibility status.
+				PrimState = EGeometryCachePrimState::Mesh;
+			}
 		}
 		else if (bIsXform)
 		{
 			// An xform prim is considered collapsible since it could have a mesh prim under it. It has to bubble up its children state.
-			PrimState = ChildrenState != EGeometryCachePrimState::None ? ChildrenState | EGeometryCachePrimState::Xform : EGeometryCachePrimState::Xform;
+			PrimState = ChildrenState != EGeometryCachePrimState::None ? ChildrenState | EGeometryCachePrimState::Xform
+																	   : EGeometryCachePrimState::Xform;
 		}
 		else
 		{
@@ -1386,9 +1408,15 @@ namespace UE::USDInfoCacheImpl::Private
 		{
 			if (Depth > GGeometryCacheMaxDepth)
 			{
-				UE_LOG(LogUsd, Warning, TEXT("Prim '%s' is potentially a geometry cache %d levels deep, which exceeds the limit of %d. "
-					"This could affect its imported animation. The limit can be increased with the cvar USD.GeometryCache.MaxDepth if needed."),
-					*PrimPath.GetString(), Depth, GGeometryCacheMaxDepth);
+				UE_LOG(
+					LogUsd,
+					Warning,
+					TEXT("Prim '%s' is potentially a geometry cache %d levels deep, which exceeds the limit of %d. "
+						 "This could affect its imported animation. The limit can be increased with the cvar USD.GeometryCache.MaxDepth if needed."),
+					*PrimPath.GetString(),
+					Depth,
+					GGeometryCacheMaxDepth
+				);
 			}
 			FindValidGeometryCacheRoot(UsdPrim, Context, Impl, PrimState);
 			Depth = -1;
@@ -1429,9 +1457,11 @@ namespace UE::USDInfoCacheImpl::Private
 			return;
 		}
 
+		const bool bIsInsideSkelRoot = static_cast<bool>(UsdUtils::GetClosestParentSkelRoot(UsdPrim));
+
 		int32 Depth = -1;
 		EGeometryCachePrimState State = EGeometryCachePrimState::None;
-		RecursiveCheckForGeometryCache(UsdPrim, Context, Impl, Depth, State);
+		RecursiveCheckForGeometryCache(UsdPrim, Context, Impl, bIsInsideSkelRoot, Depth, State);
 
 		// If we end up with a positive depth, it means the check found an animated mesh somewhere
 		// but no potential root before reaching the pseudoroot, so find one
@@ -1439,9 +1469,14 @@ namespace UE::USDInfoCacheImpl::Private
 		{
 			if (Depth > GGeometryCacheMaxDepth)
 			{
-				UE_LOG(LogUsd, Warning, TEXT("The stage has a geometry cache %d levels deep, which exceeds the limit of %d. "
-					"This could affect its imported animation. The limit can be increased with the cvar USD.GeometryCache.MaxDepth if needed."),
-					Depth, GGeometryCacheMaxDepth);
+				UE_LOG(
+					LogUsd,
+					Warning,
+					TEXT("The stage has a geometry cache %d levels deep, which exceeds the limit of %d. "
+						 "This could affect its imported animation. The limit can be increased with the cvar USD.GeometryCache.MaxDepth if needed."),
+					Depth,
+					GGeometryCacheMaxDepth
+				);
 			}
 
 			FScopedUsdAllocs UsdAllocs;
@@ -1456,8 +1491,8 @@ namespace UE::USDInfoCacheImpl::Private
 			}
 		}
 	}
-#endif // USE_SD_SDK
-}
+#endif	  // USE_SD_SDK
+}	 // namespace UE::USDInfoCacheImpl::Private
 
 bool FUsdInfoCache::IsPotentialGeometryCacheRoot(const UE::FSdfPath& Path) const
 {
@@ -1477,37 +1512,37 @@ bool FUsdInfoCache::IsPotentialGeometryCacheRoot(const UE::FSdfPath& Path) const
 	return false;
 }
 
-TOptional<uint64> FUsdInfoCache::GetSubtreeVertexCount( const UE::FSdfPath& Path )
+TOptional<uint64> FUsdInfoCache::GetSubtreeVertexCount(const UE::FSdfPath& Path)
 {
-	if ( FUsdInfoCacheImpl* ImplPtr = Impl.Get() )
+	if (FUsdInfoCacheImpl* ImplPtr = Impl.Get())
 	{
 		FReadScopeLock ScopeLock(ImplPtr->InfoMapLock);
 
-		if ( const UE::UsdInfoCache::Private::FUsdPrimInfo* FoundInfo = ImplPtr->InfoMap.Find( Path ) )
+		if (const UE::UsdInfoCache::Private::FUsdPrimInfo* FoundInfo = ImplPtr->InfoMap.Find(Path))
 		{
 			return FoundInfo->ExpectedVertexCountForSubtree;
 		}
 
 		// This should never happen: We should have cached the entire tree
-		ensureMsgf( false, TEXT( "Prim path '%s' has not been cached!" ), *Path.GetString() );
+		ensureMsgf(false, TEXT("Prim path '%s' has not been cached!"), *Path.GetString());
 	}
 
 	return {};
 }
 
-TOptional<uint64> FUsdInfoCache::GetSubtreeMaterialSlotCount( const UE::FSdfPath& Path )
+TOptional<uint64> FUsdInfoCache::GetSubtreeMaterialSlotCount(const UE::FSdfPath& Path)
 {
-	if ( FUsdInfoCacheImpl* ImplPtr = Impl.Get() )
+	if (FUsdInfoCacheImpl* ImplPtr = Impl.Get())
 	{
 		FReadScopeLock ScopeLock(ImplPtr->InfoMapLock);
 
-		if ( const UE::UsdInfoCache::Private::FUsdPrimInfo* FoundInfo = ImplPtr->InfoMap.Find( Path ) )
+		if (const UE::UsdInfoCache::Private::FUsdPrimInfo* FoundInfo = ImplPtr->InfoMap.Find(Path))
 		{
 			return FoundInfo->SubtreeMaterialSlots.Num();
 		}
 
 		// This should never happen: We should have cached the entire tree
-		ensureMsgf( false, TEXT( "Prim path '%s' has not been cached!" ), *Path.GetString() );
+		ensureMsgf(false, TEXT("Prim path '%s' has not been cached!"), *Path.GetString());
 	}
 
 	return {};
@@ -1540,13 +1575,34 @@ void FUsdInfoCache::LinkAssetToPrim(const UE::FSdfPath& Path, UObject* Asset)
 	}
 	FWriteScopeLock ScopeLock(ImplPtr->PrimPathToAssetsLock);
 
-	UE_LOG(LogUsd, Verbose, TEXT("Linking asset '%s' to prim '%s'"),
+	UE_LOG(LogUsd, Verbose, TEXT("Linking asset '%s' to prim '%s'"), *Asset->GetPathName(), *Path.GetString());
+
+	ImplPtr->PrimPathToAssets.FindOrAdd(Path).AddUnique(Asset);
+	ImplPtr->AssetToPrimPaths.FindOrAdd(Asset).AddUnique(Path);
+}
+
+void FUsdInfoCache::UnlinkAssetFromPrim(const UE::FSdfPath& Path, UObject* Asset)
+{
+	FUsdInfoCacheImpl* ImplPtr = Impl.Get();
+	if (!ImplPtr)
+	{
+		return;
+	}
+	FWriteScopeLock ScopeLock(ImplPtr->PrimPathToAssetsLock);
+
+	UE_LOG(LogUsd, Verbose, TEXT("Unlinking asset '%s' to prim '%s'"),
 		*Asset->GetPathName(),
 		*Path.GetString()
 	);
 
-	ImplPtr->PrimPathToAssets.FindOrAdd(Path).AddUnique(Asset);
-	ImplPtr->AssetToPrimPaths.FindOrAdd(Asset).AddUnique(Path);
+	if (TArray<TWeakObjectPtr<UObject>>* FoundAssetsForPrim = ImplPtr->PrimPathToAssets.Find(Path))
+	{
+		FoundAssetsForPrim->Remove(Asset);
+	}
+	if (TArray<UE::FSdfPath>* FoundPrimPathsForAsset = ImplPtr->AssetToPrimPaths.Find(Asset))
+	{
+		FoundPrimPathsForAsset->Remove(Path);
+	}
 }
 
 TArray<TWeakObjectPtr<UObject>> FUsdInfoCache::RemoveAllAssetPrimLinks(const UE::FSdfPath& Path)
@@ -1558,9 +1614,7 @@ TArray<TWeakObjectPtr<UObject>> FUsdInfoCache::RemoveAllAssetPrimLinks(const UE:
 	}
 	FWriteScopeLock ScopeLock(ImplPtr->PrimPathToAssetsLock);
 
-	UE_LOG(LogUsd, Verbose, TEXT("Removing asset prim links for path '%s'"),
-		*Path.GetString()
-	);
+	UE_LOG(LogUsd, Verbose, TEXT("Removing asset prim links for path '%s'"), *Path.GetString());
 
 	TArray<TWeakObjectPtr<UObject>> Assets;
 	ImplPtr->PrimPathToAssets.RemoveAndCopyValue(Path, Assets);
@@ -1574,6 +1628,31 @@ TArray<TWeakObjectPtr<UObject>> FUsdInfoCache::RemoveAllAssetPrimLinks(const UE:
 	}
 
 	return Assets;
+}
+
+TArray<UE::FSdfPath> FUsdInfoCache::RemoveAllAssetPrimLinks(const UObject* Asset)
+{
+	FUsdInfoCacheImpl* ImplPtr = Impl.Get();
+	if (!ImplPtr)
+	{
+		return {};
+	}
+	FWriteScopeLock ScopeLock(ImplPtr->PrimPathToAssetsLock);
+
+	UE_LOG(LogUsd, Verbose, TEXT("Removing asset prim links for asset '%s'"), *Asset->GetPathName());
+
+	TArray<UE::FSdfPath> PrimPaths;
+	ImplPtr->AssetToPrimPaths.RemoveAndCopyValue(const_cast<UObject*>(Asset), PrimPaths);
+
+	for (const UE::FSdfPath& Path : PrimPaths)
+	{
+		if (TArray<TWeakObjectPtr<UObject>>* Assets = ImplPtr->PrimPathToAssets.Find(Path))
+		{
+			Assets->Remove(const_cast<UObject*>(Asset));
+		}
+	}
+
+	return PrimPaths;
 }
 
 void FUsdInfoCache::RemoveAllAssetPrimLinks()
@@ -1641,13 +1720,13 @@ TMap<UE::FSdfPath, TArray<TWeakObjectPtr<UObject>>> FUsdInfoCache::GetAllAssetPr
 	return ImplPtr->PrimPathToAssets;
 }
 
-void FUsdInfoCache::RebuildCacheForSubtree( const UE::FUsdPrim& Prim, FUsdSchemaTranslationContext& Context )
+void FUsdInfoCache::RebuildCacheForSubtree(const UE::FUsdPrim& Prim, FUsdSchemaTranslationContext& Context)
 {
 #if USE_USD_SDK
-	TRACE_CPUPROFILER_EVENT_SCOPE( FUsdInfoCache::RebuildCacheForSubtree );
+	TRACE_CPUPROFILER_EVENT_SCOPE(FUsdInfoCache::RebuildCacheForSubtree);
 
 	FUsdInfoCacheImpl* ImplPtr = Impl.Get();
-	if ( !ImplPtr )
+	if (!ImplPtr)
 	{
 		return;
 	}
@@ -1660,7 +1739,7 @@ void FUsdInfoCache::RebuildCacheForSubtree( const UE::FUsdPrim& Prim, FUsdSchema
 		FScopedUsdAllocs Allocs;
 
 		pxr::UsdPrim UsdPrim{Prim};
-		if ( !UsdPrim )
+		if (!UsdPrim)
 		{
 			return;
 		}
@@ -1681,11 +1760,11 @@ void FUsdInfoCache::RebuildCacheForSubtree( const UE::FUsdPrim& Prim, FUsdSchema
 			ImplPtr->MainToAuxPrims.Empty();
 		}
 
-		IUsdSchemasModule& UsdSchemasModule = FModuleManager::Get().LoadModuleChecked< IUsdSchemasModule >( TEXT( "USDSchemas" ) );
+		IUsdSchemasModule& UsdSchemasModule = FModuleManager::Get().LoadModuleChecked<IUsdSchemasModule>(TEXT("USDSchemas"));
 		FUsdSchemaTranslatorRegistry& Registry = UsdSchemasModule.GetTranslatorRegistry();
 
-		TMap< UE::FSdfPath, TArray<UsdUtils::FUsdPrimMaterialSlot>> TempSubtreeSlots;
-		TArray< FString > PointInstancerPaths;
+		TMap<UE::FSdfPath, TArray<UsdUtils::FUsdPrimMaterialSlot>> TempSubtreeSlots;
+		TArray<FString> PointInstancerPaths;
 
 		pxr::TfToken MaterialPurposeToken = pxr::UsdShadeTokens->allPurpose;
 		if (!Context.MaterialPurpose.IsNone())
@@ -1711,37 +1790,22 @@ void FUsdInfoCache::RebuildCacheForSubtree( const UE::FUsdPrim& Prim, FUsdSchema
 			bPossibleInheritedBindings
 		);
 
-		UE::USDInfoCacheImpl::Private::UpdateInfoForPointInstancers(
-			UsdPrim.GetStage(),
-			Context,
-			*ImplPtr,
-			PointInstancerPaths,
-			TempSubtreeSlots
-		);
+		UE::USDInfoCacheImpl::Private::UpdateInfoForPointInstancers(UsdPrim.GetStage(), Context, *ImplPtr, PointInstancerPaths, TempSubtreeSlots);
 
 		UE::USDInfoCacheImpl::Private::CheckForGeometryCache(UsdPrim, Context, *ImplPtr);
 
-		UE::USDInfoCacheImpl::Private::RecursiveQueryCollapsesChildren(
-			UsdPrim,
-			Context,
-			*ImplPtr,
-			Registry
-		);
+		UE::USDInfoCacheImpl::Private::RecursiveQueryCollapsesChildren(UsdPrim, Context, *ImplPtr, Registry);
 
 		UE::USDInfoCacheImpl::Private::RegisterInstanceableAuxPrims(UsdPrim, Context, *ImplPtr);
 
-		UE::USDInfoCacheImpl::Private::CollectMaterialSlotCounts(
-			*ImplPtr,
-			TempSubtreeSlots,
-			Context.bMergeIdenticalMaterialSlots
-		);
+		UE::USDInfoCacheImpl::Private::CollectMaterialSlotCounts(*ImplPtr, TempSubtreeSlots, Context.bMergeIdenticalMaterialSlots);
 	}
-#endif // USE_USD_SDK
+#endif	  // USE_USD_SDK
 }
 
 void FUsdInfoCache::Clear()
 {
-	if ( FUsdInfoCacheImpl* ImplPtr = Impl.Get() )
+	if (FUsdInfoCacheImpl* ImplPtr = Impl.Get())
 	{
 		{
 			FWriteScopeLock ScopeLock(ImplPtr->InfoMapLock);
@@ -1766,7 +1830,7 @@ void FUsdInfoCache::Clear()
 
 bool FUsdInfoCache::IsEmpty()
 {
-	if ( FUsdInfoCacheImpl* ImplPtr = Impl.Get() )
+	if (FUsdInfoCacheImpl* ImplPtr = Impl.Get())
 	{
 		FReadScopeLock ScopeLock(ImplPtr->InfoMapLock);
 		return ImplPtr->InfoMap.IsEmpty();

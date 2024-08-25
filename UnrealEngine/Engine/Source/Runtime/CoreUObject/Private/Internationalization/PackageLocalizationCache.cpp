@@ -179,7 +179,7 @@ FPackageLocalizationCache::FPackageLocalizationCache()
 		auto ReadAssetGroupClassSettings = [this](const TCHAR* InConfigLogName, const FString& InConfigFilename)
 		{
 			// The config is Group=Class, but we want Class=Group
-			if (const FConfigSection* AssetGroupClassesSection = GConfig->GetSectionPrivate(TEXT("Internationalization.AssetGroupClasses"), false, true, InConfigFilename))
+			if (const FConfigSection* AssetGroupClassesSection = GConfig->GetSection(TEXT("Internationalization.AssetGroupClasses"), false, InConfigFilename))
 			{
 				for (const auto& SectionEntryPair : *AssetGroupClassesSection)
 				{

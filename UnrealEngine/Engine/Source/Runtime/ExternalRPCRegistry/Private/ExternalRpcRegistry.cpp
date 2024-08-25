@@ -92,16 +92,10 @@ UExternalRpcRegistry* UExternalRpcRegistry::GetInstance()
 		}
 		FParse::Value(FCommandLine::Get(), TEXT("rpcport="), ObjectInstance->PortToUse);
 		
-		TWeakObjectPtr<UExternalRpcRegistry> WeakThis(ObjectInstance);
-
-		const FHttpRequestHandler& ListRoutesRequestHandler = [WeakThis](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
-		{
-			if (!WeakThis.IsValid()) { return false; }
-			return WeakThis->HttpListOpenRoutes(Request, OnComplete);
-		};
-		TArray<FExternalRpcArgumentDesc*> ArgumentArray;
+		FHttpRequestHandler ListRoutesRequestHandler = FHttpRequestHandler::CreateUObject(ObjectInstance, &ThisClass::HttpListOpenRoutes);
+		TArray<FExternalRpcArgumentDesc> ArgumentArray;
 		// We always want the ListRegisteredRpcs route bound, no matter what.
-		UExternalRpcRegistry::GetInstance()->RegisterNewRouteWithArguments(TEXT("ListRegisteredRpcs"), FHttpPath("/listrpcs"), EHttpServerRequestVerbs::VERB_GET,
+		ObjectInstance->RegisterNewRouteWithArguments(TEXT("ListRegisteredRpcs"), FHttpPath("/listrpcs"), EHttpServerRequestVerbs::VERB_GET,
 			ListRoutesRequestHandler, ArgumentArray,  true, true);
 
 		ObjectInstance->AddToRoot();
@@ -126,7 +120,7 @@ bool UExternalRpcRegistry::GetRegisteredRoute(FName RouteName, FExternalRouteInf
 	return false;
 }
 
-void UExternalRpcRegistry::RegisterNewRouteWithArguments(FName RouteName, const FHttpPath& HttpPath, const EHttpServerRequestVerbs& RequestVerbs, const FHttpRequestHandler& Handler, TArray<FExternalRpcArgumentDesc*> InArguments, bool bOverrideIfBound /* = false */, bool bIsAlwaysOn /* = false */, FString OptionalCategory /* = FString("Unknown") */, FString OptionalContentType /* = TEXT("")*/)
+void UExternalRpcRegistry::RegisterNewRouteWithArguments(FName RouteName, const FHttpPath& HttpPath, const EHttpServerRequestVerbs& RequestVerbs, const FHttpRequestHandler& Handler, TArray<FExternalRpcArgumentDesc> InArguments, bool bOverrideIfBound /* = false */, bool bIsAlwaysOn /* = false */, FString OptionalCategory /* = FString("Unknown") */, FString OptionalContentType /* = TEXT("")*/)
 {
 #if WITH_RPC_REGISTRY
 	FExternalRouteInfo InRouteInfo;
@@ -134,10 +128,10 @@ void UExternalRpcRegistry::RegisterNewRouteWithArguments(FName RouteName, const 
 	InRouteInfo.RoutePath = HttpPath;
 	InRouteInfo.RequestVerbs = RequestVerbs;
 	InRouteInfo.InputContentType = OptionalContentType;
-	InRouteInfo.ExpectedArguments = InArguments;
+	InRouteInfo.ExpectedArguments = MoveTemp(InArguments);
 	InRouteInfo.RpcCategory = OptionalCategory;
 	InRouteInfo.bAlwaysOn = bIsAlwaysOn;
-	RegisterNewRoute(InRouteInfo, Handler, bOverrideIfBound);
+	RegisterNewRoute(MoveTemp(InRouteInfo), Handler, bOverrideIfBound);
 #endif
 }
 
@@ -152,7 +146,7 @@ void UExternalRpcRegistry::RegisterNewRoute(FName RouteName, const FHttpPath& Ht
 	InRouteInfo.InputContentType = OptionalContentType;
 	InRouteInfo.RpcCategory = OptionalCategory;
 	InRouteInfo.bAlwaysOn = bIsAlwaysOn;
-	RegisterNewRoute(InRouteInfo, Handler, bOverrideIfBound);
+	RegisterNewRoute(MoveTemp(InRouteInfo), Handler, bOverrideIfBound);
 #endif
 }
 
@@ -237,17 +231,13 @@ bool UExternalRpcRegistry::HttpListOpenRoutes(const FHttpServerRequest& Request,
 		if (!RegisteredRoutes[RouteKey].ExpectedArguments.IsEmpty())
 		{
 			JsonWriter->WriteArrayStart(TEXT("args"));
-			for (const FExternalRpcArgumentDesc* ArgDesc : RegisteredRoutes[RouteKey].ExpectedArguments)
+			for (const FExternalRpcArgumentDesc& ArgDesc : RegisteredRoutes[RouteKey].ExpectedArguments)
 			{
-				if (ArgDesc == nullptr)
-				{
-					continue;
-				}
 				JsonWriter->WriteObjectStart();
-				JsonWriter->WriteValue(TEXT("name"), ArgDesc->Name);
-				JsonWriter->WriteValue(TEXT("type"), ArgDesc->Type);
-				JsonWriter->WriteValue(TEXT("desc"), ArgDesc->Desc);
-				JsonWriter->WriteValue(TEXT("optional"), ArgDesc->IsOptional);
+				JsonWriter->WriteValue(TEXT("name"), ArgDesc.Name);
+				JsonWriter->WriteValue(TEXT("type"), ArgDesc.Type);
+				JsonWriter->WriteValue(TEXT("desc"), ArgDesc.Desc);
+				JsonWriter->WriteValue(TEXT("optional"), ArgDesc.bIsOptional);
 				JsonWriter->WriteObjectEnd();
 			}
 			JsonWriter->WriteArrayEnd();

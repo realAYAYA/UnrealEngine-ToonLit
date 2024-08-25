@@ -20,6 +20,10 @@
 #include "Chaos/Levelset.h"
 #include "Chaos/UniformGrid.h"
 #include "Chaos/WeightedLatticeImplicitObject.h"
+#include "Chaos/PBDJointConstraintUtilities.h"
+
+//UE_DISABLE_OPTIMIZATION
+#include "Misc/ScopeLock.h"
 
 static const int32 DrawCollisionSides = 32;
 static const int32 DrawConeLimitSides = 40;
@@ -32,6 +36,9 @@ static const float UnselectedJointRenderSize = 4.f;
 static const float SelectedJointRenderSize = 10.f;
 static const float LimitRenderSize = 0.16f;
 
+static const float ConstraintPointSize = 4.0f;
+static const float ConstraintLimitViolatedPointSize = 6.0f;
+
 static const FColor JointUnselectedColor(255, 0, 255);
 static const FColor JointRed(FColor::Red);
 static const FColor JointGreen(FColor::Green);
@@ -41,6 +48,7 @@ static const FColor	JointLimitColor(FColor::Green);
 static const FColor	JointRefColor(FColor::Yellow);
 static const FColor JointLockedColor(255,128,10);
 
+static const FColor JointLimitsViolatedColor(FColor::Purple);
 
 static int SkinnedLatticeBoneWeight = -1;
 static FAutoConsoleVariableRef CVarClothVizDrawSkinnedLattice(TEXT("p.PhysDrawing.SkinnedLatticeBoneWeight"), SkinnedLatticeBoneWeight, TEXT("Draw skinned lattice bone weight. -1 = all lattice points"));
@@ -956,7 +964,7 @@ static void DrawSkinnedLevelSetLattice(class FPrimitiveDrawInterface* PDI, const
 
 void FKSkinnedLevelSetElem::DrawElemWire(class FPrimitiveDrawInterface* PDI, const FTransform& ElemTM, float Scale, const FColor Color) const
 {
-	if (WeightedLevelSet.IsValid())
+	if (WeightedLatticeLevelSet.IsValid())
 	{
 		constexpr float HSVHueShift = 240.f;
 		constexpr float HSVSaturationMult = 0.5f;
@@ -972,23 +980,23 @@ void FKSkinnedLevelSetElem::DrawElemWire(class FPrimitiveDrawInterface* PDI, con
 		ShiftedColorHSV.B *= HSVValueMult;
 		ShiftedColorHSV.A *= HSVAlphaMult;
 
-		DrawSkinnedLevelSetLattice(PDI, ElemTM.ToMatrixWithScale(), ShiftedColorHSV.HSVToLinearRGB().ToFColor(true), WeightedLevelSet.Get());
+		DrawSkinnedLevelSetLattice(PDI, ElemTM.ToMatrixWithScale(), ShiftedColorHSV.HSVToLinearRGB().ToFColor(true), WeightedLatticeLevelSet.GetReference());
 	}
 }
 
 void FKSkinnedLevelSetElem::DrawElemSolid(class FPrimitiveDrawInterface* PDI, const FTransform& ElemTM, float Scale, const FMaterialRenderProxy* MaterialRenderProxy) const
 {
-	if (WeightedLevelSet.IsValid())
+	if (WeightedLatticeLevelSet.IsValid())
 	{
 		TArray<FVector3f> Vertices;
 		TArray<FIntVector> Tris;
-		const Chaos::FLevelSet* const LevelSet = WeightedLevelSet->GetEmbeddedObject();
+		const Chaos::FLevelSet* const LevelSet = WeightedLatticeLevelSet->GetEmbeddedObject();
 		LevelSet->GetZeroIsosurfaceGridCellFaces(Vertices, Tris);
 
 		FDynamicMeshBuilder MeshBuilder(PDI->View->GetFeatureLevel());
 		for (const FVector3f& V : Vertices)
 		{
-			MeshBuilder.AddVertex(FDynamicMeshVertex(FVector3f(WeightedLevelSet->GetDeformedPoint(Chaos::FVec3(V)))));
+			MeshBuilder.AddVertex(FDynamicMeshVertex(FVector3f(WeightedLatticeLevelSet->GetDeformedPoint(Chaos::FVec3(V)))));
 		}
 		for (const FIntVector& T : Tris)
 		{
@@ -1001,17 +1009,17 @@ void FKSkinnedLevelSetElem::DrawElemSolid(class FPrimitiveDrawInterface* PDI, co
 
 void FKSkinnedLevelSetElem::GetElemSolid(const FTransform& ElemTM, const FVector& Scale3D, const FMaterialRenderProxy* MaterialRenderProxy, int32 ViewIndex, class FMeshElementCollector& Collector) const
 {
-	if (WeightedLevelSet.IsValid())
+	if (WeightedLatticeLevelSet.IsValid())
 	{
 		TArray<FVector3f> Vertices;
 		TArray<FIntVector> Tris;
-		const Chaos::FLevelSet* const LevelSet = WeightedLevelSet->GetEmbeddedObject();
+		const Chaos::FLevelSet* const LevelSet = WeightedLatticeLevelSet->GetEmbeddedObject();
 		LevelSet->GetZeroIsosurfaceGridCellFaces(Vertices, Tris);
 
 		FDynamicMeshBuilder MeshBuilder(Collector.GetPDI(ViewIndex)->View->GetFeatureLevel());
 		for (const FVector3f& V : Vertices)
 		{
-			MeshBuilder.AddVertex(FDynamicMeshVertex(FVector3f(WeightedLevelSet->GetDeformedPoint(Chaos::FVec3(V)))));
+			MeshBuilder.AddVertex(FDynamicMeshVertex(FVector3f(WeightedLatticeLevelSet->GetDeformedPoint(Chaos::FVec3(V)))));
 		}
 		for (const FIntVector& T : Tris)
 		{
@@ -1088,39 +1096,48 @@ void FKAggregateGeom::GetAggGeom(const FTransform& Transform, const FColor Color
 		else
 			SphylElems[i].DrawElemWire(Collector.GetPDI(ViewIndex), ElemTM, Scale3D, Color);
 	}
-	
+
+	FRHICommandListBase& RHICmdList = Collector.GetRHICommandList();
+
 	if(ConvexElems.Num() > 0)
 	{
 		if(bDrawSolid)
 		{
 			// Cache collision vertex/index buffer
+			auto RenderInfo = RenderInfoPtr.load(std::memory_order_relaxed);
 			if(!RenderInfo)
 			{
-				//@todo - parallel rendering, remove const cast
-				FKAggregateGeom& ThisGeom = const_cast<FKAggregateGeom&>(*this);
-				ThisGeom.RenderInfo = new FKConvexGeomRenderInfo();
-				ThisGeom.RenderInfo->VertexBuffers = new FStaticMeshVertexBuffers();
-				ThisGeom.RenderInfo->IndexBuffer = new FDynamicMeshIndexBuffer32();
+				UE::TScopeLock Lock(RenderInfoLock);
 
-				TArray<FDynamicMeshVertex> OutVerts;
-				for(int32 i=0; i<ConvexElems.Num(); i++)
+				// After obtaining the lock, we might now have render info, in which case skip re-creating the data
+				RenderInfo = RenderInfoPtr.load(std::memory_order_acquire);
+				if (!RenderInfo)
 				{
-					// Get vertices/triangles from this hull.
-					ConvexElems[i].AddCachedSolidConvexGeom(OutVerts, ThisGeom.RenderInfo->IndexBuffer->Indices, FColor::White);
-				}
+					RenderInfo = new FKConvexGeomRenderInfo();
+					RenderInfo->VertexBuffers = new FStaticMeshVertexBuffers();
+					RenderInfo->IndexBuffer = new FDynamicMeshIndexBuffer32();
 
-				// Only continue if we actually got some valid geometry
-				// Will crash if we try to init buffers with no data
-				if(ThisGeom.RenderInfo->VertexBuffers
-					&& ThisGeom.RenderInfo->IndexBuffer
-					&& OutVerts.Num() > 0
-					&& ThisGeom.RenderInfo->IndexBuffer->Indices.Num() > 0)
-				{
-					ThisGeom.RenderInfo->IndexBuffer->InitResource(FRHICommandListImmediate::Get());
+					TArray<FDynamicMeshVertex> OutVerts;
+					for(int32 i=0; i<ConvexElems.Num(); i++)
+					{
+						// Get vertices/triangles from this hull.
+						ConvexElems[i].AddCachedSolidConvexGeom(OutVerts, RenderInfo->IndexBuffer->Indices, FColor::White);
+					}
 
-					ThisGeom.RenderInfo->CollisionVertexFactory = new FLocalVertexFactory(Collector.GetFeatureLevel(), "FKAggregateGeom");
-					ThisGeom.RenderInfo->VertexBuffers->InitFromDynamicVertex(ThisGeom.RenderInfo->CollisionVertexFactory, OutVerts);
+					// Only continue if we actually got some valid geometry
+					// Will crash if we try to init buffers with no data
+					if(RenderInfo->VertexBuffers
+						&& RenderInfo->IndexBuffer
+						&& OutVerts.Num() > 0
+						&& RenderInfo->IndexBuffer->Indices.Num() > 0)
+					{
+						RenderInfo->IndexBuffer->InitResource(RHICmdList);
 
+						RenderInfo->CollisionVertexFactory = new FLocalVertexFactory(Collector.GetFeatureLevel(), "FKAggregateGeom");
+						RenderInfo->VertexBuffers->InitFromDynamicVertex(RHICmdList, RenderInfo->CollisionVertexFactory, OutVerts);
+					}
+
+					RenderInfoPtr.store(RenderInfo, std::memory_order_release);
 				}
 			}
 
@@ -1141,7 +1158,7 @@ void FKAggregateGeom::GetAggGeom(const FTransform& Transform, const FColor Color
 				CalcBoxSphereBounds(LocalBounds, FTransform::Identity);
 
 				FDynamicPrimitiveUniformBuffer& DynamicPrimitiveUniformBuffer = Collector.AllocateOneFrameResource<FDynamicPrimitiveUniformBuffer>();
-				DynamicPrimitiveUniformBuffer.Set(LocalToWorld.ToMatrixWithScale(), LocalToWorld.ToMatrixWithScale(), WorldBounds, LocalBounds, true, false, bOutputVelocity);
+				DynamicPrimitiveUniformBuffer.Set(Collector.GetRHICommandList(), LocalToWorld.ToMatrixWithScale(), LocalToWorld.ToMatrixWithScale(), WorldBounds, LocalBounds, true, false, bOutputVelocity);
 				BatchElement.PrimitiveUniformBufferResource = &DynamicPrimitiveUniformBuffer.UniformBuffer;
 
 			 	// previous l2w not used so treat as static
@@ -1212,10 +1229,11 @@ void FKAggregateGeom::GetAggGeom(const FTransform& Transform, const FColor Color
 	}
 }
 
-/** Release the RenderInfo (if its there) and safely clean up any resources. Not thread safe, but can be called from any thread (conditionally safe). */
+/** Release the RenderInfo (if its there) and safely clean up any resources. Can be called from any thread. */
 void FKAggregateGeom::FreeRenderInfo()
 {
 	// See if we have rendering resources to free
+	auto RenderInfo = RenderInfoPtr.exchange(nullptr, std::memory_order_acq_rel);
 	if (RenderInfo)
 	{
 		// Should always have these if RenderInfo exists
@@ -1249,9 +1267,6 @@ void FKAggregateGeom::FreeRenderInfo()
 				delete RenderInfoToRelease;
 			}
 		);
-
-		// Reset the pointer as it's been given to the render thread
-		RenderInfo = nullptr;
 	}
 }
 
@@ -1324,7 +1339,7 @@ void UPhysicsAsset::DrawConstraints(int32 ViewIndex, FMeshElementCollector& Coll
 		}
 
 
-		Instance.DrawConstraint(ViewIndex, Collector, Scale, 1.f, true, true, Con1Frame, Con2Frame, false);
+		Instance.DrawConstraint(ViewIndex, Collector, Scale, 1.f, true, true, Con1Frame, Con2Frame, false, false);
 	}
 }
 static void DrawLinearLimit(FPrimitiveDrawInterface* PDI, const FVector& Origin, const FVector& Axis, const FVector& Orth, float LinearLimitRadius, bool bLinearLimited, float DrawScale)
@@ -1425,25 +1440,22 @@ void FConstraintInstance::GetUsedMaterials(TArray<UMaterialInterface*>& Material
 	Materials.AddUnique(GEngine->ConstraintLimitMaterialZAxis);
 }
 
-void FConstraintInstance::DrawConstraintImp(const FPDIOrCollector& PDIOrCollector, float Scale, float LimitDrawScale, bool bDrawLimits, bool bDrawSelected, const FTransform& Con1Frame, const FTransform& Con2Frame, bool bDrawAsPoint) const
+void FConstraintInstance::DrawConstraintImp(const FPDIOrCollector& PDIOrCollector, float Scale, float LimitDrawScale, bool bDrawLimits, bool bDrawSelected, const FTransform& Con1Frame, const FTransform& Con2Frame, bool bDrawAsPoint, bool bDrawViolatedLimits) const
 {
 	// Do nothing if we're shipping
-#if UE_BUILD_SHIPPING
-	return;
-#endif
-
+#if !UE_BUILD_SHIPPING
 	const ESceneDepthPriorityGroup Layer = ESceneDepthPriorityGroup::SDPG_World;
 	FPrimitiveDrawInterface* PDI = PDIOrCollector.GetPDI();
 
-	check((GEngine->ConstraintLimitMaterialX != nullptr) && (GEngine->ConstraintLimitMaterialY != nullptr) && (GEngine->ConstraintLimitMaterialZ != nullptr));
+	check(GEngine->ConstraintLimitMaterialX && GEngine->ConstraintLimitMaterialY && GEngine->ConstraintLimitMaterialZ);
 
-	static UMaterialInterface * LimitMaterialX = GEngine->ConstraintLimitMaterialX;
-	static UMaterialInterface * LimitMaterialXAxis = GEngine->ConstraintLimitMaterialXAxis;
-	static UMaterialInterface * LimitMaterialY = GEngine->ConstraintLimitMaterialY;
-	static UMaterialInterface * LimitMaterialYAxis = GEngine->ConstraintLimitMaterialYAxis;
-	static UMaterialInterface * LimitMaterialZ = GEngine->ConstraintLimitMaterialZ;
-	static UMaterialInterface * LimitMaterialZAxis = GEngine->ConstraintLimitMaterialZAxis;
-	
+	static UMaterialInterface* LimitMaterialX = GEngine->ConstraintLimitMaterialX;
+	static UMaterialInterface* LimitMaterialXAxis = GEngine->ConstraintLimitMaterialXAxis;
+	static UMaterialInterface* LimitMaterialY = GEngine->ConstraintLimitMaterialY;
+	static UMaterialInterface* LimitMaterialYAxis = GEngine->ConstraintLimitMaterialYAxis;
+	static UMaterialInterface* LimitMaterialZ = GEngine->ConstraintLimitMaterialZ;
+	static UMaterialInterface* LimitMaterialZAxis = GEngine->ConstraintLimitMaterialZAxis;
+
 	const FVector Con1Pos = Con1Frame.GetTranslation();
 	const FVector Con2Pos = Con2Frame.GetTranslation();
 
@@ -1453,8 +1465,8 @@ void FConstraintInstance::DrawConstraintImp(const FPDIOrCollector& PDIOrCollecto
 	// Special mode for drawing joints just as points..
 	if(bDrawAsPoint && !bDrawSelected)
 	{
-		PDI->DrawPoint( Con1Frame.GetTranslation(), JointUnselectedColor, 4.f, ESceneDepthPriorityGroup::SDPG_Foreground );
-		PDI->DrawPoint( Con2Frame.GetTranslation(), JointUnselectedColor, 4.f, ESceneDepthPriorityGroup::SDPG_Foreground );
+		PDI->DrawPoint( Con1Frame.GetTranslation(), JointUnselectedColor, ConstraintPointSize, ESceneDepthPriorityGroup::SDPG_Foreground );
+		PDI->DrawPoint( Con2Frame.GetTranslation(), JointUnselectedColor, ConstraintPointSize, ESceneDepthPriorityGroup::SDPG_Foreground );
 
 		// do nothing else in this mode.
 		return;
@@ -1462,6 +1474,20 @@ void FConstraintInstance::DrawConstraintImp(const FPDIOrCollector& PDIOrCollecto
 
 	if (bDrawLimits)
 	{
+		bool bTwistViolated = false;
+		bool bSwing1Violated = false;
+		bool bSwing2Violated = false;
+		if (bDrawViolatedLimits)
+		{
+			Chaos::FReal TwistAngle, Swing1Angle, Swing2Angle;
+			const FQuat ParentQ = Con2Frame.GetRotation();
+			FQuat ChildQ = Con1Frame.GetRotation();
+			ChildQ.EnforceShortestArcWith(ParentQ);
+			Chaos::FPBDJointUtilities::GetSwingTwistAngles(ParentQ, ChildQ, TwistAngle, Swing1Angle, Swing2Angle);
+			bTwistViolated = GetAngularTwistMotion() == ACM_Limited && FMath::Abs(TwistAngle) > FMath::DegreesToRadians(GetAngularTwistLimit());
+			bSwing1Violated = GetAngularSwing1Motion() == ACM_Limited && FMath::Abs(Swing1Angle) > FMath::DegreesToRadians(GetAngularSwing1Limit());
+			bSwing2Violated = GetAngularSwing2Motion() == ACM_Limited && FMath::Abs(Swing2Angle) > FMath::DegreesToRadians(GetAngularSwing2Limit());
+		}
 
 		//////////////////////////////////////////////////////////////////////////
 		// ANGULAR DRAWING
@@ -1498,6 +1524,11 @@ void FConstraintInstance::DrawConstraintImp(const FPDIOrCollector& PDIOrCollecto
 			FTransform ArrowTM = Con1Frame;
 			ArrowTM.SetTranslation(Con2Pos);
 			PDIOrCollector.DrawArrow(ArrowTM.ToMatrixWithScale(), Length, Thickness, DrawConeLimitSides, JointLimitColor, LimitMaterialX->GetRenderProxy(), Layer);
+
+			if (bSwing1Violated || bSwing2Violated)
+			{
+				PDI->DrawPoint(ArrowTM.TransformPosition(FVector(Length, 0, 0)), JointLimitsViolatedColor, ConstraintLimitViolatedPointSize, ESceneDepthPriorityGroup::SDPG_Foreground);
+			}
 		}
 
 		// Draw the twist limit - A green arc that shows the allowed range of rotation about the parent frame's x axis.
@@ -1512,6 +1543,12 @@ void FConstraintInstance::DrawConstraintImp(const FPDIOrCollector& PDIOrCollecto
 			const FVector TwistIndicator = FVector::PointPlaneProject(Con1Frame.GetScaledAxis(EAxis::Y), FVector::ZeroVector, Con2Frame.GetUnitAxis(EAxis::X)).GetSafeNormal(); // project the y axis of the child frame into the parent frame's yz plane
 			const FTransform ArrowTM(TwistIndicator, Con2Frame.GetScaledAxis(EAxis::X), TwistIndicator ^ Con2Frame.GetScaledAxis(EAxis::X), Con2Frame.GetTranslation());
 			PDIOrCollector.DrawArrow(ArrowTM.ToMatrixWithScale(), Length, Thickness, DrawConeLimitSides, JointLimitColor, LimitMaterialYAxis->GetRenderProxy(), Layer);
+
+			if (bTwistViolated)
+			{
+				PDI->DrawPoint(ArrowTM.TransformPosition(FVector(Length, 0, 0)), JointLimitsViolatedColor, ConstraintLimitViolatedPointSize, ESceneDepthPriorityGroup::SDPG_Foreground);
+			}
+
 		}
 	}
 
@@ -1560,4 +1597,5 @@ void FConstraintInstance::DrawConstraintImp(const FPDIOrCollector& PDIOrCollecto
 		bool bLinearZLimited = ( GetLinearZMotion() == LCM_Limited && GetLinearLimit() >= RB_MinSizeToLockDOF );
 		DrawLinearLimit(PDI, Con2Frame.GetTranslation(), Con2Frame.GetScaledAxis( EAxis::Z ), Con2Frame.GetScaledAxis( EAxis::X ), GetLinearLimit(), bLinearZLimited, LimitDrawScale);
 	}
+#endif
 }

@@ -10,9 +10,9 @@ import dashboard from "../backend/Dashboard";
 import notices from "../backend/Notices";
 import { useWindowSize } from "../base/utilities/hooks";
 import { displayTimeZone } from "../base/utilities/timeUtils";
-import { hordeClasses, modeColors } from "../styles/Styles";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { TopNav } from "./TopNav";
+import { getHordeStyling } from "../styles/Styles";
 
 
 const NoticePanel: React.FC = observer(() => {
@@ -76,36 +76,38 @@ const NoticePanel: React.FC = observer(() => {
       return null;
    };
 
-   return (<Stack>
+   const { hordeClasses } = getHordeStyling();
+
+   return <Stack>
       {!!state.showEditor && <NoticeEditor noticeIn={state.editNotice} onClose={() => {
          setState({})
       }} />}
-      <Stack styles={{ root: { paddingTop: 18, paddingLeft: 12, paddingRight: 12, width: "100%" } }} >
-         <Stack tokens={{ childrenGap: 12 }} >
-            <Stack horizontal>
-               <Stack>
-                  <Text variant="mediumPlus" styles={{ root: { fontFamily: "Horde Open Sans SemiBold" } }}>Notices</Text>
-               </Stack>
-               <Stack grow />
-               <Stack>
-                  <PrimaryButton styles={{ root: { fontFamily: "Horde Open Sans SemiBold" } }} onClick={() => setState({ showEditor: true, editNotice: userNotice })}>Set Notice</PrimaryButton>
-               </Stack>
+      <Stack style={{ paddingBottom: 12 }}>
+         <Stack verticalAlign="center">
+            <Stack horizontalAlign="end">
+               <PrimaryButton styles={{ root: { fontFamily: "Horde Open Sans SemiBold" } }} onClick={() => setState({ showEditor: true, editNotice: userNotice })}>Set Notice</PrimaryButton>
             </Stack>
-            <div style={{ overflowY: 'auto', overflowX: 'hidden', maxHeight: "calc(100vh - 312px)" }} data-is-scrollable={true}>
-               <Stack>
-                  <DetailsList
-                     items={allNotices}
-                     columns={columns}
-                     selectionMode={SelectionMode.none}
-                     layoutMode={DetailsListLayoutMode.justified}
-                     compact={true}
-                     onRenderItemColumn={renderItem}
-                  />
-               </Stack>
-            </div>
+            {!allNotices.length && <Stack horizontalAlign="center">
+               <Text variant="mediumPlus">No Service Notices Found</Text>
+            </Stack>}
          </Stack>
       </Stack>
-   </Stack>);
+
+      {!!allNotices.length && <Stack className={hordeClasses.raised} >
+         <Stack styles={{ root: { paddingLeft: 12, paddingRight: 12, paddingBottom: 12, width: "100%" } }} >
+            <Stack>
+            <DetailsList
+                  items={allNotices}
+                  columns={columns}
+                  selectionMode={SelectionMode.none}
+                  layoutMode={DetailsListLayoutMode.justified}
+                  compact={true}
+                  onRenderItemColumn={renderItem}
+               />
+            </Stack>
+         </Stack>
+      </Stack>}
+   </Stack>
 });
 
 
@@ -113,19 +115,26 @@ export const NoticeView: React.FC = () => {
 
    const windowSize = useWindowSize();
    const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
+   const centerAlign = vw / 2 - 720;
+
+   const { hordeClasses, modeColors } = getHordeStyling();
+
+   const key = `windowsize_view_${windowSize.width}_${windowSize.height}`;
 
    return <Stack className={hordeClasses.horde}>
       <TopNav />
-      <Breadcrumbs items={[{ text: 'Server Notices' }]} />
-      <Stack horizontal>
-         <div key={`windowsize_noticeview_${windowSize.width}_${windowSize.height}`} style={{ width: vw / 2 - (1440/2), flexShrink: 0, backgroundColor: modeColors.background }} />
-         <Stack tokens={{ childrenGap: 0 }} styles={{ root: { backgroundColor: modeColors.background, width: "100%" } }}>
-            <Stack style={{ maxWidth: 1440, paddingTop: 6, marginLeft: 4, height: 'calc(100vh - 8px)' }}>
-               <Stack horizontal className={hordeClasses.raised}>
-                  <Stack style={{ width: "100%", height: 'calc(100vh - 228px)' }} tokens={{ childrenGap: 18 }}>
-                     <NoticePanel />
+      <Breadcrumbs items={[{ text: 'Notices' }]} />
+      <Stack styles={{ root: { width: "100%", backgroundColor: modeColors.background } }}>
+         <Stack style={{ width: "100%", backgroundColor: modeColors.background }}>
+            <Stack style={{ position: "relative", width: "100%", height: 'calc(100vh - 148px)' }}>
+               <div style={{ overflowX: "auto", overflowY: "visible" }}>
+                  <Stack horizontal style={{ paddingTop: 30, paddingBottom: 48 }}>
+                     <Stack key={`${key}`} style={{ paddingLeft: centerAlign }} />
+                     <Stack style={{ width: 1440 }}>
+                        <NoticePanel />
+                     </Stack>
                   </Stack>
-               </Stack>
+               </div>
             </Stack>
          </Stack>
       </Stack>
@@ -136,6 +145,7 @@ const NoticeEditor: React.FC<{ noticeIn?: GetNoticeResponse, onClose: () => void
 
    const [submitting, setSubmitting] = useState(false);
    const [confirmDelete, setConfirmDelete] = useState(false);
+   const { hordeClasses } = getHordeStyling();
 
    let notice = noticeIn ? { ...noticeIn } : { id: undefined, message: undefined };
 

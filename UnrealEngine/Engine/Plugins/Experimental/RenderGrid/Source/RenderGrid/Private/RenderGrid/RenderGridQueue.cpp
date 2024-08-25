@@ -626,7 +626,7 @@ TArray<URenderGridJob*> URenderGridQueue::GetJobs() const
 {
 	TArray<URenderGridJob*> Jobs;
 	Jobs.Reserve(Entries.Num());
-	for (const TTuple<TObjectPtr<URenderGridJob>, TObjectPtr<URenderGridMoviePipelineRenderJob>> EntryEntry : Entries)
+	for (const TTuple<TObjectPtr<URenderGridJob>, TObjectPtr<URenderGridMoviePipelineRenderJob>>& EntryEntry : Entries)
 	{
 		if (const TObjectPtr<URenderGridJob> Job = EntryEntry.Key; IsValid(Job))
 		{
@@ -645,7 +645,7 @@ TArray<URenderGridJob*> URenderGridQueue::GetJobs() const
 int32 URenderGridQueue::GetJobsCount() const
 {
 	int32 JobsCount = 0;
-	for (const TTuple<TObjectPtr<URenderGridJob>, TObjectPtr<URenderGridMoviePipelineRenderJob>> EntryEntry : Entries)
+	for (const TTuple<TObjectPtr<URenderGridJob>, TObjectPtr<URenderGridMoviePipelineRenderJob>>& EntryEntry : Entries)
 	{
 		if (const TObjectPtr<URenderGridJob> Job = EntryEntry.Key; IsValid(Job))
 		{
@@ -669,7 +669,7 @@ int32 URenderGridQueue::GetJobsRemainingCount() const
 	}
 
 	int32 JobsCount = 0;
-	for (const TObjectPtr<URenderGridJob> Job : RemainingJobs)
+	for (const TObjectPtr<URenderGridJob>& Job : RemainingJobs)
 	{
 		if (const TObjectPtr<URenderGridMoviePipelineRenderJob>* EntryPtr = Entries.Find(Job))
 		{
@@ -843,7 +843,7 @@ void URenderGridQueue::OnProcessJob(URenderGridJob* Job)
 		while (!RemainingJobs.IsEmpty() && !bCanceled && !bFinished)
 		{
 			TObjectPtr<URenderGridJob> NextJob = RemainingJobs[0];
-			RemainingJobs.RemoveAt(0, 1, false);
+			RemainingJobs.RemoveAt(0, 1, EAllowShrinking::No);
 
 			if (IsValid(NextJob))
 			{

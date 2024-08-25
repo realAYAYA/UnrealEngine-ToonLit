@@ -97,17 +97,15 @@ namespace UE
 			// Get the log of the first client app
 			IAppInstance RunningInstance = this.TestInstance.RunningRoles.First().AppInstance;
 
-			UnrealLogParser LogParser = new UnrealLogParser(RunningInstance.StdOut);
+			UnrealLogStreamParser LogParser = new UnrealLogStreamParser();
+			LogLinesLastTick += LogParser.ReadStream(RunningInstance.StdOut, LogLinesLastTick);
 
-			IEnumerable<string> BusyLogLines = LogParser.GetEditorBusyChannels();
-			int BusyLineCount = BusyLogLines.Count();
-
-			if (BusyLineCount > LogLinesLastTick)
+			IEnumerable<string> BusyLogLines = LogParser.GetLogFromEditorBusyChannels();
+			if (BusyLogLines.Any())
 			{
 				LastLogTime = DateTime.Now;
 				// log new entries so people have something to look at
-				BusyLogLines.Skip(LogLinesLastTick).ToList().ForEach(S => Log.Info("{0}", S));
-				LogLinesLastTick = BusyLineCount;
+				BusyLogLines.ToList().ForEach(S => Log.Info("{0}", S));
 			}
 
 			// Gauntlet will timeout tests based on the -timeout argument, but we have greater insight here so can bail earlier to save
@@ -119,14 +117,11 @@ namespace UE
 				SetUnrealTestResult(TestResult.TimedOut);
 			}
 
-			// now see if the game has brought the first world up for play
-			IEnumerable<string> LogWorldLines = LogParser.GetLogChannel("World");
-
 			string CompletionString = GetCompletionString();
 
 			if (!string.IsNullOrEmpty(CompletionString))
 			{
-				if (LogParser.Content.IndexOf(CompletionString, StringComparison.OrdinalIgnoreCase) > 0)
+				if (LogParser.GetLogLinesContaining(CompletionString).Any())
 				{
 					Log.Info("Found '{0}'. Ending Test", GetCompletionString());
 					MarkTestComplete();

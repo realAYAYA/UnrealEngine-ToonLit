@@ -10,6 +10,7 @@
 UBlueprintEditorProjectSettings::UBlueprintEditorProjectSettings(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 	, DefaultChildActorTreeViewMode(EChildActorComponentTreeViewVisualizationMode::ComponentOnly)
+	, bDisallowEditorUtilityBlueprintFunctionsInDetailsView(false)
 {
 }
 

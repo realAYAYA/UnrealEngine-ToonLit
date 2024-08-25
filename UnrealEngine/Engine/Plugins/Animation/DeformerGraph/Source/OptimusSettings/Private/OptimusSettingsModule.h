@@ -4,6 +4,7 @@
 
 #include "Animation/MeshDeformerProvider.h"
 #include "Modules/ModuleInterface.h"
+#include "UObject/StrongObjectPtr.h"
 
 class UOptimusSettings;
 
@@ -21,6 +22,6 @@ private:
 	void CacheDefaultMeshDeformers();
 	void CacheDefaultMeshDeformers(UOptimusSettings const* InSettings);
 
-	TObjectPtr<UMeshDeformer> DefaultDeformer;
-	TObjectPtr<UMeshDeformer> DefaultRecomputeTangentDeformer;
+	TStrongObjectPtr<UMeshDeformer> DefaultDeformer;
+	TStrongObjectPtr<UMeshDeformer> DefaultRecomputeTangentDeformer;
 };

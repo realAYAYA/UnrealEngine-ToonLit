@@ -275,6 +275,12 @@ namespace AutomationScripts
 			}
 		}
 
+		private static IProcessResult RunClientInternal( ERunOptions ClientRunFlags, string ClientApp, string ClientCmdLine, ProjectParams Params, DeploymentContext SC )
+		{
+			IProcessResult CustomResult = SC.CustomDeployment?.RunClient(ClientRunFlags, ClientApp, ClientCmdLine, Params, SC);
+			return CustomResult ?? SC.StageTargetPlatform.RunClient(ClientRunFlags, ClientApp, ClientCmdLine, Params, SC);
+		}
+
 		private static void RunClient(
 				List<DeploymentContext> DeployContextList,
 				string ClientLogFile,
@@ -325,7 +331,7 @@ namespace AutomationScripts
 				int LastAutoFailIndex = -1;
 
 				Logger.LogInformation("Starting Client for unattended test....");
-				ClientProcess = SC.StageTargetPlatform.RunClient(ClientRunFlags, ClientApp, ClientCmdLine, Params);
+				ClientProcess = RunClientInternal(ClientRunFlags, ClientApp, ClientCmdLine, Params, SC);
 
 				if (DedicatedServerProcess != null)
 				{
@@ -334,7 +340,7 @@ namespace AutomationScripts
 						for (int i = 1; i < NumClients; i++)
 						{
 							Logger.LogInformation("Starting Extra Client {i} for unattended test....", i);
-							ExtraClients.Add(SC.StageTargetPlatform.RunClient(ExtraClientRunFlags, ClientApp, ClientCmdLine, Params));
+							ExtraClients.Add(RunClientInternal(ExtraClientRunFlags, ClientApp, ClientCmdLine, Params, SC));
 						}
 					}
 				}
@@ -458,7 +464,7 @@ namespace AutomationScripts
 			else
 			{
 				Logger.LogInformation("Starting Client....");
-				ClientProcess = SC.StageTargetPlatform.RunClient(ClientRunFlags, ClientApp, ClientCmdLine, Params);
+				ClientProcess = RunClientInternal(ClientRunFlags, ClientApp, ClientCmdLine, Params, SC);
 
 				if (DedicatedServerProcess != null)
 				{
@@ -467,7 +473,7 @@ namespace AutomationScripts
 						for (int i = 1; i < NumClients; i++)
 						{
 							Logger.LogInformation("Starting Extra Client {i}....", i);
-							ExtraClients.Add(SC.StageTargetPlatform.RunClient(ExtraClientRunFlags, ClientApp, ClientCmdLine, Params));
+							ExtraClients.Add(RunClientInternal(ExtraClientRunFlags, ClientApp, ClientCmdLine, Params, SC));
 						}
 					}
 				}
@@ -810,7 +816,7 @@ namespace AutomationScripts
 				return null;
 			}
 			// Check for stage with zenstore without PAK?
-			FileReference PackageStoreManifestFile = FileReference.Combine(ProjectStoreDir, ".projectstore");
+			FileReference PackageStoreManifestFile = FileReference.Combine(ProjectStoreDir, "ue.projectstore");
 			System.IO.FileInfo PackageStoreManifestFileInfo = PackageStoreManifestFile.ToFileInfo();
 			if (PackageStoreManifestFileInfo.Exists)
 			{
@@ -830,7 +836,7 @@ namespace AutomationScripts
 			}
 
 			string ProjectId = ProjectUtils.GetProjectPathId(SC.RawProjectPath);
-			ushort ZenHostPort = 1337;
+			ushort ZenHostPort = 8558;
 			List<string> HostAddresses = null;
 			if (ZenStoreMarkerFile != null)
 			{

@@ -54,7 +54,7 @@ EAssetCommandResult UAssetDefinition_World::OpenAssets(const FAssetOpenArgs& Ope
 		UWorld* World = Cast<UWorld>(WorldAsset.GetAsset());
 		if (World != nullptr && 
 			ensureMsgf(World->GetPackage(), TEXT("World(%s) is not in a package and cannot be opened"), *World->GetFullName()) && 
-			ensureMsgf(!World->GetPackage()->HasAnyPackageFlags(PKG_NewlyCreated), TEXT("World(%s) is unsaved and cannot be opened")))
+			ensureMsgf(!World->GetPackage()->HasAnyPackageFlags(PKG_NewlyCreated), TEXT("World(%s) is unsaved and cannot be opened"), *World->GetFullName()))
 		{
 			const FString FileToOpen = FPackageName::LongPackageNameToFilename(World->GetOutermost()->GetName(), FPackageName::GetMapPackageExtension());
 			const bool bLoadAsTemplate = false;

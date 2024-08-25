@@ -18,14 +18,14 @@ UsageAndExit()
     echo
     echo "Usage examples:"
     echo
-    echo "    $BUILD_SCRIPT_NAME 1.80.0 x86_64-unknown-linux-gnu"
-    echo "      -- Installs $LIBRARY_NAME version 1.80.0 as header-only."
+    echo "    $BUILD_SCRIPT_NAME 1.82.0 x86_64-unknown-linux-gnu"
+    echo "      -- Installs $LIBRARY_NAME version 1.82.0 as header-only."
     echo
-    echo "    $BUILD_SCRIPT_NAME 1.80.0 x86_64-unknown-linux-gnu iostreams system thread"
-    echo "      -- Installs $LIBRARY_NAME version 1.80.0 for x86_64 architecture with iostreams, system, and thread libraries."
+    echo "    $BUILD_SCRIPT_NAME 1.82.0 x86_64-unknown-linux-gnu iostreams system thread"
+    echo "      -- Installs $LIBRARY_NAME version 1.82.0 for x86_64 architecture with iostreams, system, and thread libraries."
     echo
-    echo "    $BUILD_SCRIPT_NAME 1.80.0 aarch64-unknown-linux-gnueabi all"
-    echo "      -- Installs $LIBRARY_NAME version 1.80.0 for arm64 architecture with all of its libraries."
+    echo "    $BUILD_SCRIPT_NAME 1.82.0 aarch64-unknown-linux-gnueabi all"
+    echo "      -- Installs $LIBRARY_NAME version 1.82.0 for arm64 architecture with all of its libraries."
     exit 1
 }
 

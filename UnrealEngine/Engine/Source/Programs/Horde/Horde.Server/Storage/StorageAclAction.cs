@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using Horde.Server.Acls;
+using EpicGames.Horde.Acls;
 
 namespace Horde.Server.Storage
 {
@@ -12,26 +12,26 @@ namespace Horde.Server.Storage
 		/// <summary>
 		/// Ability to read blobs from the storage service
 		/// </summary>
-		public static readonly AclAction ReadBlobs = new AclAction("ReadBlobs");
+		public static AclAction ReadBlobs { get; } = new AclAction("ReadBlobs");
 
 		/// <summary>
 		/// Ability to write blobs to the storage service
 		/// </summary>
-		public static readonly AclAction WriteBlobs = new AclAction("WriteBlobs");
+		public static AclAction WriteBlobs { get; } = new AclAction("WriteBlobs");
 
 		/// <summary>
 		/// Ability to read refs from the storage service
 		/// </summary>
-		public static readonly AclAction ReadRefs = new AclAction("ReadRefs");
+		public static AclAction ReadRefs { get; } = new AclAction("ReadRefs");
 
 		/// <summary>
 		/// Ability to write refs to the storage service
 		/// </summary>
-		public static readonly AclAction WriteRefs = new AclAction("WriteRefs");
+		public static AclAction WriteRefs { get; } = new AclAction("WriteRefs");
 
 		/// <summary>
 		/// Ability to delete refs
 		/// </summary>
-		public static readonly AclAction DeleteRefs = new AclAction("DeleteRefs");
+		public static AclAction DeleteRefs { get; } = new AclAction("DeleteRefs");
 	}
 }

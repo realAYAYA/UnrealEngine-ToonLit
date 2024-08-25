@@ -137,6 +137,8 @@ namespace FNavigationSystem
 	//ENGINE_API bool HasComponentData(UActorComponent& Comp);
 	ENGINE_API void OnActorBoundsChanged(AActor& Actor);
 	ENGINE_API void OnPostEditActorMove(AActor& Actor);
+
+	UE_DEPRECATED(5.4, "Use OnObjectBoundsChanged taking UObject and list of dirty areas as parameters instead.")
 	ENGINE_API void OnComponentBoundsChanged(UActorComponent& Comp, const FBox& NewBounds, const FBox& DirtyArea);
 	ENGINE_API void OnComponentTransformChanged(USceneComponent& Comp);
 
@@ -148,7 +150,12 @@ namespace FNavigationSystem
 	
 	ENGINE_API void RegisterComponent(UActorComponent& Comp);
 	ENGINE_API void UnregisterComponent(UActorComponent& Comp);
-	
+
+	ENGINE_API void RegisterNavRelevantObject(UObject& Object);
+	ENGINE_API void UpdateNavRelevantObject(UObject& Object);
+	ENGINE_API void UnregisterNavRelevantObject(UObject& Object);
+	ENGINE_API void OnObjectBoundsChanged(UObject& Object, const FBox& NewBounds, TConstArrayView<FBox> DirtyAreas);
+
 	ENGINE_API void RemoveActorData(AActor& Actor);
 
 	ENGINE_API bool HasComponentData(UActorComponent& Comp);
@@ -190,6 +197,8 @@ namespace FNavigationSystem
 	ENGINE_API void StopMovement(const AController& Controller);
 	ENGINE_API IPathFollowingAgentInterface* FindPathFollowingAgentForActor(const AActor& Actor);
 
+	DECLARE_DELEGATE_OneParam(FObjectBasedSignature, UObject& /*Object*/);
+	DECLARE_DELEGATE_ThreeParams(FObjectBoundsChangedSignature, UObject& /*Object*/, const FBox& /*NewBounds*/, TConstArrayView<FBox> /*DirtyAreas*/)
 	DECLARE_DELEGATE_OneParam(FActorBasedSignature, AActor& /*Actor*/);
 	DECLARE_DELEGATE_OneParam(FActorComponentBasedSignature, UActorComponent& /*Comp*/);
 	DECLARE_DELEGATE_OneParam(FSceneComponentBasedSignature, USceneComponent& /*Comp*/);
@@ -205,13 +214,15 @@ namespace FNavigationSystem
 	DECLARE_DELEGATE_RetVal_OneParam(double, FDoubleWorldBasedSignature, const UWorld& /*World*/);
 	DECLARE_DELEGATE_TwoParams(FWorldByteBasedSignature, UWorld& /*World*/, uint8 /*Flags*/);
 	DECLARE_DELEGATE_TwoParams(FActorBooleBasedSignature, AActor& /*Actor*/, bool /*bUpdateAttachedActors*/);
-	DECLARE_DELEGATE_ThreeParams(FComponentBoundsChangeSignature, UActorComponent& /*Comp*/, const FBox& /*NewBounds*/, const FBox& /*DirtyArea*/)
 	DECLARE_DELEGATE_RetVal_OneParam(INavigationDataInterface*, FNavDataForPropsSignature, const FNavAgentProperties& /*AgentProperties*/);
 	DECLARE_DELEGATE_RetVal_OneParam(INavigationDataInterface*, FNavDataForActorSignature, const AActor& /*Actor*/);
 	DECLARE_DELEGATE_RetVal(TSubclassOf<AActor>, FNavDataClassFetchSignature);
 	DECLARE_DELEGATE_TwoParams(FWorldBoolBasedSignature, UWorld& /*World*/, const bool /*bShow*/);
 	DECLARE_MULTICAST_DELEGATE_OneParam(FOnNavigationInitSignature, const UNavigationSystemBase&);
 	DECLARE_MULTICAST_DELEGATE_TwoParams(FOnNavAreaGenericEvent, const UWorld&, const UClass*);
+
+	UE_DEPRECATED(5.4, "Use FObjectBoundsChangedSignature delegate taking UObject and list of dirty areas as parameters instead.")
+	DECLARE_DELEGATE_ThreeParams(FComponentBoundsChangeSignature, UActorComponent& /*Comp*/, const FBox& /*NewBounds*/, const FBox& /*DirtyArea*/)
 }
 
 
@@ -276,6 +287,12 @@ protected:
 	static ENGINE_API void SetDefaultObstacleArea(TSubclassOf<UNavAreaBase> InAreaClass);
 
 	static ENGINE_API void ResetEventDelegates();
+
+	static ENGINE_API FNavigationSystem::FObjectBasedSignature& RegisterNavRelevantObjectDelegate();
+	static ENGINE_API FNavigationSystem::FObjectBasedSignature& UpdateNavRelevantObjectDelegate();
+	static ENGINE_API FNavigationSystem::FObjectBasedSignature& UnregisterNavRelevantObjectDelegate();
+	static ENGINE_API FNavigationSystem::FObjectBoundsChangedSignature& OnObjectBoundsChangedDelegate();
+
 	static ENGINE_API FNavigationSystem::FActorBasedSignature& UpdateActorDataDelegate();
 	static ENGINE_API FNavigationSystem::FActorComponentBasedSignature& UpdateComponentDataDelegate();
 	static ENGINE_API FNavigationSystem::FSceneComponentBasedSignature& UpdateComponentDataAfterMoveDelegate();
@@ -293,11 +310,14 @@ protected:
 	static ENGINE_API FNavigationSystem::FNavDataConfigBasedSignature& GetDefaultSupportedAgentDelegate();
 	static ENGINE_API FNavigationSystem::FNavDataConfigAndWorldSignature& GetBiggestSupportedAgentDelegate();
 	static ENGINE_API FNavigationSystem::FActorBooleBasedSignature& UpdateActorAndComponentDataDelegate();
-	static ENGINE_API FNavigationSystem::FComponentBoundsChangeSignature& OnComponentBoundsChangedDelegate();
 	static ENGINE_API FNavigationSystem::FNavDataForActorSignature& GetNavDataForActorDelegate();
 	static ENGINE_API FNavigationSystem::FNavDataClassFetchSignature& GetDefaultNavDataClassDelegate();
 	static ENGINE_API FNavigationSystem::FWorldBoolBasedSignature& VerifyNavigationRenderingComponentsDelegate();
 	static ENGINE_API FNavigationSystem::FWorldBasedSignature& BuildDelegate();
+
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	static ENGINE_API FNavigationSystem::FComponentBoundsChangeSignature& OnComponentBoundsChangedDelegate();
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 #if WITH_EDITOR
 	static ENGINE_API FNavigationSystem::FWorldBasedSignature& OnPIEStartDelegate();
 	static ENGINE_API FNavigationSystem::FWorldBasedSignature& OnPIEEndDelegate();

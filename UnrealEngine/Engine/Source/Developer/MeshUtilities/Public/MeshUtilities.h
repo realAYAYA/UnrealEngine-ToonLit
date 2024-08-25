@@ -48,9 +48,8 @@ namespace ETangentOptions
 	};
 };
 
-class FSignedDistanceFieldBuildMaterialData
+struct FSignedDistanceFieldBuildSectionData
 {
-public:
 	EBlendMode BlendMode = BLEND_Opaque;
 	bool bTwoSided = false;
 	bool bAffectDistanceFieldLighting = true;
@@ -130,8 +129,8 @@ public:
 		const FSourceMeshDataForDerivedDataTask& SourceMeshData,
 		const FStaticMeshLODResources& LODModel,
 		class FQueuedThreadPool& ThreadPool,
-		const TArray<FSignedDistanceFieldBuildMaterialData>& MaterialBlendModes,
-		const FBoxSphereBounds& Bounds,
+		const TArray<FSignedDistanceFieldBuildSectionData>& SectionData,
+		const FBoxSphereBounds3f& Bounds,
 		float DistanceFieldResolutionScale,
 		bool bGenerateAsIfTwoSided,
 		class FDistanceFieldVolumeData& OutData) = 0;
@@ -141,7 +140,7 @@ public:
 		const FSourceMeshDataForDerivedDataTask& SourceMeshData,
 		const FStaticMeshLODResources& LODModel,
 		class FQueuedThreadPool& ThreadPool,
-		const TArray<FSignedDistanceFieldBuildMaterialData>& MaterialBlendModes,
+		const TArray<FSignedDistanceFieldBuildSectionData>& SectionData,
 		const FBoxSphereBounds& Bounds,
 		const class FDistanceFieldVolumeData* DistanceFieldVolumeData,
 		int32 MaxLumenMeshCards,
@@ -203,6 +202,7 @@ public:
 		TArray<FText> * OutWarningMessages = NULL,
 		TArray<FName> * OutWarningNames = NULL
 		) = 0;
+
 	
 	/** Cache optimize the index buffer. */
 	virtual void CacheOptimizeIndexBuffer(TArray<uint16>& Indices) = 0;
@@ -342,6 +342,8 @@ public:
 	/*
 	 * This function create the import data using the LODModel. You can call this function if you load an asset that was not re-import since the build refactor and the chunking is more agressive than the bake data in the LODModel.
 	 * You can also need this function if you create a skeletalmesh with LODModel instead of import data, so your newly created skeletalmesh can be build properly.
+	 * If the LODModel is not being pulled out of the old reduction storage, and bInResetReductionAsNeeded is true, then the reduction settings for that
+	 * LOD will be reset to avoid regenerating the mesh even more reduced.
 	 */
-	virtual void CreateImportDataFromLODModel(USkeletalMesh* SkeletalMesh) const = 0;
+	virtual void CreateImportDataFromLODModel(USkeletalMesh* InSkeletalMesh, bool bInResetReductionAsNeeded = false) const = 0;
 };

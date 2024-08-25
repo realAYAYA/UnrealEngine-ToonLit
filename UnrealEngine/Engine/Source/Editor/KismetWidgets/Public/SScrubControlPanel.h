@@ -43,6 +43,7 @@ public:
 		, _OnSetInputViewRange()
 		, _OnCropAnimSequence()
 		, _OnTickPlayback()
+		, _TransportControlWidgetsToCreate()
 	{}
 		SLATE_ATTRIBUTE( float, Value )
 		SLATE_ATTRIBUTE( uint32, NumOfKeys )
@@ -89,6 +90,12 @@ public:
 		SLATE_EVENT( FOnScrubBarCommit, OnBarCommit )
 		/** Called each frame during playback */
 		SLATE_EVENT( FOnTickPlayback, OnTickPlayback )
+		/**
+		 * Array of custom widgets to create in the Transport Control widget. If this array is used the default widget ordering will be
+		 * ignored in favor of this set of widgets.
+		 */
+		SLATE_ARGUMENT(TOptional<TArray<FTransportControlWidget>>, TransportControlWidgetsToCreate);
+
 	SLATE_END_ARGS()
 
 	/**

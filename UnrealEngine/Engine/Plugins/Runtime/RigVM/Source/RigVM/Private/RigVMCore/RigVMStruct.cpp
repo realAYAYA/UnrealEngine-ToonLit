@@ -130,7 +130,7 @@ FRigVMTemplateTypeMap FRigVMStructUpgradeInfo::GetTypeMapFromStruct(UScriptStruc
 		}
 		
 		const FName PropertyName = It->GetFName();
-		const TRigVMTypeIndex TypeIndex = FRigVMTemplateArgument(*It).GetTypeIndices()[0];
+		const TRigVMTypeIndex TypeIndex = FRigVMTemplateArgument(*It).GetTypeIndex(0);
 		Types.Add(PropertyName, TypeIndex);
 	}
 #endif

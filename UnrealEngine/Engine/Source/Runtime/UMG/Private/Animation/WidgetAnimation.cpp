@@ -259,10 +259,10 @@ UMovieScene* UWidgetAnimation::GetMovieScene() const
 	return MovieScene;
 }
 
-UObject* UWidgetAnimation::CreateDirectorInstance(IMovieScenePlayer& Player, FMovieSceneSequenceID SequenceID)
+UObject* UWidgetAnimation::CreateDirectorInstance(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, FMovieSceneSequenceID SequenceID)
 {
 	// Widget animations do not create separate director instances, but just re-use the UUserWidget from the playback context
-	UUserWidget* WidgetContext = CastChecked<UUserWidget>(Player.GetPlaybackContext());
+	UUserWidget* WidgetContext = CastChecked<UUserWidget>(SharedPlaybackState->GetPlaybackContext());
 	return WidgetContext;
 }
 

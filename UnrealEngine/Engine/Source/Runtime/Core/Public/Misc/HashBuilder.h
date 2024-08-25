@@ -29,7 +29,7 @@ public:
 	template <typename T>
 	typename TEnableIf<TIsPODType<T>::Value, FHashBuilder&>::Type AppendRaw(const T& InData)
 	{
-		AppendRaw(&InData, sizeof(T), Hash);
+		AppendRaw(&InData, sizeof(T));
 		return *this;
 	}
 

@@ -65,16 +65,16 @@ class FByteBufferShader : public FGlobalShader
 		{
 			return FDataDrivenShaderPlatformInfo::GetSupportsByteBufferComputeShaders(Parameters.Platform);
 		}
+		// Don't compile structured buffer size variations unless we need them
+		else if (ResourceType != EByteBufferResourceType::StructuredBuffer && static_cast<EByteBufferStructuredSize>(PermutationVector.Get<StructuredElementSizeDim>()) != EByteBufferStructuredSize::Uint4)
+		{
+			return false;
+		}
 		else
 		{
 			return true;
 		}
 
-		// Don't compile structured buffer size variations unless we need them
-		if (ResourceType != EByteBufferResourceType::StructuredBuffer && static_cast<EByteBufferStructuredSize>(PermutationVector.Get<StructuredElementSizeDim>()) != EByteBufferStructuredSize::Uint4)
-		{
-			return false;
-		}
 	}
 
 	BEGIN_SHADER_PARAMETER_STRUCT( FParameters, )
@@ -548,27 +548,37 @@ FRDGBuffer* ResizeBufferIfNeeded(FRDGBuilder& GraphBuilder, TRefCountPtr<FRDGPoo
 		return InternalBufferNew;
 	}
 
+	const uint32 BufferSizeNew = BufferDesc.GetSize();
+	const uint32 BufferSizeOld = ExternalBuffer->GetCommittedSize();
+
 	FRDGBuffer* InternalBufferOld = GraphBuilder.RegisterExternalBuffer(ExternalBuffer);
 
-	const uint32 BufferSize = BufferDesc.GetSize();
-	const uint32 BufferSizeOld = InternalBufferOld->GetSize();
+	if (BufferSizeNew == BufferSizeOld)
+	{
+		return InternalBufferOld;
+	}
 
-	if (BufferSize != BufferSizeOld)
+	if (EnumHasAllFlags(ExternalBuffer->Desc.Usage, EBufferUsageFlags::ReservedResource)
+		&& ensureMsgf(ExternalBuffer->GetSize() >= BufferSizeNew, TEXT("Reserved buffers can't grow beyond the size specified at creation")))
+	{
+		GraphBuilder.QueueCommitReservedBuffer(InternalBufferOld, BufferSizeNew);
+
+		return InternalBufferOld;
+	}
+	else
 	{
 		InternalBufferNew = GraphBuilder.CreateBuffer(BufferDesc, Name);
 		ExternalBuffer = GraphBuilder.ConvertToExternalBuffer(InternalBufferNew);
 
 		// Copy data to new buffer
 		FMemcpyResourceParams Params;
-		Params.Count = FMath::Min(BufferSize, BufferSizeOld) / BufferDesc.BytesPerElement;
+		Params.Count = FMath::Min(BufferSizeNew, BufferSizeOld) / BufferDesc.BytesPerElement;
 		Params.SrcOffset = 0;
 		Params.DstOffset = 0;
 		MemcpyResource(GraphBuilder, InternalBufferNew, InternalBufferOld, Params);
 
 		return InternalBufferNew;
 	}
-
-	return InternalBufferOld;
 }
 
 FRDGBuffer* ResizeBufferIfNeeded(FRDGBuilder& GraphBuilder, TRefCountPtr<FRDGPooledBuffer>& ExternalBuffer, EPixelFormat Format, uint32 NumElements, const TCHAR* Name)
@@ -1397,14 +1407,14 @@ RENDERCORE_API bool ResizeResourceSOAIfNeeded<FRWBufferStructured>(FRHICommandLi
 {
 	const uint32 BytesPerElement = 16;
 
-	checkf(Params.NumBytes % BytesPerElement == 0, TEXT("NumBytes (%s) must be a multiple of BytesPerElement (%s)"), Params.NumBytes, BytesPerElement);
-	checkf(Buffer.NumBytes % BytesPerElement == 0, TEXT("NumBytes (%s) must be a multiple of BytesPerElement (%s)"), Buffer.NumBytes, BytesPerElement);
+	checkf(Params.NumBytes % BytesPerElement == 0, TEXT("NumBytes (%u) must be a multiple of BytesPerElement (%u)"), Params.NumBytes, BytesPerElement);
+	checkf(Buffer.NumBytes % BytesPerElement == 0, TEXT("NumBytes (%u) must be a multiple of BytesPerElement (%u)"), Buffer.NumBytes, BytesPerElement);
 
 	uint32 NumElements = Params.NumBytes / BytesPerElement;
 	uint32 NumElementsOld = Buffer.NumBytes / BytesPerElement;
 
-	checkf(NumElements % Params.NumArrays == 0, TEXT("NumElements (%s) must be a multiple of NumArrays (%s)"), NumElements, Params.NumArrays);
-	checkf(NumElementsOld % Params.NumArrays == 0, TEXT("NumElements (%s) must be a multiple of NumArrays (%s)"), NumElementsOld, Params.NumArrays);
+	checkf(NumElements % Params.NumArrays == 0, TEXT("NumElements (%u) must be a multiple of NumArrays (%u)"), NumElements, Params.NumArrays);
+	checkf(NumElementsOld % Params.NumArrays == 0, TEXT("NumElements (%u) must be a multiple of NumArrays (%u)"), NumElementsOld, Params.NumArrays);
 
 	if (Buffer.NumBytes == 0)
 	{
@@ -1450,14 +1460,14 @@ RENDERCORE_API bool ResizeResourceSOAIfNeeded(FRDGBuilder& GraphBuilder, FRWBuff
 {
 	const uint32 BytesPerElement = 16;
 
-	checkf(Params.NumBytes % BytesPerElement == 0, TEXT("NumBytes (%s) must be a multiple of BytesPerElement (%s)"), Params.NumBytes, BytesPerElement);
-	checkf(Buffer.NumBytes % BytesPerElement == 0, TEXT("NumBytes (%s) must be a multiple of BytesPerElement (%s)"), Buffer.NumBytes, BytesPerElement);
+	checkf(Params.NumBytes % BytesPerElement == 0, TEXT("NumBytes (%u) must be a multiple of BytesPerElement (%u)"), Params.NumBytes, BytesPerElement);
+	checkf(Buffer.NumBytes % BytesPerElement == 0, TEXT("NumBytes (%u) must be a multiple of BytesPerElement (%u)"), Buffer.NumBytes, BytesPerElement);
 
 	uint32 NumElements = Params.NumBytes / BytesPerElement;
 	uint32 NumElementsOld = Buffer.NumBytes / BytesPerElement;
 
-	checkf(NumElements % Params.NumArrays == 0, TEXT("NumElements (%s) must be a multiple of NumArrays (%s)"), NumElements, Params.NumArrays);
-	checkf(NumElementsOld % Params.NumArrays == 0, TEXT("NumElements (%s) must be a multiple of NumArrays (%s)"), NumElementsOld, Params.NumArrays);
+	checkf(NumElements % Params.NumArrays == 0, TEXT("NumElements (%u) must be a multiple of NumArrays (%u)"), NumElements, Params.NumArrays);
+	checkf(NumElementsOld % Params.NumArrays == 0, TEXT("NumElements (%u) must be a multiple of NumArrays (%u)"), NumElementsOld, Params.NumArrays);
 
 	if (Buffer.NumBytes == 0)
 	{
@@ -1528,7 +1538,7 @@ RENDERCORE_API bool ResizeResourceIfNeeded(FRDGBuilder& GraphBuilder, FRWBufferS
 {
 	const uint32 BytesPerElement = 16;
 
-	checkf((NumBytes % BytesPerElement) == 0, TEXT("NumBytes (%s) must be a multiple of BytesPerElement (%s)"), NumBytes, BytesPerElement);
+	checkf((NumBytes % BytesPerElement) == 0, TEXT("NumBytes (%u) must be a multiple of BytesPerElement (%u)"), NumBytes, BytesPerElement);
 
 	uint32 NumElements = NumBytes / BytesPerElement;
 

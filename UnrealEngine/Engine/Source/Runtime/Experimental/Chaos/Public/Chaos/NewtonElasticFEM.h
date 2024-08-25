@@ -76,7 +76,7 @@ public:
 		PMatrix<T, 3, 3> Result((T)0.);
 		for (int i = 0; i < 3; i++) {
 			for (int c = 0; c < 3; c++) {
-				Result.SetAt(c, i, InParticles.X(Mesh[e][i + 1])[c] - InParticles.X(Mesh[e][0])[c]);
+				Result.SetAt(c, i, InParticles.GetX(Mesh[e][i + 1])[c] - InParticles.GetX(Mesh[e][0])[c]);
 			}
 		}
 		return Result;

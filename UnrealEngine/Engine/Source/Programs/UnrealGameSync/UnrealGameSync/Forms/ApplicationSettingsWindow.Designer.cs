@@ -30,461 +30,436 @@ namespace UnrealGameSync
 		/// </summary>
 		private void InitializeComponent()
 		{
-			this.label1 = new System.Windows.Forms.Label();
-			this.groupBox1 = new System.Windows.Forms.GroupBox();
-			this.tableLayoutPanel1 = new System.Windows.Forms.TableLayoutPanel();
-			this.label2 = new System.Windows.Forms.Label();
-			this.ParallelSyncThreadsSpinner = new System.Windows.Forms.NumericUpDown();
-			this.UserNameTextBox = new UnrealGameSync.TextBoxWithCueBanner();
-			this.ServerTextBox = new UnrealGameSync.TextBoxWithCueBanner();
-			this.label3 = new System.Windows.Forms.Label();
-			this.OkBtn = new System.Windows.Forms.Button();
-			this.CancelBtn = new System.Windows.Forms.Button();
-			this.ViewLogBtn = new System.Windows.Forms.Button();
-			this.groupBox2 = new System.Windows.Forms.GroupBox();
-			this.tableLayoutPanel3 = new System.Windows.Forms.TableLayoutPanel();
-			this.KeepInTrayCheckBox = new System.Windows.Forms.CheckBox();
-			this.AutomaticallyRunAtStartupCheckBox = new System.Windows.Forms.CheckBox();
-			this.groupBox3 = new System.Windows.Forms.GroupBox();
-			this.tableLayoutPanel4 = new System.Windows.Forms.TableLayoutPanel();
-			this.label6 = new System.Windows.Forms.Label();
-			this.tableLayoutPanel5 = new System.Windows.Forms.TableLayoutPanel();
-			this.UsePreviewBuildCheckBox = new System.Windows.Forms.CheckBox();
-			this.DepotPathTextBox = new UnrealGameSync.TextBoxWithCueBanner();
-			this.groupBox4 = new System.Windows.Forms.GroupBox();
-			this.tableLayoutPanel2 = new System.Windows.Forms.TableLayoutPanel();
-			this.EnableProtocolHandlerCheckBox = new System.Windows.Forms.CheckBox();
-			this.flowLayoutPanel1 = new System.Windows.Forms.FlowLayoutPanel();
-			this.EnableAutomationCheckBox = new System.Windows.Forms.CheckBox();
-			this.AutomationPortTextBox = new System.Windows.Forms.TextBox();
-			this.AdvancedBtn = new System.Windows.Forms.Button();
-			this.groupBox5 = new System.Windows.Forms.GroupBox();
-			this.CustomToolsListBox = new System.Windows.Forms.CheckedListBox();
-			this.groupBox1.SuspendLayout();
-			this.tableLayoutPanel1.SuspendLayout();
-			((System.ComponentModel.ISupportInitialize)(this.ParallelSyncThreadsSpinner)).BeginInit();
-			this.groupBox2.SuspendLayout();
-			this.tableLayoutPanel3.SuspendLayout();
-			this.groupBox3.SuspendLayout();
-			this.tableLayoutPanel4.SuspendLayout();
-			this.tableLayoutPanel5.SuspendLayout();
-			this.groupBox4.SuspendLayout();
-			this.tableLayoutPanel2.SuspendLayout();
-			this.flowLayoutPanel1.SuspendLayout();
-			this.groupBox5.SuspendLayout();
-			this.SuspendLayout();
+			label1 = new System.Windows.Forms.Label();
+			groupBox1 = new System.Windows.Forms.GroupBox();
+			tableLayoutPanel1 = new System.Windows.Forms.TableLayoutPanel();
+			tableLayoutPanel6 = new System.Windows.Forms.TableLayoutPanel();
+			ParallelSyncThreadsSpinner = new System.Windows.Forms.NumericUpDown();
+			AdvancedBtn = new System.Windows.Forms.Button();
+			label2 = new System.Windows.Forms.Label();
+			UserNameTextBox = new TextBoxWithCueBanner();
+			ServerTextBox = new TextBoxWithCueBanner();
+			label3 = new System.Windows.Forms.Label();
+			OkBtn = new System.Windows.Forms.Button();
+			CancelBtn = new System.Windows.Forms.Button();
+			ViewLogBtn = new System.Windows.Forms.Button();
+			groupBox2 = new System.Windows.Forms.GroupBox();
+			tableLayoutPanel3 = new System.Windows.Forms.TableLayoutPanel();
+			KeepInTrayCheckBox = new System.Windows.Forms.CheckBox();
+			AutomaticallyRunAtStartupCheckBox = new System.Windows.Forms.CheckBox();
+			groupBox4 = new System.Windows.Forms.GroupBox();
+			tableLayoutPanel2 = new System.Windows.Forms.TableLayoutPanel();
+			EnableProtocolHandlerCheckBox = new System.Windows.Forms.CheckBox();
+			flowLayoutPanel1 = new System.Windows.Forms.FlowLayoutPanel();
+			EnableAutomationCheckBox = new System.Windows.Forms.CheckBox();
+			AutomationPortTextBox = new System.Windows.Forms.TextBox();
+			groupBox5 = new System.Windows.Forms.GroupBox();
+			CustomToolsListBox = new System.Windows.Forms.CheckedListBox();
+			groupBox3 = new System.Windows.Forms.GroupBox();
+			tableLayoutPanel4 = new System.Windows.Forms.TableLayoutPanel();
+			HordeServerTextBox = new TextBoxWithCueBanner();
+			label4 = new System.Windows.Forms.Label();
+			UpdateSettingsBtn = new System.Windows.Forms.Button();
+			groupBox1.SuspendLayout();
+			tableLayoutPanel1.SuspendLayout();
+			tableLayoutPanel6.SuspendLayout();
+			((System.ComponentModel.ISupportInitialize)ParallelSyncThreadsSpinner).BeginInit();
+			groupBox2.SuspendLayout();
+			tableLayoutPanel3.SuspendLayout();
+			groupBox4.SuspendLayout();
+			tableLayoutPanel2.SuspendLayout();
+			flowLayoutPanel1.SuspendLayout();
+			groupBox5.SuspendLayout();
+			groupBox3.SuspendLayout();
+			tableLayoutPanel4.SuspendLayout();
+			SuspendLayout();
 			// 
 			// label1
 			// 
-			this.label1.Anchor = System.Windows.Forms.AnchorStyles.Left;
-			this.label1.AutoSize = true;
-			this.label1.Location = new System.Drawing.Point(3, 9);
-			this.label1.MinimumSize = new System.Drawing.Size(80, 0);
-			this.label1.Name = "label1";
-			this.label1.Size = new System.Drawing.Size(80, 15);
-			this.label1.TabIndex = 0;
-			this.label1.Text = "Server:";
+			label1.Anchor = System.Windows.Forms.AnchorStyles.Left;
+			label1.AutoSize = true;
+			label1.Location = new System.Drawing.Point(3, 9);
+			label1.MinimumSize = new System.Drawing.Size(80, 0);
+			label1.Name = "label1";
+			label1.Size = new System.Drawing.Size(80, 15);
+			label1.TabIndex = 0;
+			label1.Text = "Server:";
 			// 
 			// groupBox1
 			// 
-			this.groupBox1.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left) 
-            | System.Windows.Forms.AnchorStyles.Right)));
-			this.groupBox1.Controls.Add(this.tableLayoutPanel1);
-			this.groupBox1.Location = new System.Drawing.Point(17, 106);
-			this.groupBox1.Name = "groupBox1";
-			this.groupBox1.Size = new System.Drawing.Size(822, 149);
-			this.groupBox1.TabIndex = 1;
-			this.groupBox1.TabStop = false;
-			this.groupBox1.Text = "Default Perforce Settings";
+			groupBox1.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
+			groupBox1.Controls.Add(tableLayoutPanel1);
+			groupBox1.Location = new System.Drawing.Point(17, 179);
+			groupBox1.Name = "groupBox1";
+			groupBox1.Size = new System.Drawing.Size(822, 149);
+			groupBox1.TabIndex = 1;
+			groupBox1.TabStop = false;
+			groupBox1.Text = "Perforce";
 			// 
 			// tableLayoutPanel1
 			// 
-			this.tableLayoutPanel1.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
-			this.tableLayoutPanel1.ColumnCount = 2;
-			this.tableLayoutPanel1.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle());
-			this.tableLayoutPanel1.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
-			this.tableLayoutPanel1.Controls.Add(this.label2, 0, 2);
-			this.tableLayoutPanel1.Controls.Add(this.ParallelSyncThreadsSpinner, 1, 2);
-			this.tableLayoutPanel1.Controls.Add(this.UserNameTextBox, 1, 1);
-			this.tableLayoutPanel1.Controls.Add(this.label1, 0, 0);
-			this.tableLayoutPanel1.Controls.Add(this.ServerTextBox, 1, 0);
-			this.tableLayoutPanel1.Controls.Add(this.label3, 0, 1);
-			this.tableLayoutPanel1.Location = new System.Drawing.Point(22, 27);
-			this.tableLayoutPanel1.Name = "tableLayoutPanel1";
-			this.tableLayoutPanel1.RowCount = 3;
-			this.tableLayoutPanel1.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 33.33333F));
-			this.tableLayoutPanel1.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 33.33333F));
-			this.tableLayoutPanel1.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 33.33333F));
-			this.tableLayoutPanel1.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 20F));
-			this.tableLayoutPanel1.Size = new System.Drawing.Size(787, 102);
-			this.tableLayoutPanel1.TabIndex = 0;
+			tableLayoutPanel1.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
+			tableLayoutPanel1.ColumnCount = 2;
+			tableLayoutPanel1.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 130F));
+			tableLayoutPanel1.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
+			tableLayoutPanel1.Controls.Add(tableLayoutPanel6, 1, 2);
+			tableLayoutPanel1.Controls.Add(label2, 0, 2);
+			tableLayoutPanel1.Controls.Add(UserNameTextBox, 1, 1);
+			tableLayoutPanel1.Controls.Add(label1, 0, 0);
+			tableLayoutPanel1.Controls.Add(ServerTextBox, 1, 0);
+			tableLayoutPanel1.Controls.Add(label3, 0, 1);
+			tableLayoutPanel1.Location = new System.Drawing.Point(22, 27);
+			tableLayoutPanel1.Name = "tableLayoutPanel1";
+			tableLayoutPanel1.RowCount = 3;
+			tableLayoutPanel1.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 33.3333321F));
+			tableLayoutPanel1.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 33.3333321F));
+			tableLayoutPanel1.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 33.3333321F));
+			tableLayoutPanel1.Size = new System.Drawing.Size(787, 102);
+			tableLayoutPanel1.TabIndex = 0;
 			// 
-			// label2
+			// tableLayoutPanel6
 			// 
-			this.label2.Anchor = System.Windows.Forms.AnchorStyles.Left;
-			this.label2.AutoSize = true;
-			this.label2.Location = new System.Drawing.Point(3, 77);
-			this.label2.Margin = new System.Windows.Forms.Padding(3, 0, 10, 0);
-			this.label2.MinimumSize = new System.Drawing.Size(80, 0);
-			this.label2.Name = "label2";
-			this.label2.Size = new System.Drawing.Size(117, 15);
-			this.label2.TabIndex = 4;
-			this.label2.Text = "Parallel sync threads:";
+			tableLayoutPanel6.ColumnCount = 3;
+			tableLayoutPanel6.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle());
+			tableLayoutPanel6.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
+			tableLayoutPanel6.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle());
+			tableLayoutPanel6.Controls.Add(ParallelSyncThreadsSpinner, 0, 0);
+			tableLayoutPanel6.Controls.Add(AdvancedBtn, 2, 0);
+			tableLayoutPanel6.Location = new System.Drawing.Point(130, 66);
+			tableLayoutPanel6.Margin = new System.Windows.Forms.Padding(0);
+			tableLayoutPanel6.Name = "tableLayoutPanel6";
+			tableLayoutPanel6.RowCount = 1;
+			tableLayoutPanel6.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
+			tableLayoutPanel6.Size = new System.Drawing.Size(657, 36);
+			tableLayoutPanel6.TabIndex = 9;
 			// 
 			// ParallelSyncThreadsSpinner
 			// 
-			this.ParallelSyncThreadsSpinner.Anchor = System.Windows.Forms.AnchorStyles.Left;
-			this.ParallelSyncThreadsSpinner.Location = new System.Drawing.Point(133, 73);
-			this.ParallelSyncThreadsSpinner.Maximum = new decimal(new int[] {
-            8,
-            0,
-            0,
-            0});
-			this.ParallelSyncThreadsSpinner.Minimum = new decimal(new int[] {
-            1,
-            0,
-            0,
-            0});
-			this.ParallelSyncThreadsSpinner.Name = "ParallelSyncThreadsSpinner";
-			this.ParallelSyncThreadsSpinner.Size = new System.Drawing.Size(163, 23);
-			this.ParallelSyncThreadsSpinner.TabIndex = 3;
-			this.ParallelSyncThreadsSpinner.Value = new decimal(new int[] {
-            1,
-            0,
-            0,
-            0});
-			// 
-			// UserNameTextBox
-			// 
-			this.UserNameTextBox.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right)));
-			this.UserNameTextBox.CueBanner = "Default";
-			this.UserNameTextBox.Location = new System.Drawing.Point(133, 39);
-			this.UserNameTextBox.Name = "UserNameTextBox";
-			this.UserNameTextBox.Size = new System.Drawing.Size(651, 23);
-			this.UserNameTextBox.TabIndex = 1;
-			// 
-			// ServerTextBox
-			// 
-			this.ServerTextBox.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right)));
-			this.ServerTextBox.CueBanner = "Default";
-			this.ServerTextBox.Location = new System.Drawing.Point(133, 5);
-			this.ServerTextBox.Name = "ServerTextBox";
-			this.ServerTextBox.Size = new System.Drawing.Size(651, 23);
-			this.ServerTextBox.TabIndex = 0;
-			// 
-			// label3
-			// 
-			this.label3.Anchor = System.Windows.Forms.AnchorStyles.Left;
-			this.label3.AutoSize = true;
-			this.label3.Location = new System.Drawing.Point(3, 43);
-			this.label3.Margin = new System.Windows.Forms.Padding(3, 0, 10, 0);
-			this.label3.Name = "label3";
-			this.label3.Size = new System.Drawing.Size(33, 15);
-			this.label3.TabIndex = 2;
-			this.label3.Text = "User:";
-			// 
-			// OkBtn
-			// 
-			this.OkBtn.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
-			this.OkBtn.Location = new System.Drawing.Point(661, 608);
-			this.OkBtn.Name = "OkBtn";
-			this.OkBtn.Size = new System.Drawing.Size(89, 27);
-			this.OkBtn.TabIndex = 2;
-			this.OkBtn.Text = "Ok";
-			this.OkBtn.UseVisualStyleBackColor = true;
-			this.OkBtn.Click += new System.EventHandler(this.OkBtn_Click);
-			// 
-			// CancelBtn
-			// 
-			this.CancelBtn.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right)));
-			this.CancelBtn.DialogResult = System.Windows.Forms.DialogResult.Cancel;
-			this.CancelBtn.Location = new System.Drawing.Point(756, 608);
-			this.CancelBtn.Name = "CancelBtn";
-			this.CancelBtn.Size = new System.Drawing.Size(89, 27);
-			this.CancelBtn.TabIndex = 3;
-			this.CancelBtn.Text = "Cancel";
-			this.CancelBtn.UseVisualStyleBackColor = true;
-			this.CancelBtn.Click += new System.EventHandler(this.CancelBtn_Click);
-			// 
-			// ViewLogBtn
-			// 
-			this.ViewLogBtn.Location = new System.Drawing.Point(0, 0);
-			this.ViewLogBtn.Name = "ViewLogBtn";
-			this.ViewLogBtn.Size = new System.Drawing.Size(75, 23);
-			this.ViewLogBtn.TabIndex = 0;
-			// 
-			// groupBox2
-			// 
-			this.groupBox2.Controls.Add(this.tableLayoutPanel3);
-			this.groupBox2.Location = new System.Drawing.Point(17, 12);
-			this.groupBox2.Name = "groupBox2";
-			this.groupBox2.Size = new System.Drawing.Size(822, 88);
-			this.groupBox2.TabIndex = 0;
-			this.groupBox2.TabStop = false;
-			this.groupBox2.Text = "Startup and Shutdown";
-			// 
-			// tableLayoutPanel3
-			// 
-			this.tableLayoutPanel3.ColumnCount = 1;
-			this.tableLayoutPanel3.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 50F));
-			this.tableLayoutPanel3.Controls.Add(this.KeepInTrayCheckBox, 0, 1);
-			this.tableLayoutPanel3.Controls.Add(this.AutomaticallyRunAtStartupCheckBox, 0, 0);
-			this.tableLayoutPanel3.Location = new System.Drawing.Point(22, 24);
-			this.tableLayoutPanel3.Name = "tableLayoutPanel3";
-			this.tableLayoutPanel3.RowCount = 2;
-			this.tableLayoutPanel3.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 50F));
-			this.tableLayoutPanel3.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 50F));
-			this.tableLayoutPanel3.Size = new System.Drawing.Size(787, 52);
-			this.tableLayoutPanel3.TabIndex = 6;
-			// 
-			// KeepInTrayCheckBox
-			// 
-			this.KeepInTrayCheckBox.Anchor = System.Windows.Forms.AnchorStyles.Left;
-			this.KeepInTrayCheckBox.AutoSize = true;
-			this.KeepInTrayCheckBox.Location = new System.Drawing.Point(3, 29);
-			this.KeepInTrayCheckBox.Name = "KeepInTrayCheckBox";
-			this.KeepInTrayCheckBox.Size = new System.Drawing.Size(377, 19);
-			this.KeepInTrayCheckBox.TabIndex = 1;
-			this.KeepInTrayCheckBox.Text = "Keep program running in the system notification area when closed";
-			this.KeepInTrayCheckBox.UseVisualStyleBackColor = true;
-			// 
-			// AutomaticallyRunAtStartupCheckBox
-			// 
-			this.AutomaticallyRunAtStartupCheckBox.Anchor = System.Windows.Forms.AnchorStyles.Left;
-			this.AutomaticallyRunAtStartupCheckBox.AutoSize = true;
-			this.AutomaticallyRunAtStartupCheckBox.Location = new System.Drawing.Point(3, 3);
-			this.AutomaticallyRunAtStartupCheckBox.Name = "AutomaticallyRunAtStartupCheckBox";
-			this.AutomaticallyRunAtStartupCheckBox.Size = new System.Drawing.Size(174, 19);
-			this.AutomaticallyRunAtStartupCheckBox.TabIndex = 0;
-			this.AutomaticallyRunAtStartupCheckBox.Text = "Automatically run at startup";
-			this.AutomaticallyRunAtStartupCheckBox.UseVisualStyleBackColor = true;
-			// 
-			// groupBox3
-			// 
-			this.groupBox3.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left) 
-            | System.Windows.Forms.AnchorStyles.Right)));
-			this.groupBox3.Controls.Add(this.tableLayoutPanel4);
-			this.groupBox3.Location = new System.Drawing.Point(17, 261);
-			this.groupBox3.Name = "groupBox3";
-			this.groupBox3.Size = new System.Drawing.Size(822, 77);
-			this.groupBox3.TabIndex = 4;
-			this.groupBox3.TabStop = false;
-			this.groupBox3.Text = "Updates";
-			// 
-			// tableLayoutPanel4
-			// 
-			this.tableLayoutPanel4.ColumnCount = 2;
-			this.tableLayoutPanel4.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle());
-			this.tableLayoutPanel4.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
-			this.tableLayoutPanel4.Controls.Add(this.label6, 0, 0);
-			this.tableLayoutPanel4.Controls.Add(this.tableLayoutPanel5, 1, 0);
-			this.tableLayoutPanel4.Location = new System.Drawing.Point(22, 27);
-			this.tableLayoutPanel4.Name = "tableLayoutPanel4";
-			this.tableLayoutPanel4.RowCount = 1;
-			this.tableLayoutPanel4.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
-			this.tableLayoutPanel4.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 34F));
-			this.tableLayoutPanel4.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Absolute, 34F));
-			this.tableLayoutPanel4.Size = new System.Drawing.Size(787, 34);
-			this.tableLayoutPanel4.TabIndex = 0;
-			// 
-			// label6
-			// 
-			this.label6.Anchor = System.Windows.Forms.AnchorStyles.Left;
-			this.label6.Location = new System.Drawing.Point(3, 10);
-			this.label6.MinimumSize = new System.Drawing.Size(80, 0);
-			this.label6.Name = "label6";
-			this.label6.Size = new System.Drawing.Size(80, 13);
-			this.label6.TabIndex = 4;
-			this.label6.Text = "Depot Path:";
-			// 
-			// tableLayoutPanel5
-			// 
-			this.tableLayoutPanel5.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right)));
-			this.tableLayoutPanel5.ColumnCount = 2;
-			this.tableLayoutPanel5.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
-			this.tableLayoutPanel5.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle());
-			this.tableLayoutPanel5.Controls.Add(this.UsePreviewBuildCheckBox, 1, 0);
-			this.tableLayoutPanel5.Controls.Add(this.DepotPathTextBox, 0, 0);
-			this.tableLayoutPanel5.Location = new System.Drawing.Point(86, 2);
-			this.tableLayoutPanel5.Margin = new System.Windows.Forms.Padding(0);
-			this.tableLayoutPanel5.Name = "tableLayoutPanel5";
-			this.tableLayoutPanel5.RowCount = 1;
-			this.tableLayoutPanel5.RowStyles.Add(new System.Windows.Forms.RowStyle());
-			this.tableLayoutPanel5.Size = new System.Drawing.Size(701, 29);
-			this.tableLayoutPanel5.TabIndex = 5;
-			// 
-			// UseUnstableBuildCheckBox
-			// 
-			this.UsePreviewBuildCheckBox.Anchor = System.Windows.Forms.AnchorStyles.Right;
-			this.UsePreviewBuildCheckBox.AutoSize = true;
-			this.UsePreviewBuildCheckBox.Location = new System.Drawing.Point(574, 5);
-			this.UsePreviewBuildCheckBox.Margin = new System.Windows.Forms.Padding(10, 3, 3, 3);
-			this.UsePreviewBuildCheckBox.Name = "UsePreviewBuildCheckBox";
-			this.UsePreviewBuildCheckBox.Size = new System.Drawing.Size(124, 19);
-			this.UsePreviewBuildCheckBox.TabIndex = 1;
-			this.UsePreviewBuildCheckBox.Text = "Use Preview Build";
-			this.UsePreviewBuildCheckBox.UseVisualStyleBackColor = true;
-			// 
-			// DepotPathTextBox
-			// 
-			this.DepotPathTextBox.Anchor = ((System.Windows.Forms.AnchorStyles)(((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Left) 
-            | System.Windows.Forms.AnchorStyles.Right)));
-			this.DepotPathTextBox.CueBanner = null;
-			this.DepotPathTextBox.Location = new System.Drawing.Point(3, 3);
-			this.DepotPathTextBox.Name = "DepotPathTextBox";
-			this.DepotPathTextBox.Size = new System.Drawing.Size(558, 23);
-			this.DepotPathTextBox.TabIndex = 0;
-			// 
-			// groupBox4
-			// 
-			this.groupBox4.Controls.Add(this.tableLayoutPanel2);
-			this.groupBox4.Location = new System.Drawing.Point(17, 344);
-			this.groupBox4.Name = "groupBox4";
-			this.groupBox4.Size = new System.Drawing.Size(822, 95);
-			this.groupBox4.TabIndex = 5;
-			this.groupBox4.TabStop = false;
-			this.groupBox4.Text = "Integration";
-			// 
-			// tableLayoutPanel2
-			// 
-			this.tableLayoutPanel2.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
-            | System.Windows.Forms.AnchorStyles.Left) 
-            | System.Windows.Forms.AnchorStyles.Right)));
-			this.tableLayoutPanel2.ColumnCount = 1;
-			this.tableLayoutPanel2.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
-			this.tableLayoutPanel2.Controls.Add(this.EnableProtocolHandlerCheckBox, 0, 1);
-			this.tableLayoutPanel2.Controls.Add(this.flowLayoutPanel1, 0, 0);
-			this.tableLayoutPanel2.Location = new System.Drawing.Point(18, 23);
-			this.tableLayoutPanel2.Name = "tableLayoutPanel2";
-			this.tableLayoutPanel2.RowCount = 2;
-			this.tableLayoutPanel2.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 25.00062F));
-			this.tableLayoutPanel2.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 25.00062F));
-			this.tableLayoutPanel2.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 25.00062F));
-			this.tableLayoutPanel2.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 24.99813F));
-			this.tableLayoutPanel2.Size = new System.Drawing.Size(787, 58);
-			this.tableLayoutPanel2.TabIndex = 7;
-			// 
-			// EnableProtocolHandlerCheckBox
-			// 
-			this.EnableProtocolHandlerCheckBox.Anchor = System.Windows.Forms.AnchorStyles.Left;
-			this.EnableProtocolHandlerCheckBox.AutoSize = true;
-			this.EnableProtocolHandlerCheckBox.Location = new System.Drawing.Point(3, 34);
-			this.EnableProtocolHandlerCheckBox.Name = "EnableProtocolHandlerCheckBox";
-			this.EnableProtocolHandlerCheckBox.Size = new System.Drawing.Size(197, 19);
-			this.EnableProtocolHandlerCheckBox.TabIndex = 0;
-			this.EnableProtocolHandlerCheckBox.Text = "Enable \"ugs://\" protocol handler for all users";
-			this.EnableProtocolHandlerCheckBox.UseVisualStyleBackColor = true;
-			// 
-			// flowLayoutPanel1
-			// 
-			this.flowLayoutPanel1.Anchor = System.Windows.Forms.AnchorStyles.Left;
-			this.flowLayoutPanel1.AutoSize = true;
-			this.flowLayoutPanel1.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
-			this.flowLayoutPanel1.Controls.Add(this.EnableAutomationCheckBox);
-			this.flowLayoutPanel1.Controls.Add(this.AutomationPortTextBox);
-			this.flowLayoutPanel1.Location = new System.Drawing.Point(0, 1);
-			this.flowLayoutPanel1.Margin = new System.Windows.Forms.Padding(0);
-			this.flowLayoutPanel1.Name = "flowLayoutPanel1";
-			this.flowLayoutPanel1.Size = new System.Drawing.Size(281, 26);
-			this.flowLayoutPanel1.TabIndex = 2;
-			// 
-			// EnableAutomationCheckBox
-			// 
-			this.EnableAutomationCheckBox.Anchor = System.Windows.Forms.AnchorStyles.Left;
-			this.EnableAutomationCheckBox.AutoSize = true;
-			this.EnableAutomationCheckBox.Location = new System.Drawing.Point(3, 3);
-			this.EnableAutomationCheckBox.Name = "EnableAutomationCheckBox";
-			this.EnableAutomationCheckBox.Size = new System.Drawing.Size(169, 19);
-			this.EnableAutomationCheckBox.TabIndex = 0;
-			this.EnableAutomationCheckBox.Text = "Enable automation via port";
-			this.EnableAutomationCheckBox.UseVisualStyleBackColor = true;
-			this.EnableAutomationCheckBox.CheckedChanged += new System.EventHandler(this.EnableAutomationCheckBox_CheckedChanged);
-			// 
-			// AutomationPortTextBox
-			// 
-			this.AutomationPortTextBox.Anchor = System.Windows.Forms.AnchorStyles.Left;
-			this.AutomationPortTextBox.Location = new System.Drawing.Point(178, 0);
-			this.AutomationPortTextBox.Margin = new System.Windows.Forms.Padding(3, 0, 3, 3);
-			this.AutomationPortTextBox.Name = "AutomationPortTextBox";
-			this.AutomationPortTextBox.Size = new System.Drawing.Size(100, 23);
-			this.AutomationPortTextBox.TabIndex = 1;
+			ParallelSyncThreadsSpinner.Anchor = System.Windows.Forms.AnchorStyles.Left;
+			ParallelSyncThreadsSpinner.Location = new System.Drawing.Point(3, 6);
+			ParallelSyncThreadsSpinner.Maximum = new decimal(new int[] { 8, 0, 0, 0 });
+			ParallelSyncThreadsSpinner.Minimum = new decimal(new int[] { 1, 0, 0, 0 });
+			ParallelSyncThreadsSpinner.Name = "ParallelSyncThreadsSpinner";
+			ParallelSyncThreadsSpinner.Size = new System.Drawing.Size(163, 23);
+			ParallelSyncThreadsSpinner.TabIndex = 3;
+			ParallelSyncThreadsSpinner.Value = new decimal(new int[] { 1, 0, 0, 0 });
 			// 
 			// AdvancedBtn
 			// 
-			this.AdvancedBtn.Anchor = ((System.Windows.Forms.AnchorStyles)((System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left)));
-			this.AdvancedBtn.Location = new System.Drawing.Point(17, 608);
-			this.AdvancedBtn.Name = "AdvancedBtn";
-			this.AdvancedBtn.Size = new System.Drawing.Size(105, 27);
-			this.AdvancedBtn.TabIndex = 6;
-			this.AdvancedBtn.Text = "Advanced";
-			this.AdvancedBtn.UseVisualStyleBackColor = true;
-			this.AdvancedBtn.Click += new System.EventHandler(this.AdvancedBtn_Click);
+			AdvancedBtn.Anchor = System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left;
+			AdvancedBtn.Location = new System.Drawing.Point(512, 6);
+			AdvancedBtn.Name = "AdvancedBtn";
+			AdvancedBtn.Size = new System.Drawing.Size(142, 27);
+			AdvancedBtn.TabIndex = 6;
+			AdvancedBtn.Text = "Advanced...";
+			AdvancedBtn.UseVisualStyleBackColor = true;
+			AdvancedBtn.Click += AdvancedBtn_Click;
+			// 
+			// label2
+			// 
+			label2.Anchor = System.Windows.Forms.AnchorStyles.Left;
+			label2.AutoSize = true;
+			label2.Location = new System.Drawing.Point(3, 76);
+			label2.Margin = new System.Windows.Forms.Padding(3, 0, 10, 0);
+			label2.MinimumSize = new System.Drawing.Size(80, 0);
+			label2.Name = "label2";
+			label2.Size = new System.Drawing.Size(117, 15);
+			label2.TabIndex = 4;
+			label2.Text = "Parallel sync threads:";
+			// 
+			// UserNameTextBox
+			// 
+			UserNameTextBox.Anchor = System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
+			UserNameTextBox.CueBanner = "Default";
+			UserNameTextBox.Location = new System.Drawing.Point(133, 38);
+			UserNameTextBox.Name = "UserNameTextBox";
+			UserNameTextBox.Size = new System.Drawing.Size(651, 23);
+			UserNameTextBox.TabIndex = 1;
+			// 
+			// ServerTextBox
+			// 
+			ServerTextBox.Anchor = System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
+			ServerTextBox.CueBanner = "Default";
+			ServerTextBox.Location = new System.Drawing.Point(133, 5);
+			ServerTextBox.Name = "ServerTextBox";
+			ServerTextBox.Size = new System.Drawing.Size(651, 23);
+			ServerTextBox.TabIndex = 0;
+			// 
+			// label3
+			// 
+			label3.Anchor = System.Windows.Forms.AnchorStyles.Left;
+			label3.AutoSize = true;
+			label3.Location = new System.Drawing.Point(3, 42);
+			label3.Margin = new System.Windows.Forms.Padding(3, 0, 10, 0);
+			label3.Name = "label3";
+			label3.Size = new System.Drawing.Size(33, 15);
+			label3.TabIndex = 2;
+			label3.Text = "User:";
+			// 
+			// OkBtn
+			// 
+			OkBtn.Anchor = System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right;
+			OkBtn.Location = new System.Drawing.Point(655, 592);
+			OkBtn.Name = "OkBtn";
+			OkBtn.Size = new System.Drawing.Size(89, 27);
+			OkBtn.TabIndex = 2;
+			OkBtn.Text = "Ok";
+			OkBtn.UseVisualStyleBackColor = true;
+			OkBtn.Click += OkBtn_Click;
+			// 
+			// CancelBtn
+			// 
+			CancelBtn.Anchor = System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Right;
+			CancelBtn.DialogResult = System.Windows.Forms.DialogResult.Cancel;
+			CancelBtn.Location = new System.Drawing.Point(750, 592);
+			CancelBtn.Name = "CancelBtn";
+			CancelBtn.Size = new System.Drawing.Size(89, 27);
+			CancelBtn.TabIndex = 3;
+			CancelBtn.Text = "Cancel";
+			CancelBtn.UseVisualStyleBackColor = true;
+			CancelBtn.Click += CancelBtn_Click;
+			// 
+			// ViewLogBtn
+			// 
+			ViewLogBtn.Location = new System.Drawing.Point(0, 0);
+			ViewLogBtn.Name = "ViewLogBtn";
+			ViewLogBtn.Size = new System.Drawing.Size(75, 23);
+			ViewLogBtn.TabIndex = 0;
+			// 
+			// groupBox2
+			// 
+			groupBox2.Controls.Add(tableLayoutPanel3);
+			groupBox2.Location = new System.Drawing.Point(17, 12);
+			groupBox2.Name = "groupBox2";
+			groupBox2.Size = new System.Drawing.Size(822, 88);
+			groupBox2.TabIndex = 0;
+			groupBox2.TabStop = false;
+			groupBox2.Text = "Startup and Shutdown";
+			// 
+			// tableLayoutPanel3
+			// 
+			tableLayoutPanel3.ColumnCount = 1;
+			tableLayoutPanel3.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 50F));
+			tableLayoutPanel3.Controls.Add(KeepInTrayCheckBox, 0, 1);
+			tableLayoutPanel3.Controls.Add(AutomaticallyRunAtStartupCheckBox, 0, 0);
+			tableLayoutPanel3.Location = new System.Drawing.Point(22, 24);
+			tableLayoutPanel3.Name = "tableLayoutPanel3";
+			tableLayoutPanel3.RowCount = 2;
+			tableLayoutPanel3.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 50F));
+			tableLayoutPanel3.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 50F));
+			tableLayoutPanel3.Size = new System.Drawing.Size(787, 52);
+			tableLayoutPanel3.TabIndex = 6;
+			// 
+			// KeepInTrayCheckBox
+			// 
+			KeepInTrayCheckBox.Anchor = System.Windows.Forms.AnchorStyles.Left;
+			KeepInTrayCheckBox.AutoSize = true;
+			KeepInTrayCheckBox.Location = new System.Drawing.Point(3, 29);
+			KeepInTrayCheckBox.Name = "KeepInTrayCheckBox";
+			KeepInTrayCheckBox.Size = new System.Drawing.Size(377, 19);
+			KeepInTrayCheckBox.TabIndex = 1;
+			KeepInTrayCheckBox.Text = "Keep program running in the system notification area when closed";
+			KeepInTrayCheckBox.UseVisualStyleBackColor = true;
+			// 
+			// AutomaticallyRunAtStartupCheckBox
+			// 
+			AutomaticallyRunAtStartupCheckBox.Anchor = System.Windows.Forms.AnchorStyles.Left;
+			AutomaticallyRunAtStartupCheckBox.AutoSize = true;
+			AutomaticallyRunAtStartupCheckBox.Location = new System.Drawing.Point(3, 3);
+			AutomaticallyRunAtStartupCheckBox.Name = "AutomaticallyRunAtStartupCheckBox";
+			AutomaticallyRunAtStartupCheckBox.Size = new System.Drawing.Size(174, 19);
+			AutomaticallyRunAtStartupCheckBox.TabIndex = 0;
+			AutomaticallyRunAtStartupCheckBox.Text = "Automatically run at startup";
+			AutomaticallyRunAtStartupCheckBox.UseVisualStyleBackColor = true;
+			// 
+			// groupBox4
+			// 
+			groupBox4.Controls.Add(tableLayoutPanel2);
+			groupBox4.Location = new System.Drawing.Point(17, 334);
+			groupBox4.Name = "groupBox4";
+			groupBox4.Size = new System.Drawing.Size(822, 95);
+			groupBox4.TabIndex = 5;
+			groupBox4.TabStop = false;
+			groupBox4.Text = "Integration";
+			// 
+			// tableLayoutPanel2
+			// 
+			tableLayoutPanel2.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
+			tableLayoutPanel2.ColumnCount = 1;
+			tableLayoutPanel2.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
+			tableLayoutPanel2.Controls.Add(EnableProtocolHandlerCheckBox, 0, 1);
+			tableLayoutPanel2.Controls.Add(flowLayoutPanel1, 0, 0);
+			tableLayoutPanel2.Location = new System.Drawing.Point(18, 23);
+			tableLayoutPanel2.Name = "tableLayoutPanel2";
+			tableLayoutPanel2.RowCount = 2;
+			tableLayoutPanel2.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 25.00062F));
+			tableLayoutPanel2.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 25.00062F));
+			tableLayoutPanel2.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 25.00062F));
+			tableLayoutPanel2.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 24.99813F));
+			tableLayoutPanel2.Size = new System.Drawing.Size(787, 58);
+			tableLayoutPanel2.TabIndex = 7;
+			// 
+			// EnableProtocolHandlerCheckBox
+			// 
+			EnableProtocolHandlerCheckBox.Anchor = System.Windows.Forms.AnchorStyles.Left;
+			EnableProtocolHandlerCheckBox.AutoSize = true;
+			EnableProtocolHandlerCheckBox.Location = new System.Drawing.Point(3, 34);
+			EnableProtocolHandlerCheckBox.Name = "EnableProtocolHandlerCheckBox";
+			EnableProtocolHandlerCheckBox.Size = new System.Drawing.Size(260, 19);
+			EnableProtocolHandlerCheckBox.TabIndex = 0;
+			EnableProtocolHandlerCheckBox.Text = "Enable \"ugs://\" protocol handler for all users";
+			EnableProtocolHandlerCheckBox.UseVisualStyleBackColor = true;
+			// 
+			// flowLayoutPanel1
+			// 
+			flowLayoutPanel1.Anchor = System.Windows.Forms.AnchorStyles.Left;
+			flowLayoutPanel1.AutoSize = true;
+			flowLayoutPanel1.AutoSizeMode = System.Windows.Forms.AutoSizeMode.GrowAndShrink;
+			flowLayoutPanel1.Controls.Add(EnableAutomationCheckBox);
+			flowLayoutPanel1.Controls.Add(AutomationPortTextBox);
+			flowLayoutPanel1.Location = new System.Drawing.Point(0, 1);
+			flowLayoutPanel1.Margin = new System.Windows.Forms.Padding(0);
+			flowLayoutPanel1.Name = "flowLayoutPanel1";
+			flowLayoutPanel1.Size = new System.Drawing.Size(281, 26);
+			flowLayoutPanel1.TabIndex = 2;
+			// 
+			// EnableAutomationCheckBox
+			// 
+			EnableAutomationCheckBox.Anchor = System.Windows.Forms.AnchorStyles.Left;
+			EnableAutomationCheckBox.AutoSize = true;
+			EnableAutomationCheckBox.Location = new System.Drawing.Point(3, 3);
+			EnableAutomationCheckBox.Name = "EnableAutomationCheckBox";
+			EnableAutomationCheckBox.Size = new System.Drawing.Size(169, 19);
+			EnableAutomationCheckBox.TabIndex = 0;
+			EnableAutomationCheckBox.Text = "Enable automation via port";
+			EnableAutomationCheckBox.UseVisualStyleBackColor = true;
+			EnableAutomationCheckBox.CheckedChanged += EnableAutomationCheckBox_CheckedChanged;
+			// 
+			// AutomationPortTextBox
+			// 
+			AutomationPortTextBox.Anchor = System.Windows.Forms.AnchorStyles.Left;
+			AutomationPortTextBox.Location = new System.Drawing.Point(178, 0);
+			AutomationPortTextBox.Margin = new System.Windows.Forms.Padding(3, 0, 3, 3);
+			AutomationPortTextBox.Name = "AutomationPortTextBox";
+			AutomationPortTextBox.Size = new System.Drawing.Size(100, 23);
+			AutomationPortTextBox.TabIndex = 1;
 			// 
 			// groupBox5
 			// 
-			this.groupBox5.Controls.Add(this.CustomToolsListBox);
-			this.groupBox5.Location = new System.Drawing.Point(17, 445);
-			this.groupBox5.Name = "groupBox5";
-			this.groupBox5.Size = new System.Drawing.Size(822, 142);
-			this.groupBox5.TabIndex = 7;
-			this.groupBox5.TabStop = false;
-			this.groupBox5.Text = "Custom Tools";
+			groupBox5.Controls.Add(CustomToolsListBox);
+			groupBox5.Location = new System.Drawing.Point(17, 435);
+			groupBox5.Name = "groupBox5";
+			groupBox5.Size = new System.Drawing.Size(822, 142);
+			groupBox5.TabIndex = 7;
+			groupBox5.TabStop = false;
+			groupBox5.Text = "Custom Tools";
 			// 
 			// CustomToolsListBox
 			// 
-			this.CustomToolsListBox.Anchor = ((System.Windows.Forms.AnchorStyles)((((System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom) 
-            | System.Windows.Forms.AnchorStyles.Left) 
-            | System.Windows.Forms.AnchorStyles.Right)));
-			this.CustomToolsListBox.CheckOnClick = true;
-			this.CustomToolsListBox.FormattingEnabled = true;
-			this.CustomToolsListBox.IntegralHeight = false;
-			this.CustomToolsListBox.Location = new System.Drawing.Point(18, 23);
-			this.CustomToolsListBox.Name = "CustomToolsListBox";
-			this.CustomToolsListBox.Size = new System.Drawing.Size(787, 100);
-			this.CustomToolsListBox.Sorted = true;
-			this.CustomToolsListBox.TabIndex = 0;
+			CustomToolsListBox.Anchor = System.Windows.Forms.AnchorStyles.Top | System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
+			CustomToolsListBox.CheckOnClick = true;
+			CustomToolsListBox.FormattingEnabled = true;
+			CustomToolsListBox.IntegralHeight = false;
+			CustomToolsListBox.Location = new System.Drawing.Point(18, 23);
+			CustomToolsListBox.Name = "CustomToolsListBox";
+			CustomToolsListBox.Size = new System.Drawing.Size(787, 100);
+			CustomToolsListBox.TabIndex = 0;
+			CustomToolsListBox.ItemCheck += CustomToolsListBox_ItemCheck;
+			// 
+			// groupBox3
+			// 
+			groupBox3.Controls.Add(tableLayoutPanel4);
+			groupBox3.Location = new System.Drawing.Point(17, 106);
+			groupBox3.Name = "groupBox3";
+			groupBox3.Size = new System.Drawing.Size(822, 67);
+			groupBox3.TabIndex = 8;
+			groupBox3.TabStop = false;
+			groupBox3.Text = "Horde";
+			// 
+			// tableLayoutPanel4
+			// 
+			tableLayoutPanel4.ColumnCount = 2;
+			tableLayoutPanel4.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Absolute, 130F));
+			tableLayoutPanel4.ColumnStyles.Add(new System.Windows.Forms.ColumnStyle(System.Windows.Forms.SizeType.Percent, 100F));
+			tableLayoutPanel4.Controls.Add(HordeServerTextBox, 1, 0);
+			tableLayoutPanel4.Controls.Add(label4, 0, 0);
+			tableLayoutPanel4.Location = new System.Drawing.Point(22, 22);
+			tableLayoutPanel4.Name = "tableLayoutPanel4";
+			tableLayoutPanel4.RowCount = 1;
+			tableLayoutPanel4.RowStyles.Add(new System.Windows.Forms.RowStyle(System.Windows.Forms.SizeType.Percent, 100F));
+			tableLayoutPanel4.Size = new System.Drawing.Size(788, 30);
+			tableLayoutPanel4.TabIndex = 0;
+			// 
+			// HordeServerTextBox
+			// 
+			HordeServerTextBox.Anchor = System.Windows.Forms.AnchorStyles.Left | System.Windows.Forms.AnchorStyles.Right;
+			HordeServerTextBox.CueBanner = "Default";
+			HordeServerTextBox.Location = new System.Drawing.Point(133, 3);
+			HordeServerTextBox.Name = "HordeServerTextBox";
+			HordeServerTextBox.Size = new System.Drawing.Size(652, 23);
+			HordeServerTextBox.TabIndex = 1;
+			// 
+			// label4
+			// 
+			label4.Anchor = System.Windows.Forms.AnchorStyles.Left;
+			label4.AutoSize = true;
+			label4.Location = new System.Drawing.Point(3, 7);
+			label4.Name = "label4";
+			label4.Size = new System.Drawing.Size(42, 15);
+			label4.TabIndex = 0;
+			label4.Text = "Server:";
+			// 
+			// UpdateSettingsBtn
+			// 
+			UpdateSettingsBtn.Anchor = System.Windows.Forms.AnchorStyles.Bottom | System.Windows.Forms.AnchorStyles.Left;
+			UpdateSettingsBtn.Location = new System.Drawing.Point(17, 592);
+			UpdateSettingsBtn.Name = "UpdateSettingsBtn";
+			UpdateSettingsBtn.Size = new System.Drawing.Size(142, 27);
+			UpdateSettingsBtn.TabIndex = 9;
+			UpdateSettingsBtn.Text = "Update Settings...";
+			UpdateSettingsBtn.UseVisualStyleBackColor = true;
+			UpdateSettingsBtn.Click += UpdateSettingsBtn_Click;
 			// 
 			// ApplicationSettingsWindow
 			// 
-			this.AcceptButton = this.OkBtn;
-			this.AutoScaleDimensions = new System.Drawing.SizeF(96F, 96F);
-			this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Dpi;
-			this.CancelButton = this.CancelBtn;
-			this.ClientSize = new System.Drawing.Size(857, 647);
-			this.Controls.Add(this.groupBox5);
-			this.Controls.Add(this.AdvancedBtn);
-			this.Controls.Add(this.groupBox4);
-			this.Controls.Add(this.groupBox3);
-			this.Controls.Add(this.groupBox2);
-			this.Controls.Add(this.CancelBtn);
-			this.Controls.Add(this.OkBtn);
-			this.Controls.Add(this.groupBox1);
-			this.FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedDialog;
-			this.Icon = global::UnrealGameSync.Properties.Resources.Icon;
-			this.MaximizeBox = false;
-			this.MinimizeBox = false;
-			this.Name = "ApplicationSettingsWindow";
-			this.StartPosition = System.Windows.Forms.FormStartPosition.CenterParent;
-			this.Text = "Application Settings";
-			this.groupBox1.ResumeLayout(false);
-			this.tableLayoutPanel1.ResumeLayout(false);
-			this.tableLayoutPanel1.PerformLayout();
-			((System.ComponentModel.ISupportInitialize)(this.ParallelSyncThreadsSpinner)).EndInit();
-			this.groupBox2.ResumeLayout(false);
-			this.tableLayoutPanel3.ResumeLayout(false);
-			this.tableLayoutPanel3.PerformLayout();
-			this.groupBox3.ResumeLayout(false);
-			this.tableLayoutPanel4.ResumeLayout(false);
-			this.tableLayoutPanel5.ResumeLayout(false);
-			this.tableLayoutPanel5.PerformLayout();
-			this.groupBox4.ResumeLayout(false);
-			this.tableLayoutPanel2.ResumeLayout(false);
-			this.tableLayoutPanel2.PerformLayout();
-			this.flowLayoutPanel1.ResumeLayout(false);
-			this.flowLayoutPanel1.PerformLayout();
-			this.groupBox5.ResumeLayout(false);
-			this.ResumeLayout(false);
-
+			AcceptButton = OkBtn;
+			AutoScaleDimensions = new System.Drawing.SizeF(96F, 96F);
+			AutoScaleMode = System.Windows.Forms.AutoScaleMode.Dpi;
+			CancelButton = CancelBtn;
+			ClientSize = new System.Drawing.Size(857, 631);
+			Controls.Add(UpdateSettingsBtn);
+			Controls.Add(groupBox3);
+			Controls.Add(groupBox5);
+			Controls.Add(groupBox4);
+			Controls.Add(groupBox2);
+			Controls.Add(CancelBtn);
+			Controls.Add(OkBtn);
+			Controls.Add(groupBox1);
+			FormBorderStyle = System.Windows.Forms.FormBorderStyle.FixedDialog;
+			Icon = Properties.Resources.Icon;
+			MaximizeBox = false;
+			MinimizeBox = false;
+			Name = "ApplicationSettingsWindow";
+			StartPosition = System.Windows.Forms.FormStartPosition.CenterParent;
+			Text = "Application Settings";
+			groupBox1.ResumeLayout(false);
+			tableLayoutPanel1.ResumeLayout(false);
+			tableLayoutPanel1.PerformLayout();
+			tableLayoutPanel6.ResumeLayout(false);
+			((System.ComponentModel.ISupportInitialize)ParallelSyncThreadsSpinner).EndInit();
+			groupBox2.ResumeLayout(false);
+			tableLayoutPanel3.ResumeLayout(false);
+			tableLayoutPanel3.PerformLayout();
+			groupBox4.ResumeLayout(false);
+			tableLayoutPanel2.ResumeLayout(false);
+			tableLayoutPanel2.PerformLayout();
+			flowLayoutPanel1.ResumeLayout(false);
+			flowLayoutPanel1.PerformLayout();
+			groupBox5.ResumeLayout(false);
+			groupBox3.ResumeLayout(false);
+			tableLayoutPanel4.ResumeLayout(false);
+			tableLayoutPanel4.PerformLayout();
+			ResumeLayout(false);
 		}
 
 		#endregion
@@ -501,12 +476,6 @@ namespace UnrealGameSync
 		private System.Windows.Forms.CheckBox AutomaticallyRunAtStartupCheckBox;
 		private System.Windows.Forms.CheckBox KeepInTrayCheckBox;
 		private System.Windows.Forms.TableLayoutPanel tableLayoutPanel3;
-		private System.Windows.Forms.GroupBox groupBox3;
-		private System.Windows.Forms.TableLayoutPanel tableLayoutPanel4;
-		private System.Windows.Forms.Label label6;
-		private System.Windows.Forms.TableLayoutPanel tableLayoutPanel5;
-		public System.Windows.Forms.CheckBox UsePreviewBuildCheckBox;
-		private TextBoxWithCueBanner DepotPathTextBox;
 		private System.Windows.Forms.GroupBox groupBox4;
 		private System.Windows.Forms.FlowLayoutPanel flowLayoutPanel1;
 		private System.Windows.Forms.CheckBox EnableAutomationCheckBox;
@@ -518,5 +487,11 @@ namespace UnrealGameSync
 		private System.Windows.Forms.TableLayoutPanel tableLayoutPanel2;
 		private System.Windows.Forms.GroupBox groupBox5;
 		private System.Windows.Forms.CheckedListBox CustomToolsListBox;
+		private System.Windows.Forms.TableLayoutPanel tableLayoutPanel6;
+		private System.Windows.Forms.GroupBox groupBox3;
+		private System.Windows.Forms.TableLayoutPanel tableLayoutPanel4;
+		private TextBoxWithCueBanner HordeServerTextBox;
+		private System.Windows.Forms.Label label4;
+		private System.Windows.Forms.Button UpdateSettingsBtn;
 	}
 }

@@ -78,6 +78,15 @@ public:
 	UPROPERTY(EditAnywhere, config, Category=Play, meta=(AllowAbstract))
 	TArray<TSoftClassPtr<UObject>> BaseClassesToAllowRecompilingDuringPlayInEditor;
 
+	/**
+	 * Disallow call-in-editor functions in Editor Utility Blueprint assets from adding buttons to the Details view when an instance of the Blueprint is selected.
+	 * 
+	 * @todo - Eventually "Blutility" functions are no longer to appear in the Details view by default, in favor of a more flexible solution. At that point, we can
+	 * expose this option and allow users to opt the project back into the legacy path until it can be fully deprecated.
+	 */
+	UPROPERTY(config)
+	bool bDisallowEditorUtilityBlueprintFunctionsInDetailsView;
+
 public:
 	// UObject interface
 	UNREALED_API virtual void PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent) override;

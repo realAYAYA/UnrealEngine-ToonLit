@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "RigUnit_BlendTransform.h"
+#include "Units/Deprecated/RigUnit_BlendTransform.h"
 #include "Units/RigUnitContext.h"
 #include "AnimationRuntime.h"
 

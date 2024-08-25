@@ -16,6 +16,7 @@
 #include "ComputeFramework/ShaderParameterMetadataAllocation.h"
 #include "GameFramework/Actor.h"
 #include "Interfaces/ITargetPlatform.h"
+#include "Misc/App.h"
 #include "ShaderParameterMetadataBuilder.h"
 #include "UObject/Package.h"
 #include "DataDrivenShaderPlatformInfo.h"
@@ -209,6 +210,11 @@ void UComputeGraph::UpdateResources()
 	RenderProxy = CreateRenderProxy();
 }
 
+bool UComputeGraph::HasKernelResourcesPendingShaderCompilation() const
+{
+	return !KernelResourceIndicesPendingShaderCompilation.IsEmpty();
+}
+
 FComputeGraphRenderProxy const* UComputeGraph::GetRenderProxy() const 
 {
 	return RenderProxy;
@@ -398,8 +404,12 @@ namespace
 	/** Add HLSL code to implement an external function. */
 	void GetFunctionShimHLSL(FShaderFunctionDefinition const& FnImpl, FShaderFunctionDefinition const& FnWrap, TCHAR const* UID, TCHAR const *WrapNameOverride, TCHAR const* Namespace, FString& InOutHLSL)
 	{
-		const bool bHasReturn = FnWrap.bHasReturnType;
-		const int32 NumParams = FnWrap.ParamTypes.Num();
+		const bool bHasReturnImpl = FnImpl.bHasReturnType;
+		const int32 NumImplParams = FnImpl.ParamTypes.Num();
+		const int32 NumImplInputParams = bHasReturnImpl ? NumImplParams - 1 : NumImplParams;
+		
+		const bool bHasReturnWrap = FnWrap.bHasReturnType;
+		const int32 NumWrapParams = FnWrap.ParamTypes.Num();
 
 		TStringBuilder<512> StringBuilder;
 
@@ -409,27 +419,39 @@ namespace
 			StringBuilder.Append(Namespace);
 			StringBuilder.Append(TEXT(" { "));
 		}
-		StringBuilder.Append(bHasReturn ? *FnWrap.ParamTypes[0].TypeDeclaration : TEXT("void"));
+		StringBuilder.Append(bHasReturnWrap ? *FnWrap.ParamTypes[0].TypeDeclaration : TEXT("void"));
 		StringBuilder.Append(TEXT(" "));
 		StringBuilder.Append(WrapNameOverride ? WrapNameOverride : *FnWrap.Name);
 		StringBuilder.Append(TEXT("("));
 		
-		for (int32 ParameterIndex = bHasReturn ? 1 : 0; ParameterIndex < NumParams; ++ParameterIndex)
+		for (int32 ParameterIndex = bHasReturnWrap ? 1 : 0; ParameterIndex < NumWrapParams; ++ParameterIndex)
 		{
 			StringBuilder.Append(*FnWrap.ParamTypes[ParameterIndex].TypeDeclaration);
 			StringBuilder.Appendf(TEXT(" P%d"), ParameterIndex);
-			StringBuilder.Append((ParameterIndex < NumParams - 1) ? TEXT(", ") : TEXT(""));
+			StringBuilder.Append((ParameterIndex < NumWrapParams - 1) ? TEXT(", ") : TEXT(""));
 		}
 
 		StringBuilder.Append(TEXT(") { "));
-		StringBuilder.Append(bHasReturn ? TEXT("return ") : TEXT(""));
+		StringBuilder.Append(bHasReturnWrap ? TEXT("return ") : TEXT(""));
 		StringBuilder.Append(*FnImpl.Name).Append(TEXT("_")).Append(UID);
 		StringBuilder.Append(TEXT("("));
 
-		for (int32 ParameterIndex = bHasReturn ? 1 : 0; ParameterIndex < NumParams; ++ParameterIndex)
+		// There are cases where the impl will have fewer input params than the wrap, additional wrap params should be skipped
+		// Example: when a parameter pin connects to a resource pin
+		// void Wrap(uint P0, uint P1, ...) { Impl(); } // Impl has no input param
+		// SomeType Wrap(uint P1, uint P2, ...) { return Impl(P1); } // Impl has 1 input param
+		int32 NumImplInputParamsUsed = 0;
+		for (int32 WrapParameterIndex = bHasReturnWrap? 1 : 0; WrapParameterIndex < NumWrapParams; ++WrapParameterIndex)
 		{
-			StringBuilder.Appendf(TEXT("P%d"), ParameterIndex);
-			StringBuilder.Append((ParameterIndex < NumParams - 1) ? TEXT(", ") : TEXT(""));
+			if (NumImplInputParamsUsed >= NumImplInputParams)
+			{
+				break;
+			}
+			// prepend a comma if we are not the first param for the impl
+			StringBuilder.Append((NumImplInputParamsUsed != 0) ? TEXT(", ") : TEXT(""));
+			StringBuilder.Appendf(TEXT("P%d"), WrapParameterIndex);
+			
+			NumImplInputParamsUsed++;
 		}
 
 		StringBuilder.Append(TEXT(");"));
@@ -620,6 +642,13 @@ void UComputeGraph::CacheResourceShadersForRendering(uint32 CompilationFlags)
 	if (FApp::CanEverRender())
 	{
 		KernelResources.SetNum(KernelInvocations.Num());
+
+		KernelResourceIndicesPendingShaderCompilation.Reset();
+		for (int32 KernelIndex = 0; KernelIndex < KernelInvocations.Num(); ++KernelIndex)
+		{
+			KernelResourceIndicesPendingShaderCompilation.Add(KernelIndex);
+		}
+		
 		for (int32 KernelIndex = 0; KernelIndex < KernelInvocations.Num(); ++KernelIndex)
 		{
 			UComputeKernel* Kernel = KernelInvocations[KernelIndex];
@@ -720,6 +749,7 @@ void UComputeGraph::ShaderCompileCompletionCallback(FComputeKernelResource const
 		if (KernelResource == KernelResources[KernelIndex].Get())
 		{
 			OnKernelCompilationComplete(KernelIndex, KernelResource->GetCompilationResults());
+			KernelResourceIndicesPendingShaderCompilation.Remove(KernelIndex);
 		}
 	}
 }
@@ -945,7 +975,7 @@ void UComputeGraph::FComputeKernelResourceSet::Serialize(FArchive& Ar)
 					if (GMaxRHIShaderPlatform == ShaderMap->GetShaderPlatform())
 					{
 #if WITH_EDITORONLY_DATA
-						KernelResourcesByFeatureLevel[GMaxRHIShaderPlatform] = MoveTemp(Resource);
+						KernelResourcesByFeatureLevel[GMaxRHIFeatureLevel] = MoveTemp(Resource);
 #else
 						KernelResource = MoveTemp(Resource);
 #endif

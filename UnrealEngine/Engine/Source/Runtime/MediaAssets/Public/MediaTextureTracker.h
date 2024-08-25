@@ -34,6 +34,8 @@ struct FMediaTextureTrackerObject
 	FVector2D MeshRange;
 	/* Mip level to upscale into lower quality mips. All levels including and above the specified value will be fully read. */
 	int32 MipLevelToUpscale = -1;
+	/* When this is enabled Media Plate will automatically try to figure out the best mip to upscale to reduce the load. */
+	bool bAdaptivePoleMipUpscaling = false;
 };
 
 /**

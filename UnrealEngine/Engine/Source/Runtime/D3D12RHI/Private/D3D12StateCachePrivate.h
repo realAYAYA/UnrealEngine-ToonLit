@@ -35,6 +35,8 @@ extern int32 GGlobalSamplerDescriptorHeapSize;
 extern int32 GGlobalSamplerHeapSize;
 extern int32 GOnlineDescriptorHeapSize;
 extern int32 GOnlineDescriptorHeapBlockSize;
+extern int32 GBindlessOnlineDescriptorHeapSize;
+extern int32 GBindlessOnlineDescriptorHeapBlockSize;
 
 enum class ED3D12PipelineType : uint8
 {
@@ -66,14 +68,14 @@ struct FD3D12VertexBufferCache
 	{
 		FMemory::Memzero(CurrentVertexBufferViews, sizeof(CurrentVertexBufferViews));
 		FMemory::Memzero(CurrentVertexBufferResources, sizeof(CurrentVertexBufferResources));
-		FMemory::Memzero(ResidencyHandles, sizeof(ResidencyHandles));
+		FMemory::Memzero(Resources, sizeof(Resources));
 		MaxBoundVertexBufferIndex = INDEX_NONE;
 		BoundVBMask = 0;
 	}
 
 	D3D12_VERTEX_BUFFER_VIEW CurrentVertexBufferViews[MAX_VBS];
 	FD3D12ResourceLocation* CurrentVertexBufferResources[MAX_VBS];
-	FD3D12ResidencyHandle* ResidencyHandles[MAX_VBS];
+	FD3D12Resource* Resources[MAX_VBS];
 	int32 MaxBoundVertexBufferIndex;
 	VBSlotMask BoundVBMask;
 };
@@ -103,7 +105,7 @@ struct FD3D12ResourceCache
 
 	static inline void CleanSlots(ResourceSlotMask& SlotMask, uint32 NumSlots)
 	{
-		SlotMask &= ~(((ResourceSlotMask)1 << NumSlots) - 1);
+		SlotMask &= (NumSlots >= std::numeric_limits<ResourceSlotMask>::digits) ? 0 : ~(((ResourceSlotMask)1 << NumSlots) - 1);
 	}
 
 	static inline void DirtySlot(ResourceSlotMask& SlotMask, uint32 SlotIndex)
@@ -161,17 +163,17 @@ struct FD3D12ConstantBufferCache : public FD3D12ResourceCache<CBVSlotMask>
 		DirtyAll();
 
 		FMemory::Memzero(CurrentGPUVirtualAddress, sizeof(CurrentGPUVirtualAddress));
-		FMemory::Memzero(ResidencyHandles, sizeof(ResidencyHandles));
-#if USE_STATIC_ROOT_SIGNATURE
+		FMemory::Memzero(Resources, sizeof(Resources));
+#if D3D12RHI_USE_CONSTANT_BUFFER_VIEWS
 		FMemory::Memzero(CBHandles, sizeof(CBHandles));
 #endif
 	}
 
-#if USE_STATIC_ROOT_SIGNATURE
+#if D3D12RHI_USE_CONSTANT_BUFFER_VIEWS
 	D3D12_CPU_DESCRIPTOR_HANDLE CBHandles[SF_NumStandardFrequencies][MAX_CBS];
 #endif
 	D3D12_GPU_VIRTUAL_ADDRESS CurrentGPUVirtualAddress[SF_NumStandardFrequencies][MAX_CBS];
-	FD3D12ResidencyHandle* ResidencyHandles[SF_NumStandardFrequencies][MAX_CBS];
+	FD3D12Resource* Resources[SF_NumStandardFrequencies][MAX_CBS];
 };
 
 struct FD3D12ShaderResourceViewCache : public FD3D12ResourceCache<SRVSlotMask>
@@ -185,7 +187,7 @@ struct FD3D12ShaderResourceViewCache : public FD3D12ResourceCache<SRVSlotMask>
 	{
 		DirtyAll();
 
-		FMemory::Memzero(ResidencyHandles);
+		FMemory::Memzero(Resources);
 		FMemory::Memzero(BoundMask);
 		
 		for (int32& Index : MaxBoundIndex)
@@ -203,7 +205,7 @@ struct FD3D12ShaderResourceViewCache : public FD3D12ResourceCache<SRVSlotMask>
 	}
 
 	FD3D12ShaderResourceView* Views[SF_NumStandardFrequencies][MAX_SRVS];
-	FD3D12ResidencyHandle* ResidencyHandles[SF_NumStandardFrequencies][MAX_SRVS];
+	FD3D12Resource* Resources[SF_NumStandardFrequencies][MAX_SRVS];
 
 	SRVSlotMask BoundMask[SF_NumStandardFrequencies];
 	int32 MaxBoundIndex[SF_NumStandardFrequencies];
@@ -221,7 +223,7 @@ struct FD3D12UnorderedAccessViewCache : public FD3D12ResourceCache<UAVSlotMask>
 		DirtyAll();
 
 		FMemory::Memzero(Views);
-		FMemory::Memzero(ResidencyHandles);
+		FMemory::Memzero(Resources);
 
 		for (uint32& Index : StartSlot)
 		{
@@ -230,7 +232,7 @@ struct FD3D12UnorderedAccessViewCache : public FD3D12ResourceCache<UAVSlotMask>
 	}
 
 	FD3D12UnorderedAccessView* Views[SF_NumStandardFrequencies][MAX_UAVS];
-	FD3D12ResidencyHandle* ResidencyHandles[SF_NumStandardFrequencies][MAX_UAVS];
+	FD3D12Resource* Resources[SF_NumStandardFrequencies][MAX_UAVS];
 	uint32 StartSlot[SF_NumStandardFrequencies];
 };
 
@@ -389,6 +391,10 @@ protected:
 			ID3D12PipelineState* CurrentPipelineStateObject = nullptr;
 			bool bNeedSetPSO;
 
+			// Root Constants
+			bool bNeedSetRootConstants;
+			FUint32Vector4 ShaderRootConstants = FUint32Vector4(0, 0, 0, 0);
+
 			uint32 CurrentShaderSamplerCounts[SF_NumStandardFrequencies] = {};
 			uint32 CurrentShaderSRVCounts    [SF_NumStandardFrequencies] = {};
 			uint32 CurrentShaderCBCounts     [SF_NumStandardFrequencies] = {};
@@ -448,7 +454,7 @@ public:
 
 	void ClearSRVs();
 
-	void ClearShaderResourceViews(EShaderFrequency ShaderFrequency, FD3D12ResourceLocation*& ResourceLocation);
+	void ClearResourceViewCaches(EShaderFrequency ShaderFrequency, FD3D12ResourceLocation*& ResourceLocation, EShaderParameterTypeMask ShaderParameterTypeMask);
 
 	void SetShaderResourceView(EShaderFrequency ShaderFrequency, FD3D12ShaderResourceView* SRV, uint32 ResourceIndex);
 	
@@ -518,26 +524,26 @@ public:
 			if (ResourceLocation.GetGPUVirtualAddress() != CurrentGPUVirtualAddress)
 			{
 				CurrentGPUVirtualAddress = ResourceLocation.GetGPUVirtualAddress();
-				CBVCache.ResidencyHandles[ShaderFrequency][SlotIndex] = &ResourceLocation.GetResource()->GetResidencyHandle();
+				CBVCache.Resources[ShaderFrequency][SlotIndex] = ResourceLocation.GetResource();
 				FD3D12ConstantBufferCache::DirtySlot(CBVCache.DirtySlotMask[ShaderFrequency], SlotIndex);
 			}
 
-#if USE_STATIC_ROOT_SIGNATURE
+#if D3D12RHI_USE_CONSTANT_BUFFER_VIEWS
 			CBVCache.CBHandles[ShaderFrequency][SlotIndex] = UniformBuffer->View->GetOfflineCpuHandle();
 #endif
 		}
 		else if (CurrentGPUVirtualAddress != 0)
 		{
 			CurrentGPUVirtualAddress = 0;
-			CBVCache.ResidencyHandles[ShaderFrequency][SlotIndex] = nullptr;
+			CBVCache.Resources[ShaderFrequency][SlotIndex] = {};
 			FD3D12ConstantBufferCache::DirtySlot(CBVCache.DirtySlotMask[ShaderFrequency], SlotIndex);
-#if USE_STATIC_ROOT_SIGNATURE
+#if D3D12RHI_USE_CONSTANT_BUFFER_VIEWS
 			CBVCache.CBHandles[ShaderFrequency][SlotIndex].ptr = 0;
 #endif
 		}
 		else
 		{
-#if USE_STATIC_ROOT_SIGNATURE
+#if D3D12RHI_USE_CONSTANT_BUFFER_VIEWS
 			CBVCache.CBHandles[ShaderFrequency][SlotIndex].ptr = 0;
 #endif
 		}
@@ -556,10 +562,10 @@ public:
 			D3D12_GPU_VIRTUAL_ADDRESS& CurrentGPUVirtualAddress = CBVCache.CurrentGPUVirtualAddress[ShaderFrequency][SlotIndex];
 			check(Location.GetGPUVirtualAddress() != CurrentGPUVirtualAddress);
 			CurrentGPUVirtualAddress = Location.GetGPUVirtualAddress();
-			CBVCache.ResidencyHandles[ShaderFrequency][SlotIndex] = &Location.GetResource()->GetResidencyHandle();
+			CBVCache.Resources[ShaderFrequency][SlotIndex] = Location.GetResource();
 			FD3D12ConstantBufferCache::DirtySlot(CBVCache.DirtySlotMask[ShaderFrequency], SlotIndex);
 
-#if USE_STATIC_ROOT_SIGNATURE
+#if D3D12RHI_USE_CONSTANT_BUFFER_VIEWS
 			CBVCache.CBHandles[ShaderFrequency][SlotIndex] = Buffer.GetOfflineCpuHandle();
 #endif
 		}
@@ -640,6 +646,7 @@ public:
 		if (LastComputePipelineType != PipelineType)
 		{
 			PipelineState.Common.bNeedSetPSO = true;
+			PipelineState.Common.bNeedSetRootConstants = true;
 			PipelineState.Compute.bNeedSetRootSignature = true;
 
 			LastComputePipelineType = PipelineType;
@@ -649,7 +656,7 @@ public:
 	ED3D12PipelineType LastComputePipelineType = ED3D12PipelineType::Compute;
 #endif // D3D12_RHI_RAYTRACING
 
-	void ApplyState(ED3D12PipelineType PipelineType);
+	void ApplyState(ERHIPipeline HardwarePipe, ED3D12PipelineType PipelineType);
 	void ApplySamplers(const FD3D12RootSignature* const pRootSignature, uint32 StartStage, uint32 EndStage);
 	void ApplyResources(const FD3D12RootSignature* const pRootSignature, uint32 StartStage, uint32 EndStage);
 	void ApplyBindlessResources(const FD3D12RootSignature* const pRootSignature, uint32 StartStage, uint32 EndStage);
@@ -675,6 +682,8 @@ public:
 		}
 	}
 
+	void SetRootConstants(const FUint32Vector4& Constants);
+
 	void SetUAV(EShaderFrequency ShaderStage, uint32 SlotIndex, FD3D12UnorderedAccessView* UAV, uint32 InitialCount = -1);
 
 	void ClearUAVs(EShaderFrequency ShaderStage);
@@ -690,31 +699,25 @@ public:
 		}
 	}
 
-	void SetShadingRate(EVRSShadingRate ShadingRate, EVRSRateCombiner Combiner)
+	void SetShadingRate(EVRSShadingRate ShadingRate, EVRSRateCombiner PerPrimitiveCombiner, EVRSRateCombiner ScreenSpaceCombiner)
 	{
-		if (PipelineState.Graphics.DrawShadingRate != ShadingRate || PipelineState.Graphics.Combiners[ED3D12VRSCombinerStages::PerPrimitive] != Combiner)
+		if (PipelineState.Graphics.DrawShadingRate != ShadingRate
+			|| PipelineState.Graphics.Combiners[ED3D12VRSCombinerStages::PerPrimitive] != PerPrimitiveCombiner
+			|| PipelineState.Graphics.Combiners[ED3D12VRSCombinerStages::ScreenSpace] != ScreenSpaceCombiner)
 		{
 			PipelineState.Graphics.DrawShadingRate = ShadingRate;
-			PipelineState.Graphics.Combiners[ED3D12VRSCombinerStages::PerPrimitive] = Combiner;
+			PipelineState.Graphics.Combiners[ED3D12VRSCombinerStages::PerPrimitive] = PerPrimitiveCombiner;
+			PipelineState.Graphics.Combiners[ED3D12VRSCombinerStages::ScreenSpace] = ScreenSpaceCombiner;
 			bNeedSetShadingRate = GRHISupportsPipelineVariableRateShading && GRHIVariableRateShadingEnabled;
 		}
-	}
+	}	
 
-	void SetShadingRateImage(FD3D12Resource* ShadingRateImage, EVRSRateCombiner Combiner)
+	void SetShadingRateImage(FD3D12Resource* ShadingRateImage)
 	{
 		if (PipelineState.Graphics.ShadingRateImage != ShadingRateImage)
 		{
 			PipelineState.Graphics.ShadingRateImage = ShadingRateImage;
 			bNeedSetShadingRateImage = GRHISupportsAttachmentVariableRateShading && GRHIAttachmentVariableRateShadingEnabled;
-		}
-
-		// If we aren't provided a ShadingRateImage, we should request the passthrough combiner
-		ensure((PipelineState.Graphics.ShadingRateImage != nullptr) || (Combiner == EVRSRateCombiner::VRSRB_Passthrough));
-
-		if (PipelineState.Graphics.Combiners[ED3D12VRSCombinerStages::ScreenSpace] != Combiner)
-		{
-			PipelineState.Graphics.Combiners[ED3D12VRSCombinerStages::ScreenSpace] = Combiner;
-			bNeedSetShadingRate = GRHISupportsAttachmentVariableRateShading && GRHIAttachmentVariableRateShadingEnabled;
 		}
 	}
 

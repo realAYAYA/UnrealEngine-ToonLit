@@ -108,11 +108,39 @@ public:
 	}
 
 	/**
-	 * Add a set of triangles produced by calling TriangleGenFunc for each index in range [0,NumIndices)
+	 * call UpdateFunc for all existing Triangle Sets
 	 */
-	void CreateOrUpdateTriangleSet(const FString& TriangleSetIdentifier, int32 NumIndices,
+	template<typename UpdateFuncType>
+	void UpdateAllTriangleSets(UpdateFuncType UpdateFunc)
+	{
+		for (TPair<FString, TObjectPtr<UTriangleSetComponent>> Entry : TriangleSets)
+		{
+			UpdateFunc(Entry.Value);
+		}
+	}
+
+	/**
+	 * Add a set of triangles produced by calling TriangleGenFunc for each index in range [0,NumIndices)
+	 * @return the created or updated triangle set
+	 */
+	UTriangleSetComponent* CreateOrUpdateTriangleSet(const FString& TriangleSetIdentifier, int32 NumIndices,
 		TFunctionRef<void(int32 Index, TArray<FRenderableTriangle>& TrianglesOut)> TriangleGenFunc,
 		int32 TrianglesPerIndexHint = -1);
+
+	/**
+	 * Remove the TriangleSetComponent with the given TriangleSetIdentifier
+	 * @param bDestroy if true, component will unregistered and destroyed.
+	 * @return true if the TriangleSetComponent was found and removed
+	 */
+	UFUNCTION()
+	bool RemoveTriangleSet(const FString& TriangleSetIdentifier, bool bDestroy = true);
+
+	/**
+	 * Remove all TriangleSetComponents
+	 * @param bDestroy if true, the components will unregistered and destroyed.
+	 */
+	UFUNCTION()
+	void RemoveAllTriangleSets(bool bDestroy = true);
 
 
 	//
@@ -195,8 +223,9 @@ public:
 
 	/**
 	 * Add a set of lines produced by calling LineGenFunc for each index in range [0,NumIndices)
+	 * @return the created or updated line set
 	 */
-	void CreateOrUpdateLineSet(const FString& LineSetIdentifier, int32 NumIndices,
+	ULineSetComponent* CreateOrUpdateLineSet(const FString& LineSetIdentifier, int32 NumIndices,
 		TFunctionRef<void(int32 Index, TArray<FRenderableLine>& LinesOut)> LineGenFunc,
 		int32 LinesPerIndexHint = -1);
 

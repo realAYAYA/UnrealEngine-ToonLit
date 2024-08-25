@@ -193,7 +193,8 @@ UNiagaraDataInterfaceGrid3D::UNiagaraDataInterfaceGrid3D(FObjectInitializer cons
 {
 }
 
-void UNiagaraDataInterfaceGrid3D::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceGrid3D::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 
 	{
@@ -351,6 +352,7 @@ void UNiagaraDataInterfaceGrid3D::GetFunctions(TArray<FNiagaraFunctionSignature>
 		OutFunctions.Add(Sig);
 	}
 }
+#endif
 
 void UNiagaraDataInterfaceGrid3D::GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction &OutFunc)
 {
@@ -636,7 +638,7 @@ void UNiagaraDataInterfaceGrid2D::Serialize(FArchive& Ar)
 void UNiagaraDataInterfaceGrid2D::ValidateFunction(const FNiagaraFunctionSignature& Function, TArray<FText>& OutValidationErrors)
 {
 	TArray<FNiagaraFunctionSignature> DIFuncs;
-	GetFunctions(DIFuncs);
+	GetFunctionsInternal(DIFuncs);
 	
 	// All the deprecated grid2d functions
 	TSet<FName> DeprecatedFunctionNames;
@@ -651,9 +653,7 @@ void UNiagaraDataInterfaceGrid2D::ValidateFunction(const FNiagaraFunctionSignatu
 	Super::ValidateFunction(Function, OutValidationErrors);
 }
 
-#endif
-
-void UNiagaraDataInterfaceGrid2D::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+void UNiagaraDataInterfaceGrid2D::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {	
 	{
 		FNiagaraFunctionSignature Sig;
@@ -831,7 +831,7 @@ void UNiagaraDataInterfaceGrid2D::GetFunctions(TArray<FNiagaraFunctionSignature>
 		OutFunctions.Add(Sig);
 	}
 }
-
+#endif
 
 void UNiagaraDataInterfaceGrid2D::GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction &OutFunc)
 {

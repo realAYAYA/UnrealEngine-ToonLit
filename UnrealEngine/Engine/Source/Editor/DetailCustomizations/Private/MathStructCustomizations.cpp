@@ -25,9 +25,13 @@
 #include "Styling/SlateColor.h"
 #include "Templates/UnrealTemplate.h"
 #include "UObject/EnumProperty.h"
+#include "UObject/NoExportTypes.h"
 #include "UObject/UnrealType.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
 #include "Widgets/Images/SImage.h"
+#include "Widgets/Input/NumericTypeInterface.h"
+#include "Widgets/Input/NumericUnitTypeInterface.inl"
+#include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Input/SNumericEntryBox.h"
 #include "Widgets/SBoxPanel.h"
@@ -68,6 +72,62 @@ void FMathStructCustomization::CustomizeChildren(TSharedRef<class IPropertyHandl
 }
 
 
+namespace MathStructCustomization {
+	double ScaleStructComponent(double Val, double Scale)
+	{
+		return Val * Scale;
+	}
+
+	template<typename NumericType>
+	void NormalizePropertyVector(TWeakPtr<IPropertyHandle> PropertyHandle)
+	{
+		double SquareSum = 0;
+		TSharedPtr<IPropertyHandle> Property = PropertyHandle.Pin();
+
+		uint32 NumChildren;
+		Property->GetNumChildren(NumChildren);
+
+		// Loop through each child object and build a square sum
+		for (uint32 ChildIndex = 0; ChildIndex < NumChildren; ++ChildIndex)
+		{
+			TSharedPtr<IPropertyHandle> Child = Property->GetChildHandle(ChildIndex);
+			FProperty* ChildProperty = Child->GetProperty();
+			NumericType Val;
+			Child->GetValue(Val);
+			SquareSum += Val * Val;
+		}
+		if (SquareSum > UE_SMALL_NUMBER * UE_SMALL_NUMBER)
+		{
+			// Calculate the scale each object will need to be multiplied by to achieve a unit vector
+			double Scale = FMath::InvSqrt(SquareSum);
+
+			// Loop through each object and scale based on the normalized ratio for each object individually
+			for (uint32 ChildIndex = 0; ChildIndex < NumChildren; ++ChildIndex)
+			{
+				TSharedPtr<IPropertyHandle> Child = Property->GetChildHandle(ChildIndex);
+				FProperty* ChildProperty = Child->GetProperty();
+				NumericType Val;
+				Child->GetValue(Val);
+				NumericType Result = (NumericType)ScaleStructComponent(Val, Scale);
+				Child->SetValue(Result);
+			}
+		}
+	}
+
+	bool IsFloatVector(TSharedRef<class IPropertyHandle>& PropertyHandle)
+	{
+		// Look at the first child element to see if it's something we can normalize
+		TSharedPtr<IPropertyHandle> Child = PropertyHandle->GetChildHandle(0);
+		if (Child)
+		{
+			FNumericProperty* ChildProperty = CastField<FNumericProperty>(Child->GetProperty());
+
+			return ChildProperty && ChildProperty->IsFloatingPoint();
+		}
+		return false;
+	}
+}
+
 void FMathStructCustomization::MakeHeaderRow(TSharedRef<class IPropertyHandle>& StructPropertyHandle, FDetailWidgetRow& Row)
 {
 	TWeakPtr<IPropertyHandle> StructWeakHandlePtr = StructPropertyHandle;
@@ -97,11 +157,22 @@ void FMathStructCustomization::MakeHeaderRow(TSharedRef<class IPropertyHandle>& 
 		ChildHandle->SetInstanceMetaData(TEXT("SliderExponent"), StructPropertyHandle->GetMetaData(TEXT("SliderExponent")));
 		ChildHandle->SetInstanceMetaData(TEXT("Delta"), StructPropertyHandle->GetMetaData(TEXT("Delta")));
 		ChildHandle->SetInstanceMetaData(TEXT("LinearDeltaSensitivity"), StructPropertyHandle->GetMetaData(TEXT("LinearDeltaSensitivity")));
-		ChildHandle->SetInstanceMetaData(TEXT("ShiftMouseMovePixelPerDelta"), StructPropertyHandle->GetMetaData(TEXT("ShiftMouseMovePixelPerDelta")));
+		ChildHandle->SetInstanceMetaData(TEXT("ShiftMultiplier"), StructPropertyHandle->GetMetaData(TEXT("ShiftMultiplier")));
+		ChildHandle->SetInstanceMetaData(TEXT("CtrlMultiplier"), StructPropertyHandle->GetMetaData(TEXT("CtrlMultiplier")));
 		ChildHandle->SetInstanceMetaData(TEXT("SupportDynamicSliderMaxValue"), StructPropertyHandle->GetMetaData(TEXT("SupportDynamicSliderMaxValue")));
 		ChildHandle->SetInstanceMetaData(TEXT("SupportDynamicSliderMinValue"), StructPropertyHandle->GetMetaData(TEXT("SupportDynamicSliderMinValue")));
 		ChildHandle->SetInstanceMetaData(TEXT("ClampMin"), StructPropertyHandle->GetMetaData(TEXT("ClampMin")));
 		ChildHandle->SetInstanceMetaData(TEXT("ClampMax"), StructPropertyHandle->GetMetaData(TEXT("ClampMax")));
+
+		// Handle units directly since we can't set metadata on core object types
+		if (FStructProperty* StructProp = CastField<FStructProperty>(StructPropertyHandle->GetProperty()))
+		{
+			if (StructProp->Struct == TBaseStructure<FRotator>::Get())
+			{
+				const static int32 EUnitNamespaceSize = FCString::Strlen(TEXT("EUnit::"));
+				ChildHandle->SetInstanceMetaData(TEXT("Units"), UEnum::GetValueAsString(EUnit::Degrees).RightChop(EUnitNamespaceSize));
+			}
+		}
 
 		const bool bLastChild = SortedChildHandles.Num()-1 == ChildIndex;
 		// Make a widget for each property.  The vector component properties  will be displayed in the header
@@ -116,7 +187,7 @@ void FMathStructCustomization::MakeHeaderRow(TSharedRef<class IPropertyHandle>& 
 		];
 	}
 
-	if (StructPropertyHandle->GetProperty()->HasMetaData("AllowPreserveRatio"))
+	if (StructPropertyHandle->HasMetaData("AllowPreserveRatio"))
 	{
 		if (!GConfig->GetBool(TEXT("SelectionDetails"), *(StructPropertyHandle->GetProperty()->GetName() + TEXT("_PreserveScaleRatio")), bPreserveScaleRatio, GEditorPerProjectIni))
 		{
@@ -141,20 +212,37 @@ void FMathStructCustomization::MakeHeaderRow(TSharedRef<class IPropertyHandle>& 
 			]
 		];
 	}
-}
 
+	if (StructPropertyHandle->HasMetaData("ShowNormalize") && MathStructCustomization::IsFloatVector(StructPropertyHandle))
+	{
+		HorizontalBox->AddSlot()
+			.AutoWidth()
+			.MaxWidth(18.0f)
+			.VAlign(VAlign_Center)
+			[
+				// Add a button to scale the vector uniformly to achieve a unit vector
+				SNew(SButton)
+					.OnClicked(this, &FMathStructCustomization::OnNormalizeClicked, StructWeakHandlePtr)
+					.ButtonStyle(FAppStyle::Get(), "NoBorder")
+					.ToolTipText(LOCTEXT("NormalizeToolTip", "When clicked, if the vector is large enough, it scales the vector uniformly to achieve a unit vector (vector with a length of 1)"))
+					[
+						SNew(SImage)
+							.ColorAndOpacity(FSlateColor::UseForeground())
+							.Image(FAppStyle::GetBrush(TEXT("Icons.Normalize")))	
+					]
+			];
+	}
+}
 
 const FSlateBrush* FMathStructCustomization::GetPreserveScaleRatioImage() const
 {
 	return bPreserveScaleRatio ? FAppStyle::GetBrush(TEXT("Icons.Lock")) : FAppStyle::GetBrush(TEXT("Icons.Unlock"));
 }
 
-
 ECheckBoxState FMathStructCustomization::IsPreserveScaleRatioChecked() const
 {
 	return bPreserveScaleRatio ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
 }
-
 
 void FMathStructCustomization::OnPreserveScaleRatioToggled(ECheckBoxState NewState, TWeakPtr<IPropertyHandle> PropertyHandle)
 {
@@ -167,6 +255,24 @@ void FMathStructCustomization::OnPreserveScaleRatioToggled(ECheckBoxState NewSta
 	}
 }
 
+FReply FMathStructCustomization::OnNormalizeClicked(TWeakPtr<IPropertyHandle> PropertyHandle)
+{
+	if (PropertyHandle.IsValid())
+	{
+		TSharedPtr<IPropertyHandle> Property = PropertyHandle.Pin();
+		TSharedRef<IPropertyHandle> PropertyRef = Property.ToSharedRef();
+
+		if (MathStructCustomization::IsFloatVector(PropertyRef))
+		{
+			MathStructCustomization::NormalizePropertyVector<double>(Property);
+		}
+		else
+		{
+			ensureMsgf(false, TEXT("Unsupported type to Normalize"));
+		}
+	}
+	return FReply::Handled();
+}
 
 void FMathStructCustomization::GetSortedChildren(TSharedRef<IPropertyHandle> StructPropertyHandle, TArray< TSharedRef<IPropertyHandle> >& OutChildren)
 {
@@ -195,7 +301,6 @@ void FMathStructCustomization::ExtractNumericMetadata(TSharedRef<IPropertyHandle
 	SliderMaxValue = Metadata.SliderMaxValue;
 	SliderExponent = Metadata.SliderExponent;
 	Delta = Metadata.Delta;
-	ShiftMouseMovePixelPerDelta = Metadata.ShiftMouseMovePixelPerDelta;
 	bSupportDynamicSliderMaxValue = Metadata.bSupportDynamicSliderMaxValue;
 	bSupportDynamicSliderMinValue = Metadata.bSupportDynamicSliderMinValue;
 }
@@ -230,7 +335,8 @@ void FMathStructCustomization::ExtractNumericMetadata(TSharedRef<IPropertyHandle
 	const FString& SliderExponentString = Property->GetMetaData(TEXT("SliderExponent"));
 	const FString& DeltaString = Property->GetMetaData(TEXT("Delta"));
 	const FString& LinearDeltaSensitivityString = Property->GetMetaData(TEXT("LinearDeltaSensitivity"));
-	const FString& ShiftMouseMovePixelPerDeltaString = Property->GetMetaData(TEXT("ShiftMouseMovePixelPerDelta"));
+	const FString& ShiftMultiplierString = Property->GetMetaData(TEXT("ShiftMultiplier"));
+	const FString& CtrlMultiplierString = Property->GetMetaData(TEXT("CtrlMultiplier"));
 	const FString& SupportDynamicSliderMaxValueString = Property->GetMetaData(TEXT("SupportDynamicSliderMaxValue"));
 	const FString& SupportDynamicSliderMinValueString = Property->GetMetaData(TEXT("SupportDynamicSliderMinValue"));
 	const FString& ClampMinString = Property->GetMetaData(TEXT("ClampMin"));
@@ -239,6 +345,7 @@ void FMathStructCustomization::ExtractNumericMetadata(TSharedRef<IPropertyHandle
 	// If no UIMin/Max was specified then use the clamp string
 	const FString& UIMinString = MetaUIMinString.Len() ? MetaUIMinString : ClampMinString;
 	const FString& UIMaxString = MetaUIMaxString.Len() ? MetaUIMaxString : ClampMaxString;
+	bool bAllowSpin = !Property->GetBoolMetaData(TEXT("NoSpinBox"));
 
 	NumericType ClampMin = TNumericLimits<NumericType>::Lowest();
 	NumericType ClampMax = TNumericLimits<NumericType>::Max();
@@ -280,16 +387,16 @@ void FMathStructCustomization::ExtractNumericMetadata(TSharedRef<IPropertyHandle
 	// LinearDeltaSensitivity only works in SSpinBox if delta is provided, so add it in if it wasn't.
 	MetadataOut.Delta = (MetadataOut.LinearDeltaSensitivity != 0 && MetadataOut.Delta == NumericType(0)) ? NumericType(1) : MetadataOut.Delta;
 
-	MetadataOut.ShiftMouseMovePixelPerDelta = 1;
-	if (ShiftMouseMovePixelPerDeltaString.Len())
+	MetadataOut.ShiftMultiplier = 10.f;
+	if (ShiftMultiplierString.Len())
 	{
-		TTypeFromString<int32>::FromString(MetadataOut.ShiftMouseMovePixelPerDelta, *ShiftMouseMovePixelPerDeltaString);
-		//The value should be greater or equal to 1
-		// 1 is neutral since it is a multiplier of the mouse drag pixel
-		if (MetadataOut.ShiftMouseMovePixelPerDelta < 1)
-		{
-			MetadataOut.ShiftMouseMovePixelPerDelta = 1;
-		}
+		TTypeFromString<float>::FromString(MetadataOut.ShiftMultiplier, *ShiftMultiplierString);
+	}
+
+	MetadataOut.CtrlMultiplier = 0.1f;
+	if (CtrlMultiplierString.Len())
+	{
+		TTypeFromString<float>::FromString(MetadataOut.CtrlMultiplier, *CtrlMultiplierString);
 	}
 
 	if (ClampMin >= ClampMax && (ClampMinString.Len() || ClampMaxString.Len()))
@@ -312,6 +419,22 @@ void FMathStructCustomization::ExtractNumericMetadata(TSharedRef<IPropertyHandle
 	
 	MetadataOut.bSupportDynamicSliderMaxValue = SupportDynamicSliderMaxValueString.Len() > 0 && SupportDynamicSliderMaxValueString.ToBool();
 	MetadataOut.bSupportDynamicSliderMinValue = SupportDynamicSliderMinValueString.Len() > 0 && SupportDynamicSliderMinValueString.ToBool();
+	MetadataOut.bAllowSpinBox = bAllowSpin;
+
+	// By default allow widget to determine default interface
+	MetadataOut.TypeInterface = nullptr;
+
+	if (FStructProperty* StructProp = CastField<FStructProperty>(Property))
+	{
+		if (StructProp->Struct == TBaseStructure<FRotator>::Get())
+		{
+			// The units for degrees does not support floats
+			if constexpr (TIsFloatingPoint<NumericType>::Value && std::is_same<FRotator::FReal, NumericType>::value)
+			{
+				MetadataOut.TypeInterface = MakeShared<TNumericUnitTypeInterface<FRotator::FReal>>(EUnit::Degrees);
+			}
+		}
+	}
 }
 
 
@@ -337,8 +460,9 @@ TSharedRef<SWidget> FMathStructCustomization::MakeNumericWidget(
 			.OnBeginSliderMovement(this, &FMathStructCustomization::OnBeginSliderMovement)
 			.OnEndSliderMovement(this, &FMathStructCustomization::OnEndSliderMovement<NumericType>)
 			// Only allow spin on handles with one object.  Otherwise it is not clear what value to spin
-			.AllowSpin(PropertyHandle->GetNumOuterObjects() < 2)
-			.ShiftMouseMovePixelPerDelta(Metadata.ShiftMouseMovePixelPerDelta)
+			.AllowSpin(PropertyHandle->GetNumOuterObjects() < 2 && Metadata.bAllowSpinBox)
+			.ShiftMultiplier(Metadata.ShiftMultiplier)
+			.CtrlMultiplier(Metadata.CtrlMultiplier)
 			.SupportDynamicSliderMaxValue(Metadata.bSupportDynamicSliderMaxValue)
 			.SupportDynamicSliderMinValue(Metadata.bSupportDynamicSliderMinValue)
 			.OnDynamicSliderMaxValueChanged(this, &FMathStructCustomization::OnDynamicSliderMaxValueChanged<NumericType>)
@@ -351,7 +475,8 @@ TSharedRef<SWidget> FMathStructCustomization::MakeNumericWidget(
 			.Delta(Metadata.Delta)
 			// LinearDeltaSensitivity must be left unset if not provided, rather than being set to some default
 			.LinearDeltaSensitivity(Metadata.LinearDeltaSensitivity != 0 ? Metadata.LinearDeltaSensitivity : TAttribute<int32>())
-			.ToolTipText(this, &FMathStructCustomization::OnGetValueToolTip<NumericType>, WeakHandlePtr);
+			.ToolTipText(this, &FMathStructCustomization::OnGetValueToolTip<NumericType>, WeakHandlePtr)
+			.TypeInterface(Metadata.TypeInterface);
 }
 
 template <typename NumericType>
@@ -607,6 +732,5 @@ void FMathStructCustomization::OnEndSliderMovement(NumericType NewValue)
 
 	GEditor->EndTransaction();
 }
-
 
 #undef LOCTEXT_NAMESPACE

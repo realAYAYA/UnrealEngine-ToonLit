@@ -4,9 +4,15 @@
 
 #include "EntitySystem/MovieSceneEntitySystem.h"
 #include "Channels/MovieSceneEvent.h"
+#include "Evaluation/IMovieScenePlaybackCapability.h"
 #include "MovieSceneEventSystems.generated.h"
 
-class IMovieScenePlayer;
+namespace UE::MovieScene
+{
+
+struct FSharedPlaybackState;
+
+}  // namespace UE::MovieScene
 
 USTRUCT()
 struct FMovieSceneEventTriggerData
@@ -47,13 +53,15 @@ protected:
 
 private:
 
+	using FSharedPlaybackState = UE::MovieScene::FSharedPlaybackState;
+
 	MOVIESCENETRACKS_API virtual void OnRun(FSystemTaskPrerequisites& InPrerequisites, FSystemSubsequentTasks& Subsequents) override;
 	MOVIESCENETRACKS_API virtual bool IsRelevantImpl(UMovieSceneEntitySystemLinker* InLinker) const override;
 	MOVIESCENETRACKS_API virtual void OnUnlink() override final;
 
-	static void TriggerEvents(TArrayView<const FMovieSceneEventTriggerData> Events, IMovieScenePlayer* Player);
-	static void TriggerEventWithParameters(UObject* DirectorInstance, const FMovieSceneEventTriggerData& Event, TArrayView<UObject* const> GlobalContexts, IMovieScenePlayer* Player);
-	static bool PatchBoundObject(uint8* Parameters, UObject* BoundObject, FProperty* BoundObjectProperty, IMovieScenePlayer* Player, FMovieSceneSequenceID SequenceID);
+	static void TriggerEvents(TArrayView<const FMovieSceneEventTriggerData> Events, TSharedRef<const FSharedPlaybackState> SharedPlaybackState);
+	static void TriggerEventWithParameters(UObject* DirectorInstance, const FMovieSceneEventTriggerData& Event, TArrayView<UObject* const> GlobalContexts, TSharedRef<const FSharedPlaybackState> SharedPlaybackState);
+	static bool PatchBoundObject(uint8* Parameters, UObject* BoundObject, FProperty* BoundObjectProperty, TSharedRef<const FSharedPlaybackState> SharedPlaybackState, FMovieSceneSequenceID SequenceID);
 
 	/** Events grouped by root sequence instance handle */
 	TMap< UE::MovieScene::FInstanceHandle, TArray<FMovieSceneEventTriggerData> > EventsByRoot;

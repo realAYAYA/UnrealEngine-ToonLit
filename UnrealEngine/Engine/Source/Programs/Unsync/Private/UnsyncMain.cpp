@@ -1,11 +1,15 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+#include "UnsyncAuth.h"
 #include "UnsyncCmdDiff.h"
 #include "UnsyncCmdHash.h"
+#include "UnsyncCmdLogin.h"
+#include "UnsyncCmdMount.h"
+#include "UnsyncCmdPack.h"
 #include "UnsyncCmdPatch.h"
 #include "UnsyncCmdPush.h"
-#include "UnsyncCmdSync.h"
 #include "UnsyncCmdQuery.h"
+#include "UnsyncCmdSync.h"
 #include "UnsyncCore.h"
 #include "UnsyncFile.h"
 #include "UnsyncMemory.h"
@@ -20,11 +24,11 @@ UNSYNC_THIRD_PARTY_INCLUDES_START
 #	include <shellapi.h>
 #endif	// UNSYNC_PLATFORM_WINDOWS
 #include <fcntl.h>
+#include <CLI/CLI.hpp>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <system_error>
-#include <CLI/CLI.hpp>
 UNSYNC_THIRD_PARTY_INCLUDES_END
 
 namespace unsync {
@@ -34,16 +38,18 @@ static FPath GExePath;
 int
 InnerMain(int Argc, char** Argv)
 {
-	FTimingLogger TimingLogger("Total time");
+	LogSaveCommandLineUtf8(Argc, Argv);
 
-	std::string AppDescription = "UNSYNC ";
+	std::string AppDescription = "UNSYNC v";
 	AppDescription += GetVersionString();
 	AppDescription +=
 		" -- Differential binary synchronization tool.\n"
 		"Copyright Epic Games, Inc. All Rights Reserved.\n";
 
 	CLI::App Cli(AppDescription, "unsync");
-	Cli.allow_windows_style_options(true);
+
+	Cli.allow_windows_style_options(false); // never allow /flag syntax, only --flag
+	Cli.set_version_flag("--version", GetVersionString());
 
 	std::vector<CLI::App*> SubCommands;
 
@@ -69,7 +75,13 @@ InnerMain(int Argc, char** Argv)
 	std::string				 ProtocolName = "jupiter";
 	std::string				 HttpHeaderFilenameUtf8;
 	std::string				 QueryStringUtf8;
+	std::vector<std::string> QueryArgsUtf8;
 	std::string				 ScavengeRootUtf8;
+	std::string				 P4HavePathUtf8;
+	std::string				 StorePathUtf8;
+	std::string				 SnapshotNameUtf8;
+	std::string				 AuthTokenPathUtf8;
+	bool					 bRunP4Have			 = false;
 	bool					 bForceOperation	 = false;
 	bool					 bAllowInsecureTls	 = false;
 	bool					 bUseTls			 = false;
@@ -81,27 +93,47 @@ InnerMain(int Argc, char** Argv)
 	bool					 bFullSourceScan	 = false;
 	bool					 bFullDifference	 = false;
 	bool					 bInfoFiles			 = false;
+	bool					 bNoProxySelect		 = false;
+	bool					 bInteractive		 = false;
+	bool					 bDecode			 = false;
+	bool					 bPrint				 = false;
+	bool					 bPrintHttpHeader	 = false;
+	bool					 bShouldLogin		 = false;
+	bool					 bQuickLogin		 = false;
+	bool					 bForceRefreshAuth	 = false;
+	bool					 bNoSocketTimeout	 = false;
+	bool					 bNoOutputFiles  	 = false;
+	bool					 bNoOutputRevisions  = false;
 	int32					 CompressionLevel	 = 3;
 	uint32					 DiffBlockSize		 = uint32(4_KB);
 	uint32					 HashOrSyncBlockSize = uint32(64_KB);
+	uint32					 BackgroundTaskMemoryBudgetGB = 2;
 
 	struct FDeprecatedOptions
 	{
-		bool bQuickSyncMode = false;
-		bool bQuickDifference = false;
+		bool bQuickSyncMode			= false;
+		bool bQuickDifference		= false;
 		bool bQuickSourceValidation = false;
 	} DeprecatedOptions;
 
-	const std::string HiddenGroupId; // CLI11 uses an empty string group name to mark arguments that should be hidden
+	const std::string HiddenGroupId;  // CLI11 uses an empty string group name to mark arguments that should be hidden
 
-#if UNSYNC_USE_TLS
-	auto AddTlsOptions = [&CacertFilenameUtf8, &bUseTls, &bAllowInsecureTls](CLI::App* App)
-	{
+	auto AddTlsOptions = [&CacertFilenameUtf8, &bUseTls, &bAllowInsecureTls](CLI::App* App) {
 		App->add_option("--cacert", CacertFilenameUtf8, "Certificate authority file to use for TLS validation (.pem)");
 		App->add_flag("--tls", bUseTls, "Use TLS when connecting to remote server");
 		App->add_flag("--insecure", bAllowInsecureTls, "Skip remote server TLS certificate validation");
 	};
-#endif // UNSYNC_USE_TLS
+
+	auto AddProxyOptions = [&RemoteAddressUtf8, &bNoProxySelect](CLI::App* App) {
+		App->add_option("--proxy, --remote, --server",
+						RemoteAddressUtf8,
+						"Download server address ([transport://]address[:port][/request][#namespace])");
+		App->add_flag("--no-proxy-select",
+					  bNoProxySelect,
+					  "Skip automatic server selection and use the exact one specified by command line or environment variable");
+	};
+
+	// Configure hash
 
 	CLI::App* SubHash = Cli.add_subcommand("hash", "Generate hash manifest for a file or directory");
 	SubHash->add_option("Input", InputFilenameUtf8, "Input file or directory path")->required();
@@ -127,6 +159,52 @@ InnerMain(int Argc, char** Argv)
 		"Create a directory manifest incrementally, by updating an existing manifest if one exists (only process changed files)");
 	SubCommands.push_back(SubHash);
 
+	// Configure pack
+
+	CLI::App* SubPack = nullptr;
+	{
+		SubPack =
+			Cli.add_subcommand("pack",
+							   "EXPERIMENTAL: Generate manifest for a directory and store all referenced data in a compressed pack file");
+
+		SubPack->add_option("Input", InputFilenameUtf8, "Input directory path")->required();
+
+		auto P4HaveFileOpt =
+			SubPack->add_option("--p4havefile",
+								P4HavePathUtf8,
+								"Use `p4 have` output from a given file to explicitly specify files included in the manifest");
+
+		auto RunP4HaveOpt = SubPack->add_flag("--p4have", bRunP4Have, "Run `p4 have` when generating the dirctory pack");
+
+		SubPack->add_option("--store", StorePathUtf8, "Use this location to store pack data (default: <Input>/.unsync/pack)");
+		SubPack->add_option("--snapshot", SnapshotNameUtf8, "Custom name for the snapshot (will overwrite an existing tag)");
+
+		RunP4HaveOpt->excludes(P4HaveFileOpt);
+
+		SubCommands.push_back(SubPack);
+	}
+
+	CLI::App* SubUnpack = nullptr;
+	{
+		SubUnpack = Cli.add_subcommand("unpack", "EXPERIMENTAL: Sync directory based on package snapshot");
+
+		SubUnpack->add_option("Output", OutputFilenameUtf8, "Output directory path")->required();
+
+		SubUnpack->add_option("--store", StorePathUtf8, "Pack storage path")->required();
+		SubUnpack->add_option("--snapshot", SnapshotNameUtf8, "Directory snapshot ID")->required();
+		SubUnpack->add_option("--p4havefile", P4HavePathUtf8, "Write revision control data in `p4 have` format into this file");
+		SubUnpack->add_flag("--no-revisions", bNoOutputRevisions, "Skip writing revision control data to <output>/.unsync/revisions.txt");
+		SubUnpack->add_flag("--no-files",
+							bNoOutputFiles,
+							"Skip actually unpacking the snapshot files, but attempt to reconstruct and verify the manifest. "
+							"Can be used in combination with --p4havefile option to only extract the `p4 have` list.");
+
+
+		SubCommands.push_back(SubUnpack);
+	}
+
+	// Configure push
+
 	CLI::App* SubPush = Cli.add_subcommand("push", "Loads a manifest from a directory and uploads referenced blocks to the remote server");
 	SubPush->add_option("Input", InputFilenameUtf8, "Input file or directory path")->required();
 	SubPush
@@ -137,9 +215,7 @@ InnerMain(int Argc, char** Argv)
 	SubPush->add_option("--http-header-file",
 						HttpHeaderFilenameUtf8,
 						"Text file that contains any extra HTTP headers to pass to the remote server (auth tokens, etc.)");
-#if UNSYNC_USE_TLS
 	SubPush->add_flag("--insecure", bAllowInsecureTls, "Skip remote server TLS certificate validation");
-#endif
 	SubCommands.push_back(SubPush);
 
 	CLI::App* SubInfo = Cli.add_subcommand("info", "Display information about a manifest file or diff two manifests");
@@ -155,6 +231,8 @@ InnerMain(int Argc, char** Argv)
 						"Exclude filenames that contain specified words (comma separated). Filter is run after --include.");
 	SubCommands.push_back(SubInfo);
 
+	// Configure diff
+
 	CLI::App* SubDiff = Cli.add_subcommand("diff", "Compute difference required to transform BaseFile into SourceFile");
 	SubDiff->add_option("Base", BaseFilenameUtf8, "Base file name (local data)")->required();
 	SubDiff->add_option("Source", SourceFilenameUtf8, "Source file name (remote data)")->required();
@@ -162,6 +240,8 @@ InnerMain(int Argc, char** Argv)
 	SubDiff->add_option("--level", CompressionLevel, "ZSTD compression level (default=3)");
 	SubDiff->add_option("-b, --block", DiffBlockSize, "Block size in bytes (default=4KB)");
 	SubCommands.push_back(SubDiff);
+
+	// Configure sync
 
 	CLI::App* SubSync = Cli.add_subcommand("sync", "Synchronize files, transforming target file/directory into source");
 	SubSync
@@ -171,23 +251,28 @@ InnerMain(int Argc, char** Argv)
 		->required();
 	SubSync->add_option("Target", TargetFilenameUtf8, "Target path")->required();
 	SubSync->add_option("-m, --manifest", SourceManifestFilenameUtf8, "Override manifest path for Source");
-	SubSync->add_option("--proxy, --remote",
-						RemoteAddressUtf8,
-						"FProxy server address ([transport://]address[:port][/request][#namespace])");
+	AddProxyOptions(SubSync);
 	SubSync->add_option("--dfs", PreferredDfsUtf8, "Preferred DFS mirror (matched by sub-string)");
-	SubSync->add_option("--overlay", OverlayArrayUtf8, "Additional source directory to sync (keep unique files from all sources, overwrite conflicting files with overlay source)");
-	SubSync->add_option("--include", IncludeFilterArrayUtf8, "Include filenames that contain specified words (comma separated). If this is not present, all files will be included.");
-	SubSync->add_option("--exclude", ExcludeFilterArrayUtf8, "Exclude filenames that contain specified words (comma separated). Filter is run after --include.");
-#if UNSYNC_USE_TLS
+	SubSync->add_option(
+		"--overlay",
+		OverlayArrayUtf8,
+		"Additional source directory to sync (keep unique files from all sources, overwrite conflicting files with overlay source)");
+	SubSync->add_option(
+		"--include",
+		IncludeFilterArrayUtf8,
+		"Include filenames that contain specified words (comma separated). If this is not present, all files will be included.");
+	SubSync->add_option("--exclude",
+						ExcludeFilterArrayUtf8,
+						"Exclude filenames that contain specified words (comma separated). Filter is run after --include.");
 	AddTlsOptions(SubSync);
-#else
-	UNSYNC_UNUSED(bUseTls);
-#endif	// UNSYNC_USE_TLS
+
 	SubSync->add_option("--http-header-file",
 						HttpHeaderFilenameUtf8,
 						"Text file that contains any extra HTTP headers to pass to the remote server (auth tokens, etc.)");
 	SubSync->add_flag("--no-cleanup", bNoCleanupAfterSync, "Do not delete local files that aren't in the manifest after a successful sync");
-	SubSync->add_option("--cleanup-exclude", CleanupExcludeFilterArrayUtf8, "Exclude filenames that contain specified words from cleanup process (comma separated)");
+	SubSync->add_option("--cleanup-exclude",
+						CleanupExcludeFilterArrayUtf8,
+						"Exclude filenames that contain specified words from cleanup process (comma separated)");
 
 	// Deprecated --quick flag
 	SubSync
@@ -224,9 +309,14 @@ InnerMain(int Argc, char** Argv)
 
 	SubSync->add_flag("--no-output-validation", bNoOutputValidation, "Skip final patched file block hash validation (DANGEROUS)");
 	SubSync->add_flag("--no-space-validation", bNoSpaceValidation, "Skip checking available disk space before sync (DANGEROUS)");
-	SubSync->add_option("-b, --block", HashOrSyncBlockSize, "Block size in bytes (default=64KB)");
-
 	SubSync->add_option("--scavenge", ScavengeRootUtf8, "Search for unsync manifests and reusable blocks in this directory (EXPERIMENTAL)");
+	SubSync->add_flag("--login", bShouldLogin, "Use user authentication when accessing unsync server");
+	SubSync->add_option("--token", AuthTokenPathUtf8, "Explicit path to the authentication token file to use");
+	SubSync->add_flag("--no-timeout", bNoSocketTimeout, "Disable the default 60 second timeout on network socket operations");
+
+	CLI::Option* BackgroundMemoryBudgetOption = SubSync->add_option("--background-task-memory",
+															BackgroundTaskMemoryBudgetGB,
+															"Set memory budget that background tasks in gigabytes (default: 2 GB)");
 
 	SubCommands.push_back(SubSync);
 
@@ -240,41 +330,143 @@ InnerMain(int Argc, char** Argv)
 	SubTest->add_option("--preset", PresetUtf8, "Test preset")->default_str(PresetUtf8);
 	SubCommands.push_back(SubTest);
 
+	// Configure query
+
 	CLI::App* SubQuery = Cli.add_subcommand("query", "Run a query command on the remote server");
-	SubQuery->add_option("QueryString", QueryStringUtf8, "Query")->required();
-	SubQuery->add_option("--proxy, --remote",
-					RemoteAddressUtf8,
-					"FProxy server address ([transport://]address[:port][/request][#namespace])")->required();
-#if UNSYNC_USE_TLS
+	SubQuery->add_option("QueryString", QueryStringUtf8, "Query to run: mirrors, login, list")->required();
+	SubQuery->add_option("QueryArgs", QueryArgsUtf8, "Query arguments");
+	SubQuery->add_option("-o", OutputFilenameUtf8, "Output file name");
+	AddProxyOptions(SubQuery);
+
 	AddTlsOptions(SubQuery);
-#endif // UNSYNC_USE_TLS
 	SubCommands.push_back(SubQuery);
+
+	// Configure login
+
+	CLI::App* SubLogin = Cli.add_subcommand("login", "Authenticate with the remote server (acquire access and refresh tokens)");
+	SubLogin->add_flag("--interactive", bInteractive, "Allow user interaction through modal dialogs");
+	SubLogin->add_flag("--decode", bDecode, "Decode authentication token (implies --print)");
+	SubLogin->add_flag("--print", bPrint, "Print authentication token to standard output");
+	SubLogin->add_flag("--print-http-header", bPrintHttpHeader, "Print authentication token to standard output as HTTP Authorization header that could be used with curl, etc.");
+	SubLogin->add_flag("--refresh", bForceRefreshAuth, "Force authentication refresh even if access token has not yet expired");
+	SubLogin->add_flag("--quick", bQuickLogin, "Skip token validation using remote server (fast path when cached acess token is expected to be valid)");
+	AddTlsOptions(SubLogin);
+	AddProxyOptions(SubLogin);
+	SubCommands.push_back(SubLogin);
+
+	// Configure mount
+
+	CLI::App* SubMount = Cli.add_subcommand("mount", "Mount directory manifest as a virtual file system (EXPERIMENTAL)");
+	SubMount
+		->add_option("Source",
+					 SourceFilenameUtf8,
+					 "Source path, object name, hash or full URL ([transport://]address[:port]#namespace/object)")
+		->required();
+	AddProxyOptions(SubMount);
+	SubCommands.push_back(SubMount);
 
 	for (CLI::App* Subcommand : SubCommands)
 	{
 		Subcommand->add_flag("-d, --dry, --dry-run", GDryRun, "Don't write any outputs to disk");
-		Subcommand->add_flag("-v, --verbose", GLogVerbose, "Verbose logging");
-		Subcommand->add_flag("--very-verbose", GLogVeryVerbose, "Very verbose logging");
+		auto VerboseFlag	 = Subcommand->add_flag("-v, --verbose", GLogVerbose, "Verbose logging");
+		auto VeryVerboseFlag = Subcommand->add_flag("--very-verbose", GLogVeryVerbose, "Very verbose logging");
+		auto SilentFlag		 = Subcommand->add_flag("--silent", GLogSilent, "Skip all console logging except errors and warnings");
 		Subcommand->add_flag("--progress", GLogProgress, "Output @progress and @status markers");
 		Subcommand->add_option("--threads", GMaxThreads, "Limit worker threads to specified number");
 		Subcommand->add_flag("--buffered-files", GForceBufferedFiles, "Always use buffered file IO");
 		Subcommand->add_flag("--debug", bUseDebugMode, "Enable extra debugging features, such as extra memory safety validation");
+
+		SilentFlag->excludes(VerboseFlag);
+		SilentFlag->excludes(VeryVerboseFlag);
+		VeryVerboseFlag->excludes(VerboseFlag);
 	}
 
-#if UNSYNC_PLATFORM_WINDOWS
-	_setmode(_fileno(stdout), _O_TEXT);
-#endif	// UNSYNC_PLATFORM_WINDOWS
+	// Run the command
 
-	CLI11_PARSE(Cli, Argc, Argv);
+	try
+	{
+		Cli.parse(Argc, Argv);
+	}
+	catch (CLI::Error& E)
+	{
+		std::stringstream OutputStream;
+		const int32		  ReturnCode = Cli.exit(E, OutputStream, OutputStream);
+		std::wstring	  Output	 = ConvertUtf8ToWide(OutputStream.str());
+		wprintf(L"%ls", Output.c_str());
+		return ReturnCode;
+	}
 
 	if (Cli.get_subcommands().size() == 0)
 	{
-		printf("%s", Cli.help().c_str());
+		wprintf(L"%hs", Cli.help().c_str());
 	}
 
-#if UNSYNC_PLATFORM_WINDOWS
-	_setmode(_fileno(stdout), _O_U8TEXT);
-#endif	// UNSYNC_PLATFORM_WINDOWS
+	FTimingLogger TimingLogger("Total time", ELogLevel::Info);
+
+	// Configure default output mehtod based on subcommand.
+	// In machine-readable mode, all verbose logging is directed to stderr.
+
+	if (Cli.got_subcommand(SubQuery) || Cli.got_subcommand(SubLogin))
+	{
+		GLogMachineReadable = true;
+	}
+
+	UNSYNC_VERBOSE(L"UNSYNC v%hs", GetVersionString().c_str());
+
+	UnsyncMallocInit(bUseDebugMode ? EMallocType::Debug : EMallocType::Default);
+
+	if (bUseDebugMode)
+	{
+		UNSYNC_LOG(L"*** Debug mode enabled ***");
+	}
+
+	// Augment configuration based on environment variables if corresponding command line arguments are missing.
+
+	if (const char* EnvCleanupExclude = getenv("UNSYNC_CLEANUP_EXCLUDE"))
+	{
+		UNSYNC_LOG(L"Using UNSYNC_CLEANUP_EXCLUDE environment: '%hs'", EnvCleanupExclude);
+		CleanupExcludeFilterArrayUtf8.push_back(EnvCleanupExclude);
+	}
+
+	if (PreferredDfsUtf8.empty())
+	{
+		const char* EnvDfs = getenv("UNSYNC_DFS");
+		if (EnvDfs)
+		{
+			UNSYNC_LOG(L"Using UNSYNC_DFS environment: '%hs'", EnvDfs);
+			PreferredDfsUtf8 = std::string(EnvDfs);
+		}
+	}
+
+	if (RemoteAddressUtf8.empty())
+	{
+		const char* EnvProxy = getenv("UNSYNC_PROXY");
+		if (EnvProxy)
+		{
+			UNSYNC_LOG(L"Using UNSYNC_PROXY environment: '%hs'", EnvProxy);
+			RemoteAddressUtf8 = std::string(EnvProxy);
+		}
+	}
+
+	if (CacertFilenameUtf8.empty())
+	{
+		const char* EnvCacert = getenv("UNSYNC_CACERT");
+		if (EnvCacert)
+		{
+			UNSYNC_LOG(L"Using UNSYNC_CACERT environment: '%hs'", EnvCacert);
+			CacertFilenameUtf8 = std::string(EnvCacert);
+		}
+	}
+
+	if (HttpHeaderFilenameUtf8.empty())
+	{
+		const char* EnvHttpHeaderFile = getenv("UNSYNC_HTTP_HEADER_FILE");
+		if (EnvHttpHeaderFile)
+		{
+			UNSYNC_LOG(L"Using UNSYNC_HTTP_HEADER_FILE environment: '%hs'", EnvHttpHeaderFile);
+			HttpHeaderFilenameUtf8 = std::string(EnvHttpHeaderFile);
+		}
+	}
 
 	if (GLogVeryVerbose)
 	{
@@ -302,13 +494,6 @@ InnerMain(int Argc, char** Argv)
 			L"Quick mode is now the default and --quick-difference flag is deprecated. Use --full-diff to enable legacy behavior performs "
 			L"full binary difference of local files even if timestamps and sizes match.");
 	}
-
-	if (bUseDebugMode)
-	{
-		UNSYNC_LOG(L"*** Debug mode enabled ***");
-	}
-
-	UnsyncMallocInit(bUseDebugMode ? EMallocType::Debug : EMallocType::Default);
 
 	EWeakHashAlgorithmID DefaultWeakHasher = EWeakHashAlgorithmID::BuzHash;
 	if (WeakHashUtf8 == "naive")
@@ -349,6 +534,7 @@ InnerMain(int Argc, char** Argv)
 	}
 
 	FRemoteDesc RemoteDesc;
+	FAuthDesc	AuthDesc;
 
 	if (RemoteAddressUtf8.empty())
 	{
@@ -408,20 +594,18 @@ InnerMain(int Argc, char** Argv)
 	FPath ScavengeRoot			 = NormalizeFilenameUtf8(ScavengeRootUtf8);
 	FPath SourceManifestFilename = NormalizeFilenameUtf8(SourceManifestFilenameUtf8);
 
-	UNSYNC_VERBOSE(L"UNSYNC %hs", GetVersionString().c_str());
-
 	if (GLogVeryVerbose)
 	{
-		UNSYNC_VERBOSE(L"Very verbose logging is enabled");
+		UNSYNC_LOG(L"Very verbose logging is enabled");
 	}
 	else if (GLogVerbose)
 	{
-		UNSYNC_VERBOSE(L"Verbose logging is enabled");
+		UNSYNC_LOG(L"Verbose logging is enabled");
 	}
 
 	if (GDryRun)
 	{
-		UNSYNC_VERBOSE(L">>> DRY RUN <<<");
+		UNSYNC_LOG(L">>> DRY RUN <<<");
 	}
 
 	if (GForceBufferedFiles)
@@ -430,10 +614,10 @@ InnerMain(int Argc, char** Argv)
 	}
 
 	GMaxThreads = std::max(1u, GMaxThreads);
-	UNSYNC_VERBOSE(L"Using threads: %d", GMaxThreads);
+	UNSYNC_VERBOSE2(L"Using threads: %d", GMaxThreads);
 	FConcurrencyPolicyScope ConcurrencyLimitScope(GMaxThreads);
 
-	if (Cli.got_subcommand(SubHash) || Cli.got_subcommand(SubSync))
+	if (Cli.got_subcommand(SubHash) || Cli.got_subcommand(SubPack))
 	{
 		UNSYNC_VERBOSE(L"Using block size: %d KB", HashOrSyncBlockSize / 1024);
 	}
@@ -475,61 +659,15 @@ InnerMain(int Argc, char** Argv)
 		SyncFilter.IncludeInSync(ConvertUtf8ToWide(Str));
 	}
 
-	if (const char* EnvCleanupExclude = getenv("UNSYNC_CLEANUP_EXCLUDE"))
-	{
-		UNSYNC_VERBOSE(L"Using UNSYNC_CLEANUP_EXCLUDE environment: '%hs'", EnvCleanupExclude);
-		CleanupExcludeFilterArrayUtf8.push_back(EnvCleanupExclude);
-	}
-
 	for (const std::string& Str : CleanupExcludeFilterArrayUtf8)
 	{
 		SyncFilter.ExcludeFromCleanup(ConvertUtf8ToWide(Str));
 	}
 
-	if (PreferredDfsUtf8.empty())
-	{
-		const char* EnvDfs = getenv("UNSYNC_DFS");
-		if (EnvDfs)
-		{
-			UNSYNC_VERBOSE(L"Using UNSYNC_DFS environment: '%hs'", EnvDfs);
-			PreferredDfsUtf8 = std::string(EnvDfs);
-		}
-	}
-
-	if (RemoteAddressUtf8.empty() && Cli.got_subcommand(SubSync))
-	{
-		const char* EnvProxy = getenv("UNSYNC_PROXY");
-		if (EnvProxy)
-		{
-			UNSYNC_VERBOSE(L"Using UNSYNC_PROXY environment: '%hs'", EnvProxy);
-			RemoteAddressUtf8 = std::string(EnvProxy);
-		}
-	}
-
-	if (CacertFilenameUtf8.empty())
-	{
-		const char* EnvCacert = getenv("UNSYNC_CACERT");
-		if (EnvCacert)
-		{
-			UNSYNC_VERBOSE(L"Using UNSYNC_CACERT environment: '%hs'", EnvCacert);
-			CacertFilenameUtf8 = std::string(EnvCacert);
-		}
-	}
-
-	if (HttpHeaderFilenameUtf8.empty())
-	{
-		const char* EnvHttpHeaderFile = getenv("UNSYNC_HTTP_HEADER_FILE");
-		if (EnvHttpHeaderFile)
-		{
-			UNSYNC_VERBOSE(L"Using UNSYNC_HTTP_HEADER_FILE environment: '%hs'", EnvHttpHeaderFile);
-			HttpHeaderFilenameUtf8 = std::string(EnvHttpHeaderFile);
-		}
-	}
-
 	if (!PreferredDfsUtf8.empty() && !SourceFilenameUtf8.empty())
 	{
 		LogGlobalStatus(L"Enumerating DFS");
-		UNSYNC_VERBOSE(L"Enumerating DFS");
+		UNSYNC_LOG(L"Enumerating DFS");
 		std::wstring PreferredDfs = ConvertUtf8ToWide(PreferredDfsUtf8);
 		auto		 DfsEntries	  = DfsEnumerate(SourceFilename);
 
@@ -547,7 +685,7 @@ InnerMain(int Argc, char** Argv)
 
 		if (FoundDfsStorage)
 		{
-			UNSYNC_VERBOSE(L"Found preferred DFS storage server '%ls' with share '%ls'",
+			UNSYNC_LOG(L"Found preferred DFS storage server '%ls' with share '%ls'",
 						   FoundDfsStorage->Server.c_str(),
 						   FoundDfsStorage->Share.c_str());
 
@@ -555,7 +693,7 @@ InnerMain(int Argc, char** Argv)
 			DfsAlias.Source = DfsEntries.Root;
 			DfsAlias.Target = FPath(L"\\\\") / FoundDfsStorage->Server / FoundDfsStorage->Share;
 
-			UNSYNC_VERBOSE(L"Using DFS alias '%ls' -> '%ls'", DfsAlias.Source.wstring().c_str(), DfsAlias.Target.wstring().c_str());
+			UNSYNC_LOG(L"Using DFS alias '%ls' -> '%ls'", DfsAlias.Source.wstring().c_str(), DfsAlias.Target.wstring().c_str());
 
 			if (!DfsAlias.Source.empty())
 			{
@@ -583,15 +721,19 @@ InnerMain(int Argc, char** Argv)
 
 	if (bUseTls)
 	{
-		RemoteDesc.bTlsEnable			 = true;
-		RemoteDesc.bTlsVerifyCertificate = true;
+		RemoteDesc.bTlsEnable = true;
 	}
 
 	if (bAllowInsecureTls)
 	{
 		RemoteDesc.bTlsVerifyCertificate = false;
-		RemoteDesc.TlsSubject			 = {};
+		RemoteDesc.bTlsVerifySubject	 = false;
 		UNSYNC_WARNING(L"Remote server certificate verification is disabled.");
+	}
+	else
+	{
+		RemoteDesc.bTlsVerifyCertificate = true;
+		RemoteDesc.bTlsVerifySubject	 = true;
 	}
 
 	if (bNoOutputValidation)
@@ -609,8 +751,8 @@ InnerMain(int Argc, char** Argv)
 	}
 
 	{
-		FPath ExtraCertPath = GExePath.parent_path() / "unsync.cer";
-		FBuffer CertBuffer = ReadFileToBuffer(ExtraCertPath);
+		FPath	ExtraCertPath = GExePath.parent_path() / "unsync.cer";
+		FBuffer CertBuffer	  = ReadFileToBuffer(ExtraCertPath);
 		if (!CertBuffer.Empty())
 		{
 			UNSYNC_LOG(L"Using trusted certificates from '%ls'", ExtraCertPath.wstring().c_str());
@@ -626,6 +768,34 @@ InnerMain(int Argc, char** Argv)
 		}
 	}
 
+	if (bShouldLogin)
+	{
+		RemoteDesc.PrimaryHost = RemoteDesc.Host;
+	}
+
+	FRemoteDesc RootRemoteDesc = RemoteDesc;
+
+	if (!bNoProxySelect
+		&& Cli.got_subcommand(SubSync)
+		&& RemoteDesc.IsValid() && RemoteDesc.Protocol == EProtocolFlavor::Unsync)
+	{
+		UNSYNC_LOG(L"Selecting server using root '%hs'", RemoteDesc.Host.Address.c_str());
+		TResult<FMirrorInfo> MirrorResult = FindClosestMirror(RemoteDesc);
+		if (const FMirrorInfo* Mirror = MirrorResult.TryData())
+		{
+			UNSYNC_LOG(L"Closest server: '%hs', ping: %.2f ms", Mirror->Address.c_str(), Mirror->Ping * 1000.0);
+
+			RemoteDesc.Host.Address = Mirror->Address;
+			RemoteDesc.Host.Port	= Mirror->Port;
+		}
+		else
+		{
+			UNSYNC_WARNING(L"Failed to find closest proxy using root server '%hs': %ls",
+						   RemoteAddressUtf8.c_str(),
+						   MirrorResult.TryError()->Context.c_str());
+		}
+	}
+
 	if (Cli.got_subcommand(SubHash))
 	{
 		FCmdHashOptions HashOptions;
@@ -638,6 +808,33 @@ InnerMain(int Argc, char** Argv)
 		HashOptions.bIncremental = bIncrementalMode;
 
 		return CmdHash(HashOptions);
+	}
+	else if (Cli.got_subcommand(SubPack))
+	{
+		FCmdPackOptions PackOptions;
+
+		PackOptions.RootPath	 = InputFilename;
+		PackOptions.P4HavePath	 = NormalizeFilenameUtf8(P4HavePathUtf8);
+		PackOptions.StorePath	 = NormalizeFilenameUtf8(StorePathUtf8);
+		PackOptions.bRunP4Have	 = bRunP4Have;
+		PackOptions.BlockSize	 = HashOrSyncBlockSize;
+		PackOptions.Algorithm	 = Algorithm;
+		PackOptions.SnapshotName = SnapshotNameUtf8;
+
+		return CmdPack(PackOptions);
+	}
+	else if (Cli.got_subcommand(SubUnpack))
+	{
+		FCmdUnpackOptions UnpackOptions;
+
+		UnpackOptions.OutputPath	   = OutputFilename;
+		UnpackOptions.SnapshotName	   = SnapshotNameUtf8;
+		UnpackOptions.P4HaveOutputPath = NormalizeFilenameUtf8(P4HavePathUtf8);
+		UnpackOptions.StorePath		   = NormalizeFilenameUtf8(StorePathUtf8);
+		UnpackOptions.bOutputFiles	   = !bNoOutputFiles;
+		UnpackOptions.bOutputRevisions = !bNoOutputRevisions;
+
+		return CmdUnpack(UnpackOptions);
 	}
 	else if (Cli.got_subcommand(SubDiff))
 	{
@@ -661,21 +858,87 @@ InnerMain(int Argc, char** Argv)
 			ScavengeRoot = FPath{};
 		}
 
+		if (bShouldLogin)
+		{
+			UNSYNC_LOG(L"Attempting to authenticate");
+			UNSYNC_LOG_INDENT;
+
+			TResult<FAuthDesc> AuthDescResult = GetRemoteAuthDesc(RemoteDesc);
+
+			if (AuthDescResult.IsOk())
+			{
+				AuthDesc = AuthDescResult.GetData();
+
+				AuthDesc.TokenPath = NormalizeFilenameUtf8(AuthTokenPathUtf8);
+
+				// Note: since tokens can expire during a long operation,
+				// we can only save the auth descriptor and re-authenticate later if necessary
+				TResult<FAuthToken> AuthTokenResult = Authenticate(AuthDesc, 5 * 60);
+
+				if (AuthTokenResult.IsError())
+				{
+					UNSYNC_ERROR("Failed to authenticate with server '%hs'", RemoteDesc.Host.Address.c_str());
+					LogError(AuthTokenResult.GetError());
+					return -1;
+				}
+
+				// Authentication requires encrypted connection
+				RemoteDesc.bTlsEnable			   = true;
+				RemoteDesc.bAuthenticationRequired = true;
+
+				UNSYNC_LOG(L"Authentication enabled")
+			}
+		}
+
+		if (bNoSocketTimeout)
+		{
+			RemoteDesc.RecvTimeoutSeconds = 0;
+		}
+		else
+		{
+			RemoteDesc.RecvTimeoutSeconds = 60;
+		}
+
+		// Try to derive default memory budget
+
+		if (BackgroundMemoryBudgetOption->empty())
+		{
+			FSystemMemoryInfo MemoryInfo;
+			if (QueryMemoryInfo(MemoryInfo))
+			{
+				uint32 InstalledMemoryGB = CheckedNarrow(MemoryInfo.InstalledPhysicalMemory >> 30);
+				UNSYNC_VERBOSE2(L"Detected memory: %llu GB", InstalledMemoryGB);
+				BackgroundTaskMemoryBudgetGB = std::max<uint32>(2, InstalledMemoryGB / 4);
+			}
+			else
+			{
+				UNSYNC_VERBOSE2(L"Could not detect system memory size");
+			}
+
+			UNSYNC_VERBOSE2(L"Using automatic background task memory budget: %llu GB", BackgroundTaskMemoryBudgetGB);
+		}
+		else
+		{
+			UNSYNC_VERBOSE2(L"Using explicit background task memory budget: %llu GB", BackgroundTaskMemoryBudgetGB);
+		}
+		//
+
 		FCmdSyncOptions SyncOptions;
 
-		SyncOptions.Algorithm			   = Algorithm;
-		SyncOptions.Source				   = SourceFilename;
-		SyncOptions.Target				   = TargetFilename;
-		SyncOptions.SourceManifestOverride = SourceManifestFilename;
-		SyncOptions.Remote				   = RemoteDesc;
-		SyncOptions.bFullDifference		   = bFullDifference;
-		SyncOptions.bFullSourceScan		   = bFullSourceScan;
-		SyncOptions.bCleanup			   = !bNoCleanupAfterSync;
-		SyncOptions.BlockSize			   = HashOrSyncBlockSize;
-		SyncOptions.Filter				   = &SyncFilter;
-		SyncOptions.bValidateTargetFiles   = !bNoOutputValidation;
-		SyncOptions.bCheckAvailableSpace   = !bNoSpaceValidation;
-		SyncOptions.ScavengeRoot		   = ScavengeRoot;
+		SyncOptions.Algorithm				   = Algorithm;
+		SyncOptions.Source					   = SourceFilename;
+		SyncOptions.Target					   = TargetFilename;
+		SyncOptions.SourceManifestOverride	   = SourceManifestFilename;
+		SyncOptions.Remote					   = RemoteDesc;
+		SyncOptions.AuthDesc				   = AuthDesc.IsValid() ? &AuthDesc : nullptr;
+		SyncOptions.bFullDifference			   = bFullDifference;
+		SyncOptions.bFullSourceScan			   = bFullSourceScan;
+		SyncOptions.bCleanup				   = !bNoCleanupAfterSync;
+		SyncOptions.Filter					   = &SyncFilter;
+		SyncOptions.bValidateTargetFiles	   = !bNoOutputValidation;
+		SyncOptions.bCheckAvailableSpace	   = !bNoSpaceValidation;
+		SyncOptions.ScavengeRoot			   = ScavengeRoot;
+		SyncOptions.BackgroundTaskMemoryBudget = uint64(BackgroundTaskMemoryBudgetGB) << 30ull;
 
 		for (const std::string& Entry : OverlayArrayUtf8)
 		{
@@ -710,8 +973,8 @@ InnerMain(int Argc, char** Argv)
 	else if (Cli.got_subcommand(SubInfo))
 	{
 		FCmdInfoOptions Options;
-		Options.InputA = InputFilename;
-		Options.InputB = InputFilename2;
+		Options.InputA	   = InputFilename;
+		Options.InputB	   = InputFilename2;
 		Options.bListFiles = bInfoFiles;
 		Options.SyncFilter = &SyncFilter;
 		return CmdInfo(Options);
@@ -719,9 +982,34 @@ InnerMain(int Argc, char** Argv)
 	else if (Cli.got_subcommand(SubQuery))
 	{
 		FCmdQueryOptions QueryOptions;
-		QueryOptions.Query	= QueryStringUtf8;
-		QueryOptions.Remote = RemoteDesc;
+		QueryOptions.Query		= QueryStringUtf8;
+		QueryOptions.Args		= QueryArgsUtf8;
+		QueryOptions.Remote		= RemoteDesc;
+		QueryOptions.OutputPath = OutputFilename;
 		return CmdQuery(QueryOptions);
+	}
+	else if (Cli.got_subcommand(SubLogin))
+	{
+		if (bDecode || bPrintHttpHeader)
+		{
+			bPrint = true;
+		}
+
+		FCmdLoginOptions LoginOptions;
+		LoginOptions.Remote			  = RemoteDesc;
+		LoginOptions.bInteractive	  = bInteractive;
+		LoginOptions.bDecode		  = bDecode;
+		LoginOptions.bPrint			  = bPrint;
+		LoginOptions.bPrintHttpHeader = bPrintHttpHeader;
+		LoginOptions.bForceRefresh	  = bForceRefreshAuth;
+		LoginOptions.bQuick			  = bQuickLogin;
+		return CmdLogin(LoginOptions);
+	}
+	else if (Cli.got_subcommand(SubMount))
+	{
+		FCmdMountOptions MountOptions;
+		MountOptions.Path = SourceFilename;
+		return CmdMount(MountOptions);
 	}
 
 	return 0;
@@ -765,7 +1053,14 @@ ExceptionFilter(_EXCEPTION_POINTERS* ExceptionPointers)
 
 	PEXCEPTION_RECORD Record = ExceptionPointers->ExceptionRecord;
 
-	LogPrintf(ELogLevel::Error, L"Unhandled exception 0x%08X at address 0x%016X\n", Record->ExceptionCode, Record->ExceptionAddress);
+	if (Record->ExceptionCode == EXCEPTION_BREAKPOINT)
+	{
+		LogPrintf(ELogLevel::Error, L"Break point at address 0x%016X\n", Record->ExceptionAddress);
+	}
+	else
+	{
+		LogPrintf(ELogLevel::Error, L"Unhandled exception 0x%08X at address 0x%016X\n", Record->ExceptionCode, Record->ExceptionAddress);
+	}
 
 	LogWriteCrashDump(ExceptionPointers);
 
@@ -808,7 +1103,7 @@ main(int argc, char** argv)
 	{
 		ArgvUtf8.push_back(ArgvStringsUtf8[I].data());
 	}
-#else // UNSYNC_PLATFORM_WINDOWS
+#else	// UNSYNC_PLATFORM_WINDOWS
 	GExePath = FPath(argv[0]);
 #endif	// UNSYNC_PLATFORM_WINDOWS
 

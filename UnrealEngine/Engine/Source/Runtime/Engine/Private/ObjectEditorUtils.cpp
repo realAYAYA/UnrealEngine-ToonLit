@@ -202,25 +202,19 @@ namespace FObjectEditorUtils
 
 			TargetMapHelper.EmptyValues();
 
-			int32 Num = SourceMapHelper.Num();
-			for ( int32 Index = 0; Num; Index++ )
+			for (FScriptMapHelper::FIterator It(SourceMapHelper); It; ++It)
 			{
-				if ( SourceMapHelper.IsValidIndex(Index) )
-				{
-					uint8* SrcPairPtr = SourceMapHelper.GetPairPtr(Index);
+				uint8* SrcPairPtr = SourceMapHelper.GetPairPtr(It);
 
-					int32 NewIndex = TargetMapHelper.AddDefaultValue_Invalid_NeedsRehash();
-					TargetMapHelper.Rehash();
+				int32 NewIndex = TargetMapHelper.AddDefaultValue_Invalid_NeedsRehash();
+				TargetMapHelper.Rehash();
 
-					uint8* PairPtr = TargetMapHelper.GetPairPtr(NewIndex);
+				uint8* PairPtr = TargetMapHelper.GetPairPtr(NewIndex);
 
-					CopySinglePropertyRecursive(SourceObject, SrcPairPtr, SrcMapProperty->KeyProp, PairPtr, InDestinationObject, DestMapProperty->KeyProp);
-					CopySinglePropertyRecursive(SourceObject, SrcPairPtr, SrcMapProperty->ValueProp, PairPtr, InDestinationObject, DestMapProperty->ValueProp);
+				CopySinglePropertyRecursive(SourceObject, SrcPairPtr, SrcMapProperty->KeyProp, PairPtr, InDestinationObject, DestMapProperty->KeyProp);
+				CopySinglePropertyRecursive(SourceObject, SrcPairPtr, SrcMapProperty->ValueProp, PairPtr, InDestinationObject, DestMapProperty->ValueProp);
 
-					TargetMapHelper.Rehash();
-
-					--Num;
-				}
+				TargetMapHelper.Rehash();
 			}
 
 			bNeedsShallowCopy = false;
@@ -235,23 +229,17 @@ namespace FObjectEditorUtils
 
 			TargetSetHelper.EmptyElements();
 
-			int32 Num = SourceSetHelper.Num();
-			for ( int32 Index = 0; Num; Index++ )
+			for (FScriptSetHelper::FIterator It(SourceSetHelper); It; ++It)
 			{
-				if ( SourceSetHelper.IsValidIndex(Index) )
-				{
-					uint8* SrcPtr = SourceSetHelper.GetElementPtr(Index);
+				uint8* SrcPtr = SourceSetHelper.GetElementPtr(It);
 
-					int32 NewIndex = TargetSetHelper.AddDefaultValue_Invalid_NeedsRehash();
-					TargetSetHelper.Rehash();
+				int32 NewIndex = TargetSetHelper.AddDefaultValue_Invalid_NeedsRehash();
+				TargetSetHelper.Rehash();
 
-					uint8* TargetPtr = TargetSetHelper.GetElementPtr(NewIndex);
-					CopySinglePropertyRecursive(SourceObject, SrcPtr, SrcSetProperty->ElementProp, TargetPtr, InDestinationObject, DestSetProperty->ElementProp);
+				uint8* TargetPtr = TargetSetHelper.GetElementPtr(NewIndex);
+				CopySinglePropertyRecursive(SourceObject, SrcPtr, SrcSetProperty->ElementProp, TargetPtr, InDestinationObject, DestSetProperty->ElementProp);
 
-					TargetSetHelper.Rehash();
-
-					--Num;
-				}
+				TargetSetHelper.Rehash();
 			}
 
 			bNeedsShallowCopy = false;
@@ -275,7 +263,7 @@ namespace FObjectEditorUtils
 							ExistingObject->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors);
 						}
 
-						UObject* DuplicateValue = StaticDuplicateObject(Value, InDestinationObject, Value->GetFName(), RF_AllFlags, nullptr, EDuplicateMode::Normal, EInternalObjectFlags::AllFlags);
+						UObject* DuplicateValue = StaticDuplicateObject(Value, InDestinationObject, Value->GetFName(), RF_AllFlags, nullptr, EDuplicateMode::Normal, EInternalObjectFlags_AllFlags);
 
 						// Ensure that we propagate the necessary flags from the destination object (outer) to the new subobject.
 						EObjectFlags FlagsToPropagate = InDestinationObject->GetMaskedFlags(RF_PropagateToSubObjects);

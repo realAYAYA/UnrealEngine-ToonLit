@@ -39,6 +39,7 @@ UObjectPathChannelEvaluatorSystem::UObjectPathChannelEvaluatorSystem(const FObje
 
 	FBuiltInComponentTypes* BuiltInComponents = FBuiltInComponentTypes::Get();
 	RelevantComponent = BuiltInComponents->ObjectPathChannel;
+	Phase = ESystemPhase::Scheduling;
 
 	if (HasAnyFlags(RF_ClassDefaultObject))
 	{

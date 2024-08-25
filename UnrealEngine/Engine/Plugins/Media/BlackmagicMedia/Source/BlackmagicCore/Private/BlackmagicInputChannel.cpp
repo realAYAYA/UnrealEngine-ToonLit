@@ -178,7 +178,7 @@ namespace BlackmagicDesign
 				InputChannel->ChannelOptions.FormatInfo.FieldDominance = FormatInfo.FieldDominance;
 				InputChannel->ChannelOptions.FormatInfo.DisplayMode = InNewDisplayMode->GetDisplayMode();
 
-				if (InputChannel->ChannelOptions.bAutoDetect)
+				if (InputChannel->ChannelOptions.bAutoDetect || InputChannel->ChannelOptions.TimecodeFormat == ETimecodeFormat::TCF_Auto)
 				{
 					InputChannel->DisplayMode = InNewDisplayMode->GetDisplayMode();
 					InputChannel->Reinitialize();
@@ -535,7 +535,8 @@ namespace BlackmagicDesign
 
 		bool FInputChannel::IsCompatible(const FChannelInfo& InChannelInfo, const FInputChannelOptions& InChannelOptions) const
 		{
-			bool bResult = (ChannelOptions.FormatInfo.DisplayMode == InChannelOptions.FormatInfo.DisplayMode);
+			// Format isn't set on the channel options when using "Auto", since we don't care about the format, it's always going to be "compatible".
+			bool bResult = (ChannelOptions.FormatInfo.DisplayMode == InChannelOptions.FormatInfo.DisplayMode || InChannelOptions.bAutoDetect);
 
 			if (bResult)
 			{

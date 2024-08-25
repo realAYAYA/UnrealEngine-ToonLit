@@ -2,6 +2,7 @@
 
 #include "MuCOE/CustomizableObjectCustomSettings.h"
 
+#include "CustomizableObjectEditor.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Components/SpotLightComponent.h"
 #include "Framework/Views/TableViewMetadata.h"
@@ -11,7 +12,12 @@
 #include "MuCOE/SCustomizableObjectEditorViewport.h"
 #include "MuCOE/UnrealEditorPortabilityHelpers.h"
 #include "PropertyCustomizationHelpers.h"
+#include "MuCO/CustomizableObject.h"
+#include "MuCO/CustomizableObjectInstance.h"
+#include "MuCOE/ICustomizableObjectEditor.h"
+#include "MuCOE/ICustomizableObjectInstanceEditor.h"
 #include "Subsystems/ImportSubsystem.h"
+#include "Toolkits/ToolkitManager.h"
 #include "Widgets/Colors/SColorBlock.h"
 #include "Widgets/Colors/SColorPicker.h"
 #include "Widgets/Input/SButton.h"
@@ -30,16 +36,28 @@ struct FGeometry;
 
 const FString SCustomizableObjectCustomSettings::LightPackagePath = "/Game/EditorAssets/Mutable/";
 
-void SCustomizableObjectCustomSettings::Construct(const FArguments& InArgs, UCustomizableObjectEmptyClassForSettings* InObject)
-{
-	if (!IsValid(InObject) || !InObject->Viewport.IsValid())
+void SCustomizableObjectCustomSettings::Construct(const FArguments& InArgs)
+{	
+	WeakEditor = InArgs._PreviewSettings->GetEditor();
+
+	const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = GetEditorChecked();
+	
+	const TSharedPtr<SCustomizableObjectEditorViewportTabBody> Viewpot = Editor->GetViewport();
+	WeakViewport = Editor->GetViewport();
+
+	TSharedPtr<FString> SelectedLight;
+	for (ULightComponent* Light : Viewpot->GetViewportClient()->GetLightComponents())
 	{
-		return;
-	}
+		TSharedPtr<FString> LightName = MakeShareable(new FString(Light->GetName()));
+		LightNames.Add(LightName);
 
-	TSharedPtr<SCustomizableObjectEditorViewportTabBody> ViewportTabBody = InObject->Viewport.Pin();
+		if (Light == Editor->GetCustomSettings()->GetSelectedLight())
+		{
+			SelectedLight = LightName;
+		}
+	}		
 
-	ViewportClient = ViewportTabBody->GetViewportClient().Get();
+	TSharedPtr<STextBlock> LightAssetText;
 
 	// Viewport Lighting 
 	AddSlot()
@@ -77,7 +95,6 @@ void SCustomizableObjectCustomSettings::Construct(const FArguments& InArgs, UCus
 				.FillWidth(0.5)
 				[
 					SAssignNew(LightsAssetNameInputText, SEditableTextBox)
-					.Text(FText::FromString("Default Viewport Lights"))
 				]
 				+ SHorizontalBox::Slot()
 				.FillWidth(.15)
@@ -121,7 +138,6 @@ void SCustomizableObjectCustomSettings::Construct(const FArguments& InArgs, UCus
 					[
 						SAssignNew(LightAssetText, STextBlock)
 						.TextStyle(FAppStyle::Get(), "PropertyEditor.AssetClass")
-						.Text(FText::FromString("No Asset Selected"))
 					]
 				]
 			]
@@ -408,22 +424,45 @@ void SCustomizableObjectCustomSettings::Construct(const FArguments& InArgs, UCus
 			]
 		]
 	];
+
+	if (const UCustomizableObjectEditorViewportLights* LightPreset = Editor->GetCustomSettings()->GetLightsPreset())
+	{
+		const FText Name = FText::FromString(LightPreset->GetName());
+		LightAssetText->SetText(Name);		
+		LightsAssetNameInputText->SetText(Name);		
+	}
+	else
+	{
+		LightAssetText->SetText(FText::FromString("No Asset Selected"));		
+		LightsAssetNameInputText->SetText(FText::FromString("Default Viewport Lights"));			
+	}
+
+	if (SelectedLight)
+	{
+		LightsListView->SetSelection(SelectedLight);		
+	}
 }
 
 
 void SCustomizableObjectCustomSettings::SetViewportLightsByAsset(const FAssetData& InAsset)
 {
-	UCustomizableObjectEditorViewportLights* InLights = Cast<UCustomizableObjectEditorViewportLights>(InAsset.GetAsset());
+	const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = GetEditorChecked();
 	
+	const TSharedPtr<SCustomizableObjectEditorViewportTabBody> Viewport = WeakViewport.Pin();
+	if (!Viewport)
+	{
+		return;	
+	}
+	
+	UCustomizableObjectEditorViewportLights* InLights = Cast<UCustomizableObjectEditorViewportLights>(InAsset.GetAsset());	
 	if (!InLights)
 	{
 		return;
 	}
+	
+	Editor->GetCustomSettings()->SetLightsPreset(*InLights);
 
 	OnNewViewportLightsAsset();
-
-	LightsAssetNameInputText->SetText(FText::FromString(InLights->GetName()));
-	LightAssetText->SetText(LightsAssetNameInputText->GetText());
 
 	for (FViewportLightData& LightData : InLights->LightsData)
 	{
@@ -448,24 +487,23 @@ void SCustomizableObjectCustomSettings::SetViewportLightsByAsset(const FAssetDat
 		NewLight->SetSourceLength(LightData.SourceLength);
 		NewLight->SetSourceRadius(LightData.SourceRadius);
 
-		Lights.Add(NewLight);
-		ViewportClient->AddLightToScene(NewLight);
+		Viewport->GetViewportClient()->AddLightToScene(NewLight);			
+		
 		LightNames.Add(MakeShareable(new FString(NewLight->GetName())));
 	}
 
-	SelectedLight = nullptr;
-	ViewportClient->SetSelectedLight(nullptr);
-
-	LightsListView->RequestListRefresh();
-
+	Editor->HideGizmoLight();
 }
+
 
 TSharedRef<SWidget> SCustomizableObjectCustomSettings::GetLightComboButtonContent()
 {
+	const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = GetEditorChecked();
+	
 	TArray<const UClass*> filterClasses;
 	filterClasses.Add(UCustomizableObjectEditorViewportLights::StaticClass());
 	return PropertyCustomizationHelpers::MakeAssetPickerWithMenu(
-		FAssetData(),
+		FAssetData(Editor->GetCustomSettings()->GetLightsPreset()),
 		true,
 		filterClasses,
 		TArray<UFactory*>(),
@@ -485,8 +523,16 @@ void SCustomizableObjectCustomSettings::CloseLightComboButtonContent()
 }
 
 
-FReply SCustomizableObjectCustomSettings::OnSaveViewportLightsAsset()
+FReply SCustomizableObjectCustomSettings::OnSaveViewportLightsAsset() const
 {
+	const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = GetEditorChecked();
+
+	const TSharedPtr<SCustomizableObjectEditorViewportTabBody> Viewport = WeakViewport.Pin();
+	if (!Viewport)
+	{
+		return FReply::Handled();	
+	}
+	
 	FString ObjName = LightsAssetNameInputText->GetText().ToString();
 
 	if (ObjName.IsEmpty() || ObjName == "None")
@@ -520,19 +566,20 @@ FReply SCustomizableObjectCustomSettings::OnSaveViewportLightsAsset()
 
 	if (ViewportLights)
 	{
-		for (int32 i = 0; i < Lights.Num(); ++i)
+		for (ULightComponent* Light : Viewport->GetViewportClient()->GetLightComponents())
 		{
-			UPointLightComponent* Light = Lights[i];
+			FViewportLightData& NewData = ViewportLights->LightsData.AddDefaulted_GetRef();
 
-			ViewportLights->LightsData.Add(FViewportLightData());
-			FViewportLightData& NewData = ViewportLights->LightsData.Last();
-			NewData.Intensity = Light->Intensity;
-			NewData.Color = Light->LightColor;
-			NewData.AttenuationRadius = Light->AttenuationRadius;
-			NewData.Transform = Light->GetComponentTransform();
-			NewData.SourceLength = Light->SourceLength;
-			NewData.SourceRadius = Light->SourceRadius;
-
+			if (const UPointLightComponent* PointLight = Cast<UPointLightComponent>(Light))
+			{
+				NewData.Intensity = PointLight->Intensity;
+				NewData.Color = PointLight->LightColor;
+				NewData.AttenuationRadius = PointLight->AttenuationRadius;
+				NewData.Transform = PointLight->GetComponentTransform();
+				NewData.SourceLength = PointLight->SourceLength;
+				NewData.SourceRadius = PointLight->SourceRadius;
+			}
+			
 			if (const USpotLightComponent* SpotLight = Cast<USpotLightComponent>(Light))
 			{
 				NewData.bIsSpotLight = true;
@@ -552,94 +599,101 @@ FReply SCustomizableObjectCustomSettings::OnSaveViewportLightsAsset()
 	return FReply::Handled();
 }
 
-FReply SCustomizableObjectCustomSettings::OnNewViewportLightsAsset()
+FReply SCustomizableObjectCustomSettings::OnNewViewportLightsAsset() const
 {
-	if (Lights.Num())
+	const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = GetEditorChecked();
+	
+	const TSharedPtr<SCustomizableObjectEditorViewportTabBody> Viewport = WeakViewport.Pin();
+	if (!Viewport)
 	{
-		for (int32 i = 0; i < Lights.Num(); ++i)
-		{
-			ViewportClient->RemoveLightFromScene(Lights[i]);
-		}
-		Lights.Empty();
-		LightNames.Empty();
-
-		LightsAssetNameInputText->SetText(FText::FromString("*Enter Asset Name*"));
-		LightAssetText->SetText(FText::FromString("No Asset Selected"));
-		LightsListView->RequestListRefresh();
+		return FReply::Handled();	
 	}
 
+	Viewport->GetViewportClient()->RemoveAllLightsFromScene();
+	
+	Editor->HideGizmoLight();
+	
 	return FReply::Handled();
 }
 
-FReply SCustomizableObjectCustomSettings::OnPointLightAdded()
+FReply SCustomizableObjectCustomSettings::OnPointLightAdded() const
 {
-	UPointLightComponent* component = NewObject<UPointLightComponent>();
-	Lights.Add(component);
+	const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = GetEditorChecked();
 
-	ViewportClient->AddLightToScene(component);
-
-	// Add Light to ListView and update widgets to reflect the changes
-	LightNames.Add(MakeShareable(new FString(component->GetName())));
-	LightsListView->RequestListRefresh();
-	LightsListView->SetSelection(LightNames.Last());
-
-	return FReply::Handled();
-}
-
-
-FReply SCustomizableObjectCustomSettings::OnSpotLightAdded()
-{
-	USpotLightComponent* component = NewObject<USpotLightComponent>();
-	Lights.Add(component);
-
-	ViewportClient->AddLightToScene(component);
-
-	// Add Light to ListView and update widgets to reflect the changes
-	LightNames.Add(MakeShareable(new FString(component->GetName())));
-	LightsListView->RequestListRefresh();
-	LightsListView->SetSelection(LightNames.Last());
-
-	return FReply::Handled();
-}
-
-
-FReply SCustomizableObjectCustomSettings::OnLightRemoved()
-{
-	TArray<TSharedPtr<FString>> SelectedItems = LightsListView->GetSelectedItems();
-
-	if (SelectedItems.Num())
+	const TSharedPtr<SCustomizableObjectEditorViewportTabBody> Viewport = WeakViewport.Pin();
+	if (!Viewport)
 	{
-		int32 LightIndex = LightNames.Find(SelectedItems[0]);
+		return FReply::Handled();	
+	}
 
-		// Delete Light from ViewportClient  
-		ULightComponent* LightToRemove = Lights[LightIndex];
-		if (LightToRemove)
-		{
-			ViewportClient->RemoveLightFromScene(LightToRemove);
-			Lights.RemoveAt(LightIndex);
-		}
+	UPointLightComponent* Component = NewObject<UPointLightComponent>(GetTransientPackage(), NAME_None, RF_Transactional);
+	Viewport->GetViewportClient()->AddLightToScene(Component);
+	Editor->ShowGizmoLight(*Component);
+	
+	return FReply::Handled();
+}
+
+
+FReply SCustomizableObjectCustomSettings::OnSpotLightAdded() const
+{
+	const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = GetEditorChecked();
+	
+	const TSharedPtr<SCustomizableObjectEditorViewportTabBody> Viewport = WeakViewport.Pin();
+	if (!Viewport)
+	{
+		return FReply::Handled();	
+	}
+	
+	USpotLightComponent* Component = NewObject<USpotLightComponent>();
+		
+	Viewport->GetViewportClient()->AddLightToScene(Component);
+	Editor->ShowGizmoLight(*Component);			
+
+	return FReply::Handled();
+}
+
+
+FReply SCustomizableObjectCustomSettings::OnLightRemoved() const
+{
+	const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = GetEditorChecked();
+
+	const TSharedPtr<SCustomizableObjectEditorViewportTabBody> Viewport = WeakViewport.Pin();
+	if (!Viewport)
+	{
+		return FReply::Handled();	
+	}
+	
+	const TArray<TSharedPtr<FString>> SelectedItems = LightsListView->GetSelectedItems();
+	if (!SelectedItems.Num())
+	{
+		return FReply::Handled();
+	}
+
+	const int32 LightIndex = LightNames.Find(SelectedItems[0]);
+
+	// Delete Light from ViewportClient  
+	if (ULightComponent* LightToRemove = Viewport->GetViewportClient()->GetLightComponents()[LightIndex])
+	{
+		Viewport->GetViewportClient()->RemoveLightFromScene(LightToRemove);
 		LightToRemove->DestroyComponent();
-
-		// Delete and refresh ListView
-		LightNames.RemoveAt(LightIndex);
-		LightsListView->RequestListRefresh();
-
-		SelectedLight = nullptr;
 	}
+
+	Editor->HideGizmoLight();
 
 	return FReply::Handled();
 }
 
 FReply SCustomizableObjectCustomSettings::OnLightUnselected()
 {
-	if (SelectedLight)
-	{
-		ViewportClient->SetSelectedLight(nullptr);
-		SelectedLight = nullptr;
+	const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = GetEditorChecked();
 
-		LightsListView->ClearSelection();
-		LightsListView->RequestListRefresh();
+	const TArray<TSharedPtr<FString>> SelectedItems = LightsListView->GetSelectedItems();
+	if (!SelectedItems.Num())
+	{
+		return FReply::Handled();
 	}
+	
+	Editor->HideGizmoLight();
 
 	return FReply::Handled();
 }
@@ -658,50 +712,62 @@ TSharedRef<ITableRow> SCustomizableObjectCustomSettings::OnGenerateWidgetForList
 
 void SCustomizableObjectCustomSettings::OnListSelectionChanged(TSharedPtr<FString> Selection, ESelectInfo::Type SelectInfo)
 {
+	const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = GetEditorChecked();
+
+	SpotLightProperties->SetVisibility(EVisibility::HitTestInvisible);
+	SpotLightProperties->SetExpanded(false);
+	PointLightProperties->SetVisibility(EVisibility::HitTestInvisible);
+	PointLightProperties->SetExpanded(false);
+	
 	TArray<TSharedPtr<FString>> SelectedItems = LightsListView->GetSelectedItems();
-
-	// Find selected component and enable viewport gizmo
-	if (SelectedItems.Num())
+	if (SelectedItems.Num() != 1)
 	{
-		int32 LightIndex = LightNames.Find(SelectedItems[0]);
+		return;
+	}
 
-		SelectedLight = Lights[LightIndex];
-		ViewportClient->SetSelectedLight(SelectedLight);
+	const TSharedPtr<SCustomizableObjectEditorViewportTabBody> Viewport = WeakViewport.Pin();
+	if (!Viewport)
+	{
+		return;	
+	}
+	
+	const int32 LightIndex = LightNames.Find(SelectedItems[0]);
+	
+	ULightComponent* SelectedLight = Viewport->GetViewportClient()->GetLightComponents()[LightIndex];
+	Editor->ShowGizmoLight(*SelectedLight);			
 
-		if (const USpotLightComponent* SpotLight = Cast<USpotLightComponent>(SelectedLight))
-		{
-			SpotLightProperties->SetVisibility(EVisibility::Visible);
-			SpotLightProperties->SetExpanded(true);
-		}
-		else
-		{
-			SpotLightProperties->SetExpanded(false);
-			SpotLightProperties->SetVisibility(EVisibility::HitTestInvisible);
-		}
-
-		PointLightProperties->SetVisibility(EVisibility::Visible);
-		PointLightProperties->SetExpanded(true);
+	if (Cast<USpotLightComponent>(SelectedLight))
+	{
+		SpotLightProperties->SetVisibility(EVisibility::Visible);
+		SpotLightProperties->SetExpanded(true);
 	}
 	else
 	{
-		SpotLightProperties->SetVisibility(EVisibility::HitTestInvisible);
 		SpotLightProperties->SetExpanded(false);
-		PointLightProperties->SetVisibility(EVisibility::HitTestInvisible);
-		PointLightProperties->SetExpanded(false);
+		SpotLightProperties->SetVisibility(EVisibility::HitTestInvisible);
 	}
 
-
+	PointLightProperties->SetVisibility(EVisibility::Visible);
+	PointLightProperties->SetExpanded(true);	
 }
 
 
 TOptional<float> SCustomizableObjectCustomSettings::GetIntensityValue() const
 {
+	const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = GetEditorChecked();
+
+	ULightComponent* SelectedLight = Editor->GetCustomSettings()->GetSelectedLight();
+	
 	return (SelectedLight) ? SelectedLight->Intensity : 1.0f;
 }
 
 
 void SCustomizableObjectCustomSettings::OnIntensityValueCommited(float Value, ETextCommit::Type CommitType)
 {
+	const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = GetEditorChecked();
+
+	ULightComponent* SelectedLight = Editor->GetCustomSettings()->GetSelectedLight();
+	
 	if (SelectedLight && CommitType != ETextCommit::OnCleared)
 	{
 		SelectedLight->SetIntensity(Value);
@@ -711,6 +777,10 @@ void SCustomizableObjectCustomSettings::OnIntensityValueCommited(float Value, ET
 
 FLinearColor SCustomizableObjectCustomSettings::GetLightColorValue() const
 {
+	const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = GetEditorChecked();
+
+	const ULightComponent* SelectedLight = Editor->GetCustomSettings()->GetSelectedLight();
+	
 	return (SelectedLight) ? SelectedLight->LightColor : FLinearColor::White;
 }
 
@@ -737,7 +807,9 @@ FReply SCustomizableObjectCustomSettings::OnLightColorBlockMouseButtonDown(const
 
 void SCustomizableObjectCustomSettings::OnSetLightColorFromColorPicker(FLinearColor InColor)
 {
-	if (SelectedLight)
+	const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = GetEditorChecked();
+
+	if (ULightComponent* SelectedLight = Editor->GetCustomSettings()->GetSelectedLight())
 	{
 		SelectedLight->SetLightColor(InColor);
 	}
@@ -746,6 +818,10 @@ void SCustomizableObjectCustomSettings::OnSetLightColorFromColorPicker(FLinearCo
 
 TOptional<float> SCustomizableObjectCustomSettings::GetAttenuationRadius() const
 {
+	const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = GetEditorChecked();
+
+	ULightComponent* SelectedLight = Editor->GetCustomSettings()->GetSelectedLight();
+	
 	if (const UPointLightComponent* PointLight = Cast<const UPointLightComponent>(SelectedLight))
 	{
 		return PointLight->AttenuationRadius;
@@ -756,6 +832,10 @@ TOptional<float> SCustomizableObjectCustomSettings::GetAttenuationRadius() const
 
 void SCustomizableObjectCustomSettings::OnAttenuationRadiusValueCommited(float Value, ETextCommit::Type CommitType)
 {
+	const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = GetEditorChecked();
+
+	ULightComponent* SelectedLight = Editor->GetCustomSettings()->GetSelectedLight();
+	
 	if (UPointLightComponent* PointLight = Cast<UPointLightComponent>(SelectedLight))
 	{
 		PointLight->SetAttenuationRadius(Value);
@@ -764,6 +844,10 @@ void SCustomizableObjectCustomSettings::OnAttenuationRadiusValueCommited(float V
 
 TOptional<float> SCustomizableObjectCustomSettings::GetLightSourceRadius() const
 {
+	const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = GetEditorChecked();
+
+	ULightComponent* SelectedLight = Editor->GetCustomSettings()->GetSelectedLight();
+	
 	if (const UPointLightComponent* PointLight = Cast<const UPointLightComponent>(SelectedLight))
 	{
 		return PointLight->SourceRadius;
@@ -774,6 +858,10 @@ TOptional<float> SCustomizableObjectCustomSettings::GetLightSourceRadius() const
 
 void SCustomizableObjectCustomSettings::OnLightSourceRadiusValueCommited(float Value, ETextCommit::Type CommitType)
 {
+	const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = GetEditorChecked();
+
+	ULightComponent* SelectedLight = Editor->GetCustomSettings()->GetSelectedLight();
+	
 	if (UPointLightComponent* PointLight = Cast<UPointLightComponent>(SelectedLight))
 	{
 		PointLight->SetSourceRadius(Value);
@@ -782,6 +870,10 @@ void SCustomizableObjectCustomSettings::OnLightSourceRadiusValueCommited(float V
 
 TOptional<float> SCustomizableObjectCustomSettings::GetLightSourceLength() const
 {
+	const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = GetEditorChecked();
+
+	ULightComponent* SelectedLight = Editor->GetCustomSettings()->GetSelectedLight();
+	
 	if (const UPointLightComponent* PointLight = Cast<const UPointLightComponent>(SelectedLight))
 	{
 		return PointLight->SourceLength;
@@ -792,6 +884,10 @@ TOptional<float> SCustomizableObjectCustomSettings::GetLightSourceLength() const
 
 void SCustomizableObjectCustomSettings::OnLightSourceLengthValueCommited(float Value, ETextCommit::Type CommitType)
 {
+	const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = GetEditorChecked();
+
+	ULightComponent* SelectedLight = Editor->GetCustomSettings()->GetSelectedLight();
+	
 	if (UPointLightComponent* PointLight = Cast<UPointLightComponent>(SelectedLight))
 	{
 		PointLight->SetSourceLength(Value);
@@ -800,6 +896,10 @@ void SCustomizableObjectCustomSettings::OnLightSourceLengthValueCommited(float V
 
 TOptional<float> SCustomizableObjectCustomSettings::GetLightInnerConeAngle() const
 {
+	const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = GetEditorChecked();
+
+	ULightComponent* SelectedLight = Editor->GetCustomSettings()->GetSelectedLight();
+	
 	if (const USpotLightComponent* SpotLight = Cast<const USpotLightComponent>(SelectedLight))
 	{
 		return SpotLight->InnerConeAngle;
@@ -810,6 +910,10 @@ TOptional<float> SCustomizableObjectCustomSettings::GetLightInnerConeAngle() con
 
 void SCustomizableObjectCustomSettings::OnLightInnerConeAngleValueCommited(float Value, ETextCommit::Type CommitType)
 {
+	const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = GetEditorChecked();
+
+	ULightComponent* SelectedLight = Editor->GetCustomSettings()->GetSelectedLight();
+	
 	if (USpotLightComponent* SpotLight = Cast<USpotLightComponent>(SelectedLight))
 	{
 		SpotLight->SetInnerConeAngle(Value);
@@ -818,6 +922,10 @@ void SCustomizableObjectCustomSettings::OnLightInnerConeAngleValueCommited(float
 
 TOptional<float> SCustomizableObjectCustomSettings::GetLightOuterConeAngle() const
 {
+	const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = GetEditorChecked();
+
+	ULightComponent* SelectedLight = Editor->GetCustomSettings()->GetSelectedLight();
+	
 	if (const USpotLightComponent* SpotLight = Cast<const USpotLightComponent>(SelectedLight))
 	{
 		return SpotLight->OuterConeAngle;
@@ -828,8 +936,21 @@ TOptional<float> SCustomizableObjectCustomSettings::GetLightOuterConeAngle() con
 
 void SCustomizableObjectCustomSettings::OnLightOuterConeAngleValueCommited(float Value, ETextCommit::Type CommitType)
 {
+	const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = GetEditorChecked();
+
+	ULightComponent* SelectedLight = Editor->GetCustomSettings()->GetSelectedLight();
+	
 	if (USpotLightComponent* SpotLight = Cast<USpotLightComponent>(SelectedLight))
 	{
 		SpotLight->SetOuterConeAngle(Value);
 	}
+}
+
+
+TSharedPtr<ICustomizableObjectInstanceEditor> SCustomizableObjectCustomSettings::GetEditorChecked() const
+{
+	const TSharedPtr<ICustomizableObjectInstanceEditor> Editor = WeakEditor.Pin();
+	check(Editor);
+	
+	return Editor;
 }

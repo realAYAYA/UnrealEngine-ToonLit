@@ -7,93 +7,88 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/SkinnedAsset.h"
-#include "GameFramework/Pawn.h"
 #include "Engine/SkinnedAssetCommon.h"
+#include "Engine/SkeletalMeshLODSettings.h"
 #include "GameFramework/PlayerController.h"
 #include "Interfaces/ITargetPlatform.h"
-#include "Kismet/GameplayStatics.h"
 #include "MuCO/CustomizableInstanceLODManagement.h"
-#include "MuCO/CustomizableInstancePrivateData.h"
+#include "MuCO/CustomizableObjectInstancePrivate.h"
 #include "MuCO/CustomizableObjectPrivate.h"
+#include "MuCO/CustomizableObjectUIData.h"
 #include "MuCO/DefaultImageProvider.h"
-#include "MuCO/CustomizableSkeletalComponent.h"
+#include "MuCO/CustomizableObjectInstanceUsage.h"
 #include "MuCO/ICustomizableObjectModule.h"
 #include "MuCO/LogBenchmarkUtil.h"
 #include "MuCO/LogInformationUtil.h"
-#include "MuCO/UnrealBakeHelpers.h"
 #include "MuCO/UnrealExtensionDataStreamer.h"
 #include "MuCO/UnrealMutableImageProvider.h"
 #include "MuCO/UnrealMutableModelDiskStreamer.h"
 #include "MuCO/UnrealPortabilityHelpers.h"
 #include "MuR/Model.h"
 #include "MuR/Settings.h"
-#include "TextureResource.h"
 #include "UObject/UObjectIterator.h"
 #include "Widgets/Notifications/SNotificationList.h"
 #include "ContentStreaming.h"
+#include "MuCO/EditorImageProvider.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "MuCO/CustomizableObjectSystemPrivate.h"
+#include "CustomizableObjectSettings.h"
 
 #if WITH_EDITOR
 #include "Editor.h"
 #include "Logging/MessageLog.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/MessageDialog.h"
+#include "Engine/World.h"
 #else
 #include "Engine/Engine.h"
 #endif
 
 
+#include "BusyWaits_Deprecated.h"
+
 #include UE_INLINE_GENERATED_CPP_BY_NAME(CustomizableObjectSystem)
 
 class AActor;
 class UAnimInstance;
-class UMaterialInterface;
 
-namespace impl
-{
-	void Task_Game_Callbacks_Work(UCustomizableObjectInstance* CustomizableObjectInstance);
-}
-
-DEFINE_STAT(STAT_MutableNumSkeletalMeshes);
-DEFINE_STAT(STAT_MutableNumCachedSkeletalMeshes);
-DEFINE_STAT(STAT_MutableNumAllocatedSkeletalMeshes);
-DEFINE_STAT(STAT_MutableNumInstancesLOD0);
-DEFINE_STAT(STAT_MutableNumInstancesLOD1);
-DEFINE_STAT(STAT_MutableNumInstancesLOD2);
-DEFINE_STAT(STAT_MutableSkeletalMeshResourceMemory);
-DEFINE_STAT(STAT_MutableNumTextures);
-DEFINE_STAT(STAT_MutableNumCachedTextures);
-DEFINE_STAT(STAT_MutableNumAllocatedTextures);
-DEFINE_STAT(STAT_MutableTextureResourceMemory);
-DEFINE_STAT(STAT_MutableTextureGeneratedMemory);
-DEFINE_STAT(STAT_MutableTextureCacheMemory);
-DEFINE_STAT(STAT_MutablePendingInstanceUpdates);
-DEFINE_STAT(STAT_MutableAbandonedInstanceUpdates);
-DEFINE_STAT(STAT_MutableInstanceBuildTime);
-DEFINE_STAT(STAT_MutableInstanceBuildTimeAvrg);
-DEFINE_STAT(STAT_MutableStreamingOps);
 
 DECLARE_CYCLE_STAT(TEXT("MutablePendingRelease Time"), STAT_MutablePendingRelease, STATGROUP_Game);
 DECLARE_CYCLE_STAT(TEXT("MutableTask"), STAT_MutableTask, STATGROUP_Game);
 
-UCustomizableObjectSystem* FCustomizableObjectSystemPrivate::SSystem = nullptr;
+#define UE_MUTABLE_UPDATE_REGION TEXT("Mutable Update")
+#define UE_TASK_MUTABLE_GETMESHES_REGION TEXT("Task_Mutable_GetMeshes")
+#define UE_TASK_MUTABLE_GETIMAGES_REGION TEXT("Task_Mutable_GetImages")
 
-static TAutoConsoleVariable<int32> CVarWorkingMemory(
-	TEXT("mutable.WorkingMemory"),
+
+UCustomizableObjectSystem* UCustomizableObjectSystemPrivate::SSystem = nullptr;
+
+bool bIsMutableEnabled = true;
+
+static FAutoConsoleVariableRef CVarMutableEnabled(
+	TEXT("Mutable.Enabled"),
+	bIsMutableEnabled,
+	TEXT("true/false - Disabling Mutable will turn off CO compilation, mesh generation, and texture streaming and will remove the system ticker. "),
+	FConsoleVariableDelegate::CreateStatic(&UCustomizableObjectSystemPrivate::OnMutableEnabledChanged));
+
+int32 WorkingMemory =
 #if !PLATFORM_DESKTOP
-	(10 * 1024),
+(10 * 1024);
 #else
-	(50 * 1024),
+(50 * 1024);
 #endif
+
+static FAutoConsoleVariableRef CVarWorkingMemory(
+	TEXT("mutable.WorkingMemory"),
+	WorkingMemory,
 	TEXT("Limit the amount of memory (in KB) to use as working memory when building characters. More memory reduces the object construction time. 0 means no restriction. Defaults: Desktop = 50,000 KB, Others = 10,000 KB"),
 	ECVF_Scalability);
-
 
 TAutoConsoleVariable<bool> CVarClearWorkingMemoryOnUpdateEnd(
 	TEXT("mutable.ClearWorkingMemoryOnUpdateEnd"),
 	false,
 	TEXT("Clear the working memory and cache after every Mutable operation."),
 	ECVF_Scalability);
-
 
 TAutoConsoleVariable<bool> CVarReuseImagesBetweenInstances(
 	TEXT("mutable.ReuseImagesBetweenInstances"),
@@ -107,10 +102,187 @@ static TAutoConsoleVariable<int32> CVarGeneratedResourcesCacheSize(
 	TEXT("Limit the number of resources (images and meshes) that will be tracked for reusal. Each tracked resource uses a small amout of memory for its key."),
 	ECVF_Scalability);
 
+TAutoConsoleVariable<bool> CVarPreserveUserLODsOnFirstGeneration(
+	TEXT("mutable.PreserveUserLODsOnFirstGeneration"),
+	true,
+	TEXT("If false, force disable UCustomizableObject::bPreserveUserLODsOnFirstGeneration."),
+	ECVF_Scalability);
 
-bool FMutablePendingInstanceWork::ArePendingUpdatesEmpty() const
+TAutoConsoleVariable<bool> CVarEnableMeshCache(
+	TEXT("mutable.EnableMeshCache"),
+	true,
+	TEXT("Enables or disables the reuse of meshes."),
+	ECVF_Scalability);
+
+TAutoConsoleVariable<bool> CVarEnableNewSplitMutableTask(
+	TEXT("mutable.EnableNewSplitMutableTask"),
+	false,
+	TEXT("Enables or disables the then new split GetImages and GetMesh tasks that remove BusyWaits."),
+	ECVF_Scalability);
+
+
+int32 UCustomizableObjectSystemPrivate::SkeletalMeshMinLodQualityLevel = -1;
+
+
+static void CVarMutableSinkFunction()
 {
-	return PendingInstanceUpdates.Num() == 0;
+	if (UCustomizableObjectSystem::IsCreated())
+	{
+		UCustomizableObjectSystemPrivate* PrivateSystem = UCustomizableObjectSystem::GetInstance()->GetPrivate();
+
+		static const IConsoleVariable* CVarSkeletalMeshMinLodQualityLevelCVarName = IConsoleManager::Get().FindConsoleVariable(TEXT("r.SkeletalMesh.MinLodQualityLevel"));
+		PrivateSystem->SkeletalMeshMinLodQualityLevel = CVarSkeletalMeshMinLodQualityLevelCVarName ? CVarSkeletalMeshMinLodQualityLevelCVarName->GetInt() : INDEX_NONE;
+	}
+}
+
+static FAutoConsoleVariableSink CVarMutableSink(FConsoleCommandDelegate::CreateStatic(&CVarMutableSinkFunction));
+
+
+FUpdateContextPrivate::FUpdateContextPrivate(UCustomizableObjectInstance& InInstance, const FCustomizableObjectInstanceDescriptor& Descriptor)
+{
+	check(InInstance.GetPrivate());
+	check(InInstance.GetCustomizableObject());
+
+	Instance = &InInstance;
+	CapturedDescriptor = Descriptor;
+	CapturedDescriptorHash = FDescriptorHash(Descriptor);
+	Parameters = Descriptor.GetParameters();
+	NumComponents = InInstance.GetCustomizableObject()->GetComponentCount();
+	FirstLODAvailable = InInstance.GetCustomizableObject()->GetPrivate()->GetMinLODIndex();
+	FirstResidentLOD = InInstance.GetPrivate()->FirstResidentLOD;
+
+	MutableSystem = UCustomizableObjectSystem::GetInstance()->GetPrivate()->MutableSystem;	
+	check(MutableSystem);
+	
+	InInstance.GetCustomizableObject()->GetPrivate()->ApplyStateForcedValuesToParameters(CapturedDescriptor.GetState(), Parameters.get());
+
+	UCustomizableObjectSystem* System = UCustomizableObjectSystem::GetInstance();
+	System->GetPrivate()->CacheTextureParameters(CapturedDescriptor.GetTextureParameters());
+}
+
+
+FUpdateContextPrivate::FUpdateContextPrivate(UCustomizableObjectInstance& InInstance) :
+	FUpdateContextPrivate(InInstance, InInstance.GetDescriptor())
+{
+}
+
+
+FUpdateContextPrivate::~FUpdateContextPrivate()
+{
+	if (UCustomizableObjectSystem::IsCreated())
+	{
+		UCustomizableObjectSystem* System = UCustomizableObjectSystem::GetInstance();
+		System->GetPrivate()->UnCacheTextureParameters(CapturedDescriptor.GetTextureParameters());
+	}
+}
+
+
+FString FUpdateContextPrivate::GetReferencerName() const
+{
+	return TEXT("FUpdateContextPrivate");
+}
+
+
+void FUpdateContextPrivate::AddReferencedObjects(FReferenceCollector& Collector)
+{
+	Collector.AddReferencedObjects(Objects);
+}
+
+
+int32 FUpdateContextPrivate::GetMinLOD() const
+{
+	return CapturedDescriptor.GetMinLod();
+}
+
+
+void FUpdateContextPrivate::SetMinLOD(int32 MinLOD)
+{
+	CapturedDescriptor.SetMinLod(MinLOD);
+	CapturedDescriptorHash.MinLOD = MinLOD;
+}
+
+
+const TArray<uint16>& FUpdateContextPrivate::GetRequestedLODs() const
+{
+	return CapturedDescriptor.GetRequestedLODLevels();
+}
+
+
+void FUpdateContextPrivate::SetRequestedLODs(TArray<uint16>& RequestedLODs)
+{
+	CapturedDescriptor.SetRequestedLODLevels(RequestedLODs);
+	CapturedDescriptorHash.RequestedLODsPerComponent = RequestedLODs;
+}
+
+
+const FCustomizableObjectInstanceDescriptor& FUpdateContextPrivate::GetCapturedDescriptor() const
+{
+	return CapturedDescriptor;
+}
+
+
+const FDescriptorHash& FUpdateContextPrivate::GetCapturedDescriptorHash() const
+{
+	return CapturedDescriptorHash;
+}
+
+
+const FCustomizableObjectInstanceDescriptor&& FUpdateContextPrivate::MoveCommittedDescriptor()
+{
+	return MoveTemp(CapturedDescriptor);	
+}
+
+
+FMutablePendingInstanceUpdate::FMutablePendingInstanceUpdate(const TSharedRef<FUpdateContextPrivate>& InContext) :
+	Context(InContext)
+{
+}
+
+
+bool FMutablePendingInstanceUpdate::operator==(const FMutablePendingInstanceUpdate& Other) const
+{
+	return Context->Instance.HasSameIndexAndSerialNumber(Other.Context->Instance);
+}
+
+
+bool FMutablePendingInstanceUpdate::operator<(const FMutablePendingInstanceUpdate& Other) const
+{
+	if (Context->PriorityType < Other.Context->PriorityType)
+	{
+		return true;
+	}
+	else if (Context->PriorityType > Other.Context->PriorityType)
+	{
+		return false;
+	}
+	else
+	{
+		return Context->StartQueueTime < Other.Context->StartQueueTime;
+	}
+}
+
+
+uint32 GetTypeHash(const FMutablePendingInstanceUpdate& Update)
+{
+	return GetTypeHash(Update.Context->Instance.GetWeakPtrTypeHash());
+}
+
+
+TWeakObjectPtr<const UCustomizableObjectInstance> FPendingInstanceUpdateKeyFuncs::GetSetKey(const FMutablePendingInstanceUpdate& PendingUpdate)
+{
+	return PendingUpdate.Context->Instance;
+}
+
+
+bool FPendingInstanceUpdateKeyFuncs::Matches(const TWeakObjectPtr<const UCustomizableObjectInstance>& A, const TWeakObjectPtr<const UCustomizableObjectInstance>& B)
+{
+	return A.HasSameIndexAndSerialNumber(B);
+}
+
+
+uint32 FPendingInstanceUpdateKeyFuncs::GetKeyHash(const TWeakObjectPtr<const UCustomizableObjectInstance>& Identifier)
+{
+	return GetTypeHash(Identifier.GetWeakPtrTypeHash());
 }
 
 
@@ -128,17 +300,18 @@ void FMutablePendingInstanceWork::SetLODUpdatesLastTick(int32 NumLODUpdates)
 
 void FMutablePendingInstanceWork::AddUpdate(const FMutablePendingInstanceUpdate& UpdateToAdd)
 {
-	if (FMutablePendingInstanceUpdate* ExistingUpdate = PendingInstanceUpdates.Find(UpdateToAdd.CustomizableObjectInstance))
+	UpdateToAdd.Context->StartQueueTime = FPlatformTime::Seconds();
+	
+	if (const FMutablePendingInstanceUpdate* ExistingUpdate = PendingInstanceUpdates.Find(UpdateToAdd.Context->Instance))
 	{
-		FMutablePendingInstanceUpdate TaskToEnqueue = UpdateToAdd;
+		ExistingUpdate->Context->UpdateResult = EUpdateResult::ErrorReplaced;
+		FinishUpdateGlobal(ExistingUpdate->Context);
 
-		FInstanceUpdateDelegate* Callback = ExistingUpdate->Callback;
-		FinishUpdateGlobal(ExistingUpdate->CustomizableObjectInstance.Get(), EUpdateResult::ErrorReplaced, Callback);
-
-		TaskToEnqueue.PriorityType = FMath::Min(ExistingUpdate->PriorityType, UpdateToAdd.PriorityType);
-		TaskToEnqueue.SecondsAtUpdate = FMath::Min(ExistingUpdate->SecondsAtUpdate, UpdateToAdd.SecondsAtUpdate);
+		const FMutablePendingInstanceUpdate TaskToEnqueue = UpdateToAdd;
+		TaskToEnqueue.Context->PriorityType = FMath::Min(ExistingUpdate->Context->PriorityType, UpdateToAdd.Context->PriorityType);
+		TaskToEnqueue.Context->StartQueueTime = FMath::Min(ExistingUpdate->Context->StartQueueTime, UpdateToAdd.Context->StartQueueTime);
 		
-		PendingInstanceUpdates.Remove(ExistingUpdate->CustomizableObjectInstance);
+		RemoveUpdate(ExistingUpdate->Context->Instance);
 		PendingInstanceUpdates.Add(TaskToEnqueue);
 	}
 	else
@@ -146,9 +319,10 @@ void FMutablePendingInstanceWork::AddUpdate(const FMutablePendingInstanceUpdate&
 		PendingInstanceUpdates.Add(UpdateToAdd);
 	}
 
-	if (FMutablePendingInstanceDiscard* ExistingDiscard = PendingInstanceDiscards.Find(UpdateToAdd.CustomizableObjectInstance))
+	if (const FMutablePendingInstanceDiscard* ExistingDiscard = PendingInstanceDiscards.Find(UpdateToAdd.Context->Instance))
 	{
-		FinishUpdateGlobal(ExistingDiscard->CustomizableObjectInstance.Get(), EUpdateResult::ErrorReplaced, nullptr);
+		UpdateToAdd.Context->UpdateResult = EUpdateResult::ErrorReplaced;
+		FinishUpdateGlobal(UpdateToAdd.Context);
 
 		PendingInstanceDiscards.Remove(ExistingDiscard->CustomizableObjectInstance);
 	}
@@ -157,11 +331,28 @@ void FMutablePendingInstanceWork::AddUpdate(const FMutablePendingInstanceUpdate&
 
 void FMutablePendingInstanceWork::RemoveUpdate(const TWeakObjectPtr<UCustomizableObjectInstance>& Instance)
 {
-	PendingInstanceUpdates.Remove(Instance);
+	if (const FMutablePendingInstanceUpdate* Update = PendingInstanceUpdates.Find(Instance))
+	{
+		Update->Context->QueueTime = FPlatformTime::Seconds() - Update->Context->StartQueueTime;
+		PendingInstanceUpdates.Remove(Instance);
+	}	
 }
 
+#if WITH_EDITOR
+void FMutablePendingInstanceWork::RemoveUpdatesForObject(const UCustomizableObject* InObject)
+{
+	check(InObject);
+	for (auto Iterator = PendingInstanceUpdates.CreateIterator(); Iterator; ++Iterator)
+	{
+		if (Iterator->Context->Instance.IsValid() && Iterator->Context->Instance->GetCustomizableObject() == InObject)
+		{
+			Iterator.RemoveCurrent();
+		}
+	}
+}
+#endif
 
-const FMutablePendingInstanceUpdate* FMutablePendingInstanceWork::GetUpdate(const TWeakObjectPtr<UCustomizableObjectInstance>& Instance) const
+const FMutablePendingInstanceUpdate* FMutablePendingInstanceWork::GetUpdate(const TWeakObjectPtr<const UCustomizableObjectInstance>& Instance) const
 {
 	return PendingInstanceUpdates.Find(Instance);
 }
@@ -169,15 +360,14 @@ const FMutablePendingInstanceUpdate* FMutablePendingInstanceWork::GetUpdate(cons
 
 void FMutablePendingInstanceWork::AddDiscard(const FMutablePendingInstanceDiscard& TaskToEnqueue)
 {
-	if (FMutablePendingInstanceUpdate* ExistingUpdate = PendingInstanceUpdates.Find(TaskToEnqueue.CustomizableObjectInstance.Get()))
+	if (const FMutablePendingInstanceUpdate* ExistingUpdate = PendingInstanceUpdates.Find(TaskToEnqueue.CustomizableObjectInstance.Get()))
 	{
-		FinishUpdateGlobal(ExistingUpdate->CustomizableObjectInstance.Get(), EUpdateResult::ErrorReplaced, ExistingUpdate->Callback);
-		PendingInstanceUpdates.Remove(ExistingUpdate->CustomizableObjectInstance);
+		ExistingUpdate->Context->UpdateResult = EUpdateResult::ErrorDiscarded;
+		FinishUpdateGlobal(ExistingUpdate->Context);
+		RemoveUpdate(ExistingUpdate->Context->Instance);
 	}
 
 	PendingInstanceDiscards.Add(TaskToEnqueue);
-
-	TaskToEnqueue.CustomizableObjectInstance->GetPrivate()->SetCOInstanceFlags(Updating);
 }
 
 
@@ -187,33 +377,52 @@ void FMutablePendingInstanceWork::AddIDRelease(mu::Instance::ID IDToRelease)
 }
 
 
-void FMutablePendingInstanceWork::RemoveAllUpdatesAndDiscardsAndReleases()
-{
-	PendingInstanceUpdates.Empty();
-	PendingInstanceDiscards.Empty();
-	PendingIDsToRelease.Empty();
-}
-
-
 UCustomizableObjectSystem* UCustomizableObjectSystem::GetInstance()
 {
-	if (!FCustomizableObjectSystemPrivate::SSystem)
+	if (!UCustomizableObjectSystemPrivate::SSystem)
 	{
 		UE_LOG(LogMutable, Log, TEXT("Creating Mutable Customizable Object System."));
 
 		check(IsInGameThread());
 
-		FCustomizableObjectSystemPrivate::SSystem = NewObject<UCustomizableObjectSystem>(UCustomizableObjectSystem::StaticClass());
-		check(FCustomizableObjectSystemPrivate::SSystem != nullptr);
-		checkf(!GUObjectArray.IsDisregardForGC(FCustomizableObjectSystemPrivate::SSystem), TEXT("Mutable was initialized too early in the UE4 init process, for instance, in the constructor of a default UObject."));
-		FCustomizableObjectSystemPrivate::SSystem->AddToRoot();
-		checkf(!GUObjectArray.IsDisregardForGC(FCustomizableObjectSystemPrivate::SSystem), TEXT("Mutable was initialized too early in the UE4 init process, for instance, in the constructor of a default UObject."));
-		FCustomizableObjectSystemPrivate::SSystem->InitSystem();
+		UCustomizableObjectSystemPrivate::SSystem = NewObject<UCustomizableObjectSystem>(UCustomizableObjectSystem::StaticClass());
+		check(UCustomizableObjectSystemPrivate::SSystem != nullptr);
+		checkf(!GUObjectArray.IsDisregardForGC(UCustomizableObjectSystemPrivate::SSystem), TEXT("Mutable was initialized too early in the UE4 init process, for instance, in the constructor of a default UObject."));
+		UCustomizableObjectSystemPrivate::SSystem->AddToRoot();
+		checkf(!GUObjectArray.IsDisregardForGC(UCustomizableObjectSystemPrivate::SSystem), TEXT("Mutable was initialized too early in the UE4 init process, for instance, in the constructor of a default UObject."));
+		UCustomizableObjectSystemPrivate::SSystem->InitSystem();
 
-		//FCoreUObjectDelegates::PurgePendingReleaseSkeletalMesh.AddUObject(FCustomizableObjectSystemPrivate::SSystem, &UCustomizableObjectSystem::PurgePendingReleaseSkeletalMesh);
+		//FCoreUObjectDelegates::PurgePendingReleaseSkeletalMesh.AddUObject(UCustomizableObjectSystemPrivate::SSystem, &UCustomizableObjectSystem::PurgePendingReleaseSkeletalMesh);
 	}
 
-	return FCustomizableObjectSystemPrivate::SSystem;
+	return UCustomizableObjectSystemPrivate::SSystem;
+}
+
+
+UCustomizableObjectSystem* UCustomizableObjectSystem::GetInstanceChecked()
+{
+	UCustomizableObjectSystem* System = GetInstance();
+	check(System);
+	
+	return System;
+}
+
+
+bool UCustomizableObjectSystem::IsUpdateResultValid(const EUpdateResult UpdateResult)
+{
+	return UpdateResult == EUpdateResult::Success || UpdateResult == EUpdateResult::Warning;
+}
+
+
+UCustomizableInstanceLODManagementBase* UCustomizableObjectSystem::GetInstanceLODManagement() const
+{
+	return GetPrivate()->CurrentInstanceLODManagement.Get();
+}
+
+
+void UCustomizableObjectSystem::SetInstanceLODManagement(UCustomizableInstanceLODManagementBase* NewInstanceLODManagement)
+{
+	GetPrivate()->CurrentInstanceLODManagement = NewInstanceLODManagement ? NewInstanceLODManagement : ToRawPtr(GetPrivate()->DefaultInstanceLODManagement);
 }
 
 
@@ -228,20 +437,27 @@ void UCustomizableObjectSystem::LogShowData(bool bFullInfo, bool ShowMaterialInf
 {
 	LogInformationUtil::ResetCounters();
 
-	AActor* ParentActor;
 	TArray<UCustomizableObjectInstance*> ArrayData;
 
-	for (TObjectIterator<UCustomizableSkeletalComponent> It; It; ++It)
+	for (TObjectIterator<UCustomizableObjectInstanceUsage> It; It; ++It)
 	{
-		UCustomizableSkeletalComponent* CustomizableSkeletalComponent = *It;
+		const UCustomizableObjectInstanceUsage* CustomizableObjectInstanceUsage = *It;
 
-		if ((CustomizableSkeletalComponent != nullptr) && (CustomizableSkeletalComponent->CustomizableObjectInstance != nullptr))
+#if WITH_EDITOR
+		if (IsValid(CustomizableObjectInstanceUsage) && CustomizableObjectInstanceUsage->IsNetMode(NM_DedicatedServer))
 		{
-			ParentActor = CustomizableSkeletalComponent->GetAttachmentRootActor();
+			continue;
+		}
+#endif
+
+		if (IsValid(CustomizableObjectInstanceUsage) && CustomizableObjectInstanceUsage->GetCustomizableObjectInstance()
+			&& CustomizableObjectInstanceUsage->GetAttachParent())
+		{
+			const AActor* ParentActor = CustomizableObjectInstanceUsage->GetAttachParent()->GetAttachmentRootActor();
 
 			if (ParentActor != nullptr)
 			{
-				ArrayData.AddUnique(CustomizableSkeletalComponent->CustomizableObjectInstance);
+				ArrayData.AddUnique(CustomizableObjectInstanceUsage->GetCustomizableObjectInstance());
 			}
 		}
 	}
@@ -253,8 +469,8 @@ void UCustomizableObjectSystem::LogShowData(bool bFullInfo, bool ShowMaterialInf
 		return (A.GetPrivate()->LastMinSquareDistFromComponentToPlayer < B.GetPrivate()->LastMinSquareDistFromComponentToPlayer);
 	});
 
-	int i;
-	const int Max = ArrayData.Num();
+	int32 i;
+	const int32 Max = ArrayData.Num();
 
 	if (bFullInfo)
 	{
@@ -286,78 +502,51 @@ void UCustomizableObjectSystem::LogShowData(bool bFullInfo, bool ShowMaterialInf
 }
 
 
-FCustomizableObjectSystemPrivate* UCustomizableObjectSystem::GetPrivate()
+UCustomizableObjectSystemPrivate* UCustomizableObjectSystem::GetPrivate()
 {
-	return Private.Get();
+	check(Private);
+	return Private;
 }
 
 
-const FCustomizableObjectSystemPrivate* UCustomizableObjectSystem::GetPrivate() const
+const UCustomizableObjectSystemPrivate* UCustomizableObjectSystem::GetPrivate() const
 {
-	return Private.Get();
-}
-
-
-FCustomizableObjectSystemPrivate* UCustomizableObjectSystem::GetPrivateChecked()
-{
-	check(Private)
-	return Private.Get();
-}
-
-
-const FCustomizableObjectSystemPrivate* UCustomizableObjectSystem::GetPrivateChecked() const
-{
-	check(Private)
-	return Private.Get();
+	check(Private);
+	return Private;
 }
 
 
 bool UCustomizableObjectSystem::IsCreated()
 {
-	return FCustomizableObjectSystemPrivate::SSystem != 0;
+	return UCustomizableObjectSystemPrivate::SSystem != 0;
+}
+
+bool UCustomizableObjectSystem::IsActive()
+{
+	return IsCreated() && bIsMutableEnabled;
 }
 
 
 void UCustomizableObjectSystem::InitSystem()
 {
 	// Everything initialized in Init() instead of constructor to prevent the default UCustomizableObjectSystem from registering a tick function
-	Private = MakeShareable(new FCustomizableObjectSystemPrivate());
+	Private = NewObject<UCustomizableObjectSystemPrivate>(this, FName("Private"));
 	check(Private != nullptr);
 	Private->NewCompilerFunc = nullptr;
 
 	Private->bReplaceDiscardedWithReferenceMesh = false;
 
-	const IConsoleVariable* CVarSupport16BitBoneIndex = IConsoleManager::Get().FindConsoleVariable(TEXT("r.GPUSkin.Support16BitBoneIndex"));
-	Private->bSupport16BitBoneIndex = CVarSupport16BitBoneIndex ? CVarSupport16BitBoneIndex->GetBool() : false;
-
 	Private->CurrentMutableOperation = nullptr;
 	Private->CurrentInstanceBeingUpdated = nullptr;
 
-#if !UE_SERVER
-	Private->TickDelegate = FTickerDelegate::CreateUObject(this, &UCustomizableObjectSystem::Tick);
-	Private->TickDelegateHandle = FTSTicker::GetCoreTicker().AddTicker(Private->TickDelegate, 0.f);
-#endif // !UE_SERVER
-
-	Private->TotalBuildMs = 0;
-	Private->TotalBuiltInstances = 0;
-	Private->NumInstances = 0;
-	Private->TextureMemoryUsed = 0;
-
-#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
-	SET_DWORD_STAT(STAT_MutableNumSkeletalMeshes, 0);
-	SET_DWORD_STAT(STAT_MutableNumTextures, 0);
-	SET_DWORD_STAT(STAT_MutableInstanceBuildTime, 0);
-	SET_DWORD_STAT(STAT_MutableInstanceBuildTimeAvrg, 0);
-#endif
-
-	Private->LastWorkingMemoryBytes = CVarWorkingMemory.GetValueOnGameThread() * 1024;
+	Private->LastWorkingMemoryBytes = CVarWorkingMemory->GetInt() * 1024;
 	Private->LastGeneratedResourceCacheSize = CVarGeneratedResourcesCacheSize.GetValueOnGameThread();
 
-	mu::Ptr<mu::Settings> pSettings = new mu::Settings;
+	const mu::Ptr<mu::Settings> pSettings = new mu::Settings;
 	check(pSettings);
 	pSettings->SetProfile(false);
 	pSettings->SetWorkingMemoryBytes(Private->LastWorkingMemoryBytes);
-	Private->ExtensionDataStreamer = MakeShared<FUnrealExtensionDataStreamer>(Private.ToSharedRef());
+	Private->ExtensionDataStreamer = MakeShared<FUnrealExtensionDataStreamer>(Private);
 	Private->MutableSystem = new mu::System(pSettings, Private->ExtensionDataStreamer);
 	check(Private->MutableSystem);
 
@@ -371,28 +560,30 @@ void UCustomizableObjectSystem::InitSystem()
 	Private->ImageProvider = Provider;
 	Private->MutableSystem->SetImageParameterGenerator(Provider);
 
-#if WITH_EDITOR
-	if (!IsRunningGame())
-	{
-		FEditorDelegates::PreBeginPIE.AddUObject(this, &UCustomizableObjectSystem::OnPreBeginPIE);
-	}
+#if WITH_EDITORONLY_DATA
+	Private->EditorImageProvider = NewObject<UEditorImageProvider>();
+	check(Private->EditorImageProvider);
+	RegisterImageProvider(Private->EditorImageProvider);
 #endif
+	
+	GetPrivate()->DefaultInstanceLODManagement = NewObject<UCustomizableInstanceLODManagement>();
+	check(GetPrivate()->DefaultInstanceLODManagement != nullptr);
+	GetPrivate()->CurrentInstanceLODManagement = GetPrivate()->DefaultInstanceLODManagement;
 
-	DefaultInstanceLODManagement = NewObject<UCustomizableInstanceLODManagement>();
-	check(DefaultInstanceLODManagement != nullptr);
-	CurrentInstanceLODManagement = DefaultInstanceLODManagement;
+	// This CVar is constant for the lifespan of the program. Read its value once. 
+	const IConsoleVariable* CVarSupport16BitBoneIndex = IConsoleManager::Get().FindConsoleVariable(TEXT("r.GPUSkin.Support16BitBoneIndex"));
+	Private->bSupport16BitBoneIndex = CVarSupport16BitBoneIndex ? CVarSupport16BitBoneIndex->GetBool() : false;
+
+	// Read non-constant CVars and do work if required.
+	CVarMutableSinkFunction();
+
+	Private->OnMutableEnabledChanged();
 }
 
 
 void UCustomizableObjectSystem::BeginDestroy()
 {
 #if WITH_EDITOR
-	if (RecompileCustomizableObjectsCompiler)
-	{
-		RecompileCustomizableObjectsCompiler->ForceFinishCompilation();
-		delete RecompileCustomizableObjectsCompiler;
-	}
-
 	if (!IsRunningGame())
 	{
 		FEditorDelegates::PreBeginPIE.RemoveAll(this);
@@ -401,31 +592,44 @@ void UCustomizableObjectSystem::BeginDestroy()
 #endif
 
 	// It could be null, for the default object.
-	if (Private.IsValid())
+	if (Private)
 	{
+#if WITH_EDITOR
+		if (Private->RecompileCustomizableObjectsCompiler)
+		{
+			Private->RecompileCustomizableObjectsCompiler->ForceFinishCompilation();
+			delete Private->RecompileCustomizableObjectsCompiler;
+		}
+#endif
 
 #if !UE_SERVER
-		FTSTicker::GetCoreTicker().RemoveTicker(Private->TickDelegateHandle);
+		if (GetMutableDefault<UCustomizableObjectSettings>()->bEnableStreamingManager)
+		{
+			FStreamingManagerCollection::Get().RemoveStreamingManager(GetPrivate());
+		}
+		else
+		{
+			FTSTicker::GetCoreTicker().RemoveTicker(Private->TickDelegateHandle);			
+		}
 #endif // !UE_SERVER
 
 		// Discard pending game thread tasks
 		Private->PendingTasks.Empty();
 
 		// Complete pending taskgraph tasks
+		Private->MutableTaskGraph.AllowLaunchingMutableTaskLowPriority(false, false);
+		check(Private->Streamer);
+		Private->MutableTaskGraph.AddMutableThreadTask(TEXT("EndStream"), [Streamer = Private->Streamer]()
+			{
+				Streamer->EndStreaming();
+			});
 		Private->MutableTaskGraph.WaitForMutableTasks();
 
 		// Clear the ongoing operation
 		Private->CurrentMutableOperation = nullptr;
-
-		// Deallocate streaming
-		check(Private->Streamer != nullptr);
-		Private->Streamer->EndStreaming();
-
 		Private->CurrentInstanceBeingUpdated = nullptr;
 
-		Private->MutablePendingInstanceWork.RemoveAllUpdatesAndDiscardsAndReleases();
-
-		FCustomizableObjectSystemPrivate::SSystem = nullptr;
+		UCustomizableObjectSystemPrivate::SSystem = nullptr;
 
 		Private = nullptr;
 	}
@@ -440,7 +644,7 @@ FString UCustomizableObjectSystem::GetDesc()
 }
 
 
-FCustomizableObjectCompilerBase* (*FCustomizableObjectSystemPrivate::NewCompilerFunc)() = nullptr;
+FCustomizableObjectCompilerBase* (*UCustomizableObjectSystemPrivate::NewCompilerFunc)() = nullptr;
 
 
 FCustomizableObjectCompilerBase* UCustomizableObjectSystem::GetNewCompiler()
@@ -459,494 +663,655 @@ FCustomizableObjectCompilerBase* UCustomizableObjectSystem::GetNewCompiler()
 
 void UCustomizableObjectSystem::SetNewCompilerFunc(FCustomizableObjectCompilerBase* (*InNewCompilerFunc)())
 {
-	check(Private != nullptr);
-	Private->NewCompilerFunc = InNewCompilerFunc;
+	GetPrivate()->NewCompilerFunc = InNewCompilerFunc;
 }
 
 
-void FCustomizableObjectSystemPrivate::CreatedTexture(UTexture2D* Texture)
-{
-	// TODO: Do not keep this array unless we are gathering stats!
-	TextureTrackerArray.Add(Texture);
-
-	INC_DWORD_STAT(STAT_MutableNumTextures);
-}
-
-
-int32 FCustomizableObjectSystemPrivate::EnableMutableAnimInfoDebugging = 0;
+int32 UCustomizableObjectSystemPrivate::EnableMutableAnimInfoDebugging = 0;
 
 static FAutoConsoleVariableRef CVarEnableMutableAnimInfoDebugging(
-	TEXT("mutable.EnableMutableAnimInfoDebugging"), FCustomizableObjectSystemPrivate::EnableMutableAnimInfoDebugging,
+	TEXT("mutable.EnableMutableAnimInfoDebugging"), UCustomizableObjectSystemPrivate::EnableMutableAnimInfoDebugging,
 	TEXT("If set to 1 or greater print on screen the animation info of the pawn's Customizable Object Instance. Anim BPs, slots and tags will be displayed."
 	"If the root Customizable Object is recompiled after this command is run, the used skeletal meshes will also be displayed."),
 	ECVF_Default);
 
 
-void FCustomizableObjectSystemPrivate::UpdateStats()
+UCustomizableObjectSystem* UCustomizableObjectSystemPrivate::GetPublic() const
 {
-#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
-	bool bLogEnabled = true;
-#else
-	bool bLogEnabled = LogBenchmarkUtil::isLoggingActive();
-#endif
-	if (bLogEnabled)
+	UCustomizableObjectSystem* Public = StaticCast<UCustomizableObjectSystem*>(GetOuter());
+	check(Public);
+
+	return Public;
+}
+
+
+void UCustomizableObjectSystemPrivate::AddGameThreadTask(const FMutableTask& Task)
+{
+	PendingTasks.Enqueue(Task);
+}
+
+
+TAutoConsoleVariable<bool> CVarCleanupTextureCache(
+	TEXT("mutable.EnableCleanupCache"),
+	true,
+	TEXT("If enabled stale textures and meshes in mutable's cache will be removed."),
+	ECVF_Scalability);
+
+
+void UCustomizableObjectSystemPrivate::CleanupCache()
+{
+	check(IsInGameThread());
+
+	const bool bCleanupEnabled = CVarCleanupTextureCache.GetValueOnGameThread();
+
+	for (int32 ModelIndex = 0; ModelIndex < ModelResourcesCache.Num();)
 	{
-		CountAllocatedSkeletalMesh = 0;
-
-		int CountLOD0 = 0;
-		int CountLOD1 = 0;
-		int CountLOD2 = 0;
-		int CountTotal = 0;
-
-		for (TObjectIterator<UCustomizableObjectInstance> CustomizableObjectInstance; CustomizableObjectInstance; ++CustomizableObjectInstance)
+		if (!ModelResourcesCache[ModelIndex].Object.IsValid(false, true))
 		{
-			if ( IsValidChecked(*CustomizableObjectInstance) && CustomizableObjectInstance->GetPrivate())
-			{
-				++CountTotal;
-
-				for (int32 ComponentIndex = 0; ComponentIndex < CustomizableObjectInstance->SkeletalMeshes.Num(); ++ComponentIndex)
-				{
-					if (CustomizableObjectInstance->SkeletalMeshes[ComponentIndex] && CustomizableObjectInstance->SkeletalMeshes[ComponentIndex]->GetResourceForRendering())
-					{
-						CountAllocatedSkeletalMesh++;
-
-						if (CustomizableObjectInstance->GetCurrentMinLOD() < 1)
-						{
-							++CountLOD0;
-						}
-						else if (CustomizableObjectInstance->GetCurrentMaxLOD() < 2)
-						{
-							++CountLOD1;
-						}
-						else
-						{
-							++CountLOD2;
-						}
-					}
-				}
-			}
+			// The whole object has been destroyed. Remove everything.
+			ModelResourcesCache.RemoveAtSwap(ModelIndex);
 		}
-
-		NumInstances = CountLOD0 + CountLOD1 + CountLOD2;
-		TotalInstances = CountTotal;
-		NumPendingInstances = MutablePendingInstanceWork.Num();
-		//SET_DWORD_STAT(STAT_MutableSkeletalMeshResourceMemory, Size / 1024.f);
-		SET_DWORD_STAT(STAT_MutablePendingInstanceUpdates, MutablePendingInstanceWork.Num());
-
-		uint64 Size = 0;
-		uint32 CountAllocated = 0;
-		for (TWeakObjectPtr<UTexture2D>& Tracker : TextureTrackerArray)
+		else
 		{
-			if (Tracker.IsValid() && Tracker->GetResource())
+			if (bCleanupEnabled)
 			{
-				CountAllocated++;
-
-				if (Tracker->GetResource()->TextureRHI)
+				// Remove stale textures
+				for (auto Iterator = ModelResourcesCache[ModelIndex].Images.CreateIterator(); Iterator; ++Iterator)
 				{
-					Size += Tracker->CalcTextureMemorySizeEnum(TMC_AllMips);
-				}
-			}
-		}
-
-		TextureMemoryUsed = int64_t(Size / 1024);
-
-		uint64 SizeGenerated = 0;
-		for (TObjectIterator<UCustomizableObjectInstance> CustomizableObjectInstance; CustomizableObjectInstance; ++CustomizableObjectInstance)
-		{
-			if (IsValidChecked(*CustomizableObjectInstance) && CustomizableObjectInstance->GetPrivate() && CustomizableObjectInstance->HasAnySkeletalMesh())
-			{
-				bool bHasResourceForRendering = false;
-				for (int32 MeshIndex = 0; !bHasResourceForRendering && MeshIndex < CustomizableObjectInstance->SkeletalMeshes.Num(); ++MeshIndex)
-				{
-					bHasResourceForRendering = CustomizableObjectInstance->GetSkeletalMesh(MeshIndex) && CustomizableObjectInstance->GetSkeletalMesh(MeshIndex)->GetResourceForRendering();
-				}
-
-				if (bHasResourceForRendering)
-				{
-					for (const FGeneratedTexture& GeneratedTextures : CustomizableObjectInstance->GetPrivate()->GeneratedTextures)
+					if (Iterator->Value.IsStale())
 					{
-						if (GeneratedTextures.Texture)
-						{
-							check(GeneratedTextures.Texture != nullptr);
-							SizeGenerated += GeneratedTextures.Texture->CalcTextureMemorySizeEnum(TMC_AllMips);
-						}
-					}
-				}
-			}
-		}
-
-		if (LogBenchmarkUtil::isLoggingActive())
-		{
-			LogBenchmarkUtil::updateStat("customizable_objects", (int32)CountAllocatedSkeletalMesh);
-			LogBenchmarkUtil::updateStat("pending_instance_updates", MutablePendingInstanceWork.Num());
-			LogBenchmarkUtil::updateStat("allocated_textures", (int32)CountAllocated);
-			LogBenchmarkUtil::updateStat("texture_resource_memory", (long double)Size / 1048576.0L);
-			LogBenchmarkUtil::updateStat("texture_generated_memory", (long double)SizeGenerated / 1048576.0L);
-		}
-
-#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
-		SET_DWORD_STAT(STAT_MutableNumInstancesLOD0, CountLOD0);
-		SET_DWORD_STAT(STAT_MutableNumInstancesLOD1, CountLOD1);
-		SET_DWORD_STAT(STAT_MutableNumInstancesLOD2, CountLOD2);
-		SET_DWORD_STAT(STAT_MutableNumAllocatedSkeletalMeshes, CountAllocatedSkeletalMesh);
-		SET_DWORD_STAT(STAT_MutablePendingInstanceUpdates, MutablePendingInstanceWork.Num());
-		SET_DWORD_STAT(STAT_MutableNumAllocatedTextures, CountAllocated);
-		SET_DWORD_STAT(STAT_MutableTextureResourceMemory, Size / 1024.f);
-		SET_DWORD_STAT(STAT_MutableTextureGeneratedMemory, SizeGenerated / 1024.f);
-#endif
-
-#if WITH_EDITORONLY_DATA
-		if (FCustomizableObjectSystemPrivate::IsMutableAnimInfoDebuggingEnabled())
-		{
-			if (GEngine)
-			{
-				bool bFoundPlayer = false;
-				int32 MsgIndex = 15820; // Arbitrary big value to prevent collisions with other on-screen messages
-
-				for (TObjectIterator<UCustomizableSkeletalComponent> CustomizableSkeletalComponent; CustomizableSkeletalComponent; ++CustomizableSkeletalComponent)
-				{
-					AActor* ParentActor = CustomizableSkeletalComponent->GetAttachmentRootActor();
-					UCustomizableObjectInstance* Instance = CustomizableSkeletalComponent->CustomizableObjectInstance;
-
-					APawn* PlayerPawn = nullptr;
-					if (UWorld* World = CustomizableSkeletalComponent->GetWorld())
-					{
-						PlayerPawn = UGameplayStatics::GetPlayerPawn(World, 0);						
-					}
-					
-					if (ParentActor && (ParentActor == PlayerPawn) && Instance)
-					{
-						bFoundPlayer = true;
-
-						FString TagString;
-						const FGameplayTagContainer& Tags = Instance->GetAnimationGameplayTags();
-
-						for (const FGameplayTag& Tag : Tags)
-						{
-							TagString += !TagString.IsEmpty() ? FString(TEXT(", ")) : FString();
-							TagString += Tag.ToString();
-						}												
-												
-						GEngine->AddOnScreenDebugMessage(MsgIndex++, .0f, FColor::Green, TEXT("Animation tags: ") + TagString);
-
-						check(Instance->GetPrivate() != nullptr);
-						FCustomizableInstanceComponentData* ComponentData = Instance->GetPrivate()->GetComponentData(CustomizableSkeletalComponent->ComponentIndex);
-
-						if (ComponentData)
-						{
-							for (TPair<FName, TSoftClassPtr<UAnimInstance>>& Entry : ComponentData->AnimSlotToBP)
-							{
-								FString AnimBPSlot;
-
-								AnimBPSlot += Entry.Key.ToString() + FString("-") + Entry.Value.GetAssetName();
-								GEngine->AddOnScreenDebugMessage(MsgIndex++, .0f, FColor::Green, AnimBPSlot);
-							}
-						}
-
-						GEngine->AddOnScreenDebugMessage(MsgIndex++, .0f, FColor::Green, TEXT("Slots-AnimBP: "));
-
-						if (ComponentData)
-						{
-							if (ComponentData->MeshPartPaths.IsEmpty())
-							{
-								GEngine->AddOnScreenDebugMessage(MsgIndex++, .0f, FColor::Magenta,
-									TEXT("No meshes found. In order to see the meshes compile the pawn's root CustomizableObject after the 'mutable.EnableMutableAnimInfoDebugging 1' command has been run."));
-							}
-
-							for (const FString& MeshPath : ComponentData->MeshPartPaths)
-							{
-								GEngine->AddOnScreenDebugMessage(MsgIndex++, .0f, FColor::Magenta, MeshPath);
-							}
-						}
-
-						GEngine->AddOnScreenDebugMessage(MsgIndex++, .0f, FColor::Magenta, TEXT("Meshes: "));
-
-						GEngine->AddOnScreenDebugMessage(MsgIndex++, .0f, FColor::Cyan,
-							TEXT("Player Pawn Mutable Mesh/Animation info for component ") + FString::Printf(TEXT("%d"), 
-							CustomizableSkeletalComponent->ComponentIndex));
+						Iterator.RemoveCurrent();
 					}
 				}
 
-				if (!bFoundPlayer)
+				// Remove stale meshes
+				for (auto Iterator = ModelResourcesCache[ModelIndex].Meshes.CreateIterator(); Iterator; ++Iterator)
 				{
-					GEngine->AddOnScreenDebugMessage(MsgIndex, .0f, FColor::Yellow, TEXT("Mutable Animation info: N/A"));
+					if (Iterator->Value.IsStale())
+					{
+						Iterator.RemoveCurrent();
+					}
 				}
 			}
+
+			++ModelIndex;
 		}
-#endif
 	}
 }
 
 
-void FCustomizableObjectSystemPrivate::AddReferencedObjects(FReferenceCollector& Collector)
+FMutableResourceCache& UCustomizableObjectSystemPrivate::GetObjectCache(const UCustomizableObject* Object)
 {
-	if (CurrentInstanceBeingUpdated)
+	check(IsInGameThread());
+
+	// Not mandatory, but a good place for a cleanup
+	CleanupCache();
+
+	for (int ModelIndex = 0; ModelIndex < ModelResourcesCache.Num(); ++ModelIndex)
 	{
-		Collector.AddReferencedObject(CurrentInstanceBeingUpdated);
+		if (ModelResourcesCache[ModelIndex].Object==Object)
+		{
+			return ModelResourcesCache[ModelIndex];
+		}
 	}
+		
+	// Not found, create and add it.
+	ModelResourcesCache.Push(FMutableResourceCache());
+	ModelResourcesCache.Last().Object = Object;
+	return ModelResourcesCache.Last();
 }
 
+bool bForceStreamMeshLODs = false;
 
-int32 FCustomizableObjectSystemPrivate::EnableMutableProgressiveMipStreaming = 1;
+static FAutoConsoleVariableRef CVarMutableForceStreamMeshLODs(
+	TEXT("Mutable.ForceStreamMeshLODs"),
+	bForceStreamMeshLODs,
+	TEXT("true/false - If true, and bStreamMeshLODs is enabled, all COs will stream mesh LODs. "),
+	ECVF_Default);
+
+
+bool bStreamMeshLODs = true;
+
+static FAutoConsoleVariableRef CVarMutableStreamMeshLODsEnabled(
+	TEXT("Mutable.StreamMeshLODsEnabled"),
+	bStreamMeshLODs,
+	TEXT("true/false - If true, enable generated meshes to stream mesh LODs. "),
+	ECVF_Default);
+
+int32 UCustomizableObjectSystemPrivate::EnableMutableProgressiveMipStreaming = 1;
 
 // Warning! If this is enabled, do not get references to the textures generated by Mutable! They are owned by Mutable and could become invalid at any moment
 static FAutoConsoleVariableRef CVarEnableMutableProgressiveMipStreaming(
-	TEXT("mutable.EnableMutableProgressiveMipStreaming"), FCustomizableObjectSystemPrivate::EnableMutableProgressiveMipStreaming,
+	TEXT("mutable.EnableMutableProgressiveMipStreaming"), UCustomizableObjectSystemPrivate::EnableMutableProgressiveMipStreaming,
 	TEXT("If set to 1 or greater use progressive Mutable Mip streaming for Mutable textures. If disabled, all mips will always be generated and spending memory. In that case, on Desktop platforms they will be stored in CPU memory, on other platforms textures will be non-streaming."),
 	ECVF_Default);
 
 
-int32 FCustomizableObjectSystemPrivate::EnableMutableLiveUpdate = 1;
+int32 UCustomizableObjectSystemPrivate::EnableMutableLiveUpdate = 1;
 
 static FAutoConsoleVariableRef CVarEnableMutableLiveUpdate(
-	TEXT("mutable.EnableMutableLiveUpdate"), FCustomizableObjectSystemPrivate::EnableMutableLiveUpdate,
+	TEXT("mutable.EnableMutableLiveUpdate"), UCustomizableObjectSystemPrivate::EnableMutableLiveUpdate,
 	TEXT("If set to 1 or greater Mutable can use the live update mode if set in the current Mutable state. If disabled, it will never use live update mode even if set in the current Mutable state."),
 	ECVF_Default);
 
 
-int32 FCustomizableObjectSystemPrivate::EnableReuseInstanceTextures = 1;
+int32 UCustomizableObjectSystemPrivate::EnableReuseInstanceTextures = 1;
 
 static FAutoConsoleVariableRef CVarEnableMutableReuseInstanceTextures(
-	TEXT("mutable.EnableReuseInstanceTextures"), FCustomizableObjectSystemPrivate::EnableReuseInstanceTextures,
+	TEXT("mutable.EnableReuseInstanceTextures"), UCustomizableObjectSystemPrivate::EnableReuseInstanceTextures,
 	TEXT("If set to 1 or greater and set in the corresponding setting in the current Mutable state, Mutable can reuse instance UTextures (only uncompressed and not streaming, so set the options in the state) and their resources between updates when they are modified. If geometry or state is changed they cannot be reused."),
 	ECVF_Default);
 
 
-bool FCustomizableObjectSystemPrivate::bEnableMutableReusePreviousUpdateData = false;
-static FAutoConsoleVariableRef CVarEnableMutableReusePreviousUpdateData(
-	TEXT("mutable.EnableMutableReusePreviousUpdateData"), FCustomizableObjectSystemPrivate::bEnableMutableReusePreviousUpdateData,
-	TEXT("If true, Mutable will try to reuse render sections from previous SkeletalMeshes. If false, all SkeletalMeshes will be build from scratch."),
-	ECVF_Default);
-
-
-int32 FCustomizableObjectSystemPrivate::EnableOnlyGenerateRequestedLODs = 1;
+int32 UCustomizableObjectSystemPrivate::EnableOnlyGenerateRequestedLODs = 1;
 
 static FAutoConsoleVariableRef CVarEnableOnlyGenerateRequestedLODs(
-	TEXT("mutable.EnableOnlyGenerateRequestedLODs"), FCustomizableObjectSystemPrivate::EnableOnlyGenerateRequestedLODs,
+	TEXT("mutable.EnableOnlyGenerateRequestedLODs"), UCustomizableObjectSystemPrivate::EnableOnlyGenerateRequestedLODs,
 	TEXT("If 1 or greater, Only the RequestedLODLevels will be generated. If 0, all LODs will be build."),
 	ECVF_Default);
 
-int32 FCustomizableObjectSystemPrivate::EnableSkipGenerateResidentMips = 1;
+int32 UCustomizableObjectSystemPrivate::EnableSkipGenerateResidentMips = 1;
 
 static FAutoConsoleVariableRef CVarSkipGenerateResidentMips(
-	TEXT("mutable.EnableSkipGenerateResidentMips"), FCustomizableObjectSystemPrivate::EnableSkipGenerateResidentMips,
+	TEXT("mutable.EnableSkipGenerateResidentMips"), UCustomizableObjectSystemPrivate::EnableSkipGenerateResidentMips,
 	TEXT("If 1 or greater, resident mip generation will be optional. If 0, resident mips will be always generated"),
 	ECVF_Default);
 
-int32 FCustomizableObjectSystemPrivate::MaxTextureSizeToGenerate = 0;
+int32 UCustomizableObjectSystemPrivate::MaxTextureSizeToGenerate = 0;
 
 FAutoConsoleVariableRef CVarMaxTextureSizeToGenerate(
 	TEXT("Mutable.MaxTextureSizeToGenerate"),
-	FCustomizableObjectSystemPrivate::MaxTextureSizeToGenerate,
+	UCustomizableObjectSystemPrivate::MaxTextureSizeToGenerate,
 	TEXT("Max texture size on Mutable textures. Mip 0 will be the first mip with max size equal or less than MaxTextureSizeToGenerate."
 		"If a texture doesn't have small enough mips, mip 0 will be the last mip available."));
 
+static FAutoConsoleVariable CVarDescriptorDebugPrint(
+	TEXT("mutable.DescriptorDebugPrint"),
+	false,
+	TEXT("If true, each time an update is enqueued, print its captured parameters."),
+	ECVF_Default);
 
-void FinishUpdateGlobal(UCustomizableObjectInstance* Instance, EUpdateResult UpdateResult, FInstanceUpdateDelegate* UpdateCallback, const FDescriptorRuntimeHash InUpdatedHash)
+
+void FinishUpdateGlobal(const TSharedRef<FUpdateContextPrivate>& Context)
 {
 	check(IsInGameThread())
-	
-	// Callbacks. Must be done at the end.
+
+	UCustomizableObjectInstance* Instance = Context->Instance.Get();
+
+	UCustomizableObjectSystem* System = UCustomizableObjectSystem::GetInstance();
+	UCustomizableObjectSystemPrivate* SystemPrivate = System ? System->GetPrivate() : nullptr;
+
 	if (Instance)
 	{
-		Instance->FinishUpdate(UpdateResult, InUpdatedHash);			
+		UCustomizableInstancePrivate* PrivateInstance = Instance->GetPrivate();
+		
+		switch (Context->UpdateResult)
+		{
+		case EUpdateResult::Success:
+		case EUpdateResult::Warning:
+			PrivateInstance->SkeletalMeshStatus = ESkeletalMeshStatus::Success;
+
+			if (SystemPrivate)
+			{
+				SystemPrivate->UnCacheTextureParameters(PrivateInstance->CommittedDescriptor.GetTextureParameters());				
+			}
+
+			PrivateInstance->CommittedDescriptor = Context->MoveCommittedDescriptor();
+			PrivateInstance->CommittedDescriptorHash = Context->GetCapturedDescriptorHash();
+
+			if (SystemPrivate)
+			{
+				// Cache new Texture Parameters
+				SystemPrivate->CacheTextureParameters(PrivateInstance->CommittedDescriptor.GetTextureParameters());
+			}
+			
+			// Delegates must be called only after updating the Instance flags.
+			Instance->UpdatedDelegate.Broadcast(Instance);
+			Instance->UpdatedNativeDelegate.Broadcast(Instance);
+			break;
+
+		case EUpdateResult::ErrorOptimized:
+			break; // Skeletal Mesh not changed.
+			
+		case EUpdateResult::ErrorDiscarded:
+			break; // Status will be updated once the discard is performed.
+
+		case EUpdateResult::Error: 
+		case EUpdateResult::Error16BitBoneIndex:
+			PrivateInstance->SkeletalMeshStatus = ESkeletalMeshStatus::Error;
+			break;
+			
+		case EUpdateResult::ErrorReplaced:
+			break; // Skeletal Mesh not changed.
+			
+		default:
+			unimplemented();
+		}
 	}
 
-	if (UpdateResult == EUpdateResult::Success)
+	if (UCustomizableObjectSystem::IsUpdateResultValid(Context->UpdateResult))
 	{
-		// Call Customizable Skeletal Components updated callbacks.
-		for (TObjectIterator<UCustomizableSkeletalComponent> It; It; ++It) // Since iterating objects is expensive, for now CustomizableSkeletalComponent does not have a FinishUpdate function.
+		// Call CustomizableObjectInstanceUsages updated callbacks.
+		for (TObjectIterator<UCustomizableObjectInstanceUsage> It; It; ++It) // Since iterating objects is expensive, for now CustomizableObjectInstanceUsage does not have a FinishUpdate function.
 		{
-			if (const UCustomizableSkeletalComponent* CustomizableSkeletalComponent = *It;
-				CustomizableSkeletalComponent &&
-				CustomizableSkeletalComponent->CustomizableObjectInstance == Instance)
+#if WITH_EDITOR
+			if (IsValid(*It) && It->IsNetMode(NM_DedicatedServer))
 			{
-				CustomizableSkeletalComponent->Callbacks();
+				continue;
+			}
+#endif
+
+			if (const UCustomizableObjectInstanceUsage* CustomizableObjectInstanceUsage = *It;
+				IsValid(CustomizableObjectInstanceUsage) &&
+				CustomizableObjectInstanceUsage->GetCustomizableObjectInstance() == Instance)
+			{
+				CustomizableObjectInstanceUsage->Callbacks();
 			}
 		}
 	}
 
-	if (UpdateCallback)
-	{
-		FUpdateContext Context;
-		Context.UpdateResult = UpdateResult;
+	FUpdateContext ContextPublic;
+	ContextPublic.UpdateResult = Context->UpdateResult;
 		
-		UpdateCallback->ExecuteIfBound(Context);
-	}
+	Context->UpdateCallback.ExecuteIfBound(ContextPublic);
+	Context->UpdateNativeCallback.Broadcast(ContextPublic);
 
-	UCustomizableObjectSystem::GetInstance()->GetPrivate()->MutableTaskGraph.AllowLaunchingMutableTaskLowPriority(true, false);
+
+	if (SystemPrivate)
+	{
+		SystemPrivate->MutableTaskGraph.AllowLaunchingMutableTaskLowPriority(true, false);
+	}
+	
+	if (Context->StartUpdateTime != 0.0) // Update started.
+	{
+		Context->UpdateTime = FPlatformTime::Seconds() - Context->StartUpdateTime;		
+	}
+	
+	const uint32 InstanceId = Instance ? Instance->GetUniqueID() : 0;
+	UE_LOG(LogMutable, Log, TEXT("Finished UpdateSkeletalMesh Async. Instance=%d, Frame=%d, QueueTime=%f, UpdateTime=%f"), InstanceId, GFrameNumber, Context->QueueTime, Context->UpdateTime);
+
+	if (SystemPrivate &&
+		CVarEnableBenchmark.GetValueOnAnyThread())
+	{
+		FFunctionGraphTask::CreateAndDispatchWhenReady( // Calling Benchmark in a task so we make sure we exited all scopes.
+		[Context]()
+		{
+			if (!UCustomizableObjectSystem::IsCreated()) // We are shutting down
+			{
+				return;	
+			}
+			
+			UCustomizableObjectSystem* System = UCustomizableObjectSystem::GetInstance();
+			if (!System)
+			{
+				return;
+			}
+
+			System->GetPrivate()->LogBenchmarkUtil.FinishUpdateMesh(Context);
+		},
+		TStatId{},
+		nullptr,
+		ENamedThreads::GameThread);
+	}
+	
+	if (Context->UpdateStarted)
+	{
+		TRACE_END_REGION(UE_MUTABLE_UPDATE_REGION);		
+	}
 }
 
 
-/** Update the given Instance Skeletal Meshes and call its callbacks. */
-void UpdateSkeletalMesh(UCustomizableObjectInstance& CustomizableObjectInstance, const FDescriptorRuntimeHash& UpdatedDescriptorRuntimeHash, EUpdateResult UpdateResult, FInstanceUpdateDelegate* UpdateCallback)
+/** Update the given Instance Skeletal Meshes */
+void UpdateSkeletalMesh(const TSharedRef<FUpdateContextPrivate>& Context)
 {
 	MUTABLE_CPUPROFILER_SCOPE(UpdateSkeletalMesh);
 
 	check(IsInGameThread());
 
-	for (int32 ComponentIndex = 0; ComponentIndex < CustomizableObjectInstance.SkeletalMeshes.Num(); ++ComponentIndex)
-	{
-		if (TObjectPtr<USkeletalMesh> SkeletalMesh = CustomizableObjectInstance.SkeletalMeshes[ComponentIndex])
-		{
-#if WITH_EDITOR
-			FUnrealBakeHelpers::BakeHelper_RegenerateImportedModel(SkeletalMesh);
-#else
-			SkeletalMesh->RebuildSocketMap();
-#endif
-		}
-	}
+	UCustomizableObjectInstance* CustomizableObjectInstance = Context->Instance.Get();
+	check(CustomizableObjectInstance);
 
-	UCustomizableInstancePrivateData* CustomizableObjectInstancePrivateData = CustomizableObjectInstance.GetPrivate();
+	UCustomizableInstancePrivate* CustomizableObjectInstancePrivateData = CustomizableObjectInstance->GetPrivate();
 	check(CustomizableObjectInstancePrivateData != nullptr);
-	for (TObjectIterator<UCustomizableSkeletalComponent> It; It; ++It)
+	for (TObjectIterator<UCustomizableObjectInstanceUsage> It; It; ++It)
 	{
-		UCustomizableSkeletalComponent* CustomizableSkeletalComponent = *It;
+		UCustomizableObjectInstanceUsage* CustomizableObjectInstanceUsage = *It;
 
-		if (CustomizableSkeletalComponent &&
-			(CustomizableSkeletalComponent->CustomizableObjectInstance == &CustomizableObjectInstance) &&
-			CustomizableObjectInstance.SkeletalMeshes.IsValidIndex(CustomizableSkeletalComponent->ComponentIndex)
+#if WITH_EDITOR
+		if (IsValid(CustomizableObjectInstanceUsage) && CustomizableObjectInstanceUsage->IsNetMode(NM_DedicatedServer))
+		{
+			continue;
+		}
+#endif
+
+		if (IsValid(CustomizableObjectInstanceUsage) &&
+			(CustomizableObjectInstanceUsage->GetCustomizableObjectInstance() == CustomizableObjectInstance) &&
+			CustomizableObjectInstancePrivateData->SkeletalMeshes.IsValidIndex(CustomizableObjectInstanceUsage->GetComponentIndex())
 		   )
 		{
 			MUTABLE_CPUPROFILER_SCOPE(UpdateSkeletalMesh_SetSkeletalMesh);
 
-			const bool bIsCreatingSkeletalMesh = CustomizableObjectInstancePrivateData->HasCOInstanceFlags(CreatingSkeletalMesh); //TODO MTBL-391: Review
-			CustomizableSkeletalComponent->SetSkeletalMesh(CustomizableObjectInstance.SkeletalMeshes[CustomizableSkeletalComponent->ComponentIndex], false, bIsCreatingSkeletalMesh);
+			CustomizableObjectInstanceUsage->SetSkeletalMesh(CustomizableObjectInstancePrivateData->SkeletalMeshes[CustomizableObjectInstanceUsage->GetComponentIndex()]);
 
 			if (CustomizableObjectInstancePrivateData->HasCOInstanceFlags(ReplacePhysicsAssets))
 			{
-				CustomizableSkeletalComponent->SetPhysicsAsset(
-					CustomizableObjectInstance.SkeletalMeshes[CustomizableSkeletalComponent->ComponentIndex] ? 
-					CustomizableObjectInstance.SkeletalMeshes[CustomizableSkeletalComponent->ComponentIndex]->GetPhysicsAsset() : nullptr);
+				CustomizableObjectInstanceUsage->SetPhysicsAsset(
+					CustomizableObjectInstancePrivateData->SkeletalMeshes[CustomizableObjectInstanceUsage->GetComponentIndex()] ?
+					CustomizableObjectInstancePrivateData->SkeletalMeshes[CustomizableObjectInstanceUsage->GetComponentIndex()]->GetPhysicsAsset() : nullptr);
 			}
 		}
 	}
-
-	CustomizableObjectInstancePrivateData->SetCOInstanceFlags(Generated);
-	CustomizableObjectInstancePrivateData->ClearCOInstanceFlags(CreatingSkeletalMesh);
-
-	CustomizableObjectInstance.bEditorPropertyChanged = false;
-
-	FinishUpdateGlobal(&CustomizableObjectInstance, UpdateResult, UpdateCallback, UpdatedDescriptorRuntimeHash);
 }
 
 
-void FCustomizableObjectSystemPrivate::GetMipStreamingConfig(const UCustomizableObjectInstance& Instance, bool& bOutNeverStream, int32& OutMipsToSkip) const
+void UCustomizableObjectSystemPrivate::GetMipStreamingConfig(const UCustomizableObjectInstance& Instance, bool& bOutNeverStream, int32& OutMipsToSkip) const
 {
+	bOutNeverStream = false;
+
+	// From user-controlled per-state flag?
 	const FString CurrentState = Instance.GetCurrentState();
-	const FParameterUIData* State = Instance.GetCustomizableObject()->StateUIDataMap.Find(CurrentState);
-
-	// \TODO: This should be controllable independently
-	bOutNeverStream = State ? State->TextureCompressionStrategy != ETextureCompressionStrategy::None : false;
-	bool bUseMipmapStreaming = !bOutNeverStream;
-	OutMipsToSkip = 0; // 0 means all mips
-
-#if PLATFORM_SUPPORTS_TEXTURE_STREAMING
-	if (!IStreamingManager::Get().IsTextureStreamingEnabled())
+	const FParameterUIData* State = Instance.GetCustomizableObject()->GetPrivate()->GetModelResources().StateUIDataMap.Find(CurrentState);	
+	if (State)
 	{
-		bUseMipmapStreaming = false;
+		bOutNeverStream = State->bDisableTextureStreaming;
 	}
-#else
-	bUseMipmapStreaming = false;
+
+#if WITH_EDITORONLY_DATA
+	// Was streaming disabled at object-compilation time? 
+	if (Instance.GetCustomizableObject()->GetPrivate()->bDisableTextureStreaming)
+	{
+		bOutNeverStream = true;
+	}
 #endif
 
-	if (bUseMipmapStreaming && EnableMutableProgressiveMipStreaming)
+	OutMipsToSkip = 0; // 0 means generate all mips
+
+	// Streaming disabled from platform settings or from platform CustomizableObjectSystem properties?
+#if PLATFORM_SUPPORTS_TEXTURE_STREAMING
+	if (!IStreamingManager::Get().IsTextureStreamingEnabled() || !EnableMutableProgressiveMipStreaming)
+	{
+		bOutNeverStream = true;
+	}
+#else
+	bOutNeverStream = true;
+#endif
+	
+	if (!bOutNeverStream)
 	{
 		OutMipsToSkip = 255; // This means skip all possible mips until only UTexture::GetStaticMinTextureResidentMipCount() are left
 	}
 }
 
 
-void FCustomizableObjectSystemPrivate::InitUpdateSkeletalMesh(UCustomizableObjectInstance& Instance, EQueuePriorityType Priority, bool bIsCloseDistTick, FInstanceUpdateDelegate* UpdateCallback)
+bool UCustomizableObjectSystemPrivate::IsReplaceDiscardedWithReferenceMeshEnabled() const
 {
-	MUTABLE_CPUPROFILER_SCOPE(FCustomizableObjectSystemPrivate::InitUpdateSkeletalMesh);
+	return bReplaceDiscardedWithReferenceMesh;
+}
 
-	check(IsInGameThread());
 
-	bool bNeverStream = false;
-	int32 MipsToSkip = 0;
+void UCustomizableObjectSystemPrivate::SetReplaceDiscardedWithReferenceMeshEnabled(bool bIsEnabled)
+{
+	bReplaceDiscardedWithReferenceMesh = bIsEnabled;
+}
 
-	GetMipStreamingConfig(Instance, bNeverStream, MipsToSkip);
-	
-	const FDescriptorRuntimeHash UpdateDescriptorHash = Instance.GetUpdateDescriptorRuntimeHash();
 
-	if (const FMutablePendingInstanceUpdate* QueueElem = MutablePendingInstanceWork.GetUpdate(&Instance))
+int32 UCustomizableObjectSystemPrivate::GetNumSkeletalMeshes() const
+{
+	return NumSkeletalMeshes;
+}
+
+
+void UCustomizableObjectSystemPrivate::AddTextureReference(const FMutableImageCacheKey& TextureId)
+{
+	uint32& CountRef = TextureReferenceCount.FindOrAdd(TextureId);
+
+	CountRef++;
+}
+
+
+bool UCustomizableObjectSystemPrivate::RemoveTextureReference(const FMutableImageCacheKey& TextureId)
+{
+	uint32* CountPtr = TextureReferenceCount.Find(TextureId);
+
+	if (CountPtr && *CountPtr > 0)
 	{
-		if (UpdateDescriptorHash.IsSubset(FDescriptorRuntimeHash(QueueElem->InstanceDescriptor)))
+		(*CountPtr)--;
+
+		if (*CountPtr == 0)
 		{
-			FinishUpdateGlobal(&Instance, EUpdateResult::ErrorOptimized, UpdateCallback);			
-			return; // The the requested update is equal to the last enqueued update.
+			TextureReferenceCount.Remove(TextureId);
+
+			return true;
 		}
-	}	
-
-	if (CurrentMutableOperation &&
-		&Instance == CurrentMutableOperation->CustomizableObjectInstance &&
-		UpdateDescriptorHash.IsSubset(CurrentMutableOperation->InstanceDescriptorRuntimeHash))
-	{
-		FinishUpdateGlobal(&Instance, EUpdateResult::ErrorOptimized, UpdateCallback);			
-		return; // The requested update is equal to the running update.
-	}
-	
-	// These delegates must be called at the end of the begin update.
-	Instance.BeginUpdateDelegate.Broadcast(&Instance);
-	Instance.BeginUpdateNativeDelegate.Broadcast(&Instance);
-
-	if (UpdateDescriptorHash.IsSubset(Instance.GetDescriptorRuntimeHash()) &&
-		!(CurrentMutableOperation &&
-			&Instance == CurrentMutableOperation->CustomizableObjectInstance)) // This condition is necessary because even if the descriptor is a subset, it will be replaced by the CurrentMutableOperation
-	{
-		Instance.SkeletalMeshStatus = ESkeletalMeshState::Correct; // TODO FutureGMT MTBL-1033 should not be here. Move to UCustomizableObjectInstance::Updated
-		UpdateSkeletalMesh(Instance, Instance.GetDescriptorRuntimeHash(), EUpdateResult::Success, UpdateCallback);
 	}
 	else
 	{
-		// Cache Texture Parameters being used during the update:
-		check(ImageProvider);
+		ensure(false); // Mutable texture reference count is incorrect
+		TextureReferenceCount.Remove(TextureId);
+	}
 
-		// Cache new Texture Parameters
-		for (const FCustomizableObjectTextureParameterValue& TextureParameters : Instance.GetDescriptor().GetTextureParameters())
+	return false;
+}
+
+
+bool UCustomizableObjectSystemPrivate::TextureHasReferences(const FMutableImageCacheKey& TextureId) const
+{
+	const uint32* CountPtr = TextureReferenceCount.Find(TextureId);
+
+	if (CountPtr && *CountPtr > 0)
+	{
+		return true;
+	}
+
+	return false;
+}
+
+
+EUpdateRequired UCustomizableObjectSystemPrivate::IsUpdateRequired(const UCustomizableObjectInstance& Instance, bool bOnlyUpdateIfNotGenerated, bool bOnlyUpdateIfLODs, bool bIgnoreCloseDist) const
+{
+	UCustomizableObjectSystem* System = UCustomizableObjectSystem::GetInstance();
+	const UCustomizableInstancePrivate* const Private = Instance.GetPrivate();
+	
+	if (!Instance.CanUpdateInstance())
+	{
+		return EUpdateRequired::NoUpdate;
+	}
+
+	const bool bIsGenerated = Private->SkeletalMeshStatus != ESkeletalMeshStatus::NotGenerated;
+	const int32 NumGeneratedInstancesLimit = System->GetInstanceLODManagement()->GetNumGeneratedInstancesLimitFullLODs();
+	const int32 NumGeneratedInstancesLimitLOD1 = System->GetInstanceLODManagement()->GetNumGeneratedInstancesLimitLOD1();
+	const int32 NumGeneratedInstancesLimitLOD2 = System->GetInstanceLODManagement()->GetNumGeneratedInstancesLimitLOD2();
+
+	if (!bIsGenerated && // Prevent generating more instances than the limit, but let updates to existing instances run normally
+		NumGeneratedInstancesLimit > 0 &&
+		System->GetPrivate()->GetNumSkeletalMeshes() > NumGeneratedInstancesLimit + NumGeneratedInstancesLimitLOD1 + NumGeneratedInstancesLimitLOD2)
+	{
+		return EUpdateRequired::NoUpdate;
+	}
+
+	const bool bDiscardByDistance = Private->LastMinSquareDistFromComponentToPlayer > FMath::Square(System->GetInstanceLODManagement()->GetOnlyUpdateCloseCustomizableObjectsDist());
+	const bool bLODManagementDiscard = System->GetInstanceLODManagement()->IsOnlyUpdateCloseCustomizableObjectsEnabled() &&
+			bDiscardByDistance &&
+			!bIgnoreCloseDist;
+	
+	if (Private->HasCOInstanceFlags(DiscardedByNumInstancesLimit) ||
+		bLODManagementDiscard)
+	{
+		if (bIsGenerated)
 		{
-			ImageProvider->CacheImage(TextureParameters.ParameterValue, false);
+			return EUpdateRequired::Discard;		
+		}
+		else
+		{
+			return EUpdateRequired::NoUpdate;
+		}
+	}
 
-			for (const FName& TextureParameter : TextureParameters.ParameterRangeValues)
+	const bool bShouldUpdateLODs = Private->HasCOInstanceFlags(PendingLODsUpdate);
+
+	const bool bNoUpdateLODs = bOnlyUpdateIfLODs && !bShouldUpdateLODs;
+	const bool bNoInitialUpdate = bOnlyUpdateIfNotGenerated && bIsGenerated;
+
+	if (bNoUpdateLODs &&
+		bNoInitialUpdate)
+	{
+		return EUpdateRequired::NoUpdate;
+	}
+
+	return EUpdateRequired::Update;
+}
+
+
+EQueuePriorityType UCustomizableObjectSystemPrivate::GetUpdatePriority(const UCustomizableObjectInstance& Instance,	bool bForceHighPriority) const
+{
+	const UCustomizableInstancePrivate* InstancePrivate = Instance.GetPrivate();
+		
+	const bool bNotGenerated = InstancePrivate->SkeletalMeshStatus == ESkeletalMeshStatus::NotGenerated;
+	const bool bShouldUpdateLODs = InstancePrivate->HasCOInstanceFlags(PendingLODsUpdate);
+	const bool bIsDowngradeLODUpdate = InstancePrivate->HasCOInstanceFlags(PendingLODsDowngrade);
+	const bool bIsPlayerOrNearIt = InstancePrivate->HasCOInstanceFlags(UsedByPlayerOrNearIt);
+
+	EQueuePriorityType Priority = EQueuePriorityType::Low;
+	if (bForceHighPriority)
+	{
+		Priority = EQueuePriorityType::High;
+	}
+	else if (bNotGenerated || !Instance.HasAnySkeletalMesh())
+	{
+		Priority = EQueuePriorityType::Med;
+	}
+	else if (bShouldUpdateLODs && bIsDowngradeLODUpdate)
+	{
+		Priority = EQueuePriorityType::Med_Low;
+	}
+	else if (bIsPlayerOrNearIt && bShouldUpdateLODs && !bIsDowngradeLODUpdate)
+	{
+		Priority = EQueuePriorityType::High;
+	}
+	else if (bShouldUpdateLODs && !bIsDowngradeLODUpdate)
+	{
+		Priority = EQueuePriorityType::Med;
+	}
+	else if (bIsPlayerOrNearIt)
+	{
+		Priority = EQueuePriorityType::High;
+	}
+
+	return Priority;
+}
+
+
+void UCustomizableObjectSystemPrivate::EnqueueUpdateSkeletalMesh(const TSharedRef<FUpdateContextPrivate>& Context)
+{
+	MUTABLE_CPUPROFILER_SCOPE(FCustomizableObjectSystemPrivate::EnqueueUpdateSkeletalMesh);
+	check(IsInGameThread());
+
+	UCustomizableObjectInstance* Instance = Context->Instance.Get();
+	check(Instance);
+	
+	UCustomizableInstancePrivate* InstancePrivate = Instance->GetPrivate();
+
+	const EQueuePriorityType Priority = GetUpdatePriority(*Instance, Context->bForceHighPriority);
+	const uint32 InstanceId = Instance->GetUniqueID();
+	const float Distance = FMath::Sqrt(InstancePrivate->LastMinSquareDistFromComponentToPlayer);
+	const bool bIsPlayerOrNearIt = InstancePrivate->HasCOInstanceFlags(UsedByPlayerOrNearIt);
+	UE_LOG(LogMutable, Log, TEXT("Enqueue UpdateSkeletalMesh Async. Instance=%d, Frame=%d, Priority=%d, dist=%f, bIsPlayerOrNearIt=%d"), InstanceId, GFrameNumber, static_cast<int32>(Priority), Distance, bIsPlayerOrNearIt);				
+	
+	if (!bIsMutableEnabled)
+	{
+		// Mutable is disabled. Set the reference SkeletalMesh and finish the update with success to avoid breaking too many things.
+		Context->UpdateResult = EUpdateResult::Success;
+		InstancePrivate->SetDefaultSkeletalMesh();
+		FinishUpdateGlobal(Context);
+		return;
+	}
+
+	if (!Instance->CanUpdateInstance())
+	{
+		Context->UpdateResult = EUpdateResult::Error;
+		FinishUpdateGlobal(Context);
+		return;
+	}
+
+	const EUpdateRequired UpdateRequired = IsUpdateRequired(*Instance, Context->bOnlyUpdateIfNotGenerated, false, Context->bIgnoreCloseDist);
+	switch (UpdateRequired)
+	{
+	case EUpdateRequired::NoUpdate:
+	{	
+		Context->UpdateResult = EUpdateResult::Error;
+		FinishUpdateGlobal(Context);
+		break;
+	}		
+	case EUpdateRequired::Update:
+	{
+		if (InstancePrivate->HasCOInstanceFlags(PendingLODsUpdate))
+		{
+			UE_LOG(LogMutable, Verbose, TEXT("Min LOD change: %d -> %d"), Instance->GetCurrentMinLOD(), Instance->GetMinLODToLoad());
+		}
+
+		if (const FMutablePendingInstanceUpdate* QueueElem = MutablePendingInstanceWork.GetUpdate(Instance))
+		{
+			if (Context->GetCapturedDescriptorHash().IsSubset(QueueElem->Context->GetCapturedDescriptorHash()))
 			{
-				ImageProvider->CacheImage(TextureParameter, false);
+				Context->UpdateResult = EUpdateResult::ErrorOptimized;
+				FinishUpdateGlobal(Context);			
+				return; // The the requested update is equal to the last enqueued update.
 			}
-		}
+		}	
 
-		UCustomizableInstancePrivateData* InstancePrivate = Instance.GetPrivate();
-		check(InstancePrivate);
-
-		// Uncache old Texture Parameters
-		for (const FName& TextureParameter : InstancePrivate->UpdateTextureParameters)
+		if (CurrentMutableOperation &&
+			Instance == CurrentMutableOperation->Instance &&
+			Context->GetCapturedDescriptorHash().IsSubset(CurrentMutableOperation->GetCapturedDescriptorHash()))
 		{
-			ImageProvider->UnCacheImage(TextureParameter, false);
+			Context->UpdateResult = EUpdateResult::ErrorOptimized;
+			FinishUpdateGlobal(Context);
+			return; // The requested update is equal to the running update.
 		}
-
-		// Update which ones are currently are being used
-		InstancePrivate->UpdateTextureParameters.Reset();
-		for (const FCustomizableObjectTextureParameterValue& TextureParameters : Instance.GetDescriptor().GetTextureParameters())
+	
+		if (Context->GetCapturedDescriptorHash().IsSubset(InstancePrivate->CommittedDescriptorHash) &&
+			!(CurrentMutableOperation &&
+			Instance == CurrentMutableOperation->Instance)) // This condition is necessary because even if the descriptor is a subset, it will be replaced by the CurrentMutableOperation
 		{
-			InstancePrivate->UpdateTextureParameters.Add(TextureParameters.ParameterValue);
-
-			for (const FName& TextureParameter : TextureParameters.ParameterRangeValues)
+			Context->UpdateResult = EUpdateResult::Success;
+			UpdateSkeletalMesh(Context);
+			FinishUpdateGlobal(Context);
+		}
+		else
+		{
+			if (CVarDescriptorDebugPrint->GetBool())
 			{
-				InstancePrivate->UpdateTextureParameters.Add(TextureParameter);
+				FString String = TEXT("DESCRIPTOR DEBUG PRINT\n");
+				String += "================================\n";				
+				String += FString::Printf(TEXT("=== DESCRIPTOR HASH ===\n%s\n"), *Context->GetCapturedDescriptorHash().ToString());
+				String += FString::Printf(TEXT("=== DESCRIPTOR ===\n%s"), *Instance->GetDescriptor().ToString());
+				String += "================================";
+				
+				UE_LOG(LogMutable, Log, TEXT("%s"), *String);
 			}
-		}
 
-		Instance.SkeletalMeshStatus = ESkeletalMeshState::AsyncUpdatePending;
-
-		if (!bIsCloseDistTick) // When called from bIsCloseDistTick, the update operation is directly processed without going to a queue first
-		{
-			const FMutablePendingInstanceUpdate InstanceUpdate(&Instance, Priority, UpdateCallback, bNeverStream, MipsToSkip);
+			const FMutablePendingInstanceUpdate InstanceUpdate(Context);
 			MutablePendingInstanceWork.AddUpdate(InstanceUpdate);
 		}
+
+		break;
+	}
+
+	case EUpdateRequired::Discard:
+	{
+		InitDiscardResourcesSkeletalMesh(Instance);
+
+		Context->UpdateResult = EUpdateResult::ErrorDiscarded;
+		FinishUpdateGlobal(Context);
+		break;
+	}
+
+	default:
+		unimplemented();
 	}
 }
 
 
-void FCustomizableObjectSystemPrivate::InitDiscardResourcesSkeletalMesh(UCustomizableObjectInstance* InCustomizableObjectInstance)
+void UCustomizableObjectSystemPrivate::InitDiscardResourcesSkeletalMesh(UCustomizableObjectInstance* InCustomizableObjectInstance)
 {
 	check(IsInGameThread());
 
@@ -958,7 +1323,7 @@ void FCustomizableObjectSystemPrivate::InitDiscardResourcesSkeletalMesh(UCustomi
 }
 
 
-void FCustomizableObjectSystemPrivate::InitInstanceIDRelease(mu::Instance::ID IDToRelease)
+void UCustomizableObjectSystemPrivate::InitInstanceIDRelease(mu::Instance::ID IDToRelease)
 {
 	check(IsInGameThread());
 
@@ -968,7 +1333,7 @@ void FCustomizableObjectSystemPrivate::InitInstanceIDRelease(mu::Instance::ID ID
 
 bool UCustomizableObjectSystem::IsReplaceDiscardedWithReferenceMeshEnabled() const
 {
-	if (Private.IsValid())
+	if (Private)
 	{
 		return Private->IsReplaceDiscardedWithReferenceMeshEnabled();
 	}
@@ -979,7 +1344,7 @@ bool UCustomizableObjectSystem::IsReplaceDiscardedWithReferenceMeshEnabled() con
 
 void UCustomizableObjectSystem::SetReplaceDiscardedWithReferenceMeshEnabled(bool bIsEnabled)
 {
-	if (Private.IsValid())
+	if (Private)
 	{
 		Private->SetReplaceDiscardedWithReferenceMeshEnabled(bIsEnabled);
 	}
@@ -990,7 +1355,7 @@ void UCustomizableObjectSystem::ClearResourceCacheProtected()
 {
 	check(IsInGameThread());
 
-	ProtectedCachedTextures.Reset(0);
+	GetPrivate()->ProtectedCachedTextures.Reset(0);
 	check(GetPrivate() != nullptr);
 	GetPrivate()->ProtectedObjectCachedImages.Reset(0);
 }
@@ -1000,10 +1365,11 @@ void UCustomizableObjectSystem::ClearResourceCacheProtected()
 bool UCustomizableObjectSystem::LockObject(const class UCustomizableObject* InObject)
 {
 	check(InObject != nullptr);
+	check(InObject->GetPrivate());
 	check(!InObject->GetPrivate()->bLocked);
 	check(IsInGameThread() && !IsInParallelGameThread());
 
-	if (InObject && InObject->GetPrivate() && Private)
+	if (Private)
 	{
 		// If the current instance is for this object, make the lock fail by returning false
 		if (Private->CurrentInstanceBeingUpdated &&
@@ -1031,6 +1397,12 @@ bool UCustomizableObjectSystem::LockObject(const class UCustomizableObject* InOb
 		// Lock the object, no new file or mip streaming operations should start from this point
 		InObject->GetPrivate()->bLocked = true;
 
+		// Invalidate the current model to avoid further disk or mip updates.
+		if (InObject->GetPrivate()->GetModel())
+		{
+			InObject->GetPrivate()->GetModel()->Invalidate();
+		}
+
 		// But some could have started between the first CheckIfDiskOrMipUpdateOperationsPending and the lock a few lines back, so check again
 		if (CheckIfDiskOrMipUpdateOperationsPending(*InObject))
 		{
@@ -1047,8 +1419,26 @@ bool UCustomizableObjectSystem::LockObject(const class UCustomizableObject* InOb
 		check(GetPrivate() != nullptr);
 		if (GetPrivate()->Streamer)
 		{
-			GetPrivate()->Streamer->CancelStreamingForObject(InObject);
+			UE::Tasks::FTask Task = Private->MutableTaskGraph.AddMutableThreadTask(TEXT("EndStream"), [InObject, Streamer = GetPrivate()->Streamer]()
+				{
+					Streamer->CancelStreamingForObject(InObject);
+				});
+
+			
+			if (GetMutableDefault<UCustomizableObjectSettings>()->bEnableStreamingManager)
+			{
+				while (!Task.IsCompleted())				
+				{
+					GetPrivate()->TickMutableThreadDependencies();
+				}
+			}
+			else
+			{
+				Task.Wait();
+			}
 		}
+
+		Private->MutablePendingInstanceWork.RemoveUpdatesForObject(InObject);
 
 		// Clear the cache for the instance, since we will remake it
 		FMutableResourceCache& Cache = GetPrivate()->GetObjectCache(InObject);
@@ -1071,13 +1461,11 @@ bool UCustomizableObjectSystem::LockObject(const class UCustomizableObject* InOb
 void UCustomizableObjectSystem::UnlockObject(const class UCustomizableObject* Obj)
 {
 	check(Obj != nullptr);
+	check(Obj->GetPrivate());
 	check(Obj->GetPrivate()->bLocked);
 	check(IsInGameThread() && !IsInParallelGameThread());
 	
-	if (Obj && Obj->GetPrivate())
-	{
-		Obj->GetPrivate()->bLocked = false;
-	}
+	Obj->GetPrivate()->bLocked = false;
 }
 
 
@@ -1085,7 +1473,7 @@ bool UCustomizableObjectSystem::CheckIfDiskOrMipUpdateOperationsPending(const UC
 {
 	for (TObjectIterator<UCustomizableObjectInstance> CustomizableObjectInstance; CustomizableObjectInstance; ++CustomizableObjectInstance)
 	{
-		if (CustomizableObjectInstance->GetCustomizableObject() == &Object)
+		if (IsValid(*CustomizableObjectInstance) && CustomizableObjectInstance->GetCustomizableObject() == &Object)
 		{
 			for (const FGeneratedTexture& GeneratedTexture : CustomizableObjectInstance->GetPrivate()->GeneratedTextures)
 			{
@@ -1114,18 +1502,25 @@ bool UCustomizableObjectSystem::CheckIfDiskOrMipUpdateOperationsPending(const UC
 void UCustomizableObjectSystem::EditorSettingsChanged(const FEditorCompileSettings& InEditorSettings)
 {
 	EditorSettings = InEditorSettings;
+
+	CVarMutableEnabled->Set(InEditorSettings.bIsMutableEnabled);
 }
-
-
-bool UCustomizableObjectSystem::IsCompilationDisabled() const
-{
-	return EditorSettings.bDisableCompilation;
-}
-
 
 bool UCustomizableObjectSystem::IsAutoCompileEnabled() const
 {
 	return EditorSettings.bEnableAutomaticCompilation;
+}
+
+
+bool UCustomizableObjectSystem::IsAutoCompileCommandletEnabled() const
+{
+	return GetPrivate()->bAutoCompileCommandletEnabled;
+}
+
+
+void UCustomizableObjectSystem::SetAutoCompileCommandletEnabled(bool bValue)
+{
+	GetPrivate()->bAutoCompileCommandletEnabled = bValue;
 }
 
 
@@ -1137,50 +1532,6 @@ bool UCustomizableObjectSystem::IsAutoCompilationSync() const
 #endif
 
 
-void UCustomizableObjectSystem::PurgePendingReleaseSkeletalMesh()
-{
-	MUTABLE_CPUPROFILER_SCOPE(UCustomizableObjectSystem::PurgePendingReleaseSkeletalMesh);
-
-	double	CurTime = FPlatformTime::Seconds();
-	static double TimeToDelete = 1.0;
-
-	for (int32 InfoIndex = PendingReleaseSkeletalMesh.Num() - 1; InfoIndex >= 0; --InfoIndex)
-	{
-		FPendingReleaseSkeletalMeshInfo& Info = PendingReleaseSkeletalMesh[InfoIndex];
-		
-		if (Info.SkeletalMesh != nullptr)
-		{
-			if ((CurTime - Info.TimeStamp) >= TimeToDelete)
-			{
-				if (Info.SkeletalMesh->GetSkeleton())
-				{
-					Info.SkeletalMesh->GetSkeleton()->ClearCacheData();
-				}
-				Info.SkeletalMesh->GetRefSkeleton().Empty();
-				Info.SkeletalMesh->GetMaterials().Empty();
-				Info.SkeletalMesh->GetRefBasesInvMatrix().Empty();
-				Info.SkeletalMesh->ReleaseResources();
-				Info.SkeletalMesh->ReleaseResourcesFence.Wait();
-
-				PendingReleaseSkeletalMesh.RemoveAt(InfoIndex);
-			}
-		}
-	}
-}
-
-
-void UCustomizableObjectSystem::AddPendingReleaseSkeletalMesh(USkeletalMesh* SkeletalMesh)
-{
-	check(SkeletalMesh != nullptr);
-
-	FPendingReleaseSkeletalMeshInfo	Info;
-	Info.SkeletalMesh = SkeletalMesh;
-	Info.TimeStamp = FPlatformTime::Seconds();
-
-	PendingReleaseSkeletalMesh.Add(Info);
-}
-
-
 void UCustomizableObjectSystem::ClearCurrentMutableOperation()
 {
 	check(Private != nullptr);
@@ -1190,12 +1541,12 @@ void UCustomizableObjectSystem::ClearCurrentMutableOperation()
 }
 
 
-void FCustomizableObjectSystemPrivate::UpdateMemoryLimit()
+void UCustomizableObjectSystemPrivate::UpdateMemoryLimit()
 {
 	// This must run on game thread, and when the mutable thread is not running
 	check(IsInGameThread());
 
-	const uint64 MemoryBytes = CVarWorkingMemory.GetValueOnGameThread() * 1024;
+	const uint64 MemoryBytes = CVarWorkingMemory->GetInt() * 1024;
 	if (MemoryBytes != LastWorkingMemoryBytes)
 	{
 		LastWorkingMemoryBytes = MemoryBytes;
@@ -1220,31 +1571,80 @@ void FCustomizableObjectSystemPrivate::UpdateMemoryLimit()
 // Naming: Task_<thread>_<description>
 namespace impl
 {
+	struct FGetImageData
+	{
+		int32 ImageIndex;
+		mu::FResourceID ImageID;
+	};
+	
 
-	void Subtask_Mutable_UpdateParameterRelevancy(const TSharedPtr<FMutableOperationData>& OperationData, const mu::Parameters* MutableParameters)
+	/** Process the next Image. If there are no more Images, go to the end of the task. */
+	void Task_Mutable_GetMeshes_GetImage_Loop(
+		const TSharedRef<FUpdateContextPrivate>& OperationData,
+		double StartTime,
+		uint32 StartCycles,
+		const TSharedRef<TArray<FGetImageData>>& GetImagesData,
+		int32 GetImageIndex);
+	
+
+	struct FGetMeshData
+	{
+		int32 ComponentIndex;
+		mu::FResourceID MeshID;
+	};
+
+
+	/** Process the next Mesh. If there are no more Meshes, go to the process Images loop. */
+	void Task_Mutable_GetMeshes_GetMesh_Loop(
+		const TSharedRef<FUpdateContextPrivate>& OperationData,
+		double StartTime,
+		uint32 StartCycles,
+		const TSharedRef<TArray<FGetMeshData>>& GetMeshesData,
+		int32 GetMeshIndex);
+
+
+	/** Call GetImage.
+	  * Once GetImage is called, the task must end. Following code will be in a subsequent TaskGraph task. */
+	void Task_Mutable_GetImages_GetImage(
+		const TSharedRef<FUpdateContextPrivate>& OperationData,
+		double StartTime,
+		uint32 StartCycles,
+		const TSharedPtr<TArray<mu::FResourceID>>& ImagesInThisInstance,
+		int32 ImageIndex,
+		UE::Tasks::TTask<mu::FImageDesc> GetImageDescTask);
+
+	
+	/** Process the next Image. If there are no more Images, go to the end of the task. */
+	void Task_Mutable_GetImages_Loop(
+		const TSharedRef<FUpdateContextPrivate>& OperationData,
+		double StartTime,
+		uint32 StartCycles,
+		const TSharedPtr<TArray<mu::FResourceID>>& ImagesInThisInstance,
+		int32 ImageIndex);
+
+	
+	void Subtask_Mutable_UpdateParameterRelevancy(const TSharedRef<FUpdateContextPrivate>& OperationData)
 	{
 		MUTABLE_CPUPROFILER_SCOPE(Subtask_Mutable_UpdateParameterRelevancy)
 
-		check(OperationData);
-		OperationData->RelevantParametersInProgress.Empty();
-
-		check(MutableParameters);
+		check(OperationData->Parameters);
 		check(OperationData->InstanceID != 0);
+
+		OperationData->RelevantParametersInProgress.Empty();
 
 		// This must run in the mutable thread.
 		check(UCustomizableObjectSystem::GetInstance() != nullptr);
 		check(UCustomizableObjectSystem::GetInstance()->GetPrivate() != nullptr);
-		mu::SystemPtr MutableSystem = UCustomizableObjectSystem::GetInstance()->GetPrivate()->MutableSystem;
-
-		int32 NumParameters = MutableParameters->GetCount();
 
 		// Update the parameter relevancy.
 		{
 			MUTABLE_CPUPROFILER_SCOPE(ParameterRelevancy)
 
+			const int32 NumParameters = OperationData->Parameters->GetCount();
+
 			TArray<bool> Relevant;
 			Relevant.SetNumZeroed(NumParameters);
-			MutableSystem->GetParameterRelevancy(OperationData->InstanceID, MutableParameters, Relevant.GetData());
+			OperationData->MutableSystem->GetParameterRelevancy(OperationData->InstanceID, OperationData->Parameters, Relevant.GetData());
 
 			for (int32 ParamIndex = 0; ParamIndex < NumParameters; ++ParamIndex)
 			{
@@ -1257,178 +1657,332 @@ namespace impl
 	}
 
 
-	// This runs in the mutable thread.
-	void Subtask_Mutable_BeginUpdate_GetMesh(const TSharedPtr<FMutableOperationData>& OperationData, TSharedPtr<mu::Model, ESPMode::ThreadSafe> Model, const mu::Parameters* MutableParameters, int32 State)
+	void CreateMutableInstance(const TSharedRef<FUpdateContextPrivate>& Operation)
 	{
-		MUTABLE_CPUPROFILER_SCOPE(Subtask_Mutable_BeginUpdate_GetMesh)
-
-		check(MutableParameters);
-		check(OperationData);
-		OperationData->InstanceUpdateData.Clear();
-
-		check(UCustomizableObjectSystem::GetInstance() != nullptr);
-		check(UCustomizableObjectSystem::GetInstance()->GetPrivate() != nullptr);
-		mu::System* System = UCustomizableObjectSystem::GetInstance()->GetPrivate()->MutableSystem.get();
-		check(System != nullptr);
-
-		if (OperationData->bLiveUpdateMode)
+		UCustomizableObjectSystem* System = UCustomizableObjectSystem::GetInstanceChecked(); // Save since UCustomizableObjectSystem::BeginDestroy always waits for all tasks to finish
+		const UCustomizableObjectSystemPrivate* SystemPrivate = System->GetPrivate();
+		
+		if (CVarEnableBenchmark.GetValueOnAnyThread())
 		{
-			if (OperationData->InstanceID == 0)
+			Operation->UpdateStartBytes = mu::FGlobalMemoryCounter::GetCounter();
+			mu::FGlobalMemoryCounter::Zero();
+		}
+
+		// Prepare streaming for the current customizable object
+		check(SystemPrivate->Streamer != nullptr);
+		SystemPrivate->Streamer->PrepareStreamingForObject(Operation->Instance->GetCustomizableObject());			
+
+		const mu::Ptr<mu::System> MutableSystem = SystemPrivate->MutableSystem;
+
+		const TSharedPtr<mu::Model> Model = Operation->Instance->GetCustomizableObject()->GetPrivate()->GetModel();
+
+		if (Operation->bLiveUpdateMode)
+		{
+			if (Operation->InstanceID == 0)
 			{
 				// It's the first update since the instance was put in LiveUpdate Mode, this ID will be reused from now on
-				OperationData->InstanceID = System->NewInstance(Model);
-				UE_LOG(LogMutable, Verbose, TEXT("Creating Mutable instance with id [%d] for reuse "), OperationData->InstanceID);
+				Operation->InstanceID = MutableSystem->NewInstance(Model);
+				UE_LOG(LogMutable, Verbose, TEXT("Creating Mutable instance with id [%d] for reuse "), Operation->InstanceID);
 			}
 			else
 			{
 				// The instance was already in LiveUpdate Mode, the ID is reused
-				check(OperationData->InstanceID);
-				UE_LOG(LogMutable, Verbose, TEXT("Reusing Mutable instance with id [%d] "), OperationData->InstanceID);
+				check(Operation->InstanceID);
+				UE_LOG(LogMutable, Verbose, TEXT("Reusing Mutable instance with id [%d] "), Operation->InstanceID);
 			}
 		}
 		else
 		{
 			// In non-LiveUpdate mode, we are forcing the recreation of mutable-side instances with every update.
-			check(OperationData->InstanceID == 0);
-			OperationData->InstanceID = System->NewInstance(Model);
-			UE_LOG(LogMutable, Verbose, TEXT("Creating Mutable instance with id [%d] "), OperationData->InstanceID);
+			check(Operation->InstanceID == 0);
+			Operation->InstanceID = MutableSystem->NewInstance(Model);
+			UE_LOG(LogMutable, Verbose, TEXT("Creating Mutable instance with id [%d] "), Operation->InstanceID);
 		}
 
-		check(OperationData->InstanceID != 0);
+		Operation->MutableInstance = MutableSystem->BeginUpdate(Operation->InstanceID, Operation->Parameters, Operation->GetCapturedDescriptor().GetState(), mu::System::AllLODs);
+	}
 
-		const mu::Instance* Instance = nullptr;
+	
+	void FixLODs(const TSharedRef<FUpdateContextPrivate>& Operation)
+	{
+		Operation->NumLODsAvailable = Operation->MutableInstance->GetLODCount();
+		
+		int32 CurrentMinLOD = Operation->bStreamMeshLODs ? 0 : Operation->GetMinLOD();
+		CurrentMinLOD = FMath::Clamp(CurrentMinLOD, Operation->FirstLODAvailable, Operation->NumLODsAvailable - 1);
+		Operation->SetMinLOD(CurrentMinLOD);
 
-		// Main instance generation step
+		if (Operation->bStreamMeshLODs)
 		{
-			// LOD mask, set to all ones to build  all LODs
-			uint32 LODMask = mu::System::AllLODs;
+			Operation->FirstResidentLOD = FMath::Clamp(Operation->FirstResidentLOD, Operation->FirstLODAvailable, Operation->NumLODsAvailable - 1);
+		}
+		else 
+		{
+			Operation->FirstResidentLOD = Operation->FirstLODAvailable;
+		}
+		
+		// Initialize RequestedLODs to zero if not set
+		TArray<uint16> RequestedLODs = Operation->GetRequestedLODs();
+		RequestedLODs.SetNumZeroed(Operation->NumComponents);
 
-			Instance = System->BeginUpdate(OperationData->InstanceID, MutableParameters, State, LODMask);
-
-			if (!Instance)
+		for (int32 ComponentIndex = 0; ComponentIndex < Operation->NumComponents; ++ComponentIndex)
+		{
+			if (Operation->bStreamMeshLODs)
 			{
-				UE_LOG(LogMutable, Warning, TEXT("An Instace update has failed."));
-				return;
+				RequestedLODs[ComponentIndex] = CurrentMinLOD;
+			}
+			else
+			{
+				// Clamp value to the valid LOD range.
+				RequestedLODs[ComponentIndex] = FMath::Min(RequestedLODs[ComponentIndex], (uint16)(Operation->NumLODsAvailable - 1));
 			}
 		}
 
-		OperationData->NumLODsAvailable = Instance->GetLODCount();
+		Operation->SetRequestedLODs(RequestedLODs);
+	}
+	
 
-		if (OperationData->CurrentMinLOD >= OperationData->NumLODsAvailable)
-		{
-			OperationData->CurrentMinLOD = OperationData->NumLODsAvailable - 1;
-			OperationData->CurrentMaxLOD = OperationData->CurrentMinLOD;
-		}
-		else if (OperationData->CurrentMaxLOD >= OperationData->NumLODsAvailable)
-		{
-			OperationData->CurrentMaxLOD = OperationData->NumLODsAvailable - 1;
-		}
+	// This runs in a worker thread
+	void Subtask_Mutable_PrepareTextures(const TSharedRef<FUpdateContextPrivate>& OperationData)
+	{
+		MUTABLE_CPUPROFILER_SCOPE(Subtask_Mutable_PrepareTextures)
 
-		if(!OperationData->RequestedLODs.IsEmpty())
+		for (const FInstanceUpdateData::FSurface& Surface : OperationData->InstanceUpdateData.Surfaces)
 		{
-			// Initialize RequestedLODs to zero if not set
-			const int32 ComponentCount = Instance->GetComponentCount(OperationData->CurrentMinLOD);
-			OperationData->RequestedLODs.SetNumZeroed(ComponentCount);
-			
-			for (int32 ComponentIndex = 0; ComponentIndex < ComponentCount; ++ComponentIndex)
+			for (int32 ImageIndex = 0; ImageIndex<Surface.ImageCount; ++ImageIndex)
 			{
-				// Ensure we're generating at least one LOD
-				if (OperationData->RequestedLODs[ComponentIndex] == 0)
-				{
-					OperationData->RequestedLODs[ComponentIndex] |= (1 << OperationData->CurrentMaxLOD);
-				}
+				const FInstanceUpdateData::FImage& Image = OperationData->InstanceUpdateData.Images[Surface.FirstImage+ImageIndex];
 
-				// Make sure we are not requesting a LOD that doesn't exist in this state (Essentially for states with bBuildOnlyFirstLOD 
-				// and NumExtraLODsToBuildPerPlatform when the ExtraLOD is not needed)
-				if ((OperationData->RequestedLODs[ComponentIndex] & (1 << OperationData->CurrentMaxLOD)) == 0)
-				{
-					OperationData->CurrentMaxLOD = OperationData->CurrentMinLOD;
+				const FName KeyName = Image.Name;
+				mu::ImagePtrConst MutableImage = Image.Image;
 
-					// Ensure the fallback LOD actually exists
-					OperationData->RequestedLODs[ComponentIndex] |= (1 << OperationData->CurrentMaxLOD);
+				// If the image is null, it must be in the cache (or repeated in this instance), and we don't need to do anything here.
+				if (MutableImage)
+				{
+					// Image references are just references to texture assets and require no work at all
+					if (!MutableImage->IsReference())
+					{
+						if (!OperationData->ImageToPlatformDataMap.Contains(Image.ImageID))
+						{
+							FTexturePlatformData* PlatformData = MutableCreateImagePlatformData(MutableImage, -1, Image.FullImageSizeX, Image.FullImageSizeY);
+							OperationData->ImageToPlatformDataMap.Add(Image.ImageID, PlatformData);
+						}
+						else
+						{
+							// The ImageID already exists in the ImageToPlatformDataMap, that means the equivalent surface in a lower
+							// LOD already created the PlatformData for that ImageID and added it to the ImageToPlatformDataMap.
+						}
+					}
 				}
 			}
 		}
+	}
+	
 
-		// Map SharedSurfaceId to surface index
-		TArray<int32> SurfacesSharedId;
+	// This runs in a worker thread
+	void Subtask_Mutable_PrepareSkeletonData(const TSharedRef<FUpdateContextPrivate>& OperationData)
+	{
+		MUTABLE_CPUPROFILER_SCOPE(Subtask_Mutable_PrepareSkeletonData);
 
-		// Generate the mesh and gather all the required resource Ids
-		OperationData->InstanceUpdateData.LODs.SetNum(Instance->GetLODCount());
-		for (int32 MutableLODIndex = 0; MutableLODIndex < Instance->GetLODCount(); ++MutableLODIndex)
+		for (FInstanceUpdateData::FComponent& Component : OperationData->InstanceUpdateData.Components)
 		{
-			// Skip LODs outside the reange we want to generate
-			if (MutableLODIndex < OperationData->CurrentMinLOD || MutableLODIndex > OperationData->CurrentMaxLOD)
+			if (!OperationData->InstanceUpdateData.Skeletons.IsValidIndex(Component.Id))
+			{
+				OperationData->InstanceUpdateData.Skeletons.SetNum(Component.Id + 1);
+			}
+
+			FInstanceUpdateData::FSkeletonData& SkeletonData = OperationData->InstanceUpdateData.Skeletons[Component.Id];
+			SkeletonData.ComponentIndex = Component.Id;
+
+			mu::MeshPtrConst Mesh = Component.Mesh;
+			if (!Mesh)
 			{
 				continue;
 			}
 
-			FInstanceUpdateData::FLOD& LOD = OperationData->InstanceUpdateData.LODs[MutableLODIndex];
-			LOD.FirstComponent = OperationData->InstanceUpdateData.Components.Num();
-			LOD.ComponentCount = Instance->GetComponentCount(MutableLODIndex);
+			// Add SkeletonIds 
+			const int32 SkeletonIDsCount = Mesh->GetSkeletonIDsCount();
+			for (int32 SkeletonIndex = 0; SkeletonIndex < SkeletonIDsCount; ++SkeletonIndex)
+			{
+				SkeletonData.SkeletonIds.AddUnique(Mesh->GetSkeletonID(SkeletonIndex));
+			}
 
-			const FInstanceGeneratedData::FLOD& PrevUpdateLODData = OperationData->LastUpdateData.LODs.IsValidIndex(MutableLODIndex) ?
-				OperationData->LastUpdateData.LODs[MutableLODIndex] : FInstanceGeneratedData::FLOD();
+			// Append BoneMap to the array of BoneMaps
+			const TArray<uint16>& BoneMap = Mesh->GetBoneMap();
+			Component.FirstBoneMap = OperationData->InstanceUpdateData.BoneMaps.Num();
+			Component.BoneMapCount = BoneMap.Num();
+			OperationData->InstanceUpdateData.BoneMaps.Append(BoneMap);
 
+			// Add active bone indices and poses
+			const int32 MaxBoneIndex = Mesh->GetBonePoseCount();
+			Component.ActiveBones.Reserve(MaxBoneIndex);
+			for (int32 BonePoseIndex = 0; BonePoseIndex < MaxBoneIndex; ++BonePoseIndex)
+			{
+				const uint16 BoneId = Mesh->GetBonePoseBoneId(BonePoseIndex);
+
+				Component.ActiveBones.Add(BoneId);
+
+				if (SkeletonData.BoneIds.Find(BoneId) == INDEX_NONE)
+				{
+					SkeletonData.BoneIds.Add(BoneId);
+
+					FTransform3f Transform;
+					Mesh->GetBoneTransform(BonePoseIndex, Transform);
+					SkeletonData.BoneMatricesWithScale.Emplace(Transform.Inverse().ToMatrixWithScale());
+				}
+			}
+		}
+	}
+
+
+	/** End of the GetMeshes tasks. */
+	void Task_Mutable_GetMeshes_End(
+		const TSharedRef<FUpdateContextPrivate>& OperationData,
+		double StartTime,
+		uint32 StartCycles)
+	{
+		MUTABLE_CPUPROFILER_SCOPE(Task_Mutable_GetMeshes_End)
+
+		// TODO: Not strictly mutable: move to another worker thread task to free mutable access?
+		Subtask_Mutable_PrepareSkeletonData(OperationData);
+
+		if (OperationData->GetCapturedDescriptor().GetBuildParameterRelevancy())
+		{
+			Subtask_Mutable_UpdateParameterRelevancy(OperationData);
+		}
+		else
+		{
+			OperationData->RelevantParametersInProgress.Reset();
+		}
+
+#if WITH_EDITOR
+		const uint32 EndCycles = FPlatformTime::Cycles();
+		OperationData->MutableRuntimeCycles = EndCycles - StartCycles;
+#endif
+		OperationData->TaskGetMeshTime = FPlatformTime::Seconds() - StartTime;
+
+		TRACE_END_REGION(UE_TASK_MUTABLE_GETMESHES_REGION);
+	}
+
+
+	/** TaskGraph task after GetImage has completed. */
+	void Task_Mutable_GetMeshes_GetImage_Post(
+		const TSharedRef<FUpdateContextPrivate>& OperationData,
+		double StartTime,
+		uint32 StartCycles,
+		const TSharedRef<TArray<FGetImageData>>& GetImagesData,
+		int32 GetImageIndex,
+		UE::Tasks::TTask<mu::Ptr<const mu::Image>> GetImageTask)
+	{
+		MUTABLE_CPUPROFILER_SCOPE(Task_Mutable_GetMeshes_GetImage_Post)
+
+		const UCustomizableObjectInstance* Instance = OperationData->Instance.Get();
+		const UCustomizableObject* CustomizableObject = Instance->GetCustomizableObject();
+		const FModelResources& ModelResources = CustomizableObject->GetPrivate()->GetModelResources();
+
+		const int32 ImageIndex = (*GetImagesData)[GetImageIndex].ImageIndex;
+
+		FInstanceUpdateData::FImage& Image = OperationData->InstanceUpdateData.Images[ImageIndex];
+
+		Image.Image = GetImageTask.GetResult();
+		check(Image.Image->IsReference());
+
+		const uint32 ReferenceID = Image.Image->GetReferencedTexture();
+
+		if (ModelResources.PassThroughTextures.IsValidIndex(ReferenceID))
+		{
+			const TSoftObjectPtr<UTexture> Ref = ModelResources.PassThroughTextures[ReferenceID];
+			Instance->GetPrivate()->PassThroughTexturesToLoad.Add(Ref);
+		}
+		else
+		{
+			// internal error.
+			UE_LOG(LogMutable, Error, TEXT("Referenced image [%d] was not stored in the resource array."), ReferenceID);
+		}
+			
+		Task_Mutable_GetMeshes_GetImage_Loop(OperationData, StartTime, StartCycles, GetImagesData, ++GetImageIndex);
+	}
+
+	
+	/** See declaration. */
+	void Task_Mutable_GetMeshes_GetImage_Loop(
+		const TSharedRef<FUpdateContextPrivate>& OperationData,
+		double StartTime,
+		uint32 StartCycles,
+		const TSharedRef<TArray<FGetImageData>>& GetImagesData,
+		int32 GetImageIndex)
+	{
+		MUTABLE_CPUPROFILER_SCOPE(Task_Mutable_GetMesh_GetImages_Loop)
+
+		if (GetImageIndex >= GetImagesData->Num()) 
+		{
+			Task_Mutable_GetMeshes_End(OperationData, StartTime, StartCycles);
+			return;
+		}
+
+		const FGetImageData& ImageData = (*GetImagesData)[GetImageIndex];
+		
+		UE::Tasks::TTask<mu::Ptr<const mu::Image>> GetImageTask = OperationData->MutableSystem->GetImage(OperationData->InstanceID, ImageData.ImageID, 0, 0);
+
+		UE::Tasks::AddNested(UE::Tasks::Launch(TEXT("Task_Mutable_GetMeshes_GetImage_Post"), [=]()
+		{
+			Task_Mutable_GetMeshes_GetImage_Post(OperationData, StartTime, StartCycles, GetImagesData, GetImageIndex, GetImageTask);
+		},
+		GetImageTask));
+	}
+
+
+	/** Gather all GetImages that have to be called. */
+	void Task_Mutable_GetMeshes_GetImages(
+		const TSharedRef<FUpdateContextPrivate>& OperationData,
+		double StartTime,
+		uint32 StartCycles)
+	{
+		MUTABLE_CPUPROFILER_SCOPE(Task_Mutable_GetMeshes_GetImages)
+		
+		const UCustomizableObjectInstance* Instance = OperationData->Instance.Get();
+		const UCustomizableObject* CustomizableObject = Instance->GetCustomizableObject();
+		const FModelResources& ModelResources = CustomizableObject->GetPrivate()->GetModelResources();
+
+		const mu::Instance* MutableInstance = OperationData->MutableInstance;
+
+		TArray<int32> SurfacesSharedId;
+
+		const TSharedRef<TArray<FGetImageData>> GetImagesData = MakeShared<TArray<FGetImageData>>();
+		
+		for (int32 MutableLODIndex = 0; MutableLODIndex < OperationData->NumLODsAvailable; ++MutableLODIndex)
+		{
+			// Skip LODs outside the range we want to generate
+			if (MutableLODIndex < OperationData->GetMinLOD())
+			{
+				continue;
+			}
+
+			const FInstanceUpdateData::FLOD& LOD = OperationData->InstanceUpdateData.LODs[MutableLODIndex];
 
 			for (int32 ComponentIndex = 0; ComponentIndex < LOD.ComponentCount; ++ComponentIndex)
 			{
-				OperationData->InstanceUpdateData.Components.Push(FInstanceUpdateData::FComponent());
-				FInstanceUpdateData::FComponent& Component = OperationData->InstanceUpdateData.Components.Last();
-				Component.Id = Instance->GetComponentId(MutableLODIndex, ComponentIndex);
+				FInstanceUpdateData::FComponent& Component = OperationData->InstanceUpdateData.Components[LOD.FirstComponent + ComponentIndex];
 				Component.FirstSurface = OperationData->InstanceUpdateData.Surfaces.Num();
 				Component.SurfaceCount = 0;
 
-				const FInstanceGeneratedData::FComponent& PrevUpdateComponent = OperationData->LastUpdateData.Components.IsValidIndex(PrevUpdateLODData.FirstComponent + ComponentIndex) ?
-					OperationData->LastUpdateData.Components[PrevUpdateLODData.FirstComponent +  ComponentIndex] : FInstanceGeneratedData::FComponent();
-
-				const bool bGenerateLOD = OperationData->RequestedLODs.IsValidIndex(Component.Id) ? (OperationData->RequestedLODs[Component.Id] & (1 << MutableLODIndex)) != 0 : true;
-
-				// Mesh
-				if (Instance->GetMeshCount(MutableLODIndex, ComponentIndex) > 0)
-				{
-					MUTABLE_CPUPROFILER_SCOPE(GetMesh);
-
-					Component.MeshID = Instance->GetMeshId(MutableLODIndex, ComponentIndex, 0);
-
-					// Mesh cache is not enabled yet.
-					//auto CachedMesh = Cache.Meshes.Find(meshId);
-					//if (CachedMesh && CachedMesh->IsValid(false, true))
-					//{
-					//	UE_LOG(LogMutable, Verbose, TEXT("Mesh resource with id [%d] can be cached."), meshId);
-					//	INC_DWORD_STAT(STAT_MutableNumCachedSkeletalMeshes);
-					//}
-
-					// Check if we can use data from the currently generated SkeletalMesh
-					Component.bReuseMesh = OperationData->bCanReuseGeneratedData && PrevUpdateComponent.bGenerated ? PrevUpdateComponent.MeshID == Component.MeshID : false;
-
-					if(bGenerateLOD && !Component.bReuseMesh)
-					{
-						Component.Mesh = System->GetMesh(OperationData->InstanceID, Component.MeshID);
-					}
-				}
-
-				if (!Component.Mesh && !Component.bReuseMesh)
+				if (!Component.Mesh)
 				{
 					continue;
 				}
-
-				Component.bGenerated = true;
-
-				const int32 SurfaceCount = Component.Mesh ? Component.Mesh->GetSurfaceCount() : PrevUpdateComponent.SurfaceCount;
-
+				
 				// Materials and images
+				const int32 SurfaceCount = Component.Mesh->GetSurfaceCount();
 				for (int32 MeshSurfaceIndex = 0; MeshSurfaceIndex < SurfaceCount; ++MeshSurfaceIndex)
 				{
-					uint32 SurfaceId = Component.Mesh ? Component.Mesh->GetSurfaceId(MeshSurfaceIndex) : OperationData->LastUpdateData.SurfaceIds[PrevUpdateComponent.FirstSurface + MeshSurfaceIndex];
-					int32 InstanceSurfaceIndex = Instance->FindSurfaceById(MutableLODIndex, ComponentIndex, SurfaceId);
-					check(Component.bReuseMesh || Component.Mesh->GetVertexCount() == 0 || InstanceSurfaceIndex >= 0);
-
-					int32 BaseSurfaceIndex = InstanceSurfaceIndex;
-					int32 BaseLODIndex = MutableLODIndex;
+					const uint32 SurfaceId = Component.Mesh->GetSurfaceId(MeshSurfaceIndex);
+					const int32 InstanceSurfaceIndex = MutableInstance->FindSurfaceById(MutableLODIndex, ComponentIndex, SurfaceId);
+					check(Component.Mesh->GetVertexCount() > 0 || InstanceSurfaceIndex >= 0);
 
 					if (InstanceSurfaceIndex >= 0)
 					{
+						int32 BaseSurfaceIndex = InstanceSurfaceIndex;
+						int32 BaseLODIndex = MutableLODIndex;
+
 						OperationData->InstanceUpdateData.Surfaces.Push({});
 						FInstanceUpdateData::FSurface& Surface = OperationData->InstanceUpdateData.Surfaces.Last();
 						++Component.SurfaceCount;
@@ -1436,7 +1990,7 @@ namespace impl
 						// Now Surface.MaterialIndex is decoded from a parameter at the end of this if()
 						Surface.SurfaceId = SurfaceId;
 
-						const int32 SharedSurfaceId = Instance->GetSharedSurfaceId(MutableLODIndex, ComponentIndex, InstanceSurfaceIndex);
+						const int32 SharedSurfaceId = MutableInstance->GetSharedSurfaceId(MutableLODIndex, ComponentIndex, InstanceSurfaceIndex);
 						const int32 SharedSurfaceIndex = SurfacesSharedId.Find(SharedSurfaceId);
 
 						SurfacesSharedId.Add(SharedSurfaceId);
@@ -1450,55 +2004,39 @@ namespace impl
 							}
 
 							// Find the first LOD where this surface can be found
-							Instance->FindBaseSurfaceBySharedId(ComponentIndex, SharedSurfaceId, BaseSurfaceIndex, BaseLODIndex);
+							MutableInstance->FindBaseSurfaceBySharedId(ComponentIndex, SharedSurfaceId, BaseSurfaceIndex, BaseLODIndex);
 
-							Surface.SurfaceId = Instance->GetSurfaceId(BaseLODIndex, ComponentIndex, BaseSurfaceIndex);
-						}
-
-						// Images
-						Surface.FirstImage = OperationData->InstanceUpdateData.Images.Num();
-						Surface.ImageCount = Instance->GetImageCount(BaseLODIndex, ComponentIndex, InstanceSurfaceIndex);
-						for (int32 ImageIndex = 0; ImageIndex < Surface.ImageCount; ++ImageIndex)
-						{
-							MUTABLE_CPUPROFILER_SCOPE(GetImageId);
-
-							OperationData->InstanceUpdateData.Images.Push({});
-							FInstanceUpdateData::FImage& Image = OperationData->InstanceUpdateData.Images.Last();
-							Image.Name = Instance->GetImageName(BaseLODIndex, ComponentIndex, InstanceSurfaceIndex, ImageIndex);
-							Image.ImageID = Instance->GetImageId(BaseLODIndex, ComponentIndex, BaseSurfaceIndex, ImageIndex);
-							Image.FullImageSizeX = 0;
-							Image.FullImageSizeY = 0;
-							Image.BaseLOD = BaseLODIndex;
+							Surface.SurfaceId = MutableInstance->GetSurfaceId(BaseLODIndex, ComponentIndex, BaseSurfaceIndex);
 						}
 
 						// Vectors
 						Surface.FirstVector = OperationData->InstanceUpdateData.Vectors.Num();
-						Surface.VectorCount = Instance->GetVectorCount(BaseLODIndex, ComponentIndex, InstanceSurfaceIndex);
+						Surface.VectorCount = MutableInstance->GetVectorCount(BaseLODIndex, ComponentIndex, InstanceSurfaceIndex);
 						for (int32 VectorIndex = 0; VectorIndex < Surface.VectorCount; ++VectorIndex)
 						{
 							MUTABLE_CPUPROFILER_SCOPE(GetVector);
 							OperationData->InstanceUpdateData.Vectors.Push({});
 							FInstanceUpdateData::FVector& Vector = OperationData->InstanceUpdateData.Vectors.Last();
-							Vector.Name = Instance->GetVectorName(BaseLODIndex, ComponentIndex, InstanceSurfaceIndex, VectorIndex);
-							Vector.Vector = Instance->GetVector(BaseLODIndex, ComponentIndex, InstanceSurfaceIndex, VectorIndex);
+							Vector.Name = MutableInstance->GetVectorName(BaseLODIndex, ComponentIndex, InstanceSurfaceIndex, VectorIndex);
+							Vector.Vector = MutableInstance->GetVector(BaseLODIndex, ComponentIndex, InstanceSurfaceIndex, VectorIndex);
 						}
 
 						// Scalars
 						Surface.FirstScalar = OperationData->InstanceUpdateData.Scalars.Num();
-						Surface.ScalarCount = Instance->GetScalarCount(BaseLODIndex, ComponentIndex, InstanceSurfaceIndex);
+						Surface.ScalarCount = MutableInstance->GetScalarCount(BaseLODIndex, ComponentIndex, InstanceSurfaceIndex);
 						for (int32 ScalarIndex = 0; ScalarIndex < Surface.ScalarCount; ++ScalarIndex)
 						{
 							MUTABLE_CPUPROFILER_SCOPE(GetScalar)
 
-							FString ScalarName = Instance->GetScalarName(BaseLODIndex, ComponentIndex, InstanceSurfaceIndex, ScalarIndex);
-							float ScalarValue = Instance->GetScalar(BaseLODIndex, ComponentIndex, InstanceSurfaceIndex, ScalarIndex);
+							const FName ScalarName = MutableInstance->GetScalarName(BaseLODIndex, ComponentIndex, InstanceSurfaceIndex, ScalarIndex);
+							const float ScalarValue = MutableInstance->GetScalar(BaseLODIndex, ComponentIndex, InstanceSurfaceIndex, ScalarIndex);
 							
 							FString EncodingMaterialIdString = "__MutableMaterialId";
 							
 							// Decoding Material Switch from Mutable parameter name
-							if (ScalarName.Equals(EncodingMaterialIdString))
+							if (ScalarName.ToString().Equals(EncodingMaterialIdString))
 							{
-								Surface.MaterialIndex = (uint32)ScalarValue;
+								Surface.MaterialIndex = static_cast<uint32>(ScalarValue);
 							
 								// This parameter is not needed in the final material instance
 								Surface.ScalarCount -= 1;
@@ -1508,331 +2046,457 @@ namespace impl
 								OperationData->InstanceUpdateData.Scalars.Push({ ScalarName, ScalarValue });
 							}
 						}
+
+						// Images
+						Surface.FirstImage = OperationData->InstanceUpdateData.Images.Num();
+						Surface.ImageCount = MutableInstance->GetImageCount(BaseLODIndex, ComponentIndex, InstanceSurfaceIndex);
+						for (int32 ImageIndex = 0; ImageIndex < Surface.ImageCount; ++ImageIndex)
+						{
+							MUTABLE_CPUPROFILER_SCOPE(GetImageId);
+
+							const int32 UpdateDataImageIndex = OperationData->InstanceUpdateData.Images.AddDefaulted();
+							FInstanceUpdateData::FImage& Image = OperationData->InstanceUpdateData.Images.Last();
+							Image.Name = MutableInstance->GetImageName(BaseLODIndex, ComponentIndex, InstanceSurfaceIndex, ImageIndex);
+							Image.ImageID = MutableInstance->GetImageId(BaseLODIndex, ComponentIndex, BaseSurfaceIndex, ImageIndex);
+							Image.FullImageSizeX = 0;
+							Image.FullImageSizeY = 0;
+							Image.BaseLOD = BaseLODIndex;
+							Image.BaseMip = 0;
+
+							FString KeyName = Image.Name.ToString();
+							int32 ImageKey = FCString::Atoi(*KeyName);
+
+							if (ImageKey >= 0 && ImageKey < ModelResources.ImageProperties.Num())
+							{
+								const FMutableModelImageProperties& Props = ModelResources.ImageProperties[ImageKey];
+
+								if (Props.IsPassThrough)
+								{
+									Image.bIsPassThrough = true;
+
+									// Since it's known it's a pass-through texture there is no need to cache or convert it so we can generate it here already.
+									GetImagesData->Add({ UpdateDataImageIndex, Image.ImageID });
+								}
+							}
+							else
+							{
+								// This means the compiled model (maybe coming from derived data) has images that the asset doesn't know about.
+								UE_LOG(LogMutable, Error, TEXT("CustomizableObject derived data out of sync with asset for [%s]. Try recompiling it."), *CustomizableObject->GetName());
+							}
+						}
 					}
 				}
-			}
+			}	
 		}
 
-		// Copy ExtensionData Object node input from the Instance to the InstanceUpdateData
-		for (int32 ExtensionDataIndex = 0; ExtensionDataIndex < Instance->GetExtensionDataCount(); ExtensionDataIndex++)
-		{
-			mu::ExtensionDataPtrConst ExtensionData;
-			const char* NameAnsi = nullptr;
-			Instance->GetExtensionData(ExtensionDataIndex, ExtensionData, NameAnsi);
-
-			check(ExtensionData);
-			check(NameAnsi);
-
-			FInstanceUpdateData::FNamedExtensionData& NewEntry = OperationData->InstanceUpdateData.ExtendedInputPins.AddDefaulted_GetRef();
-			NewEntry.Data = ExtensionData;
-			NewEntry.Name = NameAnsi;
-			check(NewEntry.Name != NAME_None);
-		}
+		Task_Mutable_GetMeshes_GetImage_Loop(OperationData, StartTime, StartCycles, GetImagesData, 0);
 	}
 
 
-	// This runs in the mutable thread.
-	void Subtask_Mutable_GetImages(const TSharedPtr<FMutableOperationData>& OperationData, TSharedPtr<mu::Model, ESPMode::ThreadSafe> Model, const mu::Parameters* MutableParameters, int32 State)
+	/** TaskGraph task after GetMesh has completed. */
+	void Task_MutableGetMeshes_GetMesh_Post(
+		const TSharedRef<FUpdateContextPrivate>& OperationData,
+		double StartTime,
+		uint32 StartCycles,
+		const TSharedRef<TArray<FGetMeshData>>& GetMeshesData,
+		int32 GetMeshIndex,
+		UE::Tasks::TTask<mu::Ptr<const mu::Mesh>> GetMeshTask)
 	{
-		MUTABLE_CPUPROFILER_SCOPE(Subtask_Mutable_GetImages)
+		MUTABLE_CPUPROFILER_SCOPE(Task_MutableGetMeshes_GetMesh_Post)
 
-		check(OperationData);
-		check(MutableParameters);
+		const int32 ComponentIndex = (*GetMeshesData)[GetMeshIndex].ComponentIndex;
+		FInstanceUpdateData::FComponent& Component = OperationData->InstanceUpdateData.Components[ComponentIndex];
 
-		check(UCustomizableObjectSystem::GetInstance() != nullptr);
-		FCustomizableObjectSystemPrivate* CustomizableObjectSystemPrivateData = UCustomizableObjectSystem::GetInstance()->GetPrivate();
-		check(CustomizableObjectSystemPrivateData != nullptr);
-		mu::System* System = CustomizableObjectSystemPrivateData->MutableSystem.get();
-		check(System != nullptr);
+		Component.Mesh = GetMeshTask.GetResult();
+			
+		Task_Mutable_GetMeshes_GetMesh_Loop(OperationData, StartTime, StartCycles, GetMeshesData, ++GetMeshIndex);
+	}
+	
 
-		// Generate all the required resources, that are not cached
-		TArray<mu::FResourceID> ImagesInThisInstance;
-		for (FInstanceUpdateData::FImage& Image : OperationData->InstanceUpdateData.Images)
+	/** See declaration. */
+	void Task_Mutable_GetMeshes_GetMesh_Loop(
+		const TSharedRef<FUpdateContextPrivate>& OperationData,
+		double StartTime,
+		uint32 StartCycles,
+		const TSharedRef<TArray<FGetMeshData>>& GetMeshesData,
+		int32 GetMeshIndex)
+	{
+		MUTABLE_CPUPROFILER_SCOPE(Task_Mutable_GetMeshes_GetMesh_Loop)
+
+		if (GetMeshIndex >= GetMeshesData->Num())
 		{
-			MUTABLE_CPUPROFILER_SCOPE(GetImage);
+			Task_Mutable_GetMeshes_GetImages(OperationData, StartTime, StartCycles);
+			return;
+		}
+		
+		const FGetMeshData& MeshData = (*GetMeshesData)[GetMeshIndex];
+		UE::Tasks::TTask<mu::Ptr<const mu::Mesh>> GetMeshTask = OperationData->MutableSystem->GetMesh(OperationData->InstanceID, MeshData.MeshID);
+		
+		UE::Tasks::AddNested(UE::Tasks::Launch(TEXT("Task_MutableGetMeshes_GetMesh_Post"), [=]()
+		{
+			Task_MutableGetMeshes_GetMesh_Post(OperationData, StartTime, StartCycles, GetMeshesData, GetMeshIndex, GetMeshTask);
+		},
+		GetMeshTask));
+	}
 
-			mu::FImageDesc ImageDesc;
 
-			// This should only be done when using progressive images, since GetImageDesc does some actual processing.
+	namespace impl_new
+	{
+		/** Start of the GetMeshes tasks.
+		  * Gathers all GetMeshes that has to be called. */
+		void Task_Mutable_GetMeshes(const TSharedRef<FUpdateContextPrivate>& OperationData)
+		{
+			MUTABLE_CPUPROFILER_SCOPE(Task_Mutable_GetMeshes)
+			TRACE_BEGIN_REGION(UE_TASK_MUTABLE_GETMESHES_REGION);
+
+			const double StartTime = FPlatformTime::Seconds();
+			const uint32 StartCycles = FPlatformTime::Cycles();
+
+			check(OperationData->Parameters);
+			OperationData->InstanceUpdateData.Clear();
+
+			check(UCustomizableObjectSystem::GetInstance() != nullptr);
+			check(UCustomizableObjectSystem::GetInstance()->GetPrivate() != nullptr);
+
+			UCustomizableInstancePrivate* CustomizableObjectInstancePrivateData = OperationData->Instance->GetPrivate();
+
+			CustomizableObjectInstancePrivateData->PassThroughTexturesToLoad.Empty();
+
+			if (OperationData->PixelFormatOverride)
 			{
-				System->GetImageDesc(OperationData->InstanceID, Image.ImageID, ImageDesc);
-
-				uint16 MaxTextureSizeToGenerate = uint16(CustomizableObjectSystemPrivateData->MaxTextureSizeToGenerate);
-				uint16 MaxSize = FMath::Max(ImageDesc.m_size[0], ImageDesc.m_size[1]);
-				uint16 Reduction = 1;
-
-				if (MaxTextureSizeToGenerate > 0 && MaxSize > MaxTextureSizeToGenerate)
-				{
-					Reduction = MaxSize / MaxTextureSizeToGenerate;
-				}
-
-				Image.FullImageSizeX = ImageDesc.m_size[0] / Reduction;
-				Image.FullImageSizeY = ImageDesc.m_size[1] / Reduction;
+				OperationData->MutableSystem->SetImagePixelConversionOverride( OperationData->PixelFormatOverride );
 			}
 
-			const bool bCached = ImagesInThisInstance.Contains(Image.ImageID) || // See if it is cached from this same instance (can happen with LODs)
-				(CVarReuseImagesBetweenInstances.GetValueOnAnyThread() && CustomizableObjectSystemPrivateData->ProtectedObjectCachedImages.Contains(Image.ImageID)); // See if it is cached from another instance
-
-			if (bCached)
+			if (!OperationData->bUseMeshCache)
 			{
-				UE_LOG(LogMutable, VeryVerbose, TEXT("Texture resource with id [%d] is cached."), Image.ImageID);
-				INC_DWORD_STAT(STAT_MutableNumCachedTextures);
+				CreateMutableInstance(OperationData);
+				FixLODs(OperationData);
 			}
-			else
+
+			// Main instance generation step
+			// LOD mask, set to all ones to build  all LODs
+			const mu::Instance* Instance = OperationData->MutableInstance; // TODO GMTFuture remove
+			if (!Instance)
 			{
-				int32 MaxSize = FMath::Max(Image.FullImageSizeX, Image.FullImageSizeY);
-				int32 FullLODCount = FMath::CeilLogTwo(MaxSize) + 1;
-				int32 MinMipsInImage = FMath::Min(FullLODCount, UTexture::GetStaticMinTextureResidentMipCount());
-				int32 MaxMipsToSkip = FullLODCount - MinMipsInImage;
-				int32 MipsToSkip = FMath::Min(MaxMipsToSkip, OperationData->MipsToSkip);
+				UE_LOG(LogMutable, Warning, TEXT("An Instace update has failed."));
+				Task_Mutable_GetMeshes_End(OperationData, StartTime, StartCycles);
+				return;
+			}
 
-				if (!FMath::IsPowerOfTwo(Image.FullImageSizeX) || !FMath::IsPowerOfTwo(Image.FullImageSizeY))
-				{
-					// It doesn't make sense to skip mips as non-power-of-two size textures cannot be streamed anyway
-					MipsToSkip = 0;
-				}
+			const TArray<uint16>& RequestedLODs = OperationData->GetRequestedLODs();
 
-				const int32 MipSizeX = FMath::Max(Image.FullImageSizeX >> MipsToSkip, 1);
-				const int32 MipSizeY = FMath::Max(Image.FullImageSizeY >> MipsToSkip, 1);
-				if (MipsToSkip > 0 && CustomizableObjectSystemPrivateData->EnableSkipGenerateResidentMips != 0 && OperationData->LowPriorityTextures.Find(Image.Name) != INDEX_NONE)
-				{
-					Image.Image = new mu::Image(MipSizeX, MipSizeY, FullLODCount - MipsToSkip, ImageDesc.m_format, mu::EInitializationType::Black);
-				}
-				else
-				{
-					Image.Image = System->GetImage(OperationData->InstanceID, Image.ImageID, MipsToSkip, Image.BaseLOD);
-				}
-
-				check(Image.Image);
-
-				// If the image is a reference to an engine texture, we are done.
-				if (Image.Image->IsReference())
+			const TSharedRef<TArray<FGetMeshData>> GetMeshesData = MakeShared<TArray<FGetMeshData>>();
+		
+			OperationData->InstanceUpdateData.LODs.SetNum(OperationData->NumLODsAvailable);
+			for (int32 MutableLODIndex = 0; MutableLODIndex < OperationData->NumLODsAvailable; ++MutableLODIndex)
+			{
+				// Skip LODs outside the range we want to generate
+				if (MutableLODIndex < OperationData->GetMinLOD())
 				{
 					continue;
 				}
 
+				FInstanceUpdateData::FLOD& LOD = OperationData->InstanceUpdateData.LODs[MutableLODIndex];
+				LOD.FirstComponent = OperationData->InstanceUpdateData.Components.Num();
+				LOD.ComponentCount = Instance->GetComponentCount(MutableLODIndex);
 
-				// We should have genrated exactly this size.
-				bool bSizeMissmatch = Image.Image->GetSizeX() != MipSizeX || Image.Image->GetSizeY() != MipSizeY;
-				if (bSizeMissmatch)
+				for (int32 ComponentIndex = 0; ComponentIndex < LOD.ComponentCount; ++ComponentIndex)
 				{
-					// Generate a correctly-sized but empty image instead, to avoid crashes.
-					UE_LOG(LogMutable, Warning, TEXT("Mutable generated a wrongly-sized image %d."), Image.ImageID);
-					Image.Image = new mu::Image(MipSizeX, MipSizeY, FullLODCount - MipsToSkip, Image.Image->GetFormat(), mu::EInitializationType::Black);
-				}
+					const int32 UpdateDataComponentIndex = OperationData->InstanceUpdateData.Components.AddDefaulted();
+					FInstanceUpdateData::FComponent& Component = OperationData->InstanceUpdateData.Components.Last();
+					Component.Id = Instance->GetComponentId(MutableLODIndex, ComponentIndex);
 
-				// We need one mip or the complete chain. Otherwise there was a bug.
-				int32 FullMipCount = Image.Image->GetMipmapCount(Image.Image->GetSizeX(), Image.Image->GetSizeY());
-				int32 RealMipCount = Image.Image->GetLODCount();
+					const bool bGenerateLOD = RequestedLODs.IsValidIndex(Component.Id) ? RequestedLODs[Component.Id] <= MutableLODIndex : true;
 
-				bool bForceMipchain = 
-					// Did we fail to generate the entire mipchain (if we have mips at all)?
-					(RealMipCount != 1) && (RealMipCount != FullMipCount);
-
-				if (bForceMipchain)
-				{
-					MUTABLE_CPUPROFILER_SCOPE(GetImage_MipFix);
-
-					UE_LOG(LogMutable, Warning, TEXT("Mutable generated an incomplete mip chain for image %d."), Image.ImageID);
-
-					// Force the right number of mips. The missing data will be black.
-					mu::Ptr<mu::Image> NewImage = new mu::Image(Image.Image->GetSizeX(), Image.Image->GetSizeY(), FullMipCount, Image.Image->GetFormat(), mu::EInitializationType::Black);
-					check(NewImage);
-					if (NewImage->GetDataSize() >= Image.Image->GetDataSize())
+					// Mesh
+					if (Instance->GetMeshCount(MutableLODIndex, ComponentIndex) > 0)
 					{
-						FMemory::Memcpy(NewImage->GetData(), Image.Image->GetData(), Image.Image->GetDataSize());
-					}
-					Image.Image = NewImage;
-				}
+						MUTABLE_CPUPROFILER_SCOPE(GetMesh);
 
-				ImagesInThisInstance.Add(Image.ImageID);
-			}
-		}
-	}
-	
+						Component.MeshID = Instance->GetMeshId(MutableLODIndex, ComponentIndex, 0);
 
-	// This runs in a worker thread
-	void Subtask_Mutable_PrepareTextures(const TSharedPtr<FMutableOperationData>& OperationData)
-	{
-		MUTABLE_CPUPROFILER_SCOPE(Subtask_Mutable_PrepareTextures)
+						if (bGenerateLOD)
+						{
+							Component.bGenerated = true;
 
-		check(OperationData);
-		for (const FInstanceUpdateData::FSurface& Surface : OperationData->InstanceUpdateData.Surfaces)
-		{
-			for (int32 ImageIndex = 0; ImageIndex<Surface.ImageCount; ++ImageIndex)
-			{
-				const FInstanceUpdateData::FImage& Image = OperationData->InstanceUpdateData.Images[Surface.FirstImage+ImageIndex];
-
-				FString KeyName = Image.Name;
-				mu::ImagePtrConst MutableImage = Image.Image;
-
-				// If the image is null, it must be in the cache (or repeated in this instance), and we don't need to do anything here.
-				if (MutableImage)
-				{
-					// Image refences are just references to texture assets and require no work at all
-					if (!MutableImage->IsReference())
-					{
-						FTexturePlatformData* PlatformData = UCustomizableInstancePrivateData::MutableCreateImagePlatformData(MutableImage, -1, Image.FullImageSizeX, Image.FullImageSizeY);
-						OperationData->ImageToPlatformDataMap.Add(Image.ImageID, PlatformData);
-						OperationData->PendingTextureCoverageQueries.Add({ KeyName, Surface.MaterialIndex, PlatformData });
+							GetMeshesData->Add({ UpdateDataComponentIndex, Component.MeshID});
+						}
 					}
 				}
 			}
-		}
-	}
-	
 
-	// This runs in a worker thread
-	void Subtask_Mutable_PrepareSkeletonData(const TSharedPtr<FMutableOperationData>& OperationData)
-	{
-		MUTABLE_CPUPROFILER_SCOPE(Subtask_Mutable_PrepareSkeletonData)
-
-		check(OperationData);
-		const int32 LODCount = OperationData->InstanceUpdateData.LODs.Num();
-		const FInstanceUpdateData::FLOD& MinLOD = OperationData->InstanceUpdateData.LODs[OperationData->CurrentMinLOD];
-		const int32 ComponentCount = MinLOD.ComponentCount;
-
-		// Add SkeletonData for each component
-		OperationData->InstanceUpdateData.Skeletons.AddDefaulted(ComponentCount);
-
-		for (int32 ComponentIndex = 0; ComponentIndex < ComponentCount; ++ComponentIndex)
-		{
-			FInstanceUpdateData::FComponent& MinLODComponent = OperationData->InstanceUpdateData.Components[MinLOD.FirstComponent + ComponentIndex];
-
-			// Set the ComponentIndex
-			OperationData->InstanceUpdateData.Skeletons[ComponentIndex].ComponentIndex = MinLODComponent.Id;
-
-			// Fill the data used to generate the RefSkeletalMesh
-			TArray<uint16>& SkeletonIds = OperationData->InstanceUpdateData.Skeletons[ComponentIndex].SkeletonIds;
-			TArray<uint16>& BoneIds = OperationData->InstanceUpdateData.Skeletons[ComponentIndex].BoneIds;
-			TArray<FMatrix44f>& BoneMatricesWithScale = OperationData->InstanceUpdateData.Skeletons[ComponentIndex].BoneMatricesWithScale;
-
-			// Use first valid LOD bone count as a potential total number of bones, used for pre-allocating data arrays
-			if (MinLODComponent.Mesh && MinLODComponent.Mesh->GetSkeleton())
-			{
-				const int32 TotalPossibleBones = MinLODComponent.Mesh->GetSkeleton()->GetBoneCount();
-
-				// Out Data
-				BoneIds.Reserve(TotalPossibleBones);
-				BoneMatricesWithScale.Reserve(TotalPossibleBones);
-			}
-
-			for (int32 LODIndex = OperationData->CurrentMinLOD; LODIndex <= OperationData->CurrentMaxLOD && LODIndex < LODCount; ++LODIndex)
-			{
-				MUTABLE_CPUPROFILER_SCOPE(PrepareSkeletonData_LODs);
-
-				const FInstanceUpdateData::FLOD& CurrentLOD = OperationData->InstanceUpdateData.LODs[LODIndex];
-				FInstanceUpdateData::FComponent& CurrentLODComponent = OperationData->InstanceUpdateData.Components[CurrentLOD.FirstComponent + ComponentIndex];
-				mu::MeshPtrConst Mesh = CurrentLODComponent.Mesh;
-
-				if (!Mesh)
-				{
-					continue;
-				}
-
-				// Add SkeletonIds 
-				const int32 SkeletonIDsCount = Mesh->GetSkeletonIDsCount();
-				for (int32 SkeletonIndex = 0; SkeletonIndex < SkeletonIDsCount; ++SkeletonIndex)
-				{
-					SkeletonIds.AddUnique(Mesh->GetSkeletonID(SkeletonIndex));
-				}
-
-				// Append BoneMap to the array of BoneMaps
-				const TArray<uint16>& BoneMap = Mesh->GetBoneMap();
-				CurrentLODComponent.FirstBoneMap = OperationData->InstanceUpdateData.BoneMaps.Num();
-				CurrentLODComponent.BoneMapCount = BoneMap.Num();
-				OperationData->InstanceUpdateData.BoneMaps.Append(BoneMap);
-
-				// Add active bone indices and poses
-				const int32 MaxBoneIndex = Mesh->GetBonePoseCount();
-				CurrentLODComponent.ActiveBones.Reserve(MaxBoneIndex);
-				for (int32 BonePoseIndex = 0; BonePoseIndex < MaxBoneIndex; ++BonePoseIndex)
-				{
-					const uint16 BoneId = Mesh->GetBonePoseBoneId(BonePoseIndex);
-
-					CurrentLODComponent.ActiveBones.Add(BoneId);
-
-					if(BoneIds.Find(BoneId) == INDEX_NONE)
-					{
-						BoneIds.Add(BoneId);
-
-						FTransform3f Transform;
-						Mesh->GetBoneTransform(BonePoseIndex, Transform);
-						BoneMatricesWithScale.Emplace(Transform.Inverse().ToMatrixWithScale());
-					}
-				}
-			}
+			Task_Mutable_GetMeshes_GetMesh_Loop(OperationData, StartTime, StartCycles, GetMeshesData, 0);
 		}
 	}
 
 
-	// This runs in a worker thread.
-	void Task_Mutable_Update_GetMesh(TSharedPtr<FMutableOperationData> OperationData, TSharedPtr<mu::Model, ESPMode::ThreadSafe> Model, mu::ParametersPtrConst Parameters, bool bBuildParameterRelevancy, int32 State)
+	void Task_Mutable_GetMeshes(const TSharedRef<FUpdateContextPrivate>& OperationData)
 	{
-		MUTABLE_CPUPROFILER_SCOPE(Task_Mutable_Update_GetMesh)
-
-#if WITH_EDITOR
-		uint32 StartCycles = FPlatformTime::Cycles();
-#endif
-
-		check(OperationData.IsValid());
-
-		Subtask_Mutable_BeginUpdate_GetMesh(OperationData, Model, Parameters.get(), State);
-
-		// TODO: Not strictly mutable: move to another worker thread task to free mutable access?
-		Subtask_Mutable_PrepareSkeletonData(OperationData);
-
-		if (bBuildParameterRelevancy)
+		if (CVarEnableNewSplitMutableTask->GetBool())
 		{
-			Subtask_Mutable_UpdateParameterRelevancy(OperationData, Parameters.get());
+			impl_new::Task_Mutable_GetMeshes(OperationData);
 		}
 		else
 		{
-			OperationData->RelevantParametersInProgress.Reset();
+			CustomizableObjectSystem::ImplDeprecated::Task_Mutable_GetMeshes(OperationData);
 		}
-
-#if WITH_EDITOR
-		uint32 EndCycles = FPlatformTime::Cycles();
-		OperationData->MutableRuntimeCycles = EndCycles - StartCycles;
-#endif
-
 	}
 
-
-	void Task_Mutable_Update_GetImages(TSharedPtr<FMutableOperationData> OperationData, TSharedPtr<mu::Model, ESPMode::ThreadSafe> Model, mu::ParametersPtrConst Parameters, int32 State)
+	
+		/** End of the GetImages tasks. */
+	void Task_Mutable_GetImages_End(const TSharedRef<FUpdateContextPrivate>& OperationData, double StartCycles, double StartTime)
 	{
-		// This runs in a worker thread.
-		MUTABLE_CPUPROFILER_SCOPE(Task_Mutable_GetImages)
-
-#if WITH_EDITOR
-		uint32 StartCycles = FPlatformTime::Cycles();
-#endif
-
-		check(OperationData.IsValid());
-
-		Subtask_Mutable_GetImages(OperationData, Model, Parameters.get(), State);
-
+		MUTABLE_CPUPROFILER_SCOPE(Task_Mutable_GetImages_End)
+		
 		// TODO: Not strictly mutable: move to another worker thread task to free mutable access?
 		Subtask_Mutable_PrepareTextures(OperationData);
 
-#if WITH_EDITOR
-		uint32 EndCycles = FPlatformTime::Cycles();
+		const uint32 EndCycles = FPlatformTime::Cycles();
 		OperationData->MutableRuntimeCycles += EndCycles - StartCycles;
-#endif
+		OperationData->TaskGetImagesTime = FPlatformTime::Seconds() - StartTime;
+
+		TRACE_END_REGION(UE_TASK_MUTABLE_GETIMAGES_REGION);
+	}
+
+
+	/** Call GetImageDesc.
+	  * Once GetImageDesc is called, the task must end. Following code will be in a subsequent TaskGraph task. */
+	void Task_Mutable_GetImages_GetImageDesc(
+		const TSharedRef<FUpdateContextPrivate>& OperationData,
+		double StartTime,
+		uint32 StartCycles,
+		const TSharedPtr<TArray<mu::FResourceID>>& ImagesInThisInstance,
+		int32 ImageIndex)
+	{
+		MUTABLE_CPUPROFILER_SCOPE(Task_Mutable_GetImages_GetImageDesc)
+
+		FInstanceUpdateData::FImage& Image = OperationData->InstanceUpdateData.Images[ImageIndex];
+		
+		// This should only be done when using progressive images, since GetImageDesc does some actual processing.
+		UE::Tasks::TTask<mu::FImageDesc> GetImageDescTask = OperationData->MutableSystem->GetImageDesc(OperationData->InstanceID, Image.ImageID);
+		
+		UE::Tasks::AddNested(UE::Tasks::Launch(TEXT("Task_Mutable_GetImages_GetImage"), [=]()
+		{
+			Task_Mutable_GetImages_GetImage(OperationData, StartTime, StartCycles, ImagesInThisInstance, ImageIndex, GetImageDescTask);
+		},
+		GetImageDescTask));
+	}
+
+
+	/** TaskGraph task after GetImage has completed. */
+	void Task_Mutable_GetImages_GetImage_Post(
+		const TSharedRef<FUpdateContextPrivate>& OperationData,
+    	double StartTime,
+    	uint32 StartCycles,
+    	const TSharedPtr<TArray<mu::FResourceID>>& ImagesInThisInstance,
+    	int32 ImageIndex,
+    	UE::Tasks::TTask<mu::Ptr<const mu::Image>> GetImageTask,
+    	int32 MipSizeX,
+		int32 MipSizeY,
+		int32 FullLODContent,
+		int32 MipsToSkip)
+	{
+		MUTABLE_CPUPROFILER_SCOPE(Task_Mutable_GetImages_GetImage_Post)
+
+		FInstanceUpdateData::FImage& Image = OperationData->InstanceUpdateData.Images[ImageIndex];
+
+		Image.Image = GetImageTask.GetResult();
+		
+		check(Image.Image);
+
+		// We should have generated exactly this size.
+		const bool bSizeMissmatch = Image.Image->GetSizeX() != MipSizeX || Image.Image->GetSizeY() != MipSizeY;
+		if (bSizeMissmatch)
+		{
+			// Generate a correctly-sized but empty image instead, to avoid crashes.
+			UE_LOG(LogMutable, Warning, TEXT("Mutable generated a wrongly-sized image %llu."), Image.ImageID);
+			Image.Image = new mu::Image(MipSizeX, MipSizeY, FullLODContent - MipsToSkip, Image.Image->GetFormat(), mu::EInitializationType::Black);
+		}
+
+		// We need one mip or the complete chain. Otherwise there was a bug.
+		const int32 FullMipCount = Image.Image->GetMipmapCount(Image.Image->GetSizeX(), Image.Image->GetSizeY());
+		const int32 RealMipCount = Image.Image->GetLODCount();
+
+		bool bForceMipchain = 
+			// Did we fail to generate the entire mipchain (if we have mips at all)?
+			(RealMipCount != 1) && (RealMipCount != FullMipCount);
+
+		if (bForceMipchain)
+		{
+			MUTABLE_CPUPROFILER_SCOPE(GetImage_MipFix);
+
+			UE_LOG(LogMutable, Warning, TEXT("Mutable generated an incomplete mip chain for image %llu."), Image.ImageID);
+
+			// Force the right number of mips. The missing data will be black.
+			const mu::Ptr<mu::Image> NewImage = new mu::Image(Image.Image->GetSizeX(), Image.Image->GetSizeY(), FullMipCount, Image.Image->GetFormat(), mu::EInitializationType::Black);
+			check(NewImage);	
+			// Formats with BytesPerBlock == 0 will not allocate memory. This type of images are not expected here.
+			check(!NewImage->DataStorage.IsEmpty());
+
+			for (int32 L = 0; L < RealMipCount; ++L)
+			{
+				TArrayView<uint8> DestView = NewImage->DataStorage.GetLOD(L);
+				TArrayView<const uint8> SrcView = Image.Image->DataStorage.GetLOD(L);
+
+				check(DestView.Num() == SrcView.Num());
+				FMemory::Memcpy(DestView.GetData(), SrcView.GetData(), DestView.Num());
+			}
+			Image.Image = NewImage;
+		}
+
+		ImagesInThisInstance->Add(Image.ImageID);
+
+		Task_Mutable_GetImages_Loop(OperationData, StartTime, StartCycles, ImagesInThisInstance, ++ImageIndex);
+	}
+
+
+	/** See declaration. */
+	void Task_Mutable_GetImages_GetImage(
+		const TSharedRef<FUpdateContextPrivate>& OperationData,
+		double StartTime,
+		uint32 StartCycles,
+		const TSharedPtr<TArray<mu::FResourceID>>& ImagesInThisInstance,
+		int32 ImageIndex,
+		UE::Tasks::TTask<mu::FImageDesc> GetImageDescTask)
+	{
+		MUTABLE_CPUPROFILER_SCOPE(Task_Mutable_GetImages_GetImage)
+
+		const mu::FImageDesc& ImageDesc = GetImageDescTask.GetResult();
+
+		FInstanceUpdateData::FImage& Image = OperationData->InstanceUpdateData.Images[ImageIndex];
+
+		const UCustomizableObjectSystemPrivate* CustomizableObjectSystemPrivateData = UCustomizableObjectSystem::GetInstanceChecked()->GetPrivate();
+		
+		{
+			const uint16 MaxTextureSizeToGenerate = static_cast<uint16>(CustomizableObjectSystemPrivateData->MaxTextureSizeToGenerate);
+			const uint16 MaxSize = FMath::Max(ImageDesc.m_size[0], ImageDesc.m_size[1]);
+			uint16 Reduction = 1;
+
+			if (MaxTextureSizeToGenerate > 0 && MaxSize > MaxTextureSizeToGenerate)
+			{
+				// Find the reduction factor, and the BaseMip of the texture.
+				const uint32 NextPowerOfTwo = FMath::RoundUpToPowerOfTwo(FMath::DivideAndRoundUp(MaxSize, MaxTextureSizeToGenerate));
+				Reduction = FMath::Max(NextPowerOfTwo, 2U); // At least divide the texture by a factor of two
+				Image.BaseMip = FMath::FloorLog2(Reduction);
+			}
+
+			Image.FullImageSizeX = ImageDesc.m_size[0] / Reduction;
+			Image.FullImageSizeY = ImageDesc.m_size[1] / Reduction;
+		}
+
+		const bool bCached = ImagesInThisInstance->Contains(Image.ImageID) || // See if it is cached from this same instance (can happen with LODs)
+			(CVarReuseImagesBetweenInstances.GetValueOnAnyThread() && CustomizableObjectSystemPrivateData->ProtectedObjectCachedImages.Contains(Image.ImageID)); // See if it is cached from another instance
+
+		if (bCached)
+		{
+			UE_LOG(LogMutable, VeryVerbose, TEXT("Texture resource with id [%llu] is cached."), Image.ImageID);
+
+			Task_Mutable_GetImages_Loop(OperationData, StartTime, StartCycles, ImagesInThisInstance, ++ImageIndex);
+			return;
+		}
+		
+		const int32 MaxSize = FMath::Max(Image.FullImageSizeX, Image.FullImageSizeY);
+		const int32 FullLODCount = FMath::CeilLogTwo(MaxSize) + 1;
+		const int32 MinMipsInImage = FMath::Min(FullLODCount, UTexture::GetStaticMinTextureResidentMipCount());
+		const int32 MaxMipsToSkip = FullLODCount - MinMipsInImage;
+		int32 MipsToSkip = FMath::Min(MaxMipsToSkip, OperationData->MipsToSkip);
+
+		if (!FMath::IsPowerOfTwo(Image.FullImageSizeX) || !FMath::IsPowerOfTwo(Image.FullImageSizeY))
+		{
+			// It doesn't make sense to skip mips as non-power-of-two size textures cannot be streamed anyway
+			MipsToSkip = 0;
+		}
+
+		const int32 MipSizeX = FMath::Max(Image.FullImageSizeX >> MipsToSkip, 1);
+		const int32 MipSizeY = FMath::Max(Image.FullImageSizeY >> MipsToSkip, 1);
+		if (MipsToSkip > 0 && CustomizableObjectSystemPrivateData->EnableSkipGenerateResidentMips != 0 && OperationData->LowPriorityTextures.Find(Image.Name.ToString()) != INDEX_NONE)
+		{
+			mu::Ptr<const mu::Image> NewImage = new mu::Image(MipSizeX, MipSizeY, FullLODCount - MipsToSkip, ImageDesc.m_format, mu::EInitializationType::Black);
+
+			UE::Tasks::TTask<mu::Ptr<const mu::Image>> DummyTask = UE::Tasks::MakeCompletedTask<mu::Ptr<const mu::Image>>(NewImage);
+			Task_Mutable_GetImages_GetImage_Post(OperationData, StartTime, StartCycles, ImagesInThisInstance, ImageIndex, DummyTask, MipSizeX, MipSizeY, FullLODCount, MipsToSkip);
+		}
+		else
+		{
+			const UE::Tasks::TTask<mu::Ptr<const mu::Image>> GetImageTask = OperationData->MutableSystem->GetImage(OperationData->InstanceID, Image.ImageID, Image.BaseMip + MipsToSkip, Image.BaseLOD);
+			
+			UE::Tasks::AddNested(UE::Tasks::Launch(TEXT("Task_Mutable_GetImages_GetImage_Post"), [=]()
+			{
+				Task_Mutable_GetImages_GetImage_Post(OperationData, StartTime, StartCycles, ImagesInThisInstance, ImageIndex, GetImageTask, MipSizeX, MipSizeY, FullLODCount, MipsToSkip);
+			},
+			GetImageTask));
+		}
+	}
+
+
+	/** See declaration. */
+	void Task_Mutable_GetImages_Loop(
+		const TSharedRef<FUpdateContextPrivate>& OperationData,
+		double StartTime,
+		uint32 StartCycles,
+		const TSharedPtr<TArray<mu::FResourceID>>& ImagesInThisInstance,
+		int32 ImageIndex)
+	{
+		MUTABLE_CPUPROFILER_SCOPE(Task_Mutable_GetImages_Loop)
+
+		// Process next image. Some images are skipped
+		for (; ImageIndex < OperationData->InstanceUpdateData.Images.Num(); ++ImageIndex)
+		{
+			const FInstanceUpdateData::FImage& Image = OperationData->InstanceUpdateData.Images[ImageIndex];
+			if (!Image.bIsPassThrough)
+			{
+				Task_Mutable_GetImages_GetImageDesc(OperationData, StartTime, StartCycles, ImagesInThisInstance, ImageIndex);
+				return;
+			}
+		}
+
+		// If not image needs to be processed, go to end directly
+		Task_Mutable_GetImages_End(OperationData, StartTime, StartCycles);
+	}
+
+
+	namespace impl_new
+	{
+		// This runs in a worker thread.
+		void Task_Mutable_GetImages(const TSharedRef<FUpdateContextPrivate>& OperationData)
+		{
+			MUTABLE_CPUPROFILER_SCOPE(Task_Mutable_GetImages)
+			TRACE_BEGIN_REGION(UE_TASK_MUTABLE_GETIMAGES_REGION);
+
+			const double StartTime = FPlatformTime::Seconds();		
+			const uint32 StartCycles = FPlatformTime::Cycles();
+
+			const TSharedPtr<TArray<mu::FResourceID>> ImagesInThisInstance = MakeShared<TArray<mu::FResourceID>>();
+			Task_Mutable_GetImages_Loop(OperationData, StartTime, StartCycles, ImagesInThisInstance, 0);
+		}
+		
+	}
+
+
+	/** Start of the GetImages tasks. */
+	void Task_Mutable_GetImages(const TSharedRef<FUpdateContextPrivate>& OperationData)
+	{
+		if (CVarEnableNewSplitMutableTask->GetBool())
+		{
+			impl_new::Task_Mutable_GetImages(OperationData);
+		}
+		else
+		{
+			CustomizableObjectSystem::ImplDeprecated::Task_Mutable_GetImages(OperationData);						
+		}
 	}
 
 
 	// This runs in a worker thread.
-	void Task_Mutable_ReleaseInstance(TSharedPtr<FMutableOperationData> OperationData, mu::SystemPtr MutableSystem)
+	void Task_Mutable_ReleaseInstance(const TSharedRef<FUpdateContextPrivate>& OperationData, mu::Ptr<mu::System> MutableSystem)
 	{
 		MUTABLE_CPUPROFILER_SCOPE(Task_Mutable_ReleaseInstance)
 
-		check(OperationData.IsValid());
+		check(MutableSystem);
 
 		if (OperationData->InstanceID > 0)
 		{
 			MUTABLE_CPUPROFILER_SCOPE(EndUpdate);
-			check(MutableSystem);
 			MutableSystem->EndUpdate(OperationData->InstanceID);
 			OperationData->InstanceUpdateData.Clear();
 
@@ -1840,8 +2504,11 @@ namespace impl
 			{
 				MutableSystem->ReleaseInstance(OperationData->InstanceID);
 				OperationData->InstanceID = 0;
+				OperationData->MutableInstance = nullptr;
 			}
 		}
+
+		MutableSystem->SetImagePixelConversionOverride(nullptr);
 
 		if (CVarClearWorkingMemoryOnUpdateEnd.GetValueOnAnyThread())
 		{
@@ -1852,17 +2519,14 @@ namespace impl
 	}
 
 
-	void Task_Mutable_ReleaseInstanceID(TSharedPtr<FMutableOperationData> OperationData, mu::SystemPtr MutableSystem)
+	// This runs in a worker thread.
+	void Task_Mutable_ReleaseInstanceID(const mu::Instance::ID InstanceID, const mu::Ptr<mu::System>& MutableSystem)
 	{
 		MUTABLE_CPUPROFILER_SCOPE(Task_Mutable_ReleaseInstanceID)
 
-		// This runs in a worker thread.
-		check(OperationData.IsValid());
-
-		if (OperationData->InstanceID > 0)
+		if (InstanceID > 0)
 		{
-			MutableSystem->ReleaseInstance(OperationData->InstanceID);
-			OperationData->InstanceID = 0;
+			MutableSystem->ReleaseInstance(InstanceID);
 		}
 
 		if (CVarClearWorkingMemoryOnUpdateEnd.GetValueOnAnyThread())
@@ -1872,13 +2536,14 @@ namespace impl
 	}
 
 
-	void Task_Game_ReleasePlatformData(TSharedPtr<FMutableReleasePlatformOperationData> OperationData)
+	void Task_Game_ReleasePlatformData(const TSharedPtr<FMutableReleasePlatformOperationData>& OperationData)
 	{
 		MUTABLE_CPUPROFILER_SCOPE(Task_Game_ReleasePlatformData)
 
-		check(OperationData.IsValid());
+		check(OperationData);
+		
 		TMap<uint32, FTexturePlatformData*>& ImageToPlatformDataMap = OperationData->ImageToPlatformDataMap;
-		for (TPair<uint32, FTexturePlatformData*> Pair : ImageToPlatformDataMap)
+		for (const TPair<uint32, FTexturePlatformData*>& Pair : ImageToPlatformDataMap)
 		{
 			delete Pair.Value; // If this is not null then it must mean it hasn't been used, otherwise they would have taken ownership and nulled it
 		}
@@ -1886,165 +2551,124 @@ namespace impl
 	}
 
 	
-	void Task_Game_Callbacks(TSharedPtr<FMutableOperationData> OperationData, const TWeakObjectPtr<UCustomizableObjectInstance>& CustomizableObjectInstancePtr)
+	void Task_Game_Callbacks(const TSharedRef<FUpdateContextPrivate>& OperationData)
 	{
 		MUTABLE_CPUPROFILER_SCOPE(Task_Game_Callbacks)
+		FMutableScopeTimer Timer(OperationData->TaskCallbacksTime);
 
 		check(IsInGameThread());
 
 		UCustomizableObjectSystem* System = UCustomizableObjectSystem::GetInstance();
 		if (!System || !System->IsValidLowLevel() || System->HasAnyFlags(RF_BeginDestroyed))
 		{
-			FinishUpdateGlobal(CustomizableObjectInstancePtr.Get(), EUpdateResult::Error, &OperationData->UpdateCallback);
+			OperationData->UpdateResult = EUpdateResult::Error;
+			FinishUpdateGlobal(OperationData);
 			return;
 		}
 
-		UCustomizableObjectInstance* CustomizableObjectInstance = CustomizableObjectInstancePtr.Get();
+		UCustomizableObjectInstance* CustomizableObjectInstance = OperationData->Instance.Get();
 
 		// TODO: Review checks.
 		if (!CustomizableObjectInstance || !CustomizableObjectInstance->IsValidLowLevel() )
 		{
 			System->ClearCurrentMutableOperation();
-			FinishUpdateGlobal(CustomizableObjectInstance, EUpdateResult::Error, &OperationData->UpdateCallback);
+			OperationData->UpdateResult = EUpdateResult::Error;
+			FinishUpdateGlobal(OperationData);
 			return;
 		}
 
-		FCustomizableObjectSystemPrivate * CustomizableObjectSystemPrivateData = System->GetPrivate();
-		check(CustomizableObjectSystemPrivateData != nullptr);
+		UCustomizableObjectSystemPrivate * CustomizableObjectSystemPrivateData = System->GetPrivate();
 
 		// Actual work
 		// TODO MTBL-391: Review This hotfix
-		UpdateSkeletalMesh(*CustomizableObjectInstance, CustomizableObjectSystemPrivateData->CurrentMutableOperation->InstanceDescriptorRuntimeHash, OperationData->UpdateResult, &OperationData->UpdateCallback);
+		UpdateSkeletalMesh(OperationData);
 
 		// All work is done, release unused textures.
 		if (CustomizableObjectSystemPrivateData->bReleaseTexturesImmediately)
 		{
 			FMutableResourceCache& Cache = CustomizableObjectSystemPrivateData->GetObjectCache(CustomizableObjectInstance->GetCustomizableObject());
 
-			UCustomizableInstancePrivateData* CustomizableObjectInstancePrivateData = CustomizableObjectInstance->GetPrivate();
+			UCustomizableInstancePrivate* CustomizableObjectInstancePrivateData = CustomizableObjectInstance->GetPrivate();
 			for (FGeneratedTexture& GeneratedTexture : CustomizableObjectInstancePrivateData->TexturesToRelease)
 			{
-				UCustomizableInstancePrivateData::ReleaseMutableTexture(GeneratedTexture.Key, Cast<UTexture2D>(GeneratedTexture.Texture), Cache);
+				UCustomizableInstancePrivate::ReleaseMutableTexture(GeneratedTexture.Key, Cast<UTexture2D>(GeneratedTexture.Texture), Cache);
 			}
 
 			CustomizableObjectInstancePrivateData->TexturesToRelease.Empty();
 		}
 
-		// TODO: T2927
-		if (LogBenchmarkUtil::isLoggingActive())
-		{
-			double deltaSeconds = FPlatformTime::Seconds() - CustomizableObjectSystemPrivateData->CurrentMutableOperation->StartUpdateTime;
-			int32 deltaMs = int32(deltaSeconds * 1000);
-
-			LogBenchmarkUtil::updateStat("customizable_instance_build_time", deltaMs);
-			CustomizableObjectSystemPrivateData->TotalBuildMs += deltaMs;
-			CustomizableObjectSystemPrivateData->TotalBuiltInstances++;
-			SET_DWORD_STAT(STAT_MutableInstanceBuildTime, deltaMs);
-			SET_DWORD_STAT(STAT_MutableInstanceBuildTimeAvrg, CustomizableObjectSystemPrivateData->TotalBuildMs / CustomizableObjectSystemPrivateData->TotalBuiltInstances);
-		}
-
 		// End Update
 		System->ClearCurrentMutableOperation();
+
+		FinishUpdateGlobal(OperationData);
 	}
 
 
-	void Task_Game_ConvertResources(TSharedPtr<FMutableOperationData> OperationData, const TWeakObjectPtr<UCustomizableObjectInstance>& CustomizableObjectInstancePtr)
+	void Task_Game_ConvertResources(const TSharedRef<FUpdateContextPrivate>& OperationData)
 	{
 		MUTABLE_CPUPROFILER_SCOPE(Task_Game_ConvertResources)
+		FMutableScopeTimer Timer(OperationData->TaskConvertResourcesTime);
 
 		check(IsInGameThread());
 
 		UCustomizableObjectSystem* System = UCustomizableObjectSystem::GetInstance();
 		if (!System || !System->IsValidLowLevel() || System->HasAnyFlags(RF_BeginDestroyed))
 		{
-			FinishUpdateGlobal(CustomizableObjectInstancePtr.Get(), EUpdateResult::Error, &OperationData->UpdateCallback);
+			OperationData->UpdateResult = EUpdateResult::Error;
+			FinishUpdateGlobal(OperationData);
 			return;
 		}
 
-		check(OperationData.IsValid());
-
-		UCustomizableObjectInstance* CustomizableObjectInstance = CustomizableObjectInstancePtr.Get();
+		UCustomizableObjectInstance* CustomizableObjectInstance = OperationData->Instance.Get();
 
 		// Actual work
 		// TODO: Review checks.
 		const bool bInstanceInvalid = !CustomizableObjectInstance || !CustomizableObjectInstance->IsValidLowLevel();
 		if (!bInstanceInvalid)
 		{
-			UCustomizableInstancePrivateData* CustomizableInstancePrivateData = CustomizableObjectInstance->GetPrivate();
-
-			// Process the pending texture coverage queries
-			{
-				MUTABLE_CPUPROFILER_SCOPE(GameTextureQueries);
-				for (const FPendingTextureCoverageQuery& Query : OperationData->PendingTextureCoverageQueries)
-				{
-					UMaterialInterface* Material = nullptr;
-					const uint32* InstanceIndex = CustomizableInstancePrivateData->ObjectToInstanceIndexMap.Find(Query.MaterialIndex);
-					if (InstanceIndex && CustomizableInstancePrivateData->ReferencedMaterials.IsValidIndex(*InstanceIndex))
-					{
-						Material = CustomizableInstancePrivateData->ReferencedMaterials[*InstanceIndex];
-					}
-
-					UCustomizableInstancePrivateData::ProcessTextureCoverageQueries(OperationData, CustomizableObjectInstance->GetCustomizableObject(), Query.KeyName, Query.PlatformData, Material);
-				}
-				OperationData->PendingTextureCoverageQueries.Empty();
-			}
-
-			// Process texture coverage queries because it's safe to do now that the Mutable thread is stopped
-			{
-				if (OperationData->TextureCoverageQueries_MutableThreadResults.Num() > 0)
-				{
-					for (auto& Result : OperationData->TextureCoverageQueries_MutableThreadResults)
-					{
-						FTextureCoverageQueryData* FinalResultData = CustomizableInstancePrivateData->TextureCoverageQueries.Find(Result.Key);
-						*FinalResultData = Result.Value;
-					}
-
-					OperationData->TextureCoverageQueries_MutableThreadResults.Empty();
-				}
+			UCustomizableInstancePrivate* CustomizableInstancePrivateData = CustomizableObjectInstance->GetPrivate();
 
 #if WITH_EDITOR
-				CustomizableObjectInstance->LastUpdateMutableRuntimeCycles = OperationData->MutableRuntimeCycles;
+			CustomizableObjectInstance->GetPrivate()->LastUpdateMutableRuntimeCycles = OperationData->MutableRuntimeCycles;
 #endif
 
-				// Convert Step
-				//-------------------------------------------------------------
+			// Convert Step
+			//-------------------------------------------------------------
 
-				// \TODO: Bring that code here instead of keeping it in the UCustomizableObjectInstance
-				if (CustomizableInstancePrivateData->UpdateSkeletalMesh_PostBeginUpdate0(CustomizableObjectInstance, OperationData))
+			// \TODO: Bring that code here instead of keeping it in the UCustomizableObjectInstance
+			if (CustomizableInstancePrivateData->UpdateSkeletalMesh_PostBeginUpdate0(CustomizableObjectInstance, OperationData))
+			{
+				// This used to be CustomizableObjectInstance::UpdateSkeletalMesh_PostBeginUpdate1
 				{
-					// This used to be CustomizableObjectInstance::UpdateSkeletalMesh_PostBeginUpdate1
-					{
-						MUTABLE_CPUPROFILER_SCOPE(UpdateSkeletalMesh_PostBeginUpdate1);
+					MUTABLE_CPUPROFILER_SCOPE(UpdateSkeletalMesh_PostBeginUpdate1);
 
-						// \TODO: Bring here
-						CustomizableInstancePrivateData->BuildMaterials(OperationData, CustomizableObjectInstance);
-					}
-
-					// This used to be CustomizableObjectInstance::UpdateSkeletalMesh_PostBeginUpdate2
-					{
-						MUTABLE_CPUPROFILER_SCOPE(UpdateSkeletalMesh_PostBeginUpdate2);
-
-						for (int32 Component = 0; Component < CustomizableObjectInstance->SkeletalMeshes.Num(); ++Component)
-						{
-							if (CustomizableObjectInstance->SkeletalMeshes[Component] && CustomizableObjectInstance->SkeletalMeshes[Component]->GetLODInfoArray().Num())
-							{
-								MUTABLE_CPUPROFILER_SCOPE(UpdateSkeletalMesh_PostEditChangeProperty);
-
-								CustomizableInstancePrivateData->PostEditChangePropertyWithoutEditor(CustomizableObjectInstance->SkeletalMeshes[Component]);
-							}
-						}
-					}
+					// \TODO: Bring here
+					CustomizableInstancePrivateData->BuildMaterials(OperationData, CustomizableObjectInstance);
 				}
-			} // END - Process texture coverage queries
+
+				// This used to be CustomizableObjectInstance::UpdateSkeletalMesh_PostBeginUpdate2
+				{
+					MUTABLE_CPUPROFILER_SCOPE(UpdateSkeletalMesh_PostBeginUpdate2);
+					
+#if WITH_EDITORONLY_DATA
+					CustomizableInstancePrivateData->RegenerateImportedModels();
+#endif
+					CustomizableInstancePrivateData->PostEditChangePropertyWithoutEditor();
+				}
+			}
 		} // if (!bInstanceValid)
 
-		FCustomizableObjectSystemPrivate* CustomizableObjectSystemPrivateData = System->GetPrivate();
-		check(CustomizableObjectSystemPrivateData != nullptr);
+		// Memory used in the context of this the update of mesh
+		OperationData->UpdateEndPeakBytes = mu::FGlobalMemoryCounter::GetPeak();
+		// Memory used in the context of the mesh update + the baseline memory already in use by mutable
+		OperationData->UpdateEndRealPeakBytes = OperationData->UpdateEndPeakBytes + OperationData->UpdateStartBytes;
+		
+		UCustomizableObjectSystemPrivate* CustomizableObjectSystemPrivateData = System->GetPrivate();
 
 		// Next Task: Release Mutable. We need this regardless if we cancel or not
 		//-------------------------------------------------------------		
 		{
-			mu::SystemPtr MutableSystem = CustomizableObjectSystemPrivateData->MutableSystem;
+			const mu::Ptr<mu::System> MutableSystem = CustomizableObjectSystemPrivateData->MutableSystem;
 			CustomizableObjectSystemPrivateData->MutableTaskGraph.AddMutableThreadTask(
 				TEXT("Task_Mutable_ReleaseInstance"),
 				[OperationData, MutableSystem]() {Task_Mutable_ReleaseInstance(OperationData, MutableSystem); });
@@ -2081,27 +2705,28 @@ namespace impl
 			CustomizableObjectSystemPrivateData->AddGameThreadTask(
 				{
 				FMutableTaskDelegate::CreateLambda(
-					[OperationData,CustomizableObjectInstancePtr]()
+					[OperationData]()
 					{
-						Task_Game_Callbacks(OperationData,CustomizableObjectInstancePtr);
+						Task_Game_Callbacks(OperationData);
 					}),
 					{}
 				});
 		}
 		else
 		{
-			FinishUpdateGlobal(CustomizableObjectInstance, EUpdateResult::Error, &OperationData->UpdateCallback);
+			OperationData->UpdateResult = EUpdateResult::Error;
+			FinishUpdateGlobal(OperationData);
 		}
 	}
 
 
-	/** "Lock Cached Resources" */
-	void Task_Game_LockCache(TSharedPtr<FMutableOperationData> OperationData, const TWeakObjectPtr<UCustomizableObjectInstance>& CustomizableObjectInstancePtr, mu::Ptr<const mu::Parameters> Parameters, bool bBuildParameterRelevancy)
+	/** Lock Cached Resources. */
+	void Task_Game_LockCache(const TSharedRef<FUpdateContextPrivate>& OperationData)
 	{
 		MUTABLE_CPUPROFILER_SCOPE(Task_Game_LockCache)
+		FMutableScopeTimer Timer(OperationData->TaskLockCacheTime);
 
 		check(IsInGameThread());
-		check(OperationData);
 
 		UCustomizableObjectSystem* System = UCustomizableObjectSystem::GetInstance();
 		if (!System)
@@ -2109,16 +2734,17 @@ namespace impl
 			return;
 		}
 
-		UCustomizableObjectInstance* ObjectInstance = CustomizableObjectInstancePtr.Get();
-
+		UCustomizableObjectInstance* ObjectInstance = OperationData->Instance.Get();
 		if (!ObjectInstance)
 		{
 			System->ClearCurrentMutableOperation();
-			FinishUpdateGlobal(ObjectInstance, EUpdateResult::Error, &OperationData->UpdateCallback);
+			
+			OperationData->UpdateResult = EUpdateResult::Error;
+			FinishUpdateGlobal(OperationData);
 			return;
 		}
 
-		UCustomizableInstancePrivateData* ObjectInstancePrivateData = ObjectInstance->GetPrivate();
+		UCustomizableInstancePrivate* ObjectInstancePrivateData = ObjectInstance->GetPrivate();
 		check(ObjectInstancePrivateData != nullptr);
 
 		if (OperationData->bLiveUpdateMode)
@@ -2136,13 +2762,13 @@ namespace impl
 		if (!CustomizableObject)
 		{
 			System->ClearCurrentMutableOperation();
-			FinishUpdateGlobal(CustomizableObjectInstancePtr.Get(), EUpdateResult::Error, &OperationData->UpdateCallback);
+			
+			OperationData->UpdateResult = EUpdateResult::Error;
+			FinishUpdateGlobal(OperationData);
 			return;
 		}
-
-		check(OperationData.IsValid());
 		
-		if (bBuildParameterRelevancy)
+		if (OperationData->GetCapturedDescriptor().GetBuildParameterRelevancy())
 		{
 			// Relevancy
 			ObjectInstancePrivateData->RelevantParameters = OperationData->RelevantParametersInProgress;
@@ -2151,10 +2777,9 @@ namespace impl
 		
 		// Selectively lock the resource cache for the object used by this instance to avoid the destruction of resources that we may want to reuse.
 		// When protecting textures there mustn't be any left from a previous update
-		check(System->ProtectedCachedTextures.Num() == 0);
+		check(System->GetPrivate()->ProtectedCachedTextures.Num() == 0);
 
-		FCustomizableObjectSystemPrivate* SystemPrivateData = System->GetPrivate();
-		check(SystemPrivateData != nullptr);
+		UCustomizableObjectSystemPrivate* SystemPrivateData = System->GetPrivate();
 
 		// TODO: If this is the first code that runs after the CO program has finished AND if it's
 		// guaranteed that the next CO program hasn't started yet, we need to call ClearActiveObject
@@ -2167,17 +2792,17 @@ namespace impl
 
 		FMutableResourceCache& Cache = SystemPrivateData->GetObjectCache(CustomizableObject);
 
-		System->ProtectedCachedTextures.Reset(Cache.Images.Num());
+		System->GetPrivate()->ProtectedCachedTextures.Reset(Cache.Images.Num());
 		SystemPrivateData->ProtectedObjectCachedImages.Reset(Cache.Images.Num());
 
 		for (const FInstanceUpdateData::FImage& Image : OperationData->InstanceUpdateData.Images)
 		{
 			FMutableImageCacheKey Key(Image.ImageID, OperationData->MipsToSkip);
-			TWeakObjectPtr<UTexture2D>* TexturePtr = Cache.Images.Find(Key);
+			const TWeakObjectPtr<UTexture2D>* TexturePtr = Cache.Images.Find(Key);
 
 			if (TexturePtr && TexturePtr->Get() && SystemPrivateData->TextureHasReferences(Key))
 			{
-				System->ProtectedCachedTextures.Add(TexturePtr->Get());
+				System->GetPrivate()->ProtectedCachedTextures.Add(TexturePtr->Get());
 				SystemPrivateData->ProtectedObjectCachedImages.Add(Image.ImageID);
 			}
 		}
@@ -2190,47 +2815,33 @@ namespace impl
 
 		// Task: Mutable GetImages
 		//-------------------------------------------------------------
-#ifdef MUTABLE_USE_NEW_TASKGRAPH
 		UE::Tasks::FTask Mutable_GetImagesTask;
-#else
-		FGraphEventRef Mutable_GetImagesTask;
-#endif
 		{
 			// Task inputs
-			TSharedPtr<mu::Model, ESPMode::ThreadSafe> Model = CustomizableObject->GetPrivate()->GetModel();
-			int32 State = ObjectInstance->GetState();
-
 			Mutable_GetImagesTask = SystemPrivateData->MutableTaskGraph.AddMutableThreadTask(
-					TEXT("Task_Mutable_GetImages"),
-					[OperationData, Parameters, Model, State]()
-					{
-						impl::Task_Mutable_Update_GetImages(OperationData, Model, Parameters, State);
-					});
+				TEXT("Task_Mutable_GetImages"),
+				[OperationData]()
+				{
+					CustomizableObjectSystem::ImplDeprecated::Task_Mutable_GetImages(OperationData);
+				});
 		}
 
 
 		// Next Task: Load Unreal Assets
 		//-------------------------------------------------------------
-		FGraphEventRef Game_LoadUnrealAssets = ObjectInstancePrivateData->LoadAdditionalAssetsAsync(OperationData, ObjectInstance, UCustomizableObjectSystem::GetInstance()->GetStreamableManager());
-		if (Game_LoadUnrealAssets)
-		{
-			Game_LoadUnrealAssets->SetDebugName(TEXT("LoadAdditionalAssetsAsync"));
-		}
+		UE::Tasks::FTask Game_LoadUnrealAssets = ObjectInstancePrivateData->LoadAdditionalAssetsAndDataAsync(OperationData, UCustomizableObjectSystem::GetInstance()->GetPrivate()->StreamableManager);
 
 		// Next-next Task: Convert Resources
 		//-------------------------------------------------------------
 		SystemPrivateData->AddGameThreadTask(
+			FMutableTask 
 			{
-			FMutableTaskDelegate::CreateLambda(
-				[OperationData,CustomizableObjectInstancePtr]()
+				FMutableTaskDelegate::CreateLambda(
+				[OperationData]()
 				{
-					Task_Game_ConvertResources(OperationData,CustomizableObjectInstancePtr);
+					Task_Game_ConvertResources(OperationData);
 				}),
-#ifdef MUTABLE_USE_NEW_TASKGRAPH
-				{},
-#endif
-				Game_LoadUnrealAssets,
-				Mutable_GetImagesTask
+				{ Game_LoadUnrealAssets, Mutable_GetImagesTask }
 			});
 	}
 
@@ -2240,69 +2851,135 @@ namespace impl
 	{
 		MUTABLE_CPUPROFILER_SCOPE(Task_Game_ReleaseInstanceID)
 
-		UCustomizableObjectSystem* System = UCustomizableObjectSystem::GetInstance();
-		check(System != nullptr);
+		UCustomizableObjectSystem* System = UCustomizableObjectSystem::GetInstanceChecked();
+		UCustomizableObjectSystemPrivate* SystemPrivateData = System->GetPrivate();
 
-		FCustomizableObjectSystemPrivate* SystemPrivateData = System->GetPrivate();
-		check(SystemPrivateData != nullptr);
-
-		mu::SystemPtr MutableSystem = SystemPrivateData->MutableSystem;
+		const mu::Ptr<mu::System> MutableSystem = SystemPrivateData->MutableSystem;
 
 		// Task: Release Instance ID
 		//-------------------------------------------------------------
-		TSharedPtr<FMutableOperationData> CurrentOperationData = MakeShared<FMutableOperationData>();
-		check(CurrentOperationData);
-		CurrentOperationData->InstanceID = IDToRelease;
-
-#ifdef MUTABLE_USE_NEW_TASKGRAPH
-		UE::Tasks::FTask Mutable_GetMeshTask;
-#else
-		FGraphEventRef Mutable_GetMeshTask;
-#endif
 		{
 			// Task inputs
-			TSharedPtr<FMutableOperation> CurrentMutableOperation = SystemPrivateData->CurrentMutableOperation;
-			check(CurrentMutableOperation);
-
-			Mutable_GetMeshTask = SystemPrivateData->MutableTaskGraph.AddMutableThreadTask(
+			SystemPrivateData->MutableTaskGraph.AddMutableThreadTask(
 				TEXT("Task_Mutable_ReleaseInstanceID"),
-				[CurrentOperationData, MutableSystem]()
+				[IDToRelease, MutableSystem]()
 				{
-					impl::Task_Mutable_ReleaseInstanceID(CurrentOperationData, MutableSystem);
+					impl::Task_Mutable_ReleaseInstanceID(IDToRelease, MutableSystem);
 				});
 		}
 	}
 
 
+	void Task_Game_LockMeshCache(const TSharedRef<FUpdateContextPrivate>& Operation)
+	{
+		MUTABLE_CPUPROFILER_SCOPE(Task_Game_LockMeshCache);
+
+		UCustomizableObjectSystem* System = UCustomizableObjectSystem::GetInstanceChecked();
+		UCustomizableObjectSystemPrivate* SystemPrivate = System->GetPrivate();
+
+		const UCustomizableObject* CustomizableObject = Operation->Instance->GetCustomizableObject();
+		UCustomizableObjectPrivate* CustomizableObjectPrivate = CustomizableObject->GetPrivate();
+		
+		for (const TArray<mu::FResourceID>& MeshId : Operation->MeshDescriptors)
+		{
+			if (USkeletalMesh* CachedMesh = CustomizableObject->GetPrivate()->MeshCache.Get(MeshId))
+			{
+				Operation->Objects.Add(CachedMesh);
+			}
+		}
+
+		UE::Tasks::FTask Dependency = SystemPrivate->MutableTaskGraph.AddMutableThreadTask(
+			TEXT("Task_Mutable_GetMeshes"),
+			[Operation]()
+			{
+				Task_Mutable_GetMeshes(Operation);
+			});
+
+		SystemPrivate->AddGameThreadTask(
+			FMutableTask
+			{
+				FMutableTaskDelegate::CreateLambda(
+				[Operation]()
+				{
+					impl::Task_Game_LockCache(Operation);
+				}),
+				{ Dependency }
+			});
+	}
+	
+
+	void Task_Mutable_GetMeshID(const TSharedRef<FUpdateContextPrivate>& Operation)
+	{
+		MUTABLE_CPUPROFILER_SCOPE(Task_Mutable_GetMeshID);
+
+
+		UCustomizableObjectSystem* System = UCustomizableObjectSystem::GetInstanceChecked(); // Save since UCustomizableObjectSystem::BeginDestroy always waits for all tasks to finish
+		UCustomizableObjectSystemPrivate* SystemPrivate = System->GetPrivate();
+		
+		CreateMutableInstance(Operation);
+		FixLODs(Operation);
+
+		const int32 NumComponents = Operation->NumComponents;
+
+		Operation->MeshDescriptors.SetNum(NumComponents);
+
+		const TArray<uint16>& RequestedLODs = Operation->GetRequestedLODs();
+		for (int32 ComponentIndex = 0; ComponentIndex < NumComponents; ++ComponentIndex)
+		{
+			TArray<mu::FResourceID>& MeshId = Operation->MeshDescriptors[ComponentIndex];
+			MeshId.Init(MAX_uint64, MAX_MESH_LOD_COUNT);
+
+			
+			for (int32 LODIndex = Operation->GetMinLOD(); LODIndex < Operation->NumLODsAvailable; ++LODIndex)
+			{
+				const bool bGenerateLOD = RequestedLODs.IsValidIndex(ComponentIndex) ? RequestedLODs[ComponentIndex] <= LODIndex : true;
+				if (bGenerateLOD)
+				{
+					MeshId[LODIndex] = Operation->MutableInstance->GetMeshId(LODIndex, ComponentIndex, 0);
+				}
+			}
+		}
+	}
+	
 	/** "Start Update" */
-	void Task_Game_StartUpdate(TSharedPtr<FMutableOperation> Operation)
+	void Task_Game_StartUpdate(const TSharedRef<FUpdateContextPrivate>& Operation)
 	{
 		MUTABLE_CPUPROFILER_SCOPE(Task_Game_StartUpdate)
 
+		// Check if a level has been loaded
+		if (CVarEnableBenchmark.GetValueOnAnyThread() && GWorld)
+		{
+			Operation->bLevelBegunPlay = GWorld->GetBegunPlay();
+		}
+
+		Operation->StartUpdateTime = FPlatformTime::Seconds();
+
 		UCustomizableObjectSystem::GetInstance()->GetPrivate()->MutableTaskGraph.AllowLaunchingMutableTaskLowPriority(false, false);
 		
-		check(Operation);
-
 		UCustomizableObjectSystem* System = UCustomizableObjectSystem::GetInstance();
 		check(System != nullptr);
 
-		if (!Operation->CustomizableObjectInstance.IsValid() || !Operation->CustomizableObjectInstance->IsValidLowLevel()) // Only start if it hasn't been already destroyed (i.e. GC after finish PIE)
+		if (!Operation->Instance.IsValid() || !Operation->Instance->IsValidLowLevel()) // Only start if it hasn't been already destroyed (i.e. GC after finish PIE)
 		{
 			System->ClearCurrentMutableOperation();
-			FinishUpdateGlobal(nullptr, EUpdateResult::Error, &Operation->UpdateCallback);
+
+			Operation->UpdateResult = EUpdateResult::Error;
+			FinishUpdateGlobal(Operation);
 			return;
 		}
 
-		TObjectPtr<UCustomizableObjectInstance> CandidateInstance = Operation->CustomizableObjectInstance.Get();
+		UCustomizableObjectInstance* CandidateInstance = Operation->Instance.Get();
 		
-		UCustomizableInstancePrivateData* CandidateInstancePrivateData = CandidateInstance->GetPrivate();
+		UCustomizableInstancePrivate* CandidateInstancePrivateData = CandidateInstance->GetPrivate();
 		if (!CandidateInstancePrivateData)
 		{
 			System->ClearCurrentMutableOperation();
-			FinishUpdateGlobal(nullptr, EUpdateResult::Error, &Operation->UpdateCallback);
+			
+			Operation->UpdateResult = EUpdateResult::Error;
+			FinishUpdateGlobal(Operation);
 			return;
 		}
-		
+
 		if (CandidateInstancePrivateData->HasCOInstanceFlags(PendingLODsUpdate))
 		{
 			CandidateInstancePrivateData->ClearCOInstanceFlags(PendingLODsUpdate);
@@ -2310,42 +2987,39 @@ namespace impl
 			//Operation->CustomizableObjectInstance->ReleaseMutableInstanceId(); // To make mutable regenerate the LODs even if the instance parameters have not changed
 		}
 
+		// Skip update, the requested update is equal to the running update.
+		if (Operation->GetCapturedDescriptorHash().IsSubset(CandidateInstancePrivateData->CommittedDescriptorHash))
+		{
+			System->ClearCurrentMutableOperation();
+
+			Operation->UpdateResult = EUpdateResult::Success;
+			UpdateSkeletalMesh(Operation);
+			FinishUpdateGlobal(Operation);
+			return;
+		}
+
 		bool bCancel = false;
 
-		// If the object is locked (for instance, compiling) we skip any instance update.
 		TObjectPtr<UCustomizableObject> CustomizableObject = CandidateInstance->GetCustomizableObject();
-		if (!CustomizableObject)
+
+		// If the object is locked (for instance, compiling) we skip any instance update.
+		if (!CustomizableObject || CustomizableObject->GetPrivate()->bLocked)
 		{
 			bCancel = true;
 		}
-		else
-		{
-			if (CustomizableObject->GetPrivate()->bLocked)
-			{
-				bCancel = true;
-			}
-		}
 
 		// Only update resources if the instance is in range (it could have got far from the player since the task was queued)
-		check(System->CurrentInstanceLODManagement != nullptr);
-		if (System->CurrentInstanceLODManagement->IsOnlyUpdateCloseCustomizableObjectsEnabled()
+		check(System->GetPrivate()->CurrentInstanceLODManagement != nullptr);
+		if (System->GetPrivate()->CurrentInstanceLODManagement->IsOnlyUpdateCloseCustomizableObjectsEnabled()
 			&& CandidateInstancePrivateData
-			&& CandidateInstancePrivateData->LastMinSquareDistFromComponentToPlayer > FMath::Square(System->CurrentInstanceLODManagement->GetOnlyUpdateCloseCustomizableObjectsDist())
+			&& CandidateInstancePrivateData->LastMinSquareDistFromComponentToPlayer > FMath::Square(System->GetPrivate()->CurrentInstanceLODManagement->GetOnlyUpdateCloseCustomizableObjectsDist())
 			&& CandidateInstancePrivateData->LastMinSquareDistFromComponentToPlayer != FLT_MAX // This means it is the first frame so it has to be updated
 		   )
 		{
 			bCancel = true;
 		}
 
-		// Skip update, the requested update is equal to the running update.
-		if (Operation->InstanceDescriptorRuntimeHash.IsSubset(CandidateInstance->GetDescriptorRuntimeHash()))
-		{
-			CandidateInstance->SkeletalMeshStatus = ESkeletalMeshState::Correct;
-			UpdateSkeletalMesh(*CandidateInstance, CandidateInstance->GetDescriptorRuntimeHash(), EUpdateResult::Success, &Operation->UpdateCallback);
-			bCancel = true;
-		}
-
-		mu::Ptr<const mu::Parameters> Parameters = Operation->GetParameters();
+		mu::Ptr<const mu::Parameters> Parameters = Operation->Parameters;
 		if (!Parameters)
 		{
 			bCancel = true;
@@ -2353,145 +3027,170 @@ namespace impl
 
 		if (bCancel)
 		{
-			CandidateInstancePrivateData->ClearCOInstanceFlags(Updating);
-
 			System->ClearCurrentMutableOperation();
 
-			FinishUpdateGlobal(CandidateInstance, EUpdateResult::Error, &Operation->UpdateCallback);
+			Operation->UpdateResult = EUpdateResult::Error;
+			FinishUpdateGlobal(Operation);
 			return;
 		}
 
-		if (LogBenchmarkUtil::isLoggingActive())
-		{
-			Operation->StartUpdateTime = FPlatformTime::Seconds();
-		}
-
-		FCustomizableObjectSystemPrivate* SystemPrivateData = System->GetPrivate();
-		check(SystemPrivateData != nullptr);
+		UCustomizableObjectSystemPrivate* SystemPrivateData = System->GetPrivate();
 
 		SystemPrivateData->CurrentInstanceBeingUpdated = CandidateInstance;
-
-		// Prepare streaming for the current customizable object
-		check(SystemPrivateData->Streamer != nullptr);
-		SystemPrivateData->Streamer->PrepareStreamingForObject(CustomizableObject);
 
 		check(SystemPrivateData->ExtensionDataStreamer != nullptr);
 		SystemPrivateData->ExtensionDataStreamer->SetActiveObject(CustomizableObject);
 
-		CandidateInstance->CommitMinMaxLOD();
+		FString StateName = CandidateInstance->GetCustomizableObject()->GetStateName(CandidateInstance->GetPrivate()->GetState());
+		const FParameterUIData* StateData = CandidateInstance->GetCustomizableObject()->GetPrivate()->GetModelResources().StateUIDataMap.Find(StateName);
 
-		FString StateName = CandidateInstance->GetCustomizableObject()->GetStateName(CandidateInstance->GetState());
-		const FParameterUIData* StateData = CandidateInstance->GetCustomizableObject()->StateUIDataMap.Find(StateName);
-
-		bool bLiveUpdateMode = false;
+		Operation->bLiveUpdateMode = false;
 
 		if (SystemPrivateData->EnableMutableLiveUpdate)
 		{
-			bLiveUpdateMode = StateData ? StateData->bLiveUpdateMode : false;
+			Operation->bLiveUpdateMode = StateData ? StateData->bLiveUpdateMode : false;
 		}
 
-		if (bLiveUpdateMode && (!Operation->bNeverStream || Operation->MipsToSkip > 0))
+		Operation->bNeverStream = false;
+		Operation->MipsToSkip = 0;
+
+		SystemPrivateData->GetMipStreamingConfig(*CandidateInstance, Operation->bNeverStream, Operation->MipsToSkip);
+		
+		if (Operation->bLiveUpdateMode && (!Operation->bNeverStream || Operation->MipsToSkip > 0))
 		{
 			UE_LOG(LogMutable, Warning, TEXT("Instance LiveUpdateMode does not yet support progressive streaming of Mutable textures. Disabling LiveUpdateMode for this update."));
-			bLiveUpdateMode = false;
+			Operation->bLiveUpdateMode = false;
 		}
 
-		bool bReuseInstanceTextures = false;
+		Operation->bReuseInstanceTextures = false;
 
 		if (SystemPrivateData->EnableReuseInstanceTextures)
 		{
-			bReuseInstanceTextures = StateData ? StateData->bReuseInstanceTextures : false;
-			bReuseInstanceTextures |= CandidateInstancePrivateData->HasCOInstanceFlags(ReuseTextures);
+			Operation->bReuseInstanceTextures = StateData ? StateData->bReuseInstanceTextures : false;
+			Operation->bReuseInstanceTextures |= CandidateInstancePrivateData->HasCOInstanceFlags(ReuseTextures);
 			
-			if (bReuseInstanceTextures && !Operation->bNeverStream)
+			if (Operation->bReuseInstanceTextures && !Operation->bNeverStream)
 			{
 				UE_LOG(LogMutable, Warning, TEXT("Instance texture reuse requires that the current Mutable state is in non-streaming mode. Change it in the Mutable graph base node in the state definition."));
-				bReuseInstanceTextures = false;
+				Operation->bReuseInstanceTextures = false;
 			}
 		}
 
-		if (!bLiveUpdateMode && CandidateInstancePrivateData->LiveUpdateModeInstanceID != 0)
+		if (!Operation->bLiveUpdateMode && CandidateInstancePrivateData->LiveUpdateModeInstanceID != 0)
 		{
 			// The instance was in live update mode last update, but now it's not. So the Id and resources have to be released.
 			// Enqueue a new mutable task to release them
 			Task_Game_ReleaseInstanceID(CandidateInstancePrivateData->LiveUpdateModeInstanceID);
 			CandidateInstancePrivateData->LiveUpdateModeInstanceID = 0;
 		}
+
 		
 		// Task: Mutable Update and GetMesh
 		//-------------------------------------------------------------
-		TSharedPtr<FMutableOperationData> CurrentOperationData = MakeShared<FMutableOperationData>();
-		check(CurrentOperationData);
-		CurrentOperationData->TextureCoverageQueries_MutableThreadParams = CandidateInstancePrivateData->TextureCoverageQueries;
-		CurrentOperationData->TextureCoverageQueries_MutableThreadResults.Empty();
-		CurrentOperationData->bCanReuseGeneratedData = SystemPrivateData->bEnableMutableReusePreviousUpdateData;
-		CurrentOperationData->LastUpdateData = SystemPrivateData->bEnableMutableReusePreviousUpdateData ? CandidateInstancePrivateData->LastUpdateData : FInstanceGeneratedData();
-		CurrentOperationData->CurrentMinLOD = Operation->InstanceDescriptorRuntimeHash.GetMinLOD();
-		CurrentOperationData->CurrentMaxLOD = Operation->InstanceDescriptorRuntimeHash.GetMaxLOD();
-		CurrentOperationData->bNeverStream = Operation->bNeverStream;
-		CurrentOperationData->bLiveUpdateMode = bLiveUpdateMode;
-		CurrentOperationData->bReuseInstanceTextures = bReuseInstanceTextures;
-		CurrentOperationData->InstanceID = bLiveUpdateMode ? CandidateInstancePrivateData->LiveUpdateModeInstanceID : 0;
-		CurrentOperationData->MipsToSkip = Operation->MipsToSkip;
-		CurrentOperationData->MutableParameters = Parameters;
-		CurrentOperationData->State = CandidateInstance->GetState();
-		CurrentOperationData->UpdateResult = EUpdateResult::Success;
-		CurrentOperationData->UpdateCallback = Operation->UpdateCallback;
+		Operation->InstanceID = Operation->bLiveUpdateMode ? CandidateInstancePrivateData->LiveUpdateModeInstanceID : 0;
+		Operation->bUseMeshCache = CustomizableObject->bEnableMeshCache && !Operation->bLiveUpdateMode && CVarEnableMeshCache.GetValueOnGameThread();
+
+		const bool bStreamingEnabled = (CustomizableObject->bEnableMeshStreaming || bForceStreamMeshLODs) && bStreamMeshLODs;
+		Operation->bStreamMeshLODs = bStreamingEnabled && IStreamingManager::Get().IsRenderAssetStreamingEnabled(EStreamableRenderAssetType::SkeletalMesh);
+#if WITH_EDITOR
+		Operation->PixelFormatOverride = SystemPrivateData->ImageFormatOverrideFunc;
+#endif
 
 		if (!CandidateInstancePrivateData->HasCOInstanceFlags(ForceGenerateMipTail))
 		{
-			CustomizableObject->GetLowPriorityTextureNames(CurrentOperationData->LowPriorityTextures);
+			CustomizableObject->GetPrivate()->GetLowPriorityTextureNames(Operation->LowPriorityTextures);
 		}
 
-		if (System->IsOnlyGenerateRequestedLODsEnabled() && System->CurrentInstanceLODManagement->IsOnlyGenerateRequestedLODLevelsEnabled() && 
-			!Operation->bForceGenerateAllLODs)
-		{
-			CurrentOperationData->RequestedLODs = Operation->InstanceDescriptorRuntimeHash.GetRequestedLODs();
-		}
+		bool bIsInEditorViewport = false;
 
-#ifdef MUTABLE_USE_NEW_TASKGRAPH
-		UE::Tasks::FTask Mutable_GetMeshTask;
-#else
-		FGraphEventRef Mutable_GetMeshTask;
-#endif
+#if WITH_EDITOR
+		for (TObjectIterator<UCustomizableObjectInstanceUsage> CustomizableObjectInstanceUsage; CustomizableObjectInstanceUsage && !bIsInEditorViewport; ++CustomizableObjectInstanceUsage)
 		{
-			// Task inputs
-			TWeakObjectPtr<UCustomizableObjectInstance> CustomizableObjectInstancePtr = CandidateInstance;
-			check(CustomizableObjectInstancePtr.IsValid());
-			TSharedPtr<FMutableOperation> CurrentMutableOperation = SystemPrivateData->CurrentMutableOperation;
-			check(CurrentMutableOperation);
-			bool bBuildParameterRelevancy = CurrentMutableOperation->IsBuildParameterRelevancy();
-			TSharedPtr<mu::Model, ESPMode::ThreadSafe> Model = CustomizableObject->GetPrivate()->GetModel();
-			int32 State = CustomizableObjectInstancePtr->GetState();
+			if (IsValid(*CustomizableObjectInstanceUsage) && CustomizableObjectInstanceUsage->IsNetMode(NM_DedicatedServer))
+			{
+				continue;
+			}
 
-			Mutable_GetMeshTask = SystemPrivateData->MutableTaskGraph.AddMutableThreadTask(
-				TEXT("Task_Mutable_Update_GetMesh"),
-				[CurrentOperationData, bBuildParameterRelevancy, Parameters, Model, State]()
+			if (IsValid(*CustomizableObjectInstanceUsage) &&
+				CustomizableObjectInstanceUsage->GetCustomizableObjectInstance() == CandidateInstance)
+			{
+				EWorldType::Type WorldType = EWorldType::Type::None;
+
+				USkeletalMeshComponent* Parent = Cast<USkeletalMeshComponent>(CustomizableObjectInstanceUsage->GetAttachParent());
+
+				if (Parent && Parent->GetWorld())
 				{
-					impl::Task_Mutable_Update_GetMesh(CurrentOperationData, Model, Parameters, bBuildParameterRelevancy, State);
-				});
+					WorldType = Parent->GetWorld()->WorldType;
+				}
+
+				switch (WorldType)
+				{
+					// Editor preview instances
+					case EWorldType::EditorPreview:
+					case EWorldType::None:
+						bIsInEditorViewport = true;
+					default: ;
+				}
+			}
+		}
+#endif // WITH_EDITOR
+		
+		if (!System->IsOnlyGenerateRequestedLODsEnabled() ||
+			!System->GetPrivate()->CurrentInstanceLODManagement->IsOnlyGenerateRequestedLODLevelsEnabled() ||
+			bIsInEditorViewport)
+		{
+			TArray<uint16> RequestedLODs = Operation->GetRequestedLODs();
+			RequestedLODs.Init(0, Operation->NumComponents);
+
+			Operation->SetRequestedLODs(RequestedLODs);
 		}
 
-
-		// Task: Lock cache
-		//-------------------------------------------------------------
+		UE::Tasks::FTask Mutable_GetMeshTask;
+		
+		if (Operation->bUseMeshCache)
 		{
-			// Task inputs
-			TWeakObjectPtr<UCustomizableObjectInstance> CustomizableObjectInstancePtr = CandidateInstance;
-			check(CustomizableObjectInstancePtr.IsValid());
-			TSharedPtr<FMutableOperation> CurrentMutableOperation = SystemPrivateData->CurrentMutableOperation;
-			check(CurrentMutableOperation);
-			bool bBuildParameterRelevancy = CurrentMutableOperation->IsBuildParameterRelevancy();
+			Mutable_GetMeshTask = SystemPrivateData->MutableTaskGraph.AddMutableThreadTask(
+				TEXT("Task_Mutable_GetMeshID"),
+				[Operation]()
+				{
+					impl::Task_Mutable_GetMeshID(Operation);
+				});
 
 			SystemPrivateData->AddGameThreadTask(
+				FMutableTask 
 				{
-				FMutableTaskDelegate::CreateLambda(
-					[CurrentOperationData, CustomizableObjectInstancePtr, bBuildParameterRelevancy, Parameters]()
+					FMutableTaskDelegate::CreateLambda(
+					[Operation]()
 					{
-						impl::Task_Game_LockCache(CurrentOperationData, CustomizableObjectInstancePtr, Parameters, bBuildParameterRelevancy);
+						impl::Task_Game_LockMeshCache(Operation);
 					}),
-				Mutable_GetMeshTask
+					{ Mutable_GetMeshTask }
 				});
+		}
+		else
+		{
+			Mutable_GetMeshTask = SystemPrivateData->MutableTaskGraph.AddMutableThreadTask(
+				TEXT("Task_Mutable_GetMeshes"),
+				[Operation]()
+				{
+					Task_Mutable_GetMeshes(Operation);
+				});
+
+			// Task: Lock cache
+			//-------------------------------------------------------------
+			{
+				// Task inputs
+				SystemPrivateData->AddGameThreadTask(
+					FMutableTask 
+					{
+						FMutableTaskDelegate::CreateLambda(
+						[Operation]()
+						{
+							impl::Task_Game_LockCache(Operation);
+						}),
+						{ Mutable_GetMeshTask }
+					});
+			}
 		}
 	}
 } // namespace impl
@@ -2535,66 +3234,78 @@ void UCustomizableObjectSystem::AdvanceCurrentOperation()
 		MUTABLE_CPUPROFILER_SCOPE(OperationUpdate);
 
 		// Start the first task of the update process. See namespace impl comments above.
-		impl::Task_Game_StartUpdate(Private->CurrentMutableOperation);
+		impl::Task_Game_StartUpdate(Private->CurrentMutableOperation.ToSharedRef());
 	}
 }
 
 
 bool UCustomizableObjectSystem::Tick(float DeltaTime)
 {
-	MUTABLE_CPUPROFILER_SCOPE(UCustomizableObjectSystem::Tick)
+	TickInternal();
+	return true;
+}
+
+
+int32 UCustomizableObjectSystem::TickInternal()
+{
+	MUTABLE_CPUPROFILER_SCOPE(UCustomizableObjectSystem::TickInternal)
+
+	check(IsInGameThread());
 	
 	// Building instances is not enabled in servers. If at some point relevant collision or animation data is necessary for server logic this will need to be changed.
 #if UE_SERVER
-	return true;
+	return 0;
 #endif
 
-	if (!Private.IsValid())
+	if (!Private)
 	{
-		return true;
+		return 0;
 	}
 
-	UWorld* World = GWorld;
-	if (World)
+	if (GWorld)
 	{
-		EWorldType::Type WorldType = World->WorldType;
+		const EWorldType::Type WorldType = GWorld->WorldType;
 
 		if (WorldType != EWorldType::PIE && WorldType != EWorldType::Game && WorldType != EWorldType::Editor && WorldType != EWorldType::GamePreview)
 		{
-			return true;
+			return 0;
 		}
 	}
 
 	// \TODO: Review: We should never compile an object from this tick, so this could be removed
 #if WITH_EDITOR
-	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+	const FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
 
 	if (AssetRegistryModule.Get().IsLoadingAssets())
 	{
-		return true; // Assets are still being loaded, so subobjects won't be found, compiled objects incomplete and thus updates wrong
+		return 0; // Assets are still being loaded, so subobjects won't be found, compiled objects incomplete and thus updates wrong
 	}
 
 	// Do not tick if the CookCommandlet is running.
 	if (IsRunningCookCommandlet())
 	{
-		return true;
+		return 0;
 	}
 #endif
+
+	Private->UpdateStats();
+
+	FMutableUpdateCandidate* LODUpdateCandidateFound = nullptr;
 	
 	// Get a new operation if we aren't working on one
-	if (!Private->CurrentMutableOperation)
+	if (!Private->CurrentMutableOperation && bIsMutableEnabled)
 	{
 		// Reset the instance relevancy
 		// The RequestedUpdates only refer to LOD changes. User Customization and discards are handled separately
 		FMutableInstanceUpdateMap RequestedLODUpdates;
 		
-		CurrentInstanceLODManagement->UpdateInstanceDistsAndLODs(RequestedLODUpdates);
+		GetPrivate()->CurrentInstanceLODManagement->UpdateInstanceDistsAndLODs(RequestedLODUpdates);
 
 		for (TObjectIterator<UCustomizableObjectInstance> CustomizableObjectInstance; CustomizableObjectInstance; ++CustomizableObjectInstance)
 		{
-			if (IsValidChecked(*CustomizableObjectInstance) && CustomizableObjectInstance->GetPrivate())
+			if (IsValid(*CustomizableObjectInstance) && CustomizableObjectInstance->GetPrivate())
 			{
-				UCustomizableInstancePrivateData* ObjectInstancePrivateData = CustomizableObjectInstance->GetPrivate();
+				UCustomizableInstancePrivate* ObjectInstancePrivateData = CustomizableObjectInstance->GetPrivate();
 
 				if (ObjectInstancePrivateData->HasCOInstanceFlags(UsedByComponentInPlay))
 				{
@@ -2618,35 +3329,32 @@ bool UCustomizableObjectSystem::Tick(float DeltaTime)
 			}
 		}
 
-		TSharedPtr<FMutableOperation> FoundOperation;
-
 		{
 			// Look for the highest priority update between the pending updates and the LOD Requested Updates
 			EQueuePriorityType MaxPriorityFound = EQueuePriorityType::Low;
 			double MaxSquareDistanceFound = TNumericLimits<double>::Max();
 			double MinTimeFound = TNumericLimits<double>::Max();
 			const FMutablePendingInstanceUpdate* PendingInstanceUpdateFound = nullptr;
-			FMutableUpdateCandidate* LODUpdateCandidateFound = nullptr;
 
 			// Look for the highest priority Pending Update
 			for (auto Iterator = Private->MutablePendingInstanceWork.GetUpdateIterator(); Iterator; ++Iterator)
 			{
 				FMutablePendingInstanceUpdate& PendingUpdate = *Iterator;
 
-				if (PendingUpdate.CustomizableObjectInstance.IsValid())
+				if (PendingUpdate.Context->Instance.IsValid())
 				{
-					EQueuePriorityType PriorityType = PendingUpdate.CustomizableObjectInstance->GetUpdatePriority(true, true, false, false);
+					const EQueuePriorityType PriorityType = Private->GetUpdatePriority(*PendingUpdate.Context->Instance, false);
 					
-					if (PendingUpdate.PriorityType <= MaxPriorityFound)
+					if (PendingUpdate.Context->PriorityType <= MaxPriorityFound)
 					{
-						const double MinSquareDistFromComponentToPlayer = PendingUpdate.CustomizableObjectInstance->GetPrivate()->MinSquareDistFromComponentToPlayer;
+						const double MinSquareDistFromComponentToPlayer = PendingUpdate.Context->Instance->GetPrivate()->MinSquareDistFromComponentToPlayer;
 						
 						if (MinSquareDistFromComponentToPlayer < MaxSquareDistanceFound ||
-							(MinSquareDistFromComponentToPlayer == MaxSquareDistanceFound && PendingUpdate.SecondsAtUpdate < MinTimeFound))
+							(MinSquareDistFromComponentToPlayer == MaxSquareDistanceFound && PendingUpdate.Context->StartQueueTime < MinTimeFound))
 						{
 							MaxPriorityFound = PriorityType;
 							MaxSquareDistanceFound = MinSquareDistFromComponentToPlayer;
-							MinTimeFound = PendingUpdate.SecondsAtUpdate;
+							MinTimeFound = PendingUpdate.Context->StartQueueTime;
 							PendingInstanceUpdateFound = &PendingUpdate;
 							LODUpdateCandidateFound = nullptr;
 						}
@@ -2700,51 +3408,38 @@ bool UCustomizableObjectSystem::Tick(float DeltaTime)
 			{
 				check(!LODUpdateCandidateFound);
 
-				UCustomizableObjectInstance* PendingInstance = PendingInstanceUpdateFound->CustomizableObjectInstance.Get();
-				ensure(PendingInstance);
+				UCustomizableObjectInstance* PendingInstance = PendingInstanceUpdateFound->Context->Instance.Get();
+				check(PendingInstance);
 
 				// Maybe there's a LODUpdate that has the same instance, merge both updates as an optimization
 				FMutableUpdateCandidate* LODUpdateWithSameInstance = RequestedLODUpdates.Find(PendingInstance);
 				
 				if (LODUpdateWithSameInstance)
 				{
-					LODUpdateWithSameInstance->ApplyLODUpdateParamsToInstance();
+					LODUpdateWithSameInstance->ApplyLODUpdateParamsToInstance(PendingInstanceUpdateFound->Context.Get());
 				}
 
-				// No need to do a DoUpdateSkeletalMesh, as it was already done when adding the pending update
-
-				FoundOperation = MakeShared<FMutableOperation>(FMutableOperation::CreateInstanceUpdate(PendingInstance,
-					PendingInstanceUpdateFound->bNeverStream, PendingInstanceUpdateFound->MipsToSkip, PendingInstanceUpdateFound->Callback));
-
-				Private->MutablePendingInstanceWork.RemoveUpdate(PendingInstanceUpdateFound->CustomizableObjectInstance);
+				Private->StartUpdateSkeletalMesh(PendingInstanceUpdateFound->Context);				
+				Private->MutablePendingInstanceWork.RemoveUpdate(PendingInstanceUpdateFound->Context->Instance);
 			}
-			else if(LODUpdateCandidateFound)
+			else if (LODUpdateCandidateFound)
 			{
+				UCustomizableObjectInstance* Instance = LODUpdateCandidateFound->CustomizableObjectInstance;
+				const FCustomizableObjectInstanceDescriptor& Descriptor = Instance->GetPrivate()->SkeletalMeshStatus == ESkeletalMeshStatus::NotGenerated ? Instance->GetDescriptor() : Instance->GetPrivate()->CommittedDescriptor;
+
+				const TSharedRef<FUpdateContextPrivate> Context = MakeShared<FUpdateContextPrivate>(*Instance, Descriptor);
+
 				// Commit the LOD changes
-				LODUpdateCandidateFound->ApplyLODUpdateParamsToInstance();
+				LODUpdateCandidateFound->ApplyLODUpdateParamsToInstance(*Context);
 
-				// No need to check if a PendingUpdate has the same instance, it would already have been caught in the 
-				// previous if statements
-
-				// LOD updates are detected automatically and have never had a DoUpdateSkeletalMesh, so call it without enqueing a new update
-				const EUpdateRequired Required = EUpdateRequired::Update;
-				LODUpdateCandidateFound->CustomizableObjectInstance->DoUpdateSkeletalMesh(true, false, false, false, &Required, nullptr);
-				
-				bool bNeverStream = false;
-				int32 MipsToSkip = 0;
-
-				ensure(LODUpdateCandidateFound->CustomizableObjectInstance);
-				GetPrivate()->GetMipStreamingConfig(*LODUpdateCandidateFound->CustomizableObjectInstance, bNeverStream, MipsToSkip);
-
-				FoundOperation = MakeShared<FMutableOperation>(FMutableOperation::CreateInstanceUpdate(LODUpdateCandidateFound->CustomizableObjectInstance,
-					bNeverStream, MipsToSkip, nullptr));
+				Private->StartUpdateSkeletalMesh(Context);
 			}
 		}
 
 		{
 			for (TObjectIterator<UCustomizableObjectInstance> CustomizableObjectInstance; CustomizableObjectInstance; ++CustomizableObjectInstance)
 			{
-				if (IsValidChecked(*CustomizableObjectInstance) && CustomizableObjectInstance->GetPrivate())
+				if (IsValid(*CustomizableObjectInstance) && CustomizableObjectInstance->GetPrivate())
 				{
 					CustomizableObjectInstance->GetPrivate()->LastMinSquareDistFromComponentToPlayer = CustomizableObjectInstance->GetPrivate()->MinSquareDistFromComponentToPlayer;
 					CustomizableObjectInstance->GetPrivate()->MinSquareDistFromComponentToPlayer = FLT_MAX;
@@ -2758,55 +3453,47 @@ bool UCustomizableObjectSystem::Tick(float DeltaTime)
 		// Free memory before starting the new update
 		DiscardInstances();
 		ReleaseInstanceIDs();
-
-		// Decide the next mutable operation to perform.
-		if (FoundOperation.IsValid())
-		{
-			Private->CurrentMutableOperation = FoundOperation;
-
-			UCustomizableObjectInstance* FoundInstance = Private->CurrentMutableOperation->CustomizableObjectInstance.Get();
-			
-			if (FoundInstance->GetPrivate()->HasCOInstanceFlags(ForceGenerateAllLODs))
-			{
-				Private->CurrentMutableOperation->bForceGenerateAllLODs = true;
-			}
-
-			Private->CurrentMutableOperation->CustomizableObjectInstance->GetPrivate()->InstanceUpdateFlags(*FoundInstance);
-		}
-		else
-		{
-			Private->CurrentMutableOperation = nullptr;
-		}
 	}
+	
 	// Advance the current operation
 	if (Private->CurrentMutableOperation)
 	{
 		AdvanceCurrentOperation();
 	}
-	
-	// TODO: T2927
-	if (LogBenchmarkUtil::isLoggingActive())
-	{
-		uint64 SizeCache = 0;
-		for (const UTexture2D* CachedTextures : ProtectedCachedTextures)
-		{
-			if (CachedTextures)
-			{
-				SizeCache += CachedTextures->CalcTextureMemorySizeEnum(TMC_AllMips);
-			}
-		}
-		SET_DWORD_STAT(STAT_MutableTextureCacheMemory, SizeCache / 1024.f);
-	}
-
-	Private->UpdateStats();
 
 #if WITH_EDITOR
 	TickRecompileCustomizableObjects();
+	GetPrivate()->TickMutableThreadDependencies();
 #endif
+	
+	const int32 RemainingTasks = Private->MutableTaskGraph.Tick();
 
-	Private->MutableTaskGraph.Tick();
+	Private->LogBenchmarkUtil.UpdateStats(); // Must to be the last thing to perform
 
-	return true;
+	if (!bIsMutableEnabled && !Private->CurrentMutableOperation)
+	{
+		if (GetMutableDefault<UCustomizableObjectSettings>()->bEnableStreamingManager)
+		{
+			FStreamingManagerCollection::Get().RemoveStreamingManager(GetPrivate());
+		}
+		else
+		{
+			// Mutable has been disabled. Unregister the ticker if there is no CurrentMutableOperation.
+			FTSTicker::GetCoreTicker().RemoveTicker(Private->TickDelegateHandle);
+			Private->TickDelegateHandle.Reset();
+		}
+	}
+
+	int32 RemainingWork = Private->CurrentMutableOperation.IsValid() + 
+		Private->MutablePendingInstanceWork.Num() +
+		static_cast<int32>(LODUpdateCandidateFound != nullptr) + // Still a pending LOD update. We can not use the size of RequestedLODUpdates since not all requests valid in future ticks.
+		RemainingTasks;
+
+#if WITH_EDITOR
+	RemainingWork += static_cast<int32>(GetPrivate()->RecompileCustomizableObjectsCompiler != nullptr); // Compiler only is valid if we are compiling a CO.
+#endif
+	
+	return RemainingWork;
 }
 
 
@@ -2819,47 +3506,32 @@ TAutoConsoleVariable<int32> CVarMaxNumInstancesToDiscardPerTick(
 
 void UCustomizableObjectSystem::DiscardInstances()
 {
+	MUTABLE_CPUPROFILER_SCOPE(DiscardInstances);
+
+	check(IsInGameThread());
+
 	// Handle instance discards
 	int32 NumInstancesDiscarded = 0;
 	const int32 DiscardLimitPerTick = CVarMaxNumInstancesToDiscardPerTick.GetValueOnGameThread();
 
-	for (auto Iterator = Private->MutablePendingInstanceWork.GetDiscardIterator(); Iterator && NumInstancesDiscarded < DiscardLimitPerTick; ++Iterator)
+	for (TSet<FMutablePendingInstanceDiscard, FPendingInstanceDiscardKeyFuncs>::TIterator Iterator = Private->MutablePendingInstanceWork.GetDiscardIterator();
+		Iterator && NumInstancesDiscarded < DiscardLimitPerTick;
+		++Iterator)
 	{
-		MUTABLE_CPUPROFILER_SCOPE(OperationDiscard);
 
 		UCustomizableObjectInstance* COI = Iterator->CustomizableObjectInstance.Get();
-
-		if (COI)
+		
+		const bool bUpdating = Private->CurrentMutableOperation && Private->CurrentMutableOperation->Instance == Iterator->CustomizableObjectInstance;
+		if (COI && COI->GetPrivate() && !bUpdating)
 		{
-			UCustomizableInstancePrivateData* COIPrivateData = COI ? COI->GetPrivate() : nullptr;
+			UCustomizableInstancePrivate* COIPrivateData = COI ? COI->GetPrivate() : nullptr;
 
 			// Only discard resources if the instance is still out range (it could have got closer to the player since the task was queued)
-			if (!CurrentInstanceLODManagement->IsOnlyUpdateCloseCustomizableObjectsEnabled() ||
-				!COI ||
-				((COIPrivateData != nullptr) &&
-					(COIPrivateData->LastMinSquareDistFromComponentToPlayer > FMath::Square(CurrentInstanceLODManagement->GetOnlyUpdateCloseCustomizableObjectsDist()))
-					)
-				)
+			if (!GetPrivate()->CurrentInstanceLODManagement->IsOnlyUpdateCloseCustomizableObjectsEnabled() ||
+				COIPrivateData->LastMinSquareDistFromComponentToPlayer > FMath::Square(GetPrivate()->CurrentInstanceLODManagement->GetOnlyUpdateCloseCustomizableObjectsDist()))
 			{
-				if (COI && COI->IsValidLowLevel())
-				{
-					check(COIPrivateData != nullptr);
-					COIPrivateData->DiscardResourcesAndSetReferenceSkeletalMesh(COI);
-					COIPrivateData->ClearCOInstanceFlags(Updating);
-					COI->SkeletalMeshStatus = ESkeletalMeshState::Correct;
-				}
-			}
-			else
-			{
-				check(COIPrivateData != nullptr);
-				COIPrivateData->ClearCOInstanceFlags(Updating);
-			}
-
-			if (COI && !COI->HasAnySkeletalMesh())
-			{
-				// To solve the problem in the Mutable demo where PIE just after editor start made all instances appear as reference mesh until editor restart
-				check(COIPrivateData != nullptr);
-				COIPrivateData->ClearCOInstanceFlags(Generated);
+				COIPrivateData->DiscardResources();
+				COIPrivateData->SetDefaultSkeletalMesh(!IsReplaceDiscardedWithReferenceMeshEnabled());
 			}
 		}
 
@@ -2893,11 +3565,22 @@ void UCustomizableObjectSystem::ReleaseInstanceIDs()
 }
 
 
+bool UCustomizableObjectSystem::IsUpdating(const UCustomizableObjectInstance* Instance) const
+{
+	if (!Instance)
+	{
+		return false;
+	}
+	
+	return GetPrivate()->IsUpdating(*Instance);
+}
+
+
 TArray<FCustomizableObjectExternalTexture> UCustomizableObjectSystem::GetTextureParameterValues()
 {
 	TArray<FCustomizableObjectExternalTexture> Result;
 
-	for (const TWeakObjectPtr<UCustomizableSystemImageProvider> Provider : GetPrivateChecked()->GetImageProviderChecked()->ImageProviders)
+	for (const TWeakObjectPtr<UCustomizableSystemImageProvider> Provider : GetPrivate()->GetImageProviderChecked()->ImageProviders)
 	{
 		if (Provider.IsValid())
 		{
@@ -2911,213 +3594,135 @@ TArray<FCustomizableObjectExternalTexture> UCustomizableObjectSystem::GetTexture
 
 void UCustomizableObjectSystem::RegisterImageProvider(UCustomizableSystemImageProvider* Provider)
 {
-	GetPrivateChecked()->GetImageProviderChecked()->ImageProviders.Add(Provider);
+	GetPrivate()->GetImageProviderChecked()->ImageProviders.Add(Provider);
 }
 
 
 void UCustomizableObjectSystem::UnregisterImageProvider(UCustomizableSystemImageProvider* Provider)
 {
-	GetPrivateChecked()->GetImageProviderChecked()->ImageProviders.Remove(Provider);
+	GetPrivate()->GetImageProviderChecked()->ImageProviders.Remove(Provider);
 }
 
 
-
-UDefaultImageProvider& UCustomizableObjectSystem::GetOrCreateDefaultImageProvider()
+void UCustomizableObjectSystemPrivate::CacheTextureParameters(const TArray<FCustomizableObjectTextureParameterValue>& TextureParameters) const
 {
-	if (!DefaultImageProvider)
+	for (const FCustomizableObjectTextureParameterValue& TextureParameter : TextureParameters)
 	{
-		DefaultImageProvider = NewObject<UDefaultImageProvider>();
-		RegisterImageProvider(DefaultImageProvider);
-	}
+		ImageProvider->CacheImage(TextureParameter.ParameterValue, false);
 
-	return *DefaultImageProvider;
-}
-
-static bool bRevertCacheTextureParameters = false;
-static FAutoConsoleVariableRef CVarRevertCacheTextureParameters(
-	TEXT("mutable.RevertCacheTextureParameters"), bRevertCacheTextureParameters,
-	TEXT("If true, FMutableOperation will not cache/uncache texture parameters. If false, FMutableOperation will add an additional reference to the TextureParameters being used in the update."));
-
-void CacheTexturesParameters(const TArray<FName>& TextureParameters)
-{
-	if (bRevertCacheTextureParameters)
-	{
-		return;
-	}
-
-	if (!TextureParameters.IsEmpty() && UCustomizableObjectSystem::IsCreated())
-	{
-		FUnrealMutableImageProvider* ImageProvider = UCustomizableObjectSystem::GetInstance()->GetPrivateChecked()->GetImageProviderChecked();
-		check(ImageProvider);
-
-		for (const FName& TextureParameter : TextureParameters)
+		for (const FName& RangeValue : TextureParameter.ParameterRangeValues)
 		{
-			ImageProvider->CacheImage(TextureParameter, false);
+			ImageProvider->CacheImage(RangeValue, false);
 		}
 	}
 }
 
 
-void UnCacheTexturesParameters(const TArray<FName>& TextureParameters)
+void UCustomizableObjectSystemPrivate::UnCacheTextureParameters(const TArray<FCustomizableObjectTextureParameterValue>& TextureParameters) const
 {
-	if (bRevertCacheTextureParameters)
+	for (const FCustomizableObjectTextureParameterValue& TextureParameter : TextureParameters)
 	{
-		return;
-	}
+		ImageProvider->UnCacheImage(TextureParameter.ParameterValue, false);
 
-	if (!TextureParameters.IsEmpty() && UCustomizableObjectSystem::IsCreated())
-	{
-		FUnrealMutableImageProvider* ImageProvider = UCustomizableObjectSystem::GetInstance()->GetPrivateChecked()->GetImageProviderChecked();
-		check(ImageProvider);
-
-		for (const FName& TextureParameter : TextureParameters)
+		for (const FName& RangeValue : TextureParameter.ParameterRangeValues)
 		{
-			ImageProvider->UnCacheImage(TextureParameter, false);
+			ImageProvider->UnCacheImage(RangeValue, false);
 		}
 	}
-}
-
-
-FMutableOperation::FMutableOperation(const FMutableOperation& Other)
-{
-	bNeverStream = Other.bNeverStream;
-	MipsToSkip = Other.MipsToSkip;
-	CustomizableObjectInstance = Other.CustomizableObjectInstance;
-	InstanceDescriptorRuntimeHash = Other.InstanceDescriptorRuntimeHash;
-	bStarted = Other.bStarted;
-	bBuildParameterRelevancy = Other.bBuildParameterRelevancy;
-	Parameters = Other.Parameters;
-	TextureParameters = Other.TextureParameters;
-	UpdateCallback = Other.UpdateCallback;
-
-	CacheTexturesParameters(TextureParameters);
-}
-
-
-FMutableOperation& FMutableOperation::operator=(const FMutableOperation& Other)
-{
-	bNeverStream = Other.bNeverStream;
-	MipsToSkip = Other.MipsToSkip;
-	CustomizableObjectInstance = Other.CustomizableObjectInstance;
-	InstanceDescriptorRuntimeHash = Other.InstanceDescriptorRuntimeHash;
-	bStarted = Other.bStarted;
-	bBuildParameterRelevancy = Other.bBuildParameterRelevancy;
-	Parameters = Other.Parameters;
-	TextureParameters = Other.TextureParameters;
-	UpdateCallback = Other.UpdateCallback;
-
-	CacheTexturesParameters(TextureParameters);
-
-	return *this;
-}
-
-
-FMutableOperation::~FMutableOperation()
-{
-	// Uncache Texture Parameters
-	UnCacheTexturesParameters(TextureParameters);
-}
-
-
-FMutableOperation FMutableOperation::CreateInstanceUpdate(UCustomizableObjectInstance* InCustomizableObjectInstance, bool bInNeverStream, int32 InMipsToSkip, const FInstanceUpdateDelegate* UpdateCallback)
-{
-	check(InCustomizableObjectInstance != nullptr);
-	check(InCustomizableObjectInstance->GetPrivate() != nullptr);
-	check(InCustomizableObjectInstance->GetCustomizableObject() != nullptr);
-
-	FMutableOperation Op;
-	Op.bNeverStream = bInNeverStream;
-	Op.MipsToSkip = InMipsToSkip;
-	Op.CustomizableObjectInstance = InCustomizableObjectInstance;
-	Op.InstanceDescriptorRuntimeHash = InCustomizableObjectInstance->GetUpdateDescriptorRuntimeHash();
-	Op.bStarted = false;
-	Op.bBuildParameterRelevancy = InCustomizableObjectInstance->GetBuildParameterRelevancy();
-	Op.Parameters = InCustomizableObjectInstance->GetDescriptor().GetParameters();
-	Op.TextureParameters = InCustomizableObjectInstance->GetPrivate()->UpdateTextureParameters;
-
-	if (UpdateCallback)
-	{
-		Op.UpdateCallback = *UpdateCallback;		
-	}
-	
-	InCustomizableObjectInstance->GetCustomizableObject()->ApplyStateForcedValuesToParameters(InCustomizableObjectInstance->GetState(), Op.Parameters.get());
-
-	if (!Op.Parameters)
-	{
-		// Cancel the update because the parameters aren't valid, probably because the object is not compiled
-		Op.CustomizableObjectInstance = nullptr;
-	}
-
-	CacheTexturesParameters(Op.TextureParameters);
-
-	return Op;
 }
 
 
 int32 UCustomizableObjectSystem::GetNumInstances() const
 {
-	check(Private != nullptr);
-	return Private->NumInstances;
+	int32 NumInstances;
+	int32 NumBuiltInstances;
+	int32 NumInstancesLOD0;
+	int32 NumInstancesLOD1;
+	int32 NumInstancesLOD2;
+	int32 NumAllocatedSkeletalMeshes;
+	GetPrivate()->LogBenchmarkUtil.GetInstancesStats(NumInstances, NumBuiltInstances, NumInstancesLOD0, NumInstancesLOD1, NumInstancesLOD2, NumAllocatedSkeletalMeshes);
+
+	return NumBuiltInstances;
 }
 
 int32 UCustomizableObjectSystem::GetNumPendingInstances() const
 {
-	check(Private != nullptr);
-	return Private->NumPendingInstances;
+	return GetPrivate()->MutablePendingInstanceWork.Num();
 }
 
 int32 UCustomizableObjectSystem::GetTotalInstances() const
 {
-	check(Private != nullptr);
-	return Private->TotalInstances;
+	int32 NumInstances = 0;
+	
+	for (TObjectIterator<UCustomizableObjectInstance> Instance; Instance; ++Instance)
+	{
+		if (!IsValid(*Instance) ||
+			Instance->HasAnyFlags(RF_ClassDefaultObject))
+		{
+			continue;
+		}
+				
+		++NumInstances;
+	}
+	return NumInstances;
 }
 
-int32 UCustomizableObjectSystem::GetTextureMemoryUsed() const
+int64 UCustomizableObjectSystem::GetTextureMemoryUsed() const
 {
-	check(Private != nullptr);
-	return int32(Private->TextureMemoryUsed);
+	return GetPrivate()->LogBenchmarkUtil.TextureGPUSize.GetValue();
 }
 
 int32 UCustomizableObjectSystem::GetAverageBuildTime() const
 {
-	check(Private != nullptr);
-	return Private->TotalBuiltInstances == 0 ? 0 : Private->TotalBuildMs / Private->TotalBuiltInstances;
+	return GetPrivate()->LogBenchmarkUtil.InstanceBuildTimeAvrg.GetValue() * 1000;
+}
+
+
+int32 UCustomizableObjectSystem::GetSkeletalMeshMinLODQualityLevel() const
+{
+	return GetPrivate()->SkeletalMeshMinLodQualityLevel;
 }
 
 
 bool UCustomizableObjectSystem::IsSupport16BitBoneIndexEnabled() const
 {
-	check(Private != nullptr);
-	return Private->bSupport16BitBoneIndex;
+	return GetPrivate()->bSupport16BitBoneIndex;
 }
 
 
 bool UCustomizableObjectSystem::IsProgressiveMipStreamingEnabled() const
 {
-	check(Private != nullptr);
-	return Private->EnableMutableProgressiveMipStreaming != 0;
+	return GetPrivate()->EnableMutableProgressiveMipStreaming != 0;
 }
 
 
 void UCustomizableObjectSystem::SetProgressiveMipStreamingEnabled(bool bIsEnabled)
 {
-	check(Private != nullptr);
-	Private->EnableMutableProgressiveMipStreaming = bIsEnabled ? 1 : 0;
+	GetPrivate()->EnableMutableProgressiveMipStreaming = bIsEnabled ? 1 : 0;
 }
 
 
 bool UCustomizableObjectSystem::IsOnlyGenerateRequestedLODsEnabled() const
 {
-	check(Private != nullptr);
-	return Private->EnableOnlyGenerateRequestedLODs != 0;
+	return GetPrivate()->EnableOnlyGenerateRequestedLODs != 0;
 }
 
 
 void UCustomizableObjectSystem::SetOnlyGenerateRequestedLODsEnabled(bool bIsEnabled)
 {
-	check(Private != nullptr);
-	Private->EnableOnlyGenerateRequestedLODs = bIsEnabled ? 1 : 0;
+	GetPrivate()->EnableOnlyGenerateRequestedLODs = bIsEnabled ? 1 : 0;
 }
+
+
+#if WITH_EDITOR
+void UCustomizableObjectSystem::SetImagePixelFormatOverride(const mu::FImageOperator::FImagePixelFormatFunc& InFunc)
+{
+	if (Private != nullptr)
+	{
+		Private->ImageFormatOverrideFunc = InFunc;
+	}
+}
+#endif
 
 
 void UCustomizableObjectSystem::AddUncompiledCOWarning(const UCustomizableObject& InObject, FString const* OptionalLogInfo)
@@ -3128,18 +3733,18 @@ void UCustomizableObjectSystem::AddUncompiledCOWarning(const UCustomizableObject
 
 #if WITH_EDITOR
 	// Mutable will spam these warnings constantly due to the tick and LOD manager checking for instances to update with every tick. Send only one message per CO in the editor.
-	if (UncompiledCustomizableObjectIds.Find(InObject.GetVersionId()) != INDEX_NONE)
+	if (GetPrivate()->UncompiledCustomizableObjectIds.Find(InObject.GetPrivate()->GetVersionId()) != INDEX_NONE)
 	{
 		return;
 	}
 	
 	// Add notification
-	UncompiledCustomizableObjectIds.Add(InObject.GetVersionId());
+	GetPrivate()->UncompiledCustomizableObjectIds.Add(InObject.GetPrivate()->GetVersionId());
 
 	FMessageLog MessageLog("Mutable");
 	MessageLog.Warning(FText::FromString(Msg));
 
-	if (!UncompiledCustomizableObjectsNotificationPtr.IsValid())
+	if (!GetPrivate()->UncompiledCustomizableObjectsNotificationPtr.IsValid())
 	{
 		FNotificationInfo Info(FText::FromString("Uncompiled Customizable Object/s found. Please, check the Message Log - Mutable for more information."));
 		Info.bFireAndForget = true;
@@ -3147,7 +3752,7 @@ void UCustomizableObjectSystem::AddUncompiledCOWarning(const UCustomizableObject
 		Info.FadeOutDuration = 1.0f;
 		Info.ExpireDuration = 5.0f;
 
-		UncompiledCustomizableObjectsNotificationPtr = FSlateNotificationManager::Get().AddNotification(Info);
+		GetPrivate()->UncompiledCustomizableObjectsNotificationPtr = FSlateNotificationManager::Get().AddNotification(Info);
 	}
 
 	const FString ErrorString = FString::Printf(
@@ -3164,21 +3769,22 @@ void UCustomizableObjectSystem::AddUncompiledCOWarning(const UCustomizableObject
 	UE_LOG(LogMutable, Error, TEXT("%s"), *ErrorString);
 }
 
+
 void UCustomizableObjectSystem::EnableBenchmark()
 {
-	LogBenchmarkUtil::startLogging();
+	CVarEnableBenchmark->Set(true);
 }
+
 
 void UCustomizableObjectSystem::EndBenchmark()
 {
-	LogBenchmarkUtil::shutdownAndSaveResults();
+	CVarEnableBenchmark->Set(false);
 }
 
 
 void UCustomizableObjectSystem::SetReleaseMutableTexturesImmediately(bool bReleaseTextures)
 {
-	check(Private != nullptr);
-	Private->bReleaseTexturesImmediately = bReleaseTextures;
+	GetPrivate()->bReleaseTexturesImmediately = bReleaseTextures;
 }
 
 
@@ -3186,7 +3792,7 @@ void UCustomizableObjectSystem::SetReleaseMutableTexturesImmediately(bool bRelea
 
 void UCustomizableObjectSystem::OnPreBeginPIE(const bool bIsSimulatingInEditor)
 {
-	if (!EditorSettings.bCompileRootObjectsOnStartPIE || IsRunningGame() || IsCompilationDisabled())
+	if (!EditorSettings.bCompileRootObjectsOnStartPIE || IsRunningGame())
 	{
 		return;
 	}
@@ -3210,7 +3816,7 @@ void UCustomizableObjectSystem::OnPreBeginPIE(const bool bIsSimulatingInEditor)
 		}
 		
 		const UCustomizableObject* Object = Cast<UCustomizableObject>(Asset.GetAsset());
-		if (!Object || Object->IsCompiled() || Object->IsLocked() || Object->bIsChildObject)
+		if (!Object || Object->IsCompiled() || Object->GetPrivate()->IsLocked() || Object->IsChildObject())
 		{
 			continue;
 		}
@@ -3221,10 +3827,10 @@ void UCustomizableObjectSystem::OnPreBeginPIE(const bool bIsSimulatingInEditor)
 
 	if (!TempObjectsToRecompile.IsEmpty())
 	{
-		FText Msg = FText::FromString(TEXT("Warning: one or more Customizable Objects used in PIE are uncompiled.\n\nDo you want to compile them?"));
+		const FText Msg = FText::FromString(TEXT("Warning: one or more Customizable Objects used in PIE are uncompiled.\n\nDo you want to compile them?"));
 		if (FMessageDialog::Open(EAppMsgType::OkCancel, Msg) == EAppReturnType::Ok)
 		{
-			ObjectsToRecompile.Empty(TempObjectsToRecompile.Num());
+			GetPrivate()->ObjectsToRecompile.Empty(TempObjectsToRecompile.Num());
 			RecompileCustomizableObjects(TempObjectsToRecompile);
 		}
 	}
@@ -3232,40 +3838,42 @@ void UCustomizableObjectSystem::OnPreBeginPIE(const bool bIsSimulatingInEditor)
 
 void UCustomizableObjectSystem::StartNextRecompile()
 {
-	CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS);
-
-	FAssetData Itr = ObjectsToRecompile.Pop();
-	UCustomizableObject* CustomizableObject = Cast<UCustomizableObject>(Itr.GetAsset());
-
-	if (CustomizableObject)
+	if (GEngine)
 	{
-		FText UpdateMsg = FText::FromString(FString::Printf(TEXT("Compiling Customizable Objects:\n%s"), *CustomizableObject->GetName()));
-		FSlateNotificationManager::Get().UpdateProgressNotification(RecompileNotificationHandle, NumObjectsCompiled, TotalNumObjectsToRecompile, UpdateMsg);
+		GEngine->ForceGarbageCollection();
+	}
+
+	FAssetData Itr = GetPrivate()->ObjectsToRecompile.Pop();
+
+	if (UCustomizableObject* CustomizableObject = Cast<UCustomizableObject>(Itr.GetAsset()))
+	{
+		const FText UpdateMsg = FText::FromString(FString::Printf(TEXT("Compiling Customizable Objects:\n%s"), *CustomizableObject->GetName()));
+		FSlateNotificationManager::Get().UpdateProgressNotification(GetPrivate()->RecompileNotificationHandle, GetPrivate()->NumObjectsCompiled, GetPrivate()->TotalNumObjectsToRecompile, UpdateMsg);
 
 		// Use default options
 		FCompilationOptions Options = CustomizableObject->CompileOptions;
 		Options.bSilentCompilation = true;
-		check(RecompileCustomizableObjectsCompiler != nullptr);
-		RecompileCustomizableObjectsCompiler->Compile(*CustomizableObject, Options, true);
+		check(GetPrivate()->RecompileCustomizableObjectsCompiler != nullptr);
+		GetPrivate()->RecompileCustomizableObjectsCompiler->Compile(*CustomizableObject, Options, true);
 	}
 }
 
 void UCustomizableObjectSystem::RecompileCustomizableObjectAsync(const FAssetData& InAssetData,
 	const UCustomizableObject* InObject)
 {
-	if (IsRunningGame() || IsCompilationDisabled())
+	if (!IsActive() || IsRunningGame())
 	{
 		return;
 	}
 	
-	if ((InObject && InObject->IsLocked()) || ObjectsToRecompile.Find((InAssetData)) != INDEX_NONE)
+	if ((InObject && InObject->GetPrivate()->IsLocked()) || GetPrivate()->ObjectsToRecompile.Find((InAssetData)) != INDEX_NONE)
 	{
 		return;
 	}
 	
-	if (!ObjectsToRecompile.IsEmpty())
+	if (!GetPrivate()->ObjectsToRecompile.IsEmpty())
 	{
-		ObjectsToRecompile.Add(InAssetData);
+		GetPrivate()->ObjectsToRecompile.Add(InAssetData);
 	}
 	else
 	{
@@ -3275,36 +3883,36 @@ void UCustomizableObjectSystem::RecompileCustomizableObjectAsync(const FAssetDat
 
 void UCustomizableObjectSystem::RecompileCustomizableObjects(const TArray<FAssetData>& InObjects)
 {
-	if (IsRunningGame() || IsCompilationDisabled())
+	if (!IsActive() || IsRunningGame())
 	{
 		return;
 	}
 
 	if (InObjects.Num())
 	{
-		if (!RecompileCustomizableObjectsCompiler)
+		if (!GetPrivate()->RecompileCustomizableObjectsCompiler)
 		{
-			RecompileCustomizableObjectsCompiler = GetNewCompiler();
+			GetPrivate()->RecompileCustomizableObjectsCompiler = GetNewCompiler();
 
-			if (!RecompileCustomizableObjectsCompiler)
+			if (!GetPrivate()->RecompileCustomizableObjectsCompiler)
 			{
 				return;
 			}
 		}
 
-		ObjectsToRecompile.Append(InObjects);
+		GetPrivate()->ObjectsToRecompile.Append(InObjects);
 
-		TotalNumObjectsToRecompile = ObjectsToRecompile.Num();
-		NumObjectsCompiled = 0;
+		GetPrivate()->TotalNumObjectsToRecompile = GetPrivate()->ObjectsToRecompile.Num();
+		GetPrivate()->NumObjectsCompiled = 0;
 
-		if (RecompileNotificationHandle.IsValid())
+		if (GetPrivate()->RecompileNotificationHandle.IsValid())
 		{
-			++TotalNumObjectsToRecompile;
-			FSlateNotificationManager::Get().UpdateProgressNotification(RecompileNotificationHandle, NumObjectsCompiled, TotalNumObjectsToRecompile);
+			++GetPrivate()->TotalNumObjectsToRecompile;
+			FSlateNotificationManager::Get().UpdateProgressNotification(GetPrivate()->RecompileNotificationHandle, GetPrivate()->NumObjectsCompiled, GetPrivate()->TotalNumObjectsToRecompile);
 		}
 		else
 		{
-			RecompileNotificationHandle = FSlateNotificationManager::Get().StartProgressNotification(FText::FromString(TEXT("Compiling Customizable Objects")), TotalNumObjectsToRecompile);
+			GetPrivate()->RecompileNotificationHandle = FSlateNotificationManager::Get().StartProgressNotification(FText::FromString(TEXT("Compiling Customizable Objects")), GetPrivate()->TotalNumObjectsToRecompile);
 			StartNextRecompile();
 		}
 	}
@@ -3315,33 +3923,56 @@ void UCustomizableObjectSystem::TickRecompileCustomizableObjects()
 {
 	bool bUpdated = false;
 	
-	if (RecompileCustomizableObjectsCompiler)
+	if (GetPrivate()->RecompileCustomizableObjectsCompiler)
 	{
-		bUpdated = RecompileCustomizableObjectsCompiler->Tick() || RecompileCustomizableObjectsCompiler->GetCompilationState() == ECustomizableObjectCompilationState::Failed;
+		bUpdated = GetPrivate()->RecompileCustomizableObjectsCompiler->Tick() || GetPrivate()->RecompileCustomizableObjectsCompiler->GetCompilationState() == ECustomizableObjectCompilationState::Failed;
 	}
 
 	if (bUpdated)
 	{
-		NumObjectsCompiled++;
+		GetPrivate()->NumObjectsCompiled++;
 
-		if (!ObjectsToRecompile.IsEmpty())
+		if (!GetPrivate()->ObjectsToRecompile.IsEmpty())
 		{
 			StartNextRecompile();
 		}
 		else // All objects compiled, clean up
 		{
 			// Delete compiler
-			delete RecompileCustomizableObjectsCompiler;
-			RecompileCustomizableObjectsCompiler = nullptr;
+			delete GetPrivate()->RecompileCustomizableObjectsCompiler;
+			GetPrivate()->RecompileCustomizableObjectsCompiler = nullptr;
 
 			// Remove progress bar
-			FSlateNotificationManager::Get().UpdateProgressNotification(RecompileNotificationHandle, NumObjectsCompiled, TotalNumObjectsToRecompile);
-			FSlateNotificationManager::Get().CancelProgressNotification(RecompileNotificationHandle);
-			RecompileNotificationHandle.Reset();
+			FSlateNotificationManager::Get().UpdateProgressNotification(GetPrivate()->RecompileNotificationHandle, GetPrivate()->NumObjectsCompiled, GetPrivate()->TotalNumObjectsToRecompile);
+			FSlateNotificationManager::Get().CancelProgressNotification(GetPrivate()->RecompileNotificationHandle);
+			GetPrivate()->RecompileNotificationHandle.Reset();
 
-			CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS);
+			if (GEngine)
+			{
+				GEngine->ForceGarbageCollection();
+			}
 		}
 	}
+}
+
+
+void UCustomizableObjectSystem::SetWorkingMemory(int32 Bytes)
+{
+	WorkingMemory = Bytes;
+	UE_LOG(LogMutable, Log, TEXT("Working Memory set to %i bytes."), Bytes);
+}
+
+
+int32 UCustomizableObjectSystem::GetWorkingMemory() const
+{
+	return WorkingMemory;
+}
+
+
+void UCustomizableObjectSystemPrivate::TickMutableThreadDependencies()
+{
+	check(IsInGameThread());
+	ImageProvider->Tick();
 }
 
 
@@ -3349,7 +3980,7 @@ uint64 UCustomizableObjectSystem::GetMaxChunkSizeForPlatform(const ITargetPlatfo
 {
 	const FString& PlatformName = TargetPlatform ? TargetPlatform->IniPlatformName() : FPlatformProperties::IniPlatformName();
 
-	if (const int64* CachedMaxChunkSize = PlatformMaxChunkSize.Find(PlatformName))
+	if (const int64* CachedMaxChunkSize = GetPrivate()->PlatformMaxChunkSize.Find(PlatformName))
 	{
 		return *CachedMaxChunkSize;
 	}
@@ -3373,7 +4004,7 @@ uint64 UCustomizableObjectSystem::GetMaxChunkSizeForPlatform(const ITargetPlatfo
 		MaxChunkSize = MUTABLE_STREAMED_DATA_MAXCHUNKSIZE;
 	}
 
-	PlatformMaxChunkSize.Add(PlatformName, MaxChunkSize);
+	GetPrivate()->PlatformMaxChunkSize.Add(PlatformName, MaxChunkSize);
 
 	return MaxChunkSize;
 }
@@ -3383,23 +4014,23 @@ uint64 UCustomizableObjectSystem::GetMaxChunkSizeForPlatform(const ITargetPlatfo
 
 void UCustomizableObjectSystem::CacheImage(FName ImageId)
 {
-	GetPrivateChecked()->GetImageProviderChecked()->CacheImage(ImageId, true);
+	GetPrivate()->GetImageProviderChecked()->CacheImage(ImageId, true);
 }
 
 
 void UCustomizableObjectSystem::UnCacheImage(FName ImageId)
 {
-	GetPrivateChecked()->GetImageProviderChecked()->UnCacheImage(ImageId, true);
+	GetPrivate()->GetImageProviderChecked()->UnCacheImage(ImageId, true);
 }
 
 
 void UCustomizableObjectSystem::ClearImageCache()
 {
-	GetPrivateChecked()->GetImageProviderChecked()->ClearCache(true);
+	GetPrivate()->GetImageProviderChecked()->ClearCache(true);
 }
 
 
-bool FCustomizableObjectSystemPrivate::IsMutableAnimInfoDebuggingEnabled() const
+bool UCustomizableObjectSystemPrivate::IsMutableAnimInfoDebuggingEnabled() const
 { 
 #if WITH_EDITORONLY_DATA
 	return EnableMutableAnimInfoDebugging > 0;
@@ -3409,18 +4040,146 @@ bool FCustomizableObjectSystemPrivate::IsMutableAnimInfoDebuggingEnabled() const
 }
 
 
-FUnrealMutableImageProvider* FCustomizableObjectSystemPrivate::GetImageProviderChecked() const
+FUnrealMutableImageProvider* UCustomizableObjectSystemPrivate::GetImageProviderChecked() const
 {
 	check(ImageProvider)
 	return ImageProvider.Get();
 }
 
 
+void UCustomizableObjectSystemPrivate::OnMutableEnabledChanged(IConsoleVariable* MutableEnabled)
+{
+	if (!UCustomizableObjectSystem::IsCreated())
+	{
+		return;
+	}
+
+	UCustomizableObjectSystem* System = UCustomizableObjectSystem::GetInstance();
+	UCustomizableObjectSystemPrivate* SystemPrivate = System->GetPrivate();
+
+	if (bIsMutableEnabled)
+	{
+#if !UE_SERVER
+		if (GetMutableDefault<UCustomizableObjectSettings>()->bEnableStreamingManager)
+		{
+			FStreamingManagerCollection::Get().RemoveStreamingManager(SystemPrivate); // Avoid being added twice
+			FStreamingManagerCollection::Get().AddStreamingManager(SystemPrivate);
+		}
+		else
+		{
+			if (!SystemPrivate->TickDelegateHandle.IsValid())
+			{
+				SystemPrivate->TickDelegate = FTickerDelegate::CreateUObject(System, &UCustomizableObjectSystem::Tick);
+				SystemPrivate->TickDelegateHandle = FTSTicker::GetCoreTicker().AddTicker(SystemPrivate->TickDelegate, 0.f);
+			}			
+		}
+#endif // !UE_SERVER
+
+#if WITH_EDITOR
+		if (!IsRunningGame() && !FEditorDelegates::PreBeginPIE.IsBoundToObject(System))
+		{
+			FEditorDelegates::PreBeginPIE.AddUObject(System, &UCustomizableObjectSystem::OnPreBeginPIE);
+		}
+#endif
+	}
+	else
+	{
+#if WITH_EDITOR
+		FEditorDelegates::PreBeginPIE.RemoveAll(System);
+#endif
+	}
+}
+
+
+void UCustomizableObjectSystemPrivate::StartUpdateSkeletalMesh(const TSharedRef<FUpdateContextPrivate>& Context)
+{
+	Context->UpdateStarted = true;
+	TRACE_BEGIN_REGION(UE_MUTABLE_UPDATE_REGION);
+
+	check(!CurrentMutableOperation); // Can not start an update if there is already another in progress
+	check(Context->Instance.IsValid()) // The instance has to be alive to start the update
+
+	const uint32 InstanceId = Context->Instance->GetUniqueID();
+	UE_LOG(LogMutable, Log, TEXT("Started UpdateSkeletalMesh Async. Instance=%d, Frame=%d"), InstanceId, GFrameNumber);				
+			
+	CurrentMutableOperation = Context;
+}
+
+
+bool UCustomizableObjectSystemPrivate::IsUpdating(const UCustomizableObjectInstance& Instance) const
+{
+	if (CurrentMutableOperation && CurrentMutableOperation->Instance.Get() == &Instance)
+	{
+		return true;
+	}
+
+	if (MutablePendingInstanceWork.GetUpdate(TWeakObjectPtr<const UCustomizableObjectInstance>(&Instance)))
+	{
+		return true;
+	}
+	
+	return false;
+}
+
+
+void UCustomizableObjectSystemPrivate::UpdateStats()
+{
+	NumSkeletalMeshes = 0;
+	
+	for (TObjectIterator<UCustomizableObjectInstance> Instance; Instance; ++Instance)
+	{
+		if (!IsValid(*Instance))
+		{
+			continue;
+		}
+
+		NumSkeletalMeshes += Instance->GetPrivate()->SkeletalMeshes.Num();
+	}
+}
+
+
 bool UCustomizableObjectSystem::IsMutableAnimInfoDebuggingEnabled() const
 {
 #if WITH_EDITOR
-	return GetPrivateChecked()->IsMutableAnimInfoDebuggingEnabled();
+	return GetPrivate()->IsMutableAnimInfoDebuggingEnabled();
 #else
 	return false;
 #endif
 }
+
+
+void UCustomizableObjectSystemPrivate::UpdateResourceStreaming(float DeltaTime, bool bProcessEverything)
+{
+	GetPublic()->TickInternal();
+}
+
+
+int32 UCustomizableObjectSystemPrivate::BlockTillAllRequestsFinished(float TimeLimit, bool bLogResults)
+{
+	const double BlockEndTime = FPlatformTime::Seconds() + TimeLimit;
+
+	int32 RemainingWork = TNumericLimits<int32>::Max();
+	
+	if (TimeLimit == 0.0f)
+	{
+		while (RemainingWork > 0)
+		{
+			RemainingWork = GetPublic()->TickInternal();
+		}
+	}
+	else
+	{
+		while (RemainingWork > 0)
+		{			
+			if (FPlatformTime::Seconds() > BlockEndTime)
+			{
+				return RemainingWork;
+			}
+			
+			RemainingWork = GetPublic()->TickInternal();
+		}
+	}
+
+	return 0;
+}
+

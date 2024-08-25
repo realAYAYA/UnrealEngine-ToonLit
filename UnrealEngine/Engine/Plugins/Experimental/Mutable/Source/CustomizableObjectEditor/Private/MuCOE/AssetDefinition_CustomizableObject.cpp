@@ -4,15 +4,17 @@
 
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetToolsModule.h"
+#include "AssetViewUtils.h"
 #include "ContentBrowserMenuContexts.h"
 #include "ContentBrowserModule.h"
+#include "CustomizableObjectEditor.h"
 #include "Editor.h"
 #include "IContentBrowserSingleton.h"
 #include "Misc/MessageDialog.h"
 #include "MuCO/CustomizableObject.h"
 #include "MuCO/CustomizableObjectInstance.h"
 #include "MuCO/CustomizableObjectSystem.h"
-#include "MuCOE/CustomizableObjectEditorModule.h"
+#include "MuCO/ICustomizableObjectEditorModule.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "ToolMenus.h"
 
@@ -25,8 +27,8 @@ EAssetCommandResult UAssetDefinition_CustomizableObject::OpenAssets(const FAsset
 	
 	for (UCustomizableObject* Object : OpenArgs.LoadObjects<UCustomizableObject>())
 	{
-		ICustomizableObjectEditorModule* CustomizableObjectEditorModule = &FModuleManager::LoadModuleChecked<ICustomizableObjectEditorModule>( "CustomizableObjectEditor" );
-		CustomizableObjectEditorModule->CreateCustomizableObjectEditor(Mode, OpenArgs.ToolkitHost, Object);
+		const TSharedPtr<FCustomizableObjectEditor> Editor = MakeShared<FCustomizableObjectEditor>(*Object);
+		Editor->InitCustomizableObjectEditor(Mode, OpenArgs.ToolkitHost);
 	}
 
 	return EAssetCommandResult::Handled;
@@ -148,8 +150,18 @@ namespace MenuExtension_CustomizableObject
 		
 		for (UCustomizableObject* Object : Context->LoadSelectedObjects<UCustomizableObject>())
 		{
-			ICustomizableObjectEditorModule& CustomizableObjectEditorModule = FModuleManager::LoadModuleChecked<ICustomizableObjectEditorModule>("CustomizableObjectEditor");
-			CustomizableObjectEditorModule.CreateCustomizableObjectDebugger(EToolkitMode::Standalone, nullptr , Object);
+			if (!AssetViewUtils::OpenEditorForAsset(Object))
+			{
+				continue;
+			}
+
+			if (IAssetEditorInstance* AssetEditor = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->FindEditorForAsset(Object, true))
+			{
+				if (const FCustomizableObjectEditor* CustomizableObjectEditor = StaticCast<FCustomizableObjectEditor*>(AssetEditor))
+				{
+					CustomizableObjectEditor->DebugObject();
+				}
+			}
 		}
 	}
 

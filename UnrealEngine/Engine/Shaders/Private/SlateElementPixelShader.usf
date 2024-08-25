@@ -101,7 +101,7 @@ void GetSlateUVs(VertexToPixelInterpolants Interpolants, inout float2 UVs[8])
 #if USE_MATERIALS
 void FillTexCoords( inout FMaterialPixelParameters Parameters, VertexToPixelInterpolants InVertex, float2 InDefaultUV )
 {
-#if SHADER_TYPE == ST_GrayscaleFont || SHADER_TYPE == ST_ColorFont
+#if SHADER_TYPE == ST_GrayscaleFont || SHADER_TYPE == ST_ColorFont || SHADER_TYPE == ST_SdfFont || SHADER_TYPE == ST_MsdfFont
 	#if NUM_MATERIAL_TEXCOORDS == 1
 		// Note: The first channel is used to look up into the texture atlas. The second channel is the custom 0-1 UV set for the text run
 		Parameters.TexCoords[0] = SLATE_UV1( InVertex );
@@ -162,24 +162,25 @@ half4 GetMaterialColor( VertexToPixelInterpolants InVertex, float2 MeshUV )
 
 	half4 OutColor;
 	
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 
-	// UI element are always rendered with a unlit BSDF behind the scene
-	FStrataBSDF UnlitBSDF = PixelMaterialInputs.FrontMaterial.InlinedBSDF;
-	UnlitBSDF.StrataSanitizeBSDF();
+	// UI node forces a single unlit BSDF. We get the raw data from light function node from the raw BSDF on the tree.
+	FSubstratePixelHeader SubstratePixelHeader = Parameters.GetFrontSubstrateHeader();
+	FSubstrateBSDF UnlitBSDF = SubstratePixelHeader.SubstrateTree.BSDFs[0];
+	UnlitBSDF.SubstrateSanitizeBSDF(); // required wehen not calling SubstrateUpdateTreeUnlit
 
-#if ((STRATA_OPAQUE_DEFERRED || (STRATA_OPAQUE_MATERIAL && STRATA_FORWARD_SHADING)))
+#if ((SUBSTRATE_OPAQUE_DEFERRED || (SUBSTRATE_OPAQUE_MATERIAL && SUBSTRATE_FORWARD_SHADING)))
 
 	OutColor = half4(BSDF_GETEMISSIVE(UnlitBSDF), 1.0f);
 
-#else // STRATA_OPAQUE_DEFERRED
+#else // SUBSTRATE_OPAQUE_DEFERRED
 
 	float3 Color = BSDF_GETEMISSIVE(UnlitBSDF);
 	float Coverage = saturate(1.0f - UNLIT_TRANSMITTANCE(UnlitBSDF).x);	// Unlit node transmittance is only generated from opacity
 
 #if MATERIALBLENDING_ALPHACOMPOSITE
 
-#if STRATA_USE_PREMULTALPHA_OVERRIDE // AlphaComposite - Premultiplied alpha blending
+#if SUBSTRATE_USE_PREMULTALPHA_OVERRIDE // AlphaComposite - Premultiplied alpha blending
 	Coverage = GetMaterialOpacity(PixelMaterialInputs);
 #endif
 	OutColor = half4(Color, Coverage);
@@ -192,9 +193,9 @@ half4 GetMaterialColor( VertexToPixelInterpolants InVertex, float2 MeshUV )
 	OutColor = half4(Color * Coverage, Coverage);
 #endif // MATERIALBLENDING_xxx
 
-#endif// STRATA_OPAQUE_DEFERRED
+#endif// SUBSTRATE_OPAQUE_DEFERRED
 
-#else // STRATA_ENABLED
+#else // SUBSTRATE_ENABLED
 
 	half Opacity = GetMaterialOpacity(PixelMaterialInputs);
 	half3 Color = GetMaterialEmissive(PixelMaterialInputs);
@@ -205,7 +206,7 @@ half4 GetMaterialColor( VertexToPixelInterpolants InVertex, float2 MeshUV )
 	OutColor = half4(Color, Opacity);
 #endif
 
-#endif // STRATA_ENABLED
+#endif // SUBSTRATE_ENABLED
 
 	return OutColor;
 }
@@ -267,6 +268,35 @@ half4 GetColor( VertexToPixelInterpolants InVertex, float2 UV )
 	return FinalColor;
 }
 
+#if SHADER_TYPE == ST_SdfFont || SHADER_TYPE == ST_MsdfFont
+half4 GetSdfTextElementColor( VertexToPixelInterpolants InVertex )
+{
+	const float2 AtlasTextureCoordinates = SLATE_UV0( InVertex );
+#if USE_MATERIALS
+	half4 OutColor = GetMaterialColor( InVertex, float2(0,0) ) * InVertex.Color;
+#else
+	half4 OutColor = InVertex.Color;
+#endif
+
+	const float4 MultiDistance = float4(Texture2DSample( ElementTexture, ElementTextureSampler, AtlasTextureCoordinates ));
+#if SHADER_TYPE == ST_MsdfFont
+	const float SampledDistance = max(min(MultiDistance.r, MultiDistance.g), min(max(MultiDistance.r, MultiDistance.g), MultiDistance.b));
+#else
+	const float SampledDistance = lerp(MultiDistance A8_SAMPLE_MASK, MultiDistance.a, ShaderParams.w);
+#endif
+	const float2 ScreenSpaceTextureSize = float2(1.0, 1.0) / fwidth(AtlasTextureCoordinates);
+	const float ScreenSpaceSpread = max(dot(ShaderParams.xy, ScreenSpaceTextureSize), 1.0);
+	const float ScreenSpaceDistance = (SampledDistance - ShaderParams.z) * ScreenSpaceSpread;
+	#if USE_MATERIALS && (MATERIALBLENDING_ADDITIVE || MATERIALBLENDING_ALPHACOMPOSITE)
+		OutColor *= half(saturate(ScreenSpaceDistance + 0.5));
+	#else
+		OutColor.a *= half(saturate(ScreenSpaceDistance + 0.5));
+	#endif
+
+	return OutColor;
+}
+#endif
+
 #if SHADER_TYPE == ST_GrayscaleFont || SHADER_TYPE == ST_ColorFont
 half4 GetFontElementColor( VertexToPixelInterpolants InVertex )
 {
@@ -279,7 +309,7 @@ half4 GetFontElementColor( VertexToPixelInterpolants InVertex )
 	half4 OutColor = BaseColor;
 
 #if SHADER_TYPE == ST_GrayscaleFont
-	#if USE_MATERIALS && MATERIALBLENDING_ADDITIVE
+	#if USE_MATERIALS && (MATERIALBLENDING_ADDITIVE || MATERIALBLENDING_ALPHACOMPOSITE)
 		OutColor *= Texture2DSample_A8( ElementTexture, ElementTextureSampler, AtlasTextureCoordinates );
 	#else
 		OutColor.a *= Texture2DSample_A8( ElementTexture, ElementTextureSampler, AtlasTextureCoordinates );
@@ -380,6 +410,8 @@ HALF4_TYPE Main( VertexToPixelInterpolants VIn ) : SV_Target0
 	OutColor = GetBorderElementColor( VIn );
 #elif SHADER_TYPE == ST_GrayscaleFont || SHADER_TYPE == ST_ColorFont
 	OutColor = GetFontElementColor( VIn );
+#elif SHADER_TYPE == ST_SdfFont || SHADER_TYPE == ST_MsdfFont
+	OutColor = GetSdfTextElementColor( VIn );
 #else
 	OutColor = GetLineSegmentElementColor( VIn );
 #endif

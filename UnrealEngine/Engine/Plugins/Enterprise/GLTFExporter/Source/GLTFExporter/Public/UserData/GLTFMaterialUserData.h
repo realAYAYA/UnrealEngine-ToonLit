@@ -20,25 +20,6 @@ enum class EGLTFMaterialBakeMode : uint8
 };
 
 UENUM(BlueprintType)
-enum class EGLTFMaterialBakeSizePOT : uint8
-{
-	POT_1 UMETA(DisplayName = "1 x 1"),
-	POT_2 UMETA(DisplayName = "2 x 2"),
-	POT_4 UMETA(DisplayName = "4 x 4"),
-	POT_8 UMETA(DisplayName = "8 x 8"),
-	POT_16 UMETA(DisplayName = "16 x 16"),
-	POT_32 UMETA(DisplayName = "32 x 32"),
-	POT_64 UMETA(DisplayName = "64 x 64"),
-	POT_128 UMETA(DisplayName = "128 x 128"),
-	POT_256 UMETA(DisplayName = "256 x 256"),
-	POT_512 UMETA(DisplayName = "512 x 512"),
-	POT_1024 UMETA(DisplayName = "1024 x 1024"),
-	POT_2048 UMETA(DisplayName = "2048 x 2048"),
-	POT_4096 UMETA(DisplayName = "4096 x 4096"),
-	POT_8192 UMETA(DisplayName = "8192 x 8192")
-};
-
-UENUM(BlueprintType)
 enum class EGLTFMaterialPropertyGroup : uint8
 {
 	None UMETA(DisplayName = "None"),
@@ -50,6 +31,24 @@ enum class EGLTFMaterialPropertyGroup : uint8
 	AmbientOcclusion UMETA(DisplayName = "Ambient Occlusion"),
 	ClearCoatRoughness UMETA(DisplayName = "Clear Coat + Clear Coat Roughness"),
 	ClearCoatBottomNormal UMETA(DisplayName = "Clear Coat Bottom Normal"),
+};
+
+USTRUCT(Blueprintable)
+struct FGLTFMaterialBakeSize
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "")
+	int32 X = 1;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "")
+	int32 Y = 1;
+
+	/** If enabled, bake size is based on the largest texture used in the material input's expression graph. If none found, bake size will fall back to the explicit dimensions. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "")
+	bool bAutoDetect = false;
+
+	static FGLTFMaterialBakeSize Default;
 };
 
 USTRUCT(Blueprintable)
@@ -65,7 +64,7 @@ struct FGLTFOverrideMaterialBakeSettings
 
 	/** Overrides default size of the baked out texture. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "", meta = (EditCondition = "bOverrideSize"))
-	EGLTFMaterialBakeSizePOT Size;
+	FGLTFMaterialBakeSize Size;
 
 	/** If enabled, default filtering mode will be overridden by the corresponding property. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "", meta = (InlineEditConditionToggle))
@@ -108,7 +107,7 @@ public:
 
 	static const UMaterialInterface* ResolveProxy(const UMaterialInterface* Material);
 
-	static EGLTFMaterialBakeSizePOT GetBakeSizeForPropertyGroup(const UMaterialInterface* Material, EGLTFMaterialPropertyGroup PropertyGroup, EGLTFMaterialBakeSizePOT DefaultValue);
+	static FGLTFMaterialBakeSize GetBakeSizeForPropertyGroup(const UMaterialInterface* Material, EGLTFMaterialPropertyGroup PropertyGroup, FGLTFMaterialBakeSize DefaultValue);
 	static TextureFilter GetBakeFilterForPropertyGroup(const UMaterialInterface* Material, EGLTFMaterialPropertyGroup PropertyGroup, TextureFilter DefaultValue);
 	static TextureAddress GetBakeTilingForPropertyGroup(const UMaterialInterface* Material, EGLTFMaterialPropertyGroup PropertyGroup, TextureAddress DefaultValue);
 

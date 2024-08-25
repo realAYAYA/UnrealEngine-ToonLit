@@ -17,7 +17,6 @@
 #include "Interfaces/IMainFrameModule.h"
 #include "ContentBrowserModule.h"
 #include "IDocumentation.h"
-#include "Animation/Rig.h"
 #include "AnimPreviewInstance.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AnimationRuntime.h"

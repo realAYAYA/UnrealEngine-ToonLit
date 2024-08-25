@@ -5,13 +5,6 @@
 #include "PerPlatformProperties.h"
 #include "Templates/SubclassOf.h"
 
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "Engine/DeveloperSettings.h"
-#include "Animation/AnimBlueprint.h"
-#include "Animation/AnimSequence.h"
-#include "Animation/Skeleton.h"
-#include "Engine/SkeletalMesh.h"
-#endif
 #include "AnimationSharingTypes.generated.h"
 
 class UAnimSequence;

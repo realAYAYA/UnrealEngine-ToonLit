@@ -225,6 +225,12 @@ public:
 	UPROPERTY()
 	bool bClientOnlyVisible;
 
+#if WITH_EDITORONLY_DATA
+	/** Applied to LoadedLevel */
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UObject> EditorPathOwner;
+#endif
+
 private:
 
 	/** Requested LOD. Non LOD sub-levels have Index = -1  */
@@ -680,6 +686,9 @@ protected:
 
 	/** Called by SetLoadedLevel */
 	virtual void OnLevelLoadedChanged(ULevel* Level) {}
+
+	/** Called by RequestLevel to detect existing streaming level with same world asset */
+	bool ValidateUniqueWorldAsset(UWorld* PersistentWorld);
 
 	ENGINE_API void OnLoadingStarted();
 	ENGINE_API void OnLoadingFinished();

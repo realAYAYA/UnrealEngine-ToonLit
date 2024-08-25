@@ -10,6 +10,7 @@
 class AActor;
 class UActorComponent;
 class UOptimusComponentSourceBinding;
+struct FOptimusPinTraversalContext;
 
 
 UINTERFACE()
@@ -26,5 +27,5 @@ class IOptimusComponentBindingProvider
 
 public:
 	/** Returns the component binding for the node that this interface is implemented on */
-	virtual UOptimusComponentSourceBinding *GetComponentBinding() const = 0;
+	virtual UOptimusComponentSourceBinding *GetComponentBinding(const FOptimusPinTraversalContext& InContext) const = 0;
 };

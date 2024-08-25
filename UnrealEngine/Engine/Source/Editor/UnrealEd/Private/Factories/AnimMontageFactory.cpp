@@ -87,6 +87,8 @@ UObject* UAnimMontageFactory::FactoryCreateNew(UClass* Class, UObject* InParent,
 			NewTrack.AnimTrack.AnimSegments.Add(NewSegment);
 
 			AnimMontage->SetCompositeLength(SourceAnimation->GetPlayLength());
+
+			AnimMontage->UpdateCommonTargetFrameRate();
 		}
 
 		AnimMontage->SetSkeleton(TargetSkeleton);

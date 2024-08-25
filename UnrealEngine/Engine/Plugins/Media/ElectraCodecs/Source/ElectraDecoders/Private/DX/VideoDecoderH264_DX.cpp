@@ -13,6 +13,12 @@
 #include "IElectraDecoderResourceDelegate.h"
 #include "ElectraDecodersModule.h"
 
+#include COMPILED_PLATFORM_HEADER(ElectraDecoderGPUBufferHelpers.h)
+#include COMPILED_PLATFORM_HEADER(PlatformHeaders_Video_DX.h)
+
+#include "Stats/Stats.h"
+#include "HAL/IConsoleManager.h"
+
 /*********************************************************************************************************************/
 #include COMPILED_PLATFORM_HEADER(PlatformHeaders_Video_DX.h)
 
@@ -23,6 +29,25 @@ if (FAILED(Result))						\
 	PostError(Result, Msg, Code);		\
 	return false;						\
 }
+
+/*********************************************************************************************************************/
+
+#ifndef ELECTRA_HAVE_IMAGEBUFFERS
+#define	ELECTRA_HAVE_IMAGEBUFFERS 0
+#endif
+
+/*********************************************************************************************************************/
+
+DECLARE_CYCLE_STAT(TEXT("ElectraDecoder ConvertOutput"), STAT_ElectraDecoder_ConvertOutputH264, STATGROUP_Media);
+
+/*********************************************************************************************************************/
+
+static TAutoConsoleVariable<int32> CVarElectraWindowsH264UseOldOutputPath(
+	TEXT("Electra.Win.H264UseOldOutputPath"),
+	0,
+	TEXT("Use old style CPU buffer output path for H264.\n")
+	TEXT(" 0: use new upload heap / direct path (default); 1: use old CPU buffer path."),
+	ECVF_Default);
 
 /*********************************************************************************************************************/
 /*********************************************************************************************************************/
@@ -38,11 +63,13 @@ public:
 
 
 class FElectraVideoDecoderOutputH264_DX : public IElectraDecoderVideoOutput
+#if ELECTRA_HAVE_IMAGEBUFFERS
+										, public IElectraDecoderVideoOutputImageBuffers
+#endif
 {
 public:
 	virtual ~FElectraVideoDecoderOutputH264_DX()
-	{
-	}
+	{ }
 
 	FTimespan GetPTS() const override
 	{ return PTS; }
@@ -75,6 +102,17 @@ public:
 	{ 
 		switch(InTypeOfHandle)
 		{
+#if ELECTRA_HAVE_IMAGEBUFFERS
+			case EElectraDecoderPlatformOutputHandleType::ImageBuffers:
+				if (!MFSample.IsValid())
+				{
+					if (InTypeOfHandle == EElectraDecoderPlatformOutputHandleType::ImageBuffers)	//-V547
+					{
+						return static_cast<IElectraDecoderVideoOutputImageBuffers*>(const_cast<FElectraVideoDecoderOutputH264_DX*>(this));
+					}
+				}
+				return nullptr;
+#endif
 			case EElectraDecoderPlatformOutputHandleType::MFSample:
 				return MFSample.GetReference(); 
 			case EElectraDecoderPlatformOutputHandleType::DXDevice:
@@ -89,6 +127,86 @@ public:
 	{ return nullptr; }
 	IElectraDecoderVideoOutput::EImageCopyResult CopyPlatformImage(IElectraDecoderVideoOutputCopyResources* InCopyResources) const override
 	{ return IElectraDecoderVideoOutput::EImageCopyResult::NotSupported; }
+
+#if ELECTRA_HAVE_IMAGEBUFFERS
+	//
+	// IElectraDecoderVideoOutputImageBuffers
+	//
+
+	// Return the 4cc of the codec.
+	virtual uint32 GetCodec4CC() const override
+	{
+		return *(uint32*)"h264";
+	}
+
+	// Returns the number of separate image buffers making up the frame.
+	virtual int32 GetNumberOfBuffers() const override
+	{
+		return 1;
+	}
+
+	// Returns the n'th image buffer as CPU data buffer.
+	virtual TSharedPtr<TArray<uint8>, ESPMode::ThreadSafe> GetBufferDataByIndex(int32 InBufferIndex) const override
+	{
+		// For now CPU side buffers use the old style MFSample way to return data
+		return nullptr;
+	}
+
+	// Returns the n'th image buffer as GPU texture resource.
+	virtual void* GetBufferTextureByIndex(int32 InBufferIndex) const override
+	{
+		if (InBufferIndex == 0)
+		{
+			return Buffer.Resource.GetReference();
+		}
+		return nullptr;
+	}
+
+	virtual bool GetBufferTextureSyncByIndex(int32 InBufferIndex, FElectraDecoderOutputSync& SyncObject) const override
+	{
+		if (InBufferIndex == 0)
+		{
+#if ALLOW_MFSAMPLE_WITH_DX12
+			SyncObject = { Buffer.DecoderSync.GetReference(), 0, Buffer.MFSample };
+			// note: a reference to the MFSample remains with this instance, but is assumed to soon be released as the instance will be destroyed shortly after this was called
+#else
+			SyncObject = { Buffer.Fence.GetReference(), Buffer.FenceValue, nullptr, Buffer_TaskSync };
+#endif
+			return true;
+		}
+		return false;
+	}
+
+	// Returns the n'th image buffer format
+	virtual EElectraDecoderPlatformPixelFormat GetBufferFormatByIndex(int32 InBufferIndex) const override
+	{
+		if (InBufferIndex == 0)
+		{
+			return (EElectraDecoderPlatformPixelFormat)ElectraDecodersUtil::GetVariantValueSafeU64(ExtraValues, TEXT("pixfmt"), (uint64)EElectraDecoderPlatformPixelFormat::INVALID);
+		}
+		return EElectraDecoderPlatformPixelFormat::INVALID;
+	}
+
+	// Returns the n'th image buffer encoding
+	virtual EElectraDecoderPlatformPixelEncoding GetBufferEncodingByIndex(int32 InBufferIndex) const override
+	{
+		if (InBufferIndex == 0)
+		{
+			return (EElectraDecoderPlatformPixelEncoding)ElectraDecodersUtil::GetVariantValueSafeU64(ExtraValues, TEXT("pixenc"), (uint64)EElectraDecoderPlatformPixelEncoding::Native);
+		}
+		return EElectraDecoderPlatformPixelEncoding::Native;
+	}
+	
+	// Returns the n'th image buffer pitch
+	virtual int32 GetBufferPitchByIndex(int32 InBufferIndex) const override
+	{
+		if (InBufferIndex == 0)
+		{
+			return Pitch;
+		}
+		return 0;
+	}
+#endif // ELECTRA_HAVE_IMAGEBUFFERS
 
 public:
 	FTimespan PTS;
@@ -109,6 +227,17 @@ public:
 	TMap<FString, FVariant> ExtraValues;
 	TRefCountPtr<IMFSample> MFSample;
 	FElectraVideoDecoderDXDeviceContext Ctx;
+
+#if ALLOW_MFSAMPLE_WITH_DX12
+	struct {
+		TRefCountPtr<ID3D12Resource> Resource;
+		TRefCountPtr<IMFD3D12SynchronizationObjectCommands> DecoderSync;
+		TRefCountPtr<IMFSample> MFSample;	// note: this reference is kept to allow proper passing on of ref keeping to the DX12 queue only - as this instance will be destroyed once the DX12 queue took over, this reference will not keep the MFSample around for too long
+	} Buffer;
+#else
+	FElectraMediaDecoderOutputBufferPool_DX12::FOutputData Buffer;
+	TSharedPtr<IElectraDecoderResourceDelegateWindows::IAsyncConsecutiveTaskSync, ESPMode::ThreadSafe> Buffer_TaskSync;
+#endif
 };
 
 
@@ -158,6 +287,7 @@ private:
 		FInputAccessUnit AccessUnit;
 		TMap<FString, FVariant> AdditionalOptions;
 		void* InputDataCopy = nullptr;
+		bool bDropOutput = false;
 	};
 
 	struct FDecoderOutputBuffer
@@ -218,7 +348,7 @@ private:
 
 	bool CreateInputSample(TRefCountPtr<IMFSample>& InputSample, const FInputAccessUnit& InInputAccessUnit, const TMap<FString, FVariant>& InAdditionalOptions);
 	bool ConvertDecoderOutput();
-
+	static void CopyBufferData(TRefCountPtr<IMF2DBuffer> Buffer2D, TRefCountPtr<ID3D12Resource> BufferResource, TRefCountPtr<ID3D12Fence> BufferFence, uint64 BufferFenceValue, uint32 BufferPitch, int32 DecodedHeight);
 
 	TWeakPtr<IElectraDecoderResourceDelegate, ESPMode::ThreadSafe> ResourceDelegate;
 
@@ -234,6 +364,14 @@ private:
 	IPlatformHandle* DecoderPlatformHandle = nullptr;
 	TRefCountPtr<IMFTransform> DecoderTransform;
 	TRefCountPtr<IMFMediaType> CurrentOutputMediaType;
+
+	uint32 MaxOutputBuffers;
+	uint32 MaxWidth;
+	uint32 MaxHeight;
+#if !ALLOW_MFSAMPLE_WITH_DX12
+	mutable TSharedPtr<FElectraMediaDecoderOutputBufferPool_DX12> D3D12ResourcePool;
+	mutable TSharedPtr<IElectraDecoderResourceDelegateBase::IAsyncConsecutiveTaskSync> TaskSync;
+#endif
 
 	static const GUID MFTms_AVLowLatencyMode;
 };
@@ -256,6 +394,12 @@ TSharedPtr<IElectraDecoder, ESPMode::ThreadSafe> IElectraVideoDecoderH264_DX::Cr
 FElectraVideoDecoderH264_DX::FElectraVideoDecoderH264_DX(const TMap<FString, FVariant>& InOptions, TSharedPtr<IElectraDecoderResourceDelegate, ESPMode::ThreadSafe> InResourceDelegate)
 {
 	ResourceDelegate = InResourceDelegate;
+
+	MaxWidth = (uint32)ElectraDecodersUtil::GetVariantValueSafeU64(InOptions, TEXT("max_width"), 1920);
+	MaxHeight = (uint32)ElectraDecodersUtil::GetVariantValueSafeU64(InOptions, TEXT("max_height"), 1080);
+
+	MaxOutputBuffers = (uint32)ElectraDecodersUtil::GetVariantValueSafeU64(InOptions, TEXT("max_output_buffers"), 5);
+	MaxOutputBuffers += kElectraDecoderPipelineExtraFrames;
 }
 
 
@@ -364,15 +508,21 @@ IElectraDecoder::EDecoderError FElectraVideoDecoderH264_DX::DecodeAccessUnit(con
 		return IElectraDecoder::EDecoderError::EndOfData;
 	}
 
+	// CSD only buffer is not handled at the moment.
+	check((InInputAccessUnit.Flags & EElectraDecoderFlags::InitCSDOnly) == EElectraDecoderFlags::None);
+
+	// If this is discardable and won't be output we do not need to handle it at all.
+	if ((InInputAccessUnit.Flags & (EElectraDecoderFlags::DoNotOutput | EElectraDecoderFlags::IsDiscardable)) == (EElectraDecoderFlags::DoNotOutput | EElectraDecoderFlags::IsDiscardable))
+	{
+		return IElectraDecoder::EDecoderError::None;
+	}
+
 	// If there is pending output it is very likely that decoding this access unit would also generate output.
 	// Since that would result in loss of the pending output we return now.
 	if (CurrentOutput.IsValid())
 	{
 		return IElectraDecoder::EDecoderError::NoBuffer;
 	}
-
-	// CSD only buffer is not handled at the moment.
-	check((InInputAccessUnit.Flags & EElectraDecoderFlags::InitCSDOnly) == EElectraDecoderFlags::None);
 
 	// Create decoder transform if necessary.
 	if (!DecoderTransform.IsValid() && !InternalDecoderCreate(InAdditionalOptions))
@@ -416,6 +566,7 @@ IElectraDecoder::EDecoderError FElectraVideoDecoderH264_DX::DecodeAccessUnit(con
 
 					FDecoderInput In;
 					In.AdditionalOptions = InAdditionalOptions;
+					In.bDropOutput = (InInputAccessUnit.Flags & EElectraDecoderFlags::DoNotOutput) == EElectraDecoderFlags::DoNotOutput;
 					In.AccessUnit = InInputAccessUnit;
 					// If we need to hold on to the input data we need to make a local copy.
 					// For safety reasons we zero out the pointer we were given in the input data copy to now accidentally
@@ -448,7 +599,7 @@ IElectraDecoder::EDecoderError FElectraVideoDecoderH264_DX::DecodeAccessUnit(con
 				{
 					return IElectraDecoder::EDecoderError::Error;
 				}
-				// It is possible that we got output without having consumed the input. Check for this and return appropraitely.
+				// It is possible that we got output without having consumed the input. Check for this and return appropriately.
 				return InputSample.IsValid() ? IElectraDecoder::EDecoderError::NoBuffer : IElectraDecoder::EDecoderError::None;
 			}
 			else
@@ -799,9 +950,32 @@ bool FElectraVideoDecoderH264_DX::CreateInputSample(TRefCountPtr<IMFSample>& Inp
 	return true;
 }
 
+#if !ALLOW_MFSAMPLE_WITH_DX12
+void FElectraVideoDecoderH264_DX::CopyBufferData(TRefCountPtr<IMF2DBuffer> Buffer2D, TRefCountPtr<ID3D12Resource> BufferResource, TRefCountPtr<ID3D12Fence> BufferFence, uint64 BufferFenceValue, uint32 BufferPitch, int32 DecodedHeight)
+{
+	uint8* Data = nullptr;
+	LONG Pitch = 0;
+	HRESULT Res = Buffer2D->Lock2D(&Data, &Pitch);
+	check(SUCCEEDED(Res));
+
+	void* BufferAddr;
+	Res = BufferResource->Map(0, nullptr, &BufferAddr);
+	check(SUCCEEDED(Res));
+
+	FElectraMediaDecoderOutputBufferPool_DX12::CopyWithPitchAdjust((uint8*)BufferAddr, BufferPitch, Data, Pitch, DecodedHeight * 3 / 2);
+
+	BufferResource->Unmap(0, nullptr);
+
+	Buffer2D->Unlock2D();
+
+	BufferFence->Signal(BufferFenceValue);
+};
+#endif
 
 bool FElectraVideoDecoderH264_DX::ConvertDecoderOutput()
 {
+	SCOPE_CYCLE_COUNTER(STAT_ElectraDecoder_ConvertOutputH264);
+
 	TRefCountPtr<IMFSample> DecodedOutputSample = CurrentDecoderOutputBuffer->DetachOutputSample();
 	CurrentDecoderOutputBuffer.Reset();
 	if (!DecodedOutputSample.IsValid())
@@ -851,6 +1025,11 @@ bool FElectraVideoDecoderH264_DX::ConvertDecoderOutput()
 	}
 	*/
 
+	if (MatchingInput.bDropOutput)
+	{
+		return true;
+	}
+
 	TSharedPtr<FElectraVideoDecoderOutputH264_DX, ESPMode::ThreadSafe> NewOutput = MakeShared<FElectraVideoDecoderOutputH264_DX>();
 	NewOutput->PTS = MatchingInput.AccessUnit.PTS;
 	NewOutput->UserValue = MatchingInput.AccessUnit.UserValue;
@@ -885,11 +1064,16 @@ bool FElectraVideoDecoderH264_DX::ConvertDecoderOutput()
 	NewOutput->DecodedWidth = (int32)dwInputWidth;
 	NewOutput->DecodedHeight = (int32)dwInputHeight;
 	// If we deliver the data in a CPU side buffer, we need to patch the decoded height to reflect the oddness of these planar formats
-	// (DirectX12 and higher, SW decoder or a non-DirectX API will trigger this)
-	if (DecoderPlatformHandle->IsSoftware() || DecoderPlatformHandle->GetDXVersionTimes1000() >= 12000 || DecoderPlatformHandle->GetDXVersionTimes1000() == 0)
+	// (DirectX12 and higher (unless we can use the render device to decode), SW decoder or a non-DirectX API will trigger this)
+	if (DecoderPlatformHandle->IsSoftware() || (DecoderPlatformHandle->GetDXVersionTimes1000() >= 12000 && DecoderPlatformHandle->GetDXDevice() != nullptr) || DecoderPlatformHandle->GetDXVersionTimes1000() == 0)
 	{
-		// We are returning a CPU side buffer (software decode OR DX12 render device) - adjust the height so it can be interpreted as a single plane texture
-		NewOutput->DecodedHeight = NewOutput->DecodedHeight * 3 / 2;
+#if !ALLOW_MFSAMPLE_WITH_DX12
+		if (DecoderPlatformHandle->GetDXVersionTimes1000() < 12000 || CVarElectraWindowsH264UseOldOutputPath.GetValueOnAnyThread() != 0)
+#endif
+		{
+			// We are returning a CPU side buffer (software decode OR DX12 render device) - adjust the height so it can be interpreted as a single plane texture
+			NewOutput->DecodedHeight = NewOutput->DecodedHeight * 3 / 2;
+		}
 	}
 
 	// Note: Decoder crops at the lower right border.
@@ -900,7 +1084,6 @@ bool FElectraVideoDecoderH264_DX::ConvertDecoderOutput()
 
 	// Try to get the stride. Defaults to 0 should it not be obtainable.
 	UINT32 stride = MFGetAttributeUINT32(CurrentOutputMediaType, MF_MT_DEFAULT_STRIDE, 0);
-	NewOutput->Pitch = stride;
 
 	// Try to get the frame rate ratio.
 	UINT32 num=0, denom=0;
@@ -927,8 +1110,120 @@ bool FElectraVideoDecoderH264_DX::ConvertDecoderOutput()
 	NewOutput->ExtraValues.Emplace(TEXT("pixfmt"), FVariant((int64)EElectraDecoderPlatformPixelFormat::NV12));
 	NewOutput->ExtraValues.Emplace(TEXT("pixenc"), FVariant((int64)EElectraDecoderPlatformPixelEncoding::Native));
 
-	// Retain the IMFSample in the output. It is needed later in converting it for display.
-	NewOutput->MFSample = DecodedOutputSample;
+#if ELECTRA_HAVE_IMAGEBUFFERS
+	void* PlatformDevice = nullptr;
+	int32 PlatformDeviceVersion = 0;
+	bool bUseGPUBuffers = false;
+	auto PinnedResourceDelegate = ResourceDelegate.Pin();
+	if (PinnedResourceDelegate.IsValid() && CVarElectraWindowsH264UseOldOutputPath.GetValueOnAnyThread() == 0)
+	{
+		PinnedResourceDelegate->GetD3DDevice(&PlatformDevice, &PlatformDeviceVersion);
+		bUseGPUBuffers = (PlatformDevice && PlatformDeviceVersion >= 12000);
+	}
+
+	// If we don't have support for DX12 direct to video decoding, yet, we bring the CPU buffer data into a DX12 resource now
+	if (bUseGPUBuffers)
+	{
+		DWORD BuffersNum = 0;
+		if ((Result = DecodedOutputSample->GetBufferCount(&BuffersNum)) != S_OK)
+		{
+			return false;
+		}
+		if (BuffersNum != 1)
+		{
+			return false;
+		}
+		TRefCountPtr<IMFMediaBuffer> Buffer;
+		if ((Result = DecodedOutputSample->GetBufferByIndex(0, Buffer.GetInitReference())) != S_OK)
+		{
+			return false;
+		}
+
+#if !ALLOW_MFSAMPLE_WITH_DX12
+		//
+		// Pre SDK 22621: use CPU copy to get data from MFSample to DX12 resource
+		//
+		TRefCountPtr D3D12Device(static_cast<ID3D12Device*>(PlatformDevice));
+
+		// Create the resource pool as needed...
+		if (!D3D12ResourcePool)
+		{
+			D3D12ResourcePool = MakeShared<FElectraMediaDecoderOutputBufferPool_DX12, ESPMode::ThreadSafe>(D3D12Device, MaxOutputBuffers, MaxWidth, MaxHeight * 3 / 2, 1);
+		}
+
+		// Create a tasksync instance so we can have our own async jobs run in consecutive order
+		if (!TaskSync.IsValid())
+		{
+			TaskSync = PinnedResourceDelegate->CreateAsyncConsecutiveTaskSync();
+		}
+
+		// Get data from MFSample...
+		TRefCountPtr<IMF2DBuffer> Buffer2D;
+		if ((Result = Buffer->QueryInterface(__uuidof(IMF2DBuffer), (void**)Buffer2D.GetInitReference())) != S_OK)
+		{
+			return false;
+		}
+
+		// Request resource and fence...
+		uint32 BufferPitch;
+		if (!D3D12ResourcePool->AllocateOutputDataAsBuffer(NewOutput->Buffer, BufferPitch))
+		{
+			return false;
+		}
+
+		NewOutput->Pitch = BufferPitch;
+
+		if (PinnedResourceDelegate->RunCodeAsync([DecodedOutputSample, Buffer2D, BufferResource = NewOutput->Buffer.Resource, BufferFence = NewOutput->Buffer.Fence, BufferFenceValue = NewOutput->Buffer.FenceValue, BufferPitch, DecodedHeight = NewOutput->DecodedHeight]()
+			{
+				CopyBufferData(Buffer2D, BufferResource, BufferFence, BufferFenceValue, BufferPitch, DecodedHeight);
+			}, TaskSync.Get()))
+		{
+			NewOutput->Buffer_TaskSync = TaskSync;
+		}
+		else
+		{
+			CopyBufferData(Buffer2D, NewOutput->Buffer.Resource, NewOutput->Buffer.Fence, NewOutput->Buffer.FenceValue, BufferPitch, NewOutput->DecodedHeight);
+		}
+#else
+		//
+		// Post SDK 22621: direct link from MFSample to DX12 resource
+		//
+		
+		TRefCountPtr<IMFDXGIBuffer> DXGIBuffer;
+		if ((Result = Buffer->QueryInterface(__uuidof(IMFDXGIBuffer), (void**)DXGIBuffer.GetInitReference())) != S_OK)
+		{
+			return false;
+		}
+
+		TRefCountPtr<ID3D12Resource> Resource;
+		Result = DXGIBuffer->GetResource(__uuidof(ID3D12Resource), (void**)Resource.GetInitReference());
+		if (Result == S_OK)
+		{
+			// Yes, set this up...
+			TRefCountPtr<IMFD3D12SynchronizationObjectCommands> DecoderSync;
+			if ((Result = DXGIBuffer->GetUnknown(MF_D3D12_SYNCHRONIZATION_OBJECT, IID_PPV_ARGS(DecoderSync.GetInitReference()))) != S_OK)
+			{
+				return false;
+			}
+
+			NewOutput->Buffer.Resource = Resource;
+			NewOutput->Buffer.DecoderSync = DecoderSync;
+			NewOutput->Buffer.MFSample = DecodedOutputSample;	// we keep a reference around until we actually submit the sync object to a DX12 queue
+		}
+#endif // !ALLOW_MFSAMPLE_WITH_DX12
+	}
+	else
+#endif // ELECTRA_HAVE_IMAGEBUFFERS
+	{
+		//
+		// Fallback output path for pre- / none-DX12 graphics APIs
+		// 
+		
+		// Retain the IMFSample in the output. It is needed later in converting it for display.
+		NewOutput->Pitch = stride;
+		NewOutput->MFSample = DecodedOutputSample;
+	}
+
 	// Do the same for the HW acceleration device.
 	NewOutput->Ctx.SetDeviceAndContext(DecoderPlatformHandle->GetDXDevice(), DecoderPlatformHandle->GetDXDeviceContext());
 

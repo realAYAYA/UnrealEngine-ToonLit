@@ -35,7 +35,7 @@ groupshared uint SharedShadowTraces[THREADGROUP_SIZE_X * THREADGROUP_SIZE_Y];
 groupshared uint SharedGlobalShadowTraceOffset;
 
 [numthreads(THREADGROUP_SIZE_X, THREADGROUP_SIZE_Y, 1)]
-void LumenSceneDirectLightingNonRayTracedShadowsCS(
+void LumenSceneDirectLightingShadowMaskFromLightAttenuationCS( 
 	uint3 GroupId : SV_GroupID,
 	uint3 DispatchThreadId : SV_DispatchThreadID,
 	uint3 GroupThreadId : SV_GroupThreadID)
@@ -91,7 +91,7 @@ void LumenSceneDirectLightingNonRayTracedShadowsCS(
 		const FDeferredLightData LightData = InitDeferredLightFromUniforms(LIGHT_TYPE);
 		float3 WorldNormal = SurfaceCacheData.WorldNormal;
 		float3 WorldPosition = SurfaceCacheData.WorldPosition;
-		float3 TranslatedWorldPosition = WorldPosition + LWCHackToFloat(PrimaryView.PreViewTranslation);
+		float3 TranslatedWorldPosition = WorldPosition + DFHackToFloat(PrimaryView.PreViewTranslation);
 
 		float3 L = LightData.Direction;
 		float3 ToLight = L;
@@ -127,10 +127,16 @@ void LumenSceneDirectLightingNonRayTracedShadowsCS(
 			ShadowMaskRay.ShadowFactor = 1.0f;
 			ShadowMaskRay.bShadowFactorComplete = false;
 
-			#if LIGHT_FUNCTION
+			#if USE_LIGHT_FUNCTION_ATLAS
+			if (ShadowMaskRay.ShadowFactor > 0.01f && DeferredLightUniforms.LightFunctionAtlasLightIndex >= 0)
+			{
+				ShadowMaskRay.ShadowFactor *= GetLocalLightFunctionCommon(TranslatedWorldPosition, DeferredLightUniforms.LightFunctionAtlasLightIndex);
+				ShadowMaskRay.bShadowFactorComplete = ShadowMaskRay.bShadowFactorComplete || ShadowMaskRay.ShadowFactor < 0.01f;
+			}
+			#elif LIGHT_FUNCTION
 			if (ShadowMaskRay.ShadowFactor > 0.01f)
 			{
-				ShadowMaskRay.ShadowFactor *= GetLightFunction(TranslatedWorldPosition);
+				ShadowMaskRay.ShadowFactor *= GetLumenLightFunction(TranslatedWorldPosition);
 				ShadowMaskRay.bShadowFactorComplete = ShadowMaskRay.bShadowFactorComplete || ShadowMaskRay.ShadowFactor < 0.01f;
 			}
 			#endif
@@ -202,3 +208,4 @@ void LumenSceneDirectLightingNonRayTracedShadowsCS(
 		RWShadowMaskTiles[SHADOW_MASK_CARD_TILE_DWORDS * LightTileIndex + ShadowMaskSize * ShadowMaskOffset + LinearGroupThreadId] = SharedShadowMask[LinearGroupThreadId];
 	}
 }
+

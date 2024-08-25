@@ -9,6 +9,17 @@
 
 #include "MassVisualizationLODProcessor.generated.h"
 
+
+/** 
+ * Tag required by Visualization LOD Processor to update LOD information. Removing the tag allows to support temporary 
+ * disabling of processing for individual entities.
+ */
+USTRUCT()
+struct MASSREPRESENTATION_API FMassVisualizationLODProcessorTag : public FMassTag
+{
+	GENERATED_BODY();
+};
+
 UCLASS()
 class MASSREPRESENTATION_API UMassVisualizationLODProcessor : public UMassProcessor
 {
@@ -45,4 +56,7 @@ protected:
 
 	UPROPERTY(Transient)
 	TObjectPtr<const UScriptStruct> FilterTag = nullptr;
+
+	UPROPERTY(config, EditDefaultsOnly, Category = "Mass")
+	bool bDoAdjustmentFromCount = true;
 };

@@ -167,8 +167,8 @@ void UMovieSceneGeometryCacheSection::GetSnapTimes(TArray<FFrameNumber>& OutSnap
 	const FFrameNumber EndFrame = GetExclusiveEndFrame() - 1; // -1 because we don't need to add the end frame twice
 
 	const float AnimPlayRate = FMath::IsNearlyZero(Params.PlayRate) ? 1.0f : Params.PlayRate;
-	const float SeqLengthSeconds = Params.GetSequenceLength() - FrameRate.AsSeconds(Params.StartFrameOffset + Params.EndFrameOffset) / AnimPlayRate;
-	const float FirstLoopSeqLengthInSeconds = SeqLengthSeconds - FrameRate.AsSeconds(Params.FirstLoopStartFrameOffset) / AnimPlayRate;
+	const float SeqLengthSeconds = static_cast<float>(Params.GetSequenceLength() - FrameRate.AsSeconds(Params.StartFrameOffset + Params.EndFrameOffset) / AnimPlayRate);
+	const float FirstLoopSeqLengthInSeconds = static_cast<float>(SeqLengthSeconds - FrameRate.AsSeconds(Params.FirstLoopStartFrameOffset) / AnimPlayRate);
 
 	const FFrameTime SequenceFrameLength = SeqLengthSeconds * FrameRate;
 	const FFrameTime FirstLoopSequenceFrameLength = FirstLoopSeqLengthInSeconds * FrameRate;
@@ -219,7 +219,7 @@ void UMovieSceneGeometryCacheSection::PostEditChangeProperty(FPropertyChangedEve
 
 		if (!FMath::IsNearlyZero(NewPlayRate))
 		{
-			float CurrentDuration = UE::MovieScene::DiscreteSize(GetRange());
+			float CurrentDuration = static_cast<float>(UE::MovieScene::DiscreteSize(GetRange()));
 			float NewDuration = CurrentDuration * (PreviousPlayRate / NewPlayRate);
 			SetEndFrame(GetInclusiveStartFrame() + FMath::FloorToInt(NewDuration));
 

@@ -10,6 +10,7 @@
 #include "HAL/ThreadHeartBeat.h"
 #include "HAL/PlatformStackWalk.h"
 #include "HAL/PlatformProcess.h"
+#include "ProfilingDebugging/TraceAuxiliary.h"
 #include "Trace/Trace.inl"
 #include "Types/ReflectionMetadata.h"
 #include "Widgets/SWidget.h"
@@ -137,16 +138,18 @@ namespace SlateTraceDetail
 #if UE_SLATE_WITH_WIDGET_UNIQUE_IDENTIFIER
 		check(InWidget);
 		return InWidget->GetId();
-#endif
+#else
 		return 0;
+#endif
 	}
 
 	uint64 GetWidgetIdIfValid(const SWidget* InWidget)
 	{
 #if UE_SLATE_WITH_WIDGET_UNIQUE_IDENTIFIER
 		return InWidget ? InWidget->GetId() : 0;
-#endif
+#else
 		return 0;
+#endif
 	}
 
 	void SerializeToWidgetUpdateSteps(uint8 InNumber)
@@ -225,6 +228,7 @@ FSlateTrace::FScopedWidgetPaintTrace::FScopedWidgetPaintTrace(const SWidget* InW
 	{
 		StartCycle = FPlatformTime::Cycles64();
 		SlateTraceDetail::AddStartWidgetPaintSteps(Widget, StartCycle);
+		FSlateTrace::ConditionallyUpdateWidgetInfo(Widget);
 	}
 
 	++SlateTraceDetail::GScopedPaintCount;
@@ -261,6 +265,7 @@ FSlateTrace::FScopedWidgetUpdateTrace::FScopedWidgetUpdateTrace(const SWidget* I
 		{
 			StartCycle = FPlatformTime::Cycles64();
 			UpdateFlags = InWidget->UpdateFlags & (EWidgetUpdateFlags::NeedsTick | EWidgetUpdateFlags::NeedsActiveTimerUpdate);
+			FSlateTrace::ConditionallyUpdateWidgetInfo(Widget);
 		}
 	}
 	++SlateTraceDetail::GScopedUpdateCount;
@@ -292,6 +297,11 @@ void FSlateTrace::ApplicationTickAndDrawWidgets(float DeltaTime)
 				const uint64 WidgetId = SlateTraceDetail::GetWidgetId(SharedWidget.Get());
 				const FString Path = FReflectionMetaData::GetWidgetPath(SharedWidget.Get());
 				const FString DebugInfo = FReflectionMetaData::GetWidgetDebugInfo(SharedWidget.Get());
+
+				if (FTraceAuxiliary::IsConnected())
+				{
+					SharedWidget->Debug_SetWidgetInfoTraced(FSlateTrace::TraceCounter);
+				}
 
 				UE_TRACE_LOG(SlateTrace, WidgetInfo, SlateChannel)
 					<< WidgetInfo.WidgetId(WidgetId)
@@ -328,6 +338,13 @@ void FSlateTrace::ApplicationTickAndDrawWidgets(float DeltaTime)
 	}
 }
 
+void FSlateTrace::ApplicationRegisterTraceEvents(FSlateApplicationBase& /*SlateApplication*/)
+{
+	// Registering directly on the slate application would mean slate app headers need to know trace types.
+	// Instead register a static here that gets the application on a trace start.
+	FTraceAuxiliary::OnTraceStarted.AddStatic(&FSlateTrace::HandleOnTraceStarted);
+}
+
 void FSlateTrace::OutputWidgetUpdate(const SWidget* Widget, uint64 StartCycle, uint64 EndCycle, EWidgetUpdateFlags UpdateFlags, uint32 AffectedCount)
 {
 	if (EnumHasAnyFlags(UpdateFlags, EWidgetUpdateFlags::NeedsActiveTimerUpdate))
@@ -360,6 +377,8 @@ void FSlateTrace::WidgetInvalidated(const SWidget* Widget, const SWidget* Invest
 {
 	if (UE_TRACE_CHANNELEXPR_IS_ENABLED(SlateChannel) && Reason != EInvalidateWidgetReason::None)
 	{
+		FSlateTrace::ConditionallyUpdateWidgetInfo(Widget);
+
 		++SlateTraceDetail::GFrameInvalidateCount;
 
 		static_assert(sizeof(EInvalidateWidgetReason) == sizeof(uint8), "EInvalidateWidgetReason is not a uint8");
@@ -452,6 +471,8 @@ void FSlateTrace::RootInvalidated(const SWidget* Widget, const SWidget* Investig
 {
 	if (UE_TRACE_CHANNELEXPR_IS_ENABLED(SlateChannel))
 	{
+		FSlateTrace::ConditionallyUpdateWidgetInfo(Widget);
+
 		++SlateTraceDetail::GFrameInvalidateCount;
 
 		const uint64 WidgetId = SlateTraceDetail::GetWidgetId(Widget);
@@ -468,6 +489,8 @@ void FSlateTrace::RootChildOrderInvalidated(const SWidget* Widget, const SWidget
 {
 	if (UE_TRACE_CHANNELEXPR_IS_ENABLED(SlateChannel))
 	{
+		FSlateTrace::ConditionallyUpdateWidgetInfo(Widget);
+
 		++SlateTraceDetail::GFrameInvalidateCount;
 
 		const uint64 WidgetId = SlateTraceDetail::GetWidgetId(Widget);
@@ -519,8 +542,31 @@ void FSlateTrace::RemoveWidget(const SWidget* Widget)
 	--SlateTraceDetail::GWidgetCount;
 }
 
-void FSlateTrace::OutputWidgetPaint(const SWidget* Widget, uint64 StartCycle, uint64 EndCycle, uint32 PaintCount)
+void FSlateTrace::ConditionallyUpdateWidgetInfo(const SWidget* Widget)
 {
+	if (UE_TRACE_CHANNELEXPR_IS_ENABLED(SlateChannel) && FTraceAuxiliary::IsConnected())
+	{
+		if (Widget && Widget->Debug_GetWidgetInfoTraced() < FSlateTrace::TraceCounter)
+		{
+			const uint64 WidgetId = SlateTraceDetail::GetWidgetId(Widget);
+			const FString Path = FReflectionMetaData::GetWidgetPath(Widget);
+			const FString DebugInfo = FReflectionMetaData::GetWidgetDebugInfo(Widget);
+
+			UE_TRACE_LOG(SlateTrace, WidgetInfo, SlateChannel)
+				<< WidgetInfo.WidgetId(WidgetId)
+				<< WidgetInfo.Path(*Path)
+				<< WidgetInfo.DebugInfo(*DebugInfo);
+
+			Widget->Debug_SetWidgetInfoTraced(FSlateTrace::TraceCounter);
+		}
+	}
 }
+
+void FSlateTrace::HandleOnTraceStarted(FTraceAuxiliary::EConnectionType TraceType, const FString& TraceDestination)
+{
+	FSlateTrace::TraceCounter++;
+}
+
+uint8 FSlateTrace::TraceCounter = 0;
 
  #endif // UE_SLATE_TRACE_ENABLED

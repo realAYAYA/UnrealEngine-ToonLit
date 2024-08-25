@@ -3,6 +3,8 @@
 
 #include "DynamicMesh/DynamicMesh3.h"
 #include "Util/ProgressCancel.h"
+#include "Selections/QuadGridPatch.h"
+#include "Math/InterpCurve.h"
 
 namespace UE
 {
@@ -53,6 +55,15 @@ public:
 	/** Distance that bevel edges/vertices are inset from their initial position. Not guaranteed to hold for all vertices, though. */
 	double InsetDistance = 5.0;
 	
+	/** Number of subdivisions inserted in each bevel strip */
+	int32 NumSubdivisions = 0;
+
+	/** 
+	 * "Roundness" of the bevel profile. Ignored if Subdivisions = 0. Default=1 means try to be circular-ish. 
+	 * Higher values pull towards a sharper crease. 0 is flat (ie no profile, a linear chamfer). If negative, bevel profile will be an inverted-arc 
+	 */
+	double RoundWeight = 1.0;
+
 	/** Options for MaterialID assignment on the new triangles generated for the bevel */
 	enum class EMaterialIDMode
 	{
@@ -134,6 +145,7 @@ public:
 		TArray<int32> MeshVertices;		// sequential list of mesh vertex IDs along edge loop
 		TArray<int32> MeshEdges;		// sequential list of mesh edge IDs along edge loop
 		TArray<FIndex2i> MeshEdgeTris;	// the one or two triangles associated w/ each MeshEdges element in the input mesh
+		TArray<FVector3d> InitialPositions;		// initial vertex positions
 
 		// new mesh topology computed during unlink step
 		TArray<int32> NewMeshVertices;		// list of new vertices on "other" side of unlinked edge, 1-1 with MeshVertices
@@ -146,6 +158,8 @@ public:
 		// new geometry computed during mesh step
 		TArray<int32> NewGroupIDs;
 		TArray<FIndex2i> StripQuads;		// triangle-ID-pairs for each new quad added along edge, 1-1 with MeshEdges
+		FQuadGridPatch StripQuadPatch;			// only initialized in multi-segment bevel
+		TArray<FVector3d> NormalsA, NormalsB;	// normals at NewPositions0 and NewPositions1, before internal meshing is added (ie the tangent-boundary condition)
 	};
 
 	// FBevelEdge is the accumulated data for an open span of mesh-edges, which possibly meets up with other bevel-edges
@@ -153,12 +167,15 @@ public:
 	struct FBevelEdge
 	{
 		// initial topological information that defines what happens in unlink/displace/mesh steps
+		int32 EdgeIndex;				// index of this BevelEdge in Edges array
 		TArray<int32> MeshVertices;		// sequential list of mesh vertex IDs along edge
 		TArray<int32> MeshEdges;		// sequential list of mesh edge IDs along edge
 		TArray<FIndex2i> MeshEdgeTris;	// the one or two triangles associated w/ each MeshEdges element in the input mesh
 		int32 GroupEdgeID;				// ID of this edge in external topology (eg FGroupTopology)
 		FIndex2i GroupIDs;				// topological IDs of groups on either side of topological edge
 		bool bEndpointBoundaryFlag[2];	// flag defining whether vertex at start/end of MeshVertices was a boundary vertex
+		TArray<FVector3d> InitialPositions;		// initial vertex positions
+		FIndex2i BevelVertices;			// indices of Bevel Vertices at either end of Bevel Edge
 
 		// new mesh topology computed during unlink step
 		TArray<int32> NewMeshVertices;		// list of new vertices on "other" side of unlinked edge, 1-1 with MeshVertices
@@ -171,6 +188,8 @@ public:
 		// new geometry computed during mesh step
 		int32 NewGroupID;
 		TArray<FIndex2i> StripQuads;		// triangle-ID-pairs for each new quad added along edge, 1-1 with MeshEdges
+		FQuadGridPatch StripQuadPatch;			// only initialized in multi-segment bevel
+		TArray<FVector3d> NormalsA, NormalsB;	// normals at NewPositions0 and NewPositions1, before internal meshing is added (ie the tangent-boundary condition)
 	};
 
 
@@ -185,6 +204,7 @@ public:
 		int32 WedgeVertex;						// central vertex of this wedge (updated by unlink functions)
 
 		FVector3d NewPosition;					// new calculated position for vertex of this wedge
+		bool bHaveNewPosition = false;			// flag indicating if NewPosition is valid
 	};
 
 	// a FBevelVertex can have various types, depending on the topology of the bevel edge graph and input mesh
@@ -202,6 +222,12 @@ public:
 		Unknown
 	};
 
+	struct FBevelVertex_InteriorVertex
+	{
+		int32 VertexID = -1;
+		TArray<FVector3d> BorderFrameWeight;
+	};
+
 	// A FBevelVertex repesents/stores the accumulated data at a "bevel vertex", which is the mesh vertex at the end of a FBevelEdge.
 	// A FBevelVertex may be expanded out into a polygon or just an edge, depending on its Type
 	struct FBevelVertex
@@ -212,6 +238,7 @@ public:
 
 		TArray<int32> IncomingBevelMeshEdges;						// Set of (unsorted) Mesh Edges that are destined to be Beveled, coming into the vertex
 		TArray<int32> IncomingBevelTopoEdges;						// Set of (unsorted) Group Topology Edges that are to be Beveled, coming into the vertex
+		TArray<int32> IncomingBevelEdgeIndices;						// Set of (unsorted) indices of FBevelEdge, coming into the vertex
 
 		TArray<int32> SortedTriangles;			// ordered triangle one-ring around VertexID
 		TArray<FOneRingWedge> Wedges;			// ordered decomposition of one-ring into "wedges" between incoming bevel edges (no correspondence w/ IncomingBevelMeshEdges list)
@@ -221,6 +248,10 @@ public:
 
 		FIndex2i TerminatorInfo;				// for TerminatorVertex type, store [EdgeID, FarVertexID] in one-ring, used to unlink/fill (see usage)
 		int32 ConnectedBevelVertex = -1;		// If set to another FBevelVertex index, then the TerminatorInfo.EdgeID directly connects to that vertex and special handling is needed
+
+		// these arrays are used for multi-segment bevels, and are initialized in different ways depending on the vertex valence - see cpp comments
+		TArray<FBevelVertex_InteriorVertex> InteriorVertices;
+		TArray<int32> InteriorBorderLoop;
 	};
 
 
@@ -239,7 +270,7 @@ public:
 
 protected:
 
-	FBevelVertex* GetBevelVertexFromVertexID(int32 VertexID);
+	FBevelVertex* GetBevelVertexFromVertexID(int32 VertexID, int32* IndexOut = nullptr);
 
 	// Setup phase: register Edges (spans) and (isolated) Loops that need to be beveled and precompute/store any mesh topology that must be tracked across the operation
 	// Required BevelVertex's are added by AddBevelGroupEdge()
@@ -273,12 +304,24 @@ protected:
 	// Meshing phase - append quad-strips between unlinked edge spans/loops, polygons at junction vertices where required,
 	// and triangles at terminator vertices
 
+	/* Meshing functions for chamfer bevel, ie no subdivisions */
 	void CreateBevelMeshing(FDynamicMesh3& Mesh);
 	void AppendJunctionVertexPolygon(FDynamicMesh3& Mesh, FBevelVertex& Vertex);
 	void AppendTerminatorVertexTriangle(FDynamicMesh3& Mesh, FBevelVertex& Vertex);
 	void AppendTerminatorVertexPairQuad(FDynamicMesh3& Mesh, FBevelVertex& Vertex0, FBevelVertex& Vertex1);
 	void AppendEdgeQuads(FDynamicMesh3& Mesh, FBevelEdge& Edge);
 	void AppendLoopQuads(FDynamicMesh3& Mesh, FBevelLoop& Loop);
+
+	/** Meshing functions for multi-segment bevel with optional round profile */
+	void CreateBevelMeshing_Multi(FDynamicMesh3& Mesh);
+	void AppendEdgeQuads_Multi(FDynamicMesh3& Mesh, FBevelEdge& Edge);
+	void AppendLoopQuads_Multi(FDynamicMesh3& Mesh, FBevelLoop& Loop);
+	void AppendJunctionVertexPolygon_Multi(FDynamicMesh3& Mesh, FBevelVertex& Vertex);
+	void AppendTerminatorVertexTriangles_Multi(FDynamicMesh3& Mesh, FBevelVertex& Vertex);
+	void AppendTerminatorVertexPairQuad_Multi(FDynamicMesh3& Mesh, FBevelVertex& Vertex0, FBevelVertex& Vertex1);
+	void ApplyProfileShape_Round(FDynamicMesh3& Mesh);
+	FInterpCurveVector MakeArcSplineCurve(const FVector3d& PosA, FVector3d& NormalA, const FVector3d& PosB, FVector3d& NormalB) const;
+
 
 	// Normals phase - calculate normals for new geometry
 

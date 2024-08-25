@@ -28,10 +28,6 @@
 #define GPUSKIN_UNLIMITED_BONE_INFLUENCE 0
 #endif
 
-#ifndef GPUSKIN_USE_BONES_SRV_BUFFER
-#define GPUSKIN_USE_BONES_SRV_BUFFER	0	// Use a Buffer<float4> if 1, otherwise a uniform buffer   
-#endif
-
 #define MAX_INFLUENCES_PER_STREAM	4
 
 #define FIXED_VERTEX_INDEX 0xFFFF
@@ -281,14 +277,10 @@ FMaterialPixelParameters GetMaterialPixelParameters(FVertexFactoryInterpolantsVS
 
 #define FBoneMatrix float3x4
 
-#if GPUSKIN_USE_BONES_SRV_BUFFER
-
 // The bone matrix buffer stored as 4x3 (3 float4 behind each other), all chunks of a skeletal mesh in one, each skeletal mesh has it's own buffer
 STRONG_TYPE Buffer<float4> BoneMatrices;
 // The previous bone matrix buffer stored as 4x3 (3 float4 behind each other), all chunks of a skeletal mesh in one, each skeletal mesh has it's own buffer
 STRONG_TYPE Buffer<float4> PreviousBoneMatrices;
-
-#endif
 
 // Cache data to avoid multiple calculation 
 struct FVertexFactoryIntermediates
@@ -296,9 +288,9 @@ struct FVertexFactoryIntermediates
 	float3 InvNonUniformScale;
 	float DeterminantSign;
 
-	FLWCMatrix LocalToWorld;
-	FLWCInverseMatrix WorldToLocal;
-	FLWCMatrix PrevLocalToWorld;
+	FDFMatrix LocalToWorld;
+	FDFInverseMatrix WorldToLocal;
+	FDFMatrix PrevLocalToWorld;
 
 	// Blend Matrix (used for position/tangents)
 	FBoneMatrix BlendMatrix;
@@ -341,7 +333,7 @@ FMaterialVertexParameters GetMaterialVertexParameters(FVertexFactoryInput Input,
 	Result.SceneData = Intermediates.SceneData;
 	Result.WorldPosition = WorldPosition;
 	Result.VertexColor = Intermediates.Color;
-	Result.TangentToWorld = mul(TangentToLocal, LWCToFloat3x3(Intermediates.LocalToWorld));
+	Result.TangentToWorld = mul(TangentToLocal, DFToFloat3x3(Intermediates.LocalToWorld));
 	Result.PreSkinnedPosition = Intermediates.UnpackedPosition.xyz;
 	Result.PreSkinnedNormal = Input.TangentZ.xyz;
 
@@ -368,6 +360,9 @@ FMaterialVertexParameters GetMaterialVertexParameters(FVertexFactoryInput Input,
 #if ENABLE_NEW_HLSL_GENERATOR
 	EvaluateVertexMaterialAttributes(Result);
 #endif
+
+	Result.LWCData = MakeMaterialLWCData(Result);
+
 	return Result;
 }
 
@@ -529,155 +524,54 @@ float3 MorphPreviousPosition( FVertexFactoryInput Input, FVertexFactoryIntermedi
 
 FBoneMatrix GetBoneMatrix(int Index)
 {
-#if GPUSKIN_USE_BONES_SRV_BUFFER
 	float4 A = BoneMatrices[Index * 3];
 	float4 B = BoneMatrices[Index * 3 + 1];
 	float4 C = BoneMatrices[Index * 3 + 2];
 	return FBoneMatrix(A,B,C);
-#else
-	return Bones.BoneMatrices[Index];
-#endif
 }
 
 FBoneMatrix CalcBoneMatrix( FVertexFactoryInput Input )
 {
 #if GPUSKIN_UNLIMITED_BONE_INFLUENCE
-	int NumBoneInfluences = Input.BlendOffsetCount & 0xff;
-	int StreamOffset = Input.BlendOffsetCount >> 8;
-	int BoneIndexSize = InputWeightIndexSize & 0xff;
-	int BoneWeightSize = InputWeightIndexSize >> 8;
-	int WeightsOffset = StreamOffset + (BoneIndexSize * NumBoneInfluences);
-
-	FBoneMatrix BoneMatrix = FBoneMatrix(float4(0,0,0,0), float4(0,0,0,0), float4(0,0,0,0));
-	for (int InfluenceIdx = 0; InfluenceIdx < NumBoneInfluences; InfluenceIdx++)
+	return ComputeBoneMatrixWithUnlimitedInfluences(BoneMatrices, InputWeightStream, InputWeightIndexSize, Input.BlendOffsetCount);
+#else
+	const bool bHasExtraInfluences = NumBoneInfluencesParam > MAX_INFLUENCES_PER_STREAM;
+	FGPUSkinIndexAndWeight In = (FGPUSkinIndexAndWeight)0;
+	In.BlendIndices = Input.BlendIndices;
+	In.BlendWeights = Input.BlendWeights;
+	if (bHasExtraInfluences)
 	{
-		int BoneIndexOffset = StreamOffset + (BoneIndexSize * InfluenceIdx);
-		int BoneWeightOffset = WeightsOffset + InfluenceIdx * BoneWeightSize;
-		int BoneIndex = InputWeightStream[BoneIndexOffset];
-		if (BoneIndexSize > 1)
-		{
-			BoneIndex = InputWeightStream[BoneIndexOffset + 1] << 8 | BoneIndex;
-			//@todo-lh: Workaround to fix issue in SPIRVEmitter of DXC; this block must be inside the if branch
-			// Q: Is this workaround still necessary?
-			float BoneWeight;
-			if (BoneWeightSize > 1)
-			{
-				BoneWeight = float(InputWeightStream[BoneWeightOffset + 1] << 8 | InputWeightStream[BoneWeightOffset]) / 65535.0;
-			}
-			else
-			{
-				BoneWeight = float(InputWeightStream[BoneWeightOffset]) / 255.0f;
-			}
-			BoneMatrix += BoneWeight * GetBoneMatrix(BoneIndex);
-		}
-		else
-		{
-			//@todo-lh: Workaround to fix issue in SPIRVEmitter of DXC; this block must be inside the if branch
-			float BoneWeight;
-			if (BoneWeightSize > 1)
-			{
-				BoneWeight = float(InputWeightStream[BoneWeightOffset + 1] << 8 | InputWeightStream[BoneWeightOffset]) / 65535.0;
-			}
-			else
-			{
-				BoneWeight = float(InputWeightStream[BoneWeightOffset]) / 255.0f;
-			}
-			BoneMatrix += BoneWeight * GetBoneMatrix(BoneIndex);
-		}
+		In.BlendIndices2 = Input.BlendIndicesExtra;
+		In.BlendWeights2 = Input.BlendWeightsExtra;
 	}
-#else // GPUSKIN_UNLIMITED_BONE_INFLUENCE
-	FBoneMatrix BoneMatrix = Input.BlendWeights.x * GetBoneMatrix(Input.BlendIndices.x);
-	BoneMatrix += Input.BlendWeights.y * GetBoneMatrix(Input.BlendIndices.y);
-
-#if !GPUSKIN_LIMIT_2BONE_INFLUENCES
-	BoneMatrix += Input.BlendWeights.z * GetBoneMatrix(Input.BlendIndices.z);
-	BoneMatrix += Input.BlendWeights.w * GetBoneMatrix(Input.BlendIndices.w);
-	if (NumBoneInfluencesParam > MAX_INFLUENCES_PER_STREAM)
-	{
-		BoneMatrix += Input.BlendWeightsExtra.x * GetBoneMatrix(Input.BlendIndicesExtra.x);
-		BoneMatrix += Input.BlendWeightsExtra.y * GetBoneMatrix(Input.BlendIndicesExtra.y);
-		BoneMatrix += Input.BlendWeightsExtra.z * GetBoneMatrix(Input.BlendIndicesExtra.z);
-		BoneMatrix += Input.BlendWeightsExtra.w * GetBoneMatrix(Input.BlendIndicesExtra.w);
-	}
-#endif//GPUSKIN_LIMIT_2BONE_INFLUENCES
-#endif // GPUSKIN_UNLIMITED_BONE_INFLUENCE
-	return BoneMatrix;
+	return ComputeBoneMatrixWithLimitedInfluences(BoneMatrices, In, bHasExtraInfluences);
+#endif
 }
 
 FBoneMatrix GetPreviousBoneMatrix(int Index)
 {
-#if GPUSKIN_USE_BONES_SRV_BUFFER
 	float4 A = PreviousBoneMatrices[Index * 3 + 0];
 	float4 B = PreviousBoneMatrices[Index * 3 + 1];
 	float4 C = PreviousBoneMatrices[Index * 3 + 2];
 	return FBoneMatrix(A,B,C);
-#else
-	return Bones.BoneMatrices[Index];
-#endif
 }
 
-FBoneMatrix CalcPreviousBoneMatrix( FVertexFactoryInput Input )
+FBoneMatrix CalcPreviousBoneMatrix(FVertexFactoryInput Input)
 {
 #if GPUSKIN_UNLIMITED_BONE_INFLUENCE
-	int NumBoneInfluences = Input.BlendOffsetCount & 0xff;
-	int StreamOffset = Input.BlendOffsetCount >> 8;
-	int BoneIndexSize = InputWeightIndexSize & 0xff;
-	int BoneWeightSize = InputWeightIndexSize >> 8;
-	int WeightsOffset = StreamOffset + (BoneIndexSize * NumBoneInfluences);
-
-	FBoneMatrix BoneMatrix = FBoneMatrix(float4(0,0,0,0), float4(0,0,0,0), float4(0,0,0,0));
-	for (int InfluenceIdx = 0; InfluenceIdx < NumBoneInfluences; InfluenceIdx++)
+	return ComputeBoneMatrixWithUnlimitedInfluences(PreviousBoneMatrices, InputWeightStream, InputWeightIndexSize, Input.BlendOffsetCount);
+#else
+	const bool bHasExtraInfluences = NumBoneInfluencesParam > MAX_INFLUENCES_PER_STREAM;
+	FGPUSkinIndexAndWeight In = (FGPUSkinIndexAndWeight)0;
+	In.BlendIndices = Input.BlendIndices;
+	In.BlendWeights = Input.BlendWeights;
+	if (bHasExtraInfluences)
 	{
-		int BoneIndexOffset = StreamOffset + (BoneIndexSize * InfluenceIdx);
-		int BoneWeightOffset = WeightsOffset + InfluenceIdx * BoneWeightSize;
-		int BoneIndex = InputWeightStream[BoneIndexOffset];
-		if (BoneIndexSize > 1)
-		{
-			BoneIndex = InputWeightStream[BoneIndexOffset + 1] << 8 | BoneIndex;
-			//@todo-lh: Workaround to fix issue in SPIRVEmitter of DXC; this block must be inside the if branch
-			float BoneWeight;
-			if (BoneWeightSize > 1)
-			{
-				BoneWeight = float(InputWeightStream[BoneWeightOffset + 1] << 8 | InputWeightStream[BoneWeightOffset]) / 65535.0;
-			}
-			else
-			{
-				BoneWeight = float(InputWeightStream[BoneWeightOffset]) / 255.0f;
-			}
-			BoneMatrix += BoneWeight * GetPreviousBoneMatrix(BoneIndex);
-		}
-		else
-		{
-			//@todo-lh: Workaround to fix issue in SPIRVEmitter of DXC; this block must be inside the if branch
-			float BoneWeight;
-			if (BoneWeightSize > 1)
-			{
-				BoneWeight = float(InputWeightStream[BoneWeightOffset + 1] << 8 | InputWeightStream[BoneWeightOffset]) / 65535.0;
-			}
-			else
-			{
-				BoneWeight = float(InputWeightStream[BoneWeightOffset]) / 255.0f;
-			}
-			BoneMatrix += BoneWeight * GetPreviousBoneMatrix(BoneIndex);
-		}
+		In.BlendIndices2 = Input.BlendIndicesExtra;
+		In.BlendWeights2 = Input.BlendWeightsExtra;
 	}
-#else // GPUSKIN_UNLIMITED_BONE_INFLUENCE
-	FBoneMatrix BoneMatrix = Input.BlendWeights.x * GetPreviousBoneMatrix(Input.BlendIndices.x);
-	BoneMatrix += Input.BlendWeights.y * GetPreviousBoneMatrix(Input.BlendIndices.y);
-
-#if !GPUSKIN_LIMIT_2BONE_INFLUENCES
-	BoneMatrix += Input.BlendWeights.z * GetPreviousBoneMatrix(Input.BlendIndices.z);
-	BoneMatrix += Input.BlendWeights.w * GetPreviousBoneMatrix(Input.BlendIndices.w);
-	if (NumBoneInfluencesParam > MAX_INFLUENCES_PER_STREAM)
-	{
-		BoneMatrix += Input.BlendWeightsExtra.x * GetPreviousBoneMatrix(Input.BlendIndicesExtra.x);
-		BoneMatrix += Input.BlendWeightsExtra.y * GetPreviousBoneMatrix(Input.BlendIndicesExtra.y);
-		BoneMatrix += Input.BlendWeightsExtra.z * GetPreviousBoneMatrix(Input.BlendIndicesExtra.z);
-		BoneMatrix += Input.BlendWeightsExtra.w * GetPreviousBoneMatrix(Input.BlendIndicesExtra.w);
-	}
-#endif//GPUSKIN_LIMIT_2BONE_INFLUENCES
-#endif // GPUSKIN_UNLIMITED_BONE_INFLUENCE
-	return BoneMatrix;
+	return ComputeBoneMatrixWithLimitedInfluences(PreviousBoneMatrices, In, bHasExtraInfluences);
+#endif
 }
 
 /** transform position by weighted sum of skinning matrices */
@@ -946,7 +840,7 @@ float3 VertexFactoryGetPositionForVertexLighting(FVertexFactoryInput Input, FVer
 
 void CalcTangentToWorld(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates, out float3 TangentToWorld0, out float4 TangentToWorld2)
 {
-	float3x3 LocalToWorld = LWCToFloat3x3(Intermediates.LocalToWorld);
+	float3x3 LocalToWorld = DFToFloat3x3(Intermediates.LocalToWorld);
 
 	// Remove scaling.
 	half3 InvScale = Intermediates.InvNonUniformScale;

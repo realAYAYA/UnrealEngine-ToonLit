@@ -75,7 +75,7 @@ bool UAdditiveControlRig::Execute_Internal(const FName& InEventName)
 		GetHierarchy()->ForEach<FRigBoneElement>([&](FRigBoneElement* BoneElement) -> bool
 		{
 			FRigUnit_AddBoneTransform NewUnit;
-			NewUnit.Bone = BoneElement->GetName();
+			NewUnit.Bone = BoneElement->GetFName();
 			NewUnit.bPropagateToChildren = true;
 			AddBoneRigUnits.Add(NewUnit);
 			return true;
@@ -119,7 +119,7 @@ void UAdditiveControlRig::CreateRigElements(const FReferenceSkeleton& InReferenc
 		// add control for all bone hierarchy
 		GetHierarchy()->ForEach<FRigBoneElement>([&](FRigBoneElement* BoneElement) -> bool
         {
-            const FName BoneName = BoneElement->GetName();
+            const FName BoneName = BoneElement->GetFName();
             const int32 ParentIndex = GetHierarchy()->GetFirstParent(BoneElement->GetIndex());
             const FName NullName = GetNullName(BoneName);// name conflict?
             const FName ControlName = GetControlName(BoneName); // name conflict?

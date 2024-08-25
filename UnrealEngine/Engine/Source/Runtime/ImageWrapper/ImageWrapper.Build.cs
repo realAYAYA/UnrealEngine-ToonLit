@@ -36,7 +36,9 @@ public class ImageWrapper : ModuleRules
 		AddEngineThirdPartyPrivateStaticDependencies(Target,
 			"zlib",
 			"UElibPNG",
-			"LibTiff"
+			"LibTiff",
+			"OodleDataCompression",
+			"UEJpegComp"
 		);
 
 		// Jpeg Decoding

@@ -21,6 +21,14 @@
 #define uintmax_t unsigned long long
 #endif
 
+#if !defined(FORCE_INLINE)
+#if defined(_MSC_VER)
+#define FORCE_INLINE __forceinline
+#else
+#define FORCE_INLINE inline __attribute__((always_inline))
+#endif
+#endif
+
 typedef struct
 {
 	union
@@ -53,11 +61,78 @@ typedef struct
 	int syntax_error;
 } ppcexp;  // preprocessor constant expression lexer
 
+// Faster inline version of CRT isspace function
+static FORCE_INLINE unsigned isspace_inline(unsigned p)
+{
+	// Subtract one so ASCII space (32) fits in the last bit of a 32-bit mask.  The null terminator (zero) will wrap around due to
+	// unsigned math, which is good, because it will pass this conditional, avoiding the bit test.
+	p = p - 1;
+	if (p >= 32)
+	{
+		return 0;
+	}
+
+	// Only invalid non-printable characters (which lead to downstream syntax errors) will fail the bit test, since nullptr is covered
+	// by the branch above, so we expect this second branch condition to be 100% correctly predicted.
+	static const unsigned whitespace_mask =
+		(1u << ('\t' - 1)) |
+		(1u << ('\n' - 1)) |
+		(1u << ('\v' - 1)) |
+		(1u << ('\r' - 1)) |
+		(1u << (' '  - 1));
+
+	return whitespace_mask & (1u << p);
+}
+
+// Assuming we found a starting digit, this function checks the next character to see if it ends the number.  If so, it's a single
+// digit number (which is very common in the preprocessor -- most values are zero or one), and we can do a trivial digit character
+// to number conversion, rather than calling the expensive strtoull.  This doesn't try to catch all cases, but it catches most
+// cases likely to exist in valid (non syntax error) code.
+static FORCE_INLINE int is_end_of_number(int p)
+{
+	// Any ASCII less than a decimal character ('.') ends a number, which includes whitespace, parentheses, some operator
+	// characters, and NULL.  Numbers can have hex or binary prefixes (0x, 0b), or unsigned / length suffixes (ull), so we need
+	// to allow letters as a possibility, in addition to digits (other letters produce syntax errors, but it's fine if those
+	// return false and go through the slow path).
+	// 
+	// That leaves other operator characters we need to treat as ending the number:  ":<=>?^|~".  Looking at an ASCII chart shows
+	// a way to handle those.  All the above characters are at the bottom of the chart, and can be detected by looking at the
+	// bottom 5 bits of the character code:
+	// 
+	//    0x38 8  0x58 X  0x78  x
+	//    0x39 9  0x59 Y  0x79  y
+	//    0x3a :  0x5a Z  0x7a  z
+	//    0x3b ;  0x5b [  0x7b  {
+	//    0x3c <  0x5c \  0x7c  |
+	//    0x3d =  0x5d ]  0x7d  }
+	//    0x3e >  0x5e ^  0x7e  ~
+	//    0x3f ?  0x5f _  0x7f  DEL
+	//
+	// Anything 0x1a or larger in the bottom 5 bits is past the range of possible number continuations.  There's a handful of
+	// characters not caught by this logic:  "/@`", but two of those will produce syntax errors, and integer divide is rare in
+	// preprocessor expressions.  To avoid two branches, we merge two expressions which will have a negative sign for the
+	// condition we care about.  This is equivalent to:
+	//
+	//    (p < '.') || (0x1a <= (p & 0x1f))
+	//
+	return ((p - '.') | (0x19 - (p & 0x1f))) < 0;
+}
+
+static FORCE_INLINE int is_token_character(unsigned char p)
+{
+	// Numbers, letteres, underscore, and '$' are considered valid token characters by the preprocessor.  Mask test to see
+	// if this is one of those.
+	static const unsigned token_mask[8] = { 0x00000000, 0x03ff0010, 0x87fffffe, 0x07fffffe,  0,0,0,0 };
+
+	return (1u << (p & 0x1f)) & token_mask[p >> 5];
+}
+
 static void ce_next(ppcexp* c)
 {
 	char* p = c->p;
-	while (isspace(*p))
+	while (isspace_inline(*p))
 		++p;
+
 	switch (*p)
 	{
 		case '<':
@@ -200,7 +275,7 @@ static void ce_next(ppcexp* c)
 		{
 			do
 				++p;
-			while (isalnum(*p) || *p == '_' || *p == '$');
+			while (is_token_character(*p));
 			// any Identifier is a macro that WASN'T defined, so it evaluates as 0
 			c->token_value.iv = 0;
 			c->token_value.is_signed = 1;
@@ -209,6 +284,14 @@ static void ce_next(ppcexp* c)
 		}
 
 		case '0':
+			if (is_end_of_number(p[1]))
+			{
+				c->token_value.iv = 0;
+				c->token_value.is_signed = 1;
+				c->token = PPLEX_int_literal;
+				p++;
+				break;
+			}
 			if (p[1] == 'x' || p[1] == 'X')
 			{
 				char* q;
@@ -244,6 +327,14 @@ static void ce_next(ppcexp* c)
 		case '7':
 		case '8':
 		case '9':
+			if (is_end_of_number(p[1]))
+			{
+				c->token_value.iv = *p - '0';
+				c->token_value.is_signed = 1;
+				c->token = PPLEX_int_literal;
+				p++;
+				break;
+			}
 			c->token_value.uv = strtoull(p, &p, 10);
 		numeric_suffixes:
 			c->token_value.is_signed = (c->token_value.uv < ((uintmax_t)1 << 63));

@@ -149,26 +149,20 @@ namespace Chaos
 				CurrentEpoch = InEpoch;
 			}
 
-			// Process all the new midphases from the parallel collision detection
-			CHAOS_API void ProcessNewMidPhases(FCollisionConstraintAllocator* Allocator);
-
-			// Process all the activated collisions from the parallel collision detection
-			CHAOS_API void ProcessNewConstraints(FCollisionConstraintAllocator* Allocator);
-
 			// Find the midphase for the particle pair if it exists. Every particle holds a list of its midphases. We search "SearchParticle" which should be
 			// ideally be the one with fewer midphases on it.
 			FParticlePairMidPhase* FindMidPhaseImpl(FGeometryParticleHandle* Particle0, FGeometryParticleHandle* Particle1, FGeometryParticleHandle* SearchParticle)
 			{
 				check((SearchParticle == Particle0) || (SearchParticle == Particle1));
 
-				const FCollisionParticlePairKey Key = FCollisionParticlePairKey(Particle0, Particle1);
+				const Private::FCollisionParticlePairKey Key = Private::FCollisionParticlePairKey(Particle0, Particle1);
 				return SearchParticle->ParticleCollisions().FindMidPhase(Key.GetKey());
 			}
 
 			// Create and initialize a midphase for the particle pair. Adds it to the particles' lists of midphases.
 			FParticlePairMidPhase* CreateMidPhase(FGeometryParticleHandle* Particle0, FGeometryParticleHandle* Particle1, const FCollisionContext& Context)
 			{
-				const FCollisionParticlePairKey Key = FCollisionParticlePairKey(Particle0, Particle1);
+				const Private::FCollisionParticlePairKey Key = Private::FCollisionParticlePairKey(Particle0, Particle1);
 
 				// We temporarily hold new midphases as raw pointers and wrap them in a unique ptr later in ProcessNewMidPhases
 #if CHAOS_MIDPHASE_OBJECTPOOL_ENABLED 
@@ -243,6 +237,7 @@ namespace Chaos
 				, ActiveConstraints()
 				, ActiveCCDConstraints()
 				, CurrentEpoch(0)
+				, bIsDeteministic(false)
 				, bInCollisionDetectionPhase(false)
 			{
 			}
@@ -351,6 +346,8 @@ namespace Chaos
 			*/
 			void BeginFrame()
 			{
+				ResetActiveConstraints();
+
 				ActiveConstraints.Reset();
 				ActiveCCDConstraints.Reset();
 			}
@@ -377,6 +374,8 @@ namespace Chaos
 					ContextAllocator->BeginDetectCollisions(CurrentEpoch);
 				}
 
+				ResetActiveConstraints();
+
 				// Clear the collision list for this tick - we are about to rebuild them
 				ActiveConstraints.Reset();
 				ActiveCCDConstraints.Reset();
@@ -386,13 +385,7 @@ namespace Chaos
 			 * @brief Called after collision detection to clean up
 			 * Prunes unused contacts
 			*/
-			void EndDetectCollisions()
-			{
-				check(bInCollisionDetectionPhase);
-				bInCollisionDetectionPhase = false;
-
-				ProcessNewItems();
-			}
+			CHAOS_API void EndDetectCollisions();
 
 			/**
 			 * @brief Called each tick after the graph is updated to remove unused collisions
@@ -405,13 +398,7 @@ namespace Chaos
 			/**
 			 * Collect all the midphases created on the context allocators (probably on multiple threads) and register them
 			*/
-			void ProcessNewMidPhases()
-			{
-				for (TUniquePtr<FCollisionContextAllocator>& ContextAllocator : ContextAllocators)
-				{
-					ContextAllocator->ProcessNewMidPhases(this);
-				}
-			}
+			CHAOS_API void ProcessNewMidPhases();
 
 			/**
 			 * @brief If we add new constraints after collision detection, do what needs to be done to add them to the system
@@ -459,17 +446,7 @@ namespace Chaos
 			*/
 			void SortConstraintsHandles()
 			{
-				if(ActiveConstraints.Num())
-				{
-					// We need to sort constraints for solver stability
-					// We have to use StableSort so that constraints of the same pair stay in the same order
-					// Otherwise the order within each pair can change due to where they start out in the array
-					// @todo(chaos): we should label each contact (and shape) for things like warm starting GJK
-					// and so we could use that label as part of the key
-					// and then we could use regular Sort (which is faster)			
-					// @todo(chaos): this can be moved to the island and therefoe done in parallel
-					ActiveConstraints.StableSort(ContactConstraintSortPredicate);
-				}
+				SortActiveConstraints();
 			}
 
 			/**
@@ -483,11 +460,11 @@ namespace Chaos
 			 * Visitor signature: ECollisionVisitorResult(const FPBDCollisionConstraint&)
 			*/
 			template<typename TLambda>
-			void VisitConstCollisions(const TLambda& Visitor) const
+			void VisitConstCollisions(const TLambda& Visitor, const ECollisionVisitorFlags& VisitFlags = ECollisionVisitorFlags::VisitDefault) const
 			{
 				for (const FParticlePairMidPhasePtr& MidPhase : ParticlePairMidPhases)
 				{
-					if (MidPhase->VisitConstCollisions(Visitor) == ECollisionVisitorResult::Stop)
+					if (MidPhase->VisitConstCollisions(Visitor, VisitFlags) == ECollisionVisitorResult::Stop)
 					{
 						return;
 					}
@@ -526,6 +503,14 @@ namespace Chaos
 				}
 			}
 
+			/**
+			 * Enable/Disable determinism (extra sorting steps after collision detection)
+			*/
+			void SetIsDeterministic(const bool bInIsDeterministic)
+			{
+				bIsDeteministic = bInIsDeterministic;
+			}
+
 		private:
 			friend class FCollisionContextAllocator;
 
@@ -562,34 +547,13 @@ namespace Chaos
 			CHAOS_API void PruneExpiredMidPhases();
 
 			// Collect all the constraints activated in the collision tasks and register them (calls ActivateConstraintImp on each)
-			void ProcessNewConstraints()
-			{
-				for (TUniquePtr<FCollisionContextAllocator>& ContextAllocator : ContextAllocators)
-				{
-					ContextAllocator->ProcessNewConstraints(this);
-				}
-			}
-
-			// Register an activated constraint
-			void ActivateConstraintImp(FPBDCollisionConstraint* CollisionConstraint)
-			{
-				FPBDCollisionConstraintContainerCookie& Cookie = CollisionConstraint->GetContainerCookie();
-
-				// Add the constraint to the active list and update its epoch
-				checkSlow(ActiveConstraints.Find(CollisionConstraint) == INDEX_NONE);
-				Cookie.ConstraintIndex = ActiveConstraints.Add(CollisionConstraint);
-
-				// If the constraint uses CCD, keep it in another list so we don't have to search the full list for CCD contacts
-				if (CollisionConstraint->GetCCDEnabled())
-				{
-					checkSlow(ActiveCCDConstraints.Find(CollisionConstraint) == INDEX_NONE);
-					Cookie.CCDConstraintIndex = ActiveCCDConstraints.Add(CollisionConstraint);
-				}
-
-				Cookie.LastUsedEpoch = CurrentEpoch;
-			}
+			CHAOS_API void ProcessNewConstraints();
 
 			CHAOS_API void RemoveActiveConstraint(FPBDCollisionConstraint& Constraint);
+
+			CHAOS_API void SortActiveConstraints();
+
+			CHAOS_API void ResetActiveConstraints();
 
 			// The container that owns the allocator (only needed because new constraints need to know)
 			FPBDCollisionConstraints* CollisionContainer;
@@ -611,6 +575,9 @@ namespace Chaos
 			// older than the current Epoch at the end of the tick was not refreshed this tick.
 			int32 CurrentEpoch;
 
+			// Whether we running a deterministic sim
+			bool bIsDeteministic;
+
 			// For assertions
 			bool bInCollisionDetectionPhase;
 		};
@@ -626,16 +593,65 @@ namespace Chaos
 	///////////////////////////////////////////////////////////////////////////////////////////////
 	///////////////////////////////////////////////////////////////////////////////////////////////
 
+	// Check the visitor flags and return true if we want to visit the constraint
+	inline bool CollisionVisitorShouldVisit(const FPBDCollisionConstraint* Constraint, const ECollisionVisitorFlags VisitFlags)
+	{
+		if (Constraint == nullptr)
+		{
+			return false;
+		}
+
+		if (!(VisitFlags & ECollisionVisitorFlags::VisitDisabled))
+		{
+			// Awkward. Sleeping constraints are considered "disabled" so if we want to
+			// visit sleeping constraints we must ignore the disabled state when asleep
+			if (!(VisitFlags & ECollisionVisitorFlags::VisitSleeping))
+			{
+				// We do NOT want to visit sleeping, so we can just check the enabled flag
+				if (!Constraint->IsEnabled())
+				{
+					return false;
+				}
+			}
+			else
+			{
+				// We do want to visit sleeping, so we only skip disabled-awake constraints
+				if (!Constraint->IsEnabled() && !Constraint->IsSleeping())
+				{
+					return false;
+				}
+			}
+		}
+
+		if (!(VisitFlags & ECollisionVisitorFlags::VisitSleeping))
+		{
+			if (Constraint->IsSleeping())
+			{
+				return false;
+			}
+		}
+
+		if (!(VisitFlags & ECollisionVisitorFlags::VisitExpired))
+		{
+			if (!Constraint->IsCurrent())
+			{
+				return false;
+			}
+		}
+
+		return true;
+	}
 
 	template<typename TLambda>
-	inline ECollisionVisitorResult FParticlePairMidPhase::VisitCollisions(const TLambda& Visitor, const bool bOnlyActive)
+	inline ECollisionVisitorResult FParticlePairMidPhase::VisitCollisions(const TLambda& Visitor, const ECollisionVisitorFlags VisitFlags)
 	{
 		if (GetMidPhaseType() == EParticlePairMidPhaseType::ShapePair)
 		{
 			FShapePairParticlePairMidPhase* This = static_cast<FShapePairParticlePairMidPhase*>(this);
+
 			for (FSingleShapePairCollisionDetector& ShapePair : This->ShapePairDetectors)
 			{
-				if ((ShapePair.GetConstraint() != nullptr) && (!bOnlyActive || !ShapePair.GetConstraint()->GetDisabled()))
+				if (CollisionVisitorShouldVisit(ShapePair.GetConstraint(), VisitFlags))
 				{
 					if (Visitor(*ShapePair.GetConstraint()) == ECollisionVisitorResult::Stop)
 					{
@@ -651,7 +667,24 @@ namespace Chaos
 			for (auto& KVP : This->Constraints)
 			{
 				FPBDCollisionConstraintPtr& Constraint = KVP.Value;
-				if (!bOnlyActive || Constraint->IsEnabled())
+
+				if (CollisionVisitorShouldVisit(Constraint.Get(), VisitFlags))
+				{
+					if (Visitor(*Constraint) == ECollisionVisitorResult::Stop)
+					{
+						return ECollisionVisitorResult::Stop;
+					}
+				}
+			}
+		}
+
+		if (GetMidPhaseType() == EParticlePairMidPhaseType::SphereApproximation)
+		{
+			FSphereApproximationParticlePairMidPhase* This = static_cast<FSphereApproximationParticlePairMidPhase*>(this);
+			FPBDCollisionConstraint* Constraint = This->Constraint.Get();
+			if (Constraint != nullptr)
+			{
+				if (CollisionVisitorShouldVisit(Constraint, VisitFlags))
 				{
 					if (Visitor(*Constraint) == ECollisionVisitorResult::Stop)
 					{
@@ -666,14 +699,14 @@ namespace Chaos
 
 
 	template<typename TLambda>
-	inline ECollisionVisitorResult FParticlePairMidPhase::VisitConstCollisions(const TLambda& Visitor, const bool bOnlyActive) const
+	inline ECollisionVisitorResult FParticlePairMidPhase::VisitConstCollisions(const TLambda& Visitor, const ECollisionVisitorFlags VisitFlags) const
 	{
 		if (GetMidPhaseType() == EParticlePairMidPhaseType::ShapePair)
 		{
 			const FShapePairParticlePairMidPhase* This = static_cast<const FShapePairParticlePairMidPhase*>(this);
 			for (const FSingleShapePairCollisionDetector& ShapePair : This->ShapePairDetectors)
 			{
-				if ((ShapePair.GetConstraint() != nullptr) && (!bOnlyActive || !ShapePair.GetConstraint()->GetDisabled()))
+				if (CollisionVisitorShouldVisit(ShapePair.GetConstraint(), VisitFlags))
 				{
 					if (Visitor(*ShapePair.GetConstraint()) == ECollisionVisitorResult::Stop)
 					{
@@ -689,7 +722,24 @@ namespace Chaos
 			for (const auto& KVP : This->Constraints)
 			{
 				const FPBDCollisionConstraintPtr& Constraint = KVP.Value;
-				if (!bOnlyActive || Constraint->IsEnabled())
+				
+				if (CollisionVisitorShouldVisit(Constraint.Get(), VisitFlags))
+				{
+					if (Visitor(*Constraint) == ECollisionVisitorResult::Stop)
+					{
+						return ECollisionVisitorResult::Stop;
+					}
+				}
+			}
+		}
+
+		if (GetMidPhaseType() == EParticlePairMidPhaseType::SphereApproximation)
+		{
+			const FSphereApproximationParticlePairMidPhase* This = static_cast<const FSphereApproximationParticlePairMidPhase*>(this);
+			const FPBDCollisionConstraint* Constraint = This->Constraint.Get();
+			if (Constraint != nullptr)
+			{
+				if (CollisionVisitorShouldVisit(Constraint, VisitFlags))
 				{
 					if (Visitor(*Constraint) == ECollisionVisitorResult::Stop)
 					{
@@ -730,11 +780,11 @@ namespace Chaos
 	}
 
 	template<typename TLambda>
-	inline ECollisionVisitorResult FParticleCollisions::VisitCollisions(const TLambda& Visitor)
+	inline ECollisionVisitorResult FParticleCollisions::VisitCollisions(const TLambda& Visitor, const ECollisionVisitorFlags VisitFlags)
 	{
-		return VisitMidPhases([&Visitor](FParticlePairMidPhase& MidPhase)
+		return VisitMidPhases([&Visitor, VisitFlags](FParticlePairMidPhase& MidPhase)
 			{
-				if (MidPhase.VisitCollisions(Visitor) == ECollisionVisitorResult::Stop)
+				if (MidPhase.VisitCollisions(Visitor, VisitFlags) == ECollisionVisitorResult::Stop)
 				{
 					return ECollisionVisitorResult::Stop;
 				}
@@ -743,11 +793,11 @@ namespace Chaos
 	}
 
 	template<typename TLambda>
-	inline ECollisionVisitorResult FParticleCollisions::VisitConstCollisions(const TLambda& Visitor) const
+	inline ECollisionVisitorResult FParticleCollisions::VisitConstCollisions(const TLambda& Visitor, const ECollisionVisitorFlags VisitFlags) const
 	{
-		return VisitConstMidPhases([&Visitor](const FParticlePairMidPhase& MidPhase)
+		return VisitConstMidPhases([&Visitor, VisitFlags](const FParticlePairMidPhase& MidPhase)
 			{
-				if (MidPhase.VisitConstCollisions(Visitor) == ECollisionVisitorResult::Stop)
+				if (MidPhase.VisitConstCollisions(Visitor, VisitFlags) == ECollisionVisitorResult::Stop)
 				{
 					return ECollisionVisitorResult::Stop;
 				}

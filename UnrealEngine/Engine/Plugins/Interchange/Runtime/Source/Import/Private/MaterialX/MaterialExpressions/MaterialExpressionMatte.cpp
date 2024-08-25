@@ -1,6 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #include "MaterialExpressionMatte.h"
 #include "MaterialCompiler.h"
+#include "MaterialHLSLGenerator.h"
+#include "HLSLTree/HLSLTree.h"
+#include "HLSLTree/HLSLTreeCommon.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MaterialExpressionMatte)
 
@@ -59,6 +62,38 @@ int32 UMaterialExpressionMaterialXMatte::Compile(FMaterialCompiler* Compiler, in
 void UMaterialExpressionMaterialXMatte::GetCaption(TArray<FString>& OutCaptions) const
 {
 	OutCaptions.Add(TEXT("MaterialX Matte"));
+}
+
+bool UMaterialExpressionMaterialXMatte::GenerateHLSLExpression(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope, int32 OutputIndex, UE::HLSLTree::FExpression const*& OutExpression) const
+{
+	using namespace UE::HLSLTree;
+
+	const FExpression* ExpressionA = A.AcquireHLSLExpression(Generator, Scope);
+	const FExpression* ExpressionB = B.AcquireHLSLExpression(Generator, Scope);
+	const FExpression* ExpressionAlpha = Alpha.AcquireHLSLExpressionOrConstant(Generator, Scope, ConstAlpha);
+
+	if(!ExpressionA || !ExpressionB || !ExpressionAlpha)
+	{
+		return false;
+	}
+
+	FTree& Tree = Generator.GetTree();
+	const FExpression* ExpressionAlphaA = Tree.NewSwizzle(FSwizzleParameters(3), ExpressionA);
+	const FExpression* ExpressionAlphaB = Tree.NewSwizzle(FSwizzleParameters(3), ExpressionB);
+	const FExpression* ExpressionRgbA = Tree.NewSwizzle(FSwizzleParameters(0, 1, 2), ExpressionA);
+	const FExpression* ExpressionRgbB = Tree.NewSwizzle(FSwizzleParameters(0, 1, 2), ExpressionB);
+
+	const FExpression* ExpressionOneMinusAlphaA = Tree.NewSub(Tree.NewConstant(1.f), ExpressionAlphaA);
+
+	const FExpression* ExpressionMatte = Tree.NewExpression<FExpressionAppend>(
+			Tree.NewAdd(Tree.NewMul(ExpressionRgbA, ExpressionAlphaA),
+						Tree.NewMul(ExpressionRgbB, ExpressionOneMinusAlphaA)),
+			Tree.NewAdd(ExpressionAlphaA,
+						Tree.NewMul(ExpressionAlphaB, ExpressionOneMinusAlphaA)));
+
+	OutExpression = Tree.NewLerp(ExpressionB, ExpressionMatte, ExpressionAlpha);
+
+	return true;
 }
 #endif
 

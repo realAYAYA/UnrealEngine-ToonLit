@@ -1,0 +1,28 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "/Engine/Private/Common.ush"
+
+Texture2D InputTexture;
+SamplerState InputSampler;
+
+float4 DrawTextureWithAlphaPS(
+	noperspective float4 UVAndScreenPos : TEXCOORD0
+	) : SV_Target0
+{
+	const float2 UV = UVAndScreenPos.xy;
+	const float4 SceneColorValue = Texture2DSample(InputTexture, InputSampler, UV);
+
+	// 	r.PostProcessing.PropagateAlpha
+	#if POST_PROCESS_ALPHA == 2 
+		return float4(SceneColorValue.rgb, saturate(1.0 - SceneColorValue.a));
+	#else
+		if (float(SceneColorValue.r) > 0.f || float(SceneColorValue.g) > 0.f || float(SceneColorValue.b) > 0.f)
+		{
+			return float4(SceneColorValue.rgb, 1.f);
+		}
+		else
+		{
+			return float4(0.f, 0.f, 0.f, 0.f);
+		}
+	#endif
+}

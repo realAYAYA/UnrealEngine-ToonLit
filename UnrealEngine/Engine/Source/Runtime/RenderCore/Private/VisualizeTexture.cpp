@@ -133,12 +133,12 @@ void FVisualizeTexture::ParseCommands(const TCHAR* Cmd, FOutputDevice &Ar)
 			}
 			else if (Parameter.Left(3) == TEXT("mip"))
 			{
-				Parameter.RightInline(Parameter.Len() - 3, false);
+				Parameter.RightInline(Parameter.Len() - 3, EAllowShrinking::No);
 				Config.MipIndex = FCString::Atoi(*Parameter);
 			}
 			else if (Parameter.Left(5) == TEXT("index"))
 			{
-				Parameter.RightInline(Parameter.Len() - 5, false);
+				Parameter.RightInline(Parameter.Len() - 5, EAllowShrinking::No);
 				Config.ArrayIndex = FCString::Atoi(*Parameter);
 			}
 			// e.g. RGB*6, A, *22, /2.7, A*7
@@ -154,7 +154,7 @@ void FVisualizeTexture::ParseCommands(const TCHAR* Cmd, FOutputDevice &Ar)
 
 				if (Parameter.Left(3) == TEXT("rgb"))
 				{
-					Parameter.RightInline(Parameter.Len() - 3, false);
+					Parameter.RightInline(Parameter.Len() - 3, EAllowShrinking::No);
 				}
 				else if (Parameter.Left(1) == TEXT("r")) Config.SingleChannel = 0;
 				else if (Parameter.Left(1) == TEXT("g")) Config.SingleChannel = 1;
@@ -162,7 +162,7 @@ void FVisualizeTexture::ParseCommands(const TCHAR* Cmd, FOutputDevice &Ar)
 				else if (Parameter.Left(1) == TEXT("a")) Config.SingleChannel = 3;
 				if (Config.SingleChannel >= 0)
 				{
-					Parameter.RightInline(Parameter.Len() - 1, false);
+					Parameter.RightInline(Parameter.Len() - 1, EAllowShrinking::No);
 					Config.SingleChannelMul = 1.0f;
 					Config.RGBMul = 0.0f;
 				}
@@ -172,12 +172,12 @@ void FVisualizeTexture::ParseCommands(const TCHAR* Cmd, FOutputDevice &Ar)
 				// * or /
 				if (Parameter.Left(1) == TEXT("*"))
 				{
-					Parameter.RightInline(Parameter.Len() - 1, false);
+					Parameter.RightInline(Parameter.Len() - 1, EAllowShrinking::No);
 					Mul = FCString::Atof(*Parameter);
 				}
 				else if (Parameter.Left(1) == TEXT("/"))
 				{
-					Parameter.RightInline(Parameter.Len() - 1, false);
+					Parameter.RightInline(Parameter.Len() - 1, EAllowShrinking::No);
 					Mul = 1.0f / FCString::Atof(*Parameter);
 				}
 				Config.RGBMul *= Mul;
@@ -675,7 +675,7 @@ FRDGTextureRef FVisualizeTexture::AddVisualizeTexturePass(
 
 				// w * almost_1 to avoid frac(1) => 0
 				PassParameters->VisualizeParam[0] = FVector4f(VisualizeConfig.RGBMul, VisualizeConfig.SingleChannelMul, Add, FracScale * 0.9999f);
-				PassParameters->VisualizeParam[1] = FVector4f(CVarAllowBlinking.GetValueOnRenderThread() ? BlinkState : 1.0f, (VisualizeConfig.ShaderOp == EShaderOp::Saturate) ? 1.0f : 0.0f, VisualizeConfig.ArrayIndex, VisualizeConfig.MipIndex);
+				PassParameters->VisualizeParam[1] = FVector4f(CVarAllowBlinking.GetValueOnRenderThread() ? BlinkState : 0.0f, (VisualizeConfig.ShaderOp == EShaderOp::Saturate) ? 1.0f : 0.0f, VisualizeConfig.ArrayIndex, VisualizeConfig.MipIndex);
 				PassParameters->VisualizeParam[2] = FVector4f((float)InputValueMapping, 0.0f, VisualizeConfig.SingleChannel);
 			}
 

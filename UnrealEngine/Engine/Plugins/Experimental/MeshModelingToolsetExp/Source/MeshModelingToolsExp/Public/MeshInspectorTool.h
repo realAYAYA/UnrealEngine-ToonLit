@@ -96,6 +96,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = Options)
 	bool bTangentVectors = false;
 
+	/** Toggle visibility of occluded boundary edges and seams */
+	UPROPERTY(EditAnywhere, Category = Options)
+	bool bDrawHiddenEdgesAndSeams = true;
+
 	/** Length of line segments representing normal vectors */
 	UPROPERTY(EditAnywhere, Category = Options, AdvancedDisplay, meta = (EditCondition = "bNormalVectors",
 		UIMin="0", UIMax="400", ClampMin = "0", ClampMax = "1000000000.0"))
@@ -220,7 +224,7 @@ public:
  * Mesh Inspector Tool for visualizing mesh information
  */
 UCLASS()
-class MESHMODELINGTOOLSEXP_API UMeshInspectorTool : public USingleSelectionMeshEditingTool
+class MESHMODELINGTOOLSEXP_API UMeshInspectorTool : public USingleSelectionMeshEditingTool, public IInteractiveToolManageGeometrySelectionAPI
 {
 	GENERATED_BODY()
 
@@ -240,6 +244,12 @@ public:
 	virtual bool CanAccept() const override;
 
 	virtual void OnPropertyModified(UObject* PropertySet, FProperty* Property) override;
+
+	// IInteractiveToolManageGeometrySelectionAPI -- this tool won't update external geometry selection or change selection-relevant mesh IDs
+	virtual bool IsInputSelectionValidOnOutput() override
+	{
+		return true;
+	}
 
 public:
 

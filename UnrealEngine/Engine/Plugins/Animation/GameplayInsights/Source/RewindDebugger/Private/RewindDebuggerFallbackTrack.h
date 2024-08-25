@@ -2,6 +2,7 @@
 #pragma once
 
 #include "RewindDebuggerTrack.h"
+#include "IRewindDebuggerViewCreator.h"
 
 namespace RewindDebugger
 {

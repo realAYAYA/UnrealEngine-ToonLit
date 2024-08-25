@@ -63,9 +63,15 @@ int32 SEventTimelineView::PaintEvents(const FGeometry& AllottedGeometry, const F
 				float Y = (AllottedGeometry.Size.Y - EventSize.Y)/2;
 				if (Point.Time == PrevPointTime)
 				{
-					OverlappingPointCount++;
-
 					static const int OverlapOffsetAmount = 2;
+					static const int MaxOverlappingEvents = 2;
+				
+					if (OverlappingPointCount > MaxOverlappingEvents)
+					{
+						continue;
+					}
+					
+					OverlappingPointCount++;
 					Y += OverlapOffsetAmount * OverlappingPointCount;
 				}
 				else

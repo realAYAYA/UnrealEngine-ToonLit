@@ -11,7 +11,7 @@ class SWidget;
 
 TSharedRef<SWidget> FDataLayerPropertyTypeCustomizationHelper::CreateDataLayerMenu(TFunction<void(const UDataLayerInstance* DataLayer)> OnDataLayerSelectedFunction)
 {
-	return FDataLayerPickingMode::CreateDataLayerPickerWidget(FOnDataLayerPicked::CreateLambda([OnDataLayerSelectedFunction](UDataLayerInstance* TargetDataLayer)
+	return FDataLayerPickingMode::CreateDataLayerPickerWidget(FOnDataLayerInstancePicked::CreateLambda([OnDataLayerSelectedFunction](UDataLayerInstance* TargetDataLayer)
 	{
 		OnDataLayerSelectedFunction(TargetDataLayer);
 	}));

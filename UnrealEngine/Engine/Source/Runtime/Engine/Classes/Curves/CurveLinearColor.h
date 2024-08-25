@@ -101,7 +101,5 @@ public:
 	UE_DEPRECATED(4.26, "OnUpdateGradient is deprecated. Please use UCurveBase::OnUpdateCurve instead")
 	FOnUpdateGradient OnUpdateGradient;
 #endif
-protected:
-	ENGINE_API void WritePixel(uint8* Pixel, const FLinearColor& Color);
 };
 

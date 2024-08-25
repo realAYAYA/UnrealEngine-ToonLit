@@ -3,7 +3,6 @@
 #include "LevelSequenceActorSpawner.h"
 #include "Misc/PackageName.h"
 #include "MovieSceneSpawnable.h"
-#include "IMovieScenePlayer.h"
 #include "GameFramework/Actor.h"
 #include "Engine/World.h"
 #include "Particles/ParticleSystemComponent.h"
@@ -69,7 +68,7 @@ ULevelStreaming* GetLevelStreaming(const FName& DesiredLevelName, const UWorld* 
 	return nullptr;
 }
 
-UObject* FLevelSequenceActorSpawner::SpawnObject(FMovieSceneSpawnable& Spawnable, FMovieSceneSequenceIDRef TemplateID, IMovieScenePlayer& Player)
+UObject* FLevelSequenceActorSpawner::SpawnObject(FMovieSceneSpawnable& Spawnable, FMovieSceneSequenceIDRef TemplateID, TSharedRef<const UE::MovieScene::FSharedPlaybackState> SharedPlaybackState)
 {
 	AActor* ObjectTemplate = Cast<AActor>(Spawnable.GetObjectTemplate());
 	if (!ObjectTemplate)
@@ -88,7 +87,8 @@ UObject* FLevelSequenceActorSpawner::SpawnObject(FMovieSceneSpawnable& Spawnable
 	
 	// @todo sequencer actors: We need to make sure puppet objects aren't copied into PIE/SIE sessions!  They should be omitted from that duplication!
 
-	UWorld* WorldContext = Cast<UWorld>(Player.GetPlaybackContext());
+	UObject* PlaybackContext = SharedPlaybackState->GetPlaybackContext();
+	UWorld* WorldContext = PlaybackContext ? PlaybackContext->GetWorld() : nullptr;
 
 	FName DesiredLevelName = Spawnable.GetLevelName();
 	if (DesiredLevelName != NAME_None)
@@ -121,7 +121,7 @@ UObject* FLevelSequenceActorSpawner::SpawnObject(FMovieSceneSpawnable& Spawnable
 	// We use the net addressable name for spawnables on any non-editor, non-standalone world (ie, all clients, servers and PIE worlds)
 	const bool bUseNetAddressableName = Spawnable.bNetAddressableName && (WorldContext->WorldType != EWorldType::Editor) && (WorldContext->GetNetMode() != ENetMode::NM_Standalone);
 
-	FName SpawnName = bUseNetAddressableName ? Spawnable.GetNetAddressableName(Player, TemplateID) :
+	FName SpawnName = bUseNetAddressableName ? Spawnable.GetNetAddressableName(SharedPlaybackState, TemplateID) :
 #if WITH_EDITOR
 		// Construct the object with the same name that we will set later on the actor to avoid renaming it inside SetActorLabel
 		MakeUniqueObjectName(WorldContext->PersistentLevel, ObjectTemplate->GetClass(), *Spawnable.GetName());
@@ -225,7 +225,7 @@ UObject* FLevelSequenceActorSpawner::SpawnObject(FMovieSceneSpawnable& Spawnable
 	}	
 #endif
 
-	if (UMovieSceneEntitySystemLinker* Linker = Player.GetEvaluationTemplate().GetEntitySystemLinker())
+	if (UMovieSceneEntitySystemLinker* Linker = SharedPlaybackState->GetLinker())
 	{
 		if (UMovieSceneDeferredComponentMovementSystem* DeferredMovementSystem = Linker->FindSystem<UMovieSceneDeferredComponentMovementSystem>())
 		{

@@ -33,33 +33,41 @@ class _Shell(object):
         start_dir = os.getcwd()
 
         with open(cookie, "wt") as out:
+            header = _get_header_script()
+            autocompleter = _get_autocompleter_script()
+            function_template = _get_function_template_script()
+            cleanup = _get_cleanup_script()
+
             out.write(f"Set-Location \"{start_dir}\"\n")
             # Environment must be written out first so autocomplete daemon gets the right session id
             for key, value in env.read_changes():
                 value = value or ""
                 out.write(f'${{env:{key}}}="{value}"\n')
-            out.write(_header.format(shims_path=shims_path,working_dir=working_dir))
-            out.write(_autocompleter.format(python=sys.executable, run_py_path=run_py_path, working_dir=working_dir))
+            out.write(header.format(shims_path=shims_path,working_dir=working_dir))
+            out.write(autocompleter.format(python=sys.executable, run_py_path=run_py_path, working_dir=working_dir))
             for name,_ in tree_root.read_children():
                 if name.startswith("$"): continue
-                out.write(_function_template.format(name=name))
-            out.write(_cleanup)
+                out.write(function_template.format(name=name))
+            out.write(cleanup)
 
-_header = r"""
+def _get_header_script():
+    return r"""
 $ShimsPath = Resolve-Path "{shims_path}"
 $env:Path += ";$ShimsPath"
 """
 
 # Braces in this string must be doubled to escape formatting
 #TODO: give these functions long names, then optionally add aliases?
-_function_template = r"""
+def _get_function_template_script():
+    return r"""
 Register-ArgumentCompleter -CommandName "{name}.exe" -Native -ScriptBlock $SharedCompleter
 Register-ArgumentCompleter -CommandName "{name}" -Native -ScriptBlock $SharedCompleter
 # Explicitly export this function so that others are not exported automatically
 Export-ModuleMember -Function {name}
 """
 # If we give commands long names, we need to separate completers that provide the name ushell $complete expects
-_autocompleter = r"""
+def _get_autocompleter_script():
+    return r"""
 function Get-Daemon {{
     if( $script:CompleteDaemonCache -ne $null -and !$script:CompleteDaemonCache.HasExited) {{
         return $script:CompleteDaemonCache
@@ -201,7 +209,8 @@ Export-ModuleMember -Function "Update-UShellEnvVars"
 """
 
 # Kill the autocomplete daemon so we don't leak a process
-_cleanup = r"""
+def _get_cleanup_script():
+    return r"""
 $ExecutionContext.SessionState.Module.OnRemove += {
     if( $script:CompleteDaemonCache -ne $null ) {
         Write-Debug "Stopping complete daemon"

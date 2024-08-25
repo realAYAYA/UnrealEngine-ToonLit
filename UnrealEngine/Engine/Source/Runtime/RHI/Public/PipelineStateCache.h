@@ -47,7 +47,7 @@ enum class EPSOPrecacheResult
 	Missed,				//< PSO precache miss, needs to be compiled at draw time
 	TooLate,			//< PSO precache request still compiling when needed
 	NotSupported,		//< PSO precache not supported (VertexFactory or MeshPassProcessor doesn't support/implement precaching)
-	Untracked,			//< PSO is not tracked at all (Compute or not coming from MeshDrawCommands)
+	Untracked,			//< PSO is not tracked at all (Global shader or not coming from MeshDrawCommands)
 };
 
 // Unique request ID of PSOPrecache which can be used to boost the priority of a PSO precache requests if it's needed for rendering
@@ -97,7 +97,7 @@ struct FPSOPrecacheRequestResult
 	FGraphEventRef AsyncCompileEvent;
 };
 
-extern RHI_API void SetComputePipelineState(FRHIComputeCommandList& RHICmdList, FRHIComputeShader* ComputeShader);
+extern RHI_API void SetComputePipelineState(FRHIComputeCommandList& RHICmdList, FRHIComputeShader* ComputeShader, EPSOPrecacheResult PSOPrecacheResult = EPSOPrecacheResult::Untracked);
 extern RHI_API void SetGraphicsPipelineState(FRHICommandList& RHICmdList, const FGraphicsPipelineStateInitializer& Initializer, uint32 StencilRef, EApplyRendertargetOption ApplyFlags = EApplyRendertargetOption::CheckApply, bool bApplyAdditionalState = true, EPSOPrecacheResult PSOPrecacheResult = EPSOPrecacheResult::Untracked);
 
 UE_DEPRECATED(5.0, "SetGraphicsPipelineState now requires a StencilRef argument and EApplyRendertargetOption::ForceApply will soon be removed")
@@ -110,11 +110,13 @@ namespace PipelineStateCache
 {
 	extern RHI_API uint64					RetrieveGraphicsPipelineStateSortKey(const FGraphicsPipelineState* GraphicsPipelineState);
 
-	extern RHI_API FComputePipelineState*	GetAndOrCreateComputePipelineState(FRHIComputeCommandList& RHICmdList, FRHIComputeShader* ComputeShader, bool bFromFileCache);
+	extern RHI_API FComputePipelineState*	GetAndOrCreateComputePipelineState(FRHIComputeCommandList& RHICmdList, FRHIComputeShader* ComputeShader, bool bFromFileCache, EPSOPrecacheResult PSOPrecacheResult);
 
 	extern RHI_API FGraphicsPipelineState*	GetAndOrCreateGraphicsPipelineState(FRHICommandList& RHICmdList, const FGraphicsPipelineStateInitializer& OriginalInitializer, EApplyRendertargetOption ApplyFlags, EPSOPrecacheResult PSOPrecacheResult);
 
-	extern RHI_API FGraphicsPipelineState*	FindGraphicsPipelineState(const FGraphicsPipelineStateInitializer& Initializer);
+	extern RHI_API FComputePipelineState*	FindComputePipelineState(FRHIComputeShader* ComputeShader, bool bVerifyUse = true);
+
+	extern RHI_API FGraphicsPipelineState*	FindGraphicsPipelineState(const FGraphicsPipelineStateInitializer& Initializer, bool bVerifyUse = true);
 
 	extern RHI_API FRHIVertexDeclaration*	GetOrCreateVertexDeclaration(const FVertexDeclarationElementList& Elements);
 

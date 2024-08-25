@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "Async/Future.h"
 #include "CoreMinimal.h"
 
 class UFbxImportUI;
@@ -48,7 +49,7 @@ namespace FbxMeshUtils
 	 * @param LODLevel			The level of the lod to import
 	 * @return					Whether or not the import succeeded
 	 */
-	UNREALED_API bool ImportMeshLODDialog( UObject* Mesh, int32 LODLevel, bool bNotifyCB = true, bool bReimportWithNewFile = false);
+	UNREALED_API TFuture<bool> ImportMeshLODDialog( UObject* Mesh, int32 LODLevel, bool bNotifyCB = true, bool bReimportWithNewFile = false);
 
 	/**
 	 * Imports a mesh as the high res source model of the given mesh

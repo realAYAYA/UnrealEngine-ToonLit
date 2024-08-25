@@ -6,6 +6,7 @@
 #include "UObject/Interface.h"
 #include "Misc/Optional.h"
 #include "WorldPartition/WorldPartitionHandle.h"
+#include "WorldPartition/WorldPartitionActorDesc.h"
 #include "WorldPartitionActorLoaderInterface.generated.h"
 
 UINTERFACE(MinimalAPI)
@@ -21,7 +22,7 @@ class IWorldPartitionActorLoaderInterface
 #if WITH_EDITOR
 	using FReferenceMap = TMap<FGuid, FWorldPartitionReference>;
 	using FActorReferenceMap = TMap<FGuid, FReferenceMap>;
-	using FContainerReferenceMap = TMap<TWeakObjectPtr<UActorDescContainer>, FActorReferenceMap>;
+	using FContainerReferenceMap = TMap<TWeakObjectPtr<UActorDescContainerInstance>, FActorReferenceMap>;
 
 public:
 	/** Base class for actor loaders */
@@ -45,10 +46,15 @@ public:
 		virtual TOptional<FString> GetLabel() const { return TOptional<FString>(); }
 		virtual TOptional<FColor> GetColor() const { return TOptional<FColor>(); }
 
-		ENGINE_API void OnActorDescContainerInitialize(UActorDescContainer* Container);
-		ENGINE_API void OnActorDescContainerUninitialize(UActorDescContainer* Container);
+		UE_DEPRECATED(5.4, "Use OnActorDescContainerInstanceInitialize")
+		ENGINE_API void OnActorDescContainerInitialize(UActorDescContainer* Container) {}
+		UE_DEPRECATED(5.4, "Use OnActorDescContainerInstanceUninitialize")
+		ENGINE_API void OnActorDescContainerUninitialize(UActorDescContainer* Container) {}
 
 	protected:
+		void OnActorDescContainerInstanceInitialize(UActorDescContainerInstance* ContainerInstance);
+		void OnActorDescContainerInstanceUninitialize(UActorDescContainerInstance* ContainerInstance);
+
 		// Private interface
 		virtual void ForEachActor(TFunctionRef<void(const FWorldPartitionHandle&)> InOperation) const =0;
 
@@ -67,8 +73,9 @@ public:
 		ENGINE_API void OnRefreshLoadedState(bool bFromUserOperation);
 
 		// Helpers
-		ENGINE_API FActorReferenceMap& GetContainerReferences(UActorDescContainer* InContainer);
-		ENGINE_API const FActorReferenceMap* GetContainerReferencesConst(UActorDescContainer* InContainer) const;
+		ENGINE_API FActorReferenceMap& GetContainerReferences(UActorDescContainerInstance* InContainerInstance);
+		ENGINE_API const FActorReferenceMap* GetContainerReferencesConst(UActorDescContainerInstance* InContainerInstance) const;
+		ENGINE_API UWorldPartition* GetLoadedChildWorldPartition(const FWorldPartitionHandle& Handle) const;
 
 	private:
 		UWorld* World;
@@ -97,6 +104,8 @@ public:
 	static ENGINE_API void RefreshLoadedState(bool bIsFromUserChange);
 
 private:
+	static ENGINE_API UWorldPartition* GetLoadedChildWorldPartition(const FWorldPartitionHandle& Handle);
+	
 	DECLARE_EVENT_OneParam(IWorldPartitionActorLoaderInterface, FOnActorLoaderInterfaceRefreshState, bool /*bIsFromUserChange*/);
 	static ENGINE_API FOnActorLoaderInterfaceRefreshState ActorLoaderInterfaceRefreshState;
 

@@ -27,10 +27,12 @@ public:
 public:	
 	TSequenceHistory();
 
-#if WITH_DEV_AUTOMATION_TESTS
+#if WITH_AUTOMATION_WORKER
 	explicit TSequenceHistory(WordT Value, SIZE_T Count = 1);
 	WordT* Data() { return &Storage[0]; }
+	const WordT* Data() const { return &Storage[0]; }
 #endif
+
 	/** Reset */
 	void Reset();
 
@@ -72,7 +74,7 @@ TSequenceHistory<HistorySize>::TSequenceHistory()
 	Reset();
 }
 
-#if WITH_DEV_AUTOMATION_TESTS
+#if WITH_AUTOMATION_WORKER
 template <SIZE_T HistorySize>
 TSequenceHistory<HistorySize>::TSequenceHistory(WordT Value, SIZE_T Count)
 {

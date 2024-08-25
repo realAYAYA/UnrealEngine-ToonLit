@@ -12,7 +12,6 @@
 #include "Serialization/Archive.h"
 #include "Serialization/MemoryImageWriter.h"
 #include "Serialization/MemoryLayout.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/EnableIf.h"
 #include "Templates/Invoke.h"
 #include "Templates/UnrealTemplate.h"
@@ -226,34 +225,19 @@ public:
 	}
 	FORCEINLINE void AtomicSet(const bool NewValue)
 	{
+		uint32 Current = static_cast<uint32>(FPlatformAtomics::AtomicRead_Relaxed((const volatile int32*)&Data));
 		if(NewValue)
 		{
-			if (!(Data & Mask))
+			if (!(Current & Mask))
 			{
-				while (1)
-				{
-					uint32 Current = Data;
-					uint32 Desired = Current | Mask;
-					if (Current == Desired || FPlatformAtomics::InterlockedCompareExchange((volatile int32*)&Data, (int32)Desired, (int32)Current) == (int32)Current)
-					{
-						return;
-					}
-				}
+				FPlatformAtomics::InterlockedOr((volatile int32*)&Data, (int32)Mask);
 			}
 		}
 		else
 		{
-			if (Data & Mask)
+			if (Current & Mask)
 			{
-				while (1)
-				{
-					uint32 Current = Data;
-					uint32 Desired = Current & ~Mask;
-					if (Current == Desired || FPlatformAtomics::InterlockedCompareExchange((volatile int32*)&Data, (int32)Desired, (int32)Current) == (int32)Current)
-					{
-						return;
-					}
-				}
+				FPlatformAtomics::InterlockedAnd((volatile int32*)&Data, (int32)~Mask);
 			}
 		}
 	}
@@ -304,6 +288,16 @@ public:
 
 	int32  WordIndex;
 	uint32 Mask;
+
+	FORCEINLINE bool operator==(FRelativeBitReference Other) const
+	{
+		return (WordIndex == Other.WordIndex) & (Mask == Other.Mask);
+	}
+
+	FORCEINLINE bool operator!=(FRelativeBitReference Other) const
+	{
+		return !(Other == *this);
+	}
 };
 
 class FBitArrayMemory
@@ -913,7 +907,7 @@ public:
 				Count -= 2;
 				while (Count != 0)
 				{
-					*Data++ = ~0;
+					*Data++ = ~0u;
 					--Count;
 				}
 				*Data |= EndMask;
@@ -1464,11 +1458,18 @@ public:
 			}
 			return *this;
 		}
+
+		FORCEINLINE FBitReference operator*() const
+		{
+			return GetValue();
+		}
+
 		/** conversion to "bool" returning true if the iterator is valid. */
 		FORCEINLINE explicit operator bool() const
 		{ 
 			return Index < Array.Num(); 
 		}
+
 		/** inverse of the "bool" operator */
 		FORCEINLINE bool operator !() const 
 		{
@@ -1503,6 +1504,11 @@ public:
 				++this->WordIndex;
 			}
 			return *this;
+		}
+
+		FORCEINLINE FBitReference operator*() const
+		{
+			return GetValue();
 		}
 
 		/** conversion to "bool" returning true if the iterator is valid. */
@@ -1694,6 +1700,13 @@ public:
 		}
 	};
 
+	/** Enables range-based for loops, DO NOT USE DIRECTLY. */
+
+	FORCEINLINE FIterator		begin()			{ return FIterator(*this); }
+	FORCEINLINE FConstIterator	begin() const	{ return FConstIterator(*this); }
+	FORCEINLINE FIterator		end()			{ return FIterator(*this, NumBits); }
+	FORCEINLINE FConstIterator	end() const		{ return FConstIterator(*this, NumBits); }
+
 private:
 	AllocatorType AllocatorInstance;
 	int32         NumBits;
@@ -1878,7 +1891,7 @@ private:
 			}
 
 			RemainingBitMask = ArrayData[this->WordIndex];
-			UnvisitedBitMask = ~0;
+			UnvisitedBitMask = ~0u;
 		}
 
 		// This operation has the effect of unsetting the lowest set bit of BitMask
@@ -1971,8 +1984,16 @@ private:
 	void FindFirstSetBit()
 	{
 		const uint32 EmptyArrayData = 0;
-		const uint32* ArrayDataA = IfAThenAElseB(ArrayA.GetData(),&EmptyArrayData);
-		const uint32* ArrayDataB = IfAThenAElseB(ArrayB.GetData(),&EmptyArrayData);
+		const uint32* ArrayDataA = ArrayA.GetData();
+		if (!ArrayDataA)
+		{
+			ArrayDataA = &EmptyArrayData;
+		}
+		const uint32* ArrayDataB = ArrayB.GetData();
+		if (!ArrayDataB)
+		{
+			ArrayDataB = &EmptyArrayData;
+		}
 
 		// Advance to the next non-zero uint32.
 		uint32 RemainingBitMask;
@@ -2042,7 +2063,7 @@ using TConstDualEitherSetBitIterator = TConstDualSetBitIterator<Allocator, Other
 template <typename Allocator, typename InDerivedType>
 class TScriptBitArray
 {
-	using DerivedType = typename TChooseClass<std::is_void_v<InDerivedType>, TScriptBitArray, InDerivedType>::Result;
+	using DerivedType = std::conditional_t<std::is_void_v<InDerivedType>, TScriptBitArray, InDerivedType>;
 
 public:
 	/**

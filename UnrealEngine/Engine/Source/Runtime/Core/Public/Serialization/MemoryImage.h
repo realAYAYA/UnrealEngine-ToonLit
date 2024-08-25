@@ -576,6 +576,7 @@ public:
 	{
 		this->SafeDelete();
 		this->Ptr = InPtr;
+		return *this;
 	}
 	inline TUniqueMemoryImagePtr& operator=(TUniqueMemoryImagePtr&& Other)
 	{
@@ -771,7 +772,10 @@ public:
 		}
 	}
 
-	FORCEINLINE operator FString() const { return FString(Len(), Data.GetData()); }
+	FORCEINLINE operator FString() const
+	{
+		return FString::ConstructFromPtrSize(Data.GetData(), Len());
+	}
 
 	FORCEINLINE const TCHAR* operator*() const
 	{

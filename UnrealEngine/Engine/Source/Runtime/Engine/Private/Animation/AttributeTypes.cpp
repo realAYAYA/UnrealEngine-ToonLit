@@ -11,40 +11,41 @@
 namespace UE
 {
 	namespace Anim
-	{		
+	{
 		TArray<TWeakObjectPtr<const UScriptStruct>> AttributeTypes::RegisteredTypes;
 		TArray<TUniquePtr<IAttributeBlendOperator>> AttributeTypes::Operators;
 		TArray<TWeakObjectPtr<const UScriptStruct>> AttributeTypes::InterpolatableTypes;
-		std::atomic<bool> AttributeTypes::bInitialized = false;		
 		AttributeTypes::FOnAttributeTypesChanged AttributeTypes::OnAttributeTypesChangedDelegate;
-		
-		void AttributeTypes::LazyInitialize()
-		{
-			bool bWasUninitialized = false;
-			if (bInitialized.compare_exchange_strong(bWasUninitialized, true))
-			{
-				Initialize();
-			}
-		}
 
-		void AttributeTypes::Initialize()
+		struct FAttributeTypeRegistrar
 		{
-			RegisterType<FFloatAnimationAttribute>();
-			RegisterType<FIntegerAnimationAttribute>();
-			RegisterType<FStringAnimationAttribute>();
-			RegisterType<FTransformAnimationAttribute>();
-			RegisterType<FVectorAnimationAttribute>();
-			RegisterType<FQuaternionAnimationAttribute>();
-
-			for (const TSoftObjectPtr<UUserDefinedStruct>& UserDefinedStruct : UAnimationSettings::Get()->UserDefinedStructAttributes)
+			static void RegisterBuiltInTypes()
 			{
-				UE::Anim::AttributeTypes::RegisterNonBlendableType(UserDefinedStruct.LoadSynchronous());
+				AttributeTypes::RegisterType<FFloatAnimationAttribute>();
+				AttributeTypes::RegisterType<FIntegerAnimationAttribute>();
+				AttributeTypes::RegisterType<FStringAnimationAttribute>();
+				AttributeTypes::RegisterType<FTransformAnimationAttribute>();
+				AttributeTypes::RegisterType<FVectorAnimationAttribute>();
+				AttributeTypes::RegisterType<FQuaternionAnimationAttribute>();
 			}
-		}
-		
-		static FDelayedAutoRegisterHelper DelayedAttributeTypesInitializationHelper(EDelayedRegisterRunPhase::ObjectSystemReady, []()
+
+			static void RegisterUserDefinedStructTypes()
+			{
+				for (const TSoftObjectPtr<UUserDefinedStruct>& UserDefinedStruct : UAnimationSettings::Get()->UserDefinedStructAttributes)
+				{
+					AttributeTypes::RegisterNonBlendableType(UserDefinedStruct.LoadSynchronous());
+				}
+			}
+		};
+
+		static FDelayedAutoRegisterHelper DelayedBuiltInTypesInitializationHelper(EDelayedRegisterRunPhase::PreObjectSystemReady, []()
 		{
-			UE::Anim::AttributeTypes::LazyInitialize();
+			FAttributeTypeRegistrar::RegisterBuiltInTypes();
+		});
+		
+		static FDelayedAutoRegisterHelper DelayedUserDefinedStructTypesInitializationHelper(EDelayedRegisterRunPhase::EndOfEngineInit, []()
+		{
+			FAttributeTypeRegistrar::RegisterUserDefinedStructTypes();
 		});
 
 		bool AttributeTypes::RegisterNonBlendableType(const UScriptStruct* InScriptStruct)

@@ -111,5 +111,5 @@ protected:
 
 	AIMODULE_API void OnNewListenerImpl(const FPerceptionListener& NewListener);
 	AIMODULE_API void OnListenerUpdateImpl(const FPerceptionListener& UpdatedListener);
-	AIMODULE_API void OnListenerRemovedImpl(const FPerceptionListener& UpdatedListener);
+	AIMODULE_API void OnListenerRemovedImpl(const FPerceptionListener& RemovedListener);
 };

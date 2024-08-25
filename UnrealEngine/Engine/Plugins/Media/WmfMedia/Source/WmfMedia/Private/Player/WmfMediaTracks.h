@@ -23,12 +23,14 @@ class FWmfMediaAudioSamplePool;
 class FWmfMediaSampler;
 class FWmfMediaTextureSamplePool;
 class FWmfMediaHardwareVideoDecodingTextureSamplePool;
+class FWmfMediaSession;
 class IMediaAudioSample;
 class IMediaBinarySample;
 class IMediaOverlaySample;
 class IMediaTextureSample;
 class FWmfMediaTextureSample;
 class FMediaTimeStamp;
+class FWmfMediaStreamSink;
 
 enum class EMediaTextureSampleFormat;
 enum class EMediaTrackType;
@@ -187,34 +189,51 @@ public:
 	 */
 	void SetSessionState(EMediaState InState);
 
-#if WMFMEDIA_PLAYER_VERSION >= 2
+public:
+
 	/**
-	 * Call this when seeking so that we will discard subsequent samples until
-	 * we find one that matches this seek time.
-	 *
-	 * @param InTime Seek time to wait for.
+	 * Notify track of triggered seek
 	 */
-	void SeekStarted(const FTimespan& InTime);
-#endif // WMFMEDIA_PLAYER_VERSION >= 2
+	void SeekStarted(const FTimespan& InTime, uint32 UserIssuedSeeks, float UnpausedSessionRate);
+
+	/**
+	 * Notify track of triggered loop
+	 */
+	void LoopStarted(float UnpausedSessionRate);
+
+	void SetSession(FWmfMediaSession* InSession)
+	{
+		Session = InSession;
+	}
+
+	void SessionEnded();
+
+	void RequestMoreVideoDataFromStreamSink();
+
+	bool ExecuteOnceMediaStreamSinkHasNoPendingRequests(TFunction<void()>&& ExecuteOnIdle);
 
 public:
 
 	//~ IMediaSamples interface
 
-	virtual bool FetchAudio(TRange<FTimespan> TimeRange, TSharedPtr<IMediaAudioSample, ESPMode::ThreadSafe>& OutSample) override;
-	virtual bool FetchCaption(TRange<FTimespan> TimeRange, TSharedPtr<IMediaOverlaySample, ESPMode::ThreadSafe>& OutSample) override;
-	virtual bool FetchMetadata(TRange<FTimespan> TimeRange, TSharedPtr<IMediaBinarySample, ESPMode::ThreadSafe>& OutSample) override;
-	virtual bool FetchVideo(TRange<FTimespan> TimeRange, TSharedPtr<IMediaTextureSample, ESPMode::ThreadSafe>& OutSample) override;
+	virtual bool FetchAudio(TRange<FTimespan> TimeRange, TSharedPtr<IMediaAudioSample, ESPMode::ThreadSafe>& OutSample) override { return FetchAudio(TimeRange.GetLowerBound().IsOpen() ? TRange<FMediaTimeStamp>() : TRange<FMediaTimeStamp>(FMediaTimeStamp(TimeRange.GetLowerBoundValue(), 0), FMediaTimeStamp(TimeRange.GetUpperBoundValue(), 0)), OutSample); }
+	virtual bool FetchCaption(TRange<FTimespan> TimeRange, TSharedPtr<IMediaOverlaySample, ESPMode::ThreadSafe>& OutSample) override { return FetchCaption(TimeRange.GetLowerBound().IsOpen() ? TRange<FMediaTimeStamp>() : TRange<FMediaTimeStamp>(FMediaTimeStamp(TimeRange.GetLowerBoundValue(), 0), FMediaTimeStamp(TimeRange.GetUpperBoundValue(), 0)), OutSample); }
+	virtual bool FetchMetadata(TRange<FTimespan> TimeRange, TSharedPtr<IMediaBinarySample, ESPMode::ThreadSafe>& OutSample) override { return FetchMetadata(TimeRange.GetLowerBound().IsOpen() ? TRange<FMediaTimeStamp>() : TRange<FMediaTimeStamp>(FMediaTimeStamp(TimeRange.GetLowerBoundValue(), 0), FMediaTimeStamp(TimeRange.GetUpperBoundValue(), 0)), OutSample); }
+	virtual bool FetchVideo(TRange<FTimespan> TimeRange, TSharedPtr<IMediaTextureSample, ESPMode::ThreadSafe>& OutSample) override { return FetchVideo(TimeRange.GetLowerBound().IsOpen() ? TRange<FMediaTimeStamp>() : TRange<FMediaTimeStamp>(FMediaTimeStamp(TimeRange.GetLowerBoundValue(), 0), FMediaTimeStamp(TimeRange.GetUpperBoundValue(), 0)), OutSample); }
 
-	virtual bool FetchAudio(TRange<FMediaTimeStamp> TimeRange, TSharedPtr<IMediaAudioSample, ESPMode::ThreadSafe>& OutSample) override { return FetchAudio(TimeRange.GetLowerBound().IsOpen() ? TRange<FTimespan>() : TRange<FTimespan>(TimeRange.GetLowerBoundValue().Time, TimeRange.GetUpperBoundValue().Time), OutSample); }
-	virtual bool FetchCaption(TRange<FMediaTimeStamp> TimeRange, TSharedPtr<IMediaOverlaySample, ESPMode::ThreadSafe>& OutSample) override { return FetchCaption(TRange<FTimespan>(TimeRange.GetLowerBoundValue().Time, TimeRange.GetUpperBoundValue().Time), OutSample); }
-	virtual bool FetchMetadata(TRange<FMediaTimeStamp> TimeRange, TSharedPtr<IMediaBinarySample, ESPMode::ThreadSafe>& OutSample) override { return FetchMetadata(TRange<FTimespan>(TimeRange.GetLowerBoundValue().Time, TimeRange.GetUpperBoundValue().Time), OutSample); }
-	virtual bool FetchVideo(TRange<FMediaTimeStamp> TimeRange, TSharedPtr<IMediaTextureSample, ESPMode::ThreadSafe>& OutSample) override { return FetchVideo(TRange<FTimespan>(TimeRange.GetLowerBoundValue().Time, TimeRange.GetUpperBoundValue().Time), OutSample); }
+	virtual bool FetchAudio(TRange<FMediaTimeStamp> TimeRange, TSharedPtr<IMediaAudioSample, ESPMode::ThreadSafe>& OutSample) override;
+	virtual bool FetchCaption(TRange<FMediaTimeStamp> TimeRange, TSharedPtr<IMediaOverlaySample, ESPMode::ThreadSafe>& OutSample) override;
+	virtual bool FetchMetadata(TRange<FMediaTimeStamp> TimeRange, TSharedPtr<IMediaBinarySample, ESPMode::ThreadSafe>& OutSample) override;
+	virtual bool FetchVideo(TRange<FMediaTimeStamp> TimeRange, TSharedPtr<IMediaTextureSample, ESPMode::ThreadSafe>& OutSample) override;
 
 	virtual void FlushSamples() override;
-#if WMFMEDIA_PLAYER_VERSION >= 2
-	virtual EFetchBestSampleResult FetchBestVideoSampleForTimeRange(const TRange<FMediaTimeStamp> & TimeRange, TSharedPtr<IMediaTextureSample, ESPMode::ThreadSafe>& OutSample, bool bReverse) override;
-#endif // WMFMEDIA_PLAYER_VERSION >= 2
+
+	virtual EFetchBestSampleResult FetchBestVideoSampleForTimeRange(const TRange<FMediaTimeStamp>& TimeRange, TSharedPtr<IMediaTextureSample, ESPMode::ThreadSafe>& OutSample, bool bReverse, bool bConsistentResult) override;
+
+	virtual bool DiscardVideoSamples(const TRange<FMediaTimeStamp>& TimeRange, bool bReverse) override;
+	virtual bool DiscardAudioSamples(const TRange<FMediaTimeStamp>& TimeRange, bool bReverse) override;
+	virtual bool DiscardCaptionSamples(const TRange<FMediaTimeStamp>& TimeRange, bool bReverse) override;
+	virtual bool DiscardMetadataSamples(const TRange<FMediaTimeStamp>& TimeRange, bool bReverse) override;
 	virtual bool PeekVideoSampleTime(FMediaTimeStamp & TimeStamp) override;
 
 public:
@@ -305,8 +324,10 @@ private:
 	/** Callback for handling new video samples. */
 	void HandleMediaSamplerVideoSample(const uint8* Buffer, uint32 Size, FTimespan Duration, FTimespan Time);
 
-private:
+	/** Make sure sequence index is up to date and combine with given timestamp */
+	FMediaTimeStamp AdjustTimeStamp(FTimespan Time, EMediaTrackType TrackType);
 
+private:
 	/** Audio sample object pool. */
 	FWmfMediaAudioSamplePool* AudioSamplePool;
 
@@ -333,6 +354,9 @@ private:
 
 	/** The currently opened media. */
 	TComPtr<IMFMediaSource> MediaSource;
+
+	// Hardware Acccelerated Stream Sink
+	TComPtr<FWmfMediaStreamSink> MediaStreamSink;
 
 	/** Whether the media source has changed. */
 	bool MediaSourceChanged;
@@ -380,12 +404,11 @@ private:
 	/** Current state of the session. */
 	EMediaState SessionState;
 
-#if WMFMEDIA_PLAYER_VERSION >= 2
-	/** If set, then discard samples until we get this sample. */
-	TOptional<FTimespan> SeekTimeOptional;
-	/** Seek index tracking */
+	FWmfMediaSession* Session;
+
+	/** SequenceIndex tracking */
 	int32 SeekIndex;
-#endif // WMFMEDIA_PLAYER_VERSION >= 2
+	int32 LoopIndex;
 };
 
 

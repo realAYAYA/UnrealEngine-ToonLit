@@ -1,5 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+#include "HeterogeneousVolumesRayMarchingTypes.ush"
+#include "HeterogeneousVolumesTracingUtils.ush"
 #include "HeterogeneousVolumesTransmittanceVolumeUtils.ush"
 
 #include "../ForwardShadowingCommon.ush"
@@ -10,6 +12,10 @@
 #define RadianceCacheInterpolation LumenGIVolumeStruct
 #include "../Lumen/LumenTranslucencyVolumeShared.ush"
 
+#ifndef CUSTOM_TRANSMITTANCE_FUNCTION
+#define CUSTOM_TRANSMITTANCE_FUNCTION 0
+#endif // CUSTOM_TRANSMITTANCE_FUNCTION
+
 #ifndef HARDWARE_RAY_TRACING
 #define HARDWARE_RAY_TRACING 0
 #endif // HARDWARE_RAY_TRACING
@@ -18,135 +24,39 @@
 #define HARD_SURFACE_SHADOWING 1
 #endif // HARD_SURFACE_SHADOWING
 
-struct FRayMarchingContext
-{
-	// Local-space
-	float3 LocalRayOrigin;
-	float3 LocalRayDirection;
-	float LocalRayTMin;
-	float LocalRayTMax;
+#ifndef DIM_USE_ADAPTIVE_VOLUMETRIC_SHADOW_MAP
+#define DIM_USE_ADAPTIVE_VOLUMETRIC_SHADOW_MAP 0
+#endif // DIM_USE_ADAPTIVE_VOLUMETRIC_SHADOW_MAP
 
-	// World-space
-	float3 WorldRayOrigin;
-	float3 WorldRayDirection;
-	float LocalToWorldScale;
+#define APPLY_FOG_INSCATTERING_OFF 0
+#define APPLY_FOG_INSCATTERING_REFERENCE 1
+#define APPLY_FOG_INSCATTERING_STOCHASTIC 2
 
-	// Ray-step attributes
-	float Jitter;
-	float StepSize;
-	uint MaxStepCount;
+#ifndef APPLY_FOG_INSCATTERING
+#define APPLY_FOG_INSCATTERING APPLY_FOG_INSCATTERING_OFF
+#endif // APPLY_FOG_INSCATTERING
 
-	float MipLevel;
+#if DIM_USE_ADAPTIVE_VOLUMETRIC_SHADOW_MAP
+#include "HeterogeneousVolumesAdaptiveVolumetricShadowMapSampling.ush"
+#endif // DIM_USE_ADAPTIVE_VOLUMETRIC_SHADOW_MAP
 
-	// Lighting
-	int bApplyEmissionAndTransmittance;
-	int bApplyDirectLighting;
-	int bApplyShadowTransmittance;
-};
-
-FRayMarchingContext CreateRayMarchingContext(
-	// Local-space
-	float3 LocalRayOrigin,
-	float3 LocalRayDirection,
-	float LocalRayTMin,
-	float LocalRayTMax,
-	// World-space
-	float3 WorldRayOrigin,
-	float3 WorldRayDirection,
-	// Ray-step attributes
-	float Jitter,
-	float StepSize,
-	uint MaxStepCount,
-	// Lighting
-	int bApplyEmissionAndTransmittance,
-	int bApplyDirectLighting,
-	int bApplyShadowTransmittance
-)
-{
-	FRayMarchingContext Context = (FRayMarchingContext)0;
-
-	// Local-space
-	Context.LocalRayOrigin = LocalRayOrigin;
-	Context.LocalRayDirection = LocalRayDirection;
-	Context.LocalRayTMin = LocalRayTMin;
-	Context.LocalRayTMax = LocalRayTMax;
-	// World-space
-	Context.WorldRayOrigin = WorldRayOrigin;
-	Context.WorldRayDirection = WorldRayDirection;
-	// Ray-step attributes
-	Context.Jitter = Jitter;
-	Context.StepSize = StepSize;
-	Context.MaxStepCount = MaxStepCount;
-	// Lighting
-	Context.bApplyEmissionAndTransmittance = bApplyEmissionAndTransmittance;
-	Context.bApplyDirectLighting = bApplyDirectLighting;
-	Context.bApplyShadowTransmittance = bApplyShadowTransmittance;
-
-	// Transform local-scale properties into world-scale
-	float3 LocalRayHit = LocalRayOrigin + LocalRayDirection * LocalRayTMax;
-	float3 WorldRayHit = mul(float4(LocalRayHit, 1.0), GetLocalToWorld()).xyz;
-	float WorldRayTMax = length(WorldRayHit - WorldRayOrigin);
-	Context.LocalToWorldScale = WorldRayTMax / LocalRayTMax;
-
-	Context.MipLevel = 0.0f;
-
-	return Context;
-}
-
-float CalcStepSize(float3 LocalRayDirection, float LocalStepSize, float LocalStepFactor)
-{
-	if (LocalStepSize <= 0.0f)
-	{
-		// Intersect aligned voxel to determine candidate t-values and use the minimum distance
-		float3 VoxelSize = GetLocalBoundsExtent() / float3(GetVolumeResolution());
-		float3 tValues = abs(VoxelSize / LocalRayDirection);
-		float VoxelStepSize = min(tValues.x, min(tValues.y, tValues.z));
-		LocalStepSize = VoxelStepSize * LocalStepFactor;
-	}
-	return max(LocalStepSize, 0.01f);
-}
-
-float CalcStepSize(float3 LocalRayDirection)
-{
-	float LocalStepSize = GetStepSize();
-	float LocalStepFactor = GetStepFactor();
-	return CalcStepSize(LocalRayDirection, LocalStepSize, LocalStepFactor);
-}
-
-float CalcShadowStepSize(float3 LocalRayDirection)
-{
-	float LocalStepSize = GetShadowStepSize();
-	float LocalStepFactor = GetShadowStepFactor();
-	return CalcStepSize(LocalRayDirection, LocalStepSize, LocalStepFactor);
-}
+#if APPLY_FOG_INSCATTERING
+#include "../HeightFogCommon.ush"
+#endif // APPLY_FOG_INSCATTERING
 
 float CalcShadowBias()
 {
-	float3 VolumeBounds = 2.0f * GetLocalBoundsExtent();
-	float3 VoxelSize = VolumeBounds / float3(GetLightingCacheResolution());
-	float3 WorldVoxelSize = mul(float4(VoxelSize, 0), GetLocalToWorld()).xyz;
-	float VoxelDiagonal = length(WorldVoxelSize);
-	float WorldShadowBias = VoxelDiagonal * GetLightingCacheVoxelBias();
+	float WorldShadowBias = 0.0f;
+	float3 LightingCacheResolutionAsFloat3 = GetLightingCacheResolution();
+	if (all(LightingCacheResolutionAsFloat3 > 0))
+	{
+		float3 VolumeBounds = 2.0f * GetLocalBoundsExtent();
+		float3 VoxelSize = VolumeBounds * rcp(LightingCacheResolutionAsFloat3);
+		float3 WorldVoxelSize = mul(float4(VoxelSize, 0), GetLocalToWorld()).xyz;
+		float VoxelDiagonal = length(WorldVoxelSize);
+		WorldShadowBias = VoxelDiagonal * GetLightingCacheVoxelBias();
+	}
 	return WorldShadowBias;
-}
-
-float RecalculateStepSize(inout FRayMarchingContext Context)
-{
-	// Recalculate step-size if the bounding-box diagonal is greater than the maximum step-count
-	float DiagonalLength = length(2.0 * GetLocalBoundsExtent());
-	uint MaxStepCount = max(DiagonalLength / Context.StepSize, 1);
-
-	float StepSize = (MaxStepCount > Context.MaxStepCount) ? DiagonalLength / Context.MaxStepCount : Context.StepSize;
-	return StepSize;
-}
-
-uint CalcStepCount(inout FRayMarchingContext Context)
-{
-	Context.StepSize = RecalculateStepSize(Context);
-
-	float HitSpan = length(Context.LocalRayTMax - Context.LocalRayTMin);
-	uint StepCount = max(ceil(HitSpan / Context.StepSize), 1);
-	return StepCount;
 }
 
 float ComputeHardSurfaceShadowFactor(
@@ -223,7 +133,11 @@ float3 ComputeTransmittance(
 	inout FRayMarchingContext RayMarchingContext
 )
 {
-#if HARDWARE_RAY_TRACING
+#if CUSTOM_TRANSMITTANCE_FUNCTION
+	float WorldRayTMin = RayMarchingContext.LocalRayTMin * RayMarchingContext.LocalToWorldScale;
+	float WorldRayTMax = RayMarchingContext.LocalRayTMax * RayMarchingContext.LocalToWorldScale;
+	return TransmittanceFunction(RayMarchingContext.WorldRayOrigin, RayMarchingContext.WorldRayDirection, WorldRayTMin, WorldRayTMax);
+#elif HARDWARE_RAY_TRACING
 	//  TODO: Incorporpate ray jitter
 	return ComputeTransmittanceHardwareRayTracing(RayMarchingContext.WorldRayOrigin, RayMarchingContext.WorldRayDirection, RayMarchingContext.LocalRayTMin, RayMarchingContext.LocalRayTMax);
 #else // HARDWARE_RAY_TRACING
@@ -255,51 +169,62 @@ float3 ComputeTransmittance(
 	uint MaxStepCount
 )
 {
+	float3 Transmittance = 1.0;
+
 #if DIM_USE_TRANSMITTANCE_VOLUME
 	float3 LocalRayOrigin = mul(float4(WorldRayOrigin, 1.0), GetWorldToLocal()).xyz;
 	float3 LocalBoundsMin = GetLocalBoundsOrigin() - GetLocalBoundsExtent();
 	float3 TransmittanceUVW = saturate((LocalRayOrigin - LocalBoundsMin) / (2.0 * GetLocalBoundsExtent()));
 	float MipLevel = 0;
 
-	float3 Transmittance = SampleLightingCache(TransmittanceUVW, MipLevel);
+	Transmittance = SampleLightingCache(TransmittanceUVW, MipLevel);
 
-#else // DIM_USE_TRANSMITTANCE_VOLUME
+#else
+	#if DIM_USE_ADAPTIVE_VOLUMETRIC_SHADOW_MAP
+		if (!AVSM.bIsEmpty)
+		{
+			float3 TranslatedWorldPosition = DFHackToFloat(DFFastAdd(WorldRayOrigin, PrimaryView.PreViewTranslation));
+			float3 LightTranslatedWorldPosition = TranslatedWorldPosition + ToLight;
+			Transmittance = AVSM_SampleTransmittance(TranslatedWorldPosition, LightTranslatedWorldPosition);
+		}
+		else
+	#endif
+		{
+			float3 WorldRayEnd = WorldRayOrigin + ToLight;
+			float3 WorldRayDirection = normalize(ToLight);
 
-	float3 WorldRayEnd = WorldRayOrigin + ToLight;
-	float3 WorldRayDirection = normalize(ToLight);
+			float3 LocalRayOrigin = mul(float4(WorldRayOrigin, 1.0), GetWorldToLocal()).xyz;
+			float3 LocalRayEnd = mul(float4(WorldRayEnd, 1.0), GetWorldToLocal()).xyz;
+			float3 LocalRayDirection = LocalRayEnd - LocalRayOrigin;
+			float LocalRayTMin = 0.0;
+			float LocalRayTMax = length(LocalRayDirection);
+			LocalRayDirection /= LocalRayTMax;
 
-	float3 LocalRayOrigin = mul(float4(WorldRayOrigin, 1.0), GetWorldToLocal()).xyz;
-	float3 LocalRayEnd = mul(float4(WorldRayEnd, 1.0), GetWorldToLocal()).xyz;
-	float3 LocalRayDirection = LocalRayEnd - LocalRayOrigin;
-	float LocalRayTMin = 0.0;
-	float LocalRayTMax = length(LocalRayDirection);
-	LocalRayDirection /= LocalRayTMax;
+			float ShadowBias = 0.5;
+			float ShadowStepSize = CalcShadowStepSize(LocalRayDirection);
+			int bApplyEmissionAndTransmittance = 0;
+			int bApplyDirectLighting = 0;
+			int bApplyShadowTransmittance = 0;
 
-	float ShadowBias = 0.5;
-	float ShadowStepSize = CalcShadowStepSize(LocalRayDirection);
-	int bApplyEmissionAndTransmittance = 0;
-	int bApplyDirectLighting = 0;
-	int bApplyShadowTransmittance = 0;
+			FRayMarchingContext ShadowRayMarchingContext = CreateRayMarchingContext(
+				LocalRayOrigin,
+				LocalRayDirection,
+				LocalRayTMin,
+				LocalRayTMax,
+				WorldRayOrigin,
+				WorldRayDirection,
+				ShadowBias,
+				ShadowStepSize,
+				MaxStepCount,
+				bApplyEmissionAndTransmittance,
+				bApplyDirectLighting,
+				bApplyShadowTransmittance
+				//RayMarchingContext.MaxShadowTraceDistance
+			);
 
-	FRayMarchingContext ShadowRayMarchingContext = CreateRayMarchingContext(
-		LocalRayOrigin,
-		LocalRayDirection,
-		LocalRayTMin,
-		LocalRayTMax,
-		WorldRayOrigin,
-		WorldRayDirection,
-		ShadowBias,
-		ShadowStepSize,
-		MaxStepCount,
-		bApplyEmissionAndTransmittance,
-		bApplyDirectLighting,
-		bApplyShadowTransmittance
-		//RayMarchingContext.MaxShadowTraceDistance
-	);
-
-	float3 Transmittance = ComputeTransmittance(ShadowRayMarchingContext);
-#endif // DIM_USE_INSCATTERING_VOLUME
-
+			Transmittance = ComputeTransmittance(ShadowRayMarchingContext);
+		}
+#endif
 	return Transmittance;
 }
 
@@ -328,7 +253,7 @@ float3 ComputeInscattering(
 	float3 ToLight = L * 10000;
 
 	float LightAttenuation = 1.0;
-	float3 TranslatedWorldPosition = LWCHackToFloat(LWCAdd(WorldPosition, PrimaryView.PreViewTranslation));
+	float3 TranslatedWorldPosition = DFFastToTranslatedWorld(WorldPosition, PrimaryView.PreViewTranslation);
 	if (LightType != LIGHT_TYPE_DIRECTIONAL)
 	{
 		LightAttenuation = GetLocalLightAttenuation(TranslatedWorldPosition, LightData, ToLight, L);
@@ -386,15 +311,35 @@ void RayMarchSingleScattering(
 	FDeferredLightData LightData,
 	uint LightType,
 	uint StepCount,
+	inout float LocalScatterTMin,
 	inout float3 Radiance,
 	inout float3 Transmittance
 )
 {
-	float WorldShadowBias = CalcShadowBias();
+	LocalScatterTMin = RayMarchingContext.LocalRayTMax;
+#if APPLY_FOG_INSCATTERING != APPLY_FOG_INSCATTERING_OFF
+	float3 FogRadiance = 0;
+	float3 PrevTransmittance = Transmittance;
+	float4 PrevCombinedFog = 0;
+#endif // #if APPLY_FOG_INSCATTERING
 
+	float WorldShadowBias = CalcShadowBias();
+	//float WorldShadowBias = View.GeneralPurposeTweak;
+	float StepSize = RayMarchingContext.StepSize;
+	float JitterSize = StepSize * RayMarchingContext.Jitter;
+	// Reuse jitter as random sample
+	float RandomSample = RayMarchingContext.Jitter;
+
+	float LocalHitT = RayMarchingContext.LocalRayTMin + JitterSize;
 	for (uint StepIndex = 0; StepIndex < StepCount; ++StepIndex)
 	{
-		float LocalHitT = RayMarchingContext.LocalRayTMin + RayMarchingContext.StepSize * (RayMarchingContext.Jitter + StepIndex);
+		// Correct the final step size
+		if (StepIndex == StepCount - 1)
+		{
+			float UnjitteredLocalHitT = LocalHitT - JitterSize;
+			StepSize = RayMarchingContext.LocalRayTMax - UnjitteredLocalHitT;
+		}
+
 		float3 LocalPosition = RayMarchingContext.LocalRayOrigin + RayMarchingContext.LocalRayDirection * LocalHitT;
 		float3 WorldPosition = RayMarchingContext.WorldRayOrigin + RayMarchingContext.WorldRayDirection * LocalHitT * RayMarchingContext.LocalToWorldScale;
 		FVolumeSampleContext SampleContext = CreateVolumeSampleContext(LocalPosition, WorldPosition, RayMarchingContext.MipLevel);
@@ -402,30 +347,32 @@ void RayMarchSingleScattering(
 		if (RayMarchingContext.bApplyEmissionAndTransmittance)
 		{
 			float3 Emission = SampleEmission(SampleContext);
-			Radiance += Emission * RayMarchingContext.StepSize * Transmittance;
+			Radiance += Emission * StepSize * Transmittance;
 
 #if DIM_USE_LUMEN_GI
-			float3 TranslucencyEvaluationPosition = WorldPosition;
-			FTwoBandSHVectorRGB TranslucencyGISH = GetTranslucencyGIVolumeLighting(LWCPromote(TranslucencyEvaluationPosition), PrimaryView.WorldToClip, true);
+			FTwoBandSHVectorRGB TranslucencyGISH = GetTranslucencyGIVolumeLighting(DFPromote(WorldPosition), PrimaryView.WorldToClip, true);
 
 			FTwoBandSHVector RotatedHGZonalHarmonic;
 			float3 CameraVector = normalize(RayMarchingContext.WorldRayDirection);
 			float PhaseG = 0.0;
 			RotatedHGZonalHarmonic.V = float4(1.0f, CameraVector.y, CameraVector.z, CameraVector.x) * float4(1.0f, PhaseG, PhaseG, PhaseG);
-			float3 IndirectInscattering = max(DotSH(TranslucencyGISH, RotatedHGZonalHarmonic), 0);
+			float3 IndirectInscattering = max(DotSH(TranslucencyGISH, RotatedHGZonalHarmonic), 0) / PI;
 
 			float3 Extinction = SampleExtinction(SampleContext);
 			float3 Albedo = SampleAlbedo(SampleContext);
 			float3 ScatteringCoefficient = Albedo * Extinction;
 
 			// Note: Phase is accounted for in spherical hamonic calculation
-			Radiance += IndirectInscattering * ScatteringCoefficient * Transmittance * RayMarchingContext.StepSize;
+			Radiance += IndirectInscattering * ScatteringCoefficient * Transmittance * StepSize;
 #endif // DIM_USE_LUMEN_GI
 		}
 
 		float3 Extinction = SampleExtinction(SampleContext);
-		if (RayMarchingContext.bApplyDirectLighting && (any(Extinction > 0.0)))
+		if (RayMarchingContext.bApplyDirectLighting && (any(Extinction > 0)))
 		{
+			float3 RadianceSample = 0;
+
+			// Evaluate in-scattering
 			float3 Albedo = SampleAlbedo(SampleContext);
 			if (any(Albedo > 0.0))
 			{
@@ -433,12 +380,52 @@ void RayMarchSingleScattering(
 
 				float3 ScatteringCoefficient = Albedo * Extinction;
 				float IsotropicPhase = 1.0 / (4.0 * PI);
-				Radiance += Inscattering * ScatteringCoefficient * IsotropicPhase * Transmittance * RayMarchingContext.StepSize;
+				RadianceSample = Inscattering * ScatteringCoefficient * IsotropicPhase * Transmittance * StepSize;
 			}
+
+			// Stochastically decide to record scatter position
+			if (any(Transmittance < RandomSample))
+			{
+				LocalScatterTMin = min(LocalHitT, LocalScatterTMin);
+			}
+
+#if APPLY_FOG_INSCATTERING == APPLY_FOG_INSCATTERING_REFERENCE
+			{
+				float WorldRayT = LocalHitT * RayMarchingContext.LocalToWorldScale;
+				float3 CameraRelative_WorldPosition = RayMarchingContext.WorldRayDirection * WorldRayT;
+				float4 HeightFog = float4(0, 0, 0, 1);
+				if (ShouldApplyHeightFog())
+				{
+					HeightFog = CalculateHeightFog(CameraRelative_WorldPosition);
+				}
+
+				float4 CombinedFog = HeightFog;
+				if (ShouldApplyVolumetricFog() && FogStruct.ApplyVolumetricFog > 0)
+				{
+					float3 WorldPosition = CameraRelative_WorldPosition + RayMarchingContext.WorldRayOrigin;
+					const uint EyeIndex = 0;
+					float3 VolumeUV = ComputeVolumeUV_DEPRECATED(WorldPosition, DFHackToFloat(PrimaryView.WorldToClip));
+					CombinedFog = CombineVolumetricFog(HeightFog, VolumeUV, EyeIndex, WorldRayT);
+				}
+
+				// Attenuate RadianceSample
+				RadianceSample *= CombinedFog.a;
+
+				// Add FogRadiance
+				float3 DeltaTransmittance = clamp(Transmittance / PrevTransmittance, 0.0, 1.0);
+				float3 DeltaFogRadiance = CombinedFog.rgb - PrevCombinedFog.rgb;
+				FogRadiance += DeltaFogRadiance * DeltaTransmittance;
+
+				PrevCombinedFog = CombinedFog;
+			}
+#endif // APPLY_FOG_INSCATTERING_REFERENCE
+
+			// Accumulate radiance
+			Radiance += RadianceSample;
 		}
 
 		// Accumulate transmittance for the next evaluation
-		Transmittance *= exp(-Extinction * RayMarchingContext.StepSize);
+		Transmittance *= exp(-Extinction * StepSize);
 
 		float Epsilon = 1.0e-7;
 		if (all(Transmittance < Epsilon))
@@ -446,5 +433,47 @@ void RayMarchSingleScattering(
 			Transmittance = 0.0;
 			break;
 		}
+
+		LocalHitT += StepSize;
 	}
+
+#if APPLY_FOG_INSCATTERING == APPLY_FOG_INSCATTERING_STOCHASTIC
+	if (LocalScatterTMin < RayMarchingContext.LocalRayTMax)
+	{
+		float WorldRayT = LocalScatterTMin * RayMarchingContext.LocalToWorldScale;
+
+		float3 CameraRelative_WorldPosition = RayMarchingContext.WorldRayDirection * WorldRayT;
+		float4 HeightFog = float4(0, 0, 0, 1);
+		if (ShouldApplyHeightFog())
+		{
+			HeightFog = CalculateHeightFog(CameraRelative_WorldPosition);
+		}
+
+		float4 CombinedFog = HeightFog;
+		if (ShouldApplyVolumetricFog() && FogStruct.ApplyVolumetricFog > 0)
+		{
+			float3 WorldPosition = CameraRelative_WorldPosition + RayMarchingContext.WorldRayOrigin;
+			const uint EyeIndex = 0;
+			float3 VolumeUV = ComputeVolumeUV_DEPRECATED(WorldPosition, DFHackToFloat(PrimaryView.WorldToClip));
+			CombinedFog = CombineVolumetricFog(HeightFog, VolumeUV, EyeIndex, WorldRayT);
+		}
+
+		// Attenuate Radiance by fog
+		Radiance *= CombinedFog.a;
+		FogRadiance = CombinedFog.rgb;
+	}
+#endif // APPLY_FOG_INSCATTERING
+
+#if APPLY_FOG_INSCATTERING != APPLY_FOG_INSCATTERING_OFF
+	// Simplifying terms to avoid vector division:
+	// float3 DeltaTransmittance = clamp(Transmittance / PrevTransmittance, 0.0, 1.0);
+	// float3 DeltaOpacity = 1.0 - DeltaTransmittance;
+	// float3 FogAlpha = PrevTransmittance * DeltaOpacity;
+	float3 FogAlpha = clamp(PrevTransmittance - Transmittance, 0.0, 1.0);
+
+	// Fogging in-scattering contribution is not currently attenuated by Heterogeneous Volumes
+	// for elements behind the subject. To prevent doubled contribution of in-scattering for 
+	// regions of low density (eg: silhouette edges), blending is interpreted as alpha-masking instead.
+	Radiance += FogRadiance.rgb * FogAlpha;
+#endif // APPLY_FOG_INSCATTERING
 }

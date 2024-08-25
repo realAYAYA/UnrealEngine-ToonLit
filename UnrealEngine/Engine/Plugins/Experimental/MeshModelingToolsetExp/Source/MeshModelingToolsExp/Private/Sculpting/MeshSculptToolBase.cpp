@@ -97,7 +97,10 @@ void UMeshSculptToolBase::Setup()
 	UMeshSurfacePointTool::Setup();
 
 	BrushProperties = NewObject<USculptBrushProperties>(this);
-	BrushProperties->RestoreProperties(this);
+	if (SharesBrushPropertiesChanges())
+	{
+		BrushProperties->RestoreProperties(this);
+	}
 	// Note that brush properties includes BrushRadius, which, when not used as a constant,
 	// serves as an output property based on target size and brush size, and so it would need
 	// updating after the RestoreProperties() call. But deriving classes will call 
@@ -180,7 +183,10 @@ void UMeshSculptToolBase::Shutdown(EToolShutdownType ShutdownType)
 	BrushIndicator = nullptr;
 	GetToolManager()->GetPairedGizmoManager()->DeregisterGizmoType(VertexSculptIndicatorGizmoType);
 
-	BrushProperties->SaveProperties(this);
+	if (SharesBrushPropertiesChanges())
+	{
+		BrushProperties->SaveProperties(this);
+	}
 	if (GizmoProperties)
 	{
 		GizmoProperties->SaveProperties(this);
@@ -211,6 +217,7 @@ void UMeshSculptToolBase::Shutdown(EToolShutdownType ShutdownType)
 		DynamicMeshComponent = nullptr;
 	}
 
+	LongTransactions.CloseAll(GetToolManager());
 }
 
 
@@ -574,10 +581,17 @@ void UMeshSculptToolBase::OnEndDrag(const FRay& Ray)
 	bIsStampPending = false;
 
 	OnEndStroke();
-
 }
 
+void UMeshSculptToolBase::OnCancelDrag()
+{
+	bInStroke = false;
 
+	// cancel any outstanding stamps
+	bIsStampPending = false;
+
+	OnCancelStroke();
+}
 
 FRay3d UMeshSculptToolBase::GetLocalRay(const FRay& WorldRay) const
 {

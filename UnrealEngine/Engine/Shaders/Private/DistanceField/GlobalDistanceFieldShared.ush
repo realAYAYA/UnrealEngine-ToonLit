@@ -355,10 +355,8 @@ float3 GetDistanceFieldGradientGlobal(float3 TranslatedWorldPosition)
 	return Gradient;
 }
 
-float CalculateDistanceFieldApproxAO(FLWCVector3 WorldPosition, float3 WorldNormal, uint NumSteps, float StepDistance, float StepScale, float DistanceBias, float MaxDistance)
+float CalculateDistanceFieldApproxAO(float3 TranslatedWorldPosition, float3 WorldNormal, uint NumSteps, float StepDistance, float StepScale, float DistanceBias, float MaxDistance)
 {
-	const float3 TranslatedWorldPosition = LWCToFloat(LWCAdd(WorldPosition, ResolvedView.PreViewTranslation));
-
 	// determine the min clipmap that covers all the sampling points (sphere centered on TranslatedWorldPosition with radius = MaxDistance)
 	int MinClipmapIndex = -1;
 
@@ -408,24 +406,46 @@ float3 GetDistanceFieldGradientGlobal(float3 TranslatedWorldPosition)
 	return float3(0, 0, .001f);
 }
 
-float CalculateDistanceFieldApproxAO(FLWCVector3 WorldPosition, float3 WorldNormal, uint NumSteps, float StepDistance, float StepScale, float DistanceBias, float MaxDistance)
+float CalculateDistanceFieldApproxAO(float3 TranslatedWorldPosition, float3 WorldNormal, uint NumSteps, float StepDistance, float StepScale, float DistanceBias, float MaxDistance)
 {
 	return 1.0f;
 }
 
 #endif
 
+float GetDistanceToNearestSurfaceGlobal(FDFVector3 WorldPosition)
+{
+	const float3 TranslatedWorldPosition = DFFastToTranslatedWorld(WorldPosition, ResolvedView.PreViewTranslation);
+	return GetDistanceToNearestSurfaceGlobal(TranslatedWorldPosition);
+}
+
 float GetDistanceToNearestSurfaceGlobal(FLWCVector3 WorldPosition)
 {
-	const float3 TranslatedWorldPosition = LWCToFloat(LWCAdd(WorldPosition, ResolvedView.PreViewTranslation));
+	return GetDistanceToNearestSurfaceGlobal(DFFromTileOffset(WorldPosition));
+}
 
-	return GetDistanceToNearestSurfaceGlobal(TranslatedWorldPosition);
+float3 GetDistanceFieldGradientGlobal(FDFVector3 WorldPosition)
+{
+	const float3 TranslatedWorldPosition = DFFastToTranslatedWorld(WorldPosition, ResolvedView.PreViewTranslation);
+	return GetDistanceFieldGradientGlobal(TranslatedWorldPosition);
 }
 
 float3 GetDistanceFieldGradientGlobal(FLWCVector3 WorldPosition)
 {
-	const float3 TranslatedWorldPosition = LWCToFloat(LWCAdd(WorldPosition, ResolvedView.PreViewTranslation));
-
-	return GetDistanceFieldGradientGlobal(TranslatedWorldPosition);
+	return GetDistanceFieldGradientGlobal(DFFromTileOffset(WorldPosition));
 }
+
+float CalculateDistanceFieldApproxAO(FDFVector3 WorldPosition, float3 WorldNormal, uint NumSteps, float StepDistance, float StepScale, float DistanceBias, float MaxDistance)
+{
+	const float3 TranslatedWorldPosition = DFFastToTranslatedWorld(WorldPosition, ResolvedView.PreViewTranslation);
+	return CalculateDistanceFieldApproxAO(TranslatedWorldPosition, WorldNormal, NumSteps, StepDistance, StepScale, DistanceBias, MaxDistance);
+}
+
+float CalculateDistanceFieldApproxAO(FLWCVector3 WorldPosition, float3 WorldNormal, uint NumSteps, float StepDistance, float StepScale, float DistanceBias, float MaxDistance)
+{
+	const float3 TranslatedWorldPosition = LWCToFloat(LWCAdd(WorldPosition, ResolvedView.TileOffset.PreViewTranslation));
+	return CalculateDistanceFieldApproxAO(TranslatedWorldPosition, WorldNormal, NumSteps, StepDistance, StepScale, DistanceBias, MaxDistance);
+}
+
+
 

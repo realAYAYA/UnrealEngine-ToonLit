@@ -48,6 +48,7 @@ public:
 	virtual bool Open(const FString& Url, const IMediaOptions* Options) override;
 	virtual bool Open(const TSharedRef<FArchive, ESPMode::ThreadSafe>& Archive, const FString& OriginalUrl, const IMediaOptions* Options) override;
 	virtual FText GetMediaName() const override;
+	virtual bool GetPlayerFeatureFlag(EFeatureFlag Flag) const override;
 	
 	// IMediaTracks Interface
 	virtual bool GetAudioTrackFormat(int32 TrackIndex, int32 FormatIndex, FMediaAudioTrackFormat& OutFormat) const override;

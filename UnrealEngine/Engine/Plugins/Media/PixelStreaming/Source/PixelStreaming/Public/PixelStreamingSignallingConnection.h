@@ -17,12 +17,14 @@ class IWebSocket;
 class PIXELSTREAMING_API FPixelStreamingSignallingConnection : public IPixelStreamingSignallingConnection
 {
 public:
-	FPixelStreamingSignallingConnection(TSharedPtr<IPixelStreamingSignallingConnectionObserver> InObserver, FString InStreamerId = "");
+	FPixelStreamingSignallingConnection(TSharedPtr<IPixelStreamingSignallingConnectionObserver> InObserver, FString InStreamerId = "", TSharedPtr<IWebSocket> InWebSocket = nullptr);
 	virtual ~FPixelStreamingSignallingConnection();
 
 	/* IPixelStreamingSignallingConnection Interface */
 	virtual void TryConnect(FString URL) override;
+	UE_DEPRECATED(5.4, "Disconnect has been deprecated and will be removed in future versions. Please use: Disconnect(FString Reason)")
 	virtual void Disconnect() override;
+	virtual void Disconnect(FString Reason) override;
 	virtual bool IsConnected() const override;
 	virtual void SendOffer(FPixelStreamingPlayerId PlayerId, const webrtc::SessionDescriptionInterface& SDP) override;
 	virtual void SendAnswer(FPixelStreamingPlayerId PlayerId, const webrtc::SessionDescriptionInterface& SDP) override;
@@ -94,6 +96,7 @@ private:
 
 	bool bAutoReconnectEnabled = true;
 	bool bKeepAliveEnabled = true;
+	bool bIsConnected = false;
 	/** Handle for efficient management of KeepAlive timer */
 	FTimerHandle TimerHandle_KeepAlive;
 	FTimerHandle TimerHandle_Reconnect;

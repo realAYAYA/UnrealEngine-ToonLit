@@ -21,6 +21,7 @@
 #include "Widgets/Text/STextBlock.h"
 #include "Sequencer.h"
 #include "SequencerWidgetsDelegates.h"
+#include "STemporarilyFocusedSpinBox.h"
 
 class FActorDragDropOp;
 class FFolderDragDropOp;
@@ -49,6 +50,7 @@ namespace Sequencer
 	class SOutlinerView;
 	class STrackAreaView;
 	class FVirtualTrackArea;
+	class IOutlinerColumn;
 	struct FSequencerSelectionCurveFilter;
 
 } // namespace Sequencer
@@ -66,7 +68,7 @@ namespace SequencerLayoutConstants
 	const float ObjectNodeHeight = 20.0f;
 
 	/** Height of each section area if there are no sections (note: section areas may be larger than this if they have children. This is the height of a section area with no children or all children hidden) */
-	const float SectionAreaDefaultHeight = 15.0f;
+	const float SectionAreaDefaultHeight = 27.0f;
 
 	/** Height of each key area */
 	const float KeyAreaHeight = 15.0f;
@@ -110,28 +112,17 @@ struct FSequencerBreadcrumb
 
 
 /**
- * A widget that holds a widget that is to be refocused on completion
+ * Holds an outliner column and its visibility state
  */
-template<typename T>
-struct STemporarilyFocusedSpinBox : SSpinBox<T>
+struct FSequencerOutlinerColumnVisibility
 {
-public:
-	void Setup()
-	{
-		PreviousFocusedWidget = FSlateApplication::Get().GetKeyboardFocusedWidget();
-	}
+	TSharedPtr<UE::Sequencer::IOutlinerColumn> Column;
+	bool bIsColumnVisible = false;
 
-	void Refocus()
-	{
-		if (PreviousFocusedWidget.IsValid())
-		{
-			FSlateApplication::Get().SetKeyboardFocus(PreviousFocusedWidget.Pin());
-		}
-	}
-
-private:
-	TWeakPtr<SWidget> PreviousFocusedWidget;
+	FSequencerOutlinerColumnVisibility(TSharedPtr<UE::Sequencer::IOutlinerColumn> InColumn);
+	FSequencerOutlinerColumnVisibility(TSharedPtr<UE::Sequencer::IOutlinerColumn> InColumn, bool bInIsColumnVisible);
 };
+
 
 /**
  * Main sequencer UI widget
@@ -154,6 +145,9 @@ public:
 
 		/** The playback range */
 		SLATE_ATTRIBUTE( TRange<FFrameNumber>, PlaybackRange )
+
+		/** The time bounds */
+		SLATE_ATTRIBUTE(TRange<FFrameNumber>, TimeBounds)
 
 		/** The selection range */
 		SLATE_ATTRIBUTE( TRange<FFrameNumber>, SelectionRange)
@@ -321,13 +315,6 @@ public:
 	void ResetBreadcrumbs();
 	void PopBreadcrumb();
 
-	/** Step to next and previous keyframes */
-	void StepToNextKey();
-	void StepToPreviousKey();
-	void StepToNextCameraKey();
-	void StepToPreviousCameraKey();
-	void StepToKey(bool bStepToNextKey, bool bCameraOnly);
-
 	/** Called when the save button is clicked */
 	void OnSaveMovieSceneClicked();
 
@@ -399,6 +386,10 @@ private:
 	/** Initalizes a list of all track filter objects */
 	void InitializeTrackFilters();
 
+
+	/** Initializes outliner column list from settings and SequencerCore */
+	void InitializeOutlinerColumns();
+
 	/** Handles key selection changes. */
 	void HandleKeySelectionChanged();
 
@@ -461,6 +452,12 @@ private:
 	/** Makes the playback speed menu for the toolbar. */
 	void FillPlaybackSpeedMenu(FMenuBuilder& InMenuBuilder);
 
+	/** Makes the view density menu for the toolbar. */
+	void FillViewDensityMenu(FMenuBuilder& InMenuBuilder);
+
+	/** Makes the column visibility menu for the toolbar. */
+	void FillColumnVisibilityMenu(FMenuBuilder& InMenuBuilder);
+
 	/** Return the current sequencer settings */ 
 	USequencerSettings* GetSequencerSettings() const;
 
@@ -494,6 +491,12 @@ private:
 
 	void OnEnableAllNodeGroupFilters(bool bEnableAll);
 	void OnNodeGroupFilterClicked(UMovieSceneNodeGroup* NodeGroup);
+
+	/**
+	 * Called when any outliner column's visibily is modified.
+	 * Updates SequencerSettings and visible outliner columns in Outliner View.
+	 */
+	void UpdateOutlinerViewColumns();
 
 	/**
 	* Called when the time snap interval changes.
@@ -583,8 +586,8 @@ private:
 	/** Gets whether or not the time range should be visible. */
 	EVisibility GetTimeRangeVisibility() const;
 
-	/** Gets whether the status bar should be visible. */
-	EVisibility GetStatusBarVisibility() const;
+	/** Gets whether the info button in the playback controls should be visible. */
+	EVisibility GetInfoButtonVisibility() const;
 
 	/** Gets whether the tick lines should be drawn. */
 	EVisibility GetShowTickLines() const;
@@ -610,9 +613,6 @@ private:
 
 	/** Controls how fast Spinboxes change values. */
 	double GetSpinboxDelta() const;
-
-	/** Get minimum desired width of the current time spin box */
-	float GetPlayTimeMinDesiredWidth() const;
 
 	bool GetIsSequenceReadOnly() const;
 	void OnSetSequenceReadOnly(ECheckBoxState CheckBoxState);
@@ -708,6 +708,9 @@ private:
 
 	/** The fill coefficients of each column in the grid. */
 	float ColumnFillCoefficients[2];
+
+	/** List of registered outliner columns with their visibility states */
+	TArray<FSequencerOutlinerColumnVisibility> OutlinerColumnVisibilities;
 
 	TSharedPtr<class SSequencerSplitterOverlay> TreeViewSplitter;
 

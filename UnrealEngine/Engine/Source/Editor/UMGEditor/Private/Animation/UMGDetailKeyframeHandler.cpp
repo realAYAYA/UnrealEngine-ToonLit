@@ -43,6 +43,16 @@ bool FUMGDetailKeyframeHandler::IsPropertyAnimated(const IPropertyHandle& Proper
 	return false;
 }
 
+EPropertyKeyedStatus FUMGDetailKeyframeHandler::GetPropertyKeyedStatus(const IPropertyHandle& PropertyHandle) const
+{
+	TSharedPtr<ISequencer> Sequencer = BlueprintEditor.Pin()->GetSequencer();
+	if (Sequencer.IsValid())
+	{
+		return Sequencer->GetPropertyKeyedStatus(PropertyHandle);
+	}
+	return EPropertyKeyedStatus::NotKeyed;
+}
+
 void FUMGDetailKeyframeHandler::OnKeyPropertyClicked(const IPropertyHandle& KeyedPropertyHandle)
 {
 	TArray<UObject*> Objects;

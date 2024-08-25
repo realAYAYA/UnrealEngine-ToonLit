@@ -100,7 +100,7 @@ struct FRetargetChainAnalyzer
 	
 	static FName GetDefaultChainName();
 
-	static EChainSide GetSideOfChain(const TArray<int32>& BoneIndices, const FIKRigSkeleton& IKRigSkeleton);
+	EChainSide GetSideOfChain(const TArray<int32>& BoneIndices, const FIKRigSkeleton& IKRigSkeleton) const;
 };
 
 // a home for cross-widget communication to synchronize state across all tabs and viewport 
@@ -113,9 +113,6 @@ public:
 	// cleanup when editor closed 
 	void Close() const;
 
-	// initial setup, used when asset is empty (no hierarchy, no mesh assigned)
-	void PromptUserToAssignMesh();
-
 	// get the currently active processor running the IK Rig in the editor 
 	UIKRigProcessor* GetIKRigProcessor() const;
 	// get the currently running IKRig skeleton (if there is a running processor) 
@@ -124,22 +121,27 @@ public:
 	// callback when IK Rig requires re-initialization 
 	void HandleIKRigNeedsInitialized(UIKRigDefinition* ModifiedIKRig) const;
 
+	// delete key pressed (in either viewport or tree view)
+	void HandleDeleteSelectedElements();
+
 	// create goals 
 	void AddNewGoals(const TArray<FName>& GoalNames, const TArray<FName>& BoneNames);
 	// clear all selected objects 
-	void ClearSelection();
+	void ClearSelection() const;
 	// callback when goal is selected in the viewport 
 	void HandleGoalSelectedInViewport(const FName& GoalName, bool bReplace) const;
 	// callback when bone is selected in the viewport 
 	void HandleBoneSelectedInViewport(const FName& BoneName, bool bReplace) const;
 	// reset all goals to initial transforms 
 	void Reset() const;
-	// refresh all views 
-	void RefreshAllViews() const;
 	// refresh just the skeleton tree view 
 	void RefreshTreeView() const;
 	// clear the output log 
 	void ClearOutputLog() const;
+	// automatically generates retarget chains 
+	void AutoGenerateRetargetChains() const;
+	// automatically generates IK setup 
+	void AutoGenerateFBIK() const;
 
 	// return list of those solvers in the stack that are selected by user 
 	void GetSelectedSolvers(TArray<TSharedPtr<FSolverStackElement> >& OutSelectedSolvers) const;
@@ -176,11 +178,13 @@ public:
 	// show single SOLVER settings in details view 
 	void ShowDetailsForSolver(const int32 SolverIndex) const;
 	// show nothing in details view 
-	void ShowEmptyDetails() const;
+	void ShowAssetDetails() const;
 	// show selected items in details view 
 	void ShowDetailsForElements(const TArray<TSharedPtr<FIKRigTreeElement>>& InItems) const;
 	// callback when detail is edited 
 	void OnFinishedChangingDetails(const FPropertyChangedEvent& PropertyChangedEvent) const;
+	// returns true if the supplied UObject is being shown in the details panel
+	bool IsObjectInDetailsView(const UObject* Object) const;
 	
 	// set details tab view 
 	void SetDetailsView(const TSharedPtr<class IDetailsView>& InDetailsView);

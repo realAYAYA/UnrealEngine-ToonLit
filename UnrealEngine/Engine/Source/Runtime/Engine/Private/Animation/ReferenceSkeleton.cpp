@@ -2,6 +2,7 @@
 
 #include "ReferenceSkeleton.h"
 #include "Animation/Skeleton.h"
+#include "Animation/SkeletonRemappingRegistry.h"
 #include "EngineLogs.h"
 #include "Engine/SkeletalMesh.h"
 
@@ -252,6 +253,7 @@ namespace FReferenceSkeletonLocals
 					if (Element.Parent)
 					{
 						Transforms[Element.RawIndex] *= GetGlobalTransformArg(*Element.Parent, GetGlobalTransformArg);
+						Transforms[Element.RawIndex].NormalizeRotation();
 					}
 
 					TransformCached[Element.RawIndex] = true;
@@ -423,6 +425,7 @@ int32 FReferenceSkeleton::SetParent(const FName InBoneName, const FName InParent
 		if (NewParentIdx != INDEX_NONE)
 		{
 			Pose = Transforms[NewIndex].GetRelativeTransform(Transforms[Element.Parent->RawIndex]);
+			Pose.NormalizeRotation();
 		}
 
 		// update name to index map
@@ -500,6 +503,9 @@ void FReferenceSkeleton::RebuildRefSkeleton(const USkeleton* Skeleton, bool bReb
 			}
 		}
 	}
+
+	// Full rebuild of all compatible with this and with ones we are compatible with.
+	UE::Anim::FSkeletonRemappingRegistry::Get().RefreshMappings(Skeleton);
 }
 
 void FReferenceSkeleton::RemoveDuplicateBones(const UObject* Requester, TArray<FBoneIndexType> & DuplicateBones)

@@ -191,6 +191,9 @@ private:
 	ECheckBoxState GetLockColorBounaries() const;
 	void SetLockColorBounaries(ECheckBoxState NewState);
 
+	ECheckBoxState GetImproveTrianglesForCloth() const;
+	void SetImproveTrianglesForCloth(ECheckBoxState NewState);
+
 	ECheckBoxState GetEnforceBoneBoundaries() const;
 	void SetEnforceBoneBoundaries(ECheckBoxState NewState);
 
@@ -282,6 +285,7 @@ private:
 		const FText& RowTitleText,
 		const FText& RowNameContentText,
 		const FText& RowNameContentTooltipText,
+		FName RowTag,
 		const int32 MinSliderValue,
 		const int32 MaxSliderValue,
 		const FGetIntegerDelegate& GetterDelegate,
@@ -604,7 +608,8 @@ private:
 
 	FText GetMaterialSlotNameText(int32 MaterialIndex) const;
 
-	void RefreshMeshDetailLayout();
+	void ForceLayoutRebuild();
+	void RequestLayoutUpdate();
 
 	void OnNoRefStreamingLODBiasChanged(int32 NewValue, FName QualityLevel);
 	void OnNoRefStreamingLODBiasCommitted(int32 InValue, ETextCommit::Type CommitInfo, FName QualityLevel);

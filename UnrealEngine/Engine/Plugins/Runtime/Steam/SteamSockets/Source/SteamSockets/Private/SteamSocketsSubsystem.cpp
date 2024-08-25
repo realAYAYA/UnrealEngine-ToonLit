@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "SteamSocketsSubsystem.h"
+#include "SteamSocketsPackage.h"
 #include "Misc/CommandLine.h"
 #include "Misc/ConfigCacheIni.h"
 #include "SteamSocketsTaskManager.h"
@@ -831,8 +832,6 @@ static FString ConnectionStateToString(const ESteamNetworkingConnectionState& Co
 	case k_ESteamNetworkingConnectionState_ProblemDetectedLocally:
 		return TEXT("Local Connection Issue");
 	}
-
-	return TEXT("");
 }
 
 void FSteamSocketsSubsystem::SteamSocketEventHandler(struct SteamNetConnectionStatusChangedCallback_t* Message)

@@ -134,7 +134,7 @@ FVector3f FMeshNormalMapEvaluator::SampleFunction(const FCorrespondenceSample& S
 			FVector3f DetailNormalObjectSpace = (DetailNormalColor * 2.0f) - FVector3f::One();
 			// Ideally this branch could be made compile time. Unfortunately since each mesh could have its
 			// own source normal map each with their own normal space, this branch must be resolved at runtime.
-			if (DetailNormalSpace == IMeshBakerDetailSampler::EBakeDetailNormalSpace::Tangent)
+			if (DetailNormalSpace == IMeshBakerDetailSampler::EBakeDetailNormalSpace::Tangent) //-V547
 			{
 				// Convert detail normal tangent space to object space
 				const FVector3f DetailNormalTangentSpace = DetailNormalObjectSpace;

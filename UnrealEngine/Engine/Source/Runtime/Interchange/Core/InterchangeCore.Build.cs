@@ -13,5 +13,12 @@ public class InterchangeCore : ModuleRules
 				"Json"
 			}
 		);
+
+		PrivateDependencyModuleNames.AddRange(
+			new string[]
+			{
+				"SlateCore",
+			}
+		);
 	}
 }

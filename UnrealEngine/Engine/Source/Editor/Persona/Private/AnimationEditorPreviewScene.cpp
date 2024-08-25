@@ -175,7 +175,8 @@ void FAnimationEditorPreviewScene::SetPreviewMesh(USkeletalMesh* NewPreviewMesh,
 	if (NewPreviewMesh != nullptr && GetEditableSkeleton().IsValid() && !GetEditableSkeleton()->GetSkeleton().IsCompatibleMesh(NewPreviewMesh))
 	{
 		const USkeleton& Skeleton = GetEditableSkeleton()->GetSkeleton();
-		if (NewPreviewMesh->GetSkeleton() && Skeleton.IsCompatibleForEditor(NewPreviewMesh->GetSkeleton()))
+		const bool bSkipSkeletonCompatibility = PersonaToolkit.IsValid() && PersonaToolkit.Pin()->CanPreviewMeshUseDifferentSkeleton(); 
+		if (NewPreviewMesh->GetSkeleton() && (bSkipSkeletonCompatibility || Skeleton.IsCompatibleForEditor(NewPreviewMesh->GetSkeleton())))
 		{
 			SetPreviewMeshInternal(NewPreviewMesh);
 		}	
@@ -278,8 +279,8 @@ void FAnimationEditorPreviewScene::SetPreviewMeshInternal(USkeletalMesh* NewPrev
 		UAnimationAsset* AnimAssetToPlay = nullptr;
 		float PlayPosition = 0.f;
 		bool bPlaying = false;
-		bool bNeedsToCopyAnimationData = SkeletalMeshComponent->GetAnimInstance() && SkeletalMeshComponent->GetAnimInstance() == SkeletalMeshComponent->PreviewInstance;
-		if (bNeedsToCopyAnimationData)
+		bool bNeedsToCopyAnimationData = bIsBeingConstructed == false && SkeletalMeshComponent->GetAnimInstance() && SkeletalMeshComponent->GetAnimInstance() == SkeletalMeshComponent->PreviewInstance;
+		if (bNeedsToCopyAnimationData && NewPreviewMesh)
 		{
 			AnimAssetToPlay = SkeletalMeshComponent->PreviewInstance->GetCurrentAsset();
 			PlayPosition = SkeletalMeshComponent->PreviewInstance->GetCurrentTime();
@@ -289,7 +290,7 @@ void FAnimationEditorPreviewScene::SetPreviewMeshInternal(USkeletalMesh* NewPrev
 		SkeletalMeshComponent->EmptyOverrideMaterials();
 		SkeletalMeshComponent->SetSkeletalMesh(NewPreviewMesh);
 
-		if (bNeedsToCopyAnimationData)
+		if (bNeedsToCopyAnimationData && (NewPreviewMesh == nullptr || AnimAssetToPlay != nullptr))
 		{
 			SetPreviewAnimationAsset(AnimAssetToPlay);
 			SkeletalMeshComponent->PreviewInstance->SetPosition(PlayPosition);
@@ -1171,7 +1172,7 @@ void FAnimationEditorPreviewScene::SetAllowMeshHitProxies(bool bState)
 
 void FAnimationEditorPreviewScene::FlagTickable()
 {
-	// Set the last tick time so we tick kwhen we are visible in a viewport
+	// Set the last tick time so we tick when we are visible in a viewport
 	LastTickTime = FPlatformTime::Seconds();
 }
 

@@ -86,15 +86,14 @@ namespace GeometryCollectionTest
 			UnitTest.Advance();
 		}
 
-		TManagedArray<int32>& DynamicState = Collection->DynamicCollection->DynamicState;
+		TManagedArray<uint8>& DynamicState = Collection->DynamicCollection->DynamicState;
 		EXPECT_EQ(DynamicState[0], (int32)EObjectStateTypeEnum::Chaos_Object_Kinematic);
 
 		// simulated
-		const TManagedArray<FTransform>& Transform = Collection->DynamicCollection->Transform;
-		EXPECT_EQ(Transform.Num(), 1);
-		const FVector Translation1 = Transform[0].GetTranslation();
+		EXPECT_EQ(Collection->DynamicCollection->GetNumTransforms(), 1);
+		const FVector Translation1 = FVector(Collection->DynamicCollection->GetTransform(0).GetTranslation());
 		EXPECT_NEAR((Translation0 - Translation1).Size(), 0.f, KINDA_SMALL_NUMBER);
-		EXPECT_NEAR(Transform[0].GetTranslation().Z, 1.f, KINDA_SMALL_NUMBER);
+		EXPECT_NEAR(Collection->DynamicCollection->GetTransform(0).GetTranslation().Z, 1.f, KINDA_SMALL_NUMBER);
 
 		FRadialIntMask* RadialMask = new FRadialIntMask();
 		RadialMask->Position = FVector(0.0, 0.0, 0.0);
@@ -110,9 +109,9 @@ namespace GeometryCollectionTest
 		}
 		EXPECT_EQ(DynamicState[0], (int32)EObjectStateTypeEnum::Chaos_Object_Dynamic);
 
-		const FVector Translation2 = Transform[0].GetTranslation();
+		const FVector Translation2 = FVector(Collection->DynamicCollection->GetTransform(0).GetTranslation());
 		EXPECT_NE(Translation1, Translation2);
-		EXPECT_LE(Transform[0].GetTranslation().Z, 0.f);
+		EXPECT_LE(Collection->DynamicCollection->GetTransform(0).GetTranslation().Z, 0.f);
 	}
 
 	GTEST_TEST(AllTraits, GeometryCollection_RigidBodies_Field_KinematicActivation)
@@ -135,11 +134,10 @@ namespace GeometryCollectionTest
 		}
 
 		// simulated
-		const TManagedArray<FTransform>& Transform = Collection->DynamicCollection->Transform;
-		EXPECT_EQ(Transform.Num(), 1);
-		const FVector Translation1 = Transform[0].GetTranslation();
+		EXPECT_EQ(Collection->DynamicCollection->GetNumTransforms(), 1);
+		const FVector Translation1 = FVector(Collection->DynamicCollection->GetTransform(0).GetTranslation());
 		EXPECT_NEAR((Translation0 - Translation1).Size(), 0.f, KINDA_SMALL_NUMBER);
-		EXPECT_NEAR(Transform[0].GetTranslation().Z, 1.f, KINDA_SMALL_NUMBER);
+		EXPECT_NEAR(Collection->DynamicCollection->GetTransform(0).GetTranslation().Z, 1.f, KINDA_SMALL_NUMBER);
 
 		FRadialIntMask* RadialMask = new FRadialIntMask();
 		RadialMask->Position = FVector(0.0, 0.0, 0.0);
@@ -155,9 +153,9 @@ namespace GeometryCollectionTest
 			UnitTest.Advance();
 		}
 
-		const FVector Translation2 = Transform[0].GetTranslation();
+		const FVector Translation2 = FVector(Collection->DynamicCollection->GetTransform(0).GetTranslation());
 		EXPECT_NE(Translation1, Translation2);
-		EXPECT_LE(Transform[0].GetTranslation().Z, 0.f);
+		EXPECT_LE(Collection->DynamicCollection->GetTransform(0).GetTranslation().Z, 0.f);
 	}
 
 	GTEST_TEST(AllTraits, GeometryCollection_RigidBodies_Field_InitialLinearVelocity)
@@ -184,12 +182,11 @@ namespace GeometryCollectionTest
 
 		UnitTest.Initialize();
 
-		TManagedArray<FTransform>& Transform = Collection->DynamicCollection->Transform;
-		TManagedArray<int32>& DynamicState = Collection->DynamicCollection->DynamicState;
+		TManagedArray<uint8>& DynamicState = Collection->DynamicCollection->DynamicState;
 
 		FReal PreviousY = 0.f;
-		EXPECT_EQ(Transform[0].GetTranslation().X, 0);
-		EXPECT_EQ(Transform[0].GetTranslation().Y, 0);
+		EXPECT_EQ(Collection->DynamicCollection->GetTransform(0).GetTranslation().X, 0);
+		EXPECT_EQ(Collection->DynamicCollection->GetTransform(0).GetTranslation().Y, 0);
 
 		for (int Frame = 0; Frame < 10; Frame++)
 		{
@@ -204,18 +201,18 @@ namespace GeometryCollectionTest
 			if (Frame >= 2)
 			{
 				EXPECT_EQ(DynamicState[0], (int32)EObjectStateTypeEnum::Chaos_Object_Dynamic);
-				EXPECT_EQ(Transform[0].GetTranslation().X, 0);
-				EXPECT_GT(Transform[0].GetTranslation().Y, PreviousY);
-				EXPECT_LT(Transform[0].GetTranslation().Z, 0);
+				EXPECT_EQ(Collection->DynamicCollection->GetTransform(0).GetTranslation().X, 0);
+				EXPECT_GT(Collection->DynamicCollection->GetTransform(0).GetTranslation().Y, PreviousY);
+				EXPECT_LT(Collection->DynamicCollection->GetTransform(0).GetTranslation().Z, 0);
 			}
 			else
 			{
 				EXPECT_EQ(DynamicState[0], (int32)EObjectStateTypeEnum::Chaos_Object_Kinematic);
-				EXPECT_EQ(Transform[0].GetTranslation().X, 0);
-				EXPECT_EQ(Transform[0].GetTranslation().Y, 0);
-				EXPECT_EQ(Transform[0].GetTranslation().Z, 0);
+				EXPECT_EQ(Collection->DynamicCollection->GetTransform(0).GetTranslation().X, 0);
+				EXPECT_EQ(Collection->DynamicCollection->GetTransform(0).GetTranslation().Y, 0);
+				EXPECT_EQ(Collection->DynamicCollection->GetTransform(0).GetTranslation().Z, 0);
 			}
-			PreviousY = Transform[0].GetTranslation().Y;
+			PreviousY = Collection->DynamicCollection->GetTransform(0).GetTranslation().Y;
 		}
 	}
 
@@ -241,7 +238,6 @@ namespace GeometryCollectionTest
 
 		UnitTest.Initialize();
 
-		TManagedArray<FTransform>& Transform = Collection->DynamicCollection->Transform;
 		for (int Frame = 0; Frame < 10; Frame++)
 		{
 			// Set everything inside the r=5.0 sphere to dynamic
@@ -256,16 +252,16 @@ namespace GeometryCollectionTest
 			if (Frame < 5)
 			{
 				// Before frame 5 nothing should have moved
-				EXPECT_LT(FMath::Abs(Transform[0].GetTranslation().Z - 5.f), SMALL_THRESHOLD);
+				EXPECT_LT(FMath::Abs(Collection->DynamicCollection->GetTransform(0).GetTranslation().Z - 5.f), SMALL_THRESHOLD);
 			}
 			else
 			{
 				// Frame 5 and after should be falling
-				EXPECT_LT(Transform[0].GetTranslation().Z, PreviousHeight);
+				EXPECT_LT(Collection->DynamicCollection->GetTransform(0).GetTranslation().Z, PreviousHeight);
 			}
 
 			// Track current height of the object
-			PreviousHeight = Transform[0].GetTranslation().Z;
+			PreviousHeight = Collection->DynamicCollection->GetTransform(0).GetTranslation().Z;
 		}
 
 	}
@@ -288,7 +284,6 @@ namespace GeometryCollectionTest
 
 		UnitTest.Initialize();
 
-		TManagedArray<FTransform>& Transform = Collection->DynamicCollection->Transform;
 		FReal PreviousY = 0.0;
 		for (int Frame = 0; Frame < 10; Frame++)
 		{
@@ -302,14 +297,14 @@ namespace GeometryCollectionTest
 
 			if (Frame < 5)
 			{
-				EXPECT_LT(FMath::Abs(Transform[0].GetTranslation().Y), SMALL_THRESHOLD);
+				EXPECT_LT(FMath::Abs(Collection->DynamicCollection->GetTransform(0).GetTranslation().Y), SMALL_THRESHOLD);
 			}
 			else
 			{
-				EXPECT_GT(Transform[0].GetTranslation().Y, PreviousY);
+				EXPECT_GT(Collection->DynamicCollection->GetTransform(0).GetTranslation().Y, PreviousY);
 			}
 
-			PreviousY = Transform[0].GetTranslation().Y;
+			PreviousY = Collection->DynamicCollection->GetTransform(0).GetTranslation().Y;
 
 		}
 
@@ -336,7 +331,6 @@ namespace GeometryCollectionTest
 
 		UnitTest.Initialize();
 
-		TManagedArray<FTransform>& Transform = Collection->DynamicCollection->Transform;
 		FReal PreviousY = 0.0;
 		for (int Frame = 0; Frame < 10; Frame++)
 		{
@@ -351,15 +345,15 @@ namespace GeometryCollectionTest
 			auto& Particles = UnitTest.Solver->GetParticles().GetGeometryCollectionParticles();
 			if (Frame < 5)
 			{
-				EXPECT_LT(FMath::Abs(Transform[0].GetRotation().Euler().Y), SMALL_THRESHOLD);
+				EXPECT_LT(FMath::Abs(Collection->DynamicCollection->GetTransform(0).GetRotation().Euler().Y), SMALL_THRESHOLD);
 			}
 			else
 			{
-				EXPECT_NE(FMath::Abs(Transform[0].GetRotation().Euler().Y), SMALL_THRESHOLD);
-				EXPECT_GT(Particles.W(0).Y, PreviousY);
+				EXPECT_NE(FMath::Abs(Collection->DynamicCollection->GetTransform(0).GetRotation().Euler().Y), SMALL_THRESHOLD);
+				EXPECT_GT(Particles.GetW(0).Y, PreviousY);
 			}
 
-			PreviousY = Particles.W(0).Y;
+			PreviousY = Particles.GetW(0).Y;
 		}
 
 	}
@@ -385,7 +379,7 @@ namespace GeometryCollectionTest
 
 		UnitTest.Initialize();
 
-		TManagedArray<FTransform>& Transform = Collection->DynamicCollection->Transform;
+		
 		TManagedArray<bool>& Active = Collection->DynamicCollection->Active;
 		auto& Particles = UnitTest.Solver->GetParticles().GetGeometryCollectionParticles();
 		for (int Frame = 0; Frame < 20; Frame++)
@@ -404,8 +398,8 @@ namespace GeometryCollectionTest
 		EXPECT_EQ(Particles.Disabled(0), true);
 
 		// hasn't fallen any further than this due to being disabled
-		EXPECT_LT(Transform[0].GetTranslation().Z, 5.f);
-		EXPECT_GT(Transform[0].GetTranslation().Z, -5.0f);
+		EXPECT_LT(Collection->DynamicCollection->GetTransform(0).GetTranslation().Z, 5.f);
+		EXPECT_GT(Collection->DynamicCollection->GetTransform(0).GetTranslation().Z, -5.0f);
 	}
 
 	GTEST_TEST(AllTraits, GeometryCollection_RigidBodies_Field_LinearVelocity)
@@ -431,15 +425,15 @@ namespace GeometryCollectionTest
 		UnitTest.Advance();
 
 		FReal PreviousX = 0.0;
-		TManagedArray<FTransform>& Transform = Collection->DynamicCollection->Transform;
+		
 		for (int Frame = 1; Frame < 10; Frame++)
 		{
 			UnitTest.Solver->GetPerSolverField().AddTransientCommand({ GetFieldPhysicsName(EFieldPhysicsType::Field_LinearVelocity), VectorField->NewCopy() });
 
 			UnitTest.Advance();
 
-			EXPECT_GT(Transform[0].GetTranslation().X, PreviousX);
-			PreviousX = Transform[0].GetTranslation().X;
+			EXPECT_GT(Collection->DynamicCollection->GetTransform(0).GetTranslation().X, PreviousX);
+			PreviousX = Collection->DynamicCollection->GetTransform(0).GetTranslation().X;
 		}
 	}
 
@@ -489,9 +483,9 @@ namespace GeometryCollectionTest
 			if (Frame == 30)
 			{
 				// The boxes should have landed on each other and settled by now
-				EXPECT_NEAR(Collection[1]->DynamicCollection->Transform[0].GetTranslation().Z, (FReal)100, (FReal)20);
-				EXPECT_NEAR(Collection[2]->DynamicCollection->Transform[0].GetTranslation().Z, (FReal)300, (FReal)20);
-				EXPECT_NEAR(Collection[3]->DynamicCollection->Transform[0].GetTranslation().Z, (FReal)500, (FReal)20);
+				EXPECT_NEAR(Collection[1]->DynamicCollection->GetTransform(0).GetTranslation().Z, (FReal)100, (FReal)20);
+				EXPECT_NEAR(Collection[2]->DynamicCollection->GetTransform(0).GetTranslation().Z, (FReal)300, (FReal)20);
+				EXPECT_NEAR(Collection[3]->DynamicCollection->GetTransform(0).GetTranslation().Z, (FReal)500, (FReal)20);
 			}
 			if (Frame == 31)
 			{
@@ -501,9 +495,9 @@ namespace GeometryCollectionTest
 		}
 		// The bottom boxes should have fallen below the ground level, box 2 now on the ground with box 3 on top
 		auto& Particles = UnitTest.Solver->GetParticles().GetGeometryCollectionParticles();
-		EXPECT_LT(Collection[1]->DynamicCollection->Transform[0].GetTranslation().Z, 0);
-		EXPECT_TRUE(FMath::IsNearlyEqual((FReal)Collection[2]->DynamicCollection->Transform[0].GetTranslation().Z, (FReal)100, (FReal)20));
-		EXPECT_TRUE(FMath::IsNearlyEqual((FReal)Collection[3]->DynamicCollection->Transform[0].GetTranslation().Z, (FReal)300, (FReal)20));
+		EXPECT_LT(Collection[1]->DynamicCollection->GetTransform(0).GetTranslation().Z, 0);
+		EXPECT_TRUE(FMath::IsNearlyEqual((FReal)Collection[2]->DynamicCollection->GetTransform(0).GetTranslation().Z, (FReal)100, (FReal)20));
+		EXPECT_TRUE(FMath::IsNearlyEqual((FReal)Collection[3]->DynamicCollection->GetTransform(0).GetTranslation().Z, (FReal)300, (FReal)20));
 
 	}
 
@@ -542,48 +536,47 @@ namespace GeometryCollectionTest
 
 		UnitTest.Advance();
 
-		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*>& ParticleHandles = Collection->PhysObject->GetSolverParticleHandles();
 		{
 			FName TargetName = GetFieldPhysicsName(EFieldPhysicsType::Field_ExternalClusterStrain);
 			UnitTest.Solver->GetPerSolverField().AddTransientCommand({ TargetName, FalloffField->NewCopy() });
 
 			EXPECT_EQ(ClusterMap.Num(), 3);
-			EXPECT_EQ(ClusterMap[ParticleHandles[4]].Num(), 2);
-			EXPECT_TRUE(ClusterMap[ParticleHandles[4]].Contains(ParticleHandles[0]));
-			EXPECT_TRUE(ClusterMap[ParticleHandles[4]].Contains(ParticleHandles[1]));
-			EXPECT_EQ(ClusterMap[ParticleHandles[5]].Num(), 2);
-			EXPECT_TRUE(ClusterMap[ParticleHandles[5]].Contains(ParticleHandles[2]));
-			EXPECT_TRUE(ClusterMap[ParticleHandles[5]].Contains(ParticleHandles[3]));
-			EXPECT_EQ(ClusterMap[ParticleHandles[6]].Num(), 2);
-			EXPECT_TRUE(ClusterMap[ParticleHandles[6]].Contains(ParticleHandles[5]));
-			EXPECT_TRUE(ClusterMap[ParticleHandles[6]].Contains(ParticleHandles[4]));
+			EXPECT_EQ(ClusterMap[Collection->PhysObject->GetParticle_Internal(4)].Num(), 2);
+			EXPECT_TRUE(ClusterMap[Collection->PhysObject->GetParticle_Internal(4)].Contains(Collection->PhysObject->GetParticle_Internal(0)));
+			EXPECT_TRUE(ClusterMap[Collection->PhysObject->GetParticle_Internal(4)].Contains(Collection->PhysObject->GetParticle_Internal(1)));
+			EXPECT_EQ(ClusterMap[Collection->PhysObject->GetParticle_Internal(5)].Num(), 2);
+			EXPECT_TRUE(ClusterMap[Collection->PhysObject->GetParticle_Internal(5)].Contains(Collection->PhysObject->GetParticle_Internal(2)));
+			EXPECT_TRUE(ClusterMap[Collection->PhysObject->GetParticle_Internal(5)].Contains(Collection->PhysObject->GetParticle_Internal(3)));
+			EXPECT_EQ(ClusterMap[Collection->PhysObject->GetParticle_Internal(6)].Num(), 2);
+			EXPECT_TRUE(ClusterMap[Collection->PhysObject->GetParticle_Internal(6)].Contains(Collection->PhysObject->GetParticle_Internal(5)));
+			EXPECT_TRUE(ClusterMap[Collection->PhysObject->GetParticle_Internal(6)].Contains(Collection->PhysObject->GetParticle_Internal(4)));
 
-			EXPECT_TRUE(ParticleHandles[0]->Disabled());
-			EXPECT_TRUE(ParticleHandles[1]->Disabled());
-			EXPECT_TRUE(ParticleHandles[2]->Disabled());
-			EXPECT_TRUE(ParticleHandles[3]->Disabled());
-			EXPECT_TRUE(ParticleHandles[4]->Disabled());
-			EXPECT_TRUE(ParticleHandles[5]->Disabled());
-			EXPECT_FALSE(ParticleHandles[6]->Disabled());
+			EXPECT_TRUE(Collection->PhysObject->GetParticle_Internal(0)->Disabled());
+			EXPECT_TRUE(Collection->PhysObject->GetParticle_Internal(1)->Disabled());
+			EXPECT_TRUE(Collection->PhysObject->GetParticle_Internal(2)->Disabled());
+			EXPECT_TRUE(Collection->PhysObject->GetParticle_Internal(3)->Disabled());
+			EXPECT_TRUE(Collection->PhysObject->GetParticle_Internal(4)->Disabled());
+			EXPECT_TRUE(Collection->PhysObject->GetParticle_Internal(5)->Disabled());
+			EXPECT_FALSE(Collection->PhysObject->GetParticle_Internal(6)->Disabled());
 
 			UnitTest.Advance();
 
 			// todo: indices here might seem odd, particles 4 & 5 are swapped
 			EXPECT_EQ(ClusterMap.Num(), 2);
-			EXPECT_EQ(ClusterMap[ParticleHandles[4]].Num(), 2);
-			EXPECT_TRUE(ClusterMap[ParticleHandles[4]].Contains(ParticleHandles[0]));
-			EXPECT_TRUE(ClusterMap[ParticleHandles[4]].Contains(ParticleHandles[1]));
-			EXPECT_EQ(ClusterMap[ParticleHandles[5]].Num(), 2);
-			EXPECT_TRUE(ClusterMap[ParticleHandles[5]].Contains(ParticleHandles[2]));
-			EXPECT_TRUE(ClusterMap[ParticleHandles[5]].Contains(ParticleHandles[3]));
+			EXPECT_EQ(ClusterMap[Collection->PhysObject->GetParticle_Internal(4)].Num(), 2);
+			EXPECT_TRUE(ClusterMap[Collection->PhysObject->GetParticle_Internal(4)].Contains(Collection->PhysObject->GetParticle_Internal(0)));
+			EXPECT_TRUE(ClusterMap[Collection->PhysObject->GetParticle_Internal(4)].Contains(Collection->PhysObject->GetParticle_Internal(1)));
+			EXPECT_EQ(ClusterMap[Collection->PhysObject->GetParticle_Internal(5)].Num(), 2);
+			EXPECT_TRUE(ClusterMap[Collection->PhysObject->GetParticle_Internal(5)].Contains(Collection->PhysObject->GetParticle_Internal(2)));
+			EXPECT_TRUE(ClusterMap[Collection->PhysObject->GetParticle_Internal(5)].Contains(Collection->PhysObject->GetParticle_Internal(3)));
 
-			EXPECT_TRUE(ParticleHandles[0]->Disabled());
-			EXPECT_TRUE(ParticleHandles[1]->Disabled());
-			EXPECT_TRUE(ParticleHandles[2]->Disabled());
-			EXPECT_TRUE(ParticleHandles[3]->Disabled());
-			EXPECT_FALSE(ParticleHandles[4]->Disabled());
-			EXPECT_FALSE(ParticleHandles[5]->Disabled());
-			EXPECT_TRUE(ParticleHandles[6]->Disabled());
+			EXPECT_TRUE(Collection->PhysObject->GetParticle_Internal(0)->Disabled());
+			EXPECT_TRUE(Collection->PhysObject->GetParticle_Internal(1)->Disabled());
+			EXPECT_TRUE(Collection->PhysObject->GetParticle_Internal(2)->Disabled());
+			EXPECT_TRUE(Collection->PhysObject->GetParticle_Internal(3)->Disabled());
+			EXPECT_FALSE(Collection->PhysObject->GetParticle_Internal(4)->Disabled());
+			EXPECT_FALSE(Collection->PhysObject->GetParticle_Internal(5)->Disabled());
+			EXPECT_TRUE(Collection->PhysObject->GetParticle_Internal(6)->Disabled());
 		}
 
 		delete FalloffField;
@@ -619,7 +612,11 @@ namespace GeometryCollectionTest
 		UnitTest.Initialize();
 		UnitTest.Advance();
 
-		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*>& ParticleHandles = Collection->PhysObject->GetSolverParticleHandles();
+		auto ParticleHandles = [&Collection](int32 Index) -> Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*
+		{
+			return Collection->PhysObject->GetParticle_Internal(Index);
+		};
+
 		auto& Clustering = UnitTest.Solver->GetEvolution()->GetRigidClustering();
 		const auto& ClusterMap = Clustering.GetChildrenMap();
 
@@ -631,47 +628,47 @@ namespace GeometryCollectionTest
 			UnitTest.Solver->GetPerSolverField().AddTransientCommand(Command);
 
 			EXPECT_EQ(ClusterMap.Num(), 3);
-			EXPECT_EQ(ClusterMap[ParticleHandles[6]].Num(), 3);
-			EXPECT_TRUE(ClusterMap[ParticleHandles[6]].Contains(ParticleHandles[0]));
-			EXPECT_TRUE(ClusterMap[ParticleHandles[6]].Contains(ParticleHandles[1]));
-			EXPECT_TRUE(ClusterMap[ParticleHandles[6]].Contains(ParticleHandles[2]));
-			EXPECT_EQ(ClusterMap[ParticleHandles[7]].Num(), 3);
-			EXPECT_TRUE(ClusterMap[ParticleHandles[7]].Contains(ParticleHandles[3]));
-			EXPECT_TRUE(ClusterMap[ParticleHandles[7]].Contains(ParticleHandles[4]));
-			EXPECT_TRUE(ClusterMap[ParticleHandles[7]].Contains(ParticleHandles[5]));
-			EXPECT_EQ(ClusterMap[ParticleHandles[8]].Num(), 2);
-			EXPECT_TRUE(ClusterMap[ParticleHandles[8]].Contains(ParticleHandles[7]));
-			EXPECT_TRUE(ClusterMap[ParticleHandles[8]].Contains(ParticleHandles[6]));
+			EXPECT_EQ(ClusterMap[ParticleHandles(6)].Num(), 3);
+			EXPECT_TRUE(ClusterMap[ParticleHandles(6)].Contains(ParticleHandles(0)));
+			EXPECT_TRUE(ClusterMap[ParticleHandles(6)].Contains(ParticleHandles(1)));
+			EXPECT_TRUE(ClusterMap[ParticleHandles(6)].Contains(ParticleHandles(2)));
+			EXPECT_EQ(ClusterMap[ParticleHandles(7)].Num(), 3);
+			EXPECT_TRUE(ClusterMap[ParticleHandles(7)].Contains(ParticleHandles(3)));
+			EXPECT_TRUE(ClusterMap[ParticleHandles(7)].Contains(ParticleHandles(4)));
+			EXPECT_TRUE(ClusterMap[ParticleHandles(7)].Contains(ParticleHandles(5)));
+			EXPECT_EQ(ClusterMap[ParticleHandles(8)].Num(), 2);
+			EXPECT_TRUE(ClusterMap[ParticleHandles(8)].Contains(ParticleHandles(7)));
+			EXPECT_TRUE(ClusterMap[ParticleHandles(8)].Contains(ParticleHandles(6)));
 
-			EXPECT_TRUE(ParticleHandles[0]->Disabled());
-			EXPECT_TRUE(ParticleHandles[1]->Disabled());
-			EXPECT_TRUE(ParticleHandles[2]->Disabled());
-			EXPECT_TRUE(ParticleHandles[3]->Disabled());
-			EXPECT_TRUE(ParticleHandles[4]->Disabled());
-			EXPECT_TRUE(ParticleHandles[5]->Disabled());
-			EXPECT_TRUE(ParticleHandles[6]->Disabled());
-			EXPECT_TRUE(ParticleHandles[7]->Disabled());
-			EXPECT_FALSE(ParticleHandles[8]->Disabled());
+			EXPECT_TRUE(ParticleHandles(0)->Disabled());
+			EXPECT_TRUE(ParticleHandles(1)->Disabled());
+			EXPECT_TRUE(ParticleHandles(2)->Disabled());
+			EXPECT_TRUE(ParticleHandles(3)->Disabled());
+			EXPECT_TRUE(ParticleHandles(4)->Disabled());
+			EXPECT_TRUE(ParticleHandles(5)->Disabled());
+			EXPECT_TRUE(ParticleHandles(6)->Disabled());
+			EXPECT_TRUE(ParticleHandles(7)->Disabled());
+			EXPECT_FALSE(ParticleHandles(8)->Disabled());
 
 			UnitTest.Advance();
 			UnitTest.Solver->GetPerSolverField().AddTransientCommand(Command);
 			UnitTest.Advance();
 
 			EXPECT_EQ(ClusterMap.Num(), 1);
-			EXPECT_EQ(ClusterMap[ParticleHandles[7]].Num(), 3);
-			EXPECT_TRUE(ClusterMap[ParticleHandles[7]].Contains(ParticleHandles[3]));
-			EXPECT_TRUE(ClusterMap[ParticleHandles[7]].Contains(ParticleHandles[4]));
-			EXPECT_TRUE(ClusterMap[ParticleHandles[7]].Contains(ParticleHandles[5]));
+			EXPECT_EQ(ClusterMap[ParticleHandles(7)].Num(), 3);
+			EXPECT_TRUE(ClusterMap[ParticleHandles(7)].Contains(ParticleHandles(3)));
+			EXPECT_TRUE(ClusterMap[ParticleHandles(7)].Contains(ParticleHandles(4)));
+			EXPECT_TRUE(ClusterMap[ParticleHandles(7)].Contains(ParticleHandles(5)));
 
-			EXPECT_FALSE(ParticleHandles[0]->Disabled());
-			EXPECT_FALSE(ParticleHandles[1]->Disabled());
-			EXPECT_FALSE(ParticleHandles[2]->Disabled());
-			EXPECT_TRUE(ParticleHandles[3]->Disabled());
-			EXPECT_TRUE(ParticleHandles[4]->Disabled());
-			EXPECT_TRUE(ParticleHandles[5]->Disabled());
-			EXPECT_TRUE(ParticleHandles[6]->Disabled());
-			EXPECT_FALSE(ParticleHandles[7]->Disabled());
-			EXPECT_TRUE(ParticleHandles[8]->Disabled());
+			EXPECT_FALSE(ParticleHandles(0)->Disabled());
+			EXPECT_FALSE(ParticleHandles(1)->Disabled());
+			EXPECT_FALSE(ParticleHandles(2)->Disabled());
+			EXPECT_TRUE(ParticleHandles(3)->Disabled());
+			EXPECT_TRUE(ParticleHandles(4)->Disabled());
+			EXPECT_TRUE(ParticleHandles(5)->Disabled());
+			EXPECT_TRUE(ParticleHandles(6)->Disabled());
+			EXPECT_FALSE(ParticleHandles(7)->Disabled());
+			EXPECT_TRUE(ParticleHandles(8)->Disabled());
 		}
 
 		delete FalloffField;
@@ -710,7 +707,10 @@ namespace GeometryCollectionTest
 		auto& Clustering = UnitTest.Solver->GetEvolution()->GetRigidClustering();
 		const auto& ClusterMap = Clustering.GetChildrenMap();
 
-		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*>& ParticleHandles = Collection->PhysObject->GetSolverParticleHandles();
+		auto ParticleHandles = [&Collection](int32 Index) -> Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*
+		{
+			return Collection->PhysObject->GetParticle_Internal(Index);
+		};
 
 		UnitTest.Advance();
 
@@ -721,38 +721,38 @@ namespace GeometryCollectionTest
 			Command.MetaData.Add(FFieldSystemMetaData::EMetaType::ECommandData_ProcessingResolution, TUniquePtr< FFieldSystemMetaDataProcessingResolution >(ResolutionData));
 			UnitTest.Solver->GetPerSolverField().AddTransientCommand(Command);
 
-			EXPECT_TRUE(ParticleHandles[0]->Disabled());
-			EXPECT_TRUE(ParticleHandles[1]->Disabled());
-			EXPECT_TRUE(ParticleHandles[2]->Disabled());
-			EXPECT_TRUE(ParticleHandles[3]->Disabled());
-			EXPECT_TRUE(ParticleHandles[4]->Disabled());
-			EXPECT_TRUE(ParticleHandles[5]->Disabled());
-			EXPECT_TRUE(ParticleHandles[6]->Disabled());
-			EXPECT_TRUE(ParticleHandles[7]->Disabled());
-			EXPECT_FALSE(ParticleHandles[8]->Disabled());
+			EXPECT_TRUE(ParticleHandles(0)->Disabled());
+			EXPECT_TRUE(ParticleHandles(1)->Disabled());
+			EXPECT_TRUE(ParticleHandles(2)->Disabled());
+			EXPECT_TRUE(ParticleHandles(3)->Disabled());
+			EXPECT_TRUE(ParticleHandles(4)->Disabled());
+			EXPECT_TRUE(ParticleHandles(5)->Disabled());
+			EXPECT_TRUE(ParticleHandles(6)->Disabled());
+			EXPECT_TRUE(ParticleHandles(7)->Disabled());
+			EXPECT_FALSE(ParticleHandles(8)->Disabled());
 
 			UnitTest.Advance();
 
 			// todo: indices here might be off but the test crashes before this so we can't validate yet
 			EXPECT_EQ(ClusterMap.Num(), 2);
-			EXPECT_EQ(ClusterMap[ParticleHandles[7]].Num(), 3);
-			EXPECT_TRUE(ClusterMap[ParticleHandles[7]].Contains(ParticleHandles[3]));
-			EXPECT_TRUE(ClusterMap[ParticleHandles[7]].Contains(ParticleHandles[4]));
-			EXPECT_TRUE(ClusterMap[ParticleHandles[7]].Contains(ParticleHandles[5]));
-			EXPECT_EQ(ClusterMap[ParticleHandles[6]].Num(), 3);
-			EXPECT_TRUE(ClusterMap[ParticleHandles[6]].Contains(ParticleHandles[0]));
-			EXPECT_TRUE(ClusterMap[ParticleHandles[6]].Contains(ParticleHandles[1]));
-			EXPECT_TRUE(ClusterMap[ParticleHandles[6]].Contains(ParticleHandles[2]));
+			EXPECT_EQ(ClusterMap[ParticleHandles(7)].Num(), 3);
+			EXPECT_TRUE(ClusterMap[ParticleHandles(7)].Contains(ParticleHandles(3)));
+			EXPECT_TRUE(ClusterMap[ParticleHandles(7)].Contains(ParticleHandles(4)));
+			EXPECT_TRUE(ClusterMap[ParticleHandles(7)].Contains(ParticleHandles(5)));
+			EXPECT_EQ(ClusterMap[ParticleHandles(6)].Num(), 3);
+			EXPECT_TRUE(ClusterMap[ParticleHandles(6)].Contains(ParticleHandles(0)));
+			EXPECT_TRUE(ClusterMap[ParticleHandles(6)].Contains(ParticleHandles(1)));
+			EXPECT_TRUE(ClusterMap[ParticleHandles(6)].Contains(ParticleHandles(2)));
 
-			EXPECT_TRUE(ParticleHandles[0]->Disabled());
-			EXPECT_TRUE(ParticleHandles[1]->Disabled());
-			EXPECT_TRUE(ParticleHandles[2]->Disabled());
-			EXPECT_TRUE(ParticleHandles[3]->Disabled());
-			EXPECT_TRUE(ParticleHandles[4]->Disabled());
-			EXPECT_TRUE(ParticleHandles[5]->Disabled());
-			EXPECT_FALSE(ParticleHandles[6]->Disabled());
-			EXPECT_FALSE(ParticleHandles[7]->Disabled());
-			EXPECT_TRUE(ParticleHandles[8]->Disabled());
+			EXPECT_TRUE(ParticleHandles(0)->Disabled());
+			EXPECT_TRUE(ParticleHandles(1)->Disabled());
+			EXPECT_TRUE(ParticleHandles(2)->Disabled());
+			EXPECT_TRUE(ParticleHandles(3)->Disabled());
+			EXPECT_TRUE(ParticleHandles(4)->Disabled());
+			EXPECT_TRUE(ParticleHandles(5)->Disabled());
+			EXPECT_FALSE(ParticleHandles(6)->Disabled());
+			EXPECT_FALSE(ParticleHandles(7)->Disabled());
+			EXPECT_TRUE(ParticleHandles(8)->Disabled());
 		}
 
 		delete FalloffField;
@@ -793,7 +793,15 @@ namespace GeometryCollectionTest
 		auto& Clustering = UnitTest.Solver->GetEvolution()->GetRigidClustering();
 		const auto& ClusterMap = Clustering.GetChildrenMap();
 
-		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*>& ParticleHandles = Collection->PhysObject->GetSolverParticleHandles();
+		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*> ParticleHandles = {
+			Collection->PhysObject->GetParticle_Internal(0),
+			Collection->PhysObject->GetParticle_Internal(1),
+			Collection->PhysObject->GetParticle_Internal(2),
+			Collection->PhysObject->GetParticle_Internal(3),
+			Collection->PhysObject->GetParticle_Internal(4),
+			Collection->PhysObject->GetParticle_Internal(5),
+			Collection->PhysObject->GetParticle_Internal(6),
+		};
 		{
 			FName TargetName = GetFieldPhysicsName(EFieldPhysicsType::Field_ExternalClusterStrain);
 			UnitTest.Solver->GetPerSolverField().AddTransientCommand({ TargetName, FalloffField->NewCopy() });
@@ -853,12 +861,56 @@ namespace GeometryCollectionTest
 		FalloffField->Falloff = EFieldFalloffType::Field_FallOff_None;
 
 		UnitTest.Initialize();
-		auto& ParticleHandles = Collection->PhysObject->GetSolverParticleHandles();
-		auto& ClusteredParticleHandles = Collection->PhysObject->GetSolverClusterHandles();
+
+		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*> ParticleHandles = {
+			Collection->PhysObject->GetParticle_Internal(0),
+			Collection->PhysObject->GetParticle_Internal(1),
+			Collection->PhysObject->GetParticle_Internal(2),
+			Collection->PhysObject->GetParticle_Internal(3),
+			Collection->PhysObject->GetParticle_Internal(4),
+			Collection->PhysObject->GetParticle_Internal(5),
+			Collection->PhysObject->GetParticle_Internal(6),
+			Collection->PhysObject->GetParticle_Internal(7),
+			Collection->PhysObject->GetParticle_Internal(8),
+		};
+		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*> ClusteredParticleHandles = {
+			Collection->PhysObject->GetSolverClusterHandle_Internal(0),
+			Collection->PhysObject->GetSolverClusterHandle_Internal(1),
+			Collection->PhysObject->GetSolverClusterHandle_Internal(2),
+			Collection->PhysObject->GetSolverClusterHandle_Internal(3),
+			Collection->PhysObject->GetSolverClusterHandle_Internal(4),
+			Collection->PhysObject->GetSolverClusterHandle_Internal(5),
+			Collection->PhysObject->GetSolverClusterHandle_Internal(6),
+			Collection->PhysObject->GetSolverClusterHandle_Internal(7),
+			Collection->PhysObject->GetSolverClusterHandle_Internal(8),
+		};
+
 		auto& Clustering = UnitTest.Solver->GetEvolution()->GetRigidClustering();
 		const auto& ClusterMap = Clustering.GetChildrenMap();
 		UnitTest.Solver->RegisterSimOneShotCallback([&]()
 		{
+			ParticleHandles = {
+			Collection->PhysObject->GetParticle_Internal(0),
+			Collection->PhysObject->GetParticle_Internal(1),
+			Collection->PhysObject->GetParticle_Internal(2),
+			Collection->PhysObject->GetParticle_Internal(3),
+			Collection->PhysObject->GetParticle_Internal(4),
+			Collection->PhysObject->GetParticle_Internal(5),
+			Collection->PhysObject->GetParticle_Internal(6),
+			Collection->PhysObject->GetParticle_Internal(7),
+			Collection->PhysObject->GetParticle_Internal(8),
+			};
+			ClusteredParticleHandles = {
+				Collection->PhysObject->GetSolverClusterHandle_Internal(0),
+				Collection->PhysObject->GetSolverClusterHandle_Internal(1),
+				Collection->PhysObject->GetSolverClusterHandle_Internal(2),
+				Collection->PhysObject->GetSolverClusterHandle_Internal(3),
+				Collection->PhysObject->GetSolverClusterHandle_Internal(4),
+				Collection->PhysObject->GetSolverClusterHandle_Internal(5),
+				Collection->PhysObject->GetSolverClusterHandle_Internal(6),
+				Collection->PhysObject->GetSolverClusterHandle_Internal(7),
+				Collection->PhysObject->GetSolverClusterHandle_Internal(8),
+			};
 			EXPECT_EQ(ClusterMap.Num(), 3);
 			EXPECT_EQ(ClusteredParticleHandles[1]->GetInternalStrains(), 101);
 		});
@@ -973,7 +1025,7 @@ namespace GeometryCollectionTest
 		UnitTest.Solver->GetPerSolverField().AddTransientCommand({ TargetNameForce, VectorFieldBackward->NewCopy() });
 		UnitTest.Advance();
 
-		TManagedArray<FTransform>& Transform = Collection->DynamicCollection->Transform;
+		
 		for (int Frame = 1; Frame < 10; Frame++)
 		{
 			UnitTest.Solver->GetPerSolverField().AddTransientCommand({ GetFieldPhysicsName(EFieldPhysicsType::Field_LinearVelocity), VectorFieldRight->NewCopy() });
@@ -983,11 +1035,11 @@ namespace GeometryCollectionTest
 
 			UnitTest.Advance();
 
-			EXPECT_NEAR(Transform[0].GetTranslation().X, ExpectedLocation.X, KINDA_SMALL_NUMBER);
-			EXPECT_NEAR(Transform[0].GetTranslation().Y, ExpectedLocation.Y, KINDA_SMALL_NUMBER);
-			EXPECT_LT(Transform[0].GetTranslation().Z, ExpectedLocation.Z);
-			EXPECT_LT(Transform[0].GetTranslation().Z, LastZ);
-			LastZ = Transform[0].GetTranslation().Z;
+			EXPECT_NEAR(Collection->DynamicCollection->GetTransform(0).GetTranslation().X, ExpectedLocation.X, KINDA_SMALL_NUMBER);
+			EXPECT_NEAR(Collection->DynamicCollection->GetTransform(0).GetTranslation().Y, ExpectedLocation.Y, KINDA_SMALL_NUMBER);
+			EXPECT_LT(Collection->DynamicCollection->GetTransform(0).GetTranslation().Z, ExpectedLocation.Z);
+			EXPECT_LT(Collection->DynamicCollection->GetTransform(0).GetTranslation().Z, LastZ);
+			LastZ = Collection->DynamicCollection->GetTransform(0).GetTranslation().Z;
 		}
 	}
 
@@ -1018,9 +1070,11 @@ namespace GeometryCollectionTest
 		UnitTest.Initialize();
 		UnitTest.Advance();
 
-		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*>& ParticleHandles = Collection->PhysObject->GetSolverParticleHandles();
-		Chaos::TVector<float, 3> CurrV = ParticleHandles[0]->V();
-		TManagedArray<FTransform>& Transform = Collection->DynamicCollection->Transform;
+		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*> ParticleHandles = {
+			Collection->PhysObject->GetParticle_Internal(0),
+		};
+		Chaos::TVector<float, 3> CurrV = ParticleHandles[0]->GetV();
+		
 
 		for (int Frame = 1; Frame < 10; Frame++)
 		{
@@ -1029,14 +1083,14 @@ namespace GeometryCollectionTest
 
 			UnitTest.Advance();
 
-			CurrV = ParticleHandles[0]->V();
+			CurrV = ParticleHandles[0]->GetV();
 			EXPECT_NEAR(CurrV.X, Params.InitialLinearVelocity.X, KINDA_SMALL_NUMBER); // Velocity in +x
-			EXPECT_GT(Transform[0].GetTranslation().X, LastLocation.X); // Pos in +x
+			EXPECT_GT(Collection->DynamicCollection->GetTransform(0).GetTranslation().X, LastLocation.X); // Pos in +x
 
 			// Still falling?
-			EXPECT_LT(Transform[0].GetTranslation().Z, LastLocation.Z);
+			EXPECT_LT(Collection->DynamicCollection->GetTransform(0).GetTranslation().Z, LastLocation.Z);
 
-			LastLocation = Transform[0].GetTranslation();
+			LastLocation = FVector(Collection->DynamicCollection->GetTransform(0).GetTranslation());
 
 		}
 	}
@@ -1064,9 +1118,9 @@ namespace GeometryCollectionTest
 
 		UnitTest.Initialize();
 
-		TManagedArray<FTransform>& Transform = Collection->DynamicCollection->Transform;
-		FReal PreviousHeight = Transform[0].GetTranslation().Z;
-		FReal PreviousX = Transform[0].GetRotation().Euler().X;
+		
+		FReal PreviousHeight = Collection->DynamicCollection->GetTransform(0).GetTranslation().Z;
+		FReal PreviousX = Collection->DynamicCollection->GetTransform(0).GetRotation().Euler().X;
 		for (int Frame = 0; Frame < 10; Frame++)
 		{
 			
@@ -1077,12 +1131,12 @@ namespace GeometryCollectionTest
 			UnitTest.Advance();
 
 			Chaos::TPBDGeometryCollectionParticles<Chaos::FReal, 3>& Particles = UnitTest.Solver->GetParticles().GetGeometryCollectionParticles();
-			EXPECT_NE(FMath::Abs(Transform[0].GetRotation().Euler().Y), SMALL_THRESHOLD); // not rotating in Y?
-			EXPECT_GT(Particles.W(0).X, PreviousX); // rotating in X?
-			EXPECT_LT(Particles.X(0).Z, PreviousHeight); // still falling?
+			EXPECT_NE(FMath::Abs(Collection->DynamicCollection->GetTransform(0).GetRotation().Euler().Y), SMALL_THRESHOLD); // not rotating in Y?
+			EXPECT_GT(Particles.GetW(0).X, PreviousX); // rotating in X?
+			EXPECT_LT(Particles.GetX(0).Z, PreviousHeight); // still falling?
 
-			PreviousHeight = Particles.X(0).Z;
-			PreviousX = Particles.W(0).X;
+			PreviousHeight = Particles.GetX(0).Z;
+			PreviousX = Particles.GetW(0).X;
 		}
 
 
@@ -1098,7 +1152,7 @@ namespace GeometryCollectionTest
 		RestCollection->AppendGeometry(*GeometryCollection::MakeCubeElement(FTransform(FQuat::MakeFromEuler(FVector(0.f)), FVector(200, 0, 0)), FVector(1.0)));
 		RestCollection->AppendGeometry(*GeometryCollection::MakeCubeElement(FTransform(FQuat::MakeFromEuler(FVector(0.f)), FVector(300, 0, 0)), FVector(1.0)));
 		RestCollection->AppendGeometry(*GeometryCollection::MakeCubeElement(FTransform(FQuat::MakeFromEuler(FVector(0.f)), FVector(400, 0, 0)), FVector(1.0)));
-		RestCollection->Transform[0].SetTranslation(FVector(0.0f));
+		RestCollection->Transform[0].SetTranslation(FVector3f(0.0f));
 		RestCollection->SimulationType[0] = FGeometryCollection::ESimulationTypes::FST_Clustered;
 		RestCollection->SimulationType[1] = FGeometryCollection::ESimulationTypes::FST_Clustered;
 		RestCollection->SimulationType[2] = FGeometryCollection::ESimulationTypes::FST_Clustered;
@@ -1129,7 +1183,13 @@ namespace GeometryCollectionTest
 		UnitTest.Initialize();
 		UnitTest.Advance();
 
-		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*>& ParticleHandles = Collection->PhysObject->GetSolverParticleHandles();
+		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*> ParticleHandles = {
+			Collection->PhysObject->GetParticle_Internal(0),
+			Collection->PhysObject->GetParticle_Internal(1),
+			Collection->PhysObject->GetParticle_Internal(2),
+			Collection->PhysObject->GetParticle_Internal(3),
+			Collection->PhysObject->GetParticle_Internal(4),
+		};
 		auto& Clustering = UnitTest.Solver->GetEvolution()->GetRigidClustering();
 		const auto& ClusterMap = Clustering.GetChildrenMap();
 
@@ -1167,7 +1227,7 @@ namespace GeometryCollectionTest
 		RestCollection->AppendGeometry(*GeometryCollection::MakeCubeElement(FTransform(FQuat::MakeFromEuler(FVector(0.f)), FVector(200, 0, 0)), FVector(1.0)));
 		RestCollection->AppendGeometry(*GeometryCollection::MakeCubeElement(FTransform(FQuat::MakeFromEuler(FVector(0.f)), FVector(300, 0, 0)), FVector(1.0)));
 		RestCollection->AppendGeometry(*GeometryCollection::MakeCubeElement(FTransform(FQuat::MakeFromEuler(FVector(0.f)), FVector(400, 0, 0)), FVector(1.0)));
-		RestCollection->Transform[0].SetTranslation(FVector(0.0f));
+		RestCollection->Transform[0].SetTranslation(FVector3f(0.0f));
 		RestCollection->SimulationType[0] = FGeometryCollection::ESimulationTypes::FST_Clustered;
 		RestCollection->SimulationType[1] = FGeometryCollection::ESimulationTypes::FST_Clustered;
 		RestCollection->SimulationType[2] = FGeometryCollection::ESimulationTypes::FST_Clustered;
@@ -1198,7 +1258,13 @@ namespace GeometryCollectionTest
 		UnitTest.Initialize();
 		UnitTest.Advance();
 
-		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*>& ParticleHandles = Collection->PhysObject->GetSolverParticleHandles();
+		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*> ParticleHandles = {
+			Collection->PhysObject->GetParticle_Internal(0),
+			Collection->PhysObject->GetParticle_Internal(1),
+			Collection->PhysObject->GetParticle_Internal(2),
+			Collection->PhysObject->GetParticle_Internal(3),
+			Collection->PhysObject->GetParticle_Internal(4),
+		};
 		auto& Clustering = UnitTest.Solver->GetEvolution()->GetRigidClustering();
 		const auto& ClusterMap = Clustering.GetChildrenMap();
 

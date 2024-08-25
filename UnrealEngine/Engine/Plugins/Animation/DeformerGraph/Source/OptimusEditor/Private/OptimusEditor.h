@@ -161,6 +161,12 @@ private:
 
 	void ExpandCollapsedNode();
 	bool CanExpandCollapsedNode() const;
+
+	void ConvertToFunction();
+	bool CanConvertToFunction() const;
+	
+	void ConvertToSubGraph();
+	bool CanConvertToSubGraph() const;
 	
 	// ----------------------------------------------------------------------------------------
 	// Graph event listeners
@@ -211,6 +217,9 @@ private:
 	void CreateWidgets();
 	TSharedRef<SGraphEditor> CreateGraphEditorWidget();
 	FGraphAppearanceInfo GetGraphAppearance() const;
+	bool IsGraphReadOnly() const;
+	bool IsGraphEditable() const;
+	bool IsPropertyReadOnly(const FPropertyAndParent& InPropertyAndParent) const;
 
 	TArray<UOptimusNode*> GetSelectedModelNodes() const;
 

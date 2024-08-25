@@ -50,7 +50,7 @@ namespace UnrealBuildTool.Rules
 				}
 			);
 
-			if (Target.Type == TargetType.Editor)
+			if (Target.bCompileAgainstEditor)
 			{
 
 				DynamicallyLoadedModuleNames.AddRange(

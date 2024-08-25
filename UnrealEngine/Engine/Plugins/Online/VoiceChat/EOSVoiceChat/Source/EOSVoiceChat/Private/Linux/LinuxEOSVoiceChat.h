@@ -4,8 +4,8 @@
 
 #include "EOSVoiceChat.h"
 
-#if WITH_EOS_RTC
+#if WITH_EOSVOICECHAT
 
 using FPlatformEOSVoiceChat = FEOSVoiceChat;
 
-#endif // WITH_EOS_RTC
+#endif // WITH_EOSVOICECHAT

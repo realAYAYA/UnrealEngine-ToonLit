@@ -120,7 +120,7 @@ void FSkeletonRemapping::GenerateMapping()
 	// from local space (D) to component space (C), given its parent (P), we have:
 	//
 	//		C * P = P * D
-	//		C = P * D * P⁻¹
+	//		C = P * D * P⁻¹		(this uses the sandwich product to rotate the rotation axis from local to mesh space)
 	//
 	// Setting the source and target component space rotations to be equal (Cs = Ct) then gives us:
 	//
@@ -144,14 +144,17 @@ void FSkeletonRemapping::GenerateMapping()
 	//
 	//		Lt = Pt⁻¹ * Ps * Ls * Rs⁻¹ * Ps⁻¹ * Pt * Rt
 	//
-	// Finally, factoring out the constant terms (which we precompute here) gives us:
+	// Finally, factoring out the constant terms (which we pre-compute here) gives us:
 	//
 	//		Lt = Q0 * Ls * Q1
 	//		Q0 = Pt⁻¹ * Ps
 	//		Q1 = Rs⁻¹ * Ps⁻¹ * Pt * Rt
 	//
 	// Note that when remapping additive animations, we drop the rest pose terms, but we still need to convert between the
-	// source and target rotation frames.  Dropping Rs and Rt from the equations above gives us:
+	// source and target rotation frames. The terms drop because an additive rotation needs to be applied to a base one to
+	// become a local space rotation. To that end, we can use any base as we are interested in the delta between source/target.
+	// Using the bind pose as our base quickly cancels out the terms.
+	// Dropping Rs and Rt from the equations above gives us:
 	//
 	//		Lt = Pt⁻¹ * Ps * Ls * Ps⁻¹ * Pt			(for additive animations)
 	//
@@ -159,6 +162,9 @@ void FSkeletonRemapping::GenerateMapping()
 	//
 	//		Lt = Q0 * Ls * Q0⁻¹						(for additive animations)
 	//
+	// For mesh space additive animations, the source rotations already represent a mesh space delta and as such no fix-up needs
+	// to applied for those.
+
 	RetargetingTable[0] = MakeTuple(FQuat::Identity, SourceLocalTransforms[0].GetRotation().Inverse() * TargetLocalTransforms[0].GetRotation());
 	for (int32 TargetBoneIndex = 1; TargetBoneIndex < TargetNumBones; ++TargetBoneIndex)
 	{

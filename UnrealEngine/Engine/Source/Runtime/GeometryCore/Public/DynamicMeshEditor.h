@@ -565,6 +565,28 @@ public:
 		FIndexMapi& ColorMapOut);
 
 
+
+	/**
+	 * Append overlay elements in both ROIs from one overlay to another
+	 *
+	 * @param FromMesh     Mesh that owns FromOverlay attribute overlay
+	 * @param TriangleROI  Triangles containing the copied overlay elements
+	 * @param VertexROI    Parent vertices of the copied overlay elements
+	 * @param FromOverlay  Overlay we want to append from (owned by FromMesh)
+	 * @param ToOverlay    Overlay we want to append into (owned by .Mesh)
+	 *
+	 * @note Required overloads should be declared in the .cpp file
+	 */
+	template <typename RealType, int ElementSize>
+	GEOMETRYCORE_API void AppendElementSubset(
+		const FDynamicMesh3* FromMesh,
+		const TSet<int>& TriangleROI,
+		const TSet<int>& VertexROI,
+		const TDynamicMeshOverlay<RealType, ElementSize>* FromOverlay,
+		TDynamicMeshOverlay<RealType, ElementSize>* ToOverlay);
+
+
+
 	/**
 	 * Append triangles of an existing mesh. This duplicates the current groups and also any attributes existing on the triangles.
 	 * @param SourceMesh the mesh to copy from

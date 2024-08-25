@@ -309,12 +309,13 @@ void FPageAllocator::UpdateStats()
 	FMemStack implementation.
 -----------------------------------------------------------------------------*/
  
-FMemStackBase::FMemStackBase()
+FMemStackBase::FMemStackBase(EPageSize InPageSize)
 : Top(nullptr)
 , End(nullptr)
 , TopChunk(nullptr)
 , TopMark(nullptr)
 , NumMarks(0)
+, PageSize(InPageSize)
 , bShouldEnforceAllocMarks(false)
 {
 	// By fetching the FPageAllocator singleton's address here we can guarantee
@@ -345,7 +346,7 @@ void FMemStackBase::AllocateNewChunk(int32 MinSize)
 	// Create new chunk.
 	int32 TotalSize = MinSize + (int32)sizeof(FTaggedMemory);
 	uint32 AllocSize;
-	if (TopChunk || TotalSize > FPageAllocator::SmallPageSize)
+	if (TopChunk || TotalSize > FPageAllocator::SmallPageSize || PageSize == EPageSize::Large)
 	{
 		AllocSize = AlignArbitrary<int32>(TotalSize, FPageAllocator::PageSize);
 		if (AllocSize == FPageAllocator::PageSize)

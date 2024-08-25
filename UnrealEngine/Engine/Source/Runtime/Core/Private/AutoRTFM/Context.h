@@ -22,7 +22,7 @@ public:
     // This is public API
     ETransactionResult Transact(void (*Function)(void* Arg), void* Arg);
     
-	EContextStatus CallClosedNest(void (*ClosedFunction)(void* Arg, FContext* Context), void* Arg);
+	EContextStatus CallClosedNest(void (*ClosedFunction)(void* Arg), void* Arg);
 
 	void AbortByRequestAndThrow();
 	void AbortByRequestWithoutThrowing();
@@ -31,7 +31,7 @@ public:
 	bool StartTransaction();
 
 	ETransactionResult CommitTransaction();
-	ETransactionResult AbortTransaction(bool bIsClosed);
+	ETransactionResult AbortTransaction(bool bIsClosed, bool bIsCascading);
 	void ClearTransactionStatus();
 	bool IsAborting() const;
 
@@ -39,8 +39,10 @@ public:
 
     // Record that a write is about to occur at the given LogicalAddress of Size bytes.
     void RecordWrite(void* LogicalAddress, size_t Size);
+    template<unsigned SIZE> void RecordWrite(void* LogicalAddress);
 
     void DidAllocate(void* LogicalAddress, size_t Size);
+    void DidFree(void* LogicalAddress);
 
     // The rest of this is internalish.
     void AbortByLanguageAndThrow();
@@ -67,6 +69,7 @@ private:
 	void PopTransaction();
 
 	ETransactionResult ResolveNestedTransaction(FTransaction* NewTransaction);
+	bool AttemptToCommitTransaction(FTransaction* const Transaction);
 
     void Set();
     

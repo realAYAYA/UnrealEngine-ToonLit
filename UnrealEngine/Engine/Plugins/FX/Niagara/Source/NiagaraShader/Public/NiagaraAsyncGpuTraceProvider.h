@@ -59,7 +59,7 @@ public:
 	};
 
 	static NIAGARASHADER_API EProviderType ResolveSupportedType(EProviderType InType, const FProviderPriorityArray& Priorities);
-	static NIAGARASHADER_API bool RequiresDistanceFieldData(EProviderType InType, const FProviderPriorityArray& Priorities);
+	static NIAGARASHADER_API bool RequiresGlobalDistanceField(EProviderType InType, const FProviderPriorityArray& Priorities);
 	static NIAGARASHADER_API bool RequiresRayTracingScene(EProviderType InType, const FProviderPriorityArray& Priorities);
 
 	/** Hash table.

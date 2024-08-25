@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include "HAL/Platform.h"
+
 #if PLATFORM_WINDOWS
 	#include "Win/WinPlatform.h"
 #elif PLATFORM_LINUX

@@ -434,6 +434,7 @@ namespace
 					{
 						check(!FoundConstKey);
 						check(It->Key == Key);
+						check(Cont.Get(It.GetId()) == *It);
 						FoundConstKey = &It->Key;
 					}
 
@@ -443,6 +444,7 @@ namespace
 					{
 						check(!FoundKey);
 						check(It->Key == Key);
+						check(Cont.Get(It.GetId()) == *It);
 						FoundKey = &It->Key;
 						It->Value.Str = ReplacedValue;
 					}

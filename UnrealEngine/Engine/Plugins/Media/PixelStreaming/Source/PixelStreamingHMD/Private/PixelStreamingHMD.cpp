@@ -8,24 +8,125 @@
 #include "Engine/GameViewportClient.h"
 #include "GameFramework/PlayerController.h"
 #include "Engine/LocalPlayer.h"
-#include "SceneRendering.h"
 #include "PostProcess/PostProcessHMD.h"
 #include "GameFramework/WorldSettings.h"
 #include "Settings.h"
 #include "Widgets/SWindow.h"
+#include "SceneView.h"
+
+DEFINE_LOG_CATEGORY(LogPixelStreamingHMD);
 
 FPixelStreamingHMD::FPixelStreamingHMD(const FAutoRegister& AutoRegister)
 	: FHeadMountedDisplayBase(nullptr)
 	, FHMDSceneViewExtension(AutoRegister)
 	, CurHmdTransform(FTransform::Identity)
 	, WorldToMeters(100.0f)
-	, InterpupillaryDistance(0.064f)
+	, InterpupillaryDistance(0.0315f)
 	, bStereoEnabled(true)
 {
 }
 
 FPixelStreamingHMD::~FPixelStreamingHMD()
 {
+}
+
+void FPixelStreamingHMD::SetEyeViews(FTransform Left, FMatrix LeftProj, FTransform Right, FMatrix RightProj)
+{
+	CurLeftEyeTransform = Left;
+	CurRightEyeTransform = Right;
+	CurLeftEyeProjMatrix = LeftProj;
+	CurRightEyeProjMatrix = RightProj;
+
+	// Calculate HMD roation as the rotation quaternion in between both eyes
+	FQuat HMDRotation = FQuat::Slerp(Left.GetRotation(), Right.GetRotation(), 0.5);
+
+	// Calculate HMD position as the position between both eyes
+	FVector RightEyeLoc = Right.GetLocation();
+	FVector LeftEyeLoc = Left.GetLocation();
+	FVector Dir = RightEyeLoc - LeftEyeLoc;
+	float IPD = Dir.Size();
+	// Get the location half way between the two eye locations
+	FVector HMDLocation = LeftEyeLoc + (Dir * 0.5);
+	FTransform HMDTransform = FTransform(HMDRotation, HMDLocation, FVector::OneVector);
+
+	// Set the HMD transform
+	SetTransform(HMDTransform);
+
+	// Set the IPD (in meters)
+	SetInterpupillaryDistance(IPD / 100.0f);
+
+	// Calculate the horizontal and vertical FoV from the projection matrix (left and right eye will have same FoVs)
+	HFoVRads = 2.0f * FMath::Atan(1.0f / CurLeftEyeProjMatrix.M[0][0]);
+	VFoVRads = 2.0f * FMath::Atan(1.0f / CurLeftEyeProjMatrix.M[1][1]);
+
+	// Extract the left/right eye projection offsets
+	CurLeftEyeProjOffsetX = -CurLeftEyeProjMatrix.M[0][2];
+	CurLeftEyeProjOffsetY = CurLeftEyeProjMatrix.M[1][2];
+	CurRightEyeProjOffsetX = -CurRightEyeProjMatrix.M[0][2];
+	CurRightEyeProjOffsetY = CurRightEyeProjMatrix.M[1][2];
+
+	// Extract near and farclip planes
+    NearClip = CurLeftEyeProjMatrix.M[3][2] / (CurLeftEyeProjMatrix.M[2][2] - 1);
+    FarClip = CurLeftEyeProjMatrix.M[3][2] / (CurLeftEyeProjMatrix.M[2][2] + 1);
+	SetClippingPlanes(NearClip, FarClip);
+
+	// Calculate target aspect ratio from the projection matrix (left and right eye will have same aspect ratio)
+	//TargetAspectRatio = CurLeftEyeProjMatrix.M[1][1] / CurLeftEyeProjMatrix.M[0][0];
+	TargetAspectRatio = tan(HFoVRads * 0.5f) / tan(VFoVRads * 0.5f);
+
+	TSharedPtr<SWindow> TargetWindow = GEngine->GameViewport->GetWindow();
+	FVector2f SizeInScreen = TargetWindow->GetSizeInScreen();
+	const float InWidth = SizeInScreen.X / 2.f;
+	const float InHeight = SizeInScreen.Y;
+	const float AspectRatio = InWidth / InHeight;
+
+	// If current resolution does not match remote device aspect ratio, we will change resolution to match aspect ratio (though we rate limit res change to every 5s)
+	if(UE::PixelStreamingHMD::Settings::CVarPixelStreamingHMDMatchAspectRatio.GetValueOnAnyThread() &&
+		FMath::Abs(AspectRatio - TargetAspectRatio) > 0.01 &&
+		!bReceivedTransforms)
+	{
+		int TargetHeight = InHeight;
+		int TargetWidth = InHeight * TargetAspectRatio * 2.0f;
+		UE_LOG(LogPixelStreamingHMD, Warning, TEXT("XR Pixel Streaming streaming resolution not matching remote device aspect ratio. Changing resolution to %dx%d"), TargetWidth, TargetHeight);
+		FString ChangeResCommand = FString::Printf(TEXT("r.SetRes %dx%d"), TargetWidth, TargetHeight);
+		GEngine->Exec(GEngine->GetWorld(), *ChangeResCommand);
+	}
+
+	// If we know we are doing XR update some CVars for Pixel Streaming to optimise for it.
+	if(!bReceivedTransforms)
+	{
+		// Couple engine's render rate and streaming rate
+		if (IConsoleVariable* DecoupleFramerateCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("PixelStreaming.DecoupleFramerate")))
+		{
+			DecoupleFramerateCVar->Set(false);
+		}
+
+		// Set the rate at which we will stream
+		if (IConsoleVariable* StreamFPS = IConsoleManager::Get().FindConsoleVariable(TEXT("PixelStreaming.WebRTC.Fps")))
+		{
+			StreamFPS->Set(90);
+		}
+
+		// Set the MinQP to bound quality
+		if (IConsoleVariable* MinQP = IConsoleManager::Get().FindConsoleVariable(TEXT("PixelStreaming.Encoder.MinQP")))
+		{
+			MinQP->Set(15);
+		}
+
+		// Necessary for coupled framerate
+		if (IConsoleVariable* CaptureUseFence = IConsoleManager::Get().FindConsoleVariable(TEXT("PixelStreaming.CaptureUseFence")))
+		{
+			CaptureUseFence->Set(false);
+		}
+
+		// Disable keyframes interval, only send them as needed
+		if (IConsoleVariable* KeyframeInterval = IConsoleManager::Get().FindConsoleVariable(TEXT("PixelStreaming.Encoder.KeyframeInterval")))
+		{
+			KeyframeInterval->Set(0);
+		}
+	}
+
+	bReceivedTransforms = true;
 }
 
 float FPixelStreamingHMD::GetWorldToMetersScale() const
@@ -45,7 +146,7 @@ void FPixelStreamingHMD::EnableHMD(bool enable)
 
 bool FPixelStreamingHMD::GetHMDMonitorInfo(MonitorInfo& MonitorDesc)
 {
-	MonitorDesc.MonitorName = "";
+	MonitorDesc.MonitorName = "PixelStreamingHMD";
 	MonitorDesc.MonitorId = 0;
 	MonitorDesc.DesktopX = MonitorDesc.DesktopY = MonitorDesc.ResolutionX = MonitorDesc.ResolutionY = 0;
 	return false;
@@ -53,8 +154,8 @@ bool FPixelStreamingHMD::GetHMDMonitorInfo(MonitorInfo& MonitorDesc)
 
 void FPixelStreamingHMD::GetFieldOfView(float& OutHFOVInDegrees, float& OutVFOVInDegrees) const
 {
-	OutHFOVInDegrees = 0.0f;
-	OutVFOVInDegrees = 0.0f;
+	OutHFOVInDegrees = FMath::RadiansToDegrees(HFoVRads);
+	OutVFOVInDegrees = FMath::RadiansToDegrees(VFoVRads);
 }
 
 bool FPixelStreamingHMD::EnumerateTrackedDevices(TArray<int32>& OutDevices, EXRTrackedDeviceType Type)
@@ -101,55 +202,7 @@ void FPixelStreamingHMD::ResetOrientationAndPosition(float yaw)
 
 void FPixelStreamingHMD::DrawDistortionMesh_RenderThread(struct FHeadMountedDisplayPassContext& Context, const FIntPoint& TextureSize)
 {
-	float ClipSpaceQuadZ = 0.0f;
-	FMatrix QuadTexTransform = FMatrix::Identity;
-	FMatrix QuadPosTransform = FMatrix::Identity;
-	const FSceneView& View = Context.View;
-	const FIntRect SrcRect = View.UnscaledViewRect;
-
-	FRHICommandListImmediate& RHICmdList = Context.RHICmdList;
-	const FSceneViewFamily& ViewFamily = *(View.Family);
-	FIntPoint ViewportSize = ViewFamily.RenderTarget->GetSizeXY();
-	RHICmdList.SetViewport(0, 0, 0.0f, ViewportSize.X, ViewportSize.Y, 1.0f);
-
-	static const uint32 NumVerts = 4;
-	static const uint32 NumTris = 2;
-
-	static const FDistortionVertex MeshVerts[][NumVerts] = {
-		{
-			// left eye
-			{ FVector2f(-0.9f, -0.9f), FVector2f(0.0f, 1.0f), FVector2f(0.0f, 1.0f), FVector2f(0.0f, 1.0f), 1.0f, 0.0f },
-			{ FVector2f(-0.1f, -0.9f), FVector2f(0.5f, 1.0f), FVector2f(0.5f, 1.0f), FVector2f(0.5f, 1.0f), 1.0f, 0.0f },
-			{ FVector2f(-0.1f, 0.9f), FVector2f(0.5f, 0.0f), FVector2f(0.5f, 0.0f), FVector2f(0.5f, 0.0f), 1.0f, 0.0f },
-			{ FVector2f(-0.9f, 0.9f), FVector2f(0.0f, 0.0f), FVector2f(0.0f, 0.0f), FVector2f(0.0f, 0.0f), 1.0f, 0.0f },
-		},
-		{
-			// right eye
-			{ FVector2f(0.1f, -0.9f), FVector2f(0.5f, 1.0f), FVector2f(0.5f, 1.0f), FVector2f(0.5f, 1.0f), 1.0f, 0.0f },
-			{ FVector2f(0.9f, -0.9f), FVector2f(1.0f, 1.0f), FVector2f(1.0f, 1.0f), FVector2f(1.0f, 1.0f), 1.0f, 0.0f },
-			{ FVector2f(0.9f, 0.9f), FVector2f(1.0f, 0.0f), FVector2f(1.0f, 0.0f), FVector2f(1.0f, 0.0f), 1.0f, 0.0f },
-			{ FVector2f(0.1f, 0.9f), FVector2f(0.5f, 0.0f), FVector2f(0.5f, 0.0f), FVector2f(0.5f, 0.0f), 1.0f, 0.0f },
-		}
-	};
-
-	FRHIResourceCreateInfo CreateInfo(TEXT("FPixelStreamingHMD"));
-	FBufferRHIRef VertexBufferRHI = RHICmdList.CreateVertexBuffer(sizeof(FDistortionVertex) * NumVerts, BUF_Volatile, CreateInfo);
-	void* VoidPtr = RHICmdList.LockBuffer(VertexBufferRHI, 0, sizeof(FDistortionVertex) * NumVerts, RLM_WriteOnly);
-	FPlatformMemory::Memcpy(VoidPtr, MeshVerts[View.StereoViewIndex], sizeof(FDistortionVertex) * NumVerts);
-	RHICmdList.UnlockBuffer(VertexBufferRHI);
-
-	static const uint16 Indices[] = { 0, 1, 2, 0, 2, 3 };
-
-	FBufferRHIRef IndexBufferRHI = RHICmdList.CreateIndexBuffer(sizeof(uint16), sizeof(uint16) * 6, BUF_Volatile, CreateInfo);
-	void* VoidPtr2 = RHICmdList.LockBuffer(IndexBufferRHI, 0, sizeof(uint16) * 6, RLM_WriteOnly);
-	FPlatformMemory::Memcpy(VoidPtr2, Indices, sizeof(uint16) * 6);
-	RHICmdList.UnlockBuffer(IndexBufferRHI);
-
-	RHICmdList.SetStreamSource(0, VertexBufferRHI, 0);
-	RHICmdList.DrawIndexedPrimitive(IndexBufferRHI, 0, 0, NumVerts, 0, NumTris, 1);
-
-	IndexBufferRHI.SafeRelease();
-	VertexBufferRHI.SafeRelease();
+	// Note: Left intentionally blank as we do not want to do any distortion on the UE side, the device will distort the image for us.
 }
 
 bool FPixelStreamingHMD::IsStereoEnabled() const
@@ -171,35 +224,59 @@ void FPixelStreamingHMD::AdjustViewRect(int32 ViewIndex, int32& X, int32& Y, uin
 
 void FPixelStreamingHMD::CalculateStereoViewOffset(const int32 ViewIndex, FRotator& ViewRotation, const float InWorldToMeters, FVector& ViewLocation)
 {
-	if (ViewIndex != INDEX_NONE)
+	if(ViewIndex == INDEX_NONE)
 	{
-		float EyeOffset = 3.20000005f;
-		const float PassOffset = (ViewIndex == EStereoscopicEye::eSSE_LEFT_EYE) ? -EyeOffset : EyeOffset;
+		return;
+	}
+
+	// If not received any transforms yet, just do default offset of half IPD
+	if (!bReceivedTransforms)
+	{
+		float IPDCentimeters = InterpupillaryDistance * 100.0f;
+		const float PassOffset = (ViewIndex == EStereoscopicEye::eSSE_LEFT_EYE) ? -IPDCentimeters * 0.5f : IPDCentimeters * 0.5f;
 		ViewLocation += ViewRotation.Quaternion().RotateVector(FVector(0, PassOffset, 0));
+	}
+	else
+	{
+		FTransform& EyeTransform = (ViewIndex == EStereoscopicEye::eSSE_LEFT_EYE) ? CurLeftEyeTransform : CurRightEyeTransform;
+		FVector LocationOffset = EyeTransform.GetLocation() - CurHmdTransform.GetLocation();
+		ViewLocation += LocationOffset;
+
+		FQuat DeltaRot = EyeTransform.GetRotation() * CurHmdTransform.GetRotation().Inverse();
+		ViewRotation += DeltaRot.Rotator();
 	}
 }
 
 FMatrix FPixelStreamingHMD::GetStereoProjectionMatrix(const int32 ViewIndex) const
 {
-	const float ProjectionCenterOffset = 0.151976421f;
-	const float PassProjectionOffset = (ViewIndex == EStereoscopicEye::eSSE_LEFT_EYE) ? ProjectionCenterOffset : -ProjectionCenterOffset;
+	const float PassProjectionOffsetX = (ViewIndex == EStereoscopicEye::eSSE_LEFT_EYE) ? CurLeftEyeProjOffsetX : CurRightEyeProjOffsetX;
+	const float PassProjectionOffsetY = (ViewIndex == EStereoscopicEye::eSSE_LEFT_EYE) ? CurLeftEyeProjOffsetY : CurRightEyeProjOffsetY;
 
-	const float HalfFov = 2.19686294f / 2.f;
-	TSharedPtr<SWindow> TargetWindow = GEngine->GameViewport->GetWindow();
-	FVector2f SizeInScreen = TargetWindow->GetSizeInScreen();
-	const float InWidth = SizeInScreen.X / 2.f;
-	const float InHeight = SizeInScreen.Y;
-	const float XS = 1.0f / tan(HalfFov);
-	const float YS = InWidth / tan(HalfFov) / InHeight;
+	const float HFoVOverride = UE::PixelStreamingHMD::Settings::CVarPixelStreamingHMDHFOV.GetValueOnAnyThread();
+	const float VFoVOverride = UE::PixelStreamingHMD::Settings::CVarPixelStreamingHMDVFOV.GetValueOnAnyThread();
+	// FoV's are either passed in from the remote device or taken from the FoV override CVars.
+	const float HalfVFov = VFoVOverride > 0.0f ? FMath::DegreesToRadians(VFoVOverride) * 0.5f : VFoVRads * 0.5f;
+	const float HalfHFov = HFoVOverride > 0.0f ? FMath::DegreesToRadians(HFoVOverride) * 0.5f : HFoVRads * 0.5f;
 
 	const float InNearZ = GNearClippingPlane;
-	return FMatrix(
-			   FPlane(XS, 0.0f, 0.0f, 0.0f),
-			   FPlane(0.0f, YS, 0.0f, 0.0f),
-			   FPlane(0.0f, 0.0f, 0.0f, 1.0f),
-			   FPlane(0.0f, 0.0f, InNearZ, 0.0f))
+	const float TanHalfHFov = tan(HalfHFov);
+	const float TanHalfVFov = tan(HalfVFov);
+	const float XS = 1.0f / TanHalfHFov;
+	const float YS = 1.0f / TanHalfVFov;
 
-		* FTranslationMatrix(FVector(PassProjectionOffset, 0, 0));
+	// Apply eye off-center translation
+	const FTranslationMatrix TranslationMatrix = FTranslationMatrix(FVector(PassProjectionOffsetX, PassProjectionOffsetY, 0));
+	const float ZNear = GNearClippingPlane_RenderThread;
+
+	FMatrix ProjMatrix = FMatrix(
+		FPlane(XS, 0.0f, 0.0f, 0.0f),
+		FPlane(0.0f, YS, 0.0f, 0.0f),
+		FPlane(0.0f, 0.0f, 0.0f, 1.0f),
+		FPlane(0.0f, 0.0f, ZNear, 0.0f)
+	);
+
+	const FMatrix OutMatrix = ProjMatrix * TranslationMatrix;
+	return OutMatrix;
 }
 
 void FPixelStreamingHMD::GetEyeRenderParams_RenderThread(const FHeadMountedDisplayPassContext& Context, FVector2D& EyeToSrcUVScaleValue, FVector2D& EyeToSrcUVOffsetValue) const
@@ -211,7 +288,8 @@ void FPixelStreamingHMD::GetEyeRenderParams_RenderThread(const FHeadMountedDispl
 void FPixelStreamingHMD::SetupViewFamily(FSceneViewFamily& InViewFamily)
 {
 	InViewFamily.EngineShowFlags.MotionBlur = 0;
-	InViewFamily.EngineShowFlags.HMDDistortion = true;
+	// Note: We do not want to apply any distortion on the UE side.
+	InViewFamily.EngineShowFlags.HMDDistortion = false;
 	InViewFamily.EngineShowFlags.StereoRendering = IsStereoEnabled();
 
 	if (UWorld* World = GWorld)

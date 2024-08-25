@@ -168,6 +168,21 @@ void URemoteControlExposeRegistry::PostDuplicate(bool bDuplicateForPIE)
 	CacheLabels();
 }
 
+void URemoteControlExposeRegistry::Rehash()
+{
+	TSet<FRCEntityWrapper> RehashedEntities;
+	RehashedEntities.Reserve(ExposedEntities.Num());
+	
+	for (FRCEntityWrapper& Wrapper : ExposedEntities)
+	{
+		RehashedEntities.Add(FRCEntityWrapper(Wrapper));
+	}
+	
+	ExposedEntities = MoveTemp(RehashedEntities);
+
+	CacheLabels();
+}
+
 TSharedPtr<FRemoteControlEntity> URemoteControlExposeRegistry::GetEntity(const FGuid& EntityId)
 {
 	/** Get a raw pointer to an entity using its id. */

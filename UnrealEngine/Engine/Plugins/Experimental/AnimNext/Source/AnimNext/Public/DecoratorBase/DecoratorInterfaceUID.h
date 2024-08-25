@@ -6,6 +6,9 @@
 
 namespace UE::AnimNext
 {
+	// Type alias for a raw decorator UID, not typesafe
+	using FDecoratorInterfaceUIDRaw = uint32;
+
 	/**
 	 * FDecoratorInterfaceUID
 	 *
@@ -19,17 +22,17 @@ namespace UE::AnimNext
 	{
 		// Constructs an invalid UID
 		constexpr FDecoratorInterfaceUID()
-			: UID(0)
+			: UID(INVALID_UID)
 #if !UE_BUILD_SHIPPING
 			, InterfaceName(TEXT("<Invalid Interface UID>"))
 #endif
 		{}
 
 		// Constructs an interface UID
-		constexpr FDecoratorInterfaceUID(const TCHAR* InterfaceName_, uint32 UID_)
-			: UID(UID_)
+		explicit constexpr FDecoratorInterfaceUID(FDecoratorInterfaceUIDRaw InUID, const TCHAR* InInterfaceName = TEXT("<Unknown Decorator Interface Name>"))
+			: UID(InUID)
 #if !UE_BUILD_SHIPPING
-			, InterfaceName(InterfaceName_)
+			, InterfaceName(InInterfaceName)
 #endif
 		{
 		}
@@ -40,20 +43,25 @@ namespace UE::AnimNext
 #endif
 
 		// Returns the interface global UID
-		constexpr uint32 GetUID() const { return UID; }
+		constexpr FDecoratorInterfaceUIDRaw GetUID() const { return UID; }
 
 		// Returns whether this UID is valid or not
-		constexpr bool IsValid() const { return UID != 0; }
-
-		// Compares for equality and inequality
-		constexpr bool operator==(FDecoratorInterfaceUID RHS) const { return UID == RHS.UID; }
-		constexpr bool operator!=(FDecoratorInterfaceUID RHS) const { return UID != RHS.UID; }
+		constexpr bool IsValid() const { return UID != INVALID_UID; }
 
 	private:
-		uint32	UID;
+		static constexpr FDecoratorInterfaceUIDRaw INVALID_UID = 0;
+
+		FDecoratorInterfaceUIDRaw	UID;
 
 #if !UE_BUILD_SHIPPING
-		const TCHAR* InterfaceName;
+		const TCHAR*				InterfaceName;
 #endif
 	};
+
+	// Compares for equality and inequality
+	constexpr bool operator==(FDecoratorInterfaceUID LHS, FDecoratorInterfaceUID RHS) { return LHS.GetUID() == RHS.GetUID(); }
+	constexpr bool operator!=(FDecoratorInterfaceUID LHS, FDecoratorInterfaceUID RHS) { return LHS.GetUID() != RHS.GetUID(); }
+
+	// For sorting
+	constexpr bool operator<(FDecoratorInterfaceUID LHS, FDecoratorInterfaceUID RHS) { return LHS.GetUID() < RHS.GetUID(); }
 }

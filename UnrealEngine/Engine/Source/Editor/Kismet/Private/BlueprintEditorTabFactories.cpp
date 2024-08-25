@@ -32,7 +32,6 @@
 #include "Styling/SlateColor.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SubclassOf.h"
 #include "Textures/SlateIcon.h"
 #include "Types/SlateEnums.h"

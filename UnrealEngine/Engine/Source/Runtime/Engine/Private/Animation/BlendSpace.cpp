@@ -12,6 +12,8 @@
 #include "Animation/AnimationPoseData.h"
 #include "Animation/BlendSpaceHelpers.h"
 #include "Animation/BlendSpace1DHelpers.h"
+#include "Animation/SkeletonRemapping.h"
+#include "Animation/SkeletonRemappingRegistry.h"
 #include "Math/UnrealMathUtility.h"
 #include "UObject/FrameworkObjectVersion.h"
 #include "UObject/UE5MainStreamObjectVersion.h"
@@ -295,6 +297,118 @@ bool UBlendSpace::UpdateBlendSamples(const FVector& InBlendSpacePosition, float 
 	return bResult;
 }
 
+void UBlendSpace::ResetBlendSamples(TArray<FBlendSampleData>& InOutSampleDataCache, float InNormalizedCurrentTime, bool bLooping, bool bMatchSyncPhases) const
+{
+	const bool bCanDoMarkerSync = SampleIndexWithMarkers != INDEX_NONE && SampleData.Num() > SampleIndexWithMarkers;
+
+	// Ensure we have a valid normalized time.
+	InNormalizedCurrentTime = bLooping ? FMath::Wrap(InNormalizedCurrentTime, 0.0f, 1.0f) : FMath::Clamp(InNormalizedCurrentTime, 0.0f, 1.0f);
+	
+	if (bCanDoMarkerSync)
+	{
+		// Query highest weighted sample with marker information. This will become the leader for all other samples to follow.
+		const int32 HighestMarkerSyncWeightIndex = FBlendSpaceUtilities::GetHighestWeightMarkerSyncSample(InOutSampleDataCache, SampleData);
+		
+		// Query leader sample information.
+		FBlendSampleData& LeaderSampleData = InOutSampleDataCache[HighestMarkerSyncWeightIndex];
+		const FBlendSample& LeaderSample = SampleData[LeaderSampleData.SampleDataIndex];
+
+		ensure(LeaderSample.Animation != nullptr);
+
+		// Leader is known at this point, build it's tick context.
+		FAnimAssetTickContext Context = { 0.0f, ERootMotionMode::NoRootMotionExtraction, true, *LeaderSampleData.Animation->GetUniqueMarkerNames()};
+		
+		// Reset leader sample to match requested time.
+		LeaderSampleData.MarkerTickRecord.Reset();
+		LeaderSampleData.PreviousTime = InNormalizedCurrentTime * LeaderSampleData.Animation->GetPlayLength();
+		LeaderSampleData.Time = InNormalizedCurrentTime * LeaderSampleData.Animation->GetPlayLength();
+
+		// Query valid marker position for leader.
+		LeaderSample.Animation->GetMarkerIndicesForTime(LeaderSampleData.Time, bLooping, Context.MarkerTickContext.GetValidMarkerNames(), LeaderSampleData.MarkerTickRecord.PreviousMarker, LeaderSampleData.MarkerTickRecord.NextMarker);
+
+		// Get leader sync start position.
+		if (bMatchSyncPhases)
+		{
+			FMarkerTickRecord StartMarkerTickRecord;
+
+			// Get sync start position.
+			LeaderSample.Animation->GetMarkerIndicesForTime(0, bLooping, Context.MarkerTickContext.GetValidMarkerNames(), StartMarkerTickRecord.PreviousMarker, StartMarkerTickRecord.NextMarker);
+			Context.MarkerTickContext.SetMarkerSyncStartPosition(LeaderSample.Animation->GetMarkerSyncPositionFromMarkerIndicies(StartMarkerTickRecord.PreviousMarker.MarkerIndex, StartMarkerTickRecord.NextMarker.MarkerIndex, 0, nullptr));
+
+			// We need to account for an extra passed marker when the LeaderSample is looping and its last marker is placed at PlayLength, since GetMarkerIndicesForTime() will give us Prev = LastMarkerIndex - 1 and Next = LastMarkerIndex when CurrentTime is 0.
+			int LeaderLastMarkerIndex = LeaderSampleData.Animation->AuthoredSyncMarkers.Num() - 1;
+			if (bLooping && StartMarkerTickRecord.NextMarker.MarkerIndex == LeaderLastMarkerIndex)
+			{
+				int32 PassedMarker = Context.MarkerTickContext.MarkersPassedThisTick.Add(FPassedMarker());
+				Context.MarkerTickContext.MarkersPassedThisTick[PassedMarker].PassedMarkerName = LeaderSampleData.Animation->AuthoredSyncMarkers[LeaderLastMarkerIndex].MarkerName;
+				Context.MarkerTickContext.MarkersPassedThisTick[PassedMarker].DeltaTimeWhenPassed = LeaderSampleData.Time;
+			}
+		}
+		else
+		{
+			Context.MarkerTickContext.SetMarkerSyncStartPosition(LeaderSample.Animation->GetMarkerSyncPositionFromMarkerIndicies(LeaderSampleData.MarkerTickRecord.PreviousMarker.MarkerIndex, LeaderSampleData.MarkerTickRecord.NextMarker.MarkerIndex, LeaderSampleData.Time, nullptr));
+		}
+
+		// Get leader sync end position.
+		Context.MarkerTickContext.SetMarkerSyncEndPosition(LeaderSample.Animation->GetMarkerSyncPositionFromMarkerIndicies(LeaderSampleData.MarkerTickRecord.PreviousMarker.MarkerIndex, LeaderSampleData.MarkerTickRecord.NextMarker.MarkerIndex, LeaderSampleData.Time, nullptr));
+
+		// Determine how many markers where passed to arrive to the sync phase the leader is currently in.
+		if (bMatchSyncPhases)
+		{
+			FMarkerSyncData SyncData;
+			
+			SyncData.AuthoredSyncMarkers = LeaderSample.Animation->AuthoredSyncMarkers;
+			SyncData.CollectMarkersInRange(0, LeaderSampleData.Time, Context.MarkerTickContext.MarkersPassedThisTick, LeaderSampleData.Time);
+		}
+		
+		// Reset follower samples.
+		for (int32 SampleIndex = 0; SampleIndex < InOutSampleDataCache.Num(); ++SampleIndex)
+		{
+			FBlendSampleData& SampleDataItem = InOutSampleDataCache[SampleIndex];
+			const FBlendSample& Sample = SampleData[SampleDataItem.SampleDataIndex];
+			
+			if (HighestMarkerSyncWeightIndex != SampleIndex && (SampleDataItem.TotalWeight > ZERO_ANIMWEIGHT_THRESH))
+			{
+				if (!Sample.Animation->AuthoredSyncMarkers.IsEmpty())
+				{
+					// Reset time.
+					SampleDataItem.PreviousTime = 0.0f;
+					SampleDataItem.Time = 0.0f;
+				
+					// Get next marker indices that matches sync start position.
+					SampleDataItem.MarkerTickRecord.Reset();
+					Sample.Animation->GetMarkerIndicesForPosition(Context.MarkerTickContext.GetMarkerSyncStartPosition(), bLooping, SampleDataItem.MarkerTickRecord.PreviousMarker, SampleDataItem.MarkerTickRecord.NextMarker, SampleDataItem.Time, nullptr);
+
+					// Ensure we advance and pass all the phases the leader passed.
+					if (bMatchSyncPhases)
+					{
+						Sample.Animation->AdvanceMarkerPhaseAsFollower(Context.MarkerTickContext, 0.0f, bLooping, SampleDataItem.Time, SampleDataItem.MarkerTickRecord.PreviousMarker, SampleDataItem.MarkerTickRecord.NextMarker, nullptr);
+					}
+				}
+				else
+				{
+					// Fallback to length based syncing so it matches default behaviour when ticking a blend space.
+					SampleDataItem.MarkerTickRecord.Reset();
+					SampleDataItem.PreviousTime = InNormalizedCurrentTime * Sample.Animation->GetPlayLength();
+					SampleDataItem.Time = InNormalizedCurrentTime * Sample.Animation->GetPlayLength();
+				}
+			}
+		}
+	}
+	else
+	{
+		// Fallback to length based syncing so it matches default behaviour when ticking a blend space.
+		for (int32 SampleIndex = 0; SampleIndex < InOutSampleDataCache.Num(); ++SampleIndex)
+		{
+			FBlendSampleData& SampleDataItem = InOutSampleDataCache[SampleIndex];
+			
+			SampleDataItem.MarkerTickRecord.Reset();
+			SampleDataItem.PreviousTime = InNormalizedCurrentTime * SampleDataItem.Animation->GetPlayLength();
+			SampleDataItem.Time = InNormalizedCurrentTime * SampleDataItem.Animation->GetPlayLength();
+		}
+	}
+}
+
 void UBlendSpace::ForEachImmutableSample(const TFunctionRef<void(const FBlendSample&)> Func) const
 {
 	for (const FBlendSample & Sample : SampleData)
@@ -498,10 +612,10 @@ void UBlendSpace::TickAssetPlayer(FAnimTickRecord& Instance, struct FAnimNotifyQ
 
 						// Only tick samples if leader sample has any delta time to consume.
 						const float NewDeltaTime = Context.GetDeltaTime() * Instance.PlayRateMultiplier * LeaderSample.RateScale * LeaderSample.Animation->RateScale;
+						Context.SetLeaderDelta(NewDeltaTime);
+
 						if (!FMath::IsNearlyZero(NewDeltaTime))
 						{
-							Context.SetLeaderDelta(NewDeltaTime);
-
 							// Tick leader sample
 							LeaderSample.Animation->TickByMarkerAsLeader(LeaderSampleData.MarkerTickRecord, Context.MarkerTickContext, LeaderSampleData.Time, LeaderSampleData.PreviousTime, NewDeltaTime, Instance.bLooping, Instance.MirrorDataTable);
 
@@ -509,6 +623,19 @@ void UBlendSpace::TickAssetPlayer(FAnimTickRecord& Instance, struct FAnimNotifyQ
 							
 							// Tick all the follower samples
 							TickFollowerSamples(SampleDataList, HighestMarkerSyncWeightIndex, Context, bResetMarkerDataOnFollowers, Instance.bLooping, Instance.MirrorDataTable);
+						}
+						else if (!Instance.MarkerTickRecord->IsValid(Instance.bLooping))
+						{
+							// Re-compute marker indices for leader sample's tick record. Get previous and next markers.
+							LeaderSample.Animation->GetMarkerIndicesForTime(LeaderSampleData.Time, Instance.bLooping, Context.MarkerTickContext.GetValidMarkerNames(), LeaderSampleData.MarkerTickRecord.PreviousMarker, LeaderSampleData.MarkerTickRecord.NextMarker);
+
+							// Get sync position for followers to sync up to.
+							const FMarkerSyncAnimPosition SyncPosition = LeaderSample.Animation->GetMarkerSyncPositionFromMarkerIndicies(LeaderSampleData.MarkerTickRecord.PreviousMarker.MarkerIndex, LeaderSampleData.MarkerTickRecord.NextMarker.MarkerIndex, LeaderSampleData.Time, Instance.MirrorDataTable);
+							Context.MarkerTickContext.SetMarkerSyncStartPosition(SyncPosition);
+							Context.MarkerTickContext.SetMarkerSyncEndPosition(SyncPosition);
+							
+							// Make all follower samples match next sync position to equal that of the leader.
+							TickFollowerSamples(SampleDataList, HighestMarkerSyncWeightIndex, Context, true, Instance.bLooping, Instance.MirrorDataTable);
 						}
 						
 						NormalizedCurrentTime = LeaderSampleData.Time / LeaderSample.Animation->GetPlayLength();
@@ -756,21 +883,37 @@ void UBlendSpace::RuntimeValidateMarkerData()
 /** When per-bone blend data are required to be sorted, this stores the sorted copy and the index of the original */
 struct FSortedPerBoneInterpolation
 {
-	FSortedPerBoneInterpolation(const FPerBoneInterpolation& Original, int32 Index) :
-		PerBoneBlend(Original), OriginalIndex(Index) {}
+	FSortedPerBoneInterpolation(const FPerBoneInterpolation& Original, int32 Index)
+		: PerBoneBlend(Original)
+		, OriginalIndex(Index)
+	{
+	}
+
 	FPerBoneInterpolation PerBoneBlend;
+
 	/** Index into the original array */
 	int32 OriginalIndex;
 };
+
 struct FSortedPerBoneInterpolationData : public IInterpolationIndexProvider::FPerBoneInterpolationData
 {
+	explicit FSortedPerBoneInterpolationData(const FSkeletonRemapping& InSkeletonMapping)
+		: SkeletonMapping(InSkeletonMapping)
+	{
+	}
+
+	const FSkeletonRemapping& SkeletonMapping;
 	TArray<FSortedPerBoneInterpolation> Data;
 };
 
 TSharedPtr<IInterpolationIndexProvider::FPerBoneInterpolationData> UBlendSpace::GetPerBoneInterpolationData(const USkeleton* RuntimeSkeleton) const 
 {
-	FSortedPerBoneInterpolationData* Data = new FSortedPerBoneInterpolationData();
+	const USkeleton* SourceSkeleton = GetSkeleton();
+	const FSkeletonRemapping& SkeletonRemapping = UE::Anim::FSkeletonRemappingRegistry().Get().GetRemapping(SourceSkeleton, RuntimeSkeleton);
+
+	FSortedPerBoneInterpolationData* Data = new FSortedPerBoneInterpolationData(SkeletonRemapping);
 	Data->Data.SetNumUninitialized(PerBoneBlendValues.Num());
+
 	for (int32 Iter = 0 ; Iter != PerBoneBlendValues.Num() ; ++Iter)
 	{
 		Data->Data[Iter] = FSortedPerBoneInterpolation(PerBoneBlendValues[Iter], Iter);
@@ -791,25 +934,40 @@ TSharedPtr<IInterpolationIndexProvider::FPerBoneInterpolationData> UBlendSpace::
 int32 UBlendSpace::GetPerBoneInterpolationIndex(
 	const FCompactPoseBoneIndex&                                  InCompactPoseBoneIndex, 
 	const FBoneContainer&                                         RequiredBones, 
-	const IInterpolationIndexProvider::FPerBoneInterpolationData* Data) const
+	const IInterpolationIndexProvider::FPerBoneInterpolationData* InData) const
 {
-	if (!ensure(Data))
+	if (!ensure(InData))
 	{
 		return INDEX_NONE;
 	}
-	const TArray<FSortedPerBoneInterpolation>& SortedData = static_cast<const FSortedPerBoneInterpolationData*>(Data)->Data;
+
+	const FSortedPerBoneInterpolationData* Data = static_cast<const FSortedPerBoneInterpolationData*>(InData);
+	const TArray<FSortedPerBoneInterpolation>& SortedData = Data->Data;
+
+	const USkeleton* SourceSkeleton = GetSkeleton();
+	const FSkeletonRemapping& SkeletonRemapping = Data->SkeletonMapping;
 
 	for (int32 Iter = 0; Iter < SortedData.Num(); ++Iter)
 	{
 		const FPerBoneInterpolation& PerBoneInterpolation = SortedData[Iter].PerBoneBlend;
-		int32 OriginalIndex = SortedData[Iter].OriginalIndex;
+		const int32 OriginalIndex = SortedData[Iter].OriginalIndex;
 		const FBoneReference& SmoothedBone = PerBoneInterpolation.BoneReference;
-		FCompactPoseBoneIndex SmoothedBoneCompactPoseIndex = 
-			RequiredBones.GetCompactPoseIndexFromSkeletonPoseIndex(SmoothedBone.GetSkeletonPoseIndex(RequiredBones));
+
+		FSkeletonPoseBoneIndex SkelBoneIndex = SmoothedBone.GetSkeletonPoseIndex(RequiredBones);
+
+		// Remap to the target skeleton, using skeleton remapping, as we might be applying this blend space onto another skeleton than the asset was created for.
+		if (SkeletonRemapping.IsValid())
+		{
+			const int32 RemappedSkelBoneIndex = SkeletonRemapping.GetTargetSkeletonBoneIndex(SkelBoneIndex.GetInt());
+			SkelBoneIndex = FSkeletonPoseBoneIndex(RemappedSkelBoneIndex);
+		}
+
+		const FCompactPoseBoneIndex SmoothedBoneCompactPoseIndex = RequiredBones.GetCompactPoseIndexFromSkeletonPoseIndex(SkelBoneIndex);
 		if (SmoothedBoneCompactPoseIndex == InCompactPoseBoneIndex)
 		{
 			return OriginalIndex;
 		}
+
 		// BoneIsChildOf returns true if InCompactPoseBoneIndex is a child of SmoothedBoneCompactPoseIndex. 
 		if (SmoothedBoneCompactPoseIndex != INDEX_NONE && 
 			RequiredBones.BoneIsChildOf(InCompactPoseBoneIndex, SmoothedBoneCompactPoseIndex))
@@ -817,6 +975,59 @@ int32 UBlendSpace::GetPerBoneInterpolationIndex(
 			return OriginalIndex;
 		}
 	}
+	return INDEX_NONE;
+}
+
+namespace UE::Anim::Private
+{
+	static FBoneContainer DummyContainer;
+}
+
+int32 UBlendSpace::GetPerBoneInterpolationIndex(
+	const FSkeletonPoseBoneIndex InSkeletonBoneIndex,
+	const USkeleton* TargetSkeleton,
+	const IInterpolationIndexProvider::FPerBoneInterpolationData* InData) const
+{
+	if (!ensure(InData) || !InSkeletonBoneIndex.IsValid())
+	{
+		return INDEX_NONE;
+	}
+
+	const FSortedPerBoneInterpolationData* Data = static_cast<const FSortedPerBoneInterpolationData*>(InData);
+	const TArray<FSortedPerBoneInterpolation>& SortedData = Data->Data;
+
+	const USkeleton* SourceSkeleton = GetSkeleton();
+	const FReferenceSkeleton& TargetReferenceSkeleton = TargetSkeleton->GetReferenceSkeleton();
+	const FSkeletonRemapping& SkeletonRemapping = Data->SkeletonMapping;
+
+	for (const FSortedPerBoneInterpolation& SortedBoneData : SortedData)
+	{
+		const FPerBoneInterpolation& PerBoneInterpolation = SortedBoneData.PerBoneBlend;
+		const FBoneReference& SmoothedBone = PerBoneInterpolation.BoneReference;
+
+		// Bone references are stored as skeleton bones, we can use a dummy bone container as it isn't required
+		FSkeletonPoseBoneIndex SmoothedSkelBoneIndex = SmoothedBone.GetSkeletonPoseIndex(UE::Anim::Private::DummyContainer);
+
+		// Remap to the target skeleton, using skeleton remapping, as we might be applying this blend space onto another skeleton than the asset was created for.
+		if (SkeletonRemapping.IsValid())
+		{
+			const int32 RemappedSkelBoneIndex = SkeletonRemapping.GetTargetSkeletonBoneIndex(SmoothedSkelBoneIndex.GetInt());
+			SmoothedSkelBoneIndex = FSkeletonPoseBoneIndex(RemappedSkelBoneIndex);
+		}
+
+		if (SmoothedSkelBoneIndex == InSkeletonBoneIndex)
+		{
+			return SortedBoneData.OriginalIndex;
+		}
+
+		// BoneIsChildOf returns true if InSkeletonBoneIndex is a child of SmoothedSkelBoneIndex
+		if (SmoothedSkelBoneIndex.IsValid() &&
+			TargetReferenceSkeleton.BoneIsChildOf(InSkeletonBoneIndex.GetInt(), SmoothedSkelBoneIndex.GetInt()))
+		{
+			return SortedBoneData.OriginalIndex;
+		}
+	}
+
 	return INDEX_NONE;
 }
 
@@ -1096,7 +1307,7 @@ bool UBlendSpace::GetSamplesFromBlendInput(
 					}
 
 					// as for time or previous time will be the master one(Index1)
-					OutSampleDataList.RemoveAtSwap(Index2, 1, false);
+					OutSampleDataList.RemoveAtSwap(Index2, 1, EAllowShrinking::No);
 					--Index2;
 				}
 			}
@@ -1113,7 +1324,7 @@ bool UBlendSpace::GetSamplesFromBlendInput(
 		if (OutSampleDataList[I].TotalWeight < ZERO_ANIMWEIGHT_THRESH)
 		{
 			// cut anything in front of this 
-			OutSampleDataList.RemoveAt(I, TotalSample - I, false); // we won't shrink here, that might screw up alloc optimization at a higher level, if not this is temp anyway
+			OutSampleDataList.RemoveAt(I, TotalSample - I, EAllowShrinking::No); // we won't shrink here, that might screw up alloc optimization at a higher level, if not this is temp anyway
 			break;
 		}
 
@@ -1591,10 +1802,10 @@ void UBlendSpace::InitializePerBoneBlend()
 	{
 		PerBoneBlendValues.Empty();
 
-		UBlendProfile* BlendProfile = PerBoneBlendProfile.BlendProfile.Get();
+		const UBlendProfile* BlendProfile = PerBoneBlendProfile.BlendProfile.Get();
 		if (BlendProfile)
 		{
-			int32 NumBlendEntries = BlendProfile->GetNumBlendEntries();
+			const int32 NumBlendEntries = BlendProfile->GetNumBlendEntries();
 			for (int32 EntryIndex = 0; EntryIndex < NumBlendEntries; ++EntryIndex)
 			{
 				const FBlendProfileBoneEntry& BoneEntry = BlendProfile->GetEntry(EntryIndex);

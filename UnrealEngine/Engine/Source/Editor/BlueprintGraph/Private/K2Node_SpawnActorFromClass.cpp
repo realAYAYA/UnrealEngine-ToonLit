@@ -28,7 +28,6 @@
 #include "Misc/AssertionMacros.h"
 #include "Styling/AppStyle.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SubclassOf.h"
 #include "Templates/UnrealTemplate.h"
 #include "UObject/Class.h"

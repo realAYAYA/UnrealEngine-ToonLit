@@ -183,7 +183,18 @@ struct FSkeletalMeshLODInfo
 	/** Keeps this LODs data on the CPU so it can be used for things such as sampling in FX. */
 	UPROPERTY(EditAnywhere, Category = SkeletalMeshLODInfo)
 	uint8 bAllowCPUAccess : 1;
+	
+	/**
+	 * If true, we will cache/cook half edge data that provides vertex connectivity information across material sections, which
+ 	 * may be useful for other systems like Mesh Deformer.
+	 */
+	UPROPERTY(EditAnywhere, Category = SkeletalMeshLODInfo)
+	uint8 bBuildHalfEdgeBuffers : 1;
 
+	/** Whether a Mesh Deformer applied to the mesh asset or Skinned Mesh Component should be used on this LOD or not */
+	UPROPERTY(EditAnywhere, Category = SkeletalMeshLODInfo)
+	uint8 bAllowMeshDeformer : 1;
+	
 	/** List of vertex attributes to include for rendering and what type they should be */
 	UPROPERTY(EditAnywhere, Category = SkeletalMeshLODInfo, AdvancedDisplay, EditFixedSize, Meta=(NoResetToDefault))
 	TArray<FSkeletalMeshVertexAttributeInfo> VertexAttributes;	
@@ -220,6 +231,8 @@ struct FSkeletalMeshLODInfo
 		, bHasBeenSimplified(false)
 		, bHasPerLODVertexColors(false)
 		, bAllowCPUAccess(false)
+		, bBuildHalfEdgeBuffers(false)
+		, bAllowMeshDeformer(true)
 		, bSupportUniformlyDistributedSampling(false)
 #if WITH_EDITORONLY_DATA
 		, bImportWithBaseMesh(false)

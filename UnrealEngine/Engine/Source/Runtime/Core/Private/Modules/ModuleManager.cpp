@@ -138,6 +138,17 @@ IModuleInterface* FModuleManager::GetModulePtr_Internal(FName ModuleName)
 
 void FModuleManager::FindModules(const TCHAR* WildcardWithoutExtension, TArray<FName>& OutModules) const
 {
+	TArray<FModuleDiskInfo> FoundModules;
+	FindModules(WildcardWithoutExtension, FoundModules);
+	OutModules.Reserve(OutModules.Num() + FoundModules.Num());
+	for (FModuleDiskInfo& Module : FoundModules)
+	{
+		OutModules.Add(Module.Name);
+	}
+}
+
+void FModuleManager::FindModules(const TCHAR* WildcardWithoutExtension, TArray<FModuleDiskInfo>& OutModules) const
+{
 	// @todo plugins: Try to convert existing use cases to use plugins, and get rid of this function
 #if !IS_MONOLITHIC
 
@@ -146,7 +157,7 @@ void FModuleManager::FindModules(const TCHAR* WildcardWithoutExtension, TArray<F
 
 	for(TMap<FName, FString>::TConstIterator Iter(ModulePaths); Iter; ++Iter)
 	{
-		OutModules.Add(Iter.Key());
+		OutModules.Add(FModuleDiskInfo{ Iter.Key(), Iter.Value() });
 	}
 
 #else
@@ -175,7 +186,7 @@ void FModuleManager::FindModules(const TCHAR* WildcardWithoutExtension, TArray<F
 		{
 			if (It.Key.ToString().MatchesWildcard(Wildcard))
 			{
-				OutModules.Add(It.Key);
+				OutModules.Add(FModuleDiskInfo{ It.Key, FString() });
 			}
 		}
 	}
@@ -185,17 +196,32 @@ void FModuleManager::FindModules(const TCHAR* WildcardWithoutExtension, TArray<F
 		FName WildcardName(WildcardWithoutExtension);
 		if (StaticallyLinkedModuleInitializers.Contains(WildcardName))
 		{
-			OutModules.Add(WildcardName);
+			OutModules.Add(FModuleDiskInfo{ WildcardName, FString() });
 		}
 	}
 #endif
 }
 
-bool FModuleManager::ModuleExists(const TCHAR* ModuleName) const
+bool FModuleManager::ModuleExists(const TCHAR* ModuleName, FString* OutModuleFilePath) const
 {
-	TArray<FName> Names;
-	FindModules(ModuleName, Names);
-	return Names.Num() > 0;
+	TArray<FModuleDiskInfo> FoundModules;
+	FindModules(ModuleName, FoundModules);
+	if (FoundModules.IsEmpty())
+	{
+		if (OutModuleFilePath)
+		{
+			OutModuleFilePath->Reset();
+		}
+		return false;
+	}
+	else
+	{
+		if (OutModuleFilePath)
+		{
+			*OutModuleFilePath = FoundModules[0].FilePath;
+		}
+		return true;
+	}
 }
 
 bool FModuleManager::IsModuleLoaded( const FName InModuleName ) const
@@ -505,7 +531,6 @@ IModuleInterface* FModuleManager::LoadModuleWithFailureReason(const FName InModu
 			FScopedBootTiming BootScope("LoadModule  - ", InModuleName);
 			TRACE_LOADTIME_REQUEST_GROUP_SCOPE(TEXT("LoadModule - %s"), *InModuleName.ToString());
 
-#if USE_PER_MODULE_UOBJECT_BOOTSTRAP || WITH_VERSE
 			{
 				// Defer String Table find/load during CDO registration, as it may happen 
 				// before StartupModule has had a chance to load the String Table
@@ -513,7 +538,6 @@ IModuleInterface* FModuleManager::LoadModuleWithFailureReason(const FName InModu
 
 				ProcessLoadedObjectsCallback.Broadcast(InModuleName, bCanProcessNewlyLoadedObjects);
 			}
-#endif
 
 			// Startup the module
 			{
@@ -705,7 +729,7 @@ IModuleInterface* FModuleManager::LoadModuleWithFailureReason(const FName InModu
 }
 
 
-bool FModuleManager::UnloadModule( const FName InModuleName, bool bIsShutdown )
+bool FModuleManager::UnloadModule( const FName InModuleName, bool bIsShutdown, bool bAllowUnloadCode)
 {
 	// Do we even know about this module?
 	ModuleInfoPtr ModuleInfoPtr = FindModule(InModuleName);
@@ -732,7 +756,7 @@ bool FModuleManager::UnloadModule( const FName InModuleName, bool bIsShutdown )
 				// instead.  This makes it much less likely that code will be unloaded that could still be called by
 				// another module, such as a destructor or other virtual function.  The module will still be unloaded by
 				// the operating system when the process exits.
-				if( !bIsShutdown )
+				if( !bIsShutdown && bAllowUnloadCode )
 				{
 					// Unload the DLL
 					FPlatformProcess::FreeDllHandle( ModuleInfo.Handle );
@@ -848,7 +872,7 @@ void FModuleManager::UnloadModulesAtShutdown()
 	// Now actually unload all modules
 	for (FModulePair& ModuleToUnload : ModulesToUnload)
 	{
-		UE_LOG(LogModuleManager, Log, TEXT("Shutting down and abandoning module %s (%d)"), *ModuleToUnload.ModuleName.ToString(), ModuleToUnload.LoadOrder);
+		UE_LOG(LogModuleManager, Verbose, TEXT("Shutting down and abandoning module %s (%d)"), *ModuleToUnload.ModuleName.ToString(), ModuleToUnload.LoadOrder);
 		const bool bIsShutdown = true;
 		UnloadModule(ModuleToUnload.ModuleName, bIsShutdown);
 		UE_LOG(LogModuleManager, Verbose, TEXT( "Returned from UnloadModule." ));

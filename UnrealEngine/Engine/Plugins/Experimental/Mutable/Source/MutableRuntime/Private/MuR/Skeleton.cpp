@@ -154,7 +154,7 @@ namespace mu
 		}
 		else
 		{
-			TArray<string> OldBoneNames;
+			TArray<std::string> OldBoneNames;
 			arch >> OldBoneNames;
 
 			const int32 NumBones = OldBoneNames.Num();
@@ -172,6 +172,16 @@ namespace mu
 		}
 
 		arch >> BoneParents;
+
+		if (ver < 6) // before BoneIds 
+		{
+			int16 ParentIndex = INDEX_NONE;
+			for (int16& BoneParent : BoneParents)
+			{
+				BoneParent = ParentIndex;
+				ParentIndex++;
+			}
+		}
 
 		if (ver <= 4)
 		{

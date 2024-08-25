@@ -35,15 +35,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category="Rendering|Material")
 	ENGINE_API virtual TArray<class UMaterialInterface*> GetMaterials() const;
 
-	UFUNCTION(BlueprintCallable, Category = "Rendering|Material")
-	ENGINE_API virtual int32 GetMaterialIndex(FName MaterialSlotName) const;
-
-	UFUNCTION(BlueprintCallable, Category = "Rendering|Material")
-	ENGINE_API virtual TArray<FName> GetMaterialSlotNames() const;
-
-	UFUNCTION(BlueprintCallable, Category = "Rendering|Material")
-	ENGINE_API virtual bool IsMaterialSlotNameValid(FName MaterialSlotName) const;
-
 	/** Determines if we use the nanite overrides from any materials */
 	virtual bool UseNaniteOverrideMaterials() const { return false; }
 
@@ -100,6 +91,7 @@ public:
 	//~ Begin UPrimitiveComponent Interface
 	ENGINE_API virtual int32 GetNumMaterials() const override;
 	ENGINE_API virtual UMaterialInterface* GetMaterial(int32 ElementIndex) const override;
+	ENGINE_API virtual UMaterialInterface* GetMaterialByName(FName MaterialSlotName) const override;
 	ENGINE_API virtual void SetMaterial(int32 ElementIndex, UMaterialInterface* Material) override;
 	ENGINE_API virtual void SetMaterialByName(FName MaterialSlotName, class UMaterialInterface* Material) override;
 	ENGINE_API virtual void GetUsedMaterials(TArray<UMaterialInterface*>& OutMaterials, bool bGetDebugMaterials = false) const override;	
@@ -124,9 +116,18 @@ public:
 	ENGINE_API virtual void PrestreamTextures( float Seconds, bool bPrioritizeCharacterTextures, int32 CinematicTextureGroups = 0 );
 
 	/**
+	 *	Tell the streaming system to start streaming in all LODs for the mesh.
+	*	Note: this function may set bIgnoreStreamingMipBias on this component enable the FastForceResident system.
+	 *  @return bool							True if streaming was successfully requested
+	 *	@param Seconds							Number of seconds to force all LODs to be resident
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Rendering")
+	ENGINE_API virtual bool PrestreamMeshLODs( float Seconds ) { return false; }
+
+	/**
 	 * Register a one-time callback that will be called when criteria met
 	 * @param Callback
-	 * @param LODIdx		The LOD index expected
+	 * @param LODIdx		The LOD index expected. Specify -1 for the MinLOD.
 	 * @param TimeoutSecs	Timeout in seconds
 	 * @param bOnStreamIn	To get notified when the expected LOD is streamed in or out
 	 */
@@ -177,6 +178,11 @@ public:
 		return (ParameterCache ? ParameterCache->ScalarParameterDefaultValue : 0.f);
 	}
 protected:
+
+	//~ Begin UObject Interface.
+	ENGINE_API virtual void BeginDestroy() override;
+	//~ End UObject Interface.
+
 	/** Get the default overlay material used by a mesh */
 	virtual UMaterialInterface* GetDefaultOverlayMaterial() const { return nullptr; };
 	

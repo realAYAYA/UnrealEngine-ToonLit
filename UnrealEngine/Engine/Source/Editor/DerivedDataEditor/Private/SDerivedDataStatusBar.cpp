@@ -45,6 +45,7 @@
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/SOverlay.h"
 #include "Widgets/Text/STextBlock.h"
+#include "ZenDashboardLauncher.h"
 
 class SWidget;
 struct FSlateBrush;
@@ -69,6 +70,7 @@ void FDerivedDataStatusBarMenuCommands::RegisterCommands()
 	UI_COMMAND(ChangeSettings, "Change Cache Settings", "Opens a dialog to change Cache settings.", EUserInterfaceActionType::Button, FInputChord());
 	UI_COMMAND(ViewCacheStatistics, "View Cache Statistics", "Opens the Cache Statistics panel.", EUserInterfaceActionType::Button, FInputChord());
 	UI_COMMAND(ViewResourceUsage, "View Resource Usage", "Opens the Resource Usage panel.", EUserInterfaceActionType::Button, FInputChord());
+	UI_COMMAND(LaunchZenDashboard, "Launch Zen Dashboard", "Launches the Zen Dashboard utility.", EUserInterfaceActionType::Button, FInputChord());
 
 	ActionList->MapAction(
 		ChangeSettings,
@@ -83,6 +85,11 @@ void FDerivedDataStatusBarMenuCommands::RegisterCommands()
 	ActionList->MapAction(
 		ViewResourceUsage,
 		FExecuteAction::CreateStatic(&FDerivedDataStatusBarMenuCommands::ViewResourceUsage_Clicked)
+	);
+
+	ActionList->MapAction(
+		LaunchZenDashboard,
+		FExecuteAction::CreateStatic(&FDerivedDataStatusBarMenuCommands::LaunchZenDashboard_Clicked)
 	);
 }
 
@@ -103,6 +110,12 @@ void FDerivedDataStatusBarMenuCommands::ViewResourceUsage_Clicked()
 	DerivedDataEditorModule.ShowResourceUsageTab();
 }
 
+void FDerivedDataStatusBarMenuCommands::LaunchZenDashboard_Clicked()
+{
+	using namespace UE::Zen;
+	FZenDashboardLauncher::Get()->StartZenDashboard(FZenDashboardLauncher::Get()->GetZenDashboardApplicationPath());
+}
+
 TSharedRef<SWidget> SDerivedDataStatusBarWidget::CreateStatusBarMenu()
 {
 	UToolMenu* Menu = UToolMenus::Get()->RegisterMenu("StatusBar.ToolBar.DDC", NAME_None, EMultiBoxType::Menu, false);
@@ -115,6 +128,12 @@ TSharedRef<SWidget> SDerivedDataStatusBarWidget::CreateStatusBarMenu()
 			TAttribute<FText>(),
 			TAttribute<FText>(),
 			FSlateIcon(FAppStyle::GetAppStyleSetName(), "DerivedData.Cache.Settings")
+		);
+		Section.AddMenuEntry(
+			FDerivedDataStatusBarMenuCommands::Get().LaunchZenDashboard,
+			TAttribute<FText>(),
+			TAttribute<FText>(),
+			FSlateIcon(FAppStyle::GetAppStyleSetName(), "DerivedData.LaunchZenDashboard")
 		);
 	}
 

@@ -4,6 +4,7 @@
 #include "WorldPartition/WorldPartitionActorLoaderInterface.h"
 #include "WorldPartition/WorldPartitionHelpers.h"
 #include "UObject/FortniteMainBranchObjectVersion.h"
+#include "AssetRegistry/AssetRegistryHelpers.h"
 
 #if WITH_EDITORONLY_DATA
 FWorldPartitionActorFilter::FOnWorldPartitionActorFilterChanged FWorldPartitionActorFilter::OnWorldPartitionActorFilterChanged;
@@ -171,7 +172,7 @@ bool FWorldPartitionActorFilter::Serialize(FArchive& Ar)
 			{
 				Ar << AssetPath;
 			}
-			FWorldPartitionHelpers::FixupRedirectedAssetPath(AssetPath);
+			UAssetRegistryHelpers::FixupRedirectedAssetPath(AssetPath);
 
 			bool bIncluded;
 			Ar << bIncluded;

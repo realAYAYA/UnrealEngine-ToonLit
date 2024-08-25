@@ -12,6 +12,8 @@ struct FAssetData;
 class FAssetPackageData;
 class FLinkerTables;
 class FPackageDependencyData;
+struct FGatherableTextData;
+struct FObjectFullNameAndThumbnail;
 
 class FPackageReader : public FArchiveUObject
 {
@@ -19,6 +21,7 @@ public:
 	ASSETREGISTRY_API FPackageReader();
 	ASSETREGISTRY_API ~FPackageReader();
 
+	// Note: Keep up to date with LexToString implementation
 	enum class EOpenPackageResult : uint8
 	{
 		/** The package summary loaded successfully */
@@ -51,7 +54,8 @@ public:
 	ASSETREGISTRY_API bool OpenPackageFile(FStringView LongPackageName, FStringView PackageFilename,
 		EOpenPackageResult* OutErrorCode = nullptr);
 	ASSETREGISTRY_API bool OpenPackageFile(FArchive* Loader, EOpenPackageResult* OutErrorCode = nullptr);
-	ASSETREGISTRY_API bool OpenPackageFile(EOpenPackageResult* OutErrorCode = nullptr);
+	ASSETREGISTRY_API bool OpenPackageFile(TUniquePtr<FArchive> Loader, EOpenPackageResult* OutErrorCode = nullptr);
+	ASSETREGISTRY_API bool OpenPackageFile(EOpenPackageResult& OutErrorCode);
 
 	/**
 	 * Returns the LongPackageName from constructor if provided, otherwise calculates it from
@@ -63,14 +67,24 @@ public:
 
 	/** Returns the Summary that was ready by OpenPackageFile. */
 	ASSETREGISTRY_API const FPackageFileSummary& GetPackageFileSummary() const;
+	/** Reads Names if not already read and returns a copy. */
+	ASSETREGISTRY_API bool GetNames(TArray<FName>& OutNames);
 	/** Reads Imports if not already read and returns a copy. */
 	ASSETREGISTRY_API bool GetImports(TArray<FObjectImport>& OutImportMap);
 	/** Reads Exports if not already read and returns a copy. */
 	ASSETREGISTRY_API bool GetExports(TArray<FObjectExport>& OutExportMap);
+	/** Reads DependsMap if not already read and returns a copy. */
+	ASSETREGISTRY_API bool GetDependsMap(TArray<TArray<FPackageIndex>>& OutDependsMap);
 	/** Reads the list of SoftPackageDependencies if not already read and returns a copy. */
 	ASSETREGISTRY_API bool GetSoftPackageReferenceList(TArray<FName>& OutSoftPackageReferenceList);
+	/** Reads the list of SoftObjectPaths if not already read and returns a copy. */
+	ASSETREGISTRY_API bool GetSoftObjectPaths(TArray<FSoftObjectPath>& OutSoftObjectPaths);
 	/** Reads the EditorOnly flags for Imports and Exports and returns them. not cached, reparsed each call. */
 	ASSETREGISTRY_API bool ReadEditorOnlyFlags(TBitArray<>& OutImportUsedInGame, TBitArray<>& OutSoftPackageUsedInGame);
+	/** Reads the list of GatherableTextData if not already read and returns a copy. */
+	ASSETREGISTRY_API bool GetGatherableTextData(TArray<FGatherableTextData>& OutText);
+	/** Reads the list of thumbnails if not already read and returns a copy. */
+	ASSETREGISTRY_API bool GetThumbnails(TArray<FObjectFullNameAndThumbnail>& OutThumbnails);
 
 	/** Reads information from the AR section and converts it to FAssetData. Not cached, reparsed each call. */
 	ASSETREGISTRY_API bool ReadAssetRegistryData(TArray<FAssetData*>& AssetDataList, bool& bOutIsCookedWithoutAssetData);
@@ -122,8 +136,12 @@ private:
 	bool SerializeNameMap();
 	bool SerializeImportMap();
 	bool SerializeExportMap();
+	bool SerializeDependsMap();
 	bool SerializeImportedClasses(const TArray<FObjectImport>& InImportMap, TArray<FName>& OutClassNames);
 	bool SerializeSoftPackageReferenceList();
+	bool SerializeSoftObjectPathMap();
+	bool SerializeGatherableTextDataMap();
+	bool SerializeThumbnailMap();
 	bool SerializeEditorOnlyFlags(TBitArray<>& OutImportUsedInGame, TBitArray<>& OutSoftPackageUsedInGame);
 	bool SerializeSearchableNamesMap(FLinkerTables& OutSearchableNames);
 	bool SerializeAssetRegistryDependencyData(TBitArray<>& OutImportUsedInGame, TBitArray<>& OutSoftPackageUsedInGame,
@@ -149,9 +167,15 @@ private:
 	TArray<FName> NameMap;
 	TArray<FObjectImport> ImportMap;
 	TArray<FObjectExport> ExportMap;
+	TArray<TArray<FPackageIndex>> DependsMap;
 	TArray<FName> SoftPackageReferenceList;
+	TArray<FSoftObjectPath> SoftObjectPathMap;
+	TArray<FGatherableTextData> GatherableTextDataMap;
+	TArray<FObjectFullNameAndThumbnail> ThumbnailMap;
 	int64 PackageFileSize;
 	int64 AssetRegistryDependencyDataOffset;
 	bool bLoaderOwner;
 };
 ENUM_CLASS_FLAGS(FPackageReader::EReadOptions);
+
+ASSETREGISTRY_API const TCHAR* LexToString(FPackageReader::EOpenPackageResult Result);

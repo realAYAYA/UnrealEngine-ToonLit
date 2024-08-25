@@ -77,6 +77,8 @@ public:
 	 */
 	void SetAsGMalloc();
 
+	bool IsActive() const;
+
 	// FMalloc interface.
 	virtual void* Malloc( SIZE_T Size, uint32 Alignment ) override;
 
@@ -175,6 +177,8 @@ struct FGenericStackBasedMallocCrash : public FMalloc
 	static CORE_API FGenericStackBasedMallocCrash& Get(FMalloc* MainMalloc = nullptr);
 
 	void SetAsGMalloc();
+
+	bool IsActive() const;
 
 	virtual void* Malloc(SIZE_T Size, uint32 Alignment) override;
 

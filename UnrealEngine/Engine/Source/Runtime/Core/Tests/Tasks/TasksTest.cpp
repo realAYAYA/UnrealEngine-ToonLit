@@ -3,9 +3,12 @@
 #include "CoreTypes.h"
 #include "Misc/AutomationTest.h"
 #include "Tests/Benchmark.h"
+#include "Tasks/Task.h"
 #include "Tasks/Pipe.h"
+#include "Tasks/TaskConcurrencyLimiter.h"
 #include "HAL/Thread.h"
 #include "Async/ParallelFor.h"
+#include "Async/ManualResetEvent.h"
 #include "Tests/TestHarnessAdapter.h"
 #include "Containers/UnrealString.h"
 
@@ -934,43 +937,41 @@ namespace UE { namespace TasksTests
 		}
 
 		UE_BENCHMARK(5, DependenciesPerfTest<150, 150>);
-
 	}
 
 	// blocks all workers (except reserve workers) until given event is triggered. Returns blocking tasks.
-	TArray<LowLevelTasks::FTask> BlockWorkers(FTaskEvent& ResumeEvent)
+	TArray<LowLevelTasks::FTask> BlockWorkers(FTaskEvent& ResumeEvent, uint32 NumWorkers = LowLevelTasks::FScheduler::Get().GetNumWorkers())
 	{
-		FPlatformProcess::Sleep(0.1f); // give workers time to fall asleep, to avoid any reserve worker messing around
-
-		uint32 NumWorkers = LowLevelTasks::FScheduler::Get().GetNumWorkers();
+		TRACE_CPUPROFILER_EVENT_SCOPE(BlockWorkers);
 
 		TArray<LowLevelTasks::FTask> WorkerBlockers; // tasks that block worker threads
 		WorkerBlockers.Reserve(NumWorkers);
 
-		std::atomic<uint32> NumWorkersNotBlocked{ NumWorkers };
+		std::atomic<uint32>   NumWorkersBlocked{ 0 };
+		UE::FManualResetEvent AllWorkersBlocked;
 
 		for (int i = 0; i != NumWorkers; ++i)
 		{
 			WorkerBlockers.Emplace();
 			LowLevelTasks::FTask& Task = WorkerBlockers.Last();
 			Task.Init(TEXT("WorkerBlocker"),
-				[&NumWorkersNotBlocked, &ResumeEvent]
+				[&NumWorkersBlocked, &NumWorkers, &ResumeEvent, &AllWorkersBlocked]
 				{
 					checkf(LowLevelTasks::FScheduler::Get().IsWorkerThread(), TEXT("No reserve workers are expected to get blocked"));
-					--NumWorkersNotBlocked;
+					if (++NumWorkersBlocked == NumWorkers)
+					{
+						AllWorkersBlocked.Notify();
+					}
+					TRACE_CPUPROFILER_EVENT_SCOPE(BlockWorkers_Blocked);
 					ResumeEvent.Wait();
 				},
 				LowLevelTasks::ETaskFlags::AllowNothing
 			);
-			LowLevelTasks::FScheduler::Get().TryLaunchAffinity(Task, i);
+			LowLevelTasks::FScheduler::Get().TryLaunch(Task);
 		}
 
-		UE::FTimeout Timeout{ FTimespan::FromSeconds(1) };
-		while (NumWorkersNotBlocked != 0)
-		{
-			check(!Timeout);
-			FPlatformProcess::Sleep(0.001f);
-		}
+		TRACE_CPUPROFILER_EVENT_SCOPE(WaitingUntilAllWorkersBlocked);
+		check(AllWorkersBlocked.WaitFor(UE::FMonotonicTimeSpan::FromSeconds(1)));
 
 		return WorkerBlockers;
 	}
@@ -1004,6 +1005,8 @@ namespace UE { namespace TasksTests
 
 	TEST_CASE_NAMED(FTasksDeepRetractionTest, "System::Core::Tasks::DeepRetraction", "[.][ApplicationContextMask][EngineFilter]")
 	{
+		FPlatformProcess::Sleep(0.1f); // give workers time to fall asleep, to avoid any reserve worker messing around
+
 		FTaskEvent ResumeEvent{ UE_SOURCE_LOCATION };
 		TArray<LowLevelTasks::FTask> WorkerBlockers = BlockWorkers(ResumeEvent);
 
@@ -1427,6 +1430,291 @@ namespace UE { namespace TasksTests
 			TTask<FDummy> Task = MakeCompletedTask<FDummy>(42, TEXT("Test"));
 			check(Task.GetResult().Int == 42 && Task.GetResult().Str == TEXT("Test"));
 		}
+	}
+
+	TEST_CASE_NAMED(FTasksCancellation, "System::Core::Tasks::Cancellation", "[.][ApplicationContextMask][EngineFilter]")
+	{
+		{
+			FCancellationToken CancellationToken;
+			FTaskEvent BlockExecution{ UE_SOURCE_LOCATION };
+
+			// check that a task sees cancellation request
+			FTask Task1 = Launch(UE_SOURCE_LOCATION,
+				[&CancellationToken, BlockExecution]
+				{
+					BlockExecution.Wait();
+					verify(CancellationToken.IsCanceled());
+				}
+			);
+			// same token can be used with multiple tasks to cancel them all
+			// a task can ignore cancellation request
+			FTask Task2 = Launch(UE_SOURCE_LOCATION, [&CancellationToken] {});
+
+			CancellationToken.Cancel();
+			BlockExecution.Trigger();
+
+			Wait(TArray{ Task1, Task2 });
+		}
+	}
+
+	TEST_CASE_NAMED(FTasksWaitAny, "System::Core::Async::Tasks::WaitAny", "[.][ApplicationContextMask][EngineFilter]")
+	{
+		{	// blocks if none of tasks is completed
+			FTaskEvent Blocker{ UE_SOURCE_LOCATION }; // blocks all tasks
+
+			TArray<FTask> Tasks
+			{
+				Launch(UE_SOURCE_LOCATION, [] {}, Prerequisites(Blocker)),
+				Launch(UE_SOURCE_LOCATION, [] {}, Prerequisites(Blocker))
+			};
+
+			verify(WaitAny(Tasks, FTimespan::FromMilliseconds(1.0)) == INDEX_NONE);
+
+			Blocker.Trigger();
+
+			verify(WaitAny(Tasks) != INDEX_NONE);
+		}
+
+		{	// doesn't wait for all tasks
+			FTaskEvent Blocker{ UE_SOURCE_LOCATION };
+
+			TArray<FTask> Tasks
+			{
+				Launch(UE_SOURCE_LOCATION, [] {}),
+				Launch(UE_SOURCE_LOCATION, [] {}, Prerequisites(Blocker)) // is blocked
+			};
+
+			verify(WaitAny(Tasks) == 0);
+
+			Blocker.Trigger();
+		}
+	}
+
+	TEST_CASE_NAMED(FTasksAny, "System::Core::Async::Tasks::Any", "[.][ApplicationContextMask][EngineFilter]")
+	{
+		{	// blocks if none of tasks is completed
+			FTaskEvent Blocker{ UE_SOURCE_LOCATION }; // blocks all tasks
+
+			TArray<FTask> Tasks
+			{
+				Launch(UE_SOURCE_LOCATION, [] {}, Prerequisites(Blocker)),
+				Launch(UE_SOURCE_LOCATION, [] {}, Prerequisites(Blocker))
+			};
+
+			verify(!Any(Tasks).Wait(FTimespan::FromMilliseconds(0.1)));
+
+			Blocker.Trigger();
+
+			Any(Tasks).Wait();
+		}
+
+		{	// doesn't wait for all tasks
+			FTaskEvent Blocker{ UE_SOURCE_LOCATION };
+
+			TArray<FTask> Tasks
+			{
+				Launch(UE_SOURCE_LOCATION, [] {}),
+				Launch(UE_SOURCE_LOCATION, [] {}, Prerequisites(Blocker)) // is blocked
+			};
+
+			Any(Tasks).Wait();
+
+			Blocker.Trigger();
+		}
+	}
+
+	// produces work for FTaskConcurrencyLimiter from multiple threads to check it's thread-safety, checks that:
+	// * it doesn't go over max concurrency
+	// * can check (not 100% reliably but still useful for local runs) that max concurrency is actually reached
+	// * slots don't overlap
+	template<uint32 MaxConcurrency, uint32 NumItems, uint32 NumPushingTasks>
+	void TaskConcurrencyLimiterStressTest()
+	{
+		static_assert(NumItems % NumPushingTasks == 0);
+
+		std::atomic<uint32> CurrentConcurrency = 0;
+		std::atomic<uint32> ActualMaxConcurrency = 0;
+		std::atomic<uint32> NumProcessed = 0;
+
+		std::atomic<bool> Slots[MaxConcurrency] = {};
+
+		TArray<FTask> PushingTasks;
+		PushingTasks.Reserve(NumPushingTasks);
+
+		FTaskConcurrencyLimiter TaskConcurrencyLimiter(MaxConcurrency);
+
+		for (uint32 i = 0; i != NumPushingTasks; ++i)
+		{
+			PushingTasks.Add(Launch(UE_SOURCE_LOCATION, 
+				[&TaskConcurrencyLimiter, &CurrentConcurrency, &ActualMaxConcurrency, &Slots, &NumProcessed]
+				{
+					TRACE_CPUPROFILER_EVENT_SCOPE(PushTasks);
+					for (uint32 i = 0; i < NumItems / NumPushingTasks; ++i)
+					{
+						TaskConcurrencyLimiter.Push(UE_SOURCE_LOCATION,
+							[&CurrentConcurrency, &ActualMaxConcurrency, &Slots, &NumProcessed](uint32 Slot)
+							{
+								TRACE_CPUPROFILER_EVENT_SCOPE(Task);
+								check(Slot < MaxConcurrency);
+								check(!Slots[Slot].load(std::memory_order_relaxed));
+								Slots[Slot].store(true, std::memory_order_relaxed);
+
+								uint32 CurrentConcurrencyLocal = CurrentConcurrency.fetch_add(1, std::memory_order_relaxed) + 1;
+								check(CurrentConcurrencyLocal <= MaxConcurrency);
+								uint32 ActualMaxConcurrencyLocal = ActualMaxConcurrency.load(std::memory_order_relaxed);
+								while (ActualMaxConcurrencyLocal < CurrentConcurrencyLocal &&
+									!ActualMaxConcurrency.compare_exchange_weak(ActualMaxConcurrencyLocal, CurrentConcurrencyLocal, std::memory_order_relaxed, std::memory_order_relaxed))
+								{
+									check(ActualMaxConcurrencyLocal <= MaxConcurrency);
+								}
+
+								FPlatformProcess::YieldCycles(10000);
+
+								CurrentConcurrencyLocal = CurrentConcurrency.fetch_sub(1, std::memory_order_relaxed) - 1;
+								check(CurrentConcurrencyLocal >= 0);
+
+								Slots[Slot].store(false, std::memory_order_relaxed);
+
+								NumProcessed.fetch_add(1, std::memory_order_release);
+							}
+						);
+					}
+				}
+			));
+		}
+
+		Wait(PushingTasks);
+		TaskConcurrencyLimiter.Wait();
+		check(NumProcessed.load(std::memory_order_acquire) == NumItems);
+
+		// unreliable check that MaxConcurrency is actually reached, but reliable enough for testing locally
+		//check(ActualMaxConcurrency.load(std::memory_order_relaxed) == MaxConcurrency);
+	}
+
+	TEST_CASE_NAMED(FTasksConcurrencyLimiterTest, "System::Core::Async::Tasks::TaskConcurrencyLimiter", "[.][ApplicationContextMask][EngineFilter]")
+	{
+		UE_BENCHMARK(5, TaskConcurrencyLimiterStressTest<8, 1'000'000, 10>);
+	}
+
+	template<uint32 RepeatCount>
+	void TaskConcurrencyLimiter_WaitingStressTest()
+	{
+		for (uint32 RepeatIndex = 0; RepeatIndex < RepeatCount; ++RepeatIndex)
+		{
+			FTaskConcurrencyLimiter TaskConcurrencyLimiter{ 1 };
+			FEventRef Blocker;
+			std::atomic<bool> bDone{ false };
+			TaskConcurrencyLimiter.Push(UE_SOURCE_LOCATION, 
+				[&Blocker, &bDone](uint32) 
+				{ 
+					TRACE_CPUPROFILER_EVENT_SCOPE(Blocked);
+					Blocker->Wait(); 
+					bDone.store(true, std::memory_order_relaxed); 
+				}
+			);
+			const uint32 NumWaitingTasks = 10;
+			TArray<FTask> WaitingTasks;
+			WaitingTasks.Reserve(NumWaitingTasks);
+			for (uint32 WaitIndex = 0; WaitIndex < NumWaitingTasks; ++WaitIndex)
+			{
+				WaitingTasks.Add(Launch(UE_SOURCE_LOCATION, 
+					[&TaskConcurrencyLimiter, &bDone] 
+					{
+						TRACE_CPUPROFILER_EVENT_SCOPE(Waiting);
+						TaskConcurrencyLimiter.Wait(); 
+						check(bDone.load(std::memory_order_relaxed)); 
+					}
+				));
+			}
+			Blocker->Trigger();
+			Wait(WaitingTasks);
+		}
+	}
+
+	TEST_CASE_NAMED(FTasksConcurrencyLimiterWaitingTest, "System::Core::Async::Tasks::TaskConcurrencyLimiter::Waiting", "[.][ApplicationContextMask][EngineFilter]")
+	{
+		UE_BENCHMARK(5, TaskConcurrencyLimiter_WaitingStressTest<10'000>);
+	}
+
+	void BenchmarkBlockUnblockWorkers(uint32 NumWorkers)
+	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(BenchmarkBlockUnblockWorkers);
+
+		for (int Index = 0; Index < 1000; ++Index)
+		{
+			FTaskEvent ResumeEvent{ UE_SOURCE_LOCATION };
+			TArray<LowLevelTasks::FTask> WorkerBlockers = BlockWorkers(ResumeEvent, NumWorkers);
+
+			ResumeEvent.Trigger();
+			LowLevelTasks::BusyWaitForTasks<LowLevelTasks::FTask>(WorkerBlockers);
+		}
+	}
+
+	TEST_CASE_NAMED(FTasksBenchmarkBlockUnblockWorkers, "System::Core::Async::Tasks::BenchmarkBlockUnblockWorkers", "[.][ApplicationContextMask][EngineFilter]")
+	{
+		FPlatformProcess::Sleep(0.1f); // give workers time to fall asleep, to avoid any reserve worker messing around
+
+		uint32 NumWorkers = LowLevelTasks::FScheduler::Get().GetNumWorkers();
+
+		for (uint32 Index = 1; Index <= NumWorkers; Index *= 2)
+		{
+			FString Name = FString::Printf(TEXT("BenchmarkBlockUnblockWorkers(%u)"), Index);
+
+			TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*Name);
+			Benchmark<5>(*Name, [&Index]() { BenchmarkBlockUnblockWorkers(Index); });
+		}
+	}
+
+	TEST_CASE_NAMED(FTasksDoNotRunInsideBusyWait, "System::Core::Async::Tasks::DoNotRunInsideBusyWait", "[.][ApplicationContextMask][EngineFilter]")
+	{
+		using namespace LowLevelTasks;
+
+		FPlatformProcess::Sleep(0.1f); // give workers time to fall asleep, to avoid any reserve worker messing around
+
+		uint32 NumWorkers = LowLevelTasks::FScheduler::Get().GetNumWorkers();
+
+		// Block all workers to make sure the tasks we're going to queue are not executed before we enter our busy wait loop.
+		FTaskEvent ResumeEvent{ UE_SOURCE_LOCATION };
+		TArray<LowLevelTasks::FTask> WorkerBlockers = BlockWorkers(ResumeEvent, NumWorkers);
+
+		std::atomic<bool>     CanExecute { false };
+		std::atomic<int32>    NumExecuted { 0 };
+		UE::FManualResetEvent Done;
+
+		// Queue enough busy wait excluded tasks to verify that the scheduler
+		// will do the right thing and not end up actually executing one of them
+		// from inside busy wait.
+		for (int32 Index = 0; Index < 100; ++Index)
+		{
+			Launch(UE_SOURCE_LOCATION,
+				[&CanExecute, &NumExecuted, &Done]()
+				{
+					verify(CanExecute.load());
+					if (++NumExecuted == 100)
+					{
+						Done.Notify();
+					}
+				},
+				UE::Tasks::ETaskPriority::Default,
+				UE::Tasks::EExtendedTaskPriority::None,
+				UE::Tasks::ETaskFlags::DoNotRunInsideBusyWait // this should not be picked up by busy waiting
+			);
+		}
+
+		// Busy wait for a second, making sure no excluded tasks are executed.
+		double StartTime = FPlatformTime::Seconds() + 1;
+		BusyWaitUntil([&StartTime]() { return FPlatformTime::Seconds() > StartTime; });
+
+		// Allow execution now.
+		CanExecute = true;
+
+		ResumeEvent.Trigger();
+
+		// Now busy waiting will run since we just unblocked all workers.
+		verify(Done.WaitFor(UE::FMonotonicTimeSpan::FromSeconds(1)));
+
+		// Do not exit the test before all blocked workers' tasks are done.
+		LowLevelTasks::BusyWaitForTasks<LowLevelTasks::FTask>(WorkerBlockers);
 	}
 }}
 

@@ -1,14 +1,47 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "AbcImporter.h"
-#include "AbcImportLogger.h"
-#include "AbcPolyMesh.h"
-#include "Animation/Skeleton.h"
 
+#include "AbcAssetImportData.h"
+#include "AbcFile.h"
+#include "AbcImportLogger.h"
+#include "AbcImportUtilities.h"
+#include "AbcPolyMesh.h"
+#include "Animation/AnimSequence.h"
+#include "Animation/Skeleton.h"
+#include "Async/ParallelFor.h"
 #include "BoneWeights.h"
+#include "ComponentReregisterContext.h"
+#include "Editor.h"
+#include "EigenHelper.h"
+#include "Engine/SkeletalMesh.h"
+#include "Engine/SkinnedAssetCommon.h"
+#include "Engine/StaticMesh.h"
+#include "GeometryCache.h"
+#include "GeometryCacheCodecV1.h"
+#include "GeometryCacheComponent.h"
+#include "GeometryCacheMeshData.h"
+#include "GeometryCacheTrackStreamable.h"
+#include "Logging/TokenizedMessage.h"
+#include "MaterialDomain.h"
+#include "Materials/Material.h"
+#include "MeshBudgetProjectSettings.h"
+#include "MeshUtilities.h"
+#include "Misc/MessageDialog.h"
+#include "Misc/PackageName.h"
+#include "Misc/Paths.h"
+#include "Misc/ScopedSlowTask.h"
+#include "Modules/ModuleManager.h"
+#include "ObjectTools.h"
+#include "PackageTools.h"
+#include "RenderMath.h"
+#include "Rendering/SkeletalMeshModel.h"
+#include "StaticMeshAttributes.h"
+#include "StaticMeshOperations.h"
+#include "Subsystems/AssetEditorSubsystem.h"
+#include "UObject/MetaData.h"
 
 #if PLATFORM_WINDOWS
-#include "AbcPolyMesh.h"
 #include "Windows/WindowsHWrapper.h"
 #endif
 
@@ -18,54 +51,6 @@ THIRD_PARTY_INCLUDES_START
 #include "Animation/AnimData/IAnimationDataController.h"
 #include <Alembic/AbcCoreOgawa/All.h>
 THIRD_PARTY_INCLUDES_END
-
-#include "Engine/StaticMeshSourceData.h"
-#include "Misc/Paths.h"
-#include "GeometryCache.h"
-#include "Misc/ScopedSlowTask.h"
-
-#include "GeometryCacheComponent.h"
-#include "PackageTools.h"
-#include "GeometryCacheMeshData.h"
-#include "StaticMeshAttributes.h"
-#include "GeometryCacheTrackStreamable.h"
-#include "StaticMeshOperations.h"
-#include "Logging/TokenizedMessage.h"
-#include "ObjectTools.h"
-
-#include "Engine/StaticMesh.h"
-#include "Engine/SkeletalMesh.h"
-#include "Engine/SkinnedAssetCommon.h"
-#include "Animation/AnimSequence.h"
-#include "Misc/PackageName.h"
-#include "Rendering/SkeletalMeshModel.h"
-
-#include "AbcImportUtilities.h"
-
-#include "MeshUtilities.h"
-#include "MaterialDomain.h"
-#include "Materials/Material.h"
-#include "Modules/ModuleManager.h"
-
-#include "Async/ParallelFor.h"
-
-#include "EigenHelper.h"
-
-#include "AbcAssetImportData.h"
-#include "AbcFile.h"
-
-#include "ComponentReregisterContext.h"
-#include "GeometryCacheCodecV1.h"
-#include "RenderMath.h"
-#include "Subsystems/AssetEditorSubsystem.h"
-#include "Editor.h"
-
-#include "Rendering/SkeletalMeshLODModel.h"
-#include "UObject/MetaData.h"
-
-#if WITH_EDITOR
-#include "MeshBudgetProjectSettings.h"
-#endif
 
 #define LOCTEXT_NAMESPACE "AbcImporter"
 
@@ -154,11 +139,12 @@ const EAbcImportError FAbcImporter::ImportTrackData(const int32 InNumThreads, UA
 }
 
 template<typename T>
-T* FAbcImporter::CreateObjectInstance(UObject*& InParent, const FString& ObjectName, const EObjectFlags Flags)
+T* FAbcImporter::CreateObjectInstance(UObject*& InParent, const FString& ObjectName, const EObjectFlags Flags, bool& bObjectAlreadyExists)
 {
 	// Parent package to place new asset
 	UPackage* Package = nullptr;
 	FString NewPackageName;
+	bObjectAlreadyExists = false;
 
 	// Setup package name and create one accordingly
 	NewPackageName = FPackageName::GetLongPackagePath(InParent->GetOutermost()->GetPathName()) + TEXT("/") + ObjectName;
@@ -173,6 +159,8 @@ T* FAbcImporter::CreateObjectInstance(UObject*& InParent, const FString& ObjectN
 	if (ExistingTypedObject != nullptr)
 	{
 		ExistingTypedObject->PreEditChange(nullptr);
+		bObjectAlreadyExists = true;
+		return ExistingTypedObject;
 	}
 	else if (ExistingObject != nullptr)
 	{
@@ -199,9 +187,10 @@ T* FAbcImporter::CreateObjectInstance(UObject*& InParent, const FString& ObjectN
 	return NewObject<T>(Package, FName(*SanitizedObjectName), Flags | RF_Public);
 }
 
-UStaticMesh* FAbcImporter::CreateStaticMeshFromSample(UObject* InParent, const FString& Name, EObjectFlags Flags, const uint32 NumMaterials, const TArray<FString>& FaceSetNames, const FAbcMeshSample* Sample)
+UStaticMesh* FAbcImporter::CreateStaticMeshFromSample(UObject* InParent, const FString& Name, EObjectFlags Flags, const TArray<FString>& UniqueFaceSetNames, const TArray<int32>& LookupMaterialSlot, const FAbcMeshSample* Sample)
 {
-	UStaticMesh* StaticMesh = CreateObjectInstance<UStaticMesh>(InParent, Name, Flags);
+	bool bObjectAlreadyExists = false;
+	UStaticMesh* StaticMesh = CreateObjectInstance<UStaticMesh>(InParent, Name, Flags, bObjectAlreadyExists);
 
 	// Only import data if a valid object was created
 	if (StaticMesh)
@@ -223,35 +212,27 @@ UStaticMesh* FAbcImporter::CreateStaticMeshFromSample(UObject* InParent, const F
 
 		// Material list
 		StaticMesh->GetStaticMaterials().Empty();
-		// If there were FaceSets available in the Alembic file use the number of unique face sets as num material entries, otherwise default to one material for the whole mesh
-		const uint32 FrameIndex = 0;
-		uint32 NumFaceSets = FaceSetNames.Num();
 
-		const bool bCreateMaterial = ImportSettings->MaterialSettings.bCreateMaterials;
-		for (uint32 MaterialIndex = 0; MaterialIndex < ((NumMaterials != 0) ? NumMaterials : 1); ++MaterialIndex)
+		// Build the material slots : one for each faceset
+		for (const FString& FaceSetName : UniqueFaceSetNames)
 		{
-			UMaterialInterface* Material = nullptr;
-			if (FaceSetNames.IsValidIndex(MaterialIndex))
-			{
-				Material = AbcImporterUtilities::RetrieveMaterial(*AbcFile, FaceSetNames[MaterialIndex], InParent, Flags);
+			UMaterialInterface* Material = AbcImporterUtilities::RetrieveMaterial(*AbcFile, FaceSetName, InParent, Flags);
 
-				if (Material != UMaterial::GetDefaultMaterial(MD_Surface))
-				{
-					Material->PostEditChange();
-				}
+			if (Material == nullptr)
+			{
+				Material = DefaultMaterial;
+			}
+			else if (Material != DefaultMaterial)
+			{
+				Material->PostEditChange();
 			}
 
-			FStaticMaterial StaticMaterial;
-			StaticMaterial.MaterialInterface = (Material != nullptr) ? Material : DefaultMaterial;
+			FName MaterialName(*FaceSetName);
 
-			FName SlotName((Material != nullptr) ? FName(FaceSetNames[MaterialIndex]) : NoFaceSetName);
-			StaticMaterial.MaterialSlotName = SlotName;
-			StaticMaterial.ImportedMaterialSlotName = SlotName;
-
-			StaticMesh->GetStaticMaterials().Add(StaticMaterial);
+			StaticMesh->GetStaticMaterials().Add(FStaticMaterial(Material, MaterialName, MaterialName));
 		}
 
-		GenerateMeshDescriptionFromSample(Sample, MeshDescription, StaticMesh);
+		GenerateMeshDescriptionFromSample(UniqueFaceSetNames, LookupMaterialSlot, Sample, MeshDescription);
 
 		// Get the first LOD for filling it up with geometry, only support one LOD
 		FStaticMeshSourceModel& SrcModel = StaticMesh->GetSourceModel(LODIndex);
@@ -270,9 +251,8 @@ UStaticMesh* FAbcImporter::CreateStaticMeshFromSample(UObject* InParent, const F
 		//Set the Imported version before calling the build
 		StaticMesh->ImportVersion = EImportStaticMeshVersion::LastVersion;
 
-#if WITH_EDITOR
 		FMeshBudgetProjectSettingsUtils::SetLodGroupForStaticMesh(StaticMesh);
-#endif
+
 		// Build the static mesh (using the build setting etc.) this generates correct tangents using the extracting smoothing group along with the imported Normals data
 		StaticMesh->Build(false);
 
@@ -293,46 +273,36 @@ const TArray<UStaticMesh*> FAbcImporter::ImportAsStaticMesh(UObject* InParent, E
 	TFunction<void(int32, FAbcFile*)> Func = [this, &ImportedStaticMeshes, StaticMeshSettings, InParent, Flags](int32 FrameIndex, FAbcFile* InFile)
 	{
 		const TArray<FAbcPolyMesh*>& PolyMeshes = AbcFile->GetPolyMeshes();
-		if (StaticMeshSettings.bMergeMeshes)
+		if (StaticMeshSettings.bMergeMeshes) 
 		{
-			// If merging we merge all the raw mesh structures together and generate a static mesh asset from this
-			TArray<FString> MergedFaceSetNames;
-			TArray<FAbcMeshSample*> Samples;
-			uint32 TotalNumMaterials = 0;
-
+			// Merge all meshes in the Alembic cache to one single static mesh
 			TArray<const FAbcMeshSample*> SamplesToMerge;
-			// Should merge all samples in the Alembic cache to one single static mesh
 			for (const FAbcPolyMesh* PolyMesh : PolyMeshes)
 			{
 				if (PolyMesh->bShouldImport)
 				{
 					const FAbcMeshSample* Sample = PolyMesh->GetSample(FrameIndex);
 					SamplesToMerge.Add(Sample);
-					TotalNumMaterials += (Sample->NumMaterials != 0) ? Sample->NumMaterials : 1;
-
-					if (PolyMesh->FaceSetNames.Num() > 0)
-					{
-						MergedFaceSetNames.Append(PolyMesh->FaceSetNames);
-					}
-					else
-					{
-						// Default name
-						MergedFaceSetNames.Add(NoFaceSetNameStr);
-					}
 				}
 			}
 
-			// Only merged samples if there are any
 			if (SamplesToMerge.Num())
 			{
 				FAbcMeshSample* MergedSample = AbcImporterUtilities::MergeMeshSamples(SamplesToMerge);
+			
+				UStaticMesh* StaticMesh = CreateStaticMeshFromSample(InParent, 
+					InParent != GetTransientPackage() ? FPaths::GetBaseFilename(InParent->GetName()) : (FPaths::GetBaseFilename(AbcFile->GetFilePath()) + "_" + FGuid::NewGuid().ToString()),
+					Flags, 
+					AbcFile->GetUniqueFaceSetNames(),
+					AbcFile->GetLookupMaterialSlot(),
+					MergedSample);
 
-
-				UStaticMesh* StaticMesh = CreateStaticMeshFromSample(InParent, InParent != GetTransientPackage() ? FPaths::GetBaseFilename(InParent->GetName()) : (FPaths::GetBaseFilename(AbcFile->GetFilePath()) + "_" + FGuid::NewGuid().ToString()), Flags, TotalNumMaterials, MergedFaceSetNames, MergedSample);
 				if (StaticMesh)
 				{
-						ImportedStaticMeshes.Add(StaticMesh);
+					ImportedStaticMeshes.Add(StaticMesh);
 				}
+
+				delete MergedSample; // Delete this temporary mesh
 			}
 		}
 		else
@@ -342,8 +312,19 @@ const TArray<UStaticMesh*> FAbcImporter::ImportAsStaticMesh(UObject* InParent, E
 				const FAbcMeshSample* Sample = PolyMesh->GetSample(FrameIndex);
 				if (PolyMesh->bShouldImport && Sample)
 				{
+					TArray<int32> LookupMaterialSlot;
+					for (int32 MaterialSlotIndex = 0; MaterialSlotIndex < PolyMesh->FaceSetNames.Num(); ++MaterialSlotIndex)
+					{
+						LookupMaterialSlot.Add(MaterialSlotIndex);
+					}
+
 					// Setup static mesh instance
-					UStaticMesh* StaticMesh = CreateStaticMeshFromSample(InParent, InParent != GetTransientPackage() ? PolyMesh->GetName() : PolyMesh->GetName() + "_" + FGuid::NewGuid().ToString(), Flags, Sample->NumMaterials, PolyMesh->FaceSetNames, Sample);
+					UStaticMesh* StaticMesh = CreateStaticMeshFromSample(InParent, 
+						InParent != GetTransientPackage() ? PolyMesh->GetName() : PolyMesh->GetName() + "_" + FGuid::NewGuid().ToString(), 
+						Flags, 
+						PolyMesh->FaceSetNames, 
+						LookupMaterialSlot,
+						Sample);
 
 					if (StaticMesh)
 					{
@@ -367,8 +348,9 @@ const TArray<UStaticMesh*> FAbcImporter::ImportAsStaticMesh(UObject* InParent, E
 
 UGeometryCache* FAbcImporter::ImportAsGeometryCache(UObject* InParent, EObjectFlags Flags)
 {
-	// Create a GeometryCache instance 
-	UGeometryCache* GeometryCache = CreateObjectInstance<UGeometryCache>(InParent, InParent != GetTransientPackage() ? FPaths::GetBaseFilename(InParent->GetName()) : (FPaths::GetBaseFilename(AbcFile->GetFilePath()) + "_" + FGuid::NewGuid().ToString()), Flags);
+	// Create a GeometryCache instance
+	bool bObjectAlreadyExists = false;
+	UGeometryCache* GeometryCache = CreateObjectInstance<UGeometryCache>(InParent, InParent != GetTransientPackage() ? FPaths::GetBaseFilename(InParent->GetName()) : (FPaths::GetBaseFilename(AbcFile->GetFilePath()) + "_" + FGuid::NewGuid().ToString()), Flags, bObjectAlreadyExists);
 
 	// Only import data if a valid object was created
 	if (GeometryCache)
@@ -388,7 +370,22 @@ UGeometryCache* FAbcImporter::ImportAsGeometryCache(UObject* InParent, EObjectFl
 		// Load the default material for later usage
 		UMaterial* DefaultMaterial = UMaterial::GetDefaultMaterial(MD_Surface);
 		check(DefaultMaterial);
-		uint32 MaterialOffset = 0;
+
+		auto CreateMaterial = [this, GeometryCache, DefaultMaterial, InParent, Flags](const FString& FaceSetName)
+		{
+			FName MaterialName(*FaceSetName);
+
+			UMaterialInterface* Material = AbcImporterUtilities::RetrieveMaterial(*AbcFile, FaceSetName, InParent, Flags);
+			check(Material);
+
+			if (Material != DefaultMaterial)
+			{
+				Material->PostEditChange();
+			}
+
+			GeometryCache->Materials.Add(Material);
+			GeometryCache->MaterialSlotNames.Add(MaterialName);
+		};
 
 		// Add tracks
 		const int32 NumPolyMeshes = AbcFile->GetNumPolyMeshes();
@@ -396,15 +393,16 @@ UGeometryCache* FAbcImporter::ImportAsGeometryCache(UObject* InParent, EObjectFl
 		{
 			TArray<UGeometryCacheTrackStreamable*> Tracks;
 
-			TArray<FAbcPolyMesh*> ImportPolyMeshes;
-			TArray<int32> MaterialOffsets;
-
 			const bool bContainsHeterogeneousMeshes = AbcFile->ContainsHeterogeneousMeshes();
 			if (ImportSettings->GeometryCacheSettings.bApplyConstantTopologyOptimizations && bContainsHeterogeneousMeshes)
 			{
 				TSharedRef<FTokenizedMessage> Message = FTokenizedMessage::Create(EMessageSeverity::Warning, LOCTEXT("HeterogeneousMeshesAndForceSingle", "Unable to enforce constant topology optimizations as the imported tracks contain topology varying data."));
 				FAbcImportLogger::AddImportMessage(Message);
 			}
+
+			FScopedSlowTask SlowTask(static_cast<float>((ImportSettings->SamplingSettings.FrameEnd + 1) - ImportSettings->SamplingSettings.FrameStart), FText::FromString(FString(TEXT("Importing Frames"))));
+			SlowTask.MakeDialog(true);
+			float CompletedFrames = 0.0f;
 
 			if (ImportSettings->GeometryCacheSettings.bFlattenTracks)
 			{
@@ -417,17 +415,13 @@ UGeometryCache* FAbcImporter::ImportAsGeometryCache(UObject* InParent, EObjectFl
 				Track->BeginCoding(Codec, ImportSettings->GeometryCacheSettings.bApplyConstantTopologyOptimizations && !bContainsHeterogeneousMeshes, bCalculateMotionVectors, ImportSettings->GeometryCacheSettings.bOptimizeIndexBuffers);
 				Tracks.Add(Track);
 				
-				FScopedSlowTask SlowTask(static_cast<float>((ImportSettings->SamplingSettings.FrameEnd + 1) - ImportSettings->SamplingSettings.FrameStart), FText::FromString(FString(TEXT("Importing Frames"))));
-				SlowTask.MakeDialog(true);
-
-				const TArray<FString>& UniqueFaceSetNames = AbcFile->GetUniqueFaceSetNames();
 				const TArray<FAbcPolyMesh*>& PolyMeshes = AbcFile->GetPolyMeshes();
 				TArray<float> FrameTimes;
 				FrameTimes.SetNum(ImportSettings->SamplingSettings.FrameEnd - ImportSettings->SamplingSettings.FrameStart + 1);
 				
 				const int32 NumTracks = Tracks.Num();
 				int32 PreviousNumVertices = 0;
-				TFunction<void(int32, FAbcFile*)> Callback = [this, &Tracks, &SlowTask, &UniqueFaceSetNames, &PolyMeshes, &PreviousNumVertices, &FrameTimes](int32 FrameIndex, const FAbcFile* InAbcFile)
+				TFunction<void(int32, FAbcFile*)> Callback = [this, &Tracks, &PolyMeshes, &PreviousNumVertices, &FrameTimes, &SlowTask, &CompletedFrames](int32 FrameIndex, const FAbcFile* InAbcFile)
 				{
 					const bool bUseVelocitiesAsMotionVectors = (ImportSettings->GeometryCacheSettings.MotionVectors == EAbcGeometryCacheMotionVectorsImport::ImportAbcVelocitiesAsMotionVectors);
 					FGeometryCacheMeshData MeshData;
@@ -436,37 +430,42 @@ UGeometryCache* FAbcImporter::ImportAsGeometryCache(UObject* InParent, EObjectFl
 
 					int32 FrameTimeIndex = FrameIndex - ImportSettings->SamplingSettings.FrameStart;
 					AbcImporterUtilities::MergePolyMeshesToMeshData(FrameIndex, ImportSettings->SamplingSettings.FrameStart, AbcFile->GetSecondsPerFrame(), bUseVelocitiesAsMotionVectors,
-						PolyMeshes, UniqueFaceSetNames, FrameTimes[FrameTimeIndex], MeshData, PreviousNumVertices, bConstantTopology, bStoreImportedVertexNumbers);
+						PolyMeshes,
+						AbcFile->GetLookupMaterialSlot(),
+						FrameTimes[FrameTimeIndex],
+						MeshData, PreviousNumVertices, bConstantTopology, bStoreImportedVertexNumbers);
 					
-					const float FrameRate = static_cast<float>(InAbcFile->GetFramerate());
+					const float FrameRate = InAbcFile->GetFramerate();
 
 					// Convert frame times to frame numbers and back to time to avoid float imprecision
 					const float FrameTime = static_cast<float>(FMath::RoundToInt(FrameTimes[FrameTimeIndex] * FrameRate) - FMath::RoundToInt(InAbcFile->GetImportTimeOffset() * FrameRate)) / FrameRate;
 					Tracks[0]->AddMeshSample(MeshData, FrameTime, bConstantTopology);
 					
+					++CompletedFrames;
 					if (IsInGameThread())
 					{
-						SlowTask.EnterProgressFrame(1.0f);
+						SlowTask.EnterProgressFrame(CompletedFrames);
+						CompletedFrames = 0.0f;
 					}					
 				};
 
-				AbcFile->ProcessFrames(Callback, EFrameReadFlags::ApplyMatrix);
-
-				// Now add materials for all the face set names
-				for (const FString& FaceSetName : UniqueFaceSetNames)
+				if (!AbcFile->ProcessFrames(Callback, EFrameReadFlags::ApplyMatrix, &SlowTask))
 				{
-					UMaterialInterface* Material = AbcImporterUtilities::RetrieveMaterial(*AbcFile, FaceSetName, InParent, Flags);
-					GeometryCache->Materials.Add((Material != nullptr) ? Material : DefaultMaterial);		
-					GeometryCache->MaterialSlotNames.Add(FaceSetName != TEXT("DefaultMaterial") ? FName(FaceSetName) : NoFaceSetName);
+					UE_LOG(LogAbcImporter, Warning, TEXT("Alembic geometry cache import was interrupted"));
+				}
 
-					if (Material != UMaterial::GetDefaultMaterial(MD_Surface))
-					{
-						Material->PostEditChange();
-					}
+				// Now add materials for all the unique face set names
+				for (const FString& FaceSetName : AbcFile->GetUniqueFaceSetNames())
+				{
+					CreateMaterial(FaceSetName);
 				}
 			}
 			else
 			{
+				uint32 MaterialOffset = 0;
+				TArray<int32> MaterialOffsets;
+				TArray<FAbcPolyMesh*> ImportPolyMeshes;
+
 				const TArray<FAbcPolyMesh*>& PolyMeshes = AbcFile->GetPolyMeshes();
 				for (FAbcPolyMesh* PolyMesh : PolyMeshes)
 				{
@@ -489,25 +488,10 @@ UGeometryCache* FAbcImporter::ImportAsGeometryCache(UObject* InParent, EObjectFl
 						MaterialOffsets.Add(MaterialOffset);
 
 						// Add materials for this Mesh Object
-						const uint32 NumMaterials = (PolyMesh->FaceSetNames.Num() > 0) ? PolyMesh->FaceSetNames.Num() : 1;
+						const uint32 NumMaterials = PolyMesh->FaceSetNames.Num();
 						for (uint32 MaterialIndex = 0; MaterialIndex < NumMaterials; ++MaterialIndex)
 						{
-							UMaterialInterface* Material = nullptr;
-							if (PolyMesh->FaceSetNames.IsValidIndex(MaterialIndex))
-							{
-								Material = AbcImporterUtilities::RetrieveMaterial(*AbcFile, PolyMesh->FaceSetNames[MaterialIndex], InParent, Flags);
-								GeometryCache->MaterialSlotNames.Add(FName(PolyMesh->FaceSetNames[MaterialIndex]));
-								if (Material != UMaterial::GetDefaultMaterial(MD_Surface))
-								{
-									Material->PostEditChange();
-								}
-							}
-							else
-							{
-								GeometryCache->MaterialSlotNames.Add(NoFaceSetName);
-							}
-
-							GeometryCache->Materials.Add((Material != nullptr) ? Material : DefaultMaterial);
+							CreateMaterial(PolyMesh->FaceSetNames[MaterialIndex]);
 						}
 
 						MaterialOffset += NumMaterials;
@@ -515,7 +499,7 @@ UGeometryCache* FAbcImporter::ImportAsGeometryCache(UObject* InParent, EObjectFl
 				}
 
 				const int32 NumTracks = Tracks.Num();
-				TFunction<void(int32, FAbcFile*)> Callback = [this, NumTracks, &ImportPolyMeshes, &Tracks, &MaterialOffsets](int32 FrameIndex, const FAbcFile* InAbcFile)
+				TFunction<void(int32, FAbcFile*)> Callback = [this, NumTracks, &ImportPolyMeshes, &Tracks, &MaterialOffsets, &SlowTask, &CompletedFrames](int32 FrameIndex, const FAbcFile* InAbcFile)
 				{
 					const float FrameRate = static_cast<float>(InAbcFile->GetFramerate());
 					for (int32 TrackIndex = 0; TrackIndex < NumTracks; ++TrackIndex)
@@ -542,9 +526,19 @@ UGeometryCache* FAbcImporter::ImportAsGeometryCache(UObject* InParent, EObjectFl
 							Track->AddVisibilitySample(bVisible, FrameTime);
 						}
 					}
+
+					++CompletedFrames;
+					if (IsInGameThread())
+					{
+						SlowTask.EnterProgressFrame(CompletedFrames);
+						CompletedFrames = 0.0f;
+					}					
 				};
 
-				AbcFile->ProcessFrames(Callback, EFrameReadFlags::ApplyMatrix);
+				if (!AbcFile->ProcessFrames(Callback, EFrameReadFlags::ApplyMatrix, &SlowTask))
+				{
+					UE_LOG(LogAbcImporter, Warning, TEXT("Alembic geometry cache import was interrupted"));
+				}
 			}
 
 			TArray<FMatrix> Mats;
@@ -612,7 +606,8 @@ TArray<UObject*> FAbcImporter::ImportAsSkeletalMesh(UObject* InParent, EObjectFl
 	USkeletalMesh* ExistingSkeletalMesh = FindObject<USkeletalMesh>(InParent, *SanitizedObjectName);	
 	FSkinnedMeshComponentRecreateRenderStateContext* RecreateExistingRenderStateContext = ExistingSkeletalMesh ? new FSkinnedMeshComponentRecreateRenderStateContext(ExistingSkeletalMesh, false) : nullptr;
 	
-	USkeletalMesh* SkeletalMesh = CreateObjectInstance<USkeletalMesh>(InParent, ObjectName, Flags);
+	bool bMeshAlreadyExists = false;
+	USkeletalMesh* SkeletalMesh = CreateObjectInstance<USkeletalMesh>(InParent, ObjectName, Flags, bMeshAlreadyExists);
 
 	// Only import data if a valid object was created
 	if (SkeletalMesh)
@@ -622,7 +617,6 @@ TArray<UObject*> FAbcImporter::ImportAsSkeletalMesh(UObject* InParent, EObjectFl
 
 		// Retrieve the imported resource structure and allocate a new LOD model
 		FSkeletalMeshModel* ImportedModel = SkeletalMesh->GetImportedModel();
-		check(ImportedModel->LODModels.Num() == 0);
 		ImportedModel->LODModels.Empty();
 		ImportedModel->EmptyOriginalReductionSourceMeshData();
 		ImportedModel->LODModels.Add(new FSkeletalMeshLODModel());
@@ -638,20 +632,12 @@ TArray<UObject*> FAbcImporter::ImportAsSkeletalMesh(UObject* InParent, EObjectFl
 		const FTransform BoneTransform;
 		{
 			FReferenceSkeletonModifier RefSkelModifier(SkeletalMesh->GetRefSkeleton(), SkeletalMesh->GetSkeleton());
-			RefSkelModifier.Add(BoneInfo, BoneTransform);
+			if (RefSkelModifier.FindBoneIndex(BoneInfo.Name) == INDEX_NONE)
+			{
+				RefSkelModifier.Add(BoneInfo, BoneTransform);
+			}
 		}
 
-
-		FAbcMeshSample* MergedMeshSample = new FAbcMeshSample();
-		for (const FCompressedAbcData& Data : CompressedMeshData)
-		{
-			AbcImporterUtilities::AppendMeshSample(MergedMeshSample, Data.AverageSample);
-		}
-		
-		// Forced to 1
-		LODModel.NumTexCoords = MergedMeshSample->NumUVSets;
-		SkeletalMesh->SetHasVertexColors(true);
-		SkeletalMesh->SetVertexColorGuid(FGuid::NewGuid());
 
 		/* Bounding box according to animation */
 		SkeletalMesh->SetImportedBounds(AbcFile->GetArchiveBounds().GetBox());
@@ -659,9 +645,27 @@ TArray<UObject*> FAbcImporter::ImportAsSkeletalMesh(UObject* InParent, EObjectFl
 		bool bBuildSuccess = false;
 		TArray<int32> MorphTargetVertexRemapping;
 		TArray<int32> UsedVertexIndicesForMorphs;
-		MergedMeshSample->TangentX.Empty();
-		MergedMeshSample->TangentY.Empty();
-		bBuildSuccess = BuildSkeletalMesh(LODModel, SkeletalMesh->GetRefSkeleton(), MergedMeshSample, MorphTargetVertexRemapping, UsedVertexIndicesForMorphs);
+
+		{
+			FAbcMeshSample MergedMeshSample; // Temporary mesh
+			for (const FCompressedAbcData& Data : CompressedMeshData)
+			{
+				AbcImporterUtilities::AppendMeshSample(&MergedMeshSample, Data.AverageSample);
+			}
+
+			MergedMeshSample.TangentX.Empty();
+			MergedMeshSample.TangentY.Empty();
+
+			// Forced to 1
+			LODModel.NumTexCoords = MergedMeshSample.NumUVSets;
+			SkeletalMesh->SetHasVertexColors(true);
+			SkeletalMesh->SetVertexColorGuid(FGuid::NewGuid());
+
+			bBuildSuccess = BuildSkeletalMesh(LODModel, SkeletalMesh->GetRefSkeleton(), &MergedMeshSample,
+				AbcFile->GetNumMaterialSlots(),
+				AbcFile->GetLookupMaterialSlot(),
+				MorphTargetVertexRemapping, UsedVertexIndicesForMorphs);
+		}
 
 		if (!bBuildSuccess)
 		{
@@ -671,10 +675,11 @@ TArray<UObject*> FAbcImporter::ImportAsSkeletalMesh(UObject* InParent, EObjectFl
 
 		// Create the skeleton object
 		FString SkeletonName = FString::Printf(TEXT("%s_Skeleton"), *SkeletalMesh->GetName());
-		USkeleton* Skeleton = CreateObjectInstance<USkeleton>(InParent, SkeletonName, Flags);
+		bool bSkeletonAlreadyExists = false;
+		USkeleton* Skeleton = CreateObjectInstance<USkeleton>(InParent, SkeletonName, Flags, bSkeletonAlreadyExists);
 
 		// Merge bones to the selected skeleton
-		check(Skeleton->MergeAllBonesToBoneTree(SkeletalMesh));
+		ensure(Skeleton->MergeAllBonesToBoneTree(SkeletalMesh));
 		Skeleton->MarkPackageDirty();
 		if (SkeletalMesh->GetSkeleton() != Skeleton)
 		{
@@ -683,7 +688,8 @@ TArray<UObject*> FAbcImporter::ImportAsSkeletalMesh(UObject* InParent, EObjectFl
 		}
 
 		// Create animation sequence for the skeleton
-		UAnimSequence* Sequence = CreateObjectInstance<UAnimSequence>(InParent, FString::Printf(TEXT("%s_Animation"), *SkeletalMesh->GetName()), Flags);
+		bool bSequenceAlreadyExists = false;
+		UAnimSequence* Sequence = CreateObjectInstance<UAnimSequence>(InParent, FString::Printf(TEXT("%s_Animation"), *SkeletalMesh->GetName()), Flags, bSequenceAlreadyExists);
 		Sequence->SetSkeleton(Skeleton);
 
 		int32 ObjectIndex = 0;
@@ -693,23 +699,22 @@ TArray<UObject*> FAbcImporter::ImportAsSkeletalMesh(UObject* InParent, EObjectFl
 
 		IAnimationDataController& Controller = Sequence->GetController();
 
-		Controller.OpenBracket(LOCTEXT("ImportAsSkeletalMesh", "Importing Alembic Animation"));
+		const bool bShouldTransact = bSequenceAlreadyExists;
+		Controller.OpenBracket(LOCTEXT("ImportAsSkeletalMesh", "Importing Alembic Animation"), bShouldTransact);
 		Controller.InitializeModel();
 
-		const FFrameRate FrameRate(AbcFile->GetFramerate(), 1);
-		Controller.SetFrameRate(FrameRate);	
+		const FFrameRate FrameRate(FMath::RoundToInt(AbcFile->GetFramerate()), 1);
+		Controller.SetFrameRate(FrameRate, bShouldTransact);	
 		const FFrameNumber FrameNumber = FrameRate.AsFrameNumber(AbcFile->GetImportLength());
-		Controller.SetNumberOfFrames(FrameNumber);
+		Controller.SetNumberOfFrames(FrameNumber, bShouldTransact);
 
 		Sequence->ImportFileFramerate = static_cast<float>(FrameRate.AsDecimal());
 		Sequence->ImportResampleFramerate = static_cast<int32>(FrameRate.AsInterval());
 
 		{
-#if WITH_EDITOR
 			// When ScopedPostEditChange goes out of scope, it will call SkeletalMesh->PostEditChange()
 			// while preventing any call to that within the scope
 			FScopedSkeletalMeshPostEditChange ScopedPostEditChange(SkeletalMesh);
-#endif
 
 			for (FCompressedAbcData& CompressedData : CompressedMeshData)
 			{
@@ -750,7 +755,7 @@ TArray<UObject*> FAbcImporter::ImportAsSkeletalMesh(UObject* InParent, EObjectFl
 							FName ConstCurveName = *CurveName;
 
 							// Sets up the morph target curves with the sample values and time keys
-							SetupMorphTargetCurves(Skeleton, ConstCurveName, Sequence, CurveValues, TimeValues, Controller);
+							SetupMorphTargetCurves(Skeleton, ConstCurveName, Sequence, CurveValues, TimeValues, Controller, bShouldTransact);
 						}
 						else
 						{
@@ -761,18 +766,6 @@ TArray<UObject*> FAbcImporter::ImportAsSkeletalMesh(UObject* InParent, EObjectFl
 
 				WedgeOffset += CompressedData.AverageSample->Indices.Num();
 				VertexOffset += CompressedData.AverageSample->Vertices.Num();
-
-				const uint32 NumMaterials = CompressedData.MaterialNames.Num();
-				for (uint32 MaterialIndex = 0; MaterialIndex < NumMaterials; ++MaterialIndex)
-				{
-					const FString& MaterialName = CompressedData.MaterialNames[MaterialIndex];
-					UMaterialInterface* Material = AbcImporterUtilities::RetrieveMaterial(*AbcFile, MaterialName, InParent, Flags);
-					SkeletalMesh->GetMaterials().Add(FSkeletalMaterial(Material, true, false, FName(MaterialName), FName(MaterialName)));
-					if (Material != UMaterial::GetDefaultMaterial(MD_Surface))
-					{
-						Material->PostEditChange();
-					}
-				}
 
 				++ObjectIndex;
 			}
@@ -800,8 +793,8 @@ TArray<UObject*> FAbcImporter::ImportAsSkeletalMesh(UObject* InParent, EObjectFl
 				const FReferenceSkeleton& RefSkeleton = SkeletalMesh->GetRefSkeleton();
 				const TArray<FMeshBoneInfo>& BonesInfo = RefSkeleton.GetRawRefBoneInfo();
 				
-				Controller.AddBoneCurve(BonesInfo[0].Name);
-				Controller.SetBoneTrackKeys(BonesInfo[0].Name, RootBoneTrack.PosKeys, RootBoneTrack.RotKeys, RootBoneTrack.ScaleKeys);
+				Controller.AddBoneCurve(BonesInfo[0].Name, bShouldTransact);
+				Controller.SetBoneTrackKeys(BonesInfo[0].Name, RootBoneTrack.PosKeys, RootBoneTrack.RotKeys, RootBoneTrack.ScaleKeys, bShouldTransact);
 			}
 
 			// Set recompute tangent flag on skeletal mesh sections
@@ -813,11 +806,31 @@ TArray<UObject*> FAbcImporter::ImportAsSkeletalMesh(UObject* InParent, EObjectFl
 			SkeletalMesh->CalculateInvRefMatrices();
 		}
 
+		UMaterial* DefaultMaterial = UMaterial::GetDefaultMaterial(MD_Surface);
+		check(DefaultMaterial);
+
+		// Build the material slots : one for each faceset
+		for (const FString& FaceSetName : AbcFile->GetUniqueFaceSetNames())
+		{
+			UMaterialInterface* Material = AbcImporterUtilities::RetrieveMaterial(*AbcFile, FaceSetName, InParent, Flags);
+			if (Material == nullptr)
+			{
+				Material = DefaultMaterial;
+			}
+			else if (Material != DefaultMaterial)
+			{
+				Material->PostEditChange();
+			}
+
+			FName MaterialName(*FaceSetName);
+			SkeletalMesh->GetMaterials().Add(FSkeletalMaterial(Material, true, false, MaterialName, MaterialName));
+		}
+
 		SkeletalMesh->MarkPackageDirty();
 
 		Controller.NotifyPopulated();
 
-		Controller.CloseBracket();
+		Controller.CloseBracket(bShouldTransact);
 
 		Sequence->PostEditChange();
 		Sequence->SetPreviewMesh(SkeletalMesh);
@@ -846,7 +859,7 @@ TArray<UObject*> FAbcImporter::ImportAsSkeletalMesh(UObject* InParent, EObjectFl
 	return GeneratedObjects;
 }
 
-void FAbcImporter::SetupMorphTargetCurves(USkeleton* Skeleton, FName ConstCurveName, UAnimSequence* Sequence, const TArray<float> &CurveValues, const TArray<float>& TimeValues, IAnimationDataController& Controller)
+void FAbcImporter::SetupMorphTargetCurves(USkeleton* Skeleton, FName ConstCurveName, UAnimSequence* Sequence, const TArray<float> &CurveValues, const TArray<float>& TimeValues, IAnimationDataController& Controller, bool bShouldTransact)
 {
 	// Need curve metadata for the AnimSequence to playback. Can be either on the Skeleton or SKelMesh,
 	// but by default for FBX import it's on the Skeleton so do the same for Alembic
@@ -855,7 +868,7 @@ void FAbcImporter::SetupMorphTargetCurves(USkeleton* Skeleton, FName ConstCurveN
 	Skeleton->AccumulateCurveMetaData(ConstCurveName, bMaterialCurve, bMorphTargetCurve);
 
 	FAnimationCurveIdentifier CurveId(ConstCurveName, ERawCurveTrackTypes::RCT_Float);
-	Controller.AddCurve(CurveId);
+	Controller.AddCurve(CurveId, EAnimAssetCurveFlags::AACF_Editable, bShouldTransact);
 
 	const FFloatCurve* NewCurve = Sequence->GetDataModel()->FindFloatCurve(CurveId);
 	ensure(NewCurve);
@@ -877,7 +890,7 @@ void FAbcImporter::SetupMorphTargetCurves(USkeleton* Skeleton, FName ConstCurveN
 		RichCurve.SetKeyTangentWeightMode(NewKeyHandle, NewTangentWeightMode);
 	}
 
-	Controller.SetCurveKeys(CurveId, RichCurve.GetConstRefOfKeys());
+	Controller.SetCurveKeys(CurveId, RichCurve.GetConstRefOfKeys(), bShouldTransact);
 }
 
 void FAbcImporter::SetMetaData(const TArray<UObject*>& Objects)
@@ -933,10 +946,14 @@ const bool FAbcImporter::CompressAnimationDataUsingPCA(const FAbcCompressionSett
 			float MaxTime = -FLT_MAX;
 			int32 NumSamples = 0;
 
+			TUniquePtr<FScopedSlowTask> SlowTask = MakeUnique<FScopedSlowTask>(static_cast<float>((ImportSettings->SamplingSettings.FrameEnd + 1) - ImportSettings->SamplingSettings.FrameStart + 1), FText::FromString(FString(TEXT("Merging meshes"))));
+			SlowTask->MakeDialog(true);
+
 			TArray<uint32> ObjectVertexOffsets;
 			TArray<uint32> ObjectIndexOffsets;
+			float CompletedFrames = 0.0f;
 			TFunction<void(int32, FAbcFile*)> MergedMeshesFunc =
-				[this, PolyMeshesToCompress, &MinTime, &MaxTime, &NumSamples, &ObjectVertexOffsets, &ObjectIndexOffsets, &AverageVertexData, &AverageNormalData, NumPolyMeshesToCompress]
+				[this, PolyMeshesToCompress, &MinTime, &MaxTime, &NumSamples, &ObjectVertexOffsets, &ObjectIndexOffsets, &AverageVertexData, &AverageNormalData, NumPolyMeshesToCompress, &SlowTask, &CompletedFrames]
 				(int32 FrameIndex, FAbcFile* InFile)
 				{
 					const float FrameRate = static_cast<float>(AbcFile->GetFramerate());
@@ -971,6 +988,13 @@ const bool FAbcImporter::CompressAnimationDataUsingPCA(const FAbcCompressionSett
 					}
 
 					++NumSamples;
+					++CompletedFrames;
+
+					if (IsInGameThread())
+					{
+						SlowTask->EnterProgressFrame(CompletedFrames);
+						CompletedFrames = 0.0f;
+					}					
 				};
 
 			EFrameReadFlags Flags = EFrameReadFlags::PositionAndNormalOnly;
@@ -987,19 +1011,41 @@ const bool FAbcImporter::CompressAnimationDataUsingPCA(const FAbcCompressionSett
 
 				const int32 NumFrames = AbcFile->GetEndFrameIndex() - AbcFile->GetStartFrameIndex() + 1;
 				const uint64 NumMatrixElements = uint64(AverageVertexData.Num()) * 3 * NumFrames;
+				bool bTriggerWarning = false;
+				int32 NumElementsWarning = 0;
+				uint64 NumMatrixElementsWarning = 0;
 				if (!IntFitsIn<int32>(NumMatrixElements))
 				{
-					UE_LOG(LogAbcImporter, Error, TEXT("Vertex matrix has too many elements (%llu) because the mesh has too many vertices (%d) and/or the animation has too many frames (%d). Try importing as GeometryCache instead."),
-						NumMatrixElements, AverageVertexData.Num(), NumFrames);
-					return false;
+					NumElementsWarning = AverageVertexData.Num();
+					NumMatrixElementsWarning = NumMatrixElements;
+					bTriggerWarning = true;
 				}
 
 				const uint64 NumNormalsMatrixElements = uint64(AverageNormalData.Num()) * 3 * NumFrames;
 				if (!IntFitsIn<int32>(NumNormalsMatrixElements))
 				{
-					UE_LOG(LogAbcImporter, Error, TEXT("Normal matrix has too many elements (%llu) because the mesh has too many vertices (%d) and/or the animation has too many frames (%d). Try importing as GeometryCache instead."),
-						NumNormalsMatrixElements, AverageNormalData.Num(), NumFrames);
+					if (AverageNormalData.Num() > NumElementsWarning || NumNormalsMatrixElements > NumMatrixElementsWarning)
+					{
+						NumElementsWarning = AverageNormalData.Num();
+						NumMatrixElementsWarning = NumNormalsMatrixElements;
+					}
+					bTriggerWarning = true;
+				}
+
+				if (bTriggerWarning)
+				{
+					UE_LOG(LogAbcImporter, Warning, TEXT("Vertex matrix has %llu elements because the mesh has %d vertices and the animation has %d frames. This can cause the import to take a long time and use a lot of memory."),
+						NumMatrixElementsWarning, NumElementsWarning, NumFrames);
+
+					const FText Title = LOCTEXT("AbcSkelMeshImportWarningTitle", "Proceed with import?");
+					const FText Message = LOCTEXT("AbcSkelMeshImportWarningMessage", "Warning: Due to the mesh size and animation length, the import may take a long time and may run out of memory and crash. Do you want to continue?\n"
+						"If not, you may try reducing the animation import range (will use less memory) or use No Compression as the Base Calculation Type (faster, but will use more memory) or import as Geometry Cache.");
+
+					const EAppReturnType::Type DialogResponse = FMessageDialog::Open(EAppMsgType::OkCancel, EAppReturnType::Ok, Message, Title);
+					if (DialogResponse != EAppReturnType::Ok)
+					{
 					return false;
+				}
 				}
 
 				AverageVertexData.Reset();
@@ -1012,7 +1058,12 @@ const bool FAbcImporter::CompressAnimationDataUsingPCA(const FAbcCompressionSett
 				NumSamples = 0;
 			}
 
-			AbcFile->ProcessFrames(MergedMeshesFunc, Flags);
+			if (!AbcFile->ProcessFrames(MergedMeshesFunc, Flags, SlowTask.Get()))
+			{
+				UE_LOG(LogAbcImporter, Warning, TEXT("Alembic skeletal mesh import was interrupted"));
+				return false;
+			}
+			SlowTask.Reset();
 
 			// Average out vertex data
 			FBox AverageBoundingBox(ForceInit);
@@ -1037,17 +1088,6 @@ const bool FAbcImporter::CompressAnimationDataUsingPCA(const FAbcCompressionSett
 			for (FAbcPolyMesh* PolyMesh : PolyMeshesToCompress)
 			{
 				AbcImporterUtilities::AppendMeshSample(&MergedZeroFrameSample, PolyMesh->GetTransformedFirstSample());
-
-				// QQ FUNCTIONALIZE
-				// Add material names from this mesh object
-				if (PolyMesh->FaceSetNames.Num() > 0)
-				{
-					CompressedData.MaterialNames.Append(PolyMesh->FaceSetNames);
-				}
-				else
-				{
-					CompressedData.MaterialNames.Add(NoFaceSetNameStr);
-				}
 			}
 
 			const uint32 NumVertices = AverageVertexData.Num();
@@ -1055,10 +1095,10 @@ const bool FAbcImporter::CompressAnimationDataUsingPCA(const FAbcCompressionSett
 			const uint32 NumIndices = AverageNormalData.Num();
 			const uint32 NumNormalsMatrixRows = NumIndices * 3;
 
-			TArray<float> OriginalMatrix;
+			TArray64<float> OriginalMatrix;
 			OriginalMatrix.AddZeroed(NumMatrixRows * NumSamples);
 
-			TArray<float> OriginalNormalsMatrix;
+			TArray64<float> OriginalNormalsMatrix;
 			OriginalNormalsMatrix.AddZeroed(NumNormalsMatrixRows * NumSamples);
 
 			if (bEnableSamplesOffsets)
@@ -1067,10 +1107,15 @@ const bool FAbcImporter::CompressAnimationDataUsingPCA(const FAbcCompressionSett
 				SamplesOffsets.GetValue().AddZeroed(NumSamples);
 			}
 
+			SlowTask = MakeUnique<FScopedSlowTask>(static_cast<float>((ImportSettings->SamplingSettings.FrameEnd + 1) - ImportSettings->SamplingSettings.FrameStart), FText::FromString(FString(TEXT("Generating matrices"))));
+			SlowTask->MakeDialog(true);
+
+			CompletedFrames = 0.0f;
+
 			uint32 GenerateMatrixSampleIndex = 0;
 			TFunction<void(int32, FAbcFile*)> GenerateMatrixFunc =
 				[this, PolyMeshesToCompress, NumPolyMeshesToCompress, &OriginalMatrix, &OriginalNormalsMatrix, &AverageVertexData, &AverageNormalData, &NumSamples,
-					&ObjectVertexOffsets, &ObjectIndexOffsets, &GenerateMatrixSampleIndex, &AverageSampleCenter]
+					&ObjectVertexOffsets, &ObjectIndexOffsets, &GenerateMatrixSampleIndex, &AverageSampleCenter, &SlowTask, &CompletedFrames]
 				(int32 FrameIndex, FAbcFile* InFile)
 				{
 					FVector SampleOffset = FVector::ZeroVector;
@@ -1105,14 +1150,26 @@ const bool FAbcImporter::CompressAnimationDataUsingPCA(const FAbcCompressionSett
 					}
 
 					++GenerateMatrixSampleIndex;
+					++CompletedFrames;
+
+					if (IsInGameThread())
+					{
+						SlowTask->EnterProgressFrame(CompletedFrames);
+						CompletedFrames = 0.0f;
+					}					
 				};
 
-			AbcFile->ProcessFrames(GenerateMatrixFunc, Flags);
+			if (!AbcFile->ProcessFrames(GenerateMatrixFunc, Flags, SlowTask.Get()))
+			{
+				UE_LOG(LogAbcImporter, Warning, TEXT("Alembic skeletal mesh import was interrupted"));
+				return false;
+			}
+			SlowTask.Reset();
 
 			// Perform compression
-			TArray<float> OutU, OutV, OutNormalsU;
-			TArrayView<float> BasesMatrix;
-			TArrayView<float> NormalsBasesMatrix;
+			TArray64<float> OutU, OutV, OutNormalsU;
+			TArrayView64<float> BasesMatrix;
+			TArrayView64<float> NormalsBasesMatrix;
 			uint32 NumUsedSingularValues = NumSamples;
 
 			if (InCompressionSettings.BaseCalculationType != EBaseCalculationType::NoCompression)
@@ -1173,10 +1230,13 @@ const bool FAbcImporter::CompressAnimationDataUsingPCA(const FAbcCompressionSett
 			AverageVertexData.AddDefaulted(NumPolyMeshesToCompress);
 			AverageNormalData.AddDefaulted(NumPolyMeshesToCompress);
 			
+			TUniquePtr<FScopedSlowTask> SlowTask = MakeUnique<FScopedSlowTask>(static_cast<float>((ImportSettings->SamplingSettings.FrameEnd + 1) - ImportSettings->SamplingSettings.FrameStart + 1), FText::FromString(FString(TEXT("Processing meshes"))));
+			SlowTask->MakeDialog(true);
 			
 			int32 NumSamples = 0;
+			float CompletedFrames = 0.0f;
 			TFunction<void(int32, FAbcFile*)> IndividualMeshesFunc =
-				[this, NumPolyMeshesToCompress, &PolyMeshesToCompress, &MinTimes, &MaxTimes, &NumSamples, &AverageVertexData, &AverageNormalData]
+				[this, NumPolyMeshesToCompress, &PolyMeshesToCompress, &MinTimes, &MaxTimes, &NumSamples, &AverageVertexData, &AverageNormalData, &SlowTask, &CompletedFrames]
 				(int32 FrameIndex, FAbcFile* InFile)
 			{
 				const float FrameRate = static_cast<float>(AbcFile->GetFramerate());
@@ -1224,6 +1284,13 @@ const bool FAbcImporter::CompressAnimationDataUsingPCA(const FAbcCompressionSett
 				}
 
 				++NumSamples;
+				++CompletedFrames;
+
+				if (IsInGameThread())
+				{
+					SlowTask->EnterProgressFrame(CompletedFrames);
+					CompletedFrames = 0.0f;
+				}					
 			};
 
 			EFrameReadFlags Flags = EFrameReadFlags::PositionAndNormalOnly;
@@ -1239,21 +1306,42 @@ const bool FAbcImporter::CompressAnimationDataUsingPCA(const FAbcCompressionSett
 				AbcFile->CleanupFrameData(0);
 
 				const int32 NumFrames = AbcFile->GetEndFrameIndex() - AbcFile->GetStartFrameIndex() + 1;
+				bool bTriggerWarning = false;
+				int32 NumElementsWarning = 0;
+				uint64 NumMatrixElementsWarning = 0;
 				for (int32 MeshIndex = 0; MeshIndex < NumPolyMeshesToCompress; ++MeshIndex)
 				{
 					const uint64 NumMatrixElements = uint64(AverageVertexData[MeshIndex].Num()) * 3 * NumFrames;
 					if (!IntFitsIn<int32>(NumMatrixElements))
 					{
-						UE_LOG(LogAbcImporter, Error, TEXT("Vertex matrix has too many elements (%llu) because the mesh has too many vertices (%d) and/or the animation has too many frames (%d). Try importing as GeometryCache instead."),
-						NumMatrixElements, AverageVertexData[MeshIndex].Num(), NumFrames);
-						return false;
+						NumElementsWarning = AverageVertexData[MeshIndex].Num();
+						NumMatrixElementsWarning = NumMatrixElements;
+						bTriggerWarning = true;
+						break;
 					}
 
 					const uint64 NumNormalsMatrixElements = uint64(AverageNormalData[MeshIndex].Num()) * 3 * NumFrames;
 					if (!IntFitsIn<int32>(NumNormalsMatrixElements))
 					{
-						UE_LOG(LogAbcImporter, Error, TEXT("Normal matrix has too many elements (%llu) because the mesh has too many vertices (%d) and/or the animation has too many frames (%d). Try importing as GeometryCache instead."),
-						NumNormalsMatrixElements, AverageNormalData[MeshIndex].Num(), NumFrames);
+						NumElementsWarning = AverageNormalData[MeshIndex].Num();
+						NumMatrixElementsWarning = NumNormalsMatrixElements;
+						bTriggerWarning = true;
+						break;
+					}
+				}
+
+				if (bTriggerWarning)
+				{
+					UE_LOG(LogAbcImporter, Warning, TEXT("Vertex matrix has %llu elements because the mesh has %d vertices and the animation has %d frames. This can cause the import to take a long time and use a lot of memory."),
+						NumMatrixElementsWarning, NumElementsWarning, NumFrames);
+
+					const FText Title = LOCTEXT("AbcSkelMeshImportWarningTitle", "Proceed with import?");
+					const FText Message = LOCTEXT("AbcSkelMeshImportWarningMessage", "Warning: Due to the mesh size and animation length, the import may take a long time and may run out of memory and crash. Do you want to continue?\n"
+						"If not, you may try reducing the animation import range (will use less memory) or use No Compression as the Base Calculation Type (faster, but will use more memory) or import as Geometry Cache.");
+
+					const EAppReturnType::Type DialogResponse = FMessageDialog::Open(EAppMsgType::OkCancel, EAppReturnType::Ok, Message, Title);
+					if (DialogResponse != EAppReturnType::Ok)
+					{
 						return false;
 					}
 				}
@@ -1271,7 +1359,12 @@ const bool FAbcImporter::CompressAnimationDataUsingPCA(const FAbcCompressionSett
 				NumSamples = 0;
 			}
 
-			AbcFile->ProcessFrames(IndividualMeshesFunc, Flags);
+			if (!AbcFile->ProcessFrames(IndividualMeshesFunc, Flags, SlowTask.Get()))
+			{
+				UE_LOG(LogAbcImporter, Warning, TEXT("Alembic skeletal mesh import was interrupted"));
+				return false;
+			}
+			SlowTask.Reset();
 
 			// Average out vertex data
 			FBox AverageBoundingBox(ForceInit);
@@ -1286,15 +1379,15 @@ const bool FAbcImporter::CompressAnimationDataUsingPCA(const FAbcCompressionSett
 			}
 			const FVector AverageSampleCenter = AverageBoundingBox.GetCenter();
 
-			TArray<TArray<float>> Matrices;
-			TArray<TArray<float>> NormalsMatrices;
+			TArray<TArray64<float>> Matrices;
+			TArray<TArray64<float>> NormalsMatrices;
 			for (int32 MeshIndex = 0; MeshIndex < NumPolyMeshesToCompress; ++MeshIndex)
 			{
 				Matrices.AddDefaulted();
-				Matrices[MeshIndex].AddZeroed(AverageVertexData[MeshIndex].Num() * 3 * NumSamples);
+				Matrices[MeshIndex].AddZeroed(int64(AverageVertexData[MeshIndex].Num()) * 3 * NumSamples);
 
 				NormalsMatrices.AddDefaulted();
-				NormalsMatrices[MeshIndex].AddZeroed(AverageNormalData[MeshIndex].Num() * 3 * NumSamples);
+				NormalsMatrices[MeshIndex].AddZeroed(int64(AverageNormalData[MeshIndex].Num()) * 3 * NumSamples);
 			}
 
 			if (bEnableSamplesOffsets)
@@ -1308,10 +1401,14 @@ const bool FAbcImporter::CompressAnimationDataUsingPCA(const FAbcCompressionSett
 				SamplesOffsets.Emplace();
 				SamplesOffsets.GetValue().AddDefaulted(NumSamples);
 			}
+
+			SlowTask = MakeUnique<FScopedSlowTask>(static_cast<float>((ImportSettings->SamplingSettings.FrameEnd + 1) - ImportSettings->SamplingSettings.FrameStart), FText::FromString(FString(TEXT("Generating matrices"))));
+			SlowTask->MakeDialog(true);
 
 			uint32 GenerateMatrixSampleIndex = 0;
+			CompletedFrames = 0.0f;
 			TFunction<void(int32, FAbcFile*)> GenerateMatrixFunc =
-				[this, NumPolyMeshesToCompress, &Matrices, &NormalsMatrices, &GenerateMatrixSampleIndex, &PolyMeshesToCompress, &AverageVertexData, &AverageNormalData, &AverageSampleCenter]
+				[this, NumPolyMeshesToCompress, &Matrices, &NormalsMatrices, &GenerateMatrixSampleIndex, &PolyMeshesToCompress, &AverageVertexData, &AverageNormalData, &AverageSampleCenter, &SlowTask, &CompletedFrames]
 				(int32 FrameIndex, FAbcFile* InFile)
 				{
 					// Compute on bounding box for the sample, which will include all the meshes
@@ -1353,16 +1450,28 @@ const bool FAbcImporter::CompressAnimationDataUsingPCA(const FAbcCompressionSett
 					}
 
 					++GenerateMatrixSampleIndex;
+					++CompletedFrames;
+
+					if (IsInGameThread())
+					{
+						SlowTask->EnterProgressFrame(CompletedFrames);
+						CompletedFrames = 0.0f;
+					}					
 				};
 
-			AbcFile->ProcessFrames(GenerateMatrixFunc, Flags);
+			if (!AbcFile->ProcessFrames(GenerateMatrixFunc, Flags, SlowTask.Get()))
+			{
+				UE_LOG(LogAbcImporter, Warning, TEXT("Alembic skeletal mesh import was interrupted"));
+				return false;
+			}
+			SlowTask.Reset();
 
 			for (int32 MeshIndex = 0; MeshIndex < NumPolyMeshesToCompress; ++MeshIndex)
 			{
 				// Perform compression
-				TArray<float> OutU, OutV, OutNormalsU;
-				TArrayView<float> BasesMatrix;
-				TArrayView<float> NormalsBasesMatrix;
+				TArray64<float> OutU, OutV, OutNormalsU;
+				TArrayView64<float> BasesMatrix;
+				TArrayView64<float> NormalsBasesMatrix;
 
 				const int32 NumVertices = AverageVertexData[MeshIndex].Num();
 				const int32 NumIndices = AverageNormalData[MeshIndex].Num();
@@ -1411,17 +1520,6 @@ const bool FAbcImporter::CompressAnimationDataUsingPCA(const FAbcCompressionSett
 				const float FrameStep = (MaxTimes[MeshIndex] - MinTimes[MeshIndex]) / (float)(NumSamples - 1);
 				AbcImporterUtilities::GenerateCompressedMeshData(CompressedData, NumUsedSingularValues, NumSamples, BasesMatrix, NormalsBasesMatrix, OutV, FrameStep, FMath::Max(MinTimes[MeshIndex], 0.0f));
 
-				// QQ FUNCTIONALIZE
-				// Add material names from this mesh object
-				if (PolyMeshesToCompress[MeshIndex]->FaceSetNames.Num() > 0)
-				{
-					CompressedData.MaterialNames.Append(PolyMeshesToCompress[MeshIndex]->FaceSetNames);
-				}
-				else
-				{
-					CompressedData.MaterialNames.Add(NoFaceSetNameStr);
-				}
-
 				if (bRunComparison)
 				{
 					CompareCompressionResult(Matrices[MeshIndex], NumSamples, NumUsedSingularValues, BasesMatrix, OutV, THRESH_POINTS_ARE_SAME);
@@ -1452,41 +1550,30 @@ const bool FAbcImporter::CompressAnimationDataUsingPCA(const FAbcCompressionSett
 		{
 			CompressedData.AverageSample = new FAbcMeshSample(*ConstantPolyMesh->GetFirstSample());
 		}
-
-		// QQ FUNCTIONALIZE
-		// Add material names from this mesh object
-		if (ConstantPolyMesh->FaceSetNames.Num() > 0)
-		{
-			CompressedData.MaterialNames.Append(ConstantPolyMesh->FaceSetNames);
-		}
-		else
-		{
-			CompressedData.MaterialNames.Add(NoFaceSetNameStr);
-		}
 	}
 		
 	return bResult;
 }
 
-void FAbcImporter::CompareCompressionResult(const TArray<float>& OriginalMatrix, const uint32 NumSamples, const uint32 NumUsedSingularValues, const TArrayView<float>& OutU, const TArray<float>& OutV, const float Tolerance)
+void FAbcImporter::CompareCompressionResult(const TArray64<float>& OriginalMatrix, const uint32 NumSamples, const uint32 NumUsedSingularValues, const TArrayView64<float>& OutU, const TArray64<float>& OutV, const float Tolerance)
 {
 	if (NumSamples == 0)
 	{
 		return;
 	}
 
-	const uint32 NumRows = OriginalMatrix.Num() / NumSamples;
+	const uint32 NumRows = IntCastChecked<uint32>(OriginalMatrix.Num() / NumSamples);
 
-	TArray<float> ComparisonMatrix;
+	TArray64<float> ComparisonMatrix;
 	ComparisonMatrix.AddZeroed(OriginalMatrix.Num());
 	for (uint32 SampleIndex = 0; SampleIndex < NumSamples; ++SampleIndex)
 	{
-		const int32 SampleOffset = (SampleIndex * NumRows);
-		const int32 CurveOffset = (SampleIndex * NumUsedSingularValues);
+		const int64 SampleOffset = (int64(SampleIndex) * NumRows);
+		const int64 CurveOffset = (int64(SampleIndex) * NumUsedSingularValues);
 		for (uint32 BaseIndex = 0; BaseIndex < NumUsedSingularValues; ++BaseIndex)
 		{
-			const int32 BaseOffset = (BaseIndex * NumRows);
-			for (uint32 RowIndex = 0; RowIndex < NumRows; RowIndex++)
+			const int64 BaseOffset = (int64(BaseIndex) * NumRows);
+			for (uint32 RowIndex = 0; RowIndex < NumRows; ++RowIndex)
 			{
 				ComparisonMatrix[RowIndex + SampleOffset] += OutU[RowIndex + BaseOffset] * OutV[BaseIndex + CurveOffset];
 			}
@@ -1494,30 +1581,34 @@ void FAbcImporter::CompareCompressionResult(const TArray<float>& OriginalMatrix,
 	}
 
 	// Compare arrays
-	for (int32 i = 0; i < ComparisonMatrix.Num(); ++i)
+	for (int64 i = 0; i < ComparisonMatrix.Num(); ++i)
 	{
 		ensureMsgf(FMath::IsNearlyEqual(OriginalMatrix[i], ComparisonMatrix[i], Tolerance), TEXT("Difference of %2.10f found"), FMath::Abs(OriginalMatrix[i] - ComparisonMatrix[i]));
 	}
 }
 
-const int32 FAbcImporter::PerformSVDCompression(const TArray<float>& OriginalMatrix, const TArray<float>& OriginalNormalsMatrix, const uint32 NumSamples, const float InPercentage, const int32 InFixedNumValue,
-	TArray<float>& OutU, TArray<float>& OutNormalsU, TArray<float>& OutV)
+const int32 FAbcImporter::PerformSVDCompression(const TArray64<float>& OriginalMatrix, const TArray64<float>& OriginalNormalsMatrix, const uint32 NumSamples, const float InPercentage, const int32 InFixedNumValue,
+	TArray64<float>& OutU, TArray64<float>& OutNormalsU, TArray64<float>& OutV)
 {
-	const int32 NumRows = OriginalMatrix.Num() / NumSamples;
+	FScopedSlowTask SlowTask(4.0f, FText::FromString(FString(TEXT("Decomposing animation"))));
+	SlowTask.MakeDialog();
 
-	TArray<float> OutS;
+	const int32 NumRows = IntCastChecked<int32>(OriginalMatrix.Num() / NumSamples);
+
+	TArray64<float> OutS;
 	EigenHelpers::PerformSVD(OriginalMatrix, NumRows, NumSamples, OutU, OutV, OutS);
+	SlowTask.EnterProgressFrame(1.0f);
 
 	// Now we have the new basis data we have to construct the correct morph target data and curves
 	const float PercentageBasesUsed = InPercentage;
-	const int32 NumNonZeroSingularValues = OutS.Num();
-	const int32 NumUsedSingularValues = (InFixedNumValue != 0) ? FMath::Min(InFixedNumValue, (int32)OutS.Num()) : (int32)((float)NumNonZeroSingularValues * PercentageBasesUsed);
+	const int32 NumNonZeroSingularValues = IntCastChecked<int32>(OutS.Num());
+	const int32 NumUsedSingularValues = (InFixedNumValue != 0) ? FMath::Min(InFixedNumValue, NumNonZeroSingularValues) : (int32)((float)NumNonZeroSingularValues * PercentageBasesUsed);
 
 	// Pre-multiply the bases with it's singular values
-	ParallelFor(NumUsedSingularValues, [&](int32 ValueIndex)
+	ParallelFor(NumUsedSingularValues, [&](int64 ValueIndex)
 	{
 		const float Multiplier = OutS[ValueIndex];
-		const int32 ValueOffset = ValueIndex * NumRows;
+		const int64 ValueOffset = ValueIndex * NumRows;
 
 		for (int32 RowIndex = 0; RowIndex < NumRows; ++RowIndex)
 		{
@@ -1531,20 +1622,23 @@ const int32 FAbcImporter::PerformSVDCompression(const TArray<float>& OriginalMat
 	//
 	// This takes into account that OutNormalsU should be already scaled by what would be OutNormalsS, just like OutU is scaled by OutS
 
-	const int32 NormalsNumRows = OriginalNormalsMatrix.Num() / NumSamples;
+	const int32 NormalsNumRows = IntCastChecked<int32>(OriginalNormalsMatrix.Num() / NumSamples);
 
 	Eigen::MatrixXf NormalsMatrix;
 	EigenHelpers::ConvertArrayToEigenMatrix(OriginalNormalsMatrix, NormalsNumRows, NumSamples, NormalsMatrix);
+	SlowTask.EnterProgressFrame(1.0f);
 
-	const uint32 OutVNumRows = OutV.Num() / NumSamples;
+	const int32 OutVNumRows = IntCastChecked<uint32>(OutV.Num() / NumSamples);
 
 	Eigen::MatrixXf VMatrix;
 	EigenHelpers::ConvertArrayToEigenMatrix(OutV, OutVNumRows, NumSamples, VMatrix);
+	SlowTask.EnterProgressFrame(1.0f);
 
 	Eigen::MatrixXf NormalsUMatrix = NormalsMatrix * VMatrix.transpose();
 
 	uint32 OutNumColumns, OutNumRows;
 	EigenHelpers::ConvertEigenMatrixToArray(NormalsUMatrix, OutNormalsU, OutNumColumns, OutNumRows);
+	SlowTask.EnterProgressFrame(1.0f);
 
 	UE_LOG(LogAbcImporter, Log, TEXT("Decomposed animation and reconstructed with %i number of bases (full %i, percentage %f, calculated %i)"), NumUsedSingularValues, OutS.Num(), PercentageBasesUsed * 100.0f, NumUsedSingularValues);	
 	
@@ -1591,7 +1685,7 @@ const uint32 FAbcImporter::GetNumMeshTracks() const
 	return (AbcFile != nullptr) ? AbcFile->GetNumPolyMeshes() : 0;
 }
 
-void FAbcImporter::GenerateMeshDescriptionFromSample(const FAbcMeshSample* Sample, FMeshDescription* MeshDescription, UStaticMesh* StaticMesh)
+void FAbcImporter::GenerateMeshDescriptionFromSample(const TArray<FString>& UniqueFaceSetNames, const TArray<int32>& LookupMaterialSlot, const FAbcMeshSample* Sample, FMeshDescription* MeshDescription)
 {
 	if (MeshDescription == nullptr)
 	{
@@ -1611,11 +1705,11 @@ void FAbcImporter::GenerateMeshDescriptionFromSample(const FAbcMeshSample* Sampl
 
 	//Speedtree use UVs to store is data
 	VertexInstanceUVs.SetNumChannels(Sample->NumUVSets);
-	
-	for (int32 MatIndex = 0; MatIndex < StaticMesh->GetStaticMaterials().Num(); ++MatIndex)
+
+	for (const FString& FaceSetName: UniqueFaceSetNames)
 	{
 		const FPolygonGroupID PolygonGroupID = MeshDescription->CreatePolygonGroup();
-		PolygonGroupImportedMaterialSlotNames[PolygonGroupID] = StaticMesh->GetStaticMaterials()[MatIndex].ImportedMaterialSlotName;
+		PolygonGroupImportedMaterialSlotNames[PolygonGroupID] = FName(*FaceSetName);
 	}
 
 	// position
@@ -1678,7 +1772,9 @@ void FAbcImporter::GenerateMeshDescriptionFromSample(const FAbcMeshSample* Sampl
 			CornerVertexIDs[Corner] = VertexID;
 		}
 
-		const FPolygonGroupID PolygonGroupID(Sample->MaterialIndices[TriangleIndex]);
+		int32 MaterialSlotID = LookupMaterialSlot[Sample->MaterialIndices[TriangleIndex]];
+		const FPolygonGroupID PolygonGroupID(MaterialSlotID);
+
 		// Insert a polygon into the mesh
 		MeshDescription->CreatePolygon(PolygonGroupID, CornerVertexInstanceIDs);
 	}
@@ -1686,7 +1782,9 @@ void FAbcImporter::GenerateMeshDescriptionFromSample(const FAbcMeshSample* Sampl
 	FStaticMeshOperations::ConvertSmoothGroupToHardEdges(Sample->SmoothingGroupIndices, *MeshDescription);
 }
 
-bool FAbcImporter::BuildSkeletalMesh( FSkeletalMeshLODModel& LODModel, const FReferenceSkeleton& RefSkeleton, FAbcMeshSample* Sample, TArray<int32>& OutMorphTargetVertexRemapping, TArray<int32>& OutUsedVertexIndicesForMorphs)
+bool FAbcImporter::BuildSkeletalMesh( FSkeletalMeshLODModel& LODModel, const FReferenceSkeleton& RefSkeleton, FAbcMeshSample* Sample, 
+	int32 NumMaterialSlots, const TArray<int32> LookupMaterialSlot, 
+	TArray<int32>& OutMorphTargetVertexRemapping, TArray<int32>& OutUsedVertexIndicesForMorphs)
 {
 	// Module manager is not thread safe, so need to prefetch before parallelfor
 	IMeshUtilities& MeshUtilities = FModuleManager::Get().LoadModuleChecked<IMeshUtilities>("MeshUtilities");
@@ -1707,13 +1805,13 @@ bool FAbcImporter::BuildSkeletalMesh( FSkeletalMeshLODModel& LODModel, const FRe
 	Faces.AddZeroed(NumFaces);
 
 	TArray<FMeshSection> MeshSections;
-	MeshSections.AddDefaulted(Sample->NumMaterials);
+	MeshSections.AddDefaulted(NumMaterialSlots);
 
 	// Process all the faces and add to their respective mesh section
 	for (uint32 FaceIndex = 0; FaceIndex < NumFaces; ++FaceIndex)
 	{
 		const uint32 FaceOffset = FaceIndex * 3;
-		const int32 MaterialIndex = Sample->MaterialIndices[FaceIndex];
+		const int32 MaterialIndex = LookupMaterialSlot[Sample->MaterialIndices[FaceIndex]];
 
 		check(MeshSections.IsValidIndex(MaterialIndex));
 

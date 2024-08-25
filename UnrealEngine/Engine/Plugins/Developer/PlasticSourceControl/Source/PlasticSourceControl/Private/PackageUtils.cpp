@@ -3,11 +3,11 @@
 #include "PackageUtils.h"
 
 #include "Async/Async.h"
-#include "PackageTools.h"
 #include "Editor.h"
-#include "UObject/Linker.h"
-
+#include "FileHelpers.h"
 #include "ISourceControlModule.h" // LogSourceControl
+#include "PackageTools.h"
+#include "UObject/Linker.h"
 
 namespace PackageUtils
 {
@@ -23,6 +23,56 @@ static UWorld* GetCurrentWorld()
 		}
 	}
 	return nullptr;
+}
+
+TArray<FString> AssetDataToFileNames(const TArray<FAssetData>& InAssetObjectPaths)
+{
+	TArray<FString> FileNames;
+	FileNames.Reserve(InAssetObjectPaths.Num());
+	for (const FAssetData& AssetObjectPath : InAssetObjectPaths)
+	{
+		//  Tries to find the package in memory if it is loaded, otherwise loads it
+		if (UPackage* Package = AssetObjectPath.GetPackage())
+		{
+			const FString PackageExtension = Package->ContainsMap() ? FPackageName::GetMapPackageExtension() : FPackageName::GetAssetPackageExtension();
+			FString PackageFilename = FPackageName::LongPackageNameToFilename(Package->GetName(), PackageExtension);
+			FileNames.Add(MoveTemp(PackageFilename));
+		}
+	}
+	return FileNames;
+}
+
+/// Prompt to save or discard all packages
+bool SaveDirtyPackages()
+{
+	const bool bPromptUserToSave = true;
+	const bool bSaveMapPackages = true;
+	const bool bSaveContentPackages = true;
+	const bool bFastSave = false;
+	const bool bNotifyNoPackagesSaved = false;
+	const bool bCanBeDeclined = true; // If the user clicks "don't save" this will continue and lose their changes
+	bool bHadPackagesToSave = false;
+
+	bool bSaved = FEditorFileUtils::SaveDirtyPackages(bPromptUserToSave, bSaveMapPackages, bSaveContentPackages, bFastSave, bNotifyNoPackagesSaved, bCanBeDeclined, &bHadPackagesToSave);
+
+	// bSaved can be true if the user selects to not save an asset by un-checking it and clicking "save"
+	if (bSaved)
+	{
+		TArray<UPackage*> DirtyPackages;
+		FEditorFileUtils::GetDirtyWorldPackages(DirtyPackages);
+		FEditorFileUtils::GetDirtyContentPackages(DirtyPackages);
+		bSaved = DirtyPackages.Num() == 0;
+	}
+
+	return bSaved;
+}
+
+/// Find all packages in Content directory
+TArray<FString> ListAllPackages()
+{
+	TArray<FString> PackageFilePaths;
+	FPackageName::FindPackagesInDirectory(PackageFilePaths, FPaths::ConvertRelativePathToFull(FPaths::ProjectContentDir()));
+	return PackageFilePaths;
 }
 
 // Find the packages corresponding to the files, if they are loaded in memory (won't load them)
@@ -133,7 +183,7 @@ static TArray<UPackage*> ListPackagesToReload(const TArray<FString>& InFiles)
 // Note: Extracted from AssetViewUtils::SyncPathsFromSourceControl()
 void ReloadPackages(TArray<UPackage*>& InPackages)
 {
-	UE_LOG(LogSourceControl, Log, TEXT("Reloading %d Packages..."), InPackages.Num());
+	UE_LOG(LogSourceControl, Verbose, TEXT("Reloading %d Packages..."), InPackages.Num());
 
 	// Syncing may have deleted some packages, so we need to unload those rather than re-load them...
 	// Note: we will store the package using weak pointers here otherwise we might have garbage collection issues after the ReloadPackages call
@@ -173,6 +223,10 @@ void ReloadPackages(const TArray<FString>& InFiles)
 	if (PackagesToReload.Num() > 0)
 	{
 		ReloadPackages(PackagesToReload);
+	}
+	else
+	{
+		UE_LOG(LogSourceControl, Verbose, TEXT("No package to reload"));
 	}
 }
 

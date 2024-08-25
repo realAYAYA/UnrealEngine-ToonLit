@@ -12,7 +12,7 @@
 bool FMovieSceneByteChannel::SerializeFromMismatchedTag(const FPropertyTag& Tag, FStructuredArchive::FSlot Slot)
 {
 	static const FName IntegralCurveName("IntegralCurve");
-	if (Tag.Type == NAME_StructProperty && Tag.StructName == IntegralCurveName)
+	if (Tag.GetType().IsStruct(IntegralCurveName))
 	{
 		FIntegralCurve IntegralCurve;
 		FIntegralCurve::StaticStruct()->SerializeItem(Slot, &IntegralCurve, nullptr);

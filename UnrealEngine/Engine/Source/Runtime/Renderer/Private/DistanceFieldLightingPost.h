@@ -30,7 +30,7 @@ extern void UpdateHistory(
 
 extern void UpsampleBentNormalAO(
 	FRDGBuilder& GraphBuilder,
-	const TArray<FViewInfo>& Views,
+	const FViewInfo& View,
 	TRDGUniformBufferRef<FSceneTextureUniformParameters> SceneTexturesUniformBuffer,
 	FRDGTextureRef SceneColorTexture,
 	FRDGTextureRef DistanceFieldAOBentNormal,

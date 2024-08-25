@@ -21,7 +21,7 @@ public:
 	 * @param InRemapConfiguration - The remapping configuration to update to
 	 * @returns true if the render geometry needs updating after the configuration has been updated; otherwise, false
 	 */
-	bool UpdateConfiguration(const FDisplayClusterViewport& InViewport, const FDisplayClusterConfigurationViewport_Remap& InRemapConfiguration);
+	bool UpdateViewportRemap(const FDisplayClusterViewport& InViewport, const FDisplayClusterConfigurationViewport_Remap& InRemapConfiguration);
 
 	/** Gets a pointer to the mesh geometry to use for rendering the remapped regions */
 	TSharedPtr<IDisplayClusterRender_MeshComponent, ESPMode::ThreadSafe> GetRemapMesh() const;

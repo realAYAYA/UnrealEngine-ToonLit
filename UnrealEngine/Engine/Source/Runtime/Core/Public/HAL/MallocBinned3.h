@@ -10,10 +10,7 @@
 #include "HAL/CriticalSection.h"
 #include "HAL/LowLevelMemTracker.h"
 #include "HAL/MallocBinnedCommon.h"
-#include "HAL/MemoryBase.h"
-#include "HAL/PlatformMath.h"
 #include "HAL/PlatformMemory.h"
-#include "HAL/PlatformTLS.h"
 #include "HAL/UnrealMemory.h"
 #include "Math/NumericLimits.h"
 #include "Misc/AssertionMacros.h"
@@ -64,67 +61,41 @@ struct FGenericMemoryStats;
 #endif
 
 #define DEFAULT_GMallocBinned3PerThreadCaches 1
-#define DEFAULT_GMallocBinned3BundleCount 64
 #define DEFAULT_GMallocBinned3AllocExtra 32
 #define BINNED3_MAX_GMallocBinned3MaxBundlesBeforeRecycle 8
 
-#if !defined(AGGRESSIVE_MEMORY_SAVING)
-	#error "AGGRESSIVE_MEMORY_SAVING must be defined"
-#endif
-#if AGGRESSIVE_MEMORY_SAVING
-	#define DEFAULT_GMallocBinned3BundleSize 8192
-#else
-	#define DEFAULT_GMallocBinned3BundleSize 65536
-#endif
-
-
-#define BINNED3_ALLOW_RUNTIME_TWEAKING 0
+#define BINNED3_ALLOW_RUNTIME_TWEAKING UE_BINNEDCOMMON_ALLOW_RUNTIME_TWEAKING
 #if BINNED3_ALLOW_RUNTIME_TWEAKING
 	extern CORE_API int32 GMallocBinned3PerThreadCaches;
-	extern CORE_API int32 GMallocBinned3BundleSize = DEFAULT_GMallocBinned3BundleSize;
-	extern CORE_API int32 GMallocBinned3BundleCount = DEFAULT_GMallocBinned3BundleCount;
-	extern CORE_API int32 GMallocBinned3MaxBundlesBeforeRecycle = BINNED3_MAX_GMallocBinned3MaxBundlesBeforeRecycle;
-	extern CORE_API int32 GMallocBinned3AllocExtra = DEFAULT_GMallocBinned3AllocExtra;
+	extern CORE_API int32 GMallocBinned3MaxBundlesBeforeRecycle;
+	extern CORE_API int32 GMallocBinned3AllocExtra;
 #else
 	#define GMallocBinned3PerThreadCaches DEFAULT_GMallocBinned3PerThreadCaches
-	#define GMallocBinned3BundleSize DEFAULT_GMallocBinned3BundleSize
-	#define GMallocBinned3BundleCount DEFAULT_GMallocBinned3BundleCount
 	#define GMallocBinned3MaxBundlesBeforeRecycle BINNED3_MAX_GMallocBinned3MaxBundlesBeforeRecycle
 	#define GMallocBinned3AllocExtra DEFAULT_GMallocBinned3AllocExtra
 #endif
 
-
-#ifndef BINNED3_ALLOCATOR_STATS
-	#if UE_BUILD_SHIPPING && !WITH_EDITOR
-		#define BINNED3_ALLOCATOR_STATS 0	
-	#else
-		#define BINNED3_ALLOCATOR_STATS 1
-	#endif
-#endif
-
+#define BINNED3_ALLOCATOR_STATS UE_BINNEDCOMMON_ALLOCATOR_STATS
 
 #if BINNED3_ALLOCATOR_STATS
-	#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
-		#define BINNED3_ALLOCATOR_PER_BIN_STATS 1
-	#else
-		#define BINNED3_ALLOCATOR_PER_BIN_STATS 0
-	#endif
+	#define BINNED3_ALLOCATOR_PER_BIN_STATS !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
 #else
 	#define BINNED3_ALLOCATOR_PER_BIN_STATS 0
 #endif
+
 
 PRAGMA_DISABLE_UNSAFE_TYPECAST_WARNINGS
 
 //
 // Optimized virtual memory allocator.
 //
-class CORE_API FMallocBinned3 : public FMalloc
+class CORE_API FMallocBinned3 : public TMallocBinnedCommon<FMallocBinned3, BINNED3_MINIMUM_ALIGNMENT, BINNED3_MAX_SMALL_POOL_ALIGNMENT, BINNED3_MINIMUM_ALIGNMENT_SHIFT, BINNED3_SMALL_POOL_COUNT, BINNED3_MAX_SMALL_POOL_SIZE>
 {	
 	// Forward declares.
 	struct FPoolInfoLarge;
 	struct FPoolInfoSmall;
 	struct FPoolTable;
-	struct PoolHashBucket;
+	using PoolHashBucket = TPoolHashBucket<FPoolInfoLarge>;
 	struct Private;
 
 
@@ -219,58 +190,6 @@ class CORE_API FMallocBinned3 : public FMalloc
 #endif
 	};
 
-	struct FPtrToPoolMapping
-	{
-		FPtrToPoolMapping()
-			: PtrToPoolPageBitShift(0)
-			, HashKeyShift(0)
-			, PoolMask(0)
-			, MaxHashBuckets(0)
-		{
-		}
-		explicit FPtrToPoolMapping(uint32 InPageSize, uint64 InNumPoolsPerPage, uint64 AddressLimit)
-		{
-			Init(InPageSize, InNumPoolsPerPage, AddressLimit);
-		}
-
-		void Init(uint32 InPageSize, uint64 InNumPoolsPerPage, uint64 AddressLimit)
-		{
-			uint64 PoolPageToPoolBitShift = FPlatformMath::CeilLogTwo(InNumPoolsPerPage);
-
-			PtrToPoolPageBitShift = FPlatformMath::CeilLogTwo(InPageSize);
-			HashKeyShift          = PtrToPoolPageBitShift + PoolPageToPoolBitShift;
-			PoolMask              = (1ull << PoolPageToPoolBitShift) - 1;
-			MaxHashBuckets        = AddressLimit >> HashKeyShift;
-		}
-
-		FORCEINLINE void GetHashBucketAndPoolIndices(const void* InPtr, uint32& OutBucketIndex, UPTRINT& OutBucketCollision, uint32& OutPoolIndex) const
-		{
-			OutBucketCollision = (UPTRINT)InPtr >> HashKeyShift;
-			OutBucketIndex = uint32(OutBucketCollision & (MaxHashBuckets - 1));
-			OutPoolIndex   = ((UPTRINT)InPtr >> PtrToPoolPageBitShift) & PoolMask;
-		}
-
-		FORCEINLINE uint64 GetMaxHashBuckets() const
-		{
-			return MaxHashBuckets;
-		}
-
-	private:
-		/** Shift to apply to a pointer to get the reference from the indirect tables */
-		uint64 PtrToPoolPageBitShift;
-
-		/** Shift required to get required hash table key. */
-		uint64 HashKeyShift;
-
-		/** Used to mask off the bits that have been used to lookup the indirect table */
-		uint64 PoolMask;
-
-		// PageSize dependent constants
-		uint64 MaxHashBuckets;
-	};
-
-	FPtrToPoolMapping PtrToPoolMapping;
-
 	// Pool tables for different pool sizes
 	FPoolTable SmallPoolTables[BINNED3_SMALL_POOL_COUNT];
 
@@ -281,145 +200,6 @@ class CORE_API FMallocBinned3 : public FMalloc
 	uint64 NumLargePoolsPerPage;
 
 	FCriticalSection Mutex;
-
-	struct FBundleNode
-	{
-		FBundleNode* NextNodeInCurrentBundle;
-		union
-		{
-			FBundleNode* NextBundle;
-			int32 Count;
-		};
-	};
-
-	struct FBundle
-	{
-		FORCEINLINE FBundle()
-		{
-			Reset();
-		}
-
-		FORCEINLINE void Reset()
-		{
-			Head = nullptr;
-			Count = 0;
-		}
-
-		FORCEINLINE void PushHead(FBundleNode* Node)
-		{
-			Node->NextNodeInCurrentBundle = Head;
-			Node->NextBundle = nullptr;
-			Head = Node;
-			Count++;
-		}
-
-		FORCEINLINE FBundleNode* PopHead()
-		{
-			FBundleNode* Result = Head;
-
-			Count--;
-			Head = Head->NextNodeInCurrentBundle;
-			return Result;
-		}
-
-		FBundleNode* Head;
-		uint32       Count;
-	};
-	static_assert(sizeof(FBundleNode) <= BINNED3_MINIMUM_ALIGNMENT, "Bundle nodes must fit into the smallest block size");
-
-	struct FFreeBlockList
-	{
-		// return true if we actually pushed it
-		FORCEINLINE bool PushToFront(void* InPtr, uint32 InPoolIndex, uint32 InBlockSize)
-		{
-			checkSlow(InPtr);
-
-			if ((PartialBundle.Count >= (uint32)GMallocBinned3BundleCount) | (PartialBundle.Count * InBlockSize >= (uint32)GMallocBinned3BundleSize))
-			{
-				if (FullBundle.Head)
-				{
-					return false;
-				}
-				FullBundle = PartialBundle;
-				PartialBundle.Reset();
-			}
-			PartialBundle.PushHead((FBundleNode*)InPtr);
-			return true;
-		}
-		FORCEINLINE bool CanPushToFront(uint32 InPoolIndex, uint32 InBlockSize)
-		{
-			return !((!!FullBundle.Head) & ((PartialBundle.Count >= (uint32)GMallocBinned3BundleCount) | (PartialBundle.Count * InBlockSize >= (uint32)GMallocBinned3BundleSize)));
-		}
-		FORCEINLINE void* PopFromFront(uint32 InPoolIndex)
-		{
-			if ((!PartialBundle.Head) & (!!FullBundle.Head))
-			{
-				PartialBundle = FullBundle;
-				FullBundle.Reset();
-			}
-			return PartialBundle.Head ? PartialBundle.PopHead() : nullptr;
-		}
-
-		// tries to recycle the full bundle, if that fails, it is returned for freeing
-		FBundleNode* RecyleFull(uint32 InPoolIndex);
-		bool ObtainPartial(uint32 InPoolIndex);
-		FBundleNode* PopBundles(uint32 InPoolIndex);
-	private:
-		FBundle PartialBundle;
-		FBundle FullBundle;
-	};
-
-	struct FPerThreadFreeBlockLists
-	{
-		FORCEINLINE static FPerThreadFreeBlockLists* Get()
-		{
-			return FMallocBinned3::Binned3TlsSlot ? (FPerThreadFreeBlockLists*)FPlatformTLS::GetTlsValue(FMallocBinned3::Binned3TlsSlot) : nullptr;
-		}
-		static void SetTLS();
-		static void ClearTLS();
-
-		FPerThreadFreeBlockLists() 
-#if BINNED3_ALLOCATOR_STATS
-			: AllocatedMemory(0) 
-#endif
-		{ }
-
-		FORCEINLINE void* Malloc(uint32 InPoolIndex)
-		{
-			return FreeLists[InPoolIndex].PopFromFront(InPoolIndex);
-		}
-		// return true if the pointer was pushed
-		FORCEINLINE bool Free(void* InPtr, uint32 InPoolIndex, uint32 InBlockSize)
-		{
-			return FreeLists[InPoolIndex].PushToFront(InPtr, InPoolIndex, InBlockSize);
-		}		
-		// return true if a pointer can be pushed
-		FORCEINLINE bool CanFree(uint32 InPoolIndex, uint32 InBlockSize)
-		{
-			return FreeLists[InPoolIndex].CanPushToFront(InPoolIndex, InBlockSize);
-		}
-		// returns a bundle that needs to be freed if it can't be recycled
-		FBundleNode* RecycleFullBundle(uint32 InPoolIndex)
-		{
-			return FreeLists[InPoolIndex].RecyleFull(InPoolIndex);
-		}
-		// returns true if we have anything to pop
-		bool ObtainRecycledPartial(uint32 InPoolIndex)
-		{
-			return FreeLists[InPoolIndex].ObtainPartial(InPoolIndex);
-		}
-		FBundleNode* PopBundles(uint32 InPoolIndex)
-		{
-			return FreeLists[InPoolIndex].PopBundles(InPoolIndex);
-		}
-#if BINNED3_ALLOCATOR_STATS
-	public:
-		int64 AllocatedMemory;
-		static TAtomic<int64> ConsolidatedMemory;
-#endif
-	private:
-		FFreeBlockList FreeLists[BINNED3_SMALL_POOL_COUNT];
-	};
 
 #if !BINNED3_USE_SEPARATE_VM_PER_POOL
 	FORCEINLINE uint64 PoolIndexFromPtr(const void* Ptr) // returns a uint64 for it can also be used to check if it is an OS allocation
@@ -527,7 +307,6 @@ class CORE_API FMallocBinned3 : public FMalloc
 
 public:
 
-
 	FMallocBinned3();
 
 	virtual ~FMallocBinned3();
@@ -545,7 +324,7 @@ public:
 			FPerThreadFreeBlockLists* Lists = GMallocBinned3PerThreadCaches ? FPerThreadFreeBlockLists::Get() : nullptr;
 			if (Lists)
 			{
-				uint32 PoolIndex = BoundSizeToPoolIndex(Size);
+				uint32 PoolIndex = BoundSizeToPoolIndex(Size, MemSizeToIndex);
 				uint32 BlockSize = PoolIndexToBlockSize(PoolIndex);
 				Result = Lists->Malloc(PoolIndex);
 #if BINNED3_ALLOCATOR_STATS
@@ -592,7 +371,7 @@ public:
 				}
 				if (bCanFree)
 				{
-					uint32 NewPoolIndex = BoundSizeToPoolIndex(NewSize);
+					uint32 NewPoolIndex = BoundSizeToPoolIndex(NewSize, MemSizeToIndex);
 					uint32 NewBlockSize = PoolIndexToBlockSize(NewPoolIndex);
 					void* Result = NewSize ? Lists->Malloc(NewPoolIndex) : nullptr;
 #if BINNED3_ALLOCATOR_STATS
@@ -661,20 +440,7 @@ public:
 
 	FORCEINLINE virtual SIZE_T QuantizeSize(SIZE_T Count, uint32 Alignment) override
 	{
-		static_assert(DEFAULT_ALIGNMENT <= BINNED3_MINIMUM_ALIGNMENT, "DEFAULT_ALIGNMENT is assumed to be zero"); // used below
-		checkSlow((Alignment & (Alignment - 1)) == 0); // Check the alignment is a power of two
-		SIZE_T SizeOut;
-		if ((Count <= BINNED3_MAX_SMALL_POOL_SIZE) & (Alignment <= BINNED3_MINIMUM_ALIGNMENT)) // one branch, not two
-		{
-			SizeOut = PoolIndexToBlockSize(BoundSizeToPoolIndex(Count));
-		}
-		else
-		{
-			Alignment = FPlatformMath::Max<uint32>(Alignment, OsAllocationGranularity);
-			SizeOut = Align(Count, Alignment);
-		}
-		check(SizeOut >= Count);
-		return SizeOut;
+		return QuantizeSizeCommon(Count, Alignment, *this);
 	}
 
 	virtual bool ValidateHeap() override;
@@ -701,8 +467,11 @@ public:
 	// see ((!PoolIndex) | (NewSize > PoolIndexToBlockSize(static_cast<uint32>(PoolIndex - 1)))
 	static uint16 SmallBlockSizesReversedShifted[BINNED3_SMALL_POOL_COUNT + 1]; // this is reversed to get the smallest elements on our main cache line
 	static FMallocBinned3* MallocBinned3;
-	static uint32 Binned3TlsSlot;
 	static uint32 OsAllocationGranularity;
+
+	static void RegisterThreadFreeBlockLists(FPerThreadFreeBlockLists* FreeBlockLists);
+	static void UnregisterThreadFreeBlockLists(FPerThreadFreeBlockLists* FreeBlockLists);
+
 #if !BINNED3_USE_SEPARATE_VM_PER_POOL
 	static uint8* Binned3BaseVMPtr;
 	FPlatformMemory::FPlatformVirtualMemoryBlock Binned3BaseVMBlock;
@@ -715,15 +484,7 @@ public:
 	// Mapping of sizes to small table indices
 	static uint8 MemSizeToIndex[1 + (BINNED3_MAX_SMALL_POOL_SIZE >> BINNED3_MINIMUM_ALIGNMENT_SHIFT)];
 
-	FORCEINLINE uint32 BoundSizeToPoolIndex(SIZE_T Size) 
-	{
-		auto Index = ((Size + BINNED3_MINIMUM_ALIGNMENT - 1) >> BINNED3_MINIMUM_ALIGNMENT_SHIFT);
-		checkSlow(Index >= 0 && Index <= (BINNED3_MAX_SMALL_POOL_SIZE >> BINNED3_MINIMUM_ALIGNMENT_SHIFT)); // and it should be in the table
-		uint32 PoolIndex = uint32(MemSizeToIndex[Index]);
-		checkSlow(PoolIndex >= 0 && PoolIndex < BINNED3_SMALL_POOL_COUNT);
-		return PoolIndex;
-	}
-	FORCEINLINE uint32 PoolIndexToBlockSize(uint32 PoolIndex)
+	FORCEINLINE uint32 PoolIndexToBlockSize(uint32 PoolIndex) const
 	{
 		return uint32(SmallBlockSizesReversedShifted[BINNED3_SMALL_POOL_COUNT - PoolIndex - 1]) << BINNED3_MINIMUM_ALIGNMENT_SHIFT;
 	}
@@ -731,10 +492,8 @@ public:
 	void Commit(uint32 InPoolIndex, void *Ptr, SIZE_T Size);
 	void Decommit(uint32 InPoolIndex, void *Ptr, SIZE_T Size);
 
-private:
 	static void* AllocateMetaDataMemory(SIZE_T Size);
-	static FPlatformMemory::FPlatformVirtualMemoryBlock AllocateMemoryBlock(SIZE_T Size);
-	static void DeallocateMemoryBlock(FPlatformMemory::FPlatformVirtualMemoryBlock& Block);
+	static void FreeMetaDataMemory(void *Ptr, SIZE_T Size);
 };
 
 PRAGMA_RESTORE_UNSAFE_TYPECAST_WARNINGS

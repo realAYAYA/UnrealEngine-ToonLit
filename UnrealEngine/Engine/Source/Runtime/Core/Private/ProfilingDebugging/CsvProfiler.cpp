@@ -16,7 +16,6 @@
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformTime.h"
 #include "HAL/IConsoleManager.h"
-#include "HAL/MemoryMisc.h"
 #include "Misc/Paths.h"
 #include "Misc/CommandLine.h"
 #include "Misc/ScopeLock.h"
@@ -142,6 +141,28 @@ TAutoConsoleVariable<int32> CVarCsvWriteBufferSize(
 	128 * 1024, // 128 KB
 	TEXT("When non-zero, defines the size of the write buffer to use whilst writing the CSV file.\r\n")
 	TEXT("A non-zero value is required for GZip compressed output."),
+	ECVF_Default
+);
+
+TAutoConsoleVariable<int32> CVarCsvStreamFramesToBuffer(
+	TEXT("csv.FramesToBuffer"),
+	128,
+	TEXT("Defines the minimum amount of frames to keep in memory before flushing them."),
+	ECVF_Default
+);
+
+TAutoConsoleVariable<int32> CVarCsvPauseProcessingThread(
+	TEXT("csv.PauseProcessingThread"),
+	0,
+	TEXT("Debug only - When 1, blocks the processing thread to simulate starvation"),
+	ECVF_Default
+);
+
+TAutoConsoleVariable<int32> CVarMaxPerThreadStatDataSlackKB(
+	TEXT("csv.MaxPerThreadStatDataSlackKB"),
+	64,
+	TEXT("Max amount of per thread slack data to allow during a capture.\r\n")
+	TEXT("Higher values result in better performance due to fewer allocations but higher memory overhead"),
 	ECVF_Default
 );
 
@@ -290,10 +311,10 @@ static FAutoConsoleVariableRef CVarNamedEventsTiming(TEXT("csv.NamedEventsTiming
 
 void CsvBeginNamedEvent(FColor Color, const char* NamedEventName)
 {
-#if CPUPROFILERTRACE_ENABLED 
+#if CPUPROFILERTRACE_ENABLED
 	if (UE_TRACE_CHANNELEXPR_IS_ENABLED(CpuChannel))
 	{
-		FCpuProfilerTrace::OutputBeginDynamicEvent(NamedEventName);
+		FCpuProfilerTrace::OutputBeginDynamicEvent(NamedEventName, __FILE__, __LINE__);
 	}
 	else
 #endif
@@ -306,6 +327,23 @@ void CsvBeginNamedEvent(FColor Color, const char* NamedEventName)
 	}
 }
 
+void CsvBeginNamedEvent(FColor Color, const FName& StatName)
+{
+#if CPUPROFILERTRACE_ENABLED
+	if (UE_TRACE_CHANNELEXPR_IS_ENABLED(CpuChannel))
+	{
+		FCpuProfilerTrace::OutputBeginDynamicEvent(StatName, __FILE__, __LINE__);
+	}
+	else
+#endif
+	{
+#if PLATFORM_IMPLEMENTS_BeginNamedEventStatic
+		FPlatformMisc::BeginNamedEventStatic(Color, *StatName.ToString());
+#else
+		FPlatformMisc::BeginNamedEvent(Color, *StatName.ToString());
+#endif
+	}
+}
 
 void CsvEndNamedEvent()
 {
@@ -393,7 +431,7 @@ public:
 				{
 					FString Val = ValueStr.Mid(0, CommaIndex);
 					CVarValues.Add(FCString::Atof(*Val));
-					ValueStr.MidInline(CommaIndex + 1, MAX_int32, false);
+					ValueStr.MidInline(CommaIndex + 1, MAX_int32, EAllowShrinking::No);
 					continue;
 				}
 			}
@@ -410,7 +448,7 @@ public:
 				{
 					FString Val = ValueStr.Mid(0, SemiColonIndex);
 					CVarValues.Add(FCString::Atof(*Val));
-					ValueStr.MidInline(SemiColonIndex, MAX_int32, false);
+					ValueStr.MidInline(SemiColonIndex, MAX_int32, EAllowShrinking::No);
 					continue;
 				}
 			}
@@ -576,10 +614,20 @@ public:
 
 	void UpdateCategoryFromConfig(int32 CategoryIndex)
 	{
+		for (FString const& EnabledCategory : CategoriesEnabledInConfig)
+		{
+			if (FWildcardString::IsMatch(*EnabledCategory, *CategoryNames[CategoryIndex]))
+			{
+				UE_LOG(LogCsvProfiler, Log, TEXT("Config enabled category %s"), *CategoryNames[CategoryIndex]);
+				GCsvCategoriesEnabled[CategoryIndex] = true;
+			}
+		}
+
 		for (FString const& DisabledCategory : CategoriesDisabledInConfig)
 		{
 			if (FWildcardString::IsMatch(*DisabledCategory, *CategoryNames[CategoryIndex]))
 			{
+				UE_LOG(LogCsvProfiler, Log, TEXT("Config disabled category %s"), *CategoryNames[CategoryIndex]);
 				GCsvCategoriesEnabled[CategoryIndex] = false;
 			}
 		}
@@ -587,10 +635,21 @@ public:
 
 	void UpdateCategoriesFromConfig()
 	{
-		GConfig->GetArray(TEXT("CsvProfiler"), TEXT("DisabledCategories"), CategoriesDisabledInConfig, GEngineIni);
-		for (int i = 0; i < GetCategoryCount(); ++i)
+		TArray<FString> NewCategoriesDisabledInConfig;
+		TArray<FString> NewCategoriesEnabledInConfig;
+
+		GConfig->GetArray(TEXT("CsvProfiler"), TEXT("EnabledCategories"), NewCategoriesEnabledInConfig, GEngineIni);
+		GConfig->GetArray(TEXT("CsvProfiler"), TEXT("DisabledCategories"), NewCategoriesDisabledInConfig, GEngineIni);
+
+		// Check if the config changed. This prevents us from resetting categories unnecessarily at runtime (which could be confusing if debug category toggle commands are in play)
+		if (NewCategoriesEnabledInConfig != CategoriesEnabledInConfig || NewCategoriesDisabledInConfig != CategoriesDisabledInConfig )
 		{
-			UpdateCategoryFromConfig(i);
+			CategoriesEnabledInConfig = NewCategoriesEnabledInConfig;
+			CategoriesDisabledInConfig = NewCategoriesDisabledInConfig;
+			for (int i = 0; i < GetCategoryCount(); ++i)
+			{
+				UpdateCategoryFromConfig(i);
+			}
 		}
 	}
 
@@ -646,6 +705,7 @@ private:
 	TMap<FString, int32> CategoryNameToIndex;
 	TArray<FString> CategoryNames;
 	TArray<FString> CategoriesDisabledInConfig;
+	TArray<FString> CategoriesEnabledInConfig;
 
 	static FCsvCategoryData* Instance;
 };
@@ -901,12 +961,19 @@ public:
 	}
 
 	// Called from the consumer thread
-	void PopAll(TArray<T>& ElementsOut)
+	void PopAll(TArray<T>& ElementsOut, int64 MaxSlackMemBytes = -1 )
 	{
 		volatile uint64 CurrentCounterValue = Counter;
 		FPlatformMisc::MemoryBarrier();
 
 		uint32 MaxElementsToPop = uint32(CurrentCounterValue - ConsumerThreadReadIndex);
+
+		// Shrink the output array if it has excessive slack (note: usually this will shrink to 0)
+		int64 SlackMemBytes = ( (int64)ElementsOut.GetSlack() - (int64)MaxElementsToPop ) * (int64)sizeof(T);
+		if ( MaxSlackMemBytes >= 0 && SlackMemBytes > MaxSlackMemBytes )
+		{
+			ElementsOut.Shrink();
+		}
 
 		// Presize the array capacity to avoid memory reallocation.
 		ElementsOut.Reserve(ElementsOut.Num() + MaxElementsToPop);
@@ -1809,7 +1876,7 @@ class FCsvStreamWriter
 	// frame index less than (WriteFrameIndex - NumFramesToBuffer). NumFramesToBuffer should be large enough to avoid
 	// flushing rows before all the timestamps for that frame have been processed, but small enough to avoid the
 	// additional memory overhead of holding addition rows in memory unnecessarily.
-	const int64 NumFramesToBuffer = 128;
+	int64 NumFramesToBuffer;
 	int64 WriteFrameIndex;
 	int64 ReadFrameIndex;
 
@@ -1823,7 +1890,7 @@ class FCsvStreamWriter
 	uint32 RHIThreadId;
 
 public:
-	FCsvStreamWriter(const TSharedRef<FArchive>& InOutputFile, bool bInContinuousWrites, int32 InBufferSize, bool bInCompressOutput, uint32 RenderThreadId, uint32 RHIThreadId);
+	FCsvStreamWriter(const TSharedRef<FArchive>& InOutputFile, bool bInContinuousWrites, int32 InBufferSize, int64 InNumFramesToBuffer, bool bInCompressOutput, uint32 RenderThreadId, uint32 RHIThreadId);
 	~FCsvStreamWriter();
 
 	void AddSeries(FCsvStatSeries* Series);
@@ -1915,7 +1982,7 @@ private:
 public:
 	static void InitTls()
 	{
-		if (TlsSlot == 0)
+		if (!FPlatformTLS::IsValidTlsSlot(TlsSlot))
 		{
 			TlsSlot = FPlatformTLS::AllocTlsSlot();
 			FPlatformMisc::MemoryBarrier();
@@ -2005,9 +2072,11 @@ public:
 		
 		check(IsInCsvProcessingThread());
 
-		TimingMarkers.PopAll(OutMarkers);
-		CustomStats.PopAll(OutCustomStats);
-		Events.PopAll(OutEvents);
+		int64 MaxSlackMemBytes = (int64)CVarMaxPerThreadStatDataSlackKB.GetValueOnAnyThread() * 1024;
+
+		TimingMarkers.PopAll(OutMarkers, MaxSlackMemBytes);
+		CustomStats.PopAll(OutCustomStats, MaxSlackMemBytes);
+		Events.PopAll(OutEvents, MaxSlackMemBytes);
 	}
 
 	CSV_PROFILER_INLINE void AddTimestampBegin(const char* StatName, int32 CategoryIndex)
@@ -2157,7 +2226,7 @@ public:
 	TArray<const char*> WaitStatNameStack;
 };
 
-uint32 FCsvProfilerThreadData::TlsSlot = 0;
+uint32 FCsvProfilerThreadData::TlsSlot = FPlatformTLS::InvalidTlsSlot;
 FCriticalSection FCsvProfilerThreadData::TlsCS;
 TArray<FCsvProfilerThreadData::FWeakPtr> FCsvProfilerThreadData::TlsInstances;
 
@@ -2245,8 +2314,9 @@ private:
 	}
 };
 
-FCsvStreamWriter::FCsvStreamWriter(const TSharedRef<FArchive>& InOutputFile, bool bInContinuousWrites, int32 InBufferSize, bool bInCompressOutput, uint32 InRenderThreadId, uint32 InRHIThreadId)
+FCsvStreamWriter::FCsvStreamWriter(const TSharedRef<FArchive>& InOutputFile, bool bInContinuousWrites, int32 InBufferSize, int64 InNumFramesToBuffer, bool bInCompressOutput, uint32 InRenderThreadId, uint32 InRHIThreadId)
 	: Stream(InOutputFile, InBufferSize, bInCompressOutput)
+	, NumFramesToBuffer(InNumFramesToBuffer)
 	, WriteFrameIndex(-1)
 	, ReadFrameIndex(-1)
 	, bContinuousWrites(bInContinuousWrites)
@@ -2282,7 +2352,7 @@ void FCsvStreamWriter::PushValue(FCsvStatSeries* Series, int64 FrameNumber, cons
 	// Ensure the row is large enough to hold every series
 	if (Row.Values.Num() < AllSeries.Num())
 	{
-		Row.Values.SetNumZeroed(AllSeries.Num(), false);
+		Row.Values.SetNumZeroed(AllSeries.Num(), EAllowShrinking::No);
 	}
 
 	Row.Values[Series->ColumnIndex] = Value;
@@ -2509,6 +2579,11 @@ public:
 
 		while (StopCounter.GetValue() == 0)
 		{
+			if (CVarCsvPauseProcessingThread.GetValueOnAnyThread())
+			{
+				FPlatformProcess::Sleep(TimeBetweenUpdatesMS / 1000.0f);
+				continue;
+			}
 			float ElapsedMS = CsvProfiler.ProcessStatData();
 
 			if (GCsvProfilerIsWritingFile)
@@ -2600,7 +2675,7 @@ void FCsvProfilerThreadDataProcessor::Process(FCsvProcessThreadDataStats& OutSta
 				{
 					if (ExclusiveMarkerStack.Num() > 0)
 					{
-						ExclusiveMarkerStack.Pop(false);
+						ExclusiveMarkerStack.Pop(EAllowShrinking::No);
 						if (ExclusiveMarkerStack.Num() > 0)
 						{
 							// Insert an artificial begin marker to resume the marker on the stack at the same timestamp
@@ -2648,7 +2723,7 @@ void FCsvProfilerThreadDataProcessor::Process(FCsvProcessThreadDataStats& OutSta
 						if (MarkerStack[j].RawStatID == Marker.RawStatID) // Note: only works with scopes!
 						{
 							StartMarker = MarkerStack[j];
-							MarkerStack.RemoveAt(j, 1, false);
+							MarkerStack.RemoveAt(j, 1, EAllowShrinking::No);
 							bFoundStart = true;
 							break;
 						}
@@ -2764,6 +2839,7 @@ FCsvProfiler::FCsvProfiler()
 	, CaptureFrameNumberRT(0)
 	, CaptureOnEventFrameCount(-1)
 	, bInsertEndFrameAtFrameStart(false)
+	, bNamedEventsWasEnabled(false)
 	, LastEndFrameTimestamp(0)
 	, CaptureEndFrameCount(0)
 	, ProcessingThread(nullptr)
@@ -2809,7 +2885,12 @@ FCsvProfiler::FCsvProfiler()
 	// for privacy, personal and free text fields are not allowed in shipping
 	SetMetadataInternal(TEXT("Commandline"), *CommandlineStr, false);
 	SetMetadataInternal(TEXT("LoginID"), *FPlatformMisc::GetLoginId());
-
+	FString DeviceTag = FPlatformMisc::GetDeviceTag();
+    if (!DeviceTag.IsEmpty())
+    {
+    	SetMetadataInternal(TEXT("DeviceTag"), *DeviceTag);
+    }
+	
 	// Set the device ID if the platform supports it
 	FString DeviceID = FPlatformMisc::GetDeviceId();
 	if (!DeviceID.IsEmpty())
@@ -2881,6 +2962,12 @@ void FCsvProfiler::BeginFrame()
 			{
 				UE_LOG(LogCsvProfiler, Display, TEXT("Capture Starting"));
 
+				if (GConfig)
+				{
+					// Update categories from the config. The config may have changed if there were hotfixes
+					FCsvCategoryData::Get()->UpdateCategoriesFromConfig();
+				}
+
 				// signal external profiler that we are capturing
 				OnCSVProfileStartDelegate.Broadcast();
 
@@ -2919,8 +3006,8 @@ void FCsvProfiler::BeginFrame()
 				}
 				else
 				{
-					
-					CsvWriter = new FCsvStreamWriter(OutputFile.ToSharedRef(), bContinuousWrites, BufferSize, bCompressOutput, RenderThreadId, RHIThreadId);
+					int64 NumFramesToBuffer = CVarCsvStreamFramesToBuffer.GetValueOnAnyThread();
+					CsvWriter = new FCsvStreamWriter(OutputFile.ToSharedRef(), bContinuousWrites, BufferSize, NumFramesToBuffer, bCompressOutput, RenderThreadId, RHIThreadId);
 
 					NumFramesToCapture = CurrentCommand.Value;
 					GCsvRepeatFrameCount = NumFramesToCapture;
@@ -2975,7 +3062,8 @@ void FCsvProfiler::BeginFrame()
 
 					SetMetadataInternal(TEXT("TargetFramerate"), *FString::FromInt(TargetFPS));
 					SetMetadataInternal(TEXT("StartTimestamp"), *FString::Printf(TEXT("%lld"), FDateTime::UtcNow().ToUnixTimestamp()));
-					SetMetadataInternal(TEXT("NamedEvents"), GCycleStatsShouldEmitNamedEvents ? TEXT("1") : TEXT("0"));
+					SetMetadataInternal(TEXT("NamedEvents"), (GCycleStatsShouldEmitNamedEvents > 0) ? TEXT("1") : TEXT("0"));
+					bNamedEventsWasEnabled = (GCycleStatsShouldEmitNamedEvents > 0);
 
 					GCsvStatCounts = !!CVarCsvStatCounts.GetValueOnGameThread();
 
@@ -2994,6 +3082,18 @@ void FCsvProfiler::BeginFrame()
 			if (CaptureFrameNumber == 0)
 			{
 				OnCSVProfileFirstFrameDelegate.Broadcast();
+			}
+
+			if (!bNamedEventsWasEnabled && (GCycleStatsShouldEmitNamedEvents > 0))
+			{
+				bNamedEventsWasEnabled = true;
+#if !UE_SERVER
+				// Servers with -EnableMetrics run perf collection a few times per match which includes
+				// insights/framepro captures and namedevents on.
+				// We don't want these server csvs to be filtered out by PRS, so
+				// excluding this logic from server builds for now.
+				SetMetadataInternal(TEXT("NamedEvents"), TEXT("1"));
+#endif
 			}
 		}
 	}
@@ -3038,26 +3138,6 @@ void FCsvProfiler::EndFrame()
 		CSV_CUSTOM_STAT_DEFINED(FrameTime, ElapsedMs, ECsvCustomStatOp::Set);
 
 		FPlatformMemoryStats MemoryStats = FPlatformMemory::GetStats();
-
-#if PLATFORM_USE_CACHED_SLACK_MEMORY_IN_MEMORY_STATS
-		// Take into account cached slacked memory to reflect what is really available
-		if (GMalloc != nullptr)
-		{
-			uint64 CachedFreeSize = 0;
-
-			FGenericMemoryStats MallocStats;
-			GMalloc->GetAllocatorStats(MallocStats);
-
-			SIZE_T* PageAllocatorFreeCacheSize = MallocStats.Data.Find("PageAllocatorFreeCacheSize");
-			if (PageAllocatorFreeCacheSize != nullptr)
-			{
-				CachedFreeSize = *PageAllocatorFreeCacheSize;
-			}
-
-			MemoryStats.UsedPhysical -= CachedFreeSize;
-			MemoryStats.AvailablePhysical += CachedFreeSize;
-		}
-#endif
 
 		float PhysicalMBFree = float(MemoryStats.AvailablePhysical) / (1024.0f * 1024.0f);
 		float UsedExtendedMB = 0;
@@ -3284,6 +3364,8 @@ TSharedFuture<FString> FCsvProfiler::EndCapture(FGraphEventRef EventToSignal)
 	// Fire before we copy the metadata so it gives other systems a chance to write any final information.
 	OnCSVProfileEndRequestedDelegate.Broadcast();
 
+	SetNonPersistentMetadata(TEXT("EndTimestamp"), *FString::Printf(TEXT("%lld"), FDateTime::UtcNow().ToUnixTimestamp()));
+
 	TPromise<FString>* Completion = new TPromise<FString>([EventToSignal]()
 	{
 		if (EventToSignal)
@@ -3375,6 +3457,12 @@ void FCsvProfiler::BeginStat(const FName& StatName, uint32 CategoryIndex)
 #if RECORD_TIMESTAMPS
 	if (GCsvProfilerIsCapturing && GCsvCategoriesEnabled[CategoryIndex])
 	{
+#if CSV_PROFILER_SUPPORT_NAMED_EVENTS
+		if (UNLIKELY(GCsvProfilerNamedEventsTiming))
+		{
+			CsvBeginNamedEvent(FColor(255, 128, 255), StatName);
+		}
+#endif
 		FCsvProfilerThreadData::Get().AddTimestampBegin(StatName, CategoryIndex);
 	}
 #endif
@@ -3402,6 +3490,12 @@ void FCsvProfiler::EndStat(const FName& StatName, uint32 CategoryIndex)
 	if (GCsvProfilerIsCapturing && GCsvCategoriesEnabled[CategoryIndex])
 	{
 		FCsvProfilerThreadData::Get().AddTimestampEnd(StatName, CategoryIndex);
+#if CSV_PROFILER_SUPPORT_NAMED_EVENTS
+		if (UNLIKELY(GCsvProfilerNamedEventsTiming))
+		{
+			CsvEndNamedEvent();
+		}
+#endif
 	}
 #endif
 }
@@ -3428,7 +3522,6 @@ void FCsvProfiler::EndExclusiveStat(const char * StatName)
 	if (GCsvProfilerIsCapturing && GCsvCategoriesEnabled[CSV_CATEGORY_INDEX(Exclusive)])
 	{
 		FCsvProfilerThreadData::Get().AddTimestampExclusiveEnd(StatName);
-
 #if CSV_PROFILER_SUPPORT_NAMED_EVENTS
 		if (UNLIKELY(GCsvProfilerNamedEventsExclusive))
 		{
@@ -3527,7 +3620,7 @@ void FCsvProfiler::RecordEventfInternal(int32 CategoryIndex, const TCHAR* Fmt, .
 	{
 		LLM_SCOPE(ELLMTag::CsvProfiler);
 		TCHAR Buffer[256];
-		GET_VARARGS(Buffer, UE_ARRAY_COUNT(Buffer), UE_ARRAY_COUNT(Buffer) - 1, Fmt, Fmt);
+		GET_TYPED_VARARGS(TCHAR, Buffer, UE_ARRAY_COUNT(Buffer), UE_ARRAY_COUNT(Buffer) - 1, Fmt, Fmt);
 		Buffer[255] = '\0';
 		FString Str = Buffer;
 
@@ -3558,6 +3651,11 @@ void FCsvProfiler::RecordEvent(int32 CategoryIndex, const FString& EventText)
 		UE_LOG(LogCsvProfiler, Display, TEXT("CSVEvent \"%s\" [Frame %d]"), *EventText, FCsvProfiler::Get()->GetCaptureFrameNumber());
 		FCsvProfilerThreadData::Get().AddEvent(EventText, CategoryIndex);
 	}
+}
+
+void FCsvProfiler::RecordEventAtFrameStart(int32 CategoryIndex, const FString& EventText)
+{
+	RecordEventAtTimestamp(CategoryIndex, EventText, FCsvProfiler::Get()->LastEndFrameTimestamp);
 }
 
 void FCsvProfiler::SetMetadata(const TCHAR* Key, const TCHAR* Value)

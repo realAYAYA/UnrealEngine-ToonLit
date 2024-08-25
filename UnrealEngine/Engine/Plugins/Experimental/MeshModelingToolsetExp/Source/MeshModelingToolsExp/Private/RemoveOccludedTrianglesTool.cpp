@@ -487,7 +487,7 @@ void URemoveOccludedTrianglesTool::GenerateAsset(const TArray<FDynamicMeshOpResu
 		}
 	}
 
-	FSelectedOjectsChangeList NewSelection;
+	FSelectedObjectsChangeList NewSelection;
 	for (int32 PreviewIdx = 0; PreviewIdx < Previews.Num(); PreviewIdx++)
 	{
 		check(Results[PreviewIdx].Mesh.Get() != nullptr);

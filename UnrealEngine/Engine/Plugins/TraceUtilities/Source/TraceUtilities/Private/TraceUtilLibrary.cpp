@@ -18,7 +18,7 @@ bool UTraceUtilLibrary::StartTraceToFile(const FString& FileName, const TArray<F
 bool UTraceUtilLibrary::StartTraceSendTo(const FString& Target, const TArray<FString>& Channels)
 {
 	FString ChannelString = FString::Join(Channels, TEXT(","));
-	return FTraceAuxiliary::Start(FTraceAuxiliary::EConnectionType::File ,*Target, *ChannelString);
+	return FTraceAuxiliary::Start(FTraceAuxiliary::EConnectionType::Network ,*Target, *ChannelString);
 }
 
 bool UTraceUtilLibrary::StopTracing()

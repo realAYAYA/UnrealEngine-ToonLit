@@ -15,8 +15,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeImageSaturate::Private::s_type =
-			NODE_TYPE( "ImageSaturate", NodeImage::GetStaticType() );
+	FNodeType NodeImageSaturate::Private::s_type =
+			FNodeType( "ImageSaturate", NodeImage::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -24,45 +24,6 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 
 	MUTABLE_IMPLEMENT_NODE( NodeImageSaturate, EType::Saturate, Node, Node::EType::Image)
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	int NodeImageSaturate::GetInputCount() const
-	{
-		return 2;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	Node* NodeImageSaturate::GetInputNode( int i ) const
-	{
-		check( i>=0 && i< GetInputCount());
-
-		Node* pResult = 0;
-
-		switch (i)
-		{
-		case 0: pResult = m_pD->m_pFactor.get();
-		case 1: pResult = m_pD->m_pSource.get();
-		}
-
-		return pResult;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeImageSaturate::SetInputNode( int i, NodePtr pNode )
-	{
-		check( i>=0 && i< GetInputCount());
-
-		switch (i)
-		{
-		case 0: m_pD->m_pFactor = dynamic_cast<NodeScalar*>(pNode.get());
-		case 1: m_pD->m_pSource = dynamic_cast<NodeImage*>(pNode.get());
-		}
-	}
 
 
 	//---------------------------------------------------------------------------------------------

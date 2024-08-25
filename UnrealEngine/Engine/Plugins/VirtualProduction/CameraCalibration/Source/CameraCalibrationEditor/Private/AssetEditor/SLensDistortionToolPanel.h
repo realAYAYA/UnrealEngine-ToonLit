@@ -35,6 +35,21 @@ private:
 	/** Builds the wrapper for the currently selected algo UI */
 	TSharedRef<SWidget> BuildUIWrapper();
 
+	/** Builds the UI of the solver picker widget */
+	TSharedRef<SWidget> BuildSolverPickerWidget();
+
+	/** Builds the list of solvers to display when opening the solver picker */
+	TSharedRef<SWidget> BuildSolverList();
+
+	/** When the solver class is selected in the UI, update the lens distortion tool with the newly selected class */
+	void OnSolverClassSelected(UClass* SolverClass);
+
+	/** Returns true if the input class is the currently selected one */
+	bool IsSolverClassSelected(UClass* SolverClass) const;
+
+	/** Get the display name of the currently selected solver class */
+	FText GetSelectedSolverName() const;
+
 	/** Builds the UI for the algorithm picker */
 	TSharedRef<SWidget> BuildAlgoPickerWidget();
 

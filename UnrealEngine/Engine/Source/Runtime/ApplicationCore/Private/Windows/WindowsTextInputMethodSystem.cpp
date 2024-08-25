@@ -6,7 +6,6 @@
 #include "Math/Vector2D.h"
 #include "Logging/LogCategory.h"
 #include "GenericPlatform/GenericWindow.h"
-#include "Windows/WindowsHWrapper.h"
 #include "Stats/Stats.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogWindowsTextInputMethodSystem, Log, All);

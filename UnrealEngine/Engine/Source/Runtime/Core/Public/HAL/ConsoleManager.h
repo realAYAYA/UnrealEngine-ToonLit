@@ -48,6 +48,7 @@ public:
 	CORE_API void OnCVarChanged();
 
 	CORE_API virtual FConsoleVariableMulticastDelegate& OnCVarUnregistered()override;
+	CORE_API virtual FConsoleObjectWithNameMulticastDelegate& OnConsoleObjectUnregistered() override;
 
 	// interface IConsoleManager -----------------------------------
 
@@ -86,7 +87,13 @@ public:
 	CORE_API virtual bool IsNameRegistered(const TCHAR* Name) const override;	
 	CORE_API virtual void RegisterThreadPropagation(uint32 ThreadId, IConsoleThreadPropagation* InCallback) override;
 	CORE_API virtual void UnregisterConsoleObject( IConsoleObject* Object, bool bKeepState) override;
-
+	CORE_API virtual void UnsetAllConsoleVariablesWithTag(FName Tag, EConsoleVariableFlags Priority) override;
+#if ALLOW_OTHER_PLATFORM_CONFIG
+	CORE_API virtual void LoadAllPlatformCVars(FName PlatformName, const FString& DeviceProfileName=FString()) override;
+	CORE_API virtual void ClearAllPlatformCVars(FName PlatformName=NAME_None, const FString& DeviceProfileName=FString()) override;
+	CORE_API virtual void PreviewPlatformCVars(FName PlatformName, const FString& DeviceProfileName, FName PreviewModeTag) override;
+#endif
+	
 private: // ----------------------------------------------------
 
 	/** Map of console variables and commands, indexed by the name of that command or variable */
@@ -98,8 +105,12 @@ private: // ----------------------------------------------------
 	TArray<FConsoleCommandDelegate>	ConsoleVariableChangeSinks;
 
 	FConsoleVariableMulticastDelegate ConsoleVariableUnregisteredDelegate;
+	FConsoleObjectWithNameMulticastDelegate ConsoleObjectUnregisteredDelegate;
 
 	IConsoleThreadPropagation* ThreadPropagationCallback;
+	
+	FCriticalSection CachedPlatformsAndDeviceProfilesLock;
+	TSet<FName> CachedPlatformsAndDeviceProfiles;
 
 	// if true the next call to CallAllConsoleVariableSinks() we will call all registered sinks
 	bool bCallAllConsoleVariableSinks;

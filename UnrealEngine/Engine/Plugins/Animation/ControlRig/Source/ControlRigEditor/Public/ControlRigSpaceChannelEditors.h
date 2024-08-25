@@ -21,7 +21,7 @@
 
 struct FKeyHandle;
 struct FKeyDrawParams;
-class UControlrig;
+class UControlRig;
 class ISequencer;
 class UMovieSceneSection;
 class URigHierarchy;

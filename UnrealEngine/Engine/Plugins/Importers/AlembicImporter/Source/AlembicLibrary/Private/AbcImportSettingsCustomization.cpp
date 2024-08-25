@@ -9,6 +9,8 @@
 #include "IDetailChildrenBuilder.h"
 #include "IDetailPropertyRow.h"
 #include "PropertyRestriction.h"
+#include "AssetToolsModule.h"
+#include "Misc/NamePermissionList.h"
 
 void FAbcImportSettingsCustomization::CustomizeDetails(IDetailLayoutBuilder& LayoutBuilder)
 {
@@ -36,20 +38,47 @@ void FAbcImportSettingsCustomization::CustomizeDetails(IDetailLayoutBuilder& Lay
 
 	UAbcImportSettings* CurrentSettings = SettingsObject ? Cast<UAbcImportSettings>(SettingsObject->Get()) : nullptr;
 
-	if (CurrentSettings && CurrentSettings->bReimport)
+	if (CurrentSettings)
 	{
-		UEnum* ImportTypeEnum = StaticEnum<EAlembicImportType>();		
-		static FText RestrictReason = NSLOCTEXT("AlembicImportFactory", "ReimportRestriction", "Unable to change type while reimporting");
-		TSharedPtr<FPropertyRestriction> EnumRestriction = MakeShareable(new FPropertyRestriction(RestrictReason));
-
-		for (uint8 EnumIndex = 0; EnumIndex < (ImportTypeEnum->GetMaxEnumValue() + 1); ++EnumIndex)
+		if (CurrentSettings->bReimport)
 		{
-			if (EnumValue != EnumIndex)
+			UEnum* ImportTypeEnum = StaticEnum<EAlembicImportType>();
+			static FText RestrictReason = NSLOCTEXT("AlembicImportFactory", "ReimportRestriction", "Unable to change type while reimporting");
+			TSharedPtr<FPropertyRestriction> EnumRestriction = MakeShareable(new FPropertyRestriction(RestrictReason));
+
+			for (uint8 EnumIndex = 0; EnumIndex < (ImportTypeEnum->GetMaxEnumValue() + 1); ++EnumIndex)
 			{
-				EnumRestriction->AddDisabledValue(ImportTypeEnum->GetNameStringByIndex(EnumIndex));
+				if (EnumValue != EnumIndex)
+				{
+					EnumRestriction->AddDisabledValue(ImportTypeEnum->GetNameStringByIndex(EnumIndex));
+				}
 			}
-		}		
-		ImportType->AddRestriction(EnumRestriction.ToSharedRef());
+			ImportType->AddRestriction(EnumRestriction.ToSharedRef());
+		}
+		else
+		{
+			static bool bGeometryCacheAllowed = []() -> bool
+			{
+				IAssetTools& AssetTools = FAssetToolsModule::GetModule().Get();
+				TSharedPtr<FPathPermissionList> AssetClassPermissionList = AssetTools.GetAssetClassPathPermissionList(EAssetClassAction::ImportAsset);
+				if (AssetClassPermissionList && AssetClassPermissionList->HasFiltering())
+				{
+					return AssetClassPermissionList->PassesFilter(TEXT("/Script/GeometryCache.GeometryCache"));
+				}
+
+				return true;
+			}();
+
+			UEnum* ImportTypeEnum = StaticEnum<EAlembicImportType>();
+			static FText RestrictReason = NSLOCTEXT("AlembicImportFactory", "ImportRestriction", "Geometry Cache import disabled");
+			TSharedPtr<FPropertyRestriction> EnumRestriction = MakeShareable(new FPropertyRestriction(RestrictReason));
+
+			if (!bGeometryCacheAllowed)
+			{
+				EnumRestriction->AddHiddenValue(ImportTypeEnum->GetNameStringByValue((uint8)EAlembicImportType::GeometryCache));
+				ImportType->AddRestriction(EnumRestriction.ToSharedRef());
+			}
+		}
 	}	
 }
 
@@ -187,7 +216,7 @@ void FAbcConversionSettingsCustomization::OnConversionPresetChanged()
 		// Set values to specified preset
 		switch (Settings->Preset)
 		{
-			case EAbcConversionPreset::Maya:
+			case EAbcConversionPreset::Max:
 			{
 				Settings->bFlipU = false;
 				Settings->bFlipV = true;
@@ -196,7 +225,7 @@ void FAbcConversionSettingsCustomization::OnConversionPresetChanged()
 				break;
 			}
 
-			case EAbcConversionPreset::Max:
+			case EAbcConversionPreset::Maya:
 			{
 				Settings->bFlipU = false;
 				Settings->bFlipV = true;

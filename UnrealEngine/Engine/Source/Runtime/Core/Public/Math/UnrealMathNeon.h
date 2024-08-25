@@ -6,8 +6,6 @@
 
 PRAGMA_DISABLE_SHADOW_VARIABLE_WARNINGS
 
-#include <type_traits>
-
 // Include the intrinsic functions header
 #if ((PLATFORM_WINDOWS || PLATFORM_HOLOLENS) && PLATFORM_64BITS)
 #include <arm64_neon.h>
@@ -111,6 +109,7 @@ typedef float32x4_t GCC_ALIGN(16) VectorRegister4Float;
 typedef float64x2_t GCC_ALIGN(16) VectorRegister2Double;
 typedef int32x4_t  GCC_ALIGN(16) VectorRegister4Int;
 typedef int64x2_t GCC_ALIGN(16) VectorRegister2Int64;
+typedef float32x4x4_t GCC_ALIGN(16) VectorRegister4x4Float;
 
 FORCEINLINE constexpr VectorRegister4Int MakeVectorRegisterIntConstant(int32 X, int32 Y, int32 Z, int32 W)
 {
@@ -475,6 +474,17 @@ FORCEINLINE VectorRegister4Double VectorLoad(const double* Ptr)
 }
 
 /**
+ * Loads 16 floats from unaligned memory into 4 vector registers.
+ *
+ * @param Ptr	Unaligned memory pointer to the 4 floats
+ * @return		VectorRegister4x4Float containing 16 floats
+ */
+FORCEINLINE VectorRegister4x4Float VectorLoad16(const float* Ptr)
+{
+	return vld1q_f32_x4(Ptr);
+}
+
+/**
  * Loads 2 floats from unaligned memory into X and Y and duplicates them in Z and W.
  *
  * @param Ptr	Unaligned memory pointer to the floats
@@ -531,21 +541,20 @@ FORCEINLINE VectorRegister2Double VectorSetComponentImpl(const VectorRegister2Do
 	return vsetq_lane_f64(Scalar, Vec, ElementIndex);
 }
 
-template<int ElementIndex, typename std::enable_if< (ElementIndex > 1), bool >::type = true >
+template <int ElementIndex>
 FORCEINLINE VectorRegister4Double VectorSetComponentImpl(const VectorRegister4Double& Vec, double Scalar)
 {
 	VectorRegister4Double Result;
-	Result.XY = Vec.XY;
-	Result.ZW = VectorSetComponentImpl<ElementIndex - 2>(Vec.ZW, Scalar);
-	return Result;
-}
-
-template<int ElementIndex, typename std::enable_if < (ElementIndex <= 1), bool >::type = true >
-FORCEINLINE VectorRegister4Double VectorSetComponentImpl(const VectorRegister4Double& Vec, double Scalar)
-{
-	VectorRegister4Double Result;
-	Result.XY = VectorSetComponentImpl<ElementIndex>(Vec.XY, Scalar);
-	Result.ZW = Vec.ZW;
+	if constexpr (ElementIndex > 1)
+	{
+		Result.XY = Vec.XY;
+		Result.ZW = VectorSetComponentImpl<ElementIndex - 2>(Vec.ZW, Scalar);
+	}
+	else
+	{
+		Result.XY = VectorSetComponentImpl<ElementIndex>(Vec.XY, Scalar);
+		Result.ZW = Vec.ZW;
+	}
 	return Result;
 }
 
@@ -585,6 +594,11 @@ FORCEINLINE VectorRegister4Double VectorLoadDouble1(const double* Ptr)
 	Result.XY = vdupq_n_f64(Ptr[0]);
 	Result.ZW = Result.XY;
 	return Result;
+}
+
+FORCEINLINE VectorRegister4i VectorLoad64Bits(const void *Ptr)
+{
+	return vcombine_s64(vld1_s64((const int64_t *)Ptr), vdup_n_s64(0));
 }
 
 /**
@@ -680,6 +694,17 @@ FORCEINLINE void VectorStore(const VectorRegister4Double& Vec, double* Ptr)
 }
 
 /**
+ * Stores 4 vectors to memory (aligned or unaligned).
+ *
+ * @param Vec	Vector to store
+ * @param Ptr	Memory pointer
+ */
+FORCEINLINE void VectorStore16(const VectorRegister4x4Float& Vec, float* Ptr)
+{
+	vst1q_f32_x4(Ptr, Vec);
+}
+
+/**
  * Stores the XYZ components of a vector to unaligned memory.
  *
  * @param Vec	Vector to store XYZ
@@ -740,21 +765,20 @@ FORCEINLINE VectorRegister2Double VectorReplicateImpl(const VectorRegister2Doubl
 	return vdupq_n_f64(vgetq_lane_f64(Vec, ElementIndex));
 }
 
-template <int ElementIndex, typename std::enable_if < (ElementIndex <= 1), bool >::type = true >
+template <int ElementIndex>
 FORCEINLINE VectorRegister4Double VectorReplicateImpl(const VectorRegister4Double& Vec)
 {
 	VectorRegister4Double Result;
-	Result.XY = VectorReplicateImpl<ElementIndex>(Vec.XY);
-	Result.ZW = Result.XY;
-	return Result;
-}
-
-template <int ElementIndex, typename std::enable_if < (ElementIndex > 1), bool >::type = true >
-FORCEINLINE VectorRegister4Double VectorReplicateImpl(const VectorRegister4Double& Vec)
-{
-	VectorRegister4Double Result;
-	Result.ZW = VectorReplicateImpl<ElementIndex - 2>(Vec.ZW);
-	Result.XY = Result.ZW;
+	if constexpr (ElementIndex <= 1)
+	{
+		Result.XY = VectorReplicateImpl<ElementIndex>(Vec.XY);
+		Result.ZW = Result.XY;
+	}
+	else
+	{
+		Result.ZW = VectorReplicateImpl<ElementIndex - 2>(Vec.ZW);
+		Result.XY = Result.ZW;
+	}
 	return Result;
 }
 
@@ -1294,28 +1318,31 @@ FORCEINLINE VectorRegister4Float VectorSwizzleImpl(VectorRegister4Float Vec)
 	return __builtin_shufflevector(Vec, Vec, X, Y, Z, W);
 }
 
-template <int X, int Y, typename std::enable_if < (X <= 1) && (Y <= 1), bool >::type = true>
+template <int X, int Y>
 FORCEINLINE VectorRegister2Double VectorSwizzleImpl2(VectorRegister4Double Vec)
 {
-	return __builtin_shufflevector(Vec.XY, Vec.XY, X, Y);
-}
-
-template <int X, int Y, typename std::enable_if < (X <= 1) && (Y > 1), bool >::type = true>
-FORCEINLINE VectorRegister2Double VectorSwizzleImpl2(VectorRegister4Double Vec)
-{
-	return __builtin_shufflevector(Vec.XY, Vec.ZW, X, Y);
-}
-
-template <int X, int Y, typename std::enable_if < (X > 1) && (Y <= 1), bool >::type = true>
-FORCEINLINE VectorRegister2Double VectorSwizzleImpl2(VectorRegister4Double Vec)
-{
-	return __builtin_shufflevector(Vec.ZW, Vec.XY, X - 2, Y + 2);
-}
-
-template <int X, int Y, typename std::enable_if < (X > 1) && (Y > 1), bool >::type = true>
-FORCEINLINE VectorRegister2Double VectorSwizzleImpl2(VectorRegister4Double Vec)
-{
-	return __builtin_shufflevector(Vec.ZW, Vec.ZW, X - 2, Y);
+	if constexpr (X <= 1)
+	{
+		if constexpr (Y <= 1)
+		{
+			return __builtin_shufflevector(Vec.XY, Vec.XY, X, Y);
+		}
+		else
+		{
+			return __builtin_shufflevector(Vec.XY, Vec.ZW, X, Y);
+		}
+	}
+	else
+	{
+		if constexpr (Y <= 1)
+		{
+			return __builtin_shufflevector(Vec.ZW, Vec.XY, X - 2, Y + 2);
+		}
+		else
+		{
+			return __builtin_shufflevector(Vec.ZW, Vec.ZW, X - 2, Y);
+		}
+	}
 }
 
 template <int X, int Y, int Z, int W>
@@ -1797,16 +1824,17 @@ FORCEINLINE double VectorGetComponentImpl(VectorRegister2Double Vec)
 	return vgetq_lane_f64(Vec, ElementIndex);
 }
 
-template<int ElementIndex, typename std::enable_if< (ElementIndex > 1), bool >::type = true >
+template <int ElementIndex>
 FORCEINLINE double VectorGetComponentImpl(const VectorRegister4Double& Vec)
 {
-	return VectorGetComponentImpl<ElementIndex - 2>(Vec.ZW);
-}
-
-template<int ElementIndex, typename std::enable_if < (ElementIndex <= 1), bool >::type = true >
-FORCEINLINE double VectorGetComponentImpl(const VectorRegister4Double& Vec)
-{
-	return VectorGetComponentImpl<ElementIndex>(Vec.XY);
+	if constexpr (ElementIndex > 1)
+	{
+		return VectorGetComponentImpl<ElementIndex - 2>(Vec.ZW);
+	}
+	else
+	{
+		return VectorGetComponentImpl<ElementIndex>(Vec.XY);
+	}
 }
 
 #define VectorGetComponent(Vec, ElementIndex) VectorGetComponentImpl<ElementIndex>(Vec)
@@ -2212,26 +2240,17 @@ FORCEINLINE void VectorStoreURGB10A2N(const VectorRegister4Float& Vec, void* Ptr
  * @param Vec2			2nd source vector
  * @return				Non-zero integer if (Vec1.x > Vec2.x) || (Vec1.y > Vec2.y) || (Vec1.z > Vec2.z) || (Vec1.w > Vec2.w)
  */
-FORCEINLINE int32 VectorAnyGreaterThan( VectorRegister4Float Vec1, VectorRegister4Float Vec2 )
+FORCEINLINE int32 VectorAnyGreaterThan(VectorRegister4Float Vec1, VectorRegister4Float Vec2)
 {
-	uint16x8_t u16x8 = (uint16x8_t)vcgtq_f32( Vec1, Vec2 );
-	uint8x8_t u8x8 = (uint8x8_t)vget_low_u16( vuzpq_u16( u16x8, u16x8 ).val[0] );
-	u8x8 = vuzp_u8( u8x8, u8x8 ).val[0];
-	uint32_t buf[2];
-	vst1_u8( (uint8_t *)buf, u8x8 );
-	return (int32)buf[0]; // each byte of output corresponds to a component comparison
+	uint32x4_t Mask = (uint32x4_t)VectorCompareGT(Vec1, Vec2);
+	return vmaxvq_u32(Mask);
 }
 
 FORCEINLINE int32 VectorAnyGreaterThan(VectorRegister4Double Vec1, VectorRegister4Double Vec2)
 {
-	uint16x8_t u16x8_1 = (uint16x8_t)vcgtq_f64(Vec1.XY, Vec2.XY);
-	uint16x8_t u16x8_2 = (uint16x8_t)vcgtq_f64(Vec1.ZW, Vec2.ZW);
-	uint16x8x2_t tmp = vuzpq_u16(u16x8_1, u16x8_2);
-	uint8x8_t u8x8 = (uint8x8_t)vget_low_u16(vuzpq_u16(tmp.val[0], tmp.val[0]).val[0]);
-	u8x8 = vuzp_u8(u8x8, u8x8).val[0];
-	uint32_t buf[2];
-	vst1_u8((uint8_t*)buf, u8x8);
-	return (int32)buf[0]; // each byte of output corresponds to a component comparison
+	uint32x4_t MaskXY = (uint32x4_t)vcgtq_f64(Vec1.XY, Vec2.XY);
+	uint32x4_t MaskZW = (uint32x4_t)vcgtq_f64(Vec1.ZW, Vec2.ZW);
+	return vmaxvq_u32(MaskXY) || vmaxvq_u32(MaskZW);
 }
 
 /**
@@ -2828,6 +2847,7 @@ FORCEINLINE VectorRegister4Int VectorFloatToInt(const VectorRegister4Double& A)
 * @param Ptr	Memory pointer
 */
 #define VectorIntStore( Vec, Ptr )			vst1q_s32( (int32*)(Ptr), Vec )
+#define VectorIntStore_16( Vec, Ptr )		vst1q_s16( (int16*)(Ptr), Vec )
 
 /**
 * Loads 4 int32s from unaligned memory.
@@ -2836,6 +2856,7 @@ FORCEINLINE VectorRegister4Int VectorFloatToInt(const VectorRegister4Double& A)
 * @return		VectorRegister4Int(Ptr[0], Ptr[1], Ptr[2], Ptr[3])
 */
 #define VectorIntLoad( Ptr )				vld1q_s32( (int32*)((void*)(Ptr)) )
+#define VectorIntLoad_16( Ptr )				vld1q_s16( (int16*)((void*)(Ptr)) )
 
 /**
 * Stores a vector to memory (aligned).
@@ -2859,7 +2880,8 @@ FORCEINLINE VectorRegister4Int VectorFloatToInt(const VectorRegister4Double& A)
 * @param Ptr	Unaligned memory pointer to the 4 int32s
 * @return		VectorRegister4Int(*Ptr, *Ptr, *Ptr, *Ptr)
 */
-#define VectorIntLoad1( Ptr )	vld1q_dup_s32((int32*)(Ptr))
+#define VectorIntLoad1( Ptr )	                    vld1q_dup_s32((int32*)(Ptr))
+#define VectorIntLoad1_16(Ptr)                      vld1q_dup_s16((int16*)(Ptr))
 
 #define VectorIntSet1(F)                            vdupq_n_s32(F)
 #define VectorSetZero()                             vdupq_n_s32(0)
@@ -2876,7 +2898,7 @@ FORCEINLINE VectorRegister4Int VectorRoundToIntHalfToEven(const VectorRegister4F
 	return vcvtnq_s32_f32(Vec);
 }
 
-inline VectorRegister4i VectorIntExpandLow16To32(VectorRegister4i V) {
+FORCEINLINE VectorRegister4i VectorIntExpandLow16To32(VectorRegister4i V) {
 	int16x4x2_t res = vzip_s16(vget_low_u16(V), vdup_n_u16(0));
 	return vcombine_s16(res.val[0], res.val[1]);
 }
@@ -2884,3 +2906,7 @@ inline VectorRegister4i VectorIntExpandLow16To32(VectorRegister4i V) {
 // To be continued...
 
 PRAGMA_ENABLE_SHADOW_VARIABLE_WARNINGS
+
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
+#include <type_traits>
+#endif

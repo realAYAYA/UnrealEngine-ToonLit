@@ -57,7 +57,7 @@ private:
 	void OnAssetRemoved(const FAssetData& InAssetData);
 	void OnAssetScanFinished();
 
-	void HandleGetExtendedAssetRegistryTagsForSave(const UObject* Object, const ITargetPlatform* TargetPlatform, TArray<UObject::FAssetRegistryTag>& OutTags);
+	void HandleOnGetExtraObjectTags(FAssetRegistryTagsContext Context);
 	void HandlePackageSaved(const FString& PackageFilename, UPackage* Package, FObjectPostSaveContext ObjectSaveContext);
 	void OnAssetLoaded(UObject* InObject);
 

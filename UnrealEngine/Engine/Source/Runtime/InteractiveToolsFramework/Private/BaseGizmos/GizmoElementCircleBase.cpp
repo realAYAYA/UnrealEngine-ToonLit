@@ -23,21 +23,29 @@ bool UGizmoElementCircleBase::IsPartial(const UGizmoViewContext* View, const FVe
 }
 
 bool UGizmoElementCircleBase::IsPartial(const FVector& InWorldCenter, const FVector& InWorldNormal,
-	const FVector& InViewLocation, const FVector& InViewDirection, bool bIsPerspectiveProjection)
+	const FVector& InViewLocation, const FVector& InViewDirection, const bool bIsPerspectiveProjection)
 {
-	FVector ViewToCircleBaseCenter;
-	if (bIsPerspectiveProjection)
+	switch (PartialType)
 	{
-		ViewToCircleBaseCenter = (InWorldCenter - InViewLocation).GetSafeNormal();
-	}
-	else
-	{
-		ViewToCircleBaseCenter = InViewDirection;
+		case EGizmoElementPartialType::None:
+			return false;
+		case EGizmoElementPartialType::Partial:
+			return true;
+		case EGizmoElementPartialType::PartialViewDependent:
+		{
+			FVector ViewToCircleBaseCenter(InViewDirection);
+			if (bIsPerspectiveProjection)
+			{
+				ViewToCircleBaseCenter = (InWorldCenter - InViewLocation).GetSafeNormal();
+			}
+			const double DotP = FMath::Abs(FVector::DotProduct(InWorldNormal, ViewToCircleBaseCenter));
+			return (DotP <= PartialViewDependentMaxCosTol);
+		}
+		default:
+			break;
 	}
 
-	double DotP = FMath::Abs(FVector::DotProduct(InWorldNormal, ViewToCircleBaseCenter));
-	return (PartialType == EGizmoElementPartialType::Partial ||
-		(PartialType == EGizmoElementPartialType::PartialViewDependent && DotP <= PartialViewDependentMaxCosTol));
+	return false;
 }
 
 void UGizmoElementCircleBase::SetCenter(const FVector& InCenter)

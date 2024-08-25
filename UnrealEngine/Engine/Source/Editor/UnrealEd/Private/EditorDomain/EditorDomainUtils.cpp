@@ -9,6 +9,7 @@
 #include "AssetRegistry/AssetData.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "AssetRegistry/PackageReader.h"
+#include "Containers/DirectoryTree.h"
 #include "DerivedDataBuildDefinition.h"
 #include "DerivedDataCache.h"
 #include "DerivedDataCacheKey.h"
@@ -22,6 +23,8 @@
 #include "HAL/FileManager.h"
 #include "HAL/IConsoleManager.h"
 #include "Hash/Blake3.h"
+#include "Interfaces/IPluginManager.h"
+#include "IO/IoHash.h"
 #include "Memory/SharedBuffer.h"
 #include "Misc/CommandLine.h"
 #include "Misc/CoreDelegates.h"
@@ -33,6 +36,7 @@
 #include "Misc/Parse.h"
 #include "Misc/ScopeRWLock.h"
 #include "Misc/StringBuilder.h"
+#include "Modules/ModuleManager.h"
 #include "Serialization/BulkDataRegistry.h"
 #include "Serialization/CompactBinaryWriter.h"
 #include "Serialization/MemoryReader.h"
@@ -143,6 +147,18 @@ void Register()
 namespace UE::EditorDomain
 {
 
+FStringView RemoveConfigComment(FStringView Line)
+{
+	int32 CommentIndex;
+	Line.FindChar(';', CommentIndex);
+	if (CommentIndex != INDEX_NONE)
+	{
+		Line = Line.Left(CommentIndex);
+	}
+	Line.TrimStartAndEndInline();
+	return Line;
+}
+
 struct FSaveStoreResultToText
 {
 	ESaveStorageResult Code;
@@ -199,7 +215,7 @@ TMultiMap<FTopLevelAssetPath, FTopLevelAssetPath> GConstructClasses;
 TSet<FTopLevelAssetPath> GTargetDomainClassBlockList;
 TArray<FTopLevelAssetPath> GGlobalConstructClasses;
 bool bGGlobalConstructClassesInitialized = false;
-bool bGUtilsTargetDomainInitialized = false;
+bool bGUtilsCookInitialized = false;
 FBlake3Hash GGlobalConstructClassesHash;
 int64 GMaxBulkDataSize = -1;
 
@@ -327,9 +343,7 @@ FPackageDigest CalculatePackageDigest(IAssetRegistry& AssetRegistry, FName Packa
 	Writer.Update(EditorDomainVersion, FCString::Strlen(EditorDomainVersion)*sizeof(EditorDomainVersion[0]));
 	uint8 EditorDomainSaveUnversioned = GetEditorDomainSaveUnversioned() ? 1 : 0;
 	Writer.Update(&EditorDomainSaveUnversioned, sizeof(EditorDomainSaveUnversioned));
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
-	Writer.Update(&PackageData.PackageGuid, sizeof(PackageData.PackageGuid));
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+	Writer.Update(&PackageData.GetPackageSavedHash().GetBytes(), sizeof(PackageData.GetPackageSavedHash().GetBytes()));
 	Writer.Update(&GPackageFileUEVersion, sizeof(GPackageFileUEVersion));
 	Writer.Update(&GPackageFileLicenseeUEVersion, sizeof(GPackageFileLicenseeUEVersion));
 	TArray<int32> CustomVersionHandles;
@@ -970,11 +984,11 @@ TMap<FName, EDomainUse> ConstructPackageNameBlockedUses()
 TSet<FTopLevelAssetPath> ConstructTargetIterativeClassBlockList()
 {
 	TSet<FTopLevelAssetPath> Result;
-	TArray<FString> BlockListArray;
-	GConfig->GetArray(TEXT("TargetDomain"), TEXT("IterativeClassBlockList"), BlockListArray, GEditorIni);
-	for (const FString& ClassPathString : BlockListArray)
+	TArray<FString> DenyListArray;
+	GConfig->GetArray(TEXT("TargetDomain"), TEXT("IterativeClassDenyList"), DenyListArray, GEditorIni);
+	for (const FString& ClassPathString : DenyListArray)
 	{
-		FTopLevelAssetPath ClassPath(ClassPathString);
+		FTopLevelAssetPath ClassPath(RemoveConfigComment(ClassPathString));
 		if (ClassPath.IsValid())
 		{
 			CoreRedirectClassPath(ClassPath);
@@ -1035,9 +1049,7 @@ void ConstructTargetIterativeClassAllowList()
 	};
 
 	TArray<FString> AllowListLeafNames;
-	TArray<FString> AllowListScriptPackages;
 	GConfig->GetArray(TEXT("TargetDomain"), TEXT("IterativeClassAllowList"), AllowListLeafNames, GEditorIni);
-	GConfig->GetArray(TEXT("TargetDomain"), TEXT("IterativeScriptPackageAllowList"), AllowListScriptPackages, GEditorIni);
 	TSet<UStruct*> AllowListClasses;
 	for (const FString& ClassPathString : AllowListLeafNames)
 	{
@@ -1058,35 +1070,132 @@ void ConstructTargetIterativeClassAllowList()
 		}
 		AllowListClasses.Add(Struct);
 	}
-	UPackage* CoreUObjectPackage = UClass::StaticClass()->GetPackage();
-	UPackage* EnginePackage = UBlueprint::StaticClass()->GetPackage();
-	for (const FString& ScriptPackage : AllowListScriptPackages)
+
+	enum class EAllowCommand
 	{
-		if (!FPackageName::IsScriptPackage(ScriptPackage))
+		Allow,
+		Deny,
+		Invalid,
+	};
+
+	TDirectoryTree<EAllowCommand> ScriptPackageAllowPaths;
+	TArray<FString> ScriptPackageAllowListLines;
+	GConfig->GetArray(TEXT("TargetDomain"), TEXT("IterativeClassScriptPackageAllowList"), ScriptPackageAllowListLines, GEditorIni);
+	for (const FString& Line : ScriptPackageAllowListLines)
+	{
+		TArray<FStringView, TInlineAllocator<2>> Tokens;
+		UE::String::ParseTokens(Line, TEXT(","), Tokens, UE::String::EParseTokensOptions::SkipEmpty | UE::String::EParseTokensOptions::Trim);
+		EAllowCommand Command = EAllowCommand::Invalid;
+		FString ScriptPath;
+
+		if (Tokens.Num() == 2)
 		{
-			continue;
-		}
-		UPackage* Package = FindObject<UPackage>(nullptr, *ScriptPackage);
-		if (!Package)
-		{
-			continue;
-		}
-		ForEachObjectWithPackage(Package, [Package, CoreUObjectPackage, EnginePackage, &AllowListClasses](UObject* Object)
+			if (Tokens[0] == TEXTVIEW("Allow"))
 			{
-				UClass* Class = Cast<UClass>(Object);
-				if (!Class)
+				Command = EAllowCommand::Allow;
+			}
+			else if (Tokens[0] == TEXTVIEW("Deny") || Tokens[0] == TEXTVIEW("Block"))
+			{
+				Command = EAllowCommand::Deny;
+			}
+			ScriptPath = Tokens[1];
+			ScriptPath = ScriptPath.Replace(TEXT("<ProjectRoot>"), *FPaths::ProjectDir());
+			ScriptPath = ScriptPath.Replace(TEXT("<EngineRoot>"), *FPaths::EngineDir());
+			FPaths::MakeStandardFilename(ScriptPath);
+		}
+		if (Command == EAllowCommand::Invalid || ScriptPath.IsEmpty())
+		{
+			UE_LOG(LogEditorDomain, Error, TEXT("Invalid value for Editor.ini:[TargetDomain]:IterativeClassScriptPackageAllowList:")
+				TEXT("\n\t%s")
+				TEXT("\n\tExpected form\n\t+IterativeClassScriptPackageAllowList=<Allow|Deny>,../../../Engine"),
+				*Line);
+			continue;
+		}
+		ScriptPackageAllowPaths.FindOrAdd(ScriptPath) = Command;
+	}
+
+	// For every known /Script/ package, test whether it is allow-listed in IterativeClassScriptPackageAllowList,
+	// and if so add all classes and structs in the package to AllowListClasses 
+	FModuleManager& ModuleManager = FModuleManager::Get();
+	IPluginManager& PluginManager = IPluginManager::Get();
+	for (TObjectIterator<UPackage> PackageIter; PackageIter; ++PackageIter)
+	{
+		UPackage* Package = *PackageIter;
+		TStringBuilder<256> PackageName(InPlace, Package->GetFName());
+		FStringView ModuleName;
+		if (!FPackageName::TryConvertScriptPackageNameToModuleName(PackageName, ModuleName))
+		{
+			continue;
+		}
+
+		FString ModuleSourceDir;
+		FName ModuleNameFName(ModuleName);
+
+		// Try to find the path to the script package's source.
+		// All script packages come from a module, but some modules are not loaded until load/save of the package
+		// (even though their script package is loaded at startup)
+		// First  ask the PluginManager whether any plugin claims the module. If so, use the plugin's directory.
+		TSharedPtr<IPlugin> Plugin = PluginManager.GetModuleOwnerPlugin(ModuleNameFName);
+		if (Plugin)
+		{
+			ModuleSourceDir = Plugin->GetBaseDir();
+		}
+		else
+		{
+			// Not claimed by a plugin, so its either a module in /Engine or /Game. To find out which, first
+			// try the ModuleManager and use bIsGameModule.
+			FModuleStatus ModuleStatus;
+			if (ModuleManager.QueryModule(ModuleNameFName, ModuleStatus))
+			{
+				ModuleSourceDir = FPaths::Combine(ModuleStatus.bIsGameModule ? FPaths::ProjectDir() : FPaths::EngineDir(), TEXT("Source"));
+			}
+			else
+			{
+				// Not yet known to the module manager; maybe it just hasn't been loaded
+				FString ModuleFilePath;
+				if (ModuleManager.ModuleExists(*WriteToString<256>(ModuleName), &ModuleFilePath))
 				{
-					return true;
-				}
-				if (Package == CoreUObjectPackage || Package == EnginePackage)
-				{
-					// Skip some non-normal classes in CoreUObject and Engine; we crash on them because e.g. they do not have a CDO
-					if (FStringView(WriteToString<256>(Object->GetFName())).StartsWith(TEXT("Default_")))
+					bool bIsGameModule = false;
+					// In a monolithic compile, ModuleFilePath will be empty.
+					// For now, treat all of those as EnginePath. TODO: Modify IMPLEMENT_MODULE to specify whether the module is game or engine
+					if (ModuleFilePath.IsEmpty())
 					{
-						return true;
+						bIsGameModule = false;
 					}
+					else
+					{
+						// ModuleFilePath is the path to the dll, and since it is not a plugin, should be either in Engine/Binaries/Win64 or <ProjectRoot>/Binaries/Win64
+						FPaths::MakeStandardFilename(ModuleFilePath);
+						bIsGameModule = !FPathViews::IsParentPathOf(FPaths::EngineDir(), ModuleFilePath);
+					}
+					ModuleSourceDir = FPaths::Combine(bIsGameModule ? FPaths::ProjectDir() : FPaths::EngineDir(), TEXT("Source"));
 				}
-				AllowListClasses.Add(Class);
+				else
+				{
+					// else not a module that can ever be found in the module manager; this can happen if the module is missing IMPLEMENT_MODULE
+					// e.g. CoreOnline
+					UE_LOG(LogEditorDomain, Verbose,
+						TEXT("Could not find module for script package %s. Packages with classes from this script package will not be iteratively skippable."),
+						*PackageName);
+					continue;
+				}
+			}
+		}
+
+		FPaths::MakeStandardFilename(ModuleSourceDir);
+		EAllowCommand* AllowCommand = ScriptPackageAllowPaths.FindClosestValue(ModuleSourceDir);
+		if (!AllowCommand || *AllowCommand != EAllowCommand::Allow)
+		{
+			continue;
+		}
+
+		ForEachObjectWithPackage(Package, [&AllowListClasses](UObject* Object)
+			{
+				UStruct* Class = Cast<UStruct>(Object);
+				if (Class)
+				{
+					AllowListClasses.Add(Class);
+				}
 				return true;
 			}, false /* bIncludeNestedObjects */);
 	}
@@ -1212,14 +1321,15 @@ void UtilsInitialize()
 	COOK_STAT(UE::EditorDomain::CookStats::Register());
 }
 
-void UtilsTargetDomainInit()
+void UtilsCookInitialize()
 {
-	if (bGUtilsTargetDomainInitialized)
+	if (bGUtilsCookInitialized)
 	{
 		return;
 	}
-	bGUtilsTargetDomainInitialized = true;
+	bGUtilsCookInitialized = true;
 	ConstructTargetIterativeClassAllowList();
+	UE::TargetDomain::CookInitialize();
 }
 
 UE::DerivedData::FCacheKey GetEditorDomainPackageKey(const FIoHash& EditorDomainHash)
@@ -1940,10 +2050,10 @@ void PutBulkDataList(FName PackageName, FSharedBuffer Buffer)
 	Owner.KeepAlive();
 }
 
-FIoHash GetPackageAndGuidHash(const FGuid& PackageGuid, const FGuid& BulkDataId)
+FIoHash GetPackageAndGuidHash(const FIoHash& PackageHash, const FGuid& BulkDataId)
 {
 	FBlake3 Builder;
-	Builder.Update(&PackageGuid, sizeof(PackageGuid));
+	Builder.Update(&PackageHash.GetBytes(), sizeof(PackageHash.GetBytes()));
 	Builder.Update(&BulkDataId, sizeof(BulkDataId));
 	return Builder.Finalize();
 }
@@ -1958,10 +2068,7 @@ void GetBulkDataPayloadId(FName PackageName, const FGuid& BulkDataId, UE::Derive
 	{
 		return;
 	}
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
-	const FGuid& PackageGuid = PackageData->PackageGuid;
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
-	FIoHash PackageAndGuidHash = GetPackageAndGuidHash(PackageGuid, BulkDataId);
+	FIoHash PackageAndGuidHash = GetPackageAndGuidHash(PackageData->GetPackageSavedHash(), BulkDataId);
 
 	using namespace UE::DerivedData;
 	ICache& Cache = GetCache();
@@ -1983,10 +2090,7 @@ void PutBulkDataPayloadId(FName PackageName, const FGuid& BulkDataId, FSharedBuf
 	{
 		return;
 	}
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
-	const FGuid& PackageGuid = PackageData->PackageGuid;
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
-	FIoHash PackageAndGuidHash = GetPackageAndGuidHash(PackageGuid, BulkDataId);
+	FIoHash PackageAndGuidHash = GetPackageAndGuidHash(PackageData->GetPackageSavedHash(), BulkDataId);
 
 	using namespace UE::DerivedData;
 	ICache& Cache = GetCache();

@@ -65,6 +65,26 @@ class FCbAttachment
 		}
 	};
 
+	struct FCompressedBinaryValue
+	{
+		FCompressedBuffer Buffer;
+		FIoHash Hash;
+
+		template <typename BufferType, decltype(FCompressedBuffer(DeclVal<BufferType>().MakeOwned()))* = nullptr>
+		inline explicit FCompressedBinaryValue(BufferType&& InBuffer)
+			: Buffer(Forward<BufferType>(InBuffer).MakeOwned())
+			, Hash(Buffer.GetRawHash())
+		{
+		}
+
+		template <typename BufferType, decltype(FCompressedBuffer(DeclVal<BufferType>().MakeOwned()))* = nullptr>
+		inline explicit FCompressedBinaryValue(BufferType&& InBuffer, const FIoHash& InHash)
+			: Buffer(Forward<BufferType>(InBuffer).MakeOwned())
+			, Hash(InHash)
+		{
+		}
+	};
+
 	template <typename... ArgTypes, decltype(FBinaryValue(DeclVal<ArgTypes>()...))* = nullptr>
 	inline FCbAttachment(TInPlaceType<FBinaryValue>, ArgTypes&&... Args)
 		: Value(TInPlaceType<FBinaryValue>(), Forward<ArgTypes>(Args)...)
@@ -99,19 +119,36 @@ public:
 
 	/** Construct a compressed binary attachment. Value is cloned if not owned. */
 	inline explicit FCbAttachment(const FCompressedBuffer& InValue)
-		: Value(TInPlaceType<FCompressedBuffer>(), InValue)
+		: Value(TInPlaceType<FCompressedBinaryValue>(), InValue)
 	{
-		if (Value.Get<FCompressedBuffer>().IsNull())
+		if (Value.Get<FCompressedBinaryValue>().Buffer.IsNull())
 		{
 			Value.Emplace<TYPE_OF_NULLPTR>();
 		}
 	}
 
-	/** Construct a compressed binary attachment. Value is cloned if not owned. */
-	inline explicit FCbAttachment(FCompressedBuffer&& InValue)
-		: Value(TInPlaceType<FCompressedBuffer>(), InValue)
+	UE_INTERNAL inline explicit FCbAttachment(const FCompressedBuffer& InValue, const FIoHash& Hash)
+		: Value(TInPlaceType<FCompressedBinaryValue>(), InValue, Hash)
 	{
-		if (Value.Get<FCompressedBuffer>().IsNull())
+		if (Value.Get<FCompressedBinaryValue>().Buffer.IsNull())
+		{
+			Value.Emplace<TYPE_OF_NULLPTR>();
+		}
+	}
+
+	inline explicit FCbAttachment(FCompressedBuffer&& InValue)
+		: Value(TInPlaceType<FCompressedBinaryValue>(), InValue)
+	{
+		if (Value.Get<FCompressedBinaryValue>().Buffer.IsNull())
+		{
+			Value.Emplace<TYPE_OF_NULLPTR>();
+		}
+	}
+
+	UE_INTERNAL inline explicit FCbAttachment(FCompressedBuffer&& InValue, const FIoHash& Hash)
+		: Value(TInPlaceType<FCompressedBinaryValue>(), InValue, Hash)
+	{
+		if (Value.Get<FCompressedBinaryValue>().Buffer.IsNull())
 		{
 			Value.Emplace<TYPE_OF_NULLPTR>();
 		}
@@ -145,7 +182,7 @@ public:
 	inline bool IsBinary() const { return Value.IsType<FBinaryValue>(); }
 
 	/** Returns whether the attachment is compressed binary. */
-	inline bool IsCompressedBinary() const { return Value.IsType<FCompressedBuffer>(); }
+	inline bool IsCompressedBinary() const { return Value.IsType<FCompressedBinaryValue>(); }
 
 	/** Returns the hash of the attachment value. */
 	CORE_API FIoHash GetHash() const;
@@ -182,7 +219,7 @@ public:
 	CORE_API void Save(FArchive& Ar) const;
 
 private:
-	TVariant<TYPE_OF_NULLPTR, FObjectValue, FBinaryValue, FCompressedBuffer> Value;
+	TVariant<TYPE_OF_NULLPTR, FObjectValue, FBinaryValue, FCompressedBinaryValue> Value;
 };
 
 /** Hashes attachments by their hash. Any discrepancy in type must be handled externally. */
@@ -443,9 +480,9 @@ const FCompositeBuffer& FCbAttachment::AsCompositeBinary() const
 
 const FCompressedBuffer& FCbAttachment::AsCompressedBinary() const
 {
-	if (const FCompressedBuffer* CompressedBuffer = Value.TryGet<FCompressedBuffer>())
+	if (const FCompressedBinaryValue* CompressedBuffer = Value.TryGet<FCompressedBinaryValue>())
 	{
-		return *CompressedBuffer;
+		return CompressedBuffer->Buffer;
 	}
 	return FCompressedBuffer::Null;
 }

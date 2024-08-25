@@ -1345,7 +1345,7 @@ void SDMXMVRFixtureList::OnPasteItems()
 		return;
 	}
 
-	TGuardValue<bool>(bChangingDMXLibrary, true);
+	TGuardValue Guard(bChangingDMXLibrary, true);
 	const FText TransactionText = LOCTEXT("PasteFixturePatchesTransaction", "Paste Fixture Patches");
 	const FScopedTransaction PasteTransaction(TransactionText);
 
@@ -1386,7 +1386,7 @@ void SDMXMVRFixtureList::OnDuplicateItems()
 		return;
 	}
 
-	TGuardValue<bool>(bChangingDMXLibrary, true);
+	TGuardValue Guard(bChangingDMXLibrary, true);
 
 	const FText TransactionText = LOCTEXT("DuplicateFixturePatchesTransaction", "Duplicate Fixture Patches");
 	const FScopedTransaction PasteTransaction(TransactionText);
@@ -1443,7 +1443,7 @@ bool SDMXMVRFixtureList::CanDeleteItems() const
 
 void SDMXMVRFixtureList::OnDeleteItems()
 {
-	TGuardValue<bool>(bChangingDMXLibrary, true);
+	TGuardValue Guard(bChangingDMXLibrary, true);
 
 	const TArray<TSharedPtr<FDMXMVRFixtureListItem>> SelectedItems = ListView->GetSelectedItems();
 

@@ -4,9 +4,10 @@
 
 #include "ContentBrowserMenuContexts.h"
 #include "ContentBrowserModule.h"
+#include "CustomizableObjectInstanceEditor.h"
 #include "Editor.h"
 #include "ToolMenus.h"
-#include "MuCOE/CustomizableObjectEditorModule.h"
+#include "MuCO/ICustomizableObjectEditorModule.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 
 #define LOCTEXT_NAMESPACE "CustomizableObjectInstance"
@@ -17,8 +18,8 @@ EAssetCommandResult UAssetDefinition_CustomizableObjectInstance::OpenAssets(cons
 
 	for (UCustomizableObjectInstance* Object : OpenArgs.LoadObjects<UCustomizableObjectInstance>())
 	{
-		ICustomizableObjectEditorModule* CustomizableObjectEditorModule = &FModuleManager::LoadModuleChecked<ICustomizableObjectEditorModule>( "CustomizableObjectEditor" );
-		CustomizableObjectEditorModule->CreateCustomizableObjectInstanceEditor(Mode, OpenArgs.ToolkitHost, Object);
+		const TSharedPtr<FCustomizableObjectInstanceEditor> Editor = MakeShared<FCustomizableObjectInstanceEditor>();
+		Editor->InitCustomizableObjectInstanceEditor(Mode, OpenArgs.ToolkitHost, Object);
 	}
 
 	return EAssetCommandResult::Handled;

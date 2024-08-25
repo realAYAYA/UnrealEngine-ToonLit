@@ -81,6 +81,8 @@ public:
 	IMAGEWRITEQUEUE_API virtual bool RunTask() override final;
 	IMAGEWRITEQUEUE_API virtual void OnAbandoned() override final;
 
+	IMAGEWRITEQUEUE_API void AddPreProcessorToSetAlphaOpaque();
+
 private:
 
 	/**
@@ -116,11 +118,13 @@ private:
 
 /**
  * A pixel preprocessor for use with FImageWriteTask::PixelPreProcessor that overwrites the alpha channel with a fixed value as part of the threaded work
+ *
+ * DEPRECATED.  Prefer AddPreProcessorToSetAlphaOpaque.
  */
 template<typename PixelType> struct TAsyncAlphaWrite;
 
 template<>
-struct TAsyncAlphaWrite<FColor>
+struct TAsyncAlphaWrite<FColor> // prefer AddPreProcessorToSetAlphaOpaque
 {
 	uint8 Alpha;
 	TAsyncAlphaWrite(uint8 InAlpha) : Alpha(InAlpha) {}
@@ -138,7 +142,7 @@ struct TAsyncAlphaWrite<FColor>
 };
 
 template<>
-struct TAsyncAlphaWrite<FFloat16Color>
+struct TAsyncAlphaWrite<FFloat16Color> // prefer AddPreProcessorToSetAlphaOpaque
 {
 	FFloat16 Alpha;
 	TAsyncAlphaWrite(float InAlpha) : Alpha(InAlpha) {}
@@ -156,7 +160,7 @@ struct TAsyncAlphaWrite<FFloat16Color>
 };
 
 template<>
-struct TAsyncAlphaWrite<FLinearColor>
+struct TAsyncAlphaWrite<FLinearColor> // prefer AddPreProcessorToSetAlphaOpaque
 {
 	float Alpha;
 	TAsyncAlphaWrite(float InAlpha) : Alpha(InAlpha) {}
@@ -175,6 +179,9 @@ struct TAsyncAlphaWrite<FLinearColor>
 
 /**
  * A pixel preprocessor for use with FImageWriteTask::PixelPreProcessor that inverts the alpha channel as part of the threaded work
+ *
+ * DEPRECATED.  This is not used that I can see; if it is, make something like AddPreProcessorToSetAlphaOpaque where the implementation
+ *   is in a C file and handles all formats, not a template in a header.
  */
 template<typename PixelType> struct TAsyncAlphaInvert;
 
@@ -203,7 +210,7 @@ struct TAsyncAlphaInvert<FFloat16Color>
 		TImagePixelData<FFloat16Color>* Float16ColorData = static_cast<TImagePixelData<FFloat16Color>*>(PixelData);
 		for (FFloat16Color& Pixel : Float16ColorData->Pixels)
 		{
-			Pixel.A = FFloat16(1.f) - Pixel.A;
+			Pixel.A = FFloat16(1.f - Pixel.A.GetFloat());
 		}
 	}
 };

@@ -48,7 +48,7 @@ public:
 	 * @Param Producer				The producer object, tested in debug builds to be the owner port.
 	 * @Param Signal				The signal to enqueue
 	 */
-	void EnqueueSignal(void* Producer, const FDMXSignalSharedRef& Signal);
+	virtual void EnqueueSignal(void* Producer, const FDMXSignalSharedRef& Signal);
 
 	/** 
 	 * Thread safe single consumer. Tries to dequeues a signal from the raw listener. 

@@ -31,6 +31,14 @@
 	<Property Name="DefaultWithIOS" Value="$(DefaultWithPlatform)"/>
 	<Property Name="DefaultWithIOS" Value="false" If="'$(HostPlatform)' != 'Mac' And !$(AllPlatforms)"/>
 
+	<!-- Global Compile Arguments - note: only implemented for Win64 agents -->
+	<Option Name="ExtraCompileArgs" DefaultValue="" Description="Extra arguments to pass to compiles run on Win64 agents"/>
+
+	<!-- Host platforms for the installed editor -->
+	<Option Name="WithInstalledWin64" Restrict="true|false" DefaultValue="true" Description="Whether to include the Win64 editor as part of a binary release"/>
+	<Option Name="WithInstalledMac" Restrict="true|false" DefaultValue="true" Description="Whether to include the Mac editor as part of a binary release"/>
+	<Option Name="WithInstalledLinux" Restrict="true|false" DefaultValue="true" Description="Whether to include the Linux editor as part of a binary release"/>
+
 	<!-- Setup default target platforms for Installed build if they haven't been specified on the commandline -->
 	<Option Name="WithWin64" Restrict="true|false" DefaultValue="$(DefaultWithWin64)" Description="Include the Win64 target platform"/>
 	<Option Name="WithMac" Restrict="true|false" DefaultValue="$(DefaultWithMac)" Description="Include the Mac target platform"/>
@@ -52,6 +60,7 @@
 
 	<!-- Whether to sign any executables produced -->
 	<Option Name="SignExecutables" Restrict="true|false" DefaultValue="false" Description="Sign the executables produced where signing is available"/>
+	<Option Name="SignWindowsExecutablesInParallel" Restrict="true|false" DefaultValue="false" Description="Sign the executables in parallel, Windows only"/>
 
 	<!-- The analytics type -->
 	<Option Name="AnalyticsTypeOverride" DefaultValue="" Description="Identifier for analytic events to send"/>
@@ -63,8 +72,7 @@
 
 	<!--- Create command line argument for build identifier -->
 	<Property Name="BuildIdentifierArg" Value="" />
-	<Property Name="BuildIdentifierArg" Value="-BuildId=&quot;$(BuildId)&quot;" If="'$(BuildId)' != ''"/>
-
+	<Property Name="BuildIdentifierArg" Value="-BuildId=&quot;$(BuildId)&quot;" If="'$(BuildId)' != ''"/>	
 
 	<!-- Whether to embed source server info (ie. P4 paths) into PDB files -->
 	<Option Name="EmbedSrcSrvInfo" Restrict="true|false" DefaultValue="false" Description="Whether to add Source indexing to Windows game apps so they can be added to a symbol server"/>
@@ -97,11 +105,16 @@
 	<Property Name="ToolchainDir" Value="$(RootDir)/Engine/Extras/ThirdPartyNotUE/SDKs"/>
 
 	<!-- Architectures that we build for Android. NOTE: This should match the architectures specified in BuildPluginCommand. -->
-	<Property Name="AndroidArchitectures" Value="arm64"/>
+	<Property Name="AndroidArchitectures" Value="arm64+x64"/>
 	
 	<Property Name="DefaultArchitectureCommandsWin64" Value=""/>
-
-
+	
+	<!-- LiveLinkHub args -->
+	<Option Name="WithLiveLinkHub3rdPartyPlugins" DefaultValue="true" Restrict="true|false" Description="Whether or not to compile LiveLinkHub plugins."/>
+	<Option Name="HasExtraNotForLicenseeFiles" DefaultValue="false" Restrict="true|false" Description="Whether or not a an extra set of nodes should be generated."/>
+	<Property Name="LiveLinkHubCompileArgs" Value="-EnableThirdPartyPlugins=true" />
+	<Property Name="LiveLinkHubCompileArgs" Value="-EnableThirdPartyPlugins=false" If="!$(WithLiveLinkHub3rdPartyPlugins)"/>
+	
 	<!-- Compile flags for Windows Game binaries -->
 	<Property Name="TargetDebugInfoArg" Value="-nodebuginfo"/>
 	<Property Name="TargetDebugInfoArg" Value="" If="$(WithFullDebugInfo)"/>
@@ -146,10 +159,27 @@
 	<!-- Include the script that lists files and patterns used when creating an installed build -->
 	<Include Script="InstalledEngineFilters.xml"/>
 
-	<Option Name="CrashReporterAPIURL" DefaultValue="" Description="The URL to use to talk to the CrashReporterClient API."/>
-	<Option Name="CrashReporterAPIKey" DefaultValue="" Description="The API key to use to talk to the CrashReporterClient API."/>
-	<Property Name="CrashReporterCompileArgs" Value=""/>
-	<Property Name="CrashReporterCompileArgs" Value="-define:CRC_TELEMETRY_URL=\&quot;$(CrashReporterAPIURL)\&quot; -define:CRC_TELEMETRY_KEY_DEV=\&quot;$(CrashReporterAPIKey)\&quot; -define:CRC_TELEMETRY_KEY_RELEASE=\&quot;$(CrashReporterAPIKey)\&quot; -OverrideBuildEnvironment" If="'$(CrashReporterAPIURL)' != '' And '$(CrashReporterAPIKey)' != ''" />
+	<!-- Crash reporter and telemetry settings for the customer facing crash reporter -->
+	<Option Name="CrashReporterURL" DefaultValue="" Description="The URL to use to talk to the crash reporting API. Used for crashes from packaged games."/>
+	<Option Name="CrashReporterTelemetryURL" DefaultValue="" Description="The URL to use to talk to the Telemetry API. Used for crashes from packaged games."/>
+	<Option Name="CrashReporterTelemetryKey" DefaultValue="" Description="The API key to use to talk to the Telemetry API. Used for crashes from packaged games."/>
+	<Option Name="CrashReporterCompanyName" DefaultValue="" Description="Default company name to display in CrashReportClient. Used for crashes from packaged games."/>
+
+	<Property Name="CRCTelemetryDefines" Value=""/>
+	<Property Name="CRCTelemetryDefines" Value="-define:CRC_TELEMETRY_URL=\&quot;$(CrashReporterTelemetryURL)\&quot; -define:CRC_TELEMETRY_KEY=\&quot;$(CrashReporterTelemetryKey)\&quot; -OverrideBuildEnvironment" If="'$(CrashReporterTelemetryURL)' != '' And '$(CrashReporterTelemetryKey)' != ''" />
+	<Property Name="CRCDefines" Value=""/>
+	<Property Name="CRCDefines" Value=" -define:CRC_DEFAULT_URL=\&quot;$(CrashReporterURL)\&quot; -define:CRC_DEFAULT_COMPANY_NAME=\&quot;$(CrashReporterCompanyName)\&quot; -OverrideBuildEnvironment" If="'$(CrashReporterURL)' != ''" />
+	
+	<!-- Crash reporter and telemetry settings for development time crash reporter -->
+	<Option Name="CrashReporterDevURL" DefaultValue="" Description="The URL to use to talk to the crash reporting API. Used for development time crashes."/>
+	<Option Name="CrashReporterDevTelemetryURL" DefaultValue="" Description="The URL to use to talk to the Telemetry API. Used for development time crashes."/>
+	<Option Name="CrashReporterDevTelemetryKey" DefaultValue="" Description="The API key to use to talk to the Telemetry API. Used for development time crashes."/>
+	<Option Name="CrashReporterDevCompanyName" DefaultValue="" Description="Default company name to display in CrashReportClient. Used for development time crashes."/>
+
+	<Property Name="CRCETelemetryDefines" Value=""/>
+	<Property Name="CRCETelemetryDefines" Value="-define:CRC_TELEMETRY_URL=\&quot;$(CrashReporterDevTelemetryURL)\&quot; -define:CRC_TELEMETRY_KEY=\&quot;$(CrashReporterDevTelemetryKey)\&quot; -OverrideBuildEnvironment" If="'$(CrashReporterDevTelemetryURL)' != '' And '$(CrashReporterDevTelemetryKey)' != ''" />
+	<Property Name="CRCEDefines" Value=""/>
+	<Property Name="CRCEDefines" Value=" -define:CRC_DEFAULT_URL=\&quot;$(CrashReporterDevURL)\&quot; -define:CRC_DEFAULT_COMPANY_NAME=\&quot;$(CrashReporterDevCompanyName)\&quot; -OverrideBuildEnvironment" If="'$(CrashReporterDevURL)' != ''" />
 
 	<Property Name="MacArchitectureArg" Value="-architecture=arm64+x64" />
 
@@ -159,8 +189,8 @@
 			<SetVersion Change="$(Change)" Branch="$(EscapedBranch)" If="$(IsBuildMachine)"/>
 		</Node>
 		<Node Name="Compile UnrealEditor Win64" Requires="Update Version Files" Produces="#UnrealEditor Win64;#UnrealEditor Win64 Unstripped;#UnrealEditor Win64 Stripped;#UnrealEditor Win64 Unsigned;#UnrealEditor Win64 Signed;#UnrealEditor Win64 WithExceptions">
-			<Compile Target="UnrealEditor" Platform="Win64" Configuration="DebugGame" Tag="#UnrealEditor Win64" Arguments="-precompile -allmodules $(CrashReporterCompileArgs)"/>
-			<Compile Target="UnrealEditor" Platform="Win64" Configuration="Development" Tag="#UnrealEditor Win64" Arguments="-precompile -allmodules $(CrashReporterCompileArgs)"/>
+			<Compile Target="UnrealEditor" Platform="Win64" Configuration="DebugGame" Tag="#UnrealEditor Win64" Arguments="-precompile -allmodules $(ExtraCompileArgs)"/>
+			<Compile Target="UnrealEditor" Platform="Win64" Configuration="Development" Tag="#UnrealEditor Win64" Arguments="-precompile -allmodules $(ExtraCompileArgs)"/>
 
 			<Do If="$(EmbedSrcSrvInfo)">
 				<!-- Embed source info into the PDB files. Should be done from this machine to ensure that paths are correct. -->
@@ -187,7 +217,7 @@
 			<Do If="'$(SignExecutables)' == true">
 				<Tag Files="#UnrealEditor Win64" Filter="$(WindowsSignFilter)" Except="$(PluginsExceptions)" With="#UnrealEditor Win64 Unsigned"/>
 				<Copy Files="#UnrealEditor Win64 Unsigned" From="$(RootDir)" To="$(SavedOutput)" Tag="#Editor_ToSign_Win64"/>
-				<Sign Files="#Editor_ToSign_Win64" Tag="#UnrealEditor Win64 Signed"/>
+				<Sign Files="#Editor_ToSign_Win64" Parallel="$(SignWindowsExecutablesInParallel)" Tag="#UnrealEditor Win64 Signed"/>
 			</Do>
 			<Tag Files="#UnrealEditor Win64" Except="$(PluginsExceptions)" With="#UnrealEditor Win64 WithExceptions"/>
 
@@ -199,8 +229,8 @@
 	<Agent Name="Editor Mac" Type="Mac_Licensee">
 		<Node Name="Compile UnrealEditor Mac" Requires="Update Version Files" Produces="#UnrealEditor Mac;#UnrealEditor Mac Unstripped;#UnrealEditor Mac Stripped;#UnrealEditor Mac Unsigned;#UnrealEditor Mac Signed;#UnrealEditor Mac WithExceptions">
 			<Property Name="AllModulesArg" Value="-allmodules"/>
-			<Compile Target="UnrealEditor" Platform="Mac" Configuration="DebugGame" Tag="#UnrealEditor Mac" Arguments="-precompile -EnableDSYM $(AllModulesArg) $(CrashReporterCompileArgs) $(MacArchitectureArg)"/>
-			<Compile Target="UnrealEditor" Platform="Mac" Configuration="Development" Tag="#UnrealEditor Mac" Arguments="-precompile -EnableDSYM $(AllModulesArg) $(CrashReporterCompileArgs) $(MacArchitectureArg)"/>
+			<Compile Target="UnrealEditor" Platform="Mac" Configuration="DebugGame" Tag="#UnrealEditor Mac" Arguments="-precompile -EnableDSYM $(AllModulesArg) $(MacArchitectureArg)"/>
+			<Compile Target="UnrealEditor" Platform="Mac" Configuration="Development" Tag="#UnrealEditor Mac" Arguments="-precompile -EnableDSYM $(AllModulesArg) $(MacArchitectureArg)"/>
 
 			<Property Name="UnrealEditorExceptions" Value=""/>
 			<Property Name="UnrealEditorExceptions" Value="$(PluginsExceptions)" If="$(CompileDatasmithPlugins)"/>
@@ -231,8 +261,8 @@
 	<!-- Base editor and tools for compile on Linux -->
 	<Agent Name="Editor Linux" Type="Linux_Licensee">
 		<Node Name="Compile UnrealEditor Linux" Requires="Update Version Files" Produces="#UnrealEditor Linux;#UnrealEditor Linux Unstripped;#UnrealEditor Linux Stripped;#UnrealEditor Linux WithExceptions">
-			<Compile Target="UnrealEditor" Platform="Linux" Configuration="DebugGame" Tag="#UnrealEditor Linux" Arguments="-precompile -allmodules $(CrashReporterCompileArgs)"/>
-			<Compile Target="UnrealEditor" Platform="Linux" Configuration="Development" Tag="#UnrealEditor Linux" Arguments="-precompile -allmodules $(CrashReporterCompileArgs)"/>
+			<Compile Target="UnrealEditor" Platform="Linux" Configuration="DebugGame" Tag="#UnrealEditor Linux" Arguments="-precompile -allmodules"/>
+			<Compile Target="UnrealEditor" Platform="Linux" Configuration="Development" Tag="#UnrealEditor Linux" Arguments="-precompile -allmodules"/>
 
 			<Tag Files="#UnrealEditor Linux" Filter="$(LinuxStripFilter)" With="#UnrealEditor Linux Unstripped"/>
 			<Tag Files="#UnrealEditor Linux" Except="$(PluginsExceptions)" With="#UnrealEditor Linux WithExceptions"/>
@@ -257,8 +287,8 @@
 		<ForEach Name="Target" Values="$(OptionalClientTarget);$(OptionalServerTarget)">
 			<Node Name="Compile $(Target) Win64" Requires="Update Version Files" Produces="#$(Target) Win64">
 				<ForEach Name="Configuration" Values="$(GameConfigurations)">
-					<Compile Target="$(Target)" Platform="Win64" Configuration="$(Configuration)" Tag="#$(Target) Win64" Arguments="-precompile -allmodules -nolink $(TargetDebugInfoArg)"/>
-					<Compile Target="$(Target)" Platform="Win64" Configuration="$(Configuration)" Tag="#$(Target) Win64" Arguments="-precompile $(TargetDebugInfoArg)" Clean="false"/>
+					<Compile Target="$(Target)" Platform="Win64" Configuration="$(Configuration)" Tag="#$(Target) Win64" Arguments="-precompile -allmodules -nolink $(TargetDebugInfoArg) $(ExtraCompileArgs)"/>
+					<Compile Target="$(Target)" Platform="Win64" Configuration="$(Configuration)" Tag="#$(Target) Win64" Arguments="-precompile $(TargetDebugInfoArg) $(ExtraCompileArgs)" Clean="false"/>
 					<Property Name="OptionalTargetTags" Value="$(OptionalTargetTags);#$(Target) Win64"/>
 				</ForEach>
 			</Node>
@@ -268,8 +298,8 @@
 				<Tag Files="$(Tag)" With="#UnrealGame Win64"/>
 			</ForEach>
 			<ForEach Name="Configuration" Values="$(GameConfigurations)">
-				<Compile Target="UnrealGame" Platform="Win64" Configuration="$(Configuration)" Tag="#UnrealGame Win64" AllowParallelExecutor="$(bAllowParallelExecutor)" Arguments="-precompile -allmodules -nolink $(TargetDebugInfoArg)"/>
-				<Compile Target="UnrealGame" Platform="Win64" Configuration="$(Configuration)" Tag="#UnrealGame Win64" AllowParallelExecutor="$(bAllowParallelExecutor)" Arguments="-precompile $(TargetDebugInfoArg)" Clean="false"/>
+				<Compile Target="UnrealGame" Platform="Win64" Configuration="$(Configuration)" Tag="#UnrealGame Win64" AllowParallelExecutor="$(bAllowParallelExecutor)" Arguments="-precompile -allmodules -nolink $(TargetDebugInfoArg) $(ExtraCompileArgs)"/>
+				<Compile Target="UnrealGame" Platform="Win64" Configuration="$(Configuration)" Tag="#UnrealGame Win64" AllowParallelExecutor="$(bAllowParallelExecutor)" Arguments="-precompile $(TargetDebugInfoArg) $(ExtraCompileArgs)" Clean="false"/>
 			</ForEach>
 
 			<Do If="$(EmbedSrcSrvInfo)">
@@ -295,7 +325,7 @@
 			<Do If="'$(SignExecutables)' == true">
 				<Tag Files="#UnrealGame Win64" Filter="$(WindowsSignFilter)" With="#UnrealGame Win64 Unsigned"/>
 				<Copy Files="#UnrealGame Win64 Unsigned" From="$(RootDir)" To="$(SavedOutput)" Tag="#Game_ToSign_Win64"/>
-				<Sign Files="#Game_ToSign_Win64" Tag="#UnrealGame Win64 Signed"/>
+				<Sign Files="#Game_ToSign_Win64" Parallel="$(SignWindowsExecutablesInParallel)" Tag="#UnrealGame Win64 Signed"/>
 			</Do>
 		</Node>
 	</Agent>
@@ -365,8 +395,8 @@
 		<Node Name="Compile UnrealGame Android" Requires="Update Version Files" Produces="#UnrealGame Android;#UnrealGame Android Unstripped;#UnrealGame Android Stripped">
 			<ForEach Name="Target" Values="UnrealGame;$(OptionalClientTarget)">
 				<ForEach Name="Configuration" Values="$(GameConfigurations)">
-					<Compile Target="$(Target)" Platform="Android" Configuration="$(Configuration)" Tag="#UnrealGame Android" AllowParallelExecutor="$(bAllowParallelExecutor)" Arguments="-precompile -allmodules -nolink -architectures=$(AndroidArchitectures) $(TargetDebugInfoArg)"/>
-					<Compile Target="$(Target)" Platform="Android" Configuration="$(Configuration)" Tag="#UnrealGame Android" AllowParallelExecutor="$(bAllowParallelExecutor)" Arguments="-precompile -architectures=$(AndroidArchitectures) $(TargetDebugInfoArg)" Clean="false"/>
+					<Compile Target="$(Target)" Platform="Android" Configuration="$(Configuration)" Tag="#UnrealGame Android" AllowParallelExecutor="$(bAllowParallelExecutor)" Arguments="-precompile -allmodules -nolink -architectures=$(AndroidArchitectures) $(TargetDebugInfoArg) $(ExtraCompileArgs)"/>
+					<Compile Target="$(Target)" Platform="Android" Configuration="$(Configuration)" Tag="#UnrealGame Android" AllowParallelExecutor="$(bAllowParallelExecutor)" Arguments="-precompile -architectures=$(AndroidArchitectures) $(TargetDebugInfoArg) $(ExtraCompileArgs)" Clean="false"/>
 				</ForEach>
 			</ForEach>
 
@@ -442,14 +472,53 @@
 	</Agent>
 	<Aggregate Name="TargetPlatforms_TVOS" Label="Platforms/TVOS" Requires="Compile UnrealGame TVOS"/>
 
+	<Do If="!$(HasExtraNotForLicenseeFiles)">
+		<!-- If this is false we stub out the macro. -->
+		<Macro Name="ExtraNotForLicenseeFiles" Arguments="TagSet;Platform;HostPlatform" />
+	</Do>
+
 	<Agent Name="NotForLicensee Tools Group Win64" Type="Win64">
 		<Node Name="Build NotForLicensee Tools Win64" Requires="Update Version Files" Produces="#NotForLicensee Build Tools Win64">
-			<Compile Target="DatasmithCADWorker" Configuration="Development" Platform="Win64" Tag="#NotForLicensee Build Tools Win64"/>
+			<Compile Target="DatasmithCADWorker" Configuration="Development" Platform="Win64" Tag="#NotForLicensee Build Tools Win64" Arguments="$(ExtraCompileArgs)"/>
 			<!-- Temporarily removing the compilation of DatasmithCADRuntime from the installed build
-			<Compile Target="DatasmithCADRuntime" Configuration="Development" Platform="Win64" Tag="#NotForLicensee Build Tools Win64"/>
+			<Compile Target="DatasmithCADRuntime" Configuration="Development" Platform="Win64" Tag="#NotForLicensee Build Tools Win64" Arguments="$(ExtraCompileArgs)"/>
 			-->
+			<Compile Target="LiveLinkHub" Configuration="Shipping" Platform="Win64" Arguments="-Monolithic $(LiveLinkHubCompileArgs) $(ExtraCompileArgs)" />
+
+			<Expand Name="ExtraNotForLicenseeFiles" TagSet="#NotForLicensee Build Tools Win64" Platform="Win64" HostPlatform="Win64"/>
+			<Tag Files="Engine/Binaries/Win64/LiveLinkHub-Win64-Shipping.exe" With="#NotForLicensee Build Tools Win64"/>
+			<Tag Files="Engine/Programs/LiveLinkHub/..." With="#NotForLicensee Build Tools Win64" />
+		</Node>
+		
+		<Node Name="Build NotForLicensee Tools Linux" Requires="Update Version Files" Produces="#NotForLicensee Build Tools Linux">
+			<Compile Target="LiveLinkHub" Configuration="Shipping" Platform="Linux" Arguments="-Monolithic $(LiveLinkHubCompileArgs)"/>
+
+			<!-- Since we're running on the same agent as the Win64 node, we don't need to re-tag those files or else it would generate an error. -->
+			<Expand Name="ExtraNotForLicenseeFiles" TagSet="#NotForLicensee Build Tools Linux" Platform="Linux" HostPlatform="Linux"/>
+			<Tag Files="Engine/Binaries/Linux/LiveLinkHub-Linux-Shipping" With="#NotForLicensee Build Tools Linux" />
 		</Node>
 	</Agent>
+	
+	<Agent Name="NotForLicensee Tools Group LinuxNative" Type="Linux">
+		<Node Name="Build NotForLicensee Tools LinuxNative" Requires="Update Version Files" Produces="#NotForLicensee Build Tools LinuxNative">
+			<Compile Target="LiveLinkHub" Configuration="Shipping" Platform="Linux" Arguments="-Monolithic $(LiveLinkHubCompileArgs)"/>
+
+			<Expand Name="ExtraNotForLicenseeFiles" TagSet="#NotForLicensee Build Tools LinuxNative" Platform="LinuxNative" HostPlatform="Linux"/>
+			<Tag Files="Engine/Binaries/Linux/LiveLinkHub-Linux-Shipping" With="#NotForLicensee Build Tools LinuxNative" />
+			<Tag Files="Engine/Programs/LiveLinkHub/..." With="#NotForLicensee Build Tools LinuxNative" />
+		</Node>
+	</Agent>
+	
+	<Agent Name="NotForLicensee Tools Group Mac" Type="Mac">
+		<Node Name="Build NotForLicensee Tools Mac" Requires="Update Version Files" Produces="#NotForLicensee Build Tools Mac">
+			<Compile Target="LiveLinkHub" Configuration="Shipping" Platform="Mac" Arguments="-Monolithic $(LiveLinkHubCompileArgs)"/>
+
+			<Expand Name="ExtraNotForLicenseeFiles" TagSet="#NotForLicensee Build Tools Mac" Platform="Mac" HostPlatform="Mac"/>
+			<Tag Files="Engine/Binaries/Mac/LiveLinkHub-Mac-Shipping.app/..." With="#NotForLicensee Build Tools Mac" />
+			<Tag Files="Engine/Programs/LiveLinkHub/..." With="#NotForLicensee Build Tools Mac" />
+		</Node>
+	</Agent>
+
 	
 	<Agent Name="BuildRules" Type="Win64_Licensee">
 		<Node Name="Compile Rules Assemblies" Produces="#Rules Assemblies">
@@ -463,28 +532,28 @@
 
 	<Agent Name="Tools Group Win64" Type="Win64_Licensee">
 		<Node Name="Build Tools Win64" Requires="Update Version Files;#NotForLicensee Build Tools Win64" Produces="#Tools Win64 Complete">
-			<Compile Target="CrashReportClient" Configuration="Shipping" Platform="Win64" Tag="#Build Tools Win64" Arguments="$(CrashReporterCompileArgs)"/>
-			<Compile Target="CrashReportClientEditor" Configuration="Shipping" Platform="Win64" Tag="#Build Tools Win64" Arguments="$(CrashReporterCompileArgs)"/>
+			<Compile Target="CrashReportClient" Configuration="Shipping" Platform="Win64" Tag="#Build Tools Win64" Arguments="$(CRCTelemetryDefines) $(CRCDefines) $(ExtraCompileArgs)"/>
+			<Compile Target="CrashReportClientEditor" Configuration="Shipping" Platform="Win64" Tag="#Build Tools Win64" Arguments="$(CRCETelemetryDefines) $(CRCEDefines) $(ExtraCompileArgs)"/>
 			<Tag Files="#NotForLicensee Build Tools Win64" With="#Build Tools Win64"/>
-			<Compile Target="ShaderCompileWorker" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64"/>
-			<Compile Target="EpicWebHelper" Configuration="Shipping" Platform="Win64" Tag="#Build Tools Win64"/>
-			<Compile Target="UnrealInsights" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64"/>
-			<Compile Target="UnrealFrontend" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64"/>
-			<Compile Target="UnrealLightmass" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64"/>
-			<Compile Target="InterchangeWorker" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64"/>
-			<Compile Target="UnrealPak" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64"/>
-			<Compile Target="UnrealMultiUserServer" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64"/>
-			<Compile Target="UnrealMultiUserSlateServer" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64"/>
-			<Compile Target="UnrealRecoverySvc" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64"/>
-			<Compile Target="LiveCodingConsole" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64"/>
-			<Compile Target="BootstrapPackagedGame" Configuration="Shipping" Platform="Win64" Tag="#Build Tools Win64"/>
-			<Compile Target="BuildPatchTool" Configuration="Shipping" Platform="Win64" Tag="#Build Tools Win64"/>
-			<Compile Target="SwitchboardListener" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64"/>
-			<Compile Target="SwitchboardListenerHelper" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64"/>
-			<Compile Target="UnrealObjectPtrTool" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64"/>
+			<Compile Target="ShaderCompileWorker" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64" Arguments="$(ExtraCompileArgs)"/>
+			<Compile Target="EpicWebHelper" Configuration="Shipping" Platform="Win64" Tag="#Build Tools Win64" Arguments="$(ExtraCompileArgs)"/>
+			<Compile Target="UnrealInsights" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64" Arguments="$(ExtraCompileArgs)"/>
+			<Compile Target="UnrealFrontend" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64" Arguments="$(ExtraCompileArgs)"/>
+			<Compile Target="UnrealLightmass" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64" Arguments="$(ExtraCompileArgs)"/>
+			<Compile Target="InterchangeWorker" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64" Arguments="$(ExtraCompileArgs)"/>
+			<Compile Target="UnrealPak" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64" Arguments="$(ExtraCompileArgs)"/>
+			<Compile Target="UnrealMultiUserServer" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64" Arguments="$(ExtraCompileArgs)"/>
+			<Compile Target="UnrealMultiUserSlateServer" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64" Arguments="$(ExtraCompileArgs)"/>
+			<Compile Target="UnrealRecoverySvc" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64" Arguments="$(ExtraCompileArgs)"/>
+			<Compile Target="LiveCodingConsole" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64" Arguments="$(ExtraCompileArgs)"/>
+			<Compile Target="BootstrapPackagedGame" Configuration="Shipping" Platform="Win64" Tag="#Build Tools Win64" Arguments="$(ExtraCompileArgs)"/>
+			<Compile Target="BuildPatchTool" Configuration="Shipping" Platform="Win64" Tag="#Build Tools Win64" Arguments="$(ExtraCompileArgs)"/>
+			<Compile Target="SwitchboardListener" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64" Arguments="$(ExtraCompileArgs)"/>
+			<Compile Target="SwitchboardListenerHelper" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64" Arguments="$(ExtraCompileArgs)"/>
+			<Compile Target="UnrealObjectPtrTool" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64" Arguments="$(ExtraCompileArgs)"/>
+			<Compile Target="ZenDashboard" Configuration="Development" Platform="Win64" Tag="#Build Tools Win64" Arguments="$(ExtraCompileArgs)"/>
 
 			<Tag Files="Engine/Binaries/Win64/XGEControlWorker.exe" With="#Build Tools Win64"/>
-			<Tag Files="$(RootDir)/Engine/Saved/UnrealBuildTool/BuildConfiguration.Schema.xsd" With="#Build Tools Win64"/>
 
 			<Do If="$(EmbedSrcSrvInfo)">
 				<!-- Embed source info into the PDB files. Should be done from this machine to ensure that paths are correct. -->
@@ -523,6 +592,10 @@
 				<CsCompile Project="$(CsToolsDir)/Engine/Source/Programs/NetworkProfiler/NetworkProfiler/NetworkProfiler.csproj" Configuration="Development" Platform="AnyCPU" UseSystemCompiler="true" Tag="#Build Tools CS Binaries" TagReferences="#Build Tools CS Binaries;#Sign Binaries"/>
 				<Expand Name="Platform_Build_Tools_CS_Binaries"/>
 			</Do>
+
+			<!-- Save and tag BuildConfiguration.Schema.xsd as this can/will be overriden by other processes piggy backing on cstools to get it to the right spot -->
+			<Copy Files="$(RootDir)/Engine/Saved/UnrealBuildTool/BuildConfiguration.Schema.xsd" From="$(RootDir)" To="$(CsToolsDir)"/>
+			<Tag Files="$(CsToolsDir)/Engine/Saved/UnrealBuildTool/BuildConfiguration.Schema.xsd" With="#Build Tools CS Binaries"/>
 			
 			<!-- Tag AutomationTool and UnrealBuildTool folders recursively as NET Core dependencies are not currently handled by CsCompile -->
 			<Tag Files="$(CsToolsDir)/Engine/Binaries/DotNET/AutomationTool/..." With="#Build Tools CS Binaries" />
@@ -541,11 +614,12 @@
 			<Tag Files="$(CsToolsDir)/Engine/..." With="#SourceForDocumentation" />
 
 			<!-- Sign the binaries -->
-			<Sign Files="#Sign Binaries" If="'$(SignExecutables)' == true"/>
+			<Sign Files="#Sign Binaries" Parallel="$(SignWindowsExecutablesInParallel)" If="'$(SignExecutables)' == true"/>
 		</Node>
-		<Node Name="Build Tools Linux" Requires="Update Version Files">
-			<Compile Target="CrashReportClient" Platform="Linux" Configuration="Shipping" Tag="#Build Tools Linux" Arguments="$(CrashReporterCompileArgs)"/>
-			<Compile Target="CrashReportClientEditor" Platform="Linux" Configuration="Shipping" Tag="#Build Tools Linux" Arguments="$(CrashReporterCompileArgs)"/>
+		<Node Name="Build Tools Linux" Requires="Update Version Files;#NotForLicensee Build Tools Linux" >
+			<Tag Files="#NotForLicensee Build Tools Linux" With="#Build Tools Linux"/>
+			<Compile Target="CrashReportClient" Platform="Linux" Configuration="Shipping" Tag="#Build Tools Linux" Arguments="$(CRCTelemetryDefines)  $(CRCDefines)"/>
+			<Compile Target="CrashReportClientEditor" Platform="Linux" Configuration="Shipping" Tag="#Build Tools Linux" Arguments="$(CRCETelemetryDefines)  $(CRCEDefines)"/>
 			<Compile Target="ShaderCompileWorker" Configuration="Development" Platform="Linux" Tag="#Build Tools Linux"/>
 			<Compile Target="EpicWebHelper" Configuration="Shipping" Platform="Linux" Tag="#Build Tools Linux"/>
 			<Compile Target="UnrealInsights" Configuration="Development" Platform="Linux" Tag="#Build Tools Linux"/>
@@ -559,6 +633,7 @@
 			<Compile Target="SwitchboardListener" Configuration="Development" Platform="Linux" Tag="#Build Tools Linux"/>
 			<Compile Target="SwitchboardListenerHelper" Configuration="Development" Platform="Linux" Tag="#Build Tools Linux"/>
 			<Compile Target="UnrealObjectPtrTool" Configuration="Development" Platform="Linux" Tag="#Build Tools Linux"/>
+			<Compile Target="ZenDashboard" Configuration="Development" Platform="Linux" Tag="#Build Tools Linux"/>
 		</Node>
 	</Agent>
 
@@ -612,9 +687,10 @@
 			<Sign Files="#Sign Binaries Mac" If="'$(SignExecutables)' == true"/>
 		</Node>
 	
-		<Node Name="Build Tools Mac" Requires="Update Version Files">
-			<Compile Target="CrashReportClient" Configuration="Shipping" Platform="Mac" Tag="#Build Tools Mac" Arguments="-EnableDSYM $(CrashReporterCompileArgs)"/>
-			<Compile Target="CrashReportClientEditor" Configuration="Shipping" Platform="Mac" Tag="#Build Tools Mac" Arguments="-EnableDSYM $(CrashReporterCompileArgs)"/>
+		<Node Name="Build Tools Mac" Requires="Update Version Files;#NotForLicensee Build Tools Mac">
+			<Tag Files="#NotForLicensee Build Tools Mac" With="#Build Tools Mac"/>
+			<Compile Target="CrashReportClient" Configuration="Shipping" Platform="Mac" Tag="#Build Tools Mac" Arguments="-EnableDSYM $(CRCTelemetryDefines) $(CRCDefines)"/>
+			<Compile Target="CrashReportClientEditor" Configuration="Shipping" Platform="Mac" Tag="#Build Tools Mac" Arguments="-EnableDSYM $(CRCETelemetryDefines) $(CRCEDefines)"/>
 			<Compile Target="ShaderCompileWorker" Configuration="Development" Platform="Mac" Tag="#Build Tools Mac" Arguments="-EnableDSYM"/>
 			<Compile Target="EpicWebHelper" Configuration="Shipping" Platform="Mac" Tag="#Build Tools Mac" Arguments="-EnableDSYM"/>
 			<Compile Target="UnrealInsights" Configuration="Development" Platform="Mac" Tag="#Build Tools Mac" Arguments="-EnableDSYM"/>
@@ -630,13 +706,15 @@
 			<Compile Target="UnrealEditorServices" Configuration="Development" Platform="Mac" Tag="#Build Tools Mac" Arguments="-EnableDSYM"/>
 			<Compile Target="UnrealAtoS" Configuration="Development" Platform="Mac" Tag="#Build Tools Mac" Arguments="-EnableDSYM"/>
 			<Compile Target="UnrealObjectPtrTool" Configuration="Development" Platform="Mac" Tag="#Build Tools Mac" Arguments="-EnableDSYM"/>
+			<Compile Target="ZenDashboard" Configuration="Development" Platform="Mac" Tag="#Build Tools Mac" Arguments="-EnableDSYM"/>
 		</Node>
 	</Agent>
 
 	<Agent Name="Tools Group LinuxNative" Type="Linux_Licensee">
-		<Node Name="Build Tools LinuxNative" Requires="Update Version Files">
-			<Compile Target="CrashReportClient" Platform="Linux" Configuration="Shipping" Tag="#Build Tools LinuxNative" Arguments="$(CrashReporterCompileArgs)"/>
-			<Compile Target="CrashReportClientEditor" Platform="Linux" Configuration="Shipping"  Tag="#Build Tools LinuxNative" Arguments="$(CrashReporterCompileArgs)"/>
+		<Node Name="Build Tools LinuxNative" Requires="Update Version Files;#NotForLicensee Build Tools LinuxNative">
+			<Tag Files="#NotForLicensee Build Tools LinuxNative" With="#Build Tools LinuxNative"/>
+			<Compile Target="CrashReportClient" Platform="Linux" Configuration="Shipping" Tag="#Build Tools LinuxNative" Arguments="$(CRCTelemetryDefines) $(CRCDefines)"/>
+			<Compile Target="CrashReportClientEditor" Platform="Linux" Configuration="Shipping"  Tag="#Build Tools LinuxNative" Arguments="$(CRCETelemetryDefines) $(CRCEDefines)"/>
 			<Compile Target="ShaderCompileWorker" Configuration="Development" Platform="Linux" Tag="#Build Tools LinuxNative"/>
 			<Compile Target="EpicWebHelper" Configuration="Shipping" Platform="Linux" Tag="#Build Tools LinuxNative"/>
 			<Compile Target="UnrealInsights" Configuration="Development" Platform="Linux" Tag="#Build Tools LinuxNative"/>
@@ -650,6 +728,7 @@
 			<Compile Target="SwitchboardListener" Configuration="Development" Platform="Linux" Tag="#Build Tools LinuxNative"/>
 			<Compile Target="SwitchboardListenerHelper" Configuration="Development" Platform="Linux" Tag="#Build Tools LinuxNative"/>
 			<Compile Target="UnrealObjectPtrTool" Configuration="Development" Platform="Linux" Tag="#Build Tools LinuxNative"/>
+			<Compile Target="ZenDashboard" Configuration="Development" Platform="Linux" Tag="#Build Tools LinuxNative"/>
 		</Node>
 
 		<!-- Compile the C# tools. Copies files to a temporary directory first, to strip out all confidential folders and avoid sharing violations with the running version of UAT. -->
@@ -689,7 +768,7 @@
 	</Agent>
 
 	<Agent Name="FeaturePacks Group" Type="Win64_Licensee">
-		<Node Name="Make Feature Packs" Requires="Update Version Files;Build Tools $(HostPlatform)">
+		<Node Name="Make Feature Packs" Requires="Update Version Files;#Build Tools $(HostPlatform)">
 			<!--Delete any pre-existing feature packs-->
 			<Delete Files="FeaturePacks/..."/>
 			<ForEach Name="TemplateName" Values="$(ProjectsToFeaturePack)">
@@ -702,7 +781,7 @@
 	</Agent>
 
 	<Agent Name="FeaturePacks Group Mac" Type="Mac_Licensee">
-		<Node Name="Make Feature Packs Mac" Requires="Update Version Files;Build Tools Mac">
+		<Node Name="Make Feature Packs Mac" Requires="Update Version Files;#Build Tools Mac">
 			<!--Delete any pre-existing feature packs-->
 			<Delete Files="FeaturePacks/..."/>
 			<ForEach Name="TemplateName" Values="$(ProjectsToFeaturePack)">
@@ -715,7 +794,7 @@
 	</Agent>
 
 	<Agent Name="FeaturePacks Group LinuxNative" Type="Linux_Licensee">
-		<Node Name="Make Feature Packs LinuxNative" Requires="Update Version Files;Build Tools LinuxNative">
+		<Node Name="Make Feature Packs LinuxNative" Requires="Update Version Files;#Build Tools LinuxNative">
 			<!--Delete any pre-existing feature packs-->
 			<Delete Files="FeaturePacks/..."/>
 			<ForEach Name="TemplateName" Values="$(ProjectsToFeaturePack)">
@@ -777,7 +856,7 @@
 	</Macro>
 
 	<Agent Name="DDC Group Win64" Type="Win64_Licensee">
-		<Node Name="Build DDC Win64" Requires="#UnrealEditor Win64;Build Tools Win64;#Build Tools CS Binaries" Produces="#CompressedDDCWin64">
+		<Node Name="Build DDC Win64" Requires="#UnrealEditor Win64;#Build Tools Win64;#Build Tools CS Binaries" Produces="#CompressedDDCWin64">
 			<!-- Get our temp dir -->
 			<Property Name="DDCDir" Value="$(RootDir)\LocalBuilds\InstalledDDC"/>
 			<Property Name="SavedDir" Value="$(SavedOutput)\Installed\Win64"/>
@@ -792,6 +871,9 @@
 			<Tag Files="Engine\Build\BatchFiles\..."  With="#ToCopy"/>
 			<Tag Files="Engine\Binaries\DotNET\Ionic.Zip.Reduced.dll" With="#ToCopy"/>
 			<Tag Files="Engine\Binaries\DotNET\OneSky.dll" With="#ToCopy"/>
+			<Tag Files="Engine\Binaries\Win64\crashpad_handler.exe" With="#ToCopy"/>
+			<Tag Files="Engine\Binaries\Win64\zen.*" With="#ToCopy"/>
+			<Tag Files="Engine\Binaries\Win64\zenserver.*" With="#ToCopy"/>
 			<Tag Files="Templates\TemplateResources\..." With="#ToCopy"/>
 			<Expand Name="TagDDCEngineFiles" ExceptPlugins="Plugins\...\Binaries\Mac\..."/>
 			<!-- Filter out the files not needed to build DDC. Removing confidential folders can affect DDC keys, so we want to be sure that we're making DDC with a build that can use it. -->
@@ -825,7 +907,7 @@
 
 	<Property Name="MacDDCAgentType" Value="Mac" />
 	<Agent Name="DDC Group Mac" Type="$(MacDDCAgentType)">
-		<Node Name="Build DDC Mac" Requires="#UnrealEditor Mac;Build Tools Mac;#Build Tools CS Binaries Mac" Produces="#CompressedDDCMac">
+		<Node Name="Build DDC Mac" Requires="#UnrealEditor Mac;#Build Tools Mac;#Build Tools CS Binaries Mac" Produces="#CompressedDDCMac">
 			<!-- Get our temp dir -->
 			<Property Name="DDCDir" Value="$(RootDir)/LocalBuilds/InstalledDDC"/>
 			<Property Name="SavedDir" Value="$(SavedOutput)/Installed/Mac"/>
@@ -840,6 +922,9 @@
 			<Tag Files="Engine/Build/BatchFiles/Mac/..."  With="#ToCopy"/>
 			<Tag Files="Engine/Binaries/DotNET/Ionic.Zip.Reduced.dll" With="#ToCopy"/>
 			<Tag Files="Engine/Binaries/DotNET/OneSky.dll" With="#ToCopy"/>
+			<Tag Files="Engine/Binaries/Mac/crashpad_handler" With="#ToCopy"/>
+			<Tag Files="Engine/Binaries/Mac/zen" With="#ToCopy"/>
+			<Tag Files="Engine/Binaries/Mac/zenserver" With="#ToCopy"/>
 			<Tag Files="Templates/TemplateResources/..." With="#ToCopy"/>
 			<Expand Name="TagDDCEngineFiles" ExceptPlugins="Plugins/.../Binaries/Win64/..."/>
 			<!-- Filter out the files not needed to build DDC. Removing confidential folders can affect DDC keys, so we want to be sure that we're making DDC with a build that can use it. -->
@@ -863,7 +948,7 @@
 	</Do>
 
 	<Agent Name="DDC Group Linux" Type="Linux">
-		<Property Name="DDCLinuxRequires" Value="#UnrealEditor Linux;Build Tools LinuxNative;#Build Tools CS Binaries LinuxNative"/>
+		<Property Name="DDCLinuxRequires" Value="#UnrealEditor Linux;#Build Tools LinuxNative;#Build Tools CS Binaries LinuxNative"/>
 		<Node Name="Build DDC Linux" Requires="$(DDCLinuxRequires)" Produces="#CompressedDDCLinux">
 			<!-- Get our temp dir -->
 			<Property Name="DDCDir" Value="$(RootDir)/LocalBuilds/InstalledDDC"/>
@@ -883,6 +968,8 @@
 			<Tag Files="Engine/Shaders/..." With="#ToCopy"/>
 			<Tag Files="Engine/Binaries/DotNET/Ionic.Zip.Reduced.dll" With="#ToCopy"/>
 			<Tag Files="Engine/Binaries/DotNET/OneSky.dll" With="#ToCopy"/>
+			<Tag Files="Engine/Binaries/Linux/zen" With="#ToCopy"/>
+			<Tag Files="Engine/Binaries/Linux/zenserver" With="#ToCopy"/>
 			<Tag Files="Templates/TemplateResources/..." With="#ToCopy"/>
 			<Expand Name="TagDDCEngineFiles" ExceptPlugins="Plugins/.../Binaries/Mac/..."/>
 			<!-- Filter out the files not needed to build DDC. Removing confidential folders can affect DDC keys, so we want to be sure that we're making DDC with a build that can use it. -->
@@ -904,7 +991,7 @@
 			<Do If="$(WithWin64) And $(CompileDatasmithPlugins) == 'True'">
 				<Property Name="DatasmithPlugins" Value="DatasmithCADImporter;DatasmithC4DImporter;AxFImporter;MDLImporter"/>
 				<ForEach Name="Plugin" Values="$(DatasmithPlugins)">
-					<Compile Target="UnrealEditor" Configuration="Development" Platform="Win64" Arguments="-Plugin=&quot;$(RootDir)/Engine/Plugins/Enterprise/$(Plugin)/$(Plugin).uplugin&quot;"/>
+					<Compile Target="UnrealEditor" Configuration="Development" Platform="Win64" Arguments="-Plugin=&quot;$(RootDir)/Engine/Plugins/Enterprise/$(Plugin)/$(Plugin).uplugin&quot; $(ExtraCompileArgs)"/>
 					<Tag Files="$(RootDir)/Engine/Plugins/Enterprise/$(Plugin)/Binaries/Win64/..." With="#DatasmithPluginBinaries Win64"/>
 				</ForEach>
 			</Do>
@@ -914,7 +1001,7 @@
 	<Agent Name="Extra Plugins Agent Mac" Type="Mac">
 		<Node Name="Compile Datasmith Plugins Mac" Requires="Update Version Files" Produces="#DatasmithPluginBinaries Mac">
 			<Do If="$(WithMac) And $(CompileDatasmithPlugins) == 'True'">
-				<Property Name="DatasmithPlugins" Value="DatasmithCADImporter;DatasmithC4DImporter;AxFImporter;MDLImporter"/>
+				<Property Name="DatasmithPlugins" Value="DatasmithC4DImporter;MDLImporter"/>
 				<ForEach Name="Plugin" Values="$(DatasmithPlugins)">
 					<Compile Target="UnrealEditor" Configuration="Development" Platform="Mac" Arguments="-Plugin=&quot;$(RootDir)/Engine/Plugins/Enterprise/$(Plugin)/$(Plugin).uplugin&quot; $(MacArchitectureArg)"/>
 					<Tag Files="$(RootDir)/Engine/Plugins/Enterprise/$(Plugin)/Binaries/Mac/..." With="#DatasmithPluginBinaries Mac"/>
@@ -1069,7 +1156,7 @@
 				<!-- Copy then Sign required files in their final location -->
 				<Copy Files="#Sign Tools for Installed Win64" From="$(RootDir)" To="$(LocalInstalledDir)" Tag="#Files to Sign"/>
 				<Copy Files="#Sign CS Tools for Installed Win64" From="$(CsToolsDir)" To="$(LocalInstalledDir)" Tag="#Files to Sign"/>
-				<Sign Files="#Files to Sign" Tag="#Installed Build Win64 Files"/>
+				<Sign Files="#Files to Sign" Parallel="$(SignWindowsExecutablesInParallel)" Tag="#Installed Build Win64 Files"/>
 			</Do>
 
 			<!-- Copy the compressed DDC -->
@@ -1090,6 +1177,9 @@
 			<!-- Sanitize all the receipts in the target directory -->
 			<Tag Files="#Installed Build Win64 Files" Filter="*.target" With="#Installed Build Win64 Receipts"/>
 			<SanitizeReceipt Files="#Installed Build Win64 Receipts" EngineDir="$(LocalInstalledDir)\Engine"/>
+		</Node>
+		<Node Name="Upload To Horde Win64" Requires="Make Installed Build Win64">
+			<CreateArtifact Name="installed-build-win64" Type="installed-build" Description="Installed Build (Windows)" BaseDir="$(LocalInstalledDir)"/>
 		</Node>
 	</Agent>
 	<Aggregate Name="HostPlatforms_Win64" Label="Builds/Win64" Requires="Make Installed Build Win64" Exclude="Update Version Files"/>
@@ -1215,6 +1305,9 @@
 			<Tag Files="#Installed Build Mac Files" Filter="*.target" With="#Installed Build Mac Receipts"/>
 			<SanitizeReceipt Files="#Installed Build Mac Receipts" EngineDir="$(LocalInstalledDirMac)/Engine"/>
 		</Node>
+		<Node Name="Upload To Horde Mac" Requires="Make Installed Build Mac">
+			<CreateArtifact Name="installed-build-mac" Type="installed-build" Description="Installed Build (Mac)" BaseDir="$(LocalInstalledDirMac)"/>
+		</Node>
 	</Agent>
 	<Aggregate Name="HostPlatforms_Mac" Label="Builds/Mac" Requires="Make Installed Build Mac"/>
 
@@ -1330,7 +1423,16 @@
 			<Tag Files="#Installed Build Linux Files" Filter="*.target" With="#Installed Build Linux Receipts"/>
 			<SanitizeReceipt Files="#Installed Build Linux Receipts" EngineDir="$(LocalInstalledDirLinux)/Engine"/>
 		</Node>
+		<Node Name="Upload To Horde Linux" Requires="Make Installed Build Linux">
+			<CreateArtifact Name="installed-build-linux" Type="installed-build" Description="Installed Build (Linux)" BaseDir="$(LocalInstalledDirLinux)"/>
+		</Node>
 	</Agent>
 	<Aggregate Name="HostPlatforms_Linux" Label="Builds/Linux" Requires="Make Installed Build Linux"/>
+
+	<Property Name="InstalledEngineBuildTargets"/>
+	<Property Name="InstalledEngineBuildTargets" Value="$(InstalledEngineBuildTargets)Upload to Horde Win64;" If="'$(WithInstalledWin64)' == true"/>
+	<Property Name="InstalledEngineBuildTargets" Value="$(InstalledEngineBuildTargets)Upload to Horde Mac;" If="'$(WithInstalledMac)' == true"/>
+	<Property Name="InstalledEngineBuildTargets" Value="$(InstalledEngineBuildTargets)Upload to Horde Linux;" If="'$(WithInstalledLinux)' == true"/>
+	<Aggregate Name="Installed Engine Build" Requires="$(InstalledEngineBuildTargets)"/>
 
 </BuildGraph>

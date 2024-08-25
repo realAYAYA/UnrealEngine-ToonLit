@@ -29,6 +29,7 @@
 #include "DynamicBufferAllocator.h"
 #include "Rendering/SkyAtmosphereCommonData.h"
 #include "Math/SHMath.h"
+#include "GlobalRenderResources.h"
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
 #include "Engine/TextureLightProfile.h"
@@ -72,6 +73,7 @@ struct FViewMatrices;
 struct FEngineShowFlags;
 class FViewport;
 class FLandscapeRayTracingStateList;
+struct FPrimitiveUniformShaderParametersBuilder;
 
 namespace UE { namespace Color { class FColorSpace; } }
 
@@ -245,14 +247,6 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	virtual FLandscapeRayTracingStateList* GetLandscapeRayTracingStates() const = 0;
 #endif
 
-	/**
-	* Adds a per-view virtual shadow map cache, which can help performance, at a cost in memory.  Does nothing if one is already present.
-	* The cache only works for the first Scene this function is called for.
-	*/
-	virtual void AddVirtualShadowMapCache(FSceneInterface* InScene) {}
-	virtual void RemoveVirtualShadowMapCache(FSceneInterface* InScene) {}
-	virtual bool HasVirtualShadowMapCache() const = 0;
-
 	/** Similar to above, but adds Lumen Scene Data */
 	virtual void AddLumenSceneData(FSceneInterface* InScene, float SurfaceCacheResolution = 1.0f) {}
 	virtual void RemoveLumenSceneData(FSceneInterface* InScene) {}
@@ -282,7 +276,6 @@ protected:
 	uint8 bValidEyeAdaptationBuffer : 1;
 
 private:
-	virtual FVirtualShadowMapArrayCacheManager* GetVirtualShadowMapCache(const FScene* InScene) const { return nullptr; }
 	friend class FScene;
 };
 
@@ -314,7 +307,7 @@ class FDefaultWorkingColorSpaceUniformBuffer : public TUniformBuffer<FWorkingCol
 	typedef TUniformBuffer<FWorkingColorSpaceShaderParameters> Super;
 public:
 
-	void Update(const UE::Color::FColorSpace& InColorSpace);
+	void Update(FRHICommandListBase& RHICmdList, const UE::Color::FColorSpace& InColorSpace);
 };
 
 ENGINE_API extern TGlobalResource<FDefaultWorkingColorSpaceUniformBuffer> GDefaultWorkingColorSpaceUniformBuffer;
@@ -893,7 +886,7 @@ public:
 
 	ENGINE_API FShadowMapInteraction GetShadowMapInteraction(ERHIFeatureLevel::Type InFeatureLevel) const;
 
-protected:
+public:
 	// Load parameters from GPUScene when possible
 	// Basically this is the same as VF_SUPPORTS_PRIMITIVE_SCENE_DATA on the vertex factory, but we can't deduce automatically
 	// because we don't know about VF type until we see the actual mesh batch
@@ -1104,6 +1097,8 @@ BEGIN_GLOBAL_SHADER_PARAMETER_STRUCT(FMobileReflectionCaptureShaderParameters,EN
 	SHADER_PARAMETER(FVector4f, Params) // x - inv average brightness, y - sky cubemap max mip, z - unused, w - brightness of reflection capture
 	SHADER_PARAMETER_TEXTURE(TextureCube, Texture)
 	SHADER_PARAMETER_SAMPLER(SamplerState, TextureSampler)
+	SHADER_PARAMETER_TEXTURE(TextureCube, TextureBlend)			// Only used when this refelction is a sky light
+	SHADER_PARAMETER_SAMPLER(SamplerState, TextureBlendSampler)	// Idem
 END_GLOBAL_SHADER_PARAMETER_STRUCT()
 
 class FDefaultMobileReflectionCaptureUniformBuffer : public TUniformBuffer<FMobileReflectionCaptureShaderParameters>
@@ -1182,8 +1177,6 @@ public:
 	bool bCaptureSkyLightWaitingForMeshesOrTextures;
 #endif
 
-	uint8 bShowIlluminanceMeter : 1;
-
 private:
 	FLinearColor LightColor;
 	const uint8 bMovable : 1;
@@ -1206,6 +1199,9 @@ public:
 
 	const FAtmosphereSetup& GetAtmosphereSetup() const { return AtmosphereSetup; }
 
+	bool IsHoldout() const { return bHoldout; }
+	bool IsRenderedInMainPass() const { return bRenderInMainPass; }
+
 	void UpdateTransform(const FTransform& ComponentTransform, uint8 TranformMode) { AtmosphereSetup.UpdateTransform(ComponentTransform, TranformMode); }
 	void ApplyWorldOffset(const FVector3f& InOffset) { AtmosphereSetup.ApplyWorldOffset((FVector)InOffset); }
 
@@ -1222,6 +1218,8 @@ private:
 	float HeightFogContribution;
 	float AerialPerspectiveStartDepthKm;
 	float TraceSampleCountScale;
+	bool bHoldout;
+	bool bRenderInMainPass;
 
 	bool OverrideAtmosphericLight[NUM_ATMOSPHERE_LIGHTS];
 	FVector OverrideAtmosphericLightDirection[NUM_ATMOSPHERE_LIGHTS];
@@ -1274,8 +1272,11 @@ BEGIN_SHADER_PARAMETER_STRUCT(FLightShaderParameters, ENGINE_API)
 	SHADER_PARAMETER(FVector2f, RectLightAtlasUVScale)
 	SHADER_PARAMETER(float, RectLightAtlasMaxLevel)
 
-	// UES texture slice index
+	// IES texture slice index
 	SHADER_PARAMETER(float, IESAtlasIndex)
+
+	// Index of the light function in the atlas
+	SHADER_PARAMETER(uint32, LightFunctionAtlasLightIndex)
 
 END_SHADER_PARAMETER_STRUCT()
 
@@ -1349,6 +1350,9 @@ struct FLightRenderParameters
 	// IES atlas slice index
 	float IESAtlasIndex;
 
+	// Index of the light in the Light function atlas data
+	uint32 LightFunctionAtlasLightIndex;
+
 	float InverseExposureBlend;
 
 	// Return Invalid rect light atlas MIP level
@@ -1399,8 +1403,6 @@ private:
 	FBoxSphereBounds Bounds;
 
 public:
-
-	bool bOwnerSelected;
 
 	/** Larger values draw later (on top). */
 	int32 SortOrder;
@@ -1475,8 +1477,7 @@ public:
 	EReflectionCaptureShape::Type Shape;
 
 	// Properties shared among all shapes
-	FVector3f RelativePosition;
-	FVector3f TilePosition;
+	FDFVector3 Position;
 	float InfluenceRadius;
 	float Brightness;
 	uint32 Guid;
@@ -1593,7 +1594,7 @@ class FPrimitiveDrawInterface
 {
 public:
 
-	const FSceneView* const View;
+	const FSceneView* View;
 
 	/** Initialization constructor. */
 	FPrimitiveDrawInterface(const FSceneView* InView):
@@ -1784,6 +1785,28 @@ public:
 
 	ENGINE_API void DrawBatchedElements(FRHICommandList& RHICmdList, const FMeshPassProcessorRenderState& DrawRenderState, const FSceneView& InView, EBlendModeFilter::Type Filter, ESceneDepthPriorityGroup DPG) const;
 
+	class FAllocationInfo
+	{
+	public:
+		FAllocationInfo() = default;
+
+	private:
+		FBatchedElements::FAllocationInfo BatchedElements;
+		FBatchedElements::FAllocationInfo TopBatchedElements;
+		uint32 NumDynamicResources = 0;
+
+		friend FSimpleElementCollector;
+	};
+
+	/** Accumulates allocation info for use calling Reserve. */
+	ENGINE_API void AddAllocationInfo(FAllocationInfo& AllocationInfo) const;
+
+	/** Reserves memory for all containers. */
+	ENGINE_API void Reserve(const FAllocationInfo& AllocationInfo);
+
+	/** Appends contents of another batched elements into this one and clears the other one. */
+	ENGINE_API void Append(FSimpleElementCollector& Other);
+
 	bool HasAnyPrimitives() const
 	{
 		return BatchedElements.HasPrimsToDraw() || TopBatchedElements.HasPrimsToDraw();
@@ -1804,11 +1827,7 @@ public:
 	FBatchedElements TopBatchedElements;
 
 private:
-
 	FHitProxyId HitProxyId;
-	uint16 PrimitiveMeshId;
-
-	bool bIsMobileHDR;
 
 	/** The dynamic resources which have been registered with this drawer. */
 	TArray<FDynamicPrimitiveResource*,SceneRenderingAllocator> DynamicResources;
@@ -1907,6 +1926,13 @@ public:
 		return *DynamicReadBuffer;
 	}
 
+	/** Return the current RHI command list used to initialize resources. */
+	FRHICommandList& GetRHICommandList()
+	{
+		check(RHICmdList);
+		return *RHICmdList;
+	}
+
 	// @return number of MeshBatches collected (so far) for a given view
 	uint32 GetMeshBatchCount(uint32 ViewIndex) const
 	{
@@ -1927,8 +1953,12 @@ public:
 	/** Add a material render proxy that will be cleaned up automatically */
 	void RegisterOneFrameMaterialProxy(FMaterialRenderProxy* Proxy)
 	{
-		TemporaryProxies.Add(Proxy);
+		check(Proxy);
+		MaterialProxiesToDelete.Add(Proxy);
 	}
+
+	/** Adds a request to force caching of uniform expressions for a material render proxy. */
+	ENGINE_API void CacheUniformExpressions(FMaterialRenderProxy* Proxy, bool bRecreateUniformBuffer);
 
 	/** Allocates a temporary resource that is safe to be referenced by an FMeshBatch added to the collector. */
 	template<typename T, typename... ARGS>
@@ -1958,36 +1988,53 @@ public:
 	}
 
 protected:
+	enum class ECommitFlags
+	{
+		None = 0,
 
-	ENGINE_API FMeshElementCollector(ERHIFeatureLevel::Type InFeatureLevel, FSceneRenderingBulkObjectAllocator& InBulkAllocator);
+		// Defers material uniform expression updates until Commit or Finish is called.
+		DeferMaterials = 1 << 0,
+
+		// Defers GPU scene updates until Commit or Finish is called.
+		DeferGPUScene  = 1 << 1,
+
+		DeferAll = DeferMaterials | DeferGPUScene
+	};
+	FRIEND_ENUM_CLASS_FLAGS(ECommitFlags);
+
+	ENGINE_API FMeshElementCollector(ERHIFeatureLevel::Type InFeatureLevel, FSceneRenderingBulkObjectAllocator& InBulkAllocator, ECommitFlags CommitFlags = ECommitFlags::None);
 
 	ENGINE_API ~FMeshElementCollector();
 
-	ENGINE_API void DeleteTemporaryProxies();
-
 	ENGINE_API void SetPrimitive(const FPrimitiveSceneProxy* InPrimitiveSceneProxy, FHitProxyId DefaultHitProxyId);
+
+	ENGINE_API void Start(
+		FRHICommandList& RHICmdList,
+		FGlobalDynamicVertexBuffer& DynamicVertexBuffer,
+		FGlobalDynamicIndexBuffer& DynamicIndexBuffer,
+		FGlobalDynamicReadBuffer& DynamicReadBuffer);
+
+	ENGINE_API void AddViewMeshArrays(
+		const FSceneView* InView,
+		TArray<FMeshBatchAndRelevance, SceneRenderingAllocator>* ViewMeshes,
+		FSimpleElementCollector* ViewSimpleElementCollector,
+		FGPUScenePrimitiveCollector* DynamicPrimitiveCollector
+#if UE_ENABLE_DEBUG_DRAWING
+		, FSimpleElementCollector* DebugSimpleElementCollector = nullptr
+#endif
+		);
 
 	ENGINE_API void ClearViewMeshArrays();
 
-	ENGINE_API void AddViewMeshArrays(
-		FSceneView* InView,
-		TArray<FMeshBatchAndRelevance, SceneRenderingAllocator>* ViewMeshes,
-		FSimpleElementCollector* ViewSimpleElementCollector,
-		FGPUScenePrimitiveCollector* InDynamicPrimitiveCollector,
-		ERHIFeatureLevel::Type InFeatureLevel,
-		FGlobalDynamicIndexBuffer* InDynamicIndexBuffer,
-		FGlobalDynamicVertexBuffer* InDynamicVertexBuffer,
-		FGlobalDynamicReadBuffer* InDynamicReadBuffer
-#if UE_ENABLE_DEBUG_DRAWING
-		,FSimpleElementCollector* InDebugSimpleElementCollector = nullptr
-#endif
-	);
+	ENGINE_API void Commit();
+
+	ENGINE_API void Finish();
 
 	/** 
 	 * Using TChunkedArray which will never realloc as new elements are added
 	 * @todo - use mem stack
 	 */
-	TChunkedArray<FMeshBatch> MeshBatchStorage;
+	TChunkedArray<FMeshBatch, 16384, FConcurrentLinearArrayAllocator> MeshBatchStorage;
 
 	/** Meshes to render */
 	TArray<TArray<FMeshBatchAndRelevance, SceneRenderingAllocator>*, TInlineAllocator<2, SceneRenderingAllocator> > MeshBatches;
@@ -2003,13 +2050,22 @@ protected:
 #endif
 
 	/** Views being collected for */
-	TArray<FSceneView*, TInlineAllocator<2, SceneRenderingAllocator>> Views;
+	TArray<const FSceneView*, TInlineAllocator<2, SceneRenderingAllocator>> Views;
 
 	/** Current Mesh Id In Primitive per view */
 	TArray<uint16, TInlineAllocator<2, SceneRenderingAllocator>> MeshIdInPrimitivePerView;
 
 	/** Material proxies that will be deleted at the end of the frame. */
-	TArray<FMaterialRenderProxy*, SceneRenderingAllocator> TemporaryProxies;
+	TArray<FMaterialRenderProxy*, SceneRenderingAllocator> MaterialProxiesToDelete;
+
+	/** Material proxies to force uniform expression evaluation. */
+	TArray<TPair<FMaterialRenderProxy*, bool>, SceneRenderingAllocator> MaterialProxiesToInvalidate;
+
+	/** Material proxies to force uniform expression evaluation. */
+	TArray<const FMaterialRenderProxy*, SceneRenderingAllocator> MaterialProxiesToUpdate;
+
+	/** List of mesh batches that require GPU scene updates. */
+	TArray<TPair<FGPUScenePrimitiveCollector*, FMeshBatch*>, SceneRenderingAllocator> MeshBatchesForGPUScene;
 
 	/** Resources that will be deleted at the end of the frame. */
 	FSceneRenderingBulkObjectAllocator& OneFrameResources;
@@ -2018,11 +2074,15 @@ protected:
 	const FPrimitiveSceneProxy* PrimitiveSceneProxy;
 
 	/** Dynamic buffer pools. */
-	FGlobalDynamicIndexBuffer* DynamicIndexBuffer;
-	FGlobalDynamicVertexBuffer* DynamicVertexBuffer;
-	FGlobalDynamicReadBuffer* DynamicReadBuffer;
+	FGlobalDynamicIndexBuffer* DynamicIndexBuffer = nullptr;
+	FGlobalDynamicVertexBuffer* DynamicVertexBuffer = nullptr;
+	FGlobalDynamicReadBuffer* DynamicReadBuffer = nullptr;
 
-	ERHIFeatureLevel::Type FeatureLevel;
+	FRHICommandList* RHICmdList = nullptr;
+
+	const ERHIFeatureLevel::Type FeatureLevel;
+	const ECommitFlags CommitFlags;
+	const bool bUseGPUScene;
 
 	/** Tracks dynamic primitive data for upload to GPU Scene for every view, when enabled. */
 	TArray<FGPUScenePrimitiveCollector*, TInlineAllocator<2, SceneRenderingAllocator>> DynamicPrimitiveCollectorPerView;
@@ -2033,7 +2093,13 @@ protected:
 	friend class FProjectedShadowInfo;
 	friend class FCardPageRenderData;
 	friend class FViewFamilyInfo;
+	friend class FShadowMeshCollector;
+	friend class FDynamicMeshElementContext;
+	friend struct FRayTracingMaterialGatheringContext;
+	friend FSceneRenderingBulkObjectAllocator;
 };
+
+ENUM_CLASS_FLAGS(FMeshElementCollector::ECommitFlags);
 
 #if RHI_RAYTRACING
 /**
@@ -2051,16 +2117,9 @@ public:
 
 	FRayTracingMeshResourceCollector(
 		ERHIFeatureLevel::Type InFeatureLevel,
-		FSceneRenderingBulkObjectAllocator& InBulkAllocator,
-		FGlobalDynamicIndexBuffer* InDynamicIndexBuffer,
-		FGlobalDynamicVertexBuffer* InDynamicVertexBuffer,
-		FGlobalDynamicReadBuffer* InDynamicReadBuffer)
+		FSceneRenderingBulkObjectAllocator& InBulkAllocator)
 		: FMeshElementCollector(InFeatureLevel, InBulkAllocator)
-	{
-		DynamicIndexBuffer = InDynamicIndexBuffer;
-		DynamicVertexBuffer = InDynamicVertexBuffer;
-		DynamicReadBuffer = InDynamicReadBuffer;
-	}
+	{}
 };
 
 struct FRayTracingDynamicGeometryUpdateParams
@@ -2093,17 +2152,24 @@ struct FRayTracingMaterialGatheringContext
 	const FSceneViewFamily& ReferenceViewFamily;
 
 	FRDGBuilder& GraphBuilder;
+	FRHICommandList& RHICmdList;
 	FRayTracingMeshResourceCollector& RayTracingMeshResourceCollector;
 	TArray<FRayTracingDynamicGeometryUpdateParams> DynamicRayTracingGeometriesToUpdate;
+	FGlobalDynamicVertexBuffer DynamicVertexBuffer;
+	FGlobalDynamicIndexBuffer DynamicIndexBuffer;
+	FGlobalDynamicReadBuffer& DynamicReadBuffer;
 
-	FRayTracingMaterialGatheringContext(const FScene* InScene, const FSceneView* InReferenceView, const FSceneViewFamily& InReferenceViewFamily, FRDGBuilder& InGraphBuilder, FRayTracingMeshResourceCollector& InRayTracingMeshResourceCollector)
-	:Scene(InScene),
-	ReferenceView(InReferenceView),
-	ReferenceViewFamily(InReferenceViewFamily),
-	GraphBuilder(InGraphBuilder),
-	RayTracingMeshResourceCollector(InRayTracingMeshResourceCollector){}
+	ENGINE_API FRayTracingMaterialGatheringContext(
+		const FScene* InScene,
+		const FSceneView* InReferenceView,
+		const FSceneViewFamily& InReferenceViewFamily,
+		FRDGBuilder& InGraphBuilder,
+		FRayTracingMeshResourceCollector& InRayTracingMeshResourceCollector,
+		FGlobalDynamicReadBuffer& InGlobalDynamicReadBuffer);
 
-	virtual ~FRayTracingMaterialGatheringContext() {}
+	ENGINE_API virtual ~FRayTracingMaterialGatheringContext();
+
+	UE_DEPRECATED(5.4, "InstanceMaskAndFlags is automatically built and cached in RayTracing.cpp")
 	virtual FRayTracingMaskAndFlags BuildInstanceMaskAndFlags(const FRayTracingInstance& Instance, const FPrimitiveSceneProxy& ScenePrimitive) = 0;
 };
 #endif
@@ -2118,7 +2184,10 @@ public:
 
 	TUniformBuffer<FPrimitiveUniformShaderParameters> UniformBuffer;
 
+	ENGINE_API void Set(FRHICommandListBase& RHICmdList, FPrimitiveUniformShaderParametersBuilder& Builder);
+
 	ENGINE_API void Set(
+		FRHICommandListBase& RHICmdList,
 		const FMatrix& LocalToWorld,
 		const FMatrix& PreviousLocalToWorld,
 		const FVector& ActorPositionWS, 
@@ -2131,6 +2200,7 @@ public:
 		const FCustomPrimitiveData* CustomPrimitiveData);
 
 	ENGINE_API void Set(
+		FRHICommandListBase& RHICmdList,
 		const FMatrix& LocalToWorld,
 		const FMatrix& PreviousLocalToWorld,
 		const FBoxSphereBounds& WorldBounds,
@@ -2142,6 +2212,7 @@ public:
 		const FCustomPrimitiveData* CustomPrimitiveData);
 
 	ENGINE_API void Set(
+		FRHICommandListBase& RHICmdList,
 		const FMatrix& LocalToWorld,
 		const FMatrix& PreviousLocalToWorld,
 		const FBoxSphereBounds& WorldBounds,
@@ -2153,6 +2224,7 @@ public:
 
 	/** Pass-through implementation which calls the overloaded Set function with LocalBounds for PreSkinnedLocalBounds. */
 	ENGINE_API void Set(
+		FRHICommandListBase& RHICmdList,
 		const FMatrix& LocalToWorld,
 		const FMatrix& PreviousLocalToWorld,
 		const FBoxSphereBounds& WorldBounds,
@@ -2161,29 +2233,52 @@ public:
 		bool bHasPrecomputedVolumetricLightmap,
 		bool bOutputVelocity);
 
-	UE_DEPRECATED(5.1, "Use version without bDrawsVelocity instead.")
-	void Set(
-		const FMatrix& LocalToWorld, const FMatrix& PreviousLocalToWorld, const FBoxSphereBounds& WorldBounds, const FBoxSphereBounds& LocalBounds, const FBoxSphereBounds& PreSkinnedLocalBounds,
-		bool bReceivesDecals, bool bHasPrecomputedVolumetricLightmap, bool bDrawsVelocity, bool bOutputVelocity, const FCustomPrimitiveData* CustomPrimitiveData)
-	{
-		Set(LocalToWorld, PreviousLocalToWorld, WorldBounds, LocalBounds, PreSkinnedLocalBounds, bReceivesDecals, bHasPrecomputedVolumetricLightmap, bOutputVelocity, CustomPrimitiveData);
-	}
+	UE_DEPRECATED(5.4, "Set requires a command list")
+	ENGINE_API void Set(
+		const FMatrix& LocalToWorld,
+		const FMatrix& PreviousLocalToWorld,
+		const FVector& ActorPositionWS, 
+		const FBoxSphereBounds& WorldBounds,
+		const FBoxSphereBounds& LocalBounds,
+		const FBoxSphereBounds& PreSkinnedLocalBounds,
+		bool bReceivesDecals,
+		bool bHasPrecomputedVolumetricLightmap,
+		bool bOutputVelocity,
+		const FCustomPrimitiveData* CustomPrimitiveData);
 
-	UE_DEPRECATED(5.1, "Use version without bDrawsVelocity instead.")
-	void Set(
-		const FMatrix& LocalToWorld, const FMatrix& PreviousLocalToWorld, const FBoxSphereBounds& WorldBounds, const FBoxSphereBounds& LocalBounds, const FBoxSphereBounds& PreSkinnedLocalBounds,
-		bool bReceivesDecals, bool bHasPrecomputedVolumetricLightmap, bool bDrawsVelocity, bool bOutputVelocity)
-	{
-		Set(LocalToWorld, PreviousLocalToWorld, WorldBounds, LocalBounds, PreSkinnedLocalBounds, bReceivesDecals, bHasPrecomputedVolumetricLightmap, bOutputVelocity);
-	}
+	UE_DEPRECATED(5.4, "Set requires a command list")
+	ENGINE_API void Set(
+		const FMatrix& LocalToWorld,
+		const FMatrix& PreviousLocalToWorld,
+		const FBoxSphereBounds& WorldBounds,
+		const FBoxSphereBounds& LocalBounds,
+		const FBoxSphereBounds& PreSkinnedLocalBounds,
+		bool bReceivesDecals,
+		bool bHasPrecomputedVolumetricLightmap,
+		bool bOutputVelocity,
+		const FCustomPrimitiveData* CustomPrimitiveData);
 
-	UE_DEPRECATED(5.1, "Use version without bDrawsVelocity instead.")
-	void Set(
-		const FMatrix& LocalToWorld, const FMatrix& PreviousLocalToWorld, const FBoxSphereBounds& WorldBounds, const FBoxSphereBounds& LocalBounds, 
-		bool bReceivesDecals, bool bHasPrecomputedVolumetricLightmap, bool bDrawsVelocity, bool bOutputVelocity)
-	{
-		Set(LocalToWorld, PreviousLocalToWorld, WorldBounds, LocalBounds, bReceivesDecals, bHasPrecomputedVolumetricLightmap, bOutputVelocity);
-	}
+	UE_DEPRECATED(5.4, "Set requires a command list")
+	ENGINE_API void Set(
+		const FMatrix& LocalToWorld,
+		const FMatrix& PreviousLocalToWorld,
+		const FBoxSphereBounds& WorldBounds,
+		const FBoxSphereBounds& LocalBounds,
+		const FBoxSphereBounds& PreSkinnedLocalBounds,
+		bool bReceivesDecals,
+		bool bHasPrecomputedVolumetricLightmap,
+		bool bOutputVelocity);
+
+	/** Pass-through implementation which calls the overloaded Set function with LocalBounds for PreSkinnedLocalBounds. */
+	UE_DEPRECATED(5.4, "Set requires a command list")
+	ENGINE_API void Set(
+		const FMatrix& LocalToWorld,
+		const FMatrix& PreviousLocalToWorld,
+		const FBoxSphereBounds& WorldBounds,
+		const FBoxSphereBounds& LocalBounds,
+		bool bReceivesDecals,
+		bool bHasPrecomputedVolumetricLightmap,
+		bool bOutputVelocity);
 };
 
 //
@@ -2771,61 +2866,119 @@ int8 ENGINE_API ComputeStaticMeshLOD(const FStaticMeshRenderData* RenderData, co
  */
 int8 ENGINE_API ComputeTemporalStaticMeshLOD( const FStaticMeshRenderData* RenderData, const FVector4& Origin, const float SphereRadius, const FSceneView& View, int32 MinLOD, float FactorScale, int32 SampleIndex );
 
-/**
- * Computes the LOD to render for the list of static meshes in the given view.
- * @param StaticMeshes - List of static meshes.
- * @param View - The view to render the LOD level for 
- * @param Origin - Origin of the bounds of the mesh in world space
- * @param SphereRadius - Radius of the sphere to use to calculate screen coverage
+/** 
+ * Contains LODs to render. 
+ * Interpretation of LODIndex0 and LODIndex1 depends on flags.
+ * By default the two LODs are the ones used in a dithered LOD transition.
+ * But they also be interpreted as the start and end of a range where we submit multiple LODs and select/cull on GPU.
  */
 struct FLODMask
 {
-	int8 DitheredLODIndices[2];
+	// Assumes a max lod index of 127.
+	// In fact MAX_STATIC_MESH_LODS is 8 so we could use 3 bits per LODIndex and fit in a uint8 here.
+	uint16 LODIndex0 : 7;
+	uint16 LODIndex1 : 7;
+	uint16 bIsValid : 1;
+	uint16 bIsRange : 1;
 
 	FLODMask()
+		: LODIndex0(0)
+		, LODIndex1(0)
+		, bIsValid(0)
+		, bIsRange(0)
 	{
-		DitheredLODIndices[0] = MAX_int8;
-		DitheredLODIndices[1] = MAX_int8;
 	}
 
-	void SetLOD(int32 LODIndex)
+	bool IsValid() const
 	{
-		DitheredLODIndices[0] = (int8)LODIndex;
-		DitheredLODIndices[1] = (int8)LODIndex;
+		return bIsValid;
 	}
-	void SetLODSample(int32 LODIndex, int32 SampleIndex)
+	void SetLOD(uint32 LODIndex)
 	{
-		DitheredLODIndices[SampleIndex] = (int8)LODIndex;
+		LODIndex0 = LODIndex1 = (uint8)LODIndex;
+		bIsValid = 1;
+		bIsRange = 0;
 	}
-	void ClampToFirstLOD(int8 FirstLODIdx)
+	void SetLODSample(uint32 LODIndex, uint32 SampleIndex)
 	{
-		DitheredLODIndices[0] = FMath::Max(DitheredLODIndices[0], FirstLODIdx);
-		DitheredLODIndices[1] = FMath::Max(DitheredLODIndices[1], FirstLODIdx);
+		if (SampleIndex == 0)
+		{
+			LODIndex0 = (uint8)LODIndex;
+		}
+		else if (SampleIndex == 1)
+		{
+			LODIndex1 = (uint8)LODIndex;
+		}
+		bIsValid = 1;
+		bIsRange = 0;
+	}
+	void SetLODRange(uint32 MinLODIndex, uint32 MaxLODIndex)
+	{
+		LODIndex0 = (uint8)MinLODIndex;
+		LODIndex1 = (uint8)MaxLODIndex;
+		bIsValid = 1;
+		bIsRange = 1;
+	}
+	void ClampToFirstLOD(uint32 FirstLODIdx)
+	{
+		LODIndex0 = LODIndex0 > (uint8)FirstLODIdx ? LODIndex0 : (uint8)FirstLODIdx;
+		LODIndex1 = LODIndex1 > (uint8)FirstLODIdx ? LODIndex1 : (uint8)FirstLODIdx;
+	}
+	bool IsDithered() const
+	{
+		return IsValid() && !bIsRange && LODIndex0 != LODIndex1;
+	}
+	bool IsLODRange() const
+	{
+		return IsValid() && bIsRange && LODIndex0 != LODIndex1;
 	}
 	bool ContainsLOD(int32 LODIndex) const
 	{
-		return DitheredLODIndices[0] == LODIndex || DitheredLODIndices[1] == LODIndex;
+		if (!IsValid())
+		{
+			return false;
+		}
+		if (bIsRange)
+		{
+			return (int32)LODIndex0 <= LODIndex && (int32)LODIndex1 >= LODIndex;
+		}
+		return (int32)LODIndex0 == LODIndex || (int32)LODIndex1 == LODIndex;
+	}
+	bool IsMinLODInRange(int32 LODIndex) const
+	{
+		return IsLODRange() && LODIndex == LODIndex0;
+	}
+	bool IsMaxLODInRange(int32 LODIndex) const
+	{
+		return IsLODRange() && LODIndex == LODIndex1;
 	}
 
 	//#dxr_todo UE-72106: We should probably add both LoDs but mask them based on their 
 	//LodFade value within the BVH based on the LodFadeMask in the GBuffer
-	bool ContainsRayTracedLOD(int32 LODIndex) const
+	int8 GetRayTracedLOD() const
 	{
-		return DitheredLODIndices[1] == LODIndex;
-	}
-
-	int8 GetRayTracedLOD()
-	{
-		return DitheredLODIndices[1];
-	}
-
-	bool IsDithered() const
-	{
-		return DitheredLODIndices[0] != DitheredLODIndices[1];
+		return LODIndex1;
 	}
 };
+
+/**
+ * Computes the LOD to render for the list of static meshes in the given view.
+ * @param StaticMeshes - List of static meshes.
+ * @param View - The view to render the LOD level for
+ * @param Origin - Origin of the bounds of the primitive in world space
+ * @param SphereRadius - Radius of the sphere bounds of the primitive in world space
+ */
 FLODMask ENGINE_API ComputeLODForMeshes(const TArray<class FStaticMeshBatchRelevance>& StaticMeshRelevances, const FSceneView& View, const FVector4& Origin, float SphereRadius, int32 ForcedLODLevel, float& OutScreenRadiusSquared, int8 CurFirstLODIdx, float ScreenSizeScale = 1.0f, bool bDitheredLODTransition = true);
-FLODMask ENGINE_API ComputeFastLODForMeshes(const TArray<float>& ScreenSizes, const FSceneView& View, const FVector4& Origin, float SphereRadius, int32 ForcedLODLevel, float& OutScreenRadiusSquared, float ScreenSizeScale = 1.0f, bool bDitheredLODTransition = true);
+
+/**
+ * Computes the LOD to render for the list of static meshes in the given view.
+ * @param StaticMeshes - List of static meshes.
+ * @param View - The view to render the LOD level for
+ * @param Origin - Origin of the bounds of the primitive in world space
+ * @param SphereRadius - Radius of the sphere bounds of the primitive in world space
+ * @param InstanceSphereRadius - Radius of the sphere bounds for a single mesh instance in the primitive. If not 0.f then the return FLODMask will contain a range of LODs ready for LOD selection on the GPU
+ */
+FLODMask ENGINE_API ComputeLODForMeshes(const TArray<class FStaticMeshBatchRelevance>& StaticMeshRelevances, const FSceneView& View, const FVector4& Origin, float SphereRadius, float InstanceSphereRadius, int32 ForcedLODLevel, float& OutScreenRadiusSquared, int8 CurFirstLODIdx, float ScreenSizeScale = 1.0f);
 
 class FSharedSamplerState : public FRenderResource
 {
@@ -2853,27 +3006,3 @@ extern ENGINE_API FSharedSamplerState* Clamp_WorldGroupSettings;
 
 /** Initializes the shared sampler states. */
 extern ENGINE_API void InitializeSharedSamplerStates();
-
-/**
-* Cache of read-only console variables used by the scene renderer
-*/
-struct FReadOnlyCVARCache
-{
-	static ENGINE_API const FReadOnlyCVARCache& Get();
-
-	bool bEnablePointLightShadows;
-	bool bEnableStationarySkylight;
-	bool bEnableLowQualityLightmaps;
-	bool bAllowStaticLighting;
-	bool bSupportSkyAtmosphere;
-
-	// Mobile specific
-	bool bMobileAllowMovableDirectionalLights;
-	bool bMobileAllowDistanceFieldShadows;
-	bool bMobileEnableStaticAndCSMShadowReceivers;
-	int32 MobileSkyLightPermutation;
-	bool bMobileEnableNoPrecomputedLightingCSMShader;
-	
-	bool bInitialized;
-	void Init();
-};

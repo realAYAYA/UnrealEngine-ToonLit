@@ -14,6 +14,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Misc/CommandLine.h"
 #include "IAutomationControllerModule.h"
+#include "UObject/AssetRegistryTagsContext.h"
 
 #define LOCTEXT_NAMESPACE "FunctionalTesting"
 
@@ -38,7 +39,7 @@ public:
 
 private:
 	UWorld* GetTestWorld();
-	void OnGetAssetTagsForWorld(const UWorld* World, TArray<UObject::FAssetRegistryTag>& OutTags);
+	void OnGetAssetTagsForWorld(const UWorld* World, FAssetRegistryTagsContext Context);
 
 
 	TWeakObjectPtr<class UFunctionalTestingManager> TestManager;
@@ -49,18 +50,18 @@ void FFunctionalTestingModule::StartupModule()
 {
 	bPendingActivation = false;
 #if WITH_EDITOR
-	FWorldDelegates::GetAssetTags.AddRaw(this, &FFunctionalTestingModule::OnGetAssetTagsForWorld);
+	FWorldDelegates::GetAssetTagsWithContext.AddRaw(this, &FFunctionalTestingModule::OnGetAssetTagsForWorld);
 #endif
 }
 
 void FFunctionalTestingModule::ShutdownModule() 
 {
 #if WITH_EDITOR
-	FWorldDelegates::GetAssetTags.RemoveAll(this);
+	FWorldDelegates::GetAssetTagsWithContext.RemoveAll(this);
 #endif
 }
 
-void FFunctionalTestingModule::OnGetAssetTagsForWorld(const UWorld* World, TArray<UObject::FAssetRegistryTag>& OutTags)
+void FFunctionalTestingModule::OnGetAssetTagsForWorld(const UWorld* World, FAssetRegistryTagsContext Context)
 {
 #if WITH_EDITOR
 	TArray<FString> TestNamesRuntime;
@@ -80,13 +81,13 @@ void FFunctionalTestingModule::OnGetAssetTagsForWorld(const UWorld* World, TArra
 		}
 	}
 
-	auto AddTestNames = [&OutTags](const TCHAR* TagName, TArray<FString>& TestNames)
+	auto AddTestNames = [&Context](const TCHAR* TagName, TArray<FString>& TestNames)
 	{
 		if (!TestNames.IsEmpty())
 		{
 			TestNames.Sort();
 			FString TestNamesStr = FString::Join(TestNames, TEXT(""));
-			OutTags.Add(UObject::FAssetRegistryTag(TagName, MoveTemp(TestNamesStr), UObject::FAssetRegistryTag::TT_Hidden));
+			Context.AddTag(UObject::FAssetRegistryTag(TagName, MoveTemp(TestNamesStr), UObject::FAssetRegistryTag::TT_Hidden));
 		}
 	};
 	AddTestNames(TEXT("TestNames"), TestNamesRuntime);

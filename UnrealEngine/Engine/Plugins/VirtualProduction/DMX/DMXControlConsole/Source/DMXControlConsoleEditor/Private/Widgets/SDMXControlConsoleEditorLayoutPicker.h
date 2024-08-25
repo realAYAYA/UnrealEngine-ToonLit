@@ -7,78 +7,99 @@
 enum class ECheckBoxState : uint8;
 template <typename OptionType> class SComboBox;
 class SEditableTextBox;
-class UClass;
-class UDMXControlConsoleEditorGlobalLayoutUser;
+class UDMXControlConsoleEditorGlobalLayoutBase;
+class UDMXControlConsoleEditorModel;
 
 
-/** A widget to pick layouts for Control Console */
-class SDMXControlConsoleEditorLayoutPicker
-	: public SCompoundWidget
+namespace UE::DMX::Private
 {
-public:
-	SLATE_BEGIN_ARGS(SDMXControlConsoleEditorLayoutPicker)
-	{}
+	/** A widget to pick layouts for Control Console */
+	class SDMXControlConsoleEditorLayoutPicker
+		: public SCompoundWidget
+	{
+	public:
+		SLATE_BEGIN_ARGS(SDMXControlConsoleEditorLayoutPicker)
+			{}
 
-	SLATE_END_ARGS()
+		SLATE_END_ARGS()
 
-	/** Constructs the widget */
-	void Construct(const FArguments& InArgs);
+		/** Constructs the widget */
+		void Construct(const FArguments& InArgs, UDMXControlConsoleEditorModel* InEditorModel);
 
-private:
-	/** Generates a widget for selecting layouts */
-	TSharedRef<SWidget> GenerateLayoutCheckBoxWidget();
+	private:
+		/** Generates a widget for selecting layouts */
+		TSharedRef<SWidget> GenerateLayoutCheckBoxWidget();
 
-	/** Generates a widget for each element in UserLayoutsComboBox */
-	TSharedRef<SWidget> GenerateLayoutComboBoxWidget(const TWeakObjectPtr<UDMXControlConsoleEditorGlobalLayoutUser> InLayout);
+		/** Generates a widget for Default Layout options */
+		TSharedRef<SWidget> GenerateDefaultLayoutPickerWidget();
 
-	/** Called when Default Layout checkbox state has changed */
-	void OnDefaultLayoutChecked(ECheckBoxState CheckBoxState);
+		/** Generates a widget for User Layout options */
+		TSharedRef<SWidget> GenerateUserLayoutPickerWidget();
 
-	/** Called when UserLayout checkbox state has changed */
-	void OnUserLayoutChecked(ECheckBoxState CheckBoxState);
+		/** Generates a widget for each element in the UserLayoutsComboBox */
+		TSharedRef<SWidget> GenerateUserLayoutComboBoxWidget(const TWeakObjectPtr<UDMXControlConsoleEditorGlobalLayoutBase> InLayout);
 
-	/** Checked if the active layout class matche the given layout class */
-	ECheckBoxState IsActiveLayoutClass(UClass* InLayoutClass) const;
+		/** True if the active layout is the default layout */
+		bool IsDefaultLayoutActive() const;
 
-	/** Updates ComboBoxSource array according to the current DMX Library */
-	void UpdateComboBoxSource();
+		/** Called when the Default Layout checkbox state has changed */
+		void OnDefaultLayoutCheckBoxStateChanged(ECheckBoxState CheckBoxState);
 
-	/** Called when an FixturePatchesComboBox element is selected */
-	void OnComboBoxSelectionChanged(const TWeakObjectPtr<UDMXControlConsoleEditorGlobalLayoutUser> InLayout, ESelectInfo::Type SelectInfo);
+		/** Called when the UserLayout checkbox state has changed */
+		void OnUserLayoutCheckBoxStateChanged(ECheckBoxState CheckBoxState);
 
-	/** Called when LayoutNameEditableBox text changes */
-	void OnLayoutNameTextChanged(const FText& NewText);
+		/** Updates the ComboBoxSource array according to the current Control Console Layouts */
+		void UpdateComboBoxSource();
 
-	/** Called when a new text on LayoutNameEditableBox editable text box is committed */
-	void OnLayoutNameTextCommitted(const FText& NewText, ETextCommit::Type CommitInfo);
+		/** Gets the check box state of the auto-group check box */
+		ECheckBoxState IsAutoGroupCheckBoxChecked() const;
 
-	/** Called to rename the active layout */
-	void OnRenameLayout(const FString& NewName);
+		/** Called when the auto-group checkbox state has changed */
+		void OnAutoGroupCheckBoxStateChanged(ECheckBoxState CheckBoxState);
 
-	/** Called when add layout button is clicked */
-	FReply OnAddLayoutClicked();
+		/** Called when a UserLayoutsComboBox element is selected */
+		void OnComboBoxSelectionChanged(const TWeakObjectPtr<UDMXControlConsoleEditorGlobalLayoutBase> InLayout, ESelectInfo::Type SelectInfo);
 
-	/** Called when rename layout button is clicked */
-	FReply OnRenameLayoutClicked();
+		/** Called when the LayoutNameEditableBox text changes */
+		void OnLayoutNameTextChanged(const FText& NewText);
 
-	/** Called when delete layout button is clicked */
-	FReply OnDeleteLayoutClicked();
+		/** Called when a new text on the LayoutNameEditableBox editable text box is committed */
+		void OnLayoutNameTextCommitted(const FText& NewText, ETextCommit::Type CommitInfo);
 
-	/** Gets visibility for the layout ComboBox widget */
-	EVisibility GetComboBoxVisibility() const;
+		/** Called to rename the active layout */
+		void OnRenameLayout(const FString& NewName);
 
-	/** Reference to UserLayoutsComboBox last selected item */
-	TWeakObjectPtr<UDMXControlConsoleEditorGlobalLayoutUser> LastSelectedItem;
+		/** Called when the add layout button is clicked */
+		FReply OnAddLayoutClicked();
 
-	/** Source items for UserLayoutsComboBox */
-	TArray<TWeakObjectPtr<UDMXControlConsoleEditorGlobalLayoutUser>> ComboBoxSource;
+		/** Called when the rename layout button is clicked */
+		FReply OnRenameLayoutClicked();
 
-	/** A ComboBox for showing all User Layouts in the current Control Console */
-	TSharedPtr<SComboBox<TWeakObjectPtr<UDMXControlConsoleEditorGlobalLayoutUser>>> UserLayoutsComboBox;
+		/** Called when the delete layout button is clicked */
+		FReply OnDeleteLayoutClicked();
 
-	/** Reference to text box for editing layout name */
-	TSharedPtr<SEditableTextBox> LayoutNameEditableBox;
+		/** Gets the visibility for the Default Layout option widgets */
+		EVisibility GetDefaultLayoutVisibility() const;
 
-	/** Text for editing layout name */
-	FText LayoutNameText;
-};
+		/** Gets the visibility for the User Layout option widgets */
+		EVisibility GetUserLayoutVisibility() const;
+
+		/** Reference to the last selected item in the UserLayoutsComboBox */
+		TWeakObjectPtr<UDMXControlConsoleEditorGlobalLayoutBase> LastSelectedItem;
+
+		/** Source items for the UserLayoutsComboBox */
+		TArray<TWeakObjectPtr<UDMXControlConsoleEditorGlobalLayoutBase>> ComboBoxSource;
+
+		/** A ComboBox for showing all User Layouts in the current Control Console */
+		TSharedPtr<SComboBox<TWeakObjectPtr<UDMXControlConsoleEditorGlobalLayoutBase>>> UserLayoutsComboBox;
+
+		/** Reference to the text box for editing the layout name */
+		TSharedPtr<SEditableTextBox> LayoutNameEditableBox;
+
+		/** Weak reference to the Control Console editor model */
+		TWeakObjectPtr<UDMXControlConsoleEditorModel> EditorModel;
+
+		/** Text for editing the layout name */
+		FText LayoutNameText;
+	};
+}

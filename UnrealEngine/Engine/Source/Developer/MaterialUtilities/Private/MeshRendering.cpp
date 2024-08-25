@@ -647,8 +647,7 @@ bool FMeshRenderer::RenderMaterial(struct FMaterialMergeData& InMaterialData, FM
 			CanvasRenderTarget,
 			NULL,
 			FEngineShowFlags(ESFIM_Game))
-			.SetTime(FGameTime())
-			.SetGammaCorrection(CanvasRenderTarget->GetDisplayGamma()));
+			.SetTime(FGameTime()));
 		
 #if !SHOW_WIREFRAME_MESH
 		Canvas.Clear(InRenderTarget->ClearColor);
@@ -766,8 +765,7 @@ bool FMeshRenderer::RenderMaterialTexCoordScales(struct FMaterialMergeData& InMa
 	ShowFlags.OutputMaterialTextureScales = true; // This will bind the DVSM_OutputMaterialTextureScales
 
 	FSceneViewFamily ViewFamily(FSceneViewFamily::ConstructionValues(CanvasRenderTarget, nullptr, ShowFlags)
-		.SetTime(FGameTime())
-		.SetGammaCorrection(CanvasRenderTarget->GetDisplayGamma()));
+		.SetTime(FGameTime()));
 
 	// The next line ensures a constant view vector of (0,0,1) for all pixels. Required because here SVPositionToTranslatedWorld is identity, making excessive view angle increase per pixel.
 	// That creates bad side effects for anything that depends on the view vector, like parallax or bump offset mappings. For those, we want the tangent

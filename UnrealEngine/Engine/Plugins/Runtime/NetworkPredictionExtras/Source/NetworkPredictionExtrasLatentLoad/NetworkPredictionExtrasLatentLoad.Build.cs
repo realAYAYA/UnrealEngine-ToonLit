@@ -6,6 +6,8 @@ namespace UnrealBuildTool.Rules
 	{
 		public NetworkPredictionExtrasLatentLoad(ReadOnlyTargetRules Target) : base(Target)
 		{
+			ShortName = "NetPredExtrasLL";
+
 			PublicDependencyModuleNames.AddRange(
 				new string[]
 				{

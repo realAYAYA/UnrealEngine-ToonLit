@@ -120,6 +120,12 @@ public:
 		Unlock();
 	}
 
+	FManagedStorageScopeFileLock(const FManagedStorageScopeFileLock&) = delete;
+	FManagedStorageScopeFileLock& operator=(const FManagedStorageScopeFileLock&) = delete;
+
+	FManagedStorageScopeFileLock(FManagedStorageScopeFileLock&& InOther) = delete;
+	FManagedStorageScopeFileLock& operator=(FManagedStorageScopeFileLock&& InOther) = delete;
+	
 	void Unlock();
 
 private:
@@ -489,7 +495,6 @@ public:
 		}
 
 		return Categories.GetCategories()[File.Category].RemoveFile(File.FullFilename);
-		File.Clear();
 	}
 
 	int64 GetTotalUsedSize() const
@@ -875,6 +880,42 @@ public:
 		if (bSuccess)
 		{
 			Manager.RemoveFileFromManager(ManagedFile);
+		}
+
+		return bSuccess;
+	}
+
+	virtual bool DeleteFiles(const TArrayView<const TCHAR*>& Filenames) override
+	{
+		if (!IsReady())
+		{
+			return BaseClass::DeleteFiles(Filenames);
+		}
+
+		FPersistentStorageManager& Manager = FPersistentStorageManager::Get();
+
+		TArray<TPair<FPersistentManagedFile, FManagedStorageScopeFileLock>> FileLocks;
+		FileLocks.Reserve(Filenames.Num());
+		for (const TCHAR* Filename : Filenames)
+		{
+			FPersistentManagedFile ManagedFile = Manager.TryManageFile(Filename);
+			FileLocks.Emplace(ManagedFile, MoveTemp(ManagedFile));
+		}
+
+		bool bSuccess = BaseClass::DeleteFiles(Filenames);
+
+		const int32 Count = Filenames.Num();
+		for (int32 i = 0; i < Count; i++)
+		{
+			if (!BaseClass::FileExists(Filenames[i]))
+			{
+				UE_LOG(LogPlatformFileManagedStorage, Display, TEXT("Removing deleted file %s."), *(FileLocks[i].Key.FullFilename));
+				Manager.RemoveFileFromManager(FileLocks[i].Key);
+			}
+			else
+			{
+				UE_LOG(LogPlatformFileManagedStorage, Warning, TEXT("Not removing deleted file %s. It still exists on disk."), *(FileLocks[i].Key.FullFilename));
+			}
 		}
 
 		return bSuccess;

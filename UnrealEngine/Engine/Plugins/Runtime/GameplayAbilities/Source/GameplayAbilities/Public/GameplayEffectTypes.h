@@ -27,6 +27,7 @@
 class Error;
 class UAbilitySystemComponent;
 class UGameplayAbility;
+class UNetConnection;
 struct FActiveGameplayEffect;
 struct FGameplayEffectModCallbackData;
 struct FGameplayEffectSpec;
@@ -825,6 +826,12 @@ struct GAMEPLAYABILITIES_API FGameplayCueParameters
 	FGameplayCueParameters(const struct FGameplayEffectSpecForRPC &Spec);
 	FGameplayCueParameters(const struct FGameplayEffectContextHandle& EffectContext);
 
+	bool operator==(const FGameplayCueParameters& Other) const;
+	bool operator!=(const FGameplayCueParameters& Other) const
+	{
+		return !(*this == Other);
+	}
+
 	/** Magnitude of source gameplay effect, normalzed from 0-1. Use this for "how strong is the gameplay effect" (0=min, 1=,max) */
 	UPROPERTY(BlueprintReadWrite, Category=GameplayCue)
 	float NormalizedMagnitude;
@@ -1174,7 +1181,8 @@ struct GAMEPLAYABILITIES_API FGameplayTagCountContainer
 	}
 
 	/**
-	* return the count for a specified tag 
+	* return the hierarchical count for a specified tag
+	* e.g. if A.B & A.C were added, GetTagCount("A") would return 2.
 	*
 	* @param Tag			Tag to update
 	*
@@ -1183,6 +1191,24 @@ struct GAMEPLAYABILITIES_API FGameplayTagCountContainer
 	FORCEINLINE int32 GetTagCount(const FGameplayTag& Tag) const
 	{
 		if (const int32* Ptr = GameplayTagCountMap.Find(Tag))
+		{
+			return *Ptr;
+		}
+
+		return 0;
+	}
+
+	/**
+	* return how many times the exact specified tag has been added to the container (ignores the tag hierarchy)
+	* e.g. if A.B & A.C were added, GetExplicitTagCount("A") would return 0, and GetExplicitTagCount("A.B") would return 1.
+	*
+	* @param Tag			Tag to update
+	*
+	* @return the count of the passed in tag
+	*/
+	FORCEINLINE int32 GetExplicitTagCount(const FGameplayTag& Tag) const
+	{
+		if (const int32* Ptr = ExplicitTagCountMap.Find(Tag))
 		{
 			return *Ptr;
 		}
@@ -1221,7 +1247,12 @@ struct GAMEPLAYABILITIES_API FGameplayTagCountContainer
 		return ExplicitTags;
 	}
 
-	void Reset();
+	/**
+	 * Removes all of the tags. Does not notify any delegates.
+	 * 
+	 * @param bResetCallbacks	If true, also remove all of the registered tag count change delegates
+	 */
+	void Reset(bool bResetCallbacks = true);
 
 	/** Fills in ParentTags from GameplayTags */
 	void FillParentTags()
@@ -1394,7 +1425,7 @@ struct GAMEPLAYABILITIES_API FGameplayTagRequirements
 	bool operator!=(const FGameplayTagRequirements& Other) const;
 
 	/** Converts the RequireTags and IgnoreTags fields into an equivalent FGameplayTagQuery */
-	UE_NODISCARD FGameplayTagQuery ConvertTagFieldsToTagQuery() const;
+	[[nodiscard]] FGameplayTagQuery ConvertTagFieldsToTagQuery() const;
 };
 
 
@@ -1603,6 +1634,8 @@ private:
 	friend UE::Net::FMinimalReplicationTagCountMapReplicationFragment;
 
 	bool bRequireNonOwningNetConnection = false;
+	TWeakObjectPtr<UNetConnection> LastConnection;
+
 	void UpdateOwnerTagMap();
 };
 

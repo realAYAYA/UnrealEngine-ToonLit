@@ -6,6 +6,7 @@
 #include "EdGraph/EdGraph.h"
 #include "Sound/AudioSettings.h"
 #include "Sound/SoundCue.h"
+#include "Sound/SoundNodeWavePlayer.h"
 #include "AudioCompressionSettingsUtils.h"
 
 #if WITH_EDITORONLY_DATA
@@ -74,6 +75,26 @@ void USoundNodeQualityLevel::RetainChildWavePlayers(bool bRecurse)
 void USoundNodeQualityLevel::ReleaseRetainerOnChildWavePlayers(bool bRecurse)
 {
 	ForCurrentQualityLevel([bRecurse](USoundNode* Node) { Node->ReleaseRetainerOnChildWavePlayers(bRecurse); });
+}
+
+void USoundNodeQualityLevel::LoadChildWavePlayers(bool bAddToRoot, bool bRecurse)
+{
+	ForCurrentQualityLevel([bAddToRoot, bRecurse](USoundNode* Node) 
+	{ 
+		if (Node)
+		{
+			// If this node is a wave player node, load it, otherwise load children 
+			// (a wave player node cannot have children)
+			if (USoundNodeWavePlayer* WavePlayerNode = Cast<USoundNodeWavePlayer>(Node))
+			{
+				WavePlayerNode->LoadAsset(bAddToRoot);
+			}
+			else
+			{
+				Node->LoadChildWavePlayerAssets(bAddToRoot, bRecurse);
+			}
+		}
+	});
 }
 
 int32 USoundNodeQualityLevel::GetMaxChildNodes() const

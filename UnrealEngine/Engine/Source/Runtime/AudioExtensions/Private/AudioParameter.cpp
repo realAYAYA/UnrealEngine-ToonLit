@@ -1,8 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #include "AudioParameter.h"
 
-#include UE_INLINE_GENERATED_CPP_BY_NAME(AudioParameter)
+#include "Algo/BinarySearch.h"
 
+#include UE_INLINE_GENERATED_CPP_BY_NAME(AudioParameter)
 
 namespace Audio
 {
@@ -190,40 +191,27 @@ void FAudioParameter::Merge(TArray<FAudioParameter>&& InParams, TArray<FAudioPar
 
 	if (OutParams.IsEmpty())
 	{
-		OutParams.Append(MoveTemp(InParams));
+		OutParams = MoveTemp(InParams);
 		return;
 	}
 
 	auto SortParamsPredicate = [](const FAudioParameter& A, const FAudioParameter& B) { return A.ParamName.FastLess(B.ParamName); };
-
-	InParams.Sort(SortParamsPredicate);
 	OutParams.Sort(SortParamsPredicate);
 
-	for (int32 i = OutParams.Num() - 1; i >= 0; --i)
+	for (FAudioParameter& NewParam : InParams)
 	{
-		while (!InParams.IsEmpty())
+		const int32 ExistingElementIndex = Algo::LowerBound(OutParams, NewParam, SortParamsPredicate);
+		if (OutParams.IsValidIndex(ExistingElementIndex))
 		{
-			FAudioParameter& OutParam = OutParams[i];
-			// Break going through in params as there will be no more matches with this current out param 
-			if (InParams.Last().ParamName.FastLess(OutParam.ParamName))
+			FAudioParameter& ExistingParam = OutParams[ExistingElementIndex];
+			if (ExistingParam.ParamName == NewParam.ParamName)
 			{
-				break;
-			}
-
-			constexpr bool bAllowShrinking = false;
-			FAudioParameter NewParam = InParams.Pop(bAllowShrinking);
-			if (NewParam.ParamName == OutParam.ParamName)
-			{
-				OutParam.Merge(NewParam);
-			}
-			else
-			{
-				OutParams.Emplace(MoveTemp(NewParam));
+				ExistingParam.Merge(NewParam);
+				continue;
 			}
 		}
-	}
 
-	// Add the rest of the in params that have no matching out param 
-	OutParams.Append(MoveTemp(InParams));
+		OutParams.Emplace(MoveTemp(NewParam));
+	}
 }
 

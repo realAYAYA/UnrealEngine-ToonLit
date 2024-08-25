@@ -213,7 +213,7 @@ public:
 		UGameplayTagsSettings* Settings = GetMutableDefault<UGameplayTagsSettings>();
 		
 		// The refresh has already set the in memory version of this to be correct, just need to save it out now
-		if (!GConfig->GetSectionPrivate(TEXT("GameplayTags"), false, true, DefaultEnginePath))
+		if (!GConfig->GetSection(TEXT("GameplayTags"), false, DefaultEnginePath))
 		{
 			// Already migrated or no data
 			return;
@@ -225,18 +225,8 @@ public:
 		// Delete gameplay tags section entirely. This modifies the disk version
 		GConfig->EmptySection(TEXT("GameplayTags"), DefaultEnginePath);
 
-		FConfigSection* PackageRedirects = GConfig->GetSectionPrivate(TEXT("/Script/Engine.Engine"), false, false, DefaultEnginePath);
-
-		if (PackageRedirects)
-		{
-			for (FConfigSection::TIterator It(*PackageRedirects); It; ++It)
-			{
-				if (It.Key() == TEXT("+GameplayTagRedirects"))
-				{
-					It.RemoveCurrent();
-				}
-			}
-		}
+		// Remove any redirects
+		GConfig->RemoveKeyFromSection(TEXT("/Script/Engine.Engine"), "+GameplayTagRedirects", DefaultEnginePath);
 
 		// This will remove comments, etc. It is expected for someone to diff this before checking in to manually fix it
 		GConfig->Flush(false, DefaultEnginePath);
@@ -932,8 +922,12 @@ public:
 		UGameplayTagsManager& Manager = UGameplayTagsManager::Get();
 
 		TArray<FString> ReportLines;
+		TArray<FString> ReportReferencers;
+		TArray<FString> ReportSources;
 
-		ReportLines.Add(TEXT("Tag,Reference Count,Source,Comment"));
+		ReportLines.Add(TEXT("Tag,Explicit,HasNativeSource,HasConfigSource,Reference Count,Sources Count,Comment"));
+		ReportReferencers.Add(TEXT("Asset,Tag"));
+		ReportSources.Add(TEXT("Source,Tag"));
 
 		FGameplayTagContainer AllTags;
 		Manager.RequestAllGameplayTags(AllTags, true);
@@ -952,15 +946,39 @@ public:
 			AssetRegistryModule.Get().GetReferencers(TagId, Referencers, UE::AssetRegistry::EDependencyCategory::SearchableName);
 
 			FString Comment;
-			FName TagSource;
+			TArray<FName> TagSources;
 			bool bExplicit, bRestricted, bAllowNonRestrictedChildren;
 
-			Manager.GetTagEditorData(Tag.GetTagName(), Comment, TagSource, bExplicit, bRestricted, bAllowNonRestrictedChildren);
+			Manager.GetTagEditorData(Tag.GetTagName(), Comment, TagSources, bExplicit, bRestricted, bAllowNonRestrictedChildren);
 
-			ReportLines.Add(FString::Printf(TEXT("%s,%d,%s,%s"), *Tag.ToString(), Referencers.Num(), *TagSource.ToString(), *Comment));
+			bool bHasNative = TagSources.Contains(FGameplayTagSource::GetNativeName());
+			bool bHasConfigIni = TagSources.Contains(FGameplayTagSource::GetDefaultName());
+
+			FString TagName = Tag.ToString();
+
+			ReportLines.Add(FString::Printf(TEXT("%s,%s,%s,%s,%d,%d,\"%s\""),
+				*TagName,
+				bExplicit ? TEXT("true") : TEXT("false"),
+				bHasNative ? TEXT("true") : TEXT("false"),
+				bHasConfigIni ? TEXT("true") : TEXT("false"),
+				Referencers.Num(),
+				TagSources.Num(),
+				*Comment));
+
+			for (const FAssetIdentifier& Referencer : Referencers)
+			{
+				ReportReferencers.Add(FString::Printf(TEXT("%s,%s"), *Referencer.ToString(), *TagName));
+			}
+
+			for (const FName& TagSource : TagSources)
+			{
+				ReportSources.Add(FString::Printf(TEXT("%s,%s"), *TagSource.ToString(), *TagName));
+			}
 		}
 
 		WriteCustomReport(TEXT("TagList.csv"), ReportLines);
+		WriteCustomReport(TEXT("TagReferencesList.csv"), ReportReferencers);
+		WriteCustomReport(TEXT("TagSourcesList.csv"), ReportSources);
 	}
 
 	FDelegateHandle AssetImportHandle;
@@ -972,7 +990,8 @@ public:
 
 static FAutoConsoleCommand CVarDumpTagList(
 	TEXT("GameplayTags.DumpTagList"),
-	TEXT("Writes out a csv with all tags to Reports/TagList.csv"),
+	TEXT("Writes out a csvs with all tags to Reports/TagList.csv, ")
+	TEXT("Reports/TagReferencesList.csv and Reports/TagSourcesList.csv"),
 	FConsoleCommandDelegate::CreateStatic(FGameplayTagsEditorModule::DumpTagList),
 	ECVF_Cheat);
 

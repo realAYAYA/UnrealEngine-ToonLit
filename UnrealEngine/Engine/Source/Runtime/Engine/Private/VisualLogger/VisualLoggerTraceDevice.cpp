@@ -7,11 +7,13 @@
 #include "ObjectTrace.h"
 #include "Trace/Trace.inl"
 #include "VisualLogger/VisualLoggerCustomVersion.h"
+#include "UObject/UE5MainStreamObjectVersion.h"
 
 UE_TRACE_CHANNEL_DEFINE(VisualLoggerChannel);
 
 UE_TRACE_EVENT_BEGIN(VisualLogger, VisualLogEntry)
 	UE_TRACE_EVENT_FIELD(uint64, Cycle)
+	UE_TRACE_EVENT_FIELD(double, RecordingTime)
 	UE_TRACE_EVENT_FIELD(uint64, OwnerId)
 	UE_TRACE_EVENT_FIELD(uint8[], LogEntry)
 UE_TRACE_EVENT_END()
@@ -55,14 +57,20 @@ void FVisualLoggerTraceDevice::Serialize(const UObject* LogOwner, FName OwnerNam
 	{
 		FBufferArchive Archive;
 		Archive.UsingCustomVersion(EVisualLoggerVersion::GUID);
+		Archive.UsingCustomVersion(FUE5MainStreamObjectVersion::GUID);
+		Archive.SetCustomVersion(FUE5MainStreamObjectVersion::GUID, FUE5MainStreamObjectVersion::LatestVersion, "UE5MainStreamObjectVersion");
+
 		Archive << const_cast<FVisualLogEntry&>(LogEntry);
 
 		UE_TRACE_LOG(VisualLogger, VisualLogEntry, VisualLoggerChannel)
 			<< VisualLogEntry.Cycle(FPlatformTime::Cycles64())
+			<< VisualLogEntry.RecordingTime(FObjectTrace::GetWorldElapsedTime(LogOwner->GetWorld()))
 			<< VisualLogEntry.OwnerId(FObjectTrace::GetObjectId(LogOwner))
 			<< VisualLogEntry.LogEntry(Archive.GetData(), Archive.Num());
 	}
 #endif
+
+	ImmediateRenderDelegate.ExecuteIfBound(LogOwner, LogEntry);
 }
 
 #endif

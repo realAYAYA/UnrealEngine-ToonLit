@@ -17,7 +17,7 @@ struct FWorldPartitionRuntimeSpatialHashGridPreviewer
 	ENGINE_API FWorldPartitionRuntimeSpatialHashGridPreviewer();
 
 #if WITH_EDITOR
-	ENGINE_API void Draw(UWorld* World, const TArray<FSpatialHashRuntimeGrid>& Grids, bool bEnabled, int32 PreviewGridLevel);
+	ENGINE_API void Draw(UWorld* World, const TArray<FSpatialHashRuntimeGrid>& Grids, bool bEnabled, int32 PreviewGridLevel, bool bUseAlignedGridLevels = true);
 #endif
 
 #if WITH_EDITORONLY_DATA
@@ -29,6 +29,8 @@ struct FWorldPartitionRuntimeSpatialHashGridPreviewer
 
 	UPROPERTY()
 	TObjectPtr<APostProcessVolume> Volume;
+
+	bool bIsInitialized;
 
 	struct FGridParametersCache
 	{

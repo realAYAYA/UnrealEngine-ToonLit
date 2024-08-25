@@ -20,5 +20,7 @@ public class PacketHandler : ModuleRules
         );
 
         CircularlyReferencedDependentModules.Add("ReliabilityHandlerComponent");
-    }
+
+		UnsafeTypeCastWarningLevel = WarningLevel.Error;
+	}
 }

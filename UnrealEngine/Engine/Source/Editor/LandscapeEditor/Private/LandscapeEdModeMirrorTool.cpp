@@ -224,10 +224,6 @@ public:
 				return EAxisList::None;
 			}
 		}
-		else
-		{
-			return EAxisList::None;
-		}
 
 		return EAxisList::None;
 	}

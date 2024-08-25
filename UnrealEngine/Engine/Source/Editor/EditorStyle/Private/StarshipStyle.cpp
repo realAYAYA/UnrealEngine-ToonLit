@@ -125,8 +125,7 @@ FStarshipEditorStyle::FStyle::FStyle( const TWeakObjectPtr< UEditorStyleSettings
 
 FStarshipEditorStyle::FStyle::~FStyle()
 {
-
-#ifdef WITH_EDITOR
+#if WITH_EDITOR
 	if (Settings.IsValid())
 	{
 		Settings->OnSettingChanged().Remove(SettingChangedHandler);
@@ -250,6 +249,7 @@ void FStarshipEditorStyle::FStyle::Initialize()
 	SetupMyBlueprintStyles();
 	SetupStatusBarStyle();
 	SetupColorPickerStyle();
+	SetupSourceCodeStyles();
 
 //	LogUnusedBrushResources();
 
@@ -257,7 +257,7 @@ void FStarshipEditorStyle::FStyle::Initialize()
 	
 	SyncSettings();
 
-#ifdef WITH_EDITOR
+#if WITH_EDITOR
 	if (Settings.IsValid())
 	{
 		SettingChangedHandler = Settings->OnSettingChanged().AddRaw(this, &FStarshipEditorStyle::FStyle::SettingsChanged);
@@ -400,6 +400,7 @@ void FStarshipEditorStyle::FStyle::SetupGeneralStyles()
 		Set( "Symbols.DownArrow", new IMAGE_BRUSH( "Common/DownArrow", Icon8x8 ) );
 		Set( "Symbols.DoubleDownArrow", new IMAGE_BRUSH( "Common/DownArrow2", Icon8x8 ) );
 		Set( "Symbols.RightArrow", new IMAGE_BRUSH("Common/SubmenuArrow", Icon8x8));
+		Set( "Symbols.LeftArrow", new IMAGE_BRUSH("Common/LeftArrow", Icon8x8));
 		Set( "Symbols.Check", new IMAGE_BRUSH( "Common/Check", Icon16x16 ) );
 	}
 
@@ -430,6 +431,7 @@ void FStarshipEditorStyle::FStyle::SetupGeneralStyles()
 		Set("Icons.PlaceActors", new IMAGE_BRUSH_SVG("Starship/Common/PlaceActors", Icon16x16));
 		Set("Icons.ReplaceActor", new IMAGE_BRUSH_SVG("Starship/Common/ReplaceActors", Icon16x16));
 		Set("Icons.GroupActors", new IMAGE_BRUSH_SVG("Starship/Common/GroupActors", Icon16x16));
+		Set("Icons.FrameActor", new IMAGE_BRUSH_SVG("Starship/Common/FrameActor", Icon16x16));
 		Set("Icons.Transform", new IMAGE_BRUSH_SVG("Starship/Common/transform-local", Icon16x16));
 		Set("Icons.SetShowPivot", new IMAGE_BRUSH_SVG("Starship/Common/SetShowPivot", Icon16x16));
 		Set("Icons.Snap", new IMAGE_BRUSH_SVG("Starship/Common/Snap", Icon16x16));
@@ -455,7 +457,6 @@ void FStarshipEditorStyle::FStyle::SetupGeneralStyles()
 		Set("Icons.HollowHeart", new IMAGE_BRUSH_SVG("Starship/Common/HollowHeart", Icon16x16));
 		Set("Icons.Heart", new IMAGE_BRUSH_SVG("Starship/Common/Heart", Icon16x16));
 		Set("Icons.RecentAssets", new IMAGE_BRUSH_SVG("Starship/Common/RecentAssets", Icon16x16));
-
 
 		Set("Icons.Toolbar.Play", new IMAGE_BRUSH_SVG("Starship/Common/play", Icon20x20));
 		Set("Icons.Toolbar.Pause", new IMAGE_BRUSH_SVG("Starship/MainToolbar/pause", Icon20x20));
@@ -865,81 +866,24 @@ void FStarshipEditorStyle::FStyle::SetupGeneralStyles()
 	
 	// Scrub control buttons
 	{
-		Set( "Animation.Pause", FButtonStyle( Button )
-			.SetNormal(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Pause_24x_OFF", Icon24x24 ))
-			.SetHovered(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Pause_24x_OFF", Icon24x24 ))
-			.SetPressed(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Pause_24x", Icon24x24 ))
-		);
+		Set("Animation.PlayControlsButton", FButtonStyle(Button)
+			.SetNormal(FSlateNoResource())
+			.SetDisabled(FSlateNoResource())
+			.SetNormalPadding(FMargin(2.f, 2.f, 2.f, 2.f))
+			.SetPressedPadding(FMargin(2.f, 2.f, 2.f, 2.f)));
 
-		Set( "Animation.Forward", FButtonStyle( Button )
-			.SetNormal(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Play_24x_OFF", Icon24x24 ))
-			.SetHovered(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Play_24x_OFF", Icon24x24 ))
-			.SetPressed(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Play_24x", Icon24x24 ))
-		);
-
-		Set( "Animation.Forward_Step", FButtonStyle( Button )
-			.SetNormal(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Step_Forward_24x_OFF", Icon24x24 ))
-			.SetHovered(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Step_Forward_24x_OFF", Icon24x24 ))
-			.SetPressed(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Step_Forward_24x", Icon24x24 ))
-			.SetDisabled(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Step_Forward_24x_OFF", Icon24x24, FLinearColor(0.4f, 0.4f, 0.4f, 0.4f) ))
-		);
-
-		Set( "Animation.Forward_End", FButtonStyle( Button )
-			.SetNormal(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Go_To_End_24x_OFF", Icon24x24 ))
-			.SetHovered(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Go_To_End_24x_OFF", Icon24x24 ))
-			.SetPressed(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Go_To_End_24x", Icon24x24 ))
-			.SetDisabled(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Go_To_End_24x_OFF", Icon24x24, FLinearColor(0.4f, 0.4f, 0.4f, 0.4f) ))
-		);
-
-		Set( "Animation.Backward", FButtonStyle( Button )
-			.SetNormal(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Backwards_24x_OFF", Icon24x24 ))
-			.SetHovered(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Backwards_24x_OFF", Icon24x24 ))
-			.SetPressed(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Backwards_24x", Icon24x24 ))
-		);
-
-		Set( "Animation.Backward_Step", FButtonStyle( Button )
-			.SetNormal(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Step_Backwards_24x_OFF", Icon24x24 ))
-			.SetHovered(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Step_Backwards_24x_OFF", Icon24x24 ))
-			.SetPressed(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Step_Backwards_24x", Icon24x24 ))
-			.SetDisabled(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Step_Backwards_24x_OFF", Icon24x24, FLinearColor(0.4f, 0.4f, 0.4f, 0.4f) ))
-		);
-
-		Set( "Animation.Backward_End", FButtonStyle( Button )
-			.SetNormal(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Go_To_Front_24x_OFF", Icon24x24 ))
-			.SetHovered(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Go_To_Front_24x_OFF", Icon24x24 ))
-			.SetPressed(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Go_To_Front_24x", Icon24x24 ))
-			.SetDisabled(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Step_Backwards_24x_OFF", Icon24x24, FLinearColor(0.4f, 0.4f, 0.4f, 0.4f) ))
-		);
-
-		Set( "Animation.Loop.Enabled", FButtonStyle( Button )
-			.SetNormal(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Loop_24x_OFF", Icon24x24 ))
-			.SetHovered(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Loop_24x_OFF", Icon24x24 ))
-			.SetPressed(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Loop_24x", Icon24x24 ))
-		);
-
-		Set( "Animation.Loop.Disabled", FButtonStyle( Button )
-			.SetNormal(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Loop_Toggle_24x_OFF", Icon24x24 ))
-			.SetHovered(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Loop_Toggle_24x_OFF", Icon24x24 ))
-			.SetPressed(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Loop_Toggle_24x", Icon24x24 ))
-		);
-
-		Set( "Animation.Loop.SelectionRange", FButtonStyle( Button )
-			.SetNormal(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Loop_SelectionRange_24x_OFF", Icon24x24 ))
-			.SetHovered(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Loop_SelectionRange_24x_OFF", Icon24x24 ))
-			.SetPressed(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Loop_SelectionRange_24x", Icon24x24 ))
-		);
-
-		Set( "Animation.Record", FButtonStyle( Button )
-			.SetNormal(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Record_24x_OFF", Icon24x24 ))
-			.SetHovered(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Record_24x_OFF", Icon24x24 ))
-			.SetPressed(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Record_24x", Icon24x24 ))
-		);
-
-		Set( "Animation.Recording", FButtonStyle( Button )
-			.SetNormal(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Recording_24x_OFF", Icon24x24 ))
-			.SetHovered(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Recording_24x_OFF", Icon24x24 ))
-			.SetPressed(IMAGE_BRUSH( "/Sequencer/Transport_Bar/Recording_24x", Icon24x24 ))
-		);
+		Set("Animation.Pause", new IMAGE_BRUSH_SVG("Sequencer/PlaybackControls/PlayControlsPause", Icon20x20));
+		Set("Animation.Forward", new IMAGE_BRUSH_SVG("Sequencer/PlaybackControls/PlayControlsPlayForward", Icon20x20));
+		Set("Animation.Forward_Step", new IMAGE_BRUSH_SVG("Sequencer/PlaybackControls/PlayControlsToNext", Icon20x20));
+		Set("Animation.Forward_End", new IMAGE_BRUSH_SVG("Sequencer/PlaybackControls/PlayControlsToEnd", Icon20x20));
+		Set("Animation.Backward", new IMAGE_BRUSH_SVG("Sequencer/PlaybackControls/PlayControlsPlayReverse", Icon20x20));
+		Set("Animation.Stop", new IMAGE_BRUSH_SVG("Sequencer/PlaybackControls/PlayControlsStop", Icon20x20));
+		Set("Animation.Backward_Step", new IMAGE_BRUSH_SVG("Sequencer/PlaybackControls/PlayControlsToPrevious", Icon20x20));
+		Set("Animation.Backward_End", new IMAGE_BRUSH_SVG("Sequencer/PlaybackControls/PlayControlsToFront", Icon20x20));
+		Set("Animation.Loop.Enabled", new IMAGE_BRUSH_SVG("Sequencer/PlaybackControls/PlayControlsLooping", Icon20x20));
+		Set("Animation.Loop.Disabled", new IMAGE_BRUSH_SVG("Sequencer/PlaybackControls/PlayControlsNoLooping", Icon20x20));
+		Set("Animation.Loop.SelectionRange", new IMAGE_BRUSH_SVG("Sequencer/PlaybackControls/PlayControlsLoopingSelectionRange", Icon20x20));
+		Set("Animation.Record", new IMAGE_BRUSH_SVG("Sequencer/PlaybackControls/PlayControlsRecord", Icon20x20));
 	}
 
 	// Message Log
@@ -1123,6 +1067,7 @@ void FStarshipEditorStyle::FStyle::SetupGeneralStyles()
 		Set("ClassIcon.DataLayer", new IMAGE_BRUSH_SVG("Icons/DataLayerEditor", Icon16x16));
 		Set("DataLayer.Editor", new IMAGE_BRUSH_SVG("Icons/DataLayerEditor", Icon16x16));
 		Set("DataLayer.Runtime", new IMAGE_BRUSH_SVG("Icons/DataLayerRuntime", Icon16x16));
+		Set("DataLayer.External", new IMAGE_BRUSH_SVG("Icons/ExternalDataLayer", Icon16x16));
 		Set("DataLayer.LoadedInEditor", new IMAGE_BRUSH_SVG("Icons/DataLayerLoadedInEditor", Icon16x16));
 		Set("DataLayerBrowser.AddSelection", new IMAGE_BRUSH_SVG("Icons/DataLayerAddSelected", Icon16x16));
 		Set("DataLayerBrowser.RemoveSelection", new IMAGE_BRUSH_SVG("Icons/DataLayerRemoveSelected", Icon16x16));
@@ -1143,6 +1088,7 @@ void FStarshipEditorStyle::FStyle::SetupGeneralStyles()
 		Set("DerivedData.Cache.Settings", new IMAGE_BRUSH_SVG("Starship/DerivedData/DD_Cache_Settings", Icon16x16));
 		Set("DerivedData.Cache.Statistics", new IMAGE_BRUSH_SVG("Starship/DerivedData/DD_Cache_Statistics", Icon16x16));
 		Set("DerivedData.ResourceUsage", new IMAGE_BRUSH_SVG("Starship/DerivedData/DD_Resource_Usage", Icon16x16));
+		Set("DerivedData.LaunchZenDashboard", new CORE_IMAGE_BRUSH_SVG("Starship/Common/SessionFrontend", Icon16x16));
 		Set("DerivedData.RemoteCache.Uploading", new IMAGE_BRUSH_SVG("Starship/DerivedData/DD_Upload", Icon16x16, EStyleColor::AccentGreen));
 		Set("DerivedData.RemoteCache.Downloading", new IMAGE_BRUSH_SVG("Starship/DerivedData/DD_Download", Icon16x16, EStyleColor::AccentBlue));
 
@@ -1164,6 +1110,21 @@ void FStarshipEditorStyle::FStyle::SetupGeneralStyles()
 
 	// Scene Outliner
 	{
+		// Override icons
+		
+		// Background images for outliner override badges (first layer)
+		Set("SceneOutliner.OverrideBase", new IMAGE_BRUSH_SVG("Starship/SceneOutliner/OutlinerOverrideBG", Icon16x16, FStyleColors::AccentBlue));
+		Set("SceneOutliner.OverrideAddedBase", new IMAGE_BRUSH_SVG("Starship/SceneOutliner/OutlinerOverrideBG", Icon16x16, FStyleColors::AccentGreen));
+		Set("SceneOutliner.OverrideRemovedBase", new IMAGE_BRUSH_SVG("Starship/SceneOutliner/OutlinerOverrideBG", Icon16x16, FStyleColors::AccentRed));
+		Set("SceneOutliner.OverrideInsideBase", new IMAGE_BRUSH_SVG("Starship/SceneOutliner/OutlinerOverrideInsideBG", Icon16x16, FStyleColors::Input));
+
+		// Foreground images for all override badges (second layer)
+		Set("SceneOutliner.OverrideHere", new IMAGE_BRUSH_SVG("Starship/SceneOutliner/OutlinerOverrideHere", Icon16x16, FStyleColors::Input));
+		Set("SceneOutliner.OverrideAdded", new IMAGE_BRUSH_SVG("Starship/SceneOutliner/OutlinerOverrideAdded", Icon16x16, FStyleColors::Input));
+		Set("SceneOutliner.OverrideRemoved", new IMAGE_BRUSH_SVG("Starship/SceneOutliner/OutlinerOverrideRemoved", Icon16x16, FStyleColors::Input));
+		Set("SceneOutliner.OverrideInside", new IMAGE_BRUSH_SVG("Starship/SceneOutliner/OutlinerOverrideInside", Icon16x16, FStyleColors::AccentBlue));
+		Set("SceneOutliner.OverrideHereAndInside", new IMAGE_BRUSH_SVG("SceneOutliner/Common/OutlinerOverrideHereAndInside", Icon16x16, FStyleColors::AccentBlue));
+
 		Set( "SceneOutliner.NewFolderIcon", new CORE_IMAGE_BRUSH_SVG("Starship/Common/folder-plus", Icon16x16 ) );
 		Set( "SceneOutliner.FolderClosed",  new CORE_IMAGE_BRUSH_SVG("Starship/Common/folder-closed", Icon16x16, FStyleColors::AccentFolder ) );
 		Set( "SceneOutliner.FolderOpen",    new CORE_IMAGE_BRUSH_SVG("Starship/Common/folder-open", Icon16x16, FStyleColors::AccentFolder ) );
@@ -1244,6 +1205,10 @@ void FStarshipEditorStyle::FStyle::SetupGeneralStyles()
 
 		Set( "AssetEditor.ReimportAsset", new IMAGE_BRUSH( "Icons/icon_TextureEd_Reimport_40x", Icon40x40 ) );
 		Set( "AssetEditor.ReimportAsset.Small", new IMAGE_BRUSH( "Icons/icon_TextureEd_Reimport_40x", Icon20x20 ) );
+
+		Set( "AssetEditor.ReadOnlyBorder", new FSlateRoundedBoxBrush(FStyleColors::Foreground, 10.0f));
+		Set("AssetEditor.ReadOnlyOpenable", new IMAGE_BRUSH_SVG("Starship/AssetEditors/LockEye", Icon16x16));
+
 	}
 		
 	// Asset Thumbnail
@@ -1500,6 +1465,8 @@ void FStarshipEditorStyle::FStyle::SetupGeneralStyles()
 		Set("FoliageEditMode.Settings.Small",            new IMAGE_BRUSH("Icons/GeneralTools/Settings_40x", Icon20x20));
 		Set("FoliageEditMode.MoveToCurrentLevel",        new IMAGE_BRUSH("Icons/GeneralTools/MoveToLevel_40x", Icon20x20));
 		Set("FoliageEditMode.MoveToCurrentLevel.Small",  new IMAGE_BRUSH("Icons/GeneralTools/MoveToLevel_40x", Icon20x20));
+		Set("FoliageEditMode.MoveToActorEditorContext", new IMAGE_BRUSH("Icons/GeneralTools/MoveToActorEditorContext_40x", Icon20x20));
+		Set("FoliageEditMode.MoveToActorEditorContext.Small", new IMAGE_BRUSH("Icons/GeneralTools/MoveToActorEditorContext_40x", Icon20x20));
 
 		Set( "FoliageEditMode.SetNoSettings", new IMAGE_BRUSH( "Icons/FoliageEditMode/icon_FoliageEdMode_NoSettings_20x", Icon20x20 ) );
 		Set( "FoliageEditMode.SetPaintSettings", new IMAGE_BRUSH( "Icons/FoliageEditMode/icon_FoliageEdMode_PaintingSettings_20x", Icon20x20 ) );
@@ -1999,7 +1966,6 @@ void FStarshipEditorStyle::FStyle::SetupLevelGeneralStyles()
 
 void FStarshipEditorStyle::FStyle::SetupWorldBrowserStyles()
 {
-
 	// World Browser
 	{
 		Set("WorldBrowser.AddLayer", new IMAGE_BRUSH("Icons/icon_levels_addlayer_16x", Icon16x16));
@@ -2036,9 +2002,20 @@ void FStarshipEditorStyle::FStyle::SetupWorldBrowserStyles()
 void FStarshipEditorStyle::FStyle::SetupWorldPartitionStyles()
 {
 	// World Partition
-	Set("WorldPartition.PartiallyLoadedCell", new IMAGE_BRUSH("WorldPartition/PartiallyLoadedCell", Icon32x32));
-	Set("WorldPartition.GridBackground", new BOX_BRUSH("WorldPartition/GridBackground", FMargin(0.f)));
 	Set("WorldPartition.SimulationViewPosition", new IMAGE_BRUSH("Icons/icon_levels_simulationviewpos_16x", Icon16x16));
+
+	Set("WorldPartition.FollowPlayerInPIE", new IMAGE_BRUSH_SVG("WorldPartition//Developer_20", Icon16x16));
+	Set("WorldPartition.BugItGoLoadRegion", new IMAGE_BRUSH_SVG("WorldPartition//Bug_20", Icon16x16)); 
+
+	Set("WorldPartition.ShowActors", new IMAGE_BRUSH_SVG("WorldPartition/Actor_20", Icon16x16));
+	Set("WorldPartition.ShowHLODActors", new IMAGE_BRUSH_SVG("Starship/Common/HierarchicalLOD", Icon16x16));
+	Set("WorldPartition.ShowGrid", new IMAGE_BRUSH_SVG("Starship/EditorViewport/grid", Icon16x16));
+	Set("WorldPartition.ShowMiniMap", new IMAGE_BRUSH_SVG("Starship/AssetIcons/Texture2D_16", Icon16x16)); 
+	Set("WorldPartition.ShowCoords", new IMAGE_BRUSH_SVG("WorldPartition/Coordinate_20", Icon16x16));
+
+	Set("WorldPartition.FocusSelection", new IMAGE_BRUSH_SVG("WorldPartition/FramingSelection_20", Icon16x16));
+	Set("WorldPartition.FocusLoadedRegions", new IMAGE_BRUSH_SVG("WorldPartition/FrameRegions_20", Icon16x16));
+	Set("WorldPartition.FocusWorld", new IMAGE_BRUSH_SVG("WorldPartition/FrameWorld_20", Icon16x16));
 }
 
 void FStarshipEditorStyle::FStyle::SetupSequencerStyles()
@@ -2056,6 +2033,42 @@ void FStarshipEditorStyle::FStyle::SetupSequencerStyles()
 		SequencerToolbar.SetSeparatorPadding(    FMargin(6.0f, 0.0f));
 
 		Set("SequencerToolBar", SequencerToolbar);
+
+		const FTableRowStyle AlternatingTableRowStyle = GetWidgetStyle<FTableRowStyle>("TableView.AlternatingRow");
+
+		// Top parent hover is 2x brighter than header color
+		FLinearColor BrighterHeader = FStyleColors::Header.GetSpecifiedColor().LinearRGBToHSV();
+		BrighterHeader.B = FMath::Min(1.f, BrighterHeader.B * 2.0f);
+		BrighterHeader = BrighterHeader.HSVToLinearRGB();
+
+		Set("Sequencer.Outliner.Row", FTableRowStyle(AlternatingTableRowStyle)
+			.SetUseParentRowBrush(true)
+			.SetParentRowBackgroundBrush(FSlateColorBrush(FStyleColors::Header))
+			.SetParentRowBackgroundHoveredBrush(FSlateColorBrush(BrighterHeader)));
+
+		Set("Sequencer.Outliner.Separator", new FSlateColorBrush(FStyleColors::Input));
+		Set("Sequencer.Outliner.Plus", new IMAGE_BRUSH_SVG("Sequencer/Column_Widgets/Plus", Icon14x14));
+		Set("Sequencer.Outliner.AddKey", new IMAGE_BRUSH_SVG("Sequencer/Column_Widgets/AddKey", Icon14x14));
+		Set("Sequencer.Outliner.NextKey", new IMAGE_BRUSH_SVG("Sequencer/Column_Widgets/NextKey", Icon14x14));
+		Set("Sequencer.Outliner.PreviousKey", new IMAGE_BRUSH_SVG("Sequencer/Column_Widgets/PreviousKey", Icon14x14));
+		Set("Sequencer.Outliner.CameraLock", new IMAGE_BRUSH_SVG("Sequencer/Column_Widgets/SequencerCamera", Icon14x14));
+
+		Set("Sequencer.Outliner.ColumnButton", FButtonStyle()
+				.SetNormal(FSlateNoResource())
+				.SetHovered(FSlateNoResource())
+				.SetPressed(FSlateNoResource())
+				.SetNormalPadding(FMargin(0,0,0,1))
+				.SetPressedPadding(FMargin(0,1,0,0)) );
+
+		Set("Sequencer.Outliner.ToggleButton", FCheckBoxStyle( GetWidgetStyle<FCheckBoxStyle>("ToggleButtonCheckbox"))
+			.SetUncheckedImage(FSlateRoundedBoxBrush(FStyleColors::Header, 4.0f, FStyleColors::Input, 1.0f))
+			.SetUncheckedHoveredImage(FSlateRoundedBoxBrush(FStyleColors::Hover, 4.0f, FStyleColors::Input, 1.0f))
+			.SetUncheckedPressedImage(FSlateRoundedBoxBrush(FStyleColors::Hover, 4.0f, FStyleColors::Input, 1.0f))
+			.SetCheckedImage(FSlateRoundedBoxBrush(FStyleColors::Primary, 4.0f, FStyleColors::Input, 1.0f))
+			.SetCheckedHoveredImage(FSlateRoundedBoxBrush(FStyleColors::PrimaryHover, 4.0f, FStyleColors::Input, 1.0f))
+			.SetCheckedPressedImage(FSlateRoundedBoxBrush(FStyleColors::PrimaryHover, 4.0f, FStyleColors::Input, 1.0f))
+			.SetPadding(FMargin(6.f, 1.f))
+		);
 
 		Set("Sequencer.IconKeySmartAuto", new IMAGE_BRUSH("Sequencer/IconKeySmartAuto", Icon12x12));
 		Set("Sequencer.IconKeyAuto", new IMAGE_BRUSH("Sequencer/IconKeyAuto", Icon12x12));
@@ -2106,22 +2119,10 @@ void FStarshipEditorStyle::FStyle::SetupSequencerStyles()
 		Set("Sequencer.Timeline.EaseInOut", new IMAGE_BRUSH("Sequencer/EaseInOut", FVector2D(128, 128)));
 		Set("Sequencer.InterpLine", new BOX_BRUSH("Sequencer/InterpLine", FMargin(5.f / 7.f, 0.f, 0.f, 0.f)));
 
-		Set("Sequencer.Transport.JumpToPreviousKey", FButtonStyle()
-			.SetNormal(IMAGE_BRUSH("/Sequencer/Transport_Bar/Previous_Frame_OFF", Icon24x24))
-			.SetPressed(IMAGE_BRUSH("/Sequencer/Transport_Bar/Previous_Frame", Icon24x24))
-			.SetHovered(IMAGE_BRUSH("/Sequencer/Transport_Bar/Previous_Frame_OFF", Icon24x24)));
-		Set("Sequencer.Transport.JumpToNextKey", FButtonStyle()
-			.SetNormal(IMAGE_BRUSH("/Sequencer/Transport_Bar/Next_Frame_24x_OFF", Icon24x24))
-			.SetPressed(IMAGE_BRUSH("/Sequencer/Transport_Bar/Next_Frame_24x", Icon24x24))
-			.SetHovered(IMAGE_BRUSH("/Sequencer/Transport_Bar/Next_Frame_24x_OFF", Icon24x24)));
-		Set("Sequencer.Transport.SetPlayStart", FButtonStyle()
-			.SetNormal(IMAGE_BRUSH("/Sequencer/Transport_Bar/Bracket_In_16x24_OFF", FVector2D(16, 24)))
-			.SetPressed(IMAGE_BRUSH("/Sequencer/Transport_Bar/Bracket_In_16x24", FVector2D(16, 24)))
-			.SetHovered(IMAGE_BRUSH("/Sequencer/Transport_Bar/Bracket_In_16x24_OFF", FVector2D(16, 24))));
-		Set("Sequencer.Transport.SetPlayEnd", FButtonStyle()
-			.SetNormal(IMAGE_BRUSH("/Sequencer/Transport_Bar/Bracket_Out_16x24_OFF", FVector2D(16, 24)))
-			.SetPressed(IMAGE_BRUSH("/Sequencer/Transport_Bar/Bracket_Out_16x24", FVector2D(16, 24)))
-			.SetHovered(IMAGE_BRUSH("/Sequencer/Transport_Bar/Bracket_Out_16x24_OFF", FVector2D(16, 24))));
+		Set("Sequencer.Transport.JumpToPreviousKey", new IMAGE_BRUSH_SVG("Sequencer/PlaybackControls/PlayControlsJumpToPreviousKey", Icon20x20));
+		Set("Sequencer.Transport.JumpToNextKey", new IMAGE_BRUSH_SVG("Sequencer/PlaybackControls/PlayControlsJumpToNextKey", Icon20x20));
+		Set("Sequencer.Transport.SetPlayStart", new IMAGE_BRUSH_SVG("Sequencer/PlaybackControls/PlayControlsSetPlaybackStart", Icon20x20));
+		Set("Sequencer.Transport.SetPlayEnd", new IMAGE_BRUSH_SVG("Sequencer/PlaybackControls/PlayControlsSetPlaybackEnd", Icon20x20));
 
 		Set("Sequencer.Transport.CloseButton", FButtonStyle()
 			.SetNormal(IMAGE_BRUSH("/Docking/CloseApp_Normal", Icon16x16))
@@ -2138,6 +2139,7 @@ void FStarshipEditorStyle::FStyle::SetupSequencerStyles()
 		Set("Sequencer.Section.Background", new BORDER_BRUSH(TEXT("Sequencer/SectionBackground"), FMargin(4.f / 16.f)));
 		Set("Sequencer.Section.BackgroundTint", new BOX_BRUSH(TEXT("Sequencer/SectionBackgroundTint"), FMargin(4 / 16.f)));
 		Set("Sequencer.Section.CollapsedSelectedSectionOverlay", new IMAGE_BRUSH(TEXT("Sequencer/Section/CollapsedSelectedSectionOverlay"), Icon16x16, FLinearColor::White, ESlateBrushTileType::Both));
+		Set("Sequencer.Section.SequencerDeactivatedOverlay", new IMAGE_BRUSH(TEXT("Sequencer/Section/SequencerDeactivatedOverlay"), Icon16x16, FLinearColor::White, ESlateBrushTileType::Both));
 		Set("Sequencer.Section.ErroredSectionOverlay", new BORDER_BRUSH(TEXT("Sequencer/Section/CollapsedSelectedSectionOverlay"), FMargin(4.f / 16.f)));
 		Set("Sequencer.Section.SectionHeaderSelectedSectionOverlay", new IMAGE_BRUSH(TEXT("Sequencer/Section/SectionHeaderSelectedSectionOverlay"), Icon16x16, FLinearColor::White, ESlateBrushTileType::Both));
 		Set("Sequencer.Section.SelectedTrackTint", new BOX_BRUSH(TEXT("Sequencer/SelectedTrackTint"), FMargin(0.f, 0.5f)));
@@ -2258,6 +2260,11 @@ void FStarshipEditorStyle::FStyle::SetupSequencerStyles()
 
 		Set("Sequencer.AddKey.Details", new IMAGE_BRUSH("Sequencer/AddKey_Details", FVector2D(11, 11)));
 
+		Set("Sequencer.KeyedStatus.NotKeyed", new IMAGE_BRUSH_SVG("Sequencer/DetailsKeyUnkeyed", FVector2D(11, 11)));
+		Set("Sequencer.KeyedStatus.Keyed", new IMAGE_BRUSH_SVG("Sequencer/DetailsKeyKeyed", FVector2D(11, 11)));
+		Set("Sequencer.KeyedStatus.Animated", new IMAGE_BRUSH_SVG("Sequencer/DetailsKeyAnimated", FVector2D(11, 11)));
+		Set("Sequencer.KeyedStatus.PartialKey", new IMAGE_BRUSH_SVG("Sequencer/DetailsKeyPartialKey", FVector2D(11, 11)));
+
 		const FSplitterStyle OutlinerSplitterStyle = FSplitterStyle()
 		.SetHandleNormalBrush(FSlateNoResource())
 		.SetHandleHighlightBrush(FSlateNoResource());
@@ -2279,7 +2286,7 @@ void FStarshipEditorStyle::FStyle::SetupSequencerStyles()
 			.SetHoveredBackgroundBrush(FSlateNoResource())
 			.SetInactiveFillBrush(FSlateNoResource())
 			.SetActiveFillBrush(FSlateNoResource())
-			.SetForegroundColor(SelectionColor_Pressed)
+			.SetForegroundColor(FSlateColor::UseForeground())
 			.SetArrowsImage(FSlateNoResource())
 		);
 
@@ -2343,6 +2350,16 @@ void FStarshipEditorStyle::FStyle::SetupSequencerStyles()
 		Set("SequenceRecorder.Common.RecordingInactive", new IMAGE_BRUSH("Common/SmallCheckBox", Icon14x14));
 	}
 
+	// Sequencer outliner column UI
+	if (IncludeEditorSpecificStyles())
+	{
+		Set("Sequencer.Column.Mute", new IMAGE_BRUSH_SVG("Sequencer/Column_Widgets/SequencerMute", Icon14x14));
+		Set("Sequencer.Column.Locked", new IMAGE_BRUSH_SVG("Sequencer/Column_Widgets/SequencerLocked", Icon14x14));
+		Set("Sequencer.Column.Solo", new IMAGE_BRUSH_SVG("Sequencer/Column_Widgets/SequencerSolo", Icon14x14));
+		Set("Sequencer.Column.Unpinned", new IMAGE_BRUSH_SVG("Sequencer/Column_Widgets/SequencerUnpinned", Icon14x14));
+		Set("Sequencer.Column.CheckBoxIndeterminate", new CORE_IMAGE_BRUSH_SVG("Starship/CoreWidgets/CheckBox/CheckBoxIndeterminate_14", Icon14x14));
+		Set("Sequencer.Column.OutlinerColumnBox", new FSlateRoundedBoxBrush(FStyleColors::Header, 2.0f));
+	}
 }
 
 void FStarshipEditorStyle::FStyle::SetupViewportStyles()
@@ -2394,12 +2411,30 @@ void FStarshipEditorStyle::FStyle::SetupViewportStyles()
 			.SetPressedPadding(FMargin(4.0f, 4.0f, 3.0f, 4.0f));
 		Set("EditorViewportToolBar.Button", ViewportMenuButton);
 
+		FButtonStyle ViewportMenuButtonLeft = FButtonStyle(ViewportMenuButton)
+			.SetNormal(		BOX_BRUSH("Starship/EditorViewport/ToolBarLeftGroup", 12.f/25.f, FStyleColors::Dropdown))
+			.SetHovered(	BOX_BRUSH("Starship/EditorViewport/ToolBarLeftGroup", 12.f/25.f, FStyleColors::Hover))
+			.SetPressed(	BOX_BRUSH("Starship/EditorViewport/ToolBarLeftGroup", 12.f/25.f, FStyleColors::Recessed));
+		Set("EditorViewportToolBar.Button.Start", ViewportMenuButtonLeft);
+
+		FButtonStyle ViewportMenuButtonMiddle = FButtonStyle(ViewportMenuButton)
+        	.SetNormal(		BOX_BRUSH("Starship/EditorViewport/ToolBarMiddleGroup", 12.f/25.f, FStyleColors::Dropdown))
+        	.SetHovered(	BOX_BRUSH("Starship/EditorViewport/ToolBarMiddleGroup", 12.f/25.f, FStyleColors::Hover))
+        	.SetPressed(	BOX_BRUSH("Starship/EditorViewport/ToolBarMiddleGroup", 12.f/25.f, FStyleColors::Recessed));
+		Set("EditorViewportToolBar.Button.Middle", ViewportMenuButtonMiddle);
+
+		FButtonStyle ViewportMenuButtonRight = FButtonStyle(ViewportMenuButton)
+			.SetNormal(		BOX_BRUSH("Starship/EditorViewport/ToolBarRightGroup", 12.f/25.f, FStyleColors::Dropdown))
+			.SetHovered(	BOX_BRUSH("Starship/EditorViewport/ToolBarRightGroup", 12.f/25.f, FStyleColors::Hover))
+			.SetPressed(	BOX_BRUSH("Starship/EditorViewport/ToolBarRightGroup", 12.f/25.f, FStyleColors::Recessed));
+		Set("EditorViewportToolBar.Button.End", ViewportMenuButtonRight);
+
 		Set("EditorViewportToolBar.StartToolbarImage", new BOX_BRUSH("Starship/EditorViewport/ToolBarLeftGroup", 12.f/25.f, FStyleColors::Dropdown));
 
 		const FCheckBoxStyle ViewportMenuToggleLeftButtonStyle = FCheckBoxStyle(ViewportToggleButton)
 			.SetCheckBoxType(ESlateCheckBoxType::ToggleButton)
 			.SetUncheckedImage(		  BOX_BRUSH("Starship/EditorViewport/ToolBarLeftGroup", 12.f/25.f, FStyleColors::Dropdown))
-			.SetUncheckedPressedImage(BOX_BRUSH("Starship/EditorViewport/ToolBarLeftGroup", 12.f/25.f,FStyleColors::Recessed))
+			.SetUncheckedPressedImage(BOX_BRUSH("Starship/EditorViewport/ToolBarLeftGroup", 12.f/25.f, FStyleColors::Recessed))
 			.SetUncheckedHoveredImage(BOX_BRUSH("Starship/EditorViewport/ToolBarLeftGroup", 12.f/25.f, FStyleColors::Hover))
 			.SetCheckedHoveredImage(  BOX_BRUSH("Starship/EditorViewport/ToolBarLeftGroup", 12.f/25.f, FStyleColors::PrimaryHover))
 			.SetCheckedPressedImage(  BOX_BRUSH("Starship/EditorViewport/ToolBarLeftGroup", 12.f/25.f, FStyleColors::PrimaryPress))
@@ -2428,12 +2463,6 @@ void FStarshipEditorStyle::FStyle::SetupViewportStyles()
 			.SetCheckedImage(         BOX_BRUSH("Starship/EditorViewport/ToolBarRightGroup", 12.f/25.f, FStyleColors::Primary))
 			.SetPadding(ViewportMarginRight);
 		Set("EditorViewportToolBar.ToggleButton.End", ViewportMenuToggleRightButtonStyle);
-
-		Set("EditorViewportToolBar.Button.Middle", FButtonStyle(ViewportMenuButton)
-			.SetNormal(BOX_BRUSH("Starship/EditorViewport/ToolBarMiddleGroup", 12.f/25.f, FStyleColors::Dropdown))
-			.SetPressed(BOX_BRUSH("Starship/EditorViewport/ToolBarMiddleGroup", 12.f/25.f, FStyleColors::Recessed))
-			.SetHovered(BOX_BRUSH("Starship/EditorViewport/ToolBarMiddleGroup", 12.f/25.f, FStyleColors::Hover))
-		);
 
 		// We want a background-less version as the ComboMenu has its own unified background
 		const FToolBarStyle& SlimCoreToolBarStyle = FStarshipCoreStyle::GetCoreStyle().GetWidgetStyle<FToolBarStyle>("SlimToolBar");
@@ -2537,6 +2566,23 @@ void FStarshipEditorStyle::FStyle::SetupViewportStyles()
 
 		Set("EditorViewport.OverlayBrush", new FSlateRoundedBoxBrush(ViewportOverlayColor, 8.0, FStyleColors::Dropdown, 1.0));
 
+		const FSlateColorBrush ActionableListViewBrush = FSlateColorBrush(FLinearColor(0.f, 0.f, 0.f, 0.f));
+		
+		Set("ActionableMessage.Border", new FSlateRoundedBoxBrush(ToolbarBackgroundColor, 4.0f, FLinearColor(0,0,0,.8), 1.0));
+		Set("ActionableMessage.Warning", new IMAGE_BRUSH_SVG(TEXT("Starship/EditorViewport/alert-solid"), Icon16x16, FStyleColors::Warning));
+		Set("ActionableMessage.Update", new IMAGE_BRUSH_SVG(TEXT("Starship/EditorViewport/update"), Icon16x16));
+		Set("ActionableMessage.ListView", FTableViewStyle().SetBackgroundBrush(ActionableListViewBrush));
+		Set("ActionableMessage.ListViewRow",FTableRowStyle()
+			.SetEvenRowBackgroundBrush(ActionableListViewBrush)
+			.SetEvenRowBackgroundHoveredBrush(ActionableListViewBrush)
+			.SetOddRowBackgroundBrush(ActionableListViewBrush)
+			.SetOddRowBackgroundHoveredBrush(ActionableListViewBrush)
+			.SetSelectorFocusedBrush(ActionableListViewBrush)
+			.SetActiveBrush(ActionableListViewBrush)
+			.SetActiveHoveredBrush(ActionableListViewBrush)
+			.SetInactiveBrush(ActionableListViewBrush)
+			.SetInactiveHoveredBrush(ActionableListViewBrush)
+		);
 	}
 
 	// Legacy Viewport ToolbarBar
@@ -2686,6 +2732,7 @@ void FStarshipEditorStyle::FStyle::SetupGeneralIcons()
 	Set("AssetEditor.CompileStatus.Overlay.Warning", new IMAGE_BRUSH_SVG("Starship/Blueprints/CompileStatus_Warning_Badge", Icon20x20, FStyleColors::Warning));
 	Set("AssetEditor.CompileStatus.Overlay.Good", new IMAGE_BRUSH_SVG("Starship/Blueprints/CompileStatus_Good_Badge", Icon20x20, FStyleColors::AccentGreen));
 	Set("AssetEditor.CompileStatus.Overlay.Error", new IMAGE_BRUSH_SVG("Starship/Blueprints/CompileStatus_Fail_Badge", Icon20x20, FStyleColors::Error));
+
 	
 	Set("Debug", new IMAGE_BRUSH_SVG( "Starship/Common/Debug", Icon16x16 ) );
 	Set("Modules", new IMAGE_BRUSH_SVG( "Starship/Common/Modules", Icon16x16 ) );
@@ -2984,6 +3031,52 @@ void FStarshipEditorStyle::FStyle::SetupPropertyEditorStyles()
 		Set( "DetailsView.CollapsedCategory",         new FSlateColorBrush(FStyleColors::Header));
 		Set( "DetailsView.CollapsedCategory_Hovered", new FSlateColorBrush(FStyleColors::Hover));
 		Set( "DetailsView.CategoryTop",               new FSlateColorBrush(FStyleColors::Header));
+		
+		/****** Styles for rounded corners for the Card style of a Details View ********/
+
+		Set( "DetailsView.CardHeaderTopLeftSideRounded", new FSlateRoundedBoxBrush(FStyleColors::Header, FVector4(4.0f, 0.0f, 0.0f, 0.0f)));
+		Set( "DetailsView.CardHeaderLeftSideRounded", new FSlateRoundedBoxBrush(FStyleColors::Header, FVector4(4.0f, 0.0f, 0.0f, 4.0f)));
+		Set( "DetailsView.CardHeaderTopRightSideRounded", new FSlateRoundedBoxBrush(FStyleColors::Header, FVector4(0.0f, 4.0f, 0.0f, 0.0f)));
+		Set( "DetailsView.CardHeaderRightSideRounded", new FSlateRoundedBoxBrush(FStyleColors::Header, FVector4(0.0f, 4.0f, 4.0f, 0.0f)));
+		Set( "DetailsView.CardHeaderTopRounded", new FSlateRoundedBoxBrush(FStyleColors::Header, FVector4(4.0f, 4.0f, 0.0f, 0.0f)));
+		Set( "DetailsView.CardHeaderRounded", new FSlateRoundedBoxBrush(FStyleColors::Header, FVector4(4.0f, 4.0f, 4.0f, 4.0f )));
+		
+		/*******************************************************************************/
+		
+		// Background images for all the details panels override states
+		Set("DetailsView.OverrideHere", new IMAGE_BRUSH_SVG("Starship/DetailsView/DetailsOverrideHere", Icon16x16, FStyleColors::AccentBlue));
+		Set("DetailsView.OverrideAdded", new IMAGE_BRUSH_SVG("Starship/DetailsView/DetailsOverrideAdded", Icon16x16, FStyleColors::AccentGreen));
+		Set("DetailsView.OverrideNone", new IMAGE_BRUSH_SVG("Starship/DetailsView/DetailsOverrideNone", Icon16x16, FStyleColors::Foreground));
+		Set("DetailsView.OverrideRemoved", new IMAGE_BRUSH_SVG("Starship/DetailsView/DetailsOverrideRemoved", Icon16x16, FStyleColors::Error));
+		Set("DetailsView.OverrideInside", new IMAGE_BRUSH_SVG("Starship/DetailsView/DetailsOverrideInside", Icon16x16, FStyleColors::AccentBlue));
+		Set("DetailsView.OverrideHereInside", new IMAGE_BRUSH_SVG("Starship/DetailsView/DetailsOverrideHereInside", Icon16x16, FStyleColors::AccentBlue));
+		Set("DetailsView.OverrideInherited", new IMAGE_BRUSH_SVG("Starship/DetailsView/DetailsOverrideInherited", Icon16x16, FStyleColors::AccentBlue));
+
+		// Hovered images for all the details panel override states
+		Set("DetailsView.OverrideHere.Hovered", new IMAGE_BRUSH_SVG("Starship/DetailsView/DetailsOverrideHere", Icon16x16, FStyleColors::White));
+		Set("DetailsView.OverrideAdded.Hovered", new IMAGE_BRUSH_SVG("Starship/DetailsView/DetailsOverrideAdded", Icon16x16, FStyleColors::White));
+		Set("DetailsView.OverrideNone.Hovered", new IMAGE_BRUSH_SVG("Starship/DetailsView/DetailsOverrideNone", Icon16x16, FStyleColors::White));
+		Set("DetailsView.OverrideRemoved.Hovered", new IMAGE_BRUSH_SVG("Starship/DetailsView/DetailsOverrideRemoved", Icon16x16, FStyleColors::White));
+		Set("DetailsView.OverrideInside.Hovered", new IMAGE_BRUSH_SVG("Starship/DetailsView/DetailsOverrideInside", Icon16x16, FStyleColors::White));
+		Set("DetailsView.OverrideHereInside.Hovered", new IMAGE_BRUSH_SVG("Starship/DetailsView/DetailsOverrideHereInside", Icon16x16, FStyleColors::White));
+		Set("DetailsView.OverrideInherited.Hovered", new IMAGE_BRUSH_SVG("Starship/DetailsView/DetailsOverrideInherited", Icon16x16, FStyleColors::White));
+
+		
+		const FButtonStyle CategoryRowButton = FButtonStyle()
+			.SetNormal(FSlateRoundedBoxBrush(FStyleColors::Header, 0.f))
+			.SetHovered(FSlateRoundedBoxBrush(FStyleColors::Input, 0.f))
+			.SetPressed(FSlateRoundedBoxBrush(FStyleColors::Header, 0.f))
+			.SetDisabled(FSlateRoundedBoxBrush(FStyleColors::Header, 0.f))
+			.SetNormalPadding(FMargin(2.f, 0.f, 2.f, 0.f))
+			.SetPressedPadding(FMargin(2.f, 0.f, 2.f, 0.f));
+
+		FComboButtonStyle CategoryComboButton = FComboButtonStyle(FStarshipCoreStyle::GetCoreStyle().GetWidgetStyle<FComboButtonStyle>("ComboButton"))
+		.SetButtonStyle(CategoryRowButton)
+		.SetDownArrowPadding(FMargin(2.f, 5.f, 3.f, 5.f))
+		.SetDownArrowImage(CORE_IMAGE_BRUSH_SVG("Starship/Common/ellipsis-vertical-narrow", FVector2D(6, 15)));
+		CategoryComboButton.ButtonStyle = CategoryRowButton;
+		Set( "DetailsView.CategoryComboButton", CategoryComboButton);
+
 		Set( "DetailsView.CategoryTop_Hovered",       new FSlateColorBrush(FStyleColors::Hover));
 		Set( "DetailsView.CategoryBottom",            new FSlateColorBrush(FStyleColors::Recessed));
 		
@@ -3580,10 +3673,10 @@ void FStarshipEditorStyle::FStyle::SetupGraphEditorStyles()
 			FEditableTextBoxStyle CommentEditableText = FEditableTextBoxStyle(NormalEditableTextBoxStyle)
 				.SetFont(NormalText.Font)
 				.SetForegroundColor(FStyleColors::Foreground)
-				.SetBackgroundImageNormal(FSlateRoundedBoxBrush(FStyleColors::Foreground, FStyleColors::Secondary, 1.0f))
-				.SetBackgroundImageHovered(FSlateRoundedBoxBrush(FStyleColors::Foreground, FStyleColors::Hover, 1.0f))
-				.SetBackgroundImageFocused(FSlateRoundedBoxBrush(FStyleColors::Foreground, FStyleColors::Primary, 1.0f))
-				.SetBackgroundImageReadOnly(FSlateRoundedBoxBrush(FStyleColors::Header, FStyleColors::InputOutline, 1.0f))
+				.SetBackgroundImageNormal(FSlateRoundedBoxBrush(FStyleColors::Foreground, CoreStyleConstants::InputFocusRadius, FStyleColors::Secondary, CoreStyleConstants::InputFocusThickness))
+				.SetBackgroundImageHovered(FSlateRoundedBoxBrush(FStyleColors::Foreground, CoreStyleConstants::InputFocusRadius, FStyleColors::Hover, CoreStyleConstants::InputFocusThickness))
+				.SetBackgroundImageFocused(FSlateRoundedBoxBrush(FStyleColors::Foreground, CoreStyleConstants::InputFocusRadius, FStyleColors::Primary, CoreStyleConstants::InputFocusThickness))
+				.SetBackgroundImageReadOnly(FSlateRoundedBoxBrush(FStyleColors::Header, CoreStyleConstants::InputFocusRadius, FStyleColors::InputOutline, CoreStyleConstants::InputFocusThickness))
 				.SetForegroundColor(FStyleColors::Background)
 				.SetBackgroundColor(FStyleColors::White)
 				.SetReadOnlyForegroundColor(FSlateColor::UseForeground())
@@ -3600,7 +3693,11 @@ void FStarshipEditorStyle::FStyle::SetupGraphEditorStyles()
 
 			FEditableTextBoxStyle GraphCommentBlockTitleEditableText = FEditableTextBoxStyle(GraphNodeTitleEditableText)
 				.SetFont(GraphCommentBlockTitle.Font)
-				.SetScrollBarStyle( ScrollBar );
+				.SetScrollBarStyle( ScrollBar )
+				.SetBackgroundImageNormal(FSlateRoundedBoxBrush(FStyleColors::Foreground, 0.0f, FStyleColors::Transparent, 0.0f))
+				.SetBackgroundImageHovered(FSlateRoundedBoxBrush(FStyleColors::Foreground, CoreStyleConstants::InputFocusRadius, FStyleColors::Hover, CoreStyleConstants::InputFocusThickness))
+				.SetBackgroundImageFocused(FSlateRoundedBoxBrush(FStyleColors::Foreground, CoreStyleConstants::InputFocusRadius, FStyleColors::Primary, CoreStyleConstants::InputFocusThickness))
+				.SetBackgroundImageReadOnly(FSlateRoundedBoxBrush(FStyleColors::Header, CoreStyleConstants::InputFocusRadius, FStyleColors::InputOutline, CoreStyleConstants::InputFocusThickness));
 			Set( "Graph.CommentBlock.TitleEditableText", GraphCommentBlockTitleEditableText );
 
 			Set( "Graph.CommentBlock.TitleInlineEditableText", FInlineEditableTextBlockStyle()
@@ -4212,7 +4309,7 @@ void FStarshipEditorStyle::FStyle::SetupLevelEditorStyle()
 			Set( "LevelEditor.Tabs.Toolbar",                new IMAGE_BRUSH("Icons/icon_tab_Toolbars_16x", Icon16x16 ) );
 
 			Set( "LevelEditor.Tabs.Viewports",              new IMAGE_BRUSH_SVG("Starship/Common/Viewports", Icon16x16) );
-			Set( "LevelEditor.Tabs.HLOD",                   new IMAGE_BRUSH_SVG("Starship/Common/HierarchicalLODOutliner", Icon16x16) );
+			Set( "LevelEditor.Tabs.HLOD",                   new IMAGE_BRUSH_SVG("Starship/Common/HierarchicalLOD", Icon16x16) );
 			Set( "LevelEditor.Tabs.Debug",                  new IMAGE_BRUSH_SVG("Starship/Common/Bug", Icon16x16) );
 
 			Set( "LevelEditor.Audit",                  		new IMAGE_BRUSH_SVG("Starship/Common/AssetAudit", Icon16x16) );
@@ -4629,7 +4726,11 @@ void FStarshipEditorStyle::FStyle::SetupLevelEditorStyle()
 		Set("ShowFlagsMenu.SubMenu.Layers", new IMAGE_BRUSH_SVG("Starship/Common/Layers", Icon16x16));
 		Set("ShowFlagsMenu.SubMenu.FoliageTypes", new IMAGE_BRUSH_SVG("Starship/Common/FoliageTypes", Icon16x16));
 		Set("ShowFlagsMenu.SubMenu.Sprites", new IMAGE_BRUSH_SVG("Starship/Common/Sprite", Icon16x16));
+		Set("ShowFlagsMenu.SubMenu.HLODs", new IMAGE_BRUSH_SVG("Starship/Common/HierarchicalLOD", Icon16x16));
+		Set("ShowFlagsMenu.SubMenu.RevisionControl", new CORE_IMAGE_BRUSH_SVG("Starship/SourceControl/Status/RevisionControl", Icon16x16));
 	}
+	
+
 #endif // WITH_EDITOR || (IS_PROGRAM && WITH_UNREAL_DEVELOPER_TOOLS)
 
 	// Mobility Icons
@@ -4838,6 +4939,8 @@ void FStarshipEditorStyle::FStyle::SetupPersonaStyle()
 
 		// Anim Notify Editor
 		Set("AnimNotifyEditor.BranchingPoint", new IMAGE_BRUSH("Persona/NotifyEditor/BranchingPoints_24x", Icon24x24));
+		Set("AnimNotifyEditor.AnimNotify", new IMAGE_BRUSH_SVG("Starship/Persona/Notify", Icon16x16));
+		Set("AnimNotifyEditor.AnimSyncMarker", new IMAGE_BRUSH_SVG("Starship/Persona/SyncMarker", Icon16x16));
 
 		// AnimBlueprint Preview Warning Background
 		FSlateColor PreviewPropertiesWarningColour(FLinearColor::Gray);
@@ -4846,8 +4949,8 @@ void FStarshipEditorStyle::FStyle::SetupPersonaStyle()
 		// Persona-specific tabs
 		Set("Persona.Tabs.SkeletonTree", new IMAGE_BRUSH(TEXT("Icons/icon_Persona_Skeleton_Tree_16x"), Icon16x16));
 		Set("Persona.Tabs.MorphTargetPreviewer", new IMAGE_BRUSH(TEXT("Icons/icon_Persona_Morph_Target_Previewer_16x"), Icon16x16));
-		Set("Persona.Tabs.AnimCurveDebugger", new IMAGE_BRUSH(TEXT("Icons/icon_Persona_AnimCurve_Previewer_16x"), Icon16x16));
-		Set("Persona.Tabs.AnimCurveMetadataEditor", new IMAGE_BRUSH(TEXT("Icons/icon_Persona_AnimCurve_Previewer_16x"), Icon16x16));
+		Set("Persona.Tabs.AnimCurveDebugger", new IMAGE_BRUSH_SVG(TEXT("Starship/Persona/CurveDebugger"), Icon16x16));
+		Set("Persona.Tabs.AnimCurveMetadataEditor", new IMAGE_BRUSH_SVG(TEXT("Starship/Persona/CurveMetadata"), Icon16x16));
 		Set("Persona.Tabs.AnimationNotifies", new IMAGE_BRUSH(TEXT("Icons/icon_Persona_Animation_Notifies_16x"), Icon16x16));
 		Set("Persona.Tabs.RetargetManager", new IMAGE_BRUSH_SVG("Starship/Persona/RetargetManager", Icon16x16));
 		Set("Persona.Tabs.AnimSlotManager", new IMAGE_BRUSH(TEXT("Icons/icon_Persona_Anim_Slot_Manager_16x"), Icon16x16));
@@ -4940,6 +5043,12 @@ void FStarshipEditorStyle::FStyle::SetupPersonaStyle()
 		Set("SkeletalMeshEditor.MeshSectionSelection", new IMAGE_BRUSH_SVG("Starship/Persona/SectionSelection", Icon20x20));
 	}
 
+	// Motion Matching editor
+	{
+		Set("MotionMatchingEditor.EnablePoseReselection", new IMAGE_BRUSH_SVG("Starship/Animation/PoseReselection", Icon20x20));
+		Set("MotionMatchingEditor.DisablePoseReselection", new IMAGE_BRUSH_SVG("Starship/Animation/PoseReselection", Icon20x20, FLinearColor(1.0f, 1.0f, 1.0f, 0.25f)));
+	}
+	
 	// New anim blueprint dialog
 	{
 		Set("NewAnimBlueprintDialog.AreaBorder", new FSlateRoundedBoxBrush(FStyleColors::Panel, 4.0f));
@@ -5170,7 +5279,7 @@ void FStarshipEditorStyle::FStyle::SetupPersonaStyle()
 	{
 		Set("FindResults.FindInBlueprints", FTextBlockStyle(NormalText)
 			.SetFont(ICON_FONT(10))
-			.SetColorAndOpacity(FLinearColor(0.f, 0.f, 0.f))
+			.SetColorAndOpacity(FLinearColor::White)
 		);
 	}
 
@@ -5864,6 +5973,7 @@ void FStarshipEditorStyle::FStyle::SetupClassIconsAndThumbnails()
 			{TEXT("Emitter")},
 			{TEXT("EmptyActor")},
 			{TEXT("ExponentialHeightFog")},
+			{TEXT("ExternalDataLayerAsset")},
 			{TEXT("FileMediaOutput")},
 			{TEXT("FileMediaSource")},
 			{TEXT("FoliageType_Actor")},
@@ -6034,10 +6144,14 @@ void FStarshipEditorStyle::FStyle::SetupContentBrowserStyle()
 		Set("ContentBrowser.AssetTreeFolderClosed", new CORE_IMAGE_BRUSH_SVG("Starship/Common/folder-closed", Icon16x16));
 		Set("ContentBrowser.AssetTreeFolderOpen", new CORE_IMAGE_BRUSH_SVG("Starship/Common/folder-open", Icon16x16));
 
-		Set( "ContentBrowser.AssetTreeFolderOpenDeveloper", new IMAGE_BRUSH_SVG("Starship/ContentBrowser/folder-developer-open", Icon16x16));
-		Set( "ContentBrowser.AssetTreeFolderClosedDeveloper", new IMAGE_BRUSH_SVG( "Starship/ContentBrowser/folder-developer", Icon16x16));
-		Set( "ContentBrowser.AssetTreeFolderOpenCode", new IMAGE_BRUSH_SVG( "Starship/ContentBrowser/folder-code-open", Icon16x16) );
-		Set( "ContentBrowser.AssetTreeFolderClosedCode", new IMAGE_BRUSH_SVG( "Starship/ContentBrowser/folder-code", Icon16x16) );
+		Set("ContentBrowser.AssetTreeFolderClosedVirtual", new CORE_IMAGE_BRUSH_SVG("Starship/Common/folder-virtual-closed", Icon16x16));
+		Set("ContentBrowser.AssetTreeFolderOpenVirtual", new CORE_IMAGE_BRUSH_SVG("Starship/Common/folder-virtual-open", Icon16x16));
+		Set("ContentBrowser.AssetTreeFolderOpenDeveloper", new IMAGE_BRUSH_SVG("Starship/ContentBrowser/folder-developer-open", Icon16x16));
+		Set("ContentBrowser.AssetTreeFolderClosedDeveloper", new IMAGE_BRUSH_SVG("Starship/ContentBrowser/folder-developer", Icon16x16));
+		Set("ContentBrowser.AssetTreeFolderOpenCode", new IMAGE_BRUSH_SVG("Starship/ContentBrowser/folder-code-open", Icon16x16));
+		Set("ContentBrowser.AssetTreeFolderClosedCode", new IMAGE_BRUSH_SVG("Starship/ContentBrowser/folder-code", Icon16x16));
+		Set("ContentBrowser.AssetTreeFolderOpenPluginRoot", new IMAGE_BRUSH_SVG("Starship/ContentBrowser/folder-pluginroot-open", Icon16x16));
+		Set("ContentBrowser.AssetTreeFolderClosedPluginRoot", new IMAGE_BRUSH_SVG("Starship/ContentBrowser/folder-pluginroot", Icon16x16));
 
 		Set("ContentBrowser.DefaultFolderColor", FStyleColors::AccentFolder);
 
@@ -6217,9 +6331,11 @@ void FStarshipEditorStyle::FStyle::SetupContentBrowserStyle()
 		Set( "ContentBrowser.ColumnViewFolderIcon", new CORE_IMAGE_BRUSH_SVG( "Starship/Common/folder-closed", Icon16x16 ) );
 		Set( "ContentBrowser.ColumnViewDeveloperFolderIcon", new IMAGE_BRUSH_SVG( "Starship/ContentBrowser/folder-developer", Icon16x16 ) );
 
-		Set( "ContentBrowser.ListViewFolderIcon", new IMAGE_BRUSH_SVG( "Starship/ContentBrowser/folder", FVector2D(64, 64) ) );
-		Set( "ContentBrowser.ListViewDeveloperFolderIcon", new IMAGE_BRUSH_SVG("Starship/ContentBrowser/FolderLargeDeveloper", FVector2D(64, 64)));
-		Set( "ContentBrowser.ListViewCodeFolderIcon", new IMAGE_BRUSH_SVG("Starship/ContentBrowser/FolderLargeCode", FVector2D(64, 64)));
+		Set("ContentBrowser.ListViewFolderIcon", new IMAGE_BRUSH_SVG("Starship/ContentBrowser/folder", FVector2D(64, 64)));
+		Set("ContentBrowser.ListViewVirtualFolderIcon", new IMAGE_BRUSH_SVG("Starship/ContentBrowser/FolderLargeVirtual", FVector2D(64, 64)));
+		Set("ContentBrowser.ListViewDeveloperFolderIcon", new IMAGE_BRUSH_SVG("Starship/ContentBrowser/FolderLargeDeveloper", FVector2D(64, 64)));
+		Set("ContentBrowser.ListViewCodeFolderIcon", new IMAGE_BRUSH_SVG("Starship/ContentBrowser/FolderLargeCode", FVector2D(64, 64)));
+		Set("ContentBrowser.ListViewPluginFolderIcon", new IMAGE_BRUSH_SVG("Starship/ContentBrowser/FolderLargePlugin", FVector2D(64, 64)));
 
 		Set("ContentBrowser.AssetTileItem.FolderAreaHoveredBackground", new FSlateRoundedBoxBrush(FStyleColors::Secondary, 4.0f));
 		Set("ContentBrowser.AssetTileItem.FolderAreaSelectedBackground", new FSlateRoundedBoxBrush(FStyleColors::Secondary, 4.0f));
@@ -6393,18 +6509,27 @@ void FStarshipEditorStyle::FStyle::SetupLandscapeEditorStyle()
 		Set("LandscapeEditor.Brushes.Alpha.UseBChannel", new IMAGE_BRUSH("Icons/icon_Landscape_Brush_Alpha_UseBChannel_20x", Icon20x20));
 		Set("LandscapeEditor.Brushes.Alpha.UseAChannel", new IMAGE_BRUSH("Icons/icon_Landscape_Brush_Alpha_UseAChannel_20x", Icon20x20));
 
+		Set("LandscapeEditor.Brush.AffectsHeightmap", new IMAGE_BRUSH("Icons/icon_Landscape_Affects_Heightmap_16x", Icon16x16));
+		Set("LandscapeEditor.Brush.AffectsHeightmap.Disabled", new IMAGE_BRUSH("Icons/icon_Landscape_Affects_Heightmap_Disabled_16x", Icon16x16));
+
 		Set("LandscapeEditor.Brush.AffectsHeight.Enabled", new IMAGE_BRUSH("Icons/icon_Landscape_Affects_Height_Enabled_16x", Icon16x16));
 		Set("LandscapeEditor.Brush.AffectsHeight.Disabled", new IMAGE_BRUSH("Icons/icon_Landscape_Affects_Height_Disabled_16x", Icon16x16));
+		
+		Set("LandscapeEditor.Brush.AffectsWeightmap", new IMAGE_BRUSH("Icons/icon_Landscape_Affects_Weightmap_16x", Icon16x16));
+		Set("LandscapeEditor.Brush.AffectsWeightmap.Disabled", new IMAGE_BRUSH("Icons/icon_Landscape_Affects_Weightmap_Disabled_16x", Icon16x16));
+
 		Set("LandscapeEditor.Brush.AffectsWeight.Enabled", new IMAGE_BRUSH("Icons/icon_Landscape_Affects_Weight_Enabled_16x", Icon16x16));
 		Set("LandscapeEditor.Brush.AffectsWeight.Disabled", new IMAGE_BRUSH("Icons/icon_Landscape_Affects_Weight_Disabled_16x", Icon16x16));
+		
+		Set("LandscapeEditor.Brush.AffectsVisibilityLayer", new IMAGE_BRUSH("Icons/icon_Landscape_Affects_VisibilityLayer_16x", Icon16x16));
 		Set("LandscapeEditor.Brush.AffectsVisibilityLayer.Enabled", new IMAGE_BRUSH("Icons/icon_Landscape_Affects_VisibilityLayer_Enabled_16x", Icon16x16));
 		Set("LandscapeEditor.Brush.AffectsVisibilityLayer.Disabled", new IMAGE_BRUSH("Icons/icon_Landscape_Affects_VisibilityLayer_Disabled_16x", Icon16x16));
 
 		// Target List
 		Set("LandscapeEditor.TargetList.RowBackground",        new FSlateNoResource());
-		Set("LandscapeEditor.TargetList.RowBackgroundHovered", new BOX_BRUSH("Common/RoundedSelection_16x", 4.0f / 16.0f, FLinearColor(1.0f, 1.0f, 1.0f, 0.1f)));
-		Set("LandscapeEditor.TargetList.RowSelected",          new BOX_BRUSH("Common/RoundedSelection_16x", 4.0f / 16.0f, SelectionColor_Pressed));
-		Set("LandscapeEditor.TargetList.RowSelectedHovered",   new BOX_BRUSH("Common/RoundedSelection_16x", 4.0f / 16.0f, SelectionColor));
+		Set("LandscapeEditor.TargetList.RowBackgroundHovered", new BOX_BRUSH("Common/RoundedSelection_16x", 4.0f / 16.0f, FStyleColors::SelectHover));
+		Set("LandscapeEditor.TargetList.RowSelected",          new BOX_BRUSH("Common/RoundedSelection_16x", 4.0f / 16.0f, FStyleColors::Select));
+		Set("LandscapeEditor.TargetList.RowSelectedHovered",   new BOX_BRUSH("Common/RoundedSelection_16x", 4.0f / 16.0f, FStyleColors::PrimaryHover));
 
 		Set("LandscapeEditor.Target_Heightmap",  new IMAGE_BRUSH("Icons/icon_Landscape_Target_Heightmap_48x",  Icon48x48));
 		Set("LandscapeEditor.Target_Visibility", new IMAGE_BRUSH("Icons/icon_Landscape_Target_Visibility_48x", Icon48x48));
@@ -7604,7 +7729,7 @@ void FStarshipEditorStyle::FStyle::SetupLocalizationDashboardStyles()
 
 void FStarshipEditorStyle::FStyle::SetupMyBlueprintStyles()
 {
-	Set("MyBlueprint.DeleteEntry", new IMAGE_BRUSH("Icons/Edit/icon_Edit_Delete_40x", Icon16x16));
+	Set( "MyBlueprint.DeleteEntry", new IMAGE_BRUSH("Icons/GeneralTools/Delete_40x", Icon16x16));
 }
 
 void FStarshipEditorStyle::FStyle::SetupStatusBarStyle()
@@ -7617,6 +7742,27 @@ void FStarshipEditorStyle::FStyle::SetupStatusBarStyle()
 void FStarshipEditorStyle::FStyle::SetupColorPickerStyle()
 {
 	Set("ColorPicker.ColorThemes", new IMAGE_BRUSH_SVG("Starship/ColorPicker/ColorThemes", Icon16x16));
+}
+
+void FStarshipEditorStyle::FStyle::SetupSourceCodeStyles()
+{
+	constexpr int32 SourceCodeFontSize = 9;
+	FSlateFontInfo SourceCodeFont = DEFAULT_FONT("Mono", SourceCodeFontSize);
+	FTextBlockStyle NormalSourceCodeText = FTextBlockStyle(NormalText)
+		.SetFont(SourceCodeFont);
+	const FTextBlockStyle SourceCodeErrorText = FTextBlockStyle(NormalSourceCodeText)
+		.SetUnderlineBrush(IMAGE_BRUSH("Old/White", Icon8x8, FLinearColor::Red, ESlateBrushTileType::Both))
+		.SetColorAndOpacity(FLinearColor::Red);
+	
+	Set("SyntaxHighlight.SourceCode.Normal", FTextBlockStyle(NormalSourceCodeText).SetColorAndOpacity(FLinearColor(FColor(189, 183, 107))));
+	Set("SyntaxHighlight.SourceCode.Operator", FTextBlockStyle(NormalSourceCodeText).SetColorAndOpacity(FLinearColor(FColor(220, 220, 220))));
+	Set("SyntaxHighlight.SourceCode.Keyword", FTextBlockStyle(NormalSourceCodeText).SetColorAndOpacity(FLinearColor(FColor(86, 156, 214))));
+	Set("SyntaxHighlight.SourceCode.String", FTextBlockStyle(NormalSourceCodeText).SetColorAndOpacity(FLinearColor(FColor(214, 157, 133))));
+	Set("SyntaxHighlight.SourceCode.Number", FTextBlockStyle(NormalSourceCodeText).SetColorAndOpacity(FLinearColor(FColor(181, 206, 168))));
+	Set("SyntaxHighlight.SourceCode.Comment", FTextBlockStyle(NormalSourceCodeText).SetColorAndOpacity(FLinearColor(FColor(87, 166, 74))));
+	Set("SyntaxHighlight.SourceCode.PreProcessorKeyword", FTextBlockStyle(NormalSourceCodeText).SetColorAndOpacity(FLinearColor(FColor(188, 98, 171))));
+
+	Set("SyntaxHighlight.SourceCode.Error", SourceCodeErrorText); 
 }
 
 #undef DEFAULT_FONT

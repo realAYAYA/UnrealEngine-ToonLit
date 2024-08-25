@@ -86,7 +86,7 @@ class ULODSyncComponent : public UActorComponent
 	TArray<FComponentSync> ComponentsToSync;
 
 	// by default, the mapping will be one to one
-// but if you want custom, add here. 
+	// but if you want custom, add here. 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = LOD)
 	TMap<FName, FLODMappingData> CustomLODMapping;
 
@@ -118,6 +118,14 @@ private:
 
 public: 
 	ENGINE_API void RefreshSyncComponents();
+	
+	/**
+	 * Set the LOD of each synced component.
+	 *
+	 * This is called from TickComponent, so there's no need to call it manually. It's exposed here
+	 * for testing purposes.
+	 */
+	ENGINE_API void UpdateLOD();
 
 private:
 	int32 GetCustomMappingLOD(const FName& ComponentName, int32 CurrentWorkingLOD) const;
@@ -125,6 +133,5 @@ private:
 	void InitializeSyncComponents();
 	void UninitializeSyncComponents();
 	const FComponentSync* GetComponentSync(const FName& InName) const;
-	void UpdateLOD();
 };
 

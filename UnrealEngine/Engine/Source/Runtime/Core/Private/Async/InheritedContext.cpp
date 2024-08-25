@@ -5,7 +5,7 @@
 namespace UE
 {
 	// this method must be defined in a .cpp file to avoid exporting dependency on trace module
-	UE_NODISCARD FInheritedContextScope FInheritedContextBase::RestoreInheritedContext()
+	[[nodiscard]] FInheritedContextScope FInheritedContextBase::RestoreInheritedContext()
 	{
 		return FInheritedContextScope{
 #if ENABLE_LOW_LEVEL_MEM_TRACKER

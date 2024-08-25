@@ -823,11 +823,14 @@ void FNiagaraSystemToolkitParameterPanelViewModel::Cleanup()
 	GraphsToRemoveCallbacks.Add(GetGraphFromScript(System.GetSystemUpdateScript()));
 	for (TSharedRef<FNiagaraEmitterHandleViewModel> EmitterHandleViewModel : SystemViewModel->GetEmitterHandleViewModels())
 	{
-		if (FNiagaraEmitterHandle* EmitterHandle = EmitterHandleViewModel->GetEmitterHandle())
+		FNiagaraEmitterHandle* EmitterHandle = EmitterHandleViewModel->GetEmitterHandle();
+		//-TODO:Stateless: Add Stateless support
+		FVersionedNiagaraEmitterData* EmitterData = EmitterHandle ? EmitterHandle->GetEmitterData() : nullptr;
+		if (EmitterData)
 		{
 			TArray<UNiagaraScript*> EmitterScripts;
 			const bool bCompilableOnly = false;
-			EmitterHandle->GetEmitterData()->GetScripts(EmitterScripts, bCompilableOnly);
+			EmitterData->GetScripts(EmitterScripts, bCompilableOnly);
 			for (UNiagaraScript* EmitterScript : EmitterScripts)
 			{
 				GraphsToRemoveCallbacks.Add(GetGraphFromScript(EmitterScript));
@@ -917,6 +920,12 @@ void FNiagaraSystemToolkitParameterPanelViewModel::Init(const FSystemToolkitUICo
 	{
 		if (FNiagaraEmitterHandle* EmitterHandle = EmitterHandleViewModel->GetEmitterHandle())
 		{
+			//-TODO:Stateless: Add Stateless support?
+			if (EmitterHandle->GetEmitterData() == nullptr)
+			{
+				continue;
+			}
+
 			TArray<UNiagaraScript*> EmitterScripts;
 			const bool bCompilableOnly = false;
 			EmitterHandle->GetEmitterData()->GetScripts(EmitterScripts, bCompilableOnly);
@@ -2424,10 +2433,14 @@ void FNiagaraSystemToolkitParameterPanelViewModel::ReconcileOnGraphChangedBindin
 		{
 			TArray<UNiagaraScript*> EmitterScripts;
 			const bool bCompilableOnly = false;
-			EmitterHandle->GetEmitterData()->GetScripts(EmitterScripts, bCompilableOnly);
-			for (UNiagaraScript* EmitterScript : EmitterScripts)
+			//-TODO:Stateless: Add Stateless support?
+			if (FVersionedNiagaraEmitterData* EmitterData = EmitterHandle->GetEmitterData())
 			{
-				GraphsToAddCallbacks.Add(GetGraphFromScript(EmitterScript));
+				EmitterData->GetScripts(EmitterScripts, bCompilableOnly);
+				for (UNiagaraScript* EmitterScript : EmitterScripts)
+				{
+					GraphsToAddCallbacks.Add(GetGraphFromScript(EmitterScript));
+				}
 			}
 		}
 	}
@@ -2596,9 +2609,10 @@ void FNiagaraScriptToolkitParameterPanelViewModel::DeleteParameters(const TArray
 			{
 				VariableObjectSelection->ClearSelectedObjects();
 			}
+			Graph->Modify();
 			Graph->RemoveParameter(ItemToDelete.GetVariable());
 			
-			if(!bAnyChange)
+			if (!bAnyChange)
 			{
 				bAnyChange = true;
 			}

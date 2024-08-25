@@ -42,7 +42,7 @@ bool FGameplayTagQueryMatchesTagRequirementsTest::RunTest(const FString& Paramet
 
 		if (AllGameplayTags.Num() < NumDebugTags)
 		{
-			AddWarning(FString::Printf(TEXT("There are only %d defined tags in the Project.  We need at least %d to run this test."), AllGameplayTags.Num(), NumDebugTags));
+			AddInfo(FString::Printf(TEXT("There are only %d defined tags in the Project.  We need at least %d to run this test (skipping)."), AllGameplayTags.Num(), NumDebugTags));
 			return true;
 		}
 
@@ -128,5 +128,6 @@ bool FGameplayTagQueryMatchesTagRequirementsTest::RunTest(const FString& Paramet
 	AddInfo(FString::Printf(TEXT("	FGameplayTagRequirements took %ull cycles (%.4lf ms) and gave %d matches"), MetRequirementsCycles, FPlatformTime::ToMilliseconds64(MetRequirementsCycles), NumMetRequirements));
 	AddInfo(FString::Printf(TEXT("	FGameplayTagQuery took %ull cycles (%.4lf ms) and gave %d matches"), QueryMatchesCycles, FPlatformTime::ToMilliseconds64(QueryMatchesCycles), NumQueryMatches));
 
-	return true;
+	TestEqual(TEXT("FGameplayTagRequirements has same matching rules as FGameplayTagQuery"), NumQueryMatches, NumMetRequirements);
+	return NumMetRequirements == NumQueryMatches;
 }

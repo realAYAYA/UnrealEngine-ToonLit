@@ -50,7 +50,7 @@ void FillRayInfos(in uint2 ScreenCoord, inout float3 RayBegin, inout float3 RayE
 	const float2 UV = PixelCoord / float2(OutputResolution);
 	const float ClosestDepth = ConvertFromDeviceZ(0.0000001f);//ConvertFromDeviceZ(SceneDepthTexture.Load(uint3(PixelCoord, 0)));
 
-	RayBegin = LWCHackToFloat(PrimaryView.WorldCameraOrigin);
+	RayBegin = DFHackToFloat(PrimaryView.WorldCameraOrigin);
 	RayEnd = ReconstructWorldPositionFromDepth(UV, ClosestDepth);
 	RayDirection = (RayEnd - RayBegin);
 }

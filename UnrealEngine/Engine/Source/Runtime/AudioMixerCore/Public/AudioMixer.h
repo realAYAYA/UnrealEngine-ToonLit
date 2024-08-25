@@ -520,14 +520,6 @@ namespace Audio
 		/** Whether this is an interface for a non-realtime renderer. If true, synch events will behave differently to avoid deadlocks. */
 		virtual bool IsNonRealtime() const { return false; }
 
-		/** Returns the FName version of a given sound wave's format. Override to provide a runtime format (codec) that is platform specific. */
-		UE_DEPRECATED(5.2, "GetRuntimeFormat is now deprecated. Please use USoundWave::GetRuntimeFormat()")
-		virtual FName GetRuntimeFormat(const USoundWave* InSoundWave) const { return FName(); }
-
-		/** Creates a Compressed audio info class suitable for decompressing this SoundWave. OVerride to create platform-specific decoders. */
-		UE_DEPRECATED(5.2, "CreateCompressedAudioInfo is now deprecated. Please use IAudioInfoFactory::Create()")
-		virtual ICompressedAudioInfo* CreateCompressedAudioInfo(const FName& InRuntimeFormat) const { return nullptr; };
-
 		/** Return any optional device name defined in platform configuratio. */
 		virtual FString GetDefaultDeviceName() = 0;
 

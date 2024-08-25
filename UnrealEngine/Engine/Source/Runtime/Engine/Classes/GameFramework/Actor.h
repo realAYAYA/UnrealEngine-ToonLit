@@ -47,8 +47,10 @@ class FActorTransactionAnnotation;
 class FComponentInstanceDataCache;
 class UDEPRECATED_DataLayer;
 class UDataLayerAsset;
+class UExternalDataLayerAsset;
 class UDataLayerInstance;
 class AWorldDataLayers;
+class IWorldPartitionCell;
 #if UE_WITH_IRIS
 struct FActorBeginReplicationParams;
 #endif // UE_WITH_IRIS
@@ -135,22 +137,6 @@ DECLARE_EVENT_TwoParams(AActor, FActorOnPackagingModeChanged, AActor*, bool /* b
 
 #if !UE_BUILD_SHIPPING
 DECLARE_DELEGATE_RetVal_ThreeParams(bool, FOnProcessEvent, AActor*, UFunction*, void*);
-#endif
-
-#if WITH_EDITOR
-class FActorInstanceGuidMapper
-{
-	using FGuidMapper = TFunction<FGuid(const FGuid&)>;
-
-public:
-	void RegisterGuidMapper(FName InPackageName, const FGuidMapper& InGuidMapper);
-	void UnregisterGuidMapper(FName InPackageName);
-
-	FGuid MapGuid(FName InPackageName, const FGuid& InGuid);
-
-private:
-	TMap<FName, FGuidMapper> GuidMappers;
-};
 #endif
 
 /**
@@ -289,11 +275,19 @@ private:
 	uint8 bForceNetAddressable:1;
 
 #if WITH_EDITORONLY_DATA
-	/**
-	 * Whether this actor belongs to a level instance which is currently being edited.
-	 */
+	/** Whether this actor belongs to a level instance which is currently being edited. */
 	UPROPERTY(Transient)
-	uint8 bIsInEditingLevelInstance:1;
+	uint8 bIsInEditLevelInstance:1;
+
+	/** Whether this actor belongs to a level instance in a level instance hierarchy currently being edited. Itself or its parent level instances. */
+	UPROPERTY(Transient)
+	uint8 bIsInEditLevelInstanceHierarchy:1;
+
+	/** Whether this actor belongs to a level instance  */
+	UPROPERTY(Transient)
+	uint8 bIsInLevelInstance:1;
+
+	friend struct FSetActorIsInLevelInstance;
 
 public:
 	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = LevelInstance, meta = (Tooltip = "If checked, this Actor will only get loaded in a main world (persistent level), it will not be loaded through Level Instances."))
@@ -321,10 +315,29 @@ public:
 	}
 
 #if WITH_EDITOR
-	/** If true, the actor belongs to a level instance which is currently being edited. */
+	/** Deprecated for a non virtual version. */
+	UE_DEPRECATED(5.4, "Call IsInEditLevelInstanceHierarchy/IsInEditLevelInstance instead.")
 	virtual bool IsInEditingLevelInstance() const
 	{
-		return bIsInEditingLevelInstance;
+		return bIsInEditLevelInstance;
+	}
+
+	/** If true, the actor belongs to a level instance which is currently being edited */
+	bool IsInEditLevelInstance() const
+	{
+		return bIsInEditLevelInstance;
+	}
+
+	/** If true, the actor belongs to a level instance which is currently being edited or a parent level instance being edited. */
+	bool IsInEditLevelInstanceHierarchy() const
+	{
+		return bIsInEditLevelInstanceHierarchy;
+	}
+
+	/** If true, the actor belongs to a level instance. */
+	bool IsInLevelInstance() const
+	{
+		return bIsInLevelInstance;
 	}
 #endif
 
@@ -589,6 +602,10 @@ private:
 
 	/** Internal helper to update Overlaps during Actor initialization/BeginPlay correctly based on the UpdateOverlapsMethodDuringLevelStreaming and bGenerateOverlapEventsDuringLevelStreaming settings. */
 	ENGINE_API void UpdateInitialOverlaps(bool bFromLevelStreaming);
+	
+	/** Describes how much control the remote machine has over the actor. */
+	UPROPERTY(Replicated, Transient, VisibleInstanceOnly, Category=Networking)
+	TEnumAsByte<enum ENetRole> RemoteRole;
 
 public:
 	/**
@@ -629,6 +646,9 @@ public:
 	ENGINE_API void SetNetAddressable();
 
 public:
+	/** Project-specific field that help to categorize actors for reporting purposes*/
+	uint8 ActorCategory = 0;
+
 	/** How long this Actor lives before dying, 0=forever. Note this is the INITIAL value and should not be modified once play has begun. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category=Actor)
 	float InitialLifeSpan;
@@ -638,10 +658,6 @@ public:
 	float CustomTimeDilation;
 	
 private:
-	/** Describes how much control the remote machine has over the actor. */
-	UPROPERTY(Replicated, Transient, VisibleInstanceOnly, Category=Networking)
-	TEnumAsByte<enum ENetRole> RemoteRole;
-
 	/** The RayTracingGroupId this actor and its components belong to. (For components that did not specify any) */
 	UPROPERTY()
 	int32 RayTracingGroupId;
@@ -658,7 +674,7 @@ protected:
 	 * Determine in which partition grid this actor will be placed in the partition (if the world is partitioned).
 	 * If None, the decision will be left to the partition.
 	 */
-	UPROPERTY(EditAnywhere, Category=WorldPartition)
+	UPROPERTY(EditAnywhere, AdvancedDisplay, Category=WorldPartition)
 	FName RuntimeGrid;
 #endif
 
@@ -936,7 +952,7 @@ protected:
 	/**
 	 * The instance GUID for this actor; this guid will be unique for actors from instanced streaming levels.
 	 * @see		ActorGuid
-	 * @note	This is not guaranteed to be valid during PostLoad in all situations, but safe to access from RegisterAllComponents.
+	 * @note	This is not guaranteed to be valid during PostLoad, but safe to access from RegisterAllComponents.
 	 */
 	UPROPERTY(BluePrintReadOnly, AdvancedDisplay, Category=Actor, Transient, NonPIEDuplicateTransient, TextExportTransient, NonTransactional)
 	FGuid ActorInstanceGuid;
@@ -955,6 +971,9 @@ protected:
 	TArray<TSoftObjectPtr<UDataLayerAsset>> DataLayerAssets;
 
 	TArray<TSoftObjectPtr<UDataLayerAsset>> PreEditChangeDataLayers;
+
+	UPROPERTY(VisibleAnywhere, AdvancedDisplay, Category = DataLayers, TextExportTransient, NonTransactional)
+	TObjectPtr<const UExternalDataLayerAsset> ExternalDataLayerAsset;
 
 public:
 	/** The copy/paste id used to remap actors during copy operations */
@@ -978,8 +997,9 @@ public:
 	 * Set the actor packaging mode.
 	 * @param bExternal will set the actor packaging mode to external if true, to internal otherwise
 	 * @param bShouldDirty should dirty or not the level package
+	 * @param ActorExternalPackage if non-null and bExternal is true, will use the provided package instead of creating one
 	 */
-	ENGINE_API void SetPackageExternal(bool bExternal, bool bShouldDirty = true);
+	ENGINE_API void SetPackageExternal(bool bExternal, bool bShouldDirty = true, UPackage* ActorExternalPackage = nullptr);
 
 	/**
 	 * Determine how this actor should be referenced by the level when external (saved in its own package).
@@ -1139,7 +1159,7 @@ protected:
 	 *	If true, this actor will be loaded when in the range of any streaming sources and if (1) in no data layers, or (2) one or more of its data layers are enabled.
 	 *	If false, this actor will be loaded if (1) in no data layers, or (2) one or more of its data layers are enabled.
 	 */
-	UPROPERTY(EditAnywhere, Category=WorldPartition)
+	UPROPERTY(EditAnywhere, AdvancedDisplay, Category=WorldPartition)
 	uint8 bIsSpatiallyLoaded : 1;
 
 private:
@@ -1291,14 +1311,16 @@ public:
 	//~=============================================================================
 	// DataLayers functions.
 #if WITH_EDITOR
+protected:
+	UE_DEPRECATED(5.4, "Use ActorTypeSupportsDataLayer instead.")
+	virtual bool IsDataLayerTypeSupported(TSubclassOf<UDataLayerInstance> DataLayerType) const final { return false; }
 private:
-	virtual bool IsDataLayerTypeSupported(TSubclassOf<UDataLayerInstance> DataLayerType) const { return true; }
 	virtual bool ActorTypeIsMainWorldOnly() const { return false; }
 	ENGINE_API TArray<const UDataLayerAsset*> ResolveDataLayerAssets(const TArray<TSoftObjectPtr<UDataLayerAsset>>& InDataLayerAssets) const;
 public:
 	ENGINE_API bool AddDataLayer(const UDataLayerInstance* DataLayerInstance);
 	ENGINE_API bool RemoveDataLayer(const UDataLayerInstance* DataLayerInstance);
-	ENGINE_API bool CanAddDataLayer(const UDataLayerInstance* InDataLayerInstance) const;
+	ENGINE_API bool CanAddDataLayer(const UDataLayerInstance* InDataLayerInstance, FText* OutReason = nullptr) const;
 
 	ENGINE_API TArray<const UDataLayerInstance*> RemoveAllDataLayers();
 	ENGINE_API bool SupportsDataLayerType(TSubclassOf<UDataLayerInstance> DataLayerType) const;
@@ -1310,7 +1332,11 @@ public:
 	static const FName GetDataLayerAssetsPropertyName() { return GET_MEMBER_NAME_CHECKED(AActor, DataLayerAssets); }
 	static const FName GetDataLayerPropertyName() { return GET_MEMBER_NAME_CHECKED(AActor, DataLayers); }
 
-	ENGINE_API TArray<const UDataLayerAsset*> GetDataLayerAssets() const;
+	ENGINE_API TArray<const UDataLayerAsset*> GetDataLayerAssets(bool bIncludeExternalDataLayerAsset = true) const;
+	ENGINE_API bool HasExternalContent() const;
+
+	virtual bool ActorTypeSupportsDataLayer() const { return true; }
+	virtual bool ActorTypeSupportsExternalDataLayer() const { return true; }
 
 	//~ Begin Deprecated
 
@@ -1326,9 +1352,6 @@ public:
 
 	UE_DEPRECATED(5.3, "Use AActor::SupportsDataLayerType(TSubclassOf<UDataLayerInstance>) instead.")
 	ENGINE_API bool SupportsDataLayer() const;
-
-	UE_DEPRECATED(5.3, "Use AActor::IsDataLayerTypeSupported(TSubclassOf<UDataLayerInstance>) instead.")
-	virtual bool ActorTypeSupportsDataLayer() const { return true; }
 
 	UE_DEPRECATED(5.3, "Use UDataLayerInstance::AddActor(AActor*) instead.")
 	bool AddDataLayer(const UDataLayerAsset* DataLayerAsset) { return false; }
@@ -1362,10 +1385,12 @@ public:
 	ENGINE_API bool ContainsDataLayer(const UDataLayerAsset* DataLayerAsset) const;
 	ENGINE_API bool ContainsDataLayer(const UDataLayerInstance* DataLayerInstance) const;
 	ENGINE_API bool HasDataLayers() const;
+	ENGINE_API bool HasContentBundle() const;
+	ENGINE_API const UExternalDataLayerAsset* GetExternalDataLayerAsset() const;
 
 private:
 	ENGINE_API TArray<const UDataLayerInstance*> GetDataLayerInstancesInternal(bool bUseLevelContext, bool bIncludeParentDataLayers = true) const;
-	ENGINE_API bool UseWorldPartitionRuntimeCellDataLayers() const;
+	ENGINE_API const IWorldPartitionCell* GetWorldPartitionRuntimeCell() const;
 
 	//~=============================================================================
 	// General functions.
@@ -1399,6 +1424,8 @@ public:
 	 *						If true, physics velocity for this object is unchanged (so ragdoll parts are not affected by change in location).
 	 *						If false, physics velocity is updated based on the change in position (affecting ragdoll parts).
 	 *						If CCD is on and not teleporting, this will affect objects along the entire swept volume.
+	 *                      Note that when teleporting, any child/attached components will be teleported too, maintaining their current offset even if they are being simulated. 
+	 *                      Setting the location without teleporting will not update the location of simulated child/attached components.
 	 * @param SweepHitResult	The hit result from the move if swept.
 	 * @return	Whether the location was successfully set (if not swept), or whether movement occurred at all (if swept).
 	 */
@@ -1449,6 +1476,8 @@ public:
 	 *						If equal to ETeleportType::TeleportPhysics, physics velocity for this object is unchanged (so ragdoll parts are not affected by change in location).
 	 *						If equal to ETeleportType::None, physics velocity is updated based on the change in position (affecting ragdoll parts).
 	 *						If CCD is on and not teleporting, this will affect objects along the entire swept volume.
+	 *                      Note that when teleporting, any child/attached components will be teleported too, maintaining their current offset even if they are being simulated. 
+	 *                      Setting the location without teleporting will not update the location of simulated child/attached components.
 	 * @param OutSweepHitResult The hit result from the move if swept.
 	 * @return	Whether the location was successfully set if not swept, or whether movement occurred if swept.
 	 */
@@ -1461,6 +1490,8 @@ public:
 	 * @param	bTeleportPhysics Whether we teleport the physics state (if physics collision is enabled for this object).
 	 *			If true, physics velocity for this object is unchanged (so ragdoll parts are not affected by change in location).
 	 *			If false, physics velocity is updated based on the change in position (affecting ragdoll parts).
+	 *          Note that when teleporting, any child/attached components will be teleported too, maintaining their current offset even if they are being simulated. 
+	 *          Setting the rotation without teleporting will not update the rotation of simulated child/attached components.
 	 * @return	Whether the rotation was successfully set.
 	 */
 	UFUNCTION(BlueprintCallable, meta=(DisplayName = "Set Actor Rotation", ScriptName = "SetActorRotation"), Category="Transformation")
@@ -1473,6 +1504,8 @@ public:
 	 * @param	Teleport	How we teleport the physics state (if physics collision is enabled for this object).
 	 *						If equal to ETeleportType::TeleportPhysics, physics velocity for this object is unchanged (so ragdoll parts are not affected by change in location).
 	 *						If equal to ETeleportType::None, physics velocity is updated based on the change in position (affecting ragdoll parts).
+	 *                      Note that when teleporting, any child/attached components will be teleported too, maintaining their current offset even if they are being simulated.
+	 *                      Setting the rotation without teleporting will not update the rotation of simulated child/attached components.
 	 * @return	Whether the rotation was successfully set.
 	 */
 	ENGINE_API bool SetActorRotation(FRotator NewRotation, ETeleportType Teleport = ETeleportType::None);
@@ -1489,6 +1522,8 @@ public:
 	 *							If true, physics velocity for this object is unchanged (so ragdoll parts are not affected by change in location).
 	 *							If false, physics velocity is updated based on the change in position (affecting ragdoll parts).
 	 *							If CCD is on and not teleporting, this will affect objects along the entire swept volume.
+	 *                          Note that when teleporting, any child/attached components will be teleported too, maintaining their current offset even if they are being simulated. 
+	 *                          Setting the location without teleporting will not update the location of simulated child/attached components.
 	 * @param SweepHitResult	The hit result from the move if swept.
 	 * @return	Whether the rotation was successfully set.
 	 */
@@ -1506,6 +1541,8 @@ public:
 	 *							If equal to ETeleportType::TeleportPhysics, physics velocity for this object is unchanged (so ragdoll parts are not affected by change in location).
 	 *							If equal to ETeleportType::None, physics velocity is updated based on the change in position (affecting ragdoll parts).
 	 *							If CCD is on and not teleporting, this will affect objects along the entire swept volume.
+	 *                          Note that when teleporting, any child/attached components will be teleported too, maintaining their current offset even if they are being simulated.
+	 *                          Setting the location without teleporting will not update the location of simulated child/attached components.
 	 * @param OutSweepHitResult	The hit result from the move if swept.
 	 * @return	Whether the rotation was successfully set.
 	 */
@@ -1558,6 +1595,8 @@ public:
 	 *							If true, physics velocity for this object is unchanged (so ragdoll parts are not affected by change in location).
 	 *							If false, physics velocity is updated based on the change in position (affecting ragdoll parts).
 	 *							If CCD is on and not teleporting, this will affect objects along the entire swept volume.
+	 *                          Note that when teleporting, any child/attached components will be teleported too, maintaining their current offset even if they are being simulated.
+	 *                          Setting the location without teleporting will not update the location of simulated child/attached components.
 	 * @param SweepHitResult	The hit result from the move if swept.
 	 */
 	UFUNCTION(BlueprintCallable, Category="Transformation", meta=(DisplayName="Add Actor World Offset", ScriptName="AddActorWorldOffset", Keywords="location position"))
@@ -1573,6 +1612,8 @@ public:
 	 *							If true, physics velocity for this object is unchanged (so ragdoll parts are not affected by change in location).
 	 *							If false, physics velocity is updated based on the change in position (affecting ragdoll parts).
 	 *							If CCD is on and not teleporting, this will affect objects along the entire swept volume.
+	 *                          Note that when teleporting, any child/attached components will be teleported too, maintaining their current offset even if they are being simulated.
+	 *                          Setting the rotation without teleporting will not update the rotation of simulated child/attached components.
 	 * @param SweepHitResult	The hit result from the move if swept.
 	 */
 	UFUNCTION(BlueprintCallable, Category="Transformation", meta=(DisplayName="Add Actor World Rotation", ScriptName="AddActorWorldRotation", AdvancedDisplay="bSweep,SweepHitResult,bTeleport"))
@@ -1599,6 +1640,8 @@ public:
 	 *							If true, physics velocity for this object is unchanged (so ragdoll parts are not affected by change in location).
 	 *							If false, physics velocity is updated based on the change in position (affecting ragdoll parts).
 	 *							If CCD is on and not teleporting, this will affect objects along the entire swept volume.
+	 *                          Note that when teleporting, any child/attached components will be teleported too, maintaining their current offset even if they are being simulated.
+	 *                          Setting the transform without teleporting will not update the transform of simulated child/attached components.
 	 */
 	UFUNCTION(BlueprintCallable, Category="Transformation", meta=(DisplayName="Set Actor Transform", ScriptName="SetActorTransform"))
 	ENGINE_API bool K2_SetActorTransform(const FTransform& NewTransform, bool bSweep, FHitResult& SweepHitResult, bool bTeleport);
@@ -1613,6 +1656,8 @@ public:
 	 *							If true, physics velocity for this object is unchanged (so ragdoll parts are not affected by change in location).
 	 *							If false, physics velocity is updated based on the change in position (affecting ragdoll parts).
 	 *							If CCD is on and not teleporting, this will affect objects along the entire swept volume.
+	 *                          Note that when teleporting, any child/attached components will be teleported too, maintaining their current offset even if they are being simulated.
+	 *                          Setting the location without teleporting will not update the location of simulated child/attached components.
 	 */
 	UFUNCTION(BlueprintCallable, Category="Transformation", meta=(DisplayName="Add Actor Local Offset", ScriptName="AddActorLocalOffset", Keywords="location position"))
 	ENGINE_API void K2_AddActorLocalOffset(FVector DeltaLocation, bool bSweep, FHitResult& SweepHitResult, bool bTeleport);
@@ -1627,6 +1672,8 @@ public:
 	 *							If true, physics velocity for this object is unchanged (so ragdoll parts are not affected by change in location).
 	 *							If false, physics velocity is updated based on the change in position (affecting ragdoll parts).
 	 *							If CCD is on and not teleporting, this will affect objects along the entire swept volume.
+	 *                          Note that when teleporting, any child/attached components will be teleported too, maintaining their current offset even if they are being simulated.
+	 *                          Setting the rotation without teleporting will not update the rotation of simulated child/attached components.
 	 */
 	UFUNCTION(BlueprintCallable, Category="Transformation", meta=(DisplayName="Add Actor Local Rotation", ScriptName="AddActorLocalRotation", AdvancedDisplay="bSweep,SweepHitResult,bTeleport"))
 	ENGINE_API void K2_AddActorLocalRotation(FRotator DeltaRotation, bool bSweep, FHitResult& SweepHitResult, bool bTeleport);
@@ -1642,6 +1689,8 @@ public:
 	 *							If true, physics velocity for this object is unchanged (so ragdoll parts are not affected by change in location).
 	 *							If false, physics velocity is updated based on the change in position (affecting ragdoll parts).
 	 *							If CCD is on and not teleporting, this will affect objects along the entire swept volume.
+	 *                          Note that when teleporting, any child/attached components will be teleported too, maintaining their current offset even if they are being simulated.
+	 *                          Setting the transform without teleporting will not update the transform of simulated child/attached components.
 	 */
 	UFUNCTION(BlueprintCallable, Category="Transformation", meta=(DisplayName="Add Actor Local Transform", ScriptName="AddActorLocalTransform"))
 	ENGINE_API void K2_AddActorLocalTransform(const FTransform& NewTransform, bool bSweep, FHitResult& SweepHitResult, bool bTeleport);
@@ -1656,6 +1705,8 @@ public:
 	 *								If true, physics velocity for this object is unchanged (so ragdoll parts are not affected by change in location).
 	 *								If false, physics velocity is updated based on the change in position (affecting ragdoll parts).
 	 *								If CCD is on and not teleporting, this will affect objects along the entire swept volume.
+	 *                              Note that when teleporting, any child/attached components will be teleported too, maintaining their current offset even if they are being simulated. 
+	 *                              Setting the location without teleporting will not update the location of simulated child/attached components.
 	 */
 	UFUNCTION(BlueprintCallable, Category="Transformation", meta=(DisplayName="Set Actor Relative Location", ScriptName="SetActorRelativeLocation"))
 	ENGINE_API void K2_SetActorRelativeLocation(FVector NewRelativeLocation, bool bSweep, FHitResult& SweepHitResult, bool bTeleport);
@@ -1670,6 +1721,8 @@ public:
 	 *								If true, physics velocity for this object is unchanged (so ragdoll parts are not affected by change in location).
 	 *								If false, physics velocity is updated based on the change in position (affecting ragdoll parts).
 	 *								If CCD is on and not teleporting, this will affect objects along the entire swept volume.
+	 *                              Note that when teleporting, any child/attached components will be teleported too, maintaining their current offset even if they are being simulated.
+	 *                              Setting the rotation without teleporting will not update the rotation of simulated child/attached components.
 	 */
 	UFUNCTION(BlueprintCallable, Category="Transformation", meta=(DisplayName="Set Actor Relative Rotation", ScriptName="SetActorRelativeRotation", AdvancedDisplay="bSweep,SweepHitResult,bTeleport"))
 	ENGINE_API void K2_SetActorRelativeRotation(FRotator NewRelativeRotation, bool bSweep, FHitResult& SweepHitResult, bool bTeleport);
@@ -1685,6 +1738,8 @@ public:
 	 *							If true, physics velocity for this object is unchanged (so ragdoll parts are not affected by change in location).
 	 *							If false, physics velocity is updated based on the change in position (affecting ragdoll parts).
 	 *							If CCD is on and not teleporting, this will affect objects along the entire swept volume.
+	 *                          Note that when teleporting, any child/attached components will be teleported too, maintaining their current offset even if they are being simulated. 
+	 *                          Setting the transform without teleporting will not update the transform of simulated child/attached components.
 	 */
 	UFUNCTION(BlueprintCallable, Category="Transformation", meta=(DisplayName="Set Actor Relative Transform", ScriptName="SetActorRelativeTransform"))
 	ENGINE_API void K2_SetActorRelativeTransform(const FTransform& NewRelativeTransform, bool bSweep, FHitResult& SweepHitResult, bool bTeleport);
@@ -1700,6 +1755,12 @@ public:
 	/** Return the actor's relative scale 3d */
 	UFUNCTION(BlueprintCallable, Category="Transformation")
 	ENGINE_API FVector GetActorRelativeScale3D() const;
+
+	/**
+	 * Marks the bounds of all SceneComponents attached to this actor which have `bComputeBoundsOnceForGame` as needing to be recomputed the next time UpdateBounds is called. 
+	 * This might be necessary if the bounds that were cached on cook no longer reflect the actor's transform (ex. if level transform is applied).
+	 */
+	ENGINE_API void MarkNeedsRecomputeBoundsOnceForGame();
 
 	/**
 	 *	Sets the actor to be hidden in the game
@@ -1786,7 +1847,7 @@ public:
 	 * @param LocationRule				How to handle translation when attaching.
 	 * @param RotationRule				How to handle rotation when attaching.
 	 * @param ScaleRule					How to handle scale when attaching.
-	 * @param bWeldSimulatedBodies		Whether to weld together simulated physics bodies.
+	 * @param bWeldSimulatedBodies		Whether to weld together simulated physics bodies. This transfers the shapes in the welded object into the parent (if simulated), which can result in permanent changes that persist even after subsequently detaching.
 	 * @return							Whether the attachment was successful or not
 	 */
 	UFUNCTION(BlueprintCallable, meta = (DisplayName = "Attach Actor To Component", ScriptName = "AttachToComponent", bWeldSimulatedBodies = true), Category = "Transformation")
@@ -1822,7 +1883,7 @@ public:
 	 * @param LocationRule				How to handle translation when attaching.
 	 * @param RotationRule				How to handle rotation when attaching.
 	 * @param ScaleRule					How to handle scale when attaching.
-	 * @param bWeldSimulatedBodies		Whether to weld together simulated physics bodies.
+	 * @param bWeldSimulatedBodies		Whether to weld together simulated physics bodies.This transfers the shapes in the welded object into the parent (if simulated), which can result in permanent changes that persist even after subsequently detaching.
 	 * @return							Whether the attachment was successful or not
 	 */
 	UFUNCTION(BlueprintCallable, meta = (DisplayName = "Attach Actor To Actor", ScriptName = "AttachToActor", bWeldSimulatedBodies=true), Category = "Transformation")
@@ -2161,12 +2222,13 @@ public:
 	/** Used to check if Actor is the main actor of a package (currently Child Actors are not) */
 	ENGINE_API bool IsMainPackageActor() const;
 
-	static ENGINE_API AActor* FindActorInPackage(UPackage* InPackage);
+	static ENGINE_API AActor* FindActorInPackage(UPackage* InPackage, bool bEvenIfPendingKill = true);
 
 #if WITH_EDITOR
 	ENGINE_API virtual bool Modify(bool bAlwaysMarkDirty = true) override;
+	ENGINE_API virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	ENGINE_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
-	ENGINE_API virtual void GetExtendedAssetRegistryTagsForSave(const ITargetPlatform* TargetPlatform, TArray<FAssetRegistryTag>& OutTags) const override;
 	ENGINE_API virtual bool NeedsLoadForTargetPlatform(const ITargetPlatform* TargetPlatform) const;
 	ENGINE_API virtual void PreEditChange(FProperty* PropertyThatWillChange) override;
 	ENGINE_API virtual bool CanEditChange(const FProperty* InProperty) const;
@@ -2207,11 +2269,6 @@ public:
 
 	/** Does this actor supports external packaging? */
 	ENGINE_API virtual bool SupportsExternalPackaging() const;
-
-	/** Called when the we detach the actor from the external package. Temporary fix to allow the actor to fixup and rename any objects outered to the external package. */
-	virtual void OnDetachExternalPackage() {}
-	/** Called when the we reattach the actor to the external package. Temporary fix to allow the actor to fixup and rename any objects outered to the external package. */
-	virtual void OnReattachExternalPackage() {}
 #endif
 
 #if WITH_EDITOR
@@ -2470,6 +2527,7 @@ public:
 	virtual bool ShouldImport(FStringView ActorPropString, bool IsMovingLevel) { return true; }
 
 	/** Called by InputKey when an unhandled key is pressed with a selected actor */
+	UE_DEPRECATED(5.4, "Please use UI Commands and process your custom actors as necessary by extending the level editor modules' global command list.")
 	virtual void EditorKeyPressed(FKey Key, EInputEvent Event) {}
 
 	/** Called by ReplaceSelectedActors to allow a new actor to copy properties from an old actor when it is replaced */
@@ -2510,7 +2568,7 @@ public:
 	 * Returns if this actor's current label is editable.  Actor labels are only available in development builds.
 	 * @return	The editable status of the actor's label
 	 */
-	ENGINE_API bool IsActorLabelEditable() const;
+	ENGINE_API virtual bool IsActorLabelEditable() const;
 
 	/** Returns this actor's folder path. Actor folder paths are only available in development builds. */
 	UFUNCTION(BlueprintCallable, Category = "Editor Scripting | Actor Editing")
@@ -2730,6 +2788,11 @@ public:
 	/** Update and smooth simulated physic state, replaces PostNetReceiveLocation() and PostNetReceiveVelocity() */
 	ENGINE_API virtual void PostNetReceivePhysicState();
 
+	/** Set the current state as a faked networked physics state for physics replication
+	* Limited for use with actors using EPhysicsReplicationMode::PredictiveInterpolation only.
+	* @param bShouldSleep  Should the replication force the object to sleep */
+	void SetFakeNetPhysicsState(bool bShouldSleep);
+
 protected:
 	/** Sync IsSimulatingPhysics() with ReplicatedMovement.bRepPhysics */
 	ENGINE_API void SyncReplicatedPhysicsSimulation();
@@ -2948,6 +3011,9 @@ public:
 	/** Returns top most selection parent */
 	ENGINE_API virtual AActor* GetRootSelectionParent() const;
 
+	/** Returns true if actor can be selected as a sub selection of its root selection parent */
+	ENGINE_API virtual bool SupportsSubRootSelection() const { return false; }
+
 	/** Returns if actor or selection parent is selected */
 	ENGINE_API bool IsActorOrSelectionParentSelected() const;
 
@@ -3020,6 +3086,9 @@ public:
 
 	/** Update all components transforms */
 	ENGINE_API void UpdateComponentTransforms();
+
+	/** Update all components visibility state */
+	ENGINE_API void UpdateComponentVisibility();
 
 	/** Iterate over components array and call InitializeComponent, which happens once per actor */
 	ENGINE_API void InitializeComponents();
@@ -3224,7 +3293,7 @@ protected:
 	 * Pushes the owning NetConnection for the actor and all of its children to the replication system.
 	 * This information decides whether properties with owner conditionals are replicated or not.
 	 */
-	ENGINE_API void UpdateOwningNetConnection() const;
+	ENGINE_API void UpdateOwningNetConnection();
 
 	/**
 	 * Helper to BeginReplication passing on additional parameters to the ReplicationSystem, typically called from code overriding normal BeginReplication()
@@ -3402,7 +3471,7 @@ public:
 	ENGINE_API virtual void CalcCamera(float DeltaTime, struct FMinimalViewInfo& OutResult);
 
 	/** Returns true if the actor contains an active camera component */
-	ENGINE_API virtual bool HasActiveCameraComponent() const;
+	ENGINE_API virtual bool HasActiveCameraComponent(bool bForceFindCamera = false) const;
 
 	/** Returns true if the actor contains an active locked to HMD camera component */
 	ENGINE_API virtual bool HasActivePawnControlCameraComponent() const;
@@ -4372,7 +4441,7 @@ private:
 	}
 
 	friend class UPrimitiveComponent;
-	friend class FPrimitiveSceneInfo;
+	friend struct FPrimitiveSceneInfoAdapter;
 };
 
 #if WITH_EDITOR
@@ -4387,6 +4456,7 @@ private:
 	friend UWorld;
 	friend class FFoliageHelper;
 	friend class ULevelInstanceSubsystem;
+	friend class UExternalDataLayerInstance;
 };
 
 struct FSetActorGuid
@@ -4402,7 +4472,6 @@ private:
 	friend class UWorldPartitionConvertCommandlet;
 };
 
-#if WITH_EDITOR
 struct FSetActorReplicates
 {
 private:
@@ -4417,7 +4486,6 @@ private:
 	}
 	friend class FWorldPartitionLevelHelper;
 };
-#endif
 
 struct FSetActorInstanceGuid
 {
@@ -4454,6 +4522,7 @@ private:
 		InActor->ContentBundleGuid = InContentBundleGuid;
 	}
 	friend class FContentBundleEditor;
+	friend class UGameFeatureActionConvertContentBundleWorldPartitionBuilder;
 };
 
 struct FAssignActorDataLayer
@@ -4464,7 +4533,21 @@ private:
 
 	friend class UDataLayerInstanceWithAsset;
 	friend class UDataLayerInstancePrivate;
+	friend class UExternalDataLayerInstance;
 	friend class ULevelInstanceSubsystem;
+};
+
+struct FSetActorIsInLevelInstance
+{
+private:
+	FSetActorIsInLevelInstance(AActor* InActor, bool bIsEditing = false)
+	{
+		InActor->bIsInLevelInstance = true;
+		InActor->bIsInEditLevelInstance = bIsEditing;
+	}
+
+	friend class ULevelStreamingLevelInstance;
+	friend class ULevelStreamingLevelInstanceEditor;
 };
 #endif
 

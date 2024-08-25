@@ -17,7 +17,6 @@
 #include "Editor.h"
 #include "Engine/World.h"
 #include "Framework/Notifications/NotificationManager.h"
-#include "GameplayMediaEncoderCommon.h"
 #include "IAssetTools.h"
 #include "Misc/FeedbackContext.h"
 #include "Misc/MessageDialog.h"

@@ -13,7 +13,6 @@ struct FCapturedFrame;
 
 #if PLATFORM_WINDOWS && WITH_UNREAL_DEVELOPER_TOOLS
 
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 
 typedef TCHAR* PTCHAR;

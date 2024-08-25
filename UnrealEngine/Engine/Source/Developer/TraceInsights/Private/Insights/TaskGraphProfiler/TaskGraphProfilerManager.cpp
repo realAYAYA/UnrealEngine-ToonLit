@@ -5,6 +5,7 @@
 #include "Async/TaskGraphInterfaces.h"
 #include "Features/IModularFeatures.h"
 #include "Framework/Docking/TabManager.h"
+#include "Logging/MessageLog.h"
 #include "Modules/ModuleManager.h"
 #include "TraceServices/Model/TasksProfiler.h"
 #include "Widgets/Docking/SDockTab.h"
@@ -315,7 +316,11 @@ void FTaskGraphProfilerManager::ShowTaskRelations(const TraceServices::FTaskInfo
 	{
 		GetSingleTaskRelationsForAll(Task->NestedTasks);
 	}
+
+	OutputWarnings();
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void FTaskGraphProfilerManager::GetSingleTaskTransitions(const TraceServices::FTaskInfo* Task, const TraceServices::ITasksProvider* TasksProvider, const FThreadTrackEvent* InSelectedEvent)
 {
@@ -607,6 +612,16 @@ void FTaskGraphProfilerManager::AddRelation(const FThreadTrackEvent* InSelectedE
 		}
 	}
 
+	if (TaskRelationPtr->GetSourceTrack().IsValid() && !TaskRelationPtr->GetSourceTrack()->IsVisible())
+	{
+		HiddenTrackNames.Add(TaskRelationPtr->GetSourceTrack()->GetName());
+	}
+
+	if (TaskRelationPtr->GetTargetTrack().IsValid() && !TaskRelationPtr->GetTargetTrack()->IsVisible())
+	{
+		HiddenTrackNames.Add(TaskRelationPtr->GetTargetTrack()->GetName());
+	}
+
 	if (TaskRelationPtr->GetSourceTrack().IsValid() && TaskRelationPtr->GetTargetTrack().IsValid())
 	{
 		TimingView->AddRelation(Relation);
@@ -649,6 +664,8 @@ void FTaskGraphProfilerManager::ClearTaskRelations()
 		{
 			return Relations->Is<FTaskGraphRelation>();
 		});
+
+	HiddenTrackNames.Empty();
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -734,7 +751,7 @@ double FTaskGraphProfilerManager::GetRelationsOnCriticalPathAscendingRec(const T
 					// Remove the relations from the shorter branch.
 					if (Relations.Num() > InitialRelationNum)
 					{
-						Relations.RemoveAt(InitialRelationNum, Relations.Num() - InitialRelationNum, false);
+						Relations.RemoveAt(InitialRelationNum, Relations.Num() - InitialRelationNum, EAllowShrinking::No);
 					}
 
 					Relations.Append(AscendingRelations);
@@ -788,7 +805,7 @@ double FTaskGraphProfilerManager::GetRelationsOnCriticalPathDescendingRec(const 
 					// Remove the relations from the shorter branch.
 					if (Relations.Num() > InitialRelationNum)
 					{
-						Relations.RemoveAt(InitialRelationNum, Relations.Num() - InitialRelationNum, false);
+						Relations.RemoveAt(InitialRelationNum, Relations.Num() - InitialRelationNum, EAllowShrinking::No);
 					}
 
 					Relations.Append(DescendingRelations);
@@ -836,6 +853,55 @@ void FTaskGraphProfilerManager::RegisterOnWindowClosedEventHandle()
 		OnWindowClosedEventHandle = Window->GetWindowClosedEvent().AddSP(this, &FTaskGraphProfilerManager::OnWindowClosedEvent);
 	}
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void FTaskGraphProfilerManager::OutputWarnings()
+{
+	if (HiddenTrackNames.Num() == 0)
+	{
+		return;
+	}
+
+	TStringBuilder<256> TrackList;
+
+	constexpr int32 MaxListedTracks = 3;
+	int32 NumTracks = 0;
+
+	for (FString TrackName : HiddenTrackNames)
+	{
+		++NumTracks;
+		TrackList.Append(TrackName);
+		TrackList.Append(TEXT(","));
+
+		if (NumTracks >= MaxListedTracks)
+		{
+			break;
+		}
+	}
+
+	int32 RemainingTracksNum = HiddenTrackNames.Num() - NumTracks;
+	FText WarningMessage;
+	if (RemainingTracksNum > 0)
+	{
+		WarningMessage = FText::Format(LOCTEXT("RelationsOnMoreHiddenTracksWarningFmt", "Some task relations point to hidden tracks: {0} and {1} more."),
+									   FText::FromString(TrackList.ToString()),
+									   RemainingTracksNum);
+	}
+	else
+	{
+		TrackList.RemoveSuffix(1);
+		WarningMessage = FText::Format(LOCTEXT("RelationsOnHiddenTracksWarningFmt", "Some task relations point to hidden tracks: {0}."),
+									   FText::FromString(TrackList.ToString()));
+	}
+
+	FName LogListingName = FTimingProfilerManager::Get()->GetLogListingName();
+	FMessageLog ReportMessageLog(LogListingName);
+	ReportMessageLog.Warning(WarningMessage);
+	ReportMessageLog.Notify();
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 } // namespace Insights
 

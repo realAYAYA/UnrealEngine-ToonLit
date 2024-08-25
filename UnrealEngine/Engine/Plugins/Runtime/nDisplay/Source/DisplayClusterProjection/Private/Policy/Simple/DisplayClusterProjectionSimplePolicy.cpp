@@ -59,6 +59,7 @@ bool FDisplayClusterProjectionSimplePolicy::HandleStartScene(IDisplayClusterView
 		return true;
 	}
 
+	ReleaseMeshData(InViewport);
 	return false;
 }
 
@@ -66,8 +67,7 @@ void FDisplayClusterProjectionSimplePolicy::HandleEndScene(IDisplayClusterViewpo
 {
 	check(IsInGameThread());
 
-	// Forget about screen. It will be released by the Engine.
-	ScreenCompRef.ResetSceneComponent();
+	ReleaseMeshData(InViewport);
 }
 
 bool FDisplayClusterProjectionSimplePolicy::CalculateView(IDisplayClusterViewport* InViewport, const uint32 InContextNum, FVector& InOutViewLocation, FRotator& InOutViewRotation, const FVector& ViewOffset, const float WorldToMeters, const float NCP, const float FCP)
@@ -183,11 +183,13 @@ bool FDisplayClusterProjectionSimplePolicy::InitializeMeshData(IDisplayClusterVi
 {
 	UE_LOG(LogDisplayClusterProjectionSimple, Verbose, TEXT("Initializing screen geometry for viewport policy  %s"), *GetId());
 
+	const bool bExtraLog = !IsEditorOperationMode(InViewport);
+
 	// Get our VR root
-	ADisplayClusterRootActor* const RootActorPtr = InViewport->GetRootActor();
-	if (!RootActorPtr)
+	ADisplayClusterRootActor* const SceneRootActor = InViewport->GetConfiguration().GetRootActor(EDisplayClusterRootActorType::Scene);
+	if (!SceneRootActor)
 	{
-		if (!IsEditorOperationMode(InViewport))
+		if (bExtraLog)
 		{
 			UE_LOG(LogDisplayClusterProjectionSimple, Error, TEXT("Couldn't get a VR root object"));
 		}
@@ -195,38 +197,45 @@ bool FDisplayClusterProjectionSimplePolicy::InitializeMeshData(IDisplayClusterVi
 		return false;
 	}
 
-	// Get screen component
-	UDisplayClusterScreenComponent* ScreenComp = RootActorPtr->GetComponentByName<UDisplayClusterScreenComponent>(ScreenId);
+	// Get preview screen components (optional)
+	if(ADisplayClusterRootActor* const PreviewRootActor = InViewport->GetConfiguration().GetRootActor(EDisplayClusterRootActorType::Preview))
+	{
+		UDisplayClusterScreenComponent* PreviewScreenComp = PreviewRootActor->GetComponentByName<UDisplayClusterScreenComponent>(ScreenId);
+		PreviewScreenCompRef.SetSceneComponent(PreviewScreenComp);
+	}
+
+	// Get screen components
+	UDisplayClusterScreenComponent* ScreenComp = SceneRootActor->GetComponentByName<UDisplayClusterScreenComponent>(ScreenId);
+	ScreenCompRef.SetSceneComponent(ScreenComp);
+
 	if (!ScreenComp)
 	{
-		if (!IsEditorOperationMode(InViewport))
+		if (bExtraLog)
 		{
-			UE_LOG(LogDisplayClusterProjectionSimple, Warning, TEXT("Couldn't initialize screen component"));
+			UE_LOG(LogDisplayClusterProjectionSimple, Warning, TEXT("Couldn't initialize screen component '%s'"), *ScreenId);
 		}
 
 		return false;
 	}
 
-	return ScreenCompRef.SetSceneComponent(ScreenComp);
+	return true;
 }
 
 void FDisplayClusterProjectionSimplePolicy::ReleaseMeshData(IDisplayClusterViewport* InViewport)
 {
+	// Forget about screen. It will be released by the Engine.
+	ScreenCompRef.ResetSceneComponent();
+	PreviewScreenCompRef.ResetSceneComponent();
 }
 
-#if WITH_EDITOR
 UMeshComponent* FDisplayClusterProjectionSimplePolicy::GetOrCreatePreviewMeshComponent(IDisplayClusterViewport* InViewport, bool& bOutIsRootActorComponent)
 {
 	bOutIsRootActorComponent = true;
-
-	USceneComponent* SceneComponent = ScreenCompRef.GetOrFindSceneComponent();
-
-	if (SceneComponent)
+	if (USceneComponent* PreviewSceneComponent = PreviewScreenCompRef.GetOrFindSceneComponent())
 	{
-		UDisplayClusterScreenComponent* ScreenComp = StaticCast<UDisplayClusterScreenComponent*>(SceneComponent);
-		return (ScreenComp == nullptr) ? nullptr : ScreenComp;
+		UDisplayClusterScreenComponent* PreviewScreenComp = StaticCast<UDisplayClusterScreenComponent*>(PreviewSceneComponent);
+		return (PreviewScreenComp == nullptr) ? nullptr : PreviewScreenComp;
 	}
 
 	return nullptr;
 }
-#endif

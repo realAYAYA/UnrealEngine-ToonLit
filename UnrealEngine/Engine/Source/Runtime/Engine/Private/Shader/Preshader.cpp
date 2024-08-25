@@ -20,6 +20,77 @@ namespace UE
 namespace Shader
 {
 
+// For prettier debug printing of preshaders, we'd like add / subtract / multiply / divide to be operators instead of function calls.  To
+// implement this, we need to know when a given operator requires parentheses for correct order of operations.  We track the type of
+// expression for each stack element, and can decide whether an operator is valid without parentheses based on the state of the elements:
+//
+//		Singular,		Singular		+-*/ valid
+//		Singular,		SumTerms		+    valid
+//		Singular,		ProductTerms	+-*  valid
+//		SumTerms,		Singular		+-   valid
+//		SumTerms,		SumTerms		+    valid
+//		SumTerms,		ProductTerms	+-   valid
+//		ProductTerms,	Singular		+-*/ valid
+//		ProductTerms,	SumTerms		+    valid
+//		ProductTerms,	ProductTerms	+-*  valid
+//
+// Besides the above, swizzles require parentheses for non-singular elements, so we can use the state for that purpose as well.  Other
+// operators (like comparison), are quite rare in Preshaders, so it's not worth the effort to try to convert those.
+//
+enum class EPreshaderDebugStackType : uint8
+{
+	Singular,				// Stack element is a singular term (constant, param, function, parentheses wrapped, etc)
+	SumTerms,				// Stack element is a series of added / subtracted terms
+	ProductTerms,			// Stack element is a series of multiplied / divided terms
+};
+
+enum class EPreshaderOperatorType : uint8
+{
+	Add,
+	Sub,
+	Mul,
+	Div,
+	None
+};
+
+// Each entry in the table is the highest operator enum value that's valid without parentheses for that state combination.
+// As you can see from the valid combinations listed in the comment above, valid combinations are all monotonic sequences,
+// which is why we only need to store the maximum valid operator type, as opposed to flags.
+static const EPreshaderOperatorType PreshaderDebugStackLookup[3][3] =
+{
+	// Second element:
+	// Singular						SumTerms						ProductTerms
+	{ EPreshaderOperatorType::Div,	EPreshaderOperatorType::Add,	EPreshaderOperatorType::Mul },		// First element:  Singular
+	{ EPreshaderOperatorType::Sub,	EPreshaderOperatorType::Add,	EPreshaderOperatorType::Sub },		// First element:  SumTerms
+	{ EPreshaderOperatorType::Div,	EPreshaderOperatorType::Add,	EPreshaderOperatorType::Mul },		// First element:  ProductTerms
+};
+
+struct FPreshaderDebugStackElement
+{
+	FString Text;
+	EPreshaderDebugStackType DebugStackType;
+};
+
+struct FPreshaderDebugStack
+{
+	TArray<FPreshaderDebugStackElement> Elements;
+	TMap<FString, uint32>* ParameterReferences = nullptr;
+	uint32 OpCount = 0;
+	uint32 ParameterCount = 0;
+	bool bGenerateString = true;
+
+	void Push(FString Text, EPreshaderDebugStackType DebugStackType)
+	{
+		Elements.Push({ MoveTemp(Text), DebugStackType });
+	}
+
+	void Reset()
+	{
+		Elements.Reset();
+		// By design, doesn't reset "ParameterReferences", so they can be accumulated for the caller
+	}
+};
+
 FPreshaderType::FPreshaderType(const FType& InType) : ValueType(InType.ValueType)
 {
 	if (InType.IsStruct())
@@ -86,13 +157,13 @@ FValueComponent* FPreshaderStack::PushEmptyValue(EValueType InType, int32 NumCom
 FPreshaderValue FPreshaderStack::PopValue()
 {
 	FPreshaderValue Value;
-	Value.Type = Values.Pop(false);
+	Value.Type = Values.Pop(EAllowShrinking::No);
 
 	const int32 NumComponents = Value.Type.GetNumComponents();
 	const int32 ComponentIndex = Components.Num() - NumComponents;
 
 	Value.Component = MakeArrayView(Components.GetData() + ComponentIndex, NumComponents);
-	Components.RemoveAt(ComponentIndex, NumComponents, false);
+	Components.RemoveAt(ComponentIndex, NumComponents, EAllowShrinking::No);
 
 	return Value;
 }
@@ -326,6 +397,22 @@ static void EvaluateConstantZero(FPreshaderStack& Stack, FPreshaderDataContext& 
 	Stack.PushEmptyValue(Type); // Leave the empty value zero-initialized
 }
 
+static void EvaluateConstantZero(FPreshaderDebugStack& Stack, FPreshaderDataContext& RESTRICT Data)
+{
+	Stack.OpCount++;
+
+	FPreshaderStack TempStack;
+	EvaluateConstantZero(TempStack, Data);
+
+	if (Stack.bGenerateString)
+	{
+		// Display scalar constants without type information, for better readability
+		bool bIsScalar = TempStack.PeekValue().Type.ValueType == EValueType::Float1;
+		TStringBuilder<256> ValueBuffer;
+		Stack.Push(TempStack.PeekValue().AsShaderValue().ToString(bIsScalar ? EValueStringFormat::Description : EValueStringFormat::HLSL, ValueBuffer), EPreshaderDebugStackType::Singular);
+	}
+}
+
 static void EvaluateConstant(FPreshaderStack& Stack, FPreshaderDataContext& RESTRICT Data)
 {
 	const FPreshaderType Type = ReadPreshaderValue<FPreshaderType>(Data);
@@ -348,6 +435,22 @@ static void EvaluateConstant(FPreshaderStack& Stack, FPreshaderDataContext& REST
 			const int32 ComponmentSizeInBytes = GetComponentTypeSizeInBytes(ComponentType);
 			ReadPreshaderData(Data, ComponmentSizeInBytes, &Component[Index].Packed);
 		}
+	}
+}
+
+static void EvaluateConstant(FPreshaderDebugStack& Stack, FPreshaderDataContext& RESTRICT Data)
+{
+	Stack.OpCount++;
+
+	FPreshaderStack TempStack;
+	EvaluateConstant(TempStack, Data);
+
+	if (Stack.bGenerateString)
+	{
+		// Display scalar constants without type information, for better readability
+		bool bIsScalar = TempStack.PeekValue().Type.ValueType == EValueType::Float1;
+		TStringBuilder<256> ValueBuffer;
+		Stack.Push(TempStack.PeekValue().AsShaderValue().ToString(bIsScalar ? EValueStringFormat::Description : EValueStringFormat::HLSL, ValueBuffer), EPreshaderDebugStackType::Singular);
 	}
 }
 
@@ -383,6 +486,22 @@ static void EvaluateSetField(FPreshaderStack& Stack, FPreshaderDataContext& REST
 	}
 }
 
+static void EvaluateSetField(FPreshaderDebugStack& Stack, FPreshaderDataContext& RESTRICT Data)
+{
+	Stack.OpCount++;
+
+	const int32 ComponentIndex = ReadPreshaderValue<int32>(Data);
+	const int32 ComponentNum = ReadPreshaderValue<int32>(Data);
+
+	if (Stack.bGenerateString)
+	{
+		FString Value = Stack.Elements.Pop().Text;
+
+		Stack.Elements.Last().Text = FString::Printf(TEXT("SetField(%s[%d,%d], %s)"), *Stack.Elements.Last().Text, ComponentIndex, ComponentNum, *Value);
+		Stack.Elements.Last().DebugStackType = EPreshaderDebugStackType::Singular;
+	}
+}
+
 static void EvaluateGetField(FPreshaderStack& Stack, FPreshaderDataContext& RESTRICT Data)
 {
 	const FPreshaderValue StructValue = Stack.PopValue();
@@ -400,6 +519,28 @@ static void EvaluateGetField(FPreshaderStack& Stack, FPreshaderDataContext& REST
 	Stack.PushValue(FieldType, FieldComponents);
 }
 
+static void EvaluateGetField(FPreshaderDebugStack& Stack, FPreshaderDataContext& RESTRICT Data)
+{
+	Stack.OpCount++;
+
+	const FPreshaderType FieldType = ReadPreshaderValue<FPreshaderType>(Data);
+	const int32 ComponentIndex = ReadPreshaderValue<int32>(Data);
+	const int32 ComponentNum = FieldType.GetNumComponents();
+
+	if (Stack.bGenerateString)
+	{
+		if (Stack.Elements.Last().DebugStackType == EPreshaderDebugStackType::Singular)
+		{
+			Stack.Elements.Last().Text.Append(FString::Printf(TEXT("[%d]"), ComponentIndex));
+		}
+		else
+		{
+			Stack.Elements.Last().Text = FString::Printf(TEXT("(%s)[%d]"), *Stack.Elements.Last().Text, ComponentIndex);
+			Stack.Elements.Last().DebugStackType = EPreshaderDebugStackType::Singular;
+		}
+	}
+}
+
 static void EvaluatePushValue(FPreshaderStack& Stack, FPreshaderDataContext& RESTRICT Data)
 {
 	const int32 StackOffset = ReadPreshaderValue<uint16>(Data);
@@ -407,6 +548,17 @@ static void EvaluatePushValue(FPreshaderStack& Stack, FPreshaderDataContext& RES
 	// Make a local copy of the component array, as it will be invalidated when pushing the copy
 	const TArray<FValueComponent, TInlineAllocator<64>> LocalComponent(Value.Component);
 	Stack.PushValue(Value.Type, LocalComponent);
+}
+
+static void EvaluatePushValue(FPreshaderDebugStack& Stack, FPreshaderDataContext& RESTRICT Data)
+{
+	Stack.OpCount++;
+
+	const int32 StackOffset = ReadPreshaderValue<uint16>(Data);
+	if (Stack.bGenerateString)
+	{
+		Stack.Elements.Push(Stack.Elements[StackOffset]);
+	}
 }
 
 static void EvaluateAssign(FPreshaderStack& Stack)
@@ -419,6 +571,18 @@ static void EvaluateAssign(FPreshaderStack& Stack)
 	Stack.PopValue();
 	// Replace with the new value
 	Stack.PushValue(Value.Type, LocalComponent);
+}
+
+static void EvaluateAssign(FPreshaderDebugStack& Stack)
+{
+	Stack.OpCount++;
+
+	if (Stack.bGenerateString)
+	{
+		FPreshaderDebugStackElement Value = Stack.Elements.Pop();
+		Stack.Elements.Pop();
+		Stack.Elements.Push(Value);
+	}
 }
 
 static void EvaluateParameter(FPreshaderStack& Stack, const FUniformExpressionSet* UniformExpressionSet, uint32 ParameterIndex, const FMaterialRenderContext& Context)
@@ -496,6 +660,40 @@ static void EvaluateParameter(FPreshaderStack& Stack, const FUniformExpressionSe
 		{
 			Stack.PushValue(UniformExpressionSet->GetDefaultParameterValue(Parameter.ParameterType, Parameter.DefaultValueOffset));
 		}
+	}
+}
+
+static void EvaluateParameter(FPreshaderDebugStack& Stack, const FUniformExpressionSet* UniformExpressionSet, uint32 ParameterIndex, const FMaterialRenderContext& Context)
+{
+	Stack.OpCount++;
+	Stack.ParameterCount++;
+
+	if (!Stack.bGenerateString && !Stack.ParameterReferences)
+	{
+		return;
+	}
+
+	const FMaterialNumericParameterInfo& Parameter = UniformExpressionSet->GetNumericParameter(ParameterIndex);
+	FString ParameterName = Parameter.ParameterInfo.Name.ToString();
+
+	// Count the number of references to each parameter
+	if (Stack.ParameterReferences)
+	{
+		uint32 ParameterNameHash = GetTypeHash(ParameterName);
+		uint32* ParameterCount = Stack.ParameterReferences->FindByHash(ParameterNameHash, ParameterName);
+		if (ParameterCount)
+		{
+			(*ParameterCount)++;
+		}
+		else
+		{
+			Stack.ParameterReferences->AddByHash(ParameterNameHash, ParameterName, 1);
+		}
+	}
+
+	if (Stack.bGenerateString)
+	{
+		Stack.Push(FString::Printf(TEXT("Param[\"%s\"]"), *ParameterName), EPreshaderDebugStackType::Singular);
 	}
 }
 
@@ -597,6 +795,18 @@ static inline void EvaluateUnaryOp(FPreshaderStack& Stack, const Operation& Op)
 	Stack.PushValue(Op(Value));
 }
 
+static inline void EvaluateUnaryOpDebug(FPreshaderDebugStack& Stack, const TCHAR* Op)
+{
+	Stack.OpCount++;
+
+	if (Stack.bGenerateString)
+	{
+		// Length op is in a lambda, rather than a standalone function, so replace that with "Length" if we detect that's the Op passed in
+		Stack.Elements.Last().Text = FString::Printf(TEXT("%s( %s )"), FCString::Strstr(Op, TEXT("Sqrt(Dot(")) ? TEXT("Length") : Op, *Stack.Elements.Last().Text);
+		Stack.Elements.Last().DebugStackType = EPreshaderDebugStackType::Singular;
+	}
+}
+
 template<typename Operation>
 static inline void EvaluateUnaryOpInPlace(FPreshaderStack& Stack, const Operation& Op)
 {
@@ -612,12 +822,89 @@ static inline void EvaluateUnaryOpInPlace(FPreshaderStack& Stack, const Operatio
 	}
 }
 
+static inline void EvaluateUnaryOpInPlaceDebug(FPreshaderDebugStack& Stack, const TCHAR* Op)
+{
+	Stack.OpCount++;
+
+	if (Stack.bGenerateString)
+	{
+		FString LocalOp = Op;
+		LocalOp.RemoveFromEnd("InPlace");
+		Stack.Elements.Last().Text = FString::Printf(TEXT("%s( %s )"), *LocalOp, *Stack.Elements.Last().Text);
+		Stack.Elements.Last().DebugStackType = EPreshaderDebugStackType::Singular;
+	}
+}
+
 template<typename Operation>
 static inline void EvaluateBinaryOp(FPreshaderStack& Stack, const Operation& Op)
 {
 	const FValue Value1 = Stack.PopValue().AsShaderValue();
 	const FValue Value0 = Stack.PopValue().AsShaderValue();
 	Stack.PushValue(Op(Value0, Value1));
+}
+
+static inline void EvaluateBinaryOpDebug(FPreshaderDebugStack& Stack, const TCHAR* Op)
+{
+	Stack.OpCount++;
+
+	if (Stack.bGenerateString)
+	{
+		FPreshaderDebugStackElement Value1 = Stack.Elements.Pop();
+		FPreshaderDebugStackElement Value0 = Stack.Elements.Pop();
+
+		EPreshaderOperatorType PreshaderOperator = EPreshaderOperatorType::None;
+		if (!FCString::Strcmp(Op, TEXT("Add")))
+		{
+			PreshaderOperator = EPreshaderOperatorType::Add;
+		}
+		else if (!FCString::Strcmp(Op, TEXT("Sub")))
+		{
+			PreshaderOperator = EPreshaderOperatorType::Sub;
+		}
+		else if (!FCString::Strcmp(Op, TEXT("Mul")))
+		{
+			PreshaderOperator = EPreshaderOperatorType::Mul;
+		}
+		else if (!FCString::Strcmp(Op, TEXT("Div")))
+		{
+			PreshaderOperator = EPreshaderOperatorType::Div;
+		}
+
+		if (PreshaderOperator != EPreshaderOperatorType::None)
+		{
+			static const TCHAR PreshaderOperatorChars[4] = { '+', '-', '*', '/' };
+
+			TCHAR OperatorChar = PreshaderOperatorChars[(uint8)PreshaderOperator];
+			EPreshaderDebugStackType NewDebugStackType = PreshaderOperator >= EPreshaderOperatorType::Mul ? EPreshaderDebugStackType::ProductTerms : EPreshaderDebugStackType::SumTerms;
+			EPreshaderOperatorType MaxOperatorValid = PreshaderDebugStackLookup[(uint8)Value0.DebugStackType][(uint8)Value1.DebugStackType];
+
+			if (PreshaderOperator <= MaxOperatorValid)
+			{
+				// Operator is valid without parentheses
+				Stack.Push(FString::Printf(TEXT("%s %c %s"), *Value0.Text, OperatorChar, *Value1.Text), NewDebugStackType);
+			}
+			else
+			{
+				// Add parentheses around non-singular parameters.  At least one is non-singular, otherwise we would have gone through the above path
+				if (Value0.DebugStackType == EPreshaderDebugStackType::Singular)
+				{
+					Stack.Push(FString::Printf(TEXT("%s %c (%s)"), *Value0.Text, OperatorChar, *Value1.Text), NewDebugStackType);
+				}
+				else if (Value1.DebugStackType == EPreshaderDebugStackType::Singular)
+				{
+					Stack.Push(FString::Printf(TEXT("(%s) %c %s"), *Value0.Text, OperatorChar, *Value1.Text), NewDebugStackType);
+				}
+				else
+				{
+					Stack.Push(FString::Printf(TEXT("(%s) %c (%s)"), *Value0.Text, OperatorChar, *Value1.Text), NewDebugStackType);
+				}
+			}
+		}
+		else
+		{
+			Stack.Push(FString::Printf(TEXT("%s(%s, %s)"), Op, *Value0.Text, *Value1.Text), EPreshaderDebugStackType::Singular);
+		}
+	}
 }
 
 template<typename Operation, typename OperationFallback>
@@ -649,22 +936,45 @@ static inline void EvaluateTernaryOp(FPreshaderStack& Stack, const Operation& Op
 	Stack.PushValue(Op(Value0, Value1, Value2));
 }
 
+static inline void EvaluateTernaryOpDebug(FPreshaderDebugStack& Stack, const TCHAR* Op)
+{
+	Stack.OpCount++;
+
+	if (Stack.bGenerateString)
+	{
+		FString Value2 = Stack.Elements.Pop().Text;
+		FString Value1 = Stack.Elements.Pop().Text;
+		FString Value0 = Stack.Elements.Pop().Text;
+		Stack.Push(FString::Printf(TEXT("%s(%s, %s, %s)"), Op, *Value0, *Value1, *Value2), EPreshaderDebugStackType::Singular);
+	}
+}
+
 // Runs the swizzle in place on the top item on the stack
 static void EvaluateComponentSwizzle(FPreshaderStack& Stack, FPreshaderDataContext& RESTRICT Data)
 {
-	const uint8 NumElements = ReadPreshaderValue<uint8>(Data);
-	const uint8 IndexR = ReadPreshaderValue<uint8>(Data);
-	const uint8 IndexG = ReadPreshaderValue<uint8>(Data);
-	const uint8 IndexB = ReadPreshaderValue<uint8>(Data);
-	const uint8 IndexA = ReadPreshaderValue<uint8>(Data);
-
 	// Get original type and adjust the count and type to the new type.  Adjusting the count doesn't destroy
 	// the elements, so we can still access them, but saves time over having to re-fetch the component pointer
 	// in case the component array gets resized between the read and write.
 	const FPreshaderType& OriginalType = Stack.PeekType();
 	check(OriginalType.IsStruct() == false);
 
-	int32 OriginalNumComponents = GetValueTypeDescription(OriginalType.ValueType).NumComponents;
+	const int32 OriginalNumComponents = GetValueTypeDescription(OriginalType.ValueType).NumComponents;
+	const int32 NumElements = (int32)ReadPreshaderValue<uint8>(Data);
+	
+	auto ReadNextSourceComponentIndex = [&Data, OriginalNumComponents]()
+	{
+		uint8 SourceComponentIndex = ReadPreshaderValue<uint8>(Data);
+		if (OriginalNumComponents == 1 && SourceComponentIndex != uint8(INDEX_NONE))
+		{
+			// Replicate scalar
+			SourceComponentIndex = 0;
+		}
+		return (int32)SourceComponentIndex;
+	};
+	const int32 IndexR = ReadNextSourceComponentIndex();
+	const int32 IndexG = ReadNextSourceComponentIndex();
+	const int32 IndexB = ReadNextSourceComponentIndex();
+	const int32 IndexA = ReadNextSourceComponentIndex();
 
 	Stack.AdjustComponentCount(NumElements - OriginalNumComponents);
 	Stack.OverrideTopType(UE::Shader::MakeValueType(OriginalType.ValueType, NumElements));
@@ -717,6 +1027,44 @@ static void EvaluateComponentSwizzle(FPreshaderStack& Stack, FPreshaderDataConte
 	}
 }
 
+static void EvaluateComponentSwizzle(FPreshaderDebugStack& Stack, FPreshaderDataContext& RESTRICT Data)
+{
+	Stack.OpCount++;
+
+	const uint8 NumElements = ReadPreshaderValue<uint8>(Data);
+	const uint8 IndexR = FMath::Min(ReadPreshaderValue<uint8>(Data), (uint8)3);
+	const uint8 IndexG = FMath::Min(ReadPreshaderValue<uint8>(Data), (uint8)3);
+	const uint8 IndexB = FMath::Min(ReadPreshaderValue<uint8>(Data), (uint8)3);
+	const uint8 IndexA = FMath::Min(ReadPreshaderValue<uint8>(Data), (uint8)3);
+
+	if (Stack.bGenerateString)
+	{
+		if (Stack.Elements.Last().DebugStackType != EPreshaderDebugStackType::Singular)
+		{
+			Stack.Elements.Last().Text = FString::Printf(TEXT("(%s)"), *Stack.Elements.Last().Text);
+			Stack.Elements.Last().DebugStackType = EPreshaderDebugStackType::Singular;
+		}
+
+		static const TCHAR ComponentChars[4] = { 'x', 'y', 'z', 'w' };
+
+		switch (NumElements)
+		{
+		case 4:
+			Stack.Elements.Last().Text = FString::Printf(TEXT("%s.%c%c%c%c"), *Stack.Elements.Last().Text, ComponentChars[IndexR], ComponentChars[IndexG], ComponentChars[IndexB], ComponentChars[IndexA]);
+			break;
+		case 3:
+			Stack.Elements.Last().Text = FString::Printf(TEXT("%s.%c%c%c"), *Stack.Elements.Last().Text, ComponentChars[IndexR], ComponentChars[IndexG], ComponentChars[IndexB]);
+			break;
+		case 2:
+			Stack.Elements.Last().Text = FString::Printf(TEXT("%s.%c%c"), *Stack.Elements.Last().Text, ComponentChars[IndexR], ComponentChars[IndexG]);
+			break;
+		case 1:
+			Stack.Elements.Last().Text = FString::Printf(TEXT("%s.%c"), *Stack.Elements.Last().Text, ComponentChars[IndexR]);
+			break;
+		}
+	}
+}
+
 static void GetTextureParameter(const FMaterialRenderContext& Context, FPreshaderDataContext& RESTRICT Data, const UTexture*& OutTexture, const USparseVolumeTexture*& OutSparseVolumeTexture)
 {
 	const FHashedMaterialParameterInfo ParameterInfo = ReadPreshaderValue<FHashedMaterialParameterInfo>(Data);
@@ -757,6 +1105,18 @@ static void EvaluateTextureSize(const FMaterialRenderContext& Context, FPreshade
 	}
 }
 
+static void EvaluateTextureSize(const FMaterialRenderContext& Context, FPreshaderDebugStack& Stack, FPreshaderDataContext& RESTRICT Data)
+{
+	Stack.OpCount++;
+
+	const FHashedMaterialParameterInfo ParameterInfo = ReadPreshaderValue<FHashedMaterialParameterInfo>(Data);
+	const int32 TextureIndex = ReadPreshaderValue<int32>(Data);
+	if (Stack.bGenerateString)
+	{
+		Stack.Push(FString::Printf(TEXT("TEX[\"%s\"][%d].TextureSize"), *ParameterInfo.GetName().ToString(), TextureIndex), EPreshaderDebugStackType::Singular);
+	}
+}
+
 static void EvaluateTexelSize(const FMaterialRenderContext& Context, FPreshaderStack& Stack, FPreshaderDataContext& RESTRICT Data)
 {
 	const UTexture* Texture = nullptr;
@@ -779,6 +1139,18 @@ static void EvaluateTexelSize(const FMaterialRenderContext& Context, FPreshaderS
 	else
 	{
 		Stack.PushValue(FValue(0.0f, 0.0f, 0.0f));
+	}
+}
+
+static void EvaluateTexelSize(const FMaterialRenderContext& Context, FPreshaderDebugStack& Stack, FPreshaderDataContext& RESTRICT Data)
+{
+	Stack.OpCount++;
+
+	const FHashedMaterialParameterInfo ParameterInfo = ReadPreshaderValue<FHashedMaterialParameterInfo>(Data);
+	const int32 TextureIndex = ReadPreshaderValue<int32>(Data);
+	if (Stack.bGenerateString)
+	{
+		Stack.Push(FString::Printf(TEXT("TEX[\"%s\"][%d].TexelSize"), *ParameterInfo.GetName().ToString(), TextureIndex), EPreshaderDebugStackType::Singular);
 	}
 }
 
@@ -812,6 +1184,34 @@ static void EvaluateExternalTextureCoordinateOffset(const FMaterialRenderContext
 	Stack.PushValue(Result);
 }
 
+static void EvaluateExternalTextureCoordinateScaleRotation(const FMaterialRenderContext& Context, FPreshaderDebugStack& Stack, FPreshaderDataContext& RESTRICT Data)
+{
+	Stack.OpCount++;
+
+	const FScriptName ParameterName = ReadPreshaderValue<FScriptName>(Data);
+	const FGuid ExternalTextureGuid = ReadPreshaderValue<FGuid>(Data);
+	const int32 TextureIndex = ReadPreshaderValue<int32>(Data);
+
+	if (Stack.bGenerateString)
+	{
+		Stack.Push(FString::Printf(TEXT("TEX[\"%s\"].ExternalTextureScaleRotation"), *ParameterName.ToString()), EPreshaderDebugStackType::Singular);
+	}
+}
+
+static void EvaluateExternalTextureCoordinateOffset(const FMaterialRenderContext& Context, FPreshaderDebugStack& Stack, FPreshaderDataContext& RESTRICT Data)
+{
+	Stack.OpCount++;
+
+	const FScriptName ParameterName = ReadPreshaderValue<FScriptName>(Data);
+	const FGuid ExternalTextureGuid = ReadPreshaderValue<FGuid>(Data);
+	const int32 TextureIndex = ReadPreshaderValue<int32>(Data);
+
+	if (Stack.bGenerateString)
+	{
+		Stack.Push(FString::Printf(TEXT("TEX[\"%s\"].ExternalTextureOffset"), *ParameterName.ToString()), EPreshaderDebugStackType::Singular);
+	}
+}
+
 static void EvaluateRuntimeVirtualTextureUniform(const FMaterialRenderContext& Context, FPreshaderStack& Stack, FPreshaderDataContext& RESTRICT Data)
 {
 	const FHashedMaterialParameterInfo ParameterInfo = ReadPreshaderValue<FHashedMaterialParameterInfo>(Data);
@@ -830,6 +1230,20 @@ static void EvaluateRuntimeVirtualTextureUniform(const FMaterialRenderContext& C
 	else
 	{
 		Stack.PushValue(FValue(0.f, 0.f, 0.f, 0.f));
+	}
+}
+
+static void EvaluateRuntimeVirtualTextureUniform(const FMaterialRenderContext& Context, FPreshaderDebugStack& Stack, FPreshaderDataContext& RESTRICT Data)
+{
+	Stack.OpCount++;
+
+	const FHashedMaterialParameterInfo ParameterInfo = ReadPreshaderValue<FHashedMaterialParameterInfo>(Data);
+	const int32 TextureIndex = ReadPreshaderValue<int32>(Data);
+	const int32 VectorIndex = ReadPreshaderValue<int32>(Data);
+
+	if (Stack.bGenerateString)
+	{
+		Stack.Push(FString::Printf(TEXT("TEX[\"%s\"].VirtualTextureUniform[%d]"), *ParameterInfo.Name.ToString(), VectorIndex), EPreshaderDebugStackType::Singular);
 	}
 }
 
@@ -854,6 +1268,20 @@ static void EvaluateSparseTextureUniform(const FMaterialRenderContext& Context, 
 	}
 }
 
+static void EvaluateSparseTextureUniform(const FMaterialRenderContext& Context, FPreshaderDebugStack& Stack, FPreshaderDataContext& RESTRICT Data)
+{
+	Stack.OpCount++;
+
+	const FHashedMaterialParameterInfo ParameterInfo = ReadPreshaderValue<FHashedMaterialParameterInfo>(Data);
+	const int32 TextureIndex = ReadPreshaderValue<int32>(Data);
+	const int32 VectorIndex = ReadPreshaderValue<int32>(Data);
+
+	if (Stack.bGenerateString)
+	{
+		Stack.Push(FString::Printf(TEXT("TEX[\"%s\"].SparseTextureUniform[%d]"), *ParameterInfo.Name.ToString(), VectorIndex), EPreshaderDebugStackType::Singular);
+	}
+}
+
 static void EvaluateJump(FPreshaderDataContext& RESTRICT Data)
 {
 	const int32 JumpOffset = ReadPreshaderValue<int32>(Data);
@@ -871,6 +1299,21 @@ static void EvaluateJumpIfFalse(FPreshaderStack& Stack, FPreshaderDataContext& R
 	{
 		Data.Ptr += JumpOffset;
 	}
+}
+
+static void EvaluateJumpIfFalse(FPreshaderDebugStack& Stack, FPreshaderDataContext& RESTRICT Data)
+{
+	Stack.OpCount++;
+
+	const int32 JumpOffset = ReadPreshaderValue<int32>(Data);
+	check(Data.Ptr + JumpOffset <= Data.EndPtr);
+
+	// It's complicated to include conditional jumps in a stack evaluator.  Ideally we'd want to evaluate and display both
+	// branches, but that requires evaluating both branches forward to where the branches reach the same instruction
+	// again, then converting stack entries that diverge between the two code paths to include a conditional expression.
+
+	// The new translator can generate conditionals, until as above is implemented, ignore the conditional.
+	// This may elevate the reported count as actually exclusive branches may both be debug evaluated.
 }
 
 FPreshaderValue EvaluatePreshader(const FUniformExpressionSet* UniformExpressionSet, const FMaterialRenderContext& Context, FPreshaderStack& Stack, FPreshaderDataContext& RESTRICT Data)
@@ -952,6 +1395,117 @@ FPreshaderValue EvaluatePreshader(const FUniformExpressionSet* UniformExpression
 	FPreshaderValue Result;
 	Stack.PopResult(Result);
 	return Result;
+}
+
+#define EvaluateUnaryOp(STACK, OP) EvaluateUnaryOpDebug(STACK, TEXT(#OP))
+#define EvaluateUnaryOpInPlace(STACK, IN_PLACE_OP) EvaluateUnaryOpInPlaceDebug(STACK, TEXT(#IN_PLACE_OP))
+#define EvaluateBinaryOp(STACK, OP) EvaluateBinaryOpDebug(STACK, TEXT(#OP))
+#define EvaluateBinaryOpInPlace(STACK, IN_PLACE_OP, OP) EvaluateBinaryOpDebug(STACK, TEXT(#OP))
+#define EvaluateTernaryOp(STACK, OP) EvaluateTernaryOpDebug(STACK, TEXT(#OP))
+
+// The body of this function is designed to be completely identical to EvaluatePreshader above, other than the lack of popping the result
+// at the end, so new opcodes can be added and the body trivially cut-and-pasted, for ease of maintenance.  Temporary redefining some Evaluate
+// functions as macros is done above to automate string-izing of function names.
+static void EvaluatePreshaderDebug(const FUniformExpressionSet* UniformExpressionSet, const FMaterialRenderContext& Context, FPreshaderDebugStack& Stack, FPreshaderDataContext& RESTRICT Data)
+{
+	uint8 const* const DataEnd = Data.EndPtr;
+
+	Stack.Reset();
+	while (Data.Ptr < DataEnd)
+	{
+		const EPreshaderOpcode Opcode = (EPreshaderOpcode)ReadPreshaderValue<uint8>(Data);
+		switch (Opcode)
+		{
+		case EPreshaderOpcode::ConstantZero: EvaluateConstantZero(Stack, Data); break;
+		case EPreshaderOpcode::Constant: EvaluateConstant(Stack, Data); break;
+		case EPreshaderOpcode::GetField: EvaluateGetField(Stack, Data); break;
+		case EPreshaderOpcode::SetField: EvaluateSetField(Stack, Data); break;
+		case EPreshaderOpcode::Parameter:
+			EvaluateParameter(Stack, UniformExpressionSet, ReadPreshaderValue<uint16>(Data), Context);
+			break;
+		case EPreshaderOpcode::PushValue: EvaluatePushValue(Stack, Data); break;
+		case EPreshaderOpcode::Assign: EvaluateAssign(Stack); break;
+		case EPreshaderOpcode::Add: EvaluateBinaryOpInPlace(Stack, AddInPlace, Add); break;
+		case EPreshaderOpcode::Sub: EvaluateBinaryOpInPlace(Stack, SubInPlace, Sub); break;
+		case EPreshaderOpcode::Mul: EvaluateBinaryOpInPlace(Stack, MulInPlace, Mul); break;
+		case EPreshaderOpcode::Div: EvaluateBinaryOpInPlace(Stack, DivInPlace, Div); break;
+		case EPreshaderOpcode::Less: EvaluateBinaryOp(Stack, Less); break;
+		case EPreshaderOpcode::Greater: EvaluateBinaryOp(Stack, Greater); break;
+		case EPreshaderOpcode::LessEqual: EvaluateBinaryOp(Stack, LessEqual); break;
+		case EPreshaderOpcode::GreaterEqual: EvaluateBinaryOp(Stack, GreaterEqual); break;
+		case EPreshaderOpcode::Fmod: EvaluateBinaryOpInPlace(Stack, FmodInPlace, Fmod); break;
+		case EPreshaderOpcode::Min: EvaluateBinaryOpInPlace(Stack, MinInPlace, Min); break;
+		case EPreshaderOpcode::Max: EvaluateBinaryOpInPlace(Stack, MaxInPlace, Max); break;
+		case EPreshaderOpcode::Clamp: EvaluateTernaryOp(Stack, Clamp); break;
+		case EPreshaderOpcode::Dot: EvaluateBinaryOp(Stack, Dot); break;
+		case EPreshaderOpcode::Cross: EvaluateBinaryOp(Stack, Cross); break;
+		case EPreshaderOpcode::Neg: EvaluateUnaryOpInPlace(Stack, NegInPlace); break;
+		case EPreshaderOpcode::Sqrt: EvaluateUnaryOpInPlace(Stack, SqrtInPlace); break;
+		case EPreshaderOpcode::Rcp: EvaluateUnaryOpInPlace(Stack, RcpInPlace); break;
+		case EPreshaderOpcode::Length: EvaluateUnaryOp(Stack, [](const FValue& Value) { return Sqrt(Dot(Value, Value)); }); break;
+		case EPreshaderOpcode::Normalize: EvaluateUnaryOpInPlace(Stack, NormalizeInPlace); break;
+		case EPreshaderOpcode::Sin: EvaluateUnaryOpInPlace(Stack, SinInPlace); break;
+		case EPreshaderOpcode::Cos: EvaluateUnaryOpInPlace(Stack, CosInPlace); break;
+		case EPreshaderOpcode::Tan: EvaluateUnaryOpInPlace(Stack, TanInPlace); break;
+		case EPreshaderOpcode::Asin: EvaluateUnaryOpInPlace(Stack, AsinInPlace); break;;
+		case EPreshaderOpcode::Acos: EvaluateUnaryOpInPlace(Stack, AcosInPlace); break;
+		case EPreshaderOpcode::Atan: EvaluateUnaryOpInPlace(Stack, AtanInPlace); break;
+		case EPreshaderOpcode::Atan2: EvaluateBinaryOpInPlace(Stack, Atan2InPlace, Atan2); break;
+		case EPreshaderOpcode::Abs: EvaluateUnaryOpInPlace(Stack, AbsInPlace); break;
+		case EPreshaderOpcode::Saturate: EvaluateUnaryOpInPlace(Stack, SaturateInPlace); break;
+		case EPreshaderOpcode::Floor: EvaluateUnaryOpInPlace(Stack, FloorInPlace); break;
+		case EPreshaderOpcode::Ceil: EvaluateUnaryOpInPlace(Stack, CeilInPlace); break;
+		case EPreshaderOpcode::Round: EvaluateUnaryOpInPlace(Stack, RoundInPlace); break;
+		case EPreshaderOpcode::Trunc: EvaluateUnaryOpInPlace(Stack, TruncInPlace); break;
+		case EPreshaderOpcode::Sign: EvaluateUnaryOpInPlace(Stack, SignInPlace); break;
+		case EPreshaderOpcode::Frac: EvaluateUnaryOpInPlace(Stack, FracInPlace); break;
+		case EPreshaderOpcode::Fractional: EvaluateUnaryOpInPlace(Stack, FractionalInPlace); break;
+		case EPreshaderOpcode::Exp: EvaluateUnaryOpInPlace(Stack, ExpInPlace); break;
+		case EPreshaderOpcode::Exp2: EvaluateUnaryOpInPlace(Stack, Exp2InPlace); break;
+		case EPreshaderOpcode::Log: EvaluateUnaryOpInPlace(Stack, LogInPlace); break;
+		case EPreshaderOpcode::Log2: EvaluateUnaryOpInPlace(Stack, Log2InPlace); break;
+		case EPreshaderOpcode::Log10: EvaluateUnaryOpInPlace(Stack, Log10InPlace); break;
+		case EPreshaderOpcode::ComponentSwizzle: EvaluateComponentSwizzle(Stack, Data); break;
+		case EPreshaderOpcode::AppendVector: EvaluateBinaryOpInPlace(Stack, AppendInPlace, Append); break;
+		case EPreshaderOpcode::TextureSize: EvaluateTextureSize(Context, Stack, Data); break;
+		case EPreshaderOpcode::TexelSize: EvaluateTexelSize(Context, Stack, Data); break;
+		case EPreshaderOpcode::ExternalTextureCoordinateScaleRotation: EvaluateExternalTextureCoordinateScaleRotation(Context, Stack, Data); break;
+		case EPreshaderOpcode::ExternalTextureCoordinateOffset: EvaluateExternalTextureCoordinateOffset(Context, Stack, Data); break;
+		case EPreshaderOpcode::RuntimeVirtualTextureUniform: EvaluateRuntimeVirtualTextureUniform(Context, Stack, Data); break;
+		case EPreshaderOpcode::SparseVolumeTextureUniform: EvaluateSparseTextureUniform(Context, Stack, Data); break;
+		case EPreshaderOpcode::Jump: EvaluateJump(Data); break;
+		case EPreshaderOpcode::JumpIfFalse: EvaluateJumpIfFalse(Stack, Data); break;
+		default:
+			UE_LOG(LogMaterial, Fatal, TEXT("Unknown preshader opcode %d"), (uint8)Opcode);
+			break;
+		}
+	}
+	check(Data.Ptr == DataEnd);
+}
+
+#undef EvaluateUnaryOp
+#undef EvaluateUnaryOpInPlace
+#undef EvaluateBinaryOp
+#undef EvaluateBinaryOpInPlace
+#undef EvaluateTernaryOp
+
+FString PreshaderGenerateDebugString(const FUniformExpressionSet& UniformExpressionSet, const FMaterialRenderContext& Context, FPreshaderDataContext& RESTRICT Data, TMap<FString, uint32>* ParameterReferences)
+{
+	FPreshaderDebugStack Stack;
+	Stack.ParameterReferences = ParameterReferences;
+	EvaluatePreshaderDebug(&UniformExpressionSet, Context, Stack, Data);
+
+	return Stack.Elements.Pop().Text;
+}
+
+void PreshaderComputeDebugStats(const FUniformExpressionSet& UniformExpressionSet, const FMaterialRenderContext& Context, FPreshaderDataContext& RESTRICT Data, uint32& TotalParameters, uint32& TotalOps)
+{
+	FPreshaderDebugStack Stack;
+	Stack.bGenerateString = false;
+	EvaluatePreshaderDebug(&UniformExpressionSet, Context, Stack, Data);
+
+	TotalParameters += Stack.ParameterCount;
+	TotalOps += Stack.OpCount;
 }
 
 FPreshaderValue FPreshaderData::Evaluate(FUniformExpressionSet* UniformExpressionSet, const struct FMaterialRenderContext& Context, FPreshaderStack& Stack) const

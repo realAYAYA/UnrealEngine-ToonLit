@@ -23,7 +23,6 @@
 #include "KismetCompilerMisc.h"
 #include "Styling/AppStyle.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "UObject/Class.h"
 #include "UObject/Object.h"
 #include "UObject/ObjectPtr.h"

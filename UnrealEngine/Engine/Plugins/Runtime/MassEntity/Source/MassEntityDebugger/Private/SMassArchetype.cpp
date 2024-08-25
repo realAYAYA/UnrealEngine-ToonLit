@@ -55,11 +55,20 @@ void SMassArchetype::Construct(const FArguments& InArgs, TSharedPtr<FMassDebugge
 		.Font(FCoreStyle::GetDefaultFontStyle("Mono", 9))
 	];
 	
-	FText ArchetypeDescription = FText::Format(LOCTEXT("ArchetypeDescrption", "EntitiesCount: {0}\nEntitiesCountPerChunk: {1}\nChunksCount: {2}\nAllocated memory: {3}")
+	FText ArchetypeDescription = FText::Format(LOCTEXT("ArchetypeDescrption", "EntitiesCount: {0}\
+		\nBytesPerEntity: {1}\
+		\nEntitiesCountPerChunk: {2}\
+		\nChunksCount: {3}\
+		\nAllocated memory: {4}\
+		\nWasted memory : {5} ({6}%)")
 		, FText::AsNumber(ArchetypeDebugData.ArchetypeStats.EntitiesCount)
+		, FText::AsMemory(ArchetypeDebugData.ArchetypeStats.BytesPerEntity)
 		, FText::AsNumber(ArchetypeDebugData.ArchetypeStats.EntitiesCountPerChunk)
 		, FText::AsNumber(ArchetypeDebugData.ArchetypeStats.ChunksCount)
-		, FText::AsMemory(ArchetypeDebugData.ArchetypeStats.AllocatedSize));
+		, FText::AsMemory(ArchetypeDebugData.ArchetypeStats.AllocatedSize)
+		, FText::AsMemory(ArchetypeDebugData.ArchetypeStats.WastedEntityMemory)
+		, FText::AsNumber(float(ArchetypeDebugData.ArchetypeStats.WastedEntityMemory) * 100.f / ArchetypeDebugData.ArchetypeStats.AllocatedSize)
+		);
 	
 	Box->AddSlot()
 	.AutoHeight()
@@ -68,6 +77,22 @@ void SMassArchetype::Construct(const FArguments& InArgs, TSharedPtr<FMassDebugge
 		SNew(STextBlock)
 		.Text(ArchetypeDescription)
 	];
+
+	if (ArchetypeDebugData.ArchetypeStats.EntitiesCount != 0 && ArchetypeDebugData.ArchetypeStats.ChunksCount != 0)
+	{
+		const float AverageEntitiesPerChunkActual = float(ArchetypeDebugData.ArchetypeStats.EntitiesCount) / ArchetypeDebugData.ArchetypeStats.ChunksCount;
+		FText DerivedArchetypeDescription = FText::Format(LOCTEXT("ArchetypeDescrptionAux", "Actual average Entities per Chunk: {0}\nChunk occupancy: {1}")
+			, FText::AsNumber(AverageEntitiesPerChunkActual)
+			, FText::AsNumber(AverageEntitiesPerChunkActual / ArchetypeDebugData.ArchetypeStats.EntitiesCountPerChunk));
+
+		Box->AddSlot()
+			.AutoHeight()
+			.Padding(0, 4)
+			[
+				SNew(STextBlock)
+					.Text(DerivedArchetypeDescription)
+			];
+	}
 
 	const FMassArchetypeCompositionDescriptor& Composition = ArchetypeData->Composition;
 	const FSlateBrush* Brush = FMassDebuggerStyle::GetBrush("MassDebug.Fragment");

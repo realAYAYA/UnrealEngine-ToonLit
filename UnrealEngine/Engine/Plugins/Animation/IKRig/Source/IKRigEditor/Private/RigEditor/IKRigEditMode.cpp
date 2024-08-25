@@ -388,50 +388,18 @@ bool FIKRigEditMode::HandleClick(FEditorViewportClient* InViewportClient, HHitPr
 
 bool FIKRigEditMode::StartTracking(FEditorViewportClient* InViewportClient, FViewport* InViewport)
 {
-	const TSharedPtr<FIKRigEditorController> Controller = EditorController.Pin();
-	if (!Controller.IsValid())
-	{
-		return false; 
-	}
-	
-	TArray<FName> SelectedGoalNames;
-	Controller->GetSelectedGoalNames(SelectedGoalNames);
-	if (SelectedGoalNames.IsEmpty())
-	{
-		return false; // no goals selected to manipulate
-	}
-
 	const EAxisList::Type CurrentAxis = InViewportClient->GetCurrentWidgetAxis();
 	if (CurrentAxis == EAxisList::None)
 	{
 		return false; // not manipulating a required axis
 	}
 
-	GEditor->BeginTransaction(LOCTEXT("ManipulateGoal", "Manipulate IK Rig Goal"));
-	for (const FName& SelectedGoal : SelectedGoalNames)
-	{
-		Controller->AssetController->ModifyGoal(SelectedGoal);
-	}
-	Controller->bManipulatingGoals = true;
-	return true;
+	return HandleBeginTransform();
 }
 
 bool FIKRigEditMode::EndTracking(FEditorViewportClient* InViewportClient, FViewport* InViewport)
 {
-	const TSharedPtr<FIKRigEditorController> Controller = EditorController.Pin();
-	if (!Controller.IsValid())
-	{
-		return false; 
-	}
-	
-	if (!Controller->bManipulatingGoals)
-	{
-		return false; // not handled
-	}
-
-	GEditor->EndTransaction();
-	Controller->bManipulatingGoals = false;
-	return true;
+	return HandleEndTransform();
 }
 
 bool FIKRigEditMode::InputDelta(FEditorViewportClient* InViewportClient, FViewport* InViewport, FVector& InDrag, FRotator& InRot, FVector& InScale)
@@ -478,6 +446,58 @@ bool FIKRigEditMode::InputDelta(FEditorViewportClient* InViewportClient, FViewpo
 	return true;
 }
 
+bool FIKRigEditMode::BeginTransform(const FGizmoState& InState)
+{
+	return HandleBeginTransform();
+}
+
+bool FIKRigEditMode::EndTransform(const FGizmoState& InState)
+{
+	return HandleEndTransform();
+}
+
+bool FIKRigEditMode::HandleBeginTransform() const
+{
+	const TSharedPtr<FIKRigEditorController> Controller = EditorController.Pin();
+	if (!Controller.IsValid())
+	{
+		return false; 
+	}
+	
+	TArray<FName> SelectedGoalNames;
+	Controller->GetSelectedGoalNames(SelectedGoalNames);
+	if (SelectedGoalNames.IsEmpty())
+	{
+		return false; // no goals selected to manipulate
+	}
+
+	for (const FName& SelectedGoal : SelectedGoalNames)
+	{
+		(void)Controller->AssetController->ModifyGoal(SelectedGoal);
+	}
+	Controller->bManipulatingGoals = true;
+
+	return true;
+}
+
+bool FIKRigEditMode::HandleEndTransform() const
+{
+	const TSharedPtr<FIKRigEditorController> Controller = EditorController.Pin();
+	if (!Controller.IsValid())
+	{
+		return false; 
+	}
+	
+	if (!Controller->bManipulatingGoals)
+	{
+		return false; // not handled
+	}
+
+	Controller->bManipulatingGoals = false;
+	return true;
+}
+
+
 bool FIKRigEditMode::GetCustomDrawingCoordinateSystem(FMatrix& InMatrix, void* InData)
 {
 	const TSharedPtr<FIKRigEditorController> Controller = EditorController.Pin();
@@ -516,26 +536,11 @@ bool FIKRigEditMode::InputKey(FEditorViewportClient* ViewportClient, FViewport* 
 		
 	if (Key == EKeys::Delete || Key == EKeys::BackSpace)
 	{
-		const TSharedPtr<FIKRigEditorController> Controller = EditorController.Pin();
-		if (!Controller.IsValid())
+		if (EditorController.IsValid())
 		{
-			return false;
+			EditorController.Pin()->HandleDeleteSelectedElements();
+			return true;
 		}
-	
-		TArray<FName> SelectedGoalNames;
-		Controller->GetSelectedGoalNames(SelectedGoalNames);
-		if (SelectedGoalNames.IsEmpty())
-		{
-			return false; // nothing selected to manipulate
-		}
-
-		for (const FName& GoalName : SelectedGoalNames)
-		{
-			Controller->AssetController->RemoveGoal(GoalName);
-		}
-
-		Controller->RefreshAllViews();
-		return true;
 	}
 
 	return false;

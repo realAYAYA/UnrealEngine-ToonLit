@@ -5,6 +5,7 @@
 #include "Animation/AnimMontage.h"
 #include "Animation/AnimInstanceProxy.h"
 #include "Animation/AnimationPoseData.h"
+#include "Animation/AnimPoseSearchProvider.h"
 #include "Animation/ExposedValueHandler.h"
 #include "Logging/TokenizedMessage.h"
 
@@ -61,12 +62,14 @@ void FAnimNode_SequencePlayerBase::Initialize_AnyThread(const FAnimationInitiali
 
 	if (CurrentSequence != nullptr)
 	{
+		const float EffectiveStartPosition = GetEffectiveStartPosition(Context);
 		const float CurrentPlayRate = GetPlayRate();
 		const float CurrentPlayRateBasis = GetPlayRateBasis();
 
+		InternalTimeAccumulator = FMath::Clamp(EffectiveStartPosition, 0.f, CurrentSequence->GetPlayLength());
 		const float AdjustedPlayRate = PlayRateScaleBiasClampState.ApplyTo(GetPlayRateScaleBiasClampConstants(), FMath::IsNearlyZero(CurrentPlayRateBasis) ? 0.f : (CurrentPlayRate / CurrentPlayRateBasis), 0.f);
 		const float EffectivePlayrate = CurrentSequence->RateScale * AdjustedPlayRate;
-		if ((InternalTimeAccumulator == 0.f) && (EffectivePlayrate < 0.f))
+		if ((EffectiveStartPosition == 0.f) && (EffectivePlayrate < 0.f))
 		{
 			InternalTimeAccumulator = CurrentSequence->GetPlayLength();
 		}
@@ -109,7 +112,7 @@ void FAnimNode_SequencePlayerBase::UpdateAssetPlayer(const FAnimationUpdateConte
 
 	TRACE_ANIM_SEQUENCE_PLAYER(Context, *this);
 	TRACE_ANIM_NODE_VALUE(Context, TEXT("Name"), CurrentSequence != nullptr ? CurrentSequence->GetFName() : NAME_None);
-	TRACE_ANIM_NODE_VALUE(Context, TEXT("Sequence"), CurrentSequence);
+	TRACE_ANIM_NODE_VALUE(Context, TEXT("Asset"), CurrentSequence);
 	TRACE_ANIM_NODE_VALUE(Context, TEXT("Playback Time"), InternalTimeAccumulator);
 }
 
@@ -155,6 +158,20 @@ float FAnimNode_SequencePlayerBase::GetTimeFromEnd(float CurrentNodeTime) const
 
 float FAnimNode_SequencePlayerBase::GetEffectiveStartPosition(const FAnimationBaseContext& Context) const
 {
+	// Override the start position if pose matching is enabled
+	const UObject* CurrentSequence = GetSequence();
+	if (CurrentSequence != nullptr && GetStartFromMatchingPose())
+	{
+		if (const UE::Anim::IPoseSearchProvider* PoseSearchProvider = UE::Anim::IPoseSearchProvider::Get())
+		{
+			UE::Anim::IPoseSearchProvider::FSearchResult Result = PoseSearchProvider->Search(Context, MakeArrayView(&CurrentSequence, 1));
+			if (Result.SelectedAsset != nullptr)
+			{
+				return Result.TimeOffsetSeconds;
+			}
+		}
+	}
+
 	return GetStartPosition();
 }
 

@@ -68,6 +68,10 @@ void UCommonInputSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
 	Super::Initialize(Collection);
 
+	// There is a dependency on the Enhanced Input subsystem below so we need to make sure it is available
+	// in a packaged game
+	Collection.InitializeDependency<UEnhancedInputLocalPlayerSubsystem>();
+
 	FCommonInputBase::GetInputSettings()->LoadData();
 
 	const UCommonInputPlatformSettings* Settings = UPlatformSettingsManager::Get().GetSettingsForPlatform<UCommonInputPlatformSettings>();
@@ -520,9 +524,10 @@ bool UCommonInputSubsystem::PlatformSupportsInputType(ECommonInputType InInputTy
 		break;
 		case ECommonInputType::Touch:
 		{
-			bPlatformSupportsInput &= UE_COMMONINPUT_PLATFORM_SUPPORTS_TOUCH != 0;
-#if PLATFORM_DESKTOP && !UE_BUILD_SHIPPING
-			bPlatformSupportsInput = true; // Enable touch in debug editor
+			bPlatformSupportsInput &= !UE_COMMONINPUT_FORCE_TOUCH_SUPPORT_DISABLED;
+#if WITH_EDITOR
+			// Support touch testing (testing with UseMouseForTouch setting enabled or with URemote in the editor) until touch is supported on desktop
+			bPlatformSupportsInput = true;
 #endif
 		}
 		break;

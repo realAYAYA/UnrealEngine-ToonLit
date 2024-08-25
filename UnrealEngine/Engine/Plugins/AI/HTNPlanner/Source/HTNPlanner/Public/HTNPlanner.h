@@ -55,7 +55,7 @@ struct HTNPLANNER_API FHTNPlanner
 protected:
 	FHTNWorldState& CurrentWorldState()	{ return CurrentState.WorldState; }
 	void RecordDecomposition(const FHTNPolicy::FTaskID CurrentTask, const int32 MethodIndex) { RestorePoints.Push(FHTNRestorePoint(CurrentState, CurrentTask, MethodIndex)); }
-	void RestoreDecomposition() { CurrentState = RestorePoints.Pop(/*bAllowShrinking=*/false); }
+	void RestoreDecomposition() { CurrentState = RestorePoints.Pop(EAllowShrinking::No); }
 	bool CanRollBack() const { return RestorePoints.Num() > 0; }
 	int32 GetMethodIndex() const { return CurrentState.NextMethod; }
 	FHTNPolicy::FTaskID GetActiveTask() const { return CurrentState.ActiveTask; }

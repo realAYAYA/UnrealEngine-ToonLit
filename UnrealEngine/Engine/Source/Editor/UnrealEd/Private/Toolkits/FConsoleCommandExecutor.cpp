@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Toolkits/FConsoleCommandExecutor.h"
+#include "ConsoleSettings.h"
 #include "EngineGlobals.h"
 #include "Editor.h"
 #include "Toolkits/GlobalEditorCommonCommands.h"
@@ -54,6 +55,7 @@ void FConsoleCommandExecutor::GetAutoCompleteSuggestions(const TCHAR* Input, TAr
 	};
 
 	IConsoleManager::Get().ForEachConsoleObjectThatContains(FConsoleObjectVisitor::CreateLambda(OnConsoleVariable), Input);
+	Out.Append(GetDefault<UConsoleSettings>()->GetFilteredManualAutoCompleteCommands(Input));
 }
 
 void FConsoleCommandExecutor::GetExecHistory(TArray<FString>& Out)

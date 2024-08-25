@@ -1,3 +1,4 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
 #pragma once
 
 #ifndef USE_FIRST_BOUNCE_RAY_GUIDING

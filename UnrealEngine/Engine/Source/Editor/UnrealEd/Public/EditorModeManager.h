@@ -13,6 +13,7 @@
 
 #include "Elements/Framework/TypedElementSelectionSet.h"
 
+class ITypedElementWorldInterface;
 class FCanvas;
 class FEditorViewportClient;
 class FEdMode;
@@ -29,6 +30,9 @@ class UInteractiveGizmoManager;
 class UInputRouter;
 class UModeManagerInteractiveToolsContext;
 class UTypedElementSelectionSet;
+class IGizmoStateTarget;
+class UEditorGizmoStateTarget;
+struct FGizmoState;
 
 /**
  * A helper class to store the state of the various editor modes.
@@ -131,9 +135,10 @@ public:
 	 */
 	UNREALED_API bool EnsureNotInMode(FEditorModeID ModeID, const FText& ErrorMsg = FText::GetEmpty(), bool bNotifyUser = false) const;
 
-	UNREALED_API FMatrix GetCustomDrawingCoordinateSystem();
-	UNREALED_API FMatrix GetCustomInputCoordinateSystem();
-	UNREALED_API FMatrix GetLocalCoordinateSystem();
+	UNREALED_API FMatrix GetCustomDrawingCoordinateSystem() const;
+	UNREALED_API FMatrix GetCustomInputCoordinateSystem() const;
+	UNREALED_API FMatrix GetLocalCoordinateSystem() const;
+	UNREALED_API FMatrix GetParentSpaceCoordinateSystem() const;
 	
 	/** 
 	 * Returns true if the passed in editor mode is active 
@@ -395,7 +400,7 @@ public:
 	 * 
 	 * @param bGetRawValue true when you want the actual value of CoordSystem, not the value modified by the state.
 	 */
-	UNREALED_API ECoordSystem GetCoordSystem(bool bGetRawValue = false);
+	UNREALED_API ECoordSystem GetCoordSystem(bool bGetRawValue = false) const;
 
 	/** Sets the current CoordSystem */
 	UNREALED_API void SetCoordSystem(ECoordSystem NewCoordSystem);
@@ -455,7 +460,7 @@ public:
 	 * Returns the selection set for the toolkit host.
 	 * (i.e. the selection set for the level editor)
 	 */
-	UNREALED_API UTypedElementSelectionSet* GetEditorSelectionSet() const;
+	UNREALED_API virtual UTypedElementSelectionSet* GetEditorSelectionSet() const;
 
 	/**
 	 * Stores the current selection under the given key, and clears the current selection state if requested.
@@ -486,6 +491,7 @@ public:
 	 * Whether or not the current selection has a scene component selected
  	 */
 	UNREALED_API bool SelectionHasSceneComponent() const;
+	UNREALED_API void SetSelectionHasSceneComponent(bool bHasSceneComponent);
 
 	UNREALED_API bool IsSelectionAllowed(AActor* InActor, const bool bInSelected) const;
 
@@ -530,7 +536,12 @@ public:
 	/** @return ToolsContext for this Mode Manager */
 	UNREALED_API UModeManagerInteractiveToolsContext* GetInteractiveToolsContext() const;
 
-
+	/** New TRS Gizmo interface */
+	UNREALED_API IGizmoStateTarget* GetGizmoStateTarget();
+	UNREALED_API bool BeginTransform(const FGizmoState& InState);
+	UNREALED_API bool EndTransform(const FGizmoState& InState) const;
+	UNREALED_API bool HasOngoingTransform() const;
+	
 protected:
 	/** 
 	 * Delegate handlers
@@ -560,6 +571,9 @@ protected:
 			return true;
 		});
 	}
+
+	/** Returns the custom coordinate matrix using a callback-type request. */
+	FMatrix GetCustomCoordinateSystem(TUniqueFunction<void(const TTypedElement<ITypedElementWorldInterface>&, FTransform&)>&& InGetTransformFunc) const;
 
 	UNREALED_API void ExitAllModesPendingDeactivate();
 
@@ -617,6 +631,16 @@ private:
 
 	/** Guard to prevent modes from entering as part of their exit routine */
 	bool bIsExitingModesDuringTick = false;
+
+	/** GizmoStateTarget used to handle a new TRS gizmo transform begin/end sequence. */
+	TWeakObjectPtr<UEditorGizmoStateTarget> GizmoStateTarget;
+
+	/** Flag to track if we started a new TRS gizmo transform.
+	 * NOTE: we have to use it for now as StartTracking / EndTracking iterates thru the modes even if the ITF context captured something.
+	 * This might not be needed anymore in the future but as some routing behavior had to be kept for legacy reasons, we use that extra flag.
+	 * If StartTracking / EndTracking were to be changed (which needs more testing), this could probably be removed.
+	 */
+	bool bHasOngoingTransform = false;
 
 	FEditorViewportClient* HoveredViewportClient = nullptr;
 	FEditorViewportClient* FocusedViewportClient = nullptr;

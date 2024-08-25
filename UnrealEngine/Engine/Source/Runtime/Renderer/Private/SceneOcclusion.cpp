@@ -22,6 +22,7 @@
 #include "PixelShaderUtils.h"
 #include "RenderCore.h"
 #include "MobileBasePassRendering.h"
+#include "Misc/Compression.h"
 
 
 /*-----------------------------------------------------------------------------
@@ -105,11 +106,12 @@ FOcclusionRandomStream GOcclusionRandomStream;
 
 int32 FOcclusionQueryHelpers::GetNumBufferedFrames(ERHIFeatureLevel::Type FeatureLevel)
 {
-	int32 NumGPUS = 1;
 #if WITH_MGPU
 	// TODO:  Should this still be differentiated for MGPU?  Originally this logic was here for AFR, which has been removed.
 	return FMath::Min<int32>(1, (int32)FOcclusionQueryHelpers::MaxBufferedOcclusionFrames);
-#endif
+#else
+	int32 NumGPUS = 1;
+
 	static const auto NumBufferedQueriesVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.NumBufferedOcclusionQueries"));
 	EShaderPlatform ShaderPlatform = GShaderPlatformForFeatureLevel[FeatureLevel];
 
@@ -132,6 +134,7 @@ int32 FOcclusionQueryHelpers::GetNumBufferedFrames(ERHIFeatureLevel::Type Featur
 	}
 
 	return FMath::Clamp<int32>(NumExtraMobileFrames + NumBufferedQueriesVar->GetValueOnAnyThread() * NumGPUS, 1, (int32)FOcclusionQueryHelpers::MaxBufferedOcclusionFrames);
+#endif
 }
 
 
@@ -367,7 +370,7 @@ FRHIRenderQuery* FFrameBasedOcclusionQueryPool::AllocateQuery()
 			FFrameOcclusionQueries& OtherFrame = FrameQueries[Index];
 			while (OtherFrame.FirstFreeIndex < OtherFrame.Queries.Num())
 			{
-				CurrentFrame.Queries.Add(OtherFrame.Queries.Pop(false));
+				CurrentFrame.Queries.Add(OtherFrame.Queries.Pop(EAllowShrinking::No));
 			}
 
 			if (CurrentFrame.FirstFreeIndex < CurrentFrame.Queries.Num())
@@ -485,7 +488,7 @@ void FOcclusionQueryBatcher::Flush(FRHICommandList& RHICmdList)
 	}
 }
 
-FRHIRenderQuery* FOcclusionQueryBatcher::BatchPrimitive(FRHICommandList& RHICmdList, const FVector& BoundsOrigin,const FVector& BoundsBoxExtent, FGlobalDynamicVertexBuffer& DynamicVertexBuffer)
+FRHIRenderQuery* FOcclusionQueryBatcher::BatchPrimitive(const FVector& BoundsOrigin,const FVector& BoundsBoxExtent, FGlobalDynamicVertexBuffer& DynamicVertexBuffer)
 {
 	// Check if the current batch is full.
 	if(CurrentBatchOcclusionQuery == NULL || NumBatchedPrimitives >= MaxBatchedPrimitives)
@@ -493,7 +496,7 @@ FRHIRenderQuery* FOcclusionQueryBatcher::BatchPrimitive(FRHICommandList& RHICmdL
 		check(OcclusionQueryPool);
 		CurrentBatchOcclusionQuery = new(BatchOcclusionQueries) FOcclusionBatch;
 		CurrentBatchOcclusionQuery->Query = OcclusionQueryPool->AllocateQuery();
-		CurrentBatchOcclusionQuery->VertexAllocation = DynamicVertexBuffer.Allocate(RHICmdList, MaxBatchedPrimitives * 8 * sizeof(FVector3f));
+		CurrentBatchOcclusionQuery->VertexAllocation = DynamicVertexBuffer.Allocate(MaxBatchedPrimitives * 8 * sizeof(FVector3f));
 		check(CurrentBatchOcclusionQuery->VertexAllocation.IsValid());
 		NumBatchedPrimitives = 0;
 	}
@@ -1062,7 +1065,7 @@ static void TrimAllOcclusionHistory(TArrayView<FViewInfo> Views)
 	}
 }
 
-static FViewOcclusionQueriesPerView AllocateOcclusionTests(const FScene* Scene, TArrayView<const FVisibleLightInfo> VisibleLightInfos, TArrayView<FViewInfo> Views)
+static void AllocateOcclusionTests(FViewOcclusionQueriesPerView& QueriesPerView, const FScene* Scene, TArrayView<const FVisibleLightInfo> VisibleLightInfos, TArrayView<FViewInfo> Views)
 {
 	SCOPED_NAMED_EVENT(FSceneRenderer_AllocateOcclusionTestsOcclusionTests, FColor::Emerald);
 
@@ -1071,7 +1074,6 @@ static FViewOcclusionQueriesPerView AllocateOcclusionTests(const FScene* Scene, 
 
 	bool bBatchedQueries = false;
 
-	FViewOcclusionQueriesPerView QueriesPerView;
 	QueriesPerView.AddDefaulted(Views.Num());
 
 	// Perform occlusion queries for each view
@@ -1215,7 +1217,6 @@ static FViewOcclusionQueriesPerView AllocateOcclusionTests(const FScene* Scene, 
 	{
 		QueriesPerView.Empty();
 	}
-	return MoveTemp(QueriesPerView);
 }
 
 static void BeginOcclusionTests(
@@ -1412,15 +1413,18 @@ void FDeferredShadingSceneRenderer::RenderOcclusion(
 			}
 		}
 
-		// Issue occlusion queries. This is done after the downsampled depth buffer is created so that it can be used for issuing queries.
-		FViewOcclusionQueriesPerView QueriesPerView = AllocateOcclusionTests(Scene, VisibleLightInfos, Views);
+		auto& QueriesPerView = *GraphBuilder.AllocObject<FViewOcclusionQueriesPerView>();
+		auto* PassParameters = GraphBuilder.AllocParameters<FRenderTargetParameters>();
 
-		if (QueriesPerView.Num())
+		GraphBuilder.AddSetupTask([this, PassParameters, &QueriesPerView]
 		{
+			// Issue occlusion queries. This is done after the downsampled depth buffer is created so that it can be used for issuing queries.
+			AllocateOcclusionTests(QueriesPerView, Scene, VisibleLightInfos, Views);
+
 			int32 NumQueriesForBatch = 0;
 
 			{
-				for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ViewIndex++)
+				for (int32 ViewIndex = 0; ViewIndex < QueriesPerView.Num(); ViewIndex++)
 				{
 					const FViewOcclusionQueries& ViewQuery = QueriesPerView[ViewIndex];
 					NumQueriesForBatch += ViewQuery.LocalLightQueries.Num();
@@ -1440,20 +1444,25 @@ void FDeferredShadingSceneRenderer::RenderOcclusion(
 				}
 			}
 
-			auto* PassParameters = GraphBuilder.AllocParameters<FRenderTargetParameters>();
-			PassParameters->RenderTargets.DepthStencil = FDepthStencilBinding(OcclusionDepthTexture, ERenderTargetLoadAction::ELoad, ERenderTargetLoadAction::ELoad, FExclusiveDepthStencil::DepthRead_StencilWrite);
 			PassParameters->RenderTargets.NumOcclusionQueries = NumQueriesForBatch;
+		});
 
-			RDG_GPU_STAT_SCOPE(GraphBuilder, BeginOcclusionTests);
-			GraphBuilder.AddPass(
-				RDG_EVENT_NAME("BeginOcclusionTests"),
-				PassParameters,
-				ERDGPassFlags::Raster | ERDGPassFlags::NeverCull,
-				[this, LocalQueriesPerView = MoveTemp(QueriesPerView), DownsampleFactor](FRHICommandList& RHICmdList)
+		PassParameters->RenderTargets.DepthStencil = FDepthStencilBinding(OcclusionDepthTexture, ERenderTargetLoadAction::ELoad, ERenderTargetLoadAction::ELoad, FExclusiveDepthStencil::DepthRead_StencilWrite);
+
+		RDG_GPU_STAT_SCOPE(GraphBuilder, BeginOcclusionTests);
+
+		GraphBuilder.AddPass(
+			RDG_EVENT_NAME("BeginOcclusionTests"),
+			PassParameters,
+			ERDGPassFlags::Raster | ERDGPassFlags::NeverCull,
+			[this, &QueriesPerView, DownsampleFactor](FRHICommandList& RHICmdList)
 			{
-				BeginOcclusionTests(RHICmdList, Views, FeatureLevel, LocalQueriesPerView, DownsampleFactor);
+				if (!QueriesPerView.IsEmpty())
+				{
+					BeginOcclusionTests(RHICmdList, Views, FeatureLevel, QueriesPerView, DownsampleFactor);
+					QueriesPerView.Empty();
+				}
 			});
-		}
 	}
 	else
 	{
@@ -1488,7 +1497,8 @@ void FMobileSceneRenderer::RenderOcclusion(FRHICommandList& RHICmdList)
 
 	{
 		SCOPED_NAMED_EVENT(FMobileSceneRenderer_BeginOcclusionTests, FColor::Emerald);
-		const FViewOcclusionQueriesPerView QueriesPerView = AllocateOcclusionTests(Scene, VisibleLightInfos, Views);
+		FViewOcclusionQueriesPerView QueriesPerView;
+		AllocateOcclusionTests(QueriesPerView, Scene, VisibleLightInfos, Views);
 
 		if (QueriesPerView.Num())
 		{
@@ -1788,7 +1798,7 @@ void FOcclusionFeedback::ReadbackResults(FRHICommandList& RHICmdList)
 	}
 }
 
-void FOcclusionFeedback::AddPrimitive(FRHICommandList& RHICmdList, const FPrimitiveOcclusionHistoryKey& PrimitiveKey, const FVector& BoundsOrigin, const FVector& BoundsBoxExtent, FGlobalDynamicVertexBuffer& DynamicVertexBuffer)
+void FOcclusionFeedback::AddPrimitive(const FPrimitiveOcclusionHistoryKey& PrimitiveKey, const FVector& BoundsOrigin, const FVector& BoundsBoxExtent, FGlobalDynamicVertexBuffer& DynamicVertexBuffer)
 {
 	constexpr uint32 MaxBatchedPrimitives = 512;
 	constexpr uint32 PrimitiveStride = sizeof(FVector4f) * 2u;
@@ -1798,7 +1808,7 @@ void FOcclusionFeedback::AddPrimitive(FRHICommandList& RHICmdList, const FPrimit
 	{
 		FOcclusionBatch OcclusionBatch;
 		OcclusionBatch.NumBatchedPrimitives = 0u;
-		OcclusionBatch.VertexAllocation = DynamicVertexBuffer.Allocate(RHICmdList, MaxBatchedPrimitives * PrimitiveStride);
+		OcclusionBatch.VertexAllocation = DynamicVertexBuffer.Allocate(MaxBatchedPrimitives * PrimitiveStride);
 		check(OcclusionBatch.VertexAllocation.IsValid());
 		BatchOcclusionQueries.Add(OcclusionBatch);
 	}

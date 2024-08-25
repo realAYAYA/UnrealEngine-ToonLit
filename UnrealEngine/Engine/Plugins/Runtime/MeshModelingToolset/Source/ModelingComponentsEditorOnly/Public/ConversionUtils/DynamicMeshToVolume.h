@@ -23,7 +23,7 @@ using namespace UE::Geometry;
 struct FMeshToVolumeOptions
 {
 	/**
-	 * When true, coplanar components with different group id's will not be
+	 * When true, coplanar components with different group IDs will not be
 	 * merged into a single volume polygon.
 	 */
 	bool bRespectGroupBoundaries = true;
@@ -35,8 +35,17 @@ struct FMeshToVolumeOptions
 	 */
 	bool bAutoSimplify = false;
 
-	/** If true, simplify the mesh to the specified target triangle count */
+	/** If bAutoSimplify is true, it will simplify the mesh to this MaxTriangles count */
 	int32 MaxTriangles = 250;
+
+	/** If true, attempt to clean degenerate triangles before converting to a volume, as degenerate triangles can cause BSP construction to fail. */
+	bool bCleanDegenerate = true;
+
+	/** If bCleanDegenerate is true, defines the minimum triangle area to keep */
+	double MinTriangleArea = UE_DOUBLE_KINDA_SMALL_NUMBER;
+
+	/** If bCleanDegenerate is true, defines the minimum triangle edge length to keep. */
+	double MinEdgeLength = .01; // default value reflects how the BSP code tends to snap vertices
 };
 
 struct FDynamicMeshFace

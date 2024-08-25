@@ -29,6 +29,10 @@ struct FKeyboardConfig
 		bSecureTextEntry(NO) {}
 };
 
+namespace MTL
+{
+    class Device;
+}
 
 APPLICATIONCORE_API
 @interface FIOSView : UIView  <UIKeyInput, UITextInput>
@@ -48,7 +52,7 @@ APPLICATIONCORE_API
 	bool HasMoved[10];
 
 	// global metal device
-	id<MTLDevice> MetalDevice;
+	MTL::Device* MetalDevice;
 	id<CAMetalDrawable> PanicDrawable;
 
 	//// KEYBOARD MEMBERS

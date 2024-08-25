@@ -6,6 +6,7 @@
 #include "NiagaraCommon.h"
 #include "EdGraph/EdGraph.h"
 #include "NiagaraScript.h"
+#include "NiagaraVariableMetaData.h"
 #include "NiagaraGraph.generated.h"
 
 class UNiagaraNodeStaticSwitch;
@@ -251,7 +252,7 @@ class UNiagaraGraph : public UEdGraph
 	void GetAllReferencedGraphs(TArray<const UNiagaraGraph*>& Graphs) const;
 
 	/** Gather all the change ids of external references for this specific graph traversal.*/
-	void GatherExternalDependencyData(ENiagaraScriptUsage InUsage, const FGuid& InUsageId, TArray<FNiagaraCompileHash>& InReferencedCompileHashes, TArray<FString>& InReferencedObjs);
+	void GatherExternalDependencyData(ENiagaraScriptUsage InUsage, const FGuid& InUsageId, FNiagaraScriptHashCollector& HashCollector);
 
 	/** Determine if another item has been synchronized with this graph.*/
 	bool IsOtherSynchronized(const FGuid& InChangeId) const;

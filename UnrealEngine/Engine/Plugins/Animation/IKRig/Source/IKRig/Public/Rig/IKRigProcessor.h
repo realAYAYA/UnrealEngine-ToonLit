@@ -110,6 +110,9 @@ public:
 
 	/** Used to propagate setting values from the source asset at runtime (settings that do not require re-initialization) */
 	void CopyAllInputsFromSourceAssetAtRuntime(const UIKRigDefinition* SourceAsset);
+
+	/** Get read-only access to currently running solvers */
+	const TArray<TObjectPtr<UIKRigSolver>>& GetSolvers(){ return Solvers; };
 	
 private:
 

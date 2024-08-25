@@ -64,7 +64,7 @@ struct MASSMOVEMENT_API FMassMovementParameters : public FMassSharedFragment
 			}
 		}
 		
-		return DesiredSpeed * FMath::RandRange(1.0f - DesiredSpeedVariance, 1.0f + DesiredSpeedVariance);
+		return DesiredSpeed * UE::RandomSequence::RandRange(UniqueId, 1.0f - DesiredSpeedVariance, 1.0f + DesiredSpeedVariance);;
 	}
 	
 	/** Maximum speed (cm/s). */

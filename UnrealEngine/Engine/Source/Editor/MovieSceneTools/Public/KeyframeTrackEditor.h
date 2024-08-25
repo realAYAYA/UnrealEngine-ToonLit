@@ -634,6 +634,7 @@ private:
 				if (bSectionCreated && GetSequencer()->GetInfiniteKeyAreas())
 				{
 					SectionToKey->SetRange(TRange<FFrameNumber>::All());
+					KeyPropertyResult.SectionsCreated.Add(SectionToKey);
 				}
 			}
 

@@ -5,6 +5,7 @@
 #include "ProxyTableEditorCommands.h"
 #include "StructOutputDataCustomization.h"
 #include "PropertyEditorModule.h"
+#include "ProxyTableEditorStyle.h"
 
 #define LOCTEXT_NAMESPACE "ProxyTableEditorModule"
 
@@ -13,6 +14,7 @@ namespace UE::ProxyTableEditor
 
 void FModule::StartupModule()
 {
+	FProxyTableEditorStyle::Initialize();
 	FProxyTableEditor::RegisterWidgets();
 
 	FProxyTableEditorCommands::Register();
@@ -25,6 +27,9 @@ void FModule::ShutdownModule()
 {
 	FProxyTableEditorCommands::Unregister();
 	FPropertyEditorModule& PropertyModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
+	PropertyModule.UnregisterCustomPropertyTypeLayout(FProxyStructOutput::StaticStruct()->GetFName());
+	
+	FProxyTableEditorStyle::Shutdown();
 }
 
 }

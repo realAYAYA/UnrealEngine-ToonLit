@@ -19,6 +19,7 @@ void FSceneInterface::UpdateAllPrimitiveSceneInfos(FRHICommandListImmediate& RHI
 
 void FSceneInterface::ProcessAndRenderIlluminanceMeter(FRDGBuilder& GraphBuilder, TArrayView<FViewInfo> Views, FRDGTextureRef SceneColorTexture)
 {
+	// Deprecated
 }
 
 EShaderPlatform FSceneInterface::GetShaderPlatform() const
@@ -28,12 +29,5 @@ EShaderPlatform FSceneInterface::GetShaderPlatform() const
 
 EShadingPath FSceneInterface::GetShadingPath(ERHIFeatureLevel::Type InFeatureLevel)
 {
-	if (InFeatureLevel >= ERHIFeatureLevel::SM5)
-	{
-		return EShadingPath::Deferred;
-	}
-	else
-	{
-		return EShadingPath::Mobile;
-	}
+	return GetFeatureLevelShadingPath(InFeatureLevel);
 }

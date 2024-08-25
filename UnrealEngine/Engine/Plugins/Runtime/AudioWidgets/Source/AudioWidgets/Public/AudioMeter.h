@@ -2,6 +2,7 @@
 #pragma once
 
 #include "AudioAnalyzer.h"
+#include "AudioDefines.h"
 #include "AudioMeterStyle.h"
 #include "AudioMeterTypes.h"
 #include "Components/Widget.h"
@@ -155,20 +156,27 @@ namespace AudioWidgets
 	class AUDIOWIDGETS_API FAudioMeter
 	{
 	public:
-		FAudioMeter();
+		UE_DEPRECATED(5.4, "Use the FAudioMeter constructor that uses Audio::FDeviceId.")
+		FAudioMeter(int32 InNumChannels, UWorld& InWorld, TObjectPtr<UAudioBus> InExternalAudioBus = nullptr); // OPTIONAL PARAM InExternalAudioBus: An audio meter can be constructed from this audio bus.
+		
+		FAudioMeter(const int32 InNumChannels, const Audio::FDeviceId InAudioDeviceId, TObjectPtr<UAudioBus> InExternalAudioBus = nullptr); // OPTIONAL PARAM InExternalAudioBus: An audio meter can be constructed from this audio bus.
+		~FAudioMeter();
 
 		UAudioBus* GetAudioBus() const;
 
 		TSharedRef<SAudioMeter> GetWidget() const;
 
-		void Teardown();
+		UE_DEPRECATED(5.4, "Use the Init method that uses Audio::FDeviceId.")
+		void Init(int32 InNumChannels, UWorld& InWorld, TObjectPtr<UAudioBus> InExternalAudioBus = nullptr);
 
-		void Init(int32 InNumChannels, UWorld& InWorld);
+		void Init(const int32 InNumChannels, const Audio::FDeviceId InAudioDeviceId, TObjectPtr<UAudioBus> InExternalAudioBus);
 
 	protected:
 		void OnMeterOutput(UMeterAnalyzer* InMeterAnalyzer, int32 ChannelIndex, const FMeterResults& InMeterResults);
 
 	private:
+		void Teardown();
+
 		/** Metasound analyzer object. */
 		TStrongObjectPtr<UMeterAnalyzer> Analyzer;
 
@@ -187,6 +195,6 @@ namespace AudioWidgets
 		/** MetaSound Output Meter widget */
 		TSharedPtr<SAudioMeter> Widget;
 
-		TWeakObjectPtr<UWorld> WorldPtr;
+		bool bUseExternalAudioBus = false;
 	};
 } // namespace AudioWidgets

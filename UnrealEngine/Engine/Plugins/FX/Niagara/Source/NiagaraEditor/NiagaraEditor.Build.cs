@@ -24,6 +24,7 @@ public class NiagaraEditor : ModuleRules
                 "EditorStyle",
 				"VectorVM",
                 "MovieScene",
+				"SequencerCore",
 				"Sequencer",
 				"TimeManagement",
 				"PropertyEditor",
@@ -46,9 +47,13 @@ public class NiagaraEditor : ModuleRules
 				"ImageWrapper",
 				"AssetDefinition",
 				"ContentBrowser",
+				"ContentBrowserData",
 				"ToolWidgets",
 				"AssetTools",
 				"LevelSequence",
+				"SparseVolumeTexture",
+				"EngineSettings",
+				"EditorConfig"
 			}
 		);
 

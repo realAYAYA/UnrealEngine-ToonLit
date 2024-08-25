@@ -116,7 +116,8 @@ void Main(
 	{
 		const float4 Normal = UnpackNormalMap(Sample);
 		const float4 RescaledNormal = float4(Normal.xyz * 0.5 + 0.5, 1);
-		Sample = RETURN_COLOR(RescaledNormal);	
+		// RETURN_COLOR is typically a nop
+		Sample = RETURN_COLOR(RescaledNormal);
 	}
 
 	// Seperate the Color weights and use against the Base colour to detrmine the actual colour from our filter
@@ -129,7 +130,9 @@ void Main(
 
 	if( Gamma != 1.0 )
 	{
-		FinalColor.rgb = ApplyGammaCorrection(saturate(FinalColor.rgb), 2.2 / (1.0 / Gamma));
+		// typically Gamma = 1.0/2.2
+		// then this does LinearToSrgb
+		FinalColor.rgb = ApplyGammaCorrection(saturate(FinalColor.rgb), Gamma * 2.2);
 	}
 	
 	FinalColor = RETURN_COLOR(FinalColor);	

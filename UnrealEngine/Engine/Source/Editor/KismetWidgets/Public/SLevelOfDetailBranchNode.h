@@ -45,6 +45,9 @@ public:
 	virtual void Tick( const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime ) override;
 	// End of SWidget interface
 
+	// Determine whether we need to show the low-detail slot or high-detail slot
+	void RefreshLODSlotContent();
+
 protected:
 	// What kind of slot was shown last frame
 	int LastCachedValue;

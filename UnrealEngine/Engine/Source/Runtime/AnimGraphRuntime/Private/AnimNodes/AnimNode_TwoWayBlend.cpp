@@ -94,6 +94,11 @@ void FAnimNode_TwoWayBlend::Update_AnyThread(const FAnimationUpdateContext& Cont
 		}
 		else
 		{
+			if (bAlwaysUpdateChildren)
+			{
+				A.Update(Context.FractionalWeight(FAnimWeight::GetSmallestRelevantWeight()));
+			}
+
 			// Take all of B
 			B.Update(Context);
 		}
@@ -102,6 +107,11 @@ void FAnimNode_TwoWayBlend::Update_AnyThread(const FAnimationUpdateContext& Cont
 	{
 		// Take all of A
 		A.Update(Context);
+
+		if (bAlwaysUpdateChildren)
+		{
+			B.Update(Context.FractionalWeight(FAnimWeight::GetSmallestRelevantWeight()));
+		}
 	}
 
 	TRACE_ANIM_NODE_VALUE(Context, TEXT("Alpha"), InternalBlendAlpha);

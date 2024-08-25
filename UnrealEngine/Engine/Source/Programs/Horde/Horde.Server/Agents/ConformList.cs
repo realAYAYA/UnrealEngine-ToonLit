@@ -2,8 +2,8 @@
 
 using System;
 using System.Collections.Generic;
-using Horde.Server.Agents.Leases;
-using Horde.Server.Server;
+using EpicGames.Horde.Agents;
+using EpicGames.Horde.Agents.Leases;
 using Horde.Server.Utilities;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization.Attributes;

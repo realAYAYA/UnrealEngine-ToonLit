@@ -27,12 +27,28 @@ public:
 	TEnumAsByte<ECameraProjectionMode::Type> ProjectionType;
 
 	/** Camera field of view (in degrees). */
-	UPROPERTY(interp, EditAnywhere, BlueprintReadWrite, Category=Projection, meta=(DisplayName = "Field of View", UIMin = "5.0", UIMax = "170", ClampMin = "0.001", ClampMax = "360.0"))
+	UPROPERTY(interp, EditAnywhere, BlueprintReadWrite, Category=Projection, meta=(DisplayName = "Field of View", UIMin = "5.0", UIMax = "170", ClampMin = "0.001", ClampMax = "360.0", editcondition = "ProjectionType==0"))
 	float FOVAngle;
 
 	/** The desired width (in world units) of the orthographic view (ignored in Perspective mode) */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Projection)
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Projection, meta = (editcondition = "ProjectionType==1"))
 	float OrthoWidth;
+
+	/** Automatically determine a min/max Near/Far clip plane position depending on OrthoWidth value */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Projection, meta = (editcondition = "ProjectionType==1"))
+	bool bAutoCalculateOrthoPlanes;
+
+	/** Manually adjusts the planes of this camera, maintaining the distance between them. Positive moves out to the farplane, negative towards the near plane */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Projection, meta = (editcondition = "ProjectionType==1 && bAutoCalculateOrthoPlanes"))
+	float AutoPlaneShift;
+
+	/** Adjusts the near/far planes and the view origin of the current camera automatically to avoid clipping and light artefacting*/
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Projection, meta = (editcondition = "ProjectionType==1"))
+	bool bUpdateOrthoPlanes;
+
+	/** If UpdateOrthoPlanes is enabled, this setting will use the cameras current height to compensate the distance to the general view (as a pseudo distance to view target when one isn't present) */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Projection, meta = (editcondition = "ProjectionType==1 && bUpdateOrthoPlanes"))
+	bool bUseCameraHeightAsViewTarget;
 
 	/** Output render target of the scene capture that can be read in materials. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=SceneCapture)
@@ -66,8 +82,7 @@ public:
 	UPROPERTY(BlueprintReadWrite, AdvancedDisplay, Category = Projection)
 	FMatrix CustomProjectionMatrix;
 
-	/** In case of orthographic camera, generate a fake view position that has a non-zero W component. The view position will be derived based on the view matrix. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, AdvancedDisplay, Category = Projection, meta = (editcondition = "ProjectionType==1"))
+	UPROPERTY(meta = (DeprecatedProperty, DeprecationMessage = "5.4 - bUseFauxOrthoViewPos has been deprecated alongside updates to Orthographic camera fixes"))
 	bool bUseFauxOrthoViewPos = false;
 
 	/** Render the scene in n frames (i.e TileCount) - Ignored in Perspective mode, works only in Orthographic mode when CaptureSource uses SceneColor (not FinalColor)
@@ -98,6 +113,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, AdvancedDisplay, Category=SceneCapture)
 	FVector ClipPlaneNormal;
 	
+	/** Render scene capture as additional render passes of the main renderer rather than as an independent renderer. Can only apply to scene depth and device depth modes. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, AdvancedDisplay, Category = SceneCapture, meta = (EditCondition = "CaptureSource == ESceneCaptureSource::SCS_SceneDepth || CaptureSource == ESceneCaptureSource::SCS_DeviceDepth"))
+	bool bRenderInMainRenderer = false;
+
 	/** 
 	 * True if we did a camera cut this frame. Automatically reset to false at every capture.
 	 * This flag affects various things in the renderer (such as whether to use the occlusion queries from last frame, and motion blur).

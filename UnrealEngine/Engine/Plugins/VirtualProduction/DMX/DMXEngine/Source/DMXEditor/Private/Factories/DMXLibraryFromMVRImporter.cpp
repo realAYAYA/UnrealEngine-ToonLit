@@ -33,7 +33,7 @@
 namespace UE::DMX::DMXLibraryFromMVRImporter::Private
 {
 	/** Finds the file corresponding to the GDTF Spec in an MVR Zip file. Returns true if the file was found.  */
-	UE_NODISCARD bool FindGDTFFilenameInMVRZip(const TSharedRef<FDMXZipper>& MVRZip, const FString& GDTFSpec, FString& OutGDTFFilename)
+	[[nodiscard]] bool FindGDTFFilenameInMVRZip(const TSharedRef<FDMXZipper>& MVRZip, const FString& GDTFSpec, FString& OutGDTFFilename)
 	{
 		OutGDTFFilename.Reset();
 
@@ -112,7 +112,7 @@ namespace UE::DMX::DMXLibraryFromMVRImporter::Private
 bool FDMXLibraryFromMVRImporter::LoadMVRFile(const FString& InFilename)
 {
 	Filename = InFilename;
-	if (!ensureAlwaysMsgf(FPaths::FileExists(InFilename), TEXT("Cannot import MVR File '%s'. File does not exist.")))
+	if (!ensureAlwaysMsgf(FPaths::FileExists(InFilename), TEXT("Cannot import MVR File '%s'. File does not exist."), *InFilename))
 	{
 		return false;
 	}
@@ -445,7 +445,7 @@ TArray<UDMXImportGDTF*> FDMXLibraryFromMVRImporter::CreateGDTFs(UObject* InParen
 				Package->FullyLoad();
 
 				bool bCancelled;
-				UObject* NewGDTFObject = GDTFFactory->FactoryCreateFile(UDMXImportGDTF::StaticClass(), Package, FName(*FixtureNode->GDTFSpec), InFlags | RF_Public, ScopedUnzipGDTF.TempFilePathAndName, nullptr, GWarn, bCancelled);
+				UObject* NewGDTFObject = GDTFFactory->FactoryCreateFile(UDMXImportGDTF::StaticClass(), Package, *GDTFName, InFlags | RF_Public, ScopedUnzipGDTF.TempFilePathAndName, nullptr, GWarn, bCancelled);
 
 				if (UDMXImportGDTF* NewGDTF = Cast<UDMXImportGDTF>(NewGDTFObject))
 				{

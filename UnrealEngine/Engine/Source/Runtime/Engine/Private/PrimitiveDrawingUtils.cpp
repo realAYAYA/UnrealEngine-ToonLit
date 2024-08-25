@@ -117,7 +117,6 @@ void DrawTriangle(class FPrimitiveDrawInterface* PDI, const FVector& A, const FV
 	PDI->DrawLine(B, C, FColor::Yellow, DepthPriorityGroup, 1.f);
 }
 
-
 void GetBoxMesh(const FMatrix& BoxToWorld,const FVector& Radii,const FMaterialRenderProxy* MaterialRenderProxy,uint8 DepthPriorityGroup,int32 ViewIndex,FMeshElementCollector& Collector, HHitProxy* HitProxy)
 {
 	// Calculate verts for a face pointing down Z
@@ -130,45 +129,45 @@ void GetBoxMesh(const FMatrix& BoxToWorld,const FVector& Radii,const FMaterialRe
 	};
 	FVector2f UVs[4] =
 	{
-		FVector2f(0,0),
-		FVector2f(0,1),
-		FVector2f(1,1),
-		FVector2f(1,0),
+		FVector2f(0, 0),
+		FVector2f(0, 1),
+		FVector2f(1, 1),
+		FVector2f(1, 0),
 	};
 
 	// Then rotate this face 6 times
 	FRotator3f FaceRotations[6];
 	FaceRotations[0] = FRotator3f(0,		0,	0);
-	FaceRotations[1] = FRotator3f(90.f,	0,	0);
-	FaceRotations[2] = FRotator3f(-90.f,	0,  0);
+	FaceRotations[1] = FRotator3f(90.f,		0,	0);
+	FaceRotations[2] = FRotator3f(-90.f,	0,	0);
 	FaceRotations[3] = FRotator3f(0,		0,	90.f);
 	FaceRotations[4] = FRotator3f(0,		0,	-90.f);
 	FaceRotations[5] = FRotator3f(180.f,	0,	0);
 
 	FDynamicMeshBuilder MeshBuilder(Collector.GetFeatureLevel());
 
-	for(int32 f=0; f<6; f++)
+	for (int32 f = 0; f < 6; f++)
 	{
-		FMatrix44f FaceTransform = FRotationMatrix44f(FaceRotations[f]);
+		FMatrix44f FaceTransform = FRotationMatrix44f(FaceRotations[f]) * FScaleMatrix44f(FVector3f(Radii));
 
 		int32 VertexIndices[4];
-		for(int32 VertexIndex = 0;VertexIndex < 4;VertexIndex++)
+		for (int32 VertexIndex = 0; VertexIndex < 4; VertexIndex++)
 		{
 			VertexIndices[VertexIndex] = MeshBuilder.AddVertex(
 				FaceTransform.TransformPosition( Positions[VertexIndex] ),
 				UVs[VertexIndex],
-				FaceTransform.TransformVector(FVector3f(1,0,0)),
-				FaceTransform.TransformVector(FVector3f(0,1,0)),
-				FaceTransform.TransformVector(FVector3f(0,0,1)),
+				FaceTransform.TransformVector(FVector3f(1, 0, 0)),
+				FaceTransform.TransformVector(FVector3f(0, 1, 0)),
+				FaceTransform.TransformVector(FVector3f(0, 0, 1)),
 				FColor::White
 				);
 		}
 
-		MeshBuilder.AddTriangle(VertexIndices[0],VertexIndices[1],VertexIndices[2]);
-		MeshBuilder.AddTriangle(VertexIndices[0],VertexIndices[2],VertexIndices[3]);
+		MeshBuilder.AddTriangle(VertexIndices[0], VertexIndices[1], VertexIndices[2]);
+		MeshBuilder.AddTriangle(VertexIndices[0], VertexIndices[2], VertexIndices[3]);
 	}
 
-	MeshBuilder.GetMesh(FScaleMatrix(Radii) * BoxToWorld,MaterialRenderProxy,DepthPriorityGroup,false,false,true,ViewIndex,Collector,HitProxy);
+	MeshBuilder.GetMesh(BoxToWorld, MaterialRenderProxy, DepthPriorityGroup, false, false, true, ViewIndex, Collector, HitProxy);
 }
 
 void DrawBox(FPrimitiveDrawInterface* PDI,const FMatrix& BoxToWorld,const FVector& Radii,const FMaterialRenderProxy* MaterialRenderProxy,uint8 DepthPriorityGroup)
@@ -183,16 +182,16 @@ void DrawBox(FPrimitiveDrawInterface* PDI,const FMatrix& BoxToWorld,const FVecto
 	};
 	FVector2f UVs[4] =
 	{
-		FVector2f(0,0),
-		FVector2f(0,1),
-		FVector2f(1,1),
-		FVector2f(1,0),
+		FVector2f(0, 0),
+		FVector2f(0, 1),
+		FVector2f(1, 1),
+		FVector2f(1, 0),
 	};
 
 	// Then rotate this face 6 times
 	FRotator3f FaceRotations[6];
 	FaceRotations[0] = FRotator3f(0,		0,	0);
-	FaceRotations[1] = FRotator3f(90.f,	0,	0);
+	FaceRotations[1] = FRotator3f(90.f,		0,	0);
 	FaceRotations[2] = FRotator3f(-90.f,	0,  0);
 	FaceRotations[3] = FRotator3f(0,		0,	90.f);
 	FaceRotations[4] = FRotator3f(0,		0,	-90.f);
@@ -200,28 +199,27 @@ void DrawBox(FPrimitiveDrawInterface* PDI,const FMatrix& BoxToWorld,const FVecto
 
 	FDynamicMeshBuilder MeshBuilder(PDI->View->GetFeatureLevel());
 
-	for(int32 f=0; f<6; f++)
+	for(int32 f = 0; f < 6; f++)
 	{
-		FMatrix44f FaceTransform = FRotationMatrix44f(FaceRotations[f]);
+		FMatrix44f FaceTransform = FRotationMatrix44f(FaceRotations[f]) * FScaleMatrix44f(FVector3f(Radii));
 
 		int32 VertexIndices[4];
-		for(int32 VertexIndex = 0;VertexIndex < 4;VertexIndex++)
+		for (int32 VertexIndex = 0; VertexIndex < 4; VertexIndex++)
 		{
 			VertexIndices[VertexIndex] = MeshBuilder.AddVertex(
 				FaceTransform.TransformPosition( Positions[VertexIndex] ),
 				UVs[VertexIndex],
-				FaceTransform.TransformVector(FVector3f(1,0,0)),
-				FaceTransform.TransformVector(FVector3f(0,1,0)),
-				FaceTransform.TransformVector(FVector3f(0,0,1)),
-				FColor::White
-				);
+				FaceTransform.TransformVector(FVector3f(1, 0, 0)),
+				FaceTransform.TransformVector(FVector3f(0, 1, 0)),
+				FaceTransform.TransformVector(FVector3f(0, 0, 1)),
+				FColor::White);
 		}
 
-		MeshBuilder.AddTriangle(VertexIndices[0],VertexIndices[1],VertexIndices[2]);
-		MeshBuilder.AddTriangle(VertexIndices[0],VertexIndices[2],VertexIndices[3]);
+		MeshBuilder.AddTriangle(VertexIndices[0], VertexIndices[1], VertexIndices[2]);
+		MeshBuilder.AddTriangle(VertexIndices[0], VertexIndices[2], VertexIndices[3]);
 	}
 
-	MeshBuilder.Draw(PDI,FScaleMatrix(Radii) * BoxToWorld,MaterialRenderProxy,DepthPriorityGroup,0.f);
+	MeshBuilder.Draw(PDI, BoxToWorld, MaterialRenderProxy, DepthPriorityGroup, 0.f);
 }
 
 void GetOrientedHalfSphereMesh(const FVector& Center, const FRotator& Orientation, const FVector& Radii, int32 NumSides, int32 NumRings, float StartAngle, float EndAngle, const FMaterialRenderProxy* MaterialRenderProxy, uint8 DepthPriority,
@@ -1540,11 +1538,10 @@ bool IsRichView(const FSceneViewFamily& ViewFamily)
 		ViewFamily.EngineShowFlags.StationaryLightOverlap ||
 		ViewFamily.EngineShowFlags.BSPSplit ||
 		ViewFamily.EngineShowFlags.LightMapDensity ||
-		ViewFamily.EngineShowFlags.PropertyColoration ||
 		ViewFamily.EngineShowFlags.MeshEdges ||
 		ViewFamily.EngineShowFlags.LightInfluences ||
 		ViewFamily.EngineShowFlags.Wireframe ||
-		ViewFamily.EngineShowFlags.LevelColoration ||
+		ViewFamily.EngineShowFlags.ActorColoration ||
 		ViewFamily.EngineShowFlags.LODColoration ||
 		ViewFamily.EngineShowFlags.HLODColoration ||
 		ViewFamily.EngineShowFlags.MassProperties )
@@ -1578,15 +1575,11 @@ void ApplyViewModeOverrides(
 	if (EngineShowFlags.Wireframe)
 	{
 		// In wireframe mode, draw the edges of the mesh with the specified wireframe color, or
-		// with the level or property color if level or property coloration is enabled.
+		// with the level color if level coloration is enabled.
 		FLinearColor BaseColor( PrimitiveSceneProxy->GetWireframeColor() );
-		if (EngineShowFlags.PropertyColoration)
+		if (EngineShowFlags.ActorColoration)
 		{
-			BaseColor = PrimitiveSceneProxy->GetPropertyColor();
-		}
-		else if (EngineShowFlags.LevelColoration)
-		{
-			BaseColor = PrimitiveSceneProxy->GetLevelColor();
+			BaseColor = PrimitiveSceneProxy->GetPrimitiveColor();
 		}
 
 		if (bMaterialModifiesMeshPosition)
@@ -1667,30 +1660,9 @@ void ApplyViewModeOverrides(
 	}
 	else
 	{	
-		if (EngineShowFlags.PropertyColoration)
+		if (EngineShowFlags.ActorColoration)
 		{
-			const FLinearColor SelectionColor = GetSelectionColor(PrimitiveSceneProxy->GetPropertyColor(), bSelected, PrimitiveSceneProxy->IsHovered());
-			FMaterialRenderProxy* PropertyColorationMaterialInstance = nullptr;
-
-			if (bMaterialModifiesMeshPosition)
-			{
-				// If the material is mesh-modifying, we cannot rely on substitution.
-				PropertyColorationMaterialInstance = new FOverrideSelectionColorMaterialRenderProxy(Mesh.MaterialRenderProxy, SelectionColor);
-			}
-			else
-			{
-				// In property coloration mode, override the mesh's material with a color that was chosen based on property value.
-				const UMaterial* PropertyColorationMaterial = EngineShowFlags.Lighting ? GEngine->LevelColorationLitMaterial : GEngine->LevelColorationUnlitMaterial;
-
-				PropertyColorationMaterialInstance = new FColoredMaterialRenderProxy(PropertyColorationMaterial->GetRenderProxy(), SelectionColor);
-			}
-
-			Mesh.MaterialRenderProxy = PropertyColorationMaterialInstance;
-			Collector.RegisterOneFrameMaterialProxy(PropertyColorationMaterialInstance);
-		}
-		else if (EngineShowFlags.LevelColoration)
-		{
-			const FLinearColor SelectionColor = GetSelectionColor(PrimitiveSceneProxy->GetLevelColor(), bSelected, PrimitiveSceneProxy->IsHovered());
+			const FLinearColor SelectionColor = GetSelectionColor(PrimitiveSceneProxy->GetPrimitiveColor(), bSelected, PrimitiveSceneProxy->IsHovered());
 			FMaterialRenderProxy* LevelColorationMaterialInstance = nullptr;
 
 			if (bMaterialModifiesMeshPosition)
@@ -1734,7 +1706,7 @@ void ApplyViewModeOverrides(
 		{
 			auto InvalidSettingsMaterialInstance = new FColoredMaterialRenderProxy(
 				GEngine->InvalidLightmapSettingsMaterial->GetRenderProxy(),
-				GetSelectionColor(PrimitiveSceneProxy->GetLevelColor(),bSelected,PrimitiveSceneProxy->IsHovered())
+				GetSelectionColor(PrimitiveSceneProxy->GetPrimitiveColor(),bSelected,PrimitiveSceneProxy->IsHovered())
 				);
 			Mesh.MaterialRenderProxy = InvalidSettingsMaterialInstance;
 			Collector.RegisterOneFrameMaterialProxy(InvalidSettingsMaterialInstance);

@@ -25,7 +25,7 @@ public class LyraGameTarget : TargetRules
 	{
 		ILogger Logger = Target.Logger;
 		
-		Target.DefaultBuildSettings = BuildSettingsVersion.V4;
+		Target.DefaultBuildSettings = BuildSettingsVersion.V5;
 		Target.IncludeOrderVersion = EngineIncludeOrderVersion.Latest;
 
 		bool bIsTest = Target.Configuration == UnrealTargetConfiguration.Test;
@@ -245,7 +245,7 @@ public class LyraGameTarget : TargetRules
 							}
 						}
 					}
-					catch (JsonParseException ParseException)
+					catch (Exception ParseException)
 					{
 						Logger.LogWarning("Failed to parse GameFeaturePlugin file {Name}, disabling. Exception: {1}", PluginFile.GetFileNameWithoutExtension(), ParseException.Message);
 						bForceDisabled = true;

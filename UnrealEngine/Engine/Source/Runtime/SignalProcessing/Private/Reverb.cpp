@@ -2,6 +2,8 @@
 
 #include "DSP/Reverb.h"
 
+#include "DSP/WaveTableOsc.h"
+
 namespace Audio
 {
 	struct FReverbSettingsInternal

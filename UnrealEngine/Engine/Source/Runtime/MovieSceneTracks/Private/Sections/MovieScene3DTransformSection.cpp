@@ -31,6 +31,15 @@ struct F3DTransformChannelEditorData
 	{
 		static const TSet<FName> PropertyMetaDataKeys = { "UIMin", "UIMax", "SliderExponent", "LinearDeltaSensitivity", "Delta", "ClampMin", "ClampMax", "ForceUnits", "WheelStep" };
 
+		auto MakeSubPropertyMap = [](FName FTransformName, FName FEulerTransformName)->TMap<FName, FName>
+		{
+			return
+			{
+				{ TBaseStructure<FTransform>::Get()->GetFName(), FTransformName },
+				{ TBaseStructure<FEulerTransform>::Get()->GetFName(), FEulerTransformName }
+			};
+		};
+
 		const FProperty* RelativeLocationProperty = USceneComponent::StaticClass()->FindPropertyByName(USceneComponent::GetRelativeLocationPropertyName());
 		const FProperty* RelativeRotationProperty = USceneComponent::StaticClass()->FindPropertyByName(USceneComponent::GetRelativeRotationPropertyName());
 		const FProperty* RelativeScale3DProperty = USceneComponent::StaticClass()->FindPropertyByName(USceneComponent::GetRelativeScale3DPropertyName());
@@ -40,6 +49,7 @@ struct F3DTransformChannelEditorData
 		FText ScaleGroup    = NSLOCTEXT("MovieSceneTransformSection", "Scale",    "Scale");
 		{
 			MetaData[0].SetIdentifiers("Location.X", FCommonChannelData::ChannelX, LocationGroup);
+			MetaData[0].SubPropertyPathMap = MakeSubPropertyMap(TEXT("Translation.X"), TEXT("Location.X"));
 			MetaData[0].bEnabled = EnumHasAllFlags(Mask, EMovieSceneTransformChannel::TranslationX);
 			MetaData[0].Color = FCommonChannelData::RedChannelColor;
 			MetaData[0].SortOrder = SortOrderStart;
@@ -50,6 +60,7 @@ struct F3DTransformChannelEditorData
 			}
 
 			MetaData[1].SetIdentifiers("Location.Y", FCommonChannelData::ChannelY, LocationGroup);
+			MetaData[1].SubPropertyPathMap = MakeSubPropertyMap(TEXT("Translation.Y"), TEXT("Location.Y"));
 			MetaData[1].bEnabled = EnumHasAllFlags(Mask, EMovieSceneTransformChannel::TranslationY);
 			MetaData[1].Color = FCommonChannelData::GreenChannelColor;
 			MetaData[1].SortOrder = SortOrderStart + 1;
@@ -60,6 +71,7 @@ struct F3DTransformChannelEditorData
 			}
 
 			MetaData[2].SetIdentifiers("Location.Z", FCommonChannelData::ChannelZ, LocationGroup);
+			MetaData[2].SubPropertyPathMap = MakeSubPropertyMap(TEXT("Translation.Z"), TEXT("Location.Z"));
 			MetaData[2].bEnabled = EnumHasAllFlags(Mask, EMovieSceneTransformChannel::TranslationZ);
 			MetaData[2].Color = FCommonChannelData::BlueChannelColor;
 			MetaData[2].SortOrder = SortOrderStart + 2;
@@ -71,6 +83,7 @@ struct F3DTransformChannelEditorData
 		}
 		{
 			MetaData[3].SetIdentifiers("Rotation.X", NSLOCTEXT("MovieSceneTransformSection", "RotationX", "Roll"), RotationGroup);
+			MetaData[3].SubPropertyPathMap = MakeSubPropertyMap(TEXT("Rotation.X"), TEXT("Rotation.Roll"));
 			MetaData[3].bEnabled = EnumHasAllFlags(Mask, EMovieSceneTransformChannel::RotationX);
 			MetaData[3].Color = FCommonChannelData::RedChannelColor;
 			MetaData[3].SortOrder = SortOrderStart + 3;
@@ -81,6 +94,7 @@ struct F3DTransformChannelEditorData
 			}
 
 			MetaData[4].SetIdentifiers("Rotation.Y", NSLOCTEXT("MovieSceneTransformSection", "RotationY", "Pitch"), RotationGroup);
+			MetaData[4].SubPropertyPathMap = MakeSubPropertyMap(TEXT("Rotation.Y"), TEXT("Rotation.Pitch"));
 			MetaData[4].bEnabled = EnumHasAllFlags(Mask, EMovieSceneTransformChannel::RotationY);
 			MetaData[4].Color = FCommonChannelData::GreenChannelColor;
 			MetaData[4].SortOrder = SortOrderStart + 4;
@@ -91,6 +105,7 @@ struct F3DTransformChannelEditorData
 			}
 
 			MetaData[5].SetIdentifiers("Rotation.Z", NSLOCTEXT("MovieSceneTransformSection", "RotationZ", "Yaw"), RotationGroup);
+			MetaData[5].SubPropertyPathMap = MakeSubPropertyMap(TEXT("Rotation.Z"), TEXT("Rotation.Yaw"));
 			MetaData[5].bEnabled = EnumHasAllFlags(Mask, EMovieSceneTransformChannel::RotationZ);
 			MetaData[5].Color = FCommonChannelData::BlueChannelColor;
 			MetaData[5].SortOrder = SortOrderStart + 5;
@@ -102,6 +117,7 @@ struct F3DTransformChannelEditorData
 		}
 		{
 			MetaData[6].SetIdentifiers("Scale.X", FCommonChannelData::ChannelX, ScaleGroup);
+			MetaData[6].SubPropertyPathMap = MakeSubPropertyMap(TEXT("Scale3D.X"), TEXT("Scale.X"));
 			MetaData[6].bEnabled = EnumHasAllFlags(Mask, EMovieSceneTransformChannel::ScaleX);
 			MetaData[6].Color = FCommonChannelData::RedChannelColor;
 			MetaData[6].SortOrder = SortOrderStart + 6;
@@ -112,6 +128,7 @@ struct F3DTransformChannelEditorData
 			}
 
 			MetaData[7].SetIdentifiers("Scale.Y", FCommonChannelData::ChannelY, ScaleGroup);
+			MetaData[7].SubPropertyPathMap = MakeSubPropertyMap(TEXT("Scale3D.Y"), TEXT("Scale.Y"));
 			MetaData[7].bEnabled = EnumHasAllFlags(Mask, EMovieSceneTransformChannel::ScaleY);
 			MetaData[7].Color = FCommonChannelData::GreenChannelColor;
 			MetaData[7].SortOrder = SortOrderStart + 7;
@@ -122,6 +139,7 @@ struct F3DTransformChannelEditorData
 			}
 
 			MetaData[8].SetIdentifiers("Scale.Z", FCommonChannelData::ChannelZ, ScaleGroup);
+			MetaData[8].SubPropertyPathMap = MakeSubPropertyMap(TEXT("Scale3D.Z"), TEXT("Scale.Z"));
 			MetaData[8].bEnabled = EnumHasAllFlags(Mask, EMovieSceneTransformChannel::ScaleZ);
 			MetaData[8].Color = FCommonChannelData::BlueChannelColor;
 			MetaData[8].SortOrder = SortOrderStart + 8;
@@ -400,20 +418,12 @@ void UMovieScene3DTransformSection::OnBindingIDsUpdated(const TMap<UE::MovieScen
 	{
 		for (FConstraintAndActiveChannel& ConstraintChannel : Constraints->ConstraintsChannels)
 		{
-			if (UTickableTransformConstraint* TransformConstraint = Cast< UTickableTransformConstraint>(ConstraintChannel.Constraint.Get()))
+			if (UTickableTransformConstraint* TransformConstraint = Cast< UTickableTransformConstraint>(ConstraintChannel.GetConstraint()))
 			{
 				//Don't do child's we do that in the system, needed for duplication
 				if (TransformConstraint->ParentTRSHandle)
 				{
 					TransformConstraint->ParentTRSHandle->OnBindingIDsUpdated(OldFixedToNewFixedMap, LocalSequenceID, Hierarchy, Player);
-				}
-			}
-			if (UTickableTransformConstraint* SpawnCopy = Cast< UTickableTransformConstraint>(ConstraintChannel.ConstraintCopyToSpawn))
-			{
-				//Don't do child's we do that in the system, needed for duplication
-				if (SpawnCopy->ParentTRSHandle)
-				{
-					SpawnCopy->ParentTRSHandle->OnBindingIDsUpdated(OldFixedToNewFixedMap, LocalSequenceID, Hierarchy, Player);
 				}
 			}
 		}
@@ -426,7 +436,7 @@ void UMovieScene3DTransformSection::GetReferencedBindings(TArray<FGuid>& OutBind
 	{
 		for (FConstraintAndActiveChannel& ConstraintChannel : Constraints->ConstraintsChannels)
 		{
-			if (UTickableTransformConstraint* TransformConstraint = Cast< UTickableTransformConstraint>(ConstraintChannel.Constraint.Get()))
+			if (UTickableTransformConstraint* TransformConstraint = Cast< UTickableTransformConstraint>(ConstraintChannel.GetConstraint().Get()))
 			{
 				if (TransformConstraint->ChildTRSHandle && TransformConstraint->ChildTRSHandle->ConstraintBindingID.IsValid())
 				{
@@ -444,16 +454,6 @@ void UMovieScene3DTransformSection::GetReferencedBindings(TArray<FGuid>& OutBind
 void UMovieScene3DTransformSection::PreSave(FObjectPreSaveContext SaveContext)
 {
 	Super::PreSave(SaveContext);
-	if (Constraints)
-	{
-		for (FConstraintAndActiveChannel& ActiveChannel : Constraints->ConstraintsChannels)
-		{
-			if (ActiveChannel.Constraint.IsValid())
-			{
-				ActiveChannel.ConstraintCopyToSpawn = ActiveChannel.Constraint->Duplicate(this);
-			}
-		}
-	}
 }
 
 template<typename BaseBuilderType>
@@ -622,14 +622,13 @@ void UMovieScene3DTransformSection::ImportConstraintEntity(UMovieSceneEntitySyst
 
 		checkf(Constraints->ConstraintsChannels.IsValidIndex(ConstraintIndex), TEXT("Encoded constraint (%d) index is not valid within array size %d. Data must have been manipulated without re-compilaition."), ConstraintIndex, Constraints->ConstraintsChannels.Num());
 		//add if constraint or spawn copy is valid
-		if (Constraints->ConstraintsChannels[ConstraintIndex].Constraint.IsValid() ||
-			Constraints->ConstraintsChannels[ConstraintIndex].ConstraintCopyToSpawn)
+		if (Constraints->ConstraintsChannels[ConstraintIndex].GetConstraint().Get())
 		{
-			FName ConstraintName = Constraints->ConstraintsChannels[ConstraintIndex].Constraint.IsValid() ? Constraints->ConstraintsChannels[ConstraintIndex].Constraint->GetFName()
-				: Constraints->ConstraintsChannels[ConstraintIndex].ConstraintCopyToSpawn->GetFName();
+			FGuid ConstraintID = Constraints->ConstraintsChannels[ConstraintIndex].GetConstraint()->ConstraintID;
+			//ID's should be the same!
 
 			FConstraintComponentData ComponentData;
-			ComponentData.ConstraintName = ConstraintName;
+			ComponentData.ConstraintID = ConstraintID;
 			ComponentData.Section = this;
 			OutImportedEntity->AddBuilder(
 				FEntityBuilder()
@@ -759,11 +758,7 @@ EMovieSceneChannelProxyType UMovieScene3DTransformSection::CacheChannelProxy()
 
 	auto GetValidConstraint = [](FConstraintAndActiveChannel& ConstraintChannel)
 	{
-		if (ConstraintChannel.Constraint.IsValid())
-		{
-			return ConstraintChannel.Constraint.Get();
-		}
-		return (ConstraintChannel.ConstraintCopyToSpawn.Get());
+		return ConstraintChannel.GetConstraint().Get();
 	};
 #endif
 		
@@ -980,26 +975,25 @@ void UMovieScene3DTransformSection::SetBlendType(EMovieSceneBlendType InBlendTyp
 	}
 }
 
-bool UMovieScene3DTransformSection::HasConstraintChannel(const FName& InConstraintName) const
+bool UMovieScene3DTransformSection::HasConstraintChannel(const FGuid& InGuid) const
 {
 	if (Constraints)
 	{
-		return Constraints->ConstraintsChannels.ContainsByPredicate([InConstraintName](const FConstraintAndActiveChannel& InChannel)
+		return Constraints->ConstraintsChannels.ContainsByPredicate([InGuid](const FConstraintAndActiveChannel& InChannel)
 			{
-				return InChannel.Constraint.IsValid() ? InChannel.Constraint->GetFName() == InConstraintName : false;
+				return InChannel.GetConstraint().Get() ? InChannel.GetConstraint()->ConstraintID == InGuid : false;
 			});
 	}
 	return false;
 }
 
-FConstraintAndActiveChannel* UMovieScene3DTransformSection::GetConstraintChannel(const FName& InConstraintName)
+FConstraintAndActiveChannel* UMovieScene3DTransformSection::GetConstraintChannel(const FGuid& InConstraintID)
 {
 	if (Constraints)
 	{
-		const int32 Index = Constraints->ConstraintsChannels.IndexOfByPredicate([InConstraintName](const FConstraintAndActiveChannel& InChannel)
+		const int32 Index = Constraints->ConstraintsChannels.IndexOfByPredicate([InConstraintID](const FConstraintAndActiveChannel& InChannel)
 			{
-				return InChannel.Constraint.IsValid() ? InChannel.Constraint->GetFName() == InConstraintName : (InChannel.ConstraintCopyToSpawn ?
-				InChannel.ConstraintCopyToSpawn->GetFName() == InConstraintName : false);
+				return InChannel.GetConstraint().Get() ? InChannel.GetConstraint()->ConstraintID == InConstraintID : false;
 			});
 		return (Index != INDEX_NONE) ? &(Constraints->ConstraintsChannels[Index]) : nullptr;
 	}
@@ -1015,6 +1009,12 @@ TArray<FConstraintAndActiveChannel>& UMovieScene3DTransformSection::GetConstrain
 	}
 	return EmptyChannels;
 }
+
+void UMovieScene3DTransformSection::PostLoad()
+{
+	Super::PostLoad();
+}	
+
 #if WITH_EDITOR
 bool UMovieScene3DTransformSection::Modify(bool bAlwaysMarkDirty)
 {
@@ -1032,20 +1032,6 @@ bool UMovieScene3DTransformSection::Modify(bool bAlwaysMarkDirty)
 void UMovieScene3DTransformSection::PostDuplicate(bool bDuplicateForPIE)
 {
 	Super::PostDuplicate(bDuplicateForPIE);
-	//if not duplicating for PIE clear out the soft object ptrs to the constraints we dont' want to hold pointers to the old constraints.
-	//also make the copy to spawn so we can duplicate it if it doesn't exist in the level
-	//to the old ones but make new duplicates
-	if (bDuplicateForPIE == false && Constraints)
-	{
-		for (FConstraintAndActiveChannel& ConstraintChannel : Constraints->ConstraintsChannels)
-		{
-			if (ConstraintChannel.Constraint.IsValid() && !ConstraintChannel.ConstraintCopyToSpawn)
-			{
-				ConstraintChannel.ConstraintCopyToSpawn = ConstraintChannel.Constraint->Duplicate(this);
-			}
-			ConstraintChannel.Constraint.Reset();
-		}
-	}
 }
 #endif
 void UMovieScene3DTransformSection::AddConstraintChannel(UTickableConstraint* InConstraint)
@@ -1055,7 +1041,7 @@ void UMovieScene3DTransformSection::AddConstraintChannel(UTickableConstraint* In
 	{
 		Constraints = NewObject<UMovieScene3DTransformSectionConstraints>(this, NAME_None, RF_Public| RF_Transactional);
 	}
-	if (InConstraint && !HasConstraintChannel(InConstraint->GetFName()))
+	if (InConstraint && !HasConstraintChannel(InConstraint->ConstraintID))
 	{
 		Constraints->SetFlags(RF_Transactional);
 		Constraints->Modify();
@@ -1065,8 +1051,9 @@ void UMovieScene3DTransformSection::AddConstraintChannel(UTickableConstraint* In
 		ExistingChannel->SetDefault(false);
 
 		//make copy that we can spawn if it doesn't exist
-		Constraints->ConstraintsChannels[NewIndex].ConstraintCopyToSpawn = InConstraint->Duplicate(this);
-
+		//the rename changes the outer to this section (from any actor manager)
+		InConstraint->Rename(nullptr, this, REN_ForceNoResetLoaders | REN_DontCreateRedirectors);
+	
 		CacheChannelProxy();
 
 		if (OnConstraintChannelAdded.IsBound())
@@ -1082,12 +1069,12 @@ void UMovieScene3DTransformSection::ReplaceConstraint(const FName InConstraintNa
 	{
 		const int32 Index = Constraints->ConstraintsChannels.IndexOfByPredicate([InConstraintName](const FConstraintAndActiveChannel& InChannel)
 			{
-				return InChannel.ConstraintCopyToSpawn ? InChannel.ConstraintCopyToSpawn->GetFName() == InConstraintName : false;
+				return InChannel.GetConstraint().Get() ? InChannel.GetConstraint()->GetFName() == InConstraintName : false;
 			});
 		if (Index != INDEX_NONE)
 		{
 			Modify();
-			Constraints->ConstraintsChannels[Index].Constraint = InConstraint;
+			Constraints->ConstraintsChannels[Index].GetConstraint() = InConstraint;
 			CacheChannelProxy();
 		}
 	}
@@ -1103,7 +1090,7 @@ void UMovieScene3DTransformSection::RemoveConstraintChannel(const UTickableConst
 	{
 		const int32 Index = Constraints->ConstraintsChannels.IndexOfByPredicate([InConstraint](const FConstraintAndActiveChannel& InChannel)
 			{
-				return InChannel.Constraint.IsValid() ? InChannel.Constraint == InConstraint : false;
+				return InChannel.GetConstraint().Get() ? InChannel.GetConstraint().Get() == InConstraint : false;
 			});
 
 		if (Constraints->ConstraintsChannels.IsValidIndex(Index))

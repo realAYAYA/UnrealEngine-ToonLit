@@ -127,7 +127,7 @@ struct FVulkanSubpassDescription<VkSubpassDescription>
 		pColorAttachments = ColorAttachmentReferences.GetData();
 	}
 
-	void SetResolveAttachments(const TArray<FVulkanAttachmentReference<VkAttachmentReference>>& ResolveAttachmentReferences)
+	void SetResolveAttachments(const TArrayView<FVulkanAttachmentReference<VkAttachmentReference>>& ResolveAttachmentReferences)
 	{
 		if (ResolveAttachmentReferences.Num() > 0)
 		{
@@ -175,7 +175,7 @@ struct FVulkanSubpassDescription<VkSubpassDescription2>
 		pColorAttachments = ColorAttachmentReferences.GetData();
 	}
 
-	void SetResolveAttachments(const TArray<FVulkanAttachmentReference<VkAttachmentReference2>>& ResolveAttachmentReferences)
+	void SetResolveAttachments(const TArrayView<FVulkanAttachmentReference<VkAttachmentReference2>>& ResolveAttachmentReferences)
 	{
 		if (ResolveAttachmentReferences.Num() > 0)
 		{
@@ -424,13 +424,14 @@ public:
 		uint32 MultiviewMask = (0b1 << RTLayout.GetMultiViewCount()) - 1;
 
 		const bool bDeferredShadingSubpass = RTLayout.GetSubpassHint() == ESubpassHint::DeferredShadingSubpass;
-		const bool bDepthReadSubpass = RTLayout.GetSubpassHint() == ESubpassHint::DepthReadSubpass;
 		const bool bApplyFragmentShadingRate =  GRHISupportsAttachmentVariableRateShading 
 												&& GRHIVariableRateShadingEnabled 
 												&& GRHIAttachmentVariableRateShadingEnabled 
 												&& RTLayout.GetFragmentDensityAttachmentReference() != nullptr
 												&& Device.GetOptionalExtensions().HasKHRFragmentShadingRate 
 												&& Device.GetOptionalExtensionProperties().FragmentShadingRateFeatures.attachmentFragmentShadingRate == VK_TRUE;
+		const bool bCustomResolveSubpass = RTLayout.GetSubpassHint() == ESubpassHint::CustomResolveSubpass;
+		const bool bDepthReadSubpass = bCustomResolveSubpass || (RTLayout.GetSubpassHint() == ESubpassHint::DepthReadSubpass);
 		const bool bHasDepthStencilAttachmentReference = (RTLayout.GetDepthAttachmentReference() != nullptr);
 
 		if (bApplyFragmentShadingRate)
@@ -440,13 +441,20 @@ public:
 		}
 
 		// Grab (and optionally convert) attachment references.
-		for (uint32 ColorAttachment = 0; ColorAttachment < RTLayout.GetNumColorAttachments(); ++ColorAttachment)
+		uint32 NumColorAttachments = RTLayout.GetNumColorAttachments();
+		for (uint32 ColorAttachment = 0; ColorAttachment < NumColorAttachments; ++ColorAttachment)
 		{
 			ColorAttachmentReferences.Add(TAttachmentReferenceClass(RTLayout.GetColorAttachmentReferences()[ColorAttachment], 0));
 			if (RTLayout.GetResolveAttachmentReferences() != nullptr)
 			{
 				ResolveAttachmentReferences.Add(TAttachmentReferenceClass(RTLayout.GetResolveAttachmentReferences()[ColorAttachment], 0));
 			}
+		}
+
+		// CustomResolveSubpass has an additional color attachment that should not be used by main and depth subpasses
+		if (bCustomResolveSubpass && (NumColorAttachments > 1))
+		{
+			NumColorAttachments--;
 		}
 
 		uint32_t DepthInputAttachment = VK_ATTACHMENT_UNUSED;
@@ -483,12 +491,8 @@ public:
 		{
 			TSubpassDescriptionClass& SubpassDesc = SubpassDescriptions[NumSubpasses++];
 
-			SubpassDesc.SetColorAttachments(ColorAttachmentReferences);
-			if (!bDepthReadSubpass)
-			{
-				// only set resolve attachment on the last subpass
-				SubpassDesc.SetResolveAttachments(ResolveAttachmentReferences);
-			}
+			SubpassDesc.SetColorAttachments(ColorAttachmentReferences, NumColorAttachments);
+
 			if (bHasDepthStencilAttachmentReference)
 			{
 				SubpassDesc.SetDepthStencilAttachment(&DepthStencilAttachmentReference);
@@ -506,8 +510,7 @@ public:
 		{
 			TSubpassDescriptionClass& SubpassDesc = SubpassDescriptions[NumSubpasses++];
 
-			SubpassDesc.SetColorAttachments(ColorAttachmentReferences);
-			SubpassDesc.SetResolveAttachments(ResolveAttachmentReferences);
+			SubpassDesc.SetColorAttachments(ColorAttachmentReferences, 1);
 
 			check(RTLayout.GetDepthAttachmentReference());
 
@@ -617,6 +620,59 @@ public:
 			}
 		}
 
+		// Custom resolve subpass
+		if (bCustomResolveSubpass)
+		{
+			TSubpassDescriptionClass& SubpassDesc = SubpassDescriptions[NumSubpasses++];
+			ColorAttachments3[0].attachment = ColorAttachmentReferences[1].attachment;
+			ColorAttachments3[0].layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+			ColorAttachments3[0].SetAspect(VK_IMAGE_ASPECT_COLOR_BIT);
+			
+			InputAttachments3[0].attachment = VK_ATTACHMENT_UNUSED; // The subpass fetch logic expects depth in first attachment.
+			InputAttachments3[0].layout = VK_IMAGE_LAYOUT_UNDEFINED;
+			InputAttachments3[0].SetAspect(0);
+			
+			InputAttachments3[1].attachment = ColorAttachmentReferences[0].attachment; // SceneColor as input
+			InputAttachments3[1].layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			InputAttachments3[1].SetAspect(VK_IMAGE_ASPECT_COLOR_BIT);
+		
+			SubpassDesc.SetInputAttachments(InputAttachments3, 2);
+			SubpassDesc.colorAttachmentCount = 1;
+			SubpassDesc.pColorAttachments = ColorAttachments3;
+
+			SubpassDesc.SetMultiViewMask(MultiviewMask);
+
+			TSubpassDependencyClass& SubpassDep = SubpassDependencies[NumDependencies++];
+			SubpassDep.srcSubpass = 1;
+			SubpassDep.dstSubpass = 2;
+			SubpassDep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+			SubpassDep.dstStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+			SubpassDep.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+			SubpassDep.dstAccessMask = VK_ACCESS_INPUT_ATTACHMENT_READ_BIT;
+			SubpassDep.dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
+		}
+
+		// CustomResolveSubpass does a custom resolve into second color target and does not need resolve attachments
+		if (!bCustomResolveSubpass)
+		{
+			if (bDepthReadSubpass && ResolveAttachmentReferences.Num() > 1)
+			{
+				// Handle SceneDepthAux resolve:
+				// The depth read subpass has only a single color attachment (using more would not be compatible dual source blending), so make SceneDepthAux a resolve attachment of the first subpass instead
+				ResolveAttachmentReferences.Add(TAttachmentReferenceClass{});
+				ResolveAttachmentReferences.Last().attachment = VK_ATTACHMENT_UNUSED;
+				Swap(ResolveAttachmentReferences.Last(), ResolveAttachmentReferences[0]);
+
+				SubpassDescriptions[0].SetResolveAttachments(TArrayView<TAttachmentReferenceClass>(ResolveAttachmentReferences.GetData(), ResolveAttachmentReferences.Num() - 1));
+				SubpassDescriptions[NumSubpasses - 1].SetResolveAttachments(TArrayView<TAttachmentReferenceClass>(&ResolveAttachmentReferences.Last(), 1));
+			}
+			else
+			{
+				// Only set resolve attachment on the last subpass
+				SubpassDescriptions[NumSubpasses - 1].SetResolveAttachments(ResolveAttachmentReferences);
+			}
+		}
+
 		for (uint32 Attachment = 0; Attachment < RTLayout.GetNumAttachmentDescriptions(); ++Attachment)
 		{
 			if (bHasDepthStencilAttachmentReference && (Attachment == DepthStencilAttachmentReference.attachment))
@@ -716,6 +772,10 @@ private:
 
 	TAttachmentReferenceClass DepthStencilAttachmentReference;
 	TArray<TAttachmentDescriptionClass> AttachmentDescriptions;
+
+	// Tonemap subpass
+	TAttachmentReferenceClass InputAttachments3[MaxSimultaneousRenderTargets + 1];
+	TAttachmentReferenceClass ColorAttachments3[MaxSimultaneousRenderTargets + 1];
 
 	FVulkanAttachmentReference<VkAttachmentReference2> ShadingRateAttachmentReference;
 	FVulkanFragmentShadingRateAttachmentInfo FragmentShadingRateAttachmentInfo;

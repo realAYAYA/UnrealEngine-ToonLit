@@ -349,8 +349,8 @@ public:
 		UVertexColorSmoothBrushOpProps* Props = GetPropertySetAs<UVertexColorSmoothBrushOpProps>();
 
 		int32 NumElements = ElementIDs.Num();
-		ElementIDVertices.SetNum(NumElements, false);
-		ElementIDVertexIndices.SetNum(NumElements, false);
+		ElementIDVertices.SetNum(NumElements, EAllowShrinking::No);
+		ElementIDVertexIndices.SetNum(NumElements, EAllowShrinking::No);
 		ensure(NewColorsOut.Num() == NumElements);
 		UniqueVertices.Reset();
 		for (int32 k = 0; k < NumElements; ++k)
@@ -363,7 +363,7 @@ public:
 
 		// compute color at each vertex that blends any split elements
 		int32 NumVertices = UniqueVertices.Num();
-		SoftenedVertexColors.SetNum(NumVertices, false);
+		SoftenedVertexColors.SetNum(NumVertices, EAllowShrinking::No);
 		ParallelFor(NumVertices, [&](int32 Index)
 		{
 			TArray<int32> Temp;
@@ -387,7 +387,7 @@ public:
 		
 
 		// now compute one-ring-smoothed vertex colors
-		SmoothedVertexColors.SetNum(NumVertices, false);
+		SmoothedVertexColors.SetNum(NumVertices, EAllowShrinking::No);
 		ParallelFor(NumVertices, [&](int32 Index)
 		{
 			FVector4f SmoothedColor = FVector4f::Zero();

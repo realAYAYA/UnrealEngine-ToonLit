@@ -7,7 +7,7 @@
 #include "../Nanite/NaniteDataDecode.ush"
 #include "../SceneData.ush"
 #include "VirtualShadowMapPageAccessCommon.ush"
-#include "VirtualShadowMapStaticCaching.ush"
+#include "VirtualShadowMapPageCacheCommon.ush"
 
 StructuredBuffer<uint> HZBPageTable;
 StructuredBuffer<uint4> HZBPageRectBounds;
@@ -188,19 +188,14 @@ bool IsVisibleMaskedHZB(uint PrevShadowMapID, uint MipLevel, FScreenRect Rect, b
 	return false;
 }
 
-uint GetPageFlagMaskForRendering(bool bShouldCacheInstanceAsStatic, bool bHasMoved)
+uint GetPageFlagMaskForRendering(bool bCacheAsStatic, bool bHasMoved)
 {
 	// Clustered that have moved must be rendered into any allocated page
 	// Otherwise they must be rendered only into uncached pages that match their "static/dynamic" instance type	
 	const uint PageFlagMask = 
 		bHasMoved ? VSM_ALLOCATED_FLAG :
-		(bShouldCacheInstanceAsStatic ?  VSM_STATIC_UNCACHED_FLAG : VSM_DYNAMIC_UNCACHED_FLAG);
+		(bCacheAsStatic ?  VSM_STATIC_UNCACHED_FLAG : VSM_DYNAMIC_UNCACHED_FLAG);
 	return PageFlagMask;
-}
-
-uint GetPageFlagMaskForRendering(FInstanceSceneData InstanceData, FNaniteView NaniteView, bool bHasMoved)
-{
-	return GetPageFlagMaskForRendering(ShouldCacheInstanceAsStatic(InstanceData, NaniteView), bHasMoved);
 }
 
 float CalcClipSpaceRadiusEstimate(bool bIsOrtho, FInstanceSceneData InstanceData, float4x4 LocalToTranslatedWorld, float4x4 ViewToClip)
@@ -225,7 +220,7 @@ float CalcClipSpaceRadiusEstimate(bool bIsOrtho, FInstanceSceneData InstanceData
  * When the comparison is not 1 (i.e., for a page _not_ marked with VSM_DETAIL_GEOMETRY_FLAG) the instance is culled.
  * This test should only be performed at the instance level, as it does not make sense to partially cull geometry, (e.g, creating holes based on varying cluster size).
  */
-uint GetDetailGeometryFlagMaskForCulling(bool bShouldCacheAsStatic, bool bIsNaniteGeometry, float InstancePixelEstRadius)
+uint GetDetailGeometryFlagMaskForCulling(bool bCacheAsStatic, bool bIsNaniteGeometry, float InstancePixelEstRadius)
 {
 	// Preserve the old behaviour, only based on whether it is nanite or not.
 	if (VirtualShadowMap.bExcludeNonNaniteFromCoarsePages)
@@ -233,9 +228,9 @@ uint GetDetailGeometryFlagMaskForCulling(bool bShouldCacheAsStatic, bool bIsNani
 		return bIsNaniteGeometry ? 0U : VSM_DETAIL_GEOMETRY_FLAG;
 	}
 
-	// We use a separate threshold for dynamically cached geometry, this is becase the overhead is lower when caching is enabled as cached page culling removes the instances anyway.
+	// We use a separate threshold for dynamically cached geometry, this is because the overhead is lower when caching is enabled as cached page culling removes the instances anyway.
 	// Nanite geometry has a separate smaller footprint as it has better LOD and lower overhead for replicated drawing.
-	if (bShouldCacheAsStatic)
+	if (bCacheAsStatic)
 	{
 		return InstancePixelEstRadius >= VirtualShadowMap.CoarsePagePixelThresholdStatic ? 0U : VSM_DETAIL_GEOMETRY_FLAG;
 	}

@@ -64,6 +64,7 @@ TArray<int32> URigVMLibraryNode::GetInstructionsForVMImpl(const FRigVMExtendedEx
 	}
 
 #endif
+
 	
 	return Instructions;
 }
@@ -237,6 +238,7 @@ FRigVMGraphFunctionHeader URigVMLibraryNode::GetFunctionHeader(IRigVMGraphFuncti
 	}	
     
     Header.Name = GetFName();
+	Header.Description = GetNodeDescription();
     Header.Category = GetNodeCategory();
     Header.Keywords = GetNodeKeywords();
 	

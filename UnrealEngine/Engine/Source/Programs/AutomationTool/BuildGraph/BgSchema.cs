@@ -1,13 +1,13 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+using EpicGames.BuildGraph;
+using EpicGames.Core;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Xml;
 using System.Xml.Schema;
-using EpicGames.BuildGraph;
-using EpicGames.Core;
 
 #nullable enable
 
@@ -149,6 +149,7 @@ namespace AutomationTool
 		EnvVar,
 		Property,
 		Regex,
+		StringOp,
 		Macro,
 		MacroBody,
 		Extend,
@@ -334,6 +335,7 @@ namespace AutomationTool
 			newSchema.Items.Add(CreateEnvVarType());
 			newSchema.Items.Add(CreatePropertyType());
 			newSchema.Items.Add(CreateRegexType());
+			newSchema.Items.Add(CreateStringOpType());
 			newSchema.Items.Add(CreateMacroType());
 			newSchema.Items.Add(CreateMacroBodyType(taskNameToType));
 			newSchema.Items.Add(CreateExtendType());
@@ -476,6 +478,7 @@ namespace AutomationTool
 			graphChoice.Items.Add(CreateSchemaElement("EnvVar", ScriptSchemaStandardType.EnvVar));
 			graphChoice.Items.Add(CreateSchemaElement("Property", ScriptSchemaStandardType.Property));
 			graphChoice.Items.Add(CreateSchemaElement("Regex", ScriptSchemaStandardType.Regex));
+			graphChoice.Items.Add(CreateSchemaElement("StringOp", ScriptSchemaStandardType.StringOp));
 			graphChoice.Items.Add(CreateSchemaElement("Macro", ScriptSchemaStandardType.Macro));
 			graphChoice.Items.Add(CreateSchemaElement("Extend", ScriptSchemaStandardType.Extend));
 			graphChoice.Items.Add(CreateSchemaElement("Agent", ScriptSchemaStandardType.Agent));
@@ -532,6 +535,7 @@ namespace AutomationTool
 			agentChoice.MaxOccursString = "unbounded";
 			agentChoice.Items.Add(CreateSchemaElement("Property", ScriptSchemaStandardType.Property));
 			agentChoice.Items.Add(CreateSchemaElement("Regex", ScriptSchemaStandardType.Regex));
+			agentChoice.Items.Add(CreateSchemaElement("StringOp", ScriptSchemaStandardType.StringOp));
 			agentChoice.Items.Add(CreateSchemaElement("EnvVar", ScriptSchemaStandardType.EnvVar));
 			agentChoice.Items.Add(CreateSchemaElement("Node", ScriptSchemaStandardType.Node));
 			agentChoice.Items.Add(CreateSchemaElement("Trace", ScriptSchemaStandardType.Trace));
@@ -589,6 +593,7 @@ namespace AutomationTool
 			nodeChoice.MaxOccursString = "unbounded";
 			nodeChoice.Items.Add(CreateSchemaElement("Property", ScriptSchemaStandardType.Property));
 			nodeChoice.Items.Add(CreateSchemaElement("Regex", ScriptSchemaStandardType.Regex));
+			nodeChoice.Items.Add(CreateSchemaElement("StringOp", ScriptSchemaStandardType.StringOp));
 			nodeChoice.Items.Add(CreateSchemaElement("EnvVar", ScriptSchemaStandardType.EnvVar));
 			nodeChoice.Items.Add(CreateSchemaElement("Trace", ScriptSchemaStandardType.Trace));
 			nodeChoice.Items.Add(CreateSchemaElement("Warning", ScriptSchemaStandardType.Warning));
@@ -642,8 +647,12 @@ namespace AutomationTool
 			XmlSchemaComplexType artifactType = new XmlSchemaComplexType();
 			artifactType.Name = GetTypeName(ScriptSchemaStandardType.Artifact);
 			artifactType.Attributes.Add(CreateSchemaAttribute("Name", ScriptSchemaStandardType.Name, XmlSchemaUse.Required));
+			artifactType.Attributes.Add(CreateSchemaAttribute("Type", ScriptSchemaStandardType.Name, XmlSchemaUse.Optional));
+			artifactType.Attributes.Add(CreateSchemaAttribute("Description", ScriptSchemaStandardType.BalancedString, XmlSchemaUse.Optional));
+			artifactType.Attributes.Add(CreateSchemaAttribute("BasePath", ScriptSchemaStandardType.BalancedString, XmlSchemaUse.Optional));
 			artifactType.Attributes.Add(CreateSchemaAttribute("Tag", ScriptSchemaStandardType.Tag, XmlSchemaUse.Optional));
 			artifactType.Attributes.Add(CreateSchemaAttribute("Keys", ScriptSchemaStandardType.BalancedString, XmlSchemaUse.Optional));
+			artifactType.Attributes.Add(CreateSchemaAttribute("Metadata", ScriptSchemaStandardType.BalancedString, XmlSchemaUse.Optional));
 			artifactType.Attributes.Add(CreateSchemaAttribute("If", ScriptSchemaStandardType.BalancedString, XmlSchemaUse.Optional));
 			return artifactType;
 		}
@@ -789,6 +798,7 @@ namespace AutomationTool
 			extension.Attributes.Add(CreateSchemaAttribute("Value", s_stringTypeName, XmlSchemaUse.Optional));
 			extension.Attributes.Add(CreateSchemaAttribute("Separator", s_stringTypeName, XmlSchemaUse.Optional));
 			extension.Attributes.Add(CreateSchemaAttribute("If", ScriptSchemaStandardType.BalancedString, XmlSchemaUse.Optional));
+			extension.Attributes.Add(CreateSchemaAttribute("CreateInParentScope", ScriptSchemaStandardType.Boolean, XmlSchemaUse.Optional));
 
 			XmlSchemaSimpleContent contentModel = new XmlSchemaSimpleContent();
 			contentModel.Content = extension;
@@ -821,6 +831,30 @@ namespace AutomationTool
 			regexType.Name = GetTypeName(ScriptSchemaStandardType.Regex);
 			regexType.ContentModel = contentModel;
 			return regexType;
+		}
+
+		/// <summary>
+		/// Creates the schema type representing a stringop type
+		/// </summary>
+		/// <returns>Type definition for a stringop element</returns>
+		static XmlSchemaType CreateStringOpType()
+		{
+			XmlSchemaSimpleContentExtension extension = new XmlSchemaSimpleContentExtension();
+			extension.BaseTypeName = s_stringTypeName;
+
+			extension.Attributes.Add(CreateSchemaAttribute("Input", s_stringTypeName, XmlSchemaUse.Required));
+			extension.Attributes.Add(CreateSchemaAttribute("Output", s_stringTypeName, XmlSchemaUse.Required));
+			extension.Attributes.Add(CreateSchemaAttribute("Method", s_stringTypeName, XmlSchemaUse.Required));
+			extension.Attributes.Add(CreateSchemaAttribute("Arguments", s_stringTypeName, XmlSchemaUse.Optional));
+			extension.Attributes.Add(CreateSchemaAttribute("If", ScriptSchemaStandardType.BalancedString, XmlSchemaUse.Optional));
+
+			XmlSchemaSimpleContent contentModel = new XmlSchemaSimpleContent();
+			contentModel.Content = extension;
+
+			XmlSchemaComplexType stringOpType = new XmlSchemaComplexType();
+			stringOpType.Name = GetTypeName(ScriptSchemaStandardType.StringOp);
+			stringOpType.ContentModel = contentModel;
+			return stringOpType;
 		}
 
 		/// <summary>
@@ -860,6 +894,7 @@ namespace AutomationTool
 			macroChoice.Items.Add(CreateSchemaElement("EnvVar", ScriptSchemaStandardType.EnvVar));
 			macroChoice.Items.Add(CreateSchemaElement("Property", ScriptSchemaStandardType.Property));
 			macroChoice.Items.Add(CreateSchemaElement("Regex", ScriptSchemaStandardType.Regex));
+			macroChoice.Items.Add(CreateSchemaElement("StringOp", ScriptSchemaStandardType.StringOp));
 			macroChoice.Items.Add(CreateSchemaElement("Macro", ScriptSchemaStandardType.Macro));
 			macroChoice.Items.Add(CreateSchemaElement("Agent", ScriptSchemaStandardType.Agent));
 			macroChoice.Items.Add(CreateSchemaElement("Aggregate", ScriptSchemaStandardType.Aggregate));

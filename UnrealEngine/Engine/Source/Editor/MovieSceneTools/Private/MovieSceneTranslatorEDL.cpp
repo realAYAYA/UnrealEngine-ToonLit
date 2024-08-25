@@ -193,7 +193,7 @@ void ParseFromEDL(const FString& InputString, FFrameRate TickResolution, FFrameR
 
 				if (ReelName.EndsWith(TEXT(".avi")))
 				{
-					ReelName.LeftChopInline(4, false); // strip .avi
+					ReelName.LeftChopInline(4, EAllowShrinking::No); // strip .avi
 				}
 
 				FString ElementName = MoveTemp(ReelName);

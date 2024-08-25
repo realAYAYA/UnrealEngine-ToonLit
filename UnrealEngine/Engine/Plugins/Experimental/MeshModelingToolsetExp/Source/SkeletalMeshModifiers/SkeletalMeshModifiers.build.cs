@@ -25,7 +25,8 @@ public class SkeletalMeshModifiers : ModuleRules
 				"SkeletalMeshUtilitiesCommon",
 				"RenderCore",
 				"CoreUObject",
-				"Engine"
+				"Engine",
+				"ApplicationCore"
 			}
 			);
 

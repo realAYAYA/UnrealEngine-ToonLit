@@ -767,6 +767,7 @@ FCompressibleAnimData::FCompressibleAnimData(class UAnimSequence* InSeq, const b
 	, BoneCompressionSettings(InSeq->BoneCompressionSettings)
 	, Interpolation(InSeq->Interpolation)
 	, SequenceLength(InSeq->GetDataModelInterface()->GetPlayLength())
+	, AdditiveType(InSeq->GetAdditiveAnimType())
 	, bIsValidAdditive(InSeq->IsValidAdditive())
 #if WITH_EDITORONLY_DATA
 	, ErrorThresholdScale(InSeq->CompressionErrorThresholdScale)
@@ -852,14 +853,14 @@ void FCompressibleAnimData::FetchData(const ITargetPlatform* InPlatform)
 	// Sorting increases the chances of linearizing the decompression later
 	RawFloatCurves.Sort([](const FFloatCurve& InLHS, const FFloatCurve& InRHS)
 	{
-		return InLHS.GetName().FastLess(InRHS.GetName());
+		return InLHS.GetName().LexicalLess(InRHS.GetName());
 	});
 	
 	// Apply any key reduction if possible
 	if (RawAnimationData.Num())
 	{ 
-		UE::Anim::Compression::CompressAnimationDataTracks(RawAnimationData, NumberOfKeys, AnimSequence->GetFName(), -1.f, -1.f);
-		UE::Anim::Compression::CompressAnimationDataTracks(RawAnimationData, NumberOfKeys, AnimSequence->GetFName());
+		UE::Anim::Compression::CompressAnimationDataTracks(Skeleton, TrackToSkeletonMapTable, RawAnimationData, NumberOfKeys, AnimSequence->GetFName(), -1.f, -1.f);
+		UE::Anim::Compression::CompressAnimationDataTracks(Skeleton, TrackToSkeletonMapTable, RawAnimationData, NumberOfKeys, AnimSequence->GetFName());
 	}
 
 	auto IsKeyArrayValidForRemoval = [](const auto& Keys, const auto& IdentityValue) -> bool
@@ -1009,6 +1010,7 @@ FCompressibleAnimData::FCompressibleAnimData(UAnimBoneCompressionSettings* InBon
 	, NumberOfFrames(InNumberOfKeys)
 	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	, NumberOfKeys(InNumberOfKeys)
+	, AdditiveType(AAT_None)
 	, bIsValidAdditive(false)
 	, ErrorThresholdScale(1.f)
 	, TargetPlatform(InTargetPlatform)
@@ -1029,6 +1031,7 @@ PRAGMA_DISABLE_DEPRECATION_WARNINGS
 , NumberOfFrames(0)
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
 , NumberOfKeys(0)
+, AdditiveType(AAT_None)
 , bIsValidAdditive(false)
 , ErrorThresholdScale(1.f)
 , TargetPlatform(nullptr)
@@ -1082,19 +1085,13 @@ void FUECompressedAnimData::InitViewsFromBuffer(const TArrayView<uint8> BulkData
 }
 
 template<typename T>
-void InitArrayViewSize(TArrayView<T>& Dest, const TArray<T>& Src)
-{
-	Dest = TArrayView<T>((T*)nullptr, Src.Num());
-}
-
-template<typename T>
 void SerializeView(class FArchive& Ar, TArrayView<T>& View)
 {
 	int32 Size = View.Num();
 	if (Ar.IsLoading())
 	{
 		Ar << Size;
-		View = TArrayView<T>((T*)nullptr, Size);
+		View = TArrayView<T>((T*)nullptr, Size); //-V575
 	}
 	else
 	{
@@ -1241,6 +1238,7 @@ void ICompressedAnimData::SerializeCompressedData(class FArchive& Ar)
 struct FAnimDDCDebugData
 {
 public:
+	FAnimDDCDebugData() {}
 	FAnimDDCDebugData(FName InOwnerName, const TArray<FRawAnimSequenceTrack>& RawData)
 	{
 		CompressedRawData = RawData;
@@ -1287,6 +1285,8 @@ FArchive& operator<<(FArchive& Ar, FAnimDDCDebugData& DebugData)
 
 void FCompressedAnimSequence::SerializeCompressedData(FArchive& Ar, bool bDDCData, UObject* DataOwner, USkeleton* Skeleton, UAnimBoneCompressionSettings* BoneCompressionSettings, UAnimCurveCompressionSettings* CurveCompressionSettings, bool bCanUseBulkData)
 {
+	Ar.UsingCustomVersion(FFortniteMainBranchObjectVersion::GUID);
+
 	Ar << CompressedRawDataSize;
 	Ar << CompressedTrackToSkeletonMapTable;
 	Ar << IndexedCurveNames;
@@ -1417,7 +1417,6 @@ void FCompressedAnimSequence::SerializeCompressedData(FArchive& Ar, bool bDDCDat
 		bool bSavebUseBulkDataForSave = false;
 		if (!bDDCData)
 		{
-			Ar.UsingCustomVersion(FFortniteMainBranchObjectVersion::GUID);
 			if (Ar.CustomVer(FFortniteMainBranchObjectVersion::GUID) < FFortniteMainBranchObjectVersion::FortMappedCookedAnimation)
 			{
 				bUseBulkDataForSave = false;
@@ -1503,13 +1502,10 @@ void FCompressedAnimSequence::SerializeCompressedData(FArchive& Ar, bool bDDCDat
 #if WITH_EDITOR
 	if (bDDCData)
 	{
-		FAnimDDCDebugData DebugData(OwnerName, CompressedRawData);
-		Ar << DebugData;
-
-		if (Ar.IsLoading() && Skeleton)
+		if (Ar.IsLoading() && Ar.CustomVer(FFortniteMainBranchObjectVersion::GUID) < FFortniteMainBranchObjectVersion::AnimationSequenceCompressedDataRemoveDebugData)
 		{
-			//Temp DDC debug
-			//DebugData.Display();
+			FAnimDDCDebugData DebugData;
+			Ar << DebugData;
 		}
 	}
 #endif

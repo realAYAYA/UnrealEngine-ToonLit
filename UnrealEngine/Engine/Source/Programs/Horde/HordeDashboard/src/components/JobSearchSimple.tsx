@@ -9,10 +9,11 @@ import dashboard from "../backend/Dashboard";
 import { projectStore } from "../backend/ProjectStore";
 import templateCache from '../backend/TemplateCache';
 import { displayTimeZone } from "../base/utilities/timeUtils";
-import { detailClasses, hordeClasses } from "../styles/Styles";
 import { ChangeButton } from "./ChangeButton";
 import { StepRefStatusIcon } from "./StatusIcon";
 import { UserSelect } from "./UserSelect";
+import { getHordeTheme } from "../styles/theme";
+import { getHordeStyling } from "../styles/Styles";
 
 
 const jobToStep = new Map<string, GetJobStepRefResponse>();
@@ -27,12 +28,16 @@ export const JobSearchSimpleModal: React.FC<{ streamId: string, onClose: () => v
    const [searchState, setSearchState] = useState<{ items: JobItem[], groups?: IGroup[], templateId?: string, name?: string, userId?: string, global?: boolean, streamIdOverride?: string, preflights: boolean, preflightOnly?: boolean, minDate?: Date, maxDate?: Date, minCL?: string, maxCL?: string, querying: boolean, containsStep?: string, containsParameter?: string }>({ items: [], querying: false, preflights: false });
    const [templateData, setTemplateData] = useState<{ streamId: string; templates: GetTemplateRefResponse[] } | undefined>(undefined);
 
+   const { hordeClasses, detailClasses } = getHordeStyling();
+
    const stream = projectStore.streamById(streamId);
 
    if (!stream) {
       console.error("unable to get stream");
       return <div>unable to get stream</div>;
    }
+
+   const hordeTheme = getHordeTheme();
 
    const StatusModal: React.FC<{ text: string }> = ({ text }) => {
       return <Modal isOpen={true} isBlocking={true} topOffsetFixed={true} styles={{ main: { padding: 8, width: 700, hasBeenOpened: false, top: "80px", position: "absolute" } }} className={hordeClasses.modal}>
@@ -413,7 +418,7 @@ export const JobSearchSimpleModal: React.FC<{ streamId: string, onClose: () => v
       title = `Find Jobs in ${searchState.streamIdOverride}`;
    }
 
-   return (<Modal isOpen={true} topOffsetFixed={true} styles={{ main: { padding: 8, width: 1400, height: '800px', backgroundColor: '#FFFFFF', hasBeenOpened: false, top: "80px", position: "absolute" } }} className={hordeClasses.modal} onDismiss={() => { onClose() }}>
+   return (<Modal isOpen={true} topOffsetFixed={true} styles={{ main: { padding: 8, width: 1400, height: '800px', backgroundColor: hordeTheme.horde.contentBackground, hasBeenOpened: false, top: "80px", position: "absolute" } }} className={hordeClasses.modal} onDismiss={() => { onClose() }}>
       {searchState.querying && <StatusModal text={"Finding Jobs"} />}
       <Stack styles={{ root: { paddingTop: 8, paddingLeft: 24, paddingRight: 12, paddingBottom: 8 } }}>
          <Stack tokens={{ childrenGap: 12 }}>

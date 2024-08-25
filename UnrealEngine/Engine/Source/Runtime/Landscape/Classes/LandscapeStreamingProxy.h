@@ -33,7 +33,7 @@ private:
 	TSoftObjectPtr<ALandscape> LandscapeActorRef;
 
 	UPROPERTY()
-	TSet<FString> OverriddenSharedProperties;
+	TSet<FName> OverriddenSharedProperties;
 
 public:
 	//~ Begin UObject Interface
@@ -63,8 +63,8 @@ public:
 
 #if WITH_EDITOR
 	//~ Begin ALandscapeProxy Interface
-	virtual bool IsSharedPropertyOverridden(const FString& InPropertyName) const override;
-	virtual void SetSharedPropertyOverride(const FString& InPropertyName, const bool bIsOverridden) override;
+	virtual bool IsSharedPropertyOverridden(const FName& InPropertyName) const override;
+	virtual void SetSharedPropertyOverride(const FName& InPropertyName, const bool bIsOverridden) override;
 	//~ End ALandscapeProxy Interface
 
 protected:

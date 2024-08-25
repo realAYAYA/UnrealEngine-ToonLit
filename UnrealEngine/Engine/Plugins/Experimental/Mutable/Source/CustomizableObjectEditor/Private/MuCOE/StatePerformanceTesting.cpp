@@ -8,6 +8,7 @@
 #include "Logging/MessageLog.h"
 #include "MuCO/CustomizableObject.h"
 #include "MuCO/CustomizableObjectInstance.h"
+#include "MuCO/CustomizableObjectInstancePrivate.h"
 #include "MuCO/CustomizableSkeletalComponent.h"
 
 
@@ -185,7 +186,7 @@ void FTestingCustomizableObject::FinishTest()
 
 void FTestingCustomizableObject::InstanceUpdateEnd()
 {
-	const int32 MutableRuntimeCycles = Instance->LastUpdateMutableRuntimeCycles;
+	const int32 MutableRuntimeCycles = Instance->GetPrivate()->LastUpdateMutableRuntimeCycles;
 
 	if ((ActiveBatch != nullptr) && !ActiveBatch->TestFinished)
 	{
@@ -252,7 +253,7 @@ void FTestingCustomizableObject::LaunchNextBatch()
 
 	if (ActiveBatch->IsStateChange)
 	{
-		Instance->SetState(ActiveBatch->State);
+		Instance->GetPrivate()->SetState(ActiveBatch->State);
 	}
 	else
 	{
@@ -283,7 +284,7 @@ void FTestingCustomizableObject::LaunchNextBatch()
 				// For projectors we have small random offsets to apply to the position
 				FVector Position = Instance->GetProjectorPosition(ActiveBatch->Name);
 				Position *= ActiveBatch->VectorValue;
-				Instance->SetProjectorPosition(ActiveBatch->Name, (FVector3f)Position);
+				Instance->SetProjectorPosition(ActiveBatch->Name, Position);
 				break;
 			}
 			case EMutableParameterType::Texture:

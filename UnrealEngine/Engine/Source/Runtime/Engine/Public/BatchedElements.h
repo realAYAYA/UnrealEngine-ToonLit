@@ -10,6 +10,7 @@
 #include "Templates/RefCounting.h"
 #include "RenderResource.h"
 #include "Containers/DynamicRHIResourceArray.h"
+#include "Math/DoubleFloat.h"
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
 #include "CoreMinimal.h"
@@ -28,7 +29,7 @@ class FSceneView;
 
 struct FBatchedPoint;
 struct FMeshPassProcessorRenderState;
-struct FRelativeViewMatrices;
+struct FDFRelativeViewMatrices;
 
 enum EBlendMode : int;
 enum ESimpleElementBlendMode : int;
@@ -50,8 +51,7 @@ struct FSimpleElementVertex
 	// Store LWC-scale positions per-vertex
 	// Could potentially optimize this by storing a global batch offset, along with relative position per-vertex, but this would be more complicated
 	// Could also pack this structure to save some space, W component of position is currently unused for example
-	FVector4f RelativePosition;
-	FVector4f TilePosition;
+	FDFVector4 Position;
 	FVector2f TextureCoordinate;
 	FLinearColor Color;
 	FColor HitProxyIdColor;
@@ -237,10 +237,35 @@ public:
 			+ Sprites.GetAllocatedSize() + MeshElements.GetAllocatedSize() + MeshVertices.GetAllocatedSize();
 	}
 
-	void EnableMobileHDREncoding(bool bInEnableHDREncoding)
+	UE_DEPRECATED(5.4, "EnableMobileHDREncoding is no longer supported")
+	void EnableMobileHDREncoding(bool bInEnableHDREncoding) {}
+
+	class FAllocationInfo
 	{
-		bEnableHDREncoding = bInEnableHDREncoding;
-	}
+	public:
+		FAllocationInfo() = default;
+
+	private:
+		int32 NumLineVertices = 0;
+		int32 NumPoints = 0;
+		int32 NumWireTris = 0;
+		int32 NumWireTriVerts = 0;
+		int32 NumThickLines = 0;
+		int32 NumSprites = 0;
+		int32 NumMeshElements = 0;
+		int32 NumMeshVertices = 0;
+
+		friend FBatchedElements;
+	};
+
+	/** Accumulates allocation info for use calling Reserve. */
+	ENGINE_API void AddAllocationInfo(FAllocationInfo& AllocationInfo) const;
+
+	/** Reserves memory for all containers. */
+	ENGINE_API void Reserve(const FAllocationInfo& AllocationInfo);
+
+	/** Appends contents of another batched elements into this one and clears the other one. */
+	ENGINE_API void Append(FBatchedElements& Other);
 
 private:
 
@@ -338,7 +363,7 @@ private:
 		uint32 StencilRef,
 		ERHIFeatureLevel::Type FeatureLevel,
 		ESimpleElementBlendMode BlendMode,
-		const FRelativeViewMatrices& ViewMatrices,
+		const FDFRelativeViewMatrices& ViewMatrices,
 		FBatchedElementParameters* BatchedElementParameters,
 		const FTexture* Texture,
 		bool bHitTesting,
@@ -347,8 +372,5 @@ private:
 		const FSceneView* View = nullptr,
 		float OpacityMaskRefVal = .5f
 		) const;
-
-	/** if false then prevent the use of HDR encoded shaders. */
-	bool bEnableHDREncoding;
 };
 

@@ -8,6 +8,14 @@
 
 namespace UE::NNEHlslShaders::Internal
 {
+	enum class EUpsampleMode : uint8
+	{
+		Nearest = 0,
+		Bilinear,
+		Trilinear,
+		MAX
+	};
+
 	class FUpsampleConstants
 	{
 	public:
@@ -22,7 +30,8 @@ namespace UE::NNEHlslShaders::Internal
 		SHADER_USE_PARAMETER_STRUCT(FUpsampleCS, FHlslShaderBase)
 
 		class FUpsampleNumDimensions : SHADER_PERMUTATION_RANGE_INT("NUM_DIMENSIONS", 1, FUpsampleConstants::MAX_NUM_DIMENSIONS);
-		using FPermutationDomain = TShaderPermutationDomain<FUpsampleNumDimensions>;
+		class FUpsampleMode : SHADER_PERMUTATION_ENUM_CLASS("MODE", EUpsampleMode);
+		using FPermutationDomain = TShaderPermutationDomain<FUpsampleNumDimensions, FUpsampleMode>;
 
 	public:
 
@@ -33,6 +42,8 @@ namespace UE::NNEHlslShaders::Internal
 			SHADER_PARAMETER(uint32, Num)
 			SHADER_PARAMETER(uint32, ThreadCountX)
 		END_SHADER_PARAMETER_STRUCT()
+
+		static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters);
 
 		static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& InParameters, FShaderCompilerEnvironment& OutEnvironment);
 	};

@@ -481,10 +481,10 @@ float3 ComputeVectorFromNeighborToRef(
 	{
 		// Recompute the the screen position of the reference, from the most minimal VGPR footprint.
 		float2 RefScreenPos = RefSceneMetadata.ScreenPosition;
-		float3 RefClipPosition = float3(RefScreenPos * (View.ViewToClip[3][3] < 1.0f ? RefWorldDepth : 1.0f), RefWorldDepth);
+		float3 RefClipPosition = float3(GetScreenPositionForProjectionType(RefScreenPos, RefWorldDepth), RefWorldDepth);
 
 		float2 NeighborScreenPos = NeighborSceneMetadata.ScreenPosition;
-		float3 NeighborClipPosition = float3(NeighborScreenPos * (View.ViewToClip[3][3] < 1.0f ? NeighborWorldDepth : 1.0f), NeighborWorldDepth);
+		float3 NeighborClipPosition = float3(GetScreenPositionForProjectionType(NeighborScreenPos, NeighborWorldDepth), NeighborWorldDepth);
 		
 		#if CONFIG_USE_VIEW_SPACE
 			float3 NeighborToRefVector = mul(float4(RefClipPosition - NeighborClipPosition, 0), GetScreenToViewDistanceMatrix()).xyz;
@@ -1084,7 +1084,7 @@ void AccumulateBilinear2x2Kernel(
 	FLATTEN
 	if (bUseStocasticBilinear)
 	{
-		float2 SampleOffset;
+		float2 SampleOffset = 0;
 		float WeigthAccumulation = 0.0;
 
 		UNROLL_N(4)

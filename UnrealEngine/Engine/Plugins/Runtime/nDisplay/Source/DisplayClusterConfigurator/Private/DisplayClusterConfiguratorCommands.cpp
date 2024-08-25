@@ -11,6 +11,7 @@ void FDisplayClusterConfiguratorCommands::RegisterCommands()
 	UI_COMMAND(Export, "Export", "Export to an nDisplay config. Requires a primary cluster node set. This does not export all components and is meant for launching the cluster from the command line", EUserInterfaceActionType::Button, FInputChord());
 	UI_COMMAND(EditConfig, "EditConfig", "Edit config file with text editor", EUserInterfaceActionType::Button, FInputChord());
 	UI_COMMAND(ExportConfigOnSave, "Export on Save", "Export to nDisplay config automatically on save. Requires a config previously exported", EUserInterfaceActionType::ToggleButton, FInputChord());
+	UI_COMMAND(ImportMPCDI, "Import MPCDI", "Import an MPCDI configuration", EUserInterfaceActionType::Button, FInputChord());
 
 	UI_COMMAND(AddNewClusterNode, "Add New Cluster Node", "Adds a new cluster node to the cluster config", EUserInterfaceActionType::Button, FInputChord());
 	UI_COMMAND(AddNewViewport, "Add New Viewport", "Adds a new viewport to the cluster node", EUserInterfaceActionType::Button, FInputChord());

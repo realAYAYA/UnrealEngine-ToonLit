@@ -7,6 +7,9 @@
 #include "EngineGlobals.h"
 #include "MaterialCompiler.h"
 #include "PhysicalMaterials/PhysicalMaterial.h"
+#if WITH_EDITOR
+#include "MaterialHLSLGenerator.h"
+#endif
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MaterialExpressionLandscapePhysicalMaterialOutput)
 
@@ -87,6 +90,32 @@ int32 UMaterialExpressionLandscapePhysicalMaterialOutput::Compile(class FMateria
 	}
 
 	return INDEX_NONE;
+}
+
+UE::Shader::EValueType UMaterialExpressionLandscapePhysicalMaterialOutput::GetCustomOutputType(int32 OutputIndex) const
+{
+	return UE::Shader::EValueType::Float1;
+}
+
+bool UMaterialExpressionLandscapePhysicalMaterialOutput::GenerateHLSLExpression(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope, int32 OutputIndex, UE::HLSLTree::FExpression const*& OutExpression) const
+{
+	if (!Inputs.IsValidIndex(OutputIndex))
+	{
+		return Generator.Error(TEXT("Invalid LandscapePhysicalMaterialOutput OutputIndex."));
+	}
+
+	if (!Inputs[OutputIndex].PhysicalMaterial)
+	{
+		return Generator.Error(TEXT("LandscapePhysicalMaterialOutput PhysicalMaterial not set."));
+	}
+
+	if (!Inputs[OutputIndex].Input.GetTracedInput().Expression)
+	{
+		return Generator.Error(TEXT("LandscapePhysicalMaterialOutput Input missing."));
+	}
+
+	OutExpression = Inputs[OutputIndex].Input.AcquireHLSLExpression(Generator, Scope);
+	return true;
 }
 
 void UMaterialExpressionLandscapePhysicalMaterialOutput::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)

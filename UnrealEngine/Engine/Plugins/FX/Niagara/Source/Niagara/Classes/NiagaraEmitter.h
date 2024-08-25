@@ -10,6 +10,7 @@
 #include "NiagaraMessageDataBase.h"
 #include "NiagaraMessageStore.h"
 #include "INiagaraMergeManager.h"
+#include "NiagaraAssetTagDefinitions.h"
 #include "NiagaraEffectType.h"
 #include "NiagaraDataSetAccessor.h"
 #include "NiagaraBoundsCalculator.h"
@@ -17,7 +18,7 @@
 #include "NiagaraParameterDefinitionsBase.h"
 #include "NiagaraParameterDefinitionsSubscriber.h"
 #include "NiagaraScratchPadContainer.h"
-
+#include "NiagaraSimStageExecutionData.h"
 #include "NiagaraDataInterfacePlatformSet.h"
 
 #include "NiagaraEmitter.generated.h"
@@ -150,8 +151,6 @@ struct FNiagaraEmitterScriptProperties
 	TArray<FNiagaraEventGeneratorProperties> EventGenerators;
 
 	NIAGARA_API void InitDataSetAccess();
-
-	NIAGARA_API bool DataSetAccessSynchronized() const;
 };
 
 USTRUCT()
@@ -374,6 +373,7 @@ struct FVersionedNiagaraEmitterData
 	FORCEINLINE const TArray<FNiagaraEventScriptProperties>& GetEventHandlers() const { return EventHandlerScriptProps; }
 	NIAGARA_API void CacheFromCompiledData(const FNiagaraDataSetCompiledData* CompiledData, const UNiagaraEmitter& Emitter);
 	NIAGARA_API void CacheFromShaderCompiled();
+	bool IsAllowedToExecute() const { return bIsAllowedToExecute; }
 
 	NIAGARA_API FGraphEventArray PrecacheComputePSOs(const UNiagaraEmitter& NiagaraEmitter);
 	bool DidPSOPrecacheFail() const { return PSOPrecacheResult == EPSOPrecacheResult::NotSupported; }
@@ -385,6 +385,7 @@ struct FVersionedNiagaraEmitterData
 	TConstArrayView<TSharedPtr<FNiagaraBoundsCalculator>> GetBoundsCalculators() const { return MakeArrayView(BoundsCalculators); }
 	NIAGARA_API bool RequiresPersistentIDs() const;
 	const TArray<UNiagaraSimulationStageBase*>& GetSimulationStages() const { return SimulationStages; }
+	FNiagaraSimStageExecutionDataPtr GetSimStageExcecutionData() const { return SimStageExecutionData; }
 	FORCEINLINE const FNiagaraEmitterScalabilitySettings& GetScalabilitySettings()const { return CurrentScalabilitySettings; }
 	NIAGARA_API const FNiagaraEmitterScalabilityOverride& GetCurrentOverrideSettings() const;
 	NIAGARA_API UNiagaraSimulationStageBase* GetSimulationStageById(FGuid ScriptUsageId) const;
@@ -483,13 +484,23 @@ struct FVersionedNiagaraEmitterData
 #endif
 
 	NIAGARA_API void GatherCompiledParticleAttributes(TArray<FNiagaraVariableBase>& OutVariables) const;
-	
+
 private:
 	UPROPERTY()
 	TArray<TObjectPtr<UNiagaraRendererProperties>> RendererProperties;
 
 	UPROPERTY(meta = (NiagaraNoMerge))
 	TArray<TObjectPtr<UNiagaraSimulationStageBase>> SimulationStages;
+
+	UPROPERTY()
+	TArray<FNiagaraSimStageExecutionLoopData> SimStageExecutionLoops;
+
+#if WITH_EDITORONLY_DATA
+	UPROPERTY(EditAnywhere, Advanceddisplay, Category = "Emitter", meta = (DisplayName = "Sim Stage Loops"))
+	TArray<FNiagaraSimStageExecutionLoopEditorData> SimStageExecutionLoopEditorData;
+#endif
+
+	FNiagaraSimStageExecutionDataPtr SimStageExecutionData;
 
 	UPROPERTY()
 	TObjectPtr<UNiagaraScript> GPUComputeScript = nullptr;
@@ -499,7 +510,10 @@ private:
 
 	UPROPERTY(Transient)
 	FNiagaraEmitterScalabilitySettings CurrentScalabilitySettings;
-	
+
+	/** Can this emitter run with the current scalability settings, etc */
+	uint32 bIsAllowedToExecute : 1;
+
 	/** Indicates that the GPU script requires the view uniform buffer. */
 	uint32 bRequiresViewUniformBuffer : 1;
 
@@ -542,6 +556,13 @@ private:
 	NIAGARA_API void OnPostCompile(const UNiagaraEmitter& InEmitter);
 
 	EPSOPrecacheResult PSOPrecacheResult = EPSOPrecacheResult::Unknown;
+
+	bool IsValidInternal() const;
+	bool IsReadyToRunInternal() const;
+#if !WITH_EDITORONLY_DATA
+	mutable TOptional<bool> IsValidCached;
+	mutable TOptional<bool> IsReadyToRunCached;
+#endif
 };
 
 /** 
@@ -605,6 +626,8 @@ public:
 	static void DeclareConstructClasses(TArray<FTopLevelAssetPath>& OutConstructClasses, const UClass* SpecificSubclass);
 #endif
 	virtual bool IsEditorOnly() const override;
+	virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 	//End UObject Interface
 
@@ -692,22 +715,26 @@ private:
 public:
 	
 #if WITH_EDITORONLY_DATA
-	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = "Asset Options", AssetRegistrySearchable)
-	ENiagaraScriptTemplateSpecification TemplateSpecification;
+	UPROPERTY()
+	TArray<FNiagaraAssetTagDefinitionReference> AssetTags;
+
+	/** If an emitter is inheritable, new emitters based on an inheritable emitter, or Niagara Systems using an inheritable emitter, will automatically inherit changes made to the original emitter. */
+	UPROPERTY(EditAnywhere, Category = "Asset Options", AssetRegistrySearchable)
+	bool bIsInheritable = true;
 	
-	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = "Asset Options", AssetRegistrySearchable)
+	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = "Asset Options", AssetRegistrySearchable, DisplayName="Asset Description")
 	FText TemplateAssetDescription;
 
 	/** Category to collate this emitter into for "add new emitter" dialogs.*/
-	UPROPERTY(AssetRegistrySearchable, EditAnywhere, Category = Script)
+	UPROPERTY(AssetRegistrySearchable)
 	FText Category;
 
-	///** Internal: The thumbnail image.*/
+	///** The thumbnail image used for the asset. This is always the latest recorded thumbnail. This can be different from the thumbnails that are saved per emitter version in collapsed view. */
 	UPROPERTY()
 	TObjectPtr<UTexture2D> ThumbnailImage;
 	
 	/** If this emitter is exposed to the library, or should be explicitly hidden. */
-    UPROPERTY(EditAnywhere, AdvancedDisplay, Category = "Asset Options", AssetRegistrySearchable)
+    UPROPERTY(AssetRegistrySearchable)
     ENiagaraScriptLibraryVisibility LibraryVisibility = ENiagaraScriptLibraryVisibility::Unexposed;
 
 	/** This is used as a transient value to open a specific version in the editor */
@@ -750,7 +777,9 @@ public:
 	UPROPERTY(meta = (DeprecatedProperty))
 	FNiagaraEmitterScriptProperties SpawnScriptProps_DEPRECATED;
 
-
+	UPROPERTY(meta = (DeprecatedProperty))
+	ENiagaraScriptTemplateSpecification TemplateSpecification_DEPRECATED;
+	
 	/** Use property in struct returned from GetEmitterData() instead */ 
 	UPROPERTY(meta = (DeprecatedProperty))
 	FNiagaraEmitterScriptProperties EmitterSpawnScriptProps_DEPRECATED;
@@ -978,7 +1007,11 @@ private:
 	FOnEventHandlersChanged OnEventHandlersChangedDelegate;
 #endif
 
-	void GenerateStatID()const;
+
+public:
+	void UpdateStatID() const;
+private:
+	void GenerateStatID() const;
 #if STATS
 	mutable TStatId StatID_GT;
 	mutable TStatId StatID_GT_CNC;

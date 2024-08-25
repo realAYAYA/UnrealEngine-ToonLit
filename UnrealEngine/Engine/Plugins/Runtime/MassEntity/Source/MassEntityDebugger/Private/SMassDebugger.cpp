@@ -261,9 +261,9 @@ void SMassDebugger::HandleEnvironmentChanged(TSharedPtr<FMassDebuggerEnvironment
 void SMassDebugger::RebuildEnvironmentsList()
 {
 #if WITH_MASSENTITY_DEBUG
-	for (const TWeakPtr<const FMassEntityManager>& WeakEntityManager : FMassDebugger::GetEntityManagers())
+	for (const FMassDebugger::FEnvironment& Environment : FMassDebugger::GetEnvironments())
 	{
-		if (const FMassEntityManager* EntityManagerPtr = WeakEntityManager.Pin().Get())
+		if (const FMassEntityManager* EntityManagerPtr = Environment.EntityManager.Pin().Get())
 		{
 			const UWorld* World = EntityManagerPtr->GetWorld();
 			if (World == nullptr || UE::Mass::Debugger::Private::IsSupportedWorldType(World->WorldType))

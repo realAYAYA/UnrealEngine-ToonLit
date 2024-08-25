@@ -9,7 +9,6 @@
 #include "DetailWidgetRow.h"
 #include "ScopedTransaction.h"
 #include "NiagaraEditorStyle.h"
-#include "NiagaraEditorUtilities.h"
 #include "DetailCategoryBuilder.h"
 #include "DetailLayoutBuilder.h"
 #include "Widgets/Images/SImage.h"
@@ -17,12 +16,8 @@
 #include "IPropertyUtilities.h"
 #include "Misc/NotifyHook.h"
 #include "IDetailChildrenBuilder.h"
-#include "NiagaraComponent.h"
-#include "NiagaraScript.h"
-#include "NiagaraEmitter.h"
-#include "NiagaraSystem.h"
-#include "NiagaraNodeInput.h"
 #include "NiagaraEditorModule.h"
+#include "NiagaraVariableMetaData.h"
 
 #define LOCTEXT_NAMESPACE "FNiagaraDataInterfaceDetailsBase"
 #define ErrorsCategoryName  TEXT("Errors")
@@ -219,8 +214,8 @@ class FNiagaraDataInterfaceCustomNodeBuilder : public IDetailCustomNodeBuilder
 											 , public TSharedFromThis<FNiagaraDataInterfaceCustomNodeBuilder>
 {
 public:
-	FNiagaraDataInterfaceCustomNodeBuilder(IDetailLayoutBuilder* InDetailBuilder)
-		: DetailBuilder(InDetailBuilder)
+	FNiagaraDataInterfaceCustomNodeBuilder(TWeakPtr<IDetailLayoutBuilder> InDetailBuilder)
+		: WeakDetailBuilder(MoveTemp(InDetailBuilder))
 	{
 	}
 
@@ -231,7 +226,7 @@ public:
 		DataInterface->OnErrorsRefreshed().AddSP(this, &FNiagaraDataInterfaceCustomNodeBuilder::OnRefreshErrorsRequested);
 	}
 
-	~FNiagaraDataInterfaceCustomNodeBuilder()
+	virtual ~FNiagaraDataInterfaceCustomNodeBuilder() override
 	{
 		if (DataInterface.IsValid())
 		{
@@ -321,21 +316,23 @@ private:
 	{
 		FProperty* PropertyPlaceholder = nullptr;  // we don't need to specify the property, all we need is to trigger the restart of the emitter
 		FPropertyChangedEvent ChangeEvent(PropertyPlaceholder, EPropertyChangeType::Unspecified);
-		if (DetailBuilder->GetPropertyUtilities()->GetNotifyHook() != nullptr)
+		if (TSharedPtr<IDetailLayoutBuilder> DetailBuilder = WeakDetailBuilder.Pin())
 		{
-			DetailBuilder->GetPropertyUtilities()->GetNotifyHook()->NotifyPostChange(ChangeEvent, PropertyPlaceholder);
+			if (DetailBuilder->GetPropertyUtilities()->GetNotifyHook() != nullptr)
+			{
+				DetailBuilder->GetPropertyUtilities()->GetNotifyHook()->NotifyPostChange(ChangeEvent, PropertyPlaceholder);
+			}
 		}
 	}
 
 private:
 	TWeakObjectPtr<UNiagaraDataInterface> DataInterface;
-	IDetailLayoutBuilder* DetailBuilder;
+	TWeakPtr<IDetailLayoutBuilder> WeakDetailBuilder;
 	FSimpleDelegate OnRebuildChildren;
 };
 
 void FNiagaraDataInterfaceDetailsBase::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder)
-{
-	Builder = &DetailBuilder;
+{	
 	PropertyUtilitiesWeak = DetailBuilder.GetPropertyUtilities();
 	TArray<TWeakObjectPtr<UObject>> SelectedObjects;
 	DetailBuilder.GetObjectsBeingCustomized(SelectedObjects);
@@ -345,10 +342,16 @@ void FNiagaraDataInterfaceDetailsBase::CustomizeDetails(IDetailLayoutBuilder& De
 	DataInterface->OnErrorsRefreshed().AddSP(this, &FNiagaraDataInterfaceDetailsBase::OnErrorsRefreshed);
 	IDetailCategoryBuilder& ErrorsBuilderRef = DetailBuilder.EditCategory(ErrorsCategoryName, LOCTEXT("ErrorsAndWarnings", "Errors And Warnings"), ECategoryPriority::Important);
 	ErrorsCategoryBuilder = &ErrorsBuilderRef;
-	CustomBuilder = MakeShared<FNiagaraDataInterfaceCustomNodeBuilder>(&DetailBuilder);
+	CustomBuilder = MakeShared<FNiagaraDataInterfaceCustomNodeBuilder>(Builder);
 	CustomBuilder->Initialize(*DataInterface);
 	ErrorsCategoryBuilder->AddCustomBuilder(CustomBuilder.ToSharedRef());
 	OnErrorsRefreshed();
+}
+
+void FNiagaraDataInterfaceDetailsBase::CustomizeDetails(const TSharedPtr<IDetailLayoutBuilder>& DetailBuilder)
+{
+	Builder = DetailBuilder;
+	CustomizeDetails(*DetailBuilder);
 }
 
 void FNiagaraDataInterfaceDetailsBase::OnErrorsRefreshed() // need to only refresh errors, and all will be good
@@ -356,6 +359,7 @@ void FNiagaraDataInterfaceDetailsBase::OnErrorsRefreshed() // need to only refre
 	TSharedPtr<IPropertyUtilities> PropertyUtilities = PropertyUtilitiesWeak.Pin();
 	bool bStillValid =
 		DataInterface.IsValid() &&
+		Builder.IsValid() &&
 		PropertyUtilities.IsValid() &&
 		PropertyUtilities->GetSelectedObjects().Num() == 1 &&
 		PropertyUtilities->GetSelectedObjects()[0].IsValid() &&

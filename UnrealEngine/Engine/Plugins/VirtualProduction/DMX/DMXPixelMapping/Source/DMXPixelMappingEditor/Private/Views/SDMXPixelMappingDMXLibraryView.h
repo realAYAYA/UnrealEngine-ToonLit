@@ -8,14 +8,15 @@
 #include "Widgets/SCompoundWidget.h"
 #include "UObject/GCObject.h"
 
+enum class ECheckBoxState : uint8; 
 class FDMXPixelMappingToolkit;
 class FReply;
 class IDetailsView;
 class SBorder;
 class SDMXPixelMappingFixturePatchList;
-class SHorizontalBox;
 class STextBlock;
 class SWidgetSwitcher;
+class SWrapBox;
 class UDMXEntity;
 class UDMXLibrary;
 class UDMXPixelMapping;
@@ -79,6 +80,12 @@ private:
 	/** Called when the 'Add All Patches' button was clicked */
 	FReply OnAddAllPatchesClicked();
 
+	/** Returns the check state of the 'use patch color' check box */
+	ECheckBoxState GetUsePatchColorCheckState() const;
+
+	/** Called when the check state of the 'use patch color' check box changed */
+	void OnUsePatchColorCheckStateChanged(ECheckBoxState NewCheckState);
+
 	/** Helper that returns all fixture patches in use in the pixel mapping */
 	TArray<UDMXEntityFixturePatch*> GetFixturePatchesInDMXLibrary() const;
 
@@ -106,8 +113,8 @@ private:
 	/** Text block displaying 'all patches added' when no patches are available to add from the dmx library */
 	TSharedPtr<STextBlock> AllPatchesAddedTextBlock;
 
-	/** Horizontal box containing the 'add selected patches' and 'add all patches' buttons */
-	TSharedPtr<SHorizontalBox> AddPatchesHorizontalBox;
+	/** Wrap box containing the 'add selected patches' and 'add all patches' buttons and the 'Use Patch Color' checkbox */
+	TSharedPtr<SWrapBox> AddPatchesWrapBox;
 
 	/** Details view for the model, displays the library picker */
 	TSharedPtr<IDetailsView> ModelDetailsView;

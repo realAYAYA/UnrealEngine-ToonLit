@@ -217,9 +217,9 @@ FParticleRenderData FNiagaraRenderer::TransferDataToGPU(FRHICommandListBase& RHI
 	const int32 TotalIntSize = IntComponents.Num() * NumInstances;
 
 	FParticleRenderData Allocation;
-	Allocation.FloatData = TotalFloatSize ? DynamicReadBuffer.AllocateFloat(RHICmdList, TotalFloatSize) : FGlobalDynamicReadBuffer::FAllocation();
-	Allocation.HalfData = TotalHalfSize ? DynamicReadBuffer.AllocateHalf(RHICmdList, TotalHalfSize) : FGlobalDynamicReadBuffer::FAllocation();
-	Allocation.IntData = TotalIntSize ? DynamicReadBuffer.AllocateInt32(RHICmdList, TotalIntSize) : FGlobalDynamicReadBuffer::FAllocation();
+	Allocation.FloatData = TotalFloatSize ? DynamicReadBuffer.AllocateFloat(TotalFloatSize) : FGlobalDynamicReadBuffer::FAllocation();
+	Allocation.HalfData = TotalHalfSize ? DynamicReadBuffer.AllocateHalf(TotalHalfSize) : FGlobalDynamicReadBuffer::FAllocation();
+	Allocation.IntData = TotalIntSize ? DynamicReadBuffer.AllocateInt32(TotalIntSize) : FGlobalDynamicReadBuffer::FAllocation();
 
 	Allocation.FloatStride = TotalFloatSize ? NumInstances * sizeof(float) : 0;
 	Allocation.HalfStride = TotalHalfSize ? NumInstances * sizeof(FFloat16) : 0;
@@ -270,21 +270,17 @@ FNiagaraDynamicDataBase::FNiagaraDynamicDataBase(const FNiagaraEmitterInstance* 
 {
 	check(InEmitter);
 
-	FNiagaraDataSet& DataSet = InEmitter->GetData();
-	SimTarget = DataSet.GetSimTarget();
 	SystemInstanceID = InEmitter->GetParentSystemInstance()->GetId();
 
-	if (SimTarget == ENiagaraSimTarget::CPUSim)
+	// CPU simulations we take a reference to the most recent data
+	if (InEmitter->GetSimTarget() == ENiagaraSimTarget::CPUSim)
 	{
-		//On CPU we pass through direct ptr to the most recent data buffer.
-		CPUParticleData = &DataSet.GetCurrentDataChecked();
+		CPUParticleData = &InEmitter->GetParticleData().GetCurrentDataChecked();
 	}
+	// GPU simulations we get a callback which will give us the correct data
 	else
 	{
-		//On GPU we must access the correct buffer via the GPUExecContext. Probably a way to route this data better outside the dynamic data in future.
-		//During simulation, the correct data buffer for rendering will be placed in the GPUContext and AddReadRef called.
-		check(SimTarget == ENiagaraSimTarget::GPUComputeSim);
-		GPUExecContext = InEmitter->GetGPUContext();
+		ComputeDataBufferInterface = InEmitter->GetComputeDataBufferInterface();
 	}
 }
 
@@ -294,46 +290,28 @@ FNiagaraDynamicDataBase::~FNiagaraDynamicDataBase()
 
 bool FNiagaraDynamicDataBase::IsGpuLowLatencyTranslucencyEnabled() const
 {
-	if (SimTarget == ENiagaraSimTarget::CPUSim)
-	{
-		return false;
-	}
-	else
-	{
-		return GPUExecContext ? GPUExecContext->HasTranslucentDataToRender() : false;
-	}
+	return ComputeDataBufferInterface ? ComputeDataBufferInterface->HasTranslucentDataToRender() : false;
 }
 
-FNiagaraDataBuffer* FNiagaraDynamicDataBase::GetParticleDataToRender(bool bIsLowLatencyTranslucent)const
+FNiagaraDataBuffer* FNiagaraDynamicDataBase::GetParticleDataToRender(bool bIsLowLatencyTranslucent) const
 {
-	FNiagaraDataBuffer* Ret = nullptr;
-
-	if (SimTarget == ENiagaraSimTarget::CPUSim)
-	{
-		Ret = CPUParticleData;
-	}
-	else
-	{
-		Ret = GPUExecContext->GetDataToRender(bIsLowLatencyTranslucent);
-	}
-
+	FNiagaraDataBuffer* Ret = ComputeDataBufferInterface ? ComputeDataBufferInterface->GetDataToRender(bIsLowLatencyTranslucent) : CPUParticleData.GetReference();
 	checkSlow(Ret == nullptr || Ret->IsBeingRead());
 	return Ret;
 }
 
 //////////////////////////////////////////////////////////////////////////
-
 FNiagaraRenderer::FNiagaraRenderer(ERHIFeatureLevel::Type InFeatureLevel, const UNiagaraRendererProperties *InProps, const FNiagaraEmitterInstance* Emitter)
 	: DynamicDataRender(nullptr)
-	, bLocalSpace(Emitter->GetCachedEmitterData()->bLocalSpace)
+	, bLocalSpace(Emitter->IsLocalSpace())
 	, bHasLights(false)
 	, bMotionBlurEnabled(InProps ? InProps->MotionVectorSetting != ENiagaraRendererMotionVectorSetting::Disable : false)
-	, SimTarget(Emitter->GetCachedEmitterData()->SimTarget)
+	, SimTarget(Emitter->GetSimTarget())
 	, FeatureLevel(InFeatureLevel)
-{
 #if STATS
-	EmitterStatID = Emitter->GetCachedEmitter().Emitter->GetStatID(false, false);
+	, EmitterStatID(Emitter->GetEmitterStatID(false, false))
 #endif
+{
 }
 
 void FNiagaraRenderer::Initialize(const UNiagaraRendererProperties* InProps, const FNiagaraEmitterInstance* Emitter, const FNiagaraSystemInstanceController& InController)
@@ -346,7 +324,7 @@ void FNiagaraRenderer::Initialize(const UNiagaraRendererProperties* InProps, con
 	bRendersInSecondaryDepthPass = false;
 
 	// Let check if the GPU simulation shader script needed to use the partial depth texture for depth queries.
-	const bool bNeedsPartialDepthTexture = Emitter->GetCachedEmitterData()->NeedsPartialDepthTexture();
+	const bool bNeedsPartialDepthTexture = Emitter->NeedsPartialDepthTexture();
 
 	uint32 Index = 0;
 	for (UMaterialInterface*& Mat : BaseMaterials_GT)
@@ -384,25 +362,18 @@ FNiagaraRenderer::~FNiagaraRenderer()
 FPrimitiveViewRelevance FNiagaraRenderer::GetViewRelevance(const FSceneView* View, const FNiagaraSceneProxy *SceneProxy)const
 {
 	FPrimitiveViewRelevance Result;
-	bool bHasDynamicData = HasDynamicData();
-
-	//Always draw so our LastRenderTime is updated. We may not have dynamic data if we're disabled from visibility culling.
-	Result.bDrawRelevance =/* bHasDynamicData && */SceneProxy->IsShown(View) && View->Family->EngineShowFlags.Particles && View->Family->EngineShowFlags.Niagara;
-	Result.bShadowRelevance = bHasDynamicData && SceneProxy->IsShadowCast(View);
-	Result.bDynamicRelevance = bHasDynamicData;
-	if (bHasDynamicData)
+	if (HasDynamicData())
 	{
 		Result.bOpaque = View->Family->EngineShowFlags.Bounds;
+		Result.bRenderInSecondStageDepthPass = bRendersInSecondaryDepthPass;
 		DynamicDataRender->GetMaterialRelevance().SetPrimitiveViewRelevance(Result);
 	}
-	Result.bRenderInSecondStageDepthPass = bRendersInSecondaryDepthPass;
 
 	return Result;
 }
 
 void FNiagaraRenderer::SetDynamicData_RenderThread(FNiagaraDynamicDataBase* NewDynamicData)
 {
-	check(IsInRenderingThread());
 	if (DynamicDataRender)
 	{
 		delete DynamicDataRender;
@@ -583,6 +554,24 @@ void FNiagaraRenderer::ProcessMaterialParameterBindings(const FNiagaraRendererMa
 			}
 		}
 	}
+}
+
+bool FNiagaraRenderer::IsViewRenderingOpaqueOnly(const FSceneView* View, bool bCastsVolumetricTranslucentShadow)
+{
+	const bool bShadowView = View->GetDynamicMeshElementsShadowCullFrustum() != nullptr;
+	return View->CustomRenderPass || (bShadowView && !bCastsVolumetricTranslucentShadow);
+}
+
+bool FNiagaraRenderer::AreViewsRenderingOpaqueOnly(const TArray<const FSceneView*>& Views, int32 ViewVisibilityMask, bool bCastsVolumetricTranslucentShadow)
+{
+	for ( int32 i=0; i < Views.Num(); ++i )
+	{
+		if (((ViewVisibilityMask & (1 << i)) != 0) && !IsViewRenderingOpaqueOnly(Views[i], bCastsVolumetricTranslucentShadow))
+		{
+			return false;
+		}
+	}
+	return true;
 }
 
 void FNiagaraRenderer::SortIndices(const FNiagaraGPUSortInfo& SortInfo, const FNiagaraRendererVariableInfo& SortVariable, const FNiagaraDataBuffer& Buffer, FGlobalDynamicReadBuffer::FAllocation& OutIndices)

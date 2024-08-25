@@ -21,10 +21,13 @@ public:
 private:
 	FPixelStreamingVideoInputViewport() = default;
 
-	bool FilterViewport(const FViewport* InViewport);
-	void OnViewportRendered(FViewport* Viewport);
+	bool FilterWindow(SWindow& Window);
+	void OnWindowRendered(SWindow& Window, void* Resource);
+	void OnPIEViewportRendered(FViewport* InViewport);
+	void SubmitViewport(FViewport* InViewport);
 
 	FDelegateHandle DelegateHandle;
+	FDelegateHandle PIEDelegateHandle;
 
 	FName TargetViewportType = FName(FString(TEXT("SceneViewport")));
 

@@ -18,8 +18,9 @@ DECLARE_DELEGATE_RetVal_OneParam(FPlasticSourceControlWorkerRef, FGetPlasticSour
 class FPlasticSourceControlProvider : public ISourceControlProvider
 {
 public:
-	/** Constructor */
+	/** Constructor & destructor */
 	FPlasticSourceControlProvider();
+	~FPlasticSourceControlProvider();
 
 	/* ISourceControlProvider implementation */
 	virtual void Init(bool bForceConnection = true) override;
@@ -38,7 +39,7 @@ public:
 	virtual FDelegateHandle RegisterSourceControlStateChanged_Handle(const FSourceControlStateChanged::FDelegate& SourceControlStateChanged) override;
 	virtual void UnregisterSourceControlStateChanged_Handle(FDelegateHandle Handle) override;
 	virtual ECommandResult::Type Execute(const FSourceControlOperationRef& InOperation, FSourceControlChangelistPtr InChangelist, const TArray<FString>& InFiles, EConcurrency::Type InConcurrency = EConcurrency::Synchronous, const FSourceControlOperationComplete& InOperationCompleteDelegate = FSourceControlOperationComplete() ) override;
-	virtual bool CanExecuteOperation( const FSourceControlOperationRef& InOperation ) const override;
+	virtual bool CanExecuteOperation(const FSourceControlOperationRef& InOperation) const override;
 	virtual bool CanCancelOperation(const FSourceControlOperationRef& InOperation) const override;
 	virtual void CancelOperation(const FSourceControlOperationRef& InOperation) override;
 	virtual bool UsesLocalReadOnlyState() const override;
@@ -100,7 +101,7 @@ public:
 		return RepositoryName;
 	}
 
-	/** Get the Plastic current server URL */
+	/** Get the Plastic current server URL. See also GetCloudOrganization() */
 	inline const FString& GetServerUrl() const
 	{
 		return ServerUrl;
@@ -110,6 +111,10 @@ public:
 	inline const FString& GetBranchName() const
 	{
 		return BranchName;
+	}
+	inline void SetBranchName(const FString& InBranchName)
+	{
+		BranchName = InBranchName;
 	}
 
 	/** Get the current Changeset Number */
@@ -124,17 +129,20 @@ public:
 		return (ChangesetNumber == -1);
 	}
 
-	/** Version of the Plastic SCM executable used */
+	/** Version of the Unity Version Control executable used */
 	inline const FSoftwareVersion& GetPlasticScmVersion() const
 	{
 		return PlasticScmVersion;
 	}
 
-	/** Version of the Plastic SCM plugin */
+	/** Version of the Unity Version Control plugin */
 	const FString& GetPluginVersion() const
 	{
 		return PluginVersion;
 	}
+
+	/** Return the name of the cloud organization from the ServerUrl if applicable (MyOrganization@cloud) or an empty string */
+	FString GetCloudOrganization() const;
 
 	/** Set list of error messages that occurred after last Plastic command */
 	void SetLastErrors(const TArray<FString>& InErrors);
@@ -189,7 +197,7 @@ private:
 	/** Indicates if source control integration is available or not. */
 	bool bServerAvailable = false;
 
-	/** Whether Plastic SCM is configured to uses local read-only state to signal whether a file is editable ("SetFilesAsReadOnly" in client.conf) */
+	/** Whether Unity Version Control is configured to uses local read-only state to signal whether a file is editable ("SetFilesAsReadOnly" in client.conf) */
 	bool bUsesLocalReadOnlyState = false;
 
 	/** Critical section for thread safety of error messages that occurred after last Plastic command */
@@ -212,10 +220,13 @@ private:
 	/** Update workspace status on Connect and UpdateStatus operations */
 	void UpdateWorkspaceStatus(const class FPlasticSourceControlCommand& InCommand);
 
-	/** Version of the Plastic SCM executable used */
+	/** Called after a package has been saved to disk, to update the source control cache */
+	void HandlePackageSaved(const FString& InPackageFilename, UPackage* InPackage, FObjectPostSaveContext InObjectSaveContext);
+
+	/** Version of the Unity Version Control executable used */
 	FSoftwareVersion PlasticScmVersion;
 
-	/** Version of the Plastic SCM plugin */
+	/** Version of the Unity Version Control plugin */
 	FString PluginVersion;
 
 	/** Path to the root of the Plastic workspace: can be the GameDir itself, or any parent directory (found by the "Connect" operation) */

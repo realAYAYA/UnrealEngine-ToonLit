@@ -3,7 +3,7 @@
 #pragma once
 
 #include "USDIntegrationsViewModel.h"
-#include "UsdWrappers/UsdStage.h"
+#include "UsdWrappers/ForwardDeclarations.h"
 
 #include "Templates/SharedPointer.h"
 #include "Widgets/Views/SListView.h"
@@ -26,25 +26,27 @@ public:
 
 	// Ideally these would be FSoftObjectPaths, but FPropertyEditorModule doesn't support generating
 	// widgets for those properties yet
-	UPROPERTY( EditAnywhere, Transient, Category = Dummy, meta = ( AllowedClasses = "/Script/Engine.AnimBlueprint" ) )
+	UPROPERTY(EditAnywhere, Transient, Category = Dummy, meta = (AllowedClasses = "/Script/Engine.AnimBlueprint"))
 	TObjectPtr<UObject> AnimBPProperty;
 
-	UPROPERTY( EditAnywhere, Transient, Category = Dummy, meta = ( AllowedClasses = "/Script/ControlRigDeveloper.ControlRigBlueprint" ) )
+	UPROPERTY(EditAnywhere, Transient, Category = Dummy, meta = (AllowedClasses = "/Script/ControlRigDeveloper.ControlRigBlueprint"))
 	TObjectPtr<UObject> ControlRigProperty;
 };
 
 #if USE_USD_SDK
 
-class SUsdIntegrationsPanelRow : public SMultiColumnTableRow< TSharedPtr<UE::FUsdAttribute> >
+class SUsdIntegrationsPanelRow : public SMultiColumnTableRow<TSharedPtr<UE::FUsdAttribute>>
 {
 public:
-	SLATE_BEGIN_ARGS( SUsdIntegrationsPanelRow ) {}
+	SLATE_BEGIN_ARGS(SUsdIntegrationsPanelRow)
+	{
+	}
 	SLATE_END_ARGS()
 
 public:
-	void Construct( const FArguments& InArgs, TSharedPtr<UE::FUsdAttribute> InAttr, const TSharedRef< STableViewBase >& OwnerTable );
+	void Construct(const FArguments& InArgs, TSharedPtr<UE::FUsdAttribute> InAttr, const TSharedRef<STableViewBase>& OwnerTable);
 
-	virtual TSharedRef< SWidget > GenerateWidgetForColumn( const FName& ColumnName ) override;
+	virtual TSharedRef<SWidget> GenerateWidgetForColumn(const FName& ColumnName) override;
 
 private:
 	TSharedPtr<UE::FUsdAttribute> Attribute;
@@ -53,21 +55,23 @@ private:
 // We don't really need a list view here since we'll mostly always know exactly what attributes are going to
 // be displayed here beforehand, but doing so is a simple way of ensuring a consistent look between this panel
 // and the variants/references panels, that *do* need to be lists
-class SUsdIntegrationsPanel : public SListView< TSharedPtr<UE::FUsdAttribute> >
+class SUsdIntegrationsPanel : public SListView<TSharedPtr<UE::FUsdAttribute>>
 {
-	SLATE_BEGIN_ARGS( SUsdIntegrationsPanel ) {}
+	SLATE_BEGIN_ARGS(SUsdIntegrationsPanel)
+	{
+	}
 	SLATE_END_ARGS()
 
 public:
-	void Construct( const FArguments& InArgs );
-	void SetPrimPath( const UE::FUsdStageWeak& UsdStage, const TCHAR* PrimPath );
+	void Construct(const FArguments& InArgs);
+	void SetPrimPath(const UE::FUsdStageWeak& UsdStage, const TCHAR* PrimPath);
 
 protected:
-	TSharedRef< ITableRow > OnGenerateRow( TSharedPtr<UE::FUsdAttribute> InAttr, const TSharedRef< STableViewBase >& OwnerTable );
+	TSharedRef<ITableRow> OnGenerateRow(TSharedPtr<UE::FUsdAttribute> InAttr, const TSharedRef<STableViewBase>& OwnerTable);
 
 private:
-	TSharedPtr< SHeaderRow > HeaderRowWidget;
+	TSharedPtr<SHeaderRow> HeaderRowWidget;
 	FUsdIntegrationsViewModel ViewModel;
 };
 
-#endif // USE_USD_SDK
+#endif	  // USE_USD_SDK

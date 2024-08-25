@@ -2,6 +2,7 @@
 
 #include "GameFramework/SpringArmComponent.h"
 #include "GameFramework/Pawn.h"
+#include "Engine/HitResult.h"
 #include "Engine/World.h"
 #include "DrawDebugHelpers.h"
 #include "Math/RotationMatrix.h"

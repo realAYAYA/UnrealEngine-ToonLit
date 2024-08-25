@@ -1,9 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using Microsoft.Extensions.DependencyInjection;
 using System;
 using System.ComponentModel.DataAnnotations;
 using System.Net.Http;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace EpicGames.Horde.Auth
 {
@@ -47,8 +47,8 @@ namespace EpicGames.Horde.Auth
 
 	internal static class AuthExtensions
 	{
-		public static void AddHttpClientWithAuth<TClient, TImplementation>(this IServiceCollection services, Func<IServiceProvider, HttpServiceClientOptions> getOptions) 
-			where TClient : class 
+		public static void AddHttpClientWithAuth<TClient, TImplementation>(this IServiceCollection services, Func<IServiceProvider, HttpServiceClientOptions> getOptions)
+			where TClient : class
 			where TImplementation : class, TClient
 		{
 			services.AddScoped<OAuthHandlerFactory>();

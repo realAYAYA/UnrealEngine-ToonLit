@@ -72,9 +72,9 @@ FVertexFactoryIntermediates GetVertexFactoryIntermediates( FVertexFactoryInput I
 	const float3 Vec = normalize(Force) * ForceScale;
 
 	// The base position for this vector.
-	FLWCVector3 VolumeToWorldTile = MakeLWCVector3(VectorFieldVis.VolumeToWorldTile.xyz, 0.0f);
-	FLWCVector3 WorldPosition = LWCAdd(LWCPromote(mul(float4(VoxelUV.xyz,1), VectorFieldVis.VolumeToWorld).xyz), VolumeToWorldTile);
-	const float3 BasePosition = LWCToFloat(LWCSubtract(WorldPosition, ResolvedView.WorldCameraOrigin));
+	FDFVector3 VolumeToWorldTile = DFFromTileOffset_Hack(MakeLWCVector3(VectorFieldVis.VolumeToWorldTile.xyz, 0.0f));
+	FDFVector3 WorldPosition = DFFastAdd(DFPromote(mul(float4(VoxelUV.xyz,1), VectorFieldVis.VolumeToWorld).xyz), VolumeToWorldTile);
+	const float3 BasePosition = DFFastSubtractDemote(WorldPosition, ResolvedView.WorldCameraOrigin);
 	const float3 Position = BasePosition + float(Input.VertexId) * mul(float4(Vec,0), VectorFieldVis.VolumeToWorldNoScale).xyz;
 
 	// Build and return the set of intermediates.
@@ -127,6 +127,9 @@ FMaterialVertexParameters GetMaterialVertexParameters(FVertexFactoryInput Input,
 	Result.VertexColor = float4(1,1,1,1);
 	Result.TangentToWorld = mul(TangentToLocal, GetLocalToWorld3x3()); 
 	Result.PrevFrameLocalToWorld = GetPrimitiveDataFromUniformBuffer().LocalToWorld;
+
+	Result.LWCData = MakeMaterialLWCData(Result);
+
 	return Result;
 }
 

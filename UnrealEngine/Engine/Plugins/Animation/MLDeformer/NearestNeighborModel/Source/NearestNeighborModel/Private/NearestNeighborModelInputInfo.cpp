@@ -6,32 +6,6 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(NearestNeighborModelInputInfo)
 
-
-void UNearestNeighborModelInputInfo::ComputeNetworkInput(const TArray<FQuat>& BoneRotations, float* OutputBuffer, int64 StartIndex) const
-{
-    if (OutputBuffer == nullptr)
-    {
-        return;
-    }
-
-    const int32 NumBones = GetNumBones();
-    check(BoneRotations.Num() == NumBones && RefBoneRotations.Num() == NumBones);
-
-    int64 Index = StartIndex;
-    for(int32 BoneIndex = 0; BoneIndex < NumBones; BoneIndex++)
-    {
-        FQuat RestR = RefBoneRotations[BoneIndex];
-        FQuat LocalR = BoneRotations[BoneIndex];
-
-        const FQuat R =  RestR.Inverse() * LocalR;
-        const float Scalar = R.W >= 0 ? 2.f : -2.f;
-
-        OutputBuffer[Index++] = R.X * Scalar;
-        OutputBuffer[Index++] = R.Y * Scalar;
-        OutputBuffer[Index++] = R.Z * Scalar;
-    }
-}
-
 void UNearestNeighborModelInputInfo::ExtractBoneRotations(USkeletalMeshComponent* SkelMeshComponent, TArray<float>& OutRotations) const
 {
     const int32 NumBones = GetNumBones();
@@ -55,7 +29,7 @@ void UNearestNeighborModelInputInfo::ExtractBoneRotations(USkeletalMeshComponent
         }
     }
 
-    ComputeNetworkInput(BoneRotations, OutRotations.GetData());
+    ComputeNetworkInput(BoneRotations, OutRotations);
 }
 
 int32 UNearestNeighborModelInputInfo::CalcNumNeuralNetInputs() const
@@ -65,7 +39,7 @@ int32 UNearestNeighborModelInputInfo::CalcNumNeuralNetInputs() const
         CurveNames.Num();     // One float per curve.
 }
 
-void UNearestNeighborModelInputInfo::InitRefBoneRotations(USkeletalMesh* SkelMesh)
+void UNearestNeighborModelInputInfo::InitRefBoneRotations(const USkeletalMesh* SkelMesh)
 {
     RefBoneRotations.Reset();
     if (SkelMesh)
@@ -80,5 +54,26 @@ void UNearestNeighborModelInputInfo::InitRefBoneRotations(USkeletalMesh* SkelMes
             const int32 BoneIndex = RefSkel.FindBoneIndex(BoneName);
             RefBoneRotations[Index] = RefBonePose[BoneIndex].GetRotation();
         }
+    }
+}
+
+void UNearestNeighborModelInputInfo::ComputeNetworkInput(TConstArrayView<FQuat> BoneRotations, TArrayView<float> OutputView) const
+{
+    const int32 NumBones = GetNumBones();
+    check(BoneRotations.Num() == NumBones && RefBoneRotations.Num() == NumBones);
+    check(OutputView.Num() >= NumBones * 3);
+
+    int32 Index = 0;
+    for(int32 BoneIndex = 0; BoneIndex < NumBones; BoneIndex++)
+    {
+        FQuat RestR = RefBoneRotations[BoneIndex];
+        FQuat LocalR = BoneRotations[BoneIndex];
+
+        const FQuat R =  RestR.Inverse() * LocalR;
+        const float Scalar = R.W >= 0 ? 2.0f : -2.0f;
+
+        OutputView[Index++] = R.X * Scalar;
+        OutputView[Index++] = R.Y * Scalar;
+        OutputView[Index++] = R.Z * Scalar;
     }
 }

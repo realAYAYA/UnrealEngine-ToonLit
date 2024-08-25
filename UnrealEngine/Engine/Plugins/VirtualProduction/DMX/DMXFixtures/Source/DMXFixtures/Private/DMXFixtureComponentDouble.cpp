@@ -17,19 +17,19 @@ void UDMXFixtureComponentDouble::PushNormalizedValuesPerAttribute(const FDMXNorm
 	const float* FirstTargetValuePtr = ValuePerAttribute.Map.Find(DMXChannel1.Name);
 	if (FirstTargetValuePtr)
 	{
-		float Channel1RemappedValue = NormalizedToAbsoluteValue(0, *FirstTargetValuePtr);
+		const float Channel1RemappedValue = NormalizedToAbsoluteValue(0, *FirstTargetValuePtr);
 
 		constexpr int32 FirstChannelIndex = 0;
-		SetTargetValue(FirstChannelIndex, *FirstTargetValuePtr);
+		SetTargetValue(FirstChannelIndex, Channel1RemappedValue);
 	}
 
 	const float* SecondTargetValuePtr = ValuePerAttribute.Map.Find(DMXChannel2.Name);
 	if (SecondTargetValuePtr)
 	{
-		float Channel2RemappedValue = NormalizedToAbsoluteValue(1, *SecondTargetValuePtr);
+		const float Channel2RemappedValue = NormalizedToAbsoluteValue(1, *SecondTargetValuePtr);
 
 		constexpr int32 SecondChannelIndex = 1;
-		SetTargetValue(SecondChannelIndex, *SecondTargetValuePtr);
+		SetTargetValue(SecondChannelIndex, Channel2RemappedValue);
 	}
 }
 

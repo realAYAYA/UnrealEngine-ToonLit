@@ -113,7 +113,7 @@ UTriangleSetComponent* UPreviewGeometry::FindTriangleSet(const FString& Triangle
 
 
 
-void UPreviewGeometry::CreateOrUpdateTriangleSet(const FString& TriangleSetIdentifier, int32 NumIndices,
+UTriangleSetComponent* UPreviewGeometry::CreateOrUpdateTriangleSet(const FString& TriangleSetIdentifier, int32 NumIndices,
 	TFunctionRef<void(int32 Index, TArray<FRenderableTriangle>& TrianglesOut)> TriangleGenFunc,
 	int32 TrianglesPerIndexHint)
 {
@@ -124,12 +124,13 @@ void UPreviewGeometry::CreateOrUpdateTriangleSet(const FString& TriangleSetIdent
 		if (TriangleSet == nullptr)
 		{
 			check(false);
-			return;
+			return nullptr;
 		}
 	}
 
 	TriangleSet->Clear();
 	TriangleSet->AddTriangles(NumIndices, TriangleGenFunc, TrianglesPerIndexHint);
+	return TriangleSet;
 }
 
 
@@ -180,6 +181,7 @@ bool UPreviewGeometry::RemoveLineSet(const FString& LineSetIdentifier, bool bDes
 			LineSet->DestroyComponent();
 			LineSet = nullptr;
 		}
+		return true;
 	}
 	return false;
 }
@@ -197,6 +199,41 @@ void UPreviewGeometry::RemoveAllLineSets(bool bDestroy)
 		}
 	}
 	LineSets.Reset();
+}
+
+
+bool UPreviewGeometry::RemoveTriangleSet(const FString& TriangleSetIdentifier, bool bDestroy)
+{
+	TObjectPtr<UTriangleSetComponent>* Found = TriangleSets.Find(TriangleSetIdentifier);
+	if (Found != nullptr)
+	{
+		UTriangleSetComponent* TriangleSet = *Found;
+
+		TriangleSets.Remove(TriangleSetIdentifier);
+		if (bDestroy)
+		{
+			TriangleSet->UnregisterComponent();
+			TriangleSet->DestroyComponent();
+			TriangleSet = nullptr;
+		}
+		return true;
+	}
+	return false;
+}
+
+
+
+void UPreviewGeometry::RemoveAllTriangleSets(bool bDestroy)
+{
+	if (bDestroy)
+	{
+		for (TPair<FString, TObjectPtr<UTriangleSetComponent>> Entry : TriangleSets)
+		{
+			Entry.Value->UnregisterComponent();
+			Entry.Value->DestroyComponent();
+		}
+	}
+	TriangleSets.Reset();
 }
 
 
@@ -235,7 +272,7 @@ void UPreviewGeometry::SetAllLineSetsMaterial(UMaterialInterface* Material)
 
 
 
-void UPreviewGeometry::CreateOrUpdateLineSet(const FString& LineSetIdentifier, int32 NumIndices,
+ULineSetComponent* UPreviewGeometry::CreateOrUpdateLineSet(const FString& LineSetIdentifier, int32 NumIndices,
 	TFunctionRef<void(int32 Index, TArray<FRenderableLine>& LinesOut)> LineGenFunc,
 	int32 LinesPerIndexHint)
 {
@@ -246,12 +283,13 @@ void UPreviewGeometry::CreateOrUpdateLineSet(const FString& LineSetIdentifier, i
 		if (LineSet == nullptr)
 		{
 			check(false);
-			return;
+			return nullptr;
 		}
 	}
 
 	LineSet->Clear();
 	LineSet->AddLines(NumIndices, LineGenFunc, LinesPerIndexHint);
+	return LineSet;
 }
 
 
@@ -320,6 +358,7 @@ bool UPreviewGeometry::RemovePointSet(const FString& PointSetIdentifier, bool bD
 			PointSet->DestroyComponent();
 			PointSet = nullptr;
 		}
+		return true;
 	}
 	return false;
 }

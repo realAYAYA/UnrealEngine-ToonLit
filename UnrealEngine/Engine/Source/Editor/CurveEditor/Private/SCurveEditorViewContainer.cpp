@@ -94,7 +94,11 @@ FVector2D SCurveEditorViewContainer::ComputeDesiredSize(float) const
 	}
 
 	const float PanelHeight = CurveEditor->GetPanel()->GetScrollPanelGeometry().GetLocalSize().Y - 1.f;
-	MyDesiredSize.Y += FMath::Max(MinimumPanelHeight, (PanelHeight - MyDesiredSize.Y) / NumStretchPanels) * NumStretchPanels;
+
+	if (NumStretchPanels > 0)
+	{
+		MyDesiredSize.Y += FMath::Max(MinimumPanelHeight, (PanelHeight - MyDesiredSize.Y) / NumStretchPanels) * NumStretchPanels;
+	}
 
 	MyDesiredSize.Y = FMath::Max(MyDesiredSize.Y, PanelHeight);
 	return MyDesiredSize;
@@ -419,7 +423,7 @@ void SCurveEditorViewContainer::AddView(TSharedRef<SCurveEditorView> ViewToAdd)
 		SAssignNew(RetainerWidget, SRetainerWidget)
 		.RenderOnPhase(false)
 		.RenderOnInvalidation(false)
-		.RenderWithLocalTransform(false)
+		.bWarnOnInvalidSize(false)
 		[
 			SNew(SBox)
 			.Padding(MakeAttributeSP(this, &SCurveEditorViewContainer::GetSlotPadding, InsertIndex))

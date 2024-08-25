@@ -67,7 +67,7 @@ void UFractureToolAddEmbeddedGeometry::Execute(TWeakPtr<FFractureEditorModeToolk
 			UGeometryCollection* FracturedGeometryCollection = GeometryCollectionEdit.GetRestCollection();
 
 			FFractureToolContext::FGeometryCollectionPtr GeometryCollection = Context.GetGeometryCollection();
-			const TManagedArray<FTransform>& Transform = GeometryCollection->Transform;
+			const TManagedArray<FTransform3f>& Transform = GeometryCollection->Transform;
 			const TManagedArray<int32>& Parent = GeometryCollection->Parent;
 
 			int32 StartTransformCount = Transform.Num();
@@ -195,7 +195,7 @@ void UFractureToolAutoEmbedGeometry::Execute(TWeakPtr<FFractureEditorModeToolkit
 
 				FGeometryCollection* GeometryCollection = Context.GetGeometryCollection().Get();
 				FGeometryCollectionConvexUtility::FGeometryCollectionConvexData ConvexData = FGeometryCollectionConvexUtility::GetValidConvexHullData(GeometryCollection);
-				const TManagedArray<FTransform>& Transform = GeometryCollection->Transform;
+				const TManagedArray<FTransform3f>& Transform = GeometryCollection->Transform;
 				const TManagedArray<int32>& Parent = GeometryCollection->Parent;
 				const TManagedArray<int32>& SimulationType = GeometryCollection->SimulationType;
 				TArray<FTransform> BoneGlobalTransforms;
@@ -233,7 +233,7 @@ void UFractureToolAutoEmbedGeometry::Execute(TWeakPtr<FFractureEditorModeToolkit
 			if (ClosestGeometryCollection.IsValid() && ClosestComponent && ClosestContext)
 			{
 				// Which bone points to the closest convex?
-				const TManagedArray<FTransform>& Transform = ClosestGeometryCollection->Transform;
+				const TManagedArray<FTransform3f>& Transform = ClosestGeometryCollection->Transform;
 				const TManagedArray<int32>& Parent = ClosestGeometryCollection->Parent;
 				const TManagedArray<TSet<int32>>& TransformToConvexIndices =
 					ClosestGeometryCollection->GetAttribute<TSet<int32>>("TransformToConvexIndices", FTransformCollection::TransformGroup);
@@ -378,7 +378,7 @@ void UFractureToolFlushEmbeddedGeometry::Execute(TWeakPtr<FFractureEditorModeToo
 			}
 			
 			const TManagedArray<int32>& ExemplarIndex = Context.GetGeometryCollection()->GetAttribute<int32>("ExemplarIndex", FGeometryCollection::TransformGroup);
-			const TManagedArray<FTransform>& Transforms = Context.GetGeometryCollection()->GetAttribute<FTransform>("Transform", FGeometryCollection::TransformGroup);
+			const TManagedArray<FTransform3f>& Transforms = Context.GetGeometryCollection()->GetAttribute<FTransform3f>("Transform", FGeometryCollection::TransformGroup);
 			const TManagedArray<int32>& ParentIndices = Context.GetGeometryCollection()->GetAttribute<int32>("Parent", FGeometryCollection::TransformGroup);
 
 			TArray<FMatrix> GlobalMatrices;

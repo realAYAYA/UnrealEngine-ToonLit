@@ -23,15 +23,28 @@ LLM_DEFINE_TAG(Cooker_CachedPlatformData);
 namespace UE::Cook
 {
 
-const TCHAR* LexToString(EReleaseSaveReason Reason)
+const TCHAR* LexToString(EStateChangeReason Reason)
 {
 	switch (Reason)
 	{
-	case EReleaseSaveReason::Completed: return TEXT("Completed");
-	case EReleaseSaveReason::DoneForNow: return TEXT("DoneForNow");
-	case EReleaseSaveReason::Demoted: return TEXT("Demoted");
-	case EReleaseSaveReason::AbortSave: return TEXT("AbortSave");
-	case EReleaseSaveReason::RecreateObjectCache: return TEXT("RecreateObjectCache");
+	case EStateChangeReason::Completed: return TEXT("Completed");
+	case EStateChangeReason::DoneForNow: return TEXT("DoneForNow");
+	case EStateChangeReason::SaveError: return TEXT("SaveError");
+	case EStateChangeReason::RecreateObjectCache: return TEXT("RecreateObjectCache");
+	case EStateChangeReason::CookerShutdown: return TEXT("CookerShutdown");
+	case EStateChangeReason::ReassignAbortedPackages: return TEXT("ReassignAbortedPackages");
+	case EStateChangeReason::Retraction: return TEXT("Retraction");
+	case EStateChangeReason::Discovered: return TEXT("Discovered");
+	case EStateChangeReason::Requested: return TEXT("Requested");
+	case EStateChangeReason::RequestCluster: return TEXT("RequestCluster");
+	case EStateChangeReason::DirectorRequest: return TEXT("DirectorRequest");
+	case EStateChangeReason::Loaded: return TEXT("Loaded");
+	case EStateChangeReason::Saved: return TEXT("Saved");
+	case EStateChangeReason::CookSuppressed: return TEXT("CookSuppressed");
+	case EStateChangeReason::GarbageCollected: return TEXT("GarbageCollected");
+	case EStateChangeReason::GeneratorPreGarbageCollected: return TEXT("GeneratorPreGarbageCollected");
+	case EStateChangeReason::ForceRecook: return TEXT("ForceRecook");
+	case EStateChangeReason::UrgencyUpdated: return TEXT("UrgencyUpdated");
 	default: return TEXT("Invalid");
 	}
 }
@@ -50,6 +63,7 @@ const TCHAR* LexToString(ESuppressCookReason Reason)
 	case ESuppressCookReason::Redirected: return TEXT("Redirected");
 	case ESuppressCookReason::OrphanedGenerated: return TEXT("OrphanedGenerated");
 	case ESuppressCookReason::LoadError: return TEXT("LoadError");
+	case ESuppressCookReason::ValidationError: return TEXT("ValidationError");
 	case ESuppressCookReason::SaveError: return TEXT("SaveError");
 	case ESuppressCookReason::OnlyEditorOnly: return TEXT("OnlyEditorOnly");
 	case ESuppressCookReason::CookCanceled: return TEXT("CookCanceled");
@@ -155,10 +169,10 @@ double FCookerTimer::GetActionTimeTillNow() const
 	return FPlatformTime::Seconds() - ActionStartTime;
 }
 
-static uint32 SchedulerThreadTlsSlot = 0;
+static uint32 SchedulerThreadTlsSlot = FPlatformTLS::InvalidTlsSlot;
 void InitializeTls()
 {
-	if (SchedulerThreadTlsSlot == 0)
+	if (!FPlatformTLS::IsValidTlsSlot(SchedulerThreadTlsSlot))
 	{
 		SchedulerThreadTlsSlot = FPlatformTLS::AllocTlsSlot();
 		SetIsSchedulerThread(true);

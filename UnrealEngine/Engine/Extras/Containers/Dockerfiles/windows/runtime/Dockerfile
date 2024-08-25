@@ -2,6 +2,7 @@
 ARG DLL_IMAGE
 ARG BASETAG
 FROM ${DLL_IMAGE}:${BASETAG} AS full
+ARG VERSION_SPECIFIC_DLLS
 
 # Gather the system DLLs that we need from the full Windows base image
 RUN xcopy /y C:\Windows\System32\avicap32.dll C:\GatheredDlls\ && `
@@ -12,7 +13,7 @@ RUN xcopy /y C:\Windows\System32\avicap32.dll C:\GatheredDlls\ && `
 	xcopy /y C:\Windows\System32\dsound.dll C:\GatheredDlls\ && `
 	xcopy /y C:\Windows\System32\dxva2.dll C:\GatheredDlls\ && `
 	xcopy /y C:\Windows\System32\glu32.dll C:\GatheredDlls\ && `
-	xcopy /y C:\Windows\System32\ksuser.dll C:\GatheredDlls\ && `
+	xcopy /y C:\Windows\System32\InputHost.dll C:\GatheredDlls\ && `
 	xcopy /y C:\Windows\System32\mf.dll C:\GatheredDlls\ && `
 	xcopy /y C:\Windows\System32\mfcore.dll C:\GatheredDlls\ && `
 	xcopy /y C:\Windows\System32\mfplat.dll C:\GatheredDlls\ && `
@@ -23,7 +24,9 @@ RUN xcopy /y C:\Windows\System32\avicap32.dll C:\GatheredDlls\ && `
 	xcopy /y C:\Windows\System32\msvfw32.dll C:\GatheredDlls\ && `
 	xcopy /y C:\Windows\System32\opengl32.dll C:\GatheredDlls\ && `
 	xcopy /y C:\Windows\System32\ResampleDMO.dll C:\GatheredDlls\ && `
-	xcopy /y C:\Windows\System32\ResourcePolicyClient.dll C:\GatheredDlls\
+	xcopy /y C:\Windows\System32\ResourcePolicyClient.dll C:\GatheredDlls\ && `
+	xcopy /y C:\Windows\System32\XInput1_4.dll C:\GatheredDlls\ && `
+	powershell -Command "$dlls = $env:VERSION_SPECIFIC_DLLS; if ($dlls) {foreach ($dll in $dlls.Split(';')) { & xcopy /y C:\Windows\System32\$dll C:\GatheredDlls\ } }"
 
 # Retrieve the DirectX runtime files required by the Unreal Engine, since even the full Windows base image does not include them
 RUN curl --progress-bar -L "https://download.microsoft.com/download/8/4/A/84A35BF1-DAFE-4AE8-82AF-AD2AE20B6B14/directx_Jun2010_redist.exe" --output %TEMP%\directx_redist.exe && `
@@ -46,7 +49,7 @@ FROM mcr.microsoft.com/windows/servercore:${BASETAG}
 COPY --from=full C:\GatheredDlls\ C:\Windows\System32\
 
 # Install the Visual C++ runtime files using Chocolatey
-RUN powershell -NoProfile -ExecutionPolicy Bypass -Command "[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))"
+RUN powershell -NoProfile -ExecutionPolicy Bypass -Command "$env:chocolateyVersion = '1.4.0'; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))"
 RUN choco install -y vcredist-all
 
 # Copy our entrypoint script for enabling vendor-specific graphics APIs

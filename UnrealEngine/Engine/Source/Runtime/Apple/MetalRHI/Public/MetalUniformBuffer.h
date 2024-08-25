@@ -25,7 +25,7 @@ public:
     // The GPU backing buffer for this uniform buffer. Many FMetalMobileUniformBuffers can own regions.
     // This UB does not own a reference to the backing buffer.
     // This Backing is recycled at the end of every frame so you MUST update it if LastFrameUpdated != this frame or contents are undefined.
-    id <MTLBuffer> Backing;
+    MTLBufferPtr Backing;
     // CPU side shadow memory to hold updates for single-draw or multi-frame buffers.
     // This allows you to upload on a frame but actually use this UB later on
     void* Shadow;

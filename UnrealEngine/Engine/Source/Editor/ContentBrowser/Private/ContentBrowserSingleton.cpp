@@ -3,7 +3,9 @@
 
 #include "ContentBrowserSingleton.h"
 
+#include "Algo/Transform.h"
 #include "AssetRegistry/AssetData.h"
+#include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetToolsModule.h"
 #include "AssetViewUtils.h"
 #include "CollectionAssetRegistryBridge.h"
@@ -92,6 +94,7 @@ FContentBrowserSingleton::FContentBrowserSingleton()
 	const FSlateIcon ContentBrowserIcon(FAppStyle::Get().GetStyleSetName(), "ContentBrowser.TabIcon");
 	const IWorkspaceMenuStructure& MenuStructure = WorkspaceMenu::GetMenuStructure();
 	TSharedRef<FWorkspaceItem> ContentBrowserGroup = MenuStructure.GetLevelEditorCategory()->AddGroup(
+		"ContentBrowser",
 		LOCTEXT("WorkspaceMenu_ContentBrowserCategory", "Content Browser"),
 		LOCTEXT("ContentBrowserMenuTooltipText", "Open a Content Browser tab."),
 		ContentBrowserIcon,
@@ -285,6 +288,21 @@ bool FContentBrowserSingleton::HasPrimaryContentBrowser() const
 	}
 }
 
+bool FContentBrowserSingleton::SetPrimaryContentBrowser(FName InstanceName)
+{
+	for (int32 BrowserIdx = 0; BrowserIdx < AllContentBrowsers.Num(); ++BrowserIdx)
+	{
+		TSharedPtr<SContentBrowser> ContentBrowser = AllContentBrowsers[BrowserIdx].Pin();
+		if ( ContentBrowser && ContentBrowser->GetInstanceName() == InstanceName)
+		{
+			// There is at least one valid content browser
+			PrimaryContentBrowser = ContentBrowser;
+			return true;
+		}
+	}
+	return false;
+}
+
 void FContentBrowserSingleton::FocusPrimaryContentBrowser(bool bFocusSearch)
 {
 	// See if the primary content browser is still valid
@@ -435,7 +453,7 @@ TSharedPtr<SContentBrowser> FContentBrowserSingleton::FindContentBrowserToSync(b
 		// Now try to find a non-locked valid browser again, now that a new one may exist
 		for (int32 BrowserIdx = 0; BrowserIdx < AllContentBrowsers.Num(); ++BrowserIdx)
 		{
-			if ((AllContentBrowsers[BrowserIdx].IsValid() && (NewBrowserName == NAME_None && (bAllowLockedBrowsers || !AllContentBrowsers[BrowserIdx].Pin()->IsLocked()))) || (AllContentBrowsers[BrowserIdx].Pin()->GetInstanceName() == NewBrowserName))
+			if ((AllContentBrowsers[BrowserIdx].IsValid() && (NewBrowserName == NAME_None && (bAllowLockedBrowsers || !AllContentBrowsers[BrowserIdx].Pin()->IsLocked()))) || (AllContentBrowsers[BrowserIdx].IsValid() && AllContentBrowsers[BrowserIdx].Pin()->GetInstanceName() == NewBrowserName))
 			{
 				ContentBrowserToSync = AllContentBrowsers[BrowserIdx].Pin();
 				break;
@@ -467,7 +485,31 @@ void FContentBrowserSingleton::SyncBrowserToAssets(const TArray<FAssetData>& Ass
 		{
 			FocusContentBrowser(ContentBrowserToSync);
 		}
-		ContentBrowserToSync->SyncToAssets(AssetDataList);
+
+		TSet<FName> OuterPathNames;
+		TArray<FAssetData> AssetDataListToSync;
+		AssetDataListToSync.Reserve(AssetDataList.Num());
+
+		for (const FAssetData& AssetData : AssetDataList)
+		{
+			if (FName OuterPathName = AssetData.GetOptionalOuterPathName(); !OuterPathName.IsNone())
+			{
+				OuterPathNames.Add(*FSoftObjectPath(OuterPathName.ToString()).GetLongPackageName());
+			}
+			else
+			{
+				AssetDataListToSync.Add(AssetData);
+			}
+		}
+
+		if (OuterPathNames.Num())
+		{
+			TMap<FName, FAssetData> PackagesToAssetDataMap;
+			UE::AssetRegistry::GetAssetForPackages(OuterPathNames.Array(), PackagesToAssetDataMap);
+			Algo::Transform(PackagesToAssetDataMap, AssetDataListToSync, [](const TPair<FName, FAssetData>& Pair) { return Pair.Value; });
+		}
+
+		ContentBrowserToSync->SyncToAssets(AssetDataListToSync);
 	}
 }
 
@@ -662,17 +704,24 @@ void FContentBrowserSingleton::SharedCreateAssetDialogWindow(const TSharedRef<SA
 
 	DialogWindow->SetContent(AssetDialog);
 
-	IMainFrameModule& MainFrameModule = FModuleManager::LoadModuleChecked<IMainFrameModule>(TEXT("MainFrame"));
-	const TSharedPtr<SWindow>& MainFrameParentWindow = MainFrameModule.GetParentWindow();
-	if (MainFrameParentWindow.IsValid())
+	TSharedPtr<SWindow> ParentWindow = InConfig.WindowOverride;
+	if (!InConfig.WindowOverride)
+	{
+		IMainFrameModule& MainFrameModule = FModuleManager::LoadModuleChecked<IMainFrameModule>(TEXT("MainFrame"));
+		const TSharedPtr<SWindow>& MainFrameParentWindow = MainFrameModule.GetParentWindow();
+		ParentWindow = MainFrameModule.GetParentWindow();
+	}
+
+
+	if (ParentWindow.IsValid())
 	{
 		if (bModal)
 		{
-			FSlateApplication::Get().AddModalWindow(DialogWindow, MainFrameParentWindow.ToSharedRef());
+			FSlateApplication::Get().AddModalWindow(DialogWindow, ParentWindow.ToSharedRef());
 		}
 		else if (FGlobalTabmanager::Get()->GetRootWindow().IsValid())
 		{
-			FSlateApplication::Get().AddWindowAsNativeChild(DialogWindow, MainFrameParentWindow.ToSharedRef());
+			FSlateApplication::Get().AddWindowAsNativeChild(DialogWindow, ParentWindow.ToSharedRef());
 		}
 		else
 		{
@@ -1127,15 +1176,6 @@ void FContentBrowserSingleton::RebuildPrivateContentStateCache()
 	}
 }
 
-bool FContentBrowserSingleton::CanChangeAssetPublicState(FStringView AssetPath)
-{
-	if (CanChangeAssetPublicStateDelegate.IsBound())
-	{
-		return CanChangeAssetPublicStateDelegate.Execute(AssetPath);
-	}
-	return true;
-}
-
 bool FContentBrowserSingleton::IsFolderShowPrivateContentToggleable(const FStringView VirtualFolderPath)
 {
 	if (IsFolderShowPrivateContentToggleableDelegate.IsBound())
@@ -1154,16 +1194,6 @@ const TSharedPtr<FPathPermissionList>& FContentBrowserSingleton::GetShowPrivateC
 void FContentBrowserSingleton::SetPrivateContentPermissionListDirty()
 {
 	ShowPrivateContentState.CachedVirtualPaths.Reset();
-}
-
-void FContentBrowserSingleton::RegisterCanChangeAssetPublicStateDelegate(FCanChangeAssetPublicStateDelegate InCanChangeAssetPublicStateDelegate)
-{
-	CanChangeAssetPublicStateDelegate = MoveTemp(InCanChangeAssetPublicStateDelegate);
-}
-
-void FContentBrowserSingleton::UnregisterCanChangeAssetPublicStateDelegate()
-{
-	CanChangeAssetPublicStateDelegate = FCanChangeAssetPublicStateDelegate();
 }
 
 void FContentBrowserSingleton::RegisterIsFolderShowPrivateContentToggleableDelegate(FIsFolderShowPrivateContentToggleableDelegate InIsFolderShowPrivateContentToggleableDelegate)
@@ -1311,10 +1341,23 @@ FContentBrowserItemPath FContentBrowserSingleton::GetInitialPathToSaveAsset(cons
 	// Remove trailing slash
 	if (AssetPath.EndsWith(TEXT("/")) || AssetPath.EndsWith(TEXT("\\")))
 	{
-		AssetPath.LeftChopInline(1, false);
+		AssetPath.LeftChopInline(1, EAllowShrinking::No);
 	}
 
 	return FContentBrowserItemPath(AssetPath, EContentBrowserPathType::Internal);
+}
+
+TArray<FString> FContentBrowserSingleton::GetAliasesForPath(const FSoftObjectPath& InPath) const
+{
+	TArray<FString> OutPaths;
+
+	const TArray<FContentBrowserItemPath> Items = IContentBrowserDataModule::Get().GetSubsystem()->GetAliasesForPath(InPath);
+	for (const FContentBrowserItemPath& Item : Items)
+	{
+		OutPaths.Add(Item.GetInternalPathString());
+	}
+
+	return OutPaths;
 }
 
 #undef LOCTEXT_NAMESPACE

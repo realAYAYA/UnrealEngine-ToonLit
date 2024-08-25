@@ -11,7 +11,8 @@ public class TextureBuildUtilities : ModuleRules
 		// Include only , no link :
 		PrivateIncludePathModuleNames.AddRange(new string[]
 		{
-			"TextureCompressor"
+			"TextureCompressor",
+			"Engine"
 		});
 
 		PrivateDependencyModuleNames.AddRange(

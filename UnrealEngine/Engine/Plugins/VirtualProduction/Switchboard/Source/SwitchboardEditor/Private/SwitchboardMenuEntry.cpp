@@ -128,7 +128,7 @@ struct FSwitchboardMenuEntryImpl
 		{
 			MenuBuilder.AddMenuEntry(FSwitchboardUICommands::Get().LaunchSwitchboardListener);
 
-#if SB_LISTENER_AUTOLAUNCH
+#if SWITCHBOARD_LISTENER_AUTOLAUNCH
 			MenuBuilder.AddMenuSeparator();
 
 			MenuBuilder.AddMenuEntry(
@@ -146,7 +146,7 @@ struct FSwitchboardMenuEntryImpl
 				NAME_None,
 				EUserInterfaceActionType::ToggleButton
 			);
-#endif // #if SB_LISTENER_AUTOLAUNCH
+#endif // #if SWITCHBOARD_LISTENER_AUTOLAUNCH
 		}
 		MenuBuilder.EndSection();
 
@@ -204,7 +204,7 @@ struct FSwitchboardMenuEntryImpl
 		}
 	}
 
-#if SB_LISTENER_AUTOLAUNCH
+#if SWITCHBOARD_LISTENER_AUTOLAUNCH
 	void ToggleAutolaunch()
 	{
 		if (FSwitchboardEditorModule::Get().IsListenerAutolaunchEnabled())
@@ -223,7 +223,7 @@ struct FSwitchboardMenuEntryImpl
 			FSwitchboardEditorModule::Get().SetListenerAutolaunchEnabled(true);
 		}
 	}
-#endif // #if SB_LISTENER_AUTOLAUNCH
+#endif // #if SWITCHBOARD_LISTENER_AUTOLAUNCH
 
 	void OnLaunchSwitchboard()
 	{

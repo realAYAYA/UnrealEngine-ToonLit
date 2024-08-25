@@ -7,8 +7,6 @@
 
 #define TILE_SIZE 8
 
-#define CONFIG_MIN_LUMA_ALIASING 0.05
-
 #define CONFIG_COMPUTE_NOISE_FILTERING 1
 
 #if DIM_QUALITY_PRESET == 1
@@ -34,10 +32,10 @@
 
 //------------------------------------------------------- PARAMETERS
 
-Texture2D<tsr_half> InputSceneColorLdrLumaTexture;
+Texture2D<tsr_ushort> AntiAliasMaskTexture;
+Texture2D<tsr_half>  InputSceneColorLdrLumaTexture;
 
-RWTexture2D<uint> AntiAliasingOutput;
-RWTexture2D<tsr_half> NoiseFilteringOutput;
+RWTexture2D<tsr_ushort2> AntiAliasingOutput;
 
 
 //------------------------------------------------------- FUNCTIONS
@@ -206,8 +204,23 @@ void MainCS(
 	
 	//Debug[0] = 1.0;
 
-	tsr_half2x2 TexelOffset = 0.0;
-	tsr_half2 NoiseFiltering = 0.0;
+	bool2 bAntiAlias;
+	bAntiAlias[0] = AntiAliasMaskTexture[dpv_lo(InputPixelPos)] > tsr_ushort(0);
+	bAntiAlias[1] = AntiAliasMaskTexture[dpv_hi(InputPixelPos)] > tsr_ushort(0);
+	
+	// Whether it is worth to anti-aliasing.
+	bool bSkipAntiAliaser = all(!bAntiAlias);
+
+	tsr_half2x2 TexelOffset;
+	tsr_half2 NoiseFiltering;
+
+	BRANCH
+	if (bSkipAntiAliaser)
+	{
+		TexelOffset = tsr_half(0.0);
+		NoiseFiltering = tsr_half(0.0);
+	}
+	else
 	{
 		#if CONFIG_ENABLE_DUAL_PIXEL_VECTORIZATION && 1
 			tsr_half InputCache[3 * 4];
@@ -269,8 +282,12 @@ void MainCS(
 
 		#if CONFIG_COMPUTE_NOISE_FILTERING
 		{
-			NoiseFiltering = max(NoiseFiltering, tsr_half(2.0) * TotalVarH - max(DiffE, DiffW));
-			NoiseFiltering = max(NoiseFiltering, tsr_half(2.0) * TotalVarV - max(DiffN, DiffS));
+			NoiseFiltering = saturate(tsr_half(2.0) * TotalVarH - max(DiffE, DiffW));
+			NoiseFiltering = max(NoiseFiltering, saturate(tsr_half(2.0) * TotalVarV - max(DiffN, DiffS)));
+		}
+		#else
+		{
+			NoiseFiltering = tsr_half(0.0);
 		}
 		#endif
 
@@ -304,9 +321,9 @@ void MainCS(
 
 		tsr_half2 LumaDelta = abs(EdgeLuma - InputC) * 0.5;
 		
-		bool2 WorthBrowsing = LumaDelta > CONFIG_MIN_LUMA_ALIASING;
+		bool2 WorthBrowsing = LumaDelta > SPATIAL_ANTI_ALIASER_MIN_LUMIMANCE;
 
-		tsr_half2 BrowseDelta = saturate(LumaDelta * rcp(tsr_half(CONFIG_MIN_LUMA_ALIASING)));
+		tsr_half2 BrowseDelta = saturate(LumaDelta * rcp(tsr_half(SPATIAL_ANTI_ALIASER_MIN_LUMIMANCE)));
 		
 		tsr_ushort2 EdgeLengthP = 0;
 		tsr_ushort2 EdgeLengthN = 0;
@@ -500,12 +517,10 @@ void MainCS(
 		
 		OutputPixelPos = InvalidateOutputPixelPos(OutputPixelPos, InputInfo_ViewportMax);
 		
-		AntiAliasingOutput[dpv_lo(OutputPixelPos)] = dpv_lo(EncodedTexelOffset);
-		NoiseFilteringOutput[dpv_lo(OutputPixelPos)] = dpv_lo(NoiseFiltering);
+		AntiAliasingOutput[dpv_lo(OutputPixelPos)] = tsr_ushort2(dpv_lo(EncodedTexelOffset), round(dpv_lo(NoiseFiltering) * tsr_half(255.0)));
 		
 		#if CONFIG_ENABLE_DUAL_PIXEL_VECTORIZATION
-			AntiAliasingOutput[dpv_hi(OutputPixelPos)] = dpv_hi(EncodedTexelOffset);
-			NoiseFilteringOutput[dpv_hi(OutputPixelPos)] = dpv_hi(NoiseFiltering);
+			AntiAliasingOutput[dpv_hi(OutputPixelPos)] = tsr_ushort2(dpv_hi(EncodedTexelOffset), round(dpv_hi(NoiseFiltering) * tsr_half(255.0)));
 		#endif
 
 		#if DEBUG_OUTPUT

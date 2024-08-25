@@ -14,7 +14,8 @@
 #include "Misc/ConfigCacheIni.h"
 #include "PlatformInfo.h"
 #include "Serialization/Archive.h"
-
+#include "Interfaces/ITargetPlatformSettings.h"
+#include "Interfaces/ITargetPlatformControls.h"
 #include "TargetDeviceServiceMessages.h"
 
 LLM_DECLARE_TAG(TargetDeviceProxyManager);
@@ -30,7 +31,7 @@ struct FVariantSortCallback
 		ITargetDevicePtr APtr = A.Pin();
 		ITargetDevicePtr BPtr = B.Pin();
 
-		return APtr->GetTargetPlatform().GetVariantPriority() > BPtr->GetTargetPlatform().GetVariantPriority();
+		return APtr->GetPlatformControls().GetVariantPriority() > BPtr->GetPlatformControls().GetVariantPriority();
 	}
 };
 
@@ -80,13 +81,13 @@ void FTargetDeviceService::AddTargetDevice(TSharedPtr<ITargetDevice, ESPMode::Th
 		return;
 	}
 
-	FName Variant = FName(InDevice->GetTargetPlatform().PlatformName().GetCharArray().GetData());
+	FName Variant = FName(InDevice->GetPlatformControls().PlatformName().GetCharArray().GetData());
 
 	if (DevicePlatformName == NAME_None)
 	{
 		// If this seems nasty your right!
 		// This is just one more nastiness in this class due to the fact that we intend to refactor the target platform stuff as a separate task.
-		const PlatformInfo::FTargetPlatformInfo& Info = InDevice->GetTargetPlatform().GetTargetPlatformInfo();
+		const PlatformInfo::FTargetPlatformInfo& Info = InDevice->GetPlatformControls().GetTargetPlatformInfo();
 		const PlatformInfo::FTargetPlatformInfo* VanillaInfo = Info.VanillaInfo;
 
 		DevicePlatformName = Info.Name;
@@ -212,7 +213,7 @@ void FTargetDeviceService::RemoveTargetDevice(TSharedPtr<ITargetDevice, ESPMode:
 		return;
 	}
 
-	FName Variant = FName(InDevice->GetTargetPlatform().PlatformName().GetCharArray().GetData());
+	FName Variant = FName(InDevice->GetPlatformControls().PlatformName().GetCharArray().GetData());
 
 	TargetDevicePtrs.Remove(Variant);
 
@@ -415,8 +416,8 @@ void FTargetDeviceService::HandlePingMessage(const FTargetDeviceServicePing& InM
 
 	if (DefaultDevice.IsValid())
 	{
-		const FString& PlatformName = DefaultDevice->GetTargetPlatform().PlatformName();
-		const PlatformInfo::FTargetPlatformInfo* VanillaInfo = DefaultDevice->GetTargetPlatform().GetTargetPlatformInfo().VanillaInfo;
+		const FString& PlatformName = DefaultDevice->GetPlatformControls().PlatformName();
+		const PlatformInfo::FTargetPlatformInfo* VanillaInfo = DefaultDevice->GetPlatformControls().GetTargetPlatformInfo().VanillaInfo;
 
 		FTargetDeviceServicePong* Message = FMessageEndpoint::MakeMessage<FTargetDeviceServicePong>();
 
@@ -425,7 +426,7 @@ void FTargetDeviceService::HandlePingMessage(const FTargetDeviceServicePing& InM
 		Message->HostName = FPlatformProcess::ComputerName();
 		Message->HostUser = FPlatformProcess::UserName(false);
 		Message->Connected = DefaultDevice->IsConnected();
-		Message->ConnectionType = (DefaultDevice->GetDeviceConnectionType() == ETargetDeviceConnectionTypes::Wifi) ? "Network" : "USB";
+		Message->ConnectionType = TargetDeviceConnectionTypes::ToString(DefaultDevice->GetDeviceConnectionType());
 		Message->Authorized = DefaultDevice->IsAuthorized();
 		Message->Make = TEXT("@todo");
 		Message->Model = DefaultDevice->GetModelId();
@@ -436,8 +437,8 @@ void FTargetDeviceService::HandlePingMessage(const FTargetDeviceServicePing& InM
 		Message->SupportsPowerOff = DefaultDevice->SupportsFeature(ETargetDeviceFeatures::PowerOff);
 		Message->SupportsPowerOn = DefaultDevice->SupportsFeature(ETargetDeviceFeatures::PowerOn);
 		Message->SupportsReboot = DefaultDevice->SupportsFeature(ETargetDeviceFeatures::Reboot);
-		Message->SupportsVariants = DefaultDevice->GetTargetPlatform().SupportsVariants();
-		Message->DefaultVariant = FName(DefaultDevice->GetTargetPlatform().PlatformName().GetCharArray().GetData());
+		Message->SupportsVariants = DefaultDevice->GetPlatformControls().SupportsVariants();
+		Message->DefaultVariant = FName(DefaultDevice->GetPlatformControls().PlatformName().GetCharArray().GetData());
 
 		// Check if we should also create an aggregate (All_<platform>_devices_on_<host>) proxy
 		Message->Aggregated = DefaultDevice->IsPlatformAggregated();
@@ -451,13 +452,13 @@ void FTargetDeviceService::HandlePingMessage(const FTargetDeviceServicePing& InM
 		for (auto TargetDeviceIt = TargetDevicePtrs.CreateIterator(); TargetDeviceIt; ++TargetDeviceIt, ++Index)
 		{
 			const ITargetDevicePtr& TargetDevice = TargetDeviceIt.Value().Pin();
-			const PlatformInfo::FTargetPlatformInfo& Info = TargetDevice->GetTargetPlatform().GetTargetPlatformInfo();
+			const PlatformInfo::FTargetPlatformInfo& Info = TargetDevice->GetPlatformControls().GetTargetPlatformInfo();
 
 			FTargetDeviceVariant& Variant = Message->Variants[Index];
 
 			Variant.DeviceID = TargetDevice->GetId().ToString();
 			Variant.VariantName = TargetDeviceIt.Key();
-			Variant.TargetPlatformName = TargetDevice->GetTargetPlatform().PlatformName();
+			Variant.TargetPlatformName = TargetDevice->GetPlatformControls().PlatformName();
 			Variant.TargetPlatformId = Info.Name;
 			Variant.VanillaPlatformId = Info.VanillaInfo->Name;
 			Variant.PlatformDisplayName = Info.DisplayName.ToString();

@@ -5,6 +5,7 @@
 
 #include "Online/OnlineTypeInfo.h"
 #include "Online/OnlineMeta.h"
+#include "Templates/SharedPointer.h"
 
 namespace UE::Online { class IOnlineComponent; }
 

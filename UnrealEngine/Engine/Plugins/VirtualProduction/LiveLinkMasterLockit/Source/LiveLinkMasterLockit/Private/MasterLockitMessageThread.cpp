@@ -111,7 +111,7 @@ uint32 FMasterLockitMessageThread::Run()
 				ReceiveBuffer.Serialize(Packet.GetData(), PacketLength);
 
 				// Remove the packet from the buffer
-				ReceiveBuffer.RemoveAt(0, PacketLength, false);
+				ReceiveBuffer.RemoveAt(0, PacketLength, EAllowShrinking::No);
 				ReceiveBuffer.AddZeroed(PacketLength);
 				ReceiveBuffer.Seek(0);
 

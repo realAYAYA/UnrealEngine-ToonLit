@@ -7,7 +7,7 @@
  * This interface is not available for general access at this time.
  *
  * The KWS Interface exists as an integration for age gating functionality provided by Kids Web Services from SuperAwesome, using the EOS Connect interface.
- * 
+ *
  * All KWS Interface calls take a handle of type EOS_HKWS as the first parameter.
  * This handle can be retrieved from a EOS_HPlatform handle by using the EOS_Platform_GetKWSInterface function.
  *
@@ -141,7 +141,7 @@ EOS_DECLARE_FUNC(EOS_EResult) EOS_KWS_GetPermissionByKey(EOS_HKWS Handle, const 
  * This interface is not available for general access at this time.
  *
  * Register to receive notifications about KWS permissions changes for any logged in local users
- * @note must call EOS_KWS_RemoveNotifyPermissionsUpdateReceived to remove the notification
+ * @note If the returned NotificationId is valid, you must call EOS_KWS_RemoveNotifyPermissionsUpdateReceived when you no longer wish to have your NotificationHandler called.
  *
  * @param Options Structure containing information about the request.
  * @param ClientData Arbitrary data that is passed back to you in the CompletionDelegate.

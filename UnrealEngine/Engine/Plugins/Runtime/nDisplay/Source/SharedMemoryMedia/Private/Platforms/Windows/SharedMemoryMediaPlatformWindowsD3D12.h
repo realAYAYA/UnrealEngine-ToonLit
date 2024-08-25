@@ -36,9 +36,9 @@ private:
 public:
 
 	//~ Begin FSharedMemoryMediaPlatform interface
-	virtual FTextureRHIRef CreateSharedCrossGpuTexture(EPixelFormat Format, bool bSrgb, int32 Width, int32 Height, const FGuid& Guid, uint32 BufferIdx) override;
-	virtual void ReleaseSharedCrossGpuTexture(uint32 BufferIdx) override;
-	virtual FTextureRHIRef OpenSharedCrossGpuTextureByGuid(const FGuid& Guid, FSharedMemoryMediaTextureDescription& OutTextureDescription) override;
+	virtual FTextureRHIRef CreateSharedTexture(EPixelFormat Format, bool bSrgb, int32 Width, int32 Height, const FGuid& Guid, uint32 BufferIdx, bool bCrossGpu) override;
+	virtual void ReleaseSharedTexture(uint32 BufferIdx) override;
+	virtual FTextureRHIRef OpenSharedTextureByGuid(const FGuid& Guid, FSharedMemoryMediaTextureDescription& OutTextureDescription) override;
 	//~ End FSharedMemoryMediaPlatform interface
 
 	FSharedMemoryMediaPlatformWindowsD3D12();

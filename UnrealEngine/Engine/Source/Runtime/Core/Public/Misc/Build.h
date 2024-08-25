@@ -108,6 +108,9 @@
 	#define WITH_PERFCOUNTERS		0
 #endif
 
+/** Enable perf counters on dedicated servers */
+#define USE_SERVER_PERF_COUNTERS ((UE_SERVER || UE_EDITOR) && WITH_PERFCOUNTERS)
+
 /** 
  * Whether we are compiling a PGO instrumented build.
  */
@@ -352,20 +355,25 @@
 #define USE_NETWORK_PROFILER !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
 #endif
 
-/** Enable UberGraphPersistentFrame feature. It can speed up BP compilation (re-instancing) in editor, but introduce an unnecessary overhead in runtime. */
-#define USE_UBER_GRAPH_PERSISTENT_FRAME 1
-
 /** Enable validation of the Uber Graph's persistent frame's layout, this is useful to detect uber graph frame related corruption */
-#define VALIDATE_UBER_GRAPH_PERSISTENT_FRAME (!(UE_BUILD_SHIPPING || UE_BUILD_TEST)) && USE_UBER_GRAPH_PERSISTENT_FRAME
+#ifndef VALIDATE_USER_GRAPH_PERSISTENT_FRAME
+	#define VALIDATE_UBER_GRAPH_PERSISTENT_FRAME (!(UE_BUILD_SHIPPING || UE_BUILD_TEST))
+#endif
 
 /** Enable fast calls for event thunks into an event graph that have no parameters  */
-#define UE_BLUEPRINT_EVENTGRAPH_FASTCALLS 1
+#ifndef UE_BLUEPRINT_EVENTGRAPH_FASTCALLS
+	#define UE_BLUEPRINT_EVENTGRAPH_FASTCALLS 1
+#endif
 
-/** Enable perf counters on dedicated servers */
-#define USE_SERVER_PERF_COUNTERS ((UE_SERVER || UE_EDITOR) && WITH_PERFCOUNTERS)
+/** Enables code required for handling recursive dependencies during blueprint serialization */
+#ifndef USE_CIRCULAR_DEPENDENCY_LOAD_DEFERRING
+	#define USE_CIRCULAR_DEPENDENCY_LOAD_DEFERRING 1
+#endif
 
-#define USE_CIRCULAR_DEPENDENCY_LOAD_DEFERRING 1
-#define USE_DEFERRED_DEPENDENCY_CHECK_VERIFICATION_TESTS (USE_CIRCULAR_DEPENDENCY_LOAD_DEFERRING && 0)
+/** Enable validation of deferred dependencies loaded during blueprint serialization */
+#ifndef USE_DEFERRED_DEPENDENCY_CHECK_VERIFICATION_TESTS
+	#define USE_DEFERRED_DEPENDENCY_CHECK_VERIFICATION_TESTS (USE_CIRCULAR_DEPENDENCY_LOAD_DEFERRING && 0)
+#endif
 
 // 0 (default), set this to 1 to get draw events with "TOGGLEDRAWEVENTS" "r.ShowMaterialDrawEvents" and the "ProfileGPU" command working in test
 #ifndef ALLOW_PROFILEGPU_IN_TEST
@@ -389,6 +397,17 @@
 
 // DumpGPU command
 #define WITH_DUMPGPU (!(UE_BUILD_SHIPPING || UE_BUILD_TEST) || (UE_BUILD_TEST && ALLOW_DUMPGPU_IN_TEST) || (UE_BUILD_SHIPPING && ALLOW_DUMPGPU_IN_SHIPPING))
+
+#ifndef ALLOW_GPUDEBUGCRASH_IN_TEST
+#define ALLOW_GPUDEBUGCRASH_IN_TEST 1
+#endif
+
+#ifndef ALLOW_GPUDEBUGCRASH_IN_SHIPPING
+#define ALLOW_GPUDEBUGCRASH_IN_SHIPPING 0
+#endif
+
+// GPUDebugCrash
+#define WITH_GPUDEBUGCRASH (!(UE_BUILD_SHIPPING || UE_BUILD_TEST) || (UE_BUILD_TEST && ALLOW_GPUDEBUGCRASH_IN_TEST) || (UE_BUILD_SHIPPING && ALLOW_GPUDEBUGCRASH_IN_SHIPPING))
 
 #ifndef ALLOW_CHEAT_CVARS_IN_TEST
 	#define ALLOW_CHEAT_CVARS_IN_TEST 1

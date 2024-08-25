@@ -9,6 +9,7 @@
 #include "LogVisualizerSettings.h"
 #include "VisualLoggerDatabase.h"
 #include "VisualLoggerCameraController.h"
+#include "VisualLogger/VisualLogger.h"
 
 #if WITH_EDITOR
 #include "Editor/EditorEngine.h"
@@ -79,6 +80,7 @@ void FLogVisualizer::Shutdown()
 void FLogVisualizer::Reset()
 {
 	TimeSliderController->SetTimesliderArgs(FVisualLoggerTimeSliderArgs());
+	FVisualLogger::Get().OnDataReset();
 }
 
 FLogVisualizer& FLogVisualizer::Get()

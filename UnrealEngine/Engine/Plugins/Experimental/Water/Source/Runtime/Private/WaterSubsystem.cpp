@@ -19,9 +19,11 @@
 #include "WaterUtils.h"
 #include "WaterViewExtension.h"
 #include "Algo/MaxElement.h"
+#include "Algo/RemoveIf.h"
 
 #if WITH_EDITOR
 #include "WaterZoneActorDesc.h"
+#include "WorldPartition/WorldPartitionActorDescInstance.h"
 #include "WorldPartition/WorldPartitionHelpers.h"
 extern UNREALED_API UEditorEngine* GEditor;
 #else
@@ -184,11 +186,11 @@ FWaterBodyManager* UWaterSubsystem::GetWaterBodyManager(const UWorld* InWorld)
 	return nullptr;
 }
 
-TWeakPtr<FWaterViewExtension, ESPMode::ThreadSafe> UWaterSubsystem::GetWaterViewExtension(const UWorld* InWorld)
+FWaterViewExtension* UWaterSubsystem::GetWaterViewExtension(const UWorld* InWorld)
 {
-	if (UWaterSubsystem* Subsystem = GetWaterSubsystem(InWorld))
+	if (FWaterBodyManager* Manager = GetWaterBodyManager(InWorld))
 	{
-		return Subsystem->WaterViewExtension;
+		return Manager->GetWaterViewExtension();
 	}
 	return {};
 }
@@ -253,7 +255,6 @@ void UWaterSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 	check(World != nullptr);
 
 	GetWaterBodyManagerInternal().Initialize(World);
-	WaterViewExtension = FSceneViewExtensions::NewExtension<FWaterViewExtension>(World);
 
 	bUsingSmoothedTime = false;
 	FConsoleVariableDelegate NotifyWaterScalabilityChanged = FConsoleVariableDelegate::CreateUObject(this, &UWaterSubsystem::NotifyWaterScalabilityChangedInternal);
@@ -371,7 +372,7 @@ void UWaterSubsystem::ApplyRuntimeSettings(const UWaterRuntimeSettings* Settings
 void UWaterSubsystem::OnHeightmapStreamed(const FOnHeightmapStreamedContext& InContext)
 {
 	UE_LOG(LogWater, Verbose, TEXT("UWaterSubsystem::OnHeightmapStreamed() -- Rebuilding Water Info Texture..."));
-	MarkWaterZonesInRegionForRebuild(InContext.GetUpdateRegion(), EWaterZoneRebuildFlags::UpdateWaterInfoTexture);
+	MarkWaterZonesInRegionForRebuild(InContext.GetUpdateRegion(), EWaterZoneRebuildFlags::UpdateWaterInfoTexture, /* DebugRequestingObject = */ this);
 }
 #endif // WITH_EDITOR
 
@@ -482,7 +483,7 @@ void UWaterSubsystem::SetOceanFloodHeight(float InFloodHeight)
 		if (FloodHeight != ClampedFloodHeight)
 		{
 			FloodHeight = ClampedFloodHeight;
-			MarkAllWaterZonesForRebuild();
+			MarkAllWaterZonesForRebuild(EWaterZoneRebuildFlags::All, /* DebugRequestingObject = */ this);
 
 			// the ocean body is dynamic and needs to be readjusted when the flood height changes : 
 			if (OceanBodyComponent.IsValid())
@@ -509,18 +510,18 @@ float UWaterSubsystem::GetOceanBaseHeight() const
 	return TNumericLimits<float>::Lowest();
 }
 
-void UWaterSubsystem::MarkAllWaterZonesForRebuild(EWaterZoneRebuildFlags RebuildFlags)
+void UWaterSubsystem::MarkAllWaterZonesForRebuild(EWaterZoneRebuildFlags RebuildFlags, const UObject* DebugRequestingObject)
 {
 	if (UWorld* World = GetWorld())
 	{
 		for (AWaterZone* WaterZone : TActorRange<AWaterZone>(World))
 		{
-			WaterZone->MarkForRebuild(RebuildFlags);
+			WaterZone->MarkForRebuild(RebuildFlags, DebugRequestingObject);
 		}
 	}
 }
 
-void UWaterSubsystem::MarkWaterZonesInRegionForRebuild(const FBox2D& InUpdateRegion, EWaterZoneRebuildFlags InRebuildFlags)
+void UWaterSubsystem::MarkWaterZonesInRegionForRebuild(const FBox2D& InUpdateRegion, EWaterZoneRebuildFlags InRebuildFlags, const UObject* DebugRequestingObject)
 {
 	if (UWorld* World = GetWorld())
 	{
@@ -530,7 +531,7 @@ void UWaterSubsystem::MarkWaterZonesInRegionForRebuild(const FBox2D& InUpdateReg
 
 			if (WaterZoneBounds.Intersect(InUpdateRegion))
 			{
-				WaterZone->MarkForRebuild(InRebuildFlags);
+				WaterZone->MarkForRebuild(InRebuildFlags, InUpdateRegion, DebugRequestingObject);
 			}
 		}
 	}
@@ -552,15 +553,15 @@ TSoftObjectPtr<AWaterZone> UWaterSubsystem::FindWaterZone(const UWorld* World, c
 	{
 		if (UWorldPartition* WorldPartition = World->GetWorldPartition())
 		{
-			FWorldPartitionHelpers::ForEachActorDesc<AWaterZone>(WorldPartition, [Bounds, &ViableZones](const FWorldPartitionActorDesc* ActorDesc)
+			FWorldPartitionHelpers::ForEachActorDescInstance<AWaterZone>(WorldPartition, [Bounds, &ViableZones](const FWorldPartitionActorDescInstance* ActorDescInstance)
 			{
-				FWaterZoneActorDesc* WaterZoneActorDesc = (FWaterZoneActorDesc*)ActorDesc;
-				const FBox WaterZoneBounds = WaterZoneActorDesc->GetEditorBounds();
+				FWaterZoneActorDesc* WaterZoneActorDesc = (FWaterZoneActorDesc*)ActorDescInstance->GetActorDesc();
+				const FBox WaterZoneBounds = ActorDescInstance->GetEditorBounds();
 				const FBox2D WaterZoneBounds2D(FVector2D(WaterZoneBounds.Min), FVector2D(WaterZoneBounds.Max));
 
 				if (Bounds.Intersect(WaterZoneBounds2D))
 				{
-					ViableZones.Emplace(WaterZoneActorDesc->GetActorSoftPath(), WaterZoneActorDesc->GetOverlapPriority());
+					ViableZones.Emplace(ActorDescInstance->GetActorSoftPath(), WaterZoneActorDesc->GetOverlapPriority());
 				}
 
 				return true;
@@ -702,16 +703,28 @@ void UWaterSubsystem::ComputeUnderwaterPostProcess(FVector ViewLocation, FSceneV
 	{
 		if (Hits.Num() > 1)
 		{
+			// Prepass to remove non-waterbody elements
+			Hits.SetNum(Algo::RemoveIf(Hits, [](const FHitResult& A)
+			{
+				return A.HitObjectHandle.FetchActor<AWaterBody>() == nullptr;
+			}));
+			
 			// Sort hits based on their water priority for rendering since we should prioritize evaluating waves in the order those waves will be considered for rendering. 
 			Hits.Sort([](const FHitResult& A, const FHitResult& B)
 			{
 				const AWaterBody* ABody = A.HitObjectHandle.FetchActor<AWaterBody>();
 				const AWaterBody* BBody = B.HitObjectHandle.FetchActor<AWaterBody>();
 
-				const int32 APriority = ABody ? ABody->GetWaterBodyComponent()->GetOverlapMaterialPriority() : -1;
-				const int32 BPriority = BBody ? BBody->GetWaterBodyComponent()->GetOverlapMaterialPriority() : -1;
+				// If both water bodies either have waves or both don't have waves, use the overlap priority to determine which to use, since in this case we need to respect the surface waves
+				if (ABody->GetWaterBodyComponent()->HasWaves() == BBody->GetWaterBodyComponent()->HasWaves())
+				{
+					const int32 APriority = ABody->GetWaterBodyComponent()->GetOverlapMaterialPriority();
+					const int32 BPriority = BBody->GetWaterBodyComponent()->GetOverlapMaterialPriority();
+					return APriority > BPriority;
+				}
 
-				return APriority > BPriority;
+				// Otherwise, prefer the water body with waves to ensure the PP calculates the waves correctly.
+				return ABody->GetWaterBodyComponent()->HasWaves() && !BBody->GetWaterBodyComponent()->HasWaves();
 			});
 		}
 

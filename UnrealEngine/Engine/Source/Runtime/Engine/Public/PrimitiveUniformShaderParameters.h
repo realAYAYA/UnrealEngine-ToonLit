@@ -28,7 +28,7 @@ BEGIN_GLOBAL_SHADER_PARAMETER_STRUCT(FPrimitiveUniformShaderParameters,ENGINE_AP
 	SHADER_PARAMETER(uint32,		InstanceSceneDataOffset)
 	SHADER_PARAMETER(uint32,		NumInstanceSceneDataEntries)
 	SHADER_PARAMETER(int32,			SingleCaptureIndex)										// Should default to 0 if no reflection captures are provided, as there will be a default black (0,0,0,0) cubemap in that slot
-	SHADER_PARAMETER(FVector3f,		TilePosition)
+	SHADER_PARAMETER(FVector3f,		PositionHigh)
 	SHADER_PARAMETER(uint32,		PrimitiveComponentId)									// TODO: Refactor to use PersistentPrimitiveIndex, ENGINE USE ONLY - will be removed
 	SHADER_PARAMETER(FMatrix44f,	LocalToRelativeWorld)									// Always needed
 	SHADER_PARAMETER(FMatrix44f,	RelativeWorldToLocal)									// Rarely needed
@@ -37,8 +37,12 @@ BEGIN_GLOBAL_SHADER_PARAMETER_STRUCT(FPrimitiveUniformShaderParameters,ENGINE_AP
 	SHADER_PARAMETER(FMatrix44f,	WorldToPreviousWorld)									// Used when calculating instance prev local->world for static instances that do not store it (calculated via doubles to resolve precision issues)
 	SHADER_PARAMETER_EX(FVector3f,	InvNonUniformScale,  EShaderPrecisionModifier::Half)	// Often needed
 	SHADER_PARAMETER(float,			ObjectBoundsX)											// Only needed for editor/development
-	SHADER_PARAMETER(FVector4f,		ObjectRelativeWorldPositionAndRadius)					// Needed by some materials
-	SHADER_PARAMETER(FVector3f,		ActorRelativeWorldPosition)
+	SHADER_PARAMETER(FVector4f,		ObjectWorldPositionHighAndRadius)						// Needed by some materials
+	SHADER_PARAMETER(FVector3f,		ObjectWorldPositionLow)									// Needed by some materials
+	SHADER_PARAMETER(float,			MinMaterialDisplacement)
+	SHADER_PARAMETER(FVector3f,		ActorWorldPositionHigh)
+	SHADER_PARAMETER(float,			MaxMaterialDisplacement)
+	SHADER_PARAMETER(FVector3f,		ActorWorldPositionLow)
 	SHADER_PARAMETER(uint32,		LightmapUVIndex)										// Only needed if static lighting is enabled
 	SHADER_PARAMETER_EX(FVector3f,	ObjectOrientation,   EShaderPrecisionModifier::Half)
 	SHADER_PARAMETER(uint32,		LightmapDataIndex)										// Only needed if static lighting is enabled
@@ -56,16 +60,13 @@ BEGIN_GLOBAL_SHADER_PARAMETER_STRUCT(FPrimitiveUniformShaderParameters,ENGINE_AP
 	SHADER_PARAMETER(FVector3f,		InstanceLocalBoundsExtent)
 	SHADER_PARAMETER(uint32,		InstancePayloadDataStride)
 	SHADER_PARAMETER(uint32,		InstancePayloadExtensionSize)
-	SHADER_PARAMETER(FVector3f,		WireframeColor)											// Only needed for editor/development
+	SHADER_PARAMETER(FVector2f,		WireframeAndPrimitiveColor)								// Only needed for editor/development
 	SHADER_PARAMETER(uint32,		PackedNaniteFlags)
-	SHADER_PARAMETER(FVector3f,		LevelColor)												// Only needed for editor/development
 	SHADER_PARAMETER(int32,			PersistentPrimitiveIndex)
 	SHADER_PARAMETER(FVector2f,		InstanceDrawDistanceMinMaxSquared)
 	SHADER_PARAMETER(float,			InstanceWPODisableDistanceSquared)
 	SHADER_PARAMETER(uint32,		NaniteRayTracingDataOffset)
 	SHADER_PARAMETER(float,			MaxWPOExtent)
-	SHADER_PARAMETER(float,			MinMaterialDisplacement)
-	SHADER_PARAMETER(float,			MaxMaterialDisplacement)
 	SHADER_PARAMETER(uint32,		CustomStencilValueAndMask)
 	SHADER_PARAMETER(uint32,		VisibilityFlags)
 	SHADER_PARAMETER_ARRAY(FVector4f, CustomPrimitiveData, [FCustomPrimitiveData::NumCustomPrimitiveDataFloat4s]) // Custom data per primitive that can be accessed through material expression parameters and modified through UStaticMeshComponent
@@ -90,7 +91,7 @@ class FIdentityPrimitiveUniformBuffer : public TUniformBuffer<FPrimitiveUniformS
 public:
 	void InitContents()
 	{
-		SetContents(GetIdentityPrimitiveParameters());
+		SetContents(FRenderResource::GetImmediateCommandList(), GetIdentityPrimitiveParameters());
 	}
 };
 

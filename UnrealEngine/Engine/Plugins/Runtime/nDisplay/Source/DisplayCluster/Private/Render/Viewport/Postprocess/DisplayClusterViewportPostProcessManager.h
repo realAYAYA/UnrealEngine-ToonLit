@@ -6,9 +6,9 @@
 #include "Render/IDisplayClusterRenderManager.h"
 #include "Templates/SharedPointer.h"
 
-class FDisplayClusterViewportManager;
 class FDisplayClusterViewportManagerProxy;
 class FDisplayClusterViewportPostProcessOutputRemap;
+class FDisplayClusterViewportConfiguration;
 struct FDisplayClusterConfigurationPostprocess;
 
 /**
@@ -19,10 +19,10 @@ class FDisplayClusterViewportPostProcessManager
 	: public TSharedFromThis<FDisplayClusterViewportPostProcessManager, ESPMode::ThreadSafe>
 {
 public:
-	FDisplayClusterViewportPostProcessManager(FDisplayClusterViewportManager& InViewportManager);
+	FDisplayClusterViewportPostProcessManager(const TSharedRef<const FDisplayClusterViewportConfiguration, ESPMode::ThreadSafe>& InConfiguration);
 	virtual ~FDisplayClusterViewportPostProcessManager();
 
-	void Release();
+	void Release_GameThread();
 
 public:
 	bool IsPostProcessViewBeforeWarpBlendRequired(const TSharedPtr<IDisplayClusterPostProcess, ESPMode::ThreadSafe>& PostprocessInstance) const;
@@ -40,8 +40,8 @@ public:
 
 	void Tick();
 
-	bool HandleStartScene();
-	void HandleEndScene();
+	bool OnHandleStartScene();
+	void OnHandleEndScene();
 
 	void HandleSetupNewFrame();
 	void HandleBeginNewFrame(FDisplayClusterRenderFrame& InOutRenderFrame);
@@ -86,25 +86,22 @@ public:
 private:
 	TSharedPtr<IDisplayClusterPostProcess, ESPMode::ThreadSafe> ImplFindPostProcess(const FString& InPostprocessId) const;
 
-	/** Get a pointer to the DC ViewportManager if it still exists. */
-	FDisplayClusterViewportManager* GetViewportManager() const;
-
 protected:
 	void ImplPerformPostProcessViewBeforeWarpBlend_RenderThread(FRHICommandListImmediate& RHICmdList, const FDisplayClusterViewportManagerProxy* InViewportManagerProxy) const;
 	void ImplPerformPostProcessViewAfterWarpBlend_RenderThread(FRHICommandListImmediate& RHICmdList,  const FDisplayClusterViewportManagerProxy* InViewportManagerProxy) const;
 	void ImplPerformPostProcessFrameAfterWarpBlend_RenderThread(FRHICommandListImmediate& RHICmdList, const FDisplayClusterViewportManagerProxy* InViewportManagerProxy) const;
 
-
-protected:
-	// Game thread instances
-	TArray<TSharedPtr<IDisplayClusterPostProcess, ESPMode::ThreadSafe>> Postprocess;
+public:
+	// Configuration of the current cluster node
+	const TSharedRef<const FDisplayClusterViewportConfiguration, ESPMode::ThreadSafe> Configuration;
 
 private:
-	/** A reference to the owning viewport manager */
-	const TWeakPtr<FDisplayClusterViewportManager, ESPMode::ThreadSafe> ViewportManagerWeakPtr;
+	// Game thread instances
+	TArray<TSharedPtr<IDisplayClusterPostProcess, ESPMode::ThreadSafe>> Postprocess;
 
 	// Render thread instances
 	TArray<TSharedPtr<IDisplayClusterPostProcess, ESPMode::ThreadSafe>> PostprocessProxy;
 
+	// Output remap implementation
 	TSharedPtr<FDisplayClusterViewportPostProcessOutputRemap, ESPMode::ThreadSafe> OutputRemap;
 };

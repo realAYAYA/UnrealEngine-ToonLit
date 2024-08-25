@@ -33,6 +33,7 @@ void UInterchangePythonPipelineBase::PostEditChangeProperty(struct FPropertyChan
 
 void UInterchangePythonPipelineAsset::PostLoad()
 {
+	GetPackage()->SetPackageFlags(PKG_EditorOnly);
 	Super::PostLoad();
 	GeneratePipeline();
 }

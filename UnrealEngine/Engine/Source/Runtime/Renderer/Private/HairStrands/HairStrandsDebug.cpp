@@ -2,7 +2,6 @@
 
 #include "HairStrandsDebug.h"
 #include "HairStrandsInterface.h"
-#include "HairStrandsCluster.h"
 #include "HairStrandsDeepShadow.h"
 #include "HairStrandsUtils.h"
 #include "HairStrandsVoxelization.h"
@@ -22,7 +21,6 @@
 #include "PostProcess/SceneRenderTargets.h"
 #include "SceneTextureParameters.h"
 #include "DynamicPrimitiveDrawing.h"
-#include "RenderTargetTemp.h"
 #include "CanvasTypes.h"
 #include "ShaderPrintParameters.h"
 #include "RenderGraphUtils.h"
@@ -30,6 +28,7 @@
 #include "ScreenPass.h"
 #include "ScenePrivate.h"
 #include "UnrealEngine.h"
+#include "DataDrivenShaderPlatformInfo.h"
 
 #include "GroomVisualizationData.h"
 
@@ -125,6 +124,8 @@ public:
 	{
 		// Skip optimization for avoiding long compilation time due to large UAV writes
 		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		ShaderPrint::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+
 		OutEnvironment.CompilerFlags.Add(CFLAG_Debug);
 		OutEnvironment.SetDefine(TEXT("SHADER_LOD_INFO"), 1);
 	}
@@ -137,6 +138,11 @@ static void AddPrintLODInfoPass(
 	const FViewInfo& View,
 	const FHairGroupPublicData* Data)
 {
+	if (!ShaderPrint::IsSupported(View.GetShaderPlatform()))
+	{
+		return;
+	}
+
 	// Force ShaderPrint on.
 	ShaderPrint::SetEnabled(true);
 	ShaderPrint::RequestSpaceForCharacters(2000);
@@ -186,14 +192,15 @@ class FHairDebugPrintCS : public FGlobalShader
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER(FIntPoint, GroupSize)
-		SHADER_PARAMETER(FIntPoint, PixelCoord)
 		SHADER_PARAMETER(FIntPoint, MaxResolution)
 		SHADER_PARAMETER(uint32, FastResolveMask)
 		SHADER_PARAMETER(uint32, HairMacroGroupCount)
 		SHADER_PARAMETER(uint32, HairVisibilityNodeGroupSize)
 		SHADER_PARAMETER(uint32, AllocatedSampleCount)
 		SHADER_PARAMETER(uint32, HairInstanceCount)
-		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>, HairInstanceIDs)
+		SHADER_PARAMETER(float, ResolutionScale)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>, HairInstanceDataBuffer)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<int>, InstanceAABBBuffer)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, HairCountTexture)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, HairCountUintTexture)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>, HairVisibilityIndirectArgsBuffer)
@@ -208,7 +215,7 @@ class FHairDebugPrintCS : public FGlobalShader
 	END_SHADER_PARAMETER_STRUCT()
 
 public:
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return IsHairStrandsSupported(EHairStrandsShaderType::Tool, Parameters.Platform); }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return IsHairStrandsSupported(EHairStrandsShaderType::Strands, Parameters.Platform) && ShaderPrint::IsSupported(Parameters.Platform); }
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 	{
 		// Skip optimization for avoiding long compilation time due to large UAV writes
@@ -233,15 +240,29 @@ static void AddDebugHairPrintPass(
 {
 	if (!Scene || !View || !View->HairStrandsViewData.UniformBuffer || !InStencilTexture) return;
 
-	if (!TryEnableShaderDrawAndShaderPrint(*View, MacroGroupResources.MacroGroupCount * 32u, 2000u))
+	if (!ShaderPrint::IsSupported(View->GetShaderPlatform()))
 	{
 		return;
 	}
 
+	if (!TryEnableShaderDrawAndShaderPrint(*View, MacroGroupResources.MacroGroupCount * 32u, 8192u))
+	{
+		return;
+	}
+
+	struct FData
+	{
+		uint32 PrimitiveID = ~0;
+		uint32 RegisteredIndex = ~0;
+		uint32 GeometryType = 0;
+		uint32 Pad0 = 0;
+		FVector4f InstanceScreenSphereBound = FVector4f::Zero();
+	};
+
 	// Build mapping Instance -> PrimitiveID to fetch primitive data (i.e., transform & co)
 	const uint32 MacroGroupCount = MacroGroupDatas.Num();
-	TArray<uint32> InstanceIDs;
-	InstanceIDs.Reserve(MacroGroupCount * 4u);
+	TArray<FData> InstanceDatas;
+	InstanceDatas.Reserve(MacroGroupCount * 4u);
 	for (uint32 MacroGroupIndex = 0; MacroGroupIndex < MacroGroupCount; ++MacroGroupIndex)
 	{
 		const FHairStrandsMacroGroupData& MacroGroup = MacroGroupDatas[MacroGroupIndex];
@@ -249,21 +270,30 @@ static void AddDebugHairPrintPass(
 		{
 			if (PrimitiveInfo.PrimitiveSceneProxy)
 			{
-				uint32 PrimitiveID = ~0u;
+				FData& InstanceData = InstanceDatas.AddDefaulted_GetRef();
+				InstanceData.PrimitiveID = ~0u;
 				if (const FPrimitiveSceneInfo* SceneInfo = PrimitiveInfo.PrimitiveSceneProxy->GetPrimitiveSceneInfo())
 				{
-					PrimitiveID = SceneInfo->GetIndex();
+					InstanceData.PrimitiveID = SceneInfo->GetIndex();
 				}
-				InstanceIDs.Add(PrimitiveID);
+
+				FHairStrandsInstance* Instance = PrimitiveInfo.PublicDataPtr->Instance;
+				check(Instance);
+
+				const float MaxRectSizeInPixels = FMath::Min(View->UnscaledViewRect.Height(), View->UnscaledViewRect.Width());
+				const float ContinousLODRadius = PrimitiveInfo.PublicDataPtr->ContinuousLODScreenSize * MaxRectSizeInPixels * 0.5f; // Diameter->Radius
+
+				InstanceData.GeometryType 				= Instance->GetHairGeometry();
+				InstanceData.RegisteredIndex			= Instance->RegisteredIndex;
+				InstanceData.InstanceScreenSphereBound 	= FVector4f(PrimitiveInfo.PublicDataPtr->ContinuousLODScreenPos.X, PrimitiveInfo.PublicDataPtr->ContinuousLODScreenPos.Y, 0.f, ContinousLODRadius);
 			}
 			else
 			{
-				InstanceIDs.Add(0u);
+				InstanceDatas.AddDefaulted();
 			}
 		}
 	}
-	FRDGBufferRef InstancesIDBuffer = CreateVertexBuffer(GraphBuilder, TEXT("Hair.Debug.InstanceIDs"), FRDGBufferDesc::CreateBufferDesc(4, InstanceIDs.Num()), InstanceIDs.GetData(), 4u * InstanceIDs.Num());
-
+	FRDGBufferRef InstanceDataBuffer = CreateVertexBuffer(GraphBuilder, TEXT("Hair.Debug.InstanceDatas"), FRDGBufferDesc::CreateBufferDesc(sizeof(FData), InstanceDatas.Num()), InstanceDatas.GetData(), sizeof(FData) * InstanceDatas.Num());
 
 	FRDGTextureRef ViewHairCountTexture = VisibilityData.ViewHairCountTexture ? VisibilityData.ViewHairCountTexture : GSystemTextures.GetBlackDummy(GraphBuilder);
 	FRDGTextureRef ViewHairCountUintTexture = VisibilityData.ViewHairCountUintTexture ? VisibilityData.ViewHairCountUintTexture : GSystemTextures.GetBlackDummy(GraphBuilder);
@@ -272,13 +302,14 @@ static void AddDebugHairPrintPass(
 	const FIntPoint Resolution(Viewport.Width(), Viewport.Height());
 
 	FHairDebugPrintCS::FParameters* Parameters = GraphBuilder.AllocParameters<FHairDebugPrintCS::FParameters>();
+	Parameters->ResolutionScale = float(View->ViewRect.Width()) / float(View->UnscaledViewRect.Width());
 	Parameters->Scene = View->GetSceneUniforms().GetBuffer(GraphBuilder);
-	Parameters->HairInstanceCount = InstanceIDs.Num();
-	Parameters->HairInstanceIDs = GraphBuilder.CreateSRV(InstancesIDBuffer, PF_R32_UINT);
+	Parameters->HairInstanceCount = InstanceDatas.Num();
+	Parameters->HairInstanceDataBuffer = GraphBuilder.CreateSRV(InstanceDataBuffer, PF_R32_UINT);
+	Parameters->InstanceAABBBuffer = Scene->HairStrandsSceneData.TransientResources->GroupAABBSRV;
 	Parameters->GroupSize = GetVendorOptimalGroupSize2D();
 	Parameters->ViewUniformBuffer = View->ViewUniformBuffer;
 	Parameters->MaxResolution = VisibilityData.CoverageTexture ? VisibilityData.CoverageTexture->Desc.Extent : FIntPoint(0,0);
-	Parameters->PixelCoord = View->CursorPos;
 	Parameters->AllocatedSampleCount = VisibilityData.MaxNodeCount;
 	Parameters->FastResolveMask = STENCIL_TEMPORAL_RESPONSIVE_AA_MASK;
 	Parameters->HairCountTexture = ViewHairCountTexture;
@@ -326,7 +357,7 @@ class FHairDebugShadowCullingCS : public FGlobalShader
 	END_SHADER_PARAMETER_STRUCT()
 
 public:
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return IsHairStrandsSupported(EHairStrandsShaderType::Tool, Parameters.Platform); }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return IsHairStrandsSupported(EHairStrandsShaderType::Strands, Parameters.Platform) && ShaderPrint::IsSupported(Parameters.Platform); }
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 	{
 		// Skip optimization for avoiding long compilation time due to large UAV writes
@@ -344,6 +375,11 @@ static void AddDebugHairShadowCullingPass(
 	const FViewInfo* View)
 {
 	if (!Scene || !View || !View->HairStrandsViewData.UniformBuffer) return;
+
+	if (!ShaderPrint::IsSupported(View->GetShaderPlatform()))
+	{
+		return;
+	}
 
 	const uint32 LightCount = View->HairStrandsViewData.DebugData.CullData.DirectionalLights.Num();
 	uint32 InstanceCount = 0;
@@ -432,7 +468,7 @@ class FHairDebugPS : public FGlobalShader
 	END_SHADER_PARAMETER_STRUCT()
 
 public:
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return IsHairStrandsSupported(EHairStrandsShaderType::Tool, Parameters.Platform); }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return IsHairStrandsSupported(EHairStrandsShaderType::Strands, Parameters.Platform); }
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 	{
 		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
@@ -491,7 +527,7 @@ static void AddDebugHairPass(
 	Parameters->DebugMode = InternalDebugMode;
 	Parameters->SampleIndex = 0;
 	Parameters->RenderTargets[0] = FRenderTargetBinding(OutTarget, ERenderTargetLoadAction::ELoad, 0);
-	TShaderMapRef<FPostProcessVS> VertexShader(View->ShaderMap);
+	TShaderMapRef<FScreenVS> VertexShader(View->ShaderMap);
 
 	TShaderMapRef<FHairDebugPS> PixelShader(View->ShaderMap);
 
@@ -554,10 +590,10 @@ class FDeepShadowVisualizePS : public FGlobalShader
 
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, ViewUniformBuffer)
 		RENDER_TARGET_BINDING_SLOTS()
-		END_SHADER_PARAMETER_STRUCT()
+	END_SHADER_PARAMETER_STRUCT()
 
 public:
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return IsHairStrandsSupported(EHairStrandsShaderType::Tool, Parameters.Platform); }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return IsHairStrandsSupported(EHairStrandsShaderType::Strands, Parameters.Platform); }
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 	{
 		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
@@ -601,7 +637,7 @@ static void AddDebugDeepShadowTexturePass(
 	Parameters->LinearSampler = TStaticSamplerState<SF_Bilinear, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
 	Parameters->HairViewRect = FIntVector4(HairViewRect.Min.X, HairViewRect.Min.Y, HairViewRect.Width(), HairViewRect.Height());
 	Parameters->RenderTargets[0] = FRenderTargetBinding(OutTarget, ERenderTargetLoadAction::ELoad, 0);
-	TShaderMapRef<FPostProcessVS> VertexShader(View->ShaderMap);
+	TShaderMapRef<FScreenVS> VertexShader(View->ShaderMap);
 	FDeepShadowVisualizePS::FPermutationDomain PermutationVector;
 	PermutationVector.Set<FDeepShadowVisualizePS::FOutputType>(ShadowData ? 0 : 1);
 	TShaderMapRef<FDeepShadowVisualizePS> PixelShader(View->ShaderMap, PermutationVector);
@@ -664,10 +700,13 @@ class FDeepShadowInfoCS : public FGlobalShader
 	END_SHADER_PARAMETER_STRUCT()
 
 public:
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return IsHairStrandsSupported(EHairStrandsShaderType::Tool, Parameters.Platform); }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return IsHairStrandsSupported(EHairStrandsShaderType::Strands, Parameters.Platform) && ShaderPrint::IsSupported(Parameters.Platform); }
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 	{
 		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		ShaderPrint::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+
+		OutEnvironment.CompilerFlags.Add(CFLAG_Debug);
 		OutEnvironment.SetDefine(TEXT("SHADER_DOMINFO"), 1);
 	}
 };
@@ -681,6 +720,11 @@ static void AddDeepShadowInfoPass(
 	const FHairStrandsMacroGroupResources& MacroGroupResources,
 	FRDGTextureRef& OutputTexture)
 {
+	if (!ShaderPrint::IsSupported(View.GetShaderPlatform()))
+	{
+		return;
+	}
+
 	if (DeepShadowResources.TotalAtlasSlotCount == 0)
 	{
 		return;
@@ -737,7 +781,7 @@ class FVoxelVirtualRaymarchingCS : public FGlobalShader
 	END_SHADER_PARAMETER_STRUCT()
 
 public:
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return IsHairStrandsSupported(EHairStrandsShaderType::Strands, Parameters.Platform); }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return IsHairStrandsSupported(EHairStrandsShaderType::Strands, Parameters.Platform) && ShaderPrint::IsSupported(Parameters.Platform); }
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 	{
 		// Skip optimization for avoiding long compilation time due to large UAV writes
@@ -756,6 +800,11 @@ static void AddVoxelPageRaymarchingPass(
 	const FHairStrandsVoxelResources& VoxelResources,
 	FRDGTextureRef& OutputTexture)
 {
+	if (!ShaderPrint::IsSupported(View.GetShaderPlatform()))
+	{
+		return;
+	}
+
 	if (!TryEnableShaderDrawAndShaderPrint(View, 4000, 2000))
 	{
 		return;
@@ -810,7 +859,7 @@ class FDebugHairTangentCS : public FGlobalShader
 	END_SHADER_PARAMETER_STRUCT()
 
 public:
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return IsHairStrandsSupported(EHairStrandsShaderType::Tool, Parameters.Platform); }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return IsHairStrandsSupported(EHairStrandsShaderType::Strands, Parameters.Platform) && ShaderPrint::IsSupported(Parameters.Platform); }
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 	{
 		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
@@ -826,6 +875,11 @@ static void AddDebugHairTangentPass(
 	const FSceneTextures& SceneTextures,
 	FRDGTextureRef& OutputTexture)
 {
+	if (!ShaderPrint::IsSupported(View.GetShaderPlatform()))
+	{
+		return;
+	}
+
 	if (!TryEnableShaderDrawAndShaderPrint(View, 64000u, 1000u))
 	{
 		return;
@@ -898,7 +952,7 @@ static void AddPlotBSDFPass(
 	Parameters->RenderTargets[0] = FRenderTargetBinding(OutputTexture, ERenderTargetLoadAction::ELoad);
 
 	const FIntPoint OutputResolution = SceneTextures.SceneDepthTexture->Desc.Extent;
-	TShaderMapRef<FPostProcessVS> VertexShader(View.ShaderMap);
+	TShaderMapRef<FScreenVS> VertexShader(View.ShaderMap);
 	TShaderMapRef<FHairStrandsPlotBSDFPS> PixelShader(View.ShaderMap);
 	const FGlobalShaderMap* GlobalShaderMap = View.ShaderMap;
 	const FIntRect Viewport = View.ViewRect;
@@ -988,7 +1042,7 @@ static void AddPlotSamplePass(
 	Parameters->RenderTargets[0] = FRenderTargetBinding(OutputTexture, ERenderTargetLoadAction::ELoad);
 
 	const FIntPoint OutputResolution = SceneTextures.SceneDepthTexture->Desc.Extent;
-	TShaderMapRef<FPostProcessVS> VertexShader(View.ShaderMap);
+	TShaderMapRef<FScreenVS> VertexShader(View.ShaderMap);
 	TShaderMapRef<FHairStrandsPlotSamplePS> PixelShader(View.ShaderMap);
 	const FGlobalShaderMap* GlobalShaderMap = View.ShaderMap;
 	const FIntRect Viewport = View.ViewRect;
@@ -1056,7 +1110,7 @@ class FHairVisibilityDebugPPLLCS : public FGlobalShader
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
 	{
-		return IsHairStrandsSupported(EHairStrandsShaderType::Tool, Parameters.Platform);
+		return IsHairStrandsSupported(EHairStrandsShaderType::Tool, Parameters.Platform) && ShaderPrint::IsSupported(Parameters.Platform);
 	}
 
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
@@ -1075,13 +1129,13 @@ static void InternalRenderHairStrandsDebugInfo(
 	FRDGBuilder& GraphBuilder,
 	FScene* Scene,
 	FViewInfo& View,
-	FRDGTextureRef SceneColorTexture,
-	FRDGTextureRef SceneDepthTexture)
+	FHairStrandsBookmarkParameters& Params)
 {
-	FHairStrandsBookmarkParameters Params;
-	CreateHairStrandsBookmarkParameters(Scene, View, Params);
-	Params.SceneColorTexture = SceneColorTexture;
-	Params.SceneDepthTexture = SceneDepthTexture;
+	if (!ShaderPrint::IsSupported(View.GetShaderPlatform()))
+	{
+		return;
+	}
+
 	if (!Params.HasInstances())
 	{
 		return;
@@ -1105,7 +1159,7 @@ static void InternalRenderHairStrandsDebugInfo(
 	// Display tangent vector for strands/cards/meshes
 	if (ViewMode == EGroomViewMode::Tangent)
 		{
-			AddDebugHairTangentPass(GraphBuilder, View, SceneTextures, SceneColorTexture);
+			AddDebugHairTangentPass(GraphBuilder, View, SceneTextures, Params.SceneColorTexture);
 		}
 
 	// Draw LOD info 
@@ -1126,14 +1180,13 @@ static void InternalRenderHairStrandsDebugInfo(
 		}
 	}
 
-
 	// Pass this point, all debug rendering concern only hair strands data
 	if (!HairStrands::HasViewHairStrandsData(View))
 	{
 		return;
 	}
 
-	const FScreenPassRenderTarget SceneColor(SceneColorTexture, View.ViewRect, ERenderTargetLoadAction::ELoad);
+	const FScreenPassRenderTarget SceneColor(Params.SceneColorTexture, View.ViewRect, ERenderTargetLoadAction::ELoad);
 
 	const FHairStrandsViewData& HairData = View.HairStrandsViewData;
 
@@ -1141,11 +1194,11 @@ static void InternalRenderHairStrandsDebugInfo(
 	{
 		if (GHairStrandsDebugPlotBsdf > 0)
 		{
-			AddPlotBSDFPass(GraphBuilder, View, SceneColorTexture);
+			AddPlotBSDFPass(GraphBuilder, View, Params.SceneColorTexture);
 		}
 		if (HairData.DebugData.IsPlotDataValid())
 		{
-			AddPlotSamplePass(GraphBuilder, View, HairData.DebugData.PlotData, SceneColorTexture);
+			AddPlotSamplePass(GraphBuilder, View, HairData.DebugData.PlotData, Params.SceneColorTexture);
 		}	
 	}
 
@@ -1176,7 +1229,7 @@ static void InternalRenderHairStrandsDebugInfo(
 				if (DeepShadowData.AtlasSlotIndex != DomIndex)
 					continue;
 
-				AddDebugDeepShadowTexturePass(GraphBuilder, &View, FIntRect(), &DeepShadowData, &HairData.DeepShadowResources, SceneColorTexture);
+				AddDebugDeepShadowTexturePass(GraphBuilder, &View, FIntRect(), &DeepShadowData, &HairData.DeepShadowResources, Params.SceneColorTexture);
 			}
 		}
 	}
@@ -1186,11 +1239,11 @@ static void InternalRenderHairStrandsDebugInfo(
 	{
 		for (const FHairStrandsMacroGroupData& MacroGroupData : HairData.MacroGroupDatas)
 		{
-			AddDebugDeepShadowTexturePass(GraphBuilder, &View, MacroGroupData.ScreenRect, nullptr, nullptr, SceneColorTexture);
+			AddDebugDeepShadowTexturePass(GraphBuilder, &View, MacroGroupData.ScreenRect, nullptr, nullptr, Params.SceneColorTexture);
 		}
 
 		const FIntRect TotalRect = ComputeVisibleHairStrandsMacroGroupsRect(View.ViewRect, HairData.MacroGroupDatas);
-		AddDebugDeepShadowTexturePass(GraphBuilder, &View, TotalRect, nullptr, nullptr, SceneColorTexture);
+		AddDebugDeepShadowTexturePass(GraphBuilder, &View, TotalRect, nullptr, nullptr, Params.SceneColorTexture);
 	}
 	
 
@@ -1200,7 +1253,7 @@ static void InternalRenderHairStrandsDebugInfo(
 		{
 			if (HairData.DeepShadowResources.bIsGPUDriven)
 			{
-				AddDeepShadowInfoPass(GraphBuilder, View, HairData.DeepShadowResources, HairData.MacroGroupResources, SceneColorTexture);
+				AddDeepShadowInfoPass(GraphBuilder, View, HairData.DeepShadowResources, HairData.MacroGroupResources, Params.SceneColorTexture);
 			}
 		}
 	}
@@ -1217,13 +1270,13 @@ static void InternalRenderHairStrandsDebugInfo(
 		ViewMode == EGroomViewMode::MaterialTangent;
 	if (bRunDebugPass)
 	{
-		AddDebugHairPass(GraphBuilder, &View, ViewMode, HairData.VisibilityData, SceneTextures.Stencil, SceneColorTexture);
+		AddDebugHairPass(GraphBuilder, &View, ViewMode, HairData.VisibilityData, SceneTextures.Stencil, Params.SceneColorTexture);
 		AddDebugHairPrintPass(GraphBuilder, Scene, &View, ViewMode, HairData.VisibilityData, HairData.MacroGroupDatas, HairData.MacroGroupResources, SceneTextures.Stencil);
 	}
 	else if (ViewMode == EGroomViewMode::Tile)
 	{
 		check(HairData.VisibilityData.TileData.IsValid());
-		AddHairStrandsDebugTilePass(GraphBuilder, View, SceneColorTexture, HairData.VisibilityData.TileData);
+		AddHairStrandsDebugTilePass(GraphBuilder, View, Params.SceneColorTexture, HairData.VisibilityData.TileData);
 	}
 
 	const bool bIsVoxelMode = ViewMode == EGroomViewMode::VoxelsDensity;
@@ -1231,7 +1284,7 @@ static void InternalRenderHairStrandsDebugInfo(
 	{
 		if (HairData.VirtualVoxelResources.IsValid())
 		{
-			AddVoxelPageRaymarchingPass(GraphBuilder, View, HairData.MacroGroupDatas, HairData.VirtualVoxelResources, SceneColorTexture);
+			AddVoxelPageRaymarchingPass(GraphBuilder, View, HairData.MacroGroupDatas, HairData.VirtualVoxelResources, Params.SceneColorTexture);
 		}
 	}
 
@@ -1249,12 +1302,12 @@ static void InternalRenderHairStrandsDebugInfo(
 		PassParameters->PPLLNodeIndex = HairData.DebugData.PPLLData.NodeIndexTexture;
 		PassParameters->PPLLNodeData = GraphBuilder.CreateSRV(FRDGBufferSRVDesc(HairData.DebugData.PPLLData.NodeDataBuffer));
 		PassParameters->ViewUniformBuffer = View.ViewUniformBuffer;
-		PassParameters->SceneColorTextureUAV = GraphBuilder.CreateUAV(SceneColorTexture);
+		PassParameters->SceneColorTextureUAV = GraphBuilder.CreateUAV(Params.SceneColorTexture);
 		ShaderPrint::SetParameters(GraphBuilder, View.ShaderPrintData, PassParameters->ShaderPrintParameters);
 
 		FHairVisibilityDebugPPLLCS::FPermutationDomain PermutationVector;
 		TShaderMapRef<FHairVisibilityDebugPPLLCS> ComputeShader(View.ShaderMap, PermutationVector);
-		FIntVector TextureSize = SceneColorTexture->Desc.GetSize(); TextureSize.Z = 1;
+		FIntVector TextureSize = Params.SceneColorTexture->Desc.GetSize(); TextureSize.Z = 1;
 		FComputeShaderUtils::AddPass(GraphBuilder, RDG_EVENT_NAME("HairStrands::PPLLDebug"), ComputeShader, PassParameters, FIntVector::DivideAndRoundUp(TextureSize, FIntVector(8, 8, 1)));
 	}
 
@@ -1279,12 +1332,11 @@ void RenderHairStrandsDebugInfo(
 	FRDGBuilder& GraphBuilder,
 	FScene* Scene,
 	TArrayView<FViewInfo> Views,
-	FRDGTextureRef SceneColorTexture,
-	FRDGTextureRef SceneDepthTexture)
+	FHairStrandsBookmarkParameters& Parameters)
 {
 	bool bHasHairData = false;
 	for (FViewInfo& View : Views)
 	{
-		InternalRenderHairStrandsDebugInfo(GraphBuilder, Scene, View, SceneColorTexture, SceneDepthTexture);
+		InternalRenderHairStrandsDebugInfo(GraphBuilder, Scene, View, Parameters);
 	}
 }

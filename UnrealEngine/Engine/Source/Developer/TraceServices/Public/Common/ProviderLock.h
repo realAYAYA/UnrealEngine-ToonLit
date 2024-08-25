@@ -51,7 +51,7 @@ struct TRACESERVICES_API FProviderReadScopeLock
 class FProviderLock
 {
 public:
-	struct FThreadLocalState
+	struct TRACESERVICES_API FThreadLocalState
 	{
 		FProviderLock* Lock;
 		int32 ReadLockCount;
@@ -59,14 +59,14 @@ public:
 	};
 
 public:
-	void ReadAccessCheck(FThreadLocalState& State) const;
-	void WriteAccessCheck(FThreadLocalState& State) const;
+	TRACESERVICES_API void ReadAccessCheck(FThreadLocalState& State) const;
+	TRACESERVICES_API void WriteAccessCheck(FThreadLocalState& State) const;
 
-	void BeginRead(FThreadLocalState& State);
-	void EndRead(FThreadLocalState& State);
+	TRACESERVICES_API void BeginRead(FThreadLocalState& State);
+	TRACESERVICES_API void EndRead(FThreadLocalState& State);
 
-	void BeginWrite(FThreadLocalState& State);
-	void EndWrite(FThreadLocalState& State);
+	TRACESERVICES_API void BeginWrite(FThreadLocalState& State);
+	TRACESERVICES_API void EndWrite(FThreadLocalState& State);
 
 	UE_DEPRECATED(5.3, "Please use the FThreadLocalState overload")
 	void ReadAccessCheck(const FProviderLock* CurrentProviderLock, const int32& CurrentReadProviderLockCount, const int32& CurrentWriteProviderLockCount) const;

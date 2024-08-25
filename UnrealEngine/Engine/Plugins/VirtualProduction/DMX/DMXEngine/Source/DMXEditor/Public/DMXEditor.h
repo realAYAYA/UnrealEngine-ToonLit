@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "Analytics/DMXEditorToolAnalyticsProvider.h"
 #include "WorkflowOrientedApp/WorkflowCentricApplication.h"
 #include "Misc/NotifyHook.h"
 
@@ -13,10 +14,9 @@ class SDMXInputConsole;
 class SDMXFixturePatchEditor;
 class SDMXFixtureTypeEditor;
 class SDMXLibraryEditorTab;
+class SDockTab;
 class UDMXEntity;
 class UDMXLibrary;
-
-class SDockTab;
 class UFactory;
 
 
@@ -33,6 +33,8 @@ class DMXEDITOR_API FDMXEditor
 	, public FNotifyHook
 {	
 public:
+	FDMXEditor();
+
 	//~ Begin IToolkit implementation
 	virtual FName GetToolkitFName() const override;
 	virtual FText GetBaseToolkitName() const override;
@@ -148,4 +150,7 @@ private:
 
 	/** Shared Data for Fixture Patch editors */
 	TSharedPtr<FDMXFixturePatchSharedData> FixturePatchSharedData;
+
+	/** The analytics provider for this tool */
+	UE::DMX::FDMXEditorToolAnalyticsProvider AnalyticsProvider;
 };

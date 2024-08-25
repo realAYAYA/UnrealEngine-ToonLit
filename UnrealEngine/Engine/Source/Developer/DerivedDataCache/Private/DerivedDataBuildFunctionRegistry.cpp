@@ -148,7 +148,7 @@ bool IsValidBuildFunctionName(FUtf8StringView Function)
 void AssertValidBuildFunctionName(FUtf8StringView Function, FStringView Name)
 {
 	checkf(IsValidBuildFunctionName(Function),
-		TEXT("A build function name must be alphanumeric and non-empty for build of '%.*s' by '%.*s'."),
+		TEXT("A build function name must be alphanumeric and non-empty for build of '%.*s' by '%s'."),
 		Name.Len(), Name.GetData(), *WriteToString<32>(Function));
 }
 

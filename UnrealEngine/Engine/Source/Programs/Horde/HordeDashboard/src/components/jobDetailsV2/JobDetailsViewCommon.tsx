@@ -11,16 +11,16 @@ import { PollBase } from "../../backend/PollBase";
 import { projectStore } from "../../backend/ProjectStore";
 import TemplateCache from "../../backend/TemplateCache";
 import { ISideRailLink } from "../../base/components/SideRail";
-import { modeColors } from "../../styles/Styles";
 import { useQuery } from "../JobDetailCommon";
 import { LabelStatusIcon, StepStatusIcon } from "../StatusIcon";
+import { getHordeStyling } from "../../styles/Styles";
 
 export abstract class JobDataView {
 
-   constructor(details: JobDetailsV2, initObservable?:boolean) {
+   constructor(details: JobDetailsV2, initObservable?: boolean) {
       if (initObservable === undefined || initObservable) {
-         makeObservable(this);   
-      }      
+         makeObservable(this);
+      }
       this.details = details;
    }
 
@@ -60,7 +60,21 @@ export abstract class JobDataView {
    get initialized(): boolean {
       return this._initialized;
    }
-   // may be called more than once with different parameters, though allways initializes
+
+   addRail(link: ISideRailLink) {
+
+      const existing = this._railLinks.find(r => r.text === link.text);
+      if (existing) {
+         return;
+      }
+
+      this._railLinks.push(link);
+      this.details?.externalUpdate();
+      this.details?.setRootUpdated();
+   }
+
+
+   // may be called more than once with different parameters, though always initializes
    initialize(railLinks?: ISideRailLink[]) {
 
       if (this._initialized) {
@@ -165,8 +179,22 @@ export class JobDetailsV2 extends PollBase {
       this.batches = [];
       this.views = [];
       this.timing = undefined;
-      this.reportData = new Map();
       this.overview = undefined;
+   }
+
+   viewReady(order: number): boolean {
+
+      const views = this.views.sort((a, b) => {
+         return a.order - b.order;
+      });
+
+      for (let i = 0; i < views.length; i++) {
+         if (!views[i].initialized && views[i].order < order) {
+            return false;
+         }
+      }
+
+      return true;
    }
 
    get viewsReady(): boolean {
@@ -523,6 +551,14 @@ export class JobDetailsV2 extends PollBase {
       this.views.forEach(v => v.filterUpdated());
    }
 
+   bisectionUpdated() {
+      const v = this.views.find(v => v.name === "StepBisectionView") as any;
+      if (v) {
+         v.bisectionUpdated();
+      }
+   }
+
+
    getReportData(placement: ReportPlacement, stepId?: string): string | undefined {
 
       if (stepId) {
@@ -533,70 +569,12 @@ export class JobDetailsV2 extends PollBase {
             return undefined;
          }
 
-         const report = step.reports?.find(r => r.placement === placement);
-
-         if (!report) {
-            return undefined;
-         }
-
-         return this.reportData.get(report.artifactId);
+         return step.reports?.find(r => r.placement === placement)?.content;
 
       } else {
 
-         if (this.jobData?.reports?.length) {
-            return this.reportData.get(this.jobData.reports[0].artifactId);
-         }
-
-         return undefined;
-
+         return this.jobData?.reports?.find(r => r.placement === placement)?.content;
       }
-   }
-
-   private async queryReports(): Promise<boolean> {
-
-      let queried = false;
-      let artifacts: string[] = [];
-
-      this.jobData?.reports?.forEach(r => {
-         artifacts.push(r.artifactId)
-      });
-
-      this.jobData?.batches?.forEach(b => {
-         b.steps.forEach(s => s.reports?.forEach(r => {
-            artifacts.push(r.artifactId);
-         }));
-      });
-
-      artifacts = artifacts.filter(id => !this.reportData.has(id));
-
-      let requests = artifacts.map(id => {
-         return { id: id, request: backend.getArtifactDataById(id) as unknown as string };
-      });
-
-      while (requests.length) {
-
-         queried = true;
-
-         const batch = requests.slice(0, 5);
-
-         const ids = batch.map(b => b.id);
-         const request = batch.map(b => b.request);
-
-         await Promise.all(request).then((responses) => {
-            responses.forEach((r, idx) => {
-               this.reportData.set(ids[idx], r);
-            });
-
-         }).catch((errors) => {
-            console.log(errors);
-            // eslint-disable-next-line
-         }).finally(() => {
-
-            requests = requests.slice(5);
-         });
-      }
-
-      return queried;
    }
 
    syncTiming() {
@@ -615,7 +593,7 @@ export class JobDetailsV2 extends PollBase {
 
       const initialRequest = !this.jobData;
 
-      requests.push(backend.getJob(this.jobId));
+      requests.push(backend.getJob(this.jobId, undefined, true, true));
 
       let results: any;
 
@@ -623,6 +601,10 @@ export class JobDetailsV2 extends PollBase {
          console.error(reason);
          this.jobError = reason;
       });
+
+      if (!this.jobError && !results?.length) {
+         this.jobError = "Not Found";
+      }
 
       if (this.jobError) {
          this.setRootUpdated();
@@ -654,11 +636,6 @@ export class JobDetailsV2 extends PollBase {
             forceUpdate = true;
             this.timing = await backend.getJobTiming(this.jobId);
             this.syncTiming();
-         }
-
-         const queried = await this.queryReports();
-         if (!forceUpdate && queried) {
-            forceUpdate = true;
          }
       }
 
@@ -717,12 +694,9 @@ export class JobDetailsV2 extends PollBase {
    nodes: NodeData[] = [];
    batches: BatchData[] = [];
    template?: GetTemplateRefResponse;
-   
+
    // stepId => artifacts
    stepArtifacts = new Map<string, GetArtifactResponseV2[]>();
-
-   // artifact id => report contents (markdown)
-   private reportData = new Map<string, string>();
 
    @observable
    private rootUpdated: number = 0;
@@ -769,7 +743,7 @@ export class JobDetailsV2 extends PollBase {
       getStepsRecursive(stepId);
 
       steps.push(step);
-      
+
       return steps;
 
    }
@@ -1065,6 +1039,7 @@ export const JobFilterBar: React.FC<{ jobDetails: JobDetailsV2 }> = observer(({ 
    const filterPicker = React.useRef(null);
    const navigate = useNavigate();
    const [state, setState] = useState<{}>({});
+   const { modeColors } = getHordeStyling();
 
    const jobFilter = jobDetails.filter;
    const stateFilter = jobFilter.filterStates;

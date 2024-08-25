@@ -5,9 +5,12 @@ using System.IO;
 using System.Text;
 using System.Threading.Tasks;
 using EpicGames.Core;
-using EpicGames.Horde.Api;
+using EpicGames.Horde.Agents.Pools;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Jobs.Templates;
+using EpicGames.Horde.Projects;
+using EpicGames.Horde.Streams;
 using Horde.Server.Agents;
-using Horde.Server.Agents.Pools;
 using Horde.Server.Configuration;
 using Horde.Server.Jobs;
 using Horde.Server.Jobs.Artifacts;
@@ -16,8 +19,6 @@ using Horde.Server.Jobs.Templates;
 using Horde.Server.Projects;
 using Horde.Server.Server;
 using Horde.Server.Streams;
-using Horde.Server.Utilities;
-using HordeCommon;
 
 namespace Horde.Server.Tests
 {
@@ -37,18 +38,18 @@ namespace Horde.Server.Tests
 		public string Agent1Name { get; private set; } = null!;
 		public const string PoolName = "TestingPool";
 
-		public static async Task<Fixture> Create(ConfigService configService, IGraphCollection graphCollection, ITemplateCollection templateCollection, JobService jobService, IArtifactCollectionV1 artifactCollection, AgentService agentService, ServerSettings serverSettings)
+		public static async Task<Fixture> CreateAsync(ConfigService configService, IGraphCollection graphCollection, ITemplateCollection templateCollection, JobService jobService, IArtifactCollectionV1 artifactCollection, AgentService agentService, ServerSettings serverSettings)
 		{
 			Fixture fixture = new Fixture();
-			await fixture.Populate(configService, graphCollection, templateCollection, jobService, artifactCollection, agentService, serverSettings);
+			await fixture.PopulateAsync(configService, graphCollection, templateCollection, jobService, artifactCollection, agentService, serverSettings);
 
-//			(PerforceService as PerforceServiceStub)?.AddChange("//UE5/Main", 112233, "leet.coder", "Did stuff", new []{"file.cpp"});
-//			(PerforceService as PerforceServiceStub)?.AddChange("//UE5/Main", 1111, "swarm", "A shelved CL here", new []{"renderer.cpp"});
-		
+			//			(PerforceService as PerforceServiceStub)?.AddChange("//UE5/Main", 112233, "leet.coder", "Did stuff", new []{"file.cpp"});
+			//			(PerforceService as PerforceServiceStub)?.AddChange("//UE5/Main", 1111, "swarm", "A shelved CL here", new []{"renderer.cpp"});
+
 			return fixture;
 		}
 
-		private async Task Populate(ConfigService configService, IGraphCollection graphCollection, ITemplateCollection templateCollection, JobService jobService, IArtifactCollectionV1 artifactCollection, AgentService agentService, ServerSettings serverSettings)
+		private async Task PopulateAsync(ConfigService configService, IGraphCollection graphCollection, ITemplateCollection templateCollection, JobService jobService, IArtifactCollectionV1 artifactCollection, AgentService agentService, ServerSettings serverSettings)
 		{
 			FixtureGraph fg = new FixtureGraph();
 			fg.Id = ContentHash.Empty;
@@ -68,7 +69,7 @@ namespace Horde.Server.Tests
 			templates.Add(new TemplateRefConfig { Id = TemplateRefId2, Name = "Test Template" });
 
 			List<TabConfig> tabs = new List<TabConfig>();
-			tabs.Add(new JobsTabConfig { Title = "foo", Templates = new List<TemplateId> { TemplateRefId1, TemplateRefId2 } });
+			tabs.Add(new TabConfig { Title = "foo", Templates = new List<TemplateId> { TemplateRefId1, TemplateRefId2 } });
 
 			Dictionary<string, AgentConfig> agentTypes = new()
 			{
@@ -83,7 +84,7 @@ namespace Horde.Server.Tests
 
 			GlobalConfig globalConfig = new GlobalConfig { Projects = new List<ProjectConfig> { projectConfig } };
 			globalConfig.PostLoad(serverSettings);
-			configService.Set(IoHash.Zero, globalConfig);
+			configService.OverrideConfig(globalConfig);
 
 			StreamId = streamId;
 			StreamConfig = streamConfig;
@@ -116,11 +117,11 @@ namespace Horde.Server.Tests
 
 			Job1ArtifactData = "For The Horde!";
 			using MemoryStream job1ArtifactStream = new MemoryStream(Encoding.UTF8.GetBytes(Job1ArtifactData));
-			Job1Artifact = await artifactCollection.CreateArtifactAsync(Job1.Id, SubResourceId.Parse("22"), "myFile.txt",
+			Job1Artifact = await artifactCollection.CreateArtifactAsync(Job1.Id, JobStepId.Parse("22"), "myfile.txt",
 				"text/plain", job1ArtifactStream);
 
 			Agent1Name = "testAgent1";
-			Agent1 = await agentService.CreateAgentAsync(Agent1Name, true, null);
+			Agent1 = await agentService.CreateAgentAsync(Agent1Name, false, "");
 		}
 
 		private class FixtureGraph : IGraph
@@ -130,6 +131,7 @@ namespace Horde.Server.Tests
 			public IReadOnlyList<INodeGroup> Groups { get; set; } = null!;
 			public IReadOnlyList<IAggregate> Aggregates { get; set; } = null!;
 			public IReadOnlyList<ILabel> Labels { get; set; } = null!;
+			public IReadOnlyList<IGraphArtifact> Artifacts { get; set; } = null!;
 		}
 	}
 }

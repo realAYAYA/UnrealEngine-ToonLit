@@ -12,7 +12,7 @@
 #include "MLDeformerVizSettings.h"
 #include "MLDeformerModule.h"
 #include "MLDeformerModel.h"
-
+#include "MLDeformerSampler.h"
 #include "MLDeformerEditorModel.generated.h"
 
 class UMLDeformerModel;
@@ -31,6 +31,8 @@ class UMaterial;
 class UGeometryCache;
 class UMorphTarget;
 class FMorphTargetVertexInfoBuffers;
+struct FMLDeformerTrainingInputAnim;
+struct FMLDeformerTrainingInputAnimName;
 
 /** Training process return codes. */
 UENUM()
@@ -115,6 +117,14 @@ namespace UE::MLDeformer
 		virtual int32 GetNumTrainingFrames() const;
 
 		/**
+		 * Updates the number of available training frames as returned by GetNumTrainingFrames().
+		 * This should update the NumTrainingFrames class member with the total number of frames that can be included during training.
+		 * So this must be the sum of all frames of all enabled training input animations.
+		 * This should not take into account the maximum number of frames we want to train with.
+		 */
+		virtual void UpdateNumTrainingFrames();
+
+		/**
 		 * Launch the training. This gets executed when the Train button is pressed.
 		 * Training can succeed, or be aborted, and there can be training errors. The result is returned by this method.
 		 * You generally want to implement a class inherited from MLDeformerTrainingModel, and put a Train function inside of that, which you then execute through
@@ -191,13 +201,20 @@ namespace UE::MLDeformer
 		 */
 		virtual FMLDeformerEditorActor* CreateEditorActor(const FMLDeformerEditorActor::FConstructSettings& Settings) const;
 
+		UE_DEPRECATED(5.4, "This method will be removed. Please use the CreateSamplerObject that returns a shared pointer instead.")
+		virtual FMLDeformerSampler* CreateSampler() const { return nullptr; }
+
 		/**
 		 * Create the vertex delta sampler object.
 		 * You can create your own sampler in case you use anything else than say a Geometry Cache as ground truth target data.
 		 * A geometry cache based editor model would create a new FMLDeformerGeomCacheSampler for example.
 		 * @return A pointer to the newly created sampler.
 		 */
-		virtual FMLDeformerSampler* CreateSampler() const;
+		virtual TSharedPtr<FMLDeformerSampler> CreateSamplerObject() const;
+
+		virtual int32 GetNumTrainingInputAnims() const;
+		virtual FMLDeformerTrainingInputAnim* GetTrainingInputAnim(int32 Index) const;
+		virtual void UpdateTimelineTrainingAnimList();
 
 		/**
 		 * Get the time in seconds, for a given frame in the training data.
@@ -265,6 +282,10 @@ namespace UE::MLDeformer
 		 * @param World The world to create the actor in.
 		 */
 		virtual void CreateTestMLDeformedActor(UWorld* World);
+
+		virtual void CreateTestCompareActors(UWorld* World);
+		virtual bool IsCompatibleDeformer(UMLDeformerAsset* Deformer) const;
+		virtual void UpdateMeshOffsetFactors();
 
 		/**
 		 * Create the training ground truth actor.
@@ -529,6 +550,12 @@ namespace UE::MLDeformer
 		virtual void UpdateDeformerGraph();
 
 		/**
+		 * Executed when the maximum number of LOD levels changed.
+		 * Other models could use this to reinitialize the morph targets for all LOD levels for example.
+		 */
+		virtual void OnMaxNumLODsChanged() {}
+
+		/**
 		 * Sample the vertex deltas between the training base model and target model.
 		 * This will initialize the sampler if needed and set the sampler space to post-skinning deltas, and then samples them using the sampler.
 		 * So this will update the internal state of the Sampler member. It will use the current training frame number to sample from.
@@ -556,7 +583,7 @@ namespace UE::MLDeformer
 		 * This is determined by looking whether the neural network pointer is nullptr or not.
 		 * @return Returns true when the model is trained already, or false if it hasn't been trained yet.
 		 */
-		virtual bool IsTrained() const { return false; }
+		virtual bool IsTrained() const { return Model->IsTrained(); }
 
 		/**
 		 * Get the editor actor that defines the timeline play position.
@@ -607,8 +634,42 @@ namespace UE::MLDeformer
 		UE_DEPRECATED(5.3, "Please call FMLDeformerMorphModelEditorModel::CalcMorphTargetNormals instead.")
 		virtual void GenerateNormalsForMorphTarget(int32 LOD, USkeletalMesh* SkelMesh, int32 MorphTargetIndex, TArrayView<const FVector3f> Deltas, TArrayView<const FVector3f> BaseVertexPositions, TArrayView<FVector3f> BaseNormals, TArray<FVector3f>& OutDeltaNormals);
 
+		/**
+		 * Called whenever the actor to debug has been changed.
+		 * This can be changed throughout the UI, in testing mode.
+		 * When debugging gets disabled, this will contain a nullptr.
+		 * @param DebugActor The new actor we want to debug.
+		 */
+		virtual void OnDebugActorChanged(TObjectPtr<AActor> DebugActor);
+
+		/** 
+		 * Apply the transforms of the actor we debug to the editor actors in our world.
+		 * @param DebugActorComponentSpaceTransforms The component space transforms from the actor we are debugging.
+		 */
+		virtual void ApplyDebugActorTransforms(const TArray<FTransform>& DebugActorComponentSpaceTransforms);
+
+		/**
+		 * Debug draw helpers inside the PIE viewport that highlight debuggable actors.
+		 * On default this will draw a bounding box around the actors that can be debugged by this model.
+		 * Also it will render the actor names.
+		 * NOTE: This renders inside the PIE viewport, not our own MLD asset editor viewport.
+		 */
+		virtual void DrawPIEDebugActors();
+
+		/** 
+		 * Update LOD levels of the actors in editor world.
+		 * This can be used to for example sync the LOD levels of the compare actors with the main actor.
+		 */
+		virtual void UpdateActorLODs();
+
+		/** Apply the transforms of the debug actor to the actors in the asset editor world. This will internally call ApplyDebugActorTransforms(DebugActorComponentSpaceTransforms). */
+		void ApplyDebugActorTransforms();
+
 		/** Invalidate the memory usage, so it gets updated in the UI again. */
-		void UpdateMemoryUsage();	
+		void UpdateMemoryUsage();
+
+		/** Get the currently active training input animation sequence, which is the one that the viewport is showing the timeline for in training mode. */
+		UAnimSequence* GetActiveTrainingInputAnimSequence() const;
 
 		/** Get the current view range. */
 		TRange<double> GetViewRange() const;
@@ -680,7 +741,10 @@ namespace UE::MLDeformer
 		bool IsReadyForTraining() const { return bIsReadyForTraining; }
 
 		/** Get the sampler we use to calculate vertex deltas when we are in training mdoe and enable deltas. */
-		FMLDeformerSampler* GetSampler() const { return Sampler; }
+		UE_DEPRECATED(5.4, "Please use GetSamplerForTrainingAnim instead.")
+		FMLDeformerSampler* GetSampler() const;
+
+		FMLDeformerSampler* GetSamplerForTrainingAnim(int32 AnimIndex) const	{ return Samplers.IsValidIndex(AnimIndex) ? Samplers[AnimIndex].Get() : nullptr; }
 
 		/**
 		 * Set whether we need to resample inputs or not. This can be used by the training code to determine if we need to resample inputs and outputs, or if
@@ -720,7 +784,7 @@ namespace UE::MLDeformer
 		 * Check for incompatible skeletons between the skeletal mesh and anim sequence skeleton.
 		 * @return An error string if there is an error, otherwise an empty text object is returned.
 		 */
-		FText GetIncompatibleSkeletonErrorText(USkeletalMesh* InSkelMesh, UAnimSequence* InAnimSeq) const;
+		FText GetIncompatibleSkeletonErrorText(const USkeletalMesh* InSkelMesh, const UAnimSequence* InAnimSeq) const;
 
 		/**
 		 * Check to see if the skeletal mesh has to be reimported because it misses some newly added data.
@@ -821,7 +885,6 @@ namespace UE::MLDeformer
 		 */
 		UMLDeformerComponent* FindMLDeformerComponent(int32 ActorID = ActorID_Test_MLDeformed) const;
 
-
 		/**
 		 * Correct floating point errors that can cause issues when sampling animation using step timing.
 		 * @param FrameNumber The desired frame number
@@ -834,7 +897,20 @@ namespace UE::MLDeformer
 		TSharedPtr<SMLDeformerInputWidget> GetInputWidget() const			{ return InputWidget; }
 		void SetInputWidget(TSharedPtr<SMLDeformerInputWidget> Widget)		{ InputWidget = Widget; }
 
+		FMLDeformerSampler* GetSamplerForActiveAnim() const;
+
+		void SetActiveTrainingInputAnimIndex(int32 Index);
+		int32 GetActiveTrainingInputAnimIndex() const;
+
+		/** Mark the deltas to be updated on next Tick. */
+		void InvalidateDeltas();
+
 	protected:
+		virtual void CreateSamplers();
+
+		void AddAnimatedBonesToBonesIncludeList(const UAnimSequence* AnimSequence);
+		void AddAnimatedCurvesToCurvesIncludeList(const UAnimSequence* AnimSequence);
+
 		/**
 		 * Executed when a property changes by a change in the UI.
 		 * This internally calls OnPropertyChanged.
@@ -856,6 +932,11 @@ namespace UE::MLDeformer
 		 * You can call ClearWorld to include that.
 		 */
 		void DeleteEditorActors();
+
+		/**
+		 * Set the names of the anim sequences in the timeline. 
+		 */
+		void SetTimelineAnimNames(const TArray<TSharedPtr<FMLDeformerTrainingInputAnimName>>& AnimNames);
 
 		/**
 		 * Perform some basic checks to see if the editor can be ready to train the model.
@@ -880,7 +961,7 @@ namespace UE::MLDeformer
 		 *        recomputing normals can lead to lower quality results, in trade for faster performance.
 		 * @param MaskChannel The weight mask mode, which specifies what channel to get the weight data from. Such channel allows the user to define what areas the deformer should for example not be active in.
 		 * @param bInvertMaskChannel Specifies whether the weight mask should be inverted or not.
-		 * @param MaskBuffer An optional mask buffer that contains 'Model->GetNumBaseMeshVerts() * (MorphModel->GetNumMorphTargets() - 1)' number of floats. Deltas will be multiplied by this value. 
+		 * @param MaskBuffer An optional mask buffer that contains 'Model->GetNumBaseMeshVerts() * (MorphModel->GetNumMorphTargets()- 1)' number of floats. Deltas will be multiplied by this value. 
 		 *        When the mask buffer is an empty array, it will be ignored.
 		 */
 		UE_DEPRECATED(5.3, "Please call FMLDeformerMorphModelEditorModel::CreateMorphTargets instead.")
@@ -941,7 +1022,32 @@ namespace UE::MLDeformer
 		 */
 		void UpdateRanges();
 
+		void AddCompareActor(int32 ArrayIndex);
+		void RemoveCompareActor(int32 ArrayIndex);
+		void RemoveAllCompareActors();
+		void UpdateCompareActorLabels();		
+
+		int32 CalcNumValidCompareActorsPriorTo(int32 CompareActorIndex) const;
+		virtual bool IsAnimIndexValid(int32 AnimIndex) const;
+
+		void UpdateLODMappings();
+
 	protected:
+		struct FLODInfo
+		{
+			/** 
+			 * Map all vertices in this LOD into an imported vertex number in LOD 0. 
+			 * This basically tells us which vertex to get the vertex delta for, for each vertex in this LOD.
+			 */
+			TArray<int32> VtxMappingToLODZero;
+		};
+
+		/** The LOD information. The size of this array is the number of LODs on the skeletal mesh, unless less LOD levels are desired using MLD. */
+		TArray<FLODInfo> LODMappings;
+
+		/** A reusable array to store current LOD skinned vertex positions. */
+		TArray<FVector3f> SkinnedPositions;
+
 		/** The runtime model associated with this editor model. */
 		TObjectPtr<UMLDeformerModel> Model = nullptr;
 
@@ -951,8 +1057,8 @@ namespace UE::MLDeformer
 		/** A pointer to the editor toolkit. */
 		FMLDeformerEditorToolkit* Editor = nullptr;
 
-		/** A pointer to the sampler, which can sample target meshes to calculate deltas. */
-		FMLDeformerSampler* Sampler = nullptr;
+		/** A sampler for every input animation. These samplers are used to calculate the vertex deltas. */
+		TArray<TSharedPtr<FMLDeformerSampler>> Samplers;
 
 		/** The inputs widget. */
 		TSharedPtr<SMLDeformerInputWidget> InputWidget;
@@ -1007,6 +1113,15 @@ namespace UE::MLDeformer
 
 		/** Set to true when on next tick we need to trigger an input assets changed event. */
 		bool bNeedsAssetReinit = false;
+
+		/**
+		 * The total number of frames that can be used for training, based on the training input animations list.
+		 * Call UpdateNumTrainingFrames() to refresh this value.
+		 */
+		int32 NumTrainingFrames = 0;
+
+		/** The training input animation that is selected in the timeline. */
+		int32 ActiveTrainingInputAnimIndex = INDEX_NONE;
 	};
 
 	/**

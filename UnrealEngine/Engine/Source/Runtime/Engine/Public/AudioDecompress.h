@@ -14,10 +14,12 @@
 #include "HAL/LowLevelMemTracker.h"
 #include "ContentStreaming.h"
 
-// 186ms of 44.1KHz data
-// 372ms of 22KHz data
-#define MONO_PCM_BUFFER_SAMPLES		8192
-#define MONO_PCM_BUFFER_SIZE		( MONO_PCM_BUFFER_SAMPLES * sizeof( int16 ) )
+// 100ms of 48KHz data
+// 108ms of 44.1KHz data
+// 218ms of 22KHz data
+constexpr int32 MONO_PCM_BUFFER_SAMPLES = 4800;
+constexpr uint32 MONO_PCM_SAMPLE_SIZE = sizeof(int16);
+constexpr uint32 MONO_PCM_BUFFER_SIZE = MONO_PCM_BUFFER_SAMPLES * MONO_PCM_SAMPLE_SIZE;
 
 struct FSoundQualityInfo;
 class FStreamedAudioChunkSeekTable;
@@ -61,6 +63,11 @@ public:
 	 * Seeks to time (Some formats might not be seekable)
 	 */
 	virtual void SeekToTime(const float SeekTime) = 0;
+
+	/**
+	* Seeks to specific frame in the audio (Some formats might not be seekable)
+	*/
+	virtual void SeekToFrame(const uint32 Frame) = 0;
 
 	/**
 	* Decompress an entire data file to a TArray
@@ -130,7 +137,7 @@ public:
 	/**
 	*  Returns true if a non-recoverable error has occurred.
 	*/
-	virtual bool HasError() const { return false; }
+	ENGINE_API virtual bool HasError() const;
 
 protected:
 	/** Internal override implemented by subclasses. */
@@ -163,6 +170,7 @@ public:
 	virtual const FSoundWaveProxyPtr& GetStreamingSoundWave() { return StreamingSoundWave; }
 
 protected:
+	mutable bool bHasError = false;
 	FSoundWaveProxyPtr StreamingSoundWave;
 };
 
@@ -197,7 +205,8 @@ public:
 	//~ Begin ICompressedInfo Interface
 	ENGINE_API virtual bool ReadCompressedInfo(const uint8* InSrcBufferData, uint32 InSrcBufferDataSize, FSoundQualityInfo* QualityInfo) override;
 	ENGINE_API virtual bool ReadCompressedData(uint8* Destination, bool bLooping, uint32 BufferSize) override;
-	ENGINE_API virtual void SeekToTime(const float SeekTime) override;;
+	ENGINE_API virtual void SeekToTime(const float SeekTime) override;
+	ENGINE_API virtual void SeekToFrame(const uint32 SeekFrame) override;
 	ENGINE_API virtual void ExpandFile(uint8* DstBuffer, struct FSoundQualityInfo* QualityInfo) override;
 	virtual void EnableHalfRate(bool HalfRate) override {};
 	virtual uint32 GetSourceBufferSize() const override { return SrcBufferDataSize; }
@@ -240,7 +249,7 @@ protected:
 	* Decompresses a frame of data to PCM buffer
 	*
 	* @param FrameSize Size of the frame in bytes
-	* @return The amount of samples that were decompressed (< 0 indicates error)
+	* @return The number of audio frames that were decompressed (< 0 indicates error)
 	*/
 	int32 DecompressToPCMBuffer(uint16 FrameSize);
 
@@ -319,7 +328,9 @@ protected:
 	/** The current chunk index in the streamed chunks. */
 	int32 CurrentChunkIndex;
 	/** Whether or not to print the chunk fail message. */
-	bool bPrintChunkFailMessage;
+	int32 PrintChunkFailMessageCount = 0;
+	/** A counter of when we started the last request (for gauging latency) */
+	uint64 StartTimeInCycles = 0;
 	/** Number of bytes of padding used, overridden in some implementations. Defaults to 0. */
 	uint32 SrcBufferPadding;
 	/** Chunk Handle to ensure that this chunk of streamed audio is not deleted while we are using it. */
@@ -525,7 +536,7 @@ public:
 			RETURN_QUICK_DECLARE_CYCLE_STAT(FAsyncRealtimeAudioProceduralWorker, STATGROUP_ThreadPoolAsyncTasks);
 		}
 		else
-		{
+		{ //-V523
 			RETURN_QUICK_DECLARE_CYCLE_STAT(FAsyncRealtimeAudioDecompressWorker, STATGROUP_ThreadPoolAsyncTasks);
 		}
 	}

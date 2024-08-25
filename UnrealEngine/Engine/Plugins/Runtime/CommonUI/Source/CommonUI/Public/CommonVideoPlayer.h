@@ -32,6 +32,7 @@ public:
 	void SetPlaybackRate(float PlaybackRate);
 	void SetLooping(bool bShouldLoopPlayback);
 	void SetIsMuted(bool bInIsMuted);
+	void SetShouldMatchSize(bool bInMatchSize);
 
 	void Play();
 	void Reverse();
@@ -67,6 +68,10 @@ private:
 private:
 	UPROPERTY(EditAnywhere, Category = VideoPlayer)
 	TObjectPtr<UMediaSource> Video;
+
+	// Should we match the size of the media source when it opens?
+	UPROPERTY(EditAnywhere, Category = VideoPlayer)
+	bool bMatchSize = false;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UMediaPlayer> MediaPlayer;

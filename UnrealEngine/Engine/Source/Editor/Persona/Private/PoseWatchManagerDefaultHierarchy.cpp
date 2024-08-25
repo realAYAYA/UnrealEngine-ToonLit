@@ -65,7 +65,7 @@ void FPoseWatchManagerDefaultHierarchy::CreateItems(TArray<FPoseWatchManagerTree
 
 				OutItems.Add(PoseWatchItem);
 
-				for (TObjectPtr<UPoseWatchElement> CurrentElement : PoseWatch->GetElements())
+				for (const TObjectPtr<UPoseWatchElement>& CurrentElement : PoseWatch->GetElements())
 				{
 					FPoseWatchManagerTreeItemPtr ElementItem = Mode->PoseWatchManager->CreateItemFor<FPoseWatchManagerElementTreeItem>(CurrentElement);
 					OutItems.Add(ElementItem);

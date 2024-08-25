@@ -43,10 +43,22 @@ namespace AutomationTool.Tasks
 		/// </summary>
 		[TaskParameter(Optional = true)]
 		public DirectoryReference LicenseDir;
+
+		/// <summary>
+		/// Path to a csv file to write with list of packages and their licenses
+		/// </summary>
+		[TaskParameter(Optional = true)]
+		public FileReference CsvFile;
+
+		/// <summary>
+		/// Override path to dotnet executable
+		/// </summary>
+		[TaskParameter(Optional = true)]
+		public FileReference DotNetPath;
 	}
 
 	/// <summary>
-	/// Spawns Docker and waits for it to complete.
+	/// Verifies which licenses are in use by nuget dependencies
 	/// </summary>
 	[TaskElement("NuGet-LicenseCheck", typeof(NuGetLicenseCheckTaskParameters))]
 	public class NuGetLicenseCheckTask : SpawnTaskBase
@@ -62,7 +74,7 @@ namespace AutomationTool.Tasks
 		NuGetLicenseCheckTaskParameters Parameters;
 
 		/// <summary>
-		/// Construct a Docker task
+		/// Construct a NuGetLicenseCheckTask task
 		/// </summary>
 		/// <param name="InParameters">Parameters for the task</param>
 		public NuGetLicenseCheckTask(NuGetLicenseCheckTaskParameters InParameters)
@@ -83,6 +95,7 @@ namespace AutomationTool.Tasks
 		{
 			public string Name;
 			public string Version;
+			public string ProjectUrl;
 			public LicenseInfo License;
 			public string LicenseSource;
 			public PackageState State;
@@ -96,6 +109,7 @@ namespace AutomationTool.Tasks
 			public string NormalizedText;
 			public string Extension;
 			public bool Approved;
+			public FileReference File;
 		}
 
 		LicenseInfo FindOrAddLicense(Dictionary<IoHash, LicenseInfo> Licenses, string Text, string Extension)
@@ -132,7 +146,9 @@ namespace AutomationTool.Tasks
 		/// <param name="TagNameToFileSet">Mapping from tag names to the set of files they include</param>
 		public override async Task ExecuteAsync(JobContext Job, HashSet<FileReference> BuildProducts, Dictionary<string, HashSet<FileReference>> TagNameToFileSet)
 		{
-			IProcessResult NuGetOutput = await ExecuteAsync(Unreal.DotnetPath.FullName, $"nuget locals global-packages --list", LogOutput: false);
+			FileReference DotNetPath = Parameters.DotNetPath ?? Unreal.DotnetPath;
+
+			IProcessResult NuGetOutput = await ExecuteAsync(DotNetPath.FullName, $"nuget locals global-packages --list", LogOutput: false);
 			if (NuGetOutput.ExitCode != 0)
 			{
 				throw new AutomationException("DotNet terminated with an exit code indicating an error ({0})", NuGetOutput.ExitCode);
@@ -152,7 +168,7 @@ namespace AutomationTool.Tasks
 
 			const string UnknownPrefix = "Unknown-";
 
-			IProcessResult PackageListOutput = await ExecuteAsync(Unreal.DotnetPath.FullName, "list package --include-transitive", WorkingDir: Parameters.BaseDir, LogOutput: false);
+			IProcessResult PackageListOutput = await ExecuteAsync(DotNetPath.FullName, "list package --include-transitive", WorkingDir: Parameters.BaseDir, LogOutput: false);
 			if (PackageListOutput.ExitCode != 0)
 			{
 				throw new AutomationException("DotNet terminated with an exit code indicating an error ({0})", PackageListOutput.ExitCode);
@@ -199,6 +215,7 @@ namespace AutomationTool.Tasks
 							{
 								string Text = await FileReference.ReadAllTextAsync(File);
 								LicenseInfo License = FindOrAddLicense(Licenses, Text, File.GetFileNameWithoutExtension());
+								License.File = File;
 								License.Approved = true;
 							}
 						}
@@ -246,6 +263,9 @@ namespace AutomationTool.Tasks
 
 					XmlDocument XmlDocument = new XmlDocument();
 					XmlDocument.Load(XmlReader);
+
+					XmlNode ProjectUrlNode = XmlDocument.SelectSingleNode("/package/metadata/projectUrl");
+					Info.ProjectUrl = ProjectUrlNode?.InnerText;
 
 					if (Info.License == null)
 					{
@@ -368,6 +388,32 @@ namespace AutomationTool.Tasks
 					foreach (PackageInfo LicensePackage in MissingLicensePackages)
 					{
 						Logger.LogInformation("  -> {Name} {Version} ({Source})", LicensePackage.Name, LicensePackage.Version, LicensePackage.LicenseSource);
+					}
+				}
+			}
+
+			if (Parameters.CsvFile != null)
+			{
+				Logger.LogInformation("Writing {File}", Parameters.CsvFile);
+				DirectoryReference.CreateDirectory(Parameters.CsvFile.Directory);
+				using (StreamWriter writer = new StreamWriter(Parameters.CsvFile.FullName))
+				{
+					await writer.WriteLineAsync($"Package,Version,Project Url,License Url,License Hash,License File");
+					foreach (PackageInfo PackageInfo in Packages.Values)
+					{
+						string RelativeLicensePath = "";
+						if (PackageInfo.License?.File != null)
+						{
+							RelativeLicensePath = PackageInfo.License.File.MakeRelativeTo(Parameters.CsvFile.Directory);
+						}
+
+						string LicenseUrl = "";
+						if (PackageInfo.LicenseSource != null && PackageInfo.LicenseSource.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+						{
+							LicenseUrl = PackageInfo.LicenseSource;
+						}
+
+						await writer.WriteLineAsync($"\"{PackageInfo.Name}\",\"{PackageInfo.Version}\",{PackageInfo.ProjectUrl},{LicenseUrl},{PackageInfo.License?.Hash},{RelativeLicensePath}");
 					}
 				}
 			}

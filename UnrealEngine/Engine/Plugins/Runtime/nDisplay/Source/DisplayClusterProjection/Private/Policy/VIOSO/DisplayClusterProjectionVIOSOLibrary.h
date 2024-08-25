@@ -9,7 +9,7 @@
 * Implement access to VIOSO DLL functions
 * The basic idea is to load the DLL dynamically without using LIB files
 * 
-* The DLL function is described in the file //nDisplay/ThirdParty/VIOSO/Include/VIOSOWarpBlend.h
+* The DLL function is described in the file //nDisplay/Source/ThirdParty/VIOSO/Include/VIOSOWarpBlend.h
 * Supported: IDirect3DDevice9,IDirect3DDevice9Ex,ID3D10Device,ID3D10Device1,ID3D11Device,ID3D12CommandQueue (for ID3D12Device initialization)
 */
 class FDisplayClusterProjectionVIOSOLibrary

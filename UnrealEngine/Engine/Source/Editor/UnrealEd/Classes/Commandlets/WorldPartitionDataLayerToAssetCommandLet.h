@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "UObject/ObjectMacros.h"
 #include "UObject/UObjectAnnotation.h"
+#include "UObject/SoftObjectPath.h"
 #include "UObject/StrongObjectPtr.h"
 #include "Commandlets/Commandlet.h"
 #include "Commandlets/WorldPartitionCommandletHelpers.h"
@@ -167,7 +168,7 @@ private:
 	UNREALED_API bool CommitConversion(TStrongObjectPtr<UDataLayerToAssetCommandletContext>& CommandletContext, FPackageSourceControlHelper& PackageHelper);
 
 	UNREALED_API FString GetConversionFolder() const;
-	UNREALED_API bool IsAssetInConversionFolder(const TObjectPtr<UDataLayerAsset> DataLayerAsset);
+	UNREALED_API bool IsAssetInConversionFolder(const FSoftObjectPath& DataLayerAsset);
 
 	UPROPERTY(Config)
 	FString DestinationFolder;

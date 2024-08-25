@@ -60,8 +60,14 @@ public:
 	/** Conditionally refresh the runtime state if needed */
 	virtual void RuntimeRefreshIfNeeded();
 
-	/** Attempt to register a specified asset with a source, returns true if any changes were made. Can be used to update priority for existing asset as well */
-	virtual bool RegisterSpecificAsset(const FAssetData& AssetData, int32 AssetPriority = 0);
+	/** 
+	 * Attempt to register a specified asset with a source, returns an EDataRegistryRegisterAssetResult, indicating whether the asset was registered or not. Can be used to update priority for existing asset as well 
+	 * @return An EDataRegistryRegisterAssetResult that indicates if the asset Was Registered, whether it failed to register, or did not register because the asset was already registered.
+	 */
+	virtual EDataRegistryRegisterAssetResult RegisterSpecificAsset(const FAssetData& AssetData, int32 AssetPriority = 0);
+
+	/** Use this to confirm that a DataRegistryRegisterAssetResult caused a change to the Data Registry. Virtual so that different registries can decide what may cause a change.*/
+	virtual bool DidRegisterAssetResultCauseChange(EDataRegistryRegisterAssetResult RegisterAssetStatus) const;
 
 	/** Removes references to a specific asset, returns bool if it was removed */
 	virtual bool UnregisterSpecificAsset(const FSoftObjectPath& AssetPath);

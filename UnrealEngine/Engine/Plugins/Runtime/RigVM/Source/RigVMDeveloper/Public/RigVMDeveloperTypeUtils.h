@@ -60,5 +60,7 @@ namespace RigVMTypeUtils
 
 	RIGVMDEVELOPER_API const FName& GetCastTemplateNotation();
 
+	// Get a user-facing name for an argument type
+	RIGVMDEVELOPER_API FText GetDisplayTextForArgumentType(const FRigVMTemplateArgumentType& InType);
 #endif
 }

@@ -41,6 +41,14 @@ struct FGLTFMaterialUtilities
 
 	static bool IsClearCoatBottomNormalEnabled();
 
+	static EMaterialShadingModel GetRichestShadingModel(const FMaterialShadingModelField& ShadingModels);
+	static FString ShadingModelsToString(const FMaterialShadingModelField& ShadingModels);
+
+	static bool NeedsMeshData(const UMaterialInterface* Material);
+	static bool NeedsMeshData(const TArray<const UMaterialInterface*>& Materials);
+
+	static EMaterialShadingModel GetShadingModel(const UMaterialInterface* Material, FString& OutMessage);
+
 #if WITH_EDITOR
 	static bool IsNormalMap(const FMaterialPropertyEx& Property);
 	static bool IsSRGB(const FMaterialPropertyEx& Property);
@@ -69,17 +77,43 @@ struct FGLTFMaterialUtilities
 	static FLinearColor GetMask(const FExpressionInput& ExpressionInput);
 	static uint32 GetMaskComponentCount(const FExpressionInput& ExpressionInput);
 
-	static bool TryGetTextureCoordinateIndex(const UMaterialExpressionTextureSample* TextureSampler, int32& TexCoord, FGLTFJsonTextureTransform& Transform);
-	static void GetAllTextureCoordinateIndices(const UMaterialInterface* InMaterial, const FMaterialPropertyEx& InProperty, FGLTFIndexArray& OutTexCoords);
+	static bool TryGetMaxTextureSize(const UMaterialInterface* Material, const FMaterialPropertyEx& Property, FIntPoint& OutMaxSize);
+	static bool TryGetMaxTextureSize(const UMaterialInterface* Material, const FMaterialPropertyEx& PropertyA, const FMaterialPropertyEx& PropertyB, FIntPoint& OutMaxSize);
+
+	static UTexture* GetTextureFromSample(const UMaterialInterface* Material, const UMaterialExpressionTextureSample* SampleExpression);
+
+	static bool TryGetTextureCoordinateIndex(const UMaterialExpressionTextureSample* TextureSample, int32& OutTexCoord, FGLTFJsonTextureTransform& OutTransform);
+	static void GetAllTextureCoordinateIndices(const UMaterialInterface* Material, const FMaterialPropertyEx& Property, FGLTFIndexArray& OutTexCoords);
 
 	static void AnalyzeMaterialProperty(const UMaterialInterface* Material, const FMaterialPropertyEx& InProperty, FMaterialAnalysisResult& OutAnalysis);
 
 	static FMaterialShadingModelField EvaluateShadingModelExpression(const UMaterialInterface* Material);
+private:
+
+	template<typename ExpressionType>
+	static void GetAllInputExpressionsOfType(const UMaterialInterface* Material, const FMaterialPropertyEx& Property, TArray<ExpressionType*>& OutExpressions);
 #endif
+};
 
-	static EMaterialShadingModel GetRichestShadingModel(const FMaterialShadingModelField& ShadingModels);
-	static FString ShadingModelsToString(const FMaterialShadingModelField& ShadingModels);
+//Helper used to identify Interchange - glTF Importer created materials.
+// And then helps to acquire the Values set by the glTF Importer
+struct FGLTFImportMaterialMatchMakingHelper
+{
+	TMap<FString, UMaterialExpression*> Inputs;
+	FGLTFConvertBuilder& Builder;
+	FGLTFJsonMaterial& JsonMaterial;
+	const UMaterialInterface* Material;
+	bool bMaterialInstance; //uses Parameter acquisition approach if true, otherwise uses Inputs
+	bool bIsGLTFImportedMaterial;
 
-	static bool NeedsMeshData(const UMaterialInterface* Material);
-	static bool NeedsMeshData(const TArray<const UMaterialInterface*>& Materials);
+	FGLTFImportMaterialMatchMakingHelper(FGLTFConvertBuilder& InBuilder,
+		const UMaterialInterface* InMaterial,
+		FGLTFJsonMaterial& InJsonMaterial);
+
+	bool GetValue(const FString& InputKey, float& OutValue);
+	bool GetValue(const FString& InputKey, FGLTFJsonColor3& OutValue);
+	bool GetValue(const FString& InputKey, FGLTFJsonColor4& OutValue, bool HandleAsColor);
+	bool GetValue(const FString& InputKey, FGLTFJsonTextureInfo& OutValue);
+
+	void Process();
 };

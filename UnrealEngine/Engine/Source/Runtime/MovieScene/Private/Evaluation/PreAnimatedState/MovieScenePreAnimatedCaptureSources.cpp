@@ -15,8 +15,33 @@ namespace MovieScene
 
 // Explicit, exported template instantiation for these classes
 template struct MOVIESCENE_API TPreAnimatedCaptureSources<FObjectKey>;
-template struct MOVIESCENE_API TPreAnimatedCaptureSources<FMovieSceneEvaluationKey>;
+template struct MOVIESCENE_API TPreAnimatedCaptureSources<FPreAnimatedEvaluationKeyType>;
 template struct MOVIESCENE_API TPreAnimatedCaptureSources<FPreAnimatedEvalHookKeyType>;
+template struct MOVIESCENE_API TPreAnimatedCaptureSources<FMovieSceneEntityID>;
+
+FPreAnimatedEntityCaptureSource::FPreAnimatedEntityCaptureSource(FPreAnimatedStateExtension* InOwner)
+	: TPreAnimatedCaptureSources<FMovieSceneEntityID>(InOwner)
+{}
+
+void FPreAnimatedEntityCaptureSource::BeginTrackingEntity(const FPreAnimatedStateEntry& Entry, FMovieSceneEntityID EntityID, FRootInstanceHandle RootInstanceHandle, bool bWantsRestoreState)
+{
+	FPreAnimatedStateMetaData MetaData{ Entry, RootInstanceHandle, bWantsRestoreState };
+	BeginTrackingCaptureSource(EntityID, MetaData);
+}
+
+FPreAnimatedTemplateCaptureSources::FPreAnimatedTemplateCaptureSources(FPreAnimatedStateExtension* InOwner)
+	: TPreAnimatedCaptureSources<FPreAnimatedEvaluationKeyType>(InOwner)
+{}
+
+EPreAnimatedCaptureSourceState FPreAnimatedTemplateCaptureSources::BeginTrackingCaptureSource(const FMovieSceneEvaluationKey& EvaluationKey, const FPreAnimatedStateMetaData& MetaData)
+{
+	return TPreAnimatedCaptureSources<FPreAnimatedEvaluationKeyType>::BeginTrackingCaptureSource(FPreAnimatedEvaluationKeyType{ EvaluationKey, MetaData.RootInstanceHandle }, MetaData);
+}
+
+void FPreAnimatedTemplateCaptureSources::StopTrackingCaptureSource(const FMovieSceneEvaluationKey& EvaluationKey, FRootInstanceHandle RootInstanceHandle)
+{
+	TPreAnimatedCaptureSources<FPreAnimatedEvaluationKeyType>::StopTrackingCaptureSource(FPreAnimatedEvaluationKeyType{ EvaluationKey, RootInstanceHandle });
+}
 
 FPreAnimatedEvaluationHookCaptureSources::FPreAnimatedEvaluationHookCaptureSources(FPreAnimatedStateExtension* InOwner)
 	: TPreAnimatedCaptureSources<FPreAnimatedEvalHookKeyType>(InOwner)
@@ -24,15 +49,13 @@ FPreAnimatedEvaluationHookCaptureSources::FPreAnimatedEvaluationHookCaptureSourc
 
 EPreAnimatedCaptureSourceState FPreAnimatedEvaluationHookCaptureSources::BeginTrackingCaptureSource(const UObject* Hook, FMovieSceneSequenceID SequenceID, const FPreAnimatedStateMetaData& MetaData)
 {
-	return TPreAnimatedCaptureSources<FPreAnimatedEvalHookKeyType>::BeginTrackingCaptureSource(FPreAnimatedEvalHookKeyType{ Hook, SequenceID }, MetaData);
+	return TPreAnimatedCaptureSources<FPreAnimatedEvalHookKeyType>::BeginTrackingCaptureSource(FPreAnimatedEvalHookKeyType{ Hook, MetaData.RootInstanceHandle, SequenceID }, MetaData);
 }
 
-void FPreAnimatedEvaluationHookCaptureSources::StopTrackingCaptureSource(const UObject* Hook, FMovieSceneSequenceID SequenceID)
+void FPreAnimatedEvaluationHookCaptureSources::StopTrackingCaptureSource(const UObject* Hook, FRootInstanceHandle RootInstanceHandle, FMovieSceneSequenceID SequenceID)
 {
-	TPreAnimatedCaptureSources<FPreAnimatedEvalHookKeyType>::StopTrackingCaptureSource(FPreAnimatedEvalHookKeyType{ Hook, SequenceID });
+	TPreAnimatedCaptureSources<FPreAnimatedEvalHookKeyType>::StopTrackingCaptureSource(FPreAnimatedEvalHookKeyType{ Hook, RootInstanceHandle, SequenceID });
 }
-
-
 
 FPreAnimatedTrackInstanceCaptureSources::FPreAnimatedTrackInstanceCaptureSources(FPreAnimatedStateExtension* InOwner)
 	: TPreAnimatedCaptureSources<FObjectKey>(InOwner)
@@ -52,10 +75,6 @@ void FPreAnimatedTrackInstanceCaptureSources::StopTrackingCaptureSource(UMovieSc
 
 FPreAnimatedTrackInstanceInputCaptureSources::FPreAnimatedTrackInstanceInputCaptureSources(FPreAnimatedStateExtension* InOwner)
 	: TPreAnimatedCaptureSources<FMovieSceneTrackInstanceInput>(InOwner)
-{}
-
-FPreAnimatedTemplateCaptureSources::FPreAnimatedTemplateCaptureSources(FPreAnimatedStateExtension* InOwner)
-	: TPreAnimatedCaptureSources<FMovieSceneEvaluationKey>(InOwner)
 {}
 
 

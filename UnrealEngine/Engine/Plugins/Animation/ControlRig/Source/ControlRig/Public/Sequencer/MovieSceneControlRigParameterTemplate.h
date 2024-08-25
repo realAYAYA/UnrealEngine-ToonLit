@@ -26,7 +26,7 @@ private:
 	virtual void Interrogate(const FMovieSceneContext& Context, FMovieSceneInterrogationData& Container, UObject* BindingOverride) const override;
 
 private:
-	void EvaluateCurvesWithMasks(const FMovieSceneContext& Context, FEvaluatedControlRigParameterSectionValues& Values) const;
+	void EvaluateCurvesWithMasks(const FMovieSceneContext& Context, struct FEvaluatedControlRigParameterSectionChannelMasks& InMasks, FEvaluatedControlRigParameterSectionValues& Values) const;
 
 protected:
 	/** The bool parameter names and their associated curves. */

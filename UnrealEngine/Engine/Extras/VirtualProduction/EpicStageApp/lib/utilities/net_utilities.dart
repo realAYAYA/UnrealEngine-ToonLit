@@ -2,71 +2,90 @@
 
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
-import 'package:archive/archive_io.dart';
+import 'package:archive/archive.dart';
+import 'package:epic_common/unreal_beacon.dart';
 import 'package:logging/logging.dart';
-import 'package:uuid/uuid.dart';
 
 import '../models/engine_connection.dart';
 
-const int _protocolVersion = 0; // The current protocol version for beacon messages
-const String _protocolIdentifier = 'ES@p';
+/// The configuration to use for the beacon that detects compatible Unreal Engine instances.
+final unrealEngineBeaconConfig = UnrealEngineBeaconConfig(
+  beaconAddress: InternetAddress('230.0.0.2'),
+  beaconPort: 6667,
+  protocolIdentifier: 'ES@p',
+  userDataReader: (InputStream inputStream, InternetAddress address, _, __) {
+    final int port = inputStream.readUint32();
+    String? name = readStringFromStream(inputStream);
 
-/// Data about a detected engine connection
+    // If the engine didn't provide a friendly name, just use the address and WebSocket port.
+    if (name == null || name.isEmpty || (name.length == 1 && name[0] == '\x00')) {
+      name = '${address.address}:${port.toString()}';
+    }
+
+    return UnrealBeaconResponseUserData(
+      additionalData: UnrealStageBeaconData(websocketPort: port),
+      name: name,
+    );
+  },
+);
+
+/// Type of response received from beacon messages for this app.
+typedef UnrealStageBeaconResponse = UnrealBeaconResponse<UnrealStageBeaconData>;
+
+/// Additional Unreal Stage-specific data received from beacon messages.
+class UnrealStageBeaconData {
+  const UnrealStageBeaconData({required this.websocketPort});
+
+  /// Port to connect to for WebSocket communication.
+  final int websocketPort;
+}
+
+/// Data about a connection to Unreal Engine.
 class ConnectionData {
-  ConnectionData({required this.uuid, required this.name, required this.websocketAddress, required this.websocketPort})
-      : lastSeenTime = DateTime.now();
+  const ConnectionData({
+    required this.name,
+    required this.websocketAddress,
+    required this.websocketPort,
+  }) : this.bIsDemo = false;
 
-  final UuidValue uuid;
-  String name;
-  InternetAddress websocketAddress;
-  int websocketPort;
-  DateTime lastSeenTime;
-}
+  const ConnectionData._({
+    required this.name,
+    required this.websocketAddress,
+    required this.websocketPort,
+    required this.bIsDemo,
+  });
 
-/// Convert a Uint8List to a UUID.
-UuidValue uuidFromUint8List(Uint8List data) {
-  String guidString = Uuid.unparse(data);
-  return UuidValue(guidString, false);
-}
-
-/// Make the beacon message that will be multicast to find compatible engine instances.
-Uint8List makeBeaconMessage() {
-  return Uint8List.fromList(_protocolIdentifier.codeUnits + [_protocolVersion]);
-}
-
-/// Retrieve the connection data from the datagram received from the response to a beacon message.
-/// If the connection data couldn't be retrieved, this will return null.
-ConnectionData? getConnectionFromBeaconResponse(Datagram datagram) {
-  final InputStream stream = InputStream(datagram.data);
-  stream.byteOrder = LITTLE_ENDIAN;
-  ConnectionData? connection;
-
-  try {
-    stream.readByte(); // Protocol version; currently ignored
-    final UuidValue engineUuid = uuidFromUint8List(stream.readBytes(16).toUint8List());
-    final int port = stream.readUint32();
-
-    final int nameLength = stream.readUint32();
-    String name = stream.readString(size: nameLength, utf8: true);
-
-    if (name[name.length - 1] == '\x00') {
-      // Remove the null terminator
-      name = name.substring(0, name.length - 1);
-    }
-
-    // If the engine didn't provide a friendly name, just use the address and port.
-    if (name.isEmpty || (name.length == 1 && name[0] == '\x00')) {
-      name = '${datagram.address.address}:${port.toString()}';
-    }
-
-    connection = ConnectionData(uuid: engineUuid, name: name, websocketAddress: datagram.address, websocketPort: port);
-  } catch (error) {
-    // TODO: Set up error logging so we can do something here
+  /// Create connection data for demo mode.
+  static ConnectionData forDemoMode() {
+    return ConnectionData._(
+      name: 'Demo',
+      websocketAddress: InternetAddress('127.0.0.1'),
+      websocketPort: 0,
+      bIsDemo: true,
+    );
   }
 
-  return connection;
+  /// Create connection data from a [response] to an UnrealEngineBeacon message.
+  static ConnectionData fromBeaconResponse(UnrealStageBeaconResponse response) {
+    return ConnectionData(
+      name: response.name,
+      websocketAddress: response.address,
+      websocketPort: response.additionalData.websocketPort,
+    );
+  }
+
+  /// User-friendly name of the connection.
+  final String name;
+
+  /// Address to connect to for WebSocket communication.
+  final InternetAddress websocketAddress;
+
+  /// Port to connect to for WebSocket communication.
+  final int websocketPort;
+
+  /// Whether this connection is a demo, meaning no actual Unreal Engine instance exists.
+  final bool bIsDemo;
 }
 
 /// A helper class that automatically retries sending a message to the engine if it times out.

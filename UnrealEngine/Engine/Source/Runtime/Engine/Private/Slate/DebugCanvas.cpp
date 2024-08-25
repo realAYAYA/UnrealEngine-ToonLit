@@ -234,7 +234,7 @@ void FDebugCanvasDrawer::InitDebugCanvas(FViewportClient* ViewportClient, UWorld
 	}
 }
 
-void FDebugCanvasDrawer::DrawRenderThread(FRHICommandListImmediate& RHICmdList, const void* InWindowBackBuffer)
+void FDebugCanvasDrawer::Draw_RenderThread(FRHICommandListImmediate& RHICmdList, const void* InWindowBackBuffer, const FSlateCustomDrawParams& Params)
 {
 	check( IsInRenderingThread() );
 	check(RHICmdList.IsOutsideRenderPass());

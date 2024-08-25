@@ -11,11 +11,14 @@
 #include "NiagaraSimulationStageBase.h"
 #include "ViewModels/NiagaraEmitterViewModel.h"
 #include "ViewModels/HierarchyEditor/NiagaraSummaryViewViewModel.h"
+#include "ViewModels/Stack/NiagaraStackEmitterSettingsGroup.h"
 #include "ViewModels/Stack/NiagaraStackEventScriptItemGroup.h"
 #include "ViewModels/Stack/NiagaraStackFunctionInputCollection.h"
 #include "ViewModels/Stack/NiagaraStackModuleItem.h"
+#include "ViewModels/Stack/NiagaraStackObject.h"
 #include "ViewModels/Stack/NiagaraStackPropertyRow.h"
 #include "ViewModels/Stack/NiagaraStackRendererItem.h"
+#include "ViewModels/Stack/NiagaraStackRenderersOwner.h"
 #include "ViewModels/Stack/NiagaraStackSimulationStageGroup.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(NiagaraStackInputCategory)
@@ -176,17 +179,41 @@ void UNiagaraStackInputCategory::ToClipboardFunctionInputs(UObject* InOuter, TAr
 	}
 }
 
-template<typename Predicate>
-void SetValuesFromFunctionInputsInternal(UNiagaraStackInputCategory* Category, const TArray<const UNiagaraClipboardFunctionInput*>& ClipboardFunctionInputs, Predicate InputMatchesFilter, UNiagaraStackFunctionInputCollection* OwningFunctionCollection)
+bool UNiagaraStackInputCategory::TrySetStaticSwitchValuesFromClipboardFunctionInput(const UNiagaraClipboardFunctionInput& ClipboardFunctionInput)
 {
+	TArray<UNiagaraStackFunctionInput*> ChildInputs;
+	GetUnfilteredChildrenOfType(ChildInputs);
+	for (UNiagaraStackFunctionInput* ChildInput : ChildInputs)
+	{
+		if (ChildInput->IsStaticParameter() &&
+			ChildInput->GetInputParameterHandle().GetName() == ClipboardFunctionInput.InputName &&
+			ChildInput->GetInputType() == ClipboardFunctionInput.InputType)
+		{
+			if (ClipboardFunctionInput.ValueMode == ENiagaraClipboardFunctionInputValueMode::ResetToDefault)
+			{
+				ChildInput->Reset();
+			}
+			else
+			{
+				ChildInput->SetValueFromClipboardFunctionInput(ClipboardFunctionInput);
+			}
+			return true;
+		}
+	}
+	return false;
+}
+
+void  UNiagaraStackInputCategory::SetStandardValuesFromClipboardFunctionInputs(const TArray<const UNiagaraClipboardFunctionInput*>& ClipboardFunctionInputs)
+{
+	TArray<UNiagaraStackFunctionInput*> ChildInputs;
+	GetUnfilteredChildrenOfType(ChildInputs);
 	for (const UNiagaraClipboardFunctionInput* ClipboardFunctionInput : ClipboardFunctionInputs)
 	{
-		TArray<UNiagaraStackFunctionInput*> ChildInputs;
-		Category->GetUnfilteredChildrenOfType(ChildInputs);
-		
 		for (UNiagaraStackFunctionInput* ChildInput : ChildInputs)
 		{
-			if (InputMatchesFilter(ChildInput) && ChildInput->GetInputParameterHandle().GetName() == ClipboardFunctionInput->InputName && ChildInput->GetInputType() == ClipboardFunctionInput->InputType)
+			if (ChildInput->IsStaticParameter() == false && 
+				ChildInput->GetInputParameterHandle().GetName() == ClipboardFunctionInput->InputName &&
+				ChildInput->GetInputType() == ClipboardFunctionInput->InputType)
 			{
 				if (ClipboardFunctionInput->ValueMode == ENiagaraClipboardFunctionInputValueMode::ResetToDefault)
 				{
@@ -196,24 +223,9 @@ void SetValuesFromFunctionInputsInternal(UNiagaraStackInputCategory* Category, c
 				{
 					ChildInput->SetValueFromClipboardFunctionInput(*ClipboardFunctionInput);
 				}
-				if(OwningFunctionCollection)
-				{
-					OwningFunctionCollection->RefreshChildren();
-				}
-				break;
 			}
 		}
 	}
-}
-
-void  UNiagaraStackInputCategory::SetStaticSwitchValuesFromClipboardFunctionInputs(const TArray<const UNiagaraClipboardFunctionInput*>& ClipboardFunctionInputs, UNiagaraStackFunctionInputCollection& OwningFunctionCollection)
-{
-	SetValuesFromFunctionInputsInternal(this, ClipboardFunctionInputs, [](UNiagaraStackFunctionInput* ChildInput) { return ChildInput->IsStaticParameter(); }, &OwningFunctionCollection);
-}
-
-void  UNiagaraStackInputCategory::SetStandardValuesFromClipboardFunctionInputs(const TArray<const UNiagaraClipboardFunctionInput*>& ClipboardFunctionInputs)
-{
-	SetValuesFromFunctionInputsInternal(this, ClipboardFunctionInputs, [](UNiagaraStackFunctionInput* ChildInput) { return ChildInput->IsStaticParameter() == false; }, nullptr);
 }
 
 void UNiagaraStackInputCategory::GetFilteredChildInputs(TArray<UNiagaraStackFunctionInput*>& OutFilteredChildInputs) const
@@ -250,17 +262,23 @@ void UNiagaraStackSummaryCategory::RefreshChildrenInternal(const TArray<UNiagara
 	for(TSharedPtr<FNiagaraHierarchyItemViewModelBase> HierarchyViewModel : AllChildrenViewModels)
 	{
 		UNiagaraHierarchyItemBase* Data = HierarchyViewModel->GetDataMutable();
+		TOptional<FGuid> FunctionCallGuid;
 		if(UNiagaraHierarchyModuleInput* ModuleInput = Cast<UNiagaraHierarchyModuleInput>(Data))
 		{
-			UsedFunctionCallNodes.Add(State.NodeGuidToModuleNodeMap[ModuleInput->GetPersistentIdentity().Guids[0]]);
+			FunctionCallGuid = ModuleInput->GetPersistentIdentity().Guids[0];
 		}
 		else if(UNiagaraHierarchyAssignmentInput* AssignmentInput = Cast<UNiagaraHierarchyAssignmentInput>(Data))
 		{
-			UsedFunctionCallNodes.Add(State.NodeGuidToModuleNodeMap[AssignmentInput->GetPersistentIdentity().Guids[0]]);
+			FunctionCallGuid = AssignmentInput->GetPersistentIdentity().Guids[0];
 		}
 		else if(UNiagaraHierarchyModule* Module = Cast<UNiagaraHierarchyModule>(Data))
 		{
-			UsedFunctionCallNodes.Add(State.NodeGuidToModuleNodeMap[Module->GetPersistentIdentity().Guids[0]]);
+			FunctionCallGuid = Module->GetPersistentIdentity().Guids[0];
+		}
+
+		if(FunctionCallGuid.IsSet() && State.NodeGuidToModuleNodeMap.Contains(FunctionCallGuid.GetValue()))
+		{
+			UsedFunctionCallNodes.Add(State.NodeGuidToModuleNodeMap[FunctionCallGuid.GetValue()]);
 		}
 	}
 	
@@ -513,11 +531,24 @@ void UNiagaraStackSummaryCategory::RefreshChildrenInternal(const TArray<UNiagara
 				if (StackRenderer == nullptr)
 				{
 					StackRenderer = NewObject<UNiagaraStackRendererItem>(this);
-					StackRenderer->Initialize(CreateDefaultChildRequiredData(), *MatchingRendererProperties);
+					StackRenderer->Initialize(CreateDefaultChildRequiredData(), FNiagaraStackRenderersOwnerStandard::CreateShared(GetEmitterViewModel().ToSharedRef()), *MatchingRendererProperties);
 				}
 			
 				NewChildren.Add(StackRenderer);	
 			}
+		}
+		else if(UNiagaraHierarchyEmitterProperties* EmitterProperties = Cast<UNiagaraHierarchyEmitterProperties>(Data))
+		{
+			UNiagaraStackEmitterPropertiesItem* StackEmitterPropertiesItem = FindCurrentChildOfTypeByPredicate<UNiagaraStackEmitterPropertiesItem>(CurrentChildren,
+			[&](UNiagaraStackEmitterPropertiesItem* CurrentEmitterProperties) { return CurrentEmitterProperties->GetEmitterViewModel()->GetEmitter().Emitter->GetUniqueEmitterName() == EmitterProperties->GetPersistentIdentity().Names[0]; });
+	
+			if (StackEmitterPropertiesItem == nullptr)
+			{
+				StackEmitterPropertiesItem = NewObject<UNiagaraStackEmitterPropertiesItem>(this);
+				StackEmitterPropertiesItem->Initialize(CreateDefaultChildRequiredData());
+			}
+		
+			NewChildren.Add(StackEmitterPropertiesItem);	
 		}
 		else if(UNiagaraHierarchySimStage* SummarySimStage = Cast<UNiagaraHierarchySimStage>(Data))
 		{
@@ -609,30 +640,44 @@ void UNiagaraStackSummaryCategory::RefreshChildrenInternal(const TArray<UNiagara
 		else if(const UNiagaraHierarchyObjectProperty* ObjectProperty = Cast<UNiagaraHierarchyObjectProperty>(Data))
 		{
 			TMap<FGuid, UObject*> ObjectsForProperties = GetEmitterViewModel()->GetSummaryHierarchyViewModel()->GetObjectsForProperties();
+			FGuid ObjectGuid = ObjectProperty->GetPersistentIdentity().Guids.Num() > 0 ? ObjectProperty->GetPersistentIdentity().Guids[0] : FGuid();
 			
-			FGuid OwnerGuid = ObjectProperty->GetPersistentIdentity().Guids.Num() > 0 ? ObjectProperty->GetPersistentIdentity().Guids[0] : FGuid();
-			
-			if(ObjectsForProperties.Contains(OwnerGuid))
+			if(ObjectsForProperties.Contains(ObjectGuid))
 			{
 				UObject* Object = ObjectsForProperties[ObjectProperty->GetPersistentIdentity().Guids[0]];
-				TArray<TSharedRef<IDetailTreeNode>> RootNodes = GetEmitterViewModel()->GetSummaryHierarchyViewModel()->RequestDetailTreeNodesForObject(Object);
-				
-				for(TSharedRef<IDetailTreeNode>& RootNode : RootNodes)
-				{
-					TArray<TSharedRef<IDetailTreeNode>> ChildrenNodes;
-					RootNode->GetChildren(ChildrenNodes);
 
-					for(TSharedRef<IDetailTreeNode> ChildNode : ChildrenNodes)
+				UNiagaraStackObject* StackObjectWithProperty = FindCurrentChildOfTypeByPredicate<UNiagaraStackObject>(CurrentChildren,
+				[&](UNiagaraStackObject* StackObjectCandidate)
+				{
+					return StackObjectCandidate->GetObject() == Object && StackObjectCandidate->GetCustomName() == ObjectProperty->GetPersistentIdentity().Names[0];
+				});
+
+				if(StackObjectWithProperty == nullptr)
+				{
+					StackObjectWithProperty = NewObject<UNiagaraStackObject>(this);
+					bool bIsInTopLevelObject = false;
+					bool bHideTopLevelCategories = false;
+					StackObjectWithProperty->Initialize(CreateDefaultChildRequiredData(), Object, bIsInTopLevelObject, bHideTopLevelCategories, GetStackEditorDataKey(), nullptr);
+					StackObjectWithProperty->SetCustomName(ObjectProperty->GetPersistentIdentity().Names[0]);
+					StackObjectWithProperty->SetOnFilterDetailNodes(FNiagaraStackObjectShared::FOnFilterDetailNodes::CreateLambda([PropertyName = ObjectProperty->GetPersistentIdentity().Names[0]]( const TArray<TSharedRef<IDetailTreeNode>>& InSourceNodes, TArray<TSharedRef<IDetailTreeNode>>& OutFilteredNodes)
 					{
-						if(ChildNode->GetNodeName() == ObjectProperty->GetPersistentIdentity().Names[0])
+						for(const TSharedRef<IDetailTreeNode>& SourceNode : InSourceNodes)
 						{
-							UNiagaraStackPropertyRow* PropertyRow = NewObject<UNiagaraStackPropertyRow>(this);
-							PropertyRow->Initialize(CreateDefaultChildRequiredData(), ChildNode, false, GetOwnerStackItemEditorDataKey(), GetOwnerStackItemEditorDataKey(), nullptr);
-							PropertyRow->SetOwnerGuid(ObjectProperty->GetPersistentIdentity().Guids[0]);
-							NewChildren.Add(PropertyRow);
+							TArray<TSharedRef<IDetailTreeNode>> ChildrenNodes;
+							SourceNode->GetChildren(ChildrenNodes);
+							
+							for(TSharedRef<IDetailTreeNode> ChildNode : ChildrenNodes)
+							{
+								if(ChildNode->GetNodeName() == PropertyName)
+								{
+									OutFilteredNodes.Add(ChildNode);
+								}
+							}
 						}
-					}
+					}));
 				}
+				
+				NewChildren.Add(StackObjectWithProperty);
 			}
 		}
 	}

@@ -8,11 +8,13 @@
   <Property Name="ReplicationSystemTarget" Value="ReplicationSystemLowLevelTests" />
   <Property Name="ReplicationSystemBinariesRelative" Value="Engine\Binaries" />
   <Property Name="ReplicationSystemReportType" Value="console" />
+  <Property Name="ReplicationSystemGauntletArgs" Value="" />
+  <Property Name="ReplicationSystemExtraArgs" />
   <Property Name="ReplicationSystemInitialExtraArgs" />
   <Property Name="ReplicationSystemHasAfterSteps" Value="False" />
   <Property Name="ReplicationSystemUsesCatch2" Value="True" />
   <Option Name="RunReplicationSystemTests" DefaultValue="False" Description="Run Replication System Tests" />
-  <Property Name="ReplicationSystemSupportedPlatforms" Value="Win64;Linux" />
+  <Property Name="ReplicationSystemSupportedPlatforms" Value="Win64;Linux;LinuxArm64" />
   <Property Name="Win64ReplicationSystemTags" Value="" />
   <Property Name="MacReplicationSystemTags" Value="" />
   <Property Name="IOSReplicationSystemTags" Value="" />
@@ -33,5 +35,16 @@
   <Property Name="AndroidReplicationSystemRunSupported" Value="False" />
   <Property Name="LinuxReplicationSystemRunSupported" Value="True" />
   <Property Name="LinuxArm64ReplicationSystemRunSupported" Value="True" />
-  <Property Name="TVOSReplicationSystemRunSupported" Value="True" />
+  <Property Name="TVOSReplicationSystemRunSupported" Value="False" />
+  <Property Name="VisionOSReplicationSystemTags" Value="" />
+  <Property Name="VisionOSReplicationSystemExtraCompilationArgs" Value="" />
+  <Property Name="VisionOSReplicationSystemRunSupported" Value="False" />
+  <Property Name="Win64ReplicationSystemRunContainerized" Value="False" />
+  <Property Name="MacReplicationSystemRunContainerized" Value="False" />
+  <Property Name="IOSReplicationSystemRunContainerized" Value="False" />
+  <Property Name="AndroidReplicationSystemRunContainerized" Value="False" />
+  <Property Name="LinuxReplicationSystemRunContainerized" Value="False" />
+  <Property Name="LinuxArm64ReplicationSystemRunContainerized" Value="True" />
+  <Property Name="TVOSReplicationSystemRunContainerized" Value="False" />
+  <Property Name="VisionOSReplicationSystemRunContainerized" Value="False" />
 </BuildGraph>

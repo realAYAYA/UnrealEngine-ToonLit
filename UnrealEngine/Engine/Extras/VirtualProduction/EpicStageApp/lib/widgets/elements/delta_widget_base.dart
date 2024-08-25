@@ -1,11 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+import 'package:epic_common/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/settings/delta_widget_settings.dart';
-import 'epic_icon_button.dart';
 
 class DeltaWidgetConstants {
   /// Size of icon buttons used for delta widgets.
@@ -43,7 +43,7 @@ class ResetValueButton extends StatelessWidget {
   Widget build(BuildContext context) {
     return EpicIconButton(
       onPressed: onPressed,
-      iconPath: 'assets/images/icons/reset.svg',
+      iconPath: 'packages/epic_common/assets/icons/reset.svg',
       tooltipMessage: AppLocalizations.of(context)!.propertyResetButtonTooltip,
       iconSize: 24,
       buttonSize: const Size(32, 32),

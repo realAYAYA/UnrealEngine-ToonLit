@@ -2,6 +2,7 @@
 
 #include "Render/Synchronization/DisplayClusterRenderSyncHelper.h"
 
+#include "Misc/DisplayClusterLog.h"
 #include "Misc/DisplayClusterStrings.h"
 
 #include "Engine/Engine.h"
@@ -10,12 +11,12 @@
 #include "DynamicRHI.h"
 #include "UnrealClient.h"
 
-#pragma warning(push)
-#pragma warning (disable : 4005)
 #include "Windows/AllowWindowsPlatformTypes.h"
-#include "dxgi.h"
+THIRD_PARTY_INCLUDES_START
+#include "dxgi1_3.h"
+THIRD_PARTY_INCLUDES_END
 #include "Windows/HideWindowsPlatformTypes.h"
-#pragma warning(pop)
+
 
 
 TUniquePtr<IDisplayClusterRenderSyncHelper> FDisplayClusterRenderSyncHelper::CreateHelper()
@@ -74,12 +75,76 @@ bool FDisplayClusterRenderSyncHelper::FDCRSHelperDX::WaitForVBlank()
 	return false;
 }
 
+bool FDisplayClusterRenderSyncHelper::FDCRSHelperDX::GetMaximumFrameLatency(uint32& OutMaximumFrameLatency)
+{
+	if (GEngine && GEngine->GameViewport && GEngine->GameViewport->Viewport)
+	{
+		if (FRHIViewport* RHIViewport = GEngine->GameViewport->Viewport->GetViewportRHI().GetReference())
+		{
+			if (IDXGISwapChain2* DXGISwapChain = static_cast<IDXGISwapChain2*>(RHIViewport->GetNativeSwapChain()))
+			{
+				const HRESULT Result = DXGISwapChain->GetMaximumFrameLatency(&OutMaximumFrameLatency);
+
+				if (Result == S_OK)
+				{
+					UE_LOG(LogDisplayClusterRenderSync, Verbose, TEXT("Swapchain frame latency: %u"), OutMaximumFrameLatency);
+				}
+				else
+				{
+					UE_LOG(LogDisplayClusterRenderSync, Warning, TEXT("Couldn't get maximum frame latency. Error: %x"), Result);
+				}
+
+				return Result == S_OK;
+			}
+		}
+	}
+
+	return false;
+}
+
+bool FDisplayClusterRenderSyncHelper::FDCRSHelperDX::SetMaximumFrameLatency(uint32 MaximumFrameLatency)
+{
+	if (GEngine && GEngine->GameViewport && GEngine->GameViewport->Viewport)
+	{
+		if (FRHIViewport* RHIViewport = GEngine->GameViewport->Viewport->GetViewportRHI().GetReference())
+		{
+			if (IDXGISwapChain2* DXGISwapChain = static_cast<IDXGISwapChain2*>(RHIViewport->GetNativeSwapChain()))
+			{
+				const HRESULT Result = DXGISwapChain->SetMaximumFrameLatency(MaximumFrameLatency);
+
+				if (Result == S_OK)
+				{
+					UE_LOG(LogDisplayClusterRenderSync, Verbose, TEXT("Swapchain frame latency was set to: %u"), MaximumFrameLatency);
+				}
+				else
+				{
+					UE_LOG(LogDisplayClusterRenderSync, Warning, TEXT("Couldn't set maximum frame latency to %u. Error: %x"), MaximumFrameLatency, Result);
+				}
+
+				return Result == S_OK;
+			}
+		}
+	}
+
+	return false;
+}
+
 bool FDisplayClusterRenderSyncHelper::FDCRSHelperVulkan::IsWaitForVBlankSupported()
 {
 	return false;
 }
 
 bool FDisplayClusterRenderSyncHelper::FDCRSHelperVulkan::WaitForVBlank()
+{
+	return false;
+}
+
+bool FDisplayClusterRenderSyncHelper::FDCRSHelperVulkan::GetMaximumFrameLatency(uint32& OutMaximumFrameLatency)
+{
+	return false;
+}
+
+bool FDisplayClusterRenderSyncHelper::FDCRSHelperVulkan::SetMaximumFrameLatency(uint32 MaximumFrameLatency)
 {
 	return false;
 }

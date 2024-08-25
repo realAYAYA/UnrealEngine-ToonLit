@@ -53,9 +53,6 @@ private:
 	void HandleUseIoStoreCheckStateChanged(ECheckBoxState NewState);
 	ECheckBoxState HandleUseIoStoreCheckBoxIsChecked() const;
 
-	void HandleRetainStagedDirectoryCheckStateChanged(ECheckBoxState NewState);
-	ECheckBoxState HandleRetainStagedDirectoryCheckBoxIsChecked() const;
-
 	void HandleMakeBinaryConfigCheckStateChanged(ECheckBoxState NewState);
 	ECheckBoxState HandleMakeBinaryConfigCheckBoxIsChecked() const;
 

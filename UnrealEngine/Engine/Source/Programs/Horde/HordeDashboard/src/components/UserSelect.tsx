@@ -2,12 +2,12 @@ import { CompactPeoplePicker, IBasePickerSuggestionsProps, IPersonaProps, Label,
 import { observer } from "mobx-react-lite";
 import React, { useState } from "react";
 import { useWindowSize } from "../base/utilities/hooks";
-import { hordeClasses } from "../styles/Styles";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { TopNav } from "./TopNav";
 import userCache from "../backend/UserCache";
 import backend from "../backend";
 import { GetUserResponse } from "../backend/Api";
+import { getHordeStyling } from "../styles/Styles";
 
 const loadedUsers: Map<string, GetUserResponse> = new Map();
 
@@ -117,7 +117,7 @@ export const UserSelect: React.FC<{ handleSelection: (userId: string | undefined
          }}
 
          onInputChange={(input) => {
-            return input;
+            return input.replaceAll(".", " ");
          }}
 
          resolveDelay={1000}
@@ -127,6 +127,8 @@ export const UserSelect: React.FC<{ handleSelection: (userId: string | undefined
 
 
 export const UserSelectTestView: React.FC = () => {
+
+   const { hordeClasses } = getHordeStyling();
 
    const windowSize = useWindowSize();
    const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);

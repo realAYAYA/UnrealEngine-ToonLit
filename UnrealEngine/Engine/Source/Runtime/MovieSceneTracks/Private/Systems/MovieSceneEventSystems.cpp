@@ -4,14 +4,19 @@
 #include "Algo/RemoveIf.h"
 #include "EntitySystem/MovieSceneEntitySystemLinker.h"
 #include "EntitySystem/MovieSceneEntitySystemRunner.h"
-#include "EntitySystem/MovieSceneSpawnablesSystem.h"
 #include "EntitySystem/MovieSceneEntitySystemTask.h"
+#include "EntitySystem/MovieSceneSharedPlaybackState.h"
+#include "EntitySystem/MovieSceneSpawnablesSystem.h"
 
+#include "Evaluation/EventContextsPlaybackCapability.h"
+#include "Evaluation/EventTriggerControlPlaybackCapability.h"
+#include "Evaluation/SequenceDirectorPlaybackCapability.h"
 #include "Evaluation/MovieSceneEvaluationTemplateInstance.h"
 #include "MovieSceneTracksComponentTypes.h"
 #include "IMovieScenePlayer.h"
 #include "MovieSceneSequence.h"
 
+#include "Templates/SharedPointer.h"
 #include "Templates/SubclassOf.h"
 #include "Engine/World.h"
 #include "Engine/LevelScriptActor.h"
@@ -21,12 +26,10 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MovieSceneEventSystems)
 
-
 #define LOCTEXT_NAMESPACE "MovieSceneEventSystem"
 
 DECLARE_CYCLE_STAT(TEXT("Event Systems"),  MovieSceneEval_Events,        STATGROUP_MovieSceneECS);
 DECLARE_CYCLE_STAT(TEXT("Trigger Events"), MovieSceneEval_TriggerEvents, STATGROUP_MovieSceneECS);
-
 
 UMovieSceneEventSystem::UMovieSceneEventSystem(const FObjectInitializer& ObjInit)
 	: Super(ObjInit)
@@ -75,24 +78,33 @@ void UMovieSceneEventSystem::TriggerAllEvents()
 
 	struct FTriggerBatch
 	{
+		FTriggerBatch(TSharedRef<const FSharedPlaybackState> InSharedPlaybackState) : SharedPlaybackState(InSharedPlaybackState) {}
 		TArray<FMovieSceneEventTriggerData> Triggers;
-		IMovieScenePlayer* Player;
+		TSharedRef<const FSharedPlaybackState> SharedPlaybackState;
 	};
 	TArray<FTriggerBatch> TriggerBatches;
 
 	for (TPair<FInstanceHandle, TArray<FMovieSceneEventTriggerData>>& Pair : EventsByRoot)
 	{
 		const FSequenceInstance& RootInstance = InstanceRegistry->GetInstance(Pair.Key);
-		IMovieScenePlayer* Player = RootInstance.GetPlayer();
+		TSharedRef<const FSharedPlaybackState> SharedPlaybackState = RootInstance.GetSharedPlaybackState();
 
 		FFrameTime SkipUntil;
-		const bool bSkipTrigger = Player->IsDisablingEventTriggers(SkipUntil);
+		bool bSkipTrigger = false;
+		if (IMovieScenePlayer* Player = FPlayerIndexPlaybackCapability::GetPlayer(SharedPlaybackState))
+		{
+			bSkipTrigger = Player->IsDisablingEventTriggers(SkipUntil);
+		}
+		else if (FEventTriggerControlPlaybackCapability* TriggerControlCapability = SharedPlaybackState->FindCapability<FEventTriggerControlPlaybackCapability>())
+		{
+			bSkipTrigger = TriggerControlCapability->IsDisablingEventTriggers(SkipUntil);
+		}
 
 		if (RootInstance.GetContext().GetDirection() == EPlayDirection::Forwards)
 		{
 			if (bSkipTrigger)
 			{
-				Algo::RemoveIf(Pair.Value, [SkipUntil](FMovieSceneEventTriggerData& Data) { return Data.RootTime <= SkipUntil; });
+				Pair.Value.SetNum(Algo::RemoveIf(Pair.Value, [SkipUntil](FMovieSceneEventTriggerData& Data) { return Data.RootTime <= SkipUntil; }));
 			}
 			Algo::SortBy(Pair.Value, &FMovieSceneEventTriggerData::RootTime);
 		}
@@ -100,14 +112,13 @@ void UMovieSceneEventSystem::TriggerAllEvents()
 		{
 			if (bSkipTrigger)
 			{
-				Algo::RemoveIf(Pair.Value, [SkipUntil](FMovieSceneEventTriggerData& Data) { return Data.RootTime >= SkipUntil; });
+				Pair.Value.SetNum(Algo::RemoveIf(Pair.Value, [SkipUntil](FMovieSceneEventTriggerData& Data) { return Data.RootTime >= SkipUntil; }));
 			}
 			Algo::SortBy(Pair.Value, &FMovieSceneEventTriggerData::RootTime, TGreater<>());
 		}
 
-		FTriggerBatch& TriggerBatch = TriggerBatches.Emplace_GetRef();
+		FTriggerBatch& TriggerBatch = TriggerBatches.Emplace_GetRef(SharedPlaybackState);
 		TriggerBatch.Triggers = Pair.Value;
-		TriggerBatch.Player = Player;
 	}
 
 	// We need to clean our state before actually triggering the events because one of those events could
@@ -117,25 +128,48 @@ void UMovieSceneEventSystem::TriggerAllEvents()
 
 	for (const FTriggerBatch& TriggerBatch : TriggerBatches)
 	{
-		TriggerEvents(TriggerBatch.Triggers, TriggerBatch.Player);
+		TriggerEvents(TriggerBatch.Triggers, TriggerBatch.SharedPlaybackState);
 	}
 }
 
-void UMovieSceneEventSystem::TriggerEvents(TArrayView<const FMovieSceneEventTriggerData> Events, IMovieScenePlayer* Player)
+void UMovieSceneEventSystem::TriggerEvents(TArrayView<const FMovieSceneEventTriggerData> Events, TSharedRef<const FSharedPlaybackState> SharedPlaybackState)
 {
+	using namespace UE::MovieScene;
+
 #if !NO_LOGGING
-	UMovieSceneSequence* PlayerSequence = Player->GetEvaluationTemplate().GetRootSequence();
+	UMovieSceneSequence* PlayerSequence = SharedPlaybackState->GetRootSequence();
 	FString SequenceName = PlayerSequence->GetName();
 	UE_LOG(LogMovieScene, VeryVerbose, TEXT("%s: Triggering %d events"), *SequenceName, Events.Num());
 #endif
 
-	TArray<UObject*> GlobalContexts = Player->GetEventContexts();
+	// Auto-add the director playback capability, which is just really a cache for director instances after
+	// they've been created by the sequences in the hierarchy.
+	FSequenceDirectorPlaybackCapability* DirectorCapability = SharedPlaybackState->FindCapability<FSequenceDirectorPlaybackCapability>();
+	if (!DirectorCapability)
+	{
+		TSharedRef<FSharedPlaybackState> MutableState = ConstCastSharedRef<FSharedPlaybackState>(SharedPlaybackState);
+		DirectorCapability = &MutableState->AddCapability<FSequenceDirectorPlaybackCapability>();
+	}
+
+	TArray<UObject*> GlobalContexts;
+	if (IMovieScenePlayer* Player = FPlayerIndexPlaybackCapability::GetPlayer(SharedPlaybackState))
+	{
+		// Check the player interface first. If implemented, we get what we want. If not, it will fall back to the default
+		// implementation that queries the playback capabality (see below), which covers the cases of a player that uses
+		// the new API.
+		GlobalContexts = Player->GetEventContexts();
+	}
+	else if (IEventContextsPlaybackCapability* EventContextsCapability = SharedPlaybackState->FindCapability<IEventContextsPlaybackCapability>())
+	{
+		// No player... let's query the playback capability.
+		GlobalContexts = EventContextsCapability->GetEventContexts();
+	}
 
 	for (const FMovieSceneEventTriggerData& Event : Events)
 	{
 		SCOPE_CYCLE_COUNTER(MovieSceneEval_TriggerEvents);
 
-		UObject* DirectorInstance = Player->GetEvaluationTemplate().GetOrCreateDirectorInstance(Event.SequenceID, *Player);
+		UObject* DirectorInstance = DirectorCapability->GetOrCreateDirectorInstance(SharedPlaybackState, Event.SequenceID);
 		if (!DirectorInstance)
 		{
 #if !NO_LOGGING
@@ -174,15 +208,26 @@ void UMovieSceneEventSystem::TriggerEvents(TArrayView<const FMovieSceneEventTrig
 		}
 		else
 		{
-			TriggerEventWithParameters(DirectorInstance, Event, GlobalContexts, Player);
+			TriggerEventWithParameters(DirectorInstance, Event, GlobalContexts, SharedPlaybackState);
 		}
 	}
 }
 
-void UMovieSceneEventSystem::TriggerEventWithParameters(UObject* DirectorInstance, const FMovieSceneEventTriggerData& Event, TArrayView<UObject* const> GlobalContexts, IMovieScenePlayer* Player)
+void UMovieSceneEventSystem::TriggerEventWithParameters(UObject* DirectorInstance, const FMovieSceneEventTriggerData& Event, TArrayView<UObject* const> GlobalContexts, TSharedRef<const FSharedPlaybackState> SharedPlaybackState)
 {
 	const FMovieSceneEventPtrs& EventPtrs = Event.Ptrs;
-	if (!ensureMsgf(!EventPtrs.BoundObjectProperty.Get() || (EventPtrs.BoundObjectProperty->GetOwner<UObject>() == EventPtrs.Function && EventPtrs.BoundObjectProperty->GetOffset_ForUFunction() < EventPtrs.Function->ParmsSize), TEXT("Bound object property belongs to the wrong function or has an offset greater than the parameter size! This should never happen and indicates a BP compilation or nativization error.")))
+	if (!ensureMsgf(
+				!EventPtrs.BoundObjectProperty.Get() || 
+				(EventPtrs.BoundObjectProperty->GetOwner<UObject>() == EventPtrs.Function && 
+					EventPtrs.BoundObjectProperty->GetOffset_ForUFunction() < EventPtrs.Function->ParmsSize),
+		TEXT("Bound object property belongs to the wrong function or has an offset greater than the parameter size!"
+			 "This should never happen and indicates a BP compilation or nativization error.")))
+	{
+		return;
+	}
+
+	FMovieSceneEvaluationState* State = SharedPlaybackState->FindCapability<FMovieSceneEvaluationState>();
+	if (!ensureMsgf(State, TEXT("No evaluation state found!")))
 	{
 		return;
 	}
@@ -210,12 +255,12 @@ void UMovieSceneEventSystem::TriggerEventWithParameters(UObject* DirectorInstanc
 	// If the event exists on an object binding, only call the events for those bindings (never for the global contexts)
 	if (Event.ObjectBindingID.IsValid())
 	{
-		for (TWeakObjectPtr<> WeakBoundObject : Player->FindBoundObjects(Event.ObjectBindingID, Event.SequenceID))
+		for (TWeakObjectPtr<> WeakBoundObject : State->FindBoundObjects(Event.ObjectBindingID, Event.SequenceID, SharedPlaybackState))
 		{
 			if (UObject* BoundObject = WeakBoundObject.Get())
 			{
 				// Attempt to bind the object to the function parameters
-				if (PatchBoundObject(Parameters, BoundObject, EventPtrs.BoundObjectProperty.Get(), Player, Event.SequenceID))
+				if (PatchBoundObject(Parameters, BoundObject, EventPtrs.BoundObjectProperty.Get(), SharedPlaybackState, Event.SequenceID))
 				{
 					DirectorInstance->ProcessEvent(EventPtrs.Function, Parameters);
 				}
@@ -228,7 +273,7 @@ void UMovieSceneEventSystem::TriggerEventWithParameters(UObject* DirectorInstanc
 	{
 		for (UObject* Context : GlobalContexts)
 		{
-			if (PatchBoundObject(Parameters, Context, EventPtrs.BoundObjectProperty.Get(), Player, Event.SequenceID))
+			if (PatchBoundObject(Parameters, Context, EventPtrs.BoundObjectProperty.Get(), SharedPlaybackState, Event.SequenceID))
 			{
 				DirectorInstance->ProcessEvent(EventPtrs.Function, Parameters);
 			}
@@ -246,7 +291,7 @@ void UMovieSceneEventSystem::TriggerEventWithParameters(UObject* DirectorInstanc
 	}
 }
 
-bool UMovieSceneEventSystem::PatchBoundObject(uint8* Parameters, UObject* BoundObject, FProperty* BoundObjectProperty, IMovieScenePlayer* Player, FMovieSceneSequenceID SequenceID)
+bool UMovieSceneEventSystem::PatchBoundObject(uint8* Parameters, UObject* BoundObject, FProperty* BoundObjectProperty, TSharedRef<const FSharedPlaybackState> SharedPlaybackState, FMovieSceneSequenceID SequenceID)
 {
 	if (!BoundObjectProperty)
 	{
@@ -266,7 +311,7 @@ bool UMovieSceneEventSystem::PatchBoundObject(uint8* Parameters, UObject* BoundO
 
 		FMessageLog("PIE").Warning()
 			->AddToken(FUObjectToken::Create(BoundObjectProperty->GetOwnerUObject()))
-			->AddToken(FUObjectToken::Create(Player->GetEvaluationTemplate().GetSequence(SequenceID)))
+			->AddToken(FUObjectToken::Create(SharedPlaybackState->GetSequence(SequenceID)))
 			->AddToken(FTextToken::Create(FText::Format(LOCTEXT("LevelBP_InterfaceNotImplemented_Error", "Failed to trigger event because it does not implement the necessary interface. Function expects a '{0}'."), FText::FromName(InterfaceParameter->InterfaceClass->GetFName()))));
 		return false;
 	}
@@ -277,7 +322,7 @@ bool UMovieSceneEventSystem::PatchBoundObject(uint8* Parameters, UObject* BoundO
 		{
 			FMessageLog("PIE").Warning()
 				->AddToken(FUObjectToken::Create(BoundObjectProperty->GetOwnerUObject()))
-				->AddToken(FUObjectToken::Create(Player->GetEvaluationTemplate().GetSequence(SequenceID)))
+				->AddToken(FUObjectToken::Create(SharedPlaybackState->GetSequence(SequenceID)))
 				->AddToken(FTextToken::Create(LOCTEXT("LevelBP_LevelScriptActor_Error", "Failed to trigger event: only Interface pins are supported for root tracks within Level Sequences. Please remove the pin, or change it to an interface that is implemented on the desired level blueprint.")));
 
 			return false;
@@ -285,7 +330,7 @@ bool UMovieSceneEventSystem::PatchBoundObject(uint8* Parameters, UObject* BoundO
 		else if (!BoundObject->IsA(ObjectParameter->PropertyClass))
 		{
 			FMessageLog("PIE").Warning()
-				->AddToken(FUObjectToken::Create(Player->GetEvaluationTemplate().GetSequence(SequenceID)))
+				->AddToken(FUObjectToken::Create(SharedPlaybackState->GetSequence(SequenceID)))
 				->AddToken(FUObjectToken::Create(BoundObjectProperty->GetOwnerUObject()))
 				->AddToken(FUObjectToken::Create(BoundObject))
 				->AddToken(FTextToken::Create(FText::Format(LOCTEXT("LevelBP_InvalidCast_Error", "Failed to trigger event: Cast to {0} failed."), FText::FromName(ObjectParameter->PropertyClass->GetFName()))));
@@ -298,7 +343,7 @@ bool UMovieSceneEventSystem::PatchBoundObject(uint8* Parameters, UObject* BoundO
 	}
 
 	FMessageLog("PIE").Warning()
-		->AddToken(FUObjectToken::Create(Player->GetEvaluationTemplate().GetSequence(SequenceID)))
+		->AddToken(FUObjectToken::Create(SharedPlaybackState->GetSequence(SequenceID)))
 		->AddToken(FUObjectToken::Create(BoundObjectProperty->GetOwnerUObject()))
 		->AddToken(FUObjectToken::Create(BoundObject))
 		->AddToken(FTextToken::Create(FText::Format(LOCTEXT("LevelBP_UnsupportedProperty_Error", "Failed to trigger event: Unsupported property type for bound object: {0}."), FText::FromName(BoundObjectProperty->GetClass()->GetFName()))));

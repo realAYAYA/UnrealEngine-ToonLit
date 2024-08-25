@@ -561,8 +561,8 @@ void SVirtualJoystick::SetJoystickVisibility(const bool bInVisible, const bool b
 
 void SVirtualJoystick::AddControl(const FControlInfo& Control)
 {
-	FControlData* ControlData = new (Controls) FControlData;
-	ControlData->Info = Control;
+	FControlData& ControlData = Controls.AddDefaulted_GetRef();
+	ControlData.Info = Control;
 }
 
 void SVirtualJoystick::ClearControls()

@@ -141,6 +141,9 @@
 		<!-- Build files -->
 		Engine/Build/Build.version
 		Engine/Build/Target.cs.template
+
+		<!-- Turnkey files -->
+		Engine/Build/Turnkey/...
 		
 		<!-- Source code and demos for container images -->
 		Engine/Extras/Containers/...
@@ -309,6 +312,14 @@
 		
 		<!-- UnrealTraceServer is the tool that records Unreal Insights trace files -->
 		Engine/Binaries/Win64/UnrealTraceServer.exe
+		
+		<!-- zenserver is the tool for Unreal Zen Storage services like Local DDC and optionally cooked output storage -->
+		Engine/Binaries/Win64/zenserver.exe
+		Engine/Binaries/Win64/zen.exe
+		Engine/Binaries/Win64/crashpad_handler.exe
+
+		<!-- Precompiled Win64 UBA -->
+		Engine/Binaries/Win64/UnrealBuildAccelerator/x64/...
 
 		<!-- Used by Switchboard application, and by iOS/tvOS build automation -->
 		Engine/Extras/ThirdPartyNotUE/cwrsync/...
@@ -316,11 +327,22 @@
 
 		<!-- nanosvg -->
 		Engine/Source/ThirdParty/nanosvg/...
+		
+		<!-- Catch2 -->
+		Engine/Source/ThirdParty/Catch2/v3.4.0/...
+		Engine/Source/ThirdParty/Catch2/Catch2_v3.4.0.tps
+		Engine/Source/ThirdParty/Catch2/Catch2.build.cs
+		Engine/Source/ThirdParty/Catch2/Catch2.tps
+		Engine/Source/ThirdParty/Catch2/Catch2Extras.Build.cs
 	</Property>
 
 	<Property Name="CopyEditorExceptionsWin64" Value="$(CopyEditorExceptions)">
 		<!-- Exclude Mac binaries on windows here, because previous wildcard for plugin resources matches OSX dsym resources on Windows -->
 		Engine/Plugins/.../Binaries/Mac/...
+		
+		Engine/Binaries/Win64/LiveLinkHub-Win64-Shipping.pdb
+		Engine/Binaries/Linux/LiveLinkHub-Linux-Shipping.debug
+		Engine/Binaries/Linux/LiveLinkHub-Linux-Shipping.sym
 	</Property>
 
 	<!-- Mac editor specific dependencies -->
@@ -333,25 +355,21 @@
 		Engine/Build/BatchFiles/Mac/FixDependencyFiles.sh
 		Engine/Build/BatchFiles/Mac/GenerateProjectFiles.sh
 		Engine/Build/BatchFiles/Mac/SetupEnvironment.sh
-		Engine/Build/BatchFiles/Mac/SetupMono.sh
 		Engine/Build/BatchFiles/Mac/SetupDotnet.sh
-		Engine/Build/BatchFiles/Mac/FixMonoFiles.sh
-		Engine/Build/BatchFiles/Mac/RunMono.sh
-		Engine/Build/BatchFiles/Mac/RunXBuild.sh
 		Engine/Build/BatchFiles/Mac/XcodeBuild.sh
 		Engine/Build/BatchFiles/Mac/GenerateUniversalDSYM.sh
 		Engine/Build/BatchFiles/Mac/ThinApp.sh
 		Engine/Build/BatchFiles/Mac/UpdateVersionAfterBuild.sh
-		Engine/Build/BatchFiles/Mac/SourceCodeLookup.sh
+		Engine/Build/BatchFiles/Mac/ThinApp.sh
+        Engine/Build/BatchFiles/Mac/SourceCodeLookup.sh
+		Engine/Build/BatchFiles/RunDotnet.sh
+		Engine/Build/BatchFiles/RunDotnetMSBuild.sh
 		Engine/Build/BatchFiles/RunUAT.command
 		Engine/Build/BatchFiles/RunUAT.sh
 		Engine/Build/BatchFiles/RunUBT.sh
         
         <!-- Mac build resources (plist entitlement etc.) -->
         Engine/Build/Mac/Resources/...
-
-		<!-- Mono -->
-		Engine/Binaries/ThirdParty/Mono/Mac/...
 
 		<!-- DotNet -->
 		Engine/Binaries/ThirdParty/DotNet/6.0.302/mac-arm64/...
@@ -365,6 +383,18 @@
 		
 		<!-- UnrealTraceServer is the tool that records Unreal Insights trace files -->
 		Engine/Binaries/Mac/UnrealTraceServer
+		
+		<!-- zenserver is the tool for Unreal Zen Storage services like Local DDC and optionally cooked output storage -->
+		Engine/Binaries/Mac/zenserver
+		Engine/Binaries/Mac/zen
+		Engine/Binaries/Mac/crashpad_handler
+			
+		<!-- Catch2 -->
+		Engine/Source/ThirdParty/Catch2/v3.4.0/...
+		Engine/Source/ThirdParty/Catch2/Catch2_v3.4.0.tps
+		Engine/Source/ThirdParty/Catch2/Catch2.build.cs
+		Engine/Source/ThirdParty/Catch2/Catch2.tps
+		Engine/Source/ThirdParty/Catch2/Catch2Extras.Build.cs
 	</Property>
 
 	<Property Name="CopyEditorExceptionsMac" Value="$(CopyEditorExceptions)">
@@ -391,20 +421,15 @@
 		Engine/Build/BatchFiles/Linux/QASmokeManual.sh
 		Engine/Build/BatchFiles/Linux/Setup.sh
 		Engine/Build/BatchFiles/Linux/SetupEnvironment.sh
-		Engine/Build/BatchFiles/Linux/SetupMono.sh
 		Engine/Build/BatchFiles/Linux/SetupDotnet.sh
-		Engine/Build/BatchFiles/Linux/FixMonoFiles.sh
-		Engine/Build/BatchFiles/Linux/RunMono.sh
-		Engine/Build/BatchFiles/Linux/RunXBuild.sh
+		Engine/Build/BatchFiles/RunDotnetMSBuild.sh
+		Engine/Build/BatchFiles/RunDotnet.sh
 		Engine/Build/BatchFiles/RunUAT.sh
 		Engine/Build/BatchFiles/RunUBT.sh
 
 		<!-- Debug tools -->
 		Engine/Binaries/Linux/dump_syms
 		Engine/Binaries/Linux/BreakpadSymbolEncoder
-
-		<!-- Mono -->
-		Engine/Binaries/ThirdParty/Mono/...
 
 		<!-- DotNet -->
 		Engine/Binaries/ThirdParty/DotNet/6.0.302/linux/...
@@ -422,6 +447,17 @@
 		
 		<!-- UnrealTraceServer is the tool that records Unreal Insights trace files -->
 		Engine/Binaries/Linux/UnrealTraceServer
+		
+		<!-- zenserver is the tool for Unreal Zen Storage services like Local DDC and optionally cooked output storage -->
+		Engine/Binaries/Linux/zenserver
+		Engine/Binaries/Linux/zen
+			
+		<!-- Catch2 -->
+		Engine/Source/ThirdParty/Catch2/v3.4.0/...
+		Engine/Source/ThirdParty/Catch2/Catch2_v3.4.0.tps
+		Engine/Source/ThirdParty/Catch2/Catch2.build.cs
+		Engine/Source/ThirdParty/Catch2/Catch2.tps
+		Engine/Source/ThirdParty/Catch2/Catch2Extras.Build.cs
 	</Property>
 	<Property Name="CopyEditorExceptionsLinux" Value="$(CopyEditorExceptions)">
 		<!-- Exclude Windows/Mac binaries on Linux here -->
@@ -435,6 +471,10 @@
 		<!-- Don't want The Windows/Mac Python packages -->
 		Engine/Plugins/Experimental/PythonFoundationPackages/Content/Python/Lib/Win64/...
 		Engine/Plugins/Experimental/PythonFoundationPackages/Content/Python/Lib/Mac/...
+		
+		<!-- We remove these in an attempt to save space. -->
+		Engine/Binaries/Linux/LiveLinkHub-Linux-Shipping.debug
+		Engine/Binaries/Linux/LiveLinkHub-Linux-Shipping.sym
 	</Property>
 
 	<!-- Target Platform Filters/Exceptions -->
@@ -447,6 +487,9 @@
 		<!-- App local dependencies -->
 		Engine/Binaries/ThirdParty/AppLocalDependencies/...
 		
+		<!-- Vulkan Validation Layers -->
+		Engine/Binaries/ThirdParty/Vulkan/...
+
 		<!-- Oculus Libraries & Build Files -->
 		Engine/Source/ThirdParty/Oculus/LibOVRAudio/LibOVRAudio/lib/win64/*.lib
 		Engine/Source/ThirdParty/Oculus/LibOVRAudio/*.tps
@@ -547,7 +590,6 @@
 	<Property Name="ExtraSignFilesIOS">
 		Engine/Binaries/ThirdParty/DotNet/6.0.302/mac-arm64/...
 		Engine/Binaries/ThirdParty/DotNet/6.0.302/mac-x64/...
-		Engine/Binaries/ThirdParty/Mono/Mac/...
 		Engine/Extras/ThirdPartyNotUE/libimobiledevice/x64/...
 	</Property>
 
@@ -565,7 +607,20 @@
 		<!-- PLCrashReporter needs to be specificed manually as there are two versions of the library -->
 		Engine/Source/ThirdParty/PLCrashReporter/lib/lib-Xcode-11.3.1/iOS/...
 		Engine/Source/ThirdParty/PLCrashReporter/lib/lib-Xcode-12.4/iOS/...
+
+		<!-- Extra iOS Simualtor libraries -->
+		Engine/Plugins/Compression/OodleNetwork/Sdks/2.9.12/lib/IOS/....sim.a
+		Engine/Source/ThirdParty/BLAKE3/1.3.1/lib/IOS/Simulator/...
+		Engine/Source/ThirdParty/ICU/icu4c-64_1/lib/IOS/Simulator/...
+		Engine/Source/ThirdParty/FreeType2/FreeType2-2.10.0/lib/IOS/Simulator/...
+		Engine/Source/ThirdParty/libPNG/libPNG-1.5.2/lib/IOS/Simulator/...
+		Engine/Source/ThirdParty/HarfBuzz/harfbuzz-2.4.0/lib/IOS/Simulator/...
+		Engine/Source/ThirdParty/Ogg/libogg-1.2.2/lib/ios/libogg.sim.a
+		Engine/Source/ThirdParty/Vorbis/libvorbis-1.3.2/lib/IOS/....sim.a 
+		Engine/Source/ThirdParty/libOpus/opus-1.1/IOS/libOpus.sim.a
+		Engine/Source/ThirdParty/OpenSSL/1.1.1t/lib/IOS/....sim.a
 	</Property>
+
 	<Property Name="CopyIOSFilterWin64" Value="$(CopyIOSFilter)">
 		Engine/Binaries/DotNET/IOS/openssl.exe
 		Engine/Binaries/Mac/DsymExporter*
@@ -587,7 +642,6 @@
 	<Property Name="ExtraSignFilesTVOS">
 		Engine/Binaries/ThirdParty/DotNet/6.0.302/mac-arm64/...
 		Engine/Binaries/ThirdParty/DotNet/6.0.302/mac-x64/...
-		Engine/Binaries/ThirdParty/Mono/Mac/...
 		Engine/Extras/ThirdPartyNotUE/libimobiledevice/x64/...
 	</Property>
 
@@ -616,12 +670,12 @@
 		Engine/Binaries/Linux/AgentInterface.dll
 		Engine/Binaries/Linux/dump_syms.exe
 		Engine/Binaries/Linux/BreakpadSymbolEncoder.exe
-		Engine/Binaries/ThirdParty/Mono/Linux/...
 		Engine/Binaries/Linux/UnrealTraceServer
 	</Property>
 
 	<Property Name="CopyLinuxFilter">
 		Engine/Binaries/ThirdParty/OpenAL/...
+		Engine/Binaries/ThirdParty/Vulkan/...
 		Engine/Binaries/ThirdParty/ICU/icu4c-53_1/Unix/x86_64-unknown-linux-gnu/*.so
 		Engine/Source/ThirdParty/Unix/LibCxx/...
 		Engine/Source/ThirdParty/Unix/HaveLinuxDependencies

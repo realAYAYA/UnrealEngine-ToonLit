@@ -9,12 +9,29 @@
 #include "ScopedGuard.h"
 #include "Stats.h"
 #include "TransactionInlines.h"
+#include "AutoRTFM/AutoRTFMMetrics.h"
 
 #include "Templates/UniquePtr.h"
 #include "Containers/StringConv.h"
 
+namespace
+{
+AutoRTFM::FAutoRTFMMetrics GAutoRTFMMetrics;
+}
+
 namespace AutoRTFM
 {
+
+void ResetAutoRTFMMetrics()
+{
+	GAutoRTFMMetrics = FAutoRTFMMetrics{};
+}
+
+// get a snapshot of the current internal metrics
+FAutoRTFMMetrics GetAutoRTFMMetrics()
+{
+	return GAutoRTFMMetrics;
+}
 
 thread_local TUniquePtr<FContext> ContextTls;
 
@@ -53,7 +70,7 @@ bool FContext::IsTransactional()
         return false;
     }
 
-    if (Context->GetStatus() != EContextStatus::Idle)
+    if ((Context->GetStatus() != EContextStatus::Idle) && (Context->GetStatus() != EContextStatus::Committing))
     {
         return true;
     }
@@ -75,6 +92,8 @@ bool FContext::StartTransaction()
 	// This form of transaction is always ultimately within a scoped Transact 
 	ASSERT(Status == EContextStatus::OnTrack);
 	PushTransaction(NewTransaction);
+
+	GAutoRTFMMetrics.NumTransactionsStarted++;
 
 	return true;
 }
@@ -100,7 +119,7 @@ ETransactionResult FContext::CommitTransaction()
 		DumpState();
 		UE_LOG(LogAutoRTFM, Verbose, TEXT("Committing..."));
 
-		if (CurrentTransaction->AttemptToCommit())
+		if (AttemptToCommitTransaction(CurrentTransaction))
 		{
 			Result = ETransactionResult::Committed;
 		}
@@ -115,16 +134,20 @@ ETransactionResult FContext::CommitTransaction()
 	// Parent transaction is now the current transaction
 	PopTransaction();
 
+	GAutoRTFMMetrics.NumTransactionsCommitted++;
+
 	return Result;
 }
 
-ETransactionResult FContext::AbortTransaction(bool bIsClosed)
+ETransactionResult FContext::AbortTransaction(bool bIsClosed, bool bIsCascading)
 {
+	GAutoRTFMMetrics.NumTransactionsAborted++;
+
 	ETransactionResult Result = ETransactionResult::AbortedByRequest;
 	ASSERT(Status == EContextStatus::OnTrack);
-	Status = EContextStatus::AbortedByRequest;
+	Status = bIsCascading ? EContextStatus::AbortedByCascade : EContextStatus::AbortedByRequest;
 
-	ASSERT(CurrentTransaction != nullptr);
+	ASSERT(nullptr != CurrentTransaction);
 
 	// Sort out how aborts work
 	CurrentTransaction->AbortWithoutThrowing();
@@ -146,16 +169,24 @@ ETransactionResult FContext::AbortTransaction(bool bIsClosed)
 
 bool FContext::IsAborting() const
 {
-	return Status != EContextStatus::OnTrack && Status != EContextStatus::Idle;
+	switch (Status)
+	{
+	default:
+		return true;
+	case EContextStatus::OnTrack:
+	case EContextStatus::Idle:
+	case EContextStatus::Committing:
+		return false;
+	}
 }
 
-EContextStatus FContext::CallClosedNest(void (*ClosedFunction)(void* Arg, FContext* Context), void* Arg)
+EContextStatus FContext::CallClosedNest(void (*ClosedFunction)(void* Arg), void* Arg)
 {
 	TScopedGuard<void*> CurrentNestStackAddressGuard(CurrentTransactStackAddress, &CurrentNestStackAddressGuard);
 
 	PushCallNest(new FCallNest(this));
 
-	CurrentNest->Try([&]() { ClosedFunction(Arg, this); });
+	CurrentNest->Try([&]() { ClosedFunction(Arg); });
 
 	PopCallNest();
 
@@ -216,8 +247,11 @@ void FContext::ClearTransactionStatus()
 	case EContextStatus::AbortedByRequest:
 		Status = EContextStatus::OnTrack;
 		break;
+	case EContextStatus::AbortedByCascade:
+		Status = EContextStatus::OnTrack;
+		break;
 	default:
-		ASSERT(!"Should not be reached");
+		AutoRTFM::Unreachable();
 	}
 }
 
@@ -230,7 +264,7 @@ ETransactionResult FContext::ResolveNestedTransaction(FTransaction* NewTransacti
 
 	if (Status == EContextStatus::OnTrack)
 	{
-		bool bCommitResult = NewTransaction->AttemptToCommit();
+		bool bCommitResult = AttemptToCommitTransaction(NewTransaction);
 		ASSERT(bCommitResult);
 		ASSERT(Status == EContextStatus::OnTrack);
 		return ETransactionResult::Committed;
@@ -242,19 +276,30 @@ ETransactionResult FContext::ResolveNestedTransaction(FTransaction* NewTransacti
 		return ETransactionResult::AbortedByRequest;
 	case EContextStatus::AbortedByLanguage:
 		return ETransactionResult::AbortedByLanguage;
+	case EContextStatus::AbortedByCascade:
+		return ETransactionResult::AbortedByCascade;
 	default:
-		ASSERT(!"Should not be reached");
-		return ETransactionResult::AbortedByLanguage;
+		AutoRTFM::Unreachable();
 	}
 }
 
 ETransactionResult FContext::Transact(void (*Function)(void* Arg), void* Arg)
 {
     constexpr bool bVerbose = false;
+
+    if (UNLIKELY(EContextStatus::Committing == Status))
+    {
+    	return ETransactionResult::AbortedByTransactInOnCommit;
+    }
+
+    if (UNLIKELY(IsAborting()))
+    {
+    	return ETransactionResult::AbortedByTransactInOnAbort;
+    }
     
     ASSERT(Status == EContextStatus::Idle || Status == EContextStatus::OnTrack);
 
-    void (*ClonedFunction)(void* Arg, FContext* Context) = FunctionMapTryLookup(Function);
+    void (*ClonedFunction)(void* Arg) = FunctionMapTryLookup(Function);
     if (!ClonedFunction)
     {
 		UE_LOG(LogAutoRTFM, Warning, TEXT("Could not find function %p (%s) in AutoRTFM::FContext::Transact."), Function, *GetFunctionDescription(Function));
@@ -287,7 +332,7 @@ ETransactionResult FContext::Transact(void (*Function)(void* Arg), void* Arg)
         {
             Status = EContextStatus::OnTrack;
             ASSERT(CurrentTransaction->IsFresh());
-			CurrentNest->Try([&] () { ClonedFunction(Arg, this); });
+			CurrentNest->Try([&] () { ClonedFunction(Arg); });
 			ASSERT(CurrentTransaction == NewTransaction); // The transaction lambda should have unwound any nested transactions.
             ASSERT(Status != EContextStatus::Idle);
 
@@ -297,7 +342,7 @@ ETransactionResult FContext::Transact(void (*Function)(void* Arg), void* Arg)
 				DumpState();
 				UE_LOG(LogAutoRTFM, Verbose, TEXT("Committing..."));
 
-                if (CurrentTransaction->AttemptToCommit())
+                if (AttemptToCommitTransaction(CurrentTransaction))
                 {
                     Result = ETransactionResult::Committed;
                     break;
@@ -318,6 +363,12 @@ ETransactionResult FContext::Transact(void (*Function)(void* Arg), void* Arg)
             if (Status == EContextStatus::AbortedByLanguage)
             {
                 Result = ETransactionResult::AbortedByLanguage;
+                break;
+            }
+
+            if (Status == EContextStatus::AbortedByCascade)
+            {
+                Result = ETransactionResult::AbortedByCascade;
                 break;
             }
 
@@ -342,17 +393,24 @@ ETransactionResult FContext::Transact(void (*Function)(void* Arg), void* Arg)
 		PushTransaction(NewTransaction);
 		PushCallNest(NewNest);
 
-		CurrentNest->Try([&]() { ClonedFunction(Arg, this); });
+		CurrentNest->Try([&]() { ClonedFunction(Arg); });
 		ASSERT(CurrentTransaction == NewTransaction);
 
 		Result = ResolveNestedTransaction(NewTransaction);
 		
 		PopCallNest();
 		PopTransaction();
-		ClearTransactionStatus();
 
 		ASSERT(CurrentNest != nullptr);
 		ASSERT(CurrentTransaction != nullptr);
+
+		// A cascading abort should cause all transactions to abort!
+		if (ETransactionResult::AbortedByCascade == Result)
+		{
+			CurrentTransaction->AbortAndThrow();
+		}
+
+		ClearTransactionStatus();
 	}
 
 	return Result;
@@ -361,6 +419,7 @@ ETransactionResult FContext::Transact(void (*Function)(void* Arg), void* Arg)
 void FContext::AbortByRequestAndThrow()
 {
     ASSERT(Status == EContextStatus::OnTrack);
+	GAutoRTFMMetrics.NumTransactionsAbortedByRequest++;
     Status = EContextStatus::AbortedByRequest;
     CurrentTransaction->AbortAndThrow();
 }
@@ -368,6 +427,7 @@ void FContext::AbortByRequestAndThrow()
 void FContext::AbortByRequestWithoutThrowing()
 {
 	ASSERT(Status == EContextStatus::OnTrack);
+	GAutoRTFMMetrics.NumTransactionsAbortedByRequest++;
 	Status = EContextStatus::AbortedByRequest;
 	CurrentTransaction->AbortWithoutThrowing();
 }
@@ -376,6 +436,7 @@ void FContext::AbortByLanguageAndThrow()
 {
 	UE_DEBUG_BREAK();
     ASSERT(Status == EContextStatus::OnTrack);
+	GAutoRTFMMetrics.NumTransactionsAbortedByLanguage++;
     Status = EContextStatus::AbortedByLanguage;
     CurrentTransaction->AbortAndThrow();
 }

@@ -24,15 +24,18 @@
 // SOFTWARE.
 ////////////////////////////////////////////////////////////////////////////////
 
-#if defined(SJSON_CPP_WRITER)
+#if defined(ACL_USE_SJSON)
 
+#include "acl/version.h"
+#include "acl/core/time_utils.h"
 #include "acl/core/track_formats.h"
-#include "acl/core/utils.h"
-#include "acl/core/variable_bit_rates.h"
+#include "acl/core/impl/variable_bit_rates.h"
 #include "acl/core/impl/compiler_utils.h"
 #include "acl/compression/transform_error_metrics.h"
 #include "acl/compression/track_error.h"
 #include "acl/compression/impl/clip_context.h"
+
+#include <sjson/writer.h>
 
 #include <chrono>
 #include <cstdint>
@@ -43,6 +46,8 @@ ACL_IMPL_FILE_PRAGMA_PUSH
 
 namespace acl
 {
+	ACL_IMPL_VERSION_NAMESPACE_BEGIN
+
 	namespace acl_impl
 	{
 		inline void write_summary_segment_stats(const segment_context& segment, rotation_format8 rotation_format, vector_format8 translation_format, vector_format8 scale_format, sjson::ObjectWriter& writer)
@@ -60,7 +65,24 @@ namespace acl
 			segment_size += segment.animated_data_size;						// Animated track data
 
 			writer["segment_size"] = segment_size;
-			writer["animated_frame_size"] = double(segment.animated_data_size) / double(segment.num_samples);
+			writer["animated_frame_size"] = double(segment.animated_pose_bit_size) / 8.0;
+
+			if (segment.clip->has_stripped_keyframes)
+			{
+				const bitset_description hard_keyframes_desc = bitset_description::make_from_num_bits<32>();
+				const uint32_t num_retained_keyframes = bitset_count_set_bits(&segment.hard_keyframes, hard_keyframes_desc);
+				const uint32_t num_stripped_keyframes = segment.num_samples - num_retained_keyframes;
+				writer["num_stripped_keyframes"] = num_stripped_keyframes;
+			}
+
+			if (segment.contributing_error != nullptr)
+			{
+				writer["num_trivial_keyframes"] = (uint32_t)std::count_if(segment.contributing_error, segment.contributing_error + segment.num_samples,
+					[](const keyframe_stripping_metadata_t& keyframe_metadata)
+					{
+						return keyframe_metadata.is_keyframe_trivial;
+					});
+			}
 		}
 
 		inline void write_detailed_segment_stats(const segment_context& segment, sjson::ObjectWriter& writer)
@@ -129,7 +151,7 @@ namespace acl
 			}
 
 			const float sample_rate = raw_clip_context.sample_rate;
-			const float ref_duration = calculate_duration(raw_clip_context.num_samples, sample_rate);
+			const float ref_duration = calculate_finite_duration(raw_clip_context.num_samples, sample_rate);
 
 			itransform_error_metric::apply_additive_to_base_args apply_additive_to_base_args_raw;
 			apply_additive_to_base_args_raw.dirty_transform_indices = self_transform_indices;
@@ -220,7 +242,7 @@ namespace acl
 
 		inline uint32_t calculate_clip_metadata_common_size(const clip_context& clip, const compressed_tracks& compressed_clip)
 		{
-			const uint32_t segment_header_size = compressed_clip.has_database() ? sizeof(segment_tier0_header) : sizeof(segment_header);
+			const uint32_t segment_header_size = compressed_clip.has_database() || compressed_clip.has_stripped_keyframes() ? sizeof(stripped_segment_header_t) : sizeof(segment_header);
 
 			uint32_t result = 0;
 
@@ -392,6 +414,31 @@ namespace acl
 			const uint32_t compressed_size = compressed_clip.get_size();
 			const double compression_ratio = double(raw_size) / double(compressed_size);
 
+			const bitset_description hard_keyframes_desc = bitset_description::make_from_num_bits<32>();
+			uint32_t total_num_stripped_keyframes = 0;
+			if (clip.has_stripped_keyframes)
+			{
+				for (const segment_context& segment : clip.segment_iterator())
+				{
+					const uint32_t num_retained_keyframes = bitset_count_set_bits(&segment.hard_keyframes, hard_keyframes_desc);
+					const uint32_t num_stripped_keyframes = segment.num_samples - num_retained_keyframes;
+					total_num_stripped_keyframes += num_stripped_keyframes;
+				}
+			}
+
+			uint32_t num_trivial_keyframes = 0;
+			for (const segment_context& segment : clip.segment_iterator())
+			{
+				if (segment.contributing_error != nullptr)
+				{
+					num_trivial_keyframes += static_cast<uint32_t>(std::count_if(segment.contributing_error, segment.contributing_error + segment.num_samples,
+						[](const keyframe_stripping_metadata_t& keyframe_metadata)
+						{
+							return keyframe_metadata.is_keyframe_trivial;
+						}));
+				}
+			}
+
 			sjson::ObjectWriter& writer = *stats.writer;
 			writer["algorithm_name"] = get_algorithm_name(algorithm_type8::uniformly_sampled);
 			writer["algorithm_uid"] = settings.get_hash();
@@ -400,13 +447,16 @@ namespace acl
 			writer["compressed_size"] = compressed_size;
 			writer["compression_ratio"] = compression_ratio;
 			writer["compression_time"] = compression_time.get_elapsed_seconds();
-			writer["duration"] = track_list.get_duration();
-			writer["num_samples"] = track_list.get_num_samples_per_track();
+			writer["duration"] = compressed_clip.get_duration();
+			writer["num_samples"] = compressed_clip.get_num_samples_per_track();
 			writer["num_bones"] = compressed_clip.get_num_tracks();
 			writer["rotation_format"] = get_rotation_format_name(settings.rotation_format);
 			writer["translation_format"] = get_vector_format_name(settings.translation_format);
 			writer["scale_format"] = get_vector_format_name(settings.scale_format);
 			writer["has_scale"] = clip.has_scale;
+			writer["looping"] = compressed_clip.get_looping_policy() == sample_looping_policy::wrap;
+			writer["num_stripped_keyframes"] = total_num_stripped_keyframes;
+			writer["num_trivial_keyframes"] = num_trivial_keyframes;
 			writer["error_metric"] = settings.error_metric->get_name();
 
 			if (are_all_enum_flags_set(stats.logging, stat_logging::detailed) || are_all_enum_flags_set(stats.logging, stat_logging::exhaustive))
@@ -550,8 +600,10 @@ namespace acl
 			};
 		}
 	}
+
+	ACL_IMPL_VERSION_NAMESPACE_END
 }
 
 ACL_IMPL_FILE_PRAGMA_POP
 
-#endif	// #if defined(SJSON_CPP_WRITER)
+#endif	// #if defined(ACL_USE_SJSON)

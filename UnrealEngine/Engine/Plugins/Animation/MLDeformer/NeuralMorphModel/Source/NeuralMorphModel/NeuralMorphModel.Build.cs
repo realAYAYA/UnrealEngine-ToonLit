@@ -42,7 +42,9 @@ public class NeuralMorphModel : ModuleRules
 				"Projects",
 				"RenderCore",
 				"RHI",
-				"MLDeformerFramework"
+				"MLDeformerFramework",
+				"NNE",
+				"NNERuntimeBasicCpu",
 			}
 		);
 		

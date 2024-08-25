@@ -7,13 +7,11 @@
 #include "UsdWrappers/UsdPrim.h"
 
 #if USE_USD_SDK
-
 #include "USDIncludesStart.h"
-	#include "pxr/usd/usd/prim.h"
-	#include "pxr/usd/usd/references.h"
+#include "pxr/usd/usd/prim.h"
+#include "pxr/usd/usd/references.h"
 #include "USDIncludesEnd.h"
-
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 namespace UE
 {
@@ -48,9 +46,9 @@ namespace UE
 
 			// pxr::UsdReferences has no default constructor, so we store the prim itself.
 			TUsdStore<pxr::UsdPrim> PxrUsdPrim;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 		};
-	}
+	}	  // namespace Internal
 
 	FUsdReferences::FUsdReferences()
 	{
@@ -61,7 +59,7 @@ namespace UE
 	{
 #if USE_USD_SDK
 		Impl = MakeUnique<Internal::FUsdReferencesImpl>(Other.Impl->PxrUsdPrim.Get());
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	FUsdReferences::FUsdReferences(FUsdReferences&& Other) = default;
@@ -70,7 +68,7 @@ namespace UE
 	{
 #if USE_USD_SDK
 		Impl = MakeUnique<Internal::FUsdReferencesImpl>(Other.Impl->PxrUsdPrim.Get());
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return *this;
 	}
@@ -93,7 +91,7 @@ namespace UE
 		return (bool)Impl->PxrUsdPrim.Get();
 #else
 		return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 #if USE_USD_SDK
@@ -134,15 +132,27 @@ namespace UE
 	{
 		Impl = MakeUnique<Internal::FUsdReferencesImpl>(InPrim);
 	}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 	bool FUsdReferences::AddReference(const FSdfReference& Reference, EUsdListPosition Position)
 	{
 #if USE_USD_SDK
-		static_assert((int32)EUsdListPosition::FrontOfPrependList == (int32)pxr::UsdListPositionFrontOfPrependList, "EUsdListPosition enum doesn't match USD!");
-		static_assert((int32)EUsdListPosition::BackOfPrependList == (int32)pxr::UsdListPositionBackOfPrependList, "EUsdListPosition enum doesn't match USD!");
-		static_assert((int32)EUsdListPosition::FrontOfAppendList == (int32)pxr::UsdListPositionFrontOfAppendList, "EUsdListPosition enum doesn't match USD!");
-		static_assert((int32)EUsdListPosition::BackOfAppendList == (int32)pxr::UsdListPositionBackOfAppendList, "EUsdListPosition enum doesn't match USD!");
+		static_assert(
+			(int32)EUsdListPosition::FrontOfPrependList == (int32)pxr::UsdListPositionFrontOfPrependList,
+			"EUsdListPosition enum doesn't match USD!"
+		);
+		static_assert(
+			(int32)EUsdListPosition::BackOfPrependList == (int32)pxr::UsdListPositionBackOfPrependList,
+			"EUsdListPosition enum doesn't match USD!"
+		);
+		static_assert(
+			(int32)EUsdListPosition::FrontOfAppendList == (int32)pxr::UsdListPositionFrontOfAppendList,
+			"EUsdListPosition enum doesn't match USD!"
+		);
+		static_assert(
+			(int32)EUsdListPosition::BackOfAppendList == (int32)pxr::UsdListPositionBackOfAppendList,
+			"EUsdListPosition enum doesn't match USD!"
+		);
 
 		if (Impl->PxrUsdPrim.Get())
 		{
@@ -154,11 +164,9 @@ namespace UE
 
 			const pxr::SdfReference UsdReference(AssetPath, UsdPrimPath, UsdLayerOffset);
 
-			return Impl->PxrUsdPrim.Get().GetReferences().AddReference(
-				UsdReference,
-				static_cast<pxr::UsdListPosition>(Position));
+			return Impl->PxrUsdPrim.Get().GetReferences().AddReference(UsdReference, static_cast<pxr::UsdListPosition>(Position));
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return false;
 	}
@@ -167,7 +175,8 @@ namespace UE
 		const FString& Identifier,
 		const FSdfPath& PrimPath,
 		const FSdfLayerOffset& LayerOffset,
-		EUsdListPosition Position)
+		EUsdListPosition Position
+	)
 	{
 #if USE_USD_SDK
 		if (Impl->PxrUsdPrim.Get())
@@ -179,17 +188,18 @@ namespace UE
 			const pxr::SdfLayerOffset UsdLayerOffset(LayerOffset.Offset, LayerOffset.Scale);
 
 			return Impl->PxrUsdPrim.Get().GetReferences().AddReference(
-				UsdIdentifier, UsdPrimPath, UsdLayerOffset, static_cast<pxr::UsdListPosition>(Position));
+				UsdIdentifier,
+				UsdPrimPath,
+				UsdLayerOffset,
+				static_cast<pxr::UsdListPosition>(Position)
+			);
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return false;
 	}
 
-	bool FUsdReferences::AddReference(
-		const FString& Identifier,
-		const FSdfLayerOffset& LayerOffset,
-		EUsdListPosition Position)
+	bool FUsdReferences::AddReference(const FString& Identifier, const FSdfLayerOffset& LayerOffset, EUsdListPosition Position)
 	{
 #if USE_USD_SDK
 		if (Impl->PxrUsdPrim.Get())
@@ -199,18 +209,14 @@ namespace UE
 			const std::string UsdIdentifier(TCHAR_TO_ANSI(*Identifier));
 			const pxr::SdfLayerOffset UsdLayerOffset(LayerOffset.Offset, LayerOffset.Scale);
 
-			return Impl->PxrUsdPrim.Get().GetReferences().AddReference(
-				UsdIdentifier, UsdLayerOffset, static_cast<pxr::UsdListPosition>(Position));
+			return Impl->PxrUsdPrim.Get().GetReferences().AddReference(UsdIdentifier, UsdLayerOffset, static_cast<pxr::UsdListPosition>(Position));
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return false;
 	}
 
-	bool FUsdReferences::AddInternalReference(
-		const FSdfPath& PrimPath,
-		const FSdfLayerOffset& LayerOffset,
-		EUsdListPosition Position)
+	bool FUsdReferences::AddInternalReference(const FSdfPath& PrimPath, const FSdfLayerOffset& LayerOffset, EUsdListPosition Position)
 	{
 #if USE_USD_SDK
 		if (Impl->PxrUsdPrim.Get())
@@ -221,9 +227,12 @@ namespace UE
 			const pxr::SdfLayerOffset UsdLayerOffset(LayerOffset.Offset, LayerOffset.Scale);
 
 			return Impl->PxrUsdPrim.Get().GetReferences().AddInternalReference(
-				UsdPrimPath, UsdLayerOffset, static_cast<pxr::UsdListPosition>(Position));
+				UsdPrimPath,
+				UsdLayerOffset,
+				static_cast<pxr::UsdListPosition>(Position)
+			);
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return false;
 	}
@@ -243,7 +252,7 @@ namespace UE
 
 			return Impl->PxrUsdPrim.Get().GetReferences().RemoveReference(UsdReference);
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return false;
 	}
@@ -257,7 +266,7 @@ namespace UE
 
 			return Impl->PxrUsdPrim.Get().GetReferences().ClearReferences();
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return false;
 	}
@@ -283,7 +292,7 @@ namespace UE
 
 			return Impl->PxrUsdPrim.Get().GetReferences().SetReferences(UsdReferences);
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return false;
 	}
@@ -295,8 +304,8 @@ namespace UE
 		{
 			return FUsdPrim(Impl->PxrUsdPrim.Get());
 		}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 		return FUsdPrim{};
 	}
-}
+}	 // namespace UE

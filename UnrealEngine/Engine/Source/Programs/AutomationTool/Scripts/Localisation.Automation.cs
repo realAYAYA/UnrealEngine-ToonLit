@@ -1,7 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.IO;
@@ -13,7 +12,8 @@ using EpicGames.Core;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 
-using static AutomationTool.CommandUtils;
+
+
 
 [Help("Updates the external localization data using the arguments provided.")]
 [Help("UEProjectRoot", "Optional root-path to the project we're gathering for (defaults to CmdEnv.LocalRoot if unset).")]
@@ -24,7 +24,10 @@ using static AutomationTool.CommandUtils;
 [Help("LocalizationProvider", "Optional localization provide override.")]
 [Help("LocalizationSteps", "Optional comma separated list of localization steps to perform [Download, Gather, Import, Export, Compile, GenerateReports, Upload] (default is all). Only valid for projects using a modular config.")]
 [Help("IncludePlugins", "Optional flag to include plugins from within the given UEProjectDirectory as part of the gather. This may optionally specify a comma separated list of the specific plugins to gather (otherwise all plugins will be gathered).")]
+[Help("IncludePluginsDirectory", "Optional parameter that is a list of relative paths to a directory under UEProjectDirectory separated by a ';' character. All plugins under this directory will be gathered from (if not excluded) E.g -IncludePluginsDirectory=\"Plugins/A;Plugins/B;Plugins/C\"")]
 [Help("ExcludePlugins", "Optional comma separated list of plugins to exclude from the gather.")]
+[Help("ExcludePluginsDirectory", "Optional list of relative paths to a directory under UEProjectDirectory separated by the ';' character. All plugins under this directory will be excluded from gather. E.g -ExcludePluginsDirectory=\"Plugins/A;Plugins/B;Plugins/C\"")]
+[Help("EnableIncludedPlugins", "Optional flag that passes all included plugins that aren't excluded to the -EnablePlugins editor argument to ensure content and metadata for plugins are loaded for gathering.")]
 [Help("IncludePlatforms", "Optional flag to include platforms from within the given UEProjectDirectory as part of the gather.")]
 [Help("AdditionalCommandletArguments", "Optional arguments to pass to the gather process.")]
 [Help("ParallelGather", "Run the gather processes for a single batch in parallel rather than sequence.")]
@@ -55,7 +58,7 @@ class Localize : BuildCommand
 			RootWorkingDirectory = CombinePaths(InUEProjectRoot, Batch.UEProjectDirectory);
 			RootLocalizationTargetDirectory = CombinePaths(InUEProjectRoot, Batch.LocalizationTargetDirectory);
 
-			// Try and find our localization provider
+			//Try and find our localization provider
 			{
 				LocalizationProvider.LocalizationProviderArgs LocProviderArgs;
 				LocProviderArgs.RootWorkingDirectory = RootWorkingDirectory;
@@ -75,176 +78,201 @@ class Localize : BuildCommand
 		public List<IProcessResult> GatherProcessResults = new List<IProcessResult>();
 	};
 
+	private abstract class IGatherTextCommandletLauncherStrategy
+	{
+		public class Args
+		{
+			public string AbsoluteEditorExePath { get; set; } = "";
+			public ERunOptions CommandletRunOptions { get; set; } = ERunOptions.Default;
+			public string AbsoluteUEProjectDirectoryPath { get; set; } = "";
+			public string UEProjectName { get; set; } = "";
+			public string EditorArgs { get; set; } = "";
+			public List<string> LocalizationStepNames { get; set; } = new();
+
+			public string GetAbsoluteUEProjectPath()
+			{
+				// This implies that we're gathering for the Engine 
+				if (String.IsNullOrEmpty(UEProjectName))
+				{
+					return "";
+				}
+				return Path.Combine(AbsoluteUEProjectDirectoryPath, $"{UEProjectName}.uproject");
+			}
+		}
+
+		public IGatherTextCommandletLauncherStrategy(IGatherTextCommandletLauncherStrategy.Args InArgs)
+		{
+			LauncherArgs = InArgs;
+		}
+		public abstract void LaunchCommandlet(List<LocalizationTask> LocalizationTasks);
+
+		protected readonly IGatherTextCommandletLauncherStrategy.Args LauncherArgs;
+	}
+
+	private class BatchedGatherTextCommandletLauncherStrategy : IGatherTextCommandletLauncherStrategy
+	{
+		public BatchedGatherTextCommandletLauncherStrategy(IGatherTextCommandletLauncherStrategy.Args InArgs) : base(InArgs)
+		{
+
+		}
+		
+		public override void LaunchCommandlet(List<LocalizationTask> LocalizationTasks)
+		{
+			foreach (var LocalizationTask in LocalizationTasks)
+			{
+				foreach (var ProjectInfo in LocalizationTask.ProjectInfos)
+				{
+					List<string> LocalizationConfigFiles = ProjectInfo.GetConfigFilesToRun(LauncherArgs.LocalizationStepNames);
+					if (LocalizationConfigFiles.Count > 0)
+					{
+						string ConcatenatedConfigFiles = String.Join(";", LocalizationConfigFiles);
+						string CommandLine = $"\"{LauncherArgs.GetAbsoluteUEProjectPath()}\" -run=GatherText -config=\"{ConcatenatedConfigFiles}\" {LauncherArgs.EditorArgs}";
+						Logger.LogInformation("Running localization commandlet for '{Arg0}': {Arguments}", ProjectInfo.ProjectName, CommandLine);
+						LocalizationTask.GatherProcessResults.Add(Run(LauncherArgs.AbsoluteEditorExePath, CommandLine, null,	LauncherArgs.CommandletRunOptions));
+					}
+					else
+					{
+						Logger.LogInformation($"Localization target '{ProjectInfo.ProjectName}' has no valid config files associated with the specified localization steps. The localization target will not be gathered.");
+						LocalizationTask.GatherProcessResults.Add(null);
+					}
+				}
+			}
+		}
+	}
+
+	private class ConsolidatedGatherTextCommandletLauncherStrategy : IGatherTextCommandletLauncherStrategy
+	{
+		public ConsolidatedGatherTextCommandletLauncherStrategy(IGatherTextCommandletLauncherStrategy.Args InArgs) : base(InArgs)
+		{
+
+		}
+		public override void LaunchCommandlet(List<LocalizationTask> LocalizationTasks)
+		{
+			List<string> ConsolidatedConfigFiles = new List<string>();
+			List<string> ProjectsToGather = new List<string>();
+			foreach (var LocalizationTask in LocalizationTasks)
+			{
+				foreach (var ProjectInfo in LocalizationTask.ProjectInfos)
+				{
+					List<string> LocalizationConfigFiles = ProjectInfo.GetConfigFilesToRun(LauncherArgs.LocalizationStepNames);
+					if (LocalizationConfigFiles.Count > 0)
+					{
+						ConsolidatedConfigFiles.AddRange(ProjectInfo.GetConfigFilesToRun(LauncherArgs.LocalizationStepNames));
+						ProjectsToGather.Add(ProjectInfo.ProjectName);
+					}
+					else
+					{
+						Logger.LogInformation($"Localization target {ProjectInfo.ProjectName} will not be gathered because it does not have localization config files that can be run.");
+					}
+					
+				}
+			}
+
+			// Now that we've consolidated all the config files, we write them out to the Saved Directory 
+			string SaveDirectory = Path.Combine(LauncherArgs.AbsoluteUEProjectDirectoryPath, "Saved", "Localization");
+			if (!Directory.Exists(SaveDirectory))
+			{
+				Directory.CreateDirectory(SaveDirectory);
+			}
+			// we append a GUID to the file name to ensure that parallel gathers can still work without stomping on the file and multiple runs of the Localize command can still result in unique files for debugging 
+			string SaveFile = Path.Combine(SaveDirectory, $"ConfigList_{Guid.NewGuid()}.txt");
+			File.WriteAllLines(SaveFile, ConsolidatedConfigFiles);
+
+			// now construct the command line and run 
+			string CommandLine = $"\"{LauncherArgs.GetAbsoluteUEProjectPath()}\" -run=GatherText -ConfigList=\"{SaveFile}\" {LauncherArgs.EditorArgs}";
+			string ConcatenatedProjectsString = String.Join(",", ProjectsToGather);
+			Logger.LogInformation($"Consolidating localization gather for following localization targets: \"{ConcatenatedProjectsString}\"");
+			Logger.LogInformation($"Running consolidated gather text commandlet - {CommandLine}");
+			IProcessResult ConsolidatedProcessResult = Run(LauncherArgs.AbsoluteEditorExePath, CommandLine, null, LauncherArgs.CommandletRunOptions);
+
+			// Go through all tasks and set the gather process result  accordingly for the various projects
+			// We need to do this otherwise projects won't be uploaded successfully 
+			foreach (var LocalizationTask in LocalizationTasks)
+			{
+				foreach (var ProjectInfo in LocalizationTask.ProjectInfos)
+				{
+					List<string> LocalizationConfigFiles = ProjectInfo.GetConfigFilesToRun(LauncherArgs.LocalizationStepNames);
+					if (LocalizationConfigFiles.Count > 0)
+					{
+						LocalizationTask.GatherProcessResults.Add(ConsolidatedProcessResult);
+					}
+					else
+					{
+						LocalizationTask.GatherProcessResults.Add(null);
+					}
+				}
+			}
+		}
+	}
+
+	private string UEProjectRoot = CmdEnv.LocalRoot;
+	private string UEProjectDirectory = "";
+	private string UEProjectName = "";
+	private List<string> LocalizationProjectNames = new();
+	private string LocalizationProviderName = "";
+	private List<string> LocalizationStepNames = new();
+	private bool bShouldGatherPlugins = false;
+	private bool bShouldEnableIncludedPlugins = false;
+	private List<string> IncludePlugins = new();
+	private List<string> ExcludePlugins = new();
+	private bool bShouldGatherPlatforms = false;
+	private string AdditionalCommandletArguments = "";
+	private bool bEnableParallelGather = false;
+	private bool bIsRunningInPreview = false;
+	private bool bPreserveAutoGeneratedResources = false;
+	private bool bConsolidateConfigFiles = false;
+	private int PendingChangeList = -1;
+
+	HashSet<string> AutoGeneratedFiles = new();
+	HashSet<string> AutoGeneratedDirectories = new();
+
 	public override void ExecuteBuild()
 	{
-		var UEProjectRoot = ParseParamValue("UEProjectRoot");
-		if (UEProjectRoot == null)
-		{
-			UEProjectRoot = CmdEnv.LocalRoot;
-		}
+		ParseCommandLine();
 
-		var UEProjectDirectory = ParseParamValue("UEProjectDirectory");
-		if (UEProjectDirectory == null)
-		{
-			throw new AutomationException("Missing required command line argument: 'UEProjectDirectory'");
-		}
-
-		var UEProjectName = ParseParamValue("UEProjectName");
-		if (UEProjectName == null)
-		{
-			UEProjectName = "";
-		}
-
-		var LocalizationProjectNames = new List<string>();
-		{
-			var LocalizationProjectNamesStr = ParseParamValue("LocalizationProjectNames");
-			if (LocalizationProjectNamesStr != null)
-			{
-				foreach (var ProjectName in LocalizationProjectNamesStr.Split(','))
-				{
-					LocalizationProjectNames.Add(ProjectName.Trim());
-				}
-			}
-		}
-
-		var LocalizationProviderName = ParseParamValue("LocalizationProvider");
-		if (LocalizationProviderName == null)
-		{
-			LocalizationProviderName = "";
-		}
-
-		var LocalizationStepNames = new List<string>();
-		{
-			var LocalizationStepNamesStr = ParseParamValue("LocalizationSteps");
-			if (LocalizationStepNamesStr == null)
-			{
-				LocalizationStepNames.AddRange(new string[] { "Download", "Gather", "Import", "Export", "Compile", "GenerateReports", "Upload" });
-			}
-			else
-			{
-				foreach (var StepName in LocalizationStepNamesStr.Split(','))
-				{
-					LocalizationStepNames.Add(StepName.Trim());
-				}
-			}
-			LocalizationStepNames.Add("Monolithic"); // Always allow the monolithic scripts to run as we don't know which steps they do
-		}
-
-		var ShouldGatherPlugins = ParseParam("IncludePlugins");
-		var IncludePlugins = new List<string>();
-		var ExcludePlugins = new List<string>();
-		if (ShouldGatherPlugins)
-		{
-			var IncludePluginsStr = ParseParamValue("IncludePlugins");
-			if (IncludePluginsStr != null)
-			{
-				foreach (var PluginName in IncludePluginsStr.Split(','))
-				{
-					IncludePlugins.Add(PluginName.Trim());
-				}
-			}
-
-			var ExcludePluginsStr = ParseParamValue("ExcludePlugins");
-			if (ExcludePluginsStr != null)
-			{
-				foreach (var PluginName in ExcludePluginsStr.Split(','))
-				{
-					ExcludePlugins.Add(PluginName.Trim());
-				}
-			}
-		}
-
-		var ShouldGatherPlatforms = ParseParam("IncludePlatforms");
-
-		var AdditionalCommandletArguments = ParseParamValue("AdditionalCommandletArguments");
-		if (AdditionalCommandletArguments == null)
-		{
-			AdditionalCommandletArguments = "";
-		}
-
-		var EnableParallelGather = ParseParam("ParallelGather");
-
-		var IsRunningInPreview = ParseParam("Preview");
-		// We pass the preview switch along to have the gather text commandlets exhibit different behaviors. See UGatherTextCommandlet
-		if (IsRunningInPreview)
-		{
-			Logger.LogInformation("Running in preview mode. Preview switch will be passed along to all localization commandlets to be run.");
-			AdditionalCommandletArguments += " -Preview";
-		}
-			
-
-			var StartTime = DateTime.UtcNow;
+		var StartTime = DateTime.UtcNow;
 
 		var LocalizationBatches = new List<LocalizationBatch>();
-
 		// Add the static set of localization projects as a batch
 		if (LocalizationProjectNames.Count > 0)
 		{
-			LocalizationBatches.Add(new LocalizationBatch(UEProjectDirectory, UEProjectDirectory, "", LocalizationProjectNames));
+			AddStaticLocalizationBatches(LocalizationBatches);
 		}
 
 		// Build up any additional batches needed for platforms
-		if (ShouldGatherPlatforms)
+		if (bShouldGatherPlatforms)
 		{
-			var PlatformsRootDirectory = new DirectoryReference(CombinePaths(UEProjectRoot, UEProjectDirectory, "Platforms"));
-			if (DirectoryReference.Exists(PlatformsRootDirectory))
-			{
-				foreach (DirectoryReference PlatformDirectory in DirectoryReference.EnumerateDirectories(PlatformsRootDirectory))
-				{
-					// Find the localization targets defined for this platform
-					var PlatformTargetNames = GetLocalizationTargetsFromDirectory(new DirectoryReference(CombinePaths(PlatformDirectory.FullName, "Config", "Localization")));
-					if (PlatformTargetNames.Count > 0)
-					{
-						var RootRelativePluginPath = PlatformDirectory.MakeRelativeTo(new DirectoryReference(UEProjectRoot));
-						RootRelativePluginPath = RootRelativePluginPath.Replace('\\', '/'); // Make sure we use / as these paths are used with P4
-
-						LocalizationBatches.Add(new LocalizationBatch(UEProjectDirectory, RootRelativePluginPath, "", PlatformTargetNames));
-					}
-				}
-			}
+			AddPlatformLocalizationBatches(LocalizationBatches);
 		}
 
 		// Build up any additional batches needed for plugins
-		if (ShouldGatherPlugins)
+		if (bShouldGatherPlugins)
 		{
-			var PluginsRootDirectory = new DirectoryReference(CombinePaths(UEProjectRoot, UEProjectDirectory));
-			IReadOnlyList<PluginInfo> AllPlugins = Plugins.ReadPluginsFromDirectory(PluginsRootDirectory, "Plugins", UEProjectName.Length == 0 ? PluginType.Engine : PluginType.Project);
-
-			// Add a batch for each plugin that meets our criteria
-			var AvailablePluginNames = new HashSet<string>();
-			foreach (var PluginInfo in AllPlugins)
+			HashSet<string> PluginsAdded = new();
+			HashSet<string> AdditionalPluginsToExclude = new HashSet<string>();
+			AddPluginLocalizationBatches(LocalizationBatches, PluginsAdded, AdditionalPluginsToExclude);
+			if (PluginsAdded.Count > 0)
 			{
-				AvailablePluginNames.Add(PluginInfo.Name);
-
-				bool ShouldIncludePlugin = (IncludePlugins.Count == 0 || IncludePlugins.Contains(PluginInfo.Name)) && !ExcludePlugins.Contains(PluginInfo.Name);
-				if (ShouldIncludePlugin && PluginInfo.Descriptor.LocalizationTargets != null && PluginInfo.Descriptor.LocalizationTargets.Length > 0)
-				{
-					var RootRelativePluginPath = PluginInfo.Directory.MakeRelativeTo(new DirectoryReference(UEProjectRoot));
-					RootRelativePluginPath = RootRelativePluginPath.Replace('\\', '/'); // Make sure we use / as these paths are used with P4
-
-					var PluginTargetNames = new List<string>();
-					foreach (var LocalizationTarget in PluginInfo.Descriptor.LocalizationTargets)
-					{
-						PluginTargetNames.Add(LocalizationTarget.Name);
-					}
-
-					LocalizationBatches.Add(new LocalizationBatch(UEProjectDirectory, RootRelativePluginPath, PluginInfo.Name, PluginTargetNames));
-				}
+				AutoGeneratePluginLocalizationFiles(PluginsAdded);
 			}
-
-			// If we had an explicit list of plugins to include, warn if any were missing
-			foreach (string PluginName in IncludePlugins)
+			if (AdditionalPluginsToExclude.Count > 0)
 			{
-				if (!AvailablePluginNames.Contains(PluginName))
-				{
-					Logger.LogWarning("The plugin '{PluginName}' specified by -IncludePlugins wasn't found and will be skipped.", PluginName);
-				}
+				// We now remove these plugins from the include plugins list so that we don't enable them unnecessarily down the line 
+				Logger.LogInformation($"Removing {AdditionalPluginsToExclude.Count} additional plugins that do not need to be localized.");
+				// Technically we could just set the include plugins to be the added plugisn, but we leave this exclusion explicit to make things clearer
+				// Further, additional logic can be included next time to modify what plugisn should be removed 
+				IncludePlugins = IncludePlugins.Except(AdditionalPluginsToExclude.ToList()).ToList();
 			}
 		}
 
+		if (LocalizationBatches.Count == 0)
+		{
+			Logger.LogWarning("No localization batches found from input parameters provided. Nothing will be localized.");
+			return;
+		}
+
 		// Create a single changelist to use for all changes
-		int PendingChangeList = 0;
-		if (P4Enabled && !IsRunningInPreview)
+		if (P4Enabled && !bIsRunningInPreview)
 		{
 			var ChangeListCommitMessage = String.Format("Localization Automation using CL {0}", P4Env.Changelist);
 			if (File.Exists(CombinePaths(CmdEnv.LocalRoot, @"Engine/Restricted/NotForLicensees/Build/EpicInternal.txt")))
@@ -280,11 +308,362 @@ class Localize : BuildCommand
 
 		// Hash the current PO files on disk so we can work out whether they actually change
 		Dictionary<string, byte[]> InitalPOFileHashes = null;
-		if (P4Enabled && !IsRunningInPreview)
+		if (P4Enabled && !bIsRunningInPreview)
 		{
 			InitalPOFileHashes = GetPOFileHashes(LocalizationBatches, UEProjectRoot);
 		}
 
+		InitializeLocalizationProvider(LocalizationTasks);
+
+		// Download the latest translations from our localization provider
+		if (LocalizationStepNames.Contains("Download"))
+		{
+			DownloadFilesFromLocalizationProvider(LocalizationTasks);
+		}
+
+		// Begin the gather command for each task
+		// These can run in parallel when ParallelGather is enabled
+		StartGatherCommands(LocalizationTasks);
+
+		// Wait for each commandlet process to finish and report the result.
+		// This runs even for non-parallel execution to log the exit state of the process.
+		WaitForCommandletResults(LocalizationTasks);
+
+		// If we are running in preview, we can go ahead and delete all generated preview files after the gather step is complete
+		if (bIsRunningInPreview)
+        {
+			CleanUpGeneratedPreviewFiles(LocalizationBatches);
+		}
+
+		if (!bPreserveAutoGeneratedResources)
+		{
+			CleanUpAutoGeneratedFiles();
+		}
+
+		// Upload the latest sources to our localization provider
+		if (LocalizationStepNames.Contains("Upload"))
+		{
+			UploadFilesToLocalizationProvider(LocalizationTasks);
+		}
+
+		// Clean-up the changelist so it only contains the changed files, and then submit it (if we were asked to)
+		if (P4Enabled && !bIsRunningInPreview)
+		{
+			// Revert any PO files that haven't changed aside from their header
+			RevertUnchangedFiles(LocalizationBatches, InitalPOFileHashes);
+
+			// Submit that single changelist now
+			if (AllowSubmit)
+			{
+				int SubmittedChangeList;
+				P4.Submit(PendingChangeList, out SubmittedChangeList);
+			}
+		}
+
+		var RunDuration = (DateTime.UtcNow - StartTime).TotalMilliseconds;
+		Logger.LogInformation("Localize command finished in {Arg0} seconds", RunDuration / 1000);
+	}
+
+	private void ParseCommandLine()
+	{
+		UEProjectRoot = ParseParamValue("UEProjectRoot", Default: CmdEnv.LocalRoot);
+		UEProjectDirectory = ParseParamValue("UEProjectDirectory");
+		if (UEProjectDirectory == null)
+		{
+			throw new AutomationException("Missing required command line argument: 'UEProjectDirectory'");
+		}
+
+		UEProjectName = ParseParamValue("UEProjectName", Default: "");
+
+		{
+			var LocalizationProjectNamesStr = ParseParamValue("LocalizationProjectNames");
+			if (LocalizationProjectNamesStr != null)
+			{
+				foreach (var ProjectName in LocalizationProjectNamesStr.Split(','))
+				{
+					LocalizationProjectNames.Add(ProjectName.Trim());
+				}
+			}
+		}
+
+		LocalizationProviderName = ParseParamValue("LocalizationProvider", Default: "");
+
+		{
+			var LocalizationStepNamesStr = ParseParamValue("LocalizationSteps");
+			if (LocalizationStepNamesStr == null)
+			{
+				LocalizationStepNames.AddRange(new string[] { "Download", "Gather", "Import", "Export", "Compile", "GenerateReports", "Upload" });
+			}
+			else
+			{
+				foreach (var StepName in LocalizationStepNamesStr.Split(','))
+				{
+					LocalizationStepNames.Add(StepName.Trim());
+				}
+			}
+			LocalizationStepNames.Add("Monolithic"); // Always allow the monolithic scripts to run as we don't know which steps they do
+		}
+
+		bShouldGatherPlugins = ParseParam("IncludePlugins");
+		bShouldEnableIncludedPlugins = ParseParam("EnableIncludedPlugins");
+
+		string PluginsRootPath = CombinePaths(UEProjectRoot, UEProjectDirectory);
+		string IncludePluginsUnderDirectoryStr = ParseParamValue("IncludePluginsDirectory");
+		if (!string.IsNullOrEmpty(IncludePluginsUnderDirectoryStr))
+		{
+			bShouldGatherPlugins = true;
+			foreach (string IncludePluginDirectory in IncludePluginsUnderDirectoryStr.Split(";"))
+			{
+				string AbsolutePathToIncludePluginsDirectory = Path.Combine(PluginsRootPath, IncludePluginDirectory.Trim());
+				IncludePlugins.AddRange(LocalizationUtilities.GetPluginNamesUnderDirectory(AbsolutePathToIncludePluginsDirectory, PluginsRootPath, UEProjectName.Length == 0 ? PluginType.Engine : PluginType.Project));
+			}
+		}
+
+		string ExcludePluginsUnderDirectoryStr = ParseParamValue("ExcludePluginsDirectory");
+		if (!string.IsNullOrEmpty(ExcludePluginsUnderDirectoryStr))
+		{
+			foreach (string ExcludePluginDirectory in ExcludePluginsUnderDirectoryStr.Split(";"))
+			{
+				string AbsolutePathToExcludePluginsDirectory = Path.Combine(PluginsRootPath, ExcludePluginDirectory.Trim());
+				ExcludePlugins.AddRange(LocalizationUtilities.GetPluginNamesUnderDirectory(AbsolutePathToExcludePluginsDirectory, PluginsRootPath, UEProjectName.Length == 0 ? PluginType.Engine : PluginType.Project));
+			}
+
+		}
+
+		if (bShouldGatherPlugins)
+		{
+			var IncludePluginsStr = ParseParamValue("IncludePlugins");
+			if (!string.IsNullOrEmpty(IncludePluginsStr))
+			{
+				foreach (var PluginName in IncludePluginsStr.Split(','))
+				{
+					IncludePlugins.Add(PluginName.Trim());
+				}
+			}
+
+			var ExcludePluginsStr = ParseParamValue("ExcludePlugins");
+			if (ExcludePluginsStr != null)
+			{
+				foreach (var PluginName in ExcludePluginsStr.Split(','))
+				{
+					ExcludePlugins.Add(PluginName.Trim());
+				}
+			}
+		}
+
+		bShouldGatherPlatforms = ParseParam("IncludePlatforms");
+
+		AdditionalCommandletArguments = ParseParamValue("AdditionalCommandletArguments", Default: "");
+		// We remove any leading or trailing quotes from AdditionalCommandletArguments
+		if (!String.IsNullOrEmpty(AdditionalCommandletArguments))
+		{
+			AdditionalCommandletArguments = AdditionalCommandletArguments.Trim();
+			if (AdditionalCommandletArguments.StartsWith("\"") && AdditionalCommandletArguments.EndsWith("\""))
+			{
+				// We subtract 2 to remove the last " character
+				AdditionalCommandletArguments = AdditionalCommandletArguments[1..^1];
+			}
+		}
+
+		bEnableParallelGather = ParseParam("ParallelGather");
+		if (bEnableParallelGather)
+		{
+			Logger.LogInformation("Parallel gather enabled. Multiple instances of the editor will be used to gather each individual localization batch.");
+		}
+
+		bIsRunningInPreview = ParseParam("Preview");
+		// We pass the preview switch along to have the gather text commandlets exhibit different behaviors. See UGatherTextCommandlet
+		if (bIsRunningInPreview)
+		{
+			Logger.LogInformation("Running in preview mode. Preview switch will be passed along to all localization commandlets to be run.");
+			AdditionalCommandletArguments += " -Preview";
+		}
+
+		bPreserveAutoGeneratedResources = ParseParam("PreserveAutoGeneratedResources");
+		if (bPreserveAutoGeneratedResources)
+		{
+			Logger.LogInformation("Preserving auto-generated content. Auto-generated files and folders will not be automatically cleaned up at the end of this command.");
+		}
+
+		bConsolidateConfigFiles = ParseParam("ConsolidateConfigFiles");
+		if (bConsolidateConfigFiles)
+		{
+			Logger.LogInformation("Consolidating config files for various localization targets. A single instance of the Editor will be run to perform all localization gather steps.");
+		}
+	}
+
+	private void AddStaticLocalizationBatches(List<LocalizationBatch> LocalizationBatches)
+	{
+		LocalizationBatches.Add(new LocalizationBatch(UEProjectDirectory, UEProjectDirectory, "", LocalizationProjectNames));
+	}
+
+	private void AddPlatformLocalizationBatches(List<LocalizationBatch> LocalizationBatches)
+	{
+		var PlatformsRootDirectory = new DirectoryReference(CombinePaths(UEProjectRoot, UEProjectDirectory, "Platforms"));
+		if (DirectoryReference.Exists(PlatformsRootDirectory))
+		{
+			foreach (DirectoryReference PlatformDirectory in DirectoryReference.EnumerateDirectories(PlatformsRootDirectory))
+			{
+				// Find the localization targets defined for this platform
+				var PlatformTargetNames = GetLocalizationTargetsFromDirectory(new DirectoryReference(CombinePaths(PlatformDirectory.FullName, "Config", "Localization")));
+				if (PlatformTargetNames.Count > 0)
+				{
+					var RootRelativePluginPath = PlatformDirectory.MakeRelativeTo(new DirectoryReference(UEProjectRoot));
+					RootRelativePluginPath = RootRelativePluginPath.Replace('\\', '/'); // Make sure we use / as these paths are used with P4
+
+					LocalizationBatches.Add(new LocalizationBatch(UEProjectDirectory, RootRelativePluginPath, "", PlatformTargetNames));
+				}
+			}
+		}
+	}
+
+	private void AddPluginLocalizationBatches(List<LocalizationBatch> LocalizationBatches, HashSet<string> PluginsAdded, HashSet<string> AdditionalPluginsToExclude)
+	{
+		var PluginsRootDirectory = new DirectoryReference(CombinePaths(UEProjectRoot, UEProjectDirectory));
+		IReadOnlyList<PluginInfo> AllPlugins = Plugins.ReadPluginsFromDirectory(PluginsRootDirectory, "Plugins", UEProjectName.Length == 0 ? PluginType.Engine : PluginType.Project);
+
+		// Add a batch for each plugin that meets our criteria
+		var AvailablePluginNames = new HashSet<string>();
+		foreach (var PluginInfo in AllPlugins)
+		{
+			AvailablePluginNames.Add(PluginInfo.Name);
+
+			bool bShouldIncludePlugin = (IncludePlugins.Count == 0 || IncludePlugins.Contains(PluginInfo.Name)) && !ExcludePlugins.Contains(PluginInfo.Name);
+			bool bPluginHasLocalizationTarget = PluginInfo.Descriptor.LocalizationTargets != null && PluginInfo.Descriptor.LocalizationTargets.Length > 0;
+			if (bShouldIncludePlugin && bPluginHasLocalizationTarget)
+			{
+				var RootRelativePluginPath = PluginInfo.Directory.MakeRelativeTo(new DirectoryReference(UEProjectRoot));
+				RootRelativePluginPath = RootRelativePluginPath.Replace('\\', '/'); // Make sure we use / as these paths are used with P4
+
+				var PluginTargetNames = new List<string>();
+				foreach (var LocalizationTarget in PluginInfo.Descriptor.LocalizationTargets)
+				{
+					// we only add the plugin target if the config generation policy is auto or user, i.e it should actually participate in the localization gather 
+					if (LocalizationTarget.ConfigGenerationPolicy != LocalizationConfigGenerationPolicy.Never)
+					{
+						PluginTargetNames.Add(LocalizationTarget.Name);
+					}
+					
+				}
+
+				// If the plugin has no valid loc targets to gather, we don't create the batch 
+				if (PluginTargetNames.Count > 0)
+				{
+					LocalizationBatches.Add(new LocalizationBatch(UEProjectDirectory, RootRelativePluginPath, PluginInfo.Name, PluginTargetNames));
+					PluginsAdded.Add(PluginInfo.Name);
+				}
+				else
+				{
+					// The plugin doesn't actually have to be included. 
+					AdditionalPluginsToExclude.Add(PluginInfo.Name);
+				}
+			}
+		}
+
+		// If we had an explicit list of plugins to include, warn if any were missing
+		foreach (string PluginName in IncludePlugins)
+		{
+			if (!AvailablePluginNames.Contains(PluginName))
+			{
+				Logger.LogWarning("The plugin '{PluginName}' specified by -IncludePlugins wasn't found and will be skipped.", PluginName);
+			}
+			else if (!PluginsAdded.Contains(PluginName))
+			{
+				// If the plugin was in the include list of plugins but they weren't added, this means that those plugisn failed the filter. 
+				// Those plugisn should now be removed from the include list to prevent them from being enabled for no reason 
+				AdditionalPluginsToExclude.Add(PluginName);
+			}
+		}
+
+		foreach (string AdditionalPluginToExclude in AdditionalPluginsToExclude)
+		{
+			Logger.LogInformation($"The plugin '{AdditionalPluginToExclude}' has no localization targets that needs localizing and will be skipped.");
+		}
+	}
+
+	private string BuildEditorArguments()
+	{
+		var EditorArguments = P4Enabled
+				? String.Format("-SCCProvider=Perforce -P4Port={0} -P4User={1} -P4Client={2} -P4Passwd={3} -P4Changelist={4} -EnableSCC -DisableSCCSubmit", P4Env.ServerAndPort, P4Env.User, P4Env.Client, P4.GetAuthenticationToken(), PendingChangeList)
+				: "-SCCProvider=None";
+		if (IsBuildMachine)
+		{
+			EditorArguments += " -BuildMachine";
+		}
+		EditorArguments += " -Unattended";
+		EditorArguments += " -NoShaderCompile";
+		//EditorArguments += " -LogLocalizationConflicts";
+		if (bEnableParallelGather)
+		{
+			EditorArguments += " -multiprocess";
+		}
+
+		// We append all the included plugins to -EnablePlugins if -EnableIncludedPlugins is enabled. This wil ensure that the plugin content and metadata will be loaded.
+		// @TODOLocalization: Ideally the enabling of plugins should be per batch, otherwise each instance of the editor is enabling a bunch of plugins it doesn't need 
+		if (!string.IsNullOrEmpty(AdditionalCommandletArguments) && bShouldEnableIncludedPlugins && IncludePlugins.Count > 0)
+		{
+			HashSet<string> PluginsToEnableSet = IncludePlugins.Except(ExcludePlugins).ToHashSet();
+
+			// It's possible that there are already specified values for -EnabledPlugins, we willneed to try and parse them first.
+			string EnablePluginsToken = "-EnablePlugins=";
+			string EnablePluginsNewValue = "";
+
+			int EnablePluginsTokenIndex = AdditionalCommandletArguments.IndexOf(EnablePluginsToken);
+			string EnablePluginsOldValue = "";
+			if (EnablePluginsTokenIndex > -1)
+			{
+				// -EnablePlugins token exists in the additional commandlet args. We need to process it 
+				int EnablePluginsValueStartIndex = EnablePluginsTokenIndex + EnablePluginsToken.Length;
+				// We try and find the end of the string where it's separated by a space  between the next token 
+				int EnablePluginsValueEndIndex = AdditionalCommandletArguments.IndexOf(" ", EnablePluginsValueStartIndex);
+				// We can't find a next space. THis means we're the last parameter in AdditionalCommandletArguments. The end index will be the length of the string 
+				if (EnablePluginsValueEndIndex == -1)
+				{
+					EnablePluginsValueEndIndex = AdditionalCommandletArguments.Length;
+				}
+				// Isolate the value of -EnablePlugins and add them to our list of plugins to enable 
+				EnablePluginsOldValue = AdditionalCommandletArguments.Substring(EnablePluginsValueStartIndex, EnablePluginsValueEndIndex - EnablePluginsValueStartIndex);
+				foreach (string Plugin in EnablePluginsOldValue.Split(','))
+				{
+					PluginsToEnableSet.Add(Plugin);
+				}
+			}
+
+			// Just a counter to help iterate through the set to build out the comma separated value 
+			int IterationCount = 0;
+			StringBuilder EnablePluginsBuilder = new StringBuilder();
+			foreach (string Plugin in PluginsToEnableSet)
+			{
+				EnablePluginsBuilder.Append(Plugin);
+				if (IterationCount < PluginsToEnableSet.Count - 1)
+				{
+					EnablePluginsBuilder.Append(",");
+				}
+				++IterationCount;
+			}
+			EnablePluginsNewValue = EnablePluginsBuilder.ToString();
+			Logger.LogInformation($"Appending following plugins to be enabled: {EnablePluginsNewValue}");
+			// if we already had a value of -EnablePlugins in AdditionalCommandletArguments, we'll need to replace that with the new values we've created.
+			if (EnablePluginsTokenIndex > -1)
+			{
+				AdditionalCommandletArguments = AdditionalCommandletArguments.Replace(EnablePluginsToken + EnablePluginsOldValue, EnablePluginsToken + EnablePluginsNewValue);
+			}
+			else
+			{
+				// The token doesn't exist, we'll add it to the end 
+				AdditionalCommandletArguments += " " + EnablePluginsToken + EnablePluginsNewValue;
+			}
+		}
+
+		if (!String.IsNullOrEmpty(AdditionalCommandletArguments))
+		{
+			EditorArguments += " " + AdditionalCommandletArguments;
+		}
+		return EditorArguments;
+	}
+
+	private void InitializeLocalizationProvider(List<LocalizationTask> LocalizationTasks)
+	{
 		foreach (var LocalizationTask in LocalizationTasks)
 		{
 			if (LocalizationTask.LocProvider != null)
@@ -296,85 +675,102 @@ class Localize : BuildCommand
 				}
 			}
 		}
+	}
 
-		// Download the latest translations from our localization provider
-		if (LocalizationStepNames.Contains("Download"))
+	private void DownloadFilesFromLocalizationProvider(List<LocalizationTask> LocalizationTasks)
+	{
+		foreach (var LocalizationTask in LocalizationTasks)
 		{
-			foreach (var LocalizationTask in LocalizationTasks)
+			if (LocalizationTask.LocProvider != null)
 			{
-				if (LocalizationTask.LocProvider != null)
+				foreach (var ProjectInfo in LocalizationTask.ProjectInfos)
 				{
-					foreach (var ProjectInfo in LocalizationTask.ProjectInfos)
-					{
-						Task DownloadTask = LocalizationTask.LocProvider.DownloadProjectFromLocalizationProvider(ProjectInfo.ProjectName, ProjectInfo.ImportInfo);
-						DownloadTask.Wait();
-					}
+					Task DownloadTask = LocalizationTask.LocProvider.DownloadProjectFromLocalizationProvider(ProjectInfo.ProjectName, ProjectInfo.ImportInfo);
+					DownloadTask.Wait();
 				}
 			}
 		}
+	}
 
-		// Begin the gather command for each task
-		// These can run in parallel when ParallelGather is enabled
+	private void UploadFilesToLocalizationProvider(List<LocalizationTask> LocalizationTasks)
+	{
+		foreach (var LocalizationTask in LocalizationTasks)
 		{
-			var EditorExe = CombinePaths(CmdEnv.LocalRoot, @"Engine/Binaries/Win64/UnrealEditor-Cmd.exe");
-			// Set the common basic editor arguments
-			var EditorArguments = P4Enabled 
-				? String.Format("-SCCProvider=Perforce -P4Port={0} -P4User={1} -P4Client={2} -P4Passwd={3} -P4Changelist={4} -EnableSCC -DisableSCCSubmit", P4Env.ServerAndPort, P4Env.User, P4Env.Client, P4.GetAuthenticationToken(), PendingChangeList)
-				: "-SCCProvider=None";
-			if (IsBuildMachine)
+			if (LocalizationTask.LocProvider != null)
 			{
-				EditorArguments += " -BuildMachine";
-			}
-			EditorArguments += " -Unattended";
-			EditorArguments += " -NoShaderCompile";
-			//EditorArguments += " -LogLocalizationConflicts";
-			if (EnableParallelGather)
-			{
-				EditorArguments += " -multiprocess";
-			}
-			if (!String.IsNullOrEmpty(AdditionalCommandletArguments))
-			{
-				EditorArguments += " " + AdditionalCommandletArguments;
-			}
-
-			// Set the common process run options
-			var CommandletRunOptions = ERunOptions.Default | ERunOptions.NoLoggingOfRunCommand; // Disable logging of the run command as it will print the exit code which GUBP can pick up as an error (we do that ourselves later)
-			if (EnableParallelGather)
-			{
-				CommandletRunOptions |= ERunOptions.NoWaitForExit;
-			}
-
-			foreach (var LocalizationTask in LocalizationTasks)
-			{
-				var ProjectArgument = String.IsNullOrEmpty(UEProjectName) ? "" : String.Format("\"{0}\"", Path.Combine(LocalizationTask.RootWorkingDirectory, String.Format("{0}.uproject", UEProjectName)));
-
-				foreach (var ProjectInfo in LocalizationTask.ProjectInfos)
+				// Upload all text to our localization provider
+				for (int ProjectIndex = 0; ProjectIndex < LocalizationTask.ProjectInfos.Count; ++ProjectIndex)
 				{
-					var LocalizationConfigFiles = new List<string>();
-					foreach (var LocalizationStep in ProjectInfo.LocalizationSteps)
-					{
-						if (LocalizationStepNames.Contains(LocalizationStep.Name))
-						{
-							LocalizationConfigFiles.Add(LocalizationStep.LocalizationConfigFile);
-						}
-					}
+					var ProjectInfo = LocalizationTask.ProjectInfos[ProjectIndex];
+					var RunResult = LocalizationTask.GatherProcessResults[ProjectIndex];
 
-					if (LocalizationConfigFiles.Count > 0)
+					if (RunResult != null && RunResult.ExitCode == 0)
 					{
-						var Arguments = String.Format("{0} -run=GatherText -config=\"{1}\" {2}", ProjectArgument, String.Join(";", LocalizationConfigFiles), EditorArguments);
-						Logger.LogInformation("Running localization commandlet for '{Arg0}': {Arguments}", ProjectInfo.ProjectName, Arguments);
-						LocalizationTask.GatherProcessResults.Add(Run(EditorExe, Arguments, null, CommandletRunOptions));
+						// Recalculate the split platform paths before doing the upload, as the export may have changed them
+						ProjectInfo.ExportInfo.CalculateSplitPlatformNames(LocalizationTask.RootLocalizationTargetDirectory);
+						Task UploadTask = LocalizationTask.LocProvider.UploadProjectToLocalizationProvider(ProjectInfo.ProjectName, ProjectInfo.ExportInfo);
+						UploadTask.Wait();
 					}
 					else
 					{
-						LocalizationTask.GatherProcessResults.Add(null);
+						Logger.LogWarning("Skipping upload to the localization provider for '{Arg0}' due to an earlier commandlet failure.", ProjectInfo.ProjectName);
 					}
 				}
 			}
 		}
+	}
 
-		// Wait for each commandlet process to finish and report the result.
-		// This runs even for non-parallel execution to log the exit state of the process.
+	private string GetEditorExePath()
+	{
+		var EditorExe = CombinePaths(CmdEnv.LocalRoot, @"Engine/Binaries/Win64/UnrealEditor-Cmd.exe");
+		if (!File.Exists(EditorExe))
+		{
+			// Try using the debug .exe instead 
+			EditorExe = CombinePaths(CmdEnv.LocalRoot, @"Engine/Binaries/Win64/UnrealEditor-Win64-Debug-Cmd.exe");
+		}
+
+		return EditorExe;
+	}
+
+	private ERunOptions GetCommandletRunOptions()
+	{
+		var CommandletRunOptions = ERunOptions.Default | ERunOptions.NoLoggingOfRunCommand; // Disable logging of the run command as it will print the exit code which GUBP can pick up as an error (we do that ourselves later)
+		if (bEnableParallelGather)
+		{
+			CommandletRunOptions |= ERunOptions.NoWaitForExit;
+		}
+		return CommandletRunOptions;
+	}
+
+	private void StartGatherCommands(List<LocalizationTask> LocalizationTasks)
+	{
+		IGatherTextCommandletLauncherStrategy.Args Args = new();
+		Args.AbsoluteEditorExePath = GetEditorExePath();
+
+		// Set the common basic editor arguments
+		Args.EditorArgs = BuildEditorArguments();
+
+		// Set the common process run options
+		Args.CommandletRunOptions = GetCommandletRunOptions();
+
+		Args.UEProjectName = UEProjectName;
+		Args.AbsoluteUEProjectDirectoryPath = CombinePaths(UEProjectRoot, UEProjectDirectory);
+		Args.LocalizationStepNames = LocalizationStepNames;
+
+		IGatherTextCommandletLauncherStrategy Launcher;
+		if (bConsolidateConfigFiles)
+		{
+			Launcher = new ConsolidatedGatherTextCommandletLauncherStrategy(Args);
+		}
+		else
+		{
+			Launcher = new BatchedGatherTextCommandletLauncherStrategy(Args);
+		}
+		Launcher.LaunchCommandlet(LocalizationTasks);
+	}
+
+	private void WaitForCommandletResults(List<LocalizationTask> LocalizationTasks)
+	{
 		foreach (var LocalizationTask in LocalizationTasks)
 		{
 			for (int ProjectIndex = 0; ProjectIndex < LocalizationTask.ProjectInfos.Count; ++ProjectIndex)
@@ -387,7 +783,7 @@ class Localize : BuildCommand
 					RunResult.WaitForExit();
 					RunResult.OnProcessExited();
 					RunResult.DisposeProcess();
-					
+
 					if (RunResult.ExitCode == 0)
 					{
 						Logger.LogInformation("The localization commandlet for '{Arg0}' exited with code 0.", ProjectInfo.ProjectName);
@@ -399,101 +795,150 @@ class Localize : BuildCommand
 				}
 			}
 		}
+	}
 
-		// If we are running in preview, we can go ahead and delete all generated preview files after the gather step is complete 
-		if (IsRunningInPreview)
-        {
-			var PreviewManifestFiles= GetPreviewManifestFilesToDelete(LocalizationBatches, UEProjectRoot);
-			foreach (var PreviewManifestFile in PreviewManifestFiles) 
-			{
-				Logger.LogInformation("Deleting preview manifest file {PreviewManifestFile}.", PreviewManifestFile);
-				try
-				{
-					File.Delete(PreviewManifestFile);
-				}
-				catch (Exception Ex)
-				{
-					Logger.LogInformation("[FAILED] Deleting preview file: '{PreviewManifestFile}' - {Ex}", PreviewManifestFile, Ex);
-				}
-			}
-		}
-
-		// Upload the latest sources to our localization provider
-		if (LocalizationStepNames.Contains("Upload"))
+	private void CleanUpGeneratedPreviewFiles(List<LocalizationBatch> LocalizationBatches)
+	{
+		var PreviewManifestFiles = GetPreviewManifestFilesToDelete(LocalizationBatches, UEProjectRoot);
+		foreach (var PreviewManifestFile in PreviewManifestFiles)
 		{
-			foreach (var LocalizationTask in LocalizationTasks)
+			Logger.LogInformation("Deleting preview manifest file {PreviewManifestFile}.", PreviewManifestFile);
+			try
 			{
-				if (LocalizationTask.LocProvider != null)
-				{
-					// Upload all text to our localization provider
-					for (int ProjectIndex = 0; ProjectIndex < LocalizationTask.ProjectInfos.Count; ++ProjectIndex)
-					{
-						var ProjectInfo = LocalizationTask.ProjectInfos[ProjectIndex];
-						var RunResult = LocalizationTask.GatherProcessResults[ProjectIndex];
-
-						if (RunResult != null && RunResult.ExitCode == 0)
-						{
-							// Recalculate the split platform paths before doing the upload, as the export may have changed them
-							ProjectInfo.ExportInfo.CalculateSplitPlatformNames(LocalizationTask.RootLocalizationTargetDirectory);
-							Task UploadTask = LocalizationTask.LocProvider.UploadProjectToLocalizationProvider(ProjectInfo.ProjectName, ProjectInfo.ExportInfo);
-							UploadTask.Wait();
-						}
-						else
-						{
-							Logger.LogWarning("Skipping upload to the localization provider for '{Arg0}' due to an earlier commandlet failure.", ProjectInfo.ProjectName);
-						}
-					}
-				}
+				File.Delete(PreviewManifestFile);
+			}
+			catch (Exception Ex)
+			{
+				Logger.LogInformation("[FAILED] Deleting preview file: '{PreviewManifestFile}' - {Ex}", PreviewManifestFile, Ex);
 			}
 		}
+	}
 
-		// Clean-up the changelist so it only contains the changed files, and then submit it (if we were asked to)
-		if (P4Enabled && !IsRunningInPreview)
+	private void RevertUnchangedFiles(List<LocalizationBatch> LocalizationBatches, Dictionary<string, Byte[]> InitalPOFileHashes)
+	{
+		if (!P4Enabled || bIsRunningInPreview)
 		{
-			// Revert any PO files that haven't changed aside from their header
+			return;
+		}
+
+		{
+			var POFilesToRevert = new List<string>();
+
+			var CurrentPOFileHashes = GetPOFileHashes(LocalizationBatches, UEProjectRoot);
+			foreach (var CurrentPOFileHashPair in CurrentPOFileHashes)
 			{
-				var POFilesToRevert = new List<string>();
-
-				var CurrentPOFileHashes = GetPOFileHashes(LocalizationBatches, UEProjectRoot);
-				foreach (var CurrentPOFileHashPair in CurrentPOFileHashes)
+				byte[] InitialPOFileHash;
+				if (InitalPOFileHashes.TryGetValue(CurrentPOFileHashPair.Key, out InitialPOFileHash) && InitialPOFileHash.SequenceEqual(CurrentPOFileHashPair.Value))
 				{
-					byte[] InitialPOFileHash;
-					if (InitalPOFileHashes.TryGetValue(CurrentPOFileHashPair.Key, out InitialPOFileHash) && InitialPOFileHash.SequenceEqual(CurrentPOFileHashPair.Value))
-					{
-						POFilesToRevert.Add(CurrentPOFileHashPair.Key);
-					}
-				}
-
-				if (POFilesToRevert.Count > 0)
-				{
-					var P4RevertArgsFilename = CombinePaths(CmdEnv.LocalRoot, "Engine", "Intermediate", String.Format("LocalizationP4RevertArgs-{0}.txt", Guid.NewGuid().ToString()));
-
-					using (StreamWriter P4RevertArgsWriter = File.CreateText(P4RevertArgsFilename))
-					{
-						foreach (var POFileToRevert in POFilesToRevert)
-						{
-							P4RevertArgsWriter.WriteLine(POFileToRevert);
-						}
-					}
-
-					P4.LogP4(String.Format("-x {0}", P4RevertArgsFilename), "revert");
-					DeleteFile_NoExceptions(P4RevertArgsFilename);
+					POFilesToRevert.Add(CurrentPOFileHashPair.Key);
 				}
 			}
 
-			// Revert any other unchanged files
-			P4.RevertUnchanged(PendingChangeList);
-
-			// Submit that single changelist now
-			if (AllowSubmit)
+			if (POFilesToRevert.Count > 0)
 			{
-				int SubmittedChangeList;
-				P4.Submit(PendingChangeList, out SubmittedChangeList);
+				var P4RevertArgsFilename = CombinePaths(CmdEnv.LocalRoot, "Engine", "Intermediate", String.Format("LocalizationP4RevertArgs-{0}.txt", Guid.NewGuid().ToString()));
+
+				using (StreamWriter P4RevertArgsWriter = File.CreateText(P4RevertArgsFilename))
+				{
+					foreach (var POFileToRevert in POFilesToRevert)
+					{
+						P4RevertArgsWriter.WriteLine(POFileToRevert);
+					}
+				}
+
+				P4.LogP4(String.Format("-x {0}", P4RevertArgsFilename), "revert");
+				DeleteFile_NoExceptions(P4RevertArgsFilename);
 			}
 		}
 
-		var RunDuration = (DateTime.UtcNow - StartTime).TotalMilliseconds;
-		Logger.LogInformation("Localize command finished in {Arg0} seconds", RunDuration / 1000);
+		// Revert any other unchanged files
+		P4.RevertUnchanged(PendingChangeList);
+	}
+
+	private void AutoGeneratePluginLocalizationFiles(HashSet<string> PluginNames)
+	{
+		string PluginsRootDirectory = Path.Combine(UEProjectRoot, UEProjectDirectory);
+		DirectoryReference PluginsRootDirectoryReference = new DirectoryReference(PluginsRootDirectory);
+
+		foreach (string PluginName in PluginNames)
+		{
+			PluginInfo Info = Plugins.GetPlugin(PluginName);
+			if (Info is null)
+			{
+				continue;
+			}
+
+			foreach (LocalizationTargetDescriptor Target in Info.Descriptor.LocalizationTargets)
+			{
+				if (Target.ConfigGenerationPolicy == LocalizationConfigGenerationPolicy.Auto)
+				{
+					string PluginConfigLocalizationPath = CombinePaths(Info.Directory.FullName, "Config", "Localization");
+					if (!Directory.Exists(PluginConfigLocalizationPath))
+					{
+						Logger.LogInformation($"Plugin '{Info.Name}' does not have a Config Localization folder. Creating '{PluginConfigLocalizationPath}'.");
+						Directory.CreateDirectory(PluginConfigLocalizationPath);
+						AutoGeneratedDirectories.Add(PluginConfigLocalizationPath);
+					}
+					LocalizationConfigFileGenerator Generator = LocalizationConfigFileGenerator.GetGeneratorForFileFormat(LocalizationConfigFileFormat.Latest);
+					LocalizationConfigFileGeneratorParams GeneratorParams = new();
+					GeneratorParams.LocalizationTargetName = Target.Name;
+					GeneratorParams.LocalizationTargetRootDirectory = Info.Directory.MakeRelativeTo(PluginsRootDirectoryReference);
+					List<LocalizationConfigFile> PluginLocalizationConfigFiles = Generator.GenerateDefaultSettingsConfigFiles(GeneratorParams);
+					foreach (LocalizationConfigFile PluginLocalizationConfigFile in PluginLocalizationConfigFiles)
+					{
+						string SaveFilePath = Path.Combine(PluginConfigLocalizationPath, PluginLocalizationConfigFile.Name);
+						if (File.Exists(SaveFilePath))
+						{
+							Logger.LogInformation($"Plugin localization target %{Target.Name} in {Info.Name} plugin already contains localization config file {SaveFilePath}. The file will not be auto-generated.");
+							continue;
+						}
+						Logger.LogInformation($"Auto generating localization config file '{SaveFilePath}' for localization target '{Target.Name}' in plugin {Info.Name}.");
+						AutoGeneratedFiles.Add(SaveFilePath);
+						if (!bIsRunningInPreview)
+						{
+							PluginLocalizationConfigFile.Write(new FileReference(SaveFilePath));
+						}
+					}
+				}
+			}
+		}
+	}
+
+	private void CleanUpAutoGeneratedFiles()
+	{
+		if (AutoGeneratedFiles.Count > 0)
+		{
+			Logger.LogInformation("Cleaning up auto-generated files.");
+			foreach (string AutoGeneratedFile in AutoGeneratedFiles)
+			{
+				if (File.Exists(AutoGeneratedFile))
+				{
+					Logger.LogInformation($"Deleting auto-generated file '{AutoGeneratedFile}'");
+					if (!bIsRunningInPreview)
+					{
+						File.Delete(AutoGeneratedFile);
+					}
+				}
+			}
+			Logger.LogInformation("Finished cleaning up all auto-generated files.");
+		}
+
+		if (AutoGeneratedDirectories.Count > 0)
+		{
+			Logger.LogInformation("Cleaning up auto-generated directories.");
+			foreach (string AutoGeneratedDirectory in AutoGeneratedDirectories)
+			{
+				if (Directory.Exists(AutoGeneratedDirectory))
+				{
+					Logger.LogInformation($"Deleting auto-generated directory '{AutoGeneratedDirectory}'.");
+					if (!bIsRunningInPreview)
+					{
+						Directory.Delete(AutoGeneratedDirectory);
+					}
+				}
+			}
+			Logger.LogInformation("Finished cleaning up auto-generated directories.");
+		}
 	}
 
 	private ProjectInfo GenerateProjectInfo(string RootWorkingDirectory, string ProjectName, IReadOnlyList<string> LocalizationStepNames)

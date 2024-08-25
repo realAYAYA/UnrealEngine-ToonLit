@@ -10,6 +10,9 @@
 
 namespace Audio
 {
+	const float FMultichannelLinearResampler::MaxFrameRatio = 100.f;
+	const float FMultichannelLinearResampler::MinFrameRatio = 0.001f;
+
 	FMultichannelLinearResampler::FMultichannelLinearResampler(int32 InNumChannels)
 		: NumChannels(InNumChannels)
 	{
@@ -17,7 +20,7 @@ namespace Audio
 
 	void FMultichannelLinearResampler::SetFrameRatio(float InRatio, int32 InDesiredNumFramesToInterpolate)
 	{
-		if (ensureMsgf(InRatio > 0.f, TEXT("The frame ratio must be greater than zero.")))
+		if (ensureMsgf((InRatio >= MinFrameRatio) && (InRatio <= MaxFrameRatio), TEXT("The frame ratio (%f) must be between %f and %f."), InRatio, MinFrameRatio, MaxFrameRatio))
 		{
 			if ((InDesiredNumFramesToInterpolate <= 1) || FMath::IsNearlyEqual(InRatio, CurrentFrameRatio))
 			{
@@ -199,7 +202,9 @@ namespace Audio
 			
 			const int32 NumBufferFrames = GetNumBufferFramesToProduceOutputFrames(NumOutputFrames);
 			NumOutputFrames = FMath::FloorToInt((NumAvailableInputFrames - NumBufferFrames) / FMath::Max(CurrentFrameRatio, TargetFrameRatio)) - 1;
+			NumOutputFrames = FMath::Max(NumOutputFrames, 0);
 			NumInputFramesRequired = NumAvailableInputFrames;
+			checkf(NumInputFramesRequired > FMath::CeilToInt(MapOutputFrameToInputFrame(NumOutputFrames - 1)), TEXT("Invalid calculation. Required input frames (%d) does not satisfy need for input frames (%f)"), NumInputFramesRequired, MapOutputFrameToInputFrame(NumOutputFrames - 1));
 		}
 
 		if (NumOutputFrames > 0)
@@ -209,7 +214,7 @@ namespace Audio
 
 			// Copy input buffers into work buffer since circular buffers 
 			// are not ensured to hold entire array contiguously.
-			WorkBuffer.SetNumUninitialized(NumInputFramesRequired, false /* bAllowShrinking */);
+			WorkBuffer.SetNumUninitialized(NumInputFramesRequired, EAllowShrinking::No);
 
 			for (int32 ChannelIndex = 0; ChannelIndex < NumChannels; ChannelIndex++)
 			{
@@ -264,7 +269,6 @@ namespace Audio
 		{
 			return 0.f;
 		}
-		checkf(InAudio.Num() >= GetNumInputFramesNeededToProduceOutputFrames(NumOutputFrames), TEXT("Not enough input frames available to produce output frames"));
 
 		float* OutAudioData = OutAudio.GetData();
 		const float* InAudioData = InAudio.GetData();
@@ -310,7 +314,7 @@ namespace Audio
 			}
 
 			// Check for buffer over run
-			checkf((LowerFrameIndex + 1) < InAudio.Num(), TEXT("Buffer overrun in multichannel linear resampler. Attempt to read index %d of array with %d elements."), LowerFrameIndex + 1, InAudio.Num());
+			checkf((LowerFrameIndex + 1) < InAudio.Num(), TEXT("Buffer overrun in multichannel linear resampler. Attempt to read index %d of array with %d elements. FrameRatio: %f, FrameRatioDelta: %f, NumFramesToInterpolate: %d"), LowerFrameIndex + 1, InAudio.Num(), CurrentFrameRatio, FrameRatioFrameDelta, NumFramesToInterpolate);
 
 			return InputFrameIndex;
 		}

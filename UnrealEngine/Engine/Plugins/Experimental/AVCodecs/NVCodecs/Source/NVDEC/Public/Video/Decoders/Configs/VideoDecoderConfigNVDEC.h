@@ -4,6 +4,7 @@
 
 #include "AVExtension.h"
 #include "Video/VideoDecoder.h"
+#include "Video/Decoders/Configs/VideoDecoderConfigAV1.h"
 #include "Video/Decoders/Configs/VideoDecoderConfigH264.h"
 #include "Video/Decoders/Configs/VideoDecoderConfigH265.h"
 
@@ -57,7 +58,7 @@ public:
 		return !(*this == Other);
 	}
 
-	FAVResult Parse(TSharedRef<FAVInstance> const& Instance, FVideoPacket const& Packet, TArray<FParsedPicture>& OutPictures);
+	FAVResult Parse(TSharedRef<FAVInstance> const& Instance, FVideoPacket const& Packet, TArray<FParsedPicture>& OutPictures) { return EAVResult::Error; }
 
 private:
 	int RefPicIdx[16];
@@ -74,5 +75,8 @@ FAVResult FAVExtension::TransformConfig(FVideoDecoderConfigNVDEC& OutConfig, str
 
 template <>
 FAVResult FAVExtension::TransformConfig(FVideoDecoderConfigNVDEC& OutConfig, struct FVideoDecoderConfigH265 const& InConfig);
+
+template <>
+FAVResult FAVExtension::TransformConfig(FVideoDecoderConfigNVDEC& OutConfig, struct FVideoDecoderConfigAV1 const& InConfig);
 
 DECLARE_TYPEID(FVideoDecoderConfigNVDEC, NVDEC_API);

@@ -7,7 +7,7 @@
 
 DEFINE_LOG_CATEGORY(LogMassRepresentation);
 
-namespace UE::MassRepresentation
+namespace UE::Mass::Representation
 {
 void PushSwapTagsCommand(FMassCommandBuffer& CommandBuffer, const FMassEntityHandle Entity, const EMassVisibility PrevVisibility, const EMassVisibility NewVisibility)
 {
@@ -73,8 +73,31 @@ default: \
 
 #undef CASE_SWAP_TAGS
 }
-} // UE::MassRepresentation
+} // UE::Mass::Representation
 
+//-----------------------------------------------------------------------------
+// FMassInstancedStaticMeshInfo
+//-----------------------------------------------------------------------------
+void FMassInstancedStaticMeshInfo::ClearVisualInstance(UInstancedStaticMeshComponent& ISMComponent)
+{
+	if (InstancedStaticMeshComponents.RemoveSingleSwap(&ISMComponent, EAllowShrinking::No))
+	{
+		ISMComponent.ClearInstances();
+		ISMComponent.DestroyComponent();
+	}
+	else
+	{
+		InstancedStaticMeshComponents.Reset();
+		LODSignificanceRanges.Reset();
+	}
+}
+
+void FMassInstancedStaticMeshInfo::Reset()
+{
+	Desc.Reset();
+	InstancedStaticMeshComponents.Reset();
+	LODSignificanceRanges.Reset();
+}
 
 //-----------------------------------------------------------------------------
 // FMassStaticMeshInstanceVisualizationMeshDesc
@@ -82,4 +105,27 @@ default: \
 FMassStaticMeshInstanceVisualizationMeshDesc::FMassStaticMeshInstanceVisualizationMeshDesc()
 {
 	ISMComponentClass = UInstancedStaticMeshComponent::StaticClass();
+}
+
+//-----------------------------------------------------------------------------
+// FMassISMCSharedDataMap - DEPRECATED
+//-----------------------------------------------------------------------------
+FMassISMCSharedData& FMassISMCSharedDataMap::GetAndMarkDirtyChecked(const uint32 Hash)
+{
+	static FMassISMCSharedData Dummy;
+	return Dummy;
+}
+
+FMassISMCSharedData* FMassISMCSharedDataMap::GetAndMarkDirty(const uint32 Hash)
+{
+	return nullptr;
+}
+
+FMassISMCSharedData* FMassISMCSharedDataMap::Find(const uint32 Hash)
+{
+	return nullptr;
+}
+
+void FMassISMCSharedDataMap::Remove(const uint32 Hash)
+{
 }

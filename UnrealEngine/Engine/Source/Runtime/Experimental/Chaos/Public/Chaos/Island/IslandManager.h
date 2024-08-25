@@ -13,6 +13,11 @@ namespace Chaos
 	class FPerParticleGravity;
 }
 
+namespace Chaos::DebugDraw
+{
+	struct FChaosDebugDrawSettings;
+}
+
 namespace Chaos::Private
 {
 	class FPBDIslandMergeSet;
@@ -389,15 +394,17 @@ namespace Chaos::Private
 		// The number of registered constraint containers
 		CHAOS_API int32 GetNumConstraintContainers() const;
 
-		// Add/Remove particles
+		// Particles management
 		int32 GetNumParticles() const { return Nodes.Num(); }
 		CHAOS_API void AddParticle(FGeometryParticleHandle* Particle);
 		CHAOS_API void RemoveParticle(FGeometryParticleHandle* Particle);
 		CHAOS_API int32 ReserveParticles(const int32 InNumParticles);
 		CHAOS_API void UpdateParticleMaterial(FGeometryParticleHandle* Particle);
 		CHAOS_API int32 GetParticleLevel(FGeometryParticleHandle* Particle) const;
+		CHAOS_API void WakeParticleIslands(FGeometryParticleHandle* Particle);
+		CHAOS_API void SleepParticle(FGeometryParticleHandle* Particle);
 
-		// Add/Remove constraints
+		// Constraint management
 		int32 GetNumConstraints() const { return Edges.Num(); }
 		CHAOS_API void AddConstraint(const int32 ContainerId, FConstraintHandle* Constraint, const TVec2<FGeometryParticleHandle*>& ConstrainedParticles);
 		template<typename ConstraintContainerType> void AddContainerConstraints(ConstraintContainerType& ConstraintContainer);
@@ -405,6 +412,7 @@ namespace Chaos::Private
 		CHAOS_API void RemoveParticleConstraints(FGeometryParticleHandle* Particle);
 		CHAOS_API void RemoveParticleContainerConstraints(FGeometryParticleHandle* Particle, const int32 ContainerId);
 		CHAOS_API void RemoveContainerConstraints(const int32 ContainerId);
+		CHAOS_API void WakeConstraintIsland(FConstraintHandle* Constraint);
 
 		// Access to Islands
 		int32 GetNumIslands() const { return Islands.Num(); }
@@ -422,9 +430,10 @@ namespace Chaos::Private
 		CHAOS_API void SetDisableCounterThreshold(const int32 InDisableCounterThreshold);
 		CHAOS_API void SetIsDeterministic(const bool bInIsDeterministic);
 		CHAOS_API void SetAssignLevels(const bool bInAssignLevels);
+		CHAOS_API void UpdateExplicitSleep();
 		CHAOS_API void UpdateParticles();
 		CHAOS_API void UpdateIslands();
-		CHAOS_API void UpdateSleep();
+		CHAOS_API void UpdateSleep(const FReal Dt = 0);
 		CHAOS_API void UpdateDisable(TFunctionRef<void(FPBDRigidParticleHandle*)> ParticleDisableFunctor);
 		CHAOS_API void EndTick();
 
@@ -460,7 +469,11 @@ namespace Chaos::Private
 		CHAOS_API TArray<const FPBDIsland*> FindParticleIslands(const FGeometryParticleHandle* Particle) const;
 		CHAOS_API TArray<const FGeometryParticleHandle*> FindParticlesInIslands(const TArray<const FPBDIsland*> Islands) const;
 		CHAOS_API TArray<const FConstraintHandle*> FindConstraintsInIslands(const TArray<const FPBDIsland*> Islands, int32 ContainerId) const;
-		CHAOS_API void SetParticleIslandIsSleeping(FGeometryParticleHandle* Particle, const bool bInIsSleeping);
+
+		// Debug draw
+#if CHAOS_DEBUG_DRAW
+		CHAOS_API void DebugDrawSleepState(const DebugDraw::FChaosDebugDrawSettings* DebugDrawSettings) const;
+#endif
 
 		// Deprecated API
 		UE_DEPRECATED(5.3, "Use Reset") void RemoveConstraints() { Reset(); }
@@ -501,8 +514,10 @@ namespace Chaos::Private
 		CHAOS_API void AssignEdgeIsland(FPBDIslandConstraint* Edge);
 		CHAOS_API void AddNodeToIsland(FPBDIslandParticle* Node, FPBDIsland* Island);
 		CHAOS_API void RemoveNodeFromIsland(FPBDIslandParticle* Node);
+		CHAOS_API void DestroyIslandNodes(FPBDIsland* Island);
 		CHAOS_API void AddEdgeToIsland(FPBDIslandConstraint* Edge, FPBDIsland* Island);
 		CHAOS_API void RemoveEdgeFromIsland(FPBDIslandConstraint* Edge);
+		CHAOS_API void WakeNodeIslands(const FPBDIslandParticle* Node);
 		CHAOS_API void EnqueueIslandCheckSleep(FPBDIsland* Island, const bool bIsSleepAllowed);
 
 		// Island merge set management
@@ -529,10 +544,12 @@ namespace Chaos::Private
 		CHAOS_API void SortIslandEdges(FPBDIsland* Island);
 
 		// Sleeping
-		CHAOS_API void ProcessSleep();
-		CHAOS_API void ProcessParticlesSleep();
-		CHAOS_API void ProcessIslandSleep(FPBDIsland* Island);
+		CHAOS_API void ProcessSleep(const FRealSingle Dt);
+		CHAOS_API void ProcessParticlesSleep(const FRealSingle Dt);
+		CHAOS_API void ProcessIslandSleep(FPBDIsland* Island, const FRealSingle Dt);
 		CHAOS_API void PropagateIslandSleep(FPBDIsland* Island);
+		CHAOS_API void PropagateIslandSleepToParticles(FPBDIsland* Island);
+		CHAOS_API void PropagateIslandSleepToConstraints(FPBDIsland* Island);
 
 		// Disabling
 		CHAOS_API void ProcessDisable(TFunctionRef<void(FPBDRigidParticleHandle*)> ParticleDisableFunctor);

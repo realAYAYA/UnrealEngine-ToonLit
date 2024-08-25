@@ -104,6 +104,7 @@ void UCommonAnimatedSwitcher::HandleSlateActiveIndexChanged(int32 ActiveIndex)
 	if (Slots.IsValidIndex(ActiveWidgetIndex))
 	{
 		OnActiveWidgetIndexChanged.Broadcast(GetWidgetAtIndex(ActiveWidgetIndex), ActiveWidgetIndex);
+		OnActiveWidgetIndexChangedBP.Broadcast(GetWidgetAtIndex(ActiveWidgetIndex), ActiveWidgetIndex);
 	}
 }
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
@@ -116,6 +117,7 @@ PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		.TransitionCurveType(TransitionCurveType)
 		.TransitionDuration(TransitionDuration)
 		.TransitionType(TransitionType)
+		.TransitionFallbackStrategy(TransitionFallbackStrategy)
 		.OnActiveIndexChanged_UObject(this, &UCommonAnimatedSwitcher::HandleSlateActiveIndexChanged)
 		.OnIsTransitioningChanged_UObject(this, &UCommonAnimatedSwitcher::HandleSlateIsTransitioningChanged);
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
@@ -164,6 +166,9 @@ PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	if (Index >= 0 && Index < Slots.Num() && (Index != ActiveWidgetIndex || !bSetOnce))
 	{
 		HandleOutgoingWidget();
+		
+		// When we're setting up, and the index goes 0->0, MyAnimatedSwitcher won't fire its ActiveIndexChanged Event, so we manually call HandleSlateActiveIndexChanged below.
+		const bool bIsSettingInitialIndex = !bSetOnce && (!MyAnimatedSwitcher.IsValid() || Index == MyAnimatedSwitcher->GetActiveWidgetIndex());
 
 		// For now we can't call setter since it calls MyWidgetSwitcher->SetActiveWidgetIndex(SafeIndex)
 		if (ActiveWidgetIndex != Index)
@@ -179,8 +184,7 @@ PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			MyAnimatedSwitcher->TransitionToIndex(SafeIndex, bInstantTransition);
 		}
 
-		//When we're setting up, and the index goes 0->0, MyAnimatedSwitcher won't fire its ActiveIndexChanged Event.
-		if (!bSetOnce)
+		if (bIsSettingInitialIndex)
 		{
 			HandleSlateActiveIndexChanged(ActiveWidgetIndex);
 		}
@@ -200,5 +204,28 @@ bool UCommonAnimatedSwitcher::IsTransitionPlaying() const
 	{
 		return false;
 	}
+}
+
+UWidget* UCommonAnimatedSwitcher::GetPendingActiveWidget() const
+{
+	if (MyAnimatedSwitcher.IsValid())
+	{
+		const int32 PendingIndex = GetPendingActiveWidgetIndex();
+		if (PendingIndex >= 0)
+		{
+			return GetWidgetAtIndex(PendingIndex);
+		}
+	}
+	
+	return nullptr;
+}
+
+int32 UCommonAnimatedSwitcher::GetPendingActiveWidgetIndex() const
+{
+	if (MyAnimatedSwitcher.IsValid())
+	{
+		return MyAnimatedSwitcher->GetPendingActiveWidgetIndex();
+	}
+	return INDEX_NONE;
 }
 

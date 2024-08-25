@@ -6,6 +6,7 @@
 #include "RHIFwd.h"
 #include "RHIShaderPlatform.h"
 #include "RHIFeatureLevel.h"
+#include "ReadOnlyCVARCache.h"
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
 #include "RHI.h"
@@ -128,8 +129,8 @@ struct FPackedPosition
 };
 
 
-/** Flags that control ConstructTexture2D */
-enum EConstructTextureFlags
+/** Flags that control ConstructTexture(2D/2DArray/Volume/etc.) */
+enum EConstructTextureFlags : uint32
 {
 	/** Compress RGBA8 to DXT */
 	CTF_Compress =				0x01,
@@ -269,9 +270,28 @@ RENDERCORE_API FVertexDeclarationRHIRef& GetVertexDeclarationFVector3();
 
 RENDERCORE_API FVertexDeclarationRHIRef& GetVertexDeclarationFVector2();
 
-RENDERCORE_API bool MobileSupportsGPUScene();
+/** True if HDR is enabled for the mobile renderer. */
+inline bool IsMobileHDR()
+{
+	return FReadOnlyCVARCache::MobileHDR();
+}
 
-RENDERCORE_API bool IsMobileDeferredShadingEnabled(const FStaticShaderPlatform Platform);
+inline bool MobileSupportsGPUScene()
+{
+	return FReadOnlyCVARCache::MobileSupportsGPUScene();
+}
+
+inline bool IsMobileDeferredShadingEnabled(const FStaticShaderPlatform Platform)
+{
+	return FReadOnlyCVARCache::MobileDeferredShading(Platform) && IsMobileHDR();
+}
+
+inline bool MobileForwardEnableLocalLights(const FStaticShaderPlatform Platform)
+{
+	return FReadOnlyCVARCache::MobileForwardLocalLights(Platform) > 0;
+}
+
+RENDERCORE_API bool PlatformGPUSceneUsesUniformBufferView(const FStaticShaderPlatform Platform);
 
 RENDERCORE_API bool MobileRequiresSceneDepthAux(const FStaticShaderPlatform Platform);
 
@@ -290,8 +310,6 @@ RENDERCORE_API bool IsMobileAmbientOcclusionEnabled(const FStaticShaderPlatform 
 RENDERCORE_API bool IsMobileDistanceFieldEnabled(const FStaticShaderPlatform Platform);
 
 RENDERCORE_API bool IsMobileMovableSpotlightShadowsEnabled(const FStaticShaderPlatform Platform);
-
-RENDERCORE_API bool MobileForwardEnableLocalLights(const FStaticShaderPlatform Platform);
 
 RENDERCORE_API bool MobileForwardEnableClusteredReflections(const FStaticShaderPlatform Platform);
 
@@ -318,6 +336,9 @@ RENDERCORE_API bool IsUsingDBuffers(const FStaticShaderPlatform Platform);
 /** Returns if ForwardShading is enabled. Only valid for the current platform (otherwise call ITargetPlatform::UsesForwardShading()). */
 RENDERCORE_API bool IsForwardShadingEnabled(const FStaticShaderPlatform Platform);
 
+/** Return true if all forward shaded material should blend the interpolated sky boxes for higher quality. */
+RENDERCORE_API bool ForwardShadingForcesSkyLightCubemapBlending(const FStaticShaderPlatform Platform);
+
 /** Returns if the GBuffer is used. Only valid for the current platform. */
 RENDERCORE_API bool IsUsingGBuffers(const FStaticShaderPlatform Platform);
 
@@ -341,6 +362,8 @@ RENDERCORE_API bool ForceSimpleSkyDiffuse(const FStaticShaderPlatform Platform);
 
 RENDERCORE_API bool VelocityEncodeDepth(const FStaticShaderPlatform Platform);
 
+RENDERCORE_API bool VelocityEncodeHasPixelAnimation(const FStaticShaderPlatform Platform);
+
 /** Unit cube vertex buffer (VertexDeclarationFVector4) */
 RENDERCORE_API FBufferRHIRef& GetUnitCubeVertexBuffer();
 
@@ -355,22 +378,29 @@ RENDERCORE_API FBufferRHIRef& GetUnitCubeAABBVertexBuffer();
 * rendering pipeline. Currently ensures that sizes are multiples of 4 so that they can safely
 * be halved in size several times.
 */
-RENDERCORE_API void QuantizeSceneBufferSize(const FIntPoint& InBufferSize, FIntPoint& OutBufferSize);
+RENDERCORE_API void QuantizeSceneBufferSize(const FIntPoint& InBufferSize, FIntPoint& OutBufferSize, const uint32 SuggestedDivisor = 0);
 
 /**
 * Checks if virtual texturing enabled and supported
-* todo: Deprecate the version of the function that takes FStaticFeatureLevel
 */
-RENDERCORE_API bool UseVirtualTexturing(const EShaderPlatform InShaderPlatform, const ITargetPlatform* TargetPlatform = nullptr);
+RENDERCORE_API bool UseVirtualTexturing(const FStaticShaderPlatform InShaderPlatform, const ITargetPlatform* TargetPlatform = nullptr);
+
+UE_DEPRECATED(5.4, "Use version that takes FStaticShaderPlatform instead")
 RENDERCORE_API bool UseVirtualTexturing(const FStaticFeatureLevel InFeatureLevel, const ITargetPlatform* TargetPlatform = nullptr);
 
 RENDERCORE_API bool NaniteAtomicsSupported();
 RENDERCORE_API bool NaniteComputeMaterialsSupported();
+RENDERCORE_API bool NaniteLegacyMaterialsSupported();
 RENDERCORE_API bool NaniteTessellationSupported();
 RENDERCORE_API bool NaniteSplineMeshesSupported();
 
+RENDERCORE_API bool UseNaniteComputeMaterials();
+RENDERCORE_API bool UseNaniteFastTileClear();
+RENDERCORE_API bool UseNaniteTessellation();
+
 RENDERCORE_API bool DoesPlatformSupportNanite(EShaderPlatform Platform, bool bCheckForProjectSetting = true);
 RENDERCORE_API bool DoesRuntimeSupportNanite(EShaderPlatform ShaderPlatform, bool bCheckForAtomicSupport, bool bCheckForProjectSetting);
+RENDERCORE_API bool DoesTargetPlatformSupportNanite(const ITargetPlatform* TargetPlatform);
 
 /**
  * Returns true if Nanite rendering should be used for the given shader platform.
@@ -404,6 +434,11 @@ RENDERCORE_API bool UseNonNaniteVirtualShadowMaps(EShaderPlatform ShaderPlatform
 RENDERCORE_API bool IsWaterVirtualShadowMapFilteringEnabled(const FStaticShaderPlatform Platform);
 
 /**
+ * Returns true if Heterogeneous Volumes should be used for the given shader platform.
+ */
+RENDERCORE_API bool DoesPlatformSupportHeterogeneousVolumes(EShaderPlatform Platform);
+
+/**
 *	(Non-runtime) Checks if the depth prepass for single layer water is enabled. This also depends on virtual shadow maps to be supported on the platform.
 */
 RENDERCORE_API bool IsSingleLayerWaterDepthPrepassEnabled(const FStaticShaderPlatform Platform, FStaticFeatureLevel FeatureLevel);
@@ -411,6 +446,9 @@ RENDERCORE_API bool IsSingleLayerWaterDepthPrepassEnabled(const FStaticShaderPla
 /**
 *	Checks if virtual texturing lightmap enabled and supported
 */
+RENDERCORE_API bool UseVirtualTextureLightmap(const FStaticShaderPlatform Platform, const ITargetPlatform* TargetPlatform = nullptr);
+
+UE_DEPRECATED(5.4, "Use version that takes FStaticShaderPlatform instead")
 RENDERCORE_API bool UseVirtualTextureLightmap(const FStaticFeatureLevel InFeatureLevel, const ITargetPlatform* TargetPlatform = nullptr);
 
 /**
@@ -437,6 +475,22 @@ RENDERCORE_API bool UseRemoveUnsedInterpolators(EShaderPlatform ShaderPlatform);
  *   Checks if skin cache shaders are enabled for the platform (via r.SkinCache.CompileShaders)
  */
 RENDERCORE_API bool AreSkinCacheShadersEnabled(EShaderPlatform Platform);
+
+/**
+ * Checks if skin cache shaders are allowed for the platform (via r.SkinCache.Allow)
+ */
+RENDERCORE_API bool IsGPUSkinCacheAllowed(EShaderPlatform Platform);
+
+/**
+ * Can the skin cache be used (ie shaders added, etc)
+ */
+RENDERCORE_API bool IsGPUSkinCacheAvailable(EShaderPlatform Platform);
+
+/**
+ * Does the platform support GPUSkinPassthrough permutations.
+ * This knowledge can be used to indicate if we need to create SRV for index/vertex buffers.
+ */
+RENDERCORE_API bool IsGPUSkinPassThroughSupported(EShaderPlatform Platform);
 
 /*
  * Detect (at runtime) if the runtime supports rendering one-pass point light shadows (i.e., cube maps)
@@ -474,33 +528,60 @@ extern RENDERCORE_API bool IsRayTracingAllowed();
 // This function may only be called at runtime, never during cooking.
 extern RENDERCORE_API ERayTracingMode GetRayTracingMode();
 
-namespace Strata
+// Returns 'true' when static lighting is enabled for the project
+inline bool IsStaticLightingAllowed()
 {
-	RENDERCORE_API bool IsStrataEnabled();
+	return FReadOnlyCVARCache::AllowStaticLighting();
+}
+
+extern RENDERCORE_API bool DoesPlatformSupportLumenGI(EShaderPlatform Platform, bool bSkipProjectCheck = false);
+
+extern RENDERCORE_API bool DoesProjectSupportLumenRayTracedTranslucentRefraction();
+
+/** Whether or not the platform supports the scene spline texture for spline meshes */
+RENDERCORE_API bool UseSplineMeshSceneResources(const FStaticShaderPlatform Platform);
+
+namespace Substrate
+{
+	RENDERCORE_API bool IsSubstrateEnabled();
 	RENDERCORE_API bool IsRoughDiffuseEnabled();
 	RENDERCORE_API bool IsGlintEnabled();
+	RENDERCORE_API bool IsGlintEnabled(EShaderPlatform InPlatform);
 	RENDERCORE_API uint32 GlintLUTIndex();
 	RENDERCORE_API float GlintLevelBias();
 	RENDERCORE_API float GlintLevelMin();
 	RENDERCORE_API bool IsSpecularProfileEnabled();
+	RENDERCORE_API bool IsSpecularProfileEnabled(EShaderPlatform InPlatform);
 	RENDERCORE_API bool IsBackCompatibilityEnabled();
 	RENDERCORE_API bool IsDBufferPassEnabled(EShaderPlatform InPlatform);
 	RENDERCORE_API bool IsOpaqueRoughRefractionEnabled();
 	RENDERCORE_API bool IsAdvancedVisualizationEnabled();
-	RENDERCORE_API bool Is8bitTileCoordEnabled();
 
 	RENDERCORE_API uint32 GetRayTracingMaterialPayloadSizeInBytes(bool bFullySimplifiedMaterial);
 
 	RENDERCORE_API uint32 GetBytePerPixel();
 	RENDERCORE_API uint32 GetBytePerPixel(EShaderPlatform InPlatform);
+	RENDERCORE_API uint32 GetClosurePerPixel(EShaderPlatform InPlatform);
 
 	RENDERCORE_API uint32 GetNormalQuality();
 
 	RENDERCORE_API uint32 GetSheenQuality();
+	RENDERCORE_API uint32 GetSheenQuality(EShaderPlatform InPlatform);
 
 	RENDERCORE_API uint32 GetShadingQuality();
 	RENDERCORE_API uint32 GetShadingQuality(EShaderPlatform InPlatform);
 }
+
+// Light function atlas settings
+RENDERCORE_API int32 GetLightFunctionAtlasFormat();
+// Light function atlas project settings triggering shader compilation
+RENDERCORE_API bool GetSingleLayerWaterUsesLightFunctionAtlas();
+RENDERCORE_API bool GetTranslucentUsesLightFunctionAtlas();
+RENDERCORE_API bool GetTranslucentUsesLightRectLights();
+RENDERCORE_API bool GetTranslucentUsesLightIESProfiles();
+
+RENDERCORE_API bool GetHairStrandsUsesTriangleStrips();
+RENDERCORE_API uint32 GetHairStrandsLODMode();
 
 // LuminanceMax is the amount of light that will cause the sensor to saturate at EV100.
 //  See also https://en.wikipedia.org/wiki/Film_speed and https://en.wikipedia.org/wiki/Exposure_value for more info.

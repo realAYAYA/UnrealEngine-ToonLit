@@ -251,6 +251,8 @@ EConnectionStatus FCompactBinaryTCPImpl::PollSendBytes(FSocket* Socket, const vo
 EConnectionStatus FCompactBinaryTCPImpl::TryWritePacket(FSocket* Socket, FSendBuffer& Buffer,
 	TArrayView<FMarshalledMessage>&& AppendMessages, uint64 MaxPacketSize)
 {
+	// Copy AppendMessages into the SendBuffer before any early exit; we are responsible for holding
+	// a reference to them now.
 	if (!AppendMessages.IsEmpty())
 	{
 		Buffer.PendingMessages.Reserve(Buffer.PendingMessages.Num() + AppendMessages.Num());
@@ -259,6 +261,12 @@ EConnectionStatus FCompactBinaryTCPImpl::TryWritePacket(FSocket* Socket, FSendBu
 			Buffer.PendingMessages.Add(MoveTemp(NewMessage));
 		}
 	}
+
+	if (!Socket)
+	{
+		return EConnectionStatus::Terminated;
+	}
+
 	MaxPacketSize = MaxPacketSize == 0 ? MaxOSPacketSize : FMath::Min(MaxPacketSize, MaxOSPacketSize);
 
 	for (;;)
@@ -329,30 +337,9 @@ EConnectionStatus TryWritePacket(FSocket* Socket, FSendBuffer& Buffer,
 		TArrayView<FMarshalledMessage>(&AppendMessage, 1), MaxPacketSize);
 }
 
-EConnectionStatus TryWritePacket(FSocket* Socket, FSendBuffer& Buffer,
-	const IMessage& AppendMessage, uint64 MaxPacketSize)
+void QueueMessage(FSendBuffer& Buffer, FMarshalledMessage&& Message)
 {
-	FMarshalledMessage Marshalled;
-	Marshalled.MessageType = AppendMessage.GetMessageType();
-	FCbWriter Writer;
-	Writer.BeginObject();
-	AppendMessage.Write(Writer);
-	Writer.EndObject();
-	Marshalled.Object = Writer.Save().AsObject();
-	return FCompactBinaryTCPImpl::TryWritePacket(Socket, Buffer,
-		TArrayView<FMarshalledMessage>(&Marshalled, 1), MaxPacketSize);
-}
-
-void QueueMessage(FSendBuffer& Buffer, const IMessage& AppendMessage)
-{
-	FMarshalledMessage Marshalled;
-	Marshalled.MessageType = AppendMessage.GetMessageType();
-	FCbWriter Writer;
-	Writer.BeginObject();
-	AppendMessage.Write(Writer);
-	Writer.EndObject();
-	Marshalled.Object = Writer.Save().AsObject();
-	FCompactBinaryTCPImpl::QueueMessage(Buffer, MoveTemp(Marshalled));
+	FCompactBinaryTCPImpl::QueueMessage(Buffer, MoveTemp(Message));
 }
 
 EConnectionStatus TryFlushBuffer(FSocket* Socket, FSendBuffer& Buffer, uint64 MaxPacketSize)

@@ -615,7 +615,7 @@ void SNewPluginWizard::OnEnginePluginCheckboxChanged(ECheckBoxState NewCheckedSt
 
 FReply SNewPluginWizard::OnCreatePluginClicked()
 {
-	if (!ensure(!PluginFolderPath.IsEmpty() && !PluginNameText.IsEmpty()))
+	if (!ensure(!PluginFolderPath.IsEmpty() && !GetCurrentPluginName().IsEmpty()))
 	{
 		// Don't even try to assemble the path or else it may be relative to the binaries folder!
 		return FReply::Unhandled();
@@ -635,7 +635,21 @@ FReply SNewPluginWizard::OnCreatePluginClicked()
 		return FReply::Unhandled();
 	}
 
-	const FString PluginName = PluginNameText.ToString();
+	FString PluginName;
+	TArray<FString> UPluginFiles;
+	IFileManager::Get().FindFiles(UPluginFiles, *Template->OnDiskPath, TEXT("*.uplugin"));
+	for (FString& File : UPluginFiles)
+	{
+		File.RemoveFromEnd(TEXT(".uplugin"));
+		if (File.Contains(TEXT("PLUGIN_NAME")))
+		{
+			PluginName = File.Replace(TEXT("PLUGIN_NAME"), *GetCurrentPluginName().ToString(), ESearchCase::CaseSensitive);
+		}
+	}
+	if (PluginName.IsEmpty())
+	{
+		PluginName = GetCurrentPluginName().ToString();
+	}
 	const bool bHasModules = PluginWizardDefinition->HasModules();
 	
 	FPluginUtils::FNewPluginParamsWithDescriptor CreationParams;
@@ -669,8 +683,9 @@ FReply SNewPluginWizard::OnCreatePluginClicked()
 	LoadParams.OutFailReason = &FailReason;
 
 	Template->CustomizeDescriptorBeforeCreation(CreationParams.Descriptor);
-	
-	TSharedPtr<IPlugin> NewPlugin = FPluginUtils::CreateAndLoadNewPlugin(PluginName, PluginFolderPath, CreationParams, LoadParams);
+
+
+	TSharedPtr<IPlugin> NewPlugin = FPluginUtils::CreateAndLoadNewPlugin(PluginName, GetCurrentPluginName().ToString(), PluginFolderPath, CreationParams, LoadParams);
 	const bool bSucceeded = NewPlugin.IsValid();
 
 

@@ -21,16 +21,3 @@ void UAnimNextParameterSettings::SetLastParameterType(const FAnimNextParamType& 
 {
 	LastParameterType = InLastParameterType;
 }
-
-FAssetData UAnimNextParameterSettings::GetLastLibrary() const
-{
-	IAssetRegistry& AssetRegistryModule = FModuleManager::Get().LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
-	return AssetRegistryModule.GetAssetByObjectPath(LastLibrary);
-}
-
-void UAnimNextParameterSettings::SetLastLibrary(const FAssetData& InLastLibrary)
-{
-	LastLibrary = InLastLibrary.GetSoftObjectPath();
-
-	SaveConfig();
-}

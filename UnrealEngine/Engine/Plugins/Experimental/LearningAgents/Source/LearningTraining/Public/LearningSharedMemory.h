@@ -42,9 +42,9 @@ namespace UE::Learning
 		{
 			const int32 TotalSize = sizeof(ElementType) * Shape.Total();
 
-			if (!ensureMsgf(TotalSize > 0, TEXT("Requested to map shared memory of zero size")))
+			if (TotalSize <= 0)
 			{
-				return TSharedMemoryArrayView<DimNum, ElementType>();
+				return { FGuid(), TLearningArrayView<DimNum, ElementType>(nullptr, Shape), nullptr };
 			}
 
 			FPlatformMemory::FSharedMemoryRegion* RegionPointer = FPlatformMemory::MapNamedSharedMemoryRegion(
@@ -68,7 +68,7 @@ namespace UE::Learning
 		template<uint8 DimNum, typename ElementType>
 		void Unmap(TSharedMemoryArrayView<DimNum, ElementType>& Memory)
 		{
-			if (ensureMsgf(Memory.Region != nullptr, TEXT("Unmapping shared memory region that is already null")))
+			if (Memory.Region != nullptr)
 			{
 				ensureMsgf(FPlatformMemory::UnmapNamedSharedMemoryRegion(Memory.Region), TEXT("Failed to unmap shared memory."));
 			}

@@ -22,13 +22,21 @@ public:
 	virtual TArray<UPrimitiveComponent*> GetStandardRenderableComponents() const override;
 	virtual UMaterialInstanceDynamic* GetRiverToLakeTransitionMaterialInstance() override;
 	virtual UMaterialInstanceDynamic* GetRiverToOceanTransitionMaterialInstance() override;
+	virtual UMaterialInterface* GetRiverToLakeTransitionMaterial() const override;
+	virtual UMaterialInterface* GetRiverToOceanTransitionMaterial() const override;
 
 #if WITH_EDITOR
 	virtual TArray<UPrimitiveComponent*> GetBrushRenderableComponents() const override;
 #endif //WITH_EDITOR
 
+	UFUNCTION(BlueprintCallable, Category = Rendering)
 	void SetLakeTransitionMaterial(UMaterialInterface* InMat);
+
+	UFUNCTION(BlueprintCallable, Category = Rendering)
 	void SetOceanTransitionMaterial(UMaterialInterface* InMat);
+
+	UFUNCTION(BlueprintCallable, Category = Rendering)
+	void SetLakeAndOceanTransitionMaterials(UMaterialInterface* InLakeTransition, UMaterialInterface* InOceanTransition);
 
 protected:
 	/** UWaterBodyComponent Interface */

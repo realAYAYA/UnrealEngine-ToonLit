@@ -77,6 +77,10 @@ class UK2Node_ComponentBoundEvent : public UK2Node_Event
 
 	BLUEPRINTGRAPH_API void InitializeComponentBoundEventParams(FObjectProperty const* InComponentProperty, const FMulticastDelegateProperty* InDelegateProperty);
 
+public:
+
+	BLUEPRINTGRAPH_API FName GetComponentPropertyName() const { return ComponentPropertyName; }
+
 private:
 
 	/** Returns true if there is an FObjectProperty on this blueprint with a name that matches ComponentPropertyName */

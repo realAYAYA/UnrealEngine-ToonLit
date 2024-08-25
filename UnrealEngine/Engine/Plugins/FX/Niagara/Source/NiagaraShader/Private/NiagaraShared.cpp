@@ -32,7 +32,6 @@
 IMPLEMENT_TYPE_LAYOUT(FNiagaraDataInterfaceParamRef);
 IMPLEMENT_TYPE_LAYOUT(FNiagaraShaderMapContent);
 IMPLEMENT_TYPE_LAYOUT(FNiagaraShaderMapId);
-IMPLEMENT_TYPE_LAYOUT(FNiagaraComputeShaderCompilationOutput);
 
 //* CVars */
 int32 GNiagaraTranslatorFailIfNotSetSeverity = 3;
@@ -369,7 +368,7 @@ void FNiagaraShaderScript::SerializeShaderMap(FArchive& Ar)
 
 			if (bValid)
 			{
-				TRefCountPtr<FNiagaraShaderMap> LoadedShaderMap = new FNiagaraShaderMap();
+				FNiagaraShaderMapRef LoadedShaderMap = new FNiagaraShaderMap();
 				bool bLoaded = LoadedShaderMap->Serialize(Ar, true, true);
 
 				// Toss the loaded shader data if this is a server only instance
@@ -540,12 +539,16 @@ void FNiagaraShaderScript::UpdateCachedData_PostCompile(bool bCalledFromSerializ
 			CachedData.bViewUniformBufferUsed |= NiagaraShader->bNeedsViewUniformBuffer;
 
 			// request precache the compute shader
-			if (IsResourcePSOPrecachingEnabled() || IsComponentPSOPrecachingEnabled())
+			// Note: this function can be called for different shader platforms so only precache if it's for the platform we are running
+			if (GMaxRHIShaderPlatform == GameThreadShaderMap->GetShaderPlatform())
 			{
-				check(NiagaraShader->GetFrequency() == SF_Compute)
-				FRHIShader* RHIShader = GameThreadShaderMap->GetResource()->GetShader(Shader->GetResourceIndex());
-				FRHIComputeShader* RHIComputeShader = static_cast<FRHIComputeShader*>(RHIShader);
-				PipelineStateCache::PrecacheComputePipelineState(RHIComputeShader);
+				if (IsResourcePSOPrecachingEnabled() || IsComponentPSOPrecachingEnabled())
+				{
+					check(NiagaraShader->GetFrequency() == SF_Compute);
+					FRHIShader* RHIShader = GameThreadShaderMap->GetResource()->GetShader(Shader->GetResourceIndex());
+					FRHIComputeShader* RHIComputeShader = static_cast<FRHIComputeShader*>(RHIShader);
+					PipelineStateCache::PrecacheComputePipelineState(RHIComputeShader);
+				}
 			}
 		}
 	}
@@ -604,7 +607,7 @@ bool FNiagaraShaderScript::CacheShaders(const FNiagaraShaderMapId& ShaderMapId, 
 			FNiagaraShaderMap::LoadFromDerivedDataCache(this, ShaderMapId, ShaderPlatform, GameThreadShaderMap);
 			if (GameThreadShaderMap && GameThreadShaderMap->IsValid())
 			{
-				UE_LOG(LogShaders, Verbose, TEXT("Loaded shader %s for Niagara script %s from DDC"), *GameThreadShaderMap->GetFriendlyName(), *GetFriendlyName());
+				UE_LOG(LogShaders, Verbose, TEXT("Loaded shader for Niagara script %s from DDC"), *GetFriendlyName());
 			}
 			else
 			{
@@ -689,7 +692,7 @@ void FNiagaraShaderScript::FinishCompilation()
 		}
 		// Block until the shader maps that we will save have finished being compiled
 		// NIAGARATODO: implement when async compile works
-		GNiagaraShaderCompilationManager.FinishCompilation(*GetFriendlyName(), ShaderMapIdsToFinish);
+		GNiagaraShaderCompilationManager.FinishCompilation(ShaderMapIdsToFinish);
 
 		// Shouldn't have anything left to do...
 		TArray<int32> ShaderMapIdsToFinish2;
@@ -781,7 +784,7 @@ void FNiagaraShaderScript::GetShaderMapIDsWithUnfinishedCompilation(TArray<int32
 */
 bool FNiagaraShaderScript::BeginCompileShaderMap(
 	const FNiagaraShaderMapId& ShaderMapId,
-	TRefCountPtr<FNiagaraShaderMap>& OutShaderMap,
+	FNiagaraShaderMapRef& OutShaderMap,
 	bool bApplyCompletedShaderMapForRendering,
 	bool bSynchronous)
 {
@@ -794,7 +797,7 @@ bool FNiagaraShaderScript::BeginCompileShaderMap(
 	SCOPE_SECONDS_COUNTER(NiagaraCompileTime);
 
 	// Queue hlsl generation and shader compilation - Unlike materials, we queue this here, and compilation happens from the editor module
-	TRefCountPtr<FNiagaraShaderMap> NewShaderMap = new FNiagaraShaderMap();
+	FNiagaraShaderMapRef NewShaderMap = new FNiagaraShaderMap();
 	OutstandingCompileShaderMapIds.AddUnique(NewShaderMap->GetCompilingId());		
 	UE_LOG(LogShaders, Log, TEXT("BeginCompileShaderMap AddUnique %p %d"), this, NewShaderMap->GetCompilingId());
 

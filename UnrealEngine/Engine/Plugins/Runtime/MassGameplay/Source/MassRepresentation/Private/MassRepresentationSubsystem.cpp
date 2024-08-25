@@ -20,10 +20,42 @@
 #include "MassEntityUtils.h"
 
 
-int16 UMassRepresentationSubsystem::FindOrAddStaticMeshDesc(const FStaticMeshInstanceVisualizationDesc& Desc)
+FStaticMeshInstanceVisualizationDescHandle UMassRepresentationSubsystem::FindOrAddStaticMeshDesc(const FStaticMeshInstanceVisualizationDesc& Desc)
 {
 	check(VisualizationComponent);
 	return VisualizationComponent->FindOrAddVisualDesc(Desc);
+}
+
+FStaticMeshInstanceVisualizationDescHandle UMassRepresentationSubsystem::AddVisualDescWithISMComponent(const FStaticMeshInstanceVisualizationDesc& Desc, UInstancedStaticMeshComponent& ISMComponent)
+{
+	check(VisualizationComponent);
+	return VisualizationComponent->AddVisualDescWithISMComponent(Desc, ISMComponent);
+}
+
+FStaticMeshInstanceVisualizationDescHandle UMassRepresentationSubsystem::AddVisualDescWithISMComponents(const FStaticMeshInstanceVisualizationDesc& Desc, TArrayView<TObjectPtr<UInstancedStaticMeshComponent>> ISMComponents)
+{
+	check(VisualizationComponent);
+	return VisualizationComponent->AddVisualDescWithISMComponents(Desc, ISMComponents);
+}
+
+const FMassISMCSharedData* UMassRepresentationSubsystem::GetISMCSharedDataForDescriptionIndex(const int32 DescriptionIndex) const
+{
+	check(VisualizationComponent);
+	return VisualizationComponent->GetISMCSharedDataForDescriptionIndex(DescriptionIndex);
+}
+
+void UMassRepresentationSubsystem::RemoveISMComponent(UInstancedStaticMeshComponent& ISMComponent)
+{
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	check(VisualizationComponent);
+	return VisualizationComponent->RemoveISMComponent(ISMComponent);
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+}
+
+void UMassRepresentationSubsystem::RemoveVisualDesc(const FStaticMeshInstanceVisualizationDescHandle VisualizationHandle)
+{
+	check(VisualizationComponent);
+	return VisualizationComponent->RemoveVisualDesc(VisualizationHandle);
 }
 
 FMassInstancedStaticMeshInfoArrayView UMassRepresentationSubsystem::GetMutableInstancedStaticMeshInfos()
@@ -52,7 +84,7 @@ int16 UMassRepresentationSubsystem::FindOrAddTemplateActor(const TSubclassOf<AAc
 }
 
 AActor* UMassRepresentationSubsystem::GetOrSpawnActorFromTemplate(const FMassEntityHandle MassAgent, const FTransform& Transform
-	, const int16 TemplateActorIndex, FMassActorSpawnRequestHandle& SpawnRequestHandle, float Priority
+	, const int16 TemplateActorIndex, FMassActorSpawnRequestHandle& InOutSpawnRequestHandle, float Priority
 	, FMassActorPreSpawnDelegate ActorPreSpawnDelegate, FMassActorPostSpawnDelegate ActorPostSpawnDelegate)
 {
 	UE_MT_SCOPED_READ_ACCESS(TemplateActorsMTAccessDetector);
@@ -66,9 +98,9 @@ AActor* UMassRepresentationSubsystem::GetOrSpawnActorFromTemplate(const FMassEnt
 	check(ActorSpawnerSubsystem);
 	const TSubclassOf<AActor> TemplateToSpawn = TemplateActors[TemplateActorIndex];
 
-	if (SpawnRequestHandle.IsValid())
+	if (InOutSpawnRequestHandle.IsValid())
 	{
-		FMassActorSpawnRequest& SpawnRequest = ActorSpawnerSubsystem->GetMutableSpawnRequest<FMassActorSpawnRequest>(SpawnRequestHandle);
+		FMassActorSpawnRequest& SpawnRequest = ActorSpawnerSubsystem->GetMutableSpawnRequest<FMassActorSpawnRequest>(InOutSpawnRequestHandle);
 		// Check if this existing spawn request is matching the template actor
 		if (SpawnRequest.Template != TemplateToSpawn)
 		{
@@ -96,7 +128,7 @@ AActor* UMassRepresentationSubsystem::GetOrSpawnActorFromTemplate(const FMassEnt
 					// Update spawn request with latest information and retry
 					SpawnRequest.Transform = Transform;
 					SpawnRequest.Priority = Priority;
-					ActorSpawnerSubsystem->RetryActorSpawnRequest(SpawnRequestHandle);
+					ActorSpawnerSubsystem->RetryActorSpawnRequest(InOutSpawnRequestHandle);
 				}
 				return nullptr;
 			}
@@ -104,12 +136,12 @@ AActor* UMassRepresentationSubsystem::GetOrSpawnActorFromTemplate(const FMassEnt
 			{
 				AActor* SpawnedActor = SpawnRequest.SpawnedActor;
 				check(SpawnedActor);
-				ensureMsgf(ActorSpawnerSubsystem->RemoveActorSpawnRequest(SpawnRequestHandle), TEXT("Unable to remove a valid spawn request"));
+				ensureMsgf(ActorSpawnerSubsystem->RemoveActorSpawnRequest(InOutSpawnRequestHandle), TEXT("Unable to remove a valid spawn request"));
 				return SpawnedActor;
 			}
 			default:
 				checkf(false, TEXT("Unexpected spawn request status!"));
-				SpawnRequestHandle.Invalidate();
+				InOutSpawnRequestHandle.Invalidate();
 				return nullptr;
 		}
 	}
@@ -117,12 +149,16 @@ AActor* UMassRepresentationSubsystem::GetOrSpawnActorFromTemplate(const FMassEnt
 	// If we reach here, means we need to create a spawn request
 	FMassActorSpawnRequest SpawnRequest;
 	SpawnRequest.MassAgent = MassAgent;
+	if (FMassGuidFragment* GuidFragment = EntityManager->GetFragmentDataPtr<FMassGuidFragment>(MassAgent))
+	{
+		SpawnRequest.Guid = GuidFragment->Guid;
+	}
 	SpawnRequest.Template = TemplateToSpawn;
 	SpawnRequest.Transform = Transform;
 	SpawnRequest.Priority = Priority;
 	SpawnRequest.ActorPreSpawnDelegate = ActorPreSpawnDelegate;
 	SpawnRequest.ActorPostSpawnDelegate = ActorPostSpawnDelegate;
-	SpawnRequestHandle = ActorSpawnerSubsystem->RequestActorSpawn(SpawnRequest);
+	InOutSpawnRequestHandle = ActorSpawnerSubsystem->RequestActorSpawn(SpawnRequest);
 
 	++(HandledMassAgents.FindOrAdd(MassAgent));
 
@@ -360,6 +396,8 @@ void UMassRepresentationSubsystem::Deinitialize()
 		}
 	}
 	EntityManager.Reset();
+
+	Super::Deinitialize();
 }
 
 void UMassRepresentationSubsystem::OnProcessingPhaseStarted(const float DeltaSeconds, const EMassProcessingPhase Phase) const

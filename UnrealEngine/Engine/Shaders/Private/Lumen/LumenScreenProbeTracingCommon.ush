@@ -11,10 +11,10 @@ float2 GetProbeTexelCenter(uint2 ScreenTileCoord)
 #if JITTER_RAY_DIRECTION
 	#define BLUE_NOISE_LUT 1
 	#if BLUE_NOISE_LUT
-		return BlueNoiseVec2(ScreenTileCoord, RAY_DIRECTION_TEMPORAL_INDEX);
+		return BlueNoiseVec2(ScreenTileCoord, ScreenProbeRayDirectionFrameIndex);
 	#else
 		uint2 RandomSeed = Rand3DPCG16(int3(ScreenTileCoord, 0)).xy;
-		return Hammersley16(RAY_DIRECTION_TEMPORAL_INDEX % 8, 8, RandomSeed);
+		return Hammersley16(ScreenProbeRayDirectionFrameIndex % 8, 8, RandomSeed);
 	#endif
 #else
 	return float2(0.5, 0.5);

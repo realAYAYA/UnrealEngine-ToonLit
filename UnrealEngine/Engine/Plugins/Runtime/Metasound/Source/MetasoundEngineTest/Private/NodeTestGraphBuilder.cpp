@@ -88,7 +88,7 @@ namespace Metasound::Test
 		
 		const TSet<FName> TransmittableInputNames;
 		const FString UnknownAsset = TEXT("UnknownAsset");
-		if (const TUniquePtr<FFrontendGraph> Graph = FFrontendGraphBuilder::CreateGraph(Document, TransmittableInputNames, UnknownAsset))
+		if (const TUniquePtr<FFrontendGraph> Graph = FFrontendGraphBuilder::CreateGraph(Document, UnknownAsset))
 		{
 			FOperatorBuilderSettings BuilderSettings;
 			BuilderSettings.bFailOnAnyError = true;
@@ -147,6 +147,13 @@ namespace Metasound::Test
 
 			FOutputHandle OutputToConnect = InputNode->GetOutputWithVertexName(Input->GetName());
 			FInputHandle InputToConnect = NodeHandle->GetInputWithVertexName(Input->GetName());
+
+			// set the input to the default, if there is one
+			if (const FMetasoundFrontendLiteral* Default = InputToConnect->GetClassDefaultLiteral(); nullptr != Default)
+			{
+				const FGuid InputId = Builder.RootGraph->GetVertexIDForInputVertex(Input->GetName());
+				Builder.RootGraph->SetDefaultInput(InputId, *Default);
+			}
 
 			if (!InputToConnect->Connect(*OutputToConnect))
 			{

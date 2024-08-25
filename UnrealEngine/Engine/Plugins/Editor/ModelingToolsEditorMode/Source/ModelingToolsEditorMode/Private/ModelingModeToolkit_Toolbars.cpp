@@ -50,7 +50,7 @@ void MakeSubMenu_QuickSettings(FMenuBuilder& MenuBuilder)
 			}
 		}), FCanExecuteAction(), FIsActionChecked());
 	MenuBuilder.AddMenuEntry(LOCTEXT("ModelingModeProjectSettings", "Modeling Mode (Project)"), 
-		LOCTEXT("ModelingModeProjectSettings_Tooltip", "Jump to the Project Settings for Modeling Mode. Project Settings are Poject-specific."),
+		LOCTEXT("ModelingModeProjectSettings_Tooltip", "Jump to the Project Settings for Modeling Mode. Project Settings are Project-specific."),
 		FSlateIcon(), OpenModelingModeProjectSettings, NAME_None, EUserInterfaceActionType::Button);
 
 	const FUIAction OpenModelingModeEditorSettings(
@@ -74,7 +74,7 @@ void MakeSubMenu_QuickSettings(FMenuBuilder& MenuBuilder)
 			}
 		}), FCanExecuteAction(), FIsActionChecked());
 	MenuBuilder.AddMenuEntry(LOCTEXT("ModelingToolsProjectSettings", "Modeling Tools (Project)"), 
-		LOCTEXT("ModelingToolsProjectSettings_Tooltip", "Jump to the Project Settings for Modeling Tools. Project Settings are Poject-specific."),
+		LOCTEXT("ModelingToolsProjectSettings_Tooltip", "Jump to the Project Settings for Modeling Tools. Project Settings are Project-specific."),
 		FSlateIcon(), OpenModelingToolsProjectSettings, NAME_None, EUserInterfaceActionType::Button);
 
 }
@@ -257,7 +257,7 @@ void MakeSubMenu_DefaultMeshObjectType(FMenuBuilder& MenuBuilder)
 {
 	UModelingToolsEditorModeSettings* Settings = GetMutableDefault<UModelingToolsEditorModeSettings>();
 
-	MenuBuilder.BeginSection("DefaultObjecTypeSection", LOCTEXT("DefaultObjecTypeSection", "Default Object Type"));
+	MenuBuilder.BeginSection("DefaultObjectTypeSection", LOCTEXT("DefaultObjectTypeSection", "Default Object Type"));
 
 	auto ShowMeshObjectDefaultChangeToast = []()
 	{
@@ -415,6 +415,38 @@ void MakeSubMenu_Selection_MeshType(FModelingToolsEditorModeToolkit* Toolkit, FM
 		FSlateIcon(), ToggleStaticMeshesAction, NAME_None, EUserInterfaceActionType::ToggleButton);
 
 }
+	
+void MakeSubMenu_Selection_LocalFrameMode(FModelingToolsEditorModeToolkit* Toolkit, FMenuBuilder& MenuBuilder)
+{
+		
+	UModelingSelectionInteraction* SelectionInteraction = Cast<UModelingToolsEditorMode>(Toolkit->GetScriptableEditorMode())->GetSelectionInteraction();
+	auto ToggleFromGeometryAction = [SelectionInteraction](EModelingSelectionInteraction_LocalFrameMode LocalFrameMode)
+	{
+		return FUIAction(
+			FExecuteAction::CreateLambda([SelectionInteraction, LocalFrameMode]
+			{
+				SelectionInteraction->SetLocalFrameMode(LocalFrameMode);
+				UModelingToolsModeCustomizationSettings* ModelingEditorSettings = GetMutableDefault<UModelingToolsModeCustomizationSettings>();
+				ModelingEditorSettings->LastMeshSelectionLocalFrameMode = static_cast<int>(LocalFrameMode);
+				ModelingEditorSettings->SaveConfig();
+			}),
+			FCanExecuteAction(),
+			FIsActionChecked::CreateLambda([SelectionInteraction, LocalFrameMode]()
+			{
+				return (SelectionInteraction->GetLocalFrameMode() == LocalFrameMode);
+			}));
+	};
+	
+	MenuBuilder.AddMenuEntry(
+		LOCTEXT("Selection_LocalFrameMode_FromGeometry", "From Geometry"), 
+		LOCTEXT("Selection_LocalFrameMode_FromGeometry_Tooltip", "Gizmo Orientation Based on Selected Geometry"),
+		FSlateIcon(), ToggleFromGeometryAction(EModelingSelectionInteraction_LocalFrameMode::FromGeometry), NAME_None, EUserInterfaceActionType::ToggleButton);
+
+	MenuBuilder.AddMenuEntry(
+		LOCTEXT("Selection_LocalFrameMode_FromObject", "From Object"), 
+		LOCTEXT("Selection_LocalFrameMode_FromObject_Tooltip", "Gizmo Orientation Based on Object"),
+		FSlateIcon(), ToggleFromGeometryAction(EModelingSelectionInteraction_LocalFrameMode::FromObject), NAME_None, EUserInterfaceActionType::ToggleButton);
+}
 
 TSharedRef<SWidget> MakeMenu_SelectionConfigSettings(FModelingToolsEditorModeToolkit* Toolkit)
 {
@@ -426,6 +458,10 @@ TSharedRef<SWidget> MakeMenu_SelectionConfigSettings(FModelingToolsEditorModeToo
 
 	MenuBuilder.BeginSection("Section_MeshTypes", LOCTEXT("Section_MeshTypes", "Selectable Mesh Types"));
 	MakeSubMenu_Selection_MeshType(Toolkit, MenuBuilder);
+	MenuBuilder.EndSection();
+
+	MenuBuilder.BeginSection("Section_LocalFrameMode", LOCTEXT("Section_LocalFrameMode", "Local Frame Mode"));
+	MakeSubMenu_Selection_LocalFrameMode(Toolkit, MenuBuilder);
 	MenuBuilder.EndSection();
 
 	TSharedRef<SWidget> MenuWidget = MenuBuilder.MakeWidget();

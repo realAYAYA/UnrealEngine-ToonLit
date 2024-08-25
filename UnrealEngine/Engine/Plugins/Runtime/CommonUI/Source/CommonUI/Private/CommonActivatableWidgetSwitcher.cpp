@@ -68,6 +68,11 @@ void UCommonActivatableWidgetSwitcher::DeactivateActiveWidget()
 {
 	if (UCommonActivatableWidget* ActivatableWidget = Cast<UCommonActivatableWidget>(GetActiveWidget()))
 	{
+		if (bClearFocusRestorationTargetOfDeactivatedWidgets)
+		{
+			ActivatableWidget->ClearFocusRestorationTarget();
+		}
+
 		ActivatableWidget->DeactivateWidget();
 	}
 }

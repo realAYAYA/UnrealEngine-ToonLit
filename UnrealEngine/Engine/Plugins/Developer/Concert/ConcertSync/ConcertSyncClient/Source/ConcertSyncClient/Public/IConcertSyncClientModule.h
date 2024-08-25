@@ -6,12 +6,15 @@
 #include "Modules/ModuleInterface.h"
 #include "Modules/ModuleManager.h"
 
-class IConcertSyncClient;
 class IConcertClientPackageBridge;
+class IConcertClientReplicationBridge;
 class IConcertClientTransactionBridge;
+class IConcertSyncClient;
 class UConcertClientConfig;
 
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnConcertClientCreated, TSharedRef<IConcertSyncClient>);
+
+class IConcertClientReplicationBridge;
 
 /**
  * Interface for the Concert Sync Client module.
@@ -56,28 +59,21 @@ public:
 	 */
 	virtual TSharedRef<IConcertSyncClient> CreateClient(const FString& InRole) = 0;
 
-	/**
-	 * Get the bridge between the editor package system and Concert.
-	 */
+	/** Get the bridge between the editor package system and Concert. */
 	virtual IConcertClientPackageBridge& GetPackageBridge() = 0;
 
-	/**
-	 * Get the bridge between the editor transaction system and Concert.
-	 */
+	/** Get the bridge between the editor transaction system and Concert. */
 	virtual IConcertClientTransactionBridge& GetTransactionBridge() = 0;
 
-	/**
-	 * Returns the list of active clients.
-	 */
+	/** Gets the bridge between the editor UObjects and Concert. */
+	virtual IConcertClientReplicationBridge& GetReplicationBridge() = 0;
+
+	/** Returns the list of active clients. */
 	virtual TArray<TSharedRef<IConcertSyncClient>> GetClients() const = 0;
 
-	/**
-	 * Find a concert sync client.
-	 */
+	/** Find a concert sync client. */
 	virtual TSharedPtr<IConcertSyncClient> GetClient(const FString& InRole) const = 0;
 
-	/**
-	 * Delegate invoked when a new concert sync client is created.
-	 */
+	/** Delegate invoked when a new concert sync client is created. */
 	virtual FOnConcertClientCreated& OnClientCreated() = 0;
 };

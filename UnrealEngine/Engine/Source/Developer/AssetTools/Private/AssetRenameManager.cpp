@@ -5,6 +5,7 @@
 #include "Serialization/ArchiveUObject.h"
 #include "UObject/Class.h"
 #include "Misc/PackageName.h"
+#include "Misc/PathViews.h"
 #include "Misc/MessageDialog.h"
 #include "HAL/FileManager.h"
 #include "Misc/FeedbackContext.h"
@@ -91,7 +92,8 @@ namespace AssetRenameManagerImpl
 
 struct FAssetRenameDataWithReferencers : public FAssetRenameData
 {
-	TSet<FName> ReferencingPackageNames;
+	TSet<FName> NotRenamedReferencingPackageNames;
+	TMap<FName, FName> RenamedReferencingPackageNames;
 	FText FailureReason;
 	bool bCreateRedirector;
 	bool bRenameFailed;
@@ -427,6 +429,12 @@ bool FAssetRenameManager::FixReferencesAndRename(const TArray<FAssetRenameData>&
 			// If any referencing packages are left read-only, the checkout failed or SCC was not enabled. Trim them from the save list and leave redirectors.
 			DetectReadOnlyPackages(AssetsToRename, ReferencingPackagesToSave);
 
+
+			// Make public any asset that will be referenced from another plugin after the rename.
+			// If the asset cannot be made public or if moving it requires a referenced asset that's not being modified to become public,
+			// its rename will fail and other assets that have dependencies between them will also fail to be renamed.
+			SetupPublicAssets(AssetsToRename);
+
 			if (bSoftReferencesOnly)
 			{
 				if (ReferencingPackagesToSave.Num() > 0)
@@ -736,7 +744,7 @@ void FAssetRenameManager::FindCDOReferences(const TArrayView<FAssetRenameDataWit
 void FAssetRenameManager::PopulateAssetReferencers(TArray<FAssetRenameDataWithReferencers>& AssetsToPopulate) const
 {
 	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-	TSet<FName> RenamingAssetPackageNames;
+	TMap<FName, FName> PackageNamesToRename;
 
 	// Get the names of all the packages containing the assets we are renaming so they arent added to the referencing packages list
 	for (FAssetRenameDataWithReferencers& AssetToRename : AssetsToPopulate)
@@ -744,7 +752,7 @@ void FAssetRenameManager::PopulateAssetReferencers(TArray<FAssetRenameDataWithRe
 		// If we're only fixing soft references we want to check for references inside the original package as we don't save the original package automatically
 		if (!AssetToRename.bOnlyFixSoftReferences)
 		{
-			RenamingAssetPackageNames.Add(FName(*AssetToRename.OldObjectPath.GetLongPackageName()));
+			PackageNamesToRename.Add(AssetToRename.OldObjectPath.GetLongPackageFName(), AssetToRename.NewObjectPath.GetLongPackageFName());
 		}
 	}
 
@@ -758,9 +766,10 @@ void FAssetRenameManager::PopulateAssetReferencers(TArray<FAssetRenameDataWithRe
 	// Gather all referencing packages for all assets that are being renamed
 	for (FAssetRenameDataWithReferencers& AssetToRename : AssetsToPopulate)
 	{
-		AssetToRename.ReferencingPackageNames.Empty();
+		AssetToRename.NotRenamedReferencingPackageNames.Empty();
+		AssetToRename.RenamedReferencingPackageNames.Empty();
 
-		FName OldPackageName = FName(*AssetToRename.OldObjectPath.GetLongPackageName());
+		FName OldPackageName = AssetToRename.OldObjectPath.GetLongPackageFName();
 
 		TMap<FName, TArray<FName>>& ReferencersMap = AssetToRename.bOnlyFixSoftReferences ? SoftReferencers : PackageReferencers;
 		if (!ReferencersMap.Contains(OldPackageName))
@@ -771,21 +780,25 @@ void FAssetRenameManager::PopulateAssetReferencers(TArray<FAssetRenameDataWithRe
 
 		for (const FName& ReferencingPackageName : ReferencersMap.FindChecked(OldPackageName))
 		{
-			if (!RenamingAssetPackageNames.Contains(ReferencingPackageName))
+			if (FName* NewPackageName = PackageNamesToRename.Find(ReferencingPackageName))
 			{
-				AssetToRename.ReferencingPackageNames.Add(ReferencingPackageName);
+				AssetToRename.RenamedReferencingPackageNames.Add(ReferencingPackageName, *NewPackageName);
+			}
+			else
+			{
+				AssetToRename.NotRenamedReferencingPackageNames.Add(ReferencingPackageName);
 			}
 		}
 
 		if (AssetToRename.bOnlyFixSoftReferences)
 		{
-			AssetToRename.ReferencingPackageNames.Add(FName(*AssetToRename.OldObjectPath.GetLongPackageName()));
-			AssetToRename.ReferencingPackageNames.Add(FName(*AssetToRename.NewObjectPath.GetLongPackageName()));
+			AssetToRename.NotRenamedReferencingPackageNames.Add(OldPackageName);
+			AssetToRename.NotRenamedReferencingPackageNames.Add(AssetToRename.NewObjectPath.GetLongPackageFName());
 
 			// Add dirty packages and the package that owns the reference. They will get filtered out in LoadReferencingPackages if they aren't valid
 			for (UPackage* Package : ExtraPackagesToCheckForSoftReferences)
 			{
-				AssetToRename.ReferencingPackageNames.Add(Package->GetFName());
+				AssetToRename.NotRenamedReferencingPackageNames.Add(Package->GetFName());
 			}
 		}
 	}
@@ -859,9 +872,19 @@ void FAssetRenameManager::LoadReferencingPackages(TArray<FAssetRenameDataWithRef
 		
 		FAssetRenameDataWithReferencers& RenameData = AssetsToRename[AssetIdx];
 
+		TSet<FName> ReferencingExternalPackageNames;
+
 		UObject* Asset = RenameData.Asset.Get();
 		if (Asset)
 		{
+			// External packages must always be resaved
+			for (UPackage* ExternalPackage : Asset->GetPackage()->GetExternalPackages())
+			{
+				FName ExternalPackageName = ExternalPackage->GetFName();
+				ReferencingExternalPackageNames.Add(ExternalPackageName);
+				OutReferencingPackagesToSave.Add(ExternalPackage);
+			}
+
 			// Make sure this asset is local. Only local assets should be renamed without a redirector
 			if (bCheckStatus)
 			{
@@ -908,9 +931,16 @@ void FAssetRenameManager::LoadReferencingPackages(TArray<FAssetRenameDataWithRef
 		TArray<UPackage*> PackagesToSaveForThisAsset;
 		bool bAllPackagesLoadedForThisAsset = true;
 
-		for (auto It = RenameData.ReferencingPackageNames.CreateIterator(); It; ++It)
+		for (auto It = RenameData.NotRenamedReferencingPackageNames.CreateIterator(); It; ++It)
 		{
 			FName PackageName = *It;
+
+			// Ignore external packages of this asset, those are already added to the list of packages to save
+			if (ReferencingExternalPackageNames.Contains(PackageName))
+			{
+				continue;
+			}
+
 			// Check if the package is a map before loading it!
 			if (!bLoadAllPackages && FEditorFileUtils::IsMapPackageAsset(PackageName.ToString()))
 			{
@@ -994,7 +1024,7 @@ void FAssetRenameManager::GatherReferencingObjects(TArray<FAssetRenameDataWithRe
 			continue;
 		}
 
-		for (FName PackageName : RenameData.ReferencingPackageNames)
+		for (FName PackageName : RenameData.NotRenamedReferencingPackageNames)
 		{
 			UPackage* Package = FindPackage(nullptr, *PackageName.ToString());
 
@@ -1195,7 +1225,7 @@ void FAssetRenameManager::DetectReadOnlyPackages(TArray<FAssetRenameDataWithRefe
 					// Find all assets that were referenced by this package to create a redirector when named
 					for (FAssetRenameDataWithReferencers& RenameData : AssetsToRename)
 					{
-						if (RenameData.ReferencingPackageNames.Contains(PackageName))
+						if (RenameData.NotRenamedReferencingPackageNames.Contains(PackageName))
 						{
 							RenameData.bCreateRedirector = true;
 						}
@@ -1205,6 +1235,247 @@ void FAssetRenameManager::DetectReadOnlyPackages(TArray<FAssetRenameDataWithRefe
 					InOutReferencingPackagesToSave.RemoveAt(PackageIdx);
 				}
 			}
+		}
+	}
+}
+
+void FAssetRenameManager::SetupPublicAssets(TArray<FAssetRenameDataWithReferencers>& AssetsToRename) const
+{
+	static const IConsoleVariable* EnablePublicAssetFeatureCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("AssetTools.EnablePublicAssetFeature"));
+	if (!EnablePublicAssetFeatureCVar || !EnablePublicAssetFeatureCVar->GetBool())
+	{
+		return;
+	}
+
+	FScopedSlowTask SlowTask((float)AssetsToRename.Num(), LOCTEXT("SetupPublicAssets", "Setting up public assets..."));
+	SlowTask.MakeDialog();
+
+	IAssetTools& AssetTools = IAssetTools::Get();
+	IAssetRegistry& AssetRegistry = IAssetRegistry::GetChecked();
+
+	// Build a map of old package name to rename data
+	TMap<FName, FAssetRenameDataWithReferencers*> OldPackageNameToRenameData;
+	for (FAssetRenameDataWithReferencers& RenameData : AssetsToRename)
+	{
+		OldPackageNameToRenameData.Add(RenameData.OldObjectPath.GetLongPackageFName(), &RenameData);
+	}
+
+	TArray<UPackage*> PackagesToMakePublic;
+	TSet<FName> RenamedReferencedPackageNames;
+	bool bSomeAssetCannotBeMovedToAnotherPlugin = false;
+	
+	// Determine which moved asset need to become public
+	for (FAssetRenameDataWithReferencers& RenameData : AssetsToRename)
+	{
+		SlowTask.EnterProgressFrame();
+
+		// Nothing to do if it won't be moved
+		if (RenameData.bRenameFailed || RenameData.bOnlyFixSoftReferences)
+		{
+			continue;
+		}
+
+		UObject* Asset = RenameData.Asset.Get();
+		UPackage* Package = Asset ? Asset->GetPackage() : nullptr;
+		if (!ensure(Package))
+		{
+			continue;
+		}
+
+		// Nothing to do if the renamed package mount point doesn't change
+		const FNameBuilder OldPackageName(RenameData.OldObjectPath.GetLongPackageFName());
+		const FNameBuilder NewPackageName(RenameData.NewObjectPath.GetLongPackageFName());
+		const FStringView OldPackageMountPoint = FPathViews::GetMountPointNameFromPath(OldPackageName);
+		const FStringView NewPackageMountPoint = FPathViews::GetMountPointNameFromPath(NewPackageName);
+		if (NewPackageMountPoint.Equals(OldPackageMountPoint, ESearchCase::IgnoreCase))
+		{
+			continue;
+		}
+
+		// Make sure the asset won't be referencing a private asset in a different mount point after the move
+		{
+			TArray<FName> DependencyPackageNames;
+			AssetRegistry.GetDependencies(Package->GetFName(), DependencyPackageNames);
+			for (FName DependencyPackageName : DependencyPackageNames)
+			{
+				if (OldPackageNameToRenameData.Find(DependencyPackageName))
+				{
+					RenamedReferencedPackageNames.Add(DependencyPackageName);
+
+					// Dependency is being renamed as well so it'll be handled later
+					continue;
+				}
+
+				{
+					const FNameBuilder DepPackageNameBuilder(DependencyPackageName);
+					const FStringView DependencyMountPoint = FPathViews::GetMountPointNameFromPath(DepPackageNameBuilder);
+					if (DependencyMountPoint.Equals(NewPackageMountPoint, ESearchCase::IgnoreCase))
+					{
+						// Dependency is under the same mount point as the new asset location
+						continue;
+					}
+				}
+
+				{
+					TArray<FAssetData> DependencyAssetDatas;
+					if (AssetRegistry.GetAssetsByPackageName(DependencyPackageName, DependencyAssetDatas) && !DependencyAssetDatas.IsEmpty())
+					{
+						if (DependencyAssetDatas[0].HasAnyPackageFlags(PKG_NotExternallyReferenceable))
+						{
+							RenameData.bRenameFailed = true;
+							RenameData.FailureReason = FText::Format(
+								LOCTEXT("MovedAssetReferencingPrivateAsset", "Cannot move asset to {0} because it would be referencing a private asset in a different plugin: {1}"),
+								FText::FromStringView(NewPackageMountPoint),
+								FText::FromName(DependencyPackageName));
+							break;
+						}
+					}
+				}
+			}
+
+			if (RenameData.bRenameFailed)
+			{
+				bSomeAssetCannotBeMovedToAnotherPlugin = true;
+				continue;
+			}
+		}
+
+		// If the asset is already public, it can be referenced from anywhere so we're good
+		if (Package->IsExternallyReferenceable())
+		{
+			continue;
+		}
+
+		// The asset doesn't have to become public if it's not referenced at all
+		if (!RenameData.bCreateRedirector && RenameData.NotRenamedReferencingPackageNames.IsEmpty() && RenameData.RenamedReferencingPackageNames.IsEmpty())
+		{
+			continue;
+		}
+
+		// Figure out if it's gonna be referenced from another mount point after the move
+		FString ReferencingAssetInDifferentMountPoint;
+		if (RenameData.bCreateRedirector)
+		{
+			ReferencingAssetInDifferentMountPoint = OldPackageName.ToString();
+		}
+		if (ReferencingAssetInDifferentMountPoint.IsEmpty())
+		{
+			for (FName It : RenameData.NotRenamedReferencingPackageNames)
+			{
+				const FNameBuilder ReferencingPackageName(It);
+				const FStringView ReferencingPackagMountPoint = FPathViews::GetMountPointNameFromPath(ReferencingPackageName);
+				if (!ReferencingPackagMountPoint.Equals(NewPackageMountPoint, ESearchCase::IgnoreCase))
+				{
+					ReferencingAssetInDifferentMountPoint = ReferencingPackageName.ToString();
+					break;
+				}
+			}
+		}
+		if (ReferencingAssetInDifferentMountPoint.IsEmpty())
+		{
+			for (const TPair<FName, FName>& It : RenameData.RenamedReferencingPackageNames)
+			{
+				const FName OldReferencingPackageName = It.Key;
+				const FName NewReferencingPackageName = It.Value;
+
+				FAssetRenameDataWithReferencers** FoundReferencingRenameData = OldPackageNameToRenameData.Find(OldReferencingPackageName);
+				if (!ensureAlways(FoundReferencingRenameData))
+				{
+					continue;
+				}
+				FAssetRenameDataWithReferencers& ReferencingRenameData = **FoundReferencingRenameData;
+
+				FNameBuilder ReferencingPackageName;
+				if (ReferencingRenameData.bRenameFailed || ReferencingRenameData.bOnlyFixSoftReferences)
+				{
+					OldReferencingPackageName.AppendString(ReferencingPackageName);
+				}
+				else
+				{
+					NewReferencingPackageName.AppendString(ReferencingPackageName);
+				}
+
+				const FStringView ReferencingPackagMountPoint = FPathViews::GetMountPointNameFromPath(ReferencingPackageName);
+				if (!NewPackageMountPoint.Equals(ReferencingPackagMountPoint, ESearchCase::IgnoreCase))
+				{
+					ReferencingAssetInDifferentMountPoint = ReferencingPackageName.ToString();
+					break;
+				}
+			}
+		}
+
+		// Check if the asset can be made public
+		if (!ReferencingAssetInDifferentMountPoint.IsEmpty())
+		{
+			const FString OldAssetPath = RenameData.OldObjectPath.GetAssetPathString();
+			if (AssetTools.CanAssetBePublic(OldAssetPath))
+			{
+				PackagesToMakePublic.Add(Package);
+			}
+			else
+			{
+				bSomeAssetCannotBeMovedToAnotherPlugin = true;
+				RenameData.bRenameFailed = true;
+				if (RenameData.bCreateRedirector)
+				{
+					RenameData.FailureReason = FText::Format(
+						LOCTEXT("AssetCannotBePublicForRedirector", "Cannot move asset to {0} because it cannot be made public in order to be referenced from a different plugin by its redirector"),
+						FText::FromStringView(NewPackageMountPoint));
+				}
+				else
+				{
+					RenameData.FailureReason = FText::Format(
+						LOCTEXT("AssetCannotBePublic", "Cannot move asset to {0} because it cannot be made public in order to be referenced from a different plugin by {1}"), 
+						FText::FromStringView(NewPackageMountPoint),
+						FText::FromString(ReferencingAssetInDifferentMountPoint));
+				}
+			}
+		}
+	}
+
+	if (bSomeAssetCannotBeMovedToAnotherPlugin)
+	{
+		// When an asset cannot be moved to another plugin, it changes the set of inter-plugin dependencies and it can require other assets 
+		// to become public as a result, which might not be intended by the user and those cascading effects would be difficult to grok.
+		// In this case, only rename assets that have no dependency against each other.
+		// @fixme: This is a little too aggressive. Ideally we'd check whether each asset actually has a direct or indirect
+		//         dependency with an asset that failed to be moved to another plugin but that could be expensive.
+		const FText FailureReason = LOCTEXT("DependentAssetCannotBeMoved", "Cannot rename asset because dependent assets could not be moved to a different plugin");
+		TSet<FName> RenamedReferencingPackageNames;
+
+		for (FAssetRenameDataWithReferencers& RenameData : AssetsToRename)
+		{
+			for (const TPair<FName, FName>& It : RenameData.RenamedReferencingPackageNames)
+			{
+				RenamedReferencingPackageNames.Add(It.Key);
+			}
+
+			if (!RenameData.bRenameFailed && !RenameData.bOnlyFixSoftReferences && !RenameData.RenamedReferencingPackageNames.IsEmpty())
+			{
+				RenameData.bRenameFailed = true;
+				RenameData.FailureReason = FailureReason;
+			}
+		}
+
+		for (FAssetRenameDataWithReferencers& RenameData : AssetsToRename)
+		{
+			if (!RenameData.bRenameFailed && !RenameData.bOnlyFixSoftReferences)
+			{
+				const FName PackageName = RenameData.OldObjectPath.GetLongPackageFName();
+				if (RenamedReferencingPackageNames.Contains(PackageName) || RenamedReferencedPackageNames.Contains(PackageName))
+				{
+					RenameData.bRenameFailed = true;
+					RenameData.FailureReason = FailureReason;
+				}
+			}
+		}
+	}
+	else
+	{
+		// Make assets public
+		for (UPackage* Package : PackagesToMakePublic)
+		{
+			Package->SetIsExternallyReferenceable(true);
 		}
 	}
 }
@@ -1244,9 +1515,6 @@ void FAssetRenameManager::RenameReferencingSoftObjectPaths(const TArray<UPackage
 			}
 		}
 	}
-
-	// Invalidate the soft object tag as we have created new valid paths
-	FSoftObjectPath::InvalidateTag();
 }
 
 void FAssetRenameManager::OnMarkPackageDirty(UPackage* Pkg, bool bWasDirty)
@@ -1489,7 +1757,7 @@ void FAssetRenameManager::PerformAssetRename(TArray<FAssetRenameDataWithReferenc
 				/**
 				 * Do not save the package when the user simply changing a case and there is no referencer to it
 				 */
-				if (!(bIsCaseChangeOnly && RenameData.ReferencingPackageNames.IsEmpty()))
+				if (!(bIsCaseChangeOnly && RenameData.NotRenamedReferencingPackageNames.IsEmpty()))
 				{
 					PackagesToSave.AddUnique(Asset->GetOutermost());
 				}
@@ -1521,7 +1789,7 @@ void FAssetRenameManager::PerformAssetRename(TArray<FAssetRenameDataWithReferenc
 
 		if (!RenameData.bRenameFailed && !bIsCaseChangeOnly)
 		{
-			for (FName PackageName : RenameData.ReferencingPackageNames)
+			for (FName PackageName : RenameData.NotRenamedReferencingPackageNames)
 			{
 				UPackage* PackageToCheck = FindPackage(nullptr, *PackageName.ToString());
 				if (PackageToCheck)

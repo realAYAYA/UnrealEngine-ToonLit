@@ -97,17 +97,10 @@ void FTestSoftObjectNetSerializer::TearDown()
 
 void FTestSoftObjectNetSerializer::SetUpTestValues()
 {
-	CreatedObjects.Add(TStrongObjectPtr<UObject>(NewObject<UTestReplicatedIrisObject>()));
-	CreatedObjects.Add(TStrongObjectPtr<UObject>(NewObject<UTestReplicatedIrisObject>()));
-
 	TestValues.Add(FSoftObjectPtr());
 	TestValues.Add(FSoftObjectPtr(FSoftObjectPath(TEXT("/Script/NonExistingPlugin.NonExistingClass:NonExistingInstance"))));
 
-	for (const TStrongObjectPtr<UObject>& Object : CreatedObjects)
-	{
-		TestValues.Add(FSoftObjectPtr(Object.Get()));
-		check(TestValues[TestValues.Num() - 1].Get() != nullptr);
-	}
+	// Non-stably named objects are tested in TestObjectNetSerializer.cpp.
 }
 
 void FTestSoftObjectNetSerializer::TestValidate()
@@ -126,7 +119,7 @@ void FTestSoftObjectNetSerializer::TestValidate()
 
 void FTestSoftObjectNetSerializer::TestIsEqual()
 {
-	const SIZE_T TestValueCount = TestValues.Num();
+	const int32 TestValueCount = TestValues.Num();
 
 	TArray<FSoftObjectPtr> CompareValues[2];
 	TArray<bool> ExpectedResults[2];
@@ -138,8 +131,8 @@ void FTestSoftObjectNetSerializer::TestIsEqual()
 	ExpectedResults[1].Reserve(TestValueCount);
 	for (const FSoftObjectPtr& Value : TestValues)
 	{
-		const SIZE_T ValueIndex = &Value - TestValues.GetData();
-		const SIZE_T NextValueIndex = (ValueIndex + 1U) % TestValueCount;
+		const int32 ValueIndex = static_cast<int32>(&Value - TestValues.GetData());
+		const int32 NextValueIndex = (ValueIndex + 1U) % TestValueCount;
 		CompareValues[1].Add(TestValues[NextValueIndex]);
 		ExpectedResults[1].Add(TestValues[ValueIndex] == TestValues[NextValueIndex]);
 	}

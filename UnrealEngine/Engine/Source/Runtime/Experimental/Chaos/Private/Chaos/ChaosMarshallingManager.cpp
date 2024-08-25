@@ -110,7 +110,7 @@ FPushPhysicsData* FChaosMarshallingManager::StepInternalTime_External()
 	{
 		if(ExternalQueue.Num())
 		{
-			return ExternalQueue.Pop(/*bAllowShrinking=*/false);
+			return ExternalQueue.Pop(EAllowShrinking::No);
 		}
 	}
 	else
@@ -198,7 +198,7 @@ void FChaosMarshallingManager::SetHistoryLength_Internal(int32 InHistoryLength)
 		{
 			FreeData_Internal(HistoryQueue_Internal[Idx]);
 		}
-		HistoryQueue_Internal.SetNum(InHistoryLength, /*bAllowShrinking=*/false);
+		HistoryQueue_Internal.SetNum(InHistoryLength, EAllowShrinking::No);
 	}
 }
 

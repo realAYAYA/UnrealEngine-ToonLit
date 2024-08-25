@@ -24,6 +24,7 @@ public:
 protected:
 	//~ Begin FViewportClient Interface
 	virtual void Draw(FViewport* Viewport, FCanvas* Canvas) override;
+	virtual bool ShouldDPIScaleSceneCanvas() const override { return bUseDPIScaling; }
 	//~ End FViewportClient Interface
 
 	//~ Begin FViewport Interface
@@ -31,6 +32,8 @@ protected:
 	//~ End FViewport Interface
 
 private:
+	bool bUseDPIScaling = false;
+
 	TWeakPtr<FDMXPixelMappingToolkit> WeakToolkit;
 	TWeakPtr<SDMXPixelMappingSourceTextureViewport> WeakSourceTextureViewport;
 };

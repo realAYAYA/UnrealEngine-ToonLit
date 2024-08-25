@@ -5,13 +5,16 @@
 #include "EngineAnalytics.h"
 #include "Kismet/GameplayStatics.h"
 #include "Misc/SecureHash.h"
+#include "NNE.h"
 #include "NNEAttributeMap.h"
 #include "NNEModelData.h"
 #include "NNEModelOptimizerInterface.h"
 #include "NNERuntimeRDG.h"
 #include "NNERuntimeRDGHlslHelper.h"
 #include "NNERuntimeRDGModelHlsl.h"
-#include "NNEUtilsModelOptimizer.h"
+#ifdef NNE_UTILITIES_AVAILABLE
+#include "NNEUtilitiesModelOptimizer.h"
+#endif // NNE_UTILITIES_AVAILABLE
 #include "Hlsl/NNERuntimeRDGBatchNormalization.h"
 #include "Hlsl/NNERuntimeRDGCast.h"
 #include "Hlsl/NNERuntimeRDGConv.h"
@@ -24,14 +27,19 @@
 #include "Hlsl/NNERuntimeRDGFlatten.h"
 #include "Hlsl/NNERuntimeRDGGather.h"
 #include "Hlsl/NNERuntimeRDGGemm.h"
+#include "Hlsl/NNERuntimeRDGGlobalPool.h"
 #include "Hlsl/NNERuntimeRDGIdentity.h"
 #include "Hlsl/NNERuntimeRDGInstanceNormalization.h"
 #include "Hlsl/NNERuntimeRDGPad.h"
+#include "Hlsl/NNERuntimeRDGPool.h"
+#include "Hlsl/NNERuntimeRDGReduce.h"
 #include "Hlsl/NNERuntimeRDGReshape.h"
 #include "Hlsl/NNERuntimeRDGShape.h"
 #include "Hlsl/NNERuntimeRDGSize.h"
 #include "Hlsl/NNERuntimeRDGSlice.h"
+#include "Hlsl/NNERuntimeRDGSoftmax.h"
 #include "Hlsl/NNERuntimeRDGSqueeze.h"
+#include "Hlsl/NNERuntimeRDGTranspose.h"
 #include "Hlsl/NNERuntimeRDGUnsqueeze.h"
 #include "Hlsl/NNERuntimeRDGUpsample.h"
 #include "Hlsl/NNERuntimeRDGMatMul.h"
@@ -39,68 +47,88 @@
 using namespace UE::NNERuntimeRDG::Private::Hlsl;
 
 FGuid UNNERuntimeRDGHlslImpl::GUID = FGuid((int32)'R', (int32)'D', (int32)'G', (int32)'H');
-int32 UNNERuntimeRDGHlslImpl::Version = 0x00000001;
+int32 UNNERuntimeRDGHlslImpl::Version = 0x00000005;
 
 bool UNNERuntimeRDGHlslImpl::Init()
 {
-	FOperatorRegistryHlsl* registry = FOperatorRegistryHlsl::Get();
-	check(registry != nullptr);
+	FOperatorRegistryHlsl* Registry = FOperatorRegistryHlsl::Get();
+	check(Registry != nullptr);
 
-	RegisterBatchNormalizationOperator(*registry);
-	RegisterCastOperator(*registry);
-	RegisterConvOperator(*registry);
-	RegisterConcatOperator(*registry);
-	RegisterConvTransposeOperator(*registry);
-	RegisterDropoutOperator(*registry);
-	RegisterElementWiseBinaryOperators(*registry);
-	RegisterElementWiseUnaryOperators(*registry);
-	RegisterElementWiseVariadicOperators(*registry);
-	RegisterFlattenOperator(*registry);
-	RegisterGatherOperator(*registry);
-	RegisterGemmOperator(*registry);
-	RegisterIdentityOperator(*registry);
-	RegisterInstanceNormalizationOperator(*registry);
-	RegisterPadOperator(*registry);
-	RegisterReshapeOperator(*registry);
-	RegisterShapeOperator(*registry);
-	RegisterSizeOperator(*registry);
-	RegisterSliceOperator(*registry);
-	RegisterSqueezeOperator(*registry);
-	RegisterUnsqueezeOperator(*registry);
-	RegisterUpsampleOperator(*registry);
-	RegisterMatMulOperator(*registry);
+	RegisterBatchNormalizationOperator(*Registry);
+	RegisterCastOperator(*Registry);
+	RegisterConvOperator(*Registry);
+	RegisterConcatOperator(*Registry);
+	RegisterConvTransposeOperator(*Registry);
+	RegisterDropoutOperator(*Registry);
+	RegisterElementWiseBinaryOperators(*Registry);
+	RegisterElementWiseUnaryOperators(*Registry);
+	RegisterElementWiseVariadicOperators(*Registry);
+	RegisterFlattenOperator(*Registry);
+	RegisterGatherOperator(*Registry);
+	RegisterGemmOperator(*Registry);
+	RegisterGlobalPoolOperators(*Registry);
+	RegisterIdentityOperator(*Registry);
+	RegisterInstanceNormalizationOperator(*Registry);
+	RegisterPadOperator(*Registry);
+	RegisterPoolOperators(*Registry);
+	RegisterReduceOperators(*Registry);
+	RegisterReshapeOperator(*Registry);
+	RegisterShapeOperator(*Registry);
+	RegisterSizeOperator(*Registry);
+	RegisterSliceOperator(*Registry);
+	RegisterSoftmaxOperator(*Registry);
+	RegisterSqueezeOperator(*Registry);
+	RegisterTransposeOperator(*Registry);
+	RegisterUnsqueezeOperator(*Registry);
+	RegisterUpsampleOperator(*Registry);
+	RegisterMatMulOperator(*Registry);
 
 	return true;
 }
 
-bool UNNERuntimeRDGHlslImpl::CanCreateModelData(FString FileType, TConstArrayView<uint8> FileData, FGuid FileId, const ITargetPlatform* TargetPlatform) const
+UNNERuntimeRDGHlslImpl::ECanCreateModelDataStatus UNNERuntimeRDGHlslImpl::CanCreateModelData(const FString& FileType, TConstArrayView<uint8> FileData, const TMap<FString, TConstArrayView<uint8>>& AdditionalFileData, const FGuid& FileId, const ITargetPlatform* TargetPlatform) const
 {
-	return FileType.Compare("onnx", ESearchCase::IgnoreCase) == 0;
+#ifdef NNE_UTILITIES_AVAILABLE
+	return FileType.Compare("onnx", ESearchCase::IgnoreCase) == 0 ? ECanCreateModelDataStatus::Ok : ECanCreateModelDataStatus::FailFileIdNotSupported;
+#else
+	UE_LOG(LogNNE, Display, TEXT("NNEUtilities is not available on this platform"));
+	return ECanCreateModelDataStatus::Fail;
+#endif
 }
 
-bool UNNERuntimeRDGHlslImpl::CanCreateModelRDG(TObjectPtr<UNNEModelData> ModelData) const
+UNNERuntimeRDGHlslImpl::ECanCreateModelRDGStatus UNNERuntimeRDGHlslImpl::CanCreateModelRDG(const TObjectPtr<UNNEModelData> ModelData) const
 {
 	int32 GuidSize = sizeof(GUID);
 	int32 VersionSize = sizeof(Version);
-	TConstArrayView<uint8> Data = ModelData->GetModelData(GetRuntimeName());
-	
+	TSharedPtr<UE::NNE::FSharedModelData> SharedData = ModelData->GetModelData(GetRuntimeName());
+
+	if (!SharedData.IsValid())
+	{
+		return ECanCreateModelRDGStatus::Fail;
+	}
+
+	TConstArrayView<uint8> Data = SharedData->GetView();
+
 	if (Data.Num() <= GuidSize + VersionSize)
 	{
-		return false;
+		return ECanCreateModelRDGStatus::Fail;
 	}
 	bool bResult = FGenericPlatformMemory::Memcmp(&(Data[0]), &(GUID), GuidSize) == 0;
 	bResult &= FGenericPlatformMemory::Memcmp(&(Data[GuidSize]), &(Version), VersionSize) == 0;
-	return bResult;
+
+	return bResult ? ECanCreateModelRDGStatus::Ok : ECanCreateModelRDGStatus::Fail;
 };
 
-TArray<uint8> UNNERuntimeRDGHlslImpl::CreateModelData(FString FileType, TConstArrayView<uint8> FileData, FGuid FileId, const ITargetPlatform* TargetPlatform)
+TSharedPtr<UE::NNE::FSharedModelData> UNNERuntimeRDGHlslImpl::CreateModelData(const FString& FileType, TConstArrayView<uint8> FileData, const TMap<FString, TConstArrayView<uint8>>& AdditionalFileData, const FGuid& FileId, const ITargetPlatform* TargetPlatform)
 {
-	if (!CanCreateModelData(FileType, FileData, FileId, TargetPlatform))
+	if (CanCreateModelData(FileType, FileData, AdditionalFileData, FileId, TargetPlatform) != ECanCreateModelDataStatus::Ok)
 	{
+		UE_LOG(LogNNE, Warning, TEXT("UNNERuntimeRDGHlsl cannot create the model data with id %s (Filetype: %s)"), *FileId.ToString(EGuidFormats::Digits).ToLower(), *FileType);
 		return {};
 	}
 
-	TUniquePtr<UE::NNE::Internal::IModelOptimizer> Optimizer = UE::NNEUtils::Internal::CreateONNXToNNEModelOptimizer();
+#ifdef NNE_UTILITIES_AVAILABLE
+	TUniquePtr<UE::NNE::Internal::IModelOptimizer> Optimizer = UE::NNEUtilities::Internal::CreateONNXToNNEModelOptimizer();
 	Optimizer->AddValidator(MakeShared<FModelValidatorHlsl>());
 
 	FNNEModelRaw InputModel;
@@ -119,22 +147,28 @@ TArray<uint8> UNNERuntimeRDGHlslImpl::CreateModelData(FString FileType, TConstAr
 	Writer << GUID;
 	Writer << Version;
 	Writer.Serialize(OutputModel.Data.GetData(), OutputModel.Data.Num());
-	return Result;
+
+	return MakeShared<UE::NNE::FSharedModelData>(MakeSharedBufferFromArray(MoveTemp(Result)), 0);
+#else //NNE_UTILITIES_AVAILABLE
+	return {};
+#endif //NNE_UTILITIES_AVAILABLE
 };
 
-FString UNNERuntimeRDGHlslImpl::GetModelDataIdentifier(FString FileType, TConstArrayView<uint8> FileData, FGuid FileId, const ITargetPlatform* TargetPlatform)
+FString UNNERuntimeRDGHlslImpl::GetModelDataIdentifier(const FString& FileType, TConstArrayView<uint8> FileData, const TMap<FString, TConstArrayView<uint8>>& AdditionalFileData, const FGuid& FileId, const ITargetPlatform* TargetPlatform) const
 {
 	return FileId.ToString(EGuidFormats::Digits) + "-" + UNNERuntimeRDGHlslImpl::GUID.ToString(EGuidFormats::Digits) + "-" + FString::FromInt(UNNERuntimeRDGHlslImpl::Version);
 }
 
-TUniquePtr<UE::NNE::IModelRDG> UNNERuntimeRDGHlslImpl::CreateModel(TObjectPtr<UNNEModelData> ModelData)
+TSharedPtr<UE::NNE::IModelRDG> UNNERuntimeRDGHlslImpl::CreateModelRDG(const TObjectPtr<UNNEModelData> ModelData)
 {
-	if (!CanCreateModelRDG(ModelData))
+	if (CanCreateModelRDG(ModelData) != ECanCreateModelRDGStatus::Ok)
 	{
-		return TUniquePtr<UE::NNE::IModelRDG>();
+		UE_LOG(LogNNE, Warning, TEXT("UNNERuntimeRDGHlsl cannot create a model from the model data with id %s"), *ModelData->GetFileId().ToString(EGuidFormats::Digits));
+		return TSharedPtr<UE::NNE::IModelRDG>();
 	}
 
-	TConstArrayView<uint8> Data = ModelData->GetModelData(GetRuntimeName());
+	TSharedPtr<UE::NNE::FSharedModelData> Data = ModelData->GetModelData(GetRuntimeName());
+	check(Data.IsValid());
 	UE::NNERuntimeRDG::Private::Hlsl::FModel* Model = new UE::NNERuntimeRDG::Private::Hlsl::FModel(Data);
 
 	if (FEngineAnalytics::IsAvailable())
@@ -142,10 +176,10 @@ TUniquePtr<UE::NNE::IModelRDG> UNNERuntimeRDGHlslImpl::CreateModel(TObjectPtr<UN
 		TArray<FAnalyticsEventAttribute> Attributes = MakeAnalyticsEventAttributeArray(
 			TEXT("PlatformName"), UGameplayStatics::GetPlatformName(),
 			TEXT("HashedRuntimeName"), FMD5::HashAnsiString(*GetRuntimeName()),
-			TEXT("ModelDataSize"), Data.Num()
+			TEXT("ModelDataSize"), Data->GetView().Num()
 		);
 		FEngineAnalytics::GetProvider().RecordEvent(TEXT("NeuralNetworkEngine.CreateModel"), Attributes);
 	}
 
-	return TUniquePtr<UE::NNE::IModelRDG>(Model);
+	return TSharedPtr<UE::NNE::IModelRDG>(Model);
 }

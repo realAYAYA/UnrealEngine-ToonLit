@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Rendering/MultiSizeIndexContainer.h"
+#include "Rendering/RenderCommandPipes.h"
 #include "EngineLogs.h"
 #include "RawIndexBuffer.h"
 #include "Stats/Stats.h"
@@ -30,7 +31,7 @@ void FMultiSizeIndexContainer::InitResources()
 	check(IsInGameThread());
 	if (IndexBuffer)
 	{
-		BeginInitResource(IndexBuffer);
+		BeginInitResource(IndexBuffer, &UE::RenderCommandPipe::SkeletalMesh);
 	}
 }
 
@@ -42,7 +43,7 @@ void FMultiSizeIndexContainer::ReleaseResources()
 	check(IsInGameThread());
 	if (IndexBuffer)
 	{
-		BeginReleaseResource(IndexBuffer);
+		BeginReleaseResource(IndexBuffer, &UE::RenderCommandPipe::SkeletalMesh);
 	}
 }
 
@@ -193,36 +194,31 @@ void FMultiSizeIndexContainer::SerializeMetaData(FArchive& Ar, bool bNeedsCPUAcc
 	IndexBuffer->SerializeMetaData(Ar);
 }
 
-FBufferRHIRef FMultiSizeIndexContainer::CreateRHIBuffer_RenderThread()
+FBufferRHIRef FMultiSizeIndexContainer::CreateRHIBuffer(FRHICommandListBase& RHICmdList)
 {
 	if (IndexBuffer)
 	{
 		if (DataTypeSize == sizeof(uint16))
 		{
-			return static_cast<FRawStaticIndexBuffer16or32<uint16>*>(IndexBuffer)->CreateRHIBuffer_RenderThread();
+			return static_cast<FRawStaticIndexBuffer16or32<uint16>*>(IndexBuffer)->CreateRHIBuffer(RHICmdList);
 		}
 		else
 		{
-			return static_cast<FRawStaticIndexBuffer16or32<uint32>*>(IndexBuffer)->CreateRHIBuffer_RenderThread();
+			return static_cast<FRawStaticIndexBuffer16or32<uint32>*>(IndexBuffer)->CreateRHIBuffer(RHICmdList);
 		}
 	}
 	return nullptr;
 }
 
+FBufferRHIRef FMultiSizeIndexContainer::CreateRHIBuffer_RenderThread()
+{
+	return CreateRHIBuffer(FRHICommandListImmediate::Get());
+}
+
 FBufferRHIRef FMultiSizeIndexContainer::CreateRHIBuffer_Async()
 {
-	if (IndexBuffer)
-	{
-		if (DataTypeSize == sizeof(uint16))
-		{
-			return static_cast<FRawStaticIndexBuffer16or32<uint16>*>(IndexBuffer)->CreateRHIBuffer_Async();
-		}
-		else
-		{
-			return static_cast<FRawStaticIndexBuffer16or32<uint32>*>(IndexBuffer)->CreateRHIBuffer_Async();
-		}
-	}
-	return nullptr;
+	FRHIAsyncCommandList RHICmdList;
+	return CreateRHIBuffer(*RHICmdList);
 }
 
 void FMultiSizeIndexContainer::InitRHIForStreaming(FRHIBuffer* IntermediateBuffer, FRHIResourceUpdateBatcher& Batcher)

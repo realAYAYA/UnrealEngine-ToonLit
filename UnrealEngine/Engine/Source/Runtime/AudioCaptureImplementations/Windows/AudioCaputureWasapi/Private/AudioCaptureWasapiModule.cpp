@@ -20,17 +20,27 @@ namespace Audio
 	class FAudioCaptureWasapiModule : public IModuleInterface
 	{
 	private:
+		/** Indicates if FWindowsPlatformMisc::CoInitialize() was successfull. */
+		bool bCoInitialized = false;
+		
 		FAudioCaptureWasapiFactory AudioCaptureFactory;
 
 	public:
 		virtual void StartupModule() override
 		{
+			bCoInitialized = FWindowsPlatformMisc::CoInitialize();
+			
 			IModularFeatures::Get().RegisterModularFeature(IAudioCaptureFactory::GetModularFeatureName(), &AudioCaptureFactory);
 		}
 
 		virtual void ShutdownModule() override
 		{
 			IModularFeatures::Get().UnregisterModularFeature(IAudioCaptureFactory::GetModularFeatureName(), &AudioCaptureFactory);
+			
+			if (bCoInitialized)
+			{
+				FWindowsPlatformMisc::CoUninitialize();
+			}
 		}
 	};
 }

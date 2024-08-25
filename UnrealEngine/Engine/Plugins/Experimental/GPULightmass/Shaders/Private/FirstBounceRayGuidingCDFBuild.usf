@@ -1,3 +1,4 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
 #include "/Engine/Public/Platform.ush"
 
 #include "/Engine/Private/PathTracing/Material/FirstBounceRayGuidingCommon.ush"

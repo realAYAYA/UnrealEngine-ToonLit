@@ -36,10 +36,7 @@ FText UModifyGeometrySelectionCommand::GetCommandShortString() const
 		return LOCTEXT("ShortString_Expand", "Expand/Grow Selection");
 	case EModificationType::Contract:
 		return LOCTEXT("ShortString_Contract", "Contract/Shrink Selection");
-
 	}
-
-	return LOCTEXT("ShortString_SelectAll", "Select All");
 }
 
 

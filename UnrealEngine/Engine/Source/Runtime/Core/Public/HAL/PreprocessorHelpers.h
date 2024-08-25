@@ -22,6 +22,26 @@
 // Expands to the parameter list of the macro - used to pass a *potentially* comma-separated identifier to another macro as a single parameter
 #define PREPROCESSOR_COMMA_SEPARATED(first, ...) first, ##__VA_ARGS__
 
+// Expands to a number which is the count of variadic arguments passed to it.
+#define PREPROCESSOR_VA_ARG_COUNT(...) PREPROCESSOR_APPEND_VA_ARG_COUNT(, ##__VA_ARGS__)
+
+// Expands to a token of Prefix##<count>, where <count> is the number of variadic arguments.
+//
+// Example:
+//   PREPROCESSOR_APPEND_VA_ARG_COUNT(SOME_MACRO_)          => SOME_MACRO_0
+//   PREPROCESSOR_APPEND_VA_ARG_COUNT(SOME_MACRO_, a, b, c) => SOME_MACRO_3
+#if !defined(_MSVC_TRADITIONAL) || !_MSVC_TRADITIONAL
+	#define PREPROCESSOR_APPEND_VA_ARG_COUNT(Prefix, ...) PREPROCESSOR_APPEND_VA_ARG_COUNT_INNER(Prefix, ##__VA_ARGS__, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0)
+#else
+	#define PREPROCESSOR_APPEND_VA_ARG_COUNT(Prefix, ...) PREPROCESSOR_APPEND_VA_ARG_COUNT_INVOKE(PREPROCESSOR_APPEND_VA_ARG_COUNT_INNER, (Prefix, ##__VA_ARGS__, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0))
+
+	// MSVC's traditional preprocessor doesn't handle the zero-argument case correctly, so we use a workaround.
+	// The workaround uses token pasting of Macro##ArgsInParens, which the conformant preprocessor doesn't like and emits C5103.
+	#define PREPROCESSOR_APPEND_VA_ARG_COUNT_INVOKE(Macro, ArgsInParens) PREPROCESSOR_APPEND_VA_ARG_COUNT_EXPAND(Macro##ArgsInParens)
+	#define PREPROCESSOR_APPEND_VA_ARG_COUNT_EXPAND(Arg) Arg
+#endif
+#define PREPROCESSOR_APPEND_VA_ARG_COUNT_INNER(Prefix,a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,count,...) Prefix##count
+
 // Expands to nothing - used as a placeholder
 #define PREPROCESSOR_NOTHING
 

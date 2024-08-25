@@ -127,13 +127,14 @@ TSharedRef<ITableRow> SNiagaraSimCacheOverview::OnGenerateRowForItem(TSharedRef<
 	{
 		"NiagaraEditor.SimCache.SystemItem",
 		"NiagaraEditor.SimCache.EmitterItem",
-		"NiagaraEditor.SimCache.ComponentItem"
+		"NiagaraEditor.SimCache.ComponentItem",
+		"NiagaraEditor.SimCache.DataInterfaceItem"
 	};
 
 	ENiagaraSimCacheOverviewItemType StyleType = Item->GetType();
 	
 	return SNew(STableRow<TSharedRef<FNiagaraSimCacheOverviewItem>>, Owner)
-	.Style(FNiagaraEditorStyle::Get(), ItemStyles[(int32)StyleType])
+	.Style(FNiagaraEditorStyle::Get(), ItemStyles[static_cast<int32>(StyleType)])
 	.Padding(1.0f)
 	[
 		SNew(SNiagaraSimCacheBufferItem)
@@ -141,12 +142,11 @@ TSharedRef<ITableRow> SNiagaraSimCacheOverview::OnGenerateRowForItem(TSharedRef<
 	];
 }
 
-void SNiagaraSimCacheOverview::OnListSelectionChanged(TSharedPtr<FNiagaraSimCacheOverviewItem> Item,
-	ESelectInfo::Type SelectInfo)
+void SNiagaraSimCacheOverview::OnListSelectionChanged(TSharedPtr<FNiagaraSimCacheOverviewItem> Item, ESelectInfo::Type)
 {
-	if(Item.IsValid())
+	if (Item.IsValid())
 	{
-		ViewModel->SetEmitterIndex(Item->GetBufferIndex());
+		ViewModel->SetEmitterIndex(Item->GetBufferIndex(), Item->GetDataInterface());
 	}
 }
 

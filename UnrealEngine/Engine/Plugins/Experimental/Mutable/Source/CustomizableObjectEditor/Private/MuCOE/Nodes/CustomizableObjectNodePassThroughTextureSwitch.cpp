@@ -7,21 +7,9 @@
 #define LOCTEXT_NAMESPACE "CustomizableObjectEditor"
 
 
-FString UCustomizableObjectNodePassThroughTextureSwitch::GetOutputPinName() const
-{
-	return TEXT("PassThrough Texture");
-}
-
-
 FName UCustomizableObjectNodePassThroughTextureSwitch::GetCategory() const
 {
 	return UEdGraphSchema_CustomizableObject::PC_PassThroughImage;
-}
-
-
-FString UCustomizableObjectNodePassThroughTextureSwitch::GetPinPrefix() const
-{
-	return TEXT("PassThrough Texture ");
 }
 
 

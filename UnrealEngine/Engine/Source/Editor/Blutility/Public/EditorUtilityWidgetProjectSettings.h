@@ -34,4 +34,23 @@ public:
 	virtual void PostEditChangeChainProperty(struct FPropertyChangedChainEvent& PropertyChangedEvent) override;
 	// End UObject Interface
 
+	/** Get the permission list that controls actor actions */
+	FNamePermissionList& GetAllowedEditorUtilityActorActions();
+	const FNamePermissionList& GetAllowedEditorUtilityActorActions() const;
+
+	/** Get the permission list that controls asset actions */
+	FNamePermissionList& GetAllowedEditorUtilityAssetActions();
+	const FNamePermissionList& GetAllowedEditorUtilityAssetActions() const;
+
+	/** Set true to search generated classes for scripted actions. */
+	UPROPERTY(EditAnywhere, config, Category = Designer)
+	bool bSearchGeneratedClassesForScriptedActions = false;
+
+protected:
+
+	/** EditorUtility actor actions to always consider during context menu creation */
+	FNamePermissionList AllowedEditorUtilityActorActions;
+
+	/** EditorUtility asset actions to always consider during context menu creation */
+	FNamePermissionList AllowedEditorUtilityAssetActions;
 };

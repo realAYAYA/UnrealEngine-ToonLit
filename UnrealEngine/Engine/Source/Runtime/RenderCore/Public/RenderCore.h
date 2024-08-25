@@ -64,6 +64,7 @@ DECLARE_DWORD_COUNTER_STAT_EXTERN(TEXT("Ray tracing total instances"), STAT_RayT
 // Number of valid instances, taking into account per-instance culling / activation mask
 DECLARE_DWORD_COUNTER_STAT_EXTERN(TEXT("Ray tracing active instances"), STAT_RayTracingActiveInstances, STATGROUP_SceneRendering, RENDERCORE_API);
 
+DECLARE_CYCLE_STAT_EXTERN(TEXT("Always Visible"), STAT_UpdateAlwaysVisible, STATGROUP_InitViews, RENDERCORE_API);
 DECLARE_CYCLE_STAT_EXTERN(TEXT("View Visibility"),STAT_ViewVisibilityTime,STATGROUP_InitViews, RENDERCORE_API);
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Decompress Occlusion"),STAT_DecompressPrecomputedOcclusion,STATGROUP_InitViews, RENDERCORE_API);
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Update Fading"),STAT_UpdatePrimitiveFading,STATGROUP_InitViews, RENDERCORE_API);

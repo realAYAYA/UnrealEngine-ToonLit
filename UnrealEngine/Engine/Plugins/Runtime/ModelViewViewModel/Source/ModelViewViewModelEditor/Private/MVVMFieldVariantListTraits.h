@@ -161,7 +161,7 @@ struct TListTypeTraits<FMVVMBlueprintPropertyPath>
 
 	static FString DebugDump(FMVVMBlueprintPropertyPath InPtr)
 	{
-		return InPtr.GetBasePropertyPath();
+		return FString();
 	}
 
 	class SerializerType {};

@@ -1,17 +1,15 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #pragma once
 
-// HEADER_UNIT_SKIP - Not included directly
+#include "VectorVMSerialization.h"
+#include "VectorVMCommon.h"
+#include "Math/RandomStream.h"
 
-#define VECTORVM_SUPPORTS_AVX 0
+#if VECTORVM_SUPPORTS_EXPERIMENTAL
+
 #define VECTORVM_SUPPORTS_COMPUTED_GOTO 0
 
-//only to be included by VectorVM.h
-
-typedef void * (VectorVMReallocFn)              (void *Ptr, size_t NumBytes, const char *Filename, int LineNumber);
-typedef void   (VectorVMFreeFn)                 (void *Ptr, const char *Filename, int LineNumber);
 struct FDataSetMeta;
-
 
 #define VVM_INS_PARAM_FFFFFF	0b000000
 #define VVM_INS_PARAM_FFFFFI	0b000001
@@ -78,7 +76,6 @@ struct FDataSetMeta;
 #define VVM_INS_PARAM_IIIIIF	0b111110
 #define VVM_INS_PARAM_IIIIII	0b111111
 
-
 #define VVM_OP_CAT_XM_LIST    \
 	VVM_OP_CAT_XM(Input)      \
 	VVM_OP_CAT_XM(Output)     \
@@ -87,7 +84,6 @@ struct FDataSetMeta;
 	VVM_OP_CAT_XM(IndexGen)   \
 	VVM_OP_CAT_XM(RWBuffer)   \
 	VVM_OP_CAT_XM(Stat)       \
-	VVM_OP_CAT_XM(Fused)      \
 	VVM_OP_CAT_XM(Other)
 
 #define VVM_OP_CAT_XM(Category, ...) Category,
@@ -103,6 +99,27 @@ static const EVectorVMOpCategory VVM_OP_CATEGORIES[] = {
 #undef VVM_OP_XM
 };
 
+#define VVM_MIN(a, b)               ((a) < (b) ? (a) : (b))
+#define VVM_MAX(a, b)               ((a) > (b) ? (a) : (b))
+#define VVM_CLAMP(v, min, max)      ((v) < (min) ? (min) : ((v) < (max) ? (v) : (max)))
+#define VVM_ALIGN(num, alignment)   (((size_t)(num) + (alignment) - 1) & ~((alignment) - 1))
+#define VVM_ALIGN_4(num)            (((size_t)(num) + 3) & ~3)
+#define VVM_ALIGN_8(num)            (((size_t)(num) + 7) & ~7)
+#define VVM_ALIGN_16(num)           (((size_t)(num) + 15) & ~15)
+#define VVM_ALIGN_32(num)           (((size_t)(num) + 31) & ~31)
+#define VVM_ALIGN_64(num)           (((size_t)(num) + 63) & ~63)
+
+#define VVM_PTR_ALIGN    VVM_ALIGN_16
+#define VVM_REG_SIZE     sizeof(FVecReg)
+
+enum {
+	VVM_RT_TEMPREG,
+	VVM_RT_CONST,
+	VVM_RT_INPUT,
+	VVM_RT_OUTPUT,
+	VVM_RT_INVALID
+};
+
 enum EVectorVMFlags
 {
 	VVMFlag_OptSaveIntermediateState = 1 << 0,
@@ -110,176 +127,10 @@ enum EVectorVMFlags
 	VVMFlag_LargeScript              = 1 << 2,   //if true register indices are 16 bit, otherwise they're 8 bit
 	VVMFlag_HasRandInstruction       = 1 << 3,
 	VVMFlag_DataMapCacheSetup        = 1 << 4,
-	VVMFlag_SupportsAVX              = 1 << 5,
 };
 
 //prototypes for serialization that are required whether or not serialization is enabled
-#if VECTORVM_SUPPORTS_EXPERIMENTAL || defined(VVM_INCLUDE_SERIALIZATION)
-
-typedef uint32 (VectorVMOptimizeErrorCallback)  (struct FVectorVMOptimizeContext *OptimizeContext, uint32 ErrorFlags);	//return new error flags
-typedef uint32 (VectorVMSerializeErrorCallback) (struct FVectorVMSerializeState *SerializeState, uint32 ErrorFlags);
-
-#endif // VECTORVM_SUPPORTS_EXPERIMENTAL || VVM_INCLUDE_SERIALIZATION
-
-//Serialization
-enum EVectorVMSerializeFlags
-{
-	VVMSer_SyncRandom        = 1 << 0,
-	VVMSer_SyncExtFns        = 1 << 1,
-	VVMSer_OptimizedBytecode = 1 << 2,
-};
-
-#ifdef VVM_INCLUDE_SERIALIZATION
-
-enum EVectorVMSerializeError
-{
-	VVMSerErr_OutOfMemory    = 1 << 0,
-	VVMSerErr_Init           = 1 << 1,
-	VVMSerErr_InputDataSets  = 1 << 2,
-	VVMSerErr_OutputDataSets = 1 << 3,
-	VVMSerErr_Instruction    = 1 << 4,
-	VVMSerErr_ConstData      = 1 << 5,
-
-	VVMSerErr_Fatal          = 1 << 31
-};
-
-struct FVectorVMSerializeInstruction
-{
-	uint32   OpStart;
-	uint32   NumOps;
-	uint64   Dt;
-	uint64   DtDecode;
-	uint32 * TempRegisters;
-	uint8 *  TempRegisterFlags;
-};
-
-struct FVectorVMSerializeExternalData
-{
-	wchar_t * Name;
-	uint16    NameLen;
-	uint16    NumInputs;
-	uint16    NumOutputs;
-};
-
-struct FVectorVMSerializeDataSet
-{
-	uint32 * InputBuffers;
-	uint32 * OutputBuffers;
-
-	uint32  InputOffset[4];	    //float, int, half (half must be 0)
-	uint32  OutputOffset[4];    //float, int, half (half must be 0)
-
-	int32   InputInstanceOffset;
-	int32   InputDataSetAccessIndex;
-	int32   InputIDAcquireTag;
-
-	int32   OutputInstanceOffset;
-	int32   OutputDataSetAccessIndex;
-	int32   OutputIDAcquireTag;
-
-	int32 * InputIDTable;
-	int32 * InputFreeIDTable;
-	int32 * InputSpawnedIDTable;
-
-	int32   InputIDTableNum;
-	int32   InputFreeIDTableNum;
-	int32   InputSpawnedIDTableNum;
-
-	int32   InputNumFreeIDs;
-	int32   InputMaxUsedIDs;
-	int32   InputNumSpawnedIDs;
-
-	int32 * OutputIDTable;
-	int32 * OutputFreeIDTable;
-	int32 * OutputSpawnedIDTable;
-
-	int32   OutputIDTableNum;
-	int32   OutputFreeIDTableNum;
-	int32   OutputSpawnedIDTableNum;
-
-	int32   OutputNumFreeIDs;
-	int32   OutputMaxUsedIDs;
-	int32   OutputNumSpawnedIDs;
-};
-
-struct FVectorVMSerializeChunk
-{
-	uint32 ChunkIdx;
-	uint32 BatchIdx;
-	uint32 ExecIdx;
-	uint32 StartInstance;
-	uint32 NumInstances;
-
-	uint32 StartThreadID;
-	uint32 EndThreadID;
-
-	uint64 StartClock;
-	uint64 EndClock;
-	uint64 InsExecTime;
-};
-
-struct FVectorVMSerializeState
-{
-	uint32                              NumInstances;
-	uint32                              NumTempRegisters;
-	uint32                              NumTempRegFlags;  //max of NumTempRegisters and Num Input Registers in each dataset
-	uint32                              ConstDataCount;
-
-	uint32                              Flags;
-
-	FVectorVMSerializeInstruction *     Instructions;
-	uint32                              NumInstructions;
-	uint32                              NumInstructionsAllocated;
-
-	uint32                              NumExternalData;
-	FVectorVMSerializeExternalData *    ExternalData;
-	uint32								MaxExtFnRegisters;
-	uint32								MaxExtFnUsed;
-
-	uint64                              ExecDt;
-	uint64                              SerializeDt;
-
-	uint8 *                             TempRegFlags;
-	uint8 *                             Bytecode;
-	uint32                              NumBytecodeBytes;
-
-	FVectorVMSerializeDataSet *         DataSets;
-	uint32                              NumDataSets;
-
-	uint32 *                            ConstTableSizesInBytes;
-	uint32 *                            PreExecConstData;
-	uint32 *                            PostExecConstData;
-
-
-	uint32                              NumChunks;
-	FVectorVMSerializeChunk *           Chunks;
-
-	const struct FVectorVMOptimizeContext *   OptimizeCtx;
-
-	volatile int64                      ChunkComplete; //1 bit for each of the first 64 chunks
-
-	VectorVMReallocFn *                  ReallocFn;
-	VectorVMFreeFn *                     FreeFn;
-
-	struct {
-		uint32                           Flags;
-		uint32                           Line;
-		VectorVMSerializeErrorCallback * CallbackFn;
-	} Error;
-};
-#else // VVM_INCLUDE_SERIALIZATION
-
-struct FVectorVMSerializeState
-{
-	uint32              Flags;
-	VectorVMReallocFn * ReallocFn;
-	VectorVMFreeFn *    FreeFn;
-
-};
-
-#endif // VVM_INCLUDE_SERIALIZATION
-
-#if VECTORVM_SUPPORTS_EXPERIMENTAL
+typedef uint32 (VectorVMOptimizeErrorCallback)     (struct FVectorVMOptimizeContext *OptimizeContext, uint32 ErrorFlags);	//return new error flags
 
 union FVecReg {
 	VectorRegister4f v;
@@ -302,41 +153,40 @@ struct FVectorVMOptimizeInstruction
 	uint32              PtrOffsetInOptimizedBytecode;
 	int                 Index; //initial index.  Instructions are moved around and removed and dependency chains are created based on index, so we need to store this.
 	int					InsMergedIdx; //if not -1, then the instruction index that this is merged with.  Instructions with a set InsMergedIdx are not written to the final bytecode
+	int                 OutputMergeIdx[2]; //if not -1 then this instruction writes directly to an output, not a temp register
+	uint16              RegPtrOffset;
+	int                 NumInputRegisters;
+	int                 NumOutputRegisters;
 	union
 	{
 		struct
 		{
-			uint16 DstRegPtrOffset;
 			uint16 DataSetIdx;
 			uint16 InputIdx;
 		} Input;
 		struct
 		{
-			uint16 RegPtrOffset;
 			uint16 DataSetIdx;
 			uint16 DstRegIdx;
+			int    MergeIdx; //if not -1 then this instruction index is merged with an output or an op, if it's -2 then it's already been taken care of
+			uint16 SerialIdx;
 		} Output;
 		struct
 		{
-			uint32 RegPtrOffset;
-			uint16 NumInputs;
-			uint16 NumOutputs;
+
 		} Op;
 		struct
 		{
-			uint32 RegPtrOffset;
 			uint16 DataSetIdx;
 		} IndexGen;
 		struct
 		{
-			uint32 RegPtrOffset;
 			uint16 ExtFnIdx;
 			uint16 NumInputs;
 			uint16 NumOutputs;
 		} ExtFnCall;
 		struct
 		{
-			uint32 RegPtrOffset;
 			uint16 DataSetIdx;
 		} RWBuffer;
 		struct
@@ -357,7 +207,7 @@ enum EVectorVMOptimizeError
 	VVMOptErr_RegisterUsage         = 1 << 3,
 	VVMOptErr_ConstRemap            = 1 << 4,
 	VVMOptErr_Instructions          = 1 << 5,
-	VVMOptErr_InputFuseBuffer       = 1 << 6,
+	VVMOptErr_InputMergeBuffer      = 1 << 6,
 	VVMOptErr_InstructionReOrder    = 1 << 7,
 	VVMOptErr_SSARemap              = 1 << 8,
 	VVMOptErr_OptimizedBytecode     = 1 << 9,
@@ -373,22 +223,30 @@ struct FVectorVMOptimizeContext
 	uint16 *                              ConstRemap[2];
 	uint16 *                              InputRemapTable;
 	uint16 *                              InputDataSetOffsets;
+	uint8 *                               OutputRemapDataSetIdx;
+	uint16 *                              OutputRemapDataType;
+	uint16 *                              OutputRemapDst;
+
 	FVectorVMExtFunctionData *            ExtFnTable;
 
 	uint32                                NumBytecodeBytes;
-	uint32                                NumOutputDataSets;
+	uint32                                MaxOutputDataSet;
 	uint16                                NumConstsAlloced;    //upper bound to alloc
 	uint32                                NumTempRegisters;
 	uint16                                NumConstsRemapped;
 	uint16                                NumInputsRemapped;
 	uint16                                NumNoAdvanceInputs;
 	uint16                                NumInputDataSets;
+	uint16                                NumOutputsRemapped;
+	uint16                                NumOutputInstructions;
 	uint32                                NumExtFns;
 	uint32                                MaxExtFnRegisters;
 	uint32                                NumDummyRegsReq;     //External function "null" registers
 	int32                                 MaxExtFnUsed;
 	uint32                                Flags;
+	uint64                                HashId;
 
+#if WITH_EDITORONLY_DATA
 	struct
 	{
 		VectorVMReallocFn *               ReallocFn;
@@ -409,13 +267,14 @@ struct FVectorVMOptimizeContext
 		uint8 *                           RegisterUsageType;
 		uint16 *                          RegisterUsageBuffer;
 		uint16 *                          SSARegisterUsageBuffer;
-		uint32                            NumBytecodeBytes;
+		uint16 *                          ParentInstructionIdx;
 		uint32                            NumInstructions;
+		uint32                            NumInstructionsAlloced;
 		uint32                            NumRegistersUsed;
 	} Intermediate;                                           //these are freed and NULL after optimize() unless SaveIntermediateData is true when calling OptimizeVectorVMScript
+#endif
 };
 
-//VectorVMState
 enum EVectorVMStateError
 {
 	VVMErr_InitOutOfMemory     = 1 << 0,
@@ -426,45 +285,34 @@ enum EVectorVMStateError
 	VVMErr_Fatal               = 1 << 31
 };
 
-struct FVectorVMExternalFnPerInstanceData
-{
-	class UNiagaraDataInterface *     DataInterface;
-	void *                            UserData;
-	uint16                            NumInputs;
-	uint16                            NumOutputs;
-};
-
 struct FVectorVMBatchState
 {
 	MS_ALIGN(16) FVecReg *    RegisterData GCC_ALIGN(16);
 	struct {
 		uint32 *              StartingOutputIdxPerDataSet;
 		uint32 *              NumOutputPerDataSet;
+		uint8 **              OutputMaskIdx; //these point to the BatchState's OutputMaskIdx
 		struct {
 			uint32 **         RegData;
 			uint8 *           RegInc;
 			FVecReg *         DummyRegs;
 		} ExtFnDecodedReg;
 		int32 *               RandCounters; //used for external functions only.
+
+		int                   ChunkIdx;
+		int                   StartInstanceThisChunk;
+		int                   NumInstancesThisChunk;
 	} ChunkLocalData;
 	
 	uint8 **                  RegPtrTable;    //not aligned because input pointers could be offest from the DataSetInfo.InstanceOffset, so we must assume every op is unaligned
-	uint8 *                   RegIncTable;
+	uint8 *                   RegIncTable;    //0 for const, 1 for temp reg
+	uint8 *                   OutputMaskIdx;
 
-	int                       StartInstance;
-	int                       NumInstances;
-	
 	union {
 		struct {
 			VectorRegister4i          State[5]; //xorwor state for random/randomi instructions.  DIs use RandomStream.
 			VectorRegister4i          Counters;
 		};
-#		if VECTORVM_SUPPORTS_AVX
-		struct {
-			__m256i                   State[5];
-			__m256i                   Counters;
-		} AVX;
-#		endif
 	} RandState;
 	FRandomStream             RandStream;
 };
@@ -478,11 +326,14 @@ struct FVectorVMState
 
 	FVecReg *                           ConstantBuffers;        //the last OptimizeCtx->NumNoAdvanceInputs are no advance inputs that are copied in the table setup
 	FVectorVMExtFunctionData *          ExtFunctionTable;
-	volatile int32 *                    NumOutputPerDataSet;
+	int32 *                             NumOutputPerDataSet;
 
 	uint16 *                            ConstRemapTable;
 	uint16 *                            InputRemapTable;
 	uint16 *                            InputDataSetOffsets;
+	uint8 *                             OutputRemapDataSetIdx;
+	uint16 *                            OutputRemapDataType;
+	uint16 *                            OutputRemapDst;
 
 	uint8 *                             ConstMapCacheIdx;       //these don't get filled out until Exec() is called because they can't be filled out until the state
 	uint16 *                            ConstMapCacheSrc;       //of const and input buffers from Niagara is unknown until exec() is called.
@@ -499,43 +350,46 @@ struct FVectorVMState
 	uint32                              NumConstBuffers;
 	uint32                              NumInputBuffers;
 	uint32                              NumInputDataSets;
-	uint32                              NumOutputDataSets;
+	uint32                              NumOutputsRemapped;
+	uint32                              NumOutputBuffers;
+	uint32                              MaxOutputDataSet;
 	uint32                              NumDummyRegsRequired;
 
 	//batch stuff
 	uint32                              BatchOverheadSize;
 	uint32                              ChunkLocalDataOutputIdxNumBytes;
 	uint32                              ChunkLocalNumOutputNumBytes;
+	uint32                              ChunkLocalOutputMaskIdxNumBytes;
+
+	uint64                              OptimizerHashId;
+	uint32                              TotalNumBytes;
 
 	struct {
 		uint32          NumBytesRequiredPerBatch;
 		uint32          PerBatchRegisterDataBytesRequired;
-		uint32          NumBatches;
 		uint32          MaxChunksPerBatch;
 		uint32          MaxInstancesPerChunk;
 	} ExecCtxCache;
 };
 
-struct FVectorVMExecContext {
+struct FVectorVMExecContext
+{
 	struct
 	{
 		uint32          NumBytesRequiredPerBatch;
 		uint32          PerBatchRegisterDataBytesRequired;
-		uint32          NumBatches;
 		uint32          MaxChunksPerBatch;
 		uint32          MaxInstancesPerChunk;
-		volatile int32  NumInstancesAssignedToBatches;
-		volatile int32  NumInstancesCompleted;
 	} Internal;
 
-	FVectorVMState *                        VVMState;
-	TArrayView<FDataSetMeta>                DataSets;
+	FVectorVMState *                        VVMState;               //created with AllocVectorVMState()
+	TArrayView<FDataSetMeta>                DataSets;					
 	TArrayView<const FVMExternalFunction *> ExtFunctionTable;
-	TArrayView<void*>                       UserPtrTable;
+	TArrayView<void *>                      UserPtrTable;
 	int32                                   NumInstances;
-	const uint8 * const *                   ConstantTableData;
-	const int *                             ConstantTableSizes;
-	int32                                   ConstantTableCount;
+	const uint8 * const *                   ConstantTableData;      //constant tables consist of an array of pointers
+	const int *                             ConstantTableNumBytes;  //an array of sizes in bytes
+	int32                                   ConstantTableCount;     //how many constant tables.  These tables must match the ones used with OptimizeVectorVMScript()
 };
 
 class FVectorVMExternalFunctionContextExperimental
@@ -552,7 +406,7 @@ public:
 	int                      NumLoops;
 	int                      PerInstanceFnInstanceIdx;
 
-	void** UserPtrTable;
+	void **                  UserPtrTable;
 	int                      NumUserPtrs;
 
 	FRandomStream*           RandStream;
@@ -571,7 +425,7 @@ public:
 	FORCEINLINE void *                                 GetUserPtrTable(int32 UserPtrIdx) { check(UserPtrIdx < NumUserPtrs);  return UserPtrTable[UserPtrIdx]; }
 	template<uint32 InstancesPerOp> FORCEINLINE int32  GetNumLoops() const               { static_assert(InstancesPerOp == 4); return NumLoops; };
 
-	FORCEINLINE float* GetNextRegister(int32* OutAdvanceOffset, int32* OutVecIndex)
+	FORCEINLINE float* GetNextRegister(int32* OutAdvanceOffset)
 	{
 		check(RegReadCount < NumRegisters);
 		*OutAdvanceOffset = RegInc[RegReadCount];
@@ -581,27 +435,30 @@ public:
 
 //API FUNCTIONS
 
-//initialization
-VECTORVM_API void InitVectorVM();
-VECTORVM_API void FreeVectorVM();
-
 //normal functions
-VECTORVM_API FVectorVMState * AllocVectorVMState    (FVectorVMOptimizeContext *OptimizeCtx);
-VECTORVM_API void             FreeVectorVMState     (FVectorVMState *VectorVMState);
-VECTORVM_API void             ExecVectorVMState     (FVectorVMExecContext *ExecCtx, FVectorVMSerializeState *SerializeState, FVectorVMSerializeState *CmpSerializeState);
+VECTORVM_API FVectorVMState * AllocVectorVMState                     (FVectorVMOptimizeContext *OptimizeCtx);
+VECTORVM_API void             FreeVectorVMState                      (FVectorVMState *VectorVMState);
+VECTORVM_API void             ExecVectorVMState                      (FVectorVMExecContext *ExecCtx, FVectorVMSerializeState *SerializeState, FVectorVMSerializeState *CmpSerializeState);
 
+#if WITH_EDITORONLY_DATA
 //optimize functions
-VECTORVM_API uint32  OptimizeVectorVMScript                (const uint8 *Bytecode, int BytecodeLen, FVectorVMExtFunctionData *ExtFnIOData, int NumExtFns, FVectorVMOptimizeContext *OptContext, uint32 Flags); //OutContext must be zeroed except the Init struct
-VECTORVM_API void    FreeVectorVMOptimizeContext           (FVectorVMOptimizeContext *Context);
-VECTORVM_API void    FreezeVectorVMOptimizeContext         (const FVectorVMOptimizeContext& Context, TArray<uint8>& ContextData);
-VECTORVM_API void    ReinterpretVectorVMOptimizeContextData(TConstArrayView<uint8> ContextData, FVectorVMOptimizeContext& Context);
+VECTORVM_API uint32           OptimizeVectorVMScript                 (const uint8 *Bytecode, int BytecodeLen, FVectorVMExtFunctionData *ExtFnIOData, int NumExtFns, FVectorVMOptimizeContext *OptContext, uint64 HashId, uint32 Flags); //OutContext must be zeroed except the Init struct
+VECTORVM_API void             FreeVectorVMOptimizeContext            (FVectorVMOptimizeContext *Context);
+VECTORVM_API void             FreezeVectorVMOptimizeContext          (const FVectorVMOptimizeContext& Context, TArray<uint8>& ContextData);
+VECTORVM_API void             GenerateHumanReadableVectorVMScript    (const FVectorVMOptimizeContext& Context, FString& VMScript);
+#endif
+VECTORVM_API void             ReinterpretVectorVMOptimizeContextData (TConstArrayView<uint8> ContextData, FVectorVMOptimizeContext& Context);
 
 //serialize functions
-VECTORVM_API uint32  SerializeVectorVMInputDataSets  (FVectorVMSerializeState *SerializeState, struct FVectorVMExecContext *ExecContext);
-VECTORVM_API uint32  SerializeVectorVMOutputDataSets (FVectorVMSerializeState *SerializeState, struct FVectorVMExecContext *ExecContext);
+VECTORVM_API uint32           SerializeVectorVMInputDataSets         (FVectorVMSerializeState *SerializeState, FVectorVMExecContext *ExecContext);
+VECTORVM_API uint32           SerializeVectorVMOutputDataSets        (FVectorVMSerializeState *SerializeState, FVectorVMExecContext *ExecContext);
+VECTORVM_API void             SerializeVectorVMWriteToFile           (FVectorVMSerializeState *SerializeState, uint8 WhichStateWritten, const wchar_t *Filename);
+VECTORVM_API void             FreeVectorVMSerializeState             (FVectorVMSerializeState *SerializeState);
 
-VECTORVM_API void    SerializeVectorVMWriteToFile    (FVectorVMSerializeState *SerializeState, uint8 WhichStateWritten, const wchar_t *Filename);
-VECTORVM_API void    FreeVectorVMSerializeState      (FVectorVMSerializeState *SerializeState);
+//debug helper functions
+VECTORVM_API uint16           VVMDbgGetRemappedInputIdx              (FVectorVMState *VectorVMState, int InputRegisterIdx, int DataSetIdx, bool IntReg, uint16 *OptOutIdxInRegTable);
+VECTORVM_API uint16           VVMDbgGetRemappedOutputIdx             (FVectorVMState *VectorVMState, int OutputRegisterIdx, int DataSetIdx, bool IntReg, uint16 *OptOutIdxInRegTable);
+VECTORVM_API uint16           VVMDbgGetRemappedConstIdx              (FVectorVMState *VectorVMState, int ConstTableIdx, int ConstBuffIdx, uint16 *OptOutIdxInRegTable);
 
 #else // VECTORVM_SUPPORTS_EXPERIMENTAL
 
@@ -609,9 +466,13 @@ struct FVectorVMState {
 
 };
 
-VECTORVM_API uint32  SerializeVectorVMInputDataSets (FVectorVMSerializeState *SerializeState, TArrayView<FDataSetMeta>, const uint8 * const *ConstantTableData, const int *ConstantTableSizes, int32 ConstantTableCount); //only use when not calling InitVectorVMState()
-VECTORVM_API uint32  SerializeVectorVMOutputDataSets(FVectorVMSerializeState *SerializeState, TArrayView<FDataSetMeta>, const uint8 * const *ConstantTableData, const int *ConstantTableSizes, int32 ConstantTableCount);
-VECTORVM_API void   SerializeVectorVMWriteToFile    (FVectorVMSerializeState *SerializeState, uint8 WhichStateWritten, const wchar_t *Filename);
-VECTORVM_API void   FreeVectorVMSerializeState      (FVectorVMSerializeState *SerializeState);
+VECTORVM_API void    SerializeVectorVMWriteToFile    (FVectorVMSerializeState *SerializeState, uint8 WhichStateWritten, const wchar_t *Filename);
+VECTORVM_API void    FreeVectorVMSerializeState      (FVectorVMSerializeState *SerializeState);
 
 #endif // VECTORVM_SUPPORTS_EXPERIMENTAL
+
+//things needed for when both experimental and legacy are built
+#if VECTORVM_SUPPORTS_LEGACY
+VECTORVM_API uint32  SerializeVectorVMInputDataSets  (FVectorVMSerializeState *SerializeState, TArrayView<FDataSetMeta>, const uint8 * const *ConstantTableData, const int *ConstantTableSizes, int32 ConstantTableCount); //only use when not calling AllocVectorVMState()
+VECTORVM_API uint32  SerializeVectorVMOutputDataSets (FVectorVMSerializeState *SerializeState, TArrayView<FDataSetMeta>, const uint8 * const *ConstantTableData, const int *ConstantTableSizes, int32 ConstantTableCount);
+#endif

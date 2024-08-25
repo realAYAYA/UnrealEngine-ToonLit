@@ -9,15 +9,19 @@ void FStaticSpatialIndex::FListImpl::Init(const TArray<TPair<FBox, uint32>>& InE
 	Algo::Transform(InElements, Elements, [](const TPair<FBox, uint32>& Element) { return Element.Value; });
 }
 
-void FStaticSpatialIndex::FListImpl::ForEachElement(TFunctionRef<void(uint32 InValueIndex)> Func) const
+bool FStaticSpatialIndex::FListImpl::ForEachElement(TFunctionRef<bool(uint32 InValueIndex)> Func) const
 {
 	for (uint32 ValueIndex : Elements)
 	{
-		Func(ValueIndex);
+		if (!Func(ValueIndex))
+		{
+			return false;
+		}
 	}
+	return true;
 }
 
-void FStaticSpatialIndex::FListImpl::ForEachIntersectingElement(const FBox& InBox, TFunctionRef<void(uint32 InValueIndex)> Func) const
+bool  FStaticSpatialIndex::FListImpl::ForEachIntersectingElement(const FBox& InBox, TFunctionRef<bool(uint32 InValueIndex)> Func) const
 {
 	for (uint32 ValueIndex : Elements)
 	{
@@ -25,12 +29,16 @@ void FStaticSpatialIndex::FListImpl::ForEachIntersectingElement(const FBox& InBo
 
 		if (Box.Intersect(InBox))
 		{
-			Func(ValueIndex);
+			if (!Func(ValueIndex))
+			{
+				return false;
+			}
 		}
 	}
+	return true;
 }
 
-void FStaticSpatialIndex::FListImpl::ForEachIntersectingElement(const FSphere& InSphere, TFunctionRef<void(uint32 InValueIndex)> Func) const
+bool FStaticSpatialIndex::FListImpl::ForEachIntersectingElement(const FSphere& InSphere, TFunctionRef<bool(uint32 InValueIndex)> Func) const
 {
 	for (uint32 ValueIndex : Elements)
 	{
@@ -38,9 +46,13 @@ void FStaticSpatialIndex::FListImpl::ForEachIntersectingElement(const FSphere& I
 
 		if (FMath::SphereAABBIntersection(InSphere, Box))
 		{
-			Func(ValueIndex);
+			if (!Func(ValueIndex))
+			{
+				return false;
+			}
 		}
 	}
+	return true;
 }
 
 void FStaticSpatialIndex::FRTreeImpl::Init(const TArray<TPair<FBox, uint32>>& InElements)
@@ -97,35 +109,42 @@ void FStaticSpatialIndex::FRTreeImpl::Init(const TArray<TPair<FBox, uint32>>& In
 	}
 }
 
-void FStaticSpatialIndex::FRTreeImpl::ForEachElement(TFunctionRef<void(uint32 InValueIndex)> Func) const
+bool FStaticSpatialIndex::FRTreeImpl::ForEachElement(TFunctionRef<bool(uint32 InValueIndex)> Func) const
 {
-	ForEachElementRecursive(&RootNode, Func);
+	return ForEachElementRecursive(&RootNode, Func);
 }
 
-void FStaticSpatialIndex::FRTreeImpl::ForEachElementRecursive(const FNode* Node, TFunctionRef<void(uint32 InValueIndex)> Func) const
+bool FStaticSpatialIndex::FRTreeImpl::ForEachElementRecursive(const FNode* Node, TFunctionRef<bool(uint32 InValueIndex)> Func) const
 {
 	if (Node->Content.IsType<FNode::FNodeType>())
 	{
 		for (auto& ChildNode : Node->Content.Get<FNode::FNodeType>())
 		{
-			ForEachElementRecursive(&ChildNode, Func);
+			if (!ForEachElementRecursive(&ChildNode, Func))
+			{
+				return false;
+			}
 		}
 	}
 	else
 	{
 		for (uint32 ValueIndex : Node->Content.Get<FNode::FLeafType>())
 		{
-			Func(ValueIndex);
+			if (!Func(ValueIndex))
+			{
+				return false;
+			}
 		}
 	}
+	return true;
 }
 
-void FStaticSpatialIndex::FRTreeImpl::ForEachIntersectingElement(const FBox& InBox, TFunctionRef<void(uint32 InValueIndex)> Func) const
+bool FStaticSpatialIndex::FRTreeImpl::ForEachIntersectingElement(const FBox& InBox, TFunctionRef<bool(uint32 InValueIndex)> Func) const
 {
-	ForEachIntersectingElementRecursive(&RootNode, InBox, Func);
+	return ForEachIntersectingElementRecursive(&RootNode, InBox, Func);
 }
 
-void FStaticSpatialIndex::FRTreeImpl::ForEachIntersectingElementRecursive(const FNode* Node, const FBox& InBox, TFunctionRef<void(uint32 InValueIndex)> Func) const
+bool FStaticSpatialIndex::FRTreeImpl::ForEachIntersectingElementRecursive(const FNode* Node, const FBox& InBox, TFunctionRef<bool(uint32 InValueIndex)> Func) const
 {
 	if (Node->Content.IsType<FNode::FNodeType>())
 	{
@@ -133,7 +152,10 @@ void FStaticSpatialIndex::FRTreeImpl::ForEachIntersectingElementRecursive(const 
 		{
 			if (ChildNode.Box.Intersect(InBox))
 			{
-				ForEachIntersectingElementRecursive(&ChildNode, InBox, Func);
+				if (!ForEachIntersectingElementRecursive(&ChildNode, InBox, Func))
+				{
+					return false;
+				}
 			}
 		}
 	}
@@ -145,18 +167,22 @@ void FStaticSpatialIndex::FRTreeImpl::ForEachIntersectingElementRecursive(const 
 
 			if (Box.Intersect(InBox))
 			{
-				Func(ValueIndex);
+				if (!Func(ValueIndex))
+				{
+					return false;
+				}
 			}
 		}
 	}
+	return true;
 }
 
-void FStaticSpatialIndex::FRTreeImpl::ForEachIntersectingElement(const FSphere& InSphere, TFunctionRef<void(uint32 InValueIndex)> Func) const
+bool FStaticSpatialIndex::FRTreeImpl::ForEachIntersectingElement(const FSphere& InSphere, TFunctionRef<bool(uint32 InValueIndex)> Func) const
 {
-	ForEachIntersectingElementRecursive(&RootNode, InSphere, Func);
+	return ForEachIntersectingElementRecursive(&RootNode, InSphere, Func);
 }
 
-void FStaticSpatialIndex::FRTreeImpl::ForEachIntersectingElementRecursive(const FNode* Node, const FSphere& InSphere, TFunctionRef<void(uint32 InValueIndex)> Func) const
+bool FStaticSpatialIndex::FRTreeImpl::ForEachIntersectingElementRecursive(const FNode* Node, const FSphere& InSphere, TFunctionRef<bool(uint32 InValueIndex)> Func) const
 {
 	if (Node->Content.IsType<FNode::FNodeType>())
 	{
@@ -164,7 +190,10 @@ void FStaticSpatialIndex::FRTreeImpl::ForEachIntersectingElementRecursive(const 
 		{
 			if (FMath::SphereAABBIntersection(InSphere, ChildNode.Box))
 			{
-				ForEachIntersectingElementRecursive(&ChildNode, InSphere, Func);
+				if (!ForEachIntersectingElementRecursive(&ChildNode, InSphere, Func))
+				{
+					return false;
+				}
 			}
 		}
 	}
@@ -176,8 +205,12 @@ void FStaticSpatialIndex::FRTreeImpl::ForEachIntersectingElementRecursive(const 
 
 			if (FMath::SphereAABBIntersection(InSphere, Box))
 			{
-				Func(ValueIndex);
+				if (!Func(ValueIndex))
+				{
+					return false;
+				}
 			}
 		}
 	}
+	return true;
 }

@@ -31,6 +31,9 @@ public:
 	virtual bool CanRenameItem() const override { return true; }
 	virtual void RequestRename() override;
 	virtual void OnItemDoubleClicked() override;
+	virtual void HandleDragEnter(const FDragDropEvent& DragDropEvent) override;
+	virtual void HandleDragLeave(const FDragDropEvent& DragDropEvent) override;
+	virtual FReply HandleDrop(const FDragDropEvent& DragDropEvent) override;
 	virtual UObject* GetObject() const override { return BoneProxy; }
 
 	/** FGCObject interface */

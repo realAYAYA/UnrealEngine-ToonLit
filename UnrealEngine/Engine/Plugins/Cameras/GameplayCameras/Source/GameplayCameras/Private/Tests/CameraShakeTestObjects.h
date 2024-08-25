@@ -2,7 +2,7 @@
 
 #pragma once
 
-#include "SimpleCameraShakePattern.h"
+#include "Shakes/SimpleCameraShakePattern.h"
 #include "CameraShakeTestObjects.generated.h"
 
 template<typename T>
@@ -42,6 +42,6 @@ public:
 	FRotator RotationOffset;
 
 private:
-	virtual void UpdateShakePatternImpl(const FCameraShakeUpdateParams& Params, FCameraShakeUpdateResult& OutResult) override;
+	virtual void UpdateShakePatternImpl(const FCameraShakePatternUpdateParams& Params, FCameraShakePatternUpdateResult& OutResult) override;
 };
 

@@ -53,14 +53,7 @@ void UE::GroomQueries::ExtractAllHairCards(AGroomActor* GroomActor,
 		{
 			if (Desc.GroupIndex == GroupIdx && Desc.LODIndex == LODIndex)
 			{
-				if (Desc.SourceType == EHairCardsSourceType::Imported)
-				{
-					StaticMesh = Desc.ImportedMesh;
-				}
-				else if (Desc.SourceType == EHairCardsSourceType::Procedural)
-				{
-					StaticMesh = Desc.ProceduralMesh;
-				}
+				StaticMesh = Desc.ImportedMesh;
 			}
 		}
 		
@@ -344,8 +337,8 @@ void UE::GroomQueries::ExtractCardQuads(
 						check(false);
 					}
 
-					RemainingTris.RemoveSwap(tid, false);
-					RemainingTris.RemoveSwap(OtherTID, false);
+					RemainingTris.RemoveSwap(tid, EAllowShrinking::No);
+					RemainingTris.RemoveSwap(OtherTID, EAllowShrinking::No);
 					TmpMesh.RemoveTriangle(tid, false);
 
 					FIndex3i OtherNbrTris = TmpMesh.GetTriNeighbourTris(OtherTID);

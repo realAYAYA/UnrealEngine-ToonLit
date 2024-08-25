@@ -87,8 +87,8 @@ void SampleRVT_{ParameterName}(in float3 WorldPosition, out bool bInsideVolume, 
 	Mask = 1.0f;
 
 	// Get Sample Location
-	FLWCVector3 LWCWorldPosition = MakeLWCVector3({ParameterName}_SystemLWCTile, WorldPosition);
-	FLWCVector3 LWCUVOrigin = MakeLWCVector3({ParameterName}_SystemLWCTile, {ParameterName}_UVUniforms[0].xyz);
+	FDFVector3 LWCWorldPosition = DFFromTileOffset_Hack(MakeLWCVector3({ParameterName}_SystemLWCTile, WorldPosition));
+	FDFVector3 LWCUVOrigin = DFFromTileOffset_Hack(MakeLWCVector3({ParameterName}_SystemLWCTile, {ParameterName}_UVUniforms[0].xyz));
 
 	float2 SampleUV = VirtualTextureWorldToUV(LWCWorldPosition, LWCUVOrigin, {ParameterName}_UVUniforms[1].xyz, {ParameterName}_UVUniforms[2].xyz);
 

@@ -153,9 +153,9 @@ namespace Utils
 			bInitializedSkipClasses = true;
 		}
 		return Utils::ShouldSkipAsset(AssetClass, PackageFlags, SkipUncookedClasses, SkipCookedClasses);
-#endif //if WITH_ENGINE && WITH_EDITOR
-
+#else
 		return false;
+#endif //if WITH_ENGINE && WITH_EDITOR
 	}
 
 	bool FFiltering::ShouldSkipAsset(const UObject* InAsset)

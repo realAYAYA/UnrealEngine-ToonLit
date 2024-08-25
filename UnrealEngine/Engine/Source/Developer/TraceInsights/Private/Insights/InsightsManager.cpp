@@ -446,6 +446,10 @@ void FInsightsManager::OnSessionInfoTabClosed(TSharedRef<SDockTab> TabBeingClose
 FString FInsightsManager::GetStoreDir()
 {
 	using namespace UE::Trace;
+	if (!StoreClient.IsValid())
+	{
+		return FString();
+	}
 	FScopeLock _(&StoreClientCriticalSection);
 	const FStoreClient::FStatus* Status = StoreClient->GetStatus();
 	return Status ? FString(Status->GetStoreDir()) : FString();
@@ -456,8 +460,7 @@ FString FInsightsManager::GetStoreDir()
 bool FInsightsManager::ConnectToStore(const TCHAR* Host, uint32 Port)
 {
 	using namespace UE::Trace;
-	FStoreClient* Client = FStoreClient::Connect(Host, Port);
-	StoreClient = TUniquePtr<FStoreClient>(Client);
+	StoreClient.Reset(FStoreClient::Connect(Host, Port));
 	if (!StoreClient.IsValid())
 	{
 		return false;
@@ -511,6 +514,12 @@ FInsightsActionManager& FInsightsManager::GetActionManager()
 	return FInsightsManager::Instance->ActionManager;
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+FInsightsSessionBrowserSettings& FInsightsManager::GetSessionBrowserSettings()
+{
+	return FInsightsManager::Instance->SessionBrowserSettings;
+}
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 FInsightsSettings& FInsightsManager::GetSettings()
@@ -622,7 +631,7 @@ void FInsightsManager::CheckMemoryUsage()
 		constexpr double MemUsageLimitHysteresisPercent = 50.0;
 
 		const uint64 Time = FPlatformTime::Cycles64();
-		const double DurationSeconds = (Time - MemUsageLimitLastTimestamp) * FPlatformTime::GetSecondsPerCycle64();
+		const double DurationSeconds = static_cast<double>(Time - MemUsageLimitLastTimestamp) * FPlatformTime::GetSecondsPerCycle64();
 		if (DurationSeconds > 1.0) // only check once per second
 		{
 			MemUsageLimitLastTimestamp = Time;
@@ -795,7 +804,7 @@ void FInsightsManager::ActivateTimingInsightsTab()
 
 bool FInsightsManager::ShowOpenTraceFileDialog(FString& OutTraceFile) const
 {
-	const FString ProfilingDirectory(FPaths::ConvertRelativePathToFull(FInsightsManager::Get()->GetStoreDir()));
+	static FString DefaultDirectory(FPaths::ConvertRelativePathToFull(FInsightsManager::Get()->GetStoreDir()));
 
 	TArray<FString> OutFiles;
 	bool bOpened = false;
@@ -809,7 +818,7 @@ bool FInsightsManager::ShowOpenTraceFileDialog(FString& OutTraceFile) const
 		(
 			FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr),
 			LOCTEXT("LoadTrace_FileDesc", "Open trace file...").ToString(),
-			ProfilingDirectory,
+			DefaultDirectory,
 			TEXT(""),
 			LOCTEXT("LoadTrace_FileFilter", "Trace files (*.utrace)|*.utrace|All files (*.*)|*.*").ToString(),
 			EFileDialogFlags::None,
@@ -820,6 +829,7 @@ bool FInsightsManager::ShowOpenTraceFileDialog(FString& OutTraceFile) const
 	if (bOpened == true && OutFiles.Num() == 1)
 	{
 		OutTraceFile = OutFiles[0];
+		DefaultDirectory = FPaths::GetPath(OutTraceFile);
 		return true;
 	}
 
@@ -1207,10 +1217,12 @@ void FInsightsManager::OnSessionAnalysisCompleted()
 
 bool FInsightsManager::Exec(const TCHAR* Cmd, FOutputDevice& Ar)
 {
-	FString ResponseFile;
-	if (FParse::Value(Cmd, TEXT("@="), ResponseFile))
+	// @=ResponseFile
+	if (Cmd != nullptr &&
+		Cmd[0] == TEXT('@') &&
+		Cmd[1] == TEXT('='))
 	{
-		HandleResponseFileCmd(*ResponseFile, Ar);
+		HandleResponseFileCmd(Cmd + 2, Ar);
 		return true;
 	}
 
@@ -1221,12 +1233,12 @@ bool FInsightsManager::Exec(const TCHAR* Cmd, FOutputDevice& Ar)
 
 bool FInsightsManager::HandleResponseFileCmd(const TCHAR* ResponseFile, FOutputDevice& Ar)
 {
-	Ar.Logf(TEXT("Executing commands using response file (%s)..."), ResponseFile);
+	Ar.Logf(TEXT("Executing commands using response file (\"%s\")..."), ResponseFile);
 
 	FString Contents;
 	if (!FFileHelper::LoadFileToString(Contents, &IPlatformFile::GetPlatformPhysical(), ResponseFile))
 	{
-		Ar.Logf(ELogVerbosity::Error, TEXT("Failed to open the response file (%s)."), ResponseFile);
+		Ar.Logf(ELogVerbosity::Error, TEXT("Failed to open the response file (\"%s\")."), ResponseFile);
 		return false;
 	}
 
@@ -1245,7 +1257,7 @@ bool FInsightsManager::HandleResponseFileCmd(const TCHAR* ResponseFile, FOutputD
 		uint32 EndOfLine = 0;
 		if (*CrtPos == TEXT('\r'))
 		{
-			if (*(CrtPos + 1) == '\n')
+			if (*(CrtPos + 1) == TEXT('\n'))
 			{
 				EndOfLine = 2;
 			}

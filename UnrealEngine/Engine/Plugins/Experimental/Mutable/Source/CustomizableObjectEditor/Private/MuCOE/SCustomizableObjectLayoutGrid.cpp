@@ -97,7 +97,7 @@ public:
 
 private:
 
-	void DrawRenderThread(FRHICommandListImmediate& RHICmdList, const void* RenderTarget) override;
+	virtual void Draw_RenderThread(class FRHICommandListImmediate& RHICmdList, const void* InWindowBackBuffer, const FSlateCustomDrawParams& Params) override;
 
 	/** Basic function to draw a block in the canvas */
 	void DrawBlock(FBatchedElements* BatchedElements, const FHitProxyId HitProxyId, const FRect2D& BlockRect, FColor Color);
@@ -144,6 +144,7 @@ void SCustomizableObjectLayoutGrid::Construct( const FArguments& InArgs )
 	AddBlockAtDelegate = InArgs._OnAddBlockAt;
 	OnSetBlockPriority = InArgs._OnSetBlockPriority;
 	OnSetReduceBlockSymmetrically = InArgs._OnSetReduceBlockSymmetrically;
+	OnSetReduceBlockByTwo = InArgs._OnSetReduceBlockByTwo;
 
 	HasDragged = false;
 	Dragging = false;
@@ -450,13 +451,24 @@ FReply SCustomizableObjectLayoutGrid::OnMouseButtonDown( const FGeometry& MyGeom
 					MenuBuilder.AddWidget(
 						SNew(SBox)
 						.WidthOverride(125.0f)
-						.ToolTipText(LOCTEXT("SetBlockSymmetry_Tooltip", "if true, this block will be reduced in both axes at the same time in a Fixed Layout Strategy."))
+						.ToolTipText(LOCTEXT("SetBlockSymmetry_Tooltip", "If true, this block will be reduced in both axes at the same time in a Fixed Layout Strategy."))
 						[
 							SNew(SCheckBox)
-							.IsChecked(this, &SCustomizableObjectLayoutGrid::GetReductionMethodValue)
+							.IsChecked(this, &SCustomizableObjectLayoutGrid::GetReductionMethodBoolValue, EFRO_Symmetry)
 							.OnCheckStateChanged(this, &SCustomizableObjectLayoutGrid::OnReduceBlockSymmetricallyChanged)
 						]
 					, FText::FromString("Reduce Symmetrically"), true);
+
+					MenuBuilder.AddWidget(
+						SNew(SBox)
+						.WidthOverride(125.0f)
+						.ToolTipText(LOCTEXT("SetBlockReduceByTwo_Tooltip", "Only for Unitary reduction. If true, this option reduces each time the block by two block units."))
+						[
+							SNew(SCheckBox)
+							.IsChecked(this, &SCustomizableObjectLayoutGrid::GetReductionMethodBoolValue, EFRO_RedyceByTwo)
+							.OnCheckStateChanged(this, &SCustomizableObjectLayoutGrid::OnReduceBlockByTwoChanged)
+						]
+					, FText::FromString("Reduce by Two"), true);
 				}
 			}
 			MenuBuilder.EndSection();
@@ -844,6 +856,8 @@ FReply SCustomizableObjectLayoutGrid::OnMouseWheel(const FGeometry& MyGeometry, 
 				Zoom--;
 			}
 		}
+
+		return FReply::Handled().SetUserFocus(SharedThis(this), EFocusCause::Mouse, true);
 	}
 
 	return SCompoundWidget::OnMouseWheel(MyGeometry, MouseEvent);
@@ -893,8 +907,6 @@ FCursorReply SCustomizableObjectLayoutGrid::OnCursorQuery(const FGeometry& MyGeo
 	{
 		return FCursorReply::Cursor(EMouseCursor::Default);
 	}
-
-	return FCursorReply::Unhandled();
 }
 
 
@@ -1080,12 +1092,13 @@ TOptional<int32> SCustomizableObjectLayoutGrid::GetBlockPriortyValue() const
 }
 
 
-ECheckBoxState SCustomizableObjectLayoutGrid::GetReductionMethodValue() const
+ECheckBoxState SCustomizableObjectLayoutGrid::GetReductionMethodBoolValue(EFixedReductionOptions Option) const
 {
 	if (SelectedBlocks.Num())
 	{
 		TArray<FCustomizableObjectLayoutBlock> CurrentSelectedBlocks;
 
+		// Getting all selected blocks
 		for (const FCustomizableObjectLayoutBlock& Block : Blocks.Get())
 		{
 			if (SelectedBlocks.Contains(Block.Id))
@@ -1094,17 +1107,41 @@ ECheckBoxState SCustomizableObjectLayoutGrid::GetReductionMethodValue() const
 			}
 		}
 
-		bool bUsesSymmetry = CurrentSelectedBlocks[0].bUseSymmetry;
-
-		for (const FCustomizableObjectLayoutBlock& Block : CurrentSelectedBlocks)
+		switch (Option)
 		{
-			if (Block.bUseSymmetry != bUsesSymmetry)
-			{
-				return ECheckBoxState::Undetermined;
-			}
-		}
+		case EFRO_Symmetry:
+		{
+			const bool bReduceBothAxes = CurrentSelectedBlocks[0].bReduceBothAxes;
 
-		return bUsesSymmetry ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+			// If one or more blocks have a different value than the rest of selected blocks return Undetermined
+			for (const FCustomizableObjectLayoutBlock& Block : CurrentSelectedBlocks)
+			{
+				if (Block.bReduceBothAxes != bReduceBothAxes)
+				{
+					return ECheckBoxState::Undetermined;
+				}
+			}
+
+			return bReduceBothAxes ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+		}
+		case EFRO_RedyceByTwo:
+		{
+			const bool bReduceByTwo = CurrentSelectedBlocks[0].bReduceByTwo;
+
+			// If one or more blocks have a different value than the rest of selected blocks return Undetermined
+			for (const FCustomizableObjectLayoutBlock& Block : CurrentSelectedBlocks)
+			{
+				if (Block.bReduceByTwo != bReduceByTwo)
+				{
+					return ECheckBoxState::Undetermined;
+				}
+			}
+
+			return bReduceByTwo ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+		}
+		default:
+			break;
+		}
 	}
 
 	return ECheckBoxState::Undetermined;
@@ -1125,6 +1162,15 @@ void SCustomizableObjectLayoutGrid::OnReduceBlockSymmetricallyChanged(ECheckBoxS
 	if (SelectedBlocks.Num())
 	{
 		OnSetReduceBlockSymmetrically.ExecuteIfBound(InCheckboxState == ECheckBoxState::Checked);
+	}
+}
+
+
+void SCustomizableObjectLayoutGrid::OnReduceBlockByTwoChanged(ECheckBoxState InCheckboxState)
+{
+	if (SelectedBlocks.Num())
+	{
+		OnSetReduceBlockByTwo.ExecuteIfBound(InCheckboxState == ECheckBoxState::Checked);
 	}
 }
 
@@ -1173,7 +1219,7 @@ void FUVCanvasDrawer::SetLayoutMode(ELayoutGridMode Mode)
 }
 
 
-void FUVCanvasDrawer::DrawRenderThread(class FRHICommandListImmediate& RHICmdList, const void* InWindowBackBuffer)
+void FUVCanvasDrawer::Draw_RenderThread(class FRHICommandListImmediate& RHICmdList, const void* InWindowBackBuffer, const FSlateCustomDrawParams& Params)
 {
 	if (Initialized)
 	{

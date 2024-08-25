@@ -65,8 +65,8 @@ struct FMovieSceneTimeTransform
 	 */
 	FMovieSceneTimeTransform Inverse() const
 	{
-		const FFrameTime NewOffset = -Offset / TimeScale;
-		return FMovieSceneTimeTransform(NewOffset, 1.f / TimeScale);
+		const FFrameTime NewOffset = FMath::IsNearlyZero(TimeScale) ? -Offset : -Offset / TimeScale;
+		return FMovieSceneTimeTransform(NewOffset, FMath::IsNearlyZero(TimeScale) ? std::numeric_limits<float>::infinity() : 1.f / TimeScale);
 	}
 
 	/** The sequence's time scale (or play rate) */
@@ -90,6 +90,11 @@ inline FFrameTime operator*(FFrameTime InTime, const FMovieSceneTimeTransform& R
 	if (RHS.TimeScale == 1.f)
 	{
 		return InTime + RHS.Offset;
+	}
+	else if (!FMath::IsFinite(RHS.TimeScale))
+	{
+		// Special case infinite timescale (inverse of a zero-timescale) and just return the RHS.Offset
+		return RHS.Offset;
 	}
 
 	return InTime * RHS.TimeScale + RHS.Offset;
@@ -116,11 +121,16 @@ inline FFrameTime& operator*=(FFrameTime& InTime, const FMovieSceneTimeTransform
 template<typename T>
 TRange<T> operator*(const TRange<T>& LHS, const FMovieSceneTimeTransform& RHS)
 {
+	//  Special case large (inf) timescale to return open range.
+	if (!FMath::IsFinite(RHS.TimeScale))
+		return TRange<T>(TRangeBound<T>::Open(), TRangeBound<T>::Open());
+
+	// Special case 0-timescale below. We force multiplies with zero timescale to always have inclusive boundaries to prevent no frames from being present.
 	TRangeBound<T> SourceLower = LHS.GetLowerBound();
 	TRangeBound<T> TransformedLower =
 		SourceLower.IsOpen() ? 
 			TRangeBound<T>() : 
-			SourceLower.IsInclusive() ?
+			SourceLower.IsInclusive() || FMath::IsNearlyZero(RHS.TimeScale)  ?
 				TRangeBound<T>::Inclusive(SourceLower.GetValue() * RHS) :
 				TRangeBound<T>::Exclusive(SourceLower.GetValue() * RHS);
 
@@ -128,7 +138,7 @@ TRange<T> operator*(const TRange<T>& LHS, const FMovieSceneTimeTransform& RHS)
 	TRangeBound<T> TransformedUpper =
 		SourceUpper.IsOpen() ? 
 			TRangeBound<T>() : 
-			SourceUpper.IsInclusive() ?
+			SourceUpper.IsInclusive() || FMath::IsNearlyZero(RHS.TimeScale) ?
 				TRangeBound<T>::Inclusive(SourceUpper.GetValue() * RHS) :
 				TRangeBound<T>::Exclusive(SourceUpper.GetValue() * RHS);
 
@@ -137,11 +147,18 @@ TRange<T> operator*(const TRange<T>& LHS, const FMovieSceneTimeTransform& RHS)
 
 inline TRange<FFrameNumber> operator*(const TRange<FFrameNumber>& LHS, const FMovieSceneTimeTransform& RHS)
 {
+	// Special case large (inf) timescale to return open range.
+	if (!FMath::IsFinite(RHS.TimeScale))
+	{
+		return TRange<FFrameNumber>(TRangeBound<FFrameNumber>::Open(), TRangeBound<FFrameNumber>::Open());
+	}
+	
+	// Special case 0-timescale below. We force multiplies with zero timescale to always have inclusive boundaries to prevent no frames from being present.
 	TRangeBound<FFrameNumber> SourceLower = LHS.GetLowerBound();
 	TRangeBound<FFrameNumber> TransformedLower =
 		SourceLower.IsOpen() ? 
 			TRangeBound<FFrameNumber>() : 
-			SourceLower.IsInclusive() ?
+			SourceLower.IsInclusive() || FMath::IsNearlyZero(RHS.TimeScale) ?
 				TRangeBound<FFrameNumber>::Inclusive((SourceLower.GetValue() * RHS).FloorToFrame()) :
 				TRangeBound<FFrameNumber>::Exclusive((SourceLower.GetValue() * RHS).FloorToFrame());
 
@@ -149,7 +166,7 @@ inline TRange<FFrameNumber> operator*(const TRange<FFrameNumber>& LHS, const FMo
 	TRangeBound<FFrameNumber> TransformedUpper =
 		SourceUpper.IsOpen() ? 
 			TRangeBound<FFrameNumber>() : 
-			SourceUpper.IsInclusive() ?
+			SourceUpper.IsInclusive() || FMath::IsNearlyZero(RHS.TimeScale) ?
 				TRangeBound<FFrameNumber>::Inclusive((SourceUpper.GetValue() * RHS).FloorToFrame()) :
 				TRangeBound<FFrameNumber>::Exclusive((SourceUpper.GetValue() * RHS).FloorToFrame());
 
@@ -180,7 +197,7 @@ inline FMovieSceneTimeTransform operator*(const FMovieSceneTimeTransform& LHS, c
 	// | TimeScaleA	, OffsetA	|	.	| TimeScaleB, OffsetB	|
 	// | 0			, 1			|		| 0			, 1			|
 	//
-	const FFrameTime ScaledOffsetRHS = (LHS.TimeScale == 1.f) ? RHS.Offset : RHS.Offset * LHS.TimeScale;
+	const FFrameTime ScaledOffsetRHS = (LHS.TimeScale == 1.f || !FMath::IsFinite(LHS.TimeScale)) ? RHS.Offset : RHS.Offset * LHS.TimeScale;
 	return FMovieSceneTimeTransform(
 		LHS.Offset + ScaledOffsetRHS,		// New Offset
 		RHS.TimeScale * LHS.TimeScale		// New TimeScale

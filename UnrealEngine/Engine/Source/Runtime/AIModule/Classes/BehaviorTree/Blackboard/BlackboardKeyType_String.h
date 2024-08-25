@@ -25,7 +25,11 @@ class UBlackboardKeyType_String : public UBlackboardKeyType
 	UPROPERTY()
 	FString StringValue;
 
+	UPROPERTY(EditDefaultsOnly, Category = Blackboard)
+	FString DefaultValue = InvalidValue;
+
 protected:
+	AIMODULE_API virtual void InitializeMemory(UBlackboardComponent& OwnerComp, uint8* MemoryBlock) override;
 	AIMODULE_API virtual FString DescribeValue(const UBlackboardComponent& OwnerComp, const uint8* RawData) const override;
 	AIMODULE_API virtual bool TestTextOperation(const UBlackboardComponent& OwnerComp, const uint8* MemoryBlock, ETextKeyOperation::Type Op, const FString& OtherString) const override;
 	AIMODULE_API virtual void Clear(UBlackboardComponent& OwnerComp, uint8* MemoryBlock) override;

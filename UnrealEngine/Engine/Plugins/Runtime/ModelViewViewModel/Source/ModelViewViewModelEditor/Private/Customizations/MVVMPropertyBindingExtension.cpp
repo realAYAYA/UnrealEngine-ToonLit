@@ -102,10 +102,19 @@ static void ExtendBindingsMenu(FMenuBuilder& MenuBuilder, const UWidgetBlueprint
 			DestinationPropertyPath.AppendPropertyPath(WidgetBlueprint, UE::MVVM::FMVVMConstFieldVariant(Field));
 		}
 
-		DestinationPropertyPath.SetWidgetName(Widget->GetFName());
+		if (Widget->GetFName() == WidgetBlueprint->GetFName())
+		{
+			DestinationPropertyPath.SetSelfContext();
+		}
+		else
+		{
+			DestinationPropertyPath.SetWidgetName(Widget->GetFName());
+		}
 		NewBinding.DestinationPath = DestinationPropertyPath;
 
 		NewBinding.BindingType = EMVVMBindingMode::OneWayToDestination;
+
+		MVVMBlueprintView->OnBindingsUpdated.Broadcast();
 	};
 
 	for (const FMVVMBlueprintViewModelContext& ViewModel : MVVMBlueprintView->GetViewModels())
@@ -310,7 +319,14 @@ IPropertyBindingExtension::EDropResult FMVVMPropertyBindingExtension::OnDrop(con
 			DestinationPropertyPath.AppendPropertyPath(WidgetBlueprint, UE::MVVM::FMVVMConstFieldVariant(Field));
 		}
 
-		DestinationPropertyPath.SetWidgetName(Widget->GetFName());
+		if (Widget->GetFName() == WidgetBlueprint->GetFName())
+		{
+			DestinationPropertyPath.SetSelfContext();
+		}
+		else
+		{
+			DestinationPropertyPath.SetWidgetName(Widget->GetFName());
+		}
 		EditorSubsystem->SetDestinationPathForBinding(WidgetBlueprint, NewBinding, DestinationPropertyPath);
 
 		return EDropResult::HandledContinue;

@@ -43,6 +43,7 @@ public:
 	DECLARE_MULTICAST_DELEGATE(FOnParentRemoved);
 	DECLARE_MULTICAST_DELEGATE_TwoParams(FOnScriptGraphChanged, const FEdGraphEditAction&, const UNiagaraScript&);
 	DECLARE_MULTICAST_DELEGATE_TwoParams(FOnScriptParameterStoreChanged, const FNiagaraParameterStore&, const UNiagaraScript&);
+	DECLARE_DELEGATE_OneParam(FOnEmitterSelectionRequested, bool /* bClearSelection*/)
 
 public:
 	/** Creates a new emitter editor view model.  It must be initialized before use. */
@@ -118,6 +119,8 @@ public:
 	/** Gets a multicast delegate which is called any time a parameter store on a script owned by this emitter changes. */
 	FOnScriptParameterStoreChanged& OnScriptParameterStoreChanged();
 
+	FOnEmitterSelectionRequested& OnEmitterSelectionRequested();
+
 	/** Gets editor specific data which can be stored per emitter.  If this data hasn't been created the default version will be returned. */
 	NIAGARAEDITOR_API const UNiagaraEmitterEditorData& GetEditorData() const;
 
@@ -155,7 +158,9 @@ private:
 	void OnEmitterPropertiesChanged();
 
 	void OnSummaryViewHierarchyChanged();
-	
+
+	void UpdateSelectionOnSummaryViewStateChanged() const;
+
 	virtual FString GetReferencerName() const override;
 	virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
 	
@@ -197,6 +202,8 @@ private:
 
 	FOnScriptParameterStoreChanged OnScriptParameterStoreChangedDelegate;
 
+	FOnEmitterSelectionRequested OnEmitterSelectionRequestedDelegate;
+	
 	TNiagaraViewModelManager<UNiagaraEmitter, FNiagaraEmitterViewModel>::Handle RegisteredHandle;
 
 	UEnum* ExecutionStateEnum;

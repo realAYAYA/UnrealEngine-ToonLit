@@ -11,6 +11,17 @@
 #define ENABLE_VERIFY_GL (0 & DO_CHECK)
 #define ENABLE_VERIFY_GL_TRACE 0
 
+// Include GL debug output functionality on everything but shipping configs.
+// to enable the debug output specify '-OpenGLDebugLevel=[1-5]' via the command line.
+#define ENABLE_DEBUG_OUTPUT	(!UE_BUILD_SHIPPING)
+#if !ENABLE_DEBUG_OUTPUT
+inline bool IsOGLDebugOutputEnabled() { return false; }
+inline int32 GetOGLDebugOutputLevel() { return 0; }
+#else
+bool IsOGLDebugOutputEnabled();
+int32 GetOGLDebugOutputLevel();
+#endif
+
 // Additional check that our GL calls are occurring on the expected thread
 #define ENABLE_VERIFY_GL_THREAD (UE_BUILD_DEBUG)
 

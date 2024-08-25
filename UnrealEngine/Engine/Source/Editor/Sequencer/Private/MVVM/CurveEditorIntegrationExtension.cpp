@@ -174,7 +174,8 @@ FCurveEditorTreeItemID FCurveEditorIntegrationExtension::AddToCurveEditor(TViewM
 	FCurveEditorTreeItem* NewItem = InCurveEditor->AddTreeItem(ParentID);
 	TSharedPtr<ICurveEditorTreeItem> CurveEditorTreeItem = InViewModel->GetCurveEditorTreeItem();
 	NewItem->SetWeakItem(CurveEditorTreeItem);
-
+	TOptional<FString> UniquePathName =  InViewModel->GetUniquePathName();
+	NewItem->SetUniquePathName(UniquePathName);
 	// Register the new ID in our map and notify the view model
 	ViewModelToTreeItemIDMap.Add(InViewModel.AsModel(), NewItem->GetID());
 	InViewModel->OnAddedToCurveEditor(NewItem->GetID(), InCurveEditor);

@@ -41,6 +41,8 @@
 #include "WorldPartition/WorldPartitionSubsystem.h"
 #include "WorldPartition/DataLayer/DataLayerManager.h"
 #include "WorldPartition/IWorldPartitionEditorModule.h"
+#include "WorldPartition/ActorDescContainerInstance.h"
+#include "WorldPartition/WorldPartitionActorDescInstance.h"
 #include "Subsystems/ActorEditorContextSubsystem.h"
 #include "ISourceControlModule.h"
 #include "ISourceControlProvider.h"
@@ -49,6 +51,8 @@
 #include "EditorViewportCommands.h"
 #include "SceneOutlinerActorSCCColumn.h"
 #include "Misc/ScopedSlowTask.h"
+#include "Elements/Framework/EngineElementsLibrary.h"
+#include "Elements/Framework/TypedElementHandle.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogActorBrowser, Log, All);
 
@@ -99,6 +103,9 @@ FActorBrowsingMode::FActorBrowsingMode(SSceneOutliner* InSceneOutliner, TWeakObj
 		LocalSettings = *SavedSettings;
 	}
 
+	bHideLevelInstanceHierarchy = LocalSettings.bHideLevelInstanceHierarchy;
+	InSceneOutliner->SetShowTransient(!LocalSettings.bHideTemporaryActors);
+
 	// Get the OutlinerModule to register FilterInfos with the FilterInfoMap
 	FSceneOutlinerFilterInfo ShowOnlySelectedActorsInfo(LOCTEXT("ToggleShowOnlySelected", "Only Selected"), LOCTEXT("ToggleShowOnlySelectedToolTip", "When enabled, only displays actors that are currently selected."), LocalSettings.bShowOnlySelectedActors, FCreateSceneOutlinerFilter::CreateStatic(&FActorBrowsingMode::CreateShowOnlySelectedActorsFilter));
 	ShowOnlySelectedActorsInfo.OnToggle().AddLambda([this](bool bIsActive)
@@ -111,19 +118,7 @@ FActorBrowsingMode::FActorBrowsingMode(SSceneOutliner* InSceneOutliner, TWeakObj
 			}
 		});
 	FilterInfoMap.Add(TEXT("ShowOnlySelectedActors"), ShowOnlySelectedActorsInfo);
-
-	FSceneOutlinerFilterInfo HideTemporaryActorsInfo(LOCTEXT("ToggleHideTemporaryActors", "Hide Temporary Actors"), LOCTEXT("ToggleHideTemporaryActorsToolTip", "When enabled, hides temporary/run-time Actors."), LocalSettings.bHideTemporaryActors, FCreateSceneOutlinerFilter::CreateStatic(&FActorBrowsingMode::CreateHideTemporaryActorsFilter));
-	HideTemporaryActorsInfo.OnToggle().AddLambda([this](bool bIsActive)
-		{
-			FActorBrowsingModeConfig* Settings = GetMutableConfig();
-			if(Settings)
-			{
-				Settings->bHideTemporaryActors = bIsActive;
-				SaveConfig();
-			}
-		});
-	FilterInfoMap.Add(TEXT("HideTemporaryActors"), HideTemporaryActorsInfo);
-
+		
 	FSceneOutlinerFilterInfo OnlyCurrentLevelInfo(LOCTEXT("ToggleShowOnlyCurrentLevel", "Only in Current Level"), LOCTEXT("ToggleShowOnlyCurrentLevelToolTip", "When enabled, only shows Actors that are in the Current Level."), LocalSettings.bShowOnlyActorsInCurrentLevel, FCreateSceneOutlinerFilter::CreateStatic(&FActorBrowsingMode::CreateIsInCurrentLevelFilter));
 	OnlyCurrentLevelInfo.OnToggle().AddLambda([this](bool bIsActive)
 		{
@@ -149,7 +144,7 @@ FActorBrowsingMode::FActorBrowsingMode(SSceneOutliner* InSceneOutliner, TWeakObj
 	FilterInfoMap.Add(TEXT("ShowOnlyCurrentDataLayers"), OnlyCurrentDataLayersInfo);
 
 	// Add a filter for unloaded actors to properly reflect the bShowOnlyActorsInCurrentDataLayers flag.
-	SceneOutliner->AddFilter(MakeShared<FActorDescFilter>(FActorDescTreeItem::FFilterPredicate::CreateLambda([this](const FWorldPartitionActorDesc* ActorDesc)
+	SceneOutliner->AddFilter(MakeShared<FActorDescFilter>(FActorDescTreeItem::FFilterPredicate::CreateLambda([this](const FWorldPartitionActorDescInstance* ActorDescInstance)
 		{
 			FActorBrowsingModeConfig* Settings = GetMutableConfig();
 			if (Settings && Settings->bShowOnlyActorsInCurrentDataLayers)
@@ -160,7 +155,7 @@ FActorBrowsingMode::FActorBrowsingMode(SSceneOutliner* InSceneOutliner, TWeakObj
 					return true;
 				}
 				
-				for(const UDataLayerInstance* const DataLayerInstance : DataLayerManager->GetDataLayerInstances(ActorDesc->GetDataLayerInstanceNames()))
+				for(const UDataLayerInstance* const DataLayerInstance : DataLayerManager->GetDataLayerInstances(ActorDescInstance->GetDataLayerInstanceNames().ToArray()))
 				{
 					if (DataLayerInstance->IsInActorEditorContext())
 					{
@@ -185,7 +180,7 @@ FActorBrowsingMode::FActorBrowsingMode(SSceneOutliner* InSceneOutliner, TWeakObj
 	FilterInfoMap.Add(TEXT("ShowOnlyCurrentContentBundle"), OnlyCurrentContentBundleInfo);
 
 	// Add a filter for unloaded actors to properly reflect the bShowOnlyActorsInCurrentContentBundle flag.
-	SceneOutliner->AddFilter(MakeShared<FActorDescFilter>(FActorDescTreeItem::FFilterPredicate::CreateLambda([this](const FWorldPartitionActorDesc* ActorDesc)
+	SceneOutliner->AddFilter(MakeShared<FActorDescFilter>(FActorDescTreeItem::FFilterPredicate::CreateLambda([this](const FWorldPartitionActorDescInstance* ActorDescInstance)
 		{
 			FActorBrowsingModeConfig* Settings = GetMutableConfig();
 			if (Settings && Settings->bShowOnlyActorsInCurrentContentBundle)
@@ -195,7 +190,7 @@ FActorBrowsingMode::FActorBrowsingMode(SSceneOutliner* InSceneOutliner, TWeakObj
 					return true;
 				}
 
-				return ActorDesc->GetContentBundleGuid().IsValid() && WorldPartitionEditorModule->IsEditingContentBundle(ActorDesc->GetContentBundleGuid());
+				return ActorDescInstance->GetContentBundleGuid().IsValid() && WorldPartitionEditorModule->IsEditingContentBundle(ActorDescInstance->GetContentBundleGuid());
 			}
 			return true;
 		}), FSceneOutlinerFilter::EDefaultBehaviour::Pass));
@@ -217,24 +212,6 @@ FActorBrowsingMode::FActorBrowsingMode(SSceneOutliner* InSceneOutliner, TWeakObj
 		});
 
 	FilterInfoMap.Add(TEXT("HideComponentsFilter"), HideComponentsInfo);
-
-	bHideLevelInstanceHierarchy = LocalSettings.bHideLevelInstanceHierarchy;
-	FSceneOutlinerFilterInfo HideLevelInstancesInfo(LOCTEXT("ToggleHideLevelInstanceContent", "Hide Level Instance Content"), LOCTEXT("ToggleHideLevelInstancesToolTip", "When enabled, hides all level instance content."), LocalSettings.bHideLevelInstanceHierarchy, FCreateSceneOutlinerFilter::CreateStatic(&FActorBrowsingMode::CreateHideLevelInstancesFilter));
-	HideLevelInstancesInfo.OnToggle().AddLambda([this](bool bIsActive)
-		{
-			FActorBrowsingModeConfig* Settings = GetMutableConfig();
-			if(Settings)
-			{
-				Settings->bHideLevelInstanceHierarchy = bHideLevelInstanceHierarchy = bIsActive;
-				SaveConfig();
-			}
-
-			if (auto ActorHierarchy = StaticCast<FActorHierarchy*>(Hierarchy.Get()))
-			{
-				ActorHierarchy->SetShowingLevelInstances(!bIsActive);
-			}
-		});
-	FilterInfoMap.Add(TEXT("HideLevelInstancesFilter"), HideLevelInstancesInfo);
 
 	bHideUnloadedActors = LocalSettings.bHideUnloadedActors;
 	FSceneOutlinerFilterInfo HideUnloadedActorsInfo(LOCTEXT("ToggleHideUnloadedActors", "Hide Unloaded Actors"), LOCTEXT("ToggleHideUnloadedActorsToolTip", "When enabled, hides all unloaded world partition actors."), LocalSettings.bHideUnloadedActors, FCreateSceneOutlinerFilter::CreateStatic(&FActorBrowsingMode::CreateHideUnloadedActorsFilter));
@@ -273,8 +250,13 @@ FActorBrowsingMode::FActorBrowsingMode(SSceneOutliner* InSceneOutliner, TWeakObj
 	FilterInfoMap.Add(TEXT("HideEmptyFoldersFilter"), HideEmptyFoldersInfo);
 
 	// Add a filter which sets the interactive mode of LevelInstance items and their children
-	SceneOutliner->AddFilter(MakeShared<FActorFilter>(FActorTreeItem::FFilterPredicate::CreateStatic([](const AActor* Actor) {return true; }), FSceneOutlinerFilter::EDefaultBehaviour::Pass, FActorTreeItem::FFilterPredicate::CreateLambda([this](const AActor* Actor)
+	SceneOutliner->AddInteractiveFilter(MakeShared<FActorFilter>(FActorTreeItem::FFilterPredicate::CreateLambda([this](const AActor* Actor)
 		{
+			if (Actor->SupportsSubRootSelection())
+			{
+				return true;
+			}
+
 			if (!bHideLevelInstanceHierarchy)
 			{
 				if (const ULevelInstanceSubsystem* LevelInstanceSubsystem = RepresentingWorld->GetSubsystem<ULevelInstanceSubsystem>())
@@ -291,7 +273,7 @@ FActorBrowsingMode::FActorBrowsingMode(SSceneOutliner* InSceneOutliner, TWeakObj
 				}
 			}
 			return true;
-		})));
+		}), FSceneOutlinerFilter::EDefaultBehaviour::Pass));
 
 	bAlwaysFrameSelection = LocalSettings.bAlwaysFrameSelection;
 
@@ -304,7 +286,7 @@ FActorBrowsingMode::~FActorBrowsingMode()
 	{
 		if (UWorldPartition* const WorldPartition = RepresentingWorld->GetWorldPartition())
 		{
-			WorldPartition->OnActorDescRemovedEvent.RemoveAll(this);
+			WorldPartition->OnActorDescInstanceRemovedEvent.RemoveAll(this);
 		}
 	}
 	FSceneOutlinerDelegates::Get().OnComponentsUpdated.RemoveAll(this);
@@ -337,7 +319,7 @@ void FActorBrowsingMode::Rebuild()
 	{
 		if (UWorldPartition* const WorldPartition = RepresentingWorld->GetWorldPartition())
 		{
-			WorldPartition->OnActorDescRemovedEvent.RemoveAll(this);
+			WorldPartition->OnActorDescInstanceRemovedEvent.RemoveAll(this);
 		}
 	}
 
@@ -354,7 +336,7 @@ void FActorBrowsingMode::Rebuild()
 	if (bRepresentingWorldPartitionedWorld)
 	{
 		UWorldPartition* const WorldPartition = RepresentingWorld->GetWorldPartition();
-		WorldPartition->OnActorDescRemovedEvent.AddRaw(this, &FActorBrowsingMode::OnActorDescRemoved);
+		WorldPartition->OnActorDescInstanceRemovedEvent.AddRaw(this, &FActorBrowsingMode::OnActorDescInstanceRemoved);
 	}
 }
 
@@ -434,40 +416,146 @@ void FActorBrowsingMode::OnToggleAlwaysFrameSelection()
 	}
 }
 
-bool FActorBrowsingMode::ShouldAlwaysFrameSelection()
+bool FActorBrowsingMode::ShouldAlwaysFrameSelection() const
 {
 	return bAlwaysFrameSelection;
 }
 
-void FActorBrowsingMode::CreateViewContent(FMenuBuilder& MenuBuilder)
+void FActorBrowsingMode::OnToggleHideTemporaryActors()
 {
-	MenuBuilder.BeginSection("OutlinerSelectionOptions", LOCTEXT("OptionsHeading", "Options"));
-
-	MenuBuilder.AddMenuEntry(
-		LOCTEXT("AlwaysFrameSelectionLabel", "Always Frame Selection"),
-		LOCTEXT("AlwaysFrameSelectionTooltip", "When enabled, selecting an Actor in the Viewport also scrolls to that Actor in the Outliner."),
-		FSlateIcon(),
-		FUIAction(
-			FExecuteAction::CreateRaw(this, &FActorBrowsingMode::OnToggleAlwaysFrameSelection),
-			FCanExecuteAction(),
-			FIsActionChecked::CreateRaw(this, &FActorBrowsingMode::ShouldAlwaysFrameSelection)
-		),
-		NAME_None,
-		EUserInterfaceActionType::ToggleButton
-	);
-
-	MenuBuilder.EndSection();
-
-
-	MenuBuilder.BeginSection("AssetThumbnails", LOCTEXT("ShowWorldHeading", "World"));
+	FActorBrowsingModeConfig* Settings = GetMutableConfig();
+	if (Settings)
 	{
+		Settings->bHideTemporaryActors = !Settings->bHideTemporaryActors;
+		SaveConfig();
+
+		SceneOutliner->SetShowTransient(!Settings->bHideTemporaryActors);
+		
+		SceneOutliner->FullRefresh();
+	}
+}
+
+bool FActorBrowsingMode::ShouldHideTemporaryActors() const
+{
+	const FActorBrowsingModeConfig* Settings = GetConstConfig();
+	if (Settings)
+	{
+		return Settings->bHideTemporaryActors;
+	}
+
+	return false;
+}
+
+void FActorBrowsingMode::OnToggleHideLevelInstanceHierarchy()
+{
+	bHideLevelInstanceHierarchy = !bHideLevelInstanceHierarchy;
+
+	FActorBrowsingModeConfig* Settings = GetMutableConfig();
+	if (Settings)
+	{
+		Settings->bHideLevelInstanceHierarchy = bHideLevelInstanceHierarchy;
+
+		SaveConfig();
+	}
+
+	if (auto ActorHierarchy = StaticCast<FActorHierarchy*>(Hierarchy.Get()))
+	{
+		ActorHierarchy->SetShowingLevelInstances(!bHideLevelInstanceHierarchy);
+	}
+
+	SceneOutliner->FullRefresh();
+}
+
+bool FActorBrowsingMode::ShouldHideLevelInstanceHierarchy() const
+{
+	const FActorBrowsingModeConfig* Settings = GetConstConfig();
+	if (Settings)
+	{
+		return Settings->bHideLevelInstanceHierarchy;
+	}
+
+	return false;
+}
+
+void FActorBrowsingMode::InitializeViewMenuExtender(TSharedPtr<FExtender> Extender)
+{
+	FActorModeInteractive::InitializeViewMenuExtender(Extender);
+	
+	Extender->AddMenuExtension(SceneOutliner::ExtensionHooks::Show, EExtensionHook::First, nullptr, FMenuExtensionDelegate::CreateLambda([this](FMenuBuilder& MenuBuilder)
+	{
+		MenuBuilder.AddMenuEntry(
+			LOCTEXT("ToggleHideTemporaryActors", "Hide Temporary Actors"),
+			LOCTEXT("ToggleHideTemporaryActorsToolTip", "When enabled, hides temporary/run-time Actors."),
+			FSlateIcon(),
+			FUIAction(
+				FExecuteAction::CreateRaw(this, &FActorBrowsingMode::OnToggleHideTemporaryActors),
+				FCanExecuteAction(),
+				FIsActionChecked::CreateRaw(this, &FActorBrowsingMode::ShouldHideTemporaryActors)
+			),
+			NAME_None,
+			EUserInterfaceActionType::ToggleButton
+		);
+
+		MenuBuilder.AddMenuEntry(
+			LOCTEXT("ToggleHideLevelInstanceContent", "Hide Level Instance Content"),
+			LOCTEXT("ToggleHideLevelInstancesToolTip", "When enabled, hides all level instance content."),
+			FSlateIcon(),
+			FUIAction(
+				FExecuteAction::CreateRaw(this, &FActorBrowsingMode::OnToggleHideLevelInstanceHierarchy),
+				FCanExecuteAction(),
+				FIsActionChecked::CreateRaw(this, &FActorBrowsingMode::ShouldHideLevelInstanceHierarchy)
+			),
+			NAME_None,
+			EUserInterfaceActionType::ToggleButton
+		);
+	}));
+
+	Extender->AddMenuExtension(SceneOutliner::ExtensionHooks::Show, EExtensionHook::After, nullptr, FMenuExtensionDelegate::CreateLambda([this](FMenuBuilder& MenuBuilder)
+	{
+		MenuBuilder.BeginSection("OutlinerSelectionOptions", LOCTEXT("OptionsHeading", "Options"));
+
+		MenuBuilder.AddMenuEntry(
+			LOCTEXT("AlwaysFrameSelectionLabel", "Always Frame Selection"),
+			LOCTEXT("AlwaysFrameSelectionTooltip", "When enabled, selecting an Actor in the Viewport also scrolls to that Actor in the Outliner."),
+			FSlateIcon(),
+			FUIAction(
+				FExecuteAction::CreateRaw(this, &FActorBrowsingMode::OnToggleAlwaysFrameSelection),
+				FCanExecuteAction(),
+				FIsActionChecked::CreateRaw(this, &FActorBrowsingMode::ShouldAlwaysFrameSelection)
+			),
+			NAME_None,
+			EUserInterfaceActionType::ToggleButton
+		);
+
+		MenuBuilder.AddMenuEntry(
+			LOCTEXT("FolderDoubleClickToggleCurrentFolderLabel", "Double Click toggles Current Folder"),
+			LOCTEXT(
+				"FolderDoubleClickToggleCurrentFolderTooltip",
+				"When enabled, double clicking on a folder will result in it toggling its Current Folder state"
+				"instead of its expansion."
+			),
+			FSlateIcon(),
+			FUIAction(
+				FExecuteAction::CreateRaw(this, &FActorBrowsingMode::OnToggleFolderDoubleClickMarkCurrentFolder),
+				FCanExecuteAction(),
+				FIsActionChecked::CreateRaw(this, &FActorBrowsingMode::DoesFolderDoubleClickMarkCurrentFolder)
+			),
+			NAME_None,
+			EUserInterfaceActionType::ToggleButton
+		);
+
+		MenuBuilder.EndSection();
+
+		MenuBuilder.BeginSection("World", LOCTEXT("ShowWorldHeading", "World"));
+		
 		MenuBuilder.AddSubMenu(
 			LOCTEXT("ChooseWorldSubMenu", "Choose World"),
 			LOCTEXT("ChooseWorldSubMenuToolTip", "Choose the world to display in the outliner."),
 			FNewMenuDelegate::CreateRaw(this, &FActorMode::BuildWorldPickerMenu)
 		);
-	}
-	MenuBuilder.EndSection();
+		
+		MenuBuilder.EndSection();
+	}));
 }
 
 TSharedRef<FSceneOutlinerFilter> FActorBrowsingMode::CreateShowOnlySelectedActorsFilter()
@@ -477,14 +565,6 @@ TSharedRef<FSceneOutlinerFilter> FActorBrowsingMode::CreateShowOnlySelectedActor
 		return InActor && InActor->IsSelected();
 	};
 	return MakeShareable(new FActorFilter(FActorTreeItem::FFilterPredicate::CreateStatic(IsActorSelected), FSceneOutlinerFilter::EDefaultBehaviour::Fail, FActorTreeItem::FFilterPredicate::CreateStatic(IsActorSelected)));
-}
-
-TSharedRef<FSceneOutlinerFilter> FActorBrowsingMode::CreateHideTemporaryActorsFilter()
-{
-	return MakeShareable(new FActorFilter(FActorTreeItem::FFilterPredicate::CreateStatic([](const AActor* InActor)
-		{
-			return ((InActor->GetWorld() && InActor->GetWorld()->WorldType != EWorldType::PIE) || GEditor->ObjectsThatExistInEditorWorld.Get(InActor)) && !InActor->HasAnyFlags(EObjectFlags::RF_Transient);
-		}), FSceneOutlinerFilter::EDefaultBehaviour::Pass));
 }
 
 TSharedRef<FSceneOutlinerFilter> FActorBrowsingMode::CreateIsInCurrentLevelFilter()
@@ -569,30 +649,10 @@ TSharedRef<FSceneOutlinerFilter> FActorBrowsingMode::CreateHideComponentsFilter(
 		FSceneOutlinerFilter::EDefaultBehaviour::Pass));
 }
 
-TSharedRef<FSceneOutlinerFilter> FActorBrowsingMode::CreateHideLevelInstancesFilter()
-{
-	return MakeShareable(new FActorFilter(FActorTreeItem::FFilterPredicate::CreateStatic([](const AActor* Actor)
-		{
-			// Check if actor belongs to a LevelInstance
-			if (const ULevelInstanceSubsystem* LevelInstanceSubsystem = Actor->GetWorld()->GetSubsystem<ULevelInstanceSubsystem>())
-			{
-				if (const ILevelInstanceInterface* ParentLevelInstance = LevelInstanceSubsystem->GetParentLevelInstance(Actor))
-				{
-					if (!LevelInstanceSubsystem->IsEditingLevelInstance(ParentLevelInstance))
-					{
-						return false;
-					}
-				}
-			}
-			// Or if the actor itself is a LevelInstance editor instance
-			return Cast<ALevelInstanceEditorInstanceActor>(Actor) == nullptr;
-		}), FSceneOutlinerFilter::EDefaultBehaviour::Pass));
-}
-
 TSharedRef<FSceneOutlinerFilter> FActorBrowsingMode::CreateHideUnloadedActorsFilter()
 {
 	return MakeShareable(new FActorDescFilter(FActorDescTreeItem::FFilterPredicate::CreateStatic(
-		[](const FWorldPartitionActorDesc* ActorDesc) { return false; }), FSceneOutlinerFilter::EDefaultBehaviour::Pass));
+		[](const FWorldPartitionActorDescInstance* ActorDescInstance) { return false; }), FSceneOutlinerFilter::EDefaultBehaviour::Pass));
 }
 
 TSharedRef<FSceneOutlinerFilter> FActorBrowsingMode::CreateHideEmptyFoldersFilter()
@@ -932,9 +992,9 @@ void FActorBrowsingMode::OnSelectUnloadedActors(const TArray<FGuid>& ActorGuids)
 		ItemsToSelect.Reserve(ActorGuids.Num());
 		for (const FGuid& ActorGuid : ActorGuids)
 		{
-			if (FWorldPartitionActorDesc* ActorDesc = WorldPartition->GetActorDesc(ActorGuid))
+			if (FWorldPartitionActorDescInstance* ActorDescInstance = WorldPartition->GetActorDescInstance(ActorGuid))
 			{
-				if (FSceneOutlinerTreeItemPtr ItemPtr = SceneOutliner->GetTreeItem(FActorDescTreeItem::ComputeTreeItemID(ActorDesc->GetGuid(), ActorDesc->GetContainer())))
+				if (FSceneOutlinerTreeItemPtr ItemPtr = SceneOutliner->GetTreeItem(FActorDescTreeItem::ComputeTreeItemID(ActorDescInstance->GetGuid(), ActorDescInstance->GetContainerInstance())))
 				{
 					ItemsToSelect.Add(ItemPtr);
 				}
@@ -954,92 +1014,106 @@ void FActorBrowsingMode::OnSelectUnloadedActors(const TArray<FGuid>& ActorGuids)
 	}
 }
 
-void FActorBrowsingMode::OnActorDescRemoved(FWorldPartitionActorDesc* InActorDesc)
+void FActorBrowsingMode::OnActorDescInstanceRemoved(FWorldPartitionActorDescInstance* InActorDescInstance)
 {
-	ApplicableUnloadedActors.Remove(InActorDesc);
+	ApplicableUnloadedActors.Remove(InActorDescInstance);
 }
 
 void FActorBrowsingMode::OnItemSelectionChanged(FSceneOutlinerTreeItemPtr TreeItem, ESelectInfo::Type SelectionType, const FSceneOutlinerItemSelection& Selection)
 {
-	TArray<AActor*> SelectedActors = Selection.GetData<AActor*>(SceneOutliner::FActorSelector());
+	TSet<AActor*> OutlinerSelectedActors(Selection.GetData<AActor*>(SceneOutliner::FActorSelector()));
+	TSet<AActor*> ActorsToSelect;
+	ActorsToSelect.Reserve(OutlinerSelectedActors.Num());
 
 	SynchronizeSelectedActorDescs();
 
-	bool bChanged = false;
-	bool bAnyInPIE = false;
-	for (auto* Actor : SelectedActors)
+	USelection* ActorSelection = GEditor->GetSelectedActors();
+	if (UTypedElementSelectionSet* SelectionSet = ActorSelection->GetElementSelectionSet())
 	{
-		if (!bAnyInPIE && Actor && Actor->GetPackage()->HasAnyPackageFlags(PKG_PlayInEditor))
-		{
-			bAnyInPIE = true;
-		}
-		if (!GEditor->GetSelectedActors()->IsSelected(Actor))
-		{
-			bChanged = true;
-			break;
-		}
-	}
+		TSet<AActor*> EditorSelectedActors(SelectionSet->GetSelectedObjects<AActor>());
 
-	for (FSelectionIterator SelectionIt(*GEditor->GetSelectedActors()); SelectionIt && !bChanged; ++SelectionIt)
-	{
-		const AActor* Actor = CastChecked< AActor >(*SelectionIt);
-		if (!bAnyInPIE && Actor->GetPackage()->HasAnyPackageFlags(PKG_PlayInEditor))
+		bool bChanged = false;
+		bool bAnyInPIE = false;
+		for (AActor* Actor : OutlinerSelectedActors)
 		{
-			bAnyInPIE = true;
-		}
-		if (!SelectedActors.Contains(Actor))
-		{
-			// Actor has been deselected
-			bChanged = true;
-
-			// If actor was a group actor, remove its members from the ActorsToSelect list
-			const AGroupActor* DeselectedGroupActor = Cast<AGroupActor>(Actor);
-			if (DeselectedGroupActor)
+			if (!bAnyInPIE && Actor && Actor->GetPackage()->HasAnyPackageFlags(PKG_PlayInEditor))
 			{
-				TArray<AActor*> GroupActors;
-				DeselectedGroupActor->GetGroupActors(GroupActors);
+				bAnyInPIE = true;
+			}
 
-				for (auto* GroupActor : GroupActors)
-				{
-					SelectedActors.Remove(GroupActor);
-				}
+			if (!EditorSelectedActors.Contains(Actor))
+			{
+				bChanged = true;
+			}
 
+			// Allow selection of Sub Roots only if Roots aren't in the outliners selection
+			AActor* RootSelectionParent = Actor ? Actor->GetRootSelectionParent() : nullptr;
+			if (!RootSelectionParent || !OutlinerSelectedActors.Contains(RootSelectionParent))
+			{
+				ActorsToSelect.Add(Actor);
 			}
 		}
-	}
 
-	// If there's a discrepancy, update the selected actors to reflect this list.
-	if (bChanged)
-	{
-		const FScopedTransaction Transaction(NSLOCTEXT("UnrealEd", "ClickingOnActors", "Clicking on Actors"), !bAnyInPIE);
-		GEditor->GetSelectedActors()->Modify();
-
-		// We'll batch selection changes instead by using BeginBatchSelectOperation()
-		GEditor->GetSelectedActors()->BeginBatchSelectOperation();
-
-		// Clear the selection.
-		GEditor->SelectNone(false, true, true);
-
-		const bool bShouldSelect = true;
-		const bool bNotifyAfterSelect = false;
-		const bool bSelectEvenIfHidden = true;	// @todo outliner: Is this actually OK?
-		for (auto* Actor : SelectedActors)
+		for (const AActor* SelectedActor : EditorSelectedActors)
 		{
-			UE_LOG(LogActorBrowser, Verbose, TEXT("Clicking on Actor (world outliner): %s (%s)"), *Actor->GetClass()->GetName(), *Actor->GetActorLabel());
-			GEditor->SelectActor(Actor, bShouldSelect, bNotifyAfterSelect, bSelectEvenIfHidden);
+			if (!bAnyInPIE && SelectedActor && SelectedActor->GetPackage()->HasAnyPackageFlags(PKG_PlayInEditor))
+			{
+				bAnyInPIE = true;
+			}
+
+			if (!ActorsToSelect.Contains(SelectedActor))
+			{
+				// Actor has been deselected
+				bChanged = true;
+
+				// If actor was a group actor, remove its members from the ActorsToSelect list
+				if (const AGroupActor* DeselectedGroupActor = Cast<AGroupActor>(SelectedActor))
+				{
+					TArray<AActor*> GroupActors;
+					DeselectedGroupActor->GetGroupActors(GroupActors);
+
+					for (AActor* GroupActor : GroupActors)
+					{
+						ActorsToSelect.Remove(GroupActor);
+					}
+				}
+			}
 		}
 
-		// Commit selection changes
-		GEditor->GetSelectedActors()->EndBatchSelectOperation(/*bNotify*/false);
+		// If there's a discrepancy, update the selected actors to reflect this list.
+		if (bChanged)
+		{
+			const FScopedTransaction Transaction(NSLOCTEXT("UnrealEd", "ClickingOnActors", "Clicking on Actors"), !bAnyInPIE);
 
-		// Fire selection changed event
-		GEditor->NoteSelectionChange();
+			TArray<FTypedElementHandle> ElementsToSelect;
+			for (auto* Actor : ActorsToSelect)
+			{
+				UE_LOG(LogActorBrowser, Verbose, TEXT("Clicking on Actor (world outliner): %s (%s)"), *Actor->GetClass()->GetName(), *Actor->GetActorLabel());
+				ElementsToSelect.Add(UEngineElementsLibrary::AcquireEditorActorElementHandle(Actor));
+			}
 
-		// Set this outliner as the most recently interacted with
-		SetAsMostRecentOutliner();
+			{
+				const FTypedElementSelectionOptions SelectionOptions = FTypedElementSelectionOptions()
+					.SetAllowHidden(true)
+					.SetWarnIfLocked(false)
+					.SetAllowLegacyNotifications(false)
+					.SetAllowSubRootSelection(true);
+
+				// Avoid senting out notification via typed element and call NoteSelectionChange to preserve previous behavior
+				FTypedElementList::FScopedClearNewPendingChange ClearNewPendingChange = SelectionSet->GetScopedClearNewPendingChange();
+				SelectionSet->SetSelection(ElementsToSelect, SelectionOptions);
+				SelectionSet->NotifyPendingChanges();
+			}
+
+			// Fire selection changed event
+			GEditor->NoteSelectionChange();
+
+			// Set this outliner as the most recently interacted with
+			SetAsMostRecentOutliner();
+		}
+
+		SceneOutliner->RefreshSelection();
 	}
-
-	SceneOutliner->RefreshSelection();
 }
 
 void FActorBrowsingMode::OnItemDoubleClick(FSceneOutlinerTreeItemPtr Item)
@@ -1080,6 +1154,60 @@ void FActorBrowsingMode::OnItemDoubleClick(FSceneOutlinerTreeItemPtr Item)
 	{
 		ActorDescItem->FocusActorBounds();
 	}
+	else if (const FActorFolderTreeItem* FolderItem = Item->CastTo<FActorFolderTreeItem>())
+	{
+		if (DoesFolderDoubleClickMarkCurrentFolder())
+		{
+			if (UWorld* World = FolderItem->World.Get())
+			{
+				const FScopedTransaction Transaction(
+					LOCTEXT("ToggleCurrentActorFolder", "Toggle Current Actor Folder")
+				);
+
+				const FFolder CurrentContextFolder = FActorFolders::Get().GetActorEditorContextFolder(*World);
+				if (CurrentContextFolder == FolderItem->GetFolder())
+				{
+					FActorFolders::Get().SetActorEditorContextFolder(*World, FFolder::GetWorldRootFolder(World));
+				}
+				else
+				{
+					FActorFolders::Get().SetActorEditorContextFolder(*World, FolderItem->GetFolder());
+				}
+			}
+		}
+	}
+}
+
+bool FActorBrowsingMode::HasCustomFolderDoubleClick() const
+{
+	return DoesFolderDoubleClickMarkCurrentFolder();
+}
+
+void FActorBrowsingMode::OnToggleFolderDoubleClickMarkCurrentFolder()
+{
+	if (FActorBrowsingModeConfig* Settings = GetMutableConfig())
+	{
+		if (Settings->FolderDoubleClickMethod == EActorBrowsingFolderDoubleClickMethod::ToggleCurrentFolder)
+		{
+			Settings->FolderDoubleClickMethod = EActorBrowsingFolderDoubleClickMethod::ToggleExpansion;
+		}
+		else
+		{
+			Settings->FolderDoubleClickMethod = EActorBrowsingFolderDoubleClickMethod::ToggleCurrentFolder;
+		}
+
+		SaveConfig();
+	}
+}
+
+bool FActorBrowsingMode::DoesFolderDoubleClickMarkCurrentFolder() const
+{
+	if (const FActorBrowsingModeConfig* Settings = GetConstConfig())
+	{
+		return Settings->FolderDoubleClickMethod == EActorBrowsingFolderDoubleClickMethod::ToggleCurrentFolder;
+	}
+
+	return false;
 }
 
 void FActorBrowsingMode::OnFilterTextCommited(FSceneOutlinerItemSelection& Selection, ETextCommit::Type CommitType)
@@ -1120,7 +1248,7 @@ void FActorBrowsingMode::OnItemPassesFilters(const ISceneOutlinerTreeItem& Item)
 	}
 	else if (const FActorDescTreeItem* const ActorDescItem = Item.CastTo<FActorDescTreeItem>(); ActorDescItem && ActorDescItem->IsValid())
 	{
-		ApplicableUnloadedActors.Add(ActorDescItem->ActorDescHandle.Get());
+		ApplicableUnloadedActors.Add(ActorDescItem->ActorDescHandle);
 	}
 }
 
@@ -1247,9 +1375,9 @@ bool FActorBrowsingMode::HasErrors() const
 		{
 			bool bHasErrors = 0;
 
-			WorldPartition->ForEachActorDescContainer([&bHasErrors](UActorDescContainer* ActorDescContainer)
+			WorldPartition->ForEachActorDescContainerInstance([&bHasErrors](UActorDescContainerInstance* ActorDescContainerInstance)
 			{
-				if (ActorDescContainer->HasInvalidActors())
+				if (ActorDescContainerInstance->GetContainer()->HasInvalidActors())
 				{
 					bHasErrors = true;
 				}
@@ -1277,13 +1405,13 @@ void FActorBrowsingMode::RepairErrors() const
 			ISourceControlProvider& SourceControlProvider = SourceControlModule.GetProvider();
 
 			TArray<FAssetData> InvalidActorAssets;
-			WorldPartition->ForEachActorDescContainer([&InvalidActorAssets](UActorDescContainer* ActorDescContainer)
+			WorldPartition->ForEachActorDescContainerInstance([&InvalidActorAssets](UActorDescContainerInstance* ActorDescContainerInstance)
 			{
-				for (const FAssetData& InvalidActor : ActorDescContainer->GetInvalidActors())
+				for (const FAssetData& InvalidActor : ActorDescContainerInstance->GetContainer()->GetInvalidActors())
 				{
 					InvalidActorAssets.Add(InvalidActor);
 				}
-				ActorDescContainer->ClearInvalidActors();
+				ActorDescContainerInstance->GetContainer()->ClearInvalidActors();
 			});
 
 			TArray<FString> ActorFilesToDelete;
@@ -1356,657 +1484,17 @@ bool FActorBrowsingMode::CanPasteFoldersOnlyFromClipboard() const
 	return PasteString.StartsWith("BEGIN FOLDERLIST");
 }
 
-bool FActorBrowsingMode::GetFolderNamesFromPayload(const FSceneOutlinerDragDropPayload& InPayload, TArray<FName>& OutFolders, FFolder::FRootObject& OutCommonRootObject) const
-{
-	return FFolder::GetFolderPathsAndCommonRootObject(InPayload.GetData<FFolder>(SceneOutliner::FFolderPathSelector()), OutFolders, OutCommonRootObject);
-}
-
-TSharedPtr<FDragDropOperation> FActorBrowsingMode::CreateDragDropOperation(const FPointerEvent& MouseEvent, const TArray<FSceneOutlinerTreeItemPtr>& InTreeItems) const
-{
-	FSceneOutlinerDragDropPayload DraggedObjects(InTreeItems);
-
-	// If the drag contains only actors, we shortcut and create a simple FActorDragDropGraphEdOp rather than an FSceneOutlinerDragDrop composite op.
-	if (DraggedObjects.Has<FActorTreeItem>() && !DraggedObjects.Has<FFolderTreeItem>())
-	{
-		return FActorDragDropGraphEdOp::New(DraggedObjects.GetData<TWeakObjectPtr<AActor>>(SceneOutliner::FWeakActorSelector()));
-	}
-
-	TSharedPtr<FSceneOutlinerDragDropOp> OutlinerOp = MakeShareable(new FSceneOutlinerDragDropOp());
-
-	if (DraggedObjects.Has<FActorTreeItem>())
-	{
-		TSharedPtr<FActorDragDropOp> ActorOperation = MakeShareable(new FActorDragDropGraphEdOp);
-		ActorOperation->Init(DraggedObjects.GetData<TWeakObjectPtr<AActor>>(SceneOutliner::FWeakActorSelector()));
-		OutlinerOp->AddSubOp(ActorOperation);
-	}
-
-	if (DraggedObjects.Has<FFolderTreeItem>())
-	{
-		FFolder::FRootObject CommonRootObject;
-		TArray<FName> DraggedFolders;
-		if (GetFolderNamesFromPayload(DraggedObjects, DraggedFolders, CommonRootObject))
-		{
-			TSharedPtr<FFolderDragDropOp> FolderOperation = MakeShareable(new FFolderDragDropOp);
-			FolderOperation->Init(DraggedFolders, RepresentingWorld.Get(), CommonRootObject);
-			OutlinerOp->AddSubOp(FolderOperation);
-		}
-	}
-	OutlinerOp->Construct();
-	return OutlinerOp;
-}
-
-bool FActorBrowsingMode::ParseDragDrop(FSceneOutlinerDragDropPayload& OutPayload, const FDragDropOperation& Operation) const
-{
-	if (Operation.IsOfType<FSceneOutlinerDragDropOp>())
-	{
-		const auto& OutlinerOp = static_cast<const FSceneOutlinerDragDropOp&>(Operation);
-		if (const auto& FolderOp = OutlinerOp.GetSubOp<FFolderDragDropOp>())
-		{
-			for (const auto& Folder : FolderOp->Folders)
-			{
-				OutPayload.DraggedItems.Add(SceneOutliner->GetTreeItem(FFolder(FolderOp->RootObject, Folder)));
-			}
-		}
-		if (const auto& ActorOp = OutlinerOp.GetSubOp<FActorDragDropOp>())
-		{
-			for (const auto& Actor : ActorOp->Actors)
-			{
-				OutPayload.DraggedItems.Add(SceneOutliner->GetTreeItem(Actor.Get()));
-			}
-		}
-		return true;
-	}
-	else if (Operation.IsOfType<FActorDragDropOp>())
-	{
-		for (const TWeakObjectPtr<AActor>& Actor : static_cast<const FActorDragDropOp&>(Operation).Actors)
-		{
-			OutPayload.DraggedItems.Add(SceneOutliner->GetTreeItem(Actor.Get()));
-		}
-		return true;
-	}
-
-	return false;
-}
-
-FFolder FActorBrowsingMode::GetWorldDefaultRootFolder() const
-{
-	return FFolder::GetWorldRootFolder(RepresentingWorld.Get());
-}
-
 void FActorBrowsingMode::SynchronizeSelectedActorDescs()
 {
 	if (UWorldPartitionSubsystem* WorldPartitionSubsystem = UWorld::GetSubsystem<UWorldPartitionSubsystem>(RepresentingWorld.Get()))
 	{
 		const FSceneOutlinerItemSelection Selection = SceneOutliner->GetSelection();
-		TArray<FWorldPartitionActorDesc*> SelectedActorDescs = Selection.GetData<FWorldPartitionActorDesc*>(SceneOutliner::FActorDescSelector());
+		TArray<FWorldPartitionHandle> SelectedActorHandles = Selection.GetData<FWorldPartitionHandle>(SceneOutliner::FActorHandleSelector());
 
-		WorldPartitionSubsystem->SelectedActorDescs.Empty();
-		for (FWorldPartitionActorDesc* SelectedActorDesc : SelectedActorDescs)
+		WorldPartitionSubsystem->SelectedActorHandles.Empty();
+		for (const FWorldPartitionHandle& ActorHandle : SelectedActorHandles)
 		{
-			WorldPartitionSubsystem->SelectedActorDescs.Add(SelectedActorDesc);
-		}
-	}
-}
-
-FSceneOutlinerDragValidationInfo FActorBrowsingMode::ValidateDrop(const ISceneOutlinerTreeItem& DropTarget, const FSceneOutlinerDragDropPayload& Payload) const
-{
-	if (Payload.Has<FFolderTreeItem>())
-	{
-		FFolder::FRootObject TargetRootObject = DropTarget.GetRootObject();
-		FFolder::FRootObject CommonPayloadFoldersRootObject;
-		TArray<FName> PayloadFolders;
-		const bool bHasCommonRootObject = GetFolderNamesFromPayload(Payload, PayloadFolders, CommonPayloadFoldersRootObject);
-		if (!bHasCommonRootObject)
-		{
-			return FSceneOutlinerDragValidationInfo(ESceneOutlinerDropCompatibility::IncompatibleGeneric, LOCTEXT("CantMoveFoldersWithMultipleRoots", "Cannot move folders with multiple roots"));
-		}
-		else if (CommonPayloadFoldersRootObject != TargetRootObject)
-		{
-			return FSceneOutlinerDragValidationInfo(ESceneOutlinerDropCompatibility::IncompatibleGeneric, LOCTEXT("CantChangeFoldersRoot", "Cannot change folders root"));
-		}
-	}
-
-	if (const FActorTreeItem* ActorItem = DropTarget.CastTo<FActorTreeItem>())
-	{
-		const AActor* ActorTarget = ActorItem->Actor.Get();
-		if (!ActorTarget)
-		{
-			return FSceneOutlinerDragValidationInfo(ESceneOutlinerDropCompatibility::IncompatibleGeneric, FText());
-		}
-
-		const ILevelInstanceInterface* LevelInstanceTarget = Cast<ILevelInstanceInterface>(ActorTarget);
-		const ULevelInstanceSubsystem* LevelInstanceSubsystem = RepresentingWorld->GetSubsystem<ULevelInstanceSubsystem>();
-		if (LevelInstanceTarget)
-		{
-			check(LevelInstanceSubsystem);
-			if (!LevelInstanceTarget->IsEditing())
-			{
-				return FSceneOutlinerDragValidationInfo(ESceneOutlinerDropCompatibility::IncompatibleGeneric, LOCTEXT("Error_AttachToClosedLevelInstance", "Cannot attach to LevelInstance which is not being edited"));
-			}
-		}
-		else
-		{
-			if (Payload.Has<FFolderTreeItem>())
-			{
-				return FSceneOutlinerDragValidationInfo(ESceneOutlinerDropCompatibility::IncompatibleGeneric, LOCTEXT("FoldersOnActorError", "Cannot attach folders to actors"));
-			}
-
-			if (!Payload.Has<FActorTreeItem>())
-			{
-				return FSceneOutlinerDragValidationInfo(ESceneOutlinerDropCompatibility::IncompatibleGeneric, FText());
-			}
-		}
-
-		FText AttachErrorMsg;
-		bool bCanAttach = true;
-		bool bDraggedOntoAttachmentParent = true;
-		const auto& DragActors = Payload.GetData<TWeakObjectPtr<AActor>>(SceneOutliner::FWeakActorSelector());
-		for (const auto& DragActorPtr : DragActors)
-		{
-			AActor* DragActor = DragActorPtr.Get();
-			if (DragActor)
-			{
-				if (bCanAttach)
-				{
-					if (LevelInstanceSubsystem)
-					{
-						// Either all actors must be in a LevelInstance or none of them
-						if (const ILevelInstanceInterface* ParentLevelInstance = LevelInstanceSubsystem->GetParentLevelInstance(DragActor))
-						{
-							if (!ParentLevelInstance->IsEditing())
-							{
-								return FSceneOutlinerDragValidationInfo(ESceneOutlinerDropCompatibility::IncompatibleGeneric, LOCTEXT("Error_RemoveEditingLevelInstance", "Cannot detach from a LevelInstance which is not being edited"));
-							}
-						}
-
-						if (!LevelInstanceSubsystem->CanMoveActorToLevel(DragActor, &AttachErrorMsg))
-						{
-							bCanAttach = bDraggedOntoAttachmentParent = false;
-							break;
-						}
-					}
-
-					if (DragActor->IsChildActor())
-					{
-						AttachErrorMsg = FText::Format(LOCTEXT("Error_AttachChildActor", "Cannot move {0} as it is a child actor."), FText::FromString(DragActor->GetActorLabel()));
-						bCanAttach = bDraggedOntoAttachmentParent = false;
-						break;
-					}
-					if (!LevelInstanceTarget && !GEditor->CanParentActors(ActorTarget, DragActor, &AttachErrorMsg))
-					{
-						bCanAttach = false;
-					}
-				}
-
-				if (DragActor->GetSceneOutlinerParent() != ActorTarget)
-				{
-					bDraggedOntoAttachmentParent = false;
-				}
-			}
-		}
-
-		const FText ActorLabel = FText::FromString(ActorTarget->GetActorLabel());
-		if (bDraggedOntoAttachmentParent)
-		{
-			if (DragActors.Num() == 1)
-			{
-				return FSceneOutlinerDragValidationInfo(ESceneOutlinerDropCompatibility::CompatibleDetach, ActorLabel);
-			}
-			else
-			{
-				return FSceneOutlinerDragValidationInfo(ESceneOutlinerDropCompatibility::CompatibleMultipleDetach, ActorLabel);
-			}
-		}
-		else if (bCanAttach)
-		{
-			if (DragActors.Num() == 1)
-			{
-				return FSceneOutlinerDragValidationInfo(ESceneOutlinerDropCompatibility::CompatibleAttach, ActorLabel);
-			}
-			else
-			{
-				return FSceneOutlinerDragValidationInfo(ESceneOutlinerDropCompatibility::CompatibleMultipleAttach, ActorLabel);
-			}
-		}
-		else
-		{
-			if (DragActors.Num() == 1)
-			{
-				return FSceneOutlinerDragValidationInfo(ESceneOutlinerDropCompatibility::IncompatibleGeneric, AttachErrorMsg);
-			}
-			else
-			{
-				const FText ReasonText = FText::Format(LOCTEXT("DropOntoText", "{0}. {1}"), ActorLabel, AttachErrorMsg);
-				return FSceneOutlinerDragValidationInfo(ESceneOutlinerDropCompatibility::IncompatibleMultipleAttach, ReasonText);
-			}
-		}
-	}
-	else if (DropTarget.IsA<FFolderTreeItem>() || DropTarget.IsA<FWorldTreeItem>() || DropTarget.IsA<FLevelTreeItem>())
-	{
-		const FFolderTreeItem* FolderItem = DropTarget.CastTo<FFolderTreeItem>();
-		const FWorldTreeItem* WorldItem = DropTarget.CastTo<FWorldTreeItem>();
-		const FLevelTreeItem* LevelItem = DropTarget.CastTo<FLevelTreeItem>();
-		// WorldTreeItem and LevelTreeItem are treated as root folders (path = none), with the difference that LevelTreeItem has a RootObject.
-		const FFolder DestinationPath = FolderItem ? FolderItem->GetFolder() : (LevelItem ? FFolder(FFolder::GetOptionalFolderRootObject(LevelItem->Level.Get()).Get(FFolder::GetInvalidRootObject())) : GetWorldDefaultRootFolder());
-		const FFolder::FRootObject& DestinationRootObject = DestinationPath.GetRootObject();
-		ILevelInstanceInterface* LevelInstanceTarget = Cast<ILevelInstanceInterface>(DestinationPath.GetRootObjectPtr());
-		if (LevelInstanceTarget && !LevelInstanceTarget->IsEditing())
-		{
-			return FSceneOutlinerDragValidationInfo(ESceneOutlinerDropCompatibility::IncompatibleGeneric, LOCTEXT("Error_DragInNonEditingLevelInstance", "Cannot drag into a LevelInstance which is not being edited"));
-		}
-
-		if (Payload.Has<FFolderTreeItem>())
-		{
-			FFolder::FRootObject CommonFolderRootObject;
-			TArray<FName> DraggedFolders;
-			if (GetFolderNamesFromPayload(Payload, DraggedFolders, CommonFolderRootObject))
-			{
-				// Iterate over all the folders that have been dragged
-				for (const FName& DraggedFolder : DraggedFolders)
-				{
-					const FName Leaf = FEditorFolderUtils::GetLeafName(DraggedFolder);
-					const FName Parent = FEditorFolderUtils::GetParentPath(DraggedFolder);
-
-					if ((CommonFolderRootObject != DestinationRootObject) && FFolder::IsRootObjectValid(CommonFolderRootObject) && FFolder::IsRootObjectValid(DestinationRootObject))
-					{
-						FFormatNamedArguments Args;
-						Args.Add(TEXT("SourceName"), FText::FromName(Leaf));
-						FText Text = FText::Format(LOCTEXT("CantChangeFolderRoot", "Cannot change {SourceName} folder root"), Args);
-						return FSceneOutlinerDragValidationInfo(ESceneOutlinerDropCompatibility::IncompatibleGeneric, Text);
-					}
-
-					if (Parent == DestinationPath.GetPath())
-					{
-						FFormatNamedArguments Args;
-						Args.Add(TEXT("SourceName"), FText::FromName(Leaf));
-
-						FText Text;
-						if (DestinationPath.IsNone())
-						{
-							Text = FText::Format(LOCTEXT("FolderAlreadyAssignedRoot", "{SourceName} is already assigned to root"), Args);
-						}
-						else
-						{
-							Args.Add(TEXT("DestPath"), FText::FromName(DestinationPath.GetPath()));
-							Text = FText::Format(LOCTEXT("FolderAlreadyAssigned", "{SourceName} is already assigned to {DestPath}"), Args);
-						}
-
-						return FSceneOutlinerDragValidationInfo(ESceneOutlinerDropCompatibility::IncompatibleGeneric, Text);
-					}
-
-					const FString DragFolderPath = DraggedFolder.ToString();
-					const FString LeafName = Leaf.ToString();
-					const FString DstFolderPath = DestinationPath.IsNone() ? FString() : DestinationPath.ToString();
-					const FString NewPath = DstFolderPath / LeafName;
-
-					if (FActorFolders::Get().ContainsFolder(*RepresentingWorld, FFolder(DestinationRootObject, FName(*NewPath))))
-					{
-						// The folder already exists
-						FFormatNamedArguments Args;
-						Args.Add(TEXT("DragName"), FText::FromString(LeafName));
-						return FSceneOutlinerDragValidationInfo(ESceneOutlinerDropCompatibility::IncompatibleGeneric,
-							FText::Format(LOCTEXT("FolderAlreadyExistsRoot", "A folder called \"{DragName}\" already exists at this level"), Args));
-					}
-					else if (DragFolderPath == DstFolderPath || DstFolderPath.StartsWith(DragFolderPath + "/"))
-					{
-						// Cannot drag as a child of itself
-						FFormatNamedArguments Args;
-						Args.Add(TEXT("FolderPath"), FText::FromName(DraggedFolder));
-						return FSceneOutlinerDragValidationInfo(
-							ESceneOutlinerDropCompatibility::IncompatibleGeneric,
-							FText::Format(LOCTEXT("ChildOfItself", "Cannot move \"{FolderPath}\" to be a child of itself"), Args));
-					}
-				}
-			}
-		}
-
-		if (Payload.Has<FActorTreeItem>())
-		{
-			const ULevelInstanceSubsystem* LevelInstanceSubsystem = RepresentingWorld->GetSubsystem<ULevelInstanceSubsystem>();
-			// Iterate over all the actors that have been dragged
-			for (const TWeakObjectPtr<AActor>& WeakActor : Payload.GetData<TWeakObjectPtr<AActor>>(SceneOutliner::FWeakActorSelector()))
-			{
-				const AActor* Actor = WeakActor.Get();
-
-				bool bActorContainedInLevelInstance = false;
-				if (LevelInstanceSubsystem)
-				{
-					if (const ILevelInstanceInterface* ParentLevelInstance = LevelInstanceSubsystem->GetParentLevelInstance(Actor))
-					{
-						if (!ParentLevelInstance->IsEditing())
-						{
-							return FSceneOutlinerDragValidationInfo(ESceneOutlinerDropCompatibility::IncompatibleGeneric, LOCTEXT("Error_RemoveEditingLevelInstance", "Cannot detach from a LevelInstance which is not being edited"));
-						}
-						bActorContainedInLevelInstance = true;
-					}
-
-					if (const ILevelInstanceInterface* LevelInstance = Cast<ILevelInstanceInterface>(Actor))
-					{
-						FText Reason;
-						if (!LevelInstanceSubsystem->CanMoveActorToLevel(Actor, &Reason))
-						{
-							return FSceneOutlinerDragValidationInfo(ESceneOutlinerDropCompatibility::IncompatibleGeneric, Reason);
-						}
-					}
-				}
-
-				if (Actor->IsChildActor())
-				{
-					return FSceneOutlinerDragValidationInfo(ESceneOutlinerDropCompatibility::IncompatibleGeneric, FText::Format(LOCTEXT("Error_AttachChildActor", "Cannot move {0} as it is a child actor."), FText::FromString(Actor->GetActorLabel())));
-				}
-				else if ((Actor->GetFolderRootObject() != DestinationRootObject) && FFolder::IsRootObjectValid(Actor->GetFolderRootObject()) && FFolder::IsRootObjectValid(DestinationRootObject))
-				{
-					FFormatNamedArguments Args;
-					Args.Add(TEXT("SourceName"), FText::FromString(Actor->GetActorLabel()));
-					FText Text = FText::Format(LOCTEXT("CantChangeActorRoot", "Cannot change {SourceName} folder root"), Args);
-					return FSceneOutlinerDragValidationInfo(ESceneOutlinerDropCompatibility::IncompatibleGeneric, Text);
-				}
-				else if (Actor->GetFolder() == DestinationPath && !Actor->GetSceneOutlinerParent() && !bActorContainedInLevelInstance)
-				{
-					FFormatNamedArguments Args;
-					Args.Add(TEXT("SourceName"), FText::FromString(Actor->GetActorLabel()));
-
-					FText Text;
-					if (DestinationPath.IsNone())
-					{
-						Text = FText::Format(LOCTEXT("FolderAlreadyAssignedRoot", "{SourceName} is already assigned to root"), Args);
-					}
-					else
-					{
-						Args.Add(TEXT("DestPath"), FText::FromName(DestinationPath.GetPath()));
-						Text = FText::Format(LOCTEXT("FolderAlreadyAssigned", "{SourceName} is already assigned to {DestPath}"), Args);
-					}
-
-					return FSceneOutlinerDragValidationInfo(ESceneOutlinerDropCompatibility::IncompatibleGeneric, Text);
-				}
-			}
-		}
-
-		// Everything else is a valid operation
-		if (DestinationPath.IsNone())
-		{
-			return FSceneOutlinerDragValidationInfo(ESceneOutlinerDropCompatibility::CompatibleGeneric, LOCTEXT("MoveToRoot", "Move to root"));
-		}
-		else
-		{
-			FFormatNamedArguments Args;
-			Args.Add(TEXT("DestPath"), FText::FromName(DestinationPath.GetPath()));
-			return FSceneOutlinerDragValidationInfo(ESceneOutlinerDropCompatibility::CompatibleGeneric, FText::Format(LOCTEXT("MoveInto", "Move into \"{DestPath}\""), Args));
-		}
-	}
-	else if (DropTarget.IsA<FComponentTreeItem>())
-	{
-		// we don't allow drag and drop on components for now
-		return FSceneOutlinerDragValidationInfo(ESceneOutlinerDropCompatibility::IncompatibleGeneric, FText());
-	}
-	return FSceneOutlinerDragValidationInfo::Invalid();
-}
-
-void FActorBrowsingMode::OnDrop(ISceneOutlinerTreeItem& DropTarget, const FSceneOutlinerDragDropPayload& Payload, const FSceneOutlinerDragValidationInfo& ValidationInfo) const
-{
-	if (const FActorTreeItem* ActorItem = DropTarget.CastTo<FActorTreeItem>())
-	{
-		AActor* DropActor = ActorItem->Actor.Get();
-		if (!DropActor)
-		{
-			return;
-		}
-
-		FMessageLog EditorErrors("EditorErrors");
-		EditorErrors.NewPage(LOCTEXT("ActorAttachmentsPageLabel", "Actor attachment"));
-
-		if (ValidationInfo.CompatibilityType == ESceneOutlinerDropCompatibility::CompatibleMultipleDetach || ValidationInfo.CompatibilityType == ESceneOutlinerDropCompatibility::CompatibleDetach)
-		{
-			const FScopedTransaction Transaction(LOCTEXT("UndoAction_DetachActors", "Detach actors"));
-
-			TArray<TWeakObjectPtr<AActor>> DraggedActors = Payload.GetData<TWeakObjectPtr<AActor>>(SceneOutliner::FWeakActorSelector());
-			for (const auto& WeakActor : DraggedActors)
-			{
-				if (auto* DragActor = WeakActor.Get())
-				{
-					// Detach from parent
-					USceneComponent* RootComp = DragActor->GetRootComponent();
-					if (RootComp && RootComp->GetAttachParent())
-					{
-						AActor* OldParent = RootComp->GetAttachParent()->GetOwner();
-						// Attachment is persisted on the child so modify both actors for Undo/Redo but do not mark the Parent package dirty
-						OldParent->Modify(/*bAlwaysMarkDirty=*/false);
-						RootComp->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
-
-						DragActor->SetFolderPath_Recursively(OldParent->GetFolderPath());
-					}
-				}
-			}
-		}
-		else if (ValidationInfo.CompatibilityType == ESceneOutlinerDropCompatibility::CompatibleMultipleAttach || ValidationInfo.CompatibilityType == ESceneOutlinerDropCompatibility::CompatibleAttach)
-		{
-			// Show socket chooser if we have sockets to select
-
-			if (ILevelInstanceInterface* TargetLevelInstance = Cast<ILevelInstanceInterface>(DropActor))
-			{
-				check(TargetLevelInstance->IsEditing());
-				const FScopedTransaction Transaction(LOCTEXT("UndoAction_MoveActorsToLevelInstance", "Move actors to LevelInstance"));
-
-				const FFolder DestinationPath = FFolder(FFolder::FRootObject(DropActor));
-				auto MoveToDestination = [&DestinationPath](FFolderTreeItem& Item)
-				{
-					Item.MoveTo(DestinationPath);
-				};
-				Payload.ForEachItem<FFolderTreeItem>(MoveToDestination);
-
-				// Since target root is directly the Level Instance, clear folder path
-				TArray<AActor*> DraggedActors = Payload.GetData<AActor*>(SceneOutliner::FActorSelector());
-				for (auto& Actor : DraggedActors)
-				{
-					Actor->SetFolderPath_Recursively(FName());
-				}
-
-				ULevelInstanceSubsystem* LevelInstanceSubsystem = RepresentingWorld->GetSubsystem<ULevelInstanceSubsystem>();
-				check(LevelInstanceSubsystem);
-				LevelInstanceSubsystem->MoveActorsTo(TargetLevelInstance, DraggedActors);
-			}
-			else
-			{
-				auto PerformAttachment = [](FName SocketName, TWeakObjectPtr<AActor> Parent, const TArray<TWeakObjectPtr<AActor>> NewAttachments)
-				{
-					AActor* ParentActor = Parent.Get();
-					if (ParentActor)
-					{
-						// modify parent and child
-						const FScopedTransaction Transaction(LOCTEXT("UndoAction_PerformAttachment", "Attach actors"));
-
-						// Attach each child
-						bool bAttached = false;
-						for (auto& Child : NewAttachments)
-						{
-							AActor* ChildActor = Child.Get();
-							if (GEditor->CanParentActors(ParentActor, ChildActor))
-							{
-								GEditor->ParentActors(ParentActor, ChildActor, SocketName);
-
-								ChildActor->SetFolderPath_Recursively(ParentActor->GetFolderPath());
-							}
-						}
-					}
-				};
-
-				TArray<TWeakObjectPtr<AActor>> DraggedActors = Payload.GetData<TWeakObjectPtr<AActor>>(SceneOutliner::FWeakActorSelector());
-				//@TODO: Should create a menu for each component that contains sockets, or have some form of disambiguation within the menu (like a fully qualified path)
-				// Instead, we currently only display the sockets on the root component
-				USceneComponent* Component = DropActor->GetRootComponent();
-				if ((Component != NULL) && (Component->HasAnySockets()))
-				{
-					// Create the popup
-					FSlateApplication::Get().PushMenu(
-						SceneOutliner->AsShared(),
-						FWidgetPath(),
-						SNew(SSocketChooserPopup)
-						.SceneComponent(Component)
-						.OnSocketChosen_Lambda(PerformAttachment, DropActor, MoveTemp(DraggedActors)),
-						FSlateApplication::Get().GetCursorPos(),
-						FPopupTransitionEffect(FPopupTransitionEffect::TypeInPopup)
-					);
-				}
-				else
-				{
-					PerformAttachment(NAME_None, DropActor, MoveTemp(DraggedActors));
-				}
-			}
-
-		}
-		// Report errors
-		EditorErrors.Notify(NSLOCTEXT("ActorAttachmentError", "AttachmentsFailed", "Attachments Failed!"));
-	}
-	else if (DropTarget.IsA<FFolderTreeItem>() || DropTarget.IsA<FWorldTreeItem>() || DropTarget.IsA<FLevelTreeItem>())
-	{
-		const FFolderTreeItem* FolderItem = DropTarget.CastTo<FFolderTreeItem>();
-		const FWorldTreeItem* WorldItem = DropTarget.CastTo<FWorldTreeItem>();
-		const FLevelTreeItem* LevelItem = DropTarget.CastTo<FLevelTreeItem>();
-		// WorldTreeItem and LevelTreeItem are treated as root folders (path = none), with the difference that LevelTreeItem has a RootObject.
-		const FFolder DestinationPath = FolderItem ? FolderItem->GetFolder() : (LevelItem ? FFolder(FFolder::GetOptionalFolderRootObject(LevelItem->Level.Get()).Get(FFolder::GetInvalidRootObject())) : GetWorldDefaultRootFolder());
-
-		const FScopedTransaction Transaction(LOCTEXT("MoveOutlinerItems", "Move World Outliner Items"));
-
-		auto MoveToDestination = [&DestinationPath](FFolderTreeItem& Item)
-		{
-			Item.MoveTo(DestinationPath);
-		};
-		Payload.ForEachItem<FFolderTreeItem>(MoveToDestination);
-
-		// Set the folder path on all the dragged actors, and detach any that need to be moved
-		if (Payload.Has<FActorTreeItem>())
-		{
-			TSet<const AActor*> ParentActors;
-			TSet<const AActor*> ChildActors;
-
-			TArray<AActor*> MovingActorsToValidRootObject;
-			Payload.ForEachItem<FActorTreeItem>([&DestinationPath, &ParentActors, &ChildActors, &MovingActorsToValidRootObject](const FActorTreeItem& ActorItem)
-			{
-				AActor* Actor = ActorItem.Actor.Get();
-				if (Actor)
-				{
-					// First mark this object as a parent, then set its children's path
-					ParentActors.Add(Actor);
-
-					const FFolder SrcFolder = Actor->GetFolder();
-
-					// If the folder root object changes, 1st pass will put actors at root. 2nd pass will set the destination path.
-					FName NewPath = (SrcFolder.GetRootObject() == DestinationPath.GetRootObject()) ? DestinationPath.GetPath() : NAME_None;
-
-					Actor->SetFolderPath(NewPath);
-					FActorEditorUtils::TraverseActorTree_ParentFirst(Actor, [&](AActor* InActor) {
-						ChildActors.Add(InActor);
-						InActor->SetFolderPath(NewPath);
-						return true;
-						}, false);
-
-					if ((Actor->GetFolderRootObject() != DestinationPath.GetRootObject()) && SrcFolder.IsRootObjectPersistentLevel() && (DestinationPath.IsRootObjectValid() && !DestinationPath.IsRootObjectPersistentLevel()))
-					{
-						MovingActorsToValidRootObject.Add(Actor);
-					}
-				}
-			});
-
-			// Detach parent actors
-			for (const AActor* Parent : ParentActors)
-			{
-				auto* RootComp = Parent->GetRootComponent();
-
-				// We don't detach if it's a child of another that's been dragged
-				if (RootComp && RootComp->GetAttachParent() && !ChildActors.Contains(Parent))
-				{
-					if (AActor* OldParentActor = RootComp->GetAttachParent()->GetOwner())
-					{
-						// Attachment is persisted on the child so modify both actors for Undo/Redo but do not mark the Parent package dirty
-						OldParentActor->Modify(/*bAlwaysMarkDirty=*/false);
-					}
-					RootComp->DetachFromComponent(FDetachmentTransformRules::KeepWorldTransform);
-				}
-			}
-
-			auto MoveActorsToLevel = [](const TArray<AActor*>& InActorsToMove, ULevel* InDestLevel, const FName& InDestinationPath)
-			{
-				// We are moving actors to another level
-				const bool bWarnAboutReferences = true;
-				const bool bWarnAboutRenaming = true;
-				const bool bMoveAllOrFail = true;
-				TArray<AActor*> MovedActors;
-				if (!EditorLevelUtils::MoveActorsToLevel(InActorsToMove, InDestLevel, bWarnAboutReferences, bWarnAboutRenaming, bMoveAllOrFail, &MovedActors))
-				{
-					UE_LOG(LogActorBrowser, Warning, TEXT("Failed to move actors because not all actors could be moved"));
-				}
-				// Once moved, update actors folder path
-				for (AActor* Actor : MovedActors)
-				{
-					Actor->SetFolderPath_Recursively(InDestinationPath);
-				}
-			};
-
-			if (DestinationPath.IsRootObjectPersistentLevel())
-			{
-				const ULevelInstanceSubsystem* LevelInstanceSubsystem = RepresentingWorld->GetSubsystem<ULevelInstanceSubsystem>();
-				check(LevelInstanceSubsystem);
-				ULevel* DestinationLevel = RepresentingWorld->PersistentLevel;
-				check(DestinationLevel);
-
-				TArray<AActor*> LevelInstanceActorsToMove;
-				TArray<AActor*> ActorsToMoveToPersistentLevel;
-				Payload.ForEachItem<FActorTreeItem>([LevelInstanceSubsystem, &LevelInstanceActorsToMove, &ActorsToMoveToPersistentLevel](const FActorTreeItem& ActorItem)
-				{
-					AActor* Actor = ActorItem.Actor.Get();
-					if (const ILevelInstanceInterface* ParentLevelInstance = LevelInstanceSubsystem->GetParentLevelInstance(Actor))
-					{
-						check(ParentLevelInstance->IsEditing());
-						LevelInstanceActorsToMove.Add(Actor);
-					}
-					else
-					{
-						const FFolder ActorSrcFolder = Actor->GetFolder();
-						if (ActorSrcFolder.IsRootObjectValid() && !ActorSrcFolder.IsRootObjectPersistentLevel())
-						{
-							ActorsToMoveToPersistentLevel.Add(Actor);
-						}
-					}
-				});
-
-				// We are moving actors outside of an editing level instance to a folder (or root) into the persistent level.
-				if (LevelInstanceActorsToMove.Num() > 0)
-				{
-					TArray<AActor*> MovedActors;
-					LevelInstanceSubsystem->MoveActorsToLevel(LevelInstanceActorsToMove, DestinationLevel, &MovedActors);
-					// Once moved, update actors folder path
-					for (AActor* Actor : MovedActors)
-					{
-						Actor->SetFolderPath_Recursively(DestinationPath.GetPath());
-					}
-				}
-				if (ActorsToMoveToPersistentLevel.Num() > 0)
-				{
-					MoveActorsToLevel(ActorsToMoveToPersistentLevel, DestinationLevel, DestinationPath.GetPath());
-				}
-			}
-			else if (MovingActorsToValidRootObject.Num())
-			{
-				if (ILevelInstanceInterface* TargetLevelInstance = Cast<ILevelInstanceInterface>(DestinationPath.GetRootObjectPtr()))
-				{
-					// We are moving actors inside an editing level instance
-					check(TargetLevelInstance->IsEditing());
-
-					ULevelInstanceSubsystem* LevelInstanceSubsystem = RepresentingWorld->GetSubsystem<ULevelInstanceSubsystem>();
-					check(LevelInstanceSubsystem);
-					TArray<AActor*> MovedActors;
-					LevelInstanceSubsystem->MoveActorsTo(TargetLevelInstance, MovingActorsToValidRootObject, &MovedActors);
-					// Once moved, update actors folder path
-					for (AActor* Actor : MovedActors)
-					{
-						Actor->SetFolderPath_Recursively(DestinationPath.GetPath());
-					}
-				}
-				else if (ULevel* DestinationLevel = Cast<ULevel>(DestinationPath.GetRootObjectPtr()))
-				{
-					MoveActorsToLevel(MovingActorsToValidRootObject, DestinationLevel, DestinationPath.GetPath());
-				}
-			}
+			WorldPartitionSubsystem->SelectedActorHandles.Add(ActorHandle);
 		}
 	}
 }
@@ -2147,11 +1635,11 @@ namespace ActorBrowsingModeUtils
 		
 		for (const TTuple<UWorld*, TSet<FName>>& Pair : UnloadedActorsFolderPaths)
 		{
-			FActorFolders::ForEachActorDescInFolders(*Pair.Key, Pair.Value, [&List](const FWorldPartitionActorDesc* ActorDesc)
+			FActorFolders::ForEachActorDescInstanceInFolders(*Pair.Key, Pair.Value, [&List](const FWorldPartitionActorDescInstance* ActorDescInstance)
 			{
-				if (!ActorDesc->IsLoaded())
+				if (!ActorDescInstance->IsLoaded())
 				{
-					List.Add(ActorDesc->GetGuid());
+					List.Add(ActorDescInstance->GetGuid());
 				}
 				return true;
 			});
@@ -2435,10 +1923,10 @@ bool FActorBrowsingMode::CompareItemWithClassName(SceneOutliner::FilterBarType I
 	}
 	else if (const FActorDescTreeItem* ActorDescItem = InItem.CastTo<FActorDescTreeItem>())
 	{
-		if (const FWorldPartitionActorDesc* ActorDesc = ActorDescItem->ActorDescHandle.Get())
+		if (const FWorldPartitionActorDescInstance* ActorDescInstance = *ActorDescItem->ActorDescHandle)
 		{
 			// For Unloaded Actors, grab the native class 
-			FTopLevelAssetPath ClassPath = ActorDesc->GetNativeClass();
+			FTopLevelAssetPath ClassPath = ActorDescInstance->GetNativeClass();
 			return AssetClassPaths.Contains(ClassPath);
 		}
 	}

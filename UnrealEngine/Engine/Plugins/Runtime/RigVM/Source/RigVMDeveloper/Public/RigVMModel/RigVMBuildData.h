@@ -86,8 +86,9 @@ public:
 	 * Iterator function to invoke a lambda / TFunction for each reference of a function
 	 * @param InFunction The function to iterate all references for
 	 * @param PerReferenceFunction The function to invoke for each reference
+	 * @param bLoadIfNecessary If true, will load packages if necessary
 	 */
-	void ForEachFunctionReference(const FRigVMGraphFunctionIdentifier& InFunction, TFunction<void(URigVMFunctionReferenceNode*)> PerReferenceFunction) const;
+	void ForEachFunctionReference(const FRigVMGraphFunctionIdentifier& InFunction, TFunction<void(URigVMFunctionReferenceNode*)> PerReferenceFunction, bool bLoadIfNecessary = true) const;
 
 	/**
 	* Iterator function to invoke a lambda / TFunction for each reference of a function

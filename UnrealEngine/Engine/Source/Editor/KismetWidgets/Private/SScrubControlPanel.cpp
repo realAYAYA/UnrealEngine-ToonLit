@@ -41,7 +41,8 @@ void SScrubControlPanel::Construct( const SScrubControlPanel::FArguments& InArgs
 	TransportControlArgs.OnGetPlaybackMode = InArgs._OnGetPlaybackMode;
 	TransportControlArgs.OnGetRecording = InArgs._OnGetRecording;
 	TransportControlArgs.OnTickPlayback = InArgs._OnTickPlayback;
-	
+	TransportControlArgs.WidgetsToCreate = InArgs._TransportControlWidgetsToCreate.Get(TArray<FTransportControlWidget>());
+
 	FTransportControlArgs TransportControlArgsForRealtimeStreamingMode;
 	TransportControlArgsForRealtimeStreamingMode.OnForwardPlay = TransportControlArgs.OnForwardPlay;
 	TransportControlArgsForRealtimeStreamingMode.OnForwardStep = TransportControlArgs.OnForwardStep;

@@ -14,10 +14,33 @@
 #include "WorldPartition/WorldPartitionRuntimeCell.h"
 #include "WorldPartition/WorldPartitionRuntimeHash.h"
 #include "WorldPartition/WorldPartitionStreamingSource.h"
+#include "WorldPartition/WorldPartitionRuntimeContainerResolving.h"
 #include "WorldPartitionStreamingPolicy.generated.h"
 
 class UWorldPartition;
 class FWorldPartitionDraw2DContext;
+
+USTRUCT()
+struct FActivatedCells
+{
+	GENERATED_USTRUCT_BODY()
+
+	void Add(const UWorldPartitionRuntimeCell* InCell);
+	void Remove(const UWorldPartitionRuntimeCell* InCell);
+	bool Contains(const UWorldPartitionRuntimeCell* InCell) const { return Cells.Contains(InCell); }
+	void OnAddedToWorld(const UWorldPartitionRuntimeCell* InCell);
+	void OnRemovedFromWorld(const UWorldPartitionRuntimeCell* InCell);
+
+	const TSet<TObjectPtr<const UWorldPartitionRuntimeCell>>& GetCells() const { return Cells; }
+	const TSet<const UWorldPartitionRuntimeCell*>& GetPendingAddToWorldCells() const { return PendingAddToWorldCells; }
+
+private:
+
+	UPROPERTY(Transient)
+	TSet<TObjectPtr<const UWorldPartitionRuntimeCell>> Cells;
+
+	TSet<const UWorldPartitionRuntimeCell*> PendingAddToWorldCells;
+};
 
 UCLASS(Abstract, Within = WorldPartition)
 class UWorldPartitionStreamingPolicy : public UObject
@@ -46,9 +69,13 @@ public:
 
 	// PIE/Game methods
 	virtual void PrepareActorToCellRemapping() {}
+	virtual void SetContainerResolver(const FWorldPartitionRuntimeContainerResolver& InContainerResolver) {}
 	virtual void RemapSoftObjectPath(FSoftObjectPath& ObjectPath) const {}
 
-	virtual bool StoreToExternalStreamingObject(URuntimeHashExternalStreamingObjectBase& OutExternalStreamingObject) { return true; }
+	UE_DEPRECATED(5.4, "Use StoreStreamingContentToExternalStreamingObject instead.")
+	virtual bool StoreToExternalStreamingObject(URuntimeHashExternalStreamingObjectBase& OutExternalStreamingObject) { return StoreStreamingContentToExternalStreamingObject(OutExternalStreamingObject); }
+	virtual bool StoreStreamingContentToExternalStreamingObject(URuntimeHashExternalStreamingObjectBase& OutExternalStreamingObject) { return true; }
+	virtual bool ConvertContainerPathToEditorPath(const FActorContainerID& InContainerID, const FSoftObjectPath& InPath, FSoftObjectPath& OutPath) const { return false; }
 #endif
 
 #if !UE_BUILD_SHIPPING
@@ -68,6 +95,8 @@ public:
 	virtual bool InjectExternalStreamingObject(URuntimeHashExternalStreamingObjectBase* ExternalStreamingObject) { return true; }
 	virtual bool RemoveExternalStreamingObject(URuntimeHashExternalStreamingObjectBase* ExternalStreamingObject) { return true; }
 
+	virtual void SetShouldMergeStreamingSourceInfo(bool bInShouldMergeStreamingSourceInfo) { bShouldMergeStreamingSourceInfo = bInShouldMergeStreamingSourceInfo; }
+
 protected:
 	virtual void SetCellStateToLoaded(const UWorldPartitionRuntimeCell* InCell, int32& InOutMaxCellsToLoad);
 	virtual void SetCellStateToActivated(const UWorldPartitionRuntimeCell* InCell, int32& InOutMaxCellsToLoad);
@@ -80,27 +109,11 @@ protected:
 	bool IsInBlockTillLevelStreamingCompleted(bool bIsCausedByBadStreamingPerformance = false) const;
 
 	const UWorldPartition* WorldPartition;
-	TSet<const UWorldPartitionRuntimeCell*> LoadedCells;
+	UPROPERTY(Transient)
+	TSet<TObjectPtr<const UWorldPartitionRuntimeCell>> LoadedCells;
 
-	struct FActivatedCells
-	{
-		void Add(const UWorldPartitionRuntimeCell* InCell);
-		void Remove(const UWorldPartitionRuntimeCell* InCell);
-		bool Contains(const UWorldPartitionRuntimeCell* InCell) const { return Cells.Contains(InCell); }
-		void OnAddedToWorld(const UWorldPartitionRuntimeCell* InCell);
-		void OnRemovedFromWorld(const UWorldPartitionRuntimeCell* InCell);
-
-		const TSet<const UWorldPartitionRuntimeCell*>& GetCells() const { return Cells; }
-		const TSet<const UWorldPartitionRuntimeCell*>& GetPendingAddToWorldCells() const { return PendingAddToWorldCells; }
-
-	private:
-
-		TSet<const UWorldPartitionRuntimeCell*> Cells;
-		TSet<const UWorldPartitionRuntimeCell*> PendingAddToWorldCells;
-	};
-
+	UPROPERTY(Transient)
 	FActivatedCells ActivatedCells;
-	mutable TArray<const UWorldPartitionRuntimeCell*> SortedAddToWorldCells;
 
 	// Streaming Sources
 	TArray<FWorldPartitionStreamingSource> StreamingSources;
@@ -109,8 +122,12 @@ protected:
 	TSet<const UWorldPartitionRuntimeCell*> FrameLoadCells;
 
 	// Used by UWorldPartitionSubsystem
-	TArray<const UWorldPartitionRuntimeCell*> ToActivateCells;
-	TArray<const UWorldPartitionRuntimeCell*> ToLoadCells;
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<const UWorldPartitionRuntimeCell>> ToActivateCells;
+	
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<const UWorldPartitionRuntimeCell>> ToLoadCells;
+	
 	int32 ProcessedToActivateCells;
 	int32 ProcessedToLoadCells;
 
@@ -128,8 +145,11 @@ private:
 	static FAutoConsoleVariableRef CVarForceUpdateFrameCount;
 
 	bool bCriticalPerformanceRequestedBlockTillOnWorld;
+	
+	UPROPERTY()
+	bool bShouldMergeStreamingSourceInfo;
+
 	int32 CriticalPerformanceBlockTillLevelStreamingCompletedEpoch;
-	int32 ServerDataLayersStatesEpoch;
 	int32 ServerStreamingStateEpoch;
 	int32 ServerStreamingEnabledEpoch;
 	uint32 UpdateStreamingHash;

@@ -9,8 +9,6 @@
 SYMS_API SYMS_ElfImgHeader
 syms_elf_img_header_from_file(SYMS_String8 file)
 {
-  SYMS_ElfImgHeader img;
-  syms_memzero_struct(&img);
   void *file_base = file.str;
   SYMS_U64Range file_range = syms_make_u64_range(0, file.size);
   
@@ -30,35 +28,35 @@ syms_elf_img_header_from_file(SYMS_String8 file)
   }
   
   //- rjf: parse ELF header
-  SYMS_ElfEhdr64 elf_header;
+  SYMS_ElfEhdr64 elf_header = {0};
   SYMS_B32 is_32bit = syms_false;
   SYMS_B32 good_elf_header = syms_false;
   if(sig_is_elf)
   {
-    syms_memzero_struct(&elf_header);
     SYMS_U64 bytes_read = 0;
     switch(sig[SYMS_ElfIdentifier_CLASS])
     {
       //- rjf: parse 32-bit header
       case SYMS_ElfClass_32:
       {
-        SYMS_ElfEhdr32 elf_header_32;
-        syms_memzero_struct(&elf_header_32);
+        SYMS_ElfEhdr32 elf_header_32 = {0};
         bytes_read = syms_based_range_read_struct(file_base, file_range, elf_header_off, &elf_header_32);
         elf_header = syms_elf_ehdr64_from_ehdr32(elf_header_32);
-        good_elf_header = bytes_read == sizeof(elf_header_32);
+        good_elf_header = (bytes_read == sizeof(elf_header_32));
         is_32bit = syms_true;
       }break;
       //- rjf: parse 64-bit header
       case SYMS_ElfClass_64:
       {
-        syms_memzero_struct(&elf_header);
         bytes_read = syms_based_range_read_struct(file_base, file_range, elf_header_off, &elf_header);
-        good_elf_header = bytes_read == sizeof(elf_header);
+        good_elf_header = (bytes_read == sizeof(elf_header));
       }break;
       default:break;
     }
   }
+  
+  //- allen: extract entry point
+  SYMS_U64 entry_point = elf_header.e_entry;
   
   //- rjf: parse section header
   SYMS_U64 sh_name_low_offset  = SYMS_U64_MAX;
@@ -99,8 +97,7 @@ syms_elf_img_header_from_file(SYMS_String8 file)
     //- rjf: search for base address, by grabbing the first LOAD phdr
     for(SYMS_U64 i = 0; i < program_header_num; i += 1)
     {
-      SYMS_ElfPhdr64 program_header;
-      syms_memzero_struct(&program_header);
+      SYMS_ElfPhdr64 program_header = {0};
       switch(sig[SYMS_ElfIdentifier_CLASS])
       {
         case SYMS_ElfClass_32:
@@ -138,6 +135,7 @@ syms_elf_img_header_from_file(SYMS_String8 file)
   }
   
   //- rjf: fill img
+  SYMS_ElfImgHeader img = {0};
   if(good_elf_header)
   {
     img.valid = 1;
@@ -147,6 +145,7 @@ syms_elf_img_header_from_file(SYMS_String8 file)
     img.sh_name_low_offset = sh_name_low_offset;
     img.sh_name_high_offset = sh_name_high_offset;
     img.base_address = base_address;
+    img.entry_point = entry_point;
   }
   
   return img;
@@ -308,8 +307,7 @@ syms_elf_sec_name_from_elf_section(SYMS_ElfSection elf_section){
 SYMS_API SYMS_ElfFileAccel *
 syms_elf_file_accel_from_data(SYMS_Arena *arena, SYMS_String8 string)
 {
-  SYMS_ElfFileAccel *file_accel = syms_push_array(arena, SYMS_ElfFileAccel, 1);
-  syms_memzero_struct(file_accel);
+  SYMS_ElfFileAccel *file_accel = syms_push_array_zero(arena, SYMS_ElfFileAccel, 1);
   file_accel->header = syms_elf_img_header_from_file(string);
   if (file_accel->header.valid){
     file_accel->format = SYMS_FileFormat_ELF;
@@ -323,8 +321,7 @@ syms_elf_file_accel_from_data(SYMS_Arena *arena, SYMS_String8 string)
 SYMS_API SYMS_ElfBinAccel *
 syms_elf_bin_accel_from_file(SYMS_Arena *arena, SYMS_String8 data, SYMS_ElfFileAccel *file_accel)
 {
-  SYMS_ElfBinAccel *bin_accel = syms_push_array(arena, SYMS_ElfBinAccel, 1);
-  syms_memzero_struct(bin_accel);
+  SYMS_ElfBinAccel *bin_accel = syms_push_array_zero(arena, SYMS_ElfBinAccel, 1);
   syms_memmove(&bin_accel->header, &file_accel->header, sizeof(file_accel->header));
   bin_accel->format = file_accel->format;
   bin_accel->sections = syms_elf_section_array_from_img_header(arena, data, file_accel->header);
@@ -335,8 +332,7 @@ syms_elf_bin_accel_from_file(SYMS_Arena *arena, SYMS_String8 data, SYMS_ElfFileA
 SYMS_API SYMS_ExtFileList
 syms_elf_ext_file_list_from_bin(SYMS_Arena *arena, SYMS_String8 file, SYMS_ElfBinAccel *bin_accel)
 {
-  SYMS_ExtFileList list;
-  syms_memzero_struct(&list);
+  SYMS_ExtFileList list = {0};
   SYMS_ElfExtDebugRef ext_debug_ref = syms_elf_ext_debug_ref_from_elf_section_array(file, bin_accel->sections);
   if(ext_debug_ref.path.size != 0)
   {
@@ -353,8 +349,7 @@ syms_elf_ext_file_list_from_bin(SYMS_Arena *arena, SYMS_String8 file, SYMS_ElfBi
 SYMS_API SYMS_SecInfoArray
 syms_elf_sec_info_array_from_bin(SYMS_Arena *arena, SYMS_String8 data, SYMS_ElfBinAccel *bin)
 {
-  SYMS_SecInfoArray array;
-  syms_memzero_struct(&array);
+  SYMS_SecInfoArray array = {0};
   array.count = bin->sections.count;
   array.sec_info = syms_push_array_zero(arena, SYMS_SecInfo, array.count);
   for(SYMS_U64 idx = 0; idx < array.count; idx += 1)
@@ -368,6 +363,12 @@ SYMS_API SYMS_U64
 syms_elf_default_vbase_from_bin(SYMS_ElfBinAccel *bin)
 {
   return bin->header.base_address;
+}
+
+SYMS_API SYMS_U64
+syms_elf_entry_point_voff_from_bin(SYMS_ElfBinAccel *bin)
+{
+  return bin->header.entry_point;
 }
 
 SYMS_API SYMS_Arch

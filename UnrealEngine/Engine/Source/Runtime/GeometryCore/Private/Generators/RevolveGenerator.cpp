@@ -119,6 +119,8 @@ namespace UELocal
 
 FDynamicMesh3 FRevolvePlanarPathGenerator::GenerateMesh()
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(RevolvePlanarPathGenerator_GenerateMesh);
+	
 	// revolve around +Z axis, around origin
 	FVector3d AxisDirection(0, 0, 1);
 	FVector3d AxisOrigin(0, 0, 0);
@@ -327,6 +329,8 @@ FDynamicMesh3 FRevolvePlanarPathGenerator::GenerateMesh()
 
 FDynamicMesh3 FRevolvePlanarPolygonGenerator::GenerateMesh()
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(RevolvePlanarPolygonGenerator_GenerateMesh);
+	
 	// revolve around +Z axis, around origin
 	FVector3d AxisDirection(0, 0, 1);
 	FVector3d AxisOrigin(0, 0, 0);
@@ -516,6 +520,8 @@ FDynamicMesh3 FRevolvePlanarPolygonGenerator::GenerateMesh()
 
 FDynamicMesh3 FSpiralRevolvePlanarPolygonGenerator::GenerateMesh()
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(SpiralRevolvePlanarPolygonGenerator_GenerateMesh);
+	
 	// revolve around +Z axis, around origin
 	FVector3d AxisDirection(0, 0, 1);
 	FVector3d AxisOrigin(0, 0, 0);

@@ -34,7 +34,7 @@ void FConsoleVariablesEditorCommandInfo::ExecuteCommand(
 	}
 	if (!bIsInteractiveChange && bShouldTransactInConcert)
 	{
-		FConsoleVariablesEditorModule::Get().SendMultiUserConsoleVariableChange(ERemoteCVarChangeType::Update, Command, NewValueAsString);
+		FConsoleVariablesEditorModule::Get().SendMultiUserConsoleVariableChange(ERemoteCVarChangeType::Update, Command, NewValueAsString, GetSource());
 	}
 }
 
@@ -54,26 +54,25 @@ void FConsoleVariablesEditorCommandInfo::PrintCommandOrVariable()
 /** Get a reference to the cached console object. May return nullptr if unregistered. */
 IConsoleObject* FConsoleVariablesEditorCommandInfo::GetConsoleObjectPtr()
 {
-	// If the console object ptr goes stale or is older than the specified threshold, try to refresh it
+	// If the console object ptr null, try to find if not already attempted
 	// May return nullptr if unregistered
-	if (!ConsoleObjectPtr ||
-		(FDateTime::UtcNow() - TimeOfLastConsoleObjectRefresh).GetTotalSeconds() > ConsoleObjectRefreshThreshold)
+	if (!ConsoleObjectPtr && !bHasAttemptedFind)
 	{
-		FString CommandKey = Command; 
+		bHasAttemptedFind = true;
+
 		// Remove additional params, if they exist
-		const int32 IndexOfSpace = CommandKey.Find(" ");
-		if (IndexOfSpace != INDEX_NONE)
+		int32 IndexOfSpace = INDEX_NONE;
+		if (Command.FindChar(TEXT(' '), IndexOfSpace))
 		{
-			CommandKey = CommandKey.Left(IndexOfSpace).TrimStartAndEnd();
+			const FStringView CommandKeyView = FStringView(*Command, IndexOfSpace).TrimStartAndEnd();
+			TStringBuilder<260> CommandKey;
+			CommandKey.Append(CommandKeyView);
+			ConsoleObjectPtr = IConsoleManager::Get().FindConsoleObject(*CommandKey);
 		}
-		
-		ConsoleObjectPtr = IConsoleManager::Get().FindConsoleObject(*CommandKey);
-		TimeOfLastConsoleObjectRefresh = FDateTime::UtcNow();
-	}
-	// If the console object turns out to be unregistered, let interested parties know
-	if (ConsoleObjectPtr && ConsoleObjectPtr->TestFlags(ECVF_Unregistered))
-	{
-		OnDetectConsoleObjectUnregistered.Broadcast(Command);
+		else
+		{
+			ConsoleObjectPtr = IConsoleManager::Get().FindConsoleObject(*Command);
+		}
 	}
 	return ConsoleObjectPtr;
 }
@@ -230,6 +229,11 @@ bool FConsoleVariablesEditorCommandInfo::IsCurrentValueDifferentFromInputValue(c
 		return true;
 	}
 	return false;
+}
+
+void FConsoleVariablesEditorCommandInfo::OnConsoleVariableChanged(IConsoleVariable* ChangedVariable)
+{
+	FConsoleVariablesEditorModule::Get().OnConsoleVariableChanged(*this, ChangedVariable);
 }
 
 #undef LOCTEXT_NAMESPACE

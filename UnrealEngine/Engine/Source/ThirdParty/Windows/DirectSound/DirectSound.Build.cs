@@ -1,4 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
+using System.IO;
 using UnrealBuildTool;
 
 public class DirectSound : ModuleRules
@@ -11,11 +12,11 @@ public class DirectSound : ModuleRules
 		{
 			PublicDependencyModuleNames.Add("DirectX");
 
-			string DirectXLibDir = DirectX.GetLibDir(Target);
+			string DirectXLibDir = Target.WindowsPlatform.DirectXLibDir;
 			PublicAdditionalLibraries.AddRange(
 				new string[] {
-					 DirectXLibDir + "dxguid.lib",
-					 DirectXLibDir + "dsound.lib"
+					 Path.Combine(DirectXLibDir, "dxguid.lib"),
+					 Path.Combine(DirectXLibDir, "dsound.lib")
 				}
 			);
 		}

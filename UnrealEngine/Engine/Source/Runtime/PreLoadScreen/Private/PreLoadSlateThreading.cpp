@@ -231,10 +231,9 @@ void FPreLoadScreenSlateSynchMechanism::RunMainLoop_SlateThread()
 			// as we don't want Slate to submit any more draw calls until we Resume.
 			if (GDynamicRHI && !GDynamicRHI->RHIIsRenderingSuspended())
 			{
-				FScopeLock Lock(&FPreLoadScreenManager::AcquireCriticalSection);
 				if (IsSlateMainLoopRunning_AnyThread() && FPreLoadScreenManager::bRenderingEnabled)
 				{
-					WidgetRenderer->DrawWindow(DeltaTime);
+					WidgetRenderer->DrawWindow(static_cast<float>(DeltaTime));
 
 					bRenderCommandEnqeued = true;
 

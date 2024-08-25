@@ -13,6 +13,7 @@
 	"CanContainContent": true,
 	"IsBetaVersion": true,
 	"Installed": false,
+	"SupportedPrograms": ["LiveLinkHub"],
 	"Plugins": [
 		{
 			"Name": "PythonScriptPlugin",
@@ -23,11 +24,13 @@
 		{
 			"Name": "SequencerScripting",
 			"Type": "Runtime",
+			"ProgramAllowList": [ "LiveLinkHub" ],
 			"LoadingPhase": "Default"
 		},
 		{
 			"Name": "SequencerScriptingEditor",
 			"Type": "Editor",
+			"ProgramAllowList": [ "LiveLinkHub" ],
 			"LoadingPhase": "Default"
 		}
 	]

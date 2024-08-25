@@ -2,11 +2,13 @@
 
 #include "Kismet/KismetMathLibrary.h"
 #include "Engine/Engine.h"
+#include "Curves/CurveFloat.h"
 #include "DrawDebugHelpers.h"
 
 #include "Blueprint/BlueprintSupport.h"
 #include "Math/ConvexHull2d.h"
 #include "Math/DualQuat.h"
+#include "Math/Box.h"
 
 #include "Math/RandomStream.h"
 #include "Misc/RuntimeErrors.h"
@@ -44,6 +46,7 @@ const FName DivideByZeroWarning = FName("DivideByZeroWarning");
 const FName NegativeSqrtWarning = FName("NegativeSqrtWarning");
 const FName ZeroLengthProjectionWarning = FName("ZeroLengthProjectionWarning");
 const FName InvalidDateWarning = FName("InvalidDateWarning");
+const FName InvalidIndexConversionParameterWarning = FName("InvalidIndexConversionParameterWarning");
 
 UKismetMathLibrary::UKismetMathLibrary(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -70,6 +73,12 @@ UKismetMathLibrary::UKismetMathLibrary(const FObjectInitializer& ObjectInitializ
 		FBlueprintWarningDeclaration (
 			InvalidDateWarning,
 			LOCTEXT("InvalidDateWarning", "Invalid date warning")
+		)
+	);
+	FBlueprintSupport::RegisterBlueprintWarning(
+		FBlueprintWarningDeclaration(
+			InvalidIndexConversionParameterWarning,
+			LOCTEXT("InvalidIndexConversionParameterWarning", "Invalid index conversion parameter warning")
 		)
 	);
 }
@@ -342,6 +351,16 @@ double UKismetMathLibrary::MapRangeClamped(double Value, double InRangeA, double
 double UKismetMathLibrary::FInterpEaseInOut(double A, double B, double Alpha, double Exponent)
 {
 	return FMath::InterpEaseInOut<double>(A, B, Alpha, Exponent);
+}
+
+float UKismetMathLibrary::GetRuntimeFloatCurveValue(const FRuntimeFloatCurve& Curve, const float InTime, const float InDefaultValue /*= 0.0f*/)
+{
+	if (const FRichCurve* RichCurve = Curve.GetRichCurveConst())
+	{
+		return RichCurve->Eval(InTime, InDefaultValue);
+	}
+
+	return InDefaultValue;
 }
 
 float UKismetMathLibrary::MakePulsatingValue(float InCurrentTime, float InPulsesPerSecond, float InPhase)
@@ -1371,6 +1390,61 @@ bool UKismetMathLibrary::IsPointInBox_Box(FVector Point, FBox Box)
 	return Box.IsInsideOrOn(Point);
 }
 
+FBox UKismetMathLibrary::MakeBoxWithOrigin(const FVector& Origin, const FVector& Extent)
+{
+	return FBox::BuildAABB(Origin, Extent);
+}
+
+bool UKismetMathLibrary::Box_IsInside(const FBox& InnerTest, const FBox& OuterTest)
+{
+	return OuterTest.IsInside(InnerTest);
+}
+
+bool UKismetMathLibrary::Box_IsInsideOrOn(const FBox& InnerTest, const FBox& OuterTest)
+{
+	return OuterTest.IsInsideOrOn(InnerTest);
+}
+
+bool UKismetMathLibrary::Box_IsPointInside(const FBox& Box, const FVector& Point)
+{
+	return Box.IsInside(Point);
+}
+
+bool UKismetMathLibrary::Box_Intersects(const FBox& A, const FBox& B)
+{
+	return A.Intersect(B);
+}
+
+FBox UKismetMathLibrary::Box_ExpandBy(const FBox& Box, const FVector& Negative, const FVector& Positive)
+{
+	return Box.ExpandBy(Negative, Positive);
+}
+
+FBox UKismetMathLibrary::Box_Overlap(const FBox& A, const FBox& B)
+{
+	return A.Overlap(B);
+}
+
+FVector UKismetMathLibrary::Box_GetClosestPointTo(const FBox& Box, const FVector& Point)
+{
+	return Box.GetClosestPointTo(Point);
+}
+
+double UKismetMathLibrary::GetBoxVolume(const FBox& InBox)
+{
+	return InBox.GetVolume();
+}
+
+FVector UKismetMathLibrary::GetBoxSize(const FBox& InBox)
+{
+	return InBox.GetSize();
+}
+
+FVector UKismetMathLibrary::GetBoxCenter(const FBox& InBox)
+{
+	return InBox.GetCenter();
+}
+
 bool UKismetMathLibrary::IsPointInBoxWithTransform(FVector Point, const FTransform& BoxWorldTransform, FVector BoxExtent)
 {
 	// Put point in component space
@@ -1524,6 +1598,94 @@ FRotator UKismetMathLibrary::DynamicWeightedMovingAverage_FRotator(FRotator Curr
 	return OutRotator;
 }
 
+FIntPoint UKismetMathLibrary::Convert1DTo2D(int32 Index1D, int32 XSize)
+{
+	if (Index1D < 0)
+	{
+		FFrame::KismetExecutionMessage(TEXT("Index1D must be non-negative: Convert1DTo2D"), ELogVerbosity::Warning, InvalidIndexConversionParameterWarning);
+		return FIntPoint::ZeroValue;
+	}
+
+	if (XSize <= 0)
+	{
+		FFrame::KismetExecutionMessage(TEXT("XSize must be positive: Convert1DTo2D"), ELogVerbosity::Warning, InvalidIndexConversionParameterWarning);
+		return FIntPoint::ZeroValue;
+	}
+
+	int32 X = Index1D % XSize;
+	int32 Y = Index1D / XSize;
+
+	return FIntPoint{ X,Y };
+}
+
+FIntVector UKismetMathLibrary::Convert1DTo3D(int32 Index1D, int32 XSize, int32 YSize)
+{
+	if (Index1D < 0)
+	{
+		FFrame::KismetExecutionMessage(TEXT("Index1D must be non-negative: Convert1DTo3D"), ELogVerbosity::Warning, InvalidIndexConversionParameterWarning);
+		return FIntVector::ZeroValue;
+	}
+
+	if (XSize <= 0 || YSize <= 0)
+	{
+		FFrame::KismetExecutionMessage(TEXT("XSize and YSize must be positive: Convert1DTo3D"), ELogVerbosity::Warning, InvalidIndexConversionParameterWarning);
+		return FIntVector::ZeroValue;
+	}
+
+	int32 X = Index1D % XSize;
+	int32 Y = (Index1D / XSize) % YSize;
+	int32 Z = (Index1D / (XSize * YSize));
+
+	return FIntVector{ X, Y, Z };
+}
+
+int32 UKismetMathLibrary::Convert2DTo1D(const FIntPoint& Index2D, int32 XSize)
+{
+	const bool bInvalidBounds =
+		Index2D.X < 0 || 
+		Index2D.X >= XSize || 
+		Index2D.Y < 0
+	;
+
+	if (bInvalidBounds)
+	{
+		FFrame::KismetExecutionMessage(TEXT("Index2D out of bounds: Convert2DTo1D"), ELogVerbosity::Warning, InvalidIndexConversionParameterWarning);
+		return 0;
+	}
+
+	if (XSize <= 0)
+	{
+		FFrame::KismetExecutionMessage(TEXT("XSize must be positive: Convert2DTo1D"), ELogVerbosity::Warning, InvalidIndexConversionParameterWarning);
+		return 0;
+	}
+
+	return Index2D.X + (Index2D.Y * XSize);
+}
+
+int32 UKismetMathLibrary::Convert3DTo1D(const FIntVector& Index3D, int32 XSize, int32 YSize)
+{
+	const bool bInvalidBounds =
+		Index3D.X < 0 || 
+		Index3D.X >= XSize || 
+		Index3D.Y < 0 || 
+		Index3D.Y >= YSize || 
+		Index3D.Z < 0
+	;
+
+	if (bInvalidBounds)
+	{
+		FFrame::KismetExecutionMessage(TEXT("Index3D out of bounds: Convert3DTo1D"), ELogVerbosity::Warning, InvalidIndexConversionParameterWarning);
+		return 0;
+	}
+
+	if (XSize <= 0 || YSize <= 0)
+	{
+		FFrame::KismetExecutionMessage(TEXT("XSize and YSize must be positive: Convert3DTo1D"), ELogVerbosity::Warning, InvalidIndexConversionParameterWarning);
+		return 0;
+	}
+
+	return Index3D.X + (Index3D.Y * XSize) + (Index3D.Z * XSize * YSize);
+}
 
 #undef LOCTEXT_NAMESPACE
 

@@ -5,6 +5,7 @@
 #include "Hash/Blake3.h"
 #include "Interfaces/ITargetPlatform.h"
 #include "Misc/ScopeRWLock.h"
+#include "UObject/OverridableManager.h"
 #include "UObject/PropertyOptional.h"
 #include "UObject/UnrealType.h"
 
@@ -780,7 +781,7 @@ public:
 		while (Fragments.Num() > 1 && Fragments.Last().ValueNum == 0)
 		{
 			checkf(!Fragments.Last().bHasAnyZeroes, TEXT("No values implies no zero-values"));			
-			Fragments.Pop(/* allow shrink */ false);
+			Fragments.Pop(EAllowShrinking::No);
 		}
 
 		Fragments.Last().bIsLast = true;

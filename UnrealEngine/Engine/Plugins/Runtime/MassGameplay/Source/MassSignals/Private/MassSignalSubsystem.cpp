@@ -34,7 +34,7 @@ void UMassSignalSubsystem::Tick(float DeltaTime)
 		if (DelayedSignal.TargetTimestamp <= CurrentTime)
 		{
 			SignalEntities(DelayedSignal.SignalName, MakeArrayView(DelayedSignal.Entities));
-			DelayedSignals.RemoveAtSwap(i, 1, /*bAllowShrinking=*/false);
+			DelayedSignals.RemoveAtSwap(i, 1, EAllowShrinking::No);
 		}
 		else
 		{

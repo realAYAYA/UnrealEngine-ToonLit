@@ -8,6 +8,7 @@
 #include "Interfaces/ITargetPlatform.h"
 #include "Interfaces/ITargetPlatformManagerModule.h"
 #include "Rendering/NaniteResources.h"
+#include "RenderUtils.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(NaniteDisplacedMesh)
 
@@ -19,7 +20,6 @@
 #include "NaniteBuilder.h"
 #include "NaniteDisplacedMeshAlgo.h"
 #include "NaniteDisplacedMeshCompiler.h"
-#include "RenderUtils.h"
 #include "Serialization/MemoryHasher.h"
 #include "Serialization/MemoryReader.h"
 #include "Serialization/MemoryWriter.h"
@@ -28,24 +28,6 @@
 #include "StaticMeshCompiler.h"
 #endif
 
-static bool DoesTargetPlatformSupportNanite(const ITargetPlatform* TargetPlatform)
-{
-	if (TargetPlatform != nullptr)
-	{
-		TArray<FName> DesiredShaderFormats;
-		TargetPlatform->GetAllTargetedShaderFormats(DesiredShaderFormats);
-		for (int32 FormatIndex = 0; FormatIndex < DesiredShaderFormats.Num(); FormatIndex++)
-		{
-			const EShaderPlatform ShaderPlatform = ShaderFormatToLegacyShaderPlatform(DesiredShaderFormats[FormatIndex]);
-			if (DoesPlatformSupportNanite(ShaderPlatform))
-			{
-				return true;
-			}
-		}
-	}
-
-	return false;
-}
 
 #if WITH_EDITOR
 
@@ -647,26 +629,7 @@ bool UNaniteDisplacedMesh::IsReadyForFinishDestroy()
 
 bool UNaniteDisplacedMesh::NeedsLoadForTargetPlatform(const ITargetPlatform* TargetPlatform) const
 {
-	return IsSupportedByTargetPlatform(TargetPlatform);
-}
-
-bool UNaniteDisplacedMesh::IsSupportedByTargetPlatform(const ITargetPlatform* TargetPlatform)
-{
-	if (TargetPlatform != nullptr)
-	{
-		TArray<FName> DesiredShaderFormats;
-		TargetPlatform->GetAllTargetedShaderFormats(DesiredShaderFormats);
-		for (int32 FormatIndex = 0; FormatIndex < DesiredShaderFormats.Num(); FormatIndex++)
-		{
-			const EShaderPlatform ShaderPlatform = ShaderFormatToLegacyShaderPlatform(DesiredShaderFormats[FormatIndex]);
-			if (DoesPlatformSupportNanite(ShaderPlatform))
-			{
-				return true;
-			}
-		}
-	}
-
-	return false;
+	return DoesTargetPlatformSupportNanite(TargetPlatform);
 }
 
 void UNaniteDisplacedMesh::InitResources()
@@ -745,9 +708,20 @@ bool UNaniteDisplacedMesh::IsCachedCookedPlatformDataLoaded(const ITargetPlatfor
 
 void UNaniteDisplacedMesh::ClearAllCachedCookedPlatformData()
 {
-	// Delete any cache tasks first because the destructor will cancel the cache and build tasks,
-	// and drop their pointers to the data.
-	CacheTasksByKeyHash.Empty();
+	TRACE_CPUPROFILER_EVENT_SCOPE(UNaniteDisplacedMesh::ClearAllCachedCookedPlatformData);
+
+	// This is not ideal because we must wait for the tasks to finish or be canceled. They might work with an ptr to the FNaniteData contained in the DataByPlatformKeyHash map and we can't safely disarm them at moment. 
+	if (!TryCancelAsyncTasks())
+	{
+		FinishAsyncTasks();
+	}
+
+	/**
+	 * TryCancelAsyncTasks or FinishAsyncTasks should have been able to clear all tasks.If any tasks remain
+	 * then they must still be running, and we would crash when attempting to delete them.
+	 */
+	check(CacheTasksByKeyHash.IsEmpty()); 
+
 	DataByPlatformKeyHash.Empty();
 	Super::ClearAllCachedCookedPlatformData();
 }
@@ -774,7 +748,7 @@ void UNaniteDisplacedMesh::NotifyOnRenderingDataChanged()
 
 FIoHash UNaniteDisplacedMesh::CreateDerivedDataKeyHash(const ITargetPlatform* TargetPlatform)
 {
-	if (!IsSupportedByTargetPlatform(TargetPlatform))
+	if (!DoesTargetPlatformSupportNanite(TargetPlatform))
 	{
 		return FIoHash::Zero;
 	}
@@ -889,6 +863,12 @@ bool UNaniteDisplacedMesh::TryCancelAsyncTasks()
 		else
 		{
 			It->Value->Cancel();
+
+			// Try to see if we can remove the task now that it might have been canceled
+			if (It->Value->Poll())
+			{
+				It.RemoveCurrent();
+			}
 		}
 	}
 	

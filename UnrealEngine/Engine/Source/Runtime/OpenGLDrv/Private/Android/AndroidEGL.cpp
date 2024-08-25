@@ -102,6 +102,7 @@ struct AndroidESPImpl
 	GLuint ResolveFrameBuffer;
 	GLuint DummyFrameBuffer;
 	FPlatformRect CachedWindowRect;
+	bool bIsDebug = false;
 
 	AndroidESPImpl();
 };
@@ -291,10 +292,17 @@ void AndroidEGL::CreateEGLRenderSurface(ANativeWindow* InWindow, bool bCreateWnd
 
 		if (FAndroidPlatformRHIFramePacer::CVarAllowFrameTimestamps.GetValueOnAnyThread())
 		{
+			STANDALONE_DEBUG_LOGf(LogAndroid, TEXT("AndroidEGL::CreateEGLRenderSurface(InWindow = %p) using a.allowFrameTimestamps enable EGL_TIMESTAMPS_ANDROID on %p"), InWindow, PImplData->eglSurface);
 			eglSurfaceAttrib(PImplData->eglDisplay, PImplData->eglSurface, EGL_TIMESTAMPS_ANDROID, EGL_TRUE);
 		}
+		else
+		{
+			// HAD to add the false condition so that android attributes reflect current state of CVar.
+			STANDALONE_DEBUG_LOGf(LogAndroid, TEXT("AndroidEGL::CreateEGLRenderSurface(InWindow = %p) using a.allowFrameTimestamps disable EGL_TIMESTAMPS_ANDROID on %p"), InWindow, PImplData->eglSurface);
+			eglSurfaceAttrib(PImplData->eglDisplay, PImplData->eglSurface, EGL_TIMESTAMPS_ANDROID, EGL_FALSE);
+		}
 
-		FPlatformMisc::LowLevelOutputDebugStringf( TEXT("AndroidEGL::CreateEGLRenderSurface() %p" ), PImplData->eglSurface);
+		STANDALONE_DEBUG_LOGf(LogAndroid, TEXT("AndroidEGL::CreateEGLRenderSurface() %p" ), PImplData->eglSurface);
 
 		if(PImplData->eglSurface == EGL_NO_SURFACE )
 		{
@@ -415,11 +423,12 @@ void AndroidEGL::InitEGL(APIVariant API)
 	// Get the EGL Extension list to determine what is supported
 	FString Extensions = ANSI_TO_TCHAR( eglQueryString( PImplData->eglDisplay, EGL_EXTENSIONS));
 
-	FPlatformMisc::LowLevelOutputDebugStringf( TEXT("EGL Extensions: \n%s" ), *Extensions );
+	UE_LOG(LogAndroid, Log, TEXT("EGL Extensions: \n%s"), *Extensions);
 
 	bSupportsKHRCreateContext = Extensions.Contains(TEXT("EGL_KHR_create_context"));
 	bSupportsKHRSurfacelessContext = Extensions.Contains(TEXT("EGL_KHR_surfaceless_context"));
 	bSupportsKHRNoErrorContext = Extensions.Contains(TEXT("EGL_KHR_create_context_no_error"));
+	bSupportsEXTRobustContext = Extensions.Contains(TEXT("EGL_EXT_create_context_robustness"));
 
 	if (API == AV_OpenGLES)
 	{
@@ -671,12 +680,21 @@ void AndroidEGL::InitRenderSurface(bool bUseSmallSurface, bool bCreateWndSurface
 		if (PImplData->CachedWindowRect.Right > 0 && PImplData->CachedWindowRect.Bottom > 0)
 		{
 			// If we resumed from a lost window reuse the window size, the game thread will update the window dimensions.
-			FPlatformMisc::LowLevelOutputDebugStringf(TEXT("AndroidEGL::InitRenderSurface, Using CachedWindowRect, width: %d, height %d "), PImplData->CachedWindowRect.Right, PImplData->CachedWindowRect.Bottom);
+			FPlatformMisc::LowLevelOutputDebugStringf(TEXT("AndroidEGL::InitRenderSurface, Using CachedWindowRect, left: %d, top: %d, right: %d, bottom: %d "), PImplData->CachedWindowRect.Left, PImplData->CachedWindowRect.Top, PImplData->CachedWindowRect.Right, PImplData->CachedWindowRect.Bottom);
 			WindowSize = PImplData->CachedWindowRect;
 		}
+#if USE_ANDROID_STANDALONE
+		if (WindowSize.Left != 0 || WindowSize.Top != 0)
+		{
+			STANDALONE_DEBUG_LOGf(LogAndroid, TEXT("AndroidEGL::InitRenderSurface, WARNING!!! WindowSize is offset, left: %d, top: %d, right: %d, bottom: %d "), WindowSize.Left, WindowSize.Top, WindowSize.Right, WindowSize.Bottom);
+		}
+		Width = WindowSize.Right - WindowSize.Left;
+		Height = WindowSize.Bottom - WindowSize.Top;
+#else
 
 		Width = WindowSize.Right;
 		Height = WindowSize.Bottom;
+#endif
 
 		FPlatformMisc::LowLevelOutputDebugStringf(TEXT("AndroidEGL::InitRenderSurface, Using width: %d, height %d "), Width, Height);
 		AndroidThunkCpp_SetDesiredViewSize(Width, Height);
@@ -706,12 +724,21 @@ void AndroidEGL::InitSharedSurface(bool bUseSmallSurface)
 		if (PImplData->CachedWindowRect.Right > 0 && PImplData->CachedWindowRect.Bottom > 0)
 		{
 			// If we resumed from a lost window reuse the window size, the game thread will update the window dimensions.
-			FPlatformMisc::LowLevelOutputDebugStringf(TEXT("AndroidEGL::InitSharedSurface, Using CachedWindowRect, width: %d, height %d "), PImplData->CachedWindowRect.Right, PImplData->CachedWindowRect.Bottom);
+			FPlatformMisc::LowLevelOutputDebugStringf(TEXT("AndroidEGL::InitSharedSurface, Using CachedWindowRect, left: %d, top: %d, right: %d, bottom: %d "), PImplData->CachedWindowRect.Left, PImplData->CachedWindowRect.Top, PImplData->CachedWindowRect.Right, PImplData->CachedWindowRect.Bottom);
 			WindowSize = PImplData->CachedWindowRect;
 		}
+#if USE_ANDROID_STANDALONE
+		if (WindowSize.Left != 0 || WindowSize.Top != 0)
+		{
+			STANDALONE_DEBUG_LOGf(LogAndroid, TEXT("AndroidEGL::InitSharedSurface, WARNING!!! WindowSize is offset, left: %d, top: %d, right: %d, bottom: %d "), WindowSize.Left, WindowSize.Top, WindowSize.Right, WindowSize.Bottom);
+		}
+		Width = WindowSize.Right - WindowSize.Left;
+		Height = WindowSize.Bottom - WindowSize.Top;
+#else
 
 		Width = WindowSize.Right;
 		Height = WindowSize.Bottom;
+#endif
 
 		FPlatformMisc::LowLevelOutputDebugStringf(TEXT("AndroidEGL::InitSharedSurface, Using width: %d, height %d "), Width, Height);
 		AndroidThunkCpp_SetDesiredViewSize(Width, Height);
@@ -738,22 +765,36 @@ void AndroidEGL::ReInit()
 	SetCurrentSharedContext();
 }
 
-void AndroidEGL::Init(APIVariant API, uint32 MajorVersion, uint32 MinorVersion, bool bDebug)
+
+// EGL_CONTEXT_OPENGL_ROBUST_ACCESS_EXT is enabled if configrules asks for it or the command line specifies it.
+// If -OpenGLRobustContext=[0/1] is specified on the command line it takes precedence.
+void AndroidEGL::Init(APIVariant API, uint32 MajorVersion, uint32 MinorVersion)
 {
 	check(IsInGameThread());
-
+	const bool bDebug = IsOGLDebugOutputEnabled();
+	const FString* ConfigRulesForceRobustGLContext = FAndroidMisc::GetConfigRulesVariable(TEXT("ForceRobustGLContext"));
+	bool bWantsRobustGLContext = ConfigRulesForceRobustGLContext && ConfigRulesForceRobustGLContext->Equals("true", ESearchCase::IgnoreCase);
+	
+	FString RobustArg;
+	if (FParse::Value(FCommandLine::Get(), TEXT("-OpenGLRobustContext="), RobustArg))
+	{
+		bWantsRobustGLContext = RobustArg.Contains(TEXT("1"));
+	}
+	
 	if (PImplData->Initalized)
 	{
+		ensure(bDebug == PImplData->bIsDebug); // if this fires you would need to tear down the previous context and recreate to honour the debug change.
 		return;
 	}
-	InitEGL(API);
 
+	InitEGL(API);
+	PImplData->bIsDebug = bDebug;
 	if (bSupportsKHRCreateContext)
 	{
-		const uint32 MaxElements = 13;
+		const uint32 MaxElements = 16;
 		uint32 Flags = 0;
 
-		Flags |= bDebug ? EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR : 0;
+		Flags |= PImplData->bIsDebug ? EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR : 0;
 
 		ContextAttributes = new int[MaxElements];
 		uint32 Element = 0;
@@ -769,6 +810,15 @@ void AndroidEGL::Init(APIVariant API, uint32 MajorVersion, uint32 MinorVersion, 
 			ContextAttributes[Element++] = EGL_TRUE;
 		}
 #endif // USE_ANDROID_EGL_NO_ERROR_CONTEXT
+
+		bIsEXTRobustContextActive = bSupportsEXTRobustContext && bWantsRobustGLContext;
+		if (bIsEXTRobustContextActive)
+		{
+			UE_LOG(LogAndroid, Log, TEXT("Enabling: EGL_CONTEXT_OPENGL_ROBUST_ACCESS_EXT"));
+			ContextAttributes[Element++] = EGL_CONTEXT_OPENGL_ROBUST_ACCESS_EXT;
+			ContextAttributes[Element++] = EGL_TRUE;
+		}
+
 		if (API == AV_OpenGLCore)
 		{
 			ContextAttributes[Element++] = EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR;
@@ -778,7 +828,7 @@ void AndroidEGL::Init(APIVariant API, uint32 MajorVersion, uint32 MinorVersion, 
 		ContextAttributes[Element++] = Flags;
 		ContextAttributes[Element++] = EGL_NONE;
 
-		checkf( Element < MaxElements, TEXT("Too many elements in config list"));
+		checkf( Element <= MaxElements, TEXT("Too many elements in config list"));
 	}
 	else
 	{
@@ -796,7 +846,18 @@ void AndroidEGL::Init(APIVariant API, uint32 MajorVersion, uint32 MinorVersion, 
 	{
 		ContextAttributes[3] -= 1;
 
-		InitContexts();
+		bSuccess = InitContexts();
+
+		if (!bSuccess)
+		{
+			// Try to create an ES2 context if ES3.1 also failed, which can happen in the Android emulator.
+			// This is enough for FAndroidGPUInfo detection to enable Vulkan.
+			ContextAttributes[0] = EGL_CONTEXT_CLIENT_VERSION;
+			ContextAttributes[1] = 2;
+			ContextAttributes[2] = EGL_NONE;
+
+			bSuccess = InitContexts();
+		}
 	}
 
 	// Getting the hardware window is valid during preinit as we have GAndroidWindowLock held.
@@ -1268,7 +1329,7 @@ void BlockRendering()
 	check(IsInAndroidEventThread());
 	check(GIsRHIInitialized);
 
-	UE_LOG(LogAndroid, Log, TEXT("Blocking renderer on invalid window."));
+	UE_LOG(LogAndroid, Log, TEXT("Blocking renderer on suspended window."));
 	
 	TSharedPtr<FEvent, ESPMode::ThreadSafe> BlockedTrigger = MakeShareable(FPlatformProcess::GetSynchEventFromPool(), [](FEvent* EventToDelete)
 	{

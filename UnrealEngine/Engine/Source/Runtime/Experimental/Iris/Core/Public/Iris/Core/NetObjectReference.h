@@ -92,7 +92,7 @@ private:
 
 	FNetRefHandle RefHandle;
 	FNetToken PathToken;
-	ENetObjectReferenceTraits Traits;
+	ENetObjectReferenceTraits Traits = ENetObjectReferenceTraits::None;
 };
 
 /** Representation of an object dependency, e.g. when used in UReplicationBridge::GetInitialDependencies(). */

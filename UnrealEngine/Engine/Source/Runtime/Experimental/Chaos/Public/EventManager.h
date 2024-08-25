@@ -129,6 +129,11 @@ namespace Chaos
 		virtual void FlipBufferIfRequired() = 0;
 
 		/**
+		 * Reset the consumer buffer, can be used just before flipping buffers to start with a clean buffer
+		 */
+		virtual void ResetConsumerBuffer() = 0;
+
+		/**
 		 * Dispatch events to the registered handlers
 		 */
 		virtual void DispatchConsumerData() = 0;
@@ -164,11 +169,13 @@ namespace Chaos
 		 */
 		~TEventContainer()
 		{
-			for (FEventHandlerPtr Handler : HandlerArray)
+			HandlerLock.WriteLock();
+			for (TPair<void*, FEventHandlerPtr>& Pair : HandlerMap)
 			{
-				delete Handler;
-				Handler = nullptr;
+				delete Pair.Value;
+				Pair.Value = nullptr;
 			}
+			HandlerLock.WriteUnlock();
 		}
 #
 		/**
@@ -176,23 +183,35 @@ namespace Chaos
 		 */
 		virtual void RegisterHandler(const FEventHandlerPtr& Handler)
 		{
-			HandlerArray.AddUnique(Handler);
-			TArray<UObject*> ProxyOwners;
-			bool bValidProxyFilter = Handler->GetInterestedProxyOwners(ProxyOwners);
-
-			if (bValidProxyFilter)
+			// If Register Handler is called by the user inside a dispatch event we ll end up with a dead lock. 
+			// so if we cannot lock it we store the event handler to try to register later
+			if (HandlerLock.TryWriteLock())
 			{
-				for (UObject* ProxyOwner : ProxyOwners)
+				HandlerMap.Add(Handler->GetHandler(), Handler);
+				TArray<UObject*> ProxyOwners;
+				bool bValidProxyFilter = Handler->GetInterestedProxyOwners(ProxyOwners);
+
+				if (bValidProxyFilter)
 				{
-					ProxyOwnerToHandlerMap.Add(ProxyOwner, Handler);
+					for (UObject* ProxyOwner : ProxyOwners)
+					{
+						ProxyOwnerToHandlerMap.Add(ProxyOwner, Handler);
+					}
 				}
+				else
+				{
+					if (GetProxyToIndexMap(EventBuffer.Get()->GetConsumerBuffer()) != nullptr) // Only if our type supports getting the ProxyToIndexMap do we bother adding this
+					{
+						HandlersNotInProxyOwnerMap.Add(Handler->GetHandler(), Handler);
+					}
+				}
+				HandlerLock.WriteUnlock();
 			}
 			else
 			{
-				if (GetProxyToIndexMap(EventBuffer.Get()->GetConsumerBuffer()) != nullptr) // Only if our type supports getting the ProxyToIndexMap do we bother adding this
-				{
-					HandlersNotInMap.AddUnique(Handler);
-				}				
+				DeferredHandlerLock.WriteLock();
+				DeferredHandlers.AddUnique(Handler);
+				DeferredHandlerLock.WriteUnlock();
 			}
 		}
 
@@ -201,39 +220,39 @@ namespace Chaos
 		 */
 		virtual void UnregisterHandler(const void* InHandler)
 		{
-			TArray<TPair<UObject*, FEventHandlerPtr>> KeysAndValuesToRemove;
-			for (TPair<UObject*, FEventHandlerPtr>& KeyValue : ProxyOwnerToHandlerMap)
+			// If Unregister Handler is called by the user inside a dispatch event we ll end up with a dead lock. 
+			// so if we cannot lock it we store the event handler to try to unregister it later
+			if (HandlerLock.TryWriteLock())
 			{
-				const FEventHandlerPtr Value = KeyValue.Value;
-				if (Value && Value->GetHandler() == InHandler)
+				TArray<TPair<UObject*, FEventHandlerPtr>> KeysAndValuesToRemove;
+				for (TPair<UObject*, FEventHandlerPtr>& KeyValue : ProxyOwnerToHandlerMap)
 				{
-					KeysAndValuesToRemove.Add(KeyValue);
+					const FEventHandlerPtr Value = KeyValue.Value;
+					if (Value && Value->GetHandler() == InHandler)
+					{
+						KeysAndValuesToRemove.Add(KeyValue);
+					}
 				}
-			}
 
-			for (TPair<UObject*, FEventHandlerPtr>& KeyAndValue : KeysAndValuesToRemove)
-			{
-				ProxyOwnerToHandlerMap.Remove(KeyAndValue.Get<0>(), KeyAndValue.Get<1>());
-			}
-
-			for (int i = 0; i < HandlersNotInMap.Num(); i++)
-			{
-				if (HandlersNotInMap[i]->GetHandler() == InHandler)
+				for (TPair<UObject*, FEventHandlerPtr>& KeyAndValue : KeysAndValuesToRemove)
 				{
-
-					HandlersNotInMap.RemoveAtSwap(i, 1, false);
-					break;
+					ProxyOwnerToHandlerMap.Remove(KeyAndValue.Get<0>(), KeyAndValue.Get<1>());
 				}
-			}
 
-			for (int i = 0; i < HandlerArray.Num(); i++)
-			{
-				if (HandlerArray[i]->GetHandler() == InHandler)
+				HandlersNotInProxyOwnerMap.Remove(InHandler);
+
+				if (FEventHandlerPtr* HandlerPtr = HandlerMap.Find(InHandler))
 				{
-					DeleteHandler(HandlerArray[i]);
-					HandlerArray.RemoveAtSwap(i, 1, false);
-					break;
+					DeleteHandler(*HandlerPtr);
+					HandlerMap.Remove(InHandler);
 				}
+				HandlerLock.WriteUnlock();
+			}
+			else
+			{
+				DeferredHandlerLock.WriteLock();
+				DeferredUnregisterHandlers.AddUnique(InHandler);
+				DeferredHandlerLock.WriteUnlock();
 			}
 		}
 
@@ -265,6 +284,14 @@ namespace Chaos
 		}
 
 		/**
+		 * Reset the consumer buffer, can be used just before flipping buffers to start with a clean buffer
+		 */
+		virtual void ResetConsumerBuffer()
+		{
+			EventBuffer->GetConsumerBufferMutable()->Reset();
+		}
+
+		/**
 		 * Dispatch events to the registered handlers
 		 */
 		virtual void DispatchConsumerData()
@@ -275,43 +302,68 @@ namespace Chaos
 				return;
 			}
 
+			HandlerLock.ReadLock();
 			const TMap<IPhysicsProxyBase*, TArray<int32>>* Map = GetProxyToIndexMap(Buffer); // Use t his map to get all proxies used in the event buffer
 			// Only take this path if we have fewer Events than Handlers
-			if (Map && Map->Num() + HandlersNotInMap.Num() < HandlerArray.Num())
+			if (Map && Map->Num() + HandlersNotInProxyOwnerMap.Num() < HandlerMap.Num())
 			{
-				TSet<FEventHandlerPtr> UniqueHandlers;
-				UniqueHandlers.Reserve(Map->Num());
-				for (auto& KeyValue : *Map) // Only iterating over objects that are associated with events here
+				if (!ProxyOwnerToHandlerMap.IsEmpty())
 				{
-					const IPhysicsProxyBase* Proxy = KeyValue.Get<0>();
-					for (TMultiMap<UObject*, FEventHandlerPtr>::TConstKeyIterator It = ProxyOwnerToHandlerMap.CreateConstKeyIterator(Proxy->GetOwner()); It; ++It)
+					TSet<FEventHandlerPtr> UniqueHandlers;
+					UniqueHandlers.Reserve(Map->Num());
+					for (auto& KeyValue : *Map) // Only iterating over objects that are associated with events here
 					{
-						UniqueHandlers.Add(It.Value());
+						const IPhysicsProxyBase* Proxy = KeyValue.Get<0>();
+						const UObject* Owner = Proxy->GetOwner();
+						for (TMultiMap<UObject*, FEventHandlerPtr>::TConstKeyIterator It = ProxyOwnerToHandlerMap.CreateConstKeyIterator(Owner); It; ++It)
+						{
+							UniqueHandlers.Add(It.Value());
+						}
+					}
+
+					for (const FEventHandlerPtr Handler : UniqueHandlers)
+					{
+						Handler->HandleEvent(Buffer);
 					}
 				}
 
-				for (FEventHandlerPtr Handler : UniqueHandlers)
+				for (const TPair<void*, FEventHandlerPtr>& Pair : HandlersNotInProxyOwnerMap)
 				{
-					Handler->HandleEvent(Buffer);
+					Pair.Value->HandleEvent(Buffer);
 				}
-
-				for (FEventHandlerPtr Handler : HandlersNotInMap)
-				{
-					Handler->HandleEvent(Buffer);
-				}
-				return;
 			}
-			
+			else
 			// This path is taken if there are fewer Handlers than events or the handler does not support GetProxyToIndexMap
 			{
-				for (FEventHandlerPtr Handler : HandlerArray)
+				for (const TPair<void*, FEventHandlerPtr>& Pair : HandlerMap)
 				{
-					Handler->HandleEvent(Buffer);
+					Pair.Value->HandleEvent(Buffer);
 				}
-			}			
+			}
+			HandlerLock.ReadUnlock();
+			UnAndRegisterDeferedHandler();
 		}
 
-	private:
+private:
+
+		void UnAndRegisterDeferedHandler()
+		{
+			DeferredHandlerLock.WriteLock();
+			// Move array
+			TArray<FEventHandlerPtr> DeferredHandlersCopy(MoveTemp(DeferredHandlers));
+			check(DeferredHandlers.Num() == 0);
+			TArray<const void*> DeferredUnregisterHandlersCopy(MoveTemp(DeferredUnregisterHandlers));
+			check(DeferredUnregisterHandlers.Num() == 0);
+			DeferredHandlerLock.WriteUnlock();
+			for (const FEventHandlerPtr& HandlerPtr : DeferredHandlersCopy)
+			{
+				RegisterHandler(HandlerPtr);
+			}
+			for (const void* HandlerPtr : DeferredUnregisterHandlersCopy)
+			{
+				UnregisterHandler(HandlerPtr);
+			}
+		}
 
 		void DeleteHandler(FEventHandlerPtr& HandlerPtr)
 		{
@@ -329,13 +381,19 @@ namespace Chaos
 		 */
 		TUniquePtr<IBufferResource<PayloadType>> EventBuffer;
 
-		TMultiMap<UObject*, FEventHandlerPtr> ProxyOwnerToHandlerMap; // Used to prevent us from iterating through the whole HandlerArray
-		TArray<FEventHandlerPtr> HandlersNotInMap; // Handlers not added to ProxyOwnerToHandlerMap since they do not support it
+		TMultiMap<UObject*, FEventHandlerPtr> ProxyOwnerToHandlerMap; // Used to prevent us from iterating through the whole HandlerMap
+		TMap<void*, FEventHandlerPtr> HandlersNotInProxyOwnerMap; // Handlers not added to ProxyOwnerToHandlerMap since they do not support it
 
 		/**
 		 * Delegate function registered to handle this event when it is dispatched
 		 */
-		TArray<FEventHandlerPtr> HandlerArray;
+		TMap<void*, FEventHandlerPtr> HandlerMap;
+
+		FRWLock HandlerLock; // protect access ProxyOwnerToHandlerMap, HandlersNotInProxyOwnerMap, HandlerMap
+		TArray<FEventHandlerPtr> DeferredHandlers; // Store handler to register, they couldn't registered to avoid reentrant lock
+		TArray<const void*> DeferredUnregisterHandlers; // Store handler to unregister, they couldn't unregistered to avoid reentrant lock
+		FRWLock DeferredHandlerLock; // protect access to DeferredHandlers and DeferredUnregisterHandlers
+
 	};
 
 	/**
@@ -351,7 +409,6 @@ namespace Chaos
 
 		FEventManager(const Chaos::EMultiBufferMode& BufferModeIn) 
 			: BufferMode(BufferModeIn)
-			, bCurrentlyDispatchingEvents(false)
 			{}
 
 		~FEventManager()
@@ -409,22 +466,11 @@ namespace Chaos
 		template<typename PayloadType, typename HandlerType>
 		void RegisterHandler(const EEventType& EventType, HandlerType* Handler, typename TRawEventHandler<PayloadType, HandlerType>::FHandlerFunction HandlerFunction, typename TRawEventHandler<PayloadType, HandlerType>::FInterestedProxyOwnerFunction InterestedProxyOwnerFunction = nullptr)
 		{
-			FScopeLock ScopeLock(&AccessDeferredHandlersLock);
-
 			const FEventID EventID = FEventID(EventType);
-			
-			// If we are currently dispatching events, defer handler registration until completion of dispatch to avoid deadlock
-			if (bCurrentlyDispatchingEvents)
-			{
-				DeferredHandlers.Add(TPair<FEventID, IEventHandler*>(EventID, new TRawEventHandler<PayloadType, HandlerType>(Handler, HandlerFunction, InterestedProxyOwnerFunction)));
-			}
-			else
-			{
-				ContainerLock.WriteLock();
-				checkf(EventID < EventContainers.Num(), TEXT("Registering event Handler for an event ID that does not exist"));
-				EventContainers[EventID]->RegisterHandler(new TRawEventHandler<PayloadType, HandlerType>(Handler, HandlerFunction, InterestedProxyOwnerFunction));
-				ContainerLock.WriteUnlock();
-			}	
+			ContainerLock.ReadLock();
+			checkf(EventID < EventContainers.Num(), TEXT("Registering event Handler for an event ID that does not exist"));
+			EventContainers[EventID]->RegisterHandler(new TRawEventHandler<PayloadType, HandlerType>(Handler, HandlerFunction, InterestedProxyOwnerFunction));
+			ContainerLock.ReadUnlock();
 		}
 
 		/**
@@ -456,12 +502,20 @@ namespace Chaos
 		template<typename PayloadType>
 		void AddEvent(const EEventType& EventType, TFunction<void(PayloadType& EventData)> InFunction)
 		{
+			if (BufferMode == EMultiBufferMode::Double)
+			{
+				ResourceLock.ReadLock();
+			}
 			ContainerLock.ReadLock();
 			if (TEventContainer<PayloadType>* EventContainer = StaticCast<TEventContainer<PayloadType>*>(EventContainers[FEventID(EventType)]))
 			{
 				EventContainer->AddEvent(InFunction);
 			}
 			ContainerLock.ReadUnlock();
+			if (BufferMode == EMultiBufferMode::Double)
+			{
+				ResourceLock.ReadUnlock();
+			}
 		}
 
 	private:
@@ -472,11 +526,6 @@ namespace Chaos
 		TArray<FEventContainerBasePtr> EventContainers;	// Array of event types
 		FRWLock ResourceLock;
 		FRWLock ContainerLock;
-		FCriticalSection AccessDeferredHandlersLock;
-
-		/** Defer handler registration if we are currently dispatching events. */
-		bool bCurrentlyDispatchingEvents;
-		TArray<TPair<FEventID, IEventHandler*>> DeferredHandlers;
 	};
 
 }

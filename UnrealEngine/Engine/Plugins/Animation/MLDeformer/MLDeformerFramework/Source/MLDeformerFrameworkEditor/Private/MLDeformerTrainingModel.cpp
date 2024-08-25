@@ -14,6 +14,7 @@ UMLDeformerModel* UMLDeformerTrainingModel::GetModel() const
 void UMLDeformerTrainingModel::Init(UE::MLDeformer::FMLDeformerEditorModel* InEditorModel)
 {
 	EditorModel = InEditorModel;
+	ResetSampling();
 }
 
 void UMLDeformerTrainingModel::SetEditorModel(UE::MLDeformer::FMLDeformerEditorModel* InModel)
@@ -41,6 +42,14 @@ int32 UMLDeformerTrainingModel::NumSamples() const
 	return EditorModel->GetNumFramesForTraining();
 }
 
+void UMLDeformerTrainingModel::ResetSampling()
+{
+	NumTimesSampled.Reset();
+	NumTimesSampled.AddZeroed(EditorModel->GetNumTrainingInputAnims());
+	SampleAnimIndex = 0;
+	bFinishedSampling = !FindNextAnimToSample(SampleAnimIndex);
+}
+
 int32 UMLDeformerTrainingModel::GetNumberSampleDeltas() const
 {
 	return EditorModel->GetEditorInputInfo()->GetNumBaseMeshVertices();
@@ -48,12 +57,20 @@ int32 UMLDeformerTrainingModel::GetNumberSampleDeltas() const
 
 void UMLDeformerTrainingModel::SetNumFloatsPerCurve(int32 NumFloatsPerCurve)
 {
-	EditorModel->GetSampler()->SetNumFloatsPerCurve(NumFloatsPerCurve);
+	const int32 NumAnims = EditorModel->GetNumTrainingInputAnims();
+	for (int32 AnimIndex = 0; AnimIndex < NumAnims; ++AnimIndex)
+	{
+		UE::MLDeformer::FMLDeformerSampler* Sampler = EditorModel->GetSamplerForTrainingAnim(AnimIndex);
+		if (Sampler)
+		{
+			Sampler->SetNumFloatsPerCurve(NumFloatsPerCurve);
+		}
+	}
 }
 
 bool UMLDeformerTrainingModel::SetCurrentSampleIndex(int32 Index)
 {
-	return SampleFrame(Index);
+	return NextSample();
 }
 
 bool UMLDeformerTrainingModel::GetNeedsResampling() const
@@ -66,26 +83,19 @@ void UMLDeformerTrainingModel::SetNeedsResampling(bool bNeedsResampling)
 	EditorModel->SetResamplingInputOutputsNeeded(bNeedsResampling);
 }
 
+bool UMLDeformerTrainingModel::NextSample()
+{
+	return SampleNextFrame();
+}
+
+bool UMLDeformerTrainingModel::SampleNextFrame()
+{
+	UE_LOG(LogMLDeformer, Warning, TEXT("Please override the SampleNextFrame method in your UMLDeformerTrainingModel inherited class."));
+	return false;
+}
+
 bool UMLDeformerTrainingModel::SampleFrame(int32 Index)
 {
-	using namespace UE::MLDeformer;
-
-	// Make sure we have a valid frame number.
-	if (Index < 0 || Index >= EditorModel->GetNumTrainingFrames())
-	{
-		UE_LOG(LogMLDeformer, Warning, TEXT("Sample index must range from %d to %d, but a value of %d was provided."), 0, EditorModel->GetNumTrainingFrames()-1, Index);
-		return false;
-	}
-
-	// Sample the frame.
-	FMLDeformerSampler* Sampler = EditorModel->GetSampler();
-	Sampler->SetVertexDeltaSpace(EVertexDeltaSpace::PreSkinning);
-	Sampler->Sample(Index);
-
-	// Copy sampled values.
-	SampleDeltas = Sampler->GetVertexDeltas();
-	SampleBoneRotations = Sampler->GetBoneRotations();
-	SampleCurveValues = Sampler->GetCurveValues();
-
-	return true;
+	UE_LOG(LogMLDeformer, Warning, TEXT("Please use UMLDeformerTrainingModel::NextSample() instead."));
+	return false;
 }

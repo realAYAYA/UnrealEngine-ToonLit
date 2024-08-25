@@ -14,10 +14,11 @@
 #include "GameFramework/Actor.h"
 #include "EngineUtils.h" // for TActorIterator<>
 #include "Engine/StaticMesh.h"
-#include "Components/PrimitiveComponent.h"
-#include "Components/StaticMeshComponent.h"
 #include "Components/BrushComponent.h"
 #include "Components/DynamicMeshComponent.h"
+#include "Components/PrimitiveComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Components/ShapeComponent.h"
 #include "RawIndexBuffer.h"
 #include "StaticMeshResources.h"
 #include "UObject/UObjectGlobals.h"
@@ -339,7 +340,8 @@ static bool FindNearestVisibleObjectHit_Internal(
 		}
 
 		// filtering out any volume hits here will disable volume snapping
-		if (bEnableVolumes == false && Cast<UBrushComponent>(CurResult.GetComponent()) != nullptr)
+		// shape components are also commonly used to represent simple volumes, so if we are filtering out volume hits, we filter out both brush and shape components
+		if (bEnableVolumes == false && (Cast<UBrushComponent>(CurResult.GetComponent()) != nullptr || Cast<UShapeComponent>(CurResult.GetComponent()) != nullptr))
 		{
 			continue;
 		}
@@ -537,7 +539,7 @@ bool UModelingSceneSnappingManager::ExecuteSceneSnapQueryPosition(const FSceneSn
 	};
 
 
-	auto TrySnapToEdge = [](const FSceneSnapQueryRequest& RequestIn, const FRay3d& WorldRay, FSceneSnapQueryResult& SnapResult, double& SmallestSnapAngle)
+	auto TrySnapToEdge = [](const FSceneSnapQueryRequest& RequestIn, const FVector& SurfacePoint, const FRay3d& WorldRay, FSceneSnapQueryResult& SnapResult, double& SmallestSnapAngle)
 	{
 		if ( ((RequestIn.TargetTypes & ESceneSnapQueryTargetType::MeshEdge) != ESceneSnapQueryTargetType::None) &&
 			  (SnapResult.TargetType != ESceneSnapQueryTargetType::MeshVertex) )
@@ -545,7 +547,7 @@ bool UModelingSceneSnappingManager::ExecuteSceneSnapQueryPosition(const FSceneSn
 			for (int j = 0; j < 3; ++j)
 			{
 				UE::Geometry::FSegment3d Segment(SnapResult.TriVertices[j], SnapResult.TriVertices[(j+1)%3]);
-				FVector3d EdgeNearestPt = Segment.NearestPoint(RequestIn.Position);
+				FVector3d EdgeNearestPt = Segment.NearestPoint(SurfacePoint);
 				double VisualAngle = UE::Geometry::VectorUtil::OpeningAngleD(RequestIn.Position, EdgeNearestPt, WorldRay.Origin);
 				if (VisualAngle < SmallestSnapAngle )
 				{
@@ -615,7 +617,7 @@ bool UModelingSceneSnappingManager::ExecuteSceneSnapQueryPosition(const FSceneSn
 			TrySnapToVertex(Request, WorldRay, SnapResult, SmallestAngle);
 
 			// try snapping to nearest points on edges
-			TrySnapToEdge(Request, WorldRay, SnapResult, SmallestAngle);
+			TrySnapToEdge(Request, HitPoint.WorldPoint, WorldRay, SnapResult, SmallestAngle);
 
 			// if we found a valid snap, return it
 			if (SmallestAngle < (double)Request.VisualAngleThresholdDegrees)
@@ -645,7 +647,7 @@ bool UModelingSceneSnappingManager::ExecuteSceneSnapQueryPosition(const FSceneSn
 				TrySnapToVertex(Request, WorldRay, SnapResult, SmallestAngle);
 
 				// try snapping to nearest points on edges
-				TrySnapToEdge(Request, WorldRay, SnapResult, SmallestAngle);
+				TrySnapToEdge(Request, HitResult.ImpactPoint, WorldRay, SnapResult, SmallestAngle);
 
 				// if we found a valid snap, return it
 				if (SmallestAngle < (double)Request.VisualAngleThresholdDegrees)

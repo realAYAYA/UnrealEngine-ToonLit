@@ -5,6 +5,8 @@
 #include "Styling/CoreStyle.h"
 #include "Styling/SlateStyleRegistry.h"
 #include "Styling/SlateStyleMacros.h"
+#include "Styling/AppStyle.h"
+#include "Styling/StyleColors.h"
 
 TUniquePtr<FSmartObjectEditorStyle> FSmartObjectEditorStyle::Instance(nullptr);
 FColor FSmartObjectEditorStyle::TypeColor(104,49,178);
@@ -21,6 +23,16 @@ FSmartObjectEditorStyle::FSmartObjectEditorStyle() : FSlateStyleSet("SmartObject
 	Set("ClassIcon.SmartObjectComponent", new IMAGE_BRUSH_SVG("Icons/SmartObject_16", CoreStyleConstants::Icon16x16));
 	Set("ClassThumbnail.SmartObjectComponent", new IMAGE_BRUSH_SVG("Icons/SmartObject_64", CoreStyleConstants::Icon64x64));
 	
+	FSlateFontInfo LargerDetailFont = FAppStyle::GetFontStyle(TEXT("PropertyWindow.NormalFont"));
+	LargerDetailFont.Size = 10;
+	Set("LargerDetailFont", LargerDetailFont);
+
+	FSlateFontInfo LargerDetailFontBold = FAppStyle::GetFontStyle(TEXT("PropertyWindow.BoldFont"));
+	LargerDetailFontBold.Size = 10;
+	Set("LargerDetailFontBold", LargerDetailFontBold);
+
+	Set("ItemSelection", new FSlateRoundedBoxBrush(FStyleColors::Transparent, 2.0f, FStyleColors::Select, 2.0f));
+
 	FSlateStyleRegistry::RegisterSlateStyle(*this);
 }
 

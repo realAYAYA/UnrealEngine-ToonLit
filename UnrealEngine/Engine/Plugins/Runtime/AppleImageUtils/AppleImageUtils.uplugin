@@ -14,12 +14,14 @@
 	"CanContainContent" : false,
 	"IsBetaVersion" : false,
 	"Installed" : false,
+	"SupportedPrograms": ["LiveLinkHub"],
 	"Modules" :
 	[
 		{
 			"Name" : "AppleImageUtils",
 			"Type" : "Runtime",
-			"LoadingPhase" : "Default"
+			"LoadingPhase" : "Default",
+			"ProgramAllowList": ["LiveLinkHub"]
 		},
 		{
 			"Name" : "AppleImageUtilsBlueprintSupport",

@@ -73,7 +73,7 @@ public:
 		}
 	}
 
-	void ResetConfiguration()
+	void BeginUpdateSettings()
 	{
 		BlurSetup = FDisplayClusterViewport_CameraMotionBlur();
 	}

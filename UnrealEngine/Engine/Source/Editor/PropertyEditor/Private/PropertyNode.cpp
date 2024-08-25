@@ -1,34 +1,31 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "PropertyNode.h"
-#include "Misc/ConfigCacheIni.h"
-#include "Serialization/ArchiveReplaceObjectRef.h"
 #include "Components/ActorComponent.h"
 #include "Containers/Deque.h"
-#include "Editor/UnrealEdEngine.h"
-#include "Engine/UserDefinedStruct.h"
 #include "EditConditionContext.h"
-#include "UnrealEdGlobals.h"
-#include "ScopedTransaction.h"
-#include "PropertyRestriction.h"
-#include "Kismet2/StructureEditorUtils.h"
-#include "Kismet2/BlueprintEditorUtils.h"
-#include "Misc/ScopeExit.h"
 #include "Editor.h"
-#include "ObjectPropertyNode.h"
-#include "StructurePropertyNode.h"
-#include "PropertyHandleImpl.h"
-#include "PropertyTextUtilities.h"
+#include "Editor/UnrealEdEngine.h"
 #include "EditorSupportDelegates.h"
-#include "UObject/ConstructorHelpers.h"
+#include "Engine/UserDefinedStruct.h"
 #include "InstancedReferenceSubobjectHelper.h"
+#include "Kismet2/BlueprintEditorUtils.h"
+#include "Misc/ConfigCacheIni.h"
+#include "Misc/ScopeExit.h"
+#include "ObjectPropertyNode.h"
+#include "PropertyHandleImpl.h"
+#include "PropertyRestriction.h"
+#include "PropertyTextUtilities.h"
+#include "StringPrefixTree.h"
+#include "StructurePropertyNode.h"
 
-#include "Framework/Notifications/NotificationManager.h"
-#include "Widgets/Notifications/SNotificationList.h"
 #include "UObject/MetaData.h"
 #include "UObject/TextProperty.h"
 #include "UObject/EnumProperty.h"
+#include "UObject/PropertyBagRepository.h"
 #include "UObject/UnrealType.h"
+
+#include "UObject/PropertyOptional.h"
 
 #define LOCTEXT_NAMESPACE "PropertyNode"
 
@@ -90,7 +87,7 @@ FPropertyNode::~FPropertyNode()
 void FPropertyNode::InitNode(const FPropertyNodeInitParams& InitParams)
 {
 	//Dismantle the previous tree
-	DestroyTree();
+	DestroyTree(/*bInDestroySelf*/false);
 
 	//tree hierarchy
 	check(InitParams.ParentNode.Get() != this);
@@ -173,7 +170,7 @@ void FPropertyNode::InitNode(const FPropertyNodeInitParams& InitParams)
 		const FProperty* OwnerProperty = MyProperty->GetOwnerProperty();
 
 		const bool bIsObjectOrInterface = CastField<FObjectPropertyBase>(MyProperty) || CastField<FInterfaceProperty>(MyProperty);
-		bool bIsInsideContainer = CastField<FArrayProperty>(OwnerProperty) || CastField<FSetProperty>(OwnerProperty) || CastField<FMapProperty>(OwnerProperty);
+		bool bIsInsideContainer = CastField<FArrayProperty>(OwnerProperty) || CastField<FSetProperty>(OwnerProperty) || CastField<FMapProperty>(OwnerProperty) || CastField<FOptionalProperty>(OwnerProperty);
 
 		// Don't consider the container's inline status if the key is a class property that is not inline
 		if (const FMapProperty* MapProperty = CastField<FMapProperty>(OwnerProperty))
@@ -243,7 +240,7 @@ void FPropertyNode::InitNode(const FPropertyNodeInitParams& InitParams)
 		bool bRequiresValidation = bIsEditInlineNew || bShowInnerObjectProperties;
 	
 		// We require validation if we are in a container.
-		bRequiresValidation |= MyProperty->IsA<FArrayProperty>() || MyProperty->IsA<FSetProperty>() || MyProperty->IsA<FMapProperty>();
+		bRequiresValidation |= MyProperty->IsA<FArrayProperty>() || MyProperty->IsA<FSetProperty>() || MyProperty->IsA<FMapProperty>() || MyProperty->IsA<FOptionalProperty>();
 
 		// We require validation if our parent also needs validation (if an array parent was resized all the addresses of children are invalid)
 		bRequiresValidation |= (GetParentNode() && GetParentNode()->HasNodeFlags(EPropertyNodeFlags::RequiresValidation));
@@ -265,24 +262,65 @@ void FPropertyNode::InitNode(const FPropertyNodeInitParams& InitParams)
 	PropertyPath = FPropertyNode::CreatePropertyPath(this->AsShared())->ToString();
 }
 
+namespace FPropertyNodeUtils
+{
+	void GetExpandedItems(const TSharedPtr<FPropertyNode>& InPropertyNode, FStringPrefixTree& OutExpandedItems)
+	{
+		if (InPropertyNode->HasNodeFlags(EPropertyNodeFlags::Expanded))
+		{
+			constexpr bool bWithArrayIndex = true;
+			FString Path;
+			Path.Empty(128);
+			InPropertyNode->GetQualifiedName(Path, bWithArrayIndex);
+
+			OutExpandedItems.Insert(Path);
+		}
+
+		for (int32 ChildIndex = 0; ChildIndex < InPropertyNode->GetNumChildNodes(); ++ChildIndex)
+		{
+			GetExpandedItems(InPropertyNode->GetChildNode(ChildIndex), OutExpandedItems);
+		}
+	}
+
+	void SetExpandedItems(const TSharedPtr<FPropertyNode>& InPropertyNode, const FStringPrefixTree& InExpandedItems)
+	{
+		constexpr bool bWithArrayIndex = true;
+		FString Path;
+		Path.Empty(128);
+		InPropertyNode->GetQualifiedName(Path, bWithArrayIndex);
+
+		if (InExpandedItems.Contains(Path))
+		{
+			InPropertyNode->SetNodeFlags(EPropertyNodeFlags::Expanded, true);
+		}
+
+		if (InExpandedItems.AnyStartsWith(Path))
+		{
+			for (int32 NodeIndex = 0; NodeIndex < InPropertyNode->GetNumChildNodes(); ++NodeIndex)
+			{
+				SetExpandedItems(InPropertyNode->GetChildNode(NodeIndex), InExpandedItems);
+			}
+		}
+	}
+}
+
 /**
  * Used for rebuilding a sub portion of the tree
  */
 void FPropertyNode::RebuildChildren()
 {
-	CachedReadAddresses.Reset();
-
-	bool bDestroySelf = false;
-	TSet<FString> OutExpandedChildPropertyPaths;
-
-	for (const TSharedPtr<FPropertyNode>& ChildNode : ChildNodes)
+	if (TSharedPtr<FPropertyNode>& ValueNode = GetOrCreateOptionalValueNode())
 	{
-		if (ChildNode->HasNodeFlags(EPropertyNodeFlags::Expanded))
-		{
-			OutExpandedChildPropertyPaths.Add(ChildNode->GetPropertyPath());
-		}
+		return ValueNode->RebuildChildren();
 	}
+
+	CachedReadAddresses.Reset();
 	
+	FStringPrefixTree ExpandedPropertyItemSet;
+	const TSharedRef<FPropertyNode> ThisAsSharedRef = AsShared();
+	FPropertyNodeUtils::GetExpandedItems(ThisAsSharedRef, ExpandedPropertyItemSet);
+
+	constexpr bool bDestroySelf = false;
 	DestroyTree(bDestroySelf);
 
 	if (MaxChildDepthAllowed != 0)
@@ -293,12 +331,9 @@ void FPropertyNode::RebuildChildren()
 		if (HasNodeFlags(EPropertyNodeFlags::CanBeExpanded) && (ChildNodes.Num() == 0))
 		{
 			InitChildNodes();
-			for (const TSharedPtr<FPropertyNode>& ChildNode : ChildNodes)
+			if (ExpandedPropertyItemSet.Size() > 0)
 			{
-				if ( OutExpandedChildPropertyPaths.Contains(ChildNode->GetPropertyPath()) )
-				{
-					ChildNode->SetNodeFlags(EPropertyNodeFlags::Expanded, true);
-				}
+				FPropertyNodeUtils::SetExpandedItems(ThisAsSharedRef, ExpandedPropertyItemSet);
 			}
 		}
 	}
@@ -495,6 +530,11 @@ void FPropertyNode::MarkChildrenAsRebuilt()
  */
 EPropertyDataValidationResult FPropertyNode::EnsureDataIsValid()
 {
+	if (TSharedPtr<FPropertyNode>& ValueNode = GetOrCreateOptionalValueNode())
+	{
+		return ValueNode->EnsureDataIsValid();
+	}
+
 	bool bValidateChildren = !HasNodeFlags(EPropertyNodeFlags::SkipChildValidation);
 	bool bValidateChildrenKeyNodes = false;		// by default, we don't check this, since it's just for Map properties
 
@@ -653,6 +693,11 @@ EPropertyDataValidationResult FPropertyNode::EnsureDataIsValid()
 				if (ObjectProperty && !bIgnoreAllMismatch)
 				{
 					UObject* Obj = ObjectProperty->GetObjectPropertyValue(Addr);
+					UE::FPropertyBagRepository& Repository = UE::FPropertyBagRepository::Get();
+					if (UObject* Found = Repository.FindInstanceDataObject(Obj))
+					{
+						Obj = Found;
+					}
 					if (IsValid(Obj))
 					{
 						if (!bShowInnerObjectPropertiesObjectChanged && 
@@ -1169,7 +1214,12 @@ bool FPropertyNode::IsEditConst() const
 				FStructProperty* StructProperty = CastField<FStructProperty>(CurParent->GetProperty());
 				if (StructProperty == nullptr)
 				{
-					break;
+					const bool bIsContainerProperty = CastField<FArrayProperty>(CurParent->GetProperty()) || CastField<FSetProperty>(CurParent->GetProperty()) || CastField<FMapProperty>(CurParent->GetProperty()) || CastField<FOptionalProperty>(CurParent->GetProperty());
+					
+					if (!bIsContainerProperty)
+					{
+						break;
+					}
 				}
 
 				if (CurParent->IsEditConst())
@@ -1177,7 +1227,7 @@ bool FPropertyNode::IsEditConst() const
 					// An owning struct is edit const, so the child property is too
 					bIsEditConst = true;
 				}
-				else
+				else if (StructProperty)
 				{
 					// See if the struct has a problem with this property being editable
 					UScriptStruct* ScriptStruct = StructProperty->Struct;
@@ -1651,8 +1701,8 @@ public:
 			PropertyValueRoot.OwnerObject = Cast<UClass>(PropertyValueRoot.OwnerObject)->GetDefaultObject();
 		}
 
-		const bool bIsContainerProperty = CastField<FArrayProperty>(Property) || CastField<FSetProperty>(Property) || CastField<FMapProperty>(Property);
-		const bool bIsInsideContainerProperty = Property->GetOwner<FArrayProperty>() || Property->GetOwner<FSetProperty>() || Property->GetOwner<FMapProperty>();
+		const bool bIsContainerProperty = CastField<FArrayProperty>(Property) || CastField<FSetProperty>(Property) || CastField<FMapProperty>(Property) || CastField<FOptionalProperty>(Property);
+		const bool bIsInsideContainerProperty = Property->GetOwner<FArrayProperty>() || Property->GetOwner<FSetProperty>() || Property->GetOwner<FMapProperty>() || Property->GetOwner<FOptionalProperty>();
 
 		FPropertyNode* Node = bIsInsideContainerProperty ? ParentNode : PropertyNode;
 
@@ -2075,19 +2125,12 @@ private:
 		if (MapProp != NULL)
 		{
 			FScriptMapHelper MapHelper(MapProp, PropertyValueAddress);
-
-			int32 ItemsLeft = MapHelper.Num();
-			for (int32 Index = 0; ItemsLeft > 0; ++Index)
+			for (FScriptMapHelper::FIterator It(MapHelper); It; ++It)
 			{
-				if (MapHelper.IsValidIndex(Index))
-				{
-					--ItemsLeft;
+				uint8* Data = MapHelper.GetPairPtr(It);
 
-					uint8* Data = MapHelper.GetPairPtr(Index);
-
-					ProcessProperty(MapProp->KeyProp, MapProp->KeyProp->ContainerPtrToValuePtr<uint8>(Data));
-					ProcessProperty(MapProp->ValueProp, MapProp->ValueProp->ContainerPtrToValuePtr<uint8>(Data));
-				}
+				ProcessProperty(MapProp->KeyProp, MapProp->KeyProp->ContainerPtrToValuePtr<uint8>(Data));
+				ProcessProperty(MapProp->ValueProp, MapProp->ValueProp->ContainerPtrToValuePtr<uint8>(Data));
 			}
 
 			bResult = true;
@@ -2237,7 +2280,7 @@ private:
 };
 
 
-bool FPropertyNode::GetDiffersFromDefault(const uint8* PropertyValueAddress, const uint8* PropertyDefaultAddress, const uint8* DefaultPropertyValueBaseAddress, const FProperty* InProperty) const
+bool FPropertyNode::GetDiffersFromDefault(const uint8* PropertyValueAddress, const uint8* PropertyDefaultAddress, const uint8* DefaultPropertyValueBaseAddress, const FProperty* InProperty, const UObject* TopLevelObject) const
 {
 	bool bDiffersFromDefaultValue = false;
 
@@ -2272,41 +2315,17 @@ bool FPropertyNode::GetDiffersFromDefault(const uint8* PropertyValueAddress, con
 
 	if (!bDiffersFromDefaultValue)
 	{
-		uint32 PortFlags = 0;
-		if (InProperty->ContainsInstancedObjectProperty())
-		{
-			PortFlags |= PPF_DeepComparison;
-		}
-	
 		if (PropertyValueAddress == nullptr || PropertyDefaultAddress == nullptr)
 		{
 			// if either are NULL, we had a dynamic array somewhere in our parent chain and the array doesn't
 			// have enough elements in either the default or the object
 			bDiffersFromDefaultValue = true;
 		}
-		else if (GetArrayIndex() == INDEX_NONE && InProperty->ArrayDim > 1)
-		{
-			// this is a container; loop through all of its elements and see if any of them differ from the default
-			for (int32 Idx = 0; !bDiffersFromDefault && Idx < InProperty->ArrayDim; Idx++)
-			{
-				bDiffersFromDefaultValue = !InProperty->Identical(
-					PropertyValueAddress + Idx * InProperty->ElementSize,
-					PropertyDefaultAddress + Idx * InProperty->ElementSize,
-					PortFlags
-					);
-			}
-		}
 		else
 		{
-			// try to compare the values at the current and default property addresses
-			if( PropertyValueAddress != nullptr && PropertyDefaultAddress != nullptr )
-			{
-				bDiffersFromDefaultValue = !InProperty->Identical(
-					PropertyValueAddress,
-					PropertyDefaultAddress,
-					PortFlags
-					);
-			}
+			FString DefaultValue = GetDefaultValueAsString(PropertyDefaultAddress, InProperty, EValueAsStringMode::ForDiff, TopLevelObject);
+			FString CurrentValue = GetDefaultValueAsString(PropertyValueAddress, InProperty, EValueAsStringMode::ForDiff, TopLevelObject);
+			bDiffersFromDefaultValue = !(DefaultValue.Equals(CurrentValue, ESearchCase::CaseSensitive));
 		}
 	}
 
@@ -2323,7 +2342,7 @@ bool FPropertyNode::GetDiffersFromDefaultForObject( FPropertyItemValueDataTracke
 
 	if (bIsValidTracker && bHasDefaultValue && bHasParent)
 	{
-		return GetDiffersFromDefault(ValueTracker.GetPropertyValueAddress(), ValueTracker.GetPropertyDefaultAddress(), ValueTracker.GetPropertyDefaultBaseAddress(), InProperty);
+		return GetDiffersFromDefault(ValueTracker.GetPropertyValueAddress(), ValueTracker.GetPropertyDefaultAddress(), ValueTracker.GetPropertyDefaultBaseAddress(), InProperty, ValueTracker.GetTopLevelObject());
 	}
 
 	return false;
@@ -2351,12 +2370,13 @@ bool FPropertyNode::GetDiffersFromDefault()
 			StructNode->GetAllStructureData(Structs);
 			
 			const bool bIsSparse = HasNodeFlags(EPropertyNodeFlags::IsSparseClassData);
-			const bool bIsContainer = CastField<FArrayProperty>(Prop) || CastField<FSetProperty>(Prop) || CastField<FMapProperty>(Prop);
-			const bool bIsInsideContainerProperty = Property->GetOwner<FArrayProperty>() || Property->GetOwner<FSetProperty>() || Property->GetOwner<FMapProperty>();
+			const bool bIsContainer = CastField<FArrayProperty>(Prop) || CastField<FSetProperty>(Prop) || CastField<FMapProperty>(Prop) || CastField<FOptionalProperty>(Prop);
+			const bool bIsInsideContainerProperty = Property->GetOwner<FArrayProperty>() || Property->GetOwner<FSetProperty>() || Property->GetOwner<FMapProperty>() || Property->GetOwner<FOptionalProperty>();
 			const FPropertyNode* BaseNode = bIsInsideContainerProperty ? GetParentNode() : this;
 
 			FStructOnScope DefaultStruct;
 
+			const FObjectPropertyNode* TopLevelObjectNode = StructNode->FindObjectItemParent();
 			for (int32 Index = 0; !bDiffersFromDefault && Index < Structs.Num(); Index++)
 			{
 				const TSharedPtr<FStructOnScope>& StructData = Structs[Index];
@@ -2393,7 +2413,8 @@ bool FPropertyNode::GetDiffersFromDefault()
 					PropertyDefaultAddress = PropertyDefaultBaseAddress;
 				}
 
-				bDiffersFromDefault = GetDiffersFromDefault(PropertyValueAddress, PropertyDefaultAddress, PropertyDefaultBaseAddress, Prop);
+				const UObject* TopLevelObject = (TopLevelObjectNode && Index < TopLevelObjectNode->GetNumObjects()) ? TopLevelObjectNode->GetUObject(Index) : nullptr;
+				bDiffersFromDefault = GetDiffersFromDefault(PropertyValueAddress, PropertyDefaultAddress, PropertyDefaultBaseAddress, Prop, TopLevelObject);
 			}
 		}
 		else if (FObjectPropertyNode* ObjectNode = FindObjectItemParent())
@@ -2419,11 +2440,25 @@ bool FPropertyNode::GetDiffersFromDefault()
 }
 
 
-FString FPropertyNode::GetDefaultValueAsString(const uint8* PropertyDefaultAddress, const FProperty* InProperty, const bool bUseDisplayName) const
+FString FPropertyNode::GetDefaultValueAsString(const uint8* PropertyDefaultAddress, const FProperty* InProperty, EValueAsStringMode Mode, const UObject* TopLevelObject) const
 {
+	const bool bUseDisplayName = (Mode == EValueAsStringMode::UseDisplayName);
 	FString DefaultValue;
 
-	uint32 PortFlags = bUseDisplayName ? PPF_PropertyWindow : PPF_None;
+	uint32 PortFlags = PPF_None;
+	if (Mode == EValueAsStringMode::UseDisplayName)
+	{
+		PortFlags |= PPF_PropertyWindow;
+	}
+	else if (Mode == EValueAsStringMode::ForDiff)
+	{
+		PortFlags |= PPF_ForDiff;
+		if (TopLevelObject && !TopLevelObject->IsTemplate())
+		{
+			PortFlags |= PPF_ForDiffInstanceOnly;
+		}
+	}
+
 	if (InProperty->ContainsInstancedObjectProperty())
 	{
 		PortFlags |= PPF_DeepComparison;
@@ -2440,7 +2475,7 @@ FString FPropertyNode::GetDefaultValueAsString(const uint8* PropertyDefaultAddre
 			FMemory::Free(TempComplexPropAddr);
 		};
 				
-		InProperty->ExportText_Direct(DefaultValue, TempComplexPropAddr, TempComplexPropAddr, nullptr, PPF_None);
+		InProperty->ExportText_Direct(DefaultValue, TempComplexPropAddr, TempComplexPropAddr, nullptr, PortFlags);
 	}
 	else if ( GetArrayIndex() == INDEX_NONE && InProperty->ArrayDim > 1 )
 	{
@@ -2450,13 +2485,13 @@ FString FPropertyNode::GetDefaultValueAsString(const uint8* PropertyDefaultAddre
 	else
 	{
 		// Port flags will cause enums to display correctly
-		InProperty->ExportTextItem_Direct(DefaultValue, PropertyDefaultAddress, PropertyDefaultAddress, nullptr, PortFlags, nullptr);
+		InProperty->ExportTextItem_Direct(DefaultValue, PropertyDefaultAddress, PropertyDefaultAddress, nullptr, PortFlags);
 	}
 
 	return DefaultValue;
 }
 
-FString FPropertyNode::GetDefaultValueAsStringForObject( FPropertyItemValueDataTrackerSlate& ValueTracker, UObject* InObject, FProperty* InProperty, bool bUseDisplayName)
+FString FPropertyNode::GetDefaultValueAsStringForObject( FPropertyItemValueDataTrackerSlate& ValueTracker, UObject* InObject, FProperty* InProperty, EValueAsStringMode Mode)
 {
 	check( InObject );
 	check( InProperty );
@@ -2468,7 +2503,7 @@ FString FPropertyNode::GetDefaultValueAsStringForObject( FPropertyItemValueDataT
 	{
 		if ( ValueTracker.IsValidTracker() && ValueTracker.HasDefaultValue() )
 		{
-			DefaultValue = GetDefaultValueAsString(ValueTracker.GetPropertyDefaultAddress(), InProperty, bUseDisplayName);
+			DefaultValue = GetDefaultValueAsString(ValueTracker.GetPropertyDefaultAddress(), InProperty, Mode, InObject);
 		}
 	}
 
@@ -2480,6 +2515,7 @@ FString FPropertyNode::GetDefaultValueAsString(bool bUseDisplayName)
 	FString DefaultValue;
 	FString DelimitedValue;
 	bool bAllSame = true;
+	const EValueAsStringMode Mode = bUseDisplayName ? EValueAsStringMode::UseDisplayName : EValueAsStringMode::None;
 
 	FProperty* Prop = GetProperty();
 	if (!Prop)
@@ -2493,15 +2529,17 @@ FString FPropertyNode::GetDefaultValueAsString(bool bUseDisplayName)
 		StructNode->GetAllStructureData(Structs);
 
 		const bool bIsSparse = HasNodeFlags(EPropertyNodeFlags::IsSparseClassData);
-		const bool bIsContainer = CastField<FArrayProperty>(Prop) || CastField<FSetProperty>(Prop) || CastField<FMapProperty>(Prop);
-		const bool bIsInsideContainerProperty = Property->GetOwner<FArrayProperty>() || Property->GetOwner<FSetProperty>() || Property->GetOwner<FMapProperty>();
+		const bool bIsContainer = CastField<FArrayProperty>(Prop) || CastField<FSetProperty>(Prop) || CastField<FMapProperty>(Prop) || CastField<FOptionalProperty>(Prop);
+		const bool bIsInsideContainerProperty = Property->GetOwner<FArrayProperty>() || Property->GetOwner<FSetProperty>() || Property->GetOwner<FMapProperty>() || Property->GetOwner<FOptionalProperty>();
 		const FPropertyNode* BaseNode = bIsInsideContainerProperty ? GetParentNode() : this;
 
 		FStructOnScope DefaultStruct;
 		FString NodeDefaultValue;
 
-		for (const TSharedPtr<FStructOnScope>& StructData : Structs)
+		const FObjectPropertyNode* TopLevelObjectNode = StructNode->FindObjectItemParent();
+		for (int32 StructIndex = 0; StructIndex < Structs.Num(); ++StructIndex)
 		{
+			const TSharedPtr<FStructOnScope>& StructData = Structs[StructIndex];
 			if (!StructData.IsValid())
 			{
 				continue;
@@ -2529,7 +2567,8 @@ FString FPropertyNode::GetDefaultValueAsString(bool bUseDisplayName)
 					PropertyDefaultAddress = PropertyDefaultBaseAddress;
 				}
 
-				NodeDefaultValue = GetDefaultValueAsString(PropertyDefaultAddress, Prop, bUseDisplayName);
+				const UObject* TopLevelObject = (TopLevelObjectNode && StructIndex < TopLevelObjectNode->GetNumObjects()) ? TopLevelObjectNode->GetUObject(StructIndex) : nullptr;
+				NodeDefaultValue = GetDefaultValueAsString(PropertyDefaultAddress, Prop, Mode, TopLevelObject);
 			}
 			
 			if (DefaultValue.IsEmpty())
@@ -2559,7 +2598,7 @@ FString FPropertyNode::GetDefaultValueAsString(bool bUseDisplayName)
 
 			if (Object && ValueTracker.IsValid())
 			{
-				const FString NodeDefaultValue = GetDefaultValueAsStringForObject( *ValueTracker, Object, Prop, bUseDisplayName );
+				const FString NodeDefaultValue = GetDefaultValueAsStringForObject( *ValueTracker, Object, Prop, Mode);
 
 				if (DefaultValue.IsEmpty())
 				{
@@ -2593,7 +2632,7 @@ FText FPropertyNode::GetResetToDefaultLabel()
 
 		if (DefaultValue.Len() > MaxValueLen)
 		{
-			DefaultValue.LeftInline( MaxValueLen, false );
+			DefaultValue.LeftInline( MaxValueLen, EAllowShrinking::No );
 			DefaultValue += TEXT( "..." );
 		}
 
@@ -2667,7 +2706,31 @@ bool FPropertyNode::IsChildOfFavorite (void) const
  */
 void FPropertyNode::DestroyTree(const bool bInDestroySelf)
 {
+	if (bInDestroySelf)
+	{
+		bIsDestroyed = true;
+	}
+
+	// Marks all the child nodes as destroyed.
+	// We cannot call DestroyTree() recursively since some UI code that gets executed
+	// on the destroyed nodes (due to unfortunate update order) assume that child nodes are always available.
+	for (TSharedPtr<FPropertyNode>& ChildNode : ChildNodes)
+	{
+		ChildNode->MarkDestroyedRecursive();
+	}
+	
 	ChildNodes.Empty();
+}
+
+void FPropertyNode::MarkDestroyedRecursive()
+{
+	bIsDestroyed = true;
+	
+	for (TSharedPtr<FPropertyNode>& ChildNode : ChildNodes)
+	{
+		check(ChildNode.IsValid());
+		ChildNode->MarkDestroyedRecursive();
+	}
 }
 
 /**
@@ -2993,9 +3056,14 @@ void FPropertyNode::NotifyPostChange( FPropertyChangedEvent& InPropertyChangedEv
 				auto ScopePostEditChange = [&PropertyChain, &InPropertyChangedEvent, &CurProperty, CurrentObjectIndex](UObject* Object)
 				{
 					// copy the property changed event
-					FPropertyChangedEvent ChangedEvent = CurProperty != InPropertyChangedEvent.Property ? 
-						FPropertyChangedEvent(CurProperty, InPropertyChangedEvent.ChangeType) : 
-						InPropertyChangedEvent;
+					FPropertyChangedEvent ChangedEvent = InPropertyChangedEvent;
+					if (CurProperty != InPropertyChangedEvent.Property)
+					{
+						// Parent object node property. Reset property and leave the event type as unspecified since we dont pass in the exact leaf property.
+						ChangedEvent.ChangeType = EPropertyChangeType::Unspecified;
+						ChangedEvent.Property = CurProperty;
+						ChangedEvent.MemberProperty = CurProperty;
+					}
 					ChangedEvent.ObjectIteratorIndex = CurrentObjectIndex;
 
 					if (PropertyChain->Num() == 0)
@@ -3069,6 +3137,13 @@ void FPropertyNode::NotifyPostChange( FPropertyChangedEvent& InPropertyChangedEv
 	BroadcastPropertyChangedDelegates(InPropertyChangedEvent);
 	BroadcastPropertyChangedDelegates();
 
+	// Reset these values
+	if (PropertyChain->Num() > 0)
+	{
+		PropertyChain->SetActiveMemberPropertyNode(OriginalActiveProperty);
+		PropertyChain->SetActivePropertyNode(InPropertyChangedEvent.Property);
+	}
+
 	// Call through to the property window's notify hook.
 	if( InNotifyHook )
 	{
@@ -3078,31 +3153,39 @@ void FPropertyNode::NotifyPostChange( FPropertyChangedEvent& InPropertyChangedEv
 		}
 		else
 		{
-			PropertyChain->SetActiveMemberPropertyNode( OriginalActiveProperty );
-			PropertyChain->SetActivePropertyNode( InPropertyChangedEvent.Property);
-		
 			InPropertyChangedEvent.SetActiveMemberProperty(OriginalActiveProperty);
 			InNotifyHook->NotifyPostChange( InPropertyChangedEvent, &PropertyChain.Get() );
 		}
 	}
 
 
-	if( OriginalActiveProperty )
+	// For each Property in the Property Chain, see if it has ForceRebuildProperty metadata and find the sibling PropertyNode to rebuild.
+	// To do that, we need to match up the FPropertyNode (Editor representation) with the FProperty (Engine representation)
+	if(FindObjectItemParent() != nullptr)
 	{
-		//if i have metadata forcing other property windows to rebuild
-		const FString& MetaData = OriginalActiveProperty->GetMetaData(TEXT("ForceRebuildProperty"));
-
-		if( MetaData.Len() > 0 )
+		TSharedPtr<FPropertyNode> CurrentPropertyNode = FindObjectItemParent()->AsShared();
+		for (auto PropertyChainNode = PropertyChain->GetActiveMemberNode(); PropertyChainNode && CurrentPropertyNode.IsValid() ; PropertyChainNode = PropertyChainNode->GetNextNode())
 		{
-			// We need to find the property node beginning at the root/parent, not at our own node.
-			ObjectNode = FindObjectItemParent();
-			check(ObjectNode != NULL);
-
-			TSharedPtr<FPropertyNode> ForceRebuildNode = ObjectNode->FindChildPropertyNode( FName(*MetaData), true );
-
-			if( ForceRebuildNode.IsValid() )
+			if (const FProperty* CurrentProperty = PropertyChainNode->GetValue())
 			{
-				ForceRebuildNode->RequestRebuildChildren();
+				const static FName NAME_ForceRebuildProperty(TEXT("ForceRebuildProperty"));
+				const FString& ForceRebuildPropertyName = CurrentProperty->GetMetaData(NAME_ForceRebuildProperty);
+				if (!ForceRebuildPropertyName.IsEmpty())
+				{
+					constexpr bool bRecursive = true;
+					TSharedPtr<FPropertyNode> ForceRebuildNode = CurrentPropertyNode->FindChildPropertyNode(FName(*ForceRebuildPropertyName, FNAME_Find), bRecursive);
+
+					if (ForceRebuildNode.IsValid())
+					{
+						ForceRebuildNode->RequestRebuildChildren();
+					}
+					else
+					{
+						UE_LOG(LogPropertyNode, Error, TEXT("Could not find named property '%s' referenced from %s ForceRebuildProperty"), *ForceRebuildPropertyName, *CurrentPropertyNode->GetDisplayName().ToString());
+					}
+				}
+
+				CurrentPropertyNode = CurrentPropertyNode->FindChildPropertyNode(CurrentProperty->GetFName());
 			}
 		}
 	}
@@ -3235,6 +3318,11 @@ void FPropertyNode::SetIgnoreInstancedReference()
 bool FPropertyNode::IsIgnoringInstancedReference() const
 {
 	return bIgnoreInstancedReference;
+}
+
+bool FPropertyNode::IsDestroyed() const
+{
+	return bIsDestroyed;
 }
 
 FDelegateHandle FPropertyNode::SetOnRebuildChildren(const FSimpleDelegate& InOnRebuildChildren)
@@ -3382,6 +3470,11 @@ void FPropertyNode::InvalidateCachedState()
 {
 	bUpdateDiffersFromDefault = true;
 	bUpdateEditConstState = true;
+
+	if (OptionalValueNode.IsValid())
+	{
+		OptionalValueNode->InvalidateCachedState();
+	}
 
 	for( TSharedPtr<FPropertyNode>& ChildNode : ChildNodes )
 	{
@@ -3811,28 +3904,12 @@ void FPropertyNode::PropagatePropertyChange( UObject* ModifiedObject, const TCHA
 					ComplexPropertyNode = ParentNodeWeakPtr.Pin();
 				}
 				
-				uint8* DestComplexPropAddr = ComplexPropertyNode->GetValueBaseAddressFromObject(ActualObjToChange);
-				uint8* ModifiedComplexPropAddr = ComplexPropertyNode->GetValueBaseAddressFromObject(ModifiedObject);
+				const uint8* DestComplexPropAddr = ComplexPropertyNode->GetValueBaseAddressFromObject(ActualObjToChange);
 
-				bool bShouldImport = false;
-				{
-					uint8* TempComplexPropAddr = (uint8*)FMemory::Malloc(ComplexProperty->GetSize(), ComplexProperty->GetMinAlignment());
-					ComplexProperty->InitializeValue(TempComplexPropAddr);
-					ON_SCOPE_EXIT
-					{
-						ComplexProperty->DestroyValue(TempComplexPropAddr);
-						FMemory::Free(TempComplexPropAddr);
-					};
+				FString ActualCurrentValue;
+				ComplexProperty->ExportText_Direct(ActualCurrentValue, DestComplexPropAddr, DestComplexPropAddr, ActualObjToChange, PPF_ForDiff);
 
-					// Importing the previous value into the temporary property can potentially affect shared state (such as FText display string values), so we back-up the current value 
-					// before we do this, so that we can restore it once we've checked whether the two properties are identical
-					// This ensures that shared state keeps the correct value, even if the destination property itself isn't imported (or only partly imported, as is the case with arrays/maps/sets)
-					FString CurrentValue;
-					ComplexProperty->ExportText_Direct(CurrentValue, ModifiedComplexPropAddr, ModifiedComplexPropAddr, ModifiedObject, PPF_None);
-					ComplexProperty->ImportText_Direct(*PreviousValue, TempComplexPropAddr, ModifiedObject, PPF_SerializedAsImportText);
-					bShouldImport = ComplexProperty->Identical(DestComplexPropAddr, TempComplexPropAddr, PPF_DeepComparison);
-					ComplexProperty->ImportText_Direct(*CurrentValue, TempComplexPropAddr, ModifiedObject, PPF_None);
-				}
+				const bool bShouldImport = ActualCurrentValue.Equals(PreviousValue, ESearchCase::CaseSensitive);
 
 				// Only import if the value matches the previous value of the property that changed
 				if (bShouldImport)

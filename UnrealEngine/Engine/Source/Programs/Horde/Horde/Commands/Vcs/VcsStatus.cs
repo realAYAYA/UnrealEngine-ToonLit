@@ -1,13 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System.Threading.Tasks;
 using EpicGames.Core;
 using EpicGames.Horde.Storage;
 using Microsoft.Extensions.Logging;
 
 namespace Horde.Commands.Vcs
 {
-	[Command("vcs", "status", "Find status of local files")]
+	[Command("vcs", "status", "Find status of local files", Advertise = false)]
 	class VcsStatus : VcsBase
 	{
 		public VcsStatus(IStorageClientFactory storageClientFactory)

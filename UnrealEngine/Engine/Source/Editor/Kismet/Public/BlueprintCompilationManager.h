@@ -64,15 +64,6 @@ struct KISMET_API FBlueprintCompilationManager
 	 */
 	static void CompileSynchronously(const FBPCompileRequest& Request);
 
-	// @todo: BP2CPP_remove
-	/** 
-	 * Write c++ represenetation of the blueprint to OutHeaderSource and OutCppSource
-	 */
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	UE_DEPRECATED(5.0, "This API is no longer in use and will be removed.")
-	static void CompileSynchronouslyToCpp(UBlueprint* BP, TSharedPtr<FString> OutHeaderSource, TSharedPtr<FString> OutCppSource, const FCompilerNativizationOptions& NativizationOptions);
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
-
 	/**
 	 * Adds a newly loaded blueprint to the compilation queue
 	 */

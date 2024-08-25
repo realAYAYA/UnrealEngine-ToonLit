@@ -32,10 +32,10 @@ namespace PerfSummaries
 				title = inTitle;
 				statNamesFilter = inStatFilterStr.Split(',');
 			}
-			public PeakSummarySection(XElement element)
+			public PeakSummarySection(XElement element, XmlVariableMappings vars)
 			{
 				XElement statFilterElement = element.Element("statFilter");
-				title = element.Attribute("title").Value;
+				title = element.GetRequiredAttribute<string>(vars, "title");
 
 				statNamesFilter = statFilterElement.Value.Split(',');
 			}
@@ -58,17 +58,17 @@ namespace PerfSummaries
 			public string title;
 		};
 
-		public PeakSummary(XElement element, string baseXmlDirectory)
+		public PeakSummary(XElement element, XmlVariableMappings vars, string baseXmlDirectory)
 		{
 			//read the child elements (mostly for colourThresholds)
-			ReadStatsFromXML(element);
-			hideStatPrefix = element.GetSafeAttibute<string>("hideStatPrefix", "").ToLower();
+			ReadStatsFromXML(element, vars);
+			hideStatPrefix = element.GetSafeAttribute<string>(vars, "hideStatPrefix", "").ToLower();
 
 			foreach (XElement child in element.Elements())
 			{
 				if (child.Name == "summarySection")
 				{
-					peakSummarySections.Add(new PeakSummarySection(child));
+					peakSummarySections.Add(new PeakSummarySection(child, vars));
 				}
 			}
 
@@ -84,16 +84,16 @@ namespace PerfSummaries
 
 		public override string GetName() { return "peak"; }
 
-		void WriteStatSection(StreamWriter htmlFile, CsvStats csvStats, PeakSummarySection section, StreamWriter LLMCsvData, SummaryTableRowData summaryTableRowData)
+		void WriteStatSection(HtmlSection htmlSection, CsvStats csvStats, PeakSummarySection section, StreamWriter LLMCsvData, SummaryTableRowData summaryTableRowData)
 		{
-			if (htmlFile != null)
+			if (htmlSection != null)
 			{
 				// Here we are deciding which title we have and write it to the file.
-				htmlFile.WriteLine("<h3>" + section.title + "</h3>");
-				htmlFile.WriteLine("  <table border='0' style='width:400'>");
+				htmlSection.WriteLine("<h3>" + section.title + "</h3>");
+				htmlSection.WriteLine("  <table border='0' style='width:400'>");
 
 				//Hard-coded start of the table.
-				htmlFile.WriteLine("    <tr><td style='width:200'></td><td style='width:75'><b>Average</b></td><td style='width:75'><b>Peak</b></td><td style='width:75'><b>Budget</b></td></tr>");
+				htmlSection.WriteLine("    <tr><td style='width:200'></td><td style='width:75'><b>Average</b></td><td style='width:75'><b>Peak</b></td><td style='width:75'><b>Budget</b></td></tr>");
 			}
 
 			foreach (PeakStatInfo statInfo in section.stats)
@@ -126,9 +126,9 @@ namespace PerfSummaries
 					averageColour = colorThresholdList.GetColourForValue(average);
 					budgetString = budget.ToString("0");
 				}
-				if (htmlFile != null)
+				if (htmlSection != null)
 				{
-					htmlFile.WriteLine("    <tr><td>" + statInfo.shortName + "</td><td bgcolor=" + averageColour + ">" + average.ToString("0") + "</td><td bgcolor=" + peakColour + ">" + peak.ToString("0") + "</td><td>" + budgetString + "</td></tr>");
+					htmlSection.WriteLine("    <tr><td>" + statInfo.shortName + "</td><td bgcolor=" + averageColour + ">" + average.ToString("0") + "</td><td bgcolor=" + peakColour + ">" + peak.ToString("0") + "</td><td>" + budgetString + "</td></tr>");
 				}
 
 				// Pass through color data as part of database-friendly stuff.
@@ -155,9 +155,9 @@ namespace PerfSummaries
 				}
 
 			}
-			if (htmlFile != null)
+			if (htmlSection != null)
 			{
-				htmlFile.WriteLine("  </table>");
+				htmlSection.WriteLine("  </table>");
 			}
 		}
 
@@ -173,8 +173,9 @@ namespace PerfSummaries
 			return null;
 		}
 
-		public override void WriteSummaryData(System.IO.StreamWriter htmlFile, CsvStats csvStats, CsvStats csvStatsUnstripped, bool bWriteSummaryCsv, SummaryTableRowData summaryTableRowData, string htmlFileName)
+		public override HtmlSection WriteSummaryData(bool bWriteHtml, CsvStats csvStats, CsvStats csvStatsUnstripped, bool bWriteSummaryCsv, SummaryTableRowData rowData, string htmlFileName)
 		{
+			HtmlSection htmlSection = null;
 			// Only HTML reporting is supported (does not output summary table row data)
 			StreamWriter LLMCsvData = null;
 			if (bWriteSummaryCsv)
@@ -196,24 +197,27 @@ namespace PerfSummaries
 				}
 			}
 
-			if (htmlFile != null)
+			if (bWriteHtml)
 			{
-				htmlFile.WriteLine("<h2>Peaks Summary</h2>");
+				htmlSection = new HtmlSection("Peaks Summary", bStartCollapsed);
 			}
+
 			foreach (PeakSummarySection section in peakSummarySections)
 			{
-				WriteStatSection(htmlFile, csvStats, section, LLMCsvData, summaryTableRowData);
+				WriteStatSection(htmlSection, csvStats, section, LLMCsvData, rowData);
 			}
 
 			if (LLMCsvData != null)
 			{
 				LLMCsvData.Close();
 			}
+
+			return htmlSection;
 		}
 
 
 
-		void AddStat(string statName, OptionalDouble budget)
+		void AddStat(string statName, Optional<double> budget)
 		{
 			stats.Add(statName);
 
@@ -258,13 +262,13 @@ namespace PerfSummaries
 		{
 			public PeakStatInfo(string inName, string inShortName)
 			{
-				budget = new OptionalDouble();
+				budget = new Optional<double>();
 				name = inName;
 				shortName = inShortName;
 			}
 			public string name;
 			public string shortName;
-			public OptionalDouble budget;
+			public Optional<double> budget;
 		};
 
 		PeakStatInfo getOrAddStatInfo(string statName)

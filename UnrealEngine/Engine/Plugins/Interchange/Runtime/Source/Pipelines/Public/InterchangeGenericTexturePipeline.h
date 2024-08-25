@@ -19,54 +19,62 @@ class INTERCHANGEPIPELINES_API UInterchangeGenericTexturePipeline : public UInte
 	GENERATED_BODY()
 
 public:
-	/** If enabled, imports the texture assets found in the sources. */
+	/** The name of the pipeline that will be display in the import dialog. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Textures", meta = (StandAlonePipelineProperty = "True", PipelineInternalEditionData = "True"))
+	FString PipelineDisplayName;
+
+	/** If enabled, imports all texture assets found in the source. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Textures")
 	bool bImportTextures = true;
 
-	/** If not empty, and there is only one asset and one source data, we will name the asset with this string. */
+	/** If set, and there is only one asset and one source, the imported asset will be given this name. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Textures", meta=(StandAlonePipelineProperty = "True", AlwaysResetToDefault = "True"))
 	FString AssetName;
 
 #if WITH_EDITORONLY_DATA
 	/** 
-	 * If enable, after a new import a test will be run to see if the texture is a normal map.
-	 * If the texture is a normal map the SRG, CompressionSettings and LODGroup settings will be adjusted.
+	 * If enabled, tests each newly imported texture to see if it is a normal map.
+	 * If it is, the SRGB, Compression Settings, and LOD Group properties of that texture will be adjusted.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Textures", Meta=(EditCondition="bImportTextures"))
 	bool bDetectNormalMapTexture = true;
 
-	/** If enabled, the texture's green channel will be inverted for normal maps. */
+	/** If enabled, the texture's green channel will be inverted for normal maps. This setting is only used if the Detect Normal Map Texture setting is also enabled. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Textures", Meta=(EditCondition="bImportTextures"))
 	bool bFlipNormalMapGreenChannel = false;
 
-	/** If enabled detect if a texture use a UDIM pattern and if so import it as UIDMs. */
+	/** If enabled, imports textures as UDIMs if they are named using a UDIM naming pattern. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Textures", Meta=(EditCondition="bImportTextures"))
 	bool bImportUDIMs = true;
 
-	/** Specify the files type that should be imported as long/lat cubemap */
+	/** Specify the file types that should be imported as long/lat cubemaps. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Textures", Meta=(EditCondition="bImportTextures"))
 	TSet<FString> FileExtensionsToImportAsLongLatCubemap = {"hdr"};
 
 	/** 
-	 * If true, tell the translator to provide a compressed source data payload when available.
-	 * This will generally result in smaller assets, but some operations like the texture build might be slower because the source data will need to be uncompressed.
-	 * If false, it will let the factory or another step in the pipeline decide what to do.
-	 * 
-	 * Compressed source source data is generally store the data as it is in the source file.
+	 * If enabled, the translator compresses the source data payload whenever possible. This generally results in smaller assets.
+	 * However, some operations like the texture build might be slower, because the source data first needs to be decompressed.
+	 * If disabled, the translator leaves the decision to the factory or the pipelines.
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, AdvancedDisplay, Category = "Textures", Meta=(EditCondition="bImportTextures"))
 	bool bPreferCompressedSourceData = false;
 
 #endif
 
-	/** Should the textures that have a non-power of two resolution be imported */
+	/** If enabled, textures that have a non-power-of-two resolution are imported. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, AdvancedDisplay, Category = "Textures", Meta=(EditCondition="bImportTextures"))
 	bool bAllowNonPowerOfTwo = false;
 
 public:
 	virtual void AdjustSettingsForContext(EInterchangePipelineContext ImportType, TObjectPtr<UObject> ReimportAsset) override;
-	virtual void ExecutePipeline(UInterchangeBaseNodeContainer* InBaseNodeContainer, const TArray<UInterchangeSourceData*>& InSourceDatas) override;
+	virtual void ExecutePipeline(UInterchangeBaseNodeContainer* InBaseNodeContainer, const TArray<UInterchangeSourceData*>& InSourceDatas, const FString& ContentBasePath) override;
 	virtual void ExecutePostFactoryPipeline(const UInterchangeBaseNodeContainer* BaseNodeContainer, const FString& NodeKey, UObject* CreatedAsset, bool bIsAReimport) override;
+
+#if WITH_EDITOR
+
+	virtual void FilterPropertiesFromTranslatedData(UInterchangeBaseNodeContainer* InBaseNodeContainer) override;
+
+#endif //WITH_EDITOR
 
 protected:
 	UInterchangeTextureFactoryNode* HandleCreationOfTextureFactoryNode(const UInterchangeTextureNode* TextureNode);

@@ -30,6 +30,7 @@ public class WaterEditor : ModuleRules
 				"ComponentVisualizers",
 				"DeveloperSettings",
 				"AdvancedPreviewScene",
+				"PlacementMode",
 			});
 
 		PublicDependencyModuleNames.AddRange(

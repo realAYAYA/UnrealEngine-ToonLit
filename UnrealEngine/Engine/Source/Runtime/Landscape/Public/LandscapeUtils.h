@@ -14,6 +14,7 @@ enum EShaderPlatform : uint16;
 class ULandscapeComponent;
 class ULandscapeLayerInfoObject;
 class UTexture2D;
+class UTexture;
 
 namespace UE::Landscape
 {
@@ -24,12 +25,18 @@ namespace UE::Landscape
 */
 LANDSCAPE_API bool DoesPlatformSupportEditLayers(EShaderPlatform InShaderPlatform);
 
+int32 ComputeMaxDeltasOffsetForMip(int32 InMipIndex, int32 InNumRelevantMips);
+int32 ComputeMaxDeltasCountForMip(int32 InMipIndex, int32 InNumRelevantMips);
+int32 ComputeMipToMipMaxDeltasIndex(int32 InSourceMipIndex, int32 InDestinationMipIndex, int32 InNumRelevantMips);
+int32 ComputeMipToMipMaxDeltasCount(int32 InNumRelevantMips);
+
 #if WITH_EDITOR
 
 struct FTextureCopyRequest
 {
 	UTexture2D* Source = nullptr;
-	UTexture2D* Destination = nullptr;
+	UTexture* Destination = nullptr;
+	int8 DestinationSlice = 0;
 };
 
 uint32 GetTypeHash(const FTextureCopyRequest& InKey);
@@ -57,11 +64,12 @@ public:
 	* Uses the provided arguments to add proper source/destination entries to internal copy requests.
 	* @param	InDestination	The texture used as a destination for the copy.
 	* @param	InDestinationChannel	The channel used as a destination for the copy.
+	* @param	InDestinationSlice	The Texture array slice to write to (use 0 for a Texture2D)
 	* @param	InComponent		The component containing the wanted source weightmap.
 	* @param	InLayerInfo		The layer info used to retrieve the proper source weightmap and channel.
 	* @return True if the copy has been successfully added.
 	*/
-	LANDSCAPE_API bool AddWeightmapCopy(UTexture2D* InDestination, int8 InDestinationChannel, const ULandscapeComponent* InComponent, ULandscapeLayerInfoObject* InLayerInfo);
+	LANDSCAPE_API bool AddWeightmapCopy(UTexture* InDestination, int8 InDestinationChannel, int8 InDestinationSlice, const ULandscapeComponent* InComponent, ULandscapeLayerInfoObject* InLayerInfo);
 
 	/** Process pending internal copy requests. */
 	LANDSCAPE_API bool ProcessTextureCopies();
@@ -98,6 +106,12 @@ LANDSCAPE_API FString GetLayerInfoObjectPackageName(const ULevel* InLevel, const
 /** Returns true if the provided layer info object is the current visibility layer. */
 LANDSCAPE_API bool IsVisibilityLayer(const ULandscapeLayerInfoObject* InLayerInfoObject);
 
+/** Returns true if InPlatform is a mobile platform and the Landscape.MobileWeightTextureArray CVar set */
+bool UseWeightmapTextureArray(EShaderPlatform InPlatform);	
+
+/** Check if Landscape.MobileWeightTextureArray CVar set and we should attempt to use texture arrays for weight maps on mobile platforms  */
+bool IsMobileWeightmapTextureArrayEnabled();
+	
 #endif //!WITH_EDITOR
 
 } // end namespace UE::Landscape

@@ -5,7 +5,9 @@
 #include "CoreMinimal.h"
 #include "RigVMCore/RigVMExecuteContext.h"
 #include "RigVMCore/RigVM.h"
+#include "RigName.h"
 #include "RigHierarchyElements.h"
+#include "RigHierarchyCache.h"
 #include "RigHierarchyPose.h"
 #include "UObject/WeakObjectPtrTemplates.h"
 #include "EdGraph/EdGraphPin.h"
@@ -16,8 +18,10 @@
 #include "Containers/Queue.h"
 #include "RigHierarchy.generated.h"
 
+class UControlRig;
 class URigHierarchy;
 class URigHierarchyController;
+class UModularRigRuleManager; 
 
 DECLARE_MULTICAST_DELEGATE_ThreeParams(FRigHierarchyModifiedEvent, ERigHierarchyNotification /* type */, URigHierarchy* /* hierarchy */, const FRigBaseElement* /* element */);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FRigHierarchyModifiedDynamicEvent, ERigHierarchyNotification, NotifType, URigHierarchy*, Hierarchy, FRigElementKey, Subject);
@@ -26,6 +30,7 @@ DECLARE_MULTICAST_DELEGATE_TwoParams(FRigHierarchyMetadataChangedDelegate, const
 DECLARE_MULTICAST_DELEGATE_ThreeParams(FRigHierarchyMetadataTagChangedDelegate, const FRigElementKey& /* Key */, const FName& /* Tag */, bool /* AddedOrRemoved */);
 
 extern CONTROLRIG_API TAutoConsoleVariable<bool> CVarControlRigHierarchyEnableRotationOrder;
+extern CONTROLRIG_API TAutoConsoleVariable<bool> CVarControlRigHierarchyEnableModules;
 
 UENUM()
 enum ERigTransformStackEntryType : int
@@ -90,6 +95,65 @@ struct FRigTransformStackEntry
 	TArray<FString> Callstack;
 };
 
+template<typename T>
+class CONTROLRIG_API THierarchyCache
+{
+public:
+
+	THierarchyCache()
+		: TopologyVersion(0)
+	{}
+
+	THierarchyCache(const T& InValue, uint32 InTopologyVersion)
+		: THierarchyCache()
+	{
+		Value = InValue;
+		TopologyVersion = InTopologyVersion;
+	}
+
+	bool IsValid(uint32 InTopologyVersion) const
+	{
+		return (TopologyVersion == InTopologyVersion) && Value.IsSet();
+	}
+
+	void Reset()
+	{
+		TopologyVersion = 0;
+		Value = TOptional<T>();
+	}
+
+	const T& Get() const
+	{
+		return Value.GetValue();
+	}
+
+	T& Get()
+	{
+		if(!Value.IsSet())
+		{
+			Value = T();
+		}
+		return Value.GetValue();
+	}
+
+	void Set(uint32 InTopologyVersion)
+	{
+		check(Value.IsSet());
+		TopologyVersion = InTopologyVersion;
+	}
+
+	void Set(const T& InValue, uint32 InTopologyVersion)
+	{
+		Value = InValue;
+		TopologyVersion = InTopologyVersion;
+	}
+
+private:
+
+	uint32 TopologyVersion;
+	TOptional<T> Value;
+};
+
 UCLASS(BlueprintType)
 class CONTROLRIG_API URigHierarchy : public UObject
 {
@@ -101,12 +165,18 @@ public:
 	typedef TPair<int32, TArray<int32>> TElementDependencyMapPair;
 	typedef TTuple<int32, int32, int32, ERigTransformType::Type> TInstructionSliceElement;
 	inline static const FName TagMetadataName = TEXT("Tags");
+	inline static const FName ShortModuleNameMetadataName = TEXT("ShortModuleName");
+	inline static const FName DesiredNameMetadataName = TEXT("DesiredName");
+	inline static const FName DesiredKeyMetadataName = TEXT("DesiredKey");
+	inline static const FName ModuleMetadataName = TEXT("Module");
+	inline static const FName NameSpaceMetadataName = TEXT("NameSpace");
 
 	URigHierarchy();
 
 	// UObject interface
 	virtual void BeginDestroy() override;
 	virtual void Serialize(FArchive& Ar) override;
+	static void AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector);
 	void Save(FArchive& Ar);
 	void Load(FArchive& Ar);
 	virtual void PostLoad() override;
@@ -135,6 +205,13 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = URigHierarchy)
 	void CopyHierarchy(URigHierarchy* InHierarchy);
+
+	bool IsCopyingHierarchy() const { return bIsCopyingHierarchy; }
+
+	/**
+	 * Returns true if the hierarchy currently has an execute context / the rig is running
+	 */
+	bool HasExecuteContext() const { return ExecuteContext != nullptr; }
 
 	/**
 	 * Returns a hash for the hierarchy representing all names
@@ -226,10 +303,10 @@ public:
 	TArray<FRigBaseElement*>::RangedForIteratorType      end() { return Elements.end(); }
 
 	/**
-	 * Iterator function to invoke a lambda / TFunction for each element
+	 * Iterator function to invoke a lambda / TFunctionRef for each element
 	 * @param PerElementFunction The function to invoke for each element
 	 */
-	void ForEach(TFunction<bool(FRigBaseElement*)> PerElementFunction) const
+	void ForEach(TFunctionRef<bool(FRigBaseElement*)> PerElementFunction) const
 	{
 		for (int32 ElementIndex = 0; ElementIndex < Elements.Num(); ElementIndex++)
 		{
@@ -241,11 +318,11 @@ public:
 	}
 
 	/**
-	 * Filtered template Iterator function to invoke a lambda / TFunction for each element of a given type.
+	 * Filtered template Iterator function to invoke a lambda / TFunctionRef for each element of a given type.
 	 * @param PerElementFunction The function to invoke for each element of a given type
 	 */
 	template<typename T>
-	void ForEach(TFunction<bool(T*)> PerElementFunction) const
+	void ForEach(TFunctionRef<bool(T*)> PerElementFunction) const
 	{
 		for (int32 ElementIndex = 0; ElementIndex < Elements.Num(); ElementIndex++)
 		{
@@ -335,6 +412,18 @@ public:
 	 */
 	int32 GetIndex(const FRigElementKey& InKey) const
 	{
+		if(ElementKeyRedirector)
+		{
+			if(FCachedRigElement* CachedRigElement = ElementKeyRedirector->Find(InKey))
+			{
+				if(CachedRigElement->UpdateCache(this))
+				{
+					return CachedRigElement->GetIndex();
+				}
+				return INDEX_NONE;
+			}
+		}
+		
 		if(const int32* Index = IndexLookup.Find(InKey))
 		{
 			return *Index;
@@ -585,7 +674,7 @@ private:
 		{
 			return *Bone;
 		}
-		return FRigBoneElement();
+		return FRigBoneElement{};
 	}	
 	
 	/**
@@ -599,7 +688,7 @@ private:
 		{
 			return *Control;
 		}
-		return FRigControlElement();
+		return FRigControlElement{};
 	}	
 
 	/**
@@ -613,7 +702,7 @@ private:
 		{
 			return *Null;
 		}
-		return FRigNullElement();
+		return FRigNullElement{};
 	}
 	
 public:	
@@ -872,6 +961,68 @@ public:
 	}
 
 	/**
+	 * Returns all Connector elements
+	 * @param bTraverse Returns the elements in order of a depth first traversal
+	 */
+	TArray<FRigConnectorElement*> GetConnectors(bool bTraverse = false) const
+	{
+		return GetElementsOfType<FRigConnectorElement>(bTraverse);
+	}
+
+	/**
+	 * Returns all Connector elements
+	 * @param bTraverse Returns the elements in order of a depth first traversal
+	 */
+	UFUNCTION(BlueprintCallable, Category = URigHierarchy, meta = (DisplayName = "Get Connectors", ScriptName = "GetConnectors"))
+	TArray<FRigElementKey> GetConnectorKeys(bool bTraverse = true) const
+	{
+		return GetKeysOfType<FRigConnectorElement>(bTraverse);
+	}
+
+	/**
+	 * Returns all of the sockets' state
+	 */
+	UFUNCTION(BlueprintPure, Category = URigHierarchy)
+	TArray<FRigSocketState> GetSocketStates() const;
+
+	/**
+	 * Try to restore the sockets from the state structs
+	 */
+	UFUNCTION(BlueprintCallable, Category = URigHierarchy)
+	TArray<FRigElementKey> RestoreSocketsFromStates(TArray<FRigSocketState> InStates, bool bSetupUndoRedo = false);
+
+	/**
+	 * Returns all of the connectors' state
+	 */
+	UFUNCTION(BlueprintPure, Category = URigHierarchy)
+	TArray<FRigConnectorState> GetConnectorStates() const;
+
+	/**
+	 * Try to restore the connectors from the state structs
+	 */
+	UFUNCTION(BlueprintCallable, Category = URigHierarchy)
+	TArray<FRigElementKey> RestoreConnectorsFromStates(TArray<FRigConnectorState> InStates, bool bSetupUndoRedo = false);
+
+	/**
+	 * Returns all Socket elements
+	 * @param bTraverse Returns the elements in order of a depth first traversal
+	 */
+	TArray<FRigSocketElement*> GetSockets(bool bTraverse = false) const
+	{
+		return GetElementsOfType<FRigSocketElement>(bTraverse);
+	}
+
+	/**
+	 * Returns all Socket elements
+	 * @param bTraverse Returns the elements in order of a depth first traversal
+	 */
+	UFUNCTION(BlueprintCallable, Category = URigHierarchy, meta = (DisplayName = "Get Sockets", ScriptName = "GetSockets"))
+	TArray<FRigElementKey> GetSocketKeys(bool bTraverse = true) const
+	{
+		return GetKeysOfType<FRigSocketElement>(bTraverse);
+	}
+
+	/**
 	 * Returns all root elements
 	 */
 	TArray<FRigBaseElement*> GetRootElements() const
@@ -899,7 +1050,7 @@ public:
 	 * @param InItem The element key to return the metadata keys for
 	 */
 	UFUNCTION(BlueprintPure, Category = URigHierarchy)
-	TArray<FName> GetMetadataNames(FRigElementKey InItem);
+	TArray<FName> GetMetadataNames(FRigElementKey InItem) const;
 
 	/**
 	 * Returns the type of metadata given its name the item it is stored under
@@ -907,7 +1058,7 @@ public:
 	 * @param InMetadataName The name of the metadata to return the type for
 	 */
 	UFUNCTION(BlueprintPure, Category = URigHierarchy)
-	ERigMetadataType GetMetadataType(FRigElementKey InItem, FName InMetadataName);
+	ERigMetadataType GetMetadataType(FRigElementKey InItem, FName InMetadataName) const;
 
 	/**
 	 * Removes the metadata under a given element 
@@ -1414,6 +1565,34 @@ public:
 		return SetArrayMetadata<FRigElementKey>(InItem, ERigMetadataType::RigElementKeyArray, InMetadataName, InValue);
 	}
 
+	/**
+	 * Returns the path of the module an element belong to (or NAME_None in case the element doesn't belong to a module)
+	 * @return The path the element belongs to (or NAME_None)
+	 */
+	UFUNCTION(BlueprintPure, Category = URigHierarchy)
+	FName GetModulePathFName(FRigElementKey InItem) const;
+	
+	/**
+	 * Returns the path of the module an element belong to (or an empty string in case the element doesn't belong to a module)
+	 * @return The path the element belongs to (or empty string)
+	 */
+	UFUNCTION(BlueprintPure, Category = URigHierarchy)
+	FString GetModulePath(FRigElementKey InItem) const;
+
+	/**
+	 * Returns the namespace of an element belong to (or NAME_None in case the element doesn't belong to a module / namespace)
+	 * @return The namespace the element belongs to (or NAME_None)
+	 */
+	UFUNCTION(BlueprintPure, Category = URigHierarchy)
+	FName GetNameSpaceFName(FRigElementKey InItem) const;
+	
+	/**
+	 * Returns the namespace of an element belong to (or an empty string in case the element doesn't belong to a module / namespace)
+	 * @return The namespace the element belongs to (or empty string)
+	 */
+	UFUNCTION(BlueprintPure, Category = URigHierarchy)
+	FString GetNameSpace(FRigElementKey InItem) const;
+
 	/*
 	 * Returns the tags for a given item
 	 * @param InItem The item to return the tags for
@@ -1511,6 +1690,20 @@ public:
 	}
 
 	/**
+	 * Returns the two name sections with the right namespace separator
+	 */
+	static FString JoinNameSpace(const FString& InLeft, const FString& InRight);
+	static FRigName JoinNameSpace(const FRigName& InLeft, const FRigName& InRight);
+
+	/**
+	 * Returns the two name sections with the right namespace separator
+	 */
+	static TPair<FString, FString> SplitNameSpace(const FString& InNameSpacedPath, bool bFromEnd = true);
+	static TPair<FRigName, FRigName> SplitNameSpace(const FRigName& InNameSpacedPath, bool bFromEnd = true);
+	static bool SplitNameSpace(const FString& InNameSpacedPath, FString* OutNameSpace, FString* OutName, bool bFromEnd = true);
+	static bool SplitNameSpace(const FRigName& InNameSpacedPath, FRigName* OutNameSpace, FRigName* OutName, bool bFromEnd = true);
+
+	/**
 	 * Returns the max allowed length for a name within the hierarchy.
 	 * @return Returns the max allowed length for a name within the hierarchy.
 	 */
@@ -1520,14 +1713,14 @@ public:
 	 * Sanitizes a name by removing invalid characters.
 	 * @param InOutName The name to sanitize in place.
 	 */
-	static void SanitizeName(FString& InOutName);
+	static void SanitizeName(FRigName& InOutName, bool bAllowNameSpaces = true);
 
 	/**
 	 * Sanitizes a name by removing invalid characters.
 	 * @param InName The name to sanitize.
 	 * @return The sanitized name.
  	 */
-	static FName GetSanitizedName(const FString& InName);
+	static FRigName GetSanitizedName(const FRigName& InName, bool bAllowNameSpaces = true);
 
 	/**
 	 * Returns true if a given name is available.
@@ -1536,7 +1729,7 @@ public:
 	 * @param OutErrorMessage An optional pointer to return a potential error message 
 	 * @return Returns true if the name is available.
 	 */
-	bool IsNameAvailable(const FString& InPotentialNewName, ERigElementType InType, FString* OutErrorMessage = nullptr) const;
+	bool IsNameAvailable(const FRigName& InPotentialNewName, ERigElementType InType, FString* OutErrorMessage = nullptr) const;
 
 	/**
 	 * Returns true if a given display name is available.
@@ -1545,15 +1738,16 @@ public:
 	 * @param OutErrorMessage An optional pointer to return a potential error message 
 	 * @return Returns true if the name is available.
 	 */
-	bool IsDisplayNameAvailable(const FRigElementKey& InParentElement, const FString& InPotentialNewDisplayName, FString* OutErrorMessage = nullptr) const;
+	bool IsDisplayNameAvailable(const FRigElementKey& InParentElement, const FRigName& InPotentialNewDisplayName, FString* OutErrorMessage = nullptr) const;
 
 	/**
 	 * Returns a valid new name for a to-be-added element.
 	 * @param InPotentialNewName The name to be sanitized and adjusted for availability
 	 * @param InType The type of the to-be-added element
+	 * @param bAllowNameSpace If true the name will be allowed to contain namespaces
 	 * @return Returns the name to use for the to-be-added element.
 	 */
-	FName GetSafeNewName(const FString& InPotentialNewName, ERigElementType InType) const;
+	FRigName GetSafeNewName(const FRigName& InPotentialNewName, ERigElementType InType, bool bAllowNameSpace = false) const;
 
 	/**
 	 * Returns a valid new display name for a control
@@ -1561,7 +1755,13 @@ public:
 	 * @param InPotentialNewDisplayName The name to be sanitized and adjusted for availability
 	 * @return Returns the name to use for the to-be-added element.
 	 */
-	FName GetSafeNewDisplayName(const FRigElementKey& InParentElement, const FString& InPotentialNewDisplayName) const;
+	FRigName GetSafeNewDisplayName(const FRigElementKey& InParentElement, const FRigName& InPotentialNewDisplayName) const;
+
+	/**
+	 * Returns the display label for an element to be used for the UI
+	 */
+	FText GetDisplayNameForUI(const FRigBaseElement* InElement, bool bIncludeNameSpace = true) const;
+	FText GetDisplayNameForUI(const FRigElementKey& InKey, bool bIncludeNameSpace = true) const;
 
 	/**
 	 * Returns the modified event, which can be used to 
@@ -1777,6 +1977,14 @@ public:
 	}
 
 	/**
+	 * Returns the version of the transform / pose on the element given its key.
+	 * Versions are incremented with every change occured to the transform. You
+	 * can use this to compare your previous "knowledge" of the pose - and see
+	 * if anybody has changed it during your last access.
+	 */
+	int32 GetPoseVersion(const FRigElementKey& InKey) const;
+
+	/**
 	 * Returns the global offset transform for a given control element.
 	 * @param InKey The key of the control to retrieve the transform for
 	 * @param bInitial If true the initial transform will be used
@@ -1906,7 +2114,7 @@ public:
 		{
 			if(FRigControlElement* ControlElement = Cast<FRigControlElement>(Elements[InElementIndex]))
 			{
-				return GetControlValue(ControlElement, InValueType);
+				return GetControlValue(ControlElement, InValueType, bUsePreferredEulerAngles);
 			}
 		}
 		return FRigControlValue();
@@ -1997,7 +2205,12 @@ public:
 	{
 		if(InControlElement)
 		{
-			return InControlElement->PreferredEulerAngles.GetRotator(bInitial);
+			if (bUsePreferredEulerAngles)
+			{
+				return InControlElement->PreferredEulerAngles.GetRotator(bInitial);
+			}
+			const ERigTransformType::Type Type = bInitial ? ERigTransformType::InitialLocal : ERigTransformType::CurrentLocal;
+			return GetControlValue(InControlElement->GetKey()).GetAsTransform(InControlElement->Settings.ControlType, InControlElement->Settings.PrimaryAxis).Rotator();
 		}
 		return FRotator::ZeroRotator;
 	}
@@ -2245,7 +2458,7 @@ public:
 
 	bool GetUsePreferredRotationOrder(const FRigControlElement* InControlElement) const
 	{
-		if (InControlElement)
+		if (InControlElement && bUsePreferredEulerAngles)
 		{
 			{
 				return InControlElement->Settings.bUsePreferredRotationOrder;
@@ -2297,6 +2510,28 @@ public:
 				FRotator Rotator(InEulerAngle[1], InEulerAngle[2], InEulerAngle[0]);
 				SetControlPreferredRotator(InControlElement, Rotator, bIsInitial, false /* fix euler flips*/); //test fix todo mikez
 			}
+		}
+	}
+
+	void SetControlPreferredEulerAngles(FRigControlElement* InControlElement, const FTransform& InTransform, bool bIsInitial = false)
+	{
+		FEulerTransform EulerTransform(InTransform);
+		if (InControlElement && InControlElement->Settings.ControlType == ERigControlType::Transform)
+		{
+			FVector EulerAngle(EulerTransform.Rotation.Roll, EulerTransform.Rotation.Pitch, EulerTransform.Rotation.Yaw);
+			SetControlSpecifiedEulerAngle(InControlElement, EulerAngle, bIsInitial);
+		}
+		else if (InControlElement && InControlElement->Settings.ControlType == ERigControlType::TransformNoScale)
+		{
+			const FTransformNoScale NoScale = EulerTransform.ToFTransform();
+			FVector EulerAngle(EulerTransform.Rotation.Roll, EulerTransform.Rotation.Pitch, EulerTransform.Rotation.Yaw);
+			SetControlSpecifiedEulerAngle(InControlElement, EulerAngle, bIsInitial);
+		}
+		else if (InControlElement && InControlElement->Settings.ControlType == ERigControlType::EulerTransform)
+		{
+			FVector EulerAngle(EulerTransform.Rotation.Roll, EulerTransform.Rotation.Pitch, EulerTransform.Rotation.Yaw);
+			FQuat Quat = GetControlQuaternion(InControlElement, EulerAngle);
+			SetControlSpecifiedEulerAngle(InControlElement, EulerAngle, bIsInitial);
 		}
 	}
 
@@ -2706,6 +2941,36 @@ public:
 	}
 
 	/**
+	 * Sets the connector settings for a given connector element by key
+	 * @param InKey The key of the connector element to set the settings for
+	 * @param InSettings The new connector settings value to set
+	 * @param bSetupUndo If true the transform stack will be setup for undo / redo
+	 */
+	UFUNCTION(BlueprintCallable, Category = URigHierarchy)
+	void SetConnectorSettings(FRigElementKey InKey, FRigConnectorSettings InSettings, bool bSetupUndo = false, bool bForce = false, bool bPrintPythonCommands = false)
+	{
+		return SetConnectorSettingsByIndex(GetIndex(InKey), InSettings, bSetupUndo, bForce, bPrintPythonCommands);
+	}
+
+	/**
+	 * Sets the connector settings for a given connector element by index
+	 * @param InElementIndex The index of the connector element to set the settings for
+	 * @param InSettings The new connector settings value to set
+	 * @param bSetupUndo If true the transform stack will be setup for undo / redo
+	 */
+	UFUNCTION(BlueprintCallable, Category = URigHierarchy)
+	void SetConnectorSettingsByIndex(int32 InElementIndex, FRigConnectorSettings InSettings, bool bSetupUndo = false, bool bForce = false, bool bPrintPythonCommands = false)
+	{
+		if(Elements.IsValidIndex(InElementIndex))
+		{
+			if(FRigConnectorElement* ConnectorElement = Cast<FRigConnectorElement>(Elements[InElementIndex]))
+			{
+				SetConnectorSettings(ConnectorElement, InSettings, bSetupUndo, bForce, bPrintPythonCommands);
+			}
+		}
+	}
+
+	/**
 	 * Returns the global current or initial value for a given key.
 	 * If the element does not have a parent FTransform::Identity will be returned.
 	 * @param InKey The key of the element to retrieve the transform for
@@ -2757,7 +3022,8 @@ public:
 	 * @param InElement The element to retrieve the children for
 	 * @return Returns the child elements
 	 */
-	const FRigBaseElementChildrenArray& GetChildren(const FRigBaseElement* InElement) const;
+	TConstArrayView<FRigBaseElement*> GetChildren(const FRigBaseElement* InElement) const;
+	TArrayView<FRigBaseElement*> GetChildren(const FRigBaseElement* InElement);
 
 	/**
 	 * Returns the child elements of a given element
@@ -3136,6 +3402,11 @@ public:
 	void Traverse(TFunction<void(FRigBaseElement*, bool& /* continue */)> PerElementFunction, bool bTowardsChildren = true) const;
 
 	/**
+	 * Returns the currently resolved target for given connector key
+	 */
+	const FRigElementKey& GetResolvedTarget(const FRigElementKey& InConnectorKey) const;
+
+	/**
 	 * Performs undo for one transform change
 	 */
 	bool Undo();
@@ -3213,9 +3484,34 @@ public:
 	URigHierarchyController* GetController(bool bCreateIfNeeded = true);
 
 	/**
+	 * Returns a rule manager for this hierarchy
+	 * Note: If the manager is not available this will return nullptr 
+	 * even if the bCreateIfNeeded flag is set to true.
+	 * @param bCreateIfNeeded Creates a controller if needed
+	 * @return The Controller for this hierarchy
+	 */
+	UFUNCTION(BlueprintCallable, Category = URigHierarchy)
+	UModularRigRuleManager* GetRuleManager(bool bCreateIfNeeded = true);
+
+	/**
 	 * Returns the topology version of this hierarchy
 	 */
-	uint16 GetTopologyVersion() const { return TopologyVersion; }
+	uint32 GetTopologyVersion() const { return TopologyVersion; }
+
+	/**
+	 * Returns the hash of this hierarchy used for cached element keys
+	 */
+	uint32 GetTopologyVersionHash() const
+	{
+		const uint32 Hash = HashCombine(
+			(uint32)reinterpret_cast<long long>(this),
+			GetTypeHash(TopologyVersion));
+		if(ElementKeyRedirector)
+		{
+			return HashCombine(Hash, ElementKeyRedirector->GetHash());
+		}
+		return Hash;
+	}
 
 	/**
 	 * Increments the topology version
@@ -3225,40 +3521,26 @@ public:
 	/**
 	 * Returns the metadata version of this hierarchy
 	 */
-	uint16 GetMetadataVersion() const { return MetadataVersion; }
-
-	/**
-	 * Increments the metadata version
-	 */
-	void IncrementMetadataVersion(const FRigElementKey& InKey, const FName& InName)
-	{
-		MetadataVersion += 1 + (int32)HashCombine(GetTypeHash(InKey), GetTypeHash(InName));
-	}
+	uint32 GetMetadataVersion() const { return MetadataVersion; }
 
 	/**
      * Returns the metadata tag version of this hierarchy
 	 */
-	uint16 GetMetadataTagVersion() const { return MetadataTagVersion; }
-
-	/**
-	 * Increments the metadataTag version
-	 */
-	void IncrementMetadataTagVersion(const FRigElementKey& InKey, const FName& InTag, bool bAdded)
-	{
-		MetadataTagVersion += 1 + (int32)HashCombine(GetTypeHash(InKey), GetTypeHash(InTag));
-	}
+	uint32 GetMetadataTagVersion() const { return MetadataTagVersion; }
 
 	/**
 	 * Returns the current / initial pose of the hierarchy
 	 * @param bInitial If set to true the initial pose will be returned
 	 * @return The pose of the hierarchy
+	 * @param bIncludeTransientControls If true the transient controls will be included in the pose
 	 */
 	UFUNCTION(BlueprintCallable, Category = URigHierarchy)
 	FRigPose GetPose(
-		bool bInitial = false
+		bool bInitial = false,
+		bool bIncludeTransientControls = true
 	) const
 	{
-		return GetPose(bInitial, ERigElementType::All, FRigElementKeyCollection());
+		return GetPose(bInitial, ERigElementType::All, FRigElementKeyCollection(), bIncludeTransientControls);
 	}
 
 	/**
@@ -3266,12 +3548,14 @@ public:
 	 * @param bInitial If set to true the initial pose will be returned
 	 * @param InElementType The types of elements to get
 	 * @param InItems An optional list of items to get
+	 * @param bIncludeTransientControls If true the transient controls will be included in the pose
 	 * @return The pose of the hierarchy
 	 */
 	FRigPose GetPose(
 		bool bInitial,
 		ERigElementType InElementType,
-		const FRigElementKeyCollection& InItems 
+		const FRigElementKeyCollection& InItems ,
+		bool bIncludeTransientControls = true
 	) const;
 
 	/**
@@ -3279,12 +3563,14 @@ public:
 	 * @param bInitial If set to true the initial pose will be returned
 	 * @param InElementType The types of elements to get
 	 * @param InItems An optional list of items to get
+	 * @param bIncludeTransientControls If true the transient controls will be included in the pose
 	 * @return The pose of the hierarchy
 	 */
 	FRigPose GetPose(
 		bool bInitial,
 		ERigElementType InElementType,
-		const TArrayView<const FRigElementKey>& InItems 
+		const TArrayView<const FRigElementKey>& InItems,
+		bool bIncludeTransientControls = true
 	) const;
 
 	/**
@@ -3622,9 +3908,13 @@ public:
 	 * Returns a control's current value
 	 * @param InControlElement The element to retrieve the current value for
 	 * @param InValueType The type of value to return
+	 * @param bUsePreferredAngles When true will use euler preferred angles to compute the value
 	 * @return Returns the current value of the control
 	 */
-	FRigControlValue GetControlValue(FRigControlElement* InControlElement, ERigControlValueType InValueType) const;
+	FRigControlValue GetControlValue(FRigControlElement* InControlElement, ERigControlValueType InValueType, bool bUsePreferredAngles = true) const;
+
+	void SetPreferredEulerAnglesFromValue(FRigControlElement* InControlElement, const FRigControlValue& InValue,
+	                                      const ERigControlValueType& InValueType, bool bFixEulerFlips);
 
 	template<typename T>
 	T GetControlValue(FRigControlElement* InControlElement, ERigControlValueType InValueType) const
@@ -3654,6 +3944,14 @@ public:
 	 * @param bVisibility The new visibility for the control
 	 */
 	void SetControlVisibility(FRigControlElement* InControlElement, bool bVisibility);
+
+	/**
+	 * Sets the connector settings for a given connector element
+	 * @param InConnectorElement The element to set the settings for
+	 * @param InSettings The new connector settings value to set
+	 * @param bSetupUndo If true the transform stack will be setup for undo / redo
+	 */
+	void SetConnectorSettings(FRigConnectorElement* InConnectorElement, FRigConnectorSettings InSettings, bool bSetupUndo = false, bool bForce = false, bool bPrintPythonCommands = false);
 
 	/**
 	 * Returns a curve's value. If the curve value is not set, returns 
@@ -3709,16 +4007,18 @@ public:
 	 */
 	bool IsParentedTo(FRigBaseElement* InChild, FRigBaseElement* InParent, const TElementDependencyMap& InDependencyMap = TElementDependencyMap()) const;
 
+private:
 	/**
 	 * Returns true if an element is affected to another element
 	 * @param InDependent The dependent element to check for a dependency
 	 * @param InDependency The dependency element to check for
-	 * @param InElementsVisited An array to keep track of whether an element is visited to avoid infinite recursion
 	 * @param InDependencyMap An additional map of dependencies to respect
+	 * @param bIsOnActualTopology Indicates that the passed dependent and dependency are expected to be on the current topology (if false they are provided with the dependency map)
 	 * @return True if the given dependent is affected by the given dependency 
 	 */
-	bool IsDependentOn(FRigBaseElement* InDependent, FRigBaseElement* InDependency, TArray<bool>& InElementsVisited, const TElementDependencyMap& InDependencyMap = TElementDependencyMap()) const;
+	bool IsDependentOn(FRigBaseElement* InDependent, FRigBaseElement* InDependency, const TElementDependencyMap& InDependencyMap = TElementDependencyMap(), bool bIsOnActualTopology = true) const;
 
+public:
 	/**
 	 * Returns the index of an element given its key within its default parent (or root)
 	 * @param InElement The element to retrieve the index for
@@ -3796,23 +4096,14 @@ private:
     bool IsSelected(const FRigBaseElement* InElement) const;
 
 	/**
-	 * Removes the transient cached children table for all elements.
+	 * Updates the transient cached children table if the topology version is out of date with the one
+	 * stored with the cached table.
+	 * @return Returns true if a change was performed
 	 */
-	void ResetCachedChildren();
+	void EnsureCachedChildrenAreCurrent() const;
 
-	/**
-	 * Updates the transient cached children table for a given element if needed (or if bForce == true).
-	 * @param InElement The element to update the children table for
-	 * @param bForce If set to true the table will always be updated
-	 */
-	void UpdateCachedChildren(const FRigBaseElement* InElement, bool bForce = false) const;
-
-	/**
-	* Updates the transient cached children table for all elements if needed (or if bForce == true).
-	* @param bForce If set to true the table will always be updated
-	*/
-	void UpdateAllCachedChildren() const;
-
+	void UpdateCachedChildren();
+	
 	/**
 	 * Corrects a parent element key for space switching
 	 */
@@ -3834,12 +4125,10 @@ private:
 	template<typename ElementType = FRigBaseElement>
 	ElementType* NewElement(int32 Num = 1)
 	{
-		ElementType* NewElements = (ElementType*)FMemory::Malloc(sizeof(ElementType) * Num);
+		ElementType* NewElements = static_cast<ElementType*>(FMemory::Malloc(sizeof(ElementType) * Num));
 		for(int32 Index=0;Index<Num;Index++)
 		{
-			new(&NewElements[Index]) ElementType();
-			NewElements[Index].MetadataChangedDelegate.BindStatic(&URigHierarchy::OnMetadataChanged_Static, this);
-			NewElements[Index].MetadataTagChangedDelegate.BindStatic(&URigHierarchy::OnMetadataTagChanged_Static, this);
+			new(&NewElements[Index]) ElementType(this);
 		}
 		NewElements[0].OwnedInstances = Num;
 		return NewElements;
@@ -3881,14 +4170,14 @@ private:
 	 * added, removed, re-parented or renamed.
 	 */
 	UPROPERTY(transient)
-	uint16 TopologyVersion;
+	uint32 TopologyVersion;
 
 	/**
 	 * The metadata version of the hierarchy changes when metadata is being
 	 * created or removed (not when the metadata values changes)
 	 */
 	UPROPERTY(transient)
-	uint16 MetadataVersion;
+	uint32 MetadataVersion;
 
 	/**
 	 * The metadata version of the hierarchy changes when metadata is being
@@ -3910,11 +4199,54 @@ private:
 	// Storage for the elements
 	mutable TArray<TArray<FRigBaseElement*>> ElementsPerType;
 
+	//
+	struct FMetadataStorage
+	{
+		TMap<FName, FRigBaseMetadata*> MetadataMap;
+		FName LastAccessName;
+		FRigBaseMetadata* LastAccessMetadata = nullptr;
+
+		void Reset();
+		void Serialize(FArchive& Ar);
+
+		friend FArchive& operator<<(FArchive& Ar, FMetadataStorage& Storage)
+		{
+			Storage.Serialize(Ar);
+			return Ar;
+		}
+	};
+
 	// Managed lookup from Key to Index
 	TMap<FRigElementKey, int32> IndexLookup;
 
-	// Static empty element array used for ref returns
-	static const FRigBaseElementChildrenArray EmptyElementArray;
+	TMap<FRigElementKey, FString> UserDefinedElementName;
+
+	// Element metadata storage. Storage is defined here rather than on the elements
+	// to reduce memory consumption. Only elements created by MakeElement point to
+	// the element storage. Copied elements via the copy constructor or copy operator
+	// do not have URigHierarchy as an owner and therefore do not carry metadata with them.
+	TArray<FMetadataStorage> ElementMetadata;
+
+	// List of metadata storage entries that have been freed and can be recycled.
+	TArray<int32> ElementMetadataFreeList;
+
+	// A quick-lookup cache for elements' children. Each element that has a ChildCacheIndex
+	// not equal to INDEX_NONE is an index into the offset and count cache below, which in
+	// turn contains an offset into the ChildElementCache, which stores consecutive runs of
+	// children for that element. This makes it quick to get a TArrayView on the list of
+	// children.
+	struct FChildElementOffsetAndCount
+	{
+		int32 Offset;
+		int32 Count;
+	};
+	
+	TArray<FChildElementOffsetAndCount> ChildElementOffsetAndCountCache;
+	TArray<FRigBaseElement*> ChildElementCache;
+
+	// The topology version at which the child element cache was constructed. If it differs
+	// from the stored TopologyVersion, then the cache is rebuilt. 
+	uint32 ChildElementCacheTopologyVersion = std::numeric_limits<uint32>::max();
 
 	///////////////////////////////////////////////
 	/// Undo redo related
@@ -3996,6 +4328,11 @@ private:
 	 */
 	bool bSuspendNotifications;
 
+	/** 
+	 * If set to true all metadata changes notifs coming from this hierarchy will be suspended
+	 */
+	bool bSuspendMetadataNotifications = false;
+
 	/**
 	 * The event fired during undo / redo
 	 */
@@ -4009,6 +4346,9 @@ private:
 	TObjectPtr<URigHierarchyController> HierarchyController;
 	bool bIsControllerAvailable;
 
+	UPROPERTY(Transient)
+	mutable TObjectPtr<UModularRigRuleManager> RuleManager;
+
 	TMap<FRigElementKey, FRigElementKey> PreviousParentMap;
 
 	/*We save this so Sequencer can remap this after load*/
@@ -4018,7 +4358,12 @@ private:
 	int32 ResetPoseHash;
 	TArray<bool> ResetPoseIsFilteredOut;
 	TArray<int32> ElementsToRetainLocalTransform;
-	
+
+	mutable THierarchyCache<TMap<TTuple<int32, int32>, bool>> ElementDependencyCache;
+	mutable TArray<bool> ElementDependencyVisited;
+
+	bool bIsCopyingHierarchy;
+
 #if WITH_EDITOR
 
 	// this is mainly used for propagating changes between hierarchies in the direction of blueprint -> CDO -> other instances
@@ -4101,14 +4446,17 @@ protected:
 			{
 				return 5;
 			}
-			case ERigElementType::Last:
+			case ERigElementType::Connector:
 			{
 				return 6;
+			}
+			case ERigElementType::Socket:
+			{
+				return 7;
 			}
 			case ERigElementType::All:
 			default:
 			{
-				checkNoEntry();
 				break;
 			}
 		}
@@ -4146,11 +4494,14 @@ protected:
 			}
 			case 6:
 			{
-				return ERigElementType::Last;
+				return ERigElementType::Connector;
+			}
+			case 7:
+			{
+				return ERigElementType::Socket;
 			}
 			default:
 			{
-				checkNoEntry();
 				break;
 			}
 		}
@@ -4160,10 +4511,21 @@ protected:
 
 public:
 
-	const FRigElementKeyCollection* FindCachedCollection(uint32 InHash) const { return KeyCollectionCache.Find(InHash); }
-	FRigElementKeyCollection& FindOrAddCachedCollection(uint32 InHash) const { return KeyCollectionCache.FindOrAdd(InHash); };
-	void AddCachedCollection(uint32 InHash, const FRigElementKeyCollection& InCollection) const { KeyCollectionCache.Add(InHash, InCollection); }
+	const FRigElementKeyCollection* FindCachedCollection(uint32 InHash) const
+	{
+		return KeyCollectionCache.Find(InHash);
+	}
 	
+	FRigElementKeyCollection& FindOrAddCachedCollection(uint32 InHash) const
+	{
+		return KeyCollectionCache.FindOrAdd(InHash);
+	};
+	
+	void AddCachedCollection(uint32 InHash, const FRigElementKeyCollection& InCollection) const
+	{
+		KeyCollectionCache.Add(InHash, InCollection);
+	}
+
 private:
 	
 	mutable TMap<uint32, FRigElementKeyCollection> KeyCollectionCache;
@@ -4254,86 +4616,104 @@ private:
 
 #if WITH_EDITOR
 	static TArray<FString> ControlSettingsToPythonCommands(const FRigControlSettings& Settings, const FString& NameSettings);
+	static TArray<FString> ConnectorSettingsToPythonCommands(const FRigConnectorSettings& Settings, const FString& NameSettings);
 #endif
 
 	template<typename T>
-	const T& GetMetadata(const FRigElementKey& InItem, ERigMetadataType InType, const FName& InMetadataName, const T& DefaultValue) const
+	const T& GetMetadata(const FRigElementKey& InItem, ERigMetadataType InType, const FRigName& InMetadataName, const T& DefaultValue) const
 	{
 		return GetMetadata<T>(Find(InItem), InType, InMetadataName, DefaultValue);
 	}
 
 	template<typename T>
-	const T& GetMetadata(const FRigBaseElement* InElement, ERigMetadataType InType, const FName& InMetadataName, const T& DefaultValue) const
+	const T& GetMetadata(const FRigBaseElement* InElement, ERigMetadataType InType, const FRigName& InMetadataName, const T& DefaultValue) const
 	{
 		if(InElement)
 		{
-			if(FRigBaseMetadata* Metadata = InElement->GetMetadata(InMetadataName, InType))
+			if(const FRigBaseMetadata* Metadata = FindMetadataForElement(InElement, InMetadataName, InType))
 			{
-				return *(const T*)Metadata->GetValueData();
+				return *static_cast<const T*>(Metadata->GetValueData());
 			}
 		}
 		return DefaultValue;
 	}
 
 	template<typename T>
-	const TArray<T>& GetArrayMetadata(const FRigElementKey& InItem, ERigMetadataType InType, const FName& InMetadataName) const
+	const TArray<T>& GetArrayMetadata(const FRigElementKey& InItem, ERigMetadataType InType, const FRigName& InMetadataName) const
 	{
 		return GetArrayMetadata<T>(Find(InItem), InType, InMetadataName);
 	}
 
 	template<typename T>
-	const TArray<T>& GetArrayMetadata(const FRigBaseElement* InElement, ERigMetadataType InType, const FName& InMetadataName) const
+	const TArray<T>& GetArrayMetadata(const FRigBaseElement* InElement, ERigMetadataType InType, const FRigName& InMetadataName) const
 	{
 		static const TArray<T> EmptyArray;
 		return GetMetadata<TArray<T>>(InElement, InType, InMetadataName, EmptyArray);
 	}
 
 	template<typename T>
-	bool SetMetadata(const FRigElementKey& InItem, ERigMetadataType InType, const FName& InMetadataName, const T& InValue)
+	bool SetMetadata(const FRigElementKey& InItem, ERigMetadataType InType, const FRigName& InMetadataName, const T& InValue)
 	{
 		return SetMetadata<T>(Find(InItem), InType, InMetadataName, InValue);
 	}
 
 	template<typename T>
-	bool SetMetadata(FRigBaseElement* InElement, ERigMetadataType InType, const FName& InMetadataName, const T& InValue)
+	bool SetMetadata(FRigBaseElement* InElement, ERigMetadataType InType, const FRigName& InMetadataName, const T& InValue)
 	{
 		if(InElement)
 		{
-			return InElement->SetMetaData(InMetadataName, InType, &InValue, sizeof(T));
+			constexpr bool bNotify = true;
+			if (FRigBaseMetadata* Metadata = GetMetadataForElement(InElement, InMetadataName, InType, bNotify))
+			{
+				return Metadata->SetValueData(&InValue, sizeof(T));
+			}
 		}
 		return false;
 	}
 
 	template<typename T>
-	bool SetArrayMetadata(const FRigElementKey& InItem, ERigMetadataType InType, const FName& InMetadataName, const TArray<T>& InValue)
+	bool SetArrayMetadata(const FRigElementKey& InItem, ERigMetadataType InType, const FRigName& InMetadataName, const TArray<T>& InValue)
 	{
 		return SetMetadata<TArray<T>>(Find(InItem), InType, InMetadataName, InValue);
 	}
 
 	template<typename T>
-	bool SetArrayMetadata(FRigBaseElement* InElement, ERigMetadataType InType, const FName& InMetadataName, const TArray<T>& InValue)
+	bool SetArrayMetadata(FRigBaseElement* InElement, ERigMetadataType InType, const FRigName& InMetadataName, const TArray<T>& InValue)
 	{
 		return SetMetadata<TArray<T>>(InElement, InType, InMetadataName, InValue);
 	}
 
+public:
+	
+	void PropagateMetadata(const FRigElementKey& InKey, const FName& InName, bool bNotify = true);
+	void PropagateMetadata(const FRigBaseElement* InElement, const FName& InName, bool bNotify = true);
+	
+private:
+	
 	void OnMetadataChanged(const FRigElementKey& InKey, const FName& InName);
 	void OnMetadataTagChanged(const FRigElementKey& InKey, const FName& InTag, bool bAdded);
 
-protected:
-
-	static void OnMetadataChanged_Static(const FRigElementKey& InKey, const FName& InName, URigHierarchy* InHierarchy)
-	{
-		check(InHierarchy);
-		check(IsValid(InHierarchy));
-		InHierarchy->OnMetadataChanged(InKey, InName);
-	}
-	static void OnMetadataTagChanged_Static(const FRigElementKey& InKey, const FName& InTag, bool bAdded, URigHierarchy* InHierarchy)
-	{
-		check(InHierarchy);
-		check(IsValid(InHierarchy));
-		InHierarchy->OnMetadataTagChanged(InKey, InTag, bAdded);
-	}
+	/** Returns a metadata ptr to the given element's metadata. If the meta data, with the same name, doesn't exist already a new entry
+	    is created for that element. If the name matches but the type differs, the existing metadata is destroyed and a new one with the
+	    matching type is created instead.
+	    */
+	FRigBaseMetadata* GetMetadataForElement(FRigBaseElement* InElement, const FName& InName, ERigMetadataType InType, bool bInNotify);
 	
+	/** Attempts to find element's metadata of the given name and type. If either the element doesnt exist, the name doesn't exist or the
+	    type doesn't match, then \c nullptr is returned.
+	    */ 
+	FRigBaseMetadata* FindMetadataForElement(const FRigBaseElement* InElement, const FName& InName, ERigMetadataType InType);
+	const FRigBaseMetadata* FindMetadataForElement(const FRigBaseElement* InElement, const FName& InName, ERigMetadataType InType) const;
+	
+	/** Removes the named meta data for the given element, regardless of type. If the element doesn't exist, or it doesn't have any
+	    metadata of the given name, this function does nothing and returns \c false.
+		*/
+	bool RemoveMetadataForElement(FRigBaseElement* InElement, const FName& InName);
+	bool RemoveAllMetadataForElement(FRigBaseElement* InElement);
+	
+	void CopyAllMetadataFromElement(FRigBaseElement* InTargetElement, const FRigBaseElement* InSourceElement);
+	
+protected:
 	bool bEnableCacheValidityCheck;
 
 	static bool bEnableValidityCheckbyDefault;
@@ -4342,9 +4722,14 @@ protected:
 	TObjectPtr<URigHierarchy> HierarchyForCacheValidation;
 
 	mutable TMap<FRigElementKey, FRigElementKey> DefaultParentPerElement;
+	mutable uint32 DefaultParentCacheTopologyVersion;
 
-	bool bUpdatePreferedEulerAngleWhenSettingTransform;
-	
+	bool bUsePreferredEulerAngles;
+	mutable bool bAllowNameSpaceWhenSanitizingName;
+
+public:
+	bool UsesPreferredEulerAngles() const { return bUsePreferredEulerAngles; }
+
 private:
 	
 	void EnsureCacheValidityImpl();
@@ -4364,8 +4749,29 @@ public:
 	TElementDependencyMap GetDependenciesForVM(const URigVM* InVM, FName InEventName = NAME_None) const;
 
 private:
-	
+
 #endif
+
+	mutable TArray<int32> PoseVersionPerElement;
+	FORCEINLINE int32& GetPoseVersion(int32 InIndex) const
+	{
+		if(!PoseVersionPerElement.IsValidIndex(InIndex))
+		{
+			PoseVersionPerElement.SetNumZeroed(InIndex + 1);
+		}
+		return PoseVersionPerElement[InIndex];
+	}
+	FORCEINLINE void IncrementPoseVersion(int32 InIndex) const
+	{
+		// don't do anything if the pose version array is empty
+		// or the element has not been requested yet.
+		if(PoseVersionPerElement.IsValidIndex(InIndex))
+		{
+			PoseVersionPerElement[InIndex]++;
+		}
+	}
+
+	FRigElementKeyRedirector* ElementKeyRedirector;
 
 	void UpdateVisibilityOnProxyControls();
 
@@ -4386,15 +4792,28 @@ private:
 	void QueueNotification(ERigHierarchyNotification InNotification, const FRigBaseElement* InElement);
 	void SendQueuedNotifications();
 	void Reset_Impl(bool bResetElements);
+#if WITH_EDITOR
+	void ForEachListeningHierarchy(TFunctionRef<void(const FRigHierarchyListener&)> PerListeningHierarchyFunction);
+#endif
+
+	// the currently destroyed element - used to avoid notification storms
+	const FRigBaseElement* ElementBeingDestroyed; 
 	
 	friend class URigHierarchyController;
 	friend class UControlRig;
+	friend class UModularRig;
 	friend class FControlRigEditor;
+	friend struct FRigBaseElement;
 	friend struct FRigHierarchyValidityBracket;
 	friend struct FRigHierarchyGlobalValidityBracket;
 	friend struct FControlRigVisualGraphUtils;
 	friend struct FRigHierarchyEnableControllerBracket;
 	friend struct FRigHierarchyExecuteContextBracket;
+	friend struct FRigHierarchyRedirectorGuard;
+	friend struct FRigDispatch_GetMetadata;
+	friend struct FRigDispatch_SetMetadata;
+	friend struct FRigDispatch_GetModuleMetadata;
+	friend struct FRigDispatch_SetModuleMetadata;
 };
 
 struct CONTROLRIG_API FRigHierarchyInteractionBracket
@@ -4428,6 +4847,7 @@ private:
 
 	friend class URigHierarchy;
 	friend class UControlRig;
+	friend class UControlRig;
 
 	// certain units are allowed to use this
 	friend struct FRigUnit_AddParent;
@@ -4460,6 +4880,8 @@ private:
 	const FRigVMExtendedExecuteContext* PreviousContext;
 
 	friend class UControlRig;
+	friend class UModularRig;
+	friend class UControlRigBlueprint;
 };
 
 struct CONTROLRIG_API FRigHierarchyValidityBracket
@@ -4510,6 +4932,20 @@ public:
 private:
 
 	bool bPreviousValue;
+};
+
+struct CONTROLRIG_API FRigHierarchyRedirectorGuard
+{
+public:
+	FRigHierarchyRedirectorGuard(URigHierarchy* InHierarchy, FRigElementKeyRedirector& InRedirector)
+		: Guard(InHierarchy->ElementKeyRedirector, &InRedirector)
+	{
+	}
+
+	FRigHierarchyRedirectorGuard(UControlRig* InControlRig);
+
+private:
+	TGuardValue<FRigElementKeyRedirector*> Guard;
 };
 
 template<>
@@ -4620,3 +5056,18 @@ private:
 };
 
 #endif
+
+UINTERFACE()
+class CONTROLRIG_API URigHierarchyProvider : public UInterface
+{
+	GENERATED_BODY()
+};
+
+class CONTROLRIG_API IRigHierarchyProvider
+{
+	GENERATED_BODY()
+
+public:
+
+	virtual URigHierarchy* GetHierarchy() const = 0;
+};

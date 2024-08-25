@@ -15,6 +15,13 @@ void FAnimTypePreAnimatedStateRootStorage::Initialize(FPreAnimatedStorageID InSt
 	TPreAnimatedStateStorage<FPreAnimatedRootTokenTraits>::Initialize(InStorageID, InParentExtension);
 }
 
+FPreAnimatedStateEntry FAnimTypePreAnimatedStateRootStorage::FindEntry(FMovieSceneAnimTypeID AnimTypeID)
+{
+	// Find the storage index for the specific anim-type and object we're animating
+	FPreAnimatedStorageIndex StorageIndex = FindStorageIndex(AnimTypeID);
+	return FPreAnimatedStateEntry{ FPreAnimatedStorageGroupHandle(), FPreAnimatedStateCachedValueHandle{ StorageID, StorageIndex } };
+}
+
 FPreAnimatedStateEntry FAnimTypePreAnimatedStateRootStorage::MakeEntry(FMovieSceneAnimTypeID AnimTypeID)
 {
 	// Find the storage index for the specific anim-type and object we're animating

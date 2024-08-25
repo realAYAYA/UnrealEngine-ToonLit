@@ -78,11 +78,7 @@ namespace EpicGames.BuildGraph.Expressions
 		/// <returns></returns>
 		static object CreateInstance(Type type)
 		{
-			BgTypeAttribute? converterAttr = type.GetCustomAttribute<BgTypeAttribute>(true);
-			if (converterAttr == null)
-			{
-				throw new InvalidOperationException($"Missing [BgType] attribute on {type.Name}");
-			}
+			BgTypeAttribute converterAttr = type.GetCustomAttribute<BgTypeAttribute>(true) ?? throw new InvalidOperationException($"Missing [BgType] attribute on {type.Name}");
 
 			Type converterType = converterAttr.Type;
 			if (converterType.IsGenericType)

@@ -10,20 +10,18 @@
 #include "UsdWrappers/UsdStage.h"
 
 #if USE_USD_SDK
-
 #include "USDIncludesStart.h"
-	#include "pxr/usd/sdf/reference.h"
-	#include "pxr/usd/usd/prim.h"
-	#include "pxr/usd/usd/primCompositionQuery.h"
+#include "pxr/usd/sdf/reference.h"
+#include "pxr/usd/usd/prim.h"
+#include "pxr/usd/usd/primCompositionQuery.h"
 #include "USDIncludesEnd.h"
+#endif	  // #if USE_USD_SDK
 
-#endif // #if USE_USD_SDK
-
-void FUsdReferencesViewModel::UpdateReferences( const UE::FUsdStageWeak& UsdStage, const TCHAR* PrimPath )
+void FUsdReferencesViewModel::UpdateReferences(const UE::FUsdStageWeak& UsdStage, const TCHAR* PrimPath)
 {
 	References.Reset();
 
-	if ( !UsdStage || !PrimPath || FString{ PrimPath }.IsEmpty() || UE::FSdfPath{ PrimPath }.IsAbsoluteRootPath() )
+	if (!UsdStage || !PrimPath || FString{PrimPath}.IsEmpty() || UE::FSdfPath{PrimPath}.IsAbsoluteRootPath())
 	{
 		return;
 	}
@@ -31,27 +29,27 @@ void FUsdReferencesViewModel::UpdateReferences( const UE::FUsdStageWeak& UsdStag
 #if USE_USD_SDK
 	FScopedUsdAllocs UsdAllocs;
 
-	if ( pxr::UsdPrim Prim{ UsdStage.GetPrimAtPath( UE::FSdfPath( PrimPath ) ) } )
+	if (pxr::UsdPrim Prim{UsdStage.GetPrimAtPath(UE::FSdfPath(PrimPath))})
 	{
-		pxr::UsdPrimCompositionQuery PrimCompositionQuery = pxr::UsdPrimCompositionQuery::GetDirectReferences( Prim );
+		pxr::UsdPrimCompositionQuery PrimCompositionQuery = pxr::UsdPrimCompositionQuery::GetDirectReferences(Prim);
 
-		for ( const pxr::UsdPrimCompositionQueryArc& CompositionArc : PrimCompositionQuery.GetCompositionArcs() )
+		for (const pxr::UsdPrimCompositionQueryArc& CompositionArc : PrimCompositionQuery.GetCompositionArcs())
 		{
-			if ( CompositionArc.GetArcType() == pxr::PcpArcTypeReference )
+			if (CompositionArc.GetArcType() == pxr::PcpArcTypeReference)
 			{
 				pxr::SdfReferenceEditorProxy ReferenceEditor;
 				pxr::SdfReference UsdReference;
 
-				if ( CompositionArc.GetIntroducingListEditor( &ReferenceEditor, &UsdReference ) )
+				if (CompositionArc.GetIntroducingListEditor(&ReferenceEditor, &UsdReference))
 				{
 					FUsdReference Reference;
-					Reference.AssetPath = UsdToUnreal::ConvertString( UsdReference.GetAssetPath() );
-					Reference.PrimPath = UsdToUnreal::ConvertPath( UsdReference.GetPrimPath() );
+					Reference.AssetPath = UsdToUnreal::ConvertString(UsdReference.GetAssetPath());
+					Reference.PrimPath = UsdToUnreal::ConvertPath(UsdReference.GetPrimPath());
 
-					References.Add( MakeSharedUnreal< FUsdReference >( MoveTemp( Reference ) ) );
+					References.Add(MakeSharedUnreal<FUsdReference>(MoveTemp(Reference)));
 				}
 			}
 		}
 	}
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 }

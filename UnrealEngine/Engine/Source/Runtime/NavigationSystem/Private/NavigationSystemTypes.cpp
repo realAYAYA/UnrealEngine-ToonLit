@@ -41,14 +41,14 @@ namespace
 
 namespace NavigationHelper
 {
-	void GatherCollision(UBodySetup* RigidBody, TNavStatArray<FVector>& OutVertexBuffer, TNavStatArray<int32>& OutIndexBuffer, const FTransform& LocalToWorld)
+	void GatherCollision(UBodySetup* RigidBody, TNavStatArray<FVector>& OutVertexBuffer, TNavStatArray<int32>& OutIndexBuffer, const FTransform& LocalToWorld, FBox& OutBounds)
 	{
 		if (RigidBody == NULL)
 		{
 			return;
 		}
 #if WITH_RECAST
-		FRecastNavMeshGenerator::ExportRigidBodyGeometry(*RigidBody, OutVertexBuffer, OutIndexBuffer, LocalToWorld);
+		FRecastNavMeshGenerator::ExportRigidBodyGeometry(*RigidBody, OutVertexBuffer, OutIndexBuffer, OutBounds, LocalToWorld);
 #endif // WITH_RECAST
 	}
 
@@ -62,14 +62,20 @@ namespace NavigationHelper
 		FRecastNavMeshGenerator::ExportRigidBodyGeometry(*RigidBody
 			, NavCollision->GetMutableTriMeshCollision().VertexBuffer, NavCollision->GetMutableTriMeshCollision().IndexBuffer
 			, NavCollision->GetMutableConvexCollision().VertexBuffer, NavCollision->GetMutableConvexCollision().IndexBuffer
-			, NavCollision->ConvexShapeIndices);
+			, NavCollision->ConvexShapeIndices
+			, NavCollision->Bounds);
 #endif // WITH_RECAST
 	}
 
 	void GatherCollision(const FKAggregateGeom& AggGeom, UNavCollision& NavCollision)
 	{
 #if WITH_RECAST
-		FRecastNavMeshGenerator::ExportAggregatedGeometry(AggGeom, NavCollision.GetMutableConvexCollision().VertexBuffer, NavCollision.GetMutableConvexCollision().IndexBuffer, NavCollision.ConvexShapeIndices);
+		FRecastNavMeshGenerator::ExportAggregatedGeometry(
+			AggGeom,
+			NavCollision.GetMutableConvexCollision().VertexBuffer,
+			 NavCollision.GetMutableConvexCollision().IndexBuffer,
+			 NavCollision.ConvexShapeIndices,
+			 NavCollision.Bounds);
 #endif // WITH_RECAST
 	}
 
@@ -231,7 +237,7 @@ namespace NavigationHelper
 
 	bool IsBodyNavigationRelevant(const UBodySetup& BodySetup)
 	{
-		const bool bBodyHasGeometry = (BodySetup.AggGeom.GetElementCount() > 0 || BodySetup.ChaosTriMeshes.Num() > 0);
+		const bool bBodyHasGeometry = (BodySetup.AggGeom.GetElementCount() > 0 || BodySetup.TriMeshGeometries.Num() > 0);
 
 		// has any colliding geometry
 		return bBodyHasGeometry
@@ -306,7 +312,7 @@ FNavigationLink INavLinkCustomInterface::GetModifier(const INavLinkCustomInterfa
 	return LinkMod;
 }
 
-void INavLinkCustomInterface::OnPreWorldInitialization(UWorld* World, const UWorld::InitializationValues IVS)
+void INavLinkCustomInterface::OnPreWorldInitialization(UWorld* World, const FWorldInitializationValues IVS)
 {
 	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	ResetUniqueId();

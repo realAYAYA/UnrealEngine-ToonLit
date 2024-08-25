@@ -40,7 +40,13 @@ FString FDisplayClusterClusterEventsJsonService::GetProtocolName() const
 
 TSharedPtr<IDisplayClusterSession> FDisplayClusterClusterEventsJsonService::CreateSession(FDisplayClusterSessionInfo& SessionInfo)
 {
-	SessionInfo.SessionName = FString::Printf(TEXT("%s_session_%lu_%s"), *GetName(), SessionInfo.SessionId, *SessionInfo.Endpoint.ToString());
+	SessionInfo.SessionName = FString::Printf(TEXT("%s_%lu_%s_%s"),
+		*GetName(),
+		SessionInfo.SessionId,
+		*SessionInfo.Endpoint.ToString(),
+		*SessionInfo.NodeId.Get(TEXT("(na)"))
+	);
+
 	return MakeShared<FDisplayClusterSession<FDisplayClusterPacketJson, false>>(SessionInfo, *this, *this, FDisplayClusterService::GetThreadPriority());
 }
 

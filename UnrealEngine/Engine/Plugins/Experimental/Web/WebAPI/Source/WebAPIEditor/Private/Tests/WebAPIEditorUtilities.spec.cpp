@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Misc/AutomationTest.h"
 
@@ -7,7 +7,7 @@
 #include "WebAPIEditorUtilities.h"
 
 BEGIN_DEFINE_SPEC(FWebAPIEditorUtilitiesSpec,
-	TEXT("Plugin.WebAPI.Editor.Utilities"),
+	TEXT("Plugins.WebAPI.Editor.Utilities"),
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter | EAutomationTestFlags::ApplicationContextMask)
 
 END_DEFINE_SPEC(FWebAPIEditorUtilitiesSpec)

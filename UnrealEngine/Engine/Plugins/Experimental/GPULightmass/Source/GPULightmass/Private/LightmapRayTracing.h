@@ -30,7 +30,7 @@ END_SHADER_PARAMETER_STRUCT()
 class FLightmapRayTracingMeshProcessor : public FRayTracingMeshProcessor
 {
 public:
-	FLightmapRayTracingMeshProcessor(FRayTracingMeshCommandContext* InCommandContext, FMeshPassProcessorRenderState InPassDrawRenderState);
+	FLightmapRayTracingMeshProcessor(FRayTracingMeshCommandContext* InCommandContext);
 };
 
 class FLightmapPathTracingRGS : public FGlobalShader

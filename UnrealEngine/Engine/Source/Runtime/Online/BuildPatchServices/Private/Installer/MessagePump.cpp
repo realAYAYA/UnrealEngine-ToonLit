@@ -3,6 +3,7 @@
 #include "Installer/MessagePump.h"
 #include "Containers/Union.h"
 #include "Containers/Queue.h"
+#include <atomic>
 
 namespace BuildPatchServices
 {
@@ -42,28 +43,23 @@ namespace BuildPatchServices
 		: public IMessagePump
 	{
 	public:
-		FMessagePump();
-		~FMessagePump();
-
 		// IMessagePump interface begin.
 		virtual void SendMessage(FChunkSourceEvent Message) override;
 		virtual void SendMessage(FInstallationFileAction Message) override;
 		virtual void SendRequest(FChunkUriRequest Request, TFunction<void(FChunkUriResponse)> OnResponse) override;
-		virtual void PumpMessages(const TArray<FMessageHandler*>& Handlers) override;
+		virtual void PumpMessages() override;
+		virtual void RegisterMessageHandler(FMessageHandler* MessageHandler) override;
+		virtual void UnregisterMessageHandler(FMessageHandler* MessageHandler) override;
 		// IMessagePump interface end.
 
 	private:
 		FMessageQueue MessageQueue;
 		FChunkUriQueue ChunkUriRequestQueue;
+		FDefaultMessageHandler DefaultMessageHandler;
+		TArray<FMessageHandler*> Handlers;
+		// std::atomic will not expose integral operations with enum types.
+		std::atomic<uint32> MessageRequests{0};
 	};
-
-	FMessagePump::FMessagePump()
-	{
-	}
-
-	FMessagePump::~FMessagePump()
-	{
-	}
 
 	void FMessagePump::SendMessage(FChunkSourceEvent Message)
 	{
@@ -77,10 +73,17 @@ namespace BuildPatchServices
 
 	void FMessagePump::SendRequest(FChunkUriRequest Request, TFunction<void(FChunkUriResponse)> OnResponse)
 	{
-		ChunkUriRequestQueue.Enqueue(FChunkUriRequestResponse(MoveTemp(Request), MoveTemp(OnResponse)));
+		if (!EnumHasAllFlags(static_cast<EMessageRequests>(MessageRequests.load()), EMessageRequests::ChunkUriRequest))
+		{
+			DefaultMessageHandler.HandleRequest(Request, OnResponse);
+		}
+		else
+		{
+			ChunkUriRequestQueue.Enqueue(FChunkUriRequestResponse(MoveTemp(Request), MoveTemp(OnResponse)));
+		}
 	}
 
-	void FMessagePump::PumpMessages(const TArray<FMessageHandler*>& Handlers)
+	void FMessagePump::PumpMessages()
 	{
 		FMessageUnion MessageUnion;
 		while (MessageQueue.Dequeue(MessageUnion))
@@ -95,7 +98,6 @@ namespace BuildPatchServices
 			}
 		}
 
-		FDefaultMessageHandler DefaultMessageHandler;
 		FChunkUriRequestResponse ChunkUriRequestResponse;
 		while (ChunkUriRequestQueue.Dequeue(ChunkUriRequestResponse))
 		{
@@ -112,6 +114,22 @@ namespace BuildPatchServices
 			{
 				DefaultMessageHandler.HandleRequest(ChunkUriRequestResponse.Get<0>(), ChunkUriRequestResponse.Get<1>());
 			}
+		}
+	}
+
+	void FMessagePump::RegisterMessageHandler(FMessageHandler* InHandler)
+	{
+		MessageRequests |= static_cast<uint32>(InHandler->GetMessageRequests());
+		Handlers.Add(InHandler);
+	}
+
+	void FMessagePump::UnregisterMessageHandler(FMessageHandler* InHandler)
+	{
+		MessageRequests = 0;
+		Handlers.Remove(InHandler);
+		for (FMessageHandler* Handler : Handlers)
+		{
+			MessageRequests |= static_cast<uint32>(Handler->GetMessageRequests());
 		}
 	}
 

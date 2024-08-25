@@ -17,8 +17,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeComponentEdit::Private::s_type =
-			NODE_TYPE( "EditComponent", NodeComponent::GetStaticType() );
+	FNodeType NodeComponentEdit::Private::s_type =
+			FNodeType( "EditComponent", NodeComponent::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -26,43 +26,6 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 
     MUTABLE_IMPLEMENT_NODE( NodeComponentEdit, EType::Edit, Node, Node::EType::Component)
-
-
-    //---------------------------------------------------------------------------------------------
-    // Node Interface
-    //---------------------------------------------------------------------------------------------
-    int NodeComponentEdit::GetInputCount() const
-    {
-        return m_pD->m_surfaces.Num();
-    }
-
-
-    //---------------------------------------------------------------------------------------------
-    Node* NodeComponentEdit::GetInputNode( int i ) const
-    {
-        check( i >=0 && i < GetInputCount() );
-
-        NodePtr pResult;
-
-        if ( i<m_pD->m_surfaces.Num() )
-        {
-            pResult = m_pD->m_surfaces[i];
-        }
-
-        return pResult.get();
-    }
-
-
-    //---------------------------------------------------------------------------------------------
-    void NodeComponentEdit::SetInputNode( int i, NodePtr pNode )
-    {
-        check( i >=0 && i < GetInputCount() );
-
-        if ( i<m_pD->m_surfaces.Num() )
-        {
-            m_pD->m_surfaces[ i ] = dynamic_cast<NodeSurface*>(pNode.get());
-        }
-    }
 
 
 	//---------------------------------------------------------------------------------------------
@@ -112,6 +75,21 @@ namespace mu
 
         m_pD->m_surfaces[ index ] = pNode;
     }
+
+
+	//---------------------------------------------------------------------------------------------
+	const NodeComponentNew::Private* NodeComponentEdit::Private::GetParentComponentNew() const
+	{
+		const NodeComponentNew::Private* parent = nullptr;
+		if (m_pParent)
+		{
+			NodeComponent::Private* ParentPrivate = static_cast<NodeComponent::Private*>(m_pParent->GetBasePrivate());
+			parent = ParentPrivate->GetParentComponentNew();
+		}
+
+		check(parent);
+		return parent;
+	}
 
 }
 

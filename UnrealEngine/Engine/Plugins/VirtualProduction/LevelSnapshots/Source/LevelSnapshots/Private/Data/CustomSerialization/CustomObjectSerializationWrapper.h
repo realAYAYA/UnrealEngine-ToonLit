@@ -61,7 +61,7 @@ namespace UE::LevelSnapshots::Private
 
 
 	
-	UE_NODISCARD FRestoreObjectScope PreActorRestore_SnapshotWorld(
+	[[nodiscard]] FRestoreObjectScope PreActorRestore_SnapshotWorld(
 		AActor* EditorActor,
 		FCustomSerializationData& ActorSerializationData,
 		FWorldSnapshotData& WorldData,
@@ -70,7 +70,7 @@ namespace UE::LevelSnapshots::Private
 		UPackage* LocalisationSnapshotPackage
 		);
 
-	UE_NODISCARD FRestoreObjectScope PreActorRestore_EditorWorld(
+	[[nodiscard]] FRestoreObjectScope PreActorRestore_EditorWorld(
 		AActor* EditorActor,
 		FCustomSerializationData& ActorSerializationData,
 		FWorldSnapshotData& WorldData,
@@ -80,7 +80,7 @@ namespace UE::LevelSnapshots::Private
 		);
 	
 
-	UE_NODISCARD FRestoreObjectScope PreSubobjectRestore_SnapshotWorld(
+	[[nodiscard]] FRestoreObjectScope PreSubobjectRestore_SnapshotWorld(
 		UObject* Subobject,
 		const FSoftObjectPath& OriginalSubobjectPath,
 		FWorldSnapshotData& WorldData,
@@ -89,7 +89,7 @@ namespace UE::LevelSnapshots::Private
 		UPackage* LocalisationSnapshotPackage
 		);
 	
-	UE_NODISCARD FRestoreObjectScope PreSubobjectRestore_EditorWorld(
+	[[nodiscard]] FRestoreObjectScope PreSubobjectRestore_EditorWorld(
 		UObject* SnapshotObject,
 		UObject* EditorObject,
 		FWorldSnapshotData& WorldData,

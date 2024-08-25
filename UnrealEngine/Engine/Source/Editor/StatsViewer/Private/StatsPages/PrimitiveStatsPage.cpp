@@ -71,7 +71,7 @@ struct PrimitiveStatsGenerator
 		}
 
 		// Owned by a default object? Not part of a level either.
-		if(InPrimitiveComponent->GetOuter() && InPrimitiveComponent->GetOuter()->IsDefaultSubobject() )
+		if(InPrimitiveComponent->GetOuter() && InPrimitiveComponent->GetOuter()->IsTemplate())
 		{
 			return NULL;
 		}

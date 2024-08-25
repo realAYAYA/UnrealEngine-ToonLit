@@ -16,13 +16,10 @@ namespace EpicGames.Horde.Compute
 	{
 		readonly Channel<string> _output;
 		readonly BackgroundTask _backgroundTask;
-		readonly TaskCompletionSource<int> _result = new TaskCompletionSource<int>();
+		readonly TaskCompletionSource<int> _result = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
 
 		byte[] _buffer = new byte[1024];
 		int _bufferLength;
-
-		/// <inheritdoc/>
-		public int ExitCode => _result.Task.Result;
 
 		/// <inheritdoc/>
 		public bool HasExited => _result.Task.IsCompleted;
@@ -75,7 +72,7 @@ namespace EpicGames.Horde.Compute
 				{
 					case AgentMessageType.Exception:
 						ExceptionMessage exception = message.ParseExceptionMessage();
-						throw new ComputeRemoteException(exception);
+						throw new ComputeException("Error while executing remote process", new ComputeRemoteException(exception));
 					case AgentMessageType.ExecuteOutput:
 						AppendData(message.Data.Span);
 						break;
@@ -84,7 +81,8 @@ namespace EpicGames.Horde.Compute
 						_result.TrySetResult(executeProcessResponse.ExitCode);
 						return;
 					default:
-						throw new InvalidAgentMessageException(message);
+						message.ThrowIfUnexpectedType();
+						return;
 				}
 			}
 		}

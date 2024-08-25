@@ -3,11 +3,10 @@
 
 #include "CoreMinimal.h"
 #include "UObject/Object.h"
-#include "ChooserPropertyAccess.h"
-#include "IChooserParameterProxyTable.h"
+#include "IHasContext.h"
 #include "InstancedStruct.h"
-#include "InstancedStructContainer.h"
 #include "Misc/Guid.h"
+#include "IObjectChooser.h"
 #include "ProxyAsset.generated.h"
 
 DECLARE_MULTICAST_DELEGATE_OneParam(FProxyTypeChanged, const UClass* OutputObjectType);
@@ -19,6 +18,10 @@ class UProxyAsset : public UObject, public IHasContextClass
 	GENERATED_UCLASS_BODY()
 public:
 	UProxyAsset() {}
+
+	virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+
+	static PROXYTABLE_API FName TypeTagName;
 
 #if WITH_EDITOR
 	FProxyTypeChanged OnTypeChanged;
@@ -39,7 +42,6 @@ public:
 	UPROPERTY(EditAnywhere, Meta = (ExcludeBaseStruct, BaseStruct = "/Script/Chooser.ContextObjectTypeBase"), Category = "Input")
 	TArray<FInstancedStruct> ContextData;
 
-	
 	UPROPERTY(EditAnywhere, Meta = (ExcludeBaseStruct, BaseStruct ="/Script/ProxyTable.ChooserParameterProxyTableBase"), Category = "Proxy Table Reference")
 	FInstancedStruct ProxyTable;
 
@@ -47,7 +49,8 @@ public:
 	FGuid Guid;
 
 	virtual TConstArrayView<FInstancedStruct> GetContextData() const override { return ContextData; }
-	UObject* FindProxyObject(FChooserEvaluationContext& Context) const;
+	UObject* FindProxyObject(struct FChooserEvaluationContext& Context) const;
+	FObjectChooserBase::EIteratorStatus FindProxyObjectMulti(FChooserEvaluationContext &Context, FObjectChooserBase::FObjectChooserIteratorCallback Callback) const;
 
 #if WITH_EDITORONLY_DATA
 	UPROPERTY()

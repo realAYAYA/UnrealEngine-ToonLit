@@ -89,6 +89,21 @@ public:
 
 };
 
+UCLASS()
+class UNiagaraClipboardRenderer : public UObject
+{
+	GENERATED_BODY()
+
+public:
+	static NIAGARAEDITOR_API const UNiagaraClipboardRenderer* CreateRenderer(UObject* InOuter, UNiagaraRendererProperties* Renderer, TOptional<FNiagaraStackNoteData> StackNoteData = TOptional<FNiagaraStackNoteData>());
+
+	UPROPERTY()
+	TObjectPtr<UNiagaraRendererProperties> RendererProperties;
+
+	UPROPERTY()
+	FNiagaraStackNoteData StackNoteData;
+};
+
 UENUM()
 enum class ENiagaraClipboardFunctionScriptMode
 {
@@ -104,9 +119,9 @@ class UNiagaraClipboardFunction : public UObject
 public:
 	DECLARE_DYNAMIC_DELEGATE_OneParam(FOnPastedFunctionCallNode, UNiagaraNodeFunctionCall*, PastedFunctionCall);
 
-	static NIAGARAEDITOR_API UNiagaraClipboardFunction* CreateScriptFunction(UObject* InOuter, FString InFunctionName, UNiagaraScript* InScript, const FGuid& InScriptVersion = FGuid(), const TArray<FNiagaraStackMessage> InStackMessages = TArray<FNiagaraStackMessage>());
+	static NIAGARAEDITOR_API UNiagaraClipboardFunction* CreateScriptFunction(UObject* InOuter, FString InFunctionName, UNiagaraScript* InScript, const FGuid& InScriptVersion = FGuid(), const TOptional<FNiagaraStackNoteData>& InStackNote = TOptional<FNiagaraStackNoteData>());
 
-	static NIAGARAEDITOR_API UNiagaraClipboardFunction* CreateAssignmentFunction(UObject* InOuter, FString InFunctionName, const TArray<FNiagaraVariable>& InAssignmentTargets, const TArray<FString>& InAssignmentDefaults);
+	static NIAGARAEDITOR_API UNiagaraClipboardFunction* CreateAssignmentFunction(UObject* InOuter, FString InFunctionName, const TArray<FNiagaraVariable>& InAssignmentTargets, const TArray<FString>& InAssignmentDefaults, TOptional<FNiagaraStackNoteData> InStackNoteData = TOptional<FNiagaraStackNoteData>());
 
 	UPROPERTY()
 	FString FunctionName;
@@ -134,9 +149,9 @@ public:
 
 	UPROPERTY()
 	FGuid ScriptVersion;
-
+	
 	UPROPERTY()
-	TArray<FNiagaraStackMessage> Messages;
+	FNiagaraStackNoteData StackNoteData;
 };
 
 USTRUCT()
@@ -179,7 +194,7 @@ public:
 	TArray<TObjectPtr<const UNiagaraClipboardFunctionInput>> FunctionInputs;
 
 	UPROPERTY()
-	TArray<TObjectPtr<const UNiagaraRendererProperties>> Renderers;
+	TArray<TObjectPtr<const UNiagaraClipboardRenderer>> Renderers;
 
 	UPROPERTY()
 	TArray<TObjectPtr<const UNiagaraScript>> Scripts;
@@ -194,6 +209,9 @@ public:
 	/** Markup MetaData to specify that if scripts are pasted from the clipboard to automatically fixup their order in the stack to satisfy dependencies. */
 	UPROPERTY()
 	mutable bool bFixupPasteIndexForScriptDependenciesInStack = false;
+
+	UPROPERTY()
+	FNiagaraStackNoteData StackNote;
 };
 
 class FNiagaraClipboard

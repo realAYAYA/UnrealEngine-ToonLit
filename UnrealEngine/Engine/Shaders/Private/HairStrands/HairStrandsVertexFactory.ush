@@ -74,12 +74,12 @@
  */
 bool UseStableRasterization()
 {
-	return HairStrandsVF.bStableRasterization > 0;
+	return HasHairFlags(HairStrandsVF.Flags, HAIR_FLAGS_STABLE_RASTER);
 }
 
 bool UseScatterSceneLighting()
 {
-	return HairStrandsVF.bScatterSceneLighting > 0;
+	return HasHairFlags(HairStrandsVF.Flags,HAIR_FLAGS_SCATTER_SCENE_LIGHT);
 }
 
 struct FVertexFactoryInput
@@ -106,7 +106,6 @@ struct FVertexInfo
 	uint IsTip;				// The vertex is on the quad side toward the tip of the strand.
 #if !RAYHITGROUPSHADER
 	uint IsLeft;
-	float LodRadiusScale;
 	bool bForceInvalidQuad;
 #endif
 };
@@ -116,24 +115,23 @@ FVertexInfo GetVertexInfo(FVertexFactoryInput Input)
 
 	FVertexInfo VertexInfo;
 #if RAYHITGROUPSHADER
-	uint BaseIndex    = VertexId / 4;
+	uint BaseIndex			= VertexId / 4;
 	// TODO: is there any easy way we could handle end-caps?
-	VertexInfo.IsTip        = (Input.TriangleId % 2) == 0 ? Input.TriangleVertexId != 2 : Input.TriangleVertexId == 0;
+	VertexInfo.IsTip		= (Input.TriangleId % 2) == 0 ? Input.TriangleVertexId != 2 : Input.TriangleVertexId == 0;
 #elif USE_HAIR_TRIANGLE_STRIP
-	uint QuadIndex = VertexId % 2;
-	uint BaseIndex	= VertexId / 2;
+	uint QuadIndex 			= VertexId % 2;
+	uint BaseIndex			= VertexId / 2;
 	VertexInfo.IsTip		= 0;
 	VertexInfo.IsLeft		= QuadIndex == 0 ? 1 : 0;
 #else
-	uint QuadIndex	= VertexId % 6;
-	uint BaseIndex	= VertexId / 6;
+	uint QuadIndex			= VertexId % 6;
+	uint BaseIndex			= VertexId / 6;
 	VertexInfo.IsTip		= QuadIndex == 0 || QuadIndex == 2 || QuadIndex == 4 ? 0 : 1;
 	VertexInfo.IsLeft		= QuadIndex == 0 || QuadIndex == 1 || QuadIndex == 5 ? 1 : 0;
 #endif
 	VertexInfo.HairControlPointId = BaseIndex;
 	VertexInfo.VertexIndex = BaseIndex + VertexInfo.IsTip;
 #if !RAYHITGROUPSHADER
-	VertexInfo.LodRadiusScale = 1.0f;
 	VertexInfo.bForceInvalidQuad = false;
 #endif
 
@@ -141,10 +139,6 @@ FVertexInfo GetVertexInfo(FVertexFactoryInput Input)
 	if (HairStrandsVF.bCullingEnable)
 	{
 		VertexInfo.VertexIndex = HairStrandsVF.CullingIndexBuffer[BaseIndex + VertexInfo.IsTip];
-#if !RAYHITGROUPSHADER
-		VertexInfo.LodRadiusScale = HairStrandsVF.CullingRadiusScaleBuffer[BaseIndex + VertexInfo.IsTip];
-		VertexInfo.bForceInvalidQuad = VertexInfo.LodRadiusScale <= 0.0f;
-#endif
 		VertexInfo.HairControlPointId = VertexInfo.VertexIndex - VertexInfo.IsTip;
 	}
 #endif
@@ -189,6 +183,16 @@ struct FVertexFactoryIntermediates
 	FSceneDataIntermediates SceneData;
 };
 
+float3 GetPositionOffset()
+{
+	return ReadRenPositionOffset(HairStrandsVF.PositionOffsetBuffer, HairStrandsVF.RegisteredIndex);
+}
+
+float3 GetPrevPositionOffset()
+{
+	return ReadRenPrevPositionOffset(HairStrandsVF.PreviousPositionOffsetBuffer, HairStrandsVF.RegisteredIndex);
+}
+
 uint GetHairControlPointId(FVertexFactoryInput Input)
 {
 	return GetVertexInfo(Input).HairControlPointId;
@@ -196,17 +200,13 @@ uint GetHairControlPointId(FVertexFactoryInput Input)
 
 FHairControlPoint GetVertexPosition(const FVertexInfo VertexInfo, bool bInvalidJointVertex=true)
 {
-	const float3 PositionOffset = HairStrandsVF.PositionOffsetBuffer[0].xyz;
+	const float3 PositionOffset = GetPositionOffset();
 
-	const uint4 PackedData = HairStrandsVF.PositionBuffer[VertexInfo.VertexIndex];
-	FHairControlPoint Out = UnpackHairControlPoint(
-		PackedData, 
+	FHairControlPoint Out = ReadHairControlPoint(
+		HairStrandsVF.PositionBuffer,
+		VertexInfo.VertexIndex, 
 		PositionOffset,
-#if RAYHITGROUPSHADER
 		HairStrandsVF.Radius,
-#else
-		HairStrandsVF.Radius * VertexInfo.LodRadiusScale,
-#endif
 		HairStrandsVF.RootScale,
 		HairStrandsVF.TipScale);
 	
@@ -237,18 +237,14 @@ float GetWorldStrandRadius(FVertexFactoryInput Input)
 
 float3 GetVertexPreviousPosition(FVertexFactoryInput Input, bool bInvalidJointVertex = true)
 {
-	const float3 PreviousPositionOffset = HairStrandsVF.PreviousPositionOffsetBuffer[0].xyz;
+	const float3 PreviousPositionOffset = GetPrevPositionOffset();
 
 	FVertexInfo VertexInfo = GetVertexInfo(Input);
-	const uint4 PackedData = HairStrandsVF.PreviousPositionBuffer[VertexInfo.VertexIndex];
-	FHairControlPoint Out = UnpackHairControlPoint(
-		PackedData,
+	FHairControlPoint Out = ReadHairControlPoint(
+		HairStrandsVF.PreviousPositionBuffer,
+		VertexInfo.VertexIndex,
 		PreviousPositionOffset,
-#if RAYHITGROUPSHADER
 		HairStrandsVF.Radius,
-#else
-		HairStrandsVF.Radius * VertexInfo.LodRadiusScale,
-#endif
 		HairStrandsVF.RootScale,
 		HairStrandsVF.TipScale);
 
@@ -307,7 +303,7 @@ FMaterialPixelParameters GetMaterialPixelParameters(FVertexFactoryInterpolantsVS
 
 half3x3 CalcTangentToWorldNoScale(FPrimitiveSceneData SceneData, half3x3 TangentToLocal)
 {
-	half3x3 LocalToWorld = LWCToFloat3x3(SceneData.LocalToWorld);
+	half3x3 LocalToWorld = DFToFloat3x3(SceneData.LocalToWorld);
 	half3 InvScale = SceneData.InvNonUniformScale;
 	LocalToWorld[0] *= InvScale.x;
 	LocalToWorld[1] *= InvScale.y;
@@ -328,12 +324,15 @@ FMaterialVertexParameters GetMaterialVertexParameters(FVertexFactoryInput Input,
 	Result.PrevFrameLocalToWorld = Intermediates.SceneData.Primitive.PreviousLocalToWorld;
 	Result.PreSkinnedPosition = GetVertexPreviousPosition(Input);
 	Result.PreSkinnedNormal = TangentToLocal[2];
+
+	Result.LWCData = MakeMaterialLWCData(Result);
+
 	return Result;
 }
 
-float4 CalcWorldPosition(float3 Position, FLWCMatrix LocalToWorld)
+float4 CalcWorldPosition(float3 Position, FDFMatrix LocalToWorld)
 {
-	return TransformLocalToTranslatedWorld(Position, LocalToWorld);
+	return DFTransformLocalToTranslatedWorld(Position, LocalToWorld, ResolvedView.PreViewTranslation);
 }
 
 half3x3 CalcTangentToLocal(uint VertexIndex, inout float TangentSign)
@@ -397,27 +396,26 @@ RAY_TRACING_ENTRY_INTERSECTION(MaterialIS)
 
 	uint VertexIndex0 = PrimitiveIndex() / HairStrandsVF.RaytracingProceduralSplits;
 	uint VertexIndex1 = VertexIndex0 + 1;
-	float ScaleR0 = 1, ScaleR1 = 1;
 	if (HairStrandsVF.bCullingEnable)
 	{
-		ScaleR0 = HairStrandsVF.CullingRadiusScaleBuffer[VertexIndex0];
-		ScaleR1 = HairStrandsVF.CullingRadiusScaleBuffer[VertexIndex1];
 		VertexIndex0 = HairStrandsVF.CullingIndexBuffer[VertexIndex0];
 		VertexIndex1 = HairStrandsVF.CullingIndexBuffer[VertexIndex1];
 	}
 
 	const float EffectiveRadius = HairStrandsVF.Radius * HairStrandsVF.RaytracingRadiusScale;
-	const float3 PositionOffset = HairStrandsVF.PositionOffsetBuffer[0].xyz;
-	FHairControlPoint P0 = UnpackHairControlPoint(
-		HairStrandsVF.PositionBuffer[VertexIndex0],
+	const float3 PositionOffset = GetPositionOffset();
+	FHairControlPoint P0 = ReadHairControlPoint(
+		HairStrandsVF.PositionBuffer,
+		VertexIndex0,
 		PositionOffset,
-		EffectiveRadius * ScaleR0,
+		EffectiveRadius,
 		HairStrandsVF.RootScale,
 		HairStrandsVF.TipScale);
-	FHairControlPoint P1 = UnpackHairControlPoint(
-		HairStrandsVF.PositionBuffer[VertexIndex1],
+	FHairControlPoint P1 = ReadHairControlPoint(
+		HairStrandsVF.PositionBuffer,
+		VertexIndex1,
 		PositionOffset,
-		EffectiveRadius * ScaleR1,
+		EffectiveRadius,
 		HairStrandsVF.RootScale,
 		HairStrandsVF.TipScale);
 
@@ -491,15 +489,17 @@ FMaterialPixelParameters GetMaterialPixelParameters(float3 RayOrigin, float3 Ray
 	const float EffectiveRadius = HairStrandsVF.Radius * HairStrandsVF.RaytracingRadiusScale;
 	float UCoord = Barycentrics.x;
 	float VCoord = Barycentrics.y;
-	const float3 PositionOffset = HairStrandsVF.PositionOffsetBuffer[0].xyz;
-	FHairControlPoint P0 = UnpackHairControlPoint(
-		HairStrandsVF.PositionBuffer[VertexIndex0],
+	const float3 PositionOffset = GetPositionOffset();
+	FHairControlPoint P0 = ReadHairControlPoint(
+		HairStrandsVF.PositionBuffer,
+		VertexIndex0,
 		PositionOffset,
 		EffectiveRadius,
 		HairStrandsVF.RootScale,
 		HairStrandsVF.TipScale);
-	FHairControlPoint P1 = UnpackHairControlPoint(
-		HairStrandsVF.PositionBuffer[VertexIndex1],
+	FHairControlPoint P1 = ReadHairControlPoint(
+		HairStrandsVF.PositionBuffer,
+		VertexIndex1,
 		PositionOffset,
 		EffectiveRadius,
 		HairStrandsVF.RootScale,
@@ -543,16 +543,18 @@ FMaterialPixelParameters GetMaterialPixelParameters(float3 RayOrigin, float3 Ray
 	float VCoord = 0;
 	{
 		// find central point of the hair strand
-		const float3 PositionOffset = HairStrandsVF.PositionOffsetBuffer[0].xyz;
+		const float3 PositionOffset = GetPositionOffset();
 		const float EffectiveRadius = HairStrandsVF.Radius * HairStrandsVF.RaytracingRadiusScale;
-		FHairControlPoint P0 = UnpackHairControlPoint(
-			HairStrandsVF.PositionBuffer[VertexIndex0],
+		FHairControlPoint P0 = ReadHairControlPoint(
+			HairStrandsVF.PositionBuffer,
+			VertexIndex0,
 			PositionOffset,
 			EffectiveRadius,
 			HairStrandsVF.RootScale,
 			HairStrandsVF.TipScale);
-		FHairControlPoint P1 = UnpackHairControlPoint(
-			HairStrandsVF.PositionBuffer[VertexIndex1],
+		FHairControlPoint P1 = ReadHairControlPoint(
+			HairStrandsVF.PositionBuffer,
+			VertexIndex1,
 			PositionOffset,
 			EffectiveRadius,
 			HairStrandsVF.RootScale,
@@ -561,7 +563,7 @@ FMaterialPixelParameters GetMaterialPixelParameters(float3 RayOrigin, float3 Ray
 		float4 B = float4(P1.Position, P1.WorldRadius);
 		float4 C = lerp(A, B, UCoord);
 		// approximate position along the width of the ribbon
-		float3 WorldC = LWCToFloat(TransformLocalToWorld(C.xyz, SceneData.Primitive.LocalToWorld));
+		float3 WorldC = DFDemote(TransformLocalToWorld(C.xyz, SceneData.Primitive.LocalToWorld));
 		float3 rd = RayDirection;
 		float3 cp = WorldC - RayOrigin;
 		float t = dot(cp, rd) / dot(rd, rd);
@@ -569,7 +571,7 @@ FMaterialPixelParameters GetMaterialPixelParameters(float3 RayOrigin, float3 Ray
 		float d2 = length2(dp);
 		float v = saturate(sqrt(d2 / Pow2(C.w))); // TODO: account for scale of radius
 		// figure out sign of v
-		float3 WorldU = LWCToFloat(TransformLocalToWorld(B.xyz - A.xyz, SceneData.Primitive.LocalToWorld));
+		float3 WorldU = DFDemote(TransformLocalToWorld(B.xyz - A.xyz, SceneData.Primitive.LocalToWorld));
 		VCoord = v * sign(dot(dp, cross(RayDirection, WorldU)));
 		VCoord = 0.5 * VCoord + 0.5;
 	}
@@ -653,7 +655,8 @@ float4 ComputeViewAlignedWorldPosition(FVertexFactoryInput Input, float3 WorldTa
 
 	// Minimal radius to snap the strand to a sample/pixel center (to avoid aliasing)
 	const float DistanceToCamera = length(HairViewInfo.TranslatedWorldCameraOrigin - WorldPosition.xyz);
-	const float MinStrandHairRadius = HairViewInfo.bIsOrthoView ? HairViewInfo.RadiusAtDepth1 : (DistanceToCamera * HairViewInfo.RadiusAtDepth1);
+	const float MinStrandHairRadius = ConvertGivenDepthRadiusForProjectionType(HairViewInfo.RadiusAtDepth1, DistanceToCamera, HairViewInfo.bIsOrthoView);
+
 	const float3 ViewDir = -HairViewInfo.ViewForward;
 	const float3 Right = normalize(cross(WorldTangent, ViewDir));
 	const float3 OutWorldPosition = WorldPosition.xyz + (VertexInfo.IsLeft ? -Right : Right) * max(WorldStrandRadius, MinStrandHairRadius);
@@ -676,7 +679,7 @@ float4 VertexFactoryGetWorldPosition_Visibility(FVertexFactoryInput Input, FHair
 
 	// Minimal radius to snap the strand to a sample/pixel center (to avoid aliasing)
 	const float DistanceToCamera = length(HairViewInfo.TranslatedWorldCameraOrigin - WorldPosition.xyz);
-	const float MinStrandHairRadius = DistanceToCamera * HairViewInfo.RadiusAtDepth1;
+	const float MinStrandHairRadius = ConvertGivenDepthRadiusForProjectionType(HairViewInfo.RadiusAtDepth1, DistanceToCamera);
 	const float3 ViewDir = -HairViewInfo.ViewForward;
 	const float3 Right = normalize(cross(WorldTangent, ViewDir));
 	const float3 OutWorldPosition = WorldPosition.xyz + (VertexInfo.IsLeft ? -Right : Right) * max(ControlPoint.WorldRadius, MinStrandHairRadius);
@@ -779,17 +782,14 @@ float4 VertexFactoryGetWorldPositionRaw(FVertexFactoryInput Input, FVertexFactor
 // @return previous translated world position
 float4 VertexFactoryGetPreviousWorldPosition(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates, bool bInvalidJointVertex = true)
 {
-	float4x4 PreviousLocalToWorldTranslated = LWCMultiplyTranslation(Intermediates.SceneData.Primitive.PreviousLocalToWorld, ResolvedView.PrevPreViewTranslation);
-
-
 	const float3 VertexPosition = GetVertexPreviousPosition(Input, bInvalidJointVertex);
-	return mul(float4(VertexPosition,1), PreviousLocalToWorldTranslated);
+	return DFTransformLocalToTranslatedWorld(VertexPosition, Intermediates.SceneData.Primitive.PreviousLocalToWorld, ResolvedView.PrevPreViewTranslation);
 }
 
 float4 VertexFactoryGetTranslatedPrimitiveVolumeBounds(FVertexFactoryInterpolantsVSToPS Interpolants)
 {
 	FPrimitiveSceneData PrimitiveData = GetPrimitiveData(GetPrimitiveId(Interpolants));
-	return float4(LWCToFloat(LWCAdd(PrimitiveData.ObjectWorldPosition, ResolvedView.PreViewTranslation)), PrimitiveData.ObjectRadius);
+	return float4(DFFastToTranslatedWorld(PrimitiveData.ObjectWorldPosition, ResolvedView.PreViewTranslation), PrimitiveData.ObjectRadius);
 }
 
 uint VertexFactoryGetPrimitiveId(FVertexFactoryInterpolantsVSToPS Interpolants)
@@ -875,7 +875,7 @@ FVertexFactoryRayTracingInterpolants VertexFactoryInterpolate(FVertexFactoryRayT
 #if INTERPOLATE_VERTEX_COLOR
 	INTERPOLATE_MEMBER(InterpolantsVSToPS.Color);
 #endif
-#if USE_INSTANCING
+#if	NEEDS_PER_INSTANCE_PARAMS
 	INTERPOLATE_MEMBER(InterpolantsVSToPS.PerInstanceParams);
 #endif
 

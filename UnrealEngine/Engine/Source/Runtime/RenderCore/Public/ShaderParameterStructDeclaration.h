@@ -19,6 +19,7 @@ template<typename T>
 const FShaderParametersMetadata* GetForwardDeclaredShaderParametersStructMetadata(const T*)
 {
 	static_assert(!std::is_same<T, T>::value /* true */,
-		TEXT("Partial uniform buffer struct declaration. Use `DECLARE_UNIFORM_BUFFER_STRUCT()` instead of `class T;`.")
+		"Partial uniform buffer struct declaration. Use `DECLARE_UNIFORM_BUFFER_STRUCT()` instead of `class T;`."
 	);
+	return nullptr;
 }

@@ -770,8 +770,8 @@ void FAutomationDriverSpec::Define()
 				D1->TypeChord(EKeys::LeftShift, EKeys::Tab);
 
 				FDriverElementRef C2 = Driver->FindElement(By::Id("C2"));
-				TEST_TRUE(C2->HasFocusedDescendants());
 				C2->TypeChord(EKeys::LeftControl, EKeys::V);
+				TEST_TRUE(C2->HasFocusedDescendants());
 
 				TEST_EQUAL(SuiteViewModel->GetFormString(EFormElement::D1), TEXT("1234"));
 				TEST_EQUAL(SuiteViewModel->GetFormString(EFormElement::C2), TEXT("aBc"));
@@ -925,6 +925,7 @@ void FAutomationDriverSpec::Define()
 			It("should return false if the element is not currently visible in the SWidget DOM being displayed", EAsyncExecution::ThreadPool, [this]()
 			{
 				SuiteViewModel->SetPianoVisibility(EVisibility::Hidden);
+				Driver->Wait(Until::ElementIsHidden(By::Id("Piano"), FWaitTimeout::InSeconds(1)));
 				TEST_FALSE(Driver->FindElement(By::Id("Piano"))->IsVisible());
 			});
 
@@ -938,6 +939,7 @@ void FAutomationDriverSpec::Define()
 		{
 			It("should return true if the element is a currently enabled SWidget", EAsyncExecution::ThreadPool, [this]()
 			{
+				Driver->Wait(Until::ElementIsVisible(By::Id("Piano"), FWaitTimeout::InSeconds(1)));
 				TEST_TRUE(Driver->FindElement(By::Id("KeyB"))->IsInteractable());
 			});
 
@@ -1065,6 +1067,7 @@ void FAutomationDriverSpec::Define()
 		It("should be able to perform actions across multiple windows", EAsyncExecution::ThreadPool, [this]()
 		{
 			FDriverSequenceRef Sequence = Driver->CreateSequence();
+
 			Sequence->Actions()
 				.Click(By::Id("KeyModifierA#"))
 				.Click(By::Id("KeyA#"))
@@ -1072,7 +1075,7 @@ void FAutomationDriverSpec::Define()
 				.Click(By::Id("KeyEb"))
 				.Click(By::Id("KeyModifierB#"))
 				.Click(By::Id("KeyB#"));
-
+			
 			TEST_TRUE(Sequence->Perform());
 			TEST_EQUAL(SuiteViewModel->GetKeySequence(), TEXT("A#EbB#"));
 		});
@@ -1177,43 +1180,35 @@ void FAutomationDriverSpec::Define()
 					TEST_TRUE(ElementA->IsFocused());
 				});
 
-				It("should cancel further sequence execution after timing out", EAsyncExecution::ThreadPool, [this]()
+				Describe("should cancel further sequence execution after timing out", [this]()
 				{
-					FDriverElementRef ElementB = Driver->FindElement(By::Id("KeyB"));
-					ElementB->Focus();
+					It("", EAsyncExecution::ThreadPool, [this]()
+					{
+						FDriverElementRef ElementB = Driver->FindElement(By::Id("KeyB"));
+						ElementB->Focus();
 
-					TSharedRef<int32, ESPMode::ThreadSafe> OriginalExistenceChecker = MakeShareable(new int32);
-					TWeakPtr<int32, ESPMode::ThreadSafe> WeakExistenceChecker = OriginalExistenceChecker;
-					AsyncTask(
-						ENamedThreads::GameThread,
-						[this, WeakExistenceChecker]()
+						Driver->GetConfiguration()->ImplicitWait = FTimespan::FromSeconds(0.5);
+						FDriverElementRef ElementA = Driver->FindElement(By::Id("KeyA"));
+
+						Async(EAsyncExecution::TaskGraphMainThread, [this]()
 						{
-							const TSharedPtr<int32, ESPMode::ThreadSafe> ExistenceChecker = WeakExistenceChecker.Pin();
-							if (ExistenceChecker.IsValid())
-							{
-								SuiteWidget->RemoveContents();
-								FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([this, WeakExistenceChecker](float Delta) {
-									const TSharedPtr<int32, ESPMode::ThreadSafe> TickerExistenceChecker = WeakExistenceChecker.Pin();
-									if (TickerExistenceChecker.IsValid())
-									{
-										SuiteWidget->RestoreContents();
-									}
-									return false;
-								}), 2);
-							}
-						}
-					);
+							// Note that we have to call this method in GameThread to avoid assertions
+							SuiteWidget->RemoveContents();
+						}).Get();
 
-					Driver->GetConfiguration()->ImplicitWait = FTimespan::FromSeconds(0.5);
-					FDriverElementRef ElementA = Driver->FindElement(By::Id("KeyA"));
+						FDriverSequenceRef Sequence = Driver->CreateSequence();
+						Sequence->Actions()
+							.Wait(Until::ElementExists(ElementA, FWaitInterval::InSeconds(0.25), FWaitTimeout::InSeconds(1)))
+							.Focus(ElementA);
 
-					FDriverSequenceRef Sequence = Driver->CreateSequence();
-					Sequence->Actions()
-						.Wait(Until::ElementExists(ElementA, FWaitInterval::InSeconds(0.25), FWaitTimeout::InSeconds(1)))
-						.Focus(ElementA);
+						TEST_FALSE(Sequence->Perform());
+						TEST_FALSE(ElementA->IsFocused());
+					});
 
-					TEST_FALSE(Sequence->Perform());
-					TEST_FALSE(ElementA->IsFocused());
+					AfterEach([this]()
+					{
+						SuiteWidget->RestoreContents();
+					});
 				});
 			});
 
@@ -1258,43 +1253,30 @@ void FAutomationDriverSpec::Define()
 					TEST_TRUE(ElementA->IsFocused());
 				});
 
-				It("should cancel further sequence execution after timing out", EAsyncExecution::ThreadPool, [this]()
+				Describe("should cancel further sequence execution after timing out", [this]()
 				{
-					FDriverElementRef ElementB = Driver->FindElement(By::Id("KeyB"));
-					ElementB->Focus();
+					It("", EAsyncExecution::ThreadPool, [this]()
+					{
+						FDriverElementRef ElementB = Driver->FindElement(By::Id("KeyB"));
+						ElementB->Focus();
 
-					TSharedRef<int32, ESPMode::ThreadSafe> OriginalExistenceChecker = MakeShareable(new int32);
-					TWeakPtr<int32, ESPMode::ThreadSafe> WeakExistenceChecker = OriginalExistenceChecker;
-					SuiteViewModel->SetPianoVisibility(EVisibility::Collapsed);
-					AsyncTask(
-						ENamedThreads::GameThread,
-						[this, WeakExistenceChecker]()
-						{
-							const TSharedPtr<int32, ESPMode::ThreadSafe> ExistenceChecker = WeakExistenceChecker.Pin();
-							if (ExistenceChecker.IsValid())
-							{
-								FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([this, WeakExistenceChecker](float Delta) {
-									const TSharedPtr<int32, ESPMode::ThreadSafe> TickerExistenceChecker = WeakExistenceChecker.Pin();
-									if (TickerExistenceChecker.IsValid())
-									{
-										SuiteViewModel->SetPianoVisibility(EVisibility::Visible);
-									}
-									return false;
-								}), 2);
-							}
-						}
-					);
+						Driver->GetConfiguration()->ImplicitWait = FTimespan::FromSeconds(0.5);
+						FDriverElementRef ElementA = Driver->FindElement(By::Id("KeyA"));
 
-					Driver->GetConfiguration()->ImplicitWait = FTimespan::FromSeconds(0.5);
-					FDriverElementRef ElementA = Driver->FindElement(By::Id("KeyA"));
+						SuiteViewModel->SetPianoVisibility(EVisibility::Collapsed);
 
-					FDriverSequenceRef Sequence = Driver->CreateSequence();
-					Sequence->Actions()
-						.Wait(Until::ElementIsVisible(ElementA, FWaitInterval::InSeconds(0.25), FWaitTimeout::InSeconds(1)))
-						.Focus(ElementA);
+						FDriverSequenceRef Sequence = Driver->CreateSequence();
+						Sequence->Actions()
+							.Wait(Until::ElementIsVisible(ElementA, FWaitInterval::InSeconds(0.25), FWaitTimeout::InSeconds(1)))
+							.Focus(ElementA);
 
-					TEST_FALSE(Sequence->Perform());
-					TEST_FALSE(ElementA->IsFocused());
+						TEST_FALSE(Sequence->Perform());
+						TEST_FALSE(ElementA->IsFocused());
+					});
+				
+					AfterEach([this]() {
+						SuiteViewModel->SetPianoVisibility(EVisibility::Visible);
+					});
 				});
 			});
 
@@ -1338,42 +1320,32 @@ void FAutomationDriverSpec::Define()
 					TEST_TRUE(ElementB->IsFocused());
 				});
 
-				It("should cancel further sequence execution after timing out", EAsyncExecution::ThreadPool, [this]()
+				Describe("should cancel further sequence execution after timing out", [this]()
 				{
-					TSharedRef<int32, ESPMode::ThreadSafe> OriginalExistenceChecker = MakeShareable(new int32);
-					TWeakPtr<int32, ESPMode::ThreadSafe> WeakExistenceChecker = OriginalExistenceChecker;
-					SuiteViewModel->SetKeyResetDelay(FTimespan::FromSeconds(2));
-					AsyncTask(
-						ENamedThreads::GameThread,
-						[this, WeakExistenceChecker]()
-						{
-							const TSharedPtr<int32, ESPMode::ThreadSafe> ExistenceChecker = WeakExistenceChecker.Pin();
-							if (ExistenceChecker.IsValid())
-							{
-								FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateLambda([this, WeakExistenceChecker](float Delta) {
-									const TSharedPtr<int32, ESPMode::ThreadSafe> TickerExistenceChecker = WeakExistenceChecker.Pin();
-									if (TickerExistenceChecker.IsValid())
-									{
-										SuiteViewModel->SetKeyResetDelay(FTimespan::Zero());
-									}
-									return false;
-								}), 2);
-							}
-						}
-					);
+					BeforeEach([this]() {
+						SuiteViewModel->SetKeyResetDelay(FTimespan::FromSeconds(5.0));
+					});
 
-					Driver->GetConfiguration()->ImplicitWait = FTimespan::FromSeconds(0.5);
-					FDriverElementRef ElementB = Driver->FindElement(By::Id("KeyB"));
-					FDriverElementRef ElementA = Driver->FindElement(By::Id("KeyA"));
-					ElementA->Click();
+					It("", EAsyncExecution::ThreadPool, [this]()
+					{
+						Driver->GetConfiguration()->ImplicitWait = FTimespan::FromSeconds(0.5);
+						FDriverElementRef ElementB = Driver->FindElement(By::Id("KeyB"));
+						FDriverElementRef ElementA = Driver->FindElement(By::Id("KeyA"));
 
-					FDriverSequenceRef Sequence = Driver->CreateSequence();
-					Sequence->Actions()
-						.Wait(Until::ElementIsInteractable(ElementA, FWaitInterval::InSeconds(0.25), FWaitTimeout::InSeconds(1)))
-						.Focus(ElementB);
+						ElementA->Click();
 
-					TEST_FALSE(Sequence->Perform());
-					TEST_FALSE(ElementB->IsFocused());
+						FDriverSequenceRef Sequence = Driver->CreateSequence();
+						Sequence->Actions()
+							.Wait(Until::ElementIsInteractable(ElementA, FWaitInterval::InSeconds(0.25), FWaitTimeout::InSeconds(1)))
+							.Focus(ElementB);
+
+						TEST_FALSE(Sequence->Perform());
+						TEST_FALSE(ElementB->IsFocused());
+					});
+
+					AfterEach([this]() {
+						SuiteViewModel->SetKeyResetDelay(FTimespan::FromSeconds(0.0));
+					});
 				});
 			});
 		});

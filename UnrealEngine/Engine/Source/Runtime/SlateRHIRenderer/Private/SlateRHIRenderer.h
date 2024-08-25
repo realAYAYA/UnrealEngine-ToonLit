@@ -6,6 +6,7 @@
 #include "Textures/SlateShaderResource.h"
 #include "Rendering/DrawElements.h"
 #include "RHI.h"
+#include "RenderCommandFence.h"
 #include "RenderResource.h"
 #include "SlateRHIResourceManager.h"
 #include "UnrealClient.h"
@@ -16,8 +17,12 @@
 
 class FSlateElementBatcher;
 class FSlateRHIRenderingPolicy;
+class FSlateRHIRenderingPolicyInterface;
+class USlateRHIPostBufferProcessor;
+class USlateRHIRendererSettings;
 class ISlateStyle;
 class SWindow;
+struct FSlatePostSettings;
 struct Rect;
 
 template<typename TCmd, typename NameType> struct FRHICommand;
@@ -175,6 +180,8 @@ public:
 	 * @return The created projection matrix
 	 */
 	static FMatrix CreateProjectionMatrix( uint32 Width, uint32 Height );
+	static int32 GetDrawToVRRenderTarget();
+	static int32 GetProcessSlatePostBuffers();
 
 	/** FSlateRenderer interface */
 	virtual bool Initialize() override;
@@ -241,6 +248,7 @@ public:
 
 	virtual void SetWindowRenderTarget(const SWindow& Window, class IViewportRenderTargetProvider* Provider) override;
 
+	FSlateRHIRenderingPolicyInterface GetRenderingPolicyInterface();
 
 private:
 	/** Loads all known textures from Slate styles */
@@ -305,6 +313,9 @@ private:
 	bool bIsStandaloneStereoOnlyDevice;
 	bool bTakingAScreenShot;
 	bool bUpdateHDRDisplayInformation;
+	ESlatePostRT bShrinkPostBufferRequested;
+	uint64 LastFramesPostBufferUsed[(uint8)ESlatePostRT::Num];
+	FRenderCommandFence SlatePostRTFences[(uint8)ESlatePostRT::Num];
 	FIntRect ScreenshotRect;
 	FViewportInfo* ScreenshotViewportInfo;
 	TArray<FColor>* OutScreenshotData;

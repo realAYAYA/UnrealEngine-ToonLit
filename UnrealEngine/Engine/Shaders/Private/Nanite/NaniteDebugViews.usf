@@ -11,12 +11,10 @@
 Texture2D<UlongType> VisBuffer64;
 Texture2D<float> SceneDepth;
 Texture2D<uint> ShadingMask;
-ByteAddressBuffer MaterialSlotTable;
-ByteAddressBuffer MaterialDepthTable;
 ByteAddressBuffer MaterialEditorTable;
 ByteAddressBuffer MaterialHitProxyTable;
 
-StructuredBuffer<FNaniteShadingBinMeta> ShadingBinMeta;
+ByteAddressBuffer ShadingBinData;
 
 #if USE_EDITOR_SHADERS
 Buffer<uint> EditorSelectedHitProxyIds;
@@ -33,6 +31,7 @@ float3 SelectionColor;
 #define DEBUG_VIEW_WIREFRAME 1
 #define DEBUG_VIEW_SHADER_COMPLEXITY 2
 #define DEBUG_VIEW_LIGHTMAP_DENSITY 3
+#define DEBUG_VIEW_PRIMITIVE_COLOR 4
 uint DebugViewMode;
 
 #define SOBEL_WIREFRAME_FILTER_ONLY 0
@@ -184,7 +183,7 @@ void ExportDebugViewPS(
 			{
 				const bool bIsSelected = IsInstanceSelected(InstanceData, VisibleCluster, TriIndex);
 				const float3 WireColor = CondMask(bIsSelected, SelectionColor, PrimitiveData.WireframeColor);
-				//const float3 WireColor = PrimitiveData.LevelColor;
+				//const float3 WireColor = PrimitiveData.PrimitiveColor;
 
 			#if SOBEL_WIREFRAME_FILTER_ONLY
 				const bool bUseSobelFilter = true;
@@ -208,16 +207,16 @@ void ExportDebugViewPS(
 					float3 PointLocal2 = DecodePosition(TriIndices.z, Cluster);
 
 					// We can handle spline mesh deformation here because its deformation is fixed function
-					const uint PackedFlags = ShadingBinMeta[UnpackedMask.ShadingBin].MaterialFlags;
+					const uint PackedFlags = ShadingBinData.Load<FNaniteShadingBinMeta>(UnpackedMask.ShadingBin * NANITE_SHADING_BIN_META_BYTES).MaterialFlags;
 					const FNaniteMaterialFlags MaterialFlags = UnpackNaniteMaterialFlags(PackedFlags);
 
 					BRANCH
 					if (MaterialFlags.bSplineMesh)
 					{
 						FSplineMeshShaderParams SplineMeshParams = SplineMeshLoadParamsFromInstancePayload(InstanceData);
-						PointLocal0 = SplineMeshDeformLocalPos(SplineMeshParams, float4(PointLocal0, 1));
-						PointLocal1 = SplineMeshDeformLocalPos(SplineMeshParams, float4(PointLocal1, 1));
-						PointLocal2 = SplineMeshDeformLocalPos(SplineMeshParams, float4(PointLocal2, 1));
+						PointLocal0 = SplineMeshDeformLocalPos(SplineMeshParams, PointLocal0);
+						PointLocal1 = SplineMeshDeformLocalPos(SplineMeshParams, PointLocal1);
+						PointLocal2 = SplineMeshDeformLocalPos(SplineMeshParams, PointLocal2);
 					}
 
 					const float3 PointWorld0 = mul(float4(PointLocal0, 1), InstanceDynamicData.LocalToTranslatedWorld).xyz;
@@ -233,7 +232,7 @@ void ExportDebugViewPS(
 					// Calculate perspective correct barycentric coordinates with screen derivatives
 					const FBarycentrics Barycentrics = CalculateTriangleBarycentrics(PixelClip, PointClip0, PointClip1, PointClip2, View.ViewSizeAndInvSize.zw);
 					
-					float3 Deltas = abs(Barycentrics.UVW_dx) + abs(Barycentrics.UVW_dy);
+					float3 Deltas = abs(Barycentrics.Value_dx) + abs(Barycentrics.Value_dy);
 
 					float SmoothingVal = 1.0f; // 0-10
 					float ThicknessVal = 0.05f; // 0-10
@@ -241,7 +240,7 @@ void ExportDebugViewPS(
 					float3 Smoothing = Deltas * SmoothingVal;
 					float3 Thickness = Deltas * ThicknessVal;
 
-					const float3 SmoothBarycentrics = smoothstep(Thickness, Thickness + Smoothing, Barycentrics.UVW);
+					const float3 SmoothBarycentrics = smoothstep(Thickness, Thickness + Smoothing, Barycentrics.Value);
 
 					const float MinBarycentrics = min3(SmoothBarycentrics.x, SmoothBarycentrics.y, SmoothBarycentrics.z);
 					if (MinBarycentrics == 1.0f)
@@ -281,6 +280,12 @@ void ExportDebugViewPS(
 				// Use the maximum range allowed for scene color
 				// Alpha channel needs to be 1 to have decals working where the framebuffer blend is setup to multiply with alpha
 				OutColor = float4(FinalComplexity.xyz, 1.0f);
+			}
+			else if (DebugViewMode == DEBUG_VIEW_PRIMITIVE_COLOR)
+			{
+				const bool bIsSelected = IsInstanceSelected(InstanceData, VisibleCluster, TriIndex);
+				const float3 SolidColor = CondMask(bIsSelected, SelectionColor, PrimitiveData.PrimitiveColor);
+				OutColor = float4(SolidColor, 1.0f);
 			}
 		#endif
 			else

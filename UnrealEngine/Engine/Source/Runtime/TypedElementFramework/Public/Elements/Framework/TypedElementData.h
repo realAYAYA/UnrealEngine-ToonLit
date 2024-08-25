@@ -524,7 +524,7 @@ public:
 		checkSlow(InOutElementId < 0);
 
 		InOutElementId = InternalDataFreeIndices.Num() > 0
-			? InternalDataFreeIndices.Pop(/*bAllowShrinking*/false)
+			? InternalDataFreeIndices.Pop(EAllowShrinking::No)
 			: InternalDataArray.Add();
 
 		TTypedElementInternalData<ElementDataType>& InternalData = InternalDataArray[InOutElementId];
@@ -614,7 +614,7 @@ public:
 		checkSlow(!ElementIdToArrayIndex.Contains(InOutElementId));
 
 		const int32 InternalDataArrayIndex = InternalDataFreeIndices.Num() > 0
-			? InternalDataFreeIndices.Pop(/*bAllowShrinking*/false)
+			? InternalDataFreeIndices.Pop(EAllowShrinking::No)
 			: InternalDataArray.Add();
 
 		ElementIdToArrayIndex.Add(InOutElementId, InternalDataArrayIndex);

@@ -28,9 +28,9 @@ public:
 	uint32 GetInt32ComponentStart() const { return Int32ComponentStart; }
 	uint32 GetHalfComponentStart() const { return HalfComponentStart; }
 
-	void SetFloatComponentStart(uint32 Offset) { check(Offset <= TNumericLimits<uint16>::Max()); FloatComponentStart = Offset; }
-	void SetInt32ComponentStart(uint32 Offset) { check(Offset <= TNumericLimits<uint16>::Max()); Int32ComponentStart = Offset; }
-	void SetHalfComponentStart(uint32 Offset) { check(Offset <= TNumericLimits<uint16>::Max()); HalfComponentStart = Offset; }
+	void SetFloatComponentStart(uint32 Offset) { check(Offset <= TNumericLimits<uint16>::Max()); FloatComponentStart = static_cast<uint16>(Offset); }
+	void SetInt32ComponentStart(uint32 Offset) { check(Offset <= TNumericLimits<uint16>::Max()); Int32ComponentStart = static_cast<uint16>(Offset); }
+	void SetHalfComponentStart(uint32 Offset) { check(Offset <= TNumericLimits<uint16>::Max()); HalfComponentStart = static_cast<uint16>(Offset); }
 
 	uint32 GetNumFloatComponents() const { return LayoutInfo.GetNumFloatComponents(); }
 	uint32 GetNumInt32Components() const { return LayoutInfo.GetNumInt32Components(); }

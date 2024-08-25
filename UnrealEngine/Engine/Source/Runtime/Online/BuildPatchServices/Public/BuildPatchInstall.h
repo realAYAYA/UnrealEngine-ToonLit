@@ -15,7 +15,7 @@ namespace BuildPatchServices
 	enum class EInstallMode : uint32
 	{
 		// Construct all required files, but only stage them ready to be completed later.
-		StageFiles,
+		StageFiles = 0,
 
 		// Full installation, allowing immediate changes to be made to existing files. The installation is unusable until complete.
 		DestructiveInstall,
@@ -24,32 +24,44 @@ namespace BuildPatchServices
 		NonDestructiveInstall,
 
 		// Execute the prerequisite installer only, downloading it first if necessary. If the specified manifest has no prerequisites, this will result in an error.
-		PrereqOnly
+		PrereqOnly,
+
+		InvalidOrMax
 	};
 
-	/**
-	 * Returns the string representation of the EInstallMode value. Used for analytics and logging only.
-	 * @param InstallMode     The value.
-	 * @return the enum's string representation.
-	 */
-	inline const FString& EnumToString(const EInstallMode& InstallMode)
-	{
-		// Const enum strings, special case no error.
-		static const FString StageFiles(TEXT("EInstallMode::StageFiles"));
-		static const FString DestructiveInstall(TEXT("EInstallMode::DestructiveInstall"));
-		static const FString NonDestructiveInstall(TEXT("EInstallMode::NonDestructiveInstall"));
-		static const FString PrereqOnly(TEXT("EInstallMode::PrereqOnly"));
-		static const FString InvalidOrMax(TEXT("InvalidOrMax"));
+	BUILDPATCHSERVICES_API uint64 CalculateRequiredDiskSpace(const IBuildManifestPtr& CurrentManifest, const IBuildManifestRef& BuildManifest, const EInstallMode& InstallMode, const TSet<FString>& InstallTags);
+}
 
+static_assert((uint32)BuildPatchServices::EInstallMode::InvalidOrMax == 4, "Please add support for the extra values to the Lex functions below.");
+
+inline const TCHAR* LexToString(BuildPatchServices::EInstallMode InstallMode)
+{
+#define CASE_ENUM_TO_STR(Value) case BuildPatchServices::EInstallMode::Value: return TEXT(#Value)
 		switch (InstallMode)
 		{
-			case EInstallMode::StageFiles: return StageFiles;
-			case EInstallMode::DestructiveInstall: return DestructiveInstall;
-			case EInstallMode::NonDestructiveInstall: return NonDestructiveInstall;
-			case EInstallMode::PrereqOnly: return PrereqOnly;
-			default: return InvalidOrMax;
+		CASE_ENUM_TO_STR(StageFiles);
+		CASE_ENUM_TO_STR(DestructiveInstall);
+		CASE_ENUM_TO_STR(NonDestructiveInstall);
+		CASE_ENUM_TO_STR(PrereqOnly);
+	default: return TEXT("InvalidOrMax");
 		}
-	}
+#undef CASE_ENUM_TO_STR
+}
 
-	BUILDPATCHSERVICES_API uint64 CalculateRequiredDiskSpace(const IBuildManifestPtr& CurrentManifest, const IBuildManifestRef& BuildManifest, const EInstallMode& InstallMode, const TSet<FString>& InstallTags);
+inline void LexFromString(BuildPatchServices::EInstallMode& InstallMode, const TCHAR* Buffer)
+{
+#define RETURN_IF_EQUAL(Value) if (FCString::Stricmp(Buffer, TEXT(#Value)) == 0) { InstallMode = BuildPatchServices::EInstallMode::Value; return; }
+	const TCHAR* const Prefix = TEXT("EInstallMode::");
+	const SIZE_T PrefixLen = FCString::Strlen(Prefix);
+	if (FCString::Strnicmp(Buffer, Prefix, PrefixLen) == 0)
+	{
+		Buffer += PrefixLen;
+	}
+	RETURN_IF_EQUAL(StageFiles);
+	RETURN_IF_EQUAL(DestructiveInstall);
+	RETURN_IF_EQUAL(NonDestructiveInstall);
+	RETURN_IF_EQUAL(PrereqOnly);
+	// Did not match
+	InstallMode = BuildPatchServices::EInstallMode::InvalidOrMax;
+#undef RETURN_IF_EQUAL
 }

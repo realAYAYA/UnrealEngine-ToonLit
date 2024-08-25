@@ -7,6 +7,7 @@
 FInputProtocolMap FPixelStreamingInputProtocol::ToStreamerProtocol;
 FInputProtocolMap FPixelStreamingInputProtocol::FromStreamerProtocol;
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 TSharedPtr<FJsonObject> FPixelStreamingInputProtocol::ToJson(EPixelStreamingMessageDirection Direction)
 {
 	TSharedPtr<FJsonObject> ProtocolJson = MakeShareable(new FJsonObject());
@@ -20,43 +21,45 @@ TSharedPtr<FJsonObject> FPixelStreamingInputProtocol::ToJson(EPixelStreamingMess
 		TSharedPtr<FJsonObject> MessageJson = MakeShareable(new FJsonObject());
 
 		MessageJson->SetField("id", MakeShared<FJsonValueNumber>(Value.GetID()));
-		MessageJson->SetField("byteLength", MakeShared<FJsonValueNumber>(Value.GetByteLength()));
 
-		if (Value.GetByteLength() > 0)
+        TArray<EPixelStreamingMessageTypes> Structure = Value.GetStructure();
+		TArray<TSharedPtr<FJsonValue>> StructureJson;
+		for (auto It = Structure.CreateIterator(); It; ++It)
 		{
-			TArray<TSharedPtr<FJsonValue>> StructureJson;
-			TArray<EPixelStreamingMessageTypes> Structure = Value.GetStructure();
-			for (auto It = Structure.CreateIterator(); It; ++It)
+			FString Text;
+			switch (*It)
 			{
-				FString Text;
-				switch (*It)
-				{
-					case EPixelStreamingMessageTypes::Uint8:
-						Text = "uint8";
-						break;
-					case EPixelStreamingMessageTypes::Uint16:
-						Text = "uint16";
-						break;
-					case EPixelStreamingMessageTypes::Int16:
-						Text = "int16";
-						break;
-					case EPixelStreamingMessageTypes::Float:
-						Text = "float";
-						break;
-					case EPixelStreamingMessageTypes::Double:
-						Text = "double";
-						break;
-					default:
-						Text = "";
-				}
-				TSharedRef<FJsonValueString> JsonValue = MakeShareable(new FJsonValueString(*Text));
-				StructureJson.Add(JsonValue);
+				case EPixelStreamingMessageTypes::Uint8:
+					Text = "uint8";
+					break;
+				case EPixelStreamingMessageTypes::Uint16:
+					Text = "uint16";
+					break;
+				case EPixelStreamingMessageTypes::Int16:
+					Text = "int16";
+					break;
+				case EPixelStreamingMessageTypes::Float:
+					Text = "float";
+					break;
+				case EPixelStreamingMessageTypes::Double:
+					Text = "double";
+					break;
+            	case EPixelStreamingMessageTypes::String:
+					Text = "string";
+					break;
+				case EPixelStreamingMessageTypes::Undefined:
+				case EPixelStreamingMessageTypes::Variable:
+				default:
+					Text = "";
 			}
-			MessageJson->SetArrayField("structure", StructureJson);
+			TSharedRef<FJsonValueString> JsonValue = MakeShareable(new FJsonValueString(*Text));
+			StructureJson.Add(JsonValue);
 		}
+		MessageJson->SetArrayField("structure", StructureJson);
 
 		ProtocolJson->SetField(*Key, MakeShared<FJsonValueObject>(MessageJson));
 	});
 
 	return ProtocolJson;
 }
+PRAGMA_ENABLE_DEPRECATION_WARNINGS

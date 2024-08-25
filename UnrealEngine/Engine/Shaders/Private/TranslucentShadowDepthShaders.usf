@@ -4,10 +4,10 @@
 
 #define SCENE_TEXTURES_DISABLED 1
 
-// Enable Strata only when a material is specifying a strata material is specified.
-#if !MATERIAL_IS_STRATA && STRATA_ENABLED
-#undef STRATA_ENABLED
-#define STRATA_ENABLED 0
+// Enable Substrate only when a material is specifying a Substrate material is specified.
+#if !MATERIAL_IS_SUBSTRATE && SUBSTRATE_ENABLED
+#undef SUBSTRATE_ENABLED
+#define SUBSTRATE_ENABLED 0
 #endif
 
 #include "Common.ush"
@@ -91,27 +91,25 @@ void MainOpacityPS(
 	// Evaluate the mask for translucent materials
 	GetMaterialClippingShadowDepth(MaterialParameters, PixelMaterialInputs);
 
-#if STRATA_ENABLED
-	FStrataAddressing NullStrataAddressing = (FStrataAddressing)0;	// Fake unused in StrataCreateBSDFContext when using Forward inline shading
-
-	FStrataData StrataData = PixelMaterialInputs.GetFrontStrataData();
-	FStrataPixelHeader StrataPixelHeader = MaterialParameters.GetFrontStrataHeader();
+#if SUBSTRATE_ENABLED
+	FSubstrateData SubstrateData = PixelMaterialInputs.GetFrontSubstrateData();
+	FSubstratePixelHeader SubstratePixelHeader = MaterialParameters.GetFrontSubstrateHeader();
 
 	// Retrieve density from coverage and colored transmittance.
 	float Density = 0.0f;
 
 	float Sigma = 0.0f;
 	float3 RefractionWorldNormal = MaterialParameters.CameraVector;
-	if (StrataPixelHeader.StrataTree.BSDFCount > 0)
+	if (SubstratePixelHeader.SubstrateTree.BSDFCount > 0)
 	{
 		const float3 V = MaterialParameters.CameraVector;
 
 		// Update tree (coverage/transmittance/luminace weights)
-		const FStrataIntegrationSettings Settings = InitStrataIntegrationSettings(false /*bForceFullyRough*/, Strata.bRoughDiffuse /*bRoughDiffuseEnabled*/, Strata.PeelLayersAboveDepth, Strata.bRoughnessTracking);
-		StrataPixelHeader.StrataUpdateTree(NullStrataAddressing, V, Settings);
+		const FSubstrateIntegrationSettings Settings = InitSubstrateIntegrationSettings(false /*bForceFullyRough*/, Substrate.bRoughDiffuse /*bRoughDiffuseEnabled*/, Substrate.PeelLayersAboveDepth, Substrate.bRoughnessTracking);
+		SubstratePixelHeader.SubstrateUpdateTree(V, Settings);
 
-		const float StrataTreeRootOperatorIndex = StrataData.OperatorIndex;
-		const FStrataOperator RootOperator = StrataPixelHeader.StrataTree.Operators[StrataTreeRootOperatorIndex];
+		const float SubstrateTreeRootOperatorIndex = SubstrateData.OperatorIndex;
+		const FSubstrateOperator RootOperator = SubstratePixelHeader.SubstrateTree.Operators[SubstrateTreeRootOperatorIndex];
 
 		Density = (1.0 - RootOperator.Coverage) + RootOperator.Coverage * dot(RootOperator.ThroughputAlongV, (1.0f / 3.0f).xxx);
 	}

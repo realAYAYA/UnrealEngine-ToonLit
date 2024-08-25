@@ -82,18 +82,24 @@ public:
 	virtual void Deinitialize() override;
 	/** UWorldSubsystem End */
 
-	UConversationNode* GetRuntimeNodeFromGUID(const FGuid& NodeGUID) const;
-	TArray<FGuid> GetEntryPointGUIDs(FGameplayTag EntryPoint) const;
+	UConversationNode* GetRuntimeNodeFromGUID(const FGuid& NodeGUID, const UConversationDatabase* Graph = nullptr) const;
+	UConversationNode* TryGetRuntimeNodeFromGUID(const FGuid& NodeGUID, const UConversationDatabase* Graph = nullptr) const;
+	TArray<FGuid> GetEntryPointGUIDs(const FGameplayTag& EntryPoint) const;
 
-	TArray<FGuid> GetOutputLinkGUIDs(FGameplayTag EntryPoint) const;
+	TArray<FGuid> GetOutputLinkGUIDs(const FGameplayTag& EntryPoint) const;
 	TArray<FGuid> GetOutputLinkGUIDs(const FGuid& SourceGUID) const;
 	TArray<FGuid> GetOutputLinkGUIDs(const TArray<FGuid>& SourceGUIDs) const;
+	TArray<FGuid> GetOutputLinkGUIDs(const UConversationDatabase* Graph, const FGameplayTag& EntryPoint) const;
+	TArray<FGuid> GetOutputLinkGUIDs(const UConversationDatabase* Graph, const FGuid& SourceGUID) const;
 
 	TSharedPtr<FConversationsHandle> LoadConversationsFor(const FGameplayTag& ConversationEntryTag) const;
 	TSharedPtr<FConversationsHandle> LoadConversationsFor(const TArray<FGameplayTag>& ConversationEntryTags) const;
 
 	TArray<FPrimaryAssetId> GetPrimaryAssetIdsForEntryPoint(FGameplayTag EntryPoint) const;
-	
+
+	// If a conversation database links to other conversaton assets, the tags of those conversations can be obtained here
+	TArray<FGameplayTag> GetLinkedExitConversationEntryTags(const UConversationDatabase* ConversationDatabase) const;
+
 	UPROPERTY(Transient)
 	FNetSerializeScriptStructCache_ConvVersion ConversationChoiceDataStructCache;
 

@@ -15,6 +15,11 @@ namespace Chaos
 
 	template<typename T> struct TTriangleCollisionPoint;
 
+	namespace Softs
+	{
+	class FPBDFlatWeightMap;
+	}
+
 	class FTriangleMesh
 	{
 	public:
@@ -164,7 +169,9 @@ namespace Chaos
 		 * @param bUseGlobalArray When true, fill the array from the StartIdx to StartIdx + NumIndices - 1 positions, otherwise fill the array from the 0 to NumIndices - 1 positions.
 		 */
 		template <typename T>
-		void GetPointNormals(TArrayView<TVec3<T>> PointNormals, const TConstArrayView<TVec3<T>>& FaceNormals, const bool bUseGlobalArray) const;
+		CHAOS_API void GetPointNormals(TArrayView<TVec3<T>> PointNormals, const TConstArrayView<TVec3<T>>& FaceNormals, const bool bUseGlobalArray) const;
+
+		CHAOS_API void GetPointNormals(TArrayView<TVec3<FRealSingle>> PointNormals, const TConstArrayView<TVec3<FRealSingle>>& FaceNormals, const bool bUseGlobalArray) const;
 
 		static CHAOS_API FTriangleMesh GetConvexHullFromParticles(const TConstArrayView<FVec3>& points);
 		/** Deprecated. Use TArrayView version. */
@@ -271,9 +278,9 @@ namespace Chaos
 			const int32 Idx = Particles.Size();
 			Particles.AddParticles(3);
 			// Left handed
-			Particles.X(Idx + 0) = FVec3((T)0., (T)0., (T)0.8083);
-			Particles.X(Idx + 1) = FVec3((T)0., (T)0.7, (T)-0.4041);
-			Particles.X(Idx + 2) = FVec3((T)0., (T)-0.7, (T)-0.4041);
+			Particles.SetX(Idx + 0, FVec3((T)0., (T)0., (T)0.8083));
+			Particles.SetX(Idx + 1, FVec3((T)0., (T)0.7, (T)-0.4041));
+			Particles.SetX(Idx + 2, FVec3((T)0., (T)-0.7, (T)-0.4041));
 
 			TArray<TVec3<int32>> Elements;
 			Elements.SetNum(1);
@@ -309,10 +316,13 @@ namespace Chaos
 		// Hierarchy will only go down to lods as small as MinSpatialLodSize.
 		template<typename T>
 		void BuildSpatialHash(const TConstArrayView<TVec3<T>>& Points, TSpatialHashType<T>& SpatialHash, const T MinSpatialLodSize = (T)0.) const;
+		void BuildSpatialHash(const TConstArrayView<TVec3<FRealSingle>>& Points, TSpatialHashType<FRealSingle>& SpatialHash, const Softs::FPBDFlatWeightMap& PointThicknesses, int32 ThicknessMapIndexOffset, const FRealSingle MinSpatialLodSize = 0.f) const;
 
 		template<typename T>
 		bool PointProximityQuery(const TSpatialHashType<T>& SpatialHash, const TConstArrayView<TVec3<T>>& Points, const int32 PointIndex, const TVec3<T>& PointPosition, const T PointThickness, const T ThisThickness,
 			TFunctionRef<bool(const int32 PointIndex, const int32 TriangleIndex)> BroadphaseTest, TArray<TTriangleCollisionPoint<T>>& Result) const;
+		bool PointProximityQuery(const TSpatialHashType<FRealSingle>& SpatialHash, const TConstArrayView<TVec3<FRealSingle>>& Points, const int32 PointIndex, const TVec3<FRealSingle>& PointPosition, const FRealSingle PointThickness, const Softs::FPBDFlatWeightMap& ThisThicknesses,
+			const FRealSingle ThisThicknessExtraMultiplier, int32 ThicknessMapIndexOffset, TFunctionRef<bool(const int32 PointIndex, const int32 TriangleIndex)> BroadphaseTest, TArray<TTriangleCollisionPoint<FRealSingle>>& Result) const;
 
 		template<typename T>
 		bool EdgeIntersectionQuery(const TSpatialHashType<T>& SpatialHash, const TConstArrayView<TVec3<T>>& Points, const int32 EdgeIndex, const TVec3<T>& EdgePosition1, const TVec3<T>& EdgePosition2,

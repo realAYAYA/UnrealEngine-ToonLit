@@ -2,14 +2,24 @@
 
 using System;
 using System.Collections.Generic;
+using System.Data;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
+using EpicGames.Core;
+using EpicGames.Horde.Issues;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Jobs.Templates;
+using EpicGames.Horde.Logs;
+using EpicGames.Horde.Streams;
+using EpicGames.Horde.Telemetry;
+using EpicGames.Horde.Users;
 using EpicGames.Redis.Utility;
 using Horde.Server.Auditing;
 using Horde.Server.Jobs;
 using Horde.Server.Jobs.Graphs;
-using Horde.Server.Logs;
 using Horde.Server.Server;
 using Horde.Server.Streams;
 using Horde.Server.Telemetry;
@@ -17,9 +27,12 @@ using Horde.Server.Users;
 using Horde.Server.Utilities;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using MongoDB.Bson;
+using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Driver;
+using OpenTelemetry.Trace;
 
 namespace Horde.Server.Issues
 {
@@ -31,6 +44,7 @@ namespace Horde.Server.Issues
 			public int NextId { get; set; }
 		}
 
+		[DebuggerDisplay("{Id}: {Summary}")]
 		class Issue : IIssue
 		{
 			[BsonId]
@@ -103,7 +117,7 @@ namespace Horde.Server.Issues
 
 			public int UpdateIndex { get; set; }
 
-			IReadOnlyList<IIssueFingerprint> IIssue.Fingerprints => Fingerprints ?? ((Fingerprint == null)? new List<IssueFingerprint>() : new List<IssueFingerprint> { Fingerprint });
+			IReadOnlyList<IIssueFingerprint> IIssue.Fingerprints => Fingerprints ?? ((Fingerprint == null) ? new List<IssueFingerprint>() : new List<IssueFingerprint> { Fingerprint });
 			UserId? IIssue.OwnerId => OwnerId ?? DefaultOwnerId ?? GetDefaultOwnerId();
 			IReadOnlyList<IIssueStream> IIssue.Streams => Streams;
 			DateTime IIssue.LastSeenAt => (LastSeenAt == default) ? DateTime.UtcNow : LastSeenAt;
@@ -160,9 +174,10 @@ namespace Horde.Server.Issues
 						return String.Empty;
 					}
 
-					return String.Join(", ", Fingerprints.Select(x => {
-					   return $"(Type: {x.Type} / Keys: {String.Join(", ", x.Keys)} / RejectKeys: {String.Join(", ", x.RejectKeys ?? new CaseInsensitiveStringSet(new string[] {"No Reject Keys"}))})";
-				   }));
+					return String.Join(", ", Fingerprints.Select(x =>
+					{
+						return $"(Type: {x.Type} / Keys: {String.Join(", ", x.Keys)} / RejectKeys: {String.Join(", ", x.RejectKeys ?? new HashSet<IssueKey>())})";
+					}));
 				}
 			}
 		}
@@ -228,24 +243,158 @@ namespace Horde.Server.Issues
 		class IssueFingerprint : IIssueFingerprint
 		{
 			public string Type { get; set; }
-			public CaseInsensitiveStringSet Keys { get; set; }
-			public CaseInsensitiveStringSet? RejectKeys { get; set; }
-			public CaseInsensitiveStringSet? Metadata { get; set; }
+
+			[BsonElement("summary"), BsonIgnoreIfNull]
+			string? SummaryTemplateValue { get; set; }
+
+			[BsonIgnore]
+			public string SummaryTemplate => SummaryTemplateValue ?? GetLegacyHandlerInfo(Type).SummaryTemplate;
+
+			[BsonElement("inc")]
+			public HashSet<IssueKey> Keys { get; set; } = new HashSet<IssueKey>();
+
+			IReadOnlySet<IssueKey> IIssueFingerprint.Keys => Keys;
+
+			[BsonElement("exc"), BsonIgnoreIfNull]
+			public HashSet<IssueKey>? RejectKeys { get; set; } = new HashSet<IssueKey>();
+
+			IReadOnlySet<IssueKey>? IIssueFingerprint.RejectKeys => RejectKeys;
+
+			[BsonElement("met"), BsonIgnoreIfNull]
+			public HashSet<IssueMetadata>? Metadata { get; set; } = new HashSet<IssueMetadata>();
+
+			IReadOnlySet<IssueMetadata>? IIssueFingerprint.Metadata => Metadata;
+
+			[BsonElement("flt"), BsonIgnoreIfNull]
+			public List<string>? ChangeFilter { get; set; }
+
+			IReadOnlyList<string> IIssueFingerprint.ChangeFilter => ChangeFilter ?? GetLegacyHandlerInfo(Type).ChangeFilter;
 
 			[BsonConstructor]
 			private IssueFingerprint()
 			{
 				Type = String.Empty;
-				Keys = new CaseInsensitiveStringSet();
 			}
 
 			public IssueFingerprint(IIssueFingerprint fingerprint)
 			{
 				Type = fingerprint.Type;
-				Keys = fingerprint.Keys;
-				RejectKeys = fingerprint.RejectKeys;
-				Metadata = fingerprint.Metadata;
+				SummaryTemplateValue = fingerprint.SummaryTemplate;
+
+				Keys = new HashSet<IssueKey>(fingerprint.Keys);
+				if (fingerprint.RejectKeys != null && fingerprint.RejectKeys.Count > 0)
+				{
+					RejectKeys = new HashSet<IssueKey>(fingerprint.RejectKeys);
+				}
+				if (fingerprint.Metadata != null && fingerprint.Metadata.Count > 0)
+				{
+					Metadata = new HashSet<IssueMetadata>(fingerprint.Metadata);
+				}
+
+				ChangeFilter = new List<string>(fingerprint.ChangeFilter);
 			}
+
+			#region Legacy
+
+#pragma warning disable IDE0051
+			[BsonElement("Keys"), BsonIgnoreIfNull]
+			CaseInsensitiveStringSet? LegacyKeys
+			{
+				get => null;
+				set => Keys = ParseKeySet(value) ?? new HashSet<IssueKey>();
+			}
+
+			[BsonElement("RejectKeys"), BsonIgnoreIfNull]
+			CaseInsensitiveStringSet? LegacyRejectKeys
+			{
+				get => null;
+				set => RejectKeys = ParseKeySet(value);
+			}
+
+			[BsonElement("Metadata"), BsonIgnoreIfNull]
+			CaseInsensitiveStringSet? LegacyMetadata
+			{
+				get => null;
+				set => Metadata = ParseMetadata(value);
+			}
+#pragma warning restore IDE0051
+
+			[return: NotNullIfNotNull("set")]
+			static HashSet<IssueKey>? ParseKeySet(CaseInsensitiveStringSet? set) => (set == null) ? null : new HashSet<IssueKey>(set.Select(x => ParseKey(x)));
+
+			static IssueKey ParseKey(string key)
+			{
+				int colonIdx = key.IndexOf(':', StringComparison.Ordinal);
+				if (colonIdx != -1)
+				{
+					ReadOnlySpan<char> prefix = key.AsSpan(0, colonIdx);
+					if (prefix.Equals("hash", StringComparison.Ordinal))
+					{
+						return new IssueKey(key.Substring(colonIdx + 1), IssueKeyType.Hash);
+					}
+					if (prefix.Equals("note", StringComparison.Ordinal))
+					{
+						return new IssueKey(key.Substring(colonIdx + 1), IssueKeyType.Note);
+					}
+					if (prefix.Equals("step", StringComparison.Ordinal))
+					{
+						return new IssueKey(key.Substring(colonIdx + 1), IssueKeyType.None);
+					}
+				}
+				return new IssueKey(key, IssueKeyType.None);
+			}
+
+			[return: NotNullIfNotNull("set")]
+			static HashSet<IssueMetadata>? ParseMetadata(CaseInsensitiveStringSet? set)
+			{
+				HashSet<IssueMetadata>? entries = null;
+				if (set != null)
+				{
+					entries = new HashSet<IssueMetadata>();
+					foreach (string entry in set)
+					{
+						int idx = entry.IndexOf('=', StringComparison.Ordinal);
+						entries.Add(new IssueMetadata(entry.Substring(0, idx), entry.Substring(idx + 1)));
+					}
+				}
+				return entries;
+			}
+
+			record class LegacyHandlerInfo(string SummaryTemplate, IReadOnlyList<string> ChangeFilter);
+
+			static readonly Dictionary<StringView, LegacyHandlerInfo> s_legacyHandlers = new Dictionary<StringView, LegacyHandlerInfo>
+			{
+				["BuildGraph"] = new("BuildGraph {Severity} in {Files}", IssueChangeFilter.All),
+				["Compile"] = new("{Meta:CompileType} {Severity} in {Files}", IssueChangeFilter.Code),
+				["Content"] = new("{Severity} in {Files}", IssueChangeFilter.Content),
+				["Copyright"] = new("Missing copyright notice in {Files}", IssueChangeFilter.Code),
+				["Default"] = new("{Severity} in {Nodes}", IssueChangeFilter.All),
+				["Gauntlet"] = new("Gauntlet {Meta:Type} {Severity} {Meta:Context}", IssueChangeFilter.Code),
+				["Hashed"] = new("{Severity} in {Meta:Node}", IssueChangeFilter.All),
+				["Localization"] = new("Localization {Severity} in {Files}", IssueChangeFilter.Code),
+				["PerforceCase"] = new("Inconsistent case for {Files}", IssueChangeFilter.All),
+				["Scoped"] = new("{Severity} in {Meta:Node} - {Meta:Scope}", IssueChangeFilter.All),
+				["Shader"] = new("Shader compile {Severity} in {Files}", IssueChangeFilter.Code),
+				["Symbol"] = new("{LegacySymbolIssueHandler}", IssueChangeFilter.Code),
+				["Systemic"] = new("Systemic {Severity} in {Nodes}", IssueChangeFilter.None),
+				["UnacceptableWords"] = new("Unacceptable words in {Files}", IssueChangeFilter.Code)
+			};
+
+			static LegacyHandlerInfo GetLegacyHandlerInfo(string type)
+			{
+				StringView baseType = type;
+
+				int endIdx = type.IndexOf(':', StringComparison.Ordinal);
+				if (endIdx != -1)
+				{
+					baseType = new StringView(type, 0, endIdx);
+				}
+
+				s_legacyHandlers.TryGetValue(baseType, out LegacyHandlerInfo? info);
+				return info ?? new LegacyHandlerInfo($"{type} {{Severity}}", IssueChangeFilter.All);
+			}
+
+			#endregion
 		}
 
 		class IssueSpan : IIssueSpan
@@ -369,10 +518,10 @@ namespace Horde.Server.Issues
 			public JobId JobId { get; set; }
 
 			[BsonRequired]
-			public SubResourceId BatchId { get; set; }
+			public JobStepBatchId BatchId { get; set; }
 
 			[BsonRequired]
-			public SubResourceId StepId { get; set; }
+			public JobStepId StepId { get; set; }
 
 			public DateTime StepTime { get; set; }
 
@@ -412,6 +561,33 @@ namespace Horde.Server.Issues
 			}
 		}
 
+		// Wraps a redis lock for the issue collection
+		sealed class IssueLock : IAsyncDisposable
+		{
+			readonly RedisLock _redisLock;
+			readonly Stopwatch _timer = Stopwatch.StartNew();
+			readonly TelemetrySpan _telemetrySpan;
+			readonly ILogger _logger;
+
+			public IssueLock(RedisLock redisLock, Tracer tracer, ILogger logger)
+			{
+				_redisLock = redisLock;
+				_telemetrySpan = tracer.StartActiveSpan("Holding Issue Lock").SetAttribute("Stack", Environment.StackTrace);
+				_logger = logger;
+			}
+
+			public async ValueTask DisposeAsync()
+			{
+				_telemetrySpan.Dispose();
+				if (_timer.Elapsed.TotalSeconds >= 2.5)
+				{
+					_logger.LogWarning("Issue lock held for {TimeSpan}s. Released from {Stack}.", (int)_timer.Elapsed.TotalSeconds, Environment.StackTrace);
+					_timer.Reset();
+				}
+				await _redisLock.DisposeAsync();
+			}
+		}
+
 		readonly RedisService _redisService;
 		readonly IUserCollection _userCollection;
 		readonly ISingletonDocument<IssueLedger> _ledgerSingleton;
@@ -421,13 +597,35 @@ namespace Horde.Server.Issues
 		readonly IMongoCollection<IssueSuspect> _issueSuspects;
 		readonly IAuditLog<int> _auditLog;
 		readonly ITelemetrySink _telemetrySink;
+		readonly IOptionsMonitor<GlobalConfig> _globalConfig;
+		readonly Tracer _tracer;
 		readonly ILogger _logger;
 
-		public IssueCollection(MongoService mongoService, RedisService redisService, IUserCollection userCollection, IAuditLogFactory<int> auditLogFactory, ITelemetrySink telemetrySink, ILogger<IssueCollection> logger)
+		static IssueCollection()
+		{
+			BsonClassMap.RegisterClassMap<IssueKey>(cm =>
+			{
+				cm.MapConstructor(() => new IssueKey("", IssueKeyType.None), nameof(IssueKey.Name), nameof(IssueKey.Type));
+				cm.MapProperty(x => x.Name).SetElementName("n");
+				cm.MapProperty(x => x.Type).SetElementName("t");
+				cm.MapProperty(x => x.Scope).SetElementName("s").SetIgnoreIfNull(true);
+			});
+
+			BsonClassMap.RegisterClassMap<IssueMetadata>(cm =>
+			{
+				cm.MapConstructor(() => new IssueMetadata("", ""), nameof(IssueMetadata.Key), nameof(IssueMetadata.Value));
+				cm.MapProperty(x => x.Key).SetElementName("k");
+				cm.MapProperty(x => x.Value).SetElementName("v");
+			});
+		}
+
+		public IssueCollection(MongoService mongoService, RedisService redisService, IUserCollection userCollection, IAuditLogFactory<int> auditLogFactory, ITelemetrySink telemetrySink, IOptionsMonitor<GlobalConfig> globalConfig, Tracer tracer, ILogger<IssueCollection> logger)
 		{
 			_redisService = redisService;
 			_userCollection = userCollection;
 			_telemetrySink = telemetrySink;
+			_globalConfig = globalConfig;
+			_tracer = tracer;
 			_logger = logger;
 
 			_ledgerSingleton = new SingletonDocument<IssueLedger>(mongoService);
@@ -461,22 +659,25 @@ namespace Horde.Server.Issues
 		public async Task<IAsyncDisposable> EnterCriticalSectionAsync()
 		{
 			Stopwatch timer = Stopwatch.StartNew();
-			TimeSpan nextNotifyTime = TimeSpan.FromSeconds(2.0);
+			TimeSpan nextNotifyTime = TimeSpan.FromSeconds(10.0);
 
-			RedisLock issueLock = new (_redisService.GetDatabase(), "issues/lock");
-			while (!await issueLock.AcquireAsync(TimeSpan.FromMinutes(1)))
+			RedisLock issueLock = new(_redisService.GetDatabase(), "issues/lock");
+			using (TelemetrySpan telemetrySpan = _tracer.StartActiveSpan("Wait for Issue Lock").SetAttribute("Trace", Environment.StackTrace))
 			{
-				if (timer.Elapsed > nextNotifyTime)
+				while (!await issueLock.AcquireAsync(TimeSpan.FromMinutes(1)))
 				{
-					_logger.LogWarning("Waiting on lock over issue collection for {TimeSpan}", timer.Elapsed);
-					nextNotifyTime *= 2;
+					if (timer.Elapsed > nextNotifyTime)
+					{
+						_logger.LogWarning("Waiting on lock over issue collection for {TimeSpan}", timer.Elapsed);
+						nextNotifyTime *= 2;
+					}
+					await Task.Delay(TimeSpan.FromMilliseconds(100));
 				}
-				await Task.Delay(TimeSpan.FromMilliseconds(100));
 			}
-			return issueLock;
+			return new IssueLock(issueLock, _tracer, _logger);
 		}
 
-		async Task<Issue?> TryUpdateIssueAsync(IIssue issue, UpdateDefinition<Issue> update)
+		async Task<Issue?> TryUpdateIssueAsync(IIssue issue, UpdateDefinition<Issue> update, CancellationToken cancellationToken)
 		{
 			Issue issueDocument = (Issue)issue;
 
@@ -485,7 +686,7 @@ namespace Horde.Server.Issues
 
 			FindOneAndUpdateOptions<Issue, Issue> options = new FindOneAndUpdateOptions<Issue, Issue> { ReturnDocument = ReturnDocument.After };
 
-			Issue? newIssue = await _issues.FindOneAndUpdateAsync<Issue>(x => x.Id == issueDocument.Id && x.UpdateIndex == prevUpdateIndex, update, options);
+			Issue? newIssue = await _issues.FindOneAndUpdateAsync<Issue>(x => x.Id == issueDocument.Id && x.UpdateIndex == prevUpdateIndex, update, options, cancellationToken);
 			if (newIssue != null)
 			{
 				SendTelemetry(newIssue);
@@ -493,7 +694,7 @@ namespace Horde.Server.Issues
 			return newIssue;
 		}
 
-		async Task<IssueSpan?> TryUpdateSpanAsync(IIssueSpan issueSpan, UpdateDefinition<IssueSpan> update)
+		async Task<IssueSpan?> TryUpdateSpanAsync(IIssueSpan issueSpan, UpdateDefinition<IssueSpan> update, CancellationToken cancellationToken)
 		{
 			IssueSpan issueSpanDocument = (IssueSpan)issueSpan;
 
@@ -502,7 +703,7 @@ namespace Horde.Server.Issues
 
 			FindOneAndUpdateOptions<IssueSpan, IssueSpan> options = new FindOneAndUpdateOptions<IssueSpan, IssueSpan> { ReturnDocument = ReturnDocument.After };
 
-			IssueSpan? newIssueSpan = await _issueSpans.FindOneAndUpdateAsync<IssueSpan>(x => x.Id == issueSpanDocument.Id && x.UpdateIndex == prevUpdateIndex, update, options);
+			IssueSpan? newIssueSpan = await _issueSpans.FindOneAndUpdateAsync<IssueSpan>(x => x.Id == issueSpanDocument.Id && x.UpdateIndex == prevUpdateIndex, update, options, cancellationToken);
 			if (newIssueSpan != null)
 			{
 				SendTelemetry(newIssueSpan);
@@ -513,12 +714,12 @@ namespace Horde.Server.Issues
 		#region Issues
 
 		/// <inheritdoc/>
-		public async Task<IIssue> AddIssueAsync(string summary)
+		public async Task<IIssue> AddIssueAsync(string summary, CancellationToken cancellationToken)
 		{
-			IssueLedger ledger = await _ledgerSingleton.UpdateAsync(x => x.NextId++);
+			IssueLedger ledger = await _ledgerSingleton.UpdateAsync(x => x.NextId++, cancellationToken);
 
 			Issue newIssue = new Issue(ledger.NextId, summary);
-			await _issues.InsertOneAsync(newIssue);
+			await _issues.InsertOneAsync(newIssue, null, cancellationToken);
 			SendTelemetry(newIssue);
 
 			ILogger issueLogger = GetLogger(newIssue.Id);
@@ -529,10 +730,20 @@ namespace Horde.Server.Issues
 
 		void SendTelemetry(IIssue issue)
 		{
-			if (_telemetrySink.Enabled)
+			List<TelemetryStoreId> telemetryStoreIds = new List<TelemetryStoreId>();
+			foreach (IIssueStream stream in issue.Streams)
 			{
-				_telemetrySink.SendEvent("State.Issue", new
+				if (_globalConfig.CurrentValue.TryGetStream(stream.StreamId, out StreamConfig? streamConfig) && !streamConfig.TelemetryStoreId.IsEmpty)
 				{
+					telemetryStoreIds.Add(streamConfig.TelemetryStoreId);
+				}
+			}
+
+			foreach (TelemetryStoreId telemetryStoreId in telemetryStoreIds)
+			{
+				_telemetrySink.SendEvent(telemetryStoreId, TelemetryRecordMeta.CurrentHordeInstance, new
+				{
+					EventName = "State.Issue",
 					Id = issue.Id,
 					AcknowledgedAt = issue.AcknowledgedAt,
 					CreatedAt = issue.CreatedAt,
@@ -550,22 +761,22 @@ namespace Horde.Server.Issues
 			}
 		}
 
-		async ValueTask<string> GetUserNameAsync(UserId? UserId)
+		async ValueTask<string> GetUserNameAsync(UserId? userId, CancellationToken cancellationToken)
 		{
-			if (UserId == null)
+			if (userId == null)
 			{
 				return "null";
 			}
-			else if (UserId == IIssue.ResolvedByUnknownId)
+			else if (userId == IIssue.ResolvedByUnknownId)
 			{
 				return "Horde (Unknown)";
 			}
-			else if (UserId == IIssue.ResolvedByTimeoutId)
+			else if (userId == IIssue.ResolvedByTimeoutId)
 			{
 				return "Horde (Timeout)";
 			}
 
-			IUser? user = await _userCollection.GetCachedUserAsync(UserId);
+			IUser? user = await _userCollection.GetCachedUserAsync(userId, cancellationToken);
 			if (user == null)
 			{
 				return "Unknown user";
@@ -574,14 +785,14 @@ namespace Horde.Server.Issues
 			return user.Name;
 		}
 
-		async Task LogIssueChangesAsync(UserId? initiatedByUserId, Issue oldIssue, Issue newIssue)
+		async Task LogIssueChangesAsync(UserId? initiatedByUserId, Issue oldIssue, Issue newIssue, CancellationToken cancellationToken)
 		{
 			ILogger issueLogger = GetLogger(oldIssue.Id);
-			using IDisposable scope = issueLogger.BeginScope("User {UserName} ({UserId})", await GetUserNameAsync(initiatedByUserId), initiatedByUserId ?? UserId.Empty);
-			await LogIssueChangesImplAsync(issueLogger, oldIssue, newIssue);
+			using IDisposable? scope = issueLogger.BeginScope("User {UserName} ({UserId})", await GetUserNameAsync(initiatedByUserId, cancellationToken), initiatedByUserId ?? UserId.Empty);
+			await LogIssueChangesImplAsync(issueLogger, oldIssue, newIssue, cancellationToken);
 		}
 
-		async Task LogIssueChangesImplAsync(ILogger issueLogger, Issue oldIssue, Issue newIssue)
+		async Task LogIssueChangesImplAsync(ILogger issueLogger, Issue oldIssue, Issue newIssue, CancellationToken cancellationToken)
 		{
 			if (newIssue.Severity != oldIssue.Severity)
 			{
@@ -602,23 +813,23 @@ namespace Horde.Server.Issues
 			if (newIssue.OwnerId != oldIssue.OwnerId)
 			{
 				if (newIssue.NominatedById != null)
-				{					
-					issueLogger.LogInformation("User {UserName} ({UserId}) was nominated by {NominatedByUserName} ({NominatedByUserId})", await GetUserNameAsync(newIssue.OwnerId), newIssue.OwnerId, await GetUserNameAsync(newIssue.NominatedById), newIssue.NominatedById);
+				{
+					issueLogger.LogInformation("User {UserName} ({UserId}) was nominated by {NominatedByUserName} ({NominatedByUserId})", await GetUserNameAsync(newIssue.OwnerId, cancellationToken), newIssue.OwnerId, await GetUserNameAsync(newIssue.NominatedById, cancellationToken), newIssue.NominatedById);
 				}
 				else
 				{
-					issueLogger.LogInformation("User {UserName} ({UserId}) was nominated by default", await GetUserNameAsync(newIssue.OwnerId), newIssue.OwnerId);
+					issueLogger.LogInformation("User {UserName} ({UserId}) was nominated by default", await GetUserNameAsync(newIssue.OwnerId, cancellationToken), newIssue.OwnerId);
 				}
 			}
 			if (newIssue.AcknowledgedAt != oldIssue.AcknowledgedAt)
 			{
 				if (newIssue.AcknowledgedAt == null)
 				{
-					issueLogger.LogInformation("Issue was un-acknowledged by {UserName} ({UserId})", await GetUserNameAsync(oldIssue.OwnerId), oldIssue.OwnerId);
+					issueLogger.LogInformation("Issue was un-acknowledged by {UserName} ({UserId})", await GetUserNameAsync(oldIssue.OwnerId, cancellationToken), oldIssue.OwnerId);
 				}
 				else
 				{
-					issueLogger.LogInformation("Issue was acknowledged by {UserName} ({UserId})", await GetUserNameAsync(newIssue.OwnerId), newIssue.OwnerId);
+					issueLogger.LogInformation("Issue was acknowledged by {UserName} ({UserId})", await GetUserNameAsync(newIssue.OwnerId, cancellationToken), newIssue.OwnerId);
 				}
 			}
 			if (newIssue.FixChange != oldIssue.FixChange)
@@ -640,7 +851,7 @@ namespace Horde.Server.Issues
 				}
 				else
 				{
-					issueLogger.LogInformation("Resolved by {UserName} ({UserId})", await GetUserNameAsync(newIssue.ResolvedById), newIssue.ResolvedById);
+					issueLogger.LogInformation("Resolved by {UserName} ({UserId})", await GetUserNameAsync(newIssue.ResolvedById, cancellationToken), newIssue.ResolvedById);
 				}
 			}
 
@@ -684,7 +895,7 @@ namespace Horde.Server.Issues
 			{
 				if (newIssue.QuarantinedByUserId != null)
 				{
-					issueLogger.LogInformation("Quarantined by {UserName} ({UserId})", await GetUserNameAsync(newIssue.QuarantinedByUserId), newIssue.QuarantinedByUserId);
+					issueLogger.LogInformation("Quarantined by {UserName} ({UserId})", await GetUserNameAsync(newIssue.QuarantinedByUserId, cancellationToken), newIssue.QuarantinedByUserId);
 				}
 				else
 				{
@@ -696,7 +907,7 @@ namespace Horde.Server.Issues
 			{
 				if (newIssue.ForceClosedByUserId != null)
 				{
-					issueLogger.LogInformation("Forced closed by {UserName} ({UserId})", await GetUserNameAsync(newIssue.ForceClosedByUserId), newIssue.ForceClosedByUserId);
+					issueLogger.LogInformation("Forced closed by {UserName} ({UserId})", await GetUserNameAsync(newIssue.ForceClosedByUserId, cancellationToken), newIssue.ForceClosedByUserId);
 				}
 				else
 				{
@@ -723,42 +934,42 @@ namespace Horde.Server.Issues
 			}
 		}
 
-		async Task LogIssueSuspectChangesAsync(ILogger issueLogger, List<IssueSuspect> oldIssueSuspects, List<IssueSuspect> newIssueSuspects)
+		async Task LogIssueSuspectChangesAsync(ILogger issueLogger, IReadOnlyList<IssueSuspect> oldIssueSuspects, List<IssueSuspect> newIssueSuspects, CancellationToken cancellationToken)
 		{
 			HashSet<(UserId, int)> oldSuspects = new HashSet<(UserId, int)>(oldIssueSuspects.Select(x => (x.AuthorId, x.Change)));
 			HashSet<(UserId, int)> newSuspects = new HashSet<(UserId, int)>(newIssueSuspects.Select(x => (x.AuthorId, x.Change)));
 			foreach ((UserId userId, int change) in newSuspects.Where(x => !oldSuspects.Contains(x)))
 			{
-				issueLogger.LogInformation("Added suspect {UserName} ({UserId}) for change {Change}", await GetUserNameAsync(userId), userId, change);
+				issueLogger.LogInformation("Added suspect {UserName} ({UserId}) for change {Change}", await GetUserNameAsync(userId, cancellationToken), userId, change);
 			}
 			foreach ((UserId userId, int change) in oldSuspects.Where(x => !newSuspects.Contains(x)))
 			{
-				issueLogger.LogInformation("Removed suspect {UserName} ({UserId}) for change {Change}", await GetUserNameAsync(userId), userId, change);
+				issueLogger.LogInformation("Removed suspect {UserName} ({UserId}) for change {Change}", await GetUserNameAsync(userId, cancellationToken), userId, change);
 			}
 
 			HashSet<UserId> oldDeclinedBy = new HashSet<UserId>(oldIssueSuspects.Where(x => x.DeclinedAt != null).Select(x => x.AuthorId));
 			HashSet<UserId> newDeclinedBy = new HashSet<UserId>(newIssueSuspects.Where(x => x.DeclinedAt != null).Select(x => x.AuthorId));
 			foreach (UserId addDeclinedBy in newDeclinedBy.Where(x => !oldDeclinedBy.Contains(x)))
 			{
-				issueLogger.LogInformation("Declined by {UserName} ({UserId})", await GetUserNameAsync(addDeclinedBy), addDeclinedBy);
+				issueLogger.LogInformation("Declined by {UserName} ({UserId})", await GetUserNameAsync(addDeclinedBy, cancellationToken), addDeclinedBy);
 			}
 			foreach (UserId removeDeclinedBy in oldDeclinedBy.Where(x => !newDeclinedBy.Contains(x)))
 			{
-				issueLogger.LogInformation("Un-declined by {UserName} ({UserId})", await GetUserNameAsync(removeDeclinedBy), removeDeclinedBy);
+				issueLogger.LogInformation("Un-declined by {UserName} ({UserId})", await GetUserNameAsync(removeDeclinedBy, cancellationToken), removeDeclinedBy);
 			}
 		}
 
 		/// <inheritdoc/>
-		public async Task<IIssue?> GetIssueAsync(int issueId)
+		public async Task<IIssue?> GetIssueAsync(int issueId, CancellationToken cancellationToken)
 		{
-			Issue issue = await _issues.Find(x => x.Id == issueId).FirstOrDefaultAsync();
+			Issue issue = await _issues.Find(x => x.Id == issueId).FirstOrDefaultAsync(cancellationToken);
 			return issue;
 		}
 
 		/// <inheritdoc/>
-		public Task<List<IIssueSuspect>> FindSuspectsAsync(int issueId)
+		public async Task<IReadOnlyList<IIssueSuspect>> FindSuspectsAsync(int issueId, CancellationToken cancellationToken)
 		{
-			return _issueSuspects.Find(x => x.IssueId == issueId).ToListAsync<IssueSuspect, IIssueSuspect>();
+			return await _issueSuspects.Find(x => x.IssueId == issueId).ToListAsync(cancellationToken);
 		}
 
 		class ProjectedIssueId
@@ -768,27 +979,27 @@ namespace Horde.Server.Issues
 		}
 
 		/// <inheritdoc/>
-		public async Task<List<IIssue>> FindIssuesAsync(IEnumerable<int>? ids = null, UserId? ownerId = null, StreamId? streamId = null, int? minChange = null, int? maxChange = null, bool? resolved = null, bool? promoted = null, int? index = null, int? count = null)
+		public async Task<IReadOnlyList<IIssue>> FindIssuesAsync(IEnumerable<int>? ids = null, UserId? ownerId = null, StreamId? streamId = null, int? minChange = null, int? maxChange = null, bool? resolved = null, bool? promoted = null, int? index = null, int? count = null, CancellationToken cancellationToken = default)
 		{
-			List<Issue> results;
+			IReadOnlyList<IIssue> results;
 
 			if (ownerId == null)
 			{
-				results = await FilterIssuesByStreamIdAsync(ids, streamId, minChange, maxChange, resolved ?? false, promoted, index ?? 0, count);
+				results = await FilterIssuesByStreamIdAsync(ids, streamId, minChange, maxChange, resolved ?? false, promoted, index ?? 0, count, cancellationToken);
 			}
 			else
 			{
-				results = await _issues.Find(x => x.OwnerId == ownerId).ToListAsync();
+				results = await _issues.Find(x => x.OwnerId == ownerId).ToListAsync(cancellationToken);
 			}
 
-			return results.ConvertAll<IIssue>(x => x);
+			return results;
 		}
 
-		async Task<List<Issue>> FilterIssuesByStreamIdAsync(IEnumerable<int>? ids, StreamId? streamId, int? minChange, int? maxChange, bool? resolved, bool? promoted, int index, int? count)
+		async Task<IReadOnlyList<IIssue>> FilterIssuesByStreamIdAsync(IEnumerable<int>? ids, StreamId? streamId, int? minChange, int? maxChange, bool? resolved, bool? promoted, int index, int? count, CancellationToken cancellationToken)
 		{
 			if (streamId == null)
 			{
-				return await FilterIssuesByOtherFieldsAsync(ids, minChange, maxChange, resolved, promoted, index, count);
+				return await FilterIssuesByOtherFieldsAsync(ids, minChange, maxChange, resolved, promoted, index, count, cancellationToken);
 			}
 			else
 			{
@@ -823,15 +1034,15 @@ namespace Horde.Server.Issues
 					}
 				}
 
-				using (IAsyncCursor<ProjectedIssueId> cursor = await _issueSpans.Aggregate().Match(filter).Group(x => x.IssueId, x => new ProjectedIssueId { _id = x.Key }).SortByDescending(x => x._id).ToCursorAsync())
+				using (IAsyncCursor<ProjectedIssueId> cursor = await _issueSpans.Aggregate().Match(filter).Group(x => x.IssueId, x => new ProjectedIssueId { _id = x.Key }).SortByDescending(x => x._id).ToCursorAsync(cancellationToken))
 				{
-					List<Issue> results = await PaginatedJoinAsync(cursor, (nextIds, nextIndex, nextCount) => FilterIssuesByOtherFieldsAsync(nextIds, null, null, null, promoted, nextIndex, nextCount), index, count);
+					List<Issue> results = await PaginatedJoinAsync(cursor, (nextIds, nextIndex, nextCount) => FilterIssuesByOtherFieldsAsync(nextIds, null, null, null, promoted, nextIndex, nextCount, cancellationToken), index, count, cancellationToken);
 					if (resolved != null)
 					{
 						for (int idx = results.Count - 1; idx >= 0; idx--)
 						{
 							Issue issue = results[idx];
-							if ((issue.ResolvedAt != null) != resolved.Value)
+							if ((issue.ResolvedAt != null) != resolved.Value && issue.ResolvedById != IIssue.ResolvedByTimeoutId)
 							{
 								_logger.LogWarning("Issue {IssueId} has resolved state out of sync with spans", issue.Id);
 								results.RemoveAt(idx);
@@ -843,7 +1054,7 @@ namespace Horde.Server.Issues
 			}
 		}
 
-		async Task<List<Issue>> FilterIssuesByOtherFieldsAsync(IEnumerable<int>? ids, int? minChange, int? maxChange, bool? resolved, bool? promoted, int index, int? count)
+		async Task<List<Issue>> FilterIssuesByOtherFieldsAsync(IEnumerable<int>? ids, int? minChange, int? maxChange, bool? resolved, bool? promoted, int index, int? count, CancellationToken cancellationToken)
 		{
 			FilterDefinition<Issue> filter = FilterDefinition<Issue>.Empty;
 			if (ids != null)
@@ -880,7 +1091,7 @@ namespace Horde.Server.Issues
 					filter &= Builders<Issue>.Filter.Ne(x => x.Promoted, true); // Handle the field not existing as well as being set to false.
 				}
 			}
-			return await _issues.Find(filter).SortByDescending(x => x.Id).Range(index, count).ToListAsync();
+			return await _issues.Find(filter).SortByDescending(x => x.Id).Range(index, count).ToListAsync(cancellationToken);
 		}
 
 		/// <summary>
@@ -890,18 +1101,19 @@ namespace Horde.Server.Issues
 		/// <param name="nextStageFunc"></param>
 		/// <param name="index"></param>
 		/// <param name="count"></param>
+		/// <param name="cancellationToken"></param>
 		/// <returns></returns>
-		static async Task<List<Issue>> PaginatedJoinAsync(IAsyncCursor<ProjectedIssueId> cursor, Func<IEnumerable<int>, int, int?, Task<List<Issue>>> nextStageFunc, int index, int? count)
+		static async Task<List<Issue>> PaginatedJoinAsync(IAsyncCursor<ProjectedIssueId> cursor, Func<IEnumerable<int>, int, int?, Task<List<Issue>>> nextStageFunc, int index, int? count, CancellationToken cancellationToken)
 		{
 			if (count == null)
 			{
-				List<ProjectedIssueId> issueIds = await cursor.ToListAsync();
+				List<ProjectedIssueId> issueIds = await cursor.ToListAsync(cancellationToken);
 				return await nextStageFunc(issueIds.Where(x => x._id != null).Select(x => x._id!.Value), index, null);
 			}
 			else
 			{
 				List<Issue> results = new List<Issue>();
-				while (await cursor.MoveNextAsync() && results.Count < count.Value)
+				while (await cursor.MoveNextAsync(cancellationToken) && results.Count < count.Value)
 				{
 					List<Issue> nextResults = await nextStageFunc(cursor.Current.Where(x => x._id != null).Select(x => x._id!.Value), 0, count.Value - results.Count);
 					int removeCount = Math.Min(index, nextResults.Count);
@@ -914,14 +1126,14 @@ namespace Horde.Server.Issues
 		}
 
 		/// <inheritdoc/>
-		public async Task<List<IIssue>> FindIssuesForChangesAsync(List<int> changes)
+		public async Task<IReadOnlyList<IIssue>> FindIssuesForChangesAsync(List<int> changes, CancellationToken cancellationToken)
 		{
-			List<int> issueIds = await (await _issueSuspects.DistinctAsync(x => x.IssueId, Builders<IssueSuspect>.Filter.In(x => x.Change, changes))).ToListAsync();
-			return await _issues.Find(Builders<Issue>.Filter.In(x => x.Id, issueIds)).ToListAsync<Issue, IIssue>();
+			List<int> issueIds = await (await _issueSuspects.DistinctAsync(x => x.IssueId, Builders<IssueSuspect>.Filter.In(x => x.Change, changes), cancellationToken: cancellationToken)).ToListAsync(cancellationToken);
+			return await _issues.Find(Builders<Issue>.Filter.In(x => x.Id, issueIds)).ToListAsync(cancellationToken);
 		}
 
 		/// <inheritdoc/>
-		public async Task<IIssue?> TryUpdateIssueAsync(IIssue issue, UserId? initiatedByUserId, IssueSeverity? newSeverity = null, string? newSummary = null, string? newUserSummary = null, string? newDescription = null, bool? newManuallyPromoted = null, UserId? newOwnerId = null, UserId? newNominatedById = null, bool? newAcknowledged = null, UserId? newDeclinedById = null, int? newFixChange = null, UserId? newResolvedById = null, List<ObjectId>? newExcludeSpanIds = null, DateTime? newLastSeenAt = null, string? newExternaIssueKey = null, UserId? newQuarantinedById = null, UserId? newForceClosedById = null, Uri? newWorkflowThreadUrl = null)
+		public async Task<IIssue?> TryUpdateIssueAsync(IIssue issue, UserId? initiatedByUserId, IssueSeverity? newSeverity = null, string? newSummary = null, string? newUserSummary = null, string? newDescription = null, bool? newManuallyPromoted = null, UserId? newOwnerId = null, UserId? newNominatedById = null, bool? newAcknowledged = null, UserId? newDeclinedById = null, int? newFixChange = null, UserId? newResolvedById = null, List<ObjectId>? newExcludeSpanIds = null, DateTime? newLastSeenAt = null, string? newExternaIssueKey = null, UserId? newQuarantinedById = null, UserId? newForceClosedById = null, Uri? newWorkflowThreadUrl = null, CancellationToken cancellationToken = default)
 		{
 			Issue issueDocument = (Issue)issue;
 
@@ -1068,7 +1280,7 @@ namespace Horde.Server.Issues
 			if (newDeclinedById != null)
 			{
 				GetLogger(issue.Id).LogInformation("Declined by {UserId}", newDeclinedById.Value);
-				await _issueSuspects.UpdateManyAsync(x => x.IssueId == issue.Id && x.AuthorId == newDeclinedById.Value, Builders<IssueSuspect>.Update.Set(x => x.DeclinedAt, DateTime.UtcNow));
+				await _issueSuspects.UpdateManyAsync(x => x.IssueId == issue.Id && x.AuthorId == newDeclinedById.Value, Builders<IssueSuspect>.Update.Set(x => x.DeclinedAt, DateTime.UtcNow), null, cancellationToken);
 			}
 			if (newQuarantinedById != null)
 			{
@@ -1098,7 +1310,7 @@ namespace Horde.Server.Issues
 				}
 				else
 				{
-					updates.Add(Builders<Issue>.Update.Set(x => x.ForceClosedByUserId, newForceClosedById.Value));					
+					updates.Add(Builders<Issue>.Update.Set(x => x.ForceClosedByUserId, newForceClosedById.Value));
 				}
 			}
 
@@ -1112,40 +1324,39 @@ namespace Horde.Server.Issues
 				updates.Add(Builders<Issue>.Update.Set(x => x.WorkflowThreadUrl, newWorkflowThreadUrl.ToString().Length == 0 ? null : newWorkflowThreadUrl));
 			}
 
-
 			if (updates.Count == 0)
 			{
 				return issueDocument;
 			}
 
-			Issue? newIssue = await TryUpdateIssueAsync(issue, Builders<Issue>.Update.Combine(updates));
-			if(newIssue == null)
+			Issue? newIssue = await TryUpdateIssueAsync(issue, Builders<Issue>.Update.Combine(updates), cancellationToken);
+			if (newIssue == null)
 			{
 				return null;
 			}
 
-			await LogIssueChangesAsync(initiatedByUserId, issueDocument, newIssue);
+			await LogIssueChangesAsync(initiatedByUserId, issueDocument, newIssue, cancellationToken);
 			return newIssue;
 		}
 
 		/// <inheritdoc/>
-		public async Task<IIssue?> TryUpdateIssueDerivedDataAsync(IIssue issue, string newSummary, IssueSeverity newSeverity, List<NewIssueFingerprint> newFingerprints, List<NewIssueStream> newStreams, List<NewIssueSuspectData> newSuspects, DateTime? newResolvedAt, DateTime? newVerifiedAt, DateTime newLastSeenAt)
+		public async Task<IIssue?> TryUpdateIssueDerivedDataAsync(IIssue issue, string newSummary, IssueSeverity newSeverity, List<NewIssueFingerprint> newFingerprints, List<NewIssueStream> newStreams, List<NewIssueSuspectData> newSuspects, DateTime? newResolvedAt, DateTime? newVerifiedAt, DateTime newLastSeenAt, CancellationToken cancellationToken)
 		{
 			Issue issueImpl = (Issue)issue;
 
 			// Update all the suspects for this issue
-			List<IssueSuspect> oldSuspectImpls = await _issueSuspects.Find(x => x.IssueId == issue.Id).ToListAsync();
-			List<IssueSuspect> newSuspectImpls = await UpdateIssueSuspectsAsync(issue.Id, oldSuspectImpls, newSuspects, newResolvedAt);
+			IReadOnlyList<IssueSuspect> oldSuspectImpls = await _issueSuspects.Find(x => x.IssueId == issue.Id).ToListAsync(cancellationToken);
+			List<IssueSuspect> newSuspectImpls = await UpdateIssueSuspectsAsync(issue.Id, oldSuspectImpls, newSuspects, newResolvedAt, cancellationToken);
 
 			// Find the spans for this issue
-			List<IssueSpan> newSpans = await _issueSpans.Find(x => x.IssueId == issue.Id).ToListAsync();
+			List<IssueSpan> newSpans = await _issueSpans.Find(x => x.IssueId == issue.Id).ToListAsync(cancellationToken);
 
 			// Update the resolved time on any issues
 			List<ObjectId> updateSpanIds = newSpans.Where(x => x.ResolvedAt != newResolvedAt).Select(x => x.Id).ToList();
 			if (updateSpanIds.Count > 0)
 			{
 				FilterDefinition<IssueSpan> filter = Builders<IssueSpan>.Filter.In(x => x.Id, updateSpanIds);
-				await _issueSpans.UpdateManyAsync(filter, Builders<IssueSpan>.Update.Set(x => x.ResolvedAt, newResolvedAt));
+				await _issueSpans.UpdateManyAsync(filter, Builders<IssueSpan>.Update.Set(x => x.ResolvedAt, newResolvedAt), null, cancellationToken);
 			}
 
 			// Figure out if this issue should be promoted
@@ -1168,8 +1379,8 @@ namespace Horde.Server.Issues
 			string? autoAssignToUser = newSpans.Select(x => x.LastFailure.Annotations?.AutoAssignToUser).Where(x => x != null).FirstOrDefault();
 			if (autoAssignToUser != null)
 			{
-				IUser? user = await _userCollection.FindUserByLoginAsync(autoAssignToUser);
-				if(user != null)
+				IUser? user = await _userCollection.FindUserByLoginAsync(autoAssignToUser, cancellationToken);
+				if (user != null)
 				{
 					newDefaultOwnerId = user.Id;
 				}
@@ -1243,17 +1454,17 @@ namespace Horde.Server.Issues
 				updates.Add(Builders<Issue>.Update.Set(x => x.LastSeenAt, newLastSeenAt));
 			}
 
-			Issue? newIssue = await TryUpdateIssueAsync(issue, Builders<Issue>.Update.Combine(updates));
-			if(newIssue != null)
+			Issue? newIssue = await TryUpdateIssueAsync(issue, Builders<Issue>.Update.Combine(updates), cancellationToken);
+			if (newIssue != null)
 			{
-				await LogIssueChangesAsync(null, issueImpl, newIssue);
-				await LogIssueSuspectChangesAsync(GetLogger(issue.Id), oldSuspectImpls, newSuspectImpls);
+				await LogIssueChangesAsync(null, issueImpl, newIssue, cancellationToken);
+				await LogIssueSuspectChangesAsync(GetLogger(issue.Id), oldSuspectImpls, newSuspectImpls, cancellationToken);
 				return newIssue;
 			}
 			return null;
 		}
 
-		async Task<List<IssueSuspect>> UpdateIssueSuspectsAsync(int issueId, List<IssueSuspect> oldSuspectImpls, List<NewIssueSuspectData> newSuspects, DateTime? resolvedAt)
+		async Task<List<IssueSuspect>> UpdateIssueSuspectsAsync(int issueId, IReadOnlyList<IssueSuspect> oldSuspectImpls, List<NewIssueSuspectData> newSuspects, DateTime? resolvedAt, CancellationToken cancellationToken)
 		{
 			List<IssueSuspect> newSuspectImpls = new List<IssueSuspect>(oldSuspectImpls);
 
@@ -1267,19 +1478,19 @@ namespace Horde.Server.Issues
 			// Apply the suspect changes
 			if (createSuspects.Count > 0)
 			{
-				await _issueSuspects.InsertManyIgnoreDuplicatesAsync(createSuspects);
+				await _issueSuspects.InsertManyIgnoreDuplicatesAsync(createSuspects, cancellationToken);
 				newSuspectImpls.AddRange(createSuspects);
 			}
 			if (deleteSuspects.Count > 0)
 			{
-				await _issueSuspects.DeleteManyAsync(Builders<IssueSuspect>.Filter.In(x => x.Id, deleteSuspects.Select(y => y.Id)));
+				await _issueSuspects.DeleteManyAsync(Builders<IssueSuspect>.Filter.In(x => x.Id, deleteSuspects.Select(y => y.Id)), cancellationToken);
 				newSuspectImpls.RemoveAll(x => !newSuspectKeys.Contains((x.AuthorId, x.Change)));
 			}
 
 			// Make sure all the remaining suspects have the correct resolved time
 			if (newSuspectImpls.Any(x => x.ResolvedAt != resolvedAt))
 			{
-				await _issueSuspects.UpdateManyAsync(Builders<IssueSuspect>.Filter.Eq(x => x.IssueId, issueId), Builders<IssueSuspect>.Update.Set(x => x.ResolvedAt, resolvedAt));
+				await _issueSuspects.UpdateManyAsync(Builders<IssueSuspect>.Filter.Eq(x => x.IssueId, issueId), Builders<IssueSuspect>.Update.Set(x => x.ResolvedAt, resolvedAt), null, cancellationToken);
 			}
 			return newSuspectImpls;
 		}
@@ -1289,20 +1500,21 @@ namespace Horde.Server.Issues
 		#region Spans
 
 		/// <inheritdoc/>
-		public async Task<IIssueSpan> AddSpanAsync(int issueId, NewIssueSpanData newSpan)
+		public async Task<IIssueSpan> AddSpanAsync(int issueId, NewIssueSpanData newSpan, CancellationToken cancellationToken)
 		{
 			IssueSpan span = new IssueSpan(issueId, newSpan);
-			await _issueSpans.InsertOneAsync(span);
+			await _issueSpans.InsertOneAsync(span, (InsertOneOptions?)null, cancellationToken);
 			SendTelemetry(span);
 			return span;
 		}
 
 		void SendTelemetry(IIssueSpan issueSpan)
 		{
-			if (_telemetrySink.Enabled)
+			if (_globalConfig.CurrentValue.TryGetStream(issueSpan.StreamId, out StreamConfig? streamConfig) && !streamConfig.TelemetryStoreId.IsEmpty)
 			{
-				_telemetrySink.SendEvent("State.IssueSpan", new
+				_telemetrySink.SendEvent(streamConfig.TelemetryStoreId, TelemetryRecordMeta.CurrentHordeInstance, new
 				{
+					EventName = "State.IssueSpan",
 					Id = issueSpan.Id,
 					IssueId = issueSpan.IssueId,
 					Fingerprint = new { Type = issueSpan.Fingerprint.Type, Keys = issueSpan.Fingerprint.Keys },
@@ -1316,13 +1528,13 @@ namespace Horde.Server.Issues
 		}
 
 		/// <inheritdoc/>
-		public async Task<IIssueSpan?> GetSpanAsync(ObjectId spanId)
+		public async Task<IIssueSpan?> GetSpanAsync(ObjectId spanId, CancellationToken cancellationToken)
 		{
-			return await _issueSpans.Find(Builders<IssueSpan>.Filter.Eq(x => x.Id, spanId)).FirstOrDefaultAsync();
+			return await _issueSpans.Find(Builders<IssueSpan>.Filter.Eq(x => x.Id, spanId)).FirstOrDefaultAsync(cancellationToken);
 		}
 
 		/// <inheritdoc/>
-		public async Task<IIssueSpan?> TryUpdateSpanAsync(IIssueSpan span, NewIssueStepData? newLastSuccess = null, NewIssueStepData? newFailure = null, NewIssueStepData? newNextSuccess = null, List<NewIssueSpanSuspectData>? newSuspects = null, int? newIssueId = null)
+		public async Task<IIssueSpan?> TryUpdateSpanAsync(IIssueSpan span, NewIssueStepData? newLastSuccess = null, NewIssueStepData? newFailure = null, NewIssueStepData? newNextSuccess = null, List<NewIssueSpanSuspectData>? newSuspects = null, int? newIssueId = null, CancellationToken cancellationToken = default)
 		{
 			List<UpdateDefinition<IssueSpan>> updates = new List<UpdateDefinition<IssueSpan>>();
 			if (newLastSuccess != null)
@@ -1364,7 +1576,7 @@ namespace Horde.Server.Issues
 				return span;
 			}
 
-			IssueSpan? newSpan = await TryUpdateSpanAsync(span, Builders<IssueSpan>.Update.Combine(updates));
+			IssueSpan? newSpan = await TryUpdateSpanAsync(span, Builders<IssueSpan>.Update.Combine(updates), cancellationToken);
 			if (newSpan != null)
 			{
 				ILogger logger = GetLogger(newSpan.IssueId);
@@ -1386,30 +1598,29 @@ namespace Horde.Server.Issues
 		}
 
 		/// <inheritdoc/>
-		public async Task<List<IIssueSpan>> FindSpansAsync(int issueId)
+		public async Task<IReadOnlyList<IIssueSpan>> FindSpansAsync(int issueId, CancellationToken cancellationToken)
 		{
-			return await _issueSpans.Find(x => x.IssueId == issueId).ToListAsync<IssueSpan, IIssueSpan>();
+			return await _issueSpans.Find(x => x.IssueId == issueId).ToListAsync(cancellationToken);
 		}
 
 		/// <inheritdoc/>
-		public Task<List<IIssueSpan>> FindSpansAsync(IEnumerable<ObjectId> spanIds)
+		public async Task<IReadOnlyList<IIssueSpan>> FindSpansAsync(IEnumerable<ObjectId> spanIds, CancellationToken cancellationToken)
 		{
-			return _issueSpans.Find(Builders<IssueSpan>.Filter.In(x => x.Id, spanIds)).ToListAsync<IssueSpan, IIssueSpan>();
+			return await _issueSpans.Find(Builders<IssueSpan>.Filter.In(x => x.Id, spanIds)).ToListAsync(cancellationToken);
 		}
 
 		/// <inheritdoc/>
-		public async Task<List<IIssueSpan>> FindOpenSpansAsync(StreamId streamId, TemplateId templateId, string nodeName, int change)
+		public async Task<IReadOnlyList<IIssueSpan>> FindOpenSpansAsync(StreamId streamId, TemplateId templateId, string nodeName, int change, CancellationToken cancellationToken)
 		{
-			List<IssueSpan> spans = await _issueSpans.Find(x => x.StreamId == streamId && x.TemplateRefId == templateId && x.NodeName == nodeName && change >= x.MinChange && change <= x.MaxChange).ToListAsync();
-			return spans.ConvertAll<IIssueSpan>(x => x);
+			return await _issueSpans.Find(x => x.StreamId == streamId && x.TemplateRefId == templateId && x.NodeName == nodeName && change >= x.MinChange && change <= x.MaxChange).ToListAsync(cancellationToken);
 		}
 
 		/// <inheritdoc/>
-		public Task<List<IIssueSpan>> FindSpansAsync(IEnumerable<ObjectId>? spanIds, IEnumerable<int>? issueIds, StreamId? streamId, int? minChange, int? maxChange, bool? resolved, int? index, int? count)
+		public async Task<IReadOnlyList<IIssueSpan>> FindSpansAsync(IEnumerable<ObjectId>? spanIds, IEnumerable<int>? issueIds, StreamId? streamId, int? minChange, int? maxChange, bool? resolved, int? index, int? count, CancellationToken cancellationToken)
 		{
 			FilterDefinition<IssueSpan> filter = FilterDefinition<IssueSpan>.Empty;
 
-			if(spanIds != null)
+			if (spanIds != null)
 			{
 				filter &= Builders<IssueSpan>.Filter.In(x => x.Id, spanIds);
 			}
@@ -1443,7 +1654,7 @@ namespace Horde.Server.Issues
 				}
 			}
 
-			return _issueSpans.Find(filter).Range(index, count).ToListAsync<IssueSpan, IIssueSpan>();
+			return await _issueSpans.Find(filter).Range(index, count).ToListAsync(cancellationToken);
 		}
 
 		#endregion
@@ -1451,22 +1662,22 @@ namespace Horde.Server.Issues
 		#region Steps
 
 		/// <inheritdoc/>
-		public async Task<IIssueStep> AddStepAsync(ObjectId spanId, NewIssueStepData newStep)
+		public async Task<IIssueStep> AddStepAsync(ObjectId spanId, NewIssueStepData newStep, CancellationToken cancellationToken)
 		{
 			IssueStep step = new IssueStep(spanId, newStep);
-			await _issueSteps.InsertOneAsync(step);
+			await _issueSteps.InsertOneAsync(step, (InsertOneOptions?)null, cancellationToken);
 			return step;
 		}
 
 		/// <inheritdoc/>
-		public Task<List<IIssueStep>> FindStepsAsync(IEnumerable<ObjectId> spanIds)
+		public async Task<IReadOnlyList<IIssueStep>> FindStepsAsync(IEnumerable<ObjectId> spanIds, CancellationToken cancellationToken)
 		{
 			FilterDefinition<IssueStep> filter = Builders<IssueStep>.Filter.In(x => x.SpanId, spanIds);
-			return _issueSteps.Find(filter).ToListAsync<IssueStep, IIssueStep>();
+			return await _issueSteps.Find(filter).ToListAsync(cancellationToken);
 		}
 
 		/// <inheritdoc/>
-		public Task<List<IIssueStep>> FindStepsAsync(JobId jobId, SubResourceId? batchId, SubResourceId? stepId)
+		public async Task<IReadOnlyList<IIssueStep>> FindStepsAsync(JobId jobId, JobStepBatchId? batchId, JobStepId? stepId, CancellationToken cancellationToken)
 		{
 			FilterDefinition<IssueStep> filter = Builders<IssueStep>.Filter.Eq(x => x.JobId, jobId);
 			if (batchId != null)
@@ -1477,7 +1688,7 @@ namespace Horde.Server.Issues
 			{
 				filter &= Builders<IssueStep>.Filter.Eq(x => x.StepId, stepId.Value);
 			}
-			return _issueSteps.Find(filter).ToListAsync<IssueStep, IIssueStep>();
+			return await _issueSteps.Find(filter).ToListAsync(cancellationToken);
 		}
 
 		#endregion

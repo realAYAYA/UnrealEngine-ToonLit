@@ -5,6 +5,9 @@
 #include "EntitySystem/MovieSceneEntitySystemTypes.h"
 #include "EntitySystem/MovieSceneEntityManager.h"
 #include "EntitySystem/MovieSceneEntityFactoryTemplates.h"
+#include "EntitySystem/BuiltInComponentTypes.h"
+#include "Containers/Array.h"
+#include "Containers/Set.h"
 #include "Containers/ArrayView.h"
 #include "Misc/AutomationTest.h"
 
@@ -338,6 +341,203 @@ bool FMovieSceneEntityMigrationTest::RunTest(const FString& Parameters)
 		if (!TestEntities())
 		{
 			return false;
+		}
+	}
+
+	return true;
+}
+
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FMovieSceneBlendTargetComponentTest, 
+		"System.Engine.Sequencer.EntitySystem.BlendTargetComponent",
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FMovieSceneBlendTargetComponentTest::RunTest(const FString& Parameters)
+{
+	/*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+	This test checks the behavior of FHierarchicalBlendTarget w.r.t.
+	move operations and memory management
+	~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
+
+	using namespace UE::MovieScene;
+
+	auto CompareBlendTarget = [this](const FHierarchicalBlendTarget& BlendTarget, TArrayView<const int16> Expected, const TCHAR* InTestName)
+	{
+		TArrayView<const int16> Result = BlendTarget.AsArray();
+		if (Result.Num() != Expected.Num() || !CompareItems(Result.GetData(), Expected.GetData(), Result.Num()))
+		{
+			TStringBuilder<128> ErrorString;
+			ErrorString.Appendf(TEXT("Test %s: Blend Target does not match the expected result ("), InTestName);
+			ErrorString.Join(Result, TEXT(","));
+			ErrorString.Append(TEXT(" != "));
+			ErrorString.Join(Expected, TEXT(","));
+			ErrorString.Append(TEXT(")"));
+			this->AddError(ErrorString.ToString());
+		}
+	};
+
+	// Simple test - use inline allocation
+	{
+		FHierarchicalBlendTarget BlendTarget;
+		BlendTarget.Add(0);
+		BlendTarget.Add(100);
+		BlendTarget.Add(-100);
+		BlendTarget.Add(-10);
+		BlendTarget.Add(10);
+		BlendTarget.Add(500);
+		BlendTarget.Add(1000);
+
+		this->TestEqual(TEXT("Inline Basic Capacity"), BlendTarget.GetCapacity(), 7);
+		CompareBlendTarget(BlendTarget, { 1000, 500, 100, 10, 0, -10, -100 }, TEXT("Inline Basic"));
+		GetTypeHash(BlendTarget);
+	}
+
+	// Test adding duplicates
+	{
+		FHierarchicalBlendTarget BlendTarget;
+		BlendTarget.Add(0);
+		BlendTarget.Add(100);
+		BlendTarget.Add(-100);
+		BlendTarget.Add(-10);
+		BlendTarget.Add(10);
+		BlendTarget.Add(500);
+		BlendTarget.Add(1000);
+		BlendTarget.Add(0);
+		BlendTarget.Add(100);
+		BlendTarget.Add(-100);
+		BlendTarget.Add(-10);
+		BlendTarget.Add(10);
+		BlendTarget.Add(500);
+		BlendTarget.Add(1000);
+
+		this->TestEqual(TEXT("Inline Duplicate Capacity"), BlendTarget.GetCapacity(), 7);
+		CompareBlendTarget(BlendTarget, { 1000, 500, 100, 10, 0, -10, -100 }, TEXT("Inline Duplicate"));
+		GetTypeHash(BlendTarget);
+	}
+
+	// Simple test - use inline allocation
+	{
+		FHierarchicalBlendTarget BlendTarget;
+		BlendTarget.Add(0);
+		BlendTarget.Add(100);
+		BlendTarget.Add(-100);
+		BlendTarget.Add(-10);
+		BlendTarget.Add(10);
+		BlendTarget.Add(500);
+		BlendTarget.Add(1000);
+
+		this->TestEqual(TEXT("Inline Basic Capacity"), BlendTarget.GetCapacity(), 7);
+		CompareBlendTarget(BlendTarget, { 1000, 500, 100, 10, 0, -10, -100 }, TEXT("Inline Basic"));
+		GetTypeHash(BlendTarget);
+	}
+
+	// Test growing the allocation
+	{
+		FRandomStream RandomStream;
+		RandomStream.GenerateNewSeed();
+
+		FHierarchicalBlendTarget BlendTarget;
+		TSet<int16> ExpectedSet;
+		// Add 
+		for (int16 Index = 0; Index < 25; ++Index)
+		{
+			const int16 Value = static_cast<int16>(FMath::RandRange(-10000, 10000));
+			BlendTarget.Add(Value);
+			ExpectedSet.Add(Value);
+		}
+
+		TArray<int16> Expected = ExpectedSet.Array();
+		Algo::Sort(Expected, TGreater<>());
+
+		this->TestEqual(TEXT("Basic Heap Capacity"), BlendTarget.GetCapacity(), 32);
+		CompareBlendTarget(BlendTarget, Expected, TEXT("Basic Heap"));
+		GetTypeHash(BlendTarget);
+	}
+
+	// Test growing the allocation with duplicates
+	{
+		FRandomStream RandomStream;
+		RandomStream.GenerateNewSeed();
+
+		FHierarchicalBlendTarget BlendTarget;
+		TSet<int16> ExpectedSet;
+		// Add 
+		for (int16 Index = 0; Index < 25; ++Index)
+		{
+			const int16 Value = static_cast<int16>(FMath::RandRange(-10000, 10000));
+			BlendTarget.Add(Value);
+			ExpectedSet.Add(Value);
+		}
+
+		for (int16 Expected : ExpectedSet)
+		{
+			BlendTarget.Add(Expected);
+		}
+
+		TArray<int16> Expected = ExpectedSet.Array();
+		Algo::Sort(Expected, TGreater<>());
+
+		this->TestEqual(TEXT("Duplicate Heap Capacity"), BlendTarget.GetCapacity(), 32);
+		CompareBlendTarget(BlendTarget, Expected, TEXT("Duplicate Heap"));
+		GetTypeHash(BlendTarget);
+	}
+
+	// Test move and copy operators for heap allocations
+	{
+		FRandomStream RandomStream;
+		RandomStream.GenerateNewSeed();
+
+		FHierarchicalBlendTarget BlendTarget[2];
+		TSet<int16> ExpectedSet[2];
+		// Add 
+		for (int16 Index = 0; Index < 25; ++Index)
+		{
+			const int16 Value1 = static_cast<int16>(FMath::RandRange(-10000, 10000));
+			const int16 Value2 = static_cast<int16>(FMath::RandRange(-10000, 10000));
+			BlendTarget[0].Add(Value1);
+			ExpectedSet[0].Add(Value1);
+			BlendTarget[1].Add(Value2);
+			ExpectedSet[1].Add(Value2);
+		}
+
+		TArray<int16> Expected[2] = { ExpectedSet[0].Array(), ExpectedSet[1].Array() };
+		Algo::Sort(Expected[0], TGreater<>());
+		Algo::Sort(Expected[1], TGreater<>());
+
+		// Make some copies
+		{
+			// Copy Construction
+			FHierarchicalBlendTarget BlendTargetCopy(BlendTarget[0]);
+			CompareBlendTarget(BlendTargetCopy, Expected[0], TEXT("Copy 1"));
+			CompareBlendTarget(BlendTarget[0], Expected[0], TEXT("Copied From 2"));
+			GetTypeHash(BlendTargetCopy);
+			GetTypeHash(BlendTarget[0]);
+
+			// Copy Assignment
+			BlendTargetCopy = BlendTarget[1];
+			CompareBlendTarget(BlendTargetCopy, Expected[1], TEXT("Copy 2"));
+			CompareBlendTarget(BlendTarget[1], Expected[1], TEXT("Copied From 2"));
+			GetTypeHash(BlendTargetCopy);
+			GetTypeHash(BlendTarget[1]);
+		}
+
+		// Make some moves
+		{
+			FHierarchicalBlendTarget BlendTargetCopy1(BlendTarget[0]);
+			FHierarchicalBlendTarget BlendTargetCopy2(BlendTarget[1]);
+
+			// Move Construction
+			FHierarchicalBlendTarget BlendTargetMoved(MoveTemp(BlendTargetCopy1));
+			CompareBlendTarget(BlendTargetMoved, Expected[0], TEXT("Move 1"));
+			CompareBlendTarget(BlendTargetCopy1, FHierarchicalBlendTarget().AsArray(), TEXT("Moved From 1"));
+			GetTypeHash(BlendTargetMoved);
+			GetTypeHash(BlendTargetCopy1);
+
+			// Move Assignment
+			BlendTargetMoved = MoveTemp(BlendTargetCopy2);
+			CompareBlendTarget(BlendTargetMoved, Expected[1], TEXT("Move 2"));
+			CompareBlendTarget(BlendTargetCopy2, FHierarchicalBlendTarget().AsArray(), TEXT("Moved From 2"));
+			GetTypeHash(BlendTargetMoved);
+			GetTypeHash(BlendTargetCopy2);
 		}
 	}
 

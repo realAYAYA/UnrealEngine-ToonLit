@@ -111,7 +111,7 @@ namespace UnrealBuildTool
 
 			if (!bResult)
 			{
-				throw new BuildException("Action graph is invalid; unable to continue. See log for additional details.");
+				throw new CompilationResultException(CompilationResult.ActionGraphInvalid, "Action graph is invalid; unable to continue. See log for additional details.");
 			}
 		}
 
@@ -356,37 +356,70 @@ namespace UnrealBuildTool
 			}
 		}
 
+		private static ActionExecutor? GetRemoteExecutorByName(string Name, BuildConfiguration BuildConfiguration, int ActionCount, List<TargetDescriptor> TargetDescriptors, ILogger Logger)
+		{
+			switch (Name)
+			{
+				case "XGE":
+					{
+						if (BuildConfiguration.bAllowXGE && XGE.IsAvailable(Logger) && ActionCount >= XGE.MinActions)
+						{
+							return new XGE(Logger);
+						}
+						return null;
+					}
+				case "SNDBS":
+					{
+						if (BuildConfiguration.bAllowSNDBS && SNDBS.IsAvailable(Logger))
+						{
+							return new SNDBS(TargetDescriptors, Logger);
+						}
+						return null;
+					}
+				case "FASTBuild":
+					{
+						if (BuildConfiguration.bAllowFASTBuild && FASTBuild.IsAvailable(Logger))
+						{
+							return new FASTBuild(BuildConfiguration.MaxParallelActions, BuildConfiguration.bAllCores, BuildConfiguration.bCompactOutput, Logger);
+						}
+						return null;
+					}
+				case "UBA":
+					{
+						if (BuildConfiguration.bAllowUBAExecutor && UBAExecutor.IsAvailable())
+						{
+							return new UBAExecutor(BuildConfiguration.MaxParallelActions, BuildConfiguration.bAllCores, BuildConfiguration.bCompactOutput, Logger, TargetDescriptors.FirstOrDefault()?.AdditionalArguments);
+						}
+						return null;
+					}
+				default:
+					{
+						Logger.LogWarning("Unknown remote executor {Name}", Name);
+						return null;
+					}
+			}
+		}
+
 		/// <summary>
 		/// Selects an ActionExecutor
 		/// </summary>
 		private static ActionExecutor SelectExecutor(BuildConfiguration BuildConfiguration, int ActionCount, List<TargetDescriptor> TargetDescriptors, ILogger Logger)
 		{
-#if __BOXEXECUTOR_AVAILABLE__
-			bool bAnySingleFile = TargetDescriptors.Any(Descriptor => Descriptor.SpecificFilesToCompile.Count == 1);
-			if (!bAnySingleFile && BuildConfiguration.bAllowBoxExecutor && BoxExecutor.IsAvailable(Logger))
-			{
-				return new BoxExecutor(BuildConfiguration.MaxParallelActions, BuildConfiguration.bAllCores, BuildConfiguration.bCompactOutput, Logger);
-			}
-#endif // #if __BOXEXECUTOR_AVAILABLE__
-
 			if (ActionCount > ParallelExecutor.GetDefaultNumParallelProcesses(BuildConfiguration.MaxParallelActions, BuildConfiguration.bAllCores, Logger))
 			{
-				if (BuildConfiguration.bAllowHybridExecutor && HybridExecutor.IsAvailable(Logger))
+				foreach (string Name in BuildConfiguration.RemoteExecutorPriority)
 				{
-					return new HybridExecutor(TargetDescriptors, BuildConfiguration.MaxParallelActions, BuildConfiguration.bAllCores, BuildConfiguration.bCompactOutput, Logger);
+					ActionExecutor? Executor = GetRemoteExecutorByName(Name, BuildConfiguration, ActionCount, TargetDescriptors, Logger);
+					if (Executor != null)
+					{
+						return Executor;
+					}
 				}
-				else if (BuildConfiguration.bAllowXGE && XGE.IsAvailable(Logger) && ActionCount >= XGE.MinActions)
-				{
-					return new XGE(Logger);
-				}
-				else if (BuildConfiguration.bAllowSNDBS && SNDBS.IsAvailable(Logger))
-				{
-					return new SNDBS(TargetDescriptors, Logger);
-				}
-				else if (BuildConfiguration.bAllowFASTBuild && FASTBuild.IsAvailable(Logger))
-				{
-					return new FASTBuild(BuildConfiguration.MaxParallelActions, BuildConfiguration.bAllCores, BuildConfiguration.bCompactOutput, Logger);
-				}
+			}
+
+			if (BuildConfiguration.bAllowUBALocalExecutor && UBALocalExecutor.IsAvailable())
+			{
+				return new UBALocalExecutor(BuildConfiguration.MaxParallelActions, BuildConfiguration.bAllCores, BuildConfiguration.bCompactOutput, Logger, TargetDescriptors.FirstOrDefault()?.AdditionalArguments);
 			}
 
 			return new ParallelExecutor(BuildConfiguration.MaxParallelActions, BuildConfiguration.bAllCores, BuildConfiguration.bCompactOutput, Logger);
@@ -405,6 +438,7 @@ namespace UnrealBuildTool
 			{
 				// Figure out which executor to use
 				using ActionExecutor Executor = SelectExecutor(BuildConfiguration, ActionsToExecute.Count, TargetDescriptors, Logger);
+				Logger.LogInformation("Using {ExecutorName} executor to run {ActionCount} action(s)", Executor.Name, ActionsToExecute.Count);
 
 				// Execute the build
 				Stopwatch Timer = Stopwatch.StartNew();
@@ -612,7 +646,7 @@ namespace UnrealBuildTool
 					}
 				}
 
-				throw new BuildException($"Action graph contains cycle!");
+				throw new CompilationResultException(CompilationResult.ActionGraphInvalid, "Action graph contains cycle!");
 			}
 		}
 

@@ -11,6 +11,7 @@
 #include "Widgets/Input/SHyperlink.h"
 #include "Internationalization/Regex.h"
 #include "Styling/StyleColors.h"
+#include "AssetRegistry/AssetDataToken.h"
 
 #define LOCTEXT_NAMESPACE "SMessageLogMessageListRow"
 
@@ -167,6 +168,16 @@ void SMessageLogMessageListRow::CreateMessage(const TSharedRef<SHorizontalBox>& 
 	}
 		break;
 
+	case EMessageToken::AssetData:
+	{
+		const TSharedRef<FAssetDataToken> AssetDataToken = StaticCastSharedRef<FAssetDataToken>(InMessageToken);
+
+		IconBrushName = FName("Icons.Search");
+		RowContent = CreateHyperlink(InMessageToken, FAssetDataToken::DefaultOnGetAssetDisplayName().IsBound()
+			? FAssetDataToken::DefaultOnGetAssetDisplayName().Execute(AssetDataToken->GetAssetData(), true)
+			: InMessageToken->ToText());
+	}
+		break;
 	case EMessageToken::Object:
 	{
 		const TSharedRef<FUObjectToken> UObjectToken = StaticCastSharedRef<FUObjectToken>(InMessageToken);
@@ -279,11 +290,11 @@ void SMessageLogMessageListRow::CreateMessage(const TSharedRef<SHorizontalBox>& 
 				// Remove the hyperlink from the message, since we're splitting it into its own string.
 				if (TextToken->IsSourceLinkOnLeft())
 				{
-					MessageString.RightChopInline(FileAndLineRegexMatcher.GetMatchEnding(), false);
+					MessageString.RightChopInline(FileAndLineRegexMatcher.GetMatchEnding(), EAllowShrinking::No);
 				}
 				else
 				{
-					MessageString.LeftChopInline(FileAndLineRegexMatcher.GetCaptureGroup(0).Len(), false);
+					MessageString.LeftChopInline(FileAndLineRegexMatcher.GetCaptureGroup(0).Len(), EAllowShrinking::No);
 				}
 
 				SourceLink = SNew(SHyperlink)

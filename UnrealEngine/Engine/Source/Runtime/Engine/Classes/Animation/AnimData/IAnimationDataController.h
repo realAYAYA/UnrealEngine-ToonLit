@@ -408,7 +408,7 @@ public:
 	virtual bool RenameCurve(const FAnimationCurveIdentifier& CurveToRenameId, const FAnimationCurveIdentifier& NewCurveId, bool bShouldTransact = true) = 0;
 
 	/**
-	* Changes the color of the curve with provided identifier. Broadcasts a EAnimDataModelNotifyType::CurveRenamed notify if successful.
+	* Changes the color of the curve with provided identifier. Broadcasts a EAnimDataModelNotifyType::CurveColorChanged notify if successful.
 	* Currently changing curve colors is only supported for float curves.
 	*
 	* @param	CurveId				Identifier of the curve to change the color for
@@ -419,7 +419,20 @@ public:
 	*/
 	UFUNCTION(BlueprintCallable, Category = CurveData)
 	virtual bool SetCurveColor(const FAnimationCurveIdentifier& CurveId, FLinearColor Color, bool bShouldTransact = true) = 0;
-	
+
+	/**
+	* Changes the comment of the curve with provided identifier. Broadcasts a EAnimDataModelNotifyType::CurveCommentChanged notify if successful.
+	* Currently changing curve comments is only supported for float curves.
+	*
+	* @param	CurveId				Identifier of the curve to change the comment for
+	* @param	Comment				Comment to which the curve is to be set
+	* @param	bShouldTransact		Whether or not any undo-redo changes should be generated
+	*
+	* @return	Whether or not the curve comment was successfully changed
+	*/
+	UFUNCTION(BlueprintCallable, Category = CurveData)
+	virtual bool SetCurveComment(const FAnimationCurveIdentifier& CurveId, const FString& Comment, bool bShouldTransact = true) = 0;
+
 	/**
 	* Scales the curve with provided identifier. Broadcasts a EAnimDataModelNotifyType::CurveScaled notify if successful.
 	*

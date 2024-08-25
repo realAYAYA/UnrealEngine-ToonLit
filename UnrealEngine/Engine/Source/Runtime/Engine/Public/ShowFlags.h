@@ -224,8 +224,8 @@ struct FEngineShowFlags
 		SetLumenGlobalIllumination(false);
 		SetLumenReflections(false);
 
-		// TODO: Remove when Physical page pool size scales automatically with demand
-		SetVirtualShadowMapCaching(false);
+		// Have VSM drop all persistent data each frame
+		SetVirtualShadowMapPersistentData(false);
 
 		SetShaderPrint(false);
 	}
@@ -255,8 +255,9 @@ struct FEngineShowFlags
 		SetLumenGlobalIllumination(false);
 		SetLumenReflections(false);
 
-		// TODO: Remove when Physical page pool size scales automatically with demand
-		SetVirtualShadowMapCaching(false);
+		// Have VSM drop all persistent data each frame
+		// TODO: Revisit some of the cases that trigger this; if they clean up the scene renderers this is not necessary
+		SetVirtualShadowMapPersistentData(false);
 	}
 
 	bool IsVisualizeCalibrationEnabled() const
@@ -369,6 +370,7 @@ private:
 
 		// The following code sets what should be off by default.
 		SetVisualizeHDR(false);
+		SetVisualizeSkyLightIlluminance(false);
 		SetVisualizeLocalExposure(false);
 		SetVisualizeShadingModels(false);
 		SetOverrideDiffuseAndSpecular(false);
@@ -392,8 +394,15 @@ private:
 		SetVisualizeMotionVectors(false);
 		SetVisualizeReprojection(false);
 		SetVisualizeTemporalUpscaler(false);
+		SetVisualizeTSR(false);
 		SetEditingLevelInstance(false);
 		SetSelectionOutline(false);
+		SetSelectionOutlineColor0(false);
+		SetSelectionOutlineColor1(false);
+		SetSelectionOutlineColor2(false);
+		SetSelectionOutlineColor3(false);
+		SetSelectionOutlineColor4(false);
+		SetSelectionOutlineColor5(false);
 		SetDebugAI(false);
 		SetNavigation(false);
 		SetLightComplexity(false);
@@ -425,7 +434,6 @@ private:
 		SetModeWidgets(InitMode == ESFIM_Editor);
 		SetBounds(false);
 		SetHitProxies(false);
-		SetPropertyColoration(false);
 		SetLightInfluences(false);
 		SetPivot(InitMode == ESFIM_Editor || InitMode == ESFIM_VREditing);
 		SetShadowFrustums(false);
@@ -433,7 +441,7 @@ private:
 		SetLightRadius(InitMode == ESFIM_Editor);
 		SetVolumes(InitMode == ESFIM_Editor);
 		SetGame(InitMode != ESFIM_Editor && InitMode != ESFIM_VREditing);
-		SetLevelColoration(false);
+		SetActorColoration(false);
 		SetCollision(false);
 		SetCollisionPawn(false);
 		SetCollisionVisibility(false);
@@ -473,14 +481,15 @@ private:
 		SetPathTracing(false);
 		SetRayTracingDebug(false);
 		SetVisualizeSkyAtmosphere(false);
+		SetVisualizeLightFunctionAtlas(false);
 		SetVisualizeCalibrationColor(false);
 		SetVisualizeCalibrationGrayscale(false);
 		SetVisualizeCalibrationCustom(false);
 		SetVisualizePostProcessStack(false);
 		SetVirtualTexturePrimitives(false);
+		SetVisualizeInstanceOcclusionQueries(false);
 		SetVisualizeVolumetricCloudConservativeDensity(false);
 		SetVisualizeVolumetricCloudEmptySpaceSkipping(false);
-		SetDrawOnlyVSMInvalidatingGeo(false);
 		SetDebugDrawDistantVirtualSMLights(false);
 
 		SetLumenScreenTraces(true);

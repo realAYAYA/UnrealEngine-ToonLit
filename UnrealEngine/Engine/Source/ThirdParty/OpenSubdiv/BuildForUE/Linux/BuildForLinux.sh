@@ -5,6 +5,9 @@ set -e
 LIBRARY_NAME="OpenSubdiv"
 REPOSITORY_NAME="OpenSubdiv"
 
+# Informational, for the usage message.
+CURRENT_LIBRARY_VERSION=3.6.0
+
 BUILD_SCRIPT_NAME="$(basename $BASH_SOURCE)"
 BUILD_SCRIPT_DIR=`cd $(dirname "$BASH_SOURCE"); pwd`
 
@@ -18,11 +21,11 @@ UsageAndExit()
     echo
     echo "Usage examples:"
     echo
-    echo "    $BUILD_SCRIPT_NAME 3.4.4 x86_64-unknown-linux-gnu"
-    echo "      -- Installs $LIBRARY_NAME version 3.4.4 for x86_64 architecture."
+    echo "    $BUILD_SCRIPT_NAME $CURRENT_LIBRARY_VERSION x86_64-unknown-linux-gnu"
+    echo "      -- Installs $LIBRARY_NAME version $CURRENT_LIBRARY_VERSION for x86_64 architecture."
     echo
-    echo "    $BUILD_SCRIPT_NAME 3.4.4 aarch64-unknown-linux-gnueabi"
-    echo "      -- Installs $LIBRARY_NAME version 3.4.4 for arm64 architecture."
+    echo "    $BUILD_SCRIPT_NAME $CURRENT_LIBRARY_VERSION aarch64-unknown-linux-gnueabi"
+    echo "      -- Installs $LIBRARY_NAME version $CURRENT_LIBRARY_VERSION for arm64 architecture."
     echo
     exit 1
 }
@@ -67,7 +70,7 @@ pushd $BUILD_LOCATION > /dev/null
 
 # Run Engine/Build/BatchFiles/Linux/SetupToolchain.sh first to ensure
 # that the toolchain is setup and verify that this name matches.
-TOOLCHAIN_NAME=v21_clang-15.0.1-centos7
+TOOLCHAIN_NAME=v22_clang-16.0.6-centos7
 
 UE_TOOLCHAIN_LOCATION="$UE_ENGINE_LOCATION/Extras/ThirdPartyNotUE/SDKs/HostLinux/Linux_x64/$TOOLCHAIN_NAME"
 
@@ -125,6 +128,7 @@ CMAKE_ARGS=(
     -DCMAKE_INSTALL_PREFIX="$INSTALL_LOCATION"
     -DCMAKE_BINDIR_BASE="$INSTALL_BIN_DIR"
     -DCMAKE_LIBDIR_BASE="$INSTALL_LIB_DIR"
+    -DCMAKE_INSTALL_LIBDIR="$INSTALL_LIB_DIR"
     -DCMAKE_DEBUG_POSTFIX=_d
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON
     -DNO_REGRESSION=ON
@@ -141,6 +145,7 @@ CMAKE_ARGS=(
     -DNO_DX=ON
     -DNO_GLEW=ON
     -DNO_GLFW=ON
+    -DBUILD_SHARED_LIBS=OFF
 )
 
 NUM_CPU=`grep -c ^processor /proc/cpuinfo`
@@ -165,14 +170,6 @@ cmake --build . -j$NUM_CPU
 echo Installing $LIBRARY_NAME for Release...
 cmake --install .
 
-popd > /dev/null
-
-echo Converting installed $LIBRARY_NAME library symlinks to files...
-pushd "$INSTALL_UNIX_ARCH_LOCATION/lib" > /dev/null
-for SYMLINKED_LIB in `find . -type l`
-do
-    cp --remove-destination `readlink $SYMLINKED_LIB` $SYMLINKED_LIB
-done
 popd > /dev/null
 
 echo Done.

@@ -49,6 +49,16 @@ FORCEINLINE float EquilateralEdgeLength( float Area )
 	return FMath::Sqrt( Area / sqrt3_4 );
 }
 
+FORCEINLINE float TriangleArea( float a, float b, float c )
+{
+	float AreaSqrTimes16 = FMath::Max( 0.0f,
+		( a + b + c ) *
+		(-a + b + c ) *
+		( a - b + c ) *
+		( a + b - c ) );
+	return FMath::Sqrt( AreaSqrTimes16 ) * 0.25f;
+}
+
 // a,b,c are tessellation factors for each edge
 FORCEINLINE int32 ApproxNumTris( int32 a, int32 b, int32 c )
 {
@@ -93,6 +103,24 @@ namespace Barycentric
 	FORCEINLINE float DistanceToEdge( float Barycentric, float EdgeLength, float TriangleArea )
 	{
 		return 2.0f * Barycentric * TriangleArea / EdgeLength;
+	}
+
+	// Angle at corner 0
+	FORCEINLINE float Cotangent(
+		const FVector3f& Barycentrics0,
+		const FVector3f& Barycentrics1,
+		const FVector3f& Barycentrics2,
+		const FVector3f& EdgeLengthsSqr,
+		float TriangleArea )
+	{
+		FVector3f LengthsSqr;
+		LengthsSqr[0] = LengthSquared( Barycentrics1, Barycentrics2, EdgeLengthsSqr );
+		LengthsSqr[1] = LengthSquared( Barycentrics2, Barycentrics0, EdgeLengthsSqr );
+		LengthsSqr[2] = LengthSquared( Barycentrics0, Barycentrics1, EdgeLengthsSqr );
+	
+		float Area = SubtriangleArea( Barycentrics0, Barycentrics1, Barycentrics2, TriangleArea );
+	
+		return 0.25f * ( -LengthsSqr.X + LengthsSqr.Y + LengthsSqr.Z ) / Area;
 	}
 }
 
@@ -212,7 +240,7 @@ struct FAdjacency
 	void	ForAll( int32 EdgeIndex, FuncType&& Function ) const
 	{
 		int32 AdjIndex = Direct[ EdgeIndex ];
-		if( AdjIndex != -1 )
+		if( AdjIndex >= 0 )
 		{
 			Function( EdgeIndex, AdjIndex );
 		}

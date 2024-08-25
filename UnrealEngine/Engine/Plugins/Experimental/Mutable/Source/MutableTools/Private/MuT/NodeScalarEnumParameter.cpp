@@ -14,8 +14,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeScalarEnumParameter::Private::s_type =
-			NODE_TYPE( "ScalarEnumParameter", NodeScalar::GetStaticType() );
+	FNodeType NodeScalarEnumParameter::Private::s_type =
+			FNodeType( "ScalarEnumParameter", NodeScalar::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -26,73 +26,29 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	int NodeScalarEnumParameter::GetInputCount() const
+	const FString& NodeScalarEnumParameter::GetName() const
 	{
-        return m_pD->m_ranges.Num();
+		return m_pD->m_name;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-    Node* NodeScalarEnumParameter::GetInputNode( int i ) const
+	void NodeScalarEnumParameter::SetName( const FString& strName )
 	{
-        check( i<GetInputCount() );
-        if (i<GetInputCount())
-        {
-            return m_pD->m_ranges[i].get();
-        }
-        return nullptr;
+		m_pD->m_name = strName;
+	}
+
+
+	const FString& NodeScalarEnumParameter::GetUid() const
+	{
+		return m_pD->m_uid;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-    void NodeScalarEnumParameter::SetInputNode( int i, NodePtr n )
+	void NodeScalarEnumParameter::SetUid( const FString& strUid )
 	{
-        check( i<GetInputCount() );
-        if (i<GetInputCount())
-        {
-            m_pD->m_ranges[i] = dynamic_cast<NodeRange*>(n.get());
-        }
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	const char* NodeScalarEnumParameter::GetName() const
-	{
-		return m_pD->m_name.c_str();
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeScalarEnumParameter::SetName( const char* strName )
-	{
-		if ( strName )
-		{
-			m_pD->m_name = strName;
-		}
-		else
-		{
-			m_pD->m_name = "";
-		}
-	}
-
-
-	const char* NodeScalarEnumParameter::GetUid() const
-	{
-		return m_pD->m_uid.c_str();
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeScalarEnumParameter::SetUid( const char* strUid )
-	{
-		if ( strUid )
-		{
-			m_pD->m_uid = strUid;
-		}
-		else
-		{
-			m_pD->m_uid = "";
-		}
+		m_pD->m_uid = strUid;
 	}
 
 
@@ -125,7 +81,7 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	void NodeScalarEnumParameter::SetValue( int i, float value, const char* strName )
+	void NodeScalarEnumParameter::SetValue( int i, float value, const FString& strName )
 	{
 		check( i>=0 && i<(int)m_pD->m_options.Num() );
 		m_pD->m_options[i].name = strName;

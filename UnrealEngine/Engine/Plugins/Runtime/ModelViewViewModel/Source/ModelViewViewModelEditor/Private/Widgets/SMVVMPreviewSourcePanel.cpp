@@ -4,6 +4,7 @@
 
 #include "MVVMSubsystem.h"
 #include "View/MVVMView.h"
+#include "View/MVVMViewClass.h"
 
 #include "Preview/PreviewMode.h"
 #include "WidgetBlueprintEditor.h"
@@ -69,6 +70,9 @@ void SPreviewSourcePanel::Construct(const FArguments& InArgs, TSharedPtr<FWidget
 		HandlePreviewWidgetChanged();
 		Context->OnPreviewWidgetChanged().AddSP(this, &SPreviewSourcePanel::HandlePreviewWidgetChanged);
 		Context->OnSelectedObjectChanged().AddSP(this, &SPreviewSourcePanel::HandleSelectedObjectChanged);
+#if UE_WITH_MVVM_DEBUGGING
+		FDebugging::OnViewSourceValueChanged.AddSP(this, &SPreviewSourcePanel::HandleViewChanged);
+#endif
 	}
 
 	ChildSlot
@@ -90,6 +94,7 @@ void SPreviewSourcePanel::Construct(const FArguments& InArgs, TSharedPtr<FWidget
 void SPreviewSourcePanel::HandlePreviewWidgetChanged()
 {
 	SourceList.Reset();
+	WeakView.Reset();
 
 	if (TSharedPtr<FWidgetBlueprintEditor> Editor = WeakEditor.Pin())
 	{
@@ -97,9 +102,11 @@ void SPreviewSourcePanel::HandlePreviewWidgetChanged()
 		{
 			if (UMVVMView* View = UMVVMSubsystem::GetViewFromUserWidget(NewWidget))
 			{
-				for (const FMVVMViewSource& Source : View->GetSources())
+				WeakView = View;
+				for (const FMVVMView_Source& ViewSource : View->GetSources())
 				{
-					SourceList.Emplace(MakeShared<Private::SPreviewSourceEntry>(Source.Source, Source.SourceName));
+					FName SourceName = View->GetViewClass()->GetSource(ViewSource.ClassKey).GetName();
+					SourceList.Emplace(MakeShared<Private::SPreviewSourceEntry>(ViewSource.Source, SourceName));
 				}
 			}
 		}
@@ -168,10 +175,25 @@ void SPreviewSourcePanel::HandleSourceSelectionChanged(TSharedPtr<Private::SPrev
 	}
 }
 
+#if UE_WITH_MVVM_DEBUGGING
+void SPreviewSourcePanel::HandleViewChanged(const FDebugging::FView& View, const FDebugging::FViewSourceValueArgs& Args)
+{
+	if (SourceListView)
+	{
+		if (View.GetView() == WeakView.Get())
+		{
+			SourceListView->RebuildList(); // to prevent access to invalid class, rebuild everything.
+		}
+	}
+}
+#endif
+
 
 TSharedRef<ITableRow> SPreviewSourcePanel::GenerateWidget(TSharedPtr<Private::SPreviewSourceEntry> Entry, const TSharedRef<STableViewBase>& OwnerTable) const
 {
 	typedef STableRow<TSharedPtr<Private::SPreviewSourceEntry>> RowType;
+
+	TSharedRef<SWidget> FieldIcon = Entry->GetClass() ? SNew(UE::PropertyViewer::SFieldIcon, Entry->GetClass()) : SNullWidget::NullWidget;
 
 	TSharedRef<RowType> NewRow = SNew(RowType, OwnerTable);
 	NewRow->SetContent(SNew(SHorizontalBox)
@@ -180,7 +202,7 @@ TSharedRef<ITableRow> SPreviewSourcePanel::GenerateWidget(TSharedPtr<Private::SP
 		.HAlign(HAlign_Right)
 		.VAlign(VAlign_Center)
 		[
-			SNew(UE::PropertyViewer::SFieldIcon, Entry->GetClass())
+			FieldIcon
 		]
 		+ SHorizontalBox::Slot()
 		.Padding(4.0f)

@@ -9,59 +9,51 @@
 UGraphIsland::UGraphIsland()
 	: Super(EGraphElementType::Island)
 {
-	bPendingDestroy = false;
 }
 
 void UGraphIsland::Destroy()
 {
-	bPendingDestroy = true;
+	TRACE_CPUPROFILER_EVENT_SCOPE(UGraphIsland::Destroy);
 	TSet<FGraphVertexHandle> VertexCopy = Vertices;
-	Vertices.Empty();
 
+	Vertices.Empty();
 	// Need to work off a copy of the vertex handles since calling
 	// UGraph::RemoveVertex will attempt to remove the node from its
 	// parent island as well and that'll run into an error of modifying
 	// the Vertices TSet during iteration.
-	for (const FGraphVertexHandle& Node : VertexCopy)
+	if (UGraph* Graph = GetGraph())
 	{
-		if (TObjectPtr<UGraph> Graph = GetGraph())
-		{
-			Graph->RemoveVertex(Node);
-		}
+		Graph->RemoveBulkVertices(VertexCopy.Array());
 	}
 
-	Vertices.Empty();
 	HandleOnDestroyed();
-}
-
-void UGraphIsland::MergeWith(TObjectPtr<UGraphIsland> OtherIsland)
-{
-	if (!OtherIsland)
-	{
-		return;
-	}
-
-	for (const FGraphVertexHandle& Node : OtherIsland->Vertices)
-	{
-		OtherIsland->HandleOnVertexRemoved(Node);
-		AddVertex(Node);
-	}
-
-	OtherIsland->Vertices.Empty();
 }
 
 void UGraphIsland::AddVertex(const FGraphVertexHandle& Node)
 {
-	if (!Node.IsValid())
+	TRACE_CPUPROFILER_EVENT_SCOPE(UGraphIsland::AddVertex);
+	if (!ensure(Node.IsValid()))
 	{
 		return;
 	}
 
-	TObjectPtr<UGraphVertex> NodePtr = Node.GetVertex();
-	if (!NodePtr)
+	UGraphVertex* NodePtr = Node.GetVertex();
+	if (!ensure(NodePtr))
 	{
 		return;
 	}
+
+	FGraphIslandHandle OldIslandHandle = NodePtr->GetParentIsland();
+	if (OldIslandHandle.IsValid())
+	{
+		UGraphIsland* OldIsland = OldIslandHandle.GetIsland();
+		if (ensure(OldIsland))
+		{
+			OldIsland->RemoveVertex(Node);
+		}
+	}
+
+	ensure(NodePtr->GetParentIsland() == FGraphIslandHandle{});
 	NodePtr->SetParentIsland(Handle());
 	Vertices.Add(Node);
 	HandleOnVertexAdded(Node);
@@ -69,29 +61,34 @@ void UGraphIsland::AddVertex(const FGraphVertexHandle& Node)
 
 void UGraphIsland::RemoveVertex(const FGraphVertexHandle& Node)
 {
-	if (!Node.IsValid())
+	TRACE_CPUPROFILER_EVENT_SCOPE(UGraphIsland::RemoveVertex);
+	if (!ensure(Node.IsValid()))
 	{
 		return;
 	}
 
-	TObjectPtr<UGraphVertex> NodePtr = Node.GetVertex();
-	if (!NodePtr)
-	{
-		return;
-	}
-	NodePtr->SetParentIsland({});
-	Vertices.Remove(Node);
-	HandleOnVertexRemoved(Node);
-}
+	const bool bIsInIslandSet = Vertices.Contains(Node);
+	bool bIsNodeParentSet = false;
 
-FSerializedIslandData UGraphIsland::GetSerializedData() const
-{
-	FSerializedIslandData Out;
-	for (const FGraphVertexHandle& Handle : Vertices)
+	UGraphVertex* NodePtr = Node.GetVertex();
+	if (ensure(NodePtr))
 	{
-		Out.Vertices.Add(Handle);
+		bIsNodeParentSet = NodePtr->GetParentIsland() == Handle();
+		if (bIsNodeParentSet)
+		{
+			NodePtr->SetParentIsland({});
+		}
 	}
-	return Out;
+
+	if (bIsInIslandSet)
+	{
+		Vertices.Remove(Node);
+	}
+
+	if (bIsInIslandSet || bIsNodeParentSet)
+	{
+		HandleOnVertexRemoved(Node);
+	}
 }
 
 void UGraphIsland::HandleOnVertexAdded(const FGraphVertexHandle& Handle)
@@ -112,4 +109,16 @@ void UGraphIsland::HandleOnDestroyed()
 void UGraphIsland::HandleOnConnectivityChanged()
 {
 	OnConnectivityChanged.Broadcast(Handle());
+}
+
+void UGraphIsland::SetOperationAllowed(EGraphIslandOperations Op, bool bAllowed)
+{
+	if (bAllowed)
+	{
+		EnumAddFlags(AllowedOperations, Op);
+	}
+	else
+	{
+		EnumRemoveFlags(AllowedOperations, Op);
+	}
 }

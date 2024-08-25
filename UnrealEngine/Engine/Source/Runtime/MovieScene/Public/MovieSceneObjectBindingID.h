@@ -29,6 +29,7 @@ namespace MovieScene
 
 
 struct FSequenceInstance;
+struct FSharedPlaybackState;
 
 
 /**
@@ -84,6 +85,8 @@ struct FRelativeObjectBindingID
 	 * @param TargetGuid            The GUID of the object binding within TargetSequenceID that represents the object at runtime
 	 * @param Player                The movie scene player that is currently playing the root sequence
 	 */
+	MOVIESCENE_API FRelativeObjectBindingID(FMovieSceneSequenceID SourceSequenceID, FMovieSceneSequenceID TargetSequenceID, const FGuid& TargetGuid, TSharedRef<const FSharedPlaybackState> SharedPlaybackState);
+
 	MOVIESCENE_API FRelativeObjectBindingID(FMovieSceneSequenceID SourceSequenceID, FMovieSceneSequenceID TargetSequenceID, const FGuid& TargetGuid, IMovieScenePlayer& Player);
 
 	/** GUID of the Object Binding (ie, FMovieSceneBinding::GetObjectGuid) */
@@ -143,6 +146,8 @@ public:
 	 * @param InPlayer            The active movie scene player to retrieve a root sequence hierarchy from
 	 * @return A new binding ID that will resolve relative to the specified sequence
 	 */
+	MOVIESCENE_API FRelativeObjectBindingID ConvertToRelative(FMovieSceneSequenceID SourceSequenceID, TSharedRef<const FSharedPlaybackState> SharedPlaybackState) const;
+
 	MOVIESCENE_API FRelativeObjectBindingID ConvertToRelative(FMovieSceneSequenceID SourceSequenceID, IMovieScenePlayer& InPlayer) const;
 
 	/**
@@ -196,6 +201,8 @@ enum class EMovieSceneObjectBindingSpace : uint8
 USTRUCT(BlueprintType, meta=(HasNativeMake))
 struct FMovieSceneObjectBindingID
 {
+	using FSharedPlaybackState = UE::MovieScene::FSharedPlaybackState;
+
 	GENERATED_BODY()
 
 	/**
@@ -324,7 +331,6 @@ public:
 		return FMovieSceneSequenceID(SequenceID);
 	}
 
-
 	/**
 	 * Resolve this binding ID to a fixed object binding ID resolvable from the root sequence
 	 *
@@ -332,9 +338,9 @@ public:
 	 * @param Player                The movie scene player that is currently playing the root sequence
 	 * @return A fixed binding ID whose SequenceID relates to the root sequence hierarchy
 	 */
+	MOVIESCENE_API UE::MovieScene::FFixedObjectBindingID ResolveToFixed(FMovieSceneSequenceID SourceSequenceID, TSharedRef<const FSharedPlaybackState> SharedPlaybackState) const;
+
 	MOVIESCENE_API UE::MovieScene::FFixedObjectBindingID ResolveToFixed(FMovieSceneSequenceID SourceSequenceID, IMovieScenePlayer& Player) const;
-
-
 
 	/**
 	 * Resolve the sequence ID for this binding for the root sequence
@@ -343,8 +349,9 @@ public:
 	 * @param Player                The movie scene player that is currently playing the sequence
 	 * @return The sequence ID that holds the target object
 	 */
-	MOVIESCENE_API FMovieSceneSequenceID ResolveSequenceID(FMovieSceneSequenceID SourceSequenceID, IMovieScenePlayer& Player) const;
+	MOVIESCENE_API FMovieSceneSequenceID ResolveSequenceID(FMovieSceneSequenceID SourceSequenceID, TSharedRef<const FSharedPlaybackState> SharedPlaybackState) const;
 
+	MOVIESCENE_API FMovieSceneSequenceID ResolveSequenceID(FMovieSceneSequenceID SourceSequenceID, IMovieScenePlayer& Player) const;
 
 	/**
 	 * Resolve the sequence ID for this binding for the root sequence
@@ -355,7 +362,6 @@ public:
 	 */
 	MOVIESCENE_API FMovieSceneSequenceID ResolveSequenceID(FMovieSceneSequenceID SourceSequenceID, const FMovieSceneSequenceHierarchy* Hierarchy) const;
 
-
 	/**
 	 * Resolve all the bound objects for this binding ID
 	 *
@@ -363,8 +369,9 @@ public:
 	 * @param Hierarchy             The hierachy to use for computation of the relative path. Many be nullptr where Source and Targets are both MovieSceneSequenceID::Root
 	 * @return An array view of all bound objects
 	 */
-	MOVIESCENE_API TArrayView<TWeakObjectPtr<>> ResolveBoundObjects(FMovieSceneSequenceID SourceSequenceID, IMovieScenePlayer& Player) const;
+	MOVIESCENE_API TArrayView<TWeakObjectPtr<>> ResolveBoundObjects(FMovieSceneSequenceID SourceSequenceID, TSharedRef<const FSharedPlaybackState> SharedPlaybackState) const;
 
+	MOVIESCENE_API TArrayView<TWeakObjectPtr<>> ResolveBoundObjects(FMovieSceneSequenceID SourceSequenceID, IMovieScenePlayer& Player) const;
 
 	/**
 	 * Resolve all the bound objects for this binding ID

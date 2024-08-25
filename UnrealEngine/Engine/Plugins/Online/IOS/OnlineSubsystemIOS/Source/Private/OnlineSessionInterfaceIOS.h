@@ -19,10 +19,10 @@
 @property (nonatomic, strong) MCPeerID *PeerID;
 @property (nonatomic, strong) MCSession *Session;
 
--(instancetype) initSessionWithName:(NSString*) sessionName;
+-(instancetype) initSessionWithName:(NSString*) sessionName andDisplayName:(NSString*) displayName;
 -(void) shutdownSession;
 -(bool) sessionsAvailable;
--(void)joinSession;
+-(void) joinSession;
 
 @end
 
@@ -32,10 +32,10 @@
 
 @property (nonatomic, strong) FGameCenterSessionDelegateMC *SessionMC;
 
--(instancetype) initSessionWithName:(NSString*) sessionName;
+-(instancetype) initSessionWithName:(NSString*) sessionName andDisplayName:(NSString*) displayName;
 -(void) shutdownSession;
 -(bool) sessionsAvailable;
--(void)joinSession;
+-(void) joinSession;
 
 @end
 

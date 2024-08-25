@@ -8,6 +8,7 @@
 
 #include "VertexFactoryCommon.ush"
 #include "ParticleVertexFactoryCommon.ush"
+#include "ParticleSimulationCommon.ush"
 
 #define USE_PARTICLE_LIGHTING_OFFSET (FEATURE_LEVEL >= FEATURE_LEVEL_SM5 && !MATERIAL_SHADINGMODEL_UNLIT && MATERIAL_DOMAIN_SURFACE)
 #define USE_PARTICLE_POSITION (NEEDS_PARTICLE_POSITION || PASS_NEEDS_PRIMITIVE_VOLUME_BOUNDS)
@@ -18,10 +19,12 @@
 #define USE_PARTICLE_SPRITE_ROTATION (NEEDS_PARTICLE_SPRITE_ROTATION)
 
 /** Buffer containing particle indices. */
-Buffer<float2> ParticleIndices;
+Buffer<float4> ParticleIndices;
 
 /** Offset in to the particle indices buffer. */
 uint ParticleIndicesOffset;
+float3 TilePageScale;
+
 
 /** Texture containing positions for all particles. */
 Texture2D PositionTexture;
@@ -245,10 +248,11 @@ FVertexFactoryIntermediates GetVertexFactoryIntermediates( FVertexFactoryInput I
 {
 	// Sample the position and velocity textures to get the current state of the particle.
 	uint InstanceId = GetInstanceId(Input.InstanceId) * PARTICLES_PER_INSTANCE + Input.VertexId / 4;
-	float2 ParticleIndex = ParticleIndices[ParticleIndicesOffset + InstanceId];
-	float4 PositionSample = Texture2DSampleLevel(PositionTexture, PositionTextureSampler, ParticleIndex, 0);
-	float4 VelocitySample = Texture2DSampleLevel(VelocityTexture, VelocityTextureSampler, ParticleIndex, 0);
-	float4 AttributeSample = Texture2DSampleLevel(AttributesTexture, AttributesTextureSampler, ParticleIndex, 0);
+	float3 ParticleIndex = ParticleIndices[ParticleIndicesOffset + InstanceId].xyz;
+	ParticleIndex.xy = ParticleIndex.xy * TilePageScale.xy + GetTilePageOffset(ParticleIndex.z, TilePageScale.xy, TilePageScale.z);
+	float4 PositionSample = Texture2DSampleLevel(PositionTexture, PositionTextureSampler, ParticleIndex.xy, 0);
+	float4 VelocitySample = Texture2DSampleLevel(VelocityTexture, VelocityTextureSampler, ParticleIndex.xy, 0);
+	float4 AttributeSample = Texture2DSampleLevel(AttributesTexture, AttributesTextureSampler, ParticleIndex.xy, 0);
 
 	// For clarity, store some information in local variables.
 	const float RelativeTime = PositionSample.w;
@@ -318,9 +322,10 @@ FVertexFactoryIntermediates GetVertexFactoryIntermediates( FVertexFactoryInput I
 	Rotation = Rotation * 2.0f * 3.1415926535897932f;
 
 	// Transform position to (post-view-translation) world space.
+	FLWCMatrix Transform = DFToTileOffset(GetPrimitiveDataFromUniformBuffer().LocalToWorld);
 	FLWCVector3 LWCTileOffset = MakeLWCVector3(EmitterDynamicUniforms.LWCTile, 0);
-	FLWCVector3 ParticleWorldPosition = LWCAdd(LWCMultiply(PositionSample.xyz, GetPrimitiveDataFromUniformBuffer().LocalToWorld), LWCTileOffset);
-	float3 ParticleTranslatedWorldPosition = LWCToFloat(LWCAdd(ParticleWorldPosition, ResolvedView.PreViewTranslation));
+	FLWCVector3 ParticleWorldPosition = LWCAdd(LWCMultiply(PositionSample.xyz, Transform), LWCTileOffset);
+	float3 ParticleTranslatedWorldPosition = LWCToFloat(LWCAdd(ParticleWorldPosition, ResolvedView.TileOffset.PreViewTranslation));
 
 	// Compute tangents for the sprite.
 	float3 TangentUp, TangentRight;
@@ -452,6 +457,7 @@ FMaterialPixelParameters GetMaterialPixelParameters( FVertexFactoryInterpolantsV
 
 #if USE_PARTICLE_POSITION
 	Result.Particle.TranslatedWorldPositionAndSize = Interpolants.ParticleTranslatedWorldPositionAndSize;
+	Result.Particle.PrevTranslatedWorldPositionAndSize = Result.Particle.TranslatedWorldPositionAndSize;
 #endif
 
 #if USE_SPHERICAL_NORMALS
@@ -540,6 +546,7 @@ FMaterialVertexParameters GetMaterialVertexParameters(FVertexFactoryInput Input,
 
 #if USE_PARTICLE_POSITION
 	Result.Particle.TranslatedWorldPositionAndSize = float4(Intermediates.ParticleTranslatedWorldPosition, Intermediates.ParticleRadius);
+	Result.Particle.PrevTranslatedWorldPositionAndSize = Result.Particle.TranslatedWorldPositionAndSize;
 #endif
 
 	Result.Particle.Color = Intermediates.Color;
@@ -571,6 +578,11 @@ FMaterialVertexParameters GetMaterialVertexParameters(FVertexFactoryInput Input,
 #if USE_PARTICLE_SPRITE_ROTATION
 	Result.Particle.SpriteRotation = Intermediates.ParticleSpriteRotation;
 #endif
+
+#if ENABLE_NEW_HLSL_GENERATOR
+	EvaluateVertexMaterialAttributes(Result);
+#endif
+	Result.LWCData = MakeMaterialLWCData(Result);
 
 	return Result;
 }
@@ -716,7 +728,7 @@ FVertexFactoryInterpolantsVSToPS VertexFactoryGetInterpolantsVSToPS( FVertexFact
 float4 VertexFactoryGetPreviousWorldPosition( FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates )
 {
 	float3 Position = Intermediates.VertexWorldPosition;
-	Position.xyz -= Intermediates.ParticleVelocity * EmitterUniforms.UseVelocityForMotionBlur;
+	Position.xyz -= Intermediates.ParticleVelocity.xyz * EmitterUniforms.UseVelocityForMotionBlur;
 	return float4(Position, 1);
 }
 

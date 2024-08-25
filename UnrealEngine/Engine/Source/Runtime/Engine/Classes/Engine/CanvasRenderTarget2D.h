@@ -91,13 +91,30 @@ public:
 		bShouldClearRenderTargetOnReceiveUpdate = bInShouldClearRenderTargetOnReceiveUpdate;
 	}
 
+	UFUNCTION(BlueprintGetter)
+	ENGINE_API virtual ETextureRenderTargetSampleCount GetSampleCount() const override;
+
+	UFUNCTION(BlueprintSetter)
+	ENGINE_API void SetSampleCount(ETextureRenderTargetSampleCount InSampleCount);
+
+#if WITH_EDITOR
+	virtual bool CanEditChange(const FProperty* InProperty) const override;
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif // WITH_EDITOR
+
 protected:
 
 	ENGINE_API void RepaintCanvas();
 
+	void OnSampleCountChanged();
+
 	/* The world this render target will be used with */
 	UPROPERTY()
 	TWeakObjectPtr<UWorld> World;
+
+	/** MSAA sample count. */
+	UPROPERTY(EditAnywhere, BlueprintGetter = GetSampleCount, BlueprintSetter = SetSampleCount, Category = TextureRenderTarget2D, AssetRegistrySearchable, AdvancedDisplay, meta = (AllowPrivateAccess = "true"))
+	ETextureRenderTargetSampleCount SampleCount;
 	
 	// If true, clear the render target to green whenever OnReceiveUpdate() is called.  (Defaults to true.)
 	// If false, the render target will retain whatever values it had, allowing the user to update only areas that

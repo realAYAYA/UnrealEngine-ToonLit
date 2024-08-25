@@ -57,29 +57,38 @@ FMovieSceneSequenceTransform UMovieSceneSubSection::OuterToInnerTransform() cons
 	const FFrameNumber InnerStartTime = UE::MovieScene::DiscreteInclusiveLower(MovieScenePlaybackRange);
 	const FFrameNumber OuterStartTime = UE::MovieScene::DiscreteInclusiveLower(SubRange);
 
-	// This is the transform for the "placement" (position and scaling) of the sub-sequence.
-	FMovieSceneTimeTransform LinearTransform =
-		// Inner play offset
-		FMovieSceneTimeTransform(InnerStartTime)
-		// Inner play rate
-		* FMovieSceneTimeTransform(0, Parameters.TimeScale * FrameRateScale)
-		// Outer section start time
-		* FMovieSceneTimeTransform(-OuterStartTime);
-	
-	if (!Parameters.bCanLoop)
+
+	FMovieSceneSequenceTransform Result;
+	// We have to special case 0 and infinite timescale so we can keep hold of each transform separately for property inverting.
+	// The linear transform for this special case remains identity.
+	if (FMath::IsNearlyZero(Parameters.TimeScale) || !FMath::IsFinite(Parameters.TimeScale))
 	{
-		return FMovieSceneSequenceTransform(LinearTransform);
+		Result.NestedTransforms.Add(FMovieSceneTimeTransform(-OuterStartTime));
+		Result.NestedTransforms.Add(FMovieSceneTimeTransform(0, 0));
+		Result.NestedTransforms.Add(FMovieSceneTimeTransform(InnerStartTime));
 	}
 	else
 	{
+		// This is the transform for the "placement" (position and scaling) of the sub-sequence.
+		Result.LinearTransform = 
+			// Inner play offset
+			FMovieSceneTimeTransform(InnerStartTime)
+			// Inner play rate
+			* FMovieSceneTimeTransform(0, Parameters.TimeScale * FrameRateScale)
+			// Outer section start time
+			* FMovieSceneTimeTransform(-OuterStartTime);
+	}
+
+	if (Parameters.bCanLoop)
+	{
 		const FFrameNumber InnerEndTime = UE::MovieScene::DiscreteExclusiveUpper(MovieScenePlaybackRange);
 		const FMovieSceneTimeWarping LoopingTransform(InnerStartTime, InnerEndTime);
-		LinearTransform = FMovieSceneTimeTransform(Parameters.FirstLoopStartFrameOffset) * LinearTransform;
 
-		FMovieSceneSequenceTransform Result;
-		Result.NestedTransforms.Add(FMovieSceneNestedSequenceTransform(LinearTransform, LoopingTransform));
+		Result.NestedTransforms.Add(FMovieSceneNestedSequenceTransform(FMovieSceneTimeTransform(Parameters.FirstLoopStartFrameOffset) * Result.LinearTransform, LoopingTransform));
+		Result.LinearTransform = FMovieSceneTimeTransform();
 		return Result;
 	}
+	return Result;
 }
 
 bool UMovieSceneSubSection::GetValidatedInnerPlaybackRange(TRange<FFrameNumber>& OutInnerPlaybackRange) const
@@ -211,6 +220,11 @@ void UMovieSceneSubSection::ImportEntityImpl(UMovieSceneEntitySystemLinker* Enti
 
 void UMovieSceneSubSection::SetSequence(UMovieSceneSequence* Sequence)
 {
+	if (!TryModify())
+	{
+		return;
+	}
+
 	SubSequence = Sequence;
 
 #if WITH_EDITOR
@@ -296,58 +310,6 @@ void UMovieSceneSubSection::PostEditChangeProperty(FPropertyChangedEvent& Proper
 }
 #endif
 
-UMovieSceneSection* UMovieSceneSubSection::SplitSection( FQualifiedFrameTime SplitTime, bool bDeleteKeys)
-{
-	// GetRange is in owning sequence resolution so we check against the incoming SplitTime without converting it.
-	TRange<FFrameNumber> InitialRange = GetRange();
-	if ( !InitialRange.Contains(SplitTime.Time.FrameNumber) )
-	{
-		return nullptr;
-	}
-
-	FFrameNumber InitialStartOffset = Parameters.StartFrameOffset;
-
-	UMovieSceneSubSection* NewSection = Cast<UMovieSceneSubSection>( UMovieSceneSection::SplitSection( SplitTime, bDeleteKeys ) );
-	if ( NewSection )
-	{
-		if (InitialRange.GetLowerBound().IsClosed())
-		{
-			// Sections need their offsets calculated in their local resolution. Different sequences can have different tick resolutions 
-			// so we need to transform from the parent resolution to the local one before splitting them.
-			FFrameRate LocalTickResolution;
-			if (GetSequence())
-			{
-				LocalTickResolution = GetSequence()->GetMovieScene()->GetTickResolution();
-			}
-			else
-			{
-				UMovieScene* OuterScene = GetTypedOuter<UMovieScene>();
-				if (OuterScene)
-				{
-					LocalTickResolution = OuterScene->GetTickResolution();
-				}
-			}
-
-			FFrameNumber LocalResolutionStartOffset = FFrameRate::TransformTime(SplitTime.Time.GetFrame() - UE::MovieScene::DiscreteInclusiveLower(InitialRange), SplitTime.Rate, LocalTickResolution).FrameNumber;
-
-			FFrameNumber NewStartOffset = LocalResolutionStartOffset * Parameters.TimeScale;
-			NewStartOffset += InitialStartOffset;
-
-			if (NewStartOffset >= 0)
-			{
-				NewSection->Parameters.StartFrameOffset = NewStartOffset.Value;
-			}
-		}
-
-		return NewSection;
-	}
-
-	// Restore original offset modified by splitting
-	Parameters.StartFrameOffset = InitialStartOffset;
-
-	return nullptr;
-}
-
 TOptional<TRange<FFrameNumber> > UMovieSceneSubSection::GetAutoSizeRange() const
 {
 	UMovieScene* MovieScene = SubSequence ? SubSequence->GetMovieScene() : nullptr;
@@ -355,7 +317,7 @@ TOptional<TRange<FFrameNumber> > UMovieSceneSubSection::GetAutoSizeRange() const
 	{
 		// We probably want to just auto-size the section to the sub-sequence's scaled playback range... if this section
 		// is looping, however, it's hard to know what we want to do. Let's just size it to one loop.
-		const FMovieSceneTimeTransform InnerToOuter = OuterToInnerTransform().InverseLinearOnly();
+		const FMovieSceneSequenceTransform InnerToOuter = OuterToInnerTransform().InverseNoLooping();
 		const TRange<FFrameNumber> InnerPlaybackRange = UMovieSceneSubSection::GetValidatedInnerPlaybackRange(Parameters, *MovieScene);
 
 		const FFrameTime IncAutoStartTime = FFrameTime(UE::MovieScene::DiscreteInclusiveLower(InnerPlaybackRange)) * InnerToOuter;
@@ -375,28 +337,47 @@ void UMovieSceneSubSection::TrimSection( FQualifiedFrameTime TrimTime, bool bTri
 		return;
 	}
 
-	FFrameNumber InitialStartOffset = Parameters.StartFrameOffset;
-
-	UMovieSceneSection::TrimSection( TrimTime, bTrimLeft, bDeleteKeys );
+	SetFlags(RF_Transactional);
+	if (!TryModify())
+	{
+		return;
+	}
 
 	// If trimming off the left, set the offset of the shot
-	if ( bTrimLeft && InitialRange.GetLowerBound().IsClosed() && GetSequence())
+	if (bTrimLeft && InitialRange.GetLowerBound().IsClosed() && GetSequence())
 	{
 		// Sections need their offsets calculated in their local resolution. Different sequences can have different tick resolutions 
 		// so we need to transform from the parent resolution to the local one before splitting them.
-		FFrameRate LocalTickResolution = GetSequence()->GetMovieScene()->GetTickResolution();
-		FFrameNumber LocalResolutionStartOffset = FFrameRate::TransformTime(TrimTime.Time.GetFrame() - UE::MovieScene::DiscreteInclusiveLower(InitialRange), TrimTime.Rate, LocalTickResolution).FrameNumber;
+		UMovieScene* LocalMovieScene = GetSequence()->GetMovieScene();
+		const FFrameRate LocalTickResolution = LocalMovieScene->GetTickResolution();
+		const FFrameTime LocalTickResolutionTrimTime = FFrameRate::TransformTime(TrimTime.Time, TrimTime.Rate, LocalTickResolution);
 
+		// The new first loop start offset is where the trim time fell inside the sub-sequence (this time is already
+		// normalized in the case of looping sub-sequences).
+		const FMovieSceneSequenceTransform OuterToInner(OuterToInnerTransform());
+		const FFrameTime LocalTrimTime = OuterToInner.TransformTime(LocalTickResolutionTrimTime);
+		// LocalTrimTime is now in the inner sequence timespace, but StartFrameOffset is an offset from the inner sequence's own
+		// playback start time, so we need to account for that.
+		TRange<FFrameNumber> LocalPlaybackRange = LocalMovieScene->GetPlaybackRange();
+		const FFrameNumber LocalPlaybackStart = LocalPlaybackRange.HasLowerBound() ? LocalPlaybackRange.GetLowerBoundValue() : FFrameNumber(0);
+		FFrameNumber NewStartOffset = LocalTrimTime.FrameNumber - LocalPlaybackStart;
 
-		FFrameNumber NewStartOffset = LocalResolutionStartOffset * Parameters.TimeScale;
-		NewStartOffset += InitialStartOffset;
-
-		// Ensure start offset is not less than 0
-		if (NewStartOffset >= 0)
+		// Make sure we don't have negative offsets (this shouldn't happen, though).
+		NewStartOffset = FMath::Max(FFrameNumber(0), NewStartOffset);
+		
+		const bool bCanLoop = Parameters.bCanLoop;
+		if (!bCanLoop)
 		{
 			Parameters.StartFrameOffset = NewStartOffset;
 		}
+		else
+		{
+			Parameters.FirstLoopStartFrameOffset = NewStartOffset;
+		}
 	}
+
+	// Actually trim the section range!
+	UMovieSceneSection::TrimSection(TrimTime, bTrimLeft, bDeleteKeys);
 }
 
 void UMovieSceneSubSection::GetSnapTimes(TArray<FFrameNumber>& OutSnapTimes, bool bGetSectionBorders) const
@@ -440,7 +421,7 @@ void UMovieSceneSubSection::GetSnapTimes(TArray<FFrameNumber>& OutSnapTimes, boo
 	}
 	else
 	{
-		const FMovieSceneSequenceTransform InnerToOuterTransform = OuterToInnerTransform().InverseLinearOnly();
+		const FMovieSceneSequenceTransform InnerToOuterTransform = OuterToInnerTransform().InverseNoLooping();
 		const FFrameNumber PlaybackStart = (UE::MovieScene::DiscreteInclusiveLower(PlaybackRange) * InnerToOuterTransform).FloorToFrame();
 		if (GetRange().Contains(PlaybackStart))
 		{

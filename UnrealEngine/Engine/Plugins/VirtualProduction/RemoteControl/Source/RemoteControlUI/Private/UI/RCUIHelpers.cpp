@@ -206,7 +206,7 @@ TSharedRef<SWidget> UE::RCUIHelpers::GetTypeColorWidget(const FProperty* InPrope
 			[
 				SNew(SBorder)
 				.Visibility(EVisibility::Visible)
-				.BorderImage(FAppStyle::Get().GetBrush("NumericEntrySpinBox.NarrowDecorator"))
+				.BorderImage(FAppStyle::Get().GetBrush("NumericEntrySpinBox.Decorator"))
 				.BorderBackgroundColor(TypeColor)
 				.Padding(FMargin(5.0f, 0.0f, 0.0f, 0.f))
 			];

@@ -70,6 +70,9 @@ struct FCollisionQueryParams
 	/** Whether to ignore traces to the cluster union and trace against its children instead. */
 	bool bTraceIntoSubComponents;
 
+	/** If bTraceIntoSubComponents is true, whether to replace the hit of the cluster union with its children instead. */
+	bool bReplaceHitWithSubComponents;
+
 	/** Filters query by mobility types (static vs stationary/movable)*/
 	EQueryMobilityType MobilityType;
 
@@ -158,6 +161,7 @@ public:
 		bDebugQuery = false;
 #endif
 		bTraceIntoSubComponents = true;
+		bReplaceHitWithSubComponents = true;
 	}
 
 	FCollisionQueryParams(FName InTraceTag, bool bInTraceComplex=false, const AActor* InIgnoreActor=NULL)

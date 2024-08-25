@@ -1118,6 +1118,10 @@ namespace Metasound
 			/** Returns the root graph of this document. */
 			virtual FConstGraphHandle GetRootGraph() const = 0;
 
+			/** Returns the document if set. */
+			virtual FDocumentAccessPtr GetDocumentPtr() = 0;
+			virtual const FDocumentAccessPtr GetDocumentPtr() const = 0;
+
 			/** Exports the document to a json file at the provided path.
 			 *
 			 * @return True on success, false on failure. 

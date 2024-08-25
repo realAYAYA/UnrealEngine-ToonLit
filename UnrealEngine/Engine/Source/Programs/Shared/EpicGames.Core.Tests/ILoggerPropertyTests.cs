@@ -48,7 +48,7 @@ public class SpyLogger : ILogger
 
 public sealed class FakeLoggerProvider : ILoggerProvider
 {
-	private ILogger _logger;
+	private readonly ILogger _logger;
 
 	public FakeLoggerProvider(ILogger logger)
 	{

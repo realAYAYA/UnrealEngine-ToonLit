@@ -20,6 +20,23 @@ public:
 
 protected:
 	virtual void CollectData(APlayerController* OwnerPC, AActor* DebugActor) override;
+	virtual void DrawData(APlayerController* OwnerPC, FGameplayDebuggerCanvasContext& CanvasContext) override;
+
+private:
+	void ToggleInstanceTags();
+	void ToggleSlotDetails();
+	void ToggleAnnotations();
+
+	struct FReplicationData
+	{
+		void Serialize(FArchive& Ar);
+
+		bool bDisplayInstanceTags = false;
+		bool bDisplaySlotDetails = false;
+		bool bDisplayAnnotations = false;
+	};
+
+	FReplicationData DataPack;
 };
 
 #endif // WITH_GAMEPLAY_DEBUGGER && WITH_SMARTOBJECT_DEBUG

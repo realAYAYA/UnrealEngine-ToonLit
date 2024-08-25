@@ -22,7 +22,9 @@ private:
 	enum : uint16
 	{
 		RouteId_WorldTimestamp,
+		RouteId_AssetDebugId,
 		RouteId_Instance,
+		RouteId_InstanceFrame,
 		RouteId_Phase,
 		RouteId_LogMessage,
 		RouteId_State,

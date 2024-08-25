@@ -8,6 +8,7 @@
 #include "Widgets/Views/SListView.h"
 #include "Widgets/Input/SCheckBox.h"
 #include "Widgets/Input/SComboButton.h"
+#include "Widgets/Input/SComboBox.h"
 #include "Widgets/Images/SImage.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "Fonts/FontMeasure.h"
@@ -52,6 +53,8 @@ public:
 	virtual TSharedRef<SWidget> GenerateWidgetForColumn(const FName& ColumnName) override;
 
 	FText GetTextForCell(const FName Name, const bool bToolTip) const;
+	static const FSlateBrush* GetIconForCell(const FGridCell::EIcon Icon);
+	const FSlateBrush* GetIconForCell(const FName Name) const;
 	FSlateColor GetColorForCell(const FName Name) const;
 	EHorizontalAlignment GetHAlignForCell(const FName Name) const;
 	EVerticalAlignment GetVAlignForCell(const FName Name) const;
@@ -68,7 +71,7 @@ TSharedRef<SWidget> SMaterialStatsViewRow::GenerateWidgetForColumn(const FName& 
 	EHorizontalAlignment HAlign = EHorizontalAlignment::HAlign_Fill;
 	EVerticalAlignment VALign = EVerticalAlignment::VAlign_Top;
 
-	FName UsedFontStyle = SMaterialEditorStatsWidget::GetRegulatFontStyleName();
+	FName UsedFontStyle = SMaterialEditorStatsWidget::GetRegularFontStyleName();
 
 	auto StatsPtr = MaterialStatsWPtr.Pin();
 	if (StatsPtr.IsValid() && PtrRowID.IsValid())
@@ -77,7 +80,7 @@ TSharedRef<SWidget> SMaterialStatsViewRow::GenerateWidgetForColumn(const FName& 
 
 		auto Cell = StatsPtr->GetStatsGrid()->GetCell(RowID, ColumnName);
 
-		UsedFontStyle = Cell->IsContentBold() ? SMaterialEditorStatsWidget::GetBoldFontStyleName() : SMaterialEditorStatsWidget::GetRegulatFontStyleName();
+		UsedFontStyle = Cell->IsContentBold() ? SMaterialEditorStatsWidget::GetBoldFontStyleName() : SMaterialEditorStatsWidget::GetRegularFontStyleName();
 		HAlign = Cell->GetHorizontalAlignment();
 		VALign = Cell->GetVerticalAlignment();
 	}
@@ -87,11 +90,24 @@ TSharedRef<SWidget> SMaterialStatsViewRow::GenerateWidgetForColumn(const FName& 
 		.HAlign(HAlign)
 		.VAlign(VALign)
 		[
-			SNew(STextBlock)
-			.TextStyle(FAppStyle::Get(), UsedFontStyle)
-			.Text(this, &SMaterialStatsViewRow::GetTextForCell, ColumnName, false)
-			.ToolTipText(this, &SMaterialStatsViewRow::GetTextForCell, ColumnName, true)
-			.AutoWrapText(true)
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			[
+				SNew(SImage)
+				.Image(this, &SMaterialStatsViewRow::GetIconForCell, ColumnName)
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.VAlign(VAlign_Center)
+			[
+				SNew(STextBlock)
+				.TextStyle(FAppStyle::Get(), UsedFontStyle)
+				.Text(this, &SMaterialStatsViewRow::GetTextForCell, ColumnName, false)
+				.ToolTipText(this, &SMaterialStatsViewRow::GetTextForCell, ColumnName, true)
+				.AutoWrapText(true)
+			]
 		];
 }
 
@@ -113,6 +129,36 @@ FText SMaterialStatsViewRow::GetTextForCell(const FName Name, const bool bToolTi
 
 	FText FinalText = CellContent.Len() > 0 ? FText::FromString(CellContent) : FText::FromString(TEXT(""));
 	return FinalText;
+}
+
+const FSlateBrush* SMaterialStatsViewRow::GetIconForCell(const FGridCell::EIcon Icon)
+{
+	switch(Icon)
+	{
+	case FGridCell::EIcon::Error:
+		return FAppStyle::GetBrush(TEXT("MessageLog.Error"));
+	default:
+		return nullptr;
+	}
+}
+
+const FSlateBrush* SMaterialStatsViewRow::GetIconForCell(const FName Name) const
+{
+	FGridCell::EIcon CellContent = FGridCell::EIcon::None;
+
+	const auto StatsPtr = MaterialStatsWPtr.Pin();
+	if (StatsPtr.IsValid() && PtrRowID.IsValid())
+	{
+		const int32 RowID = *PtrRowID;
+
+		const auto Cell = StatsPtr->GetStatsGrid()->GetCell(RowID, Name);
+		if (Cell.IsValid())
+		{
+			CellContent = Cell->GetIcon();
+		}
+	}
+
+	return GetIconForCell(CellContent);
 }
 
 FSlateColor SMaterialStatsViewRow::GetColorForCell(const FName Name) const
@@ -166,6 +212,10 @@ float SMaterialEditorStatsWidget::GetColumnSize(const FName ColumnName) const
 	{
 		ColumnSize = ColumnSizeLarge;
 	}
+	else if (ColumnName == FMaterialStatsGrid::ShaderStatisticColumnName)
+	{
+		ColumnSize = ColumnSizeMedium;
+	}
 	else
 	{
 		auto StatsPtr = MaterialStatsWPtr.Pin();
@@ -183,10 +233,12 @@ float SMaterialEditorStatsWidget::GetColumnSize(const FName ColumnName) const
 					const auto Cell = StatsPtr->GetStatsGrid()->GetCell(*ArrRowIds[i], ColumnName);
 
 					const FString Content = Cell->GetCellContent();
+					const FSlateBrush* Icon = SMaterialStatsViewRow::GetIconForCell(Cell->GetIcon());
 
 					FVector2D FontMeasure = FontMeasureService->Measure(Content, FontInfo);
+					const float IconSize = Icon != nullptr ? Icon->GetImageSize().X : 0.0f;
 
-					ColumnSize = FMath::Clamp(FontMeasure.X, ColumnSize, ColumnSizeExtraLarge);
+					ColumnSize = FMath::Clamp(FontMeasure.X + IconSize, ColumnSize, ColumnSizeExtraLarge);
 				}
 			}
 		}
@@ -302,7 +354,7 @@ uint32 SMaterialEditorStatsWidget::CountSubPlatforms(EPlatformCategoryType Categ
 	for (int32 i = 0; i < ArrPlatforms.Num(); ++i)
 	{
 		auto PlatformPtr = ArrPlatforms[i];
-		if (!PlatformPtr.IsValid() || !PlatformPtr->IsStatsGridPresenceAllowed())
+		if (!PlatformPtr.IsValid())
 		{
 			continue;
 		}
@@ -335,7 +387,7 @@ void SMaterialEditorStatsWidget::CreatePlatformMenus(FMenuBuilder& Builder, EPla
 	for (int32 i = 0; i < ArrPlatforms.Num(); ++i)
 	{
 		auto PlatformPtr = ArrPlatforms[i];
-		if (!PlatformPtr.IsValid() || !PlatformPtr->IsStatsGridPresenceAllowed())
+		if (!PlatformPtr.IsValid())
 		{
 			continue;
 		}
@@ -353,39 +405,29 @@ void SMaterialEditorStatsWidget::CreatePlatformMenus(FMenuBuilder& Builder, EPla
 			return ECheckBoxState::Unchecked;
 		};
 
+		// lambda function used to determine the enable state for the shader platform checkboxes
+		auto Lamda_PlatformEnableState = [PlatformPtr = PlatformPtr]()
+		{
+			return PlatformPtr.IsValid() && !PlatformPtr->IsAlwaysOn() && PlatformPtr->IsStatsGridPresenceAllowed();
+		};
+
 		// lambda used with shader platform checkboxes to add or remove selected shader platforms
 		auto Lamda_PlatformFlipState = [WidgetPtr = this, PlatformPtr = PlatformPtr](const ECheckBoxState NewState)
 		{
 			auto MaterialStats = WidgetPtr->MaterialStatsWPtr.Pin();
 			if (PlatformPtr.IsValid() && MaterialStats.IsValid())
 			{
-				const bool bSwitchValue = MaterialStats->SwitchShaderPlatformUseStats(PlatformPtr->GetPlatformShaderType());
-
-				for (int32 q = 0; q < EMaterialQualityLevel::Num; ++q)
-				{
-					EMaterialQualityLevel::Type QualityLevel = static_cast<EMaterialQualityLevel::Type>(q);
-					if (MaterialStats->GetStatsQualityFlag(QualityLevel))
-					{
-						const FName PlatformColumnName = FMaterialStatsGrid::MakePlatformColumnName(PlatformPtr, QualityLevel);
-
-						if (bSwitchValue)
-						{
-							WidgetPtr->AddColumn(PlatformColumnName);
-						}
-						else
-						{
-							WidgetPtr->RemoveColumn(PlatformColumnName);
-						}
-					}
-				}
+				MaterialStats->SwitchShaderPlatformUseStats(PlatformPtr->GetPlatformShaderType());
+				WidgetPtr->OnColumnNumChanged();
 			}
 
 			WidgetPtr->RequestRefresh();
 		};
 
-		auto PlatformWidget = SNew(SCheckBox)			
+		auto PlatformWidget = SNew(SCheckBox)
 			.OnCheckStateChanged_Lambda(Lamda_PlatformFlipState)
 			.IsChecked_Lambda(Lamda_PlatformCheckState)
+			.IsEnabled_Lambda(Lamda_PlatformEnableState)
 			.Content()
 			[
 				SNew(STextBlock)
@@ -418,48 +460,11 @@ void SMaterialEditorStatsWidget::OnFlipQualityState(const ECheckBoxState NewStat
 	auto StatsPtr = MaterialStatsWPtr.Pin();
 	if (StatsPtr.IsValid())
 	{
-		bool bSwitchValue = StatsPtr->SwitchStatsQualityFlag(QualityLevel);
+		StatsPtr->SwitchStatsQualityFlag(QualityLevel);
 
 		StatsPtr->GetStatsGrid()->OnQualitySettingChanged(QualityLevel);
 
-		auto& PlatformDB = StatsPtr->GetPlatformsDB();
-		for (auto Pair : PlatformDB)
-		{
-			TSharedPtr<FShaderPlatformSettings> Platform = Pair.Value;
-			if (Platform->IsPresentInGrid())
-			{
-				const FName ColumnName = FMaterialStatsGrid::MakePlatformColumnName(Platform, QualityLevel);
-
-				if (bSwitchValue)
-				{
-					// find insert spot, right after the a column used by the same platform, with other quality settings
-					EMaterialQualityLevel::Type InsertAfterQuality = QualityLevel;
-
-					for (int32 i = 0; i < EMaterialQualityLevel::Num; ++i)
-					{
-						if (StatsPtr->GetStatsQualityFlag((EMaterialQualityLevel::Type)i) && i != QualityLevel)
-						{
-							InsertAfterQuality = (EMaterialQualityLevel::Type)i;
-							break;
-						}
-					}
-
-					if (QualityLevel != InsertAfterQuality)
-					{
-						const FName PreviousColumnName = FMaterialStatsGrid::MakePlatformColumnName(Platform, InsertAfterQuality);
-						InsertColumnAfter(ColumnName, PreviousColumnName);
-					}
-					else
-					{
-						AddColumn(ColumnName);
-					}
-				}
-				else
-				{
-					RemoveColumn(ColumnName);
-				}
-			}
-		}
+		OnColumnNumChanged();
 
 		RequestRefresh();
 	}
@@ -482,11 +487,18 @@ void SMaterialEditorStatsWidget::CreateQualityMenus(FMenuBuilder& Builder)
 			return ECheckBoxState::Unchecked;
 		};
 
+		auto Lamba_QualityCheckAlwaysOn = [QualityType = (EMaterialQualityLevel::Type)i, MaterialStatsWPtr = MaterialStatsWPtr]()
+		{
+			const auto StatsPtr = MaterialStatsWPtr.Pin();
+			return StatsPtr.IsValid() && !StatsPtr->GetStatsQualityFlagAlwaysOn(QualityType);
+		};
+
 		const FText QualitySettingName = FText::FromString(FMaterialStatsUtils::MaterialQualityToString(QualityLevel));
 
 		auto QualityWidget = SNew(SCheckBox)
 			.OnCheckStateChanged(this, &SMaterialEditorStatsWidget::OnFlipQualityState, QualityLevel)
 			.IsChecked_Lambda(Lamda_QualityCheckState)
+			.IsEnabled_Lambda(Lamba_QualityCheckAlwaysOn)
 			.Content()
 			[
 				SNew(STextBlock)
@@ -495,6 +507,67 @@ void SMaterialEditorStatsWidget::CreateQualityMenus(FMenuBuilder& Builder)
 
 		Builder.AddMenuEntry(FUIAction(), QualityWidget);
 	}
+}
+
+FText SMaterialEditorStatsWidget::MaterialStatsDerivedMIOptionToDescription(const EMaterialStatsDerivedMIOption Option)
+{
+	static_assert(static_cast<int32>(EMaterialStatsDerivedMIOption::InvalidOrMax) == 3, "Not all cases are handled in switch below!?");
+	switch (Option)
+	{
+	case EMaterialStatsDerivedMIOption::Ignore:			return LOCTEXT("MaterialPlatformStats_IgnoreMIs", "Ignore derived material instances");
+	case EMaterialStatsDerivedMIOption::CompileOnly:	return LOCTEXT("MaterialPlatformStats_CompileMIs", "Compile derived material instances");
+	case EMaterialStatsDerivedMIOption::ShowStats:		return LOCTEXT("MaterialPlatformStats_ShowMIs", "Show stats for derived material instances");
+	default:											return LOCTEXT("InvalidOrMax", "InvalidOrMax");
+	}
+}
+
+void SMaterialEditorStatsWidget::CreateDerivedMaterialsMenu(class FMenuBuilder& Builder)
+{
+	DerivedMaterialInstancesComboBoxItems.SetNum(static_cast<int32>(EMaterialStatsDerivedMIOption::InvalidOrMax));
+	auto AddOption = [&](EMaterialStatsDerivedMIOption Option)
+	{
+		DerivedMaterialInstancesComboBoxItems[static_cast<int32>(Option)] = MakeShared<EMaterialStatsDerivedMIOption>(Option);
+	};
+	if (bAllowIgnoringCompilationErrors)
+	{
+		AddOption(EMaterialStatsDerivedMIOption::Ignore);
+	}
+	AddOption(EMaterialStatsDerivedMIOption::CompileOnly);
+	AddOption(EMaterialStatsDerivedMIOption::ShowStats);
+
+	auto PlatformWidget = SNew(SComboBox<TSharedPtr<EMaterialStatsDerivedMIOption>>)
+		.OptionsSource(&DerivedMaterialInstancesComboBoxItems)
+		.OnGenerateWidget_Lambda([](TSharedPtr<EMaterialStatsDerivedMIOption> Option)
+		{
+			return SNew(STextBlock)
+				.Text(Option.IsValid() ? MaterialStatsDerivedMIOptionToDescription(*Option) : MaterialStatsDerivedMIOptionToDescription(EMaterialStatsDerivedMIOption::InvalidOrMax));
+		})
+		.OnSelectionChanged_Lambda([WidgetPtr = this](TSharedPtr<EMaterialStatsDerivedMIOption> Option, ESelectInfo::Type InSelectType)
+		{
+			auto MaterialStats = WidgetPtr->MaterialStatsWPtr.Pin();
+			if (MaterialStats.IsValid() && Option.IsValid())
+			{
+				MaterialStats->SetMaterialStatsDerivedMIOption(*Option);
+			}
+		})
+	[
+		SNew(STextBlock)
+		.Text_Lambda([WidgetPtr = this]()
+		{
+			auto MaterialStats = WidgetPtr->MaterialStatsWPtr.Pin();
+			if (MaterialStats.IsValid())
+			{
+				return MaterialStatsDerivedMIOptionToDescription(MaterialStats->GetMaterialStatsDerivedMIOption());
+			}
+			else
+			{
+				return MaterialStatsDerivedMIOptionToDescription(EMaterialStatsDerivedMIOption::InvalidOrMax);
+			}
+		})
+	]
+	;
+
+	Builder.AddMenuEntry(FUIAction(), PlatformWidget);
 }
 
 void SMaterialEditorStatsWidget::CreateGlobalQualityMenu(class FMenuBuilder& Builder)
@@ -510,6 +583,11 @@ TSharedRef<SWidget> SMaterialEditorStatsWidget::GetSettingsButtonContent()
 	FMenuBuilder Builder(false, nullptr);
 
 	CreatePlatformCategoryMenus(Builder);
+	if (bShowMaterialInstancesMenu)
+	{
+		Builder.AddMenuSeparator();
+		CreateDerivedMaterialsMenu(Builder);
+	}
 	Builder.AddMenuSeparator();
 	CreateGlobalQualityMenu(Builder);
 
@@ -525,14 +603,14 @@ TSharedPtr<SWidget> SMaterialEditorStatsWidget::BuildMessageArea()
 	return MessageBoxWidget;
 }
 
-void SMaterialEditorStatsWidget::AddWarningMessage(const FString& Message)
+void SMaterialEditorStatsWidget::AddMessage(const FString& Message, const bool bIsError)
 {
 	MessageBoxWidget->AddSlot()
 		.AutoHeight()
 		.Padding(2.5, 2.5)
 		[
 			SNew(SBorder)
-			.BorderImage(FAppStyle::GetBrush(TEXT("ToolPanel.GroupBorder")))
+			.BorderImage(FAppStyle::Get().GetBrush(TEXT("Brushes.Recessed")))
 			[
 				SNew(SHorizontalBox)
 				+ SHorizontalBox::Slot()
@@ -540,7 +618,7 @@ void SMaterialEditorStatsWidget::AddWarningMessage(const FString& Message)
 				.VAlign(VAlign_Center)
 				[
 					SNew(SImage)
-					.Image(FAppStyle::GetBrush("MessageLog.Warning"))
+					.Image(FAppStyle::GetBrush(bIsError ? "MessageLog.Error" : "MessageLog.Warning"))
 				]
 				+ SHorizontalBox::Slot()
 				.AutoWidth()
@@ -548,7 +626,7 @@ void SMaterialEditorStatsWidget::AddWarningMessage(const FString& Message)
 				[
 					SNew(STextBlock)
 					.TextStyle(FAppStyle::Get(), TEXT("RichTextBlock.Bold"))
-					.ColorAndOpacity(FStyleColors::Warning)
+					.ColorAndOpacity(bIsError ? FStyleColors::Error : FStyleColors::Warning)
 					.Text(FText::FromString(Message))
 					.ToolTipText(FText::FromString(Message))
 				]
@@ -556,7 +634,7 @@ void SMaterialEditorStatsWidget::AddWarningMessage(const FString& Message)
 		];
 }
 
-void SMaterialEditorStatsWidget::ClearWarningMessages()
+void SMaterialEditorStatsWidget::ClearMessages()
 {
 	MessageBoxWidget->ClearChildren();
 }
@@ -564,7 +642,9 @@ void SMaterialEditorStatsWidget::ClearWarningMessages()
 void SMaterialEditorStatsWidget::Construct(const FArguments& InArgs)
 {
 	MaterialStatsWPtr = InArgs._MaterialStatsWPtr;
-	
+	bShowMaterialInstancesMenu = InArgs._ShowMaterialInstancesMenu;
+	bAllowIgnoringCompilationErrors = InArgs._AllowIgnoringCompilationErrors;
+
 	const auto StatsPtr = MaterialStatsWPtr.Pin();
 
 	if (!StatsPtr.IsValid())
@@ -634,72 +714,58 @@ void SMaterialEditorStatsWidget::Construct(const FArguments& InArgs)
 			]
 		]
 		+ SVerticalBox::Slot()
-		.AutoHeight()
 		[
-			SNew(SBorder)
-			.Padding(0.0f)
-			.HAlign(HAlign_Fill)
-			.BorderImage(FAppStyle::Get().GetBrush(TEXT("Brushes.Recessed")))
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
 			[
-				MessageArea.ToSharedRef()
-			]
-		]
-		+ SVerticalBox::Slot() // this will contain the stats grid
-		[
-			SNew(SBorder)
-			.BorderImage(FAppStyle::Get().GetBrush(TEXT("Brushes.Recessed")))
-			.Padding(0.0f)
-			.HAlign(HAlign_Fill)
-			[
-				SNew(SHorizontalBox)
-				+ SHorizontalBox::Slot()
+				SNew(SBorder)
+				.BorderImage(FAppStyle::Get().GetBrush(TEXT("Brushes.Recessed")))
+				.Padding(0.0f)
+				.HAlign(HAlign_Fill)
 				[
 					SNew(SScrollBox)
 					.Orientation(Orient_Vertical)
 					.ExternalScrollbar(VerticalScrollbar)
 					+ SScrollBox::Slot()
 					[
-						// ########## Material stats grid ##########
-						SNew(SVerticalBox)
-						+ SVerticalBox::Slot()
-						.VAlign(VAlign_Fill)
-						.AutoHeight()
+						SNew(SBorder)
+						.Padding(0.0f)
+						.HAlign(HAlign_Fill)
+						.BorderImage(FAppStyle::Get().GetBrush(TEXT("Brushes.Recessed")))
 						[
-							SNew(SHorizontalBox)
-							+ SHorizontalBox::Slot()
-							.HAlign(HAlign_Fill)
-							.FillWidth(1.f)
-							[
-								SNew(SScrollBox)
-								.Orientation(Orient_Horizontal)
-								.ExternalScrollbar(HorizontalScrollbar)
-								+ SScrollBox::Slot()
-								[
-									SAssignNew(MaterialInfoList, SListView<TSharedPtr<int32>>)
-									.ExternalScrollbar(VerticalScrollbar)
-									.ListItemsSource(StatsPtr->GetStatsGrid()->GetGridRowIDs())
-									.OnGenerateRow(this, &SMaterialEditorStatsWidget::MakeMaterialInfoWidget)
-									.Visibility(EVisibility::Visible)
-									.SelectionMode(ESelectionMode::Single)
-									.HeaderRow(PlatformColumnHeader)
-								]
-							]
+							MessageArea.ToSharedRef()
 						]
-						+ SVerticalBox::Slot()
-						.AutoHeight()
+					]
+					+ SScrollBox::Slot()
+					[
+						SNew(SScrollBox)
+						.Orientation(Orient_Horizontal)
+						.ExternalScrollbar(HorizontalScrollbar)
+						+ SScrollBox::Slot()
 						[
-							HorizontalScrollbar
+							SAssignNew(MaterialInfoList, SListView<TSharedPtr<int32>>)
+							.ExternalScrollbar(VerticalScrollbar)
+							.ListItemsSource(StatsPtr->GetStatsGrid()->GetGridRowIDs())
+							.OnGenerateRow(this, &SMaterialEditorStatsWidget::MakeMaterialInfoWidget)
+							.Visibility(EVisibility::Visible)
+							.SelectionMode(ESelectionMode::Single)
+							.HeaderRow(PlatformColumnHeader)
 						]
 					]
 				]
-				+ SHorizontalBox::Slot()
-				.AutoWidth()
-				[
-					VerticalScrollbar
-				]
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			[
+				VerticalScrollbar
 			]
 		]
-	];
+		+ SVerticalBox::Slot()
+		.AutoHeight()
+		[
+			HorizontalScrollbar
+		]
+];
 }
 
 TSharedRef<ITableRow> SMaterialEditorStatsWidget::MakeMaterialInfoWidget(const TSharedPtr<int32> PtrRowID, const TSharedRef<STableViewBase>& OwnerTable) const
@@ -714,7 +780,7 @@ void SMaterialEditorStatsWidget::RequestRefresh()
 	MaterialInfoList->RequestListRefresh();
 }
 
-FName SMaterialEditorStatsWidget::GetRegulatFontStyleName()
+FName SMaterialEditorStatsWidget::GetRegularFontStyleName()
 {
 	return RegularFontStyle;
 }
@@ -722,6 +788,16 @@ FName SMaterialEditorStatsWidget::GetRegulatFontStyleName()
 FName SMaterialEditorStatsWidget::GetBoldFontStyleName()
 {
 	return BoldFontStyle;
+}
+
+void SMaterialEditorStatsWidget::OnColumnNumChanged()
+{
+	auto StatsPtr = MaterialStatsWPtr.Pin();
+	if (StatsPtr.IsValid() && StatsPtr->GetStatsGrid().IsValid())
+	{
+		StatsPtr->GetStatsGrid()->OnColumnNumChanged();
+		RebuildColumns();
+	}
 }
 
 #undef LOCTEXT_NAMESPACE

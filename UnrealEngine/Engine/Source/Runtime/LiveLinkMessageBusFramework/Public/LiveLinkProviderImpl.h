@@ -29,7 +29,7 @@ struct FTrackedSubject
 };
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
-struct FLiveLinkProvider : public ILiveLinkProvider
+struct LIVELINKMESSAGEBUSFRAMEWORK_API FLiveLinkProvider : public ILiveLinkProvider
 {
 private:
 	const FString ProviderName;
@@ -37,7 +37,7 @@ private:
 
 	TSharedPtr<class FMessageEndpoint, ESPMode::ThreadSafe> MessageEndpoint;
 
-	/** Lock to stop multiple threads accessing the CurrentPreset at the same time */
+	// Lock to stop multiple threads accessing the CurrentPreset at the same time
 	mutable FCriticalSection CriticalSection;
 
 	// Array of our current connections
@@ -51,19 +51,13 @@ private:
 	// Delegate to notify interested parties when the client sources have changed
 	FLiveLinkProviderConnectionStatusChanged OnConnectionStatusChanged;
 
-	void CreateMessageEndpoint(struct FMessageEndpointBuilder& EndpointBuilder);
-
+private:
 	//Message bus message handlers
 	void HandlePingMessage(const FLiveLinkPingMessage& Message,
 						   const TSharedRef<class IMessageContext, ESPMode::ThreadSafe>& Context);
-	void HandleConnectMessage(const FLiveLinkConnectMessage& Message,
-							  const TSharedRef<class IMessageContext, ESPMode::ThreadSafe>& Context);
 	void HandleHeartbeat(const FLiveLinkHeartbeatMessage& Message,
 						 const TSharedRef<class IMessageContext, ESPMode::ThreadSafe>& Context);
 	// End message bus message handlers
-
-	// Validate our current connections
-	void ValidateConnections();
 	
 	FTrackedSubject& GetTrackedSubject(const FName& SubjectName);
 
@@ -83,11 +77,28 @@ private:
 	// Clear a existing track subject
 	void ClearTrackedSubject(const FName& SubjectName);
 
-	void SendClearSubjectToConnections(FName SubjectName);
-
-	void GetConnectedAddresses(TArray<FMessageAddress>& Addresses);
+	// Get the connected addresses that should receive livelink data.
+	void GetFilteredAddresses(FName SubjectName, TArray<FMessageAddress>& Addresses);
 
 protected:
+	// Update connected addresses and send information to the connected source
+	void HandleConnectMessage(const FLiveLinkConnectMessage& Message, const TSharedRef<class IMessageContext, ESPMode::ThreadSafe>& Context);
+
+	// Create the message bus message endoing responsble for dispatching message bus messages to their respective handlers
+	void CreateMessageEndpoint(struct FMessageEndpointBuilder& EndpointBuilder);
+	
+	// Get the addresses of all connected instances.
+	void GetConnectedAddresses(TArray<FMessageAddress>& Addresses);
+
+	// Validate our current connections, removing those that have timed out.
+	void ValidateConnections();
+
+	// Close a connection using its address.
+	void CloseConnection(FMessageAddress Address);
+
+	// Get the cached data struct for a subject
+	TPair<UClass*, FLiveLinkStaticDataStruct*> GetLastSubjectStaticDataStruct(FName SubjectName);
+
 	template<typename MessageType>
 	void SendMessage(MessageType* Message)
 	{
@@ -116,6 +127,17 @@ protected:
 	}
 
 	template<typename MessageType>
+	void SendMessage(MessageType* Message, const TArray<FMessageAddress>& Addresses)
+	{
+		if (!Message || !Addresses.Num())
+		{
+			return;
+		}
+
+		MessageEndpoint->Send(Message, Addresses);
+	}
+
+	template<typename MessageType>
 	void Subscribe()
 	{
 		if (MessageEndpoint.IsValid())
@@ -134,14 +156,35 @@ protected:
 		return MachineName;
 	}
 
+	// Called after ValidateConnections removes invalid connections 
+	virtual void OnConnectionsClosed(const TArray<FMessageAddress>& ClosedAddresses) {}
+
+	// Get annotations to include on every message sent by this provider
+	virtual TMap<FName, FString> GetAnnotations() const
+	{
+		return {};
+	}
+
+	// Get whether a combination of a subject/client should receive livelink data.
+	virtual bool ShouldTransmitToSubject_AnyThread(FName SubjectName, FMessageAddress Address) const
+	{
+		return true;
+	}
+
+	// Send a clear subject message to indicate that the subject should be removed from the connected client.
+	void SendClearSubjectToConnections(FName SubjectName);
+
+	// Constructor for derived classes that allows specifying that no endpoint should be created.
+	FLiveLinkProvider(const FString& InProviderName, bool bInCreateEndpoint);
+
 public:
 	FLiveLinkProvider(const FString& InProviderName);
 
 	FLiveLinkProvider(const FString& InProviderName, struct FMessageEndpointBuilder&& EndpointBuilder);
 
-	virtual ~FLiveLinkProvider();
+	virtual ~FLiveLinkProvider() override;
 
-	virtual void UpdateSubject(const FName& SubjectName, const TArray<FName>& BoneNames, const TArray<int32>& BoneParents) override;
+	virtual void UpdateSubject(const FName& SubjectName, const TArray<FName>& BoneNames, const TArray<int32>& BoneParents);
 
 	virtual bool UpdateSubjectStaticData(const FName SubjectName, TSubclassOf<ULiveLinkRole> Role, FLiveLinkStaticDataStruct&& StaticData) override;
 
@@ -150,17 +193,17 @@ public:
 	virtual void RemoveSubject(const FName SubjectName) override;
 
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	virtual void UpdateSubjectFrame(const FName& SubjectName, const TArray<FTransform>& BoneTransforms, const TArray<FLiveLinkCurveElement>& CurveData, double Time) override;
+	virtual void UpdateSubjectFrame(const FName& SubjectName, const TArray<FTransform>& BoneTransforms, const TArray<FLiveLinkCurveElement>& CurveData, double Time);
 
 	virtual void UpdateSubjectFrame(const FName& SubjectName, const TArray<FTransform>& BoneTransforms, const TArray<FLiveLinkCurveElement>& CurveData,
-									const FLiveLinkMetaData& MetaData, double Time) override;
+									const FLiveLinkMetaData& MetaData, double Time);
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
-	virtual bool UpdateSubjectFrameData(const FName SubjectName, FLiveLinkFrameDataStruct&& FrameData);
-
+	virtual bool UpdateSubjectFrameData(const FName SubjectName, FLiveLinkFrameDataStruct&& FrameData) override;
+	
 	virtual bool HasConnection() const override;
 
 	virtual FDelegateHandle RegisterConnStatusChangedHandle(const FLiveLinkProviderConnectionStatusChanged::FDelegate& ConnStatusChanged) override;
 
-	virtual void UnregisterConnStatusChangedHandle(FDelegateHandle Handle);
+	virtual void UnregisterConnStatusChangedHandle(FDelegateHandle Handle) override;
 };

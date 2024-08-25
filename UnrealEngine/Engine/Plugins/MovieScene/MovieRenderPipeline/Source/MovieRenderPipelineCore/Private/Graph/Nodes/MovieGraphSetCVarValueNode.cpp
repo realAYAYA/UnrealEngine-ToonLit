@@ -5,6 +5,16 @@
 #include "Graph/MovieGraphConfig.h"
 #include "Styling/AppStyle.h"
 
+FString UMovieGraphSetCVarValueNode::GetNodeInstanceName() const
+{
+	return Name;
+}
+
+EMovieGraphBranchRestriction UMovieGraphSetCVarValueNode::GetBranchRestriction() const
+{
+	return EMovieGraphBranchRestriction::Globals;
+}
+
 #if WITH_EDITOR
 FText UMovieGraphSetCVarValueNode::GetNodeTitle(const bool bGetDescriptive) const
 {
@@ -24,6 +34,12 @@ FText UMovieGraphSetCVarValueNode::GetMenuCategory() const
 	return NSLOCTEXT("MovieGraphNodes", "SetCVarGraphNode_Category", "Utility");
 }
 
+FText UMovieGraphSetCVarValueNode::GetKeywords() const
+{
+	static const FText Keywords = NSLOCTEXT("MovieGraphNodes", "SetCVarGraphNode_Keywords", "cvar console variable");
+	return Keywords;
+}
+
 FLinearColor UMovieGraphSetCVarValueNode::GetNodeTitleColor() const
 {
 	static const FLinearColor SetCVarNodeColor = FLinearColor(0.04f, 0.22f, 0.36f);
@@ -32,10 +48,10 @@ FLinearColor UMovieGraphSetCVarValueNode::GetNodeTitleColor() const
 
 FSlateIcon UMovieGraphSetCVarValueNode::GetIconAndTint(FLinearColor& OutColor) const
 {
-	static const FSlateIcon RenderLayerIcon = FSlateIcon(FAppStyle::GetAppStyleSetName(), "MainFrame.BrowseCVars");
+	static const FSlateIcon SetCVarValueIcon = FSlateIcon(FAppStyle::GetAppStyleSetName(), "MainFrame.BrowseCVars");
 
 	OutColor = FLinearColor::White;
-	return RenderLayerIcon;
+	return SetCVarValueIcon;
 }
 
 void UMovieGraphSetCVarValueNode::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)

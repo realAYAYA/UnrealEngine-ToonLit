@@ -1,6 +1,7 @@
 ﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "SCustomTextureControllerWidget.h"
+#include "Action/Bind/RCCustomBindActionUtilities.h"
 #include "AssetThumbnail.h"
 #include "Controller/RCController.h"
 #include "EditorDirectories.h"
@@ -8,9 +9,9 @@
 #include "Misc/MessageDialog.h"
 #include "Misc/PackageName.h"
 #include "PropertyCustomizationHelpers.h"
+#include "PropertyHandle.h"
 #include "RCVirtualProperty.h"
 #include "SlateOptMacros.h"
-#include "Action/Bind/RCCustomBindActionUtilities.h"
 #include "Styling/AppStyle.h"
 #include "ThumbnailRendering/ThumbnailManager.h"
 #include "Widgets/Input/SFilePathPicker.h"
@@ -20,17 +21,17 @@
 
 #define LOCTEXT_NAMESPACE "ExternalTextureControllerWidget"
 
-void SCustomTextureControllerWidget::Construct(const FArguments& InArgs, URCVirtualPropertyBase* InController)
+void SCustomTextureControllerWidget::Construct(const FArguments& InArgs, const TSharedPtr<IPropertyHandle>& InOriginalPropertyHandle)
 {
-	if (!InController || InController->GetValueType() != EPropertyBagPropertyType::String)
+	if (!InOriginalPropertyHandle.IsValid())
 	{
 		return;
 	}
-	
-	ControllerWeakPtr = InController;
+
+	OriginalPropertyHandle = InOriginalPropertyHandle;
 
 	FString ControllerString;
-	InController->GetValueString(ControllerString);
+	OriginalPropertyHandle->GetValueAsFormattedString(ControllerString);
 	bInternal = FPackageName::IsValidTextForLongPackageName(ControllerString);
 	if (FPackageName::IsValidTextForLongPackageName(ControllerString))
 	{
@@ -101,11 +102,6 @@ FString SCustomTextureControllerWidget::GetAssetPathName() const
 	return TEXT("");
 }
 
-URCVirtualPropertyBase* SCustomTextureControllerWidget::GetVirtualProperty() const
-{
-	return ControllerWeakPtr.Get();
-}
-
 void SCustomTextureControllerWidget::OnControllerTypeChanged(TSharedPtr<FString, ESPMode::ThreadSafe> InString, ESelectInfo::Type InArg)
 {
 	const FString& Selection = *InString.Get();
@@ -155,15 +151,12 @@ FString SCustomTextureControllerWidget::GetCurrentPath() const
 void SCustomTextureControllerWidget::UpdateControllerValue()
 {
 	const FString& Path = GetCurrentPath();
-	
-	if (URCController* Controller = Cast<URCController>(GetVirtualProperty()))
+
+	if (OriginalPropertyHandle.IsValid())
 	{
-		Controller->SetValueString(Path);
-		RefreshThumbnailImage();
-		
-		// Make sure behaviors/actions get executed
-		Controller->ExecuteBehaviours();
+		OriginalPropertyHandle->SetValueFromFormattedString(Path);
 	}
+	RefreshThumbnailImage();
 }
 
 void SCustomTextureControllerWidget::HandleFilePathPickerPathPicked(const FString& InPickedPath)

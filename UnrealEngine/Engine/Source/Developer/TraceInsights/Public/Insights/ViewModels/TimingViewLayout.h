@@ -39,14 +39,14 @@ struct TRACEINSIGHTS_API FTimingViewLayout
 	float GetLaneY(int32 Depth) const
 	{
 		// 1.0f is for the top horizontal line of each track
-		return 1.0f + TimelineDY + (EventDY + EventH) * Depth;
+		return 1.0f + TimelineDY + (EventDY + EventH) * (float)Depth;
 	}
 
 	//////////////////////////////////////////////////
 
 	float GetChildLaneY(int32 Depth) const
 	{
-		return (EventDY + EventH) * Depth;
+		return (EventDY + EventH) * (float)Depth;
 	}
 
 	/* The layout of a track:
@@ -67,7 +67,7 @@ struct TRACEINSIGHTS_API FTimingViewLayout
 		else //if (NumLanes > 0)
 		{
 			// 1.0f is for horizontal line between timelines
-			float TrackHeight = 1.0f + TimelineDY + (EventH + EventDY) * NumLanes - EventDY + TimelineDY;
+			float TrackHeight = 1.0f + TimelineDY + (EventH + EventDY) * (float)NumLanes - EventDY + TimelineDY;
 
 			if (TrackHeight < FTimingViewLayout::RealMinTimelineH)
 			{
@@ -86,7 +86,7 @@ struct TRACEINSIGHTS_API FTimingViewLayout
 		}
 		else //if (NumLanes > 0)
 		{
-			const float TrackHeight = (EventH + EventDY) * NumLanes - EventDY;
+			const float TrackHeight = (EventH + EventDY) * (float)NumLanes - EventDY;
 
 			if (TrackHeight < FTimingViewLayout::RealMinTimelineH)
 			{

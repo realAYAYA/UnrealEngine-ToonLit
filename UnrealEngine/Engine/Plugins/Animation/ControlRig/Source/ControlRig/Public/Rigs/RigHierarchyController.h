@@ -18,7 +18,6 @@ public:
 
 	URigHierarchyController()
 	: bReportWarningsAndErrors(true)
-	, Hierarchy(nullptr)
 	, bSuspendAllNotifications(false)
 	, bSuspendSelectionNotifications(false)
 	, bSuspendPythonPrinting(false)
@@ -32,10 +31,7 @@ public:
 
 	// Returns the hierarchy currently linked to this controller
 	UFUNCTION(BlueprintCallable, Category = URigHierarchyController)
-	URigHierarchy* GetHierarchy() const
-	{
-		return Hierarchy.Get();
-	}
+	URigHierarchy* GetHierarchy() const;
 
 	// Sets the hierarchy currently linked to this controller
 	UFUNCTION(BlueprintCallable, Category = URigHierarchyController)
@@ -238,6 +234,37 @@ public:
         bool bSetupUndo = false);
 
 	/**
+	 * Adds a connector to the hierarchy
+	 * @param InName The suggested name of the new connector - will eventually be corrected by the namespace
+	 * @param InSettings All of the connector's settings
+	 * @param bSetupUndo If set to true the stack will record the change for undo / redo
+	 * @param bPrintPythonCommand If set to true a python command equivalent to this call will be printed out
+	 * @return The key for the newly created bone.
+	 */
+	UFUNCTION(BlueprintCallable, Category = URigHierarchyController)
+	FRigElementKey AddConnector(FName InName, FRigConnectorSettings InSettings = FRigConnectorSettings(), bool bSetupUndo = false, bool bPrintPythonCommand = false);
+
+	/**
+	 * Adds a socket to the hierarchy
+	 * @param InName The suggested name of the new socket - will eventually be corrected by the namespace
+	 * @param InParent The (optional) parent of the new null. If you don't need a parent, pass FRigElementKey()
+	 * @param InTransform The transform for the new socket - either in local or global space, based on bTransformInGlobal
+	 * @param bTransformInGlobal Set this to true if the Transform passed is expressed in global space, false for local space.
+	 * @param InColor The color of the socket
+	 * @param InDescription The description of the socket
+	 * @param bSetupUndo If set to true the stack will record the change for undo / redo
+	 * @param bPrintPythonCommand If set to true a python command equivalent to this call will be printed out
+	 * @return The key for the newly created bone.
+	 */
+	UFUNCTION(BlueprintCallable, Category = URigHierarchyController)
+	FRigElementKey AddSocket(FName InName, FRigElementKey InParent, FTransform InTransform, bool bTransformInGlobal = true, const FLinearColor& InColor = FLinearColor::White, const FString& InDescription = TEXT(""), bool bSetupUndo = false, bool bPrintPythonCommand = false);
+
+	/**
+	 * Adds a socket to the first determined root bone the hierarchy
+	 * @return The key for the newly created bone (or an invalid key).
+	 */
+	FRigElementKey AddDefaultRootSocket();
+	/**
 	 * Returns the control settings of a given control
 	 * @param InKey The key of the control to receive the settings for
 	 * @return The settings of the given control
@@ -373,6 +400,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = URigHierarchyController)
 	TArray<FRigElementKey> ImportFromText(
 		FString InContent,
+		bool bReplaceExistingElements = false,
+		bool bSelectNewElements = true,
+		bool bSetupUndo = false,
+		bool bPrintPythonCommands = false);
+
+	TArray<FRigElementKey> ImportFromText(
+		FString InContent,
+		ERigElementType InAllowedTypes,
 		bool bReplaceExistingElements = false,
 		bool bSelectNewElements = true,
 		bool bSetupUndo = false,
@@ -578,6 +613,10 @@ public:
 
 	TArray<FString> GetAddRigidBodyPythonCommands(FRigRigidBodyElement* RigidBody) const;
 
+	TArray<FString> GetAddConnectorPythonCommands(FRigConnectorElement* Connector) const;
+
+	TArray<FString> GetAddSocketPythonCommands(FRigSocketElement* Socket) const;
+
 	TArray<FString> GetSetControlValuePythonCommands(const FRigControlElement* Control, const FRigControlValue& Value, const ERigControlValueType& Type) const;
 	
 	TArray<FString> GetSetControlOffsetTransformPythonCommands(const FRigControlElement* Control, const FTransform& Offset, bool bInitial = false, bool bAffectChildren = true) const;
@@ -586,9 +625,6 @@ public:
 #endif
 	
 private:
-
-	UPROPERTY(transient)
-	TWeakObjectPtr<URigHierarchy> Hierarchy;
 
 	FRigHierarchyModifiedEvent ModifiedEvent;
 	void Notify(ERigHierarchyNotification InNotifType, const FRigBaseElement* InElement);
@@ -601,13 +637,27 @@ private:
 	bool IsValid() const;
 
 	/**
+	 * Determine a safe new name for an element. If a name is passed which contains a namespace
+	 * (for example "MyNameSpace:Control") we'll remove the namespace and just use the short name
+	 * prefixed with the current namespace (for example: "MyOtherNameSpace:Control"). Name clashes
+	 * will be resolved for the full name. So two modules with two different namespaces can have
+	 * elements with the same short name (for example "MyModuleA:Control" and "MyModuleB:Control").
+	 * @param InDesiredName The name provided by the user
+	 * @param InElementType The kind of element we are about to create
+	 * @param bAllowNameSpace If true the name won't be changed for namespaces
+	 * @return The safe name of the element to create.
+	 */
+	FName GetSafeNewName(const FName& InDesiredName, ERigElementType InElementType, bool bAllowNameSpace = true) const;
+	
+	/**
 	 * Adds a new element to the hierarchy
 	 * @param InElementToAdd The new element to add to the hierarchy 
 	 * @param InFirstParent The (optional) parent of the new bone. If you don't need a parent, pass nullptr
 	 * @param bMaintainGlobalTransform If set to true the child will stay in the same place spatially, otherwise it will maintain it's local transform (and potential move).
+	 * @param InDesiredName The original desired name
 	 * @return The index of the newly added element
 	 */
-	int32 AddElement(FRigBaseElement* InElementToAdd, FRigBaseElement* InFirstParent, bool bMaintainGlobalTransform);
+	int32 AddElement(FRigBaseElement* InElementToAdd, FRigBaseElement* InFirstParent, bool bMaintainGlobalTransform, const FName& InDesiredName = NAME_None);
 
 	/**
 	 * Removes an existing element from the hierarchy.
@@ -723,8 +773,10 @@ private:
 	}
 	
 	friend class UControlRig;
+	friend class UControlRig;
 	friend class URigHierarchy;
 	friend class FRigHierarchyControllerInstructionBracket;
+	friend class UControlRigBlueprint;
 };
 
 class CONTROLRIG_API FRigHierarchyControllerInstructionBracket : TGuardValue<int32>

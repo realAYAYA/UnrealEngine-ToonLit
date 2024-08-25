@@ -1,0 +1,9 @@
+We are not distributing NVIDIA source code, binaries, or software. 
+We are shipping a custom Epic built binary (called NVMLWrapper) that "assumes" you have the NVML binaries installed on your machine in the common locations and if they
+are found it will attempt to load them at runtime and call specific functions in those binaries.
+
+If the binaries are not found this module will gracefully fail with an error message in the log output.
+
+This approach was chosen because NVIDIA's EULA around distributing nvml.h is unclear and legally ambiguous at the time of writing (6th Nov 2023).
+
+Note: The source code for NVMLWrapper can be found in: Engine\Restricted\NotForLicensees\Source\Programs\NvmlWrapper

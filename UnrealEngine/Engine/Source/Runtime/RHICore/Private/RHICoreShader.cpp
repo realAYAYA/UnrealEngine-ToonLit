@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "RHICoreShader.h"
+#include "PipelineStateCache.h"
 
 #define RHI_VALIDATE_STATIC_UNIFORM_BUFFERS (!UE_BUILD_SHIPPING && !UE_BUILD_TEST)
 
@@ -75,9 +76,84 @@ void SetupShaderCodeValidationData(FRHIShader* RHIShader, FShaderCodeReader& Sha
 			FShaderCodeValidationExtension ShaderCodeValidationExtension;
 			ArValidationExtensionData << ShaderCodeValidationExtension;
 			RHIShader->DebugStrideValidationData.Append(ShaderCodeValidationExtension.ShaderCodeValidationStride);
+			RHIShader->DebugSRVTypeValidationData.Append(ShaderCodeValidationExtension.ShaderCodeValidationSRVType);
+			RHIShader->DebugUAVTypeValidationData.Append(ShaderCodeValidationExtension.ShaderCodeValidationUAVType);
+			RHIShader->DebugUBSizeValidationData.Append(ShaderCodeValidationExtension.ShaderCodeValidationUBSize);
 		}
 	}
 #endif
+}
+
+void DispatchShaderBundleEmulation(
+	FRHIComputeCommandList& InRHICmdList,
+	FRHIShaderBundle* ShaderBundle,
+	FRHIBuffer* ArgumentBuffer,
+	TConstArrayView<FRHIShaderBundleDispatch> Dispatches)
+{
+	for (const FRHIShaderBundleDispatch& Dispatch : Dispatches)
+	{
+		if (Dispatch.Shader == nullptr)
+		{
+			continue;
+		}
+
+		checkf(Dispatch.Shader->HasShaderBundleUsage(), TEXT("All shaders in a bundle must specify CFLAG_ShaderBundle"));
+
+		SetComputePipelineState(InRHICmdList, Dispatch.Shader);
+
+		if (Dispatch.Parameters.HasParameters())
+		{
+			InRHICmdList.SetShaderParameters(
+				Dispatch.Shader,
+				Dispatch.Parameters.ParametersData,
+				Dispatch.Parameters.Parameters,
+				Dispatch.Parameters.ResourceParameters,
+				Dispatch.Parameters.BindlessParameters
+			);
+		}
+
+		if (GRHISupportsShaderRootConstants)
+		{
+			InRHICmdList.SetShaderRootConstants(Dispatch.Constants);
+		}
+
+		const uint32 IndirectOffset = (Dispatch.RecordIndex * FRHIShaderBundle::ArgumentByteStride);
+		InRHICmdList.DispatchIndirectComputeShader(ArgumentBuffer, IndirectOffset);
+	}
+}
+
+const bool GRHIShaderDiagnosticEnabled = true;
+void SetupShaderDiagnosticData(FRHIShader* RHIShader, FShaderCodeReader& ShaderCodeReader)
+{
+	if (RHIShader && GRHIShaderDiagnosticEnabled)
+	{
+		int32 ShaderDiagnosticExtensionSize = 0;
+		const uint8* ShaderDiagnosticExtensionData = ShaderCodeReader.FindOptionalDataAndSize(FShaderDiagnosticExtension::Key, ShaderDiagnosticExtensionSize);
+		if (ShaderDiagnosticExtensionData && ShaderDiagnosticExtensionSize > 0)
+		{
+			FBufferReader ArValidationExtensionData((void*)ShaderDiagnosticExtensionData, ShaderDiagnosticExtensionSize, false);
+			FShaderDiagnosticExtension ShaderDiagnosticExtension;
+			ArValidationExtensionData << ShaderDiagnosticExtension;
+			RegisterDiagnosticMessages(ShaderDiagnosticExtension.ShaderDiagnosticDatas);
+		}
+	}
+}
+
+TArray<FShaderDiagnosticData> GShaderDiagnosticDatas;
+void RegisterDiagnosticMessages(const TArray<FShaderDiagnosticData>& In)
+{
+	// Not thread safe
+	GShaderDiagnosticDatas.Append(In);
+}
+
+const FString* GetDiagnosticMessage(uint32 MessageID)
+{
+	// Not thread safe
+	if (const FShaderDiagnosticData* Found = GShaderDiagnosticDatas.FindByPredicate([MessageID](const FShaderDiagnosticData& In) { return In.Hash == MessageID; }))
+	{
+		return &Found->Message;
+	}
+	return nullptr;
 }
 
 } //! RHICore

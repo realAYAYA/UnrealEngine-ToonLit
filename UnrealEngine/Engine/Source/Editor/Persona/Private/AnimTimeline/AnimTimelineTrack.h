@@ -152,7 +152,7 @@ public:
 	virtual void AddToContextMenu(FMenuBuilder& InMenuBuilder, TSet<FName>& InOutExistingMenuTypes) const;
 
 	/** Get the height of this track */
-	float GetHeight() const { return Height; }
+	virtual float GetHeight() const { return Height; }
 
 	/** Set the height of this track */
 	void SetHeight(float InHeight) { Height = InHeight; }

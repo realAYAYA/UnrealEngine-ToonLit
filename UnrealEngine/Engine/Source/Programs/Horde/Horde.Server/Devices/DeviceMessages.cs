@@ -919,6 +919,12 @@ namespace Horde.Server.Devices
 		/// </summary>
 		[Required]
 		public string Guid { get; set; } = null!;
+
+		/// <summary>
+		/// The step name of reservation request 
+		/// </summary>
+		public bool? InstallRequired { get; set; } = null;
+
 	}
 
 	/// <summary>

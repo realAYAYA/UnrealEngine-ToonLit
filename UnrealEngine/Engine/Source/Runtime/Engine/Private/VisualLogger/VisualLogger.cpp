@@ -11,6 +11,7 @@
 #include "VisualLogger/VisualLoggerCustomVersion.h"
 #include "VisualLogger/VisualLoggerTraceDevice.h"
 #include "VisualLogger/VisualLoggerDebugSnapshotInterface.h"
+#include "UnrealEngine.h"
 
 #if WITH_EDITOR
 #include "Editor/EditorEngine.h"
@@ -19,13 +20,29 @@
 #include "Serialization/CustomVersion.h"
 #endif
 
-
 DEFINE_LOG_CATEGORY(LogVisual);
 #if ENABLE_VISUAL_LOG
 
+namespace UE::VisLog::Private
+{
+	/** Denotes the consecutive run number, giving us the ability to differentiate UObjectName_0 in Run 1 from UObjectName_0 in Run 2 */
+	static int32 UniqueRunNumber = 0;
+
+	/** Cached prefix string when using bForceUniqueLogNames (denotes UniqueRunNumber) */
+	static FString UniqueLogPrefix;
+
+#if WITH_EDITOR
+	namespace EditorOnly
+	{
+		/** When in Editor, use this TimeStamp as a Base time so our values don't grow too large (and are canonically around 0.0). */
+		static double EditorBaseTimeStamp = 0.0;
+	}
+#endif
+}
+
 DEFINE_STAT(STAT_VisualLog);
 
-// Unfortunately needs to be a #define since it uses GET_VARARGS_RESULT which uses the va_list stuff which operates on the
+// Unfortunately needs to be a #define since it uses GET_TYPED_VARARGS_RESULT which uses the va_list stuff which operates on the
 // current function, so we can't easily call a function
 #define COLLAPSED_LOGF(SerializeFunc) \
 	SCOPE_CYCLE_COUNTER(STAT_VisualLog); \
@@ -44,7 +61,7 @@ DEFINE_STAT(STAT_VisualLog);
 	\
 	/* first, try using the stack buffer */ \
 	Buffer = StackBuffer; \
-	GET_VARARGS_RESULT( Buffer, UE_ARRAY_COUNT(StackBuffer), UE_ARRAY_COUNT(StackBuffer) - 1, Fmt, Fmt, Result ); \
+	GET_TYPED_VARARGS_RESULT( TCHAR, Buffer, UE_ARRAY_COUNT(StackBuffer), UE_ARRAY_COUNT(StackBuffer) - 1, Fmt, Fmt, Result ); \
 	\
 	/* if that fails, then use heap allocation to make enough space */ \
 			while(Result == -1) \
@@ -52,7 +69,7 @@ DEFINE_STAT(STAT_VisualLog);
 		FMemory::SystemFree(AllocatedBuffer); \
 		/* We need to use malloc here directly as GMalloc might not be safe. */ \
 		Buffer = AllocatedBuffer = (TCHAR*) FMemory::SystemMalloc( BufferSize * sizeof(TCHAR) ); \
-		GET_VARARGS_RESULT( Buffer, BufferSize, BufferSize-1, Fmt, Fmt, Result ); \
+		GET_TYPED_VARARGS_RESULT( TCHAR, Buffer, BufferSize, BufferSize-1, Fmt, Fmt, Result ); \
 		BufferSize *= 2; \
 						}; \
 	Buffer[Result] = 0; \
@@ -61,13 +78,6 @@ DEFINE_STAT(STAT_VisualLog);
 	SerializeFunc; \
 	FMemory::SystemFree(AllocatedBuffer);
 
-void FVisualLogger::CategorizedLogfImpl(const UObject* Object, const FLogCategoryBase& Category, ELogVerbosity::Type Verbosity, const TCHAR* Fmt, ...)
-{
-	const FName CategoryName = Category.GetCategoryName(); 
-	COLLAPSED_LOGF(
-		CurrentEntry->AddText(Buffer, CategoryName, Verbosity);
-	);
-}
 void FVisualLogger::CategorizedLogfImpl(const UObject* Object, const FName& CategoryName, ELogVerbosity::Type Verbosity, const TCHAR* Fmt, ...)
 {
 	COLLAPSED_LOGF(
@@ -75,27 +85,13 @@ void FVisualLogger::CategorizedLogfImpl(const UObject* Object, const FName& Cate
 	);
 }
 
-void FVisualLogger::GeometryShapeLogfImpl(const UObject* Object, const FLogCategoryBase& Category, ELogVerbosity::Type Verbosity, const FVector& Start, const FVector& End, const FColor& Color, const uint16 Thickness, const TCHAR* Fmt, ...)
-{
-	const FName CategoryName = Category.GetCategoryName(); 
-	COLLAPSED_LOGF(
-		CurrentEntry->AddElement(Start, End, CategoryName, Verbosity, Color, Buffer, Thickness);
-	);
-}
-void FVisualLogger::GeometryShapeLogfImpl(const UObject* Object, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FVector& Start, const FVector& End, const FColor& Color, const uint16 Thickness, const TCHAR* Fmt, ...)
+void FVisualLogger::SegmentLogfImpl(const UObject* Object, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FVector& Start, const FVector& End, const FColor& Color, const uint16 Thickness, const TCHAR* Fmt, ...)
 {
 	COLLAPSED_LOGF(
-		CurrentEntry->AddElement(Start, End, CategoryName, Verbosity, Color, Buffer, Thickness);
+		CurrentEntry->AddSegment(Start, End, CategoryName, Verbosity, Color, Buffer, Thickness);
 	);
 }
 
-void FVisualLogger::ArrowLogfImpl(const UObject* Object, const FLogCategoryBase& Category, ELogVerbosity::Type Verbosity, const FVector& Start, const FVector& End, const FColor& Color, const TCHAR* Fmt, ...)
-{
-	const FName CategoryName = Category.GetCategoryName();
-	COLLAPSED_LOGF(
-		CurrentEntry->AddArrow(Start, End, CategoryName, Verbosity, Color, Buffer);
-	);
-}
 void FVisualLogger::ArrowLogfImpl(const UObject* Object, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FVector& Start, const FVector& End, const FColor& Color, const TCHAR* Fmt, ...)
 {
 	COLLAPSED_LOGF(
@@ -103,13 +99,6 @@ void FVisualLogger::ArrowLogfImpl(const UObject* Object, const FName& CategoryNa
 	);
 }
 
-void FVisualLogger::CircleLogfImpl(const UObject* Object, const FLogCategoryBase& Category, ELogVerbosity::Type Verbosity, const FVector& Center, const FVector& UpAxis, const float Radius, const FColor& Color, const uint16 Thickness, const TCHAR* Fmt, ...)
-{
-	const FName CategoryName = Category.GetCategoryName();
-	COLLAPSED_LOGF(
-		CurrentEntry->AddCircle(Center, UpAxis, Radius, CategoryName, Verbosity, Color, Buffer, Thickness);
-	);
-}
 void FVisualLogger::CircleLogfImpl(const UObject* Object, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FVector& Center, const FVector& UpAxis, const float Radius, const FColor& Color, const uint16 Thickness, const TCHAR* Fmt, ...)
 {
 	COLLAPSED_LOGF(
@@ -117,125 +106,69 @@ void FVisualLogger::CircleLogfImpl(const UObject* Object, const FName& CategoryN
 	);
 }
 
-void FVisualLogger::GeometryShapeLogfImpl(const UObject* Object, const FLogCategoryBase& Category, ELogVerbosity::Type Verbosity, const FVector& Location, float Radius, const FColor& Color, const TCHAR* Fmt, ...)
-{
-	const FName CategoryName = Category.GetCategoryName(); 
-	COLLAPSED_LOGF(
-		CurrentEntry->AddElement(Location, CategoryName, Verbosity, Color, Buffer, (uint16)Radius);
-	);
-}
-void FVisualLogger::GeometryShapeLogfImpl(const UObject* Object, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FVector& Location, float Radius, const FColor& Color, const TCHAR* Fmt, ...)
+void FVisualLogger::LocationLogfImpl(const UObject* Object, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FVector& Location, uint16 Thickness, const FColor& Color, const TCHAR* Fmt, ...)
 {
 	COLLAPSED_LOGF(
-		CurrentEntry->AddElement(Location, CategoryName, Verbosity, Color, Buffer, (uint16)Radius);
+		CurrentEntry->AddLocation(Location, CategoryName, Verbosity, Color, Buffer, Thickness);
 	);
 }
 
-void FVisualLogger::GeometryBoxLogfImpl(const UObject* Object, const FLogCategoryBase& Category, ELogVerbosity::Type Verbosity, const FBox& Box, const FMatrix& Matrix, const FColor& Color, const TCHAR* Fmt, ...)
-{
-	const FName CategoryName = Category.GetCategoryName(); 
-	COLLAPSED_LOGF(
-		CurrentEntry->AddElement(Box, Matrix, CategoryName, Verbosity, Color, Buffer);
-	);
-}
-void FVisualLogger::GeometryBoxLogfImpl(const UObject* Object, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FBox& Box, const FMatrix& Matrix, const FColor& Color, const TCHAR* Fmt, ...)
+void FVisualLogger::SphereLogfImpl(const UObject* Object, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FVector& Center, float Radius, const FColor& Color, bool bWireframe, const TCHAR* Fmt, ...)
 {
 	COLLAPSED_LOGF(
-		CurrentEntry->AddElement(Box, Matrix, CategoryName, Verbosity, Color, Buffer);
+		CurrentEntry->AddSphere(Center, Radius, CategoryName, Verbosity, Color, Buffer, bWireframe);
 	);
 }
 
-void FVisualLogger::GeometryShapeLogfImpl(const UObject* Object, const FLogCategoryBase& Category, ELogVerbosity::Type Verbosity, const FVector& Origin, const FVector& Direction, const float Length, const float Angle, const FColor& Color, const TCHAR* Fmt, ...)
-{
-	const FName CategoryName = Category.GetCategoryName(); 
-	COLLAPSED_LOGF(
-		CurrentEntry->AddElement(Origin, Direction, Length, Angle, Angle, CategoryName, Verbosity, Color, Buffer);
-	);
-}
-void FVisualLogger::GeometryShapeLogfImpl(const UObject* Object, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FVector& Origin, const FVector& Direction, const float Length, const float Angle, const FColor& Color, const TCHAR* Fmt, ...)
+void FVisualLogger::BoxLogfImpl(const UObject* Object, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FBox& Box, const FMatrix& Matrix, const FColor& Color, bool bWireframe, const TCHAR* Fmt, ...)
 {
 	COLLAPSED_LOGF(
-		CurrentEntry->AddElement(Origin, Direction, Length, Angle, Angle, CategoryName, Verbosity, Color, Buffer);
+		CurrentEntry->AddBox(Box, Matrix, CategoryName, Verbosity, Color, Buffer, /*Thickness = */0, bWireframe);
 	);
 }
 
-void FVisualLogger::GeometryShapeLogfImpl(const UObject* Object, const FLogCategoryBase& Category, ELogVerbosity::Type Verbosity, const FVector& Start, const FVector& End, const float Radius, const FColor& Color, const TCHAR* Fmt, ...)
-{
-	const FName CategoryName = Category.GetCategoryName(); 
-	COLLAPSED_LOGF(
-		CurrentEntry->AddElement(Start, End, Radius, CategoryName, Verbosity, Color, Buffer);
-	);
-}
-void FVisualLogger::GeometryShapeLogfImpl(const UObject* Object, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FVector& Start, const FVector& End, const float Radius, const FColor& Color, const TCHAR* Fmt, ...)
+void FVisualLogger::ConeLogfImpl(const UObject* Object, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FVector& Origin, const FVector& Direction, const float Length, const float Angle, const FColor& Color, bool bWireframe, const TCHAR* Fmt, ...)
 {
 	COLLAPSED_LOGF(
-		CurrentEntry->AddElement(Start, End, Radius, CategoryName, Verbosity, Color, Buffer);
+		CurrentEntry->AddCone(Origin, Direction, Length, Angle, Angle, CategoryName, Verbosity, Color, Buffer, /*Thickness = */0, bWireframe);
 	);
 }
 
-void FVisualLogger::GeometryShapeLogfImpl(const UObject* Object, const FLogCategoryBase& Category, ELogVerbosity::Type Verbosity, const FVector& Base, float HalfHeight, float Radius, const FQuat& Rotation, const FColor& Color, const TCHAR* Fmt, ...)
-{
-	const FName CategoryName = Category.GetCategoryName(); 
-	COLLAPSED_LOGF(
-		CurrentEntry->AddElement(Base, HalfHeight, Radius, Rotation, CategoryName, Verbosity, Color, Buffer);
-	);
-}
-void FVisualLogger::GeometryShapeLogfImpl(const UObject* Object, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FVector& Base, float HalfHeight, float Radius, const FQuat& Rotation, const FColor& Color, const TCHAR* Fmt, ...)
+void FVisualLogger::CylinderLogfImpl(const UObject* Object, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FVector& Start, const FVector& End, const float Radius, const FColor& Color, bool bWireframe, const TCHAR* Fmt, ...)
 {
 	COLLAPSED_LOGF(
-		CurrentEntry->AddElement(Base, HalfHeight, Radius, Rotation, CategoryName, Verbosity, Color, Buffer);
+		CurrentEntry->AddCylinder(Start, End, Radius, CategoryName, Verbosity, Color, Buffer, /*Thickness = */0, bWireframe);
 	);
 }
 
-void FVisualLogger::NavAreaShapeLogfImpl(const UObject* Object, const FLogCategoryBase& Category, ELogVerbosity::Type Verbosity, const TArray<FVector>& ConvexPoints, float MinZ, float MaxZ, const FColor& Color, const TCHAR* Fmt, ...)
-{
-	const FName CategoryName = Category.GetCategoryName(); 
-	COLLAPSED_LOGF(
-		CurrentEntry->AddElement(ConvexPoints, MinZ, MaxZ, CategoryName, Verbosity, Color, Buffer);
-	);
-}
-void FVisualLogger::NavAreaShapeLogfImpl(const UObject* Object, const FName& CategoryName, ELogVerbosity::Type Verbosity, const TArray<FVector>& ConvexPoints, float MinZ, float MaxZ, const FColor& Color, const TCHAR* Fmt, ...)
+void FVisualLogger::CapsuleLogfImpl(const UObject* Object, const FName& CategoryName, ELogVerbosity::Type Verbosity, const FVector& Base, float HalfHeight, float Radius, const FQuat& Rotation, const FColor& Color, bool bWireframe, const TCHAR* Fmt, ...)
 {
 	COLLAPSED_LOGF(
-		CurrentEntry->AddElement(ConvexPoints, MinZ, MaxZ, CategoryName, Verbosity, Color, Buffer);
+		CurrentEntry->AddCapsule(Base, HalfHeight, Radius, Rotation, CategoryName, Verbosity, Color, Buffer, bWireframe);
 	);
 }
 
-void FVisualLogger::GeometryShapeLogfImpl(const UObject* Object, const FLogCategoryBase& Category, ELogVerbosity::Type Verbosity, const TArray<FVector>& Vertices, const TArray<int32>& Indices, const FColor& Color, const TCHAR* Fmt, ...)
-{
-	const FName CategoryName = Category.GetCategoryName(); 
-	COLLAPSED_LOGF(
-		CurrentEntry->AddElement(Vertices, Indices, CategoryName, Verbosity, Color, Buffer);
-	);
-}
-void FVisualLogger::GeometryShapeLogfImpl(const UObject* Object, const FName& CategoryName, ELogVerbosity::Type Verbosity, const TArray<FVector>& Vertices, const TArray<int32>& Indices, const FColor& Color, const TCHAR* Fmt, ...)
+void FVisualLogger::PulledConvexLogfImpl(const UObject* Object, const FName& CategoryName, ELogVerbosity::Type Verbosity, const TArray<FVector>& ConvexPoints, float MinZ, float MaxZ, const FColor& Color, const TCHAR* Fmt, ...)
 {
 	COLLAPSED_LOGF(
-		CurrentEntry->AddElement(Vertices, Indices, CategoryName, Verbosity, Color, Buffer);
+		CurrentEntry->AddPulledConvex(ConvexPoints, MinZ, MaxZ, CategoryName, Verbosity, Color, Buffer);
 	);
 }
 
-void FVisualLogger::GeometryConvexLogfImpl(const UObject* Object, const FLogCategoryBase& Category, ELogVerbosity::Type Verbosity, const TArray<FVector>& Points, const FColor& Color, const TCHAR* Fmt, ...)
+void FVisualLogger::MeshLogfImpl(const UObject* Object, const FName& CategoryName, ELogVerbosity::Type Verbosity, const TArray<FVector>& Vertices, const TArray<int32>& Indices, const FColor& Color, const TCHAR* Fmt, ...)
 {
-	const FName CategoryName = Category.GetCategoryName(); 
 	COLLAPSED_LOGF(
-		CurrentEntry->AddConvexElement(Points, CategoryName, Verbosity, Color, Buffer);
+		CurrentEntry->AddMesh(Vertices, Indices, CategoryName, Verbosity, Color, Buffer);
 	);
 }
-void FVisualLogger::GeometryConvexLogfImpl(const UObject* Object, const FName& CategoryName, ELogVerbosity::Type Verbosity, const TArray<FVector>& Points, const FColor& Color, const TCHAR* Fmt, ...)
+
+void FVisualLogger::ConvexLogfImpl(const UObject* Object, const FName& CategoryName, ELogVerbosity::Type Verbosity, const TArray<FVector>& Points, const FColor& Color, const TCHAR* Fmt, ...)
 {
 	COLLAPSED_LOGF(
 		CurrentEntry->AddConvexElement(Points, CategoryName, Verbosity, Color, Buffer);
 	);
 }
 
-void FVisualLogger::HistogramDataLogfImpl(const UObject* Object, const FLogCategoryBase& Category, ELogVerbosity::Type Verbosity, FName GraphName, FName DataName, const FVector2D& Data, const FColor& Color, const TCHAR* Fmt, ...)
-{
-	const FName CategoryName = Category.GetCategoryName(); 
-	COLLAPSED_LOGF(
-		CurrentEntry->AddHistogramData(Data, CategoryName, Verbosity, GraphName, DataName);
-	);
-}
 void FVisualLogger::HistogramDataLogfImpl(const UObject* Object, const FName& CategoryName, ELogVerbosity::Type Verbosity, FName GraphName, FName DataName, const FVector2D& Data, const FColor& Color, const TCHAR* Fmt, ...)
 {
 	COLLAPSED_LOGF(
@@ -275,9 +208,9 @@ TMap<const UWorld*, FVisualLogger::FOwnerToChildrenRedirectionMap> FVisualLogger
 int32 FVisualLogger::bIsRecording = false;
 FVisualLogger::FNavigationDataDump FVisualLogger::NavigationDataDumpDelegate;
 
-bool FVisualLogger::CheckVisualLogInputInternal(const UObject* Object, const FName& CategoryName, ELogVerbosity::Type Verbosity, UWorld **World, FVisualLogEntry **CurrentEntry)
+bool FVisualLogger::CheckVisualLogInputInternal(const UObject* Object, const FName& CategoryName, ELogVerbosity::Type, UWorld** OutWorld, FVisualLogEntry** OutCurrentEntry)
 {
-	if (FVisualLogger::IsRecording() == false || !Object || !GEngine || GEngine->bDisableAILogging || Object->HasAnyFlags(RF_ClassDefaultObject))
+	if (IsRecording() == false || !Object || !GEngine || GEngine->bDisableAILogging || Object->HasAnyFlags(RF_ClassDefaultObject))
 	{
 		return false;
 	}
@@ -288,34 +221,77 @@ bool FVisualLogger::CheckVisualLogInputInternal(const UObject* Object, const FNa
 		return false;
 	}
 
-	*World = GEngine->GetWorldFromContextObject(Object, EGetWorldErrorMode::ReturnNull);
-	if (ensure(*World != nullptr) == false)
+	if (OutWorld)
 	{
-		return false;
+		*OutWorld = GetWorldForVisualLogger(Object);
+		if (!ensure(*OutWorld != nullptr))
+		{
+			return false;
+		}
 	}
 
-	*CurrentEntry = VisualLogger.GetEntryToWrite(Object, VisualLogger.GetTimeStampForObject(Object));
-	if (*CurrentEntry == nullptr)
+	if (OutCurrentEntry)
 	{
-		return false;
+		*OutCurrentEntry = VisualLogger.GetEntryToWrite(Object, VisualLogger.GetTimeStampForObject(Object));
+		if (*OutCurrentEntry == nullptr)
+		{
+			return false;
+		}
 	}
 
 	return true;
 }
 
+FVisualLogEntry* FVisualLogger::GetEntryToWrite(const UObject* LogOwner, const FLogCategoryBase& LogCategory)
+{
+	FVisualLogEntry* LogEntry;
+	if (CheckVisualLogInputInternal(LogOwner, LogCategory.GetCategoryName(), ELogVerbosity::Log, /*OutWorld*/ nullptr, &LogEntry))
+	{
+		return LogEntry;
+	}
+
+	return nullptr;
+}
+
 double FVisualLogger::GetTimeStampForObject(const UObject* Object) const
 {
+	// Licensees can write their own synchronized clock that can work across the network
+	// such an implementation could use the exchanged ServerTime and the relative ClientTime offset.
 	if (GetTimeStampFunc)
 	{
 		return GetTimeStampFunc(Object);
 	}
 
-	if (const UWorld* World = GEngine->GetWorldFromContextObject(Object, EGetWorldErrorMode::ReturnNull))
+	const UWorld* WorldForTimeStamp = nullptr;
+#if WITH_EDITOR
+	// When we're in the Editor, use a Global Engine TimeStamp so that we can synchronize between Client and Server instances.
+	UEditorEngine* EditorEngine = GIsEditor ? Cast<UEditorEngine>(GEngine) : nullptr;
+	if (EditorEngine)
 	{
-		return World->TimeSeconds;
+		// We will always have the Editor world to use.  This will ensure a consistent clock since it does not reset
+		// when more clients are added or removed and can exist before a PIE session is started.
+		WorldForTimeStamp = EditorEngine->GetEditorWorldContext().World();
+		if (ensureMsgf(WorldForTimeStamp, TEXT("We always expect to have an EditorWorld in Editor")))
+		{
+			using namespace UE::VisLog::Private;
+			if (EditorOnly::EditorBaseTimeStamp <= 0.0)
+			{
+				EditorOnly::EditorBaseTimeStamp = WorldForTimeStamp->TimeSeconds;
+			}
+
+			return WorldForTimeStamp->TimeSeconds - EditorOnly::EditorBaseTimeStamp;
+		}
 	}
 
-	return 0.;
+#endif
+
+	// This will be the fallback mode in standalone.  We do not have a synchronized clock.
+	if (!WorldForTimeStamp)
+	{
+		WorldForTimeStamp = GetWorldForVisualLogger(Object);
+	}
+
+	return WorldForTimeStamp ? WorldForTimeStamp->TimeSeconds : 0.0;
 }
 
 void FVisualLogger::SetGetTimeStampFunc(const TFunction<double(const UObject*)> Function)
@@ -492,6 +468,8 @@ FVisualLogEntry* FVisualLogger::GetEntryToWrite(const UObject* Object, const dou
 
 FVisualLogEntry* FVisualLogger::GetEntryToWriteInternal(const UObject* Object, const double TimeStamp, const ECreateIfNeeded ShouldCreate)
 {
+	using namespace UE::VisLog::Private;
+
 	// No redirection needed, it should have been done at the time of the thread entry was computed
 	const UObject* LogOwner = Object;
 	if (LogOwner == nullptr)
@@ -520,12 +498,17 @@ FVisualLogEntry* FVisualLogger::GetEntryToWriteInternal(const UObject* Object, c
 		// It's first and only one usage of LogOwner as regular object to get names. We assume once that LogOwner is correct here and only here.
 		CurrentEntry = &CurrentEntryPerObject.Add(LogOwner);
 
+		if (bForceUniqueLogNames && UniqueLogPrefix.IsEmpty())
+		{
+			UniqueLogPrefix = FString::Printf(TEXT("[%d] "), UniqueRunNumber);
+		}
+
 		const UWorld* World = GetWorldForVisualLogger(LogOwner);
 		const bool bIsStandalone = (World == nullptr || World->GetNetMode() == NM_Standalone);
 		const FName LogName(*FString::Printf(TEXT("%s%s%s"),
-			bIsStandalone ? TEXT("") : *FString::Printf(TEXT("(%s) "), *ToString(World->GetNetMode())),
-			*LogOwner->GetName(),
-			bForceUniqueLogNames ? *FString::Printf(TEXT(" [%d]"), LogOwner->GetUniqueID()) : TEXT("")));
+			*UniqueLogPrefix,
+			bIsStandalone ? TEXT("") : *FString::Printf(TEXT("(%s) "), *GetDebugStringForWorld(World)),
+			*LogOwner->GetName()));
 
 		ObjectToNameMap.Add(LogOwner, LogName);
 		ObjectToClassNameMap.Add(LogOwner, *(LogOwner->GetClass()->GetName()));
@@ -541,6 +524,14 @@ FVisualLogEntry* FVisualLogger::GetEntryToWriteInternal(const UObject* Object, c
 		checkf(CurrentEntry != nullptr, TEXT("bInitializeEntry can only be true when CurrentEntry is valid."));
 		CurrentEntry->InitializeEntry(TimeStamp);
 
+		// Let's record the World Time as the local instance sees it.
+		if (const TWeakObjectPtr<const UWorld>* WorldWeakPtr = ObjectToWorldMap.Find(LogOwner))
+		{
+			if (const UWorld* World = WorldWeakPtr->Get())
+			{
+				CurrentEntry->WorldTimeStamp = World->TimeSeconds;
+			}
+		}
 
 		if (const AActor* ObjectAsActor = Cast<AActor>(LogOwner))
 		{
@@ -615,7 +606,7 @@ void FVisualLogger::FlushThreadsEntries()
 		{
 			if (ThreadCurrentEntry.Value.bIsInitialized)
 			{
-				const UObject* OwnerObject = ThreadCurrentEntry.Key.ResolveObjectPtrEvenIfPendingKill();
+				const UObject* OwnerObject = ThreadCurrentEntry.Key.ResolveObjectPtrEvenIfGarbage();
 				if (FVisualLogEntry* GlobalCurrentEntry = GetEntryToWriteInternal(OwnerObject, ThreadCurrentEntry.Value.TimeStamp, ECreateIfNeeded::Create))
 				{
 					ThreadCurrentEntry.Value.MoveTo(*GlobalCurrentEntry);
@@ -644,7 +635,7 @@ void FVisualLogger::FlushEntry(FVisualLogEntry& Entry, const FObjectKey& ObjectK
 {
 	ensureMsgf(Entry.bIsInitialized, TEXT("FlushEntry should only be called with an initialized entry."));
 
-	const UObject* OwnerObject = ObjectKey.ResolveObjectPtrEvenIfPendingKill();
+	const UObject* OwnerObject = ObjectKey.ResolveObjectPtrEvenIfGarbage();
 	for (FVisualLogDevice* Device : OutputDevices)
 	{
 		Device->Serialize(OwnerObject, ObjectToNameMap[ObjectKey], ObjectToClassNameMap[ObjectKey], Entry);
@@ -788,13 +779,57 @@ FVisualLogger::FVisualLogger()
 
 		return true;
 	});
+
+#if WITH_EDITOR
+	PIEStartedHandle = FWorldDelegates::OnPIEStarted.AddLambda(
+		[this](UGameInstance*) {
+			// We only want to do this if we are using unique log names, otherwise it makes more sense
+			// to just continue logging at later timestamps on the same timeline as the previous one.
+			if (bForceUniqueLogNames)
+			{
+				if (GEngine->IsSettingUpPlayWorld())
+				{
+					int32 OldUniqueNumber = UE::VisLog::Private::UniqueRunNumber;
+					OnDataReset();
+					UE::VisLog::Private::UniqueRunNumber = OldUniqueNumber + 1;
+				}
+
+			}
+		});
+#endif
 }
 
-void FVisualLogger::Shutdown()
+void FVisualLogger::TearDown()
 {
+#if WITH_EDITOR
+	FWorldDelegates::OnPIEStarted.Remove(PIEStartedHandle);
+#endif
+
 	SetIsRecording(false);
 	SetIsRecordingToFile(false);
 	RemoveDevice(&FVisualLoggerBinaryFileDevice::Get());
+}
+
+void FVisualLogger::OnDataReset()
+{
+	using namespace UE::VisLog::Private;
+
+	UniqueRunNumber = 0;
+	UniqueLogPrefix.Empty();
+
+#if WITH_EDITOR
+	UEditorEngine* EditorEngine = GIsEditor ? Cast<UEditorEngine>(GEngine) : nullptr;
+	if (EditorEngine)
+	{
+		const UWorld* EditorWorld = EditorEngine->GetEditorWorldContext().World();
+		if (EditorWorld)
+		{
+			// Reset the base timestamp to zero so the next (aka first) log entry will set this variable to determine the global offset in GetTimeStampForObject
+			// This ensures that when you start recording, the first entry appears to be at 0.0 (computed as TimeStamp - EditorBaseTimeStamp)
+			EditorOnly::EditorBaseTimeStamp = 0.0;
+		}
+	}
+#endif
 }
 
 void FVisualLogger::Cleanup(UWorld* OldWorld, const bool bReleaseMemory)
@@ -851,7 +886,7 @@ void FVisualLogger::Cleanup(UWorld* OldWorld, const bool bReleaseMemory)
 
                 for (FChildToOwnerRedirectionMap::TIterator It = ChildToOwnerMap.CreateIterator(); It; ++It)
                 {
-					UObject* Object = It->Key.ResolveObjectPtrEvenIfPendingKill();
+					UObject* Object = It->Key.ResolveObjectPtrEvenIfGarbage();
 					if (Object == nullptr || Object->GetWorld() == OldWorld)
                     {
                         It.RemoveCurrent();
@@ -1090,6 +1125,11 @@ void FVisualLogger::SetIsRecordingToTrace(const bool InIsRecording)
 	bIsRecordingToTrace = InIsRecording;
 }
 
+void FVisualLogger::SetUseUniqueNames(const bool bEnable)
+{
+	bForceUniqueLogNames = bEnable;
+	UE::VisLog::Private::UniqueLogPrefix.Empty();
+}
 
 void FVisualLogger::DiscardRecordingToFile()
 {
@@ -1170,7 +1210,7 @@ protected:
 				FVisualLogger::Get().AddCategoryToAllowList(*Category);
 				return true;
 			}
-			else if (FModuleManager::Get().LoadModulePtr<IModuleInterface>("LogVisualizer"))
+			else if (Command.IsEmpty() && FModuleManager::Get().LoadModulePtr<IModuleInterface>("LogVisualizer"))
 			{
 				FGlobalTabmanager::Get()->TryInvokeTab(FName(TEXT("VisualLogger")));
 				return true;

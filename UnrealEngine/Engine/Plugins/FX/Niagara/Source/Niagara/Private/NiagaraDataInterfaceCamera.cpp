@@ -141,14 +141,13 @@ bool UNiagaraDataInterfaceCamera::PerInstanceTick(void* PerInstanceData, FNiagar
 	return false;
 }
 
-void UNiagaraDataInterfaceCamera::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceCamera::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	FNiagaraFunctionSignature Sig;
 	Sig.Name = GetViewPropertiesName;
-#if WITH_EDITORONLY_DATA
 	Sig.Description = LOCTEXT("GetViewPropertiesDescription", "This function returns the properties of the current view. Only valid for gpu particles.");
 	Sig.FunctionVersion = FNiagaraCameraDIFunctionVersion::LatestVersion;
-#endif
 	Sig.bMemberFunction = true;
 	Sig.bRequiresContext = false;
 	Sig.bSupportsCPU = false;
@@ -169,10 +168,8 @@ void UNiagaraDataInterfaceCamera::GetFunctions(TArray<FNiagaraFunctionSignature>
 
 	Sig = FNiagaraFunctionSignature();
 	Sig.Name = GetClipSpaceTransformsName;
-#if WITH_EDITORONLY_DATA
 	Sig.Description = LOCTEXT("GetClipSpaceTransformsDescription", "This function returns the clip transforms for the current view. Only valid for gpu particles.");
 	Sig.FunctionVersion = FNiagaraCameraDIFunctionVersion::LatestVersion;
-#endif
 	Sig.bMemberFunction = true;
 	Sig.bRequiresContext = false;
 	Sig.bSupportsCPU = false;
@@ -190,10 +187,8 @@ void UNiagaraDataInterfaceCamera::GetFunctions(TArray<FNiagaraFunctionSignature>
 
 	Sig = FNiagaraFunctionSignature();
 	Sig.Name = GetViewSpaceTransformsName;
-#if WITH_EDITORONLY_DATA
 	Sig.Description = LOCTEXT("GetViewSpaceTransformsDescription", "This function returns the relevant transforms for the current view. Only valid for gpu particles.");
 	Sig.FunctionVersion = FNiagaraCameraDIFunctionVersion::LatestVersion;
-#endif
 	Sig.bMemberFunction = true;
 	Sig.bRequiresContext = false;
 	Sig.bSupportsCPU = false;
@@ -209,10 +204,8 @@ void UNiagaraDataInterfaceCamera::GetFunctions(TArray<FNiagaraFunctionSignature>
 	
 	Sig = FNiagaraFunctionSignature();
 	Sig.Name = ApplyPreViewTranslationToPosition;
-#if WITH_EDITORONLY_DATA
 	Sig.Description = LOCTEXT("ApplyPreViewTranslationToPositionDescription", "This function applies the pre view translation to a lwc positions such as Particles.Position. The resulting vector can be used with any of the 'Translated X to Y' transform matrices.");
 	Sig.FunctionVersion = FNiagaraCameraDIFunctionVersion::LatestVersion;
-#endif
 	Sig.bMemberFunction = true;
 	Sig.bRequiresContext = false;
 	Sig.bSupportsCPU = false;
@@ -223,10 +216,8 @@ void UNiagaraDataInterfaceCamera::GetFunctions(TArray<FNiagaraFunctionSignature>
 
 	Sig = FNiagaraFunctionSignature();
 	Sig.Name = RemovePreViewTranslationFromPosition;
-#if WITH_EDITORONLY_DATA
 	Sig.Description = LOCTEXT("RemovePreViewTranslationFromPositionDescription", "This function removes the pre view translation from a vector to return a lwc position. Use the result of a 'X to Translated Y' transform matrix multiplication as input vector.");
 	Sig.FunctionVersion = FNiagaraCameraDIFunctionVersion::LatestVersion;
-#endif
 	Sig.bMemberFunction = true;
 	Sig.bRequiresContext = false;
 	Sig.bSupportsCPU = false;
@@ -238,10 +229,8 @@ void UNiagaraDataInterfaceCamera::GetFunctions(TArray<FNiagaraFunctionSignature>
 
 	Sig = FNiagaraFunctionSignature();
 	Sig.Name = GetFieldOfViewName;
-#if WITH_EDITORONLY_DATA
 	Sig.Description = LOCTEXT("GetNiagaraFOVDescription", "This function returns the field of view angle (in degrees) for the active camera. For gpu particles this returns the x axis fov.");
 	Sig.FunctionVersion = FNiagaraCameraDIFunctionVersion::LatestVersion;
-#endif
 	Sig.bMemberFunction = true;
 	Sig.bRequiresContext = false;
 	Sig.AddInput(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("Camera interface")));
@@ -251,10 +240,8 @@ void UNiagaraDataInterfaceCamera::GetFunctions(TArray<FNiagaraFunctionSignature>
 
 	Sig = FNiagaraFunctionSignature();
 	Sig.Name = GetCameraPropertiesName;
-#if WITH_EDITORONLY_DATA
 	Sig.Description = LOCTEXT("GetCameraPositionDescription", "This function returns the position of the currently active camera.");
 	Sig.FunctionVersion = FNiagaraCameraDIFunctionVersion::LatestVersion;
-#endif
 	Sig.bMemberFunction = true;
 	Sig.bRequiresContext = false;
 	Sig.AddInput(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("Camera interface")));
@@ -266,10 +253,8 @@ void UNiagaraDataInterfaceCamera::GetFunctions(TArray<FNiagaraFunctionSignature>
 
 	Sig = FNiagaraFunctionSignature();
 	Sig.Name = QueryClosestName;
-#if WITH_EDITORONLY_DATA
 	Sig.Description = LOCTEXT("QueryClosestDescription", "This function checks the previously calculated distance of each particle and then returns true for the closest particles and false for the other ones.\nThis function needs to be paired with CalculateParticleDistancesCPU to work correctly.");
 	Sig.FunctionVersion = FNiagaraCameraDIFunctionVersion::LatestVersion;
-#endif
 	Sig.bMemberFunction = true;
 	Sig.bRequiresContext = false;
 	Sig.bSupportsGPU = false;
@@ -281,10 +266,8 @@ void UNiagaraDataInterfaceCamera::GetFunctions(TArray<FNiagaraFunctionSignature>
 
 	Sig = FNiagaraFunctionSignature();
 	Sig.Name = CalculateDistancesName;
-#if WITH_EDITORONLY_DATA
 	Sig.Description = LOCTEXT("CalculateDistancesDescription", "This function compares the particle position against the camera position and stores the result to be queried in the next frame.\nThe results can then be queried with QueryClosestParticlesCPU.");
 	Sig.FunctionVersion = FNiagaraCameraDIFunctionVersion::LatestVersion;
-#endif
 	Sig.bMemberFunction = true;
 	Sig.bRequiresContext = false;
 	Sig.bSupportsGPU = false;
@@ -296,10 +279,8 @@ void UNiagaraDataInterfaceCamera::GetFunctions(TArray<FNiagaraFunctionSignature>
 
 	Sig = FNiagaraFunctionSignature();
 	Sig.Name = GetTAAJitterName;
-#if WITH_EDITORONLY_DATA
 	Sig.Description = NSLOCTEXT("Niagara", "GetTAAJitterDescription", "This function returns the TAA jitter values of the currently active camera.");
 	Sig.FunctionVersion = FNiagaraCameraDIFunctionVersion::LatestVersion;
-#endif
 	Sig.bMemberFunction = true;
 	Sig.bRequiresContext = false;
 	Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("Camera interface")));
@@ -308,7 +289,6 @@ void UNiagaraDataInterfaceCamera::GetFunctions(TArray<FNiagaraFunctionSignature>
 	OutFunctions.Add(Sig);
 }
 
-#if WITH_EDITORONLY_DATA
 bool UNiagaraDataInterfaceCamera::GetFunctionHLSL(const FNiagaraDataInterfaceGPUParamInfo& ParamInfo, const FNiagaraDataInterfaceGeneratedFunction& FunctionInfo, int FunctionInstanceIndex, FString& OutHLSL)
 {
 	if ((FunctionInfo.DefinitionName == GetViewPropertiesName) ||
@@ -356,7 +336,7 @@ bool UNiagaraDataInterfaceCamera::UpgradeFunctionCall(FNiagaraFunctionSignature&
 	if (FunctionSignature.FunctionVersion < FNiagaraCameraDIFunctionVersion::LWCConversion)
 	{
 		TArray<FNiagaraFunctionSignature> AllFunctions;
-		GetFunctions(AllFunctions);
+		GetFunctionsInternal(AllFunctions);
 		for (const FNiagaraFunctionSignature& Sig : AllFunctions)
 		{
 			if (FunctionSignature.Name == Sig.Name)

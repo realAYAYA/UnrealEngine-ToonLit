@@ -16,7 +16,7 @@ class UInterchangeBaseNodeContainer;
 class UInterchangeMaterialInstanceFactoryNode;
 class UInterchangeShaderGraphNode;
 
-UCLASS(config = Interchange, meta = (DisplayName = "Interchange glTF"))
+UCLASS(config = Interchange, meta = (DisplayName = "Interchange glTF", ToolTip = "Interchange settings for glTF conversions."))
 class INTERCHANGEPIPELINES_API UGLTFPipelineSettings : public UDeveloperSettings
 {
 	GENERATED_BODY()
@@ -36,8 +36,8 @@ private:
 
 	static const TArray<FString> ExpectedMaterialInstanceIdentifiers; //Default MaterialInstance' identifiers
 
-	//Helper for the Settings Customizer to decide if the ParentMaterials should be editible or not
-	//Should be editible from Project Settings, and should NOT be editible from the Import
+	//Helper for the Settings Customizer to decide if the ParentMaterials should be editable or not.
+	//Should be editable from Project Settings, and should NOT be editable from the Import.
 	//It is set by the Pipeline's Customizer.
 	//Equals to Pipeline->CanEditPropertiesStates()
 	bool bMaterialParentsEditible = true;
@@ -53,12 +53,9 @@ class INTERCHANGEPIPELINES_API UInterchangeGLTFPipeline : public UInterchangePip
 public:
 	TObjectPtr<UGLTFPipelineSettings> GLTFPipelineSettings;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "glTF", meta = (DisplayName = "Use glTF Material Instance Library"))
-	bool bUseGLTFMaterialInstanceLibrary = false;
-
 protected:
 	virtual void AdjustSettingsForContext(EInterchangePipelineContext ImportType, TObjectPtr<UObject> ReimportAsset) override;
-	virtual void ExecutePipeline(UInterchangeBaseNodeContainer* BaseNodeContainer, const TArray<UInterchangeSourceData*>& SourceDatas) override;
+	virtual void ExecutePipeline(UInterchangeBaseNodeContainer* BaseNodeContainer, const TArray<UInterchangeSourceData*>& SourceDatas, const FString& ContentBasePath) override;
 
 	virtual bool CanExecuteOnAnyThread(EInterchangePipelineTask PipelineTask) override
 	{

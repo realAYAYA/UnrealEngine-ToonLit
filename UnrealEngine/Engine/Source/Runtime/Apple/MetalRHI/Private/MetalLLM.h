@@ -46,12 +46,12 @@ namespace MetalLLM
 // These work without the LLM module
 namespace MetalLLM
 {
-	void LogAllocTexture(mtlpp::Device& Device, mtlpp::TextureDescriptor const& Desc, mtlpp::Texture const& Texture);
-	void LogAllocBuffer(mtlpp::Device& Device, mtlpp::Buffer const& Buffer);
-	void LogAllocHeap(mtlpp::Device& Device, mtlpp::Heap const& Heap);
+	void LogAllocTexture(MTL::Device* Device, MTL::TextureDescriptor* Desc, MTL::Texture* Texture);
+	void LogAllocBuffer(MTL::Device* Device, FMetalBufferPtr Buffer);
+    void LogAllocBufferNative(MTL::Device* Device, MTLBufferPtr Buffer);
+	void LogAllocHeap(MTL::Device* Device, MTL::Heap* Heap);
 	
-	void LogAliasTexture(mtlpp::Texture const& Texture);
-	void LogAliasBuffer(mtlpp::Buffer const& Buffer);
+	void LogAliasTexture(MTL::Texture* Texture);
 }
 
 

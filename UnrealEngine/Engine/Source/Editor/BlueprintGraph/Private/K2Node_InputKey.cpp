@@ -290,7 +290,7 @@ void UK2Node_InputKey::ExpandNode(FKismetCompilerContext& CompilerContext, UEdGr
 		{
 			UEdGraphPin *EachPin = (*PinIt).Pin;
 			// Create the input touch event
-			UK2Node_InputKeyEvent* InputKeyEvent = CompilerContext.SpawnIntermediateEventNode<UK2Node_InputKeyEvent>(this, EachPin, SourceGraph);
+			UK2Node_InputKeyEvent* InputKeyEvent = CompilerContext.SpawnIntermediateNode<UK2Node_InputKeyEvent>(this, SourceGraph);
 			const FName ModifierName = GetModifierName();
 			if ( ModifierName != NAME_None )
 			{
@@ -335,7 +335,7 @@ void UK2Node_InputKey::ExpandNode(FKismetCompilerContext& CompilerContext, UEdGr
 
 		if (InputKeyPin->LinkedTo.Num() > 0)
 		{
-			UK2Node_InputKeyEvent* InputKeyEvent = CompilerContext.SpawnIntermediateEventNode<UK2Node_InputKeyEvent>(this, InputKeyPin, SourceGraph);
+			UK2Node_InputKeyEvent* InputKeyEvent = CompilerContext.SpawnIntermediateNode<UK2Node_InputKeyEvent>(this, SourceGraph);
 			const FName ModifierName = GetModifierName();
 			if ( ModifierName != NAME_None )
 			{

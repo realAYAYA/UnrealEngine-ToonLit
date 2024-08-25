@@ -2,9 +2,11 @@
 
 #include "UnsyncUtil.h"
 #include "UnsyncFile.h"
+#include "UnsyncSocket.h"
 
 #if UNSYNC_PLATFORM_WINDOWS
 #	include <Windows.h>
+#	include <shellapi.h>
 #	include <lm.h>
 #	include <lmdfs.h>
 #	include <wincrypt.h>
@@ -13,14 +15,18 @@
 #	pragma comment(lib, "Crypt32.lib")
 #	pragma comment(lib, "Bcrypt.lib")
 #	pragma comment(lib, "Mpr.lib")
+#	pragma comment(lib, "Advapi32.lib") // for registry access
 #endif	// UNSYNC_PLATFORM_WINDOWS
 
+#include <stdlib.h>
 #include <codecvt>
 #include <filesystem>
 #include <locale>
 #include <mutex>
 #include <sstream>
 #include <unordered_set>
+#include <system_error>
+#include <fmt/format.h>
 
 namespace unsync {
 
@@ -57,17 +63,22 @@ BytesToHexString(const uint8* Data, uint64 Size)
 	return Result;
 }
 
-FTimingLogger::FTimingLogger(const char* InName, bool InEnabled) : Enabled(InEnabled), Name(InName)
+FTimingLogger::FTimingLogger(const char* InName, ELogLevel InLogLevel, bool bInEnabled)
+: bEnabled(bInEnabled)
+, Name(InName)
+, LogLevel(InLogLevel)
 {
-	if (Enabled)
-	{
-		TimeBegin = TimePointNow();
-	}
+	TimeBegin = TimePointNow();
 }
 
 FTimingLogger::~FTimingLogger()
 {
-	if (Enabled)
+	Finish();
+}
+
+void FTimingLogger::Finish()
+{
+	if (bEnabled)
 	{
 		FTimePoint	  TimeEnd	   = TimePointNow();
 		FTimeDuration Duration	   = FTimeDuration(TimeEnd - TimeBegin);
@@ -79,14 +90,23 @@ FTimingLogger::~FTimingLogger()
 
 		if (Name.empty())
 		{
-			UNSYNC_VERBOSE(L"%.2f sec (%02d:%02d:%02d)", TotalSeconds, H, M, S);
+			LogPrintf(LogLevel, L"%.3f sec\n", TotalSeconds);
 		}
 		else
 		{
-			UNSYNC_VERBOSE(L"%hs: %.2f sec (%02d:%02d:%02d)", Name.c_str(), TotalSeconds, H, M, S);
+			if (TotalSeconds >= 60.0)
+			{
+				LogPrintf(LogLevel, L"%hs: %.3f sec (%02d:%02d:%02d)\n", Name.c_str(), TotalSeconds, H, M, S);
+			}
+			else
+			{
+				LogPrintf(LogLevel, L"%hs: %.3f sec\n", Name.c_str(), TotalSeconds);
+			}
 		}
 
 		LogFlush();
+
+		bEnabled = false;
 	}
 }
 
@@ -104,6 +124,11 @@ IsTrivialAsciiString(const T& Input)
 	return true;
 }
 
+#ifdef __clang__
+#	pragma clang diagnostic push
+#	pragma clang diagnostic ignored "-Wdeprecated-declarations"  // codecvt_utf8 is deprecated, but there is no trivial replacement
+#endif															  // __clang__
+
 std::wstring
 ConvertUtf8ToWide(std::string_view StringUtf8)
 {
@@ -111,10 +136,12 @@ ConvertUtf8ToWide(std::string_view StringUtf8)
 
 	if (IsTrivialAsciiString(StringUtf8))
 	{
-		Result.reserve(StringUtf8.length());
+		Result.resize(StringUtf8.length());
+		wchar_t* ResultChars = Result.data();
 		for (char c : StringUtf8)
 		{
-			Result.push_back((wchar_t)c);
+			*ResultChars = (wchar_t)c;
+			++ResultChars;
 		}
 	}
 	else
@@ -126,17 +153,20 @@ ConvertUtf8ToWide(std::string_view StringUtf8)
 	return Result;
 }
 
-std::string
-ConvertWideToUtf8(std::wstring_view StringWide)
+
+void
+ConvertWideToUtf8(std::wstring_view StringWide, std::string& Result)
 {
-	std::string Result;
+	Result.clear();
 
 	if (IsTrivialAsciiString(StringWide))
 	{
-		Result.reserve(StringWide.length());
+		Result.resize(StringWide.length());
+		char* ResultChars = Result.data();
 		for (wchar_t wc : StringWide)
 		{
-			Result.push_back((char)wc);
+			*ResultChars = (char)wc;
+			++ResultChars;
 		}
 	}
 	else
@@ -144,9 +174,19 @@ ConvertWideToUtf8(std::wstring_view StringWide)
 		std::wstring_convert<std::codecvt_utf8<wchar_t>> Cvt;
 		Result = Cvt.to_bytes(StringWide.data(), StringWide.data() + StringWide.length());
 	}
+}
 
+std::string
+ConvertWideToUtf8(std::wstring_view StringWide)
+{
+	std::string Result;
+	ConvertWideToUtf8(StringWide, Result);
 	return Result;
 }
+
+#ifdef __clang__
+#	pragma clang diagnostic pop
+#endif	// __clang__
 
 const bool
 FFileAttributeCache::Exists(const FPath& Path) const
@@ -168,6 +208,71 @@ StringToUpper(const std::wstring& Input)
 {
 	std::wstring Result = Input;
 	std::transform(Result.begin(), Result.end(), Result.begin(), [](int32 C) { return wchar_t(::toupper(C)); });
+	return Result;
+}
+
+std::string
+StringEscape(const std::string_view Input)
+{
+	// Adapted from Json11
+
+	std::string Result;
+
+	for (size_t i = 0; i < Input.length(); i++)
+	{
+		const char C = Input[i];
+		if (C == '\\')
+		{
+			Result += "\\\\";
+		}
+		else if (C == '"')
+		{
+			Result += "\\\"";
+		}
+		else if (C == '\b')
+		{
+			Result += "\\b";
+		}
+		else if (C == '\f')
+		{
+			Result += "\\f";
+		}
+		else if (C == '\n')
+		{
+			Result += "\\n";
+		}
+		else if (C == '\r')
+		{
+			Result += "\\r";
+		}
+		else if (C == '\t')
+		{
+			Result += "\\t";
+		}
+		else if (static_cast<uint8_t>(C) <= 0x1f)
+		{
+			char buf[8];
+			snprintf(buf, sizeof buf, "\\u%04x", C);
+			Result += buf;
+		}
+		else if (static_cast<uint8_t>(C) == 0xe2 && static_cast<uint8_t>(Input[i + 1]) == 0x80 &&
+				 static_cast<uint8_t>(Input[i + 2]) == 0xa8)
+		{
+			Result += "\\u2028";
+			i += 2;
+		}
+		else if (static_cast<uint8_t>(C) == 0xe2 && static_cast<uint8_t>(Input[i + 1]) == 0x80 &&
+				 static_cast<uint8_t>(Input[i + 2]) == 0xa9)
+		{
+			Result += "\\u2029";
+			i += 2;
+		}
+		else
+		{
+			Result += C;
+		}
+	}
+
 	return Result;
 }
 
@@ -267,7 +372,8 @@ DfsEnumerate(const FPath& Root)
 	return Result;
 }
 
-FPath GetUniversalPath(const FPath& Path)
+FPath
+GetUniversalPath(const FPath& Path)
 {
 	FPath Result = Path;
 
@@ -279,7 +385,7 @@ FPath GetUniversalPath(const FPath& Path)
 
 	WCHAR Buffer[MaxBufferSize] = {};
 
-	DWORD				 BufferSize		   = MaxBufferSize;
+	DWORD				  BufferSize		= MaxBufferSize;
 	UNIVERSAL_NAME_INFOW* UniversalNameInfo = (UNIVERSAL_NAME_INFOW*)Buffer;
 
 	DWORD ErrorCode = WNetGetUniversalNameW(Path.native().c_str(), UNIVERSAL_NAME_INFO_LEVEL, (LPVOID)UniversalNameInfo, &BufferSize);
@@ -296,6 +402,11 @@ FPath GetUniversalPath(const FPath& Path)
 FPath
 NormalizeFilenameUtf8(const std::string& InFilename)
 {
+	if (InFilename.empty())
+	{
+		return FPath();
+	}
+
 	std::string_view Filename	   = InFilename;
 	std::string_view FileUrlPrefix = "file://";
 	if (Filename.starts_with(FileUrlPrefix))
@@ -304,19 +415,29 @@ NormalizeFilenameUtf8(const std::string& InFilename)
 	}
 
 	FPath FilenameAsPath = ConvertUtf8ToWide(Filename);
+
 	FPath NormalPath = FilenameAsPath.lexically_normal();
-	FPath AbsoluteNormalPath = std::filesystem::absolute(NormalPath);
+	FPath AbsoluteNormalPath;
+	if (Filename.starts_with("\\\\") || Filename.starts_with("//"))
+	{
+		AbsoluteNormalPath = NormalPath;  // Assume network paths are absolute
+	}
+	else
+	{
+		FPath CanonicalPath = std::filesystem::weakly_canonical(NormalPath);
+		AbsoluteNormalPath	= std::filesystem::absolute(CanonicalPath);
+	}
+
 	return AbsoluteNormalPath;
 }
 
 FPath
 GetAbsoluteNormalPath(const FPath& InPath)
 {
-	FPath NormalPath = InPath.lexically_normal();
+	FPath NormalPath		 = InPath.lexically_normal();
 	FPath AbsoluteNormalPath = std::filesystem::absolute(NormalPath);
 	return AbsoluteNormalPath;
 }
-
 
 const FBuffer&
 GetSystemRootCerts()
@@ -408,6 +529,109 @@ GetSystemRootCerts()
 	GSystemRootCerts.PushBack(0);
 
 	return GSystemRootCerts;
+}
+
+#if UNSYNC_PLATFORM_WINDOWS
+void
+OpenUrlInDefaultBrowser(const char* Address)
+{
+	ShellExecuteA(nullptr, "open", Address, nullptr, nullptr, SW_SHOWNORMAL);
+}
+#else  // UNSYNC_PLATFORM_WINDOWS
+void
+OpenUrlInDefaultBrowser(const char* Address)
+{
+#	ifdef __APPLE__
+	std::string Command = fmt::format("open \"{}\"", Address);
+#	else // assume linux with xdg-utils installed
+	std::string Command = fmt::format("xdg-open \"{}\"", Address);
+#	endif
+
+	int RetCode = system(Command.c_str());
+	if (RetCode != 0)
+	{
+		UNSYNC_ERROR(L"Failed to run command '%hs'", Command.c_str());
+	}
+}
+#endif // UNSYNC_PLATFORM_WINDOWS
+
+
+#if UNSYNC_PLATFORM_WINDOWS
+FPath GetUserHomeDirectory()
+{
+	if (const char* EnvUserProfile = getenv("USERPROFILE"))
+	{
+		return NormalizeFilenameUtf8(EnvUserProfile);
+	}
+	else
+	{
+		return {};
+	}
+}
+#else // UNSYNC_PLATFORM_WINDOWS
+FPath
+GetUserHomeDirectory()
+{
+	if (const char* EnvUserProfile = getenv("HOME"))
+	{
+		return NormalizeFilenameUtf8(EnvUserProfile);
+	}
+	else
+	{
+		return {};
+	}
+}
+#endif // UNSYNC_PLATFORM_WINDOWS
+
+std::string
+FormatSystemErrorMessage(int32 ErrorCode)
+{
+	std::string ErrorMessage = std::system_category().message(ErrorCode);
+	return fmt::format("Error code {}: {}", ErrorCode, ErrorMessage);
+}
+
+FHash256
+GetAnonymizedMachineId(std::string_view Salt)
+{
+	std::string Seed;
+
+	Seed += Salt;
+	Seed += GetCurrentHostName();
+	Seed += " {22FF4421-8CAC-4A14-9E4C-780AAF8BBF2A}";
+
+#if UNSYNC_PLATFORM_WINDOWS
+	{
+		HKEY Key = {};
+		if (RegOpenKeyA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Cryptography", &Key) == ERROR_SUCCESS)
+		{
+			char  Buffer[512] = {};
+			DWORD BufferSize  = sizeof(Buffer);
+			auto  Status	  = RegQueryValueExA(Key, "MachineGuid", nullptr, nullptr, (LPBYTE)Buffer, &BufferSize);
+			if (Status == ERROR_SUCCESS && BufferSize > 1)
+			{
+				std::string_view MachineGuid = std::string_view(Buffer, BufferSize - 1);
+				Seed += " MachineGuid ";
+				Seed += MachineGuid;
+			}
+			RegCloseKey(Key);
+		}
+	}
+#endif	// UNSYNC_PLATFORM_WINDOWS
+
+	// TODO: read `/etc/machine-id` on linux
+	// TODO: use `ioreg -rd1 -c IOPlatformExpertDevice` to get IOPlatformUUID on mac
+
+	FHash256 Result = HashBlake3String<FHash256>(Seed);
+
+	return Result;
+}
+
+std::string
+GetAnonymizedMachineIdString(std::string_view Seed)
+{
+	FHash256	MachineId = GetAnonymizedMachineId(Seed);
+	std::string Result	  = HashToHexString(MachineId);
+	return Result;
 }
 
 }  // namespace unsync

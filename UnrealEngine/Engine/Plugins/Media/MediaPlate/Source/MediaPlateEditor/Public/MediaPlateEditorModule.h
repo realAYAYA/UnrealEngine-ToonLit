@@ -4,6 +4,7 @@
 
 #include "Containers/Map.h"
 #include "CoreMinimal.h"
+#include "LevelEditor.h"
 #include "Logging/LogMacros.h"
 #include "Modules/ModuleManager.h"
 #include "TickableEditorObject.h"
@@ -64,6 +65,12 @@ private:
 	/** Stores what we have aded to the placement module. */
 	TArray<TOptional<FPlacementModeID>> PlaceActors;
 
+	/** Holds the context menu extender. */
+	FLevelEditorModule::FLevelViewportMenuExtender_SelectedActors LevelViewportContextMenuRemoteControlExtender;
+
+	/** Holds the menu extender delegate handle. */
+	FDelegateHandle MenuExtenderDelegateHandle;
+
 	/**
 	 * Gathers the Info on the Media Plate Place Actors Category.
 	 */
@@ -101,4 +108,24 @@ private:
 	 * Enables real time viewports so media plates can update in the editor.
 	 */
 	void ForceRealTimeViewports(const bool bEnable);
+
+	/**
+	 * Handle adding the menu extender for the actors.
+	 */
+	TSharedRef<FExtender> ExtendLevelViewportContextMenuForMediaPlate(const TSharedRef<FUICommandList> CommandList, TArray<AActor*> SelectedActors);
+
+	/**
+	 * Create all required callbacks for context menu's widget and button creation.
+	 */
+	void RegisterContextMenuExtender();
+
+	/**
+	 * Release context menu related resources such as handles.
+	 */
+	void UnregisterContextMenuExtender();
+
+	/**
+	 * Called when an Actor has been added to a Level
+	 */
+	void OnLevelActorAdded(AActor* InActor);
 };

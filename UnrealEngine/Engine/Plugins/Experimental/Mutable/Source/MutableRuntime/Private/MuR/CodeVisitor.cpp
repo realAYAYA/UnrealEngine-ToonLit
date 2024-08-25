@@ -1,6 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-
 #include "MuR/CodeVisitor.h"
 
 #include "HAL/PlatformCrt.h"
@@ -9,85 +8,83 @@
 namespace mu
 {
 
-
 	//-------------------------------------------------------------------------------------------------
 	//-------------------------------------------------------------------------------------------------
 	//-------------------------------------------------------------------------------------------------
-	void SubtreeParametersVisitor::Run(OP::ADDRESS root, FProgram& program)
+	void SubtreeParametersVisitor::Run(OP::ADDRESS Root, const FProgram& Program)
 	{
 		// Cached?
-		auto it = m_resultCache.Find(root);
+		TArray<int32>* it = ResultCache.Find(Root);
 		if (it)
 		{
-			m_params = *it;
+			RelevantParams = *it;
 			return;
 		}
 
 		// Not cached
+		MUTABLE_CPUPROFILER_SCOPE(SubtreeParametersVisitor);
+
+		Visited.SetNum(Program.m_opAddress.Num());
+		if (Program.m_opAddress.Num())
 		{
-			MUTABLE_CPUPROFILER_SCOPE(SubtreeParametersVisitor);
-
-			m_visited.SetNum(program.m_opAddress.Num());
-			if (program.m_opAddress.Num())
-			{
-				FMemory::Memzero(&m_visited[0], m_visited.Num());
-			}
-
-			m_currentParams.SetNum(program.m_parameters.Num());
-			if (m_currentParams.Num())
-			{
-				FMemory::Memzero(&m_currentParams[0], sizeof(int) * m_currentParams.Num());
-			}
-
-			m_pending.Reserve(program.m_opAddress.Num() / 4);
-			m_pending.Add(root);
-
-			while (m_pending.Num())
-			{
-				OP::ADDRESS at = m_pending.Pop();
-
-				if (!m_visited[at])
-				{
-					m_visited[at] = true;
-
-					switch (program.GetOpType(at))
-					{
-					case OP_TYPE::NU_PARAMETER:
-					case OP_TYPE::SC_PARAMETER:
-					case OP_TYPE::BO_PARAMETER:
-					case OP_TYPE::CO_PARAMETER:
-					case OP_TYPE::PR_PARAMETER:
-					case OP_TYPE::IM_PARAMETER:
-						m_currentParams[program.GetOpArgs<OP::ParameterArgs>(at).variable]++;
-						break;
-
-					default:
-						break;
-					}
-
-					ForEachReference(program, at, [&](OP::ADDRESS ref)
-						{
-							if (ref)
-							{
-								m_pending.Add(ref);
-							}
-						});
-				}
-			}
-
-
-			// Build result
-			m_params.Empty();
-			for (size_t i = 0; i < m_currentParams.Num(); ++i)
-			{
-				if (m_currentParams[i])
-				{
-					m_params.Add(int(i));
-				}
-			}
-
-			m_resultCache.Add(root, m_params);
+			FMemory::Memzero(&Visited[0], Visited.Num());
 		}
+
+		CurrentParams.SetNum(Program.m_parameters.Num());
+		if (CurrentParams.Num())
+		{
+			FMemory::Memzero(CurrentParams.GetData(), CurrentParams.GetAllocatedSize());
+		}
+
+		Pending.Reserve(Program.m_opAddress.Num() / 4);
+		Pending.Add(Root);
+
+		while (Pending.Num())
+		{
+			OP::ADDRESS at = Pending.Pop();
+
+			if (!Visited[at])
+			{
+				Visited[at] = true;
+
+				switch (Program.GetOpType(at))
+				{
+				case OP_TYPE::NU_PARAMETER:
+				case OP_TYPE::SC_PARAMETER:
+				case OP_TYPE::BO_PARAMETER:
+				case OP_TYPE::CO_PARAMETER:
+				case OP_TYPE::PR_PARAMETER:
+				case OP_TYPE::IM_PARAMETER:
+				case OP_TYPE::ST_PARAMETER:
+					CurrentParams[Program.GetOpArgs<OP::ParameterArgs>(at).variable]++;
+					break;
+
+				default:
+					break;
+				}
+
+				ForEachReference(Program, at, [&](OP::ADDRESS ref)
+					{
+						if (ref)
+						{
+							Pending.Add(ref);
+						}
+					});
+			}
+		}
+
+
+		// Build result
+		RelevantParams.Empty();
+		for (int32 i = 0; i < CurrentParams.Num(); ++i)
+		{
+			if (CurrentParams[i])
+			{
+				RelevantParams.Add(i);
+			}
+		}
+
+		ResultCache.Add(Root, RelevantParams);
 	}
 
 }

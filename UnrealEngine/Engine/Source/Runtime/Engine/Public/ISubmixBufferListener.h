@@ -3,14 +3,13 @@
 
 #include "HAL/Platform.h"
 
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_3
-#include "Sound/SoundSubmix.h"
-#endif
+#include "Templates/SharedPointer.h"
 
+// Forward Declarations
 class USoundSubmix;
 
 /** Abstract interface for receiving audio data from a given submix. */
-class ISubmixBufferListener
+class ISubmixBufferListener : public TSharedFromThis<ISubmixBufferListener, ESPMode::ThreadSafe>
 {
 public:
 	virtual ~ISubmixBufferListener() = default;
@@ -38,4 +37,14 @@ public:
 	{
 		return false;
 	}
+
+	virtual const FString& GetListenerName() const
+	{
+		static FString UnsetName = TEXT("Unset");
+		return UnsetName;
+	}
+
+protected:
+	template <typename ObjectType, ESPMode Mode>
+	friend class SharedPointerInternals::TIntrusiveReferenceController;
 };

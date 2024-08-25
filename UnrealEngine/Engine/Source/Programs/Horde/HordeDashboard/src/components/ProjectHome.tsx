@@ -4,7 +4,6 @@ import React from 'react';
 import { observer } from 'mobx-react-lite';
 import { Link, useParams } from 'react-router-dom';
 import { Stack, SearchBox, Text, FocusZoneDirection, ScrollbarVisibility, FocusZone, ScrollablePane } from '@fluentui/react';
-import { detailClasses, hordeClasses } from '../styles/Styles';
 import { Breadcrumbs, BreadcrumbItem } from './Breadcrumbs';
 import { TopNav } from './TopNav';
 import { action, makeObservable, observable } from 'mobx';
@@ -12,6 +11,8 @@ import backend, { useBackend } from '../backend';
 import { ProjectData, StreamData } from '../backend/Api';
 import dashboard from '../backend/Dashboard';
 import { useWindowSize } from '../base/utilities/hooks';
+import { getHordeTheme } from '../styles/theme';
+import { getHordeStyling } from '../styles/Styles';
 
 type FilteredCategory = {
     key: string;
@@ -72,7 +73,10 @@ const localState = new LocalState();
 
 export const ProjectHome: React.FC = observer(() => {
     const { projectId } = useParams<{ projectId: string }>();
-    const { projectStore } = useBackend();
+   const { projectStore } = useBackend();
+
+   const { hordeClasses, detailClasses } = getHordeStyling();   
+   const hordeTheme = getHordeTheme();
 
     const activeProject = projectStore.byId(projectId);
 
@@ -117,9 +121,9 @@ export const ProjectHome: React.FC = observer(() => {
         <Stack className={hordeClasses.horde}>
             <TopNav />
             <Breadcrumbs items={crumbs} />
-            <Stack horizontal>
-                <div key={`windowsize_streamview_${windowSize.width}_${windowSize.height}`} style={{ width: vw / 2 - (1440/2), flexShrink: 0, backgroundColor: 'rgb(250, 249, 249)' }} />
-                <Stack tokens={{ childrenGap: 0 }} styles={{ root: { backgroundColor: 'rgb(250, 249, 249)', width: "100%" } }}>
+            <Stack horizontal style={{backgroundColor: hordeTheme.horde.neutralBackground}}>
+                <div key={`windowsize_streamview_${windowSize.width}_${windowSize.height}`} style={{ width: vw / 2 - (1440/2), flexShrink: 0 }} />
+                <Stack tokens={{ childrenGap: 0 }} styles={{ root: { width: "100%" } }}>
                     <Stack style={{ maxWidth: 1440, paddingTop: 6, marginLeft: 4 }}>
                         <FocusZone direction={FocusZoneDirection.vertical} style={{ padding: 0 }}>
                             <div className={detailClasses.container} style={{ width: "100%", height: 'calc(100vh - 208px)', position: 'relative' }} data-is-scrollable={true}>
@@ -127,7 +131,7 @@ export const ProjectHome: React.FC = observer(() => {
                                     <Stack tokens={{ childrenGap: 18 }} style={{ padding: 0 }}>
                                         <Stack.Item align={'center'} className={hordeClasses.projectLogoCard}>
                                             {
-                                                activeProject ? <img style={imgStyle} src={`/api/v1/projects/${activeProject!.id}/logo`} alt="" /> : <div></div>            
+                                                activeProject ? <img style={imgStyle} src={`/api/v1/projects/${activeProject!.id}/logo`} alt="Project logo" height={300} /> : <div></div>            
                                             }
                                         </Stack.Item>
                                         <Stack tokens={{ childrenGap: 20 }} className={hordeClasses.raised}>

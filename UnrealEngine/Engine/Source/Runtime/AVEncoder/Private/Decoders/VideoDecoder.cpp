@@ -11,7 +11,9 @@ namespace AVEncoder
 
 struct FVideoDecoder::FPlatformDecoderAllocInterface
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FVideoDecoderMethodsWindows	AllocMethods = {};
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	void*						ClientData = nullptr;
 };
 
@@ -27,13 +29,15 @@ bool FVideoDecoder::CreateDecoderAllocationInterface()
 	if (!PlatformDecoderAllocInterface)
 	{
 		check(PlatformDecoderAllocInterface == nullptr);
-		FPlatformDecoderAllocInterface* Interface = new FPlatformDecoderAllocInterface {};
 
-// TODO: Platform specific!!
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
+		FPlatformDecoderAllocInterface* Interface = new FPlatformDecoderAllocInterface {};
+		// TODO: Platform specific!!
 		Interface->AllocMethods.MagicCookie = 0x57696e58;		// 'WinX'
 		Interface->AllocMethods.This = nullptr;					// This will become the client's 'this' pointer
 		Interface->AllocMethods.GetD3DDevice = nullptr;			// Method to get the current D3D device from the client.
 		Interface->AllocMethods.AllocateFrameBuffer = nullptr;	// Method to allocate frame buffer memory from the client.
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		// Call into the client to set up the allocation interface.
 		CreateDecoderAllocationInterfaceFN(&Interface->AllocMethods, &Interface->ClientData);
@@ -53,6 +57,7 @@ bool FVideoDecoder::CreateDecoderAllocationInterface()
 	return true;
 }
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 void FVideoDecoder::ReleaseDecoderAllocationInterface()
 {
 	if (PlatformDecoderAllocInterface)
@@ -62,24 +67,30 @@ void FVideoDecoder::ReleaseDecoderAllocationInterface()
 		delete PlatformDecoderAllocInterface;
 		PlatformDecoderAllocInterface = nullptr;
 	}
-
 }
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 void* FVideoDecoder::GetAllocationInterfaceMethods()
 {
 	return PlatformDecoderAllocInterface ? &PlatformDecoderAllocInterface->AllocMethods : nullptr;
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 EFrameBufferAllocReturn FVideoDecoder::AllocateOutputFrameBuffer(FVideoDecoderAllocFrameBufferResult* OutBuffer, const FVideoDecoderAllocFrameBufferParams* InAllocParams)
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 {
 	check(InAllocParams);
 	check(OutBuffer);
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	if (PlatformDecoderAllocInterface && PlatformDecoderAllocInterface->AllocMethods.AllocateFrameBuffer.IsBound())
 	{
 		return PlatformDecoderAllocInterface->AllocMethods.AllocateFrameBuffer.Execute(PlatformDecoderAllocInterface->AllocMethods.This, InAllocParams, OutBuffer);
 	}
 	return EFrameBufferAllocReturn::CODEC_Failure;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
 

@@ -9,7 +9,9 @@
 #include "CustomBuildSteps.h"
 #include "HAL/Platform.h"
 #include "LocalizationDescriptor.h"
+#include "Misc/Optional.h"
 #include "ModuleDescriptor.h"
+#include "PluginDisallowedDescriptor.h"
 #include "PluginReferenceDescriptor.h"
 #include "Serialization/JsonWriter.h"
 #include "Templates/SharedPointer.h"
@@ -93,7 +95,11 @@ struct FPluginDescriptor
 	FString VersePath;
 
 	/** Origin/visibility of Verse code in this plugin's Content/Verse folder */
-	EVerseScope::Type VerseScope = EVerseScope::User;
+	EVerseScope::Type VerseScope = EVerseScope::PublicUser;
+
+	/** The version of the Verse language that this plugin targets.
+		If no value is specified, the latest stable version is used. */
+	TOptional<uint32> VerseVersion;
 
 	/** If to generate Verse source code definitions from assets contained in this plugin */
 	bool bEnableVerseAssetReflection = false;
@@ -147,7 +153,8 @@ struct FPluginDescriptor
 	TArray<FPluginReferenceDescriptor> Plugins;
 
 	/** Plugins that cannot be used by this plugin */
-	TArray<FString> DisallowedPlugins;
+	TArray<FPluginDisallowedDescriptor> DisallowedPlugins;
+
 
 #if WITH_EDITOR
 	/** Cached json for custom data */
@@ -162,6 +169,9 @@ struct FPluginDescriptor
 
 	/** Constructor. */
 	PROJECTS_API FPluginDescriptor();
+
+	/** Loads the descriptor from the given file. */
+	PROJECTS_API bool Load(const TCHAR* FileName, FText* OutFailReason = nullptr);
 
 	/** Loads the descriptor from the given file. */
 	PROJECTS_API bool Load(const FString& FileName, FText* OutFailReason = nullptr);
@@ -181,10 +191,13 @@ struct FPluginDescriptor
 	/** Reads the descriptor from the given JSON object */
 	PROJECTS_API bool Read(const FJsonObject& Object, FText& OutFailReason);
 
-	/** Saves the descriptor from the given file. */
+	/** Saves the descriptor to the given file. */
+	PROJECTS_API bool Save(const TCHAR* FileName, FText* OutFailReason = nullptr) const;
+
+	/** Saves the descriptor to the given file. */
 	PROJECTS_API bool Save(const FString& FileName, FText* OutFailReason = nullptr) const;
 
-	/** Saves the descriptor from the given file. */
+	/** Saves the descriptor to the given file. */
 	PROJECTS_API bool Save(const FString& FileName, FText& OutFailReason) const;
 
 	/** Writes a descriptor to JSON */

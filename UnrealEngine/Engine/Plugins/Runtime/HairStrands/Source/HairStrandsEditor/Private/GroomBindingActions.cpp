@@ -47,7 +47,7 @@ void ExecuteRebuildBindingAsset(const FToolMenuContext& InContext)
 						BindingAsset->GetSourceGeometryCache()->ConditionalPostLoad();
 					}
 				}
-				FGroomBindingBuilder::BuildBinding(BindingAsset, true);
+				BindingAsset->CacheDerivedDatas();
 				BindingAsset->GetOutermost()->MarkPackageDirty();
 			}
 		}

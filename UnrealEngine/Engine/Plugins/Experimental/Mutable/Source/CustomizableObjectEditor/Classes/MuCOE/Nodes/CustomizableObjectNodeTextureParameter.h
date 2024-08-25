@@ -19,8 +19,13 @@ class CUSTOMIZABLEOBJECTEDITOR_API UCustomizableObjectNodeTextureParameter : pub
 public:
 	GENERATED_BODY()
 
+	/** Default value of the parameter. */
 	UPROPERTY(EditAnywhere, Category=CustomizableObject)
 	TObjectPtr<UTexture2D> DefaultValue;
+
+	/** Reference Texture where this parameter copies some properties from. */
+	UPROPERTY(EditAnywhere, Category=CustomizableObject)
+	TObjectPtr<UTexture2D> ReferenceValue;
 
 	UPROPERTY(EditAnywhere, Category=CustomizableObject)
 	FString ParameterName = "Default Name";
@@ -36,13 +41,14 @@ public:
 	UPROPERTY(EditAnywhere, Category = CustomizableObject)
 	int32 TextureSizeY = 0;
 
-	// Begin EdGraphNode interface
-	FText GetNodeTitle(ENodeTitleType::Type TitleType) const override;
-	FLinearColor GetNodeTitleColor() const override;
-	FText GetTooltipText() const override;
+	// EdGraphNode interface
+	virtual FText GetNodeTitle(ENodeTitleType::Type TitleType) const override;
+	virtual FLinearColor GetNodeTitleColor() const override;
+	virtual FText GetTooltipText() const override;
 
 	// UCustomizableObjectNode interface
-	void AllocateDefaultPins(UCustomizableObjectNodeRemapPins* RemapPins) override;
+	virtual void BackwardsCompatibleFixup() override;
+	virtual void AllocateDefaultPins(UCustomizableObjectNodeRemapPins* RemapPins) override;
 	virtual bool IsAffectedByLOD() const override { return false; }
 };
 

@@ -30,6 +30,22 @@ namespace UE::PixelStreaming
 	constexpr int FAudioCapturer::SampleRate;
 	constexpr int FAudioCapturer::NumChannels;
 
+	FAudioCapturerListener::FAudioCapturerListener(FAudioCapturer& InParent)
+		: Parent(&InParent)
+	{
+	}
+
+	void FAudioCapturerListener::OnNewSubmixBuffer(const USoundSubmix* OwningSubmix, float* AudioData, int32 NumSamples, int32 InNumChannels, const int32 InSampleRate, double AudioClock)
+	{
+		check(Parent);
+		Parent->OnNewSubmixBuffer(OwningSubmix, AudioData, NumSamples, InNumChannels, InSampleRate, AudioClock);
+	}
+
+	FAudioCapturer::FAudioCapturer()
+		: Listener(MakeShared<FAudioCapturerListener>(*this))
+	{
+	}
+
 	void FAudioCapturer::OnNewSubmixBuffer(const USoundSubmix* OwningSubmix, float* AudioData, int32 NumSamples, int32 InNumChannels, const int32 InSampleRate, double AudioClock)
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE_ON_CHANNEL_STR("PixelStreaming FAudioCapturer::OnNewSubmixBuffer", PixelStreamingChannel);
@@ -86,7 +102,7 @@ namespace UE::PixelStreaming
 				}
 			}
 
-			RecordingBuffer.RemoveAt(0, BytesPer10Ms, false);
+			RecordingBuffer.RemoveAt(0, BytesPer10Ms, EAllowShrinking::No);
 		}
 	}
 
@@ -130,7 +146,7 @@ namespace UE::PixelStreaming
 		}
 
 		bInitialized = true;
-		AudioDevice->RegisterSubmixBufferListener(this);
+		AudioDevice->RegisterSubmixBufferListener(Listener->AsShared(), AudioDevice->GetMainSubmixObject());
 
 		UE_LOG(LogPixelStreamingAudioCapturer, Verbose, TEXT("Init"));
 
@@ -154,7 +170,7 @@ namespace UE::PixelStreaming
 			return -1;
 		}
 
-		AudioDevice->UnregisterSubmixBufferListener(this);
+		AudioDevice->UnregisterSubmixBufferListener(Listener->AsShared(), AudioDevice->GetMainSubmixObject());
 		bInitialized = false;
 
 		{

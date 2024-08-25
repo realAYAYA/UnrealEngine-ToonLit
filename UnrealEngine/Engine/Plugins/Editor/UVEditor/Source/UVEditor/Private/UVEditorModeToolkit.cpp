@@ -464,6 +464,7 @@ void FUVEditorModeToolkit::BuildToolPalette(FName PaletteIndex, class FToolBarBu
 		ToolbarBuilder.AddToolBarButton(Commands.BeginTransformTool);
 		ToolbarBuilder.AddToolBarButton(Commands.BeginAlignTool);
 		ToolbarBuilder.AddToolBarButton(Commands.BeginDistributeTool);
+		ToolbarBuilder.AddToolBarButton(Commands.BeginTexelDensityTool);
 		ToolbarBuilder.AddToolBarButton(Commands.BeginChannelEditTool);
 		ToolbarBuilder.AddToolBarButton(Commands.BeginSeamTool);
 		ToolbarBuilder.AddToolBarButton(Commands.BeginParameterizeMeshTool);

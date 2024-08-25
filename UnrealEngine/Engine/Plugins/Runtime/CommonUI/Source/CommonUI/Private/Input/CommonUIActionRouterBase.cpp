@@ -340,6 +340,27 @@ TArray<const UWidget*> UCommonUIActionRouterBase::GatherActiveAnalogScrollRecipi
 	{
 		return ActiveRootNode->GatherScrollRecipients();
 	}
+	else
+	{
+		if (const UCommonInputActionDomainTable* ActionDomainTable = GetActionDomainTable())
+		{
+			for (const UCommonInputActionDomain* ActionDomain : ActionDomainTable->ActionDomains)
+			{
+				if (const FActionDomainSortedRootList* SortedRootList = ActionDomainRootNodes.Find(ActionDomain))
+				{
+					for (const FActivatableTreeRootRef& RootNode : SortedRootList->RootList)
+					{
+						// only return the first of the root nodes that's in the sorted root list in action domain order.
+						if (RootNode->IsReceivingInput() && RootNode->DoesWidgetSupportActivationFocus())
+						{
+							return RootNode->GatherScrollRecipients();
+						}
+					}
+				}
+			}
+		}
+	}
+
 	return TArray<const UWidget*>();
 }
 
@@ -677,8 +698,7 @@ void UCommonUIActionRouterBase::HandleRootNodeActivated(TWeakPtr<FActivatableTre
 			ActivatedRoot->SetCanReceiveInput(true);
 			ActivatedRoot->OnLeafmostActiveNodeChanged.BindUObject(this, &UCommonUIActionRouterBase::HandleLeafmostActiveNodeChanged);
 			
-			UCommonInputSubsystem& CommonInputSubsystem = GetInputSubsystem();
-			if (UCommonInputActionDomainTable* ActionDomainTable = CommonInputSubsystem.GetActionDomainTable())
+			if (const UCommonInputActionDomainTable* ActionDomainTable = GetActionDomainTable())
 			{
 				// We find the first root node that is receiving input and bail early. 
 				// The action domains and root lists are sorted so we should end up with a node with a higher paint layer
@@ -781,11 +801,15 @@ void UCommonUIActionRouterBase::HandlePostGarbageCollect()
 	}
 }
 
+const UCommonInputActionDomainTable* UCommonUIActionRouterBase::GetActionDomainTable() const
+{
+	UCommonInputSubsystem* InputSubsytem = GetLocalPlayerChecked()->GetSubsystem<UCommonInputSubsystem>();
+	return InputSubsytem ? InputSubsytem->GetActionDomainTable() : nullptr;
+}
+
 bool UCommonUIActionRouterBase::ProcessInputOnActionDomains(ECommonInputMode ActiveInputMode, FKey Key, EInputEvent InputEvent) const
 {
-	UCommonInputSubsystem& CommonInputSubsystem = GetInputSubsystem();
-	UCommonInputActionDomainTable* ActionDomainTable = CommonInputSubsystem.GetActionDomainTable();
-
+	const UCommonInputActionDomainTable* ActionDomainTable = GetActionDomainTable();
 	if (!ActionDomainTable)
 	{
 		return false;
@@ -834,10 +858,8 @@ bool UCommonUIActionRouterBase::ProcessInputOnActionDomains(ECommonInputMode Act
 EProcessHoldActionResult UCommonUIActionRouterBase::ProcessHoldInputOnActionDomains(ECommonInputMode ActiveInputMode, FKey Key, EInputEvent InputEvent) const
 {
 	EProcessHoldActionResult HoldActionResult = EProcessHoldActionResult::Unhandled;
-
-	UCommonInputSubsystem& CommonInputSubsystem = GetInputSubsystem();
-	UCommonInputActionDomainTable* ActionDomainTable = CommonInputSubsystem.GetActionDomainTable();
-
+	
+	const UCommonInputActionDomainTable* ActionDomainTable = GetActionDomainTable();
 	if (!ActionDomainTable)
 	{
 		return HoldActionResult;
@@ -1146,6 +1168,14 @@ void UCommonUIActionRouterBase::RegisterWidgetBindings(const FActivatableTreeNod
 	}
 }
 
+void UCommonUIActionRouterBase::RefreshActiveRootFocusRestorationTarget() const
+{
+	if (ActiveRootNode)
+	{
+		ActiveRootNode->RefreshCachedRestorationTarget();
+	}
+}
+
 void UCommonUIActionRouterBase::RefreshActiveRootFocus()
 {
 	if (ActiveRootNode)
@@ -1160,6 +1190,11 @@ void UCommonUIActionRouterBase::RefreshUIInputConfig()
 	{
 		ApplyUIInputConfig(ActiveInputConfig.GetValue(), /*bForceRefresh*/ true);
 	}
+}
+
+TWeakPtr<FActivatableTreeRoot> UCommonUIActionRouterBase::GetActiveRoot() const
+{
+	return ActiveRootNode;
 }
 
 void UCommonUIActionRouterBase::SetActiveRoot(FActivatableTreeRootPtr NewActiveRoot)
@@ -1241,12 +1276,12 @@ UCommonUIActionRouterBase::FPendingWidgetRegistration& UCommonUIActionRouterBase
 
 FActivatableTreeNodePtr UCommonUIActionRouterBase::FindNode(const UCommonActivatableWidget* Widget) const
 {
-	FActivatableTreeNodePtr FoundNode;
 	if (Widget)
 	{
 		const bool bIsModal = Widget->IsModal();
 		for (const FActivatableTreeRootPtr RootNode : RootNodes)
 		{
+			FActivatableTreeNodePtr FoundNode;
 			if (!bIsModal)
 			{
 				FoundNode = FindNodeRecursive(RootNode, *Widget);
@@ -1259,27 +1294,24 @@ FActivatableTreeNodePtr UCommonUIActionRouterBase::FindNode(const UCommonActivat
 
 			if (FoundNode.IsValid())
 			{
-				break;
+				return FoundNode;
 			}
 		}
-
-		if (!FoundNode.IsValid())
+				
+		for (const TPair<TObjectPtr<UCommonInputActionDomain>, FActionDomainSortedRootList>& Pair : ActionDomainRootNodes)
 		{
-			for (const TPair<TObjectPtr<UCommonInputActionDomain>, FActionDomainSortedRootList>& Pair : ActionDomainRootNodes)
+			for (const FActivatableTreeRootRef& RootNode : Pair.Value.RootList)
 			{
-				for (const FActivatableTreeRootRef& RootNode : Pair.Value.RootList)
+				FActivatableTreeNodePtr FoundNode = FindNodeRecursive(RootNode, *Widget);
+				if (FoundNode.IsValid())
 				{
-					FoundNode = FindNodeRecursive(RootNode, *Widget);
-					if (FoundNode.IsValid())
-					{
-						break;
-					}
+					return FoundNode;
 				}
 			}
 		}
 	}
 
-	return FoundNode;
+	return nullptr;
 }
 
 FActivatableTreeNodePtr UCommonUIActionRouterBase::FindOwningNode(const UWidget& Widget) const
@@ -1391,32 +1423,29 @@ void UCommonUIActionRouterBase::RefreshActionDomainLeafNodeConfig()
 		return;
 	}
 
-	if (UCommonInputSubsystem* CommonInputSubsystem = GetLocalPlayer() ? GetLocalPlayer()->GetSubsystem<UCommonInputSubsystem>() : nullptr)
+	if (const UCommonInputActionDomainTable* ActionDomainTable = GetActionDomainTable())
 	{
-		if (UCommonInputActionDomainTable* ActionDomainTable = CommonInputSubsystem->GetActionDomainTable())
+		for (const UCommonInputActionDomain* ActionDomain : ActionDomainTable->ActionDomains)
 		{
-			for (const UCommonInputActionDomain* ActionDomain : ActionDomainTable->ActionDomains)
+			if (FActionDomainSortedRootList* SortedRootList = ActionDomainRootNodes.Find(ActionDomain))
 			{
-				if (FActionDomainSortedRootList* SortedRootList = ActionDomainRootNodes.Find(ActionDomain))
+				for (FActivatableTreeRootRef& RootNode : SortedRootList->RootList)
 				{
-					for (FActivatableTreeRootRef& RootNode : SortedRootList->RootList)
+					// only root nodes that are actively receiving input and supports widget activation focus
+					// should update leaf nodes and have input config applied. This will also update focus.
+					if (RootNode->IsReceivingInput() && RootNode->DoesWidgetSupportActivationFocus())
 					{
-						// only root nodes that are actively receiving input and supports widget activation focus
-						// should update leaf nodes and have input config applied. This will also update focus.
-						if (RootNode->IsReceivingInput() && RootNode->DoesWidgetSupportActivationFocus())
+						if (!RootNode->UpdateLeafmostActiveNode(RootNode))
 						{
-							if (!RootNode->UpdateLeafmostActiveNode(RootNode))
-							{
-								RootNode->ApplyLeafmostNodeConfig();
-							}
-							return;
+							RootNode->ApplyLeafmostNodeConfig();
 						}
+						return;
 					}
 				}
 			}
-
-			SetActiveUIInputConfig(FUIInputConfig(ActionDomainTable->InputMode, ActionDomainTable->MouseCaptureMode), ActionDomainTable);
 		}
+
+		SetActiveUIInputConfig(FUIInputConfig(ActionDomainTable->InputMode, ActionDomainTable->MouseCaptureMode), ActionDomainTable);
 	}
 }
 
@@ -1459,11 +1488,11 @@ void UCommonUIActionRouterBase::ApplyUIInputConfig(const FUIInputConfig& NewConf
 						GetWorld()->GetTimerManager().SetTimerForNextTick(this, &ThisClass::FlushPressedKeys);
 					}
 
-					EMouseCaptureMode PrevCaptureMode = GameViewportClient->GetMouseCaptureMode();
-					const bool bWasPermanentlyCaptured = PrevCaptureMode == EMouseCaptureMode::CapturePermanently || PrevCaptureMode == EMouseCaptureMode::CapturePermanently_IncludingInitialMouseDown;
+					const bool bWasCursorHidden = !PC->ShouldShowMouseCursor();
 
 					GameViewportClient->SetMouseCaptureMode(NewConfig.GetMouseCaptureMode());
 					GameViewportClient->SetHideCursorDuringCapture(NewConfig.HideCursorDuringViewportCapture() && !ShouldAlwaysShowCursor());
+					GameViewportClient->SetMouseLockMode(NewConfig.GetMouseLockMode());
 
 					FReply& SlateOperations = LocalPlayer.GetSlateOperations();
 					const EMouseCaptureMode CaptureMode = NewConfig.GetMouseCaptureMode();
@@ -1472,59 +1501,73 @@ void UCommonUIActionRouterBase::ApplyUIInputConfig(const FUIInputConfig& NewConf
 					case EMouseCaptureMode::CapturePermanently:
 					case EMouseCaptureMode::CapturePermanently_IncludingInitialMouseDown:
 					{
-						GameViewportClient->SetMouseLockMode(EMouseLockMode::LockOnCapture);
-						PC->SetShowMouseCursor(ShouldAlwaysShowCursor());
+						PC->SetShowMouseCursor(ShouldAlwaysShowCursor() || !NewConfig.HideCursorDuringViewportCapture());
 
 						TSharedRef<SViewport> ViewportWidgetRef = ViewportWidget.ToSharedRef();
 						SlateOperations.UseHighPrecisionMouseMovement(ViewportWidgetRef);
 						SlateOperations.SetUserFocus(ViewportWidgetRef);
-						SlateOperations.LockMouseToWidget(ViewportWidgetRef);
 						SlateOperations.CaptureMouse(ViewportWidgetRef);
+
+						if (GameViewportClient->ShouldAlwaysLockMouse() || GameViewportClient->LockDuringCapture() || !PC->ShouldShowMouseCursor())
+						{
+							SlateOperations.LockMouseToWidget(ViewportWidget.ToSharedRef());
+						}
+						else
+						{
+							SlateOperations.ReleaseMouseLock();
+						}
 					}
 					break;
 					case EMouseCaptureMode::NoCapture:
 					case EMouseCaptureMode::CaptureDuringMouseDown:
 					case EMouseCaptureMode::CaptureDuringRightMouseDown:
 					{
-						GameViewportClient->SetMouseLockMode(EMouseLockMode::DoNotLock);
 						PC->SetShowMouseCursor(true);
 
-						SlateOperations.ReleaseMouseLock();
 						SlateOperations.ReleaseMouseCapture();
 
-						// If the mouse was captured previously, set it back to the center of the viewport now that we're showing it again 
-						if (!bForceRefresh && bWasPermanentlyCaptured)
+						if (GameViewportClient->ShouldAlwaysLockMouse())
 						{
-							const ECommonInputType CurrentInputType = GetInputSubsystem().GetCurrentInputType();
-							
-							bool bCenterCursor = true;
-							switch (CurrentInputType)
-							{
-								// Touch - Don't do it - the cursor isn't really relevant there.
-								case ECommonInputType::Touch:
-									bCenterCursor = false;
-									break;
-								// Gamepad - Let the settings tell us if we should center it.
-								case ECommonInputType::Gamepad:
-									break;
-							}
-
-							if (bCenterCursor)
-							{
-								TSharedPtr<FSlateUser> SlateUser = LocalPlayer.GetSlateUser();
-								TSharedPtr<IGameLayerManager> GameLayerManager = GameViewportClient->GetGameLayerManager();
-								if (ensure(SlateUser) && ensure(GameLayerManager))
-								{
-									FGeometry PlayerViewGeometry = GameLayerManager->GetPlayerWidgetHostGeometry(&LocalPlayer);
-									const FVector2D AbsoluteViewCenter = PlayerViewGeometry.GetAbsolutePositionAtCoordinates(FVector2D(0.5f, 0.5f));
-									SlateUser->SetCursorPosition(AbsoluteViewCenter);
-
-									UE_LOG(LogUIActionRouter, Verbose, TEXT("Capturing the cursor at the viewport center."));
-								}
-							}
+							SlateOperations.LockMouseToWidget(ViewportWidget.ToSharedRef());
+						}
+						else
+						{
+							SlateOperations.ReleaseMouseLock();
 						}
 					}
 					break;
+					}
+
+					// If the mouse was hidden previously, set it back to the center of the viewport now that we're showing it again 
+					if (!bForceRefresh && bWasCursorHidden && PC->ShouldShowMouseCursor())
+					{
+						const ECommonInputType CurrentInputType = GetInputSubsystem().GetCurrentInputType();
+						
+						bool bCenterCursor = true;
+						switch (CurrentInputType)
+						{
+							// Touch - Don't do it - the cursor isn't really relevant there.
+							case ECommonInputType::Touch:
+								bCenterCursor = false;
+								break;
+							// Gamepad - Let the settings tell us if we should center it.
+							case ECommonInputType::Gamepad:
+								break;
+						}
+
+						if (bCenterCursor)
+						{
+							TSharedPtr<FSlateUser> SlateUser = LocalPlayer.GetSlateUser();
+							TSharedPtr<IGameLayerManager> GameLayerManager = GameViewportClient->GetGameLayerManager();
+							if (ensure(SlateUser) && ensure(GameLayerManager))
+							{
+								FGeometry PlayerViewGeometry = GameLayerManager->GetPlayerWidgetHostGeometry(&LocalPlayer);
+								const FVector2D AbsoluteViewCenter = PlayerViewGeometry.GetAbsolutePositionAtCoordinates(FVector2D(0.5f, 0.5f));
+								SlateUser->SetCursorPosition(AbsoluteViewCenter);
+
+								UE_LOG(LogUIActionRouter, Verbose, TEXT("Moving the cursor to the viewport center."));
+							}
+						}
 					}
 				}
 				else
@@ -1689,7 +1732,7 @@ void UCommonUIActionRouterBase::FActionDomainSortedRootList::Add(FActivatableTre
 {
 	auto SortFunc = [](const FActivatableTreeRootRef& A, const FActivatableTreeRootRef& B) 
 		{
-			return A->GetLastPaintLayer() < B->GetLastPaintLayer();
+			return A->GetLastPaintLayer() > B->GetLastPaintLayer();
 		};
 
 	RootList.Add(RootNode);

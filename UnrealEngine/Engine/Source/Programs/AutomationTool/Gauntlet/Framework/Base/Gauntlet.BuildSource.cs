@@ -30,6 +30,11 @@ namespace Gauntlet
     public interface IBuild
 	{
 		/// <summary>
+		/// Preference order for this build type vs. other build types. Lower is more prefered.
+		/// </summary>
+		int PreferenceOrder { get; }
+
+		/// <summary>
 		/// Flags that describe the properties of this build
 		/// </summary>
 		BuildFlags Flags { get; }

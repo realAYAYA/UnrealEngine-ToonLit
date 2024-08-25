@@ -13,7 +13,6 @@
 
 class FMenuBuilder;
 class SEditableTextBox;
-class SSlider;
 class SMediaPlayerEditorViewport;
 class UMediaPlayer;
 class UMediaSoundComponent;
@@ -141,15 +140,6 @@ private:
 
 	/** Pointer to the media player that is being viewed. */
 	UMediaPlayer* MediaPlayer;
-
-	/** The playback rate prior to scrubbing. */
-	float PreScrubRate;
-
-	/** Holds the scrubber slider. */
-	TSharedPtr<SSlider> ScrubberSlider;
-
-	/** The value currently being scrubbed to. */
-	float ScrubValue;
 
 	/** The style set to use for this widget. */
 	TSharedPtr<ISlateStyle> Style;

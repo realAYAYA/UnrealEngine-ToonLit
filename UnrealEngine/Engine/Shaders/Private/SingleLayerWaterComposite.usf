@@ -19,7 +19,7 @@
 #define REFLECTION_COMPOSITE_USE_BLENDED_REFLECTION_CAPTURES (FEATURE_LEVEL >= FEATURE_LEVEL_SM5)
 #define REFLECTION_COMPOSITE_SUPPORT_SKYLIGHT_BLEND 0
 #include "ReflectionEnvironmentComposite.ush"
-#include "Strata/StrataEvaluation.ush"
+#include "Substrate/SubstrateEvaluation.ush"
 
 #ifndef THREADGROUP_SIZE
 	#define THREADGROUP_SIZE 1
@@ -62,12 +62,12 @@ SingleLayerWaterCompositeOutput SingleLayerWaterComposite(float2 BufferUV, float
 
 	float4 EffectiveSceneNoWaterMinMaxUV = SceneNoWaterMinMaxUV;
 
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 
 	// Water do nto read the classification data to avoid running it a second time when water is enabled.
-	FStrataAddressing StrataAddressing = GetStrataPixelDataByteOffset(SvPosition.xy, uint2(View.BufferSizeAndInvSize.xy), Strata.MaxBytesPerPixel);
-	FStrataPixelHeader StrataPixelHeader = UnpackStrataHeaderIn(Strata.MaterialTextureArray, StrataAddressing, Strata.TopLayerTexture);
-	if (StrataPixelHeader.BSDFCount > 0 && StrataPixelHeader.IsSingleLayerWater())
+	FSubstrateAddressing SubstrateAddressing = GetSubstratePixelDataByteOffset(SvPosition.xy, uint2(View.BufferSizeAndInvSize.xy), Substrate.MaxBytesPerPixel);
+	FSubstratePixelHeader SubstratePixelHeader = UnpackSubstrateHeaderIn(Substrate.MaterialTextureArray, SubstrateAddressing, Substrate.TopLayerTexture);
+	if (SubstratePixelHeader.ClosureCount > 0 && SubstratePixelHeader.IsSingleLayerWater())
 	{
 		float DeviceZ = SampleDeviceZFromSceneTextures(BufferUV);
 		float SceneDepth = ConvertFromDeviceZ(DeviceZ);
@@ -87,8 +87,8 @@ SingleLayerWaterCompositeOutput SingleLayerWaterComposite(float2 BufferUV, float
 		float DeltaDepth = CameraIsUnderWater ? WaterDepth : OpaqueDepth - WaterDepth;	// Inverted depth
 		if (DeltaDepth > 0.0)
 		{
-			const FStrataBSDF SLWaterBSDF = UnpackStrataBSDFIn(Strata.MaterialTextureArray, StrataAddressing, StrataPixelHeader);
-			const float3 WorldNormal = StrataGetBSDFSharedBasis(StrataPixelHeader, SLWaterBSDF, StrataAddressing)[2];
+			const FSubstrateBSDF SLWaterBSDF = UnpackSubstrateBSDFIn(Substrate.MaterialTextureArray, SubstrateAddressing, SubstratePixelHeader);
+			const float3 WorldNormal = SubstrateGetBSDFSharedBasis(SubstratePixelHeader, SLWaterBSDF, SubstrateAddressing)[2];
 			const float3 F0 = ComputeF0(SLW_SPECULAR(SLWaterBSDF), SLW_BASECOLOR(SLWaterBSDF), SLW_METALLIC(SLWaterBSDF));
 			const float Roughness = SLW_ROUGHNESS(SLWaterBSDF);
 			const float SafeRoughness = MakeRoughnessSafe(Roughness);
@@ -103,8 +103,8 @@ SingleLayerWaterCompositeOutput SingleLayerWaterComposite(float2 BufferUV, float
 			float3 Reflection = 0.0f;
 
 			// TODO MAKE COMMON WITH ReflectionEnvironment?
-			float3 WorldPosition = mul(float4(ScreenPosition * WaterDepth, WaterDepth, 1), LWCHackToFloat(PrimaryView.ScreenToWorld)).xyz;
-			float3 CameraToPixel = normalize(WorldPosition - LWCHackToFloat(PrimaryView.WorldCameraOrigin));
+			float3 WorldPosition = mul(float4(GetScreenPositionForProjectionType(ScreenPosition, WaterDepth), WaterDepth, 1), DFHackToFloat(PrimaryView.ScreenToWorld)).xyz;
+			float3 CameraToPixel = GetCameraVectorFromWorldPosition(WorldPosition);
 			float3 ReflectionVector = reflect(CameraToPixel, WorldNormal);
 			float IndirectIrradiance = 0.0;
 			float IndirectSpecularOcclusion = 1.0f;
@@ -148,12 +148,12 @@ SingleLayerWaterCompositeOutput SingleLayerWaterComposite(float2 BufferUV, float
 			float4 SSR = Texture2DSample(ScreenSpaceReflectionsTexture, ScreenSpaceReflectionsSampler, BufferUV);
 			Reflection = SSR.rgb + Reflection * (1 - SSR.a);
 
-			const float3 BSDFCoverage = 1.0f;	// Since the SLW BSDF is always isolated and composited onto the strata material buffer, this is assumed to be 1 here.
+			const float3 BSDFCoverage = 1.0f;	// Since the SLW BSDF is always isolated and composited onto the Substrate material buffer, this is assumed to be 1 here.
 
 			// The specular over the water in completely in the hand of the user. We do not fade out metalness for instance.
 			float3 EnvBrdfValue = BSDFCoverage * EnvBRDF(F0, SafeRoughness, saturate(NoV));
 
-#else // STRATA_ENABLED
+#else // SUBSTRATE_ENABLED
 
 	// Sample scene textures.
 	FGBufferData GBuffer = GetGBufferDataFromSceneTextures(BufferUV);
@@ -180,7 +180,7 @@ SingleLayerWaterCompositeOutput SingleLayerWaterComposite(float2 BufferUV, float
 			float3 Reflection = 0.0f;
 
 			// TODO MAKE COMMON WITH ReflectionEnvironment?
-			const float3 TranslatedWorldPosition = mul(float4(ScreenPosition * GBuffer.Depth, GBuffer.Depth, 1), View.ScreenToTranslatedWorld).xyz;
+			const float3 TranslatedWorldPosition = mul(float4(GetScreenPositionForProjectionType(ScreenPosition, GBuffer.Depth), GBuffer.Depth, 1), View.ScreenToTranslatedWorld).xyz;
 			float IndirectIrradiance = 0.0;// GBuffer.IndirectIrradiance;
 			float IndirectSpecularOcclusion = 1.0f;
 			float3 ExtraIndirectSpecular = 0;
@@ -200,7 +200,7 @@ SingleLayerWaterCompositeOutput SingleLayerWaterComposite(float2 BufferUV, float
 
 			//
 			float3 N = GBuffer.WorldNormal;
-			float3 V = normalize(View.TranslatedWorldCameraOrigin - TranslatedWorldPosition);
+			float3 V = -GetCameraVectorFromTranslatedWorldPosition(TranslatedWorldPosition);
 			float3 R = 2 * dot(V, N) * N - V;
 			float NoV = saturate(dot(N, V));
 			// Point lobe in off-specular peak direction
@@ -233,7 +233,7 @@ SingleLayerWaterCompositeOutput SingleLayerWaterComposite(float2 BufferUV, float
 				SeparatedMainDirLightContribution = SeparatedMainDirLightTexture[PixelPos].rgb;
 			}
 
-#endif // STRATA_ENABLED
+#endif // SUBSTRATE_ENABLED
 
 			Reflection *= EnvBrdfValue;
 
@@ -292,10 +292,10 @@ bool DoesPixelContainWater(uint2 PixelPos)
 	uint Stencil = WaterDepthStencilTexture.Load(uint3(PixelPos, 0)) STENCIL_COMPONENT_SWIZZLE;
 	return (Stencil & 1U) != 0U;
 #else // !USE_WATER_PRE_PASS_STENCIL
-#if STRATA_ENABLED
-	FStrataAddressing StrataAddressing = GetStrataPixelDataByteOffset(PixelPos, uint2(View.BufferSizeAndInvSize.xy), Strata.MaxBytesPerPixel);
-	FStrataPixelHeader StrataPixelHeader = UnpackStrataHeaderIn(Strata.MaterialTextureArray, StrataAddressing, Strata.TopLayerTexture);
-	return (StrataPixelHeader.BSDFCount > 0 && StrataPixelHeader.IsSingleLayerWater());
+#if SUBSTRATE_ENABLED
+	FSubstrateAddressing SubstrateAddressing = GetSubstratePixelDataByteOffset(PixelPos, uint2(View.BufferSizeAndInvSize.xy), Substrate.MaxBytesPerPixel);
+	FSubstratePixelHeader SubstratePixelHeader = UnpackSubstrateHeaderIn(Substrate.MaterialTextureArray, SubstrateAddressing, Substrate.TopLayerTexture);
+	return (SubstratePixelHeader.ClosureCount > 0 && SubstratePixelHeader.IsSingleLayerWater());
 #else
 	float2 BufferUV = (PixelPos + 0.5f) * View.BufferSizeAndInvSize.zw;
 	FGBufferData GBuffer = GetGBufferDataFromSceneTextures(BufferUV);
@@ -328,7 +328,8 @@ void WaterTileCatergorisationMarkCS(uint3 ThreadId : SV_DispatchThreadID, uint3 
 			uint WriteToIndex;
 			InterlockedAdd(DrawIndirectDataUAV[1], 1, WriteToIndex);
 			InterlockedAdd(DispatchIndirectDataUAV[0], 1);
-			WaterTileListDataUAV[WriteToIndex] = PackTileCoord16bits(GroupId.xy);
+			// Encoding needs to match Lumen reflection tile encoding (see LumenReflection.usf)
+			WaterTileListDataUAV[WriteToIndex] = PackTileCoord12bits(GroupId.xy);
 		}
 	}
 
@@ -473,8 +474,8 @@ void WaterTileClassificationBuildListsCS(
 				if (bTileUsed)
 				{
 					uint TileOffset = SharedNumTiles;
-					uint PackedTileData = TileCoordinate.x | (TileCoordinate.y << 16);
-					SharedTileData[TileOffset] = PackedTileData;
+					// Encoding needs to match Lumen reflection tile encoding (see LumenReflection.usf)
+					SharedTileData[TileOffset] = PackTileCoord12bits(TileCoordinate);
 					SharedNumTiles = TileOffset + 1;
 				}
 			}
@@ -510,11 +511,7 @@ void WaterTileVS(
 	out float4 Position : SV_POSITION) 
 {
 	const uint PackedTile = TileListData[InstanceId.x];
-#if PERMUTATION_TILE_ENCODING == 0 		// 16bits coord
-	const uint2 TileCoord = UnpackTileCoord16bits(PackedTile);
-#elif PERMUTATION_TILE_ENCODING == 1 	// 12bits coord
 	const uint2 TileCoord = UnpackTileCoord12bits(PackedTile);
-#endif
 	const uint2 TileOrigin = TileCoord * SLW_TILE_SIZE_XY;
 
 	uint2 TileVertex = TileOrigin;
@@ -593,3 +590,4 @@ void WaterRefractionCopyPS(
     OutSceneDepth = min(OutSceneDepth, 65500.0f);
 #endif
 }
+

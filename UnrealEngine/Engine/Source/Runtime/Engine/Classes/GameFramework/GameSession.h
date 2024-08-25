@@ -271,6 +271,18 @@ protected:
 	 */
 	ENGINE_API virtual void OnEndSessionComplete(FName InSessionName, bool bWasSuccessful);
 
+	/**
+	 * PostReloadConfig override to reapply config property overrides.
+	 */
+	ENGINE_API virtual void PostReloadConfig(FProperty* PropertyThatWasLoaded) override;
+
+private:
+
+	/** Override for the default value of MaxPlayers passed to InitOptions. */
+	TOptional<int32> MaxPlayersOptionOverride;
+
+	/** Override for the default value of MaxSpectators passed to InitOptions. */
+	TOptional<int32> MaxSpectatorsOptionOverride;
 };
 
 /** 

@@ -14,6 +14,7 @@ import { CrossDepotStreamIntegration } from './tests/cross-depot-stream-integrat
 import { EdgeIndependence } from './tests/edge-independence'
 import { EdgeInitialCl } from './tests/edge-initial-cl'
 import { ExclusiveCheckout } from './tests/exclusive-checkout'
+import { ExclusiveCheckoutUnlock } from './tests/exclusive-checkout-unlock'
 import { ExcludeAuthors } from './tests/exclude-authors'
 import { ExcludeAuthorsPerEdge } from './tests/exclude-authors-per-edge'
 import { ForwardCommands, ForwardCommands2 } from './tests/forward-commands'
@@ -217,7 +218,8 @@ async function go() {
 		new UnreachableSkip(p4), // 45
 
 		new PostToAdditionalChannel(p4),
-		new BranchspecTest(p4)
+		new BranchspecTest(p4),
+		new ExclusiveCheckoutUnlock(p4)
 	]
 
 	const TARGET_TEST_DEFS: [string[], string | null][] = [

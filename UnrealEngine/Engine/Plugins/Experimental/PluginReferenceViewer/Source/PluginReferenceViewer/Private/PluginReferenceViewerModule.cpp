@@ -52,11 +52,13 @@ void FPluginReferenceViewerModule::ShutdownModule()
 
 TSharedRef<SDockTab> FPluginReferenceViewerModule::SpawnPluginReferenceViewerTab(const FSpawnTabArgs& Args)
 {
-	return SNew(SDockTab)
-		.TabRole(ETabRole::NomadTab)
-		[
-			SNew(SPluginReferenceViewer)
-		];
+	TSharedRef<SDockTab> WidgetReflectorTab = SNew(SDockTab)
+		.TabRole(ETabRole::NomadTab);
+
+	WidgetReflectorTab->SetContent(SNew(SPluginReferenceViewer)
+		.ParentTab(WidgetReflectorTab));
+
+	return WidgetReflectorTab;
 }
 
 void FPluginReferenceViewerModule::OnLaunchReferenceViewerFromPluginBrowser(TSharedPtr<IPlugin> Plugin)

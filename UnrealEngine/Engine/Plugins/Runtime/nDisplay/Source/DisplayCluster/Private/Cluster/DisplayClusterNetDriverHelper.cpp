@@ -79,7 +79,7 @@ bool FDisplayClusterNetDriverHelper::RegisterClusterEventsBinaryClient(uint32 Cl
 		return false;
 	}
 	
-	TSharedPtr<FDisplayClusterClusterEventsBinaryClient> Client = MakeShared<FDisplayClusterClusterEventsBinaryClient>();
+	TSharedPtr<FDisplayClusterClusterEventsBinaryClient> Client(new FDisplayClusterClusterEventsBinaryClient(), FDisplayClusterClientDeleter());
 	
 	if (!Client->Connect(ClientAddress, ClientPort, 1, 0.f))
 	{

@@ -70,7 +70,7 @@ static TAutoConsoleVariable CVarRayTracingTransmissionMeanFreePathType(
 	TEXT("r.RayTracing.Transmission.MeanFreePathType"),
 	0,
 	TEXT("0: Use the extinction scale from subsurface profile as MFP.")
-	TEXT("1: Use the max MFP from Subsurface profile to generate samples for transmission (Strata is not supported)."),
+	TEXT("1: Use the max MFP from Subsurface profile to generate samples for transmission (Substrate is not supported)."),
 	ECVF_RenderThreadSafe
 );
 
@@ -109,6 +109,26 @@ static TAutoConsoleVariable<int32> CVarRayTracingShadowsAcceptFirstHit(
 	ECVF_RenderThreadSafe
 );
 
+static TAutoConsoleVariable<int32> CVarRayTracingShadowsTranslucency(
+	TEXT("r.RayTracing.Shadows.Translucency"),
+	0,
+	TEXT("0: Translucent material will not cast shadow (by default).")
+	TEXT("1: Translucent material cast approximate translucent shadows based on opacity (Very expensive)."),
+	ECVF_RenderThreadSafe
+);
+static TAutoConsoleVariable<int32> CVarRayTracingShadowsMaxTranslucencyHitCount(
+	TEXT("r.RayTracing.Shadows.MaxTranslucencyHitCount"),
+	-1,
+	TEXT("-1: Evaluate all intersections (default).")
+	TEXT(" 0: Disable translucent shadow testing.")
+	TEXT(">0: Limit the number of intersections."),
+	ECVF_RenderThreadSafe
+);
+
+int32 GetRayTracingShadowsMaxTranslucencyHitCount()
+{
+	return CVarRayTracingShadowsMaxTranslucencyHitCount.GetValueOnRenderThread();
+}
 
 bool EnableRayTracingShadowTwoSidedGeometry()
 {
@@ -119,7 +139,7 @@ uint32 GetRayTracingTransmissionMeanFreePathType()
 {	
 	uint32 MeanFreePathType = FMath::Clamp(CVarRayTracingTransmissionMeanFreePathType.GetValueOnRenderThread(), 0, 1);
 
-	if (Strata::IsStrataEnabled())
+	if (Substrate::IsSubstrateEnabled())
 	{
 		MeanFreePathType = 0u;
 	}
@@ -189,6 +209,8 @@ class FOcclusionRGS : public FGlobalShader
 		SHADER_PARAMETER(uint32, RejectionSamplingTrials)
 		SHADER_PARAMETER(uint32, bAcceptFirstHit)
 		SHADER_PARAMETER(uint32, bTwoSidedGeometry)
+		SHADER_PARAMETER(uint32, TranslucentShadow)
+		SHADER_PARAMETER(uint32, MaxTranslucencyHitCount)
 
 		SHADER_PARAMETER_STRUCT(FLightShaderParameters, Light)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FSceneTextureParameters, SceneTextures)
@@ -202,7 +224,7 @@ class FOcclusionRGS : public FGlobalShader
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, ViewUniformBuffer)
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FHairStrandsViewUniformParameters, HairStrands)
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FVirtualVoxelParameters, VirtualVoxel)
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 	END_SHADER_PARAMETER_STRUCT()
 };
 
@@ -395,6 +417,8 @@ void FDeferredShadingSceneRenderer::RenderRayTracingShadows(
 		CommonPassParameters->AvoidSelfIntersectionTraceDistance = GRayTracingShadowsAvoidSelfIntersectionTraceDistance;
 		CommonPassParameters->bAcceptFirstHit = CVarRayTracingShadowsAcceptFirstHit.GetValueOnRenderThread();
 		CommonPassParameters->bTwoSidedGeometry = EnableRayTracingShadowTwoSidedGeometry() ? 1 : 0;
+		CommonPassParameters->TranslucentShadow = CVarRayTracingShadowsTranslucency.GetValueOnRenderThread();
+		CommonPassParameters->MaxTranslucencyHitCount = GetRayTracingShadowsMaxTranslucencyHitCount();
 		CommonPassParameters->TLAS = View.GetRayTracingSceneLayerViewChecked(ERayTracingSceneLayer::Base);
 		CommonPassParameters->ViewUniformBuffer = View.ViewUniformBuffer;
 		CommonPassParameters->SceneTextures = SceneTextures;
@@ -405,7 +429,7 @@ void FDeferredShadingSceneRenderer::RenderRayTracingShadows(
 		CommonPassParameters->TransmissionSamplingTechnique = CVarRayTracingTransmissionSamplingTechnique.GetValueOnRenderThread();
 		CommonPassParameters->TransmissionMeanFreePathType = GetRayTracingTransmissionMeanFreePathType();
 		CommonPassParameters->RejectionSamplingTrials = CVarRayTracingTransmissionRejectionSamplingTrials.GetValueOnRenderThread();
-		CommonPassParameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
+		CommonPassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 
 		if (bUseHairLighting)
 		{

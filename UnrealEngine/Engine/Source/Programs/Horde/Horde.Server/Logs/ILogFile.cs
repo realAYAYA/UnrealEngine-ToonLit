@@ -3,12 +3,11 @@
 using System;
 using System.Collections.Generic;
 using EpicGames.Core;
+using EpicGames.Horde.Agents.Leases;
+using EpicGames.Horde.Agents.Sessions;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Logs;
 using EpicGames.Horde.Storage;
-using Horde.Server.Agents.Leases;
-using Horde.Server.Agents.Sessions;
-using Horde.Server.Jobs;
-using Horde.Server.Storage;
-using Horde.Server.Utilities;
 
 namespace Horde.Server.Logs
 {
@@ -89,6 +88,11 @@ namespace Horde.Server.Logs
 		public IReadOnlyList<ILogChunk> Chunks { get; }
 
 		/// <summary>
+		/// Namespace containing the log data
+		/// </summary>
+		public NamespaceId NamespaceId { get; }
+
+		/// <summary>
 		/// Name of the ref used to store data for this log
 		/// </summary>
 		public RefName RefName { get; }
@@ -134,7 +138,7 @@ namespace Horde.Server.Logs
 		public static int GetChunkForLine(this IReadOnlyList<ILogChunk> chunks, int lineIndex)
 		{
 			int chunkIndex = chunks.BinarySearch(x => x.LineIndex, lineIndex);
-			if(chunkIndex < 0)
+			if (chunkIndex < 0)
 			{
 				chunkIndex = ~chunkIndex - 1;
 			}

@@ -321,6 +321,11 @@ void FAnalyticsProviderAdjust::RecordEvent(const FString& EventName, const TArra
 {
 #if WITH_ADJUST
 	FString* EventTokenRef = EventMap.Find(EventName);
+
+	TArray<FAnalyticsEventAttribute> EventAttributes;
+	EventAttributes.Append(Attributes);
+	EventAttributes.Append(DefaultEventAttributes);
+
 	if (EventTokenRef != nullptr)
 	{
 		FString EventToken = *EventTokenRef;
@@ -328,11 +333,11 @@ void FAnalyticsProviderAdjust::RecordEvent(const FString& EventName, const TArra
 		AndroidThunkCpp_Adjust_Event_ResetCallbackParameters();
 		AndroidThunkCpp_Adjust_Event_ResetPartnerParameters();
 
-		const int32 AttrCount = Attributes.Num();
+		const int32 AttrCount = EventAttributes.Num();
 		if (AttrCount > 0)
 		{
 			// add event attributes
-			for (auto Attr : Attributes)
+			for (auto Attr : EventAttributes)
 			{
 				AndroidThunkCpp_Adjust_Event_AddCallbackParameter(Attr.GetName(), Attr.GetValue());
 			}
@@ -482,4 +487,24 @@ void FAnalyticsProviderAdjust::RecordProgress(const FString& ProgressType, const
 #else
 	UE_LOG(LogAnalytics, Warning, TEXT("WITH_ADJUST=0. Are you missing the SDK?"));
 #endif
+}
+
+void FAnalyticsProviderAdjust::SetDefaultEventAttributes(TArray<FAnalyticsEventAttribute>&& Attributes)
+{
+	DefaultEventAttributes = Attributes;
+}
+
+TArray<FAnalyticsEventAttribute> FAnalyticsProviderAdjust::GetDefaultEventAttributesSafe() const
+{
+	return DefaultEventAttributes;
+}
+
+int32 FAnalyticsProviderAdjust::GetDefaultEventAttributeCount() const
+{
+	return DefaultEventAttributes.Num();
+}
+
+FAnalyticsEventAttribute FAnalyticsProviderAdjust::GetDefaultEventAttribute(int AttributeIndex) const
+{
+	return DefaultEventAttributes[AttributeIndex];
 }

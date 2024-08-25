@@ -45,7 +45,7 @@ public:
 		else if ((uint32)Data.Num() > NumVertices)
 		{
 			// Shrink the array.
-			bool AllowShinking = !EnumHasAnyFlags(BufferFlags, EResizeBufferFlags::AllowSlackOnReduce);
+			EAllowShrinking AllowShinking = EnumHasAnyFlags(BufferFlags, EResizeBufferFlags::AllowSlackOnReduce) ? EAllowShrinking::No : EAllowShrinking::Yes;
 			Data.RemoveAt(NumVertices, Data.Num() - NumVertices, AllowShinking);
 		}
 	}

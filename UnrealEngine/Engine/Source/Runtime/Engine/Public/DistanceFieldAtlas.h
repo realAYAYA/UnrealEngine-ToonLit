@@ -6,33 +6,24 @@
 
 #pragma once
 
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_3
-#include "CoreMinimal.h"
-#endif
 #include "Containers/LockFreeList.h"
 #include "ProfilingDebugging/ResourceSize.h"
 #include "Engine/EngineTypes.h"
 #include "UObject/GCObject.h"
 #include "RenderResource.h"
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
-#include "RenderingThread.h"
-#endif
 #include "RenderDeferredCleanup.h"
 #include "TextureLayout3d.h"
-#include "AsyncCompilationHelpers.h"
-#include "AssetCompilingManager.h"
+#include "IAssetCompilingManager.h"
 #include "Templates/UniquePtr.h"
 #include "DerivedMeshDataTaskUtils.h"
 #include "Async/AsyncWork.h"
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_3
-#include "RenderGraphUtils.h"
-#endif
 
 #if WITH_EDITOR
 #include "MeshUtilities.h"
 #endif
 
 struct FAssetCompileData;
+class FAsyncCompilationNotification;
 class FDistanceFieldVolumeData;
 class UStaticMesh;
 class UTexture2D;
@@ -208,20 +199,20 @@ class FSparseDistanceFieldMip
 public:
 
 	FSparseDistanceFieldMip() :
-		IndirectionDimensions(FIntVector::ZeroValue),
+		IndirectionDimensions(FInt32Vector::ZeroValue),
 		NumDistanceFieldBricks(0),
-		VolumeToVirtualUVScale(FVector::ZeroVector),
-		VolumeToVirtualUVAdd(FVector::ZeroVector),
-		DistanceFieldToVolumeScaleBias(FVector2D::ZeroVector),
+		VolumeToVirtualUVScale(FVector3f::ZeroVector),
+		VolumeToVirtualUVAdd(FVector3f::ZeroVector),
+		DistanceFieldToVolumeScaleBias(FVector2f::ZeroVector),
 		BulkOffset(0),
 		BulkSize(0)
 	{}
 
-	FIntVector IndirectionDimensions;
+	FInt32Vector IndirectionDimensions;
 	int32 NumDistanceFieldBricks;
-	FVector VolumeToVirtualUVScale;
-	FVector VolumeToVirtualUVAdd;
-	FVector2D DistanceFieldToVolumeScaleBias;
+	FVector3f VolumeToVirtualUVScale;
+	FVector3f VolumeToVirtualUVAdd;
+	FVector2f DistanceFieldToVolumeScaleBias;
 	uint32 BulkOffset;
 	uint32 BulkSize;
 
@@ -250,7 +241,7 @@ class FDistanceFieldVolumeData : public FDeferredCleanupInterface
 public:
 
 	/** Local space bounding box of the distance field volume. */
-	FBox LocalSpaceMeshBounds;
+	FBox3f LocalSpaceMeshBounds;
 
 	/** Whether most of the triangles in the mesh used a two-sided material. */
 	bool bMostlyTwoSided;
@@ -334,7 +325,7 @@ public:
 	FAsyncDistanceFieldTask();
 
 #if WITH_EDITOR
-	TArray<FSignedDistanceFieldBuildMaterialData> MaterialBlendModes;
+	TArray<FSignedDistanceFieldBuildSectionData> SectionData;
 #endif
 	FSourceMeshDataForDerivedDataTask SourceMeshData;
 	UStaticMesh* StaticMesh;
@@ -443,10 +434,24 @@ private:
 
 	mutable FCriticalSection CriticalSection;
 
-	FAsyncCompilationNotification Notification;
+	TUniquePtr<FAsyncCompilationNotification> Notification;
 };
 
 /** Global build queue. */
 extern ENGINE_API FDistanceFieldAsyncQueue* GDistanceFieldAsyncQueue;
 
 extern ENGINE_API FString BuildDistanceFieldDerivedDataKey(const FString& InMeshKey);
+
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
+#include "RenderingThread.h"
+#endif
+
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_3
+#include "CoreMinimal.h"
+#include "RenderGraphUtils.h"
+#endif
+
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
+#include "AsyncCompilationHelpers.h"
+#include "AssetCompilingManager.h"
+#endif

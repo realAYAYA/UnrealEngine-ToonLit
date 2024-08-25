@@ -35,6 +35,9 @@ class UDerivedDataCacheCommandlet : public UCommandlet
 
 	struct FCachingData
 	{
+		/** Weak object reference to ensure that the object being referenced is still valid */
+		TWeakObjectPtr<UObject> ObjectValidityReference;
+
 		/** Element n == IsCachedCookedPlatformDataLoaded has returned true for Commandlet->Platforms[n] */
 		TBitArray<> PlatformIsComplete;
 		/**

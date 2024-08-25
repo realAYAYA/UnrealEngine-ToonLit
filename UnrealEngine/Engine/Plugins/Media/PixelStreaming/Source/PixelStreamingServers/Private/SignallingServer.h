@@ -28,6 +28,7 @@ namespace UE::PixelStreamingServers
 		virtual bool TestConnection() override;
 		virtual bool LaunchImpl(FLaunchArgs& InLaunchArgs, TMap<EEndpoint, FURL>& OutEndpoints) override;
 		virtual FString GetPathOnDisk() override;
+		virtual void GetNumStreamers(TFunction<void(uint16)> OnNumStreamersReceived) override;
 		// End FServerBase
 
 	protected:

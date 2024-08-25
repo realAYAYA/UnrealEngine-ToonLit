@@ -19,6 +19,8 @@ namespace rl4 {
 
 namespace bpcm {
 
+namespace block8 {
+
 template<typename TF256, typename T>
 static FORCE_INLINE void processBlocks16x1(const std::uint16_t* inputIndicesEndAlignedTo4,
                                            const std::uint16_t* inputIndicesEnd,
@@ -231,7 +233,7 @@ static FORCE_INLINE void processJointGroupBlock8(const JointGroupView<T>& jointG
     }
 }
 
-template<typename TF256, typename T>
+template<typename T, typename TF256>
 struct Block8JointCalculationStrategy : public JointCalculationStrategy<T> {
 
     using JointGroupArrayView = typename JointCalculationStrategy<T>::JointGroupArrayView;
@@ -256,6 +258,8 @@ struct Block8JointCalculationStrategy : public JointCalculationStrategy<T> {
     }
 
 };
+
+}  // namespace block8
 
 }  // namespace bpcm
 

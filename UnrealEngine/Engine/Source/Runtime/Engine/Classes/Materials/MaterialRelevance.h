@@ -17,8 +17,8 @@ struct FMaterialRelevance
 		struct
 		{
 			uint16 ShadingModelMask;
-			uint8 StrataUintPerPixel;
-			uint8 StrataBSDFCountMask;
+			uint8 SubstrateUintPerPixel;
+			uint8 SubstrateClosureCountMask;
 			uint8 bUsesComplexSpecialRenderPath : 1;
 			uint8 bOpaque : 1;
 			uint8 bMasked : 1;
@@ -58,9 +58,9 @@ struct FMaterialRelevance
 	/** Bitwise OR operator.  Sets any relevance bits which are present in either. */
 	FMaterialRelevance& operator|=(const FMaterialRelevance& B)
 	{
-		const uint8 LocalStrataUintPerPixel = StrataUintPerPixel;
+		const uint8 LocalSubstrateUintPerPixel = SubstrateUintPerPixel;
 		Raw |= B.Raw;
-		StrataUintPerPixel = FMath::Max(LocalStrataUintPerPixel, B.StrataUintPerPixel);
+		SubstrateUintPerPixel = FMath::Max(LocalSubstrateUintPerPixel, B.SubstrateUintPerPixel);
 		return *this;
 	}
 

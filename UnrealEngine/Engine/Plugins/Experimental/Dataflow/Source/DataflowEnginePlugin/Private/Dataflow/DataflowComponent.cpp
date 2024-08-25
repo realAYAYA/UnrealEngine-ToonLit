@@ -48,6 +48,25 @@ void UDataflowComponent::AddRenderTarget(const UDataflowEdNode* InTarget)
 	Invalidate();
 }
 
+void UDataflowComponent::BuildRenderCollection()
+{
+	RenderCollection = FManagedArrayCollection();
+	GeometryCollection::Facades::FRenderingFacade Facade(RenderCollection);
+	Facade.DefineSchema();
+
+	if (Context && Dataflow)
+	{
+		for (const UDataflowEdNode* Target : RenderTargets)
+		{
+			if (Target)
+			{
+				Target->Render(Facade, Context);
+			}
+		}
+	}
+	MarkRenderStateDirty();
+}
+
 void UDataflowComponent::TickComponent(float DeltaTime, enum ELevelTick TickType, FActorComponentTickFunction *ThisTickFunction)
 {
 	bool bNeedsSceneProxyUpdate = false;
@@ -61,19 +80,20 @@ void UDataflowComponent::TickComponent(float DeltaTime, enum ELevelTick TickType
 		GeometryCollection::Facades::FRenderingFacade Facade(RenderCollection);
 		Facade.DefineSchema();
 
-		bool bNeedsRefresh = false;
 		if (Context && Dataflow)
 		{
 			for (const UDataflowEdNode* Target : RenderTargets)
 			{
 				if (Target)
 				{
-					bNeedsRefresh |= Target->Render(Facade, Context);
+					Target->Render(Facade, Context);
 				}
 			}
 		}
 
+		bBoundsNeedsUpdate = true;
 		UpdateLocalBounds();
+
 		bUpdateRender = false;
 		bNeedsSceneProxyUpdate = true;
 	}
@@ -95,8 +115,15 @@ void UDataflowComponent::UpdateLocalBounds()
 {
 	if (bBoundsNeedsUpdate)
 	{
-		GeometryCollection::Facades::FBoundsFacade(RenderCollection).UpdateBoundingBox();
+		GeometryCollection::Facades::FBoundsFacade BoundsFacade(RenderCollection);
+		BoundsFacade.DefineSchema();
+
+		BoundsFacade.UpdateBoundingBox();
+		BoundingBox = BoundsFacade.GetBoundingBoxInCollectionSpace();
+
 		bBoundsNeedsUpdate = false;
+
+		UpdateBounds();
 	}
 }
 

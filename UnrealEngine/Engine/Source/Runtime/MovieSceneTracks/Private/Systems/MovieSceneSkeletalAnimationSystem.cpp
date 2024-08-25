@@ -40,6 +40,8 @@
 #include "BonePose.h"
 #include "Animation/BuiltInAttributeTypes.h"
 
+#include "SequencerAnimationOverride.h"
+
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MovieSceneSkeletalAnimationSystem)
 
 DECLARE_CYCLE_STAT(TEXT("Gather skeletal animations"), MovieSceneEval_GatherSkeletalAnimations, STATGROUP_MovieSceneECS);
@@ -355,7 +357,6 @@ struct FGatherSkeletalAnimations
 			// Get the full context, so we can get both the current and previous evaluation times.
 			const FSequenceInstance& SequenceInstance = InstanceRegistry->GetInstance(InstanceHandle);
 			const FMovieSceneContext& Context = SequenceInstance.GetContext();
-			IMovieScenePlayer* Player = SequenceInstance.GetPlayer();
 
 			// Calculate the time at which to evaluate the animation
 			const UMovieSceneSkeletalAnimationSection* AnimSection = SkeletalAnimation.Section;
@@ -374,7 +375,7 @@ struct FGatherSkeletalAnimations
 			const FMovieSceneContext& RootContext = RootInstance.GetContext();
 			const double RootDeltaTime = (RootContext.HasJumped() ? FFrameTime(0) : RootContext.GetRange().Size<FFrameTime>() ) / RootContext.GetFrameRate();
 
-			const EMovieScenePlayerStatus::Type PlayerStatus = Player->GetPlaybackStatus();
+			const EMovieScenePlayerStatus::Type PlayerStatus = Context.GetStatus();
 
 			const bool bResetDynamics = PlayerStatus == EMovieScenePlayerStatus::Stepping || 
 				PlayerStatus == EMovieScenePlayerStatus::Jumping || 
@@ -545,7 +546,7 @@ private:
 		}
 		else if (ExistingAnimInstance)
 		{
-			for (const TPair<FObjectKey, FMontagePlayerPerSectionData >& Pair : SystemData->MontageData)
+			for (const TPair<FObjectKey, FMontagePlayerPerSectionData >& Pair : SystemData->MontageData.FindOrAdd(SkeletalMeshComponent))
 			{
 				int32 InstanceId = Pair.Value.MontageInstanceId;
 				FAnimMontageInstance* MontageInstanceToUpdate = ExistingAnimInstance->GetMontageInstanceForID(InstanceId);
@@ -575,7 +576,9 @@ private:
 		// If the skeletal component has already ticked this frame because tick prerequisites weren't set up yet or a new binding was created, forcibly tick this component to update.
 		// This resolves first frame issues where the skeletal component ticks first, then the sequencer binding is resolved which sets up tick prerequisites
 		// for the next frame.
-		if (SkeletalMeshComponent->PoseTickedThisFrame() || (SequencerInstance && SequencerInstance->GetSourceAnimInstance() != ExistingAnimInstance))
+		if (!SkeletalMeshComponent->IsPostEvaluatingAnimation() &&
+			(SkeletalMeshComponent->PoseTickedThisFrame() || (SequencerInstance && SequencerInstance->GetSourceAnimInstance() != ExistingAnimInstance))
+			)
 		{
 			SkeletalMeshComponent->TickAnimation(0.f, false);
 
@@ -776,7 +779,8 @@ private:
 		{
 			return;
 		}
-		if (AnimParams.bForceCustomMode)
+		TScriptInterface<ISequencerAnimationOverride> SequencerAnimOverride = ISequencerAnimationOverride::GetSequencerAnimOverride(Params.SkeletalMeshComponent);
+		if (AnimParams.bForceCustomMode || (SequencerAnimOverride.GetObject() && ISequencerAnimationOverride::Execute_AllowsCinematicOverride(SequencerAnimOverride.GetObject())))
 		{
 			Params.SkeletalMeshComponent->SetAnimationMode(EAnimationMode::AnimationCustomMode);
 		}
@@ -821,14 +825,14 @@ private:
 		}
 		else if (UAnimInstance* AnimInst = GetSourceAnimInstance(Params.SkeletalMeshComponent))
 		{
-			FMontagePlayerPerSectionData* SectionData = SystemData->MontageData.Find(Params.Section);
+			FMontagePlayerPerSectionData* SectionData = SystemData->MontageData.FindOrAdd(Params.SkeletalMeshComponent).Find(Params.Section);
 
 			int32 InstanceId = (SectionData) ? SectionData->MontageInstanceId : INDEX_NONE;
 
 
 			const float AssetPlayRate = FMath::IsNearlyZero(AnimParams.Animation->RateScale) ? 1.0f : AnimParams.Animation->RateScale;
 			TWeakObjectPtr<UAnimMontage> WeakMontage = FAnimMontageInstance::SetSequencerMontagePosition(
-					AnimParams.SlotName, 
+					AnimParams.SlotName,
 					AnimInst, 
 					InstanceId, 
 					AnimParams.Animation, 
@@ -841,7 +845,7 @@ private:
 			UAnimMontage* Montage = WeakMontage.Get();
 			if (Montage)
 			{
-				FMontagePlayerPerSectionData& DataContainer = SystemData->MontageData.FindOrAdd(Params.Section);
+				FMontagePlayerPerSectionData& DataContainer = SystemData->MontageData.FindOrAdd(Params.SkeletalMeshComponent).FindOrAdd(Params.Section);
 				DataContainer.Montage = WeakMontage;
 				DataContainer.MontageInstanceId = InstanceId;
 
@@ -871,7 +875,8 @@ private:
 		{
 			return;
 		}
-		if (AnimParams.bForceCustomMode)
+		TScriptInterface<ISequencerAnimationOverride> SequencerAnimOverride = ISequencerAnimationOverride::GetSequencerAnimOverride(Params.SkeletalMeshComponent);
+		if (AnimParams.bForceCustomMode || (SequencerAnimOverride.GetObject() && ISequencerAnimationOverride::Execute_AllowsCinematicOverride(SequencerAnimOverride.GetObject())))
 		{
 			Params.SkeletalMeshComponent->SetAnimationMode(EAnimationMode::AnimationCustomMode);
 		}
@@ -914,7 +919,7 @@ private:
 		}
 		else if (UAnimInstance* AnimInst = GetSourceAnimInstance(Params.SkeletalMeshComponent))
 		{
-			FMontagePlayerPerSectionData* SectionData = SystemData->MontageData.Find(Params.Section);
+			FMontagePlayerPerSectionData* SectionData = SystemData->MontageData.FindOrAdd(Params.SkeletalMeshComponent).Find(Params.Section);
 
 			int32 InstanceId = SectionData ? SectionData->MontageInstanceId : INDEX_NONE;
 		
@@ -935,7 +940,7 @@ private:
 			UAnimMontage* Montage = WeakMontage.Get();
 			if (Montage)
 			{
-				FMontagePlayerPerSectionData& DataContainer = SystemData->MontageData.FindOrAdd(Params.Section);
+				FMontagePlayerPerSectionData& DataContainer = SystemData->MontageData.FindOrAdd(Params.SkeletalMeshComponent).FindOrAdd(Params.Section);
 				DataContainer.Montage = WeakMontage;
 				DataContainer.MontageInstanceId = InstanceId;
 

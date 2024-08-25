@@ -41,12 +41,11 @@ public:
 class FSkinnedAsyncTaskContext : public FSkinnedAssetCompilationContext
 {
 public:
-	FSkinnedAsyncTaskContext(TFunctionRef<void()> InAsyncTaskFunction)
-		: AsyncTaskFunction(InAsyncTaskFunction)
+	FSkinnedAsyncTaskContext(FEvent* InEvent)
+		: Event(InEvent)
 	{
 	}
-
-	TFunctionRef<void()> AsyncTaskFunction;
+	FEvent* Event = nullptr;
 };
 
 #if WITH_EDITOR

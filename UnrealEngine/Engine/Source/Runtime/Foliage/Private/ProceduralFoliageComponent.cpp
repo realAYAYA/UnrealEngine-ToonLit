@@ -179,9 +179,9 @@ bool UProceduralFoliageComponent::GenerateProceduralContent(TArray<FDesiredFolia
 #if WITH_EDITOR
 	LoadSimulatedRegion();
 	return GenerateProceduralContent(GetGenerateProceduralContentParams(), OutInstances);
-#endif
-
+#else
 	return false;
+#endif
 }
 
 bool UProceduralFoliageComponent::GenerateProceduralContent(const FGenerateProceduralContentParams& InParams, TArray<FDesiredFoliageInstance>& OutInstances)

@@ -12,184 +12,156 @@ using static AutomationTool.ProcessResult;
 
 namespace Gauntlet
 {
-	
-	public class MacDeviceFactory : IDeviceFactory
+	public class TargetDeviceMac : TargetDeviceDesktopCommon
 	{
-		public bool CanSupportPlatform(UnrealTargetPlatform? Platform)
-		{
-			return Platform == UnrealTargetPlatform.Mac;
-		}
-
-		public ITargetDevice CreateDevice(string InRef, string InCachePath, string InParam = null)
-		{
-			return new TargetDeviceMac(InRef, InCachePath);
-		}
-	}
-
-	class MacAppInstall : IAppInstall
-	{
-		public string Name { get; private set; }
-
-		public string LocalPath;
-
-		public string WorkingDirectory;
-
-		public string ExecutablePath;
-
-		public string CommandArguments;
-
-		public string ArtifactPath;
-
-		public ITargetDevice Device { get; protected set; }
-
-		public CommandUtils.ERunOptions RunOptions { get; set; }
-
-		public MacAppInstall(string InName, TargetDeviceMac InDevice)
-		{
-			Name = InName;
-			Device = InDevice;
-			CommandArguments = "";
-			this.RunOptions = CommandUtils.ERunOptions.NoWaitForExit;
-		}
-
-		public IAppInstance Run()
-		{
-			return Device.Run(this);
-		}
-
-		public bool ForceCleanDeviceArtifacts()
-		{
-			DirectoryInfo ClientTempDirInfo = new DirectoryInfo(ArtifactPath) { Attributes = FileAttributes.Normal };
-			Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Setting files in device artifacts {0} to have normal attributes (no longer read-only).", ArtifactPath);
-			foreach (FileSystemInfo info in ClientTempDirInfo.GetFileSystemInfos("*", SearchOption.AllDirectories))
-			{
-				info.Attributes = FileAttributes.Normal;
-			}
-			try
-			{
-				Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "Clearing device artifact path {0} (force)", ArtifactPath);
-				Directory.Delete(ArtifactPath, true);
-			}
-			catch (Exception Ex)
-			{
-				Log.Warning(KnownLogEvents.Gauntlet_DeviceEvent, "Failed to force delete artifact path {File}. {Exception}", ArtifactPath, Ex.Message);
-				return false;
-			}
-			return true;
-		}
-
-		public virtual void CleanDeviceArtifacts()
-		{
-			if (!string.IsNullOrEmpty(ArtifactPath) && Directory.Exists(ArtifactPath))
-			{
-				try
-				{
-					Log.Info("Clearing device artifacts path {0} for {1}", ArtifactPath, Device.Name);
-					Directory.Delete(ArtifactPath, true);
-				}
-				catch (Exception Ex)
-				{
-					Log.Info(KnownLogEvents.Gauntlet_DeviceEvent, "First attempt at clearing artifact path {0} failed - trying again", ArtifactPath);
-					if (!ForceCleanDeviceArtifacts())
-					{
-						Log.Warning(KnownLogEvents.Gauntlet_DeviceEvent, "Failed to delete {File}. {Exception}", ArtifactPath, Ex.Message);
-					}
-				}
-			}
-		}
-	}
-
-	class MacAppInstance : LocalAppProcess
-	{
-		protected MacAppInstall Install;
-
-		public MacAppInstance(MacAppInstall InInstall, IProcessResult InProcess)
-			: base(InProcess, InInstall.CommandArguments)
-		{
-			Install = InInstall;
-		}
-
-		public override string ArtifactPath
-		{
-			get
-			{
-				return Install.ArtifactPath;
-			}
-		}
-
-		public override ITargetDevice Device
-		{
-			get
-			{
-				return Install.Device;
-			}
-		}
-	}
-
-	public class TargetDeviceMac : ITargetDevice
-	{
-		public string Name { get; protected set; }
-
-		public UnrealTargetPlatform? Platform { get { return UnrealTargetPlatform.Mac; } }
-
-		public bool IsAvailable { get { return true; } }
-		public bool IsConnected { get { return true; } }
-		public bool IsOn { get { return true; } }
-		public bool PowerOn() { return true; }
-		public bool PowerOff() { return true; }
-		public bool Reboot() { return true; }
-		public bool Connect() { return true; }
-		public bool Disconnect(bool bForce = false) { return true; }
-
-		protected string UserDir { get; set; }
-
-		protected string LocalCachePath { get; set; }
-
-		public CommandUtils.ERunOptions RunOptions { get; set; }
-
-		protected Dictionary<EIntendedBaseCopyDirectory, string> LocalDirectoryMappings { get; set; }
-
 		public TargetDeviceMac(string InName, string InCachePath)
+			: base(InName, InCachePath)
 		{
-			Name = InName;
-			LocalCachePath = InCachePath;
-			UserDir = Path.Combine(LocalCachePath, "UserDir");
-			this.RunOptions = CommandUtils.ERunOptions.NoWaitForExit;
-			LocalDirectoryMappings = new Dictionary<EIntendedBaseCopyDirectory, string>();
+			Platform = UnrealTargetPlatform.Mac;
+			RunOptions = CommandUtils.ERunOptions.NoWaitForExit;
 		}
 
-		#region IDisposable Support
-		private bool disposedValue = false; // To detect redundant calls
-
-		protected virtual void Dispose(bool disposing)
+		public override IAppInstall InstallApplication(UnrealAppConfig AppConfig)
 		{
-			if (!disposedValue)
+			switch (AppConfig.Build)
 			{
-				if (disposing)
-				{
-					// TODO: dispose managed state (managed objects).
-				}
+				case NativeStagedBuild:
+					return InstallNativeStagedBuild(AppConfig, AppConfig.Build as NativeStagedBuild);
 
-				// TODO: free unmanaged resources (unmanaged objects) and override a finalizer below.
-				// TODO: set large fields to null.
+				case StagedBuild:
+					return InstallStagedBuild(AppConfig, AppConfig.Build as StagedBuild);
 
-				disposedValue = true;
+				case MacPackagedBuild:
+					return InstallPackagedBuild(AppConfig, AppConfig.Build as MacPackagedBuild);
+
+				case EditorBuild:
+					return InstallEditorBuild(AppConfig, AppConfig.Build as EditorBuild);
+
+				default:
+					throw new AutomationException("{0} is an invalid build type!", AppConfig.Build.ToString());
 			}
 		}
 
-		// This code added to correctly implement the disposable pattern.
-		public void Dispose()
+		public override IAppInstance Run(IAppInstall App)
 		{
-			// Do not change this code. Put cleanup code in Dispose(bool disposing) above.
-			Dispose(true);
-			// TODO: uncomment the following line if the finalizer is overridden above.
-			// GC.SuppressFinalize(this);
-		}
-		#endregion
+			MacAppInstall MacInstall = App as MacAppInstall;
 
-		public override string ToString()
+			if (MacInstall == null)
+			{
+				throw new AutomationException("Invalid install type!");
+			}
+
+			IProcessResult Result = null;
+
+			lock (Globals.MainLock)
+			{
+				string OldWD = Environment.CurrentDirectory;
+				Environment.CurrentDirectory = MacInstall.WorkingDirectory;
+
+				Log.Info("Launching {0} on {1}", App.Name, ToString());
+				Log.Verbose("\t{0}", MacInstall.CommandArguments);
+
+				bool bAllowSpew = MacInstall.RunOptions.HasFlag(CommandUtils.ERunOptions.AllowSpew);
+				Result = CommandUtils.Run(GetExecutableIfBundle(MacInstall.ExecutablePath), MacInstall.CommandArguments, Options: MacInstall.RunOptions, SpewFilterCallback: new SpewFilterCallbackType(delegate (string M) { return bAllowSpew ? M : null; }) /* make sure stderr does not spew in the stdout */);
+
+				if (Result.HasExited && Result.ExitCode != 0)
+				{
+					throw new AutomationException("Failed to launch {0}. Error {1}", MacInstall.ExecutablePath, Result.ExitCode);
+				}
+
+				Environment.CurrentDirectory = OldWD;
+			}
+
+			return new MacAppInstance(MacInstall, Result, MacInstall.LogFile);
+		}
+
+		protected override IAppInstall InstallNativeStagedBuild(UnrealAppConfig AppConfig, NativeStagedBuild InBuild)
 		{
-			return Name;
+			MacAppInstall MacApp = new MacAppInstall(AppConfig.Name, AppConfig.ProjectName, this);
+			MacApp.SetDefaultCommandLineArguments(AppConfig, RunOptions, InBuild.BuildPath);
+			MacApp.WorkingDirectory = InBuild.BuildPath;
+			MacApp.ExecutablePath = Path.Combine(InBuild.BuildPath, InBuild.ExecutablePath);
+
+			CopyAdditionalFiles(AppConfig.FilesToCopy);
+
+			return MacApp;
+		}
+
+		protected override IAppInstall InstallEditorBuild(UnrealAppConfig AppConfig, EditorBuild Build)
+		{
+			MacAppInstall MacApp = new MacAppInstall(AppConfig.Name, AppConfig.ProjectName, this);
+			MacApp.SetDefaultCommandLineArguments(AppConfig, RunOptions, Build.ExecutablePath);
+			MacApp.WorkingDirectory = Path.GetFullPath(Build.ExecutablePath);
+			MacApp.ExecutablePath = GetExecutableIfBundle(Build.ExecutablePath);
+
+			if (LocalDirectoryMappings.Count == 0)
+			{
+				PopulateDirectoryMappings(AppConfig.ProjectFile.Directory.FullName);
+			}
+
+			CopyAdditionalFiles(AppConfig.FilesToCopy);
+
+			return MacApp;
+		}
+
+		protected override IAppInstall InstallStagedBuild(UnrealAppConfig AppConfig, StagedBuild Build)
+		{
+			string BuildPath = CopyBuildIfNecessary(AppConfig, Build.BuildPath);
+			string BundlePath = Path.Combine(BuildPath, Build.ExecutablePath);
+			return InstallBuild(AppConfig, BuildPath, BundlePath);
+		}
+
+		protected IAppInstall InstallPackagedBuild(UnrealAppConfig AppConfig, MacPackagedBuild Build)
+		{
+			string BuildPath = CopyBuildIfNecessary(AppConfig, Build.BuildPath);
+			return InstallBuild(AppConfig, BuildPath, BuildPath);
+		}
+
+		protected IAppInstall InstallBuild(UnrealAppConfig AppConfig, string BuildPath, string BundlePath)
+		{
+			MacAppInstall MacApp = new MacAppInstall(AppConfig.Name, AppConfig.ProjectName, this);
+			MacApp.SetDefaultCommandLineArguments(AppConfig, RunOptions, BuildPath);
+			MacApp.WorkingDirectory = BuildPath;
+			MacApp.ExecutablePath = GetExecutableIfBundle(BundlePath);
+
+			PopulateDirectoryMappings(BuildPath);
+
+			CopyAdditionalFiles(AppConfig.FilesToCopy);
+
+			// check for a local newer executable
+			if (Globals.Params.ParseParam("dev")
+				&& AppConfig.ProcessType.UsesEditor() == false
+				&& AppConfig.ProjectFile != null)
+			{
+				// Get project properties
+				ProjectProperties Props = ProjectUtils.GetProjectProperties(AppConfig.ProjectFile,
+					new List<UnrealTargetPlatform>(new[] { AppConfig.Platform.Value }),
+					new List<UnrealTargetConfiguration>(new[] { AppConfig.Configuration }));
+
+				// Would this executable be built under Engine or a Project?
+				DirectoryReference WorkingDir = Props.bIsCodeBasedProject ? AppConfig.ProjectFile.Directory : Unreal.EngineDirectory;
+
+				// The bundlepath may be under Binaries/Mac for a staged build, or it could be in any folder for a packaged build so just use the name and
+				// build the path ourselves
+				string LocalProjectBundle = FileReference.Combine(WorkingDir, "Binaries", "Mac", Path.GetFileName(BundlePath)).FullName;
+
+				string LocalProjectBinary = GetExecutableIfBundle(LocalProjectBundle);
+
+				bool LocalFileExists = File.Exists(LocalProjectBinary);
+				bool LocalFileNewer = LocalFileExists && File.GetLastWriteTime(LocalProjectBinary) > File.GetLastWriteTime(MacApp.ExecutablePath);
+
+				Log.Verbose("Checking for newer binary at {0}", LocalProjectBinary);
+				Log.Verbose("LocalFile exists: {0}. Newer: {1}", LocalFileExists, LocalFileNewer);
+
+				if (LocalFileExists && LocalFileNewer)
+				{
+					// need to -basedir to have our exe load content from the path that the bundle sits in
+					MacApp.CommandArguments += string.Format(" -basedir={0}", Path.GetDirectoryName(BundlePath));
+					MacApp.ExecutablePath = LocalProjectBinary;
+				}
+			}
+
+			return MacApp;
 		}
 
 		protected string GetVolumeName(string InPath)
@@ -202,18 +174,6 @@ namespace Gauntlet
 			}
 
 			return "";
-		}
-
-		public void PopulateDirectoryMappings(string ProjectDir)
-		{
-			LocalDirectoryMappings.Add(EIntendedBaseCopyDirectory.Build, Path.Combine(ProjectDir, "Build"));
-			LocalDirectoryMappings.Add(EIntendedBaseCopyDirectory.Binaries, Path.Combine(ProjectDir, "Binaries"));
-			LocalDirectoryMappings.Add(EIntendedBaseCopyDirectory.Config, Path.Combine(ProjectDir, "Saved", "Config"));
-			LocalDirectoryMappings.Add(EIntendedBaseCopyDirectory.Content, Path.Combine(ProjectDir, "Content"));
-			LocalDirectoryMappings.Add(EIntendedBaseCopyDirectory.Demos, Path.Combine(ProjectDir, "Saved", "Demos"));
-			LocalDirectoryMappings.Add(EIntendedBaseCopyDirectory.PersistentDownloadDir, Path.Combine(ProjectDir, "Saved", "PersistentDownloadDir"));
-			LocalDirectoryMappings.Add(EIntendedBaseCopyDirectory.Profiling, Path.Combine(ProjectDir, "Saved", "Profiling"));
-			LocalDirectoryMappings.Add(EIntendedBaseCopyDirectory.Saved, Path.Combine(ProjectDir, "Saved"));
 		}
 
 		/// <summary>
@@ -243,220 +203,65 @@ namespace Gauntlet
 		/// <returns></returns>
 		protected string CopyBuildIfNecessary(UnrealAppConfig AppConfig, string InBuildPath)
 		{
-			bool SkipDeploy = Globals.Params.ParseParam("SkipDeploy");
+			string BuildDir = InBuildPath;
 
-			string OutBuildPath = InBuildPath;
-
-			string BuildVolume = GetVolumeName(OutBuildPath);
+			string BuildVolume = GetVolumeName(BuildDir);
 			string LocalRoot = GetVolumeName(Environment.CurrentDirectory);
 
 			// Must be on our volume to run
 			if (BuildVolume.Equals(LocalRoot, StringComparison.OrdinalIgnoreCase) == false)
 			{
 				string SubDir = string.IsNullOrEmpty(AppConfig.Sandbox) ? AppConfig.ProjectName : AppConfig.Sandbox;
-				string DestPath = Path.Combine(this.LocalCachePath, SubDir, AppConfig.ProcessType.ToString());
+				string InstallDir = Path.Combine(InstallRoot, SubDir, AppConfig.ProcessType.ToString());
 
-				if (!SkipDeploy)
+				if (!AppConfig.SkipInstall)
 				{
-					Utils.SystemHelpers.CopyDirectory(InBuildPath, DestPath, Utils.SystemHelpers.CopyOptions.Mirror);
+					Utils.SystemHelpers.CopyDirectory(BuildDir, InstallDir, Utils.SystemHelpers.CopyOptions.Mirror);
 				}
-
 				else
 				{
-					Log.Info("Skipping install of {0} (-skipdeploy)", InBuildPath);
+					Log.Info("Skipping install of {0} (-SkipInstall)", BuildDir);
 				}
 
-				Utils.SystemHelpers.MarkDirectoryForCleanup(DestPath);
-
-				OutBuildPath = DestPath;
+				BuildDir = InstallDir;
+				Utils.SystemHelpers.MarkDirectoryForCleanup(InstallDir);
 			}
 
-			return OutBuildPath;
-		}
-
-		protected IAppInstall InstallNativeStagedBuild(UnrealAppConfig AppConfig, NativeStagedBuild InBuild)
-		{
-			MacAppInstall MacApp = new MacAppInstall(AppConfig.Name, this);
-
-			MacApp.RunOptions = RunOptions;
-			if (Log.IsVeryVerbose)
-			{
-				MacApp.RunOptions |= CommandUtils.ERunOptions.AllowSpew;
-			}
-
-			MacApp.WorkingDirectory = InBuild.BuildPath;
-			MacApp.ExecutablePath = Path.Combine(InBuild.BuildPath, InBuild.ExecutablePath);
-			MacApp.CommandArguments = AppConfig.CommandLine;
-
-			MacApp.ArtifactPath = Path.Combine(InBuild.BuildPath, AppConfig.ProjectName, @"Saved");
-			MacApp.CleanDeviceArtifacts();
-
-			return MacApp;
-		}
-
-		protected IAppInstall InstallBuild(UnrealAppConfig AppConfig, IBuild InBuild)
-		{
-			// Full path to the build
-			string BuildPath;
-
-			//  Full path to the build.app to use. This will be under BuildPath for staged builds, and the build path itself for packaged builds
-			string BundlePath;
-
-			if (InBuild is StagedBuild)
-			{
-				StagedBuild InStagedBuild = InBuild as StagedBuild;
-				BuildPath = CopyBuildIfNecessary(AppConfig, InStagedBuild.BuildPath);
-				BundlePath = Path.Combine(BuildPath, InStagedBuild.ExecutablePath);
-			}
-			else
-			{
-				MacPackagedBuild InPackagedBuild = InBuild as MacPackagedBuild;
-				BuildPath = CopyBuildIfNecessary(AppConfig, InPackagedBuild.BuildPath);
-				BundlePath = BuildPath;
-			}
-
-			MacAppInstall MacApp = new MacAppInstall(AppConfig.Name, this);
-			MacApp.LocalPath = BuildPath;
-			MacApp.WorkingDirectory = MacApp.LocalPath;
-			MacApp.RunOptions = RunOptions;
-
-			MacApp.ExecutablePath = GetExecutableIfBundle(BundlePath);
-
-			// Set commandline replace any InstallPath arguments with the path we use
-			MacApp.CommandArguments = Regex.Replace(AppConfig.CommandLine, @"\$\(InstallPath\)", BuildPath, RegexOptions.IgnoreCase);
-
-			// Mac always forces this to stop logs and other artifacts going to different places
-			// Mac always forces this to stop logs and other artifacts going to different places
-			MacApp.CommandArguments += string.Format(" -userdir=\"{0}\"", UserDir);
-			MacApp.ArtifactPath = Path.Combine(UserDir, @"Saved");
-
-			if (LocalDirectoryMappings.Count == 0)
-			{
-				PopulateDirectoryMappings(BuildPath);
-			}
-
-			// clear artifact path
-			MacApp.CleanDeviceArtifacts();
-			
-			// check for a local newer executable
-			if (Globals.Params.ParseParam("dev") 
-				&& AppConfig.ProcessType.UsesEditor() == false
-				&& AppConfig.ProjectFile != null)
-			{
-				// Get project properties
-				ProjectProperties Props = ProjectUtils.GetProjectProperties(AppConfig.ProjectFile, 
-					new List<UnrealTargetPlatform>(new[] { AppConfig.Platform.Value }),
-					new List<UnrealTargetConfiguration>(new[] { AppConfig.Configuration }));
-
-				// Would this executable be built under Engine or a Project?
-				DirectoryReference  WorkingDir = Props.bIsCodeBasedProject ? AppConfig.ProjectFile.Directory : Unreal.EngineDirectory;
-
-				// The bundlepath may be under Binaries/Mac for a staged build, or it could be in any folder for a packaged build so just use the name and
-				// build the path ourselves
-				string LocalProjectBundle = FileReference.Combine(WorkingDir, "Binaries", "Mac", Path.GetFileName(BundlePath)).FullName;
-
-				string LocalProjectBinary = GetExecutableIfBundle(LocalProjectBundle);
-
-				bool LocalFileExists = File.Exists(LocalProjectBinary);
-				bool LocalFileNewer = LocalFileExists && File.GetLastWriteTime(LocalProjectBinary) > File.GetLastWriteTime(MacApp.ExecutablePath);
-
-				Log.Verbose("Checking for newer binary at {0}", LocalProjectBinary);
-				Log.Verbose("LocalFile exists: {0}. Newer: {1}", LocalFileExists, LocalFileNewer);
-
-				if (LocalFileExists && LocalFileNewer)
-				{					
-					// need to -basedir to have our exe load content from the path that the bundle sits in
-					MacApp.CommandArguments += string.Format(" -basedir={0}", Path.GetDirectoryName(BundlePath));
-					MacApp.ExecutablePath = LocalProjectBinary;
-				}
-			}
-
-			return MacApp;
-		}
-
-
-		public IAppInstall InstallApplication(UnrealAppConfig AppConfig)
-		{
-			if (AppConfig.Build is NativeStagedBuild)
-			{
-				return InstallNativeStagedBuild(AppConfig, (NativeStagedBuild)AppConfig.Build);
-			}
-			if (AppConfig.Build is StagedBuild || AppConfig.Build is MacPackagedBuild)
-			{
-				return InstallBuild(AppConfig, AppConfig.Build);
-			}
-
-			EditorBuild EditorBuild = AppConfig.Build as EditorBuild;
-
-			if (EditorBuild == null)
-			{
-				throw new AutomationException("Invalid build type!");
-			}
-
-			MacAppInstall MacApp = new MacAppInstall(AppConfig.Name, this);
-
-			MacApp.WorkingDirectory = Path.GetFullPath(EditorBuild.ExecutablePath);
-			MacApp.CommandArguments = AppConfig.CommandLine;
-			MacApp.RunOptions = RunOptions;
-
-			// Mac always forces this to stop logs and other artifacts going to different places
-			MacApp.CommandArguments += string.Format(" -userdir=\"{0}\"", UserDir);
-			MacApp.ArtifactPath = Path.Combine(UserDir, @"Saved");
-
-			// now turn the Foo.app into Foo/Content/MacOS/Foo
-			string AppPath = Path.GetDirectoryName(EditorBuild.ExecutablePath);
-
-			MacApp.ExecutablePath = GetExecutableIfBundle(EditorBuild.ExecutablePath);
-
-			if (LocalDirectoryMappings.Count == 0)
-			{
-				PopulateDirectoryMappings(AppPath);
-			}
-			return MacApp;
-		}
-
-		public IAppInstance Run(IAppInstall App)
-		{
-			MacAppInstall MacInstall = App as MacAppInstall;
-
-			if (MacInstall == null)
-			{
-				throw new AutomationException("Invalid install type!");
-			}
-
-			IProcessResult Result = null;
-
-			lock (Globals.MainLock)
-			{
-				string NewWorkingDir = string.IsNullOrEmpty(MacInstall.WorkingDirectory) ? MacInstall.LocalPath : MacInstall.WorkingDirectory;
-				string OldWD = Environment.CurrentDirectory;
-				Environment.CurrentDirectory = NewWorkingDir;
-
-				Log.Info("Launching {0} on {1}", App.Name, ToString());
-				Log.Verbose("\t{0}", MacInstall.CommandArguments);
-
-				bool bAllowSpew = MacInstall.RunOptions.HasFlag(CommandUtils.ERunOptions.AllowSpew);
-				Result = CommandUtils.Run(MacInstall.ExecutablePath, MacInstall.CommandArguments, Options: MacInstall.RunOptions, SpewFilterCallback: new SpewFilterCallbackType(delegate (string M) { return bAllowSpew ? M : null; }) /* make sure stderr does not spew in the stdout */);
-
-				if (Result.HasExited && Result.ExitCode != 0)
-				{
-					throw new AutomationException("Failed to launch {0}. Error {1}", MacInstall.ExecutablePath, Result.ExitCode);
-				}
-
-				Environment.CurrentDirectory = OldWD;
-			}
-
-			return new MacAppInstance(MacInstall, Result);
-		}
-
-		public Dictionary<EIntendedBaseCopyDirectory, string> GetPlatformDirectoryMappings()
-		{
-			if (LocalDirectoryMappings.Count == 0)
-			{
-				Log.Warning("Platform directory mappings have not been populated for this platform! This should be done within InstallApplication()");
-			}
-			return LocalDirectoryMappings;
+			return BuildDir;
 		}
 	}
 
+	public class MacAppInstall : DesktopCommonAppInstall<TargetDeviceMac>
+	{
+		[Obsolete("Will be removed in a future release. Use WorkingDirectory instead.")]
+		public string LocalPath
+		{
+			get => WorkingDirectory;
+			set { } // intentional nop
+		}
+
+		public MacAppInstall(string InName, string InProjectName, TargetDeviceMac InDevice)
+			: base(InName, InProjectName, InDevice)
+		{ }
+	}
+
+	public class MacAppInstance : DesktopCommonAppInstance<MacAppInstall, TargetDeviceMac>
+	{
+		public MacAppInstance(MacAppInstall InInstall, IProcessResult InProcess, string ProcessLogFile = null)
+			: base(InInstall, InProcess, ProcessLogFile)
+		{ }
+	}
+
+	public class MacDeviceFactory : IDeviceFactory
+	{
+		public bool CanSupportPlatform(UnrealTargetPlatform? Platform)
+		{
+			return Platform == UnrealTargetPlatform.Mac;
+		}
+
+		public ITargetDevice CreateDevice(string InRef, string InCachePath, string InParam = null)
+		{
+			return new TargetDeviceMac(InRef, InCachePath);
+		}
+	}
 }

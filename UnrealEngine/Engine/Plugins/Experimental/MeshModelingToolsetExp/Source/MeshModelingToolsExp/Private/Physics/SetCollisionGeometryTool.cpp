@@ -7,6 +7,11 @@
 #include "DynamicMesh/MeshTransforms.h"
 #include "DynamicMeshEditor.h"
 #include "Selections/MeshConnectedComponents.h"
+#include "Selections/GeometrySelectionUtil.h"
+#include "Selection/GeometrySelectionVisualization.h"
+#include "Selection/StoredMeshSelectionUtil.h"
+#include "PropertySets/GeometrySelectionVisualizationProperties.h"
+#include "GroupTopology.h"
 #include "DynamicSubmesh3.h"
 #include "Polygroups/PolygroupUtil.h"
 #include "Util/ColorConstants.h"
@@ -15,6 +20,7 @@
 #include "ShapeApproximation/MeshSimpleShapeApproximation.h"
 
 #include "Physics/CollisionGeometryVisualization.h"
+#include "Physics/ComponentCollisionUtil.h"
 
 // physics data
 #include "Components/StaticMeshComponent.h"
@@ -59,9 +65,13 @@ public:
 	bool bUseMaxCount;
 	bool bRemoveContained;
 	bool bAppendToExisting;
+	bool bMergeCollisionShapes;
+	bool bUseNegativeSpaceInMerge;
 
 	EProjectedHullAxis SweepAxis;
 	int32 MaxCount;
+
+	int32 MergeAboveCount;
 
 	// Begin TGenericDataOperator interface
 	virtual void CalculateResult(FProgressCancel* Progress) override
@@ -154,6 +164,16 @@ public:
 			NewCollision->Geometry.RemoveContainedGeometry();
 		}
 
+		if (bMergeCollisionShapes)
+		{
+			FSimpleShapeSet3d::FMergeShapesSettings Settings;
+			Settings.bMergeShapesProtectNegativeSpace = bUseNegativeSpaceInMerge;
+			// Take the UseShapeGenerator negative space settings (same as we use for convex decomposition negative space)
+			Settings.bIgnoreInternalNegativeSpace = UseShapeGenerator->bIgnoreInternalNegativeSpace;
+			Settings.NegativeSpaceMinRadius = UseShapeGenerator->NegativeSpaceMinRadius;
+			Settings.NegativeSpaceTolerance = UseShapeGenerator->NegativeSpaceTolerance;
+			NewCollision->Geometry.MergeShapes(MergeAboveCount, Settings);
+		}
 		
 		if (bUseMaxCount)
 		{
@@ -189,6 +209,26 @@ bool USetCollisionGeometryToolBuilder::CanBuildTool(const FToolBuilderState& Sce
 			(Cast<UDynamicMeshComponent>(LastValidTarget) != nullptr);
 	}
 	return false;
+}
+
+
+void USetCollisionGeometryToolBuilder::InitializeNewTool(UMultiSelectionMeshEditingTool* Tool, const FToolBuilderState& SceneState) const
+{
+	const TArray<TObjectPtr<UToolTarget>> Targets = SceneState.TargetManager->BuildAllSelectedTargetable(SceneState, GetTargetRequirements());
+	Tool->SetTargets(Targets);
+	Tool->SetWorld(SceneState.World);
+
+	if (USetCollisionGeometryTool* CollisionTool = Cast<USetCollisionGeometryTool>(Tool))
+	{
+		if (Targets.Num() == 1) // Can only have a selection when there is one target
+		{
+			FGeometrySelection Selection;
+			if (GetCurrentGeometrySelectionForTarget(SceneState, Targets[0], Selection))
+			{
+				CollisionTool->SetGeometrySelection(MoveTemp(Selection));
+			}
+		}
+	}
 }
 
 
@@ -277,19 +317,30 @@ void USetCollisionGeometryTool::Setup()
 	Settings->WatchProperty(Settings->bEnableMaxCount, [this](bool) { InvalidateCompute(); });
 	Settings->WatchProperty(Settings->MaxCount, [this](int32) { InvalidateCompute(); });
 	Settings->WatchProperty(Settings->MinThickness, [this](float) { InvalidateCompute(); });
-	Settings->WatchProperty(Settings->bDetectBoxes, [this](int32) { InvalidateCompute(); });
-	Settings->WatchProperty(Settings->bDetectSpheres, [this](int32) { InvalidateCompute(); });
-	Settings->WatchProperty(Settings->bDetectCapsules, [this](int32) { InvalidateCompute(); });
+	Settings->WatchProperty(Settings->bDetectBoxes, [this](bool) { InvalidateCompute(); });
+	Settings->WatchProperty(Settings->bDetectSpheres, [this](bool) { InvalidateCompute(); });
+	Settings->WatchProperty(Settings->bDetectCapsules, [this](bool) { InvalidateCompute(); });
 	Settings->WatchProperty(Settings->bSimplifyHulls, [this](bool) { InvalidateCompute(); });
 	Settings->WatchProperty(Settings->HullTargetFaceCount, [this](int32) { InvalidateCompute(); });
 	Settings->WatchProperty(Settings->MaxHullsPerMesh, [this](int32) { InvalidateCompute(); });
 	Settings->WatchProperty(Settings->ConvexDecompositionSearchFactor, [this](int32) { InvalidateCompute(); });
 	Settings->WatchProperty(Settings->AddHullsErrorTolerance, [this](int32) { InvalidateCompute(); });
 	Settings->WatchProperty(Settings->MinPartThickness, [this](int32) { InvalidateCompute(); });
-	Settings->WatchProperty(Settings->bSimplifyPolygons, [this](bool) { InvalidateCompute(); });
+	Settings->WatchProperty(Settings->bUseNegativeSpaceInDecomposition, [this](bool) { InvalidateCompute(); });
+	Settings->WatchProperty(Settings->NegativeSpaceMinRadius, [this](int32) { InvalidateCompute(); });
+	Settings->WatchProperty(Settings->NegativeSpaceTolerance, [this](int32) { InvalidateCompute(); });
+	Settings->WatchProperty(Settings->bIgnoreInternalNegativeSpace, [this](bool) { InvalidateCompute(); });
+	Settings->WatchProperty(Settings->bMergeCollisionShapes, [this](bool) { InvalidateCompute(); });
+	Settings->WatchProperty(Settings->bUseNegativeSpaceInMerge, [this](bool) { InvalidateCompute(); });
+	Settings->WatchProperty(Settings->MergeAboveCount, [this](int32) { InvalidateCompute(); });
 	Settings->WatchProperty(Settings->HullTolerance, [this](float) { InvalidateCompute(); });
 	Settings->WatchProperty(Settings->SweepAxis, [this](EProjectedHullAxis) { InvalidateCompute(); });
 	Settings->WatchProperty(Settings->LevelSetResolution, [this](int32) { InvalidateCompute(); });
+	Settings->WatchProperty(Settings->bShowTargetMesh, [this](bool bNewValue) 
+	{
+		UE::ToolTarget::SetSourceObjectVisible(Targets.Last(), bNewValue);
+	});
+	UE::ToolTarget::SetSourceObjectVisible(Targets.Last(), Settings->bShowTargetMesh);
 
 	if (InitialSourceMeshes.Num() == 1)
 	{
@@ -310,6 +361,30 @@ void USetCollisionGeometryTool::Setup()
 	CollisionProps = NewObject<UPhysicsObjectToolPropertySet>(this);
 	AddToolPropertySource(CollisionProps);
 
+	if (InputGeometrySelection.IsEmpty() == false)
+	{
+		GeometrySelectionVizProperties = NewObject<UGeometrySelectionVisualizationProperties>(this);
+		GeometrySelectionVizProperties->RestoreProperties(this);
+		AddToolPropertySource(GeometrySelectionVizProperties);
+		GeometrySelectionVizProperties->Initialize(this);
+		GeometrySelectionVizProperties->SelectionElementType = static_cast<EGeometrySelectionElementType>(InputGeometrySelection.ElementType);
+		GeometrySelectionVizProperties->SelectionTopologyType = static_cast<EGeometrySelectionTopologyType>(InputGeometrySelection.TopologyType);
+
+		// Compute group topology if the selection has Polygroup topology, and do nothing otherwise
+		FGroupTopology GroupTopology(&InitialSourceMeshes[0], InputGeometrySelection.TopologyType == EGeometryTopologyType::Polygroup);
+
+		FTransformSRT3d ApplyTransform(UE::ToolTarget::GetLocalToWorldTransform(CollisionTarget));
+
+		GeometrySelectionViz = NewObject<UPreviewGeometry>(this);
+		GeometrySelectionViz->CreateInWorld(GetTargetWorld(), ApplyTransform);
+		InitializeGeometrySelectionVisualization(
+			GeometrySelectionViz,
+			GeometrySelectionVizProperties,
+			InitialSourceMeshes[0],
+			InputGeometrySelection,
+			&GroupTopology);
+	}
+
 	SetToolDisplayName(LOCTEXT("ToolName", "Mesh To Collision"));
 	GetToolManager()->DisplayMessage(
 		LOCTEXT("OnStartTool", "Initialize Simple Collision geometry for a Mesh from one or more input Meshes (including itself)."),
@@ -317,6 +392,11 @@ void USetCollisionGeometryTool::Setup()
 
 	// Make sure we are set to precompute input meshes on first tick
 	bInputMeshesValid = false;
+}
+
+void USetCollisionGeometryTool::SetGeometrySelection(FGeometrySelection&& SelectionIn)
+{
+	InputGeometrySelection = MoveTemp(SelectionIn);
 }
 
 
@@ -362,14 +442,22 @@ TUniquePtr<UE::Geometry::TGenericDataOperator<FPhysicsDataCollection>> USetColli
 	Op->UseShapeGenerator->bDetectBoxes = Settings->bDetectBoxes;
 	Op->UseShapeGenerator->bDetectCapsules = Settings->bDetectCapsules;
 	Op->UseShapeGenerator->MinDimension = Settings->MinThickness;
-	Op->UseShapeGenerator->bSimplifyHulls = Settings->bSimplifyHulls;
+	// SimplifyHulls on the shape generator controls simplification on both swept and convex hull paths, but for Swept Hulls UI we leave simplification always enabled
+	Op->UseShapeGenerator->bSimplifyHulls = Settings->GeometryType == ECollisionGeometryType::SweptHulls || Settings->bSimplifyHulls;
 	Op->UseShapeGenerator->HullTargetFaceCount = Settings->HullTargetFaceCount;
 	Op->UseShapeGenerator->ConvexDecompositionMaxPieces = Settings->MaxHullsPerMesh;
 	Op->UseShapeGenerator->ConvexDecompositionSearchFactor = Settings->ConvexDecompositionSearchFactor;
 	Op->UseShapeGenerator->ConvexDecompositionErrorTolerance = Settings->AddHullsErrorTolerance;
 	Op->UseShapeGenerator->ConvexDecompositionMinPartThickness = Settings->MinPartThickness;
+	Op->UseShapeGenerator->bConvexDecompositionProtectNegativeSpace = Settings->bUseNegativeSpaceInDecomposition;
+	Op->UseShapeGenerator->NegativeSpaceMinRadius = Settings->NegativeSpaceMinRadius;
+	Op->UseShapeGenerator->NegativeSpaceTolerance = Settings->NegativeSpaceTolerance;
+	Op->UseShapeGenerator->bIgnoreInternalNegativeSpace = Settings->bIgnoreInternalNegativeSpace;
 	Op->UseShapeGenerator->HullSimplifyTolerance = Settings->HullTolerance;
 	Op->UseShapeGenerator->LevelSetGridResolution = Settings->LevelSetResolution;
+	Op->bMergeCollisionShapes = Settings->bMergeCollisionShapes;
+	Op->bUseNegativeSpaceInMerge = Settings->bUseNegativeSpaceInMerge;
+	Op->MergeAboveCount = Settings->MergeAboveCount;
 
 	Op->ComputeType = Settings->GeometryType;
 	Op->bAppendToExisting = Settings->bAppendToExisting;
@@ -404,6 +492,16 @@ void USetCollisionGeometryTool::OnShutdown(EToolShutdownType ShutdownType)
 
 	PreviewGeom->Disconnect();
 
+	if (GeometrySelectionViz)
+	{
+		GeometrySelectionViz->Disconnect();
+	}
+
+	if (GeometrySelectionVizProperties)
+	{
+		GeometrySelectionVizProperties->SaveProperties(this);
+	}
+
 	// show hidden sources
 	if (bSourcesHidden)
 	{
@@ -411,6 +509,10 @@ void USetCollisionGeometryTool::OnShutdown(EToolShutdownType ShutdownType)
 		{
 			UE::ToolTarget::ShowSourceObject(Targets[k]);
 		}
+	}
+	if (!Settings->bShowTargetMesh)
+	{
+		UE::ToolTarget::ShowSourceObject(Targets.Last());
 	}
 
 	if (Compute)
@@ -485,10 +587,14 @@ void USetCollisionGeometryTool::OnShutdown(EToolShutdownType ShutdownType)
 		}
 		else if (UDynamicMeshComponent* DynamicMeshComponent = Cast<UDynamicMeshComponent>(Component))
 		{
+			DynamicMeshComponent->Modify();
 			if (UBodySetup* BodySetup = DynamicMeshComponent->GetBodySetup())
 			{
-				UpdateBodySetup(BodySetup);
+				BodySetup->Modify();
 			}
+			DynamicMeshComponent->CollisionType = (ECollisionTraceFlag)(int32)Settings->SetCollisionType;
+			DynamicMeshComponent->SetSimpleCollisionShapes(GeneratedCollision->AggGeom, true);		
+			DynamicMeshComponent->MarkRenderStateDirty();
 		}
 
 		// post the undo transaction
@@ -509,6 +615,13 @@ void USetCollisionGeometryTool::OnTick(float DeltaTime)
 		InvalidateCompute();
 	}
 
+	FText DisplayMessage;
+	if (!Settings->bAppendToExisting && !InputGeometrySelection.IsEmpty())
+	{
+		DisplayMessage = LOCTEXT("GeometrySelectionWithoutAppendToExisting", "The tool was invoked with a selection so you may want to enable 'Append to Existing'");
+	}
+	GetToolManager()->DisplayMessage(DisplayMessage, EToolMessageLevel::UserWarning);
+
 	if (Compute)
 	{
 		Compute->Tick(DeltaTime);
@@ -523,8 +636,6 @@ void USetCollisionGeometryTool::OnTick(float DeltaTime)
 				VizSettings->bVisualizationDirty = true;
 
 				// update visualization
-				PreviewGeom->RemoveAllLineSets();
-
 				UE::PhysicsTools::InitializeCollisionGeometryVisualization(PreviewGeom, VizSettings, *GeneratedCollision);
 
 				// update property set
@@ -535,6 +646,11 @@ void USetCollisionGeometryTool::OnTick(float DeltaTime)
 	}
 
 	UE::PhysicsTools::UpdateCollisionGeometryVisualization(PreviewGeom, VizSettings);
+
+	if (GeometrySelectionViz)
+	{
+		UpdateGeometrySelectionVisualization(GeometrySelectionViz, GeometrySelectionVizProperties);
+	}
 }
 
 
@@ -577,15 +693,8 @@ void USetCollisionGeometryTool::OnSelectedGroupLayerChanged()
 }
 
 
-void USetCollisionGeometryTool::UpdateActiveGroupLayer()
+void USetCollisionGeometryTool::UpdateActiveGroupLayer(FDynamicMesh3* GroupLayersMesh)
 {
-	if (InitialSourceMeshes.Num() != 1)
-	{
-		ensure(false);		// should not get here
-		return;
-	}
-	FDynamicMesh3* GroupLayersMesh = &InitialSourceMeshes[0];
-
 	if (PolygroupLayerProperties->HasSelectedPolygroup() == false)
 	{
 		ActiveGroupSet = MakeUnique<UE::Geometry::FPolygroupSet>(GroupLayersMesh);
@@ -675,28 +784,41 @@ TArray<const T*> MakeRawPointerList(const TArray<TSharedPtr<T, ESPMode::ThreadSa
 
 void USetCollisionGeometryTool::PrecomputeInputMeshes()
 {
-	if (InitialSourceMeshes.Num() == 1)
-	{
-		UpdateActiveGroupLayer();
-	}
-
 	UToolTarget* CollisionTarget = Targets[Targets.Num() - 1];
 	FTransformSRT3d TargetTransform(UE::ToolTarget::GetLocalToWorldTransform(CollisionTarget));
 
+	// build input meshes.
 	InputMeshes.Reset();
 	InputMeshes.SetNum(SourceObjectIndices.Num());
-	ParallelFor(SourceObjectIndices.Num(), [&](int32 k)
+	if (!InputGeometrySelection.IsEmpty())
 	{
-		FDynamicMesh3 SourceMesh = InitialSourceMeshes[k];
-		if (Settings->bUseWorldSpace)
+		TSet<int> TriangleROI;
+		UE::Geometry::EnumerateSelectionTriangles(
+			InputGeometrySelection,
+			InitialSourceMeshes[0],
+			[&TriangleROI](int32 TriangleID) { TriangleROI.Add(TriangleID); });
+
+		// We dont discard attributes in the Submesh, we need them when building per-group input meshes
+		FDynamicSubmesh3 Submesh(&InitialSourceMeshes[0], TriangleROI.Array());
+
+		InputMeshes[0] = MakeShared<FDynamicMesh3, ESPMode::ThreadSafe>(MoveTemp(Submesh.GetSubmesh()));
+	}
+	else
+	{
+		ParallelFor(SourceObjectIndices.Num(), [&](int32 k)
 		{
-			FTransformSRT3d ToWorld(UE::ToolTarget::GetLocalToWorldTransform(Targets[k]));
-			MeshTransforms::ApplyTransform(SourceMesh, ToWorld, true);
-			MeshTransforms::ApplyTransformInverse(SourceMesh, TargetTransform, true);
-		}
-		SourceMesh.DiscardAttributes();
-		InputMeshes[k] = MakeShared<FDynamicMesh3, ESPMode::ThreadSafe>(MoveTemp(SourceMesh));
-	});
+			FDynamicMesh3 SourceMesh = InitialSourceMeshes[k];
+			if (Settings->bUseWorldSpace)
+			{
+				FTransformSRT3d ToWorld(UE::ToolTarget::GetLocalToWorldTransform(Targets[k]));
+				MeshTransforms::ApplyTransform(SourceMesh, ToWorld, true);
+				MeshTransforms::ApplyTransformInverse(SourceMesh, TargetTransform, true);
+			}
+			SourceMesh.DiscardAttributes();
+
+			InputMeshes[k] = MakeShared<FDynamicMesh3, ESPMode::ThreadSafe>(MoveTemp(SourceMesh));
+		});
+	}
 	InputMeshesApproximator = MakeShared<FMeshSimpleShapeApproximation, ESPMode::ThreadSafe>();
 	InputMeshesApproximator->InitializeSourceMeshes(MakeRawPointerList<FDynamicMesh3>(InputMeshes));
 
@@ -719,22 +841,39 @@ void USetCollisionGeometryTool::PrecomputeInputMeshes()
 	// build separated input meshes
 	SeparatedInputMeshes.Reset();
 	InitializeDerivedMeshSet(InputMeshes, SeparatedInputMeshes, 
-		[&](const FDynamicMesh3* Mesh, int32 Tri0, int32 Tri1) { return true; });
+		[](const FDynamicMesh3* Mesh, int32 Tri0, int32 Tri1)
+		{
+			return true;
+		});
 	SeparatedMeshesApproximator = MakeShared<FMeshSimpleShapeApproximation, ESPMode::ThreadSafe>();
 	SeparatedMeshesApproximator->InitializeSourceMeshes(MakeRawPointerList<FDynamicMesh3>(SeparatedInputMeshes));
 
 	// build per-group input meshes
 	PerGroupInputMeshes.Reset();
-	if (ActiveGroupSet.IsValid())
+	if (InputMeshes.Num() == 1)
 	{
-		check(InputMeshes.Num() == 1);
+		FDynamicMesh3* UseGroupLayerMesh = &InitialSourceMeshes[0];
+		if (!InputGeometrySelection.IsEmpty())
+		{
+			UseGroupLayerMesh = InputMeshes[0].Get();
+		}
+		UpdateActiveGroupLayer(UseGroupLayerMesh);
+
+		// Use the active polygroup layer when there is only one input
 		InitializeDerivedMeshSet(InputMeshes, PerGroupInputMeshes,
-			[&](const FDynamicMesh3* Mesh, int32 Tri0, int32 Tri1) { return ActiveGroupSet->GetTriangleGroup(Tri0) == ActiveGroupSet->GetTriangleGroup(Tri1); });
+			[this](const FDynamicMesh3* Mesh, int32 Tri0, int32 Tri1)
+			{
+				return ActiveGroupSet->GetTriangleGroup(Tri0) == ActiveGroupSet->GetTriangleGroup(Tri1);
+			});
 	}
 	else
 	{
+		// Use the default polygroup layer when there is more than one input
 		InitializeDerivedMeshSet(InputMeshes, PerGroupInputMeshes,
-			[&](const FDynamicMesh3* Mesh, int32 Tri0, int32 Tri1) { return Mesh->GetTriangleGroup(Tri0) == Mesh->GetTriangleGroup(Tri1); });
+			[](const FDynamicMesh3* Mesh, int32 Tri0, int32 Tri1)
+			{
+				return Mesh->GetTriangleGroup(Tri0) == Mesh->GetTriangleGroup(Tri1);
+			});
 	}
 	PerGroupMeshesApproximator = MakeShared<FMeshSimpleShapeApproximation, ESPMode::ThreadSafe>();
 	PerGroupMeshesApproximator->InitializeSourceMeshes(MakeRawPointerList<FDynamicMesh3>(PerGroupInputMeshes));

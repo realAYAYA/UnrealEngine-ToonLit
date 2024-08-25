@@ -83,9 +83,9 @@ DEFINE_LOG_CATEGORY(LogPlayerController);
 #define LOCTEXT_NAMESPACE "PlayerController"
 
 DECLARE_CYCLE_STAT(TEXT("PC Tick Actor"), STAT_PC_TickActor, STATGROUP_PlayerController);
-DECLARE_CYCLE_STAT(TEXT("  PC Tick Input"), STAT_PC_TickInput, STATGROUP_PlayerController);
-DECLARE_CYCLE_STAT(TEXT("    PC Build Input Stack"), STAT_PC_BuildInputStack, STATGROUP_PlayerController);
-DECLARE_CYCLE_STAT(TEXT("    PC Process Input Stack"), STAT_PC_ProcessInputStack, STATGROUP_PlayerController);
+DECLARE_CYCLE_STAT(TEXT("PC Tick Input"), STAT_PC_TickInput, STATGROUP_PlayerController);
+DECLARE_CYCLE_STAT(TEXT("PC Build Input Stack"), STAT_PC_BuildInputStack, STATGROUP_PlayerController);
+DECLARE_CYCLE_STAT(TEXT("PC Process Input Stack"), STAT_PC_ProcessInputStack, STATGROUP_PlayerController);
 
 // CVars
 namespace PlayerControllerCVars
@@ -98,22 +98,59 @@ namespace PlayerControllerCVars
 		TEXT("Whether to reset server prediction data for the possessed Pawn when the pawn ack handshake completes.\n")
 		TEXT("0: Disable, 1: Enable"),
 		ECVF_Default);
+
+	static int32 ForceUsingCameraAsStreamingSource = 0;
+	FAutoConsoleVariableRef CVarForceUsingCameraAsStreamingSource(
+		TEXT("wp.Runtime.PlayerController.ForceUsingCameraAsStreamingSource"),
+		ForceUsingCameraAsStreamingSource,
+		TEXT("Whether to force the use of the camera as the streaming source for World Partition. By default the player pawn is used.\n")
+		TEXT("0: Use pawn as streaming source, 1: Use camera as streaming source"));
 }
 
 namespace NetworkPhysicsCvars
 {
+	/* DEPRECATED 5.4 */
 	int32 NumRedundantCmds = 3;
-	FAutoConsoleVariableRef CVarNumRedundantCmds(TEXT("np2.NumRedundantCmds"), NumRedundantCmds, TEXT("Number of redundant user cmds to send per frame"));
+	FAutoConsoleVariableRef CVarNumRedundantCmds(TEXT("np2.NumRedundantCmds"), NumRedundantCmds, TEXT("(DEPRECATED 5.4, only part of the legacy physics frame offset logic) Number of redundant user cmds to send per frame"));
 
 #if (UE_BUILD_SHIPPING || UE_BUILD_TEST)
 	int32 EnableDebugRPC = 0;
 #else
 	int32 EnableDebugRPC = 1;
 #endif
-	FAutoConsoleVariableRef CVarEnableDebugRPC(TEXT("np2.EnableDebugRPC"), EnableDebugRPC, TEXT("Sends extra debug information to clients about server side input buffering"));
-
+	/* DEPRECATED 5.4 */
+	FAutoConsoleVariableRef CVarEnableDebugRPC(TEXT("np2.EnableDebugRPC"), EnableDebugRPC, TEXT("(DEPRECATED 5.4, only part of the legacy physics frame offset logic) Sends extra debug information to clients about server side input buffering"));
+	
+	/* DEPRECATED 5.4 */
 	int32 NetworkPhysicsPredictionFrameOffset = 4;
-	FAutoConsoleVariableRef CVarNetworkPhysicsPredictionFrameOffset(TEXT("np2.NetworkPhysicsPredictionFrameOffset"), NetworkPhysicsPredictionFrameOffset, TEXT("Additional frame offset to be added to the local to server offset used by network prediction"));
+	FAutoConsoleVariableRef CVarNetworkPhysicsPredictionFrameOffset(TEXT("np2.NetworkPhysicsPredictionFrameOffset"), NetworkPhysicsPredictionFrameOffset, TEXT("(DEPRECATED 5.4, use np2.PredictionAsyncFrameBuffer instead) Additional frame offset to be added to the local to server offset used by network prediction"));
+	
+	int32 PredictionAsyncFrameBuffer = 3;
+	FAutoConsoleVariableRef CVarPredictionAsyncFrameBuffer(TEXT("np2.PredictionAsyncFrameBuffer"), PredictionAsyncFrameBuffer, TEXT("Additional frame offset to be added to the local to server offset used by network prediction"));
+
+	int32 TickOffsetUpdateInterval = 10;
+	FAutoConsoleVariableRef CVarTickOffsetUpdateInterval(TEXT("np2.TickOffsetUpdateInterval"), TickOffsetUpdateInterval, TEXT("How many physics ticks to wait between each tick offset update. Lowest viable value = 1, which means update each tick. Deactivate physics offset updates by setting to 0 or negative value."));
+	
+	int32 TickOffsetCorrectionLimit = 10;
+	FAutoConsoleVariableRef CVarTickOffsetCorrectionLimit(TEXT("np2.TickOffsetCorrectionLimit"), TickOffsetCorrectionLimit, TEXT("If the client gets out of sync with physics ticks more than this limit, cut the losses and reset the offset."));
+	
+	float TimeDilationAmount = 0.01f;
+	FAutoConsoleVariableRef CVarTimeDilationAmount(TEXT("np2.TimeDilationAmount"), TimeDilationAmount, TEXT("Server-side CVar, Disable TimeDilation by setting to 0 | Default: 0.01 | Value is in percent where 0.01 = 1% dilation. Example: 1.0/0.01 = 100, meaning that over the time it usually takes to tick 100 physics steps we will tick 99 or 101 depending on if we dilate up or down."));
+
+	bool TimeDilationEscalation = true;
+	FAutoConsoleVariableRef CVarTimeDilationEscalation(TEXT("np2.TimeDilationEscalation"), TimeDilationEscalation, TEXT("Server-side CVar, Dilate the time more depending on how many ticks we need to adjust. When set to false we use the set TimeDilationAmount and wait the amount of time it takes to perform correct the offset. When set to true we multiply the TimeDilationAmount with the buffer offset count which will correct the offset in one TimeDilationAmount cycle."));
+
+	float TimeDilationEscalationDecay = 0.05f;
+	FAutoConsoleVariableRef CVarTimeDilationEscalationDecay(TEXT("np2.TimeDilationEscalationDecay"), TimeDilationEscalationDecay, TEXT("Value is a multiplier, Default: 0.05. For each escalated TimeDilation amount, also decay by this much. Disable by setting to 0."));
+
+	float TimeDilationEscalationDecayMax = 0.5f;
+	FAutoConsoleVariableRef CVarTimeDilationEscalationDecayMax(TEXT("np2.TimeDilationEscalationDecayMax"), TimeDilationEscalationDecayMax, TEXT("Value is a multiplier, Default: 0.5. The max decay value for escalated time dilation. Lower value means higher decay."));
+
+	float TimeDilationMax = 1.1f;
+	FAutoConsoleVariableRef CVarTimeDilationMax(TEXT("np2.TimeDilationMax"), TimeDilationMax, TEXT("Max value of the time dilation multiplier."));
+
+	float TimeDilationMin = 0.9f;
+	FAutoConsoleVariableRef CVarTimeDilationMin(TEXT("np2.TimeDilationMin"), TimeDilationMin, TEXT("Min value of the time dilation multiplier"));
 }
 
 const float RetryClientRestartThrottleTime = 0.5f;
@@ -145,6 +182,11 @@ struct FForceFeedbackEffectHistoryEntry
 
 APlayerController::APlayerController(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	, InputBuffer_DEPRECATED(FInputCmdBuffer())
+	, ClientFrameInfo_DEPRECATED(FClientFrameInfo())
+	, ServerFrameInfo_DEPRECATED(FServerFrameInfo())
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 {
 	NetPriority = 3.0f;
 	CheatClass = UCheatManager::StaticClass();
@@ -379,15 +421,11 @@ void APlayerController::ClientAckUpdateLevelVisibility_Implementation(FName Pack
 void APlayerController::ClientFlushLevelStreaming_Implementation()
 {
 	UWorld* World = GetWorld();
-	// if we're already doing a map change, requesting another blocking load is just wasting time	
-	if (GEngine->ShouldCommitPendingMapChange(World))
-	{
-		// request level streaming be flushed next frame
-		World->UpdateLevelStreaming();
-		World->bRequestedBlockOnAsyncLoading = true;
-		// request GC as soon as possible to remove any unloaded levels from memory
-		GEngine->ForceGarbageCollection();
-	}
+	// request level streaming be flushed next frame
+	World->UpdateLevelStreaming();
+	World->bRequestedBlockOnAsyncLoading = true;
+	// request GC as soon as possible to remove any unloaded levels from memory
+	GEngine->ForceGarbageCollection();
 }
 
 
@@ -1176,7 +1214,7 @@ void APlayerController::SetMouseCursorWidget(EMouseCursor::Type Cursor, class UU
 	ULocalPlayer* LocalPlayer = Cast<ULocalPlayer>(Player);
 	if (LocalPlayer && LocalPlayer->ViewportClient)
 	{
-		LocalPlayer->ViewportClient->AddCursorWidget(Cursor, CursorWidget);
+		LocalPlayer->ViewportClient->SetSoftwareCursorWidget(Cursor, CursorWidget);
 	}
 }
 
@@ -1666,35 +1704,33 @@ void APlayerController::ClientSetCameraFade_Implementation(bool bEnableFading, F
 
 void APlayerController::SendClientAdjustment()
 {
-	if(!UPhysicsSettings::Get()->PhysicsPrediction.bEnablePhysicsPrediction)
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	if (ServerFrameInfo_DEPRECATED.LastProcessedInputFrame != INDEX_NONE && ServerFrameInfo_DEPRECATED.LastProcessedInputFrame != ServerFrameInfo_DEPRECATED.LastSentLocalFrame)
 	{
-		if (ServerFrameInfo.LastProcessedInputFrame != INDEX_NONE && ServerFrameInfo.LastProcessedInputFrame != ServerFrameInfo.LastSentLocalFrame)
+		ServerFrameInfo_DEPRECATED.LastSentLocalFrame = ServerFrameInfo_DEPRECATED.LastProcessedInputFrame;
+		ClientRecvServerAckFrame(ServerFrameInfo_DEPRECATED.LastProcessedInputFrame, ServerFrameInfo_DEPRECATED.LastLocalFrame, ServerFrameInfo_DEPRECATED.QuantizedTimeDilation);
+		
+		if (NetworkPhysicsCvars::EnableDebugRPC)
 		{
-			ServerFrameInfo.LastSentLocalFrame = ServerFrameInfo.LastProcessedInputFrame;		
-			ClientRecvServerAckFrame(ServerFrameInfo.LastProcessedInputFrame, ServerFrameInfo.LastLocalFrame, ServerFrameInfo.QuantizedTimeDilation);
-
-			if (NetworkPhysicsCvars::EnableDebugRPC)
-			{
-				ClientRecvServerAckFrameDebug(InputBuffer.HeadFrame() - ServerFrameInfo.LastProcessedInputFrame, ServerFrameInfo.TargetNumBufferedCmds);
-			}
+			ClientRecvServerAckFrameDebug(InputBuffer_DEPRECATED.HeadFrame() - ServerFrameInfo_DEPRECATED.LastProcessedInputFrame, ServerFrameInfo_DEPRECATED.TargetNumBufferedCmds);
 		}
 	}
-	else
-	{
-		if (ServerLatestTimestampToCorrect.ServerFrame == INDEX_NONE)
-		{
-			//Nothing to correct so do not update client
-			return;
-		}
 
-		ClientCorrectionAsyncPhysicsTimestamp(ServerLatestTimestampToCorrect);
-		ServerLatestTimestampToCorrect.ServerFrame = INDEX_NONE;
+	if (UPhysicsSettings::Get()->PhysicsPrediction.bEnablePhysicsPrediction)
+	{
+		if (ServerLatestTimestampToCorrect_DEPRECATED.ServerFrame != INDEX_NONE)
+		{
+			ClientCorrectionAsyncPhysicsTimestamp(ServerLatestTimestampToCorrect_DEPRECATED);
+			ServerLatestTimestampToCorrect_DEPRECATED.ServerFrame = INDEX_NONE;
+		}
 
 		if (AcknowledgedPawn != GetPawn() && !GetSpectatorPawn())
 		{
 			return;
 		}
 	}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
 
 	// Server sends updates.
 	// Note: we do this for both the pawn and spectator in case an implementation has a networked spectator.
@@ -1711,51 +1747,66 @@ void APlayerController::SendClientAdjustment()
 
 void APlayerController::PushClientInput(int32 InRecvClientInputFrame, TArray<uint8>& Data)
 {
-	InputBuffer.Write(InRecvClientInputFrame) = MoveTemp(Data);
-
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	InputBuffer_DEPRECATED.Write(InRecvClientInputFrame) = MoveTemp(Data);
+	
 	// Do the RPC right here, including the redundant send. This should probably be time based and managed somewhere else like in Tick eventually
-	for (int32 Frame = FMath::Max(1, InRecvClientInputFrame-NetworkPhysicsCvars::NumRedundantCmds+1); Frame <= InRecvClientInputFrame; ++Frame)
+	for (int32 Frame = FMath::Max(1, InRecvClientInputFrame - NetworkPhysicsCvars::NumRedundantCmds + 1); Frame <= InRecvClientInputFrame; ++Frame)
 	{
-		ServerRecvClientInputFrame(Frame, InputBuffer.Get(Frame));
+		ServerRecvClientInputFrame(Frame, InputBuffer_DEPRECATED.Get(Frame));
 	}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
 void APlayerController::ServerRecvClientInputFrame_Implementation(int32 InRecvClientInputFrame, const TArray<uint8>& Data)
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	if (InRecvClientInputFrame < 0)
 	{
 		return;
 	}
-
-	for (int32 DroppedFrame = InputBuffer.HeadFrame()+1; DroppedFrame < InRecvClientInputFrame && DroppedFrame > 0; ++DroppedFrame)
+	
+	int32 ClampDroppedFrames = 30; // Temporary clamp to guard the for-loop from locking the thread on large discrepancies, function is deprecated and will get removed in UE 5.6
+	for (int32 DroppedFrame = InputBuffer_DEPRECATED.HeadFrame() + 1; DroppedFrame < InRecvClientInputFrame && DroppedFrame > 0; ++DroppedFrame)
 	{
-		UE_LOG(LogPlayerController, Warning, TEXT( "ClientInput Gap in frames (Dropped). %s [%s]. DroppedFrame: %d. RecvFrame: %d. LastProcessInputFrame: %d" ), *GetName(), PlayerState ? *PlayerState->GetPlayerName() : TEXT("???"), DroppedFrame, InRecvClientInputFrame, ServerFrameInfo.LastProcessedInputFrame);
+		UE_LOG(LogPlayerController, Warning, TEXT("ClientInput Gap in frames (Dropped). %s [%s]. DroppedFrame: %d. RecvFrame: %d. LastProcessInputFrame: %d"), *GetName(), PlayerState ? *PlayerState->GetPlayerName() : TEXT("???"), DroppedFrame, InRecvClientInputFrame, ServerFrameInfo_DEPRECATED.LastProcessedInputFrame);
 		//ServerFrameInfo.LastProcessedInputFrame++; // Ehh lets try this for now
-		InputBuffer.Write(DroppedFrame) = InputBuffer.Get(DroppedFrame-1);
+		InputBuffer_DEPRECATED.Write(DroppedFrame) = InputBuffer_DEPRECATED.Get(DroppedFrame - 1);
+	
+		if (--ClampDroppedFrames <= 0)
+		{
+			UE_LOG(LogPlayerController, Warning, TEXT("ClientInput Gap in frames (Dropped) reached max dropped frames, leaving a gap in the InputBuffer."));
+			break;
+		}
 	}
-
-	InputBuffer.Write(InRecvClientInputFrame) = MoveTemp(const_cast<TArray<uint8>&>(Data));
-
-	if (ServerFrameInfo.LastProcessedInputFrame < InputBuffer.TailFrame())
+	
+	InputBuffer_DEPRECATED.Write(InRecvClientInputFrame) = MoveTemp(const_cast<TArray<uint8>&>(Data));
+	
+	if (ServerFrameInfo_DEPRECATED.LastProcessedInputFrame < InputBuffer_DEPRECATED.TailFrame())
 	{
 		// At this point, things are pretty bad and we are going to drop commands. 
 		// We still need guards client side to not send too many commands
-		UE_LOG(LogPlayerController, Warning, TEXT( "ClientInput buffer overflow. %s [%s]. RecvFrame: %d. LastProcessInputFrame: %d." ), *GetName(), PlayerState ? *PlayerState->GetPlayerName() : TEXT("???"), InRecvClientInputFrame, ServerFrameInfo.LastProcessedInputFrame);
-		ServerFrameInfo.LastProcessedInputFrame = (InputBuffer.TailFrame() + InputBuffer.HeadFrame()) / 2;
+		UE_LOG(LogPlayerController, Warning, TEXT("ClientInput buffer overflow. %s [%s]. RecvFrame: %d. LastProcessInputFrame: %d."), *GetName(), PlayerState ? *PlayerState->GetPlayerName() : TEXT("???"), InRecvClientInputFrame, ServerFrameInfo_DEPRECATED.LastProcessedInputFrame);
+		ServerFrameInfo_DEPRECATED.LastProcessedInputFrame = (InputBuffer_DEPRECATED.TailFrame() + InputBuffer_DEPRECATED.HeadFrame()) / 2;
 	}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
 void APlayerController::ClientRecvServerAckFrame_Implementation(int32 LastProcessedInputFrame, int32 RecvServerFrameNumber, int8 TimeDilation)
 {
-	ClientFrameInfo.LastRecvServerFrame = RecvServerFrameNumber;
-	ClientFrameInfo.LastProcessedInputFrame = LastProcessedInputFrame;
-	ClientFrameInfo.QuantizedTimeDilation = TimeDilation;
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	ClientFrameInfo_DEPRECATED.LastRecvServerFrame = RecvServerFrameNumber;
+	ClientFrameInfo_DEPRECATED.LastProcessedInputFrame = LastProcessedInputFrame;
+	ClientFrameInfo_DEPRECATED.QuantizedTimeDilation = TimeDilation;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
 void APlayerController::ClientRecvServerAckFrameDebug_Implementation(uint8 NumBuffered, float TargetNumBufferedCmds)
 {
-	ClientFrameInfo.LastRecvInputFrame = ClientFrameInfo.LastProcessedInputFrame + NumBuffered;
-	ClientFrameInfo.TargetNumBufferedCmds = TargetNumBufferedCmds;
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	ClientFrameInfo_DEPRECATED.LastRecvInputFrame = ClientFrameInfo_DEPRECATED.LastProcessedInputFrame + NumBuffered;
+	ClientFrameInfo_DEPRECATED.TargetNumBufferedCmds = TargetNumBufferedCmds;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
 /// @cond DOXYGEN_WARNINGS
@@ -3226,6 +3277,15 @@ void APlayerController::ServerRestartPlayer_Implementation()
 	if ( IsInState(NAME_Inactive) || (IsInState(NAME_Spectating) && bPlayerIsWaiting) )
 	{
 		AGameModeBase* const GameMode = GetWorld()->GetAuthGameMode();
+
+		// This can happen if you do something like delete a bunch of stuff at runtime in PIE or something like that.
+		// We need to check here to prevent a crash
+		if (!IsValid(GameMode))
+		{
+			UE_LOG(LogPlayerController, Warning, TEXT("[APlayerController::ServerRestartPlayer_Implementation] Player Controller '%s' requested restart but the game mode is null! Nothing will happen."), *GetNameSafe(this));
+			return;
+		}
+		
 		if ( !GameMode->PlayerCanRestart(this) )
 		{
 			return;
@@ -3333,7 +3393,7 @@ void APlayerController::DisplayDebug(class UCanvas* Canvas, const FDebugDisplayI
 		{
 			if (CurrentTime > ForceFeedbackEffectHistoryEntries[i].TimeShown + 5.0f)
 			{
-				ForceFeedbackEffectHistoryEntries.RemoveAtSwap(i, 1, /*bAllowShrinking=*/ false);
+				ForceFeedbackEffectHistoryEntries.RemoveAtSwap(i, 1, EAllowShrinking::No);
 			}
 			else
 			{
@@ -3611,6 +3671,15 @@ void APlayerController::OnRemovedFromPlayerControllerList()
 
 void APlayerController::GetStreamingSourceLocationAndRotation(FVector& OutLocation, FRotator& OutRotation) const
 {
+	if (!PlayerControllerCVars::ForceUsingCameraAsStreamingSource)
+	{
+		if (const AActor* ViewTarget = GetViewTarget())
+		{
+			ViewTarget->GetActorEyesViewPoint(OutLocation, OutRotation);
+			return;
+		}
+	}
+
 	GetPlayerViewPoint(OutLocation, OutRotation);
 }
 
@@ -4754,7 +4823,7 @@ void APlayerController::ReceivedSpectatorClass(TSubclassOf<ASpectatorPawn> Spect
 void APlayerController::SetPawn(APawn* InPawn)
 {
 #if UE_WITH_IRIS
-	if (GetLocalRole() == ROLE_Authority)
+	if (GetLocalRole() == ROLE_Authority && UE::Net::FReplicationSystemUtil::GetNetHandle(this).IsValid())
 	{
 		if (const UReplicationSystem* ReplicationSystem = UE::Net::FReplicationSystemUtil::GetReplicationSystem(this))
 		{
@@ -4767,7 +4836,7 @@ void APlayerController::SetPawn(APawn* InPawn)
 
 				if (IsValid(InPawn))
 				{
-					UE::Net::FReplicationSystemUtil::AddDependentActor(this, InPawn);
+					UE::Net::FReplicationSystemUtil::AddDependentActor(this, InPawn, UE::Net::EDependentObjectSchedulingHint::ScheduleBeforeParent);
 				}
 			}
 		}
@@ -5024,17 +5093,18 @@ void APlayerController::TickActor( float DeltaSeconds, ELevelTick TickType, FAct
 						ServerData->bForcedUpdateDurationExceeded = false;
 						if (ServerData->bTriggeringForcedUpdates)
 						{
-							const float PawnTimeSinceForcingUpdates = (WorldTimeStamp - ServerData->ServerTimeBeginningForcedUpdates) * GetPawn()->CustomTimeDilation;
-							const float PawnTimeForcedUpdateMaxDuration = ForcedUpdateMaxDuration * GetPawn()->GetActorTimeDilation();
-							
-							if (PawnTimeSinceForcingUpdates > PawnTimeForcedUpdateMaxDuration)
+							if (ServerData->ServerTimeStamp > ServerData->ServerTimeLastForcedUpdate)
 							{
-								if (ServerData->ServerTimeStamp > ServerData->ServerTimeLastForcedUpdate)
-								{
-									// An update came in that was not a forced update (ie a real move), since ServerTimeStamp advanced outside this code.
-									ServerData->ResetForcedUpdateState();
-								}
-								else
+								// An update came in that was not a forced update (ie a real move), since ServerTimeStamp advanced outside this code.
+								UE_LOG(LogNetPlayerMovement, Log, TEXT("Movement detected, resetting forced update state (ServerTimeStamp %.6f > ServerTimeLastForcedUpdate %.6f)"), ServerData->ServerTimeStamp, ServerData->ServerTimeLastForcedUpdate);
+								ServerData->ResetForcedUpdateState();
+							}
+							else
+							{
+								const float PawnTimeSinceForcingUpdates = (WorldTimeStamp - ServerData->ServerTimeBeginningForcedUpdates) * GetPawn()->CustomTimeDilation;
+								const float PawnTimeForcedUpdateMaxDuration = ForcedUpdateMaxDuration * GetPawn()->GetActorTimeDilation();
+
+								if (PawnTimeSinceForcingUpdates > PawnTimeForcedUpdateMaxDuration)
 								{
 									if (ServerData->bLastRequestNeedsForcedUpdates)
 									{
@@ -5044,6 +5114,7 @@ void APlayerController::TickActor( float DeltaSeconds, ELevelTick TickType, FAct
 									else
 									{
 										// Waiting for ServerTimeStamp to advance from a client move.
+										UE_LOG(LogNetPlayerMovement, Log, TEXT("Setting bForcedUpdateDurationExceeded=true (PawnTimeSinceForcingUpdates %.6f > PawnTimeForcedUpdateMaxDuration %.6f)"), PawnTimeSinceForcingUpdates, PawnTimeForcedUpdateMaxDuration);
 										ServerData->bForcedUpdateDurationExceeded = true;
 									}
 								}
@@ -5927,14 +5998,14 @@ void APlayerController::BuildHiddenComponentList(const FVector& ViewLocation, TS
 				UPrimitiveComponent* PrimitiveComponent = Components[ComponentIndex];
 				if (PrimitiveComponent->IsRegistered())
 				{
-					HiddenComponentsOut.Add(PrimitiveComponent->ComponentId);
+					HiddenComponentsOut.Add(PrimitiveComponent->GetPrimitiveSceneId());
 
 					for (USceneComponent* AttachedChild : PrimitiveComponent->GetAttachChildren())
 					{						
 						UPrimitiveComponent* AttachChildPC = Cast<UPrimitiveComponent>(AttachedChild);
 						if (AttachChildPC && AttachChildPC->IsRegistered())
 						{
-							HiddenComponentsOut.Add(AttachChildPC->ComponentId);
+							HiddenComponentsOut.Add(AttachChildPC->GetPrimitiveSceneId());
 						}
 					}
 				}
@@ -5955,7 +6026,7 @@ void APlayerController::BuildHiddenComponentList(const FVector& ViewLocation, TS
 		{
 			if (Component->IsRegistered())
 			{
-				HiddenComponentsOut.Add(Component->ComponentId);
+				HiddenComponentsOut.Add(Component->GetPrimitiveSceneId());
 			}
 		}
 		else
@@ -6041,10 +6112,7 @@ void APlayerController::BeginReplication()
 {
 	using namespace UE::Net;
 
-	// Always allow the PlayerController to be replicated as it is required for travel.
-	FActorBeginReplicationParams Params;
-	Params.bIncludeInLevelGroupFilter = false;
-	Super::BeginReplication(Params);
+	Super::BeginReplication();
 
 	// Bump prio of playercontroller in order to make sure it replicates really early
 	static constexpr float PlayerControllerStaticPriority = 100.f;
@@ -6081,6 +6149,22 @@ FAsyncPhysicsTimestamp APlayerController::GetAsyncPhysicsTimestamp(float DeltaSe
 {
 	using namespace Chaos;
 
+	FAsyncPhysicsTimestamp Timestamp = GetPhysicsTimestamp(DeltaSeconds);
+	
+	// Handle deprecated flow using LocalToServerAsyncPhysicsTickOffset_DEPRECATED
+	if (Timestamp.IsValid() && IsLocalController())
+	{
+		Timestamp.ServerFrame -= NetworkPhysicsTickOffset;
+		Timestamp.ServerFrame += LocalToServerAsyncPhysicsTickOffset_DEPRECATED;
+	}
+
+	return Timestamp;
+}
+
+FAsyncPhysicsTimestamp APlayerController::GetPhysicsTimestamp(float DeltaSeconds)
+{
+	using namespace Chaos;
+
 	FAsyncPhysicsTimestamp Timestamp;
 
 	if(UWorld* World = GetWorld())
@@ -6101,7 +6185,7 @@ FAsyncPhysicsTimestamp APlayerController::GetAsyncPhysicsTimestamp(float DeltaSe
 				if (IsLocalController())
 				{
 					//If local controller we update server frame based on our estimate
-					Timestamp.ServerFrame = LocalPhysicsStep + LocalToServerAsyncPhysicsTickOffset;
+					Timestamp.ServerFrame = LocalPhysicsStep + NetworkPhysicsTickOffset;
 				}
 			}
 		}
@@ -6112,56 +6196,97 @@ FAsyncPhysicsTimestamp APlayerController::GetAsyncPhysicsTimestamp(float DeltaSe
 
 void APlayerController::UpdateServerAsyncPhysicsTickOffset()
 {
-	if (UWorld* World = GetWorld())
+	FAsyncPhysicsTimestamp Timestamp = GetPhysicsTimestamp();
+	if (NetworkPhysicsCvars::TickOffsetUpdateInterval <= 0 || ClientLatestAsyncPhysicsStepSent + NetworkPhysicsCvars::TickOffsetUpdateInterval > Timestamp.LocalFrame)
 	{
-		if (FPhysScene* PhysScene = World->GetPhysicsScene())
-		{
-			if(PhysScene->GetSolver()->GetEvolution()->IsResimming())
-			{
-				return;
-			}
-		}
-	}
-	FAsyncPhysicsTimestamp Timestamp = GetAsyncPhysicsTimestamp();
-	if(ClientLatestAsyncPhysicsStepSent == Timestamp.LocalFrame)
-	{
+		//Only send a new timestamp if enough physics ticks have passed, based on CVar.
 		//If GT is running faster than physics sim the physics timestep will not have changed, so no need to send another update to server
 		//This ensures monotonic increase
 		return;
 	}
 
 	ClientLatestAsyncPhysicsStepSent = Timestamp.LocalFrame;
+	Timestamp.ServerFrame = bNetworkPhysicsTickOffsetAssigned ? Timestamp.ServerFrame : INDEX_NONE; // If offset is not yet assigned, set an invalid ServerFrame
 	ServerSendLatestAsyncPhysicsTimestamp(Timestamp);
 }
 
 void APlayerController::ServerSendLatestAsyncPhysicsTimestamp_Implementation(FAsyncPhysicsTimestamp Timestamp)
 {
+	ensure(UPhysicsSettings::Get()->PhysicsPrediction.bEnablePhysicsPrediction);
+
 	//This tells the server how the client thinks the async physics tick will line up.
-	//Timestamps could be out of order due to networking, so we make sure they are sorted using the client's local frame which is monotonically increasing
-	int32 Idx;
-	for(Idx = ServerPendingTimestamps.Num() - 1; Idx >= 0; --Idx)
+	//If we have already received a more up to date timestamp from the client, early out
+	if (Timestamp.LocalFrame <= ServerLatestAsyncPhysicsStepReceived)
 	{
-		ensureMsgf(ServerPendingTimestamps[Idx].LocalFrame != Timestamp.LocalFrame, TEXT("Client should never send duplicate timestamps, something is wrong"));
-		if(ServerPendingTimestamps[Idx].LocalFrame < Timestamp.LocalFrame)
-		{
-			break;
-		}
+		return;
 	}
-	ServerPendingTimestamps.Insert(Timestamp, Idx + 1);
+
+	ServerLatestAsyncPhysicsStepReceived = Timestamp.LocalFrame;
+
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	// Only cache the most up to date timestamp based on LocalFrame
+	if (Timestamp.LocalFrame > ServerPendingTimestamp_DEPRECATED.LocalFrame)
+	{
+		ServerPendingTimestamp_DEPRECATED = Timestamp;
+	}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+	// Get current server timestamp and add the frame buffer to the ServerFrame
+	FAsyncPhysicsTimestamp ActualTimestamp = GetPhysicsTimestamp();
+	ActualTimestamp.ServerFrame += NetworkPhysicsCvars::PredictionAsyncFrameBuffer;
+
+	// Mark offset as assigned when we get a valid predicted server frame.
+	const int32 PredictedServerFrame = Timestamp.ServerFrame;
+	bNetworkPhysicsTickOffsetAssigned |= PredictedServerFrame != INDEX_NONE;
+
+	// Send update to client if offset is not assigned or over correction limit
+	// Note that we are sending the current ServerFrame along with the frame buffer added, to the client.
+	if (!bNetworkPhysicsTickOffsetAssigned || FMath::Abs(PredictedServerFrame - ActualTimestamp.ServerFrame) > NetworkPhysicsCvars::TickOffsetCorrectionLimit)
+	{
+		Timestamp.ServerFrame = ActualTimestamp.ServerFrame;
+		NetworkPhysicsTickOffset = Timestamp.ServerFrame - Timestamp.LocalFrame;
+		ClientSetupNetworkPhysicsTimestamp(Timestamp); /* Reliable RPC */
+	}
+
+	/*
+	* Use time dilation on client to adjust the frame offset and keep the buffer in check
+	* If buffer goes low, speed up the client by raising the time dilation multiplier (each deltaTime accounts for more of the accumulated time, filling the accumulated time faster to tick the next physics step)
+	* If buffer goes high, slow down the client by lowering the time dilation multiplier (each deltaTime accounts for less of the accumulated time, taking longer to fill the accumulated time
+	*/
+	if (bNetworkPhysicsTickOffsetAssigned)
+	{
+		// Get the buffer offset amount that deviates from the target buffer (Note: the buffer is already added to ActualTimestamp.ServerFrame here and in the PredictedServerFrame received from the client)
+		// 0 means buffer is perfect, positive value means the buffer is too large, negative value means the buffer is too small
+		int32 CurrentFrameBufferOffset = PredictedServerFrame - ActualTimestamp.ServerFrame;
+
+		if (NetworkPhysicsCvars::TimeDilationEscalation == false)
+		{
+			CurrentFrameBufferOffset = FMath::Clamp(CurrentFrameBufferOffset, -1, 1);
+		}
+			
+		// Calculate desired dilation and send to client
+		const float TimeDilationDecay = FMath::Clamp(1.0f - (NetworkPhysicsCvars::TimeDilationEscalationDecay * FMath::Abs(CurrentFrameBufferOffset)), NetworkPhysicsCvars::TimeDilationEscalationDecayMax, 1.0f);
+		float CalculatedTimeDilation = 1.0f + ((NetworkPhysicsCvars::TimeDilationAmount * -CurrentFrameBufferOffset) * TimeDilationDecay);
+		CalculatedTimeDilation = FMath::Clamp(CalculatedTimeDilation, NetworkPhysicsCvars::TimeDilationMin, NetworkPhysicsCvars::TimeDilationMax);
+
+		ClientAckTimeDilation(CalculatedTimeDilation, ActualTimestamp.LocalFrame);
+	}
+	
 }
 
 void APlayerController::ClientCorrectionAsyncPhysicsTimestamp_Implementation(FAsyncPhysicsTimestamp Timestamp)
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+
 	//This tells the client that a timestamp it sent out was wrong (for example we ran locally on step 5 and expected server to run on step 10, but it actually ran on step 11).
 	//The error can only be later. That is, it can never be that we expect to run on server step 10 but actually ran on sever step 9
 	//Once a timestamp has been corrected, any earlier timestamps can be ignored (these can be out of order because of networking)
-
-	ensureMsgf(Timestamp.ServerFrame != ClientLatestCorrectedOffsetServerStep, TEXT("Server only sends at most one correction per timestamp, duplicate corrections means something is wrong"));
-	if(Timestamp.ServerFrame < ClientLatestCorrectedOffsetServerStep)
+	if (Timestamp.ServerFrame <= ClientLatestCorrectedOffsetServerStep_DEPRECATED)
 	{
 		//already corrected after this so do nothing
 		return;
 	}
+	ClientLatestCorrectedOffsetServerStep_DEPRECATED = Timestamp.ServerFrame;
 
 	if (UWorld* World = GetWorld())
 	{
@@ -6173,53 +6298,60 @@ void APlayerController::ClientCorrectionAsyncPhysicsTimestamp_Implementation(FAs
 			}
 		}
 	}
+
 	FAsyncPhysicsTimestamp CurrentTimestamp = GetAsyncPhysicsTimestamp();
 	// We need to avoid changing this offset as much as possible since it will invalidate histories and will trigger resim
 	// To deal with that we compute a safe margin based on a user cvar + half the RTT
 	// This margin will only be applied the first time we will compute the offset 
-	const int32 FrameOffset = LocalToServerAsyncPhysicsTickOffset == 0 ? (NetworkPhysicsCvars::NetworkPhysicsPredictionFrameOffset + (CurrentTimestamp.LocalFrame - Timestamp.LocalFrame) / 2) : 0;
+	const int32 FrameOffset = LocalToServerAsyncPhysicsTickOffset_DEPRECATED == 0 ? (NetworkPhysicsCvars::NetworkPhysicsPredictionFrameOffset + (CurrentTimestamp.LocalFrame - Timestamp.LocalFrame) / 2) : 0;
 
-	const int32 NewOffset = FMath::Max(LocalToServerAsyncPhysicsTickOffset,Timestamp.ServerFrame - Timestamp.LocalFrame + FrameOffset); //The new offset as reported by the server
-	LocalToServerAsyncPhysicsTickOffset = NewOffset;
+	const int32 NewOffset = FMath::Max(LocalToServerAsyncPhysicsTickOffset_DEPRECATED, Timestamp.ServerFrame - Timestamp.LocalFrame + FrameOffset); //The new offset as reported by the server
+	LocalToServerAsyncPhysicsTickOffset_DEPRECATED = NewOffset;
+
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+}
+
+void APlayerController::ClientSetupNetworkPhysicsTimestamp_Implementation(FAsyncPhysicsTimestamp Timestamp)
+{
+	ensure(UPhysicsSettings::Get()->PhysicsPrediction.bEnablePhysicsPrediction);
+
+	// Assign async physics tick offset
+	bNetworkPhysicsTickOffsetAssigned = true;
+	NetworkPhysicsTickOffset = Timestamp.ServerFrame - Timestamp.LocalFrame;
 }
 
 void APlayerController::ClientAckTimeDilation_Implementation(float TimeDilation, int32 ServerStep)
 {
-	if(ServerStep < ClientLatestTimeDilationServerStep)
+	if (ServerStep <= ClientLatestTimeDilationServerStep)
 	{
-		//Stale ack so do nothing
 		return;
 	}
-
-	ensureMsgf(ClientLatestTimeDilationServerStep != ServerStep, TEXT("Server should send at most one time dilation per step, duplicate means something is wrong"));
 	ClientLatestTimeDilationServerStep = ServerStep;
+
 	if(UWorld* World = GetWorld())
 	{
 		World->GetPhysicsScene()->SetNetworkDeltaTimeScale(TimeDilation);
 	}
 }
 
+void APlayerController::UpdateServerTimestampToCorrect()
+{
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	// If the client has not sent the correct estimate of which server frame its local frame would correspond to, send back which server frame that local frame actually corresponded to
+	const FAsyncPhysicsTimestamp ActualTimestamp = GetAsyncPhysicsTimestamp();
+
+	if (ServerPendingTimestamp_DEPRECATED.ServerFrame != INDEX_NONE && ServerPendingTimestamp_DEPRECATED.ServerFrame != ActualTimestamp.ServerFrame)
+	{
+		ServerLatestTimestampToCorrect_DEPRECATED.ServerFrame = ActualTimestamp.ServerFrame;
+		ServerLatestTimestampToCorrect_DEPRECATED.LocalFrame = ServerPendingTimestamp_DEPRECATED.LocalFrame;
+		ServerPendingTimestamp_DEPRECATED.ServerFrame = INDEX_NONE;
+	}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+}
+
 void APlayerController::AsyncPhysicsTickActor(float DeltaTime, float SimTime)
 {
 	Super::AsyncPhysicsTickActor(DeltaTime, SimTime);
-
-	if(UPhysicsSettings::Get()->PhysicsPrediction.bEnablePhysicsPrediction)
-	{
-		//TODO: only kick this off if server and using this feature
-		if (IsLocalController()) { return; }
-
-		if (ServerPendingTimestamps.Num() == 0)
-		{
-			//TODO: starved for input user needs to speed up
-			return;
-		}
-
-		const FAsyncPhysicsTimestamp ActualTimestamp = GetAsyncPhysicsTimestamp();
-
-		ServerLatestTimestampToCorrect.ServerFrame = ActualTimestamp.ServerFrame;
-		ServerLatestTimestampToCorrect.LocalFrame = ServerPendingTimestamps[0].LocalFrame;
-		ServerPendingTimestamps.Reset();
-	}
 }
 
 

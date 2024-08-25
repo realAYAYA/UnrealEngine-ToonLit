@@ -6,14 +6,14 @@ namespace UnrealBuildTool.Rules
 {
 	public class VisualStudioCodeSourceCodeAccess : ModuleRules
 	{
-        public VisualStudioCodeSourceCodeAccess(ReadOnlyTargetRules Target) : base(Target)
+		public VisualStudioCodeSourceCodeAccess(ReadOnlyTargetRules Target) : base(Target)
 		{
-            PrivateDependencyModuleNames.AddRange(
+			PrivateDependencyModuleNames.AddRange(
 				new string[]
 				{
 					"Core",
 					"SourceCodeAccess",
-					"DesktopPlatform",
+					"DesktopPlatform"
 				}
 			);
 
@@ -22,24 +22,26 @@ namespace UnrealBuildTool.Rules
 				PrivateDependencyModuleNames.Add("HotReload");
 			}
 
-			bool bHasVisualStudioDTE;
+			bool bHasVisualStudioDTE = false;
 			try
 			{
-				// Interrogate the Win32 registry
-				string DTEKey = null;
-				switch (Target.WindowsPlatform.Compiler)
 				{
-					case WindowsCompiler.VisualStudio2019:
-						DTEKey = "VisualStudio.DTE.16.0";
-						break;
-					case WindowsCompiler.VisualStudio2022:
-						DTEKey = "VisualStudio.DTE.17.0";
-						break;
-					default:
-						throw new Exception("Unknown visual studio version when mapping to DTEKey: " +
-						                    Target.WindowsPlatform.Compiler.ToString());
+					// Interrogate the Win32 registry
+					string DTEKey = null;
+					switch (Target.WindowsPlatform.ToolChain)
+					{
+						case WindowsCompiler.VisualStudio2022:
+							DTEKey = "VisualStudio.DTE.17.0";
+							break;
+						default:
+							throw new Exception("Unknown visual studio version when mapping to DTEKey: " +
+												Target.WindowsPlatform.ToolChain.ToString());
+					}
+					if (OperatingSystem.IsWindows())
+					{
+						bHasVisualStudioDTE = RegistryKey.OpenBaseKey(RegistryHive.ClassesRoot, RegistryView.Registry32).OpenSubKey(DTEKey) != null;
+					}
 				}
-				bHasVisualStudioDTE = RegistryKey.OpenBaseKey(RegistryHive.ClassesRoot, RegistryView.Registry32).OpenSubKey(DTEKey) != null;
 			}
 			catch
 			{

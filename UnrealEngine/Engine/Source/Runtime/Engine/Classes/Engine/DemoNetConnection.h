@@ -33,7 +33,7 @@ public:
 	ENGINE_API virtual void FlushNet( bool bIgnoreSimulation = false ) override;
 	ENGINE_API virtual void HandleClientPlayer( APlayerController* PC, class UNetConnection* NetConnection ) override;
 	ENGINE_API virtual TSharedPtr<const FInternetAddr> GetRemoteAddr() override;
-	ENGINE_API virtual bool ClientHasInitializedLevelFor( const AActor* TestActor ) const override;
+	ENGINE_API virtual bool ClientHasInitializedLevel( const ULevel* TestLevel ) const override;
 	ENGINE_API virtual TSharedPtr<FObjectReplicator> CreateReplicatorForNewActorChannel(UObject* Object);
 	virtual FString RemoteAddressToString() override { return TEXT("Demo"); }
 

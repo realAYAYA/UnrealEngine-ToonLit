@@ -1,7 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -94,7 +93,7 @@ namespace EpicGames.Core
 		{
 			// Ignore any reference assemblies
 			string? directory = Path.GetFileName(Path.GetDirectoryName(assemblyPath));
-			if (!string.IsNullOrEmpty(directory) && (directory == "ref" | directory == "refint"))
+			if (!String.IsNullOrEmpty(directory) && (directory == "ref" | directory == "refint"))
 			{
 				return;
 			}

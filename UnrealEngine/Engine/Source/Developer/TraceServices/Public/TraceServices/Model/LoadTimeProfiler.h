@@ -67,6 +67,7 @@ struct FPackageSummaryInfo
 	uint32 TotalHeaderSize = 0;
 	uint32 ImportCount = 0;
 	uint32 ExportCount = 0;
+	int32 Priority = 0;
 };
 
 struct FClassInfo

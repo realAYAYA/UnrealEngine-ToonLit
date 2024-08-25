@@ -9,37 +9,41 @@
 #include "USDReferencesViewModel.h"
 #include "UsdWrappers/ForwardDeclarations.h"
 
-class SUsdReferenceRow : public SMultiColumnTableRow< TSharedPtr< FUsdReference > >
+class SUsdReferenceRow : public SMultiColumnTableRow<TSharedPtr<FUsdReference>>
 {
 public:
-	SLATE_BEGIN_ARGS( SUsdReferenceRow ) {}
+	SLATE_BEGIN_ARGS(SUsdReferenceRow)
+	{
+	}
 	SLATE_END_ARGS()
 
 public:
-	void Construct( const FArguments& InArgs, TSharedPtr< FUsdReference > InReference, const TSharedRef< STableViewBase >& OwnerTable );
+	void Construct(const FArguments& InArgs, TSharedPtr<FUsdReference> InReference, const TSharedRef<STableViewBase>& OwnerTable);
 
-	virtual TSharedRef< SWidget > GenerateWidgetForColumn( const FName& ColumnName ) override;
+	virtual TSharedRef<SWidget> GenerateWidgetForColumn(const FName& ColumnName) override;
 
 private:
 	FString PrimPath;
-	TSharedPtr< FUsdReference > Reference;
+	TSharedPtr<FUsdReference> Reference;
 };
 
-class SUsdReferencesList : public SListView< TSharedPtr< FUsdReference > >
+class SUsdReferencesList : public SListView<TSharedPtr<FUsdReference>>
 {
-	SLATE_BEGIN_ARGS( SUsdReferencesList ) {}
+	SLATE_BEGIN_ARGS(SUsdReferencesList)
+	{
+	}
 	SLATE_END_ARGS()
 
 public:
-	void Construct( const FArguments& InArgs );
-	void SetPrimPath( const UE::FUsdStageWeak& UsdStage, const TCHAR* PrimPath );
+	void Construct(const FArguments& InArgs);
+	void SetPrimPath(const UE::FUsdStageWeak& UsdStage, const TCHAR* PrimPath);
 
 protected:
-	TSharedRef< ITableRow > OnGenerateRow( TSharedPtr< FUsdReference > InDisplayNode, const TSharedRef< STableViewBase >& OwnerTable );
+	TSharedRef<ITableRow> OnGenerateRow(TSharedPtr<FUsdReference> InDisplayNode, const TSharedRef<STableViewBase>& OwnerTable);
 
 private:
 	FUsdReferencesViewModel ViewModel;
-	TSharedPtr< SHeaderRow > HeaderRowWidget;
+	TSharedPtr<SHeaderRow> HeaderRowWidget;
 };
 
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK

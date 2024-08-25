@@ -6,6 +6,8 @@
 #include "HAL/Thread.h"
 #include "RHI.h"
 
+#include "AVResult.h"
+
 REGISTER_TYPEID(FNVENC);
 
 // define a function pointer for creating an instance of nvEncodeAPI
@@ -55,6 +57,14 @@ FNVENC::FNVENC()
 
 			DllHandle = nullptr;
 		}
+		else
+		{
+			FAVResult::Log(EAVResult::Warning, TEXT("Failed to get NVENC dll handle. NVENC module will not be available."), TEXT("NVENC"));
+		}
+	}
+	else
+	{
+		FAVResult::Log(EAVResult::Warning, TEXT("Failed to get NVENC dll name. NVENC module will not be available."), TEXT("NVENC"));
 	}
 }
 

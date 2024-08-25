@@ -255,7 +255,7 @@ UCameraAnimationSequencePlayer::~UCameraAnimationSequencePlayer()
 
 void UCameraAnimationSequencePlayer::BeginDestroy()
 {
-	RootTemplateInstance.BeginDestroy();
+	RootTemplateInstance.TearDown();
 
 	Super::BeginDestroy();
 }
@@ -280,7 +280,7 @@ EMovieScenePlayerStatus::Type UCameraAnimationSequencePlayer::GetPlaybackStatus(
 	return Status;
 }
 
-void UCameraAnimationSequencePlayer::ResolveBoundObjects(const FGuid& InBindingId, FMovieSceneSequenceID InSequenceID, UMovieSceneSequence& InSequence, UObject* InResolutionContext, TArray<UObject*, TInlineAllocator<1>>& OutObjects) const
+void UCameraAnimationSequencePlayer::ResolveBoundObjects(UE::UniversalObjectLocator::FResolveParams& ResolveParams, const FGuid& InBindingId, FMovieSceneSequenceID SequenceID, UMovieSceneSequence& InSequence, TArray<UObject*, TInlineAllocator<1>>& OutObjects) const
 {
 	if (BoundObjectOverride)
 	{
@@ -305,7 +305,7 @@ FFrameTime UCameraAnimationSequencePlayer::GetCurrentPosition() const
 	return PlayPosition.GetCurrentPosition();
 }
 
-void UCameraAnimationSequencePlayer::Initialize(UMovieSceneSequence* InSequence, int32 StartOffset)
+void UCameraAnimationSequencePlayer::Initialize(UMovieSceneSequence* InSequence, int32 StartOffset, float DurationOverride)
 {
 	checkf(InSequence, TEXT("Invalid sequence given to player"));
 	
@@ -344,14 +344,33 @@ void UCameraAnimationSequencePlayer::Initialize(UMovieSceneSequence* InSequence,
 		}
 
 		DurationFrames = (EndTime - StartFrame);
+		TotalDurationFrames = DurationFrames;
+		bDurationRequiresLooping = false;
+
+		if (DurationOverride > 0.f)
+		{
+			const FFrameTime DurationOverrideFrames = DurationOverride * DisplayRate;
+			if (DurationOverrideFrames > DurationFrames)
+			{
+				TotalDurationFrames = DurationOverrideFrames;
+				bDurationRequiresLooping = true;
+			}
+			else
+			{
+				DurationFrames = DurationOverrideFrames;
+			}
+		}
 	}
 	else
 	{
 		StartFrame = FFrameNumber(0);
 		DurationFrames = FFrameTime(0);
+		TotalDurationFrames = DurationFrames;
+		bDurationRequiresLooping = false;
 	}
 
 	PlayPosition.Reset(StartFrame);
+	LoopsPlayed = 0;
 
 	UCameraAnimationSequenceSubsystem* Subsystem = UCameraAnimationSequenceSubsystem::GetCameraAnimationSequenceSubsystem(GetWorld());
 	ensureMsgf(Subsystem, TEXT("Unable to locate a valid camera animation sub-system. Camera anim sequences will not play."));
@@ -387,7 +406,8 @@ void UCameraAnimationSequencePlayer::Update(FFrameTime NewPosition)
 	check(RootTemplateInstance.IsValid());
 
 	bool bShouldStop = false;
-	if (bIsLooping)
+
+	if (bIsLooping || bDurationRequiresLooping)
 	{
 		// Unlike the level sequence player, we don't care about making sure to play the last few frames
 		// of the sequence before looping: we can jump straight to the looped time because we know we
@@ -400,6 +420,7 @@ void UCameraAnimationSequencePlayer::Update(FFrameTime NewPosition)
 		{
 			NewPosition -= DurationFrames;
 			PlayPosition.Reset(StartFrame);
+			++LoopsPlayed;
 		}
 	}
 	else
@@ -408,6 +429,17 @@ void UCameraAnimationSequencePlayer::Update(FFrameTime NewPosition)
 		if (NewPosition >= StartFrame + DurationFrames)
 		{
 			NewPosition = FFrameTime(StartFrame + DurationFrames);
+			bShouldStop = true;
+		}
+	}
+
+	if (bDurationRequiresLooping)
+	{
+		// If we are only looping a fixed number of times to meet a certain duration override,
+		// we need to check here whether we have reached the end.
+		const FFrameTime ElapsedPlayedFrames = (LoopsPlayed * DurationFrames) + NewPosition;
+		if (ElapsedPlayedFrames >= TotalDurationFrames)
+		{
 			bShouldStop = true;
 		}
 	}

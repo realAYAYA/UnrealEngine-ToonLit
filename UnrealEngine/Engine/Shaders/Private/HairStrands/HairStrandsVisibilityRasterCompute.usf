@@ -82,31 +82,33 @@ float3 NDCToPixelCoord(float4 InDC)
 	return float3(UV * OutputResolution, NDC.z);
 }
 
-void CalcHomogenousPos(in uint4 PB, in float3 PBO, out float4 HP, out uint Type)
+void CalcHomogenousPos(in uint InPointIndex, in float3 PBO, out float4 HP, out uint Type)
 {
-	const FHairControlPoint CP = UnpackHairControlPoint(
-		PB,
+	const FHairControlPoint CP = ReadHairControlPoint(
+		HairStrandsVF_PositionBuffer,
+		InPointIndex,
 		PBO,
 		HairStrandsVF_Radius,
 		HairStrandsVF_RootScale,
 		HairStrandsVF_TipScale);
 
 	const float3 WP = mul(float4(CP.Position, 1.0f), HairStrandsVF_LocalToWorldPrimitiveTransform).xyz;
-	HP = mul(float4(WP, 1.0f), LWCHackToFloat(PrimaryView.WorldToClip));
+	HP = mul(float4(WP, 1.0f), DFHackToFloat(PrimaryView.WorldToClip));
 	Type = CP.Type;
 }
 
-void CalcHomogenousPosAndRad(in uint4 PB, in float3 PBO, out float4 HP, out float Rad, out uint Type)
+void CalcHomogenousPosAndRad(in uint InPointIndex, in float3 PBO, out float4 HP, out float Rad, out uint Type)
 {
-	const FHairControlPoint CP = UnpackHairControlPoint(
-		PB,
+	const FHairControlPoint CP = ReadHairControlPoint(
+		HairStrandsVF_PositionBuffer,
+		InPointIndex,
 		PBO,
 		HairStrandsVF_Radius,
 		HairStrandsVF_RootScale,
 		HairStrandsVF_TipScale);
 
 	const float3 WP = mul(float4(CP.Position, 1.0f), HairStrandsVF_LocalToWorldPrimitiveTransform).xyz;
-	HP = mul(float4(WP, 1.0f), LWCHackToFloat(PrimaryView.WorldToClip));
+	HP = mul(float4(WP, 1.0f), DFHackToFloat(PrimaryView.WorldToClip));
 	Rad = CP.WorldRadius * 2000.0; // OutputResolutionf.x; //TODO: figure this out correctly?
 	Type = CP.Type;
 }
@@ -437,10 +439,8 @@ void BinningCS(uint DispatchThreadID : SV_DispatchThreadID, uint GroupThreadID :
 
 			const uint VertexIndex0 = HairStrandsVF_CullingIndexBuffer[FetchIndex0];
 			const uint VertexIndex1 = HairStrandsVF_CullingIndexBuffer[FetchIndex1];
-			const float LodRadiusScale0 = HairStrandsVF_CullingRadiusScaleBuffer[FetchIndex0];
-			const float LodRadiusScale1 = HairStrandsVF_CullingRadiusScaleBuffer[FetchIndex1];
 
-			if ((LodRadiusScale0 <= 0.0f) || (VertexIndex1 != VertexIndex0 + 1))
+			if (VertexIndex1 != VertexIndex0 + 1)
 			{
 				bSegValid = false;
 			}
@@ -467,17 +467,18 @@ void BinningCS(uint DispatchThreadID : SV_DispatchThreadID, uint GroupThreadID :
 		// Project segment end points and clip them to the screen
 		if (bSegValid)
 		{
+			const float3 InstancePositionOffset = HairStrandsVF_GetHairInstancePositionOffset();
 			float4 H0 = 0.0f;
 			float4 H1 = 0.0f;
 			uint Type = -1;
-			CalcHomogenousPos(HairStrandsVF_PositionBuffer[PrimID], HairStrandsVF_PositionOffsetBuffer[0].xyz, H0, Type);
+			CalcHomogenousPos(PrimID, InstancePositionOffset, H0, Type);
 
 			bool bIsEndCV = (Type == HAIR_CONTROLPOINT_END);
 			bSegValid = !bIsEndCV;
 
 			if (bSegValid)
 			{
-				CalcHomogenousPos(HairStrandsVF_PositionBuffer[PrimID + 1], HairStrandsVF_PositionOffsetBuffer[0].xyz, H1, Type);
+				CalcHomogenousPos(PrimID + 1, InstancePositionOffset, H1, Type);
 				
 				// Do clipping in homogenous coordinates
 				bSegValid = BlinnLineClipping(H0, H1);
@@ -884,7 +885,7 @@ void RasterCS(uint DispatchThreadID : SV_DispatchThreadID, uint GroupThreadID : 
 		group_TileNum = VisTileArgs[0];
 		group_LoopNum = (float(group_TileNum) + float(NumRasterizers - 1)) * RcpNumRasterizers;
 
-		group_PositionOffset = HairStrandsVF_PositionOffsetBuffer[0].xyz;
+		group_PositionOffset = HairStrandsVF_GetHairInstancePositionOffset();
 
 		/* no longer in use - keep for ref? Moving these values to group shared memory did seem to reduce VGPRs - more experimentation needed
 		group_RadScale = (((HairStrandsVF_TipScale - HairStrandsVF_RootScale) * HairStrandsVF_Radius * OutputResolutionf.x) / 63.0) / 255.0;
@@ -959,8 +960,8 @@ void RasterCS(uint DispatchThreadID : SV_DispatchThreadID, uint GroupThreadID : 
 			group_PrimMatID[Prim] = PackHairVisControlPointMaterialId(PrimID, HairMaterialId);
 
 			uint TypeDummy;
-			CalcHomogenousPosAndRad(HairStrandsVF_PositionBuffer[PrimID], group_PositionOffset, group_SP0[Prim], group_Rad0[Prim], TypeDummy);
-			CalcHomogenousPosAndRad(HairStrandsVF_PositionBuffer[PrimID+1], group_PositionOffset, group_SP1[Prim], group_Rad1[Prim], TypeDummy);
+			CalcHomogenousPosAndRad(PrimID, group_PositionOffset, group_SP0[Prim], group_Rad0[Prim], TypeDummy);
+			CalcHomogenousPosAndRad(PrimID+1, group_PositionOffset, group_SP1[Prim], group_Rad1[Prim], TypeDummy);
 		}
 
 		if (bWaveThreadValid)
@@ -1008,8 +1009,8 @@ void RasterCS(uint DispatchThreadID : SV_DispatchThreadID, uint GroupThreadID : 
 				PrimMatID = PackHairVisControlPointMaterialId(PrimID, HairMaterialId);
 
 				uint TypeDummy;
-				CalcHomogenousPosAndRad(HairStrandsVF_PositionBuffer[PrimID], group_PositionOffset, SP0, Rad0, TypeDummy);
-				CalcHomogenousPosAndRad(HairStrandsVF_PositionBuffer[PrimID + 1], group_PositionOffset, SP1, Rad1, TypeDummy);
+				CalcHomogenousPosAndRad(PrimID, group_PositionOffset, SP0, Rad0, TypeDummy);
+				CalcHomogenousPosAndRad(PrimID + 1, group_PositionOffset, SP1, Rad1, TypeDummy);
 			}
 
 			// Clipping
@@ -1297,7 +1298,7 @@ void RasterMultiSampleCS(uint DispatchThreadID : SV_DispatchThreadID, uint Group
 		group_TileNum = VisTileArgs[0];
 		group_LoopNum = (float(group_TileNum) + float(NumRasterizers - 1)) * RcpNumRasterizers;
 
-		group_PositionOffset = HairStrandsVF_PositionOffsetBuffer[0].xyz;
+		group_PositionOffset = HairStrandsVF_GetHairInstancePositionOffset();
 	}
 
 	GroupMemoryBarrierWithGroupSync();
@@ -1357,8 +1358,8 @@ void RasterMultiSampleCS(uint DispatchThreadID : SV_DispatchThreadID, uint Group
 			PrimMatID = PackHairVisControlPointMaterialId(PrimID, HairMaterialId);
 
 			uint Type;
-			CalcHomogenousPosAndRad(HairStrandsVF_PositionBuffer[PrimID], group_PositionOffset, SP0, Rad0, Type);
-			CalcHomogenousPosAndRad(HairStrandsVF_PositionBuffer[PrimID + 1], group_PositionOffset, SP1, Rad1, Type);
+			CalcHomogenousPosAndRad(PrimID, group_PositionOffset, SP0, Rad0, Type);
+			CalcHomogenousPosAndRad(PrimID + 1, group_PositionOffset, SP1, Rad1, Type);
 			bIsEndPoint = (Type == HAIR_CONTROLPOINT_END);
 
 			SP0 = float4(NDCToPixelCoord(SP0), 1.0f / SP0.w);

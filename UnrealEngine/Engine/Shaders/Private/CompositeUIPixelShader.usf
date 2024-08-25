@@ -1,4 +1,4 @@
-
+// Copyright Epic Games, Inc. All Rights Reserved.
 /*=============================================================================
 CompositeUIPixelShader.usf: Filter pixel shader source.
 =============================================================================*/
@@ -45,7 +45,7 @@ void GenerateLUTPS(
 
 	float3 LinearColor = ST2084ToLinear(Neutral);
 
-	FACESTonemapParams LUTTsParams = ComputeACESTonemapParams(ACESMinMaxData, ACESMidData, ACESCoefsLow_0, ACESCoefsHigh_0, ACESCoefsLow_4, ACESCoefsHigh_4, 1.0);
+	FACESTonemapParams LUTTsParams = ComputeACESTonemapParams(ACESMinMaxData, ACESMidData, ACESCoefsLow_0, ACESCoefsHigh_0, ACESCoefsLow_4, ACESCoefsHigh_4, 1.0, 1.0);
 
 	if( OutputDevice == TONEMAPPER_OUTPUT_ACES1000nitST2084 || OutputDevice == TONEMAPPER_OUTPUT_ACES1000nitScRGB)
 	{		

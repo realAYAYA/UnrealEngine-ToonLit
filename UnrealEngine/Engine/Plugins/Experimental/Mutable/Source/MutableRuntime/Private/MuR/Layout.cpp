@@ -140,21 +140,13 @@ namespace mu {
 
 
 	//---------------------------------------------------------------------------------------------
-	void Layout::GetBlockOptions(int index, int* pPriority, bool* bUseSymmetry) const
+	void Layout::GetBlockOptions(int index, int& pPriority, bool& bReduceBothAxes, bool& bReduceByTwo) const
 	{
 		check(index >= 0 && index < m_blocks.Num());
-		check(pPriority);
-		check(bUseSymmetry);
 
-		if (pPriority)
-		{
-			*pPriority = m_blocks[index].m_priority;
-		}
-
-		if (bUseSymmetry)
-		{
-			*bUseSymmetry = m_blocks[index].bUseSymmetry;
-		}
+		pPriority = m_blocks[index].m_priority;
+		bReduceBothAxes = m_blocks[index].bReduceBothAxes;
+		bReduceByTwo = m_blocks[index].bReduceByTwo;
 	}
 
 
@@ -170,12 +162,13 @@ namespace mu {
 
 
 	//---------------------------------------------------------------------------------------------
-	void Layout::SetBlockOptions(int index, int priority, bool bUseSymmetry)
+	void Layout::SetBlockOptions(int index, int priority, bool bReduceBothAxes, bool bReduceByTwo)
 	{
 		check(index >= 0 && index < m_blocks.Num());
 
 		m_blocks[index].m_priority = priority;
-		m_blocks[index].bUseSymmetry = bUseSymmetry;
+		m_blocks[index].bReduceBothAxes = bReduceBothAxes;
+		m_blocks[index].bReduceByTwo = bReduceByTwo;
 	}
 
 
@@ -196,7 +189,7 @@ namespace mu {
 	//---------------------------------------------------------------------------------------------
 	void Layout::Serialise(OutputArchive& arch) const
 	{
-		uint32 ver = 5;
+		uint32 ver = 6;
 		arch << ver;
 
 		arch << m_size;
@@ -214,11 +207,11 @@ namespace mu {
 	{
 		uint32 ver;
 		arch >> ver;
-		check(ver <= 5);
+		check(ver <= 6);
 
 		arch >> m_size;
 
-		if (ver < 5)
+		if (ver < 6)
 		{
 			uint32_t Size = 0;
 			arch >> Size;
@@ -226,6 +219,7 @@ namespace mu {
 
 			for (uint32_t BlockIndex = 0; BlockIndex < Size; ++BlockIndex)
 			{
+				// Unserialise taking into account the Layout version
 				m_blocks[BlockIndex].UnserialiseOldVersion(arch, ver);
 			}
 		}
@@ -335,7 +329,8 @@ namespace mu {
 		arch << m_size;
 		arch << m_id;
 		arch << m_priority;
-		arch << bUseSymmetry;
+		arch << bReduceBothAxes;
+		arch << bReduceByTwo;
 	}
 
 
@@ -346,18 +341,23 @@ namespace mu {
 		arch >> m_size;
 		arch >> m_id;
 		arch >> m_priority;
-		arch >> bUseSymmetry;
+		arch >> bReduceBothAxes;
+		arch >> bReduceByTwo;
 	}
 
 	
 	//---------------------------------------------------------------------------------------------
 	void Layout::FBlock::UnserialiseOldVersion(InputArchive& Archive, const int32 Version)
 	{
-		// Use the version if the Layout version changes to 6
 		Archive >> m_min;
 		Archive >> m_size;
 		Archive >> m_id;
 		Archive >> m_priority;
+
+		if (Version >= 5)
+		{
+			Archive >> bReduceBothAxes;
+		}
 	}
 }
 

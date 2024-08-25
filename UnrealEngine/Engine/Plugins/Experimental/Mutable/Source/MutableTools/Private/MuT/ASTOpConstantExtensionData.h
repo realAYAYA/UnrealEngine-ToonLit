@@ -17,7 +17,7 @@ struct FProgram;
 //---------------------------------------------------------------------------------------------
 //! A constant ExtensionData
 //---------------------------------------------------------------------------------------------
-class ASTOpConstantExtensionData : public ASTOp
+class ASTOpConstantExtensionData final : public ASTOp
 {
 public:
 

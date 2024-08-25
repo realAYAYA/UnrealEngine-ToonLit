@@ -61,11 +61,6 @@ namespace Chaos
 			return *this;
 		}
 
-		virtual FImplicitObject* Duplicate() const override
-		{
-			return new FCapsule(*this);
-		}
-
 		~FCapsule() {}
 
 		static constexpr EImplicitObjectType StaticType() { return ImplicitObjectType::Capsule; }
@@ -77,7 +72,7 @@ namespace Chaos
 			return FCapsule(X1, X2, Radius);
 		}
 
-		FReal GetRadius() const
+		virtual FReal GetRadius() const override
 		{
 			return Margin;
 		}
@@ -426,15 +421,15 @@ namespace Chaos
 		{
 			return FString::Printf(TEXT("Capsule: Height: %f Radius: %f"), GetHeight(), GetRadius());
 		}
-
-		virtual TUniquePtr<FImplicitObject> Copy() const override
+		
+		virtual Chaos::FImplicitObjectPtr CopyGeometry() const override
 		{
-			return TUniquePtr<FImplicitObject>(new FCapsule(*this));
+			return Chaos::FImplicitObjectPtr(new FCapsule(*this));
 		}
 
-		virtual TUniquePtr<FImplicitObject> CopyWithScale(const FVec3& Scale) const override
+		virtual Chaos::FImplicitObjectPtr CopyGeometryWithScale(const FVec3& Scale) const override
 		{
-			return  TUniquePtr<FImplicitObject>(new FCapsule(GetX1() * Scale, GetX2() * Scale, GetRadius() * Scale.Min()));
+			return  Chaos::FImplicitObjectPtr(new FCapsule(GetX1() * Scale, GetX2() * Scale, GetRadius() * Scale.Min()));
 		}
 
 		FReal GetHeight() const { return MSegment.GetLength(); }

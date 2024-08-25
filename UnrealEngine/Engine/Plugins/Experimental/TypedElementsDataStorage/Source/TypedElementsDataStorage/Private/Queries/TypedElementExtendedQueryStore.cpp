@@ -10,7 +10,10 @@
 const ITypedElementDataStorageInterface::FQueryDescription FTypedElementExtendedQueryStore::EmptyDescription{};
 
 FTypedElementExtendedQueryStore::Handle FTypedElementExtendedQueryStore::RegisterQuery(
-	ITypedElementDataStorageInterface::FQueryDescription Query, FMassEntityManager& EntityManager, FMassProcessingPhaseManager& PhaseManager)
+	ITypedElementDataStorageInterface::FQueryDescription Query, 
+	FTypedElementDatabaseEnvironment& Environment,
+	FMassEntityManager& EntityManager, 
+	FMassProcessingPhaseManager& PhaseManager)
 {
 	FTypedElementExtendedQueryStore::Handle Result = Queries.Emplace();
 	FTypedElementExtendedQuery& StoredQuery = GetMutableChecked(Result);
@@ -21,7 +24,7 @@ FTypedElementExtendedQueryStore::Handle FTypedElementExtendedQueryStore::Registe
 	bContinueSetup = bContinueSetup &&	SetupConditions(StoredQuery.Description, NativeQuery);
 	bContinueSetup = bContinueSetup &&	SetupDependencies(StoredQuery.Description, NativeQuery);
 	bContinueSetup = bContinueSetup &&	SetupTickGroupDefaults(StoredQuery.Description);
-	bContinueSetup = bContinueSetup &&	SetupProcessors(Result, StoredQuery, EntityManager, PhaseManager);
+	bContinueSetup = bContinueSetup &&	SetupProcessors(Result, StoredQuery, Environment, EntityManager, PhaseManager);
 	
 	if (!bContinueSetup)
 	{
@@ -36,36 +39,24 @@ void FTypedElementExtendedQueryStore::UnregisterQuery(Handle Query, FMassProcess
 {
 	if (FTypedElementExtendedQuery* QueryData = Get(Query))
 	{
-		if (QueryData->Processor)
-		{
-			if (QueryData->Processor->IsA<UTypedElementQueryProcessorCallbackAdapterProcessorBase>())
-			{
-				PhaseManager.UnregisterDynamicProcessor(*QueryData->Processor);
-			}
-			else if (QueryData->Processor->IsA<UTypedElementQueryObserverCallbackAdapterProcessorBase>())
-			{
-				checkf(false, TEXT("Observer queries can not be unregistered."));
-			}
-			else
-			{
-				checkf(false, TEXT("Query processor %s is of unsupported type %s."),
-					*QueryData->Description.Callback.Name.ToString(), *QueryData->Processor->GetSparseClassDataStruct()->GetName());
-			}
-		}
-		else if (QueryData->Description.Callback.Type == ITypedElementDataStorageInterface::EQueryCallbackType::PhasePreparation)
-		{
-			UnregisterPreambleQuery(QueryData->Description.Callback.Phase, Query);
-		}
-		else if (QueryData->Description.Callback.Type == ITypedElementDataStorageInterface::EQueryCallbackType::PhaseFinalization)
-		{
-			UnregisterPostambleQuery(QueryData->Description.Callback.Phase, Query);
-		}
-		else
-		{
-			QueryData->NativeQuery.Clear();
-		}
+		UnregisterQueryData(Query, *QueryData, PhaseManager);
 		Queries.Remove(Query);
 	}
+}
+
+void FTypedElementExtendedQueryStore::Clear(FMassProcessingPhaseManager& PhaseManager)
+{
+	TickGroupDescriptions.Empty();
+
+	Queries.ListAliveEntries([this, &PhaseManager](Handle Query, FTypedElementExtendedQuery& QueryData)
+		{
+			if (QueryData.Processor && QueryData.Processor->IsA<UTypedElementQueryObserverCallbackAdapterProcessorBase>())
+			{
+				// Observers can't be unregistered at this point, so skip these for now.
+				return;
+			}
+			UnregisterQueryData(Query, QueryData, PhaseManager);
+		});
 }
 
 void FTypedElementExtendedQueryStore::RegisterTickGroup(FName GroupName, ITypedElementDataStorageInterface::EQueryTickPhase Phase,
@@ -135,12 +126,12 @@ bool FTypedElementExtendedQueryStore::IsAlive(Handle Entry) const
 	return Queries.IsAlive(Entry);
 }
 
-void FTypedElementExtendedQueryStore::ListAliveEntries(const ListAliveEntriesCallback& Callback) const
+void FTypedElementExtendedQueryStore::ListAliveEntries(const ListAliveEntriesConstCallback& Callback) const
 {
 	Queries.ListAliveEntries(Callback);
 }
 
-ITypedElementDataStorageInterface::FQueryResult FTypedElementExtendedQueryStore::RunQuery(FMassEntityManager& EntityManager, Handle Query)
+TypedElementDataStorage::FQueryResult FTypedElementExtendedQueryStore::RunQuery(FMassEntityManager& EntityManager, Handle Query)
 {
 	using ActionType = ITypedElementDataStorageInterface::FQueryDescription::EActionType;
 	using CompletionType = ITypedElementDataStorageInterface::FQueryResult::ECompletion;
@@ -180,8 +171,13 @@ ITypedElementDataStorageInterface::FQueryResult FTypedElementExtendedQueryStore:
 	return Result;
 }
 
-ITypedElementDataStorageInterface::FQueryResult FTypedElementExtendedQueryStore::RunQuery(FMassEntityManager& EntityManager, Handle Query,
-	ITypedElementDataStorageInterface::DirectQueryCallbackRef Callback)
+template<typename CallbackReference>
+TypedElementDataStorage::FQueryResult FTypedElementExtendedQueryStore::RunQueryCallbackCommon(
+	FMassEntityManager& EntityManager, 
+	FTypedElementDatabaseEnvironment& Environment,
+	FMassExecutionContext* ParentContext,
+	Handle Query,
+	CallbackReference Callback)
 {
 	using ActionType = ITypedElementDataStorageInterface::FQueryDescription::EActionType;
 	using CompletionType = ITypedElementDataStorageInterface::FQueryResult::ECompletion;
@@ -198,8 +194,16 @@ ITypedElementDataStorageInterface::FQueryResult FTypedElementExtendedQueryStore:
 		case ActionType::Select:
 			if (!QueryData->Processor.IsValid())
 			{
-				Result = FTypedElementQueryProcessorData::Execute(
-					Callback, QueryData->Description, QueryData->NativeQuery, EntityManager);
+				if constexpr (std::is_same_v<CallbackReference, TypedElementDataStorage::DirectQueryCallbackRef>)
+				{
+					Result = FTypedElementQueryProcessorData::Execute(
+						Callback, QueryData->Description, QueryData->NativeQuery, EntityManager, Environment);
+				}
+				else
+				{
+					Result = FTypedElementQueryProcessorData::Execute(
+						Callback, QueryData->Description, QueryData->NativeQuery, EntityManager, Environment, *ParentContext);
+				}
 			}
 			else
 			{
@@ -224,23 +228,82 @@ ITypedElementDataStorageInterface::FQueryResult FTypedElementExtendedQueryStore:
 	return Result;
 }
 
-void FTypedElementExtendedQueryStore::RunPhasePreambleQueries(FMassEntityManager& EntityManager,
-	ITypedElementDataStorageInterface::EQueryTickPhase Phase, float DeltaTime)
+TypedElementDataStorage::FQueryResult FTypedElementExtendedQueryStore::RunQuery(FMassEntityManager& EntityManager, 
+	FTypedElementDatabaseEnvironment& Environment, Handle Query, TypedElementDataStorage::DirectQueryCallbackRef Callback)
 {
-	RunPhasePreOrPostAmbleQueries(EntityManager, Phase, DeltaTime, PhasePreparationQueries[static_cast<QueryTickPhaseType>(Phase)]);
+	return RunQueryCallbackCommon(EntityManager, Environment, nullptr, Query, Callback);
+}
+
+TypedElementDataStorage::FQueryResult FTypedElementExtendedQueryStore::RunQuery(FMassEntityManager& EntityManager, 
+	FTypedElementDatabaseEnvironment& Environment, FMassExecutionContext& ParentContext, Handle Query, 
+	TypedElementDataStorage::SubqueryCallbackRef Callback)
+{
+	return RunQueryCallbackCommon(EntityManager, Environment, &ParentContext, Query, Callback);
+}
+
+TypedElementDataStorage::FQueryResult FTypedElementExtendedQueryStore::RunQuery(FMassEntityManager& EntityManager, 
+	FTypedElementDatabaseEnvironment& Environment, FMassExecutionContext& ParentContext, Handle Query, TypedElementRowHandle Row,
+	TypedElementDataStorage::SubqueryCallbackRef Callback)
+{
+	using ActionType = ITypedElementDataStorageInterface::FQueryDescription::EActionType;
+	using CompletionType = ITypedElementDataStorageInterface::FQueryResult::ECompletion;
+
+	ITypedElementDataStorageInterface::FQueryResult Result;
+
+	if (FTypedElementExtendedQuery* QueryData = Get(Query))
+	{
+		switch (QueryData->Description.Action)
+		{
+		case ActionType::None:
+			Result.Completed = CompletionType::Fully;
+			break;
+		case ActionType::Select:
+			if (!QueryData->Processor.IsValid())
+			{
+				Result = FTypedElementQueryProcessorData::Execute(
+					Callback, QueryData->Description, Row, QueryData->NativeQuery, EntityManager, Environment, ParentContext);
+			}
+			else
+			{
+				Result.Completed = CompletionType::Unsupported;
+			}
+			break;
+		case ActionType::Count:
+			// Only the count is requested so no need to trigger the callback.
+			Result.Count = 1;
+			Result.Completed = CompletionType::Fully;
+			break;
+		default:
+			Result.Completed = CompletionType::Unsupported;
+			break;
+		}
+	}
+	else
+	{
+		Result.Completed = CompletionType::Unavailable;
+	}
+
+	return Result;
+}
+void FTypedElementExtendedQueryStore::RunPhasePreambleQueries(FMassEntityManager& EntityManager,
+	FTypedElementDatabaseEnvironment& Environment, ITypedElementDataStorageInterface::EQueryTickPhase Phase, float DeltaTime)
+{
+	RunPhasePreOrPostAmbleQueries(EntityManager, Environment, Phase, DeltaTime, 
+		PhasePreparationQueries[static_cast<QueryTickPhaseType>(Phase)]);
 }
 
 void FTypedElementExtendedQueryStore::RunPhasePostambleQueries(FMassEntityManager& EntityManager,
-	ITypedElementDataStorageInterface::EQueryTickPhase Phase, float DeltaTime)
+	FTypedElementDatabaseEnvironment& Environment, ITypedElementDataStorageInterface::EQueryTickPhase Phase, float DeltaTime)
 {
-	RunPhasePreOrPostAmbleQueries(EntityManager, Phase, DeltaTime, PhaseFinalizationQueries[static_cast<QueryTickPhaseType>(Phase)]);
+	RunPhasePreOrPostAmbleQueries(EntityManager, Environment, Phase, DeltaTime, 
+		PhaseFinalizationQueries[static_cast<QueryTickPhaseType>(Phase)]);
 }
 
 void FTypedElementExtendedQueryStore::DebugPrintQueryCallbacks(FOutputDevice& Output) const
 {
 	Output.Log(TEXT("The Typed Elements Data Storage has the following query callbacks:"));
 	Queries.ListAliveEntries(
-		[&Output](const FTypedElementExtendedQuery& Query)
+		[&Output](Handle QueryHandle, const FTypedElementExtendedQuery& Query)
 		{
 			if (Query.Processor)
 			{
@@ -520,8 +583,8 @@ bool FTypedElementExtendedQueryStore::SetupTickGroupDefaults(ITypedElementDataSt
 	return true;
 }
 
-bool FTypedElementExtendedQueryStore::SetupProcessors(Handle Query, FTypedElementExtendedQuery& StoredQuery, 
-	FMassEntityManager& EntityManager, FMassProcessingPhaseManager& PhaseManager)
+bool FTypedElementExtendedQueryStore::SetupProcessors(Handle QueryHandle, FTypedElementExtendedQuery& StoredQuery, 
+	FTypedElementDatabaseEnvironment& Environment, FMassEntityManager& EntityManager, FMassProcessingPhaseManager& PhaseManager)
 {
 	using DSI = ITypedElementDataStorageInterface;
 
@@ -529,10 +592,10 @@ bool FTypedElementExtendedQueryStore::SetupProcessors(Handle Query, FTypedElemen
 	switch (StoredQuery.Description.Callback.Type)
 	{
 	case DSI::EQueryCallbackType::PhasePreparation:
-		RegisterPreambleQuery(StoredQuery.Description.Callback.Phase, Query);
+		RegisterPreambleQuery(StoredQuery.Description.Callback.Phase, QueryHandle);
 		break;
 	case DSI::EQueryCallbackType::PhaseFinalization:
-		RegisterPostambleQuery(StoredQuery.Description.Callback.Phase, Query);
+		RegisterPostambleQuery(StoredQuery.Description.Callback.Phase, QueryHandle);
 		break;
 	}
 
@@ -542,7 +605,7 @@ bool FTypedElementExtendedQueryStore::SetupProcessors(Handle Query, FTypedElemen
 		if (StoredQuery.Processor->IsA<UTypedElementQueryProcessorCallbackAdapterProcessorBase>())
 		{
 			if (static_cast<UTypedElementQueryProcessorCallbackAdapterProcessorBase*>(StoredQuery.Processor.Get())->
-				ConfigureQueryCallback(StoredQuery, *this))
+				ConfigureQueryCallback(StoredQuery, QueryHandle, *this, Environment))
 			{
 				PhaseManager.RegisterDynamicProcessor(*StoredQuery.Processor);
 			}
@@ -556,7 +619,7 @@ bool FTypedElementExtendedQueryStore::SetupProcessors(Handle Query, FTypedElemen
 			if (UTypedElementQueryObserverCallbackAdapterProcessorBase* Observer =
 				static_cast<UTypedElementQueryObserverCallbackAdapterProcessorBase*>(StoredQuery.Processor.Get()))
 			{
-				Observer->ConfigureQueryCallback(StoredQuery, *this);
+				Observer->ConfigureQueryCallback(StoredQuery, QueryHandle, *this, Environment);
 				EntityManager.GetObserverManager().AddObserverInstance(*Observer->GetObservedType(), Observer->GetObservedOperation(), *Observer);
 			}
 			else
@@ -617,7 +680,8 @@ void FTypedElementExtendedQueryStore::UnregisterPostambleQuery(ITypedElementData
 }
 
 void FTypedElementExtendedQueryStore::RunPhasePreOrPostAmbleQueries(FMassEntityManager& EntityManager,
-	ITypedElementDataStorageInterface::EQueryTickPhase Phase, float DeltaTime, TArray<Handle>& QueryHandles)
+	FTypedElementDatabaseEnvironment& Environment, ITypedElementDataStorageInterface::EQueryTickPhase Phase,
+	float DeltaTime, TArray<Handle>& QueryHandles)
 {
 	if (!QueryHandles.IsEmpty())
 	{
@@ -625,7 +689,44 @@ void FTypedElementExtendedQueryStore::RunPhasePreOrPostAmbleQueries(FMassEntityM
 		for (Handle Query : QueryHandles)
 		{
 			FTypedElementExtendedQuery& QueryData = Queries.Get(Query);
-			Executor.ExecuteQuery(QueryData.Description, *this, QueryData.NativeQuery, QueryData.Description.Callback.Function);
+			Executor.ExecuteQuery(QueryData.Description, *this, Environment, QueryData.NativeQuery, QueryData.Description.Callback.Function);
 		}
+	}
+}
+
+void FTypedElementExtendedQueryStore::UnregisterQueryData(Handle Query, FTypedElementExtendedQuery& QueryData, FMassProcessingPhaseManager& PhaseManager)
+{
+	if (QueryData.Processor)
+	{
+		if (QueryData.Processor->IsA<UTypedElementQueryProcessorCallbackAdapterProcessorBase>())
+		{
+			PhaseManager.UnregisterDynamicProcessor(*QueryData.Processor);
+		}
+		else if (QueryData.Processor->IsA<UTypedElementQueryObserverCallbackAdapterProcessorBase>())
+		{
+			UTypedElementQueryObserverCallbackAdapterProcessorBase* Observer =
+				static_cast<UTypedElementQueryObserverCallbackAdapterProcessorBase*>(QueryData.Processor.Get());
+			if (ensure(Observer && PhaseManager.GetEntityManager().IsValid()))
+			{
+				PhaseManager.GetEntityManager()->GetObserverManager().RemoveObserverInstance(*Observer->GetObservedType(), Observer->GetObservedOperation(), *Observer);
+			}
+		}
+		else
+		{
+			checkf(false, TEXT("Query processor %s is of unsupported type %s."),
+				*QueryData.Description.Callback.Name.ToString(), *QueryData.Processor->GetSparseClassDataStruct()->GetName());
+		}
+	}
+	else if (QueryData.Description.Callback.Type == ITypedElementDataStorageInterface::EQueryCallbackType::PhasePreparation)
+	{
+		UnregisterPreambleQuery(QueryData.Description.Callback.Phase, Query);
+	}
+	else if (QueryData.Description.Callback.Type == ITypedElementDataStorageInterface::EQueryCallbackType::PhaseFinalization)
+	{
+		UnregisterPostambleQuery(QueryData.Description.Callback.Phase, Query);
+	}
+	else
+	{
+		QueryData.NativeQuery.Clear();
 	}
 }

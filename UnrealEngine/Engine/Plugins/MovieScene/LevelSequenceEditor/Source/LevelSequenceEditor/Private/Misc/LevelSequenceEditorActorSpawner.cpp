@@ -48,6 +48,7 @@ TValueOrError<FNewSpawnable, FText> FLevelSequenceEditorActorSpawner::CreateNewS
 		}
 
 		AActor* SpawnedActor = Cast<AActor>(StaticDuplicateObject(Actor, &OwnerMovieScene, TemplateName, RF_AllFlags));
+		SpawnedActor->DetachFromActor(FDetachmentTransformRules(EDetachmentRule::KeepRelative, false));
 		SpawnedActor->bIsEditorPreviewActor = false;
 		NewSpawnable.ObjectTemplate = SpawnedActor;
 		NewSpawnable.Name = Actor->GetActorLabel();

@@ -16,7 +16,7 @@ set OUTPUT_ROOT_DIR=%CD%/%LIBPNG_PATH%/lib/Android
 REM NDK OVERRIDE. Use a different NDK then your environment variable NDKROOT by setting it here
 REM set NDKROOT=H:/ndk/
 
-set PATH=%ANDROID_HOME%\cmake\3.10.2.4988404\bin;%PATH%
+set PATH=%ANDROID_HOME%\cmake\3.22.1\bin;%PATH%
 
 set PATH_TO_CMAKE_FILE=%ROOT_DIR%/%LIBPNG_PATH%
 set PATH_TO_CROSS_COMPILE_CMAKE_FILES=%NDKROOT%/build/cmake/android.toolchain.cmake

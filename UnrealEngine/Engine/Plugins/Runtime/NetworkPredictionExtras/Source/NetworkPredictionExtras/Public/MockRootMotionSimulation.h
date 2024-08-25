@@ -51,7 +51,7 @@ struct TMockRootMotionSourceProxy
 		{
 			uint8 Size = 0;
 			P.Ar << Size;
-			Params.SetNumUninitialized(Size, false);
+			Params.SetNumUninitialized(Size, EAllowShrinking::No);
 			P.Ar.Serialize(Params.GetData(), Size);
 		}
 	}

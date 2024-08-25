@@ -28,6 +28,7 @@
 #include "rtm/math.h"
 #include "rtm/scalard.h"
 #include "rtm/vector4d.h"
+#include "rtm/version.h"
 #include "rtm/impl/compiler_utils.h"
 #include "rtm/impl/memory_utils.h"
 #include "rtm/impl/quat_common.h"
@@ -36,6 +37,8 @@ RTM_IMPL_FILE_PRAGMA_PUSH
 
 namespace rtm
 {
+	RTM_IMPL_VERSION_NAMESPACE_BEGIN
+
 	//////////////////////////////////////////////////////////////////////////
 	// Setters, getters, and casts
 	//////////////////////////////////////////////////////////////////////////
@@ -553,6 +556,34 @@ namespace rtm
 	}
 
 	//////////////////////////////////////////////////////////////////////////
+	// Returns a normalized quaternion using a deterministic algorithm.
+	// This ensures that for a given input, the output will be identical on all
+	// platforms that implement IEEE-754. This can be slower than `quat_normalize`.
+	// Note that if the input quaternion is invalid (pure zero or with NaN/Inf),
+	// the result is undefined.
+	//////////////////////////////////////////////////////////////////////////
+	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE quatd quat_normalize_deterministic(const quatd& input) RTM_NO_EXCEPT
+	{
+		vector4d inputv = quat_to_vector(input);
+
+		// Multiply once and retrieve floats, can't use scalarf because we need to use volatile
+		// volatile will force a roundtrip to memory and should prevent re-ordering as well as
+		// other optimizations such as FMA.
+		vector4d input_sq = vector_mul(inputv, inputv);
+		volatile double x_sq = vector_get_x(input_sq);
+		volatile double y_sq = vector_get_y(input_sq);
+		volatile double z_sq = vector_get_z(input_sq);
+		volatile double w_sq = vector_get_w(input_sq);
+		volatile double sum_xy_sq = x_sq + y_sq;
+		volatile double sum_zw_sq = z_sq + w_sq;
+		double len_sq = sum_xy_sq + sum_zw_sq;
+
+		// We add volatile to ensure rsqrt or similar isn't used
+		volatile double len = scalar_sqrt(len_sq);
+		return vector_to_quat(vector_div(inputv, vector_set(len)));
+	}
+
+	//////////////////////////////////////////////////////////////////////////
 	// Returns the linear interpolation between start and end for a given alpha value.
 	// The formula used is: ((1.0 - alpha) * start) + (alpha * end).
 	// Interpolation is stable and will return 'start' when 'alpha' is 0.0 and 'end' when it is 1.0.
@@ -883,6 +914,20 @@ namespace rtm
 	}
 
 	//////////////////////////////////////////////////////////////////////////
+	// Returns true if the two quaternions are equal component wise, otherwise false.
+	//////////////////////////////////////////////////////////////////////////
+	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool quat_are_equal(const quatd& lhs, const quatd& rhs) RTM_NO_EXCEPT
+	{
+#if defined(RTM_SSE2_INTRINSICS)
+		__m128d xy_eq_pd = _mm_cmpeq_pd(lhs.xy, rhs.xy);
+		__m128d zw_eq_pd = _mm_cmpeq_pd(lhs.zw, rhs.zw);
+		return (_mm_movemask_pd(xy_eq_pd) & _mm_movemask_pd(zw_eq_pd)) == 3;
+#else
+		return lhs.x == rhs.x && lhs.y == rhs.y && lhs.z == rhs.z && lhs.w == rhs.w;
+#endif
+	}
+
+	//////////////////////////////////////////////////////////////////////////
 	// Returns true if the two quaternions are nearly equal component wise, otherwise false.
 	//////////////////////////////////////////////////////////////////////////
 	RTM_DISABLE_SECURITY_COOKIE_CHECK RTM_FORCE_INLINE bool quat_near_equal(const quatd& lhs, const quatd& rhs, double threshold = 0.00001) RTM_NO_EXCEPT
@@ -902,6 +947,8 @@ namespace rtm
 		const double positive_w_angle = scalar_acos(scalar_cast(input_abs_w)) * 2.0;
 		return positive_w_angle <= threshold_angle;
 	}
+
+	RTM_IMPL_VERSION_NAMESPACE_END
 }
 
 RTM_IMPL_FILE_PRAGMA_POP

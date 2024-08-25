@@ -25,15 +25,16 @@ void FStreamReader::Advance(uint32 Size)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-int32 FStreamReader::GetRemaining() const
+uint32 FStreamReader::GetRemaining() const
 {
-	return int32(PTRINT(End - Cursor));
+	check(End >= Cursor);
+	return End - Cursor;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 bool FStreamReader::CanMeetDemand() const
 {
-	return (GetRemaining() >= int32(DemandHint));
+	return GetRemaining() >= DemandHint;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -101,7 +102,8 @@ uint8* FStreamBuffer::Append(uint32 Size)
 ////////////////////////////////////////////////////////////////////////////////
 void FStreamBuffer::Consolidate()
 {
-	int32 Remaining = GetRemaining();
+	uint32 Remaining = GetRemaining();
+	check((uint64)DemandHint + (uint64)Remaining < (1ull << 31));
 	DemandHint += Remaining;
 
 	if (DemandHint >= BufferSize)

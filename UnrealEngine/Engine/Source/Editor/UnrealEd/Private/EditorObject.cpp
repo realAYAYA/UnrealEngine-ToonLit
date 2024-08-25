@@ -311,7 +311,7 @@ static const TCHAR* ImportProperties(
 			}
 			if (Length != StrLine.Len())
 			{
-				StrLine.LeftInline(Length, false);
+				StrLine.LeftInline(Length, EAllowShrinking::No);
 			}
 		}
 
@@ -656,7 +656,7 @@ static const TCHAR* ImportProperties(
 					// Make sure desired flags are set - existing object could be pending kill
 					ComponentTemplate->ClearGarbage();
 					ComponentTemplate->ClearFlags(RF_AllFlags);
-					ComponentTemplate->ClearInternalFlags(EInternalObjectFlags::AllFlags);
+					ComponentTemplate->ClearInternalFlags(EInternalObjectFlags_AllFlags);
 					ComponentTemplate->SetFlags(NewFlags);
 				}
 
@@ -976,7 +976,7 @@ static const TCHAR* ImportCreateSubObjectsStep(
 			}
 			if (Length != StrLine.Len())
 			{
-				StrLine.LeftInline(Length, false);
+				StrLine.LeftInline(Length, EAllowShrinking::No);
 			}
 		}
 
@@ -1232,7 +1232,7 @@ static const TCHAR* ImportCreateSubObjectsStep(
 					// Make sure desired flags are set - existing object could be pending kill
 					ComponentTemplate->ClearGarbage();
 					ComponentTemplate->ClearFlags(RF_AllFlags);
-					ComponentTemplate->ClearInternalFlags(EInternalObjectFlags::AllFlags);
+					ComponentTemplate->ClearInternalFlags(EInternalObjectFlags_AllFlags);
 					ComponentTemplate->SetFlags(NewFlags);
 				}
 
@@ -1374,7 +1374,7 @@ static const TCHAR* ImportPropertiesStep(
 				}
 				if (Length != StrLine.Len())
 				{
-					StrLine.LeftInline(Length, false);
+					StrLine.LeftInline(Length, EAllowShrinking::No);
 				}
 			}
 

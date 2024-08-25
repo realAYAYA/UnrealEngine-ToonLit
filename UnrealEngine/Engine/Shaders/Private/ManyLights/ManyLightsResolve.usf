@@ -1,0 +1,189 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "ManyLights.ush"
+
+RWStructuredBuffer<uint> RWShadingTiles;
+RWStructuredBuffer<uint> RWShadingTileAllocator;
+RWTexture2D<uint> RWShadingTileGridAllocator;
+RWStructuredBuffer<uint> RWShadingTileGrid;
+RWTexture2D<UNORM float> RWShadingTileAtlas;
+
+StructuredBuffer<uint2> CompositeTileData;
+Texture2D<uint> LightSamples;
+Texture2D<float> DownsampledSceneDepth;
+Texture2D<UNORM float3> DownsampledSceneWorldNormal;
+Texture2D<float4> CompositeUpsampleWeights;
+
+uint2 NumSamplesPerPixel;
+int2 DownsampledViewSize;
+uint MaxShadingTiles;
+uint DebugLightId;
+
+#define SHARED_TILE_BORDER 1
+#define SHARED_TILE_SIZE (8 + 2 * SHARED_TILE_BORDER)
+groupshared float SharedSampleWeights[SHARED_TILE_SIZE][SHARED_TILE_SIZE];
+
+// 2x2 tile mask. 1 means that we need to spawn a shading tile for that region.
+groupshared uint SharedShadingTileMask[2][2];
+groupshared uint SharedShadingTileIndex[2][2];
+
+void AccumulateLightSample(uint2 SharedTileCoord, float UpsampleWeight, inout float SampleWeightSum)
+{
+	float SampleWeight = SharedSampleWeights[SharedTileCoord.x][SharedTileCoord.y];
+	SampleWeightSum += SampleWeight * UpsampleWeight;
+}
+
+/**
+ * Run one thread per local region and compute fullscreen per pixel BRDF weights for shading.
+ */
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
+void ResolveLightSamplesCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 GroupThreadId : SV_GroupThreadID,
+	uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint CompositeTileIndex = GroupId.x;
+
+	uint LocalLightIndex;
+	uint2 BaseDownsampledScreenCoord;
+	UnpackCompositeTile(CompositeTileData[CompositeTileIndex], LocalLightIndex, BaseDownsampledScreenCoord);
+
+	if (all(GroupThreadId < 2))
+	{
+		SharedShadingTileMask[GroupThreadId.x][GroupThreadId.y] = 0;
+		SharedShadingTileIndex[GroupThreadId.x][GroupThreadId.y] = 0xFFFFFFFF;
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	const FLocalLightData LocalLightData = GetLocalLightDataNonStereo(LocalLightIndex);
+	
+	// Composite traces into SharedSampleWeights
+	for (uint SharedCoordY = GroupThreadId.y; SharedCoordY < SHARED_TILE_SIZE; SharedCoordY += THREADGROUP_SIZE)
+	{
+		for (uint SharedCoordX = GroupThreadId.x; SharedCoordX < SHARED_TILE_SIZE; SharedCoordX += THREADGROUP_SIZE)
+		{
+			const uint2 SharedCoord = uint2(SharedCoordX, SharedCoordY);
+			const uint2 DownsampledScreenCoord = clamp(int2(BaseDownsampledScreenCoord + SharedCoord) - SHARED_TILE_BORDER, 0, DownsampledViewSize - 1);
+			
+			float WeightSum = 0.0f;
+
+			for (uint LocalSampleY = 0; LocalSampleY < NumSamplesPerPixel.y; ++LocalSampleY)
+			{
+				for (uint LocalSampleX = 0; LocalSampleX < NumSamplesPerPixel.x; ++LocalSampleX)
+				{
+					uint2 SampleCoord = DownsampledScreenCoord * NumSamplesPerPixel + uint2(LocalSampleX, LocalSampleY);
+					FLightSample LightSample = UnpackLightSample(LightSamples[SampleCoord]);
+
+					if (LightSample.LocalLightIndex == LocalLightIndex && LightSample.bVisible)
+					{
+						WeightSum += LightSample.Weight;
+					}
+				}
+			}
+
+			// Mark sub-tiles requiring shading tiles, accounting for a bilinear interpolation footprint
+			if (WeightSum > 0.001f)
+			{
+				uint LitBitMask = 0;
+
+				for (uint ShadingTileOffsetY = 0; ShadingTileOffsetY < 2; ++ShadingTileOffsetY)
+				{
+					for (uint ShadingTileOffsetX = 0; ShadingTileOffsetX < 2; ++ShadingTileOffsetX)
+					{
+						const uint2 ShadingTileOffset = uint2(ShadingTileOffsetX, ShadingTileOffsetY);
+
+						// Bilinear footprint
+						uint2 ShadingTileMin = ShadingTileOffset * 4 + (SHARED_TILE_BORDER - 1);
+						uint2 ShadingTileMax = ShadingTileMin + 5;
+
+						if (and(all(SharedCoord >= ShadingTileMin), all(SharedCoord <= ShadingTileMax)))
+						{
+							// #ml_todo: don't write to the spot from so many threads
+							SharedShadingTileMask[ShadingTileOffset.x][ShadingTileOffset.y] = 1;
+						}
+					}
+				}
+			}
+
+			SharedSampleWeights[SharedCoordX][SharedCoordY] = WeightSum;
+		}
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	uint2 LocalDownsampledTileCoord = GroupThreadId.xy;
+	uint2 DownsampledScreenCoord = BaseDownsampledScreenCoord + LocalDownsampledTileCoord;
+	uint2 ShadingTileOffset = GroupThreadId.xy;
+
+	// Allocate shading tiles
+	if (all(ShadingTileOffset < 2))
+	{
+		if (SharedShadingTileMask[ShadingTileOffset.x][ShadingTileOffset.y] != 0)
+		{	
+			const uint2 ShadingTileCoord = (BaseDownsampledScreenCoord * DOWNSAMPLE_FACTOR) / TILE_SIZE + ShadingTileOffset;
+
+			if (all(ShadingTileCoord < ShadingTileGridSize))
+			{
+				uint ShadingTileIndex = MaxShadingTiles;
+				InterlockedAdd(RWShadingTileAllocator[0], 1u, ShadingTileIndex);
+
+				if (ShadingTileIndex < MaxShadingTiles)
+				{
+					uint ShadingTileIndexInCell = 0;
+					InterlockedAdd(RWShadingTileGridAllocator[ShadingTileCoord], 1u, ShadingTileIndexInCell);
+
+					if (ShadingTileIndexInCell < MaxShadingTilesPerGridCell)
+					{
+						RWShadingTileGrid[GetShadingTileGridOffset(ShadingTileCoord, ShadingTileIndexInCell)] = PackShadingTile(LocalLightIndex, ShadingTileIndex);
+						SharedShadingTileIndex[ShadingTileOffset.x][ShadingTileOffset.y] = ShadingTileIndex;
+					}
+				}
+			}
+		}
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+
+	// Composite shading tiles
+	for (uint ShadingTileOffsetY = 0; ShadingTileOffsetY < 2; ++ShadingTileOffsetY)
+	{
+		for (uint ShadingTileOffsetX = 0; ShadingTileOffsetX < 2; ++ShadingTileOffsetX)
+		{
+			uint ShadingTileIndex = SharedShadingTileIndex[ShadingTileOffsetX][ShadingTileOffsetY];
+
+			if (ShadingTileIndex < MaxShadingTiles)
+			{
+				const uint2 CoordInShadingTile = GroupThreadId.xy;
+				const uint2 ShadingTileCoord = (BaseDownsampledScreenCoord * DOWNSAMPLE_FACTOR) / TILE_SIZE + uint2(ShadingTileOffsetX, ShadingTileOffsetY);
+				uint2 ScreenCoord = ShadingTileCoord * TILE_SIZE + CoordInShadingTile;
+				float4 DownsampledScreenWeights = CompositeUpsampleWeights[ScreenCoord];
+
+				const uint2 SharedTileCoord00 = (uint2(ShadingTileOffsetX, ShadingTileOffsetY) * TILE_SIZE + CoordInShadingTile + 1) / DOWNSAMPLE_FACTOR + (SHARED_TILE_BORDER - 1);
+
+				float SampleWeightSum = 0.0f;
+				AccumulateLightSample(SharedTileCoord00 + uint2(0, 0), DownsampledScreenWeights.x, SampleWeightSum);
+				AccumulateLightSample(SharedTileCoord00 + uint2(1, 0), DownsampledScreenWeights.y, SampleWeightSum);
+				AccumulateLightSample(SharedTileCoord00 + uint2(0, 1), DownsampledScreenWeights.z, SampleWeightSum);
+				AccumulateLightSample(SharedTileCoord00 + uint2(1, 1), DownsampledScreenWeights.w, SampleWeightSum);
+
+				#if DEBUG_MODE
+					int2 DebugScreenCoord = View.CursorPosition.x >= 0 ? View.CursorPosition * View.ViewResolutionFraction : -1;
+					bool bDebug = all(ScreenCoord == DebugScreenCoord) && LocalLightData.LightSceneId == DebugLightId;
+					FShaderPrintContext Context = InitShaderPrintContext(true, float2(0.05, 0.3));
+
+					if (bDebug)
+					{
+						Print(Context, TEXT("CompositeLightSamples"));
+						Newline(Context);
+						Print(Context, TEXT("SampleWeight: "));
+						Print(Context, SampleWeightSum);
+					}
+				#endif
+
+				uint2 ShadingTileAtlasCoord = GetShadingTileAtlasCoord(ShadingTileIndex, CoordInShadingTile);
+				RWShadingTileAtlas[ShadingTileAtlasCoord] = SampleWeightSum;
+			}
+		}
+	}
+}

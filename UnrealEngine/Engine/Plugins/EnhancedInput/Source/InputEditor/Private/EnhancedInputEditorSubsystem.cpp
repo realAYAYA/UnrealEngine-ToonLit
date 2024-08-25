@@ -11,6 +11,7 @@
 #include "EnhancedInputEditorProcessor.h"
 #include "EnhancedInputEditorSettings.h"
 #include "Framework/Application/SlateApplication.h"
+#include "UserSettings/EnhancedInputUserSettings.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(EnhancedInputEditorSubsystem)
 
@@ -255,9 +256,21 @@ void UEnhancedInputEditorSubsystem::AddDefaultMappingContexts()
 	{
 		if (const UInputMappingContext* IMC = ContextSetting.InputMappingContext.LoadSynchronous())
 		{
-			if (!HasMappingContext(IMC))
+			if (ContextSetting.bAddImmediately)
 			{
-				AddMappingContext(IMC, ContextSetting.Priority);	
+				if (!HasMappingContext(IMC))
+				{
+					FModifyContextOptions Opts = {};
+					Opts.bNotifyUserSettings = ContextSetting.bRegisterWithUserSettings;
+					AddMappingContext(IMC, ContextSetting.Priority, Opts);	
+				}
+			}
+			else if (ContextSetting.bRegisterWithUserSettings)
+			{
+				if (UEnhancedInputUserSettings* Settings = GetUserSettings())
+				{
+					Settings->RegisterInputMappingContext(IMC);
+				}
 			}
 		}
 	}
@@ -269,7 +282,9 @@ void UEnhancedInputEditorSubsystem::RemoveDefaultMappingContexts()
 	{
 		if (const UInputMappingContext* IMC = ContextSetting.InputMappingContext.LoadSynchronous())
 		{
-			RemoveMappingContext(IMC);
+			FModifyContextOptions Opts = {};
+			Opts.bNotifyUserSettings = ContextSetting.bRegisterWithUserSettings;
+			RemoveMappingContext(IMC, Opts);
 		}
 	}
 }

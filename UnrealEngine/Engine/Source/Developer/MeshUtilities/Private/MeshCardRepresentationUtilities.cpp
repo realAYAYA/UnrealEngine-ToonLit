@@ -1054,7 +1054,7 @@ bool FMeshUtilities::GenerateCardRepresentationData(
 	const FSourceMeshDataForDerivedDataTask& SourceMeshData,
 	const FStaticMeshLODResources& LODModel,
 	class FQueuedThreadPool& ThreadPool,
-	const TArray<FSignedDistanceFieldBuildMaterialData>& MaterialBlendModes,
+	const TArray<FSignedDistanceFieldBuildSectionData>& SectionData,
 	const FBoxSphereBounds& Bounds,
 	const FDistanceFieldVolumeData* DistanceFieldVolumeData,
 	int32 MaxLumenMeshCards,
@@ -1068,12 +1068,17 @@ bool FMeshUtilities::GenerateCardRepresentationData(
 	{
 		const double StartTime = FPlatformTime::Seconds();
 
+		// We include translucent triangles to get card representation for them in case translucent mesh tracing is used
+		// in combination with hardware ray tracing for hit lighting.
+		const bool bIncludeTranslucentTriangles = true; 
+
 		FEmbreeScene EmbreeScene;
 		MeshRepresentation::SetupEmbreeScene(MeshName,
 			SourceMeshData,
 			LODModel,
-			MaterialBlendModes,
+			SectionData,
 			bGenerateAsIfTwoSided,
+			bIncludeTranslucentTriangles,
 			EmbreeScene);
 
 		if (!EmbreeScene.EmbreeScene)
@@ -1084,7 +1089,7 @@ bool FMeshUtilities::GenerateCardRepresentationData(
 		FGenerateCardMeshContext Context(MeshName, EmbreeScene, OutData);
 
 		// Note: must operate on the SDF bounds when available, because SDF generation can expand the mesh's bounds
-		const FBox BuildCardsBounds = DistanceFieldVolumeData && DistanceFieldVolumeData->LocalSpaceMeshBounds.IsValid ? DistanceFieldVolumeData->LocalSpaceMeshBounds : Bounds.GetBox();
+		const FBox BuildCardsBounds = DistanceFieldVolumeData && DistanceFieldVolumeData->LocalSpaceMeshBounds.IsValid ? FBox(DistanceFieldVolumeData->LocalSpaceMeshBounds) : Bounds.GetBox();
 		BuildMeshCards(BuildCardsBounds, Context, MaxLumenMeshCards, OutData);
 
 		MeshRepresentation::DeleteEmbreeScene(EmbreeScene);

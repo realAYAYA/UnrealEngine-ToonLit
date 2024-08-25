@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Text;
 using EpicGames.Core;
 using Microsoft.Extensions.Logging;
 using UnrealBuildBase;
@@ -143,10 +144,21 @@ namespace UnrealBuildTool
 			return GetProjectArchitectures(ProjectFile, TargetName, true, false);
 		}
 
+		private static Dictionary<string, UnrealArchitectures> ProjectArchitectureCache = new();
 		private UnrealArchitectures GetProjectArchitectures(FileReference? ProjectFile, string? TargetName, bool bGetAllSupported, bool bIsDistributionMode)
 		{
+			string Key = $"{ProjectFile}{TargetName}{bGetAllSupported}{bIsDistributionMode}";
+			lock (ProjectArchitectureCache)
+			{
+				UnrealArchitectures? CachedArches;
+				if (ProjectArchitectureCache.TryGetValue(Key, out CachedArches))
+				{
+					return CachedArches;
+				}
+			}
+
 			bool bIsEditor = false;
-			bool bIsBuildMachine = Environment.GetEnvironmentVariable("IsBuildMachine") == "1";
+			bool bIsBuildMachine = Unreal.IsBuildMachine();
 
 			// get project ini from ProjetFile, or if null, then try to get it from the target rules
 			if (TargetName != null)
@@ -161,17 +173,24 @@ namespace UnrealBuildTool
 					RulesAsm = RulesCompiler.CreateProjectRulesAssembly(ProjectFile, Unreal.IsEngineInstalled(), false, false, Log.Logger);
 				}
 
-				// CreateTargetRules here needs to have an UnrealArchitectures object, because otherwise with 'null', it will call
-				// back to this function to get the ActiveArchitectures! in this case the arch is unimportant
-				UnrealArchitectures DummyArchitectures = new(UnrealArch.X64);
-				TargetRules? Rules = RulesAsm.CreateTargetRules(TargetName, UnrealTargetPlatform.Mac, UnrealTargetConfiguration.Development, DummyArchitectures, ProjectFile, null, Log.Logger);
-				bIsEditor = Rules.Type == TargetType.Editor;
-
-				// the projectfile passed in may be a game's uproject file that we are compiling a program in the context of, 
-				// but we still want the settings for the program
-				if (Rules.Type == TargetType.Program)
+				try
 				{
-					ProjectFile = Rules.ProjectFile;
+					// CreateTargetRules here needs to have an UnrealArchitectures object, because otherwise with 'null', it will call
+					// back to this function to get the ActiveArchitectures! in this case the arch is unimportant
+					UnrealArchitectures DummyArchitectures = new(UnrealArch.X64);
+					TargetRules? Rules = RulesAsm.CreateTargetRules(TargetName, UnrealTargetPlatform.Mac, UnrealTargetConfiguration.Development, DummyArchitectures, ProjectFile, null, Log.Logger, bSkipValidation:true);
+					bIsEditor = Rules.Type == TargetType.Editor;
+
+					// the projectfile passed in may be a game's uproject file that we are compiling a program in the context of, 
+					// but we still want the settings for the program
+					if (Rules.Type == TargetType.Program)
+					{
+						ProjectFile = Rules.ProjectFile;
+					}
+				}
+				catch (Exception)
+				{
+					// do nothing if it fails, assume no project
 				}
 			}
 
@@ -240,11 +259,32 @@ namespace UnrealBuildTool
 				throw new BuildException($"Unknown {DefaultKey} value found ('{DefaultArchitecture}') in .ini");
 			}
 
-			return new UnrealArchitectures(Architectures);
+			UnrealArchitectures Result = new UnrealArchitectures(Architectures);
+			lock (ProjectArchitectureCache)
+			{
+				ProjectArchitectureCache.Add(Key, Result);
+			}
+			return Result;
 		}
 	}
 
-	class MacPlatform : UEBuildPlatform
+	abstract class AppleBuildPlatform : UEBuildPlatform
+	{
+		public AppleBuildPlatform(UnrealTargetPlatform Platform, UEBuildPlatformSDK SDK, UnrealArchitectureConfig ArchitectureConfig, ILogger Logger)
+			: base(Platform, SDK, ArchitectureConfig, Logger)
+		{
+
+		}
+
+		public override void GetExternalBuildMetadata(FileReference? ProjectFile, StringBuilder Metadata)
+		{
+			base.GetExternalBuildMetadata(ProjectFile, Metadata);
+			
+			Metadata.AppendLine("xcode-select: {0}", AppleToolChainSettings.XcodeDeveloperDir);
+		}
+	}
+
+	class MacPlatform : AppleBuildPlatform
 	{
 		public MacPlatform(UEBuildPlatformSDK InSDK, ILogger InLogger)
 			: base(UnrealTargetPlatform.Mac, InSDK, new MacArchitectureConfig(), InLogger)
@@ -266,7 +306,7 @@ namespace UnrealBuildTool
 			{
 				Target.StaticAnalyzer = StaticAnalyzer.Default;
 				Target.StaticAnalyzerOutputType = (Environment.GetEnvironmentVariable("CLANG_ANALYZER_OUTPUT")?.Contains("html", StringComparison.OrdinalIgnoreCase) == true) ? StaticAnalyzerOutputType.Html : StaticAnalyzerOutputType.Text;
-				Target.StaticAnalyzerMode = String.Equals(Environment.GetEnvironmentVariable("CLANG_STATIC_ANALYZER_MODE"), "shallow") ? StaticAnalyzerMode.Shallow : StaticAnalyzerMode.Deep;
+				Target.StaticAnalyzerMode = String.Equals(Environment.GetEnvironmentVariable("CLANG_STATIC_ANALYZER_MODE"), "shallow", StringComparison.OrdinalIgnoreCase) ? StaticAnalyzerMode.Shallow : StaticAnalyzerMode.Deep;
 			}
 			else if (Target.StaticAnalyzer == StaticAnalyzer.Clang)
 			{
@@ -278,6 +318,10 @@ namespace UnrealBuildTool
 			{
 				Target.bDisableLinking = true;
 				Target.bIgnoreBuildOutputs = true;
+
+				// Clang static analysis requires non unity builds
+				Target.bUseUnityBuild = false;
+
 				// Disable chaining PCHs for the moment because it is crashing clang
 				Target.bChainPCHs = false;
 			}
@@ -299,7 +343,7 @@ namespace UnrealBuildTool
 			}
 
 			// Needs OS X 10.11 for Metal. The remote toolchain has not been initialized yet, so just assume it's a recent SDK.
-			if ((BuildHostPlatform.Current.Platform != UnrealTargetPlatform.Mac || MacToolChain.Settings.MacOSSDKVersionFloat >= 10.11f) && Target.bCompileAgainstEngine)
+			if ((BuildHostPlatform.Current.Platform != UnrealTargetPlatform.Mac || MacToolChain.Settings.SDKVersionFloat >= 10.11f) && Target.bCompileAgainstEngine)
 			{
 				Target.GlobalDefinitions.Add("HAS_METAL=1");
 				Target.ExtraModuleNames.Add("MetalRHI");
@@ -318,7 +362,7 @@ namespace UnrealBuildTool
 
 			Target.GlobalDefinitions.Add("GL_SILENCE_DEPRECATION=1");
 
-			Target.bUsePDBFiles = !Target.bDisableDebugInfo && ShouldCreateDebugInfo(new ReadOnlyTargetRules(Target));
+			Target.bUsePDBFiles = Target.DebugInfo != DebugInfoMode.None && ShouldCreateDebugInfo(new ReadOnlyTargetRules(Target));
 			Target.bUsePDBFiles &= Target.MacPlatform.bUseDSYMFiles;
 
 			// we always deploy - the build machines need to be able to copy the files back, which needs the full bundle
@@ -529,7 +573,7 @@ namespace UnrealBuildTool
 		public override bool ShouldCreateDebugInfo(ReadOnlyTargetRules Target)
 		{
 			// Always generate debug symbols on the build machines.
-			bool IsBuildMachine = Environment.GetEnvironmentVariable("IsBuildMachine") == "1";
+			bool IsBuildMachine = Unreal.IsBuildMachine();
 
 			switch (Target.Configuration)
 			{
@@ -574,7 +618,7 @@ namespace UnrealBuildTool
 				Options |= ClangToolChainOptions.OutputDylib;
 			}
 
-			return new MacToolChain(Target.ProjectFile, Options, Logger);
+			return new MacToolChain(Target, Options, Logger);
 		}
 
 		/// <inheritdoc/>
@@ -593,12 +637,13 @@ namespace UnrealBuildTool
 		/// </summary>
 		public override void RegisterBuildPlatforms(ILogger Logger)
 		{
-			MacPlatformSDK SDK = new MacPlatformSDK(Logger);
+			ApplePlatformSDK SDK = new ApplePlatformSDK(Logger);
 
 			// Register this build platform for Mac
 			UEBuildPlatform.RegisterBuildPlatform(new MacPlatform(SDK, Logger), Logger);
 			UEBuildPlatform.RegisterPlatformWithGroup(UnrealTargetPlatform.Mac, UnrealPlatformGroup.Apple);
 			UEBuildPlatform.RegisterPlatformWithGroup(UnrealTargetPlatform.Mac, UnrealPlatformGroup.Desktop);
+			UEBuildPlatform.RegisterPlatformWithGroup(UnrealTargetPlatform.Mac, UnrealPlatformGroup.PosixOS);
 		}
 	}
 }

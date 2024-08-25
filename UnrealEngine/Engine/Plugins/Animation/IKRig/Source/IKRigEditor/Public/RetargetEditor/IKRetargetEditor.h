@@ -30,7 +30,6 @@ namespace IKRetargetApplicationModes
 class FIKRetargetEditor :
 	public FPersonaAssetEditorToolkit,
 	public IHasPersonaToolkit,
-	public FGCObject,
 	public FSelfRegisteringEditorUndoClient,
 	public FTickableEditorObject
 {
@@ -54,14 +53,6 @@ public:
 	virtual FLinearColor GetWorldCentricTabColorScale() const override;
 	virtual FString GetWorldCentricTabPrefix() const override;
 	/** END FAssetEditorToolkit interface */
-	
-	/** FGCObject interface */
-	virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
-	virtual FString GetReferencerName() const override
-	{
-		return TEXT("FIKRetargetEditor");
-	}
-	/** END FGCObject interface */
 
 	//** FTickableEditorObject Interface
 	virtual void Tick(float DeltaTime) override;
@@ -89,6 +80,7 @@ private:
 	void ExtendToolbar();
 	void FillToolbar(FToolBarBuilder& ToolbarBuilder);
 	TSharedRef<SWidget> GenerateRetargetModesMenu();
+	TSharedPtr<SHorizontalBox> GenerateRetargetPhaseButtons() const;
 	/** END toolbar */
 	
 	/** preview scene setup */

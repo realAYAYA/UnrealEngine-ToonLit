@@ -109,7 +109,7 @@ public:
 	FMassArchetypeEntityCollection(const FMassArchetypeHandle& InArchetype, TConstArrayView<FMassEntityHandle> InEntities, EDuplicatesHandling DuplicatesHandling);
 	explicit FMassArchetypeEntityCollection(const FMassArchetypeHandle& InArchetypeHandle, const EInitializationType Initialization = EInitializationType::GatherAll);
 	explicit FMassArchetypeEntityCollection(TSharedPtr<FMassArchetypeData>& InArchetype, const EInitializationType Initialization = EInitializationType::GatherAll);
-	FMassArchetypeEntityCollection(FMassArchetypeHandle& InArchetypeHandle, FEntityRangeArray&& InEntityRanges)
+	FMassArchetypeEntityCollection(const FMassArchetypeHandle& InArchetypeHandle, FEntityRangeArray&& InEntityRanges)
 		: Ranges(MoveTemp(InEntityRanges))
 		, Archetype(InArchetypeHandle)
 	{}

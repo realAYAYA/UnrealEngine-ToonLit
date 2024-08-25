@@ -824,7 +824,7 @@ void STimerTreeView::ShowColumn(const FName ColumnId)
 	ColumnArgs
 		.ColumnId(Column.GetId())
 		.DefaultLabel(Column.GetShortName())
-		.ToolTip(STimersViewTooltip::GetColumnTooltip(Column))
+		.ToolTip(STimersViewTooltip::GetColumnTooltipForMode(Column, ETraceFrameType::TraceFrameType_Count))
 		.HAlignHeader(Column.GetHorizontalAlignment())
 		.VAlignHeader(VAlign_Center)
 		.HAlignCell(HAlign_Fill)
@@ -1025,16 +1025,25 @@ FTimerNodePtr STimerTreeView::CreateTimerNodeRec(const TraceServices::FTimingPro
 	if (Node.Timer == nullptr)
 	{
 		return nullptr;
-		//return MakeShared<FTimerNode>(0, TEXT("!!!!!"), ETimerNodeType::InvalidOrMax);
+		//return MakeShared<FTimerNode>(0, TEXT("!!!!!"), ETimerNodeType::InvalidOrMax, true);
 	}
 
 	const ETimerNodeType Type = Node.Timer->IsGpuTimer ? ETimerNodeType::GpuScope : ETimerNodeType::CpuScope;
-	FTimerNodePtr TimerNodePtr = MakeShared<FTimerNode>(Node.Timer->Id, Node.Timer->Name, Type);
+	FTimerNodePtr TimerNodePtr = MakeShared<FTimerNode>(Node.Timer->Id, Node.Timer->Name, Type, true);
 
 	TraceServices::FTimingProfilerAggregatedStats AggregatedStats;
 	AggregatedStats.InstanceCount = Node.Count;
 	AggregatedStats.TotalInclusiveTime = Node.InclusiveTime;
 	AggregatedStats.TotalExclusiveTime = Node.ExclusiveTime;
+	AggregatedStats.AverageInclusiveTime = Node.Count != 0 ? Node.InclusiveTime / (double)Node.Count : 0.0;
+	AggregatedStats.AverageExclusiveTime = Node.Count != 0 ? Node.ExclusiveTime / (double)Node.Count : 0.0;
+	constexpr double NanTimeValue = std::numeric_limits<double>::quiet_NaN();
+	AggregatedStats.MinInclusiveTime = NanTimeValue;
+	AggregatedStats.MinExclusiveTime = NanTimeValue;
+	AggregatedStats.MaxInclusiveTime = NanTimeValue;
+	AggregatedStats.MaxExclusiveTime = NanTimeValue;
+	AggregatedStats.MedianInclusiveTime = NanTimeValue;
+	AggregatedStats.MedianExclusiveTime = NanTimeValue;
 	TimerNodePtr->SetAggregatedStats(AggregatedStats);
 
 	for (const TraceServices::FTimingProfilerButterflyNode* ChildNodePtr : Node.Children)

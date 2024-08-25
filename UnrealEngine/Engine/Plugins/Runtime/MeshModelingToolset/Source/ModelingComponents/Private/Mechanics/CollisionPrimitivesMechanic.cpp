@@ -190,6 +190,8 @@ void UCollisionPrimitivesMechanic::SetWorld(UWorld* World)
 
 void UCollisionPrimitivesMechanic::Shutdown()
 {
+	LongTransactions.CloseAll(GetParentTool()->GetToolManager());
+
 	if (PreviewGeometry)
 	{
 		PreviewGeometry->Disconnect();
@@ -985,9 +987,12 @@ void UCollisionPrimitivesMechanic::OnUpdateModifierState(int ModifierID, bool bI
 // These get bound to the delegates on the marquee mechanic.
 void UCollisionPrimitivesMechanic::OnDragRectangleStarted()
 {
+	using namespace CollisionPrimitivesMechanicLocals;
+
 	PreDragSelection = SelectedPrimitiveIDs;
 	bIsDraggingRectangle = true;
 	UpdateGizmoVisibility();
+	LongTransactions.Open(CollisionPrimitiveSelectionTransactionText, GetParentTool()->GetToolManager());
 }
 
 void UCollisionPrimitivesMechanic::OnDragRectangleChanged(const FCameraRectangle& Rectangle)
@@ -1036,8 +1041,6 @@ void UCollisionPrimitivesMechanic::OnDragRectangleFinished(const FCameraRectangl
 
 	bIsDraggingRectangle = false;
 
-	ParentTool->GetToolManager()->BeginUndoTransaction(CollisionPrimitiveSelectionTransactionText);
-
 	if (!IsEqual(PreDragSelection, SelectedPrimitiveIDs))
 	{
 		checkSlow(CurrentActiveProxy);
@@ -1052,7 +1055,7 @@ void UCollisionPrimitivesMechanic::OnDragRectangleFinished(const FCameraRectangl
 	// We hid the gizmo at rectangle start, so it needs updating now.
 	UpdateGizmoLocation();
 
-	ParentTool->GetToolManager()->EndUndoTransaction();
+	LongTransactions.Close(GetParentTool()->GetToolManager());
 
 	UpdateDrawables();
 }

@@ -68,7 +68,7 @@ namespace Electra
 				{
 					delete InInstanceToDelete;
 				};
-				Async(EAsyncExecution::ThreadPool, MoveTemp(DeleteTask));
+				FMediaRunnable::EnqueueAsyncTask(MoveTemp(DeleteTask));
 			}
 		};
 
@@ -899,9 +899,6 @@ namespace Electra
 
 	void FElectraHttpManager::HandlePeriodicCallbacks(const FTimeValue& Now)
 	{
-		SCOPE_CYCLE_COUNTER(STAT_ElectraPlayer_FElectraHttpManager_Worker);
-		CSV_SCOPED_TIMING_STAT(ElectraPlayer, ElectraHttpManager_Worker);
-
 		for(TMap<FHandle*, TSharedPtrTS<FRequest>>::TIterator It = ActiveRequests.CreateIterator(); It; ++It)
 		{
 			FHandle* Handle = It.Key();
@@ -1029,7 +1026,7 @@ namespace Electra
 
 		FParamDict HttpOptions;
 		#ifdef ELECTRA_HTTPMANAGER_DEBUG_PROXY_ADDRESS
-			HttpOptions.Set(FString(TEXT("proxy")), FVariantValue(FString(ELECTRA_HTTPMANAGER_DEBUG_PROXY_ADDRESS)));
+			HttpOptions.Set(FName(TEXT("proxy")), FVariantValue(FString(ELECTRA_HTTPMANAGER_DEBUG_PROXY_ADDRESS)));
 		#endif
 		HTTPStreamHandler = IElectraHTTPStream::Create(HttpOptions);
 		if (HTTPStreamHandler.IsValid())
@@ -1043,7 +1040,7 @@ namespace Electra
 			return false;
 		}
 	}
-	
+
 	void FElectraHttpManager::StopHTTPManager()
 	{
 		LLM_SCOPE(ELLMTag::ElectraPlayer);
@@ -1061,7 +1058,7 @@ namespace Electra
 			HTTPStreamHandler.Reset();
 		}
 	}
-	
+
 	void FElectraHttpManager::ProcessHTTPManager()
 	{
 		LLM_SCOPE(ELLMTag::ElectraPlayer);
@@ -1399,14 +1396,24 @@ namespace Electra
 					HTTP::FConnectionInfo& ci = Request->ConnectionInfo;
 					ci.bIsCachedResponse = Handle->ActiveResponse.bHitCache;
 
+					// Set the effective URL after possible redirections.
+					ci.EffectiveURL = Response->GetEffectiveURL();
 					// Copy all new timing traces across.
 					Response->GetTimingTraces(&ci.TimingTraces, TNumericLimits<int32>::Max());
 
+					/*
+						Removed because it is possible for a response to have been gzip encoded with the _compressed_
+						payload being larger than the _decompressed_.
+						The Content-Length header conveys the size of the transmitted (compressed) data which will
+						then be larger than the decompressed result for these cases.
+
+
 					bool bCompletedWithInsufficientData = !Request->Parameters.Verb.Equals(TEXT("HEAD")) &&
-														  Response->GetStatus() == IElectraHTTPStreamResponse::EStatus::Completed && 
+														  Response->GetStatus() == IElectraHTTPStreamResponse::EStatus::Completed &&
 														  Response->GetResponseData().GetLengthFromResponseHeader() > Response->GetResponseData().GetNumTotalBytesAdded();
+					*/
 					// Has it failed?
-					if (Handle->HttpRequest->HasFailed() || bCompletedWithInsufficientData)
+					if (Handle->HttpRequest->HasFailed() ) //|| bCompletedWithInsufficientData)
 					{
 						ci.StatusInfo.ErrorCode = ERRCODE_WRITE_ERROR;
 						ci.StatusInfo.bReadError = true;
@@ -1503,7 +1510,7 @@ namespace Electra
 								CacheItem->Quality.StreamType = Request->Parameters.StreamType;
 								Request->ResponseCache->CacheEntity(CacheItem);
 							}
- 
+
 							// Check if this was a sub ranged request and if there is still data to go for the original request.
 							if (Handle->ActiveResponse.SizeRemaining() == 0)
 							{
@@ -1537,7 +1544,7 @@ namespace Electra
 								}
 								else
 								{
-									// 
+									//
 									ci.StatusInfo.ErrorCode = ERRCODE_WRITE_ERROR;
 									ci.StatusInfo.bReadError = true;
 									ci.StatusInfo.ErrorDetail.SetMessage(FString::Printf(TEXT("Error setting up the next sub range request")));

@@ -47,6 +47,15 @@ public:
 	{
 	}
 
+	/**
+	 * Reserve space in the underlying hash map
+	 * @param Num amount of elements to reserve
+	 */
+	void Reserve(int32 Num)
+	{
+		Hash.Reserve(Num);
+	}
+
 	/** Invalid grid value */
 	PointDataType GetInvalidValue() const
 	{

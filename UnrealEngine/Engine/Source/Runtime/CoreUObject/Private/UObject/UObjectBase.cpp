@@ -137,7 +137,7 @@ UObjectBase::UObjectBase(UClass* InClass,
 #if CSV_PROFILER && CSV_TRACK_UOBJECT_COUNT
 	UObjectStats::IncrementUObjectCount();
 #endif
-}
+		}	
 
 
 /**
@@ -279,14 +279,13 @@ void UObjectBase::SetExternalPackage(UPackage* InPackage)
 		check(GetClass()->IsChildOf(UPackage::StaticClass()) && (InPackage == this || InPackage == nullptr));
 		return;
 	}
-	HashObjectExternalPackage(this, InPackage);
 	if (InPackage)
 	{
-		AtomicallySetFlags(RF_HasExternalPackage);
+		HashObjectExternalPackage(this, InPackage);
 	}
 	else
 	{
-		AtomicallyClearFlags(RF_HasExternalPackage);
+		UnhashObjectExternalPackage(this);
 	}
 }
 
@@ -298,14 +297,11 @@ void UObjectBase::SetClass(UClass* NewClass)
 #endif
 
 	UnhashObject(this);
-#if USE_UBER_GRAPH_PERSISTENT_FRAME
+
 	UClass* OldClass = ClassPrivate;
 	ClassPrivate->DestroyPersistentUberGraphFrame((UObject*)this);
-#endif
 	ClassPrivate = NewClass;
-#if USE_UBER_GRAPH_PERSISTENT_FRAME
 	ClassPrivate->CreatePersistentUberGraphFrame((UObject*)this, /*bCreateOnlyIfEmpty =*/false, /*bSkipSuperClass =*/false, OldClass);
-#endif
 	HashObject(this);
 }
 #endif
@@ -594,18 +590,6 @@ class UEnum *GetStaticEnum(class UEnum *(*InRegister)(), UObject* EnumOuter, con
 	return Result;
 }
 
-// UClass deferred registration
-
-// @todo: BP2CPP_remove
-// [DEPRECATED] - No longer in use; will be removed later.
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-TMap<FName, FDynamicClassStaticData>& GetDynamicClassMap()
-{
-	static TMap<FName, FDynamicClassStaticData> DynamicClassMap;
-	return DynamicClassMap;
-}
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
-
 FName UObjectBase::GetFNameForStatID() const
 {
 	return GetFName();
@@ -616,10 +600,10 @@ FString UObjectBase::RemoveClassPrefix(const TCHAR* ClassName)
 {
 	static const TCHAR* DeprecatedPrefix = TEXT("DEPRECATED_");
 	FString NameWithoutPrefix(ClassName);
-	NameWithoutPrefix.MidInline(1, MAX_int32, false);
+	NameWithoutPrefix.MidInline(1, MAX_int32, EAllowShrinking::No);
 	if (NameWithoutPrefix.StartsWith(DeprecatedPrefix))
 	{
-		NameWithoutPrefix.MidInline(FCString::Strlen(DeprecatedPrefix), MAX_int32, false);
+		NameWithoutPrefix.MidInline(FCString::Strlen(DeprecatedPrefix), MAX_int32, EAllowShrinking::No);
 	}
 	return NameWithoutPrefix;
 }
@@ -1050,8 +1034,8 @@ void UObjectBaseInit()
 	UE::CoreUObject::Private::InitObjectHandles(GUObjectArray.GetObjectArrayCapacity());
 #endif
 
-	void InitNoPendingKill();
-	InitNoPendingKill();
+	void InitGarbageElimination();
+	InitGarbageElimination();
 
 	void InitAsyncThread();
 	InitAsyncThread();
@@ -1171,49 +1155,4 @@ const TCHAR* DebugFullName(UObject* Object)
 	{
 		return TEXT("None");
 	}
-}
-
-// @todo: BP2CPP_remove
-// [DEPRECATED] - No longer implemented or in use; will be removed later.
-UScriptStruct* FindExistingStructIfHotReloadOrDynamic(UObject* Outer, const TCHAR* StructName, SIZE_T Size, uint32 Crc, bool bIsDynamic)
-{
-	return nullptr;
-}
-
-// @todo: BP2CPP_remove
-// [DEPRECATED] - No longer implemented or in use; will be removed later.
-UEnum* FindExistingEnumIfHotReloadOrDynamic(UObject* Outer, const TCHAR* EnumName, SIZE_T Size, uint32 Crc, bool bIsDynamic)
-{
-	return nullptr;
-}
-
-// @todo: BP2CPP_remove
-// [DEPRECATED] - No longer implemented or in use; will be removed later.
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-UObject* ConstructDynamicType(FName TypePathName, EConstructDynamicType ConstructionSpecifier)
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
-{
-	return nullptr;
-}
-
-// @todo: BP2CPP_remove
-// [DEPRECATED] - No longer implemented or in use; will be removed later.
-FName GetDynamicTypeClassName(FName TypePathName)
-{
-	return NAME_None;
-}
-
-// @todo: BP2CPP_remove
-// [DEPRECATED] - No longer implemented or in use; will be removed later.
-UPackage* FindOrConstructDynamicTypePackage(const TCHAR* PackageName)
-{
-	return nullptr;
-}
-
-// @todo: BP2CPP_remove
-// [DEPRECATED] - No longer in use; will be removed later.
-TMap<FName, FName>& GetConvertedDynamicPackageNameToTypeName()
-{
-	static TMap<FName, FName> ConvertedDynamicPackageNameToTypeName;
-	return ConvertedDynamicPackageNameToTypeName;
 }

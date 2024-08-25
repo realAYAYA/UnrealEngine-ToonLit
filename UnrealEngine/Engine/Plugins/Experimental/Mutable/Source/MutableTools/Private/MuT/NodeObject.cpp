@@ -1,6 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-
 #include "MuT/NodeObject.h"
 
 #include "Misc/AssertionMacros.h"
@@ -17,7 +16,7 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE s_nodeObjectType = NODE_TYPE( "NodeObject", NodeObject::GetStaticType() );
+	FNodeType s_nodeObjectType = FNodeType( "NodeObject", Node::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -54,14 +53,14 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	const NODE_TYPE* NodeObject::GetType() const
+	const FNodeType* NodeObject::GetType() const
 	{
 		return GetStaticType();
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-	const NODE_TYPE* NodeObject::GetStaticType()
+	const FNodeType* NodeObject::GetStaticType()
 	{
 		return &s_nodeObjectType;
 	}

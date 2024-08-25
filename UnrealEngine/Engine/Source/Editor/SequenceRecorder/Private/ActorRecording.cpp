@@ -475,8 +475,10 @@ void UActorRecording::StartRecordingActorProperties(ULevelSequence* CurrentSeque
 		{
 			if (bRecordToPossessable)
 			{ 
+				UWorld* World = Actor->GetWorld();
 				Guid = MovieScene->AddPossessable(ObjectBindingName, Actor->GetClass());
 				CurrentSequence->BindPossessableObject(Guid, *Actor, Actor->GetWorld());
+				MovieScene->FindPossessable(Guid)->FixupPossessedObjectClass(CurrentSequence, World);
 			}
 			else
 			{

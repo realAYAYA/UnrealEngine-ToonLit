@@ -14,7 +14,9 @@ Controller class running on game clients that handles the passing of messages to
 #include "Particles/ParticlePerfStatsManager.h"
 #include "UObject/StrongObjectPtr.h"
 
-class UNiagaraSimCache;
+#if WITH_NIAGARA_DEBUGGER
+#include "NiagaraSimCache.h"
+#endif
 
 class FMessageEndpoint;
 
@@ -45,24 +47,30 @@ struct FNiagaraSimCacheCaptureInfo
 
 	TStrongObjectPtr<UNiagaraSimCache> SimCache = nullptr;
 
+	FOnNiagaraDebuggerClientSimCacheCapture OnCapture;
+
 	/** Process this request. Captures data where needed. Returns true if complete. */
 	bool Process();
 };
 
 DECLARE_LOG_CATEGORY_EXTERN(LogNiagaraDebuggerClient, Log, All);
 
-class FNiagaraDebuggerClient
+class FNiagaraDebuggerClient : public INiagaraDebuggerClient
 {
 public:
 
-	static FNiagaraDebuggerClient* Get();
-
 	FNiagaraDebuggerClient();
-	~FNiagaraDebuggerClient();
+	virtual ~FNiagaraDebuggerClient();
 
 	bool Tick(float DeltaSeconds);
 
-	void UpdateClientInfo();
+	//INiagaraDebuggerClient Interface
+	virtual void ExecConsoleCommand(const FNiagaraDebuggerExecuteConsoleCommand& Message) override;
+	virtual void UpdateDebugHUDSettings(const FNiagaraDebugHUDSettingsData& Message) override;
+	virtual void GetSimpleClientInfo(FNiagaraSimpleClientInfo& OutClientInfo) override;
+	virtual void UpdateOutlinerSettings(const FNiagaraOutlinerCaptureSettings& Message, FOnNiagaraDebuggerClientOutlinerCapture OnCapture) override;
+	virtual void SimCacheCaptureRequest(const FNiagaraSystemSimCacheCaptureRequest& Message, FOnNiagaraDebuggerClientSimCacheCapture OnCapture) override;
+	//INiagaraDebuggerClient End
 
 private:
 
@@ -74,6 +82,8 @@ private:
 	void HandleOutlinerSettingsMessage(const FNiagaraOutlinerCaptureSettings& Message, const TSharedRef<IMessageContext, ESPMode::ThreadSafe>& Context);
 	void HandleSimCacheCaptureRequestMessage(const FNiagaraSystemSimCacheCaptureRequest& Message, const TSharedRef<IMessageContext, ESPMode::ThreadSafe>& Context);
 
+	void UpdateClientInfo();
+
 	/** Closes any currently active connection. */
 	void CloseConnection();
 
@@ -83,6 +93,8 @@ private:
 	void ExecuteConsoleCommand(const TCHAR* Cmd, bool bRequiresWorld);
 
 	bool UpdateOutliner(float DeltaSeconds);
+
+	void CaptureOutlinerData(FNiagaraOutlinerData& OutlinerData);
 
 	/** Holds the session and instance identifier. */
 	FGuid SessionId;
@@ -99,6 +111,7 @@ private:
 	FTSTicker::FDelegateHandle TickerHandle;
 
 	uint32 OutlinerCountdown = 0;
+	FOnNiagaraDebuggerClientOutlinerCapture OutlinerOnCapture;
 
 #if WITH_PARTICLE_PERF_STATS
 	TSharedPtr<FNiagaraOutlinerPerfListener, ESPMode::ThreadSafe> StatsListener;

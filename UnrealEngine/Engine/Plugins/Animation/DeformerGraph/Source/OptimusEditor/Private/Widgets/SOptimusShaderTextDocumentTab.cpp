@@ -89,7 +89,7 @@ void SOptimusShaderTextDocumentTab::Construct(const FArguments& InArgs, UObject*
 			[
 				SAssignNew(ShaderTextTextBox, SOptimusShaderTextDocumentTextBox)
 				.Text(this, &SOptimusShaderTextDocumentTab::GetShaderTextAsText)
-				.IsReadOnly(false)
+				.IsReadOnly(this, &SOptimusShaderTextDocumentTab::IsShaderTextReadOnly)
 				.Marshaller(SyntaxHighlighterShaderText)
 				.OnTextChanged(this, &SOptimusShaderTextDocumentTab::OnShaderTextChanged)	
 			]
@@ -204,6 +204,16 @@ void SOptimusShaderTextDocumentTab::OnDiagnosticsUpdated() const
 		SyntaxHighlighterShaderText->SetCompilerMessages(Diagnostics);
 		ShaderTextTextBox->Refresh();
 	}
+}
+
+bool SOptimusShaderTextDocumentTab::IsShaderTextReadOnly() const
+{
+	if (IOptimusShaderTextProvider* Provider = Cast<IOptimusShaderTextProvider>(ShaderTextProviderObject))
+	{
+		return Provider->IsShaderTextReadOnly();
+	}
+
+	return false;
 }
 
 #undef LOCTEXT_NAMESPACE

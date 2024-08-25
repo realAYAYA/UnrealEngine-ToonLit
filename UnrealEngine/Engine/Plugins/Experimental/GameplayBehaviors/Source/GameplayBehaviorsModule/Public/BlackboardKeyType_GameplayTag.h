@@ -3,9 +3,8 @@
 
 #include "BehaviorTree/Blackboard/BlackboardKeyEnums.h"
 #include "BehaviorTree/Blackboard/BlackboardKeyType.h"
+#include "GameplayTagContainer.h"
 #include "BlackboardKeyType_GameplayTag.generated.h"
-
-struct FGameplayTagContainer;
 
 class UBlackboardComponent;
 
@@ -25,6 +24,9 @@ public:
 
 	virtual EBlackboardCompare::Type CompareValues(const UBlackboardComponent& OwnerComp, const uint8* MemoryBlock,
 		const UBlackboardKeyType* OtherKeyOb, const uint8* OtherMemoryBlock) const override;
+
+	UPROPERTY(EditDefaultsOnly, Category = Blackboard)
+	FGameplayTagContainer DefaultValue = InvalidValue;
 
 protected:
 	virtual FString DescribeValue(const UBlackboardComponent& OwnerComp, const uint8* RawData) const override;

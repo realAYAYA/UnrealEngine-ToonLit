@@ -952,6 +952,7 @@ void SAnimViewportToolBar::OnMirrorDataTableSelected(const FAssetData& SelectedM
 		if (Mesh && PreviewInstance)
 		{
 			PreviewInstance->SetMirrorDataTable(MirrorDataTable);
+			PreviewComp->OnMirrorDataTableChanged();
 		}
 	}
 }

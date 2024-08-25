@@ -55,4 +55,6 @@ public:
 
 	static ENGINE_API Chaos::FReadPhysicsObjectInterface_External GetRead_AssumesLocked();
 	static ENGINE_API Chaos::FWritePhysicsObjectInterface_External GetWrite_AssumesLocked();
+
+	static ENGINE_API UPrimitiveComponent* GetComponentFromPhysicsObject(UWorld* World, Chaos::FPhysicsObjectHandle PhysicsObject);
 };

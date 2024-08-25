@@ -54,6 +54,7 @@
 #include "FbxLibs.h"
 #include "Kismet2/CompilerResultsLog.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetRegistry/AssetDataToken.h"
 #include "EngineAnalytics.h"
 #include "AnalyticsEventAttribute.h"
 #include "Interfaces/IAnalyticsProvider.h"
@@ -73,6 +74,8 @@
 #include "PerformanceMonitor.h"
 #include "Engine/WorldComposition.h"
 #include "WorldPartition/WorldPartition.h"
+#include "WorldPartition/WorldPartitionActorDesc.h"
+#include "WorldPartition/WorldPartitionActorDescUtils.h"
 #include "Interfaces/IProjectManager.h"
 #include "FeaturePackContentSource.h"
 #include "ProjectDescriptor.h"
@@ -517,6 +520,8 @@ void FUnrealEdMisc::OnInit()
 	FUObjectToken::DefaultOnGetObjectDisplayName().BindRaw(this, &FUnrealEdMisc::OnGetDisplayName);
 	FAssetNameToken::OnGotoAsset().BindRaw(this, &FUnrealEdMisc::OnGotoAsset);
 	FActorToken::DefaultOnMessageTokenActivated().BindRaw(this, &FUnrealEdMisc::OnActorTokenActivated);
+	FAssetDataToken::DefaultOnMessageTokenActivated().BindRaw(this, &FUnrealEdMisc::OnAssetDataTokenActivated);
+	FAssetDataToken::DefaultOnGetAssetDisplayName().BindRaw(this, &FUnrealEdMisc::OnGetAssetDataDisplayName);
 
 	// Register to receive notification of new key bindings
 	OnUserDefinedChordChangedDelegateHandle = FInputBindingManager::Get().RegisterUserDefinedChordChanged(FOnUserDefinedChordChanged::FDelegate::CreateRaw( this, &FUnrealEdMisc::OnUserDefinedChordChanged ));
@@ -549,7 +554,7 @@ void FUnrealEdMisc::OnInit()
 
 	FEditorDelegates::OnEditorInitialized.Broadcast(TotalEditorStartupTime);
 	
-	GShaderCompilingManager->PrintStats(true);
+	GShaderCompilingManager->PrintStats();
 }
 
 FString FUnrealEdMisc::FindMapFileFromPartialName(const FString& PartialMapName)
@@ -1099,6 +1104,11 @@ void FUnrealEdMisc::OnExit()
 	const FString& PendingProjName = FUnrealEdMisc::Get().GetPendingProjectName();
 	if( PendingProjName.Len() > 0 )
 	{
+#if WITH_EDITOR
+			// Prevent the Zen subprocess data path from being inherited by a post-close process spawn
+			// such as when the editor is restarting itself.
+			FPlatformMisc::SetEnvironmentVar(TEXT("UE-ZenSubprocessDataPath"), nullptr);
+#endif // WITH_EDITOR
 		bool bSuccess = false;
 		if (FEditorDelegates::OnRestartRequested.IsBound())
 		{
@@ -1437,6 +1447,73 @@ void FUnrealEdMisc::OnMessageTokenActivated(const TSharedRef<IMessageToken>& Tok
 
 				GEditor->SyncBrowserToObjects(ObjectArray);
 			}
+		}
+	}
+}
+
+/** Delegate used to get a display name for a message log FAssetData token  */
+FText FUnrealEdMisc::OnGetAssetDataDisplayName(const FAssetData& InObject, const bool bFullPath)
+{
+	static FName NAME_ActorLabel("ActorLabel");
+	FString DisplayName;
+	TStringBuilder<FName::StringBufferSize> Buffer;
+	if (InObject.GetTagValue(NAME_ActorLabel, DisplayName) || 
+		InObject.GetTagValue(FPrimaryAssetId::PrimaryAssetDisplayNameTag, DisplayName))
+	{
+		Buffer << DisplayName << TEXT(" (");
+		InObject.AppendObjectPath(Buffer);
+		Buffer << TEXT(")");
+		return FText::FromStringView(Buffer.ToView());
+	}
+	else if (bFullPath)
+	{
+		InObject.AppendObjectPath(Buffer);
+		return FText::FromStringView(Buffer.ToView());
+	}
+	return FText::FromName(InObject.PackageName);
+}
+
+/** Delegate used on message log FAssetData token activation */
+void FUnrealEdMisc::OnAssetDataTokenActivated(const TSharedRef<class IMessageToken>& InToken)
+{
+	if (InToken->GetType() != EMessageToken::AssetData)
+	{
+		return;
+	}
+	
+	const TSharedRef<FAssetDataToken> Token = StaticCastSharedRef<FAssetDataToken>(InToken);
+	const FAssetData& AssetData = Token->GetAssetData();
+	// If this is a standalone asset, jump to it in the content browser
+	if (AssetData.GetOptionalOuterPathName().IsNone())
+	{
+		GEditor->SyncBrowserToObjects({ AssetData });
+	}
+	// If this is a loaded actor, resolve the pointer and select it
+	else if (AActor* Actor = Cast<AActor>(AssetData.GetSoftObjectPath().ResolveObject()))
+	{
+		SelectActorFromMessageToken(Actor);
+	}
+	else
+	{
+		FName PackageName = FName(FPackageName::ObjectPathToPackageName(WriteToString<FName::StringBufferSize>(AssetData.GetOptionalOuterPathName()).ToView()));
+		UWorld* EditorWorld = GEditor->GetEditorWorldContext().World();
+		// If this is an unloaded actor in the currently loaded level, select it as an unloaded actor
+		if (EditorWorld && EditorWorld->GetPackage()->GetFName() == PackageName)
+		{
+			TUniquePtr<FWorldPartitionActorDesc> Desc = FWorldPartitionActorDescUtils::GetActorDescriptorFromAssetData(AssetData);
+			if (Desc.IsValid())
+			{
+				GEditor->BroadcastSelectUnloadedActors({ Desc->GetGuid() });
+			}
+		}
+		// If this is an actor in an unloaded level, jump to the level in the content browser
+		else 
+		{
+			FAssetRegistryModule& AssetRegistryModule = FModuleManager::GetModuleChecked<FAssetRegistryModule>("AssetRegistry");
+			IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+			TArray<FAssetData> OutAssets;
+			AssetRegistry.GetAssetsByPackageName(PackageName, OutAssets);
+			GEditor->SyncBrowserToObjects(OutAssets);
 		}
 	}
 }

@@ -136,19 +136,20 @@ void WriteScopedEnumToBuffer(FString& Buffer, const TCHAR* Scope, const T Value)
 }	// namespace TextStringificationUtil
 
 /** Base interface class for all FText history types */
-class FTextHistory : public ITextData
+class FTextHistory : public ITextData, public TRefCountingMixin<FTextHistory>
 {
 public:
 	FTextHistory() = default;
 	virtual ~FTextHistory() = default;
 
-	/** Allow moving */
-	FTextHistory(FTextHistory&& Other) = default;
-	FTextHistory& operator=(FTextHistory&& Other) = default;
-
 	/** Disallow copying */
 	FTextHistory(const FTextHistory&) = delete;
 	FTextHistory& operator=(FTextHistory&) = delete;
+
+	//~ IRefCountedObject
+	virtual uint32 AddRef() const override final { return TRefCountingMixin<FTextHistory>::AddRef(); }
+	virtual uint32 Release() const override final { return TRefCountingMixin<FTextHistory>::Release(); }
+	virtual uint32 GetRefCount() const override final { return TRefCountingMixin<FTextHistory>::GetRefCount(); }
 
 	//~ ITextData
 	virtual const FString& GetSourceString() const override { return GetDisplayString(); }
@@ -248,10 +249,6 @@ public:
 	FTextHistory_Base(const FTextId& InTextId, FString&& InSourceString);
 	FTextHistory_Base(const FTextId& InTextId, FString&& InSourceString, FTextConstDisplayStringPtr&& InLocalizedString);
 
-	/** Allow moving */
-	FTextHistory_Base(FTextHistory_Base&& Other);
-	FTextHistory_Base& operator=(FTextHistory_Base&& Other);
-
 	//~ Begin FTextHistory Interface
 	OVERRIDE_TEXT_HISTORY_STRINGIFICATION;
 	virtual ETextHistoryType GetType() const override { return ETextHistoryType::Base; }
@@ -282,10 +279,6 @@ public:
 	FTextHistory_Generated() = default;
 	explicit FTextHistory_Generated(FString&& InDisplayString);
 
-	/** Allow moving */
-	FTextHistory_Generated(FTextHistory_Generated&& Other) = default;
-	FTextHistory_Generated& operator=(FTextHistory_Generated&& Other) = default;
-
 	//~ Begin FTextHistory Interface
 	virtual FTextId GetTextId() const override final { return FTextId(); }
 	virtual const FString& GetDisplayString() const override;
@@ -308,20 +301,16 @@ class FTextHistory_NamedFormat : public FTextHistory_Generated
 {
 public:
 	FTextHistory_NamedFormat() = default;
-	CORE_API FTextHistory_NamedFormat(FString&& InDisplayString, FTextFormat&& InSourceFmt, FFormatNamedArguments&& InArguments);
-
-	/** Allow moving */
-	FTextHistory_NamedFormat(FTextHistory_NamedFormat&& Other) = default;
-	FTextHistory_NamedFormat& operator=(FTextHistory_NamedFormat&& Other) = default;
+	FTextHistory_NamedFormat(FString&& InDisplayString, FTextFormat&& InSourceFmt, FFormatNamedArguments&& InArguments);
 
 	//~ Begin FTextHistory Interface
 	OVERRIDE_TEXT_HISTORY_STRINGIFICATION;
 	virtual ETextHistoryType GetType() const override { return ETextHistoryType::NamedFormat; }
-	CORE_API virtual bool IdenticalTo(const FTextHistory& Other, const ETextIdenticalModeFlags CompareModeFlags) const override;
-	CORE_API virtual FString BuildLocalizedDisplayString() const override;
-	CORE_API virtual FString BuildInvariantDisplayString() const override;
-	CORE_API virtual void Serialize(FStructuredArchive::FRecord Record) override;
-	CORE_API virtual void GetHistoricFormatData(const FText& InText, TArray<FHistoricTextFormatData>& OutHistoricFormatData) const override;
+	virtual bool IdenticalTo(const FTextHistory& Other, const ETextIdenticalModeFlags CompareModeFlags) const override;
+	virtual FString BuildLocalizedDisplayString() const override;
+	virtual FString BuildInvariantDisplayString() const override;
+	virtual void Serialize(FStructuredArchive::FRecord Record) override;
+	virtual void GetHistoricFormatData(const FText& InText, TArray<FHistoricTextFormatData>& OutHistoricFormatData) const override;
 	//~ End FTextHistory Interface
 
 private:
@@ -337,10 +326,6 @@ class FTextHistory_OrderedFormat : public FTextHistory_Generated
 public:
 	FTextHistory_OrderedFormat() = default;
 	FTextHistory_OrderedFormat(FString&& InDisplayString, FTextFormat&& InSourceFmt, FFormatOrderedArguments&& InArguments);
-
-	/** Allow moving */
-	FTextHistory_OrderedFormat(FTextHistory_OrderedFormat&& Other) = default;
-	FTextHistory_OrderedFormat& operator=(FTextHistory_OrderedFormat&& Other) = default;
 
 	//~ Begin FTextHistory Interface
 	OVERRIDE_TEXT_HISTORY_STRINGIFICATION;
@@ -366,10 +351,6 @@ public:
 	FTextHistory_ArgumentDataFormat() = default;
 	FTextHistory_ArgumentDataFormat(FString&& InDisplayString, FTextFormat&& InSourceFmt, TArray<FFormatArgumentData>&& InArguments);
 
-	/** Allow moving */
-	FTextHistory_ArgumentDataFormat(FTextHistory_ArgumentDataFormat&& Other) = default;
-	FTextHistory_ArgumentDataFormat& operator=(FTextHistory_ArgumentDataFormat&& Other) = default;
-
 	//~ Begin FTextHistory Interface
 	OVERRIDE_TEXT_HISTORY_STRINGIFICATION;
 	virtual ETextHistoryType GetType() const override { return ETextHistoryType::ArgumentFormat; }
@@ -393,10 +374,6 @@ class FTextHistory_FormatNumber : public FTextHistory_Generated
 public:
 	FTextHistory_FormatNumber() = default;
 	FTextHistory_FormatNumber(FString&& InDisplayString, FFormatArgumentValue InSourceValue, const FNumberFormattingOptions* const InFormatOptions, FCulturePtr InTargetCulture);
-
-	/** Allow moving */
-	FTextHistory_FormatNumber(FTextHistory_FormatNumber&& Other) = default;
-	FTextHistory_FormatNumber& operator=(FTextHistory_FormatNumber&& Other) = default;
 
 	//~ Begin FTextHistory Interface
 	virtual bool IdenticalTo(const FTextHistory& Other, const ETextIdenticalModeFlags CompareModeFlags) const override;
@@ -422,10 +399,6 @@ public:
 	FTextHistory_AsNumber() = default;
 	FTextHistory_AsNumber(FString&& InDisplayString, FFormatArgumentValue InSourceValue, const FNumberFormattingOptions* const InFormatOptions, FCulturePtr InTargetCulture);
 
-	/** Allow moving */
-	FTextHistory_AsNumber(FTextHistory_AsNumber&& Other) = default;
-	FTextHistory_AsNumber& operator=(FTextHistory_AsNumber&& Other) = default;
-
 	//~ Begin FTextHistory Interface
 	OVERRIDE_TEXT_HISTORY_STRINGIFICATION;
 	virtual ETextHistoryType GetType() const override { return ETextHistoryType::AsNumber; }
@@ -443,10 +416,6 @@ public:
 	FTextHistory_AsPercent() = default;
 	FTextHistory_AsPercent(FString&& InDisplayString, FFormatArgumentValue InSourceValue, const FNumberFormattingOptions* const InFormatOptions, FCulturePtr InTargetCulture);
 
-	/** Allow moving */
-	FTextHistory_AsPercent(FTextHistory_AsPercent&& Other) = default;
-	FTextHistory_AsPercent& operator=(FTextHistory_AsPercent&& Other) = default;
-
 	//~ Begin FTextHistory Interface
 	OVERRIDE_TEXT_HISTORY_STRINGIFICATION;
 	virtual ETextHistoryType GetType() const override { return ETextHistoryType::AsPercent; }
@@ -463,10 +432,6 @@ class FTextHistory_AsCurrency : public FTextHistory_FormatNumber
 public:
 	FTextHistory_AsCurrency() = default;
 	FTextHistory_AsCurrency(FString&& InDisplayString, FFormatArgumentValue InSourceValue, FString InCurrencyCode, const FNumberFormattingOptions* const InFormatOptions, FCulturePtr InTargetCulture);
-
-	/** Allow moving */
-	FTextHistory_AsCurrency(FTextHistory_AsCurrency&& Other) = default;
-	FTextHistory_AsCurrency& operator=(FTextHistory_AsCurrency&& Other) = default;
 
 	//~ Begin FTextHistory Interface
 	OVERRIDE_TEXT_HISTORY_STRINGIFICATION;
@@ -487,10 +452,6 @@ class FTextHistory_AsDate : public FTextHistory_Generated
 public:
 	FTextHistory_AsDate() = default;
 	FTextHistory_AsDate(FString&& InDisplayString, FDateTime InSourceDateTime, const EDateTimeStyle::Type InDateStyle, FString InTimeZone, FCulturePtr InTargetCulture);
-
-	/** Allow moving */
-	FTextHistory_AsDate(FTextHistory_AsDate&& Other) = default;
-	FTextHistory_AsDate& operator=(FTextHistory_AsDate&& Other) = default;
 
 	//~ Begin FTextHistory Interface
 	OVERRIDE_TEXT_HISTORY_STRINGIFICATION;
@@ -519,10 +480,6 @@ public:
 	FTextHistory_AsTime() = default;
 	FTextHistory_AsTime(FString&& InDisplayString, FDateTime InSourceDateTime, const EDateTimeStyle::Type InTimeStyle, FString InTimeZone, FCulturePtr InTargetCulture);
 
-	/** Allow moving */
-	FTextHistory_AsTime(FTextHistory_AsTime&& Other) = default;
-	FTextHistory_AsTime& operator=(FTextHistory_AsTime&& Other) = default;
-
 	//~ Begin FTextHistory Interface
 	OVERRIDE_TEXT_HISTORY_STRINGIFICATION;
 	virtual ETextHistoryType GetType() const override { return ETextHistoryType::AsTime; }
@@ -550,10 +507,6 @@ public:
 	FTextHistory_AsDateTime() = default;
 	FTextHistory_AsDateTime(FString&& InDisplayString, FDateTime InSourceDateTime, const EDateTimeStyle::Type InDateStyle, const EDateTimeStyle::Type InTimeStyle, FString InTimeZone, FCulturePtr InTargetCulture);
 	FTextHistory_AsDateTime(FString&& InDisplayString, FDateTime InSourceDateTime, FString InCustomPattern, FString InTimeZone, FCulturePtr InTargetCulture);
-
-	/** Allow moving */
-	FTextHistory_AsDateTime(FTextHistory_AsDateTime&& Other) = default;
-	FTextHistory_AsDateTime& operator=(FTextHistory_AsDateTime&& Other) = default;
 
 	//~ Begin FTextHistory Interface
 	OVERRIDE_TEXT_HISTORY_STRINGIFICATION;
@@ -594,10 +547,6 @@ public:
 	FTextHistory_Transform() = default;
 	FTextHistory_Transform(FString&& InDisplayString, FText InSourceText, const ETransformType InTransformType);
 
-	/** Allow moving */
-	FTextHistory_Transform(FTextHistory_Transform&& Other) = default;
-	FTextHistory_Transform& operator=(FTextHistory_Transform&& Other) = default;
-
 	//~ Begin FTextHistory Interface
 	OVERRIDE_TEXT_HISTORY_STRINGIFICATION;
 	virtual ETextHistoryType GetType() const override { return ETextHistoryType::Transform; }
@@ -622,10 +571,6 @@ class FTextHistory_StringTableEntry : public FTextHistory
 public:
 	FTextHistory_StringTableEntry() = default;
 	FTextHistory_StringTableEntry(FName InTableId, FString&& InKey, const EStringTableLoadingPolicy InLoadingPolicy);
-
-	/** Allow moving */
-	FTextHistory_StringTableEntry(FTextHistory_StringTableEntry&& Other) = default;
-	FTextHistory_StringTableEntry& operator=(FTextHistory_StringTableEntry&& Other) = default;
 
 	//~ Begin FTextHistory Interface
 	OVERRIDE_TEXT_HISTORY_STRINGIFICATION;
@@ -719,10 +664,6 @@ class FTextHistory_TextGenerator : public FTextHistory_Generated
 public:
 	FTextHistory_TextGenerator() = default;
 	FTextHistory_TextGenerator(FString&& InDisplayString, const TSharedRef<ITextGenerator>& InTextGenerator);
-
-	/** Allow moving */
-	FTextHistory_TextGenerator(FTextHistory_TextGenerator&& Other) = default;
-	FTextHistory_TextGenerator& operator=(FTextHistory_TextGenerator&& Other) = default;
 
 	//~ Begin FTextHistory Interface
 	virtual ETextHistoryType GetType() const override { return ETextHistoryType::TextGenerator; }

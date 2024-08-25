@@ -10,72 +10,77 @@
 
 #define LOCTEXT_NAMESPACE "SDMXControlConsoleEditorExpandArrowButton"
 
-void SDMXControlConsoleEditorExpandArrowButton::Construct(const FArguments& InArgs)
+namespace UE::DMX::Private
 {
-	OnExpandClicked = InArgs._OnExpandClicked;
+	void SDMXControlConsoleEditorExpandArrowButton::Construct(const FArguments& InArgs)
+	{
+		bIsExpanded = InArgs._IsExpanded;
+		OnExpandClicked = InArgs._OnExpandClicked;
 
-	ChildSlot
-		[
-			SNew(SButton)
-			.ButtonStyle(FCoreStyle::Get(), "NoBorder")
-			.ClickMethod(EButtonClickMethod::MouseDown)
-			.ContentPadding(0.f)
-			.ForegroundColor(FSlateColor::UseForeground())
-			.IsFocusable(false)
-			.HAlign(HAlign_Center)
-			.VAlign(VAlign_Center)
-			.ToolTipText(InArgs._ToolTipText)
-			.OnClicked(this, &SDMXControlConsoleEditorExpandArrowButton::OnExpandArrowClicked)
+		ChildSlot
 			[
-				SNew(SImage)
-				.ColorAndOpacity(FSlateColor::UseSubduedForeground())
-				.Image(this, &SDMXControlConsoleEditorExpandArrowButton::GetExpandArrowImage)
-			]
-		];
-}
+				SNew(SButton)
+				.ButtonStyle(FCoreStyle::Get(), "NoBorder")
+				.ClickMethod(EButtonClickMethod::MouseDown)
+				.ContentPadding(0.f)
+				.ForegroundColor(FSlateColor::UseForeground())
+				.IsFocusable(false)
+				.HAlign(HAlign_Center)
+				.VAlign(VAlign_Center)
+				.ToolTipText(InArgs._ToolTipText)
+				.OnClicked(this, &SDMXControlConsoleEditorExpandArrowButton::OnExpandArrowClicked)
+				[
+					SNew(SImage)
+					.ColorAndOpacity(FSlateColor::UseSubduedForeground())
+					.Image(this, &SDMXControlConsoleEditorExpandArrowButton::GetExpandArrowImage)
+				]
+			];
 
-void SDMXControlConsoleEditorExpandArrowButton::SetExpandArrow(bool bExpand)
-{
-	bIsExpanded = bExpand;
-	OnExpandClicked.ExecuteIfBound(bIsExpanded);
-}
-
-void SDMXControlConsoleEditorExpandArrowButton::ToggleExpandArrow()
-{
-	bIsExpanded = !bIsExpanded;
-	OnExpandClicked.ExecuteIfBound(bIsExpanded);
-}
-
-FReply SDMXControlConsoleEditorExpandArrowButton::OnExpandArrowClicked()
-{
-	ToggleExpandArrow();
-
-	return FReply::Handled();
-}
-
-const FSlateBrush* SDMXControlConsoleEditorExpandArrowButton::GetExpandArrowImage() const
-{
-	FName ResourceName;
-	if (IsExpanded())
-	{
-		if (IsHovered())
-		{
-			return FAppStyle::GetBrush("TreeArrow_Collapsed_Hovered");
-		}
-		else
-		{
-			return FAppStyle::GetBrush("TreeArrow_Collapsed");
-		}
+		SetExpandArrow(bIsExpanded);
 	}
-	else
+
+	void SDMXControlConsoleEditorExpandArrowButton::SetExpandArrow(bool bExpand)
 	{
-		if (IsHovered())
+		bIsExpanded = bExpand;
+		OnExpandClicked.ExecuteIfBound(bIsExpanded);
+	}
+
+	void SDMXControlConsoleEditorExpandArrowButton::ToggleExpandArrow()
+	{
+		bIsExpanded = !bIsExpanded;
+		OnExpandClicked.ExecuteIfBound(bIsExpanded);
+	}
+
+	FReply SDMXControlConsoleEditorExpandArrowButton::OnExpandArrowClicked()
+	{
+		ToggleExpandArrow();
+
+		return FReply::Handled();
+	}
+
+	const FSlateBrush* SDMXControlConsoleEditorExpandArrowButton::GetExpandArrowImage() const
+	{
+		if (IsExpanded())
 		{
-			return FAppStyle::GetBrush("TreeArrow_Expanded_Hovered");
+			if (IsHovered())
+			{
+				return FAppStyle::GetBrush("TreeArrow_Collapsed_Hovered");
+			}
+			else
+			{
+				return FAppStyle::GetBrush("TreeArrow_Collapsed");
+			}
 		}
 		else
 		{
-			return FAppStyle::GetBrush("TreeArrow_Expanded");
+			if (IsHovered())
+			{
+				return FAppStyle::GetBrush("TreeArrow_Expanded_Hovered");
+			}
+			else
+			{
+				return FAppStyle::GetBrush("TreeArrow_Expanded");
+			}
 		}
 	}
 }

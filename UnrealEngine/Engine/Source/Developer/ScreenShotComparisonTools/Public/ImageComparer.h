@@ -303,18 +303,32 @@ public:
 	FText ErrorMessage;
 
 	/*
+		Path of the screenshot (includes variant if applicable)
+	*/
+	UPROPERTY()
+	FString ScreenshotPath;
+
+	/*
+		Whether to skip saving and attaching images to the report for this test
+	*/
+	UPROPERTY()
+	bool bSkipAttachingImages;
+
+	/*
 		Version of the image comparision result 
 	*/
 	UPROPERTY()
 	int32 Version;
 
-	static constexpr int32 CurrentVersion = 2;
+	static constexpr int32 CurrentVersion = 3;
+	static constexpr int32 OldestSupportedVersion = 2;
 
 	FImageComparisonResult()
 		: CreationTime(0)
 		, MaxLocalDifference(0.0f)
 		, GlobalDifference(0.0f)
 		, ErrorMessage()
+		, bSkipAttachingImages(false)
 		, Version(CurrentVersion)
 	{
 	}
@@ -324,6 +338,7 @@ public:
 		, MaxLocalDifference(0.0f)
 		, GlobalDifference(0.0f)
 		, ErrorMessage(Error)
+		, bSkipAttachingImages(false)
 		, Version(CurrentVersion)
 	{
 	}
@@ -333,7 +348,7 @@ public:
 	*/
 	bool IsValid() const
 	{
-		return Version == CurrentVersion;
+		return Version >= OldestSupportedVersion && Version <= CurrentVersion;
 	}
 	
 	/*

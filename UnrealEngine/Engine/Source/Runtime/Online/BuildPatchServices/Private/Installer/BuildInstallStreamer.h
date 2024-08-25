@@ -88,7 +88,6 @@ namespace BuildPatchServices
 		TUniquePtr<IDownloadConnectionCount> DownloadConnectionCount;
 		TUniquePtr<IDownloadService> DownloadService;
 		TUniquePtr<IMessagePump> MessagePump;
-		TArray<FMessageHandler*> MessageHandlers;
 		FThreadSafeBool bIsShuttingDown;
 		TFuture<void> RequestWorker;
 		TFuture<void> CloudWorker;

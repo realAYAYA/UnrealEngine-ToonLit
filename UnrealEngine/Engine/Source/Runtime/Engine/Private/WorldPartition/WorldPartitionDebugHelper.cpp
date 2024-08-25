@@ -45,7 +45,7 @@ FAutoConsoleCommand FWorldPartitionDebugHelper::DebugFilterByRuntimeHashGridName
 
 bool FWorldPartitionDebugHelper::IsDebugRuntimeHashGridShown(FName Name)
 {
-	return !DebugRuntimeHashFilter.Num() || DebugRuntimeHashFilter.Contains(Name);
+	return (Name != NAME_PersistentLevel) && (!DebugRuntimeHashFilter.Num() || DebugRuntimeHashFilter.Contains(Name));
 }
 
 TSet<FName> FWorldPartitionDebugHelper::DebugDataLayerFilter;
@@ -197,42 +197,8 @@ void FWorldPartitionDebugHelper::DrawLegendItem(UCanvas* Canvas, const FString& 
 	Pos.Y = TextPos.Y;
 }
 
-bool FWorldPartitionDebugHelper::bShowRuntimeSpatialHashCellStreamingPriority = false;
-FAutoConsoleVariableRef FWorldPartitionDebugHelper::ShowRuntimeSpatialHashCellStreamingPriorityCommand(
+int32 FWorldPartitionDebugHelper::ShowRuntimeSpatialHashCellStreamingPriorityMode = 0;
+FAutoConsoleVariableRef FWorldPartitionDebugHelper::ShowRuntimeSpatialHashCellStreamingPriorityModeCommand(
 	TEXT("wp.Runtime.ShowRuntimeSpatialHashCellStreamingPriority"),
-	FWorldPartitionDebugHelper::bShowRuntimeSpatialHashCellStreamingPriority,
-	TEXT("Enable to show a heatmap of the runtime spatial hash grid cells based on their priority."));
-
-FLinearColor FWorldPartitionDebugHelper::GetHeatMapColor(float ValueNormalized)
-{
-	const int32 NUM_COLORS = 4;
-	static FLinearColor Colors[NUM_COLORS] =
-	{
-		FLinearColor::Blue,
-		FLinearColor::Green,
-		FLinearColor::Yellow,
-		FLinearColor::Red
-	};
-
-	int32 idx1 = 0;
-	int32 idx2 = 0;
-	float Fraction = 0.f;
-
-	if (ValueNormalized >= 1.f)
-	{
-		idx1 = idx2 = NUM_COLORS - 1;
-	}
-	else if (ValueNormalized > 0)
-	{
-		// Find the 2 color indexes in which value lies.
-		ValueNormalized = ValueNormalized * (NUM_COLORS - 1);
-		idx1 = FMath::Floor(ValueNormalized);
-		idx2 = idx1 + 1;
-		// Calculate the fraction between the two indexes [0, 1].
-		Fraction = ValueNormalized - float(idx1);
-	}
-
-	// Interpolate between the 2 colors
-	FLinearColor Result = Colors[idx1] + Fraction * (Colors[idx2] - Colors[idx1]);
-	return Result;
-}
+	FWorldPartitionDebugHelper::ShowRuntimeSpatialHashCellStreamingPriorityMode,
+	TEXT("Enable to show a heatmap of the runtime spatial hash grid cells based on their priority (0=disabled, 1=heatmap, 2=grayscale."));

@@ -124,6 +124,15 @@ public:
 		return true;
 	}
 
+	/**
+	 * Allow a producer to pop a ui after being created.
+	 * @return false to cancel the insertion of the new producer
+	 */
+	virtual bool IsActive()
+	{
+		return true;
+	}
+
 	/** Returns true if the producer was cancelled during execution */
 	bool IsCancelled() { return Context.ProgressReporterPtr.IsValid() ? Context.ProgressReporterPtr->IsWorkCancelled() : false; }
 

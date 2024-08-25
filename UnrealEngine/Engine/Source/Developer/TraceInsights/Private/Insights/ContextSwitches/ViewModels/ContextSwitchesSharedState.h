@@ -42,6 +42,7 @@ public:
 	TSharedPtr<FUICommandInfo> Command_ShowContextSwitches;
 	TSharedPtr<FUICommandInfo> Command_ShowOverlays;
 	TSharedPtr<FUICommandInfo> Command_ShowExtendedLines;
+	TSharedPtr<FUICommandInfo> Command_ShowNonTargetProcessEvents;
 
 	// Commands for a Cpu Core track (context menu).
 	TSharedPtr<FUICommandInfo> Command_NavigateToCpuThreadEvent;
@@ -99,6 +100,12 @@ public:
 	void ToggleExtendedLines() { SetExtendedLinesVisible(!bAreExtendedLinesVisible); }
 	void SetExtendedLinesVisible(bool bOnOff);
 
+	bool AreNonTargetProcessEventsVisible() const { return bAreNonTargetProcessEventsVisible; }
+	void ShowNonTargetProcessEvents() { SetNonTargetProcessEventsVisible(true); }
+	void HideNonTargetProcessEvents() { SetNonTargetProcessEventsVisible(false); }
+	void ToggleNonTargetProcessEvents() { SetNonTargetProcessEventsVisible(!bAreNonTargetProcessEventsVisible); }
+	void SetNonTargetProcessEventsVisible(bool bOnOff);
+
 	void SetTargetTimingEvent(const TSharedPtr<const ITimingEvent> InEvent)
 	{
 		TargetTimingEvent = InEvent;
@@ -135,11 +142,15 @@ private:
 	bool Command_ShowExtendedLines_CanExecute() const { return AreContextSwitchesAvailable() && AreContextSwitchesVisible(); }
 	bool Command_ShowExtendedLines_IsChecked() const { return AreExtendedLinesVisible(); }
 
+	void Command_ShowNonTargetProcessEvents_Execute() { ToggleNonTargetProcessEvents(); }
+	bool Command_ShowNonTargetProcessEvents_CanExecute() const { return AreContextSwitchesAvailable() && AreCoreTracksVisible(); }
+	bool Command_ShowNonTargetProcessEvents_IsChecked() const { return AreNonTargetProcessEventsVisible(); }
+
 	bool IsValidCpuCoreEventSelected() const;
 	bool IsValidContextSwitchEventSelected() const;
 
 	void Command_NavigateToCpuThreadEvent_Execute();
-	bool Command_NavigateToCpuThreadEvent_CanExecute() const { return AreContextSwitchesAvailable() && AreContextSwitchesVisible() && IsValidCpuCoreEventSelected(); }
+	bool Command_NavigateToCpuThreadEvent_CanExecute() const;
 
 	void Command_DockCpuThreadTrackToBottom_Execute();
 	bool Command_DockCpuThreadTrackToBottom_CanExecute() const { return AreContextSwitchesAvailable() && AreContextSwitchesVisible() && IsValidCpuCoreEventSelected(); }
@@ -165,6 +176,7 @@ private:
 	bool bAreContextSwitchesVisible;
 	bool bAreOverlaysVisible;
 	bool bAreExtendedLinesVisible;
+	bool bAreNonTargetProcessEventsVisible;
 
 	bool bSyncWithProviders;
 

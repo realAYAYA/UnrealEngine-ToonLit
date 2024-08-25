@@ -165,22 +165,16 @@ void ULODSyncComponent::RefreshSyncComponents()
 
 void ULODSyncComponent::UninitializeSyncComponents()
 {
-	auto ResetComponentList = [&](TArray<UPrimitiveComponent*>& ComponentList)
+	for (UPrimitiveComponent* Component : SubComponents)
 	{
-		for (UPrimitiveComponent* Component : ComponentList)
+		if (Component)
 		{
-			if (Component)
-			{
-				Component->PrimaryComponentTick.RemovePrerequisite(this, PrimaryComponentTick);
-			}
+			Component->PrimaryComponentTick.RemovePrerequisite(this, PrimaryComponentTick);
 		}
+	}
 
-		ComponentList.Reset();
-
-	};
-
-	ResetComponentList(MutableView(DriveComponents));
-	ResetComponentList(MutableView(SubComponents));
+	SubComponents.Reset();
+	DriveComponents.Reset();
 }
 
 void ULODSyncComponent::UpdateLOD()
@@ -204,7 +198,6 @@ void ULODSyncComponent::UpdateLOD()
 			bHaveValidSetting = true;
 			UE_LOG(LogLODSync, Verbose, TEXT("LOD Sync : Using Cvar r.ForceLod Value to set lodsync [%d]"), HighestPriLOD);
 		}
-
 		else if (ForcedLOD >= 0 && ForcedLOD < CurrentNumLODs)
 		{
 			HighestPriLOD = ForcedLOD;
@@ -213,57 +206,126 @@ void ULODSyncComponent::UpdateLOD()
 		}
 		else
 		{
-			bool bHaveVisibleComponent = false;
-			int32 HighestPriVisibleLOD = 0xff;
-			for (UPrimitiveComponent* Component : DriveComponents)
+			// Array is in priority order (last one is highest priority)
+			for (int32 DriveComponentIndex = DriveComponents.Num() - 1; DriveComponentIndex >= 0; DriveComponentIndex--)
 			{
-				if (Component)
+				const UPrimitiveComponent* Component = DriveComponents[DriveComponentIndex];
+				if (!Component)
 				{
-					ILODSyncInterface* LODInterface = CastChecked<ILODSyncInterface>(Component);
-					const int32 DesiredSyncLOD = LODInterface->GetDesiredSyncLOD();
-
-					if (DesiredSyncLOD >= 0)
-					{
-						const int32 DesiredLOD = GetSyncMappingLOD(Component->GetFName(), DesiredSyncLOD);
-						// Array is in priority order (last one is highest priority)
-						HighestPriLOD = DesiredLOD;
-						bHaveValidSetting = true;
-
-						if (Component->WasRecentlyRendered())
-						{
-							bHaveVisibleComponent = true;
-							HighestPriVisibleLOD = DesiredLOD;
-							UE_LOG(LogLODSync, Verbose, TEXT("LOD Sync Drivers : %s (VISIBLE) - Source LOD [%d] RemappedLOD[%d]"), *GetNameSafe(Component), DesiredSyncLOD, DesiredLOD);
-						}
-						else
-						{
-							UE_LOG(LogLODSync, Verbose, TEXT("LOD Sync Drivers : %s - Source LOD [%d] RemappedLOD[%d]"), *GetNameSafe(Component), DesiredSyncLOD, DesiredLOD);
-						}
-					}
+					continue;
 				}
-			}
 
-			// If we found a visible component, use that, if not, use highest priority that wasn't visible
-			if (bHaveVisibleComponent)
-			{
-				HighestPriLOD = HighestPriVisibleLOD;
+				const ILODSyncInterface* LODInterface = CastChecked<ILODSyncInterface>(Component);
+				const int32 DesiredSyncLOD = LODInterface->GetDesiredSyncLOD();
+
+				if (DesiredSyncLOD < 0 || LODInterface->GetBestAvailableLOD() < 0)
+				{
+					// Can't drive from a component that doesn't know what LOD it wants or what
+					// LODs it can render.
+					continue;
+				}
+
+				const int32 DesiredLOD = GetSyncMappingLOD(Component->GetFName(), DesiredSyncLOD);
+
+				if (Component->WasRecentlyRendered())
+				{
+					HighestPriLOD = DesiredLOD;
+					bHaveValidSetting = true;
+
+					UE_LOG(LogLODSync, Verbose, TEXT("LOD Sync Drivers : %s (VISIBLE) - Source LOD [%d] RemappedLOD[%d]"), *GetNameSafe(Component), DesiredSyncLOD, DesiredLOD);
+
+					// This is the best possible match, so no need to keep looking
+					break;
+				}
+
+				if (!bHaveValidSetting)
+				{
+					// This is the best match so far, but keep looking in case there's a visible component
+					HighestPriLOD = DesiredLOD;
+					bHaveValidSetting = true;
+				}
+
+				UE_LOG(LogLODSync, Verbose, TEXT("LOD Sync Drivers : %s - Source LOD [%d] RemappedLOD[%d]"), *GetNameSafe(Component), DesiredSyncLOD, DesiredLOD);
 			}
 		}
 
 		if (bHaveValidSetting)
 		{
-			// ensure current WorkingLOD is with in the range
+			// Ensure HighestPriLOD is with in the range
 			HighestPriLOD = FMath::Clamp(HighestPriLOD, MinLOD, CurrentNumLODs - 1);
 			UE_LOG(LogLODSync, Verbose, TEXT("LOD Sync : Current LOD (%d)"), HighestPriLOD);
-			for (UPrimitiveComponent* Component : SubComponents)
+
+			TArray<int32, TInlineAllocator<16>> SubComponentLODs;
+			// The code below ensures that all elements corresponding to non-null components are
+			// written before any elements are read, so it's safe to leave them uninitialized here.
+			SubComponentLODs.SetNumUninitialized(SubComponents.Num());
+
+			bool bFirstIteration = true;
+			while (HighestPriLOD < CurrentNumLODs)
 			{
-				if (Component)
+				// HighestPriLOD can only be used if the corresponding LOD on each component is 
+				// available.
+				//
+				// This loop checks to make sure all the necessary LODs are available, and requests
+				// that the best one be streamed in.
+				bool bAllLODsAvailable = true;
+				for (int32 SubComponentIndex = 0; SubComponentIndex < SubComponents.Num(); SubComponentIndex++)
 				{
-					ILODSyncInterface* LODInterface = Cast<ILODSyncInterface>(Component);
-					const int32 NewLOD = GetCustomMappingLOD(Component->GetFName(), HighestPriLOD);
-					UE_LOG(LogLODSync, Verbose, TEXT("LOD Sync Setter : %s - New LOD [%d]"), *GetNameSafe(Component), NewLOD);
-					LODInterface->SetSyncLOD(NewLOD);
+					UPrimitiveComponent* Component = SubComponents[SubComponentIndex];
+					if (Component)
+					{
+						ILODSyncInterface* LODInterface = CastChecked<ILODSyncInterface>(Component);
+						const int32 NewLOD = GetCustomMappingLOD(Component->GetFName(), HighestPriLOD);
+
+						// The first iteration of the enclosing loop tests the most desired LOD, so
+						// this is the one that should be requested for streaming, regardless of
+						// which LOD is ultimately used for rendering.
+						if (bFirstIteration)
+						{
+							LODInterface->SetForceStreamedLOD(NewLOD);
+						}
+
+						// If this LOD isn't available, break out and try the next one.
+						// 
+						// Note that if GetBestAvailableLOD returns INDEX_NONE, this condition will
+						// always be false. We ignore the invalid value rather than let it prevent
+						// us from setting LODs on the other components.
+						if (NewLOD < LODInterface->GetBestAvailableLOD())
+						{
+							bAllLODsAvailable = false;
+
+							// Don't break out if this is the first iteration, because we need to
+							// request streaming on all the most desired LODs during this iteration.
+							if (!bFirstIteration)
+							{
+								break;
+							}
+						}
+
+						SubComponentLODs[SubComponentIndex] = NewLOD;
+					}
 				}
+
+				bFirstIteration = false;
+
+				if (!bAllLODsAvailable)
+				{
+					HighestPriLOD++;
+					continue;
+				}
+
+				// Found a good set of LODs, now set them.
+				for (int32 SubComponentIndex = 0; SubComponentIndex < SubComponents.Num(); SubComponentIndex++)
+				{
+					UPrimitiveComponent* Component = SubComponents[SubComponentIndex];
+					if (Component)
+					{
+						ILODSyncInterface* LODInterface = CastChecked<ILODSyncInterface>(Component);
+						LODInterface->SetForceRenderedLOD(SubComponentLODs[SubComponentIndex]);
+					}
+				}
+
+				break;
 			}
 		}
 	}
@@ -307,16 +369,22 @@ FString ULODSyncComponent::GetLODSyncDebugText() const
 		if (Component)
 		{
 			ILODSyncInterface* LODInterface = CastChecked<ILODSyncInterface>(Component);
-			const int32 CurrentSyncLOD = LODInterface->GetCurrentSyncLOD();
+			const int32 StreamedLOD = LODInterface->GetForceStreamedLOD();
+			const int32 RenderedLOD = LODInterface->GetForceRenderedLOD();
 			const int32 DesiredSyncLOD = LODInterface->GetDesiredSyncLOD();
 
-			if (DesiredSyncLOD >= 0)
+			if (StreamedLOD >= 0 && StreamedLOD < LODInterface->GetBestAvailableLOD())
 			{
-				OutString += FString::Printf(TEXT("%s : %d (%d)\n"), *(Component->GetFName().ToString()), CurrentSyncLOD, DesiredSyncLOD);
+				// We're waiting for a better LOD to stream in
+				OutString += FString::Printf(TEXT("%s : %d (%d, %d)\n"), *(Component->GetFName().ToString()), RenderedLOD, DesiredSyncLOD, StreamedLOD);
+			}
+			else if (DesiredSyncLOD >= 0)
+			{
+				OutString += FString::Printf(TEXT("%s : %d (%d)\n"), *(Component->GetFName().ToString()), RenderedLOD, DesiredSyncLOD);
 			}
 			else
 			{
-				OutString += FString::Printf(TEXT("%s : %d\n"), *(Component->GetFName().ToString()), CurrentSyncLOD);
+				OutString += FString::Printf(TEXT("%s : %d\n"), *(Component->GetFName().ToString()), RenderedLOD);
 			}
 		}
 	}

@@ -119,6 +119,12 @@ public:
 	GEOMETRYFRAMEWORK_API virtual void ApplyTransform(const FTransform3d& Transform, bool bInvert) override;
 
 
+	/**
+	 * If set to false, this blocks external code from being able to modify the internal mesh. It prevents modifications through methods on this UDynamicMeshComponent such as EditMesh/SetMesh,
+	 * However, this cannot prevent code from modifying the underlying UDynamicMesh through direct references (ex. via GetDynamicMesh()->SetMesh).
+	 */
+	GEOMETRYFRAMEWORK_API bool IsEditable() const { return bIsEditable; }
+	GEOMETRYFRAMEWORK_API void SetIsEditable(bool bInIsEditable) { bIsEditable = bInIsEditable; }
 
 protected:
 	/**
@@ -296,6 +302,11 @@ protected:
 	/** Called whenever internal MeshObject is modified, fires OnMeshChanged and OnMeshVerticesChanged above */
 	GEOMETRYFRAMEWORK_API void OnMeshObjectChanged(UDynamicMesh* ChangedMeshObject, FDynamicMeshChangeInfo ChangeInfo);
 
+	/**
+	 * If set to false, this blocks external code from being able to modify the internal mesh. It prevents modifications through methods on this UDynamicMeshComponent such as EditMesh/SetMesh,
+	 * However, this cannot prevent code from modifying the underlying UDynamicMesh through direct references (ex. via GetDynamicMesh()->SetMesh).
+	 */
+	bool bIsEditable = true;
 
 
 

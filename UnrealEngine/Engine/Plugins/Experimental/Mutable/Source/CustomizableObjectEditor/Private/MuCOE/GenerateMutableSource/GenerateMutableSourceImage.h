@@ -4,6 +4,7 @@
 
 
 #include "MuR/Ptr.h"
+#include "HAL/Platform.h"
 
 class FCustomizableObjectCompiler;
 class UCustomizableObjectNode;
@@ -21,9 +22,7 @@ namespace mu
 
 mu::Ptr<mu::Image> ConvertTextureUnrealToMutable(UTexture2D* Texture, const UCustomizableObjectNode* Node, FCustomizableObjectCompiler* Compiler, bool bIsNormalComposite);
 
-
-mu::Ptr<mu::NodeImage> ResizeToMaxTextureSize(float MaxTextureSize, const UTexture2D* BaseTexture, mu::Ptr<mu::NodeImageConstant> ImageNode);
-
+mu::Ptr<mu::NodeImage> ResizeTextureByNumMips(const mu::Ptr<mu::NodeImage>& Image, int32 MipsToSkip);
 
 /** Convert a CustomizableObject Source Graph from an Image pin into a mutable source graph. */
-mu::Ptr<mu::NodeImage> GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGraphGenerationContext& GenerationContext, float MaxTextureSize);
+mu::Ptr<mu::NodeImage> GenerateMutableSourceImage(const UEdGraphPin* Pin, FMutableGraphGenerationContext& GenerationContext, int32 ReferenceTextureSize);

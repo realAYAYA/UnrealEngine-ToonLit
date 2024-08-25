@@ -1111,7 +1111,7 @@ bool FMeshBoolean::MergeEdges(const FMeshIndexMappings& IndexMaps, FDynamicMesh3
 				int EID = UnmatchedEdges[UnmatchedIdx];
 				if (!Result->IsEdge(EID) || !Result->IsBoundaryEdge(EID))
 				{
-					UnmatchedEdges.RemoveAtSwap(UnmatchedIdx, 1, false);
+					UnmatchedEdges.RemoveAtSwap(UnmatchedIdx, 1, EAllowShrinking::No);
 					UnmatchedIdx--;
 					continue;
 				}
@@ -1123,7 +1123,7 @@ bool FMeshBoolean::MergeEdges(const FMeshIndexMappings& IndexMaps, FDynamicMesh3
 					EMeshResult EdgeMergeResult = Result->MergeEdges(EID, OtherEID, MergeInfo);
 					if (EdgeMergeResult == EMeshResult::Ok)
 					{
-						UnmatchedEdges.RemoveAtSwap(UnmatchedIdx, 1, false);
+						UnmatchedEdges.RemoveAtSwap(UnmatchedIdx, 1, EAllowShrinking::No);
 						if (bTrackAllNewEdges)
 						{
 							AllNewEdges.Add(EID);

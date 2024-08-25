@@ -3,8 +3,10 @@
 using System;
 using System.Threading;
 using System.Threading.Tasks;
+using HordeCommon;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using StackExchange.Redis;
 
 namespace Horde.Server.Server
@@ -12,7 +14,7 @@ namespace Horde.Server.Server
 	/// <summary>
 	/// Service containing an async task that allows long polling operations to complete early if the server is shutting down
 	/// </summary>
-	public sealed class LifetimeService : IDisposable
+	public sealed class LifetimeService : IHostedService, IAsyncDisposable
 	{
 		/// <summary>
 		/// Writer for log output
@@ -34,8 +36,13 @@ namespace Horde.Server.Server
 		/// </summary>
 		readonly CancellationTokenRegistration _registration;
 
+		readonly IHostApplicationLifetime _lifetime;
 		readonly MongoService _mongoService;
 		readonly RedisService _redisService;
+		readonly ITicker _ticker;
+
+		/// <inheritdoc cref="ServerSettings.ShutdownMemoryThreshold" />
+		readonly int? _shutdownMemoryThreshold = null;
 
 		/*
 		/// <summary>
@@ -53,24 +60,70 @@ namespace Horde.Server.Server
 		/// <summary>
 		/// Constructor
 		/// </summary>
+		/// <param name="settings">Server settings</param>
 		/// <param name="lifetime">Application lifetime interface</param>
+		/// <param name="env">Current ASP.NET environment</param>
 		/// <param name="mongoService">Database singleton service</param>
 		/// <param name="redisService">Redis singleton service</param>
+		/// <param name="clock"></param>
 		/// <param name="logger">Logging interface</param>
-		public LifetimeService(IHostApplicationLifetime lifetime, MongoService mongoService, RedisService redisService, ILogger<LifetimeService> logger)
+		public LifetimeService(IOptionsMonitor<ServerSettings> settings, IHostApplicationLifetime lifetime, IHostEnvironment env, MongoService mongoService, RedisService redisService, IClock clock, ILogger<LifetimeService> logger)
 		{
+			_shutdownMemoryThreshold = settings.CurrentValue.ShutdownMemoryThreshold;
+			_lifetime = lifetime;
 			_mongoService = mongoService;
 			_redisService = redisService;
 			_logger = logger;
-			_stoppingTaskCompletionSource = new TaskCompletionSource<bool>();
-			_preStoppingTaskCompletionSource = new TaskCompletionSource<bool>();
-			_registration = lifetime.ApplicationStopping.Register(ApplicationStopping);
+			_stoppingTaskCompletionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+			_preStoppingTaskCompletionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+			if (env.IsProduction() || env.IsDevelopment())
+			{
+				_registration = lifetime.ApplicationStopping.Register(ApplicationStopping);
+			}
+
+			_ticker = clock.AddTicker<LifetimeService>(TimeSpan.FromMinutes(5), CheckMemoryUsageAsync, _logger);
 		}
 
 		/// <inheritdoc/>
-		public void Dispose()
+		public async ValueTask DisposeAsync()
 		{
-			_registration.Dispose();
+			await _registration.DisposeAsync();
+			await _ticker.DisposeAsync();
+		}
+
+		/// <inheritdoc/>
+		public async Task StartAsync(CancellationToken cancellationToken)
+		{
+			await _ticker.StartAsync();
+		}
+
+		/// <inheritdoc/>
+		public async Task StopAsync(CancellationToken cancellationToken)
+		{
+			await _ticker.StopAsync();
+		}
+
+		private ValueTask CheckMemoryUsageAsync(CancellationToken cancellationToken)
+		{
+			if (_shutdownMemoryThreshold == null || _shutdownMemoryThreshold <= 0)
+			{
+				return ValueTask.CompletedTask;
+			}
+
+			// Force a garbage collection and wait for it to complete for a more accurate reading
+			// Can be a heavy operation but this ticker method is run infrequently
+			GC.Collect();
+			GC.WaitForPendingFinalizers();
+
+			long totalMemoryUsageMb = GC.GetTotalMemory(forceFullCollection: false) / 1024 / 1024;
+			if (totalMemoryUsageMb > _shutdownMemoryThreshold)
+			{
+				_logger.LogWarning("Memory usage exceeded {MemoryThreshold} MB. Stopping process...", _shutdownMemoryThreshold);
+				_lifetime.StopApplication();
+			}
+
+			return ValueTask.CompletedTask;
 		}
 
 		/// <summary>
@@ -78,7 +131,7 @@ namespace Horde.Server.Server
 		/// </summary>
 		void ApplicationStopping()
 		{
-			_logger.LogInformation("SIGTERM signal received");
+			_logger.LogInformation("Shutdown/SIGTERM signal received");
 			IsPreStopping = true;
 			IsStopping = true;
 
@@ -140,7 +193,7 @@ namespace Horde.Server.Server
 		/// Check if MongoDB can be reached
 		/// </summary>
 		/// <returns>True if communication works</returns>
-		public async Task<bool> IsMongoDbConnectionHealthy()
+		public async Task<bool> IsMongoDbConnectionHealthyAsync()
 		{
 			using CancellationTokenSource cancelSource = new CancellationTokenSource(10000);
 			bool isHealthy = false;
@@ -151,7 +204,7 @@ namespace Horde.Server.Server
 			}
 			catch (Exception e)
 			{
-				_logger.LogError("MongoDB call failed during health check", e);
+				_logger.LogError(e, "MongoDB call failed during health check");
 			}
 
 			return isHealthy;
@@ -161,7 +214,7 @@ namespace Horde.Server.Server
 		/// Check if Redis can be reached
 		/// </summary>
 		/// <returns>True if communication works</returns>
-		public async Task<bool> IsRedisConnectionHealthy()
+		public async Task<bool> IsRedisConnectionHealthyAsync()
 		{
 			using CancellationTokenSource cancelSource = new CancellationTokenSource(10000);
 			bool isHealthy = false;
@@ -175,7 +228,7 @@ namespace Horde.Server.Server
 			}
 			catch (Exception e)
 			{
-				_logger.LogError("Redis call failed during health check", e);
+				_logger.LogError(e, "Redis call failed during health check");
 			}
 
 			return isHealthy;

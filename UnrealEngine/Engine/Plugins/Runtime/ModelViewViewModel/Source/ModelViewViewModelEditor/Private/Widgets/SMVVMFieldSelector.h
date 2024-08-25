@@ -2,13 +2,11 @@
 
 #pragma once
 
-#include "MVVMPropertyPath.h"
 #include "Styling/CoreStyle.h"
 #include "Styling/SlateTypes.h"
 #include "Styling/SlateWidgetStyleAsset.h"
 #include "Widgets/SCompoundWidget.h"
-#include "Widgets/SMVVMCachedViewBindingPropertyPath.h"
-#include "Widgets/SMVVMCachedViewBindingConversionFunction.h"
+#include "Widgets/SMVVMFieldDisplay.h"
 #include "Widgets/SMVVMFieldSelectorMenu.h"
 
 namespace UE::MVVM { class SCachedViewBindingPropertyPath; }
@@ -30,10 +28,10 @@ public:
 		{
 		}
 		SLATE_STYLE_ARGUMENT(FTextBlockStyle, TextStyle)
-		SLATE_ARGUMENT_DEFAULT(bool, ShowContext) = true;
-		SLATE_EVENT(FOnGetPropertyPath, OnGetPropertyPath)
-		SLATE_EVENT(FOnGetConversionFunction, OnGetConversionFunction)
-		SLATE_EVENT(FOnFieldSelectionChanged, OnFieldSelectionChanged)
+		SLATE_ARGUMENT_DEFAULT(bool, ShowContext) { true };
+		SLATE_ARGUMENT_DEFAULT(bool, IsBindingToEvent) { false };
+		SLATE_EVENT(SFieldDisplay::FOnGetLinkedPinValue, OnGetLinkedValue)
+		SLATE_EVENT(FOnLinkedValueSelectionChanged, OnSelectionChanged)
 		SLATE_EVENT(FOnGetSelectionContext, OnGetSelectionContext)
 		SLATE_EVENT(FOnDrop, OnDrop)
 		SLATE_EVENT(FOnDragEnter, OnDragEnter)
@@ -44,28 +42,23 @@ public:
 	virtual void OnDragEnter(const FGeometry& MyGeometry, const FDragDropEvent& DragDropEvent) override;
 	virtual void OnDragLeave(const FDragDropEvent& DragDropEvent) override;
 
-
 private:
-	int32 GetCurrentDisplayIndex() const;
-
 	TSharedRef<SWidget> CreateSourcePanel();
 	TSharedRef<SWidget> HandleGetMenuContent();
 
-	void HandleFieldSelectionChanged(FMVVMBlueprintPropertyPath, const UFunction*);
+	void HandleFieldSelectionChanged(FMVVMLinkedPinValue NewValue);
 	void HandleMenuClosed();
 
 private:
 	TSharedPtr<SCachedViewBindingPropertyPath> PropertyPathWidget;
 	TSharedPtr<SComboButton> ComboButton;
-
+	TSharedPtr<SFieldDisplay> FieldDisplay;
 	TWeakObjectPtr<const UWidgetBlueprint> WidgetBlueprint;
-	const FTextBlockStyle* TextStyle = nullptr;
-	FOnGetPropertyPath OnGetPropertyPath;
-	FOnGetConversionFunction OnGetConversionFunction;
+	FOnLinkedValueSelectionChanged OnSelectionChanged;
 	FOnGetSelectionContext OnGetSelectionContext;
-	FOnFieldSelectionChanged OnFieldSelectionChanged;
 	FOnDrop OnDropEvent;
 	FOnDragEnter OnDragEnterEvent;
+	bool bIsBindingToEvent = false;
 }; 
 
 } // namespace UE::MVVM

@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "IO/IoOffsetLength.h"
 #include "IoDispatcher.h"
 #include "Async/InheritedContext.h"
 #include "Misc/Optional.h"
@@ -54,6 +55,15 @@ public:
 		Buffer.Emplace(InBuffer);
 	}
 
+	uint64 GetStartTime() const
+	{
+#if UE_IODISPATCHER_STATS_ENABLED
+		return StartTime;
+#else
+		return 0;
+#endif
+	}
+
 private:
 	friend class FIoDispatcherImpl;
 	friend class FIoRequest;
@@ -79,7 +89,7 @@ private:
 	struct IIoDispatcherBackend* Backend = nullptr;
 	FIoBatchImpl* Batch = nullptr;
 #if UE_IODISPATCHER_STATS_ENABLED
-	double StartTime = -1.0;
+	uint64 StartTime = 0;
 #endif
 	TOptional<FIoBuffer> Buffer;
 	FIoReadCallback Callback;
@@ -106,7 +116,14 @@ struct IIoDispatcherBackend
 	virtual void CancelIoRequest(FIoRequestImpl* Request) = 0;
 	virtual void UpdatePriorityForIoRequest(FIoRequestImpl* Request) = 0;
 	virtual bool DoesChunkExist(const FIoChunkId& ChunkId) const = 0;
+	virtual bool DoesChunkExist(const FIoChunkId& ChunkId, const FIoOffsetAndLength& ChunkRange) const { return DoesChunkExist(ChunkId); }
 	virtual TIoStatusOr<uint64> GetSizeForChunk(const FIoChunkId& ChunkId) const = 0;
+	virtual TIoStatusOr<uint64> GetSizeForChunk(const FIoChunkId& ChunkId, const FIoOffsetAndLength& ChunkRange, uint64& OutAvailable) const
+	{
+		TIoStatusOr<uint64> ChunkSize = GetSizeForChunk(ChunkId);
+		OutAvailable = ChunkSize.IsOk() ? ChunkSize.ValueOrDie() : 0;
+		return ChunkSize;
+	}
 	virtual FIoRequestImpl* GetCompletedRequests() = 0;
 	virtual TIoStatusOr<FIoMappedRegion> OpenMapped(const FIoChunkId& ChunkId, const FIoReadOptions& Options) = 0;
 };

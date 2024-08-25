@@ -10,6 +10,7 @@
 #include "UObject/GCObjectScopeGuard.h"
 #include "SourceControlHelpers.h"
 #include "GeneralProjectSettings.h"
+#include "Misc/FileHelper.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogGatherTextCommandlet, Log, All);
 
@@ -52,21 +53,45 @@ int32 UGatherTextCommandlet::Main( const FString& Params )
 	if (const FString* ConfigParamPtr = ParamVals.Find(UGatherTextCommandletBase::ConfigParam))
 	{
 		ConfigParamPtr->ParseIntoArray(GatherTextConfigPaths, TEXT(";"));
+	}
 
-		const FString& ProjectBasePath = UGatherTextCommandletBase::GetProjectBasePath();
-
-		for (FString& GatherTextConfigPath : GatherTextConfigPaths)
+	if (const FString* ConfigListFileParamPtr = ParamVals.Find(TEXT("ConfigList")))
+	{
+		if (FPaths::FileExists(*ConfigListFileParamPtr))
 		{
-			if (FPaths::IsRelative(GatherTextConfigPath))
+			TArray<FString> ConfigFiles;
+			FFileHelper::LoadFileToStringArray(ConfigFiles, **ConfigListFileParamPtr);
+			if (ConfigFiles.Num() > 0)
 			{
-				GatherTextConfigPath = FPaths::Combine(*ProjectBasePath, *GatherTextConfigPath);
+				GatherTextConfigPaths.Append(MoveTemp(ConfigFiles));
 			}
+			else
+			{
+				UE_LOG(LogGatherTextCommandlet, Warning, TEXT("There are no config file paths in specified config ,list '%s'. Please check to see the is correctly populated."), **ConfigListFileParamPtr);
+			}
+		}
+		else
+		{
+			UE_LOG(LogGatherTextCommandlet, Warning, TEXT("Specified config list file '%s' does not exist. No additional config files from -ConfigList can be added."), **ConfigListFileParamPtr);
+		}
+	}
+
+	// @TODOLocalization: Handle the case where -config and -ConfigList both specify the same files.
+	// Currently that would just mean that the config files will be launched with the relevant commandlets multiple times. The results should be correct, but it's wasted work.
+	
+	// Turn all relative paths into absolute paths 
+	const FString& ProjectBasePath = UGatherTextCommandletBase::GetProjectBasePath();
+	for (FString& GatherTextConfigPath : GatherTextConfigPaths)
+	{
+		if (FPaths::IsRelative(GatherTextConfigPath))
+		{
+			GatherTextConfigPath = FPaths::Combine(*ProjectBasePath, *GatherTextConfigPath);
 		}
 	}
 
 	if (GatherTextConfigPaths.Num() == 0)
 	{
-		UE_LOG(LogGatherTextCommandlet, Error, TEXT("-config not specified.\n%s"), *UsageText);
+		UE_LOG(LogGatherTextCommandlet, Error, TEXT("-config or -ConfigList not specified. If -ConfigList was specified, please check that the file path is valid.\n%s"), *UsageText);
 		return -1;
 	}
 

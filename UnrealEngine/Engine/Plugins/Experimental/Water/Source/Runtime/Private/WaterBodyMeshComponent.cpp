@@ -82,3 +82,49 @@ bool UWaterBodyMeshComponent::CanCreateSceneProxy() const
 
 	return true;
 }
+
+
+#if WITH_EDITOR
+void UWaterBodyMeshComponent::PostLoad()
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(WaterBodyMeshComponent::PostLoad);
+
+	Super::PostLoad();
+
+	// If the static mesh is currently compiling, we should not call GetBodySetup.
+	// This would block the async compilation immediately after it starts for each water body mesh and slows down editor load.
+	UStaticMesh* Mesh = GetStaticMesh();
+	if (Mesh && !Mesh->IsCompiling())
+	{
+		FixupCollisionOnBodySetup();
+	}
+}
+
+void UWaterBodyMeshComponent::PostStaticMeshCompilation()
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(WaterBodyMeshComponent::PostStaticMeshCompilation);
+
+	Super::PostStaticMeshCompilation();
+
+	FixupCollisionOnBodySetup();
+}
+
+void UWaterBodyMeshComponent::FixupCollisionOnBodySetup()
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(WaterBodyMeshComponent::FixupCollisionOnBodySetup);
+
+	// Fix for a bug that existing where the body setup was not created with bNeverNeedsCookedCollisionData, and also address an issue where bNeverNeedsCookedCollisionData was allowing meshes to generate cooked data.
+	UBodySetup* BodySetup = GetBodySetup();
+	UStaticMesh* Mesh = GetStaticMesh();
+	const bool bResetBodySetup = Mesh != nullptr && (BodySetup == nullptr || !BodySetup->bNeverNeedsCookedCollisionData || BodySetup->bHasCookedCollisionData);
+	if (bResetBodySetup)
+	{
+		Mesh->CreateBodySetup();
+		BodySetup = GetBodySetup();
+		BodySetup->bNeverNeedsCookedCollisionData = true;
+		BodySetup->bHasCookedCollisionData = false;
+		BodySetup->InvalidatePhysicsData();
+	}
+}
+#endif // WITH_EDITOR
+

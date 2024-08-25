@@ -21,6 +21,8 @@ public:
 	/** IVisualLoggerProvider interface */
 	virtual bool ReadVisualLogEntryTimeline(uint64 InObjectId, TFunctionRef<void(const VisualLogEntryTimeline&)> Callback) const;
 
+	virtual void EnumerateCategories(TFunctionRef<void(const FName&)> Callback) const;
+
 	/** Add an object event message */
 	void AppendVisualLogEntry(uint64 InObjectId, double InTime, const FVisualLogEntry& Entry);
 
@@ -29,4 +31,5 @@ private:
 
 	TMap<uint64, uint32> ObjectIdToLogEntryTimelines;
 	TArray<TSharedRef<TraceServices::TPointTimeline<FVisualLogEntry>>> LogEntryTimelines;
+	TArray<FName> Categories;
 };

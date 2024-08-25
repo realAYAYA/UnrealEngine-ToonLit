@@ -265,7 +265,7 @@ private:
 			while (TempPath.FindChar(TEXT('/'), Index))
 			{
 				const FString PathPiece = TempPath.Left(Index);
-				TempPath.RightChopInline(Index + 1, false);
+				TempPath.RightChopInline(Index + 1, EAllowShrinking::No);
 
 				if (PathPiece.Len() == 0)
 				{

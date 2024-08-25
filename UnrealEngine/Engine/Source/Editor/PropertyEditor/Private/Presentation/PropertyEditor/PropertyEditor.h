@@ -90,6 +90,15 @@ public:
 	void OnActorSelected( AActor* InActor );
 	void OnGetActorFiltersForSceneOutliner( TSharedPtr<FSceneOutlinerFilters>& OutFilters );
 	void EditConfigHierarchy();
+	
+	/**	
+	* If this is an editor of an optional, set that optional to the passed in value.
+	* If nullptr is passed in, the optional is set and default-initialized.
+	*/
+	void SetOptionalItem(FProperty* NewValue);
+
+	/**	If this is an editor of an optional, unset that optional. */
+	void ClearOptionalItem();
 
 	/**	In an ideal world we wouldn't expose these */
 	TSharedRef<FPropertyNode> GetPropertyNode() const;
@@ -111,6 +120,8 @@ private:
 	void OnDuplicateItem();
 	void OnBrowseTo();
 	void OnEmptyArray();
+	void OnSetOptionalValue(FProperty* NewValue);
+	void OnClearOptionalValue();
 
 private:
 

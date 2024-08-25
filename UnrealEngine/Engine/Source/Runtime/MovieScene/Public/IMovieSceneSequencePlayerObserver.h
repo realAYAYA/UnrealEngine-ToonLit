@@ -21,4 +21,6 @@ public:
 	GENERATED_BODY()
 
 	virtual bool CanObserveSequence() const = 0;
+
+	virtual TObjectPtr<UObject> GetInstigator() { return nullptr; }
 };

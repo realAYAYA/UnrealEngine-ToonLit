@@ -120,7 +120,7 @@ namespace
 						bForceUniqueId = PropertyHandle->HasMetaData(PropertyObjects[InIndex]->HasAnyFlags(RF_ClassDefaultObject | RF_ArchetypeObject) ? NAME_UniqueIdWhenEditedOnDefault : NAME_UniqueIdWhenEditedOnInstance);
 					}
 				}
-				if (!PropertyPackage)
+				if (!PropertyPackage || PropertyPackage == GetTransientPackage())
 				{
 					TArray<UPackage*> PropertyPackages;
 					PropertyHandle->GetOuterPackages(PropertyPackages);

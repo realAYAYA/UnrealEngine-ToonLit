@@ -100,6 +100,10 @@ class UMaterialFunction : public UMaterialFunctionInterface
 	TEnumAsByte<enum EBlendMode> PreviewBlendMode = BLEND_Opaque;
 
 	class UMaterialGraph* MaterialGraph = nullptr;
+
+	/* Whether all expressions in the function loaded correctly. */
+	uint8 bAllExpressionsLoadedCorrectly : 1;
+
 private:
 	/** Transient flag used to track re-entrance in recursive functions like IsDependent. */
 	UPROPERTY(transient)

@@ -29,15 +29,29 @@ public class ModelingComponents : ModuleRules
 			new string[]
 			{
 				"CoreUObject",
+				"Chaos",
 				"Engine",
 				"RenderCore",
 				"RHI",
 				"ImageWriteQueue",
 				"SkeletalMeshDescription", // FSkeletalMeshAttributes::DefaultSkinWeightProfileName
 				"SlateCore",
+				"ImageCore",
+				"PlanarCut",
+				"GeometryCollectionEngine",
+				"MeshConversionEngineTypes"
 				// ... add private dependencies that you statically link with here ...
 			}
 		);
+		
+		if (Target.bCompileAgainstEditor) // #if WITH_EDITOR
+		{
+			PrivateDependencyModuleNames.AddRange(
+				new string[]
+				{
+					"UnrealEd"
+				});
+		}
 
 		DynamicallyLoadedModuleNames.AddRange(
 			new string[]

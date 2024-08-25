@@ -26,6 +26,7 @@
 #include "Materials/MaterialExpressionNamedReroute.h"
 #include "Materials/MaterialExpressionFunctionInput.h"
 #include "Materials/MaterialExpressionStaticBool.h"
+#include "Materials/MaterialExpressionLandscapeGrassOutput.h"
 #include "Materials/MaterialFunctionInterface.h"
 #include "Materials/MaterialParameterCollection.h"
 #include "MaterialHLSLTree.h"
@@ -34,6 +35,7 @@
 #include "SparseVolumeTexture/SparseVolumeTexture.h"
 #include "Engine/Font.h"
 #include "LandscapeGrassType.h"
+#include "Logging/LogScopedVerbosityOverride.h"
 #include "Curves/CurveLinearColor.h"
 #include "Curves/CurveLinearColorAtlas.h"
 #include "UObject/UE5MainStreamObjectVersion.h"
@@ -358,16 +360,20 @@ void FMaterialCachedExpressionData::UpdateForExpressions(const FMaterialCachedEx
 		const bool bCanReferenceTexture = Expression->CanReferenceTexture();
 		if (!ReferencedTexture && bCanReferenceTexture)
 		{
-			ReferencedTexture = Expression->GetReferencedTexture();
+			const UMaterialExpression::ReferencedTextureArray ExpressionReferencedTextures = Expression->GetReferencedTextures();
+			for (UObject* ExpressionReferencedTexture : ExpressionReferencedTextures)
+			{
+				ReferencedTextures.AddUnique(ExpressionReferencedTexture);
+			}
 		}
-
-		if (ReferencedTexture)
+		else if (ReferencedTexture)
 		{
-			checkf(bCanReferenceTexture, TEXT("CanReferenceTexture() returned false, but found a referenced texture"));
 			ReferencedTextures.AddUnique(ReferencedTexture);
 		}
 
 		Expression->GetLandscapeLayerNames(EditorOnlyData->LandscapeLayerNames);
+
+		Expression->GetIncludeFilePaths(EditorOnlyData->ExpressionIncludeFilePaths);
 
 		if (UMaterialExpressionCollectionParameter* ExpressionCollectionParameter = Cast<UMaterialExpressionCollectionParameter>(Expression))
 		{
@@ -938,7 +944,7 @@ void PrepareHLSLTree(UE::HLSLTree::FEmitContext& EmitContext,
 	FEmitScope* EmitResultScope = EmitContext.PrepareScope(CachedTree.GetResultScope());
 
 	FRequestedType RequestedAttributesType(CachedTree.GetMaterialAttributesType(), false);
-	CachedTree.SetRequestedFields(ShaderFrequency, RequestedAttributesType);
+	CachedTree.SetRequestedFields(EmitContext, RequestedAttributesType);
 
 	const FPreparedType& ResultType = EmitContext.PrepareExpression(CachedTree.GetResultExpression(), *EmitResultScope, RequestedAttributesType);
 	if (!ResultType.IsVoid())
@@ -963,7 +969,7 @@ void PrepareHLSLTree(UE::HLSLTree::FEmitContext& EmitContext,
 
 }
 
-void FMaterialCachedExpressionData::UpdateForCachedHLSLTree(const FMaterialCachedHLSLTree& CachedTree, const FStaticParameterSet* StaticParameters)
+void FMaterialCachedExpressionData::UpdateForCachedHLSLTree(const FMaterialCachedHLSLTree& CachedTree, const FStaticParameterSet* StaticParameters, const UMaterialInterface* TargetMaterial)
 {
 	using namespace UE::HLSLTree;
 
@@ -972,6 +978,7 @@ void FMaterialCachedExpressionData::UpdateForCachedHLSLTree(const FMaterialCache
 
 	FMemStackBase Allocator;
 	FEmitContext EmitContext(Allocator, FTargetParameters(), NullErrorHandler, CachedTree.GetTypeRegistry());
+	EmitContext.MaterialInterface = TargetMaterial;
 
 	Material::FEmitData& EmitMaterialData = EmitContext.AcquireData<Material::FEmitData>();
 	EmitMaterialData.CachedExpressionData = this;
@@ -979,9 +986,20 @@ void FMaterialCachedExpressionData::UpdateForCachedHLSLTree(const FMaterialCache
 
 	::Private::PrepareHLSLTree(EmitContext, CachedTree, *this, SF_Pixel);
 	::Private::PrepareHLSLTree(EmitContext, CachedTree, *this, SF_Vertex);
+
+	for (const UMaterialExpressionCustomOutput* CustomOutput : CachedTree.GetMaterialCustomOutputs())
+	{
+		if (const UMaterialExpressionLandscapeGrassOutput* ExpressionGrassOutput = Cast<UMaterialExpressionLandscapeGrassOutput>(CustomOutput))
+		{
+			for (const FGrassInput& GrassInput : ExpressionGrassOutput->GrassTypes)
+			{
+				GrassTypes.AddUnique(GrassInput.GrassType);
+			}
+		}
+	}
 }
 
-void FMaterialCachedExpressionData::Validate()
+void FMaterialCachedExpressionData::Validate(const UMaterialInterface& Material)
 {
 	if (EditorOnlyData)
 	{
@@ -992,6 +1010,40 @@ void FMaterialCachedExpressionData::Validate()
 			check(EditorEntry.EditorInfo.Num() == Entry.ParameterInfoSet.Num());
 		}
 		FMaterialLayersFunctions::Validate(MaterialLayers, EditorOnlyData->MaterialLayers);
+
+		if (!FPlatformProperties::RequiresCookedData() && AllowShaderCompiling())
+		{
+			// Mute log errors created by GetShaderSourceFilePath during include path validation
+			LOG_SCOPE_VERBOSITY_OVERRIDE(LogShaders, ELogVerbosity::Fatal);
+
+			for (auto PathIt = EditorOnlyData->ExpressionIncludeFilePaths.CreateIterator(); PathIt; ++PathIt)
+			{
+				const FString& IncludeFilePath = *PathIt;
+				bool bValidExpressionIncludePath = false;
+
+				if (!IncludeFilePath.IsEmpty())
+				{
+					FString ValidatedPath = GetShaderSourceFilePath(IncludeFilePath);
+					if (!ValidatedPath.IsEmpty())
+					{
+						ValidatedPath = IFileManager::Get().ConvertToAbsolutePathForExternalAppForWrite(*ValidatedPath);
+						if (FPaths::FileExists(ValidatedPath))
+						{
+							bValidExpressionIncludePath = true;
+						}
+					}
+				}
+
+				if (!bValidExpressionIncludePath)
+				{
+					UE_LOG(LogMaterial, Warning, TEXT("Expression include file path '%s' is invalid, removing from cached data for material '%s'."), *IncludeFilePath, *Material.GetPathName());
+					PathIt.RemoveCurrent();
+				}
+			}
+		}
+
+		// Sort to make hashing less dependent on the order of expression visiting
+		EditorOnlyData->ExpressionIncludeFilePaths.Sort(TLess<>());
 	}
 }
 
@@ -1100,27 +1152,10 @@ void FMaterialCachedExpressionData::GetParameterValueByIndex(EMaterialParameterT
 	}
 }
 
-bool FStrataMaterialInfo::Serialize(FArchive& Ar)
-{
-	Ar.UsingCustomVersion(FUE5MainStreamObjectVersion::GUID);
-	return false;
-}
-
 bool FMaterialCachedExpressionData::Serialize(FArchive& Ar)
 {
 	Ar.UsingCustomVersion(FUE5MainStreamObjectVersion::GUID);
 	return false;
-}
-
-void FStrataMaterialInfo::PostSerialize(const FArchive& Ar)
-{
-	if (Ar.IsLoading())
-	{
-		if (Ar.CustomVer(FUE5MainStreamObjectVersion::GUID) < FUE5MainStreamObjectVersion::IncreaseMaterialAttributesInputMask)
-		{
-			ConnectedPropertyMask = uint64(ConnectedProperties_DEPRECATED);
-		}
-	}
 }
 
 void FMaterialCachedExpressionData::PostSerialize(const FArchive& Ar)

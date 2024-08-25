@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Stats/Stats.h"
 #include "SlateGlobals.h"
+#include "Rendering/SlateRendererTypes.h"
 #include "Rendering/SlateResourceHandle.h"
 
 class FSlateShaderResourceProxy;
@@ -68,6 +69,11 @@ public:
 	 * Additional validation that can vary per resource type
 	 */
 	virtual bool IsResourceValid() const { return true; };
+
+	/**
+	 * Does this resource use slate post buffers? If no resources use a post buffer we won't populate it.
+	 */
+	virtual ESlatePostRT GetUsedSlatePostBuffers() const { return ESlatePostRT::None; }
 
 #if SLATE_CHECK_UOBJECT_RENDER_RESOURCES
 	virtual void CheckForStaleResources() const { }

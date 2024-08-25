@@ -603,26 +603,24 @@ void FMeshDescription::RebuildIndexers()
 
 void FMeshDescription::Empty()
 {
-	VertexElements->Reset();
-	VertexInstanceElements->Reset();
-	UVElements->Reset();
-	EdgeElements->Reset();
-	TriangleElements->Reset();
-	PolygonElements->Reset();
-	PolygonGroupElements->Reset();
+	for (TPair<FName, FMeshElementTypeWrapper>& ElementsItem: Elements)
+	{
+		ElementsItem.Value.Get()->Reset();
+	}
 	ResetIndexers();
 }
 
 
 bool FMeshDescription::IsEmpty() const
 {
-	return VertexElements->IsEmpty() &&
-		   VertexInstanceElements->IsEmpty() &&
-		   UVElements->IsEmpty() &&
-		   EdgeElements->IsEmpty() &&
-		   TriangleElements->IsEmpty() &&
-		   PolygonElements->IsEmpty() &&
-		   PolygonGroupElements->IsEmpty();
+	for (const TPair<FName, FMeshElementTypeWrapper>& ElementsItem: Elements)
+	{
+		if (!ElementsItem.Value.Get()->IsEmpty())
+		{
+			return false;
+		}
+	}
+	return true;
 }
 
 bool FMeshDescription::NeedsCompact() const
@@ -1324,8 +1322,8 @@ void FMeshDescription::FindPolygonPerimeter(const FPolygonID PolygonID, TArrayVi
 			if (EdgeIndex != INDEX_NONE)
 			{
 				// If adding an edge which already exists, it must be an internal edge, so remove it again.
-				PerimeterEdges.RemoveAtSwap(EdgeIndex, 1, false);
-				TriIndices.RemoveAtSwap(EdgeIndex, 1, false);
+				PerimeterEdges.RemoveAtSwap(EdgeIndex, 1, EAllowShrinking::No);
+				TriIndices.RemoveAtSwap(EdgeIndex, 1, EAllowShrinking::No);
 			}
 			else
 			{
@@ -1421,8 +1419,8 @@ void FMeshDescription::FindPolygonPerimeter(TArrayView<const FTriangleID> Triang
 			if (PerimeterIndex != INDEX_NONE)
 			{
 				// If adding an edge which already exists, it must be an internal edge, so remove it again.
-				PerimeterEdges.RemoveAtSwap(PerimeterIndex, 1, false);
-				Indices.RemoveAtSwap(PerimeterIndex, 1, false);
+				PerimeterEdges.RemoveAtSwap(PerimeterIndex, 1, EAllowShrinking::No);
+				Indices.RemoveAtSwap(PerimeterIndex, 1, EAllowShrinking::No);
 			}
 			else
 			{
@@ -1616,9 +1614,9 @@ void FMeshDescription::CreatePolygonTriangles(const FPolygonID PolygonID, TArray
 	TArray<FVector3f> PolyVertexPositions;
 	int32 PolygonVertexCount = VertexInstanceIDs.Num();
 	{
-		PrevVertexNumbers.SetNumUninitialized(PolygonVertexCount, false);
-		NextVertexNumbers.SetNumUninitialized(PolygonVertexCount, false);
-		PolyVertexPositions.SetNumUninitialized(PolygonVertexCount, false);
+		PrevVertexNumbers.SetNumUninitialized(PolygonVertexCount, EAllowShrinking::No);
+		NextVertexNumbers.SetNumUninitialized(PolygonVertexCount, EAllowShrinking::No);
+		PolyVertexPositions.SetNumUninitialized(PolygonVertexCount, EAllowShrinking::No);
 
 		for (int32 VertexNumber = 0; VertexNumber < PolygonVertexCount; ++VertexNumber)
 		{

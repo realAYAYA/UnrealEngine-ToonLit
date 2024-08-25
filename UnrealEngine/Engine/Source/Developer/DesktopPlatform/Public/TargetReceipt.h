@@ -87,6 +87,9 @@ struct DESKTOPPLATFORM_API FTargetReceipt
 	/** All plugins that were either enabled or disabled via the target rules. */
 	TMap<FString, bool> PluginNameToEnabledState;
 
+	/** All plugins which are part of this target. */
+	TArray<FString> BuildPlugins;
+
 	/** Additional build properties passed through from the module rules */
 	TArray<FReceiptProperty> AdditionalProperties;
 

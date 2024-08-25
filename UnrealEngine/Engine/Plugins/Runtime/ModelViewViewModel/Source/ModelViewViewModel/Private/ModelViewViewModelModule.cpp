@@ -9,8 +9,10 @@
 
 void FModelViewViewModelModule::StartupModule()
 {
-	if (IConsoleVariable* CVarDefaultExecutionMode = IConsoleManager::Get().FindConsoleVariable(TEXT("MVVM.DefaultExecutionMode")))
+	IConsoleVariable* CVarDefaultExecutionMode = IConsoleManager::Get().FindConsoleVariable(TEXT("MVVM.DefaultExecutionMode"));
+	if (ensure(CVarDefaultExecutionMode))
 	{
+		HandleDefaultExecutionModeChanged(CVarDefaultExecutionMode);
 		CVarDefaultExecutionMode->OnChangedDelegate().AddRaw(this, &FModelViewViewModelModule::HandleDefaultExecutionModeChanged);
 	}
 }
@@ -28,13 +30,18 @@ void FModelViewViewModelModule::ShutdownModule()
 
 void FModelViewViewModelModule::HandleDefaultExecutionModeChanged(IConsoleVariable* Variable)
 {
-	EMVVMExecutionMode Value = (EMVVMExecutionMode)Variable->GetInt();
-	if (Value != EMVVMExecutionMode::Delayed
-		&& Value != EMVVMExecutionMode::Immediate
-		&& Value != EMVVMExecutionMode::Tick
-		&& Value != EMVVMExecutionMode::DelayedWhenSharedElseImmediate)
+	const int32 Value = Variable->GetInt();
+	switch(Value)
 	{
-		Variable->Set((int32)EMVVMExecutionMode::Immediate, (EConsoleVariableFlags)(Variable->GetFlags() & ECVF_SetByMask));
+	case (int32)EMVVMExecutionMode::Delayed:
+	case (int32)EMVVMExecutionMode::Immediate:
+	case (int32)EMVVMExecutionMode::Tick:
+	case (int32)EMVVMExecutionMode::DelayedWhenSharedElseImmediate:
+		break;
+	default:
+		ensureMsgf(false, TEXT("MVVM.DefaultExecutionMode default value is not a valid value."));
+		Variable->Set((int32)EMVVMExecutionMode::DelayedWhenSharedElseImmediate, (EConsoleVariableFlags)(Variable->GetFlags() & ECVF_SetByMask));
+		break;
 	}
 }
 

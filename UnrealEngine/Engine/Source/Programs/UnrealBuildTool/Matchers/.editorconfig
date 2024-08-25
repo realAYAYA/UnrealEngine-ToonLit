@@ -1,0 +1,21 @@
+# NOTE: Requires **VS2019 16.3** or later
+
+# EditorConfig is awesome:http://EditorConfig.org
+
+# Dotnet code style settings:
+[*.cs]
+
+# IDE0005: Using directive is unnecessary (Disabled for UBT due to mismatch in projects with implicit usings)
+dotnet_diagnostic.IDE0005.severity = silent 
+
+# IDE0018: Variable declaration can be inlined
+dotnet_diagnostic.IDE0018.severity = silent 
+
+# IDE0090: New expression can be simplified
+dotnet_diagnostic.IDE0090.severity = silent 
+
+# MA0009: Regular expressions should not be vulnerable to Denial of Service attacks
+dotnet_diagnostic.MA0009.severity = none
+
+# MA0051: Method is too long
+dotnet_diagnostic.MA0051.severity = none

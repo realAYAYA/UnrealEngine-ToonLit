@@ -21,6 +21,7 @@
 #include "EditorModeManager.h"
 #include "Sequencer/MovieSceneControlRigParameterSection.h"
 #include "Sequencer/MovieSceneControlRigSectionDetailsCustomization.h"
+#include "EditMode/ControlsProxyDetailCustomization.h"
 #include "EditMode/ControlRigEditModeCommands.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "ToolMenus.h"
@@ -38,12 +39,15 @@
 #include "Graph/ControlRigGraphPanelPinFactory.h"
 #include <Editor/ControlRigEditorCommands.h>
 #include "ControlRigHierarchyCommands.h"
+#include "ControlRigModularRigCommands.h"
 #include "Animation/AnimSequence.h"
 #include "Editor/ControlRigEditorEditMode.h"
 #include "ControlRigElementDetails.h"
+#include "ControlRigModuleDetails.h"
 #include "ControlRigCompilerDetails.h"
 #include "ControlRigDrawingDetails.h"
 #include "ControlRigAnimGraphDetails.h"
+#include "ControlRigBlueprintDetails.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "Sequencer/ControlRigParameterTrackEditor.h"
 #include "ActorFactories/ActorFactorySkeletalMesh.h"
@@ -61,7 +65,6 @@
 #include "ISequencer.h"
 #include "ILevelSequenceEditorToolkit.h"
 #include "ClassViewerModule.h"
-#include "ClassViewerFilter.h"
 #include "Editor.h"
 #include "LevelEditorViewport.h"
 #include "Animation/SkeletalMeshActor.h"
@@ -92,6 +95,8 @@
 #include "RigVMFunctions/Math/RigVMMathLibrary.h"
 #include "Constraints/ControlRigTransformableHandle.h"
 #include "Constraints/TransformConstraintChannelInterface.h"
+#include "Async/TaskGraphInterfaces.h"
+#include "AssetRegistry/IAssetRegistry.h"
 
 #define LOCTEXT_NAMESPACE "ControlRigEditorModule"
 
@@ -102,6 +107,7 @@ void FControlRigEditorModule::StartupModule()
 	FControlRigEditModeCommands::Register();
 	FControlRigEditorCommands::Register();
 	FControlRigHierarchyCommands::Register();
+	FControlRigModularRigCommands::Register();
 	FControlRigEditorStyle::Get();
 
 	EdGraphPanelPinFactory = MakeShared<FControlRigGraphPanelPinFactory>();
@@ -116,14 +122,131 @@ void FControlRigEditorModule::StartupModule()
 	ClassesToUnregisterOnShutdown.Add(UMovieSceneControlRigParameterSection::StaticClass()->GetFName());
 	PropertyEditorModule.RegisterCustomClassLayout(ClassesToUnregisterOnShutdown.Last(), FOnGetDetailCustomizationInstance::CreateStatic(&FMovieSceneControlRigSectionDetailsCustomization::MakeInstance));
 
+	ClassesToUnregisterOnShutdown.Add(UControlRigBlueprint::StaticClass()->GetFName());
+	PropertyEditorModule.RegisterCustomClassLayout(ClassesToUnregisterOnShutdown.Last(), FOnGetDetailCustomizationInstance::CreateStatic(&FControlRigBlueprintDetails::MakeInstance));
+
+	ClassesToUnregisterOnShutdown.Add(UControlRig::StaticClass()->GetFName());
+	PropertyEditorModule.RegisterCustomClassLayout(ClassesToUnregisterOnShutdown.Last(), FOnGetDetailCustomizationInstance::CreateStatic(&FRigModuleInstanceDetails::MakeInstance));
+
 	ClassesToUnregisterOnShutdown.Add(UControlRig::StaticClass()->GetFName());
 
+	// proxies
+	const FName PropertyEditorModuleName("PropertyEditor");
+	FPropertyEditorModule& PropertyModule = FModuleManager::GetModuleChecked<FPropertyEditorModule>(PropertyEditorModuleName);
+
+	ClassesToUnregisterOnShutdown.Add(UAnimDetailControlsProxyFloat::StaticClass()->GetFName());
+	PropertyEditorModule.RegisterCustomClassLayout(UAnimDetailControlsProxyFloat::StaticClass()->GetFName(), FOnGetDetailCustomizationInstance::CreateLambda([]() {
+		FName CategoryName = FName(TEXT("Float"));
+		return FAnimDetailProxyDetails::MakeInstance(CategoryName);
+		}));
+
+	{	
+		TSharedRef<FPropertySection> Section = RegisterPropertySection(PropertyModule, "AnimDetailControlsProxyFloat", "General", LOCTEXT("General", "General"));
+		Section->AddCategory("Attributes");
+	}
+
+	ClassesToUnregisterOnShutdown.Add(UAnimDetailControlsProxyInteger::StaticClass()->GetFName());
+	PropertyEditorModule.RegisterCustomClassLayout(UAnimDetailControlsProxyInteger::StaticClass()->GetFName(), FOnGetDetailCustomizationInstance::CreateLambda([]() {
+		FName CategoryName = FName(TEXT("Integer"));
+		return FAnimDetailProxyDetails::MakeInstance(CategoryName);
+		}));
+
+	{
+		TSharedRef<FPropertySection> Section = RegisterPropertySection(PropertyModule, "AnimDetailControlsProxyInteger", "General", LOCTEXT("General", "General"));
+		Section->AddCategory("Attributes");
+	}
+
+	ClassesToUnregisterOnShutdown.Add(UAnimDetailControlsProxyBool::StaticClass()->GetFName());
+	PropertyEditorModule.RegisterCustomClassLayout(UAnimDetailControlsProxyBool::StaticClass()->GetFName(), FOnGetDetailCustomizationInstance::CreateLambda([]() {
+		FName CategoryName = FName(TEXT("Bool"));
+		return FAnimDetailProxyDetails::MakeInstance(CategoryName);
+		}));
+
+	{
+		TSharedRef<FPropertySection> Section = RegisterPropertySection(PropertyModule, "AnimDetailControlsProxyBool", "General", LOCTEXT("General", "General"));
+		Section->AddCategory("Attributes");
+	}
+
+	ClassesToUnregisterOnShutdown.Add(UAnimDetailControlsProxyTransform::StaticClass()->GetFName());
+	PropertyEditorModule.RegisterCustomClassLayout(UAnimDetailControlsProxyTransform::StaticClass()->GetFName(), FOnGetDetailCustomizationInstance::CreateLambda([]() {
+		FName CategoryName = FName(TEXT("Transform"));
+		return FAnimDetailProxyDetails::MakeInstance(CategoryName);
+		}));
+
+	{
+		TSharedRef<FPropertySection> Section = RegisterPropertySection(PropertyModule, "AnimDetailControlsProxyTransform", "General", LOCTEXT("General", "General"));
+		Section->AddCategory("Attributes");
+	}
+
+	ClassesToUnregisterOnShutdown.Add(UAnimDetailControlsProxyLocation::StaticClass()->GetFName());
+	PropertyEditorModule.RegisterCustomClassLayout(UAnimDetailControlsProxyLocation::StaticClass()->GetFName(), FOnGetDetailCustomizationInstance::CreateLambda([]() {
+		FName CategoryName = FName(TEXT("Location"));
+		return FAnimDetailProxyDetails::MakeInstance(CategoryName);
+		}));
+
+	{
+		TSharedRef<FPropertySection> Section = RegisterPropertySection(PropertyModule, "AnimDetailControlsProxyLocation", "General", LOCTEXT("General", "General"));
+		Section->AddCategory("Attributes");
+	}
+
+	ClassesToUnregisterOnShutdown.Add(UAnimDetailControlsProxyRotation::StaticClass()->GetFName());
+	PropertyEditorModule.RegisterCustomClassLayout(UAnimDetailControlsProxyRotation::StaticClass()->GetFName(), FOnGetDetailCustomizationInstance::CreateLambda([]() {
+		FName CategoryName = FName(TEXT("Rotation"));
+		return FAnimDetailProxyDetails::MakeInstance(CategoryName);
+		}));
+
+	{
+		TSharedRef<FPropertySection> Section = RegisterPropertySection(PropertyModule, "AnimDetailControlsProxyRotation", "General", LOCTEXT("General", "General"));
+		Section->AddCategory("Attributes");
+	}
+
+	ClassesToUnregisterOnShutdown.Add(UAnimDetailControlsProxyScale::StaticClass()->GetFName());
+	PropertyEditorModule.RegisterCustomClassLayout(UAnimDetailControlsProxyScale::StaticClass()->GetFName(), FOnGetDetailCustomizationInstance::CreateLambda([]() {
+		FName CategoryName = FName(TEXT("Scale"));
+		return FAnimDetailProxyDetails::MakeInstance(CategoryName);
+		}));
+	{
+		TSharedRef<FPropertySection> Section = RegisterPropertySection(PropertyModule, "AnimDetailControlsProxyScale", "General", LOCTEXT("General", "General"));
+		Section->AddCategory("Attributes");
+	}
+
+	ClassesToUnregisterOnShutdown.Add(UAnimDetailControlsProxyVector2D::StaticClass()->GetFName());
+	PropertyEditorModule.RegisterCustomClassLayout(UAnimDetailControlsProxyVector2D::StaticClass()->GetFName(), FOnGetDetailCustomizationInstance::CreateLambda([]() {
+		FName CategoryName = FName(TEXT("Vector2D"));
+		return FAnimDetailProxyDetails::MakeInstance(CategoryName);
+		}));
+
+	{
+		TSharedRef<FPropertySection> Section = RegisterPropertySection(PropertyModule, "AnimDetailControlsProxyVector2D", "General", LOCTEXT("General", "General"));
+		Section->AddCategory("Attributes");
+	}
+	
 	// same as ClassesToUnregisterOnShutdown but for properties, there is none right now
 	PropertiesToUnregisterOnShutdown.Reset();
-
 	PropertiesToUnregisterOnShutdown.Add(FRigVMCompileSettings::StaticStruct()->GetFName());
 	PropertyEditorModule.RegisterCustomPropertyTypeLayout(PropertiesToUnregisterOnShutdown.Last(), FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FRigVMCompileSettingsDetails::MakeInstance));
 
+	PropertiesToUnregisterOnShutdown.Add(FAnimDetailProxyFloat::StaticStruct()->GetFName());
+	PropertyEditorModule.RegisterCustomPropertyTypeLayout(PropertiesToUnregisterOnShutdown.Last(), FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FAnimDetailValueCustomization::MakeInstance));
+
+	PropertiesToUnregisterOnShutdown.Add(FAnimDetailProxyInteger::StaticStruct()->GetFName());
+	PropertyEditorModule.RegisterCustomPropertyTypeLayout(PropertiesToUnregisterOnShutdown.Last(), FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FAnimDetailValueCustomization::MakeInstance));
+
+	PropertiesToUnregisterOnShutdown.Add(FAnimDetailProxyBool::StaticStruct()->GetFName());
+	PropertyEditorModule.RegisterCustomPropertyTypeLayout(PropertiesToUnregisterOnShutdown.Last(), FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FAnimDetailValueCustomization::MakeInstance));
+
+	PropertiesToUnregisterOnShutdown.Add(FAnimDetailProxyVector2D::StaticStruct()->GetFName());
+	PropertyEditorModule.RegisterCustomPropertyTypeLayout(PropertiesToUnregisterOnShutdown.Last(), FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FAnimDetailValueCustomization::MakeInstance));
+
+	PropertiesToUnregisterOnShutdown.Add(FAnimDetailProxyLocation::StaticStruct()->GetFName());
+	PropertyEditorModule.RegisterCustomPropertyTypeLayout(PropertiesToUnregisterOnShutdown.Last(), FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FAnimDetailValueCustomization::MakeInstance));
+
+	PropertiesToUnregisterOnShutdown.Add(FAnimDetailProxyRotation::StaticStruct()->GetFName());
+	PropertyEditorModule.RegisterCustomPropertyTypeLayout(PropertiesToUnregisterOnShutdown.Last(), FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FAnimDetailValueCustomization::MakeInstance));
+
+	PropertiesToUnregisterOnShutdown.Add(FAnimDetailProxyScale::StaticStruct()->GetFName());
+	PropertyEditorModule.RegisterCustomPropertyTypeLayout(PropertiesToUnregisterOnShutdown.Last(), FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FAnimDetailValueCustomization::MakeInstance));
+	
 	PropertiesToUnregisterOnShutdown.Add(FRigVMPythonSettings::StaticStruct()->GetFName());
 	PropertyEditorModule.RegisterCustomPropertyTypeLayout(PropertiesToUnregisterOnShutdown.Last(), FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FControlRigPythonLogDetails::MakeInstance));
 
@@ -144,6 +267,9 @@ void FControlRigEditorModule::StartupModule()
 
 	PropertiesToUnregisterOnShutdown.Add(StaticEnum<ERigControlTransformChannel>()->GetFName());
 	PropertyEditorModule.RegisterCustomPropertyTypeLayout(PropertiesToUnregisterOnShutdown.Last(), FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FRigControlTransformChannelDetails::MakeInstance));
+
+	PropertiesToUnregisterOnShutdown.Add(FRigConnectionRuleStash::StaticStruct()->GetFName());
+	PropertyEditorModule.RegisterCustomPropertyTypeLayout(PropertiesToUnregisterOnShutdown.Last(), FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FRigConnectionRuleDetails::MakeInstance));
 
 	FRigBaseElementDetails::RegisterSectionMappings(PropertyEditorModule);
 
@@ -182,6 +308,13 @@ void FControlRigEditorModule::StartupModule()
 		FSlateIcon(FRigVMEditorStyle::Get().GetStyleSetName(), "RigVMEditMode", "RigVMEditMode.Small"),
 		false,
 		8500);
+
+	FEditorModeRegistry::Get().RegisterMode<FModularRigEditorEditMode>(
+		FModularRigEditorEditMode::ModeName,
+		NSLOCTEXT("RiggingModeToolkit", "DisplayName", "Rigging"),
+		FSlateIcon(FRigVMEditorStyle::Get().GetStyleSetName(), "RigVMEditMode", "RigVMEditMode.Small"),
+		false,
+		9000);
 
 	ICurveEditorModule& CurveEditorModule = FModuleManager::LoadModuleChecked<ICurveEditorModule>("CurveEditor");
 	FControlRigSpaceChannelCurveModel::ViewID = CurveEditorModule.RegisterView(FOnCreateCurveEditorView::CreateStatic(
@@ -225,6 +358,7 @@ void FControlRigEditorModule::ShutdownModule()
 	//UThumbnailManager::Get().UnregisterCustomRenderer(UControlRigBlueprint::StaticClass());
 	//UActorFactorySkeletalMesh::UnregisterDelegatesForAssetClass(UControlRigBlueprint::StaticClass());
 
+	FEditorModeRegistry::Get().UnregisterMode(FModularRigEditorEditMode::ModeName);
 	FEditorModeRegistry::Get().UnregisterMode(FControlRigEditorEditMode::ModeName);
 	FEditorModeRegistry::Get().UnregisterMode(FControlRigEditMode::ModeName);
 
@@ -270,6 +404,8 @@ void FControlRigEditorModule::ShutdownModule()
 		}
 	}
 	WorkflowHandles.Reset();
+
+	UnregisterPropertySectionMappings();
 }
 
 UClass* FControlRigEditorModule::GetRigVMBlueprintClass() const
@@ -277,19 +413,46 @@ UClass* FControlRigEditorModule::GetRigVMBlueprintClass() const
 	return UControlRigBlueprint::StaticClass();
 }
 
-void FControlRigEditorModule::GetNodeContextMenuActions(URigVMBlueprint* RigVMBlueprint,
+TSharedRef<FPropertySection> FControlRigEditorModule::RegisterPropertySection(FPropertyEditorModule& PropertyModule, FName ClassName, FName SectionName, FText DisplayName)
+{
+	TSharedRef<FPropertySection> PropertySection = PropertyModule.FindOrCreateSection(ClassName, SectionName, DisplayName);
+	RegisteredPropertySections.Add(ClassName, SectionName);
+
+	return PropertySection;
+}
+
+void FControlRigEditorModule::UnregisterPropertySectionMappings()
+{
+	const FName PropertyEditorModuleName("PropertyEditor");
+	FPropertyEditorModule* PropertyModule = FModuleManager::GetModulePtr<FPropertyEditorModule>(PropertyEditorModuleName);
+
+	if (!PropertyModule)
+	{
+		return;
+	}
+
+	for (TMultiMap<FName, FName>::TIterator PropertySectionIterator = RegisteredPropertySections.CreateIterator(); PropertySectionIterator; ++PropertySectionIterator)
+	{
+		PropertyModule->RemoveSection(PropertySectionIterator->Key, PropertySectionIterator->Value);
+		PropertySectionIterator.RemoveCurrent();
+	}
+
+	RegisteredPropertySections.Empty();
+}
+
+void FControlRigEditorModule::GetNodeContextMenuActions(IRigVMClientHost* RigVMClientHost,
 	const URigVMEdGraphNode* EdGraphNode, URigVMNode* ModelNode, UToolMenu* Menu) const
 {
-	FRigVMEditorModule::GetNodeContextMenuActions(RigVMBlueprint, EdGraphNode, ModelNode, Menu);
+	FRigVMEditorModule::GetNodeContextMenuActions(RigVMClientHost, EdGraphNode, ModelNode, Menu);
 
-	UControlRigBlueprint* ControlRigBlueprint = Cast<UControlRigBlueprint>(RigVMBlueprint);
+	UControlRigBlueprint* ControlRigBlueprint = Cast<UControlRigBlueprint>(RigVMClientHost);
 	if(ControlRigBlueprint == nullptr)
 	{
 		return;
 	}
 
-	URigVMGraph* Model = RigVMBlueprint->GetModel(EdGraphNode->GetGraph());
-	URigVMController* Controller = RigVMBlueprint->GetController(Model);
+	URigVMGraph* Model = RigVMClientHost->GetRigVMClient()->GetModel(EdGraphNode->GetGraph());
+	URigVMController* Controller = RigVMClientHost->GetRigVMClient()->GetController(Model);
 
 	TArray<FName> SelectedNodeNames = Model->GetSelectNodes();
 	SelectedNodeNames.AddUnique(ModelNode->GetFName());
@@ -468,6 +631,8 @@ void FControlRigEditorModule::GetNodeContextMenuActions(URigVMBlueprint* RigVMBl
 		}
 	}
 
+	GetDirectManipulationMenuActions(RigVMClientHost, ModelNode, nullptr, Menu);
+
 	if (RigElementsToSelect.Num() > 0)
 	{
 		FToolMenuSection& Section = Menu->AddSection("RigVMEditorContextMenuHierarchy", LOCTEXT("HierarchyHeader", "Hierarchy"));
@@ -611,30 +776,165 @@ void FControlRigEditorModule::GetNodeContextMenuActions(URigVMBlueprint* RigVMBl
 	}
 }
 
-void FControlRigEditorModule::GetPinContextMenuActions(URigVMBlueprint* RigVMBlueprint, const UEdGraphPin* EdGraphPin, URigVMPin* ModelPin, UToolMenu* Menu) const
+void FControlRigEditorModule::GetPinContextMenuActions(IRigVMClientHost* RigVMClientHost, const UEdGraphPin* EdGraphPin, URigVMPin* ModelPin, UToolMenu* Menu) const
 {
-	FRigVMEditorModule::GetPinContextMenuActions(RigVMBlueprint, EdGraphPin, ModelPin, Menu);
+	FRigVMEditorModule::GetPinContextMenuActions(RigVMClientHost, EdGraphPin, ModelPin, Menu);
+	GetDirectManipulationMenuActions(RigVMClientHost, ModelPin->GetNode(), ModelPin, Menu);
+}
 
+void FControlRigEditorModule::GetDirectManipulationMenuActions(IRigVMClientHost* RigVMClientHost, URigVMNode* InNode, URigVMPin* ModelPin, UToolMenu* Menu) const
+{
     // Add direct manipulation context menu entries
-	if(UControlRigBlueprint* ControlRigBlueprint = Cast<UControlRigBlueprint>(RigVMBlueprint))
+	if(UControlRigBlueprint* ControlRigBlueprint = Cast<UControlRigBlueprint>(RigVMClientHost))
 	{
-		if ((ModelPin->GetCPPType() == TEXT("FVector") ||
-			 ModelPin->GetCPPType() == TEXT("FQuat") ||
-			 ModelPin->GetCPPType() == TEXT("FTransform")) &&
-			(ModelPin->GetDirection() == ERigVMPinDirection::Input ||
-			 ModelPin->GetDirection() == ERigVMPinDirection::IO) &&
-			 ModelPin->GetPinForLink()->GetRootPin()->GetSourceLinks(true).Num() == 0)
+		UControlRig* DebuggedRig = Cast<UControlRig>(ControlRigBlueprint->GetObjectBeingDebugged());
+		if(DebuggedRig == nullptr)
 		{
-			FToolMenuSection& Section = Menu->AddSection("RigVMEditorContextMenuControlPin", LOCTEXT("ControlPin", "Direct Manipulation"));
-			Section.AddMenuEntry(
-				"DirectManipControlPin",
-				LOCTEXT("DirectManipControlPin", "Control Pin Value"),
-				LOCTEXT("DirectManipControlPin_Tooltip", "Configures the pin for direct interaction in the viewport"),
-				FSlateIcon(),
-				FUIAction(FExecuteAction::CreateLambda([ControlRigBlueprint, ModelPin]() {
-					ControlRigBlueprint->AddTransientControl(ModelPin);
-				})
-			));
+			return;
+		}
+		
+		if(const URigVMUnitNode* UnitNode = Cast<URigVMUnitNode>(InNode))
+		{
+			if(!UnitNode->IsPartOfRuntime(DebuggedRig))
+			{
+				return;
+			}
+			
+			const UScriptStruct* ScriptStruct = UnitNode->GetScriptStruct();
+			if(ScriptStruct == nullptr)
+			{
+				return;
+			}
+
+			TSharedPtr<FStructOnScope> NodeInstance = UnitNode->ConstructStructInstance(false);
+			if(!NodeInstance.IsValid() || !NodeInstance->IsValid())
+			{
+				return;
+			}
+
+			const FRigUnit* UnitInstance = UControlRig::GetRigUnitInstanceFromScope(NodeInstance);
+			TArray<FRigDirectManipulationTarget> Targets;
+			if(UnitInstance->GetDirectManipulationTargets(UnitNode, NodeInstance, DebuggedRig->GetHierarchy(), Targets, nullptr))
+			{
+				if(ModelPin)
+				{
+					Targets.RemoveAll([ModelPin, UnitNode, UnitInstance](const FRigDirectManipulationTarget& Target) -> bool
+					{
+						const TArray<const URigVMPin*> AffectedPins = UnitInstance->GetPinsForDirectManipulation(UnitNode, Target);
+						return !AffectedPins.Contains(ModelPin);
+					});
+				}
+
+				if(!Targets.IsEmpty())
+				{
+					FToolMenuSection& Section = Menu->AddSection("RigVMEditorContextMenuControlNode", LOCTEXT("ControlNodeDirectManipulation", "Direct Manipulation"));
+
+					bool bHasPosition = false;
+					bool bHasRotation = false;
+					bool bHasScale = false;
+					
+					for(const FRigDirectManipulationTarget& Target : Targets)
+					{
+						auto IsSliced = [UnitNode]() -> bool
+						{
+							return UnitNode->IsWithinLoop();
+						};
+						
+						auto HasNoUnconstrainedAffectedPin = [NodeInstance, UnitNode, Target]() -> bool
+						{
+							const FRigUnit* UnitInstance = UControlRig::GetRigUnitInstanceFromScope(NodeInstance);
+							const TArray<const URigVMPin*> AffectedPins = UnitInstance->GetPinsForDirectManipulation(UnitNode, Target);
+
+							int32 NumAffectedPinsWithRootLinks = 0;
+							for(const URigVMPin* AffectedPin : AffectedPins)
+							{
+								if(!AffectedPin->GetRootPin()->GetSourceLinks().IsEmpty())
+								{
+									NumAffectedPinsWithRootLinks++;
+								}
+							}
+							return NumAffectedPinsWithRootLinks == AffectedPins.Num();
+						};
+
+						FText Suffix;
+						static const FText SuffixPosition = LOCTEXT("DirectManipulationPosition", " (W)"); 
+						static const FText SuffixRotation = LOCTEXT("DirectManipulationRotation", " (E)"); 
+						static const FText SuffixScale = LOCTEXT("DirectManipulationScale", " (R)"); 
+						TSharedPtr< const FUICommandInfo > CommandInfo;
+						if(!CommandInfo.IsValid() && !bHasPosition)
+						{
+							if(Target.ControlType == ERigControlType::EulerTransform || Target.ControlType == ERigControlType::Position)
+							{
+								CommandInfo = FControlRigEditorCommands::Get().RequestDirectManipulationPosition;
+								Suffix = SuffixPosition;
+								bHasPosition = true;
+							}
+						}
+						if(!CommandInfo.IsValid() && !bHasRotation)
+						{
+							if(Target.ControlType == ERigControlType::EulerTransform || Target.ControlType == ERigControlType::Rotator)
+							{
+								CommandInfo = FControlRigEditorCommands::Get().RequestDirectManipulationRotation;
+								Suffix = SuffixRotation;
+								bHasRotation = true;
+							}
+						}
+						if(!CommandInfo.IsValid() && !bHasScale)
+						{
+							if(Target.ControlType == ERigControlType::EulerTransform)
+							{
+								CommandInfo = FControlRigEditorCommands::Get().RequestDirectManipulationScale;
+								Suffix = SuffixScale;
+								bHasScale = true;
+							}
+						}
+
+						const FText Label = FText::Format(LOCTEXT("ControlNodeLabelFormat", "Manipulate {0}{1}"), FText::FromString(Target.Name), Suffix);
+						TAttribute<FText> ToolTipAttribute = TAttribute<FText>::CreateLambda([HasNoUnconstrainedAffectedPin, IsSliced, Target]() -> FText
+						{
+							if(HasNoUnconstrainedAffectedPin())
+							{
+								return FText::Format(LOCTEXT("ControlNodeLabelFormat_Tooltip_FullyConstrained", "The value of {0} cannot be manipulated, its pins have links fully constraining it."), FText::FromString(Target.Name));
+							}
+							if(IsSliced())
+							{
+								return FText::Format(LOCTEXT("ControlNodeLabelFormat_Tooltip_Sliced", "The value of {0} cannot be manipulated, the node is linked to a loop."), FText::FromString(Target.Name));
+							}
+							return FText::Format(LOCTEXT("ControlNodeLabelFormat_Tooltip", "Manipulate the value of {0} interactively"), FText::FromString(Target.Name));
+						});
+
+						FToolMenuEntry& MenuEntry = Section.AddMenuEntry(
+							*Target.Name,
+							Label,
+							ToolTipAttribute,
+							FSlateIcon(),
+							FUIAction(FExecuteAction::CreateLambda([ControlRigBlueprint, UnitNode, Target]() {
+
+								// disable literal folding for the moment
+								if(ControlRigBlueprint->VMCompileSettings.ASTSettings.bFoldLiterals)
+								{
+									ControlRigBlueprint->VMCompileSettings.ASTSettings.bFoldLiterals = false;
+									ControlRigBlueprint->RecompileVM();
+								}
+
+								// run the task after a bit so that the rig has the opportunity to run first
+								FFunctionGraphTask::CreateAndDispatchWhenReady([ControlRigBlueprint, UnitNode, Target]()
+								{
+									ControlRigBlueprint->AddTransientControl(UnitNode, Target);
+								}, TStatId(), NULL, ENamedThreads::GameThread);
+							}),
+							FCanExecuteAction::CreateLambda([HasNoUnconstrainedAffectedPin, IsSliced]() -> bool
+							{
+								if(HasNoUnconstrainedAffectedPin() || IsSliced())
+								{
+									return false;
+								}
+								return true;
+							})
+						));
+					}
+				}
+			}
 		}
 	}
 }
@@ -743,126 +1043,6 @@ TSharedRef< SWidget > FControlRigEditorModule::GenerateAnimationMenu(TWeakPtr<IA
 						LOCTEXT("BakeToControlRig", "Bake To Control Rig"), NSLOCTEXT("AnimationModeToolkit", "BakeToControlRigTooltip", "This Control Rig will Drive This Animation."),
 						FNewMenuDelegate::CreateLambda([this, AnimSequence, SkeletalMesh, Skeleton](FMenuBuilder& InSubMenuBuilder)
 							{
-								//todo move to .h for ue5
-								class FControlRigClassFilter : public IClassViewerFilter
-								{
-								public:
-									FControlRigClassFilter(bool bInCheckSkeleton, bool bInCheckAnimatable, bool bInCheckInversion, USkeleton* InSkeleton) :
-										bFilterAssetBySkeleton(bInCheckSkeleton),
-										bFilterExposesAnimatableControls(bInCheckAnimatable),
-										bFilterInversion(bInCheckInversion),
-										AssetRegistry(FModuleManager::GetModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get())
-									{
-										if (InSkeleton)
-										{
-											SkeletonName = FAssetData(InSkeleton).GetExportTextName();
-										}
-									}
-									bool bFilterAssetBySkeleton;
-									bool bFilterExposesAnimatableControls;
-									bool bFilterInversion;
-
-									FString SkeletonName;
-									const IAssetRegistry& AssetRegistry;
-
-									bool MatchesFilter(const FAssetData& AssetData)
-									{
-										bool bExposesAnimatableControls = AssetData.GetTagValueRef<bool>(TEXT("bExposesAnimatableControls"));
-										if (bFilterExposesAnimatableControls == true && bExposesAnimatableControls == false)
-										{
-											return false;
-										}
-										if (bFilterInversion)
-										{
-											bool bHasInversion = false;
-											FAssetDataTagMapSharedView::FFindTagResult Tag = AssetData.TagsAndValues.FindTag(TEXT("SupportedEventNames"));
-											if (Tag.IsSet())
-											{
-												FString EventString = FRigUnit_InverseExecution::EventName.ToString();
-												FString OldEventString = FString(TEXT("Inverse"));
-												TArray<FString> SupportedEventNames;
-												Tag.GetValue().ParseIntoArray(SupportedEventNames, TEXT(","), true);
-
-												for (const FString& Name : SupportedEventNames)
-												{
-													if (Name.Contains(EventString) || Name.Contains(OldEventString))
-													{
-														bHasInversion = true;
-														break;
-													}
-												}
-												if (bHasInversion == false)
-												{
-													return false;
-												}
-											}
-										}
-										if (bFilterAssetBySkeleton)
-										{
-											FString PreviewSkeletalMesh = AssetData.GetTagValueRef<FString>(TEXT("PreviewSkeletalMesh"));
-											if (PreviewSkeletalMesh.Len() > 0)
-											{
-												FAssetData SkelMeshData = AssetRegistry.GetAssetByObjectPath(FSoftObjectPath(PreviewSkeletalMesh));
-												FString PreviewSkeleton = SkelMeshData.GetTagValueRef<FString>(TEXT("Skeleton"));
-												if (PreviewSkeleton == SkeletonName)
-												{
-													return true;
-												}
-											}
-											FString PreviewSkeleton = AssetData.GetTagValueRef<FString>(TEXT("PreviewSkeleton"));
-											if (PreviewSkeleton == SkeletonName)
-											{
-												return true;
-											}
-											FString SourceHierarchyImport = AssetData.GetTagValueRef<FString>(TEXT("SourceHierarchyImport"));
-											if (SourceHierarchyImport == SkeletonName)
-											{
-												return true;
-											}
-											FString SourceCurveImport = AssetData.GetTagValueRef<FString>(TEXT("SourceCurveImport"));
-											if (SourceCurveImport == SkeletonName)
-											{
-												return true;
-											}
-											return false;
-										}
-										return true;
-
-									}
-									bool IsClassAllowed(const FClassViewerInitializationOptions& InInitOptions, const UClass* InClass, TSharedRef< FClassViewerFilterFuncs > InFilterFuncs) override
-									{
-										if (InClass)
-										{
-											const bool bChildOfObjectClass = InClass->IsChildOf(UControlRig::StaticClass());
-											const bool bMatchesFlags = !InClass->HasAnyClassFlags(CLASS_Hidden | CLASS_HideDropDown | CLASS_Deprecated | CLASS_Abstract);
-											const bool bNotNative = !InClass->IsNative();
-
-											if (bChildOfObjectClass && bMatchesFlags && bNotNative)
-											{
-												FAssetData AssetData(InClass);
-												return MatchesFilter(AssetData);
-											}
-										}
-										return false;
-									}
-
-									virtual bool IsUnloadedClassAllowed(const FClassViewerInitializationOptions& InInitOptions, const TSharedRef< const IUnloadedBlueprintData > InUnloadedClassData, TSharedRef< FClassViewerFilterFuncs > InFilterFuncs) override
-									{
-										const bool bChildOfObjectClass = InUnloadedClassData->IsChildOf(UControlRig::StaticClass());
-										const bool bMatchesFlags = !InUnloadedClassData->HasAnyClassFlags(CLASS_Hidden | CLASS_HideDropDown | CLASS_Deprecated | CLASS_Abstract);
-										if (bChildOfObjectClass && bMatchesFlags)
-										{
-											FString GeneratedClassPathString = InUnloadedClassData->GetClassPathName().ToString();
-											FString BlueprintPath = GeneratedClassPathString.LeftChop(2); // Chop off _C
-											FAssetData AssetData = AssetRegistry.GetAssetByObjectPath(FSoftObjectPath(BlueprintPath));
-											return MatchesFilter(AssetData);
-
-										}
-										return false;
-									}
-
-								};
-
 								FClassViewerInitializationOptions Options;
 								Options.bShowUnloadedBlueprints = true;
 								Options.NameTypeToDisplay = EClassViewerNameTypeToDisplay::DisplayName;
@@ -1049,12 +1229,13 @@ void FControlRigEditorModule::BakeToControlRig(UClass* ControlRigClass, UAnimSeq
 			
 				FBakeToControlDelegate BakeCallback = FBakeToControlDelegate::CreateLambda([this, WeakSequencer, LevelSequence, 
 					AnimSequence, MovieScene, ControlRig, ParamSection,ActorTrackGuid, SkelMeshComp]
-				(bool bKeyReduce, float KeyReduceTolerance)
+				(bool bKeyReduce, float KeyReduceTolerance, bool bResetControls)
 				{
 					if (ParamSection)
 					{
+						EMovieSceneKeyInterpolation DefaultInterpolation = WeakSequencer.Pin()->GetKeyInterpolation();
 						ParamSection->LoadAnimSequenceIntoThisSection(AnimSequence, MovieScene, SkelMeshComp, bKeyReduce,
-							KeyReduceTolerance);
+							KeyReduceTolerance, bResetControls, FFrameNumber(0), DefaultInterpolation);
 					}
 					WeakSequencer.Pin()->EmptySelection();
 					WeakSequencer.Pin()->SelectSection(ParamSection);
@@ -1285,6 +1466,149 @@ TSharedRef<IControlRigEditor> FControlRigEditorModule::CreateControlRigEditor(co
 	TSharedRef< FControlRigEditor > NewControlRigEditor(new FControlRigEditor());
 	NewControlRigEditor->InitRigVMEditor(Mode, InitToolkitHost, InBlueprint);
 	return NewControlRigEditor;
+}
+
+FControlRigClassFilter::FControlRigClassFilter(bool bInCheckSkeleton, bool bInCheckAnimatable, bool bInCheckInversion, USkeleton* InSkeleton) :	bFilterAssetBySkeleton(bInCheckSkeleton),
+	bFilterExposesAnimatableControls(bInCheckAnimatable),
+	bFilterInversion(bInCheckInversion),
+	Skeleton(InSkeleton),
+	AssetRegistry(FModuleManager::GetModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get())
+{
+}
+
+bool FControlRigClassFilter::MatchesFilter(const FAssetData& AssetData)
+{
+	const bool bExposesAnimatableControls = AssetData.GetTagValueRef<bool>(TEXT("bExposesAnimatableControls"));
+	if (bFilterExposesAnimatableControls == true && bExposesAnimatableControls == false)
+	{
+		return false;
+	}
+	if (bFilterInversion)
+	{		
+		FAssetDataTagMapSharedView::FFindTagResult Tag = AssetData.TagsAndValues.FindTag(TEXT("SupportedEventNames"));
+		if (Tag.IsSet())
+		{
+			bool bHasInversion = false;
+			FString EventString = FRigUnit_InverseExecution::EventName.ToString();
+			FString OldEventString = FString(TEXT("Inverse"));
+			TArray<FString> SupportedEventNames;
+			Tag.GetValue().ParseIntoArray(SupportedEventNames, TEXT(","), true);
+
+			for (const FString& Name : SupportedEventNames)
+			{
+				if (Name.Contains(EventString) || Name.Contains(OldEventString))
+				{
+					bHasInversion = true;
+					break;
+				}
+			}
+			if (bHasInversion == false)
+			{
+				return false;
+			}
+		}
+	}
+	if (bFilterAssetBySkeleton)
+	{
+		FString SkeletonName;
+		if (Skeleton)
+		{
+			SkeletonName = FAssetData(Skeleton).GetExportTextName();
+		}
+		FString PreviewSkeletalMesh = AssetData.GetTagValueRef<FString>(TEXT("PreviewSkeletalMesh"));
+		if (PreviewSkeletalMesh.Len() > 0)
+		{
+			FAssetData SkelMeshData = AssetRegistry.GetAssetByObjectPath(FSoftObjectPath(PreviewSkeletalMesh));
+			FString PreviewSkeleton = SkelMeshData.GetTagValueRef<FString>(TEXT("Skeleton"));
+			if (PreviewSkeleton == SkeletonName)
+			{
+				return true;
+			}
+			else if(Skeleton)
+			{
+				if (Skeleton->IsCompatibleForEditor(PreviewSkeleton))
+				{
+					return true;
+				}
+			}
+		}
+		FString PreviewSkeleton = AssetData.GetTagValueRef<FString>(TEXT("PreviewSkeleton"));
+		if (PreviewSkeleton == SkeletonName)
+		{
+			return true;
+		}
+		else if (Skeleton)
+		{
+			if (Skeleton->IsCompatibleForEditor(PreviewSkeleton))
+			{
+				return true;
+			}
+		}
+		FString SourceHierarchyImport = AssetData.GetTagValueRef<FString>(TEXT("SourceHierarchyImport"));
+		if (SourceHierarchyImport == SkeletonName)
+		{
+			return true;
+		}
+		else if (Skeleton)
+		{
+			if (Skeleton->IsCompatibleForEditor(SourceHierarchyImport))
+			{
+				return true;
+			}
+		}
+		FString SourceCurveImport = AssetData.GetTagValueRef<FString>(TEXT("SourceCurveImport"));
+		if (SourceCurveImport == SkeletonName)
+		{
+			return true;
+		}
+		else if (Skeleton)
+		{
+			if (Skeleton->IsCompatibleForEditor(SourceCurveImport))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+	return true;
+}
+
+bool FControlRigClassFilter::IsClassAllowed(const FClassViewerInitializationOptions& InInitOptions, const UClass* InClass, TSharedRef< FClassViewerFilterFuncs > InFilterFuncs) 
+{
+	if(InClass)
+	{
+		const bool bChildOfObjectClass = InClass->IsChildOf(UControlRig::StaticClass());
+		const bool bMatchesFlags = !InClass->HasAnyClassFlags(CLASS_Hidden | CLASS_HideDropDown | CLASS_Deprecated | CLASS_Abstract);
+		const bool bNotNative = !InClass->IsNative();
+
+		// Allow any class contained in the extra picker common classes array
+		if (InInitOptions.ExtraPickerCommonClasses.Contains(InClass))
+		{
+			return true;
+		}
+			
+		if (bChildOfObjectClass && bMatchesFlags && bNotNative)
+		{
+			const FAssetData AssetData(InClass);
+			return MatchesFilter(AssetData);
+		}
+	}
+	return false;
+}
+
+bool FControlRigClassFilter::IsUnloadedClassAllowed(const FClassViewerInitializationOptions& InInitOptions, const TSharedRef< const IUnloadedBlueprintData > InUnloadedClassData, TSharedRef< FClassViewerFilterFuncs > InFilterFuncs)
+{
+	const bool bChildOfObjectClass = InUnloadedClassData->IsChildOf(UControlRig::StaticClass());
+	const bool bMatchesFlags = !InUnloadedClassData->HasAnyClassFlags(CLASS_Hidden | CLASS_HideDropDown | CLASS_Deprecated | CLASS_Abstract);
+	if (bChildOfObjectClass && bMatchesFlags)
+	{
+		const FString GeneratedClassPathString = InUnloadedClassData->GetClassPathName().ToString();
+		const FString BlueprintPath = GeneratedClassPathString.LeftChop(2); // Chop off _C
+		const FAssetData AssetData = AssetRegistry.GetAssetByObjectPath(FSoftObjectPath(BlueprintPath));
+		return MatchesFilter(AssetData);
+
+	}
+	return false;
 }
 
 IMPLEMENT_MODULE(FControlRigEditorModule, ControlRigEditor)

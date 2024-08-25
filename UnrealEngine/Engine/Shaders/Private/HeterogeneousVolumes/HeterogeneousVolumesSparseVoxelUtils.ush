@@ -34,10 +34,10 @@ FVoxelData DecodeVoxelData(FVoxelDataPacked VoxelDataPacked, uint3 VolumeResolut
 	VoxelData.MipLevel = VoxelDataPacked.MipLevel;
 
 	// TODO: Morton Order
-	uint3 VolumeResolution = VolumeResolutionAtMip0 >> VoxelData.MipLevel;
-	VoxelData.VoxelIndex.x = (VoxelDataPacked.LinearIndex % (VolumeResolution.x * VolumeResolution.y)) % VolumeResolution.x;
-	VoxelData.VoxelIndex.y = (VoxelDataPacked.LinearIndex % (VolumeResolution.x * VolumeResolution.y)) / VolumeResolution.x;
-	VoxelData.VoxelIndex.z = VoxelDataPacked.LinearIndex / (VolumeResolution.x * VolumeResolution.y);
+	uint3 VolumeRes = VolumeResolutionAtMip0 >> VoxelData.MipLevel;
+	VoxelData.VoxelIndex.x = (VoxelDataPacked.LinearIndex % (VolumeRes.x * VolumeRes.y)) % VolumeRes.x;
+	VoxelData.VoxelIndex.y = (VoxelDataPacked.LinearIndex % (VolumeRes.x * VolumeRes.y)) / VolumeRes.x;
+	VoxelData.VoxelIndex.z = VoxelDataPacked.LinearIndex / (VolumeRes.x * VolumeRes.y);
 
 	return VoxelData;
 }

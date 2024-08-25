@@ -3,6 +3,7 @@
 #include "DataValidationModule.h"
 
 #include "AssetRegistry/ARFilter.h"
+#include "AssetRegistry/AssetDataToken.h"
 #include "UObject/ObjectSaveContext.h"
 
 #include "Editor.h"
@@ -11,11 +12,15 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Misc/MessageDialog.h"
 #include "DataValidationCommandlet.h"
+#include "EditorValidatorBase.h"
 #include "Elements/Framework/TypedElementSelectionSet.h"
+#include "Logging/MessageLog.h"
+#include "UObject/ICookInfo.h"
 
 #include "ContentBrowserMenuContexts.h"
 #include "LevelEditorMenuContext.h"
 
+#include "EditorValidatorHelpers.h"
 #include "EditorValidatorSubsystem.h"
 #include "ISettingsModule.h"
 #include "Algo/RemoveIf.h"
@@ -41,6 +46,8 @@ class FDataValidationModule : public IDataValidationModule
 private:
 	void OnPackageSaved(const FString& PackageFileName, UPackage* Package, FObjectPostSaveContext ObjectSaveContext);
 
+	EDataValidationResult OnValidateSourcePackageDuringCook(UPackage* Package, FDataValidationContext& ValidationContext);
+
 	// Adds Asset and any assets it depends on to the set DependentAssets
 	void FindAssetDependencies(const FAssetRegistryModule& AssetRegistryModule, const FAssetData& Asset, TSet<FAssetData>& DependentAssets);
 
@@ -53,6 +60,8 @@ IMPLEMENT_MODULE(FDataValidationModule, DataValidation)
 
 void FDataValidationModule::StartupModule()
 {	
+	UE::Cook::FDelegates::ValidateSourcePackage.BindRaw(this, &FDataValidationModule::OnValidateSourcePackageDuringCook);
+
 	if (!IsRunningCommandlet() && !IsRunningGame() && FSlateApplication::IsInitialized())
 	{
 		// add the File->DataValidation menu subsection
@@ -72,6 +81,8 @@ void FDataValidationModule::StartupModule()
 
 void FDataValidationModule::ShutdownModule()
 {
+	UE::Cook::FDelegates::ValidateSourcePackage.Unbind();
+
 	if (!IsRunningCommandlet() && !IsRunningGame() && !IsRunningDedicatedServer())
 	{
 		// remove menu extension
@@ -113,6 +124,16 @@ void FDataValidationModule::RegisterMenus()
 					}
 					return true;
 				});
+				FAssetRegistryModule& AssetRegistryModule = FModuleManager::GetModuleChecked<FAssetRegistryModule>("AssetRegistry");
+				IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+				for (FAssetData& AssetData : SelectedActorAssets)
+				{
+					FAssetData DiskAssetData = AssetRegistry.GetAssetByObjectPath(AssetData.GetSoftObjectPath(), true);
+					if (DiskAssetData.IsValid())
+					{
+						AssetData = MoveTemp(DiskAssetData);
+					}
+				}
 				ValidateAssets(SelectedActorAssets, false, EDataValidationUsecase::Manual);
 			}
 		});
@@ -297,6 +318,7 @@ void FDataValidationModule::ValidateAssets(const TArray<FAssetData>& SelectedAss
 		Settings.bSkipExcludedDirectories = false;
 		Settings.bShowIfNoFailures = true;
 		Settings.ValidationUsecase = InValidationUsecase;
+		Settings.MessageLogPageTitle = LOCTEXT("ValidateSelectedAssets", "Validate Selected Assets");
 
 		EditorValidationSubsystem->ValidateAssetsWithSettings(bValidateDependencies ? DependentAssets.Array() : SelectedAssets, Settings, Results);
 	}
@@ -341,6 +363,100 @@ void FDataValidationModule::OnPackageSaved(const FString& PackageFileName, UPack
 	{
 		EditorValidationSubsystem->ValidateSavedPackage(Package->GetFName(), ObjectSaveContext.IsProceduralSave());
 	}
+}
+
+EDataValidationResult FDataValidationModule::OnValidateSourcePackageDuringCook(UPackage* Package, FDataValidationContext& ValidationContext)
+{
+	EDataValidationResult FinalValidationResult = EDataValidationResult::NotValidated;
+
+	if (UEditorValidatorSubsystem* EditorValidationSubsystem = GEditor->GetEditorSubsystem<UEditorValidatorSubsystem>())
+	{
+		// Log the enabled set of validators, but only once
+		{
+			static const bool LogValidatorsListOnce = [EditorValidationSubsystem]()
+			{
+				UE_LOG(LogContentValidation, Display, TEXT("Enabled validators:"));
+				EditorValidationSubsystem->ForEachEnabledValidator([](UEditorValidatorBase* Validator)
+				{
+					UE_LOG(LogContentValidation, Display, TEXT("\t%s"), *Validator->GetClass()->GetClassPathName().ToString());
+					return true;
+				});
+				return true;
+			}();
+		}
+
+		TArray<FAssetData> AssetList;
+		IAssetRegistry::GetChecked().GetAssetsByPackageName(Package->GetFName(), AssetList);
+
+		{
+			FValidateAssetsSettings Settings;
+			Settings.ValidationUsecase = ValidationContext.GetValidationUsecase();
+			AssetList.RemoveAll([EditorValidationSubsystem, &Settings, &ValidationContext](const FAssetData& AssetData)
+			{
+				return !EditorValidationSubsystem->ShouldValidateAsset(AssetData, Settings, ValidationContext);
+			});
+		}
+
+		if (AssetList.Num() > 0)
+		{
+			// Broadcast the Editor event before we start validating. This lets other systems (such as Sequencer) restore the state
+			// of the level to what is actually saved on disk before performing validation.
+			if (FEditorDelegates::OnPreAssetValidation.IsBound())
+			{
+				FEditorDelegates::OnPreAssetValidation.Broadcast();
+			}
+
+			FMessageLog DataValidationLog(UE::DataValidation::MessageLogName);
+			for (const FAssetData& AssetData : AssetList)
+			{
+				if (UObject* Asset = AssetData.FastGetAsset(/*bLoad*/false))
+				{
+					DataValidationLog.Info()
+						->AddToken(FAssetDataToken::Create(AssetData))
+						->AddToken(FTextToken::Create(LOCTEXT("Data.ValidatingAsset", "Validating asset")));
+
+					UE::DataValidation::FScopedLogMessageGatherer LogGatherer;
+					EDataValidationResult ValidationResult = EditorValidationSubsystem->IsObjectValidWithContext(Asset, ValidationContext);
+
+					TArray<FString> LogWarnings;
+					TArray<FString> LogErrors;
+					LogGatherer.Stop(LogWarnings, LogErrors);
+
+					if (LogWarnings.Num() > 0)
+					{
+						TStringBuilder<2048> Buffer;
+						Buffer.Join(LogWarnings, LINE_TERMINATOR);
+						ValidationContext.AddMessage(EMessageSeverity::Error)
+							->AddToken(FAssetDataToken::Create(AssetData))
+							->AddText(LOCTEXT("DataValidation.DuringValidationWarnings", "Warnings logged while validating asset {0}"), FText::FromStringView(Buffer.ToView()));
+						ValidationResult = EDataValidationResult::Invalid;
+					}
+					if (LogErrors.Num() > 0)
+					{
+						TStringBuilder<2048> Buffer;
+						Buffer.Join(LogErrors, LINE_TERMINATOR);
+						ValidationContext.AddMessage(EMessageSeverity::Error)
+							->AddToken(FAssetDataToken::Create(AssetData))
+							->AddText(LOCTEXT("DataValidation.DuringValidationErrors", "Errors logged while validating asset {0}"), FText::FromStringView(Buffer.ToView()));
+						ValidationResult = EDataValidationResult::Invalid;
+					}
+
+					FinalValidationResult = CombineDataValidationResults(FinalValidationResult, ValidationResult);
+
+					UE::DataValidation::AddAssetValidationMessages(AssetData, DataValidationLog, ValidationContext);
+					DataValidationLog.Flush();
+				}
+			}
+
+			// Broadcast now that we're complete so other systems can go back to their previous state.
+			if (FEditorDelegates::OnPostAssetValidation.IsBound())
+			{
+				FEditorDelegates::OnPostAssetValidation.Broadcast();
+			}
+		}
+	}
+
+	return FinalValidationResult;
 }
 
 #undef LOCTEXT_NAMESPACE

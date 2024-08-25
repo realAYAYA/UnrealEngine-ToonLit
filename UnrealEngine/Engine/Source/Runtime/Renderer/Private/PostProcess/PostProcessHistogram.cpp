@@ -38,7 +38,7 @@ public:
 		SHADER_PARAMETER_STRUCT(FScreenPassTextureViewportParameters, Input)
 		SHADER_PARAMETER_STRUCT(FEyeAdaptationParameters, EyeAdaptation)
 		SHADER_PARAMETER_SAMPLER(SamplerState, InputSampler)
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, InputTexture)
+		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D, InputTexture)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, HistogramRWTexture)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture3D<float2>, BilateralGridRWTexture)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float>, DebugOutput)
@@ -164,7 +164,7 @@ public:
 		SHADER_PARAMETER_STRUCT_INCLUDE(FSceneTextureParameters, SceneTextures)
 		SHADER_PARAMETER_STRUCT(FScreenPassTextureViewportParameters, Input)
 		SHADER_PARAMETER_STRUCT(FEyeAdaptationParameters, EyeAdaptation)
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, InputTexture)
+		SHADER_PARAMETER_RDG_TEXTURE_SRV(Texture2D, InputTexture)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<float4>, EyeAdaptationBuffer)
 		SHADER_PARAMETER(FIntPoint, ThreadGroupCount)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, HistogramScatter64Output)
@@ -240,7 +240,7 @@ static FRDGTextureRef AddHistogramLegacyPass(
 	FRDGBuilder& GraphBuilder,
 	const FViewInfo& View,
 	const FEyeAdaptationParameters& EyeAdaptationParameters,
-	const FScreenPassTexture& SceneColor,
+	const FScreenPassTextureSlice& SceneColor,
 	FRDGBufferRef EyeAdaptationBuffer)
 {
 	check(SceneColor.IsValid());
@@ -270,7 +270,7 @@ static FRDGTextureRef AddHistogramLegacyPass(
 		PassParameters->View = View.ViewUniformBuffer;
 		PassParameters->Input = GetScreenPassTextureViewportParameters(FScreenPassTextureViewport(SceneColor));
 		PassParameters->InputSampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
-		PassParameters->InputTexture = SceneColor.Texture;
+		PassParameters->InputTexture = SceneColor.TextureSRV;
 		PassParameters->HistogramRWTexture = GraphBuilder.CreateUAV(HistogramTexture);
 		PassParameters->ThreadGroupCount = HistogramThreadGroupCount;
 		PassParameters->EyeAdaptation = EyeAdaptationParameters;
@@ -338,7 +338,7 @@ static FRDGTextureRef AddHistogramAtomicPass(
 	FRDGBuilder& GraphBuilder,
 	const FViewInfo& View,
 	const FEyeAdaptationParameters& EyeAdaptationParameters,
-	const FScreenPassTexture& SceneColor,
+	const FScreenPassTextureSlice& SceneColor,
 	const FSceneTextureParameters& SceneTextures,
 	FRDGBufferRef EyeAdaptationBuffer)
 {
@@ -374,7 +374,7 @@ static FRDGTextureRef AddHistogramAtomicPass(
 		PassParameters->View = View.ViewUniformBuffer;
 		PassParameters->SceneTextures = SceneTextures;
 		PassParameters->Input = GetScreenPassTextureViewportParameters(FScreenPassTextureViewport(SceneColor));
-		PassParameters->InputTexture = SceneColor.Texture;
+		PassParameters->InputTexture = SceneColor.TextureSRV;
 		PassParameters->EyeAdaptationBuffer = GraphBuilder.CreateSRV(EyeAdaptationBuffer);
 		PassParameters->ThreadGroupCount = FIntPoint(SceneColor.ViewRect.Size().Y, 1);
 		PassParameters->EyeAdaptation = EyeAdaptationParameters;
@@ -448,7 +448,7 @@ FRDGTextureRef AddHistogramPass(
 	FRDGBuilder& GraphBuilder,
 	const FViewInfo& View,
 	const FEyeAdaptationParameters& EyeAdaptationParameters,
-	FScreenPassTexture SceneColor,
+	FScreenPassTextureSlice SceneColor,
 	const FSceneTextureParameters& SceneTextures,
 	FRDGBufferRef EyeAdaptationBuffer)
 {
@@ -486,7 +486,7 @@ FRDGTextureRef AddLocalExposurePass(
 	FRDGBuilder& GraphBuilder,
 	const FViewInfo& View,
 	const FEyeAdaptationParameters& EyeAdaptationParameters,
-	FScreenPassTexture SceneColor)
+	FScreenPassTextureSlice SceneColor)
 {
 	check(SceneColor.IsValid());
 
@@ -514,7 +514,7 @@ FRDGTextureRef AddLocalExposurePass(
 		PassParameters->EyeAdaptation = EyeAdaptationParameters;
 		PassParameters->Input = GetScreenPassTextureViewportParameters(FScreenPassTextureViewport(SceneColor));
 		PassParameters->InputSampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
-		PassParameters->InputTexture = SceneColor.Texture;
+		PassParameters->InputTexture = SceneColor.TextureSRV;
 		PassParameters->BilateralGridRWTexture = GraphBuilder.CreateUAV(LocalExposureTexture);
 		PassParameters->ThreadGroupCount = ThreadGroupCount;
 

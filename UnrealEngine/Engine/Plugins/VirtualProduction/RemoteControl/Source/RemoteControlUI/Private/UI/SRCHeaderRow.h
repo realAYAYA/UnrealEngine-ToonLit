@@ -102,11 +102,15 @@ public:
 
 	SLATE_BEGIN_ARGS(SRCHeaderRow)
 		: _CanSelectGeneratedColumn(false)
+		, _HiddenColumnsList({})
 	{}
 
 		SLATE_STYLE_ARGUMENT(FHeaderRowStyle, Style)
 		SLATE_SUPPORTS_SLOT_WITH_ARGS(FColumn)
 		SLATE_ARGUMENT(bool, CanSelectGeneratedColumn)
+	
+		/** Add here the columns to be hidden by default. They can still be re-enabled via right click context-menu in the header row. */
+		SLATE_ARGUMENT(TArray<FName>, HiddenColumnsList)
 
 	SLATE_END_ARGS()
 
@@ -145,6 +149,9 @@ private:
 	 * Rretrieves the check box state of the overridden custom column(s).
 	 */
 	ECheckBoxState GetOverriddenGeneratedColumnCheckedState(FName ColumnId) const;
+
+	/** Save the current settings for shown/hidden columns to Remote Control Config */
+	void StoreHiddenColumnsSettings();
 
 private:
 

@@ -79,6 +79,12 @@ namespace UnrealBuildTool
 		public double ActiveActionWeight = 0;
 
 		/// <summary>
+		/// Used to track if the runner has already scanned the action list
+		/// for a given change count but found nothing to run.
+		/// </summary>
+		public int LastActionChange = 0;
+
+		/// <summary>
 		/// True if the current limits have not been reached.
 		/// </summary>
 		public bool IsUnderLimits => ActiveActions < MaxActions && (!UseActionWeights || ActiveActionWeight < MaxActionWeight);
@@ -95,11 +101,19 @@ namespace UnrealBuildTool
 	/// For example:
 	/// 
 	///		ParallelExecutor uses an automatic runner exclusively.
-	///		BoxExecutor uses an automatic runner to run jobs locally and a manual runner to run jobs remotely as processes 
+	///		UBAExecutor uses an automatic runner to run jobs locally and a manual runner to run jobs remotely as processes 
 	///			become available.
 	/// </summary>
 	class ImmediateActionQueue : IDisposable
 	{
+
+		/// <summary>
+		/// Number of second of no completed actions to trigger an action stall report.
+		/// If zero, stall reports will not be enabled.
+		/// </summary>
+		[CommandLine("-ActionStallReportTime=")]
+		[XmlConfigFile(Category = "BuildConfiguration")]
+		public int ActionStallReportTime = 0;
 
 		/// <summary>
 		/// Running status of the action
@@ -156,6 +170,11 @@ namespace UnrealBuildTool
 			/// Optional execution results
 			/// </summary>
 			public ExecuteResults? Results;
+
+			/// <summary>
+			/// Indices to prereq actions
+			/// </summary>
+			public int[] PrereqActionsSortIndex;
 		};
 
 		/// <summary>
@@ -294,9 +313,39 @@ namespace UnrealBuildTool
 		private int _completedActions = 0;
 
 		/// <summary>
+		/// Flags used to track how StartManyActions should run
+		/// </summary>
+		private int _startManyFlags = 0;
+
+		/// <summary>
+		/// Number of changes to the action list
+		/// </summary>
+		private int _lastActionChange = 1;
+
+		/// <summary>
+		/// If true, a action stall has been reported for the current change count
+		/// </summary>
+		private bool _lastActionStallReported = false;
+
+		/// <summary>
+		/// Time of the last change to the action count.  This is updated by the timer.
+		/// </summary>
+		private DateTime _lastActionChangeTime;
+
+		/// <summary>
+		/// Copy of _lastActionChange used to detect updates by the time.
+		/// </summary>
+		private int _lastActionStallChange = 1;
+
+		/// <summary>
 		/// Used to terminate the run with status
 		/// </summary>
 		private readonly TaskCompletionSource _doneTaskSource = new();
+
+		/// <summary>
+		/// The last action group printed in multi-target builds
+		/// </summary>
+		private string? LastGroupPrefix = null;
 
 		/// <summary>
 		/// If set, artifact cache used to retrieve previously compiled results and save new results
@@ -317,6 +366,9 @@ namespace UnrealBuildTool
 		/// <param name="logger">Logging interface</param>
 		public ImmediateActionQueue(IEnumerable<LinkedAction> actions, IActionArtifactCache? actionArtifactCache, int maxActionArtifactCacheTasks, string progressWriterText, Action<string> writeToolOutput, System.Action flushToolOutput, ILogger logger)
 		{
+			CommandLine.ParseArguments(Environment.GetCommandLineArgs(), this, logger);
+			XmlConfig.ApplyTo(this);
+
 			int count = actions.Count();
 			Actions = new ActionState[count];
 
@@ -338,6 +390,7 @@ namespace UnrealBuildTool
 					Status = ActionStatus.Queued,
 					Phase = action.ArtifactMode.HasFlag(ArtifactMode.Enabled) ? initialPhase : ActionPhase.Compile,
 					Results = null,
+					PrereqActionsSortIndex = action.PrerequisiteActions.Select(a => a.SortIndex).ToArray()
 				};
 			}
 
@@ -399,17 +452,44 @@ namespace UnrealBuildTool
 		/// </summary>
 		public void Start()
 		{
-			if (ShowCPUUtilization)
+			if (ShowCPUUtilization || ActionStallReportTime > 0)
 			{
+				_lastActionChangeTime = DateTime.Now;
 				_cpuUtilizationTimer = new(x =>
 				{
-					lock (_cpuUtilization)
+					if (ShowCPUUtilization)
 					{
-						if (Utils.GetTotalCpuUtilization(out float cpuUtilization))
+						lock (_cpuUtilization)
 						{
-							_cpuUtilization.Add(cpuUtilization);
+							if (Utils.GetTotalCpuUtilization(out float cpuUtilization))
+							{
+								_cpuUtilization.Add(cpuUtilization);
+							}
 						}
 					}
+
+					if (ActionStallReportTime > 0)
+					{
+						lock (Actions)
+						{
+
+							// If there has been an action count change, reset the timer and enable the report again
+							if (_lastActionStallChange != _lastActionChange)
+							{
+								_lastActionStallChange = _lastActionChange;
+								_lastActionChangeTime = DateTime.Now;
+								_lastActionStallReported = false;
+							}
+
+							// Otherwise, if we haven't already generated a report, test for a timeout in seconds and generate one on timeout.
+							else if (!_lastActionStallReported && (DateTime.Now - _lastActionChangeTime).TotalSeconds > ActionStallReportTime)
+							{
+								_lastActionStallReported = true;
+								GenerateStallReport();
+							}
+						}
+					}
+
 				}, null, 1000, 1000);
 			}
 
@@ -434,11 +514,12 @@ namespace UnrealBuildTool
 		/// <returns>Enumerations of all ready to compile actions.</returns>
 		public IEnumerable<LinkedAction> EnumerateReadyToCompileActions()
 		{
-			foreach (ActionState actionState in Actions)
+			for (int actionIndex = _firstPendingAction; actionIndex != Actions.Length; ++actionIndex)
 			{
+				var actionState = Actions[actionIndex];
 				if (actionState.Status == ActionStatus.Queued &&
 					actionState.Phase == ActionPhase.Compile &&
-					GetActionReadyState(actionState.Action) == ActionReadyState.Ready)
+					GetActionReadyState(actionState) == ActionReadyState.Ready)
 				{
 					yield return actionState.Action;
 				}
@@ -465,16 +546,33 @@ namespace UnrealBuildTool
 				lock (Actions)
 				{
 					hasCanceled = CancellationTokenSource.IsCancellationRequested;
-					if (!hasCanceled)
+
+					// Don't bother if we have been canceled or the specified running has already failed to find
+					// anything at the given change number.
+					if (!hasCanceled && (runner == null || runner.LastActionChange != _lastActionChange))
 					{
+
+						// Try to get an action
 						(runAction, action, completedActions) = TryStartOneActionInternal(runner);
+
+						// If we have completed actions (i.e. error propagations), then increment the change counter
+						if (completedActions != 0)
+						{
+							_lastActionChange++;
+						}
+						
+						// Otherwise if nothing was found, remember that we have already scanned at this change.
+						else if ((runAction == null || action == null) && runner != null)
+						{
+							runner.LastActionChange = _lastActionChange;
+						}
 					}
 				}
 
 				// If we have an action, run it and account for any completed actions
 				if (runAction != null && action != null)
 				{
-					Task.Factory.StartNew(() =>
+					if (runner != null && runner.Type == ImmediateActionQueueRunnerType.Manual)
 					{
 						try
 						{
@@ -484,7 +582,21 @@ namespace UnrealBuildTool
 						{
 							HandleException(action, ex);
 						}
-					}, CancellationToken, TaskCreationOptions.LongRunning | TaskCreationOptions.PreferFairness, TaskScheduler.Default);
+					}
+					else
+					{
+						Task.Factory.StartNew(() =>
+						{
+							try
+							{
+								runAction().Wait();
+							}
+							catch (Exception ex)
+							{
+								HandleException(action, ex);
+							}
+						}, CancellationToken, TaskCreationOptions.LongRunning | TaskCreationOptions.PreferFairness, TaskScheduler.Default);
+					}
 					AddCompletedActions(completedActions);
 					return true;
 				}
@@ -581,7 +693,7 @@ namespace UnrealBuildTool
 				}
 
 				// Based on the ready state, use this action or mark as an error
-				switch (GetActionReadyState(Actions[actionIndex].Action))
+				switch (GetActionReadyState(Actions[actionIndex]))
 				{
 					case ActionReadyState.NotReady:
 						break;
@@ -646,8 +758,31 @@ namespace UnrealBuildTool
 		/// <param name="runner">If specified, all actions will be limited to the runner</param>
 		public void StartManyActions(ImmediateActionQueueRunner? runner = null)
 		{
-			while (TryStartOneAction(runner))
-			{ }
+			const int Running = 1 << 1;
+			const int ScanRequested = 1 << 0;
+
+			// If both flags were clear, I need to start running actions
+			int old = Interlocked.Or(ref _startManyFlags, Running | ScanRequested);
+			if (old == 0)
+			{
+				for(; ; )
+				{
+
+					// Clear the changed flag since we are about to scan
+					Interlocked.And(ref _startManyFlags, Running);
+
+					// If nothing started
+					if (!TryStartOneAction(runner))
+					{
+
+						// If we only have the running flag (nothing new changed), then exit
+						if (Interlocked.CompareExchange(ref _startManyFlags, 0, Running) == Running)
+						{
+							return;
+						}
+					}
+				}
+			}
 		}
 
 		/// <summary>
@@ -710,6 +845,9 @@ namespace UnrealBuildTool
 				ImmediateActionQueueRunner runner = Actions[actionIndex].Runner ?? throw new BuildException("Attempting to update action state but runner isn't set");
 				runner.ActiveActions--;
 				runner.ActiveActionWeight -= Actions[actionIndex].Action.Weight;
+
+				// Use to track that action states have changed
+				_lastActionChange++;
 
 				// If we are doing an artifact check, then move to compile phase
 				bool wasArtifactCheck = false;
@@ -805,22 +943,31 @@ namespace UnrealBuildTool
 			}
 		}
 
-		public int GetQueuedActionsCount()
+		/// <summary>
+		/// Returns the number of queued actions left (not including ArtifactCheck actions)
+		/// Note, this method is lockless and will not always return accurate count
+		/// </summary>
+		/// <param name="filterFunc">Optional function to filter out actions. Return false if action should not be included</param>
+		public uint GetQueuedActionsCount(Func<LinkedAction, bool>? filterFunc = null)
 		{
-			lock (Actions)
+			uint count = 0;
+
+			for (int actionIndex = _firstPendingAction; actionIndex != Actions.Length; ++actionIndex)
 			{
-				int count = 0;
 
-				for (int actionIndex = _firstPendingAction; actionIndex != Actions.Length; ++actionIndex)
+				if (Actions[actionIndex].Status != ActionStatus.Queued || Actions[actionIndex].Phase != ActionPhase.Compile)
 				{
-
-					if (Actions[actionIndex].Status == ActionStatus.Queued)
-					{
-						++count;
-					}
+					continue;
 				}
-				return count;
+					
+				if (filterFunc != null && !filterFunc(Actions[actionIndex].Action))
+				{
+					continue;
+				}
+
+				++count;
 			}
+			return count;
 		}
 
 		/// <summary>
@@ -948,6 +1095,19 @@ namespace UnrealBuildTool
 						Console.CursorLeft = 0;
 					}
 				}
+				else
+				{
+					// If the action group has changed for a multi target build, write it to the log
+					if (action.GroupNames.Count > 0)
+					{
+						string ActionGroup = $"** For {String.Join(" + ", action.GroupNames)} **";
+						if (!ActionGroup.Equals(LastGroupPrefix, StringComparison.Ordinal))
+						{
+							LastGroupPrefix = ActionGroup;
+							_writeToolOutput(ActionGroup);
+						}
+					}
+				}
 
 				s_previousLineLength = message.Length;
 
@@ -971,14 +1131,30 @@ namespace UnrealBuildTool
 
 				if (exitCode != 0)
 				{
+					string exitCodeStr = String.Empty;
+					if ((uint)exitCode == 0xC0000005)
+					{
+						exitCodeStr = "(Access violation)";
+					}
+					else if ((uint)exitCode == 0xC0000409)
+					{
+						exitCodeStr = "(Stack buffer overflow)";
+					}
 
 					// If we have an error code but no output, chances are the tool crashed.  Generate more detailed information to let the
 					// user know something went wrong.
 					if (logLines == null || logLines.Count <= (action.bShouldOutputStatusDescription ? 0 : 1))
 					{
-						Logger.LogError("{TargetDetails} {Description}: Exited with error code {ExitCode}. The build will fail.", targetDetails, description, exitCode);
+						Logger.LogError("{TargetDetails} {Description}: Exited with error code {ExitCode} {ExitCodeStr}. The build will fail.", targetDetails, description, exitCode, exitCodeStr);
 						Logger.LogInformation("{TargetDetails} {Description}: WorkingDirectory {WorkingDirectory}", targetDetails, description, action.WorkingDirectory);
 						Logger.LogInformation("{TargetDetails} {Description}: {CommandPath} {CommandArguments}", targetDetails, description, action.CommandPath, action.CommandArguments);
+					}
+					// Always print error details to to the log file
+					else
+					{
+						Logger.LogDebug("{TargetDetails} {Description}: Exited with error code {ExitCode} {ExitCodeStr}. The build will fail.", targetDetails, description, exitCode, exitCodeStr);
+						Logger.LogDebug("{TargetDetails} {Description}: WorkingDirectory {WorkingDirectory}", targetDetails, description, action.WorkingDirectory);
+						Logger.LogDebug("{TargetDetails} {Description}: {CommandPath} {CommandArguments}", targetDetails, description, action.CommandPath, action.CommandArguments);
 					}
 
 					// prevent overwriting of error text
@@ -1072,20 +1248,20 @@ namespace UnrealBuildTool
 		/// </summary>
 		/// <param name="action">Action in question</param>
 		/// <returns>Action ready state</returns>
-		private ActionReadyState GetActionReadyState(LinkedAction action)
+		private ActionReadyState GetActionReadyState(ActionState action)
 		{
-			foreach (LinkedAction prereq in action.PrerequisiteActions)
+			foreach (int prereqIndex in action.PrereqActionsSortIndex)
 			{
 
 				// To avoid doing artifact checks on actions that might need compiling,
 				// we first make sure the action is in the compile phase
-				if (Actions[prereq.SortIndex].Phase != ActionPhase.Compile)
+				if (Actions[prereqIndex].Phase != ActionPhase.Compile)
 				{
 					return ActionReadyState.NotReady;
 				}
 
 				// Respect the compile status of the action
-				switch (Actions[prereq.SortIndex].Status)
+				switch (Actions[prereqIndex].Status)
 				{
 					case ActionStatus.Finished:
 						continue;
@@ -1098,6 +1274,52 @@ namespace UnrealBuildTool
 				}
 			}
 			return ActionReadyState.Ready;
+		}
+
+		private void GenerateStallReport()
+		{
+			Logger.LogInformation("Action stall detected:");
+			foreach (ImmediateActionQueueRunner runner in _runners)
+			{
+				Logger.LogInformation("Runner Type: {Type}, Running Actions: {ActionCount}", runner.Type.ToString(), runner.ActiveActions);
+				if (runner.ActiveActions > 0)
+				{
+					int count = 0;
+					foreach (ActionState state in Actions)
+					{
+						if (state.Runner == runner && state.Status == ActionStatus.Running)
+						{
+							string description = $"{(state.Action.CommandDescription ?? state.Action.CommandPath.GetFileNameWithoutExtension())} {state.Action.StatusDescription}".Trim();
+							Logger.LogInformation("    Action[{Index}]: {Description}", count++, description);
+						}
+					}
+				}
+			}
+			{
+				int queued = 0;
+				int running = 0;
+				int error = 0;
+				int finished = 0;
+				foreach (ActionState state in Actions)
+				{
+					switch (state.Status)
+					{
+						case ActionStatus.Error:
+							error++;
+							break;
+						case ActionStatus.Finished:
+							finished++;
+							break;
+						case ActionStatus.Queued:
+							queued++;
+							break;
+						case ActionStatus.Running:
+							running++;
+							break;
+					}
+				}
+				Logger.LogInformation("Queue Counts: Queued = {Queued}, Running = {Running}, Finished = {Finished}, Error = {Error}", queued, running, finished, error);
+			}
 		}
 	}
 }

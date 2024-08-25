@@ -17,13 +17,12 @@
 #include "Materials/Material.h"
 #include "Materials/MaterialRenderProxy.h"
 #include "Engine/Engine.h"
-#include "Engine/LevelStreaming.h"
-#include "LevelUtils.h"
 #include "HModel.h"
 #include "Components/ModelComponent.h"
 #include "Engine/Brush.h"
 #include "Components/ModelComponent.h"
 #include "SceneInterface.h"
+#include "Hash/Blake3.h"
 
 namespace
 {
@@ -87,6 +86,18 @@ FArchive& operator<<(FArchive& Ar,FModelVertexBuffer& B)
 	return Ar;
 }
 
+#if WITH_EDITOR
+void UpdateHash(FBlake3& Builder, const FModelVertexBuffer& B)
+{
+	if (!B.Vertices.IsEmpty())
+	{
+		static_assert(alignof(FModelVertex) <= 1 || sizeof(FModelVertex) % alignof(FModelVertex) == 0, "We rely on zero padding in arrays");
+		checkf(B.Vertices.Num() < 2 || (int64)&B.Vertices[1] - (int64)&B.Vertices[0] == sizeof(B.Vertices[0]), TEXT("We rely on zero padding in arrays"));
+		Builder.Update(B.Vertices.GetData(), B.Vertices.Num() * sizeof(B.Vertices[0]));
+	}
+	// B.Buffers - Not needed, transient runtime rendering 
+}
+#endif
 /*-----------------------------------------------------------------------------
 UModelComponent
 -----------------------------------------------------------------------------*/
@@ -250,23 +261,6 @@ public:
 		}
 
 		bGoodCandidateForCachedShadowmap = CacheShadowDepthsFromPrimitivesUsingWPO() || (!MaterialRelevance.bUsesWorldPositionOffset && !MaterialRelevance.bUsesDisplacement);
-
-		// Try to find a color for level coloration.
-		UObject* ModelOuter = InComponent->GetModel()->GetOuter();
-		ULevel* Level = Cast<ULevel>( ModelOuter );
-		if ( Level )
-		{
-			ULevelStreaming* LevelStreaming = FLevelUtils::FindStreamingLevel( Level );
-			if ( LevelStreaming )
-			{
-				SetLevelColor(LevelStreaming->LevelColor);
-			}
-		}
-
-		// Get a color for property coloration.
-		FColor NewPropertyColor;
-		GEngine->GetPropertyColorationColor( (UObject*)InComponent, NewPropertyColor );
-		SetPropertyColor(NewPropertyColor);
 	}
 
 	~FModelSceneProxy()

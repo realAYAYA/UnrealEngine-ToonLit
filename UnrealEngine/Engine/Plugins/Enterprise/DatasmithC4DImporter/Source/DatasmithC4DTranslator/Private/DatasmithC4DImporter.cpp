@@ -802,6 +802,11 @@ TSharedPtr<IDatasmithActorElement> FDatasmithC4DImporter::ImportNullActor(cinewa
 	return ActorElement;
 }
 
+// workaround define from UE that conflicts with C4D SDK constant
+#ifdef LIGHT_TYPE_SPOT
+#undef LIGHT_TYPE_SPOT
+#endif
+
 namespace
 {
 	TSharedPtr<IDatasmithLightActorElement> CreateDatasmithLightActorElement(int32 MelangeLightTypeId, const FString& Name, const FString& Label)

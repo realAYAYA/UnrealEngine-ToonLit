@@ -2,6 +2,8 @@
 
 #pragma once
 
+#if SOURCE_CONTROL_WITH_SLATE
+
 #include "CoreMinimal.h"
 #include "Layout/Visibility.h"
 #include "Input/Reply.h"
@@ -150,3 +152,5 @@ private:
 	/** Whether to expand advanced settings */
 	bool bAreAdvancedSettingsExpanded;
 };
+
+#endif //SOURCE_CONTROL_WITH_SLATE

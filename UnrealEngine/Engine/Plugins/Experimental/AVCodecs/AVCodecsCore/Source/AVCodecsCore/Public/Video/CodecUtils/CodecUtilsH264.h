@@ -117,7 +117,9 @@ namespace UE::AVCodecCore::H264
 		High422 = 122,
 		// High422Intra = 122,					with constraint flag 3 set
 		StereoHigh = 128,
+        MultiresolutionFrameCompatibleHigh = 134,
 		MultiviewDepthHigh = 138,
+        EnhancedMultiviewDepthHigh = 139,
 		High444 = 244,
 		// High444Intra = 244,					with constraint flag 3 set
 	};
@@ -251,7 +253,7 @@ namespace UE::AVCodecCore::H264
 		return OutBuf - OutBase;
 	}
 
-	struct FNaluInfo
+	struct FNaluH264
 	{
 		uint64 Start, Size;
 		uint8 StartCodeSize;
@@ -260,7 +262,7 @@ namespace UE::AVCodecCore::H264
 		const uint8* Data;
 	};
 
-	FAVResult FindNALUs(FVideoPacket const& InPacket, TArray<FNaluInfo>& FoundNalus);
+	AVCODECSCORE_API FAVResult FindNALUs(FVideoPacket const& InPacket, TArray<FNaluH264>& FoundNalus);
 
 	constexpr uint8 Default_4x4_Intra[16] = {
 		6, 13, 13, 20,
@@ -446,7 +448,7 @@ namespace UE::AVCodecCore::H264
 		}
 	};
 
-	FAVResult ParseSPS(FBitstreamReader& Bitstream, FNaluInfo const& InNaluInfo, TMap<uint32, SPS_t>& OutMapSPS);
+	FAVResult ParseSPS(FBitstreamReader& Bitstream, FNaluH264 const& InNaluInfo, TMap<uint32, SPS_t>& OutMapSPS);
 
 	struct PPS_t : public FNalu
 	{
@@ -481,7 +483,7 @@ namespace UE::AVCodecCore::H264
 		SE second_chroma_qp_index_offset;
 	};
 
-	FAVResult ParsePPS(FBitstreamReader& Bitstream, FNaluInfo const& InNaluInfo, TMap<uint32, SPS_t> const& InMapSPS, TMap<uint32, PPS_t>& OutMapPPS);
+	FAVResult ParsePPS(FBitstreamReader& Bitstream, FNaluH264 const& InNaluInfo, TMap<uint32, SPS_t> const& InMapSPS, TMap<uint32, PPS_t>& OutMapPPS);
 
 	struct Slice_t : public FNalu
 	{
@@ -518,9 +520,9 @@ namespace UE::AVCodecCore::H264
 		};
 
 		U<1> ref_pic_list_modification_flag_l0;
-		TArray<RefPic_t> RefPicList0;
+		// TArray<RefPic_t> RefPicList0;
 		U<1> ref_pic_list_modification_flag_l1;
-		TArray<RefPic_t> RefPicList1;
+		// TArray<RefPic_t> RefPicList1;
 
 		// pred_weight_table
 
@@ -529,14 +531,19 @@ namespace UE::AVCodecCore::H264
 		U<1> long_term_reference_flag;
 
 		U<1> adaptive_ref_pic_marking_mode_flag;
+
+        UE difference_of_pic_nums_minus1;
+        UE long_term_pic_num;
+        UE long_term_frame_idx;
+        UE max_long_term_frame_idx_plus1;
 	};
 
-	FAVResult ParseSliceHeader(FBitstreamReader& Bitstream, FNaluInfo const& InNaluInfo, TMap<uint32, SPS_t> InMapSPS, TMap<uint32, PPS_t> const& InMapPPS, Slice_t& OutSlice);
+	FAVResult ParseSliceHeader(FBitstreamReader& Bitstream, FNaluH264 const& InNaluInfo, TMap<uint32, SPS_t> const& InMapSPS, TMap<uint32, PPS_t> const& InMapPPS, Slice_t& OutSlice);
 
 	// SEI can transmit arbitrary data so we probably want something less rigid for this
 	struct SEI_t
 	{
 	};
 
-	FAVResult ParseSEI(FBitstreamReader& Bitstream, FNaluInfo const& InNaluInfo, SEI_t& OutSEI);
+	FAVResult ParseSEI(FBitstreamReader& Bitstream, FNaluH264 const& InNaluInfo, SEI_t& OutSEI);
 } // namespace UE::AVCodecCore::H264

@@ -26,5 +26,5 @@ private:
 	static void ExecuteDNAImport(UObject* Mesh);
 	static void ExecuteDNAReimport(UObject* Mesh);
 
-	static void GetAssetRegistryTagsForDNA(const UObject* Object, TArray<UObject::FAssetRegistryTag>& OutTags);
+	static void GetAssetRegistryTagsForDNA(FAssetRegistryTagsContext Context);
 };

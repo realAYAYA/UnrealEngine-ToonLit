@@ -7,6 +7,7 @@
 #include "HAL/FileManager.h"
 #include "Misc/Paths.h"
 #include "Streaming/LevelStreamingDelegates.h"
+#include "UObject/Package.h"
 #include "WorldPartition/WorldPartition.h"
 #include "WorldPartition/WorldPartitionLevelStreamingDynamic.h"
 #include "Stats/Stats.h"
@@ -688,7 +689,7 @@ void ULevelStreamingProfilingSubsystem::OnLevelFinishedAddToWorld(UWorld* World,
 		return;
 	}
 
-	TRACE_CPUPROFILER_EVENT_SCOPE("FortStreamingProfiling.OnLevelFinishedAddToWorld");
+	TRACE_CPUPROFILER_EVENT_SCOPE(FortStreamingProfiling.OnLevelFinishedAddToWorld);
 
 	TUniquePtr<FActiveLevel>& Level = ActiveLevels.FindOrAdd(StreamingLevel);
 	if (!Level.IsValid())

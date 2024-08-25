@@ -179,6 +179,9 @@ public:
 	FText GetValueAsTooltipText(const FBaseTreeNode& InNode) const;
 	FText GetValueAsGroupingText(const FBaseTreeNode& InNode) const;
 
+	FText CopyValue(const FBaseTreeNode& InNode) const;
+	FText CopyTooltip(const FBaseTreeNode& InNode) const;
+
 	FString GetValueAsSerializableString(const FBaseTreeNode& InNode) const;
 
 	//////////////////////////////////////////////////

@@ -6,9 +6,6 @@
 #include "UsdWrappers/UsdStage.h"
 #include "Widgets/SUSDTreeView.h"
 
-#include "Widgets/Views/SHeaderRow.h"
-#include "Widgets/Views/STreeView.h"
-
 class AUsdStageActor;
 class FUICommandList;
 enum class EPayloadsTrigger;
@@ -20,54 +17,61 @@ namespace UE
 
 #if USE_USD_SDK
 
-DECLARE_DELEGATE_OneParam( FOnPrimSelectionChanged, const TArray<FString>& /* NewSelection */);
-DECLARE_DELEGATE_OneParam( FOnAddPrim, FString );
+DECLARE_DELEGATE_OneParam(FOnPrimSelectionChanged, const TArray<FString>& /* NewSelection */);
+DECLARE_DELEGATE_OneParam(FOnAddPrim, FString);
 
-class SUsdStageTreeView : public SUsdTreeView< FUsdPrimViewModelRef >
+class SUsdStageTreeView : public SUsdTreeView<FUsdPrimViewModelRef>
 {
 public:
-	SLATE_BEGIN_ARGS( SUsdStageTreeView ) {}
-		SLATE_EVENT( FOnPrimSelectionChanged, OnPrimSelectionChanged )
+	SLATE_BEGIN_ARGS(SUsdStageTreeView)
+	{
+	}
+	SLATE_EVENT(FOnPrimSelectionChanged, OnPrimSelectionChanged)
 	SLATE_END_ARGS()
 
-	void Construct( const FArguments& InArgs );
+	void Construct(const FArguments& InArgs);
 
-	void Refresh( const UE::FUsdStageWeak& NewStage );
-	void RefreshPrim( const FString& PrimPath, bool bResync );
+	void Refresh(const UE::FUsdStageWeak& NewStage);
+	void RefreshPrim(const FString& PrimPath, bool bResync);
 
-	FUsdPrimViewModelPtr GetItemFromPrimPath( const FString& PrimPath );
+	FUsdPrimViewModelPtr GetItemFromPrimPath(const FString& PrimPath);
 
-	void SetSelectedPrimPaths( const TArray<FString>& PrimPaths );
-	void SetSelectedPrims( const TArray<UE::FUsdPrim>& Prims );
+	void SetSelectedPrimPaths(const TArray<FString>& PrimPaths);
+	void SetSelectedPrims(const TArray<UE::FUsdPrim>& Prims);
 	TArray<FString> GetSelectedPrimPaths();
 	TArray<UE::FUsdPrim> GetSelectedPrims();
 
 private:
-	virtual TSharedRef< ITableRow > OnGenerateRow( FUsdPrimViewModelRef InDisplayNode, const TSharedRef< STableViewBase >& OwnerTable ) override;
-	virtual void OnGetChildren( FUsdPrimViewModelRef InParent, TArray< FUsdPrimViewModelRef >& OutChildren ) const override;
+	virtual TSharedRef<ITableRow> OnGenerateRow(FUsdPrimViewModelRef InDisplayNode, const TSharedRef<STableViewBase>& OwnerTable) override;
+	virtual void OnGetChildren(FUsdPrimViewModelRef InParent, TArray<FUsdPrimViewModelRef>& OutChildren) const override;
 
 	// Required so that we can use the cut/copy/paste/etc. shortcuts
-	virtual bool SupportsKeyboardFocus() const override { return true; }
-	virtual FReply OnKeyDown( const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent ) override;
+	virtual bool SupportsKeyboardFocus() const override
+	{
+		return true;
+	}
+	virtual FReply OnKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent) override;
 
-	void ScrollItemIntoView( FUsdPrimViewModelRef TreeItem );
-	virtual void OnTreeItemScrolledIntoView( FUsdPrimViewModelRef TreeItem, const TSharedPtr< ITableRow >& Widget ) override ;
+	void ScrollItemIntoView(FUsdPrimViewModelRef TreeItem);
+	virtual void OnTreeItemScrolledIntoView(FUsdPrimViewModelRef TreeItem, const TSharedPtr<ITableRow>& Widget) override;
 
-	void OnPrimNameCommitted( const FUsdPrimViewModelRef& TreeItem, const FText& InPrimName );
-	void OnPrimNameUpdated( const FUsdPrimViewModelRef& TreeItem, const FText& InPrimName, FText& ErrorMessage );
+	void OnPrimNameCommitted(const FUsdPrimViewModelRef& TreeItem, const FText& InPrimName);
+	void OnPrimNameUpdated(const FUsdPrimViewModelRef& TreeItem, const FText& InPrimName, FText& ErrorMessage);
 
 	virtual void SetupColumns() override;
-	TSharedPtr< SWidget > ConstructPrimContextMenu();
+	TSharedPtr<SWidget> ConstructPrimContextMenu();
 
-	void OnToggleAllPayloads( EPayloadsTrigger PayloadsTrigger );
+	void OnToggleAllPayloads(EPayloadsTrigger PayloadsTrigger);
 
-	void FillDuplicateSubmenu( FMenuBuilder& MenuBuilder );
+	void FillDuplicateSubmenu(FMenuBuilder& MenuBuilder);
+	void FillAddSchemaSubmenu(FMenuBuilder& MenuBuilder);
+	void FillRemoveSchemaSubmenu(FMenuBuilder& MenuBuilder);
 
 	void OnAddChildPrim();
 	void OnCutPrim();
 	void OnCopyPrim();
 	void OnPastePrim();
-	void OnDuplicatePrim( EUsdDuplicateType DuplicateType );
+	void OnDuplicatePrim(EUsdDuplicateType DuplicateType);
 	void OnDeletePrim();
 	void OnRenamePrim();
 
@@ -77,10 +81,10 @@ private:
 	void OnAddPayload();
 	void OnClearPayloads();
 
-	void OnApplySchema( FName SchemaName );
-	void OnRemoveSchema( FName SchemaName );
-	bool CanApplySchema( FName SchemaName );
-	bool CanRemoveSchema( FName SchemaName );
+	void OnApplySchema(FName SchemaName);
+	void OnRemoveSchema(FName SchemaName);
+	bool CanApplySchema(FName SchemaName);
+	bool CanRemoveSchema(FName SchemaName);
 
 	bool CanAddChildPrim() const;
 	bool CanPastePrim() const;
@@ -92,7 +96,7 @@ private:
 	void RestoreExpansionStates();
 	virtual void RequestListRefresh() override;
 
-	void SelectItemsInternal( const TArray< FUsdPrimViewModelRef >& ItemsToSelect );
+	void SelectItemsInternal(const TArray<FUsdPrimViewModelRef>& ItemsToSelect);
 
 public:
 	// We update only on slate tick, but can receive a USD notice at any point, from any thread.
@@ -115,14 +119,14 @@ private:
 	// Should always be valid, we keep the one we're given on Refresh()
 	UE::FUsdStageWeak UsdStage;
 
-	TWeakPtr< FUsdPrimViewModel > PendingRenameItem;
+	TWeakPtr<FUsdPrimViewModel> PendingRenameItem;
 
 	// So that we can store these across refreshes
-	TMap< FString, bool > TreeItemExpansionStates;
+	TMap<FString, bool> TreeItemExpansionStates;
 
 	FOnPrimSelectionChanged OnPrimSelectionChanged;
 
 	TSharedPtr<FUICommandList> UICommandList;
 };
 
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK

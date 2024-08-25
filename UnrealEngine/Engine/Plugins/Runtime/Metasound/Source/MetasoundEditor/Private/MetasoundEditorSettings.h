@@ -86,6 +86,9 @@ public:
 	UPROPERTY(EditAnywhere, config, Category=General)
 	FString DefaultAuthor;
 
+	/** Maps Pin Category To Pin Color */
+	TMap<FName, FLinearColor> CustomPinTypeColors;
+	
 	/** Default pin type color */
 	UPROPERTY(EditAnywhere, config, Category=PinColors)
 	FLinearColor DefaultPinTypeColor;
@@ -154,7 +157,11 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = GraphAnimation, meta = (ShowOnlyInnerProperties))
 	FMetasoundAnalyzerAnimationSettings AnalyzerAnimationSettings;
 
+	/** Whether to show a small oscilloscope when hovering audio pins. */
+	UPROPERTY(EditAnywhere, config, DisplayName = "Show Oscilloscope On Audio Pin Mouse Over", Category = Visualization)
+	bool bShowOscilloscopeOnAudioPinMouseOver = false;
+
 	/** Determines which details view to show in Metasounds Editor */
 	UPROPERTY(Transient)
-	EMetasoundActiveDetailView DetailView = EMetasoundActiveDetailView::Metasound;
+	EMetasoundActiveDetailView DetailView = EMetasoundActiveDetailView::General;
 };

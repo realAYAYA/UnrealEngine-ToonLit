@@ -518,7 +518,7 @@ private:
 	void SavePSOCache(const FString& CacheFilename, FPipelineCache& Cache);
 	void DestroyCache();
 
-	FVulkanRHIGraphicsPipelineState* RHICreateGraphicsPipelineState(const FGraphicsPipelineStateInitializer& Initializer);
+	FGraphicsPipelineStateRHIRef RHICreateGraphicsPipelineState(const FGraphicsPipelineStateInitializer& Initializer);
 	FVulkanComputePipeline* RHICreateComputePipelineState(FRHIComputeShader* ComputeShaderRHI);
 	void NotifyDeletedGraphicsPSO(FRHIGraphicsPipelineState* PSO);
 	bool CreateGfxPipelineFromEntry(FVulkanRHIGraphicsPipelineState* PSO, FVulkanShader* Shaders[ShaderStage::NumStages], bool bPrecompile);
@@ -771,6 +771,7 @@ public:
 	FVulkanRHIGraphicsPipelineStateLRUNode* LRUNode = nullptr;
 	uint32 LRUFrame = UINT32_MAX;
 	uint32 PipelineCacheSize = UINT32_MAX;
+	uint64	PrecacheKey;// hash of elements relevant to the PSO cache
 	FVulkanPSOKey							VulkanKey;
 
 #if VULKAN_PSO_CACHE_DEBUG

@@ -94,6 +94,15 @@ DECLARE_DWORD_COUNTER_STAT_EXTERN(TEXT("FindObjectFast"),STAT_FindObjectFast,STA
 #define	INVALID_OBJECT	(UObject*)-1
 #define PERF_TRACK_DETAILED_ASYNC_STATS (0)
 
+#ifndef UE_GC_RUN_WEAKPTR_BARRIERS
+#define UE_GC_RUN_WEAKPTR_BARRIERS 0
+#endif
+
+#if UE_REFERENCE_COLLECTOR_REQUIRE_OBJECTPTR
+#define UE_REFERENCE_COLLECTOR_REQUIRE_OBJECTPTR_DEPRECATED() UE_DEPRECATED(5.3, "WARNING: Your program will randomly crash if this function is called when incremental gc is enabled. Pass TObjectPtr<...> instead of UObject* to AddReferencedObject(s) API's.")
+#else
+#define UE_REFERENCE_COLLECTOR_REQUIRE_OBJECTPTR_DEPRECATED(...)
+#endif
 
 // Private system wide variables.
 
@@ -376,7 +385,6 @@ COREUOBJECT_API UObject* StaticFindObjectChecked( UClass* Class, UObject* InOute
 /** Internal version of StaticFindObject that will not assert on GIsSavingPackage or IsGarbageCollectingAndLockingUObjectHashTables() */
 COREUOBJECT_API UObject* StaticFindObjectSafe( UClass* Class, UObject* InOuter, const TCHAR* Name, bool ExactClass=false );
 
-#if UE_USE_VERSE_PATHS
 /**
  * Tries to find an object in memory, using a Verse path.
  *
@@ -387,7 +395,6 @@ COREUOBJECT_API UObject* StaticFindObjectSafe( UClass* Class, UObject* InOuter, 
  * @return	Returns a pointer to the found object or nullptr if none could be found
  */
 COREUOBJECT_API UObject* StaticFindObject(UClass* Class, const UE::Core::FVersePath& VersePath);
-#endif
 
 /**
  * Tries to find an object in memory. This version uses FTopLevelAssetPath to find the object.
@@ -574,12 +581,12 @@ COREUOBJECT_API UObject* StaticConstructObject_Internal(const FStaticConstructOb
  *
  * @deprecated This version is deprecated in favor of StaticDuplicateObjectEx
  */
-COREUOBJECT_API UObject* StaticDuplicateObject(UObject const* SourceObject, UObject* DestOuter, const FName DestName = NAME_None, EObjectFlags FlagMask = RF_AllFlags, UClass* DestClass = nullptr, EDuplicateMode::Type DuplicateMode = EDuplicateMode::Normal, EInternalObjectFlags InternalFlagsMask = EInternalObjectFlags::AllFlags);
+COREUOBJECT_API UObject* StaticDuplicateObject(UObject const* SourceObject, UObject* DestOuter, const FName DestName = NAME_None, EObjectFlags FlagMask = RF_AllFlags, UClass* DestClass = nullptr, EDuplicateMode::Type DuplicateMode = EDuplicateMode::Normal, EInternalObjectFlags InternalFlagsMask = EInternalObjectFlags_AllFlags);
 
 /**
  * Returns FObjectDuplicationParameters initialized based of StaticDuplicateObject parameters
  */
-COREUOBJECT_API FObjectDuplicationParameters InitStaticDuplicateObjectParams(UObject const* SourceObject, UObject* DestOuter, const FName DestName = NAME_None, EObjectFlags FlagMask = RF_AllFlags, UClass* DestClass = nullptr, EDuplicateMode::Type DuplicateMode = EDuplicateMode::Normal, EInternalObjectFlags InternalFlagsMask = EInternalObjectFlags::AllFlags);
+COREUOBJECT_API FObjectDuplicationParameters InitStaticDuplicateObjectParams(UObject const* SourceObject, UObject* DestOuter, const FName DestName = NAME_None, EObjectFlags FlagMask = RF_AllFlags, UClass* DestClass = nullptr, EDuplicateMode::Type DuplicateMode = EDuplicateMode::Normal, EInternalObjectFlags InternalFlagsMask = EInternalObjectFlags_AllFlags);
 
 /**
  * Creates a copy of SourceObject using the Outer and Name specified, as well as copies of all objects contained by SourceObject.
@@ -655,6 +662,23 @@ namespace EAsyncLoadingResult
 	};
 }
 
+/** Async package loading result */
+enum class EAsyncLoadingProgress : uint32
+{
+	/** Package failed to load */
+	Failed,
+	/** Package has started loading. */
+	Started,
+	/** Package I/O has been read. */
+	Read,
+	/** Package has finished its serialization phase. */
+	Serialized,
+	/** Package has finished all loading phase successfully */
+	FullyLoaded,
+	/** Async loading was canceled */
+	Canceled
+};
+
 /** The type that represents an async loading priority */
 typedef int32 TAsyncLoadPriority;
 
@@ -665,6 +689,59 @@ typedef int32 TAsyncLoadPriority;
  * @param	Result		Result of async loading.
  */
 DECLARE_DELEGATE_ThreeParams(FLoadPackageAsyncDelegate, const FName& /*PackageName*/, UPackage* /*LoadedPackage*/, EAsyncLoadingResult::Type /*Result*/)
+
+/**
+ * Parameters passed to the FLoadPackageAsyncProgressDelegate callback.
+ */
+struct FLoadPackageAsyncProgressParams
+{
+	/* Name of the package. */
+	FName PackageName { NAME_None };
+	/* Pointer to UPackage being loaded, can be nullptr depending on async loading progress. */
+	UPackage* LoadedPackage { nullptr };
+	/* Progress of async loading. */
+	EAsyncLoadingProgress ProgressType { EAsyncLoadingProgress::Failed };
+};
+
+/**
+ * Thread-safe delegate called on progress of async package loading.
+ * @param	Params        Struct containing the parameters for the callback.
+ */
+using FLoadPackageAsyncProgressDelegate = TTSDelegate<void(const FLoadPackageAsyncProgressParams& Params)>;
+
+/**
+ * Optional parameters passed to the LoadPackageAsync function.
+ */
+struct FLoadPackageAsyncOptionalParams
+{
+	/** If not none, this is the name of the package to load into (and create if not yet existing). If none, the name is take from PackagePath. **/
+	FName CustomPackageName { NAME_None };
+	/** Non Thread-safe delegate to be invoked from game-thread on completion. **/
+	TUniquePtr<FLoadPackageAsyncDelegate> CompletionDelegate;
+	/** Thread-safe delegate to be invoked at different state of progress for the given package. **/
+	TUniquePtr<FLoadPackageAsyncProgressDelegate> ProgressDelegate;
+	/** Package flags used to construct loaded package in memory. **/
+	EPackageFlags PackageFlags { PKG_None };
+	/** Play in Editor instance ID. **/
+	int32 PIEInstanceID { INDEX_NONE };
+	/** Loading priority. **/
+	int32 PackagePriority { 0 };
+	/** Additional context to map object names to their instanced counterpart when loading an instanced package. **/
+	const FLinkerInstancingContext* InstancingContext { nullptr };
+	/** Flags controlling loading behavior, from the ELoadFlags enum. */
+	uint32 LoadFlags { LOAD_None };
+};
+
+/**
+ * Asynchronously load a package and all contained objects that match context flags. Non-blocking.
+ * Use this version to specify the PackagePath rather than having the other versions internally convert the InName to a PackagePath by searching the current package mount points.
+ * Use this version if you need to specify a packagename that is different from the packagename on disk; this is useful when loading multiple copies of the same package.
+ *
+  * @param	InPackagePath           PackagePath to load. Must be a mounted path. The package is created if it does not already exist.
+  * @param	InOptionalParams        Optional parameters.
+ * @return Unique ID associated with this load request (the same package can be associated with multiple IDs).
+ */
+COREUOBJECT_API int32 LoadPackageAsync(const FPackagePath& InPackagePath, FLoadPackageAsyncOptionalParams InOptionalParams);
 
 /**
  * Asynchronously load a package and all contained objects that match context flags. Non-blocking.
@@ -705,6 +782,16 @@ COREUOBJECT_API int32 LoadPackageAsync(const FString& InName, const FGuid* InGui
  * @return Unique ID associated with this load request (the same package can be associated with multiple IDs).
  */
 COREUOBJECT_API int32 LoadPackageAsync(const FString& InName, FLoadPackageAsyncDelegate InCompletionDelegate, TAsyncLoadPriority InPackagePriority = 0, EPackageFlags InPackageFlags = PKG_None, int32 InPIEInstanceID = INDEX_NONE);
+
+/**
+ * Asynchronously load a package and all contained objects that match context flags. Non-blocking.
+ * Use this version when you need to load a package with default behavior from a packagename/filename, and need to be notified when it is loaded.
+ *
+ * @param	InName                  PackageName or LocalFilePath of package to load. Must be a mounted name/path. The package is created if it does not already exist.
+ * @param	InOptionalParams        Optional parameters.
+ * @return Unique ID associated with this load request (the same package can be associated with multiple IDs).
+ */
+COREUOBJECT_API int32 LoadPackageAsync(const FString& InName, FLoadPackageAsyncOptionalParams InOptionalParams);
 
 /**
 * Cancels all async package loading requests.
@@ -783,6 +870,25 @@ COREUOBJECT_API bool IsIncrementalPurgePending();
  * @param bForceSingleThreaded true to force the process to just one thread
  */
 COREUOBJECT_API void GatherUnreachableObjects(bool bForceSingleThreaded);
+
+/**
+ * Returns whether an incremental reachability analysis is still pending/ in progress.
+ *
+ * @return	true if incremental reachability analysis needs to be kicked off or is currently in progress, false othwerise.
+ */
+COREUOBJECT_API bool IsIncrementalReachabilityAnalysisPending();
+
+/**
+ * Incrementally perform reachability analysis
+ *
+ * @param	TimeLimit	Time limit (in seconds) for this function call. 0.0 results in no time limit being used.
+ */
+COREUOBJECT_API void PerformIncrementalReachabilityAnalysis(double TimeLimit);
+
+/**
+ * Finalizes incremental reachability analysis (if currently running) without any time limit
+ */
+COREUOBJECT_API void FinalizeIncrementalReachabilityAnalysis();
 
 /**
  * Incrementally purge garbage by deleting all unreferenced objects after routing Destroy.
@@ -1083,17 +1189,22 @@ public:
 		return Obj;
 	}
 
+	FORCEINLINE struct FObjectInstancingGraph* GetInstancingGraph()
+	{
+		return InstanceGraph;
+	}
+
 	/**
 	* Return the class of the object that is being constructed
 	**/
 	COREUOBJECT_API UClass* GetClass() const;
 
 	/**
-	 * Create a component or subobject
+	 * Create a component or subobject that will be instanced inside all instances of this class.
 	 * @param	TReturnType					class of return type, all overrides must be of this type
 	 * @param	Outer						outer to construct the subobject in
-	 * @param	SubobjectName				name of the new component
-	 * @param bTransient		true if the component is being assigned to a transient property
+	 * @param	SubobjectName				name of the new component, this will be the same for all instances of this class
+	 * @param	bTransient					true if the component is being assigned to a transient property
 	 */
 	template<class TReturnType>
 	TReturnType* CreateDefaultSubobject(UObject* Outer, FName SubobjectName, bool bTransient = false) const
@@ -1103,12 +1214,12 @@ public:
 	}
 
 	/**
-	 * Create optional component or subobject. Optional subobjects may not get created
-	 * when a derived class specified DoNotCreateDefaultSubobject with the subobject's name.
+	 * Create optional component or subobject. Optional subobjects will not get created.
+	 * if a derived class specifies DoNotCreateDefaultSubobject with the subobject name.
 	 * @param	TReturnType					class of return type, all overrides must be of this type
 	 * @param	Outer						outer to construct the subobject in
-	 * @param	SubobjectName				name of the new component
-	 * @param bTransient		true if the component is being assigned to a transient property
+	 * @param	SubobjectName				name of the new component, this will be the same for all instances of this class
+	 * @param	bTransient					true if the component is being assigned to a transient property
 	 */
 	template<class TReturnType>
 	TReturnType* CreateOptionalDefaultSubobject(UObject* Outer, FName SubobjectName, bool bTransient = false) const
@@ -1118,13 +1229,13 @@ public:
 	}
 
 	/** 
-	* Create a component or subobject 
-	* @param TReturnType class of return type, all overrides must be of this type 
-	* @param TClassToConstructByDefault class to construct by default
-	* @param Outer outer to construct the subobject in 
-	* @param SubobjectName name of the new component 
-	* @param bTransient		true if the component is being assigned to a transient property
-	*/ 
+	 * Create a component or subobject, allows creating a child class and returning the parent class.
+	 * @param	TReturnType					class of return type, all overrides must be of this type 
+	 * @param	TClassToConstructByDefault	class to construct by default
+	 * @param	Outer						outer to construct the subobject in
+	 * @param	SubobjectName				name of the new component, this will be the same for all instances of this class
+	 * @param	bTransient					true if the component is being assigned to a transient property
+	 */ 
 	template<class TReturnType, class TClassToConstructByDefault> 
 	TReturnType* CreateDefaultSubobject(UObject* Outer, FName SubobjectName, bool bTransient = false) const 
 	{ 
@@ -1135,7 +1246,7 @@ public:
 	 * Create a component or subobject only to be used with the editor.
 	 * @param	TReturnType					class of return type, all overrides must be of this type
 	 * @param	Outer						outer to construct the subobject in
-	 * @param	SubobjectName				name of the new component
+	 * @param	SubobjectName				name of the new component, this will be the same for all instances of this class
 	 * @param	bTransient					true if the component is being assigned to a transient property
 	 */
 	template<class TReturnType>
@@ -1148,14 +1259,14 @@ public:
 	/**
 	* Create a component or subobject only to be used with the editor.
 	* @param	Outer						outer to construct the subobject in
-	* @param	SubobjectName				name of the new component
+	* @param	SubobjectName				name of the new component, this will be the same for all instances of this class
 	* @param	ReturnType					type of the new component
 	* @param	bTransient					true if the component is being assigned to a transient property
 	*/
 	COREUOBJECT_API UObject* CreateEditorOnlyDefaultSubobject(UObject* Outer, FName SubobjectName, const UClass* ReturnType, bool bTransient = false) const;
 
 	/**
-	 * Create a component or subobject
+	 * Create a component or subobject that will be instanced inside all instances of this class.
 	 * @param	Outer                       outer to construct the subobject in
 	 * @param	SubobjectName               name of the new component
 	 * @param	ReturnType                  class of return type, all overrides must be of this type
@@ -1623,7 +1734,18 @@ FUNCTION_NON_NULL_RETURN_END
 	Params.bCopyTransientsFromClassDefaults = bCopyTransientsFromClassDefaults;
 	Params.InstanceGraph = InInstanceGraph;
 	Params.ExternalPackage = ExternalPackage;
-	return static_cast<T*>(StaticConstructObject_Internal(Params));
+
+	T* Result = nullptr;
+
+	// AutoRTFM: the idea here is for us to run the entire UObject creation as uninstrumented, including
+	// the object allocation. If our transaction gets aborted, we leave it up to the GC to realize that this
+	// object is no longer reachable and should be destroyed.
+	UE_AUTORTFM_OPEN(
+	{
+		Result = static_cast<T*>(StaticConstructObject_Internal(Params));
+	});
+
+	return Result;
 }
 
 template< class T >
@@ -1636,7 +1758,15 @@ FUNCTION_NON_NULL_RETURN_END
 
 	FStaticConstructObjectParameters Params(T::StaticClass());
 	Params.Outer = Outer;
-	return static_cast<T*>(StaticConstructObject_Internal(Params));
+
+	T* Result = nullptr;
+
+	UE_AUTORTFM_OPEN(
+	{
+		Result = static_cast<T*>(StaticConstructObject_Internal(Params));
+	});
+
+	return Result;
 }
 
 template< class T >
@@ -1656,7 +1786,15 @@ FUNCTION_NON_NULL_RETURN_END
 	Params.Template = Template;
 	Params.bCopyTransientsFromClassDefaults = bCopyTransientsFromClassDefaults;
 	Params.InstanceGraph = InInstanceGraph;
-	return static_cast<T*>(StaticConstructObject_Internal(Params));
+
+	T* Result = nullptr;
+
+	UE_AUTORTFM_OPEN(
+	{
+		Result = static_cast<T*>(StaticConstructObject_Internal(Params));
+	});
+
+	return Result;
 }
 
 /**
@@ -2088,7 +2226,7 @@ private:
 	bool					bExactClass;
 };
 
-/** Base class for reference serialization archives */
+/** Reference collecting archive created by FReferenceCollector::GetVerySlowReferenceCollectorArchive() */
 class FReferenceCollectorArchive : public FArchiveUObject
 {
 	/** Object which is performing the serialization. */
@@ -2105,6 +2243,7 @@ protected:
 	}
 
 public:
+	// Constructor not COREUOBJECT-exported because constructing this class is for internal use only
 	FReferenceCollectorArchive(const UObject* InSerializingObject, FReferenceCollector& InCollector);
 
 	void SetSerializingObject(const UObject* InSerializingObject)
@@ -2202,17 +2341,20 @@ public:
 		}
 	}
 
-#if !UE_REFERENCE_COLLECTOR_REQUIRE_OBJECTPTR
 	/** Preferred way to add a reference that allows batching. Object must outlive GC tracing, can't be used for temporary/stack references. */
+	UE_REFERENCE_COLLECTOR_REQUIRE_OBJECTPTR_DEPRECATED()
 	COREUOBJECT_API virtual void AddStableReference(UObject** Object);
 	
 	/** Preferred way to add a reference array that allows batching. Can't be used for temporary/stack array. */
+	UE_REFERENCE_COLLECTOR_REQUIRE_OBJECTPTR_DEPRECATED()
 	COREUOBJECT_API virtual void AddStableReferenceArray(TArray<UObject*>* Objects);
 
 	/** Preferred way to add a reference set that allows batching. Can't be used for temporary/stack set. */
+	UE_REFERENCE_COLLECTOR_REQUIRE_OBJECTPTR_DEPRECATED()	
 	COREUOBJECT_API virtual void AddStableReferenceSet(TSet<UObject*>* Objects);
-
+	
 	template<class UObjectType>
+	UE_REFERENCE_COLLECTOR_REQUIRE_OBJECTPTR_DEPRECATED()	
 	FORCEINLINE void AddStableReference(UObjectType** Object)
 	{
 		static_assert(sizeof(UObjectType) > 0, "Element must be a pointer to a fully-defined type");
@@ -2221,6 +2363,7 @@ public:
 	}
 
 	template<class UObjectType>
+	UE_REFERENCE_COLLECTOR_REQUIRE_OBJECTPTR_DEPRECATED()		
 	FORCEINLINE void AddStableReferenceArray(TArray<UObjectType*>* Objects)
 	{
 		static_assert(sizeof(UObjectType) > 0, "Element must be a pointer to a fully-defined type");
@@ -2229,13 +2372,13 @@ public:
 	}
 
 	template<class UObjectType>
+	UE_REFERENCE_COLLECTOR_REQUIRE_OBJECTPTR_DEPRECATED()		
 	FORCEINLINE void AddStableReferenceSet(TSet<UObjectType*>* Objects)
 	{
 		static_assert(sizeof(UObjectType) > 0, "Element must be a pointer to a fully-defined type");
 		static_assert(std::is_convertible_v<UObjectType*, const UObjectBase*>, "Element must be a pointer to a type derived from UObject");
 		AddStableReferenceSet(reinterpret_cast<TSet<UObject*>*>(Objects)); 
 	}
-#endif
 
 	template<class UObjectType>
 	FORCEINLINE void AddStableReference(TObjectPtr<UObjectType>* Object)
@@ -2255,7 +2398,6 @@ public:
 		AddStableReferenceSetFwd(reinterpret_cast<TSet<FObjectPtr>*>(Objects));
 	}
 
-#if !UE_REFERENCE_COLLECTOR_REQUIRE_OBJECTPTR	
 	/**
 	 * Adds object reference.
 	 *
@@ -2264,6 +2406,7 @@ public:
 	 * @param ReferencingProperty Referencing property (if available).
 	 */
 	template<class UObjectType>
+	UE_REFERENCE_COLLECTOR_REQUIRE_OBJECTPTR_DEPRECATED()	
 	void AddReferencedObject(UObjectType*& Object, const UObject* ReferencingObject = nullptr, const FProperty* ReferencingProperty = nullptr)
 	{
 		AROPrivate::AddReferencedObject<UObjectType>(*this, Object, ReferencingObject, ReferencingProperty);
@@ -2277,6 +2420,7 @@ public:
 	 * @param ReferencingProperty Referencing property (if available).
 	 */
 	template<class UObjectType>
+	UE_REFERENCE_COLLECTOR_REQUIRE_OBJECTPTR_DEPRECATED()		
 	void AddReferencedObject(const UObjectType*& Object, const UObject* ReferencingObject = nullptr, const FProperty* ReferencingProperty = nullptr)
 	{
 		AROPrivate::AddReferencedObject<UObjectType>(*this, Object, ReferencingObject, ReferencingProperty);
@@ -2290,6 +2434,7 @@ public:
 	* @param ReferencingProperty Referencing property (if available).
 	*/
 	template<class UObjectType>
+	UE_REFERENCE_COLLECTOR_REQUIRE_OBJECTPTR_DEPRECATED()		
 	void AddReferencedObjects(TArray<UObjectType*>& ObjectArray, const UObject* ReferencingObject = nullptr, const FProperty* ReferencingProperty = nullptr)
 	{
 		AROPrivate::AddReferencedObjects<UObjectType>(*this, ObjectArray, ReferencingObject, ReferencingProperty);
@@ -2303,6 +2448,7 @@ public:
 	* @param ReferencingProperty Referencing property (if available).
 	*/
 	template<class UObjectType>
+	UE_REFERENCE_COLLECTOR_REQUIRE_OBJECTPTR_DEPRECATED()	
 	void AddReferencedObjects(TArray<const UObjectType*>& ObjectArray, const UObject* ReferencingObject = nullptr, const FProperty* ReferencingProperty = nullptr)
 	{
 		AROPrivate::AddReferencedObjects<UObjectType>(*this, ObjectArray, ReferencingObject, ReferencingProperty);
@@ -2316,6 +2462,7 @@ public:
 	* @param ReferencingProperty Referencing property (if available).
 	*/
 	template<class UObjectType>
+	UE_REFERENCE_COLLECTOR_REQUIRE_OBJECTPTR_DEPRECATED()	
 	void AddReferencedObjects(TSet<UObjectType*>& ObjectSet, const UObject* ReferencingObject = nullptr, const FProperty* ReferencingProperty = nullptr)
 	{
 		AROPrivate::AddReferencedObjects<UObjectType>(*this, ObjectSet, ReferencingObject, ReferencingProperty);
@@ -2329,23 +2476,25 @@ public:
 	 * @param ReferencingProperty Referencing property (if available).
 	 */
 	template <typename KeyType, typename ValueType, typename Allocator, typename KeyFuncs>
+	UE_REFERENCE_COLLECTOR_REQUIRE_OBJECTPTR_DEPRECATED()		
 	void AddReferencedObjects(TMapBase<KeyType*, ValueType, Allocator, KeyFuncs>& Map, const UObject* ReferencingObject = nullptr, const FProperty* ReferencingProperty = nullptr)
 	{
 		AROPrivate::AddReferencedObjects<KeyType, ValueType, Allocator, KeyFuncs>(*this, Map, ReferencingObject, ReferencingProperty);
 	}
 
 	template <typename KeyType, typename ValueType, typename Allocator, typename KeyFuncs>
+	UE_REFERENCE_COLLECTOR_REQUIRE_OBJECTPTR_DEPRECATED()			
 	void AddReferencedObjects(TMapBase<KeyType, ValueType*, Allocator, KeyFuncs>& Map, const UObject* ReferencingObject = nullptr, const FProperty* ReferencingProperty = nullptr)
 	{
 		AROPrivate::AddReferencedObjects<KeyType, ValueType, Allocator, KeyFuncs>(*this, Map, ReferencingObject, ReferencingProperty);
 	}
 
 	template <typename KeyType, typename ValueType, typename Allocator, typename KeyFuncs>
+	UE_REFERENCE_COLLECTOR_REQUIRE_OBJECTPTR_DEPRECATED()				
 	void AddReferencedObjects(TMapBase<KeyType*, ValueType*, Allocator, KeyFuncs>& Map, const UObject* ReferencingObject = nullptr, const FProperty* ReferencingProperty = nullptr)
 	{
 		AROPrivate::AddReferencedObjects<KeyType, ValueType, Allocator, KeyFuncs>(*this, Map, ReferencingObject, ReferencingProperty);
 	}
-#endif
 
 	/**
 	 * Adds object reference.
@@ -2518,9 +2667,8 @@ public:
 	 * They're kept separate initially to maintain exact semantics while replacing the much slower
 	 * SerializeBin/TPropertyValueIterator/GetVerySlowReferenceCollectorArchive paths.
 	 */
-#if !UE_REFERENCE_COLLECTOR_REQUIRE_OBJECTPTR
+	UE_REFERENCE_COLLECTOR_REQUIRE_OBJECTPTR_DEPRECATED()				
 	COREUOBJECT_API void AddReferencedObjects(const UScriptStruct*& ScriptStruct, void* Instance, const UObject* ReferencingObject = nullptr, const FProperty* ReferencingProperty = nullptr);
-#endif
 
 	COREUOBJECT_API void AddReferencedObjects(TObjectPtr<const UScriptStruct>& ScriptStruct, void* Instance, const UObject* ReferencingObject = nullptr, const FProperty* ReferencingProperty = nullptr);
 	COREUOBJECT_API void AddReferencedObjects(TWeakObjectPtr<const UScriptStruct>& ScriptStruct, void* Instance, const UObject* ReferencingObject = nullptr, const FProperty* ReferencingProperty = nullptr);
@@ -2571,7 +2719,7 @@ public:
 	 * Marks a specific object reference as a weak reference. This does not affect GC but will be freed at a later point
 	 * The default behavior returns false as weak references must be explicitly supported
 	 */
-	virtual bool MarkWeakObjectReferenceForClearing(UObject** WeakReference) { return false; }
+	virtual bool MarkWeakObjectReferenceForClearing(UObject** WeakReference, UObject* ReferenceOwner) { return false; }
 	/**
 	 * Sets whether this collector is currently processing native references or not.
 	 */
@@ -2929,7 +3077,7 @@ struct FCoreUObjectDelegates
 	DECLARE_TS_MULTICAST_DELEGATE_OneParam(FOnObjectConstructed, UObject*);
 	static COREUOBJECT_API FOnObjectConstructed OnObjectConstructed;
 
-	/** Callback when packages end loading in LoadPackage or AsyncLoadPackage. All packages loaded recursively due to imports are included in the single call of the explicitly-loaded package. */
+	/** Callback when packages end loading in LoadPackage or AsyncLoadPackage. All packages loaded recursively due to imports are included in the single call of the explicitly-loaded package. It is called in all `WITH_EDITOR` cases, including -game. But it is not called in the runtime game compiled without WITH_EDITOR. This difference in behavior between the two game configurations is necessary because WITH_EDITOR uses a different loading mechanism than runtime game. */
 	DECLARE_MULTICAST_DELEGATE_OneParam(FOnEndLoadPackage, const FEndLoadPackageContext&);
 	static COREUOBJECT_API FOnEndLoadPackage OnEndLoadPackage;
 
@@ -3014,7 +3162,7 @@ struct FCoreUObjectDelegates
 	/** Called after reachability analysis, before any purging */
 	static COREUOBJECT_API FSimpleMulticastDelegate PostReachabilityAnalysis;
 
-	/** Called after garbage collection */
+	/** Called after garbage collection (before purge phase if incremental purge is enabled and after purge phase if incremental purge is disabled) */
 	static COREUOBJECT_API FSimpleMulticastDelegate& GetPostGarbageCollect();
 
 	/** Called after purging unreachable objects during garbage collection */
@@ -3031,6 +3179,9 @@ struct FCoreUObjectDelegates
 
 	/** Called after ConditionalBeginDestroy phase of garbage collection */
 	static COREUOBJECT_API FSimpleMulticastDelegate PostGarbageCollectConditionalBeginDestroy;
+
+	/** Called after garbage collection is complete, all objects have been purged (regardless of whether incremental purge is enabled or not), memory has been trimmed and all other GC callbacks have been fired. */
+	static COREUOBJECT_API FSimpleMulticastDelegate GarbageCollectComplete;
 
 	/** Queries whether an object should be loaded on top ( replace ) an already existing one */
 	DECLARE_DELEGATE_RetVal_OneParam(bool, FOnLoadObjectsOnTop, const FString&);
@@ -3060,58 +3211,14 @@ extern COREUOBJECT_API int32 GAssetClustreringEnabled;
 
 /** A struct used as stub for deleted ones. */
 COREUOBJECT_API UScriptStruct* GetFallbackStruct();
-// @todo: BP2CPP_remove
-enum class UE_DEPRECATED(5.0, "This type is no longer in use and will be removed.") EConstructDynamicType : uint8
-{
-	OnlyAllocateClassObject,
-	CallZConstructor
-};
-
-// @todo: BP2CPP_remove
-/** Constructs dynamic type of a given class. */
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-UE_DEPRECATED(5.0, "This method is no longer in use and will be removed.")
-COREUOBJECT_API UObject* ConstructDynamicType(FName TypePathName, EConstructDynamicType ConstructionSpecifier);
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
-
-// @todo: BP2CPP_remove
-/** Given a dynamic type path name, returns that type's class name (can be either DynamicClass, ScriptStruct or Enum). */
-UE_DEPRECATED(5.0, "This method is no longer in use and will be removed.")
-COREUOBJECT_API FName GetDynamicTypeClassName(FName TypePathName);
-
-// @todo: BP2CPP_remove
-/** Finds or constructs a package for dynamic type. */
-UE_DEPRECATED(5.0, "This method is no longer in use and will be removed.")
-COREUOBJECT_API UPackage* FindOrConstructDynamicTypePackage(const TCHAR* PackageName);
-
-// @todo: BP2CPP_remove
-/** Get names of "virtual" packages, that contain Dynamic types  */
-UE_DEPRECATED(5.0, "This method is no longer in use and will be removed.")
-COREUOBJECT_API TMap<FName, FName>& GetConvertedDynamicPackageNameToTypeName();
 
 /** Utility accessor for whether we are running with component class overrides enabled */
 COREUOBJECT_API bool GetAllowNativeComponentClassOverrides();
 
-// @todo: BP2CPP_remove
-struct COREUOBJECT_API UE_DEPRECATED(5.0, "This type is no longer in use and will be removed.") FDynamicClassStaticData
-{
-	/** Autogenerated Z_Construct* function pointer */
-	UClass* (*ZConstructFn)();
-	/** StaticClass() function pointer */
-	UClass* (*StaticClassFn)();
-	/** Selected AssetRegistrySearchable values */
-	TMap<FName, FName> SelectedSearchableValues;
-};
-
-// @todo: BP2CPP_remove
-/** Returns map of all dynamic/nativized classes */
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-UE_DEPRECATED(5.0, "This method is no longer in use and will be removed.")
-COREUOBJECT_API TMap<FName, FDynamicClassStaticData>& GetDynamicClassMap();
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
-
 namespace UE
 {
+class FAssetLog;
+COREUOBJECT_API void SerializeForLog(FCbWriter& Writer, const FAssetLog& AssetLog);
 
 class FAssetLog
 {
@@ -3261,6 +3368,8 @@ namespace UECodeGen_Private
 		Enum              = 0x1E,
 		FieldPath         = 0x1F,
 		LargeWorldCoordinatesReal = 0x20,
+		Optional          = 0x21,
+		VValue            = 0x22,
 
 		// Property-specific flags
 		NativeBool        = 0x40,
@@ -3637,6 +3746,7 @@ namespace UECodeGen_Private
 	typedef FObjectPropertyParams  FObjectPtrPropertyParams;
 	typedef FClassPropertyParams   FClassPtrPropertyParams;
 	typedef FObjectPropertyParams  FSoftObjectPropertyParams;
+	typedef FGenericPropertyParams FVerseValuePropertyParams;
 
 	struct FFunctionParams
 	{

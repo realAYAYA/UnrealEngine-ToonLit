@@ -95,6 +95,9 @@ public:
 	// ~ FFastArraySerializer Contract End
 
 private:
+	void ApplyDamagedActorState(int32 DamagedActorIndex);
+
+private:
 	UPROPERTY()
 	TArray<FWorldPartitionDestructibleHLODDamagedActorState> DamagedActors;
 

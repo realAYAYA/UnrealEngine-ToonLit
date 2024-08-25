@@ -10,7 +10,7 @@
 #include "Misc/Guid.h"
 #include "Modules/ModuleManager.h"
 
-#include "../../MfMedia/Public/IMfMediaModule.h"
+#include "IMfMediaModule.h"
 
 
 DEFINE_LOG_CATEGORY(LogMfMediaFactory);
@@ -154,7 +154,6 @@ public:
 		SupportedFileExtensions.Add(TEXT("m4a"));
 		SupportedFileExtensions.Add(TEXT("m4v"));
 		SupportedFileExtensions.Add(TEXT("mov"));
-		SupportedFileExtensions.Add(TEXT("mp3"));
 		SupportedFileExtensions.Add(TEXT("qt"));
 		SupportedFileExtensions.Add(TEXT("sdv"));
 		SupportedFileExtensions.Add(TEXT("snd"));

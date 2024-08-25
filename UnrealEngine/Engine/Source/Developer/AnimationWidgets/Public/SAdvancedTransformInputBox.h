@@ -1196,81 +1196,81 @@ public:
 		return InBuilder.AddGroup(GroupName, LocalizedDisplayName);
 	}
 
-	template<typename BuilderType = IDetailCategoryBuilder>
-	static FDetailWidgetRow& ConstructGroupedTransformRows(
-		BuilderType& InBuilder,
+	static void ConfigureComponentWidgetRow(
+		FDetailWidgetRow& WidgetRow, 
+		ESlateTransformComponent::Type InComponent,
+		typename SAdvancedTransformInputBox<TransformType>::FArguments WidgetArgs)
+	{
+		if(WidgetArgs._OnCopyToClipboard.IsBound() && WidgetArgs._OnPasteFromClipboard.IsBound())
+		{
+			WidgetRow
+			.CopyAction(FUIAction(
+				FExecuteAction::CreateLambda([WidgetArgs, InComponent]()
+				{
+					WidgetArgs._OnCopyToClipboard.ExecuteIfBound(InComponent);
+				}),
+				FCanExecuteAction())
+			);
+
+			WidgetRow.PasteAction(FUIAction(
+			FExecuteAction::CreateLambda([WidgetArgs, InComponent]()
+			{
+				WidgetArgs._OnPasteFromClipboard.ExecuteIfBound(InComponent);
+			}),
+			FCanExecuteAction::CreateLambda([WidgetArgs]() -> bool
+			{
+				return WidgetArgs._IsEnabled.Get();
+			})));
+		}
+
+		if(WidgetArgs._OnResetToDefault.IsBound() && WidgetArgs._DiffersFromDefault.IsBound())
+		{
+			WidgetRow.OverrideResetToDefault(FResetToDefaultOverride::Create(
+				TAttribute<bool>::CreateLambda([WidgetArgs, InComponent]() -> bool
+				{
+					if(!WidgetArgs._IsEnabled.Get())
+					{
+						return false;
+					}
+					return WidgetArgs._DiffersFromDefault.Execute(InComponent);
+				}),
+				FSimpleDelegate::CreateLambda([WidgetArgs, InComponent]()
+				{
+					WidgetArgs._OnResetToDefault.Execute(InComponent);
+				})
+			));
+		}
+			
+		if(InComponent != ESlateTransformComponent::Max)
+		{
+			WidgetRow
+			.NameContent()
+			.HAlign(HAlign_Fill)
+			[
+				SAdvancedTransformInputBox<TransformType>::ConstructLabel(WidgetArgs, InComponent)
+			]
+			.ValueContent()
+			.MinDesiredWidth(375.f)
+			.MaxDesiredWidth(375.f)
+			[
+				SNew(SHorizontalBox)
+				+SHorizontalBox::Slot()
+				[
+					SAdvancedTransformInputBox<TransformType>::ConstructWidget(WidgetArgs, InComponent)
+				]
+			];
+		}			
+	};
+
+	static void ConfigureHeader(
+		FDetailWidgetRow& HeaderRow,
 		const FText& InLabel,
 		const FText& InTooltip,
 		typename SAdvancedTransformInputBox<TransformType>::FArguments WidgetArgs,
 		TSharedPtr<SWidget> NameContent = TSharedPtr<SWidget>()
-		)
+	)
 	{
-		auto ConstructComponentWidgetRow = [WidgetArgs](FDetailWidgetRow& WidgetRow, ESlateTransformComponent::Type InComponent)
-		{
-			if(WidgetArgs._OnCopyToClipboard.IsBound() && WidgetArgs._OnPasteFromClipboard.IsBound())
-			{
-				WidgetRow
-				.CopyAction(FUIAction(
-					FExecuteAction::CreateLambda([WidgetArgs, InComponent]()
-					{
-						WidgetArgs._OnCopyToClipboard.ExecuteIfBound(InComponent);
-					}),
-					FCanExecuteAction())
-				);
-
-				WidgetRow.PasteAction(FUIAction(
-				FExecuteAction::CreateLambda([WidgetArgs, InComponent]()
-				{
-					WidgetArgs._OnPasteFromClipboard.ExecuteIfBound(InComponent);
-				}),
-				FCanExecuteAction::CreateLambda([WidgetArgs]() -> bool
-				{
-					return WidgetArgs._IsEnabled.Get();
-				})));
-			}
-
-			if(WidgetArgs._OnResetToDefault.IsBound() && WidgetArgs._DiffersFromDefault.IsBound())
-			{
-				WidgetRow.OverrideResetToDefault(FResetToDefaultOverride::Create(
-					TAttribute<bool>::CreateLambda([WidgetArgs, InComponent]() -> bool
-					{
-						if(!WidgetArgs._IsEnabled.Get())
-						{
-							return false;
-						}
-						return WidgetArgs._DiffersFromDefault.Execute(InComponent);
-					}),
-					FSimpleDelegate::CreateLambda([WidgetArgs, InComponent]()
-					{
-						WidgetArgs._OnResetToDefault.Execute(InComponent);
-					})
-				));
-			}
-			
-			if(InComponent != ESlateTransformComponent::Max)
-			{
-				WidgetRow
-				.NameContent()
-				.HAlign(HAlign_Fill)
-				[
-					SAdvancedTransformInputBox<TransformType>::ConstructLabel(WidgetArgs, InComponent)
-				]
-				.ValueContent()
-				.MinDesiredWidth(375.f)
-				.MaxDesiredWidth(375.f)
-				[
-					SNew(SHorizontalBox)
-					+SHorizontalBox::Slot()
-					[
-						SAdvancedTransformInputBox<TransformType>::ConstructWidget(WidgetArgs, InComponent)
-					]
-				];
-			}			
-		};
-		
-		IDetailGroup& Group = ConstructDetailGroup(InBuilder, *InLabel.ToString(), InLabel);
-		FDetailWidgetRow& HeaderRow = Group.HeaderRow();
-		ConstructComponentWidgetRow(HeaderRow, ESlateTransformComponent::Max);
+		ConfigureComponentWidgetRow(HeaderRow, ESlateTransformComponent::Max, WidgetArgs);
 
 		if(!NameContent.IsValid())
 		{
@@ -1286,23 +1286,37 @@ public:
 		[
 			NameContent.ToSharedRef()
 		];
+	}
+
+	template<typename BuilderType = IDetailCategoryBuilder>
+	static FDetailWidgetRow& ConstructGroupedTransformRows(
+		BuilderType& InBuilder,
+		const FText& InLabel,
+		const FText& InTooltip,
+		typename SAdvancedTransformInputBox<TransformType>::FArguments WidgetArgs,
+		TSharedPtr<SWidget> NameContent = TSharedPtr<SWidget>()
+		)
+	{
+		IDetailGroup& Group = ConstructDetailGroup(InBuilder, *InLabel.ToString(), InLabel);
+		FDetailWidgetRow& HeaderRow = Group.HeaderRow();
+		ConfigureHeader(HeaderRow, InLabel, InTooltip, WidgetArgs, NameContent);
 
 		if(WidgetArgs._ConstructLocation)
 		{
 			FDetailWidgetRow& WidgetRow = Group.AddWidgetRow();
-			ConstructComponentWidgetRow(WidgetRow, ESlateTransformComponent::Location);
+			ConfigureComponentWidgetRow(WidgetRow, ESlateTransformComponent::Location, WidgetArgs);
 		}
 
 		if(WidgetArgs._ConstructRotation)
 		{
 			FDetailWidgetRow& WidgetRow = Group.AddWidgetRow();
-			ConstructComponentWidgetRow(WidgetRow, ESlateTransformComponent::Rotation);
+			ConfigureComponentWidgetRow(WidgetRow, ESlateTransformComponent::Rotation, WidgetArgs);
 		}
 
 		if(WidgetArgs._ConstructScale)
 		{
 			FDetailWidgetRow& WidgetRow = Group.AddWidgetRow();
-			ConstructComponentWidgetRow(WidgetRow, ESlateTransformComponent::Scale);
+			ConfigureComponentWidgetRow(WidgetRow, ESlateTransformComponent::Scale, WidgetArgs);
 		}
 
 		return HeaderRow;

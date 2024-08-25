@@ -47,13 +47,11 @@ public:
 	UPROPERTY(EditAnywhere, Transient, Category = Processing)
 	bool bUsePlayer = false;
 
-	/** Number of tiles in the X direction. If 0, then there are no tiles. */
-	UPROPERTY(VisibleAnywhere, Transient, Category = Tiles)
-	int32 NumTilesX = 0;
-
-	/** Number of tiles in the Y direction. If 0, then there are no tiles. */
-	UPROPERTY(VisibleAnywhere, Transient, Category = Tiles)
-	int32 NumTilesY = 0;
+	/** 
+	* This option removes alpha channel. Since alpha channel adds 25% reading cost, it is suggested to have alpha channel removed if it is not used. 
+	*/
+	UPROPERTY(EditAnywhere, Category = Channels)
+	bool bRemoveAlphaChannel = false;
 
 	/** Tint each mip level a different colour to help with debugging. */
 	UPROPERTY(EditAnywhere, Transient, Category = Debug)

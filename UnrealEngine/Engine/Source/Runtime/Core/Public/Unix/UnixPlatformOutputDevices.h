@@ -15,7 +15,6 @@ class FOutputDeviceError;
 
 struct FUnixOutputDevices : public FGenericPlatformOutputDevices
 {
-	static CORE_API void SetupOutputDevices();
 	static CORE_API FString GetAbsoluteLogFilename();
 	static CORE_API FOutputDevice* GetEventLog();
 	static CORE_API FOutputDeviceError* GetError();

@@ -24,6 +24,7 @@
 // SOFTWARE.
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "acl/version.h"
 #include "acl/core/additive_utils.h"
 #include "acl/core/impl/compiler_utils.h"
 #include "acl/core/hash.h"
@@ -36,6 +37,8 @@ ACL_IMPL_FILE_PRAGMA_PUSH
 
 namespace acl
 {
+	ACL_IMPL_VERSION_NAMESPACE_BEGIN
+
 	//////////////////////////////////////////////////////////////////////////
 	// Interface for all skeletal error metrics.
 	// An error metric is responsible for a few things:
@@ -90,6 +93,21 @@ namespace acl
 			//////////////////////////////////////////////////////////////////////////
 			// The number of transforms in the input and output buffers.
 			uint32_t num_transforms;
+
+			//////////////////////////////////////////////////////////////////////////
+			// The sample index these transforms come from.
+			uint32_t sample_index;
+
+			//////////////////////////////////////////////////////////////////////////
+			// True if these transforms are being converted from lossy data.
+			// False if these transforms are being converted from the original uncompressed data.
+			bool is_lossy;
+
+			//////////////////////////////////////////////////////////////////////////
+			// True if these transforms are being converted from the additive base pose.
+			// False if these transforms are being converted from the additive pose.
+			// If not using a base, this value is always false.
+			bool is_additive_base;
 		};
 
 		//////////////////////////////////////////////////////////////////////////
@@ -503,6 +521,8 @@ namespace acl
 			}
 		}
 	};
+
+	ACL_IMPL_VERSION_NAMESPACE_END
 }
 
 ACL_IMPL_FILE_PRAGMA_POP

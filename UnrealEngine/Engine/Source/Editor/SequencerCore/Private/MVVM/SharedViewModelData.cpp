@@ -5,7 +5,6 @@
 #include "MVVM/ViewModels/ViewModel.h"
 #include "MVVM/ViewModels/ViewModelHierarchy.h"
 #include "Misc/AssertionMacros.h"
-#include "Templates/ChooseClass.h"
 
 namespace UE
 {
@@ -60,7 +59,7 @@ void FSharedViewModelData::PreHierarchicalChange(const TSharedPtr<FViewModel>& I
 	// If we do not have a current hierarchical operation, make a new one that will get flushed next tick
 	if (!CurrentHierarchicalOperation)
 	{
-		LatentOperation = MakeUnique<FViewModelHierarchyOperation>(AsShared());
+		LatentOperation = MakeUnique<FViewModelHierarchyOperation>(SharedThis(this));
 	}
 
 	check(CurrentHierarchicalOperation);

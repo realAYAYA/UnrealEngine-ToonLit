@@ -16,6 +16,8 @@
 
 #include "MovieSceneCaptureDialogModule.h"
 #include "LevelSequenceEditorModule.h"
+#include "LevelInstance/LevelInstanceInterface.h"
+#include "LevelInstance/LevelInstanceSubsystem.h"
 #include "Editor.h"
 
 #define LOCTEXT_NAMESPACE "LevelSequencePlaybackContext"
@@ -131,17 +133,20 @@ namespace MovieScene
  */
 static void FindLevelSequenceActors(const UWorld* InWorld, const ULevelSequence* InLevelSequence, TArray<ALevelSequenceActor*>& OutActors)
 {
+	ULevelInstanceSubsystem* LevelInstanceSubsystem = InWorld->GetSubsystem<ULevelInstanceSubsystem>();
+
 	for (const ULevel* Level : InWorld->GetLevels())
 	{
+		ILevelInstanceInterface* LevelInstance = LevelInstanceSubsystem ? LevelInstanceSubsystem->GetOwningLevelInstance(Level) : nullptr;
+		if (LevelInstance && !LevelInstance->IsEditing())
+		{
+			continue;
+		}
+
 		for (AActor* Actor : Level->Actors)
 		{
 			ALevelSequenceActor* LevelSequenceActor = Cast<ALevelSequenceActor>(Actor);
-			if (!LevelSequenceActor)
-			{
-				continue;
-			}
-
-			if (LevelSequenceActor->GetSequence() == InLevelSequence)
+			if (LevelSequenceActor && LevelSequenceActor->GetSequence() == InLevelSequence)
 			{
 				OutActors.Add(LevelSequenceActor);
 			}
@@ -205,9 +210,15 @@ ULevelSequence* FLevelSequencePlaybackContext::GetLevelSequence() const
 	return LevelSequence.Get();
 }
 
-UWorld* FLevelSequencePlaybackContext::GetPlaybackContext() const
+UObject* FLevelSequencePlaybackContext::GetPlaybackContext() const
 {
 	UpdateCachedContextAndClient();
+
+	if (ALevelSequenceActor* Client = GetPlaybackClient())
+	{
+		return Client;
+	}
+
 	return WeakCurrentContext.Get();
 }
 
@@ -230,7 +241,7 @@ IMovieScenePlaybackClient* FLevelSequencePlaybackContext::GetPlaybackClientAsInt
 TArray<UObject*> FLevelSequencePlaybackContext::GetEventContexts() const
 {
 	TArray<UObject*> Contexts;
-	UWorld* ContextWorld = GetPlaybackContext();
+	UWorld* ContextWorld = GetPlaybackContext()->GetWorld();
 	ULevelSequencePlayer::GetEventContexts(*ContextWorld, Contexts);
 	return Contexts;
 }

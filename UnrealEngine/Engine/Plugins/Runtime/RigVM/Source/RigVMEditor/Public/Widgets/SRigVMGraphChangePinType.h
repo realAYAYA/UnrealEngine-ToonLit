@@ -18,12 +18,10 @@ public:
 
 	SLATE_BEGIN_ARGS(SRigVMGraphChangePinType)
 	: _Types()
-    , _Blueprint(nullptr)
 	, _OnTypeSelected(nullptr)
 	{}
 
 		SLATE_ARGUMENT(TArray<TRigVMTypeIndex>, Types)
-		SLATE_ARGUMENT(URigVMBlueprint*, Blueprint)
 		SLATE_EVENT(FOnTypeSelected, OnTypeSelected)
 
 	SLATE_END_ARGS()
@@ -44,7 +42,6 @@ protected:
 	void HandlePinTypeChanged(FRigVMTemplateArgumentType InType);
 
 	TArray<TRigVMTypeIndex> Types;
-	URigVMBlueprint* Blueprint;
 	FOnTypeSelected OnTypeSelected;
 	FPropertyBindingWidgetArgs BindingArgs;
 };

@@ -207,7 +207,7 @@ FAutomationUtilsGameplayAutomationScreenshotInstance::FAutomationUtilsGameplayAu
 		if (HardwareDetailsString.Len() > 0)
 		{
 			//remove leading "_"
-			HardwareDetailsString.RightChopInline(1, false);
+			HardwareDetailsString.RightChopInline(1, EAllowShrinking::No);
 		}
 
 		// We need a unique ID for filenames from this run. We used to use GetDeviceId() but that is not guaranteed to return

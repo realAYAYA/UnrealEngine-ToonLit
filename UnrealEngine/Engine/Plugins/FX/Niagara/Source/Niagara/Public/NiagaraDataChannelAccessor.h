@@ -41,31 +41,40 @@ public:
 	NIAGARA_API int32 Num()const;
 
 	UFUNCTION(BlueprintCallable, Category = NiagaraDataChannel, meta = (Keywords = "Niagara DataChannel"))
-	NIAGARA_API double ReadFloat(FName VarName, int32 Index)const;
+	NIAGARA_API double ReadFloat(FName VarName, int32 Index, bool& IsValid)const;
 
 	UFUNCTION(BlueprintCallable, Category = NiagaraDataChannel, meta = (Keywords = "Niagara DataChannel"))
-	NIAGARA_API FVector2D ReadVector2D(FName VarName, int32 Index)const;
+	NIAGARA_API FVector2D ReadVector2D(FName VarName, int32 Index, bool& IsValid)const;
 
 	UFUNCTION(BlueprintCallable, Category = NiagaraDataChannel, meta = (Keywords = "Niagara DataChannel"))
-	NIAGARA_API FVector ReadVector(FName VarName, int32 Index)const;
+	NIAGARA_API FVector ReadVector(FName VarName, int32 Index, bool& IsValid)const;
 
 	UFUNCTION(BlueprintCallable, Category = NiagaraDataChannel, meta = (Keywords = "Niagara DataChannel"))
-	NIAGARA_API FVector4 ReadVector4(FName VarName, int32 Index)const;
+	NIAGARA_API FVector4 ReadVector4(FName VarName, int32 Index, bool& IsValid)const;
 
 	UFUNCTION(BlueprintCallable, Category = NiagaraDataChannel, meta = (Keywords = "Niagara DataChannel"))
-	NIAGARA_API FQuat ReadQuat(FName VarName, int32 Index)const;
+	NIAGARA_API FQuat ReadQuat(FName VarName, int32 Index, bool& IsValid)const;
 
 	UFUNCTION(BlueprintCallable, Category = NiagaraDataChannel, meta = (Keywords = "Niagara DataChannel"))
-	NIAGARA_API FLinearColor ReadLinearColor(FName VarName, int32 Index)const;
+	NIAGARA_API FLinearColor ReadLinearColor(FName VarName, int32 Index, bool& IsValid)const;
 
 	UFUNCTION(BlueprintCallable, Category = NiagaraDataChannel, meta = (Keywords = "Niagara DataChannel"))
-	NIAGARA_API int32 ReadInt(FName VarName, int32 Index)const;
+	NIAGARA_API int32 ReadInt(FName VarName, int32 Index, bool& IsValid)const;
 
 	UFUNCTION(BlueprintCallable, Category = NiagaraDataChannel, meta = (Keywords = "Niagara DataChannel"))
-	NIAGARA_API bool ReadBool(FName VarName, int32 Index)const;
+	NIAGARA_API uint8 ReadEnum(FName VarName, int32 Index, bool& IsValid)const;
 
 	UFUNCTION(BlueprintCallable, Category = NiagaraDataChannel, meta = (Keywords = "Niagara DataChannel"))
-	NIAGARA_API FVector ReadPosition(FName VarName, int32 Index)const;
+	NIAGARA_API bool ReadBool(FName VarName, int32 Index, bool& IsValid)const;
+
+	UFUNCTION(BlueprintCallable, Category = NiagaraDataChannel, meta = (Keywords = "Niagara DataChannel"))
+	NIAGARA_API FVector ReadPosition(FName VarName, int32 Index, bool& IsValid)const;
+
+	UFUNCTION(BlueprintCallable, Category = NiagaraDataChannel, meta = (Keywords = "Niagara DataChannel"))
+	NIAGARA_API FNiagaraID ReadID(FName VarName, int32 Index, bool& IsValid)const;
+
+	UFUNCTION(BlueprintCallable, Category = NiagaraDataChannel, meta = (Keywords = "Niagara DataChannel"))
+	NIAGARA_API FNiagaraSpawnInfo ReadSpawnInfo(FName VarName, int32 Index, bool& IsValid)const;
 };
 
 UCLASS(Experimental, BlueprintType, MinimalAPI)
@@ -86,8 +95,8 @@ public:
 	TObjectPtr<UNiagaraDataChannelHandler> Owner;
 	
 	/** Call before each batch of writes to allocate the data we'll be writing to. */
-	UFUNCTION(BlueprintCallable, Category = NiagaraDataChannel, meta = (Keywords = "niagara DataChannel"))
-	NIAGARA_API bool InitWrite(FNiagaraDataChannelSearchParameters SearchParams, int32 Count, bool bVisibleToGame=true, bool bVisibleToCPU=true, bool bVisibleToGPU=true);
+	UFUNCTION(BlueprintCallable, Category = NiagaraDataChannel, meta = (bVisibleToGame="true", bVisibleToCPU="true", bVisibleToGPU="true", Keywords = "niagara DataChannel", AdvancedDisplay = "DebugSource", AutoCreateRefTerm="DebugSource"))
+	NIAGARA_API bool InitWrite(FNiagaraDataChannelSearchParameters SearchParams, int32 Count, bool bVisibleToGame, bool bVisibleToCPU, bool bVisibleToGPU, const FString& DebugSource);
 
 	UFUNCTION(BlueprintCallable, Category = NiagaraDataChannel, meta = (Keywords = "niagara DataChannel"))
 	NIAGARA_API int32 Num()const;
@@ -114,6 +123,9 @@ public:
 	NIAGARA_API void WriteInt(FName VarName, int32 Index, int32 InData);
 
 	UFUNCTION(BlueprintCallable, Category = NiagaraDataChannel, meta = (Keywords = "niagara DataChannel"))
+	NIAGARA_API void WriteEnum(FName VarName, int32 Index, uint8 InData);
+
+	UFUNCTION(BlueprintCallable, Category = NiagaraDataChannel, meta = (Keywords = "niagara DataChannel"))
 	NIAGARA_API void WriteBool(FName VarName, int32 Index, bool InData);
 
 	UFUNCTION(BlueprintCallable, Category = NiagaraDataChannel, meta = (Keywords = "niagara DataChannel"))
@@ -121,6 +133,11 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = NiagaraDataChannel, meta = (Keywords = "niagara DataChannel"))
 	NIAGARA_API void WritePosition(FName VarName, int32 Index, FVector InData);
+
+	UFUNCTION(BlueprintCallable, Category = NiagaraDataChannel, meta = (Keywords = "niagara DataChannel"))
+	NIAGARA_API void WriteID(FName VarName, int32 Index, FNiagaraID InData);
+
+
 };
 
 
@@ -170,7 +187,8 @@ struct FNiagaraDataChannelGameDataWriter : public FNiagaraDataChannelGameDataWri
 	/** Write data to a specific variable index. */
 	bool Write(int32 Index, const T& InData)
 	{
-		//static_assert(false, "All implementations must provide a write function");		
+		//static_assert(false, "All implementations must provide a write function");
+		return false;
 	}
 };
 

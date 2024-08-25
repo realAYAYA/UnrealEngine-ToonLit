@@ -5,8 +5,11 @@
 #include "CoreMinimal.h"
 #include "Engine/EngineTypes.h"
 #include "NiagaraBakerOutput.h"
+#include "NiagaraBakerSettings.h"
 #include "NiagaraSystem.h"
 #include "UObject/GCObject.h"
+
+DECLARE_LOG_CATEGORY_EXTERN(LogNiagaraBaker, Log, All);
 
 class FNiagaraBakerRenderer;
 class UNiagaraComponent;
@@ -16,6 +19,8 @@ class UTextureRenderTarget2D;
 class USceneCaptureComponent2D;
 class FAdvancedPreviewScene;
 class FCanvas;
+class UAnimatedSparseVolumeTexture;
+class UHeterogeneousVolumeComponent;
 
 struct FNiagaraBakerFeedbackContext
 {
@@ -96,16 +101,17 @@ class FNiagaraBakerRenderer : FGCObject
 {
 public:
 	FNiagaraBakerRenderer(UNiagaraSystem* NiagaraSystem);
-	virtual ~FNiagaraBakerRenderer();
+	virtual ~FNiagaraBakerRenderer() override;
 
 	void SetAbsoluteTime(float AbsoluteTime, bool bShouldTickComponent = true);
 
 	void RenderSceneCapture(UTextureRenderTarget2D* RenderTarget, ESceneCaptureSource CaptureSource) const;
-	void RenderSceneCapture(UTextureRenderTarget2D* RenderTarget, UNiagaraComponent* NiagaraComponent, ESceneCaptureSource CaptureSource) const;
+	void RenderSceneCapture(UTextureRenderTarget2D* RenderTarget, UPrimitiveComponent* BakedDataComponent, ESceneCaptureSource CaptureSource) const;
 	void RenderBufferVisualization(UTextureRenderTarget2D* RenderTarget, FName BufferVisualizationMode = NAME_None) const;
 	void RenderDataInterface(UTextureRenderTarget2D* RenderTarget, FName BindingName) const;
 	void RenderParticleAttribute(UTextureRenderTarget2D* RenderTarget, FName BindingName) const;
 	void RenderSimCache(UTextureRenderTarget2D* RenderTarget, UNiagaraSimCache* SimCache) const;
+	void RenderSparseVolumeTexture(UTextureRenderTarget2D* RenderTarget, const FNiagaraBakerOutputFrameIndices Indices, UAnimatedSparseVolumeTexture *SVT) const;
 
 	UWorld* GetWorld() const;
 	float GetWorldTime() const;
@@ -138,5 +144,44 @@ private:
 	TObjectPtr<USceneCaptureComponent2D> SceneCaptureComponent = nullptr;
 
 	mutable TObjectPtr<UNiagaraComponent> SimCachePreviewComponent = nullptr;
+	mutable TObjectPtr<UHeterogeneousVolumeComponent> SVTPreviewComponent = nullptr;
+
 	mutable TSharedPtr<FAdvancedPreviewScene> SimCacheAdvancedPreviewScene;
+	mutable TSharedPtr<FAdvancedPreviewScene> SVTPreviewScene;
 };
+
+class UNiagaraComponent;
+class FNiagaraSystemInstance;
+class UNiagaraDataInterfaceGrid3DCollection;
+struct FNiagaraDataInterfaceProxyGrid3DCollectionProxy;
+struct FGrid3DCollectionRWInstanceData_GameThread;
+class UNiagaraDataInterfaceRenderTargetVolume;
+struct FNiagaraDataInterfaceProxyRenderTargetVolumeProxy;
+struct FRenderTargetVolumeRWInstanceData_GameThread;
+
+class FVolumeDataInterfaceHelper
+{
+public:
+
+	FVolumeDataInterfaceHelper() {};
+
+	UNiagaraComponent* NiagaraComponent = nullptr;
+	FNiagaraSystemInstance* SystemInstance = nullptr;
+	TArray<FString>											DataInterfacePath;
+
+	UNiagaraDataInterfaceGrid3DCollection* Grid3DDataInterface = nullptr;
+	FNiagaraDataInterfaceProxyGrid3DCollectionProxy* Grid3DProxy = nullptr;
+	FGrid3DCollectionRWInstanceData_GameThread* Grid3DInstanceData_GameThread = nullptr;
+	FName													Grid3DAttributeName;
+	int32													Grid3DVariableIndex = INDEX_NONE;
+	int32													Grid3DAttributeStart = INDEX_NONE;
+	int32													Grid3DAttributeChannels = 0;
+	FIntVector												Grid3DTextureSize = FIntVector::ZeroValue;
+
+	UNiagaraDataInterfaceRenderTargetVolume* VolumeRenderTargetDataInterface = nullptr;
+	FNiagaraDataInterfaceProxyRenderTargetVolumeProxy* VolumeRenderTargetProxy = nullptr;
+	FRenderTargetVolumeRWInstanceData_GameThread* VolumeRenderTargetInstanceData_GameThread = nullptr;
+
+	bool Initialize(const TArray<FString>& InputDataInterfacePath, UNiagaraComponent* InNiagaraComponent);
+};
+

@@ -38,6 +38,7 @@ public:
 
 protected:
 	void AddFontSizeProperty(IDetailChildrenBuilder& InStructBuilder);
+	bool IsFontSizeEnabled() const;
 
 	/** @return The value or unset if properties with multiple values are viewed */
 	TOptional<float> OnFontSizeGetValue() const;

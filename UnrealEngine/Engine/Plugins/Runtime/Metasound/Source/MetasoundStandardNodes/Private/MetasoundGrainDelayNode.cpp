@@ -32,6 +32,7 @@ namespace Metasound
 		METASOUND_PARAM(InGrainDelayEnvelope, "Grain Envelope", "The type of envelope to use for the grains.")
 		METASOUND_PARAM(InGrainMaxCount, "Max Grain Count", "The maximum number of grains to render at a time (between 1 and 100). More grains will cost more CPU and potentially clip.")
 		METASOUND_PARAM(InGrainDelayFeedbackAmount, "Feedback Amount", "The amount of feedback of each grain. The grain delay will feed its audio output back into itself.")
+		METASOUND_PARAM(InGrainMaxDelayTimeSeconds, "Max Delay Time", "The maximum amount of time to delay the audio.")
 
 		METASOUND_PARAM(OutAudio, "Out Audio", "Output audio buffer which has been grain-delayed.")
 	}
@@ -62,11 +63,13 @@ namespace Metasound
 			const FFloatReadRef& InGrainPitchShiftDelta,
 			const FGrainDelayEnvelopeReadRef& InGrainDelayEnvelope,
 			const FInt32ReadRef& InGrainMaxCount,	
-			const FFloatReadRef& InGrainDelayFeedbackAmount);
+			const FFloatReadRef& InGrainDelayFeedbackAmount,
+			float InGrainMaxDelaySeconds
+		);
 
 		static const FNodeClassMetadata& GetNodeInfo();
 		static const FVertexInterface& GetVertexInterface();
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors);
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults);
 		virtual void BindInputs(FInputVertexInterfaceData& InOutVertexData) override;
 		virtual void BindOutputs(FOutputVertexInterfaceData& InOutVertexData) override;
 		virtual FDataReferenceCollection GetInputs() const override;
@@ -89,6 +92,7 @@ namespace Metasound
 		FGrainDelayEnvelopeReadRef GrainDelayEnvelope;
 		FInt32ReadRef GrainMaxCount;
 		FFloatReadRef GrainDelayFeedbackAmount;
+		float GrainMaxDelayTimeSeconds = 2.0f;
 
 		// Output references
 		FAudioBufferWriteRef AudioOutput;
@@ -113,7 +117,8 @@ namespace Metasound
 											  const FFloatReadRef& InGrainPitchShiftDelta,
 											  const FGrainDelayEnvelopeReadRef& InGrainDelayEnvelope,
 											  const FInt32ReadRef& InGrainMaxCount,
-											  const FFloatReadRef& InGrainDelayFeedbackAmount)
+											  const FFloatReadRef& InGrainDelayFeedbackAmount,
+											  float InGrainMaxDelayTimeSeconds)
 		: OperatorSettings(InSettings),
 	      AudioInput(InAudioInput),
 		  GrainSpawnTrigger(InGrainSpawnTrigger),
@@ -126,8 +131,9 @@ namespace Metasound
 		  GrainDelayEnvelope(InGrainDelayEnvelope),
 		  GrainMaxCount(InGrainMaxCount),
 		  GrainDelayFeedbackAmount(InGrainDelayFeedbackAmount),
+		  GrainMaxDelayTimeSeconds(InGrainMaxDelayTimeSeconds),
 	      AudioOutput(FAudioBufferWriteRef::CreateNew(OperatorSettings)),
-		  GrainDelayProcessor(OperatorSettings.GetSampleRate())
+		  GrainDelayProcessor(OperatorSettings.GetSampleRate(), GrainMaxDelayTimeSeconds)
 	{
 		PreviousGrainDelayMsec = GrainDelayProcessor.GetGrainDelayClamped(*GrainDelay);
 		PreviousGrainEnvelopeType = *InGrainDelayEnvelope;
@@ -165,6 +171,9 @@ namespace Metasound
 
 		auto CreateDefaultInterface = []()-> FVertexInterface
 		{
+			FDataVertexMetadata MaxDelayTimeMetadata = METASOUND_GET_PARAM_METADATA(InGrainMaxDelayTimeSeconds);
+			MaxDelayTimeMetadata.bIsAdvancedDisplay = true;
+
 			FInputVertexInterface InputInterface;
 			InputInterface.Add(TInputDataVertex<FAudioBuffer>(METASOUND_GET_PARAM_NAME_AND_METADATA(InAudio)));
 			InputInterface.Add(TInputDataVertex<FTrigger>(METASOUND_GET_PARAM_NAME_AND_METADATA(InGrainSpawnTrigger)));
@@ -177,8 +186,9 @@ namespace Metasound
 			InputInterface.Add(TInputDataVertex<FEnumGrainDelayEnvelope>(METASOUND_GET_PARAM_NAME_AND_METADATA(InGrainDelayEnvelope), (int32)Audio::Grain::EEnvelope::Gaussian));
 			InputInterface.Add(TInputDataVertex<int32>(METASOUND_GET_PARAM_NAME_AND_METADATA(InGrainMaxCount), 16));
 			InputInterface.Add(TInputDataVertex<float>(METASOUND_GET_PARAM_NAME_AND_METADATA(InGrainDelayFeedbackAmount), 0.0f));
+			InputInterface.Add(TInputConstructorVertex<FTime>(METASOUND_GET_PARAM_NAME(InGrainMaxDelayTimeSeconds), MaxDelayTimeMetadata, 2.0f));
 
-			FOutputVertexInterface OutputInterface;
+			FOutputVertexInterface OutputInterface; 
 			OutputInterface.Add(TOutputDataVertex<FAudioBuffer>(METASOUND_GET_PARAM_NAME_AND_METADATA(OutAudio)));
 
 			return FVertexInterface(InputInterface, OutputInterface);
@@ -188,24 +198,24 @@ namespace Metasound
 		return DefaultInterface;
 	}
 
-	TUniquePtr<IOperator> FGrainDelayOperator::CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+	TUniquePtr<IOperator> FGrainDelayOperator::CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 	{
 		using namespace GrainDelay;
 
-		const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
-		const FInputVertexInterface& InputInterface = GetVertexInterface().GetInputInterface();
+		const FInputVertexInterfaceData& InputData = InParams.InputData;
 		
-		FAudioBufferReadRef AudioInput = InputCollection.GetDataReadReferenceOrConstruct<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InAudio), InParams.OperatorSettings);
-		FTriggerReadRef GrainSpawnTrigger = InputCollection.GetDataReadReferenceOrConstruct<FTrigger>(METASOUND_GET_PARAM_NAME(InGrainSpawnTrigger), InParams.OperatorSettings);
-		FFloatReadRef GrainDelay = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InGrainDelay), InParams.OperatorSettings);
-		FFloatReadRef GrainDelayDelta = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InGrainDelayDelta), InParams.OperatorSettings);
-		FFloatReadRef GrainDuration = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InGrainDuration), InParams.OperatorSettings);
-		FFloatReadRef GrainDurationDelta = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InGrainDurationDelta), InParams.OperatorSettings);
-		FFloatReadRef GrainPitchShift = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InGrainPitchShift), InParams.OperatorSettings);
-		FFloatReadRef GrainPitchShiftDelta = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InGrainPitchShiftDelta), InParams.OperatorSettings);
-		FGrainDelayEnvelopeReadRef GrainDelayEnvelope = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<FEnumGrainDelayEnvelope>(InputInterface, METASOUND_GET_PARAM_NAME(InGrainDelayEnvelope), InParams.OperatorSettings);
-		FInt32ReadRef GrainMaxCount = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<int32>(InputInterface, METASOUND_GET_PARAM_NAME(InGrainMaxCount), InParams.OperatorSettings);
-		FFloatReadRef GrainDelayFeedbackAmount = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InGrainDelayFeedbackAmount), InParams.OperatorSettings);
+		FAudioBufferReadRef AudioInput = InputData.GetOrConstructDataReadReference<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InAudio), InParams.OperatorSettings);
+		FTriggerReadRef GrainSpawnTrigger = InputData.GetOrConstructDataReadReference<FTrigger>(METASOUND_GET_PARAM_NAME(InGrainSpawnTrigger), InParams.OperatorSettings);
+		FFloatReadRef GrainDelay = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InGrainDelay), InParams.OperatorSettings);
+		FFloatReadRef GrainDelayDelta = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InGrainDelayDelta), InParams.OperatorSettings);
+		FFloatReadRef GrainDuration = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InGrainDuration), InParams.OperatorSettings);
+		FFloatReadRef GrainDurationDelta = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InGrainDurationDelta), InParams.OperatorSettings);
+		FFloatReadRef GrainPitchShift = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InGrainPitchShift), InParams.OperatorSettings);
+		FFloatReadRef GrainPitchShiftDelta = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InGrainPitchShiftDelta), InParams.OperatorSettings);
+		FGrainDelayEnvelopeReadRef GrainDelayEnvelope = InputData.GetOrCreateDefaultDataReadReference<FEnumGrainDelayEnvelope>(METASOUND_GET_PARAM_NAME(InGrainDelayEnvelope), InParams.OperatorSettings);
+		FInt32ReadRef GrainMaxCount = InputData.GetOrCreateDefaultDataReadReference<int32>(METASOUND_GET_PARAM_NAME(InGrainMaxCount), InParams.OperatorSettings);
+		FFloatReadRef GrainDelayFeedbackAmount = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InGrainDelayFeedbackAmount), InParams.OperatorSettings);
+		FTime GrainMaxDelayTimeSeconds = InputData.GetOrCreateDefaultValue<FTime>(METASOUND_GET_PARAM_NAME(InGrainMaxDelayTimeSeconds), InParams.OperatorSettings);
 
 		return MakeUnique<FGrainDelayOperator>(InParams.OperatorSettings, 
 			AudioInput,
@@ -218,7 +228,8 @@ namespace Metasound
 			GrainPitchShiftDelta,
 			GrainDelayEnvelope,
 			GrainMaxCount,
-			GrainDelayFeedbackAmount);
+			GrainDelayFeedbackAmount,
+			GrainMaxDelayTimeSeconds.GetSeconds());
 	}
 
 	void FGrainDelayOperator::BindInputs(FInputVertexInterfaceData& InOutVertexData)
@@ -236,6 +247,7 @@ namespace Metasound
 		InOutVertexData.BindReadVertex(METASOUND_GET_PARAM_NAME(InGrainDelayEnvelope), GrainDelayEnvelope);
 		InOutVertexData.BindReadVertex(METASOUND_GET_PARAM_NAME(InGrainMaxCount), GrainMaxCount);
 		InOutVertexData.BindReadVertex(METASOUND_GET_PARAM_NAME(InGrainDelayFeedbackAmount), GrainDelayFeedbackAmount);
+		InOutVertexData.SetValue(METASOUND_GET_PARAM_NAME(InGrainMaxDelayTimeSeconds), FTime::FromSeconds(GrainMaxDelayTimeSeconds));
 	}
 
 	void FGrainDelayOperator::BindOutputs(FOutputVertexInterfaceData& InOutVertexData)

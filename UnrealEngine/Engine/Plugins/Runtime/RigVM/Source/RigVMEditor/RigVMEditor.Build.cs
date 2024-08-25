@@ -31,7 +31,9 @@ public class RigVMEditor : ModuleRules
                 "PropertyEditor",
                 "ToolMenus",
                 "MessageLog",
-            }
-        );
-    }
+				"StructUtils",
+				"StructUtilsEditor",
+			}
+		);
+	}
 }

@@ -1,8 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System;
+using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Reflection;
 using System.Text.Json;
 
@@ -87,6 +91,54 @@ namespace EpicGames.Core
 			public void Format(object value, Utf8JsonWriter writer) => writer.WriteStringValue(value.ToString());
 		}
 
+		class ActivityFormatter : ILogValueFormatter
+		{
+			public void Format(object value, Utf8JsonWriter writer)
+			{
+				writer.WriteStartArray();
+				Format((Activity)value, writer);
+				writer.WriteEndArray();
+			}
+
+			static void Format(Activity activity, Utf8JsonWriter writer)
+			{
+				if (activity.Parent != null)
+				{
+					Format(activity.Parent, writer);
+				}
+
+				writer.WriteStartObject();
+				writer.WriteString("name", activity.OperationName);
+				if (activity.Tags.Any())
+				{
+					writer.WriteStartObject("tags");
+					foreach (KeyValuePair<string, string?> pair in activity.Tags)
+					{
+						writer.WriteString(pair.Key, pair.Value);
+					}
+					writer.WriteEndObject();
+				}
+				writer.WriteEndObject();
+			}
+		}
+
+		class EnumerableFormatter : ILogValueFormatter
+		{
+			readonly ILogValueFormatter _elementFormatter;
+
+			public EnumerableFormatter(ILogValueFormatter elementFormatter) => _elementFormatter = elementFormatter;
+
+			public void Format(object value, Utf8JsonWriter writer)
+			{
+				writer.WriteStartArray();
+				foreach (object element in (IEnumerable)value)
+				{
+					_elementFormatter.Format(element, writer);
+				}
+				writer.WriteEndArray();
+			}
+		}
+
 		class StructuredLogValueFormatter : ILogValueFormatter
 		{
 			public void Format(object value, Utf8JsonWriter writer)
@@ -168,7 +220,7 @@ namespace EpicGames.Core
 		{
 			readonly Utf8String _type;
 
-			public AnnotateTypeFormatter(string type) => _type = type;
+			public AnnotateTypeFormatter(string type) => _type = new Utf8String(type);
 
 			public void Format(object value, Utf8JsonWriter writer)
 			{
@@ -208,6 +260,7 @@ namespace EpicGames.Core
 			formatters.TryAdd(typeof(string), s_stringFormatter);
 			formatters.TryAdd(typeof(LogValue), new StructuredLogValueFormatter());
 			formatters.TryAdd(typeof(FileReference), new FileReferenceFormatter());
+			formatters.TryAdd(typeof(Activity), new ActivityFormatter());
 			return formatters;
 		}
 
@@ -259,21 +312,49 @@ namespace EpicGames.Core
 					return formatter;
 				}
 
-				LogValueFormatterAttribute? formatterAttribute = type.GetCustomAttribute<LogValueFormatterAttribute>();
-				if (formatterAttribute != null)
-				{
-					formatter = (ILogValueFormatter)Activator.CreateInstance(formatterAttribute.Type)!;
-				}
-				else
-				{
-					formatter = s_stringFormatter;
-				}
-
+				formatter = GetFormatterUncached(type);
 				if (s_formatters.TryAdd(type, formatter))
 				{
 					return formatter;
 				}
 			}
+		}
+
+		static ILogValueFormatter GetFormatterUncached(Type type)
+		{
+			LogValueFormatterAttribute? formatterAttribute = type.GetCustomAttribute<LogValueFormatterAttribute>();
+			if (formatterAttribute != null)
+			{
+				return (ILogValueFormatter)Activator.CreateInstance(formatterAttribute.Type)!;
+			}
+
+			LogValueTypeAttribute? typeAttribute = type.GetCustomAttribute<LogValueTypeAttribute>();
+			if (typeAttribute != null)
+			{
+				return new AnnotateTypeFormatter(typeAttribute.Name ?? type.Name);
+			}
+
+			if (TryGetEnumerableType(type, out Type? elementType))
+			{
+				return new EnumerableFormatter(GetFormatter(elementType));
+			}
+
+			return s_stringFormatter;
+		}
+
+		static bool TryGetEnumerableType(Type type, [NotNullWhen(true)] out Type? elementType)
+		{
+			foreach (Type interfaceType in type.GetInterfaces())
+			{
+				if (interfaceType.IsGenericType && interfaceType.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+				{
+					elementType = interfaceType.GetGenericArguments()[0];
+					return true;
+				}
+			}
+
+			elementType = null;
+			return false;
 		}
 
 		/// <summary>

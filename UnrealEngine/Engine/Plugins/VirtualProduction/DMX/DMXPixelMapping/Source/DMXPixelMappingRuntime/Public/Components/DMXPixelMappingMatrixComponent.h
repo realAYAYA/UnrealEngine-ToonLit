@@ -35,10 +35,11 @@ public:
 	UDMXPixelMappingMatrixComponent();
 
 	/** Gets an Event broadcast when a the matrix (and by that its num cells) changed */
+	UE_DEPRECATED(5.4, "OnMatrixChanged is removed without replacement. This is handled internally and should not require external handling.")
 	static FDMXPixelMappingOnMatrixChanged& GetOnMatrixChanged()
 	{
-		static FDMXPixelMappingOnMatrixChanged OnMatrixChanged;
-		return OnMatrixChanged;
+		static FDMXPixelMappingOnMatrixChanged OnMatrixChanged_DEPRECATED;
+		return OnMatrixChanged_DEPRECATED;
 	}
 
 	// ~Begin UObject interface
@@ -46,7 +47,6 @@ public:
 	virtual void PostLoad() override;
 	virtual void PostInitProperties() override;
 #if WITH_EDITOR
-	virtual void PreEditChange(FProperty* PropertyAboutToChange) override;
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 	virtual void PostEditChangeChainProperty(FPropertyChangedChainEvent& PropertyChangedChainEvent) override;
 #endif // WITH_EDITOR
@@ -58,19 +58,21 @@ public:
 public:
 	// ~Begin UDMXPixelMappingBaseComponent interface
 	virtual const FName& GetNamePrefix() override;
-	virtual void ResetDMX() override;
+	virtual void ResetDMX(EDMXPixelMappingResetDMXMode ResetMode = EDMXPixelMappingResetDMXMode::SendDefaultValues) override;
 	virtual void SendDMX() override;
 	virtual bool CanBeMovedTo(const UDMXPixelMappingBaseComponent* Component) const override;
 	virtual FString GetUserName() const override;
 	// ~End UDMXPixelMappingBaseComponent interface
 
 	// ~Begin UDMXPixelMappingOutputComponent interface
+	virtual void SetPosition(const FVector2D& NewPosition) override;
+	virtual void SetPositionRotated(FVector2D NewRotatedPosition) override;
+	virtual void SetSize(const FVector2D& NewSize) override;
+	virtual void SetRotation(double NewRotation) override;
 #if WITH_EDITOR
 	virtual const FText GetPaletteCategory() override;
 #endif // WITH_EDITOR
 	virtual bool IsOverParent() const override;
-	virtual void SetPosition(const FVector2D& NewPosition) override;
-	virtual void SetSize(const FVector2D& NewSize) override;
 	// ~End UDMXPixelMappingOutputComponent interface
 	
 	//~ Begin UDMXPixelMappingOutputDMXComponent implementation
@@ -79,12 +81,6 @@ public:
 	virtual void RenderWithInputAndSendDMX() override;
 	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	//~ End UDMXPixelMappingOutputDMXComponent implementation
-
-	/** Handles changes in position */
-	void HandlePositionChanged();
-
-	/** Handles changes in size or in matrix */
-	void HandleSizeChanged();
 
 	/** Handles changes in size or in matrix */
 	void HandleMatrixChanged();
@@ -104,13 +100,6 @@ protected:
 	TArray<UDMXPixelMappingBaseComponent*> PreEditUndoMatrixCellChildren;
 #endif // WITH_EDITORONLY_DATA
 
-private:
-	/** True while the component is updating its children */
-	bool bIsUpdatingChildren = false;
-
-	/** Position before it was changed */
-	FVector2D PreEditChangePosition;
-
 public:
 #if WITH_EDITORONLY_DATA
 	UPROPERTY()
@@ -125,6 +114,14 @@ public:
 
 	UPROPERTY()
 	EDMXPixelMappingDistribution Distribution;
+
+	/** Inverts the cell ordering along the X-axis. Useful when the matrix is facing away from the screen. */
+	UPROPERTY(EditAnywhere, Category = "Matrix")
+	bool bInvertCellsX = false;
+
+	/** Inverts the cell ordering along the Y-axis. Useful when the matrix is facing away from the screen . */
+	UPROPERTY(EditAnywhere, Category = "Matrix")
+	bool bInvertCellsY = false;
 
 	/** Layout script for the children of this component (hidden in customizations and displayed in its own panel). */
 	UPROPERTY(EditAnywhere, Instanced, Category = "Layout")

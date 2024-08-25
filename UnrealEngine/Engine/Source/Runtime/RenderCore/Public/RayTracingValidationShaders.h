@@ -29,7 +29,7 @@ public:
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
 	{
-		return FBuiltInRayTracingShader::ShouldCompilePermutation(Parameters);
+		return FBuiltInRayTracingShader::ShouldCompilePermutation(Parameters) && RHISupportsWaveOperations(Parameters.Platform);
 	}
 
 	// Large thread group to handle large meshes with a single 1D dispatch
@@ -73,7 +73,7 @@ public:
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
 	{
-		return FBuiltInRayTracingShader::ShouldCompilePermutation(Parameters);
+		return FBuiltInRayTracingShader::ShouldCompilePermutation(Parameters) && RHISupportsWaveOperations(Parameters.Platform);
 	}
 
 	// Large thread group to handle large meshes with a single 1D dispatch

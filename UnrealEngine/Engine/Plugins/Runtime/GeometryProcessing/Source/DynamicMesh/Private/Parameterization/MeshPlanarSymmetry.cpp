@@ -699,7 +699,7 @@ void FMeshPlanarSymmetry::ComputeSymmetryConstrainedPositions(
 	check(MirrorVertexROI.Num() == NumV);
 	check(SourceVertexPositions.Num() == NumV);
 
-	MirrorVertexPositionsOut.SetNum(NumV, false);
+	MirrorVertexPositionsOut.SetNum(NumV, EAllowShrinking::No);
 
 	for (int32 k = 0; k < NumV; ++k)
 	{

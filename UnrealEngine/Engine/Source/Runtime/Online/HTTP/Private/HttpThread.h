@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "EventLoop/EventLoopTimer.h"
 #include "HAL/ThreadSafeCounter.h"
 #include "HAL/Runnable.h"
 #include "HttpPackage.h"
@@ -10,10 +11,20 @@
 #include "Misc/Timespan.h"
 #include "Containers/Queue.h"
 #include "Containers/SpscQueue.h"
+#include "Containers/Ticker.h"
 
 #include <atomic>
 
 class IHttpThreadedRequest;
+class FHttpThreadBase;
+
+class IHttpTaskTimerHandle
+{
+public:
+	virtual ~IHttpTaskTimerHandle() {};
+
+	virtual void RemoveTaskFrom(FHttpThreadBase* HttpThreadBase) = 0;
+};
 
 /**
  * Manages Http thread
@@ -81,9 +92,15 @@ public:
 	/**
 	 * Add task to be ran on the http thread next tick
 	 *
-	 * @param Task The task to be ran next tick
+	 * @param Task The task to be ran
+	 * @param InDelay The delay to wait before running the task
+	 * @return The handle of the timer, which could be used to remove the task before it get triggered
 	 */
-	void AddHttpThreadTask(TFunction<void()>&& Task);
+	virtual TSharedPtr<IHttpTaskTimerHandle> AddHttpThreadTask(TFunction<void()>&& Task, float InDelay) = 0;
+
+	virtual void RemoveTimerHandle(FTSTicker::FDelegateHandle DelegateHandle) = 0;
+
+	virtual void RemoveTimerHandle(UE::EventLoop::FTimerHandle EventLoopTimerHandle) = 0;
 
 protected:
 
@@ -101,7 +118,6 @@ protected:
 	 * Complete a request on the http thread
 	 */
 	virtual void CompleteThreadedRequest(IHttpThreadedRequest* Request);
-
 
 protected:
 	int32 GetRunningThreadedRequestLimit() const;
@@ -122,6 +138,12 @@ protected:
 	*  @return FSingleThreadRunnable Interface for this FRunnable object.
 	*/
 	virtual class FSingleThreadRunnable* GetSingleThreadInterface() override { return this; }
+
+private:
+	void ConsumeCanceledRequestsAndNewRequests(TArray<IHttpThreadedRequest*>& RequestsToCancel, TArray<IHttpThreadedRequest*>& RequestsToComplete);
+	void MoveCompletingRequestsToCompletedRequests(TArray<IHttpThreadedRequest*>& RequestsToComplete);
+	void StartRequestsWaitingInQueue(TArray<IHttpThreadedRequest*>& RequestsToComplete);
+	void FinishRequestsFromHttpThreadWithCallbacks(TArray<IHttpThreadedRequest*>& RequestsToComplete);
 
 protected:
 	/** Pointer to Runnable Thread */
@@ -170,9 +192,6 @@ protected:
 	 * Added to on HTTP thread, processed then cleared on game thread (Single producer, single consumer)
 	 */
 	TSpscQueue<IHttpThreadedRequest*> CompletedThreadedRequests;
-
-	/** Queue of tasks to run on the game thread */
-	TQueue<TFunction<void()>, EQueueMode::Mpsc> HttpThreadQueue;
 };
 
 class FLegacyHttpThread	: public FHttpThreadBase
@@ -201,6 +220,12 @@ protected:
 	virtual void Stop() override;
 	//~ End FRunnable Interface
 
+	virtual TSharedPtr<IHttpTaskTimerHandle> AddHttpThreadTask(TFunction<void()>&& Task, float InDelay) override;
+	virtual void HttpThreadTick(float DeltaSeconds) override;
+
+	virtual void RemoveTimerHandle(FTSTicker::FDelegateHandle DelegateHandle) override;
+	virtual void RemoveTimerHandle(UE::EventLoop::FTimerHandle EventLoopTimerHandle) override;
+
 	/** signal request to stop and exit thread */
 	FThreadSafeCounter ExitRequest;
 
@@ -212,4 +237,7 @@ protected:
 	double HttpThreadIdleFrameTimeInSeconds;
 	/** Time in seconds to sleep minimally when idle, waiting for requests. */
 	double HttpThreadIdleMinimumSleepTimeInSeconds;
+
+	/* Ticker for functions to run in HTTP thread */
+	FTSTicker Ticker;
 };

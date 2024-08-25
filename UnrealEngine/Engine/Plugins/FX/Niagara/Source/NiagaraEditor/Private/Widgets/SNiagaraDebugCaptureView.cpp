@@ -23,11 +23,13 @@ void SNiagaraDebugCaptureView::OnNumFramesChanged(int32 InNumFrames)
 
 void SNiagaraDebugCaptureView::CreateComponentSelectionMenuContent(FMenuBuilder& MenuBuilder) 
 {
-	for(TObjectIterator<UNiagaraComponent> NiagaraComponent; NiagaraComponent; ++NiagaraComponent)
+	for(TObjectIterator<UNiagaraComponent> NiagaraComponentIt; NiagaraComponentIt; ++NiagaraComponentIt)
 	{
+		UNiagaraComponent* NiagaraComponent = *NiagaraComponentIt;
+
 		// Ignore dying or CDO versions of data..
 		// No need to check the unreachable flag here as TObjectIterator already does that
-		if(!IsValid(*NiagaraComponent) || NiagaraComponent->HasAnyFlags(RF_ClassDefaultObject))
+		if(!IsValid(NiagaraComponent) || NiagaraComponent->HasAnyFlags(RF_ClassDefaultObject))
 		{
 			continue;
 		}
@@ -38,22 +40,30 @@ void SNiagaraDebugCaptureView::CreateComponentSelectionMenuContent(FMenuBuilder&
 			continue;
 		}
 
-		if(!NiagaraComponent->GetWorld())
+		UWorld* World = NiagaraComponent->GetWorld();
+		if(!World)
+		{
+			continue;
+		}
+
+		// Only allow the component from our preview world to exist in the component list
+		// Without this test things like sim cache previews, or the baker's component will show up in the capture list which is confusing
+		if (World->IsPreviewWorld() && NiagaraComponent != SystemViewModel->GetPreviewComponent())
 		{
 			continue;
 		}
 
 		FText ComponentName;
 		FText ComponentTooltip;
-		GetComponentNameAndTooltip(*NiagaraComponent, ComponentName, ComponentTooltip);
+		GetComponentNameAndTooltip(NiagaraComponent, ComponentName, ComponentTooltip);
 
 		MenuBuilder.AddMenuEntry(
 			ComponentName,
 			ComponentTooltip,
 			FSlateIcon(),
-			FUIAction(FExecuteAction::CreateLambda([&, NiagaraComponent]()
+			FUIAction(FExecuteAction::CreateLambda([&, WeakNiagaraComponent=MakeWeakObjectPtr(NiagaraComponent)]()
 			{
-				TargetComponent = *NiagaraComponent;
+				WeakTargetComponent = WeakNiagaraComponent;
 			})));
 	}
 }
@@ -75,8 +85,9 @@ void SNiagaraDebugCaptureView::GetComponentNameAndTooltip(const UNiagaraComponen
     else
     {
 	    const UWorld* World = InComponent->GetWorld();
+		const EWorldType::Type WorldType = World ? EWorldType::Type(World->WorldType) : EWorldType::None;
     	const AActor* Actor = InComponent->GetOwner();
-    	OutName = FText::Format(LOCTEXT("SourceComponentLabel","World: \"{0}\" Actor: \"{1}\""), World ? FText::FromString(World->GetName()) : FText::GetEmpty(), Actor ? FText::FromString(Actor->GetActorNameOrLabel()) : FText::GetEmpty());
+    	OutName = FText::Format(LOCTEXT("SourceComponentLabel","World: \"{0} - {1}\" Actor: \"{2}\""), World ? FText::FromString(World->GetName()) : FText::GetEmpty(), FText::FromString(LexToString(WorldType)), Actor ? FText::FromString(Actor->GetActorNameOrLabel()) : FText::GetEmpty());
     	OutTooltip = OutName;
     }
 }
@@ -185,15 +196,22 @@ FSlateIcon SNiagaraDebugCaptureView::GetCaptureIcon()
 	}
 }
 
+
+
+FName GetTempCacheName(const FString& SystemName)
+{
+	return FNiagaraEditorUtilities::GetUniqueObjectName<UNiagaraSimCache>(GetTransientPackage(), TEXT("TempCache_") + SystemName);
+}
+
 void SNiagaraDebugCaptureView::Construct(const FArguments& InArgs, const TSharedRef<FNiagaraSystemViewModel> InSystemViewModel, const TSharedRef<FNiagaraSimCacheViewModel> InSimCacheViewModel)
 {
 	NumFrames = FMath::Max(1, GetDefault<UNiagaraSettings>()->QuickSimCacheCaptureFrameCount);
 
-	TargetComponent = InSystemViewModel->GetPreviewComponent();
+	WeakTargetComponent = InSystemViewModel->GetPreviewComponent();
 	SimCacheViewModel = InSimCacheViewModel;
 	SystemViewModel = InSystemViewModel;
 
-	CapturedCache = NewObject<UNiagaraSimCache>(GetTransientPackage(), FNiagaraEditorUtilities::GetUniqueObjectName<UNiagaraSimCache>(GetTransientPackage(), "TempCache"));
+	CapturedCache = NewObject<UNiagaraSimCache>(GetTransientPackage(), GetTempCacheName(InSystemViewModel->GetSystem().GetName()));
 	SimCacheViewModel.Get()->Initialize(CapturedCache);
 	CapturedCache->SetFlags(RF_Transient);
 
@@ -302,6 +320,7 @@ void SNiagaraDebugCaptureView::OnCaptureSelected()
 
 void SNiagaraDebugCaptureView::OnSingleFrameSelected()
 {
+	UNiagaraComponent* TargetComponent = WeakTargetComponent.Get();
 	if(!bIsCaptureActive && TargetComponent && CapturedCache.IsValid())
 	{
 		TSharedPtr<ISequencer> Sequencer = SystemViewModel.Get()->GetSequencer();
@@ -318,12 +337,9 @@ void SNiagaraDebugCaptureView::OnSingleFrameSelected()
 
 		if(OutCache)
 		{
-			
 			// 60fps
 			FFrameRate SystemFrameRate (60, 1);
-
 			FFrameTime NewTime = StartTime.ConvertTo(SystemFrameRate) + FQualifiedFrameTime(1, SystemFrameRate).Time;
-
 			
 			TargetComponent->SetDesiredAge(CurrentAge + 0.01666f);
 			
@@ -336,9 +352,10 @@ void SNiagaraDebugCaptureView::OnSingleFrameSelected()
 
 void SNiagaraDebugCaptureView::OnMultiFrameSelected()
 {
+	UNiagaraComponent* TargetComponent = WeakTargetComponent.Get();
 	if(!bIsCaptureActive && TargetComponent)
 	{
-		UNiagaraSimCache* MultiFrameCache = NewObject<UNiagaraSimCache>(GetTransientPackage(), FNiagaraEditorUtilities::GetUniqueObjectName<UNiagaraSimCache>(GetTransientPackage(), "TempCache"));
+		UNiagaraSimCache* MultiFrameCache = NewObject<UNiagaraSimCache>(GetTransientPackage(), GetTempCacheName(TargetComponent->GetFXSystemAsset()->GetName()));
 		MultiFrameCache->SetFlags(RF_Transient);
 		const FNiagaraSimCacheCreateParameters CreateParameters;
 		

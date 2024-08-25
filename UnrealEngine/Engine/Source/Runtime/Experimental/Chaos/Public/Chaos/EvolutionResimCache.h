@@ -17,30 +17,49 @@ namespace Chaos
 		virtual ~FEvolutionResimCache() = default;
 		void ResetCache()
 		{
+			// If the number of cached particles is shrinking, reduce the memory allocation but leave room for 10% growth without needing to reallocate
+			// Memory will be reallocated if the cached particles grow or shrink by 10%, growing reallocation is done automatically, this logic handles shrink reallocation and leaving room for 10% growth.
+			// Example: At 100 particles it's allowed to populate the TMap between 90-110 particles without a memory reallocation.
+			const int32 CurrentSize = ParticleToCachedSolve.Num();
+			const int32 SizeLeniency = FMath::CeilToInt(0.1f * static_cast<float>(CurrentSize)); // 10% leniency
+			ParticleCacheAllocationSize = FMath::Max(CurrentSize, ParticleCacheAllocationSize);
+			const int32 ReallocationLimit = FMath::Max(ParticleCacheAllocationSize - (SizeLeniency * 2), 0);
+
+			if (CurrentSize < ReallocationLimit)
+			{
+				const int32 PreferredSize = CurrentSize + SizeLeniency;
+
+				ParticleToCachedSolve.Empty(PreferredSize);
+				ParticleCacheAllocationSize = PreferredSize;
+			}
+			else
+			{
+				ParticleToCachedSolve.Reset();
+			}
+
 			SavedConstraints.Reset();
 			WeakSinglePointConstraints.Reset();
-			ParticleToCachedSolve.Reset();
 		}
 
 		void SaveParticlePostSolve(const FPBDRigidParticleHandle& Particle)
 		{
 			FPBDSolveCache& Cache = ParticleToCachedSolve.FindOrAdd(Particle.UniqueIdx());
-			Cache.P = Particle.P();
-			Cache.Q = Particle.Q();
-			Cache.V = Particle.V();
-			Cache.W = Particle.W();
+			Cache.P = Particle.GetP();
+			Cache.Q = Particle.GetQ();
+			Cache.V = Particle.GetV();
+			Cache.W = Particle.GetW();
 		}
 
 		void ReloadParticlePostSolve(FPBDRigidParticleHandle& Particle) const
 		{
 			//if this function is called it means the particle is in sync, which means we should have a cached value
 			const FPBDSolveCache* Cache = ParticleToCachedSolve.Find(Particle.UniqueIdx());
-			if(ensure(Cache))
+			if (Cache)
 			{
-				Particle.P() = Cache->P;
-				Particle.Q() = Cache->Q;
-				Particle.V() = Cache->V;
-				Particle.W() = Cache->W;
+				Particle.SetP(Cache->P);
+				Particle.SetQ(Cache->Q);
+				Particle.SetV(Cache->V);
+				Particle.SetW(Cache->W);
 			}
 		}
 
@@ -151,6 +170,7 @@ namespace Chaos
 		//TODO: better way to handle this?
 		TArray<FWeakConstraintPair> WeakSinglePointConstraints;
 		TMap<FUniqueIdx, FPBDSolveCache> ParticleToCachedSolve;
+		int32 ParticleCacheAllocationSize = 0;
 	};
 
 } // namespace Chaos

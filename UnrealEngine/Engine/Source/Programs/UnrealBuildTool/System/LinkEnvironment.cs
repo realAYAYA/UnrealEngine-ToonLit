@@ -358,6 +358,11 @@ namespace UnrealBuildTool
 		public List<ReceiptProperty> AdditionalProperties = new List<ReceiptProperty>();
 
 		/// <summary>
+		/// List of all of the runtime dependencies.
+		/// </summary>
+		public List<ModuleRules.RuntimeDependency> RuntimeDependencies = new List<ModuleRules.RuntimeDependency>();
+
+		/// <summary>
 		/// Default constructor.
 		/// </summary>
 		public LinkEnvironment(UnrealTargetPlatform Platform, CppConfiguration Configuration, UnrealArchitectures Architectures)

@@ -6,6 +6,7 @@
 #include "StateTreeEvaluatorBase.h"
 #include "StateTreeConditionBase.h"
 #include "StateTreeExecutionContext.h"
+#include "StateTreePropertyRef.h"
 #include "StateTreeTestTypes.generated.h"
 
 class UStateTree;
@@ -146,9 +147,17 @@ struct FTestTask_B : public FStateTreeTaskBase
 	using FInstanceDataType = FTestTask_BInstanceData;
 
 	FTestTask_B() = default;
+	FTestTask_B(const FName InName) { Name = InName; }
 	virtual ~FTestTask_B() override {}
 	
 	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+
+	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override
+	{
+		FTestStateTreeExecutionContext& TestContext = static_cast<FTestStateTreeExecutionContext&>(Context);
+		TestContext.Log(Name,  TEXT("EnterState"));
+		return EStateTreeRunStatus::Running;
+	}
 };
 
 USTRUCT()
@@ -198,6 +207,56 @@ struct FTestTask_PrintValue : public FStateTreeTaskBase
 	};
 };
 
+
+USTRUCT()
+struct FTestTask_StopTreeInstanceData
+{
+	GENERATED_BODY()
+};
+
+USTRUCT()
+struct FTestTask_StopTree : public FStateTreeTaskBase
+{
+	GENERATED_BODY()
+
+	using FInstanceDataType = FTestTask_PrintValueInstanceData;
+
+	FTestTask_StopTree() = default;
+	explicit FTestTask_StopTree(const FName InName) { Name = InName; }
+	virtual ~FTestTask_StopTree() override {}
+	
+	virtual const UStruct* GetInstanceDataType() const override { return FInstanceDataType::StaticStruct(); }
+
+	virtual EStateTreeRunStatus EnterState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override
+	{
+		if (Phase == EStateTreeUpdatePhase::EnterStates)
+		{
+			return Context.Stop();
+		}
+		return EStateTreeRunStatus::Running;
+	}
+
+	virtual void ExitState(FStateTreeExecutionContext& Context, const FStateTreeTransitionResult& Transition) const override
+	{
+		if (Phase == EStateTreeUpdatePhase::ExitStates)
+		{
+			Context.Stop();
+		}
+	}
+
+	virtual EStateTreeRunStatus Tick(FStateTreeExecutionContext& Context, const float DeltaTime) const override
+	{
+		if (Phase == EStateTreeUpdatePhase::TickStateTree)
+		{
+			return Context.Stop();
+		}
+		return EStateTreeRunStatus::Running;
+	};
+
+	/** Indicates in which phase the call to Stop should be performed. Possible values are EnterStates, ExitStats and TickStateTree */
+	UPROPERTY()
+	EStateTreeUpdatePhase Phase = EStateTreeUpdatePhase::Unset;
+};
 
 USTRUCT()
 struct FTestTask_StandInstanceData
@@ -396,6 +455,13 @@ public:
 	TArray<FStateTreeTest_PropertyStruct> ArrayOfStruct;
 };
 
+UCLASS(HideDropdown)
+class UStateTreeTest_PropertyObject2 : public UObject
+{
+	GENERATED_BODY()
+public:
+};
+
 USTRUCT()
 struct FStateTreeTest_PropertyCopy
 {
@@ -406,4 +472,52 @@ struct FStateTreeTest_PropertyCopy
 
 	UPROPERTY(EditAnywhere, Category = "")
 	TArray<FStateTreeTest_PropertyStruct> Array;
+};
+
+USTRUCT()
+struct FStateTreeTest_PropertyRefSourceStruct
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "")
+	FStateTreeTest_PropertyStruct Item;
+
+	UPROPERTY(EditAnywhere, Category = "Output")
+	FStateTreeTest_PropertyStruct OutputItem;
+
+	UPROPERTY(EditAnywhere, Category = "")
+	TArray<FStateTreeTest_PropertyStruct> Array;
+};
+
+USTRUCT()
+struct FStateTreeTest_PropertyRefTargetStruct
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "", meta = (RefType = "/Script/StateTreeTestSuite.StateTreeTest_PropertyStruct"))
+	FStateTreePropertyRef RefToStruct;
+
+	UPROPERTY(EditAnywhere, Category = "", meta = (RefType = "Int32"))
+	FStateTreePropertyRef RefToInt;
+
+	UPROPERTY(EditAnywhere, Category = "", meta = (RefType = "/Script/StateTreeTestSuite.StateTreeTest_PropertyStruct", IsRefToArray))
+	FStateTreePropertyRef RefToStructArray;
+};
+
+USTRUCT()
+struct FStateTreeTest_PropertyCopyObjects
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, Category = "")
+	TObjectPtr<UObject> Object;
+
+	UPROPERTY(EditAnywhere, Category = "")
+	TSubclassOf<UObject> Class;
+
+	UPROPERTY(EditAnywhere, Category = "")
+	TSoftObjectPtr<UObject> SoftObject;
+
+	UPROPERTY(EditAnywhere, Category = "")
+	TSoftClassPtr<UObject> SoftClass;
 };

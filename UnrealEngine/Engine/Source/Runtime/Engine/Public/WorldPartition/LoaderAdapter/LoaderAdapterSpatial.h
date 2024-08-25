@@ -23,7 +23,7 @@ protected:
 	virtual bool Intersect(const FBox& Box) const =0;
 
 private:
-	ENGINE_API void HandleIntersectingContainer(UWorldPartition* InWorldPartition, const FTransform InInstanceTransform, const FBox& InBoundingBox, TFunctionRef<void(const FWorldPartitionHandle&)> InOperation) const;
+	ENGINE_API void HandleIntersectingContainer(UWorldPartition* InWorldPartition, const FBox& InBoundingBox, TFunctionRef<void(const FWorldPartitionHandle&)> InOperation) const;
 
 protected:
 	bool bIncludeSpatiallyLoadedActors;

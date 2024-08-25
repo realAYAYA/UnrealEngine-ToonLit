@@ -164,7 +164,10 @@ constexpr FConcertSessionTreeItem::EType GetEType()
 	{
 		return FConcertSessionTreeItem::EType::ActiveSession;
 	}
-	return FConcertSessionTreeItem::EType::ArchivedSession;
+	else
+	{
+		return FConcertSessionTreeItem::EType::ArchivedSession;
+	}
 }
 
 template <typename SessionType>

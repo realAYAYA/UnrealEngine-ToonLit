@@ -159,7 +159,7 @@ int32 UAvoidanceManager::GetNewAvoidanceUID()
 	if (NewKeyPool.Num())
 	{
 		NewUID = NewKeyPool[NewKeyPool.Num() - 1];
-		NewKeyPool.RemoveAt(NewKeyPool.Num() - 1, 1, false);
+		NewKeyPool.RemoveAt(NewKeyPool.Num() - 1, 1, EAllowShrinking::No);
 	}
 	return NewUID;
 }

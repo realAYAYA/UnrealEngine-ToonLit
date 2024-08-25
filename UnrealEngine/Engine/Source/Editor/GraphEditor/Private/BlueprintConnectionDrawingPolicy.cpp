@@ -130,12 +130,7 @@ UBlueprint* FKismetConnectionDrawingPolicy::GetTargetBlueprint() const
 
 bool FKismetConnectionDrawingPolicy::CanBuildRoadmap(UBlueprint* TargetBP) const
 {
-	UObject* ActiveObject = nullptr;
-	if (TargetBP)
-	{
-		ActiveObject = TargetBP->GetObjectBeingDebugged();
-	}
-
+	UObject* ActiveObject = GetObjectBeingDebugged(TargetBP);
 	return ActiveObject != nullptr;
 }
 
@@ -156,7 +151,7 @@ void FKismetConnectionDrawingPolicy::BuildExecutionRoadmap()
 		return;
 	}
 
-	UObject* ActiveObject = TargetBP->GetObjectBeingDebugged();
+	UObject* ActiveObject = GetObjectBeingDebugged(TargetBP);
 	check(ActiveObject); // Due to CanBuildRoadmap
 
 	TArray<UEdGraphNode*> SequentialNodesInGraph;
@@ -399,6 +394,21 @@ bool FKismetConnectionDrawingPolicy::FindPinCenter(UEdGraphPin* Pin, FVector2D& 
 	}
 
 	return false;
+}
+
+UObject* FKismetConnectionDrawingPolicy::GetObjectBeingDebugged(UBlueprint* TargetBP)
+{
+	UObject* ActiveObject = nullptr;
+	if (TargetBP)
+	{
+		ActiveObject = TargetBP->GetObjectBeingDebugged();
+		if (UClass* GeneratedClass = TargetBP->GeneratedClass;
+			ActiveObject == nullptr && BPTYPE_FunctionLibrary == TargetBP->BlueprintType && GeneratedClass)
+		{
+			ActiveObject = GeneratedClass->ClassDefaultObject;
+		}
+	}
+	return ActiveObject;
 }
 
 bool FKismetConnectionDrawingPolicy::GetAverageConnectedPosition(class UK2Node_Knot* Knot, EEdGraphPinDirection Direction, FVector2D& OutPos) const

@@ -16,12 +16,10 @@
 #include "Engine/Texture2D.h"
 #include "Slate/SceneViewport.h"
 #include "PixelStreamingUtils.h"
+#include "PixelStreamingCoderUtils.h"
 #include "Utils.h"
-#include "UtilsRender.h"
 
-#if PLATFORM_WINDOWS
-	#include "Windows/WindowsHWrapper.h"
-#elif PLATFORM_LINUX
+#if PLATFORM_LINUX
 	#include "CudaModule.h"
 #endif
 
@@ -55,6 +53,7 @@ THIRD_PARTY_INCLUDES_END
 #endif
 
 #include "PixelStreamingVideoInputBackBuffer.h"
+#include "PixelStreamingVideoInputMediaCapture.h"
 #include "VideoSourceGroup.h"
 #include "PixelStreamingPeerConnection.h"
 #include "Engine/GameEngine.h"
@@ -94,10 +93,10 @@ namespace UE::PixelStreaming
 
 		const ERHIInterfaceType RHIType = GDynamicRHI ? RHIGetInterfaceType() : ERHIInterfaceType::Hidden;
 		// only D3D11/D3D12/Vulkan is supported
-		if (!(RHIType == ERHIInterfaceType::D3D11 || RHIType == ERHIInterfaceType::D3D12 || RHIType == ERHIInterfaceType::Vulkan))
+		if (!(RHIType == ERHIInterfaceType::D3D11 || RHIType == ERHIInterfaceType::D3D12 || RHIType == ERHIInterfaceType::Vulkan || RHIType == ERHIInterfaceType::Metal))
 		{
 #if !WITH_DEV_AUTOMATION_TESTS
-			UE_LOG(LogPixelStreaming, Warning, TEXT("Only D3D11/D3D12/Vulkan Dynamic RHI is supported. Detected %s"), GDynamicRHI != nullptr ? GDynamicRHI->GetName() : TEXT("[null]"));
+			UE_LOG(LogPixelStreaming, Warning, TEXT("Only D3D11/D3D12/Vulkan/Metal Dynamic RHI is supported. Detected %s"), GDynamicRHI != nullptr ? GDynamicRHI->GetName() : TEXT("[null]"));
 #endif
 			return;
 		}
@@ -282,11 +281,6 @@ namespace UE::PixelStreaming
 		return StreamerKeys;
 	}
 
-	TSharedPtr<IPixelStreamingStreamer> FPixelStreamingModule::GetStreamer(const FString& StreamerId)
-	{
-		return FindStreamer(StreamerId);
-	}
-
 	TSharedPtr<IPixelStreamingStreamer> FPixelStreamingModule::FindStreamer(const FString& StreamerId)
 	{
 		FScopeLock Lock(&StreamersCS);
@@ -425,7 +419,14 @@ namespace UE::PixelStreaming
 		{
 			// The user has specified a URL on the command line meaning their intention is to start streaming immediately
 			// in that case, set up the video input for them (as long as we're not in editor)
-			DefaultStreamer->SetVideoInput(FPixelStreamingVideoInputBackBuffer::Create());
+			if (Settings::CVarPixelStreamingUseMediaCapture.GetValueOnAnyThread())
+			{
+				DefaultStreamer->SetVideoInput(FPixelStreamingVideoInputMediaCapture::CreateActiveViewportCapture());
+			}
+			else
+			{
+				DefaultStreamer->SetVideoInput(FPixelStreamingVideoInputBackBuffer::Create());
+			}
 		}
 	}
 
@@ -446,10 +447,10 @@ namespace UE::PixelStreaming
 		}
 #endif
 
-		if ((Settings::CVarPixelStreamingEncoderCodec.GetValueOnAnyThread() == "H264" && !FVideoEncoder::IsSupported<FVideoResourceRHI, FVideoEncoderConfigH264>())
-			|| (Settings::CVarPixelStreamingEncoderCodec.GetValueOnAnyThread() == "H265" && !FVideoEncoder::IsSupported<FVideoResourceRHI, FVideoEncoderConfigH265>()))
+		if ((Settings::CVarPixelStreamingEncoderCodec.GetValueOnAnyThread() == "H264" && !IsEncoderSupported<FVideoEncoderConfigH264>())
+			|| (Settings::CVarPixelStreamingEncoderCodec.GetValueOnAnyThread() == "AV1" && !IsEncoderSupported<FVideoEncoderConfigAV1>()))
 		{
-			UE_LOG(LogPixelStreaming, Warning, TEXT("Could not setup hardware encoder. This is usually a driver issue, try reinstalling your drivers."));
+			UE_LOG(LogPixelStreaming, Warning, TEXT("Could not setup hardware encoder. This is usually a driver issue or hardware limitation, try reinstalling your drivers."));
 			UE_LOG(LogPixelStreaming, Warning, TEXT("Falling back to VP8 software video encoding."));
 			Settings::CVarPixelStreamingEncoderCodec.AsVariable()->Set(TEXT("VP8"), ECVF_SetByCommandline);
 		}
@@ -462,37 +463,43 @@ namespace UE::PixelStreaming
 		if (TSharedPtr<IPixelStreamingInputHandler> InputHandler = Streamer->GetInputHandler().Pin())
 		{
 			// Set Encoder.MinQP CVar
-			InputHandler->SetCommandHandler(TEXT("Encoder.MinQP"), [](FString Descriptor, FString MinQPString) {
+			InputHandler->SetCommandHandler(TEXT("Encoder.MinQP"), [](FString PlayerId, FString Descriptor, FString MinQPString) {
 				int MinQP = FCString::Atoi(*MinQPString);
 				UE::PixelStreaming::Settings::CVarPixelStreamingEncoderMinQP->Set(MinQP, ECVF_SetByCommandline);
 			});
 
 			// Set Encoder.MaxQP CVar
-			InputHandler->SetCommandHandler(TEXT("Encoder.MaxQP"), [](FString Descriptor, FString MaxQPString) {
+			InputHandler->SetCommandHandler(TEXT("Encoder.MaxQP"), [](FString PlayerId, FString Descriptor, FString MaxQPString) {
 				int MaxQP = FCString::Atoi(*MaxQPString);
 				UE::PixelStreaming::Settings::CVarPixelStreamingEncoderMaxQP->Set(MaxQP, ECVF_SetByCommandline);
 			});
 
 			// Set WebRTC max FPS
-			InputHandler->SetCommandHandler(TEXT("WebRTC.Fps"), [](FString Descriptor, FString FPSString) {
+			InputHandler->SetCommandHandler(TEXT("WebRTC.Fps"), [](FString PlayerId, FString Descriptor, FString FPSString) {
 				int FPS = FCString::Atoi(*FPSString);
 				UE::PixelStreaming::Settings::CVarPixelStreamingWebRTCFps->Set(FPS, ECVF_SetByCommandline);
 			});
 
 			// Set MinBitrate
-			InputHandler->SetCommandHandler(TEXT("WebRTC.MinBitrate"), [](FString Descriptor, FString MinBitrateString) {
-				int MinBitrate = FCString::Atoi(*MinBitrateString);
-				UE::PixelStreaming::Settings::CVarPixelStreamingWebRTCMinBitrate->Set(MinBitrate, ECVF_SetByCommandline);
+			InputHandler->SetCommandHandler(TEXT("WebRTC.MinBitrate"), [InputHandler](FString PlayerId, FString Descriptor, FString MinBitrateString) {
+				if (InputHandler->IsElevated(PlayerId))
+				{
+					int MinBitrate = FCString::Atoi(*MinBitrateString);
+					UE::PixelStreaming::Settings::CVarPixelStreamingWebRTCMinBitrate->Set(MinBitrate, ECVF_SetByCommandline);
+				}
 			});
 
 			// Set MaxBitrate
-			InputHandler->SetCommandHandler(TEXT("WebRTC.MaxBitrate"), [](FString Descriptor, FString MaxBitrateString) {
-				int MaxBitrate = FCString::Atoi(*MaxBitrateString);
-				UE::PixelStreaming::Settings::CVarPixelStreamingWebRTCMaxBitrate->Set(MaxBitrate, ECVF_SetByCommandline);
+			InputHandler->SetCommandHandler(TEXT("WebRTC.MaxBitrate"), [InputHandler](FString PlayerId, FString Descriptor, FString MaxBitrateString) {
+				if (InputHandler->IsElevated(PlayerId))
+				{
+					int MaxBitrate = FCString::Atoi(*MaxBitrateString);
+					UE::PixelStreaming::Settings::CVarPixelStreamingWebRTCMaxBitrate->Set(MaxBitrate, ECVF_SetByCommandline);
+				}
 			});
 
 			FPixelStreamingInputProtocol::ToStreamerProtocol.Add("UIInteraction", FPixelStreamingInputMessage(50));
-			InputHandler->RegisterMessageHandler("UIInteraction", [this](FMemoryReader Ar) { HandleUIInteraction(Ar); });
+			InputHandler->RegisterMessageHandler("UIInteraction", [this](FString PlayerId, FMemoryReader Ar) { HandleUIInteraction(Ar); });
 
 			// Handle sending commands to peers
 			TWeakPtr<IPixelStreamingStreamer> WeakStreamer = Streamer;
@@ -523,42 +530,6 @@ namespace UE::PixelStreaming
 	}
 	/**
 	 * End own methods
-	 */
-
-	/**
-	 * Deprecated methods
-	 */
-	const FPixelStreamingInputProtocol FPixelStreamingModule::GetProtocol()
-	{
-		return FPixelStreamingInputProtocol();
-	}
-
-	void FPixelStreamingModule::RegisterMessage(EPixelStreamingMessageDirection MessageDirection, const FString& MessageType, FPixelStreamingInputMessage Message, const TFunction<void(FMemoryReader)>& Handler)
-	{
-		if (MessageDirection == EPixelStreamingMessageDirection::ToStreamer)
-		{
-			FPixelStreamingInputProtocol::ToStreamerProtocol.Add(MessageType, Message);
-			if (TSharedPtr<IPixelStreamingInputHandler> InputHandler = DefaultStreamer->GetInputHandler().Pin())
-			{
-				InputHandler->RegisterMessageHandler(MessageType, Handler);
-			}
-		}
-		else if (MessageDirection == EPixelStreamingMessageDirection::FromStreamer)
-		{
-			FPixelStreamingInputProtocol::FromStreamerProtocol.Add(MessageType, Message);
-		}
-	}
-
-	TFunction<void(FMemoryReader)> FPixelStreamingModule::FindMessageHandler(const FString& MessageType)
-	{
-		if (TSharedPtr<IPixelStreamingInputHandler> InputHandler = DefaultStreamer->GetInputHandler().Pin())
-		{
-			return InputHandler->FindMessageHandler(MessageType);
-		}
-		return [](FMemoryReader Ar) {};
-	}
-	/**
-	 * End deprecated methods
 	 */
 } // namespace UE::PixelStreaming
 

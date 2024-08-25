@@ -22,6 +22,9 @@ public:
 	/** Activate a component visualizer given a clicked proxy */
 	UNREALED_API bool HandleProxyForComponentVis(FEditorViewportClient* InViewportClient, HHitProxy *HitProxy, const FViewportClick &Click);
 
+	/** Get the active component visualizer. */
+	UNREALED_API TSharedPtr<FComponentVisualizer> GetActiveComponentVis();
+
 	/** Activate a component visualizer given the specific visualizer */
 	UNREALED_API bool SetActiveComponentVis(FEditorViewportClient* InViewportClient, TSharedPtr<FComponentVisualizer>& InVisualizer);
 

@@ -8,6 +8,7 @@
 #include "Containers/StringView.h"
 #include "Insights/Table/ViewModels/Table.h"
 #include "Misc/CString.h"
+#include "Misc/TVariant.h"
 
 namespace UE
 {
@@ -117,7 +118,7 @@ struct FAssetTableColumns
 	static const FName PathColumnId;
 	static const FName PrimaryTypeColumnId;
 	static const FName PrimaryNameColumnId;
-	static const FName StagedCompressedSizeColumnId;
+	static const FName StagedCompressedSizeRequiredInstallColumnId;
 	static const FName TotalSizeUniqueDependenciesColumnId;
 	static const FName TotalSizeSharedDependenciesColumnId;
 	static const FName TotalSizeExternalDependenciesColumnId;
@@ -125,6 +126,8 @@ struct FAssetTableColumns
 	static const FName ChunksColumnId;
 	static const FName NativeClassColumnId;
 	static const FName PluginNameColumnId;
+	static const FName PluginInclusiveSizeColumnId;
+	static const FName PluginTypeColumnId;
 };
 
 struct FAssetTableDependencySizes
@@ -133,12 +136,73 @@ struct FAssetTableDependencySizes
 	int64 SharedDependenciesSize = 0;
 };
 
-struct FAssetTablePluginInfo
+class FAssetTablePluginInfo
 {
-	TSet<int32> PluginDependencies;
-	TSet<int32> DiscoveredPluginDependencies;
+	friend class FAssetTable;
+	friend class SAssetTableTreeView;
+
+public:
+	const TCHAR* GetName() const { return PluginName; }
+
+	int32 GetNumDependencies() const { return PluginDependencies.Num(); }
+	const TArray<int32>& GetDependencies() const { return PluginDependencies; }
+	int32 GetNumReferencers() const { return PluginReferencers.Num(); }
+	const TArray<int32>& GetReferencers() const { return PluginReferencers; }
+	int64 GetSize() const { return Size; }
+	bool IsRootPlugin() const { return bIsRootPlugin; }
+	const TCHAR* GetPluginType() const { return PluginTypeString; }
+
+	int64 GetOrComputeTotalSizeInclusiveOfDependencies(const FAssetTable& OwningTable) const;
+
+	// This is the total size of all dependencies which are not used by any plugin that is not this plugin or one of its other dependencies
+	int64 GetOrComputeTotalSizeUniqueDependencies(const FAssetTable& OwningTable) const;
+	// This is the total size of all dependencies which are used by some plugin not referenced (directly or indirectly) by this plugin
+	int64 GetOrComputeTotalSizeSharedDependencies(const FAssetTable& OwningTable) const;
+
+	static void ComputeTotalSelfAndInclusiveSizes(const FAssetTable& OwningTable, const TSet<int32>& RootPlugins, int64& OutTotalSelfSize, int64& OutTotalInclusiveSize);
+
+	template<typename T> const T* TryGetDataByKey(int32 Key) const
+	{
+		// In general there are expected to be very few keys since each key corresponds to a custom implemented
+		// column. Therefore a simple linear search is expected to be sufficiently performant.
+		for (const FCustomColumnData& CustomDataEntry : CustomColumnData)
+		{
+			if (CustomDataEntry.Key > Key)
+			{
+				// We've passed where this key ought to be found. No entry is present.
+				break; 
+			}
+			else if (CustomDataEntry.Key == Key)
+			{
+				return CustomDataEntry.Value.TryGet<T>();
+			}
+		}
+		return nullptr;
+	}
+
+private:
+	void ComputeDependencySizes(const FAssetTable& OwningTable) const;
+
+	TArray<int32> PluginDependencies;
+	TArray<int32> PluginReferencers;
+
+	typedef TVariant<bool, const TCHAR*> CustomFieldVariantType;
+
+	struct FCustomColumnData
+	{
+		CustomFieldVariantType Value;
+		int32 Key;
+	};
+
+	TArray<FCustomColumnData> CustomColumnData;
+
 	const TCHAR* PluginName = nullptr;
-	int64 Size = -1;
+	const TCHAR* PluginTypeString = nullptr;
+	int64 Size = 0;
+	mutable int64 InclusiveSize = -1;
+	mutable int64 UniqueDependenciesSize = -1;
+	mutable int64 SharedDependenciesSize = -1;
+	bool bIsRootPlugin = false;
 };
 
 class FAssetTableRow
@@ -161,7 +225,7 @@ public:
 	const TCHAR* GetPath() const { return Path; }
 	const TCHAR* GetPrimaryType() const { return PrimaryType; }
 	const TCHAR* GetPrimaryName() const { return PrimaryName; }
-	int64 GetStagedCompressedSize() const { return StagedCompressedSize; }
+	int64 GetStagedCompressedSizeRequiredInstall() const { return StagedCompressedSizeRequiredInstall; }
 	int64 GetOrComputeTotalSizeUniqueDependencies(const FAssetTable& OwningTable, int32 ThisIndex) const;
 	int64 GetOrComputeTotalSizeSharedDependencies(const FAssetTable& OwningTable, int32 ThisIndex) const; 
 	int64 GetOrComputeTotalSizeExternalDependencies(const FAssetTable& OwningTable, int32 ThisIndex) const; 
@@ -196,7 +260,7 @@ private:
 	const TCHAR* Path = nullptr;
 	const TCHAR* PrimaryType = nullptr;
 	const TCHAR* PrimaryName = nullptr;
-	int64 StagedCompressedSize = 0;
+	int64 StagedCompressedSizeRequiredInstall = 0;
 	mutable int64 TotalSizeUniqueDependencies = -1; // Lazily calculated
 	mutable int64 TotalSizeSharedDependencies = -1; // Lazily calculated
 	mutable int64 TotalSizeExternalDependencies = -1; // Lazily calculated
@@ -237,6 +301,7 @@ public:
 	FAssetTablePluginInfo& GetOrCreatePluginInfo(const TCHAR* StoredPluginName);
 
 	const FAssetTablePluginInfo& GetPluginInfoByIndex(int32 PluginIndex) const { return Plugins[PluginIndex]; }
+	FAssetTablePluginInfo& GetPluginInfoByIndex(int32 PluginIndex) { return Plugins[PluginIndex]; }
 	const FAssetTablePluginInfo& GetPluginInfoByIndexChecked(int32 PluginIndex) const { check(IsValidPluginIndex(PluginIndex)); return Plugins[PluginIndex]; }
 	int32 GetIndexForPlugin(const TCHAR* StoredPluginName) const;
 	int32 GetNumPlugins() const { return Plugins.Num(); }
@@ -267,7 +332,23 @@ public:
 		StringStore.Reset();
 		Plugins.Empty();
 		PluginNameToIndexMap.Empty();
+		CustomColumns.Empty();
 	}
+
+	enum class ECustomColumnDefinitionType
+	{
+		Boolean,
+		String
+	};
+
+	struct FCustomColumnDefinition
+	{
+		FName ColumnId;
+		ECustomColumnDefinitionType Type;
+		int32 Key;
+	};
+
+	void AddCustomColumn(const FCustomColumnDefinition& ColumnDefinition) { CustomColumns.Add(ColumnDefinition); }
 
 private:
 	void AddDefaultColumns();
@@ -276,6 +357,7 @@ private:
 	TArray<FAssetTableRow> Assets;
 	TArray<FAssetTablePluginInfo> Plugins;
 	TMap<const TCHAR*, int32, FDefaultSetAllocator, TStringPointerMapKeyFuncs_DEPRECATED<const TCHAR*, int32>> PluginNameToIndexMap;
+	TArray<FCustomColumnDefinition> CustomColumns;
 	int32 VisibleAssetCount = 0;
 	FAssetTableStringStore StringStore;
 };

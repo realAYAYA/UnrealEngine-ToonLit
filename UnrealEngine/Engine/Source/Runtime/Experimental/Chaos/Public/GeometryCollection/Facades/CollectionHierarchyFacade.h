@@ -70,6 +70,27 @@ namespace Chaos::Facades
 		*/
 		CHAOS_API TArray<int32> GetTransformArrayInDepthFirstOrder() const;
 
+		/**
+		* compute transform indices in a depth first order 
+		*/
+		CHAOS_API TArray<int32> ComputeTransformIndicesInDepthFirstOrder() const;
+
+		/**
+		* compute transform indices in a breadth first order ( root to leaves )
+		*/
+		CHAOS_API TArray<int32> ComputeTransformIndicesInBreadthFirstOrder() const;
+
+		/**
+		* generate a non serialize array that stores the indices of the transforms in a breath first order
+		*/
+		CHAOS_API void GenerateBreadthFirstOrderIndicesAttribute();
+
+		/**
+		* get the breadth first ordered transform indices from the stored attribute if any
+		* may return empty array if the attribute does not exists
+		*/
+		CHAOS_API const TArray<int32>& GetBreadthFirstOrderIndicesFromAttribute() const;
+
 	public:
 		/** Get the root indicies */
 		static CHAOS_API TArray<int32> GetRootIndices(const TManagedArrayAccessor<int32>& ParentAttribute);

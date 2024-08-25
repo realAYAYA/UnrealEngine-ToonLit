@@ -6,7 +6,6 @@
 
 class IPropertyHandle;
 class IPropertyUtilities;
-class USmartObjectDefinition;
 class SWidget;
 struct FWorldConditionContextDataRef;
 class UWorldConditionSchema;

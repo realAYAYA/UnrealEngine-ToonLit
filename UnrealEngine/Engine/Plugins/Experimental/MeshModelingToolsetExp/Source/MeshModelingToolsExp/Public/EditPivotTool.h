@@ -151,7 +151,7 @@ public:
  *
  */
 UCLASS()
-class MESHMODELINGTOOLSEXP_API UEditPivotTool : public UMultiSelectionMeshEditingTool, public IClickDragBehaviorTarget
+class MESHMODELINGTOOLSEXP_API UEditPivotTool : public UMultiSelectionMeshEditingTool, public IClickDragBehaviorTarget, public IInteractiveToolManageGeometrySelectionAPI
 {
 	GENERATED_BODY()
 
@@ -178,6 +178,12 @@ public:
 	virtual void OnClickDrag(const FInputDeviceRay& DragPos) override;
 	virtual void OnClickRelease(const FInputDeviceRay& ReleasePos) override;
 	virtual void OnTerminateDragSequence() override;
+
+	// IInteractiveToolManageGeometrySelectionAPI -- this tool won't update external geometry selection or change selection-relevant mesh IDs
+	virtual bool IsInputSelectionValidOnOutput() override
+	{
+		return true;
+	}
 
 public:
 	UPROPERTY()

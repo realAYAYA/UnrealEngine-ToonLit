@@ -38,7 +38,7 @@ private:
 	const FSkeletalMeshRenderData* RenderData;
 
 	// Output
-	TUniquePtr<Chaos::FLevelSet> LevelSet;
+	Chaos::FLevelSetPtr LevelSet;
 
 	float GetWeightForIndices(const TSet<int32>& BoneIndices, uint32 VertIndex) const;
 };

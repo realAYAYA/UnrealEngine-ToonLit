@@ -2,6 +2,7 @@
 
 #include "EnvironmentQuery/Generators/EnvQueryGenerator_PathingGrid.h"
 #include "NavMesh/RecastNavMesh.h"
+#include "NavFilters/NavigationQueryFilter.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(EnvQueryGenerator_PathingGrid)
 

@@ -8,6 +8,8 @@
 #include "DisplayClusterProjectionStrings.h"
 #include "DisplayClusterConfiguratorLog.h"
 #include "Components/DisplayClusterCameraComponent.h"
+#include "Render/DisplayDevice/Components/DisplayClusterDisplayDeviceBaseComponent.h"
+#include "Views/Details/Widgets/SDisplayClusterConfiguratorComponentPicker.h"
 #include "Views/Details/Widgets/SDisplayClusterConfigurationSearchableComboBox.h"
 
 #include "DetailLayoutBuilder.h"
@@ -49,28 +51,53 @@ void FDisplayClusterConfiguratorViewportDetailsCustomization::CustomizeDetails(I
 		IDetailCategoryBuilder& Category = InLayoutBuilder.EditCategory(TEXT("In Camera VFX"));
 		Category.SetCategoryVisibility(false);
 	}
-	
-	CameraHandle = InLayoutBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UDisplayClusterConfigurationViewport, Camera));
-	check(CameraHandle->IsValidHandle());
 
-	if (ConfigurationViewportPtr->ProjectionPolicy.Type.Equals(DisplayClusterProjectionStrings::projection::Camera, ESearchCase::IgnoreCase))
 	{
-		CameraHandle->MarkHiddenByCustomization();
-	}
-	else
-	{
-		ResetCameraOptions();
+		CameraHandle = InLayoutBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UDisplayClusterConfigurationViewport, Camera));
+		check(CameraHandle->IsValidHandle());
 
-		if (IDetailPropertyRow* CameraPropertyRow = InLayoutBuilder.EditDefaultProperty(CameraHandle))
+		if (ConfigurationViewportPtr->ProjectionPolicy.Type.Equals(DisplayClusterProjectionStrings::projection::Camera, ESearchCase::IgnoreCase))
 		{
-			CameraPropertyRow->CustomWidget()
+			CameraHandle->MarkHiddenByCustomization();
+		}
+		else
+		{
+			ResetCameraOptions();
+
+			if (IDetailPropertyRow* CameraPropertyRow = InLayoutBuilder.EditDefaultProperty(CameraHandle))
+			{
+				CameraPropertyRow->CustomWidget()
+					.NameContent()
+					[
+						CameraHandle->CreatePropertyNameWidget()
+					]
+					.ValueContent()
+					[
+						CreateCustomCameraWidget()
+					];
+			}
+		}
+	}
+	
+	{
+		TSharedPtr<IPropertyHandle> DisplayDeviceHandle = InLayoutBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UDisplayClusterConfigurationViewport, DisplayDeviceName));
+		check(DisplayDeviceHandle->IsValidHandle());
+		
+		if (IDetailPropertyRow* DisplayDevicePropertyRow = InLayoutBuilder.EditDefaultProperty(DisplayDeviceHandle))
+		{
+			DisplayDevicePropertyRow->CustomWidget()
 				.NameContent()
 				[
-					CameraHandle->CreatePropertyNameWidget()
+					DisplayDeviceHandle->CreatePropertyNameWidget()
 				]
 				.ValueContent()
 				[
-					CreateCustomCameraWidget()
+					SNew(SDisplayClusterConfiguratorComponentPicker,
+						UDisplayClusterDisplayDeviceBaseComponent::StaticClass(),
+						GetRootActor(),
+						DisplayDeviceHandle)
+						.DefaultOptionText(NSLOCTEXT("nDisplayDevicePicker", "DefaultText", "Default"))
+						.DefaultOptionValue(TOptional<FString>(""))
 				];
 		}
 	}

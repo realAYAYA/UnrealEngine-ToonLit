@@ -124,31 +124,30 @@ public class UEWorkManagerJavaInterface
 	public static boolean AndroidThunkJava_RegisterWork(Context AppContext, String TaskID, FWorkRequestParametersJavaInterface InParams)
 	{
 		//See all options for constraints at: https://developer.android.com/reference/androidx/work/Constraints.Builder
-		Constraints constraints = new Constraints.Builder()
+		Constraints.Builder constraintsBuilder = new Constraints.Builder()
 			 .setRequiresBatteryNotLow(InParams.bRequireBatteryNotLow)   
 			 .setRequiresCharging(InParams.bRequireCharging)
 			 .setRequiresDeviceIdle(InParams.bRequireDeviceIdle)
-			 .setRequiresStorageNotLow(InParams.bRequireStorageNotLow)
-			 .build();
+			 .setRequiresStorageNotLow(InParams.bRequireStorageNotLow);
 
 		if (InParams.bRequireWifi)
 		{
-			constraints.setRequiredNetworkType(NetworkType.UNMETERED);
+			constraintsBuilder.setRequiredNetworkType(NetworkType.UNMETERED);
 		}
 		else if (InParams.bRequireAnyInternet)
 		{
 			if (InParams.bAllowRoamingInternet)
 			{
-				constraints.setRequiredNetworkType(NetworkType.CONNECTED);
+				constraintsBuilder.setRequiredNetworkType(NetworkType.CONNECTED);
 			}
 			else
 			{
-				constraints.setRequiredNetworkType(NetworkType.NOT_ROAMING);
+				constraintsBuilder.setRequiredNetworkType(NetworkType.NOT_ROAMING);
 			}
 		}
 		else
 		{
-			constraints.setRequiredNetworkType(NetworkType.NOT_REQUIRED);
+			constraintsBuilder.setRequiredNetworkType(NetworkType.NOT_REQUIRED);
 		}
 				
 		if (InParams.bIsRecurringWork)
@@ -166,8 +165,9 @@ public class UEWorkManagerJavaInterface
 				BackoffPolicyToUse = BackoffPolicy.LINEAR;
 			}
 			
+			@SuppressWarnings("unchecked")
 			OneTimeWorkRequest newWorkRequest =  new OneTimeWorkRequest.Builder(InParams.WorkerJavaClass)
-				.setConstraints(constraints)
+				.setConstraints(constraintsBuilder.build())
 				.addTag(TaskID)
 				.setInitialDelay(InParams.InitialStartDelayInSeconds, TimeUnit.SECONDS)
 				.setBackoffCriteria(BackoffPolicyToUse, InParams.InitialBackoffDelayInSeconds, TimeUnit.SECONDS)

@@ -4,7 +4,6 @@
 
 #include "GlobalRenderResources.h"
 #include "GPUSortManager.h"
-#include "Materials/Material.h"
 #include "NiagaraRibbonVertexFactory.h"
 #include "NiagaraDataSet.h"
 #include "NiagaraDataSetAccessor.h"
@@ -15,8 +14,10 @@
 #include "NiagaraSystemInstance.h"
 #include "NiagaraComponent.h"
 #include "RayTracingInstance.h"
+#include "Materials/Material.h"
 #include "Materials/MaterialRenderProxy.h"
 #include "MaterialDomain.h"
+#include "MaterialShared.h"
 #include "Math/NumericLimits.h"
 #include "NiagaraCullProxyComponent.h"
 #include "NiagaraGpuComputeDispatchInterface.h"
@@ -34,7 +35,7 @@ DECLARE_CYCLE_STAT(TEXT("Generate Indices GPU [RT]"), STAT_NiagaraRenderRibbonsG
 DECLARE_CYCLE_STAT(TEXT("Generate Vertices CPU [GT]"), STAT_NiagaraRenderRibbonsGenVerticesCPU, STATGROUP_Niagara);
 DECLARE_CYCLE_STAT(TEXT("Generate Vertices GPU [RT]"), STAT_NiagaraRenderRibbonsGenVerticesGPU, STATGROUP_Niagara);
 
-DECLARE_STATS_GROUP(TEXT("NiagaraRibbons"), STATGROUP_NiagaraRibbons, STATCAT_Advanced);
+DECLARE_STATS_GROUP(TEXT("NiagaraRibbons"), STATGROUP_NiagaraRibbons, STATCAT_Niagara);
 
 DECLARE_CYCLE_STAT(TEXT("Generate Vertices GPU - Sort [RT]"), STAT_NiagaraRenderRibbonsGenVerticesSortGPU, STATGROUP_NiagaraRibbons);
 DECLARE_CYCLE_STAT(TEXT("Generate Vertices GPU - InitialSort [RT]"), STAT_NiagaraRenderRibbonsGenVerticesInitialSortGPU, STATGROUP_NiagaraRibbons);
@@ -157,9 +158,17 @@ static FAutoConsoleVariableRef CVarNiagaraRibbonGpuBufferAlign(
 	ECVF_Default
 );
 
+static bool GNiagaraRibbonShareGeneratedData = true;
+static FAutoConsoleVariableRef CVarNiagaraRibbonShareGeneratedData(
+	TEXT("Niagara.Ribbon.ShareGeneratedData"),
+	GNiagaraRibbonShareGeneratedData,
+	TEXT("Allow ribbons to share the generate data where possible."),
+	ECVF_Default
+);
+
 static TAutoConsoleVariable<int32> CVarRayTracingNiagaraRibbons(
 	TEXT("r.RayTracing.Geometry.NiagaraRibbons"),
-	1,
+	0,
 	TEXT("Include Niagara ribbons in ray tracing effects (default = 1 (Niagara ribbons enabled in ray tracing))"));
 
 // max absolute error 9.0x10^-3
@@ -289,10 +298,6 @@ struct FNiagaraDynamicDataRibbon : public FNiagaraDynamicDataBase
 {
 	FNiagaraDynamicDataRibbon(const FNiagaraEmitterInstance* InEmitter)
 		: FNiagaraDynamicDataBase(InEmitter)
-		, Material(nullptr)
-		, MaxAllocatedParticleCount(0)
-		, bUseGPUInit(false)
-		, bIsGPUSystem(false)
 	{
 	}
 
@@ -305,12 +310,12 @@ struct FNiagaraDynamicDataRibbon : public FNiagaraDynamicDataBase
 	}
 
 	
-	/** Material to use passed to the Renderer. */
-	FMaterialRenderProxy* Material;
-	int32 MaxAllocatedParticleCount;
+	FMaterialRenderProxy* Material = nullptr;		// MaterialProxy used on the renderer
+	uint32 MaxAllocationCount = 0;					// Maximum allocation count allowed (i.e. max we can fit in a buffer)
+	uint32 MaxAllocatedCountEstimate = 0;			// Maximum allocated count ever seen / estimate, since this is updated on the GT might be lower than actual particle count
 
-	bool bUseGPUInit;
-	bool bIsGPUSystem;
+	bool bUseGPUInit = false;
+	bool bIsGPUSystem = false;
 	
 	TSharedPtr<FNiagaraRibbonCPUGeneratedVertexData> GenerationOutput;
 	
@@ -323,18 +328,17 @@ struct FNiagaraDynamicDataRibbon : public FNiagaraDynamicDataBase
 
 struct FNiagaraRibbonRenderingFrameViewResources
 {
-	FNiagaraRibbonVertexFactory		VertexFactory;
-	FNiagaraRibbonUniformBufferRef	UniformBuffer;
-	FNiagaraRibbonIndexBuffer		IndexBuffer;
-	FRWBuffer						IndirectDrawBuffer;
-	FNiagaraIndexGenerationInput	IndexGenerationSettings;
+	FNiagaraRibbonVertexFactory				VertexFactory;
+	FNiagaraRibbonUniformBufferRef			UniformBuffer;
+	TSharedPtr<FNiagaraRibbonIndexBuffer>	IndexBuffer;
+	TSharedPtr<FRWBuffer>					IndirectDrawBuffer;
+	FNiagaraIndexGenerationInput			IndexGenerationSettings;
+	bool									bNeedsIndexBufferGeneration = true;
 
 	~FNiagaraRibbonRenderingFrameViewResources()
 	{
 		UniformBuffer.SafeRelease();
 		VertexFactory.ReleaseResource();
-		IndexBuffer.ReleaseResource();
-		IndirectDrawBuffer.Release();
 	}
 };
 
@@ -450,35 +454,34 @@ FNiagaraRibbonVertexBuffers::FNiagaraRibbonVertexBuffers()
 {
 }
 
-void FNiagaraRibbonVertexBuffers::InitializeOrUpdateBuffers(FRHICommandListBase& RHICmdList, const FNiagaraRibbonGenerationConfig& GenerationConfig, const TSharedPtr<FNiagaraRibbonCPUGeneratedVertexData>& GeneratedGeometryData, const FNiagaraDataBuffer* SourceParticleData, int32 MaxAllocatedCount, bool bIsUsingGPUInit)
+void FNiagaraRibbonVertexBuffers::InitializeOrUpdateBuffers(FRHICommandListBase& RHICmdList, const FNiagaraRibbonGenerationConfig& GenerationConfig, const TSharedPtr<FNiagaraRibbonCPUGeneratedVertexData>& GeneratedGeometryData, const FNiagaraDataBuffer* SourceParticleData, int32 MaxAllocationCount, bool bIsUsingGPUInit)
 {	
-	const uint32 MaxAllocatedRibbons = GenerationConfig.HasRibbonIDs() ? (GenerationConfig.GetMaxNumRibbons() > 0 ? GenerationConfig.GetMaxNumRibbons() : MaxAllocatedCount) : 1;
-	
 	constexpr ERHIAccess InitialBufferAccessFlags = ERHIAccess::SRVMask | ERHIAccess::VertexOrIndexBuffer;
 
 	if (bIsUsingGPUInit)
 	{
 		const uint32 TotalParticles = SourceParticleData->GetNumInstances();
+		const uint32 MaxAllocatedRibbons = GenerationConfig.HasRibbonIDs() ? (GenerationConfig.GetMaxNumRibbons() > 0 ? GenerationConfig.GetMaxNumRibbons() : TotalParticles) : 1;
 
 		//-OPT:  We should be able to assume 2 particles per ribbon, however the compute pass does not cull our single particle ribbons therefore we need to allocate
 		//       enough space to assume each particle will be the start of a unique ribbon to avoid running OOB on the buffers.
 		const int32 TotalRibbons = FMath::Clamp<int32>(TotalParticles, 1, MaxAllocatedRibbons);
 
-		SortedIndicesBuffer.Allocate(RHICmdList, TotalParticles, MaxAllocatedCount, InitialBufferAccessFlags, false);
-		TangentsAndDistancesBuffer.Allocate(RHICmdList, TotalParticles * 4, MaxAllocatedCount * 4, InitialBufferAccessFlags, false);
-		MultiRibbonIndicesBuffer.Allocate(RHICmdList, GenerationConfig.HasRibbonIDs() ? TotalParticles : 0, MaxAllocatedCount, InitialBufferAccessFlags, false);
+		SortedIndicesBuffer.Allocate(RHICmdList, TotalParticles, MaxAllocationCount, InitialBufferAccessFlags, false);
+		TangentsAndDistancesBuffer.Allocate(RHICmdList, TotalParticles * 4, MaxAllocationCount * 4, InitialBufferAccessFlags, false);
+		MultiRibbonIndicesBuffer.Allocate(RHICmdList, GenerationConfig.HasRibbonIDs() ? TotalParticles : 0, MaxAllocationCount, InitialBufferAccessFlags, false);
 		RibbonLookupTableBuffer.Allocate(RHICmdList, TotalRibbons * FRibbonMultiRibbonInfoBufferEntry::NumElements, MaxAllocatedRibbons * FRibbonMultiRibbonInfoBufferEntry::NumElements, InitialBufferAccessFlags, false);
-		SegmentsBuffer.Allocate(RHICmdList, TotalParticles, MaxAllocatedCount, InitialBufferAccessFlags, false);
+		SegmentsBuffer.Allocate(RHICmdList, TotalParticles, MaxAllocationCount, InitialBufferAccessFlags, false);
 		bJustCreatedCommandBuffer |= GPUComputeCommandBuffer.Allocate(RHICmdList, FNiagaraRibbonCommandBufferLayout::NumElements, FNiagaraRibbonCommandBufferLayout::NumElements, InitialBufferAccessFlags | ERHIAccess::IndirectArgs, false, EBufferUsageFlags::DrawIndirect);
 	}
 	else
 	{		
 		check(GeneratedGeometryData.IsValid());
 
-		SortedIndicesBuffer.Allocate(RHICmdList, GeneratedGeometryData->SortedIndices.Num(), MaxAllocatedCount, InitialBufferAccessFlags, true);
-		TangentsAndDistancesBuffer.Allocate(RHICmdList, GeneratedGeometryData->TangentAndDistances.Num() * 4, MaxAllocatedCount * 4, InitialBufferAccessFlags, true);
-		MultiRibbonIndicesBuffer.Allocate(RHICmdList, GenerationConfig.HasRibbonIDs() ? GeneratedGeometryData->MultiRibbonIndices.Num() : 0, MaxAllocatedCount, InitialBufferAccessFlags, true);
-		RibbonLookupTableBuffer.Allocate(RHICmdList, GeneratedGeometryData->RibbonInfoLookup.Num() * FRibbonMultiRibbonInfoBufferEntry::NumElements, MaxAllocatedCount * FRibbonMultiRibbonInfoBufferEntry::NumElements, InitialBufferAccessFlags, true);
+		SortedIndicesBuffer.Allocate(RHICmdList, GeneratedGeometryData->SortedIndices.Num(), MaxAllocationCount, InitialBufferAccessFlags, true);
+		TangentsAndDistancesBuffer.Allocate(RHICmdList, GeneratedGeometryData->TangentAndDistances.Num() * 4, MaxAllocationCount * 4, InitialBufferAccessFlags, true);
+		MultiRibbonIndicesBuffer.Allocate(RHICmdList, GenerationConfig.HasRibbonIDs() ? GeneratedGeometryData->MultiRibbonIndices.Num() : 0, MaxAllocationCount, InitialBufferAccessFlags, true);
+		RibbonLookupTableBuffer.Allocate(RHICmdList, GeneratedGeometryData->RibbonInfoLookup.Num() * FRibbonMultiRibbonInfoBufferEntry::NumElements, MaxAllocationCount * FRibbonMultiRibbonInfoBufferEntry::NumElements, InitialBufferAccessFlags, true);
 		SegmentsBuffer.Release();
 		GPUComputeCommandBuffer.Release();
 		bJustCreatedCommandBuffer = false;
@@ -534,15 +537,15 @@ class FNiagaraGpuRibbonsDataManager final : public FNiagaraGpuComputeDataManager
 {
 	struct FIndirectDrawBufferEntry
 	{
-		uint64		FrameUsed = 0;
-		FRWBuffer	Buffer;
+		uint64					FrameUsed = 0;
+		TSharedPtr<FRWBuffer>	Buffer;
 	};
 
 	struct FIndexBufferEntry
 	{
-		uint64						FrameUsed = 0;
-		int32						NumIndices = 0;
-		FNiagaraRibbonIndexBuffer	Buffer;
+		uint64									FrameUsed = 0;
+		int32									NumIndices = 0;
+		TSharedPtr<FNiagaraRibbonIndexBuffer>	Buffer;
 	};
 
 public:
@@ -566,12 +569,29 @@ public:
 
 	void RegisterRenderer(const FNiagaraRendererRibbons* InRenderer, const FNiagaraDataBuffer* InSourceParticleData, const TSharedPtr<FNiagaraRibbonRenderingFrameResources>& InRenderingResources)
 	{
+		if (InRenderingResources->ViewResources.Num() > 0)
+		{
+			const int32 GenerateIndex = InSourceParticleData->GetGPUDataReadyStage() == ENiagaraGpuComputeTickStage::PostOpaqueRender ? 1 : 0;
+			RenderersToGeneratePerStage[GenerateIndex].Emplace(InRenderer, InSourceParticleData, InRenderingResources);
+		}
+	}
+
+	FNiagaraRibbonRenderingFrameViewResources* FindExistingRendererViewData(const FNiagaraRendererRibbons* InRenderer, const FNiagaraDataBuffer* InSourceParticleData)
+	{
 		const int32 GenerateIndex = InSourceParticleData->GetGPUDataReadyStage() == ENiagaraGpuComputeTickStage::PostOpaqueRender ? 1 : 0;
-		RenderersToGeneratePerStage[GenerateIndex].Emplace(InRenderer, InSourceParticleData, InRenderingResources);
+		for (FNiagaraRibbonGPUInitParameters& ExistingData : RenderersToGeneratePerStage[GenerateIndex])
+		{
+			if (ExistingData.Renderer == InRenderer)
+			{
+				TSharedPtr<FNiagaraRibbonRenderingFrameResources> RenderingResources = ExistingData.RenderingResources.Pin();
+				return RenderingResources && RenderingResources->ViewResources.Num() > 0 ? RenderingResources->ViewResources[0].Get() : nullptr;
+			}
+		}
+		return nullptr;
 	}
 
 	//-OPT: These caches should be more central and are as a simple solution to reduce memory thrashing / poor performance for ribbons
-	FRWBuffer GetOrAllocateIndirectDrawBuffer(FRHICommandListBase& RHICmdList)
+	const TSharedPtr<FRWBuffer>& GetOrAllocateIndirectDrawBuffer(FRHICommandListBase& RHICmdList)
 	{
 		FIndirectDrawBufferEntry* BufferEntry = IndirectDrawBufferCache.FindByPredicate(
 			[&](const FIndirectDrawBufferEntry& ExistingBuffer)
@@ -582,17 +602,18 @@ public:
 		if (BufferEntry == nullptr)
 		{
 			BufferEntry = &IndirectDrawBufferCache.AddDefaulted_GetRef();
-			BufferEntry->Buffer.Initialize(RHICmdList, TEXT("RibbonIndirectDrawBuffer"), sizeof(uint32), FNiagaraRibbonIndirectDrawBufferLayout::NumElements, EPixelFormat::PF_R32_UINT, ERHIAccess::IndirectArgs | ERHIAccess::SRVMask, BUF_Static | BUF_DrawIndirect);
+			BufferEntry->Buffer = MakeShared<FRWBuffer>();
+			BufferEntry->Buffer->Initialize(RHICmdList, TEXT("RibbonIndirectDrawBuffer"), sizeof(uint32), FNiagaraRibbonIndirectDrawBufferLayout::NumElements, EPixelFormat::PF_R32_UINT, ERHIAccess::IndirectArgs | ERHIAccess::SRVMask, BUF_Static | BUF_DrawIndirect);
 		}
 		BufferEntry->FrameUsed = FrameCounter;
 		return BufferEntry->Buffer;
 	}
 
-	FNiagaraRibbonIndexBuffer GetOrAllocateIndexBuffer(FRHICommandListBase& RHICmdList, int32 NumIndices, int32 MaxIndices)
+	const TSharedPtr<FNiagaraRibbonIndexBuffer>& GetOrAllocateIndexBuffer(FRHICommandListBase& RHICmdList, int32 NumIndices, int32 MaxIndicesEstimate)
 	{
 		if (GNiagaraRibbonGpuBufferCachePurgeCounter >= 0)
 		{
-			NumIndices = GNiagaraRibbonGpuAllocateMaxCount == 0 ? Align(NumIndices, GNiagaraRibbonGpuBufferAlign) : MaxIndices;
+			NumIndices = GNiagaraRibbonGpuAllocateMaxCount == 0 ? Align(NumIndices, GNiagaraRibbonGpuBufferAlign) : MaxIndicesEstimate;
 		}
 
 		FIndexBufferEntry* BufferEntry = Index32BufferCache.FindByPredicate(
@@ -605,7 +626,8 @@ public:
 		{
 			BufferEntry = &Index32BufferCache.AddDefaulted_GetRef();
 			BufferEntry->NumIndices = NumIndices;
-			BufferEntry->Buffer.Initialize(RHICmdList, NumIndices);
+			BufferEntry->Buffer = MakeShared<FNiagaraRibbonIndexBuffer>();
+			BufferEntry->Buffer->Initialize(RHICmdList, NumIndices);
 		}
 
 		BufferEntry->FrameUsed = FrameCounter;
@@ -699,7 +721,7 @@ FNiagaraRendererRibbons::FNiagaraRendererRibbons(ERHIFeatureLevel::Type FeatureL
 	const UNiagaraRibbonRendererProperties* Properties = CastChecked<const UNiagaraRibbonRendererProperties>(InProps);
 
 	int32 IgnoredFloatOffset, IgnoredHalfOffset;
-	Emitter->GetData().GetVariableComponentOffsets(Properties->RibbonIdBinding.GetDataSetBindableVariable(), IgnoredFloatOffset, RibbonIDParamDataSetOffset, IgnoredHalfOffset);
+	Emitter->GetParticleData().GetVariableComponentOffsets(Properties->RibbonIdBinding.GetDataSetBindableVariable(), IgnoredFloatOffset, RibbonIDParamDataSetOffset, IgnoredHalfOffset);
 
 	// Check we actually have ribbon id if we claim we do
 	check(!GenerationConfig.HasRibbonIDs() || RibbonIDParamDataSetOffset != INDEX_NONE);
@@ -709,6 +731,8 @@ FNiagaraRendererRibbons::FNiagaraRendererRibbons(ERHIFeatureLevel::Type FeatureL
 	FacingMode = Properties->FacingMode;
 	DrawDirection = Properties->DrawDirection;
 	RendererLayout = &Properties->RendererLayout;
+	bCastShadows = Properties->bCastShadows;
+	bUseGeometryNormals = Properties->bUseGeometryNormals;
 	bGpuRibbonLinkIsFloat = Properties->bGpuRibbonLinkIsFloat;
 	GpuRibbonLinkOrderOffset = Properties->GpuRibbonLinkOrderOffset;
 
@@ -721,11 +745,9 @@ FNiagaraRendererRibbons::~FNiagaraRendererRibbons()
 }
 
 // FPrimitiveSceneProxy interface.
-void FNiagaraRendererRibbons::CreateRenderThreadResources()
+void FNiagaraRendererRibbons::CreateRenderThreadResources(FRHICommandListBase& RHICmdList)
 {
-	FNiagaraRenderer::CreateRenderThreadResources();
-
-	FRHICommandListBase& RHICmdList = FRHICommandListImmediate::Get();
+	FNiagaraRenderer::CreateRenderThreadResources(RHICmdList);
 
 	{
 		// Initialize the shape vertex buffer. This doesn't change frame-to-frame, so we can set it up once
@@ -825,7 +847,13 @@ void FNiagaraRendererRibbons::GetDynamicMeshElements(const TArray<const FSceneVi
 		}
 	}
 
-	FRHICommandListBase& RHICmdList = FRHICommandListImmediate::Get();
+	const bool bTranslucentMaterial = DynamicData->Material && IsTranslucentBlendMode(DynamicData->Material->GetIncompleteMaterialWithFallback(FeatureLevel));
+	if (bTranslucentMaterial && AreViewsRenderingOpaqueOnly(Views, VisibilityMap, SceneProxy->CastsVolumetricTranslucentShadow()))
+	{
+		return;
+	}
+
+	FRHICommandListBase& RHICmdList = Collector.GetRHICommandList();
 
 #if STATS
 	FScopeCycleCounter EmitterStatsCounter(EmitterStatID);
@@ -837,6 +865,22 @@ void FNiagaraRendererRibbons::GetDynamicMeshElements(const TArray<const FSceneVi
 
 	FNiagaraGpuComputeDispatchInterface* ComputeDispatchInterface = SceneProxy->GetComputeDispatchInterface();
 	FNiagaraGpuRibbonsDataManager& GpuRibbonDataManager = ComputeDispatchInterface->GetOrCreateDataManager<FNiagaraGpuRibbonsDataManager>();
+
+	// Can we share the generated data across different view families for this frame?
+	// Note: We only handle this for GPU currently
+	const bool bShareAcrossViewFamilies = GNiagaraRibbonShareGeneratedData && (DynamicData->bUseGPUInit || DynamicData->bIsGPUSystem);
+
+	// Do we need to generate a per view buffer (i.e. split screen data)
+	// Note: GPU can always share as we don't generate anything per view dependent and CPU can only share if not using multi ribbons or opaque
+	const bool bNeedsBufferPerView =
+		!GNiagaraRibbonShareGeneratedData ||
+		(
+			!DynamicData->bUseGPUInit && !DynamicData->bIsGPUSystem &&
+			bTranslucentMaterial &&
+			(DynamicData->GenerationOutput && DynamicData->GenerationOutput->RibbonInfoLookup.Num() > 0)
+		);
+
+	bool bNeedsVertexIndexGeneration = false;
 
 	// Compute the per-view uniform buffers.
 	for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ViewIndex++)
@@ -851,18 +895,46 @@ void FNiagaraRendererRibbons::GetDynamicMeshElements(const TArray<const FSceneVi
 				// We don't have to generate batches for non-primary views in stereo instance rendering
 				continue;
 			}
-			
+
+			// If we are rendering opaque only we can skip this batch
+			//-OPT: If we only have opaque materials we can skip earlier however due to RemappedMaterialIndex potentially being invalid this is tricky
+			if (bTranslucentMaterial && IsViewRenderingOpaqueOnly(View, SceneProxy->CastsVolumetricTranslucentShadow()))
+			{
+				continue;
+			}
+
 			FMeshBatch& MeshBatch = Collector.AllocateMesh();
-			
+	
 			const FVector ViewOriginForDistanceCulling = View->ViewMatrices.GetViewOrigin();
 
-			auto& RenderingViewResources = RenderingResources.RibbonResources->ViewResources.Add_GetRef(MakeShared<FNiagaraRibbonRenderingFrameViewResources>());
-			RenderingViewResources->IndexGenerationSettings = CalculateIndexBufferConfiguration(DynamicData->GenerationOutput, SourceParticleData, SceneProxy, View, ViewOriginForDistanceCulling, DynamicData->bUseGPUInit, DynamicData->bIsGPUSystem);
-			
-			GenerateIndexBufferForView(RHICmdList, GpuRibbonDataManager, Collector, RenderingViewResources->IndexGenerationSettings, DynamicData, RenderingViewResources, View, ViewOriginForDistanceCulling);
-			
+			FNiagaraRibbonRenderingFrameViewResources* RenderingViewResources = RenderingResources.RibbonResources->ViewResources.Add_GetRef(MakeShared<FNiagaraRibbonRenderingFrameViewResources>()).Get();
+			FNiagaraRibbonRenderingFrameViewResources* SharedRenderingViewResources = nullptr;
+
+			if (bShareAcrossViewFamilies)
+			{
+				SharedRenderingViewResources = GpuRibbonDataManager.FindExistingRendererViewData(this, SourceParticleData);
+			}
+			else if (!bNeedsBufferPerView && RenderingResources.RibbonResources->ViewResources.Num() > 1)
+			{
+				SharedRenderingViewResources = RenderingResources.RibbonResources->ViewResources[0].Get();
+			}
+
+			if (SharedRenderingViewResources)
+			{
+				RenderingViewResources->IndexBuffer = SharedRenderingViewResources->IndexBuffer;
+				RenderingViewResources->IndirectDrawBuffer = SharedRenderingViewResources->IndirectDrawBuffer;
+				RenderingViewResources->IndexGenerationSettings = SharedRenderingViewResources->IndexGenerationSettings;
+				RenderingViewResources->bNeedsIndexBufferGeneration = false;
+			}
+			else
+			{
+				bNeedsVertexIndexGeneration = true;
+				RenderingViewResources->IndexGenerationSettings = CalculateIndexBufferConfiguration(DynamicData->GenerationOutput, SourceParticleData, SceneProxy, View, ViewOriginForDistanceCulling, DynamicData->bUseGPUInit, DynamicData->bIsGPUSystem);
+				GenerateIndexBufferForView(RHICmdList, GpuRibbonDataManager, Collector, RenderingViewResources->IndexGenerationSettings, DynamicData, RenderingViewResources, View, ViewOriginForDistanceCulling);
+			}
+
 			SetupPerViewUniformBuffer(RenderingViewResources->IndexGenerationSettings, View, ViewFamily, SceneProxy, RenderingViewResources->UniformBuffer);
-			
+
 			SetupMeshBatchAndCollectorResourceForView(RHICmdList, RenderingViewResources->IndexGenerationSettings, DynamicData, SourceParticleData, View, ViewFamily, SceneProxy, RenderingResources.RibbonResources, RenderingViewResources, MeshBatch, DynamicData->bUseGPUInit);
 
 			Collector.AddMesh(ViewIndex, MeshBatch);
@@ -870,7 +942,7 @@ void FNiagaraRendererRibbons::GetDynamicMeshElements(const TArray<const FSceneVi
 	}
 
 	// Register this renderer for generation this frame if we're a gpu system or using gpu init
-	if (DynamicData->bUseGPUInit || DynamicData->bIsGPUSystem)
+	if (bNeedsVertexIndexGeneration && (DynamicData->bUseGPUInit || DynamicData->bIsGPUSystem))
 	{
 		GpuRibbonDataManager.RegisterRenderer(this, SourceParticleData, RenderingResources.RibbonResources);
 	}
@@ -902,7 +974,7 @@ FNiagaraDynamicDataBase* FNiagaraRendererRibbons::GenerateDynamicData(const FNia
 			return nullptr;
 		}
 
-		FNiagaraDataBuffer* DataToRender = Emitter->GetData().GetCurrentData();		
+		FNiagaraDataBuffer* DataToRender = Emitter->GetParticleData().GetCurrentData();
 		if(SimTarget == ENiagaraSimTarget::GPUComputeSim || (DataToRender != nullptr && DataToRender->GetNumInstances() > 1))
 		{
 			DynamicData = new FNiagaraDynamicDataRibbon(Emitter);
@@ -927,11 +999,16 @@ FNiagaraDynamicDataBase* FNiagaraRendererRibbons::GenerateDynamicData(const FNia
 			
 			DynamicData->bUseGPUInit = bIsGPUSystem || bWantsGPUInit;
 			DynamicData->bIsGPUSystem = bIsGPUSystem;
-			DynamicData->MaxAllocatedParticleCount = Emitter->GetData().GetMaxAllocationCount();
+			DynamicData->MaxAllocationCount = Emitter->GetParticleData().GetMaxAllocationCount();
+			DynamicData->MaxAllocatedCountEstimate = 0;
+			if (FVersionedNiagaraEmitterData* EmitterData = Emitter->GetVersionedEmitter().GetEmitterData())
+			{
+				DynamicData->MaxAllocatedCountEstimate = FMath::Min<uint32>(EmitterData->GetMaxParticleCountEstimate(), DynamicData->MaxAllocatedCountEstimate);
+			}
 			
 			if (!DynamicData->bUseGPUInit)
 			{
-				const FNiagaraGenerationInputDataCPUAccessors CPUData(Properties, Emitter->GetData());
+				const FNiagaraGenerationInputDataCPUAccessors CPUData(Properties, Emitter->GetParticleData());
 				
 				DynamicData->GenerationOutput = MakeShared<FNiagaraRibbonCPUGeneratedVertexData>();
 
@@ -982,7 +1059,7 @@ void FNiagaraRendererRibbons::GetDynamicRayTracingInstances(FRayTracingMaterialG
 	SCOPE_CYCLE_COUNTER(STAT_NiagaraRenderRibbons);
 	check(SceneProxy);
 
-	FRHICommandListBase& RHICmdList = Context.GraphBuilder.RHICmdList;
+	FRHICommandListBase& RHICmdList = Context.RHICmdList;
 	FNiagaraDynamicDataRibbon *DynamicDataRibbon = static_cast<FNiagaraDynamicDataRibbon*>(DynamicDataRender);
 	FNiagaraGpuComputeDispatchInterface* ComputeDispatchInterface = SceneProxy->GetComputeDispatchInterface();
 	
@@ -1041,7 +1118,7 @@ void FNiagaraRendererRibbons::GetDynamicRayTracingInstances(FRayTracingMaterialG
 	const FVector ViewOriginForDistanceCulling = View->ViewMatrices.GetViewOrigin();
 	
 	FNiagaraRibbonMeshCollectorResources& RenderingResources = Context.RayTracingMeshResourceCollector.AllocateOneFrameResource<FNiagaraRibbonMeshCollectorResources>();
-	auto& RenderingViewResources = RenderingResources.RibbonResources->ViewResources.Add_GetRef(MakeShared<FNiagaraRibbonRenderingFrameViewResources>());
+	FNiagaraRibbonRenderingFrameViewResources* RenderingViewResources = RenderingResources.RibbonResources->ViewResources.Add_GetRef(MakeShared<FNiagaraRibbonRenderingFrameViewResources>()).Get();
 	RenderingViewResources->IndexGenerationSettings = CalculateIndexBufferConfiguration(DynamicDataRibbon->GenerationOutput, SourceParticleData, SceneProxy, View, ViewOriginForDistanceCulling, DynamicDataRibbon->bUseGPUInit, DynamicDataRibbon->bIsGPUSystem);
 	
 	if (!RenderingViewResources->VertexFactory.GetType()->SupportsRayTracingDynamicGeometry())
@@ -1066,8 +1143,8 @@ void FNiagaraRendererRibbons::GetDynamicRayTracingInstances(FRayTracingMaterialG
 	RayTracingInstance.Geometry = &RayTracingGeometry;
 	RayTracingInstance.InstanceTransforms.Add(FMatrix::Identity);
 	
-	RayTracingGeometry.Initializer.IndexBuffer = RenderingViewResources->IndexBuffer.IndexBufferRHI;// PerViewGeneratedData.IndexAllocation.IndexBuffer->IndexBufferRHI;
-	RayTracingGeometry.Initializer.IndexBufferOffset = RenderingViewResources->IndexBuffer.FirstIndex;//PerViewGeneratedData.IndexAllocation.FirstIndex * PerViewGeneratedData.IndexAllocation.IndexStride;
+	RayTracingGeometry.Initializer.IndexBuffer = RenderingViewResources->IndexBuffer->IndexBufferRHI;// PerViewGeneratedData.IndexAllocation.IndexBuffer->IndexBufferRHI;
+	RayTracingGeometry.Initializer.IndexBufferOffset = RenderingViewResources->IndexBuffer->FirstIndex;//PerViewGeneratedData.IndexAllocation.FirstIndex * PerViewGeneratedData.IndexAllocation.IndexStride;
 	
 	FMeshBatch MeshBatch;
 	
@@ -1299,8 +1376,8 @@ void FNiagaraRendererRibbons::CalculateUVScaleAndOffsets(const FNiagaraRibbonUVS
 	float NormalizedLeadingSegmentOffset;
 	if (UVSettings.LeadingEdgeMode == ENiagaraRibbonUVEdgeMode::SmoothTransition)
 	{
-		const float FirstAge = NormalizedAgeReader[RibbonIndices[StartIndex]];
-		const float SecondAge = NormalizedAgeReader[RibbonIndices[StartIndex + 1]];
+		const float FirstAge = NormalizedAgeReader.GetSafe(RibbonIndices[StartIndex], 0.0f);
+		const float SecondAge = NormalizedAgeReader.GetSafe(RibbonIndices[StartIndex + 1], 0.0f);
 
 		const float StartTimeStep = SecondAge - FirstAge;
 		const float StartTimeOffset = FirstAge < StartTimeStep ? StartTimeStep - FirstAge : 0;
@@ -1320,8 +1397,8 @@ void FNiagaraRendererRibbons::CalculateUVScaleAndOffsets(const FNiagaraRibbonUVS
 	float NormalizedTrailingSegmentOffset;
 	if (UVSettings.TrailingEdgeMode == ENiagaraRibbonUVEdgeMode::SmoothTransition)
 	{
-		const float SecondToLastAge = NormalizedAgeReader[RibbonIndices[EndIndex - 1]];
-		const float LastAge = NormalizedAgeReader[RibbonIndices[EndIndex]];
+		const float SecondToLastAge = NormalizedAgeReader.GetSafe(RibbonIndices[EndIndex - 1], 0.0f);
+		const float LastAge = NormalizedAgeReader.GetSafe(RibbonIndices[EndIndex], 0.0f);
 
 		const float EndTimeStep = LastAge - SecondToLastAge;
 		const float EndTimeOffset = 1 - LastAge < EndTimeStep ? EndTimeStep - (1 - LastAge) : 0;
@@ -1861,7 +1938,7 @@ void FNiagaraRendererRibbons::GenerateIndexBufferForView(
 	FNiagaraGpuRibbonsDataManager& GpuRibbonsDataManager,
 	FMeshElementCollector& Collector,
 	FNiagaraIndexGenerationInput& GeneratedData, FNiagaraDynamicDataRibbon* DynamicDataRibbon,
-    const TSharedPtr<FNiagaraRibbonRenderingFrameViewResources>& RenderingViewResources, const FSceneView* View,
+    FNiagaraRibbonRenderingFrameViewResources* RenderingViewResources, const FSceneView* View,
     const FVector& ViewOriginForDistanceCulling
 ) const
 {
@@ -1870,20 +1947,21 @@ void FNiagaraRendererRibbons::GenerateIndexBufferForView(
 		if (DynamicDataRibbon->bUseGPUInit)
 		{
 			RenderingViewResources->IndirectDrawBuffer = GpuRibbonsDataManager.GetOrAllocateIndirectDrawBuffer(RHICmdList);
-			RenderingViewResources->IndexBuffer = GpuRibbonsDataManager.GetOrAllocateIndexBuffer(RHICmdList, GeneratedData.TotalNumIndices, DynamicDataRibbon->MaxAllocatedParticleCount);
+			RenderingViewResources->IndexBuffer = GpuRibbonsDataManager.GetOrAllocateIndexBuffer(RHICmdList, GeneratedData.TotalNumIndices, FMath::Max(GeneratedData.TotalNumIndices, DynamicDataRibbon->MaxAllocatedCountEstimate));
 		}
 		else
 		{
+			RenderingViewResources->IndexBuffer = MakeShared<FNiagaraRibbonIndexBuffer>();
 			if (GeneratedData.TotalBitCount <= 16)
 			{
 				FGlobalDynamicIndexBuffer::FAllocationEx IndexAllocation = Collector.GetDynamicIndexBuffer().Allocate<uint16>(GeneratedData.TotalNumIndices);
-				RenderingViewResources->IndexBuffer.Initialize(RHICmdList, IndexAllocation);
+				RenderingViewResources->IndexBuffer->Initialize(RHICmdList, IndexAllocation);
 				GenerateIndexBufferCPU<uint16>(GeneratedData, DynamicDataRibbon, ShapeState, reinterpret_cast<uint16*>(IndexAllocation.Buffer), View, ViewOriginForDistanceCulling, FeatureLevel, DrawDirection);
 			}
 			else
 			{
 				FGlobalDynamicIndexBuffer::FAllocationEx IndexAllocation = Collector.GetDynamicIndexBuffer().Allocate<uint32>(GeneratedData.TotalNumIndices);
-				RenderingViewResources->IndexBuffer.Initialize(RHICmdList, IndexAllocation);
+				RenderingViewResources->IndexBuffer->Initialize(RHICmdList, IndexAllocation);
 				GenerateIndexBufferCPU<uint32>(GeneratedData, DynamicDataRibbon, ShapeState, reinterpret_cast<uint32*>(IndexAllocation.Buffer), View, ViewOriginForDistanceCulling, FeatureLevel, DrawDirection);
 			}
 		}
@@ -2049,7 +2127,7 @@ void FNiagaraRendererRibbons::SetupPerViewUniformBuffer(FNiagaraIndexGenerationI
 }
 
 inline void FNiagaraRendererRibbons::SetupMeshBatchAndCollectorResourceForView(FRHICommandListBase& RHICmdList, const FNiagaraIndexGenerationInput& GeneratedData, FNiagaraDynamicDataRibbon* DynamicDataRibbon, const FNiagaraDataBuffer* SourceParticleData, const FSceneView* View,
-    const FSceneViewFamily& ViewFamily, const FNiagaraSceneProxy* SceneProxy, const TSharedPtr<FNiagaraRibbonRenderingFrameResources>& RenderingResources, const TSharedPtr<FNiagaraRibbonRenderingFrameViewResources>& RenderingViewResources,
+    const FSceneViewFamily& ViewFamily, const FNiagaraSceneProxy* SceneProxy, const TSharedPtr<FNiagaraRibbonRenderingFrameResources>& RenderingResources, FNiagaraRibbonRenderingFrameViewResources* RenderingViewResources,
     FMeshBatch& OutMeshBatch, bool bShouldUseGPUInitIndices) const
 {
 	const bool bIsWireframe = ViewFamily.EngineShowFlags.Wireframe;
@@ -2069,21 +2147,20 @@ inline void FNiagaraRendererRibbons::SetupMeshBatchAndCollectorResourceForView(F
 	VFLooseParams.FacingMode = static_cast<uint32>(FacingMode);
 	VFLooseParams.Shape = static_cast<uint32>(ShapeState.Shape);
 	VFLooseParams.NeedsPreciseMotionVectors = GenerationConfig.NeedsPreciseMotionVectors();
+	VFLooseParams.UseGeometryNormals = (ShapeState.Shape != ENiagaraRibbonShapeMode::Plane || bUseGeometryNormals) ? 1 : 0;
 
-	VFLooseParams.IndirectDrawOutput = bShouldUseGPUInitIndices ? (FRHIShaderResourceView*)RenderingViewResources->IndirectDrawBuffer.SRV : GetDummyUIntBuffer();
+	VFLooseParams.IndirectDrawOutput = bShouldUseGPUInitIndices ? (FRHIShaderResourceView*)RenderingViewResources->IndirectDrawBuffer->SRV : GetDummyUIntBuffer();
 	VFLooseParams.IndirectDrawOutputOffset = bShouldUseGPUInitIndices ? 0 : -1;
 
 	// Collector.AllocateOneFrameResource uses default ctor, initialize the vertex factory
-	RenderingViewResources->VertexFactory.SetParticleFactoryType(NVFT_Ribbon);
 	RenderingViewResources->VertexFactory.LooseParameterUniformBuffer = FNiagaraRibbonVFLooseParametersRef::CreateUniformBufferImmediate(VFLooseParams, UniformBuffer_SingleFrame);
 	RenderingViewResources->VertexFactory.InitResource(RHICmdList);
 	RenderingViewResources->VertexFactory.SetRibbonUniformBuffer(RenderingViewResources->UniformBuffer);
 
-
 	OutMeshBatch.VertexFactory = &RenderingViewResources->VertexFactory;
-	OutMeshBatch.CastShadow = SceneProxy->CastsDynamicShadow();
+	OutMeshBatch.CastShadow = SceneProxy->CastsDynamicShadow() && bCastShadows;
 #if RHI_RAYTRACING
-	OutMeshBatch.CastRayTracedShadow = SceneProxy->CastsDynamicShadow();
+	OutMeshBatch.CastRayTracedShadow = SceneProxy->CastsDynamicShadow() && bCastShadows;
 #endif
 	OutMeshBatch.bUseAsOccluder = false;
 	OutMeshBatch.ReverseCulling = SceneProxy->IsLocalToWorldDeterminantNegative();
@@ -2096,8 +2173,8 @@ inline void FNiagaraRendererRibbons::SetupMeshBatchAndCollectorResourceForView(F
 	OutMeshBatch.MaterialRenderProxy = bIsWireframe? UMaterial::GetDefaultMaterial(MD_Surface)->GetRenderProxy() : MaterialRenderProxy;
 	
 	FMeshBatchElement& MeshElement = OutMeshBatch.Elements[0];
-	MeshElement.IndexBuffer = &RenderingViewResources->IndexBuffer;
-	MeshElement.FirstIndex = RenderingViewResources->IndexBuffer.FirstIndex;
+	MeshElement.IndexBuffer = RenderingViewResources->IndexBuffer.Get();
+	MeshElement.FirstIndex = RenderingViewResources->IndexBuffer->FirstIndex;
 	MeshElement.NumInstances = 1;
 	MeshElement.MinVertexIndex = 0;
 	MeshElement.MaxVertexIndex = 0;
@@ -2105,7 +2182,7 @@ inline void FNiagaraRendererRibbons::SetupMeshBatchAndCollectorResourceForView(F
 	if (bShouldUseGPUInitIndices)
 	{
 		MeshElement.NumPrimitives = 0;
-		MeshElement.IndirectArgsBuffer = RenderingViewResources->IndirectDrawBuffer.Buffer;
+		MeshElement.IndirectArgsBuffer = RenderingViewResources->IndirectDrawBuffer->Buffer;
 		MeshElement.IndirectArgsOffset = View->IsInstancedStereoPass() ? FNiagaraRibbonIndirectDrawBufferLayout::StereoDrawIndirectParametersByteOffset : FNiagaraRibbonIndirectDrawBufferLayout::DrawIndirectParametersByteOffset;
 	}
 	else
@@ -2119,14 +2196,14 @@ inline void FNiagaraRendererRibbons::SetupMeshBatchAndCollectorResourceForView(F
 	}	
 	
 	// TODO: MotionVector/Velocity? Probably need to look into this?
-	MeshElement.PrimitiveUniformBuffer = SceneProxy->GetCustomUniformBuffer(false);	// Note: Ribbons don't generate accurate velocities so disabling	
+	MeshElement.PrimitiveUniformBuffer = SceneProxy->GetCustomUniformBuffer(RHICmdList, false);	// Note: Ribbons don't generate accurate velocities so disabling	
 }
 
-void FNiagaraRendererRibbons::InitializeViewIndexBuffersGPU(FRHICommandListImmediate& RHICmdList, FNiagaraGpuComputeDispatchInterface* ComputeDispatchInterface, const FNiagaraRibbonGPUInitParameters& GpuInitParameters, const TSharedPtr<FNiagaraRibbonRenderingFrameViewResources>& RenderingViewResources) const
+void FNiagaraRendererRibbons::InitializeViewIndexBuffersGPU(FRHICommandListImmediate& RHICmdList, FNiagaraGpuComputeDispatchInterface* ComputeDispatchInterface, const FNiagaraRibbonGPUInitParameters& GpuInitParameters, const FNiagaraRibbonRenderingFrameViewResources* RenderingViewResources) const
 {
 	SCOPE_CYCLE_COUNTER(STAT_NiagaraRenderRibbonsGenIndiciesGPU);
 	
-	if (!RenderingViewResources->IndirectDrawBuffer.Buffer.IsValid())
+	if (!RenderingViewResources->IndirectDrawBuffer->Buffer.IsValid())
 	{
 		return;
 	}
@@ -2144,7 +2221,7 @@ void FNiagaraRendererRibbons::InitializeViewIndexBuffersGPU(FRHICommandListImmed
 		FNiagaraRibbonInitializeIndices Params;
 		FMemory::Memzero(Params);
 
-		Params.IndirectDrawOutput = RenderingViewResources->IndirectDrawBuffer.UAV;
+		Params.IndirectDrawOutput = RenderingViewResources->IndirectDrawBuffer->UAV;
 		Params.VertexGenerationResults = VertexBuffers.GPUComputeCommandBuffer.SRV;
 
 		// Total particle Count
@@ -2172,9 +2249,9 @@ void FNiagaraRendererRibbons::InitializeViewIndexBuffersGPU(FRHICommandListImmed
 		Params.GNiagaraRibbonTessellationEnabled = GNiagaraRibbonTessellationEnabled ? 1 : 0;
 		Params.GNiagaraRibbonTessellationMinDisplacementError = GNiagaraRibbonTessellationMinDisplacementError;
 
-		RHICmdList.Transition(FRHITransitionInfo(RenderingViewResources->IndirectDrawBuffer.UAV, ERHIAccess::SRVMask | ERHIAccess::IndirectArgs, ERHIAccess::UAVCompute));
+		RHICmdList.Transition(FRHITransitionInfo(RenderingViewResources->IndirectDrawBuffer->UAV, ERHIAccess::SRVMask | ERHIAccess::IndirectArgs, ERHIAccess::UAVCompute));
 		FComputeShaderUtils::Dispatch(RHICmdList, ComputeShader, Params, FIntVector(1, 1, 1));
-		RHICmdList.Transition(FRHITransitionInfo(RenderingViewResources->IndirectDrawBuffer.UAV, ERHIAccess::UAVCompute, ERHIAccess::SRVMask | ERHIAccess::IndirectArgs));
+		RHICmdList.Transition(FRHITransitionInfo(RenderingViewResources->IndirectDrawBuffer->UAV, ERHIAccess::UAVCompute, ERHIAccess::SRVMask | ERHIAccess::IndirectArgs));
 	}
 	
 	// Not possible to have a valid ribbon with less than 2 particles, abort!
@@ -2202,12 +2279,12 @@ void FNiagaraRendererRibbons::InitializeViewIndexBuffersGPU(FRHICommandListImmed
 		FNiagaraRibbonGenerateIndices Params;
 		FMemory::Memzero(Params);
 		
-		Params.GeneratedIndicesBuffer = RenderingViewResources->IndexBuffer.UAV;
+		Params.GeneratedIndicesBuffer = RenderingViewResources->IndexBuffer->UAV;
 		Params.SortedIndices = VertexBuffers.SortedIndicesBuffer.SRV;
 		Params.MultiRibbonIndices = VertexBuffers.MultiRibbonIndicesBuffer.SRV;
 		Params.Segments = VertexBuffers.SegmentsBuffer.SRV;
 
-		Params.IndirectDrawInfo = RenderingViewResources->IndirectDrawBuffer.SRV;
+		Params.IndirectDrawInfo = RenderingViewResources->IndirectDrawBuffer->SRV;
 		Params.TriangleToVertexIds = ShapeState.SliceTriangleToVertexIdsBuffer.SRV;
 
 		// Total particle Count
@@ -2230,9 +2307,9 @@ void FNiagaraRendererRibbons::InitializeViewIndexBuffersGPU(FRHICommandListImmed
 		Params.SubSegmentBitShift = RenderingViewResources->IndexGenerationSettings.SubSegmentBitShift;
 		Params.SubSegmentBitMask = RenderingViewResources->IndexGenerationSettings.SubSegmentBitMask;
 		
-		RHICmdList.Transition(FRHITransitionInfo(RenderingViewResources->IndexBuffer.UAV, ERHIAccess::VertexOrIndexBuffer, ERHIAccess::UAVCompute));
-		FComputeShaderUtils::DispatchIndirect(RHICmdList, ComputeShader, Params, RenderingViewResources->IndirectDrawBuffer.Buffer, IndirectDispatchArgsOffset);
-		RHICmdList.Transition(FRHITransitionInfo(RenderingViewResources->IndexBuffer.UAV, ERHIAccess::UAVCompute, ERHIAccess::VertexOrIndexBuffer));
+		RHICmdList.Transition(FRHITransitionInfo(RenderingViewResources->IndexBuffer->UAV, ERHIAccess::VertexOrIndexBuffer, ERHIAccess::UAVCompute));
+		FComputeShaderUtils::DispatchIndirect(RHICmdList, ComputeShader, Params, RenderingViewResources->IndirectDrawBuffer->Buffer, IndirectDispatchArgsOffset);
+		RHICmdList.Transition(FRHITransitionInfo(RenderingViewResources->IndexBuffer->UAV, ERHIAccess::UAVCompute, ERHIAccess::VertexOrIndexBuffer));
 	}
 }
 
@@ -2241,7 +2318,7 @@ void FNiagaraRendererRibbons::InitializeVertexBuffersResources(FRHICommandListBa
 {
 
 	// Make sure our ribbon data buffers are setup
-	VertexBuffers.InitializeOrUpdateBuffers(RHICmdList, GenerationConfig, DynamicDataRibbon->GenerationOutput, SourceParticleData, DynamicDataRibbon->MaxAllocatedParticleCount, bShouldUseGPUInit);
+	VertexBuffers.InitializeOrUpdateBuffers(RHICmdList, GenerationConfig, DynamicDataRibbon->GenerationOutput, SourceParticleData, DynamicDataRibbon->MaxAllocationCount, bShouldUseGPUInit);
 	
 	// Now we need to bind the source particle data, copying it to the gpu if necessary
 	if (DynamicDataRibbon->bIsGPUSystem)
@@ -2725,7 +2802,10 @@ void FNiagaraGpuRibbonsDataManager::GenerateAllGPUData(FRHICommandListImmediate&
 		{
 			for (const TSharedPtr<FNiagaraRibbonRenderingFrameViewResources>& RenderingResourcesView : RenderingResources->ViewResources)
 			{
-				RendererToGen.Renderer->InitializeViewIndexBuffersGPU(RHICmdList, ComputeDispatchInterface, RendererToGen, RenderingResourcesView);
+				if (RenderingResourcesView->bNeedsIndexBufferGeneration)
+				{
+					RendererToGen.Renderer->InitializeViewIndexBuffersGPU(RHICmdList, ComputeDispatchInterface, RendererToGen, RenderingResourcesView.Get());
+				}
 			}
 		}
 	}

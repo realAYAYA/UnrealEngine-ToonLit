@@ -6,7 +6,7 @@
 #include "ScenePrivate.h"
 #include "SystemTextures.h"
 #include "RenderGraphUtils.h"
-#include "HairStrands/HairStrandsCluster.h"
+#include "HairStrands/HairStrandsMacroGroup.h"
 
 static TRDGUniformBufferRef<FHairStrandsViewUniformParameters> InternalCreateHairStrandsViewUniformBuffer(
 	FRDGBuilder& GraphBuilder, 
@@ -25,7 +25,7 @@ static TRDGUniformBufferRef<FHairStrandsViewUniformParameters> InternalCreateHai
 		Parameters->HairSampleOffset = In->NodeIndex;
 		Parameters->HairSampleData = GraphBuilder.CreateSRV(In->NodeData);
 		Parameters->HairSampleCoords = GraphBuilder.CreateSRV(In->NodeCoord, FHairStrandsVisibilityData::NodeCoordFormat);
-		Parameters->HairSampleCount = In->NodeCount;
+		Parameters->HairSampleCount = GraphBuilder.CreateSRV(In->NodeCount);
 		Parameters->HairSampleViewportResolution = In->SampleLightingViewportResolution;
 		Parameters->MaxSamplePerPixelCount = In->MaxSampleCount;
 
@@ -62,7 +62,7 @@ static TRDGUniformBufferRef<FHairStrandsViewUniformParameters> InternalCreateHai
 		Parameters->HairOnlyDepthClosestHZBTexture = Parameters->HairOnlyDepthFurthestHZBTexture;
 		Parameters->HairOnlyDepthHZBSampler = TStaticSamplerState<SF_Point>::GetRHI();
 		Parameters->HairCoverageTexture = BlackTexture;
-		Parameters->HairSampleCount = ZeroR32_UINT;
+		Parameters->HairSampleCount = DummyBufferR32SRV;
 		Parameters->HairSampleOffset = ZeroR32_UINT;
 		Parameters->HairSampleCoords = DummyBufferRG16SRV;
 		Parameters->HairSampleData	 = GraphBuilder.CreateSRV(DummyNodeBuffer);
@@ -85,11 +85,37 @@ void AddMeshDrawTransitionPass(
 	const FViewInfo& ViewInfo,
 	const FHairStrandsMacroGroupDatas& MacroGroupDatas);
 
+FHairTransientResources* AllocateHairTransientResources(FRDGBuilder& GraphBuilder, FScene* Scene)
+{
+	if (Scene->HairStrandsSceneData.TransientResources == nullptr)
+	{
+		Scene->HairStrandsSceneData.TransientResources = new FHairTransientResources();
+	}
+
+	const uint32 InstanceCount = Scene->HairStrandsSceneData.RegisteredProxies.Num();
+	FHairTransientResources* Out = Scene->HairStrandsSceneData.TransientResources;
+	*Out = FHairTransientResources();
+	if (InstanceCount > 0)
+	{
+		Out->bIsGroupAABBValid.Init(false, InstanceCount);
+
+		// Change this into a structure buffer
+		Out->GroupAABBBuffer = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateBufferDesc(4, 6 * InstanceCount), TEXT("Hair.Transient.GroupAABB"));
+		Out->GroupAABBSRV = GraphBuilder.CreateSRV(Out->GroupAABBBuffer, PF_R32_SINT);
+
+		// *4u* elements for storing DispatchCount.xyz and .w which contains the original number of items
+		Out->IndirectDispatchArgsBuffer = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateIndirectDesc(4u * InstanceCount), TEXT("Hair.Transient.IndirectDispatchArgs"));
+		Out->IndirectDispatchArgsSRV = GraphBuilder.CreateSRV(Out->IndirectDispatchArgsBuffer);
+	}
+	return Out;
+}
+
 void RenderHairPrePass(
 	FRDGBuilder& GraphBuilder,
 	FScene* Scene,
 	TArray<FViewInfo>& Views,
-	FInstanceCullingManager& InstanceCullingManager)
+	FInstanceCullingManager& InstanceCullingManager,
+	const TArray<EHairInstanceVisibilityType>& InstancesVisibilityType)
 {
 	for (FViewInfo& View : Views)
 	{
@@ -112,6 +138,11 @@ void RenderHairPrePass(
 				// voxelization feedback (only done for the first view in stereo) and Path-Tracer invalidation 
 				// (not supporting stereo)
 				Views[1].HairStrandsViewData = Views[0].HairStrandsViewData;
+
+				// Render DeepShadow for the second view, as for now the computations are view dependent. 
+				// This needs to be view independent to share result between eyes.
+				RenderHairStrandsDeepShadows(GraphBuilder, Scene, View, InstanceCullingManager);
+				GraphBuilder.AddDispatchHint();
 				return;
 			}
 		}
@@ -125,7 +156,7 @@ void RenderHairPrePass(
 		}
 
 		//SCOPED_GPU_STAT(RHICmdList, HairRendering);
-		CreateHairStrandsMacroGroups(GraphBuilder, Scene, View, View.HairStrandsViewData);
+		CreateHairStrandsMacroGroups(GraphBuilder, Scene, View, InstancesVisibilityType, View.HairStrandsViewData);
 		GraphBuilder.AddDispatchHint();
 
 		// Voxelization and Deep Opacity Maps
@@ -311,6 +342,15 @@ bool HasHairCardsVisible(const TArray<FViewInfo>& Views)
 bool HasHairInstanceInScene(const FScene& Scene)
 {	
 	return Scene.HairStrandsSceneData.RegisteredProxies.Num() > 0;
+}
+
+void PostRender(FScene& Scene)
+{
+	// Dellocate transient resourcse
+	if (Scene.HairStrandsSceneData.TransientResources)
+	{
+		*Scene.HairStrandsSceneData.TransientResources = FHairTransientResources();
+	}
 }
 
 } // HairStrands

@@ -1,0 +1,4 @@
+{
+	"installCommand": "p4vutils.exe install",
+	"uninstallCommand": "p4vutils.exe uninstall"
+}

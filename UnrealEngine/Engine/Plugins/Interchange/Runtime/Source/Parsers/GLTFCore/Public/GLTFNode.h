@@ -37,6 +37,7 @@ namespace GLTF
 		int32 CameraIndex;  // index into FAsset::Cameras
 		int32 LightIndex;   // index into FAsset::Lights
 
+		int32 Index;		// index of FNode in GLTFAsset.Nodes array.
 		int32 ParentIndex;
 		int32 RootJointIndex; //only valid if node is of Joint Type
 
@@ -57,6 +58,7 @@ namespace GLTF
 		    , Skindex(INDEX_NONE)
 		    , CameraIndex(INDEX_NONE)
 		    , LightIndex(INDEX_NONE)
+			, Index(INDEX_NONE)
 			, ParentIndex(INDEX_NONE)
 			, RootJointIndex(INDEX_NONE)
 			, bHasLocalBindPose(false)

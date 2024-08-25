@@ -2,32 +2,43 @@
 
 #include "RewindDebugger.h"
 
-#include "Components/SkeletalMeshComponent.h"
-#include "Editor.h"
-#include "IAnimationProvider.h"
-#include "IGameplayProvider.h"
-#include "Insights/IUnrealInsightsModule.h"
-#include "Modules/ModuleManager.h"
-#include "Animation/AnimTrace.h"
-#include "ObjectTrace.h"
-#include "TraceServices/Model/Frames.h"
-#include "SLevelViewport.h"
-#include "Widgets/Docking/SDockTab.h"
-#include "Widgets/Layout/SSpacer.h"
-#include "IRewindDebuggerExtension.h"
-#include "IRewindDebuggerDoubleClickHandler.h"
-#include "RewindDebuggerObjectTrack.h"
 #include "Animation/AnimBlueprint.h"
 #include "Animation/AnimBlueprintGeneratedClass.h"
-#include "EngineUtils.h"
-#include "ToolMenus.h"
-#include "RewindDebuggerSettings.h"
-#include "LevelEditor.h"
-#include "RewindDebuggerModule.h"
+#include "Animation/AnimTrace.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Editor.h"
 #include "Engine/PoseWatch.h"
-#include "ProfilingDebugging/TraceAuxiliary.h"
-#include "UObject/UObjectIterator.h"
 #include "Engine/World.h"
+#include "EngineUtils.h"
+#include "GameFramework/Controller.h"
+#include "GameFramework/Pawn.h"
+#include "IAnimationProvider.h"
+#include "IGameplayProvider.h"
+#include "IRewindDebuggerDoubleClickHandler.h"
+#include "IRewindDebuggerExtension.h"
+#include "Insights/IUnrealInsightsModule.h"
+#include "LevelEditor.h"
+#include "Modules/ModuleManager.h"
+#include "ObjectTrace.h"
+#include "ProfilingDebugging/TraceAuxiliary.h"
+#include "RewindDebuggerCommands.h"
+#include "RewindDebuggerModule.h"
+#include "RewindDebuggerObjectTrack.h"
+#include "RewindDebuggerPlaceholderTrack.h"
+#include "RewindDebuggerSettings.h"
+#include "SLevelViewport.h"
+#include "ToolMenus.h"
+#include "TraceServices/Model/Frames.h"
+#include "UObject/UObjectIterator.h"
+#include "Widgets/Docking/SDockTab.h"
+#include "Widgets/Layout/SSpacer.h"
+#include "RewindDebuggerCommands.h"
+#include "RewindDebuggerTrackCreators.h"
+#include "UnrealEdGlobals.h"
+#include "Editor/UnrealEdEngine.h"
+#include "Kismet2/DebuggerCommands.h"
+
+#define LOCTEXT_NAMESPACE "RewindDebugger"
 
 static void IterateExtensions(TFunction<void(IRewindDebuggerExtension* Extension)> IteratorFunction)
 {
@@ -66,7 +77,14 @@ FRewindDebugger::FRewindDebugger()  :
 	bTargetActorPositionValid(false),
 	bIsDetailsPanelOpen(true)
 {
+	RewindDebugger::FRewindDebuggerTrackCreators::EnumerateCreators([this](const RewindDebugger::IRewindDebuggerTrackCreator* Creator)
+    {
+		Creator->GetTrackTypes(TrackTypes);
+    });
+	
 	RecordingDuration.Set(0);
+	
+	UnrealInsightsModule = &FModuleManager::LoadModuleChecked<IUnrealInsightsModule>("TraceInsights");
 
 	if (GEditor->bIsSimulatingInEditor || GEditor->PlayWorld)
 	{
@@ -79,8 +97,17 @@ FRewindDebugger::FRewindDebugger()  :
 	FEditorDelegates::EndPIE.AddRaw(this, &FRewindDebugger::OnPIEStopped);
 	FEditorDelegates::SingleStepPIE.AddRaw(this, &FRewindDebugger::OnPIESingleStepped);
 
+	
 	DebugTargetActor.OnPropertyChanged = DebugTargetActor.OnPropertyChanged.CreateLambda([this](FString Target)
 		{
+			URewindDebuggerSettings& Settings = URewindDebuggerSettings::Get();
+			if (Settings.DebugTargetActor != Target)
+			{
+				Settings.DebugTargetActor = Target;
+				Settings.Modify();
+				Settings.SaveConfig();
+			}
+		
 			TargetObjectIds.SetNum(0);
 			GetTargetObjectIds(TargetObjectIds);
 			// make sure all the SubObjects of the target actor have been traced
@@ -96,8 +123,6 @@ FRewindDebugger::FRewindDebugger()  :
 
 			RefreshDebugTracks();
 		});
-
-	UnrealInsightsModule = &FModuleManager::LoadModuleChecked<IUnrealInsightsModule>("TraceInsights");
 
 	TickerHandle = FTSTicker::GetCoreTicker().AddTicker(TEXT("RewindDebugger"), 0.0f, [this](float DeltaTime)
 	{
@@ -155,14 +180,27 @@ void FRewindDebugger::OnPIEPaused(bool bSimulating)
 {
 	bPIESimulating = false;
 	ControlState = EControlState::Pause;
-
+	
 	if (bRecording)
 	{
+    #if OBJECT_TRACE_ENABLED
 		UWorld* World = GetWorldToVisualize();
-#if OBJECT_TRACE_ENABLED
-		RecordingDuration.Set(FObjectTrace::GetWorldElapsedTime(World));
-#endif // OBJECT_TRACE_ENABLED
-		SetCurrentScrubTime(RecordingDuration.Get());
+		SetCurrentScrubTime(FObjectTrace::GetWorldElapsedTime(World));
+    #endif // OBJECT_TRACE_ENABLED
+	}
+	
+	if (ShouldAutoEject() && FPlayWorldCommandCallbacks::IsInPIE())
+	{
+		bool CanEject= false;
+		for (auto It = GUnrealEd->SlatePlayInEditorMap.CreateIterator(); It; ++It)
+		{
+			CanEject = CanEject || It.Value().DestinationSlateViewport.IsValid();
+		}
+
+		if (CanEject)
+		{
+			GEditor->RequestToggleBetweenPIEandSIE();
+		}
 	}
 }
 
@@ -180,6 +218,11 @@ void FRewindDebugger::OnPIEResumed(bool bSimulating)
 	}
 
 	MeshComponentsToReset.Empty();
+
+	if (ShouldAutoEject() && FPlayWorldCommandCallbacks::IsInSIE())
+	{
+		GEditor->RequestToggleBetweenPIEandSIE();
+	}
 }
 
 void FRewindDebugger::OnPIESingleStepped(bool bSimulating)
@@ -197,11 +240,10 @@ void FRewindDebugger::OnPIESingleStepped(bool bSimulating)
 
 	if (bRecording)
 	{
+    #if OBJECT_TRACE_ENABLED
 		UWorld* World = GetWorldToVisualize();
-#if OBJECT_TRACE_ENABLED
-		RecordingDuration.Set(FObjectTrace::GetWorldElapsedTime(World));
-#endif // OBJECT_TRACE_ENABLED
-		SetCurrentScrubTime(RecordingDuration.Get());
+		SetCurrentScrubTime(FObjectTrace::GetWorldElapsedTime(World));
+    #endif // OBJECT_TRACE_ENABLED
 	}
 }
 
@@ -213,9 +255,6 @@ void FRewindDebugger::OnPIEStopped(bool bSimulating)
 	MeshComponentsToReset.Empty();
 
 	StopRecording();
-	// clear the current recording (until we support playback in the Editor world on spawned actors)
-	RecordingDuration.Set(0);
-	SetCurrentScrubTime(0);
 }
 
 bool FRewindDebugger::GetTargetActorPosition(FVector& OutPosition) const
@@ -288,22 +327,6 @@ void FRewindDebugger::GetTargetObjectIds(TArray<uint64>& OutTargetObjectIds) con
 #endif
 }
 
-class FRewindDebuggerDummyTrack : public RewindDebugger::FRewindDebuggerTrack
-{
-public:
-
-	FRewindDebuggerDummyTrack(const FName& InObjectName, const FText& InDisplayName)
-		: ObjectName(InObjectName), DisplayName(InDisplayName)
-	{
-	}
-
-private:
-	virtual FName GetNameInternal() const override { return ObjectName; }
-	virtual FText GetDisplayNameInternal() const override { return DisplayName; }
-	
-	FName ObjectName;
-	FText DisplayName;
-};
 
 void FRewindDebugger::RefreshDebugTracks()
 {
@@ -330,8 +353,8 @@ void FRewindDebugger::RefreshDebugTracks()
 
 		if (DebugTracks[1] == nullptr || DebugTracks[0] == nullptr || DebugTracks[0]->GetName().ToString() != DebugTargetActor.Get() )
 		{
-			DebugTracks[0] = MakeShared<FRewindDebuggerDummyTrack>(FName(DebugTargetActorName), FText::FromString(DebugTargetActorName)); 
-			DebugTracks[1] = MakeShared<FRewindDebuggerDummyTrack>(DebugMessageTrackName, NSLOCTEXT("RewindDebugger", "No Debug Data", " - Start a recording to debug"));
+			DebugTracks[0] = MakeShared<FRewindDebuggerPlaceholderTrack>(FName(DebugTargetActorName), FText::FromString(DebugTargetActorName)); 
+			DebugTracks[1] = MakeShared<FRewindDebuggerPlaceholderTrack>(DebugMessageTrackName, NSLOCTEXT("RewindDebugger", "No Debug Data", " - Start a recording to debug"));
 			ComponentListChangedDelegate.ExecuteIfBound();
 		}
 	}
@@ -373,7 +396,10 @@ void FRewindDebugger::RefreshDebugTracks()
     			// update all tracks
     			for (TSharedPtr<RewindDebugger::FRewindDebuggerTrack>& DebugTrack : DebugTracks )
     			{
-    				bChanged = bChanged || DebugTrack->Update();
+    				if (DebugTrack->Update())
+    				{
+    					bChanged = true;
+    				}
     			}
     
     			if (bChanged)
@@ -435,14 +461,10 @@ void FRewindDebugger::StartRecording()
 
 	FTraceAuxiliary::OnConnection.AddRaw(this, &FRewindDebugger::OnConnection); 
 
-	
 	FTraceAuxiliary::Start(FTraceAuxiliary::EConnectionType::Network, TEXT("127.0.0.1"), TEXT(""), &Options, LogRewindDebugger);
-	UnrealInsightsModule->StartAnalysisForLastLiveSession();
-
-
+	UnrealInsightsModule->StartAnalysisForLastLiveSession(5.0);
 
 	TargetObjectIds.Empty(2);
-
 }
 
 bool FRewindDebugger::ShouldAutoRecordOnPIE() const
@@ -452,7 +474,23 @@ bool FRewindDebugger::ShouldAutoRecordOnPIE() const
 
 void FRewindDebugger::SetShouldAutoRecordOnPIE(bool value)
 {
-	URewindDebuggerSettings::Get().bShouldAutoRecordOnPIE = value;
+	URewindDebuggerSettings& RewindDebuggerSettings = URewindDebuggerSettings::Get();
+	RewindDebuggerSettings.Modify();
+	RewindDebuggerSettings.bShouldAutoRecordOnPIE = value;
+	RewindDebuggerSettings.SaveConfig();
+}
+
+bool FRewindDebugger::ShouldAutoEject() const
+{
+	return URewindDebuggerSettings::Get().bShouldAutoEject;
+}
+
+void FRewindDebugger::SetShouldAutoEject(bool value)
+{
+	URewindDebuggerSettings& RewindDebuggerSettings = URewindDebuggerSettings::Get();
+	RewindDebuggerSettings.Modify();
+	RewindDebuggerSettings.bShouldAutoEject = value;
+	RewindDebuggerSettings.SaveConfig();
 }
 
 void FRewindDebugger::StopRecording()
@@ -791,7 +829,7 @@ const TraceServices::IAnalysisSession* FRewindDebugger::GetAnalysisSession() con
 		UnrealInsightsModule = &FModuleManager::LoadModuleChecked<IUnrealInsightsModule>("TraceInsights");
 	}
 
-	return UnrealInsightsModule->GetAnalysisSession().Get();
+	return UnrealInsightsModule ? UnrealInsightsModule->GetAnalysisSession().Get() : nullptr;
 }
 
 void FRewindDebugger::Tick(float DeltaTime)
@@ -828,6 +866,13 @@ void FRewindDebugger::Tick(float DeltaTime)
 				for (TActorIterator<AActor> Iterator(*World); Iterator; ++Iterator)
 				{
 					TRACE_OBJECT_LIFETIME_BEGIN(*Iterator);
+					if (APawn* Pawn = Cast<APawn>(*Iterator))
+					{
+						if (AController* Controller = Pawn->GetController())
+						{
+							TRACE_PAWN_POSSESS(static_cast<UObject*>(Controller), static_cast<UObject*>(Pawn));
+						}
+					}
 				}
 			}
 		}
@@ -844,6 +889,9 @@ void FRewindDebugger::Tick(float DeltaTime)
 		if (AnimationProvider && GameplayProvider)
 		{
 			TraceServices::FAnalysisSessionReadScope SessionReadScope(*Session);
+
+			RecordingDuration.Set(GameplayProvider->GetRecordingDuration());
+			
 			UWorld* World = GetWorldToVisualize();
 
 			if (bPIESimulating)
@@ -851,16 +899,13 @@ void FRewindDebugger::Tick(float DeltaTime)
 				if (bRecording)
 				{
 					TRACE_CPUPROFILER_EVENT_SCOPE(FRewindDebugger::Tick_UpdateSimulating);
-#if OBJECT_TRACE_ENABLED
-					RecordingDuration.Set(FObjectTrace::GetWorldElapsedTime(World));
-#endif // OBJECT_TRACE_ENABLED
 					SetCurrentScrubTime(RecordingDuration.Get());
 					TrackCursorDelegate.ExecuteIfBound(false);
 				}
 			}
 			else
 			{
-				if (RecordingDuration.Get() > 0)
+				if (RecordingDuration.Get() > 0 && CurrentScrubTime <= RecordingDuration.Get()) 
 				{
 					if (ControlState == EControlState::Play || ControlState == EControlState::PlayReverse)
 					{
@@ -876,6 +921,8 @@ void FRewindDebugger::Tick(float DeltaTime)
 						}
 					}
 
+					SetCurrentScrubTime(CurrentScrubTime);// update trace time
+					
 					const double CurrentTraceTime = TraceTime.Get();
 					if (CurrentTraceTime != PreviousTraceTime)
 					{
@@ -1000,6 +1047,16 @@ void FRewindDebugger::Tick(float DeltaTime)
 											{
 												if(UAnimBlueprint* AnimBlueprint = Cast<UAnimBlueprint>(InstanceClass->ClassGeneratedBy))
 												{
+													// for child Animation Blueprints, we actually want to debug the root blueprint (since the child doesn't contain any anim graphs)
+													if (UAnimBlueprint* RootAnimBP = UAnimBlueprint::FindRootAnimBlueprint(AnimBlueprint))
+													{
+														if (UAnimBlueprintGeneratedClass* RootInstanceClass = Cast<UAnimBlueprintGeneratedClass>(RootAnimBP->GeneratedClass))
+														{
+															AnimBlueprint = RootAnimBP;
+															InstanceClass = RootInstanceClass;
+														}
+													}
+
 													if(AnimBlueprint->IsObjectBeingDebugged(AnimInstance))
 													{
 														TRACE_CPUPROFILER_EVENT_SCOPE(FRewindDebugger::Tick_UpdateBlueprintDebug);
@@ -1012,6 +1069,22 @@ void FRewindDebugger::Tick(float DeltaTime)
 															TRACE_CPUPROFILER_EVENT_SCOPE(ResetNodeVisitStates);
 															DebugData.ResetNodeVisitSites();
 														}
+														
+														// Anim node values can come from all phases
+														AnimationProvider->ReadAnimNodeValuesTimeline(ObjectId, [&Frame,AnimationProvider, &DebugData](const IAnimationProvider::AnimNodeValuesTimeline& InNodeValuesTimeline)
+														{
+															TRACE_CPUPROFILER_EVENT_SCOPE(AnimGraphNodeValues);
+															InNodeValuesTimeline.EnumerateEvents(Frame.StartTime, Frame.EndTime, [AnimationProvider, &DebugData](double InStartTime, double InEndTime, uint32 InDepth, const FAnimNodeValueMessage& InMessage)
+															{
+																// don't send "Name" Node value for display in the graph
+																if (FPlatformString::Strcmp(InMessage.Key, TEXT("Name")) != 0)
+																{
+																	FText Text = AnimationProvider->FormatNodeKeyValue(InMessage);
+																	DebugData.RecordNodeValue(InMessage.NodeId, Text.ToString());
+																}
+																return TraceServices::EEventEnumerate::Continue;
+															});
+														});
 
 														DebugData.DisableAllPoseWatches();
 							
@@ -1135,17 +1208,6 @@ void FRewindDebugger::Tick(float DeltaTime)
 
 																}
 							
-																// Anim node values can come from all phases
-																AnimationProvider->ReadAnimNodeValuesTimeline(Id, [InGraphStartTime, InGraphEndTime, AnimationProvider, &DebugData](const IAnimationProvider::AnimNodeValuesTimeline& InNodeValuesTimeline)
-																{
-																	TRACE_CPUPROFILER_EVENT_SCOPE(AnimGraphNodeValues);
-																	InNodeValuesTimeline.EnumerateEvents(InGraphStartTime, InGraphEndTime, [AnimationProvider, &DebugData](double InStartTime, double InEndTime, uint32 InDepth, const FAnimNodeValueMessage& InMessage)
-																	{
-																		FText Text = AnimationProvider->FormatNodeKeyValue(InMessage);
-																		DebugData.RecordNodeValue(InMessage.NodeId, Text.ToString());
-																		return TraceServices::EEventEnumerate::Continue;
-																	});
-																});
 															}
 															return TraceServices::EEventEnumerate::Continue;
 														});
@@ -1243,6 +1305,88 @@ void FRewindDebugger::RegisterComponentContextMenu()
 	}));
 }
 
+void FRewindDebugger::RegisterToolBar()
+{
+	UToolMenu* Menu = UToolMenus::Get()->RegisterMenu("RewindDebugger.ToolBar", NAME_None, EMultiBoxType::ToolBar);
+	
+	FToolMenuSection& Section = Menu->FindOrAddSection("VCRControls");
+	const FRewindDebuggerCommands& Commands = FRewindDebuggerCommands::Get();
+	Section.AddEntry(FToolMenuEntry::InitToolBarButton(
+			Commands.FirstFrame,
+			LOCTEXT("Blank",""),
+			TAttribute<FText>(),
+			FSlateIcon("RewindDebuggerStyle", "RewindDebugger.FirstFrame.small")));
+	
+	Section.AddEntry(FToolMenuEntry::InitToolBarButton(
+			Commands.PreviousFrame,
+			LOCTEXT("Blank",""),
+			TAttribute<FText>(),
+			FSlateIcon("RewindDebuggerStyle", "RewindDebugger.PreviousFrame.small")));
+			
+	Section.AddEntry(FToolMenuEntry::InitToolBarButton(
+				Commands.ReversePlay,
+				LOCTEXT("Blank",""),
+				TAttribute<FText>(),
+				FSlateIcon("RewindDebuggerStyle", "RewindDebugger.ReversePlay.small")));
+	
+	Section.AddEntry(FToolMenuEntry::InitToolBarButton(
+				Commands.Pause,
+				LOCTEXT("Blank",""),
+				FText::Format(LOCTEXT("PauseButtonTooltip", "{0} ({1})"), Commands.Pause->GetDescription(), Commands.PauseOrPlay->GetInputText()),
+				FSlateIcon("RewindDebuggerStyle", "RewindDebugger.Pause.small")));
+	
+	Section.AddEntry(FToolMenuEntry::InitToolBarButton(
+				Commands.Play,
+				LOCTEXT("Blank",""),
+				FText::Format(LOCTEXT("PlayButtonTooltip", "{0} ({1})"), Commands.Play->GetDescription(), Commands.PauseOrPlay->GetInputText()),
+				FSlateIcon("RewindDebuggerStyle", "RewindDebugger.Play.small")));
+
+	Section.AddEntry(FToolMenuEntry::InitToolBarButton(
+				Commands.NextFrame,
+				LOCTEXT("Blank",""),
+				TAttribute<FText>(),
+				FSlateIcon("RewindDebuggerStyle", "RewindDebugger.NextFrame.small")));
+	
+	Section.AddEntry(FToolMenuEntry::InitToolBarButton(
+				Commands.LastFrame,
+				LOCTEXT("Blank",""),
+				TAttribute<FText>(),
+				FSlateIcon("RewindDebuggerStyle", "RewindDebugger.LastFrame.small")));
+
+	Section.AddEntry(FToolMenuEntry::InitToolBarButton(
+				Commands.StartRecording,
+				LOCTEXT("Blank",""),
+				TAttribute<FText>(),
+				FSlateIcon("RewindDebuggerStyle", "RewindDebugger.StartRecording.small")));
+				
+
+	Section.AddEntry(FToolMenuEntry::InitToolBarButton(
+				Commands.StopRecording,
+				LOCTEXT("Blank",""),
+				TAttribute<FText>(),
+				FSlateIcon("RewindDebuggerStyle", "RewindDebugger.StopRecording.small")));
+
+	Section.AddSeparator(NAME_None);
+	
+	Section.AddEntry(FToolMenuEntry::InitToolBarButton(
+				Commands.AutoEject,
+				LOCTEXT("Blank",""),
+				TAttribute<FText>(),
+				FSlateIcon("RewindDebuggerStyle", "RewindDebugger.AutoEject")));
+					Section.AddSeparator(NAME_None);
+                				
+	Section.AddEntry(FToolMenuEntry::InitToolBarButton(
+				Commands.AutoRecord,
+				LOCTEXT("Blank",""),
+				TAttribute<FText>(),
+				FSlateIcon("RewindDebuggerStyle", "RewindDebugger.AutoRecord")));
+
+	
+	Menu->SetStyleSet(&FAppStyle::Get());
+	Menu->StyleName = "PaletteToolBar";
+}
+
+
 void FRewindDebugger::ComponentDoubleClicked(TSharedPtr<RewindDebugger::FRewindDebuggerTrack> SelectedObject)
 {
 	if (!SelectedObject.IsValid())
@@ -1326,3 +1470,5 @@ TArray<TSharedPtr<FDebugObjectInfo>>& FRewindDebugger::GetDebugComponents()
 	RefreshDebugComponents(DebugTracks, DebugComponents);
 	return DebugComponents;
 }
+
+#undef LOCTEXT_NAMESPACE

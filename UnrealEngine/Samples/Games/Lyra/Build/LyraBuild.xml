@@ -1,6 +1,9 @@
 <?xml version='1.0' ?>
 <BuildGraph xmlns="http://www.epicgames.com/BuildGraph" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../Schema.xsd" >
 
+	<Option Name="EditorCompileArgs" DefaultValue="" Description="Arguments to be used for EditorTarget Compile"/>
+	<Option Name="ExtraToolCompileArguments" DefaultValue="" Description="Arguments to be used for Tool Compile"/>
+	<Option Name="ExtraTargetCompileArguments" DefaultValue="" Description="Arguments to be used for Client Compile"/>
 	<Option Name="TargetPlatforms" Restrict="[^ ]*" DefaultValue="Win64" Description="List of the target platforms to build for, separated by semicolons, eg. Win64;Win32;Android"/>
 	<Option Name="OutputDir" DefaultValue="$(RootDir)\LocalBuilds\LyraBinaries" Description ="Output directory for compiled binaries"/>
 	<Option Name="Versioned" Restrict="true|false" DefaultValue="$(IsBuildMachine)" Description="Whether to embed changelist number into binaries"/>
@@ -21,11 +24,11 @@
 		
 		<!-- Compile the tool executables -->
 		<Node Name="Compile Tools Win64" Requires="Update Version Files" Produces="#ToolBinaries">
-			<Compile Target="ShaderCompileWorker" Platform="Win64" Configuration="Development" Tag="#ToolBinaries"/>
-			<Compile Target="UnrealLightmass" Platform="Win64" Configuration="Development" Tag="#ToolBinaries"/>
-			<Compile Target="UnrealPak" Platform="Win64" Configuration="Development" Tag="#ToolBinaries"/>
-			<Compile Target="CrashReportClientEditor" Configuration="Shipping" Platform="Win64" Tag="#ToolBinaries"/>
-			<Compile Target="UnrealInsights" Platform="Win64" Configuration="Shipping" Tag="#ToolBinaries"/>
+			<Compile Target="ShaderCompileWorker" Platform="Win64" Configuration="Development" Arguments="$(ExtraToolCompileArguments)" Tag="#ToolBinaries"/>
+			<Compile Target="UnrealLightmass" Platform="Win64" Configuration="Development" Arguments="$(ExtraToolCompileArguments)" Tag="#ToolBinaries"/>
+			<Compile Target="UnrealPak" Platform="Win64" Configuration="Development" Arguments="$(ExtraToolCompileArguments)" Tag="#ToolBinaries"/>
+			<Compile Target="CrashReportClientEditor" Configuration="Shipping" Platform="Win64" Arguments="$(ExtraToolCompileArguments)" Tag="#ToolBinaries"/>
+			<Compile Target="UnrealInsights" Platform="Win64" Configuration="Shipping" Arguments="$(ExtraToolCompileArguments)" Tag="#ToolBinaries"/>
 			
 			<!-- 
 				This exe is a copy of ShaderCompileWorker.exe, created as a post-build step. See \Engine\Source\Programs\ShaderCompileWorker\ShaderCompileWorker.Target.cs.
@@ -36,15 +39,15 @@
 		
 		<!-- Compile the editor executable -->
 		<Node Name="Compile LyraEditor Win64" Requires="Compile Tools Win64" Produces="#EditorBinaries">
-			<Compile Target="LyraEditor" Platform="Win64" Configuration="Development" Tag="#EditorBinaries"/>
+			<Compile Target="LyraEditor" Platform="Win64" Configuration="Development" Tag="#EditorBinaries" Arguments="$(EditorCompileArgs)"/>
 		</Node>
 		
 		<!-- Compile the game targets -->
 		<Property Name="GameBinaries" Value=""/>
 		<ForEach Name="TargetPlatform" Values="$(TargetPlatforms)">
 			<Node Name="Compile LyraGame $(TargetPlatform)" Requires="Compile Tools Win64" Produces="#GameBinaries_LyraGame_$(TargetPlatform)">
-				<Compile Target="LyraGame" Platform="$(TargetPlatform)" Configuration="Development" Tag="#GameBinaries_LyraGame_$(TargetPlatform)"/>
-				<Compile Target="LyraGame" Platform="$(TargetPlatform)" Configuration="Shipping" Tag="#GameBinaries_LyraGame_$(TargetPlatform)"/>
+				<Compile Target="LyraGame" Platform="$(TargetPlatform)" Configuration="Development" Arguments="$(ExtraTargetCompileArguments)" Tag="#GameBinaries_LyraGame_$(TargetPlatform)"/>
+				<Compile Target="LyraGame" Platform="$(TargetPlatform)" Configuration="Shipping" Arguments="$(ExtraTargetCompileArguments)" Tag="#GameBinaries_LyraGame_$(TargetPlatform)"/>
 			</Node>
 			<Property Name="GameBinaries" Value="$(GameBinaries)#GameBinaries_LyraGame_$(TargetPlatform);"/>
 		</ForEach>

@@ -2,7 +2,6 @@
 
 #pragma once
 
-#include "CoreMinimal.h"
 #include "Containers/UnrealString.h"
 #include "Engine/DeveloperSettings.h"
 #include "Widgets/Views/SHeaderRow.h"
@@ -145,6 +144,29 @@ struct FDMXMonitorSourceDescriptor
 	FGuid MonitoredPortGuid;
 };
 
+/** Settings for the conflict monitor */
+USTRUCT()
+struct FDMXConflictMonitorSettings
+{
+	GENERATED_BODY()
+
+	/** When enabled, the conflict monitor pauses when a conflict occurs */
+	UPROPERTY()
+	bool bAutoPause = false;
+
+	/** When enabled, the the conflict monitor prints conflicts to log */
+	UPROPERTY()
+	bool bPrintToLog = false;
+
+	/** True if the conflict monitor starts when oppened */
+	UPROPERTY()
+	bool bRunWhenOpened = false;
+
+	/** The displayed depth of traces */
+	UPROPERTY()
+	uint8 Depth = 3;
+};
+
 /** Settings that holds editor configurations. Not accessible in Project Settings. TODO: Idealy rename to UDMXEditorConfiguration */
 UCLASS(Config = DMXEditor)
 class DMXEDITOR_API UDMXEditorSettings : public UObject
@@ -189,9 +211,15 @@ public:
 	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 #endif // WITH_EDITORONLY_DATA
 
+	// Control Console
+public:
+	/** Path to the last control console opened in the editor */
+	UPROPERTY(Config)
+	FString LastOpenedControlConsolePath;
+
 	// Channels Monitor
 public:
-	/** The Universe ID to be monitored in the Channels Monitor  */
+	/** The Universe ID to be monitored in the Channels Monitor */
 	UPROPERTY(Config)
 	int32 ChannelsMonitorUniverseID = 1;
 
@@ -212,4 +240,10 @@ public:
 	/** ID of the last universe to monitor in the DMX Activity Monitor */
 	UPROPERTY(Config)
 	int32 ActivityMonitorMaxUniverseID = 100;
+
+	// Conflict Monitor
+public:
+	/** Settings for the conflict monitor */
+	UPROPERTY(Config)
+	FDMXConflictMonitorSettings ConflictMonitorSettings;
 };

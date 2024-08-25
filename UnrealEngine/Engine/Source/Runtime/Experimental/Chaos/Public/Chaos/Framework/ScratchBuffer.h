@@ -111,12 +111,17 @@ namespace Chaos
 				if (InMaxBytes != BufferSize())
 				{
 					DestroyBuffer();
+
 					if (InMaxBytes > 0)
 					{
 						// Over-allocate and store a sentinel after the block
 						BufferBegin = new uint8[InMaxBytes + sizeof(SentinelValue)];
 					}
-					BufferEnd = BufferBegin + InMaxBytes;
+
+					if (BufferBegin != nullptr)
+					{
+						BufferEnd = BufferBegin + InMaxBytes;
+					}
 
 					InitSentinel();
 				}
@@ -126,15 +131,16 @@ namespace Chaos
 
 			void DestroyBuffer()
 			{
+				CheckSentinel();
+
 				if (BufferBegin != nullptr)
 				{
-					CheckSentinel();
-
 					delete[] BufferBegin;
-					BufferBegin = nullptr;
-					BufferEnd = nullptr;
-					BufferNext = nullptr;
 				}
+
+				BufferBegin = nullptr;
+				BufferEnd = nullptr;
+				BufferNext = nullptr;
 			}
 
 			size_t* Sentinel()

@@ -199,7 +199,6 @@ void UMeshInspectorTool::Setup()
 
 	DrawnLineSet->SetupAttachment(PreviewMesh->GetRootComponent());
 
-	DrawnLineSet->SetLineMaterial(ToolSetupUtil::GetDefaultLineComponentMaterial(GetToolManager()));
 	DrawnLineSet->RegisterComponent();
 
 	Precompute();
@@ -530,7 +529,11 @@ void UMeshInspectorTool::OnPropertyModified(UObject* PropertySet, FProperty* Pro
 
 void UMeshInspectorTool::UpdateVisualization()
 {
-	if (!MaterialSettings) return;
+	// return if tool is not in a valid state (e.g., has already shut down)
+	if (!MaterialSettings || !PreviewMesh)
+	{
+		return;
+	}
 
 	PreviewMesh->EnableWireframe(Settings->bWireframe);
 
@@ -594,6 +597,7 @@ void UMeshInspectorTool::UpdateVisualization()
 	const FDynamicMesh3* TargetMesh = PreviewMesh->GetPreviewDynamicMesh();
 	FVector3d A, B;
 
+	DrawnLineSet->SetLineMaterial(ToolSetupUtil::GetDefaultLineComponentMaterial(GetToolManager(), !Settings->bDrawHiddenEdgesAndSeams));
 	DrawnLineSet->Clear();
 	if (Settings->bBoundaryEdges)
 	{

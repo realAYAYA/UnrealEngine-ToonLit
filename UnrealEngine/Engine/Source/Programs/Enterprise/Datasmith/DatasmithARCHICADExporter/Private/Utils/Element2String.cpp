@@ -268,7 +268,11 @@ utf8_string FElement2String::GetElementAsString(const API_Element& InElement)
 	{
 		if (ObjectType->useObjMaterials)
 		{
+#if AC_VERSION < 27
 			ObjectData += Utf8StringFormat(", mat=%d", ObjectType->mat);
+#else
+			ObjectData += Utf8StringFormat(", mat=%d", ObjectType->mat.ToInt32_Deprecated());
+#endif
 		}
 		if (ObjectType->reflected)
 		{

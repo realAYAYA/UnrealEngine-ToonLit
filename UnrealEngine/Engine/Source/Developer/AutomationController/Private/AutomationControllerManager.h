@@ -19,6 +19,8 @@
 #include "HAL/PlatformProperties.h"
 #include "AutomationControllerManager.generated.h"
 
+struct FAutomationWorkerMessageBase;
+
 USTRUCT()
 struct FAutomatedTestResult
 {
@@ -285,6 +287,11 @@ public:
 		return DeviceClusterManager.GetClusterDeviceName(ClusterIndex, DeviceIndex);
 	}
 
+	virtual FGuid GetGameInstanceId(const int32 ClusterIndex, const int32 DeviceIndex) const override
+	{
+		return DeviceClusterManager.GetClusterGameInstanceId(ClusterIndex, DeviceIndex);
+	}
+
 	virtual FString GetGameInstanceName(const int32 ClusterIndex, const int32 DeviceIndex) const override
 	{
 		return DeviceClusterManager.GetClusterGameInstance(ClusterIndex, DeviceIndex);
@@ -406,9 +413,9 @@ protected:
 	/**
 	 * Adds a ping result from a running test.
 	 *
-	 * @param ResponderAddress The address of the message endpoint that responded to a ping.
+	 * @param ResponderInstanceId The worker instance identifier that responded to a ping.
 	 */
-	void AddPingResult( const FMessageAddress& ResponderAddress );
+	void AddPingResult(const FGuid& ResponderInstanceId);
 
 	/**
 	* Spew all of our results of the test out to the log.
@@ -457,6 +464,9 @@ protected:
 	 */
 	void ExecuteNextTask( int32 ClusterIndex, OUT bool& bAllTestsCompleted );
 
+	/* Report an image comparison result */
+	void ReportImageComparisonResult(const FAutomationWorkerImageComparisonResults& Result);
+
 	/** Process the comparison queue to see if there are comparisons we need to respond to the test with. */
 	void ProcessComparisonQueue();
 
@@ -469,18 +479,30 @@ protected:
 	/**
 	 * Removes the test info.
 	 *
-	 * @param TestToRemove The test to remove.
+	 * @param OwnerInstanceId Instance identifier of the test to remove.
 	 */
-	void RemoveTestRunning( const FMessageAddress& TestToRemove );
+	void RemoveTestRunning(const FGuid& OwnerInstanceId);
 
 	/** Changes the controller state. */
 	void SetControllerStatus( EAutomationControllerModuleState::Type AutomationTestState );
 
 	/** Stores the tests that are valid for a particular device classification. */
-	void SetTestNames(const FMessageAddress& AutomationWorkerAddress, TArray<FAutomationTestInfo>& TestInfo);
+	void SetTestNames(const FGuid& AutomationWorkerInstanceId, TArray<FAutomationTestInfo>& TestInfo);
 
 	/** Updates the tests to ensure they are all still running. */
 	void UpdateTests();
+
+	/** Sends stop session message to worker instances. */
+	void StopStartedTestSessions();
+
+	/**
+	 * Send a message in an unified way with passing correct Instance Id into the message we are going to send.
+	 *
+	 * @param Message The message to be sent.
+	 * @param TypeInfo The type information about the message to be sent.
+	 * @param ControllerAddress The message address of the receiver.
+	 */
+	void SendMessage(FAutomationWorkerMessageBase* Message, UScriptStruct* TypeInfo, const FMessageAddress& ControllerAddress);
 
 private:
 
@@ -492,6 +514,9 @@ private:
 
 	/** Handles FAutomationWorkerScreenImage messages. */
 	void HandleReceivedScreenShot( const FAutomationWorkerScreenImage& Message, const TSharedRef<IMessageContext, ESPMode::ThreadSafe>& Context );
+
+	/** Handles FAutomationWorkerScreenshotComparisonResult messages. */
+	void HandleReceivedComparisonResult( const FAutomationWorkerImageComparisonResults& Message, const TSharedRef<IMessageContext, ESPMode::ThreadSafe>& Context );
 
 	/** Handles FAutomationWorkerTestDataRequest messages. */
 	void HandleTestDataRequest(const FAutomationWorkerTestDataRequest& Message, const TSharedRef<IMessageContext, ESPMode::ThreadSafe>& Context);
@@ -581,19 +606,25 @@ private:
 	/** A data holder to keep track of how long tests have been running. */
 	struct FTestRunningInfo
 	{
-		FTestRunningInfo( FMessageAddress InMessageAddress ):
+		FTestRunningInfo( FMessageAddress InMessageAddress, FGuid InInstanceId):
 			OwnerMessageAddress( InMessageAddress),
+			OwnerInstanceId( InInstanceId ),
 			LastPingTime( 0.f )
 		{
 		}
 		/** The test runners message address */
 		FMessageAddress OwnerMessageAddress;
+		/** The test runner's instance ID */
+		FGuid OwnerInstanceId;
 		/** The time since we had a ping from the instance*/
 		double LastPingTime;
 	};
 
 	/** A array of running tests. */
 	TArray< FTestRunningInfo > TestRunningArray;
+
+	/** Set of worker instance identifiers for started sessions. */
+	TSet< FGuid > StartedTestSessionWorkerInstanceIdSet;
 
 	/** The number of test passes to perform. */
 	int32 NumTestPasses = 0;
@@ -619,7 +650,7 @@ private:
 	struct FComparisonEntry
 	{
 		FMessageAddress Sender;
-		FString ScreenshotPath;
+		FGuid InstanceId;
 		TFuture<FImageComparisonResult> PendingComparison;
 	};
 

@@ -78,5 +78,27 @@ public class IntelTBB : ModuleRules
 			RuntimeDependencies.Add(Path.Combine(IntelTBBBinaries, "libtbb.dylib"));
 			RuntimeDependencies.Add(Path.Combine(IntelTBBBinaries, "libtbbmalloc.dylib"));
 		}
+		else if (Target.Platform == UnrealTargetPlatform.Linux)
+		{
+			bUseRTTI = false;
+			bEnableExceptions = false;
+			PublicDefinitions.Add("TBB_USE_EXCEPTIONS=0");
+
+			string LibDir = Path.Combine(IntelTBBLibPath, "Linux");
+			string IntelTBBBinaries = Path.Combine(Target.UEThirdPartyBinariesDirectory, "Intel", "TBB", "Linux");
+			
+			if (Target.Configuration == UnrealTargetConfiguration.Debug && Target.bDebugBuildsActuallyUseDebugCRT)
+			{
+				PublicDefinitions.Add("TBB_USE_DEBUG=1");
+				PublicAdditionalLibraries.Add(Path.Combine(LibDir, "libtbb_debug.a"));
+				PublicAdditionalLibraries.Add(Path.Combine(LibDir, "libtbbmalloc_debug.a"));
+
+			}
+			else
+			{
+				PublicAdditionalLibraries.Add(Path.Combine(LibDir, "libtbb.a"));
+				PublicAdditionalLibraries.Add(Path.Combine(LibDir, "libtbbmalloc.a"));
+			}
+		}
 	}
 }

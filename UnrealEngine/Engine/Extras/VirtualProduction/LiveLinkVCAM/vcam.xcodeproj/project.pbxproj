@@ -10,6 +10,9 @@
 		8B01BF2C26CA7DD1001872D2 /* LaunchScreen_iPad.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 8B01BF2A26CA7DD1001872D2 /* LaunchScreen_iPad.storyboard */; };
 		8B05A926275E4EC10080AB2A /* VideoViewController+ARCoachingOverlayViewDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B05A925275E4EC10080AB2A /* VideoViewController+ARCoachingOverlayViewDelegate.swift */; };
 		8B380C1C29C4702E0080A581 /* Gamepad.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B380C1B29C4702E0080A581 /* Gamepad.swift */; };
+		8B41E83C2A8A27D30027E052 /* WebRTCStats.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B41E8392A8A27D30027E052 /* WebRTCStats.swift */; };
+		8B41E83D2A8A27D30027E052 /* WebRTCStatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B41E83A2A8A27D30027E052 /* WebRTCStatsView.swift */; };
+		8B41E83E2A8A27D30027E052 /* LineGraphView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B41E83B2A8A27D30027E052 /* LineGraphView.swift */; };
 		8B4542DA27A7CFB7001703EE /* GameController.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8B4542D927A7CFB6001703EE /* GameController.framework */; };
 		8B4A012D298BBEED00836DD5 /* KeyboardControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B4A012C298BBEED00836DD5 /* KeyboardControls.swift */; };
 		8B58775E27BE4B1E00D78749 /* LiveLinkProvider.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8B58775C27BE4B1600D78749 /* LiveLinkProvider.framework */; platformFilter = ios; };
@@ -108,6 +111,9 @@
 		8B01BF2B26CA7DD1001872D2 /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/LaunchScreen_iPad.storyboard; sourceTree = "<group>"; };
 		8B05A925275E4EC10080AB2A /* VideoViewController+ARCoachingOverlayViewDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "VideoViewController+ARCoachingOverlayViewDelegate.swift"; sourceTree = "<group>"; };
 		8B380C1B29C4702E0080A581 /* Gamepad.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = Gamepad.swift; sourceTree = "<group>"; };
+		8B41E8392A8A27D30027E052 /* WebRTCStats.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = WebRTCStats.swift; sourceTree = "<group>"; };
+		8B41E83A2A8A27D30027E052 /* WebRTCStatsView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = WebRTCStatsView.swift; sourceTree = "<group>"; };
+		8B41E83B2A8A27D30027E052 /* LineGraphView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = LineGraphView.swift; sourceTree = "<group>"; };
 		8B4542D927A7CFB6001703EE /* GameController.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = GameController.framework; path = System/Library/Frameworks/GameController.framework; sourceTree = SDKROOT; };
 		8B4A012C298BBEED00836DD5 /* KeyboardControls.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = KeyboardControls.swift; sourceTree = "<group>"; };
 		8B58775C27BE4B1600D78749 /* LiveLinkProvider.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; path = LiveLinkProvider.framework; sourceTree = "<group>"; };
@@ -285,6 +291,9 @@
 		8B7D848324DEA02600D01C13 /* vcam */ = {
 			isa = PBXGroup;
 			children = (
+				8B41E83B2A8A27D30027E052 /* LineGraphView.swift */,
+				8B41E8392A8A27D30027E052 /* WebRTCStats.swift */,
+				8B41E83A2A8A27D30027E052 /* WebRTCStatsView.swift */,
 				8BEEA84E26CD04740095691F /* new-u-pink.png */,
 				8BEEA85026CD04790095691F /* new-u-pink@2x.png */,
 				8BEEA85226CD047D0095691F /* new-u-pink@3x.png */,
@@ -474,6 +483,7 @@
 				8B72D39A286B356D00F5970C /* SignalingClient.swift in Sources */,
 				8BD09C9E2629AA4E00A4C301 /* SettingsViewController.swift in Sources */,
 				8B72D390286B356D00F5970C /* IntToBytes.swift in Sources */,
+				8B41E83E2A8A27D30027E052 /* LineGraphView.swift in Sources */,
 				8B72D3A8286C7BAB00F5970C /* WebRTCView.swift in Sources */,
 				8BD09C972625E4C200A4C301 /* Extensions.swift in Sources */,
 				8B380C1C29C4702E0080A581 /* Gamepad.swift in Sources */,
@@ -491,6 +501,7 @@
 				8B932C7224E3E7180089EB8F /* VideoViewController+ARSessionDelegate.swift in Sources */,
 				8BD09CA42629AB1100A4C301 /* ResetViewController.swift in Sources */,
 				8BD09C9B2629AA2200A4C301 /* TentacleDetailViewController.swift in Sources */,
+				8B41E83C2A8A27D30027E052 /* WebRTCStats.swift in Sources */,
 				8B7D848924DEA02600D01C13 /* VideoViewController.swift in Sources */,
 				8B72D39C286B3E3000F5970C /* StreamingConnection.swift in Sources */,
 				8B72D398286B356D00F5970C /* StarscreamProvider.swift in Sources */,
@@ -515,6 +526,7 @@
 				8B7D848724DEA02600D01C13 /* SceneDelegate.swift in Sources */,
 				8BD53B1A258E30A800E1121E /* AppSettings.swift in Sources */,
 				8B72D38D286B356D00F5970C /* TouchControls.swift in Sources */,
+				8B41E83D2A8A27D30027E052 /* WebRTCStatsView.swift in Sources */,
 				8BC2656F279186C400C23415 /* MultipleChoiceViewController.swift in Sources */,
 				8B72D395286B356D00F5970C /* Message.swift in Sources */,
 				8B72D38F286B356D00F5970C /* PixelStreamingToClientMessage.swift in Sources */,
@@ -715,17 +727,18 @@
 				CODE_SIGN_ENTITLEMENTS = vcam/VCAM.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development: Brian Smith (H95H5LFFKT)";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 14;
+				CURRENT_PROJECT_VERSION = 1;
 				DEFINES_MODULE = NO;
 				DEVELOPMENT_TEAM = 96DBZ92D3Y;
+				"DEVELOPMENT_TEAM[sdk=iphoneos*]" = 96DBZ92D3Y;
 				ENABLE_BITCODE = NO;
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)";
 				GCC_PREFIX_HEADER = "";
 				HEADER_SEARCH_PATHS = "";
 				INFOPLIST_FILE = vcam/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
-				MARKETING_VERSION = 1.3.1;
+				MARKETING_VERSION = 1.3.3;
 				OTHER_CFLAGS = (
 					"-DUE_BUILD_SHIPPING=1",
 					"-DIS_MONOLITHIC=1",
@@ -742,6 +755,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = com.epicgames.livelinkvcam;
 				PRODUCT_NAME = VCAM;
 				PROVISIONING_PROFILE_SPECIFIER = "Live Link VCam Development";
+				"PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]" = "Live Link VCam Development";
 				SWIFT_OBJC_BRIDGING_HEADER = "vcam/VCAM-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
@@ -756,7 +770,7 @@
 				CODE_SIGN_ENTITLEMENTS = vcam/VCAM.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Distribution: Epic Games International, S.a.r.l. (96DBZ92D3Y)";
 				CODE_SIGN_STYLE = Manual;
-				CURRENT_PROJECT_VERSION = 14;
+				CURRENT_PROJECT_VERSION = 1;
 				DEFINES_MODULE = NO;
 				DEVELOPMENT_TEAM = 96DBZ92D3Y;
 				ENABLE_BITCODE = NO;
@@ -764,9 +778,9 @@
 				GCC_PREFIX_HEADER = "";
 				HEADER_SEARCH_PATHS = "";
 				INFOPLIST_FILE = vcam/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
-				MARKETING_VERSION = 1.3.1;
+				MARKETING_VERSION = 1.3.3;
 				OTHER_CFLAGS = (
 					"-DUE_BUILD_SHIPPING=1",
 					"-DIS_MONOLITHIC=1",
@@ -826,7 +840,7 @@
 			repositoryURL = "https://github.com/stasel/WebRTC";
 			requirement = {
 				kind = exactVersion;
-				version = 113.0.0;
+				version = 116.0.0;
 			};
 		};
 		8B881933266A48090061F926 /* XCRemoteSwiftPackageReference "Easing" */ = {

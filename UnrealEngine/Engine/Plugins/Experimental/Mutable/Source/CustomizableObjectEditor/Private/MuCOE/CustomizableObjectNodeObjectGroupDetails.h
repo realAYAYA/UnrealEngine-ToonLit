@@ -4,8 +4,11 @@
 
 #include "IDetailCustomization.h"
 
+struct EVisibility;
+namespace ESelectInfo { enum Type : int; }
 class IDetailLayoutBuilder;
-
+class STextComboBox;
+class UCustomizableObjectNodeObjectGroup;
 
 class FCustomizableObjectNodeObjectGroupDetails : public IDetailCustomization
 {
@@ -16,16 +19,27 @@ public:
 	/** ILayoutDetails interface */
 	virtual void CustomizeDetails( IDetailLayoutBuilder& DetailBuilder ) override;
 
+	/** Fills the name options array */
+	void GenerateChildrenObjectNames();
+
+	/** Sets the selected default value */
+	void OnSetDefaultValue(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo);
+	
+	/** Determines the visibility of the default value selector */
+	EVisibility DefaultValueSelectorVisibility() const;
 
 private:
-	//TArray< TSharedPtr<FString> > BoneComboOptions;
 
-	//class UCustomizableObjectNodeProjectorConstant* NodeConstant;
-	//class UCustomizableObjectNodeProjectorParameter* NodeParameter;
-	//FReply OnProjectorCopyPressed();
-	//FReply OnProjectorPastePressed();
+	/** Pointer to the original group node */
+	UCustomizableObjectNodeObjectGroup* NodeGroup = nullptr;
 
-	//class USkeletalMesh* SkeletalMesh;
+	/** Combobox to select the defaul value of the node group */
+	TSharedPtr<STextComboBox> DefaultValueSelector;
 
-	//void OnBoneComboBoxSelectionChanged(TSharedPtr<FString> Selection, ESelectInfo::Type SelectInfo, TSharedRef<IPropertyHandle> BoneProperty);
+	/** Combobox options */
+	TArray< TSharedPtr<FString> > ChildrenNameOptions;
+
+	/** Initially selected option */
+	TSharedPtr<FString> InitialNameOption;
+
 };

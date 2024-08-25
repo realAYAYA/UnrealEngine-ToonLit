@@ -8,7 +8,7 @@
 #include "Templates/UnrealTemplate.h"
 
 // Pulled the two FOutputDevice::Logf functions into shared code. Needs to be a #define
-// since it uses GET_VARARGS_RESULT which uses the va_list stuff which operates on the
+// since it uses GET_TYPED_VARARGS_RESULT which uses the va_list stuff which operates on the
 // current function, so we can't easily call a function
 #define GROWABLE_LOGF(SerializeFunc) \
 	int32	BufferSize	= 1024; \
@@ -20,7 +20,7 @@
 \
 	/* first, try using the stack buffer */ \
 	Buffer = StackBuffer; \
-	GET_VARARGS_RESULT( Buffer, UE_ARRAY_COUNT(StackBuffer), UE_ARRAY_COUNT(StackBuffer) - 1, Fmt, Fmt, Result ); \
+	GET_TYPED_VARARGS_RESULT( TCHAR, Buffer, UE_ARRAY_COUNT(StackBuffer), UE_ARRAY_COUNT(StackBuffer) - 1, Fmt, Fmt, Result ); \
 \
 	/* if that fails, then use heap allocation to make enough space */ \
 	while(Result == -1) \
@@ -32,7 +32,7 @@
 		{ \
 			return; \
 		} \
-		GET_VARARGS_RESULT( Buffer, BufferSize, BufferSize-1, Fmt, Fmt, Result ); \
+		GET_TYPED_VARARGS_RESULT( TCHAR, Buffer, BufferSize, BufferSize-1, Fmt, Fmt, Result ); \
 		BufferSize *= 2; \
 	}; \
 	Buffer[Result] = TEXT('\0'); \

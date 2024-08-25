@@ -184,6 +184,12 @@ FFixedSampleSequenceRulerStyle FWaveformEditorStyle::CreateTimeRulerStyleFromSet
 		.SetFontSize(InSettings.RulerFontSize)
 		.SetBackgroundColor(InSettings.RulerBackgroundColor);
 
+	const ISlateStyle* AudioWidgetsStyle = FSlateStyleRegistry::FindSlateStyle("AudioWidgetsStyle");
+	if (ensure(AudioWidgetsStyle))
+	{
+		TimeRulerStyle.SetHandleBrush(*AudioWidgetsStyle->GetBrush("SampledSequenceRuler.VanillaScrubHandleDown"));
+	}
+
 	OnNewTimeRulerStyle.Broadcast(TimeRulerStyle);
 
 	return TimeRulerStyle;

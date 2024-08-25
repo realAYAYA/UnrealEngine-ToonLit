@@ -30,6 +30,18 @@ private:
 	virtual FAnimNode_CustomProperty* GetCustomPropertyNode() override { return &Node; }
 	virtual const FAnimNode_CustomProperty* GetCustomPropertyNode() const override { return &Node; }
 
+	struct FControlsInfo
+	{
+		FName Name;
+		FString DisplayName;
+		FEdGraphPinType PinType;
+		ERigControlType ControlType;
+		FString DefaultValue;
+	};
+	mutable const UClass* ControlsInfoClass = nullptr;
+	mutable TArray<FControlsInfo> ControlsInfo;
+	TArray<FControlsInfo>& GetControls() const;
+
 	// property related things
 	void GetVariables(bool bInput, TMap<FName, FRigVMExternalVariable>& OutParameters) const;
 
@@ -55,6 +67,6 @@ private:
 
 	bool IsAvailableToMapToCurve(const FName& PropertyName, bool bInput) const;
 	bool IsInputProperty(const FName& PropertyName) const;
-	FRigControlElement* FindControlElement(const FName& InControlName) const;
+	UAnimGraphNode_ControlRig::FControlsInfo* FindControlElement(const FName& InControlName) const;
 };
 

@@ -63,7 +63,7 @@ private:
 	void WriteFixturePatchToGeneralSceneDescription(const UDMXEntityFixturePatch& FixturePatch);
 
 	/** Parses a General Scene Description Xml File. Only ment to be used for initialization (ensured) */
-	UE_NODISCARD bool ParseGeneralSceneDescriptionXml(const TSharedRef<FXmlFile>& GeneralSceneDescriptionXml);
+	[[nodiscard]] bool ParseGeneralSceneDescriptionXml(const TSharedRef<FXmlFile>& GeneralSceneDescriptionXml);
 #endif
 
 	/** Returns the Fixture IDs currently in use, as number, sorted from lowest to highest */

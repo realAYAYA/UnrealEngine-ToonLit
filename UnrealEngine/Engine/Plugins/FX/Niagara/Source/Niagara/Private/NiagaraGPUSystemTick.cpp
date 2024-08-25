@@ -2,6 +2,7 @@
 
 #include "NiagaraGPUSystemTick.h"
 #include "NiagaraEmitterInstance.h"
+#include "NiagaraEmitterInstanceImpl.h"
 #include "NiagaraSystemInstance.h"
 #include "NiagaraSystem.h"
 
@@ -123,17 +124,19 @@ void FNiagaraGPUSystemTick::Init(FNiagaraSystemInstance* InSystemInstance)
 		const uint32 EmitterIdx = EmiterExecIndex.EmitterIndex;
 		if (FNiagaraEmitterInstance* EmitterInstance = &InSystemInstance->GetEmitters()[EmitterIdx].Get())
 		{
-			if (EmitterInstance->IsComplete() )
+			if ( EmitterInstance->IsComplete() )
 			{
 				continue;
 			}
 
-			const FVersionedNiagaraEmitterData* EmitterData = EmitterInstance->GetCachedEmitterData();
+			FNiagaraEmitterInstanceImpl* EmitterInstanceImpl = EmitterInstance->AsStateful();
+			if (!EmitterInstanceImpl)
+			{
+				continue;
+			}
+
 			FNiagaraComputeExecutionContext* GPUContext = EmitterInstance->GetGPUContext();
-
-			check(EmitterData);
-
-			if (!EmitterData || !GPUContext || EmitterData->SimTarget != ENiagaraSimTarget::GPUComputeSim)
+			if (!EmitterInstance->GetEmitter() || !GPUContext || EmitterInstance->GetSimTarget() != ENiagaraSimTarget::GPUComputeSim)
 			{
 				continue;
 			}
@@ -141,7 +144,7 @@ void FNiagaraGPUSystemTick::Init(FNiagaraSystemInstance* InSystemInstance)
 			// Handle edge case where an emitter was set to inactive on the first frame by scalability
 			// In which case it will never have ticked so we should not execute a GPU tick for this until it becomes active
 			// See FNiagaraSystemInstance::Tick_Concurrent for details
-			if (EmitterInstance->HasTicked() == false)
+			if (EmitterInstanceImpl->HasTicked() == false)
 			{
 				ensure((EmitterInstance->GetExecutionState() == ENiagaraExecutionState::Inactive) || (EmitterInstance->GetExecutionState() == ENiagaraExecutionState::InactiveClear));
 				continue;
@@ -168,10 +171,6 @@ void FNiagaraGPUSystemTick::Init(FNiagaraSystemInstance* InSystemInstance)
 			InstanceData->EmitterParamData = ParamDataBufferPtr;
 			ParamDataBufferPtr += InterpFactor * sizeof(FNiagaraEmitterParameters);
 
-			InstanceData->ExternalParamData = ParamDataBufferPtr;
-			InstanceData->ExternalParamDataSize = GPUContext->CombinedParamStore.GetPaddedParameterSizeInBytes();
-			ParamDataBufferPtr += InstanceData->ExternalParamDataSize;
-
 			// actually copy all of the data over
 			FMemory::Memcpy(InstanceData->EmitterParamData, &InSystemInstance->GetEmitterParameters(EmitterIdx), sizeof(FNiagaraEmitterParameters));
 			if (IncludeInterpolationParameters)
@@ -179,10 +178,9 @@ void FNiagaraGPUSystemTick::Init(FNiagaraSystemInstance* InSystemInstance)
 				FMemory::Memcpy(InstanceData->EmitterParamData + sizeof(FNiagaraEmitterParameters), &InSystemInstance->GetEmitterParameters(EmitterIdx, true), sizeof(FNiagaraEmitterParameters));
 			}
 
-			bHasMultipleStages = InstanceData->bHasMultipleStages;
-			bHasInterpolatedParameters |= GPUContext->HasInterpolationParameters;
+			ParamDataBufferPtr = GPUContext->WriteConstantBufferInstanceData(ParamDataBufferPtr, *InstanceData);
 
-			GPUContext->CombinedParamStore.CopyParameterDataToPaddedBuffer(InstanceData->ExternalParamData, InstanceData->ExternalParamDataSize);
+			bHasInterpolatedParameters |= GPUContext->HasInterpolationParameters;
 
 			// Calling PostTick will push current -> previous parameters this must be done after copying the parameter data
 			GPUContext->PostTick();
@@ -209,67 +207,88 @@ void FNiagaraGPUSystemTick::Init(FNiagaraSystemInstance* InSystemInstance)
 
 			// Gather number of iterations for each stage, and if the stage should run or not
 			InstanceData->bHasMultipleStages = false;
-			InstanceData->PerStageInfo.Reserve(GPUContext->SimStageInfo.Num());
-			for ( FSimulationStageMetaData& SimStageMetaData : GPUContext->SimStageInfo )
+			InstanceData->PerStageInfo.Reserve(GPUContext->SimStageExecData->SimStageMetaData.Num());		// Note: This presize isn't accurate but in the general none looping case it's correct
+
+			const FNiagaraParameterStore& ParameterStore = EmitterInstance->GetRendererBoundVariables();
+			for (const FNiagaraSimStageExecutionLoopData& LoopData : GPUContext->SimStageExecData->ExecutionLoops)
 			{
-				int32 NumIterations = SimStageMetaData.NumIterations;
-				FIntVector ElementCountXYZ = FIntVector(1, 1, 1);
-				if (SimStageMetaData.ShouldRunStage(InstanceData->bResetData))
+				int32 NumLoops = LoopData.NumLoopsBinding.IsNone() ? LoopData.NumLoops : ParameterStore.GetParameterValueOrDefault(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), LoopData.NumLoopsBinding), LoopData.NumLoops);
+				NumLoops = FMath::Clamp(NumLoops, 0, TNumericLimits<uint16>::Max());
+				for (int32 LoopIndex=0; LoopIndex < NumLoops; ++LoopIndex)
 				{
-					InstanceData->bHasMultipleStages = true;
-					if (!SimStageMetaData.NumIterationsBinding.IsNone())
+					for (int32 SimStageIndex=LoopData.StartStageIndex; SimStageIndex <= LoopData.EndStageIndex; ++SimStageIndex)
 					{
-						FNiagaraParameterStore& BoundParamStore = EmitterInstance->GetRendererBoundVariables();
-						if ( const uint8* ParameterData = BoundParamStore.GetParameterData(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), SimStageMetaData.NumIterationsBinding)) )
-						{
-							NumIterations = *reinterpret_cast<const int32*>(ParameterData);
-							NumIterations = FMath::Max(NumIterations, 0);
-						}
-					}
-					if (!SimStageMetaData.EnabledBinding.IsNone())
-					{
-						FNiagaraParameterStore& BoundParamStore = EmitterInstance->GetRendererBoundVariables();
-						if (const uint8* ParameterData = BoundParamStore.GetParameterData(FNiagaraVariable(FNiagaraTypeDefinition::GetBoolDef(), SimStageMetaData.EnabledBinding)))
-						{
-							const FNiagaraBool StageEnabled = *reinterpret_cast<const FNiagaraBool*>(ParameterData);
-							NumIterations = StageEnabled.GetValue() ? NumIterations : 0;
-						}
-					}
-					if (SimStageMetaData.IterationSourceType == ENiagaraIterationSource::DirectSet)
-					{
-						FNiagaraParameterStore& BoundParamStore = EmitterInstance->GetRendererBoundVariables();
-						ElementCountXYZ = FIntVector(1, 1, 1);
+						const FSimulationStageMetaData& SimStageMetaData = GPUContext->SimStageExecData->SimStageMetaData[SimStageIndex];
 
-						// This will cause a PVS warning, if we add something before this enum entry add the code back in
-						//if (SimStageMetaData.GpuDispatchType >= ENiagaraGpuDispatchType::OneD)
+						// Should we run the stage?
+						if (!SimStageMetaData.ShouldRunStage(InstanceData->bResetData))
 						{
-							ElementCountXYZ.X = SimStageMetaData.ElementCountXBinding.IsNone() ? SimStageMetaData.ElementCount.X : BoundParamStore.GetParameterValueOrDefault(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), SimStageMetaData.ElementCountXBinding), 0);
-						}
-						if (SimStageMetaData.GpuDispatchType >= ENiagaraGpuDispatchType::TwoD)
-						{
-							ElementCountXYZ.Y = SimStageMetaData.ElementCountYBinding.IsNone() ? SimStageMetaData.ElementCount.Y : BoundParamStore.GetParameterValueOrDefault(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), SimStageMetaData.ElementCountYBinding), 0);
-						}
-						if (SimStageMetaData.GpuDispatchType >= ENiagaraGpuDispatchType::ThreeD)
-						{
-							ElementCountXYZ.Z = SimStageMetaData.ElementCountZBinding.IsNone() ? SimStageMetaData.ElementCount.Z : BoundParamStore.GetParameterValueOrDefault(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), SimStageMetaData.ElementCountZBinding), 0);
+							continue;
 						}
 
-						// If any of the element count values are <= 0 we can kill the stage as it won't execute
-						if (ElementCountXYZ.GetMin() <= 0)
+						// Is the stage enabled?
+						if (!SimStageMetaData.EnabledBinding.IsNone())
 						{
-							ElementCountXYZ = FIntVector::ZeroValue;
-							NumIterations = 0;
+							if (const uint8* ParameterData = ParameterStore.GetParameterData(FNiagaraVariable(FNiagaraTypeDefinition::GetBoolDef(), SimStageMetaData.EnabledBinding)))
+							{
+								const FNiagaraBool StageEnabled = *reinterpret_cast<const FNiagaraBool*>(ParameterData);
+								if (StageEnabled.GetValue() == false)
+								{
+									continue;
+								}
+							}
 						}
+
+						// Get number of iterations
+						int32 NumIterations = SimStageMetaData.NumIterationsBinding.IsNone() ? SimStageMetaData.NumIterations : ParameterStore.GetParameterValueOrDefault(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), SimStageMetaData.NumIterationsBinding), SimStageMetaData.NumIterations);
+						NumIterations = FMath::Clamp(NumIterations, 0, TNumericLimits<uint16>::Max());
+						if ( NumIterations <= 0 )
+						{
+							continue;
+						}
+
+						// Get element count
+						FIntVector ElementCountXYZ = FIntVector(1, 1, 1);
+						if (SimStageMetaData.IterationSourceType == ENiagaraIterationSource::DirectSet)
+						{
+							FNiagaraParameterStore& BoundParamStore = EmitterInstance->GetRendererBoundVariables();
+							ElementCountXYZ = FIntVector(1, 1, 1);
+
+							// This will cause a PVS warning, if we add something before this enum entry add the code back in
+							//if (SimStageMetaData.GpuDispatchType >= ENiagaraGpuDispatchType::OneD)
+							{
+								ElementCountXYZ.X = SimStageMetaData.ElementCountXBinding.IsNone() ? SimStageMetaData.ElementCount.X : BoundParamStore.GetParameterValueOrDefault(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), SimStageMetaData.ElementCountXBinding), 0);
+							}
+							if (SimStageMetaData.GpuDispatchType >= ENiagaraGpuDispatchType::TwoD)
+							{
+								ElementCountXYZ.Y = SimStageMetaData.ElementCountYBinding.IsNone() ? SimStageMetaData.ElementCount.Y : BoundParamStore.GetParameterValueOrDefault(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), SimStageMetaData.ElementCountYBinding), 0);
+							}
+							if (SimStageMetaData.GpuDispatchType >= ENiagaraGpuDispatchType::ThreeD)
+							{
+								ElementCountXYZ.Z = SimStageMetaData.ElementCountZBinding.IsNone() ? SimStageMetaData.ElementCount.Z : BoundParamStore.GetParameterValueOrDefault(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), SimStageMetaData.ElementCountZBinding), 0);
+							}
+
+							// If any of the element count values are <= 0 we can kill the stage as it won't execute
+							if (ElementCountXYZ.GetMin() <= 0)
+							{
+								continue;
+							}
+						}
+
+						// Stage is live we can add it
+						FNiagaraComputeInstanceData::FPerStageInfo& NewStageInfo = InstanceData->PerStageInfo.AddDefaulted_GetRef();
+						NewStageInfo.SimStageIndex		= SimStageIndex;
+						NewStageInfo.NumIterations		= NumIterations;
+						NewStageInfo.LoopIndex			= LoopIndex;
+						NewStageInfo.NumLoops			= NumLoops;
+						NewStageInfo.ElementCountXYZ	= ElementCountXYZ;
+
+						InstanceData->bHasMultipleStages = true;
+						InstanceData->TotalDispatches += NumIterations;
 					}
 				}
-				else
-				{
-					NumIterations = 0;
-				}
-
-				InstanceData->TotalDispatches += NumIterations;
-				InstanceData->PerStageInfo.Emplace(NumIterations, ElementCountXYZ);
 			}
+
 			TotalDispatches += InstanceData->TotalDispatches;
 		}
 	}
@@ -315,7 +334,7 @@ void FNiagaraGPUSystemTick::BuildUniformBuffers()
 		{
 			if ( ensure(ExternalCBufferLayout && bExternalLayoutValid) )
 			{
-				ExternalUnformBuffers_RT[iInstance] = RHICreateUniformBuffer(Instance.ExternalParamData, ExternalCBufferLayout, bHasMultipleStages ? EUniformBufferUsage::UniformBuffer_SingleFrame : EUniformBufferUsage::UniformBuffer_SingleDraw);
+				ExternalUnformBuffers_RT[iInstance] = RHICreateUniformBuffer(Instance.ExternalParamData, ExternalCBufferLayout, Instance.bHasMultipleStages ? EUniformBufferUsage::UniformBuffer_SingleFrame : EUniformBufferUsage::UniformBuffer_SingleDraw);
 			}
 		}
 		if ( Instance.Context->GPUScript_RT->IsExternalConstantBufferUsed_RenderThread(1) )
@@ -323,7 +342,7 @@ void FNiagaraGPUSystemTick::BuildUniformBuffers()
 			if (ensure(ExternalCBufferLayout && bExternalLayoutValid))
 			{
 				check(ExternalCBufferLayout->ConstantBufferSize + ExternalCBufferLayout->ConstantBufferSize <= Instance.ExternalParamDataSize);
-				ExternalUnformBuffers_RT[InstanceCount + iInstance] = RHICreateUniformBuffer(Instance.ExternalParamData + ExternalCBufferLayout->ConstantBufferSize, ExternalCBufferLayout, bHasMultipleStages ? EUniformBufferUsage::UniformBuffer_SingleFrame : EUniformBufferUsage::UniformBuffer_SingleDraw);
+				ExternalUnformBuffers_RT[InstanceCount + iInstance] = RHICreateUniformBuffer(Instance.ExternalParamData + ExternalCBufferLayout->ConstantBufferSize, ExternalCBufferLayout, Instance.bHasMultipleStages ? EUniformBufferUsage::UniformBuffer_SingleFrame : EUniformBufferUsage::UniformBuffer_SingleDraw);
 			}
 		}
 	}

@@ -4,12 +4,9 @@
 
 #include "USDMemory.h"
 
-#include "Modules/ModuleManager.h"
-
 class FUsdStageEditorViewModelsModule : public IUsdStageEditorViewModelsModule
 {
 public:
-
 };
 
-IMPLEMENT_MODULE_USD( FUsdStageEditorViewModelsModule, USDStageEditorViewModels );
+IMPLEMENT_MODULE_USD(FUsdStageEditorViewModelsModule, USDStageEditorViewModels);

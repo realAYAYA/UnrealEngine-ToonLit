@@ -3,19 +3,52 @@
 #pragma once
 
 #include "MassEntityTypes.h"
+#include "Engine/ActorInstanceHandle.h"
 #include "MassCommonFragments.h"
-#include "MassEntityTemplate.h"
 #include "Misc/MTAccessDetector.h"
 #include "UObject/ObjectKey.h"
-#include "Subsystems/WorldSubsystem.h"
+#include "MassSubsystemBase.h"
 #include "MassActorSubsystem.generated.h"
 
 struct FMassEntityHandle;
 class AActor;
 struct FMassEntityManager;
+class UMassActorSubsystem;
+
+USTRUCT()
+struct MASSACTORS_API FMassGuidFragment : public FObjectWrapperFragment
+{
+	GENERATED_BODY()
+
+	FGuid Guid;
+};
 
 /**
- * Fragment to save the actor pointer of a mass entity if it exist
+ * Fragment to store the instanced actor handle of a mass entity if it needs one.
+ */
+USTRUCT()
+struct MASSACTORS_API FMassActorInstanceFragment : public FMassFragment
+{
+	GENERATED_BODY();
+
+	FMassActorInstanceFragment() = default;
+	explicit FMassActorInstanceFragment(const FActorInstanceHandle& InHandle)
+		: Handle(InHandle)
+	{
+	}
+
+	UPROPERTY()
+	FActorInstanceHandle Handle;
+};
+
+namespace UE::Mass::Signals
+{
+	/** Signal use when the actor instance handle is set or cleared in the associated fragment. */
+	const FName ActorInstanceHandleChanged = FName(TEXT("ActorInstanceHandleChanged"));
+}
+
+/**
+ * Fragment to save the actor pointer of a mass entity if it exists
  */
 USTRUCT()
 struct MASSACTORS_API FMassActorFragment : public FObjectWrapperFragment
@@ -37,8 +70,12 @@ struct MASSACTORS_API FMassActorFragment : public FObjectWrapperFragment
 	 */
 	void SetAndUpdateHandleMap(const FMassEntityHandle MassAgent, AActor* InActor, const bool bInIsOwnedByMass);
 
-	/** Resets the actor pointed by this fragment, will also keep the map back in MassActorSubsystem up to date */
-	void ResetAndUpdateHandleMap();
+	/** 
+	 * Resets the actor pointed by this fragment, will also keep the map back in UMassActorSubsystem up to date 
+	 * @param CachedActorSubsystem if provided will be used directly, otherwise an instance of UMassActorSubsystem will 
+	 *	be deduced from Actor's world (at additional runtime cost)
+	 */
+	void ResetAndUpdateHandleMap(UMassActorSubsystem* CachedActorSubsystem = nullptr);
 
 	/**
 	 * Set the actor associated to a mass agent, will NOT keep map back in MassActorSubsystem up to date.
@@ -122,7 +159,7 @@ protected:
  * A subsystem managing communication between Actors and Mass
  */
 UCLASS()
-class MASSACTORS_API UMassActorSubsystem : public UWorldSubsystem
+class MASSACTORS_API UMassActorSubsystem : public UMassSubsystemBase
 {
 	GENERATED_BODY()
 

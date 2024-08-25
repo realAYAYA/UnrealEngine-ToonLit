@@ -6,6 +6,7 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "PerforceConnection.h"
+#include "PerforceMessageLog.h"
 #include "PerforceSourceControlProvider.h"
 
 #define LOCTEXT_NAMESPACE "PerforceSourceControl"
@@ -44,7 +45,7 @@ bool FPerforceSourceControlRevision::Get(FString& InOutFilename, FPerforceConnec
 
 	FP4RecordSet Records;
 	bool bConnectionDropped;
-	TArray<FText> ErrorMessages;
+	FSourceControlResultInfo ResultInfo;
 	TArray<FString> Parameters;
 
 	// Suppress the one-line file header normally added by Perforce.
@@ -82,7 +83,7 @@ bool FPerforceSourceControlRevision::Get(FString& InOutFilename, FPerforceConnec
 	Parameters.Add(FString("-o") + AbsoluteFileName);
 	Parameters.Add(FileName + RevParam);
 
-	const bool bCmdResult = Connection.RunCommand(TEXT("print"), Parameters, Records, ErrorMessages, FOnIsCancelled(), bConnectionDropped);
+	const bool bCmdResult = Connection.RunCommand(TEXT("print"), Parameters, Records, ResultInfo, FOnIsCancelled(), bConnectionDropped);
 	if (bCmdResult)
 	{
 		InOutFilename = AbsoluteFileName;
@@ -90,9 +91,9 @@ bool FPerforceSourceControlRevision::Get(FString& InOutFilename, FPerforceConnec
 	}
 	else
 	{
-		for (auto Iter(ErrorMessages.CreateConstIterator()); Iter; Iter++)
+		for (const FText& ErrorMsg : ResultInfo.ErrorMessages)
 		{
-			FMessageLog("SourceControl").Error(FText::Format(LOCTEXT("PerforceSourceControlRevisionGetErrorFormat", "FPerforceSourceControlRevision::Get print Error: {0}"), *Iter));
+			FTSMessageLog("SourceControl").Error(FText::Format(LOCTEXT("PerforceSourceControlRevisionGetErrorFormat", "FPerforceSourceControlRevision::Get print Error: {0}"), ErrorMsg));
 		}
 
 		return false;
@@ -109,14 +110,14 @@ static FString GetUserFromChangelist(int32 ChangeNumber, FPerforceConnection& In
 {
 	FP4RecordSet Records;
 	bool bConnectionDropped;
-	TArray<FText> ErrorMessages;
+	FSourceControlResultInfo ResultInfo;
 	TArray<FString> Parameters;
 
 	// Only describe the basic changelist information, suppress output of the file diffs
 	Parameters.Add(TEXT("-s"));
 	Parameters.Add(FString::Printf(TEXT("%d"), ChangeNumber));
 
-	if(InConnection.RunCommand(TEXT("describe"), Parameters, Records, ErrorMessages, FOnIsCancelled(), bConnectionDropped))
+	if(InConnection.RunCommand(TEXT("describe"), Parameters, Records, ResultInfo, FOnIsCancelled(), bConnectionDropped))
 	{
 		if(Records.Num() > 0)
 		{
@@ -125,9 +126,9 @@ static FString GetUserFromChangelist(int32 ChangeNumber, FPerforceConnection& In
 	}
 	else
 	{
-		for(auto Iter(ErrorMessages.CreateConstIterator()); Iter; Iter++)
+		for (const FText& ErrorMsg : ResultInfo.ErrorMessages)
 		{
-			FMessageLog("SourceControl").Error(FText::Format(LOCTEXT("GetUserFromChangelistErrorFormat", "GetUserFromChangelist Error: {0}"), *Iter));
+			FMessageLog("SourceControl").Error(FText::Format(LOCTEXT("GetUserFromChangelistErrorFormat", "GetUserFromChangelist Error: {0}"), ErrorMsg));
 		}
 	}
 
@@ -179,26 +180,26 @@ bool FPerforceSourceControlRevision::GetAnnotated( TArray<FAnnotationLine>& OutL
 		FPerforceConnection& Connection = ScopedConnection.GetConnection();
 		FP4RecordSet Records;
 		bool bConnectionDropped;
-		TArray<FText> ErrorMessages;
+		FSourceControlResultInfo ResultInfo;
 		TArray<FString> Parameters;
 
 		Parameters.Add(TEXT("-q"));	// Suppress the one-line file header normally added by Perforce.
 		Parameters.Add(TEXT("-c"));	// Display change numbers rather than revision numbers
 		Parameters.Add(TEXT("-I"));	// Follow integrations
 
-		FString RevString = (RevisionNumber < 0) ? TEXT("head") : FString::Printf(TEXT("%d"), RevisionNumber);
+		const FString RevString = (RevisionNumber < 0) ? TEXT("head") : FString::Printf(TEXT("%d"), RevisionNumber);
 		Parameters.Add(FileName + TEXT("#") + RevString);
 
-		bCommandOK = Connection.RunCommand(TEXT("annotate"), Parameters, Records, ErrorMessages, FOnIsCancelled(), bConnectionDropped);
+		bCommandOK = Connection.RunCommand(TEXT("annotate"), Parameters, Records, ResultInfo, FOnIsCancelled(), bConnectionDropped);
 		if(bCommandOK)
 		{
 			ParseAnnotationResults(Records, OutLines, Connection);
 		}
 		else
 		{
-			for(auto Iter(ErrorMessages.CreateConstIterator()); Iter; Iter++)
+			for (const FText& ErrorMsg : ResultInfo.ErrorMessages)
 			{
-				FMessageLog("SourceControl").Error(FText::Format(LOCTEXT("GetAnnotatedErrorFormat", "GetAnnotated Error: {0}"), *Iter));
+				FMessageLog("SourceControl").Error(FText::Format(LOCTEXT("GetAnnotatedErrorFormat", "GetAnnotated Error: {0}"), ErrorMsg));
 			}
 		}
 	}

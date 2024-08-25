@@ -60,9 +60,6 @@ public:
 	
 	/// @param TargetMeshOut Will be populated with the initial edit patch mesh transformed to world space via the preview mesh transform
 	void MakeInsetTypeTargetMesh(FDynamicMesh3& TargetMeshOut);
-
-	UE_DEPRECATED(5.1, "We are removing this accessor because it was unused.")
-	const FDynamicMesh3& GetInitialPatchMesh() const { return InitialEditPatch; }
 	
 	void ApplyTranslationToPreview(const FTransform& TransformIn, FTransform& TranslationOut, FTransform& RotateScaleOut)
 	{
@@ -72,20 +69,9 @@ public:
 		RotateScaleOut.SetTranslation(FVector::ZeroVector);
 	}
 
-	// must be non-const because query functions are non-const
-	UE_DEPRECATED(5.1, "We are removing this accessor and the underlying tree, because they were unused.")
-	UE::Geometry::FDynamicMeshAABBTree3& GetInitialPatchMeshSpatial()
-	{
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		return InitialEditPatchBVTree; 
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
-	}
-
 protected:
 	TUniquePtr<UE::Geometry::FDynamicSubmesh3> ActiveSubmesh;
 	FDynamicMesh3 InitialEditPatch;
-	UE_DEPRECATED(5.1, "We are removing this tree, because it was unused.")
-	UE::Geometry::FDynamicMeshAABBTree3 InitialEditPatchBVTree;
 
 	TArray<int32> EditVertices;
 	TArray<FVector3d> InitialPositions;

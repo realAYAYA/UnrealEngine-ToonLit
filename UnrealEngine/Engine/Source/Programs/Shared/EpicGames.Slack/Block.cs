@@ -4,8 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using EpicGames.Slack.Blocks;
-using EpicGames.Slack.Elements;
 
 namespace EpicGames.Slack
 {

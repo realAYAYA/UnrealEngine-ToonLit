@@ -16,6 +16,9 @@
 		InProperty: ProjectName
 		InProperty: ProjectPath
 		InProperty: EscapedBranch
+		InProperty: NetworkTempRoot
+		InProperty: NetworkPublishRoot
+		InProperty: NetworkReportRoot
 
 		OutOption: PublishBuilds - Publish output from builds to a network share
 		OutOption: PublishHashedStagingData - Publish staged content with hashes for quick syncing
@@ -28,35 +31,29 @@
 
 	-->
 
+	<Property Name="IsEpicInternal" Value="false"/>
+	<Property Name="IsEpicInternal" Value="true" If="Exists('Engine/Restricted/NotForLicensees/Build/EpicInternal.txt')"/>
+
+	<Property Name="IsEpicBuildMachine" Value="false"/>
+	<Property Name="IsEpicBuildMachine" Value="true" If="$(IsBuildMachine) and $(IsEpicInternal)"/>
+
 	<!-- Publish packaged builds to the network ?-->
-	<Option Name="PublishBuilds" DefaultValue="$(IsBuildMachine)" Description="Publish packaged builds to the builds folder on the network"/>
+	<Option Name="PublishBuilds" DefaultValue="$(IsEpicBuildMachine)" Description="Publish packaged builds to the builds folder on the network"/>
 
 	<!-- Publish a hashed staging data that developers can quickly sync to -->
 	<Option Name="PublishHashedStagingData" DefaultValue="false" Restrict="true|false" Description="Create hashes for syncing via Unsync" />
 
 	<!-- Publish automation reports to the network-->
-	<Option Name="PublishReports" DefaultValue="$(IsBuildMachine)" Description="Publish packaged builds to the builds folder on the netwok"/>
+	<Option Name="PublishReports" DefaultValue="$(IsEpicBuildMachine)" Description="Publish packaged builds to the builds folder on the netwok"/>
 
+	<!-- For pre-generated build -->
+	<Option Name="GeneratedBuildVersion" DefaultValue="" Description="The pre-generated build version"/>
 
 	<!-- Where builds are saved to locally -->
 	<Property Name="ProjectOutputDirectory" Value="$(ProjectPath)/Saved/StagedBuilds"/>
 	<Property Name="ShaderSymbolsDirectory" Value="$(ProjectPath)/Saved/ShaderSymbols"/>
+	<Property Name="LocalInstallDirectory" Value="$(ProjectPath)/Saved/LocalInstall"/>
 	<Property Name="AutomationReportOutputDirectory" Value=""/>
-
-	<!-- Scratch network path that can be used for tests if we aren't publishing. Assumes there's a cleanup script.. -->
-	<Property Name="NetworkTempRoot" Value="/Volumes/Builds/UE5/TempStorage"/>
-	<Property Name="NetworkTempRoot" Value="/mnt/Builds/UE5/TempStorage" If="'$(HostPlatform)' == 'Linux'"/>
-	<Property Name="NetworkTempRoot" Value="P:/Builds/UE5/TempStorage" If="'$(HostPlatform)' == 'Win64'"/>
-
-	<!-- Network path that can be used for builds that are published -->
-	<Property Name="NetworkPublishRoot" Value="/Volumes/Builds/UE5/PackagedBuilds"/>
-	<Property Name="NetworkPublishRoot" Value="/mnt/Builds/UE5/PackagedBuilds" If="'$(HostPlatform)' == 'Linux'"/>
-	<Property Name="NetworkPublishRoot" Value="P:/Builds/UE5/PackagedBuilds" If="'$(HostPlatform)' == 'Win64'"/>
-
-	<!-- Network path that can be used for storing reports and logs -->
-	<Property Name="NetworkReportRoot" Value="/Volumes/Builds/Automation/Reports"/>
-	<Property Name="NetworkReportRoot" Value="/mnt/Builds/Automation/Reports" If="'$(HostPlatform)' == 'Linux'"/>
-	<Property Name="NetworkReportRoot" Value="P:/Builds/Automation/Reports" If="'$(HostPlatform)' == 'Win64'"/>
 
 	<!-- Allow scripts to override the network locations-->
 	<Do If="'$(NetworkTempRootOverride)' != ''" >
@@ -79,10 +76,13 @@
 	<Property Name="NetworkOutputDirectory" Value="$(NetworkOutputDirectory)/$(EscapedBranch)/$(BuildNamePath)" If="'$(NetworkOutputDirectory)' != ''"/>
 
 	<!-- Automation can publish reports to a folder that is mapped to a website -->
-	<Do If="$(IsBuildMachine) or $(PublishReports)" >
+	<Do If="$(IsEpicBuildMachine) or $(PublishReports)" >
 		<Property Name="AutomationReportOutputDirectory" Value="$(NetworkReportRoot)"/>
 		<Property Name="AutomationReportOutputDirectory" Value="$(AutomationReportOutputDirectory)/$(EscapedBranch)/$(ProjectName)/$(CL-String)"/>
 		<Property Name="AutomationReportUrl" Value="http://automation.epicgames.net/reports/$(EscapedBranch)/$(ProjectName)/$(CL-String)"/>
 	</Do>
+
+	<!-- Network path that can be used for storing reports and logs -->
+	<Property Name="GeneratedBuildDir" Value="$(NetworkPublishRoot)/$(EscapedBranch)/$(GeneratedBuildVersion)"/>
 
 </BuildGraph>

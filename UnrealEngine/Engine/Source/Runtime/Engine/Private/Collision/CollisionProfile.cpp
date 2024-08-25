@@ -271,7 +271,7 @@ void UCollisionProfile::LoadProfileConfig(bool bForceInit)
 	 * 4. It loads profile redirect data 
 	 **/
 	// read "EngineTraceChanne" and "GameTraceChanne" and set meta data
-	FConfigSection* Configs = GConfig->GetSectionPrivate( TEXT("/Script/Engine.CollisionProfile"), false, true, GEngineIni );
+	const FConfigSection* Configs = GConfig->GetSection( TEXT("/Script/Engine.CollisionProfile"), false, GEngineIni );
 
 	OnLoadProfileConfig.Broadcast(this);
 
@@ -322,7 +322,7 @@ void UCollisionProfile::LoadProfileConfig(bool bForceInit)
 	for ( int32 EnumIndex=0; EnumIndex<NumEnum; ++EnumIndex )
 	{
 		FString EnumName = Enum->GetNameStringByIndex(EnumIndex);
-		EnumName.RightChopInline(Prefix.Len(), false);
+		EnumName.RightChopInline(Prefix.Len(), EAllowShrinking::No);
 		FName DisplayName = FName(*EnumName);
 
 		if ( IS_VALID_COLLISIONCHANNEL(EnumIndex) )

@@ -3,7 +3,6 @@
 #include "CollectionAssetRegistryBridge.h"
 
 #include "AssetRegistry/AssetData.h"
-#include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 #include "CollectionManagerModule.h"
 #include "CollectionManagerTypes.h"
@@ -33,125 +32,96 @@ class FCollectionRedirectorFollower : public ICollectionRedirectorFollower
 {
 public:
 	FCollectionRedirectorFollower()
-		: AssetRegistryModule(FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")))
+		: AssetRegistry(IAssetRegistry::Get())
 	{
 	}
 
 	virtual bool FixupObject(const FSoftObjectPath& InObjectPath, FSoftObjectPath& OutNewObjectPath) override
 	{
-		OutNewObjectPath = FSoftObjectPath();
+		// Most of the time it will be in the asset registry so early return
+		FAssetData ObjectAssetData = AssetRegistry->GetAssetByObjectPath(InObjectPath, true);
 
-		FString InObjectPathString = InObjectPath.ToString();
-		if (!InObjectPathString.StartsWith(TEXT("/")))
+		if (ObjectAssetData.IsValid())
 		{
-			if (!GIsSavingPackage)
+			if (!ObjectAssetData.IsRedirector())
 			{
-				FTopLevelAssetPath FullPath = UClass::TryConvertShortTypeNameToPathName(UClass::StaticClass(), InObjectPathString);
-				if (FullPath.IsValid())
-				{
-					FString ClassPathStr = FullPath.ToString();
-					const FString NewClassName = FLinkerLoad::FindNewPathNameForClass(ClassPathStr, false);
-					if (!NewClassName.IsEmpty())
-					{
-						check(FPackageName::IsValidObjectPath(NewClassName));
-						// Our new class name might be lacking the path, so try and find it so we can use the full path in the collection
-						UClass* FoundClass = FindObject<UClass>(nullptr, *NewClassName);
-						if (FoundClass)
-						{
-							OutNewObjectPath = *FoundClass->GetPathName();
-						}
-					}
-				}
+				OutNewObjectPath = InObjectPath;
+				return false;
 			}
-		}
-		else if (InObjectPathString.StartsWith(TEXT("/Script/"))) 
-		{
-			// We can't use FindObject while we're saving
-			if (!GIsSavingPackage)
+			else
 			{
-				const FString ClassPathStr = InObjectPath.ToString();
-				check(FPackageName::IsValidObjectPath(ClassPathStr));
-				UClass* FoundClass = FindObject<UClass>(nullptr, *ClassPathStr);
-				if (!FoundClass)
-				{
-					// Use the linker to search for class name redirects (from the loaded ActiveClassRedirects)
-					const FString NewClassName = FLinkerLoad::FindNewPathNameForClass(ClassPathStr, false);
-
-					if (!NewClassName.IsEmpty())
-					{
-						check(FPackageName::IsValidObjectPath(NewClassName));
-						// Our new class name might be lacking the path, so try and find it so we can use the full path in the collection
-						FoundClass = FindObject<UClass>(nullptr, *NewClassName);
-						if (FoundClass)
-						{
-							OutNewObjectPath = *FoundClass->GetPathName();
-						}
-					}
-				}
+				OutNewObjectPath = AssetRegistry->GetRedirectedObjectPath(InObjectPath);
 			}
 		}
 		else
 		{
-			// Keep track of visted redirectors in case we loop.
-			TSet<FSoftObjectPath> VisitedRedirectors;
-
-			// Use the asset registry to avoid loading the object
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-			FAssetData ObjectAssetData = AssetRegistryModule.Get().GetAssetByObjectPath(InObjectPath, true);
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
-			while (ObjectAssetData.IsValid() && ObjectAssetData.IsRedirector())
+			FString InObjectPathString = InObjectPath.ToString();
+			if (!InObjectPathString.StartsWith(TEXT("/")))
 			{
-				// Check to see if we've already seen this path before, it's possible we might have found a redirector loop.
-				if ( VisitedRedirectors.Contains(ObjectAssetData.ToSoftObjectPath()) )
+				if (!GIsSavingPackage)
 				{
-					UE_LOG(LogContentBrowser, Error, TEXT("Redirector Loop Found!"));
-					for ( const FSoftObjectPath& Redirector : VisitedRedirectors )
+					FTopLevelAssetPath FullPath = UClass::TryConvertShortTypeNameToPathName(UClass::StaticClass(), InObjectPathString);
+					if (FullPath.IsValid())
 					{
-						UE_LOG(LogContentBrowser, Error, TEXT("Redirector: %s"), *Redirector.ToString());
+						FString ClassPathStr = FullPath.ToString();
+						const FString NewClassName = FLinkerLoad::FindNewPathNameForClass(ClassPathStr, false);
+						if (!NewClassName.IsEmpty())
+						{
+							check(FPackageName::IsValidObjectPath(NewClassName));
+							// Our new class name might be lacking the path, so try and find it so we can use the full path in the collection
+							UClass* FoundClass = FindObject<UClass>(nullptr, *NewClassName);
+							if (FoundClass)
+							{
+								OutNewObjectPath = *FoundClass->GetPathName();
+							}
+						}
 					}
-
-					ObjectAssetData = FAssetData();
-					break;
-				}
-
-				VisitedRedirectors.Add(ObjectAssetData.ToSoftObjectPath());
-
-				// Get the destination object from the meta-data rather than load the redirector object, as 
-				// loading a redirector will also load the object it points to, which could cause a large hitch
-				FString DestinationObjectPath;
-				if (ObjectAssetData.GetTagValue("DestinationObject", DestinationObjectPath))
-				{
-					ConstructorHelpers::StripObjectClass(DestinationObjectPath);
-					ObjectAssetData = AssetRegistryModule.Get().GetAssetByObjectPath(FSoftObjectPath(DestinationObjectPath));
-				}
-				else
-				{
-					ObjectAssetData = FAssetData();
 				}
 			}
+			else if (InObjectPathString.StartsWith(TEXT("/Script/")))
+			{
+				// We can't use FindObject while we're saving
+				if (!GIsSavingPackage)
+				{
+					check(FPackageName::IsValidObjectPath(InObjectPathString));
+					UClass* FoundClass = FindObject<UClass>(nullptr, *InObjectPathString);
+					if (!FoundClass)
+					{
+						// Use the linker to search for class name redirects (from the loaded ActiveClassRedirects)
+						const FString NewClassName = FLinkerLoad::FindNewPathNameForClass(InObjectPathString, false);
 
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-			OutNewObjectPath = ObjectAssetData.ObjectPath;
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
+						if (!NewClassName.IsEmpty())
+						{
+							check(FPackageName::IsValidObjectPath(NewClassName));
+							// Our new class name might be lacking the path, so try and find it so we can use the full path in the collection
+							FoundClass = FindObject<UClass>(nullptr, *NewClassName);
+							if (FoundClass)
+							{
+								OutNewObjectPath = *FoundClass->GetPathName();
+							}
+						}
+					}
+				}
+			}
 		}
 
 		return OutNewObjectPath.IsValid() && InObjectPath != OutNewObjectPath;
 	}
 
 private:
-	FAssetRegistryModule& AssetRegistryModule;
+	IAssetRegistry* AssetRegistry;
 };
 
 FCollectionAssetRegistryBridge::FCollectionAssetRegistryBridge()
 {
 	// Load the asset registry module to listen for updates
-	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
-	AssetRegistryModule.Get().OnAssetRemoved().AddRaw(this, &FCollectionAssetRegistryBridge::OnAssetRemoved);
-	AssetRegistryModule.Get().OnAssetRenamed().AddRaw(this, &FCollectionAssetRegistryBridge::OnAssetRenamed);
+	IAssetRegistry& AssetRegistry = IAssetRegistry::GetChecked();
+	AssetRegistry.OnAssetsRemoved().AddRaw(this, &FCollectionAssetRegistryBridge::OnAssetsRemoved);
+	AssetRegistry.OnAssetRenamed().AddRaw(this, &FCollectionAssetRegistryBridge::OnAssetRenamed);
 	
-	if (AssetRegistryModule.Get().IsLoadingAssets())
+	if (AssetRegistry.IsLoadingAssets())
 	{
-		AssetRegistryModule.Get().OnFilesLoaded().AddRaw(this, &FCollectionAssetRegistryBridge::OnAssetRegistryLoadComplete);
+		AssetRegistry.OnFilesLoaded().AddRaw(this, &FCollectionAssetRegistryBridge::OnAssetRegistryLoadComplete);
 	}
 	else
 	{
@@ -162,12 +132,11 @@ FCollectionAssetRegistryBridge::FCollectionAssetRegistryBridge()
 FCollectionAssetRegistryBridge::~FCollectionAssetRegistryBridge()
 {
 	// Load the asset registry module to unregister delegates
-	if (FModuleManager::Get().IsModuleLoaded("AssetRegistry"))
+	if (IAssetRegistry* AssetRegistry = IAssetRegistry::Get())
 	{
-		FAssetRegistryModule& AssetRegistryModule = FModuleManager::GetModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
-		AssetRegistryModule.Get().OnAssetRemoved().RemoveAll(this);
-		AssetRegistryModule.Get().OnAssetRenamed().RemoveAll(this);
-		AssetRegistryModule.Get().OnFilesLoaded().RemoveAll(this);
+		AssetRegistry->OnAssetsRemoved().RemoveAll(this);
+		AssetRegistry->OnAssetRenamed().RemoveAll(this);
+		AssetRegistry->OnFilesLoaded().RemoveAll(this);
 	}
 }
 
@@ -189,20 +158,37 @@ void FCollectionAssetRegistryBridge::OnAssetRenamed(const FAssetData& AssetData,
 	CollectionManagerModule.Get().HandleObjectRenamed(FSoftObjectPath(OldObjectPath), AssetData.GetSoftObjectPath());
 }
 
-void FCollectionAssetRegistryBridge::OnAssetRemoved(const FAssetData& AssetData)
+void FCollectionAssetRegistryBridge::OnAssetsRemoved(TConstArrayView<FAssetData> AssetDatas)
 {
 	FCollectionManagerModule& CollectionManagerModule = FCollectionManagerModule::GetModule();
 
-	if (AssetData.IsRedirector())
+	TArray<FSoftObjectPath> RedirectorObjectsRemoved;
+	TArray<FSoftObjectPath> ObjectsRemoved;
+	ObjectsRemoved.Reserve(AssetDatas.Num());
+
+	for (const FAssetData& AssetData : AssetDatas)
 	{
-		// Notify the collections manager that a redirector has been removed
-		// This will attempt to re-save any collections that still have a reference to this redirector in their on-disk collection data
-		CollectionManagerModule.Get().HandleRedirectorDeleted(AssetData.GetSoftObjectPath());
+		if (AssetData.IsRedirector())
+		{
+			RedirectorObjectsRemoved.Add(AssetData.GetSoftObjectPath());
+		}
+		else
+		{
+			ObjectsRemoved.Add(AssetData.GetSoftObjectPath());
+		}
 	}
-	else
+
+	// Notify the collections manager that a redirector has been removed
+	// This will attempt to re-save any collections that still have a reference to this redirector in their on-disk collection data
+	if (!RedirectorObjectsRemoved.IsEmpty())
 	{
-		// Notify the collections manager that an asset has been removed
-		CollectionManagerModule.Get().HandleObjectDeleted(AssetData.GetSoftObjectPath());
+		CollectionManagerModule.Get().HandleRedirectorsDeleted(RedirectorObjectsRemoved);
+	}
+
+	// Notify the collections manager that an asset has been removed
+	if (!ObjectsRemoved.IsEmpty())
+	{
+		CollectionManagerModule.Get().HandleObjectsDeleted(ObjectsRemoved);
 	}
 }
 

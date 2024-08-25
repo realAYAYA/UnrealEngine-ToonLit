@@ -23,7 +23,6 @@
 #include "PropertyHandle.h"
 #include "PropertyRestriction.h"
 #include "RHI.h"
-#include "Templates/ChooseClass.h"
 #include "UObject/Class.h"
 #include "UObject/NameTypes.h"
 #include "UObject/ReflectedTypeAccessors.h"

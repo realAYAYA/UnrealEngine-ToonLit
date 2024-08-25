@@ -46,7 +46,6 @@ class SRCFilterBar : public SBasicFilterBar<FilterType>
 public:
 
 	using FOnFilterChanged = typename SBasicFilterBar<FilterType>::FOnFilterChanged;
-	using FOnExtendAddFilterMenu = typename SBasicFilterBar<FilterType>::FOnExtendAddFilterMenu;
 
 	SLATE_BEGIN_ARGS(SRCFilterBar)
 		: _UseDefaultEntityFilters(true)
@@ -56,7 +55,7 @@ public:
 		SLATE_EVENT(SRCFilterBar<FilterType>::FOnFilterChanged, OnFilterChanged)
 
 		/** Delegate to extend the Add Filter dropdown */
-		SLATE_EVENT(SRCFilterBar<FilterType>::FOnExtendAddFilterMenu, OnExtendAddFilterMenu)
+		SLATE_EVENT(FOnExtendAddFilterMenu, OnExtendAddFilterMenu)
 
 		/** Initial List of Custom Filters that will be added to the AddFilter Menu */
 		SLATE_ARGUMENT(TArray<TSharedRef<FFilterBase<FilterType>>>, CustomFilters)

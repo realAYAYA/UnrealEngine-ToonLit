@@ -240,39 +240,16 @@ bool FStreamReaderMP4::HasErrored() const
 
 int32 FStreamReaderMP4::HTTPProgressCallback(const IElectraHttpManager::FRequest* InRequest)
 {
-	HTTPUpdateStats(MEDIAutcTime::Current(), InRequest);
 	// Aborted?
 	return HasBeenAborted() ? 1 : 0;
 }
 
 void FStreamReaderMP4::HTTPCompletionCallback(const IElectraHttpManager::FRequest* InRequest)
 {
-	HTTPUpdateStats(FTimeValue::GetInvalid(), InRequest);
 	bHasErrored = InRequest->ConnectionInfo.StatusInfo.ErrorDetail.IsError();
 	if (bHasErrored)
 	{
 		ReadBuffer.SetHasErrored();
-	}
-}
-
-void FStreamReaderMP4::HTTPUpdateStats(const FTimeValue& CurrentTime, const IElectraHttpManager::FRequest* Request)
-{
-	TSharedPtrTS<FStreamSegmentRequestMP4> SegmentRequest = CurrentRequest;
-	if (SegmentRequest.IsValid())
-	{
-		FMediaCriticalSection::ScopedLock lock(MetricUpdateLock);
-		SegmentRequest->ConnectionInfo = Request->ConnectionInfo;
-		// Update the current download stats which we report periodically to the ABR.
-		Metrics::FSegmentDownloadStats& ds = SegmentRequest->DownloadStats;
-		if (Request->ConnectionInfo.EffectiveURL.Len())
-		{
-			ds.URL 			  = Request->ConnectionInfo.EffectiveURL;
-		}
-		ds.HTTPStatusCode     = Request->ConnectionInfo.StatusInfo.HTTPStatus;
-		ds.TimeToFirstByte    = Request->ConnectionInfo.TimeUntilFirstByte;
-		ds.TimeToDownload     = ((CurrentTime.IsValid() ? CurrentTime : Request->ConnectionInfo.RequestEndTime) - Request->ConnectionInfo.RequestStartTime).GetAsSeconds();
-		ds.ByteSize 		  = Request->ConnectionInfo.ContentLength;
-		ds.NumBytesDownloaded = Request->ConnectionInfo.BytesReadSoFar;
 	}
 }
 
@@ -385,8 +362,6 @@ void FStreamReaderMP4::HandleRequest()
 	ReadBuffer.ReceiveBuffer = MakeSharedTS<IElectraHttpManager::FReceiveBuffer>();
 	ReadBuffer.SetCurrentPos(Request->FileStartOffset);
 
-	const FParamDict& Options = PlayerSessionServices->GetOptions();
-
 	TSharedPtrTS<IElectraHttpManager::FRequest> HTTP(new IElectraHttpManager::FRequest);
 	HTTP->Parameters.URL				= TimelineAsset->GetMediaURL();
 	HTTP->Parameters.Range.Start		= Request->FileStartOffset;
@@ -394,8 +369,8 @@ void FStreamReaderMP4::HandleRequest()
 	// No compression as this would not yield much with already compressed video/audio data.
 	HTTP->Parameters.AcceptEncoding.Set(TEXT("identity"));
 	// Timeouts
-	HTTP->Parameters.ConnectTimeout = Options.GetValue(MP4::OptionKeyMP4LoadConnectTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 8));
-	HTTP->Parameters.NoDataTimeout = Options.GetValue(MP4::OptionKeyMP4LoadNoDataTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 6));
+	HTTP->Parameters.ConnectTimeout = PlayerSessionServices->GetOptionValue(MP4::OptionKeyMP4LoadConnectTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 8));
+	HTTP->Parameters.NoDataTimeout = PlayerSessionServices->GetOptionValue(MP4::OptionKeyMP4LoadNoDataTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 6));
 
 	// Explicit range?
 	int64 NumRequestedBytes = HTTP->Parameters.Range.GetNumberOfBytes();
@@ -605,7 +580,7 @@ void FStreamReaderMP4::HandleRequest()
 							// retry on the _next_ AU and not this one again!
 							Request->CurrentIteratorBytePos = SampleFileOffset + SampleSize;
 						}
-						else if (AccessUnit->PTS >= AccessUnit->LatestPTS)
+						else if (AccessUnit->DTS >= AccessUnit->LatestPTS && AccessUnit->PTS >= AccessUnit->LatestPTS)
 						{
 							// Tag the last one and send it off, but stop doing so for the remainder of the segment.
 							// Note: we continue reading this segment all the way to the end on purpose in case there are further 'emsg' boxes.
@@ -704,24 +679,22 @@ void FStreamReaderMP4::HandleRequest()
 	DurationSuccessfullyRead	  = PrimaryTrack.DurationSuccessfullyRead;
 	DurationSuccessfullyDelivered = PrimaryTrack.DurationSuccessfullyDelivered;
 
-	// Set up remaining download stat fields.
-// Note: currently commented out because of UE-88612.
-//       This must be reinstated once we set failure reasons in the loop above so they won't get replaced by this!
-//		if (ds.FailureReason.length() == 0)
+	// Set up download stat fields.
+	if (Request->ConnectionInfo.EffectiveURL.Len())
 	{
-		ds.FailureReason = Request->ConnectionInfo.StatusInfo.ErrorDetail.GetMessage();
+		ds.URL = Request->ConnectionInfo.EffectiveURL;
 	}
+	ds.HTTPStatusCode = Request->ConnectionInfo.StatusInfo.HTTPStatus;
+	ds.TimeToFirstByte = Request->ConnectionInfo.TimeUntilFirstByte;
+	ds.TimeToDownload = (Request->ConnectionInfo.RequestEndTime - Request->ConnectionInfo.RequestStartTime).GetAsSeconds();
+	ds.ByteSize = Request->ConnectionInfo.ContentLength;
+	ds.NumBytesDownloaded = Request->ConnectionInfo.BytesReadSoFar;
+
+	ds.FailureReason = Request->ConnectionInfo.StatusInfo.ErrorDetail.GetMessage();
 	if (ParsingErrorMessage.Len())
 	{
 		ds.FailureReason = ParsingErrorMessage;
 	}
-//		if (bAbortedByABR)
-//		{
-//			// If aborted set the reason as the download failure.
-//			ds.FailureReason = ds.ABRState.ProgressDecision.Reason;
-//		}
-//		ds.bWasAborted  	  = bAbortedByABR;
-//		ds.bWasSuccessful     = !bHasErrored && !bAbortedByABR;
 	ds.bWasSuccessful     = !bHasErrored;
 	ds.URL  			  = Request->ConnectionInfo.EffectiveURL;
 	ds.HTTPStatusCode     = Request->ConnectionInfo.StatusInfo.HTTPStatus;

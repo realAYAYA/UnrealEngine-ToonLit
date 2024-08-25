@@ -47,7 +47,7 @@ class _Base(object):
                 value = str(value).replace("\n", "\\n")
                 out(f"export {key}=$'{value}'")
 
-        out("\$tip")
+        out(r"\$tip")
         out("echo")
 
 
@@ -77,18 +77,19 @@ class _Bash(_Base):
         working_dir = system.get_working_dir()
         script_path = working_dir + "complete.bash"
 
-        global _complete_bash
+        out_sh = _get_complete_bash()
         cmd_tree = system.get_command_tree()
         tree_root = cmd_tree.get_root_node()
         for name,_ in tree_root.read_children():
-            _complete_bash += " " + shlex.quote(name)
+            out_sh += " " + shlex.quote(name)
 
         with open(script_path, "w") as out:
-            out.write(_complete_bash)
+            out.write(out_sh)
 
         return script_path
 
-_complete_bash = r"""
+def _get_complete_bash():
+    return r"""
 function _flow_prompt() {
     if [[ ! -z "$FLOW_PROMPT" ]]; then
         local prompt=${FLOW_PROMPT/:FLOW_CWD:/$(dirs +0)}
@@ -146,15 +147,16 @@ class _Zsh(_Base):
         tree_root = cmd_tree.get_root_node()
         flow_cmds = "' '".join(name for name,_ in tree_root.read_children())
 
-        global _complete_zsh
-        out_sh = _complete_zsh.replace("$$$FLOW_CMDS$$$", flow_cmds)
+        out_sh = _get_complete_zsh()
+        out_sh = out_sh.replace("$$$FLOW_CMDS$$$", flow_cmds)
 
         with open(script_path, "w") as out:
             out.write(out_sh)
 
         return script_path
 
-_complete_zsh = r"""
+def _get_complete_zsh():
+    return r"""
 _flow_prompt() {
     FLOW_CWD=$(dirs)
     eval $(\$prompt --format=sh)
@@ -166,6 +168,10 @@ fi
 if [[ -z "$FLOW_CMDS" ]]; then
     precmd_functions+=(_flow_prompt)
 fi
-unset FLOW_CMDS
-FLOW_CMDS+=('$$$FLOW_CMDS$$$')
+
+function _flow_complete() {
+    # setopt local_options xtrace
+    compadd $('$complete' -- ${^^words[@]:0:-1} $PREFIX...)
+}
+compdef _flow_complete '$$$FLOW_CMDS$$$'
 """

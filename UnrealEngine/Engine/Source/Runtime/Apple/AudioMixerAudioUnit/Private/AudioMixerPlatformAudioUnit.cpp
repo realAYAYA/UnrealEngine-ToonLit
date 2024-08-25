@@ -10,8 +10,6 @@
 #include "CoreMinimal.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/CoreDelegates.h"
-#include "ADPCMAudioInfo.h"
-#include "BinkAudioInfo.h"
 #include "Misc/CommandLine.h"
 
 /*
@@ -82,7 +80,8 @@ namespace Audio
 			return false;
 		}
 		
-        bSupportsBackgroundAudio = GConfig->GetBool(TEXT("/Script/IOSRuntimeSettings.IOSRuntimeSettings"), TEXT("bSupportsBackgroundAudio"), bSupportsBackgroundAudio, GEngineIni);
+		bSupportsBackgroundAudio = false;
+		GConfig->GetBool(TEXT("/Script/IOSRuntimeSettings.IOSRuntimeSettings"), TEXT("bSupportsBackgroundAudio"), bSupportsBackgroundAudio, GEngineIni);
 
 		OSStatus Status;
 		GraphSampleRate = (double) InternalPlatformSettings.SampleRate;
@@ -391,39 +390,6 @@ namespace Audio
 		
 		int32 PushResult = CircularOutputBuffer.Push((const int8*)Buffer, BytesToSubmitToAudioMixer);
 		check(PushResult == BytesToSubmitToAudioMixer);
-	}
-
-	FName FMixerPlatformAudioUnit::GetRuntimeFormat(const USoundWave* InSoundWave) const
-	{
-		FName RuntimeFormat = Audio::ToName(InSoundWave->GetSoundAssetCompressionType());
-
-		// On IOS the default platform specific codec is ADPCM
-		if (RuntimeFormat == Audio::NAME_PLATFORM_SPECIFIC)
-		{
-			RuntimeFormat = Audio::NAME_ADPCM;
-		}
-
-		return RuntimeFormat;
-	}
-
-	ICompressedAudioInfo* FMixerPlatformAudioUnit::CreateCompressedAudioInfo(const FName& InRuntimeFormat) const
-	{
-		ICompressedAudioInfo* Decoder = nullptr;
-
-		if (InRuntimeFormat == Audio::NAME_PLATFORM_SPECIFIC)
-		{
-			Decoder = new FADPCMAudioInfo();
-		}	
-		else if (InRuntimeFormat == Audio::NAME_BINKA)
-		{
-			Decoder = new FBinkAudioInfo();
-		}
-		else
-		{
-			Decoder = Audio::CreateSoundAssetDecoder(InRuntimeFormat);
-		}
-		ensureMsgf(Decoder != nullptr, TEXT("Failed to create a sound asset decoder for compression type: %s"), *InRuntimeFormat.ToString());
-		return Decoder;
 	}
 
 	FString FMixerPlatformAudioUnit::GetDefaultDeviceName()

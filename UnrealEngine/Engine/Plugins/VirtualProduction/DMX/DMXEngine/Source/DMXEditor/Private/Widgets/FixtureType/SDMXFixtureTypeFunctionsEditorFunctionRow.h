@@ -81,6 +81,9 @@ private:
 	/** Called when the Attribute Name changed */
 	void OnUserChangedAttributeName(FName NewValue);
 
+	/** Called when the delete attribute button was clicked */
+	FReply OnDeleteAttributeClicked();
+
 	/** True while this is being dragged in a drag drop op */
 	bool bIsBeingDragged = false;
 

@@ -4,6 +4,7 @@
 #include "NetworkPredictionModelDefRegistry.h"
 #include "NetworkPredictionProxyInit.h"
 #include "NetworkPredictionPhysics.h"
+#include "Engine/OverlapResult.h"
 #include "Services/NetworkPredictionInstanceMap.h"
 #include "Services/NetworkPredictionService_Finalize.inl"
 #include "Services/NetworkPredictionService_Input.inl"

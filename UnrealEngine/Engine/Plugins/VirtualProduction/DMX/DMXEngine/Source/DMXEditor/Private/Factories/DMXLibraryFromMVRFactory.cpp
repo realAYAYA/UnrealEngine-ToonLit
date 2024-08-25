@@ -97,7 +97,7 @@ bool UDMXLibraryFromMVRFactory::CanReimport(UObject* Obj, TArray<FString>& OutFi
 void UDMXLibraryFromMVRFactory::SetReimportPaths(UObject* Obj, const TArray<FString>& NewReimportPaths)
 {
 	UDMXMVRAssetImportData* MVRAssetImportData = GetMVRAssetImportData(Obj);
-	if (!ensureMsgf(MVRAssetImportData, TEXT("Invalid MVR Asset Import Data for General Scene Description %s.")))
+	if (!ensureMsgf(MVRAssetImportData, TEXT("Invalid MVR Asset Import Data for General Scene Description.")))
 	{
 		return;
 	}

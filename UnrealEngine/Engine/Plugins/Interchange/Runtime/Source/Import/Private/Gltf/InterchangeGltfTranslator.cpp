@@ -21,6 +21,7 @@
 #include "InterchangeSceneNode.h"
 #include "InterchangeShaderGraphNode.h"
 #include "InterchangeTexture2DNode.h"
+#include "InterchangeTranslatorHelper.h"
 #include "InterchangeVariantSetNode.h"
 #include "Nodes/InterchangeSourceNode.h"
 
@@ -62,13 +63,15 @@ static const TArray<FString> ImporterSupportedExtensions = {
 	GLTF::ToString(GLTF::EExtension::KHR_MaterialsSpecular),
 	GLTF::ToString(GLTF::EExtension::KHR_MaterialsPbrSpecularGlossiness),
 	GLTF::ToString(GLTF::EExtension::KHR_MaterialsEmissiveStrength),
+	GLTF::ToString(GLTF::EExtension::KHR_MaterialsIridescence),
 	GLTF::ToString(GLTF::EExtension::MSFT_PackingOcclusionRoughnessMetallic),
 	GLTF::ToString(GLTF::EExtension::MSFT_PackingNormalRoughnessMetallic),
 	/* Textures */
 	GLTF::ToString(GLTF::EExtension::KHR_TextureTransform),
 
 	/* Mesh */
-	GLTF::ToString(GLTF::EExtension::KHR_MeshQuantization)
+	GLTF::ToString(GLTF::EExtension::KHR_MeshQuantization),
+	GLTF::ToString(GLTF::EExtension::KHR_DracoMeshCompression)
 };
 
 namespace UE::Interchange::Gltf::Private
@@ -144,22 +147,20 @@ namespace UE::Interchange::Gltf::Private
 		NOTSUPPORTED_EXTENSION_FOUND
 	};
 	void SendAnalytics(const TranslationResult& TranslationResult,
-		const TArray<FString>& ExtensionsUsed = TArray<FString>(),
-		const TArray<FString>& ExtensionsRequired = TArray<FString>(),
-		GLTF::FMetadata Metadata = GLTF::FMetadata(),
+		const GLTF::FAsset& Asset = GLTF::FAsset(),
 		const FString& GLTFReaderLogMessage = "")
 	{
 		if (FEngineAnalytics::IsAvailable())
 		{
 			TMap<FString, FString> MetadataExtras;
-			for (GLTF::FMetadata::FExtraData ExtraData : Metadata.Extras)
+			for (GLTF::FMetadata::FExtraData ExtraData : Asset.Metadata.Extras)
 			{
 				MetadataExtras.Add(ExtraData.Name, ExtraData.Value);
 			}
 
 			TSet<FString> AllExtensions;
-			AllExtensions.Append(ExtensionsUsed);
-			AllExtensions.Append(ExtensionsRequired);
+			AllExtensions.Append(Asset.ExtensionsUsed);
+			AllExtensions.Append(Asset.ExtensionsRequired);
 
 			TArray<FString> ExtensionsSupported;
 			TArray<FString> ExtensionsUnsupported;
@@ -177,13 +178,14 @@ namespace UE::Interchange::Gltf::Private
 			}
 
 			TArray<FAnalyticsEventAttribute> GLTFAnalytics;
-			if (ExtensionsUsed.Num() > 0)					GLTFAnalytics.Add(FAnalyticsEventAttribute(TEXT("ExtensionsUsed"), ExtensionsUsed));
-			if (ExtensionsRequired.Num() > 0)				GLTFAnalytics.Add(FAnalyticsEventAttribute(TEXT("ExtensionsRequired"), ExtensionsRequired));
+			if (Asset.ExtensionsUsed.Num() > 0)				GLTFAnalytics.Add(FAnalyticsEventAttribute(TEXT("ExtensionsUsed"), Asset.ExtensionsUsed));
+			if (Asset.ExtensionsRequired.Num() > 0)			GLTFAnalytics.Add(FAnalyticsEventAttribute(TEXT("ExtensionsRequired"), Asset.ExtensionsRequired));
 			if (ExtensionsSupported.Num() > 0)				GLTFAnalytics.Add(FAnalyticsEventAttribute(TEXT("ExtensionsSupported"), ExtensionsSupported));
 			if (ExtensionsUnsupported.Num() > 0)			GLTFAnalytics.Add(FAnalyticsEventAttribute(TEXT("ExtensionsUnsupported"), ExtensionsUnsupported));
-			if (Metadata.GeneratorName.Len() > 0)			GLTFAnalytics.Add(FAnalyticsEventAttribute(TEXT("MetaData.GeneratorName"), Metadata.GeneratorName));
+			if (Asset.Metadata.GeneratorName.Len() > 0)		GLTFAnalytics.Add(FAnalyticsEventAttribute(TEXT("MetaData.GeneratorName"), Asset.Metadata.GeneratorName));
 			if (MetadataExtras.Num() > 0)					GLTFAnalytics.Add(FAnalyticsEventAttribute(TEXT("MetaData.Extras"), MetadataExtras));
-			/*Version is always set at this point.*/		GLTFAnalytics.Add(FAnalyticsEventAttribute(TEXT("MetaData.Version"), Metadata.Version));
+			/*Version is always set at this point.*/		GLTFAnalytics.Add(FAnalyticsEventAttribute(TEXT("MetaData.Version"), Asset.Metadata.Version));
+			if (Asset.HasAbnormalInverseBindMatrices)		GLTFAnalytics.Add(FAnalyticsEventAttribute(TEXT("HasAbnormalInverseBindMatrices"), true));
 
 			switch (TranslationResult)
 			{
@@ -207,30 +209,11 @@ namespace UE::Interchange::Gltf::Private
 			FEngineAnalytics::GetProvider().RecordEvent(TEXT("Interchange.Usage.Import.GLTF"), GLTFAnalytics);
 		}
 	};
-
-	void AcquireJointsWithBindPose(const TArray<GLTF::FNode>& GLTFNodes,int32 CurrentIndex, TSet<int32>& Joints)
-	{
-		if (GLTFNodes.IsValidIndex(CurrentIndex))
-		{
-			const GLTF::FNode& CurrentNode = GLTFNodes[CurrentIndex];
-			if (CurrentNode.Type == GLTF::FNode::EType::Joint)
-			{
-				if (CurrentNode.bHasLocalBindPose)
-				{
-					Joints.Add(CurrentIndex);
-				}
-
-				for (int32 ChildIndex : CurrentNode.Children)
-				{
-					AcquireJointsWithBindPose(GLTFNodes, ChildIndex, Joints);
-				}
-			}
-		}
-	}
 }
 
 void UInterchangeGLTFTranslator::HandleGltfNode( UInterchangeBaseNodeContainer& NodeContainer, const GLTF::FNode& GltfNode, const FString& ParentNodeUid, const int32 NodeIndex, 
-	bool &bHasVariants, TArray<int32>& SkinnedMeshNodes, TSet<int>& UnusedMeshIndices ) const
+	bool &bHasVariants, TArray<int32>& SkinnedMeshNodes, TSet<int>& UnusedMeshIndices,
+	const TMap<int32, FTransform>& T0Transforms ) const
 {
 	using namespace UE::Interchange::Gltf::Private;
 
@@ -240,6 +223,7 @@ void UInterchangeGLTFTranslator::HandleGltfNode( UInterchangeBaseNodeContainer& 
 
 	UInterchangeSceneNode* InterchangeSceneNode = NewObject< UInterchangeSceneNode >( &NodeContainer );
 	InterchangeSceneNode->InitializeNode( NodeUid, GltfNode.Name, EInterchangeNodeContainerType::TranslatedScene );
+	InterchangeSceneNode->SetAssetName(GltfNode.UniqueId);
 	NodeContainer.AddNode( InterchangeSceneNode );
 
 	NodeUidMap.Add( &GltfNode, NodeUid );
@@ -273,7 +257,7 @@ void UInterchangeGLTFTranslator::HandleGltfNode( UInterchangeBaseNodeContainer& 
 				}
 				else
 				{
-					UE_LOG(LogInterchangeImport, Warning, TEXT("GLTF Node [%d] Import Warning. Gltf Node's MorphTargetNames count is missmatched against MorphTargetWeights count."), *GltfNode.UniqueId);
+					UE_LOG(LogInterchangeImport, Warning, TEXT("glTF Node [%d] Import Warning: The glTF node's MorphTargetNames count does not match its MorphTargetWeights count."), *GltfNode.UniqueId);
 				}
 			}
 
@@ -286,6 +270,16 @@ void UInterchangeGLTFTranslator::HandleGltfNode( UInterchangeBaseNodeContainer& 
 			if (GltfNode.bHasLocalBindPose)
 			{
 				InterchangeSceneNode->SetCustomBindPoseLocalTransform(&NodeContainer, GltfNode.LocalBindPose);
+			}
+			
+			if (GltfAsset.Animations.Num() == 0 || !T0Transforms.Contains(GltfNode.Index))
+			{
+				//If no animations present, use Local Transform for T0
+				InterchangeSceneNode->SetCustomTimeZeroLocalTransform(&NodeContainer, GltfNode.Transform);
+			}
+			else
+			{
+				InterchangeSceneNode->SetCustomTimeZeroLocalTransform(&NodeContainer, T0Transforms[GltfNode.Index]);
 			}
 			break;
 		}
@@ -312,7 +306,7 @@ void UInterchangeGLTFTranslator::HandleGltfNode( UInterchangeBaseNodeContainer& 
 					}
 					else
 					{
-						UE_LOG(LogInterchangeImport, Warning, TEXT("GLTF Node [%d] Import Warning. Gltf Node's MorphTargetNames count is missmatched against MorphTargetWeights count."), *GltfNode.UniqueId);
+						UE_LOG(LogInterchangeImport, Warning, TEXT("glTF Node [%d] Import Warning: The glTF node's MorphTargetNames count does not match its MorphTargetWeights count."), *GltfNode.UniqueId);
 					}
 				}
 
@@ -367,7 +361,7 @@ void UInterchangeGLTFTranslator::HandleGltfNode( UInterchangeBaseNodeContainer& 
 	{
 		if ( GltfAsset.Nodes.IsValidIndex( ChildIndex ) )
 		{
-			HandleGltfNode( NodeContainer, GltfAsset.Nodes[ ChildIndex ], NodeUid, ChildIndex, bHasVariants, SkinnedMeshNodes, UnusedMeshIndices );
+			HandleGltfNode( NodeContainer, GltfAsset.Nodes[ ChildIndex ], NodeUid, ChildIndex, bHasVariants, SkinnedMeshNodes, UnusedMeshIndices, T0Transforms);
 		}
 	}
 }
@@ -436,7 +430,7 @@ bool UInterchangeGLTFTranslator::Translate( UInterchangeBaseNodeContainer& NodeC
 			ErrorResult->SourceAssetName = FileName;
 			ErrorResult->Text = FText::Format(LOCTEXT("GLTF::FFileReader::ReadFile Failed.", "LogMessage: {0}"), FText::FromString(LogMessage.Value));
 
-			SendAnalytics(TranslationResult::GLTFREADER_FAILED, GltfAsset.ExtensionsUsed,GltfAsset.ExtensionsRequired, GltfAsset.Metadata, LogMessage.Value);
+			SendAnalytics(TranslationResult::GLTFREADER_FAILED, GltfAsset, LogMessage.Value);
 			return false;
 		}
 	}
@@ -457,10 +451,10 @@ bool UInterchangeGLTFTranslator::Translate( UInterchangeBaseNodeContainer& NodeC
 		UInterchangeResultError_Generic* ErrorResult = AddMessage< UInterchangeResultError_Generic >();
 		ErrorResult->SourceAssetName = FileName;
 		ErrorResult->Text = FText::Format(
-			LOCTEXT("UnsupportedRequiredExtensions", "Not All Required Extensions are supported. (Unsupported extensions: {0})"),
+			LOCTEXT("UnsupportedRequiredExtensions", "Not all required extensions are supported. (Unsupported extensions: {0})"),
 			FText::FromString(NotSupportedRequiredExtensionsStringified));
 
-		SendAnalytics(TranslationResult::NOTSUPPORTED_EXTENSION_FOUND, GltfAsset.ExtensionsUsed, GltfAsset.ExtensionsRequired, GltfAsset.Metadata);
+		SendAnalytics(TranslationResult::NOTSUPPORTED_EXTENSION_FOUND, GltfAsset);
 		return false;
 	}
 
@@ -681,6 +675,33 @@ bool UInterchangeGLTFTranslator::Translate( UInterchangeBaseNodeContainer& NodeC
 
 	// Scenes
 	{
+		//Generate T0 Transforms
+		TMap<int32, FTransform> T0Transforms;
+		if (GltfAsset.Animations.Num() > 0)
+		{
+			const GLTF::FAnimation& Animation = GltfAsset.Animations[0];
+
+			//Only Skeletal Animations (no Morph Animations as those do not produce FTransforms)
+			TMap<int32, TArray<int32>> AnimatedNodesIndexToChannelIndices;//(AnimatedNodeIndex, [Channels])
+			for (int32 ChannelIndex = 0; ChannelIndex < Animation.Channels.Num(); ++ChannelIndex)
+			{
+				const GLTF::FAnimation::FChannel& Channel = Animation.Channels[ChannelIndex];
+
+				if (Channel.Target.Node.Type == GLTF::FNode::EType::Joint)
+				{
+					TArray<int32>& ChannelIndices = AnimatedNodesIndexToChannelIndices.FindOrAdd(Channel.Target.Node.Index);
+					ChannelIndices.Add(ChannelIndex);
+				}
+			}
+
+			for (const TPair<int32, TArray<int32>>& AnimatedNodeIndexToChannelIndices : AnimatedNodesIndexToChannelIndices)
+			{
+				FTransform T0Transform;
+				UE::Interchange::Gltf::Private::GetT0Transform(Animation, GltfAsset.Nodes[AnimatedNodeIndexToChannelIndices.Key], AnimatedNodeIndexToChannelIndices.Value, T0Transform);
+				T0Transforms.Emplace(AnimatedNodeIndexToChannelIndices.Key, T0Transform);
+			}
+		}
+
 		int32 SceneIndex = 0;
 		for ( const GLTF::FScene& GltfScene : GltfAsset.Scenes )
 		{
@@ -700,7 +721,7 @@ bool UInterchangeGLTFTranslator::Translate( UInterchangeBaseNodeContainer& NodeC
 			{
 				if ( GltfAsset.Nodes.IsValidIndex( NodeIndex ) )
 				{
-					HandleGltfNode( NodeContainer, GltfAsset.Nodes[ NodeIndex ], SceneNodeUid, NodeIndex, bHasVariants, SkinnedMeshNodes, UnusedGltfMeshIndices );
+					HandleGltfNode( NodeContainer, GltfAsset.Nodes[ NodeIndex ], SceneNodeUid, NodeIndex, bHasVariants, SkinnedMeshNodes, UnusedGltfMeshIndices, T0Transforms);
 				}
 			}
 
@@ -711,10 +732,7 @@ bool UInterchangeGLTFTranslator::Translate( UInterchangeBaseNodeContainer& NodeC
 
 	// Animations
 	{
-		for ( int32 AnimationIndex = 0; AnimationIndex < GltfAsset.Animations.Num(); ++AnimationIndex )
-		{
-			HandleGltfAnimation( NodeContainer, AnimationIndex );
-		}
+		UE::Interchange::Gltf::Private::HandleGLTFAnimations(NodeContainer, GltfAsset.Animations, GltfAsset.Nodes, NodeUidMap);
 	}
 
 	// Variants
@@ -771,10 +789,10 @@ bool UInterchangeGLTFTranslator::Translate( UInterchangeBaseNodeContainer& NodeC
 
 	if (UnusedGltfMeshIndices.Num() != 0)
 	{
-		UE_LOG(LogInterchangeImport, Warning, TEXT("GLTF Mesh Import Warning. Gltf Mesh Usage expectation is not met."));
+		UE_LOG(LogInterchangeImport, Warning, TEXT("glTF Mesh Import Warning: glTF mesh usage expectations are not met."));
 	}
 
-	SendAnalytics(TranslationResult::SUCCESSFULL, GltfAsset.ExtensionsUsed, GltfAsset.ExtensionsRequired, GltfAsset.Metadata);
+	SendAnalytics(TranslationResult::SUCCESSFULL, GltfAsset);
 	return true;
 }
 
@@ -807,30 +825,18 @@ TOptional< UE::Interchange::FImportImage > UInterchangeGLTFTranslator::GetTextur
 		UInterchangeImageWrapperTranslator* ImageWrapperTranslator = NewObject<UInterchangeImageWrapperTranslator>(GetTransientPackage(), NAME_None);
 		ImageWrapperTranslator->SetResultsContainer(Results);
 		TexturePayloadData = ImageWrapperTranslator->GetTexturePayloadDataFromBuffer(ImageData);
+		ImageWrapperTranslator->ClearInternalFlags(EInternalObjectFlags::Async);
 	}
 	else
 	{
 		const FString TextureFilePath = FPaths::ConvertRelativePathToFull(GltfTexture.Source.FilePath);
-
-		UInterchangeSourceData* PayloadSourceData = UInterchangeManager::GetInterchangeManager().CreateSourceData(TextureFilePath);
-		FGCObjectScopeGuard ScopedSourceData(PayloadSourceData);
-
-		if (!PayloadSourceData)
-		{
-			return TexturePayloadData;
-		}
-
-		UInterchangeTranslatorBase* SourceTranslator = UInterchangeManager::GetInterchangeManager().GetTranslatorForSourceData(PayloadSourceData);
-		FGCObjectScopeGuard ScopedSourceTranslator(SourceTranslator);
-		const IInterchangeTexturePayloadInterface* TextureTranslator = Cast< IInterchangeTexturePayloadInterface >(SourceTranslator);
+		UE::Interchange::Private::FScopedTranslator ScopedTranslator(TextureFilePath, Results);
+		const IInterchangeTexturePayloadInterface* TextureTranslator = ScopedTranslator.GetPayLoadInterface<IInterchangeTexturePayloadInterface>();
 		if (!ensure(TextureTranslator))
 		{
 			return TexturePayloadData;
 		}
-		SourceTranslator->SetResultsContainer(Results);
-
 		AlternateTexturePath = TextureFilePath;
-
 		TexturePayloadData = TextureTranslator->GetTexturePayloadData(PayloadKey, AlternateTexturePath);
 	}
 
@@ -885,352 +891,6 @@ TFuture<TOptional<UE::Interchange::FAnimationPayloadData>> UInterchangeGLTFTrans
 			return Result;
 		}
 	);
-}
-
-void UInterchangeGLTFTranslator::HandleGltfAnimation(UInterchangeBaseNodeContainer& NodeContainer, int32 AnimationIndex) const
-{
-	const GLTF::FAnimation& GltfAnimation = GltfAsset.Animations[AnimationIndex];
-
-	TMap< const GLTF::FNode*, TArray<int32> > NodeChannelsMap;
-
-	TMap<FString, UInterchangeSkeletalAnimationTrackNode*> RootJointIndexToTrackNodeMap;
-	TMap<UInterchangeSkeletalAnimationTrackNode*, TMap<FString, TArray<int32>>> TrackNodeToJointUidWithChannelsUsedMap;
-
-	TMap<int32, TSet<int32>> SkeletonRootToAnimatedJointNodeIndicesMap;	// (SkeletonRootUID, [AnimatedNodeIndices])
-
-	for (int32 ChannelIndex = 0; ChannelIndex < GltfAnimation.Channels.Num(); ++ChannelIndex)
-	{
-		const GLTF::FAnimation::FChannel& Channel = GltfAnimation.Channels[ChannelIndex];
-		const GLTF::FNode* AnimatedNode = &Channel.Target.Node;
-
-		const FString* AnimatedNodeUidPtr = NodeUidMap.Find(AnimatedNode);
-		if (!ensure(AnimatedNodeUidPtr))
-		{
-			continue;
-		}
-
-		FString AnimatedNodeUid = *AnimatedNodeUidPtr;
-
-		auto CreateSkeletalAnimationTrackNode = [&NodeContainer, &RootJointIndexToTrackNodeMap, &GltfAnimation, &AnimationIndex, &TrackNodeToJointUidWithChannelsUsedMap, &ChannelIndex, &AnimatedNodeUid](const FString& SkeletonNodeUid, const TMap<FString, FString>& AnimationPayloadKeyForMorphTargetNodeUids)
-		{
-			if (SkeletonNodeUid.Len() > 0)
-			{
-				UInterchangeSkeletalAnimationTrackNode* TrackNode = nullptr;
-				if (RootJointIndexToTrackNodeMap.Contains(SkeletonNodeUid))
-				{
-					TrackNode = RootJointIndexToTrackNodeMap[SkeletonNodeUid];
-				}
-				else
-				{
-					TrackNode = NewObject< UInterchangeSkeletalAnimationTrackNode >(&NodeContainer);
-					FString TrackNodeUid = "\\SkeletalAnimation\\" + SkeletonNodeUid + "_" + LexToString(AnimationIndex);
-					TrackNode->InitializeNode(TrackNodeUid, GltfAnimation.Name, EInterchangeNodeContainerType::TranslatedAsset);
-					TrackNode->SetCustomSkeletonNodeUid(SkeletonNodeUid);
-
-					NodeContainer.AddNode(TrackNode);
-
-					RootJointIndexToTrackNodeMap.Add(SkeletonNodeUid, TrackNode);
-				}
-
-				for (const TPair<FString, FString>& AnimationPayloadKeyForMorphTargetNodeUid : AnimationPayloadKeyForMorphTargetNodeUids)
-				{
-					TrackNode->SetAnimationPayloadKeyForMorphTargetNodeUid(AnimationPayloadKeyForMorphTargetNodeUid.Key, AnimationPayloadKeyForMorphTargetNodeUid.Value, EInterchangeAnimationPayLoadType::MORPHTARGETCURVE);
-				}
-
-				TMap<FString, TArray<int32>>& JointUidWithChannelsUsedMap = TrackNodeToJointUidWithChannelsUsedMap.FindOrAdd(TrackNode);
-				TArray<int32>& ChannelsUsed = JointUidWithChannelsUsedMap.FindOrAdd(AnimatedNodeUid);
-				ChannelsUsed.Add(ChannelIndex);
-			}
-		};
-
-
-		bool bAnimationChannelProcessed = false;
-
-		bool bSkeletalAnimation = AnimatedNode->Type == GLTF::FNode::EType::Joint && GltfAsset.Nodes.IsValidIndex(AnimatedNode->RootJointIndex);
-		if (bSkeletalAnimation)
-		{
-			const FString* SkeletonUidPtr = NodeUidMap.Find(&GltfAsset.Nodes[AnimatedNode->RootJointIndex]);
-			FString SkeletonNodeUid = *SkeletonUidPtr;
-
-			CreateSkeletalAnimationTrackNode(SkeletonNodeUid, TMap<FString, FString>());
-
-			TSet<int32> AnimatedNodeIndices = SkeletonRootToAnimatedJointNodeIndicesMap.FindOrAdd(AnimatedNode->RootJointIndex);
-			for (int32 NodeIndex = 0; NodeIndex < GltfAsset.Nodes.Num(); NodeIndex++)
-			{
-				if (&GltfAsset.Nodes[NodeIndex] == AnimatedNode)
-				{
-					AnimatedNodeIndices.Add(NodeIndex);
-					break;
-				}
-			}
-
-			bAnimationChannelProcessed = true;
-		}
-
-		bool bMorphTargetAnimation = Channel.Target.Path == GLTF::FAnimation::EPath::Weights;
-		if (bMorphTargetAnimation)
-		{
-			TMap<FString, FString> AnimationPayloadKeyForMorphTargetNodeUids;
-			//Find SceneNode that references the MeshNode:
-			if (const UInterchangeSceneNode* ConstSceneMeshActorNode = Cast< UInterchangeSceneNode >(NodeContainer.GetNode(*AnimatedNodeUid)))
-			{
-				FString SkeletalMeshUid;
-				if (ConstSceneMeshActorNode->GetCustomAssetInstanceUid(SkeletalMeshUid))
-				{
-					if (const UInterchangeMeshNode* MeshNode = Cast< UInterchangeMeshNode >(NodeContainer.GetNode(SkeletalMeshUid)))
-					{
-						TArray<FString> MorphTargetDependencies;
-						MeshNode->GetMorphTargetDependencies(MorphTargetDependencies);
-						for (const FString& MorphTargetDependencyUid : MorphTargetDependencies)
-						{
-							if (const UInterchangeMeshNode* MorphTargetNodeConst = Cast< UInterchangeMeshNode >(NodeContainer.GetNode(MorphTargetDependencyUid)))
-							{
-								if (MorphTargetNodeConst->GetPayLoadKey().IsSet())
-								{
-									FInterchangeMeshPayLoadKey PayLoadKey = MorphTargetNodeConst->GetPayLoadKey().GetValue();
-									FString PayLoadKeyUniqueId = LexToString(AnimationIndex) + TEXT(":") + LexToString(ChannelIndex) + TEXT(":") + PayLoadKey.UniqueId;
-
-									AnimationPayloadKeyForMorphTargetNodeUids.Add(MorphTargetDependencyUid, PayLoadKeyUniqueId);
-								}
-							}
-						}
-					}
-				}
-			}
-
-			if (AnimationPayloadKeyForMorphTargetNodeUids.Num() > 0)
-			{
-				FString SkeletonNodeUid = AnimatedNodeUid;
-				CreateSkeletalAnimationTrackNode(AnimatedNodeUid, AnimationPayloadKeyForMorphTargetNodeUids);
-			}
-
-			bAnimationChannelProcessed = true;
-		}
-
-		if (bAnimationChannelProcessed)
-		{
-			continue;
-		}
-
-		TArray<int32>& NodeChannels = NodeChannelsMap.FindOrAdd(AnimatedNode);
-		NodeChannels.Add(ChannelIndex);
-	}
-
-	{//Fix Skeletal Animations
-		for (const TTuple<int32, TSet<int32>>& AnimatedJointNodeIndices : SkeletonRootToAnimatedJointNodeIndicesMap)
-		{
-			int32 SkeletonRootIndex = AnimatedJointNodeIndices.Key;
-
-			const FString* SkeletonUid = NodeUidMap.Find(&GltfAsset.Nodes[SkeletonRootIndex]);
-			if (!ensure(SkeletonUid))
-			{
-				continue;
-			}
-
-			if (!RootJointIndexToTrackNodeMap.Contains(*SkeletonUid))
-			{
-				continue;
-			}
-			UInterchangeSkeletalAnimationTrackNode* TrackNode = RootJointIndexToTrackNodeMap[*SkeletonUid];
-
-			TSet<int32> JointsWithBindPose;
-			UE::Interchange::Gltf::Private::AcquireJointsWithBindPose(GltfAsset.Nodes, SkeletonRootIndex, JointsWithBindPose);
-
-			TSet<int32> NodesToAddToAnimation = JointsWithBindPose.Difference(AnimatedJointNodeIndices.Value);
-			for (int32 NodeToAddIndex : NodesToAddToAnimation)
-			{
-				const FString* NodeToAddUidPtr = NodeUidMap.Find(&GltfAsset.Nodes[NodeToAddIndex]);
-				if (!ensure(NodeToAddUidPtr))
-				{
-					continue;
-				}
-				TrackNode->SetAnimationPayloadKeyForSceneNodeUid(*NodeToAddUidPtr, TEXT("BIND_POSE_FIX<->") + LexToString(NodeToAddIndex), EInterchangeAnimationPayLoadType::BAKED);
-			}
-		}
-	}
-
-	//setup rigged animations:
-	{
-		for (const TTuple<UInterchangeSkeletalAnimationTrackNode*, TMap<FString, TArray<int32>>>& TrackNodeAndJointNodeChannels : TrackNodeToJointUidWithChannelsUsedMap)
-		{
-			//@ StartTime = 0;
-			//from gltf documentation: https://registry.khronos.org/glTF/specs/2.0/glTF-2.0.html#animations
-			//Implementation Note
-			//	For example, if the earliest sampler input for an animation is t = 10, a client implementation must begin playback of that animation channel at t = 0 with output clamped to the first available output value.
-			double StartTime = 0.0;
-			double StopTime = 0.0;
-			double FrameRate = 30.0;
-			double SingleFrameDuration = 1.0 / FrameRate;
-			int32 FrameNumber = 0;
-			bool bHasAnimationPayloadSet = false;
-
-			for (const TTuple<FString, TArray<int32>>& JointNodeUidAndChannelsUsedPair : TrackNodeAndJointNodeChannels.Value)
-			{
-				bool bHasNonWeightAnimationChannel = false;
-				double PreviousStopTime = StopTime;
-				//check channel length and build payload
-				FString Payload = LexToString(AnimationIndex);
-				for (int32 ChannelIndex : JointNodeUidAndChannelsUsedPair.Value)
-				{
-					const GLTF::FAnimation::FChannel& Channel = GltfAnimation.Channels[ChannelIndex];
-					const GLTF::FAnimation::FSampler& Sampler = GltfAnimation.Samplers[Channel.Sampler];
-					TArray<float> Seconds;
-					Sampler.Input.GetFloatArray(Seconds);
-
-					if (Sampler.Interpolation == GLTF::FAnimation::EInterpolation::CubicSpline)
-					{
-						if (Sampler.Input.Count != 3 * Sampler.Output.Count)
-						{
-							// if any of the channels are corrupt the joint will not receive any of the  animation data
-							Payload = "";
-							UE_LOG(LogInterchangeImport, Warning, TEXT("GLTF Sampler Corrupt. Input and Output not meeting expectations."));
-							break;
-						}
-					}
-					else
-					{
-						if (Channel.Target.Path != GLTF::FAnimation::EPath::Weights && (Sampler.Input.Count != Sampler.Output.Count))
-						{
-							// if any of the channels are corrupt the joint will not receive any of the  animation data
-							Payload = "";
-							UE_LOG(LogInterchangeImport, Warning, TEXT("GLTF Sampler Corrupt. Input and Output not meeting expectations."));
-							break;
-						}
-					}
-
-					float CurrentStopTime = 0;
-					int32 CurrentFrameNumber = 0;
-
-					if (Seconds.Num() > 0)
-					{
-						//calculate FrameNumber and currentStopTime:
-						CurrentStopTime = Seconds[Seconds.Num() - 1];
-
-						float CurrentFrameNumberCandidate = CurrentStopTime / SingleFrameDuration;
-						CurrentFrameNumber = int(CurrentFrameNumberCandidate);
-						if (int(CurrentFrameNumberCandidate) < CurrentFrameNumberCandidate)
-						{
-							CurrentFrameNumber++;
-						}
-						CurrentStopTime = CurrentFrameNumber * SingleFrameDuration;
-					}
-
-					if (FrameNumber < CurrentFrameNumber)
-					{
-						FrameNumber = CurrentFrameNumber;
-						StopTime = FrameNumber * SingleFrameDuration;
-					}
-
-					if (Channel.Target.Path != GLTF::FAnimation::EPath::Weights)
-					{
-						bHasNonWeightAnimationChannel = true;
-						Payload += ":" + LexToString(ChannelIndex);
-					}
-				}
-
-				//set payload:
-				if (Payload.Len() > 0)
-				{
-					if (bHasNonWeightAnimationChannel)
-					{
-						TrackNodeAndJointNodeChannels.Key->SetAnimationPayloadKeyForSceneNodeUid(JointNodeUidAndChannelsUsedPair.Key, Payload, EInterchangeAnimationPayLoadType::BAKED);
-					}
-					
-					bHasAnimationPayloadSet = true;
-				}
-				else
-				{
-					StopTime = PreviousStopTime;
-				}
-			}
-
-			//set animation length:
-			if (bHasAnimationPayloadSet)
-			{
-				TrackNodeAndJointNodeChannels.Key->SetCustomAnimationSampleRate(FrameRate);
-				TrackNodeAndJointNodeChannels.Key->SetCustomAnimationStartTime(StartTime);
-				TrackNodeAndJointNodeChannels.Key->SetCustomAnimationStopTime(StopTime);
-			}
-		}
-	}
-
-	if (NodeChannelsMap.IsEmpty())
-	{
-		return;
-	}
-
-	UInterchangeAnimationTrackSetNode* TrackSetNode = NewObject< UInterchangeAnimationTrackSetNode >(&NodeContainer);
-
-	const FString AnimTrackSetNodeUid = TEXT("\\Animation\\") + GltfAnimation.UniqueId;
-	TrackSetNode->InitializeNode(AnimTrackSetNodeUid, GltfAnimation.Name, EInterchangeNodeContainerType::TranslatedAsset);
-
-	for (const TTuple<const GLTF::FNode*, TArray<int32>>& NodeChannelsEntry : NodeChannelsMap)
-	{
-		const TArray<int32>& ChannelIndices = NodeChannelsEntry.Value;
-		if (ChannelIndices.Num() == 0)
-		{
-			continue;
-		}
-
-		const GLTF::FNode* GltfNode = NodeChannelsEntry.Key;
-		const FString* NodeUid = NodeUidMap.Find(GltfNode);
-		if (!ensure(NodeUid))
-		{
-			continue;
-		}
-
-		UInterchangeTransformAnimationTrackNode* TransformAnimTrackNode = NewObject< UInterchangeTransformAnimationTrackNode >(&NodeContainer);
-
-		const FString TransformAnimTrackNodeName = FString::Printf(TEXT("%s_%s"), *GltfNode->Name, *GltfAnimation.Name);
-		const FString TransformAnimTrackNodeUid = TEXT("\\AnimationTrack\\") + TransformAnimTrackNodeName;
-
-		TransformAnimTrackNode->InitializeNode(TransformAnimTrackNodeUid, TransformAnimTrackNodeName, EInterchangeNodeContainerType::TranslatedAsset);
-
-		TransformAnimTrackNode->SetCustomActorDependencyUid(*NodeUid);
-
-		FString PayloadKey = FString::FromInt(AnimationIndex);
-
-		constexpr int32 TranslationChannel = 0x0001 | 0x0002 | 0x0004;
-		constexpr int32 RotationChannel = 0x0008 | 0x0010 | 0x0020;
-		constexpr int32 ScaleChannel = 0x0040 | 0x0080 | 0x0100;
-
-		int32 UsedChannels = 0;
-
-		for (int32 ChannelIndex : ChannelIndices)
-		{
-			PayloadKey += TEXT(":") + FString::FromInt(ChannelIndex);
-
-			const GLTF::FAnimation::FChannel& Channel = GltfAnimation.Channels[ChannelIndex];
-
-			switch (Channel.Target.Path)
-			{
-				case GLTF::FAnimation::EPath::Translation:
-				{
-					UsedChannels |= TranslationChannel;
-				} break;
-
-				case GLTF::FAnimation::EPath::Rotation:
-				{
-					UsedChannels |= RotationChannel;
-				} break;
-
-				case GLTF::FAnimation::EPath::Scale:
-				{
-					UsedChannels |= ScaleChannel;
-				} break;
-				default: break;
-			}
-		}
-
-		TransformAnimTrackNode->SetCustomAnimationPayloadKey(PayloadKey, EInterchangeAnimationPayLoadType::CURVE);
-		TransformAnimTrackNode->SetCustomUsedChannels(UsedChannels);
-
-		NodeContainer.AddNode(TransformAnimTrackNode);
-
-		TrackSetNode->AddCustomAnimationTrackUid(TransformAnimTrackNodeUid);
-	}
-
-	NodeContainer.AddNode(TrackSetNode);
 }
 
 void UInterchangeGLTFTranslator::SetTextureSRGB(UInterchangeBaseNodeContainer& NodeContainer, const GLTF::FTextureMap& TextureMap, bool bSRGB) const
@@ -1490,6 +1150,13 @@ TFuture< TOptional< UE::Interchange::FMeshPayloadData > > UInterchangeGLTFTransl
 			TOptional<UE::Interchange::FMeshPayloadData> Result;
 			if (bSuccessfullAcquisition)
 			{
+				if (!FStaticMeshOperations::ValidateAndFixData(MeshPayLoadData.MeshDescription, PayLoadKey.UniqueId))
+				{
+					UInterchangeResultError_Generic* ErrorResult = AddMessage<UInterchangeResultError_Generic>();
+					ErrorResult->SourceAssetName = SourceData ? SourceData->GetFilename() : FString();
+					ErrorResult->Text = NSLOCTEXT("UInterchangeGLTFTranslator", "GetMeshPayloadData_ValidateMeshDescriptionFail", "Invalid mesh data (NAN) was found and changed to zero. This may affect the mesh rendering.");
+				}
+
 				Result.Emplace(MeshPayLoadData);
 			}
 
@@ -1557,11 +1224,9 @@ void UInterchangeGLTFTranslator::HandleGltfSkeletons(UInterchangeBaseNodeContain
 				SkeletalMeshNode->SetSkeletonDependencyUid(*SkeletonNodeUid);
 			}
 
-			bool bBakeSkinJointTransform = RootSkinJointNodeIndex != RootJointNodeIndex || RootJointNode.ParentIndex == -1;
-
 			//generate payload key:
 			//of template:
-			//"LexToString(bBakeSkinJointTransform)";"LexToString(SkinnedMeshNode.MeshIndex | (SkinnedMeshNode.Skindex << 16))":"LexToString(SkinnedMeshNode.MeshIndex | (SkinnedMeshNode.Skindex << 16))".....
+			//"LexToString(SkinnedMeshNode.MeshIndex | (SkinnedMeshNode.Skindex << 16))":"LexToString(SkinnedMeshNode.MeshIndex | (SkinnedMeshNode.Skindex << 16))".....
 			FString Payload = TEXT("");
 			for (int32 SkinnedMeshIndex : RootJointToSkinnedMeshNodes.Value)
 			{
@@ -1573,7 +1238,6 @@ void UInterchangeGLTFTranslator::HandleGltfSkeletons(UInterchangeBaseNodeContain
 				
 				Payload += LexToString(SkinnedMeshNode.MeshIndex | (SkinnedMeshNode.Skindex << 16));
 			}
-			Payload = LexToString(bBakeSkinJointTransform) + TEXT(";") + Payload;
 			SkeletalMeshNode->SetPayLoadKey(Payload, EInterchangeMeshPayLoadType::SKELETAL);
 
 			//set the mesh actor node's custom asset instance uid to the new duplicated mesh
@@ -1700,7 +1364,7 @@ UInterchangeGLTFTranslator::UInterchangeGLTFTranslator()
 
 	if (!UE::Interchange::GLTFMaterials::AreRequiredPackagesLoaded())
 	{
-		UE_LOG(LogInterchangeImport, Warning, TEXT("UInterchangeGLTFPipeline: Some required packages are missing. Material import might be wrong"));
+		UE_LOG(LogInterchangeImport, Warning, TEXT("UInterchangeGLTFPipeline: Some required packages are missing. Material import might be wrong."));
 	}
 }
 

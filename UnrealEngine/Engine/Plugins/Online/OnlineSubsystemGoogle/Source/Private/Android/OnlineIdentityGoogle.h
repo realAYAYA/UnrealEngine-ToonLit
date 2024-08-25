@@ -5,7 +5,9 @@
 #include "OnlineIdentityGoogleCommon.h"
 #include "OnlineSubsystemGoogleTypes.h"
 #include "OnlineAccountGoogleCommon.h"
+#include "GoogleLoginWrapper.h"
 #include "OnlineSubsystemGooglePackage.h"
+
 
 class FOnlineSubsystemGoogle;
 
@@ -39,31 +41,34 @@ inline const TCHAR* ToString(EGoogleLoginResponse Response)
 	return TEXT("");
 }
 
-/**
- * Delegate fired when the Google Android SDK has completed a login request
- *
- * @param InResponseCode response from the Google SDK
- * @param InAccessToken access token if the response was RESPONSE_OK
- */
-DECLARE_MULTICAST_DELEGATE_TwoParams(FOnGoogleLoginComplete, EGoogleLoginResponse /*InResponseCode*/, const FString& /*InAccessToken*/);
-typedef FOnGoogleLoginComplete::FDelegate FOnGoogleLoginCompleteDelegate;
-
-/**
- * Delegate fired when the Google Android SDK has completed a logout request
- *
- * @param InResponseCode response from the Google SDK
- */
-DECLARE_MULTICAST_DELEGATE_OneParam(FOnGoogleLogoutComplete, EGoogleLoginResponse /*InResponseCode*/);
-typedef FOnGoogleLogoutComplete::FDelegate FOnGoogleLogoutCompleteDelegate;
-
 /** Android implementation of a Google user account */
 class FUserOnlineAccountGoogle : public FUserOnlineAccountGoogleCommon
 {
 public:
 
-	explicit FUserOnlineAccountGoogle(const FString& InUserId = FString(), const FAuthTokenGoogle& InAuthToken = FAuthTokenGoogle())
+	explicit FUserOnlineAccountGoogle()
+	{
+	}
+
+	explicit FUserOnlineAccountGoogle(FString&& InUserId, 
+									  FString&& InGivenName,
+									  FString&& InFamilyName,
+									  FString&& InDisplayName,
+									  FString&& InPicture,
+									  const FAuthTokenGoogle& InAuthToken)
 		: FUserOnlineAccountGoogleCommon(InUserId, InAuthToken)
 	{
+		RealName = InDisplayName;
+		FirstName = InGivenName;
+		LastName = InFamilyName;
+		SetAccountData(TEXT("sub"), MoveTemp(InUserId));
+		SetAccountData(TEXT("given_name"), MoveTemp(InGivenName));
+		SetAccountData(TEXT("family_name"), MoveTemp(InFamilyName));
+		SetAccountData(TEXT("name"), MoveTemp(InDisplayName));
+		if (!InPicture.IsEmpty())
+		{
+			SetAccountData(TEXT("picture"), MoveTemp(InPicture));
+		}
 	}
 
 	virtual ~FUserOnlineAccountGoogle()
@@ -95,6 +100,12 @@ public:
 	 */
 	bool Init();
 
+	/**	
+	 * Shuts down the interface
+	 * 
+	 */
+	void Shutdown();
+
 	/**
 	 * Destructor
 	 */
@@ -104,45 +115,32 @@ public:
 
 PACKAGE_SCOPE:
 
-	/**
-	 * Delegate fired internally when the Java Google SDK has completed, notifying any OSS listeners
-	 * Not meant for external use
-	 *
-	 * @param InResponseCode response from the Google SDK
-	 * @param InAccessToken access token from the Google SDK if login was successful
-	 */
-	DEFINE_ONLINE_DELEGATE_TWO_PARAM(OnGoogleLoginComplete, EGoogleLoginResponse /*InResponseCode*/, const FString& /*InAccessToken*/);
-
-	/**
-	 * Delegate fired internally when the Java Google SDK has completed, notifying any OSS listeners
-	 * Not meant for external use
-	 *
-	 * @param InResponseCode response from the Google SDK
-	 */
-	DEFINE_ONLINE_DELEGATE_ONE_PARAM(OnGoogleLogoutComplete, EGoogleLoginResponse /*InResponseCode*/);
+	/** Checks config to know if we should request an id token*/
+	static bool ShouldRequestIdToken();
 
 	/** Last function called for any single login attempt */
 	void OnLoginAttemptComplete(int32 LocalUserNum, const FString& ErrorStr);
 
 	/** Generic handler for the Java SDK login callback */
-	void OnLoginComplete(EGoogleLoginResponse InResponseCode, const FString& InAccessToken);
+	void OnLoginComplete(EGoogleLoginResponse InResponseCode, const TSharedPtr<FUserOnlineAccountGoogle>& User);
 	/** Generic handler for the Java SDK logout callback */
 	void OnLogoutComplete(EGoogleLoginResponse InResponseCode);
 	
 private:
 
+	FGoogleLoginWrapper GoogleLoginWrapper;
+
 	/** Config based list of permission scopes to use when logging in */
 	TArray<FString> ScopeFields;
 
-	FDelegateHandle OnGoogleLoginCompleteHandle;
-	FDelegateHandle OnGoogleLogoutCompleteHandle;
-
 	/** Delegate holder for all internal related login callbacks */
-	DECLARE_DELEGATE_TwoParams(FOnInternalLoginComplete, EGoogleLoginResponse /*InLoginResponse*/, const FString& /*AccessToken*/);
+	DECLARE_DELEGATE_TwoParams(FOnInternalLoginComplete, EGoogleLoginResponse /*InLoginResponse*/, TSharedPtr<FUserOnlineAccountGoogle> /*User*/);
 	FOnInternalLoginComplete LoginCompletionDelegate;
 	/** Delegate holder for all internal related logout callbacks */
 	DECLARE_DELEGATE_OneParam(FOnInternalLogoutComplete, EGoogleLoginResponse /*InLoginResponse*/);
 	FOnInternalLogoutComplete LogoutCompletionDelegate;
+
+	FUniqueNetIdPtr RemoveUserId(int LocalUserNum);
 };
 
 typedef TSharedPtr<FOnlineIdentityGoogle, ESPMode::ThreadSafe> FOnlineIdentityGooglePtr;

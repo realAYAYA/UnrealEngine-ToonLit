@@ -2,7 +2,7 @@
 
 #include "EOSVoiceChatUser.h"
 
-#if WITH_EOS_RTC
+#if WITH_EOSVOICECHAT
 
 #include "HAL/IConsoleManager.h"
 #include "Misc/ConfigCacheIni.h"
@@ -649,22 +649,9 @@ void FEOSVoiceChatUser::LeaveChannel(const FString& ChannelName, const FOnVoiceC
 	LeaveChannelInternal(ChannelName, Delegate);
 }
 
-void FEOSVoiceChatUser::Set3DPosition(const FString& ChannelName, const FVector& SpeakerPosition, const FVector& ListenerPosition, const FVector& ListenerForwardDirection, const FVector& ListenerUpDirection)
+void FEOSVoiceChatUser::Set3DPosition(const FString& ChannelName, const FVector& Position)
 {
-#if EOS_VOICE_TODO
-	FChannelSession& ChannelSession = GetChannelSessionGT(ChannelName);
-
-	// Transform Pos and Direction to up -> (0,1,0) and left -> (-1, 0, 0)
-	FVector RotatedPos(ListenerPosition.Y, ListenerPosition.Z, -ListenerPosition.X);
-	FVector RotatedForwardDirection(ListenerForwardDirection.Y, ListenerForwardDirection.Z, -ListenerForwardDirection.X);
-	FVector RotatedUpDirection(ListenerUpDirection.Y, ListenerUpDirection.Z, -ListenerUpDirection.X);
-
-	EOSClientApi::VCSStatus Status = EOSClientConnection.Set3DPosition(LoginSession.AccountName, ChannelSession.ChannelUri, ToEOSVector(SpeakerPosition), ToEOSVector(ListenerPosition), ToEOSVector(ListenerForwardDirection), ToEOSVector(ListenerUpDirection));
-	if (Status.IsError())
-	{
-		EOSVOICECHATUSER_LOG(Warning, TEXT("Set3DPosition failed: channel:%s error:%s (%i)"), ANSI_TO_TCHAR(ChannelSession.ChannelUri), ANSI_TO_TCHAR(Status.ToString()), Status.GetStatusCode());
-	}
-#endif
+	// Unimplemented
 }
 
 TArray<FString> FEOSVoiceChatUser::GetChannels() const
@@ -1699,7 +1686,11 @@ void FEOSVoiceChatUser::OnJoinRoom(const EOS_RTC_JoinRoomCallbackInfo* CallbackI
 		{
 			if (Result.IsSuccess())
 			{
-				EOSVOICECHATUSER_LOG(Log, TEXT("OnJoinRoom ChannelName=[%s] Result=[%s]"), *ChannelName, *LexToString(Result));
+				EOSVOICECHATUSER_LOG(Log, TEXT("OnJoinRoom ChannelName=[%s] Result=[%s] RoomOptions=[%s]"),
+					*ChannelName,
+					*LexToString(Result),
+					*FString::JoinBy(TArrayView<const EOS_RTC_Option>(CallbackInfo->RoomOptions, CallbackInfo->RoomOptionsCount), TEXT(", "), UE_PROJECTION(LexToString))
+				);
 
 				ChannelSession->JoinState = EChannelJoinState::Joined;
 				TriggerCompletionDelegate(ChannelSession->JoinDelegate, ChannelSession->ChannelName, FVoiceChatResult::CreateSuccess());
@@ -2738,4 +2729,4 @@ const TCHAR* LexToString(FEOSVoiceChatUser::EChannelJoinState State)
 	}
 }
 
-#endif // WITH_EOS_RTC
+#endif // WITH_EOSVOICECHAT

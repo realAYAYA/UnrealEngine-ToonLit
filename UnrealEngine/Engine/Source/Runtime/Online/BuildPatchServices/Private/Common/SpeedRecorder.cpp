@@ -108,7 +108,7 @@ namespace BuildPatchServices
 	private:
 		const uint64 CyclesConfidenceFactor;
 		const uint64 SizeConfidenceFactor;
-		TQueue<ISpeedRecorder::FRecord> RecordsQueue;
+		TQueue<ISpeedRecorder::FRecord, EQueueMode::Mpsc> RecordsQueue;
 		TArray<ISpeedRecorder::FRecord> Records;
 		mutable TArray<ISpeedRecorder::FRecord> Temp;
 
@@ -173,7 +173,7 @@ namespace BuildPatchServices
 		const int32 StartIdx = Records.Num();
 		do { Records.AddUninitialized(); }
 		while (RecordsQueue.Dequeue(Records.Last()));
-		Records.Pop(false);
+		Records.Pop(EAllowShrinking::No);
 		const int32 EndIdx = Records.Num() - 1;
 		// If we pulled more data.
 		if (EndIdx >= StartIdx)

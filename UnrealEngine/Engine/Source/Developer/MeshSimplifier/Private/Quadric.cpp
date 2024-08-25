@@ -958,7 +958,7 @@ void FQuadricAttr::Zero( uint32 NumAttributes )
 #endif
 }
 
-float FQuadricAttr::Evaluate( const FVector3f& Point, const float* RESTRICT Attributes, const float* RESTRICT AttributeWeights, uint32 NumAttributes ) const
+float FQuadricAttr::Evaluate( const FVector3f& RESTRICT Point, const float* RESTRICT Attributes, const float* RESTRICT AttributeWeights, uint32 NumAttributes ) const
 {
 	// Q(v) = vt*A*v + 2*bt*v + c
 	
@@ -980,13 +980,7 @@ float FQuadricAttr::Evaluate( const FVector3f& Point, const float* RESTRICT Attr
 
 	QVec3* RESTRICT   g = (QVec3*)( this + 1 );
 	QScalar* RESTRICT d = (QScalar*)( g + NumAttributes );
-	QScalar* RESTRICT s = (QScalar*)FMemory_Alloca( NumAttributes * sizeof( QScalar ) );
-
-	for( uint32 i = 0; i < NumAttributes; i++ )
-	{
-		s[i] = AttributeWeights[i] * Attributes[i];
-	}
-
+	
 	// A*v = [ C*p  + B*s ]
 	//       [ Bt*p + a*s ]
 
@@ -994,6 +988,14 @@ float FQuadricAttr::Evaluate( const FVector3f& Point, const float* RESTRICT Attr
 	QScalar x = p | QVec3( nxx, nxy, nxz );
 	QScalar y = p | QVec3( nxy, nyy, nyz );
 	QScalar z = p | QVec3( nxz, nyz, nzz );
+
+#if 0
+	QScalar* RESTRICT s = (QScalar*)FMemory_Alloca( NumAttributes * sizeof( QScalar ) );
+
+	for( uint32 i = 0; i < NumAttributes; i++ )
+	{
+		s[i] = AttributeWeights[i] * Attributes[i];
+	}
 
 	// B*s
 	for( uint32 i = 0; i < NumAttributes; i++ )
@@ -1011,7 +1013,7 @@ float FQuadricAttr::Evaluate( const FVector3f& Point, const float* RESTRICT Attr
 	// st * ( Bt*p + a*s )
 	for( uint32 i = 0; i < NumAttributes; i++ )
 	{
-		vAv += s[i] * ( a * s[i] - ( g[i] | QVec3( x, y, z ) ) );
+		vAv += s[i] * ( a * s[i] - ( p | g[i] ) );
 	}
 
 	// bt*v
@@ -1023,6 +1025,19 @@ float FQuadricAttr::Evaluate( const FVector3f& Point, const float* RESTRICT Attr
 
 	// Q(v) = vt*A*v + 2*bt*v + c
 	QScalar Q = vAv + 2.0 * btv + d2;
+#else
+	// Q(v) = vt*A*v + 2*bt*v + c
+	QScalar Q = ( p | QVec3( x, y, z ) ) + 2.0 * ( p | dn ) + d2;
+
+	for( uint32 i = 0; i < NumAttributes; i++ )
+	{
+		QScalar pgd = (p | g[i]) + d[i];
+		QScalar s = AttributeWeights[i] * Attributes[i];
+
+		// st * ( Bt*p + a*s + B + b )
+		Q += s * ( a * s - 2.0 * pgd );
+	}
+#endif
 
 	if( Q < 0.0 || !FMath::IsFinite( Q ) )
 	{
@@ -1081,10 +1096,6 @@ float FQuadricAttr::CalcAttributesAndEvaluate( const FVector3f& RESTRICT Point, 
 			z -= g[i].z * s;
 			w -= d[i]   * s;
 		}
-		else
-		{
-			Attributes[i] = 0.0f;
-		}
 	}
 
 	// vt*A*v = pt * ( C*p + B*s ) + st * ( Bt*p + a*s )
@@ -1118,10 +1129,6 @@ float FQuadricAttr::CalcAttributesAndEvaluate( const FVector3f& RESTRICT Point, 
 
 			// B*s + b*s
 			Q -= pgd * s;
-		}
-		else
-		{
-			Attributes[i] = 0.0f;
 		}
 	}
 #endif

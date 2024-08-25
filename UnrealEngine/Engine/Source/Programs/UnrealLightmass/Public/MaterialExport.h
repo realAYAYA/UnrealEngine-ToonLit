@@ -51,10 +51,10 @@ enum EBlendMode
     BLEND_Modulate                        =4,
 	BLEND_AlphaComposite                  =5,
 	BLEND_AlphaHoldout                    =6,
-	BLEND_TranslucentColoredTransmittance =7, /*Strata only */
+	BLEND_TranslucentColoredTransmittance =7,					/*Substrate only */
 	BLEND_MAX                             =8,
-	BLEND_TranslucentGreyTransmittance    = BLEND_Translucent, /*Strata only */
-	BLEND_ColoredTransmittanceOnly        = BLEND_Modulate, /*Strata only */
+	BLEND_TranslucentGreyTransmittance    = BLEND_Translucent,	/*Substrate only */
+	BLEND_ColoredTransmittanceOnly        = BLEND_Modulate,		/*Substrate only */
 };
 
 struct FMaterialData

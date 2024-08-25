@@ -19,7 +19,6 @@ class UCustomizableObjectInstanceFactory : public UActorFactory
 protected:
 	//~ Begin UActorFactory Interface
 	void PostSpawnActor(UObject* Asset, AActor* NewActor) override;
-	void PostCreateBlueprint(UObject* Asset, AActor* CDO) override;
 	UObject* GetAssetFromActorInstance(AActor* ActorInstance) override;
 	bool CanCreateActorFrom(const FAssetData& AssetData, FText& OutErrorMsg) override;
 	//~ End UActorFactory Interface

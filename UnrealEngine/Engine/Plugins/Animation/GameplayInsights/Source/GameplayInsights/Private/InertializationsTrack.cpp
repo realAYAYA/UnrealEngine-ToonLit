@@ -14,6 +14,7 @@
 #include "IAnimationBlueprintEditor.h"
 #include "Animation/AnimBlueprint.h"
 #include "Subsystems/AssetEditorSubsystem.h"
+#include "ObjectTrace.h"
 #endif
 
 #define LOCTEXT_NAMESPACE "InertializationsTrack"
@@ -36,9 +37,8 @@ void FInertializationsTrack::IterateSubTracksInternal(TFunction<void(TSharedPtr<
 
 bool FInertializationsTrack::UpdateInternal()
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FInertializationsTrack::UpdateInternal);
 	IRewindDebugger* RewindDebugger = IRewindDebugger::Instance();
-
-	TSortedMap<int32, const TCHAR*, TInlineAllocator<8>> NodeNameMap;
 
 	const TraceServices::IAnalysisSession* AnalysisSession = RewindDebugger->GetAnalysisSession();
 
@@ -57,45 +57,33 @@ bool FInertializationsTrack::UpdateInternal()
 	{
 		TraceServices::FAnalysisSessionReadScope SessionReadScope(*AnalysisSession);
 
-		AnimationProvider->ReadAnimNodesTimeline(ObjectId, [&NodeNameMap, &AnimationProvider, StartTime, EndTime](const FAnimationProvider::AnimNodesTimeline& InTimeline)
+		TArray<TPair<int32,EInertializationType>, TInlineAllocator<8>> Nodes;
 		{
-			// this isn't very efficient, and it gets called every frame.  will need optimizing
-			InTimeline.EnumerateEvents(StartTime, EndTime, [&NodeNameMap, &AnimationProvider, StartTime, EndTime](double InStartTime, double InEndTime, uint32 InDepth, const FAnimNodeMessage& InMessage)
+			AnimationProvider->EnumerateInertializationNodes(ObjectId,  [&Nodes] (uint32 NodeId, EInertializationType Type)
 			{
-				if (InEndTime > StartTime && InStartTime < EndTime)
-				{
-					for (const TCHAR* InertializationNodeType : { TEXT("AnimNode_DeadBlending"), TEXT("AnimNode_Inertialization") })
-					{
-						if (FCString::Strcmp(InertializationNodeType, InMessage.NodeTypeName) == 0)
-						{
-							NodeNameMap.Add(InMessage.NodeId, InMessage.NodeName);
-							break;
-						}
-					}
-				}
-
-				return TraceServices::EEventEnumerate::Continue;
+				Nodes.Add({ NodeId, Type });
 			});
-		});
+		}
 
-		TArray<int32, TInlineAllocator<8>> NodeIds;
-		NodeNameMap.GetKeys(NodeIds);
-
-		if (Children.Num() != NodeIds.Num())
+		if (Children.Num() != Nodes.Num())
 		{
 			bChanged = true;
 		}
 
-		Children.SetNum(NodeIds.Num());
-		for(int32 NodeIdx = 0; NodeIdx < NodeIds.Num(); NodeIdx++)
+		Children.SetNum(Nodes.Num());
+		for(int32 NodeIdx = 0; NodeIdx < Nodes.Num(); NodeIdx++)
 		{
-			if (!Children[NodeIdx].IsValid())
+			if (!Children[NodeIdx].IsValid() || Children[NodeIdx]->GetNodeId() != Nodes[NodeIdx].Key)
 			{
-				Children[NodeIdx] = MakeShared<FInertializationTrack>(ObjectId, NodeIds[NodeIdx], FText::FromString(NodeNameMap[NodeIds[NodeIdx]]));
+				Children[NodeIdx] = MakeShared<FInertializationTrack>(ObjectId, Nodes[NodeIdx].Key,
+					Nodes[NodeIdx].Value == EInertializationType::DeadBlending ? LOCTEXT("DeadBlending","DeadBlending") : LOCTEXT("Inertialization","Inertialization"));
 				bChanged = true;
 			}
 
-			bChanged = bChanged || Children[NodeIdx]->Update();
+			if (Children[NodeIdx]->Update())
+			{
+				bChanged = true;
+			}
 		}
 	}
 
@@ -147,23 +135,22 @@ bool FInertializationTrack::UpdateInternal()
 	if (CurvesUpdateRequested > 10 && GameplayProvider && AnimationProvider)
 	{
 		auto& CurvePoints = CurveData->Points;
-		CurvePoints.SetNum(0,false);
+		CurvePoints.SetNum(0,EAllowShrinking::No);
 		
 		TraceServices::FAnalysisSessionReadScope SessionReadScope(*AnalysisSession);
 		
-		AnimationProvider->ReadAnimNodeValuesTimeline(ObjectId, [AnalysisSession, StartTime, EndTime, &CurvePoints, this](const FAnimationProvider::AnimNodeValuesTimeline& InTimeline)
+		AnimationProvider->ReadInertializationTimeline(ObjectId, [AnalysisSession, StartTime, EndTime, &CurvePoints, this](const IAnimationProvider::InertializationTimeline& InTimeline)
 		{
-			InTimeline.EnumerateEvents(StartTime, EndTime, [&CurvePoints, AnalysisSession, this](double InStartTime, double InEndTime, uint32 InDepth, const FAnimNodeValueMessage& InMessage)
+			InTimeline.EnumerateEvents(StartTime, EndTime, [&CurvePoints, AnalysisSession, this](double InStartTime, double InEndTime, uint32 InDepth, const FInertializationMessage& InMessage)
 			{
-				if (InMessage.NodeId == NodeId && FCString::Strcmp(InMessage.Key, TEXT("Inertialization Weight")) == 0)
+				if (InMessage.NodeId == NodeId)
 				{
-					CurvePoints.Add({ InMessage.RecordingTime,	InMessage.Value.Float.Value });
+					CurvePoints.Add({ InMessage.RecordingTime,InMessage.Weight });
 				}
-				
 				return TraceServices::EEventEnumerate::Continue;
 			});
 		});
-
+		
 		CurvesUpdateRequested = 0;
 	}
 
@@ -190,6 +177,7 @@ TSharedPtr<SWidget> FInertializationTrack::GetTimelineViewInternal()
 	CurveColor.B *= 0.5;
 
 	TSharedPtr<SCurveTimelineView> CurveTimelineView = SNew(SCurveTimelineView)
+		.TrackName(GetDisplayNameInternal())
 		.FillColor(Color)
 		.CurveColor(CurveColor)
 		.ViewRange_Lambda([]() { return IRewindDebugger::Instance()->GetCurrentViewRange(); })
@@ -234,6 +222,11 @@ bool FInertializationTrack::HandleDoubleClickInternal()
 						{
 							GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(AnimBlueprint);
 
+							if (UObject* SelectedInstance = FObjectTrace::GetObjectFromId(ObjectId))
+							{
+								AnimBlueprint->SetObjectBeingDebugged(SelectedInstance);
+							}
+
 							if (IAnimationBlueprintEditor* AnimBlueprintEditor = static_cast<IAnimationBlueprintEditor*>(GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->FindEditorForAsset(AnimBlueprint, true)))
 							{
 								int32 AnimNodeIndex = InstanceClass.Get()->GetAnimNodeProperties().Num() - NodeId - 1;
@@ -262,10 +255,15 @@ FName FInertializationsTrackCreator::GetTargetTypeNameInternal() const
 	return TargetTypeName;
 }
 
+static const FName InertializationsName("Inertializations");
 FName FInertializationsTrackCreator::GetNameInternal() const
 {
-	static const FName InertializationsName("Inertializations");
 	return InertializationsName;
+}
+
+void FInertializationsTrackCreator::GetTrackTypesInternal(TArray<FRewindDebuggerTrackType>& Types) const 
+{
+	Types.Add({InertializationsName, LOCTEXT("Inertializations", "Inertializations")});
 }
 
 TSharedPtr<RewindDebugger::FRewindDebuggerTrack> FInertializationsTrackCreator::CreateTrackInternal(uint64 ObjectId) const
@@ -275,32 +273,19 @@ TSharedPtr<RewindDebugger::FRewindDebuggerTrack> FInertializationsTrackCreator::
 
 bool FInertializationsTrackCreator::HasDebugInfoInternal(uint64 ObjectId) const
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FInertializationsTrack::HasDebugInfoInternal);
 	const TraceServices::IAnalysisSession* AnalysisSession = IRewindDebugger::Instance()->GetAnalysisSession();
 	TraceServices::FAnalysisSessionReadScope SessionReadScope(*AnalysisSession);
 	
-	bool bHasData = false;
-
 	if (const FAnimationProvider* AnimationProvider = AnalysisSession->ReadProvider<FAnimationProvider>(FAnimationProvider::ProviderName))
 	{
-		AnimationProvider->ReadAnimNodesTimeline(ObjectId, [&AnimationProvider, &bHasData](const FAnimationProvider::AnimNodesTimeline& InTimeline)
+		if (AnimationProvider->ReadInertializationTimeline(ObjectId, [](const IAnimationProvider::InertializationTimeline& InTimeline){}))
 		{
-			InTimeline.EnumerateEvents(InTimeline.GetStartTime(), InTimeline.GetEndTime(), [&AnimationProvider, &bHasData](double InStartTime, double InEndTime, uint32 InDepth, const FAnimNodeMessage& InMessage)
-			{
-				for (const TCHAR* InertializationNodeType : { TEXT("AnimNode_DeadBlending"), TEXT("AnimNode_Inertialization") })
-				{
-					if (FCString::Strcmp(InertializationNodeType, InMessage.NodeTypeName) == 0)
-					{
-						bHasData = true;
-						return TraceServices::EEventEnumerate::Stop;
-					}
-				}
-
-				return TraceServices::EEventEnumerate::Continue;
-			});
-		});
+			return true;
+		}
 	}
-	
-	return bHasData;
+
+	return false;
 }
 
 }

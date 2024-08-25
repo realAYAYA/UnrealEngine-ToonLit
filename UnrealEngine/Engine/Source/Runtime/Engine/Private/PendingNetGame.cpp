@@ -54,19 +54,20 @@ void UPendingNetGame::InitNetDriver()
 
 		if( NetDriver->InitConnect( this, URL, ConnectionError ) )
 		{
-			UNetConnection* ServerConn = NetDriver->ServerConnection;
-
 			FNetDelegates::OnPendingNetGameConnectionCreated.Broadcast(this);
 
-			// Kick off the connection handshake
-			if (ServerConn->Handler.IsValid())
+			ULocalPlayer* LocalPlayer = GEngine->GetFirstGamePlayer(this);
+			if (LocalPlayer)
 			{
-				ServerConn->Handler->BeginHandshaking(
-					FPacketHandlerHandshakeComplete::CreateUObject(this, &UPendingNetGame::SendInitialJoin));
+				LocalPlayer->PreBeginHandshake(ULocalPlayer::FOnPreBeginHandshakeCompleteDelegate::CreateWeakLambda(this,
+					[this]()
+					{
+						BeginHandshake();
+					}));
 			}
 			else
 			{
-				SendInitialJoin();
+				BeginHandshake();
 			}
 		}
 		else
@@ -87,6 +88,21 @@ void UPendingNetGame::InitNetDriver()
 	else
 	{
 		ConnectionError = NSLOCTEXT("Engine", "UsedCheatCommands", "Console commands were used which are disallowed in netplay.  You must restart the game to create a match.").ToString();
+	}
+}
+
+void UPendingNetGame::BeginHandshake()
+{
+	// Kick off the connection handshake
+	UNetConnection* ServerConn = NetDriver->ServerConnection;
+	if (ServerConn->Handler.IsValid())
+	{
+		ServerConn->Handler->BeginHandshaking(
+			FPacketHandlerHandshakeComplete::CreateUObject(this, &UPendingNetGame::SendInitialJoin));
+	}
+	else
+	{
+		SendInitialJoin();
 	}
 }
 
@@ -190,6 +206,8 @@ void UPendingNetGame::TravelCompleted(UEngine* Engine, FWorldContext& Context)
 	// Send join.
 	Context.PendingNetGame->SendJoin();
 	Context.PendingNetGame->NetDriver = NULL;
+
+	UE_LOGSTATUS(Log, TEXT("Pending net game travel completed"));
 }
 
 EAcceptConnection::Type UPendingNetGame::NotifyAcceptingConnection()

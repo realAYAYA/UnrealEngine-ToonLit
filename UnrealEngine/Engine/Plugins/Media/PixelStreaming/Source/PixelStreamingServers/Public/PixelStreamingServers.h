@@ -103,6 +103,12 @@ namespace UE::PixelStreamingServers
 		 **/
 		virtual bool IsTimedOut() = 0;
 
+		/**
+		 * Asynchronously queries the numbers of streamers connected to the signalling server.
+		 * @param OnNumStreamersReceived	Callback fired when the query for the number of streamers returns.
+		*/
+		virtual void GetNumStreamers(TFunction<void(uint16)> OnNumStreamersReceived) = 0;
+
 	public:
 		// Delegate fired when the server is ready for connections, first parameter is a map of all supported endpoints and their urls.
 		FOnReady OnReady;

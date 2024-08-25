@@ -4,6 +4,7 @@
 #include "ContentBrowserAssetDataCore.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetToolsModule.h"
+#include "AssetViewUtils.h"
 #include "CollectionManagerModule.h"
 #include "ContentBrowserAssetDataPayload.h"
 #include "ICollectionManager.h"
@@ -17,6 +18,7 @@
 #include "IAssetTools.h"
 #include "ToolMenus.h"
 #include "Misc/PackageName.h"
+#include "Misc/PathViews.h"
 #include "NewAssetContextMenu.h"
 #include "AssetFolderContextMenu.h"
 #include "AssetFileContextMenu.h"
@@ -64,8 +66,8 @@ void UContentBrowserAssetDataSource::Initialize(const bool InAutoRegister)
 	AssetRegistry->OnAssetRenamed().AddUObject(this, &UContentBrowserAssetDataSource::OnAssetRenamed);
 	AssetRegistry->OnAssetUpdated().AddUObject(this, &UContentBrowserAssetDataSource::OnAssetUpdated);
 	AssetRegistry->OnAssetUpdatedOnDisk().AddUObject(this, &UContentBrowserAssetDataSource::OnAssetUpdatedOnDisk);
-	AssetRegistry->OnPathAdded().AddUObject(this, &UContentBrowserAssetDataSource::OnPathAdded);
-	AssetRegistry->OnPathRemoved().AddUObject(this, &UContentBrowserAssetDataSource::OnPathRemoved);
+	AssetRegistry->OnPathsAdded().AddUObject(this, &UContentBrowserAssetDataSource::OnPathsAdded);
+	AssetRegistry->OnPathsRemoved().AddUObject(this, &UContentBrowserAssetDataSource::OnPathsRemoved);
 
 	// Listen for when assets are loaded or changed
 	FCoreUObjectDelegates::OnObjectPropertyChanged.AddUObject(this, &UContentBrowserAssetDataSource::OnObjectPropertyChanged);
@@ -151,6 +153,11 @@ void UContentBrowserAssetDataSource::Initialize(const bool InAutoRegister)
 
 	// Populate the initial set of folder attributes
 	// This will be updated as the scan finds more content
+	AssetRegistry->EnumerateAllCachedPaths([this](FName PathName) { 
+		FNameBuilder NameBuilder{PathName};
+		OnPathsAdded({NameBuilder.ToView()});
+		return true; 
+	});
 	AssetRegistry->EnumerateAllAssets([this](const FAssetData& InAssetData)
 		{
 			OnPathPopulated(InAssetData);
@@ -188,8 +195,8 @@ void UContentBrowserAssetDataSource::Shutdown()
 			AssetRegistryMaybe->OnAssetRenamed().RemoveAll(this);
 			AssetRegistryMaybe->OnAssetUpdated().RemoveAll(this);
 			AssetRegistryMaybe->OnAssetUpdatedOnDisk().RemoveAll(this);	
-			AssetRegistryMaybe->OnPathAdded().RemoveAll(this);
-			AssetRegistryMaybe->OnPathRemoved().RemoveAll(this);
+			AssetRegistryMaybe->OnPathsAdded().RemoveAll(this);
+			AssetRegistryMaybe->OnPathsRemoved().RemoveAll(this);
 			AssetRegistryMaybe->OnFilesLoaded().RemoveAll(this);
 		}
 	}
@@ -1637,7 +1644,7 @@ void UContentBrowserAssetDataSource::EnumerateFoldersMatchingFilter(UContentBrow
 			PathsToScan.Add(InInternalPath);
 			while (PathsToScan.Num() > 0)
 			{
-				const FName PathToScan = PathsToScan.Pop(/*bAllowShrinking*/false);
+				const FName PathToScan = PathsToScan.Pop(EAllowShrinking::No);
 				SubPathEnumeration(PathToScan, [&DataSource, &InCallback, &AssetDataFilter, &PathsToScan, &CreateFolderItem](FName SubPath)
 				{
 					if (UContentBrowserAssetDataSource::PathPassesCompiledDataFilter(*AssetDataFilter, SubPath))
@@ -1686,7 +1693,7 @@ void UContentBrowserAssetDataSource::EnumerateFoldersMatchingFilter(UContentBrow
 			PathsToScan.Add(StartingVirtualPath);
 			while (PathsToScan.Num() > 0)
 			{
-				const FName PathToScan = PathsToScan.Pop(/*bAllowShrinking*/false);
+				const FName PathToScan = PathsToScan.Pop(EAllowShrinking::No);
 				DataSource->GetRootPathVirtualTree().EnumerateSubPaths(PathToScan, [&DataSource, &InCallback, &AssetDataFilter, &VirtualPathsPassedFilter, &PathsToScan, &HandleInternalPath, &CreateFolderItem](FName VirtualSubPath, FName InternalPath)
 				{
 					if (VirtualPathsPassedFilter.Contains(VirtualSubPath))
@@ -2528,7 +2535,8 @@ bool UContentBrowserAssetDataSource::CanHandleDragDropEvent(const FContentBrowse
 				bool bSupportOneFile = false;
 				for (const FString& File : ExternalDragDropOp->GetFiles())
 				{
-					if (AssetTools->IsImportExtensionAllowed(FPaths::GetExtension(File)))
+					FStringView Extension = FPathViews::GetExtension(File);
+					if (Extension.IsEmpty() || AssetTools->IsImportExtensionAllowed(Extension))
 					{
 						bSupportOneFile = true;
 					}
@@ -2572,37 +2580,13 @@ bool UContentBrowserAssetDataSource::HandleDragDropOnItem(const FContentBrowserI
 			FString UnsupportedFiles;
 			if (ExternalDragDropOp->HasFiles() && ContentBrowserAssetData::CanModifyPath(AssetTools, FolderPayload->GetInternalPath(), &ErrorMsg))
 			{
-				TArray<FString> ImportFiles;
-				for (const FString& File : ExternalDragDropOp->GetFiles())
-				{
-					if (AssetTools->IsImportExtensionAllowed(FPaths::GetExtension(File)))
-					{
-						ImportFiles.AddUnique(File);
-					}
-					else
-					{
-						if (!UnsupportedFiles.IsEmpty())
-						{
-							UnsupportedFiles += TEXT("\n");
-						}
-						UnsupportedFiles += File;
-					}
-				}
-				if (ImportFiles.Num() > 0)
+				TArray<FString> ImportFiles = ExternalDragDropOp->GetFiles();
+			
+				if (!ImportFiles.IsEmpty())
 				{
 					// Delay import until next tick to avoid blocking the process that files were dragged from
 					GEditor->GetEditorSubsystem<UImportSubsystem>()->ImportNextTick(ImportFiles, FolderPayload->GetInternalPath().ToString());
 				}
-			}
-
-			if (!UnsupportedFiles.IsEmpty())
-			{
-				ErrorMsg = FText::Format(LOCTEXT("HandleDragDropOnItemUnsupportedFile", "Unsupported file format to import:\n\t{0}"), FText::FromString(UnsupportedFiles));
-			}
-
-			if (!ErrorMsg.IsEmpty())
-			{
-				AssetViewUtils::ShowErrorNotifcation(ErrorMsg);
 			}
 
 			return true; // We handled this drop, even if the result was invalid (eg, read-only folder)
@@ -2718,8 +2702,8 @@ FContentBrowserItemData UContentBrowserAssetDataSource::CreateAssetFolderItem(co
 
 	const EContentBrowserFolderAttributes FolderAttributes = GetAssetFolderAttributes(InFolderPath);
 	const bool bIsCookedPath = EnumHasAnyFlags(FolderAttributes, EContentBrowserFolderAttributes::HasContent) && !EnumHasAnyFlags(FolderAttributes, EContentBrowserFolderAttributes::HasSourceContent);
-
-	return ContentBrowserAssetData::CreateAssetFolderItem(this, VirtualizedPath, InFolderPath, bIsCookedPath);
+	const bool bIsPlugin = EnumHasAnyFlags(FolderAttributes, EContentBrowserFolderAttributes::IsInPlugin);
+	return ContentBrowserAssetData::CreateAssetFolderItem(this, VirtualizedPath, InFolderPath, bIsCookedPath, bIsPlugin);
 }
 
 FContentBrowserItemData UContentBrowserAssetDataSource::CreateAssetFileItem(const FAssetData& InAssetData)
@@ -2729,7 +2713,9 @@ PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	TryConvertInternalPathToVirtual(InAssetData.ObjectPath, VirtualizedPath);
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
-	return ContentBrowserAssetData::CreateAssetFileItem(this, VirtualizedPath, InAssetData);
+	const EContentBrowserFolderAttributes FolderAttributes = GetAssetFolderAttributes(InAssetData.PackagePath);
+	const bool bIsPlugin = EnumHasAnyFlags(FolderAttributes, EContentBrowserFolderAttributes::IsInPlugin);
+	return ContentBrowserAssetData::CreateAssetFileItem(this, VirtualizedPath, InAssetData, bIsPlugin);
 }
 
 FContentBrowserItemData UContentBrowserAssetDataSource::CreateUnsupportedAssetFileItem(const FAssetData& InAssetData)
@@ -2857,36 +2843,53 @@ void UContentBrowserAssetDataSource::OnObjectPreSave(UObject* InObject, FObjectP
 	}
 }
 
-void UContentBrowserAssetDataSource::OnPathAdded(const FString& InPath)
+void UContentBrowserAssetDataSource::OnPathsAdded(TConstArrayView<FStringView> Paths)
 {
-	FName PathName(InPath);
 	RecentlyPopulatedAssetFolders.Empty();
-	
-	QueueItemDataUpdate(FContentBrowserItemDataUpdate::MakeItemAddedUpdate(CreateAssetFolderItem(PathName)));
+	for (FStringView InPath : Paths)
+	{
+		// Completely ignore paths that do not pass the most inclusive filter
+		if (!ContentBrowserDataUtils::PathPassesAttributeFilter(InPath, 0, EContentBrowserItemAttributeFilter::IncludeAll))
+		{
+			continue;
+		}
 
-	FStringView PathView(InPath);
-	// Minus one because the test depth start at zero
-	const int32 CurrentDepth = ContentBrowserDataUtils::CalculateFolderDepthOfPath(PathView) - 1;
-	int32 Index;
-	if (PathView.FindLastChar(TEXT('/'), Index))
-	{ 
-		uint32 PathNameHash = GetTypeHash(PathName);
-		FName ParentPath(PathView.Left(Index));
-		uint32 ParentPathHash = GetTypeHash(ParentPath);
-		OnAssetPathAddedDelegate.Broadcast(PathName, PathView, PathNameHash, ParentPath, ParentPathHash, CurrentDepth);
+		FName PathName(InPath);
+		const bool bIsPlugin = AssetViewUtils::IsPluginFolder(InPath);
+		if (bIsPlugin)
+		{
+			OnPathPopulated(InPath, EContentBrowserFolderAttributes::IsInPlugin);
+		}
+
+		QueueItemDataUpdate(FContentBrowserItemDataUpdate::MakeItemAddedUpdate(CreateAssetFolderItem(PathName)));
+
+		// Minus one because the test depth start at zero
+		const int32 CurrentDepth = ContentBrowserDataUtils::CalculateFolderDepthOfPath(InPath) - 1;
+		int32 Index;
+		if (InPath.FindLastChar(TEXT('/'), Index))
+		{ 
+			uint32 PathNameHash = GetTypeHash(PathName);
+			FName ParentPath(InPath.Left(Index));
+			uint32 ParentPathHash = GetTypeHash(ParentPath);
+			OnAssetPathAddedDelegate.Broadcast(PathName, InPath, PathNameHash, ParentPath, ParentPathHash, CurrentDepth);
+		}
 	}
+	RecentlyPopulatedAssetFolders.Empty();
 }
 
-void UContentBrowserAssetDataSource::OnPathRemoved(const FString& InPath)
+void UContentBrowserAssetDataSource::OnPathsRemoved(TConstArrayView<FStringView> Paths)
 {
-	// Deleted paths are no longer relevant for tracking
-	FName PathName(InPath);
-	RecentlyPopulatedAssetFolders.Remove(PathName);
-	AssetFolderToAttributes.Remove(PathName);
+	for (FStringView InPath : Paths)
+	{
+		// Deleted paths are no longer relevant for tracking
+		FName PathName(InPath);
+		RecentlyPopulatedAssetFolders.Remove(PathName);
+		AssetFolderToAttributes.Remove(PathName);
 
-	QueueItemDataUpdate(FContentBrowserItemDataUpdate::MakeItemRemovedUpdate(CreateAssetFolderItem(PathName)));
+		QueueItemDataUpdate(FContentBrowserItemDataUpdate::MakeItemRemovedUpdate(CreateAssetFolderItem(PathName)));
 
-	OnAssetPathRemovedDelegate.Broadcast(PathName, GetTypeHash(PathName));
+		OnAssetPathRemovedDelegate.Broadcast(PathName, GetTypeHash(PathName));
+	}
 }
 
 void UContentBrowserAssetDataSource::OnPathPopulated(const FAssetData& InAssetData)
@@ -3449,6 +3452,11 @@ void UContentBrowserAssetDataSource::FAssetDataSourceFilterCache::RemoveUnusedCa
 void UContentBrowserAssetDataSource::FAssetDataSourceFilterCache::ClearCachedData(const FContentBrowserDataFilterCacheIDOwner& IDOwner)
 {
 	CachedCompiledInternalPaths.Remove(IDOwner);
+}
+
+void UContentBrowserAssetDataSource::FAssetDataSourceFilterCache::Reset()
+{
+	CachedCompiledInternalPaths.Reset(); 
 }
 
 void UContentBrowserAssetDataSource::FAssetDataSourceFilterCache::OnPathAdded(FName Path, FStringView PathString, uint32 PathHash, FName ParentPath, uint32 ParentPathHash, int32 PathDepth)

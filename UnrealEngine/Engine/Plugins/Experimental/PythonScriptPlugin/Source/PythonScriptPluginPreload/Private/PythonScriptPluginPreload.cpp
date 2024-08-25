@@ -84,7 +84,7 @@ private:
 #if PLATFORM_WINDOWS
 			const FString PythonDSOWildcard = FString::Printf(TEXT("python%d*.dll"), PY_MAJOR_VERSION);
 #elif PLATFORM_LINUX
-			const FString PythonDSOWildcard = FString::Printf(TEXT("libpython%d*.so*"), PY_MAJOR_VERSION);
+			const FString PythonDSOWildcard = FString::Printf(TEXT("libpython%d*.so.1.0"), PY_MAJOR_VERSION);
 			PythonDir /= TEXT("lib");
 #endif
 			LoadSharedDSO(PythonDSOWildcard, PythonDir);

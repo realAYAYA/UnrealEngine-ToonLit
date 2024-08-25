@@ -651,7 +651,7 @@ FCrashWERContext::FCrashWERContext( const FString& WERXMLFilepath )
 				const FString DepotRoot = TEXT( "//depot/" );
 				if (BranchName.StartsWith( DepotRoot ))
 				{
-					BranchName.MidInline( DepotRoot.Len(), MAX_int32, false );
+					BranchName.MidInline( DepotRoot.Len(), MAX_int32, EAllowShrinking::No );
 				}
 				EngineVersionComponents++;
 			}

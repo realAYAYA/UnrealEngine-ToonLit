@@ -984,6 +984,8 @@ void UMaterialEditingLibrary::DeleteMaterialExpressionInFunction(UMaterialFuncti
 
 void UMaterialEditingLibrary::UpdateMaterialFunction(UMaterialFunctionInterface* MaterialFunction, UMaterial* PreviewMaterial)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(UMaterialEditingLibrary::UpdateMaterialFunction)
+
 	if (MaterialFunction)
 	{
 		// Create a material update context so we can safely update materials using this function.
@@ -994,20 +996,24 @@ void UMaterialEditingLibrary::UpdateMaterialFunction(UMaterialFunctionInterface*
 			MaterialFunction->ForceRecompileForRendering(UpdateContext, PreviewMaterial);
 			MaterialFunction->MarkPackageDirty();
 
-			// Go through all function instances in memory and recompile them if they are children
-			for (TObjectIterator<UMaterialFunctionInstance> It; It; ++It)
 			{
-				UMaterialFunctionInstance* FunctionInstance = *It;
+				TRACE_CPUPROFILER_EVENT_SCOPE(UpdateAllMaterialInstances)
 
-				TArray<UMaterialFunctionInterface*> Functions;
-				FunctionInstance->GetDependentFunctions(Functions);
-				if (Functions.Contains(MaterialFunction))
+				// Go through all function instances in memory and recompile them if they are children
+				for (TObjectIterator<UMaterialFunctionInstance> It; It; ++It)
 				{
-					FunctionInstance->UpdateParameterSet();
-					FunctionInstance->ForceRecompileForRendering(UpdateContext, PreviewMaterial);
+					UMaterialFunctionInstance* FunctionInstance = *It;
 
-					// ForceRecompileForRendering will update StateId, so need to mark the package as dirty
-					FunctionInstance->MarkPackageDirty();
+					TArray<UMaterialFunctionInterface*> Functions;
+					FunctionInstance->GetDependentFunctions(Functions);
+					if (Functions.Contains(MaterialFunction))
+					{
+						FunctionInstance->UpdateParameterSet();
+						FunctionInstance->ForceRecompileForRendering(UpdateContext, PreviewMaterial);
+
+						// ForceRecompileForRendering will update StateId, so need to mark the package as dirty
+						FunctionInstance->MarkPackageDirty();
+					}
 				}
 			}
 

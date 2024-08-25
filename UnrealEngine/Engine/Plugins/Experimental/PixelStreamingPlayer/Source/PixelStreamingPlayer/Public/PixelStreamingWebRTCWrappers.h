@@ -55,7 +55,7 @@ struct PIXELSTREAMINGPLAYER_API FPixelStreamingIceCandidateWrapper
 	{
 		webrtc::SdpParseError Error;
 		TUniquePtr<webrtc::IceCandidateInterface> Candidate = TUniquePtr<webrtc::IceCandidateInterface>(webrtc::CreateIceCandidate(TCHAR_TO_UTF8(*Mid), MLineIndex, TCHAR_TO_UTF8(*SDP), &Error));
-		verifyf(Candidate, TEXT("Failed to create ICE candicate: %s"), Error.description.c_str());
+		verifyf(Candidate, TEXT("Failed to create ICE candicate: %hs"), Error.description.c_str());
 		return Candidate;
 	}
 

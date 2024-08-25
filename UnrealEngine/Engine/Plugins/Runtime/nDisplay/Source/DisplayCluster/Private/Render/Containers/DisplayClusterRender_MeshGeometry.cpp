@@ -7,7 +7,7 @@
 #include "Misc/FileHelper.h"
 #include "Misc/DisplayClusterLog.h"
 
-namespace ObjMeshStrings
+namespace UE::DisplayCluster::MeshGeometryStrings
 {
 	static constexpr auto Vertex = TEXT("v ");
 	static constexpr auto VertexNormal = TEXT("vn ");
@@ -20,8 +20,11 @@ namespace ObjMeshStrings
 		static constexpr auto Face = TEXT("/");
 	}
 };
+using namespace UE::DisplayCluster;
 
-
+/**
+ * OBJ mesh loader class
+ */
 class FDisplayCluster_MeshGeometryLoaderOBJ
 {
 public:
@@ -206,19 +209,19 @@ bool FDisplayCluster_MeshGeometryLoaderOBJ::SaveToTarget()
 
 bool FDisplayCluster_MeshGeometryLoaderOBJ::ParseLine(const FString& Line)
 {
-	if (Line.StartsWith(ObjMeshStrings::Vertex))
+	if (Line.StartsWith(MeshGeometryStrings::Vertex))
 	{
 		return ExtractVertex(Line);
 	}
-	else if (bImportVertexNormal && Line.StartsWith(ObjMeshStrings::VertexNormal))
+	else if (bImportVertexNormal && Line.StartsWith(MeshGeometryStrings::VertexNormal))
 	{
 		return ExtractVertexNormal(Line);
 	}
-	else if (Line.StartsWith(ObjMeshStrings::UV))
+	else if (Line.StartsWith(MeshGeometryStrings::UV))
 	{
 		return ExtractUV(Line);
 	}
-	else if (Line.StartsWith(ObjMeshStrings::Face))
+	else if (Line.StartsWith(MeshGeometryStrings::Face))
 	{
 		return ExtractFace(Line);
 	}
@@ -230,7 +233,7 @@ bool FDisplayCluster_MeshGeometryLoaderOBJ::ExtractVertex(const FString& Line)
 {
 	TArray<FString> Data;
 
-	if (Line.ParseIntoArray(Data, ObjMeshStrings::delims::Values) == 4)
+	if (Line.ParseIntoArray(Data, MeshGeometryStrings::delims::Values) == 4)
 	{
 		const float X = FCString::Atof(*Data[1]);
 		const float Y = FCString::Atof(*Data[2]);
@@ -248,7 +251,7 @@ bool FDisplayCluster_MeshGeometryLoaderOBJ::ExtractVertexNormal(const FString& L
 {
 	TArray<FString> Data;
 
-	if (Line.ParseIntoArray(Data, ObjMeshStrings::delims::Values) == 4)
+	if (Line.ParseIntoArray(Data, MeshGeometryStrings::delims::Values) == 4)
 	{
 		const float X = FCString::Atof(*Data[1]);
 		const float Y = FCString::Atof(*Data[2]);
@@ -265,7 +268,7 @@ bool FDisplayCluster_MeshGeometryLoaderOBJ::ExtractVertexNormal(const FString& L
 bool FDisplayCluster_MeshGeometryLoaderOBJ::ExtractUV(const FString& Line)
 {
 	TArray<FString> Data;
-	int32 Count = Line.ParseIntoArray(Data, ObjMeshStrings::delims::Values);
+	int32 Count = Line.ParseIntoArray(Data, MeshGeometryStrings::delims::Values);
 	if (Count > 2)
 	{
 		const float U = FCString::Atof(*Data[1]);
@@ -283,7 +286,7 @@ bool FDisplayCluster_MeshGeometryLoaderOBJ::ExtractUV(const FString& Line)
 bool FDisplayCluster_MeshGeometryLoaderOBJ::ExtractFace(const FString& Line)
 {
 	TArray<FString> Data;
-	Line.ParseIntoArray(Data, ObjMeshStrings::delims::Values);
+	Line.ParseIntoArray(Data, MeshGeometryStrings::delims::Values);
 
 	if (Data.Num() > 3)
 	{
@@ -326,7 +329,7 @@ int32 FDisplayCluster_MeshGeometryLoaderOBJ::ExtractFaceVertex(const FString& Li
 	FFaceIdx OutFaceIdx;
 
 	TArray<FString> Data;
-	if (Line.ParseIntoArray(Data, ObjMeshStrings::delims::Face) > 1)
+	if (Line.ParseIntoArray(Data, MeshGeometryStrings::delims::Face) > 1)
 	{
 		const int32 InVertexIndex = FCString::Atoi(*Data[0]) - 1;
 		if (InVertexIndex < 0 || InVertexIndex >= InVertex.Num())

@@ -2,10 +2,7 @@
 
 #pragma once
 
-#include "Async/TaskGraphFwd.h"
-#include "Templates/RefCounting.h"
-
-namespace ENamedThreads { enum Type : int32; }
+#include "Tasks/Task.h"
 
 ////////////////////////////////////
 // Render fences
@@ -40,10 +37,8 @@ public:
 	RENDERCORE_API ~FRenderCommandFence();
 
 private:
-	/** Graph event that represents completion of this fence **/
-	mutable FGraphEventRef CompletionEvent;
-	/** Thread that will trigger the CompletionEvent **/
-	ENamedThreads::Type TriggerThreadIndex;
+	/** Task that represents completion of this fence **/
+	mutable UE::Tasks::FTask CompletionTask;
 };
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2

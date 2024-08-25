@@ -35,7 +35,6 @@
 #include "Subsystems/SubsystemBlueprintLibrary.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/UnrealTemplate.h"
 #include "UObject/Class.h"
 #include "UObject/NameTypes.h"
@@ -74,7 +73,7 @@ void UK2Node_GetSubsystem::Initialize( UClass* NodeClass )
 void UK2Node_GetSubsystem::AllocateDefaultPins()
 {
 	// If required add the world context pin
-	if (GetBlueprint()->ParentClass->HasMetaData(FBlueprintMetadata::MD_ShowWorldContextPin))
+	if (GetBlueprint()->ParentClass->HasMetaDataHierarchical(FBlueprintMetadata::MD_ShowWorldContextPin))
 	{
 		CreatePin(EGPD_Input, UEdGraphSchema_K2::PC_Object, UObject::StaticClass(), TEXT("WorldContext"));
 	}

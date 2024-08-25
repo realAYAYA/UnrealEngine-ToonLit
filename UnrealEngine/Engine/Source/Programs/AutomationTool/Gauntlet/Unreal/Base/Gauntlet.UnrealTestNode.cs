@@ -683,7 +683,6 @@ namespace Gauntlet
 			}
 
 			UnrealApp = new UnrealSession(Context.BuildInfo, SessionRoles) { Sandbox = Context.Options.Sandbox };
-
 			return true;
 		}
 
@@ -778,13 +777,6 @@ namespace Gauntlet
 				{
 					throw new AutomationException("Node already has a null UnrealApp, was PrepareUnrealSession or IsReadyToStart called?");
 				}
-				else
-				{
-					bool bReacquireDevicesPerPass = Globals.Params.ParseParam("ReacquireDevicesPerPass");
-					bool ShouldRetain = (!bReacquireDevicesPerPass && InNumPasses > 1 && Pass + 1 < InNumPasses) ? true : false;
-					UnrealApp.ShouldRetainDevices = ShouldRetain;
-					Log.Verbose("ShouldRetainDevices: {0}", UnrealApp.ShouldRetainDevices);
-				}
 			}
 
 			// ensure we reset things
@@ -810,8 +802,13 @@ namespace Gauntlet
 
 			// Launch the test
 			TestInstance = UnrealApp.LaunchSession();
+			if(TestInstance == null)
+			{
+				return false;
+			}
+
 			// Add info from test context to device usage log
-			foreach(IAppInstance AppInstance in TestInstance.ClientApps)
+			foreach (IAppInstance AppInstance in TestInstance.ClientApps)
 			{
 				if (AppInstance != null)
 				{
@@ -819,8 +816,6 @@ namespace Gauntlet
 					IDeviceUsageReporter.RecordComment(AppInstance.Device.Name, AppInstance.Device.Platform, IDeviceUsageReporter.EventType.Test, this.GetType().Name);
 				}
 			}
-			
-			
 
 			// track the overall session time
 			if (SessionStartTime == DateTime.MinValue)
@@ -828,16 +823,13 @@ namespace Gauntlet
 				SessionStartTime = DateTime.Now;
 			}
 
-			if (TestInstance != null)
-			{
-				// Update these for the executor
-				MaxDuration = Config.MaxDuration;
-				MaxDurationReachedResult = Config.MaxDurationReachedResult;
-				MaxRetries = Config.MaxRetries;
-				MarkTestStarted();
-			}
-			
-			return TestInstance != null;
+			// Update these for the executor
+			MaxDuration = Config.MaxDuration;
+			MaxDurationReachedResult = Config.MaxDurationReachedResult;
+			MaxRetries = Config.MaxRetries;
+			MarkTestStarted();
+
+			return true;
 		}
 
 		public virtual void PopulateCommandlineInfo()
@@ -907,6 +899,18 @@ namespace Gauntlet
 					"ECBranch",
 					"ECChangelist",
 					"PreFlightChange",
+					"AssetRegistryCacheRootFolder",
+					"DeactivatedTestConfigPath",
+					"SkipInstall",
+					"destlocalinstalldir",
+					"deviceurl",
+					"devicepool",
+					"VerifyLogin",
+					"cleardevices",
+					"reboot",
+					"fullclean",
+					"BuildName",
+					"PerfReportServer",
 			}.Select(I => I.ToLower()).ToArray();
 
 			bool ShouldArgBeDisplayed(string InArg)
@@ -1029,30 +1033,27 @@ namespace Gauntlet
 			{
 				if (App != null)
 				{
-					UnrealLogParser Parser = new UnrealLogParser(App.StdOut);
-					List<string> TestLines = new List<string>();
-					// ONLY ADD RANGE ONCE. Ordering is important and will be skewed if multiple ranges are added which can skew how logs are pulled out.
-					TestLines.AddRange(Parser.GetLogChannels(LogCategories, true));
+					UnrealLogStreamParser Parser = new UnrealLogStreamParser();
+					LastLogCount += Parser.ReadStream(App.StdOut, LastLogCount);
 
-					for (int i = LastLogCount; i < TestLines.Count(); i++)
+					foreach (string TestLine in Parser.GetLogFromShortNameChannels(LogCategories))
 					{
-						Log.Info(string.Format("{0}: {1}", AppPrefix, TestLines[i]));
+						Log.Info(string.Format("{0}: {1}", AppPrefix, TestLine));
 
 						if (bUpdateHeartbeatTime)
 						{
-							if (Regex.IsMatch(TestLines[i], @".*GauntletHeartbeat\: Active.*"))
+							if (Regex.IsMatch(TestLine, @".*GauntletHeartbeat\: Active.*"))
 							{
 								LastHeartbeatTime = DateTime.Now;
 								LastActiveHeartbeatTime = DateTime.Now;
 							}
-							else if (Regex.IsMatch(TestLines[i], @".*GauntletHeartbeat\: Idle.*"))
+							else if (Regex.IsMatch(TestLine, @".*GauntletHeartbeat\: Idle.*"))
 							{
 								LastHeartbeatTime = DateTime.Now;
 							}
 						}
 					}
 
-					LastLogCount = TestLines.Count();
 				}
 			}
 
@@ -1367,7 +1368,7 @@ namespace Gauntlet
 					ReportName = ReportName.Split('.').Last();
 				}
 
-				return ReportName;				
+				return ReportName;
 			}
 		}
 
@@ -1513,9 +1514,10 @@ namespace Gauntlet
 			}
 
 			// write test data collection for Horde
+			string FileName = FileUtils.SanitizeFilename(string.IsNullOrEmpty(Context.Options.ArtifactName) ? Name : Context.Options.ArtifactName);
 			string HordeTestDataFilePath = Path.Combine(
 				string.IsNullOrEmpty(GetCachedConfiguration().HordeTestDataPath) ? HordeReport.DefaultTestDataDir : GetCachedConfiguration().HordeTestDataPath,
-				FileUtils.SanitizeFilename(Name) + ".TestData.json"
+				FileName + ".TestData.json"
 			);
 			HordeReport.TestDataCollection HordeTestDataCollection = new HordeReport.TestDataCollection();
 			HordeTestDataCollection.AddNewTestReport(Report, GetCachedConfiguration().HordeTestDataKey);

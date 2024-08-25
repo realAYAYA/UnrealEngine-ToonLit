@@ -648,7 +648,7 @@ float FInterpCurve<T>::FindNearestOnSegment(const T& PointInSpace, int32 PtIdx, 
 
 		const TArray<FInterpCurvePoint<T>>& PointsT = Points;
 
-		TFunction<bool(float&, const float)> BreakIfConverged = [&LastValue, &MinValue, &MaxValue, &NextValue, &StartValuesT, NewtonIterationCount](float& Value, const float Tolerance) -> bool
+		const auto BreakIfConverged = [&LastValue, &MinValue, &MaxValue, &NextValue, &StartValuesT, NewtonIterationCount](float& Value, const float Tolerance) -> bool
 		{
 			if (FMath::IsNearlyEqual(LastValue, Value, Tolerance))
 			{
@@ -676,14 +676,16 @@ float FInterpCurve<T>::FindNearestOnSegment(const T& PointInSpace, int32 PtIdx, 
 			return false;
 		};
 
-		TFunction<bool(float&, const float)> NeverBreak = [](float& Value, const float Tolerance) -> bool
+		const auto NeverBreak = [](float& Value, const float Tolerance) -> bool
 		{
 			return false;
 		};
 
-		TFunction<float(float&, float&, TFunction<bool(float&, const float)>, TFunction<bool(float&, const float)>, const float)> Newton = [&PointsT, &PtIdx, &NextPtIdx, &PointInSpace, &Diff, MaxIteration, InvThree](float& Value, float& Move, TFunction<bool(float&, const float)> BreakBeforeEvaluate, TFunction<bool(float&, const float)> BreakAfterEvaluate, const float Tolerance) -> float
+		const auto Newton =
+			[&PointsT, &PtIdx, &NextPtIdx, &PointInSpace, &Diff, MaxIteration, InvThree]
+			(float& Value, float& Move, TFunctionRef<bool(float&, const float)> BreakBeforeEvaluate, TFunctionRef<bool(float&, const float)> BreakAfterEvaluate, const float Tolerance) -> float
 		{
-			T FoundPoint;
+			T FoundPoint = {};
 
 			for (int32 Iter = 0; Iter < MaxIteration; ++Iter)
 			{
@@ -802,9 +804,10 @@ void FInterpCurve<T>::AutoSetTangents(float Tension, bool bStationaryEndpoints)
 		}
 		else if (ThisPoint.InterpMode == CIM_Linear)
 		{
-			T Tangent = NextPoint.OutVal - ThisPoint.OutVal;
-			ThisPoint.ArriveTangent = Tangent;
-			ThisPoint.LeaveTangent = Tangent;
+			ThisPoint.LeaveTangent = NextPoint.OutVal - ThisPoint.OutVal;
+
+			// Following from a curve, we should set the tangents equal so that there are no discontinuities
+			ThisPoint.ArriveTangent = PrevPoint.IsCurveKey() ? ThisPoint.LeaveTangent : ThisPoint.OutVal - PrevPoint.OutVal;
 		}
 		else if (ThisPoint.InterpMode == CIM_Constant)
 		{

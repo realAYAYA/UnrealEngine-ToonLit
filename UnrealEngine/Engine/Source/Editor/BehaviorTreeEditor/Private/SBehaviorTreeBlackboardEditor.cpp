@@ -5,6 +5,7 @@
 #include "BehaviorTree/Blackboard/BlackboardKeyType.h"
 #include "BehaviorTree/BlackboardData.h"
 #include "BehaviorTreeEditorCommands.h"
+#include "BehaviorTreeEditorDelegates.h"
 #include "ClassViewerFilter.h"
 #include "ClassViewerModule.h"
 #include "Containers/Array.h"
@@ -83,7 +84,6 @@ void SBehaviorTreeBlackboardEditor::Construct(const FArguments& InArgs, TSharedR
 		.OnIsDebuggerReady(InArgs._OnIsDebuggerReady)
 		.OnIsDebuggerPaused(InArgs._OnIsDebuggerPaused)
 		.OnGetDebugTimeStamp(InArgs._OnGetDebugTimeStamp)
-		.OnBlackboardKeyChanged(InArgs._OnBlackboardKeyChanged)
 		.IsReadOnly(false),
 		CommandList,
 		InBlackboardData
@@ -153,7 +153,7 @@ void SBehaviorTreeBlackboardEditor::HandleDeleteEntry()
 			}
 
 			GraphActionMenu->RefreshAllActions(true);
-			OnBlackboardKeyChanged.ExecuteIfBound(BlackboardDataPtr, nullptr);
+			UE::BehaviorTreeEditor::Delegates::OnBlackboardKeyChanged.Broadcast(*BlackboardDataPtr, nullptr);
 
 			// signal de-selection
 			if(OnEntrySelected.IsBound())
@@ -313,7 +313,7 @@ void SBehaviorTreeBlackboardEditor::HandleKeyClassPicked(UClass* InClass)
 	BlackboardDataPtr->Keys.Add(Entry);
 
 	GraphActionMenu->RefreshAllActions(true);
-	OnBlackboardKeyChanged.ExecuteIfBound(BlackboardDataPtr, &BlackboardDataPtr->Keys.Last());
+	UE::BehaviorTreeEditor::Delegates::OnBlackboardKeyChanged.Broadcast(*BlackboardDataPtr, &BlackboardDataPtr->Keys.Last());
 
 	GraphActionMenu->SelectItemByName(Entry.EntryName, ESelectInfo::OnMouseClick);
 

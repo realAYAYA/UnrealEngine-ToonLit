@@ -15,28 +15,28 @@ class LineGraphView: UIView {
     private var dataPoints: [CGFloat] = []
     
     // Limit to the number of data points stored in the array
-    private var sizeLimit: UInt16 = 120;
+    private var sizeLimit: UInt16 = 120
     
     // Font to use in our graph title
-    private var titleFont: UIFont = UIFont.systemFont(ofSize: 12);
+    private var titleFont: UIFont
     
     // Font to use in our graph tick labels
-    private var tickLabelFont: UIFont = UIFont.systemFont(ofSize: 8);
+    private var tickLabelFont: UIFont
     
     // Color of our font
-    private var fontColor: UIColor = UIColor.white;
+    private var fontColor: UIColor = UIColor.white
     
     // Paragraph style for our text
-    private var paragraphStyle: NSMutableParagraphStyle = NSMutableParagraphStyle();
+    private var paragraphStyle: NSMutableParagraphStyle = NSMutableParagraphStyle()
     
     // Title text attributes
-    private var titleTextAttributes: [NSAttributedString.Key: Any] = [:];
+    private var titleTextAttributes: [NSAttributedString.Key: Any] = [:]
     
     // Tick label text attributes
-    private var tickTextAttributes: [NSAttributedString.Key: Any] = [:];
+    private var tickTextAttributes: [NSAttributedString.Key: Any] = [:]
     
     // Maximum y value we have seen
-    public var maxY: CGFloat = 1;
+    public var maxY: CGFloat = 1
     
     // Title of graph
     public var title: String = "Title" {
@@ -51,6 +51,12 @@ class LineGraphView: UIView {
     }
     
     override init(frame: CGRect) {
+        // Font to use in our graph title
+        self.titleFont = UIFont.systemFont(ofSize: 12 / (UIScreen.main.scale - 1));
+        
+        // Font to use in our graph tick labels
+        self.tickLabelFont = UIFont.systemFont(ofSize: 8 / (UIScreen.main.scale - 1));
+        
         super.init(frame: frame)
         
         // set transparent background color
@@ -79,6 +85,12 @@ class LineGraphView: UIView {
     }
     
     required init?(coder: NSCoder) {
+        // Font to use in our graph title
+        self.titleFont = UIFont.systemFont(ofSize: 12 / (UIScreen.main.scale - 1));
+        
+        // Font to use in our graph tick labels
+        self.tickLabelFont = UIFont.systemFont(ofSize: 8 / (UIScreen.main.scale - 1));
+        
         super.init(coder: coder)
         self.backgroundColor = UIColor.clear
     }
@@ -98,7 +110,9 @@ class LineGraphView: UIView {
         
         // Triggers a redraw (need to do this from main thread)
         DispatchQueue.main.async {
-            self.setNeedsDisplay();
+            if !self.isHidden && self.window != nil {
+                self.setNeedsDisplay()
+            }
         }
     }
     

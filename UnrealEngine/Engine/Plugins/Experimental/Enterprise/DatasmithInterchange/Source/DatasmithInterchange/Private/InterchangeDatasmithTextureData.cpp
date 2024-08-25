@@ -11,15 +11,15 @@
 
 namespace UE::DatasmithInterchange
 {
-	const FString FInterchangeDatasmithTextureDataConst::DatasmithTextureDataKey = TEXT("DatasmithTextureData");
-	const FString FInterchangeDatasmithTextureDataConst::FileKey = TEXT("File");
-	const FString FInterchangeDatasmithTextureDataConst::TextureModeKey = TEXT("TextureMode");
-	const FString FInterchangeDatasmithTextureDataConst::TextureFilterKey = TEXT("TextureFilter");
-	const FString FInterchangeDatasmithTextureDataConst::TextureAddressXKey = TEXT("TextureAddressX");
-	const FString FInterchangeDatasmithTextureDataConst::TextureAddressYKey = TEXT("TextureAddressY");
-	const FString FInterchangeDatasmithTextureDataConst::AllowResizeKey = TEXT("AllowResize");
-	const FString FInterchangeDatasmithTextureDataConst::RGBCurveKey = TEXT("RGBCurve");
-	const FString FInterchangeDatasmithTextureDataConst::SRGBKey = TEXT("SRGB");
+	const FString FInterchangeDatasmithTextureDataConst::DatasmithTextureDataKey = TEXT("DatasmithTextureData::DatasmithTextureData");
+	const FString FInterchangeDatasmithTextureDataConst::FileKey = TEXT("DatasmithTextureData::File");
+	const FString FInterchangeDatasmithTextureDataConst::TextureModeKey = TEXT("DatasmithTextureData::TextureMode");
+	const FString FInterchangeDatasmithTextureDataConst::TextureFilterKey = TEXT("DatasmithTextureData::TextureFilter");
+	const FString FInterchangeDatasmithTextureDataConst::TextureAddressXKey = TEXT("DatasmithTextureData::TextureAddressX");
+	const FString FInterchangeDatasmithTextureDataConst::TextureAddressYKey = TEXT("DatasmithTextureData::TextureAddressY");
+	const FString FInterchangeDatasmithTextureDataConst::AllowResizeKey = TEXT("DatasmithTextureData::AllowResize");
+	const FString FInterchangeDatasmithTextureDataConst::RGBCurveKey = TEXT("DatasmithTextureData::RGBCurve");
+	const FString FInterchangeDatasmithTextureDataConst::SRGBKey = TEXT("DatasmithTextureData::SRGB");
 
 	FInterchangeDatasmithTextureDataConst::FInterchangeDatasmithTextureDataConst(const UInterchangeBaseNode* InNode)
 		: ConstBaseNode(InNode)

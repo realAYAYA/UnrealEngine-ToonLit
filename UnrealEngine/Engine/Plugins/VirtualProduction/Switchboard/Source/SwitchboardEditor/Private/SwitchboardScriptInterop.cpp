@@ -208,14 +208,14 @@ void FSwitchboardVerifyResult::SetFromJson(FStringView JsonSV)
 		return;
 	}
 
-	if (!JsonObject->TryGetStringField("log", this->Log))
+	if (!JsonObject->TryGetStringField(TEXT("log"), this->Log))
 	{
 		UE_LOG(LogSwitchboardPlugin, Error, TEXT("FSwitchboardVerifyResult: 'log' field missing"));
 		this->Log.Empty();
 	}
 
 	bool bSuccess = false;
-	if (!JsonObject->TryGetBoolField("success", bSuccess))
+	if (!JsonObject->TryGetBoolField(TEXT("success"), bSuccess))
 	{
 		UE_LOG(LogSwitchboardPlugin, Error, TEXT("FSwitchboardVerifyResult: 'success' field missing"));
 		this->Summary = ESummary::InvalidOutput;

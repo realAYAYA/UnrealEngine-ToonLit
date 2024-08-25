@@ -140,7 +140,8 @@ void UNiagaraDataInterfaceSpriteRendererInfo::OnSpriteRendererChanged(UNiagaraSp
 	MarkRenderDataDirty();
 }
 
-void UNiagaraDataInterfaceSpriteRendererInfo::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceSpriteRendererInfo::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	FNiagaraFunctionSignature DefaultImmutableSignature;
 	DefaultImmutableSignature.bMemberFunction = true;
@@ -173,6 +174,7 @@ void UNiagaraDataInterfaceSpriteRendererInfo::GetFunctions(TArray<FNiagaraFuncti
 		Sig.Outputs.Emplace(FNiagaraTypeDefinition::GetVec2Def(), TEXT("SubImageSize"));
 	}
 }
+#endif
 
 void UNiagaraDataInterfaceSpriteRendererInfo::GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction& OutFunc)
 {

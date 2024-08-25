@@ -17,6 +17,7 @@
 #include "SceneInterface.h"
 #include "SceneRendererInterface.h"
 #include "SceneTexturesConfig.h"
+#include "ScreenPass.h"
 #include "ShaderParameters/DisplayClusterShaderParameters_UVLightCards.h"
 #include "UnrealClient.h"
 
@@ -31,12 +32,10 @@ public:
 	{
 		PassUniformBuffer.Bind(Initializer.ParameterMap, FSceneTextureUniformParameters::FTypeInfo::GetStructMetadata()->GetShaderVariableName());
 	}
-	              
+
 	static bool ShouldCompilePermutation(const FMeshMaterialShaderPermutationParameters& Parameters)
 	{
-		return EnumHasAllFlags(Parameters.Flags, EShaderPermutationFlags::HasEditorOnlyData)
-			&& IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5)
-			&& Parameters.VertexFactoryType == FindVertexFactoryType(TEXT("FLocalVertexFactory"));
+		return Parameters.VertexFactoryType == FindVertexFactoryType(TEXT("FLocalVertexFactory"));
 	}
 };
 
@@ -56,9 +55,7 @@ public:
 
 	static bool ShouldCompilePermutation(const FMeshMaterialShaderPermutationParameters& Parameters)
 	{
-		return EnumHasAllFlags(Parameters.Flags, EShaderPermutationFlags::HasEditorOnlyData)
-			&& IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5)
-			&& Parameters.VertexFactoryType == FindVertexFactoryType(TEXT("FLocalVertexFactory"));
+		return Parameters.VertexFactoryType == FindVertexFactoryType(TEXT("FLocalVertexFactory"));
 	}
 };
 
@@ -94,8 +91,11 @@ public:
 			return;
 		}
 
-		Shaders.TryGetVertexShader(PassShaders.VertexShader);
-		Shaders.TryGetPixelShader(PassShaders.PixelShader);
+		if (!Shaders.TryGetVertexShader(PassShaders.VertexShader) || !Shaders.TryGetPixelShader(PassShaders.PixelShader))
+		{
+			// Always check if shaders are available on the current platform and hardware
+			return;
+		}
 
 		FMeshDrawingPolicyOverrideSettings OverrideSettings = ComputeMeshOverrideSettings(MeshBatch);
 		ERasterizerFillMode MeshFillMode = ComputeMeshFillMode(Material, OverrideSettings);
@@ -172,6 +172,21 @@ BEGIN_SHADER_PARAMETER_STRUCT(FUVLightCardPassParameters, )
 	RENDER_TARGET_BINDING_SLOTS()
 END_SHADER_PARAMETER_STRUCT()
 
+class FGammaCorrectionPS : public FGlobalShader
+{
+	DECLARE_SHADER_TYPE(FGammaCorrectionPS, Global);
+	SHADER_USE_PARAMETER_STRUCT(FGammaCorrectionPS, FGlobalShader);
+
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, InputTexture)
+		SHADER_PARAMETER_SAMPLER(SamplerState, InputSampler)
+		SHADER_PARAMETER(float, InverseGamma)
+		RENDER_TARGET_BINDING_SLOTS()
+		END_SHADER_PARAMETER_STRUCT()
+};
+
+IMPLEMENT_GLOBAL_SHADER(FGammaCorrectionPS, "/Plugin/nDisplay/Private/UVLightCardGammaCorrection.usf", "GammaCorrectionPS", SF_Pixel);
+
 DECLARE_GPU_STAT_NAMED(nDisplay_UVLightCards_Render, TEXT("nDisplay UVLightCards::Render"));
 
 bool FDisplayClusterShadersPreprocess_UVLightCards::RenderPreprocess_UVLightCards(FRHICommandListImmediate& RHICmdList, FSceneInterface* InScene, FRenderTarget* InRenderTarget, const FDisplayClusterShaderParameters_UVLightCards& InParameters)
@@ -216,8 +231,7 @@ bool FDisplayClusterShadersPreprocess_UVLightCards::RenderPreprocess_UVLightCard
 		InRenderTarget,
 		InScene,
 		EngineShowFlags)
-		.SetTime(FGameTime::GetTimeSinceAppStart())
-		.SetGammaCorrection(1.0f));
+		.SetTime(FGameTime::GetTimeSinceAppStart()));
 
 	FScenePrimitiveRenderingContextScopeHelper ScenePrimitiveRenderingContextScopeHelper(GetRendererModule().BeginScenePrimitiveRendering(GraphBuilder, &ViewFamily));
 
@@ -277,11 +291,16 @@ bool FDisplayClusterShadersPreprocess_UVLightCards::RenderPreprocess_UVLightCard
 	FRDGTextureRef OutputTexture = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(InRenderTarget->GetRenderTargetTexture(), TEXT("UVLightCardRenderTarget")));
 	FRenderTargetBinding OutputRenderTargetBinding(OutputTexture, ERenderTargetLoadAction::EClear);
 
+	// Intermediate render target for the raw color output of the light cards
+	FRDGTextureRef ColorTexture = GraphBuilder.CreateTexture(OutputTexture->Desc, TEXT("DisplayClusterUVLightCards.ColorTexture"));
+	FRenderTargetBinding ColorRenderTargetBinding(ColorTexture, ERenderTargetLoadAction::EClear);
+
+	// First, render all the UV light cards to a plane which represents the UV plane for the stage
 	FUVLightCardPassParameters* PassParameters = GraphBuilder.AllocParameters<FUVLightCardPassParameters>();
 	PassParameters->View = View->ViewUniformBuffer;
 	PassParameters->Scene = GetSceneUniformBufferRef(GraphBuilder, *View);
 	PassParameters->InstanceCulling = FInstanceCullingContext::CreateDummyInstanceCullingUniformBuffer(GraphBuilder);
-	PassParameters->RenderTargets[0] = OutputRenderTargetBinding;
+	PassParameters->RenderTargets[0] = ColorRenderTargetBinding;
 
 	GraphBuilder.AddPass(RDG_EVENT_NAME("DisplayClusterUVLightCards::Render"),
 		PassParameters,
@@ -306,6 +325,32 @@ bool FDisplayClusterShadersPreprocess_UVLightCards::RenderPreprocess_UVLightCard
 				}
 			});
 		});
+
+	// Now gamma correct the UV light card render
+	FGammaCorrectionPS::FParameters* GammaCorrectionParameters = GraphBuilder.AllocParameters<FGammaCorrectionPS::FParameters>();
+	GammaCorrectionParameters->InputTexture = ColorTexture;
+	GammaCorrectionParameters->InputSampler = TStaticSamplerState<>::GetRHI();
+	GammaCorrectionParameters->InverseGamma = 1.0 / InParameters.LightCardGamma;
+	GammaCorrectionParameters->RenderTargets[0] = OutputRenderTargetBinding;
+
+	FGlobalShaderMap* GlobalShaderMap = GetGlobalShaderMap(View->FeatureLevel);
+	TShaderMapRef<FScreenPassVS> ScreenPassVS(GlobalShaderMap);
+	TShaderMapRef<FGammaCorrectionPS> GammaCorrectionPS(GlobalShaderMap);
+	if (!ScreenPassVS.IsValid() || !GammaCorrectionPS.IsValid())
+	{
+		// Always check if shaders are available on the current platform and hardware
+		return false;
+	}
+
+	AddDrawScreenPass(
+		GraphBuilder,
+		RDG_EVENT_NAME("DisplayClusterUVLightCards::GammaCorrection"),
+		FScreenPassViewInfo(*View),
+		FScreenPassTextureViewport(OutputTexture),
+		FScreenPassTextureViewport(ColorTexture),
+		ScreenPassVS,
+		GammaCorrectionPS,
+		GammaCorrectionParameters);
 
 	GraphBuilder.Execute();
 

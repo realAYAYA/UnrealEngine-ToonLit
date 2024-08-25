@@ -316,11 +316,12 @@ void UK2Node_PropertyAccess::HandleVariableRenamed(UBlueprint* InBlueprint, UCla
 {
 	IPropertyAccessEditor& PropertyAccessEditor = IModularFeatures::Get().GetModularFeature<IPropertyAccessEditor>("PropertyAccessEditor");
 
-	UClass* SkeletonVariableClass = FBlueprintEditorUtils::GetSkeletonClass(InVariableClass);
+	UClass* SkeletonVariableClass = FBlueprintEditorUtils::GetMostUpToDateClass(InVariableClass);
 
 	// See if the path references the variable
 	TArray<int32> RenameIndices;
 	IPropertyAccessEditor::FResolvePropertyAccessArgs ResolveArgs;
+	ResolveArgs.bUseMostUpToDateClasses = true;
 	ResolveArgs.PropertyFunction = [InOldVarName, SkeletonVariableClass, &RenameIndices](int32 InSegmentIndex, FProperty* InProperty, int32 InStaticArrayIndex)
 	{
 		UClass* OwnerClass = InProperty->GetOwnerClass();
@@ -340,6 +341,35 @@ void UK2Node_PropertyAccess::HandleVariableRenamed(UBlueprint* InBlueprint, UCla
 	}
 }
 
+void UK2Node_PropertyAccess::HandleFunctionRenamed(UBlueprint* InBlueprint, UClass* InFunctionClass, UEdGraph* InGraph, const FName& InOldFuncName, const FName& InNewFuncName)
+{
+	IPropertyAccessEditor& PropertyAccessEditor = IModularFeatures::Get().GetModularFeature<IPropertyAccessEditor>("PropertyAccessEditor");
+
+	UClass* SkeletonFunctionClass = FBlueprintEditorUtils::GetMostUpToDateClass(InFunctionClass);
+
+	// See if the path references the variable
+	TArray<int32> RenameIndices;
+	IPropertyAccessEditor::FResolvePropertyAccessArgs ResolveArgs;
+	ResolveArgs.bUseMostUpToDateClasses = true;
+	ResolveArgs.FunctionFunction = [InOldFuncName, SkeletonFunctionClass, &RenameIndices](int32 InSegmentIndex, UFunction* InFunction, FProperty* InReturnProperty)
+	{
+		const UClass* OwnerSkeletonFunctionClass = FBlueprintEditorUtils::GetMostUpToDateClass(InFunction->GetOuterUClass());
+		if(OwnerSkeletonFunctionClass && InFunction->GetFName() == InOldFuncName && OwnerSkeletonFunctionClass->IsChildOf(SkeletonFunctionClass))
+		{
+			RenameIndices.Add(InSegmentIndex);
+		}
+	};
+	
+	PropertyAccessEditor.ResolvePropertyAccess(GetBlueprint()->SkeletonGeneratedClass, Path, ResolveArgs);
+
+	// Rename any references we found
+	for(const int32& RenameIndex : RenameIndices)
+	{
+		Path[RenameIndex] = InNewFuncName.ToString();
+		TextPath = PropertyAccessEditor.MakeTextPath(Path, GetBlueprint()->SkeletonGeneratedClass);
+	}
+}
+
 void UK2Node_PropertyAccess::ReplaceReferences(UBlueprint* InBlueprint, UBlueprint* InReplacementBlueprint, const FMemberReference& InSource, const FMemberReference& InReplacement)
 {
 	IPropertyAccessEditor& PropertyAccessEditor = IModularFeatures::Get().GetModularFeature<IPropertyAccessEditor>("PropertyAccessEditor");
@@ -354,6 +384,7 @@ void UK2Node_PropertyAccess::ReplaceReferences(UBlueprint* InBlueprint, UBluepri
 	// See if the path references the variable
 	TArray<int32> ReplaceIndices;
 	IPropertyAccessEditor::FResolvePropertyAccessArgs ResolveArgs;
+	ResolveArgs.bUseMostUpToDateClasses = true;
 	ResolveArgs.PropertyFunction = [SourceProperty, &ReplaceIndices](int32 InSegmentIndex, FProperty* InProperty, int32 InStaticArrayIndex)
 	{
 		if(InProperty == SourceProperty)
@@ -376,17 +407,18 @@ bool UK2Node_PropertyAccess::ReferencesVariable(const FName& InVarName, const US
 {
 	IPropertyAccessEditor& PropertyAccessEditor = IModularFeatures::Get().GetModularFeature<IPropertyAccessEditor>("PropertyAccessEditor");
 
-	const UClass* SkeletonVariableClass = FBlueprintEditorUtils::GetSkeletonClass(Cast<UClass>(InScope));
+	const UClass* SkeletonVariableClass = FBlueprintEditorUtils::GetMostUpToDateClass(Cast<UClass>(InScope));
 
 	// See if the path references the variable
 	bool bReferencesVariable = false;
 	
 	IPropertyAccessEditor::FResolvePropertyAccessArgs ResolveArgs;
+	ResolveArgs.bUseMostUpToDateClasses = true;
 	ResolveArgs.PropertyFunction = [InVarName, SkeletonVariableClass, &bReferencesVariable](int32 InSegmentIndex, FProperty* InProperty, int32 InStaticArrayIndex)
 	{
 		if(SkeletonVariableClass)
 		{
-			const UClass* OwnerSkeletonVariableClass = FBlueprintEditorUtils::GetSkeletonClass(Cast<UClass>(InProperty->GetOwnerStruct()));
+			const UClass* OwnerSkeletonVariableClass = FBlueprintEditorUtils::GetMostUpToDateClass(Cast<UClass>(InProperty->GetOwnerStruct()));
 
 			if(OwnerSkeletonVariableClass && InProperty->GetFName() == InVarName && OwnerSkeletonVariableClass->IsChildOf(SkeletonVariableClass))
 			{
@@ -408,17 +440,18 @@ bool UK2Node_PropertyAccess::ReferencesFunction(const FName& InFunctionName, con
 {
 	IPropertyAccessEditor& PropertyAccessEditor = IModularFeatures::Get().GetModularFeature<IPropertyAccessEditor>("PropertyAccessEditor");
 
-	const UClass* SkeletonFunctionClass = FBlueprintEditorUtils::GetSkeletonClass(Cast<UClass>(InScope));
+	const UClass* SkeletonFunctionClass = FBlueprintEditorUtils::GetMostUpToDateClass(Cast<UClass>(InScope));
 
 	// See if the path references the function
 	bool bReferencesFunction = false;
 
 	IPropertyAccessEditor::FResolvePropertyAccessArgs ResolveArgs;
+	ResolveArgs.bUseMostUpToDateClasses = true;
 	ResolveArgs.FunctionFunction = [InFunctionName, SkeletonFunctionClass, &bReferencesFunction](int32 InSegmentIndex, UFunction* InFunction, FProperty* InProperty)
 	{
 		if (SkeletonFunctionClass)
 		{
-			const UClass* OwnerSkeletonFunctionClass = FBlueprintEditorUtils::GetSkeletonClass(InFunction->GetOuterUClass());
+			const UClass* OwnerSkeletonFunctionClass = FBlueprintEditorUtils::GetMostUpToDateClass(InFunction->GetOuterUClass());
 
 			if (OwnerSkeletonFunctionClass && InFunction->GetFName() == InFunctionName && OwnerSkeletonFunctionClass->IsChildOf(SkeletonFunctionClass))
 			{

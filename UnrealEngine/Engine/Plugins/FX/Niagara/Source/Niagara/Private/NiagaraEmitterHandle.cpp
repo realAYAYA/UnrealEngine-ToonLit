@@ -3,6 +3,7 @@
 #include "NiagaraEmitterHandle.h"
 #include "NiagaraSystem.h"
 #include "NiagaraEmitter.h"
+#include "Stateless/NiagaraStatelessEmitter.h"
 #include "NiagaraScriptSourceBase.h"
 #include "NiagaraCommon.h"
 #include "NiagaraCustomVersion.h"
@@ -24,30 +25,48 @@ FNiagaraEmitterHandle::FNiagaraEmitterHandle()
 
 #if WITH_EDITORONLY_DATA
 FNiagaraEmitterHandle::FNiagaraEmitterHandle(UNiagaraEmitter& InEmitter, const FGuid& Version)
-	: Id(FGuid::NewGuid())
+	: Name(*InEmitter.GetUniqueEmitterName())
+	, Id(FGuid::NewGuid())
 	, IdName(*Id.ToString())
 	, bIsEnabled(true)
-	, Name(*InEmitter.GetUniqueEmitterName())
 	, Source_DEPRECATED(nullptr)
 	, LastMergedSource_DEPRECATED(nullptr)
 	, bIsolated(false)
 	, Instance_DEPRECATED(nullptr)
 	, VersionedInstance(FVersionedNiagaraEmitter(&InEmitter, Version))
+	, EmitterMode(ENiagaraEmitterMode::Standard)
 {
 }
 
 FNiagaraEmitterHandle::FNiagaraEmitterHandle(const FVersionedNiagaraEmitter& InEmitter)
-	: Id(FGuid::NewGuid())
+	: Name(*InEmitter.Emitter->GetUniqueEmitterName())
+	, Id(FGuid::NewGuid())
 	, IdName(*Id.ToString())
 	, bIsEnabled(true)
-	, Name(*InEmitter.Emitter->GetUniqueEmitterName())
 	, Source_DEPRECATED(nullptr)
 	, LastMergedSource_DEPRECATED(nullptr)
 	, bIsolated(false)
 	, Instance_DEPRECATED(nullptr)
 	, VersionedInstance(InEmitter)
+	, EmitterMode(ENiagaraEmitterMode::Standard)
 {
 }
+
+//-TODO:Stateless
+FNiagaraEmitterHandle::FNiagaraEmitterHandle(UNiagaraStatelessEmitter& InEmitter)
+	: Name(*InEmitter.GetUniqueEmitterName())
+	, Id(FGuid::NewGuid())
+	, IdName(*Id.ToString())
+	, bIsEnabled(true)
+	, Source_DEPRECATED(nullptr)
+	, LastMergedSource_DEPRECATED(nullptr)
+	, bIsolated(false)
+	, Instance_DEPRECATED(nullptr)
+	, StatelessEmitter(&InEmitter)
+	, EmitterMode(ENiagaraEmitterMode::Stateless)
+{
+}
+//-TODO:Stateless
 #endif
 
 bool FNiagaraEmitterHandle::IsValid() const
@@ -89,7 +108,13 @@ void FNiagaraEmitterHandle::SetName(FName InName, UNiagaraSystem& InOwnerSystem)
 	FName UniqueName = FNiagaraUtilities::GetUniqueName(SanitizedName, OtherEmitterNames);
 
 	Name = UniqueName;
-	if (VersionedInstance.Emitter->SetUniqueEmitterName(Name.ToString()))
+
+	if (StatelessEmitter != nullptr)
+	{
+		StatelessEmitter->SetUniqueEmitterName(Name.ToString());
+	}
+
+	if (VersionedInstance.Emitter && VersionedInstance.Emitter->SetUniqueEmitterName(Name.ToString()))
 	{
  #if WITH_EDITOR
 		if (InOwnerSystem.GetSystemSpawnScript() && InOwnerSystem.GetSystemSpawnScript()->GetLatestSource())
@@ -143,6 +168,24 @@ bool FNiagaraEmitterHandle::SetIsEnabled(bool bInIsEnabled, UNiagaraSystem& InOw
 	return false;
 }
 
+#if WITH_EDITORONLY_DATA
+void FNiagaraEmitterHandle::SetEmitterMode(UNiagaraSystem& InOwningSystem, ENiagaraEmitterMode InEmitterMode)
+{
+	if (EmitterMode != InEmitterMode)
+	{
+		EmitterMode = InEmitterMode;
+		if (EmitterMode == ENiagaraEmitterMode::Stateless && StatelessEmitter == nullptr)
+		{
+			StatelessEmitter = NewObject<UNiagaraStatelessEmitter>(&InOwningSystem, "StatelessEmitter", RF_Transactional);
+			StatelessEmitter->SetUniqueEmitterName(*Name.ToString());
+			StatelessEmitter->CacheFromCompiledData();
+		}
+		InOwningSystem.RequestCompile(false);
+		OnEmitterModeChangedDelegate.Broadcast();
+	}
+}
+#endif
+
 FVersionedNiagaraEmitter FNiagaraEmitterHandle::GetInstance() const
 {
 	return VersionedInstance;
@@ -164,6 +207,11 @@ FString FNiagaraEmitterHandle::GetUniqueInstanceName() const
 	if (VersionedInstance.Emitter)
 	{
 		return VersionedInstance.Emitter->GetUniqueEmitterName();
+	}
+	//-TODO:Stateless: We need an emitter data adapter / base class
+	else if (StatelessEmitter)
+	{
+		return StatelessEmitter->GetUniqueEmitterName();
 	}
 	return FString();
 }

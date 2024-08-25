@@ -11,6 +11,7 @@
 #include "HAL/PlatformFramePacer.h"
 #include "IHeadMountedDisplayModule.h"
 #include "IHeadMountedDisplayVulkanExtensions.h"
+#include "Misc/CommandLine.h"
 #include "RHIUtilities.h"
 
 #if PLATFORM_ANDROID

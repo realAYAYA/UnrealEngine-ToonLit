@@ -705,7 +705,7 @@ static void DumpGraphicsPSO(const FD3D12_GRAPHICS_PIPELINE_STATE_DESC& Desc, con
 		DumpShaderAsm(String, Desc.PS);
 	}
 
-	UE_LOG(LogD3D12RHI, Warning, TEXT("Failed to create Graphics PSO with hash 0x%s:\n%s"), Name, *String);
+	UE_LOG(LogD3D12RHI, Warning, TEXT("Failed to create graphics PSO with combined hash 0x%s:\n%s"), Name, *String);
 }
 
 static void DumpComputePSO(const FD3D12_COMPUTE_PIPELINE_STATE_DESC& Desc, const TCHAR* Name)
@@ -721,7 +721,7 @@ static void DumpComputePSO(const FD3D12_COMPUTE_PIPELINE_STATE_DESC& Desc, const
 		DumpShaderAsm(String, Desc.CS);
 	}
 
-	UE_LOG(LogD3D12RHI, Warning, TEXT("Failed to create Compute PSO with hash 0x%s:\n%s"), Name, *String);
+	UE_LOG(LogD3D12RHI, Warning, TEXT("Failed to create compute PSO with combined hash 0x%s:\n%s"), Name, *String);
 }
 
 // Thread-safe create graphics/compute pipeline state. Conditionally load/store the PSO using a Pipeline Library.
@@ -754,7 +754,7 @@ static HRESULT CreatePipelineStateFromStream(ID3D12PipelineState*& PSO, ID3D12De
 		hr = Device->CreatePipelineState(Desc, IID_PPV_ARGS(&PSO));
 		if (FAILED(hr))
 		{
-			UE_LOG(LogD3D12RHI, Error, TEXT("Failed to create PipelineState with hash %s"), Name);
+			UE_LOG(LogD3D12RHI, Error, TEXT("Failed to create pipeline state with combined hash %s, error %x."), Name, hr);
 		}
 	}
 

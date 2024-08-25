@@ -72,7 +72,7 @@ void FLegacyInternationalization::GetCultureNames(TArray<FString>& CultureNames)
 
 TArray<FString> FLegacyInternationalization::GetPrioritizedCultureNames(const FString& Name)
 {
-	const FString CanonicalName = FCulture::GetCanonicalName(Name);
+	const FString CanonicalName = FCultureImplementation::GetCanonicalName(Name, *I18N);
 	TArray<FString> PrioritizedCultureNames;
 	
 	if (!CanonicalName.IsEmpty())

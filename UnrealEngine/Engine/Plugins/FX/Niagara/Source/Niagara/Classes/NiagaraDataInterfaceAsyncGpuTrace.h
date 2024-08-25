@@ -44,10 +44,8 @@ public:
 	NIAGARA_API virtual bool InitPerInstanceData(void* PerInstanceData, FNiagaraSystemInstance* InSystemInstance) override;
 	NIAGARA_API virtual void DestroyPerInstanceData(void* PerInstanceData, FNiagaraSystemInstance* InSystemInstance) override;
 
-	NIAGARA_API virtual void GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions) override;
-
 	virtual bool CanExecuteOnTarget(ENiagaraSimTarget Target) const override { return Target == ENiagaraSimTarget::GPUComputeSim; }
-	NIAGARA_API virtual bool RequiresDistanceFieldData() const override;
+	NIAGARA_API virtual bool RequiresGlobalDistanceField() const override;
 	NIAGARA_API virtual bool RequiresRayTracingScene() const override;
 
 #if WITH_EDITORONLY_DATA
@@ -64,6 +62,10 @@ private:
 	NIAGARA_API virtual bool Equals(const UNiagaraDataInterface* Other) const override;
 
 protected:
+#if WITH_EDITORONLY_DATA
+	virtual void GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const override;
+#endif
+
 	NIAGARA_API virtual bool CopyToInternal(UNiagaraDataInterface* Destination) const override;
 	NIAGARA_API virtual void PushToRenderThreadImpl() override;
 };

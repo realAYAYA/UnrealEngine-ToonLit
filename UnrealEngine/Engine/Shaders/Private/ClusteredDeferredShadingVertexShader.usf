@@ -6,6 +6,7 @@
 
 #include "HairStrands/HairStrandsVisibilityCommonStruct.ush" 
 #include "Common.ush"
+#include "HairStrands/HairStrandsVisibilityCommon.ush"
 
 struct FHairStrandsSamplesDesc
 {
@@ -20,9 +21,8 @@ void ClusteredShadingVertexShader(
 	nointerpolation out uint OutNodeCount : DISPATCH_NODECOUNT,
 	nointerpolation out uint2 OutResolution : DISPATCH_RESOLUTION)
 {
-	OutNodeCount = HairStrands.HairSampleCount.Load(uint3(0,0,0));
-	OutResolution.x = ceil(sqrt(OutNodeCount));
-	OutResolution.y = OutResolution.x;
+	OutNodeCount = HairStrands.HairSampleCount[0];
+	OutResolution = GetHairSampleResolution(OutNodeCount);
 
 	const float2 ClipCoord = ((OutResolution + 0.5f) / float2(HairStrands.HairSampleViewportResolution)) * 2;
 

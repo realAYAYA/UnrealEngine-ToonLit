@@ -87,6 +87,7 @@ private:
 #if WITH_EDITOR
 	void OnPreGenerateStreaming(TArray<FString>* OutPackageToGenerate);
 	void OnBeginCook(IWorldPartitionCookPackageContext& CookContext);
+	void OnEndCook(IWorldPartitionCookPackageContext& CookContext);
 #endif
 
 	using ContentBundleGameArray = TArray<TUniquePtr<FContentBundle>>;

@@ -180,7 +180,7 @@ namespace UE::PixelStreamingServers
 			return nullptr;
 		}
 
-		if (!JSONObj->TryGetStringField("type", OutMessageType))
+		if (!JSONObj->TryGetStringField(TEXT("type"), OutMessageType))
 		{
 			UE_LOG(LogPixelStreamingServers, Warning, TEXT("Incoming message did not contain a 'type' field: %s"), *InMessage);
 			return nullptr;
@@ -212,12 +212,17 @@ namespace UE::PixelStreamingServers
 			UnsubscribePlayer(PlayerConnectionId);
 		}
 
+		// We don't want to make the connections shared to prevent someone accidentally holding on to it. So we use it raw here
+		FWebSocketConnection* PlayerWS = (*PlayersWS->GetConnections().Find(PlayerConnectionId)).Get();
+		bool bUESendsOffer = !PlayerWS->GetUrlArgs().Contains(TEXT("OfferToReceive=true"));
+
 		// Send "playerConnected" message to streamer which kicks off making a new RTC connection
 		TSharedRef<FJsonObject> OnPlayerConnectedJSON = MakeShared<FJsonObject>();
 		OnPlayerConnectedJSON->SetStringField("type", "playerConnected");
 		OnPlayerConnectedJSON->SetStringField("playerId", FString::FromInt(PlayerConnectionId));
 		OnPlayerConnectedJSON->SetBoolField("dataChannel", true);
 		OnPlayerConnectedJSON->SetBoolField("sfu", false);
+		OnPlayerConnectedJSON->SetBoolField("sendOffer", bUESendsOffer);
 		SendStreamerMessage(StreamerConnectionId, OnPlayerConnectedJSON);
 
 		PlayerSubscriptions.Add(PlayerConnectionId, StreamerConnectionId);
@@ -306,14 +311,14 @@ namespace UE::PixelStreamingServers
 		{
 			// All other message types require a `playerId` field to be valid.
 			uint16 PlayerConnectionId;
-			if (!JSONObj->TryGetNumberField("playerId", PlayerConnectionId))
+			if (!JSONObj->TryGetNumberField(TEXT("playerId"), PlayerConnectionId))
 			{
 				UE_LOG(LogPixelStreamingServers, Warning, TEXT("Message did not contain a field called 'playerId' - message=%s"), *Msg);
 				return;
 			}
 
 			// As message are going to the player they don't actually need the playerId field, the field exists only so we know who to send it to.
-			JSONObj->RemoveField("playerId");
+			JSONObj->RemoveField(TEXT("playerId"));
 
 			SendPlayerMessage(PlayerConnectionId, JSONObj);
 		}
@@ -350,32 +355,32 @@ namespace UE::PixelStreamingServers
 		}
 		else
 		{
-			if (PlayerSubscriptions.Contains(ConnectionId))
+			if (!PlayerSubscriptions.Contains(ConnectionId))
 			{
-				// Add player id to any messages going to streamer so streamer knows who sent it
-				JSONObj->SetStringField("playerId", FString::FromInt(ConnectionId));
-				SendStreamerMessage(PlayerSubscriptions[ConnectionId], JSONObj);
+				TArray<FString> StreamerConnections = StreamersWS->GetConnectionNames();
+				if(StreamerConnections.Num() == 0)
+				{
+					UE_LOG(LogPixelStreamingServers, Error, TEXT("Player %d sent a message, but no streamers were connected"), ConnectionId);
+					return;
+				}
+
+				UE_LOG(LogPixelStreamingServers, Log, TEXT("Player %d attempted to send an outgoing message without having subscribed first. Defaulting to %s"), ConnectionId, *StreamerConnections[0]);
+				SubscribePlayer(ConnectionId, StreamerConnections[0]);
 			}
+
+			// Add player id to any messages going to streamer so streamer knows who sent it
+			JSONObj->SetStringField(TEXT("playerId"), FString::FromInt(ConnectionId));
+			SendStreamerMessage(PlayerSubscriptions[ConnectionId], JSONObj);
 		}
 	}
 
 	void FSignallingServer::OnStreamerIdMessage(uint16 ConnectionId, TSharedPtr<FJsonObject> JSONObj)
 	{
 		FString StreamerName;
-		if (JSONObj->TryGetStringField("id", StreamerName))
+		if (JSONObj->TryGetStringField(TEXT("id"), StreamerName))
 		{
 			StreamersWS->NameConnection(ConnectionId, StreamerName);
 			StreamersWS->RemoveName(LEGACY_NAME);
-
-			// subscribe any unsubscribed players to this new streamer
-			for (auto& ConnectionPair : PlayersWS->GetConnections())
-			{
-				const uint16 PlayerConnectionId = ConnectionPair.Key;
-				if (!PlayerSubscriptions.Contains(PlayerConnectionId))
-				{
-					SubscribePlayer(PlayerConnectionId, StreamerName);
-				}
-			}
 		}
 	}
 
@@ -391,7 +396,7 @@ namespace UE::PixelStreamingServers
 	void FSignallingServer::OnStreamerDisconnectMessage(uint16 ConnectionId, TSharedPtr<FJsonObject> JSONObj)
 	{
 		uint16 PlayerConnectionId;
-		if (!JSONObj->TryGetNumberField("playerId", PlayerConnectionId))
+		if (!JSONObj->TryGetNumberField(TEXT("playerId"), PlayerConnectionId))
 		{
 			UE_LOG(LogPixelStreamingServers, Warning, TEXT("Disconnect message did not contain a field called 'playerId'"));
 			return;
@@ -411,15 +416,15 @@ namespace UE::PixelStreamingServers
 		{
 			JsonNames.Add(MakeShared<FJsonValueString>(Name));
 		}
-		listJSON->SetStringField("type", "streamerList");
-		listJSON->SetArrayField("ids", JsonNames);
+		listJSON->SetStringField(TEXT("type"), TEXT("streamerList"));
+		listJSON->SetArrayField(TEXT("ids"), JsonNames);
 		SendPlayerMessage(ConnectionId, listJSON);
 	}
 
 	void FSignallingServer::OnPlayerSubscribeMessage(uint16 ConnectionId, TSharedPtr<FJsonObject> JSONObj)
 	{
 		FString StreamerName;
-		if (!JSONObj->TryGetStringField("streamerId", StreamerName))
+		if (!JSONObj->TryGetStringField(TEXT("streamerId"), StreamerName))
 		{
 			UE_LOG(LogPixelStreamingServers, Error, TEXT("Player %d subscribe message missing streamerId."), ConnectionId);
 		}
@@ -437,6 +442,19 @@ namespace UE::PixelStreamingServers
 	void FSignallingServer::OnPlayerStatsMessage(uint16 ConnectionId, TSharedPtr<FJsonObject> JSONObj)
 	{
 		UE_LOG(LogPixelStreamingServers, Log, TEXT("Player %d stats = \n %s"), ConnectionId, *Utils::ToString(JSONObj.ToSharedRef()));
+	}
+
+	void FSignallingServer::GetNumStreamers(TFunction<void(uint16)> OnNumStreamersReceived)
+	{
+		if(StreamersWS)
+		{
+			OnNumStreamersReceived(StreamersWS->Count());
+		}
+		else
+		{
+			// Streamers websocket server went out of scope, so we can assume no streamers are connected.
+			OnNumStreamersReceived(0);
+		}
 	}
 
 } // namespace UE::PixelStreamingServers

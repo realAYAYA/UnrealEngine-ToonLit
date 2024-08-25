@@ -1,19 +1,22 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using EpicGames.Core;
-using EpicGames.Horde.Api;
+using EpicGames.Horde.Accounts;
+using EpicGames.Horde.Acls;
+using EpicGames.Horde.Agents;
+using EpicGames.Horde.Agents.Leases;
+using EpicGames.Horde.Artifacts;
 using EpicGames.Horde.Compute;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Jobs.Bisect;
+using EpicGames.Horde.Jobs.Templates;
+using EpicGames.Horde.Projects;
+using EpicGames.Horde.Secrets;
 using EpicGames.Horde.Storage;
+using EpicGames.Horde.Streams;
+using EpicGames.Horde.Telemetry;
+using EpicGames.Horde.Tools;
 using Horde.Server.Acls;
-using Horde.Server.Agents;
-using Horde.Server.Agents.Leases;
-using Horde.Server.Artifacts;
-using Horde.Server.Jobs;
-using Horde.Server.Jobs.Bisect;
-using Horde.Server.Projects;
-using Horde.Server.Secrets;
-using Horde.Server.Streams;
-using Horde.Server.Tools;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -169,6 +172,15 @@ namespace Horde.Server.Utilities
 		/// Returns a 404 response for the given object
 		/// </summary>
 		[NonAction]
+		protected ActionResult NotFound(AccountId accountId)
+		{
+			return NotFound("Account {AccountId} not found", accountId);
+		}
+
+		/// <summary>
+		/// Returns a 404 response for the given object
+		/// </summary>
+		[NonAction]
 		protected ActionResult NotFound(AgentId agentId)
 		{
 			return NotFound("Agent {AgentId} not found", agentId);
@@ -232,7 +244,7 @@ namespace Horde.Server.Utilities
 		/// Returns a 404 response for the given object
 		/// </summary>
 		[NonAction]
-		protected ActionResult NotFound(JobId jobId, SubResourceId batchId)
+		protected ActionResult NotFound(JobId jobId, JobStepBatchId batchId)
 		{
 			return NotFound("Batch {BatchId} not found on job {JobId}", batchId, jobId);
 		}
@@ -241,7 +253,7 @@ namespace Horde.Server.Utilities
 		/// Returns a 404 response for the given object
 		/// </summary>
 		[NonAction]
-		protected ActionResult NotFound(JobId jobId, SubResourceId batchId, SubResourceId stepId)
+		protected ActionResult NotFound(JobId jobId, JobStepBatchId batchId, JobStepId stepId)
 		{
 			return NotFound("Step {StepId} not found on job {JobId} batch {BatchId}", stepId, jobId, batchId);
 		}
@@ -298,6 +310,15 @@ namespace Horde.Server.Utilities
 		protected ActionResult NotFound(StreamId streamId, TemplateId templateId)
 		{
 			return NotFound("Template {TemplateId} not found on stream {StreamId}", templateId, streamId);
+		}
+
+		/// <summary>
+		/// Returns a 404 response for the given object
+		/// </summary>
+		[NonAction]
+		protected ActionResult NotFound(TelemetryStoreId telemetryStoreId)
+		{
+			return NotFound("Telemetry store {TelemetryStoreId} not found", telemetryStoreId);
 		}
 
 		/// <summary>

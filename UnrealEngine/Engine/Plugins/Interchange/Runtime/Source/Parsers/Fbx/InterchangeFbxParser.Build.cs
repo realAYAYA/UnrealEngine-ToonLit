@@ -51,6 +51,13 @@ namespace UnrealBuildTool.Rules
 						"InterchangeEngine"
 					}
 				);
+
+				PrivateIncludePathModuleNames.AddRange(
+					new string[] {
+						"InterchangeImport"
+					}
+				);
+				
 			}
 
 			AddEngineThirdPartyPrivateStaticDependencies(Target,

@@ -58,7 +58,7 @@ void UCustomizableObjectInstanceFactory::PostSpawnActor(UObject* Asset, AActor* 
 					CustomSkeletalComp->UnregisterComponent();
 					CustomSkeletalComp->CustomizableObjectInstance = COInstance;
 					CustomSkeletalComp->ComponentIndex = ComponentIndex;
-					CustomSkeletalComp->SetSkeletalMesh(SkeletalMesh, false);
+					CustomSkeletalComp->SetSkeletalMesh(SkeletalMesh);
 					CustomSkeletalComp->UpdateSkeletalMeshAsync();
 					CustomSkeletalComp->RegisterComponent();
 				}
@@ -67,20 +67,6 @@ void UCustomizableObjectInstanceFactory::PostSpawnActor(UObject* Asset, AActor* 
 			}
 		}
 	}
-}
-
-
-void UCustomizableObjectInstanceFactory::PostCreateBlueprint(UObject* Asset, AActor* CDO)
-{
-	//if (Asset != NULL && CDO != NULL)
-	//{
-	//	USkeletalMesh* SkeletalMesh = GetSkeletalMeshFromAsset(Asset);
-	//	UAnimBlueprint* AnimBlueprint = Cast<UAnimBlueprint>(Asset);
-
-	//	ASkeletalMeshActor* SkeletalMeshActor = CastChecked<ASkeletalMeshActor>(CDO);
-	//	SkeletalMeshActor->GetSkeletalMeshComponent()->SkeletalMesh = SkeletalMesh;
-	//	SkeletalMeshActor->GetSkeletalMeshComponent()->AnimClass = AnimBlueprint ? Cast<UAnimBlueprintGeneratedClass>(AnimBlueprint->GeneratedClass) : NULL;
-	//}
 }
 
 UObject* UCustomizableObjectInstanceFactory::GetAssetFromActorInstance(AActor* ActorInstance)

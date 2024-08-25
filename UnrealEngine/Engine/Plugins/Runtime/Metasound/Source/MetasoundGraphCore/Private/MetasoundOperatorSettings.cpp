@@ -30,7 +30,7 @@ namespace Metasound
 	{
 		using namespace MetasoundOperatorSettingsPrivate;
 
-		if (ensureMsgf(InSampleRate > 0, TEXT("Invalid sample rate %d. Defaulting to %d"), InSampleRate, DefaultSampleRate))
+		if (ensureMsgf(InSampleRate > 0, TEXT("Invalid sample rate %d. Defaulting to %f"), InSampleRate, DefaultSampleRate))
 		{
 			SampleRate = InSampleRate;
 		}

@@ -606,7 +606,7 @@ public:
 	/**
 	 * Returns the importer singleton. It will be created on the first request.
 	 */
-	UNREALED_API static FFbxImporter* GetInstance();
+	UNREALED_API static FFbxImporter* GetInstance(bool bDoNotCreate = false);
 	static void DeleteInstance();
 
 	/**
@@ -849,6 +849,7 @@ public:
 			, OrderedMaterialNames(nullptr)
 			, ImportMaterialOriginalNameData(nullptr)
 			, ImportMeshSectionsData(nullptr)
+			, bMapMorphTargetToTimeZero(false)
 		{}
 
 		UObject* InParent;
@@ -864,6 +865,7 @@ public:
 
 		TArray<FName> *ImportMaterialOriginalNameData;
 		FImportMeshLodSectionsData *ImportMeshSectionsData;
+		bool bMapMorphTargetToTimeZero;
 	};
 
 	UNREALED_API USkeletalMesh* ImportSkeletalMesh(FImportSkeletalMeshArgs &ImportSkeletalMeshArgs);
@@ -934,7 +936,7 @@ public:
 	 * @param BaseSkelMesh - base Skeletal Mesh
 	 * @param LODIndex - LOD index
 	 */
-	UNREALED_API void ImportFbxMorphTarget(TArray<FbxNode*> &SkelMeshNodeArray, USkeletalMesh* BaseSkelMesh, int32 LODIndex, FSkeletalMeshImportData &BaseSkeletalMeshImportData);
+	UNREALED_API void ImportFbxMorphTarget(TArray<FbxNode*> &SkelMeshNodeArray, USkeletalMesh* BaseSkelMesh, int32 LODIndex, FSkeletalMeshImportData &BaseSkeletalMeshImportData, const bool bSkinControlPointToTimeZero);
 
 	/**
 	 * Import LOD object for skeletal mesh
@@ -1206,8 +1208,9 @@ private:
 	 * @param SkelMeshNodeArray - Fbx Nodes that the base Skeletal Mesh construct from
 	 * @param BaseSkelMesh - base Skeletal Mesh
 	 * @param LODIndex - LOD index of the skeletal mesh
+	 * @param bSkinControlPointToTimeZero Use the pose at T0 to map the morph targets onto, since the base mesh was imported at that time, rather than the ref pose.
 	 */
-	void ImportMorphTargetsInternal( TArray<FbxNode*>& SkelMeshNodeArray, USkeletalMesh* BaseSkelMesh, int32 LODIndex, FSkeletalMeshImportData &BaseSkeletalMeshImportData);
+	void ImportMorphTargetsInternal( TArray<FbxNode*>& SkelMeshNodeArray, USkeletalMesh* BaseSkelMesh, int32 LODIndex, FSkeletalMeshImportData &BaseSkeletalMeshImportData, bool bMapMorphTargetToTimeZero);
 
 	/**
 	* sub-method called from ImportSkeletalMeshLOD method
@@ -1517,7 +1520,7 @@ public:
 	*/
 	bool FillSkeletalMeshImportData(TArray<FbxNode*>& NodeArray, UFbxSkeletalMeshImportData* TemplateImportData, TArray<FbxShape*> *FbxShapeArray,
 									FSkeletalMeshImportData* OutData, TArray<FbxNode*>& OutImportedSkeletonLinkNodes, TArray<FName> &LastImportedMaterialNames, 
-									const bool bIsReimport, const TMap<FVector3f, FColor>& ExistingVertexColorData);
+									const bool bIsReimport, const TMap<FVector3f, FColor>& ExistingVertexColorData, bool& bMapMorphTargetToTimeZero);
 
 protected:
 
@@ -1543,10 +1546,11 @@ protected:
 	* @param NodeArray		Fbx node array to look at
 	* @param FbxShapeArray	Fbx Morph object, if not NULL, we are importing a morph object.
 	* @param ModifiedPoints	Set of points indices for which we've modified the value in OutData
+	* @param bInUseT0AsRefPose Use the pose at T0 to map the morph targets onto, since the base mesh was imported at that time, rather than the ref pose.
 	*
 	* @returns bool			true if import successfully.
 	*/
-	bool GatherPointsForMorphTarget(FSkeletalMeshImportData* OutData, TArray<FbxNode*>& NodeArray, TArray< FbxShape* >* FbxShapeArray, TSet<uint32>& ModifiedPoints);
+	bool GatherPointsForMorphTarget(FSkeletalMeshImportData* OutData, TArray<FbxNode*>& NodeArray, TArray< FbxShape* >* FbxShapeArray, TSet<uint32>& ModifiedPoints, bool bSkinControlPointToTimeZero);
 
 	/**
 	 * Import bones from skeletons that NodeArray bind to.
@@ -1812,8 +1816,8 @@ private:
 
 	// logger set/clear function
 	class FFbxLogger * Logger;
-	void SetLogger(class FFbxLogger * InLogger);
-	void ClearLogger();
+	UNREALED_API void SetLogger(class FFbxLogger * InLogger);
+	UNREALED_API void ClearLogger();
 
 	FImportedMaterialData ImportedMaterialData;
 

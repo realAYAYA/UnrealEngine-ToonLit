@@ -50,7 +50,7 @@ public:
 	
 public:
 	/** bAutoTick Whehter this tracker should automatically Tick */
-	INSTALLBUNDLEMANAGER_API FInstallBundleCombinedProgressTracker(bool bAutoTick = true);
+	INSTALLBUNDLEMANAGER_API FInstallBundleCombinedProgressTracker(bool bAutoTick = true, TUniqueFunction<void(const FCombinedProgress&)> OnTick = nullptr);
 	INSTALLBUNDLEMANAGER_API ~FInstallBundleCombinedProgressTracker();
 	
 	INSTALLBUNDLEMANAGER_API FInstallBundleCombinedProgressTracker(const FInstallBundleCombinedProgressTracker& Other);
@@ -96,6 +96,7 @@ private:
 	
 	TWeakPtr<IInstallBundleManager> InstallBundleManager;
 	FTSTicker::FDelegateHandle TickHandle;
+	TUniqueFunction<void(const FCombinedProgress&)> OnTick;
 };
 
 INSTALLBUNDLEMANAGER_API const TCHAR* LexToString(FInstallBundleCombinedProgressTracker::ECombinedBundleStatus Status);

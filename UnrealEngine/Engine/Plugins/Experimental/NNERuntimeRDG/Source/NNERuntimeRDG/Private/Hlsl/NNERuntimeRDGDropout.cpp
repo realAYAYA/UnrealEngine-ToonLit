@@ -21,7 +21,7 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 
 	public:
 
-		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) const override
+		virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) override
 		{
 			check(InputTensors.Num() == 1);
 			check(OutputTensors.Num() == 1);
@@ -68,14 +68,21 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 		}
 	};
 
+	template<int Version>
 	bool ValidateDropoutOperator(const NNE::FAttributeMap& AttributeMap, TConstArrayView<ENNETensorDataType> InputTypes, TConstArrayView<NNE::FSymbolicTensorShape> InputDropouts)
 	{
 		bool bIsValid = true;
 
-		//This match version 13 of the Dropout operator
-		//https://github.com/onnx/onnx/blob/main/docs/Operators.md#Dropout
 		FAttributeValidator AttributeValidator;
-		AttributeValidator.AddOptional(TEXT("seed"), ENNEAttributeDataType::Int32); //Will be ignored, only useful in training mode.
+		if constexpr (Version >= 12)
+		{
+			AttributeValidator.AddOptional(TEXT("seed"), ENNEAttributeDataType::Int32);
+		}
+		else
+		{
+			static_assert(Version >= 7, "Minimum supported version for operator Dropout is 7!");
+			AttributeValidator.AddOptional(TEXT("ratio"), ENNEAttributeDataType::Float);
+		}
 		bIsValid &= AttributeValidator.Validate(AttributeMap);
 
 		FInputValidator InputValidator;
@@ -101,7 +108,11 @@ namespace UE::NNERuntimeRDG::Private::Hlsl
 
 	bool RegisterDropoutOperator(FOperatorRegistryHlsl& Registry)
 	{
-		Registry.OpAdd(TEXT("Dropout"), CreateDropoutOperator, ValidateDropoutOperator);
+		// Note: support of a particular version is partial with respect to tensor data types (only the most typical ones are usually supported).
+		Registry.OpAdd({{TEXT("Dropout"), TEXT("Onnx")}, 7}, CreateDropoutOperator, ValidateDropoutOperator<7>);
+		Registry.OpAdd({{TEXT("Dropout"), TEXT("Onnx")}, 10}, CreateDropoutOperator, ValidateDropoutOperator<10>);
+		Registry.OpAdd({{TEXT("Dropout"), TEXT("Onnx")}, 12}, CreateDropoutOperator, ValidateDropoutOperator<12>);
+		Registry.OpAdd({{TEXT("Dropout"), TEXT("Onnx")}, 13}, CreateDropoutOperator, ValidateDropoutOperator<13>);
 		return true;
 	}
 } // UE::NNERuntimeRDG::Private::Hlsl

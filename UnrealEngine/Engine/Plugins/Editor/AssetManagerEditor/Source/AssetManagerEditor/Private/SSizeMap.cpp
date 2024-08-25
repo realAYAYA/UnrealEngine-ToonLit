@@ -1100,7 +1100,7 @@ void SSizeMap::GetReferencedPackages(TSet<FName>& OutPackageNames, TSharedPtr<FT
 	while (NodesToIterate.Num() > 0)
 	{
 		// Pop off the end, order doesn't matter here
-		TSharedPtr<FTreeMapNodeData> CurrentNode = NodesToIterate.Pop(false);
+		TSharedPtr<FTreeMapNodeData> CurrentNode = NodesToIterate.Pop(EAllowShrinking::No);
 
 		if (CurrentNode.IsValid())
 		{

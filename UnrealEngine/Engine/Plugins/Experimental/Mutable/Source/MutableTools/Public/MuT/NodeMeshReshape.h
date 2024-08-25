@@ -31,14 +31,8 @@ namespace mu
 		// Node Interface
 		//-----------------------------------------------------------------------------------------
 
-		
-
-		const NODE_TYPE* GetType() const override;
-		static const NODE_TYPE* GetStaticType();
-
-		int GetInputCount() const override;
-		Node* GetInputNode( int i ) const override;
-		void SetInputNode( int i, NodePtr pNode ) override;
+		const FNodeType* GetType() const override;
+		static const FNodeType* GetStaticType();
 
 		//-----------------------------------------------------------------------------------------
 		// Own Interface
@@ -57,6 +51,9 @@ namespace mu
 
 		/** Also deform the mesh skeleton. Disabled by default. */
 		void SetReshapeSkeleton(bool);
+	
+		/** Apply Laplacian smoothing to the reshaped mesh.  */
+		void SetApplyLaplacian(bool);
 		
 		/** Set vertex color channel usages for Reshape operations. */
 		void SetColorUsages(EVertexColorUsage R, EVertexColorUsage G, EVertexColorUsage B, EVertexColorUsage A);

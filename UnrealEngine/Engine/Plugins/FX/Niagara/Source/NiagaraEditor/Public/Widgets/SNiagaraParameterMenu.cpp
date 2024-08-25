@@ -47,20 +47,21 @@ void SNiagaraParameterMenu::Construct(const FArguments& InArgs)
 			.MinDesiredWidth(300)
 			.MaxDesiredHeight(700) // Set max desired height to prevent flickering bug for menu larger than screen
 			[
-			SAssignNew(GraphMenu, SGraphActionMenu)
-			.OnActionSelected(this, &SNiagaraParameterMenu::OnActionSelected)
-			.OnCollectAllActions(this, &SNiagaraParameterMenu::CollectAllActions)
-			.SortItemsRecursively(false)
-			.AlphaSortItems(false)
-			.AutoExpandActionMenu(bAutoExpandMenu)
-			.ShowFilterTextBox(true)
-			.OnGetSectionTitle(InArgs._OnGetSectionTitle)
-			.OnCreateCustomRowExpander_Static(&SNiagaraParameterMenu::CreateCustomActionExpander)
-			.OnCreateWidgetForAction_Lambda([](const FCreateWidgetForActionData* InData)
-				{
-					return SNew(SNiagaraGraphActionWidget, InData);
-				})
-			]
+				SAssignNew(GraphMenu, SGraphActionMenu)
+				.OnActionSelected(this, &SNiagaraParameterMenu::OnActionSelected)
+				.OnCollectAllActions(this, &SNiagaraParameterMenu::CollectAllActions)
+				.SortItemsRecursively(false)
+				.AlphaSortItems(false)
+				.AutoExpandActionMenu(bAutoExpandMenu)
+				.bAutomaticallySelectSingleAction(true)
+				.ShowFilterTextBox(true)
+				.OnGetSectionTitle(InArgs._OnGetSectionTitle)
+				.OnCreateCustomRowExpander_Static(&SNiagaraParameterMenu::CreateCustomActionExpander)
+				.OnCreateWidgetForAction_Lambda([](const FCreateWidgetForActionData* InData)
+					{
+						return SNew(SNiagaraGraphActionWidget, InData);
+					})
+				]
 		]
 	];
 }
@@ -72,7 +73,7 @@ TSharedPtr<SEditableTextBox> SNiagaraParameterMenu::GetSearchBox()
 
 void SNiagaraParameterMenu::OnActionSelected(const TArray<TSharedPtr<FEdGraphSchemaAction>>& SelectedActions, ESelectInfo::Type InSelectionType)
 {
-	if (InSelectionType == ESelectInfo::OnMouseClick || InSelectionType == ESelectInfo::OnKeyPress || SelectedActions.Num() == 0)
+	if (InSelectionType == ESelectInfo::OnMouseClick || InSelectionType == ESelectInfo::Direct || InSelectionType == ESelectInfo::OnKeyPress || SelectedActions.Num() == 0)
 	{
 		for (int32 ActionIndex = 0; ActionIndex < SelectedActions.Num(); ActionIndex++)
 		{
@@ -277,18 +278,12 @@ void SNiagaraAddParameterFromPanelMenu::AddMakeNewGroup(FNiagaraMenuActionCollec
 void SNiagaraAddParameterFromPanelMenu::CollectParameterCollectionsActions(FNiagaraMenuActionCollector& Collector)
 {
 	//Create sub menus for parameter collections.
-	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-	TArray<FAssetData> CollectionAssets;
-	AssetRegistryModule.Get().GetAssetsByClass(UNiagaraParameterCollection::StaticClass()->GetClassPathName(), CollectionAssets);
-
 	const FText Category = GetNamespaceCategoryText(FNiagaraEditorGuids::ParameterCollectionNamespaceMetaDataGuid);
-	for (FAssetData& CollectionAsset : CollectionAssets)
+	TArray<UNiagaraParameterCollection*> AvailableParameterCollections;
+	FNiagaraEditorUtilities::GetAvailableParameterCollections(AvailableParameterCollections);
+	for (UNiagaraParameterCollection* Collection : AvailableParameterCollections)
 	{
-		UNiagaraParameterCollection* Collection = CastChecked<UNiagaraParameterCollection>(CollectionAsset.GetAsset());
-		if (Collection)
-		{
-			AddParameterGroup(Collector, Collection->GetParameters(), FNiagaraEditorGuids::ParameterCollectionNamespaceMetaDataGuid, Category, 10, FString()); //TODO
-		}
+		AddParameterGroup(Collector, Collection->GetParameters(), FNiagaraEditorGuids::ParameterCollectionNamespaceMetaDataGuid, Category, 10, FString());
 	}
 }
 

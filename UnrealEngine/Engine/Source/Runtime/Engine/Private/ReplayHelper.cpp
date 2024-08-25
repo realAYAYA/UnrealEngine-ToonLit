@@ -767,7 +767,7 @@ void FReplayHelper::ProcessCheckpointActors(UNetConnection* Connection, TArrayVi
 {
 	UPackageMapClient* PackageMapClient = Cast<UPackageMapClient>(Connection->PackageMap);
 
-	// Save package map ack status in case we export stuff during the checkpoint (so we can restore the connection back to what it was before we saved the checkpoint)
+	// Set package map ack status override in case we export stuff during the checkpoint
 	PackageMapClient->OverridePackageMapExportAckStatus(&CheckpointSaveContext.CheckpointAckState);
 
 	Connection->SetReserveDestroyedChannels(false);
@@ -815,11 +815,12 @@ void FReplayHelper::ProcessCheckpointActors(UNetConnection* Connection, TArrayVi
 		}
 
 		FlushNetChecked(*Connection);
-
-		PackageMapClient->OverridePackageMapExportAckStatus(nullptr);
 	}
 
 	Connection->SetReserveDestroyedChannels(true);
+
+	// Restore package map ack status
+	PackageMapClient->OverridePackageMapExportAckStatus(nullptr);
 }
 
 void FReplayHelper::TickCheckpoint(UNetConnection* Connection)
@@ -860,9 +861,6 @@ void FReplayHelper::TickCheckpoint(UNetConnection* Connection)
 		FReplayHelper::FlushNetChecked(*Connection);
 
 		UPackageMapClient* PackageMapClient = Cast<UPackageMapClient>(Connection->PackageMap);
-
-		// Save package map ack status in case we export stuff during the checkpoint (so we can restore the connection back to what it was before we saved the checkpoint)
-		PackageMapClient->OverridePackageMapExportAckStatus(&CheckpointSaveContext.CheckpointAckState);
 
 		const bool bDeltaCheckpoint = HasDeltaCheckpoints();
 
@@ -1786,7 +1784,7 @@ bool FReplayHelper::ReplicateActor(AActor* Actor, UNetConnection* Connection, bo
 		const bool bShouldHaveChannel =
 			Actor->bRelevantForNetworkReplays &&
 			!Actor->GetTearOff() &&
-			(!Actor->IsNetStartupActor() || Connection->ClientHasInitializedLevelFor(Actor));
+			(!Actor->IsNetStartupActor() || Connection->ClientHasInitializedLevel(Actor->GetLevel()));
 
 		UActorChannel* Channel = Connection->FindActorChannelRef(Actor);
 
@@ -2096,7 +2094,7 @@ const FReplayHelper::EReadPacketState FReplayHelper::ReadPacket(FArchive& Archiv
 	}
 	else
 	{
-		OutBuffer.SetNumUninitialized(BufferSize, false);
+		OutBuffer.SetNumUninitialized(BufferSize, EAllowShrinking::No);
 		Archive.Serialize(OutBuffer.GetData(), BufferSize);
 	}
 

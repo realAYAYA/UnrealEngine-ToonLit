@@ -13,6 +13,7 @@ class UClass;
 class UChaosCache;
 class UPrimitiveComponent;
 struct FPlaybackTickRecord;
+struct FObservedComponent;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogCacheAdapter, Log, All);
 
@@ -123,6 +124,11 @@ namespace Chaos
 		virtual void Initialize() {}
 
 		/**
+		 * Called from the game thread to perform any final steps before deallocation.
+		 */
+		virtual void Finalize() {}
+
+		/**
 		* Called from the game thread to set rest state from an evaluated time in the cache.
 		*/
 		virtual void SetRestState(UPrimitiveComponent* InComponent, UChaosCache* InCache, const FTransform& InRootTransform, Chaos::FReal InTime) const = 0;
@@ -132,7 +138,8 @@ namespace Chaos
 		 * @param InComponent Target component to initialize
 		 * @param InCache Target cache to initialize
 		 */
-		virtual bool InitializeForRecord(UPrimitiveComponent* InComponent, UChaosCache* InCache) = 0;
+		virtual bool InitializeForRecord(UPrimitiveComponent* InComponent, UChaosCache* InCache) { unimplemented(); return false; }
+		virtual bool CHAOSCACHING_API InitializeForRecord(UPrimitiveComponent* InComponent, FObservedComponent& InObserved);
 
 		/**
 		 * Called from the game thread to initialize a component and cache ready to playback a cache
@@ -140,7 +147,8 @@ namespace Chaos
 		 * @param InCache Target cache to initialize
 		 * @param InTime Time from cache start to evaluate initial conditions
 		 */
-		virtual bool InitializeForPlayback(UPrimitiveComponent* InComponent, UChaosCache* InCache, float InTime) = 0;
+		virtual bool InitializeForPlayback(UPrimitiveComponent* InComponent, UChaosCache* InCache, float InTime) { unimplemented(); return false; }
+		virtual bool CHAOSCACHING_API InitializeForPlayback(UPrimitiveComponent* InComponent, FObservedComponent& InObserved, float InTime);
 
 		/**
 		 * Called by a cache observer when a component should be recorded to a cache through this adapter.

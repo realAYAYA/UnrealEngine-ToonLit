@@ -25,7 +25,7 @@ void CALLBACK UE_WinHttpWebSocketStatusCallback(HINTERNET hInternet, DWORD_PTR d
 	const EWinHttpCallbackStatus Status = static_cast<EWinHttpCallbackStatus>(dwInternetStatus);
 	if (!IsValidStatus(Status))
 	{
-		UE_LOG(LogWinHttp, Warning, TEXT("WebSocket[%p]: Received unknown WinHttp Status %lu"), dwContext, dwInternetStatus);
+		UE_LOG(LogWinHttp, Warning, TEXT("WebSocket[%p]: Received unknown WinHttp Status %lu"), reinterpret_cast<void*>(dwContext), dwInternetStatus);
 		return;
 	}
 
@@ -383,7 +383,7 @@ void FWinHttpConnectionWebSocket::ReadData(const int32 MaxMessagesToRead)
 	check(!bWebSocketReadInProgress);
 
 	// Make sure we have at least a full chunk of data to read
-	ReceiveBuffer.SetNumUninitialized(ReceiveBufferBytesWritten + UE_WINHTTP_READ_BUFFER_BYTES, false);
+	ReceiveBuffer.SetNumUninitialized(ReceiveBufferBytesWritten + UE_WINHTTP_READ_BUFFER_BYTES, EAllowShrinking::No);
 
 	// Keep reading until we don't get data (or until we read MaxMessagesToRead messages)
 	int32 MessagesRead = 0;
@@ -650,7 +650,7 @@ void FWinHttpConnectionWebSocket::HandleWebSocketReadComplete(const uint32 Bytes
 		ReceiveFragmentMessageType.Reset();
 
 		// Set our buffer to the actual size of written data before we copy it out to the receieve queue
-		ReceiveBuffer.SetNumUninitialized(ReceiveBufferBytesWritten, false);
+		ReceiveBuffer.SetNumUninitialized(ReceiveBufferBytesWritten, EAllowShrinking::No);
 
 		UE_LOG(LogWinHttp, VeryVerbose, TEXT("WinHttp WebSocket[%p]: Received complete message MessageType=[%s]"), this, LexToString(MessageType));
 		ReceieveMessageQueue.Enqueue(FPendingWebSocketMessage(MessageType, ReceiveBuffer));
@@ -662,7 +662,7 @@ void FWinHttpConnectionWebSocket::HandleWebSocketReadComplete(const uint32 Bytes
 	}
 
 	// Set our buffer to hold at least one chunk
-	ReceiveBuffer.SetNumUninitialized(ReceiveBufferBytesWritten + UE_WINHTTP_READ_BUFFER_BYTES, false);
+	ReceiveBuffer.SetNumUninitialized(ReceiveBufferBytesWritten + UE_WINHTTP_READ_BUFFER_BYTES, EAllowShrinking::No);
 }
 
 void FWinHttpConnectionWebSocket::HandleWebSocketWriteComplete(const uint32 BytesWritten, const EWebSocketMessageType MessageType)

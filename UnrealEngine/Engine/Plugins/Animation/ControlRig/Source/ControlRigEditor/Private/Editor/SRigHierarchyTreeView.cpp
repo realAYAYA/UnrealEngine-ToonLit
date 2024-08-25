@@ -17,7 +17,11 @@
 #include "Editor/SRigHierarchy.h"
 #include "Settings/ControlRigSettings.h"
 #include "Graph/ControlRigGraphSchema.h"
+#include "Rigs/AdditiveControlRig.h"
+#include "Rigs/RigHierarchyController.h"
 #include "Styling/AppStyle.h"
+#include "Algo/Sort.h"
+#include "ControlRigBlueprint.h"
 
 #define LOCTEXT_NAMESPACE "SRigHierarchyTreeView"
 
@@ -32,17 +36,21 @@ FRigTreeDisplaySettings FRigTreeDelegates::DefaultDisplaySettings;
 FRigTreeElement::FRigTreeElement(const FRigElementKey& InKey, TWeakPtr<SRigHierarchyTreeView> InTreeView, bool InSupportsRename, ERigTreeFilterResult InFilterResult)
 {
 	Key = InKey;
+	ShortName = InKey.Name;
 	ChannelName = NAME_None;
 	bIsTransient = false;
 	bIsAnimationChannel = false;
 	bIsProcedural = false;
 	bSupportsRename = InSupportsRename;
 	FilterResult = InFilterResult;
+	bFadedOutDuringDragDrop = false;
 
 	if(InTreeView.IsValid())
 	{
 		if(const URigHierarchy* Hierarchy = InTreeView.Pin()->GetRigTreeDelegates().GetHierarchy())
 		{
+			ShortName = *Hierarchy->GetDisplayNameForUI(InKey, false).ToString();
+			
 			const FRigTreeDisplaySettings& Settings = InTreeView.Pin()->GetRigTreeDelegates().GetDisplaySettings();
 			RefreshDisplaySettings(Hierarchy, Settings);
 		}
@@ -98,6 +106,30 @@ void FRigTreeElement::RefreshDisplaySettings(const URigHierarchy* InHierarchy, c
 		(InHierarchy->IsProcedural(Key) ? FSlateColor(FLinearColor(0.9f, 0.8f, 0.4f) * 0.5f) : FSlateColor(FLinearColor::Gray * 0.5f));
 }
 
+FSlateColor FRigTreeElement::GetIconColor() const
+{
+	if(bFadedOutDuringDragDrop)
+	{
+		if(FSlateApplication::Get().IsDragDropping())
+		{
+			return IconColor.GetColor(FWidgetStyle()) * 0.3f;
+		}
+	}
+	return IconColor;
+}
+
+FSlateColor FRigTreeElement::GetTextColor() const
+{
+	if(bFadedOutDuringDragDrop)
+	{
+		if(FSlateApplication::Get().IsDragDropping())
+		{
+			return TextColor.GetColor(FWidgetStyle()) * 0.3f;
+		}
+	}
+	return TextColor;
+}
+
 //////////////////////////////////////////////////////////////
 /// SRigHierarchyItem
 ///////////////////////////////////////////////////////////
@@ -105,6 +137,7 @@ void SRigHierarchyItem::Construct(const FArguments& InArgs, const TSharedRef<STa
 {
 	WeakRigTreeElement = InRigTreeElement;
 	Delegates = InTreeView->GetRigTreeDelegates();
+	FRigTreeDisplaySettings DisplaySettings = Delegates.GetDisplaySettings();
 
 	if (!InRigTreeElement->Key.IsValid())
 	{
@@ -126,19 +159,21 @@ void SRigHierarchyItem::Construct(const FArguments& InArgs, const TSharedRef<STa
 	}
 
 	TSharedPtr< SInlineEditableTextBlock > InlineWidget;
+	TSharedPtr< SHorizontalBox > HorizontalBox;
 
 	STableRow<TSharedPtr<FRigTreeElement>>::Construct(
 		STableRow<TSharedPtr<FRigTreeElement>>::FArguments()
+		.Padding(FMargin(0, 1, 1, 1))
 		.OnDragDetected(Delegates.OnDragDetected)
 		.OnCanAcceptDrop(Delegates.OnCanAcceptDrop)
 		.OnAcceptDrop(Delegates.OnAcceptDrop)
 		.ShowWires(true)
 		.Content()
 		[
-			SNew(SHorizontalBox)
+			SAssignNew(HorizontalBox, SHorizontalBox)
 			+ SHorizontalBox::Slot()
 			.MaxWidth(18)
-			.FillWidth(1.0)
+			.AutoWidth()
 			.HAlign(HAlign_Left)
 			.VAlign(VAlign_Center)
 			.Padding(FMargin(0.f, 0.f, 3.f, 0.f))
@@ -156,17 +191,19 @@ void SRigHierarchyItem::Construct(const FArguments& InArgs, const TSharedRef<STa
 				{
 					if(WeakRigTreeElement.IsValid())
 					{
-						return WeakRigTreeElement.Pin()->IconColor;
+						return WeakRigTreeElement.Pin()->GetIconColor();
 					}
 					return FSlateColor::UseForeground();
 				})
+				.DesiredSizeOverride(FVector2D(16, 16))
 			]
 			+ SHorizontalBox::Slot()
 			.AutoWidth()
 			.VAlign(VAlign_Center)
 			[
 				SAssignNew(InlineWidget, SInlineEditableTextBlock)
-				.Text(this, &SRigHierarchyItem::GetName)
+				.Text(this, &SRigHierarchyItem::GetNameForUI)
+				.ToolTipText(this, &SRigHierarchyItem::GetItemTooltip)
 				.OnVerifyTextChanged(this, &SRigHierarchyItem::OnVerifyNameChanged)
 				.OnTextCommitted(this, &SRigHierarchyItem::OnNameCommitted)
 				.MultiLine(false)
@@ -174,17 +211,43 @@ void SRigHierarchyItem::Construct(const FArguments& InArgs, const TSharedRef<STa
 				{
 					if(WeakRigTreeElement.IsValid())
 					{
-						return WeakRigTreeElement.Pin()->TextColor;
+						return WeakRigTreeElement.Pin()->GetTextColor();
 					}
 					return FSlateColor::UseForeground();
 				})
 			]
 		], OwnerTable);
 
+	if(!InRigTreeElement->Tags.IsEmpty())
+	{
+		HorizontalBox->AddSlot()
+		.FillWidth(1.f)
+		[
+			SNew(SSpacer)
+		];
+		
+		for(const SRigHierarchyTagWidget::FArguments& TagArguments : InRigTreeElement->Tags)
+		{
+			TSharedRef<SRigHierarchyTagWidget> TagWidget = SArgumentNew(TagArguments, SRigHierarchyTagWidget);
+			TagWidget->OnElementKeyDragDetected().BindSP(InTreeView.Get(), &SRigHierarchyTreeView::OnElementKeyTagDragDetected);
+			
+			HorizontalBox->AddSlot()
+			.AutoWidth()
+			[
+				TagWidget
+			];
+		}
+	}
+
 	InRigTreeElement->OnRenameRequested.BindSP(InlineWidget.Get(), &SInlineEditableTextBlock::EnterEditingMode);
 }
 
-FText SRigHierarchyItem::GetName() const
+FText SRigHierarchyItem::GetNameForUI() const
+{
+	return GetName(Delegates.GetDisplaySettings().bUseShortName);
+}
+
+FText SRigHierarchyItem::GetName(bool bUseShortName) const
 {
 	if(WeakRigTreeElement.Pin()->bIsTransient)
 	{
@@ -195,7 +258,30 @@ FText SRigHierarchyItem::GetName() const
 	{
 		return FText::FromName(WeakRigTreeElement.Pin()->ChannelName);
 	}
+	if(bUseShortName)
+	{
+		return (FText::FromName(WeakRigTreeElement.Pin()->ShortName));
+	}
 	return (FText::FromName(WeakRigTreeElement.Pin()->Key.Name));
+}
+
+FText SRigHierarchyItem::GetItemTooltip() const
+{
+	if(Delegates.OnRigTreeGetItemToolTip.IsBound())
+	{
+		const TOptional<FText> ToolTip = Delegates.OnRigTreeGetItemToolTip.Execute(WeakRigTreeElement.Pin()->Key);
+		if(ToolTip.IsSet())
+		{
+			return ToolTip.GetValue();
+		}
+	}
+	const FText FullName = GetName(false);
+	const FText ShortName = GetName(true);
+	if(FullName.EqualTo(ShortName))
+	{
+		return FText();
+	}
+	return FullName;
 }
 
 //////////////////////////////////////////////////////////////
@@ -332,7 +418,13 @@ bool SRigHierarchyTreeView::AddElement(FRigElementKey InKey, FRigElementKey InPa
 	const bool bSupportsRename = Delegates.OnRenameElement.IsBound();
 
 	const FString FilteredString = Settings.FilterText.ToString();
-	if (FilteredString.IsEmpty() || !InKey.IsValid())
+	bool bAnyFilteredOut = Delegates.OnRigTreeIsItemVisible.IsBound();
+	if (!bAnyFilteredOut)
+	{
+		bAnyFilteredOut = !FilteredString.IsEmpty() && InKey.IsValid();
+	}
+
+	if (!bAnyFilteredOut)
 	{
 		TSharedPtr<FRigTreeElement> NewItem = MakeShared<FRigTreeElement>(InKey, SharedThis(this), bSupportsRename, ERigTreeFilterResult::Shown);
 
@@ -362,8 +454,14 @@ bool SRigHierarchyTreeView::AddElement(FRigElementKey InKey, FRigElementKey InPa
 	}
 	else
 	{
+		bool bIsFilteredOut = false;
+		if (Delegates.OnRigTreeIsItemVisible.IsBound())
+		{
+			bIsFilteredOut = !Delegates.OnRigTreeIsItemVisible.Execute(InKey);
+		}
+		
 		FString FilteredStringUnderScores = FilteredString.Replace(TEXT(" "), TEXT("_"));
-		if (InKey.Name.ToString().Contains(FilteredString) || InKey.Name.ToString().Contains(FilteredStringUnderScores))	
+		if (!bIsFilteredOut && (InKey.Name.ToString().Contains(FilteredString) || InKey.Name.ToString().Contains(FilteredStringUnderScores)))
 		{
 			TSharedPtr<FRigTreeElement> NewItem = MakeShared<FRigTreeElement>(InKey, SharedThis(this), bSupportsRename, ERigTreeFilterResult::Shown);
 			ElementMap.Add(InKey, NewItem);
@@ -412,6 +510,7 @@ bool SRigHierarchyTreeView::AddElement(const FRigBaseElement* InElement)
 	}
 
 	const FRigTreeDisplaySettings& Settings = Delegates.GetDisplaySettings();
+	const URigHierarchy* Hierarchy = Delegates.GetHierarchy();
 
 	switch(InElement->GetType())
 	{
@@ -465,6 +564,92 @@ bool SRigHierarchyTreeView::AddElement(const FRigBaseElement* InElement)
 		{
 			return false;
 		}
+		case ERigElementType::Connector:
+		{
+			if(Hierarchy)
+			{
+				// add the connector as a tag rather than its own element in the tree
+				if(UControlRig* ControlRig = Hierarchy->GetTypedOuter<UControlRig>())
+				{
+					FRigElementKeyRedirector& Redirector = ControlRig->GetElementKeyRedirector();
+					if(const FCachedRigElement* Cache = Redirector.Find(InElement->GetKey()))
+					{
+						if(const_cast<FCachedRigElement*>(Cache)->UpdateCache(Hierarchy))
+						{
+							if(const TSharedPtr<FRigTreeElement>* TargetElementPtr = ElementMap.Find(Cache->GetKey()))
+							{
+								const FRigElementKey ConnectorKey = InElement->GetKey();
+
+								SRigHierarchyTagWidget::FArguments TagArguments;
+
+								static const FLinearColor BackgroundColor = FColor::FromHex(TEXT("#26BBFF"));
+								static const FLinearColor TextColor = FColor::FromHex(TEXT("#0F0F0F"));
+								static const FLinearColor IconColor = FColor::FromHex(TEXT("#1A1A1A"));
+
+								static const FSlateBrush* PrimaryBrush = FControlRigEditorStyle::Get().GetBrush("ControlRig.ConnectorPrimary");
+								static const FSlateBrush* SecondaryBrush = FControlRigEditorStyle::Get().GetBrush("ControlRig.ConnectorSecondary");
+								static const FSlateBrush* OptionalBrush = FControlRigEditorStyle::Get().GetBrush("ControlRig.ConnectorOptional");
+
+								const FSlateBrush* IconBrush = PrimaryBrush;
+								if(const FRigConnectorElement* ConnectorElement = Cast<FRigConnectorElement>(InElement))
+								{
+									if(ConnectorElement->Settings.Type == EConnectorType::Secondary)
+									{
+										IconBrush = ConnectorElement->Settings.bOptional ? OptionalBrush : SecondaryBrush;
+									}
+								}
+
+								FName Name = ConnectorKey.Name;
+								if (GetRigTreeDelegates().GetDisplaySettings().bUseShortName)
+								{
+									Name = *Hierarchy->GetDisplayNameForUI(ConnectorKey).ToString();
+								}
+								TagArguments.Text(FText::FromName(Name));
+								TagArguments.TooltipText(FText::FromName(ConnectorKey.Name));
+								TagArguments.Color(BackgroundColor);
+								TagArguments.IconColor(IconColor);
+								TagArguments.TextColor(TextColor);
+								TagArguments.Icon(IconBrush);
+								TagArguments.IconSize(FVector2d(16.f, 16.f));
+								TagArguments.AllowDragDrop(true);
+								FString Identifier;
+								FRigElementKey::StaticStruct()->ExportText(Identifier, &ConnectorKey, nullptr, nullptr, PPF_None, nullptr);
+								TagArguments.Identifier(Identifier);
+
+								TagArguments.OnClicked_Lambda([ConnectorKey, this]()
+								{
+									Delegates.RequestDetailsInspection(ConnectorKey);
+								});
+
+								if (!ControlRig->IsModularRig())
+								{
+									TagArguments.OnRenamed_Lambda([ConnectorKey, this](const FText& InNewName, ETextCommit::Type InCommitType)
+									{
+										Delegates.HandleRenameElement(ConnectorKey, InNewName.ToString());
+									});
+									TagArguments.OnVerifyRename_Lambda([ConnectorKey, this](const FText& InText, FText& OutError)
+									{
+										return Delegates.HandleVerifyElementNameChanged(ConnectorKey, InText.ToString(), OutError);
+									});
+								}
+
+								TargetElementPtr->Get()->Tags.Add(TagArguments);
+								return true;
+							}
+						}
+					}
+				}
+			}
+			break;
+		}
+		case ERigElementType::Socket:
+		{
+			if(!Settings.bShowSockets)
+			{
+				return false;
+			}
+			break;
+		}
 		default:
 		{
 			break;
@@ -478,9 +663,22 @@ bool SRigHierarchyTreeView::AddElement(const FRigBaseElement* InElement)
 
 	if (ElementMap.Contains(InElement->GetKey()))
 	{
-		if(const URigHierarchy* Hierarchy = Delegates.GetHierarchy())
+		if(Hierarchy)
 		{
+			if(InElement->GetType() == ERigElementType::Connector)
+			{
+				AddConnectorResolveWarningTag(ElementMap.FindChecked(InElement->GetKey()), InElement, Hierarchy);
+			}
+			
 			FRigElementKey ParentKey = Hierarchy->GetFirstParent(InElement->GetKey());
+			if(InElement->GetType() == ERigElementType::Connector)
+			{
+				ParentKey = Delegates.GetResolvedKey(InElement->GetKey());
+				if(ParentKey == InElement->GetKey())
+				{
+					ParentKey.Reset();
+				}
+			}
 
 			TArray<FRigElementWeight> ParentWeights = Hierarchy->GetParentWeightArray(InElement->GetKey());
 			if(ParentWeights.Num() > 0)
@@ -524,6 +722,11 @@ void SRigHierarchyTreeView::AddSpacerElement()
 bool SRigHierarchyTreeView::ReparentElement(FRigElementKey InKey, FRigElementKey InParentKey)
 {
 	if (!InKey.IsValid() || InKey == InParentKey)
+	{
+		return false;
+	}
+
+	if(InKey.Type == ERigElementType::Connector)
 	{
 		return false;
 	}
@@ -621,11 +824,61 @@ void SRigHierarchyTreeView::RefreshTreeView(bool bRebuildContent)
 		const URigHierarchy* Hierarchy = Delegates.GetHierarchy();
 		if(Hierarchy)
 		{
+			TArray<const FRigSocketElement*> Sockets;
+			TArray<const FRigConnectorElement*> Connectors;
+			TArray<const FRigBaseElement*> EverythingElse;
+			TMap<const FRigBaseElement*, int32> ElementDepth;
+			Sockets.Reserve(Hierarchy->Num(ERigElementType::Socket));
+			Connectors.Reserve(Hierarchy->Num(ERigElementType::Connector));
+			EverythingElse.Reserve(Hierarchy->Num() - Hierarchy->Num(ERigElementType::Socket) - Hierarchy->Num(ERigElementType::Connector));
+			
 			Hierarchy->Traverse([&](FRigBaseElement* Element, bool& bContinue)
 			{
-				AddElement(Element);
+				int32& Depth = ElementDepth.Add(Element, 0);
+				if(const FRigBaseElement* ParentElement = Hierarchy->GetFirstParent(Element))
+				{
+					if (int32* ParentDepth = ElementDepth.Find(ParentElement))
+					{
+						Depth = *ParentDepth + 1;
+					}
+				}
+				
+				if(const FRigSocketElement* Socket = Cast<FRigSocketElement>(Element))
+				{
+					Sockets.Add(Socket);
+				}
+				else if(const FRigConnectorElement* Connector = Cast<FRigConnectorElement>(Element))
+				{
+					Connectors.Add(Connector);
+				}
+				else
+				{
+					EverythingElse.Add(Element);
+				}
 				bContinue = true;
 			});
+
+			// sort the sockets by depth
+			Algo::SortBy(Sockets, [ElementDepth](const FRigSocketElement* Socket) -> int32
+			{
+				return ElementDepth.FindChecked(Socket);
+			});
+			for(const FRigSocketElement* Socket : Sockets)
+			{
+				AddElement(Socket);
+			}
+
+			// add everything but connectors and sockets
+			for(const FRigBaseElement* Element : EverythingElse)
+			{
+				AddElement(Element);
+			}
+
+			// add all of the connectors. their parent relationship in the tree represents resolve
+			for(const FRigConnectorElement* Connector : Connectors)
+			{
+				AddElement(Connector);
+			}
 
 			// expand all elements upon the initial construction of the tree
 			if (ExpansionState.Num() == 0)
@@ -685,7 +938,7 @@ void SRigHierarchyTreeView::RefreshTreeView(bool bRebuildContent)
 
 		if(const URigHierarchy* Hierarchy = Delegates.GetHierarchy())
 		{
-			TArray<FRigElementKey> Selection = Hierarchy->GetSelectedKeys();
+			TArray<FRigElementKey> Selection = Delegates.GetSelection();
 			for (const FRigElementKey& Key : Selection)
 			{
 				for (int32 RootIndex = 0; RootIndex < RootElements.Num(); ++RootIndex)
@@ -738,6 +991,11 @@ void SRigHierarchyTreeView::HandleGetChildrenForTree(TSharedPtr<FRigTreeElement>
 	OutChildren = InItem.Get()->Children;
 }
 
+void SRigHierarchyTreeView::OnElementKeyTagDragDetected(const FRigElementKey& InDraggedTag)
+{
+	(void)Delegates.OnRigTreeElementKeyTagDragDetected.ExecuteIfBound(InDraggedTag);
+}
+
 TArray<FRigElementKey> SRigHierarchyTreeView::GetSelectedKeys() const
 {
 	TArray<FRigElementKey> Keys;
@@ -776,6 +1034,73 @@ const TSharedPtr<FRigTreeElement>* SRigHierarchyTreeView::FindItemAtPosition(FVe
 	return nullptr;
 }
 
+void SRigHierarchyTreeView::AddConnectorResolveWarningTag(TSharedPtr<FRigTreeElement> InTreeElement,
+	const FRigBaseElement* InRigElement, const URigHierarchy* InHierarchy)
+{
+	check(InTreeElement.IsValid());
+	check(InRigElement);
+	check(InRigElement->GetType() == ERigElementType::Connector);
+
+	if(const FRigConnectorElement* ConnectorElement = Cast<FRigConnectorElement>(InRigElement))
+	{
+		if(ConnectorElement->IsOptional())
+		{
+			return;
+		}
+	}
+
+	if(UControlRig* ControlRig = InHierarchy->GetTypedOuter<UControlRig>())
+	{
+		TWeakObjectPtr<UControlRig> ControlRigPtr(ControlRig);
+		const FRigElementKey ConnectorKey = InRigElement->GetKey();
+		
+		TAttribute<FText> GetTooltipText = TAttribute<FText>::CreateSP(this,
+			&SRigHierarchyTreeView::GetConnectorWarningMessage, InTreeElement, ControlRigPtr, ConnectorKey);
+
+		static const FLinearColor BackgroundColor = FColor::FromHex(TEXT("#FFB800"));
+		static const FLinearColor TextColor = FColor::FromHex(TEXT("#0F0F0F"));
+		static const FLinearColor IconColor = FColor::FromHex(TEXT("#1A1A1A"));
+		static const FSlateBrush* WarningBrush = FControlRigEditorStyle::Get().GetBrush("ControlRig.ConnectorWarning");
+
+		SRigHierarchyTagWidget::FArguments TagArguments;
+		TagArguments.Visibility_Lambda([GetTooltipText]() -> EVisibility
+		{
+			return GetTooltipText.Get().IsEmpty() ? EVisibility::Collapsed : EVisibility::Visible;
+		});
+		TagArguments.Text(LOCTEXT("ConnectorWarningTagLabel", "Warning"));
+		TagArguments.ToolTipText(GetTooltipText);
+		TagArguments.Color(BackgroundColor);
+		TagArguments.IconColor(IconColor);
+		TagArguments.TextColor(TextColor);
+		TagArguments.Icon(WarningBrush);
+		TagArguments.IconSize(FVector2d(16.f, 16.f));
+		InTreeElement->Tags.Add(TagArguments);
+	}
+}
+
+FText SRigHierarchyTreeView::GetConnectorWarningMessage(TSharedPtr<FRigTreeElement> InTreeElement,
+	TWeakObjectPtr<UControlRig> InControlRigPtr, const FRigElementKey InConnectorKey) const
+{
+	if(UControlRig* ControlRig = InControlRigPtr.Get())
+	{
+		if(const UControlRigBlueprint* ControlRigBlueprint = Cast<UControlRigBlueprint>(ControlRig->GetClass()->ClassGeneratedBy))
+		{
+			const FRigElementKey TargetKey = ControlRigBlueprint->ModularRigModel.Connections.FindTargetFromConnector(InConnectorKey);
+			if(TargetKey.IsValid())
+			{
+				const URigHierarchy* Hierarchy = ControlRig->GetHierarchy();
+				if(Hierarchy->Contains(TargetKey))
+				{
+					return FText();
+				}
+			}
+		}
+	}
+
+	static const FText NotResolvedWarning = LOCTEXT("ConnectorWarningConnectorNotResolved", "Connector is not resolved.");
+	return NotResolvedWarning;
+}
+
 bool SRigHierarchyItem::OnVerifyNameChanged(const FText& InText, FText& OutErrorMessage)
 {
 	const FString NewName = InText.ToString();
@@ -785,6 +1110,18 @@ bool SRigHierarchyItem::OnVerifyNameChanged(const FText& InText, FText& OutError
 
 TPair<const FSlateBrush*, FSlateColor> SRigHierarchyItem::GetBrushForElementType(const URigHierarchy* InHierarchy, const FRigElementKey& InKey)
 {
+	static const FSlateBrush* ProxyControlBrush = FControlRigEditorStyle::Get().GetBrush("ControlRig.Tree.ProxyControl"); 
+	static const FSlateBrush* ControlBrush = FControlRigEditorStyle::Get().GetBrush("ControlRig.Tree.Control");
+	static const FSlateBrush* NullBrush = FControlRigEditorStyle::Get().GetBrush("ControlRig.Tree.Null");
+	static const FSlateBrush* BoneImportedBrush = FControlRigEditorStyle::Get().GetBrush("ControlRig.Tree.BoneImported");
+	static const FSlateBrush* BoneUserBrush = FControlRigEditorStyle::Get().GetBrush("ControlRig.Tree.BoneUser");
+	static const FSlateBrush* RigidBodyBrush = FControlRigEditorStyle::Get().GetBrush("ControlRig.Tree.RigidBody");
+	static const FSlateBrush* SocketOpenBrush = FControlRigEditorStyle::Get().GetBrush("ControlRig.Tree.Socket_Open");
+	static const FSlateBrush* SocketClosedBrush = FControlRigEditorStyle::Get().GetBrush("ControlRig.Tree.Socket_Closed");
+	static const FSlateBrush* PrimaryConnectorBrush = FControlRigEditorStyle::Get().GetBrush("ControlRig.ConnectorPrimary");
+	static const FSlateBrush* SecondaryConnectorBrush = FControlRigEditorStyle::Get().GetBrush("ControlRig.ConnectorSecondary");
+	static const FSlateBrush* OptionalConnectorBrush = FControlRigEditorStyle::Get().GetBrush("ControlRig.ConnectorOptional");
+
 	const FSlateBrush* Brush = nullptr;
 	FSlateColor Color = FSlateColor::UseForeground();
 	switch (InKey.Type)
@@ -799,11 +1136,11 @@ TPair<const FSlateBrush*, FSlateColor> SRigHierarchyItem::GetBrushForElementType
 				{
 					if(Control->Settings.AnimationType == ERigControlAnimationType::ProxyControl)
 					{
-						Brush = FControlRigEditorStyle::Get().GetBrush("ControlRig.Tree.ProxyControl");
+						Brush = ProxyControlBrush;
 					}
 					else
 					{
-						Brush = FControlRigEditorStyle::Get().GetBrush("ControlRig.Tree.Control");
+						Brush = ControlBrush;
 					}
 					ShapeColor = Control->Settings.ShapeColor;
 				}
@@ -820,13 +1157,13 @@ TPair<const FSlateBrush*, FSlateColor> SRigHierarchyItem::GetBrushForElementType
 			}
 			else
 			{
-				Brush = FControlRigEditorStyle::Get().GetBrush("ControlRig.Tree.Control");
+				Brush = ControlBrush;
 			}
 			break;
 		}
 		case ERigElementType::Null:
 		{
-			Brush = FControlRigEditorStyle::Get().GetBrush("ControlRig.Tree.Null");
+			Brush = NullBrush;
 			break;
 		}
 		case ERigElementType::Bone:
@@ -846,13 +1183,13 @@ TPair<const FSlateBrush*, FSlateColor> SRigHierarchyItem::GetBrushForElementType
 			{
 				case ERigBoneType::Imported:
 				{
-					Brush = FControlRigEditorStyle::Get().GetBrush("ControlRig.Tree.BoneImported");
+					Brush = BoneImportedBrush;
 					break;
 				}
 				case ERigBoneType::User:
 				default:
 				{
-					Brush = FControlRigEditorStyle::Get().GetBrush("ControlRig.Tree.BoneUser");
+					Brush = BoneUserBrush;
 					break;
 				}
 			}
@@ -861,12 +1198,41 @@ TPair<const FSlateBrush*, FSlateColor> SRigHierarchyItem::GetBrushForElementType
 		}
 		case ERigElementType::RigidBody:
 		{
-			Brush = FControlRigEditorStyle::Get().GetBrush("ControlRig.Tree.RigidBody");
+			Brush = RigidBodyBrush;
 			break;
 		}
 		case ERigElementType::Reference:
+		case ERigElementType::Socket:
 		{
-			Brush = FControlRigEditorStyle::Get().GetBrush("ControlRig.Tree.Socket");
+			Brush = SocketOpenBrush;
+
+			if(UControlRig* ControlRig = Cast<UControlRig>(InHierarchy->GetOuter()))
+			{
+				if(const FRigElementKey* ConnectorKey = ControlRig->GetElementKeyRedirector().FindReverse(InKey))
+				{
+					if(ConnectorKey->Type == ERigElementType::Connector)
+					{
+						Brush = SocketClosedBrush;
+					}
+				}
+			}
+
+			if(const FRigSocketElement* Socket = InHierarchy->Find<FRigSocketElement>(InKey))
+			{
+				Color = Socket->GetColor(InHierarchy);
+			}
+			break;
+		}
+		case ERigElementType::Connector:
+		{
+			Brush = PrimaryConnectorBrush;
+			if(const FRigConnectorElement* Connector = InHierarchy->Find<FRigConnectorElement>(InKey))
+			{
+				if(!Connector->IsPrimary())
+				{
+					Brush = Connector->IsOptional() ? OptionalConnectorBrush : SecondaryConnectorBrush;
+				}
+			}
 			break;
 		}
 		default:
@@ -889,6 +1255,7 @@ FLinearColor SRigHierarchyItem::GetColorForControlType(ERigControlType InControl
 			break;
 		}
 		case ERigControlType::Float:
+		case ERigControlType::ScaleFloat:
 		{
 			PinType = RigVMTypeUtils::PinTypeFromCPPType(RigVMTypeUtils::FloatTypeName, nullptr);
 			break;
@@ -970,11 +1337,14 @@ void SSearchableRigHierarchyTreeView::Construct(const FArguments& InArgs)
 	FRigTreeDelegates TreeDelegates = InArgs._RigTreeDelegates;
 	SuperGetRigTreeDisplaySettings = TreeDelegates.OnGetDisplaySettings;
 
+	MaxHeight = InArgs._MaxHeight;
+
 	TreeDelegates.OnGetDisplaySettings.BindSP(this, &SSearchableRigHierarchyTreeView::GetDisplaySettings);
-	
+
+	TSharedPtr<SVerticalBox> VerticalBox;
 	ChildSlot
 	[
-		SNew(SVerticalBox)
+		SAssignNew(VerticalBox, SVerticalBox)
 		+SVerticalBox::Slot()
 		.AutoHeight()
 		.VAlign(VAlign_Top)
@@ -987,7 +1357,6 @@ void SSearchableRigHierarchyTreeView::Construct(const FArguments& InArgs)
 		]
 
 		+SVerticalBox::Slot()
-		.AutoHeight()
 		.VAlign(VAlign_Top)
 		.HAlign(HAlign_Fill)
 		.Padding(0.0f, 0.0f)
@@ -1005,6 +1374,15 @@ void SSearchableRigHierarchyTreeView::Construct(const FArguments& InArgs)
 			]
 		]
 	];
+
+	if (MaxHeight > 0)
+	{
+		VerticalBox->GetSlot(1).SetMaxHeight(MaxHeight);
+	}
+	else
+	{
+		VerticalBox->GetSlot(1).SetAutoHeight();
+	}
 }
 
 const FRigTreeDisplaySettings& SSearchableRigHierarchyTreeView::GetDisplaySettings()

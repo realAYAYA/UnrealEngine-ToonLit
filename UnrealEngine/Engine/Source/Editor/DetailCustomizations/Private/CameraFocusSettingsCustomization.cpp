@@ -24,7 +24,6 @@
 #include "ScopedTransaction.h"
 #include "SlotBase.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Types/SlateEnums.h"
 #include "UObject/NameTypes.h"
 #include "UObject/UnrealType.h"

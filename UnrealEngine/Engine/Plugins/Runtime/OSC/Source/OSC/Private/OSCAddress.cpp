@@ -100,7 +100,7 @@ FString FOSCAddress::PopContainer()
 	FString Popped;
 	if (Containers.Num() > 0)
 	{
-		Popped = Containers.Pop(false /* bAllowShrinking */);
+		Popped = Containers.Pop(EAllowShrinking::No);
 		Hash = GetTypeHash(GetFullPath());
 	}
 
@@ -123,7 +123,7 @@ TArray<FString> FOSCAddress::PopContainers(int32 InNumContainers)
 			break;
 		}
 		++Removed;
-		Popped.Add(Containers.Pop(false /* bAllowShrinking */));
+		Popped.Add(Containers.Pop(EAllowShrinking::No));
 	}
 
 	Hash = GetTypeHash(GetFullPath());

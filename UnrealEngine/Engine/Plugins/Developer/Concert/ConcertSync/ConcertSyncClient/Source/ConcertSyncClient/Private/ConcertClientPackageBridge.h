@@ -32,6 +32,8 @@ public:
 	virtual EPackageFilterResult IsPackageFiltered(const FConcertPackageInfo& PackageInfo) const override;
 
 private:
+	
+#if WITH_EDITOR
 	/** Handle any deferred tasks that should be run on the game thread. */
 	void OnEndFrame();
 
@@ -55,6 +57,7 @@ private:
 
 	/** Called when the editor map is changed */
 	void HandleMapChanged(UWorld* InWorld, EMapChangeType InMapChangeType);
+#endif
 
 	/** Called when a local package event happens */
 	FOnConcertClientLocalPackageEvent OnLocalPackageEventDelegate;

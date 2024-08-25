@@ -8,7 +8,7 @@ using System.Windows.Forms;
 
 namespace UnrealGameSync
 {
-    class BuildListControl : CustomListViewControl
+	class BuildListControl : CustomListViewControl
 	{
 		[StructLayout(LayoutKind.Sequential)]
 		public class Scrollinfo
@@ -33,7 +33,7 @@ namespace UnrealGameSync
 		const int SifPos = 0x0004;
 		//const int SifDisablenoscroll = 0x0008;
 		const int SifTrackpos = 0x0010;
-		const int SifAll = (SifRange | SifPage | SifPos | SifTrackpos);        
+		const int SifAll = (SifRange | SifPage | SifPos | SifTrackpos);
 
 		const int LvmGettopindex = 0x1000 + 39;
 		const int LvmGetcountperpage = 0x1000 + 40;
@@ -58,7 +58,7 @@ namespace UnrealGameSync
 
 		public int GetFirstVisibleIndex()
 		{
-			if(!IsHandleCreated)
+			if (!IsHandleCreated)
 			{
 				return 0;
 			}
@@ -67,7 +67,7 @@ namespace UnrealGameSync
 
 		public int GetVisibleItemsPerPage()
 		{
-			if(!IsHandleCreated)
+			if (!IsHandleCreated)
 			{
 				return Height / Font.Height;
 			}
@@ -76,7 +76,7 @@ namespace UnrealGameSync
 
 		public bool GetScrollPosition(out int scrollY)
 		{
-			if(!IsHandleCreated)
+			if (!IsHandleCreated)
 			{
 				scrollY = 0;
 				return false;
@@ -85,7 +85,7 @@ namespace UnrealGameSync
 			Scrollinfo scrollInfo = new Scrollinfo();
 			scrollInfo.cbSize = Marshal.SizeOf(scrollInfo);
 			scrollInfo.fMask = SifAll;
-			if(GetScrollInfo(Handle, SbVert, scrollInfo) == 0)
+			if (GetScrollInfo(Handle, SbVert, scrollInfo) == 0)
 			{
 				scrollY = 0;
 				return false;
@@ -99,7 +99,7 @@ namespace UnrealGameSync
 
 		public void SetScrollPosition(int scrollY)
 		{
-			if(IsHandleCreated)
+			if (IsHandleCreated)
 			{
 				Scrollinfo scrollInfo = new Scrollinfo();
 				scrollInfo.cbSize = Marshal.SizeOf(scrollInfo);
@@ -111,12 +111,12 @@ namespace UnrealGameSync
 
 		public bool IsScrolledToLastPage()
 		{
-			if(IsHandleCreated)
+			if (IsHandleCreated)
 			{
 				Scrollinfo scrollInfo = new Scrollinfo();
 				scrollInfo.cbSize = Marshal.SizeOf(scrollInfo);
 				scrollInfo.fMask = SifAll;
-				if(GetScrollInfo(Handle, SbVert, scrollInfo) != 0 && scrollInfo.nPos >= scrollInfo.nMax - scrollInfo.nPage)
+				if (GetScrollInfo(Handle, SbVert, scrollInfo) != 0 && scrollInfo.nPos >= scrollInfo.nMax - scrollInfo.nPage)
 				{
 					return true;
 				}
@@ -128,11 +128,11 @@ namespace UnrealGameSync
 		{
 			base.WndProc(ref message);
 
-			switch(message.Msg)
+			switch (message.Msg)
 			{
 				case WmVscroll:
 				case WmMousewheel:
-					if(OnScroll != null)
+					if (OnScroll != null)
 					{
 						OnScroll();
 					}

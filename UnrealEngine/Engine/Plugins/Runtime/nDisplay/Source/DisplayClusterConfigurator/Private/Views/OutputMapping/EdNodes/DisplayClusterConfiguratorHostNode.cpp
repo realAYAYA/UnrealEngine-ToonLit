@@ -207,7 +207,7 @@ void UDisplayClusterConfiguratorHostNode::DeleteObject()
 	UDisplayClusterConfigurationHostDisplayData* HostDisplayData = GetObjectChecked<UDisplayClusterConfigurationHostDisplayData>();
 	if (UDisplayClusterConfigurationCluster* Cluster = Cast<UDisplayClusterConfigurationCluster>(HostDisplayData->GetOuter()))
 	{
-		FDisplayClusterConfiguratorClusterUtils::RemoveHost(Cluster, HostStr);
+		UE::DisplayClusterConfiguratorClusterUtils::RemoveHost(Cluster, HostStr);
 	}
 }
 

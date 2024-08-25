@@ -3,6 +3,8 @@
 
 #include "CoreMinimal.h"
 
+#include "Templates/TypeHash.h"
+
 class FActorPlacementInfo 
 {
 public:
@@ -42,3 +44,8 @@ public:
 	FString ObjectPath;
 	FString Factory;
 };
+
+inline uint32 GetTypeHash(const FActorPlacementInfo& Object)
+{
+	return HashCombine(GetTypeHash(Object.ObjectPath), GetTypeHash(Object.Factory));
+}

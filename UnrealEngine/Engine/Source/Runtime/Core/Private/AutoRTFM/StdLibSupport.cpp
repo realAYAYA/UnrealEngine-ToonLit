@@ -17,9 +17,7 @@
 #endif
 
 #if PLATFORM_WINDOWS
-#include "Windows/PreWindowsApi.h"
-#include "Windows/MinWindows.h"
-#include "Windows/PostWindowsApi.h"
+#include "Windows/WindowsHWrapper.h"
 #endif
 
 namespace AutoRTFM
@@ -29,9 +27,10 @@ UE_AUTORTFM_REGISTER_OPEN_FUNCTION_EXPLICIT(memcpy, Memcpy);
 UE_AUTORTFM_REGISTER_OPEN_FUNCTION_EXPLICIT(memmove, Memmove);
 UE_AUTORTFM_REGISTER_OPEN_FUNCTION_EXPLICIT(memset, Memset);
 
-void* RTFM_malloc(size_t Size, FContext* Context)
+void* RTFM_malloc(size_t Size)
 {
     void* Result = malloc(Size);
+	FContext* Context = FContext::Get();
     Context->GetCurrentTransaction()->DeferUntilAbort([Result]
     {
         free(Result);
@@ -42,10 +41,11 @@ void* RTFM_malloc(size_t Size, FContext* Context)
 
 UE_AUTORTFM_REGISTER_OPEN_FUNCTION(malloc);
 
-void RTFM_free(void* Ptr, FContext* Context)
+void RTFM_free(void* Ptr)
 {
     if (Ptr)
     {
+		FContext* Context = FContext::Get();
         Context->GetCurrentTransaction()->DeferUntilCommit([Ptr]
         {
             free(Ptr);
@@ -54,9 +54,9 @@ void RTFM_free(void* Ptr, FContext* Context)
 }
 UE_AUTORTFM_REGISTER_OPEN_FUNCTION(free);
 
-void* RTFM_realloc(void* Ptr, size_t Size, FContext* Context)
+void* RTFM_realloc(void* Ptr, size_t Size)
 {
-    void* NewObject = RTFM_malloc(Size, Context);
+    void* NewObject = RTFM_malloc(Size);
     if (Ptr)
     {
 #if defined(__APPLE__)
@@ -66,43 +66,48 @@ void* RTFM_realloc(void* Ptr, size_t Size, FContext* Context)
 #else
 		const size_t OldSize = malloc_usable_size(Ptr);
 #endif
+		FContext* Context = FContext::Get();
         MemcpyToNew(NewObject, Ptr,  FMath::Min(OldSize, Size), Context);
-        RTFM_free(Ptr, Context);
+        RTFM_free(Ptr);
     }
     return NewObject;
 }
 UE_AUTORTFM_REGISTER_OPEN_FUNCTION(realloc);
 
-char* RTFM_strcpy(char* const Dst, const char* const Src, FContext* const Context)
+char* RTFM_strcpy(char* const Dst, const char* const Src)
 {
     const size_t SrcLen = strlen(Src);
 
+	FContext* Context = FContext::Get();
     Context->RecordWrite(Dst, SrcLen);
     return strcpy(Dst, Src);
 }
 UE_AUTORTFM_REGISTER_OPEN_FUNCTION(strcpy);
 
-char* RTFM_strncpy(char* const Dst, const char* const Src, const size_t Num, FContext* const Context)
+char* RTFM_strncpy(char* const Dst, const char* const Src, const size_t Num)
 {
+	FContext* Context = FContext::Get();
     Context->RecordWrite(Dst, Num);
     return strncpy(Dst, Src, Num);
 }
 UE_AUTORTFM_REGISTER_OPEN_FUNCTION(strncpy);
 
-char* RTFM_strcat(char* const Dst, const char* const Src, FContext* const Context)
+char* RTFM_strcat(char* const Dst, const char* const Src)
 {
     const size_t DstLen = strlen(Dst);
     const size_t SrcLen = strlen(Src);
 
+	FContext* Context = FContext::Get();
     Context->RecordWrite(Dst + DstLen, SrcLen + 1);
     return strcat(Dst, Src);
 }
 UE_AUTORTFM_REGISTER_OPEN_FUNCTION(strcat);
 
-char* RTFM_strncat(char* const Dst, const char* const Src, const size_t Num, FContext* const Context)
+char* RTFM_strncat(char* const Dst, const char* const Src, const size_t Num)
 {
     const size_t DstLen = strlen(Dst);
 
+	FContext* Context = FContext::Get();
     Context->RecordWrite(Dst + DstLen, Num + 1);
     return strncat(Dst, Src, Num);
 }
@@ -115,8 +120,25 @@ UE_AUTORTFM_REGISTER_SELF_FUNCTION(static_cast<const char*(*)(const char*, int)>
 UE_AUTORTFM_REGISTER_SELF_FUNCTION(static_cast<const char* (*)(const char*, int)>(&strrchr));
 UE_AUTORTFM_REGISTER_SELF_FUNCTION(static_cast<const char* (*)(const char*, const char*)>(&strstr));
 UE_AUTORTFM_REGISTER_SELF_FUNCTION(strlen);
+UE_AUTORTFM_REGISTER_SELF_FUNCTION(strtol);
 
+UE_AUTORTFM_REGISTER_SELF_FUNCTION(static_cast<const wchar_t* (*)(const wchar_t*, wchar_t)>(&wcschr));
+UE_AUTORTFM_REGISTER_SELF_FUNCTION(static_cast<wchar_t* (*)(wchar_t*, wchar_t)>(&wcschr));
+UE_AUTORTFM_REGISTER_SELF_FUNCTION(static_cast<wchar_t* (*)(wchar_t*, const wchar_t*)>(&wcsstr));
+UE_AUTORTFM_REGISTER_SELF_FUNCTION(static_cast<const wchar_t* (*)(const wchar_t*, const wchar_t*)>(&wcsstr));
 UE_AUTORTFM_REGISTER_SELF_FUNCTION(wcscmp);
+
+UE_AUTORTFM_REGISTER_SELF_FUNCTION(iswupper);
+UE_AUTORTFM_REGISTER_SELF_FUNCTION(iswlower);
+UE_AUTORTFM_REGISTER_SELF_FUNCTION(iswalpha);
+UE_AUTORTFM_REGISTER_SELF_FUNCTION(iswgraph);
+UE_AUTORTFM_REGISTER_SELF_FUNCTION(iswprint);
+UE_AUTORTFM_REGISTER_SELF_FUNCTION(iswpunct);
+UE_AUTORTFM_REGISTER_SELF_FUNCTION(iswalnum);
+UE_AUTORTFM_REGISTER_SELF_FUNCTION(iswdigit);
+UE_AUTORTFM_REGISTER_SELF_FUNCTION(iswxdigit);
+UE_AUTORTFM_REGISTER_SELF_FUNCTION(iswspace);
+UE_AUTORTFM_REGISTER_SELF_FUNCTION(iswcntrl);
 
 #if PLATFORM_WINDOWS
 UE_AUTORTFM_REGISTER_SELF_FUNCTION(sqrt);
@@ -137,6 +159,7 @@ UE_AUTORTFM_REGISTER_SELF_FUNCTION(exp);
 UE_AUTORTFM_REGISTER_SELF_FUNCTION(log);
 UE_AUTORTFM_REGISTER_SELF_FUNCTION(pow);
 UE_AUTORTFM_REGISTER_SELF_FUNCTION(llrint);
+UE_AUTORTFM_REGISTER_SELF_FUNCTION(fmod);
 // Linux (likely Mac) have ambiguous overrides to these math functions
 #else
 UE_AUTORTFM_REGISTER_SELF_FUNCTION(static_cast<float(*)(float)>(&sqrt));
@@ -175,6 +198,8 @@ UE_AUTORTFM_REGISTER_SELF_FUNCTION(static_cast<float(*)(float, float)>(&pow));
 UE_AUTORTFM_REGISTER_SELF_FUNCTION(static_cast<long double(*)(long double, long double)>(&pow));
 UE_AUTORTFM_REGISTER_SELF_FUNCTION(static_cast<long long(*)(float)>(&llrint));
 UE_AUTORTFM_REGISTER_SELF_FUNCTION(static_cast<long long(*)(long double)>(&llrint));
+UE_AUTORTFM_REGISTER_SELF_FUNCTION(static_cast<float(*)(float, float)>(&fmod));
+UE_AUTORTFM_REGISTER_SELF_FUNCTION(static_cast<long double(*)(long double, long double)>(&fmod));
 #endif
 
 // Self register Math functions
@@ -191,38 +216,43 @@ UE_AUTORTFM_REGISTER_SELF_FUNCTION(tanhf);
 UE_AUTORTFM_REGISTER_SELF_FUNCTION(expf);
 UE_AUTORTFM_REGISTER_SELF_FUNCTION(logf);
 UE_AUTORTFM_REGISTER_SELF_FUNCTION(powf);
+UE_AUTORTFM_REGISTER_SELF_FUNCTION(fmodf);
+UE_AUTORTFM_REGISTER_SELF_FUNCTION(fmodl);
+UE_AUTORTFM_REGISTER_SELF_FUNCTION(rand);
 
 // FIXME: This is only correct when:
 // - Str is newly allocated
 // - Format is either newly allocated or not mutated
 // - any strings passed as arguments are either newly allocated or not mutated
-int RTFM_snprintf(char* Str, size_t Size, char* Format, FContext* Context, ...)
+int RTFM_snprintf(char* Str, size_t Size, char* Format, ...)
 {
+	FContext* Context = FContext::Get();
     va_list ArgList;
-    va_start(ArgList, Context);
+    va_start(ArgList, Format);
     int Result = vsnprintf(Str, Size, Format, ArgList);
     va_end(ArgList);
     return Result;
 }
 UE_AUTORTFM_REGISTER_OPEN_FUNCTION(snprintf);
 
-int RTFM_printf(const char* Format, FContext* Context, ...)
+int RTFM_printf(const char* Format, ...)
 {
+	FContext* Context = FContext::Get();
     va_list ArgList;
-    va_start(ArgList, Context);
+    va_start(ArgList, Format);
     int Result = vprintf(Format, ArgList);
     va_end(ArgList);
     return Result;
 }
 UE_AUTORTFM_REGISTER_OPEN_FUNCTION(printf);
 
-int RTFM_putchar(int Char, FContext* Context)
+int RTFM_putchar(int Char)
 {
     return putchar(Char);
 }
 UE_AUTORTFM_REGISTER_OPEN_FUNCTION(putchar);
 
-int RTFM_puts(const char* Str, FContext* Context)
+int RTFM_puts(const char* Str)
 {
     return puts(Str);
 }
@@ -230,7 +260,7 @@ UE_AUTORTFM_REGISTER_OPEN_FUNCTION(puts);
 
 #if PLATFORM_WINDOWS
 
-FILE* RTFM___acrt_iob_func(int Index, FContext* Context)
+FILE* RTFM___acrt_iob_func(int Index)
 {
     switch (Index)
     {
@@ -238,9 +268,12 @@ FILE* RTFM___acrt_iob_func(int Index, FContext* Context)
     case 2:
         return __acrt_iob_func(Index);
     default:
+	{
 		UE_LOG(LogAutoRTFM, Warning, TEXT("Attempt to get file descriptor %d (not 1 or 2) in __acrt_iob_func."), Index);
+		FContext* Context = FContext::Get();
         Context->AbortByLanguageAndThrow();
         return NULL;
+	}
     }
 }
 UE_AUTORTFM_REGISTER_OPEN_FUNCTION(__acrt_iob_func);
@@ -258,10 +291,12 @@ UE_AUTORTFM_REGISTER_SELF_FUNCTION(static_cast<float(*)(float, float)>(&powf));
 UE_AUTORTFM_REGISTER_SELF_FUNCTION(static_cast<double(*)(double, double)>(&pow));
 
 #if PLATFORM_WINDOWS
+UE_AUTORTFM_REGISTER_SELF_FUNCTION(_tcsncmp);
 UE_AUTORTFM_REGISTER_SELF_FUNCTION(_tcslen);
 UE_AUTORTFM_REGISTER_SELF_FUNCTION(_isnan);
 UE_AUTORTFM_REGISTER_SELF_FUNCTION(_finite);
 UE_AUTORTFM_REGISTER_SELF_FUNCTION(IsDebuggerPresent);
+UE_AUTORTFM_REGISTER_SELF_FUNCTION(GetSystemTime);
 
 UE_AUTORTFM_REGISTER_SELF_FUNCTION(QueryPerformanceCounter);
 UE_AUTORTFM_REGISTER_SELF_FUNCTION(QueryPerformanceFrequency);
@@ -269,11 +304,11 @@ UE_AUTORTFM_REGISTER_SELF_FUNCTION(GetCurrentThreadId);
 
 UE_AUTORTFM_REGISTER_SELF_FUNCTION(TlsGetValue);
 
-BOOL RTFM_TlsSetValue(DWORD dwTlsIndex, LPVOID lpTlsValue, FContext* Context)
+BOOL RTFM_TlsSetValue(DWORD dwTlsIndex, LPVOID lpTlsValue)
 {
 	LPVOID CurrentValue = TlsGetValue(dwTlsIndex);
 
-	AutoRTFM::OpenAbort([dwTlsIndex, CurrentValue]
+	AutoRTFM::OnAbort([dwTlsIndex, CurrentValue]
 	{
 		TlsSetValue(dwTlsIndex, CurrentValue);
 	});
@@ -283,9 +318,18 @@ BOOL RTFM_TlsSetValue(DWORD dwTlsIndex, LPVOID lpTlsValue, FContext* Context)
 UE_AUTORTFM_REGISTER_OPEN_FUNCTION(TlsSetValue);
 #endif // PLATFORM_WINDOWS
 
-wchar_t* RTFM_wcsncpy(wchar_t* Dst, const wchar_t* Src, size_t Count, FContext* Context)
+#if PLATFORM_LINUX
+UE_AUTORTFM_REGISTER_SELF_FUNCTION(clock_gettime);
+UE_AUTORTFM_REGISTER_SELF_FUNCTION(gettimeofday);
+UE_AUTORTFM_REGISTER_SELF_FUNCTION(gmtime_r);
+UE_AUTORTFM_REGISTER_SELF_FUNCTION(bcmp);
+#endif // PLATFORM_LINUX
+
+wchar_t* RTFM_wcsncpy(wchar_t* Dst, const wchar_t* Src, size_t Count)
 {
-	AutoRTFM::Unreachable();
+	FContext* Context = FContext::Get();
+	Context->RecordWrite(Dst, Count * sizeof(wchar_t));
+	return wcsncpy(Dst, Src, Count);
 }
 
 #ifdef _MSC_VER
@@ -303,8 +347,9 @@ UE_AUTORTFM_REGISTER_OPEN_FUNCTION(wcsncpy);
 #pragma warning(pop)
 #endif
 
-int RTFM_atexit(void(__cdecl*Callback)(void), FContext* Context)
+int RTFM_atexit(void(__cdecl*Callback)(void))
 {
+	FContext* Context = FContext::Get();
 	Context->GetCurrentTransaction()->DeferUntilCommit([Callback]
 		{
 			atexit(Callback);

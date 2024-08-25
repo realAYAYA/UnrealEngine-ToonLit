@@ -176,7 +176,7 @@ void FMovieSceneEventSectionTemplate::EvaluateSwept(const FMovieSceneEvaluationO
 	const int32 Last = bBackwards ? 0 : KeyTimes.Num() - 1;
 	const int32 Inc = bBackwards ? -1 : 1;
 
-	const float PositionInSeconds = Context.GetTime() * Context.GetRootToSequenceTransform().InverseLinearOnly() / Context.GetFrameRate();
+	const float PositionInSeconds = Context.GetTime() * Context.GetRootToSequenceTransform().InverseNoLooping() / Context.GetFrameRate();
 
 	if (bBackwards)
 	{

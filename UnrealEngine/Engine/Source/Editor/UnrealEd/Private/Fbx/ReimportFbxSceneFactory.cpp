@@ -822,7 +822,7 @@ void UReimportFbxSceneFactory::RecursivelySetComponentProperties(USCS_Node* Curr
 	FString ReduceNodeName = NodeName;
 	if (NameContainTemplateSuffixe)
 	{
-		ReduceNodeName.LeftInline(IndexTemplateSuffixe, false);
+		ReduceNodeName.LeftInline(IndexTemplateSuffixe, EAllowShrinking::No);
 	}
 
 	USceneComponent *CurrentNodeSceneComponent = Cast<USceneComponent>(CurrentNodeActorComponent);

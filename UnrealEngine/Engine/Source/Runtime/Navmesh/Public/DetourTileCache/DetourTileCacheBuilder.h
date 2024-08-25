@@ -263,13 +263,14 @@ NAVMESH_API dtStatus dtBuildTileCacheRegionsChunky(dtTileCacheAlloc* alloc,
 
 NAVMESH_API dtStatus dtBuildTileCacheContours(dtTileCacheAlloc* alloc,
 								dtTileCacheLayer& layer,
-								const int walkableClimb, const dtReal maxError,
+								const int walkableClimb, const int maxVerticalMergeError, const dtReal maxError, const dtReal simplificationElevationRatio, // UE
 								const dtReal cs, const dtReal ch,
 								dtTileCacheContourSet& lcset
 								//@UE BEGIN
 #if WITH_NAVMESH_CLUSTER_LINKS
 								, dtTileCacheClusterSet& lclusters
 #endif // WITH_NAVMESH_CLUSTER_LINKS
+								, const bool skipContourSimplification = false
 								//@UE END
 								);
 

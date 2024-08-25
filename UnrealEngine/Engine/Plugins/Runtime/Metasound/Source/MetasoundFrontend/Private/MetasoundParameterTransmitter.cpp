@@ -258,27 +258,67 @@ namespace Metasound
 		return true;
 	}
 
-	bool FMetaSoundParameterTransmitter::SetParameters(TArray<FAudioParameter>&& InParameters)
+	void FMetaSoundParameterTransmitter::AddAvailableParameter(FName InName)
+	{
+		AvailableParameterNames.Add(InName);
+	}
+
+	void FMetaSoundParameterTransmitter::RemoveAvailableParameter(FName InName)
+	{
+		AvailableParameterNames.Remove(InName);
+	}
+
+	bool FMetaSoundParameterTransmitter::SetVirtualizedParameters(TArray<FAudioParameter>&& InParameters)
 	{
 		bool bSuccess = true;
 
-		TArray<FAudioParameter> NewParams;
-		for (FAudioParameter& Param : InParameters)
+		// Remove triggers
+		for (int32 ParamIndex = InParameters.Num() - 1; ParamIndex >= 0; --ParamIndex)
 		{
-			const FName ParamName = Param.ParamName;
-			if (SetParameterWithLiteral(ParamName, Frontend::ConvertParameterToLiteral(Param)))
+			// Triggers are transient and are not applied for virtualized sounds. 
+			// If a cached value is desired, use SetBoolParameter
+			// (see comment for IAudioParameterControllerInterface::SetTriggerParameter)
+			FAudioParameter& Param = InParameters[ParamIndex];
+			if (Param.ParamType == EAudioParameterType::Trigger)
 			{
-				NewParams.Add(MoveTemp(Param));
+				InParameters.RemoveAtSwap(ParamIndex, 1, EAllowShrinking::No);
 			}
-			else
+		}
+
+		if (!InParameters.IsEmpty())
+		{
+			bSuccess &= FParameterTransmitterBase::SetParameters(MoveTemp(InParameters));
+		}
+
+		InParameters.Reset();
+		return bSuccess;
+	}
+
+	bool FMetaSoundParameterTransmitter::SetParameters(TArray<FAudioParameter>&& InParameters)
+	{
+		// Don't set parameters directly if the active sound 
+		// is currently virtualized (to prevent accumulation of unneeded updates) 
+		if (bIsVirtualized)
+		{
+			return SetVirtualizedParameters(MoveTemp(InParameters));
+		}
+
+		bool bSuccess = true;
+
+		for (int32 ParamIndex = InParameters.Num() - 1; ParamIndex >= 0; --ParamIndex)
+		{
+			FAudioParameter& Param = InParameters[ParamIndex];
+			const FName ParamName = Param.ParamName;
+			if (!SetParameterWithLiteral(ParamName, Frontend::ConvertParameterToLiteral(Param)))
 			{
+				InParameters.RemoveAtSwap(ParamIndex, 1, EAllowShrinking::No);
 				bSuccess = false;
 			}
 		}
 
-		if (!NewParams.IsEmpty())
+		if (!InParameters.IsEmpty())
 		{
-			bSuccess &= FParameterTransmitterBase::SetParameters(MoveTemp(NewParams));
+			bSuccess &= FParameterTransmitterBase::SetParameters(MoveTemp(InParameters));
 		}
 
 		InParameters.Reset();

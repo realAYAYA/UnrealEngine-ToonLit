@@ -24,6 +24,9 @@ class IMappedFileHandle;
 
 #if !UE_BUILD_SHIPPING
 
+#define FILE_OPEN_ORDER_LABEL(Format, ...) \
+	FPlatformFileOpenLog::AddLabel( Format, ##__VA_ARGS__ );
+
 class FLoggingAsyncReadFileHandle final : public IAsyncReadFileHandle
 {
 	FPlatformFileOpenLog* Owner;
@@ -57,12 +60,14 @@ protected:
 	int64					OpenOrder;
 	TMap<FString, int64>	FilenameAccessMap;
 	TArray<IFileHandle*>	LogOutput;
+	bool					bLogDuplicates;
 
 public:
 
 	FPlatformFileOpenLog()
 		: LowerLevel(nullptr)
 		, OpenOrder(0)
+		, bLogDuplicates(false)
 	{
 	}
 
@@ -82,85 +87,8 @@ public:
 		return bResult;
 	}
 
-	virtual bool Initialize(IPlatformFile* Inner, const TCHAR* CommandLineParam) override
-	{
-		LowerLevel = Inner;
-		FString LogFileDirectory;
-		FString LogFilePath;
-		FString PlatformStr;
-		FString	OutputDirectoryBase;
+	virtual bool Initialize(IPlatformFile* Inner, const TCHAR* CommandLineParam) override;
 
-		if (!FParse::Value(CommandLineParam, TEXT("FOOBASEDIR="), OutputDirectoryBase))
-		{
-			if (FParse::Param(CommandLineParam, TEXT("FOOUSESAVEDDIR")))
-			{
-				OutputDirectoryBase = FPaths::ProjectSavedDir();
-			}
-			else
-			{
-				OutputDirectoryBase = FPlatformMisc::ProjectDir();
-			}
-		}
-
-		if (FParse::Value(CommandLineParam, TEXT("TARGETPLATFORM="), PlatformStr))
-		{
-			TArray<FString> PlatformNames;
-			if (!(PlatformStr == TEXT("None") || PlatformStr == TEXT("All")))
-			{
-				PlatformStr.ParseIntoArray(PlatformNames, TEXT("+"), true);
-			}
-
-			for (int32 Platform = 0;Platform < PlatformNames.Num(); ++Platform)
-			{
-				if (FDataDrivenPlatformInfoRegistry::GetPlatformInfo(PlatformNames[Platform]).bIsConfidential)
-				{
-					LogFileDirectory = FPaths::Combine(OutputDirectoryBase, TEXT("Platforms"), *PlatformNames[Platform], TEXT("Build"), TEXT("FileOpenOrder"));
-				}
-				else
-				{
-					LogFileDirectory = FPaths::Combine(OutputDirectoryBase, TEXT( "Build" ), *PlatformNames[Platform], TEXT("FileOpenOrder"));
-				}
-#if WITH_EDITOR
-				LogFilePath = FPaths::Combine( *LogFileDirectory, TEXT("EditorOpenOrder.log"));
-#else 
-				FString OrderSuffix = TEXT("");
-				FParse::Value(CommandLineParam, TEXT("FooSuffix="), OrderSuffix);
-
-				FString GameOpenOrderFileName = FString::Printf(TEXT("GameOpenOrder%s.log"), *OrderSuffix);
-				LogFilePath = FPaths::Combine( *LogFileDirectory, *GameOpenOrderFileName);
-#endif
-				Inner->CreateDirectoryTree(*LogFileDirectory);
-				auto* FileHandle = Inner->OpenWrite(*LogFilePath, false, false);
-				if (FileHandle) 
-				{
-					LogOutput.Add(FileHandle);
-				}
-			}
-		}
-		else
-		{
-			if (FDataDrivenPlatformInfoRegistry::GetPlatformInfo(FPlatformProperties::IniPlatformName()).bIsConfidential)
-			{
-				LogFileDirectory = FPaths::Combine(OutputDirectoryBase, TEXT("Platforms"), StringCast<TCHAR>(FPlatformProperties::PlatformName()).Get(), TEXT("Build"), TEXT("FileOpenOrder"));
-			}
-			else
-			{
-				LogFileDirectory = FPaths::Combine(OutputDirectoryBase, TEXT("Build"), StringCast<TCHAR>(FPlatformProperties::PlatformName()).Get(), TEXT("FileOpenOrder"));
-			}
-#if WITH_EDITOR
-			LogFilePath = FPaths::Combine( *LogFileDirectory, TEXT("EditorOpenOrder.log"));
-#else 
-			LogFilePath = FPaths::Combine( *LogFileDirectory, TEXT("GameOpenOrder.log"));
-#endif
-			Inner->CreateDirectoryTree(*LogFileDirectory);
-			auto* FileHandle = Inner->OpenWrite(*LogFilePath, false, false);
-			if (FileHandle)
-			{
-				LogOutput.Add(FileHandle);
-			}
-		}
-		return true;
-	}
 	virtual IPlatformFile* GetLowerLevel() override
 	{
 		return LowerLevel;
@@ -303,7 +231,15 @@ public:
 	void AddToOpenLog(const TCHAR* Filename)
 	{
 		CriticalSection.Lock();
-		if (FilenameAccessMap.Find(Filename) == nullptr)
+		if (bLogDuplicates)
+		{
+			FString Text = FString::Printf(TEXT("\"%s\"\n"), Filename);
+			for (auto File = LogOutput.CreateIterator(); File; ++File)
+			{
+				(*File)->Write((uint8*)StringCast<ANSICHAR>(*Text).Get(), Text.Len());
+			}
+		}
+		else if (FilenameAccessMap.Find(Filename) == nullptr)
 		{
 			FilenameAccessMap.Emplace(Filename, ++OpenOrder);
 			FString Text = FString::Printf(TEXT("\"%s\" %llu\n"), Filename, OpenOrder);
@@ -315,19 +251,39 @@ public:
 		CriticalSection.Unlock();
 	}
 
-	void AddPackageToOpenLog(const TCHAR* Filename)
+	void AddLabelToOpenLog(const TCHAR* LabelStr)
 	{
 		CriticalSection.Lock();
-		if (FilenameAccessMap.Find(Filename) == nullptr)
+		for (auto File = LogOutput.CreateIterator(); File; ++File)
 		{
-			FilenameAccessMap.Emplace(Filename, ++OpenOrder);
-			FString Text = FString::Printf(TEXT("\"%s\" %llu\n"), Filename, OpenOrder);
-			for (auto File = LogOutput.CreateIterator(); File; ++File)
-			{
-				(*File)->Write((uint8*)StringCast<ANSICHAR>(*Text).Get(), Text.Len());
-			}
+			FString Text = FString::Printf(TEXT("# %s\n"), LabelStr);
+			(*File)->Write((uint8*)StringCast<ANSICHAR>(*Text).Get(), Text.Len());
 		}
 		CriticalSection.Unlock();
 	}
+
+
+	void AddPackageToOpenLog(const TCHAR* Filename)
+	{
+		// TODO: deprecate/remove this function?
+		AddToOpenLog(Filename);
+	}
+
+	template <typename FmtType, typename... Types>
+	static void AddLabel(const FmtType& Fmt, Types... Args)
+	{
+		static_assert(TIsArrayOrRefOfTypeByPredicate<FmtType, TIsCharEncodingCompatibleWithTCHAR>::Value, "Formatting string must be a TCHAR array.");
+		static_assert((TIsValidVariadicFunctionArg<Types>::Value && ...), "Invalid argument(s) passed to FCsvProfiler::AddLabel");
+		AddLabelInternal((const TCHAR*)Fmt, Args...);
+	}
+
+private:
+	static CORE_API void VARARGS AddLabelInternal(const TCHAR* Fmt, ...);
+
 };
-#endif // !UE_BUILD_SHIPPING
+#else // !UE_BUILD_SHIPPING
+
+#define FILE_OPEN_ORDER_LABEL(Format, ...)
+
+#endif
+

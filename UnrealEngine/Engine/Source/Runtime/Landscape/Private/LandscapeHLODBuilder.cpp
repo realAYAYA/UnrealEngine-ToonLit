@@ -8,9 +8,10 @@
 #if WITH_EDITOR
 
 #include "Landscape.h"
-#include "LandscapeProxy.h"
 #include "LandscapeComponent.h"
 #include "LandscapeMeshProxyComponent.h"
+#include "LandscapeProxy.h"
+#include "LandscapeSettings.h"
 
 #include "MeshDescription.h"
 #include "PhysicsEngine/BodySetup.h"
@@ -41,6 +42,10 @@ ULandscapeHLODBuilder::ULandscapeHLODBuilder(const FObjectInitializer& ObjectIni
 uint32 ULandscapeHLODBuilder::ComputeHLODHash(const UActorComponent* InSourceComponent) const
 {
 	FArchiveCrc32 Ar;
+
+	// Base lanscape HLOD key, changing this will force a rebuild of all landscape HLODs
+	FString HLODBaseKey = "38DC3700FC0742929BA00ACCF5B1B626";
+	Ar << HLODBaseKey;
 
 	if (const ULandscapeComponent* LSComponent = Cast<ULandscapeComponent>(InSourceComponent))
 	{
@@ -113,6 +118,55 @@ uint32 ULandscapeHLODBuilder::ComputeHLODHash(const UActorComponent* InSourceCom
 		// Nanite enabled?
 		bool bNaniteEnabled = LSProxy->IsNaniteEnabled();
 		Ar << bNaniteEnabled;
+		UE_LOG(LogHLODBuilder, VeryVerbose, TEXT("     - NaniteEnabled = %d"), bNaniteEnabled);
+		if (bNaniteEnabled)
+		{
+			int32 NaniteLODIndex = LSProxy->GetNaniteLODIndex();
+			int32 NanitePositionPrecision = LSProxy->GetNanitePositionPrecision();
+			float NaniteMaxEdgeLengthFactor = LSProxy->GetNaniteMaxEdgeLengthFactor();
+			Ar << NaniteLODIndex << NanitePositionPrecision << NaniteMaxEdgeLengthFactor;
+			UE_LOG(LogHLODBuilder, VeryVerbose, TEXT("     - NaniteLODIndex = %d"), NaniteLODIndex);
+			UE_LOG(LogHLODBuilder, VeryVerbose, TEXT("     - NanitePositionPrecision = %d"), NanitePositionPrecision);
+			UE_LOG(LogHLODBuilder, VeryVerbose, TEXT("     - NaniteMaxEdgeLengthFactor = %f"), NaniteMaxEdgeLengthFactor);
+
+			bool bNaniteSkirtEnabled = LSProxy->IsNaniteSkirtEnabled();
+			Ar << bNaniteSkirtEnabled;
+			UE_LOG(LogHLODBuilder, VeryVerbose, TEXT("     - NaniteSkirtEnabled = %d"), bNaniteSkirtEnabled);
+			if (bNaniteSkirtEnabled)
+			{
+				float NaniteSkirtDepth = LSProxy->GetNaniteSkirtDepth();
+				Ar << NaniteSkirtDepth;
+				UE_LOG(LogHLODBuilder, VeryVerbose, TEXT("     - NaniteSkirtDepth = %f"), NaniteSkirtDepth);
+			}
+		}
+
+		// HLODTextureSize
+		ELandscapeHLODTextureSizePolicy HLODTextureSizePolicy = LSProxy->HLODTextureSizePolicy;
+		Ar << HLODTextureSizePolicy;
+		UE_LOG(LogHLODBuilder, VeryVerbose, TEXT("     - HLODTextureSizePolicy = %x"), HLODTextureSizePolicy);
+		if (HLODTextureSizePolicy == ELandscapeHLODTextureSizePolicy::SpecificSize)
+		{
+			int32 HLODTextureSize = LSProxy->HLODTextureSize;
+			Ar << HLODTextureSize;
+			UE_LOG(LogHLODBuilder, VeryVerbose, TEXT("     - HLODTextureSize = %d"), HLODTextureSize);
+		}
+
+		// HLODMeshSourceLOD
+		ELandscapeHLODMeshSourceLODPolicy HLODMeshSourceLODPolicy = LSProxy->HLODMeshSourceLODPolicy;
+		Ar << HLODMeshSourceLODPolicy;
+		UE_LOG(LogHLODBuilder, VeryVerbose, TEXT("     - HLODMeshSourceLODPolicy = %x"), HLODMeshSourceLODPolicy);
+		if (HLODMeshSourceLODPolicy == ELandscapeHLODMeshSourceLODPolicy::SpecificLOD)
+		{
+			int32 HLODMeshSourceLOD = LSProxy->HLODMeshSourceLOD;
+			Ar << HLODMeshSourceLOD;
+			UE_LOG(LogHLODBuilder, VeryVerbose, TEXT("     - HLODMeshSourceLOD = %d"), HLODMeshSourceLOD);
+		}
+
+		// Project max texture size for landscape HLOD textures
+		const ULandscapeSettings* LandscapeSettings = GetDefault<ULandscapeSettings>();
+		int32 ProjectHLODMaxTextureSize = LandscapeSettings->GetHLODMaxTextureSize();
+		Ar << ProjectHLODMaxTextureSize;
+		UE_LOG(LogHLODBuilder, VeryVerbose, TEXT("     - ProjectHLODMaxTextureSize = %d"), ProjectHLODMaxTextureSize);
 	}
 
 	return Ar.GetCrc();
@@ -157,32 +211,84 @@ static int32 GetMeshTextureSizeFromTargetTexelDensity(const FMeshDescription& In
 static int32 ComputeRequiredLandscapeLOD(const ALandscapeProxy* InLandscapeProxy, const float InViewDistance)
 {
 	check(InLandscapeProxy && !InLandscapeProxy->LandscapeComponents.IsEmpty());
-	
-	// These constants are showing up a lot in the screen size computation for Level HLODs. This should be configurable per project.
-	const float HalfFOV = PI * 0.25f;
-	const float ScreenWidth = 1920.0f;
-	const float ScreenHeight = 1080.0f;
-	const FPerspectiveMatrix ProjMatrix(HalfFOV, ScreenWidth, ScreenHeight, 1.0f);
 
-	TArray<float> LODScreenSizes = InLandscapeProxy->GetLODScreenSizeArray();
+	const TArray<float> LODScreenSizes = InLandscapeProxy->GetLODScreenSizeArray();
+	int32 RequiredLOD = 0;	
 
-	const ULandscapeComponent* LSComponent = InLandscapeProxy->LandscapeComponents[0];
-	const float ComponentRadiusScaled = static_cast<float>(LSComponent->GetLocalBounds().SphereRadius * LSComponent->GetComponentTransform().GetScale3D().GetAbsMax());
-	const float ExpectedScreenSize = ComputeBoundsScreenSize(FVector::ZeroVector, ComponentRadiusScaled, FVector(0.0f, 0.0f, InViewDistance), ProjMatrix);
-
-	int32 RequiredLOD;
-	for (RequiredLOD = 0; RequiredLOD < LODScreenSizes.Num(); ++RequiredLOD)
+	switch (InLandscapeProxy->HLODMeshSourceLODPolicy)
 	{
-		if (ExpectedScreenSize > LODScreenSizes[RequiredLOD])
+		case ELandscapeHLODMeshSourceLODPolicy::AutomaticLOD:
 		{
-			break;
-		}
+			// These constants are showing up a lot in the screen size computation for Level HLODs. This should be configurable per project.
+			const float HalfFOV = PI * 0.25f;
+			const float ScreenWidth = 1920.0f;
+			const float ScreenHeight = 1080.0f;
+			const FPerspectiveMatrix ProjMatrix(HalfFOV, ScreenWidth, ScreenHeight, 1.0f);
+
+			
+
+			const ULandscapeComponent* LSComponent = InLandscapeProxy->LandscapeComponents[0];
+			const float ComponentRadiusScaled = static_cast<float>(LSComponent->GetLocalBounds().SphereRadius * LSComponent->GetComponentTransform().GetScale3D().GetAbsMax());
+			const float ExpectedScreenSize = ComputeBoundsScreenSize(FVector::ZeroVector, ComponentRadiusScaled, FVector(0.0f, 0.0f, InViewDistance), ProjMatrix);
+
+			
+			for (RequiredLOD = 0; RequiredLOD < LODScreenSizes.Num(); ++RequiredLOD)
+			{
+				if (ExpectedScreenSize > LODScreenSizes[RequiredLOD])
+				{
+					break;
+				}
+			}
+		} break;
+
+		case ELandscapeHLODMeshSourceLODPolicy::SpecificLOD:
+		{
+			RequiredLOD = FMath::Clamp(InLandscapeProxy->HLODMeshSourceLOD, 0, LODScreenSizes.Num() - 1);
+		} break;
+
+		case ELandscapeHLODMeshSourceLODPolicy::LowestDetailLOD:
+		{
+			RequiredLOD = LODScreenSizes.Num() - 1;
+		} break;
 	}
 
 	return RequiredLOD;
 }
 
-static UMaterialInterface* BakeLandscapeMaterial(const FHLODBuildContext& InHLODBuildContext, const FMeshDescription& InMeshDescription, const ALandscapeProxy* InLandscapeProxy, const int32 InLandscapeLOD, int32 InTextureSize)
+static int32 ComputeRequiredTextureSize(const ALandscapeProxy* InLandscapeProxy, const float InViewDistance, const FMeshDescription* InMeshDescription)
+{
+	int32 RequiredTextureSize = 0;
+
+	switch (InLandscapeProxy->HLODTextureSizePolicy)
+	{
+		case ELandscapeHLODTextureSizePolicy::AutomaticSize:
+		{
+			const float TargetTexelDensityPerMeter = FMaterialUtilities::ComputeRequiredTexelDensityFromDrawDistance(InViewDistance, static_cast<float>(InMeshDescription->GetBounds().SphereRadius));
+			RequiredTextureSize = GetMeshTextureSizeFromTargetTexelDensity(*InMeshDescription, TargetTexelDensityPerMeter);
+		} break;
+
+		case ELandscapeHLODTextureSizePolicy::SpecificSize:
+		{
+			RequiredTextureSize = InLandscapeProxy->HLODTextureSize;
+		} break;
+	}
+
+	// Clamp to a sane minimum value
+	const int32 MinLandscapeHLODTextureSize = 16;
+	RequiredTextureSize = FMath::Max(RequiredTextureSize, MinLandscapeHLODTextureSize);
+
+	// Clamp to the project's max texture size for landscape HLODs
+	const ULandscapeSettings* LandscapeSettings = GetDefault<ULandscapeSettings>();
+	RequiredTextureSize = FMath::Min(RequiredTextureSize, LandscapeSettings->GetHLODMaxTextureSize());
+
+	// Clamp to the maximum possible texture size for safety
+	RequiredTextureSize = FMath::Min(RequiredTextureSize, (int32)GetMax2DTextureDimension());
+
+	return RequiredTextureSize;
+}
+
+
+static UMaterialInterface* BakeLandscapeMaterial(const FHLODBuildContext& InHLODBuildContext, const FMeshDescription& InMeshDescription, const ALandscapeProxy* InLandscapeProxy, int32 InTextureSize)
 {
 	// Build landscape material
 	FFlattenMaterial LandscapeFlattenMaterial;
@@ -234,10 +340,8 @@ static UMaterialInterface* BakeLandscapeMaterial(const FHLODBuildContext& InHLOD
 	return LandscapeMaterialInstance;
 }
 
-// This is an initial implementation for UE 5.0
 // Multiple improvements could be done
 // * Currently, for each referenced landscape proxy, we generate individual HLOD meshes & textures. This should output a single mesh for all proxies
-// * Generated mesh could be Nanite-enabled
 TArray<UActorComponent*> ULandscapeHLODBuilder::Build(const FHLODBuildContext& InHLODBuildContext, const TArray<UActorComponent*>& InSourceComponents) const
 {
 	TArray<ULandscapeComponent*> SourceLandscapeComponents = FilterComponents<ULandscapeComponent>(InSourceComponents);
@@ -266,7 +370,7 @@ TArray<UActorComponent*> ULandscapeHLODBuilder::Build(const FHLODBuildContext& I
 		FMeshDescription* MeshDescription = nullptr;
 
 		// Compute source landscape LOD
-		int32 LandscapeLOD = ComputeRequiredLandscapeLOD(LandscapeProxy, static_cast<float>(InHLODBuildContext.MinVisibleDistance));
+		const int32 LandscapeLOD = ComputeRequiredLandscapeLOD(LandscapeProxy, static_cast<float>(InHLODBuildContext.MinVisibleDistance));
 
 		// Mesh
 		{
@@ -282,23 +386,34 @@ TArray<UActorComponent*> ULandscapeHLODBuilder::Build(const FHLODBuildContext& I
 	
 			ALandscapeProxy::FRawMeshExportParams ExportParams;
 			ExportParams.ExportLOD = LandscapeLOD;
+
+			// Always add a skirt when dealing with a Nanite landscape, as we'll not be able to avoid a gap when dealing with a lower landscape LOD in HLOD
+			if (LandscapeProxy->IsNaniteEnabled())
+			{
+				// Use a full tile size (at the ExportLOD LOD) as the skirt depth, this will cover all possible gap scenario
+				// and avoid the skirt clipping through neighborhood tiles/HLODs
+				const int32 ComponentSizeVerts = (LandscapeProxy->ComponentSizeQuads + 1) >> LandscapeLOD;
+				const float ScaleFactor = (float)LandscapeProxy->ComponentSizeQuads / (float)(ComponentSizeVerts - 1);
+				ExportParams.SkirtDepth = ScaleFactor;
+			}
+
 			LandscapeProxy->ExportToRawMesh(ExportParams, *MeshDescription);
 
 			StaticMesh->CommitMeshDescription(0);
 
 			// Nanite settings
+		    const FVector3d Scale = LandscapeProxy->GetTransform().GetScale3D();
 			StaticMesh->NaniteSettings.bEnabled = LandscapeProxy->IsNaniteEnabled();
+		    StaticMesh->NaniteSettings.PositionPrecision = FMath::Log2(Scale.GetAbsMax()) + LandscapeProxy->GetNanitePositionPrecision();
+		    StaticMesh->NaniteSettings.MaxEdgeLengthFactor = LandscapeProxy->GetNaniteMaxEdgeLengthFactor();
 
 			StaticMesh->ImportVersion = EImportStaticMeshVersion::LastVersion;
 		}
 
 		// Material
 		{
-			const float TargetTexelDensityPerMeter = FMaterialUtilities::ComputeRequiredTexelDensityFromDrawDistance(
-				static_cast<float>(InHLODBuildContext.MinVisibleDistance), static_cast<float>(MeshDescription->GetBounds().SphereRadius));
-			int32 RequiredTextureSize = GetMeshTextureSizeFromTargetTexelDensity(*MeshDescription, TargetTexelDensityPerMeter);
-
-			UMaterialInterface* LandscapeMaterial = BakeLandscapeMaterial(InHLODBuildContext, *MeshDescription, LandscapeProxy, LandscapeLOD, RequiredTextureSize);
+			int32 TextureSize = ComputeRequiredTextureSize(LandscapeProxy, static_cast<float>(InHLODBuildContext.MinVisibleDistance), MeshDescription);
+			UMaterialInterface* LandscapeMaterial = BakeLandscapeMaterial(InHLODBuildContext, *MeshDescription, LandscapeProxy, TextureSize);
 
 			//Assign the proxy material to the static mesh
 			StaticMesh->GetStaticMaterials().Add(FStaticMaterial(LandscapeMaterial));
@@ -306,23 +421,25 @@ TArray<UActorComponent*> ULandscapeHLODBuilder::Build(const FHLODBuildContext& I
 
 		StaticMeshes.Add(StaticMesh);
 
-		ULandscapeMeshProxyComponent* LandcapeMeshProxyComponent = NewObject<ULandscapeMeshProxyComponent>();
-		LandcapeMeshProxyComponent->InitializeForLandscape(LandscapeProxy, static_cast<int8>(LandscapeLOD));
-		LandcapeMeshProxyComponent->SetStaticMesh(StaticMesh);
-		HLODComponents.Add(LandcapeMeshProxyComponent);
+		// In case we are dealing with a Nanite LS, simply create a static mesh component
+		if (LandscapeProxy->IsNaniteEnabled())
+		{
+			UStaticMeshComponent* StaticMeshComponent = NewObject<UStaticMeshComponent>();
+			StaticMeshComponent->SetStaticMesh(StaticMesh);
+			HLODComponents.Add(StaticMeshComponent);
+		}
+		// Otherwise, we use a ULandscapeMeshProxyComponent, which will ensure the landscape proxies surrounding 
+		// the HLOD tiles blends properly to avoid any visible gaps.
+		else
+		{
+			ULandscapeMeshProxyComponent* LandcapeMeshProxyComponent = NewObject<ULandscapeMeshProxyComponent>();
+			LandcapeMeshProxyComponent->InitializeForLandscape(LandscapeProxy, static_cast<int8>(LandscapeLOD));
+			LandcapeMeshProxyComponent->SetStaticMesh(StaticMesh);
+			HLODComponents.Add(LandcapeMeshProxyComponent);
+		}
 	}
 
 	UStaticMesh::BatchBuild(StaticMeshes);
-
-	// Once static meshes have been built, their BodySetup should be available : 
-	for (UStaticMesh* StaticMesh : StaticMeshes)
-	{
-		// We won't ever enable collisions, ensure we don't even cook or load any collision data on this mesh: 
-		if (UBodySetup* BodySetup = StaticMesh->GetBodySetup())
-		{
-			BodySetup->bNeverNeedsCookedCollisionData = true;
-		}
-	}
 
 	return HLODComponents;
 }

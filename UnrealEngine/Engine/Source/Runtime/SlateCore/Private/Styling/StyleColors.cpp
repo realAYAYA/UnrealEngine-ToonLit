@@ -371,7 +371,7 @@ bool USlateThemeManager::ReadTheme(const FString& ThemeData, FStyleTheme& Theme)
 	if (FJsonSerializer::Deserialize(Reader, ObjectPtr) && ObjectPtr.IsValid())
 	{
 		int32 Version = 0;
-		if (!ObjectPtr->TryGetNumberField("Version", Version))
+		if (!ObjectPtr->TryGetNumberField(TEXT("Version"), Version))
 		{
 			// Invalid file
 			return false;
@@ -393,7 +393,7 @@ bool USlateThemeManager::ReadTheme(const FString& ThemeData, FStyleTheme& Theme)
 		Theme.DisplayName = FText::FromString(MoveTemp(DisplayStr));
 
 		// Just check that the theme has colors. We wont load them unless the theme is used
-		if (!ObjectPtr->HasField("Colors"))
+		if (!ObjectPtr->HasField(TEXT("Colors")))
 		{
 			// No colors
 			return false;

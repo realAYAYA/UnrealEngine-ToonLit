@@ -3,6 +3,9 @@
 #include "WorldPartition/DataLayer/DataLayerInstanceWithAsset.h"
 #include "WorldPartition/DataLayer/WorldDataLayers.h"
 #include "WorldPartition/DataLayer/DataLayerManager.h"
+#include "WorldPartition/DataLayer/ExternalDataLayerAsset.h"
+#include "WorldPartition/DataLayer/ExternalDataLayerInstance.h"
+#include "WorldPartition/WorldPartitionRuntimeHash.h"
 #include "Engine/Level.h"
 #include "Misc/StringFormatArg.h"
 #include "UObject/UnrealType.h"
@@ -10,17 +13,42 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(DataLayerInstanceWithAsset)
 
+#define LOCTEXT_NAMESPACE "DataLayerInstanceWithAsset"
+
 UDataLayerInstanceWithAsset::UDataLayerInstanceWithAsset(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 #if WITH_EDITORONLY_DATA
 	, bIsIncludedInActorFilterDefault(true)
 #endif
 {
-
+#if WITH_EDITOR
+	bSkipCheckReadOnlyForSubLevels = false;
+#endif
 }
 
+UWorld* UDataLayerInstanceWithAsset::GetOuterWorld() const
+{
+	if (URuntimeHashExternalStreamingObjectBase* ExternalStreamingObject = GetTypedOuter<URuntimeHashExternalStreamingObjectBase>())
+	{
+		return ExternalStreamingObject->GetOuterWorld();
+	}
+	check(GetDirectOuterWorldDataLayers()->GetTypedOuter<UWorld>() == Super::GetOuterWorld());
+	return Super::GetOuterWorld();
+}
+
+
 #if WITH_EDITOR
-FName UDataLayerInstanceWithAsset::MakeName(const UDataLayerAsset* DeprecatedDataLayer)
+const UExternalDataLayerInstance* UDataLayerInstanceWithAsset::GetRootExternalDataLayerInstance() const
+{
+	IDataLayerInstanceProvider* DataLayerInstanceProvider = GetImplementingOuter<IDataLayerInstanceProvider>();
+	if (ensure(DataLayerInstanceProvider))
+	{
+		return DataLayerInstanceProvider->GetRootExternalDataLayerInstance();
+	}
+	return nullptr;
+}
+
+FName UDataLayerInstanceWithAsset::MakeName(const UDataLayerAsset* InDataLayerAsset)
 {
 	return FName(FString::Format(TEXT("DataLayer_{0}"), { FGuid::NewGuid().ToString() }));
 }
@@ -32,7 +60,8 @@ TSubclassOf<UDataLayerInstanceWithAsset> UDataLayerInstanceWithAsset::GetDataLay
 
 void UDataLayerInstanceWithAsset::OnCreated(const UDataLayerAsset* Asset)
 {
-	check(!GetOuterWorldDataLayers()->HasDeprecatedDataLayers() || IsRunningCommandlet());
+	checkf(Asset->IsA<UExternalDataLayerAsset>() == this->IsA<UExternalDataLayerInstance>(), TEXT("Only ExternalDataLayerInstance can reference ExternalDataLayerAsset"));
+	check(!GetDirectOuterWorldDataLayers()->HasDeprecatedDataLayers() || IsRunningCommandlet());
 
 	Modify(/*bAlwaysMarkDirty*/false);
 
@@ -42,27 +71,51 @@ void UDataLayerInstanceWithAsset::OnCreated(const UDataLayerAsset* Asset)
 	SetVisible(true);
 }
 
-bool UDataLayerInstanceWithAsset::IsReadOnly() const
+bool UDataLayerInstanceWithAsset::IsReadOnly(FText* OutReason) const
 {
-	if (Super::IsReadOnly())
+	if (Super::IsReadOnly(OutReason))
 	{
 		return true;
 	}
-	return GetOuterWorldDataLayers()->IsReadOnly();
+	return !bSkipCheckReadOnlyForSubLevels && GetDirectOuterWorldDataLayers()->IsReadOnly(OutReason);
 }
 
-bool UDataLayerInstanceWithAsset::IsLocked() const
+bool UDataLayerInstanceWithAsset::CanBeInActorEditorContext() const
 {
-	if (Super::IsLocked())
+	if (!Super::CanBeInActorEditorContext())
 	{
-		return true;
+		return false;
 	}
-	return IsReadOnly();
+
+	return DataLayerAsset != nullptr;
 }
 
-bool UDataLayerInstanceWithAsset::CanAddActor(AActor* InActor) const
+bool UDataLayerInstanceWithAsset::CanAddActor(AActor* InActor, FText* OutReason) const
 {
-	return DataLayerAsset != nullptr && DataLayerAsset->CanBeReferencedByActor(InActor) && Super::CanAddActor(InActor);
+	if (!Super::CanAddActor(InActor, OutReason))
+	{
+		return false;
+	}
+
+	if (!DataLayerAsset)
+	{
+		if (OutReason)
+		{
+			*OutReason = LOCTEXT("CantAddActorInvalidDataLayerAsset", "Invalid data layer asset.");
+		}
+		return false;
+	}
+
+	if (!DataLayerAsset->CanBeReferencedByActor(InActor))
+	{
+		if (OutReason)
+		{
+			*OutReason = LOCTEXT("CantAddActorDataLayerAssetCantBeReferencedByActor", "Data layer asset can't be referenced by actor.");
+		}
+		return false;
+	}
+
+	return true;
 }
 
 bool UDataLayerInstanceWithAsset::PerformAddActor(AActor* InActor) const
@@ -72,9 +125,23 @@ bool UDataLayerInstanceWithAsset::PerformAddActor(AActor* InActor) const
 	return FAssignActorDataLayer::AddDataLayerAsset(InActor, DataLayerAsset);
 }
 
-bool UDataLayerInstanceWithAsset::CanRemoveActor(AActor* InActor) const
+bool UDataLayerInstanceWithAsset::CanRemoveActor(AActor* InActor, FText* OutReason) const
 {
-	return DataLayerAsset != nullptr && Super::CanRemoveActor(InActor);
+	if (!Super::CanRemoveActor(InActor, OutReason))
+	{
+		return false;
+	}
+
+	if (!DataLayerAsset)
+	{
+		if (OutReason)
+		{
+			*OutReason = LOCTEXT("CantRemoveActorInvalidDataLayerAsset", "Invalid data layer asset.");
+		}
+		return false;
+	}
+
+	return true;
 }
 
 bool UDataLayerInstanceWithAsset::PerformRemoveActor(AActor* InActor) const
@@ -89,6 +156,12 @@ bool UDataLayerInstanceWithAsset::Validate(IStreamingGenerationErrorHandler* Err
 	if (GetAsset() == nullptr)
 	{
 		ErrorHandler->OnInvalidReferenceDataLayerAsset(this);
+		return false;
+	}
+
+	if (GetAsset()->IsA<UExternalDataLayerAsset>() != this->IsA<UExternalDataLayerInstance>())
+	{
+		ErrorHandler->OnInvalidDataLayerAssetType(this, GetAsset());
 		return false;
 	}
 
@@ -144,6 +217,11 @@ bool UDataLayerInstanceWithAsset::CanEditChange(const FProperty* InProperty) con
 		return SupportsActorFilters();
 	}
 
+	if (InProperty && (InProperty->GetFName() == GET_MEMBER_NAME_CHECKED(UDataLayerInstanceWithAsset, DataLayerAsset)))
+	{
+		return CanEditDataLayerAsset();
+	}
+
 	return true;
 }
 
@@ -173,3 +251,5 @@ void UDataLayerInstanceWithAsset::PostEditUndo()
 	CachedDataLayerAsset = nullptr;
 }
 #endif
+
+#undef LOCTEXT_NAMESPACE 

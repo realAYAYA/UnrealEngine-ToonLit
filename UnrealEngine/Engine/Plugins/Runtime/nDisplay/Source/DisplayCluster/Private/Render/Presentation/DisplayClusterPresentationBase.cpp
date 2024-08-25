@@ -43,7 +43,7 @@ void FDisplayClusterPresentationBase::OnBackBufferResize()
 
 bool FDisplayClusterPresentationBase::Present(int32& InOutSyncInterval)
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE(nDisplay RenderDevice::PresentationBase);
+	TRACE_CPUPROFILER_EVENT_SCOPE(nDisplay PresentationBase);
 
 	bool bNeedPresent = true;
 
@@ -62,4 +62,10 @@ bool FDisplayClusterPresentationBase::Present(int32& InOutSyncInterval)
 	}
 
 	return bNeedPresent;
+}
+
+void FDisplayClusterPresentationBase::PostPresent()
+{
+	// Notify native frame presentation has been done
+	GDisplayCluster->GetCallbacks().OnDisplayClusterFramePresented_RHIThread().Broadcast(true);
 }

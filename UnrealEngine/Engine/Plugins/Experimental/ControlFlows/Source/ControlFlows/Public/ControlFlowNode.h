@@ -52,8 +52,11 @@ public:
 
 	virtual FString GetNodeName() const;
 
+	CONTROLFLOWS_API void SetProfilerEventStarted();
+
 protected:
 	friend class FControlFlow;
+	friend class FControlFlowSubTaskBase;
 	
 	virtual void Execute() {}
 

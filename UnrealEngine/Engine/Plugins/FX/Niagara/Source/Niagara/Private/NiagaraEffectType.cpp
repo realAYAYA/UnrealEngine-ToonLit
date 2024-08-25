@@ -44,6 +44,18 @@ void UNiagaraEffectType::Serialize(FArchive& Ar)
 	Ar.UsingCustomVersion(FNiagaraCustomVersion::GUID);
 }
 
+void UNiagaraEffectType::PostInitProperties()
+{
+	Super::PostInitProperties();
+#if WITH_PER_FXTYPE_PARTICLE_PERF_STATS
+	CSVStat_Total = *FString::Printf(TEXT("FXType_Total/%s"), *GetFName().ToString());
+	CSVStat_GTOnly = *FString::Printf(TEXT("FXType_GTOnly/%s"), *GetFName().ToString());
+	CSVStat_RT = *FString::Printf(TEXT("FXType_RT/%s"), *GetFName().ToString());
+	CSVStat_GPU = *FString::Printf(TEXT("FXType_GPU/%s"), *GetFName().ToString());
+	CSVStat_Count = *FString::Printf(TEXT("FXType_Count/%s"), *GetFName().ToString());
+#endif
+}
+
 void UNiagaraEffectType::PostLoad()
 {
 	Super::PostLoad();
@@ -407,3 +419,110 @@ FAutoConsoleCommand InvalidatePerfBaselinesCommand(
 
 #endif
 //////////////////////////////////////////////////////////////////////////
+
+
+//////////////////////////////////////////////////////////////////////////
+
+#if WITH_PER_FXTYPE_PARTICLE_PERF_STATS
+
+bool FParticlePerfStatsListener_EffectType::Tick()
+{
+	if (FCsvProfiler* CSVProfiler = FCsvProfiler::Get())
+	{
+		//First we gather up stats for all systems in each FXType
+		TMap<UNiagaraEffectType*, FParticlePerfStats> FXTypeStatsMap;
+		FParticlePerfStatsManager::ForAllSystemStats(
+			[&](TWeakObjectPtr<const UFXSystemAsset>& WeakSystem, TUniquePtr<FParticlePerfStats>& Stats)
+			{
+				if (Stats->GetGameThreadStats().NumInstances > 0)
+				{
+					if (const UNiagaraSystem* System = Cast<UNiagaraSystem>(WeakSystem.Get()))
+					{
+						FParticlePerfStats& FXTypeStats = FXTypeStatsMap.FindOrAdd(System->GetEffectType());
+						FParticlePerfStats_GT& GTStats = FXTypeStats.GetGameThreadStats();
+
+						GTStats += Stats->GetGameThreadStats();
+					}
+				}
+			}
+		);
+
+		//Now add to CSV
+		for (auto It = FXTypeStatsMap.CreateIterator(); It; ++It)
+		{
+			if (UNiagaraEffectType* FXType = It.Key())
+			{
+				FParticlePerfStats& Stats = It.Value();
+
+				if (Stats.GetGameThreadStats().NumInstances > 0)
+				{
+					float TotalTime = FPlatformTime::ToMilliseconds64(Stats.GetGameThreadStats().GetTotalCycles()) * 1000.0f;
+					float GTTime = FPlatformTime::ToMilliseconds64(Stats.GetGameThreadStats().GetTotalCycles_GTOnly()) * 1000.0f;
+					//float AvgTime = FPlatformTime::ToMilliseconds64(Stats->GetGameThreadStats().GetPerInstanceAvgCycles()) * 1000.0f;
+					int32 Count = (int32)Stats.GetGameThreadStats().NumInstances;
+					//float Activation = FPlatformTime::ToMilliseconds64(Stats->GetGameThreadStats().ActivationCycles) * 1000.0f;
+					//float Wait = FPlatformTime::ToMilliseconds64(Stats->GetGameThreadStats().WaitCycles) * 1000.0f;
+
+					CSVProfiler->RecordCustomStat(FXType->CSVStat_Total, CSV_CATEGORY_INDEX(Particles), TotalTime, ECsvCustomStatOp::Set);
+					CSVProfiler->RecordCustomStat(FXType->CSVStat_GTOnly, CSV_CATEGORY_INDEX(Particles), GTTime, ECsvCustomStatOp::Set);
+					//CSVProfiler->RecordCustomStat(FXType->CSVStat_InstAvgGT, CSV_CATEGORY_INDEX(Particles), AvgTime, ECsvCustomStatOp::Set);
+					CSVProfiler->RecordCustomStat(FXType->CSVStat_Count, CSV_CATEGORY_INDEX(Particles), Count, ECsvCustomStatOp::Set);
+
+					//CSVProfiler->RecordCustomStat(System->CSVStat_Activation, CSV_CATEGORY_INDEX(Particles), Activation, ECsvCustomStatOp::Set);
+					//CSVProfiler->RecordCustomStat(System->CSVStat_Waits, CSV_CATEGORY_INDEX(Particles), Wait, ECsvCustomStatOp::Set);
+				}
+			}
+		}
+	}
+	return true;
+}
+
+void FParticlePerfStatsListener_EffectType::TickRT()
+{
+	if (FCsvProfiler* CSVProfiler = FCsvProfiler::Get())
+	{
+		//First we gather up stats for all systems in each FXType
+		TMap<UNiagaraEffectType*, FParticlePerfStats> FXTypeStatsMap;
+		FParticlePerfStatsManager::ForAllSystemStats(
+			[&](TWeakObjectPtr<const UFXSystemAsset>& WeakSystem, TUniquePtr<FParticlePerfStats>& Stats)
+			{
+				if (Stats->GetGameThreadStats().NumInstances > 0)
+				{
+					if (const UNiagaraSystem* System = Cast<UNiagaraSystem>(WeakSystem.Get()))
+					{
+						FParticlePerfStats& FXTypeStats = FXTypeStatsMap.FindOrAdd(System->GetEffectType());
+						FParticlePerfStats_RT& RTStats = FXTypeStats.GetRenderThreadStats();
+						FParticlePerfStats_GPU& GPUStats = FXTypeStats.GetGPUStats();
+
+						RTStats += Stats->GetRenderThreadStats();
+						GPUStats += Stats->GetGPUStats();
+					}
+				}
+			}
+		);
+
+		//Now add to CSV
+		for (auto It = FXTypeStatsMap.CreateIterator(); It; ++It)
+		{
+			if (UNiagaraEffectType* FXType = It.Key())
+			{
+				FParticlePerfStats& Stats = It.Value();
+
+				if (Stats.GetRenderThreadStats().NumInstances > 0)
+				{
+					const float RTTime = FPlatformTime::ToMilliseconds64(Stats.GetRenderThreadStats().GetTotalCycles()) * 1000.0f;
+					//const float RTAvgTime = FPlatformTime::ToMilliseconds64(Stats->GetRenderThreadStats().GetPerInstanceAvgCycles()) * 1000.0f;
+					CSVProfiler->RecordCustomStat(FXType->CSVStat_RT, CSV_CATEGORY_INDEX(Particles), RTTime, ECsvCustomStatOp::Set);
+					//CSVProfiler->RecordCustomStat(System->CSVStat_InstAvgRT, CSV_CATEGORY_INDEX(Particles), RTAvgTime, ECsvCustomStatOp::Set);
+
+					const float GpuTime = float(Stats.GetGPUStats().GetTotalMicroseconds());
+					//const float GpuAvgTime = float(Stats->GetGPUStats().GetPerInstanceAvgMicroseconds());
+					CSVProfiler->RecordCustomStat(FXType->CSVStat_GPU, CSV_CATEGORY_INDEX(Particles), GpuTime, ECsvCustomStatOp::Set);
+					//CSVProfiler->RecordCustomStat(System->CSVStat_InstAvgGPU, CSV_CATEGORY_INDEX(Particles), GpuAvgTime, ECsvCustomStatOp::Set);
+				}
+			}
+		}
+	}
+}
+
+#endif //WITH_PER_FXTYPE_PARTICLE_PERF_STATS

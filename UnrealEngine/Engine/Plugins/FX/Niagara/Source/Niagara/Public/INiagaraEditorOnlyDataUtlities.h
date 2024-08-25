@@ -10,6 +10,7 @@ class UNiagaraEditorParametersAdapterBase;
 class UNiagaraMessageDataBase;
 class UNiagaraScriptSourceBase;
 class UNiagaraSystem;
+struct FNiagaraSystemStateData;
 
 /** Defines utility methods for creating editor only data which is stored on runtime objects. */
 class INiagaraEditorOnlyDataUtilities
@@ -30,4 +31,6 @@ public:
 	virtual bool IsEditorDataInterfaceInstance(const UNiagaraDataInterface* DataInterface) const = 0;
 
 	virtual UNiagaraDataInterface* GetResolvedRuntimeInstanceForEditorDataInterfaceInstance(const UNiagaraSystem& OwningSystem, UNiagaraDataInterface& EditorDataInterfaceInstance) const = 0;
+
+	virtual TOptional<FNiagaraSystemStateData> TryGetSystemStateData(const UNiagaraSystem& System) const = 0;
 };

@@ -6,6 +6,8 @@
 #include "Animation/AnimInstanceProxy.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/SkeletalMesh.h"
+#include "Retargeter/IKRetargetOps.h"
+#include "Retargeter/RetargetOps/CurveRemapOp.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AnimNode_RetargetPoseFromMesh)
 
@@ -18,10 +20,8 @@ void FAnimNode_RetargetPoseFromMesh::Initialize_AnyThread(const FAnimationInitia
 	// Initial update of the node, so we dont have a frame-delay on setup
 	GetEvaluateGraphExposedInputs().Execute(Context);
 
-	if (!Processor && IsInGameThread())
-	{
-		Processor = NewObject<UIKRetargetProcessor>(Context.AnimInstanceProxy->GetSkelMeshComponent());	
-	}
+	// create the processor
+	CreateRetargetProcessorIfNeeded(Context.AnimInstanceProxy->GetSkelMeshComponent());
 }
 
 void FAnimNode_RetargetPoseFromMesh::CacheBones_AnyThread(const FAnimationCacheBonesContext& Context)
@@ -77,7 +77,7 @@ void FAnimNode_RetargetPoseFromMesh::Evaluate_AnyThread(FPoseContext& Output)
 
 	SCOPE_CYCLE_COUNTER(STAT_IKRetarget);
 
-	if (!(IKRetargeterAsset && Processor && SourceMeshComponent.IsValid()))
+	if (!(IKRetargeterAsset && Processor && SourceMeshComponent.IsValid() && IsLODEnabled(Output.AnimInstanceProxy)))
 	{
 		Output.ResetToRefPose();
 		return;
@@ -111,6 +111,17 @@ void FAnimNode_RetargetPoseFromMesh::Evaluate_AnyThread(FPoseContext& Output)
 
 	// apply custom profile settings to the processor
 	Processor->ApplySettingsFromProfile(CustomRetargetProfile);
+	
+	// LOD off the IK pass
+	if (LODThresholdForIK != INDEX_NONE && Output.AnimInstanceProxy->GetLODLevel() > LODThresholdForIK)
+	{
+		// override the custom profile's global settings but with IK forcibly turned off
+		FRetargetProfile TurnIKOffProfile;
+		TurnIKOffProfile.bApplyGlobalSettings = true;
+		TurnIKOffProfile.GlobalSettings = Processor->GetGlobalSettings();
+		TurnIKOffProfile.GlobalSettings.bEnableIK = false;
+		Processor->ApplySettingsFromProfile(TurnIKOffProfile);
+	}
 
 	// run the retargeter
 	const TArray<FTransform>& RetargetedPose = Processor->RunRetargeter(SourceMeshComponentSpaceBoneTransforms, SpeedValuesFromCurves, DeltaTime);
@@ -133,11 +144,20 @@ void FAnimNode_RetargetPoseFromMesh::Evaluate_AnyThread(FPoseContext& Output)
 	// convert to local space
 	FCSPose<FCompactPose>::ConvertComponentPosesToLocalPoses(ComponentPose, Output.Pose);
 
-	// copy curves over
-	if (bCopyCurves)
+	// once converted back to local space, we copy scale values back
+	// (retargeter strips scale values and deals with translation only in component space)
+	const TArray<FTransform>& RefPose = TargetMesh->GetRefSkeleton().GetRefBonePose();
+	for (const TPair<int32, int32>& Pair : RequiredToTargetBoneMapping)
 	{
-		Output.Curve.CopyFrom(SourceCurves);
+		const FCompactPoseBoneIndex CompactBoneIndex(Pair.Key);
+		if (Output.Pose.IsValidIndex(CompactBoneIndex))
+		{
+			Output.Pose[CompactBoneIndex].SetScale3D(RefPose[Pair.Value].GetScale3D());
+		}
 	}
+
+	// copy and/or remap curves from the source to the target skeletal mesh
+	CopyAndRemapCurvesFromSourceToTarget(Output.Curve);
 }
 
 void FAnimNode_RetargetPoseFromMesh::PreUpdate(const UAnimInstance* InAnimInstance)
@@ -176,6 +196,58 @@ void FAnimNode_RetargetPoseFromMesh::PreUpdate(const UAnimInstance* InAnimInstan
 			UpdateSpeedValuesFromCurves();
 		}
 	}
+}
+
+void FAnimNode_RetargetPoseFromMesh::CreateRetargetProcessorIfNeeded(UObject* Outer)
+{
+	if (!Processor && IsInGameThread())
+	{
+		Processor = NewObject<UIKRetargetProcessor>(Outer);	
+	}
+}
+
+void FAnimNode_RetargetPoseFromMesh::CopyAndRemapCurvesFromSourceToTarget(FBlendedCurve& OutputCurves) const
+{
+	if (!bCopyCurves)
+	{
+		return;
+	}
+	
+	if (!(Processor && Processor->IsInitialized()))
+	{
+		return;
+	}
+
+	// copy curves over to same name on target (if it exists)
+	OutputCurves.CopyFrom(SourceCurves);
+	
+	// now remap curves that have different names using the CurveRemapOp data (if there are any)
+	FBlendedCurve RemapedCurves;
+	const TArray<TObjectPtr<URetargetOpBase>>& RetargetOps = Processor->GetRetargetOps();
+	for (URetargetOpBase* RetargetOp : RetargetOps)
+	{
+		UCurveRemapOp* CurveRemapOp = Cast<UCurveRemapOp>(RetargetOp);
+		if (!CurveRemapOp)
+		{
+			continue;
+		}
+
+		if (!CurveRemapOp->bIsEnabled)
+		{
+			continue;
+		}
+		
+		for (const FCurveRemapPair& CurveToRemap : CurveRemapOp->CurvesToRemap)
+		{
+			bool bOutIsValid = false;
+			const float SourceValue = SourceCurves.Get(CurveToRemap.SourceCurve, bOutIsValid);
+			if (bOutIsValid)
+			{
+				RemapedCurves.Add(CurveToRemap.TargetCurve, SourceValue);
+			}
+		}
+	}
+	OutputCurves.Combine(RemapedCurves);
 }
 
 void FAnimNode_RetargetPoseFromMesh::UpdateSpeedValuesFromCurves()
@@ -252,13 +324,6 @@ bool FAnimNode_RetargetPoseFromMesh::EnsureProcessorIsInitialized(const TObjectP
 	{
 		return false; // cannot initialize if components are missing skeletal mesh references
 	}
-	// check that both have skeleton assets (shouldn't get this far without a skeleton)
-	const TObjectPtr<USkeleton> SourceSkeleton = SourceMesh->GetSkeleton();
-	const TObjectPtr<USkeleton> TargetSkeleton = TargetMesh->GetSkeleton();
-	if (!SourceSkeleton || !TargetSkeleton)
-	{
-		return false;
-	}
 	
 	// try initializing the processor
 	if (!Processor->WasInitializedWithTheseAssets(SourceMesh, TargetMesh, IKRetargeterAsset))
@@ -306,6 +371,12 @@ void FAnimNode_RetargetPoseFromMesh::CopyBoneTransformsFromSource(USkeletalMeshC
 	else
 	{
 		SourceMeshComponentSpaceBoneTransforms.Append(ComponentToCopyFrom->GetComponentSpaceTransforms()); // copy directly
+	}
+	
+	// strip all scale out of the pose values, the translation of a component-space pose has incorporated scale values
+	for (FTransform& Transform : SourceMeshComponentSpaceBoneTransforms)
+	{
+		Transform.SetScale3D(FVector::OneVector);
 	}
 }
 

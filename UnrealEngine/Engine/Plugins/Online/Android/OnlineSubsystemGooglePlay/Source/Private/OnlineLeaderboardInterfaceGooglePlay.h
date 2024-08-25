@@ -4,13 +4,8 @@
 
 #include "CoreMinimal.h"
 #include "Interfaces/OnlineLeaderboardInterface.h"
-#include "AndroidRuntimeSettings.h"
-
-struct FOnlinePendingLeaderboardWrite
-{
-	FString LeaderboardName;
-	uint64 Score;
-};
+#include "OnlineLeaderboardGooglePlayCommon.h"
+#include "OnlineSubsystemGooglePlayPackage.h"
 
 /**
  * Interface definition for the online services leaderboard services 
@@ -33,16 +28,13 @@ private:
 	/** Pointer to owning subsystem */
 	FOnlineSubsystemGooglePlay* Subsystem;
 
-	/**
-	 * Helper function to get the platform- and game-specific leaderboard ID from the JSON config file.
-	 *
-	 * @param LeaderboardName the cross-platform name of the leaderboard to look up
-	 * @return The unique ID for the leaderboard as specified in the config file.
-	*/
 	FString GetLeaderboardID(const FString& LeaderboardName);
 
 	/** Scores are cached here in WriteLeaderboards until FlushLeaderboards is called */
-	TArray<FOnlinePendingLeaderboardWrite> UnreportedScores;
+	TArray<FGooglePlayLeaderboardScore> UnreportedScores;
+
+	/** Asks the identity interface it this PlayerId refers to the local player. We can only get information about the local player from GooglePlay */
+	bool IsLocalPlayer(const FUniqueNetId& PlayerId) const;
 };
 
 typedef TSharedPtr<FOnlineLeaderboardsGooglePlay, ESPMode::ThreadSafe> FOnlineLeaderboardsGooglePlayPtr;

@@ -623,10 +623,10 @@ namespace ChaosTest
 	void GJKSphereScaledSphereTest()
 	{
 		TSphere<FReal, 3> A(FVec3(10, 0, 0), 5);
-		TUniquePtr<TSphere<FReal, 3>> Sphere = MakeUnique<TSphere<FReal, 3>>(FVec3(4, 0, 0), 2);
-		TImplicitObjectScaled<TSphere<FReal, 3>> Unscaled(MakeSerializable(Sphere), nullptr, FVec3(1));
-		TImplicitObjectScaled<TSphere<FReal, 3>> UniformScaled(MakeSerializable(Sphere), nullptr, FVec3(2));
-		TImplicitObjectScaled<TSphere<FReal, 3>> NonUniformScaled(MakeSerializable(Sphere), nullptr, FVec3(2,1,1));
+		FSpherePtr Sphere( new TSphere<FReal, 3>(FVec3(4, 0, 0), 2));
+		TImplicitObjectScaled<TSphere<FReal, 3>> Unscaled(Sphere, FVec3(1));
+		TImplicitObjectScaled<TSphere<FReal, 3>> UniformScaled(Sphere, FVec3(2));
+		TImplicitObjectScaled<TSphere<FReal, 3>> NonUniformScaled(Sphere, FVec3(2,1,1));
 
 		FVec3 InitialDirs[] = { FVec3(1,0,0), FVec3(-1,0,0), FVec3(0,1,0), FVec3(0,-1,0), FVec3(0,0,1), FVec3(0,0,-1) };
 
@@ -1006,10 +1006,10 @@ namespace ChaosTest
 	void GJKSphereScaledSphereSweep()
 	{
 		TSphere<FReal, 3> A(FVec3(10, 0, 0), 5);
-		TUniquePtr<TSphere<FReal, 3>> Sphere = MakeUnique<TSphere<FReal, 3>>(FVec3(0, 0, 0), 2);
-		TImplicitObjectScaled<TSphere<FReal, 3>> Unscaled(MakeSerializable(Sphere), nullptr, FVec3(1));
-		TImplicitObjectScaled<TSphere<FReal, 3>> UniformScaled(MakeSerializable(Sphere), nullptr, FVec3(2));
-		TImplicitObjectScaled<TSphere<FReal, 3>> NonUniformScaled(MakeSerializable(Sphere), nullptr, FVec3(2, 1, 1));
+		FSpherePtr Sphere( new TSphere<FReal, 3>(FVec3(0, 0, 0), 2));
+		TImplicitObjectScaled<TSphere<FReal, 3>> Unscaled(Sphere, FVec3(1));
+		TImplicitObjectScaled<TSphere<FReal, 3>> UniformScaled(Sphere, FVec3(2));
+		TImplicitObjectScaled<TSphere<FReal, 3>> NonUniformScaled(Sphere, FVec3(2, 1, 1));
 
 		FVec3 InitialDirs[] = { FVec3(1,0,0), FVec3(-1,0,0), FVec3(0,1,0), FVec3(0,-1,0), FVec3(0,0,1), FVec3(0,0,-1) };
 
@@ -1400,9 +1400,8 @@ namespace ChaosTest
 			ConvexParticles[6] ={256.000031,-11.9999399,6.10351563e-05};
 			ConvexParticles[7] ={256.000031,-11.9999399,384.000061};
 
-			TUniquePtr<FConvex> UniqueConvex = MakeUnique<FConvex>(ConvexParticles, 0.0f);
-			TSerializablePtr<FConvex> AConv(UniqueConvex);
-			const TImplicitObjectScaled<FConvex> A(AConv, nullptr, FVec3(1.0,1.0,1.0));
+			FConvexPtr UniqueConvex( new FConvex(ConvexParticles, 0.0f));
+			const TImplicitObjectScaled<FConvex> A(UniqueConvex, FVec3(1.0,1.0,1.0));
 
 			const FVec3 Pt0(0.0,0.0,-33.0);
 			FVec3 Pt1 = Pt0;
@@ -1459,9 +1458,12 @@ namespace ChaosTest
 			const FRigidTransform3 BTM(FVec3(2461.92749, -205.484283, 106.071632), FRotation3::FromElements(0,0,0,1));
 			const FRigidTransform3 BToATM(FVec3(102.903252, 218.050415, 102.071655), FRotation3::FromElements(5.07916162e-08, 3.39378659e-08, -0.555569768, 0.831469893));
 
-			FReal Penetration;
-			FVec3 ClosestA,ClosestB,Normal;
-			int32 ClosestVertexIndexA, ClosestVertexIndexB;
+			FReal Penetration = 0;
+			FVec3 ClosestA = FVec3(0);
+			FVec3 ClosestB = FVec3(0);
+			FVec3 Normal = FVec3(0);
+			int32 ClosestVertexIndexA = INDEX_NONE;
+			int32 ClosestVertexIndexB = INDEX_NONE;
 			const FVec3 Offset ={162.072754,-178.514679,-102.071632};
 			EXPECT_TRUE((GJKPenetration<false, FReal>(A,B,BToATM,Penetration,ClosestA,ClosestB,Normal,ClosestVertexIndexA,ClosestVertexIndexB,0,0,Offset)));
 
@@ -1500,10 +1502,9 @@ namespace ChaosTest
 			ConvexParticles[0] ={7400.00000, 12600.0000, 206.248123};
 			ConvexParticles[1] ={7500.00000, 12600.0000, 199.994904};
 			ConvexParticles[2] ={7500.00000, 12700.0000, 189.837433};
-			
-			TUniquePtr<FConvex> UniqueConvex = MakeUnique<FConvex>(ConvexParticles, 0.0f);
-			TSerializablePtr<FConvex> AConv(UniqueConvex);
-			const TImplicitObjectScaled<FConvex> AConvScaled(AConv, nullptr, FVec3(1.0,1.0,1.0));
+
+			FConvexPtr UniqueConvex( new FConvex(ConvexParticles, 0.0f));
+			const TImplicitObjectScaled<FConvex> AConvScaled(UniqueConvex, FVec3(1.0,1.0,1.0));
 
 			FTriangle A(ConvexParticles[0],ConvexParticles[1],ConvexParticles[2]);
 			FTriangleRegister AReg(
@@ -1820,9 +1821,10 @@ namespace ChaosTest
 		const FVec3 Scale = FVec3(50.0f);
 		const FReal Margin = 0.75f;
 
-		TUniquePtr<FImplicitConvex3> CoreConvexShapePtr = MakeUnique<FImplicitConvex3>(CoreShapeVerts, 0.0f, FConvexBuilder::EBuildMethod::Original);
-		const TImplicitObjectScaled<FImplicitConvex3> ShapeA(MakeSerializable(CoreConvexShapePtr), nullptr, Scale, Margin);
-		const TImplicitObjectScaled<FImplicitConvex3> ShapeB(MakeSerializable(CoreConvexShapePtr), nullptr, Scale, Margin);
+		
+		FConvexPtr CoreConvexShapePtr( new FImplicitConvex3(CoreShapeVerts, 0.0f, FConvexBuilder::EBuildMethod::Original));
+		const TImplicitObjectScaled<FImplicitConvex3> ShapeA(CoreConvexShapePtr, Scale, Margin);
+		const TImplicitObjectScaled<FImplicitConvex3> ShapeB(CoreConvexShapePtr, Scale, Margin);
 		const FRigidTransform3 TransformA(FVec3(0.000000000f, 0.000000000f, 182.378937f), FRotation3::FromElements(0.000000000f, 0.000000000f, 0.707106650f, 0.707106888f));	// Top
 		const FRigidTransform3 TransformB(FVec3(0.000000000f, 0.000000000f, 107.378944f), FRotation3::FromElements(0.000000000f, 0.000000000f, 0.000000000f, 1.00000000f));		// Bottom
 
@@ -1884,8 +1886,8 @@ namespace ChaosTest
 			{512.000061, -1023.99994, -383.999939}
 		};
 		TArray<FConvex::FVec3Type> ConvexVertices(MoveTemp(ConvexVerts));
-		TUniquePtr<FImplicitConvex3> CoreConvex = MakeUnique<FImplicitConvex3>(ConvexVertices, 0.0f);
-		const TImplicitObjectScaled<FImplicitConvex3> ScaledConvex(MakeSerializable(CoreConvex), nullptr, FVec3(-1,1,1), 38.4000015);
+		FConvexPtr CoreConvex( new FImplicitConvex3(ConvexVertices, 0.0f));
+		const TImplicitObjectScaled<FImplicitConvex3> ScaledConvex(CoreConvex, FVec3(-1,1,1), 38.4000015);
 		const TSphere<FReal, 3> Sphere(FVec3(0,0,0), 32);
 		const FRigidTransform3 StartTM(FVec3( -172.000000, -48.0000000, 52.0000000 ), FRotation3::FromIdentity());
 
@@ -2087,37 +2089,17 @@ namespace ChaosTest
 		ConvexParticles[6] = { -500.000183, 499.999969, -2.84217094e-14 };
 		ConvexParticles[7] = { 500.000000, 499.999969, -2.84217094e-14 };
 
-		TUniquePtr<Chaos::FConvex> BigBox = MakeUnique<Chaos::FConvex>(ConvexParticles, 0.0f);
+		Chaos::FConvexPtr BigBox( new Chaos::FConvex(ConvexParticles, 0.0f));
 
 		// These two boxes are clearly intersecting each other
 
 		Chaos::TBox<Chaos::FReal, 3> SmallBox({ -3200, -3200, -3200 }, { 3200, 3200, 3200 }, 0);
 
-		TImplicitObjectScaled<Chaos::FConvex> BigBoxScaled(MakeSerializable(BigBox), nullptr, FVec3(50, 50, 1));
+		TImplicitObjectScaled<Chaos::FConvex> BigBoxScaled(BigBox, FVec3(50, 50, 1));
 		const TVector<FReal, 3> Translation{16000, 16000, -500};
 
 		TRigidTransform<Chaos::FReal, 3> BToATM( Translation , TRotation<FReal, 3>::Identity);
 		EXPECT_TRUE(GJKIntersection(BigBoxScaled, SmallBox, BToATM, FReal(0), Chaos::TVector<FReal, 3>(-16000, -16000, 500)));		
 
-	}
-
-
-	// Test capsule support functions when scaled
-	GTEST_TEST(GJKTests, GJK_TestSupportFunctions)
-	{
-		FVec3 PointA{ -1, 0, -100 };
-		FVec3 PointB{ 1, 0, 100 };
-		FVec3 ScaleX{ 100, 1, 1 };
-		TUniquePtr<Chaos::FCapsule> Capsule = MakeUnique<FCapsule>(PointA, PointB, 10);
-		TImplicitObjectScaled<Chaos::FCapsule> CapsuleScaled(MakeSerializable(Capsule), nullptr, ScaleX);
-
-		FVec3 SupportDir{0.1f, 0.0f, -1.0f}; // Pointing down and slightly to the right
-
-		int32 Vertex = INDEX_NONE;
-		FVec3 Support = Capsule->SupportCore(SupportDir,0, nullptr, Vertex);
-		EXPECT_EQ(Support, PointA); // Expect bottom point
-
-		Support = CapsuleScaled.SupportCore(SupportDir, 0, nullptr, Vertex);
-		EXPECT_EQ(Support, ScaleX * PointA); // Still expect bottom point (But scaled)
 	}
 }

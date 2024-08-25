@@ -65,9 +65,8 @@ const FString& FHttpRequestHandlerIterator::FHttpPathIterator::Next()
 		int32 SlashIndex = 0;
 		if (NextPath.FindLastChar(TCHAR('/'), SlashIndex))
 		{
-			const bool bAllowShrinking = false;
 			ParsedTokens.Insert(NextPath.RightChop(SlashIndex + 1), 0);
-			NextPath.RemoveAt(SlashIndex, NextPath.Len() - SlashIndex, bAllowShrinking);
+			NextPath.RemoveAt(SlashIndex, NextPath.Len() - SlashIndex, EAllowShrinking::No);
 
 			if (0 == NextPath.Len())
 			{

@@ -222,13 +222,16 @@ bool FAuthTokenGoogle::Parse(TSharedPtr<FJsonObject> InJsonObject)
 	return bSuccess;
 }
 
+bool FOnlineIdentityGoogleCommon::ShouldRequestOfflineAccess()
+{
+	bool bRequestOfflineAccess = false;
+	GConfig->GetBool(TEXT("OnlineSubsystemGoogle.OnlineIdentityGoogle"), TEXT("bRequestOfflineAccess"), bRequestOfflineAccess, GEngineIni);
+	return bRequestOfflineAccess;
+}
+
 FOnlineIdentityGoogleCommon::FOnlineIdentityGoogleCommon(FOnlineSubsystemGoogle* InSubsystem)
 	: GoogleSubsystem(InSubsystem)
 {
-	if (!GConfig->GetString(TEXT("OnlineSubsystemGoogle"), TEXT("ClientSecret"), ClientSecret, GEngineIni))
-	{
-		UE_LOG_ONLINE_IDENTITY(Warning, TEXT("Missing ClientSecret= in [OnlineSubsystemGoogle] of DefaultEngine.ini"));
-	}
 }
 
 TSharedPtr<FUserOnlineAccount> FOnlineIdentityGoogleCommon::GetUserAccount(const FUniqueNetId& UserId) const
@@ -451,7 +454,7 @@ ELoginStatus::Type FOnlineIdentityGoogleCommon::GetLoginStatus(const FUniqueNetI
 	TSharedPtr<FUserOnlineAccount> UserAccount = GetUserAccount(UserId);
 	if (UserAccount.IsValid() &&
 		UserAccount->GetUserId()->IsValid() &&
-		!UserAccount->GetAccessToken().IsEmpty())
+		(!bAccessTokenAvailableToPlatform || !UserAccount->GetAccessToken().IsEmpty()))
 	{
 		return ELoginStatus::LoggedIn;
 	}
@@ -493,7 +496,7 @@ FString FOnlineIdentityGoogleCommon::GetAuthToken(int32 LocalUserNum) const
 	return FString();
 }
 
-void FOnlineIdentityGoogleCommon::GetUserPrivilege(const FUniqueNetId& UserId, EUserPrivileges::Type Privilege, const FOnGetUserPrivilegeCompleteDelegate& Delegate)
+void FOnlineIdentityGoogleCommon::GetUserPrivilege(const FUniqueNetId& UserId, EUserPrivileges::Type Privilege, const FOnGetUserPrivilegeCompleteDelegate& Delegate, EShowPrivilegeResolveUI ShowResolveUI)
 {
 	Delegate.ExecuteIfBound(UserId, Privilege, (uint32)EPrivilegeResults::NoFailures);
 }	

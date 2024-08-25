@@ -2,9 +2,13 @@
 
 #pragma once
 
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "CoreMinimal.h"
+#endif
 #include "UObject/ObjectMacros.h"
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "AI/Navigation/NavigationTypes.h"
+#endif
 #include "AI/Navigation/NavigationDataChunk.h"
 #include "NavMesh/RecastNavMesh.h"
 #include "RecastNavMeshDataChunk.generated.h"

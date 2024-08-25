@@ -7,6 +7,7 @@
 #include "Camera/CameraActor.h"
 #include "Camera/CameraComponent.h"
 #include "CameraCalibrationEditorLog.h"
+#include "CameraCalibrationSolver.h"
 #include "CameraCalibrationUtils.h"
 #include "CineCameraComponent.h"
 #include "DistortionRenderingUtils.h"
@@ -35,20 +36,7 @@
 #include "Widgets/Views/SListView.h"
 #include "Widgets/SWidget.h"
 
-#include <vector>
-
-#if WITH_OPENCV
-#include "PreOpenCVHeaders.h"
-#include "opencv2/calib3d.hpp"
-#include "PostOpenCVHeaders.h"
-#endif
-
 #define LOCTEXT_NAMESPACE "CameraNodalOffsetAlgoPoints"
-
-#if WITH_EDITOR
-static TAutoConsoleVariable<float> CVarRotationStepValue(TEXT("CameraCalibration.RotationStepValue"), 0.05, TEXT("The value of the initial step size to use when finding an optimal nodal offset rotation that minimizes reprojection error."));
-static TAutoConsoleVariable<float> CVarLocationStepValue(TEXT("CameraCalibration.LocationStepValue"), 0.5, TEXT("The value of the initial step size to use when finding an optimal nodal offset location that minimizes reprojection error."));
-#endif
 
 const int UCameraNodalOffsetAlgoPoints::DATASET_VERSION = 1;
 
@@ -205,122 +193,8 @@ namespace CameraNodalOffsetAlgoPoints
 	}
 };
 
-#if WITH_OPENCV
-class FMinReprojectionErrorSolver : public cv::MinProblemSolver::Function
-{
-public:
-	struct FSingleViewPoseAndPoints
-	{
-		FTransform CameraPose;
-
-		std::vector<cv::Point3f> Points3d;
-		std::vector<cv::Point2f> Points2d;
-	};
-
-	//~ Begin cv::MinProblemSolver::Function interface
-	int getDims() const
-	{
-		return 7; // 4 doubles for the rotation quaternion + 3 doubles for the location vector
-	}
-
-	double calc(const double* x) const
-	{
-		// Convert the input data (7 doubles) to an FQuat and FVector
-		const FQuat Rotation = FQuat(x[0], x[1], x[2], x[3]).GetNormalized();
-		const FVector Location = FVector(x[4], x[5], x[6]);
-
-		UE_LOG(LogCameraCalibrationEditor, VeryVerbose, TEXT("Nodal Offset Candidate:  Rotation: (%lf, %lf, %lf, %lf)  Location: (%lf, %lf, %lf)"),
-			Rotation.X, Rotation.Y, Rotation.Z, Rotation.W, Location.X, Location.Y, Location.Z);
-
-		FTransform NodalOffsetCandidate;
-
-		// As a result of the way that the downhill solver nudges the input data on each iteration, it is important to normalize the rotation
-		NodalOffsetCandidate.SetRotation(Rotation);
-		NodalOffsetCandidate.SetLocation(Location);
-
-		double ReprojectionErrorTotal = 0.0;
-		int32 NumTotalPoints = 0;
-
-		// For each camera view
-		for (const FSingleViewPoseAndPoints& CameraView : CameraViews)
-		{
-			// Compute the optimal camera pose using the nodal offset candidate for this iteration and the tracked camera pose 
-			// Any existing nodal offset that was applied to the camera is also factored in
-			FTransform OptimalCameraPose = NodalOffsetCandidate * ExistingNodalOffsetInverse * CameraView.CameraPose;
-
-			// Convert the optimal camera pose to opencv's coordinate system
-			FOpenCVHelper::ConvertUnrealToOpenCV(OptimalCameraPose);
-
-			// Compute the reprojection error for this view and add it to the running total
-			double ViewError = FOpenCVHelper::ComputeReprojectionError(OptimalCameraPose, CameraMatrix, CameraView.Points3d, CameraView.Points2d);
-			ReprojectionErrorTotal += ViewError;
-
-			NumTotalPoints += CameraView.Points2d.size();
-		}
-
-		double RootMeanSquareError = FMath::Sqrt(ReprojectionErrorTotal / NumTotalPoints);
-
-		UE_LOG(LogCameraCalibrationEditor, VeryVerbose, TEXT("Reprojection Error: %lf"), RootMeanSquareError);
-
-		return RootMeanSquareError;
-	}
-	//~ End cv::MinProblemSolver::Function interface
-
-	void SetCameraMatrix(const cv::Mat InCameraMatrix) 
-	{ 
-		CameraMatrix = InCameraMatrix; 
-	}
-
-	void SetExistingNodalOffsetInverse(FTransform InOffsetInverse) 
-	{ 
-		ExistingNodalOffsetInverse = InOffsetInverse; 
-	}
-
-	void AddCameraViewAndPoints(FTransform InCameraPose, std::vector<cv::Point3f> InPoints3d, std::vector<cv::Point2f> InPoints2d)
-	{
-		FSingleViewPoseAndPoints& NewCameraView = CameraViews.Add_GetRef(FSingleViewPoseAndPoints());
-
-		NewCameraView.CameraPose = InCameraPose;
-		NewCameraView.Points3d = MoveTemp(InPoints3d);
-		NewCameraView.Points2d = MoveTemp(InPoints2d);
-	}
-
-private:
-	cv::Mat CameraMatrix;
-
-	FTransform ExistingNodalOffsetInverse;
-
-	TArray<FSingleViewPoseAndPoints> CameraViews;
-};
-#endif
-
 double UCameraNodalOffsetAlgoPoints::MinimizeReprojectionError(FTransform& InOutNodalOffset, const TArray<TSharedPtr<TArray<TSharedPtr<FNodalOffsetPointsRowData>>>>& SamePoseRowGroups) const
 {
-#if WITH_OPENCV
-	cv::Ptr<cv::DownhillSolver> Solver = cv::DownhillSolver::create();
-
-	cv::Ptr<FMinReprojectionErrorSolver> SolverFunction = cv::makePtr<FMinReprojectionErrorSolver>();
-	Solver->setFunction(SolverFunction);
-
-	const FQuat InitialRotation = InOutNodalOffset.GetRotation();
-	const FVector InitialLocation = InOutNodalOffset.GetLocation();
-
-	cv::Mat WorkingSolution(1, 7, cv::DataType<double>::type);
-	WorkingSolution.at<double>(0, 0) = InitialRotation.X;
-	WorkingSolution.at<double>(0, 1) = InitialRotation.Y;
-	WorkingSolution.at<double>(0, 2) = InitialRotation.Z;
-	WorkingSolution.at<double>(0, 3) = InitialRotation.W;
-	WorkingSolution.at<double>(0, 4) = InitialLocation.X;
-	WorkingSolution.at<double>(0, 5) = InitialLocation.Y;
-	WorkingSolution.at<double>(0, 6) = InitialLocation.Z;
-
-	// NOTE: These step sizes may need further testing and refinement, but tests so far have shown them to be decent
-	const double RotationStep = CVarRotationStepValue.GetValueOnAnyThread();
-	const double LocationStep = CVarLocationStepValue.GetValueOnAnyThread();
-	cv::Mat Step = (cv::Mat_<double>(7, 1) << RotationStep, RotationStep, RotationStep, RotationStep, LocationStep, LocationStep, LocationStep);
-
-	Solver->setInitStep(Step);
-
 	const FCameraCalibrationStepsController* StepsController;
 	const ULensFile* LensFile;
 
@@ -337,18 +211,8 @@ double UCameraNodalOffsetAlgoPoints::MinimizeReprojectionError(FTransform& InOut
 
 	const FLensDistortionState DistortionState = DistortionHandler->GetCurrentDistortionState();
 
-	// Initialize the camera matrix that will be used in each call to projectPoints()
-	cv::Mat CameraMatrix(3, 3, cv::DataType<double>::type);
-	cv::setIdentity(CameraMatrix);
-
-	CameraMatrix.at<double>(0, 0) = DistortionState.FocalLengthInfo.FxFy.X;
-	CameraMatrix.at<double>(1, 1) = DistortionState.FocalLengthInfo.FxFy.Y;
-
-	// Note that the 2D points that will be compared against have been undistorted and center shift has already been accounted for
-	CameraMatrix.at<double>(0, 2) = 0.5;
-	CameraMatrix.at<double>(1, 2) = 0.5;
-
-	SolverFunction->SetCameraMatrix(CameraMatrix);
+	const FVector2D FocalLength = DistortionState.FocalLengthInfo.FxFy;
+	const FVector2D ImageCenter = FVector2D(0.5, 0.5);
 
 	if (!ensureMsgf((CalibrationRows.Num() > 0), TEXT("Not enough calibration rows")))
 	{
@@ -372,14 +236,23 @@ double UCameraNodalOffsetAlgoPoints::MinimizeReprojectionError(FTransform& InOut
 		}
 	}
 
-	SolverFunction->SetExistingNodalOffsetInverse(ExistingOffset.Inverse());
-
 	if (!ensureMsgf(FirstRow->bUndistortedIsValid, TEXT("This method operates on undistorted 2D points. Call UndistortCalibrationRowPoints() prior to calling this method")))
 	{
 		return -1.0;
 	}
 
-	for (int32 PoseGroupIndex = 0; PoseGroupIndex < SamePoseRowGroups.Num(); ++PoseGroupIndex)
+	const int32 NumGroups = SamePoseRowGroups.Num();
+
+	TArray<TArray<FVector>> ObjectPoints;
+	ObjectPoints.Reserve(NumGroups);
+
+	TArray<TArray<FVector2f>> ImagePoints;
+	ImagePoints.Reserve(NumGroups);
+
+	TArray<FTransform> CameraPoses;
+	CameraPoses.Reserve(NumGroups);
+
+	for (int32 PoseGroupIndex = 0; PoseGroupIndex < NumGroups; ++PoseGroupIndex)
 	{
 		const TArray<TSharedPtr<FNodalOffsetPointsRowData>>& PoseGroup = *(SamePoseRowGroups[PoseGroupIndex]);
 
@@ -389,148 +262,27 @@ double UCameraNodalOffsetAlgoPoints::MinimizeReprojectionError(FTransform& InOut
 		}
 
 		const TSharedPtr<FNodalOffsetPointsRowData>& FirstRowInPoseGroup = PoseGroup[0];
+		const FTransform CameraPose = FirstRowInPoseGroup->CameraData.Pose;
 
-		FTransform CameraPose = FirstRowInPoseGroup->CameraData.Pose;
+		// Undo the existing nodal offset transformation
+		CameraPoses.Add(ExistingOffset.Inverse() * CameraPose);
 
-		std::vector<cv::Point3f> Points3d;
-		std::vector<cv::Point2f> Points2d;
-		Points3d.reserve(PoseGroup.Num());
-		Points2d.reserve(PoseGroup.Num());
+		TArray<FVector> Points3d;
+		TArray<FVector2f> Points2d;
+		Points3d.Reserve(PoseGroup.Num());
+		Points2d.Reserve(PoseGroup.Num());
 
 		for (const TSharedPtr<FNodalOffsetPointsRowData>& Row : PoseGroup)
 		{
-			// Convert from UE coordinates to OpenCV coordinates
-			FTransform Transform;
-			Transform.SetIdentity();
-			Transform.SetLocation(Row->CalibratorPointData.Location);
-
-			FOpenCVHelper::ConvertUnrealToOpenCV(Transform);
-
-			// Calibrator 3d points
-			Points3d.push_back(cv::Point3f(
-				Transform.GetLocation().X,
-				Transform.GetLocation().Y,
-				Transform.GetLocation().Z));
-
-			Points2d.push_back(cv::Point2f(
-				Row->UndistortedPoint2D.X,
-				Row->UndistortedPoint2D.Y));
+			Points3d.Add(Row->CalibratorPointData.Location);
+			Points2d.Add(Row->UndistortedPoint2D);
 		}
 
-		SolverFunction->AddCameraViewAndPoints(CameraPose, Points3d, Points2d);
+		ObjectPoints.Add(Points3d);
+		ImagePoints.Add(Points2d);
 	}
 
-	double Error = Solver->minimize(WorkingSolution);
-
-	const FQuat FinalRotation = FQuat(WorkingSolution.at<double>(0, 0), WorkingSolution.at<double>(0, 1), WorkingSolution.at<double>(0, 2), WorkingSolution.at<double>(0, 3)).GetNormalized();
-	const FVector FinalLocation = FVector(WorkingSolution.at<double>(0, 4), WorkingSolution.at<double>(0, 5), WorkingSolution.at<double>(0, 6));
-
-	InOutNodalOffset.SetRotation(FinalRotation);
-	InOutNodalOffset.SetLocation(FinalLocation);
-
-	return Error;
-#else
-	return -1.0;
-#endif
-}
-
-double UCameraNodalOffsetAlgoPoints::ComputeReprojectionError(const FTransform& NodalOffset, const TArray<TSharedPtr<FNodalOffsetPointsRowData>>& PoseGroup) const
-{
-#if WITH_OPENCV
-	const FCameraCalibrationStepsController* StepsController;
-	const ULensFile* LensFile;
-
-	if (!ensure(GetStepsControllerAndLensFile(&StepsController, &LensFile)))
-	{
-		return -1.0;
-	}
-
-	const ULensDistortionModelHandlerBase* DistortionHandler = StepsController->GetDistortionHandler();
-	if (!DistortionHandler)
-	{
-		return -1.0;
-	}
-
-	std::vector<cv::Point3f> Points3d;
-	std::vector<cv::Point2f> Points2d;
-	Points3d.reserve(PoseGroup.Num());
-	Points2d.reserve(PoseGroup.Num());
-
-	if (!ensureMsgf((PoseGroup.Num() > 0), TEXT("Not enough calibration rows")))
-	{
-		return -1.0;
-	}
-
-	const TSharedPtr<FNodalOffsetPointsRowData>& FirstRow = PoseGroup[0];
-
-	if (!ensureMsgf(FirstRow->bUndistortedIsValid, TEXT("This method operates on undistorted 2D points. Call UndistortCalibrationRowPoints() prior to calling this method")))
-	{
-		return -1.0;
-	}
-
-	for (const TSharedPtr<FNodalOffsetPointsRowData>& Row : PoseGroup)
-	{
-		// Convert from UE coordinates to OpenCV coordinates
-
-		FTransform Transform;
-		Transform.SetIdentity();
-		Transform.SetLocation(Row->CalibratorPointData.Location);
-
-		FOpenCVHelper::ConvertUnrealToOpenCV(Transform);
-
-		// Calibrator 3d points
-		Points3d.push_back(cv::Point3f(
-			Transform.GetLocation().X,
-			Transform.GetLocation().Y,
-			Transform.GetLocation().Z));
-
-		Points2d.push_back(cv::Point2f(
-			Row->UndistortedPoint2D.X,
-			Row->UndistortedPoint2D.Y));
-	}
-
-	// Compute the optimal camera pose using the nodal offset candidate for this iteration and the tracked camera pose 
-	// Any existing nodal offset that was applied to the camera is also factored in
-	FTransform CameraPose = FirstRow->CameraData.Pose;
-
-	FTransform ExistingOffset = FTransform::Identity;
-
-	if (FirstRow->CameraData.bWasNodalOffsetApplied)
-	{
-		FNodalPointOffset NodalPointOffset;
-		const float Focus = FirstRow->CameraData.InputFocus;
-		const float Zoom = FirstRow->CameraData.InputZoom;
-
-		if (LensFile->EvaluateNodalPointOffset(Focus, Zoom, NodalPointOffset))
-		{
-			ExistingOffset.SetTranslation(NodalPointOffset.LocationOffset);
-			ExistingOffset.SetRotation(NodalPointOffset.RotationOffset);
-		}
-	}
-
-	// Initialize the camera matrix that will be used in each call to projectPoints()
-	FLensDistortionState DistortionState = DistortionHandler->GetCurrentDistortionState();
-
-	cv::Mat CameraMatrix(3, 3, cv::DataType<double>::type);
-	cv::setIdentity(CameraMatrix);
-
-	CameraMatrix.at<double>(0, 0) = DistortionState.FocalLengthInfo.FxFy.X;
-	CameraMatrix.at<double>(1, 1) = DistortionState.FocalLengthInfo.FxFy.Y;
-
-	// Note that the 2D points that will be compared against have been undistorted and center shift has already been accounted for
-	CameraMatrix.at<double>(0, 2) = 0.5;
-	CameraMatrix.at<double>(1, 2) = 0.5;
-
-	FTransform OptimalCameraPose = NodalOffset * ExistingOffset.Inverse() * CameraPose;
-
-	// Convert the optimal camera pose to opencv's coordinate system
-	FOpenCVHelper::ConvertUnrealToOpenCV(OptimalCameraPose);
-
-	// Compute the reprojection error for this view
-	return FOpenCVHelper::ComputeReprojectionError(OptimalCameraPose, CameraMatrix, Points3d, Points2d);
-#else
-	return -1.0;
-#endif
+	return FCameraCalibrationSolver::OptimizeNodalOffset(ObjectPoints, ImagePoints, FocalLength, ImageCenter, CameraPoses, InOutNodalOffset);
 }
 
 void UCameraNodalOffsetAlgoPoints::Initialize(UNodalOffsetTool* InNodalOffsetTool)
@@ -1034,12 +786,15 @@ bool UCameraNodalOffsetAlgoPoints::CalculatedOptimalCameraComponentPose(
 		return false;
 	}
 
-	const FCameraCalibrationStepsController* StepsController;
-	const ULensFile* LensFile;
-
-	if (!ensure(GetStepsControllerAndLensFile(&StepsController, &LensFile)))
+	if (!NodalOffsetTool.IsValid())
 	{
-		OutErrorMessage = LOCTEXT("ToolNotFound", "Tool not found");
+		return false;
+	}
+
+	const FCameraCalibrationStepsController* StepsController = NodalOffsetTool->GetCameraCalibrationStepsController();
+
+	if (!StepsController)
+	{
 		return false;
 	}
 
@@ -1050,127 +805,33 @@ bool UCameraNodalOffsetAlgoPoints::CalculatedOptimalCameraComponentPose(
 		return false;
 	}
 
-	// Get parameters from the handler
-	FLensDistortionState DistortionState = DistortionHandler->GetCurrentDistortionState();
+	TArray<FVector> ObjectPoints;
+	ObjectPoints.Reserve(Rows.Num());
 
-#if WITH_OPENCV
-
-	// Find the pose that minimizes the reprojection error
-
-	// Populate the 3d/2d correlation points
-
-	std::vector<cv::Point3f> Points3d;
-	std::vector<cv::Point2f> Points2d;
-	Points3d.reserve(Rows.Num());
-	Points2d.reserve(Rows.Num());
+	TArray<FVector2f> ImagePoints;
+	ImagePoints.Reserve(Rows.Num());
 
 	for (const TSharedPtr<FNodalOffsetPointsRowData>& Row : Rows)
 	{
-		// Convert from UE coordinates to OpenCV coordinates
-		FTransform Transform;
-		Transform.SetIdentity();
-		Transform.SetLocation(Row->CalibratorPointData.Location);
-
-		FOpenCVHelper::ConvertUnrealToOpenCV(Transform);
-
-		// Calibrator 3d points
-		Points3d.push_back(cv::Point3f(
-			Transform.GetLocation().X,
-			Transform.GetLocation().Y,
-			Transform.GetLocation().Z));
-
-		Points2d.push_back(cv::Point2f(
-			Row->UndistortedPoint2D.X,
-			Row->UndistortedPoint2D.Y));
+		ObjectPoints.Add(Row->CalibratorPointData.Location);
+		ImagePoints.Add(Row->UndistortedPoint2D);
 	}
-	// Populate camera matrix
 
-	cv::Mat CameraMatrix(3, 3, cv::DataType<double>::type);
-	cv::setIdentity(CameraMatrix);
+	const FLensDistortionState DistortionState = DistortionHandler->GetCurrentDistortionState();
+	const FVector2D FocalLength = DistortionState.FocalLengthInfo.FxFy;
+	const FVector2D ImageCenter = FVector2D(0.5, 0.5);
 
-	// Note: cv::Mat uses (row,col) indexing.
-	//
-	//  Fx  0  Cx
-	//  0  Fy  Cy
-	//  0   0   1
-
-	CameraMatrix.at<double>(0, 0) = DistortionState.FocalLengthInfo.FxFy.X;
-	CameraMatrix.at<double>(1, 1) = DistortionState.FocalLengthInfo.FxFy.Y;
-
-	// The displacement map will correct for image center offset
-	CameraMatrix.at<double>(0, 2) = 0.5;
-	CameraMatrix.at<double>(1, 2) = 0.5;
-
-	// Solve for camera position
-	cv::Mat Rrod = cv::Mat::zeros(3, 1, cv::DataType<double>::type); // Rotation vector in Rodrigues notation. 3x1.
-	cv::Mat Tobj = cv::Mat::zeros(3, 1, cv::DataType<double>::type); // Translation vector. 3x1.
+	TArray<float> DistortionParameters = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
 
 	// We send no distortion parameters, because Points2d was manually undistorted already
-	if (!cv::solvePnP(Points3d, Points2d, CameraMatrix, cv::noArray(), Rrod, Tobj))
+	bool bResult = FOpenCVHelper::SolvePnP(ObjectPoints, ImagePoints, FocalLength, ImageCenter, DistortionParameters, OutDesiredCameraTransform);
+	if (!bResult)
 	{
 		OutErrorMessage = LOCTEXT("SolvePnpFailed", "Failed to resolve a camera position given the data in the calibration rows. Please retry the calibration.");
 		return false;
 	}
 
-	// Check for invalid data
-	{
-		const double Tx = Tobj.at<double>(0);
-		const double Ty = Tobj.at<double>(1);
-		const double Tz = Tobj.at<double>(2);
-
-		const double MaxValue = 1e16;
-
-		if (abs(Tx) > MaxValue || abs(Ty) > MaxValue || abs(Tz) > MaxValue)
-		{
-			OutErrorMessage = LOCTEXT("DataOutOfBounds", "The triangulated camera position had invalid values, please retry the calibration.");
-			return false;
-		}
-	}
-
-	// Convert to camera pose
-
-	// [R|t]' = [R'|-R'*t]
-
-	// Convert from Rodrigues to rotation matrix
-	cv::Mat Robj;
-	cv::Rodrigues(Rrod, Robj); // Robj is 3x3
-
-	// Calculate camera translation
-	cv::Mat Tcam = -Robj.t() * Tobj;
-
-	// Invert/transpose to get camera orientation
-	cv::Mat Rcam = Robj.t();
-
-	// Convert back to UE coordinates
-
-	FMatrix M = FMatrix::Identity;
-
-	// Fill rotation matrix
-	for (int32 Column = 0; Column < 3; ++Column)
-	{
-		M.SetColumn(Column, FVector(
-			Rcam.at<double>(Column, 0),
-			Rcam.at<double>(Column, 1),
-			Rcam.at<double>(Column, 2))
-		);
-	}
-
-	// Fill translation vector
-	M.M[3][0] = Tcam.at<double>(0);
-	M.M[3][1] = Tcam.at<double>(1);
-	M.M[3][2] = Tcam.at<double>(2);
-
-	OutDesiredCameraTransform.SetFromMatrix(M);
-	FOpenCVHelper::ConvertOpenCVToUnreal(OutDesiredCameraTransform);
-
 	return true;
-
-#else
-	{
-		OutErrorMessage = LOCTEXT("OpenCVRequired", "OpenCV is required");
-		return false;
-	}
-#endif //WITH_OPENCV
 }
 
 bool UCameraNodalOffsetAlgoPoints::CalibratorMovedInAnyRow(
@@ -1425,29 +1086,25 @@ TSharedRef<SWidget> UCameraNodalOffsetAlgoPoints::BuildCalibrationComponentMenu(
 	FMenuBuilder MenuBuilder(true, nullptr);
 	MenuBuilder.BeginSection("CalibrationComponents", LOCTEXT("CalibrationComponents", "Calibration Point Components"));
 
-	AActor* CalibratorPtr = Calibrator.Get();
-	if (CalibratorPtr)
+	if (AActor* CalibratorPtr = Calibrator.Get())
 	{
 		TArray<UCalibrationPointComponent*, TInlineAllocator<NumInlineAllocations>> CalibrationPointComponents;
 		CalibratorPtr->GetComponents(CalibrationPointComponents);
 
 		for (UCalibrationPointComponent* CalibratorComponent : CalibrationPointComponents)
 		{
-			if (USceneComponent* AttachComponent = CalibratorComponent->GetAttachParent())
-			{
-				MenuBuilder.AddMenuEntry(
-					FText::Format(LOCTEXT("ComponentLabel", "{0}"), FText::FromString(AttachComponent->GetName())),
-					FText::Format(LOCTEXT("ComponentTooltip", "{0}"), FText::FromString(AttachComponent->GetName())),
-					FSlateIcon(),
-					FUIAction(
-						FExecuteAction::CreateLambda([this, CalibratorComponent] { OnCalibrationComponentSelected(CalibratorComponent);}),
-						FCanExecuteAction(),
-						FIsActionChecked::CreateLambda([this, CalibratorComponent] { return IsCalibrationComponentSelected(CalibratorComponent); })
-					),
-					NAME_None,
-					EUserInterfaceActionType::ToggleButton
-				);
-			}
+			MenuBuilder.AddMenuEntry(
+				FText::Format(LOCTEXT("ComponentLabel", "{0}"), FText::FromString(CalibratorComponent->GetName())),
+				FText::Format(LOCTEXT("ComponentTooltip", "{0}"), FText::FromString(CalibratorComponent->GetName())),
+				FSlateIcon(),
+				FUIAction(
+					FExecuteAction::CreateLambda([this, CalibratorComponent] { OnCalibrationComponentSelected(CalibratorComponent);}),
+					FCanExecuteAction(),
+					FIsActionChecked::CreateLambda([this, CalibratorComponent] { return IsCalibrationComponentSelected(CalibratorComponent); })
+				),
+				NAME_None,
+				EUserInterfaceActionType::ToggleButton
+			);
 		}
 	}
 	else
@@ -1488,14 +1145,15 @@ TSharedRef<SWidget> UCameraNodalOffsetAlgoPoints::BuildCalibrationComponentPicke
 					{
 						return LOCTEXT("MultipleCalibrationComponents", "Multiple Values");
 					}
-					else if (ActiveCalibratorComponents.Num() == 1 && ActiveCalibratorComponents[0].Get() && ActiveCalibratorComponents[0]->GetAttachParent())
+					else if (ActiveCalibratorComponents.Num() == 1)
 					{
-						return FText::FromString(ActiveCalibratorComponents[0]->GetAttachParent()->GetName());
+						if (const UCalibrationPointComponent* CalibratorComponent = ActiveCalibratorComponents[0].Get())
+						{
+							return FText::FromString(CalibratorComponent->GetName());
+						}
 					}
-					else
-					{
-						return LOCTEXT("NoCalibrationComponents", "None");
-					}
+
+					return LOCTEXT("NoCalibrationComponents", "None");
 				})
 			]
 		]; 
@@ -2518,15 +2176,15 @@ void UCameraNodalOffsetAlgoPoints::UndistortCalibrationRowPoints()
 
 	const int32 NumPoints = CalibrationRows.Num();
 
-	TArray<FVector2D> ImagePoints;
+	TArray<FVector2f> ImagePoints;
 	ImagePoints.Reserve(NumPoints);
 
 	for (const TSharedPtr<FNodalOffsetPointsRowData>& Row : CalibrationRows)
 	{
-		ImagePoints.Add(FVector2D(Row->Point2D.X, Row->Point2D.Y));
+		ImagePoints.Add(Row->Point2D);
 	}
 
-	TArray<FVector2D> UndistortedPoints;
+	TArray<FVector2f> UndistortedPoints;
 	UndistortedPoints.AddZeroed(ImagePoints.Num());
 	DistortionRenderingUtils::UndistortImagePoints(DistortionHandler->GetDistortionDisplacementMap(), ImagePoints, UndistortedPoints);
 

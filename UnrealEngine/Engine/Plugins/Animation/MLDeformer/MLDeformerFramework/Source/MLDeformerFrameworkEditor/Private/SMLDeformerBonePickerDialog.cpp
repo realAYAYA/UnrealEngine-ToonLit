@@ -24,7 +24,7 @@ namespace UE::MLDeformer
 		SuperArgs.OnGenerateRow(this, &SMLDeformerBonePickerTreeWidget::MakeTableRowWidget);
 		SuperArgs.OnGetChildren(this, &SMLDeformerBonePickerTreeWidget::HandleGetChildrenForTree);
 		SuperArgs.OnMouseButtonDoubleClick(this, &SMLDeformerBonePickerTreeWidget::OnMouseDoubleClicked);
-		SuperArgs.HighlightParentNodesForSelection(true);
+		SuperArgs.HighlightParentNodesForSelection(false);
 		SuperArgs.AllowInvisibleItemSelection(true);  // Without this we deselect everything when we filter or we collapse.
 
 		STreeView<TSharedPtr<FMLDeformerBonePickerTreeElement>>::Construct(SuperArgs);
@@ -141,6 +141,30 @@ namespace UE::MLDeformer
 		}
 	}
 
+	void SMLDeformerBonePickerDialog::SelectInitialItemsRecursive(const TSharedPtr<FMLDeformerBonePickerTreeElement>& Item)
+	{
+		if (!Item.IsValid())
+		{
+			return;
+		}
+
+		const bool bSelected = InitialSelectedBoneNames.Contains(Item->Name);
+		BoneTreeWidget->SetItemSelection(Item, bSelected, ESelectInfo::Type::Direct);
+		
+		for (const TSharedPtr<FMLDeformerBonePickerTreeElement>& ChildItem : Item->Children)
+		{
+			SelectInitialItemsRecursive(ChildItem);
+		}
+	}
+
+	void SMLDeformerBonePickerDialog::SelectInitialItems()
+	{
+		for (const TSharedPtr<FMLDeformerBonePickerTreeElement>& Item : BoneTreeWidget->GetRootItems())
+		{
+			SelectInitialItemsRecursive(Item);
+		}
+	}
+
 	TSharedRef<SMLDeformerBonePickerTreeWidget> SMLDeformerBonePickerDialog::CreateBoneTree()
 	{
 		TSharedRef<SMLDeformerBonePickerTreeWidget> TreeWidget = 
@@ -149,6 +173,7 @@ namespace UE::MLDeformer
 			.PickerWidget(SharedThis(this));
 
 		RefreshBoneTreeElements();
+		SelectInitialItems();
 		return TreeWidget;
 	}
 
@@ -201,6 +226,7 @@ namespace UE::MLDeformer
 		bAllowMultiSelect = InArgs._AllowMultiSelect;
 		IncludeList = InArgs._IncludeList;
 		ExtraWidget = InArgs._ExtraWidget;
+		InitialSelectedBoneNames = InArgs._InitialSelectedBoneNames;
 
 		FText DialogTitle;
 		if (InArgs._Title.ToString().IsEmpty())

@@ -318,7 +318,7 @@ FPlanarCells::FPlanarCells(const TArrayView<const FBox> Boxes, bool bResolveAdja
 				}
 				// else overlap was too close to 'last', so we skip it
 			}
-			Overlaps[Dim].SetNum(FillIdx, false);
+			Overlaps[Dim].SetNum(FillIdx, EAllowShrinking::No);
 			if (Overlaps[Dim].Num() == 1)
 			{
 				Overlaps[Dim].Add(Box.Max[Dim]);
@@ -622,7 +622,7 @@ FPlanarCells::FPlanarCells(const FBox &Region, const TArrayView<const FColor> Im
 					int32 Last;
 					while (PerCellBoundaryEdgeArrays[Cell].Contains(Last = Chain.Last()))
 					{
-						Chain.Pop(false);
+						Chain.Pop(EAllowShrinking::No);
 						Chain.Append(PerCellBoundaryEdgeArrays[Cell][Last]);
 						PerCellBoundaryEdgeArrays[Cell].Remove(Last);
 					}
@@ -758,9 +758,9 @@ void FPlanarCells::DiscardCells(TFunctionRef<bool(int32)> KeepFunc, bool bKeepNe
 		Cells.Value = Cells.Value > -1 ? OldToNew[Cells.Value] : -1;
 		if (Cells.Key == Cells.Value && Cells.Key == -1)
 		{
-			PlaneCells.RemoveAtSwap(PlaneIdx, 1, false);
-			Planes.RemoveAtSwap(PlaneIdx, 1, false);
-			PlaneBoundaries.RemoveAtSwap(PlaneIdx, 1, false);
+			PlaneCells.RemoveAtSwap(PlaneIdx, 1, EAllowShrinking::No);
+			Planes.RemoveAtSwap(PlaneIdx, 1, EAllowShrinking::No);
+			PlaneBoundaries.RemoveAtSwap(PlaneIdx, 1, EAllowShrinking::No);
 			PlaneIdx--; // consider the swapped-in value in the next iteration
 		}
 		else
@@ -1782,7 +1782,7 @@ void MergeClusters(
 	TArray<int32> ToProcess(SmallTransformIndices); // Need a mutable copy of SmallTransformIndices to update the array with merged nodes
 	for (int32 ProcessIdx = 0; ProcessIdx < ToProcess.Num(); ++ProcessIdx)
 	{
-		int32 MergeIdx = SmallTransformIndices[ProcessIdx];
+		int32 MergeIdx = ToProcess[ProcessIdx];
 		if (Collection.Parent[MergeIdx] == -1 || DoNotReconsider.Contains(MergeIdx)) // can't merge root nodes
 		{
 			continue;
@@ -2085,30 +2085,52 @@ int32 AddCollisionSampleVertices(double CollisionSampleSpacing, FGeometryCollect
 	return INDEX_NONE;
 }
 
-
-void ConvertToMeshDescription(
-	FMeshDescription& MeshOut,
+template <typename TransformType>
+void ConvertToDynamicMeshTemplate(
+	FDynamicMesh3& CombinedMesh,
 	FTransform& TransformOut,
 	bool bCenterPivot,
-	FGeometryCollection& Collection,
-	const TManagedArray<FTransform>& BoneTransforms,
-	const TArrayView<const int32>& TransformIndices,
-	TFunction<int32(int32, bool)> RemapMaterialIDs
+	const FGeometryCollection& Collection,
+	TArrayView<const TransformType> BoneTransforms,
+	TArrayView<const int32> TransformIndices,
+	TFunction<int32(int32, bool)> RemapMaterialIDs,
+	bool bClearCustomAttributes = true,
+	bool bWeldEdges = true,
+	bool bComponentSpaceTransforms = false,
+	bool bAllowInvisible = true,
+	bool bSetPolygroupPerBone = false
 )
 {
 	FTransform CellsToWorld = FTransform::Identity;
 	TransformOut = FTransform::Identity;
 
-	FDynamicMeshCollection MeshCollection(&Collection, BoneTransforms.Num() ? BoneTransforms : Collection.Transform, TransformIndices, CellsToWorld);
-	
-	FDynamicMesh3 CombinedMesh;
+	FDynamicMeshCollection MeshCollection;
+	MeshCollection.bSkipInvisible = !bAllowInvisible;
+	MeshCollection.bComponentSpaceTransforms = bComponentSpaceTransforms && !BoneTransforms.IsEmpty();
+	if (BoneTransforms.Num())
+	{
+		MeshCollection.Init(&Collection, BoneTransforms, TransformIndices, CellsToWorld);
+	}
+	else
+	{
+		MeshCollection.Init(&Collection, Collection.Transform, TransformIndices, CellsToWorld);
+	}
+
 	SetGeometryCollectionAttributes(CombinedMesh, Collection.NumUVLayers());
 	CombinedMesh.Attributes()->EnableTangents();
+	if (bSetPolygroupPerBone)
+	{
+		CombinedMesh.EnableTriangleGroups();
+	}
 
 	int32 NumMeshes = MeshCollection.Meshes.Num();
 	for (int32 MeshIdx = 0; MeshIdx < NumMeshes; MeshIdx++)
 	{
 		FDynamicMesh3& Mesh = MeshCollection.Meshes[MeshIdx].AugMesh;
+		if (bSetPolygroupPerBone)
+		{
+			Mesh.EnableTriangleGroups();
+		}
 		const FTransform& FromCollection = MeshCollection.Meshes[MeshIdx].FromCollection;
 
 		FMeshNormals::InitializeOverlayToPerVertexNormals(Mesh.Attributes()->PrimaryNormals(), true);
@@ -2127,9 +2149,12 @@ void ConvertToMeshDescription(
 			}
 		}
 
-		FMergeCoincidentMeshEdges EdgeMerge(&Mesh);
-		EdgeMerge.Apply();
-		
+		if (bWeldEdges && Mesh.TriangleCount() > 0)
+		{
+			FMergeCoincidentMeshEdges EdgeMerge(&Mesh);
+			EdgeMerge.Apply();
+		}
+
 		if (MeshIdx > 0)
 		{
 			FDynamicMeshEditor MeshAppender(&CombinedMesh);
@@ -2150,8 +2175,70 @@ void ConvertToMeshDescription(
 		TransformOut = FTransform((FVector)-Translate);
 	}
 
+	if (bClearCustomAttributes)
+	{
+		ClearCustomGeometryCollectionAttributes(CombinedMesh);
+	}
+}
+
+template <typename TransformType>
+void ConvertToMeshDescriptionTemplate(
+	FMeshDescription& MeshOut,
+	FTransform& TransformOut,
+	bool bCenterPivot,
+	FGeometryCollection& Collection,
+	const TManagedArray<TransformType>& BoneTransforms,
+	const TArrayView<const int32>& TransformIndices,
+	TFunction<int32(int32, bool)> RemapMaterialIDs
+)
+{	
+	FDynamicMesh3 CombinedMesh;
+	ConvertToDynamicMeshTemplate<TransformType>(CombinedMesh, TransformOut, bCenterPivot, Collection, BoneTransforms.GetConstArray(), TransformIndices, RemapMaterialIDs, false);
+
 	FDynamicMeshToMeshDescription Converter;
 	Converter.Convert(&CombinedMesh, MeshOut, true);
+}
+
+void ConvertToMeshDescription(
+	FMeshDescription& MeshOut,
+	FTransform& TransformOut,
+	bool bCenterPivot,
+	FGeometryCollection& Collection,
+	const TManagedArray<FTransform>& BoneTransforms,
+	const TArrayView<const int32>& TransformIndices,
+	TFunction<int32(int32, bool)> RemapMaterialIDs
+)
+{
+	ConvertToMeshDescriptionTemplate(MeshOut, TransformOut, bCenterPivot, Collection, BoneTransforms, TransformIndices, RemapMaterialIDs);
+}
+
+void ConvertToMeshDescription(
+	FMeshDescription& MeshOut,
+	FTransform& TransformOut,
+	bool bCenterPivot,
+	FGeometryCollection& Collection,
+	const TManagedArray<FTransform3f>& BoneTransforms,
+	const TArrayView<const int32>& TransformIndices,
+	TFunction<int32(int32, bool)> RemapMaterialIDs
+)
+{
+	ConvertToMeshDescriptionTemplate(MeshOut, TransformOut, bCenterPivot, Collection, BoneTransforms, TransformIndices, RemapMaterialIDs);
+}
+
+void ConvertGeometryCollectionToDynamicMesh(
+	FDynamicMesh3& OutputMesh,
+	FTransform& TransformOut,
+	bool bCenterPivot,
+	const FGeometryCollection& Collection,
+	bool bWeldEdges,
+	TArrayView<const FTransform3f> BoneTransforms,
+	bool bUseRelativeTransforms,
+	TArrayView<const int32> TransformIndices,
+	TFunction<int32(int32, bool)> RemapMaterialIDs,
+	bool bAllowInvisible, bool bSetPolygroupPerBone
+)
+{
+	ConvertToDynamicMeshTemplate<FTransform3f>(OutputMesh, TransformOut, bCenterPivot, Collection, BoneTransforms, TransformIndices, RemapMaterialIDs, true, bWeldEdges, !bUseRelativeTransforms, bAllowInvisible, bSetPolygroupPerBone);
 }
 
 #undef LOCTEXT_NAMESPACE

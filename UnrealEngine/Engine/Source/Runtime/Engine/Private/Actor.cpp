@@ -16,6 +16,7 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/Engine.h"
 #include "Net/Core/PropertyConditions/RepChangedPropertyTracker.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/ObjectSaveContext.h"
 #include "Physics/Experimental/PhysScene_Chaos.h"
 #include "UObject/UE5MainStreamObjectVersion.h"
@@ -50,6 +51,7 @@
 #endif // UE_WITH_IRIS
 #include "LevelUtils.h"
 #include "Components/DecalComponent.h"
+#include "Components/LightComponent.h"
 #include "GameFramework/InputSettings.h"
 #include "Algo/AnyOf.h"
 #include "PrimitiveSceneProxy.h"
@@ -61,13 +63,14 @@
 #include "FoliageHelper.h"
 #include "LevelInstance/LevelInstanceSubsystem.h"
 #include "LevelInstance/LevelInstanceInterface.h"
-#include "Misc/LazySingleton.h"
 #endif
 
 #include "WorldPartition/WorldPartitionLog.h"
 #include "WorldPartition/DataLayer/WorldDataLayers.h"
 #include "WorldPartition/WorldPartitionActorDescUtils.h"
 #include "WorldPartition/DataLayer/DataLayerAsset.h"
+#include "WorldPartition/DataLayer/ExternalDataLayerAsset.h"
+#include "WorldPartition/DataLayer/ExternalDataLayerInstance.h"
 #include "WorldPartition/DataLayer/DataLayerManager.h"
 #include "WorldPartition/ContentBundle/ContentBundlePaths.h"
 
@@ -88,6 +91,9 @@ FMakeNoiseDelegate AActor::MakeNoiseDelegate = FMakeNoiseDelegate::CreateStatic(
 /** Selects if actor and actorcomponents will replicate subobjects using the registration list by default. */
 extern bool GDefaultUseSubObjectReplicationList;
 
+/** Enables optimizations to actor and component registration */
+extern int32 GOptimizeActorRegistration;
+
 #if !UE_BUILD_SHIPPING
 FOnProcessEvent AActor::ProcessEventDelegate;
 #endif
@@ -104,27 +110,6 @@ FCriticalSection CSVActorClassNameToCountMapLock;
 #endif // (CSV_PROFILER && !UE_BUILD_SHIPPING)
 
 #if WITH_EDITOR
-void FActorInstanceGuidMapper::RegisterGuidMapper(FName InPackageName, const FGuidMapper& InGuidMapper)
-{
-	check(!GuidMappers.Contains(InPackageName));
-	GuidMappers.Add(InPackageName, InGuidMapper);
-}
-
-void FActorInstanceGuidMapper::UnregisterGuidMapper(FName InPackageName)
-{
-	check(GuidMappers.Contains(InPackageName));
-	GuidMappers.Remove(InPackageName);
-}
-
-FGuid FActorInstanceGuidMapper::MapGuid(FName InPackageName, const FGuid& InGuid)
-{
-	if (FGuidMapper* GuidMapper = GuidMappers.Find(InPackageName))
-	{
-		return (*GuidMapper)(InGuid);
-	}
-	return InGuid;
-}
-
 AActor::FDuplicationSeedInterface::FDuplicationSeedInterface(TMap<UObject*, UObject*>& InDuplicationSeed)
 	: DuplicationSeed(InDuplicationSeed)
 {
@@ -210,7 +195,9 @@ void AActor::InitializeDefaults()
 	bHasRegisteredAllComponents = false;
 
 #if WITH_EDITORONLY_DATA
-	bIsInEditingLevelInstance = false;
+	bIsInEditLevelInstanceHierarchy = false;
+	bIsInEditLevelInstance = false;
+	bIsInLevelInstance = false;
 	PivotOffset = FVector::ZeroVector;
 #endif
 	SpawnCollisionHandlingMethod = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
@@ -513,25 +500,30 @@ void AActor::PreSave(FObjectPreSaveContext ObjectSaveContext)
 #if WITH_EDITOR
 void AActor::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
 	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void AActor::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	Super::GetAssetRegistryTags(Context);
 
 	if (IsPackageExternal() && !IsChildActor())
 	{
 		if (ActorLabel.Len() > 0)
 		{
 			static FName NAME_ActorLabel(TEXT("ActorLabel"));
-			OutTags.Add(UObject::FAssetRegistryTag(NAME_ActorLabel, ActorLabel, UObject::FAssetRegistryTag::TT_Hidden));
+			Context.AddTag(FAssetRegistryTag(NAME_ActorLabel, ActorLabel, UObject::FAssetRegistryTag::TT_Hidden));
 		}
 	}
-}
 
-void AActor::GetExtendedAssetRegistryTagsForSave(const ITargetPlatform* TargetPlatform, TArray<FAssetRegistryTag>& OutTags) const
-{
-	Super::GetExtendedAssetRegistryTagsForSave(TargetPlatform, OutTags);
-	
-	if (IsPackageExternal() && !IsChildActor())
+	if (Context.IsSaving())
 	{
-		FWorldPartitionActorDescUtils::AppendAssetDataTagsFromActor(this, OutTags);
+		if (IsPackageExternal() && !IsChildActor())
+		{
+			FWorldPartitionActorDescUtils::AppendAssetDataTagsFromActor(this, Context);
+		}
 	}
 }
 
@@ -751,9 +743,9 @@ void AActor::BeginDestroy()
 {
 	UnregisterAllComponents();
 	ULevel* Level = GetLevel();
-	if (Level && !Level->HasAnyInternalFlags(EInternalObjectFlags::Unreachable))
+	if (Level && !Level->IsUnreachable())
 	{
-		Level->Actors.RemoveSingleSwap(this, false);
+		Level->Actors.RemoveSingleSwap(this, EAllowShrinking::No);
 	}
 
 #if (CSV_PROFILER && !UE_BUILD_SHIPPING)
@@ -817,20 +809,8 @@ void AActor::Serialize(FArchive& Ar)
 				// Ignore transient properties since they won't be serialized
 				if(!ObjProp->HasAnyPropertyFlags(CPF_Transient))
 				{
-					UActorComponent* ActorComponent = nullptr;
-					if (FObjectPtrProperty* ObjPtrProp = CastField<FObjectPtrProperty>(ObjProp))
-					{
-						FObjectPtr& ObjectPtr = (FObjectPtr&)ObjPtrProp->GetPropertyValue_InContainer(this);
-						if (ObjectPtr && ObjectPtr.IsA<UActorComponent>())
-						{
-							ActorComponent = Cast<UActorComponent>(ObjectPtr.Get());
-						}
-					}
-					else
-					{
-						ActorComponent = Cast<UActorComponent>(ObjProp->GetObjectPropertyValue_InContainer(this));
-					}
-
+					const TObjectPtr<UObject>& ObjectPtr = ObjProp->GetPropertyValue_InContainer(this);
+					UActorComponent* ActorComponent = Cast<UActorComponent>(ObjectPtr);
 					if(ActorComponent != nullptr && ActorComponent->CreationMethod == EComponentCreationMethod::Native)
 					{
 						NativeConstructedComponentToPropertyMap.Add(ActorComponent->GetFName(), ObjProp);
@@ -898,16 +878,6 @@ void AActor::Serialize(FArchive& Ar)
 		else if ((Ar.GetPortFlags() & (PPF_Duplicate | PPF_DuplicateForPIE)) == PPF_Duplicate)
 		{
 			ActorGuid = FGuid::NewGuid();
-		}
-
-		if (!IsTemplate())
-		{
-			const FGuid NewActorInstanceGuid = TLazySingleton<FActorInstanceGuidMapper>::Get().MapGuid(GetOuter()->GetPackage()->GetFName(), ActorGuid);
-			if (NewActorInstanceGuid != ActorGuid)
-			{
-				check(!ActorInstanceGuid.IsValid());
-				ActorInstanceGuid = NewActorInstanceGuid;
-			}
 		}
 
 		if (!CanChangeIsSpatiallyLoadedFlag() && (Ar.CustomVer(FUE5ReleaseStreamObjectVersion::GUID) < FUE5ReleaseStreamObjectVersion::ActorGridPlacementDeprecateDefaultValueFixup))
@@ -1354,7 +1324,7 @@ bool AActor::IsMainPackageActor() const
 	return IsPackageExternal() && ParentComponent.IsExplicitlyNull();
 }
 
-AActor* AActor::FindActorInPackage(UPackage* InPackage)
+AActor* AActor::FindActorInPackage(UPackage* InPackage, bool bEvenIfPendingKill)
 {
 	AActor* Actor = nullptr;
 	ForEachObjectWithPackage(InPackage, [&Actor](UObject* Object)
@@ -1367,18 +1337,20 @@ AActor* AActor::FindActorInPackage(UPackage* InPackage)
 			}
 		}
 		return !Actor;
-	}, false);
+	}, false, bEvenIfPendingKill ? RF_NoFlags : RF_MirroredGarbage);
 	return Actor;
 }
 
 bool AActor::Rename( const TCHAR* InName, UObject* NewOuter, ERenameFlags Flags )
 {
 	const bool bRenameTest = ((Flags & REN_Test) != 0);
+	const bool bPerformComponentRegWork = ((Flags & REN_SkipComponentRegWork) == 0);
 	const bool bChangingOuters = (NewOuter && (NewOuter != GetOuter()));
 
 #if WITH_EDITOR
 	// if we have an external actor and the actor is changing name/outer, we will want to update its package
 	const bool bExternalActor = IsPackageExternal();
+	const bool bIsPIEPackage = bExternalActor ? !!(GetExternalPackage()->GetPackageFlags() & PKG_PlayInEditor) : false;
 	bool bShouldSetPackageExternal = false;
 	if (!bRenameTest)
 	{
@@ -1416,7 +1388,11 @@ bool AActor::Rename( const TCHAR* InName, UObject* NewOuter, ERenameFlags Flags 
 	if (!bRenameTest && bChangingOuters)
 	{
 		RegisterAllActorTickFunctions(false, true); // unregister all tick functions
-		UnregisterAllComponents();
+
+		if (bPerformComponentRegWork)
+		{
+			UnregisterAllComponents();
+		}
 
 		if (ULevel* MyLevel = GetLevel())
 		{
@@ -1437,7 +1413,8 @@ bool AActor::Rename( const TCHAR* InName, UObject* NewOuter, ERenameFlags Flags 
 	const bool bSuccess = Super::Rename( InName, NewOuter, Flags );
 
 #if WITH_EDITOR
-	if (bShouldSetPackageExternal)
+	// Restore external package state, except when in PIE since it's transient and serves no purpose
+	if (bShouldSetPackageExternal && !bIsPIEPackage)
 	{
 		if (ULevel* MyLevel = GetLevel())
 		{
@@ -1456,7 +1433,7 @@ bool AActor::Rename( const TCHAR* InName, UObject* NewOuter, ERenameFlags Flags 
 			MyLevel->ActorsForGC.Add(this);
 
 			UWorld* World = MyLevel->GetWorld();
-			if (World && World->bIsWorldInitialized)
+			if (World && World->bIsWorldInitialized && bPerformComponentRegWork)
 			{
 				RegisterAllComponents();
 			}
@@ -2383,8 +2360,7 @@ void AActor::ForEachAttachedActors(TFunctionRef<bool(class AActor*)> Functor) co
 		while (CompsToCheck.Num() > 0)
 		{
 			// Get the next off the queue
-			const bool bAllowShrinking = false;
-			USceneComponent* SceneComp = CompsToCheck.Pop(bAllowShrinking);
+			USceneComponent* SceneComp = CompsToCheck.Pop(EAllowShrinking::No);
 
 			// Add it to the 'checked' set, should not already be there!
 			CheckedComps.Add(SceneComp);
@@ -2701,7 +2677,26 @@ void AActor::PrestreamTextures( float Seconds, bool bEnableStreaming, int32 Cine
 
 void AActor::OnRep_Instigator() {}
 
-void AActor::OnRep_ReplicateMovement() {}
+void AActor::OnRep_ReplicateMovement()
+{
+	// If the actor stops replicating movement and is using PhysicsReplication PredictiveInterpolation, remove replicated target else it will linger waiting for a sleep state.
+	if (!IsReplicatingMovement() && GetPhysicsReplicationMode() == EPhysicsReplicationMode::PredictiveInterpolation)
+	{
+		if (UPrimitiveComponent* RootPrimComp = Cast<UPrimitiveComponent>(RootComponent))
+		{
+			if (UWorld* World = GetWorld())
+			{
+				if (FPhysScene* PhysScene = World->GetPhysicsScene())
+				{
+					if (IPhysicsReplication* PhysicsReplication = PhysScene->GetPhysicsReplication())
+					{
+						PhysicsReplication->RemoveReplicatedTarget(RootPrimComp);
+					}
+				}
+			}
+		}
+	}
+}
 
 void AActor::RouteEndPlay(const EEndPlayReason::Type EndPlayReason)
 {
@@ -3187,9 +3182,9 @@ void AActor::CalcCamera(float DeltaTime, FMinimalViewInfo& OutResult)
 	GetActorEyesViewPoint(OutResult.Location, OutResult.Rotation);
 }
 
-bool AActor::HasActiveCameraComponent() const
+bool AActor::HasActiveCameraComponent(bool bForceFindCamera) const
 {
-	if (bFindCameraComponentWhenViewTarget)
+	if (bFindCameraComponentWhenViewTarget || bForceFindCamera)
 	{
 		// Look for the first active camera component and use that for the view
 		for (const UActorComponent* Component : OwnedComponents)
@@ -3368,14 +3363,17 @@ void AActor::UpdateReplicatedComponent(UActorComponent* Component)
 	}
 
 #if UE_WITH_IRIS
-	if (NetCondition != COND_Never && HasActorBegunPlay())
+	if (HasAuthority())
 	{
-		// Begin replication and set NetCondition, if component already is replicated the NetCondition will be updated
-		Component->BeginReplication();
-	}
-	else if (bWasRemovedFromReplicatedComponents || NetCondition == COND_Never)
-	{
-		Component->EndReplication();
+		if (NetCondition != COND_Never && HasActorBegunPlay())
+		{
+			// Begin replication and set NetCondition, if component already is replicated the NetCondition will be updated
+			Component->BeginReplication();
+		}
+		else if (bWasRemovedFromReplicatedComponents || NetCondition == COND_Never)
+		{
+			Component->EndReplication();
+		}
 	}
 #endif // UE_WITH_IRIS
 }
@@ -3391,10 +3389,13 @@ void AActor::UpdateAllReplicatedComponents()
 	{
 		RepComponentInfo.NetCondition = COND_Never;
 #if UE_WITH_IRIS
-		// Need to end replication for all components that should no longer replicate
-		if (RepComponentInfo.Component && !RepComponentInfo.Component->GetIsReplicated())
+		if (HasAuthority())
 		{
-			RepComponentInfo.Component->EndReplication();
+			// Need to end replication for all components that should no longer replicate
+			if (RepComponentInfo.Component && !RepComponentInfo.Component->GetIsReplicated())
+			{
+				RepComponentInfo.Component->EndReplication();
+			}
 		}
 #endif
 	}
@@ -3418,15 +3419,18 @@ void AActor::UpdateAllReplicatedComponents()
 				}
 
 #if UE_WITH_IRIS
-	            if (NetCondition != COND_Never)
+				if (HasAuthority())
 				{
-					// Begin replication and set NetCondition, if component already is replicated the NetCondition will be updated
-					Component->BeginReplication();
+					if (NetCondition != COND_Never)
+					{
+						// Begin replication and set NetCondition, if component already is replicated the NetCondition will be updated
+						Component->BeginReplication();
+					}
+					else
+					{
+						Component->EndReplication();
+					}
 				}
-				else
-				{
-					Component->EndReplication();
-                }
 #endif
 			}
 		}
@@ -3632,7 +3636,7 @@ void AActor::PostEditImport()
 	ULevel* Level = GetLevel();
 	if (Level && Level->IsUsingActorFolders())
 	{
-		if (GetFolderPath().IsNone() && !FolderPath.IsNone())
+		if ((GetFolderPath().IsNone() || !FolderGuid.IsValid()) && !FolderPath.IsNone())
 		{
 			SetFolderPath(FolderPath);
 		}
@@ -4700,12 +4704,23 @@ FVector AActor::GetActorRelativeScale3D() const
 	return FVector(1,1,1);
 }
 
+void AActor::MarkNeedsRecomputeBoundsOnceForGame()
+{
+	ForEachComponent<USceneComponent>(true, [](USceneComponent* SceneComponent)
+	{
+		if (SceneComponent && SceneComponent->bComputeBoundsOnceForGame)
+		{
+			SceneComponent->bComputedBoundsOnceForGame = false;
+		}
+	});
+}
+
 void AActor::SetActorHiddenInGame( bool bNewHidden )
 {
 	if (IsHidden() != bNewHidden)
 	{
 		SetHidden(bNewHidden);
-		MarkComponentsRenderStateDirty();
+		UpdateComponentVisibility();
 	}
 }
 
@@ -5080,7 +5095,6 @@ void AActor::DispatchPhysicsCollisionHit(const FRigidBodyCollisionInfo& MyInfo, 
 	Result.Normal = Result.ImpactNormal = ContactInfo.ContactNormal;
 	Result.PenetrationDepth = ContactInfo.ContactPenetration;
 	Result.PhysMaterial = ContactInfo.PhysMaterial[1];
-	Result.HitObjectHandle = FActorInstanceHandle(OtherInfo.Actor.Get());
 	Result.Component = OtherInfo.Component;
 	Result.MyItem = MyInfo.BodyIndex;
 	Result.Item = OtherInfo.BodyIndex;
@@ -5088,7 +5102,11 @@ void AActor::DispatchPhysicsCollisionHit(const FRigidBodyCollisionInfo& MyInfo, 
 	Result.MyBoneName = MyInfo.BoneName;
 	Result.bBlockingHit = true;
 
-	NotifyHit(MyInfo.Component.Get(), OtherInfo.Actor.Get(), OtherInfo.Component.Get(), true, Result.Location, Result.Normal, RigidCollisionData.TotalNormalImpulse, Result);
+	AActor* Actor = OtherInfo.Actor.Get();
+	UPrimitiveComponent* Component = OtherInfo.Component.Get();
+	Result.HitObjectHandle = FActorInstanceHandle(Actor, Component, OtherInfo.BodyIndex);
+
+	NotifyHit(MyInfo.Component.Get(), Actor, Component, true, Result.Location, Result.Normal, RigidCollisionData.TotalNormalImpulse, Result);
 
 	// Execute delegates if bound
 
@@ -5211,9 +5229,9 @@ void AActor::PushSelectionToProxies()
 				PrimComponent->PushSelectionToProxy();
 			}
 
-			if(UDecalComponent* DecalComponent = Cast<UDecalComponent>(Component))
+			if (ULightComponent* LightComponent = Cast<ULightComponent>(Component))
 			{
-				DecalComponent->PushSelectionToProxy();
+				LightComponent->PushSelectionToProxy();
 			}
 		}
 	}
@@ -5240,17 +5258,13 @@ void AActor::PushLevelInstanceEditingStateToProxies(bool bInEditingState)
 	TInlineComponentArray<UPrimitiveComponent*> PrimComponents;
 	GetComponents(PrimComponents);
 
-
-	bIsInEditingLevelInstance = bInEditingState;
-
-	// We call the virtual method here to allow subclasses to extend the logic for determining level instance state.
-	const bool bPushEditingLevelInstanceState = IsInEditingLevelInstance();
+	bIsInEditLevelInstanceHierarchy = bInEditingState;
 
 	for (const auto& PrimComponent : PrimComponents)
 	{
 		if (PrimComponent->IsRegistered())
 		{
-			PrimComponent->PushLevelInstanceEditingStateToProxy(bPushEditingLevelInstanceState);
+			PrimComponent->PushLevelInstanceEditingStateToProxy(bIsInEditLevelInstanceHierarchy);
 		}
 	}
 
@@ -5329,9 +5343,14 @@ void AActor::UnregisterAllComponents(const bool bForReregister)
 		}
 	}
 
-	bHasRegisteredAllComponents = false;
+	if (bHasRegisteredAllComponents || GOptimizeActorRegistration == 0)
+	{
+		// With registration optimizations enabled, we need to make sure it unregisters components that were partially registered during construction,
+		// but we do not want to call PostUnregisterAllComponents if it was only partially registered
+		bHasRegisteredAllComponents = false;
 
-	PostUnregisterAllComponents();
+		PostUnregisterAllComponents();
+	}
 }
 
 void AActor::PostUnregisterAllComponents()
@@ -5350,9 +5369,6 @@ void AActor::RegisterAllComponents()
 	// 0 - means register all components
 	bool bAllRegistered = IncrementalRegisterComponents(0);
 	check(bAllRegistered);
-
-	// Clear this flag as it's no longer deferred
-	bHasDeferredComponentRegistration = false;
 }
 
 // Walks through components hierarchy and returns closest to root parent component that is unregistered
@@ -5462,12 +5478,22 @@ bool AActor::IncrementalRegisterComponents(int32 NumComponentsToRegister, FRegis
 #if PERF_TRACK_DETAILED_ASYNC_STATS
 		QUICK_SCOPE_CYCLE_COUNTER(STAT_AActor_IncrementalRegisterComponents_PostRegisterAllComponents);
 #endif
+		
+		// Skip the world post register if optimizations are enabled and it was already called
+		const bool bCallWorldPostRegister = (!bHasRegisteredAllComponents || GOptimizeActorRegistration == 0);
+
+		// Clear this flag as it's no longer deferred
+		bHasDeferredComponentRegistration = false;
+
 		bHasRegisteredAllComponents = true;
 		// Finally, call PostRegisterAllComponents
 		PostRegisterAllComponents();
 
-		// After all components have been registered the actor is considered fully added: notify the owning world.
-		World->NotifyPostRegisterAllActorComponents(this);
+		if (bCallWorldPostRegister)
+		{
+			// After all components have been registered the actor is considered fully added: notify the owning world.
+			World->NotifyPostRegisterAllActorComponents(this);
+		}
 		return true;
 	}
 	
@@ -5510,6 +5536,24 @@ void AActor::UpdateComponentTransforms()
 		if (ActorComp && ActorComp->IsRegistered())
 		{
 			ActorComp->UpdateComponentToWorld();
+		}
+	}
+}
+
+void AActor::UpdateComponentVisibility()
+{
+	for (UActorComponent* ActorComp : GetComponents())
+	{
+		if (ActorComp && ActorComp->IsRegistered())
+		{
+			ActorComp->OnActorVisibilityChanged();
+			if (UChildActorComponent* ChildActorComponent = Cast<UChildActorComponent>(ActorComp))
+			{
+				if (ChildActorComponent->GetChildActor())
+				{
+					ChildActorComponent->GetChildActor()->UpdateComponentVisibility();
+				}
+			}
 		}
 	}
 }
@@ -5581,7 +5625,7 @@ void AActor::HandleRegisterComponentWithWorld(UActorComponent* Component)
 
 		// The component was finally initialized, it can now be replicated
 		// Note that if this component does not ask to be initialized, it would have started to be replicated inside AddOwnedComponent.
-		if (bOwnerBeginPlayStarted)
+		if (bOwnerBeginPlayStarted && Component->GetIsReplicated())
 		{
 			AddComponentForReplication(Component);
 		}
@@ -5956,7 +6000,7 @@ void AActor::PostRename(UObject* OldOuter, const FName OldName)
 			{
 				if (Driver.NetDriver != nullptr && Driver.NetDriver->ShouldReplicateActor(this))
 				{
-					Driver.NetDriver->NotifyActorRenamed(this, OldName);
+					Driver.NetDriver->NotifyActorRenamed(this, OldOuter, OldName);
 				}
 			}
 		}
@@ -5970,7 +6014,11 @@ bool AActor::IsHLODRelevant() const
 		return false;
 	}
 
-	if (HasAnyFlags(RF_Transient))
+	if (HasAnyFlags(RF_Transient)
+#if WITH_EDITOR 
+		&& !IsInLevelInstance()			// Treat actors in LI as HLOD relevant for the sake of visualisation modes
+#endif
+	   )
 	{
 		return false;
 	}
@@ -5985,10 +6033,23 @@ bool AActor::IsHLODRelevant() const
 		return false;
 	}
 
+	if (IsEditorOnly())
+	{
+		return false;
+	}
+
 	if (!bEnableAutoLODGeneration)
 	{
 		return false;
 	}
+
+#if WITH_EDITOR 
+	// Only spatially loaded actors can be HLOD relevant in partitioned worlds
+	if (UWorld::IsPartitionedWorld(GetWorld()) && !GetIsSpatiallyLoaded())
+	{
+		return false;
+	}
+#endif
 
 	FVector Origin, Extent;
 	GetActorBounds(false, Origin, Extent);
@@ -6227,14 +6288,12 @@ TArray<const UDataLayerInstance*> AActor::GetDataLayerInstances() const
 // to resolve valid datalayers for this particular level.
 TArray<const UDataLayerInstance*> AActor::GetDataLayerInstancesInternal(bool bUseLevelContext, bool bIncludeParentDataLayers) const
 {
-	if (UseWorldPartitionRuntimeCellDataLayers())
+	if (const IWorldPartitionCell* Cell = GetWorldPartitionRuntimeCell())
 	{
-		const IWorldPartitionCell* Cell = GetLevel()->GetWorldPartitionRuntimeCell();
-		return Cell ? Cell->GetDataLayerInstances() : TArray<const UDataLayerInstance*>();
+		return Cell->GetDataLayerInstances();
 	}
 
 #if WITH_EDITOR
-	if (SupportsDataLayerType(UDataLayerInstance::StaticClass()))
 	{
 		TArray<const UDataLayerInstance*> DataLayerInstances;
 		if (UDataLayerManager* DataLayerManager = bUseLevelContext ? UDataLayerManager::GetDataLayerManager(this) : UDataLayerManager::GetDataLayerManager(GetWorld()))
@@ -6267,10 +6326,9 @@ TArray<const UDataLayerInstance*> AActor::GetDataLayerInstancesInternal(bool bUs
 
 bool AActor::ContainsDataLayer(const UDataLayerInstance* DataLayerInstance) const
 {
-	if (UseWorldPartitionRuntimeCellDataLayers())
+	if (const IWorldPartitionCell* Cell = GetWorldPartitionRuntimeCell())
 	{
-		const IWorldPartitionCell* Cell = GetLevel()->GetWorldPartitionRuntimeCell();
-		return Cell ? Cell->ContainsDataLayer(DataLayerInstance) : false;
+		return Cell->ContainsDataLayer(DataLayerInstance);
 	}
 
 #if WITH_EDITOR
@@ -6287,14 +6345,13 @@ bool AActor::ContainsDataLayer(const UDataLayerAsset* DataLayerAsset) const
 		return false;
 	}
 
-	if (UseWorldPartitionRuntimeCellDataLayers())
+	if (const IWorldPartitionCell* Cell = GetWorldPartitionRuntimeCell())
 	{
-		const IWorldPartitionCell* Cell = GetLevel()->GetWorldPartitionRuntimeCell();
-		return Cell ? Cell->ContainsDataLayer(DataLayerAsset) : false;
+		return Cell->ContainsDataLayer(DataLayerAsset);
 	}
 
 #if WITH_EDITOR
-	if (DataLayerAssets.Contains(DataLayerAsset))
+	if (DataLayerAssets.Contains(DataLayerAsset) || (ExternalDataLayerAsset == DataLayerAsset))
 	{
 		return true;
 	}
@@ -6308,12 +6365,25 @@ bool AActor::ContainsDataLayer(const UDataLayerAsset* DataLayerAsset) const
 	return false;
 }
 
+const UExternalDataLayerAsset* AActor::GetExternalDataLayerAsset() const
+{
+	if (const IWorldPartitionCell* Cell = GetWorldPartitionRuntimeCell())
+	{
+		const UExternalDataLayerInstance* ExternalDataLayerInstance = Cell->GetExternalDataLayerInstance();
+		return ExternalDataLayerInstance ? ExternalDataLayerInstance->GetExternalDataLayerAsset() : nullptr;
+	}
+#if WITH_EDITOR
+	return ExternalDataLayerAsset;
+#else
+	return nullptr;
+#endif
+}
+
 bool AActor::HasDataLayers() const
 {
-	if (UseWorldPartitionRuntimeCellDataLayers())
+	if (const IWorldPartitionCell* Cell = GetWorldPartitionRuntimeCell())
 	{
-		const IWorldPartitionCell* Cell = GetLevel()->GetWorldPartitionRuntimeCell();
-		return Cell ? Cell->HasDataLayers() : false;
+		return Cell->HasDataLayers();
 	}
 
 #if WITH_EDITOR
@@ -6323,10 +6393,27 @@ bool AActor::HasDataLayers() const
 #endif
 }
 
-bool AActor::UseWorldPartitionRuntimeCellDataLayers() const
+bool AActor::HasContentBundle() const
 {
-	ULevel* Level = GetLevel();
-	return Level != nullptr && Level->IsWorldPartitionRuntimeCell();
+	if (const IWorldPartitionCell* Cell = GetWorldPartitionRuntimeCell())
+	{
+		return Cell->HasContentBundle();
+	}
+
+#if WITH_EDITOR
+	return GetContentBundleGuid().IsValid();
+#else
+	return false;
+#endif
+}
+
+const IWorldPartitionCell* AActor::GetWorldPartitionRuntimeCell() const
+{
+	if (ULevel* Level = GetLevel())
+	{
+		return Level->GetWorldPartitionRuntimeCell();
+	}
+	return nullptr;
 }
 
 

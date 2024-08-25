@@ -24,6 +24,7 @@
 // SOFTWARE.
 ////////////////////////////////////////////////////////////////////////////////
 
+#include "acl/version.h"
 #include "acl/core/impl/compiler_utils.h"
 #include "acl/core/iallocator.h"
 #include "acl/core/error.h"
@@ -34,7 +35,16 @@
 	#include <malloc.h>
 #endif
 
-#if defined(ACL_HAS_ASSERT_CHECKS) && !defined(ACL_NO_ALLOCATOR_TRACKING)
+// This sets a predictable pattern on freshly allocated memory (0xCDCD..) and sets
+// another pattern on freed memory (0xFEFE..).
+// This helps tracking down uninitialized memory usage and use after free.
+#if defined(ACL_HAS_ASSERT_CHECKS) && !defined(ACL_NO_ALLOCATOR_SANITIZING) && !defined(ACL_ALLOCATOR_SANITIZE_ALLOCATIONS)
+	#define ACL_ALLOCATOR_SANITIZE_ALLOCATIONS
+#endif
+
+// This tracks the number of allocations and deallocations to make sure they agree.
+// This is a rudimentary check on double frees and memory leaks.
+#if defined(ACL_HAS_ASSERT_CHECKS) && !defined(ACL_NO_ALLOCATOR_TRACKING) && !defined(ACL_ALLOCATOR_TRACK_NUM_ALLOCATIONS)
 	#define ACL_ALLOCATOR_TRACK_NUM_ALLOCATIONS
 #endif
 
@@ -42,8 +52,12 @@
 // It should never be enabled in production!
 //#define ACL_ALLOCATOR_TRACK_ALL_ALLOCATIONS
 
+#if defined(ACL_ALLOCATOR_SANITIZE_ALLOCATIONS)
+	#include <cstring>
+#endif
+
 #if defined(ACL_ALLOCATOR_TRACK_NUM_ALLOCATIONS)
-	#include <atomic>
+	#include "acl/core/impl/atomic.impl.h"
 #endif
 
 #if defined(ACL_ALLOCATOR_TRACK_ALL_ALLOCATIONS)
@@ -54,6 +68,8 @@ ACL_IMPL_FILE_PRAGMA_PUSH
 
 namespace acl
 {
+	ACL_IMPL_VERSION_NAMESPACE_BEGIN
+
 	////////////////////////////////////////////////////////////////////////////////
 	// An ANSI allocator implementation. It uses the system malloc/free to manage
 	// memory as well as provides some debugging functionality to track memory leaks.
@@ -135,8 +151,14 @@ namespace acl
 			ptr = aligned_alloc(alignment, aligned_size);
 #endif
 
+#if defined(ACL_ALLOCATOR_SANITIZE_ALLOCATIONS)
+			if (ptr != nullptr)
+				std::memset(ptr, 0xCD, size);
+#endif
+
 #if defined(ACL_ALLOCATOR_TRACK_ALL_ALLOCATIONS)
-			m_debug_allocations.insert({ {ptr, AllocationEntry{ptr, size}} });
+			if (ptr != nullptr)
+				m_debug_allocations.insert({ {ptr, AllocationEntry{ptr, size}} });
 #endif
 
 			return ptr;
@@ -147,16 +169,10 @@ namespace acl
 			if (ptr == nullptr)
 				return;
 
-			(void)size;
-
-#if defined(_WIN32)
-			_aligned_free(ptr);
-#elif defined(__ANDROID__)
-			const size_t* padding_size_ptr = add_offset_to_ptr<size_t>(ptr, -sizeof(size_t));
-			void* allocated_ptr = add_offset_to_ptr<void>(ptr, -*padding_size_ptr);
-			free(allocated_ptr);
+#if defined(ACL_ALLOCATOR_SANITIZE_ALLOCATIONS)
+			std::memset(ptr, 0xFE, size);
 #else
-			free(ptr);
+			(void)size;
 #endif
 
 #if defined(ACL_ALLOCATOR_TRACK_ALL_ALLOCATIONS)
@@ -169,6 +185,16 @@ namespace acl
 #if defined(ACL_ALLOCATOR_TRACK_NUM_ALLOCATIONS)
 			const int32_t old_value = m_allocation_count.fetch_sub(1, std::memory_order_relaxed);
 			ACL_ASSERT(old_value > 0, "The number of allocations and deallocations does not match");
+#endif
+
+#if defined(_WIN32)
+			_aligned_free(ptr);
+#elif defined(__ANDROID__)
+			const size_t* padding_size_ptr = add_offset_to_ptr<size_t>(ptr, -sizeof(size_t));
+			void* allocated_ptr = add_offset_to_ptr<void>(ptr, -*padding_size_ptr);
+			free(allocated_ptr);
+#else
+			free(ptr);
 #endif
 		}
 
@@ -191,6 +217,8 @@ namespace acl
 		std::unordered_map<void*, AllocationEntry> m_debug_allocations;
 #endif
 	};
+
+	ACL_IMPL_VERSION_NAMESPACE_END
 }
 
 ACL_IMPL_FILE_PRAGMA_POP

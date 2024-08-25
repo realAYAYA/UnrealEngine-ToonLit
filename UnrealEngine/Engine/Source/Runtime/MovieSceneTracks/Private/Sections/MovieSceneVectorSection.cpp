@@ -85,21 +85,25 @@ struct TVectorSectionEditorData
 	TVectorSectionEditorData(int32 NumChannels)
 	{
 		MetaData[0].SetIdentifiers("Vector.X", FCommonChannelData::ChannelX);
+		MetaData[0].SubPropertyPath = TEXT("X");
 		MetaData[0].SortOrder = 0;
 		MetaData[0].Color = FCommonChannelData::RedChannelColor;
 		MetaData[0].bCanCollapseToTrack = false;
 
 		MetaData[1].SetIdentifiers("Vector.Y", FCommonChannelData::ChannelY);
+		MetaData[1].SubPropertyPath = TEXT("Y");
 		MetaData[1].SortOrder = 1;
 		MetaData[1].Color = FCommonChannelData::GreenChannelColor;
 		MetaData[1].bCanCollapseToTrack = false;
 
 		MetaData[2].SetIdentifiers("Vector.Z", FCommonChannelData::ChannelZ);
+		MetaData[2].SubPropertyPath = TEXT("Z");
 		MetaData[2].SortOrder = 2;
 		MetaData[2].Color = FCommonChannelData::BlueChannelColor;
 		MetaData[2].bCanCollapseToTrack = false;
 
 		MetaData[3].SetIdentifiers("Vector.W", FCommonChannelData::ChannelW);
+		MetaData[3].SubPropertyPath = TEXT("W");
 		MetaData[3].SortOrder = 3;
 		MetaData[3].bCanCollapseToTrack = false;
 

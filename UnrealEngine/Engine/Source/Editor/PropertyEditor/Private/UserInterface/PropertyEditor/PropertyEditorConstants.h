@@ -6,6 +6,7 @@
 #include "Templates/SharedPointer.h"
 
 class FName;
+class FText;
 struct FSlateBrush;
 
 namespace UE::PropertyEditor::Private
@@ -25,6 +26,8 @@ public:
 	static const FName MD_UseEnumValuesAsMaskValuesInEditor;
 
 	static constexpr float PropertyRowHeight = 26.0f;
+
+	static const FText DefaultUndeterminedText;
 
 	static const FSlateBrush* GetOverlayBrush(const TSharedRef<class FPropertyEditor> PropertyEditor);
 

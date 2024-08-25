@@ -4,10 +4,15 @@
 
 #include "Video/VideoEncoder.h"
 #include "Video/Resources/VideoResourceRHI.h"
-#include "Video/Resources/VideoResourceVulkan.h"
 
-#if PLATFORM_WINDOWS
-#include "Video/Resources/Windows/VideoResourceD3D.h"
+#if AVCODECS_USE_D3D
+#include "Video/Resources/D3D/VideoResourceD3D.h"
+#endif
+#if AVCODECS_USE_VULKAN
+#include "Video/Resources/Vulkan/VideoResourceVulkan.h"
+#endif
+#if AVCODECS_USE_METAL
+#include "Video/Resources/Metal/VideoResourceMetal.h"
 #endif
 
 template <typename TConfig>
@@ -44,17 +49,25 @@ public:
 
 		switch (GDynamicRHI->GetInterfaceType())
 		{
+#if AVCODECS_USE_VULKAN
 		case ERHIInterfaceType::Vulkan:
 			Child = FVideoEncoder::Wrap<FVideoResourceRHI, TConfig>(FVideoEncoder::Create<FVideoResourceVulkan, TConfig>(NewDevice, NewInstance));
 		
 			break;
-#if PLATFORM_WINDOWS
+#endif
+#if AVCODECS_USE_D3D
 		case ERHIInterfaceType::D3D11:
 			Child = FVideoEncoder::Wrap<FVideoResourceRHI, TConfig>(FVideoEncoder::Create<FVideoResourceD3D11, TConfig>(NewDevice, NewInstance));
 		
 			break;
 		case ERHIInterfaceType::D3D12:
 			Child = FVideoEncoder::Wrap<FVideoResourceRHI, TConfig>(FVideoEncoder::Create<FVideoResourceD3D12, TConfig>(NewDevice, NewInstance));
+		
+			break;
+#endif
+#if AVCODECS_USE_METAL
+        case ERHIInterfaceType::Metal:
+			Child = FVideoEncoder::Wrap<FVideoResourceRHI, TConfig>(FVideoEncoder::Create<FVideoResourceMetal, TConfig>(NewDevice, NewInstance));
 		
 			break;
 #endif

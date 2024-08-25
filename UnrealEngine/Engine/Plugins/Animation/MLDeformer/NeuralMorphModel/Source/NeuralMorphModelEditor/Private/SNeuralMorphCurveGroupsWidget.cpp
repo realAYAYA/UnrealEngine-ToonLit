@@ -88,11 +88,6 @@ namespace UE::NeuralMorphModel
 			{			
 				Menu.AddMenuEntry(Actions.DeleteSelectedItems);
 			}
-
-			if (!GetRootItems().IsEmpty())
-			{
-				Menu.AddMenuEntry(Actions.ClearGroups);
-			}
 		Menu.EndSection();
 
 		return Menu.MakeWidget();

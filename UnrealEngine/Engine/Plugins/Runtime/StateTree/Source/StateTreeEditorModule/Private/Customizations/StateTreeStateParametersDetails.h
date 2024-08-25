@@ -7,6 +7,7 @@
 class IPropertyHandle;
 class IPropertyUtilities;
 class UStateTree;
+class UStateTreeState;
 class UStateTreeEditorData;
 
 /**
@@ -36,6 +37,7 @@ private:
 
 	bool bFixedLayout = false;
 
-	UStateTreeEditorData* EditorData = nullptr;
-	UStateTree* StateTree = nullptr;
+	TWeakObjectPtr<UStateTreeEditorData> WeakEditorData = nullptr;
+	TWeakObjectPtr<UStateTree> WeakStateTree = nullptr;
+	TWeakObjectPtr<UStateTreeState> WeakState = nullptr;
 };

@@ -6,6 +6,7 @@
 #include "GeometryCacheModule.h"
 #include "GeometryCacheStreamerSettings.h"
 #include "IGeometryCacheStream.h"
+#include "Templates/RefCounting.h"
 #include "Widgets/Notifications/SNotificationList.h"
 
 #define LOCTEXT_NAMESPACE "GeometryCacheStreamer"
@@ -38,10 +39,10 @@ public:
 	//~ Begin IGeometryCacheStreamer Interface
 	static IGeometryCacheStreamer& Get();
 
-	virtual void RegisterTrack(UGeometryCacheTrack* AbcTrack, IGeometryCacheStream* Stream) override;
-	virtual void UnregisterTrack(UGeometryCacheTrack* AbcTrack) override;
-	virtual bool IsTrackRegistered(UGeometryCacheTrack* AbcTrack) const override;
-	virtual bool TryGetFrameData(UGeometryCacheTrack* AbcTrack, int32 FrameIndex, FGeometryCacheMeshData& OutMeshData) override;
+	virtual void RegisterTrack(UGeometryCacheTrack* Track, IGeometryCacheStream* Stream) override;
+	virtual void UnregisterTrack(UGeometryCacheTrack* Track) override;
+	virtual bool IsTrackRegistered(UGeometryCacheTrack* Track) const override;
+	virtual bool TryGetFrameData(UGeometryCacheTrack* Track, int32 FrameIndex, FGeometryCacheMeshData& OutMeshData) override;
 	//~ End IGeometryCacheStreamer Interface
 
 private:
@@ -50,7 +51,19 @@ private:
 private:
 	FTSTicker::FDelegateHandle TickHandle;
 
-	typedef TMap<UGeometryCacheTrack*, IGeometryCacheStream*> FTracksToStreams;
+	class FRefCountedStream : public FThreadSafeRefCountedObject
+	{
+	public:
+		FRefCountedStream(IGeometryCacheStream* InStream)
+		: Stream(InStream)
+		{
+			AddRef();
+		}
+
+		IGeometryCacheStream* Stream = nullptr;
+	};
+
+	typedef TMap<UGeometryCacheTrack*, FRefCountedStream*> FTracksToStreams;
 	FTracksToStreams TracksToStreams;
 
 	const int32 MaxReads;
@@ -100,7 +113,7 @@ void FGeometryCacheStreamer::Tick(float Time)
 		for (const auto& Pair : TracksToStreams)
 		{
 			TArray<int32> FramesCompleted;
-			IGeometryCacheStream* Stream = Pair.Value;
+			IGeometryCacheStream* Stream = Pair.Value->Stream;
 			Stream->UpdateRequestStatus(FramesCompleted);
 			NumReads -= FramesCompleted.Num();
 			NumFramesToStream += Stream->GetNumFramesNeeded();
@@ -111,7 +124,7 @@ void FGeometryCacheStreamer::Tick(float Time)
 		int32 AvailableReads = MaxReads - NumReads;
 		if (NumStreams > 0 && AvailableReads > 0)
 		{
-			TArray<IGeometryCacheStream*> Streams;
+			TArray<FRefCountedStream*> Streams;
 			TracksToStreams.GenerateValueArray(Streams);
 
 			// Streams are checked round robin until there are no more reads available
@@ -131,7 +144,7 @@ void FGeometryCacheStreamer::Tick(float Time)
 					continue;
 				}
 
-				IGeometryCacheStream* Stream = Streams[CurrentIndex];
+				IGeometryCacheStream* Stream = Streams[CurrentIndex]->Stream;
 				if (Stream->GetNumFramesNeeded() > 0)
 				{
 					if (Stream->RequestFrameData())
@@ -206,7 +219,7 @@ void FGeometryCacheStreamer::BalanceStreams()
 	FGeometryCacheStreamStats AggregatedStats;
 	for (const auto& Pair : TracksToStreams)
 	{
-		IGeometryCacheStream* Stream = Pair.Value;
+		IGeometryCacheStream* Stream = Pair.Value->Stream;
 		const FGeometryCacheStreamStats& StreamStats = Stream->GetStreamStats();
 		AggregatedStats.MemoryUsed += StreamStats.MemoryUsed;
 		AggregatedStats.CachedDuration = FMath::Max(AggregatedStats.CachedDuration, StreamStats.CachedDuration);
@@ -231,7 +244,7 @@ void FGeometryCacheStreamer::BalanceStreams()
 		const float AvgDuration = MemoryLimit / AggregatedStats.AverageBitrate;
 		for (const auto& Pair : TracksToStreams)
 		{
-			IGeometryCacheStream* Stream = Pair.Value;
+			IGeometryCacheStream* Stream = Pair.Value->Stream;
 			const FGeometryCacheStreamStats& StreamStats = Stream->GetStreamStats();
 
 			const float MaxDuration = FMath::Clamp(AvgDuration, 0.f, DurationLimit);
@@ -241,34 +254,43 @@ void FGeometryCacheStreamer::BalanceStreams()
 	}
 }
 
-void FGeometryCacheStreamer::RegisterTrack(UGeometryCacheTrack* AbcTrack, IGeometryCacheStream* Stream)
+void FGeometryCacheStreamer::RegisterTrack(UGeometryCacheTrack* Track, IGeometryCacheStream* Stream)
 {
-	check(AbcTrack && Stream && !TracksToStreams.Contains(AbcTrack));
-
-	TracksToStreams.Add(AbcTrack, Stream);
-}
-
-void FGeometryCacheStreamer::UnregisterTrack(UGeometryCacheTrack* AbcTrack)
-{
-	if (IGeometryCacheStream** Stream = TracksToStreams.Find(AbcTrack))
+	if (FRefCountedStream** RefCountStream = TracksToStreams.Find(Track))
 	{
-		int32 NumRequests = (*Stream)->CancelRequests();
-		NumReads -= NumRequests;
-
-		TracksToStreams.Remove(AbcTrack);
+		(*RefCountStream)->AddRef();
+	}
+	else
+	{
+		TracksToStreams.Add(Track, new FRefCountedStream(Stream));
 	}
 }
 
-bool FGeometryCacheStreamer::IsTrackRegistered(UGeometryCacheTrack* AbcTrack) const
+void FGeometryCacheStreamer::UnregisterTrack(UGeometryCacheTrack* Track)
 {
-	return TracksToStreams.Contains(AbcTrack);
+	if (FRefCountedStream** RefCountStream = TracksToStreams.Find(Track))
+	{
+		int32 NumRequests = ((*RefCountStream)->Stream)->CancelRequests();
+		NumReads -= NumRequests;
+
+		// The refcounted object deletes itself when the count reaches 0
+		if ((*RefCountStream)->Release() == 0)
+		{
+			TracksToStreams.Remove(Track);
+		}
+	}
 }
 
-bool FGeometryCacheStreamer::TryGetFrameData(UGeometryCacheTrack* AbcTrack, int32 FrameIndex, FGeometryCacheMeshData& OutMeshData)
+bool FGeometryCacheStreamer::IsTrackRegistered(UGeometryCacheTrack* Track) const
 {
-	if (IGeometryCacheStream** Stream = TracksToStreams.Find(AbcTrack))
+	return TracksToStreams.Contains(Track);
+}
+
+bool FGeometryCacheStreamer::TryGetFrameData(UGeometryCacheTrack* Track, int32 FrameIndex, FGeometryCacheMeshData& OutMeshData)
+{
+	if (FRefCountedStream** RefCountStream = TracksToStreams.Find(Track))
 	{
-		if ((*Stream)->GetFrameData(FrameIndex, OutMeshData))
+		if (((*RefCountStream)->Stream)->GetFrameData(FrameIndex, OutMeshData))
 		{
 			return true;
 		}

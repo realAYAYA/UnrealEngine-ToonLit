@@ -1,20 +1,21 @@
 ﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "AnimNextParameterBlockEditor.h"
+
 #include "ParameterBlockEditorMode.h"
 #include "Param/AnimNextParameterBlock.h"
 #include "Param/AnimNextParameterBlock_EditorData.h"
 #include "EdGraphNode_Comment.h"
 #include "ExternalPackageHelper.h"
-#include "Graph/SActionMenu.h"
+#include "Common/SActionMenu.h"
 #include "UncookedOnlyUtils.h"
 #include "Framework/Commands/GenericCommands.h"
 #include "RigVMModel/RigVMController.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "ScopedTransaction.h"
-#include "Param/AnimNextParameterBlockEntry.h"
 #include "Param/AnimNextParameterSettings.h"
-#include "ParameterBlockEditorMode.h"
+#include "Param/AnimNextParameterExecuteContext.h"
+#include "Widgets/Docking/SDockTab.h"
 
 #define LOCTEXT_NAMESPACE "AnimNextParameterBlockEditor"
 
@@ -61,6 +62,7 @@ void FParameterBlockEditor::InitEditor(const EToolkitMode::Type InMode, const TS
 	DocumentSummoner->OnCreateGraphEditorWidget().BindSP(this, &FParameterBlockEditor::CreateGraphEditorWidget);
 	DocumentSummoner->OnGraphEditorFocused().BindSP(this, &FParameterBlockEditor::OnGraphEditorFocused);
 	DocumentSummoner->OnGraphEditorBackgrounded().BindSP(this, &FParameterBlockEditor::OnGraphEditorBackgrounded);
+	DocumentSummoner->OnSaveGraphState().BindSP(this, &FParameterBlockEditor::HandleSaveGraphState);
 	GraphEditorTabFactoryPtr = DocumentSummoner;
 	DocumentManager->RegisterDocumentFactory(DocumentSummoner);
 
@@ -76,18 +78,30 @@ void FParameterBlockEditor::InitEditor(const EToolkitMode::Type InMode, const TS
 	ExtendMenu();
 	ExtendToolbar();
 	RegenerateMenusAndToolbars();
-	RestoreLastEditedState();
 }
 
-void FParameterBlockEditor::RestoreLastEditedState()
+void FParameterBlockEditor::RestoreEditedObjectState()
 {
 	for (const FEditedDocumentInfo& Document : EditorData->LastEditedDocuments)
 	{
 		if (UObject* Obj = Document.EditedObjectPath.ResolveObject())
 		{
-			OpenDocument(Obj, FDocumentTracker::RestorePreviousDocument);
+			if(TSharedPtr<SDockTab> DockTab = OpenDocument(Obj, FDocumentTracker::RestorePreviousDocument))
+			{
+				TSharedRef<SGraphEditor> GraphEditor = StaticCastSharedRef<SGraphEditor>(DockTab->GetContent());
+				GraphEditor->SetViewLocation(Document.SavedViewOffset, Document.SavedZoomAmount);
+			}
 		}
 	}
+}
+
+void FParameterBlockEditor::SaveEditedObjectState()
+{
+	// Clear currently edited documents
+	EditorData->LastEditedDocuments.Empty();
+
+	// Ask all open documents to save their state, which will update LastEditedDocuments
+	DocumentManager->SaveAllState();
 }
 
 TSharedPtr<SDockTab> FParameterBlockEditor::OpenDocument(const UObject* InForObject, FDocumentTracker::EOpenDocumentCause InCause)
@@ -178,7 +192,7 @@ UEdGraph* FParameterBlockEditor::GetFocusedGraph() const
 URigVMGraph* FParameterBlockEditor::GetFocusedVMGraph() const
 {
 	UAnimNextParameterBlock_EdGraph* EdGraph = Cast<UAnimNextParameterBlock_EdGraph>(GetFocusedGraph());
-	return EditorData->GetVMGraphForEdGraph(EdGraph);
+	return EditorData->GetRigVMGraphForEditorObject(EdGraph);
 }
 
 URigVMController* FParameterBlockEditor::GetFocusedVMController() const
@@ -215,7 +229,8 @@ FActionMenuContent FParameterBlockEditor::OnCreateGraphActionMenu(UEdGraph* InGr
 		.Graph(InGraph)
 		.NewNodePosition(InNodePosition)
 		.DraggedFromPins(InDraggedPins)
-		.OnClosedCallback(InOnMenuClosed);
+		.OnClosedCallback(InOnMenuClosed)
+		.AllowedExecuteContexts( { FRigVMExecuteContext::StaticStruct(), FAnimNextParameterExecuteContext::StaticStruct() });
 
 	TSharedPtr<SWidget> FilterTextBox = StaticCastSharedRef<SWidget>(ActionMenu->GetFilterTextBox());
 	return FActionMenuContent(StaticCastSharedRef<SWidget>(ActionMenu), FilterTextBox);
@@ -231,6 +246,8 @@ void FParameterBlockEditor::OnNodeTitleCommitted(const FText& NewText, ETextComm
 
 void FParameterBlockEditor::CloseDocumentTab(const UObject* DocumentID)
 {
+	EditorData->LastEditedDocuments.Remove(const_cast<UObject*>(DocumentID));
+
 	TSharedRef<FTabPayload_UObject> Payload = FTabPayload_UObject::Make(DocumentID);
 	DocumentManager->CloseTab(Payload);
 }
@@ -365,12 +382,11 @@ void FParameterBlockEditor::GetSaveableObjects(TArray<UObject*>& OutObjects) con
 
 	// Get external objects too
 	FExternalPackageHelper::GetExternalSaveableObjects(EditorData, OutObjects);
+}
 
-	// Get any referenced objects too for convenience 
-	for(UAnimNextParameterBlockEntry* Entry : EditorData->Entries)
-	{
-		Entry->GetEditedObjects(OutObjects);
-	}
+void FParameterBlockEditor::HandleSaveGraphState(UEdGraph* InGraph, FVector2D InViewOffset, float InZoomAmount)
+{
+	EditorData->LastEditedDocuments.AddUnique(FEditedDocumentInfo(InGraph, InViewOffset, InZoomAmount));
 }
 
 }

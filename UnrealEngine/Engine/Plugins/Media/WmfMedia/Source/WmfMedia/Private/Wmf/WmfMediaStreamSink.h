@@ -30,7 +30,6 @@ class FWmfMediaStreamSink
 	: public IMFGetService
 	, public IMFMediaTypeHandler
 	, public IMFStreamSink
-	, public IMFAsyncCallback
 {
 public:
 
@@ -54,14 +53,6 @@ public:
 	FWmfMediaStreamSink(const GUID& InMajorType, DWORD InStreamId);
 
 public:
-
-	/**
-	 * Get the next sample in the queue.
-	 *
-	 * @param OutSample Will contain the sample.
-	 * @return true if a sample was returned, false if the queue is empty.
-	 */
-	bool GetNextSample(TComPtr<IMFSample>& OutSample);
 
 	/**
 	 * Initialize this sink.
@@ -88,16 +79,6 @@ public:
 	 * @see Preroll, Restart, Start, Stop
 	 */
 	HRESULT Pause();
-
-	/**
-	 * Preroll the sink.
-	 *
-	 * This method is called by the owner media sink.
-	 *
-	 * @return Result code.
-	 * @see Pause, Restart, Start, Stop
-	 */
-	HRESULT Preroll();
 
 	/**
 	 * Restart the stream.
@@ -175,24 +156,11 @@ public:
 
 public:
 
-	//~ IMFAsyncCallback interface
-	STDMETHODIMP Invoke(IMFAsyncResult* pAsyncResult);
-	STDMETHODIMP GetParameters(DWORD* pdwFlags, DWORD* pdwQueue);
-
-public:
-
 	//~ IUnknown interface
 
 	STDMETHODIMP_(ULONG) AddRef();
 	STDMETHODIMP QueryInterface(REFIID RefID, void** Object);
 	STDMETHODIMP_(ULONG) Release();
-
-	/**
-	 * Set current presentation 
-	 *
-	 * @param InPresentationClock Presentation clock to use
-	 */
-	void SetPresentationClock(IMFPresentationClock* InPresentationClock);
 
 	/**
 	 * Set current clock rate
@@ -206,8 +174,27 @@ public:
 	 *
 	 * @param InVideoSamplePool sample pool to get sample from
 	 * @param InVideoSampleQueue Sample queue to fill
+	 * @param InSequenceIndex Pointer to current sequence index value
 	 */
-	void SetMediaSamplePoolAndQueue(TSharedPtr<FWmfMediaHardwareVideoDecodingTextureSamplePool>& InVideoSamplePool, TMediaSampleQueue<IMediaTextureSample>* InVideoSampleQueue);
+	void SetMediaSamplePoolAndQueue(TSharedPtr<FWmfMediaHardwareVideoDecodingTextureSamplePool>& InVideoSamplePool, TMediaSampleQueue<IMediaTextureSample>* InVideoSampleQueue, TFunction<FMediaTimeStamp(FTimespan, EMediaTrackType)>&& InAdjustTimeStamp);
+
+	/**
+	 * Request more data being delivered to video output queue 
+	 */
+	void OnRequestMoreData();
+
+	/**
+	 * Notify instance that a seek logically started
+	 */
+	void OnSeekStarted();
+
+
+	void OnSessionEnded();
+
+	/**
+	 * Register lambda to execute (once) as soon as any pending requests are done (if any are pending)
+	 */
+	bool ExecuteOnceNoPendingRequests(TFunction<void()>&& ExecuteOnIdle);
 
 private:
 
@@ -220,19 +207,6 @@ private:
 	 * @param pSample Sample from decoder
 	 */
 	void CopyTextureAndEnqueueSample(IMFSample* pSample);
-
-	/**
-	 * Check whether sample is ready to display otherwise re-schedule
-	 *
-	 * @param pSample Sample from decoder
-	 * @note This function is not thread-safe but all caller are using a Scope Lock
-	 */
-	void ScheduleWaitForNextSample(IMFSample* pSample);
-
-	/**
-	 * Close Timer
-	 */
-	void CloseTimer();
 
 	/**
 	 * Check if video sample queue is full
@@ -257,9 +231,6 @@ private:
 	/** The decoder we belong to. */
 	TComPtr<WmfMediaDecoder> Decoder;
 
-	/** Whether the sink is currently prerolling samples. */
-	bool Prerolling;
-
 	/** Holds a reference counter for this instance. */
 	int32 RefCount;
 
@@ -268,9 +239,6 @@ private:
 
 	/** The sink's major media type. */
 	const GUID StreamType;
-
-	/** Presentation clock which dictate when to present a sample. */
-	TComPtr<IMFPresentationClock> PresentationClock;
 
 	/** ClockRate to support reverse playback */
 	float ClockRate;
@@ -281,8 +249,28 @@ private:
 	/** Video sample pool from which to get next free sample */
 	TSharedPtr<FWmfMediaHardwareVideoDecodingTextureSamplePool> VideoSamplePool;
 
-	/** Video sample queue which is filled with current sample*/
+	/** Video sample queue which is filled with current sample */
 	TMediaSampleQueue<IMediaTextureSample>* VideoSampleQueue;
+
+	/** Number of requests for new video samples currently in flight */
+	int32 NumRequestsInFlight;
+	int32 NumRequestsInFlightWithSystem;
+	TFunction<void()> OnIdleAction;
+
+	/** If true seek is in progress logically */
+	bool bSeekInProgress;
+
+	/** If true scrubbing is in progress logically */
+	bool bScrubbingInProgress;
+
+	/** If true system is in scrubbing mode (play with rate==0) */
+	bool bSystemIsScrubbing;
+
+	/** If true segment just ended, but is still logically being processed */
+	bool bSegmentEnded;
+	
+	/** Callback to adjust given timestamp for the output queue */
+	TFunction<FMediaTimeStamp(FTimespan,EMediaTrackType)> AdjustTimeStamp;
 
 	/** Make sure we don't spam output with MF_MT_SUBTYPE error message */
 	bool bShowSubTypeErrorMessage;
@@ -299,13 +287,6 @@ private:
 		/** The media sample. */
 		TComPtr<IMFSample> Sample;
 	};
-
-	/** Media sample array used as dequeue to store extra samples when video sample queue is full */
-#if WMFMEDIA_PLAYER_VERSION == 1
-	TArray<FQueuedSample> SampleQueue;
-#else // WMFMEDIA_PLAYER_VERSION == 1
-	TQueue<FQueuedSample> SampleQueue;
-#endif // WMFMEDIA_PLAYER_VERSION == 1
 };
 
 #endif

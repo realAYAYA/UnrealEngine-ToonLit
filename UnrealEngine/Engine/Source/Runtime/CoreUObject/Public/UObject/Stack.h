@@ -43,12 +43,12 @@ FORCEINLINE void* UeVstackAllocHelper(FVirtualStackAllocator* Allocator, size_t 
 		// for these 'stack' allocations we call Free on both commit and abort, since
 		// the call frame that these would have otherwise existed in will always be
 		// returned from by the time we commit or abort
-		AutoRTFM::OpenCommit([Result]()
+		AutoRTFM::OnCommit([Result]
 		{
 			FMemory::Free(Result);
 		});
 
-		AutoRTFM::OpenAbort([Result]()
+		AutoRTFM::OnAbort([Result]
 		{
 			FMemory::Free(Result);
 		});
@@ -188,7 +188,7 @@ public:
 		FBlueprintContextTracker& BlueprintExceptionTracker = FBlueprintContextTracker::Get();
 		if (BlueprintExceptionTracker.ScriptStack.Num())
 		{
-			BlueprintExceptionTracker.ScriptStack.Pop(false);
+			BlueprintExceptionTracker.ScriptStack.Pop(EAllowShrinking::No);
 		}
 
 		// ensure that GTopTrackingStackFrame is accurate
@@ -202,6 +202,13 @@ public:
 		}
 #endif
 		PopThreadLocalTopStackFrame(PreviousTrackingFrame);
+		
+		if (PreviousTrackingFrame)
+		{
+			// we propagate bAbortingExecution to frames below to avoid losing abort state
+			// across heterogeneous frames (eg. bpvm -> c++ -> bpvm)
+			PreviousTrackingFrame->bAbortingExecution |= bAbortingExecution;
+		}
 	}
 
 	// Functions.
@@ -238,6 +245,7 @@ public:
 	TNumericType ReadInt();
 	float ReadFloat();
 	double ReadDouble();
+	ScriptPointerType ReadPointer();
 	FName ReadName();
 	UObject* ReadObject();
 	int32 ReadWord();
@@ -342,6 +350,19 @@ inline FFrame::FFrame( UObject* InObject, UFunction* InNode, void* InLocals, FFr
 	FBlueprintContextTracker::Get().ScriptStack.Push(this);
 #endif
 	PreviousTrackingFrame = PushThreadLocalTopStackFrame(this);
+	
+	{
+		// we propagate bAbortingExecution to *upper* frames to avoid invoking code
+		// on top of already-aborted frames
+		if (PreviousTrackingFrame)
+		{
+			bAbortingExecution |= PreviousTrackingFrame->bAbortingExecution;
+		}
+		if (InPreviousFrame)
+		{
+			bAbortingExecution |= InPreviousFrame->bAbortingExecution;
+		}
+	}
 
 #if PER_FUNCTION_SCRIPT_STATS
 	if (InPreviousFrame)
@@ -377,12 +398,8 @@ inline TNumericType FFrame::ReadInt()
 
 inline UObject* FFrame::ReadObject()
 {
-	// we always pull 64-bits of data out, which is really a UObject* in some representation (depending on platform)
-	ScriptPointerType TempCode = FPlatformMemory::ReadUnaligned<ScriptPointerType>(Code);
+	UObject* Result = (UObject*) ReadPointer();
 
-	// turn that uint32 into a UObject pointer
-	UObject* Result = (UObject*)(TempCode);
-	Code += sizeof(ScriptPointerType);
 #if UE_WITH_OBJECT_HANDLE_LATE_RESOLVE
 	TObjectPtr<UObject> ObjPtr(Result);
 	return ObjPtr.Get();
@@ -393,8 +410,7 @@ inline UObject* FFrame::ReadObject()
 
 inline FProperty* FFrame::ReadProperty()
 {
-	FProperty* Result = (FProperty*)ReadObject();
-	MostRecentProperty = Result;
+	FProperty* Result = ReadPropertyUnchecked();
 
 	// Callers don't check for NULL; this method is expected to succeed.
 	check(Result);
@@ -404,7 +420,7 @@ inline FProperty* FFrame::ReadProperty()
 
 inline FProperty* FFrame::ReadPropertyUnchecked()
 {
-	FProperty* Result = (FProperty*)ReadObject();
+	FProperty* Result = (FProperty*)ReadPointer();
 	MostRecentProperty = Result;
 	return Result;
 }
@@ -417,6 +433,15 @@ inline float FFrame::ReadFloat()
 inline double FFrame::ReadDouble()
 {
 	return Read<double>();
+}
+
+inline ScriptPointerType FFrame::ReadPointer()
+{
+	// Serialized pointers are always the size of ScriptPointerType 
+	ScriptPointerType Pointer = FPlatformMemory::ReadUnaligned<ScriptPointerType>(Code);
+
+	Code += sizeof(ScriptPointerType);
+	return Pointer;
 }
 
 inline int32 FFrame::ReadWord()
@@ -439,7 +464,7 @@ inline VariableSizeType FFrame::ReadVariableSize( FProperty** ExpressionField )
 {
 	VariableSizeType Result=0;
 
-	FField* Field = (FField*)ReadObject(); // Is it safe to assume it's an FField?
+	FField* Field = (FField*)ReadPropertyUnchecked(); // Is it safe to assume it's an FField?
 	FProperty* Property = CastField<FProperty>(Field);
 	if (Property)
 	{

@@ -108,7 +108,7 @@ const TCHAR* ReadNumberFromBuffer(const TCHAR* Buffer, FFormatArgumentValue& Out
 	while (NumericString.Len() > 0 && FCString::Strchr(SuffixNumericChars, NumericString[NumericString.Len() - 1]))
 	{
 		SuffixString += NumericString[NumericString.Len() - 1];
-		NumericString.RemoveAt(NumericString.Len() - 1, 1, /*bAllowShrinking*/false);
+		NumericString.RemoveAt(NumericString.Len() - 1, 1, EAllowShrinking::No);
 	}
 
 	if (!NumericString.IsNumeric())
@@ -687,7 +687,9 @@ void FTextHistory::UpdateDisplayStringIfOutOfDate()
 	{
 		uint16 CurrentGlobalRevision = 0;
 		uint16 CurrentLocalRevision = 0;
-		FTextLocalizationManager::Get().GetTextRevisions(GetTextId(), CurrentGlobalRevision, CurrentLocalRevision);
+		UE_AUTORTFM_OPEN({
+			FTextLocalizationManager::Get().GetTextRevisions(GetTextId(), CurrentGlobalRevision, CurrentLocalRevision);
+		});
 
 		if (GlobalRevision != CurrentGlobalRevision || LocalRevision != CurrentLocalRevision)
 		{
@@ -733,29 +735,6 @@ FTextHistory_Base::FTextHistory_Base(const FTextId& InTextId, FString&& InSource
 	, LocalizedString(MoveTemp(InLocalizedString))
 {
 	MarkDisplayStringUpToDate();
-}
-
-FTextHistory_Base::FTextHistory_Base(FTextHistory_Base&& Other)
-	: FTextHistory(MoveTemp(Other))
-	, TextId(Other.TextId)
-	, SourceString(MoveTemp(Other.SourceString))
-	, LocalizedString(MoveTemp(Other.LocalizedString))
-{
-	Other.TextId.Reset();
-}
-
-FTextHistory_Base& FTextHistory_Base::operator=(FTextHistory_Base&& Other)
-{
-	FTextHistory::operator=(MoveTemp(Other));
-	if (this != &Other)
-	{
-		TextId = Other.TextId;
-		SourceString = MoveTemp(Other.SourceString);
-		LocalizedString = MoveTemp(Other.LocalizedString);
-
-		Other.TextId.Reset();
-	}
-	return *this;
 }
 
 FTextId FTextHistory_Base::GetTextId() const
@@ -867,22 +846,13 @@ void FTextHistory_Base::Serialize(FStructuredArchive::FRecord Record)
 			}
 #endif // USE_STABLE_LOCALIZATION_KEYS
 
+#if WITH_EDITOR
 			// If this has no key, give it a GUID for a key
-			if (GIsEditor && TextId.IsEmpty() && (BaseArchive.IsPersistent() && !BaseArchive.HasAnyPortFlags(PPF_Duplicate)))
+			if (GIsEditor && Key.IsEmpty() && (BaseArchive.IsPersistent() && !BaseArchive.HasAnyPortFlags(PPF_Duplicate)))
 			{
 				Key = FGuid::NewGuid().ToString();
-				if (FTextLocalizationManager::Get().AddDisplayString(MakeTextDisplayString(CopyTemp(SourceString)), Namespace, Key))
-				{
-					TextId = FTextId(Namespace, Key);
-					MarkDisplayStringOutOfDate();
-				}
-				else
-				{
-					// Could not add display string, reset namespace and key.
-					Namespace.Reset();
-					Key.Reset();
-				}
 			}
+#endif // WITH_EDITOR
 		}
 
 		// Serialize the Namespace
@@ -898,13 +868,20 @@ void FTextHistory_Base::Serialize(FStructuredArchive::FRecord Record)
 
 bool FTextHistory_Base::CanUpdateDisplayString()
 {
-	return !TextId.IsEmpty();
+	return FTextLocalizationManager::IsDisplayStringSupportEnabled() && !TextId.IsEmpty();
 }
 
 void FTextHistory_Base::UpdateDisplayString()
 {
 	check(!TextId.IsEmpty()); // CanUpdateDisplayString should prevent UpdateDisplayString being called
-	LocalizedString = FTextLocalizationManager::Get().GetDisplayString(TextId.GetNamespace(), TextId.GetKey(), SourceString.IsEmpty() ? nullptr : &SourceString);
+
+	// Create a temp to hold the old value in case we abort, in which case we assign out of the OPEN so the old value will be preserved
+	FTextConstDisplayStringPtr NewLocalizedString;
+	UE_AUTORTFM_OPEN({
+		NewLocalizedString = FTextLocalizationManager::Get().GetDisplayString(TextId.GetNamespace(), TextId.GetKey(), SourceString.IsEmpty() ? nullptr : &SourceString);
+	});
+
+	LocalizedString = NewLocalizedString;
 }
 
 bool FTextHistory_Base::StaticShouldReadFromBuffer(const TCHAR* Buffer)
@@ -2387,11 +2364,14 @@ const FString& FTextHistory_StringTableEntry::GetSourceString() const
 
 const FString& FTextHistory_StringTableEntry::GetDisplayString() const
 {
-	if (FTextConstDisplayStringPtr DisplayString = GetLocalizedString())
+	if (FTextLocalizationManager::IsDisplayStringSupportEnabled())
 	{
-		return *DisplayString;
+		if (FTextConstDisplayStringPtr DisplayString = GetLocalizedString())
+		{
+			return *DisplayString;
+		}
 	}
-	return FStringTableEntry::GetPlaceholderSourceString();
+	return GetSourceString();
 }
 
 FString FTextHistory_StringTableEntry::BuildInvariantDisplayString() const
@@ -2539,14 +2519,14 @@ void FTextHistory_StringTableEntry::FStringTableReferenceData::Initialize(FName 
 	{
 		// No loading attempt
 		LoadingPhase = EStringTableLoadingPhase::Loaded;
-		ResolveStringTableEntry();
+		ResolveDisplayString();
 	}
 	else if (InLoadingPolicy == EStringTableLoadingPolicy::FindOrFullyLoad && IStringTableEngineBridge::CanFindOrLoadStringTableAsset())
 	{
 		// Forced synchronous load
 		LoadingPhase = EStringTableLoadingPhase::Loaded;
 		IStringTableEngineBridge::FullyLoadStringTableAsset(TableId);
-		ResolveStringTableEntry();
+		ResolveDisplayString();
 	}
 	else
 	{
@@ -2708,7 +2688,7 @@ void FTextHistory_StringTableEntry::FStringTableReferenceData::ConditionalBeginA
 		}
 		This->LoadingPhase = EStringTableLoadingPhase::Loaded;
 
-		This->ResolveStringTableEntry();
+		This->ResolveDisplayString();
 	});
 }
 

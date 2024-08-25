@@ -10,11 +10,20 @@
 #include "Misc/NetworkGuid.h"
 #include "Serialization/BitReader.h"
 #include "Templates/Tuple.h"
+#include "UObject/CoreNet.h"
+#include "UObject/WeakObjectPtr.h"
 
 class FArchive;
 class FGuidReferences;
+class FProperty;
+class UPackageMap;
 
 using FGuidReferencesMap = TMap<int32, FGuidReferences>;
+
+namespace UE::Net::Private
+{
+	extern NETCORE_API bool bRemapStableSubobjects;
+}
 
 /**
  * References to Objects (including Actors, Components, etc.) are replicated as NetGUIDs, since
@@ -40,58 +49,37 @@ using FGuidReferencesMap = TMap<int32, FGuidReferences>;
 class FGuidReferences
 {
 public:
-	FGuidReferences():
-		NumBufferBits(0),
-		Array(nullptr)
-	{}
-
-	FGuidReferences(
+	NETCORE_API FGuidReferences(
 		FBitReader&					InReader,
 		FBitReaderMark&				InMark,
 		const TSet<FNetworkGUID>&	InUnmappedGUIDs,
 		const TSet<FNetworkGUID>&	InMappedDynamicGUIDs,
 		const int32					InParentIndex,
-		const int32					InCmdIndex
-	):
-		ParentIndex(InParentIndex),
-		CmdIndex(InCmdIndex),
-		UnmappedGUIDs(InUnmappedGUIDs),
-		MappedDynamicGUIDs(InMappedDynamicGUIDs),
-		Array(nullptr)
-	{
-		NumBufferBits = UE_PTRDIFF_TO_INT32(InReader.GetPosBits() - InMark.GetPos());
-		InMark.Copy(InReader, Buffer);
-	}
+		const int32					InCmdIndex,
+		UPackageMap*				InPackageMap
+	);
 
 	FGuidReferences(
 		FGuidReferencesMap*	InArray,
 		const int32			InParentIndex,
-		const int32			InCmdIndex
+		const int32			InCmdIndex,
+		UPackageMap*		InPackageMap
 	):
 		ParentIndex(InParentIndex),
 		CmdIndex(InCmdIndex),
 		NumBufferBits(0),
-		Array(InArray)
+		Array(InArray),
+		PackageMap(InPackageMap)
 	{}
+
 
 	NETCORE_API ~FGuidReferences();
 
 	FGuidReferences& operator=(const FGuidReferences& Other) = delete;
+	NETCORE_API FGuidReferences(const FGuidReferences& Other);
 
-	FGuidReferences(const FGuidReferences& Other)
-		: ParentIndex(Other.ParentIndex)
-		, CmdIndex(Other.CmdIndex)
-		, NumBufferBits(Other.NumBufferBits)
-		, UnmappedGUIDs(Other.UnmappedGUIDs)
-		, MappedDynamicGUIDs(Other.MappedDynamicGUIDs)
-		, Buffer(Other.Buffer)
-		, Array(nullptr)
-	{
-		if (Other.Array)
-		{
-			Array = new FGuidReferencesMap(*Other.Array);
-		}
-	}
+	NETCORE_API FGuidReferences& operator=(FGuidReferences&&);
+	NETCORE_API FGuidReferences(FGuidReferences&& Other);
 
 	void CountBytes(FArchive& Ar) const
 	{
@@ -109,6 +97,18 @@ public:
 		}
 	}
 
+	/** Get the set of GUIDs for objects that haven't been loaded / created yet. */
+	const TSet<FNetworkGUID>& GetUnmappedGUIDs() const { return UnmappedGUIDs; }
+
+	/** Starts tracking InGUID if not already and calls UPackageMap::AddUnmappedNetGUIDReference if bRemapStableSubobjects is enabled. */
+	NETCORE_API void AddUnmappedGUID(FNetworkGUID InGUID);
+
+	/** Stops tracking a GUID and calls UPackageMap::RemoveUnmappedNetGUIDReference if bRemapStableSubobjects is enabled. */
+	NETCORE_API void RemoveUnmappedGUID(FNetworkGUID InGUID);
+
+	/** Called by FRepLayout to update GUID tracking when updating unmapped objects. */
+	NETCORE_API bool UpdateUnmappedGUIDs(UPackageMap* InPackageMap, UObject* OriginalObject, const FProperty* Property, int32 AbsOffset);
+
 	/** The Property Command index of the top level property that references the GUID. */
 	int32 ParentIndex;
 
@@ -117,9 +117,11 @@ public:
 
 	int32 NumBufferBits;
 
+private:
 	/** GUIDs for objects that haven't been loaded / created yet. */
 	TSet<FNetworkGUID> UnmappedGUIDs;
 
+public:
 	/** GUIDs for dynamically spawned objects that have already been created. */
 	TSet<FNetworkGUID> MappedDynamicGUIDs;
 
@@ -131,4 +133,11 @@ public:
 	 * then this will be a valid FGuidReferencesMap containing the nested FGuidReferences.
 	 */
 	FGuidReferencesMap* Array;
+
+private:
+	/** Stored PackageMap reference to update with tracked UnmappedGUIDs. */
+	TWeakObjectPtr<UPackageMap> PackageMap;
+
+	/** Calls UPackageMap::AddUnmappedNetGUIDReference for all GUIDs in UnmappedGUIDs, if bRemapStableSubobjects si enabled. */
+	void TrackAllUnmappedGUIDs() const;
 };

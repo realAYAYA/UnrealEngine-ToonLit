@@ -90,9 +90,17 @@ FPreviewScene::FPreviewScene(FPreviewScene::ConstructionValues CVS)
 		LineBatcher->bCalculateAccurateBounds = false;
 		AddComponent(LineBatcher, FTransform::Identity);
 	}
+
+	FCoreDelegates::OnEnginePreExit.AddRaw(this, &FPreviewScene::Uninitialize);
 }
 
 FPreviewScene::~FPreviewScene()
+{
+	FCoreDelegates::OnEnginePreExit.RemoveAll(this);
+	Uninitialize();
+}
+
+void FPreviewScene::Uninitialize()
 {
 	// Stop any audio components playing in this scene
 	if (GEngine)
@@ -108,9 +116,9 @@ FPreviewScene::~FPreviewScene()
 	}
 
 	// Remove all the attached components
-	for( int32 ComponentIndex = 0; ComponentIndex < Components.Num(); ComponentIndex++ )
+	for (int32 ComponentIndex = 0; ComponentIndex < Components.Num(); ComponentIndex++)
 	{
-		UActorComponent* Component = Components[ ComponentIndex ];
+		UActorComponent* Component = Components[ComponentIndex];
 
 		if (bForceAllUsedMipsResident)
 		{
@@ -124,14 +132,27 @@ FPreviewScene::~FPreviewScene()
 
 		Component->UnregisterComponent();
 	}
-	
+
+	// Uninitialize can get called from destructor or FCoreDelegates::OnPreExit (or both)
+	// so make sure we empty Components and set PreviewWorld to nullptr
+	Components.Empty();
+		
+	UWorld* LocalPreviewWorld = PreviewWorld;
+	PreviewWorld = nullptr;
+
 	// The world may be released by now.
-	if (PreviewWorld && GEngine)
+	if (LocalPreviewWorld && GEngine)
 	{
-		PreviewWorld->CleanupWorld();
-		GEngine->DestroyWorldContext(GetWorld());
+		LocalPreviewWorld->CleanupWorld();
+		GEngine->DestroyWorldContext(LocalPreviewWorld);
 		// Release PhysicsScene for fixing big fbx importing bug
-		PreviewWorld->ReleasePhysicsScene();
+		LocalPreviewWorld->ReleasePhysicsScene();
+
+		// The preview world is a heavy-weight object and may hold a significant amount of resources,
+		// including various GPU render targets and buffers required for rendering the scene.
+		// Since UWorld is garbage-collected, this memory may not be cleaned for an indeterminate amount of time.
+		// By forcing garbage collection explicitly, we allow memory to be reused immediately.
+		GEngine->ForceGarbageCollection(true /*bFullPurge*/);
 	}
 }
 
@@ -217,52 +238,72 @@ void FPreviewScene::ClearLineBatcher()
 /** Accessor for finding the current direction of the preview scene's DirectionalLight. */
 FRotator FPreviewScene::GetLightDirection()
 {
-	return DirectionalLight->GetComponentTransform().GetUnitAxis( EAxis::X ).Rotation();
+	if (DirectionalLight != NULL)
+	{
+		return DirectionalLight->GetComponentTransform().GetUnitAxis( EAxis::X ).Rotation();
+	}
+
+	return FRotator::ZeroRotator;
 }
 
 /** Function for modifying the current direction of the preview scene's DirectionalLight. */
 void FPreviewScene::SetLightDirection(const FRotator& InLightDir)
 {
+	if (DirectionalLight != NULL)
+	{
 #if WITH_EDITOR
-	DirectionalLight->PreEditChange(NULL);
+		DirectionalLight->PreEditChange(NULL);
 #endif // WITH_EDITOR
-	DirectionalLight->SetAbsolute(true, true, true);
-	DirectionalLight->SetRelativeRotation(InLightDir);
+		DirectionalLight->SetAbsolute(true, true, true);
+		DirectionalLight->SetRelativeRotation(InLightDir);
 #if WITH_EDITOR
-	DirectionalLight->PostEditChange();
+		DirectionalLight->PostEditChange();
 #endif // WITH_EDITOR
+	}
 }
 
 void FPreviewScene::SetLightBrightness(float LightBrightness)
 {
+	if (DirectionalLight != NULL)
+	{
 #if WITH_EDITOR
-	DirectionalLight->PreEditChange(NULL);
+		DirectionalLight->PreEditChange(NULL);
 #endif // WITH_EDITOR
-	DirectionalLight->Intensity = LightBrightness;
+		DirectionalLight->Intensity = LightBrightness;
 #if WITH_EDITOR
-	DirectionalLight->PostEditChange();
+		DirectionalLight->PostEditChange();
 #endif // WITH_EDITOR
+	}
 }
 
 void FPreviewScene::SetLightColor(const FColor& LightColor)
 {
+	if (DirectionalLight != NULL)
+	{
 #if WITH_EDITOR
-	DirectionalLight->PreEditChange(NULL);
+		DirectionalLight->PreEditChange(NULL);
 #endif // WITH_EDITOR
-	DirectionalLight->LightColor = LightColor;
+		DirectionalLight->LightColor = LightColor;
 #if WITH_EDITOR
-	DirectionalLight->PostEditChange();
+		DirectionalLight->PostEditChange();
 #endif // WITH_EDITOR
+	}
 }
 
 void FPreviewScene::SetSkyBrightness(float SkyBrightness)
 {
-	SkyLight->SetIntensity(SkyBrightness);
+	if (SkyLight != NULL)
+	{
+		SkyLight->SetIntensity(SkyBrightness);
+	}
 }
 
 void FPreviewScene::SetSkyCubemap(UTextureCube* Cubemap)
 {
-	SkyLight->SetCubemap(Cubemap);
+	if (SkyLight != NULL)
+	{
+		SkyLight->SetCubemap(Cubemap);
+	}
 }
 
 void FPreviewScene::LoadSettings(const TCHAR* Section)

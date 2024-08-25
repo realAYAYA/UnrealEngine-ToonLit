@@ -55,11 +55,11 @@ public:
 	void Reset();
 
 	void ResetContent();
-	void AddTitle(const FString& Title);
-	void AddTitle(const FString& Title, const FLinearColor& Color);
-	void AddNameValueTextLine(const FString& Name, const FString& Value);
-	void AddTextLine(const FString& Text, const FLinearColor& Color);
-	void AddTextLine(const float X, const float Y, const FString& Text, const FLinearColor& Color);
+	void AddTitle(FStringView Title);
+	void AddTitle(FStringView Title, const FLinearColor& Color);
+	void AddNameValueTextLine(FStringView Name, FStringView Value);
+	void AddTextLine(FStringView Text, const FLinearColor& Color);
+	void AddTextLine(const float X, const float Y, FStringView Text, const FLinearColor& Color);
 	void UpdateLayout(); // updates ValueOffsetX and DesiredSize
 
 	const FLinearColor& GetBackgroundColor() const { return BackgroundColor; }

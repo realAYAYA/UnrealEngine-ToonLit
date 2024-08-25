@@ -5,11 +5,12 @@ using System.IO;
 public class Vorbis : ModuleRules
 {
 	protected virtual string VorbisVersion { get { return "libvorbis-1.3.2"; } }
-	protected virtual string IncRootDirectory { get { return Target.UEThirdPartySourceDirectory; } }
-	protected virtual string LibRootDirectory { get { return Target.UEThirdPartySourceDirectory; } }
+	// no longer needed, remove when sunclasses remove overrides
+	protected virtual string IncRootDirectory { get { return ModuleDirectory; } }
+	protected virtual string LibRootDirectory { get { return PlatformModuleDirectory; } }
 
-	protected virtual string VorbisIncPath { get { return Path.Combine(IncRootDirectory, "Vorbis", VorbisVersion, "include"); } }
-	protected virtual string VorbisLibPath { get { return Path.Combine(LibRootDirectory, "Vorbis", VorbisVersion, "lib"); } }
+	protected virtual string VorbisIncPath { get { return Path.Combine(ModuleDirectory, VorbisVersion, "include"); } }
+	protected virtual string VorbisLibPath { get { return Path.Combine(PlatformModuleDirectory, VorbisVersion, "lib"); } }
 
 	public Vorbis(ReadOnlyTargetRules Target) : base(Target)
 	{
@@ -44,12 +45,12 @@ public class Vorbis : ModuleRules
 				PublicAdditionalLibraries.Add(Path.Combine(VorbisLibPath, "Android", Architecture, "libvorbis.a"));
 			}
         }
-		else if (Target.Platform == UnrealTargetPlatform.IOS)
+		else if (Target.IsInPlatformGroup(UnrealPlatformGroup.IOS))
 		{
 			string LibExt = (Target.Architecture == UnrealArch.IOSSimulator) ? ".sim.a" : ".a";
-			PublicAdditionalLibraries.Add(Path.Combine(VorbisLibPath, "IOS", "libvorbis" + LibExt));
-			PublicAdditionalLibraries.Add(Path.Combine(VorbisLibPath, "IOS", "libvorbisenc" + LibExt));
-			PublicAdditionalLibraries.Add(Path.Combine(VorbisLibPath, "IOS", "libvorbisfile" + LibExt));
+			PublicAdditionalLibraries.Add(Path.Combine(VorbisLibPath, PlatformSubdirectoryName, "libvorbis" + LibExt));
+			PublicAdditionalLibraries.Add(Path.Combine(VorbisLibPath, PlatformSubdirectoryName, "libvorbisenc" + LibExt));
+			PublicAdditionalLibraries.Add(Path.Combine(VorbisLibPath, PlatformSubdirectoryName, "libvorbisfile" + LibExt));
 		}
 		else if (Target.IsInPlatformGroup(UnrealPlatformGroup.Unix))
 		{

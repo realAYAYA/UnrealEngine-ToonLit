@@ -60,7 +60,7 @@ private:
 	TRefCountPtr<FRDGPooledBuffer> RDGVertexDeltaBuffer;
 
 	// The NNE RDG Model 
-	TUniquePtr<UE::NNE::IModelInstanceRDG> ModelInstanceRDG;
+	TSharedPtr<UE::NNE::IModelInstanceRDG> ModelInstanceRDG;
 	
 	// The CPU Input Tensor Buffer
 	TArray<float> NNEInputTensorBuffer;

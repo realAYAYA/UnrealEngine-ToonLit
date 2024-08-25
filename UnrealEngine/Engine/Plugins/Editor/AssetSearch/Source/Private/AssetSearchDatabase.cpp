@@ -390,7 +390,7 @@ public:
 	FGetAllAssets Statement_GetAllAssets;
 	bool GetAllAssets(TFunctionRef<ESQLitePreparedStatementExecuteRowResult(FString&&)> InCallback)
 	{
-		return Statement_GetAllAssets.BindAndExecute([&InCallback](const FGetAllAssets& InStatement)
+		return Statement_GetAllAssets.BindAndExecute([&InCallback](const FGetAllAssets& InStatement) //-V562
 		{
 			FString AssetPath;
 			if (InStatement.GetColumnValues(AssetPath))
@@ -474,6 +474,7 @@ bool FAssetSearchDatabase::Open(const FString& InSessionPath)
 
 bool FAssetSearchDatabase::Open(const FString& InSessionPath, const ESQLiteDatabaseOpenMode InOpenMode)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE_STR("FAssetSearchDatabase::Open");
 	SessionPath = InSessionPath;
 
 	if (Database->IsValid())
@@ -487,7 +488,7 @@ bool FAssetSearchDatabase::Open(const FString& InSessionPath, const ESQLiteDatab
 		return false;
 	}
 
-	if (!Database->PerformQuickIntegrityCheck())
+	if (bEnableIntegrityChecks && !Database->PerformQuickIntegrityCheck())
 	{
 		UE_LOG(LogAssetSearch, Error, TEXT("Database failed integrity check, deleting."));
 
@@ -668,7 +669,7 @@ bool FAssetSearchDatabase::Open(const FString& InSessionPath, const ESQLiteDatab
 		return false;
 	}
 
-	if (!Database->PerformQuickIntegrityCheck())
+	if (bEnableIntegrityChecks && !Database->PerformQuickIntegrityCheck())
 	{
 		UE_LOG(LogAssetSearch, Error, TEXT("Database failed integrity check, deleting."));
 

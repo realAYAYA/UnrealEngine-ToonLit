@@ -17,6 +17,34 @@ namespace BuildSettings
 	BUILDSETTINGS_API bool IsLicenseeVersion();
 
 	/**
+	* The major engine version.
+	* 
+	* @return The major part of the engine version
+	*/
+	BUILDSETTINGS_API int GetEngineVersionMajor();
+
+	/**
+	* The minor engine version.
+	*
+	* @return The minor part of the engine version
+	*/
+	BUILDSETTINGS_API int GetEngineVersionMinor();
+
+	/**
+	* The hotfix engine version.
+	*
+	* @return The hotfix patch part of the engine version
+	*/
+	BUILDSETTINGS_API int GetEngineVersionHotfix();
+
+	/**
+	* The engine version.
+	* 
+	* @return The engine version as a string in the format MAJOR.MINOR.HOTFIX-BUILD_VERSION
+	*/
+	BUILDSETTINGS_API const TCHAR* GetEngineVersionString();
+
+	/**
 	 * The Perforce changelist being compiled. Use this value advisedly; it does not take into account out-of-order commits to engine release branches over 
 	 * development branches, licensee versions, or whether the engine version has been locked to maintain compatibility with a previous engine release. Prefer
 	 * BUILD_VERSION where a unique, product-specific identifier is required, or FEngineVersion::CompatibleWith() where relational comparisons between two 

@@ -2,19 +2,16 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
+using EpicGames.Core;
+using EpicGames.Horde.Compute.Clients;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using EpicGames.Core;
-using EpicGames.Horde.Compute;
-using System.IO;
-using System.Buffers;
-using System.Buffers.Binary;
-using EpicGames.Horde.Compute.Clients;
 
 namespace Horde.Server.Compute
 {
@@ -23,25 +20,17 @@ namespace Horde.Server.Compute
 	/// </summary>
 	public sealed class TunnelService : IHostedService, IDisposable
 	{
-		const int BufferSize = 4096;
+		private const int BufferSize = 4096;
 
-		class Tunnel
-		{
-			public Socket InitiatorSocket { get; }
-			public TaskCompletionSource<Socket> RemoteSocket { get; } = new TaskCompletionSource<Socket>();
-			public AsyncEvent Complete { get; } = new AsyncEvent();
+		private readonly CancellationTokenSource _cancellationSource;
+		private readonly ServerSettings _settings;
+		private readonly ILogger _logger;
+		private Task? _serverTask;
 
-			public Tunnel(Socket initiatorSocket) => InitiatorSocket = initiatorSocket;
-		}
-
-		readonly CancellationTokenSource _cancellationSource;
-		readonly ServerSettings _settings;
-		readonly ILogger _logger;
-
-		Task? _initiatorServerTask;
-		Task? _remoteServerTask;
-
-		readonly Dictionary<ByteString, Tunnel> _waiters = new Dictionary<ByteString, Tunnel>();
+		/// <summary>
+		/// Accessor for the server task, for tests
+		/// </summary>
+		internal Task? ServerTask => _serverTask;
 
 		/// <summary>
 		/// Constructor
@@ -66,151 +55,80 @@ namespace Horde.Server.Compute
 			return Task.CompletedTask;
 		}
 
-		/// <inheritdoc/>
+		/// <summary>
+		/// Start the tunnel server
+		/// </summary>
+		/// <param name="address">Address to listen on</param>
+		/// <returns>Task representing the TCP listener</returns>
 		public void Start(IPAddress address)
 		{
-			_initiatorServerTask = RunTcpListenerAsync(address, _settings.ComputeInitiatorPort, HandleInitiatorAsync, _cancellationSource.Token);
-			_remoteServerTask = RunTcpListenerAsync(address, _settings.ComputeRemotePort, HandleRemoteAsync, _cancellationSource.Token);
+			_serverTask = RunTcpListenerAsync(address, _settings.ComputeTunnelPort, HandleClientAsync, _cancellationSource.Token);
 		}
 
 		/// <inheritdoc/>
 		public async Task StopAsync(CancellationToken cancellationToken)
 		{
-			_cancellationSource.Cancel();
+			await _cancellationSource.CancelAsync();
 
-			await _initiatorServerTask!.IgnoreCanceledExceptionsAsync().ConfigureAwait(false);
-			_initiatorServerTask = null;
-
-			await _remoteServerTask!.IgnoreCanceledExceptionsAsync().ConfigureAwait(false);
-			_remoteServerTask = null;
+			await _serverTask!.IgnoreCanceledExceptionsAsync().ConfigureAwait(false);
+			_serverTask = null;
 		}
 
-		async Task HandleRemoteAsync(Socket remoteSocket, CancellationToken cancellationToken)
+		async Task HandleClientAsync(TcpClient client, CancellationToken cancellationToken)
 		{
-			// Read the nonce for the connection
-			byte[] nonceBuffer = new byte[ServerComputeClient.NonceLength];
-			await ReadFullBufferAsync(remoteSocket, nonceBuffer, cancellationToken);
-			ByteString nonce = new ByteString(nonceBuffer);
+			await using NetworkStream stream = client.GetStream();
+			using StreamReader reader = new(stream);
+			await using StreamWriter streamWriter = new(stream) { AutoFlush = true };
 
-			// Get the completion source for this nonce
-			Tunnel? tunnel;
-			lock (_waiters)
-			{
-				_waiters.TryGetValue(nonce, out tunnel);
-			}
+			string? requestStr = await reader.ReadLineAsync(cancellationToken);
+			TunnelHandshakeRequest request = TunnelHandshakeRequest.Deserialize(requestStr);
 
-			// Pump data from the remote socket through to the initiator socket
-			if (tunnel != null && tunnel.RemoteSocket.TrySetResult(remoteSocket))
-			{
-				await tunnel.Complete.Task;
-			}
-		}
+			_logger.LogDebug("Connecting to target {TargetHostname}:{TargetPort}", request.Host, request.Port);
 
-		async Task HandleInitiatorAsync(Socket initiatorSocket, CancellationToken cancellationToken)
-		{
-			// Read the nonce for the connection
-			byte[] nonceBuffer = new byte[ServerComputeClient.NonceLength];
-			await ReadFullBufferAsync(initiatorSocket, nonceBuffer, cancellationToken);
-			ByteString nonce = new ByteString(nonceBuffer);
-
-			// Create the tunnel and add it to the waiting list
-			Tunnel tunnel = new Tunnel(initiatorSocket);
-			lock (_waiters)
-			{
-				_waiters.Add(nonce, tunnel);
-			}
-
-			// Reply with the port number that the remote should connect on
-			byte[] ackBuffer = new byte[2];
-			BinaryPrimitives.WriteUInt16LittleEndian(ackBuffer, (ushort)_settings.ComputeRemotePort);
-			await SendFullBufferAsync(initiatorSocket, ackBuffer, cancellationToken);
-
-			// Try/finally to mark the tunnel as complete when finished
+			using TcpClient targetClient = new();
 			try
 			{
-				// Start a read from the initiating socket, so we can react to disconnection events
-				using IMemoryOwner<byte> initiatorToRemoteBuffer = MemoryPool<byte>.Shared.Rent(BufferSize);
-				Task<int> readTask = initiatorSocket.ReceiveAsync(initiatorToRemoteBuffer.Memory, SocketFlags.None, cancellationToken).AsTask();
+				await targetClient.ConnectAsync(request.Host, request.Port, cancellationToken);
+				await using NetworkStream targetStream = targetClient.GetStream();
 
-				// Wait for the other end of the socket to be available
-				Task initTask = Task.WhenAny(readTask, tunnel.RemoteSocket.Task);
-				if (initTask == readTask)
+				await streamWriter.WriteLineAsync(new TunnelHandshakeResponse(true, "Connected to target").Serialize());
+
+				if (client.Client.RemoteEndPoint is IPEndPoint clientEndPoint)
 				{
-					return;
+					_logger.LogDebug("Relaying streams between {ClientIp} <-> {TargetHostname}:{TargetPort}", clientEndPoint.Address, request.Host, request.Port);
 				}
 
-				// Start a task to copy data from the remote back to the initiator
-				Socket remoteSocket = await tunnel.RemoteSocket.Task;
-
-				// Start copying data from the remote to the initiator
-				using IMemoryOwner<byte> remoteToInitiatorBuffer = MemoryPool<byte>.Shared.Rent(BufferSize);
-				Task remoteToInitiatorTask = CopySocketDataAsync(remoteSocket, tunnel.InitiatorSocket, remoteToInitiatorBuffer.Memory, cancellationToken);
-
-				// Copy data from the initiator to the remote
-				int readSize = await readTask;
-				await SendFullBufferAsync(remoteSocket, initiatorToRemoteBuffer.Memory.Slice(0, readSize), cancellationToken);
-				await CopySocketDataAsync(initiatorSocket, remoteSocket, initiatorToRemoteBuffer.Memory, cancellationToken);
-
-				// Wait for the socket to close
-				await remoteToInitiatorTask;
+				Task t1 = RelayStreamsAsync(stream, targetStream, cancellationToken);
+				Task t2 = RelayStreamsAsync(targetStream, stream, cancellationToken);
+				await Task.WhenAll(t1, t2);
 			}
 			finally
 			{
-				// Remove the nonce to the waiting list
-				lock (_waiters)
+				if (targetClient.Connected)
 				{
-					_waiters.Remove(nonce);
+					targetClient.Close();
 				}
-
-				// Signal to the other end of the socket that we're complete
-				tunnel.RemoteSocket.TrySetResult(null!);
-				tunnel.Complete.Latch();
 			}
 		}
 
-		static async Task CopySocketDataAsync(Socket sourceSocket, Socket targetSocket, Memory<byte> buffer, CancellationToken cancellationToken)
+		private static async Task RelayStreamsAsync(Stream input, Stream output, CancellationToken cancellationToken)
 		{
-			for (; ; )
+			byte[] buffer = new byte[BufferSize];
+			int bytesRead;
+			while ((bytesRead = await input.ReadAsync(buffer, 0, buffer.Length, cancellationToken)) > 0)
 			{
-				int read = await sourceSocket.ReceiveAsync(buffer, SocketFlags.None, cancellationToken);
-				if (read == 0)
-				{
-					break;
-				}
-				await SendFullBufferAsync(targetSocket, buffer.Slice(0, read), cancellationToken);
+				await output.WriteAsync(buffer, 0, bytesRead, cancellationToken);
 			}
 		}
 
-		static async Task ReadFullBufferAsync(Socket socket, Memory<byte> buffer, CancellationToken cancellationToken)
-		{
-			for (int offset = 0; offset < buffer.Length; )
-			{
-				int read = await socket.ReceiveAsync(buffer.Slice(offset), SocketFlags.None, cancellationToken);
-				if (read == 0)
-				{
-					throw new EndOfStreamException();
-				}
-				offset += read;
-			}
-		}
-
-		static async Task SendFullBufferAsync(Socket socket, ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken)
-		{
-			while (buffer.Length > 0)
-			{
-				int written = await socket.SendAsync(buffer, SocketFlags.None, cancellationToken);
-				buffer = buffer.Slice(written);
-			}
-		}
-
-		async Task RunTcpListenerAsync(IPAddress address, int port, Func<Socket, CancellationToken, Task> handleConnectionAsync, CancellationToken cancellationToken)
+		async Task RunTcpListenerAsync(IPAddress address, int port, Func<TcpClient, CancellationToken, Task> handleConnectionAsync, CancellationToken cancellationToken)
 		{
 			if (port != 0)
 			{
-				TcpListener listener = new TcpListener(address, port);
+				TcpListener listener = new(address, port);
 				listener.Start();
 
-				List<Task> tasks = new List<Task>();
+				List<Task> tasks = new();
 				try
 				{
 					for (; ; )
@@ -230,11 +148,11 @@ namespace Horde.Server.Compute
 			}
 		}
 
-		async Task HandleConnectionGuardedAsync(TcpClient tcpClient, Func<Socket, CancellationToken, Task> handleConnectionAsync, CancellationToken cancellationToken)
+		async Task HandleConnectionGuardedAsync(TcpClient tcpClient, Func<TcpClient, CancellationToken, Task> handleConnectionAsync, CancellationToken cancellationToken)
 		{
 			try
 			{
-				await handleConnectionAsync(tcpClient.Client, cancellationToken);
+				await handleConnectionAsync(tcpClient, cancellationToken);
 			}
 			catch (Exception ex)
 			{

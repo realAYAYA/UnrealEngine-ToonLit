@@ -186,7 +186,7 @@ namespace UnrealBuildTool
 		public bool bCanExecuteRemotelyWithXGE { get; set; } = true;
 
 		/// <inheritdoc/>
-		public bool bCanExecuteInBox { get; set; } = true;
+		public bool bCanExecuteInUBA { get; set; } = true;
 
 		/// <inheritdoc/>
 		public bool bUseActionHistory => true;
@@ -202,7 +202,21 @@ namespace UnrealBuildTool
 
 		IEnumerable<FileItem> IExternalAction.DeleteItems => DeleteItems;
 		public DirectoryReference WorkingDirectory => Unreal.EngineSourceDirectory;
-		string IExternalAction.CommandDescription => $"{(bIsAnalyzing ? "Analyze" : "Compile")} [{Architecture}]";
+		string IExternalAction.CommandDescription
+		{
+			get
+			{
+				if (PreprocessedFile != null)
+				{
+					return $"Preprocess [{Architecture}]";
+				}
+				else if (bIsAnalyzing)
+				{
+					return $"Analyze [{Architecture}]";
+				}
+				return $"Compile [{Architecture}]";
+			}
+		}
 		bool IExternalAction.bIsGCCCompiler => false;
 		bool IExternalAction.bProducesImportLibrary => false;
 		string IExternalAction.StatusDescription => (SourceFile == null) ? "Compiling" : SourceFile.Location.GetFileName();
@@ -363,6 +377,7 @@ namespace UnrealBuildTool
 			bCanExecuteRemotelyWithSNDBS = InAction.bCanExecuteRemotelyWithSNDBS;
 			bCanExecuteRemotelyWithXGE = InAction.bCanExecuteRemotelyWithXGE;
 			Architecture = InAction.Architecture;
+			bIsAnalyzing = InAction.bIsAnalyzing;
 			Weight = InAction.Weight;
 
 			AdditionalPrerequisiteItems = new List<FileItem>(InAction.AdditionalPrerequisiteItems);
@@ -403,7 +418,9 @@ namespace UnrealBuildTool
 			bCanExecuteRemotely = Reader.ReadBool();
 			bCanExecuteRemotelyWithSNDBS = Reader.ReadBool();
 			bCanExecuteRemotelyWithXGE = Reader.ReadBool();
+			bCanExecuteInUBA = Reader.ReadBool();
 			Architecture = UnrealArch.Parse(Reader.ReadString()!);
+			bIsAnalyzing = Reader.ReadBool();
 			Weight = Reader.ReadDouble();
 
 			AdditionalPrerequisiteItems = Reader.ReadList(() => Reader.ReadFileItem())!;
@@ -441,7 +458,9 @@ namespace UnrealBuildTool
 			Writer.WriteBool(bCanExecuteRemotely);
 			Writer.WriteBool(bCanExecuteRemotelyWithSNDBS);
 			Writer.WriteBool(bCanExecuteRemotelyWithXGE);
+			Writer.WriteBool(bCanExecuteInUBA);
 			Writer.WriteString(Architecture.ToString());
+			Writer.WriteBool(bIsAnalyzing);
 			Writer.WriteDouble(Weight);
 
 			Writer.WriteList(AdditionalPrerequisiteItems, Item => Writer.WriteFileItem(Item));
@@ -505,9 +524,6 @@ namespace UnrealBuildTool
 			if (PreprocessedFile != null)
 			{
 				VCToolChain.AddPreprocessedFile(Arguments, PreprocessedFile, Logger);
-
-				// this is parsed by external tools wishing to open this file directly.
-				Logger.LogInformation("PreProcessPath: {File}", PreprocessedFile);
 			}
 
 			if (ObjectFile != null)

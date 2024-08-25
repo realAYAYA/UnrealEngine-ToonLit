@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/Interface.h"
 #include "IMovieSceneMetaData.generated.h"
 
@@ -25,6 +26,8 @@ public:
 	 * Called from ULevelSequence::GetAssetRegistryTags in order to
 	 * extend its default set of tags to include any from this meta-data object.
 	 */
+	virtual void ExtendAssetRegistryTags(FAssetRegistryTagsContext Context) const {}
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	virtual void ExtendAssetRegistryTags(TArray<UObject::FAssetRegistryTag>& OutTags) const {}
 
 #if WITH_EDITOR

@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include "HAL/Platform.h"
+
 #if PLATFORM_LINUX
 
 #include <codecvt>
@@ -9,9 +11,6 @@
 #include <thread>
 
 #include "LinuxCOM.h"
-
-// provide string the way Unreal Engine expects
-#define TCHAR char16_t
 
 // convert Windows style enums in Linux, i.e. BMDPixelFormat to _BMDPixelFormat
 #define ENUM(x) _ ## x

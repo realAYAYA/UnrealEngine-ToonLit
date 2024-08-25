@@ -76,11 +76,11 @@ FLinearColor FBaseTreeNode::GetDefaultColor(bool bIsGroupNode)
 {
 	if (bIsGroupNode)
 	{
-		return FLinearColor(1.0f, 0.9f, 0.6f, 1.0f);
+		return USlateThemeManager::Get().GetColor(EStyleColor::AccentYellow);
 	}
 	else
 	{
-		return FLinearColor(1.0f, 1.0f, 1.0f, 1.0f);
+		return USlateThemeManager::Get().GetColor(EStyleColor::AccentWhite);
 	}
 }
 

@@ -14,5 +14,7 @@ public class ControlFlows : ModuleRules
 				// ... add private dependencies that you statically link with here ...	
 			}
 			);
+
+		bAllowAutoRTFMInstrumentation = true;
 	}
 }

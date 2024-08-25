@@ -29,7 +29,7 @@ TObjectPtr<UWebAPIOperationObject> FWebAPIPooledOperation::Pop()
 		}
 
 		// One or more available, so get last
-		TObjectPtr<UWebAPIOperationObject> AvailableItem = AvailableItems.Pop(false);
+		TObjectPtr<UWebAPIOperationObject> AvailableItem = AvailableItems.Pop(EAllowShrinking::No);
 
 		// Move to in use and return reference 
 		return ItemsInUse.Add_GetRef(MoveTemp(AvailableItem));
@@ -47,7 +47,7 @@ bool FWebAPIPooledOperation::Push(const TObjectPtr<UWebAPIOperationObject>& InIt
 #endif
 
 	// Remove from "in use"
-	const int32 ItemsRemoved = ItemsInUse.RemoveSwap(InItem, false);
+	const int32 ItemsRemoved = ItemsInUse.RemoveSwap(InItem, EAllowShrinking::No);
 
 	// Reset to "new" state
 	InItem->Reset();
@@ -150,41 +150,45 @@ bool UWebAPISubsystem::IsAllowedToTick() const
 
 void UWebAPISubsystem::Tick(float DeltaTime)
 {
-	for(TSharedRef<IHttpRequest>& Request : RequestBuffer)
+	for(auto It = RequestBuffer.CreateIterator(); It; ++It)
 	{
+		TSharedRef<IHttpRequest>& Request = *It;
 		const EHttpRequestStatus::Type RequestStatus = Request->GetStatus();
 		if(RequestStatus == EHttpRequestStatus::NotStarted)
 		{
 			Request->ProcessRequest();
 		}
-		else if(RequestStatus == EHttpRequestStatus::Failed_ConnectionError)
-		{			
-			Request->ProcessRequest();
-		}
 		else if(RequestStatus == EHttpRequestStatus::Failed)
 		{
-			// If there's a response that was denied, keep for retry after auth
-			if(Request->GetResponse().IsValid())
+			if (Request->GetFailureReason() == EHttpFailureReason::ConnectionError)
 			{
-				if(Request->GetResponse()->GetResponseCode() == EHttpResponseCodes::Denied)
-				{
-					FString Host = UWebAPIUtilities::GetHostFromUrl(Request->GetURL());
-
-					TArray<TSharedRef<IHttpRequest>>& HostRequests = HostRequestBuffer.FindOrAdd(Host);
-					// Prevent filling this buffer due to never being authorized, etc. - discards requests if buffer full
-					if(HostRequests.Num() <= CVarMaxDeniedHttpRetryCount->GetInt())
-					{
-						HostRequests.Add(Request);
-						HostRequestBuffer.Add(Host);
-					}
-
-					RequestBuffer.Remove(Request);
-
-					continue;
-				}
+				Request->ProcessRequest();
 			}
-			
-			RequestBuffer.Remove(Request);			
+			else
+			{
+				// If there's a response that was denied, keep for retry after auth
+				if(Request->GetResponse().IsValid())
+				{
+					if(Request->GetResponse()->GetResponseCode() == EHttpResponseCodes::Denied)
+					{
+						FString Host = UWebAPIUtilities::GetHostFromUrl(Request->GetURL());
+
+						TArray<TSharedRef<IHttpRequest>>& HostRequests = HostRequestBuffer.FindOrAdd(Host);
+						// Prevent filling this buffer due to never being authorized, etc. - discards requests if buffer full
+						if(HostRequests.Num() <= CVarMaxDeniedHttpRetryCount->GetInt())
+						{
+							HostRequests.Add(Request);
+							HostRequestBuffer.Add(Host);
+						}
+
+						It.RemoveCurrent();
+
+						continue;
+					}
+				}
+
+				It.RemoveCurrent();
+			}
 		}
 	}
 }

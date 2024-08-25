@@ -5,6 +5,7 @@
 #include "Engine/World.h"
 #include "SmartObjectSubsystem.h"
 #include "VisualLogger/VisualLogger.h"
+#include "Net/UnrealNetwork.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(SmartObjectComponent)
 
@@ -16,6 +17,15 @@ USmartObjectComponent::USmartObjectComponent(const FObjectInitializer& ObjectIni
 	: Super(ObjectInitializer)
 {
 
+}
+
+void USmartObjectComponent::GetLifetimeReplicatedProps(TArray<FLifetimeProperty>& OutLifetimeProps) const
+{
+	// Required to allow for sub classes to replicate the state of this smart object.
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	
+	DISABLE_REPLICATED_PROPERTY(USmartObjectComponent, DefinitionRef);
+	DISABLE_REPLICATED_PROPERTY(USmartObjectComponent, RegisteredHandle);
 }
 
 void USmartObjectComponent::PostInitProperties()
@@ -30,14 +40,89 @@ void USmartObjectComponent::PostInitProperties()
 			// tagging owner actors since the tags get included in FWorldPartitionActorDesc 
 			// and that's the only way we can tell a given actor has a SmartObjectComponent 
 			// until it's fully loaded
-			if (Actor->Tags.Contains(UE::SmartObjects::WithSmartObjectTag) == false)
+			if (Actor->Tags.Contains(UE::SmartObject::WithSmartObjectTag) == false)
 			{
-				Actor->Tags.AddUnique(UE::SmartObjects::WithSmartObjectTag);
+				Actor->Tags.AddUnique(UE::SmartObject::WithSmartObjectTag);
 				Actor->MarkPackageDirty();
 			}
 		}
 	}
 #endif // WITH_EDITORONLY_DATA
+}
+
+#if WITH_EDITORONLY_DATA
+bool USmartObjectComponent::ApplyDeprecation()
+{
+	if (bDeprecationApplied)
+	{
+		return false;
+	}
+
+	// Older versions of the SmartObject Component used to have property `DefinitionAsset`.
+	// which referenced the SmartObject Definition asset. The data is now stored in DefinitionRef.
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	if (DefinitionAsset_DEPRECATED)
+	{
+		DefinitionRef.SetSmartObjectDefinition(DefinitionAsset_DEPRECATED);
+	}
+	CachedDefinitionAssetVariation = nullptr;
+	DefinitionAsset_DEPRECATED = nullptr;
+	bDeprecationApplied = true;
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+	return true;
+}
+
+bool USmartObjectComponent::ApplyParentDeprecation()
+{
+	if (bDeprecationApplied)
+	{
+		return false;
+	}
+
+	if (USmartObjectComponent* Archetype = Cast<USmartObjectComponent>(GetArchetype()))
+	{
+		// If our archetype was already deprecated it indicates that the current instance
+		// was created from an up to date archetype so no need to deprecate those values
+		// and we consider the deprecation applied
+		if (const bool bArchetypeAlreadyDeprecated = !Archetype->ApplyParentDeprecation())
+		{
+			bDeprecationApplied = true;
+			return false;
+		}
+	}
+
+	return ApplyDeprecation();
+}
+#endif
+
+void USmartObjectComponent::Serialize(FArchive& Ar)
+{
+#if WITH_EDITORONLY_DATA
+	if (Ar.IsLoading())
+	{
+		// Keep track of deprecated definition before serialization in case we had a different asset
+		// then we'll need to deprecate it
+		const TObjectPtr<USmartObjectDefinition> AssetBeforeSerialization = DefinitionAsset_DEPRECATED;
+
+		// CDOs don't run serialize, apply deprecation if needed
+		ApplyParentDeprecation();
+
+		Super::Serialize(Ar);
+
+		// Object had its own asset, deprecate it
+		if (DefinitionAsset_DEPRECATED != AssetBeforeSerialization)
+		{
+			// Reset deprecation that might have been set before serializing
+			bDeprecationApplied = false;
+			ApplyDeprecation();
+		}
+	}
+	else
+#endif
+	{
+		Super::Serialize(Ar);
+	}
 }
 
 #if WITH_EDITOR
@@ -82,11 +167,14 @@ void USmartObjectComponent::RegisterToSubsystem()
 	}
 #endif // WITH_EDITOR
 
-	// Note: we don't report error or ensure on missing subsystem since it might happen
-	// in various scenarios (e.g. inactive world)
-	if (USmartObjectSubsystem* Subsystem = USmartObjectSubsystem::GetCurrent(World))
+	if (GetOwnerRole() == ROLE_Authority)
 	{
-		Subsystem->RegisterSmartObject(*this);
+		// Note: we don't report error or ensure on missing subsystem since it might happen
+		// in various scenarios (e.g. inactive world)
+		if (USmartObjectSubsystem* Subsystem = USmartObjectSubsystem::GetCurrent(World))
+		{
+			Subsystem->RegisterSmartObject(*this);
+		}	
 	}
 }
 
@@ -106,17 +194,16 @@ void USmartObjectComponent::UnregisterFromSubsystem(const ESmartObjectUnregistra
 	}
 #endif // WITH_EDITOR
 
-	if (GetRegisteredHandle().IsValid())
+	// Only attempt to unregister if we are the authoritative role
+	if (GetRegisteredHandle().IsValid() && GetOwnerRole() == ENetRole::ROLE_Authority)
 	{
 		if (USmartObjectSubsystem* Subsystem = USmartObjectSubsystem::GetCurrent(World))
 		{
 			if (UnregistrationType == ESmartObjectUnregistrationType::ForceRemove
-				|| IsBeingDestroyed()
-				|| (GetOwner() && GetOwner()->IsActorBeingDestroyed()))
+				|| (!World->IsGameWorld() && (IsBeingDestroyed() || (GetOwner() && GetOwner()->IsActorBeingDestroyed()))))
 			{
 				// note that this case is really only expected in the editor when the component is being unregistered 
 				// as part of DestroyComponent (or from its owner destruction).
-				// In default game flow EndPlay will get called first and once we make it here the RegisteredHandle should already be Invalid
 				Subsystem->RemoveSmartObject(*this);
 			}
 			else
@@ -146,12 +233,18 @@ void USmartObjectComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	const UWorld* World = GetWorld();
 	if (World != nullptr && World->IsGameWorld())
 	{
-		// When the object gets streamed out we unregister the component according to its registration type to preserve runtime data for persistent objects.
-		// In all other scenarios (e.g. Destroyed, EndPIE, Quit, etc.) we always remove the runtime data
-		const ESmartObjectUnregistrationType UnregistrationType =
-			(EndPlayReason == EEndPlayReason::RemovedFromWorld) ? ESmartObjectUnregistrationType::RegularProcess : ESmartObjectUnregistrationType::ForceRemove;
-
-		UnregisterFromSubsystem(UnregistrationType);
+		// When the object gets destroyed or streamed out we unregister the component according to its registration type
+		// to preserve runtime data for components bounds to existing objects.
+		if (EndPlayReason == EEndPlayReason::RemovedFromWorld
+			|| EndPlayReason == EEndPlayReason::Destroyed)
+		{
+			UnregisterFromSubsystem(ESmartObjectUnregistrationType::RegularProcess);
+		}
+		// In all other scenarios (e.g. LevelTransition, EndPIE, Quit, etc.) we always remove the runtime data
+		else
+		{
+			UnregisterFromSubsystem(ESmartObjectUnregistrationType::ForceRemove);
+		}
 	}
 
 	Super::EndPlay(EndPlayReason);
@@ -161,13 +254,38 @@ FBox USmartObjectComponent::GetSmartObjectBounds() const
 {
 	FBox BoundingBox(ForceInitToZero);
 
-	const AActor* Owner = GetOwner();
-	if (Owner != nullptr && DefinitionAsset != nullptr)
+	if (const AActor* Owner = GetOwner())
 	{
-		BoundingBox = DefinitionAsset->GetBounds().TransformBy(Owner->GetTransform());
+		if (const USmartObjectDefinition* Definition = GetDefinition())
+		{
+			BoundingBox = Definition->GetBounds().TransformBy(Owner->GetTransform());
+		}
 	}
 
 	return BoundingBox;
+}
+
+const USmartObjectDefinition* USmartObjectComponent::GetDefinition() const
+{
+	if (!CachedDefinitionAssetVariation)
+	{
+		if (USmartObjectDefinition* BaseDefinitionAsset = const_cast<USmartObjectDefinition*>(DefinitionRef.GetSmartObjectDefinition()))
+		{
+			CachedDefinitionAssetVariation = BaseDefinitionAsset->GetAssetVariation(DefinitionRef.GetParameters());
+		}
+	}
+	
+	return CachedDefinitionAssetVariation;
+}
+
+const USmartObjectDefinition* USmartObjectComponent::GetBaseDefinition() const
+{
+	return DefinitionRef.GetSmartObjectDefinition();
+}
+
+void USmartObjectComponent::SetDefinition(USmartObjectDefinition* Definition)
+{
+	DefinitionRef.SetSmartObjectDefinition(Definition);
 }
 
 void USmartObjectComponent::SetRegisteredHandle(const FSmartObjectHandle Value, const ESmartObjectRegistrationType InRegistrationType)
@@ -175,14 +293,14 @@ void USmartObjectComponent::SetRegisteredHandle(const FSmartObjectHandle Value, 
 	ensure(Value.IsValid());
 	ensure(RegisteredHandle.IsValid() == false || RegisteredHandle == Value);
 	RegisteredHandle = Value;
-	ensure(RegistrationType == ESmartObjectRegistrationType::None && InRegistrationType != ESmartObjectRegistrationType::None);
+	ensure(RegistrationType == ESmartObjectRegistrationType::NotRegistered && InRegistrationType != ESmartObjectRegistrationType::NotRegistered);
 	RegistrationType = InRegistrationType;
 }
 
 void USmartObjectComponent::InvalidateRegisteredHandle()
 {
 	RegisteredHandle = FSmartObjectHandle::Invalid;
-	RegistrationType = ESmartObjectRegistrationType::None;
+	RegistrationType = ESmartObjectRegistrationType::NotRegistered;
 }
 
 void USmartObjectComponent::OnRuntimeInstanceBound(FSmartObjectRuntime& RuntimeInstance)
@@ -199,15 +317,62 @@ void USmartObjectComponent::OnRuntimeInstanceUnbound(FSmartObjectRuntime& Runtim
 	}
 }
 
+bool USmartObjectComponent::SetSmartObjectEnabled(const bool bEnable) const
+{
+	return SetSmartObjectEnabledForReason(UE::SmartObject::EnabledReason::Gameplay, bEnable);
+}
+
+bool USmartObjectComponent::SetSmartObjectEnabledForReason(const FGameplayTag ReasonTag, const bool bEnabled) const
+{
+	if (GetRegisteredHandle().IsValid())
+	{
+		if (USmartObjectSubsystem* const Subsystem = USmartObjectSubsystem::GetCurrent(GetWorld()))
+		{
+			Subsystem->SetEnabledForReason(GetRegisteredHandle(), ReasonTag, bEnabled);
+
+			return true;
+		}
+	}
+	
+	return false;
+}
+
+bool USmartObjectComponent::IsSmartObjectEnabled() const
+{
+	if (GetRegisteredHandle().IsValid())
+	{
+		if (const USmartObjectSubsystem* const Subsystem = USmartObjectSubsystem::GetCurrent(GetWorld()))
+		{
+			return Subsystem->IsEnabled(GetRegisteredHandle());
+		}
+	}
+
+	return false;
+}
+
+bool USmartObjectComponent::IsSmartObjectEnabledForReason(const FGameplayTag ReasonTag) const
+{
+	if (GetRegisteredHandle().IsValid())
+	{
+		if (const USmartObjectSubsystem* const Subsystem = USmartObjectSubsystem::GetCurrent(GetWorld()))
+		{
+			return Subsystem->IsEnabledForReason(GetRegisteredHandle(), ReasonTag);
+		}
+	}
+
+	return false;
+}
+
 TStructOnScope<FActorComponentInstanceData> USmartObjectComponent::GetComponentInstanceData() const
 {
-	return MakeStructOnScope<FActorComponentInstanceData, FSmartObjectComponentInstanceData>(this, DefinitionAsset);
+	return MakeStructOnScope<FActorComponentInstanceData, FSmartObjectComponentInstanceData>(this, DefinitionRef);
 }
 
 #if WITH_EDITOR
 void USmartObjectComponent::PostEditUndo()
 {
 	Super::PostEditUndo();
+	CachedDefinitionAssetVariation = nullptr;
 
 	OnSmartObjectChanged.Broadcast(*this);
 }
@@ -215,6 +380,7 @@ void USmartObjectComponent::PostEditUndo()
 void USmartObjectComponent::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 {
 	Super::PostEditChangeProperty(PropertyChangedEvent);
+	CachedDefinitionAssetVariation = nullptr;
 
 	OnSmartObjectChanged.Broadcast(*this);
 }
@@ -237,9 +403,10 @@ void FSmartObjectComponentInstanceData::ApplyToComponent(UActorComponent* Compon
 		USmartObjectComponent* SmartObjectComponent = CastChecked<USmartObjectComponent>(Component);
 		// We only need to force a register if DefinitionAsset is currently null and a valid one was backed up.
 		// Reason is that our registration to the Subsystem depends on a valid definition so it can be skipped.
-		if (SmartObjectComponent->DefinitionAsset != DefinitionAsset && SmartObjectComponent->DefinitionAsset == nullptr)
+		if (SmartObjectComponent->DefinitionRef != SmartObjectDefinitionRef
+			&& SmartObjectComponent->DefinitionRef.IsValid())
 		{
-			SmartObjectComponent->DefinitionAsset = DefinitionAsset;
+			SmartObjectComponent->DefinitionRef = SmartObjectDefinitionRef;
 
 			const UWorld* World = SmartObjectComponent->GetWorld();
 			if (World != nullptr && !World->IsGameWorld())

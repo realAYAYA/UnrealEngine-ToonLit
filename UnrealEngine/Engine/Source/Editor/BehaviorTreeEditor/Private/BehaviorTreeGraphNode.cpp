@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "BehaviorTreeGraphNode.h"
+#include "BehaviorTreeColors.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
 #include "ToolMenus.h"
 #include "BehaviorTree/BTNode.h"
@@ -105,6 +106,11 @@ FText UBehaviorTreeGraphNode::GetTooltipText() const
 }
 
 UBehaviorTreeGraph* UBehaviorTreeGraphNode::GetBehaviorTreeGraph()
+{
+	return GetOwnerBehaviorTreeGraph();
+}
+
+UBehaviorTreeGraph* UBehaviorTreeGraphNode::GetOwnerBehaviorTreeGraph() const
 {
 	return CastChecked<UBehaviorTreeGraph>(GetGraph());
 }
@@ -327,6 +333,24 @@ void UBehaviorTreeGraphNode::InsertSubNodeAt(UAIGraphNode* SubNode, int32 DropIn
 	}
 }
 
+void UBehaviorTreeGraphNode::UpdateErrorMessage()
+{
+	Super::UpdateErrorMessage();
+
+	if (ErrorMessage.IsEmpty())
+	{
+		if (const UBTNode* BTNodeInstance = Cast<UBTNode>(NodeInstance))
+		{
+			ErrorMessage = BTNodeInstance->GetErrorMessage();
+		}
+	}
+}
+
+FLinearColor UBehaviorTreeGraphNode::GetBackgroundColor(bool bIsActiveForDebugger) const
+{
+	return BehaviorTreeColors::NodeBody::Default;
+}
+
 void UBehaviorTreeGraphNode::CreateAddDecoratorSubMenu(UToolMenu* Menu, UEdGraph* Graph) const
 {
 	TSharedRef<SGraphEditorActionMenuAI> Widget =
@@ -388,6 +412,12 @@ void UBehaviorTreeGraphNode::ClearDebuggerState()
 	DebuggerSearchPathSize = 0;
 	DebuggerUpdateCounter = -1;
 	DebuggerRuntimeDescription.Empty();
+}
+
+const ISlateStyle& UBehaviorTreeGraphNode::GetNameIconStyleSet() const
+{
+	const UBTNode* BTNodeInstance = Cast<UBTNode>(NodeInstance);
+	return BTNodeInstance != nullptr ? BTNodeInstance->GetNodeIconStyleSet() : FAppStyle::Get();
 }
 
 FName UBehaviorTreeGraphNode::GetNameIcon() const

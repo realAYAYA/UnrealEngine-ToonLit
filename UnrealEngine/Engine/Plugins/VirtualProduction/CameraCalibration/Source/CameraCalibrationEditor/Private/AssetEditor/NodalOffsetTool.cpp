@@ -30,7 +30,6 @@
 
 namespace UE::CameraCalibration::Private::NodalOffsetTool
 {
-	static const FString SaveDir = FPaths::ProjectSavedDir() / TEXT("CameraCalibration") / TEXT("NodalOffset");
 	static const FString SessionDateTimeField(TEXT("SessionDateTime"));
 	static const FString AlgoNameField(TEXT("AlgoName"));
 }
@@ -327,7 +326,9 @@ FString UNodalOffsetTool::GetSessionSaveDir() const
 	const FString DatasetPrefix = TEXT("Dataset-") + NodalOffsetAlgo->ShortName().ToString() + TEXT("Algorithm-");
 	const FString DatasetDir = DatasetPrefix + SessionTimeString;
 
-	return NodalOffsetTool::SaveDir / SessionDateString / DatasetDir;
+	const FString ProjectSaveDir = FPaths::ProjectSavedDir() / TEXT("CameraCalibration") / TEXT("NodalOffset");
+
+	return ProjectSaveDir / SessionDateString / DatasetDir;
 }
 
 FString UNodalOffsetTool::GetRowFilename(int32 RowIndex) const
@@ -466,7 +467,7 @@ void UNodalOffsetTool::ImportCalibrationDataset()
 	IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
 	const void* ParentWindowHandle = FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr);
 	const FString Title = TEXT("Import Camera Calibration Dataset");
-	const FString DefaultPath = NodalOffsetTool::SaveDir;
+	const FString DefaultPath = FPaths::ProjectSavedDir() / TEXT("CameraCalibration") / TEXT("NodalOffset");
 	const FString DefaultFile = TEXT("");
 	const FString FileTypes = TEXT("Camera Calibration Dataset|*.ucamcalib");
 	const uint32 OpenFileFlags = 0;

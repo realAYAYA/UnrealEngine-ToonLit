@@ -195,10 +195,6 @@ TSharedPtr<FSceneViewFamilyContext> UMoviePipelineImagePassBase::CalculateViewFa
 	OutViewFamily->ViewMode = ViewModeIndex;
 	OutViewFamily->bOverrideVirtualTextureThrottle = true;
 	
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	OutViewFamily->OverrideFrameCounter = UE::MovieRenderPipeline::GetRendererFrameCount();
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
-	
 	// Kept as an if/else statement to avoid the confusion with setting all of these values to some permutation of !/!!bHasRenderedFirstViewThisFrame.
 	if (!GetPipeline()->bHasRenderedFirstViewThisFrame)
 	{
@@ -523,7 +519,6 @@ FSceneView* UMoviePipelineImagePassBase::GetSceneViewForSampleState(FSceneViewFa
 				ZScale,
 				ZOffset
 			);
-			ViewInitOptions.bUseFauxOrthoViewPos = true;
 			
 			// Modify the projection matrix to do an off center projection, with overlap for high-res tiling
 			const bool bOrthographic = true;
@@ -921,23 +916,38 @@ namespace MoviePipeline
 
 				if (SamplePixelData->GetType() == EImagePixelType::Float32)
 				{
-					const void* RawDataPtr;
+					const void* RawDataPtr = nullptr;
 					int64 RawDataSize;
-					SamplePixelData->GetRawData(RawDataPtr, RawDataSize);
-
-					FMemory::Memcpy(FullSizeData.GetData(), RawDataPtr, RawDataSize);
+					
+					if(SamplePixelData->GetRawData(RawDataPtr, RawDataSize) == true)
+					{
+						FMemory::Memcpy(FullSizeData.GetData(), RawDataPtr, RawDataSize);
+					}
+					else
+					{
+						UE_LOG(LogMovieRenderPipelineIO, Error, TEXT("Failed to retrieve raw data from image data for writing. Bailing."));
+						return;
+					}
 				}
 				else if (SamplePixelData->GetType() == EImagePixelType::Float16)
 				{
-					const void* RawDataPtr;
+					const void* RawDataPtr = nullptr;
 					int64 RawDataSize;
-					SamplePixelData->GetRawData(RawDataPtr, RawDataSize);
 
-					const FFloat16Color* DataAsColor = reinterpret_cast<const FFloat16Color*>(RawDataPtr);
-					for (int64 Index = 0; Index < RawSize.X * RawSize.Y; Index++)
+					if(SamplePixelData->GetRawData(RawDataPtr, RawDataSize) == true)
 					{
-						FullSizeData[Index] = FLinearColor(DataAsColor[Index]);
+						const FFloat16Color* DataAsColor = reinterpret_cast<const FFloat16Color*>(RawDataPtr);
+						for (int64 Index = 0; Index < RawSize.X * RawSize.Y; Index++)
+						{
+							FullSizeData[Index] = FLinearColor(DataAsColor[Index]);
+						}
 					}
+					else
+					{
+						UE_LOG(LogMovieRenderPipelineIO, Error, TEXT("Failed to retrieve raw data from image data for writing. Bailing."));
+						return;
+					}
+
 				}
 				else
 				{

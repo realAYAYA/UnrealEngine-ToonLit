@@ -1,28 +1,43 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+using System.IO;
 using System.Text;
+using System.Threading.Tasks;
+using EpicGames.Core;
+using Jupiter.Common.Implementation;
 using Jupiter.Implementation;
+using Microsoft.Extensions.Options;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Moq;
 using OpenTelemetry.Trace;
 
 namespace Jupiter.Tests.Unit
 {
-    [TestClass]
-    public class CompressedBufferTests
-    {
+	[TestClass]
+	public class CompressedBufferTests
+	{
 
-        [TestMethod]
-        public void CompressAndDecompress()
-        {
-            byte[] bytes = Encoding.UTF8.GetBytes("this is a test string");
+		[TestMethod]
+		public async Task CompressAndDecompressAsync()
+		{
+			byte[] bytes = Encoding.UTF8.GetBytes("this is a test string");
 
-            CompressedBufferUtils bufferUtils = new(TracerProvider.Default.GetTracer("TestTracer"));
+			Tracer tracer = TracerProvider.Default.GetTracer("TestTracer");
+			BufferedPayloadOptions bufferedPayloadOptions = new BufferedPayloadOptions()
+			{
+			};
+			IOptionsMonitor<BufferedPayloadOptions> payloadOptionsMock = Mock.Of<IOptionsMonitor<BufferedPayloadOptions>>(_ => _.CurrentValue == bufferedPayloadOptions);
+			BufferedPayloadFactory bufferedPayloadFactory = new BufferedPayloadFactory(payloadOptionsMock, tracer);
+			CompressedBufferUtils bufferUtils = new(tracer, bufferedPayloadFactory);
 
-            byte[] compressedBytes = bufferUtils.CompressContent(OoodleCompressorMethod.Mermaid, OoodleCompressionLevel.VeryFast, bytes);
+			using MemoryStream ms = new MemoryStream(); 
+			IoHash uncompressedHash = bufferUtils.CompressContent(ms, OoodleCompressorMethod.Mermaid, OoodleCompressionLevel.VeryFast, bytes);
+			ms.Position = 0;
 
-            byte[] roundTrippedBytes = bufferUtils.DecompressContent(compressedBytes);
-
-            CollectionAssert.AreEqual(bytes, roundTrippedBytes);
-        }
-    }
+			using IBufferedPayload bufferedPayload = await bufferUtils.DecompressContentAsync(ms, (ulong)ms.Length);
+			await using Stream s = bufferedPayload.GetStream();
+			byte[] roundTrippedBytes = await s.ReadAllBytesAsync();
+			CollectionAssert.AreEqual(bytes, roundTrippedBytes);
+		}
+	}
 }

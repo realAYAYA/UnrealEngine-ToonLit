@@ -35,9 +35,6 @@ private:
 	/** Helper that lays out cells unaligned */
 	void LayoutUnaligned(const FVector2D& GraphSpacePosition);
 
-	/** Sets the position of the component */
-	void SetPosition(UDMXPixelMappingOutputComponent* Component, const FVector2D& Position) const;
-
 	/** Local position of the parent */
 	FVector2D ParentPosition;
 

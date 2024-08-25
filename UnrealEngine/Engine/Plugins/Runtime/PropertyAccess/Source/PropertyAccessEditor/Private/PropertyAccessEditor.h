@@ -4,6 +4,7 @@
 
 #include "IPropertyAccessEditor.h"
 #include "IPropertyAccessCompiler.h"
+#include "PropertyAccess.h"
 
 struct FEdGraphPinType;
 
@@ -40,9 +41,11 @@ public:
 	// IPropertyAccessLibraryCompiler interface
 	virtual void BeginCompilation() override;
 	virtual FPropertyAccessHandle AddCopy(TArrayView<FString> InSourcePath, TArrayView<FString> InDestPath, const FName& InContextId, UObject* InAssociatedObject = nullptr) override;
+	virtual FPropertyAccessHandle AddAccess(TArrayView<FString> InPath, UObject* InAssociatedObject = nullptr) override;
 	virtual bool FinishCompilation() override;
 	virtual void IterateErrors(TFunctionRef<void(const FText&, UObject*)> InFunction) const override;
 	virtual FCompiledPropertyAccessHandle GetCompiledHandle(FPropertyAccessHandle InHandle) const override;
+	virtual EPropertyAccessCopyType GetCompiledHandleAccessType(FPropertyAccessHandle InHandle) const override;
 
 public:
 	// Stored copy info for processing in FinishCompilation()
@@ -79,6 +82,28 @@ public:
 		int32 BatchIndex = INDEX_NONE;
 	};
 
+	// Stored access info for processing in FinishCompilation()
+	struct FQueuedAccess
+	{
+		// The path to access
+		TArray<FString> Path;
+
+		// Error text associated with the path
+		FText ErrorText;
+
+		// Result of the path resolution
+		EPropertyAccessResolveResult Result = EPropertyAccessResolveResult::Failed;
+
+		// Associated object, used to provide context for path resolution
+		UObject* AssociatedObject = nullptr;
+
+		// Compiled access index
+		int32 AccessIndex = INDEX_NONE;
+
+		// Compiled access type
+		EPropertyAccessCopyType AccessType = EPropertyAccessCopyType::None;
+	};
+
 protected:
 	friend struct FPropertyAccessEditorSystem;
 
@@ -94,6 +119,12 @@ protected:
 	// All copies to process in FinishCompilation()
 	TArray<FQueuedCopy> QueuedCopies;
 
-	// Copy map
+	// All accesses to process in FinishCompilation()
+	TArray<FQueuedAccess> QueuedAccesses;
+
+	// Copy map used to resolve handles
 	TMap<FPropertyAccessHandle, FCompiledPropertyAccessHandle> CopyMap;
+
+	// Access map used to resolve handles
+	TMap<FPropertyAccessHandle, FCompiledPropertyAccessHandle> AccessMap;
 };

@@ -442,7 +442,7 @@ void UMovieSceneReplaySystem::OnPostLoadMap(UWorld* World, IMovieScenePlayer* La
 				World->GetTimerManager().ClearTimer(ReEvaluateHandle);
 
 				FMovieSceneRootEvaluationTemplateInstance& RootEvalTemplate = LastPlayer->GetEvaluationTemplate();
-				RootEvalTemplate.EvaluateSynchronousBlocking(LastContext, *LastPlayer);
+				RootEvalTemplate.EvaluateSynchronousBlocking(LastContext);
 			}
 		},
 		0.1f,

@@ -67,3 +67,26 @@ public:
 	/** Synchronize calling thread on a specific barrier with custom data */
 	virtual bool Synchronize(const FString& BarrierId, const FString& UniqueThreadMarker, const TArray<uint8>& RequestData, TArray<uint8>& OutResponseData) = 0;
 };
+
+/**
+ * Custom deleter to avoid calling the virtual Disconnect function in the destructor.
+ * This is necessary since the destructor of the base class is calling it but expecting
+ * the derived class implementation to be called. This also avoids the PVS warning:
+ * V1053: Calling the 'Disconnect' virtual function in the destructor may lead to unexpected result at runtime.
+ */
+template<typename ClientType>
+struct FDisplayClusterGenericClientDeleter
+{
+	void operator()(ClientType* Client)
+	{
+		if (Client && Client->IsConnected())
+		{
+			Client->Disconnect();
+		}
+
+		delete Client;
+	}
+};
+
+// Custom deleter for IDisplayClusterGenericBarriersClient.
+using FDisplayClusterGenericBarriersClientDeleter = FDisplayClusterGenericClientDeleter<IDisplayClusterGenericBarriersClient>;

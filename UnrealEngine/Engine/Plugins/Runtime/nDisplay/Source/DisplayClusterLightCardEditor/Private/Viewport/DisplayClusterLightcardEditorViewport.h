@@ -13,6 +13,7 @@
 class FDisplayClusterLightCardEditor;
 class ADisplayClusterRootActor;
 class FDisplayClusterLightCardEditorViewportClient;
+class FScopedTransaction;
 
 /**
  * Slate widget which renders our view client.
@@ -132,6 +133,9 @@ private:
 private:
 	/** The preview scene to use by the viewport client to manage the preview 3D world */
 	TSharedPtr<FPreviewScene> PreviewScene;
+
+	/** Open transactions when using an 'Add Actor Here' method since they occur over multiple frames */
+	TSet<TSharedPtr<FScopedTransaction>> AddActorHereTransactions;
 	
 	/** Level viewport client */
 	TSharedPtr<FDisplayClusterLightCardEditorViewportClient> ViewportClient;

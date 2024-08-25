@@ -8,19 +8,19 @@
 #include "MetalRHIPrivate.h"
 #include "Templates/MetalBaseShader.h"
 #include "MetalComputeShader.h"
-
+#include "MetalCommandBuffer.h"
 
 //------------------------------------------------------------------------------
 
 #pragma mark - Metal RHI Compute Shader Class
 
 
-FMetalComputeShader::FMetalComputeShader(TArrayView<const uint8> InCode, mtlpp::Library InLibrary)
+FMetalComputeShader::FMetalComputeShader(TArrayView<const uint8> InCode, MTLLibraryPtr InLibrary)
 	: NumThreadsX(0)
 	, NumThreadsY(0)
 	, NumThreadsZ(0)
 {
-	Pipeline = nil;
+	Pipeline = nullptr;
 	FMetalCodeHeader Header;
 	Init(InCode, Header, InLibrary);
 
@@ -35,29 +35,36 @@ FMetalComputeShader::FMetalComputeShader(TArrayView<const uint8> InCode, mtlpp::
 
 FMetalComputeShader::~FMetalComputeShader()
 {
-	[Pipeline release];
-	Pipeline = nil;
+    if(Pipeline)
+    {
+        Pipeline = nullptr;
+    }
 }
 
-FMetalShaderPipeline* FMetalComputeShader::GetPipeline()
+FMetalShaderPipelinePtr FMetalComputeShader::GetPipeline()
 {
 	if (!Pipeline)
 	{
-		mtlpp::Function Func = GetCompiledFunction();
+        MTL_SCOPED_AUTORELEASE_POOL;
+        
+        MTLFunctionPtr Func = GetCompiledFunction();
 		check(Func);
 
-		ns::Error Error;
-		mtlpp::ComputePipelineDescriptor Descriptor;
-		Descriptor.SetLabel(Func.GetName());
-		Descriptor.SetComputeFunction(Func);
+		NS::Error* Error;
+		MTL::ComputePipelineDescriptor* Descriptor = MTL::ComputePipelineDescriptor::alloc()->init();
+        check(Descriptor);
+        
+		Descriptor->setLabel(Func->name());
+		Descriptor->setComputeFunction(Func.get());
+        
 		if (FMetalCommandQueue::SupportsFeature(EMetalFeaturesTextureBuffers))
 		{
-			Descriptor.SetMaxTotalThreadsPerThreadgroup(NumThreadsX*NumThreadsY*NumThreadsZ);
+			Descriptor->setMaxTotalThreadsPerThreadgroup(NumThreadsX*NumThreadsY*NumThreadsZ);
 		}
 
 		if (FMetalCommandQueue::SupportsFeature(EMetalFeaturesPipelineBufferMutability))
 		{
-			ns::AutoReleased<ns::Array<mtlpp::PipelineBufferDescriptor>> PipelineBuffers = Descriptor.GetBuffers();
+			MTL::PipelineBufferDescriptorArray* PipelineBuffers = Descriptor->buffers();
 
 			uint32 ImmutableBuffers = Bindings.ConstantBuffers | Bindings.ArgumentBuffers;
 			while(ImmutableBuffers)
@@ -67,64 +74,72 @@ FMetalShaderPipeline* FMetalComputeShader::GetPipeline()
 
 				if (Index < ML_MaxBuffers)
 				{
-					ns::AutoReleased<mtlpp::PipelineBufferDescriptor> PipelineBuffer = PipelineBuffers[Index];
-					PipelineBuffer.SetMutability(mtlpp::Mutability::Immutable);
+					MTL::PipelineBufferDescriptor* PipelineBuffer = PipelineBuffers->object(Index);
+					PipelineBuffer->setMutability(MTL::MutabilityImmutable);
 				}
 			}
 			if (SideTableBinding > 0)
 			{
-				ns::AutoReleased<mtlpp::PipelineBufferDescriptor> PipelineBuffer = PipelineBuffers[SideTableBinding];
-				PipelineBuffer.SetMutability(mtlpp::Mutability::Immutable);
+				MTL::PipelineBufferDescriptor* PipelineBuffer = PipelineBuffers->object(SideTableBinding);
+				PipelineBuffer->setMutability(MTL::MutabilityImmutable);
 			}
 		}
 
-		mtlpp::ComputePipelineState Kernel;
-		mtlpp::ComputePipelineReflection Reflection;
+        MTLComputePipelineStatePtr Kernel;
+		MTL::ComputePipelineReflection* Reflection = nullptr;
 
 		METAL_GPUPROFILE(FScopedMetalCPUStats CPUStat(FString::Printf(TEXT("NewComputePipeline: %d_%d"), SourceLen, SourceCRC)));
 #if METAL_DEBUG_OPTIONS
 		if (GetMetalDeviceContext().GetCommandQueue().GetRuntimeDebuggingLevel() >= EMetalDebugLevelFastValidation)
 		{
-			ns::AutoReleasedError ComputeError;
-			mtlpp::AutoReleasedComputePipelineReflection ComputeReflection;
-
-			NSUInteger ComputeOption = mtlpp::PipelineOption::ArgumentInfo | mtlpp::PipelineOption::BufferTypeInfo;
-			Kernel = GetMetalDeviceContext().GetDevice().NewComputePipelineState(Descriptor, mtlpp::PipelineOption(ComputeOption), &ComputeReflection, &ComputeError);
+			NS::Error* ComputeError = nullptr;
+            MTL::ComputePipelineReflection* ComputeReflection = nullptr;
+            
+			NS::UInteger ComputeOption = MTL::PipelineOptionArgumentInfo | MTL::PipelineOptionBufferTypeInfo;
+			Kernel = NS::TransferPtr(GetMetalDeviceContext().GetDevice()->newComputePipelineState(Descriptor, MTL::PipelineOption(ComputeOption), &ComputeReflection, &ComputeError));
 			Error = ComputeError;
 			Reflection = ComputeReflection;
 		}
 		else
 #endif // METAL_DEBUG_OPTIONS
 		{
-			ns::AutoReleasedError ComputeError;
-			Kernel = GetMetalDeviceContext().GetDevice().NewComputePipelineState(Descriptor, mtlpp::PipelineOption(0), nil, &ComputeError);
+			NS::Error* ComputeError;
+			Kernel = NS::TransferPtr(GetMetalDeviceContext().GetDevice()->newComputePipelineState(Descriptor, MTL::PipelineOption(0), nullptr, &ComputeError));
 			Error = ComputeError;
 		}
 
-		if (Kernel == nil)
+		if (Kernel.get() == nullptr)
 		{
-			UE_LOG(LogRHI, Error, TEXT("*********** Error\n%s"), *FString(GetSourceCode()));
-			UE_LOG(LogRHI, Fatal, TEXT("Failed to create compute kernel: %s"), *FString([Error description]));
+			UE_LOG(LogRHI, Error, TEXT("*********** Error\n%s"), *NSStringToFString(GetSourceCode()));
+			UE_LOG(LogRHI, Fatal, TEXT("Failed to create compute kernel: %s"), *NSStringToFString(Error->description()));
 		}
 
-		Pipeline = [FMetalShaderPipeline new];
+		Pipeline = FMetalShaderPipelinePtr(new FMetalShaderPipeline);
 		Pipeline->ComputePipelineState = Kernel;
 #if METAL_DEBUG_OPTIONS
-		Pipeline->ComputePipelineReflection = Reflection;
+        if(Reflection)
+        {
+            Pipeline->ComputePipelineReflection = NS::RetainPtr(Reflection);
+        }
+        
 		Pipeline->ComputeSource = GetSourceCode();
+        Pipeline->ComputeSource->retain();
+        
 		if (Reflection)
 		{
-			Pipeline->ComputeDesc = Descriptor;
+			Pipeline->ComputeDesc = NS::RetainPtr(Descriptor);
 		}
 #endif // METAL_DEBUG_OPTIONS
+        Descriptor->release();
+        
 		METAL_DEBUG_OPTION(FMemory::Memzero(Pipeline->ResourceMask, sizeof(Pipeline->ResourceMask)));
 	}
 	check(Pipeline);
 
-	return Pipeline;
+	return FMetalShaderPipelinePtr(Pipeline);
 }
 
-mtlpp::Function FMetalComputeShader::GetFunction()
+MTLFunctionPtr FMetalComputeShader::GetFunction()
 {
 	return GetCompiledFunction();
 }

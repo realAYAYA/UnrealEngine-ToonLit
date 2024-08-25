@@ -37,6 +37,7 @@ public:
 
 	void RefreshFullList();
 	void NotifyFoliageTypeMeshChanged(class UFoliageType* FoliageType);
+	void ReflectSelectionInPalette();
 
 private:
 	TSharedPtr< class SFoliageEdit > FoliageEdWidget;

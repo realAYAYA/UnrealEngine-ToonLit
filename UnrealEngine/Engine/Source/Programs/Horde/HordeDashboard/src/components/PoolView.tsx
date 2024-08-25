@@ -1,23 +1,20 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-import { Checkbox, ComboBox, DefaultButton, DetailsList, DetailsListLayoutMode, Dialog, DialogFooter, DialogType, IColumn, IComboBoxOption, ITag, MessageBar, MessageBarType, Position, PrimaryButton, ScrollablePane, ScrollbarVisibility, SelectionMode, Slider, SpinButton, Spinner, SpinnerSize, Stack, TagPicker, Text, TextField } from "@fluentui/react";
+import { Checkbox, ComboBox, DefaultButton, DetailsList, DetailsListLayoutMode, Dialog, DialogFooter, DialogType, IColumn, IComboBoxOption, IconButton, MessageBar, MessageBarType, Modal, Position, PrimaryButton, ScrollablePane, ScrollbarVisibility, SelectionMode, Slider, SpinButton, Spinner, SpinnerSize, Stack, Text, TextField } from "@fluentui/react";
 import { observer } from "mobx-react-lite";
 import moment from "moment";
 import React, { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import backend from "../backend";
-import { GetAgentLeaseResponse, GetAgentResponse, GetBatchResponse, GetJobTimingResponse, GetPoolResponse, GetStepResponse, JobData, JobQuery, JobState, JobStepBatchState, JobStepState, LeaseState, PoolSizeStrategy, StepData, UpdatePoolRequest } from "../backend/Api";
+import { GetAgentLeaseResponse, GetAgentResponse, GetBatchResponse, GetJobTimingResponse, GetPoolResponse, GetStepResponse, JobData, JobQuery, JobState, JobStepBatchError, JobStepBatchState, JobStepState, LeaseState, PoolSizeStrategy, UpdatePoolRequest } from "../backend/Api";
 import dashboard from "../backend/Dashboard";
 import { PollBase } from "../backend/PollBase";
 import { projectStore } from "../backend/ProjectStore";
-import { useWindowSize } from "../base/utilities/hooks";
-import { getElapsedString, getNiceTime, getShortNiceTime, getStepElapsed, getStepETA, getStepFinishTime, getStepStartTime } from "../base/utilities/timeUtils";
-import { hordeClasses, linearInterpolate, modeColors } from "../styles/Styles";
-import { Breadcrumbs } from "./Breadcrumbs";
+import { getElapsedString, getShortNiceTime, getStepElapsed, getStepStartTime } from "../base/utilities/timeUtils";
+import { getHordeStyling, linearInterpolate } from "../styles/Styles";
+import { AgentPanel } from "./AgentView";
 import { HistoryModal } from "./HistoryModal";
 import { LeaseStatusIcon, StepStatusIcon } from "./StatusIcon";
-import { TopNav } from "./TopNav";
-import { AgentPanel } from "./AgentView";
 
 
 type PendingBatch = {
@@ -27,6 +24,11 @@ type PendingBatch = {
 
 // UI visible text for values that are undefined
 const UNSET_VALUE: string = "-";
+
+const percent = (value: number) => {
+   return value.toLocaleString(undefined, { style: 'percent', minimumFractionDigits: 0 })
+}
+
 
 class PoolHandler extends PollBase {
 
@@ -45,20 +47,6 @@ class PoolHandler extends PollBase {
       this.jobData = new Map();
       this.activeConforms = new Map<string, GetAgentLeaseResponse>();
       super.stop();
-   }
-
-   loadPools() {
-
-      if (PoolHandler.pools) {
-         return;
-      }
-
-      PoolHandler.pools = [];
-
-      backend.getPools().then(p => {
-         PoolHandler.pools = p.sort((a, b) => a.name.localeCompare(b.name));
-         this.setUpdated();
-      });
    }
 
    set(poolId?: string) {
@@ -83,8 +71,6 @@ class PoolHandler extends PollBase {
       }
 
       try {
-
-         const doTimings = !!this.pool;
 
          const pool = this.pool = await backend.getPool(this.poolId);
 
@@ -165,7 +151,7 @@ class PoolHandler extends PollBase {
 
          if (streamJobIds.size) {
 
-            const streamJobs = await backend.getJobs({ id: Array.from(streamJobIds), filter: "id,name,batches,change,createTime,streamId,graphHash" }, true);
+            const streamJobs = await backend.getJobs({ id: Array.from(streamJobIds), filter: "id,name,batches,change,createTime,streamId,preflightChange,graphHash" }, true);
 
             streamJobs.forEach(job => {
 
@@ -230,7 +216,7 @@ class PoolHandler extends PollBase {
 
             const query: JobQuery = {
                id: jobIds,
-               filter: "id,name,batches,change,createTime,streamId,graphHash",
+               filter: "id,name,batches,change,createTime,streamId,preflightChange,graphHash",
             }
 
             const jobs = await backend.getJobs(query, true);
@@ -267,41 +253,6 @@ class PoolHandler extends PollBase {
             });
          }
 
-         if (doTimings) {
-
-            let jobTiming = activeJobs.filter(job => !this.jobTiming.get(job.id));
-
-            while (jobTiming.length) {
-
-               const batch = jobTiming.slice(0, 5);
-
-               const requests = batch.map(job => backend.getJobTiming(job.id));
-
-               await Promise.all(requests).then((responses) => {
-
-                  responses.forEach(r => {
-                     this.jobTiming.set(r.jobResponse.id, r);
-                  });
-
-               }).catch((errors) => {
-                  console.log(errors);
-                  // eslint-disable-next-line
-               }).finally(() => {
-
-                  jobTiming = jobTiming.slice(5);
-               });
-            }
-
-         }
-
-         activeJobs.forEach((job) => {
-            const timing = this.jobTiming.get(job.id);
-            if (timing) {
-               const steps = (job.batches?.map(b => b.steps).flat() ?? []) as StepData[];
-               steps.forEach(step => step.timing = timing.steps[step.id] ? timing.steps[step.id] : undefined)
-            }
-         });
-
          this.setUpdated();
 
       } catch (err) {
@@ -329,9 +280,6 @@ class PoolHandler extends PollBase {
    jobTiming: Map<string, GetJobTimingResponse> = new Map();
    agents?: GetAgentResponse[];
    pool?: GetPoolResponse;
-
-   static pools?: GetPoolResponse[];
-
 }
 
 const handler = new PoolHandler();
@@ -342,7 +290,7 @@ enum StepState {
    Previous = "Previous"
 }
 
-const PoolAgentPanel: React.FC<{poolId:string}> = ({poolId}) => {
+const PoolAgentPanel: React.FC<{ poolId: string }> = ({ poolId }) => {
 
    return <Stack styles={{ root: { paddingTop: 18, paddingLeft: 12, paddingRight: 12 } }} >
       <Stack tokens={{ childrenGap: 12 }}>
@@ -357,6 +305,8 @@ const PoolAgentPanel: React.FC<{poolId:string}> = ({poolId}) => {
 const StepPanel: React.FC<{ stepState: StepState }> = ({ stepState }) => {
 
    const [lastSelectedAgent, setLastSelectedAgent] = useState<string | undefined>(undefined);
+
+   const { modeColors } = getHordeStyling();
 
    const pool = handler.pool;
    if (!pool || !handler.agents || !handler.agents.length) {
@@ -410,12 +360,11 @@ const StepPanel: React.FC<{ stepState: StepState }> = ({ stepState }) => {
    let columns: IColumn[] = [];
 
    columns = [
+      { key: 'column1', name: 'Job', minWidth: 790, maxWidth: 790 },
       { key: 'column2', name: 'Agent', minWidth: 100, maxWidth: 100 },
-      { key: 'column1', name: 'Job', minWidth: 600, maxWidth: 600 },
       { key: 'column3', name: 'Time Active', minWidth: 100, maxWidth: 100 },
       { key: 'column4', name: 'Start Time', minWidth: 100, maxWidth: 100 },
-      { key: 'column5', name: 'Estimated Finish', minWidth: 100, maxWidth: 100 },
-      { key: 'column6', name: 'View Log', minWidth: 80, maxWidth: 80 }
+      { key: 'column5', name: 'View Log', minWidth: 80, maxWidth: 80 }
    ];
 
    const agentItems: AgentItem[] = agents.map(a => {
@@ -464,47 +413,12 @@ const StepPanel: React.FC<{ stepState: StepState }> = ({ stepState }) => {
          }
       }
 
-      if (column.name === 'Estimated Finish') {
-
-         let eta = {
-            display: "",
-            server: ""
-         };
-
-         let finished = { display: "", server: "" };
-
-         eta = getStepETA(step, job);
-
-         finished = getStepFinishTime(step);
-
-         if (finished.display) {
-            eta.display = finished.display;
-            eta.server = finished.server;
-         }
-
-         let time = eta.display;
-
-         const etaColor = dashboard.darktheme ? "#A9A9A9" : "#999999";
-
-         const color = !step.finishTime ? etaColor : undefined;
-
-         // Open Sans tilde rendering issue at 13px, and not rendering at all at other px: https://github.com/google/fonts/issues/399, do not change from 12px
-         return <Stack horizontalAlign={"end"}>
-            <Stack horizontal tokens={{ childrenGap: 2 }}>
-               {!!time && !step.finishTime && <Text style={{ color: color, fontSize: "11px", paddingTop: 2 }}>~</Text>}
-               <Text style={{ color: color, fontSize: "13px" }}>
-                  {time}
-               </Text>
-            </Stack>
-         </Stack>;
-
-      }
 
       if (column.name === "View Log") {
          if (stepState === StepState.Pending) {
             return null;
          }
-         return <Stack style={{ paddingRight: 32 }}>
+         return <Stack style={{ paddingRight: 8 }}>
             <Link to={`/log/${step.logId}`} target="_blank">
                <Stack horizontal horizontalAlign={"end"} verticalAlign="center" tokens={{ childrenGap: 0, padding: 0 }} style={{ width: "100%", height: "100%" }}>
                   <Text styles={{ root: { margin: '0px', padding: '0px', paddingRight: '8px' } }} className={"view-log-link"}>View Log</Text>
@@ -519,22 +433,28 @@ const StepPanel: React.FC<{ stepState: StepState }> = ({ stepState }) => {
          if (jobName.indexOf("- Kicked By") !== -1) {
             jobName = jobName.split("- Kicked By")[0];
          }
-         const stepName = `${jobName} - ${node.name}`;
+         let stepName = `${jobName} - ${node.name}`;
          const stepUrl = `/job/${job.id}?step=${step.id}`;
 
+         const stream = projectStore.streamById(job.streamId);
+         if (stream) {
+            stepName = `${stream.fullname ?? stream.id} - ${stepName}`
+         }
+
          return <Stack>
-            <Link target="_blank" to={stepUrl}><Text>{stepName}</Text></Link>
+            <Link target="_blank" to={stepUrl}>
+               <Stack horizontal>
+                  <StepStatusIcon step={step} />
+                  <Text>{stepName}</Text>
+               </Stack>
+            </Link>
          </Stack>;
 
       }
 
       if (column.name === "Agent") {
          return <div style={{ cursor: "pointer" }} onClick={() => { setLastSelectedAgent(agent.id) }}>
-            <Stack horizontal>
-               <StepStatusIcon step={step} />
-               <Text>{agent.name}</Text>
-            </Stack>
-
+            <Text>{agent.name}</Text>
          </div>
 
       }
@@ -585,6 +505,8 @@ const StepPanel: React.FC<{ stepState: StepState }> = ({ stepState }) => {
 
 const BatchPanel: React.FC = () => {
 
+   const { modeColors } = getHordeStyling();
+
    const pool = handler.pool;
    if (!pool || !handler.agents || !handler.agents.length) {
       return null;
@@ -611,9 +533,9 @@ const BatchPanel: React.FC = () => {
    let columns: IColumn[] = [];
 
    columns = [
-      { key: 'column1', name: 'Job', minWidth: 600, maxWidth: 600 },
-      { key: 'column4', name: 'Job Created', minWidth: 300, maxWidth: 300 },
-      { key: 'column2', name: 'Status', minWidth: 200, maxWidth: 200 },
+      { key: 'column1', name: 'Job', minWidth: 800, maxWidth: 800 },
+      { key: 'column2', name: 'Job Created', minWidth: 200, maxWidth: 200 },
+      { key: 'column3', name: 'Status', minWidth: 200, maxWidth: 200 },
    ];
 
    const batchItems: BatchItem[] = batches.map(b => {
@@ -627,6 +549,9 @@ const BatchPanel: React.FC = () => {
       const column = columnIn!;
       const job = item.pending.job;
       const batch = item.pending.batch;
+
+      const stream = projectStore.streamById(job.streamId);
+
 
       if (column.name === "Status") {
          let statusText = "";
@@ -644,7 +569,7 @@ const BatchPanel: React.FC = () => {
 
       if (column.name === "Job Created") {
 
-         return <Stack ><Text style={{ fontSize: "13px", paddingRight: 12 }}>{getNiceTime(job.createTime, false)}</Text></Stack>;
+         return <Stack ><Text style={{ fontSize: "13px", paddingRight: 12 }}>{getShortNiceTime(job.createTime, true, true)}</Text></Stack>;
       }
 
 
@@ -659,13 +584,18 @@ const BatchPanel: React.FC = () => {
             const group = job.graphRef!.groups![batch.groupIdx];
             const node = group.nodes[step.nodeIdx];
             jobName += ` - ${node.name}`;
+            if (stream) {
+               jobName = `${stream.fullname ?? stream.id} - ` + jobName;
+            }
          }
 
          const jobUrl = `/job/${job.id}`;
 
          return <Stack horizontal>
             {!!step && <StepStatusIcon step={step} />}
-            <Link target="_blank" to={jobUrl}><Text>{jobName}</Text></Link>
+            <Link target="_blank" to={jobUrl}>
+               <Text>{jobName}</Text>
+            </Link>
          </Stack>;
 
       }
@@ -715,6 +645,7 @@ const BatchPanel: React.FC = () => {
 const ConformPanel: React.FC = () => {
 
    const [lastSelectedAgent, setLastSelectedAgent] = useState<string | undefined>(undefined);
+   const { modeColors } = getHordeStyling();
 
    const pool = handler.pool;
    if (!pool) {
@@ -785,7 +716,7 @@ const ConformPanel: React.FC = () => {
             return null;
          }
          return <Stack horizontalAlign="end" style={{ paddingRight: 32 }}>
-            <Link to={`/log/${lease.logId}?leaseId=${lease.id}`} target="_blank">
+            <Link to={`/log/${lease.logId}`} target="_blank">
                <Stack horizontal verticalAlign="center" tokens={{ childrenGap: 0, padding: 0 }} style={{ width: "100%", height: "100%" }}>
                   <Text styles={{ root: { margin: '0px', padding: '0px', paddingRight: '8px' } }} className={"view-log-link"}>View Log</Text>
                </Stack>
@@ -841,6 +772,7 @@ const ConformPanel: React.FC = () => {
 const AutoScalerPanel: React.FC = () => {
 
    const [state, setState] = useState<{ error?: string, submitting?: boolean, confirmed?: boolean, modified?: boolean, name?: string, color?: string, autoscale?: boolean, minAgents?: number, reserveAgents?: number, strategy?: PoolSizeStrategy, conformInterval?: number }>({});
+   const { hordeClasses } = getHordeStyling();
 
    const pool = handler.pool;
    if (!pool) {
@@ -1015,13 +947,182 @@ const AutoScalerPanel: React.FC = () => {
 
 }
 
+const SettingsModal: React.FC<{ onClose: () => void }> = observer(({ onClose }) => {
+
+   const { hordeClasses, modeColors } = getHordeStyling();
+
+   return <Modal isOpen={true} isBlocking={true} topOffsetFixed={true} styles={{ main: { padding: 8, width: 800, backgroundColor: modeColors.background, hasBeenOpened: false, top: "24px", position: "absolute", height: "320px" } }} className={hordeClasses.modal} onDismiss={() => onClose()}>
+      <Stack style={{ height: "93vh" }}>
+         <Stack style={{ height: "100%" }}>
+            <Stack style={{ flexBasis: "70px", flexShrink: 0 }}>
+               <Stack horizontal styles={{ root: { padding: 8 } }} style={{ padding: 20, paddingBottom: 8 }}>
+                  <Stack horizontal style={{ width: 1024 }} tokens={{ childrenGap: 24 }} verticalAlign="center" verticalFill={true}>
+                     <AutoScalerPanel />
+                     <Stack grow />
+                  </Stack>
+                  <Stack grow />
+                  <Stack horizontalAlign="end">
+                     <IconButton
+                        iconProps={{ iconName: 'Cancel' }}
+                        ariaLabel="Close popup modal"
+                        onClick={() => { onClose() }}
+                     />
+                  </Stack>
+               </Stack>
+            </Stack>
+         </Stack>
+      </Stack>
+   </Modal>
+
+});
+
+
+const StreamPanel: React.FC = observer(() => {
+
+   // subscrive
+   if (handler.updated) { }
+
+   const agents = handler.agents;
+
+   const pool = handler.pool;
+   if (!pool || !agents?.length) {
+      return null;
+   }
+
+   type StreamItem = {
+      streamId: string;
+      streamName: string;
+      preflights: number;
+      agents: number;
+   }
+
+   type StreamMetrics = {
+      id: string,
+      name: string;
+      agents: number;
+      preflights: number;
+   }
+
+   const active = agents.filter(a => !!a.leases?.length).length;
+   const ready = agents.filter(a => !a.leases?.length && a.online && a.enabled && !a.pendingConform && !a.pendingFullConform).length;
+
+   const streamMetrics = new Map<string, StreamMetrics>();
+
+   handler.jobData.forEach((j, a) => {
+
+      const streamId = j.streamId;
+      const streamName = projectStore.streamById(streamId)?.fullname ?? "Unknown";
+
+      if (!streamMetrics.has(streamId)) {
+         streamMetrics.set(streamId, { id: streamId, name: streamName, agents: 0, preflights: 0 });
+      }
+
+      let agents = 0;
+
+      j.batches?.forEach(b => {
+         if (!b.leaseId || b.finishTime || b.state === JobStepBatchState.Complete || b.error !== JobStepBatchError.None) {
+            return;
+         }
+         const found = handler.agents?.find((a) => a.id === b.agentId);
+         if (found) {
+            agents++;
+         }
+      })
+
+      if (agents) {
+
+         let m = streamMetrics.get(streamId)!;
+
+         if (j.preflightChange) {
+            m.preflights += agents;
+         } else {
+            m.agents += agents;
+         }
+      }
+
+
+   })
+
+   const streamItems: StreamItem[] = Array.from(streamMetrics.values()).sort((a, b) => (b.agents + b.preflights) - (a.agents + a.preflights)).map(m => {
+      return {
+         streamId: m.id,
+         streamName: m.name,
+         preflights: m.preflights,
+         agents: m.agents
+      }
+   });
+
+
+   const streamColumns = [
+      { key: 'column1', name: 'Stream', minWidth: 240, maxWidth: 240 },
+      { key: 'column2', name: 'Jobs', minWidth: 200, maxWidth: 200 },
+   ];
+
+   const onRenderStreamColumn = (item: StreamItem, index?: number, columnIn?: IColumn) => {
+
+      const column = columnIn!;
+
+      // simple cases
+      switch (column.name) {
+         case 'Stream':
+            return <Text >{`${item.streamName}`}</Text>
+         case 'Jobs':
+
+            let text = "";
+            if (ready + active) {
+               text = `${percent((item.preflights + item.agents) / (ready + active))} (`
+            }
+
+            if (item.agents) {
+               text += `${item.agents}`;
+            }
+
+            if (item.preflights) {
+               if (item.agents) {
+                  text += ` + ${item.preflights} Preflights`;
+               } else {
+                  text += `${item.preflights} Preflights`;
+               }
+            }
+
+            text += ")"
+
+
+            return <Text >{text}</Text>
+         default:
+            break;
+      }
+
+      return null;
+   }
+
+   return <Stack style={{ minWidth: 460 }}>
+      <Stack style={{ paddingBottom: 12 }}>
+         <Text variant="mediumPlus" styles={{ root: { fontFamily: "Horde Open Sans SemiBold" } }}>Active Agents</Text>
+      </Stack>
+      <DetailsList
+         compact={true}
+         items={streamItems}
+         columns={streamColumns}
+         setKey="set"
+         layoutMode={DetailsListLayoutMode.justified}
+         isHeaderVisible={false}
+         selectionMode={SelectionMode.none}
+         onRenderItemColumn={onRenderStreamColumn}
+      />
+   </Stack>
+
+});
 
 const PoolPanel: React.FC = () => {
+
+   const [state, setState] = useState<{ showSettings?: boolean }>({})
 
    const pool = handler.pool;
    if (!pool) {
       return null;
    }
+
 
    type WorkspaceItem = {
       identifier: string;
@@ -1068,8 +1169,8 @@ const PoolPanel: React.FC = () => {
    }
 
    const summaryColumns = [
-      { key: 'column1', name: 'Name', minWidth: 64, maxWidth: 64 },
-      { key: 'column2', name: 'Value', minWidth: 100, maxWidth: 200 },
+      { key: 'column1', name: 'Name', minWidth: 100, maxWidth: 100 },
+      { key: 'column2', name: 'Value', minWidth: 100, maxWidth: 100 },
    ];
 
    const onRenderSummaryItemColumn = (item: SummaryItem, index?: number, columnIn?: IColumn) => {
@@ -1105,8 +1206,14 @@ const PoolPanel: React.FC = () => {
       const disabled = agents.filter(a => !a.enabled).length;
       const ready = agents.filter(a => !a.leases?.length && a.online && a.enabled && !a.pendingConform && !a.pendingFullConform).length;
 
-      const percent = (value: number) => {
-         return value.toLocaleString(undefined, { style: 'percent', minimumFractionDigits: 0 })
+      let interval = "";
+
+      if (pool.conformInterval === 0) {
+         interval = "0 - Disabled";
+      } else if (pool.conformInterval !== undefined) {
+         interval = `${pool.conformInterval}h`
+      } else {
+         interval = "24h - Default";
       }
 
       summaryItems.push({ name: "Agents", value: `${total} ` });
@@ -1114,21 +1221,26 @@ const PoolPanel: React.FC = () => {
       summaryItems.push({ name: "Ready", value: `${percent(ready / total)} (${ready})` });
       summaryItems.push({ name: "Offline", value: `${percent(offline / total)} (${offline})` });
       summaryItems.push({ name: "Disabled", value: `${percent(disabled / total)} (${disabled})` });
+      summaryItems.push({ name: "Autoscaling", value: pool.enableAutoscaling ? "On" : "Off" });
+      if (pool.enableAutoscaling) {
+         summaryItems.push({ name: "Min/Reserve", value: `${pool.minAgents?.toString() ?? "???"} / ${pool.numReserveAgents?.toString() ?? "???"}` });
+         summaryItems.push({ name: "Strategy", value: pool.sizeStrategy ?? PoolSizeStrategy.LeaseUtilization });
+      }
+      summaryItems.push({ name: "Conform Interval", value: interval });
+
    }
 
-   let color = "1";
-   if (pool.properties && pool.properties["Color"]) {
-      color = pool.properties["Color"];
-   }
-
+   let color = pool.colorValue;
 
    return (<Stack>
+      {!!state.showSettings && <SettingsModal onClose={() => { setState({ ...state, showSettings: false }) }} />}
       <Stack styles={{ root: { paddingTop: 18, paddingLeft: 12, paddingRight: 12, width: "100%" } }} >
          <Stack tokens={{ childrenGap: 12 }}>
             <Stack horizontal tokens={{ childrenGap: 48 }}>
                <Stack style={{ minWidth: 224 }}>
-                  <Stack style={{ paddingBottom: 8 }}>
-                     <PrimaryButton text={pool.name} href={`/agents?agent=${encodeURI(pool.id)}&exact=true`} target="_blank" style={{ color: "#FFFFFF", backgroundColor: linearInterpolate(color), border: "unset", flexShrink: 1 }} />
+                  <Stack horizontal style={{ paddingBottom: 18 }} tokens={{ childrenGap: 8 }}>
+                     <PrimaryButton text={pool.name} href={`/agents?agent=${encodeURI(pool.id)}&exact=true`} target="_blank" style={{ color: "#FFFFFF", backgroundColor: color, border: "unset", flexShrink: 1 }} />
+                     {!!dashboard.user?.dashboardFeatures?.showPoolEditor && <IconButton iconProps={{ iconName: "Edit" }} onClick={() => { setState({ ...state, showSettings: true }) }} style={{ color: "#FFFFFF", backgroundColor: color, border: "unset", flexShrink: 1 }} />}
                   </Stack>
                   <Stack>
                      <DetailsList
@@ -1158,7 +1270,7 @@ const PoolPanel: React.FC = () => {
                      onRenderItemColumn={onRenderItemColumn}
                   />
                </Stack>
-               <AutoScalerPanel />
+               <StreamPanel />
             </Stack>
          </Stack>
       </Stack>
@@ -1168,8 +1280,7 @@ const PoolPanel: React.FC = () => {
 
 export const PoolView: React.FC = observer(() => {
 
-   const windowSize = useWindowSize();
-   const [searchParams, setSearchParams] = useSearchParams();
+   const [searchParams] = useSearchParams();
 
    useEffect(() => {
 
@@ -1181,17 +1292,11 @@ export const PoolView: React.FC = observer(() => {
 
    }, []);
 
+   const { hordeClasses } = getHordeStyling();
+
    // subscribe
    if (handler.updated) { };
 
-   if (!PoolHandler.pools) {
-      handler.loadPools();
-      return null;
-   }
-
-   if (!PoolHandler.pools.length) {
-      return null;
-   }
 
    const poolId = searchParams.get("pool") ?? "";
 
@@ -1201,108 +1306,22 @@ export const PoolView: React.FC = observer(() => {
 
    const pool = handler.pool;
 
-   const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
-
-   const poolTags: ITag[] = PoolHandler.pools.map(p => {
-      return { key: p.id, name: p.name }
-   });
-
-   let defaultItems: ITag[] | undefined;
-   if (poolId) {
-      const d = poolTags.find(t => t.key === poolId);
-      if (d) {
-         defaultItems = [d];
-      }
-   }
-
-
-
-   const listContainsTagList = (tag: ITag, tagList?: ITag[]) => {
-      if (!tagList || !tagList.length || tagList.length === 0) {
-         return false;
-      }
-      return tagList.some(compareTag => compareTag.key === tag.key);
-   };
-
-   const filterSuggestedTags = (filterText: string, tagList?: ITag[]): ITag[] => {
-      return filterText
-         ? poolTags.filter(
-            tag => tag.name.toLowerCase().indexOf(filterText.toLowerCase()) !== -1 && !listContainsTagList(tag, tagList),
-         )
-         : poolTags;
-   };
-
-   const getTextFromItem = (item: ITag) => item.name;
-
-   let breadText = `Pool ${handler.pool?.name ?? "Loading"}`;
-   if (!poolId) {
-      breadText = "Select a Pool"
-   }
-
-   return <Stack className={hordeClasses.horde}>
-      <TopNav />
-      <Breadcrumbs items={[{ text: "Agents", link: "/agents" }, { text: breadText }]} />
-      <Stack>
-         <Stack horizontal style={{ flexBasis: 64 }}>
-            <div key={`windowsize_poolview_${windowSize.width}_${windowSize.height}`} style={{ width: vw / 2 - (1440 / 2), flexShrink: 0, backgroundColor: modeColors.background }} />
-            <Stack tokens={{ childrenGap: 0 }} styles={{ root: { backgroundColor: modeColors.background, width: "100%" } }}>
-               <Stack style={{ maxWidth: 1440, paddingTop: 6, marginLeft: 4 }}>
-                  <Stack horizontal style={{ paddingTop: 8, paddingBottom: 16 }}>
-                     <Stack grow />
-                     <Stack style={{ width: 320 }}>
-                        <TagPicker inputProps={{ placeholder: "Select a pool" }}
-                           defaultSelectedItems={defaultItems}
-                           onResolveSuggestions={filterSuggestedTags}
-                           getTextFromItem={getTextFromItem}
-                           onEmptyResolveSuggestions={(selected) => {
-                              return poolTags;
-                           }}
-
-                           onItemSelected={(item) => {
-
-                              if (!item?.key) {
-                                 return null;
-                              }
-
-                              setSearchParams(`?pool=${item.key}`, { replace: true });
-
-                              return item;
-
-                           }}
-
-                           itemLimit={1} />
-                     </Stack>
-                  </Stack>
-               </Stack>
+   return <Stack className={hordeClasses.raised} >
+      {!!pool && <Stack style={{ width: "100%", height: "100%" }}>
+         <div style={{ marginTop: 8, width: "100%", height: 'fit-content', paddingBottom: 24 }}>
+            <Stack tokens={{ childrenGap: 18 }}>
+               <PoolPanel />
+               <PoolAgentPanel poolId={poolId} />
+               <StepPanel stepState={StepState.Active} />
+               <ConformPanel />
+               <StepPanel stepState={StepState.Pending} />
+               <BatchPanel />
             </Stack>
-         </Stack>
-         <Stack style={{ height: "100%", backgroundColor: modeColors.background }}>
-            <Stack horizontal style={{ height: "100%" }}>
-               <div key={`windowsize_poolview_2_${windowSize.width}_${windowSize.height}`} style={{ width: vw / 2 - (1440 / 2), flexShrink: 0, backgroundColor: modeColors.background }} />
-               {!!pool && <Stack style={{ width: "100%", height: "100%" }}>
-                  <div style={{ marginTop: 8, width: "100%", height: 'calc(100vh - 258px)', position: 'relative' }} data-is-scrollable={true}>
-                     <ScrollablePane scrollbarVisibility={ScrollbarVisibility.always} onScroll={() => { }}>
-
-                        <Stack className={hordeClasses.raised} style={{ width: 1443, height: "fit-content" }}>
-                           <Stack tokens={{ childrenGap: 18 }}>
-                              <PoolPanel />
-                              <PoolAgentPanel poolId={poolId} />
-                              <StepPanel stepState={StepState.Active} />
-                              <ConformPanel />
-                              <StepPanel stepState={StepState.Pending} />
-                              <BatchPanel />
-                           </Stack>
-                        </Stack>
-                     </ScrollablePane>
-                  </div>
-               </Stack>}
-               {!pool && !!poolId && <Stack horizontalAlign="center" style={{ width: 1443 }}>
-                  <Spinner size={SpinnerSize.large} />
-               </Stack>}
-            </Stack>
-         </Stack>
-      </Stack>
+         </div>
+      </Stack>}
+      {!pool && !!poolId && <Stack horizontalAlign="center">
+         <Spinner size={SpinnerSize.large} />
+      </Stack>}
    </Stack>
-
 });
 

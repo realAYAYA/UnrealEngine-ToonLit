@@ -4,6 +4,7 @@
 
 #include "StateTreeState.h"
 #include "StateTreeEditorPropertyBindings.h"
+#include "StateTreeEditorTypes.h"
 #include "Debugger/StateTreeDebuggerTypes.h"
 #include "StateTreeEditorData.generated.h"
 
@@ -49,6 +50,8 @@ class STATETREEEDITORMODULE_API UStateTreeEditorData : public UObject, public IS
 	GENERATED_BODY()
 	
 public:
+	UStateTreeEditorData();
+
 	virtual void PostInitProperties() override;
 	
 	// IStateTreeEditorPropertyBindingsOwner
@@ -62,6 +65,7 @@ public:
 	using FReplacementObjectMap = TMap<UObject*, UObject*>;
 	void OnObjectsReinstanced(const FReplacementObjectMap& ObjectMap);
 	void OnUserDefinedStructReinstanced(const UUserDefinedStruct& UserDefinedStruct);
+	void OnParametersChanged(const UStateTree& StateTree);
 	virtual void BeginDestroy() override;
 	virtual void PostLoad() override;
 	virtual void PostEditChangeChainProperty(FPropertyChangedChainEvent& PropertyChangedEvent) override;
@@ -235,14 +239,24 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	// ~StateTree Builder API
 
+	/**
+	 * Attempts to find a Color matching the provided Color Key
+	 */
+	const FStateTreeEditorColor* FindColor(const FStateTreeEditorColorRef& ColorRef) const
+	{
+		return Colors.Find(FStateTreeEditorColor(ColorRef));
+	}
+
 private:
 	void FixObjectInstance(TSet<UObject*>& SeenObjects, UObject& Outer, FStateTreeEditorNode& Node);
 	void FixObjectNodes();
+	void FixDuplicateIDs();
 	void UpdateBindingsInstanceStructs();
 
 #if WITH_EDITORONLY_DATA
 	FDelegateHandle OnObjectsReinstancedHandle;
 	FDelegateHandle OnUserDefinedStructReinstancedHandle;
+	FDelegateHandle OnParametersChangedHandle;
 #endif
 
 public:
@@ -262,6 +276,10 @@ public:
 
 	UPROPERTY(meta = (ExcludeFromHash))
 	FStateTreeEditorPropertyBindings EditorBindings;
+
+	/** Color Options to assign to a State */
+	UPROPERTY(EditDefaultsOnly, Category = "Theme")
+	TSet<FStateTreeEditorColor> Colors;
 
 	/** Top level States. */
 	UPROPERTY()

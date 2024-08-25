@@ -22,10 +22,11 @@ public class PixelInspectorModule : ModuleRules
         );
 
 		PrivateDependencyModuleNames.AddRange(
-             new string[] {
-					"ColorManagement"
-				}
-         );
+			new string[] {
+				"ColorManagement",
+				"Renderer",
+			}
+		);
 
 		PrivateIncludePathModuleNames.AddRange(
 			new string[] {

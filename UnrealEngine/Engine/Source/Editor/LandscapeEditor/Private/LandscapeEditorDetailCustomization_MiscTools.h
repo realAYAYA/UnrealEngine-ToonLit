@@ -39,6 +39,8 @@ protected:
 	static FReply OnSelectAllSegmentsButtonClicked();
 	void OnbUseAutoRotateControlPointChanged(ECheckBoxState NewState);
 	ECheckBoxState GetbUseAutoRotateControlPoint() const;
+	void OnbAlwaysRotateForwardChanged(ECheckBoxState NewState);
+	ECheckBoxState GetbAlwaysRotateForward() const;
 
 	// Ramp Tool
 	static FReply OnApplyRampButtonClicked();

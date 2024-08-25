@@ -33,8 +33,10 @@ namespace BuildPatchServices
 
 	public:
 		FDownloadConnectionCount(FDownloadConnectionCountConfig InConfiguration, IDownloadServiceStatistics* InDownloadStatistics);
-		~FDownloadConnectionCount();
-		uint32 GetAdjustedCount(uint32 NumProcessing, EBuildPatchDownloadHealth CurrentHealth);
+		virtual ~FDownloadConnectionCount() override;
+
+		// IDownloadConnectionCount Interface
+		virtual uint32 GetAdjustedCount(uint32 NumProcessing, EBuildPatchDownloadHealth CurrentHealth) override;
 
 	private:
 		EDownloadSpeedStatus GetSpeedStatus(double Speed) const;

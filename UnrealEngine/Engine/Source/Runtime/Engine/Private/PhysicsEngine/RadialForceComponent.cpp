@@ -3,6 +3,7 @@
 #include "PhysicsEngine/RadialForceComponent.h"
 #include "PhysicsEngine/RigidBodyBase.h"
 #include "UObject/ConstructorHelpers.h"
+#include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 #include "Components/BillboardComponent.h"
 #include "Engine/Texture2D.h"

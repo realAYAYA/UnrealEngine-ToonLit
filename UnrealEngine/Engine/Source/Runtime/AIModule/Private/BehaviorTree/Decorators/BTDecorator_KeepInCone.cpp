@@ -132,6 +132,16 @@ uint16 UBTDecorator_KeepInCone::GetInstanceMemorySize() const
 	return sizeof(TNodeInstanceMemory);
 }
 
+void UBTDecorator_KeepInCone::InitializeMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryInit::Type InitType) const
+{
+	InitializeNodeMemory<TNodeInstanceMemory>(NodeMemory, InitType);
+}
+
+void UBTDecorator_KeepInCone::CleanupMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryClear::Type CleanupType) const
+{
+	CleanupNodeMemory<TNodeInstanceMemory>(NodeMemory, CleanupType);
+}
+
 #if WITH_EDITOR
 
 FName UBTDecorator_KeepInCone::GetNodeIconName() const

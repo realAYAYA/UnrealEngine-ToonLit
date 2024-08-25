@@ -12,29 +12,25 @@
 
 namespace UE::Core::Private
 {
-	// TIsAllVariant
-	static_assert(TIsAllVariant<TVariant<int, float>>::Value, "Expected TIsAllVariant<TVariant> to be true");
-	static_assert(TIsAllVariant<TVariant<int, float>, TVariant<float, int>>::Value, "Expected TIsAllVariant<TVariant, TVariant> to be true");
-	static_assert(TIsAllVariant<TVariant<int, float>, const TVariant<float, int>>::Value, "Expected TIsAllVariant<TVariant, const TVariant> to be true");
-	static_assert(TIsAllVariant<>::Value, "Expected TIsAllVariant<> for base case to be true");
-	static_assert(TIsAllVariant<bool>::Value == false, "Expected TIsAllVariant<non-TVariant> to be false");
-	static_assert(TIsAllVariant<TVariant<int, float>, bool>::Value == false, "Expected TIsAllVariant<TVariant, non-TVariant> to be false");
-	static_assert(TIsAllVariant<TVariant<int, float>, bool, TVariant<float, int>>::Value == false, "Expected TIsAllVariant<TVariant, non-TVariant, TVariant> to be false");
+	// TIsVariant_V of variants
+	static_assert(TIsVariant_V<      TVariant<int, float>>, "Expected TIsVariant_V<TVariant> to be true");
+	static_assert(TIsVariant_V<const TVariant<int, float>>, "Expected TIsVariant_V<const TVariant> to be true");
 
-	// TIsVariant
-	static_assert(TIsVariant<TVariant<int, float>>::Value, "Expected TIsVariant<TVariant> to be true");
-	static_assert(TIsVariant<const TVariant<int, float>>::Value, "Expected TIsVariant<const TVariant> to be true");
-	static_assert(TIsVariant<TVariant<int, float>&>::Value, "Expected TIsVariant<TVariant&> to be true");
-	static_assert(TIsVariant<const TVariant<int, float>&>::Value, "Expected TIsVariant<const TVariant&> to be true");
-	static_assert(TIsVariant<TVariant<int, float>&&>::Value, "Expected TIsVariant<TVariant&&> to be true");
-	static_assert(TIsVariant<bool>::Value == false, "Expected TIsVariant<non-TVariant> to be false");
+	// TIsVariant_V of non-variants (references are not variants)
+	static_assert(TIsVariant_V<      TVariant<int, float>&>  == false, "Expected TIsVariant_V<TVariant&> to be false");
+	static_assert(TIsVariant_V<const TVariant<int, float>&>  == false, "Expected TIsVariant_V<const TVariant&> to be false");
+	static_assert(TIsVariant_V<      TVariant<int, float>&&> == false, "Expected TIsVariant_V<TVariant&&> to be false");
+	static_assert(TIsVariant_V<      bool>                   == false, "Expected TIsVariant_V<non-TVariant> to be false");
 
-	// TVariantSize
-	static_assert(TVariantSize<TVariant<int, float>>::Value == 2, "Expected TVariantSize<TVariant> to be 2");
-	static_assert(TVariantSize<const TVariant<int, float>>::Value == 2, "Expected TVariantSize<const TVariant> to be 2");
-	static_assert(TVariantSize<TVariant<int, float>&>::Value == 2, "Expected TVariantSize<TVariant&> to be 2");
-	static_assert(TVariantSize<const TVariant<int, float>&>::Value == 2, "Expected TVariantSize<const TVariant&> to be 2");
-	static_assert(TVariantSize<TVariant<int, float>&&>::Value == 2, "Expected TVariantSize<TVariant&&> to be 2");
+	// TVariantSize_V of variants (references are not variants)
+	static_assert(TVariantSize_V<      TVariant<int, float>> == 2, "Expected TVariantSize_V<TVariant> to be 2");
+	static_assert(TVariantSize_V<const TVariant<int, float>> == 2, "Expected TVariantSize_V<const TVariant> to be 2");
+
+	// TVariantSize_V of non-variants
+	static_assert(TVariantSize_V<      TVariant<int, float>&>  == 0, "Expected TVariantSize_V<TVariant&> to be 0");
+	static_assert(TVariantSize_V<const TVariant<int, float>&>  == 0, "Expected TVariantSize_V<const TVariant&> to be 0");
+	static_assert(TVariantSize_V<      TVariant<int, float>&&> == 0, "Expected TVariantSize_V<TVariant&&> to be 0");
+	static_assert(TVariantSize_V<      bool>                   == 0, "Expected TVariantSize_V<non-TVariant> to be 0");
 } // namespace UE::Core::Private
 
 struct FNonDefaultConstructible

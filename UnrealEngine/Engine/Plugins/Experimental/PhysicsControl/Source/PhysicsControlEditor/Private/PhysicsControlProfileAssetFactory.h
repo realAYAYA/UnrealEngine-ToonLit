@@ -11,7 +11,7 @@ class UPhysicsControlProfileAssetFactory : public UFactory
 {
 	GENERATED_BODY()
 public:
-	UPhysicsControlProfileAssetFactory();
+	UPhysicsControlProfileAssetFactory(const FObjectInitializer& ObjectInitializer);
 	UObject* FactoryCreateNew(
 		UClass* Class, UObject* InParent, FName Name, EObjectFlags Flags, UObject* Context, FFeedbackContext* Warn);
 };

@@ -47,95 +47,275 @@ namespace Chaos
 		return ShouldSwapParticleOrder(bIsDynamicOrSleeping0, bIsDynamicOrSleeping1, AreParticlesInPreferredOrder(Particle0, Particle1));
 	}
 
-	/**
-	 * A key which uniquely identifes a particle pair for use by the collision detection system.
-	 * This key will be the same if particles order is reversed.
-	 * @note This uses ParticleID and truncates it from 32 to 31 bits
-	 */
-	class FCollisionParticlePairKey
+	namespace Private
 	{
-	public:
-		using KeyType = uint64;
 
-		FCollisionParticlePairKey()
+		/**
+		 * A key which uniquely identifes a particle pair for use by the collision detection system.
+		 * This key can optionally be the same if particles order is reversed (see bSymmetric constructor parameter).
+		 * @note This uses ParticleID and truncates it to 31 bits (from 32)
+		 */
+		class FCollisionParticlePairKey
 		{
-			Key.Key64 = 0;
-		}
+		public:
+			using KeyType = uint64;
 
-		FCollisionParticlePairKey(const FGeometryParticleHandle* Particle0, const FGeometryParticleHandle* Particle1)
-		{
-			GenerateKey(Particle0, Particle1);
-		}
-
-		uint64 GetKey() const
-		{
-			return Key.Key64;
-		}
-
-		friend bool operator<(const FCollisionParticlePairKey& L, const FCollisionParticlePairKey& R)
-		{
-			return L.Key.Key64 < R.Key.Key64;
-		}
-
-	private:
-		void GenerateKey(const FGeometryParticleHandle* Particle0, const FGeometryParticleHandle* Particle1)
-		{
-			Key.Key64 = 0;
-			if ((Particle0 != nullptr) && (Particle1 != nullptr))
+			FCollisionParticlePairKey()
 			{
-				const bool bIsLocalID0 = Particle0->ParticleID().LocalID != INDEX_NONE;
-				const bool bIsLocalID1 = Particle1->ParticleID().LocalID != INDEX_NONE;
-				const uint32 ID0 = uint32((bIsLocalID0) ? Particle0->ParticleID().LocalID : Particle0->ParticleID().GlobalID);
-				const uint32 ID1 = uint32((bIsLocalID1) ? Particle1->ParticleID().LocalID : Particle1->ParticleID().GlobalID);
+				Key.Key64 = 0;
+			}
 
-				if (ID0 < ID1)
+			FCollisionParticlePairKey(const FGeometryParticleHandle* Particle0, const FGeometryParticleHandle* Particle1, const bool bSymmetric = true)
+			{
+				GenerateKey(Particle0, Particle1, bSymmetric);
+			}
+
+			uint64 GetKey() const
+			{
+				return Key.Key64;
+			}
+
+			uint32 GetHash() const
+			{
+				// NOTE: GetTypeHash(uint64 V) does not work well if the 64 bit int is actually 2x32 bit ints
+				// so we hash-combine the two 32 bit ints instead
+				return ::HashCombineFast(uint32(Key.Key64 & 0xFFFFFFFF), uint32((Key.Key64 >> 32) & 0xFFFFFFFF));
+			}
+
+			friend bool operator==(const FCollisionParticlePairKey& L, const FCollisionParticlePairKey& R)
+			{
+				return L.Key.Key64 == R.Key.Key64;
+			}
+
+			friend bool operator!=(const FCollisionParticlePairKey& L, const FCollisionParticlePairKey& R)
+			{
+				return L.Key.Key64 != R.Key.Key64;
+			}
+
+			friend bool operator<(const FCollisionParticlePairKey& L, const FCollisionParticlePairKey& R)
+			{
+				return L.Key.Key64 < R.Key.Key64;
+			}
+
+		private:
+			void GenerateKey(const FGeometryParticleHandle* Particle0, const FGeometryParticleHandle* Particle1, const bool bSymmetric)
+			{
+				Key.Key64 = 0;
+				if ((Particle0 != nullptr) && (Particle1 != nullptr))
 				{
-					Key.Key32s[0].Key31 = ID0;
-					Key.Key32s[0].IsLocal = bIsLocalID0;
-					Key.Key32s[1].Key31 = ID1;
-					Key.Key32s[1].IsLocal = bIsLocalID1;
-				}
-				else
-				{
-					Key.Key32s[0].Key31 = ID1;
-					Key.Key32s[0].IsLocal = bIsLocalID1;
-					Key.Key32s[1].Key31 = ID0;
-					Key.Key32s[1].IsLocal = bIsLocalID0;
+					const bool bIsLocalID0 = Particle0->ParticleID().LocalID != INDEX_NONE;
+					const bool bIsLocalID1 = Particle1->ParticleID().LocalID != INDEX_NONE;
+					const uint32 ID0 = uint32((bIsLocalID0) ? Particle0->ParticleID().LocalID : Particle0->ParticleID().GlobalID);
+					const uint32 ID1 = uint32((bIsLocalID1) ? Particle1->ParticleID().LocalID : Particle1->ParticleID().GlobalID);
+
+					// If we want Key(A,B) == Key(B,A) swap the order if particle IDs to guarantee this
+					if (!bSymmetric || (ID0 < ID1))
+					{
+						Key.Key32s[0].Key31 = ID0;
+						Key.Key32s[0].IsLocal = bIsLocalID0;
+						Key.Key32s[1].Key31 = ID1;
+						Key.Key32s[1].IsLocal = bIsLocalID1;
+					}
+					else
+					{
+						Key.Key32s[0].Key31 = ID1;
+						Key.Key32s[0].IsLocal = bIsLocalID1;
+						Key.Key32s[1].Key31 = ID0;
+						Key.Key32s[1].IsLocal = bIsLocalID0;
+					}
 				}
 			}
-		}
 
-		struct FParticleIDKey
-		{
-			uint32 Key31 : 31;
-			uint32 IsLocal : 1;
+			struct FParticleIDKey
+			{
+				uint32 Key31 : 31;
+				uint32 IsLocal : 1;
+			};
+			union FIDKey
+			{
+				uint64 Key64;
+				FParticleIDKey Key32s[2];
+			};
+
+			// This class is sensitive to changes in FParticleID - try to catch that here...
+			static_assert(sizeof(FParticleID) == 8, "FParticleID size does not match FCollisionParticlePairKey (expected 64 bits)");
+			static_assert(sizeof(FParticleID::GlobalID) == 4, "FParticleID::GlobalID size does not match FCollisionParticlePairKey (expected 32 bits)");
+			static_assert(sizeof(FParticleID::LocalID) == 4, "FParticleID::LocalID size does not match FCollisionParticlePairKey (expected 32 bits)");
+			static_assert(sizeof(FParticleIDKey) == 4, "FCollisionParticlePairKey::FParticleIDKey size is not 32 bits");
+			static_assert(sizeof(FIDKey) == 8, "FCollisionParticlePairKey::FIDKey size is not 64 bits");
+
+			FIDKey Key;
 		};
-		union FIDKey
+
+
+		/**
+		 * A key for two shapes within a particle pair. This key is will be unique for the shape pair in the particle pair, 
+		 * but not will be duplicated in different particle pairs.
+		 */
+		class FCollisionShapePairKey
 		{
-			uint64 Key64;
-			FParticleIDKey Key32s[2];
+		public:
+			FCollisionShapePairKey()
+				: Key(0)
+			{
+			}
+
+			FCollisionShapePairKey(const int32 InShapeID0, const int32 InShapeID1)
+				: ShapeID0(InShapeID0)
+				, ShapeID1(InShapeID1)
+			{
+			}
+
+			uint64 GetKey() const
+			{
+				return Key;
+			}
+
+			friend bool operator==(const FCollisionShapePairKey& L, const FCollisionShapePairKey& R)
+			{
+				return L.Key == R.Key;
+			}
+
+			friend bool operator!=(const FCollisionShapePairKey& L, const FCollisionShapePairKey& R)
+			{
+				return L.Key != R.Key;
+			}
+
+			friend bool operator<(const FCollisionShapePairKey& L, const FCollisionShapePairKey& R)
+			{
+				return L.Key < R.Key;
+			}
+
+		private:
+			union
+			{
+				struct
+				{
+					uint32 ShapeID0;
+					uint32 ShapeID1;
+				};
+				uint64 Key;
+			};
 		};
 
-		// This class is sensitive to changes in FParticleID - try to catch that here...
-		static_assert(sizeof(FParticleID) == 8, "FParticleID size does not match FCollisionParticlePairKey (expected 64 bits)");
-		static_assert(sizeof(FParticleID::GlobalID) == 4, "FParticleID::GlobalID size does not match FCollisionParticlePairKey (expected 32 bits)");
-		static_assert(sizeof(FParticleID::LocalID) == 4, "FParticleID::LocalID size does not match FCollisionParticlePairKey (expected 32 bits)");
-		static_assert(sizeof(FParticleIDKey) == 4, "FCollisionParticlePairKey::FParticleIDKey size is not 32 bits");
-		static_assert(sizeof(FIDKey) == 8, "FCollisionParticlePairKey::FIDKey size is not 64 bits");
+		/**
+		 * A key used to sort collisions. This to ensure consistent collision solver order when collisions are generated 
+		 * in a semi-random order (during multi-threaded collision detection).
+		 * NOTE: This version does not result in collisions being sorted by Particle, but it is smaller than FCollisionSortKeyNonHashed
+		 * 
+		 * @todo(chaos): Hashing the particle pair key does not work well at all. Do not use this for the time being (see FCollisionSortKeyNonHashed)
+		 * 
+		 */
+		class FCollisionSortKeyHashed
+		{
+		public:
+			FCollisionSortKeyHashed()
+				: Key(0)
+			{
+			}
 
-		FIDKey Key;
-	};
+			FCollisionSortKeyHashed(
+				const FGeometryParticleHandle* InParticle0, const int32 InShapeID0,
+				const FGeometryParticleHandle* InParticle1, const int32 InShapeID1)
+			{
+				check(false);	// Don't use unless we can make a better hash
+				FCollisionParticlePairKey ParticlePairKey = FCollisionParticlePairKey(InParticle0, InParticle1, false);
+				ParticlesKey = ParticlePairKey.GetHash();
+				ShapesKey = ::HashCombineFast(::GetTypeHash(InShapeID0), ::GetTypeHash(InShapeID1));
+			}
 
-	/**
-	 * A key which uniquely identifes a collision constraint within a particle pair
-	 * 
-	 * This key only needs to be uinque within the context of a particle pair. There is no
-	 * guarantee of global uniqueness. This key is only used by the FMultiShapePairCollisionDetector
-	 * class which is used for colliding shape pairs where each shape is actually a hierarchy
-	 * of shapes. 
-	 * 
-	 */
-	class FCollisionParticlePairConstraintKey
+			friend bool operator==(const FCollisionSortKeyHashed& L, const FCollisionSortKeyHashed& R)
+			{
+				return L.Key == R.Key;
+			}
+
+			friend bool operator!=(const FCollisionSortKeyHashed& L, const FCollisionSortKeyHashed& R)
+			{
+				return L.Key != R.Key;
+			}
+
+			friend bool operator<(const FCollisionSortKeyHashed& L, const FCollisionSortKeyHashed& R)
+			{
+				return L.Key < R.Key;
+			}
+
+		private:
+			union
+			{
+				struct
+				{
+					uint32 ParticlesKey;
+					uint32 ShapesKey;
+				};
+				uint64 Key;
+			};
+		};
+
+		/**
+		 * A key used to sort collisions. This to ensure consistent collision solver order when collisions are generated
+		 * in a semi-random order (during multi-threaded collision detection).
+		 * NOTE: This version also results in collisions being sorted by Particle (as opposed to FCollisionSortKeyHashed)
+		 * but it is larger and the comparison operator is more complex, so sorting cost is higher
+		 */
+		class FCollisionSortKeyNonHashed
+		{
+		public:
+			FCollisionSortKeyNonHashed()
+				: ParticlePairKey()
+				, ShapePairKey()
+			{
+			}
+
+			FCollisionSortKeyNonHashed(
+				const FGeometryParticleHandle* InParticle0, const int32 InShapeID0,
+				const FGeometryParticleHandle* InParticle1, const int32 InShapeID1)
+				: ParticlePairKey(InParticle0, InParticle1, false)
+				, ShapePairKey(InShapeID0, InShapeID1)
+			{
+			}
+
+			friend bool operator==(const FCollisionSortKeyNonHashed& L, const FCollisionSortKeyNonHashed& R)
+			{
+				return (L.ParticlePairKey == R.ParticlePairKey) && (L.ShapePairKey == R.ShapePairKey);
+			}
+
+			friend bool operator!=(const FCollisionSortKeyNonHashed& L, const FCollisionSortKeyNonHashed& R)
+			{
+				return (L.ParticlePairKey != R.ParticlePairKey) || (L.ShapePairKey != R.ShapePairKey);
+			}
+
+			friend bool operator<(const FCollisionSortKeyNonHashed& L, const FCollisionSortKeyNonHashed& R)
+			{
+				// @todo(chaos): make sure this doesn't add extra branches
+				const bool ParticlePairLess = (L.ParticlePairKey < R.ParticlePairKey);
+				const bool ShapePairLess = (L.ShapePairKey < R.ShapePairKey);
+				const bool ParticlePairNotEqual = (L.ParticlePairKey != R.ParticlePairKey);
+				return ParticlePairNotEqual ? ParticlePairLess : ShapePairLess;
+			}
+
+		private:
+			FCollisionParticlePairKey ParticlePairKey;
+			FCollisionShapePairKey ShapePairKey;
+		};
+
+		// A key used to sort constraints
+		// @todo(chaos): ideally we would use the smallest key possible here, but see comments in FCollisionSortKeyHashed
+		using FCollisionSortKey = FCollisionSortKeyNonHashed;
+	}
+
+
+	///////////////////////////////////////////////////////////////////////////////////////////////
+	///////////////////////////////////////////////////////////////////////////////////////////////
+	//
+	// DEPRECATED STUFF
+	//
+	///////////////////////////////////////////////////////////////////////////////////////////////
+	///////////////////////////////////////////////////////////////////////////////////////////////
+
+
+	using FCollisionParticlePairKey UE_DEPRECATED(5.4, "Not for external use") = Private::FCollisionParticlePairKey;
+
+	class UE_DEPRECATED(5.4, "No longer used") FCollisionParticlePairConstraintKey
 	{
 	public:
 		FCollisionParticlePairConstraintKey()
@@ -153,10 +333,10 @@ namespace Chaos
 		}
 
 		FCollisionParticlePairConstraintKey(
-			const FShapeInstance* Shape0, 
-			const FImplicitObject* Implicit0, 
-			const int32 ImplicitId0, 
-			const FBVHParticles* Simplicial0, 
+			const FShapeInstance* Shape0,
+			const FImplicitObject* Implicit0,
+			const int32 ImplicitId0,
+			const FBVHParticles* Simplicial0,
 			const FShapeInstance* Shape1,
 			const FImplicitObject* Implicit1,
 			const int32 ImplicitId1,

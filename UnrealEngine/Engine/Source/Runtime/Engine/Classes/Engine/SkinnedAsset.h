@@ -213,6 +213,7 @@ public:
 	PURE_VIRTUAL(USkinnedAsset::GetDisableBelowMinLodStripping, static const FPerPlatformBool Dummy; return Dummy;);
 
 	virtual void SetSkinWeightProfilesData(int32 LODIndex, struct FSkinWeightProfilesData& SkinWeightProfilesData) {}
+	virtual FSkinWeightProfilesData* GetSkinWeightProfilesData(int32 LODIndex) { return nullptr; }
 
 	/** Computes flags for building vertex buffers. */
 	ENGINE_API virtual ESkeletalMeshVertexFlags GetVertexBufferFlags() const;
@@ -274,7 +275,8 @@ public:
 #endif // WITH_EDITOR
 
 #if WITH_EDITORONLY_DATA
-	virtual bool GetUseLegacyMeshDerivedDataKey() const	{ return false; }
+	UE_DEPRECATED(5.4, "This function and associated functionality is no longer supported.")
+	static bool GetUseLegacyMeshDerivedDataKey()	{ return false; }
 
 	/** Get the source mesh data. */
 	ENGINE_API virtual class FSkeletalMeshModel* GetImportedModel() const

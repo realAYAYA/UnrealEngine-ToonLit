@@ -95,6 +95,15 @@ void FSlateTimingViewSession::Tick(Insights::ITimingViewSession& InTimingViewSes
 				SchematicView->SetSession(&InTimingViewSession, &InAnalysisSession);
 			}
 		}
+
+		const bool bInvoke = false;
+		if (TSharedPtr<SSlateFrameSchematicView> SchematicView = FSlateInsightsModule::Get().GetSlateFrameSchematicViewTab(bInvoke))
+		{
+			if (!SchematicView->IsSessionSet())
+			{
+				SchematicView->SetSession(&InTimingViewSession, &InAnalysisSession);
+			}
+		}
 	}
 }
 

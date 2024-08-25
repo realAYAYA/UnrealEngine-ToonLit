@@ -119,7 +119,7 @@ class UnrealClassRegistry {
   static final nDisplayRootActor = UnrealClass(
     'DisplayClusterRootActor',
     getDisplayName: (context) => AppLocalizations.of(context)!.actorNameDisplayClusterRoot,
-    iconPath: 'assets/images/icons/ndisplay.svg',
+    iconPath: 'packages/epic_common/assets/icons/ndisplay.svg',
     parent: actor,
     classNames: [nDisplayRootActorClassName],
   );
@@ -127,7 +127,7 @@ class UnrealClassRegistry {
   static final lightCard = UnrealClass(
     'LightCard',
     getDisplayName: (context) => AppLocalizations.of(context)!.actorNameLightCard,
-    iconPath: 'assets/images/icons/light_card.svg',
+    iconPath: 'packages/epic_common/assets/icons/light_card.svg',
     color: const Color(0xffc4a300),
     iconPathFunction: (UnrealObject object) {
       final lightCardData = object.getPerClassData<LightCardActorData>();
@@ -137,11 +137,11 @@ class UnrealClassRegistry {
         }
 
         if (lightCardData.bIsUV == true) {
-          return 'assets/images/icons/light_card_uv.svg';
+          return 'packages/epic_common/assets/icons/light_card_uv.svg';
         }
 
         if (lightCardData.bIsFlag == true) {
-          return 'assets/images/icons/light_card_flag.svg';
+          return 'packages/epic_common/assets/icons/light_card_flag.svg';
         }
       }
 
@@ -168,7 +168,7 @@ class UnrealClassRegistry {
   static final chromakeyCard = UnrealClass(
     'ChromakeyCard',
     getDisplayName: (context) => AppLocalizations.of(context)!.actorNameChromakeyCard,
-    iconPath: 'assets/images/icons/chromakey_card.svg',
+    iconPath: 'packages/epic_common/assets/icons/chromakey_card.svg',
     color: const Color(0xff16884a),
     parent: lightCard,
     classNames: [chromakeyCardClassName],
@@ -178,7 +178,7 @@ class UnrealClassRegistry {
     'ColorCorrectRegion',
     getDisplayName: (context) => AppLocalizations.of(context)!.actorNameColorCorrectRegion,
     color: const Color(0xffd72e80),
-    iconPath: 'assets/images/icons/color_correct_region.svg',
+    iconPath: 'packages/epic_common/assets/icons/color_correct_region.svg',
     parent: actor,
     classNames: [colorCorrectRegionClassName],
   );
@@ -186,7 +186,7 @@ class UnrealClassRegistry {
   static final colorCorrectWindow = UnrealClass(
     'ColorCorrectWindow',
     getDisplayName: (context) => AppLocalizations.of(context)!.actorNameColorCorrectWindow,
-    iconPath: 'assets/images/icons/color_correct_window.svg',
+    iconPath: 'packages/epic_common/assets/icons/color_correct_window.svg',
     parent: colorCorrectRegion,
     classNames: colorCorrectWindowClassNames,
   );
@@ -194,7 +194,7 @@ class UnrealClassRegistry {
   static final postProcessVolume = UnrealClass(
     'PostProcessVolume',
     getDisplayName: (context) => AppLocalizations.of(context)!.actorNamePostProcessVolume,
-    iconPath: 'assets/images/icons/post_process_volume.svg',
+    iconPath: 'packages/epic_common/assets/icons/post_process_volume.svg',
     parent: actor,
     classNames: [postProcessVolumeClassName],
   );

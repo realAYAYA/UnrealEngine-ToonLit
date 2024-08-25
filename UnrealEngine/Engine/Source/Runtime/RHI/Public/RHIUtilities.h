@@ -12,6 +12,7 @@
 #include "HAL/IConsoleManager.h"
 #include "RHIDefinitions.h"
 #include "RHICommandList.h"
+#include "Tasks/Task.h"
 
 static inline EPixelFormat GetBlockCompressedFormatUAVAliasFormat(EPixelFormat Format)
 {
@@ -627,7 +628,10 @@ extern RHI_API void RHIGetPresentThresholds(float& OutTopPercent, float& OutBott
 extern RHI_API bool RHIGetSyncAllowVariable();
 
 /** Signals the completion of the specified task graph event when the given frame has flipped. */
-extern RHI_API void RHICompleteGraphEventOnFlip(uint64 PresentIndex, FGraphEventRef Event);
+UE_DEPRECATED(5.4, "RHICompleteGraphEventOnFlip is replaced with RHITriggerTaskEventOnFlip")
+inline void RHICompleteGraphEventOnFlip(uint64 PresentIndex, FGraphEventRef Event) { checkNoEntry(); }
+
+extern RHI_API void RHITriggerTaskEventOnFlip(uint64 PresentIndex, const UE::Tasks::FTaskEvent& TaskEvent);
 
 /** Sets the FrameIndex and InputTime for the current frame. */
 extern RHI_API void RHISetFrameDebugInfo(uint64 PresentIndex, uint64 FrameIndex, uint64 InputTime);

@@ -13,6 +13,7 @@ public class LandmassEditor : ModuleRules
 				"Core",
 				"CoreUObject",
 				"EditorFramework",
+				"Landscape",
 				"Engine",
 				"LevelEditor",
 				"UnrealEd"

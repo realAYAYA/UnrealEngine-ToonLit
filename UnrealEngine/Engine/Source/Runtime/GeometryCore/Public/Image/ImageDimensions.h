@@ -67,7 +67,7 @@ public:
 	/** @return linear index into image from 2D coordinates */
 	int64 GetIndex(int32 X, int32 Y) const
 	{
-		return (Y * Width) + X;
+		return (int64) Y * Width + X;
 	}
 
 	/** @return linear index into image from 2D coordinates */

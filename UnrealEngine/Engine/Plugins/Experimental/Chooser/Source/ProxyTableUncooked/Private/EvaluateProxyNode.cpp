@@ -19,6 +19,7 @@
 #include "K2Node_MakeStruct.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/CompilerResultsLog.h"
+#include "Kismet/KismetSystemLibrary.h"
 #include "KismetCompiler.h"
 #include "Misc/AssertionMacros.h"
 #include "Misc/CString.h"
@@ -393,6 +394,9 @@ void UK2Node_EvaluateProxy2::AllocateDefaultPins()
 
 	if (Proxy)
 	{
+		// ensure any data upgrades have been applied to Proxy before generating pins
+		Proxy->ConditionalPostLoad();
+
 		for(FInstancedStruct& ContextDataEntry : Proxy->ContextData)
 		{
 			if (ContextDataEntry.IsValid())
@@ -680,6 +684,7 @@ void UK2Node_EvaluateProxy2::ExpandNode(class FKismetCompilerContext& CompilerCo
 								// create a struct to hold the output (or for input structs that were not connected to anything)
 								UK2Node_MakeStruct* OutputStructNode = CompilerContext.SpawnIntermediateNode<UK2Node_MakeStruct>(this, SourceGraph);
 								CompilerContext.MessageLog.NotifyIntermediateObjectCreation(OutputStructNode, this);
+								OutputStructNode->PostPlacedNewNode();
 								OutputStructNode->StructType = static_cast<UScriptStruct*>(StructContext.Struct);
 								OutputStructNode->AllocateDefaultPins();
 								OutputStructNode->FindPin(StructContext.Struct->GetFName(), EGPD_Output)->MakeLinkTo(AddStructPin);
@@ -765,7 +770,30 @@ void UK2Node_EvaluateProxy2::ExpandNode(class FKismetCompilerContext& CompilerCo
 
 			if (UEdGraphPin* ResultIsClassPin = CallFunction->FindPin(TEXT("bResultIsClass")))
 			{
+				// this ensures that the function does the right kind of type validation
 				CallFunction->GetSchema()->TrySetDefaultValue(*ResultIsClassPin, Proxy->ResultType == EObjectChooserResultType::ClassResult ? TEXT("true") : TEXT("false"));
+
+				if (Proxy->ResultType == EObjectChooserResultType::ClassResult)
+				{
+					// if it's a class we need to add a CastToClass function to cast it from an Object pointer to a Class poointer
+					UK2Node_CallFunction* CastToClass = CompilerContext.SpawnIntermediateNode<UK2Node_CallFunction>(this, SourceGraph);
+					CompilerContext.MessageLog.NotifyIntermediateObjectCreation(CastToClass, this);
+
+					CastToClass->SetFromFunction(UKismetSystemLibrary::StaticClass()->FindFunctionByName(GET_MEMBER_NAME_CHECKED(UKismetSystemLibrary, Conv_ObjectToClass)));
+					CastToClass->AllocateDefaultPins();
+
+					if (UEdGraphPin* ClassPin = CastToClass->FindPin(TEXT("Class")))
+					{
+						CastToClass->GetSchema()->TrySetDefaultObject(*ClassPin, Proxy->Type);
+					}
+
+					if (UEdGraphPin* ObjectPin = CastToClass->FindPin(FName("Object")))
+					{
+						CallFunction->GetReturnValuePin()->MakeLinkTo(ObjectPin);
+					}
+
+					OutputPin = CastToClass->GetReturnValuePin();
+				}
 			}
 		}
 

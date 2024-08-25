@@ -21,10 +21,11 @@ public class NVML : ModuleRules
 		string PublicPath = Path.Combine(ModuleDirectory, "Public");
 
 		PublicSystemIncludePaths.Add(PublicPath);
-		
+
 		string DllName = "";
 		string DllPath = "";
-		
+		string AdditionalLibraryPath = "";
+
 		string ConfigFolder = (Target.Configuration == UnrealTargetConfiguration.Debug && Target.bDebugBuildsActuallyUseDebugCRT) ? "Debug" : "Release";
 		string Platform = Target.Platform.ToString();
 		if (Target.Platform == UnrealTargetPlatform.Linux && Target.Architectures.Contains(UnrealArch.X64))
@@ -32,18 +33,23 @@ public class NVML : ModuleRules
 			string Architecture = UnrealArch.X64.LinuxName;
 			DllPath = $"{ModuleDirectory}/Binaries/{Platform}/{Architecture}/{ConfigFolder}/";
 			DllName = "libNvmlWrapper.so";
-
-			PublicAdditionalLibraries.Add(Path.Combine(DllPath, DllName));
+			AdditionalLibraryPath = Path.Combine(DllPath, DllName);
 		}
 		else if (Target.Platform == UnrealTargetPlatform.Win64)
 		{
 			DllPath = $"{ModuleDirectory}/Binaries/{Platform}/{ConfigFolder}/";
 			DllName = "NvmlWrapper.dll";
-
-			PublicAdditionalLibraries.Add(Path.Combine(DllPath, "NvmlWrapper.lib"));
+			AdditionalLibraryPath = Path.Combine(DllPath, "NvmlWrapper.lib");
 		}
 
-		if (DllName != "")
+		// Add additional public lib for NVMLWrapper lib
+		if (AdditionalLibraryPath != "" && File.Exists(AdditionalLibraryPath))
+		{
+			PublicAdditionalLibraries.Add(AdditionalLibraryPath);
+		}
+
+		// Add runtime library dep on the NVMLWrapper dll
+		if (DllName != "" && File.Exists(Path.Combine(DllPath, DllName)))
 		{
 			RuntimeDependencies.Add(
 					Path.Combine(ProjectBinariesDir, DllName),

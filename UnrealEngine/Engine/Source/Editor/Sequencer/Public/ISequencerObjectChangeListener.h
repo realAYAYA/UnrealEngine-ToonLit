@@ -24,6 +24,11 @@ public:
 	virtual FOnAnimatablePropertyChanged& GetOnAnimatablePropertyChanged( FAnimatedPropertyKey PropertyKey ) = 0;
 
 	/**
+	 * A delegate for when a property of a specific path is changed. 
+	 */
+	virtual FOnAnimatablePropertyChanged& GetOnAnimatablePropertyChanged(const FProperty* Property) = 0;
+
+	/**
 	 * A delegate for when object changes should be propagated to/from puppet actors
 	 */
 	virtual FOnPropagateObjectChanges& GetOnPropagateObjectChanges() = 0;
@@ -43,7 +48,10 @@ public:
 	 */
 	virtual void TriggerAllPropertiesChanged(UObject* Object) = 0;
 
+	UE_DEPRECATED(5.4, "CanKeyProperty taking in only FCanKeyPropertyParams is deprecated. Please use the alternative CanKeyProperty that takes in FCanKeyPropertyParams and an out FPropertyPath.")
 	virtual bool CanKeyProperty(FCanKeyPropertyParams KeyPropertyParams) const = 0;
+
+	virtual bool CanKeyProperty(FCanKeyPropertyParams KeyPropertyParams, FPropertyPath& OutPropertyPath) const = 0;
 
 	virtual void KeyProperty(FKeyPropertyParams KeyPropertyParams) const = 0;
 };

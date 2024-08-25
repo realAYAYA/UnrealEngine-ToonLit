@@ -26,7 +26,7 @@ namespace UE::CoreUObject
 	  *
 	  * @param ReadObject	The object that was read from a handle.
 	  */
-	using FObjectHandleReadFunc = TFunction<void(TArrayView<const UObject* const> Objects)>;
+	using FObjectHandleReadFunc = TFunction<void(const TArrayView<const UObject* const>& Objects)>;
 
 	/**
 	 * Callback notifying when a class is resolved from an object handle or object reference.
@@ -105,6 +105,7 @@ namespace UE::CoreUObject::Private
 {
 	extern COREUOBJECT_API std::atomic<int32> HandleReadCallbackQuantity;
 	COREUOBJECT_API void OnHandleReadInternal(TArrayView<const UObject* const> Objects);
+	COREUOBJECT_API void OnHandleReadInternal(const UObject* Object);
 	inline void OnHandleRead(TArrayView<const UObject* const> Objects)
 	{
 		if (HandleReadCallbackQuantity.load(std::memory_order_acquire) > 0)
@@ -116,8 +117,7 @@ namespace UE::CoreUObject::Private
 	{
 		if (HandleReadCallbackQuantity.load(std::memory_order_acquire) > 0)
 		{
-			TArrayView<const UObject* const> View(&Object, 1);
-			OnHandleReadInternal(View);
+			OnHandleReadInternal(Object);
 		}
 	}
 	COREUOBJECT_API void OnClassReferenceResolved(const FObjectRef& ObjectRef, UPackage* ClassPackage, UClass* Class);

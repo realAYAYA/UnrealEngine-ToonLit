@@ -7,7 +7,6 @@
 #include "Logging/LogMacros.h"
 #include "UObject/UnrealTypePrivate.h"
 #include "Animation/Skeleton.h"
-#include "Animation/Rig.h"
 #include "Engine/SkeletalMesh.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(DataflowSkeletalMeshNodes)

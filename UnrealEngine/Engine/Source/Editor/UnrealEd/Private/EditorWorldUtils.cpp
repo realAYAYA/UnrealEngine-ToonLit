@@ -2,6 +2,7 @@
 
 #include "EditorWorldUtils.h"
 #include "Editor.h"
+#include "AssetRegistry/AssetRegistryHelpers.h"
 
 FScopedEditorWorld::FScopedEditorWorld()
 	: World(nullptr)
@@ -16,20 +17,29 @@ FScopedEditorWorld::FScopedEditorWorld(UWorld* InWorld, const UWorld::Initializa
 }
 
 FScopedEditorWorld::FScopedEditorWorld(const FStringView InLongPackageName, const UWorld::InitializationValues& InInitializationValues, EWorldType::Type InWorldType)
+	: FScopedEditorWorld(TSoftObjectPtr<UWorld>(FSoftObjectPath(InLongPackageName)), InInitializationValues, InWorldType)
+{
+}
+
+FScopedEditorWorld::FScopedEditorWorld(const TSoftObjectPtr<UWorld>& InSoftWorld, const UWorld::InitializationValues& InInitializationValues, EWorldType::Type InWorldType)
 	: FScopedEditorWorld()
 {
-	if (UPackage* WorldPackage = LoadWorldPackageForEditor(InLongPackageName))
+	FSoftObjectPath WorldObjectPath(InSoftWorld.ToSoftObjectPath());
+	// Handle cases where the SoftObjectPath doesn't have a valid AssetName
+	if (WorldObjectPath.GetAssetFName().IsNone())
+	{
+		FString WorldObjectPathStr = WorldObjectPath.GetLongPackageName() + TEXT(".") + FPackageName::GetShortName(WorldObjectPath.GetLongPackageName());
+		WorldObjectPath = FSoftObjectPath(WorldObjectPathStr);
+	}
+	UAssetRegistryHelpers::FixupRedirectedAssetPath(WorldObjectPath);
+	
+	if (UPackage* WorldPackage = LoadWorldPackageForEditor(WorldObjectPath.GetLongPackageName()))
 	{
 		if (UWorld* RuntimeWorld = UWorld::FindWorldInPackage(WorldPackage))
 		{
 			Init(RuntimeWorld, InInitializationValues, InWorldType);
 		}
 	}
-}
-
-FScopedEditorWorld::FScopedEditorWorld(const TSoftObjectPtr<UWorld>& InSoftWorld, const UWorld::InitializationValues& InInitializationValues, EWorldType::Type InWorldType)
-	: FScopedEditorWorld(InSoftWorld.ToSoftObjectPath().GetLongPackageName(), InInitializationValues, InWorldType)
-{
 }
 
 void FScopedEditorWorld::Init(UWorld* InWorld, const UWorld::InitializationValues& InInitializationValues, EWorldType::Type InWorldType)

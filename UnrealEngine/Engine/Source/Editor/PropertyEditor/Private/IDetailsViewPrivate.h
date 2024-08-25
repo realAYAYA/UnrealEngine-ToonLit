@@ -3,10 +3,12 @@
 #pragma once
 
 #include "AssetThumbnail.h"
+#include "DetailsDisplayManager.h"
 #include "DetailTreeNode.h"
 #include "IDetailsView.h"
 #include "PropertyNode.h"
 
+class FDetailsNameWidgetOverrideCustomization;
 class FEditConditionParser;
 class FNotifyHook;
 class IDetailPropertyExtensionHandler;
@@ -44,6 +46,9 @@ public:
 	 * Returns the property utilities for this view
 	 */
 	virtual TSharedPtr<IPropertyUtilities> GetPropertyUtilities() = 0;
+
+	/** Request the details view to be refreshed (new widgets generated) with the current set of objects on the next Tick */
+	virtual void RequestForceRefresh() = 0;
 
 	/** Causes the details view to be refreshed (new widgets generated) with the current set of objects */
 	virtual void ForceRefresh() = 0;
@@ -175,4 +180,39 @@ public:
 	
 	/** Retrieve a list of top-most detail tree nodes. */
 	virtual void GetHeadNodes(TArray<TWeakPtr<FDetailTreeNode>>& OutNodes) {}
+
+
+	/**
+	* Gets the @code FDetailsViewStyleKey& @endcode which provides a Key to the current style for a Details View
+	*/
+	virtual const FDetailsViewStyleKey& GetStyleKey() override
+	{
+		return FDetailsViewStyleKeys::Default(); 
+	}
+	
+	/**
+	* Updates @code FDetailsViewStyleKey& StyleKey @endcode for the current @code IDetailsViewPrivate @endcode state
+	*/
+	virtual void UpdateStyleKey() override
+	{
+	}
+	
+	/**
+	* Returns a bool indicating whether the given @code FDetailsViewStyleKey @endcode is the default Details View Style 
+	*/
+	virtual bool IsDefaultStyle() const override
+	{
+		return true;
+	}
+
+	/**
+	 * Returns a @code TSharedPtr @endcode to the @code FDetailsDisplayManager @endcode for this
+	 * details view
+	 */
+	virtual TSharedPtr<FDetailsDisplayManager> GetDisplayManager() = 0;
+
+	virtual TSharedPtr<FDetailsNameWidgetOverrideCustomization> GetDetailsNameWidgetOverrideCustomization()
+	{
+		return nullptr;
+	}
 };

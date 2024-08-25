@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "AudioDevice.h"
+#include "Sound/AudioBus.h"
 #include "AudioBusSubsystem.h"
 #include "DSP/ConvertDeinterleave.h"
 #include "Internationalization/Text.h"
@@ -83,19 +84,19 @@ namespace Metasound
 			return Interface;
 		}
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
 			using namespace Frontend;
 			
 			using namespace AudioBusReaderNode; 
-			const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 
 			bool bHasEnvironmentVars = InParams.Environment.Contains<Audio::FDeviceId>(SourceInterface::Environment::DeviceID);
 			bHasEnvironmentVars &= InParams.Environment.Contains<int32>(SourceInterface::Environment::AudioMixerNumOutputFrames);
 			
 			if (bHasEnvironmentVars)
 			{
-				FAudioBusAssetReadRef AudioBusIn = InputCollection.GetDataReadReferenceOrConstruct<FAudioBusAsset>(METASOUND_GET_PARAM_NAME(InParamAudioBusInput));
+				FAudioBusAssetReadRef AudioBusIn = InputData.GetOrConstructDataReadReference<FAudioBusAsset>(METASOUND_GET_PARAM_NAME(InParamAudioBusInput));
 				return MakeUnique<TAudioBusReaderOperator<NumChannels>>(InParams, AudioBusIn);
 			}
 			else
@@ -106,7 +107,7 @@ namespace Metasound
 			}
 		}
 
-		TAudioBusReaderOperator(const FCreateOperatorParams& InParams, const FAudioBusAssetReadRef& InAudioBusAsset) : AudioBusAsset(InAudioBusAsset)
+		TAudioBusReaderOperator(const FBuildOperatorParams& InParams, const FAudioBusAssetReadRef& InAudioBusAsset) : AudioBusAsset(InAudioBusAsset)
 		{
 			for (int32 ChannelIndex = 0; ChannelIndex < NumChannels; ++ChannelIndex)
 			{
@@ -234,7 +235,7 @@ namespace Metasound
 					if (FAudioDevice* AudioDevice = ADM->GetAudioDeviceRaw(AudioDeviceId))
 					{
 						// Start the audio bus in case it's not already started
-						AudioBusChannels = AudioBusProxy->NumChannels;
+						AudioBusChannels = static_cast<uint32>(FMath::Min(AudioBusProxy->NumChannels, static_cast<int32>(EAudioBusChannels::MaxChannelCount)));
 						AudioBusId = AudioBusProxy->AudioBusId;
 						
 						const Audio::FAudioBusKey AudioBusKey = Audio::FAudioBusKey(AudioBusId);
@@ -278,8 +279,9 @@ namespace Metasound
 				Buffer->Zero();
 			}
 			
-			const int32 BlockSizeFrames = InParams.OperatorSettings.GetNumFramesPerBlock();
-			CreatePatchOutput(BlockSizeFrames);
+			// Wait until Execute to connect the AudioBusPatchOutput.
+			// Otherwise the mixer will start filling the patch before the MetaSound starts.
+			AudioBusPatchOutput.Reset();
 		}
 
 	private:

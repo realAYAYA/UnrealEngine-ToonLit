@@ -6,11 +6,15 @@
 #pragma once 
 
 #include "Async/TaskGraphFwd.h"
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "CoreMinimal.h"
+#endif // UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "CollisionQueryParams.h"
 #include "CollisionShape.h"
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "Engine/OverlapResult.h"
 #include "Engine/HitResult.h"
+#endif // UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
 #include "Async/TaskGraphInterfaces.h"
@@ -18,6 +22,8 @@
 
 struct FOverlapDatum;
 struct FTraceDatum;
+struct FHitResult;
+struct FOverlapResult;
 typedef TArray<FGraphEventRef, TInlineAllocator<4> > FGraphEventArray;
 
 /** Trace Data Structs that are used for Async Trace */
@@ -178,27 +184,11 @@ struct FTraceDatum : public FBaseTraceDatum
 	/** Whether to do test, single or multi test */
 	EAsyncTraceType TraceType;
 
-	FTraceDatum() {}
+	ENGINE_API FTraceDatum();
 
 	/** Set Trace Datum for each shape type **/
-	FTraceDatum(UWorld* World, const FCollisionShape& CollisionShape, const FCollisionQueryParams& Param, const struct FCollisionResponseParams& InResponseParam, const struct FCollisionObjectQueryParams& InObjectQueryParam,
-		ECollisionChannel Channel, uint32 InUserData, EAsyncTraceType InTraceType, const FVector& InStart, const FVector& InEnd, const FQuat& InRot, const FTraceDelegate* InDelegate, int32 FrameCounter)
-	{
-		Set(World, CollisionShape, Param, InResponseParam, InObjectQueryParam, Channel, InUserData, FrameCounter);
-		Start = InStart;
-		End = InEnd;
-		Rot = InRot;
-		if (InDelegate)
-		{
-			Delegate = *InDelegate;
-		}
-		else
-		{
-			Delegate.Unbind();
-		}
-		OutHits.Reset();
-		TraceType = InTraceType;
-	}
+	ENGINE_API FTraceDatum(UWorld* World, const FCollisionShape& CollisionShape, const FCollisionQueryParams& Param, const struct FCollisionResponseParams& InResponseParam, const struct FCollisionObjectQueryParams& InObjectQueryParam,
+		ECollisionChannel Channel, uint32 InUserData, EAsyncTraceType InTraceType, const FVector& InStart, const FVector& InEnd, const FQuat& InRot, const FTraceDelegate* InDelegate, int32 FrameCounter);
 };
 
 /**
@@ -222,25 +212,11 @@ struct FOverlapDatum : FBaseTraceDatum
 	/** Output of the overlap request. Filled up by worker thread */
 	TArray<struct FOverlapResult> OutOverlaps;
 
-	FOverlapDatum() {}
+	ENGINE_API FOverlapDatum();
 
-	FOverlapDatum(UWorld * World, const FCollisionShape& CollisionShape, const FCollisionQueryParams& Param, const struct FCollisionResponseParams &InResponseParam, const struct FCollisionObjectQueryParams& InObjectQueryParam, 
-		ECollisionChannel Channel, uint32 InUserData,
-		const FVector& InPos, const FQuat& InRot, const FOverlapDelegate* InDelegate, int32 FrameCounter)
-	{
-		Set(World, CollisionShape, Param, InResponseParam, InObjectQueryParam, Channel, InUserData, FrameCounter);
-		Pos = InPos;
-		Rot = InRot;
-		if (InDelegate)
-		{
-			Delegate = *InDelegate;
-		}
-		else
-		{
-			Delegate.Unbind();
-		}
-		OutOverlaps.Reset();
-	}
+	ENGINE_API FOverlapDatum(UWorld * World, const FCollisionShape& CollisionShape, const FCollisionQueryParams& Param, const struct FCollisionResponseParams &InResponseParam, const struct FCollisionObjectQueryParams& InObjectQueryParam, 
+	              ECollisionChannel Channel, uint32 InUserData,
+	              const FVector& InPos, const FQuat& InRot, const FOverlapDelegate* InDelegate, int32 FrameCounter);
 };
 
 #define ASYNC_TRACE_BUFFER_SIZE 64

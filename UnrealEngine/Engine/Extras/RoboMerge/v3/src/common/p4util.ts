@@ -1,7 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 import { ContextualLogger } from './logger';
-import { Change, coercePerforceWorkspace, OpenedFileRecord, PerforceContext, RoboWorkspace } from './perforce';
+import { Change, ClientSpec, coercePerforceWorkspace, OpenedFileRecord, PerforceContext, RoboWorkspace } from './perforce';
 
 const USER_WORKSPACE_EXCLUDE_PATTERNS: (RegExp | string)[] = [
 	'horde-p4bridge-',
@@ -131,7 +131,7 @@ export async function convertIntegrateToEdit(p4: PerforceContext, roboWorkspace:
 
 		for (const [src, target] of localFiles) {
 			if (!src) {
-				throw new Error(`No source file in move (CL${changeNum})`)
+				throw new Error(`No source file in move (CL ${changeNum})`)
 			}
 
 			p4utilsLogger.verbose(`    ${src} to ${target}`)
@@ -223,8 +223,47 @@ export async function cleanWorkspaces(p4: PerforceContext, workspaces: [string, 
 	await Promise.all(workspaces.map(([name, root]) => p4.sync(name, root + '#0', {edgeServerAddress})))
 }
 
-export async function getWorkspacesForUser(p4: PerforceContext, user: string, edgeServerAddress?: string) {
-	return (await p4.find_workspaces(user, {edgeServerAddress}))
+export async function getWorkspacesForUser(p4: PerforceContext, user: string) {
+	return (await p4.find_workspaces(user))
 		.filter(ws => !USER_WORKSPACE_EXCLUDE_PATTERNS.some(entry => ws.client.match(entry)))
 }
 
+function matchPrefix(a: string, b: string) {
+	const len = Math.min(a.length, b.length)
+	for (let i = 0; i < len; ++i) {
+		if (a.charAt(i) !== b.charAt(i)) {
+			return i
+		}
+	}
+	return len
+}
+
+export async function chooseBestWorkspaceForUser(p4: PerforceContext, user: string, stream?: string) {
+	const workspaces: ClientSpec[] = await getWorkspacesForUser(p4,user)
+
+	if (workspaces.length > 0) {
+		workspaces.sort((a,b) => b.Access - a.Access)
+		// default to the first workspace
+		let targetWorkspace = workspaces[0]
+
+		// if this is a stream branch, do some better match-up
+		if (stream) {
+			const branch_stream = stream.toLowerCase()
+			// find the stream with the closest match
+			let target_match = 0
+			for (let def of workspaces) {
+				let stream = def.Stream
+				if (stream) {
+					const matchlen = matchPrefix(stream.toLowerCase(), branch_stream)
+					if (matchlen > target_match) {
+						target_match = matchlen
+						targetWorkspace = def
+					}
+				}
+			}
+		}
+		return targetWorkspace.client
+	}
+
+	return undefined
+}

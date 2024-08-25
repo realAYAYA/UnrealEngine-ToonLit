@@ -102,7 +102,7 @@ public:
 			if(Idx == Bucket.ProxiesData.Num() - 1)
 			{
 				//last element so just pop
-				Bucket.ProxiesData.Pop(/*bAllowShrinking=*/false);
+				Bucket.ProxiesData.Pop(EAllowShrinking::No);
 				--DirtyProxyBucketInfo.Num[(uint32)Base->GetType()];
 				--DirtyProxyBucketInfo.TotalNum;
 			}

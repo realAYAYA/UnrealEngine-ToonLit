@@ -89,6 +89,7 @@ namespace UE::Anim
 		void EndCache(UE::DerivedData::FCacheGetValueResponse&& Response);
 		bool BuildData() const;
 		void LaunchCompressionTask(const UE::DerivedData::FSharedString& Name, const UE::DerivedData::FCacheKey& Key);
+		int64 GetRequiredMemoryEstimate() const;
 
 	private:
 		friend class FAnimationSequenceAsyncBuildWorker;

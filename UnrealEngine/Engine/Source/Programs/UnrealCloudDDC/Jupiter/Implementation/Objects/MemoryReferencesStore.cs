@@ -9,180 +9,224 @@ using EpicGames.Horde.Storage;
 
 namespace Jupiter.Implementation
 {
-    public class MemoryReferencesStore : IReferencesStore
-    {
-        private readonly ConcurrentDictionary<string, MemoryStoreObject> _objects = new ConcurrentDictionary<string, MemoryStoreObject>();
-        private readonly HashSet<NamespaceId> _namespaces = new HashSet<NamespaceId>();
+	public class MemoryReferencesStore : IReferencesStore
+	{
+		private readonly ConcurrentDictionary<string, MemoryStoreObject> _objects = new ConcurrentDictionary<string, MemoryStoreObject>();
+		private readonly HashSet<NamespaceId> _namespaces = new HashSet<NamespaceId>();
 
-        public MemoryReferencesStore()
-        {
+		public MemoryReferencesStore()
+		{
 
-        }
+		}
 
-        public Task<ObjectRecord> Get(NamespaceId ns, BucketId bucket, IoHashKey key, IReferencesStore.FieldFlags flags)
-        {
-            if (_objects.TryGetValue(BuildKey(ns, bucket, key), out MemoryStoreObject? o))
-            {
-                return Task.FromResult(o.ToObjectRecord(flags));
-            }
+		public Task<RefRecord> GetAsync(NamespaceId ns, BucketId bucket, RefId key, IReferencesStore.FieldFlags fieldFlags, IReferencesStore.OperationFlags opFlags)
+		{
+			if (_objects.TryGetValue(BuildKey(ns, bucket, key), out MemoryStoreObject? o))
+			{
+				return Task.FromResult(o.ToRefRecord(fieldFlags));
+			}
 
-            throw new ObjectNotFoundException(ns, bucket, key);
-        }
+			throw new RefNotFoundException(ns, bucket, key);
+		}
 
-        public Task Put(NamespaceId ns, BucketId bucket, IoHashKey key, BlobIdentifier blobHash, byte[] blob, bool isFinalized)
-        {
-            lock (_namespaces)
-            {
-                _namespaces.Add(ns);
-            }
+		public Task PutAsync(NamespaceId ns, BucketId bucket, RefId key, BlobId blobHash, byte[] blob, bool isFinalized)
+		{
+			lock (_namespaces)
+			{
+				_namespaces.Add(ns);
+			}
 
-            MemoryStoreObject o = _objects.AddOrUpdate(BuildKey(ns, bucket, key),
-                s => new MemoryStoreObject(ns, bucket, key, blobHash, blob, isFinalized),
-                (s, o) => new MemoryStoreObject(ns, bucket, key, blobHash, blob, isFinalized));
+			MemoryStoreObject o = _objects.AddOrUpdate(BuildKey(ns, bucket, key),
+				s => new MemoryStoreObject(ns, bucket, key, blobHash, blob, isFinalized),
+				(s, o) => new MemoryStoreObject(ns, bucket, key, blobHash, blob, isFinalized));
 
-            return Task.FromResult(o);
-        }
+			return Task.FromResult(o);
+		}
 
-        public Task Finalize(NamespaceId ns, BucketId bucket, IoHashKey key, BlobIdentifier blobIdentifier)
-        {
-            if (!_objects.TryGetValue(BuildKey(ns, bucket, key), out MemoryStoreObject? o))
-            {
-                throw new ObjectNotFoundException(ns, bucket, key);
-            }
+		public Task FinalizeAsync(NamespaceId ns, BucketId bucket, RefId key, BlobId blobIdentifier)
+		{
+			if (!_objects.TryGetValue(BuildKey(ns, bucket, key), out MemoryStoreObject? o))
+			{
+				throw new RefNotFoundException(ns, bucket, key);
+			}
 
-            o.FinalizeObject();
-            return Task.CompletedTask;
-        }
+			o.FinalizeObject();
+			return Task.CompletedTask;
+		}
 
-        public Task UpdateLastAccessTime(NamespaceId ns, BucketId bucket, IoHashKey key, DateTime lastAccessTime)
-        {
-            if (!_objects.TryGetValue(BuildKey(ns, bucket, key), out MemoryStoreObject? o))
-            {
-                throw new ObjectNotFoundException(ns, bucket, key);
-            }
+		public Task<DateTime?> GetLastAccessTimeAsync(NamespaceId ns, BucketId bucket, RefId key)
+		{
+			DateTime? lastAccessTime = null;
+			if (_objects.TryGetValue(BuildKey(ns, bucket, key), out MemoryStoreObject? o))
+			{
+				lastAccessTime = o.LastAccessTime;
+			}
 
-            o.SetLastAccessTime(lastAccessTime);
-            return Task.CompletedTask;
-        }
+			return Task.FromResult(lastAccessTime);
+		}
 
-        public async IAsyncEnumerable<(NamespaceId, BucketId, IoHashKey, DateTime)> GetRecords()
-        {
-            foreach (MemoryStoreObject o in _objects.Values.OrderBy(o => o.LastAccessTime))
-            {
-                await Task.CompletedTask;
-                yield return (o.Namespace, o.Bucket, o.Name, o.LastAccessTime);
-            }
-        }
+		public Task UpdateLastAccessTimeAsync(NamespaceId ns, BucketId bucket, RefId key, DateTime lastAccessTime)
+		{
+			if (!_objects.TryGetValue(BuildKey(ns, bucket, key), out MemoryStoreObject? o))
+			{
+				throw new RefNotFoundException(ns, bucket, key);
+			}
 
-        public IAsyncEnumerable<NamespaceId> GetNamespaces()
-        {
-            return _namespaces.ToAsyncEnumerable();
-        }
+			o.SetLastAccessTime(lastAccessTime);
+			return Task.CompletedTask;
+		}
 
-        public Task<bool> Delete(NamespaceId ns, BucketId bucket, IoHashKey key)
-        {
-            if (!_objects.TryRemove(BuildKey(ns, bucket, key), out MemoryStoreObject? _))
-            {
-                throw new ObjectNotFoundException(ns, bucket, key);
-            }
+		public async IAsyncEnumerable<(NamespaceId, BucketId, RefId)> GetRecordsWithoutAccessTimeAsync()
+		{
+			await foreach ((NamespaceId namespaceId, BucketId bucketId, RefId refId, DateTime _) in GetRecordsAsync())
+			{
+				await Task.CompletedTask;
+				yield return (namespaceId, bucketId, refId);
+			}
+		}
 
-            return Task.FromResult(true);
-        }
+		public async IAsyncEnumerable<(NamespaceId, BucketId, RefId, DateTime)> GetRecordsAsync()
+		{
+			foreach (MemoryStoreObject o in _objects.Values.OrderBy(o => o.LastAccessTime))
+			{
+				await Task.CompletedTask;
+				yield return (o.Namespace, o.Bucket, o.Name, o.LastAccessTime);
+			}
+		}
 
-        public Task<long> DropNamespace(NamespaceId ns)
-        {
-            lock (_namespaces)
-            {
-                _namespaces.Remove(ns);
-            }
+		public async IAsyncEnumerable<(RefId, BlobId)> GetRecordsInBucketAsync(NamespaceId ns, BucketId bucket)
+		{
+			foreach (MemoryStoreObject o in _objects.Values.Where(o => o.Namespace == ns && o.Bucket == bucket))
+			{
+				await Task.CompletedTask;
+				yield return (o.Name, o.BlobHash);
+			}
+		}
 
-            List<string> objectToRemove = new List<string>();
+		public IAsyncEnumerable<NamespaceId> GetNamespacesAsync()
+		{
+			return _namespaces.ToAsyncEnumerable();
+		}
 
-            foreach (MemoryStoreObject o in _objects.Values)
-            {
-                if (o.Namespace == ns)
-                {
-                    objectToRemove.Add(BuildKey(o.Namespace, o.Bucket, o.Name));
-                }
-            }
+		public async IAsyncEnumerable<BucketId> GetBuckets(NamespaceId ns)
+		{
+			HashSet<BucketId> buckets = new HashSet<BucketId>();
+			foreach (MemoryStoreObject o in _objects.Values.Where(o => o.Namespace == ns))
+			{
+				buckets.Add(o.Bucket);
+			}
+			await Task.CompletedTask;
 
-            long removedCount = 0L;
-            foreach (string key in objectToRemove)
-            {
-                if (_objects.TryRemove(key, out _))
-                {
-                    removedCount++;
-                }
-            }
+			foreach (BucketId bucket in buckets)
+			{
+				yield return bucket;
+			}
+		}
 
-            return Task.FromResult(removedCount);
-        }
+		public Task<bool> DeleteAsync(NamespaceId ns, BucketId bucket, RefId key)
+		{
+			if (!_objects.TryRemove(BuildKey(ns, bucket, key), out MemoryStoreObject? _))
+			{
+				throw new RefNotFoundException(ns, bucket, key);
+			}
 
-        public Task<long> DeleteBucket(NamespaceId ns, BucketId bucket)
-        {
-            List<string> objectToRemove = new List<string>();
+			return Task.FromResult(true);
+		}
 
-            foreach (MemoryStoreObject o in _objects.Values)
-            {
-                if (o.Namespace == ns && o.Bucket == bucket)
-                {
-                    objectToRemove.Add(BuildKey(o.Namespace, o.Bucket, o.Name));
-                }
-            }
+		public Task<long> DropNamespaceAsync(NamespaceId ns)
+		{
+			lock (_namespaces)
+			{
+				_namespaces.Remove(ns);
+			}
 
-            long removedCount = 0L;
-            foreach (string key in objectToRemove)
-            {
-                if (_objects.TryRemove(key, out _))
-                {
-                    removedCount++;
-                }
-            }
+			List<string> objectToRemove = new List<string>();
 
-            return Task.FromResult(removedCount);
-        }
+			foreach (MemoryStoreObject o in _objects.Values)
+			{
+				if (o.Namespace == ns)
+				{
+					objectToRemove.Add(BuildKey(o.Namespace, o.Bucket, o.Name));
+				}
+			}
 
-        private static string BuildKey(NamespaceId ns, BucketId bucket, IoHashKey name)
-        {
-            return $"{ns}.{bucket}.{name}";
-        }
-    }
+			long removedCount = 0L;
+			foreach (string key in objectToRemove)
+			{
+				if (_objects.TryRemove(key, out _))
+				{
+					removedCount++;
+				}
+			}
 
-    public class MemoryStoreObject
-    {
-        public MemoryStoreObject(NamespaceId ns, BucketId bucket, IoHashKey key, BlobIdentifier blobHash, byte[] blob, bool isFinalized)
-        {
-            Namespace = ns;
-            Bucket = bucket;
-            Name = key;
-            BlobHash = blobHash;
-            Blob = blob;
-            IsFinalized = isFinalized;
-            LastAccessTime = DateTime.Now;
-        }
+			return Task.FromResult(removedCount);
+		}
 
-        public NamespaceId Namespace { get; }
-        public BucketId Bucket { get; }
-        public IoHashKey Name { get; }
-        public byte[] Blob { get; }
-        public BlobIdentifier BlobHash { get; }
+		public Task<long> DeleteBucketAsync(NamespaceId ns, BucketId bucket)
+		{
+			List<string> objectToRemove = new List<string>();
 
-        public DateTime LastAccessTime { get; private set; }
-        public bool IsFinalized { get; private set;}
+			foreach (MemoryStoreObject o in _objects.Values)
+			{
+				if (o.Namespace == ns && o.Bucket == bucket)
+				{
+					objectToRemove.Add(BuildKey(o.Namespace, o.Bucket, o.Name));
+				}
+			}
 
-        public void FinalizeObject()
-        {
-            IsFinalized = true;
-        }
-        public void SetLastAccessTime(DateTime lastAccessTime)
-        {
-            LastAccessTime = lastAccessTime;
-        }
+			long removedCount = 0L;
+			foreach (string key in objectToRemove)
+			{
+				if (_objects.TryRemove(key, out _))
+				{
+					removedCount++;
+				}
+			}
 
-        public ObjectRecord ToObjectRecord(IReferencesStore.FieldFlags fieldFlags)
-        {
-            bool includePayload = (fieldFlags & IReferencesStore.FieldFlags.IncludePayload) != 0;
-            return new ObjectRecord(Namespace, Bucket, Name, LastAccessTime, includePayload ? Blob : null, BlobHash, IsFinalized);
-        }
-    }
+			return Task.FromResult(removedCount);
+		}
+
+		private static string BuildKey(NamespaceId ns, BucketId bucket, RefId name)
+		{
+			return $"{ns}.{bucket}.{name}";
+		}
+	}
+
+	public class MemoryStoreObject
+	{
+		public MemoryStoreObject(NamespaceId ns, BucketId bucket, RefId key, BlobId blobHash, byte[] blob, bool isFinalized)
+		{
+			Namespace = ns;
+			Bucket = bucket;
+			Name = key;
+			BlobHash = blobHash;
+			Blob = blob;
+			IsFinalized = isFinalized;
+			LastAccessTime = DateTime.Now;
+		}
+
+		public NamespaceId Namespace { get; }
+		public BucketId Bucket { get; }
+		public RefId Name { get; }
+		public byte[] Blob { get; }
+		public BlobId BlobHash { get; }
+
+		public DateTime LastAccessTime { get; private set; }
+		public bool IsFinalized { get; private set;}
+
+		public void FinalizeObject()
+		{
+			IsFinalized = true;
+		}
+		public void SetLastAccessTime(DateTime lastAccessTime)
+		{
+			LastAccessTime = lastAccessTime;
+		}
+
+		public RefRecord ToRefRecord(IReferencesStore.FieldFlags fieldFlags)
+		{
+			bool includePayload = (fieldFlags & IReferencesStore.FieldFlags.IncludePayload) != 0;
+			return new RefRecord(Namespace, Bucket, Name, LastAccessTime, includePayload ? Blob : null, BlobHash, IsFinalized);
+		}
+	}
 }

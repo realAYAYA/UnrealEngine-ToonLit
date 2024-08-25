@@ -88,13 +88,6 @@ FLevelSequenceEditorToolkit::FLevelSequenceEditorToolkit(const TSharedRef<ISlate
 	: LevelSequence(nullptr)
 	, Style(InStyle)
 {
-	// register sequencer menu extenders
-	ISequencerModule& SequencerModule = FModuleManager::Get().LoadModuleChecked<ISequencerModule>("Sequencer");
-	int32 NewIndex = SequencerModule.GetAddTrackMenuExtensibilityManager()->GetExtenderDelegates().Add(
-		FAssetEditorExtender::CreateRaw(this, &FLevelSequenceEditorToolkit::HandleMenuExtensibilityGetExtender));
-	SequencerExtenderHandle = SequencerModule.GetAddTrackMenuExtensibilityManager()->GetExtenderDelegates()[NewIndex].GetHandle();
-
-
 	OpenToolkits.Add(this);
 }
 
@@ -125,13 +118,6 @@ FLevelSequenceEditorToolkit::~FLevelSequenceEditorToolkit()
 		auto& LevelSequenceEditorModule = FModuleManager::LoadModuleChecked<ILevelSequenceEditorModule>(TEXT("LevelSequenceEditor"));
 		LevelSequenceEditorModule.OnLevelSequenceWithShotsCreated().RemoveAll(this);
 	}
-
-	// unregister sequencer menu extenders
-	ISequencerModule& SequencerModule = FModuleManager::Get().LoadModuleChecked<ISequencerModule>("Sequencer");
-	SequencerModule.GetAddTrackMenuExtensibilityManager()->GetExtenderDelegates().RemoveAll([this](const FAssetEditorExtender& Extender)
-	{
-		return SequencerExtenderHandle == Extender.GetHandle();
-	});
 }
 
 
@@ -231,7 +217,7 @@ void FLevelSequenceEditorToolkit::Initialize(const EToolkitMode::Type Mode, cons
 	FLevelSequenceEditorToolkit::OnOpened().Broadcast(*this);
 
 	{
-		UWorld* World = PlaybackContext->GetPlaybackContext();
+		UWorld* World = PlaybackContext->GetPlaybackContext()->GetWorld();
 		UVREditorMode* VRMode = Cast<UVREditorMode>( GEditor->GetEditorWorldExtensionsManager()->GetEditorWorldExtensions( World )->FindExtension( UVREditorMode::StaticClass() ) );
 		if (VRMode != nullptr)
 		{
@@ -650,41 +636,6 @@ void FLevelSequenceEditorToolkit::OnInitToolMenuContext(FToolMenuContext& MenuCo
 	MenuContext.AddObject(LevelSequenceEditorMenuContext);
 }
 
-void FLevelSequenceEditorToolkit::HandleAddComponentActionExecute(UActorComponent* Component)
-{
-	const FScopedTransaction Transaction(LOCTEXT("AddComponent", "Add Component"));
-
-	FString ComponentName = Component->GetName();
-
-	TArray<UActorComponent*> ActorComponents;
-	ActorComponents.Add(Component);
-
-	USelection* SelectedActors = GEditor->GetSelectedActors();
-	if (SelectedActors && SelectedActors->Num() > 0)
-	{
-		for (FSelectionIterator Iter(*SelectedActors); Iter; ++Iter)
-		{
-			AActor* Actor = CastChecked<AActor>(*Iter);
-
-			TArray<UActorComponent*> OutActorComponents;
-			Actor->GetComponents(OutActorComponents);
-	
-			for (UActorComponent* ActorComponent : OutActorComponents)
-			{
-				if (ActorComponent->GetName() == ComponentName)
-				{
-					ActorComponents.AddUnique(ActorComponent);
-				}
-			}
-		}
-	}
-
-	for (UActorComponent* ActorComponent : ActorComponents)
-	{
-		Sequencer->GetHandleToObject(ActorComponent);
-	}
-}
-
 
 void FLevelSequenceEditorToolkit::HandleActorAddedToSequencer(AActor* Actor, const FGuid Binding)
 {
@@ -694,7 +645,7 @@ void FLevelSequenceEditorToolkit::HandleActorAddedToSequencer(AActor* Actor, con
 
 void FLevelSequenceEditorToolkit::HandleVREditorModeExit()
 {
-	UWorld* World = PlaybackContext->GetPlaybackContext();
+	UWorld* World = PlaybackContext->GetPlaybackContext()->GetWorld();
 	UVREditorMode* VRMode = CastChecked<UVREditorMode>( GEditor->GetEditorWorldExtensionsManager()->GetEditorWorldExtensions( World )->FindExtension( UVREditorMode::StaticClass() ) );
 
 	// Reset sequencer settings
@@ -894,19 +845,6 @@ void FLevelSequenceEditorToolkit::HandleLevelSequenceWithShotsCreated(UObject* L
 	}
 }
 
-TSharedRef<FExtender> FLevelSequenceEditorToolkit::HandleMenuExtensibilityGetExtender(const TSharedRef<FUICommandList> CommandList, const TArray<UObject*> ContextSensitiveObjects)
-{
-	TSharedRef<FExtender> AddTrackMenuExtender(new FExtender());
-	AddTrackMenuExtender->AddMenuExtension(
-		SequencerMenuExtensionPoints::AddTrackMenu_PropertiesSection,
-		EExtensionHook::Before,
-		CommandList,
-		FMenuExtensionDelegate::CreateRaw(this, &FLevelSequenceEditorToolkit::HandleTrackMenuExtensionAddTrack, ContextSensitiveObjects));
-
-	return AddTrackMenuExtender;
-}
-
-
 TSharedRef<SDockTab> FLevelSequenceEditorToolkit::HandleTabManagerSpawnTab(const FSpawnTabArgs& Args)
 {
 	TSharedPtr<SWidget> TabWidget = SNullWidget::NullWidget;
@@ -925,124 +863,9 @@ TSharedRef<SDockTab> FLevelSequenceEditorToolkit::HandleTabManagerSpawnTab(const
 		];
 }
 
-
-void FLevelSequenceEditorToolkit::HandleTrackMenuExtensionAddTrack(FMenuBuilder& AddTrackMenuBuilder, TArray<UObject*> ContextObjects)
-{
-	if (ContextObjects.Num() != 1)
-	{
-		return;
-	}
-	
-	FClassViewerModule& ClassViewerModule = FModuleManager::LoadModuleChecked<FClassViewerModule>("ClassViewer");
-	const TSharedPtr<IClassViewerFilter>& GlobalClassFilter = ClassViewerModule.GetGlobalClassViewerFilter();
-	TSharedRef<FClassViewerFilterFuncs> ClassFilterFuncs = ClassViewerModule.CreateFilterFuncs();
-	FClassViewerInitializationOptions ClassViewerOptions = {};
-
-	AActor* Actor = Cast<AActor>(ContextObjects[0]);
-	if (Actor != nullptr)
-	{
-		AddTrackMenuBuilder.BeginSection("Components", LOCTEXT("ComponentsSection", "Components"));
-		{
-			TMap<FString, UActorComponent*> SortedComponents;
-			for (UActorComponent* Component : Actor->GetComponents())
-			{
-				if (Component)
-				{
-					bool bValidComponent = !Component->IsVisualizationComponent();
-
-					if (GlobalClassFilter.IsValid())
-					{
-						// Hack - forcibly allow USkeletalMeshComponentBudgeted until FORT-527888
-						static const FName SkeletalMeshComponentBudgetedClassName(TEXT("USkeletalMeshComponentBudgeted"));
-						if (Component->GetClass()->GetName() == SkeletalMeshComponentBudgetedClassName)
-						{
-							bValidComponent = true;
-						}
-						else
-						{
-							bValidComponent = GlobalClassFilter->IsClassAllowed(ClassViewerOptions, Component->GetClass(), ClassFilterFuncs);
-						}
-					}
-
-					if (bValidComponent)
-					{
-						SortedComponents.Add(Component->GetName(), Component);
-					}
-				}
-			}
-			SortedComponents.KeySort([](const FString& A, const FString& B) 
-			{
-				return A < B;
-			});
-			
-			for (const TPair<FString, UActorComponent*>& Component : SortedComponents)
-			{
-				FUIAction AddComponentAction(FExecuteAction::CreateSP(this, &FLevelSequenceEditorToolkit::HandleAddComponentActionExecute, Component.Value));
-				FText AddComponentLabel = FText::FromString(Component.Key);
-				FText AddComponentToolTip = FText::Format(LOCTEXT("ComponentToolTipFormat", "Add {0} component"), AddComponentLabel);
-				AddTrackMenuBuilder.AddMenuEntry(AddComponentLabel, AddComponentToolTip, FSlateIcon(), AddComponentAction);
-			}
-		}
-		AddTrackMenuBuilder.EndSection();
-	}
-	else
-	{
-		if (USkeletalMeshComponent* SkeletalComponent = Cast<USkeletalMeshComponent>(ContextObjects[0]))
-		{
-			UAnimInstance* AnimInstance = SkeletalComponent->GetAnimInstance();
-			
-			FText AnimInstanceLabel = LOCTEXT("AnimInstanceLabel", "Anim Instance");
-			FText DetailedAnimInstanceText = AnimInstance ? 
-				FText::Format(LOCTEXT("AnimInstanceLabelFormat", "Anim Instance '{0}'"), FText::FromString(AnimInstance->GetName()))
-				: AnimInstanceLabel;
-
-			AddTrackMenuBuilder.BeginSection("Anim Instance", AnimInstanceLabel);
-			{
-				AddTrackMenuBuilder.AddMenuEntry(
-					DetailedAnimInstanceText,
-					LOCTEXT("AnimInstanceToolTip", "Add this skeletal mesh component's animation instance."),
-					FSlateIcon(),
-					FUIAction(
-						FExecuteAction::CreateSP(this, &FLevelSequenceEditorToolkit::BindAnimationInstance, SkeletalComponent, AnimInstance)
-					)
-				);
-			}
-			AddTrackMenuBuilder.EndSection();
-
-			if (UAnimInstance* PostProcessInstance = SkeletalComponent->GetPostProcessInstance())
-			{
-				FText PostProcessInstanceLabel = LOCTEXT("PostProcessInstanceLabel", "Post Process Instance");
-				FText DetailedPostProcessInstanceText = PostProcessInstance ?
-					FText::Format(LOCTEXT("PostProcessInstanceLabelFormat", "Post Process Instance '{0}'"), FText::FromString(PostProcessInstance->GetName()))
-					: PostProcessInstanceLabel;
-
-				AddTrackMenuBuilder.BeginSection("Post Process Instance", PostProcessInstanceLabel);
-				{
-					AddTrackMenuBuilder.AddMenuEntry(
-						DetailedPostProcessInstanceText,
-						LOCTEXT("PostProcessInstanceToolTip", "Add this skeletal mesh component's post process instance."),
-						FSlateIcon(),
-						FUIAction(
-							FExecuteAction::CreateSP(this, &FLevelSequenceEditorToolkit::BindAnimationInstance, SkeletalComponent, PostProcessInstance)
-						)
-					);
-				}
-				AddTrackMenuBuilder.EndSection();
-			}
-		}
-	}
-}
-
-void FLevelSequenceEditorToolkit::BindAnimationInstance(USkeletalMeshComponent* SkeletalComponent, UAnimInstance* AnimInstance)
-{
-	// If there is no script instance at the moment, just use a dummy instance for the purposes of setting up the binding in the first place.
-	// This temporary object will get GC'd later on and is never actually applied to the anim instance
-	Sequencer->GetHandleToObject(AnimInstance ? AnimInstance : NewObject<UAnimInstance>(SkeletalComponent));
-}
-
 void FLevelSequenceEditorToolkit::OnClose()
 {
-	UWorld* World = PlaybackContext->GetPlaybackContext();
+	UWorld* World = PlaybackContext->GetPlaybackContext()->GetWorld();
 	UVREditorMode* VRMode = Cast<UVREditorMode>(GEditor->GetEditorWorldExtensionsManager()->GetEditorWorldExtensions(World)->FindExtension(UVREditorMode::StaticClass()));
 	if (VRMode != nullptr)
 	{

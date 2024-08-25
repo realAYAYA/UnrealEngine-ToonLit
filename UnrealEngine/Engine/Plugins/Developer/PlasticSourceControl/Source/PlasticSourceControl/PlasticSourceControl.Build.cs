@@ -22,7 +22,10 @@ public class PlasticSourceControl : ModuleRules
 				"AssetRegistry",
 				"DeveloperSettings",
 				"ToolMenus",
+				"ContentBrowser",
 			}
 		);
+
+		UnsafeTypeCastWarningLevel = WarningLevel.Error;
 	}
 }

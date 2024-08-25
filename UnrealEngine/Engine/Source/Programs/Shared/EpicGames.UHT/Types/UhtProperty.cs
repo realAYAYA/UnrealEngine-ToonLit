@@ -691,6 +691,11 @@ namespace EpicGames.UHT.Types
 		public UhtPropertyExportFlags PropertyExportFlags { get; set; }
 
 		/// <summary>
+		/// #define scope of where the property exists
+		/// </summary>
+		public UhtDefineScope DefineScope { get; set; }
+
+		/// <summary>
 		/// Allocator used for containers
 		/// </summary>
 		public UhtPropertyAllocator Allocator { get; set; }
@@ -762,6 +767,7 @@ namespace EpicGames.UHT.Types
 			PropertyFlags = parentPropertySettings.PropertyFlags;
 			DisallowPropertyFlags = parentPropertySettings.DisallowPropertyFlags;
 			PropertyExportFlags = UhtPropertyExportFlags.Public;
+			DefineScope = parentPropertySettings.DefineScope;
 			RepNotifyName = null;
 			Allocator = UhtPropertyAllocator.Default;
 			Options = parentPropertySettings.Options;
@@ -790,6 +796,7 @@ namespace EpicGames.UHT.Types
 			PropertyCategory = propertyCategory;
 			PropertyFlags = EPropertyFlags.None;
 			DisallowPropertyFlags = disallowPropertyFlags;
+			DefineScope = UhtDefineScope.None;
 			PropertyExportFlags = UhtPropertyExportFlags.Public;
 			RepNotifyName = null;
 			Allocator = UhtPropertyAllocator.Default;
@@ -822,6 +829,7 @@ namespace EpicGames.UHT.Types
 			PropertyFlags = property.PropertyFlags;
 			DisallowPropertyFlags = property.DisallowPropertyFlags;
 			PropertyExportFlags = property.PropertyExportFlags;
+			DefineScope = property.DefineScope;
 			Allocator = property.Allocator;
 			Options = options;
 			PointerType = property.PointerType;
@@ -1029,7 +1037,7 @@ namespace EpicGames.UHT.Types
 		/// If true, the property is editor only
 		/// </summary>
 		[JsonIgnore]
-		public bool IsEditorOnlyProperty => PropertyFlags.HasAnyFlags(EPropertyFlags.DevelopmentAssets);
+		public bool IsEditorOnlyProperty => PropertyFlags.HasAnyFlags(EPropertyFlags.EditorOnly);
 
 		/// <summary>
 		/// Construct a new property
@@ -1058,6 +1066,7 @@ namespace EpicGames.UHT.Types
 			PropertyFlags = propertySettings.PropertyFlags;
 			DisallowPropertyFlags = propertySettings.DisallowPropertyFlags;
 			PropertyExportFlags = propertySettings.PropertyExportFlags;
+			DefineScope = propertySettings.DefineScope;
 			Allocator = propertySettings.Allocator;
 			PointerType = propertySettings.PointerType;
 			RepNotifyName = propertySettings.RepNotifyName;
@@ -1156,6 +1165,20 @@ namespace EpicGames.UHT.Types
 		}
 
 		/// <summary>
+		/// Append the required code to declare the properties meta data
+		/// </summary>
+		/// <param name="builder">Output builder</param>
+		/// <param name="context">Current context</param>
+		/// <param name="name">Name of the property.  This is needed in some cases where the name in the declarations doesn't match the property name.</param>
+		/// <param name="nameSuffix">Suffix to the property name</param>
+		/// <param name="tabs">Number of tabs prefix the line with</param>
+		/// <returns>Output builder</returns>
+		public virtual StringBuilder AppendMetaDataDecl(StringBuilder builder, IUhtPropertyMemberContext context, string name, string nameSuffix, int tabs)
+		{
+			return builder.AppendMetaDataDecl(this, context.NamePrefix, name, nameSuffix, context.MetaDataSuffix, tabs);
+		}
+
+		/// <summary>
 		/// Append the required code to declare the property as a member
 		/// </summary>
 		/// <param name="builder">Output builder</param>
@@ -1175,14 +1198,9 @@ namespace EpicGames.UHT.Types
 		/// <param name="nameSuffix">Suffix to the property name</param>
 		/// <param name="tabs">Number of tabs prefix the line with</param>
 		/// <param name="paramsStructName">Structure name</param>
-		/// <param name="appendMetaDataDecl">If true, add the meta data decl prior to the member decl</param>
 		/// <returns>Output builder</returns>
-		public StringBuilder AppendMemberDecl(StringBuilder builder, IUhtPropertyMemberContext context, string name, string nameSuffix, int tabs, string paramsStructName, bool appendMetaDataDecl = true)
+		public static StringBuilder AppendMemberDecl(StringBuilder builder, IUhtPropertyMemberContext context, string name, string nameSuffix, int tabs, string paramsStructName)
 		{
-			if (appendMetaDataDecl)
-			{
-				builder.AppendMetaDataDecl(this, context, name, nameSuffix, tabs);
-			}
 			builder.AppendTabs(tabs).Append("static const UECodeGen_Private::").Append(paramsStructName).Append(' ').AppendNameDecl(context, name, nameSuffix).Append(";\r\n");
 			return builder;
 		}
@@ -1210,16 +1228,11 @@ namespace EpicGames.UHT.Types
 		/// <param name="tabs">Number of tabs prefix the line with</param>
 		/// <param name="paramsStructName">Structure name</param>
 		/// <param name="paramsGenFlags">Structure flags</param>
-		/// <param name="appendMetaDataDef">If true, add the meta data def prior to the member def</param>
 		/// <param name="appendOffset">If true, add the offset parameter</param>
 		/// <returns>Output builder</returns>
 		public StringBuilder AppendMemberDefStart(StringBuilder builder, IUhtPropertyMemberContext context, string name, string nameSuffix, string? offset, int tabs,
-			string paramsStructName, string paramsGenFlags, bool appendMetaDataDef = true, bool appendOffset = true)
+			string paramsStructName, string paramsGenFlags, bool appendOffset = true)
 		{
-			if (appendMetaDataDef)
-			{
-				builder.AppendMetaDataDef(this, context, name, nameSuffix, tabs);
-			}
 			builder
 				.AppendTabs(tabs)
 				.Append("const UECodeGen_Private::").Append(paramsStructName).Append(' ')
@@ -1540,10 +1553,7 @@ namespace EpicGames.UHT.Types
 						if (dim.Length > 0 && !UhtFCString.IsDigit(dim[0]))
 						{
 							UhtEnum? enumObj = Session.FindRegularEnumValue(dim.ToString());
-							if (enumObj == null)
-							{
-								enumObj = Session.FindType(Outer, UhtFindOptions.Enum | UhtFindOptions.SourceName, dim.ToString()) as UhtEnum;
-							}
+							enumObj ??= Session.FindType(Outer, UhtFindOptions.Enum | UhtFindOptions.SourceName, dim.ToString()) as UhtEnum;
 							if (enumObj != null)
 							{
 								MetaData.Add(UhtNames.ArraySizeEnum, enumObj.PathName);
@@ -1954,6 +1964,30 @@ namespace EpicGames.UHT.Types
 		}
 		#endregion
 
+		#region Incremental GC Support
+		/// <summary>
+		/// Determines whether or not GC barriers need to run after passing this to a function
+		/// </summary>
+		/// <returns>True if GC barriers need to run</returns>				
+		public bool NeedsGCBarrierWhenPassedToFunction(UhtFunction function)
+		{
+			if (RefQualifier != UhtPropertyRefQualifier.NonConstRef)
+			{
+				return false;
+			}
+			return NeedsGCBarrierWhenPassedToFunctionImpl(function);
+		}
+		
+		/// <summary>
+		/// Customization point for subclasses for NeedsGCBarrierWhenPassedToFunction
+		/// </summary>
+		/// <returns>True if GC barriers need to run</returns>		
+		protected virtual bool NeedsGCBarrierWhenPassedToFunctionImpl(UhtFunction function)
+		{
+			return false;
+		}
+		#endregion
+		
 		#region Helper methods
 		/// <summary>
 		/// Generate a new name suffix based on the current suffix and the new suffix

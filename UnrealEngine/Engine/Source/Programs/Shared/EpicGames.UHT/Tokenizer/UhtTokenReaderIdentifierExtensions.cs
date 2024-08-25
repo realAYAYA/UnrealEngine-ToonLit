@@ -127,6 +127,21 @@ namespace EpicGames.UHT.Tokenizer
 		}
 
 		/// <summary>
+		/// Parse an optional namespace
+		/// </summary>
+		/// <param name="tokenReader">Token reader</param>
+		/// <param name="namespaceText">The text of the namespace</param>
+		/// <returns>Token reader</returns>
+		public static IUhtTokenReader OptionalNamespace(this IUhtTokenReader tokenReader, string namespaceText)
+		{
+			if (tokenReader.TryOptional(namespaceText))
+			{
+				tokenReader.Require("::");
+			}
+			return tokenReader;
+		}
+
+		/// <summary>
 		/// Parse a required identifier
 		/// </summary>
 		/// <param name="tokenReader">Token reader</param>

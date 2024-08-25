@@ -49,12 +49,12 @@ namespace Chaos
 		FAABBSimd();
 		FAABBSimd(const TBox<FReal, 3>& InQueryGeom);
 		FAABBSimd(const TImplicitObjectScaled< TBox<FReal, 3>, true >& QueryGeom);
-		FAABBSimd(const FRigidTransform3& WorldScaleQueryTM, const TBox<FReal, 3>& InQueryGeom);
-		FAABBSimd(const FRigidTransform3& QueryTM, const TImplicitObjectScaled< TBox<FReal, 3>, true >& QueryGeom);
+		FAABBSimd(const FVec3& Translation, const TBox<FReal, 3>& InQueryGeom);
+		FAABBSimd(const FVec3& Translation, const TImplicitObjectScaled< TBox<FReal, 3>, true >& QueryGeom);
 		bool OverlapTriangle(const VectorRegister4Float& A, const VectorRegister4Float& B, const VectorRegister4Float& C) const;
 
 	private:
-		void Initialize(const FRigidTransform3& Transform, const FVec3f& HalfExtentsf);
+		void Initialize(const FVec3& Translation, const FVec3f& HalfExtentsf);
 		bool ComputeEdgeOverlap(const VectorRegister4Float& TriangleEdge, const VectorRegister4Float& TriangleVertex, const VectorRegister4Float& Centroid) const;
 
 		VectorRegister4Float Position;

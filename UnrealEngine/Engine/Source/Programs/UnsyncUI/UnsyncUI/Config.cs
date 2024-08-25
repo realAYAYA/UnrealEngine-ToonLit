@@ -12,12 +12,15 @@ using System.Xml.Linq;
 using System.Net;
 using System.Text.Json;
 
+// warning SYSLIB0014: 'WebRequest.Create(string)' is obsolete: 'WebRequest, HttpWebRequest, ServicePoint, and WebClient are obsolete. Use HttpClient instead.' (https://aka.ms/dotnet-warnings/SYSLIB0014)
+#pragma warning disable SYSLIB0014
+
 namespace UnsyncUI
 {
 	public sealed class Config
 	{
 		// Structure that represents mirror server entry in the list from /api/v1/mirrors endpoint
-		class JsonMirrorDesc
+		private class JsonMirrorDesc
 		{
 			public String name { get; set; }
 			public String address { get; set; }
@@ -32,7 +35,7 @@ namespace UnsyncUI
 			public string Path { get; set; }
 		}
 
-		public struct BuildTemplate
+		internal struct BuildTemplate
 		{
 			public string Stream;
 			public string CL;
@@ -82,7 +85,7 @@ namespace UnsyncUI
 				FileGroups = node.Elements("files").Select(f => new FileGroup(f)).ToList();
 			}
 
-			public bool Parse(string path, ref BuildTemplate template)
+			internal bool Parse(string path, ref BuildTemplate template)
 			{
 				var match = Regex.Match(Path.GetFileName(path));
 				if (!match.Success)
@@ -116,7 +119,7 @@ namespace UnsyncUI
 				return true;
 			}
 
-			public void ParseFileGroups(List<String> filePaths, BuildTemplate template, out List<BuildTemplate> groupTemplates)
+			internal void ParseFileGroups(List<String> filePaths, BuildTemplate template, out List<BuildTemplate> groupTemplates)
 			{
 				groupTemplates = null;
 				if (!filePaths.Any())
@@ -154,13 +157,15 @@ namespace UnsyncUI
 
 		public sealed class Project
 		{
+			internal Config AppConfig;
+
 			public string Name { get; set; }
 			public string Root { get; set; }
 			public string Destination { get; set; }
 			public List<string> Exclusions { get; set; }
 			public List<Directory> Children { get; set; }
 
-			private Task EnumerateBuilds(ITargetBlock<BuildModel> pipe, Directory d, string path, BuildTemplate template, CancellationToken cancelToken)
+			private Task EnumerateBuilds(IDirectoryEnumerator dirEnum, ITargetBlock<BuildModel> pipe, Directory d, string path, BuildTemplate template, CancellationToken cancelToken)
 			{
 				return Task.Run(async () =>
 				{
@@ -169,14 +174,14 @@ namespace UnsyncUI
 
 					if (template.IsStreamClFound)
 					{
-						pipe.Post(new BuildModel(path, d, template));
+						pipe.Post(new BuildModel(path, d, template, AppConfig));
 					}
 					else
 					{
 						var jobs = new List<Task>();
-						foreach (var childDir in await AsyncIO.EnumerateDirectoriesAsync(path, cancelToken))
+						foreach (var childDir in await dirEnum.EnumerateDirectories(path, cancelToken))
 						{
-							jobs.AddRange(d.SubDirectories.Select(s => EnumerateBuilds(pipe, s, childDir, template, cancelToken)));
+							jobs.AddRange(d.SubDirectories.Select(s => EnumerateBuilds(dirEnum, pipe, s, childDir, template, cancelToken)));
 						}
 
 						await Task.WhenAll(jobs);
@@ -186,15 +191,17 @@ namespace UnsyncUI
 
 			public (Task, ISourceBlock<BuildModel>) EnumerateBuilds(CancellationToken cancelToken)
 			{
+				IDirectoryEnumerator dirEnum = AppConfig.CreateDirectoryEnumerator(this);
+
 				var pipe = new BufferBlock<BuildModel>();
 				var task = Task.Run(async () =>
 				{
 					try
 					{
 						var allTasks = new List<Task>();
-						foreach (var dir in await AsyncIO.EnumerateDirectoriesAsync(Root, cancelToken))
+						foreach (var dir in await dirEnum.EnumerateDirectories(Root, cancelToken))
 						{
-							allTasks.AddRange(Children.Select(c => EnumerateBuilds(pipe, c, dir, default(BuildTemplate), cancelToken)));
+							allTasks.AddRange(Children.Select(c => EnumerateBuilds(dirEnum, pipe, c, dir, default(BuildTemplate), cancelToken)));
 						}
 
 						await Task.WhenAll(allTasks);
@@ -210,10 +217,16 @@ namespace UnsyncUI
 		}
 
 		public List<Proxy> Proxies { get; set; } = new List<Proxy>();
+		public Proxy RootProxy { get; } = null;
 		public List<Project> Projects { get; set; }
 
 		public string UnsyncPath { get; set; }
-		public string DFS { get; set; }
+
+		public bool EnableExperimentalFeatures { get; set; } = false;
+
+		public bool EnableUserAuthentication { get; set; } = true;
+
+		internal string loggedInUser;
 
 		public Config(string filename)
 		{
@@ -225,8 +238,6 @@ namespace UnsyncUI
 			{
 				throw new Exception("Unable to find unsync.exe binary specified in config file.");
 			}
-
-			DFS = rootNode.Attribute("dfs")?.Value;
 
 			Proxies.Add(new Proxy()
 			{
@@ -243,7 +254,9 @@ namespace UnsyncUI
 			}));
 
 			// Auto-discover proxies
-			List<Proxy> DiscoveredProxies = DiscoverProxies(ConfigProxies);
+			(List<Proxy> DiscoveredProxies, Proxy DiscoveredRootProxy) = DiscoverProxies(ConfigProxies);
+
+			RootProxy = DiscoveredRootProxy;
 
 			if (DiscoveredProxies == null)
 			{
@@ -256,6 +269,7 @@ namespace UnsyncUI
 
 			Projects = rootNode.Element("projects").Elements("project").Select(p => new Project()
 			{
+				AppConfig = this,
 				Name = p.Attribute("name")?.Value,
 				Root = p.Attribute("root")?.Value,
 				Destination = p.Attribute("dest")?.Value,
@@ -264,7 +278,8 @@ namespace UnsyncUI
 			}).ToList();
 		}
 
-		private List<Proxy> DiscoverProxies(List<Proxy> SeedServers)
+		// Returns list of mirrors and the seed proxy server that was used to get it or null
+		private (List<Proxy>, Proxy) DiscoverProxies(List<Proxy> SeedServers)
 		{
 			int DefaultPort = 53841;
 
@@ -329,7 +344,7 @@ namespace UnsyncUI
 
 						if (ParsedProxies.Count != 0)
 						{
-							return ParsedProxies;
+							return (ParsedProxies, SeedServer);
 						}
 					}
 				}
@@ -339,7 +354,53 @@ namespace UnsyncUI
 				}
 			}
 
-			return null;
+			return (null, null);
 		}
-	}
+
+		private UnsyncQueryConfig CreateUnsyncQueryConfig()
+		{
+			UnsyncQueryConfig unsyncConfig = new UnsyncQueryConfig();
+			unsyncConfig.proxyAddress = RootProxy.Path;
+			unsyncConfig.unsyncPath = UnsyncPath;
+			return unsyncConfig;
+		}
+
+		private bool CanUseUnsyncDirectoryEnumerator()
+		{
+			return EnableUserAuthentication
+				&& RootProxy != null
+				&& UnsyncPath != null
+				&& loggedInUser != null;
+		}
+
+		public IDirectoryEnumerator CreateDirectoryEnumerator(Config.Project ProjectSchema)
+		{
+			if (CanUseUnsyncDirectoryEnumerator())
+			{
+				return new UnsyncDirectoryEnumerator(ProjectSchema, CreateUnsyncQueryConfig());
+			}
+			else
+			{
+				return new NativeDirectoryEnumerator();
+			}
+		}
+
+		public IDirectoryEnumerator CreateDirectoryEnumerator(String Path, Config.Directory DirectorySchema)
+		{
+			if (CanUseUnsyncDirectoryEnumerator())
+			{
+				return new UnsyncDirectoryEnumerator(Path, DirectorySchema, CreateUnsyncQueryConfig());
+			}
+			else
+			{
+				return new NativeDirectoryEnumerator();
+			}
+		}
+
+		public BuildModel CreateBuildModel(string path, Config.Directory rootDir)
+		{
+			return new BuildModel(path, rootDir, default(BuildTemplate), this);
+		}
+
+	} // class Config
 }

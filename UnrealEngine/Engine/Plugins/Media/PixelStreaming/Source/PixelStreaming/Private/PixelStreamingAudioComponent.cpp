@@ -5,6 +5,7 @@
 #include "IPixelStreamingStreamer.h"
 #include "PixelStreamingPrivate.h"
 #include "CoreMinimal.h"
+#include "DSP/FloatArrayMath.h"
 
 /*
  * Component that recieves audio from a remote webrtc connection and outputs it into UE using a "synth component".
@@ -239,25 +240,29 @@ int32 FWebRTCSoundGenerator::OnGenerateAudio(float* OutAudio, int32 NumSamples)
 	// Not listening to peer, return zero'd buffer.
 	if (!bShouldGenerateAudio || Buffer.Num() == 0)
 	{
+		FMemory::Memzero(OutAudio, NumSamples * sizeof(float));
 		return NumSamples;
 	}
+
+	int32 NumSamplesToCopy = NumSamples;
 
 	// Critical section
 	{
 		FScopeLock Lock(&CriticalSection);
 
-		int32 NumSamplesToCopy = FGenericPlatformMath::Min(NumSamples, Buffer.Num());
+		NumSamplesToCopy = FGenericPlatformMath::Min(NumSamples, Buffer.Num());
 
 		// Copy from local buffer into OutAudio if we have enough samples
-		for (int i = 0; i < NumSamplesToCopy; i++)
-		{
-			*OutAudio = Buffer[i] / 32767.0f;
-			OutAudio++;
-		}
+		Audio::ArrayPcm16ToFloat(MakeArrayView(Buffer.GetData(), NumSamplesToCopy), MakeArrayView(OutAudio, NumSamplesToCopy));
 
 		// Remove front NumSamples from the local buffer
-		Buffer.RemoveAt(0, NumSamplesToCopy, false);
-
-		return NumSamplesToCopy;
+		Buffer.RemoveAt(0, NumSamplesToCopy, EAllowShrinking::No);
 	}
+
+	if (NumSamplesToCopy < NumSamples)
+	{
+		FMemory::Memzero(&OutAudio[NumSamplesToCopy], (NumSamples - NumSamplesToCopy) * sizeof(float));
+	}
+
+	return NumSamplesToCopy;
 }

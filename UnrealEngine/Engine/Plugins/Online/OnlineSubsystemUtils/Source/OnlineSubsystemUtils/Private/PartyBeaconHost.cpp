@@ -193,7 +193,7 @@ void APartyBeaconHost::Tick(float DeltaTime)
 									// if the timeout has been exceeded then add to list of players 
 									// that need to be logged out from the beacon
 									if ((bIsPlayerPendingJoin && PlayerEntry.ElapsedTime > TravelSessionTimeoutSecs) ||
-										(!bIsPlayerPendingJoin && PlayerEntry.ElapsedTime > SessionTimeoutSecs))
+										(!bIsPlayerPendingJoin && PlayerEntry.ElapsedTime > GetSessionTimeoutSecs(PlayerEntry.UniqueId)))
 									{
 										PlayersToLogout.AddUnique(PlayerEntry.UniqueId.GetUniqueNetId());
 									}
@@ -483,6 +483,11 @@ bool APartyBeaconHost::GetPlayerValidation(const FUniqueNetId& PlayerId, FString
 	return bHasValidation;
 }
 
+float APartyBeaconHost::GetSessionTimeoutSecs(const FUniqueNetIdRepl& PlayerId) const
+{
+	return SessionTimeoutSecs;
+}
+
 bool APartyBeaconHost::GetPartyLeader(const FUniqueNetIdRepl& InPartyMemberId, FUniqueNetIdRepl& OutPartyLeaderId) const
 {
 	bool bHasLeader = false;
@@ -667,7 +672,7 @@ EPartyReservationResult::Type APartyBeaconHost::AddPartyReservation(const FParty
 
 					if (bContinue)
 					{
-						if (State->AreTeamsAvailable(ReservationRequest))
+						if (!ShouldRespectCompetitiveIntegrity() || State->AreTeamsAvailable(ReservationRequest))
 						{
 							if (State->CrossPlayAllowed(ReservationRequest))
 							{
@@ -894,7 +899,7 @@ EPartyReservationResult::Type APartyBeaconHost::UpdatePartyReservation(const FPa
 				}
 				// check to see if we have space to add new reservations for the new players 
 				// Not using IsBeaconFull as we may not be adding a new player in the situation where a party player who has a reservation joins the game in which case NewPlayers.Num == 0
-				if ((State->GetRemainingReservations() - NewPlayers.Num()) >= 0)
+				if (State->DoesModifiedReservationFit(ExistingReservation, NewPlayers))
 				{
 					// Validate that adding the new party members to this reservation entry still fits within the team size
 					if (!ShouldRespectCompetitiveIntegrity() || (NewPlayers.Num() - NumPlayersWithExistingReservation) <= NumAvailableSlotsOnTeam)

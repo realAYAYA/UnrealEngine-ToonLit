@@ -80,6 +80,13 @@ static TAutoConsoleVariable<bool> CVarEnablePSOFileCacheWhenPrecachingActive(
 	TEXT("true: GL RHI Allows both PSO file cache and precaching."),
 	ECVF_RenderThreadSafe | ECVF_ReadOnly);
 
+static TAutoConsoleVariable<bool> CVarAllowPSOPrecaching(
+	TEXT("r.OpenGL.AllowPSOPrecaching"),
+	true,
+	TEXT("true: if r.PSOPrecaching=1 GL RHI will use precaching. (default)\n")
+	TEXT("false: GL RHI will disable precaching (even if r.PSOPrecaching=1). "),
+	ECVF_RenderThreadSafe | ECVF_ReadOnly);
+
 void OnQueryCreation( FOpenGLRenderQuery* Query )
 {
 	check(PrivateOpenGLDevicePtr);
@@ -233,6 +240,7 @@ void FOpenGLDynamicRHI::RHIPerFrameRHIFlushComplete()
 	OpenGL_PollAllFences();
 
 	FMemory::Memset(PendingState.BoundUniformBuffers, 0, sizeof(PendingState.BoundUniformBuffers));
+	FMemory::Memset(PendingState.BoundUniformBuffersDynamicOffset, 0u, sizeof(PendingState.BoundUniformBuffersDynamicOffset));
 }
 
 
@@ -378,6 +386,9 @@ static const TCHAR* GetOpenGLDebugSeverityStringARB(GLenum Severity)
 	#ifndef GL_APIENTRY
 	#define GL_APIENTRY APIENTRY
 	#endif
+	#ifndef GL_DEBUG_SEVERITY_MEDIUM_ARB
+	#define GL_DEBUG_SEVERITY_MEDIUM_ARB GL_DEBUG_SEVERITY_LOW_ARB
+	#endif
 static void GL_APIENTRY OpenGLDebugMessageCallbackARB(
 #else
 static void APIENTRY OpenGLDebugMessageCallbackARB(
@@ -408,7 +419,7 @@ static void APIENTRY OpenGLDebugMessageCallbackARB(
 		if (!LogRHI.IsSuppressed(Verbosity))
 		{
 			FMsg::Logf(__FILE__, __LINE__, LogRHI.GetCategoryName(), Verbosity,
-				TEXT("[%s][%s][%s][%u] %s"),
+				TEXT("GL_DBG: [%s][%s][%s][%u] %s"),
 				SourceStr,
 				TypeStr,
 				SeverityStr,
@@ -617,6 +628,7 @@ static EOpenGLFormatCapabilities GetOpenGLFormatCapabilities(const FOpenGLTextur
 	case GL_COMPRESSED_RED_RGTC1:
 	case GL_RG16:
 	case GL_RG16_SNORM:
+	case GL_COMPRESSED_RGBA_BPTC_UNORM:
 #endif
 
 	case GL_COMPRESSED_RGBA_S3TC_DXT1_EXT:
@@ -710,7 +722,12 @@ void InitDebugContext()
 	// Set the debug output callback if the driver supports it.
 	VERIFY_GL(__FUNCTION__);
 	bool bDebugOutputInitialized = false;
-#if !ENABLE_VERIFY_GL
+	if (!IsOGLDebugOutputEnabled())
+	{
+		return;
+	}
+
+#if ENABLE_DEBUG_OUTPUT
 	#if defined(GL_ARB_debug_output)
 		if (glDebugMessageCallbackARB)
 		{
@@ -734,11 +751,15 @@ void InitDebugContext()
 			bDebugOutputInitialized = (glGetError() == GL_NO_ERROR);
 		}
 	#endif // GL_AMD_debug_output
-#endif // !ENABLE_VERIFY_GL
+ #endif // ENABLE_DEBUG_OUTPUT
 
 	if (!bDebugOutputInitialized)
 	{
 		UE_LOG(LogRHI,Warning,TEXT("OpenGL debug output extension not supported!"));
+	}
+	else
+	{
+		UE_LOG(LogRHI, Log, TEXT("OpenGL debug output extension enabled!"));
 	}
 
 	// this is to suppress feeding back of the debug markers and groups to the log, since those originate in the app anyways...
@@ -760,6 +781,25 @@ void InitDebugContext()
 		glDebugMessageControlKHR(GL_DEBUG_SOURCE_APPLICATION_KHR, GL_DEBUG_TYPE_PUSH_GROUP_KHR, GL_DONT_CARE, 0, NULL, GL_FALSE);
 		glDebugMessageControlKHR(GL_DEBUG_SOURCE_APPLICATION_KHR, GL_DEBUG_TYPE_POP_GROUP_KHR, GL_DONT_CARE, 0, NULL, GL_FALSE);
 		glDebugMessageControlKHR(GL_DEBUG_SOURCE_API_KHR, GL_DEBUG_TYPE_OTHER_KHR, GL_DEBUG_SEVERITY_NOTIFICATION, 0, NULL, GL_FALSE);
+
+		GLenum Severity;
+		const bool bAllowPerformanceMessages = GetOGLDebugOutputLevel() >= 5;
+		switch (GetOGLDebugOutputLevel())
+		{
+			case 5: Severity = GL_DONT_CARE; break;
+			case 4: Severity = GL_DEBUG_SEVERITY_NOTIFICATION; break;
+			case 3: Severity = GL_DEBUG_SEVERITY_LOW_ARB; break;
+			case 2: Severity = GL_DEBUG_SEVERITY_MEDIUM_ARB; break;
+			case 1:
+				[[fallthrough]];
+			default: Severity = GL_DEBUG_SEVERITY_HIGH_ARB; break;
+		}
+		glDebugMessageControlKHR(GL_DONT_CARE, GL_DONT_CARE, Severity, 0, NULL, GL_TRUE);
+		if( !bAllowPerformanceMessages)
+		{
+			glDebugMessageControlKHR(GL_DONT_CARE, GL_DEBUG_TYPE_PERFORMANCE_KHR, GL_DONT_CARE, 0, NULL, GL_FALSE);
+		}
+		
 		UE_LOG(LogRHI,Verbose,TEXT("disabling reporting back of debug groups and markers to the OpenGL debug output callback"));
 	}
 #endif
@@ -845,7 +885,7 @@ static void InitRHICapabilitiesForGL()
 	GRHIAdapterInternalDriverVersion = ANSI_TO_TCHAR((const ANSICHAR*)glGetString(GL_VERSION));
 
 	// Shader platform & RHI feature level
-	GMaxRHIFeatureLevel = FOpenGL::GetFeatureLevel();
+	GMaxRHIFeatureLevel = ERHIFeatureLevel::ES3_1;
 	GMaxRHIShaderPlatform = FOpenGL::GetShaderPlatform();
 
 	// Log all supported extensions.
@@ -1070,6 +1110,7 @@ static void InitRHICapabilitiesForGL()
 	GSupportsShaderMRTFramebufferFetch = FOpenGL::SupportsShaderMRTFramebufferFetch();
 	GSupportsShaderDepthStencilFetch = FOpenGL::SupportsShaderDepthStencilFetch();
 	GSupportsPixelLocalStorage = FOpenGL::SupportsPixelLocalStorage();
+	GSupportsShaderFramebufferFetchProgrammableBlending = FOpenGL::SupportsShaderFramebufferFetchProgrammableBlending();
 
 	GMaxShadowDepthBufferSizeX = FMath::Min<int32>(Value_GL_MAX_RENDERBUFFER_SIZE, 4096); // Limit to the D3D11 max.
 	GMaxShadowDepthBufferSizeY = FMath::Min<int32>(Value_GL_MAX_RENDERBUFFER_SIZE, 4096);
@@ -1090,6 +1131,8 @@ static void InitRHICapabilitiesForGL()
 	GShaderPlatformForFeatureLevel[ERHIFeatureLevel::SM4_REMOVED] = SP_NumPlatforms;
 	GShaderPlatformForFeatureLevel[ERHIFeatureLevel::SM5] = SP_NumPlatforms;
 
+	// Not implemented in OpenGL RHI. Supported in GLcore 3.3, not in OpenGL ES, extension GL_EXT_blend_func_extended not widely supported.
+	GSupportsDualSrcBlending = false;
 
 	GRHISupportsTextureStreaming = true;
 
@@ -1185,11 +1228,13 @@ static void InitRHICapabilitiesForGL()
 
 #if PLATFORM_DESKTOP
 	CA_SUPPRESS(6286);
-	if (PLATFORM_DESKTOP || FOpenGL::GetFeatureLevel() >= ERHIFeatureLevel::SM5)
+	if (PLATFORM_DESKTOP)
 	{
 		SetupTextureFormat( PF_V8U8,			FOpenGLTextureFormat( GL_RG8_SNORM,				GL_NONE,				GL_RG,			GL_BYTE,							false, false));
 		SetupTextureFormat( PF_BC5,				FOpenGLTextureFormat( GL_COMPRESSED_RG_RGTC2,	GL_COMPRESSED_RG_RGTC2,	GL_RG,			GL_UNSIGNED_BYTE,					true,	false));
 		SetupTextureFormat( PF_BC4,				FOpenGLTextureFormat( GL_COMPRESSED_RED_RGTC1,	GL_COMPRESSED_RED_RGTC1,GL_RED,			GL_UNSIGNED_BYTE,					true,	false));
+		
+		SetupTextureFormat( PF_BC7,				FOpenGLTextureFormat( GL_COMPRESSED_RGBA_BPTC_UNORM, GL_COMPRESSED_SRGB_ALPHA_BPTC_UNORM, GL_RGBA, GL_UNSIGNED_BYTE, true, false));
 
 		SetupTextureFormat( PF_G16R16,			FOpenGLTextureFormat(GL_RG16, GL_RG16, GL_RG, GL_UNSIGNED_SHORT, false, false));
 		SetupTextureFormat( PF_G16R16_SNORM,	FOpenGLTextureFormat(GL_RG16_SNORM, GL_RG16_SNORM, GL_RG, GL_SHORT, false, false));
@@ -1242,12 +1287,14 @@ static void InitRHICapabilitiesForGL()
 	GRHINeedsUnatlasedCSMDepthsWorkaround = true;
 
 	static const auto CVarPSOPrecaching = IConsoleManager::Get().FindConsoleVariable(TEXT("r.PSOPrecaching"));
-	if (CVarPSOPrecaching && CVarPSOPrecaching->GetInt() != 0)
+	if (CVarPSOPrecaching && CVarPSOPrecaching->GetInt() != 0 && CVarAllowPSOPrecaching.GetValueOnAnyThread())
 	{
 		GRHISupportsPSOPrecaching = true;
 	}
 	
 	GRHISupportsPipelineFileCache = !GRHISupportsPSOPrecaching || CVarEnablePSOFileCacheWhenPrecachingActive.GetValueOnAnyThread();
+
+	GRHIGlobals.NeedsShaderUnbinds = true;
 }
 
 FDynamicRHI* FOpenGLDynamicRHIModule::CreateRHI(ERHIFeatureLevel::Type InRequestedFeatureLevel)

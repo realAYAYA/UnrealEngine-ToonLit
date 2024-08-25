@@ -26,7 +26,11 @@ final class WebRTCClient: NSObject {
         let videoEncoderFactory = RTCDefaultVideoEncoderFactory()
         let videoDecoderFactory = RTCDefaultVideoDecoderFactory()
 
-        let fieldTrials = ["WebRTC-MaxPacketBufferSize", "8192"]
+        let fieldTrials = [
+            "WebRTC-MaxPacketBufferSize": "8192",
+            "WebRTC-ForcePlayoutDelay" : "min_ms:1,max_ms:1",
+            "WebRTC-ZeroPlayoutDelay" : "min_pacing:4ms,max_decode_queue_size:1"
+        ]
         RTCInitFieldTrialDictionary(fieldTrials)
 
 
@@ -48,6 +52,10 @@ final class WebRTCClient: NSObject {
         super.init()
     }
     
+    deinit {
+        Log.info("WebRTCClient destructed.")
+    }
+    
     // MARK: PeerConnection Config
     func setupPeerConnection(rtcConfiguration: RTCConfiguration) {
         
@@ -61,14 +69,17 @@ final class WebRTCClient: NSObject {
         
         self.peerConnection = pc
         
-        // Create the data channel
-        if let dataChannel = createDataChannel(peerConnection: pc) {
-            dataChannel.delegate = self
-            self.dataChannel = dataChannel
-        }
-        
         self.configureAudioSession()
         self.peerConnection!.delegate = self
+    }
+    
+    func close() {
+        if let pc = self.peerConnection {
+            pc.close()
+            self.peerConnection = nil
+        }
+        self.remoteVideoTrack = nil
+        self.dataChannel = nil
     }
 
     func stats(_ completionHandler : @escaping RTCStatisticsCompletionHandler) {
@@ -145,6 +156,18 @@ final class WebRTCClient: NSObject {
         }
     }
     
+    func sendRequestQualityControl() {
+        let bytes: [UInt8] = [PixelStreamingToStreamerMessage.RequestQualityControl.rawValue]
+        Log.info("Sending quality control request")
+        self.sendData(Data(bytes))
+    }
+    
+    func sendRequestKeyFrame(){
+        let bytes: [UInt8] = [PixelStreamingToStreamerMessage.IFrameRequest.rawValue]
+        Log.info("Sending keyframe request")
+        self.sendData(Data(bytes))
+    }
+    
     func sendDeviceResolution() {
         let bounds = UIScreen.main.nativeBounds
         
@@ -177,15 +200,6 @@ final class WebRTCClient: NSObject {
 
 // MARK: Data Channels
 extension WebRTCClient: RTCDataChannelDelegate {
-    
-    private func createDataChannel(peerConnection : RTCPeerConnection) -> RTCDataChannel? {
-        let config = RTCDataChannelConfiguration()
-        guard let dataChannel = peerConnection.dataChannel(forLabel: "iOSDataChannel", configuration: config) else {
-            debugPrint("Warning: Couldn't create data channel.")
-            return nil
-        }
-        return dataChannel
-    }
     
     func sendData(_ data: Data) {
         let buffer = RTCDataBuffer(data: data, isBinary: true)
@@ -239,6 +253,12 @@ extension WebRTCClient: RTCPeerConnectionDelegate {
     
     func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {
         debugPrint("peerConnection did open data channel")
+        
+        // Store datachannel internally for message sending and set datachannel delegate so we can react to its events
+        dataChannel.delegate = self
+        self.dataChannel = dataChannel
+        
+        // Send the device resolution over the datachannel
         self.sendDeviceResolution()
     }
     
@@ -293,8 +313,8 @@ extension WebRTCClient {
     private func configureAudioSession() {
         self.rtcAudioSession.lockForConfiguration()
         do {
-            try self.rtcAudioSession.setCategory(AVAudioSession.Category.ambient.rawValue) /* Playback only */
-            try self.rtcAudioSession.setMode(AVAudioSession.Mode.default.rawValue) /* Mode to default mode */
+            try self.rtcAudioSession.setCategory(AVAudioSession.Category.ambient) /* Playback only */
+            try self.rtcAudioSession.setMode(AVAudioSession.Mode.default) /* Mod.rawValuee to default mode */
         } catch let error {
             debugPrint("Error changeing AVAudioSession category: \(error)")
         }

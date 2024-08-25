@@ -73,7 +73,7 @@ bool FHierarchicalModelListRefresher::IsValid() const
 void FHierarchicalModelListRefresher::Reset()
 {
 	check(ListData.Num() >= 1);
-	ListData.RemoveAt(1, ListData.Num() - 1, false);
+	ListData.RemoveAt(1, ListData.Num() - 1, EAllowShrinking::No);
 
 	FListData& Last = ListData.Last();
 	Last.AttachTail = nullptr;
@@ -164,7 +164,7 @@ void FTrackModelLayoutBuilder::RefreshLayout(TSharedPtr<FSectionModel> InSection
 	TrackAreaList = FHierarchicalModelListRefresher();
 }
 
-void FTrackModelLayoutBuilder::PushCategory(FName CategoryName, const FText& DisplayLabel, TFunction<TSharedPtr<FCategoryModel>(FName, const FText&)> OptionalFactory)
+void FTrackModelLayoutBuilder::PushCategory(FName CategoryName, const FText& DisplayLabel, FGetMovieSceneTooltipText GetGroupTooltipTextDelegate, TFunction<TSharedPtr<FCategoryModel>(FName, const FText&)> OptionalFactory)
 {
 	check(TrackAreaList.IsValid() && SequencerSection);
 
@@ -179,7 +179,7 @@ void FTrackModelLayoutBuilder::PushCategory(FName CategoryName, const FText& Dis
 	TSharedPtr<FCategoryGroupModel> OutlinerModel = OutlinerList.FindItem<FCategoryGroupModel>(CategoryNamePredicate);
 	if (!OutlinerModel)
 	{
-		OutlinerModel = MakeShared<FCategoryGroupModel>(CategoryName, DisplayLabel);
+		OutlinerModel = MakeShared<FCategoryGroupModel>(CategoryName, DisplayLabel, GetGroupTooltipTextDelegate);
 	}
 
 	OutlinerList.Link(OutlinerModel);
@@ -282,11 +282,11 @@ void FTrackModelLayoutBuilder::AddChannel(const FMovieSceneChannelHandle& Channe
 	{
 		if (bIsTopLevel)
 		{
-			OutlinerModel = MakeShared<FChannelGroupModel>(ChannelName, MetaData->DisplayText);
+			OutlinerModel = MakeShared<FChannelGroupModel>(ChannelName, MetaData->DisplayText, MetaData->GetTooltipTextDelegate);
 		}
 		else
 		{
-			OutlinerModel = MakeShared<FChannelGroupOutlinerModel>(ChannelName, MetaData->DisplayText);
+			OutlinerModel = MakeShared<FChannelGroupOutlinerModel>(ChannelName, MetaData->DisplayText, MetaData->GetTooltipTextDelegate);
 		}
 	}
 

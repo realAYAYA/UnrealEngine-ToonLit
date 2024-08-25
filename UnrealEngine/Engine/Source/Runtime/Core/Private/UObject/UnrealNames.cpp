@@ -446,8 +446,7 @@ public:
 	/** Initializes all member variables. */
 	FNameEntryAllocator()
 	{
-		LLM_SCOPE(ELLMTag::FName);
-		Blocks[0] = (uint8*)FMemory::MallocPersistentAuxiliary(BlockSizeBytes, alignof(FNameEntry));
+		Blocks[0] = AllocBlock();
 	}
 
 	~FNameEntryAllocator()
@@ -654,12 +653,12 @@ private:
 
 	static uint8* AllocBlock()
 	{
+		LLM_SCOPE(ELLMTag::FName);
 		return (uint8*)FMemory::MallocPersistentAuxiliary(BlockSizeBytes, alignof(FNameEntry));
 	}
 	
 	void AllocateNewBlock()
 	{
-		LLM_SCOPE(ELLMTag::FName);
 		// Null-terminate final entry to allow DebugDump() entry iteration
 #if UE_FNAME_OUTLINE_NUMBER
 		if (CurrentByteCursor + NumberedEntrySize <= BlockSizeBytes)
@@ -1691,27 +1690,36 @@ FNameEntryId FNamePool::Store(FNameStringView Name)
 #if UE_FNAME_OUTLINE_NUMBER
 FNameEntryId FNamePool::StoreWithNumber(FNameEntryIds StringParts, int32 NumberPart)
 {
-#if WITH_CASE_PRESERVING_NAME
-	// Look for an exact match with the right casing first
-	FNumberedNameDisplayValue DisplayValue(StringParts.DisplayId, NumberPart);
-	if (FNameEntryId Existing = DisplayShards[DisplayValue.Hash.ShardIndex].FindWithNumber(DisplayValue))
+	FNameEntryId Result;
+
+	AutoRTFM::Open([&]
 	{
-		return Existing;
-	}
-#endif
-
-	bool bAdded = false;
-
-	// Insert comparison name first since display value must contain comparison name
-	FNumberedNameComparisonValue ComparisonValue(StringParts.ComparisonId, NumberPart);
-	FNameEntryId ComparisonId = ComparisonShards[ComparisonValue.Hash.ShardIndex].InsertWithNumber(ComparisonValue, bAdded);
-	
 #if WITH_CASE_PRESERVING_NAME
-	DisplayValue.ComparisonId = ComparisonId;
-	return StoreValueWithNumber(DisplayValue, bAdded);
-#else
-	return ComparisonId;
+		// Look for an exact match with the right casing first
+		FNumberedNameDisplayValue DisplayValue(StringParts.DisplayId, NumberPart);
+		if (FNameEntryId Existing = DisplayShards[DisplayValue.Hash.ShardIndex].FindWithNumber(DisplayValue))
+		{
+			Result = Existing;
+		}
+		else
+		{
 #endif
+			bool bAdded = false;
+
+			// Insert comparison name first since display value must contain comparison name
+			FNumberedNameComparisonValue ComparisonValue(StringParts.ComparisonId, NumberPart);
+			FNameEntryId ComparisonId = ComparisonShards[ComparisonValue.Hash.ShardIndex].InsertWithNumber(ComparisonValue, bAdded);
+
+#if WITH_CASE_PRESERVING_NAME
+			DisplayValue.ComparisonId = ComparisonId;
+			Result = StoreValueWithNumber(DisplayValue, bAdded);
+		}
+#else
+		Result = ComparisonId;
+#endif
+	});
+
+	return Result;
 }
 
 FNameEntryId FNamePool::FindWithNumber(FNameEntryId StringPart, int32 NumberPart) const
@@ -1932,7 +1940,7 @@ void FNamePool::RetraceAll() const
 
 void FNamePool::LogStats(FOutputDevice& Ar) const
 {
-	Ar.Logf(TEXT("%i FNames using in %ikB + %ikB"), NumEntries(), sizeof(FNamePool), Entries.NumBlocks() * FNameEntryAllocator::BlockSizeBytes / 1024);
+	Ar.Logf(TEXT("%i FNames using in %ikB + %ikB"), NumEntries(), sizeof(FNamePool) / 1024, Entries.NumBlocks() * FNameEntryAllocator::BlockSizeBytes / 1024);
 	Ar.Logf(TEXT("%d ansi FNames"), NumAnsiEntries());
 	Ar.Logf(TEXT("%d wide FNames"), NumWideEntries());
 #if UE_FNAME_OUTLINE_NUMBER
@@ -2006,6 +2014,7 @@ static FNamePool& GetNamePool()
 
 	FNamePool* Singleton = new (NamePoolData) FNamePool;
 	bNamePoolInitialized = true;
+	LLM(FLowLevelMemTracker::Get().FinishInitialise());
 	return *Singleton;
 }
 
@@ -2016,6 +2025,7 @@ static FNamePool& GetNamePoolPostInit()
 	return (FNamePool&)NamePoolData;
 }
 
+template <ESearchCase::Type SearchCase>
 static int32 CompareDifferentIdsAlphabetically(FNameEntryId AId, FNameEntryId BId)
 {
 	checkSlow(AId != BId);
@@ -2041,18 +2051,32 @@ static int32 CompareDifferentIdsAlphabetically(FNameEntryId AId, FNameEntryId BI
 	}
 
 	int32 MinLen = FMath::Min(AView.Len, BView.Len);
-	if (int32 StrDiff = AView.bIsWide ?	FCStringWide::Strnicmp(AView.Wide, BView.Wide, MinLen) :
-										FCStringAnsi::Strnicmp(AView.Ansi, BView.Ansi, MinLen))
+	int32 StrDiff;
+	if (SearchCase == ESearchCase::IgnoreCase)
 	{
-		return StrDiff;
+		StrDiff = AView.bIsWide ?
+			FCStringWide::Strnicmp(AView.Wide, BView.Wide, MinLen) :
+			FCStringAnsi::Strnicmp(AView.Ansi, BView.Ansi, MinLen);
 	}
+	else
+	{
+		StrDiff = AView.bIsWide ?
+			FCStringWide::Strncmp(AView.Wide, BView.Wide, MinLen) :
+			FCStringAnsi::Strncmp(AView.Ansi, BView.Ansi, MinLen);
+	}
+	if (StrDiff) return StrDiff;
 
 	return AView.Len - BView.Len;
 }
 
 int32 FNameEntryId::CompareLexical(FNameEntryId Rhs) const
 {
-	return Value != Rhs.Value && CompareDifferentIdsAlphabetically(*this, Rhs);
+	return Value != Rhs.Value ? CompareDifferentIdsAlphabetically<ESearchCase::IgnoreCase>(*this, Rhs) : 0;
+}
+
+int32 FNameEntryId::CompareLexicalSensitive(FNameEntryId Rhs) const
+{
+	return Value != Rhs.Value ? CompareDifferentIdsAlphabetically<ESearchCase::CaseSensitive>(*this, Rhs) : 0;
 }
 
 #if !UE_BUILD_SHIPPING && !UE_BUILD_TEST
@@ -2251,11 +2275,11 @@ FString FNameEntry::GetPlainNameString() const
 	FNameBuffer Temp;
 	if (Header.bIsWide)
 	{
-		return FString(Header.Len, GetUnterminatedName(Temp.WideName));
+		return FString::ConstructFromPtrSize(GetUnterminatedName(Temp.WideName), Header.Len);
 	}
 	else
 	{
-		return FString(Header.Len, GetUnterminatedName(Temp.AnsiName));
+		return FString::ConstructFromPtrSize(GetUnterminatedName(Temp.AnsiName), Header.Len);
 	}
 }
 
@@ -2386,6 +2410,12 @@ FString FNameEntrySerialized::GetPlainNameString() const
 
 static TArray<FString> NameToDisplayStringExemptions;
 static FRWLock NameToDisplayStringExemptionLock;
+
+void FName::Reserve(uint32 NumBytes, uint32 NumNames)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE_STR("FName Reserve");
+	GetNamePoolPostInit().Reserve(NumBytes, NumNames);
+}
 
 int32 FName::GetNameEntryMemorySize()
 {
@@ -2847,7 +2877,10 @@ struct FNameHelper
 		FNamePool& Pool = GetNamePool();
 		if (FindType == FNAME_Add)
 		{
-			FNameEntryId DisplayId = Pool.StoreWithNumber(BaseIds, InternalNumber);
+			FNameEntryId DisplayId;
+			UE_AUTORTFM_OPEN({
+				DisplayId = Pool.StoreWithNumber(BaseIds, InternalNumber);
+			});
 			return FinalConstruct(FNameEntryIds{ ResolveComparisonId(DisplayId), DisplayId });
 		}
 		else
@@ -2952,7 +2985,10 @@ private:
 
 	static FName MakeInternal(FNameStringView View, EFindName FindType, int32 InternalNumber)
 	{
-		FNameEntryIds Ids = FindOrStoreString(View, FindType);
+		FNameEntryIds Ids;
+		UE_AUTORTFM_OPEN({
+			Ids = FindOrStoreString(View, FindType);
+		});
 #if UE_FNAME_OUTLINE_NUMBER
 		if (FindType == FNAME_Find && !Ids.DisplayId)
 		{
@@ -3008,34 +3044,45 @@ private:
 	// If not found, returns NAME_None for both indices.
 	static FNameEntryIds FindOrStoreString(FNameStringView View, EFindName FindType)
 	{
-		if (View.Len >= NAME_SIZE)
+		FNameEntryIds Result{};
+
+		UE_AUTORTFM_OPEN(
 		{
-			// If we're doing a find, and the string is too long, then clearly we didn't find it
-			if (FindType == FNAME_Find)
+			if (View.Len >= NAME_SIZE)
 			{
-				return {};
+				// If we're doing a find, and the string is too long, then clearly we didn't find it
+				if (FindType == FNAME_Find)
+				{
+					Result = FNameEntryIds{};
+				}
+				else
+				{
+					checkf(false, TEXT("FName's %d max length exceeded. Got %d characters excluding null-terminator:\n%.*s"), 
+						NAME_SIZE - 1, View.Len, NAME_SIZE, View.IsAnsi() ? ANSI_TO_TCHAR(View.Ansi) : View.Wide)
+
+					const ANSICHAR* ErrorString = "ERROR_NAME_SIZE_EXCEEDED";
+					Result = FindOrStoreString(FNameStringView(ErrorString, FCStringAnsi::Strlen(ErrorString), false), FNAME_Add);
+				}
 			}
+			else
+			{
+				FNamePool& Pool = GetNamePool();
 
-			checkf(false, TEXT("FName's %d max length exceeded. Got %d characters excluding null-terminator:\n%.*s"), 
-				NAME_SIZE - 1, View.Len, NAME_SIZE, View.IsAnsi() ? ANSI_TO_TCHAR(View.Data) : View.Data);
+				if (FindType == FNAME_Add)
+				{
+					FNameEntryId DisplayId = Pool.Store(View);
+					Result = FNameEntryIds{ ResolveComparisonId(DisplayId), DisplayId };
+				}
+				else
+				{
+					check(FindType == FNAME_Find);
+					FNameEntryId DisplayId = Pool.Find(View);
+					Result = FNameEntryIds{ ResolveComparisonId(DisplayId), DisplayId };
+				}
+			}
+		});
 
-			const ANSICHAR* ErrorString = "ERROR_NAME_SIZE_EXCEEDED";
-			return FindOrStoreString(FNameStringView(ErrorString, FCStringAnsi::Strlen(ErrorString), false), FNAME_Add);
-		}
-		
-		FNamePool& Pool = GetNamePool();
-
-		if (FindType == FNAME_Add)
-		{
-			FNameEntryId DisplayId = Pool.Store(View);
-			return FNameEntryIds{ ResolveComparisonId(DisplayId), DisplayId };
-		}
-		else
-		{
-			check(FindType == FNAME_Find);
-			FNameEntryId DisplayId = Pool.Find(View);
-			return FNameEntryIds{ ResolveComparisonId(DisplayId), DisplayId };
-		}
+		return Result;
 	}
 
 #if UE_FNAME_OUTLINE_NUMBER
@@ -3254,7 +3301,7 @@ int32 FName::Compare( const FName& Other ) const
 	}
 
 	// Names don't match. This means we don't even need to check numbers.
-	return CompareDifferentIdsAlphabetically(GetComparisonIndex(), Other.GetComparisonIndex());
+	return CompareDifferentIdsAlphabetically<ESearchCase::IgnoreCase>(GetComparisonIndex(), Other.GetComparisonIndex());
 #else	// UE_FNAME_OUTLINE_NUMBER
 	// Names match, check whether numbers match.
 	if (GetComparisonIndex() == Other.GetComparisonIndex())
@@ -3263,7 +3310,7 @@ int32 FName::Compare( const FName& Other ) const
 	}
 
 	// Names don't match. This means we don't even need to check numbers.
-	return CompareDifferentIdsAlphabetically(GetComparisonIndex(), Other.GetComparisonIndex());
+	return CompareDifferentIdsAlphabetically<ESearchCase::IgnoreCase>(GetComparisonIndex(), Other.GetComparisonIndex());
 #endif // UE_FNAME_OUTLINE_NUMBER
 }
 
@@ -3313,6 +3360,11 @@ FString FName::ToString() const
 	FString Out;	
 	ToString(Out);
 	return Out;
+}
+
+FString LexToString(const FName& Name)
+{
+	return Name.ToString();
 }
 
 void FName::ToString(FString& Out) const
@@ -3527,6 +3579,16 @@ FString FName::SafeString(FNameEntryId InDisplayIndex, int32 InstanceNumber)
 #endif // UE_FNAME_OUTLINE_NUMBER
 }
 
+bool FName::IsValidXName() const
+{
+	return IsValidXName(*this, FString(INVALID_NAME_CHARACTERS), (FText*)nullptr, (const FText*)nullptr);
+}
+
+bool FName::IsValidXName(FText& OutReason) const
+{
+	return IsValidXName(*this, FString(INVALID_NAME_CHARACTERS), &OutReason);
+}
+
 bool FName::IsValidXName(const FName InName, const FString& InInvalidChars, FText* OutReason, const FText* InErrorCtx)
 {
 	return IsValidXName(FNameBuilder(InName), InInvalidChars, OutReason, InErrorCtx);
@@ -3632,6 +3694,16 @@ bool FName::IsValidXName(const FStringView& InName, const FString& InInvalidChar
 	return true;
 }
 
+bool FName::IsValidObjectName(FText& OutReason) const
+{
+	return IsValidXName(*this, INVALID_OBJECTNAME_CHARACTERS, &OutReason);
+}
+
+bool FName::IsValidGroupName(FText& OutReason, bool bIsGroupName) const
+{
+	return IsValidXName(*this, INVALID_LONGPACKAGE_CHARACTERS, &OutReason);
+}
+
 FString FName::SanitizeWhitespace(const FString& FNameString)
 {
 	FString ReturnStr;
@@ -3670,6 +3742,7 @@ void CheckLazyName(const CharType(&Literal)[N])
 	CharType Literal2[N];
 	FMemory::Memcpy(Literal2, Literal);
 	check(FLazyName(Literal) == FLazyName(Literal2));
+	check(WriteToString<64>(FLazyName(Literal).Resolve()).ToView().Equals(WriteToString<64>(Literal).ToView(), ESearchCase::CaseSensitive));
 }
 
 static void TestNameBatch();
@@ -3876,6 +3949,8 @@ void FName::AutoTest()
 
 	
 	CheckLazyName("Hej");
+	CheckLazyName("hej");
+	CheckLazyName("HEJ");
 	CheckLazyName(TEXT("Hej"));
 	CheckLazyName("Hej_0");
 	CheckLazyName("Hej_00");
@@ -4058,7 +4133,7 @@ FName FName::CreateNumberedName(FNameEntryId ComparisonId, FNameEntryId DisplayI
 #endif
 	checkName(ResolveEntry(ComparisonId)->IsNumbered() == false);
 
-	return FNameHelper::MakeWithNumber(FNameEntryIds{ComparisonId, DisplayId}, FNAME_Add, Number);
+	return FNameHelper::MakeWithNumber(FNameEntryIds{ ComparisonId, DisplayId }, FNAME_Add, Number);
 }
 #endif // UE_FNAME_OUTLINE_NUMBER
 
@@ -4085,25 +4160,27 @@ FName FLazyName::Resolve() const
 
 	if (Copy.IsName())
 	{
-		FNameEntryId Id = Copy.AsName();
+		FNameEntryId ComparisonId = Copy.GetComparisionId();
+		FNameEntryId DisplayId = Copy.GetDisplayId();
 #if UE_FNAME_OUTLINE_NUMBER
-		return FNameHelper::MakeWithNumber(FNameEntryIds{ Id, Id}, FNAME_Add, Number);
+		return FNameHelper::MakeWithNumber(FNameEntryIds{ ComparisonId, DisplayId }, FNAME_Add, Number);
 #else // UE_FNAME_OUTLINE_NUMBER
-		return FName(Id, Id, Number);
+		return FName(ComparisonId, DisplayId, Number);
 #endif // UE_FNAME_OUTLINE_NUMBER
 	}
 
 	// Resolve to FName but throw away the number part
-	FNameEntryId Id = bLiteralIsWide ? FName(Copy.AsWideLiteral()).GetComparisonIndex()
-										: FName(Copy.AsAnsiLiteral()).GetComparisonIndex();
+	FName FullName = bLiteralIsWide ? FName(Copy.AsWideLiteral()) : FName(Copy.AsAnsiLiteral());
+	FNameEntryId ComparisonId = FullName.GetComparisonIndex();
+	FNameEntryId DisplayId = FullName.GetDisplayIndex();
 
 	// Deliberately unsynchronized write of word-sized int, ok if multiple threads resolve same lazy name
-	Either = FLiteralOrName(Id);
+	Either = FLiteralOrName(ComparisonId, DisplayId);
 
 #if UE_FNAME_OUTLINE_NUMBER
-	return FNameHelper::MakeWithNumber(FNameEntryIds{Id, Id}, FNAME_Add, Number);
+	return FNameHelper::MakeWithNumber(FNameEntryIds{ ComparisonId, DisplayId}, FNAME_Add, Number);
 #else // UE_FNAME_OUTLINE_NUMBER
-	return FName(Id, Id, Number);		
+	return FName(ComparisonId, DisplayId, Number);
 #endif // UE_FNAME_OUTLINE_NUMBER
 }
 
@@ -4872,7 +4949,7 @@ struct FNameBatchAsyncLoader : FNameBatchLoader
 
 	bool ShouldLoadAsync(uint32 MaxWorkers) const
 	{
-		return MaxWorkers && Hashes.Num() >= FNamePoolShards && Hashes.Num() > 30000;
+		return MaxWorkers && Hashes.Num() >= FNamePoolShards && Hashes.Num() > 30000; //-V590
 	}
 
 	void PrepareWork()

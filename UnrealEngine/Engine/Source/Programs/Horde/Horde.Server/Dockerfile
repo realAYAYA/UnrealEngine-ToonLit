@@ -7,19 +7,25 @@
 #       Running directly from the source tree will cause a lot of unnecessary
 #       files to be uploaded to Docker before building.
 
-FROM redis:6.2.7 AS redis
+ARG code_coverage="false"
+
+FROM redis:7.2 AS redis
 
 # Build image
-FROM mcr.microsoft.com/dotnet/sdk:6.0 AS build-env
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build-env
 WORKDIR /app
 COPY Source/Programs/Horde/nuget.config ./Source/Programs/Horde/nuget.config
-RUN DEBIAN_FRONTEND=noninteractive apt-get -qq update && apt-get -qq install curl
+RUN DEBIAN_FRONTEND=noninteractive \
+	apt-get -qq update && \
+	apt-get -qq install curl zip && \
+	dotnet tool install --global JetBrains.dotCover.GlobalTool && \
+	ln -s /root/.dotnet/tools/dotnet-dotcover /usr/local/bin/dotnet-dotcover
 
 COPY --from=redis /usr/local/bin/redis-server /usr/local/bin/redis-server
 
 # Since the .deb does not install in this image, just download it and extract the static binary
-RUN wget https://repo.mongodb.org/apt/debian/dists/buster/mongodb-org/4.4/main/binary-amd64/mongodb-org-server_4.4.0_amd64.deb && \
-	dpkg -x mongodb-org-server_4.4.0_amd64.deb /tmp/mongodb && \
+RUN wget https://repo.mongodb.org/apt/debian/dists/bookworm/mongodb-org/7.0/main/binary-amd64/mongodb-org-server_7.0.4_amd64.deb && \
+	dpkg -x mongodb-org-server_7.0.4_amd64.deb /tmp/mongodb && \
 	cp /tmp/mongodb/usr/bin/mongod /usr/local/bin/mongod
 
 # Restore all the C# projects
@@ -39,6 +45,7 @@ RUN dotnet restore Source/Programs/Horde/Horde.Server/Horde.Server.csproj -p:Wit
 # Build the server
 COPY Binaries/DotNET/EpicGames.Perforce.Native/ Binaries/DotNET/EpicGames.Perforce.Native/
 COPY Source/Programs/Shared/ Source/Programs/Shared/
+COPY Source/Programs/Horde/.editorconfig Source/Programs/Horde/.editorconfig
 COPY Source/Programs/Horde/Horde.Server/ Source/Programs/Horde/Horde.Server/
 COPY Source/Programs/AutomationTool/AutomationUtils/Matchers/ Source/Programs/AutomationTool/AutomationUtils/Matchers/
 COPY Source/Programs/UnrealBuildTool/Matchers/ Source/Programs/UnrealBuildTool/Matchers/
@@ -49,13 +56,10 @@ RUN dotnet publish Source/Programs/Horde/Horde.Server/Horde.Server.csproj -c Rel
 COPY Source/Programs/Horde/Horde.Agent/ Source/Programs/Horde/Horde.Agent/
 COPY Source/Programs/Horde/Horde.Server.Tests/ Source/Programs/Horde/Horde.Server.Tests/
 COPY Source/Programs/Shared/EpicGames.Serialization.Tests/ Source/Programs/Shared/EpicGames.Serialization.Tests/
-RUN redis-server --save "" --appendonly no --daemonize yes && \
-	mongod --noauth --quiet --fork --dbpath /tmp/mongodb --logpath /tmp/mongod.log && \
-	dotnet test Source/Programs/Shared/EpicGames.BuildGraph.Tests/EpicGames.BuildGraph.Tests.csproj --blame-hang-timeout 2m --logger console;verbosity=normal && \
-	dotnet test Source/Programs/Shared/EpicGames.Core.Tests/EpicGames.Core.Tests.csproj --blame-hang-timeout 2m --logger console;verbosity=normal && \
-	dotnet test Source/Programs/Shared/EpicGames.Horde.Tests/EpicGames.Horde.Tests.csproj --blame-hang-timeout 2m --logger console;verbosity=normal && \
-	dotnet test Source/Programs/Shared/EpicGames.Serialization.Tests/EpicGames.Serialization.Tests.csproj --blame-hang-timeout 2m --logger console;verbosity=normal && \
-	dotnet test Source/Programs/Horde/Horde.Server.Tests/Horde.Server.Tests.csproj --blame-hang-timeout 2m --logger console;verbosity=normal
+
+ARG code_coverage
+COPY Source/Programs/Horde/Scripts/test.sh Source/Programs/Horde/Scripts/test.sh
+RUN bash Source/Programs/Horde/Scripts/test.sh
 
 # Remove native libs not used on Linux x86_64
 RUN rm -rf /app/out/runtimes/osx* && \
@@ -63,8 +67,15 @@ RUN rm -rf /app/out/runtimes/osx* && \
     rm -rf /app/out/runtimes/linux-arm* && \
     rm -rf /app/out/runtimes/linux/native/libgrpc_csharp_ext.x86.so
 
+
+# Placeholder stage that's used to produce smaller output (only specific files from build-env stage is copied)
+# To retrieve code coverage reports, docker buildx can be run with `--target build-env-output --output type=local,dest=docker-output`
+FROM scratch AS build-env-output
+# Provide at least one file that exists (/tmp/empty), so COPY operation won't fail
+COPY --from=build-env /tmp/empty /tmp/dotcover-report/*.zip /
+
 # Create the runtime image
-FROM mcr.microsoft.com/dotnet/aspnet:6.0 AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
 COPY --from=build-env /app/out .
-ENTRYPOINT [ "dotnet", "Horde.Server.dll" ]
+ENTRYPOINT [ "dotnet", "HordeServer.dll" ]

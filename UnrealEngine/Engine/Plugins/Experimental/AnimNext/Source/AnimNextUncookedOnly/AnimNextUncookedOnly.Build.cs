@@ -29,7 +29,9 @@ namespace UnrealBuildTool.Rules
 					"Kismet",
 					"Slate",
 					"SlateCore",
-					"StructUtils"
+					"StructUtils",
+					"StructUtilsEditor",
+					"ToolMenus",
 				}
 			);
 
@@ -39,6 +41,20 @@ namespace UnrealBuildTool.Rules
 					new string[]
 					{
 						"UnrealEd",
+					}
+				);
+
+				PrivateIncludePathModuleNames.AddRange(
+					new string[]
+					{
+						"AnimNextEditor",
+					}
+				);
+
+				DynamicallyLoadedModuleNames.AddRange(
+					new string[]
+					{
+						"AnimNextEditor",
 					}
 				);
 			}

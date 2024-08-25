@@ -53,6 +53,7 @@ FLightSceneProxy::FLightSceneProxy(const ULightComponent* InLightComponent)
 	, bUseVirtualShadowMaps(false)	// See below
 	, bCastModulatedShadows(false)
 	, bUseWholeSceneCSMForMovableObjects(false)
+	, bSelected(InLightComponent->GetOwner() ? InLightComponent->GetOwner()->IsActorOrSelectionParentSelected() : false)
 	, AtmosphereSunLightIndex(InLightComponent->GetAtmosphereSunLightIndex())
 	, AtmosphereSunDiskColorScale(InLightComponent->GetAtmosphereSunDiskColorScale())
 	, LightType(InLightComponent->GetLightType())
@@ -66,6 +67,7 @@ FLightSceneProxy::FLightSceneProxy(const ULightComponent* InLightComponent)
 	, SamplesPerPixel(1)
 	, DeepShadowLayerDistribution(InLightComponent->DeepShadowLayerDistribution)
 	, IESAtlasId(~0u)
+	, LightFunctionAtlasLightIndex(0)
 #if ACTOR_HAS_LABELS
 	, OwnerNameOrLabel(InLightComponent->GetOwner() ? InLightComponent->GetOwner()->GetActorNameOrLabel() : InLightComponent->GetName())
 #endif
@@ -82,10 +84,7 @@ FLightSceneProxy::FLightSceneProxy(const ULightComponent* InLightComponent)
 		bStaticShadowing = bStaticLighting;
 	}
 
-	static const auto AllowStaticLightingVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-	const bool bAllowStaticLighting = (!AllowStaticLightingVar || AllowStaticLightingVar->GetValueOnGameThread() != 0);
-
-	if (!bAllowStaticLighting)
+	if (!IsStaticLightingAllowed())
 	{
 		bStaticShadowing = bStaticLighting;
 	}
@@ -140,6 +139,8 @@ FLightSceneProxy::FLightSceneProxy(const ULightComponent* InLightComponent)
 
 		bTransmission = false;
 	}
+	VSMTexelDitherScale = 1.0f;
+	VSMResolutionLodBias = 0.0f;
 }
 
 FLightSceneProxy::~FLightSceneProxy() = default;
@@ -183,8 +184,10 @@ void FLightSceneProxy::ApplyWorldOffset(FVector InOffset)
 
 FSphere FLightSceneProxy::GetBoundingSphere() const
 {
-	// Directional lights will have a radius of WORLD_MAX
-	return FSphere(FVector::ZeroVector, WORLD_MAX);
+	// Directional lights will have a radius of WORLD_MAX,
+	// but we use UE_OLD_WORLD_MAX which is smaller, because WORLD_MAX is SUPER larger when set to UE_LARGE_WORLD_MAX,
+	// and in this case some GPUs clipper can then fail for camera with a narrow field of view.
+	return FSphere(FVector::ZeroVector, UE_OLD_WORLD_MAX);
 }
 
 FTexture* FLightSceneProxy::GetIESTextureResource() const

@@ -54,17 +54,17 @@ uint32 UHLODBuilderMeshSimplifySettings::GetCRC() const
 	uint32 MaterialBakingModuleCRC = Module.GetCRC();
 	Ar << MaterialBakingModuleCRC;
 
+	static const auto MeshMergeUtilitiesUVGenerationMethodCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("MeshMergeUtilities.UVGenerationMethod"));
+	int32 MeshMergeUtilitiesUVGenerationMethod = (MeshMergeUtilitiesUVGenerationMethodCVar != nullptr) ? MeshMergeUtilitiesUVGenerationMethodCVar->GetInt() : 0;
+	Ar << MeshMergeUtilitiesUVGenerationMethod;
+
 	uint32 Hash = Ar.GetCrc();
 
-	if (!HLODMaterial.IsNull())
+	if (HLODMaterial)
 	{
-		UMaterialInterface* Material = HLODMaterial.LoadSynchronous();
-		if (Material)
-		{
-			uint32 MaterialCRC = UHLODProxy::GetCRC(Material);
-			UE_LOG(LogHLODBuilder, VeryVerbose, TEXT(" - Material = %d"), MaterialCRC);
-			Hash = HashCombine(Hash, MaterialCRC);
-		}
+		uint32 MaterialCRC = UHLODProxy::GetCRC(HLODMaterial);
+		UE_LOG(LogHLODBuilder, VeryVerbose, TEXT(" - Material = %d"), MaterialCRC);
+		Hash = HashCombine(Hash, MaterialCRC);
 	}
 
 	return Hash;
@@ -83,7 +83,7 @@ TArray<UActorComponent*> UHLODBuilderMeshSimplify::Build(const FHLODBuildContext
 
 	const UHLODBuilderMeshSimplifySettings* MeshSimplifySettings = CastChecked<UHLODBuilderMeshSimplifySettings>(HLODBuilderSettings);
 	FMeshProxySettings UseSettings = MeshSimplifySettings->MeshSimplifySettings; // Make a copy as we may tweak some values
-	UMaterialInterface* HLODMaterial = MeshSimplifySettings->HLODMaterial.LoadSynchronous();
+	UMaterialInterface* HLODMaterial = MeshSimplifySettings->HLODMaterial;
 
 	// When using automatic texture sizing based on draw distance, use the MinVisibleDistance for this HLOD.
 	if (UseSettings.MaterialSettings.TextureSizingType == TextureSizingType_AutomaticFromMeshDrawDistance)

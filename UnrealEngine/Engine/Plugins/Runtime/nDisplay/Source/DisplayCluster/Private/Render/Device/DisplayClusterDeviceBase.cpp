@@ -42,6 +42,17 @@
 
 #include <utility>
 
+namespace UE::DisplayCluster::DeviceBaseHelpers
+{
+	static inline IDisplayCluster& GetDisplayClusterAPI()
+	{
+		static IDisplayCluster& DisplayClusterAPISingleton = IDisplayCluster::Get();
+
+		return DisplayClusterAPISingleton;
+	}
+};
+using namespace UE::DisplayCluster;
+
 // Enable/Disable ClearTexture for RTT after resolving to the backbuffer
 static TAutoConsoleVariable<int32> CVarClearTextureEnabled(
 	TEXT("nDisplay.render.ClearTextureEnabled"),
@@ -214,7 +225,7 @@ void FDisplayClusterDeviceBase::AdjustViewRect(int32 ViewIndex, int32& X, int32&
 	check(IsInGameThread());
 
 	IDisplayClusterViewportManager* ViewportManager = GetViewportManager();
-	if (ViewportManager == nullptr || ViewportManager->IsSceneOpened() == false)
+	if (ViewportManager == nullptr || ViewportManager->GetConfiguration().IsSceneOpened() == false)
 	{
 		return;
 	}
@@ -260,24 +271,13 @@ void FDisplayClusterDeviceBase::CalculateStereoViewOffset(const int32 ViewIndex,
 	}
 
 	// The camera position has already been determined from the SetupViewPoint() function
-	// Obtaining the stereo eye offset for a given viewport
-	const float PassOffsetSwap = ViewportPtr->GetStereoEyeOffsetDistance(ViewportContextNum);
-
-	FVector ViewOffset = FVector::ZeroVector;
-	{
-		// Apply computed offset to the view location
-		const FQuat EyeQuat = ViewRotation.Quaternion();
-		ViewOffset = EyeQuat.RotateVector(FVector(0.0f, PassOffsetSwap, 0.0f));
-		ViewLocation += ViewOffset;
-	}
-
+	// Obtaining the offset of the stereo eye and the values of the projection clipping plane for the given viewport was moved inside CalculateView().
 	// Perform view calculations on a policy side
-	const float CfgNCP = GNearClippingPlane;
-	if (ViewportPtr->CalculateView(ViewportContextNum, ViewLocation, ViewRotation, ViewOffset, WorldToMeters, CfgNCP, CfgNCP) == false)
+	if (ViewportPtr->CalculateView(ViewportContextNum, ViewLocation, ViewRotation, WorldToMeters) == false)
 	{
 #if WITH_EDITOR
 		// Hide spam in logs when configuring VP in editor [UE-114493]
-		static const bool bIsEditorOperationMode = IDisplayCluster::Get().GetOperationMode() == EDisplayClusterOperationMode::Editor;
+		static const bool bIsEditorOperationMode = DeviceBaseHelpers::GetDisplayClusterAPI().GetOperationMode() == EDisplayClusterOperationMode::Editor;
 		if (!bIsEditorOperationMode)
 #endif
 		{
@@ -299,7 +299,7 @@ FMatrix FDisplayClusterDeviceBase::GetStereoProjectionMatrix(const int32 ViewInd
 	// ViewIndex == eSSE_MONOSCOPIC(-1) is a special case called for ISR culling math.
 	// Since nDisplay is not ISR compatible, we ignore this request. This won't be neccessary once
 	// we stop using nDisplay as a stereoscopic rendering device (IStereoRendering).
-	if (ViewportManager && ViewportManager->IsSceneOpened() && ViewIndex >= 0)
+	if (ViewportManager && ViewportManager->GetConfiguration().IsSceneOpened() && ViewIndex >= 0)
 	{
 		uint32 ViewportContextNum = 0;
 		IDisplayClusterViewport* ViewportPtr = ViewportManager->FindViewport(ViewIndex, &ViewportContextNum);
@@ -322,17 +322,23 @@ bool FDisplayClusterDeviceBase::BeginNewFrame(FViewport* InViewport, UWorld* InW
 	check(IsInGameThread());
 	check(InViewport);
 
-	IDisplayCluster& DisplayCluster = IDisplayCluster::Get();
-	if (ADisplayClusterRootActor* RootActor = DisplayCluster.GetGameMgr()->GetRootActor())
+	if (ADisplayClusterRootActor* RootActor = DeviceBaseHelpers::GetDisplayClusterAPI().GetGameMgr()->GetRootActor())
 	{
-		if (IDisplayClusterViewportManager* ViewportManagerPtr = RootActor->GetViewportManager())
+		if (IDisplayClusterViewportManager* ViewportManagerPtr = RootActor->GetOrCreateViewportManager())
 		{
-			const FString LocalNodeId = DisplayCluster.GetConfigMgr()->GetLocalNodeId();
+			const FString LocalNodeId = DeviceBaseHelpers::GetDisplayClusterAPI().GetConfigMgr()->GetLocalNodeId();
+
+			// Get preview settings from RootActor properties
+			FDisplayClusterViewport_PreviewSettings NewPreviewSettings = RootActor->GetPreviewSettings(true);
+			NewPreviewSettings.bPreviewEnable = false;
+
+			// Dont use preview setting on primary RootActor in game
+			ViewportManagerPtr->GetConfiguration().SetPreviewSettings(NewPreviewSettings);
 
 			// Update local node viewports (update\create\delete) and build new render frame
-			if (ViewportManagerPtr->UpdateConfiguration(RenderFrameMode, LocalNodeId, RootActor))
+			if (ViewportManagerPtr->GetConfiguration().UpdateConfigurationForClusterNode(RenderFrameMode, InWorld, LocalNodeId))
 			{
-				if (ViewportManagerPtr->BeginNewFrame(InViewport, InWorld, OutRenderFrame))
+				if (ViewportManagerPtr->BeginNewFrame(InViewport, OutRenderFrame))
 				{
 					// update total number of views for this frame (in multiple families)
 					DesiredNumberOfViews = OutRenderFrame.DesiredNumberOfViews;
@@ -348,10 +354,11 @@ bool FDisplayClusterDeviceBase::BeginNewFrame(FViewport* InViewport, UWorld* InW
 
 void FDisplayClusterDeviceBase::InitializeNewFrame()
 {
-	IDisplayCluster& DisplayCluster = IDisplayCluster::Get();
-	if (ADisplayClusterRootActor* RootActor = DisplayCluster.GetGameMgr()->GetRootActor())
+	check(IsInGameThread());
+
+	if (ADisplayClusterRootActor* RootActor = DeviceBaseHelpers::GetDisplayClusterAPI().GetGameMgr()->GetRootActor())
 	{
-		if (IDisplayClusterViewportManager* ViewportManager = RootActor->GetViewportManager())
+		if (IDisplayClusterViewportManager* ViewportManager = RootActor->GetOrCreateViewportManager())
 		{
 			// Begin use viewport manager for current frame
 			ViewportManagerWeakPtr = ViewportManager->ToSharedPtr();
@@ -363,7 +370,7 @@ void FDisplayClusterDeviceBase::InitializeNewFrame()
 
 			// Send viewport manager proxy on render thread
 			ENQUEUE_RENDER_COMMAND(DisplayClusterDevice_SetViewportManagerProxy)(
-				[DCRenderDevice = this, NewViewportManagerProxy = ViewportManagerProxyPtr->AsShared()](FRHICommandListImmediate& RHICmdList)
+				[DCRenderDevice = SharedThis(this), NewViewportManagerProxy = ViewportManagerProxyPtr->AsShared()](FRHICommandListImmediate& RHICmdList)
 				{
 					DCRenderDevice->ViewportManagerProxyWeakPtr = NewViewportManagerProxy;
 				});

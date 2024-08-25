@@ -25,9 +25,19 @@
 #include <jni.h>
 #include <stdint.h>
 
+#include "common/gamesdk_common.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+#define MEMORY_ADVICE_MAJOR_VERSION 2
+#define MEMORY_ADVICE_MINOR_VERSION 0
+#define MEMORY_ADVICE_BUGFIX_VERSION 1
+#define MEMORY_ADVICE_PACKED_VERSION                         \
+    ANDROID_GAMESDK_PACKED_VERSION(TUNINGFORK_MAJOR_VERSION, \
+                                   TUNINGFORK_MINOR_VERSION, \
+                                   TUNINGFORK_BUGFIX_VERSION)
 
 /**
  * @brief All the error codes that can be returned by MemoryAdvice functions.
@@ -85,7 +95,9 @@ MemoryAdvice_ErrorCode MemoryAdvice_init(JNIEnv *env, jobject context);
  * other functions.
  *
  * This version of the init function will read the given params instead of
- * using the library provided default params.
+ * using the library provided default params. The format of params is a JSON
+ * string with a semantic like default.json in the root directory of this
+ * library.
  *
  * @param env a JNIEnv
  * @param context the app context
@@ -122,6 +134,16 @@ MemoryAdvice_MemoryState MemoryAdvice_getMemoryState();
  * Advice was not yet initialized.
  */
 float MemoryAdvice_getPercentageAvailableMemory();
+
+/**
+ * @brief Calculates the total memory available on the device, as reported by
+ * ActivityManager#getMemoryInfo()
+ *
+ * @return The total memory of the device, in bytes.
+ * @return MEMORYADVICE_ERROR_NOT_INITIALIZED (a negative number) if Memory
+ * Advice was not yet initialized.
+ */
+int64_t MemoryAdvice_getTotalMemory();
 
 /**
  * @brief Registers a watcher that polls the Memory Advice library periodically,

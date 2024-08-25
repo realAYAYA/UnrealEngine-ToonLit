@@ -52,7 +52,5 @@ FDynamicRHI* PlatformCreateDynamicRHI()
 		DynamicRHI = DynamicRHIModule->CreateRHI(RequestedFeatureLevel);
 	}
 
-	FPlatformMisc::UnlockAndroidWindow();
-
 	return DynamicRHI;
 }

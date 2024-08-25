@@ -34,6 +34,11 @@ export abstract class PollBase {
 
     abstract poll(): Promise<void>;
 
+    async forceUpdate() {        
+        this.stop(); 
+        this.update();
+    }
+
     async update() {
 
         clearTimeout(this.timeoutId);
@@ -82,6 +87,10 @@ export abstract class PollBase {
 
     @observable
     updated: number = 0;
+
+    subscribe() {
+        if (this.updated) { }
+    }
 
     updating = false;
 

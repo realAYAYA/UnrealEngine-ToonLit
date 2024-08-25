@@ -13,6 +13,10 @@ namespace Audio
 	{
 		static constexpr float MinFrameRatioFrameDelta = 0.001f;
 	public:
+
+		SIGNALPROCESSING_API static const float MaxFrameRatio;
+		SIGNALPROCESSING_API static const float MinFrameRatio;
+
 		/** Construct a linear resampler.
 		 *
 		 * @param InNumChannel - Number of audio channels in input and output buffers.

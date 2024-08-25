@@ -1,6 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-
 #include "MuT/NodeMeshSwitch.h"
 
 #include "Misc/AssertionMacros.h"
@@ -17,8 +16,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeMeshSwitch::Private::s_type =
-			NODE_TYPE( "MeshSwitch", NodeMesh::GetStaticType() );
+	FNodeType NodeMeshSwitch::Private::s_type =
+			FNodeType( "MeshSwitch", NodeMesh::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -26,55 +25,6 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 
 	MUTABLE_IMPLEMENT_NODE( NodeMeshSwitch, EType::Switch, Node, Node::EType::Mesh)
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	int NodeMeshSwitch::GetInputCount() const
-	{
-		return 1 + m_pD->m_options.Num();
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	Node* NodeMeshSwitch::GetInputNode( int i ) const
-	{
-		check( i>=0 && i<GetInputCount() );
-
-		Node* pResult = 0;
-
-		switch (i)
-		{
-		case 0:
-			pResult = m_pD->m_pParameter.get();
-			break;
-
-		default:
-			pResult = m_pD->m_options[i-1].get();
-			break;
-		}
-
-		return pResult;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeMeshSwitch::SetInputNode( int i, NodePtr pNode )
-	{
-		check( i>=0 && i<GetInputCount() );
-
-		switch (i)
-		{
-		case 0:
-			m_pD->m_pParameter = dynamic_cast<NodeScalar*>(pNode.get());
-			break;
-
-		default:
-			m_pD->m_options[i-1] = dynamic_cast<NodeMesh*>(pNode.get());
-			break;
-		}
-	}
 
 
 	//---------------------------------------------------------------------------------------------
@@ -119,17 +69,17 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	NodeLayoutPtr NodeMeshSwitch::Private::GetLayout( int index ) const
 	{
-		NodeLayoutPtr pResult;
-
-		if (m_options.Num()>0 && m_options[0] )
+		for (int32 i=0; i<m_options.Num(); ++i)
 		{
-			NodeMesh::Private* pPrivate =
-					dynamic_cast<NodeMesh::Private*>( m_options[0]->GetBasePrivate() );
-
-			pResult = pPrivate->GetLayout( index );
+			if (m_options[i])
+			{
+				NodeMesh::Private* pPrivate = static_cast<NodeMesh::Private*>(m_options[i]->GetBasePrivate());
+				NodeLayoutPtr pResult = pPrivate->GetLayout(index);
+				return pResult;
+			}
 		}
 
-		return pResult;
+		return nullptr;
 	}
 
 

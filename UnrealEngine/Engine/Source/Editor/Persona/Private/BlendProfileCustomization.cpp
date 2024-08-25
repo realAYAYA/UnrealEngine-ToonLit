@@ -12,6 +12,7 @@
 #include "Animation/AnimBlueprint.h"
 #include "Modules/ModuleManager.h"
 #include "Engine/PoseWatch.h"
+#include "Animation/BlendSpace.h"
 
 #define LOCTEXT_NAMESPACE "BlendProfileCustomization"
 
@@ -39,7 +40,7 @@ void FBlendProfileCustomization::CustomizeHeader(TSharedRef<class IPropertyHandl
 		// try to get skeleton from first outer
 		if (USkeleton* TargetSkeleton = GetSkeletonFromOuter(OuterObjects[0]))
 		{
-			TSharedPtr<IPropertyHandle> PropertyPtr(InStructPropertyHandle);
+			TWeakPtr<IPropertyHandle> PropertyPtr(InStructPropertyHandle);
 
 			UObject* PropertyValue = nullptr;
 			InStructPropertyHandle->GetValue(PropertyValue);
@@ -68,7 +69,7 @@ void FBlendProfileCustomization::CustomizeHeader(TSharedRef<class IPropertyHandl
 			Args.OnBlendProfileSelected = FOnBlendProfileSelected::CreateSP(this, &FBlendProfileCustomization::OnBlendProfileChanged, PropertyPtr);
 			Args.InitialProfile = CurrentProfile;
 			Args.SupportedBlendProfileModes = SupportedBlendProfileModes;
-			Args.PropertyHandle = PropertyPtr;
+			Args.PropertyHandle = InStructPropertyHandle;
 
 			ISkeletonEditorModule& SkeletonEditorModule = FModuleManager::Get().LoadModuleChecked<ISkeletonEditorModule>("SkeletonEditor");
 			ValueCustomWidget = SkeletonEditorModule.CreateBlendProfilePicker(TargetSkeleton, Args);
@@ -88,17 +89,28 @@ void FBlendProfileCustomization::CustomizeHeader(TSharedRef<class IPropertyHandl
 		];
 }
 
-void FBlendProfileCustomization::OnBlendProfileChanged(UBlendProfile* NewProfile, TSharedPtr<IPropertyHandle> PropertyHandle)
+void FBlendProfileCustomization::OnBlendProfileChanged(UBlendProfile* NewProfile, TWeakPtr<IPropertyHandle> WeakPropertyHandle)
 {
-	if (PropertyHandle.IsValid())
+	if(!GIsTransacting)
 	{
-		PropertyHandle->SetValue(NewProfile);
+		if (TSharedPtr<IPropertyHandle> PropertyHandle = WeakPropertyHandle.Pin())
+		{
+			PropertyHandle->SetValue(NewProfile);
+		}
 	}
 }
 
 USkeleton* FBlendProfileCustomization::GetSkeletonFromOuter(const UObject* Outer)
 {
 	const UAnimBlueprint* AnimBlueprint = nullptr;
+	if (const UBlendSpace* BlendSpace = Cast<UBlendSpace>(Outer))
+	{
+		// Check for blend space graph nodes
+		if (!BlendSpace->IsAsset())
+		{
+			AnimBlueprint = BlendSpace->GetTypedOuter<UAnimBlueprint>();
+		}			
+	}
 	if (const UEdGraphNode* OuterEdGraphNode = Cast<UEdGraphNode>(Outer))
 	{
 		AnimBlueprint = Cast<UAnimBlueprint>(FBlueprintEditorUtils::FindBlueprintForNode(OuterEdGraphNode));

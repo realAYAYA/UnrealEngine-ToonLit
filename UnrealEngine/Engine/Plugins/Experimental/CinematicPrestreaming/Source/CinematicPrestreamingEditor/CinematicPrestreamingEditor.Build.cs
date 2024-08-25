@@ -20,6 +20,7 @@ public class CinematicPrestreamingEditor : ModuleRules
 				"MovieRenderPipelineRenderPasses",
 				"MovieRenderPipelineEditor",
 				"MovieScene",
+				"SequencerCore",
 				"Sequencer",
 				"UnrealEd",
 				"EditorSubsystem"

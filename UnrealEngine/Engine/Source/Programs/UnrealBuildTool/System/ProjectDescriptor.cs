@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using EpicGames.Core;
 
 namespace UnrealBuildTool
@@ -224,9 +225,9 @@ namespace UnrealBuildTool
 				}
 				return Descriptor;
 			}
-			catch (JsonParseException ParseException)
+			catch (JsonException ex)
 			{
-				throw new JsonParseException("{0} (in {1})", ParseException.Message, FileName);
+				throw new JsonException($"{ex.Message} (in {FileName})", ex.Source ?? FileName.FullName, ex.LineNumber, ex.BytePositionInLine, ex);
 			}
 		}
 

@@ -45,7 +45,8 @@ const FName FSkeletalMeshInterfaceHelper::RandomFilteredSocketOrBoneName("Random
 const FName FSkeletalMeshInterfaceHelper::GetFilteredSocketOrBoneCountName("GetFilteredSocketOrBoneCount");
 const FName FSkeletalMeshInterfaceHelper::GetFilteredSocketOrBoneAtName("GetFilteredSocketOrBone");
 
-void UNiagaraDataInterfaceSkeletalMesh::GetSkeletonSamplingFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceSkeletalMesh::GetSkeletonSamplingFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	FNiagaraFunctionSignature DefaultSig;
 	DefaultSig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("SkeletalMesh")));
@@ -232,6 +233,7 @@ void UNiagaraDataInterfaceSkeletalMesh::GetSkeletonSamplingFunctions(TArray<FNia
 		Sig.SetDescription(LOCTEXT("GetFilteredSocketOrBoneAtDesc", "Gets a filtered socket or bone count from the DI's list."));
 	}
 }
+#endif
 
 void UNiagaraDataInterfaceSkeletalMesh::BindSkeletonSamplingFunction(const FVMExternalFunctionBindingInfo& BindingInfo, FNDISkeletalMesh_InstanceData* InstanceData, FVMExternalFunction &OutFunc)
 {
@@ -762,11 +764,11 @@ void UNiagaraDataInterfaceSkeletalMesh::GetSkinnedBoneData(FVectorVMExternalFunc
 				if (Output.bNeedsScale)
 				{
 					FVector3f Scale = CurrSocketTransform.GetScale3D();
-					TransformHandler.TransformVector(Scale, InstanceTransform);
+					TransformHandler.TransformNotUnitVector(Scale, InstanceTransform);
 					if (bInterpolated::Value)
 					{
 						FVector3f PrevScale = PrevSocketTransform.GetScale3D();
-						TransformHandler.TransformVector(PrevScale, PrevInstanceTransform);
+						TransformHandler.TransformNotUnitVector(PrevScale, PrevInstanceTransform);
 						Scale = FMath::Lerp(PrevScale, Scale, Interp);
 					}
 					Output.Scale.SetAndAdvance(Scale);

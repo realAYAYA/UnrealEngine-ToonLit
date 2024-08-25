@@ -57,4 +57,12 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Mass|Visual")
 	bool bCanModifyRepresentationSubsystemClass = true;
 #endif // WITH_EDITORONLY_DATA
+
+protected:
+	/** 
+	 * Controls whether StaticMeshInstanceDesc gets registered via FindOrAddStaticMeshDesc call. Setting it to `false` 
+	 * can be useful for subclasses to avoid needlessly creating visualization data in RepresentationSubsystem, 
+	 * data that will never be used.
+	 */
+	bool bRegisterStaticMeshDesc = true;
 };

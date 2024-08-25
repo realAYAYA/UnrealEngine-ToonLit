@@ -60,11 +60,7 @@ namespace EpicGames.OIDC
 				startInfo.ArgumentList.Add(s);
 			}
 
-			Process? p = Process.Start(startInfo);
-			if (p == null)
-			{
-				throw new Exception("Failed to run \"security\" to interact with keychain");
-			}
+			using Process p = Process.Start(startInfo) ?? throw new Exception("Failed to run \"security\" to interact with keychain");
 
 			StringBuilder sb = new StringBuilder();
 			p.OutputDataReceived += (o, e) => { sb.Append(e.Data); };

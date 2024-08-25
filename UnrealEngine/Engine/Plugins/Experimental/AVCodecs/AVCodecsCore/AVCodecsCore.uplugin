@@ -18,7 +18,7 @@
 			"Name": "AVCodecsCore",
 			"Type": "Runtime",
 			"LoadingPhase": "PostEngineInit",
-			"PlatformAllowList": [ "Win64",	"Linux" ]
+			"PlatformAllowList": [ "Win64",	"Linux", "Mac" ]
 		},
 		{
 			"Name": "AVCodecsCoreRHI",
@@ -27,11 +27,12 @@
 			"TargetDenyList": [
 				"Program"
 			],
-			"PlatformAllowList": [ "Win64",	"Linux"	]
+			"PlatformAllowList": [ "Win64",	"Linux", "Mac"	]
 		}
 	],
 	"SupportedTargetPlatforms": [
 		"Win64",
-		"Linux"
+		"Linux",
+		"Mac"
 	]
 }

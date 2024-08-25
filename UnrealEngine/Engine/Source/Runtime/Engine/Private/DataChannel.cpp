@@ -11,9 +11,11 @@
 #include "Engine/Level.h"
 #include "Engine/World.h"
 #include "GameFramework/WorldSettings.h"
+#include "Iris/ReplicationSystem/ReplicationSystem.h"
 #include "Misc/MemStack.h"
 #include "Misc/ScopeExit.h"
 #include "Net/Core/Trace/Private/NetTraceInternal.h"
+#include "Net/Core/Misc/GuidReferences.h"
 #include "Net/Core/NetCoreModule.h"
 #include "UObject/UObjectIterator.h"
 #include "EngineStats.h"
@@ -22,6 +24,7 @@
 #include "DrawDebugHelpers.h"
 #include "Net/NetworkProfiler.h"
 #include "Net/DataReplication.h"
+#include "Net/NetworkMetricsDefs.h"
 #include "Engine/ActorChannel.h"
 #include "Engine/ControlChannel.h"
 #include "Engine/DemoNetDriver.h"
@@ -166,6 +169,12 @@ namespace UE::Net
 		TEXT("net.SkipDestroyNetStartupActorsOnChannelCloseDueToLevelUnloaded"),
 		bSkipDestroyNetStartupActorsOnChannelCloseDueToLevelUnloaded,
 		TEXT("Controls if Actor that is a NetStartUpActor assosciated with the channel is destroyed or not when we receive a channel close with ECloseReason::LevelUnloaded."), ECVF_Default);
+
+	static float QueuedBunchTimeFailsafeSeconds = 2.0f;
+	static FAutoConsoleVariableRef CVarNetQueuedBunchTimeFailsafeSeconds(
+		TEXT("net.QueuedBunchTimeFailsafeSeconds"),
+		QueuedBunchTimeFailsafeSeconds,
+		TEXT("Amount of time in seconds to wait with queued bunches before forcibly processing them all, ignoring the NetDriver's HasExceededIncomingBunchFrameProcessingTime."));
 
 	// bTearOff is private but we still might need to adjust the flag on clients based on the channel close reason
 	class FTearOffSetter final
@@ -653,6 +662,7 @@ void UChannel::ReceivedRawBunch( FInBunch & Bunch, bool & bOutSkipAck )
 		New->Next     = *InPtr;
 		*InPtr        = New;
 		NumInRec++;
+		Connection->GetDriver()->GetMetrics()->SetMaxInt(UE::Net::Metric::IncomingReliableMessageQueueMaxSize, NumInRec);
 
 		if ( NumInRec >= RELIABLE_BUFFER )
 		{
@@ -1452,6 +1462,7 @@ FOutBunch* UChannel::PrepBunch(FOutBunch* Bunch, FOutBunch* OutBunch, bool Merge
 			Bunch->Next	= NULL;
 			Bunch->ChSequence = ++Connection->OutReliable[ChIndex];
 			NumOutRec++;
+			Connection->GetDriver()->GetMetrics()->SetMaxInt(UE::Net::Metric::OutgoingReliableMessageQueueMaxSize, NumOutRec);
 			OutBunch = new FOutBunch(*Bunch);
 			FOutBunch** OutLink = &OutRec;
 			while(*OutLink) // This was rewritten from a single-line for loop due to compiler complaining about empty body for loops (-Wempty-body)
@@ -1637,6 +1648,8 @@ IMPLEMENT_CONTROL_CHANNEL_MESSAGE(BeaconWelcome);
 IMPLEMENT_CONTROL_CHANNEL_MESSAGE(BeaconJoin);
 IMPLEMENT_CONTROL_CHANNEL_MESSAGE(BeaconAssignGUID);
 IMPLEMENT_CONTROL_CHANNEL_MESSAGE(BeaconNetGUIDAck);
+IMPLEMENT_CONTROL_CHANNEL_MESSAGE(IrisProtocolMismatch);
+IMPLEMENT_CONTROL_CHANNEL_MESSAGE(IrisNetRefHandleError);
 
 void UControlChannel::Init( UNetConnection* InConnection, int32 InChannelIndex, EChannelCreateFlags CreateFlags )
 {
@@ -1711,8 +1724,9 @@ void UControlChannel::ReceivedBunch( FInBunch& Bunch )
 		return;
 	}
 
+	bool bStopReadingBunch = false;
 	// Process the packet
-	while (!Bunch.AtEnd() && Connection != NULL && Connection->GetConnectionState() != USOCK_Closed) // if the connection got closed, we don't care about the rest
+	while (!Bunch.AtEnd() && bStopReadingBunch == false && Connection != nullptr && Connection->GetConnectionState() != USOCK_Closed) // if the connection got closed, we don't care about the rest
 	{
 		uint8 MessageType = 0;
 		Bunch << MessageType;
@@ -1806,7 +1820,7 @@ void UControlChannel::ReceivedBunch( FInBunch& Bunch )
 			if (FNetControlMessage<NMT_SecurityViolation>::Receive(Bunch, DebugMessage))
 			{
 				UE_LOG(LogSecurity, Warning, TEXT("%s: Closed: %s"), *Connection->RemoteAddressToString(), *DebugMessage);
-				break;
+				bStopReadingBunch = true;
 			}
 		}
 		else if (MessageType == NMT_DestructionInfo)
@@ -1830,7 +1844,7 @@ void UControlChannel::ReceivedBunch( FInBunch& Bunch )
 				Connection->HandleReceiveCloseReason(CloseReasonList);
 			}
 
-			break;
+			bStopReadingBunch = true;
 		}
 		else if (MessageType == NMT_NetPing)
 		{
@@ -1842,8 +1856,33 @@ void UControlChannel::ReceivedBunch( FInBunch& Bunch )
 			{
 				UE::Net::FNetPing::HandleNetPingControlMessage(Connection, NetPingMessageType, MessageStr);
 			}
-
-			break;
+		}
+		else if (MessageType == NMT_IrisProtocolMismatch)
+		{
+			uint64 NetRefHandleId = 0;
+			if (FNetControlMessage<NMT_IrisProtocolMismatch>::Receive(Bunch, NetRefHandleId))
+			{
+#if UE_WITH_IRIS
+				if (UReplicationSystem* IrisRepSystem = Connection->Driver->GetReplicationSystem())
+				{
+					IrisRepSystem->ReportProtocolMismatch(NetRefHandleId, Connection->GetConnectionId());
+				}
+#endif
+			}
+		}
+		else if (MessageType == NMT_IrisNetRefHandleError)
+		{
+			uint32 ErrorType = 0; //TBD
+			uint64 NetRefHandleId = 0;
+			if (FNetControlMessage<NMT_IrisNetRefHandleError>::Receive(Bunch, ErrorType, NetRefHandleId))
+			{
+#if UE_WITH_IRIS
+				if (UReplicationSystem* IrisRepSystem = Connection->Driver->GetReplicationSystem())
+				{
+					IrisRepSystem->ReportErrorWithNetRefHandle(ErrorType, NetRefHandleId, Connection->GetConnectionId());
+				}
+#endif
+			}
 		}
 		else if (Connection->Driver->Notify != nullptr)
 		{
@@ -1922,6 +1961,12 @@ void UControlChannel::ReceivedBunch( FInBunch& Bunch )
 				case NMT_BeaconNetGUIDAck:
 					FNetControlMessage<NMT_BeaconNetGUIDAck>::Discard(Bunch);
 					break;
+				case NMT_IrisProtocolMismatch:
+					FNetControlMessage<NMT_IrisProtocolMismatch>::Discard(Bunch);
+					break;
+				case NMT_IrisNetRefHandleError:
+					FNetControlMessage<NMT_IrisNetRefHandleError>::Discard(Bunch);
+					break;
 				default:
 					// if this fails, a case is missing above for an implemented message type
 					// or the connection is being sent potentially malformed packets
@@ -1939,7 +1984,7 @@ void UControlChannel::ReceivedBunch( FInBunch& Bunch )
 
 			AddToChainResultPtr(Bunch.ExtendedError, ENetCloseResult::ControlChannelMessagePayloadFail);
 
-			break;
+			bStopReadingBunch = true;
 		}
 	}
 
@@ -2383,6 +2428,20 @@ void UActorChannel::DestroyActorAndComponents()
 			MoveMappedObjectToUnmapped(Component);
 		}
 
+		// Also unmap any stably-named subobjects we didn't create
+		if (UE::Net::Private::bRemapStableSubobjects)
+		{
+			TArray<UObject*> Inners;
+			GetObjectsWithOuter(Actor, Inners);
+			for (const UObject* Inner : Inners)
+			{
+				if (Inner->IsNameStableForNetworking())
+				{
+					MoveMappedObjectToUnmapped(Inner);
+				}
+			}
+		}
+
 		// Unmap this object so we can remap it if it becomes relevant again in the future
 		MoveMappedObjectToUnmapped(Actor);
 
@@ -2710,6 +2769,27 @@ bool UActorChannel::CanStopTicking() const
 	return Super::CanStopTicking() && PendingGuidResolves.Num() == 0 && QueuedBunches.Num() == 0;
 }
 
+bool UActorChannel::ShouldProcessAllQueuedBunches(float CurrentTimeSeconds)
+{
+	using namespace UE::Net;
+
+	if (Connection->Driver->GetIncomingBunchFrameProcessingTimeLimit() <= 0.0f)
+	{
+		return true;
+	}
+
+	const float SecondsWithQueuedBunches = static_cast<float>(CurrentTimeSeconds - QueuedBunchStartTime);
+	const bool bExceededFailsafeTime = SecondsWithQueuedBunches > QueuedBunchTimeFailsafeSeconds;
+	
+	if (bExceededFailsafeTime)
+	{
+		Connection->Driver->AddQueuedBunchFailsafeChannel();
+		UE_LOG(LogNet, Verbose, TEXT("UActorChannel::ProcessQueuedBunches hit frame time failsafe after %.3f seconds. Processing entire queue of %d bunches for channel: %s"), SecondsWithQueuedBunches, QueuedBunches.Num(), *Describe());
+	}
+
+	return bExceededFailsafeTime;
+};
+
 bool UActorChannel::ProcessQueuedBunches()
 {
 	if (PendingGuidResolves.Num() == 0 && QueuedBunches.Num() == 0)
@@ -2717,7 +2797,7 @@ bool UActorChannel::ProcessQueuedBunches()
 		return true;
 	}
 
-	const uint32 QueueBunchStartCycles = FPlatformTime::Cycles();
+	const uint64 QueueBunchStartCycles = FPlatformTime::Cycles64();
 
 	// Try to resolve any guids that are holding up the network stream on this channel
 	// TODO: This could take a non-trivial amount of time since both GetObjectFromNetGUID
@@ -2757,7 +2837,7 @@ bool UActorChannel::ProcessQueuedBunches()
 	// If we don't have any time, then don't bother doing anything (including warning) as that may make things worse.
 	if (bHasTimeToProcess)
 	{
-		// We can process all of the queued up bunches if ALL of these are true:
+		// We can process at least some of the queued up bunches if ALL of these are true:
 		//	1. We no longer have any pending guids to load
 		//	2. We aren't still processing bunches on another channel that this actor was previously on
 		//	3. We haven't spent too much time yet this frame processing queued bunches
@@ -2767,15 +2847,26 @@ bool UActorChannel::ProcessQueuedBunches()
 			&& !Connection->Driver->ShouldQueueBunchesForActorGUID(ActorNetGUID))
 		{
 			DECLARE_SCOPE_CYCLE_COUNTER(TEXT("ProcessQueuedBunches time"), STAT_ProcessQueuedBunchesTime, STATGROUP_Net);
-			for (FInBunch* QueuedInBunch : QueuedBunches)
+
+			// Check failsafe timer so we don't end up starving the queue indefinitely due to frame time limits
+			const bool bProcessAllBunches = ShouldProcessAllQueuedBunches(FPlatformTime::ToSeconds64(QueueBunchStartCycles));
+			
+			int32 BunchIndex = 0;
+			while ((BunchIndex < QueuedBunches.Num()) && (bProcessAllBunches || !Connection->Driver->HasExceededIncomingBunchFrameProcessingTime()))
 			{
+				FInBunch* QueuedInBunch = QueuedBunches[BunchIndex];
+
 				ProcessBunch(*QueuedInBunch);
 				delete QueuedInBunch;
+				QueuedBunches[BunchIndex] = nullptr;
+
+				++BunchIndex;
 			}
 
-			UE_LOG(LogNet, VeryVerbose, TEXT("UActorChannel::ProcessQueuedBunches: Flushing queued bunches. ChIndex: %i, Actor: %s, Queued: %i"), ChIndex, Actor != NULL ? *Actor->GetPathName() : TEXT("NULL"), QueuedBunches.Num());
+			UE_LOG(LogNet, VeryVerbose, TEXT("UActorChannel::ProcessQueuedBunches: Flushing %i of %i queued bunches. ChIndex: %i, Actor: %s"), BunchIndex, QueuedBunches.Num(), ChIndex, Actor != NULL ? *Actor->GetPathName() : TEXT("NULL"));
 
-			QueuedBunches.Empty();
+			// Remove processed bunches from the queue
+			QueuedBunches.RemoveAt(0, BunchIndex);
 
 			// Call any onreps that were delayed because we were queuing bunches
 			for (auto& ReplicatorPair : ReplicationMap)
@@ -2789,10 +2880,14 @@ bool UActorChannel::ProcessQueuedBunches()
 				FNetGUIDCache::FIsOwnerOrPawnHelper Helper(Connection->Driver->GuidCache.Get(), Connection->OwningActor, Actor);
 #endif
 
-				PackageMapClient->SetHasQueuedBunches(ActorNetGUID, false);
+				PackageMapClient->SetHasQueuedBunches(ActorNetGUID, !QueuedBunches.IsEmpty());
 			}
 
-			QueuedBunchObjectReferences.Empty();
+			// We don't know exactly which bunches were referring to which objects, so we have to conservatively keep them all around.
+			if (QueuedBunches.IsEmpty())
+			{
+				QueuedBunchObjectReferences.Empty();
+			}
 		}
 		else
 		{
@@ -2819,9 +2914,9 @@ bool UActorChannel::ProcessQueuedBunches()
 		}
 
 		// Update the driver with our time spent
-		const uint32 QueueBunchEndCycles = FPlatformTime::Cycles();
-		const uint32 QueueBunchDeltaCycles = QueueBunchEndCycles - QueueBunchStartCycles;
-		const float QueueBunchDeltaMilliseconds = FPlatformTime::ToMilliseconds(QueueBunchDeltaCycles);
+		const uint64 QueueBunchEndCycles = FPlatformTime::Cycles64();
+		const uint64 QueueBunchDeltaCycles = QueueBunchEndCycles - QueueBunchStartCycles;
+		const float QueueBunchDeltaMilliseconds = static_cast<float>(FPlatformTime::ToMilliseconds64(QueueBunchDeltaCycles));
 
 		Connection->Driver->ProcessQueuedBunchesCurrentFrameMilliseconds += QueueBunchDeltaMilliseconds;
 	}
@@ -2866,7 +2961,7 @@ void UActorChannel::ReceivedBunch( FInBunch & Bunch )
 			uint16 NumMustBeMappedGUIDs = 0;
 			Bunch << NumMustBeMappedGUIDs;
 
-			QueuedObjectsToTrack.SetNum(NumMustBeMappedGUIDs);
+			QueuedObjectsToTrack.Reserve(NumMustBeMappedGUIDs);
 			//UE_LOG( LogNetTraffic, Warning, TEXT( "Read must be mapped GUID's. NumMustBeMappedGUIDs: %i" ), NumMustBeMappedGUIDs );
 
 			FNetGUIDCache* GuidCache = Connection->Driver->GuidCache.Get();
@@ -2943,8 +3038,10 @@ void UActorChannel::ReceivedBunch( FInBunch & Bunch )
 		//	2. We already have queued up bunches
 		//	3. If this actor was previously on a channel that is now still processing bunches after a close
 		//	4. The driver is requesting queuing for this GUID
+		//	5. We are time-boxing incoming bunch processing and have run out of time this frame
 		if (PendingGuidResolves.Num() > 0 || QueuedBunches.Num() > 0 || Connection->KeepProcessingActorChannelBunchesMap.Contains(ActorNetGUID) ||
-			 (Connection->Driver->ShouldQueueBunchesForActorGUID(ActorNetGUID)))
+			Connection->Driver->ShouldQueueBunchesForActorGUID(ActorNetGUID) ||
+			Connection->Driver->HasExceededIncomingBunchFrameProcessingTime())
 		{
 			if (Connection->KeepProcessingActorChannelBunchesMap.Contains(ActorNetGUID))
 			{
@@ -2993,6 +3090,17 @@ void UActorChannel::ProcessBunch( FInBunch & Bunch )
 	{
 		return;
 	}
+
+	uint64 StartTimeCycles = FPlatformTime::Cycles64();
+	ON_SCOPE_EXIT
+	{
+		if (Connection->Driver->GetIncomingBunchFrameProcessingTimeLimit() > 0.0f)
+		{
+			const uint64 DeltaCycles = FPlatformTime::Cycles64() - StartTimeCycles;
+			const double DeltaMS = FPlatformTime::ToMilliseconds64(DeltaCycles);
+			Connection->Driver->AddBunchProcessingFrameTimeMS(static_cast<float>(DeltaMS));
+		}
+	};
 
 	FReplicationFlags RepFlags;
 
@@ -3249,7 +3357,9 @@ public:
 		{
 			if ( !RepFlags.bNetOwner )
 			{
-				Actor->SetAutonomousProxy( false, false );
+				constexpr bool bIsAutonomousProxy = false; // become simulated
+				constexpr bool bAllowForcePropertyCompare = false;
+				Actor->SetAutonomousProxy(bIsAutonomousProxy, bAllowForcePropertyCompare);
 			}
 		}
 	}
@@ -3263,7 +3373,9 @@ public:
 
 			if (ActualRemoteRole == ROLE_AutonomousProxy)
 			{
-				Actor->SetAutonomousProxy(true, false);
+				constexpr bool bIsAutonomousProxy = true; // return to autonomous
+				constexpr bool bAllowForcePropertyCompare = false;
+				Actor->SetAutonomousProxy(bIsAutonomousProxy, bAllowForcePropertyCompare);
 			}
 		}
 	}
@@ -3643,7 +3755,7 @@ int64 UActorChannel::ReplicateActor()
 
 	bForceCompareProperties = false;		// Only do this once per frame when set
 	
-	INC_DWORD_STAT_BY(STAT_NumReplicatedActorBytes, (NumBitsWrote + 7) >> 3);
+	Connection->GetDriver()->GetMetrics()->IncrementInt(UE::Net::Metric::NumReplicatedActorBytes, (NumBitsWrote + 7) >> 3);
 	return NumBitsWrote;
 }
 
@@ -3806,13 +3918,18 @@ bool UActorChannel::UpdateDeletedSubObjects(FOutBunch& Bunch)
 	return bWroteSomethingImportant;
 }
 
-bool UActorChannel::CanSubObjectReplicateToClient(ELifetimeCondition NetCondition, FObjectKey SubObjectKey, const TStaticBitArray<COND_Max>& ConditionMap) const
+bool UActorChannel::CanSubObjectReplicateToClient(
+	const APlayerController* PlayerController,
+	ELifetimeCondition NetCondition,
+	FObjectKey SubObjectKey,
+	const TStaticBitArray<COND_Max>& ConditionMap,
+	const UE::Net::FNetConditionGroupManager& ConditionGroupManager)
 {
 	bool bCanReplicateToClient = ConditionMap[NetCondition];
 
 	if (NetCondition == COND_NetGroup)
 	{
-		TArrayView<const FName> NetGroups = DataChannelInternal::CachedNetworkSubsystem->GetNetConditionGroupManager().GetSubObjectNetConditionGroups(SubObjectKey);
+		TArrayView<const FName> NetGroups = ConditionGroupManager.GetSubObjectNetConditionGroups(SubObjectKey);
 
 		for (int i=0; i < NetGroups.Num() && !bCanReplicateToClient; ++i)
 		{
@@ -3828,7 +3945,7 @@ bool UActorChannel::CanSubObjectReplicateToClient(ELifetimeCondition NetConditio
 			}
 			else
 			{
-				bCanReplicateToClient = Connection->PlayerController->IsMemberOfNetConditionGroup(NetGroup);
+				bCanReplicateToClient = PlayerController->IsMemberOfNetConditionGroup(NetGroup);
 			}
 		}
 	}
@@ -3853,7 +3970,7 @@ bool UActorChannel::ReplicateRegisteredSubObjects(FOutBunch& Bunch, FReplication
 	}
 #endif
 
-	const TStaticBitArray<COND_Max> ConditionMap = FSendingRepState::BuildConditionMapFromRepFlags(RepFlags);
+	const TStaticBitArray<COND_Max> ConditionMap = UE::Net::BuildConditionMapFromRepFlags(RepFlags);
 
 	bool bWroteSomethingImportant = false;
 
@@ -3867,7 +3984,7 @@ bool UActorChannel::ReplicateRegisteredSubObjects(FOutBunch& Bunch, FReplication
 	// Now the replicated actor components
 	for( const FReplicatedComponentInfo& RepComponentInfo : FSubObjectRegistryGetter::GetReplicatedComponents(Actor) )
 	{
-		if (CanSubObjectReplicateToClient(RepComponentInfo.NetCondition, RepComponentInfo.Key, ConditionMap))
+		if (CanSubObjectReplicateToClient(Connection->PlayerController, RepComponentInfo.NetCondition, RepComponentInfo.Key, ConditionMap, DataChannelInternal::CachedNetworkSubsystem->GetNetConditionGroupManager()))
 		{
 			UActorComponent* ReplicatedComponent = RepComponentInfo.Component;
 
@@ -4019,7 +4136,7 @@ bool UActorChannel::ReplicateSubobject(UActorComponent* ReplicatedComponent, FOu
 
 		bool bWroteSomethingImportant = false;
 
-		const TStaticBitArray<COND_Max> ConditionMap = FSendingRepState::BuildConditionMapFromRepFlags(RepFlags);
+		const TStaticBitArray<COND_Max> ConditionMap = UE::Net::BuildConditionMapFromRepFlags(RepFlags);
 
 		checkf(Actor->IsUsingRegisteredSubObjectList() == false, TEXT("This code should only be hit when an Actor that does NOT support the SubObjectList is replicating an ActorComponent that does: %s replicating %s."), 
 			*Actor->GetName(), *ReplicatedComponent->GetName());
@@ -4051,7 +4168,7 @@ bool UActorChannel::ReplicateSubobject(UActorComponent* ReplicatedComponent, FOu
 bool UActorChannel::WriteComponentSubObjects(UActorComponent* ReplicatedComponent, FOutBunch& Bunch, FReplicationFlags RepFlags, const TStaticBitArray<COND_Max>& ConditionMap)
 {
 	using namespace UE::Net;
-	if (const FSubObjectRegistry* SubObjectList = FSubObjectRegistryGetter::GetSubObjectsOfActorCompoment(Actor, ReplicatedComponent))
+	if (const FSubObjectRegistry* SubObjectList = FSubObjectRegistryGetter::GetSubObjectsOfActorComponent(Actor, ReplicatedComponent))
 	{
 		return WriteSubObjects(ReplicatedComponent, *SubObjectList, Bunch, RepFlags, ConditionMap);
 	}
@@ -4091,7 +4208,7 @@ bool UActorChannel::WriteSubObjects(UObject* SubObjectOwner, const UE::Net::FSub
 		{
 			checkf(IsValid(SubObjectToReplicate), TEXT("Found invalid subobject (%s) registered in %s::%s"), *GetNameSafe(SubObjectToReplicate), *Actor->GetName(), *GetNameSafe(SubObjectOwner));
 
-			if (CanSubObjectReplicateToClient(SubObjectInfo.NetCondition, SubObjectInfo.Key, ConditionMap))
+			if (CanSubObjectReplicateToClient(Connection->PlayerController, SubObjectInfo.NetCondition, SubObjectInfo.Key, ConditionMap, DataChannelInternal::CachedNetworkSubsystem->GetNetConditionGroupManager()))
 			{
 #if UE_NET_REPACTOR_NAME_DEBUG
 				if (bSubObjectNameDebug)
@@ -4127,8 +4244,7 @@ bool UActorChannel::ValidateReplicatedSubObjects()
 	{
 		const DataChannelInternal::FSubObjectReplicatedInfo& Info = DataChannelInternal::LegacySubObjectsCollected[i];
 
-		constexpr bool bNoShrinking = false;
-		const bool bWasFound = DataChannelInternal::ReplicatedSubObjectsTracker.RemoveSingleSwap(Info, bNoShrinking) != 0;
+		const bool bWasFound = DataChannelInternal::ReplicatedSubObjectsTracker.RemoveSingleSwap(Info, EAllowShrinking::No) != 0;
 
 		ensureMsgf(bWasFound, TEXT("%s was not replicated by the subobject list in %s. Only by the legacy ReplicateSubObjects method."),
 			*Info.Describe(Actor), *Connection->GetDriver()->NetDriverName.ToString());
@@ -4143,7 +4259,7 @@ bool UActorChannel::ValidateReplicatedSubObjects()
 		const DataChannelInternal::FSubObjectReplicatedInfo& Info = DataChannelInternal::ReplicatedSubObjectsTracker[i];
 
 		ensureMsgf(false, TEXT("%s was replicated only in the registered subobject list in %s. Not in the legacy path."), 
-			*Info.Describe(Actor), *Info.Describe(Actor), *Connection->GetDriver()->NetDriverName.ToString());
+			*Info.Describe(Actor), *Connection->GetDriver()->NetDriverName.ToString());
 		UE_CLOG(bLogAllErrors, LogNet, Warning, TEXT("%s was replicated only in the registered subobject list. Not in the legacy path."), *Info.Describe(Actor));
 	}
 
@@ -4359,7 +4475,8 @@ void UActorChannel::WriteContentBlockHeader( UObject* Obj, FNetBitWriter &Bunch,
 			UObject* ObjOuter = Obj->GetOuter();
 			// If the subobject's outer is the not the actor (and the outer is supported for networking),
 			// then serialize the object's outer to rebuild the outer chain on the client.
-			const bool bActorIsOuter = (ObjOuter == Actor) || (!Obj->IsSupportedForNetworking());
+			const bool bActorIsOuter = (ObjOuter == Actor) || (!ObjOuter->IsSupportedForNetworking());
+
 			Bunch.WriteBit(bActorIsOuter ? 1 : 0);
 			if (!bActorIsOuter)
 			{
@@ -5302,12 +5419,12 @@ bool UActorChannel::WriteSubObjectInBunch(UObject* Obj, FOutBunch& Bunch, FRepli
 		Connection->Driver->GuidCache->AssignNewNetGUID_Server( Obj );	//Make sure it gets a NetGUID so that it is now 'supported'
 	}
 
-	bool NewSubobject = false;
-	
 	FReplicationFlags ObjRepFlags = RepFlags;
 	TSharedRef<FObjectReplicator>& ObjectReplicator = !bFoundReplicator ? CreateReplicator(Obj) : *FoundReplicator;
 
-	if (!bFoundReplicator || bNewToReplay)
+	const bool bIsNewSubObject = (ObjectReplicator->bSentSubObjectCreation == false) || bNewToReplay;
+
+	if (bIsNewSubObject)
 	{
 		// This is the first time replicating this subobject
 		// This bunch should be reliable and we should always return true
@@ -5315,7 +5432,8 @@ bool UActorChannel::WriteSubObjectInBunch(UObject* Obj, FOutBunch& Bunch, FRepli
 		// (this will ensure the content header chunk is sent which is all we care about
 		// to spawn this on the client).
 		Bunch.bReliable = true;
-		NewSubobject = true;
+		ObjectReplicator->bSentSubObjectCreation = true;
+
 		if (UE::Net::bEnableNetInitialSubObjects)
 		{
 			ObjRepFlags.bNetInitial = true;
@@ -5323,7 +5441,7 @@ bool UActorChannel::WriteSubObjectInBunch(UObject* Obj, FOutBunch& Bunch, FRepli
 	}
 	UE_NET_TRACE_OBJECT_SCOPE(ObjectReplicator->ObjectNetGUID, Bunch, GetTraceCollector(Bunch), ENetTraceVerbosity::Trace);
 	bool bWroteSomething = ObjectReplicator.Get().ReplicateProperties(Bunch, ObjRepFlags);
-	if (NewSubobject && !bWroteSomething)
+	if (bIsNewSubObject && !bWroteSomething)
 	{
 		// Write empty payload to force object creation
 		FNetBitWriter EmptyPayload;

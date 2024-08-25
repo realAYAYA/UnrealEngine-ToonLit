@@ -81,34 +81,31 @@ namespace UE::DefaultCacheDialog::Private
 					FEditorDirectories::Get().SetLastDirectory(ELastDirectory::NEW_ASSET, SavePackagePath);
 
 					const FName CallingContext = NAME_None;
-					Result = Cast<UUsdAssetCache2>(AssetTools.CreateAsset(
-						SaveAssetName,
-						SavePackagePath,
-						UUsdAssetCache2::StaticClass(),
-						Factory,
-						CallingContext
-					));
+					Result = Cast<UUsdAssetCache2>(
+						AssetTools.CreateAsset(SaveAssetName, SavePackagePath, UUsdAssetCache2::StaticClass(), Factory, CallingContext)
+					);
 				}
 			}
 		}
 
 		return Result;
 	}
-}
+}	 // namespace UE::DefaultCacheDialog::Private
 
 UUsdAssetCache2* SUsdDefaultAssetCacheDialog::GetCreatedCache()
 {
 	return ChosenCache;
 }
 
-void SUsdDefaultAssetCacheDialog::Construct( const FArguments& InArgs )
+void SUsdDefaultAssetCacheDialog::Construct(const FArguments& InArgs)
 {
 	ChosenCache = nullptr;
 	Window = InArgs._WidgetWindow;
-	bAccepted = false;
+	DialogOutcome = EDefaultAssetCacheDialogOption::Cancel;
 
 	FSlateFontInfo MessageFont(FAppStyle::GetFontStyle("StandardDialog.LargeFont"));
 
+	// clang-format off
 	ChildSlot
 	[
 		SNew(SBorder)
@@ -138,22 +135,23 @@ void SUsdDefaultAssetCacheDialog::Construct( const FArguments& InArgs )
 				.Padding(16.f, 0.f, 0.f, 0.f)
 				[
 					SNew(STextBlock)
-					.Text(LOCTEXT("DefaultAssetCacheDialogText", "This project has no default USD Asset Cache set.\n\nThe cache stores the assets generated when opening USD Stages, and shares them across all USD Stage Actors.\n\nDo you wish to set the default asset cache?"))
+					.Text(LOCTEXT("DefaultAssetCacheDialogText", "Opening a USD Stage with a Stage Actor requires a default USD Asset Cache.\n\nThe cache will be used to store and share the generated assets across all USD Stage Actors.\n\nHover on the buttons for more info about each of the proposed options."))
 					.Font(MessageFont)
-					.WrapTextAt(512.0f)
+					.WrapTextAt(650.0f)
 				]
 			]
 
 			+SVerticalBox::Slot()
+			.Padding(0.f, 32.f, 0.f, 0.f)
 			.AutoHeight()
 			[
 				SNew(SHorizontalBox)
 
-				+ SHorizontalBox::Slot()
+				+SHorizontalBox::Slot()
 				.FillWidth(1.0f)
 				.HAlign(HAlign_Left)
 				.VAlign(VAlign_Center)
-				.Padding(FMargin(16.f, 0.f, 0.f, 0.f))
+				.Padding(0)
 				[
 					SNew(SCheckBox)
 					.IsChecked(ECheckBoxState::Unchecked)
@@ -172,17 +170,18 @@ void SUsdDefaultAssetCacheDialog::Construct( const FArguments& InArgs )
 					]
 				]
 
-				+ SHorizontalBox::Slot()
+				+SHorizontalBox::Slot()
 				.AutoWidth()
 				.HAlign(HAlign_Right)
 				.VAlign(VAlign_Center)
+				.Padding(16.f, 0.f, 0.f, 0.f)
 				[
-					SNew( SUniformGridPanel )
-					.SlotPadding( 2 )
+					SNew(SUniformGridPanel)
+					.SlotPadding(FAppStyle::Get().GetMargin("StandardDialog.SlotPadding"))
 					.MinDesiredSlotWidth(FAppStyle::Get().GetFloat("StandardDialog.MinDesiredSlotWidth"))
 					.MinDesiredSlotHeight(FAppStyle::Get().GetFloat("StandardDialog.MinDesiredSlotHeight"))
 
-					+ SUniformGridPanel::Slot( 0, 0 )
+					+SUniformGridPanel::Slot(0, 0)
 					[
 						SNew(SButton)
 						.HAlign(HAlign_Center)
@@ -193,7 +192,7 @@ void SUsdDefaultAssetCacheDialog::Construct( const FArguments& InArgs )
 						.ButtonStyle(&FAppStyle::Get(), "PrimaryButton")
 					]
 
-					+ SUniformGridPanel::Slot( 1, 0 )
+					+SUniformGridPanel::Slot(1, 0)
 					[
 						SNew(SButton)
 						.HAlign(HAlign_Center)
@@ -204,7 +203,7 @@ void SUsdDefaultAssetCacheDialog::Construct( const FArguments& InArgs )
 						.ButtonStyle(&FAppStyle::Get(), "Button")
 					]
 
-					+ SUniformGridPanel::Slot( 2, 0 )
+					+SUniformGridPanel::Slot(2, 0)
 					[
 						SNew(SButton)
 						.HAlign(HAlign_Center)
@@ -218,6 +217,7 @@ void SUsdDefaultAssetCacheDialog::Construct( const FArguments& InArgs )
 			]
 		]
 	];
+	// clang-format on
 }
 
 bool SUsdDefaultAssetCacheDialog::SupportsKeyboardFocus() const
@@ -240,7 +240,7 @@ FReply SUsdDefaultAssetCacheDialog::OnUseExisting()
 		ChosenCache = Cast<UUsdAssetCache2>(PickedAssets[0].GetAsset());
 	}
 
-	bAccepted = true;
+	DialogOutcome = EDefaultAssetCacheDialogOption::PickExisting;
 	if (Window.IsValid())
 	{
 		Window.Pin()->RequestDestroyWindow();
@@ -252,7 +252,7 @@ FReply SUsdDefaultAssetCacheDialog::OnCreateNew()
 {
 	ChosenCache = UE::DefaultCacheDialog::Private::CreateNewAssetCacheWithDialog();
 
-	bAccepted = true;
+	DialogOutcome = EDefaultAssetCacheDialogOption::CreateNew;
 	if (Window.IsValid())
 	{
 		Window.Pin()->RequestDestroyWindow();
@@ -262,7 +262,7 @@ FReply SUsdDefaultAssetCacheDialog::OnCreateNew()
 
 FReply SUsdDefaultAssetCacheDialog::OnDontCreate()
 {
-	bAccepted = true;
+	DialogOutcome = EDefaultAssetCacheDialogOption::DontUseDefault;
 	if (Window.IsValid())
 	{
 		Window.Pin()->RequestDestroyWindow();
@@ -270,18 +270,18 @@ FReply SUsdDefaultAssetCacheDialog::OnDontCreate()
 	return FReply::Handled();
 }
 
-FReply SUsdDefaultAssetCacheDialog::OnKeyDown( const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent )
+FReply SUsdDefaultAssetCacheDialog::OnKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent)
 {
-	if ( InKeyEvent.GetKey() == EKeys::Escape )
+	if (InKeyEvent.GetKey() == EKeys::Escape)
 	{
 		return OnDontCreate();
 	}
 	return FReply::Unhandled();
 }
 
-bool SUsdDefaultAssetCacheDialog::UserAccepted() const
+EDefaultAssetCacheDialogOption SUsdDefaultAssetCacheDialog::GetDialogOutcome() const
 {
-	return bAccepted;
+	return DialogOutcome;
 }
 
 #undef LOCTEXT_NAMESPACE

@@ -8,24 +8,11 @@
 #include "Engine/TextureRenderTarget2D.h"
 #include "EngineUtils.h"
 #include "Misc/MessageDialog.h"
+#include "OpenCVHelper.h"
 #include "UI/CameraCalibrationWidgetHelpers.h"
 #include "UI/SFilterableActorPicker.h"
 #include "Widgets/Views/SListView.h"
 
-
-#if WITH_OPENCV
-
-#include <vector>
-#include <algorithm>
-
-#include "OpenCVHelper.h"
-#include "PreOpenCVHeaders.h"
-#include "opencv2/core/types.hpp"
-#include "opencv2/calib3d.hpp"
-#include "opencv2/imgproc.hpp"
-#include "PostOpenCVHeaders.h"
-
-#endif //WITH_OPENCV
 
 #define LOCTEXT_NAMESPACE "CameraNodalOffsetAlgoCheckerboard"
 
@@ -102,11 +89,6 @@ TSharedRef<SWidget> UCameraNodalOffsetAlgoCheckerboard::BuildCheckerboardPickerW
 
 bool UCameraNodalOffsetAlgoCheckerboard::PopulatePoints(FText& OutErrorMessage)
 {
-#if !WITH_OPENCV
-	OutErrorMessage = LOCTEXT("OpenCVRequired", "OpenCV required");
-	return false;
-#else
-
 	const FCameraCalibrationStepsController* StepsController;
 
 	if (!ensure(GetStepsControllerAndLensFile(&StepsController, nullptr)))
@@ -129,79 +111,29 @@ bool UCameraNodalOffsetAlgoCheckerboard::PopulatePoints(FText& OutErrorMessage)
 
 	TArray<FColor> Pixels;
 	FIntPoint Size;
-	ETextureRenderTargetFormat PixelFormat;
 
-	if (!StepsController->ReadMediaPixels(Pixels, Size, PixelFormat, OutErrorMessage, ESimulcamViewportPortion::CameraFeed))
+	if (!StepsController->ReadMediaPixels(Pixels, Size, OutErrorMessage, ESimulcamViewportPortion::CameraFeed))
 	{
 		return false;
 	}
-
-	if (PixelFormat != ETextureRenderTargetFormat::RTF_RGBA8)
-	{
-		OutErrorMessage = LOCTEXT("InvalidFormat", "MediaPlateRenderTarget did not have the expected RTF_RGBA8 format");
-		return false;
-	}
-
-	// Create OpenCV Mat with those pixels
-	cv::Mat CvFrame(cv::Size(Size.X, Size.Y), CV_8UC4, Pixels.GetData());
-
-	// Convert to Gray
-	cv::Mat CvGray;
-	cv::cvtColor(CvFrame, CvGray, cv::COLOR_RGBA2GRAY);
-
-	// Populate the 3d/2d correlation points
 
 	const ACameraCalibrationCheckerboard* Checkerboard = Cast<ACameraCalibrationCheckerboard>(Calibrator.Get());
 	check(Checkerboard); // This should be ensured by the picker.
 
-	std::vector<cv::Point2f> Points2d;
+	const FIntPoint CheckerboardDimensions = FIntPoint(Checkerboard->NumCornerCols, Checkerboard->NumCornerRows);
 
-	// Identify checkerboard
+	TArray<FVector2f> Corners;
+	const bool bCornersFound = FOpenCVHelper::IdentifyCheckerboard(Pixels, Size, CheckerboardDimensions, Corners);
+
+	if (!bCornersFound || Corners.IsEmpty())
 	{
-		cv::Size CheckerboardSize(Checkerboard->NumCornerCols, Checkerboard->NumCornerRows);
-
-		std::vector<cv::Point2f> Corners;
-
-		const bool bCornersFound = cv::findChessboardCorners(
-			CvGray,
-			CheckerboardSize,
-			Corners,
-			cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_NORMALIZE_IMAGE
+		OutErrorMessage = FText::FromString(FString::Printf(TEXT(
+			"Could not identify the expected checkerboard points of interest. "
+			"The expected checkerboard has %dx%d inner corners."),
+			Checkerboard->NumCornerCols, Checkerboard->NumCornerRows)
 		);
 
-		if (!bCornersFound)
-		{
-			OutErrorMessage = FText::FromString(FString::Printf(TEXT(
-				"Could not identify the expected checkerboard points of interest. "
-				"The expected checkerboard has %dx%d inner corners."),
-				Checkerboard->NumCornerCols, Checkerboard->NumCornerRows)
-			);
-
-			return false;
-		}
-
-		// CV_TERMCRIT_EPS will stop the search when the error is under the given epsilon.
-		// CV_TERMCRIT_ITER will stop after the specified number of iterations regardless of epsilon.
-		cv::TermCriteria Criteria(cv::TermCriteria::Type::EPS | cv::TermCriteria::Type::COUNT, 30, 0.001);
-		cv::cornerSubPix(CvGray, Corners, cv::Size(11, 11), cv::Size(-1, -1), Criteria);
-
-		Points2d.reserve(Corners.size());
-
-		if (!Corners.empty())
-		{
-			for (cv::Point2f& Corner : Corners)
-			{
-				Points2d.push_back(cv::Point2f(Corner.x, Corner.y));
-			}
-		}
-	}
-
-	check(Points2d.size() == Checkerboard->NumCornerRows * Checkerboard->NumCornerCols);
-
-	// Force first one to be top-left
-	if (Points2d.front().y > Points2d.back().y) 
-	{
-		std::reverse(Points2d.begin(), Points2d.end());
+		return false;
 	}
 
 	// Export the latest session data
@@ -220,8 +152,7 @@ bool UCameraNodalOffsetAlgoCheckerboard::PopulatePoints(FText& OutErrorMessage)
 			const uint32 RowIndex = NodalOffsetTool->AdvanceSessionRowIndex();
 
 			Row->Index = RowIndex;
-			Row->Point2D.X = float(Points2d[PointIdx].x) / Size.X;
-			Row->Point2D.Y = float(Points2d[PointIdx].y) / Size.Y;
+			Row->Point2D = Corners[PointIdx] / Size;
 
 			FTransform LocalPoint3d;
 			LocalPoint3d.SetLocation(Checkerboard->SquareSideLength * FVector(0, ColIdx, Checkerboard->NumCornerRows - RowIdx - 1));
@@ -257,8 +188,6 @@ bool UCameraNodalOffsetAlgoCheckerboard::PopulatePoints(FText& OutErrorMessage)
 	}
 
 	return true;
-
-#endif //WITH_OPENCV
 }
 
 AActor* UCameraNodalOffsetAlgoCheckerboard::FindFirstCalibrator() const

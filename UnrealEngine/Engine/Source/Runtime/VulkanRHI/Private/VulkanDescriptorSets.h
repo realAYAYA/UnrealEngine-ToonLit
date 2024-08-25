@@ -355,7 +355,7 @@ public:
 	template<bool bIsCompute>
 	void FinalizeBindings(const FVulkanDevice& Device, const FUniformBufferGatherInfo& UBGatherInfo, const TArrayView<FRHISamplerState*>& ImmutableSamplers);
 
-	void GenerateHash(const TArrayView<FRHISamplerState*>& ImmutableSamplers);
+	void GenerateHash(const TArrayView<FRHISamplerState*>& ImmutableSamplers, VkPipelineBindPoint InBindPoint);
 
 	friend uint32 GetTypeHash(const FVulkanDescriptorSetsLayoutInfo& In)
 	{
@@ -365,6 +365,11 @@ public:
 	inline bool operator == (const FVulkanDescriptorSetsLayoutInfo& In) const
 	{
 		if (In.Hash != Hash)
+		{
+			return false;
+		}
+
+		if (In.BindPoint != BindPoint)
 		{
 			return false;
 		}
@@ -426,6 +431,8 @@ protected:
 	uint32 Hash = 0;
 
 	uint32 TypesUsageID = ~0;
+
+	VkPipelineBindPoint BindPoint = VK_PIPELINE_BIND_POINT_MAX_ENUM;
 
 	void CompileTypesUsageID();
 

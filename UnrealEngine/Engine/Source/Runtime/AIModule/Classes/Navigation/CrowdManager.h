@@ -10,7 +10,9 @@
 #include "AI/Navigation/NavigationTypes.h"
 #include "Tickable.h"
 #include "DrawDebugHelpers.h"
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "NavFilters/NavigationQueryFilter.h"
+#endif
 #include "CrowdManager.generated.h"
 
 class ANavigationData;
@@ -32,6 +34,9 @@ struct dtCrowdAgent;
 struct dtCrowdAgentDebugInfo;
 class dtObstacleAvoidanceDebugData;
 #endif
+
+struct FNavigationQueryFilter;
+typedef TSharedPtr<const FNavigationQueryFilter, ESPMode::ThreadSafe> FSharedConstNavQueryFilter;
 
 /**
  *  Crowd manager is responsible for handling crowds using Detour (Recast library)

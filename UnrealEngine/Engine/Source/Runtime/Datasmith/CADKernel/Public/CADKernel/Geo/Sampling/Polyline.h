@@ -162,8 +162,8 @@ public:
 
 	void Pop()
 	{
-		Coordinates.Pop(false);
-		Points.Pop(false);
+		Coordinates.Pop(EAllowShrinking::No);
+		Points.Pop(EAllowShrinking::No);
 	}
 
 	double GetLength(const FLinearBoundary& InBoundary) const

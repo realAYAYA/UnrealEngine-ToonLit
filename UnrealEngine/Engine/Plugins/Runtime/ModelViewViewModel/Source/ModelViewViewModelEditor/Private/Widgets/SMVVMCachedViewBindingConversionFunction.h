@@ -2,14 +2,20 @@
 
 #pragma once
 
-#include "Widgets/SMVVMCachedViewBindingPropertyPath.h"
+#include "K2Node.h"
+#include "Misc/TVariant.h"
+#include "Templates/SubclassOf.h"
 
-class SHorizontalBox;
+#include "Styling/CoreStyle.h"
+#include "Styling/SlateTypes.h"
+#include "Styling/SlateWidgetStyleAsset.h"
+#include "Widgets/SCompoundWidget.h"
+
+class UFunction;
 class UWidgetBlueprint;
 
 namespace UE::MVVM
 {
-DECLARE_DELEGATE_RetVal(const UFunction*, FOnGetConversionFunction);
 
 class SCachedViewBindingConversionFunction : public SCompoundWidget
 {
@@ -17,6 +23,8 @@ private:
 	using Super = SCompoundWidget;
 
 public:
+	using FConversionFunctionVariant = TVariant<const UFunction*, TSubclassOf<UK2Node>, FEmptyVariantState>;
+	DECLARE_DELEGATE_RetVal(FConversionFunctionVariant, FOnGetConversionFunction);
 
 	SLATE_BEGIN_ARGS(SCachedViewBindingConversionFunction)
 		: _TextStyle(&FCoreStyle::Get().GetWidgetStyle<FTextBlockStyle>("NormalText"))

@@ -25,7 +25,7 @@ bool FDisplayClusterRenderSyncPolicyBase::Initialize()
 void FDisplayClusterRenderSyncPolicyBase::SyncOnBarrier()
 {
 	{
-		TRACE_CPUPROFILER_EVENT_SCOPE(nDisplay SyncPolicyBase::SyncBarrier);
+		TRACE_CPUPROFILER_EVENT_SCOPE(nDisplay SyncOnBarrier);
 		GDisplayCluster->GetPrivateClusterMgr()->GetClusterNodeController()->SyncOnBarrier();
 	}
 }
@@ -40,6 +40,16 @@ void FDisplayClusterRenderSyncPolicyBase::WaitForFrameCompletion()
 		Viewport->IssueFrameEvent();
 		Viewport->WaitForFrameEventCompletion();
 	}
+}
+
+bool FDisplayClusterRenderSyncPolicyBase::GetMaximumFrameLatency(uint32& OutMaximumFrameLatency)
+{
+	return FDisplayClusterRenderSyncHelper::Get().GetMaximumFrameLatency(OutMaximumFrameLatency);
+}
+
+bool FDisplayClusterRenderSyncPolicyBase::SetMaximumFrameLatency(uint32 MaximumFrameLatency)
+{
+	return FDisplayClusterRenderSyncHelper::Get().SetMaximumFrameLatency(MaximumFrameLatency);
 }
 
 bool FDisplayClusterRenderSyncPolicyBase::IsWaitForVBlankFeatureSupported()

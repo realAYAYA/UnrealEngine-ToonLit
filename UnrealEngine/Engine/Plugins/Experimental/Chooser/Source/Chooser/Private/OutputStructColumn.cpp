@@ -4,88 +4,22 @@
 #include "OutputStructColumn.h"
 
 #if WITH_EDITOR
-	#include "IPropertyAccessEditor.h"
+#include "IPropertyAccessEditor.h"
+#include "PropertyBag.h"
 #endif
 
 bool FStructContextProperty::SetValue(FChooserEvaluationContext& Context, const FInstancedStruct& InValue) const
 {
-	const UStruct* StructType = nullptr;
-	const void* Container = nullptr;
-
-	if (Binding.PropertyBindingChain.IsEmpty())
+	void* TargetData;
+	if (Binding.GetValuePtr(Context, TargetData))
 	{
-		if(Context.Params.IsValidIndex((Binding.ContextIndex)))
-		{
-			// directly bound to context struct
-			if (Context.Params[Binding.ContextIndex].GetScriptStruct() == InValue.GetScriptStruct())
-			{
-				void* TargetData = Context.Params[Binding.ContextIndex].GetMutableMemory();
-				InValue.GetScriptStruct()->CopyScriptStruct(TargetData, InValue.GetMemory());
-			}
-		}
+		InValue.GetScriptStruct()->CopyScriptStruct(TargetData, InValue.GetMemory());
+		return true;
 	}
-	else if (UE::Chooser::ResolvePropertyChain(Context, Binding, Container, StructType))
-	{
-		if (FStructProperty* Property = FindFProperty<FStructProperty>(StructType, Binding.PropertyBindingChain.Last()))
-		{
-			// const cast is here just because ResolvePropertyChain expects a const void*&
-			void* TargetData = Property->ContainerPtrToValuePtr<void>(const_cast<void*>(Container));
-			
-			if (Property->Struct == InValue.GetScriptStruct())
-			{
-				Property->Struct->CopyScriptStruct(TargetData, InValue.GetMemory());
-			}
-
-			return true;
-		}
-	}
-
 	return false;
 }
 
 #if WITH_EDITOR
-
-void FStructContextProperty::SetBinding(const UObject* OuterObject, const TArray<FBindingChainElement>& InBindingChain)
-{
-	Binding.StructType = nullptr;
-
-	UE::Chooser::CopyPropertyChain(InBindingChain, Binding);
-
-	if (Binding.PropertyBindingChain.Num() == 0)
-	{
-		// binding directly to context struct, get struct type from there
-	    if (const IHasContextClass* HasContextClass = Cast<IHasContextClass>(OuterObject))
-	    {
-	    	TConstArrayView<FInstancedStruct> ContextData = HasContextClass->GetContextData();
-	    	if (ContextData.IsValidIndex(Binding.ContextIndex))
-		    {
-	    		if (const FContextObjectTypeStruct* StructContextData = ContextData[Binding.ContextIndex].GetPtr<FContextObjectTypeStruct>())
-	    		{
-					Binding.StructType = StructContextData->Struct;
-	    			Binding.DisplayName = StructContextData->Struct->GetAuthoredName();
-	    		}
-		    }
-	    }
-	}
-	else
-	{
-		const FField* Field = InBindingChain.Last().Field.ToField();
-		if (const FStructProperty* StructProperty = CastField<FStructProperty>(Field))
-		{
-			Binding.StructType = StructProperty->Struct;
-			Binding.DisplayName = StructProperty->GetAuthoredName();
-			if (InBindingChain.Num() > 2)
-			{
-				// add the parent struct name to the display name if there is one
-				
-				if (const FField* NextToLastField = InBindingChain[InBindingChain.Num()-2].Field.ToField())
-				{
-					Binding.DisplayName = NextToLastField->GetAuthoredName() + "." + Binding.DisplayName;
-				}
-			}
-		}
-	}
-}
 
 void FOutputStructColumn::StructTypeChanged()
 {
@@ -98,6 +32,11 @@ void FOutputStructColumn::StructTypeChanged()
 			DefaultRowValue.InitializeAs(Struct);
 		}
 
+		if (FallbackValue.GetScriptStruct() != Struct)
+		{
+			FallbackValue.InitializeAs(Struct);
+		}
+
 		for (FInstancedStruct& RowValue : RowValues)
 		{
 			if (RowValue.GetScriptStruct() != Struct)
@@ -105,6 +44,28 @@ void FOutputStructColumn::StructTypeChanged()
 				RowValue.InitializeAs(Struct);
 			}
 		}
+	}
+}
+
+void FOutputStructColumn::AddToDetails(FInstancedPropertyBag& PropertyBag, int32 ColumnIndex, int32 RowIndex)
+{
+	FText DisplayName;
+	InputValue.Get<FChooserParameterStructBase>().GetDisplayName(DisplayName);
+	FName PropertyName("RowData",ColumnIndex);
+	FPropertyBagPropertyDesc PropertyDesc(PropertyName,  EPropertyBagPropertyType::Struct, RowValues[RowIndex].GetScriptStruct());
+	PropertyDesc.MetaData.Add(FPropertyBagPropertyDescMetaData("DisplayName", DisplayName.ToString()));
+	PropertyBag.AddProperties({PropertyDesc});
+	PropertyBag.SetValueStruct(PropertyName, FConstStructView(RowValues[RowIndex].GetScriptStruct(), RowValues[RowIndex].GetMemory()));
+}
+
+void FOutputStructColumn::SetFromDetails(FInstancedPropertyBag& PropertyBag, int32 ColumnIndex, int32 RowIndex)
+{
+	FName PropertyName("RowData", ColumnIndex);
+	
+	TValueOrError<FStructView, EPropertyBagResult> Result = PropertyBag.GetValueStruct(PropertyName, RowValues[RowIndex].GetScriptStruct());
+	if (FStructView* StructView = Result.TryGetValue())
+	{
+		RowValues[RowIndex].GetScriptStruct()->CopyScriptStruct(RowValues[RowIndex].GetMutableMemory(), StructView->GetMemory());
 	}
 }
 
@@ -119,7 +80,16 @@ void FOutputStructColumn::SetOutputs(FChooserEvaluationContext& Context, int Row
 {
 	if (InputValue.IsValid())
 	{
-		InputValue.Get<FChooserParameterStructBase>().SetValue(Context, RowValues[RowIndex]);
+		const FInstancedStruct* OutputValue = &FallbackValue;
+		if (RowValues.IsValidIndex(RowIndex))
+		{
+			OutputValue = &RowValues[RowIndex];
+		}
+
+		if (OutputValue && OutputValue->IsValid())
+		{
+			InputValue.Get<FChooserParameterStructBase>().SetValue(Context, *OutputValue);
+		}
 	}
 	
 #if WITH_EDITOR

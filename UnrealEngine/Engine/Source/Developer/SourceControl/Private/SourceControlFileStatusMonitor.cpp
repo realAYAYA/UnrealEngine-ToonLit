@@ -2,13 +2,17 @@
 
 #include "SourceControlFileStatusMonitor.h"
 
-#include "Framework/Application/SlateApplication.h"
 #include "HAL/PlatformTime.h"
 #include "ISourceControlModule.h"
 #include "ISourceControlProvider.h"
 #include "Math/NumericLimits.h"
-#include "SourceControlOperations.h"
+#include "Misc/ScopeExit.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
+#include "SourceControlOperations.h"
+
+#if SOURCE_CONTROL_WITH_SLATE
+#include "Framework/Application/SlateApplication.h"
+#endif //#if SOURCE_CONTROL_WITH_SLATE
 
 FSourceControlFileStatusMonitor::FSourceControlFileStatusMonitor()
 : ProbationPeriodPolicy(FTimespan::FromSeconds(1))
@@ -17,8 +21,13 @@ FSourceControlFileStatusMonitor::FSourceControlFileStatusMonitor()
 	TickerHandle = FTSTicker::GetCoreTicker().AddTicker(FTickerDelegate::CreateRaw(this, &FSourceControlFileStatusMonitor::Tick));
 	SetSuspendMonitoringPolicy([]()
 	{
+#if SOURCE_CONTROL_WITH_SLATE
 		// By default, suspend monitoring if the user didn't interact for the last 5 minutes.
 		return FPlatformTime::Seconds() - FSlateApplication::Get().GetLastUserInteractionTime() > FTimespan::FromMinutes(5).GetTotalSeconds();
+#else
+		// Without slate there is not user interaction, so we always suspend the monitoring
+		return true;
+#endif //SOURCE_CONTROL_WITH_SLATE
 	});
 }
 
@@ -290,12 +299,12 @@ bool FSourceControlFileStatusMonitor::Tick(float DeltaTime)
 		if (NewFiles.Num() > 0)
 		{
 			RequestedStatusFiles.Emplace(NewFiles.Last()->Key);
-			NewFiles.Pop(/*bAllowShrinking*/false);
+			NewFiles.Pop(EAllowShrinking::No);
 		}
 		else if (RefreshedFiles.Num())
 		{
 			RequestedStatusFiles.Emplace(RefreshedFiles.Last()->Key);
-			RefreshedFiles.Pop(/*bAllowShrinking*/false);
+			RefreshedFiles.Pop(EAllowShrinking::No);
 		}
 		else
 		{

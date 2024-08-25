@@ -1,13 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+import 'package:epic_common/preferences.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 import 'package:logging/logging.dart';
 import 'package:streaming_shared_preferences/streaming_shared_preferences.dart';
 
 import '../../utilities/debug_utilities.dart';
-import '../../utilities/preferences_bundle.dart';
-import '../../utilities/transient_preference.dart';
 import '../navigator_keys.dart';
 
 final _log = Logger('DeltaWidgetSettings');

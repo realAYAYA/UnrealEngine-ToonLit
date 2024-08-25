@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "DatasmithAnimationSerializer.h"
+#include "DatasmithLocaleScope.h"
 #include "DatasmithSceneFactory.h"
 #include "DatasmithUtils.h"
 #include "IDatasmithSceneElements.h"
@@ -446,11 +447,13 @@ namespace DatasmithAnimationJsonSerializerImpl
 
 bool FDatasmithAnimationSerializer::Serialize(const TSharedRef<IDatasmithLevelSequenceElement>& LevelSequence, const TCHAR* FilePath, bool bDebugFormat)
 {
+	FDatasmithLocaleScope LocaleScope;
 	return DatasmithAnimationJsonSerializerImpl::SerializeLevelSequence(LevelSequence, FilePath, bDebugFormat);
 }
 
 bool FDatasmithAnimationSerializer::Deserialize(const TSharedRef<IDatasmithLevelSequenceElement>& LevelSequence, const TCHAR* FilePath)
 {
+	FDatasmithLocaleScope LocaleScope;
 	return DatasmithAnimationJsonSerializerImpl::DeserializeLevelSequence(LevelSequence, FilePath);
 }
 

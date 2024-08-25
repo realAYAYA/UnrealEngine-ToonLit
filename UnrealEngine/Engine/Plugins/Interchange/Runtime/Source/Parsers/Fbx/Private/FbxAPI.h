@@ -20,6 +20,9 @@ namespace UE
 			class FPayloadContextBase;
 			struct FFbxHelper;
 		}
+#if WITH_ENGINE
+		struct FMeshPayloadData;
+#endif
 	}
 }
 class UInterchangeBaseNodeContainer;
@@ -39,6 +42,20 @@ namespace UE
 
 				~FFbxParser();
 
+				void Reset();
+
+				void SetResultContainer(UInterchangeResultsContainer* Result)
+				{
+					ResultsContainer = Result;
+				}
+
+				void SetConvertSettings(const bool InbConvertScene, const bool InbForceFrontXAxis, const bool InbConvertSceneUnit)
+				{
+					bConvertScene = InbConvertScene;
+					bForceFrontXAxis = InbForceFrontXAxis;
+					bConvertSceneUnit = InbConvertSceneUnit;
+				}
+
 				//return the fbx helper for this parser
 				const TSharedPtr<FFbxHelper> GetFbxHelper();
 
@@ -53,6 +70,9 @@ namespace UE
 
 				/* Extract the fbx mesh data from the sdk into our node container */
 				bool FetchMeshPayloadData(const FString& PayloadKey, const FTransform& MeshGlobalTransform, const FString& PayloadFilepath);
+#if WITH_ENGINE
+				bool FetchMeshPayloadData(const FString& PayloadKey, const FTransform& MeshGlobalTransform, FMeshPayloadData& OutMeshPayloadData);
+#endif
 
 				/* Extract the fbx data from the sdk into our node container */
 				bool FetchAnimationBakeTransformPayload(const FString& PayloadKey, const double BakeFrequency, const double RangeStartTime, const double RangeEndTime, const FString& PayloadFilepath);
@@ -95,12 +115,18 @@ namespace UE
 				FbxScene* SDKScene = nullptr;
 				FbxImporter* SDKImporter = nullptr;
 				FbxGeometryConverter* SDKGeometryConverter = nullptr;
+				FbxIOSettings* SDKIoSettings = nullptr;
 				FString SourceFilename;
 				TMap<FString, TSharedPtr<FPayloadContextBase>> PayloadContexts;
 				TSharedPtr<FFbxHelper> FbxHelper;
 
 				//For PivotReset and Animation Conversion:
 				double FrameRate = 30.0;
+
+				//Convert settings
+				bool bConvertScene = true;
+				bool bForceFrontXAxis = false;
+				bool bConvertSceneUnit = true;
 			};
 		}//ns Private
 	}//ns Interchange

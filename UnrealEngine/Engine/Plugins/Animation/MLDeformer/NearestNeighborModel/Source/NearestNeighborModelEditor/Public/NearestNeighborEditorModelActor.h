@@ -3,38 +3,30 @@
 #pragma once
 
 #include "MLDeformerGeomCacheActor.h"
-#include "MLDeformerComponent.h"
 
+class UGeometryCache;
 class UMLDeformerComponent;
-class UGeometryCacheComponent;
 
 namespace UE::NearestNeighborModel
 {
-	class FNearestNeighborEditorModel;
-
-	using namespace UE::MLDeformer;
-
 	enum : int32
 	{
 		ActorID_NearestNeighborActors = 6
 	};
 
-	class NEARESTNEIGHBORMODELEDITOR_API FNearestNeighborEditorModelActor
-		: public FMLDeformerGeomCacheActor
+	class FNearestNeighborEditorModelActor
+		: public UE::MLDeformer::FMLDeformerGeomCacheActor
 	{
 	public:
 		FNearestNeighborEditorModelActor(const FConstructSettings& Settings);
+		virtual ~FNearestNeighborEditorModelActor();
 
-		friend class FNearestNeighborEditorModel; 
-
+		void SetGeometryCache(UGeometryCache* InGeometryCache) const;
+		void SetTrackedComponent(const UMLDeformerComponent* InComponent, int32 InSectionIndex);
+		void Tick() const;
+	
 	private:
-		void SetGeometryCacheComponent(UGeometryCacheComponent* Component) { GeomCacheComponent = Component; }
-		UGeometryCacheComponent* GetGeometryCacheComponent() const { return GeomCacheComponent; }
-
-		void InitNearestNeighborActor(const int32 InPartId, const UMLDeformerComponent* InComponent);
-		void TickNearestNeighborActor();
-
-		int32 PartId = INDEX_NONE;
-		const UMLDeformerComponent* MLDeformerComponent = nullptr;
+		int32 SectionIndex = INDEX_NONE;
+		TWeakObjectPtr<const UMLDeformerComponent> TrackedComponent;
 	};
 }	// namespace UE::NearestNeighborModel

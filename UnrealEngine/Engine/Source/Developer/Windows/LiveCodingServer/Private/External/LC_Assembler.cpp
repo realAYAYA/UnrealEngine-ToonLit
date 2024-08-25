@@ -6,7 +6,7 @@
 #include "LC_Assembler.h"
 // BEGIN EPIC MOD
 #include "LC_Platform.h"
-#include LC_PLATFORM_INCLUDE(LC_Foundation)
+#include "LC_Foundation_Windows.h"
 #include "LC_Assert.h"
 #include <cstdlib>
 // END EPIC MOD

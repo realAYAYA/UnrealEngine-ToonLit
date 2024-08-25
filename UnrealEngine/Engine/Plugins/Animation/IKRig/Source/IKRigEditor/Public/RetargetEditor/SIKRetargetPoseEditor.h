@@ -27,6 +27,7 @@ private:
 	
 	TSharedRef<SWidget> MakeToolbar(TSharedPtr<FUICommandList> Commands);
 	TSharedRef<SWidget> GenerateResetMenuContent(TSharedPtr<FUICommandList> Commands);
+	TSharedRef<SWidget> GenerateEditMenuContent(TSharedPtr<FUICommandList> Commands);
 	TSharedRef<SWidget> GenerateNewMenuContent(TSharedPtr<FUICommandList> Commands);
 	TObjectPtr<UIKRetargeterController> GetAssetControllerFromSelectedObjects(IDetailLayoutBuilder& DetailBuilder) const;
 	

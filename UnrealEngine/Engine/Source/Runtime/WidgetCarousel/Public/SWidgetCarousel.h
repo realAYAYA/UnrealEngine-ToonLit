@@ -322,6 +322,11 @@ struct FCarouselDisplayItem : public TSharedFromThis<FCarouselDisplayItem>
 		return SlideValue;
 	}
 
+	const float GetMoveSpeed() const
+	{
+		return MoveSpeed;
+	}
+
 protected:
 
 	/**
@@ -600,6 +605,21 @@ public:
 	float GetPrimarySlide()
 	{
 		return CenterCarouselWidget->GetSlideValue();
+	}
+
+	void SetMoveSpeed(float InMoveSpeed)
+	{
+		if (!IsInTransition())
+		{
+			CenterCarouselWidget->SetMoveSpeed(InMoveSpeed);
+			RightCarouselWidget->SetMoveSpeed(InMoveSpeed);
+			LeftCarouselWidget->SetMoveSpeed(InMoveSpeed);
+		}
+	}
+
+	float GetMoveSpeed() const
+	{
+		return CenterCarouselWidget->GetMoveSpeed();
 	}
 
 protected:

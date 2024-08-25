@@ -45,7 +45,7 @@ class FSequenceCameraShakeSpawnRegister : public FMovieSceneSpawnRegister
 public:
 	void SetSpawnedObject(UObject* InObject) { SpawnedObject = InObject; }
 
-	virtual UObject* SpawnObject(FMovieSceneSpawnable&, FMovieSceneSequenceIDRef, IMovieScenePlayer&) override { return SpawnedObject.Get(); }
+	virtual UObject* SpawnObject(FMovieSceneSpawnable&, FMovieSceneSequenceIDRef, TSharedRef<const UE::MovieScene::FSharedPlaybackState>) override { return SpawnedObject.Get(); }
 	virtual void DestroySpawnedObject(UObject&) override {}
 
 #if WITH_EDITOR

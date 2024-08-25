@@ -104,12 +104,13 @@ namespace UE::VertexDeltaModel
 	{
 		using namespace UE::MLDeformer;
 
-		const UMLDeformerAsset* DeformerAsset = DeformerComponent != nullptr ? DeformerComponent->GetDeformerAsset() : nullptr;
-		const UMLDeformerModel* Model = DeformerAsset != nullptr ? DeformerAsset->GetModel() : nullptr;
-		UMLDeformerModelInstance* ModelInstance = DeformerComponent != nullptr ? DeformerComponent->GetModelInstance() : nullptr;
+		const UMLDeformerAsset* DeformerAsset = DeformerComponent ? DeformerComponent->GetDeformerAsset() : nullptr;
+		const UMLDeformerModel* Model = DeformerAsset ? DeformerAsset->GetModel() : nullptr;
+		UMLDeformerModelInstance* ModelInstance = DeformerComponent ? DeformerComponent->GetModelInstance() : nullptr;
 		const UVertexDeltaModel* VertexDeltaModel = Cast<UVertexDeltaModel>(Model);
 		
-		if (Model && VertexDeltaModel && ModelInstance)
+		Weight = 0.0f;
+		if (Model && VertexDeltaModel && ModelInstance && ModelInstance->GetSkeletalMeshComponent())
 		{
 			VertexDeltaModelInstance = Cast<UVertexDeltaModelInstance>(ModelInstance);
 			if (VertexDeltaModelInstance)

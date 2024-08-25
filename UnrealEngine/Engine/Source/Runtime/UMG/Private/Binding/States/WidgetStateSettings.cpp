@@ -104,7 +104,7 @@ FWidgetStateBitfield UWidgetStateSettings::GetInitialRegistrationBitfield(const 
 	FWidgetStateBitfield InitBitfield = {};
 
 	uint8 BinaryStateIndex = 0;
-	for (TObjectPtr<UWidgetBinaryStateRegistration> BinaryStateRegistrationCDO : BinaryStateRegistrationCDOs)
+	for (const TObjectPtr<UWidgetBinaryStateRegistration>& BinaryStateRegistrationCDO : BinaryStateRegistrationCDOs)
 	{
 		bool InitBinaryState = BinaryStateRegistrationCDO->GetRegisteredWidgetState(InWidget);
 		InitBitfield.SetBinaryState(BinaryStateIndex, InitBinaryState);
@@ -112,7 +112,7 @@ FWidgetStateBitfield UWidgetStateSettings::GetInitialRegistrationBitfield(const 
 	}
 
 	uint8 EnumStateIndex = 0;
-	for (TObjectPtr<UWidgetEnumStateRegistration> EnumStateRegistrationCDO : EnumStateRegistrationCDOs)
+	for (const TObjectPtr<UWidgetEnumStateRegistration>& EnumStateRegistrationCDO : EnumStateRegistrationCDOs)
 	{
 		bool InitUsesEnumState = EnumStateRegistrationCDO->GetRegisteredWidgetUsesState(InWidget);
 		if (InitUsesEnumState)

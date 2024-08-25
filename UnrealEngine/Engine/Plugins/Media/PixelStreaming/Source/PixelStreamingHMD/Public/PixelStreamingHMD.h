@@ -7,6 +7,8 @@
 #include "SceneViewExtension.h"
 #include "XRTrackingSystemBase.h"
 
+DECLARE_LOG_CATEGORY_EXTERN(LogPixelStreamingHMD, Log, All);
+
 class APlayerController;
 class FSceneView;
 class FSceneViewFamily;
@@ -48,9 +50,6 @@ public:
 	virtual class TSharedPtr<class IStereoRendering, ESPMode::ThreadSafe> GetStereoRenderingDevice() override
 	{
 		return SharedThis(this);
-		// TODO (william.belcher): We may want to move the stereo rendering aspect to the front end using WebGL. In that case,
-		// uncomment the line below and delete the line above
-		// return nullptr;
 	}
 
 	protected :
@@ -66,6 +65,7 @@ public:
 	virtual bool GetHMDMonitorInfo(MonitorInfo&) override;
 	virtual void GetFieldOfView(float& OutHFOVInDegrees, float& OutVFOVInDegrees) const override;
 	virtual bool IsChromaAbCorrectionEnabled() const override;
+	virtual bool GetHMDDistortionEnabled(EShadingPath ShadingPath) const override { return false; }
 	virtual void DrawDistortionMesh_RenderThread(struct FHeadMountedDisplayPassContext& Context, const FIntPoint& TextureSize) override;
 
 	/** IStereoRendering interface */
@@ -98,10 +98,26 @@ public:
 	bool IsInitialized() const { return true; }
 
 	void SetTransform(FTransform Transform) { CurHmdTransform = Transform; }
+	void SetEyeViews(FTransform Left, FMatrix LeftProj, FTransform Right, FMatrix RightProj);
 
 private:
 	FTransform CurHmdTransform;
+	FTransform CurLeftEyeTransform;
+	FTransform CurRightEyeTransform;
+	FMatrix CurLeftEyeProjMatrix;
+	FMatrix CurRightEyeProjMatrix;
 	float WorldToMeters;
 	float InterpupillaryDistance;
+	float HFoVRads = FMath::DegreesToRadians(90.0f);
+	float VFoVRads = FMath::DegreesToRadians(90.0f);
+	float CurLeftEyeProjOffsetX = 0.0f;
+	float CurLeftEyeProjOffsetY = 0.0f;
+	float CurRightEyeProjOffsetX = 0.0f;
+	float CurRightEyeProjOffsetY = 0.0f;
+	float TargetAspectRatio = 9.0f/16.0f;
+	float NearClip = 10.0f;
+	float FarClip = 10000.0f;
 	bool bStereoEnabled;
+	bool bReceivedTransforms = false;
+	double LastResChangeSeconds = 0.0f;
 };

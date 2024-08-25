@@ -709,7 +709,7 @@ void AActor::RerunConstructionScripts()
 							    && ComponentData.OldArchetype == ComponentToArchetypeMap[NewComponent])
 							{
 								ResolvedNewComponent = NewComponent;
-								NewUCSComponentsToConsider->RemoveAtSwap(Index, 1, false);
+								NewUCSComponentsToConsider->RemoveAtSwap(Index, 1, EAllowShrinking::No);
 								break;
 							}
 						}
@@ -751,18 +751,6 @@ void AActor::RerunConstructionScripts()
 					}
 				}
 			}
-#if WITH_EDITORONLY_DATA
-			if (OwningWorld && OwningWorld->GetWorldPartition() != nullptr)
-			{
-				if (USceneComponent* OldSceneComponent = Cast<USceneComponent>(ComponentData.OldComponent))
-				{
-					if (USceneComponent* NewSceneComponent = Cast<USceneComponent>(ResolvedNewComponent))
-					{
-						OldSceneComponent->ReplacementSceneComponent = NewSceneComponent;
-					}
-				}
-			}
-#endif
 
 			OldToNewComponentMapping.Add(ComponentData.OldComponent, ResolvedNewComponent);
 		}
@@ -1360,7 +1348,7 @@ void AActor::CheckComponentInstanceName(const FName InName)
 			if (CharIndex < ConflictingObjectName.Len() - 1)
 			{
 				Counter = FCString::Atoi(*ConflictingObjectName.RightChop(CharIndex + 1));
-				ConflictingObjectName.LeftInline(CharIndex + 1, false);
+				ConflictingObjectName.LeftInline(CharIndex + 1, EAllowShrinking::No);
 			}
 			FString NewObjectName;
 			do
@@ -1400,6 +1388,8 @@ void AActor::PostCreateBlueprintComponent(UActorComponent* NewActorComp)
 			int32& Count = ComponentArchetypeCounts.FindOrAdd(NewActorComp->GetArchetype());
 			FSetUCSSerializationIndex::Set(NewActorComp, Count);
 			++Count;
+
+			NewActorComp->SetNetAddressable();
 		}
 
 		// The component may not have been added to ReplicatedComponents if it was duplicated from

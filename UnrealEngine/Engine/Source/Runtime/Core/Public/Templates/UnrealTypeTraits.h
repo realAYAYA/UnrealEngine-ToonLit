@@ -117,7 +117,8 @@ struct TNthTypeFromParameterPack<0, T, OtherTypes...>
  */
 template<typename T> 
 struct TFormatSpecifier
-{ 
+{
+	template <typename CharType = TCHAR>
 	FORCEINLINE static TCHAR const* GetFormatSpecifier()
 	{
 		// Force the template instantiation to be dependent upon T so the compiler cannot automatically decide that this template can never be instantiated.
@@ -132,9 +133,25 @@ struct TFormatSpecifier
 template<> \
 struct TFormatSpecifier<type> \
 {  \
+	template <typename CharType = TCHAR> \
 	FORCEINLINE static decltype(auto) GetFormatSpecifier() \
 	{ \
-		return TEXT(format); \
+        if constexpr (std::is_same_v<CharType, WIDECHAR>) \
+        { \
+            return WIDETEXT(format); \
+        } \
+        else if constexpr (std::is_same_v<CharType, UTF8CHAR>) \
+        { \
+            return UTF8TEXT(format); \
+        } \
+		else if constexpr (std::is_same_v<CharType, ANSICHAR>) \
+        { \
+            return format; \
+        } \
+        else \
+        { \
+            static_assert(sizeof(CharType) == 0, "Unsupported char type"); \
+        } \
 	} \
 };
 

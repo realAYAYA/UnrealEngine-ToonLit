@@ -20,12 +20,13 @@ UCreateSessionCallbackProxy::UCreateSessionCallbackProxy(const FObjectInitialize
 {
 }
 
-UCreateSessionCallbackProxy* UCreateSessionCallbackProxy::CreateSession(UObject* WorldContextObject, class APlayerController* PlayerController, int32 PublicConnections, bool bUseLAN)
+UCreateSessionCallbackProxy* UCreateSessionCallbackProxy::CreateSession(UObject* WorldContextObject, class APlayerController* PlayerController, int32 PublicConnections, bool bUseLAN, bool bUseLobbiesIfAvailable)
 {
 	UCreateSessionCallbackProxy* Proxy = NewObject<UCreateSessionCallbackProxy>();
 	Proxy->PlayerControllerWeakPtr = PlayerController;
 	Proxy->NumPublicConnections = PublicConnections;
 	Proxy->bUseLAN = bUseLAN;
+	Proxy->bUseLobbiesIfAvailable = bUseLobbiesIfAvailable;
 	Proxy->WorldContextObject = WorldContextObject;
 	return Proxy;
 }
@@ -49,6 +50,7 @@ void UCreateSessionCallbackProxy::Activate()
 			Settings.bIsLANMatch = bUseLAN;
 			Settings.bUsesPresence = true;
 			Settings.bAllowJoinViaPresence = true;
+			Settings.bUseLobbiesIfAvailable = bUseLobbiesIfAvailable;
 
 			Sessions->CreateSession(*Helper.UserID, NAME_GameSession, Settings);
 

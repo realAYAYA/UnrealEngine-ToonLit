@@ -1,6 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-
 #include "MuT/NodeMeshMorph.h"
 
 #include "Containers/Array.h"
@@ -19,7 +18,7 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeMeshMorph::Private::s_type = NODE_TYPE( "MeshMorph", NodeMesh::GetStaticType() );
+	FNodeType NodeMeshMorph::Private::s_type = FNodeType( "MeshMorph", NodeMesh::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -27,69 +26,6 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 
 	MUTABLE_IMPLEMENT_NODE( NodeMeshMorph, EType::Morph, Node, Node::EType::Mesh)
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	int NodeMeshMorph::GetInputCount() const
-	{
-		return 3;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	Node* NodeMeshMorph::GetInputNode( int i ) const
-	{
-		check( i>=0 && i<GetInputCount() );
-
-		Node* pResult = 0;
-
-		switch (i)
-		{
-		case 0:
-			pResult = m_pD->Factor.get();
-			break;
-
-		case 1:
-			pResult = m_pD->Base.get();
-			break;
-
-		case 2:
-			pResult = m_pD->Morph.get();
-			break;
-
-		default:
-			check(false);
-		}
-
-		return pResult;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeMeshMorph::SetInputNode( int i, Ptr<Node> pNode )
-	{
-		check( i>=0 && i<GetInputCount() );
-
-		switch (i)
-		{
-		case 0:
-			m_pD->Factor = dynamic_cast<NodeScalar*>(pNode.get());
-			break;
-
-		case 1:
-			m_pD->Base = dynamic_cast<NodeMesh*>(pNode.get());
-			break;
-
-		case 2:
-			m_pD->Morph = dynamic_cast<NodeMesh*>(pNode.get());
-			break;
-
-		default:
-			break;
-		}
-	}
 
 
 	//---------------------------------------------------------------------------------------------
@@ -165,9 +101,7 @@ namespace mu
 
 		if ( Base )
 		{
-			NodeMesh::Private* pPrivate =
-					dynamic_cast<NodeMesh::Private*>( Base->GetBasePrivate() );
-
+			NodeMesh::Private* pPrivate = static_cast<NodeMesh::Private*>( Base->GetBasePrivate() );
 			pResult = pPrivate->GetLayout( index );
 		}
 

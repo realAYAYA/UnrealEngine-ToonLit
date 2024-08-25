@@ -125,6 +125,8 @@ namespace Metrics
 		double			PresentationTime = 0.0;				//!< Presentation time on media timeline
 		double			Duration = 0.0;						//!< Duration of segment as specified in manifest
 		int32			Bitrate = 0;						//!< Stream bitrate as specified in manifest
+		int32			QualityIndex = 0;					//!< Quality index of this segment
+		int32			HighestQualityIndex = 0;			//!< The highest quality index that could be had.
 		int32			RetryNumber = 0;
 		bool			bIsMissingSegment = false;			//!< true if the segment was not actually downloaded because it is missing on the timeline.
 
@@ -270,6 +272,12 @@ public:
 	 * A drastic change is one where quality _drops_ more than _one_ level.
 	 */
 	virtual void ReportVideoQualityChange(int32 NewBitrate, int32 PreviousBitrate, bool bIsDrasticDownswitch) = 0;
+
+	/**
+	 * Called when a new audio stream segment is fetched at a different bitrate than before.
+	 * A drastic change is one where quality _drops_ more than _one_ level.
+	 */
+	virtual void ReportAudioQualityChange(int32 NewBitrate, int32 PreviousBitrate, bool bIsDrasticDownswitch) = 0;
 
 	/**
 	 * Called when stream data availability changes when feeding the decoder.

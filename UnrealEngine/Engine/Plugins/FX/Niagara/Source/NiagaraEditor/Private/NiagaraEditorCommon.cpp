@@ -7,6 +7,7 @@
 #include "ActorFactoryNiagara.h"
 #include "NiagaraActor.h"
 #include "NiagaraComponent.h"
+#include "NiagaraSettings.h"
 #include "Misc/StringFormatter.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(NiagaraEditorCommon)
@@ -145,6 +146,7 @@ void FNiagaraOpInfo::Init()
 		Op->CompactName = FText::FromString(TEXT("+"));
 		Op->CompactNameFontSizeOverride = 30.f;
 		Op->Description = NSLOCTEXT("NiagaraOpInfo", "Add Desc", "Result = A + B");
+		Op->AlternateSearchName = FName("+");
 		Op->Keywords = FText::FromString(TEXT("+"));
 		Op->Inputs.Add(FNiagaraOpInOutInfo(A, NumericType, AText, AText, DefaultStr_Zero));
 		Op->Inputs.Add(FNiagaraOpInOutInfo(B, NumericType, BText, BText, DefaultStr_Zero));
@@ -198,6 +200,7 @@ void FNiagaraOpInfo::Init()
 		Op->CompactName = FText::FromString(TEXT("-"));
 		Op->CompactNameFontSizeOverride = 28.f;
 		Op->Description = NSLOCTEXT("NiagaraOpInfo", "Subtract Desc", "Result = A - B");
+		Op->AlternateSearchName = FName("-");
 		Op->Keywords = FText::FromString(TEXT("-"));
 		Op->Inputs.Add(FNiagaraOpInOutInfo(A, NumericType, AText, AText, DefaultStr_Zero));
 		Op->Inputs.Add(FNiagaraOpInOutInfo(B, NumericType, BText, BText, DefaultStr_Zero));
@@ -255,6 +258,7 @@ void FNiagaraOpInfo::Init()
 		Op->CompactName = FText::FromString(TEXT("\xD7"));
 		Op->CompactNameFontSizeOverride = 30.f;
 		Op->Description = NSLOCTEXT("NiagaraOpInfo", "Multiply Desc", "Result = A * B");
+		Op->AlternateSearchName = FName("*");
 		Op->Keywords = FText::FromString(TEXT("*"));
 		Op->Inputs.Add(FNiagaraOpInOutInfo(A, NumericType, AText, AText, DefaultStr_One));
 		Op->Inputs.Add(FNiagaraOpInOutInfo(B, NumericType, BText, BText, DefaultStr_One));
@@ -289,6 +293,7 @@ void FNiagaraOpInfo::Init()
 		Op->CompactName = FText::FromString(TEXT("\xF7"));
 		Op->CompactNameFontSizeOverride = 25.f;
 		Op->Description = NSLOCTEXT("NiagaraOpInfo", "Divide Desc", "Result = A / B");
+		Op->AlternateSearchName = FName("/");
 		Op->Keywords = FText::FromString(TEXT("/"));
 		Op->Inputs.Add(FNiagaraOpInOutInfo(A, NumericType, AText, AText, DefaultStr_One));
 		Op->Inputs.Add(FNiagaraOpInOutInfo(B, NumericType, BText, BText, DefaultStr_One));
@@ -326,6 +331,7 @@ void FNiagaraOpInfo::Init()
 		Op->CompactName = FText::FromString(CompactNameString);
 		Op->bShowPinNamesInCompactMode = true;
 		Op->Description = NSLOCTEXT("NiagaraOpInfo", "MultiplyAdd Desc", "Result = (A * B) + C");
+		Op->AlternateSearchName = FName("*+");
 		Op->Inputs.Add(FNiagaraOpInOutInfo(A, NumericType, AText, AText, DefaultStr_One));
 		Op->Inputs.Add(FNiagaraOpInOutInfo(B, NumericType, BText, BText, DefaultStr_One));
 		Op->Inputs.Add(FNiagaraOpInOutInfo(C, NumericType, CText, CText, DefaultStr_Zero));
@@ -365,9 +371,12 @@ void FNiagaraOpInfo::Init()
 		Op->bShowPinNamesInCompactMode = true;
 		Op->Description = NSLOCTEXT("NiagaraOpInfo", "Lerp Desc", "Result = (A * (1 - C)) + (B * C)");
 		Op->Keywords = FText::FromString(TEXT("lerp"));
+
+		FText AlphaPinFriendlyName = FText::FromString("Alpha");
+		FText AlphaTooltip = NSLOCTEXT("NiagaraOpInfo", "Lerp Alpha Tooltip", "A value typically between 0 and 1. Determines the percentage to use for interpolating from A to B.");
 		Op->Inputs.Add(FNiagaraOpInOutInfo(A, NumericType, AText, AText, DefaultStr_Zero));
 		Op->Inputs.Add(FNiagaraOpInOutInfo(B, NumericType, BText, BText, DefaultStr_One));
-		Op->Inputs.Add(FNiagaraOpInOutInfo(C, NumericType, CText, CText, DefaultStr_Zero));
+		Op->Inputs.Add(FNiagaraOpInOutInfo(C, NumericType, AlphaPinFriendlyName, AlphaTooltip, DefaultStr_Zero));
 		Op->Outputs.Add(FNiagaraOpInOutInfo(Result, NumericType, ResultText, ResultText, DefaultStr_Zero, TEXT("lerp({0},{1},{2})")));
 		Op->BuildName(TEXT("Lerp"), CategoryName);
 		Op->InputTypeValidationFunction.BindLambda([=](const TArray<FNiagaraTypeDefinition>& InputTypes, FText& ErrorMessage)
@@ -453,6 +462,7 @@ void FNiagaraOpInfo::Init()
 		Op->CompactName = FText::FromString(TEXT("1-A"));
 		Op->bShowPinNamesInCompactMode = true;
 		Op->Description = NSLOCTEXT("NiagaraOpInfo", "One Minus Desc", "Result = 1 - A");
+		Op->AlternateSearchName = FName("1-");
 		Op->Keywords = FText::FromString(TEXT("1-x"));
 		Op->Inputs.Add(FNiagaraOpInOutInfo(A, NumericType, AText, AText, DefaultStr_One));
 		Op->Outputs.Add(FNiagaraOpInOutInfo(Result, NumericType, ResultText, ResultText, DefaultStr_One, TEXT("1 - {0}")));
@@ -1424,7 +1434,7 @@ void FNiagaraOpInfo::Init()
 		Op->Keywords = FText::FromString(TEXT("!="));
 		Op->Inputs.Add(FNiagaraOpInOutInfo(A, NumericType, AText, AText, DefaultStr_Zero));
 		Op->Inputs.Add(FNiagaraOpInOutInfo(B, NumericType, BText, BText, DefaultStr_One));
-		Op->Outputs.Add(FNiagaraOpInOutInfo(Result, FNiagaraTypeDefinition::GetBoolDef(), ResultText, ResultText, DefaultStr_One, TEXT("NiagaraAll({0} != {1})")));
+		Op->Outputs.Add(FNiagaraOpInOutInfo(Result, FNiagaraTypeDefinition::GetBoolDef(), ResultText, ResultText, DefaultStr_One, TEXT("NiagaraAny({0} != {1})")));
 		Op->BuildName(TEXT("CmpNEQ"), CategoryName);
 		Op->bSupportsStaticResolution = true;
 		Op->StaticVariableResolveFunction.BindLambda([=](const TArray<int32>& InPinValues)
@@ -1559,6 +1569,51 @@ void FNiagaraOpInfo::Init()
 		return Return;
 	}
 	);
+	OpInfoMap.Add(Op->Name) = Idx;
+
+
+	Idx = OpInfos.AddDefaulted();
+	Op = &OpInfos[Idx];
+	Op->Category = IntCategory;
+	Op->FriendlyName = NSLOCTEXT("NiagaraOpInfo", "EnumEq Name", "Enum Equal");
+	Op->CompactName = FText::FromString("==");
+	Op->Description = NSLOCTEXT("NiagaraOpInfo", "EnumEq Desc", "Result = A == B");
+	Op->Keywords = FText::FromString(TEXT("=="));
+	Op->Inputs.Add(FNiagaraOpInOutInfo(A, IntType, AText, AText, Default_IntZero));
+	Op->Inputs.Add(FNiagaraOpInOutInfo(B, IntType, BText, BText, Default_IntZero));
+	Op->Outputs.Add(FNiagaraOpInOutInfo(Result, FNiagaraTypeDefinition::GetBoolDef(), ResultText, ResultText, Default_IntZero, TEXT("NiagaraAll({0} == {1})")));
+	Op->BuildName(TEXT("EnumEq"), IntCategoryName);
+	Op->bSupportsStaticResolution = true;
+	Op->StaticVariableResolveFunction.BindLambda([=](const TArray<int32>& InPinValues)
+	{
+		if (InPinValues.Num() != 2)
+			return 0;
+
+		int32 Return = InPinValues[0] == InPinValues[1];
+		return Return;
+	});
+	OpInfoMap.Add(Op->Name) = Idx;
+
+	Idx = OpInfos.AddDefaulted();
+	Op = &OpInfos[Idx];
+	Op->Category = IntCategory;
+	Op->FriendlyName = NSLOCTEXT("NiagaraOpInfo", "EnumNEq Name", "Enum Not Equal");
+	Op->CompactName = FText::FromString("!=");
+	Op->Description = NSLOCTEXT("NiagaraOpInfo", "EnumNEq Desc", "Result = A != B");
+	Op->Keywords = FText::FromString(TEXT("!="));
+	Op->Inputs.Add(FNiagaraOpInOutInfo(A, IntType, AText, AText, Default_IntZero));
+	Op->Inputs.Add(FNiagaraOpInOutInfo(B, IntType, BText, BText, Default_IntZero));
+	Op->Outputs.Add(FNiagaraOpInOutInfo(Result, FNiagaraTypeDefinition::GetBoolDef(), ResultText, ResultText, Default_IntZero, TEXT("NiagaraAll({0} != {1})")));
+	Op->BuildName(TEXT("EnumNEq"), IntCategoryName);
+	Op->bSupportsStaticResolution = true;
+	Op->StaticVariableResolveFunction.BindLambda([=](const TArray<int32>& InPinValues)
+	{
+		if (InPinValues.Num() != 2)
+			return 0;
+
+		int32 Return = InPinValues[0] != InPinValues[1];
+		return Return;
+	});
 	OpInfoMap.Add(Op->Name) = Idx;
 
 
@@ -1887,6 +1942,17 @@ bool UActorFactoryNiagara::CanCreateActorFrom(const FAssetData& AssetData, FText
 		return false;
 	}
 
+	const UNiagaraSettings* NiagarSettings = GetDefault<UNiagaraSettings>();
+	if (NiagarSettings && !NiagarSettings->bAllowCreateActorFromSystemWithNoEffectType)
+	{
+		const UNiagaraSystem* NiagaraSystem = Cast<UNiagaraSystem>(AssetData.GetAsset());
+		if (NiagaraSystem && NiagaraSystem->GetEffectType() == nullptr)
+		{
+			OutErrorMsg = NSLOCTEXT("CanCreateActor", "RequiredEffectType", "An effect type is required to create actor instances.");
+			return false;
+		}
+	}
+
 	return true;
 }
 
@@ -1926,16 +1992,6 @@ UObject* UActorFactoryNiagara::GetAssetFromActorInstance(AActor* Instance)
 	else
 	{
 		return NULL;
-	}
-}
-
-void UActorFactoryNiagara::PostCreateBlueprint(UObject* Asset, AActor* CDO)
-{
-	if (Asset != NULL && CDO != NULL)
-	{
-		UNiagaraSystem* System = CastChecked<UNiagaraSystem>(Asset);
-		ANiagaraActor* Actor = CastChecked<ANiagaraActor>(CDO);
-		Actor->GetNiagaraComponent()->SetAsset(System);
 	}
 }
 

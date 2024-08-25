@@ -17,6 +17,8 @@
 
 #include "AppleARKitCamera.generated.h"
 
+struct FSceneViewProjectionData;
+
 
 enum class EAppleARKitBackgroundFitMode : uint8
 {
@@ -124,6 +126,11 @@ struct APPLEARKIT_API FAppleARKitCamera
 	
 	/** Returns the effective vertical field of view for the screen dimensions and fit mode in those dimensions */
 	float GetVerticalFieldOfViewForScreen( EAppleARKitBackgroundFitMode BackgroundFitMode, float ScreenWidth, float ScreenHeight ) const;
+
+	/** Returns the Projection Matrix we need to render our virtual content with. */
+	void GetViewProjectionMatrix(EDeviceScreenOrientation DeviceOrientation, FSceneViewProjectionData& InOutProjectionData) const;
+	
+	
 
 	/** For the given screen position, returns the normalised capture image coordinates accounting for the fit mode of the image on screen */
 	FVector2D GetImageCoordinateForScreenPosition( FVector2D ScreenPosition, EAppleARKitBackgroundFitMode BackgroundFitMode ) const

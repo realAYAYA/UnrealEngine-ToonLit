@@ -91,24 +91,16 @@ ERigVMExecuteResult FRigVMLazyBranch::Execute(FRigVMExtendedExecuteContext& Cont
 	return FunctionPtr();
 }
 
-ERigVMExecuteResult FRigVMLazyBranch::ExecuteIfRequired(FRigVMExtendedExecuteContext& Context, int32 InSliceIndex)
+ERigVMExecuteResult FRigVMLazyBranch::ExecuteIfRequired(FRigVMExtendedExecuteContext& Context, uint32 InSliceHash)
 {
 	check(VM);
 
-	if(InSliceIndex == INDEX_NONE)
-	{
-		InSliceIndex = 0;
-	}
-	
-	while(!Context.LazyBranchInstanceData[BranchInfo.Index].LastVMNumExecutions.IsValidIndex(InSliceIndex))
-	{
-		Context.LazyBranchInstanceData[BranchInfo.Index].LastVMNumExecutions.Add(INDEX_NONE);
-	}
-
-	if(Context.GetNumExecutions() != Context.LazyBranchInstanceData[BranchInfo.Index].LastVMNumExecutions[InSliceIndex])
+	const uint32 Hash = GetTypeHash(Context.GetNumExecutions());
+	uint32& StoredHash = Context.LazyBranchExecuteState[BranchInfo.Index].SliceHashToNumInstruction.FindOrAdd(InSliceHash, UINT32_MAX);
+	if(Hash != StoredHash)
 	{
 		const ERigVMExecuteResult Result = Execute(Context);
-		Context.LazyBranchInstanceData[BranchInfo.Index].LastVMNumExecutions[InSliceIndex] = Context.GetNumExecutions();
+		StoredHash = Hash;
 		return Result;
 	}
 	
@@ -122,7 +114,7 @@ const uint8* TRigVMLazyValueBase::GetData(const FRigVMExecuteContext& Context) c
 		if(MemoryHandle->IsLazy())
 		{
 			check(Context.ExtendedExecuteContext != nullptr);
-			MemoryHandle->ComputeLazyValueIfNecessary(*Context.ExtendedExecuteContext, SliceIndex);
+			MemoryHandle->ComputeLazyValueIfNecessary(*Context.ExtendedExecuteContext, SliceHash);
 		}
 		return MemoryHandle->GetData(bFollowPropertyPath, INDEX_NONE);
 	}
@@ -131,10 +123,10 @@ const uint8* TRigVMLazyValueBase::GetData(const FRigVMExecuteContext& Context) c
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-bool FRigVMMemoryHandle::ComputeLazyValueIfNecessary(FRigVMExtendedExecuteContext& Context, int32 InSliceIndex)
+bool FRigVMMemoryHandle::ComputeLazyValueIfNecessary(FRigVMExtendedExecuteContext& Context, uint32 InSliceHash)
 {
 	check(IsLazy());
-	return LazyBranch->ExecuteIfRequired(Context, InSliceIndex) != ERigVMExecuteResult::Failed;
+	return LazyBranch->ExecuteIfRequired(Context, InSliceHash) != ERigVMExecuteResult::Failed;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -307,11 +299,23 @@ FRigVMPropertyDescription::FRigVMPropertyDescription(const FName& InName, const 
 FName FRigVMPropertyDescription::SanitizeName(const FName& InName)
 {
 	FString NameString = InName.ToString();
+	SanitizeName(NameString);
 
-	// Sanitize the name
-	for (int32 i = 0; i < NameString.Len(); ++i)
+	if (NameString != InName.ToString())
 	{
-		TCHAR& C = NameString[i];
+		return *NameString;
+	}
+
+	return InName;
+
+}
+
+void FRigVMPropertyDescription::SanitizeName(FString& InString)
+{
+	// Sanitize the name
+	for (int32 i = 0; i < InString.Len(); ++i)
+	{
+		TCHAR& C = InString[i];
 
 		const bool bGoodChar = FChar::IsAlpha(C) ||							// Any letter
 			(C == '_') || 													// _ anytime
@@ -322,13 +326,6 @@ FName FRigVMPropertyDescription::SanitizeName(const FName& InName)
 			C = '_';
 		}
 	}
-
-	if(NameString != InName.ToString())
-	{
-		return *NameString;
-	}
-
-	return InName;
 }
 
 void FRigVMPropertyDescription::SanitizeName()
@@ -370,34 +367,6 @@ FString FRigVMPropertyDescription::GetTailCPPType() const
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-
-class FRigVMMemoryStorageImportErrorContext : public FOutputDevice
-{
-public:
-
-	bool bLogErrors;
-	int32 NumErrors;
-
-	FRigVMMemoryStorageImportErrorContext(bool InLogErrors = true)
-		: FOutputDevice()
-		, bLogErrors(InLogErrors)
-		, NumErrors(0)
-	{
-	}
-
-	void Serialize(const TCHAR* V, ELogVerbosity::Type Verbosity, const class FName& Category) override
-	{
-		if(bLogErrors)
-		{
-#if WITH_EDITOR
-			UE_LOG(LogRigVM, Display, TEXT("Skipping Importing To MemoryStorage: %s"), V);
-#else
-			UE_LOG(LogRigVM, Error, TEXT("Error Importing To MemoryStorage: %s"), V);
-#endif
-		}
-		NumErrors++;
-	}
-};
 
 void URigVMMemoryStorageGeneratorClass::PurgeClass(bool bRecompilingOnLoad)
 {
@@ -481,7 +450,7 @@ URigVMMemoryStorageGeneratorClass* URigVMMemoryStorageGeneratorClass::GetStorage
 	UObject* Outer = InOuter->GetOuter();
 	do
 	{
-		if(Outer->IsA<UPackage>())
+		if(!Outer || Outer->IsA<UPackage>())
 		{
 			break;
 		}
@@ -533,31 +502,46 @@ URigVMMemoryStorageGeneratorClass* URigVMMemoryStorageGeneratorClass::CreateStor
 	UObject* OldClassObject = StaticFindObjectFastInternal( /*Class=*/ NULL, Package, *ClassName, true, RF_NoFlags, EInternalObjectFlags::None);
 	if(OldClassObject)
 	{
+		auto FindUniqueName = [](const TCHAR* TemplateName, int32& TemplateIndex)
+		{
+			FName UniqueName;
+			do
+			{
+				UniqueName = FName(TemplateName, TemplateIndex++);
+				if(StaticFindObjectFast(nullptr, GetTransientPackage(), UniqueName) == nullptr)
+				{
+					break;
+				}
+			}
+			while (TemplateIndex < INT_MAX);
+ 
+			return UniqueName;
+		};
+		
+		auto RenameAndMarkGarbage = [](UObject* InObject, FName NewName)
+		{
+			InObject->Rename(*NewName.ToString(), GetTransientPackage(), REN_ForceNoResetLoaders | REN_DoNotDirty | REN_DontCreateRedirectors | REN_NonTransactional);
+			InObject->MarkAsGarbage();
+		};
+ 
 		// ensure the OldClass is completely loaded so that we can remove it and replace it with the new class
 		// otherwise we get an assertion trying to replace objects currently being loaded
 		OldClassObject->ConditionalPostLoad();
-
 		UClass* OldClass = Cast<UClass>(OldClassObject);
-		
-		FString DiscardedMemoryClassName;
-		static const TCHAR DiscardedMemoryClassTemplate[] = TEXT("DiscardedMemoryClassTemplate_%d");
+ 
+		// using an FName to avoid formatting a string and then immediately turning around to parse it.
+		static const TCHAR* DiscardedMemoryClassTemplate(TEXT("DiscardedMemoryClassTemplate"));
 		static int32 DiscardedMemoryClassIndex = 0;
-		do
-		{
-			DiscardedMemoryClassName = FString::Printf(DiscardedMemoryClassTemplate, DiscardedMemoryClassIndex++);
-			if(StaticFindObjectFast(nullptr, GetTransientPackage(), *DiscardedMemoryClassName) == nullptr)
-			{
-				break;
-			}
-		}
-		while (DiscardedMemoryClassIndex < INT_MAX);
-
+		const FName DiscardedMemoryClassName = FindUniqueName(DiscardedMemoryClassTemplate, DiscardedMemoryClassIndex);
+		
 		OldClass->ClassFlags |= CLASS_NewerVersionExists;
-		OldClass->Rename(*DiscardedMemoryClassName, GetTransientPackage(), REN_ForceNoResetLoaders | REN_DoNotDirty | REN_DontCreateRedirectors | REN_NonTransactional);
-
+		RenameAndMarkGarbage(OldClass, DiscardedMemoryClassName);
+ 
 		if (OldClass->ClassDefaultObject)
 		{
-			OldClass->ClassDefaultObject->Rename(nullptr, GetTransientPackage(), REN_ForceNoResetLoaders | REN_DoNotDirty | REN_DontCreateRedirectors | REN_NonTransactional);
+			static const TCHAR* DiscardedMemoryCDOTemplate(TEXT("DiscardedMemoryCDOTemplate"));
+			static int32 DiscardedMemoryCDOIndex = 0;
+			RenameAndMarkGarbage(OldClass->ClassDefaultObject, FindUniqueName(DiscardedMemoryCDOTemplate, DiscardedMemoryCDOIndex));
 		}
 	}
 
@@ -565,7 +549,7 @@ URigVMMemoryStorageGeneratorClass* URigVMMemoryStorageGeneratorClass::CreateStor
 	URigVMMemoryStorageGeneratorClass* Class = NewObject<URigVMMemoryStorageGeneratorClass>(
 		Package,
 		*ClassName,
-		RF_Standalone
+		RF_Standalone | RF_Public
 	);
 
 	// clear the class (sets relevant flags)
@@ -646,7 +630,9 @@ bool URigVMMemoryStorageGeneratorClass::RemoveStorageClass(UObject* InOuter, ERi
 	URigVMMemoryStorageGeneratorClass* OldClass = FindObject<URigVMMemoryStorageGeneratorClass>(Package, *ClassName);
 	if(OldClass)
 	{
+		OldClass->ClassFlags |= CLASS_NewerVersionExists;
 		OldClass->Rename(nullptr, GetTransientPackage(), REN_ForceNoResetLoaders | REN_DoNotDirty | REN_DontCreateRedirectors | REN_NonTransactional);
+		OldClass->MarkAsGarbage();
 		return true;
 	}
 
@@ -655,7 +641,7 @@ bool URigVMMemoryStorageGeneratorClass::RemoveStorageClass(UObject* InOuter, ERi
 
 uint32 URigVMMemoryStorageGeneratorClass::GetMemoryHash() const
 {
-	if(CachedMemoryHash != 0)
+ 	if(CachedMemoryHash != 0)
 	{
 		return CachedMemoryHash;
 	}
@@ -664,20 +650,21 @@ uint32 URigVMMemoryStorageGeneratorClass::GetMemoryHash() const
 
 	for(const FProperty* Property : LinkedProperties)
 	{
-		CachedMemoryHash = HashCombine(CachedMemoryHash, GetTypeHash(Property->GetFName().ToString()));
-		CachedMemoryHash = HashCombine(CachedMemoryHash, GetTypeHash(Property->GetCPPType()));
+		CachedMemoryHash = HashCombineFast(CachedMemoryHash, GetTypeHash(Property->GetFName().ToString()));
+		CachedMemoryHash = HashCombineFast(CachedMemoryHash, GetTypeHash(Property->GetCPPType()));
 	}
 	
 	// for literals we also hash the content / defaults for each property
 	if(GetMemoryType() == ERigVMMemoryType::Literal)
 	{
-		if(URigVMMemoryStorage* CDO = Cast<URigVMMemoryStorage>(GetDefaultObject(true)))
+		if(const URigVMMemoryStorage* CDO = Cast<URigVMMemoryStorage>(GetDefaultObject(true)))
 		{
 			for(const FProperty* Property : LinkedProperties)
 			{
-				FString DefaultValue;
-				Property->ExportTextItem_InContainer(DefaultValue, CDO, nullptr, nullptr, PPF_None, nullptr);
-				CachedMemoryHash = HashCombine(CachedMemoryHash, GetTypeHash(DefaultValue));
+				const uint32 PropertyHash =
+					RigVMPropertyUtils::GetPropertyHashFast(Property, reinterpret_cast<const uint8*>(CDO));
+ 
+				CachedMemoryHash = HashCombineFast(CachedMemoryHash, PropertyHash);
 			}
 		}
 	}

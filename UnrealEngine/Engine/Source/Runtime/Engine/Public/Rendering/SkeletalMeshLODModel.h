@@ -323,23 +323,6 @@ struct FSkelMeshSourceSectionUserData
 };
 
 /**
- * The information for a given mesh as it was imported and appears in the dcc.
- * This gives us some extra information about the mesh as it appeared inside the source asset.
- * There can be multiple of those per skeletal mesh. The skeletal mesh is some merged big mesh separated in sections.
- * However sometimes we want to know some information about the actual individual meshes as they appeared in the dcc.
- * This class provides some of that information.
- */
-struct FSkelMeshImportedMeshInfo
-{
-	FName Name;	// The name of the mesh.
-	int32 NumVertices;	// The number of imported (dcc) vertices that are part of this mesh. This is a value of 8 for a cube. So NOT the number of render vertices.
-	int32 StartImportedVertex;	// The first index of imported (dcc) vertices in the mesh. So this NOT an index into the render vertex buffer. In range of 0..7 for a cube.
-
-	// Serialization.
-	friend FArchive& operator<<(FArchive& Ar, FSkelMeshImportedMeshInfo& MeshInfo);
-};
-
-/**
 * All data to define a certain LOD model for a skeletal mesh.
 */
 class FSkeletalMeshLODModel
@@ -347,9 +330,6 @@ class FSkeletalMeshLODModel
 public:
 	/** Sections. */
 	TArray<FSkelMeshSection> Sections;
-
-	/** The information about individual meshes. This can be empty if we did choose not to store this information. */
-	TArray<FSkelMeshImportedMeshInfo> ImportedMeshInfos;
 
 	/*
 	 * When user change section data in the UI, we store it here to be able to regenerate the changes
@@ -447,10 +427,30 @@ public:
 		BulkDataReadMutex = BackupBulkDataReadMutex;
 	}
 
-	/** Find a mesh info by a mesh name. Returns INDEX_NONE when not found. */
-	int32 FindMeshInfoIndex(FName Name) const;
-
 private:
+	friend struct FSkeletalMeshSourceModel;
+	
+	struct FSkelMeshImportedMeshInfo
+	{
+		FName Name;	// The name of the mesh.
+		int32 NumVertices;	// The number of imported (dcc) vertices that are part of this mesh. This is a value of 8 for a cube. So NOT the number of render vertices.
+		int32 StartImportedVertex;	// The first index of imported (dcc) vertices in the mesh. So this NOT an index into the render vertex buffer. In range of 0..7 for a cube.
+
+		void Serialize(FArchive& Ar)
+		{
+			Ar << Name;
+			Ar << NumVertices;
+			Ar << StartImportedVertex;
+		}
+	};
+	friend FArchive& operator<<(FArchive& Ar, FSkelMeshImportedMeshInfo& Info)
+	{
+		Info.Serialize(Ar);
+		return Ar;
+	}
+
+	TArray<FSkelMeshImportedMeshInfo> ImportedMeshInfos;
+
 	/** Editor only data: array of the original point (wedge) indices for each of the vertices in a FSkeletalMeshLODModel */
 	TArray<uint32>				RawPointIndices2;
 
@@ -567,7 +567,7 @@ public:
 	 * Fills in a representation of this model into the given mesh description object. Existing
 	 * mesh description data is emptied.
 	 */
-	void ENGINE_API GetMeshDescription(FMeshDescription& MeshDescription, const USkeletalMesh *Owner) const;
+	void ENGINE_API GetMeshDescription(const USkeletalMesh *InSkeletalMesh, const int32 InLODIndex, FMeshDescription& OutMeshDescription) const;
 };
 
 #endif // WITH_EDITOR

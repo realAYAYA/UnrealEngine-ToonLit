@@ -2,9 +2,7 @@
 
 using System;
 using System.Buffers;
-using System.Collections.Generic;
 using System.IO;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -45,12 +43,31 @@ namespace EpicGames.Core
 
 			try
 			{
-				return FileReference.Open(file, FileMode.Open);
+				return FileReference.Open(file, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
 			}
 			catch (FileNotFoundException)
 			{
 				return null;
 			}
+		}
+
+		/// <summary>
+		/// Reads all data from a file into a byte array
+		/// </summary>
+		/// <param name="file">File to read from</param>
+		/// <returns>The data that was read</returns>
+		public static byte[]? ReadAllBytes(FileReference file)
+		{
+			using (Stream? stream = OpenRead(file))
+			{
+				if (stream != null)
+				{
+					byte[] data = new byte[stream.Length];
+					stream.ReadFixedLengthBytes(data);
+					return data;
+				}
+			}
+			return null;
 		}
 
 		/// <summary>
@@ -80,7 +97,7 @@ namespace EpicGames.Core
 		public static FileTransactionStream OpenWrite(FileReference file)
 		{
 			FileReference incomingFile = GetIncomingFile(file);
-			Stream stream = FileReference.Open(incomingFile, FileMode.CreateNew);
+			Stream stream = FileReference.Open(incomingFile, FileMode.Create, FileAccess.ReadWrite, FileShare.Read);
 			return new FileTransactionStream(stream, incomingFile, file);
 		}
 
@@ -147,10 +164,11 @@ namespace EpicGames.Core
 				throw new InvalidOperationException("Stream cannot be written to");
 			}
 
+			FileReference finalFile = _finalFile;
 			Close();
 
-			FileReference.Delete(_finalFile);
-			FileReference.Move(_file, _finalFile);
+			FileReference.Delete(finalFile);
+			FileReference.Move(_file, finalFile);
 
 			_finalFile = null;
 		}

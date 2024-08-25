@@ -3,6 +3,7 @@
 #include "SceneRelativeViewMatrices.h"
 #include "Misc/LargeWorldRenderPosition.h"
 #include "SceneView.h"
+#include "Math/DoubleFloat.h"
 
 FRelativeViewMatrices FRelativeViewMatrices::Create(const FViewMatrices& Matrices, const FViewMatrices& PrevMatrices)
 {
@@ -38,6 +39,39 @@ FRelativeViewMatrices FRelativeViewMatrices::Create(const FInitializer& Initiali
 	Result.ClipToRelativeWorld = Result.ClipToView * Result.ViewToRelativeWorld;
 
 	Result.PrevViewToRelativeWorld = FLargeWorldRenderScalar::MakeClampedToRelativeWorldMatrix(ViewOriginTile * TileSize, Initializer.PrevViewToWorld);
+	Result.PrevClipToView = FMatrix44f(Initializer.PrevClipToView);
+	Result.PrevClipToRelativeWorld = Result.PrevClipToView * Result.PrevViewToRelativeWorld;
+	return Result;
+}
+
+
+FDFRelativeViewMatrices FDFRelativeViewMatrices::Create(const FViewMatrices& Matrices, const FViewMatrices& PrevMatrices)
+{
+	FInitializer Initializer;
+	Initializer.ViewOrigin = Matrices.GetViewOrigin();
+	Initializer.ViewToWorld = Matrices.GetInvViewMatrix();
+	Initializer.WorldToView = Matrices.GetViewMatrix();
+	Initializer.ViewToClip = Matrices.GetProjectionMatrix();
+	Initializer.ClipToView = Matrices.GetInvProjectionMatrix();
+	Initializer.PrevViewToWorld = PrevMatrices.GetInvViewMatrix();
+	Initializer.PrevClipToView = PrevMatrices.GetInvProjectionMatrix();
+	return Create(Initializer);
+}
+
+FDFRelativeViewMatrices FDFRelativeViewMatrices::Create(const FInitializer& Initializer)
+{
+	FDFVector3 ViewOrigin(Initializer.ViewOrigin);
+
+	FDFRelativeViewMatrices Result;
+	Result.PositionHigh = ViewOrigin.High;
+	Result.RelativeWorldToView = FDFInverseMatrix::MakeFromRelativeWorldMatrix(ViewOrigin.High, Initializer.WorldToView).M;
+	Result.ViewToRelativeWorld = FDFMatrix::MakeToRelativeWorldMatrix(ViewOrigin.High, Initializer.ViewToWorld).M;
+	Result.ViewToClip = FMatrix44f(Initializer.ViewToClip);
+	Result.ClipToView = FMatrix44f(Initializer.ClipToView);
+	Result.RelativeWorldToClip = Result.RelativeWorldToView * Result.ViewToClip;
+	Result.ClipToRelativeWorld = Result.ClipToView * Result.ViewToRelativeWorld;
+
+	Result.PrevViewToRelativeWorld = FDFMatrix::MakeClampedToRelativeWorldMatrix(ViewOrigin.High, Initializer.PrevViewToWorld).M;
 	Result.PrevClipToView = FMatrix44f(Initializer.PrevClipToView);
 	Result.PrevClipToRelativeWorld = Result.PrevClipToView * Result.PrevViewToRelativeWorld;
 	return Result;

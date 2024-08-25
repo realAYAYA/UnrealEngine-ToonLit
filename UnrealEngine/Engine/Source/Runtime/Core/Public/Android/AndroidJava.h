@@ -21,7 +21,11 @@ struct FJavaClassMethod
 
 class FJavaClassObject
 {
+	FJavaClassObject(jclass ClassIN, jobject ObjectIN);
+
 public:
+	static FJavaClassObject GetGameActivity();
+
 	// !!  All Java objects returned by JNI functions are local references.
 	FJavaClassObject(FName ClassName, const char* CtorSig, ...);
 
@@ -72,5 +76,8 @@ int64 FJavaClassObject::CallMethod<int64>(FJavaClassMethod Method, ...);
 
 template<>
 FString FJavaClassObject::CallMethod<FString>(FJavaClassMethod Method, ...);
+
+template<>
+float FJavaClassObject::CallMethod<float>(FJavaClassMethod Method, ...);
 
 #endif

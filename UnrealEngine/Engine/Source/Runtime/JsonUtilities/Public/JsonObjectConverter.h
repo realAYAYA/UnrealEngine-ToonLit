@@ -23,6 +23,14 @@
 #include "Trace/Detail/Channel.h"
 #include "UObject/Class.h"
 
+enum class EJsonObjectConversionFlags
+{
+	None = 0,
+	SkipStandardizeCase = 1 << 0,
+};
+
+ENUM_CLASS_FLAGS(EJsonObjectConversionFlags)
+
 class FProperty;
 class UStruct;
 
@@ -82,14 +90,15 @@ public: // UStruct -> JSON
 	 *
 	 * @param StructDefinition UStruct definition that is looked over for properties
 	 * @param Struct The UStruct instance to copy out of
-	 * @param JsonObject Json Object to be filled in with data from the ustruct
+	 * @param OutJsonObject Json Object to be filled in with data from the ustruct
 	 * @param CheckFlags Only convert properties that match at least one of these flags. If 0 check all properties.
 	 * @param SkipFlags Skip properties that match any of these flags
 	 * @param ExportCb Optional callback to override export behavior, if this returns null it will fallback to the default
+	 * @param ConversionFlags Bitwise flags to customize the conversion behavior
 	 *
 	 * @return False if any properties failed to write
 	 */
-	static JSONUTILITIES_API bool UStructToJsonObject(const UStruct* StructDefinition, const void* Struct, TSharedRef<FJsonObject> OutJsonObject, int64 CheckFlags = 0, int64 SkipFlags = 0, const CustomExportCallback* ExportCb = nullptr);
+	static JSONUTILITIES_API bool UStructToJsonObject(const UStruct* StructDefinition, const void* Struct, TSharedRef<FJsonObject> OutJsonObject, int64 CheckFlags = 0, int64 SkipFlags = 0, const CustomExportCallback* ExportCb = nullptr, EJsonObjectConversionFlags ConversionFlags = EJsonObjectConversionFlags::None);
 
 	/**
 	 * Converts from a UStruct to a json string containing an object, using exportText
@@ -130,10 +139,10 @@ public: // UStruct -> JSON
 	 * Wrapper to UStructToJsonObjectString that allows a print policy to be specified.
 	 */
 	template<typename CharType, template<typename> class PrintPolicy>
-	static bool UStructToFormattedJsonObjectString(const UStruct* StructDefinition, const void* Struct, FString& OutJsonString, int64 CheckFlags = 0, int64 SkipFlags = 0, int32 Indent = 0, const CustomExportCallback* ExportCb = nullptr)
+	static bool UStructToFormattedJsonObjectString(const UStruct* StructDefinition, const void* Struct, FString& OutJsonString, int64 CheckFlags = 0, int64 SkipFlags = 0, int32 Indent = 0, const CustomExportCallback* ExportCb = nullptr, EJsonObjectConversionFlags ConversionFlags = EJsonObjectConversionFlags::None)
 	{
 		TSharedRef<FJsonObject> JsonObject = MakeShareable(new FJsonObject());
-		if (UStructToJsonObject(StructDefinition, Struct, JsonObject, CheckFlags, SkipFlags, ExportCb))
+		if (UStructToJsonObject(StructDefinition, Struct, JsonObject, CheckFlags, SkipFlags, ExportCb, ConversionFlags))
 		{
 			TSharedRef<TJsonWriter<CharType, PrintPolicy<CharType>>> JsonWriter = TJsonWriterFactory<CharType, PrintPolicy<CharType>>::Create(&OutJsonString, Indent);
 
@@ -161,10 +170,11 @@ public: // UStruct -> JSON
 	 * @param CheckFlags Only convert properties that match at least one of these flags. If 0 check all properties.
 	 * @param SkipFlags Skip properties that match any of these flags
 	 * @param ExportCb Optional callback to override export behavior, if this returns null it will fallback to the default
+	 * @param ConversionFlags Bitwise flags to customize the conversion behavior
 	 *
 	 * @return False if any properties failed to write
 	 */
-	static JSONUTILITIES_API bool UStructToJsonAttributes(const UStruct* StructDefinition, const void* Struct, TMap< FString, TSharedPtr<FJsonValue> >& OutJsonAttributes, int64 CheckFlags = 0, int64 SkipFlags = 0, const CustomExportCallback* ExportCb = nullptr);
+	static JSONUTILITIES_API bool UStructToJsonAttributes(const UStruct* StructDefinition, const void* Struct, TMap< FString, TSharedPtr<FJsonValue> >& OutJsonAttributes, int64 CheckFlags = 0, int64 SkipFlags = 0, const CustomExportCallback* ExportCb = nullptr, EJsonObjectConversionFlags ConversionFlags = EJsonObjectConversionFlags::None);
 
 	/* * Converts from a FProperty to a Json Value using exportText
 	 *
@@ -174,10 +184,11 @@ public: // UStruct -> JSON
 	 * @param SkipFlags			Skip properties that match any of these flags
 	 * @param ExportCb Optional callback to override export behavior, if this returns null it will fallback to the default
 	 * @param OuterProperty		If applicable, the Array/Set/Map Property that contains this property
+	 * @param ConversionFlags	Bitwise flags to customize the conversion behavior
 	 *
 	 * @return					The constructed JsonValue from the property
 	 */
-	static JSONUTILITIES_API TSharedPtr<FJsonValue> UPropertyToJsonValue(FProperty* Property, const void* Value, int64 CheckFlags = 0, int64 SkipFlags = 0, const CustomExportCallback* ExportCb = nullptr, FProperty* OuterProperty = nullptr);
+	static JSONUTILITIES_API TSharedPtr<FJsonValue> UPropertyToJsonValue(FProperty* Property, const void* Value, int64 CheckFlags = 0, int64 SkipFlags = 0, const CustomExportCallback* ExportCb = nullptr, FProperty* OuterProperty = nullptr, EJsonObjectConversionFlags ConversionFlags = EJsonObjectConversionFlags::None);
 
 public: // JSON -> UStruct
 

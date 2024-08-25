@@ -89,8 +89,10 @@ public:
 
 public:
 	void LinkAssetToPrim(const UE::FSdfPath& Path, UObject* Asset);
+	void UnlinkAssetFromPrim(const UE::FSdfPath& Path, UObject* Asset);
 
 	TArray<TWeakObjectPtr<UObject>> RemoveAllAssetPrimLinks(const UE::FSdfPath& Path);
+	TArray<UE::FSdfPath> RemoveAllAssetPrimLinks(const UObject* Asset);
 	void RemoveAllAssetPrimLinks();
 
 	TArray<TWeakObjectPtr<UObject>> GetAllAssetsForPrim(const UE::FSdfPath& Path) const;
@@ -138,4 +140,3 @@ public:
 private:
 	TUniquePtr<FUsdInfoCacheImpl> Impl;
 };
-

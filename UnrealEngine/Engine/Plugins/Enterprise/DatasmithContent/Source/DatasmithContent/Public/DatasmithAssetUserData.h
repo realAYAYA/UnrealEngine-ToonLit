@@ -4,7 +4,7 @@
 
 #include "Engine/AssetUserData.h"
 #include "Templates/SubclassOf.h"
-
+#include "ObjectTemplates/DatasmithObjectTemplate.h"// Todo Fixme: UE官方没引入该文件导致编译失败
 #include "DatasmithAssetUserData.generated.h"
 
 /** Asset user data that can be used with Datasmith on Actors and other objects  */

@@ -126,13 +126,13 @@ protected:
     // Determine runtime rows and columns.
     Index rows = expr.rows();
     Index cols = expr.cols();
-    if(PlainObjectType::RowsAtCompileTime==1)
+    if constexpr (PlainObjectType::RowsAtCompileTime==1)
     {
       eigen_assert(expr.rows()==1 || expr.cols()==1);
       rows = 1;
       cols = expr.size();
     }
-    else if(PlainObjectType::ColsAtCompileTime==1)
+    else if constexpr (PlainObjectType::ColsAtCompileTime==1)
     {
       eigen_assert(expr.rows()==1 || expr.cols()==1);
       rows = expr.size();

@@ -23,6 +23,7 @@
 #include "ThumbnailRendering/ThumbnailManager.h"
 #include "AssetSelection.h"
 #include "ActorFactories/ActorFactory.h"
+#include "ScopedTransaction.h"
 
 #define LOCTEXT_NAMESPACE "PlacementMode"
 
@@ -301,7 +302,7 @@ FReply SPlacementAssetEntry::OnDragDetected(const FGeometry& MyGeometry, const F
 
 	if( MouseEvent.IsMouseButtonDown( EKeys::LeftMouseButton ) )
 	{
-		return FReply::Handled().BeginDragDrop(FAssetDragDropOp::New(Item->AssetData, Item->Factory));
+		return FReply::Handled().BeginDragDrop(FAssetDragDropOp::New(Item->AssetData, Item->AssetFactory));
 	}
 	else
 	{
@@ -476,7 +477,6 @@ FReply SPlacementAssetMenuEntry::OnMouseButtonUp(const FGeometry& MyGeometry, co
 	{
 		bIsPressed = false;
 
-		AActor* NewActor = nullptr;
 		UActorFactory* Factory = Item->Factory;
 		if (!Item->Factory)
 		{
@@ -488,13 +488,19 @@ FReply SPlacementAssetMenuEntry::OnMouseButtonUp(const FGeometry& MyGeometry, co
 				FActorFactoryAssetProxy::GetFactoryForAssetObject(ClassObject);
 			}
 		}
-		NewActor = FLevelEditorActionCallbacks::AddActor(Factory, Item->AssetData, nullptr);
-		if (NewActor && GCurrentLevelEditingViewportClient)
+
 		{
-  			GEditor->MoveActorInFrontOfCamera(*NewActor, 
-  				GCurrentLevelEditingViewportClient->GetViewLocation(), 
-  				GCurrentLevelEditingViewportClient->GetViewRotation().Vector()
-  			);
+			// Note: Capture the add and the move within a single transaction, so that the placed actor position is calculated correctly by the transaction diff
+			FScopedTransaction Transaction(NSLOCTEXT("UnrealEd", "CreateActor", "Create Actor"));
+
+			AActor* NewActor = FLevelEditorActionCallbacks::AddActor(Factory, Item->AssetData, nullptr);
+			if (NewActor && GCurrentLevelEditingViewportClient)
+			{
+				GEditor->MoveActorInFrontOfCamera(*NewActor,
+					GCurrentLevelEditingViewportClient->GetViewLocation(),
+					GCurrentLevelEditingViewportClient->GetViewRotation().Vector()
+				);
+			}
 		}
 
 		if (!MouseEvent.IsControlDown())
@@ -522,7 +528,7 @@ FReply SPlacementAssetMenuEntry::OnDragDetected(const FGeometry& MyGeometry, con
 
 	if( MouseEvent.IsMouseButtonDown( EKeys::LeftMouseButton ) )
 	{
-		return FReply::Handled().BeginDragDrop(FAssetDragDropOp::New(Item->AssetData, Item->Factory));
+		return FReply::Handled().BeginDragDrop(FAssetDragDropOp::New(Item->AssetData, Item->AssetFactory));
 	}
 	else
 	{
@@ -701,6 +707,7 @@ void SPlacementModeTools::Construct( const FArguments& InArgs, TSharedRef<SDockT
 	PlacementModeModule.OnAllPlaceableAssetsChanged().AddSP(this, &SPlacementModeTools::RequestRefreshAllClasses);
 	PlacementModeModule.OnPlaceableItemFilteringChanged().AddSP(this, &SPlacementModeTools::RequestUpdateShownItems);
 	PlacementModeModule.OnPlacementModeCategoryListChanged().AddSP(this, &SPlacementModeTools::UpdatePlacementCategories);
+	PlacementModeModule.OnPlacementModeCategoryRefreshed().AddSP(this, &SPlacementModeTools::OnCategoryRefresh);
 }
 
 FName SPlacementModeTools::GetActiveTab() const
@@ -714,7 +721,6 @@ void SPlacementModeTools::SetActiveTab(FName TabName)
 	{
 		ActiveTabName = TabName;
 		IPlacementModeModule::Get().RegenerateItemsForCategory(ActiveTabName);
-		bUpdateShownItems = true;
 	}
 }
 
@@ -837,6 +843,14 @@ void SPlacementModeTools::RequestRefreshAllClasses()
 	}
 }
 
+void SPlacementModeTools::OnCategoryRefresh(FName CategoryName)
+{
+	if (GetActiveTab() == CategoryName)
+	{
+		RequestUpdateShownItems();
+	}
+}
+
 void SPlacementModeTools::UpdatePlacementCategories()
 {
 	bool BasicTabExists = false;
@@ -895,14 +909,12 @@ void SPlacementModeTools::Tick( const FGeometry& AllottedGeometry, const double 
 	{
 		IPlacementModeModule::Get().RegenerateItemsForCategory(FBuiltInPlacementCategories::AllClasses());
 		bRefreshAllClasses = false;
-		bUpdateShownItems = true;
 	}
 
 	if (bRefreshRecentlyPlaced)
 	{
 		IPlacementModeModule::Get().RegenerateItemsForCategory(FBuiltInPlacementCategories::RecentlyPlaced());
 		bRefreshRecentlyPlaced = false;
-		bUpdateShownItems = true;
 	}
 
 	if (bUpdateShownItems)

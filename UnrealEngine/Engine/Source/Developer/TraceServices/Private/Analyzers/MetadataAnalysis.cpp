@@ -65,7 +65,7 @@ bool FMetadataAnalysis::OnEvent(uint16 RouteId, EStyle Style, const FOnEventCont
 	{
 	case RouteId_ClearScope:
 		{
-			const uint32 ThreadId = Context.ThreadInfo.GetSystemId();
+			const uint32 ThreadId = Context.ThreadInfo.GetId();
 			if (Style == EStyle::EnterScope)
 			{
 				MetadataProvider->BeginClearStackScope(ThreadId);
@@ -79,7 +79,7 @@ bool FMetadataAnalysis::OnEvent(uint16 RouteId, EStyle Style, const FOnEventCont
 
 	case RouteId_SaveStack:
 		{
-			const uint32 ThreadId = Context.ThreadInfo.GetSystemId();
+			const uint32 ThreadId = Context.ThreadInfo.GetId();
 			const uint32 RuntimeId = Context.EventData.GetValue<uint32>("Id");
 			MetadataProvider->SaveStack(ThreadId, RuntimeId);
 		}
@@ -87,7 +87,7 @@ bool FMetadataAnalysis::OnEvent(uint16 RouteId, EStyle Style, const FOnEventCont
 
 	case RouteId_RestoreStack:
 		{
-			const uint32 ThreadId = Context.ThreadInfo.GetSystemId();
+			const uint32 ThreadId = Context.ThreadInfo.GetId();
 			if (Style == EStyle::EnterScope)
 			{
 				const uint32 RuntimeId = Context.EventData.GetValue<uint32>("Id");
@@ -109,7 +109,7 @@ bool FMetadataAnalysis::OnEvent(uint16 RouteId, EStyle Style, const FOnEventCont
 			// for this event type and register it with the provider.
 			const uint16 MetadataTypeId = GetOrRegisterType(EventInfo);
 
-			const uint32 ThreadId = Context.ThreadInfo.GetSystemId();
+			const uint32 ThreadId = Context.ThreadInfo.GetId();
 
 			// Push the actual data of the scope to the provider or pop if we are leaving the scope.
 			if (Style == EStyle::EnterScope)

@@ -11,6 +11,10 @@
 #include "Logging/LogMacros.h"
 #include "Misc/Build.h"
 
+#if !defined(UE_TRACE_SERVER_CONTROLS_ENABLED)
+#	define UE_TRACE_SERVER_CONTROLS_ENABLED (PLATFORM_DESKTOP && !UE_BUILD_SHIPPING && !IS_PROGRAM)
+#endif
+
 ////////////////////////////////////////////////////////////////////////////////
 class FTraceAuxiliary
 {
@@ -93,6 +97,11 @@ public:
 	 * Pause all tracing by disabling all active channels.
 	 */
 	static CORE_API bool Pause();
+
+	/**
+	* @return True if trace was paused and the list of channels to resume exists.
+	*/
+	static CORE_API bool IsPaused();
 
 	/**
 	 * Resume tracing by enabling all previously active channels.
@@ -222,3 +231,25 @@ public:
 	static CORE_API FOnSnapshotSaved OnSnapshotSaved;
 	
 };
+
+#if UE_TRACE_SERVER_CONTROLS_ENABLED
+
+/**
+ * Controls for Unreal Trace Server, the standalone server recording and storing traces.
+ */
+class FTraceServerControls
+{
+public:
+	/**
+	 * Launch the server using the "fork" command. This spins off an separate running process.	 * 
+	 * @return True if the server was successfully started or already running.
+	 */
+	static CORE_API bool Start();
+	/**
+	 * Stop any running instance of the server.
+	 * @return True if the stop command was successful. False otherwise.
+	 */
+	static CORE_API bool Stop();
+};
+
+#endif // UE_TRACE_SERVER_CONTROLS_ENABLED

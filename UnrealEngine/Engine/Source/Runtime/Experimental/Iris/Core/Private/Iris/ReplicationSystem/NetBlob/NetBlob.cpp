@@ -28,7 +28,7 @@ FNetBlob::~FNetBlob()
 	{
 		if (EnumHasAnyFlags(Descriptor->Traits, EReplicationStateTraits::HasDynamicState))
 		{
-			if (uint8* StateBuffer = QuantizedBlobState.Get())
+			if (uint8* StateBuffer = QuantizedBlobState.GetStateBuffer())
 			{
 				Private::FReplicationStateOperationsInternal::FreeDynamicState(StateBuffer, Descriptor);
 			}
@@ -36,7 +36,7 @@ FNetBlob::~FNetBlob()
 	}
 }
 
-void FNetBlob::SetState(const TRefCountPtr<const FReplicationStateDescriptor>& InBlobDescriptor, TUniquePtr<uint8> InQuantizedBlobState)
+void FNetBlob::SetState(const TRefCountPtr<const FReplicationStateDescriptor>& InBlobDescriptor, FQuantizedBlobState&& InQuantizedBlobState)
 {
 	BlobDescriptor = InBlobDescriptor;
 	QuantizedBlobState = MoveTemp(InQuantizedBlobState);
@@ -46,12 +46,14 @@ void FNetBlob::SerializeCreationInfo(FNetSerializationContext& Context, const FN
 {
 	FNetBitStreamWriter* Writer = Context.GetBitStreamWriter();
 
-	// Currently we only need to serialize the blob type as reliability is expected to be handled externally.
 	Writer->WriteBits((CreationInfo.Type == 0 ? 0U : 1U), 1U);
 	if (CreationInfo.Type != 0)
 	{
 		Writer->WriteBits(CreationInfo.Type, 7U);
 	}
+
+	// Retain Reliable flag
+	Writer->WriteBits(EnumHasAnyFlags(CreationInfo.Flags, ENetBlobFlags::Reliable) ? 1U : 0U, 1U);
 }
 
 void FNetBlob::DeserializeCreationInfo(FNetSerializationContext& Context, FNetBlobCreationInfo& OutCreationInfo)
@@ -63,8 +65,11 @@ void FNetBlob::DeserializeCreationInfo(FNetSerializationContext& Context, FNetBl
 		Type = Reader->ReadBits(7U);
 	}
 
+	const uint32 Reliable = Reader->ReadBits(1);
+	ENetBlobFlags Flags = (Reliable ? ENetBlobFlags::Reliable : ENetBlobFlags::None);
+
 	OutCreationInfo.Type = Type;
-	OutCreationInfo.Flags = ENetBlobFlags::None;
+	OutCreationInfo.Flags = Flags;
 }
 
 void FNetBlob::SerializeWithObject(FNetSerializationContext& Context, FNetRefHandle RefHandle) const
@@ -88,29 +93,28 @@ void FNetBlob::Deserialize(FNetSerializationContext& Context)
 	DeserializeBlob(Context);
 }
 
-ENetObjectReferenceResolveResult FNetBlob::ResolveObjectReferences(FNetSerializationContext& Context) const
+void FNetBlob::CollectObjectReferences(FNetSerializationContext& Context, FNetReferenceCollector& Collector) const
 {
-	if (BlobDescriptor.IsValid() && QuantizedBlobState.IsValid())
+	if (BlobDescriptor.IsValid() && QuantizedBlobState.GetStateBuffer())
 	{
-		return Private::FReplicationStateOperationsInternal::TryToResolveObjectReferences(Context, QuantizedBlobState.Get(), BlobDescriptor);
+		const FNetSerializerChangeMaskParam InitStateChangeMaskInfo = { 0 };
+		Private::FReplicationStateOperationsInternal::CollectReferences(Context, Collector, InitStateChangeMaskInfo, QuantizedBlobState.GetStateBuffer(), BlobDescriptor);
 	}
-	
-	return ENetObjectReferenceResolveResult::None;
 }
 
 void FNetBlob::SerializeBlob(FNetSerializationContext& Context) const
 {
-	if (BlobDescriptor.IsValid() && QuantizedBlobState.IsValid())
+	if (BlobDescriptor.IsValid() && QuantizedBlobState.GetStateBuffer())
 	{
-		FReplicationStateOperations::Serialize(Context, QuantizedBlobState.Get(), BlobDescriptor);
+		FReplicationStateOperations::Serialize(Context, QuantizedBlobState.GetStateBuffer(), BlobDescriptor);
 	}
 }
 
 void FNetBlob::DeserializeBlob(FNetSerializationContext& Context)
 {
-	if (BlobDescriptor.IsValid() && QuantizedBlobState.IsValid())
+	if (BlobDescriptor.IsValid() && QuantizedBlobState.GetStateBuffer())
 	{
-		FReplicationStateOperations::Deserialize(Context, QuantizedBlobState.Get(), BlobDescriptor);
+		FReplicationStateOperations::Deserialize(Context, QuantizedBlobState.GetStateBuffer(), BlobDescriptor);
 	}
 }
 
@@ -158,6 +162,15 @@ void FNetObjectAttachment::DeserializeSubObjectReference(FNetSerializationContex
 {
 	NetObjectReference = Private::FObjectReferenceCache::MakeNetObjectReference(RefHandle);
 	ReadFullNetObjectReference(Context, TargetObjectReference);
+}
+
+FNetBlob::FQuantizedBlobState::FQuantizedBlobState(uint32 Size, uint32 Alignment)
+: StateBuffer(static_cast<uint8*>(GMalloc->Malloc(Size, Alignment)))
+{
+	if (StateBuffer)
+	{
+		FMemory::Memzero(StateBuffer, Size);
+	}
 }
 
 }

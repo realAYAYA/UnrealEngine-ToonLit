@@ -10,6 +10,7 @@
 #include "ModelingToolsEditorModeToolkit.h"
 #include "ILevelEditor.h"
 #include "ModelingToolsEditorModeSettings.h"
+#include "ModelingToolsHostCustomizationAPI.h"
 #include "ToolTargetManager.h"
 #include "ContextObjectStore.h"
 #include "InputRouter.h"
@@ -93,6 +94,7 @@
 #include "ConvertMeshesTool.h"
 #include "SplitMeshesTool.h"
 #include "PatternTool.h"
+#include "HarvestInstancesTool.h"
 #include "TriangulateSplinesTool.h"
 
 #include "Polymodeling/ExtrudeMeshSelectionTool.h"
@@ -258,7 +260,7 @@ bool UModelingToolsEditorMode::ShouldDrawWidget() const
 	}
 
 	// hide standard xform gizmo if we have an active selection
-	if (GetSelectionManager() && GetSelectionManager()->HasSelection())
+	if (GetSelectionManager() && (GetSelectionManager()->HasSelection() || GetSelectionManager()->GetMeshTopologyMode() != UGeometrySelectionManager::EMeshTopologyMode::None))
 	{
 		return false;
 	}
@@ -427,6 +429,12 @@ void UModelingToolsEditorMode::Enter()
 	UE::Geometry::RegisterSceneSnappingManager(GetInteractiveToolsContext());
 	SceneSnappingManager = UE::Geometry::FindModelingSceneSnappingManager(GetToolManager());
 
+	// register tool shutdown button customizer
+	if (ensure(Toolkit.IsValid()))
+	{
+		UModelingToolsHostCustomizationAPI::Register(GetInteractiveToolsContext(), 
+			StaticCastSharedRef<FModelingToolsEditorModeToolkit>(Toolkit.ToSharedRef()));
+	}
 
 	// set up SelectionManager and register known factory types
 	SelectionManager = NewObject<UGeometrySelectionManager>(GetToolManager());
@@ -650,6 +658,7 @@ void UModelingToolsEditorMode::Enter()
 	UPatternToolBuilder* PatternToolBuilder = NewObject<UPatternToolBuilder>();
 	PatternToolBuilder->bEnableCreateISMCs = true;
 	RegisterTool(ToolManagerCommands.BeginPatternTool, TEXT("BeginPatternTool"), PatternToolBuilder);
+	RegisterTool(ToolManagerCommands.BeginHarvestInstancesTool, TEXT("BeginHarvestInstancesTool"), NewObject<UHarvestInstancesToolBuilder>());
 
 	UCombineMeshesToolBuilder* CombineMeshesToolBuilder = NewObject<UCombineMeshesToolBuilder>();
 	RegisterTool(ToolManagerCommands.BeginCombineMeshesTool, TEXT("BeginCombineMeshesTool"), CombineMeshesToolBuilder);
@@ -846,6 +855,7 @@ void UModelingToolsEditorMode::Enter()
 	RegisterPolyModelActionTool(EEditMeshPolygonsToolActions::Outset, ToolManagerCommands.BeginPolyModelTool_Outset, TEXT("PolyEdit_Outset"), true);
 	RegisterPolyModelActionTool(EEditMeshPolygonsToolActions::CutFaces, ToolManagerCommands.BeginPolyModelTool_CutFaces, TEXT("PolyEdit_CutFaces"), true);
 	RegisterPolyModelActionTool(EEditMeshPolygonsToolActions::InsertEdgeLoop, ToolManagerCommands.BeginPolyModelTool_InsertEdgeLoop, TEXT("PolyEdit_InsertEdgeLoop"), false);
+	RegisterPolyModelActionTool(EEditMeshPolygonsToolActions::ExtrudeEdges, ToolManagerCommands.BeginPolyModelTool_ExtrudeEdges, TEXT("PolyEdit_ExtrudeEdges"), true);
 	RegisterPolyModelActionTool(EEditMeshPolygonsToolActions::PushPull, ToolManagerCommands.BeginPolyModelTool_PushPull, TEXT("PolyEdit_PushPull"), true);
 	RegisterPolyModelActionTool(EEditMeshPolygonsToolActions::BevelAuto, ToolManagerCommands.BeginPolyModelTool_Bevel, TEXT("PolyEdit_Bevel"), true);
 	
@@ -935,6 +945,15 @@ void UModelingToolsEditorMode::Enter()
 
 				RegisterTool(ToolInfo.ToolCommand, ToolInfo.ToolName.ToString(), ToolInfo.ToolBuilder);
 			}
+
+			TArray<TSubclassOf<UToolTargetFactory>> ExtensionToolTargetFactoryClasses;
+			if (Extensions[k]->GetExtensionToolTargets(ExtensionToolTargetFactoryClasses))
+			{
+				for (const TSubclassOf<UToolTargetFactory>& ExtensionTargetFactoryClass : ExtensionToolTargetFactoryClasses)
+				{
+					GetInteractiveToolsContext()->TargetManager->AddTargetFactory(NewObject<UToolTargetFactory>(GetToolManager(), ExtensionTargetFactoryClass.Get()));
+				}
+			}
 		}
 	}
 
@@ -997,6 +1016,25 @@ void UModelingToolsEditorMode::Enter()
 		}
 	});
 
+	// Restore saved selections when tool is cancelled or tool declares it is safe to do so via the IInteractiveToolManageGeometrySelectionAPI
+	GetToolManager()->OnToolEndedWithStatus.AddLambda([this](UInteractiveToolManager* Manager, UInteractiveTool* Tool, EToolShutdownType ShutdownType)
+	{
+		bool bCanRestore = (ShutdownType == EToolShutdownType::Cancel);
+		if (IInteractiveToolManageGeometrySelectionAPI* ManageSelectionTool = Cast<IInteractiveToolManageGeometrySelectionAPI>(Tool))
+		{
+			bCanRestore = bCanRestore || ManageSelectionTool->IsInputSelectionValidOnOutput();
+		}
+		if (bCanRestore)
+		{
+			GetSelectionManager()->RestoreSavedSelection();
+		}
+		else
+		{
+			GetSelectionManager()->DiscardSavedSelection();
+		}
+		ensureMsgf(!GetSelectionManager()->HasSavedSelection(), TEXT("Selection manager's saved selection should be cleared on tool end."));
+	});
+
 	// do any toolkit UI initialization that depends on the mode setup above
 	if (Toolkit.IsValid())
 	{
@@ -1035,6 +1073,13 @@ void UModelingToolsEditorMode::Enter()
 		if ( LastDragMode == EModelingSelectionInteraction_DragMode::NoDragInteraction || LastDragMode == EModelingSelectionInteraction_DragMode::PathInteraction )
 		{
 			SelectionInteraction->SetActiveDragMode(LastDragMode);
+		}
+
+		EModelingSelectionInteraction_LocalFrameMode LastLocalFrameMode =
+			static_cast<EModelingSelectionInteraction_LocalFrameMode>(ModelingEditorSettings->LastMeshSelectionLocalFrameMode);
+		if ( LastLocalFrameMode == EModelingSelectionInteraction_LocalFrameMode::FromGeometry || LastLocalFrameMode == EModelingSelectionInteraction_LocalFrameMode::FromObject )
+		{
+			SelectionInteraction->SetLocalFrameMode(LastLocalFrameMode);
 		}
 	}
 
@@ -1210,6 +1255,8 @@ void UModelingToolsEditorMode::Exit()
 #if ENABLE_STYLUS_SUPPORT 
 	StylusStateTracker = nullptr;
 #endif
+
+	UModelingToolsHostCustomizationAPI::Deregister(GetInteractiveToolsContext());
 
 	// TODO: cannot deregister currently because if another mode is also registering, its Enter()
 	// will be called before our Exit()
@@ -1557,7 +1604,8 @@ void UModelingToolsEditorMode::OnToolPostBuild(
 	// built, so that the Tool has a chance to see the Selection
 	if (GetSelectionManager() && GetSelectionManager()->HasSelection())
 	{
-		GetSelectionManager()->ClearSelection();
+		ensureMsgf(!GetSelectionManager()->HasSavedSelection(), TEXT("Selection manager should not already have a saved selection before we save-on-clear here in tool setup."));
+		GetSelectionManager()->ClearSelection(/*bSaveSelectionBeforeClear*/ true);
 	}
 }
 

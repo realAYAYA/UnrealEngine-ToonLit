@@ -3,6 +3,9 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:epic_common/preferences.dart';
+import 'package:epic_common/theme.dart';
+import 'package:epic_common/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 import 'package:logging/logging.dart';
@@ -19,21 +22,11 @@ import '../../../../models/unreal_actor_manager.dart';
 import '../../../../models/unreal_transaction_manager.dart';
 import '../../../../models/unreal_types.dart';
 import '../../../../utilities/constants.dart';
-import '../../../../utilities/preferences_bundle.dart';
-import '../../../../utilities/transient_preference.dart';
-import '../../../../utilities/unreal_colors.dart';
 import '../../../../utilities/unreal_utilities.dart';
 import '../../../elements/delta_slider.dart';
 import '../../../elements/dropdown_text.dart';
-import '../../../elements/empty_placeholder.dart';
-import '../../../elements/epic_icon_button.dart';
-import '../../../elements/layout/card.dart';
-import '../../../elements/modal.dart';
 import '../../../elements/reset_mode_button.dart';
-import '../../../elements/selector_bar.dart';
 import '../../../elements/stepper.dart';
-import '../../../elements/swipe_revealer.dart';
-import '../../../elements/tree_view.dart';
 import '../../../elements/unreal_property_builder.dart';
 import '../sidebar/outliner_panel.dart';
 import 'base_color_tab.dart';
@@ -44,7 +37,7 @@ final _log = Logger('ColorGradingTab');
 class ColorGradingTab extends StatefulWidget {
   const ColorGradingTab({Key? key}) : super(key: key);
 
-  static const String iconPath = 'assets/images/icons/color_grading.svg';
+  static const String iconPath = 'packages/epic_common/assets/icons/color_grading.svg';
 
   static String getTitle(BuildContext context) => AppLocalizations.of(context)!.tabTitleColorGrading;
 
@@ -112,7 +105,7 @@ class _ColorGradingTabState extends State<ColorGradingTab> {
             final _ColorGradingTargetListEntryData? targetData = _getTargetEntryDataForProperty(colorGradingTarget);
 
             return Padding(
-              padding: EdgeInsets.all(cardMargin),
+              padding: EdgeInsets.all(UnrealTheme.cardMargin),
               child: Row(children: [
                 // Main controls
                 Expanded(
@@ -144,7 +137,7 @@ class _ColorGradingTabState extends State<ColorGradingTab> {
                     }
 
                     return Row(children: [
-                      SizedBox(width: cardMargin),
+                      SizedBox(width: UnrealTheme.cardMargin),
 
                       // Outliner and target panels
                       SizedBox(
@@ -210,21 +203,23 @@ class _ColorGradingTabState extends State<ColorGradingTab> {
     switch (entryData?.type) {
       case _ColorGradingObjectEntryType.nDisplayConfig:
       case _ColorGradingObjectEntryType.icvfxCamera:
-        return 'assets/images/icons/viewport.svg';
+        return 'packages/epic_common/assets/icons/viewport.svg';
 
       case _ColorGradingObjectEntryType.postProcessVolume:
-        return 'assets/images/icons/post_process_volume.svg';
+        return 'packages/epic_common/assets/icons/post_process_volume.svg';
 
       default:
-        return 'assets/images/icons/color_grading.svg';
+        return 'packages/epic_common/assets/icons/color_grading.svg';
     }
   }
 
   /// Start refreshing the target list if there isn't one in progress.
-  void _startRefreshingTargetList() {
+  Future _startRefreshingTargetList() {
     if (_bPendingRefresh == null) {
       _bPendingRefresh = _refreshTargetList().then((_) => _bPendingRefresh = null);
     }
+
+    return _bPendingRefresh!;
   }
 
   /// Refresh the list of possible color grading targets.
@@ -715,7 +710,6 @@ class _ColorGradingOutlinerPanel extends StatefulWidget {
 }
 
 class _ColorGradingOutlinerPanelState extends State<_ColorGradingOutlinerPanel> {
-  final ScrollController _scrollController = ScrollController();
   late final TreeViewController _treeController = TreeViewController();
 
   @override
@@ -740,17 +734,14 @@ class _ColorGradingOutlinerPanelState extends State<_ColorGradingOutlinerPanel> 
         children: [
           CardSmallHeader(title: AppLocalizations.of(context)!.outlinerTitle),
           Expanded(
-            child: Padding(
-              padding: EdgeInsets.only(top: 2),
-              child: TreeView(
-                treeController: _treeController,
-                scrollController: _scrollController,
-                nodeBuilder: (node, controller) => _ColorGradingObjectEntry(
-                  node: node as TreeViewNode<_ColorGradingObjectEntryData>,
-                  controller: _treeController,
-                  onTap: () => widget.onSelectionChanged(node.data.path),
-                  bIsSelected: node.data.path == widget.selectedObjectPath,
-                ),
+            child: TreeView(
+              padding: EdgeInsets.symmetric(vertical: 4),
+              treeController: _treeController,
+              nodeBuilder: (node, controller) => _ColorGradingObjectEntry(
+                node: node as TreeViewNode<_ColorGradingObjectEntryData>,
+                controller: _treeController,
+                onTap: () => widget.onSelectionChanged(node.data.path),
+                bIsSelected: node.data.path == widget.selectedObjectPath,
               ),
             ),
           ),
@@ -809,8 +800,9 @@ class _ColorGradingTargetPanel extends StatefulWidget {
   /// A function called when the target property changes.
   final Function(UnrealProperty newTarget) onTargetChanged;
 
-  /// A function called when the target list should refresh.
-  final Function() refreshTargetList;
+  /// A function called when the target list should refresh. Returns a Future which will complete when the list has been
+  /// refreshed.
+  final Future Function() refreshTargetList;
 
   /// The maximum height of this panel, including its header.
   final double maxHeight;
@@ -821,7 +813,6 @@ class _ColorGradingTargetPanel extends StatefulWidget {
 
 class _ColorGradingTargetPanelState extends State<_ColorGradingTargetPanel> {
   final GlobalKey _innerListKey = GlobalKey();
-  final ScrollController _scrollController = ScrollController();
 
   /// The user's touch position when they started dragging the title bar.
   Offset? _dragStartPosition;
@@ -830,14 +821,9 @@ class _ColorGradingTargetPanelState extends State<_ColorGradingTargetPanel> {
   double _dragStartHeight = 0;
 
   @override
-  void dispose() {
-    _scrollController.dispose();
-
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
+    final connection = Provider.of<EngineConnectionManager>(context, listen: false);
+
     late final bCanSelectTarget;
 
     // Determine whether we can select sub-targets within object entry
@@ -861,22 +847,18 @@ class _ColorGradingTargetPanelState extends State<_ColorGradingTargetPanel> {
     } else {
       final List<_ColorGradingTargetListEntryData> targets = widget.objectEntry!.targets;
 
-      innerList = Padding(
+      innerList = EpicListView(
         key: _innerListKey,
-        padding: EdgeInsets.only(top: 2),
-        child: ListView.builder(
-          controller: _scrollController,
-          itemCount: targets.length,
-          itemBuilder: (BuildContext context, int targetIndex) {
-            final _ColorGradingTargetListEntryData entryData = targets[targetIndex];
-            return _ColorGradingTargetListEntry(
-              data: entryData,
-              onTap: () => widget.onTargetChanged(entryData.property),
-              bIsSelected: entryData.property == widget.currentTarget?.property,
-            );
-          },
-          scrollDirection: Axis.vertical,
-        ),
+        padding: EdgeInsets.only(top: 4),
+        itemCount: targets.length,
+        itemBuilder: (BuildContext context, int targetIndex) {
+          final _ColorGradingTargetListEntryData entryData = targets[targetIndex];
+          return _ColorGradingTargetListEntry(
+            data: entryData,
+            onTap: () => widget.onTargetChanged(entryData.property),
+            bIsSelected: entryData.property == widget.currentTarget?.property,
+          );
+        },
       );
     }
 
@@ -907,22 +889,23 @@ class _ColorGradingTargetPanelState extends State<_ColorGradingTargetPanel> {
                     padding: EdgeInsets.symmetric(horizontal: 4),
                     child: Row(children: [
                       CardSubHeaderButton(
-                        iconPath: 'assets/images/icons/add_circle.svg',
+                        iconPath: 'packages/epic_common/assets/icons/add_circle.svg',
                         tooltipMessage: AppLocalizations.of(context)!.colorGradingOutlinerAddTargetButtonTooltip,
-                        // TODO: UE-185829
-                        onPressed: null,
+                        onPressed: widget.objectEntry?.targetListProperty != null ? _addTargetToSelectedObject : null,
                       ),
                       CardSubHeaderButton(
-                        iconPath: 'assets/images/icons/edit.svg',
+                        iconPath: 'packages/epic_common/assets/icons/edit.svg',
                         tooltipMessage: AppLocalizations.of(context)!.colorGradingOutlinerRenameTargetButtonTooltip,
                         onPressed: widget.currentTarget?.nameProperty != null ? _renameTarget : null,
                       ),
                       const Spacer(),
                       CardSubHeaderButton(
-                        iconPath: 'assets/images/icons/trash.svg',
+                        iconPath: 'packages/epic_common/assets/icons/trash.svg',
                         tooltipMessage: AppLocalizations.of(context)!.colorGradingOutlinerDeleteTargetButtonTooltip,
-                        // TODO: UE-185829
-                        onPressed: null,
+                        onPressed: connection.apiVersion?.bCanUseQueryParamsInWebSocketHttpUrl == true &&
+                                widget.currentTarget?.bIsListEntry == true
+                            ? _deleteTarget
+                            : null,
                       ),
                     ]),
                   ),
@@ -995,19 +978,152 @@ class _ColorGradingTargetPanelState extends State<_ColorGradingTargetPanel> {
     _dragStartPosition = null;
   }
 
-  /// Rename the selected color grading target.
+  /// Show a dialog to rename the selected color grading target.
   void _renameTarget() {
     if (widget.currentTarget == null) {
       return;
     }
 
+    final _ColorGradingTargetListEntryData target = widget.currentTarget!;
+
     GenericModalDialogRoute.showDialog(
       context: context,
-      builder: (context) => _RenameTargetDialog(
-        targetData: widget.currentTarget!,
-        onSuccess: widget.refreshTargetList,
+      builder: (_) => StringTextInputModalDialog(
+        title: AppLocalizations.of(context)!.renameColorGradingTargetTitle,
+        initialValue: target.name,
+        handleResult: (result) => _handleRenameTargetResult(result, target),
       ),
     );
+  }
+
+  /// Handle the result of the dialog shown by [_renameTarget] as applied to a [target].
+  Future _handleRenameTargetResult(
+      TextInputModalDialogResult<String> result, _ColorGradingTargetListEntryData target) async {
+    if (result.action != TextInputModalDialogAction.apply || target.nameProperty == null) {
+      return;
+    }
+
+    final transactionManager = Provider.of<UnrealTransactionManager>(context, listen: false);
+    final connection = Provider.of<EngineConnectionManager>(context, listen: false);
+
+    final Future<UnrealHttpResponse> messageFuture = transactionManager.wrapWithTransactionIfManualAllowedForProperties(
+      AppLocalizations.of(context)!.transactionRenameColorGradingTarget,
+      (bIsManualTransaction) => connection.sendHttpRequest(
+        UnrealHttpRequest(
+          url: '/remote/object/property',
+          verb: 'PUT',
+          body: {
+            'access': bIsManualTransaction ? 'WRITE_MANUAL_TRANSACTION_ACCESS' : 'WRITE_TRANSACTION_ACCESS',
+            'generateTransaction': !bIsManualTransaction,
+            'objectPath': target.nameProperty!.objectPath,
+            'propertyName': target.nameProperty!.propertyName,
+            'propertyValue': {
+              target.nameProperty!.lastPropertyName: result.value!,
+            },
+          },
+        ),
+      ),
+    );
+
+    final UnrealHttpResponse response = await messageFuture;
+    if (response.code == HttpResponseCode.ok) {
+      await widget.refreshTargetList();
+    } else {
+      _log.warning('Failed to rename color grading target "${target.name}" to "${result.value}"');
+    }
+  }
+
+  /// Show a dialog to add a color grading target to the selected object.
+  void _addTargetToSelectedObject() {
+    if (widget.objectEntry == null) {
+      return;
+    }
+
+    GenericModalDialogRoute.showDialog(
+      context: context,
+      builder: (_) => StringTextInputModalDialog(
+        title: AppLocalizations.of(context)!.addColorGradingTargetTitle,
+        initialValue: AppLocalizations.of(context)!.addColorGradingTargetDefaultName,
+        handleResult: (result) => _handleAddTargetResult(result, widget.objectEntry!),
+      ),
+    );
+  }
+
+  /// Handle the result of the dialog shown by [_addTargetToSelectedObject] as applied to a [target].
+  Future _handleAddTargetResult(TextInputModalDialogResult<String> result, _ColorGradingObjectEntryData target) async {
+    if (result.action != TextInputModalDialogAction.apply || target.targetListProperty == null) {
+      return;
+    }
+
+    final transactionManager = Provider.of<UnrealTransactionManager>(context, listen: false);
+    final connection = Provider.of<EngineConnectionManager>(context, listen: false);
+
+    final Future<UnrealHttpResponse> messageFuture = transactionManager.wrapWithTransactionIfManualAllowedForProperties(
+      AppLocalizations.of(context)!.transactionAddColorGradingTarget,
+      (bIsManualTransaction) => connection.sendHttpRequest(
+        UnrealHttpRequest(
+          url: '/remote/object/property/append',
+          verb: 'PUT',
+          body: {
+            'access': bIsManualTransaction ? 'WRITE_MANUAL_TRANSACTION_ACCESS' : 'WRITE_TRANSACTION_ACCESS',
+            'generateTransaction': !bIsManualTransaction,
+            'objectPath': target.path,
+            'propertyName': target.targetListProperty!.propertyName,
+            'propertyValue': {
+              target.targetListProperty!.lastPropertyName: {'Name': result.value!},
+            },
+          },
+        ),
+      ),
+    );
+
+    final UnrealHttpResponse response = await messageFuture;
+    if (response.code == HttpResponseCode.ok) {
+      await widget.refreshTargetList();
+    } else {
+      _log.warning('Failed to add color grading target to "${target.name}"');
+    }
+  }
+
+  /// Delete the selected color grading target.
+  void _deleteTarget() async {
+    if (widget.objectEntry == null || widget.objectEntry!.targetListProperty == null || widget.currentTarget == null) {
+      return;
+    }
+
+    final connection = Provider.of<EngineConnectionManager>(context, listen: false);
+    if (connection.apiVersion?.bCanUseQueryParamsInWebSocketHttpUrl != true) {
+      return;
+    }
+
+    // Subtract one to ignore the first entry, which is always the entire cluster/camera VFX and can't be removed
+    final int index = widget.objectEntry!.targets.indexOf(widget.currentTarget!) - 1;
+
+    final transactionManager = Provider.of<UnrealTransactionManager>(context, listen: false);
+
+    final Future<UnrealHttpResponse> messageFuture = transactionManager.wrapWithTransactionIfManualAllowedForProperties(
+      AppLocalizations.of(context)!.transactionAddColorGradingTarget,
+      (bIsManualTransaction) => connection.sendHttpRequest(
+        UnrealHttpRequest(
+          url: '/remote/object/property/remove?index=$index',
+          verb: 'PUT',
+          body: {
+            'access': bIsManualTransaction ? 'WRITE_MANUAL_TRANSACTION_ACCESS' : 'WRITE_TRANSACTION_ACCESS',
+            'generateTransaction': !bIsManualTransaction,
+            'objectPath': widget.objectEntry!.path,
+            'propertyName': widget.objectEntry!.targetListProperty!.propertyName,
+          },
+        ),
+      ),
+    );
+
+    final UnrealHttpResponse response = await messageFuture;
+    if (response.code == HttpResponseCode.ok) {
+      await widget.refreshTargetList();
+    } else {
+      _log.warning('Failed to delete grading target "${widget.currentTarget!.name}" (index $index) '
+          'from "${widget.objectEntry!.name}"');
+    }
   }
 }
 
@@ -1049,6 +1165,9 @@ class _ColorGradingMainControls extends StatelessWidget {
         break;
     }
 
+    final List<UnrealProperty> temperatureTypeProperties =
+        getSubproperties([targetProperty!], '${whiteBalancePrefix}TemperatureType');
+
     return BaseColorTab(
       mode: mode,
       colorProperties: [targetProperty!],
@@ -1058,12 +1177,17 @@ class _ColorGradingMainControls extends StatelessWidget {
       rightSideContents: Column(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          UnrealDeltaSlider(
-            unrealProperties: getSubproperties([targetProperty!], '${whiteBalancePrefix}WhiteTemp'),
-            enableProperties: getSubproperties([targetProperty!], '${whiteBalancePrefix}bOverride_WhiteTemp'),
-            buildLabel: (name) => UnrealDropdownText(
-              unrealProperties: getSubproperties([targetProperty!], '${whiteBalancePrefix}TemperatureType'),
-              enableProperties: getSubproperties([targetProperty!], '${whiteBalancePrefix}bOverride_TemperatureType'),
+          UnrealMultiPropertyBuilder<String>(
+            properties: temperatureTypeProperties,
+            fallbackValue: AppLocalizations.of(context)!.mismatchedValuesLabel,
+            builder: (context, String? sharedValue, _) => UnrealDeltaSlider(
+              overrideName: sharedValue,
+              unrealProperties: getSubproperties([targetProperty!], '${whiteBalancePrefix}WhiteTemp'),
+              enableProperties: getSubproperties([targetProperty!], '${whiteBalancePrefix}bOverride_WhiteTemp'),
+              buildLabel: (name) => UnrealDropdownText(
+                unrealProperties: temperatureTypeProperties,
+                enableProperties: getSubproperties([targetProperty!], '${whiteBalancePrefix}bOverride_TemperatureType'),
+              ),
             ),
           ),
           UnrealDeltaSlider(
@@ -1105,10 +1229,10 @@ class _ColorGradingObjectEntry extends StatelessWidget {
   }) : super(key: key);
 
   static const Map<_ColorGradingObjectEntryType, String> _iconsByType = {
-    _ColorGradingObjectEntryType.level: 'assets/images/icons/level.svg',
-    _ColorGradingObjectEntryType.nDisplayConfig: 'assets/images/icons/ndisplay.svg',
-    _ColorGradingObjectEntryType.icvfxCamera: 'assets/images/icons/ndisplay_camera.svg',
-    _ColorGradingObjectEntryType.postProcessVolume: 'assets/images/icons/post_process_volume.svg',
+    _ColorGradingObjectEntryType.level: 'packages/epic_common/assets/icons/level.svg',
+    _ColorGradingObjectEntryType.nDisplayConfig: 'packages/epic_common/assets/icons/ndisplay.svg',
+    _ColorGradingObjectEntryType.icvfxCamera: 'packages/epic_common/assets/icons/ndisplay_camera.svg',
+    _ColorGradingObjectEntryType.postProcessVolume: 'packages/epic_common/assets/icons/post_process_volume.svg',
   };
 
   /// The node in the tree view for this item.
@@ -1198,7 +1322,7 @@ class _ColorGradingTargetListEntry extends StatelessWidget {
       builder: (_, bIsEnabled) => CardListTile(
         bIsSelected: bIsSelected,
         title: data.name,
-        iconPath: 'assets/images/icons/viewport.svg',
+        iconPath: 'packages/epic_common/assets/icons/viewport.svg',
         bDeEmphasize: !bIsEnabled,
         onTap: onTap,
       ),
@@ -1227,8 +1351,8 @@ class _EnablePropertySwipeRevealer extends StatelessWidget {
       builder: (_, final bool? bIsEnabled, modify) => SwipeRevealer(
         rightSwipeActionBuilder: (context, onFinished) => CardListTileSwipeAction(
           iconPath: (bIsEnabled == true)
-              ? 'assets/images/icons/checkbox_opaque_checked.svg'
-              : 'assets/images/icons/checkbox_opaque_unchecked.svg',
+              ? 'packages/epic_common/assets/icons/checkbox_opaque_checked.svg'
+              : 'packages/epic_common/assets/icons/checkbox_opaque_unchecked.svg',
           color: UnrealColors.gray22,
           iconSize: 18,
           onPressed: () {
@@ -1285,6 +1409,20 @@ class _ColorGradingObjectEntryData {
   /// The object this is nested under in the Outliner panel, if any.
   final _ColorGradingObjectEntryData? parent;
 
+  /// The property containing the list of targets, or null if there's no such property
+  UnrealProperty? get targetListProperty {
+    switch (type) {
+      case _ColorGradingObjectEntryType.nDisplayConfig:
+        return UnrealProperty(objectPath: path, propertyName: 'StageSettings.PerViewportColorGrading');
+
+      case _ColorGradingObjectEntryType.icvfxCamera:
+        return UnrealProperty(objectPath: path, propertyName: 'CameraSettings.PerNodeColorGrading');
+
+      default:
+        return null;
+    }
+  }
+
   /// The property that enables/disables color grading for this object.
   UnrealProperty? get enableProperty {
     switch (type) {
@@ -1328,155 +1466,4 @@ class _ColorGradingTargetListEntryData {
   /// If true, this is a color grading setting within a list (e.g. a specific viewport or camera node).
   /// If false, this is entire cluster/camera color grading.
   final bool bIsListEntry;
-}
-
-/// Modal dialog to directly rename a color grading target.
-class _RenameTargetDialog extends StatefulWidget {
-  const _RenameTargetDialog({
-    Key? key,
-    required this.targetData,
-    this.onSuccess,
-  }) : super(key: key);
-
-  /// The target to be renamed.
-  final _ColorGradingTargetListEntryData targetData;
-
-  /// Function to call when the rename is successful.
-  final void Function()? onSuccess;
-
-  @override
-  State<StatefulWidget> createState() => _RenameTargetDialogState();
-}
-
-class _RenameTargetDialogState extends State<_RenameTargetDialog> {
-  /// Text controller for collecting desired name of actor.
-  final _textController = TextEditingController();
-
-  @override
-  void initState() {
-    super.initState();
-
-    _textController.text = widget.targetData.name;
-    _textController.selection = TextSelection(baseOffset: 0, extentOffset: _textController.text.length);
-  }
-
-  @override
-  void dispose() {
-    _textController.dispose();
-
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    const double buttonWidth = 110;
-
-    return Form(
-      autovalidateMode: AutovalidateMode.onUserInteraction,
-      child: ModalDialogCard(
-        child: IntrinsicHeight(
-          child: IntrinsicWidth(
-            child: Column(
-              children: [
-                ModalDialogTitle(title: AppLocalizations.of(context)!.renameColorGradingTargetTitle),
-                ModalDialogSection(
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: SizedBox(
-                          height: 36,
-                          child: TextField(
-                            autofocus: true,
-                            maxLines: 1,
-                            cursorWidth: 1,
-                            controller: _textController,
-                            keyboardAppearance: Brightness.dark,
-                            style: Theme.of(context).textTheme.bodyMedium,
-                            decoration: InputDecoration(hintText: ''),
-                            onEditingComplete: _applyValue,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                ModalDialogSection(
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                    children: [
-                      EpicLozengeButton(
-                        label: AppLocalizations.of(context)!.menuButtonOK,
-                        width: buttonWidth,
-                        color: Colors.transparent,
-                        onPressed: _closeModal,
-                      ),
-                      EpicLozengeButton(
-                        label: AppLocalizations.of(context)!.menuButtonCancel,
-                        width: buttonWidth,
-                        onPressed: _applyValue,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// Close the modal.
-  void _closeModal() {
-    Navigator.of(context).pop();
-  }
-
-  /// Send a message to the engine requesting to rename a selected actor with
-  /// the value of [_value].
-  void _applyValue() async {
-    assert(widget.targetData.nameProperty != null);
-
-    final transactionManager = Provider.of<UnrealTransactionManager>(context, listen: false);
-    final EngineConnectionManager connection = Provider.of<EngineConnectionManager>(context, listen: false);
-
-    // Ideally we want a named transaction, but if the editor doesn't support it, fall back to a generic auto-generated
-    // transaction instead
-    final bool bUseManualTransaction = connection.apiVersion?.bCanHttpSetPropertyInManualTransaction == true;
-    if (bUseManualTransaction) {
-      if (!transactionManager.beginTransaction('Rename Color Grading Target')) {
-        _log.warning('Failed to begin transaction for color grading target rename');
-        _closeModal();
-        return;
-      }
-    }
-
-    final String propertyName = widget.targetData.nameProperty!.propertyName;
-    final lastDotIndex = propertyName.lastIndexOf('.');
-    final String propertyLastName = (lastDotIndex == -1) ? propertyName : propertyName.substring(lastDotIndex + 1);
-
-    final Future<UnrealHttpResponse> messageFuture = connection.sendHttpRequest(UnrealHttpRequest(
-      url: '/remote/object/property',
-      verb: 'PUT',
-      body: {
-        'access': bUseManualTransaction ? 'WRITE_MANUAL_TRANSACTION_ACCESS' : 'WRITE_TRANSACTION_ACCESS',
-        'generateTransaction': !bUseManualTransaction,
-        'objectPath': widget.targetData.nameProperty!.objectPath,
-        'propertyName': widget.targetData.nameProperty!.propertyName,
-        'propertyValue': {
-          propertyLastName: _textController.text,
-        },
-      },
-    ));
-
-    if (bUseManualTransaction) {
-      transactionManager.endTransaction();
-    }
-
-    final UnrealHttpResponse response = await messageFuture;
-    if (response.code == HttpResponseCode.ok) {
-      widget.onSuccess?.call();
-    }
-
-    _closeModal();
-  }
 }

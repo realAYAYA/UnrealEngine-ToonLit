@@ -5,7 +5,7 @@
 
 #include "CoreMinimal.h"
 #include "UObject/ObjectMacros.h"
-#include "Animation/AnimBoneCompressionSettings.h"
+#include "Runtime/Launch/Resources/Version.h"
 
 #if DO_GUARD_SLOW
 	// ACL has a lot of asserts, only enabled in Debug
@@ -13,9 +13,63 @@
 	// developers use a Development configuration for the editor. The ACL library runs extensive
 	// unit and regression tests on a very large number of clips which minimizes the risk of
 	// having a legitimate assert fire.
-	#define ACL_ON_ASSERT_CUSTOM
-	#define ACL_ASSERT(expression, format, ...) checkf(expression, TEXT(format), #__VA_ARGS__)
+	// 
+	// ACL assert strings are currently incompatible with checkf since it uses %s but passes a char-type string. In UE %s requires to pass a TCHAR string.
+	//#define ACL_ON_ASSERT_CUSTOM
+
+	
+	//#define ACL_ASSERT(expression, format, ...) checkf(expression, TEXT(format), ##__VA_ARGS__)
 #endif
+
+//////////////////////////////////////////////////////////////////////////
+// [Bind pose stripping]
+// Bind pose stripping allows ACL to remove the redundant bind pose often present in the compressed
+// data of joints that aren't animated. For this to work properly, we must have access to the bind
+// pose during decompression which is not accessible in UE 5.0 and earlier.
+//
+// When stripping is disabled, here is what happens:
+//     Non-additive anim sequence
+//         - During compression, sub-tracks have their default value set to the identity.
+//           Sub-tracks equal to the identity will be stripped (uncommon).
+//         - When we decompress a whole pose, sub-tracks equal to the identity are processed
+//           and the identity is written out.
+//         - When we decompress a single bone, sub-tracks equal to the identity are processed
+//           and the identity is written out.
+// 
+//     Additive anim sequence
+//         - During compression, sub-tracks have their default value set to the additive identity.
+//           Sub-tracks equal to the identity will be stripped (common).
+//         - When we decompress a whole pose, sub-tracks equal to the additive identity are skipped entirely.
+//           This is possible because the output pose is initialized with the additive identity before decompression.
+//         - When we decompress a single bone, sub-tracks equal to the identity are processed
+//           and the identity is written out.
+// 
+// When stripping is enabled, here is what happens:
+//     Non-additive anim sequence
+//         - During compression, sub-tracks have their default value set to the bind pose.
+//           Sub-tracks equal to the bind pose will be stripped (common).
+//         - When we decompress a whole pose, sub-tracks equal to the bind pose are skipped entirely.
+//           This is possible because the output pose is initialized with the bind pose before decompression.
+//         - When we decompress a single bone, sub-tracks equal to the bind pose are processed
+//           and the bind pose is written out.
+// 
+//     Additive anim sequence
+//         - Additive sequences do not have a traditional bind pose, instead their default pose is
+//           the additive identity. As such, ACL always does stripping by default for this scenario.
+//           The behavior is identical as above.
+//////////////////////////////////////////////////////////////////////////
+
+//////////////////////////////////////////////////////////////////////////
+// [Keyframe stripping]
+// 
+// ACL can strip keyframes that contribute the least amount of error.
+// This is controlled through two different variables which can be used on their own or together:
+//     * proportion: the minimum amount (percentage) of keyframes to strip
+//     * threshold: the threshold below which keyframes are stripped
+// 
+// In order to support this per platform, the plugin requires the target platform to be exposed in
+// a few codec API functions. Support for this has been added in UE 5.1.
+//////////////////////////////////////////////////////////////////////////
 
 THIRD_PARTY_INCLUDES_START
 #include <acl/core/error.h>
@@ -51,17 +105,23 @@ public:
 
 extern ACLPLUGIN_API ACLAllocator ACLAllocatorImpl;
 
-/** RTM <-> UE4 conversion utilities */
-inline rtm::vector4f RTM_SIMD_CALL VectorCast(const FVector3d& Input) { return rtm::vector_set((float)Input.X, (float)Input.Y, (float)Input.Z); }
-inline rtm::vector4f RTM_SIMD_CALL VectorCast(const FVector3f& Input) { return rtm::vector_set((float)Input.X, (float)Input.Y, (float)Input.Z); }
-inline FVector3f RTM_SIMD_CALL VectorCast(rtm::vector4f_arg0 Input) { return FVector3f(rtm::vector_get_x(Input), rtm::vector_get_y(Input), rtm::vector_get_z(Input)); }
-inline FVector RTM_SIMD_CALL VectorCastD(rtm::vector4f_arg0 Input) { return FVector(rtm::vector_get_x(Input), rtm::vector_get_y(Input), rtm::vector_get_z(Input)); }
-inline rtm::quatf RTM_SIMD_CALL QuatCast(const FQuat4d& Input) { return rtm::quat_set((float)Input.X, (float)Input.Y, (float)Input.Z, (float)Input.W); }
-inline rtm::quatf RTM_SIMD_CALL QuatCast(const FQuat4f& Input) { return rtm::quat_set((float)Input.X, (float)Input.Y, (float)Input.Z, (float)Input.W); }
-inline FQuat4f RTM_SIMD_CALL QuatCast(rtm::quatf_arg0 Input) { return FQuat4f(rtm::quat_get_x(Input), rtm::quat_get_y(Input), rtm::quat_get_z(Input), rtm::quat_get_w(Input)); }
-inline FQuat RTM_SIMD_CALL QuatCastD(rtm::quatf_arg0 Input) { return FQuat(rtm::quat_get_x(Input), rtm::quat_get_y(Input), rtm::quat_get_z(Input), rtm::quat_get_w(Input)); }
-inline rtm::qvvf RTM_SIMD_CALL TransformCast(const FTransform& Input) { return rtm::qvv_set(QuatCast(Input.GetRotation()), VectorCast(Input.GetTranslation()), VectorCast(Input.GetScale3D())); }
-inline FTransform RTM_SIMD_CALL TransformCast(rtm::qvvf_arg0 Input) { return FTransform(QuatCastD(Input.rotation), VectorCastD(Input.translation), VectorCastD(Input.scale)); }
+/** RTM <-> UE conversion utilities and aliases. */
+inline FQuat RTM_SIMD_CALL UEQuatCast(const FQuat4f& Input) { return FQuat(Input.X, Input.Y, Input.Z, Input.W); }
+inline FVector RTM_SIMD_CALL UEVector3Cast(const FVector3f& Input) { return FVector(Input.X, Input.Y, Input.Z); }
+inline FVector RTM_SIMD_CALL UEVector3Cast(const FVector3d& Input) { return FVector(Input.X, Input.Y, Input.Z); }
+
+inline rtm::vector4f RTM_SIMD_CALL UEVector3ToACL(const FVector3f& Input) { return rtm::vector_set(Input.X, Input.Y, Input.Z); }
+inline rtm::vector4f RTM_SIMD_CALL UEVector3ToACL(const FVector& Input) { return rtm::vector_cast(rtm::vector_set(Input.X, Input.Y, Input.Z)); }
+inline FVector3f RTM_SIMD_CALL ACLVector3ToUE(rtm::vector4f_arg0 Input) { return FVector3f(rtm::vector_get_x(Input), rtm::vector_get_y(Input), rtm::vector_get_z(Input)); }
+
+inline rtm::quatf RTM_SIMD_CALL UEQuatToACL(const FQuat4f& Input) { return rtm::quat_set(Input.X, Input.Y, Input.Z, Input.W); }
+inline rtm::quatf RTM_SIMD_CALL UEQuatToACL(const FQuat& Input) { return rtm::quat_cast(rtm::quat_set(Input.X, Input.Y, Input.Z, Input.W)); }
+inline FQuat4f RTM_SIMD_CALL ACLQuatToUE(rtm::quatf_arg0 Input) { return FQuat4f(rtm::quat_get_x(Input), rtm::quat_get_y(Input), rtm::quat_get_z(Input), rtm::quat_get_w(Input)); }
+
+inline FTransform RTM_SIMD_CALL ACLTransformToUE(rtm::qvvf_arg0 Input) { return FTransform(UEQuatCast(ACLQuatToUE(Input.rotation)), UEVector3Cast(ACLVector3ToUE(Input.translation)), UEVector3Cast(ACLVector3ToUE(Input.scale))); }
+
+using FRawAnimTrackQuat = FQuat4f;
+using FRawAnimTrackVector3 = FVector3f;
 
 /** The decompression settings used by ACL */
 struct UE4DefaultDecompressionSettings : public acl::default_transform_decompression_settings
@@ -79,7 +139,14 @@ struct UE4DefaultDecompressionSettings : public acl::default_transform_decompres
 #endif
 };
 
-using UE4CustomDecompressionSettings = acl::debug_transform_decompression_settings;
+struct UE4DebugDecompressionSettings : public acl::debug_transform_decompression_settings
+{
+	// Only support our latest version
+	static constexpr acl::compressed_tracks_version16 version_supported() { return acl::compressed_tracks_version16::latest; }
+};
+
+// Same as debug settings for now since everything is allowed
+using UE4CustomDecompressionSettings = UE4DebugDecompressionSettings;
 
 struct UE4SafeDecompressionSettings final : public UE4DefaultDecompressionSettings
 {
@@ -100,7 +167,7 @@ struct UE4DefaultDBDecompressionSettings final : public UE4DefaultDecompressionS
 
 using UE4DebugDatabaseSettings = acl::debug_database_settings;
 
-struct UE4DebugDBDecompressionSettings final : public acl::debug_transform_decompression_settings
+struct UE4DebugDBDecompressionSettings final : public UE4DebugDecompressionSettings
 {
 	using database_settings_type = UE4DebugDatabaseSettings;
 };
@@ -135,10 +202,50 @@ enum ACLCompressionLevel : int
 };
 
 /** Editor only utilities */
+#if WITH_EDITORONLY_DATA
+
+/**
+* An enum to control how to handle UE phantom tracks.
+* A phantom tracks are present in an animation sequence but aren't mapped to skeleton bones.
+* As such, they cannot be queried by the engine except manually through DecompressBone.
+* It should generally be safe to Strip them but we default to Ignore.
+* Re-importing the animation sequence should clean up any such stale data.
+*/
+UENUM()
+enum class ACLPhantomTrackMode : uint8
+{
+	// Ignore phantom tracks and compress them anyway (same as UE codecs).
+	Ignore,
+
+	// Strip the phantom track to save memory by collapsing them to the identity transform while maintaining the track ordering.
+	Strip,
+
+	// We ignore the phantom tracks and output a warning to the log.
+	Warn,
+};
+
+#endif
+
 #if WITH_EDITOR
+struct FCompressibleAnimData;
+struct FPerPlatformFloat;
+class UAnimSequence;
+class ITargetPlatform;
+
 ACLPLUGIN_API acl::rotation_format8 GetRotationFormat(ACLRotationFormat Format);
 ACLPLUGIN_API acl::vector_format8 GetVectorFormat(ACLVectorFormat Format);
 ACLPLUGIN_API acl::compression_level8 GetCompressionLevel(ACLCompressionLevel Level);
 
-ACLPLUGIN_API acl::track_array_qvvf BuildACLTransformTrackArray(ACLAllocator& AllocatorImpl, const FCompressibleAnimData& CompressibleAnimData, float DefaultVirtualVertexDistance, float SafeVirtualVertexDistance, bool bBuildAdditiveBase);
+ACLPLUGIN_API acl::track_array_qvvf BuildACLTransformTrackArray(ACLAllocator& AllocatorImpl, const FCompressibleAnimData& CompressibleAnimData,
+	float DefaultVirtualVertexDistance, float SafeVirtualVertexDistance,
+	bool bBuildAdditiveBase, ACLPhantomTrackMode PhantomTrackMode);
+
+/** Compatibility utilities */
+ACLPLUGIN_API uint32 GetNumSamples(const FCompressibleAnimData& CompressibleAnimData);
+ACLPLUGIN_API float GetSequenceLength(const UAnimSequence& AnimSeq);
+
+namespace ACL::Private
+{
+	ACLPLUGIN_API float GetPerPlatformFloat(const FPerPlatformFloat& PerPlatformFloat, const ITargetPlatform* TargetPlatform);
+}
 #endif // WITH_EDITOR

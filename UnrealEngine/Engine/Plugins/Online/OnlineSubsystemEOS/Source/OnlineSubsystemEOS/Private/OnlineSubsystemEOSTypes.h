@@ -10,6 +10,7 @@
 #include "EOSSharedTypes.h"
 #include "IPAddress.h"
 #include "OnlineSubsystem.h"
+#include "OnlineSubsystemEOS.h"
 #include "OnlineSubsystemTypes.h"
 #include "OnlineSubsystemEOSPackage.h" // IWYU pragma: keep
 
@@ -149,6 +150,11 @@ public:
 typedef TSharedPtr<IAttributeAccessInterface> IAttributeAccessInterfacePtr;
 typedef TSharedRef<IAttributeAccessInterface> IAttributeAccessInterfaceRef;
 
+namespace OnlineSubsystemEOSTypesPrivate
+{
+FString GetBestDisplayName(const FOnlineSubsystemEOS& EOSSubsystem, const EOS_EpicAccountId TargetUserId, const FStringView Platform);
+} // namespace OnlineSubsystemEOSTypesPrivate
+
 /**
  * Implementation of FOnlineUser that can be shared across multiple class hiearchies
  */
@@ -160,8 +166,16 @@ class TOnlineUserEOS
 public:
 	friend class FUserManagerEOS;
 
-	TOnlineUserEOS(const FUniqueNetIdEOSRef& InNetIdRef)
+	TOnlineUserEOS(const FUniqueNetIdEOSRef& InNetIdRef, const FOnlineSubsystemEOS& InSubsystem)
 		: UserIdRef(InNetIdRef)
+		, EOSSubsystem(InSubsystem)
+	{
+	}
+
+	TOnlineUserEOS(const FUniqueNetIdEOSRef& InNetIdRef, const TMap<FString, FString>& InUserAttributes, const FOnlineSubsystemEOS& InSubsystem)
+		: UserIdRef(InNetIdRef)
+		, UserAttributes(InUserAttributes)
+		, EOSSubsystem(InSubsystem)
 	{
 	}
 
@@ -182,9 +196,7 @@ public:
 
 	virtual FString GetDisplayName(const FString& Platform = FString()) const override
 	{
-		FString ReturnValue;
-		GetUserAttribute(USER_ATTR_DISPLAY_NAME, ReturnValue);
-		return ReturnValue;
+		return OnlineSubsystemEOSTypesPrivate::GetBestDisplayName(EOSSubsystem, UserIdRef->GetEpicAccountId(), Platform);
 	}
 
 	virtual bool GetUserAttribute(const FString& AttrName, FString& OutAttrValue) const override
@@ -223,6 +235,8 @@ protected:
 	FUniqueNetIdEOSRef UserIdRef;
 	/** Additional key/value pair data related to user attribution */
 	TMap<FString, FString> UserAttributes;
+
+	const FOnlineSubsystemEOS& EOSSubsystem;
 };
 
 /**
@@ -232,9 +246,11 @@ template<class BaseClass>
 class TUserOnlineAccountEOS :
 	public TOnlineUserEOS<BaseClass, IAttributeAccessInterface>
 {
+	using Super = TOnlineUserEOS<BaseClass, IAttributeAccessInterface>;
+
 public:
-	TUserOnlineAccountEOS(const FUniqueNetIdEOSRef& InNetIdRef)
-		: TOnlineUserEOS<BaseClass, IAttributeAccessInterface>(InNetIdRef)
+	TUserOnlineAccountEOS(const FUniqueNetIdEOSRef& InNetIdRef, const FOnlineSubsystemEOS& InSubsystem)
+		: Super(InNetIdRef, InSubsystem)
 	{
 	}
 
@@ -242,7 +258,13 @@ public:
 	virtual FString GetAccessToken() const override
 	{
 		FString Token;
-		GetAuthAttribute(AUTH_ATTR_ID_TOKEN, Token);
+
+		if (const IOnlineIdentityPtr Identity = Super::EOSSubsystem.GetIdentityInterface())
+		{
+			const int32 LocalUserNum = Identity->GetLocalUserNumFromPlatformUserId(Identity->GetPlatformUserIdFromUniqueNetId(*this->UserIdRef));
+			Token = Identity->GetAuthToken(LocalUserNum);
+		}
+
 		return Token;
 	}
 
@@ -289,8 +311,13 @@ class TOnlineFriendEOS :
 	public TOnlineUserEOS<BaseClass, IAttributeAccessInterface>
 {
 public:
-	TOnlineFriendEOS(const FUniqueNetIdEOSRef& InNetIdRef)
-		: TOnlineUserEOS<BaseClass, IAttributeAccessInterface>(InNetIdRef)
+	TOnlineFriendEOS(const FUniqueNetIdEOSRef& InNetIdRef, const FOnlineSubsystemEOS& InSubsystem)
+		: TOnlineUserEOS<BaseClass, IAttributeAccessInterface>(InNetIdRef, InSubsystem)
+	{
+	}
+
+	TOnlineFriendEOS(const FUniqueNetIdEOSRef& InNetIdRef, const TMap<FString, FString>& InUserAttributes, const FOnlineSubsystemEOS& InSubsystem)
+		: TOnlineUserEOS<BaseClass, IAttributeAccessInterface>(InNetIdRef, InUserAttributes, InSubsystem)
 	{
 	}
 
@@ -332,7 +359,7 @@ namespace OSSInternalCallback
 {
 	/** Create a callback for a non-SDK function that is tied to the lifetime of an arbitrary shared pointer. */
 	template <typename DelegateType, typename OwnerType, typename... CallbackArgs>
-	UE_NODISCARD DelegateType Create(const TSharedPtr<OwnerType, ESPMode::ThreadSafe>& InOwner,
+	[[nodiscard]] DelegateType Create(const TSharedPtr<OwnerType, ESPMode::ThreadSafe>& InOwner,
 		const TFunction<void(CallbackArgs...)>& InUserCallback)
 	{
 		const DelegateType& CheckOwnerThenExecute = DelegateType::CreateLambda(
@@ -533,6 +560,36 @@ private:
 
 #include "eos_sessions_types.h"
 
+struct FSessionDetailsEOS : FNoncopyable
+{
+	EOS_HSessionDetails SessionDetailsHandle;
+
+	FSessionDetailsEOS(EOS_HSessionDetails InSessionDetailsHandle)
+		: SessionDetailsHandle(InSessionDetailsHandle)
+	{
+	}
+
+	virtual ~FSessionDetailsEOS()
+	{
+		EOS_SessionDetails_Release(SessionDetailsHandle);
+	}
+};
+
+struct FLobbyDetailsEOS : FNoncopyable
+{
+	EOS_HLobbyDetails LobbyDetailsHandle;
+
+	FLobbyDetailsEOS(EOS_HLobbyDetails InLobbyDetailsHandle)
+		: LobbyDetailsHandle(InLobbyDetailsHandle)
+	{
+	}
+
+	virtual ~FLobbyDetailsEOS()
+	{
+		EOS_LobbyDetails_Release(LobbyDetailsHandle);
+	}
+};
+
 /**
  * Implementation of session information
  */
@@ -555,11 +612,16 @@ PACKAGE_SCOPE:
 		, HostAddr(Src.HostAddr)
 		, SessionId(Src.SessionId)
 		, SessionHandle(Src.SessionHandle)
+		, LobbyHandle(Src.LobbyHandle)
 		, bIsFromClone(true)
 	{
 	}
 
-	FOnlineSessionInfoEOS(const FString& InHostIp, FUniqueNetIdStringRef UniqueNetId, EOS_HSessionDetails InSessionHandle);
+	FOnlineSessionInfoEOS(const FString& InHostIp, FUniqueNetIdStringRef UniqueNetId, const TSharedPtr<FSessionDetailsEOS>& InSessionHandle, const TSharedPtr<FLobbyDetailsEOS>& InLobbyHandle);
+
+	static FOnlineSessionInfoEOS Create(const FString& InHostIp, FUniqueNetIdStringRef UniqueNetId);
+	static FOnlineSessionInfoEOS Create(const FString& InHostIp, FUniqueNetIdStringRef UniqueNetId, const TSharedPtr<FSessionDetailsEOS>& InSessionHandle);
+	static FOnlineSessionInfoEOS Create(const FString& InHostIp, FUniqueNetIdStringRef UniqueNetId, const TSharedPtr<FLobbyDetailsEOS>& InLobbyHandle);
 
 	/**
 	 * Initialize LAN session
@@ -571,8 +633,10 @@ PACKAGE_SCOPE:
 	TSharedPtr<class FInternetAddr> HostAddr;
 	/** Unique Id for this session */
 	FUniqueNetIdStringRef SessionId;
-	/** EOS session handle. Note: this needs to be released by the SDK */
-	EOS_HSessionDetails SessionHandle;
+	/** EOS session handle. The same handle can be shared between a local session and a search result. The struct type will call the release API automatically upon destruction */
+	TSharedPtr<FSessionDetailsEOS> SessionHandle;
+	/** EOS lobby handle. The same handle can be shared between a local session and a search result. The struct type will call the release API automatically upon destruction */
+	TSharedPtr<FLobbyDetailsEOS> LobbyHandle;
 	/** Whether we should delete this handle or not */
 	bool bIsFromClone;
 

@@ -44,7 +44,7 @@ namespace Chaos
 		AddParticles(Other.Size());
 		for(int32 i = Other.Size() - 1; 0 <= i; i--)
 		{
-			X(i) = Other.X(i);
+			SetX(i, Other.GetX(i));
 		}
 		MBVH = new TBoundingVolumeHierarchy<FParticles, TArray<int32>>(*this, CollisionParticlesBVHDepth);
 	}

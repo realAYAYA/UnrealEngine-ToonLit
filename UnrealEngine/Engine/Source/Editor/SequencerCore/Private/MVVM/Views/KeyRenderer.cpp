@@ -918,7 +918,7 @@ void FKeyRenderer::FCachedKeyDrawInformation::CacheViewDependentData(const FKeyB
 					// Remove elements at the front of the array if we need to (this probably means we scrolled to the left and hid leading keys)
 					else if (HeadPreserveDiff < 0)
 					{
-						DrawParams.RemoveAt(0, -HeadPreserveDiff, false);
+						DrawParams.RemoveAt(0, -HeadPreserveDiff, EAllowShrinking::No);
 					}
 
 					// Draw newly revealed keys at the start
@@ -928,7 +928,7 @@ void FKeyRenderer::FCachedKeyDrawInformation::CacheViewDependentData(const FKeyB
 					}
 
 					// Expand or contract the array to the final size
-					DrawParams.SetNum(FramesInRange.Num(), false);
+					DrawParams.SetNum(FramesInRange.Num(), EAllowShrinking::No);
 
 					// Draw newly revealed keys at the end
 					if (TailNum > 0)
@@ -943,7 +943,7 @@ void FKeyRenderer::FCachedKeyDrawInformation::CacheViewDependentData(const FKeyB
 
 		if (!bDrawnKeys)
 		{
-			DrawParams.SetNum(FramesInRange.Num(), false);
+			DrawParams.SetNum(FramesInRange.Num(), EAllowShrinking::No);
 
 			if (FramesInRange.Num())
 			{

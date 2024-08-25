@@ -50,6 +50,31 @@ void MarkRadianceProbesUsedByTranslucencyVolumeCS(
 RWTexture3D<float3> RWVolumeTraceRadiance;
 RWTexture3D<float> RWVolumeTraceHitDistance;
 
+// Applying an offset from the depth buffer helps with reducing self intersection with global distance field tracing.
+void ApplyDepthconstraintsToOffset(float3 GridCoordinate, inout float3 LocalFrameJitterOffset)
+{
+	if (GridCenterOffsetFromDepthBuffer >= 0.0)
+	{
+		float4 GridSampleClip	= mul(float4(ComputeCellTranslatedWorldPosition(GridCoordinate, LocalFrameJitterOffset), 1), View.TranslatedWorldToClip);
+		float3 GridSampleScreen	= GridSampleClip.xyz / GridSampleClip.w;
+		float3 GridSampleUVz	= float3(GridSampleScreen.xy * View.ScreenPositionScaleBias.xy + View.ScreenPositionScaleBias.wz, GridSampleScreen.z);
+		float GridSampleSceneDepth = ConvertFromDeviceZ(SceneTexturesStruct.SceneDepthTexture.SampleLevel(SceneTexturesStruct_SceneDepthTextureSampler, GridSampleUVz.xy, 0).r);
+
+		float DepthGridCoordinateWithZOffset = ComputeZSliceFromDepth(GridSampleSceneDepth) - GridCenterOffsetFromDepthBuffer;
+
+		float3 GridCoordinateOffset = float3(GridCoordinate) + LocalFrameJitterOffset;
+		
+		const float DepthToSampleGridOffset = DepthGridCoordinateWithZOffset - GridCoordinateOffset.z;	// <0 if samples is in front of the depth buffer
+		if (DepthToSampleGridOffset < 0.0																// Move the sample forward only if the depth buffer grid coordinate is closer,
+			&& (-DepthToSampleGridOffset < GridCenterOffsetThresholdToAcceptDepthBufferOffset)			// But only if it is less than N slice away (to not bring all the sample behind forward)
+			)
+		{
+			// If the grid sample is further than the grid z for the depth buffer, adjust the offset 
+			LocalFrameJitterOffset.z += DepthToSampleGridOffset;
+		}
+	}
+}
+
 [numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
 void TranslucencyVolumeTraceVoxelsCS(
 	uint3 GroupId : SV_GroupID,
@@ -72,8 +97,11 @@ void TranslucencyVolumeTraceVoxelsCS(
 
 		if (IsFroxelVisible(GridCoordinate))
 		{
-			float3 WorldPosition = ComputeCellWorldPosition(GridCoordinate, FrameJitterOffset.xyz);
-			float3 TranslatedWorldPosition = ComputeCellTranslatedWorldPosition(GridCoordinate, FrameJitterOffset.xyz);
+			float3 LocalFrameJitterOffset = FrameJitterOffset.xyz;
+			ApplyDepthconstraintsToOffset(GridCoordinate, LocalFrameJitterOffset);
+
+			float3 WorldPosition = ComputeCellWorldPosition(GridCoordinate, LocalFrameJitterOffset);
+			float3 TranslatedWorldPosition = ComputeCellTranslatedWorldPosition(GridCoordinate, LocalFrameJitterOffset);
 
 			float2 ProbeUV;
 			float ConeHalfAngle;

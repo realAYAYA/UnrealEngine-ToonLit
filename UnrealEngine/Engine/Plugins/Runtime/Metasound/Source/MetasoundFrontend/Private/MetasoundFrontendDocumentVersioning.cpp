@@ -546,7 +546,7 @@ namespace Metasound
 			if (bWasUpdated)
 			{
 				const FMetasoundFrontendVersionNumber& NewVersionNumber = Metadata->Version.Number;
-				UE_LOG(LogMetaSound, Display, TEXT("MetaSound at '%s' Document Versioned: '%s' --> '%s'"), *Path, *InitVersionNumber.ToString(), *NewVersionNumber.ToString());
+				UE_LOG(LogMetaSound, Verbose, TEXT("MetaSound at '%s' Document Versioned: '%s' --> '%s'"), *Path, *InitVersionNumber.ToString(), *NewVersionNumber.ToString());
 			}
 
 			return bWasUpdated;

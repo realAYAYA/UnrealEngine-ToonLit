@@ -18,21 +18,21 @@ namespace Horde.Server.Utilities
 		/// <returns></returns>
 		public static IEnumerable<int> GetHashCodes(ReadOnlyMemory<byte> text)
 		{
-			if(text.Length >= NgramLength)
+			if (text.Length >= NgramLength)
 			{
 				int value = 0;
-				for(int idx = 0; idx < NgramLength - 1; idx++)
+				for (int idx = 0; idx < NgramLength - 1; idx++)
 				{
 					value = (value << 8) | ToLowerUtf8(text.Span[idx]);
 				}
-				for(int idx = NgramLength - 1; idx < text.Length; idx++)
+				for (int idx = NgramLength - 1; idx < text.Length; idx++)
 				{
 					value = ((value << 8) | ToLowerUtf8(text.Span[idx])) & NgramMask;
 
 					int hashValue = value;
 					yield return hashValue;
 
-					for(int hashIdx = 1; hashIdx < NumHashes; hashIdx++)
+					for (int hashIdx = 1; hashIdx < NumHashes; hashIdx++)
 					{
 						hashValue = Scramble(hashValue);
 						yield return hashValue;
@@ -178,7 +178,7 @@ namespace Horde.Server.Utilities
 		/// <param name="hashCodes">Sequence of hash codes</param>
 		public void Add(IEnumerable<int> hashCodes)
 		{
-			foreach(int hashCode in hashCodes)
+			foreach (int hashCode in hashCodes)
 			{
 				int index = hashCode & ((Data.Length << 3) - 1);
 				Data[index >> 3] = (byte)(Data[index >> 3] | (1 << (index & 7)));

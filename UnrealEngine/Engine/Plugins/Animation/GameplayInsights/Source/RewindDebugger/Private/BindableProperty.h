@@ -56,6 +56,12 @@ struct TBindablePropertyInitializer
         Source = InSource;
         Value = T();
     }
+
+	TBindablePropertyInitializer(TBindableProperty<T, BindingType>* InSource, const T& InitialValue)
+    {
+		Source = InSource;
+		Value = InitialValue;
+    }
     
     TBindablePropertyInitializer(const T& InValue)
     {
@@ -145,6 +151,7 @@ class TBindableProperty
         {
             if (Initializer.Source)
             {
+            	InternalValue = Initializer.Value;
                 Bind(Initializer.Source);
             }
             else

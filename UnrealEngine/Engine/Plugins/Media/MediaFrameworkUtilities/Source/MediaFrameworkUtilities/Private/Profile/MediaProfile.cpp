@@ -134,6 +134,14 @@ void UMediaProfile::Apply()
 		bTimecodeProvideWasApplied = true;
 		AppliedTimecodeProvider = TimecodeProvider;
 		PreviousTimecodeProvider = GEngine->GetTimecodeProvider();
+
+		if (PreviousTimecodeProvider && AppliedTimecodeProvider && PreviousTimecodeProvider->GetClass() == AppliedTimecodeProvider->GetClass())
+		{
+			GEngine->SetTimecodeProvider(nullptr);
+			// Sleep to let the timecode provider complete its shutdown on its hardware.
+			FPlatformProcess::Sleep(0.2);
+		}
+
 		bool bResult = GEngine->SetTimecodeProvider(TimecodeProvider);
 		if (!bResult && TimecodeProvider)
 		{

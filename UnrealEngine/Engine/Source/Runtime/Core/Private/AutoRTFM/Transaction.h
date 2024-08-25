@@ -3,6 +3,7 @@
 #pragma once
 
 #include "HitSet.h"
+#include "IntervalTree.h"
 #include "LongJump.h"
 #include "Stats.h"
 #include "TaggedPtr.h"
@@ -70,8 +71,10 @@ public:
     // Record that a write is about to occur at the given LogicalAddress of Size bytes.
     void RecordWrite(void* LogicalAddress, size_t Size);
     void RecordWriteMaxPageSized(void* LogicalAddress, size_t Size);
+    template<unsigned SIZE> void RecordWrite(void* LogicalAddress);
 
     void DidAllocate(void* LogicalAddress, size_t Size);
+    void DidFree(void* LogicalAddress);
 
 private:
     void Undo();
@@ -98,6 +101,7 @@ private:
 	bool bIsStackScoped{false};
 
     FHitSet HitSet;
+    FIntervalTree NewMemoryTracker;
     FWriteLog WriteLog;
     FWriteLogBumpAllocator WriteLogBumpAllocator;
     TStatStorage<uint64_t> StatDepth = 1;

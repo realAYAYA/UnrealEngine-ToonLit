@@ -13,9 +13,6 @@
 class FScenePreUpdateChangeSet;
 class FScenePostUpdateChangeSet;
 
-// Note: the needed precomputation is not yet implemented in the ISM proxy / etc.
-#define SCENE_CULLING_USE_PRECOMPUTED 0
-
 // Test implemented for perf comparison, may not scale exactly as size grows & not fully featured.
 #define USE_STATIC_HASH_TABLE 0
 
@@ -166,11 +163,13 @@ inline FInt64Vector FloorToInt64Vector(const FVector& Vector)
 	return FInt64Vector(FMath::FloorToInt(Vector.X), FMath::FloorToInt(Vector.Y), FMath::FloorToInt(Vector.Z));
 };
 
-template <int32 InCellBlockDimLog2 = 3>
+template <typename BlockTraitsType>
 class THierarchicalSpatialHashGrid
 {
 public:
-	static constexpr int32 CellBlockDimLog2 = InCellBlockDimLog2;
+	using FBlockLoc = typename BlockTraitsType::FBlockLoc;
+
+	static constexpr int32 CellBlockDimLog2 = BlockTraitsType::CellBlockDimLog2;
 	static constexpr int32 kMaxLevel = 64;
 	static constexpr int32 NumCellsPerBlockLog2 = CellBlockDimLog2 * 3; // number of bits needed for a local cell ID
 	static constexpr int32 CellBlockDim = 1 << CellBlockDimLog2;
@@ -264,9 +263,8 @@ public:
 
 	THierarchicalSpatialHashGrid() = default;
 
-	THierarchicalSpatialHashGrid(double MinCellSize, double MaxCellSize, float InSizeLevelBias)
+	THierarchicalSpatialHashGrid(double MinCellSize, double MaxCellSize)
 	{
-		SizeLevelBias = InSizeLevelBias;
 		// Subtract 1 to make sure that intuitively, when we set a cell size of exact POT e.g., 4096, that is what we get (not the correctly conservative 8192).
 		FirstLevel = CalcLevel(MinCellSize - 1.0);
 		LastLevel = CalcLevel(MaxCellSize - 1.0);
@@ -291,14 +289,14 @@ public:
 
 	inline int32 GetMaxNumBlocks() const { return HashMap.GetMaxIndex(); }
 
-	static int32 CalcLevel(double Size, float Bias = 0.0f)
+	static inline int32 CalcLevel(float Size)
 	{
 		return RenderingSpatialHash::CalcLevel(Size);
 	};
 
-	static inline int32 CalcLevelFromRadius(double Radius, float Bias)
+	static inline int32 CalcLevelFromRadius(float Radius)
 	{
-		return CalcLevel(Radius * 2.0, Bias);
+		return CalcLevel(Radius * 2.0f);
 	};
 
 	static inline double GetCellSize(int32 Level)
@@ -342,7 +340,7 @@ public:
 	inline FFootprint64 CalcLevelAndFootprint(const FBoxSphereBounds& BoxSphereBounds) const
 	{
 		// Can't be lower than this, or the footprint might be larger than 2x2x2, globally the same, can pre-calc.
-		int32 Level = CalcLevelFromRadius(BoxSphereBounds.SphereRadius, SizeLevelBias);
+		int32 Level = CalcLevelFromRadius(BoxSphereBounds.SphereRadius);
 
 		// Clamp to lowest level represented in the grid
 		Level = FMath::Max(FirstLevel, Level);
@@ -358,7 +356,7 @@ public:
 
 	inline FLocation64 CalcLevelAndLocation(const FBoxSphereBounds& BoxSphereBounds) const
 	{
-		int32 Level = CalcLevelFromRadius(BoxSphereBounds.SphereRadius, SizeLevelBias);
+		int32 Level = CalcLevelFromRadius(BoxSphereBounds.SphereRadius);
 
 		// Clamp to lowest level represented in the grid
 		Level = FMath::Max(FirstLevel, Level);
@@ -368,7 +366,7 @@ public:
 
 	inline FLocation64 CalcLevelAndLocation(const FVector4d& Sphere) const
 	{
-		int32 Level = CalcLevelFromRadius(Sphere.W, SizeLevelBias);
+		int32 Level = CalcLevelFromRadius(Sphere.W);
 
 		// Clamp to lowest level represented in the grid
 		Level = FMath::Max(FirstLevel, Level);
@@ -430,14 +428,32 @@ public:
 	{
 		return RenderingSpatialHash::CalcWorldPosition(BlockLoc);
 	}
+
+	/**
+	 * The reference location is always the minimum corner, unpadded by loose bounds expansion.
+	 */
+	inline FVector3d CalcBlockWorldPosition(const FBlockLoc& BlockLoc) const
+	{
+		return BlockLoc.GetWorldPosition();
+	}
+
 	int32 GetFirstLevel() const { return FirstLevel; }
 
 #if USE_STATIC_HASH_TABLE
-	using FSpatialHashMap = ::TSpatialHashMap<FLocation64, FCellBlock>;
+	using FSpatialHashMap = ::TSpatialHashMap<FBlockLoc, FCellBlock>;
 	using FHashElementId = typename FSpatialHashMap::FElementId;
 	using FBlockId = typename FSpatialHashMap::FElementId;
 #else
-	using FSpatialHashMap = Experimental::TRobinHoodHashMap<FLocation64, FCellBlock>;
+
+	struct FHasher : public TDefaultMapKeyFuncs<FBlockLoc, FCellBlock, false>
+	{
+		static FORCEINLINE uint32 GetKeyHash(const FBlockLoc& Key)
+		{
+			return Key.GetHash();
+		}
+	};
+
+	using FSpatialHashMap = Experimental::TRobinHoodHashMap<FBlockLoc, FCellBlock, FHasher>;
 	using FBlockId = Experimental::FHashElementId;
 	using FHashElementId = Experimental::FHashElementId;
 
@@ -447,13 +463,12 @@ public:
 	FCellBlock &GetBlockById(const FBlockId &BlockId) { return HashMap.GetByElementId(BlockId).Value; }
 	const FCellBlock &GetBlockById(const FBlockId &BlockId) const { return HashMap.GetByElementId(BlockId).Value; }
 	
-	FLocation64 GetBlockLocById(const FBlockId &BlockId) const { return HashMap.GetByElementId(BlockId).Key; }
+	FBlockLoc GetBlockLocById(const FBlockId &BlockId) const { return HashMap.GetByElementId(BlockId).Key; }
 
 	const FSpatialHashMap &GetHashMap() const { return HashMap; };
 	FSpatialHashMap &GetHashMap() { return HashMap; };
 
 private:
-	float SizeLevelBias;
 	int32 FirstLevel;
 	int32 LastLevel;
 	double RecCellSizes[kMaxLevel];

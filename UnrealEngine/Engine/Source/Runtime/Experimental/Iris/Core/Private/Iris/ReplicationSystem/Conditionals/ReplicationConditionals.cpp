@@ -12,8 +12,10 @@
 #include "Iris/ReplicationSystem/DeltaCompression/DeltaCompressionBaselineInvalidationTracker.h"
 #include "Iris/ReplicationSystem/Filtering/NetObjectGroups.h"
 #include "Iris/ReplicationSystem/Filtering/ReplicationFiltering.h"
+#include "Iris/Serialization/InternalNetSerializers.h"
 #include "Containers/ArrayView.h"
 #include "UObject/CoreNetTypes.h"
+#include "Net/Core/NetHandle/NetHandleManager.h"
 #include "Net/Core/PropertyConditions/RepChangedPropertyTracker.h"
 #include "Net/Core/PropertyConditions/PropertyConditions.h"
 #include "Net/Core/Trace/NetDebugName.h"
@@ -65,9 +67,11 @@ bool FReplicationConditionals::SetConditionConnectionFilter(FInternalNetRefIndex
 	if (ObjectInfo->AutonomousConnectionId != AutonomousConnectionId)
 	{
 		const uint32 ConnIdForBaselineInvalidation = (bEnable ? ConnectionId : ObjectInfo->AutonomousConnectionId);
-		ObjectInfo->AutonomousConnectionId = AutonomousConnectionId;
+		ObjectInfo->AutonomousConnectionId = uint16(AutonomousConnectionId);
 
 		BaselineInvalidationTracker->InvalidateBaselines(ObjectIndex, ConnIdForBaselineInvalidation);
+
+		MarkRemoteRoleDirty(ObjectIndex);
 	}
 
 	return true;
@@ -170,6 +174,15 @@ void FReplicationConditionals::InitPropertyCustomConditions(FInternalNetRefIndex
 				{
 					const FReplicationStateMemberChangeMaskDescriptor& MemberChangeMaskDescriptor = StateDescriptor->MemberChangeMaskDescriptors[MemberIndex];
 					ConditionalChangeMask.ClearBits(MemberChangeMaskDescriptor.BitOffset, MemberChangeMaskDescriptor.BitCount);
+				}
+
+				if (MemberLifeTimeConditionDescriptor.Condition == COND_Dynamic)
+				{
+					ELifetimeCondition Condition = Tracker->GetDynamicCondition(RepIndex);
+					if (Condition != COND_Dynamic)
+					{
+						SetDynamicCondition(ObjectIndex, RepIndex, Condition);
+					}
 				}
 			}
 		}
@@ -474,18 +487,18 @@ void FReplicationConditionals::GetChildSubObjectsToReplicate(uint32 ReplicatingC
 						for (uint32 GroupIt = 0U; GroupIt < GroupCount; ++GroupIt)
 						{
 							const FNetObjectGroupHandle NetGroup = GroupMemberships[GroupIt];
-							if (NetGroup == NetGroupOwnerNetObjectGroupHandle)
+							if (NetGroup.IsNetGroupOwnerNetObjectGroup())
 							{
 								bShouldReplicateSubObject = LifetimeConditionals.IsConditionEnabled(COND_OwnerOnly);
 							}
-							else if (NetGroup == NetGroupReplayNetObjectGroupHandle)
+							else if (NetGroup.IsNetGroupReplayNetObjectGroup())
 							{
 								bShouldReplicateSubObject = LifetimeConditionals.IsConditionEnabled(COND_ReplayOnly);
 							}
 							else
 							{
 								ENetFilterStatus ReplicationStatus = ENetFilterStatus::Disallow;
-								ensureAlwaysMsgf(ReplicationFiltering->GetSubObjectFilterStatus(NetGroup, ReplicatingConnectionId, ReplicationStatus), TEXT("FReplicationConditionals::GetChildSubObjectsToReplicat Trying to filter with group %u that is not a SubObjectFilterGroup"), NetGroup);
+								ensureAlwaysMsgf(ReplicationFiltering->GetSubObjectFilterStatus(NetGroup, ReplicatingConnectionId, ReplicationStatus), TEXT("FReplicationConditionals::GetChildSubObjectsToReplicat Trying to filter with group %u that is not a SubObjectFilterGroup"), NetGroup.GetGroupIndex());
 								bShouldReplicateSubObject = ReplicationStatus != ENetFilterStatus::Disallow;
 							}
 						
@@ -511,7 +524,7 @@ void FReplicationConditionals::GetChildSubObjectsToReplicate(uint32 ReplicatingC
 
 void FReplicationConditionals::GetSubObjectsToReplicate(uint32 ReplicationConnectionId, FInternalNetRefIndex RootObjectIndex, FSubObjectsToReplicateArray& OutSubObjectsToReplicate)
 {
-	IRIS_PROFILER_SCOPE(FReplicationConditionals_GetSubObjectsToReplicate);
+	//IRIS_PROFILER_SCOPE_VERBOSE(FReplicationConditionals_GetSubObjectsToReplicate);
 
 	// For now, we do nothing to detect if a conditional has changed on the RootParent, we simply defer this until the next
 	// time the subobjects are marked as dirty. We might want to consider to explicitly mark object and subobjects as dirty when 
@@ -523,7 +536,7 @@ void FReplicationConditionals::GetSubObjectsToReplicate(uint32 ReplicationConnec
 
 bool FReplicationConditionals::ApplyConditionalsToChangeMask(uint32 ReplicatingConnectionId, bool bIsInitialState, FInternalNetRefIndex ParentObjectIndex, FInternalNetRefIndex ObjectIndex, uint32* ChangeMaskData, const uint32* ConditionalChangeMaskData, const FReplicationProtocol* Protocol)
 {
-	IRIS_PROFILER_SCOPE(FReplicationConditionals_ApplyConditionalsToChangeMask);
+	//IRIS_PROFILER_SCOPE_VERBOSE(FReplicationConditionals_ApplyConditionalsToChangeMask);
 
 	bool bMaskWasModified = false;
 
@@ -672,8 +685,8 @@ void FReplicationConditionals::UpdateObjectsInScope()
 {
 	IRIS_PROFILER_SCOPE(FReplicationConditionals_UpdateObjectsInScope);
 
-	const FNetBitArray& ObjectsInScope = NetRefHandleManager->GetScopableInternalIndices();
-	const FNetBitArray& PrevObjectsInScope = NetRefHandleManager->GetPrevFrameScopableInternalIndices();
+	const FNetBitArrayView ObjectsInScope = NetRefHandleManager->GetCurrentFrameScopableInternalIndices();
+	const FNetBitArrayView PrevObjectsInScope = NetRefHandleManager->GetPrevFrameScopableInternalIndices();
 
 	const uint32 WordCountForModifiedWords = Align(FPlatformMath::Max(MaxObjectCount, 1U), 32U)/32U;
 	TArray<uint32> ModifiedWords;
@@ -754,6 +767,7 @@ FReplicationConditionals::FConditionalsMask FReplicationConditionals::GetLifetim
 	ConditionalsMask.SetConditionEnabled(COND_ReplayOrOwner, bIsReplicatingToOwner);
 	ConditionalsMask.SetConditionEnabled(COND_SimulatedOnlyNoReplay, bRoleSimulated);
 	ConditionalsMask.SetConditionEnabled(COND_SimulatedOrPhysicsNoReplay, bRoleSimulated | bRepPhysics);
+	ConditionalsMask.SetConditionEnabled(COND_SkipReplay, true);
 
 	return ConditionalsMask;
 }
@@ -810,6 +824,127 @@ bool FReplicationConditionals::DynamicConditionChangeRequiresBaselineInvalidatio
 	const bool NewConditionMayBeEnabled = (NewCondition != COND_Never);
 
 	return OldConditionMayHaveBeenDisabled && NewConditionMayBeEnabled;
+}
+
+void FReplicationConditionals::MarkRemoteRoleDirty(FInternalNetRefIndex ObjectIndex)
+{
+	const FNetRefHandleManager::FReplicatedObjectData& ReplicatedObjectData = NetRefHandleManager->GetReplicatedObjectDataNoCheck(ObjectIndex);
+	const FReplicationProtocol* Protocol = ReplicatedObjectData.Protocol;
+
+	if (NetRefHandleManager->GetReplicatedObjectStateBufferNoCheck(ObjectIndex) == nullptr)
+	{
+		return;
+	}
+
+	if (!ReplicatedObjectData.NetHandle.IsValid())
+	{
+		return;
+	}
+
+	const uint16 RepIndex = GetRemoteRoleRepIndex(Protocol);
+	if (RepIndex == InvalidRepIndex)
+	{
+		return;
+	}
+
+	MarkPropertyDirty(ObjectIndex, RepIndex);
+}
+
+uint16 FReplicationConditionals::GetRemoteRoleRepIndex(const FReplicationProtocol* Protocol)
+{
+	if (CachedRemoteRoleRepIndex != InvalidRepIndex)
+	{
+		return CachedRemoteRoleRepIndex;
+	}
+	
+	const FNetSerializer* NetRoleNetSerializer = &UE_NET_GET_SERIALIZER(FNetRoleNetSerializer);
+
+	// Loop through all state descriptors end their properties to find the RemoteRole
+	for (const FReplicationStateDescriptor* StateDescriptor : MakeArrayView(Protocol->ReplicationStateDescriptors, static_cast<int32>(Protocol->ReplicationStateCount)))
+	{
+		for (const FReplicationStateMemberSerializerDescriptor& SerializerDescriptor : MakeArrayView(StateDescriptor->MemberSerializerDescriptors, StateDescriptor->MemberCount))
+		{
+			if (SerializerDescriptor.Serializer != NetRoleNetSerializer)
+			{
+				continue;
+			}
+
+			const SIZE_T MemberIndex = &SerializerDescriptor - StateDescriptor->MemberSerializerDescriptors;
+			const FProperty* Property = StateDescriptor->MemberProperties[MemberIndex];
+			if (Property && Property->GetFName() == NAME_RemoteRole)
+			{
+				CachedRemoteRoleRepIndex = Property->RepIndex;
+				return Property->RepIndex;
+			}
+		}
+	}
+
+	return InvalidRepIndex;
+}
+
+void FReplicationConditionals::MarkPropertyDirty(FInternalNetRefIndex ObjectIndex, uint16 RepIndex)
+{
+	const FNetRefHandleManager::FReplicatedObjectData& ReplicatedObjectData = NetRefHandleManager->GetReplicatedObjectDataNoCheck(ObjectIndex);
+
+	const FNetHandle OwnerHandle = ReplicatedObjectData.NetHandle;
+	if (!OwnerHandle.IsValid())
+	{
+		return;
+	}
+
+	if (NetRefHandleManager->GetReplicatedObjectStateBufferNoCheck(ObjectIndex) == nullptr)
+	{
+		return;
+	}
+
+	const FReplicationProtocol* Protocol = ReplicatedObjectData.Protocol;
+	const FReplicationInstanceProtocol* InstanceProtocol = ReplicatedObjectData.InstanceProtocol;
+
+	constexpr uint32 MaxFragmentOwnerCount = 1U;
+	UObject* FragmentOwners[MaxFragmentOwnerCount] = {};
+	FReplicationStateOwnerCollector FragmentOwnerCollector(FragmentOwners, MaxFragmentOwnerCount);
+
+	for (const FReplicationStateDescriptor*& StateDescriptor : MakeArrayView(Protocol->ReplicationStateDescriptors, static_cast<int32>(Protocol->ReplicationStateCount)))
+	{
+		const SIZE_T StateIndex = &StateDescriptor - Protocol->ReplicationStateDescriptors;
+
+		// Is the passed Owner the owner of the fragment?
+		{
+			const FReplicationFragment* ReplicationFragment = InstanceProtocol->Fragments[StateIndex];
+
+			FragmentOwnerCollector.Reset();
+			ReplicationFragment->CollectOwner(&FragmentOwnerCollector);
+			if (FragmentOwnerCollector.GetOwnerCount() == 0U || FNetHandleManager::GetNetHandle(FragmentOwnerCollector.GetOwners()[0]) != OwnerHandle)
+			{
+				// Not the right owner.
+				continue;
+			}
+		}
+
+		// Can this state contain this property?
+		if (RepIndex >= StateDescriptor->RepIndexCount)
+		{
+			continue;
+		}
+
+		// Does this state contain this property?
+		const FReplicationStateMemberRepIndexToMemberIndexDescriptor& RepIndexToMemberIndexDescriptor = StateDescriptor->MemberRepIndexToMemberIndexDescriptors[RepIndex];
+		if (RepIndexToMemberIndexDescriptor.MemberIndex == FReplicationStateMemberRepIndexToMemberIndexDescriptor::InvalidEntry)
+		{
+			continue;
+		}
+
+		// We found the relevant state. Modify the external state changemask.
+		const FReplicationInstanceProtocol::FFragmentData& Fragment = InstanceProtocol->FragmentData[StateIndex];
+		const FReplicationStateMemberChangeMaskDescriptor& ChangeMaskDescriptor = StateDescriptor->MemberChangeMaskDescriptors[RepIndexToMemberIndexDescriptor.MemberIndex];
+		FNetBitArrayView MemberChangeMask = GetMemberChangeMask(Fragment.ExternalSrcBuffer, StateDescriptor);
+		FReplicationStateHeader& Header = GetReplicationStateHeader(Fragment.ExternalSrcBuffer, StateDescriptor);
+		MarkDirty(Header, MemberChangeMask, ChangeMaskDescriptor);
+
+		return;
+	}
+
+	UE_LOG(LogIris, Warning, TEXT("Trying to mark non-existing property with RepIndex %u in protocol %s as dirty"), RepIndex, ToCStr(Protocol->DebugName));
 }
 
 }

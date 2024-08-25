@@ -144,7 +144,7 @@ void FHazardPointerCollection::Collect(TArray<HazardPointer_Impl::FHazardDeleter
 		{
 			DeletedCollectables.Add(Collectable);
 			Collectables[c] = Collectables.Last();
-			Collectables.Pop(false);
+			Collectables.Pop(EAllowShrinking::No);
 			c--;
 		}
 	}

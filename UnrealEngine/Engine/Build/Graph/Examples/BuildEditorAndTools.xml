@@ -24,6 +24,8 @@
 		Other options:
 			-set:EditorTarget=<TargetName>		Specifies the editor target to be built (defaults to UnrealEditor)
 			-set:UProjectPath=<ProjectPath>		Specifies the uproject path to pass as -Project in the compile args (defaults to none)
+			-set:EditorCompileArgs=<Args>		Specifies the arguments to pass to Editor Compile (defaults to none)
+			-set:ToolCompileArgs=<Args>			Specifies the arguments to pass to Tools Compile (defaults to none)
 			-set:GameTargets=<TargetName>		Specifies the game targets to be built (defaults to none)
 			-set:AdditionalTools=<A>;<B>;<C>..	Specifies the additional tool targets to be built (defaults to none)
 			-set:TargetPlatforms=<A>;<B>;<C>... Specifies the target platforms to build the game for (defaults to Win64)
@@ -38,6 +40,8 @@
 
 	<Option Name="EditorTarget" Restrict="[^ ]+" DefaultValue="UnrealEditor" Description="Name of the editor target to be built"/>
 	<Option Name="UProjectPath" Restrict="[^ ]*" DefaultValue="" Description="Optional Uproject path to include in the arguments"/>
+	<Option Name="EditorCompileArgs" DefaultValue="" Description="Arguments to be used for EditorTarget Compile"/>
+	<Option Name="ToolCompileArgs" DefaultValue="" Description="Arguments to be used for Tool Compile"/>
 	<Option Name="GameTargets" Restrict="[^ ]*" DefaultValue="" Description="Names of game targets to build separated by semicolons, eg. UnrealClient;UnrealServer"/>
 	<Option Name="AdditionalTools" Restrict="[^ ]*" DefaultValue="" Description="Tool Compiles to build seperated by semicolons, eg. UnrealMultiUserServer;BuildPatchTool"/>
 	<Option Name="TargetPlatforms" Restrict="[^ ]*" DefaultValue="Win64" Description="List of the target platforms to build for, separated by semicolons, eg. Win64;Android"/>
@@ -47,9 +51,13 @@
 	<Option Name="Promoted" Restrict="true|false" DefaultValue="true" Description="Whether to set the promoted flag in version files, allowing the editor to run without UBT."/>
 	<Option Name="ArchiveStream" Restrict="(?://.*)?" DefaultValue="" Description="Stream path that will contain zip file of the compiled binaries, for use by UnrealGameSync"/>
 	<Option Name="ForceSubmit" Restrict="true|false" DefaultValue="false" Description="Forces the submit to happen even if another change has been submitted (resolves in favor of local files)"/>
-	<Option Name="PreferredAgent" DefaultValue="CompileWin64" Description ="Agent type to use for job"/>
+	<Option Name="PreferredAgent" DefaultValue="CompileWin64;Win64" Description ="Agent type to use for job"/>
 	<Option Name="ArchiveName" Restrict="[^ ]*" DefaultValue="$(EditorTarget)" Description="Names of archive to generate instead of using the GameTarget, when the GameTarget may be UnrealEditor and result in a clash"/>
 	<Option Name="SymbolStorePath" DefaultValue="" Description ="Output directory for symbol storage"/>
+
+	<Property Name="ArchiveDir" Value="$(RootDir)\LocalBuilds\ArchiveForUGS"/>
+	<Property Name="ArchiveStagingDir" Value="$(ArchiveDir)\Staging"/>
+	<Property Name="ArchiveStagingRelativeDir" Value="LocalBuilds\ArchiveForUGS\Staging"/>
 
 	<EnvVar Name="COMPUTERNAME"/>
 	<EnvVar Name="P4CLIENT"/>
@@ -64,12 +72,12 @@
 		
 		<!-- Compile the tool executables -->
 		<Node Name="Compile Tools Win64" Requires="Update Version Files" Produces="#ToolBinaries">
-			<Compile Target="ShaderCompileWorker" Platform="Win64" Configuration="Development" Tag="#ToolBinaries"/>
-			<Compile Target="UnrealLightmass" Platform="Win64" Configuration="Development" Tag="#ToolBinaries"/>
-			<Compile Target="InterchangeWorker" Platform="Win64" Configuration="Development" Tag="#ToolBinaries"/>
-			<Compile Target="UnrealPak" Configuration="Development" Platform="Win64" Tag="#ToolBinaries"/>
+			<Compile Target="ShaderCompileWorker" Platform="Win64" Configuration="Development" Tag="#ToolBinaries" Arguments="$(ToolCompileArgs)"/>
+			<Compile Target="UnrealLightmass" Platform="Win64" Configuration="Development" Tag="#ToolBinaries" Arguments="$(ToolCompileArgs)"/>
+			<Compile Target="InterchangeWorker" Platform="Win64" Configuration="Development" Tag="#ToolBinaries" Arguments="$(ToolCompileArgs)"/>
+			<Compile Target="UnrealPak" Configuration="Development" Platform="Win64" Tag="#ToolBinaries" Arguments="$(ToolCompileArgs)"/>
 			<ForEach Name="AdditonalTool" Values="$(AdditionalTools)">
-				<Compile Target="$(AdditonalTool)" Platform="Win64" Configuration="Development" Tag="#ToolBinaries"/>
+				<Compile Target="$(AdditonalTool)" Platform="Win64" Configuration="Development" Tag="#ToolBinaries" Arguments="$(ToolCompileArgs)"/>
 			</ForEach>
 			
 			<!-- 
@@ -81,7 +89,7 @@
 		
 		<!-- Compile the editor executable -->
 		<Node Name="Compile $(EditorTarget) Win64" Produces="#EditorBinaries;#TargetInfo">
-			<Compile Target="$(EditorTarget)" Platform="Win64" Configuration="Development" Project="$(UProjectPath)" Tag="#EditorBinaries"/>
+			<Compile Target="$(EditorTarget)" Platform="Win64" Configuration="Development" Project="$(UProjectPath)" Tag="#EditorBinaries" Arguments="$(EditorCompileArgs)"/>
 			<QueryTargets ProjectFile="$(UProjectPath)" Tag="#TargetInfo"/>
 		</Node>
 		
@@ -128,10 +136,9 @@
 			<Submit Description="[CL $(CodeChange)] Updated binaries" Files="#OutputFiles" FileType="binary+FS32"/>
 		</Node>	
 		
-		<!-- Create a zip archive and submit that to Perforce for use by UGS -->
-		<Node Name="Submit To Perforce For UGS" Requires="$(SubmissionDependencies)">
-			<!-- Clear out the archive directory -->
-			<Property Name="ArchiveDir" Value="$(RootDir)\LocalBuilds\ArchiveForUGS"/>
+		<!-- Prepare a build for UGS -->
+		<Node Name="Stage for UGS" Requires="$(SubmissionDependencies)" Produces="#PublishBinaries">
+			<!-- Clear out the staging directory -->
 			<Delete Files="$(ArchiveDir)\..."/>
 
 			<!-- Tag AutomationTool build folder recursively -->
@@ -151,13 +158,14 @@
 			<Log Message="Archive symbols:" Files="#ArchiveSymbols"/>
 
 			<!-- Stage all the files to be archived -->
-			<Property Name="ArchiveStagingDir" Value="$(ArchiveDir)\Staging"/>
 			<Copy Files="#ArchiveBinaries" From="$(RootDir)" To="$(ArchiveStagingDir)"/>
 			<Strip Files="#ArchiveSymbols" BaseDir="$(RootDir)" OutputDir="$(ArchiveStagingDir)" Platform="Win64"/>
-
-
-			<!-- Create the zip file and submit it to Perforce -->
-			<Property Name="ArchivePerforceDir" Value="$(ArchiveDir)\Perforce"/>
+			<Tag Files="$(ArchiveStagingDir)/..." With="#PublishBinaries"/>
+		</Node>
+		
+		<!-- Create a zip file and submit it to Perforce -->
+		<Node Name="Submit To Perforce For UGS" Requires="Stage for UGS">
+			<Property Name="ArchivePerforceDir" Value="$(RootDir)\LocalBuilds\ArchiveForUGS-Perforce"/>
 			<Property Name="ArchiveFile" Value="$(ArchivePerforceDir)\$(EscapedBranch)-$(ArchiveName).zip"/>
 			<Zip FromDir="$(ArchiveStagingDir)" ZipFile="$(ArchiveFile)"/>
 			<Warning Message="The 'ArchiveStream' argument is not set. Binaries will not be submitted." If="'$(ArchiveStream)' == ''"/>
@@ -165,7 +173,25 @@
 			<Property Name="SubmitClient" Value="$(P4CLIENT)_ArchiveForUGS" If="'$(P4CLIENT)' != ''"/>
 			<Submit Description="[CL $(CodeChange)] Updated binaries" Files="$(ArchiveFile)" FileType="binary+FS32" Workspace="$(SubmitClient)" Stream="$(ArchiveStream)" RootDir="$(ArchivePerforceDir)" Force="$(ForceSubmit)" If="'$(ArchiveStream)' != ''"/>
 		</Node>
+
+		<!-- Upload binaries to Horde -->
+		<Property Name="UgsProjectKey" Value=""/>
+		<Property Name="UgsProjectKey" Value="ugs-project=$(Branch)/$(UProjectPath)" If="'$(Branch)' != '' and '$(UProjectPath)' != ''"/>
+		<Property Name="UgsProjectKey" Value="ugs-project=$(Branch)" If="'$(Branch)' != '' and '$(UgsProjectKey)' == ''"/>
+		<Artifact Name="editor" Description="Editor PCBs" Type="ugs-pcb" BasePath="$(ArchiveStagingRelativeDir)" Keys="$(UgsProjectKey)" Metadata="ArchiveType=Editor" Tag="#PublishBinaries"/>
 		
 	</Agent>
+
+	<Label Category="Editors" Name="Win64" Requires="Compile $(EditorTarget) Win64" UgsBadge="Editor"/>
+
+	<ForEach Name="TargetPlatform" Values="$(TargetPlatforms)">
+		<Property Name="GameTargetNodes" Value=""/>	
+		<ForEach Name="GameTarget" Values="$(GameTargets)">
+			<Property Name="GameTargetNodes" Value="$(GameTargetNodes)Compile $(GameTarget) $(TargetPlatform);"/>
+		</ForEach>
+		<Do If="'$(GameTargetNodes)' != ''">
+			<Label Category="Target Platforms" Name="$(TargetPlatform)" Requires="$(GameTargetNodes)" UgsBadge="$(TargetPlatform)"/>
+		</Do>
+	</ForEach>
 
 </BuildGraph>

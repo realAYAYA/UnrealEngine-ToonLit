@@ -15,6 +15,10 @@
 class FBatchedElementTexture2DPreviewParameters : public FBatchedElementParameters
 {
 public:
+
+	// MipLevel = -1 to auto-mip
+	//	Layer is for VT, must be an integer
+	// SliceIndex = -1 for all
 	FBatchedElementTexture2DPreviewParameters(float InMipLevel, float InLayerIndex, float InSliceIndex, bool bInIsNormalMap, bool bInIsSingleChannel, bool bInIsSingleVTPhysicalSpace, bool bInIsVirtualTexture, bool bInIsTextureArray, bool bInUsePointSampling)
 		: MipLevel(InMipLevel)
 		, LayerIndex(InLayerIndex)

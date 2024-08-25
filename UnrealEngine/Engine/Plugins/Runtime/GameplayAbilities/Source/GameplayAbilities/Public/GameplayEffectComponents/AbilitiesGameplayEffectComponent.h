@@ -32,7 +32,7 @@ struct FGameplayAbilitySpecConfig
 /**
  * Grants additional Gameplay Abilities to the Target of a Gameplay Effect while active
  */
-UCLASS()
+UCLASS(DisplayName="Grant Gameplay Abilities")
 class GAMEPLAYABILITIES_API UAbilitiesGameplayEffectComponent : public UGameplayEffectComponent
 {
 	friend class UGameplayEffect; // for upgrade path

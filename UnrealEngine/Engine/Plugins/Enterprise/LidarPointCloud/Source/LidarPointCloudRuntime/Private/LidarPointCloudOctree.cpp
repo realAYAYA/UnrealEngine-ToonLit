@@ -419,7 +419,7 @@ void FLidarPointCloudOctreeNode::InsertPoints_Static(const FLidarPointCloudPoint
 					PointBuckets[InGridData.ChildNodeLocation].Add(Data[i]);
 				}
 
-				Data.RemoveAtSwap(i--, 1, false);
+				Data.RemoveAtSwap(i--, 1, EAllowShrinking::No);
 				--NumPointsAdded;
 			}
 			else
@@ -630,7 +630,7 @@ void FLidarPointCloudOctreeNode::InsertPoints_Static(FLidarPointCloudPoint** Poi
 					PointBuckets[InGridData.ChildNodeLocation].Add(Data[i]);
 				}
 
-				Data.RemoveAtSwap(i--, 1, false);
+				Data.RemoveAtSwap(i--, 1, EAllowShrinking::No);
 				--NumPointsAdded;
 			}
 			else
@@ -1867,7 +1867,7 @@ void FLidarPointCloudOctree::DeleteSelected()
 		{
 			if (P->bSelected)
 			{
-				CurrentNode->Data.RemoveAtSwap(P - Start, 1, false);
+				CurrentNode->Data.RemoveAtSwap(P - Start, 1, EAllowShrinking::No);
 				++NumRemoved;
 				--DataEnd;
 				--P;
@@ -2152,7 +2152,7 @@ void FLidarPointCloudOctree::RemovePoints_Internal(TArray<FLidarPointCloudPoint*
 			{
 				if (P->bMarkedForDeletion)
 				{
-					CurrentNode->Data.RemoveAtSwap(P - Start, 1, false);
+					CurrentNode->Data.RemoveAtSwap(P - Start, 1, EAllowShrinking::No);
 					++NumRemoved;
 					--DataEnd;
 					--P;
@@ -2234,7 +2234,7 @@ void FLidarPointCloudOctree::RemoveHiddenPoints()
 			{
 				if (!P->bVisible)
 				{
-					CurrentNode->Data.RemoveAtSwap(P - Start, 1, false);
+					CurrentNode->Data.RemoveAtSwap(P - Start, 1, EAllowShrinking::No);
 					++NumRemoved;
 					--DataEnd;
 					--P;
@@ -2416,7 +2416,7 @@ void FLidarPointCloudOctree::StreamNodes(TArray<FLidarPointCloudOctreeNode*>& No
 				else
 				{
 					Node->ReleaseData();				
-					NodesInUse.RemoveAtSwap(i--, 1, false);
+					NodesInUse.RemoveAtSwap(i--, 1, EAllowShrinking::No);
 				}
 			}
 		}
@@ -2618,7 +2618,7 @@ void FLidarPointCloudOctree::Serialize(FArchive& Ar)
 		Nodes.Add(Root);
 		while (Nodes.Num())
 		{
-			FLidarPointCloudOctreeNode* CurrentNode = Nodes.Pop(false);
+			FLidarPointCloudOctreeNode* CurrentNode = Nodes.Pop(EAllowShrinking::No);
 
 			Ar << CurrentNode->LocationInParent << CurrentNode->Center;
 			

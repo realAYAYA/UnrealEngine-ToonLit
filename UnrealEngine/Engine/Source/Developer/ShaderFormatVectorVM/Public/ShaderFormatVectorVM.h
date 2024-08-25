@@ -9,6 +9,9 @@
 #include "VectorVM.h"
 #include "VectorVMCommon.h"
 
+struct FShaderCompilerInput;
+struct FShaderCompilerOutput;
+
 /** Ordered table of functions actually called by the VM script. */
 struct FCalledVMFunction
 {
@@ -61,7 +64,8 @@ inline FArchive& operator<<(FArchive& Ar, FVectorVMCompilationOutput& Output)
 	return Ar;
 }
 
-extern bool SHADERFORMATVECTORVM_API CompileShader_VectorVM(const struct FShaderCompilerInput& Input, struct FShaderCompilerOutput& Output, const class FString& WorkingDirectory, uint8 Version);
+UE_DEPRECATED(5.4, "Direct VectorVM compilation will no longer be exposed outside of the TestCompileVectorVMShader function")
+inline bool CompileShader_VectorVM(const FShaderCompilerInput& Input, FShaderCompilerOutput& Output, const FString& WorkingDirectory, uint8 Version) { return false; }
 
-//Cheating hack version. To be removed when we add all the plumbing for VVM scripts to be treat like real shaders.
-extern bool SHADERFORMATVECTORVM_API CompileShader_VectorVM(const struct FShaderCompilerInput& Input,struct FShaderCompilerOutput& Output,const class FString& WorkingDirectory, uint8 Version, struct FVectorVMCompilationOutput& VMCompilationOutput, bool bSkipBackendOptimizations = false);
+UE_DEPRECATED(5.4, "This overload of CompileShader_VectorVM is superceded by TestCompileShaderVectorVM")
+inline bool CompileShader_VectorVM(const FShaderCompilerInput& Input, FShaderCompilerOutput& Output, const FString& WorkingDirectory, uint8 Version, FVectorVMCompilationOutput& VMCompilationOutput, bool bSkipBackendOptimizations = false) { return false; }

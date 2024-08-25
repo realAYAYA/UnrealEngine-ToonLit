@@ -5,12 +5,15 @@
 #include "Engine/EngineTypes.h"
 #include "Widgets/SCompoundWidget.h"
 
+class FScopedTransaction;
+class SDMXPixelMappingDesignerView;
+class UDMXPixelMappingBaseComponent;
+class UDMXPixelMappingOutputComponent;
 
 enum class EDMXPixelMappingTransformDirection : uint8
 {
 	CenterRight,
 	BottomRight,
-	BottomLeft,
 	BottomCenter,
 
 	MAX
@@ -23,9 +26,6 @@ enum class EDMXPixelMappingTransformAction : uint8
 	Secondary
 };
 
-class SDMXPixelMappingDesignerView;
-class UDMXPixelMappingBaseComponent;
-class FScopedTransaction;
 
 /**
  * Most of the logic copied from a private class Engine/Source/Editor/UMGEditor/Private/Designer/STransformHandle.h
@@ -54,30 +54,32 @@ public:
 	EDMXPixelMappingTransformDirection GetTransformDirection() const { return TransformDirection; }
 	FVector2D GetOffset() const { return Offset.Get(); }
 
-protected:
+private:
 	EVisibility GetHandleVisibility() const;
 
-	/** Resizes the component on the next tick */
-	void RequestResize(UDMXPixelMappingBaseComponent* BaseComponent, const FVector2D& Direction);
-	
+	/** Rotate the component */
+	void Rotate(UDMXPixelMappingOutputComponent* OutputComponent, const FVector2D& CursorPosition, double WidgetScale);
+
 	/** Resizes the component */
-	void Resize(UDMXPixelMappingBaseComponent* BaseComponent, const FVector2D& Direction, const FVector2D& Amount);
+	void Resize(UDMXPixelMappingOutputComponent* OutputComponent, const FVector2D& CursorPosition, double WidgetScale);
+
+	/** Utiltity that returns the snap size of an output component. Note, this snaps to pixels if grid snapping is disabled. */
+	FVector2D GetSnapSize(UDMXPixelMappingOutputComponent* OutputComponent, const FVector2D& RequestedSize) const;
 
 	EDMXPixelMappingTransformAction ComputeActionAtLocation(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) const;
 
-protected:
 	FVector2D ComputeDragDirection(EDMXPixelMappingTransformDirection InTransformDirection) const;
 	FVector2D ComputeOrigin(EDMXPixelMappingTransformDirection InTransformDirection) const;
 
-protected:
 	EDMXPixelMappingTransformDirection TransformDirection;
 	EDMXPixelMappingTransformAction Action;
 
-	FVector2D DragDirection;
-	FVector2D DragOrigin;
+	FVector2D DragDirection = FVector2D::ZeroVector;
+	FVector2D DragOrigin = FVector2D::ZeroVector;
 
-	FVector2D MouseDownPosition;
-	FMargin StartingOffsets;
+	FVector2D MouseDownPosition = FVector2D::ZeroVector;
+	FVector2D InitialSize = FVector2D::ZeroVector;
+	double InitialRotation = 0.0;
 
 	TSharedPtr<FScopedTransaction> ScopedTransaction;
 
@@ -86,5 +88,5 @@ protected:
 	TAttribute<FVector2D> Offset;
 
 	/** Timer handle used when resize is requested */
-	FTimerHandle RequestResizeHandle;
+	FTimerHandle RequestApplyTransformHandle;
 };

@@ -86,22 +86,26 @@ unmasked inline uniform WideFVector4 VectorSwizzle(const uniform WideFVector4 &V
 	return Result;
 }
 
-unmasked inline uniform WideFVector4 VectorReplicate(const uniform WideFVector4 &Vec, const uniform int R)
+template<>
+inline uniform WideFVector4 VectorReplicate<uniform WideFVector4>(const uniform WideFVector4 &Vec, const uniform int R)
 {
-#if TARGET_WIDTH == 4
-	const varying int vPerm = { R, R, R, R };
-#elif TARGET_WIDTH == 8
-	const varying int vPerm = { R, R, R, R, R+4, R+4, R+4, R+4 };
-#elif TARGET_WIDTH == 16
-	const varying int vPerm = { R, R, R, R, R+4, R+4, R+4, R+4, R+8, R+8, R+8, R+8, R+12, R+12, R+12, R+12 };
-#endif
+	unmasked
+	{
+	#if TARGET_WIDTH == 4
+		const varying int vPerm = { R, R, R, R };
+	#elif TARGET_WIDTH == 8
+		const varying int vPerm = { R, R, R, R, R+4, R+4, R+4, R+4 };
+	#elif TARGET_WIDTH == 16
+		const varying int vPerm = { R, R, R, R, R+4, R+4, R+4, R+4, R+8, R+8, R+8, R+8, R+12, R+12, R+12, R+12 };
+	#endif
 
-	const FReal V = Vec.V[programIndex];
-	const FReal S = shuffle(V, vPerm);
-	uniform WideFVector4 Result;
-	Result.V[programIndex] = S;
+		const FReal V = Vec.V[programIndex];
+		const FReal S = shuffle(V, vPerm);
+		uniform WideFVector4 Result;
+		Result.V[programIndex] = S;
 
-	return Result;
+		return Result;
+	}
 }
 
 unmasked inline uniform WideFVector4 VectorCompareGE(const uniform WideFVector4 &A, const uniform WideFVector4 &B)

@@ -286,7 +286,7 @@ public:
 	PHYSICSCORE_API const FQuat& GetGeomOrientation() const;
 
 private:
-	TUniquePtr<FPhysicsGeometry> Geometry;
+	TRefCountPtr<FPhysicsGeometry> Geometry;
 	FQuat GeometryRotation;
 };
 
@@ -406,6 +406,7 @@ public:
 
 	static PHYSICSCORE_API void SetIsKinematic_AssumesLocked(const FPhysicsActorHandle& InActorReference,bool bIsKinematic);
 	static PHYSICSCORE_API void SetCcdEnabled_AssumesLocked(const FPhysicsActorHandle& InActorReference,bool bIsCcdEnabled);
+	static PHYSICSCORE_API void SetMACDEnabled_AssumesLocked(const FPhysicsActorHandle& InActorReference, bool bIsMACDEnabled);
 	static PHYSICSCORE_API void SetIgnoreAnalyticCollisions_AssumesLocked(const FPhysicsActorHandle& InActorReference,bool bIsCcdEnabled);
 
 	static PHYSICSCORE_API FTransform GetGlobalPose_AssumesLocked(const FPhysicsActorHandle& InActorReference);
@@ -463,7 +464,9 @@ public:
 	static PHYSICSCORE_API void SetOneWayInteraction_AssumesLocked(const FPhysicsActorHandle& InHandle, bool InOneWayInteraction);
 
 	static PHYSICSCORE_API float GetSleepEnergyThreshold_AssumesLocked(const FPhysicsActorHandle& InActorReference);
-	static PHYSICSCORE_API void SetSleepEnergyThreshold_AssumesLocked(const FPhysicsActorHandle& InActorReference,float InEnergyThreshold);
+	static PHYSICSCORE_API void SetSleepEnergyThreshold_AssumesLocked(const FPhysicsActorHandle& InActorReference, float InEnergyThreshold);
+
+	static PHYSICSCORE_API void SetSleepThresholdMultiplier_AssumesLocked(const FPhysicsActorHandle& InActorReference, float ThresholdMultiplier);
 
 	static PHYSICSCORE_API void SetMass_AssumesLocked(FPhysicsActorHandle& InHandle,float InMass);
 	static PHYSICSCORE_API void SetMassSpaceInertiaTensor_AssumesLocked(FPhysicsActorHandle& InHandle,const FVector& InTensor);
@@ -488,6 +491,7 @@ public:
 	static PHYSICSCORE_API FPhysicsConstraintHandle CreateConstraint(Chaos::FPhysicsObject* Body1, Chaos::FPhysicsObject* Body2, const FTransform& InLocalFrame1, const FTransform& InLocalFrame2);
 	static PHYSICSCORE_API FPhysicsConstraintHandle CreateConstraint(const FPhysicsActorHandle& InActorRef1,const FPhysicsActorHandle& InActorRef2,const FTransform& InLocalFrame1,const FTransform& InLocalFrame2);
 
+	static PHYSICSCORE_API FPhysicsConstraintHandle CreateSuspension(Chaos::FPhysicsObject* Body, const FVector& InLocalFrame);
 	static PHYSICSCORE_API FPhysicsConstraintHandle CreateSuspension(const FPhysicsActorHandle& InActorRef, const FVector& InLocalFrame);
 	static PHYSICSCORE_API void SetConstraintUserData(const FPhysicsConstraintHandle& InConstraintRef,void* InUserData);
 	static PHYSICSCORE_API void ReleaseConstraint(FPhysicsConstraintHandle& InConstraintRef);
@@ -525,7 +529,10 @@ public:
 
 	static PHYSICSCORE_API bool IsBroken(const FPhysicsConstraintHandle& InConstraintRef);
 
-	static PHYSICSCORE_API void SetGeometry(FPhysicsShapeHandle& InShape, TUniquePtr<Chaos::FImplicitObject>&& InGeometry);
+	static PHYSICSCORE_API void SetGeometry(FPhysicsShapeHandle& InShape, Chaos::FImplicitObjectPtr&& InGeometry);
+
+	UE_DEPRECATED(5.4, "Use SetGeometry with FImplicitObjectPtr instead.")
+	static PHYSICSCORE_API void SetGeometry(FPhysicsShapeHandle& InShape, TUniquePtr<Chaos::FImplicitObject>&& InGeometry) {check(false);}
 	
 	static PHYSICSCORE_API FCollisionFilterData GetSimulationFilter(const FPhysicsShapeHandle& InShape);
 	static PHYSICSCORE_API FCollisionFilterData GetQueryFilter(const FPhysicsShapeHandle& InShape);

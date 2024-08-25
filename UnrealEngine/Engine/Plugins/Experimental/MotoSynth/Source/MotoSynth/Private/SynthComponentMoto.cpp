@@ -151,6 +151,4 @@ ISoundGeneratorPtr USynthComponentMoto::CreateSoundGenerator(const FSoundGenerat
  		UE_LOG(LogMotoSynth, Verbose, TEXT("Can't play moto synth without a preset UMotoSynthPreset object and both acceleration source and deceleration source set."));
  		return ISoundGeneratorPtr(new FSoundGeneratorNull());
  	}
- 
-	return nullptr;
 }

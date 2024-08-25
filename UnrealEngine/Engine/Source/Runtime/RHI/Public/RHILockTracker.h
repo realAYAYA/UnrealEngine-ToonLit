@@ -67,7 +67,7 @@ struct FRHILockTracker
 			if (OutstandingLocks[Index].RHIBuffer == RHIBuffer && OutstandingLocks[Index].Offset == Offset)
 			{
 				FLockParams Result = OutstandingLocks[Index];
-				OutstandingLocks.RemoveAtSwap(Index, 1, false);
+				OutstandingLocks.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 				return Result;
 			}
 		}
@@ -91,7 +91,7 @@ struct FRHILockTracker
 			if (OutstandingUnlocks[Index].RHIBuffer == RHIBuffer)
 			{
 				FRHICommandListExecutor::WaitOnRHIThreadFence(OutstandingUnlocks[Index].UnlockEvent);
-				OutstandingUnlocks.RemoveAtSwap(Index, 1, false);
+				OutstandingUnlocks.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 				return;
 			}
 		}

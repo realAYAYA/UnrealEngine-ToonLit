@@ -34,13 +34,23 @@ UEnhancedPlayerInput::UEnhancedPlayerInput()
 	, bIsFlushingInputThisFrame(false)
 	, CurrentlyInUseAnyKeySubstitute(NAME_None)
 {
+	// We don't want to attempt to load stuff on the CDO. Any subobjects on the IMC (triggers, modifiers, Player mappable key settings)
+	// will likely not have been loaded yet if they are defined by the end user or in a different module.
+	if (HasAnyFlags(RF_ClassDefaultObject | RF_ArchetypeObject))
+	{
+		return;
+	}
+
 	if (UE::Input::EnableDefaultMappingContexts)
 	{
 		for (const FDefaultContextSetting& DefaultContext : GetDefault<UEnhancedInputDeveloperSettings>()->DefaultMappingContexts)
 		{
 			if (const UInputMappingContext* IMC = DefaultContext.InputMappingContext.LoadSynchronous())
 			{
-				AppliedInputContexts.Add(IMC, DefaultContext.Priority);
+				if (DefaultContext.bAddImmediately)
+				{
+					AppliedInputContexts.Add(IMC, DefaultContext.Priority);	
+				}
 			}
 		}
 	}
@@ -570,6 +580,22 @@ void UEnhancedPlayerInput::EvaluateInputDelegates(const TArray<UInputComponent*>
 						TriggeredActionsThisTick.Add(ActionData->GetSourceAction());
 					}
 				}
+
+				// If this delegate is bound to an action that has an event and is flagged to consume legacy keys, then mark it as such.
+				if (const FKeyConsumptionOptions* const ConsumptionData = KeyConsumptionData.Find(ActionData->GetSourceAction()))
+				{
+					if (static_cast<uint8>(ConsumptionData->EventsToCauseConsumption & ActionData->TriggerEvent) != 0)
+					{
+						// Consume all keys that are mapped to this input action with the proper trigger values
+						for (const FKey& KeyToConsume : ConsumptionData->KeysToConsume)
+						{
+							if (FKeyState* KeyState = KeyStateMap.Find(KeyToConsume))
+							{
+								KeyState->bConsumed = true;
+							}
+						}
+					}
+				}
 			}
 		}
 
@@ -590,7 +616,7 @@ void UEnhancedPlayerInput::EvaluateInputDelegates(const TArray<UInputComponent*>
 						bCanTrigger &= !TriggeredActionsThisTick.Contains(DepAction.SourceAction);
 						if(!bCanTrigger)
 						{
-							UE_LOG(LogEnhancedInput, Warning, TEXT("'%s' action was cancelled, its dependant on '%s'"), *DelegateAction->GetName(), *DepAction.SourceAction->GetName());
+							UE_LOG(LogEnhancedInput, Verbose, TEXT("'%s' action was cancelled, its dependant on '%s'"), *DelegateAction->GetName(), *DepAction.SourceAction->GetName());
 						}
 					}
 				}
@@ -601,18 +627,6 @@ void UEnhancedPlayerInput::EvaluateInputDelegates(const TArray<UInputComponent*>
 				// Search for the action instance data a second time as a previous delegate call may have deleted it.
 				if (const FInputActionInstance* ActionData = FindActionInstanceData(DelegateAction))
 				{
-					// If this enhanced input delegate has triggered and is flagged to consume legacy keys, then mark it as such.
-					if (const FKeyConsumptionOptions* ConsumptionData = KeyConsumptionData.Find(ActionData->GetSourceAction()))
-					{
-						if (static_cast<uint8>(ConsumptionData->EventsToCauseConsumption & Delegate->GetTriggerEvent()) != 0)
-						{
-							// Consume all keys that are mapped to this input action with the proper trigger values
-							for (const FKey& KeyToConsume : ConsumptionData->KeysToConsume)
-							{
-								ConsumeKey(KeyToConsume);	
-							}
-						}
-					}
 					Delegate->Execute(*ActionData);
 				}
 			}

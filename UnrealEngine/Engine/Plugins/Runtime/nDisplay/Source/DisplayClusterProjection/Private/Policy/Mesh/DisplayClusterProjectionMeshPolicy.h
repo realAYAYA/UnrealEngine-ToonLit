@@ -25,41 +25,17 @@ public:
 	virtual const FString& GetType() const override;
 	virtual bool HandleStartScene(IDisplayClusterViewport* InViewport) override;
 
-#if WITH_EDITOR
-	virtual bool HasPreviewMesh() override
-	{
-		return true;
-	}
-
-	virtual UMeshComponent* GetOrCreatePreviewMeshComponent(IDisplayClusterViewport* InViewport, bool& bOutIsRootActorComponent) override;
-#endif
-
-public:	
-	virtual EWarpType GetWarpType() const override
-	{
-		return EWarpType::mesh;
-	}
-
+public:
 	/** Parse the config data for a mesh id and try to retrieve it from the root actor. */
 	bool CreateWarpMeshInterface(IDisplayClusterViewport* InViewport);
 
 private:
-	struct FWarpMeshConfiguration
-	{
-		// StaticMesh component with source geometry
-		UStaticMeshComponent*     StaticMeshComponent = nullptr;
-		// StaticMesh geometry LOD
-		int32 StaticMeshComponentLODIndex = 0;
-
-		// ProceduralMesh component with source geometry
-		UProceduralMeshComponent* ProceduralMeshComponent = nullptr;
-		// ProceduralMesh section index
-		int32 ProceduralMeshComponentSectionIndex = 0;
-
-		// Customize source geometry UV channels
-		int32 BaseUVIndex = INDEX_NONE;
-		int32 ChromakeyUVIndex = INDEX_NONE;
-	};
-
-	bool GetWarpMeshConfiguration(IDisplayClusterViewport* InViewport, FWarpMeshConfiguration& OutWarpCfg);
+	/** Read mesh policy configuration from the projection policy parameters
+	* 
+	* @param InViewport - projection policy owner viewport
+	* @param OutWarpCfg - (out) warpblend configuration
+	* 
+	* @return - true when successful.
+	*/
+	bool GetWarpMeshConfiguration(IDisplayClusterViewport* InViewport, struct FDisplayClusterProjectionMeshPolicyConfiguration& OutWarpCfg);
 };

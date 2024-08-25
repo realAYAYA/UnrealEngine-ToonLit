@@ -13,8 +13,12 @@ using FDefaultAllocator64 = TSizedDefaultAllocator<64>;
 class FDefaultSetAllocator;
 
 class FString;
+class FAnsiString;
+class FUtf8String;
 
-template<> struct TIsContiguousContainer<FString> { static constexpr bool Value = true; };
+template<> struct TIsContiguousContainer<FString>     { static constexpr bool Value = true; };
+template<> struct TIsContiguousContainer<FAnsiString> { static constexpr bool Value = true; };
+template<> struct TIsContiguousContainer<FUtf8String> { static constexpr bool Value = true; };
 
 template<typename T, typename Allocator = FDefaultAllocator> class TArray;
 template<typename T> using TArray64 = TArray<T, FDefaultAllocator64>;

@@ -16,8 +16,16 @@ public static class RedisExtensions
 	/// </summary>
 	/// <param name="transaction"></param>
 	/// <param name="tasks">Tasks to await</param>
-	public static async Task WaitAndIgnoreCancellations(this ITransaction transaction, params Task[] tasks)
+	public static async Task WaitAndIgnoreCancellationsAsync(this ITransaction transaction, params Task[] tasks)
 	{
-		try { await Task.WhenAll(tasks); } catch (TaskCanceledException) { /* Ignore */ }
+		_ = transaction;
+		try
+		{
+			await Task.WhenAll(tasks);
+		}
+		catch (TaskCanceledException)
+		{
+			/* Ignore */
+		}
 	}
 }

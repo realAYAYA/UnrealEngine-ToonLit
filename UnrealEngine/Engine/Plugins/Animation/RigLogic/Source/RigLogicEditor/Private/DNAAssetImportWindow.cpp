@@ -82,7 +82,7 @@ void SDNAAssetImportWindow::Construct(const FArguments& InArgs)
 			.SlotPadding(2)
 		+ SUniformGridPanel::Slot(0, 0)
 		[
-			IDocumentation::Get()->CreateAnchor(FString("Engine/Content/FBX/ImportOptions"))
+			IDocumentation::Get()->CreateAnchor(FString("fbx-import-options-reference-in-unreal-engine"))
 		]
 	+ SUniformGridPanel::Slot(1, 0)
 		[

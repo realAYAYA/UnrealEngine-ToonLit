@@ -35,8 +35,7 @@ TUniquePtr<Audio::IModulatorSettings> USoundModulationPatch::CreateProxySettings
 
 const Audio::FModulationParameter& USoundModulationPatch::GetOutputParameter() const
 {
-	const FString Breadcrumb = FString::Format(TEXT("{0} '{1}'"), { *GetClass()->GetName(), *GetName() });
-	return AudioModulation::GetOrRegisterParameter(PatchSettings.OutputParameter, Breadcrumb);
+	return AudioModulation::GetOrRegisterParameter(PatchSettings.OutputParameter, GetName(), GetClass()->GetName());
 }
 
 #if WITH_EDITOR

@@ -6,9 +6,11 @@
 #include "Internationalization/Text.h"
 #include "MetasoundFrontendDocument.h"
 #include "MetasoundFrontendDocumentAccessPtr.h"
+#include "MetasoundFrontendDocumentIdGenerator.h"
 #include "MetasoundFrontendGraph.h"
 #include "MetasoundFrontendNodeController.h"
 #include "MetasoundFrontendNodeTemplateRegistry.h"
+#include "MetasoundFrontendProxyDataCache.h"
 #include "MetasoundFrontendSubgraphNodeController.h"
 #include "MetasoundFrontendInvalidController.h"
 #include "MetasoundFrontendVariableController.h"
@@ -974,14 +976,15 @@ namespace Metasound
 							FMetasoundFrontendNode& Node = GraphClass->Graph.Nodes.Emplace_GetRef(*InputClass);
 							Node.Name = NewName;
 
-							if (InClassInput.NodeID.IsValid())
+							FGuid NodeID = InClassInput.NodeID;
+							if (!NodeID.IsValid())
 							{
-								Node.UpdateID(InClassInput.NodeID);
+								FDocumentAccessPtr DocumentPtr = OwningDocument->GetDocumentPtr();
+								const FMetasoundFrontendDocument* Document = DocumentPtr.Get();
+								check(Document);
+								NodeID = FDocumentIDGenerator::Get().CreateNodeID(*Document);
 							}
-							else
-							{
-								Node.UpdateID(FGuid::NewGuid());
-							}
+							Node.UpdateID(NodeID);
 
 							// Set name on related vertices of input node
 							auto IsVertexWithTypeName = [&](FMetasoundFrontendVertex& Vertex) { return Vertex.TypeName == InClassInput.TypeName; };
@@ -1011,7 +1014,10 @@ namespace Metasound
 							{
 								// Create a new guid if there wasn't a valid guid attached
 								// to input.
-								NewInput.VertexID = FGuid::NewGuid();
+								FDocumentAccessPtr DocumentPtr = OwningDocument->GetDocumentPtr();
+								const FMetasoundFrontendDocument* Document = DocumentPtr.Get();
+								check(Document);
+								NewInput.VertexID = FDocumentIDGenerator::Get().CreateVertexID(*Document);
 							}
 
 #if WITH_EDITOR
@@ -1114,14 +1120,15 @@ namespace Metasound
 							FMetasoundFrontendNode& Node = GraphClass->Graph.Nodes.Add_GetRef(*OutputClass);
 							Node.Name = NewName;
 
-							if (InClassOutput.NodeID.IsValid())
+							FGuid NodeID = InClassOutput.NodeID;
+							if (!NodeID.IsValid())
 							{
-								Node.UpdateID(InClassOutput.NodeID);
+								FDocumentAccessPtr DocumentPtr = OwningDocument->GetDocumentPtr();
+								const FMetasoundFrontendDocument* Document = DocumentPtr.Get();
+								check(Document);
+								NodeID = FDocumentIDGenerator::Get().CreateNodeID(*Document);
 							}
-							else
-							{
-								Node.UpdateID(FGuid::NewGuid());
-							}
+							Node.UpdateID(NodeID);
 
 							// Set vertex name on output node
 							auto IsVertexWithTypeName = [&](FMetasoundFrontendVertex& Vertex) { return Vertex.TypeName == InClassOutput.TypeName; };
@@ -1152,7 +1159,10 @@ namespace Metasound
 							{
 								// Create a new guid if there wasn't a valid guid attached
 								// to output.
-								NewOutput.VertexID = FGuid::NewGuid();
+								FDocumentAccessPtr DocumentPtr = OwningDocument->GetDocumentPtr();
+								const FMetasoundFrontendDocument* Document = DocumentPtr.Get();
+								check(Document);
+								NewOutput.VertexID = FDocumentIDGenerator::Get().CreateVertexID(*Document);
 							}
 
 #if WITH_EDITOR
@@ -1401,7 +1411,7 @@ namespace Metasound
 				return AddNode(Class, InNodeGuid);
 			}
 
-			UE_LOG(LogMetaSound, Warning, TEXT("Failed to find or add node class info with registry key [Key:%s]"), *InKey);
+			UE_LOG(LogMetaSound, Warning, TEXT("Failed to find or add node class info with registry key [Key:%s]"), *InKey.ToString());
 			return INodeController::GetInvalidHandle();
 		}
 
@@ -1411,7 +1421,7 @@ namespace Metasound
 				TEXT("Cannot implement '%s' template node using 'AddNode'. Template nodes must always "
 				"be added using AddTemplateNode function and supply the interface to be implemented"),
 				*InClassMetadata.GetClassName().ToString());
-			return AddNode(NodeRegistryKey::CreateKey(InClassMetadata), InNodeGuid);
+			return AddNode(FNodeRegistryKey(InClassMetadata), InNodeGuid);
 		}
 
 		FNodeHandle FGraphController::AddTemplateNode(const FNodeRegistryKey& InKey, FMetasoundFrontendNodeInterface&& InNodeInterface, FGuid InNodeGuid)
@@ -1419,7 +1429,7 @@ namespace Metasound
 			if (const INodeTemplate* Template = INodeTemplateRegistry::Get().FindTemplate(InKey))
 			{
 				const bool bIsValidInterface = Template->IsValidNodeInterface(InNodeInterface);
-				if (ensureAlwaysMsgf(bIsValidInterface, TEXT("Cannot implement interface when attempting to add node using template with key '%s'"), *InKey))
+				if (ensureAlwaysMsgf(bIsValidInterface, TEXT("Cannot implement interface when attempting to add node using template with key '%s'"), *InKey.ToString()))
 				{
 					// Construct a FNodeClassInfo from this lookup key.
 					FConstClassAccessPtr Class = OwningDocument->FindOrAddClass(InKey);
@@ -1442,7 +1452,7 @@ namespace Metasound
 				}
 			}
 
-			UE_LOG(LogMetaSound, Warning, TEXT("Failed to find or add node template class info with registry key [Key:%s]"), *InKey);
+			UE_LOG(LogMetaSound, Warning, TEXT("Failed to find or add node template class info with registry key [Key:%s]"), *InKey.ToString());
 			return INodeController::GetInvalidHandle();
 		}
 
@@ -1600,13 +1610,13 @@ namespace Metasound
 		{
 			if (const FMetasoundFrontendGraphClass* GraphClass = GraphClassPtr.Get())
 			{
-				// TODO: bubble up errors. 
 				const TArray<FMetasoundFrontendGraphClass>& Subgraphs = OwningDocument->GetSubgraphs();
 				const TArray<FMetasoundFrontendClass>& Dependencies = OwningDocument->GetDependencies();
 
 				FString UnknownAsset = TEXT("UnknownAsset");
-				TSet<FName> TransmittableInputNames;
-				TUniquePtr<FFrontendGraph> Graph = FFrontendGraphBuilder::CreateGraph(*GraphClass, Subgraphs, Dependencies, TransmittableInputNames, UnknownAsset);
+				FProxyDataCache ProxyCache;
+				ProxyCache.CreateAndCacheProxies(*(OwningDocument->GetDocumentPtr().Get()));
+				TUniquePtr<FFrontendGraph> Graph = FFrontendGraphBuilder::CreateGraph(*GraphClass, Subgraphs, Dependencies, ProxyCache, UnknownAsset);
 
 				if (!Graph.IsValid())
 				{
@@ -1642,17 +1652,20 @@ namespace Metasound
 					FMetasoundFrontendNode& Node = GraphClass->Graph.Nodes.Emplace_GetRef(*NodeClass);
 
 					// Cache the asset name on the node if it node is reference to asset-defined graph.
-					const FNodeRegistryKey RegistryKey = NodeRegistryKey::CreateKey(NodeClass->Metadata);
-					if (IMetaSoundAssetManager* AssetManager = IMetaSoundAssetManager::Get())
+					if (NodeClass->Metadata.GetType() == EMetasoundFrontendClassType::External)
 					{
-						if (const FSoftObjectPath* Path = AssetManager->FindObjectPathFromKey(RegistryKey))
+						if (IMetaSoundAssetManager* AssetManager = IMetaSoundAssetManager::Get())
 						{
-							const FString& AssetName = Path->GetAssetName();
-							Node.Name = *AssetName;
+							const FNodeRegistryKey RegistryKey = FNodeRegistryKey(NodeClass->Metadata);
+							if (const FSoftObjectPath* Path = AssetManager->FindObjectPathFromKey(RegistryKey))
+							{
+								const FString& AssetName = Path->GetAssetName();
+								Node.Name = *AssetName;
+							}
 						}
 					}
-					Node.UpdateID(InNodeGuid);
 
+					Node.UpdateID(InNodeGuid);
 #if WITH_EDITOR
 					if (FMetasoundFrontendDocumentMetadata* DocMetadata = OwningDocument->GetMetadata())
 					{

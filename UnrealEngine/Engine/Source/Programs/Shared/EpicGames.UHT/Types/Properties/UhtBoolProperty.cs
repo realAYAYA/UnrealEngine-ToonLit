@@ -159,7 +159,6 @@ namespace EpicGames.UHT.Types
 		/// <inheritdoc/>
 		public override StringBuilder AppendMemberDecl(StringBuilder builder, IUhtPropertyMemberContext context, string name, string nameSuffix, int tabs)
 		{
-			builder.AppendMetaDataDecl(this, context, name, nameSuffix, tabs);
 			if (Outer is not UhtProperty)
 			{
 				builder.AppendTabs(tabs).Append("static void ").AppendNameDecl(context, name, nameSuffix).Append("_SetBit(void* Obj);\r\n");
@@ -171,7 +170,6 @@ namespace EpicGames.UHT.Types
 		/// <inheritdoc/>
 		public override StringBuilder AppendMemberDef(StringBuilder builder, IUhtPropertyMemberContext context, string name, string nameSuffix, string? offset, int tabs)
 		{
-			builder.AppendMetaDataDef(this, context, name, nameSuffix, tabs);
 			if (Outer == context.OuterStruct)
 			{
 				builder.AppendTabs(tabs).Append("void ").AppendNameDef(context, name, nameSuffix).Append("_SetBit(void* Obj)\r\n");
@@ -184,7 +182,7 @@ namespace EpicGames.UHT.Types
 				IsNativeBool ?
 				"UECodeGen_Private::EPropertyGenFlags::Bool | UECodeGen_Private::EPropertyGenFlags::NativeBool" :
 				"UECodeGen_Private::EPropertyGenFlags::Bool ",
-				false, false);
+				false);
 
 			builder.Append("sizeof(").Append(CppTypeText).Append("), ");
 

@@ -1,0 +1,39 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "PathTracingAdaptiveUtils.ush"
+
+
+RWBuffer<int> NextActivePaths;
+RWBuffer<uint> NumPathStates;
+int2 TileTextureOffset;
+uint2 DispatchDim;
+float ViewPreExposure;
+
+
+[numthreads(THREADGROUPSIZE_X, THREADGROUPSIZE_Y, 1)]
+void PathTracingAdaptiveStartCS(uint2 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint2 DispatchIdx = DispatchThreadId;
+	if (any(DispatchIdx >= DispatchDim))
+	{
+		return;
+	}
+
+	int LinearPixelIndex = DispatchIdx.x + DispatchDim.x * DispatchIdx.y;
+	if (LinearPixelIndex == 0)
+	{
+		// write other dimensions for indirect dispatch
+		NumPathStates[1] = 1;
+		NumPathStates[2] = 1;
+	}
+
+	float SampleScaleFactor = GetAdaptiveSampleFactor(DispatchIdx + TileTextureOffset, ViewPreExposure);
+	if (SampleScaleFactor > 1.0)
+	{
+		// This pixel needs more samples, allocate a path state for it
+		uint PathStateIndex;
+		InterlockedAdd(NumPathStates[0], 1, PathStateIndex);
+		NextActivePaths[PathStateIndex] = LinearPixelIndex;
+	}
+}

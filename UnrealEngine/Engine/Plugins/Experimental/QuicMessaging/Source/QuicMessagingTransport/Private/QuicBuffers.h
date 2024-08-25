@@ -2,8 +2,11 @@
 
 #pragma once
 
-#include "CoreTypes.h"
-
+#include "Containers/Array.h"
+#include "Interfaces/IPv4/IPv4Endpoint.h"
+#include "QuicIncludes.h"
+#include "QuicMessages.h"
+#include "Templates/SharedPointer.h"
 
 struct FMessageHeader;
 

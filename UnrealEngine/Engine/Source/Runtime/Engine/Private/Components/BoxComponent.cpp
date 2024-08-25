@@ -14,6 +14,9 @@
 
 UBoxComponent::UBoxComponent(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
+#if WITH_EDITOR
+	, ShowFlags(ESFIM_All0)
+#endif // WITH_EDITOR
 {
 	BoxExtent = FVector(32.0f, 32.0f, 32.0f);
 
@@ -40,12 +43,6 @@ void UBoxComponent::SetBoxExtent(FVector NewBoxExtent, bool bUpdateOverlaps)
 			UpdateOverlaps();
 		}
 	}
-}
-
-void UBoxComponent::SetLineThickness(float Thickness)
-{
-	LineThickness = Thickness;
-	MarkRenderStateDirty();
 }
 
 template <EShapeBodySetupHelper UpdateBodySetupAction, typename BodySetupType>
@@ -108,6 +105,14 @@ void UBoxComponent::UpdateBodySetup()
 	}
 }
 
+#if WITH_EDITOR
+void UBoxComponent::SetShowFlags(const FEngineShowFlags& InShowFlags)
+{
+	ShowFlags = InShowFlags;
+	MarkRenderStateDirty();
+}
+#endif // WITH_EDITOR
+
 bool UBoxComponent::IsZeroExtent() const
 {
 	return BoxExtent.IsZero();
@@ -140,6 +145,46 @@ FPrimitiveSceneProxy* UBoxComponent::CreateSceneProxy()
 			,	LineThickness( InComponent->LineThickness )
 		{
 			bWillEverBeLit = false;
+
+#if WITH_EDITOR
+			struct FIterSink
+			{
+				FIterSink(const FEngineShowFlags InSelectedShowFlags)
+					: SelectedShowFlags(InSelectedShowFlags)
+				{
+					SelectedShowFlagIndices.SetNum(FEngineShowFlags::SF_FirstCustom, false);
+				}
+
+				bool HandleShowFlag(uint32 InIndex, const FString& InName)
+				{
+					if (SelectedShowFlags.GetSingleFlag(InIndex) == true)
+					{
+						SelectedShowFlagIndices.PadToNum(InIndex + 1, false);
+						SelectedShowFlagIndices[InIndex] = true;
+					}
+
+					return true;
+				}
+
+				bool OnEngineShowFlag(uint32 InIndex, const FString& InName)
+				{
+					return HandleShowFlag(InIndex, InName);
+				}
+
+				bool OnCustomShowFlag(uint32 InIndex, const FString& InName)
+				{
+					return HandleShowFlag(InIndex, InName);
+				}
+
+				const FEngineShowFlags SelectedShowFlags;
+
+				TBitArray<> SelectedShowFlagIndices;
+			};
+
+			FIterSink Sink(InComponent->ShowFlags);
+			FEngineShowFlags::IterateAllFlags(Sink);
+			SelectedShowFlagIndices = MoveTemp(Sink.SelectedShowFlagIndices);
+#endif // WITH_EDITOR
 		}
 
 		virtual void GetDynamicMeshElements(const TArray<const FSceneView*>& Views, const FSceneViewFamily& ViewFamily, uint32 VisibilityMap, FMeshElementCollector& Collector) const override
@@ -171,6 +216,15 @@ FPrimitiveSceneProxy* UBoxComponent::CreateSceneProxy()
 
 			FPrimitiveViewRelevance Result;
 			Result.bDrawRelevance = (IsShown(View) && bProxyVisible) || bShowForCollision;
+#if WITH_EDITOR
+			bool bAreAllSelectedFlagsEnabled = true;
+			for (TConstSetBitIterator<> It(SelectedShowFlagIndices); It; ++It)
+			{
+				bAreAllSelectedFlagsEnabled &= View->Family->EngineShowFlags.GetSingleFlag(It.GetIndex());
+			}
+
+			Result.bDrawRelevance &= bAreAllSelectedFlagsEnabled;
+#endif // WITH_EDITOR
 			Result.bDynamicRelevance = true;
 			Result.bShadowRelevance = IsShadowCast(View);
 			Result.bEditorPrimitiveRelevance = UseEditorCompositing(View);
@@ -183,7 +237,10 @@ FPrimitiveSceneProxy* UBoxComponent::CreateSceneProxy()
 		const uint32	bDrawOnlyIfSelected:1;
 		const FVector	BoxExtents;
 		const FColor	BoxColor;
-		const float LineThickness;
+		const float		LineThickness;
+#if WITH_EDITOR
+		TBitArray<>		SelectedShowFlagIndices;
+#endif // WITH_EDITOR
 	};
 
 	return new FBoxSceneProxy( this );

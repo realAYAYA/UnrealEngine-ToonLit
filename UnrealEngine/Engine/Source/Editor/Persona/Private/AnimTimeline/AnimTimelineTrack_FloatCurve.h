@@ -28,6 +28,7 @@ public:
 	virtual void GetCurveEditInfo(int32 InCurveIndex, FName& OutName, ERawCurveTrackTypes& OutType, int32& OutCurveIndex) const override;
 	virtual bool SupportsCopy() const override { return true; }
 	virtual void Copy(UAnimTimelineClipboardContent* InOutClipboard) const override;
+	virtual float GetHeight() const override;
 	
 	/** Access the curve we are editing */
 	const FFloatCurve* GetFloatCurve() { return FloatCurve; }
@@ -51,6 +52,14 @@ private:
 	void ConvertMetaDataToCurve();
 	void RemoveCurve();
 	void OnCommitCurveName(const FText& InText, ETextCommit::Type CommitInfo);
+	float GetCommentHeight() const;
+	FOptionalSize GetCommentSize() const;
+	void HandleAddComment();
+	void OnCommitCurveComment(const FText& InText, ETextCommit::Type CommitInfo);
+	FText GetCommentText() const;
+	EVisibility GetCommentVisibility() const;
+	bool IsSelected() const;
+	FSlateColor GetTrackColor(bool bForComment) const;
 
 private:
 	/** The curve we are editing */
@@ -60,6 +69,18 @@ private:
 	FName CurveName;
 	FAnimationCurveIdentifier CurveId;
 
+	/** Cached color */
+	FLinearColor Color;
+
+	/** Cached comment */
+	FString Comment;
+
+	/** Cached metadata flag */
+	bool bIsMetadata = false;
+
 	/** Label we can edit */
 	TSharedPtr<SInlineEditableTextBlock> EditableTextLabel;
+
+	/** Comment we can edit */
+	TSharedPtr<SInlineEditableTextBlock> EditableTextComment;
 };

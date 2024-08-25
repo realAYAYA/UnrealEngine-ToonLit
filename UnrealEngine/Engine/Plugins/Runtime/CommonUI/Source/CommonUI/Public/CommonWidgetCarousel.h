@@ -27,6 +27,12 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category="Carousel", meta=( UIMin=0, ClampMin=0 ))
 	int32 ActiveWidgetIndex;
 
+protected:
+
+	/** How quickly the carousel transitions when changing active widget */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Getter, Setter, BlueprintGetter="GetMoveSpeed", BlueprintSetter="SetMoveSpeed", Category="Carousel", meta=( UIMin=0, ClampMin=0 ))
+	float MoveSpeed;
+	
 public:
 
 	/** Gets the slot index of the currently active widget */
@@ -56,6 +62,14 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category="Carousel")
 	void PreviousPage();
+
+	/** Sets the Move Speed. */
+	UFUNCTION(BlueprintCallable, Category="Widget")
+	void SetMoveSpeed(float InMoveSpeed);
+
+	/** Gets the Move Speed. */
+	UFUNCTION(BlueprintCallable, Category = "Widget")
+	float GetMoveSpeed() const;
 	
 	UPROPERTY(BlueprintAssignable, Category = "Carousel")
 	FOnCurrentPageIndexChanged OnCurrentPageIndexChanged;

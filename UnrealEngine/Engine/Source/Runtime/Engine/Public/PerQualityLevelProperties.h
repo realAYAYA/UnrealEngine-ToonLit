@@ -99,12 +99,20 @@ struct FPerQualityLevelProperty
 	void ConvertQualtiyLevelData(TMap<FName, _ValueType>& PlaformData, TMultiMap<FName, FName>& PerPlatformToQualityLevel, _ValueType Default);
 #endif
 
-	void Init(const TCHAR* InCVarName, const TCHAR* InSection)
+	// Set Cvar to be able to scan ini files at cook-time and only have the supported ranges of quality levels relevant to the platform.
+	// Unsupported quality levels will be stripped.
+	void SetQualityLevelCVarForCooking(const TCHAR* InCVarName, const TCHAR* InSection)
 	{
 #if WITH_EDITOR
 		ScalabilitySection = FString(InSection);
 #endif
 		CVarName = FString(InCVarName);
+	}
+
+	UE_DEPRECATED(5.4, "If no cvar is associated with the property, all quality levels will be keept when cooking. Call SetQualtiyLevelCVarForCooking to strip unsupported quality levels when cooking")
+	void Init(const TCHAR* InCVarName, const TCHAR* InSection)
+	{
+		SetQualityLevelCVarForCooking(InCVarName, InSection);
 	}
 
 	_ValueType GetDefault() const
@@ -173,7 +181,7 @@ ENGINE_API FArchive& operator<<(FArchive& Ar, FPerQualityLevelProperty<_StructTy
 template<typename _StructType, typename _ValueType, EName _BasePropertyName>
 ENGINE_API void operator<<(FStructuredArchive::FSlot Slot, FPerQualityLevelProperty<_StructType, _ValueType, _BasePropertyName>& Property);
 
-USTRUCT()
+USTRUCT(BlueprintType)
 struct FPerQualityLevelInt 
 #if CPP
 	:	public FPerQualityLevelProperty<FPerQualityLevelInt, int32, NAME_IntProperty>
@@ -181,7 +189,7 @@ struct FPerQualityLevelInt
 {
 	GENERATED_USTRUCT_BODY()
 
-	UPROPERTY(EditAnywhere, Category = PerQualityLevel)
+	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category = PerQualityLevel)
 	int32 Default;
 
 	UPROPERTY(EditAnywhere, Category = PerQualityLevel)
@@ -216,7 +224,7 @@ struct TStructOpsTypeTraits<FPerQualityLevelInt>
 	static constexpr EPropertyObjectReferenceType WithSerializerObjectReferences = EPropertyObjectReferenceType::None;
 };
 
-USTRUCT()
+USTRUCT(BlueprintType)
 struct FPerQualityLevelFloat
 #if CPP
 	:	public FPerQualityLevelProperty<FPerQualityLevelFloat, float, NAME_FloatProperty>
@@ -224,7 +232,7 @@ struct FPerQualityLevelFloat
 {
 	GENERATED_USTRUCT_BODY()
 
-	UPROPERTY(EditAnywhere, Category = PerQualityLevel)
+	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category = PerQualityLevel)
 	float Default;
 
 	UPROPERTY(EditAnywhere, Category = PerQualityLevel)

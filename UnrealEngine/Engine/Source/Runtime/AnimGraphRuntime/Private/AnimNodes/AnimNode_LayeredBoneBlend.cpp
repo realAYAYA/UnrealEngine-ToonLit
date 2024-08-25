@@ -88,8 +88,9 @@ void FAnimNode_LayeredBoneBlend::UpdateCachedBoneData(const FBoneContainer& Requ
 
 	// Build curve source indices
 	{
+		// Get the original Reserve value
+		int32 OriginalReserve = CurvePoseSourceIndices.Max();
 		CurvePoseSourceIndices.Empty();
-		CurvePoseSourceIndices.Reserve(Skeleton->GetNumCurveMetaData());
 
 		Skeleton->ForEachCurveMetaData([this, &RequiredBones](const FName& InCurveName, const FCurveMetaData& InMetaData)
 		{
@@ -106,6 +107,13 @@ void FAnimNode_LayeredBoneBlend::UpdateCachedBoneData(const FBoneContainer& Requ
 				}
 			}
 		});
+
+		// Shrink afterwards to exactly what was used if the Reserve increased, to save memory.  Eventually the reserve will
+		// stabilize at the maximum number of nodes actually used in practice for this specific anim node.
+		if (CurvePoseSourceIndices.Num() > OriginalReserve)
+		{
+			CurvePoseSourceIndices.Shrink();
+		}
 	}
 
 	RequiredBonesSerialNumber = RequiredBones.GetSerialNumber();

@@ -50,14 +50,7 @@ namespace CodeView
 				return true;
 			}
 
-			switch( CustomColumnMode )
-			{
-				default:	// If no custom mode is selected, we always allow class name to be searched
-				case ECustomColumnMode::ModuleName:
-					return TreeItem.ModuleName.Contains(FilterText);
-			};
-
-			return false;
+			return TreeItem.ModuleName.Contains(FilterText);
 		}
 
 		FText MakeCustomColumnComboText( const ECustomColumnMode::Type& Mode )

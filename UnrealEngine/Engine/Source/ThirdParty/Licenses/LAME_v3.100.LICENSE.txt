@@ -1,0 +1,15 @@
+================================================================================
+Software Name: Lame  (Lame Aint an MP3 Encoder)
+Version: 3.100
+URL: https://lame.sourceforge.io/index.php
+===========================================================================================
+LAME is a high quality MPEG Audio Layer III (MP3) encoder licensed under the LGPL.
+
+Latest LAME release: v3.100 (October 2017)
+LAME development started around mid-1998. Mike Cheng started it as a patch against the 8hz-MP3 encoder sources. After some quality concerns raised by others, he decided to start from scratch based on the dist10 sources. His goal was only to speed up the dist10 sources, and leave its quality untouched. That branch (a patch against the reference sources) became Lame 2.0, and with Lame 3.81 all of dist10 code was replaced, making LAME no more only a patch.
+
+The project quickly became a team project. Mike Cheng eventually left leadership and started working on tooLame, an MP2 encoder. Mark Taylor became leader and started pursuing better quality in addition to increased speed. He can be considered the initiator of the LAME project in its current form. He released version 3.0 featuring gpsycho, a new psychoacoustic model he developed.
+
+In early 2003 Mark left project leadership, and since then the project has been lead through the cooperation of the active developers (currently three individuals).
+
+Today, LAME is considered the best MP3 encoder at mid-high bitrates and at VBR, mostly thanks to the dedicated work of its developers and the open source licensing model that allowed the project to tap into engineering resources from all around the world. Both quality and speed improvements are still happening, probably making LAME the only MP3 encoder still being actively developed.

@@ -12,7 +12,6 @@
 #include "RCVirtualProperty.h"
 #include "GameFramework/Actor.h"
 #include "RemoteControlPreset.h"
-#include "RemoteControlRequest.h"
 #include "RemoteControlRoute.h"
 #include "RemoteControlReflectionUtils.h"
 #include "RemoteControlWebsocketRoute.h"
@@ -372,6 +371,12 @@ void FWebSocketMessageHandler::RegisterRoutes(FWebRemoteControlModule* WebRemote
 		TEXT("End a manual editor transaction"),
 		TEXT("transaction.end"),
 		FWebSocketMessageDelegate::CreateRaw(this, &FWebSocketMessageHandler::HandleWebSocketEndEditorTransaction)
+	));
+
+	RegisterRoute(WebRemoteControl, MakeUnique<FRemoteControlWebsocketRoute>(
+		TEXT("Change the compression method this client will use to communicate with Unreal Engine"),
+		TEXT("compression.change"),
+		FWebSocketMessageDelegate::CreateRaw(this, &FWebSocketMessageHandler::HandleWebSocketCompressionChange)
 	));
 }
 
@@ -801,9 +806,9 @@ void FWebSocketMessageHandler::HandleWebSocketBeginEditorTransaction(const FRemo
 	if (TransactionGuid.IsValid())
 	{
 		ClientsByTransactionGuid.FindOrAdd(TransactionGuid);
-		ContributeToTransaction(WebSocketMessage.ClientId, Body.TransactionId);
-
 		TransactionIdsByClientId.FindOrAdd(WebSocketMessage.ClientId).Add({ TransactionGuid, Body.TransactionId });
+
+		ContributeToTransaction(WebSocketMessage.ClientId, Body.TransactionId);
 	}
 	else
 	{
@@ -835,6 +840,26 @@ void FWebSocketMessageHandler::HandleWebSocketEndEditorTransaction(const FRemote
 
 	EndClientTransaction(WebSocketMessage.ClientId, Body.TransactionId);
 #endif
+}
+
+void FWebSocketMessageHandler::HandleWebSocketCompressionChange(const FRemoteControlWebSocketMessage& WebSocketMessage)
+{
+	FRCWebSocketCompressionChangeBody Body;
+	if (!WebRemoteControlInternalUtils::DeserializeRequestPayload(WebSocketMessage.RequestPayload, nullptr, Body))
+	{
+		return;
+	}
+
+	// First, reply to the client confirming the new mode so it can continue with its old decompression method until it receives this message
+	FRCCompressionChangedEvent Event;
+	Event.Mode = Body.Mode;
+
+	TArray<uint8> Payload;
+	WebRemoteControlUtils::SerializeMessage(Event, Payload);
+	Server->Send(WebSocketMessage.ClientId, Payload);
+
+	// Now update the compression method for all future messages
+	Server->SetClientCompressionMode(WebSocketMessage.ClientId, Body.Mode);
 }
 
 void FWebSocketMessageHandler::ProcessChangedControllers()
@@ -1003,15 +1028,18 @@ void FWebSocketMessageHandler::ProcessChangedProperties()
 				const int64 SequenceNumber = GetSequenceNumber(ClientToEventsPair.Key);
 
 				//Check if multiple booleans properties want to be sent and send them since multiple booleans have problem with the common workflow.
-				if(!TrySendMultipleBoolProperties(Preset, ClientToEventsPair.Key, ClassToEventsPair.Value, SequenceNumber))
+				if (ClassToEventsPair.Key == FBoolProperty::StaticClass())
 				{
-					TArray<uint8> WorkingBuffer;
-					if (ClientToEventsPair.Value.Num() && WritePropertyChangeEventPayload(Preset, { ClassToEventsPair.Value }, SequenceNumber, WorkingBuffer))
-					{
-						TArray<uint8> Payload;
-						WebRemoteControlUtils::ConvertToUTF8(WorkingBuffer, Payload);
-						Server->Send(ClientToEventsPair.Key, Payload);
-					}
+					TrySendMultipleBoolProperties(Preset, ClientToEventsPair.Key, ClassToEventsPair.Value, SequenceNumber);
+					continue;
+				}
+
+				TArray<uint8> WorkingBuffer;
+				if (ClientToEventsPair.Value.Num() && WritePropertyChangeEventPayload(Preset, { ClassToEventsPair.Value }, SequenceNumber, WorkingBuffer))
+				{
+					TArray<uint8> Payload;
+					WebRemoteControlUtils::ConvertToUTF8(WorkingBuffer, Payload);
+					Server->Send(ClientToEventsPair.Key, Payload);
 				}
 			}
 		}
@@ -1064,6 +1092,20 @@ void FWebSocketMessageHandler::OnPropertyExposed(URemoteControlPreset* Owner, co
 	if (PresetNotificationMap.Num() <= 0)
 	{
 		return;
+	}
+
+	// Cache used during the Unexposed as the last resort to get the property Label correctly (main use case is Undo/Redo)
+	TTuple<TArray<FGuid>, TArray<FName>>& Entries = CacheUndoRedoAddedRemovedProperties.FindOrAdd(Owner->GetPresetId());
+	Entries.Key.AddUnique(EntityId);
+
+	if (const TSharedPtr<FRemoteControlEntity> Entity = Owner->GetExposedEntity(EntityId).Pin())
+	{
+		Entries.Value.AddUnique(Entity->GetLabel());
+	}
+	else
+	{
+		// If the label couldn't be set from the Entity then we use the EntityId as the Label since it is unique
+		Entries.Value.AddUnique(FName(EntityId.ToString()));
 	}
 
 	//Cache the property field that was removed for end of frame notification
@@ -1124,13 +1166,38 @@ void FWebSocketMessageHandler::OnPropertyUnexposed(URemoteControlPreset* Owner, 
 		return;
 	}
 
-	TSharedPtr<FRemoteControlEntity> Entity = Owner->GetExposedEntity(EntityId).Pin();
-	check(Entity);
+	const TSharedPtr<FRemoteControlEntity> Entity = Owner->GetExposedEntity(EntityId).Pin();
+	TPair<TArray<FGuid>, TArray<FName>>& Entries = PerFrameRemovedProperties.FindOrAdd(Owner->GetPresetId());
 
 	// Cache the property field that was removed for end of frame notification
-	TTuple<TArray<FGuid>, TArray<FName>>& Entries = PerFrameRemovedProperties.FindOrAdd(Owner->GetPresetId());
 	Entries.Key.AddUnique(EntityId);
-	Entries.Value.AddUnique(Entity->GetLabel());
+	bool bLabelSet = false;
+
+	if (Entity.IsValid())
+	{
+		Entries.Value.AddUnique(Entity->GetLabel());
+		bLabelSet = true;
+	}
+	else
+	{
+		// If the Entity is not valid try using the cached properties saved during the Expose
+		// This is done because during the Undo/Redo the entity is already removed from the preset and we can't get the Label correctly
+		if (TPair<TArray<FGuid>, TArray<FName>>* CachedProperties = CacheUndoRedoAddedRemovedProperties.Find(Owner->GetPresetId()))
+		{
+			const int32 Index = CachedProperties->Key.IndexOfByKey(EntityId);
+			if (Index != INDEX_NONE && CachedProperties->Value.IsValidIndex(Index))
+			{
+				Entries.Value.AddUnique(CachedProperties->Value[Index]);
+				bLabelSet = true;
+			}
+		}
+	}
+
+	// If the label couldn't be set from the Entity or the Cache then we use the EntityId as the Label since it is unique
+	if (!bLabelSet)
+	{
+		Entries.Value.AddUnique(FName(EntityId.ToString()));
+	}
 }
 
 void FWebSocketMessageHandler::OnFieldRenamed(URemoteControlPreset* Owner, FName OldFieldLabel, FName NewFieldLabel)
@@ -1143,6 +1210,16 @@ void FWebSocketMessageHandler::OnFieldRenamed(URemoteControlPreset* Owner, FName
 	if (PresetNotificationMap.Num() <= 0)
 	{
 		return;
+	}
+
+	// Update the cached Name with the new name
+	if (TPair<TArray<FGuid>, TArray<FName>>* CachedProperties = CacheUndoRedoAddedRemovedProperties.Find(Owner->GetPresetId()))
+	{
+		const int32 Index = CachedProperties->Value.IndexOfByKey(OldFieldLabel);
+		if (Index != INDEX_NONE)
+		{
+			CachedProperties->Value[Index] = NewFieldLabel;
+		}
 	}
 
 	//Cache the field that was renamed for end of frame notification
@@ -1414,7 +1491,7 @@ void FWebSocketMessageHandler::TimeOutTransactions()
 	}
 
 	// Do this as a separate step since it may remove entries from the map during iteration
-	for (auto TransactionIterator : TransactionsToEnd)
+	for (const auto& TransactionIterator : TransactionsToEnd)
 	{
 		EndClientTransaction(TransactionIterator.Key, TransactionIterator.Value);
 	}
@@ -1637,8 +1714,10 @@ void FWebSocketMessageHandler::GatherActorChangesForClass(UClass* ActorClass, TM
 {
 	const FWatchedClassData* WatchedData = ActorNotificationMap.Find(ActorClass);
 
-	if (!ensureMsgf(WatchedData != nullptr, TEXT("An actor was still being watched for a class that is no longer in ActorNotificationMap")))
+	if (WatchedData == nullptr)
 	{
+		// We may have stopped watching the class on the same frame that an actor of that class changed, in which case
+		// nobody is expecting an update and we can ignore it
 		return;
 	}
 
@@ -1705,7 +1784,8 @@ void FWebSocketMessageHandler::GatherActorChangesForDeletedClass(const FWebSocke
 
 	if (!WatchingClients)
 	{
-		ensureMsgf(false, TEXT("An actor was still being watched for a deleted class that is no longer in ActorNotificationMap"));
+		// We may have stopped watching the class on the same frame that an actor of that class changed, in which case
+		// nobody is expecting an update and we can ignore it
 		return;
 	}
 

@@ -173,7 +173,7 @@ namespace EpicGames.Horde.Logs
 							stack[depth + 1]._index++;
 						}
 					}
-					else if(depth + 1 < stack.Length)
+					else if (depth + 1 < stack.Length)
 					{
 						// Move down the tree
 						depth++;

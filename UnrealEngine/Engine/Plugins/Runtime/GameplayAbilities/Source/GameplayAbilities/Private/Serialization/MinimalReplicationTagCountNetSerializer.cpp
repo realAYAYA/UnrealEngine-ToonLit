@@ -171,7 +171,7 @@ bool FMinimalReplicationTagCountMapNetSerializer::IsEqual(FNetSerializationConte
 		TempValue0.ClampTagCount(MaxTagCount);
 
 		TempValue1.CopyReplicatedFieldsFrom(Source1);
-		TempValue0.ClampTagCount(MaxTagCount);
+		TempValue1.ClampTagCount(MaxTagCount);
 
 		FNetIsEqualArgs IsEqualArgs = Args;
 		IsEqualArgs.Source0 = NetSerializerValuePointer(&TempValue0);
@@ -249,7 +249,7 @@ void FMinimalReplicationTagCountMapNetSerializer::FNetSerializerRegistryDelegate
 
 void FMinimalReplicationTagCountMapNetSerializer::FNetSerializerRegistryDelegates::OnPostFreezeNetSerializerRegistry()
 {
-	constexpr SIZE_T ExpectedSizeOfFMinimalReplicationTagCountMap = 96;
+	constexpr SIZE_T ExpectedSizeOfFMinimalReplicationTagCountMap = 104;
 	constexpr SIZE_T ExpectedAlignOfFMinimalReplicationTagCountMap = 8;
 
 	constexpr SIZE_T ActualSizeOfFMinimalReplicationTagCountMap = sizeof(FMinimalReplicationTagCountMap);

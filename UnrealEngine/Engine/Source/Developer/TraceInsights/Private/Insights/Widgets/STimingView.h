@@ -49,6 +49,12 @@ namespace Insights
 	enum class ETimingEventsColoringMode : uint32;
 }
 
+enum class ESelectEventType : uint32
+{
+	Min = 0,
+	Max = 1
+};
+
 /** A custom widget used to display timing events. */
 class STimingView : public SCompoundWidget, public Insights::ITimingViewSession
 {
@@ -365,7 +371,8 @@ public:
 	const TSharedPtr<const ITimingEvent> GetSelectedEvent() const { return SelectedEvent; }
 
 	void SelectTimingTrack(const TSharedPtr<FBaseTimingTrack> InTrack, bool bBringTrackIntoView);
-	void SelectTimingEvent(const TSharedPtr<const ITimingEvent> InEvent, bool bBringEventIntoView);
+	void SelectTimingEvent(const TSharedPtr<const ITimingEvent> InEvent, bool bBringEventIntoViewHorizontally, bool bBringEventIntoViewVertically = false);
+	void ToggleGraphSeries(const TSharedPtr<const ITimingEvent> InEvent);
 
 	const TSharedPtr<ITimingEventFilter> GetEventFilter() const { return TimingEventFilter; }
 	void SetEventFilter(const TSharedPtr<ITimingEventFilter> InEventFilter);
@@ -386,6 +393,10 @@ public:
 	void CloseQuickFindTab();
 
 	TSharedPtr<Insights::FFilterConfigurator> GetFilterConfigurator() { return FilterConfigurator; }
+
+	TMap<uint64, TSharedPtr<FBaseTimingTrack>>& GetAllTracks() { return AllTracks; }
+
+	void SelectEventInstance(uint32 TimerId, ESelectEventType Type, bool bUseSelection);
 
 protected:
 	virtual FVector2D ComputeDesiredSize(float) const override
@@ -512,10 +523,17 @@ protected:
 	void PopulateTrackSuggestionList(const FString& Text, TArray<FString>& OutSuggestions);
 	void PopulateTimerNameSuggestionList(const FString& Text, TArray<FString>& OutSuggestions);
 
-	typedef TFunctionRef<void(TSharedPtr<FBaseTimingTrack>& Track)> EnumerateFilteredTracksCallback;
-	void EnumerateFilteredTracks(TSharedPtr<Insights::FFilterConfigurator> FilterConfigurator, EnumerateFilteredTracksCallback Callback);
+	typedef TFunctionRef<void(TSharedPtr<const FBaseTimingTrack> Track)> EnumerateFilteredTracksCallback;
+	void EnumerateFilteredTracks(TSharedPtr<Insights::FFilterConfigurator> FilterConfigurator, TSharedPtr<const FBaseTimingTrack> PriorityTrack, EnumerateFilteredTracksCallback Callback);
 
 	ETraceFrameType GetFrameTypeToSnapTo();
+	
+	/** The FilterConfigurator needs to be updated so that custom filters work correctly when analysis is still running
+	* and the timer list can change. 
+	 */ 
+	void UpdateFilters();
+
+	bool IsInTimingProfiler();
 
 protected:
 	/** The name of the view. */
@@ -697,6 +715,8 @@ protected:
 	bool bDrawTopSeparatorLine;
 	bool bDrawBottomSeparatorLine;
 
+	bool bBringSelectedEventIntoViewVerticallyOnNextTick = false;
+
 	// Debug stats
 	int32 NumUpdatedEvents;
 	TFixedCircularBuffer<uint64, 32> PreUpdateTracksDurationHistory;
@@ -732,6 +752,7 @@ protected:
 	TSharedPtr<Insights::FFilterConfigurator> FilterConfigurator;
 	static uint32 TimingViewId;
 	const FName QuickFindTabId;
+	bool bUpdateFilters = true;
 	
 	// Used only between the creation of the widget and the spawning of the owning tab. When the tab is spawned, we relinquish ownership.
 	TSharedPtr<Insights::SQuickFind> QuickFindWidgetSharedPtr;

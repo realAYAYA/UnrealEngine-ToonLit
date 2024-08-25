@@ -134,14 +134,14 @@ namespace EpicGames.Perforce.Managed
 		/// </summary>
 		static readonly Utf8String[] s_baseNames =
 		{
-			"text",
-			"binary",
-			"symlink",
-			"apple",
-			"resource",
-			"unicode",
-			"utf16",
-			"utf8"
+			new Utf8String("text"),
+			new Utf8String("binary"),
+			new Utf8String("symlink"),
+			new Utf8String("apple"),
+			new Utf8String("resource"),
+			new Utf8String("unicode"),
+			new Utf8String("utf16"),
+			new Utf8String("utf8")
 		};
 
 		/// <summary>

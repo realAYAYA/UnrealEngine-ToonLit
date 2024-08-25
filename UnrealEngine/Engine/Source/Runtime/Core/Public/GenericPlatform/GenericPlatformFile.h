@@ -11,6 +11,8 @@
 #include "Containers/StringView.h"
 #include "Containers/UnrealString.h"
 #include "CoreTypes.h"
+#include "HAL/PlatformMemory.h"
+#include "Math/NumericLimits.h"
 #include "Misc/AssertionMacros.h"
 #include "Misc/DateTime.h"
 #include "Misc/EnumClassFlags.h"
@@ -19,6 +21,7 @@
 class FArchive;
 class IAsyncReadFileHandle;
 class IMappedFileHandle;
+namespace ELogVerbosity { enum Type : uint8; }
 
 /**
 * Enum for async IO priorities. 
@@ -88,6 +91,21 @@ enum class ESymlinkResult : int8
 };
 
 ENUM_CLASS_FLAGS(EDirectoryVisitorFlags);
+
+/** Results that can be returned from IPlatformFile FileJournal API. */
+enum class EFileJournalResult
+{
+	Success,
+	InvalidPlatform,
+	InvalidVolumeName,
+	JournalNotActive,
+	JournalWrapped,
+	FailedOpenJournal,
+	FailedDescribeJournal,
+	FailedReadJournal,
+	JournalInternalError,
+	UnhandledJournalVersion,
+};
 
 /** 
  * File handle interface. 
@@ -213,6 +231,45 @@ struct FFileStatData
 
 
 /**
+ * A handle used by the FileJournal API. Platform-specific identifier for which disk journal is being read.
+ */
+typedef uint64 FFileJournalId;
+constexpr FFileJournalId FileJournalIdInvalid = static_cast<FFileJournalId>(MAX_uint64);
+
+/**
+ * A handle used by the FileJournal API. Represents an entry for an action on a file in the FileJournal.
+ */
+typedef uint64 FFileJournalEntryHandle;
+constexpr FFileJournalEntryHandle FileJournalEntryHandleInvalid = static_cast<FFileJournalEntryHandle>(MAX_uint64);
+
+/**
+ * A handle used by the FileJournal API. Uniquely represents a file on disk without needing to use the filename.
+ */
+struct FFileJournalFileHandle
+{
+	bool operator==(const FFileJournalFileHandle& Other) const;
+	bool operator!=(const FFileJournalFileHandle& Other) const;
+	FString ToString();
+
+	uint8 Bytes[20];
+};
+uint32 GetTypeHash(const FFileJournalFileHandle&);
+CORE_API extern const FFileJournalFileHandle FileJournalFileHandleInvalid;
+
+/**
+ * Contains the information that's returned from FileJournalGetFileData for a file.
+ */
+struct FFileJournalData
+{
+	FFileJournalData();
+
+	FDateTime ModificationTime;
+	FFileJournalFileHandle JournalHandle = FileJournalFileHandleInvalid;
+	bool bIsValid : 1;
+	bool bIsDirectory : 1;
+};
+
+/**
 * File I/O Interface
 **/
 class IPlatformFile
@@ -314,6 +371,18 @@ public:
 	virtual int64		FileSize(const TCHAR* Filename) = 0;
 	/** Delete a file and return true if the file exists. Will not delete read only files. **/
 	virtual bool		DeleteFile(const TCHAR* Filename) = 0;
+	/** Delete an array of files and return true if ALL deletes are succeeded. **/
+	virtual bool		DeleteFiles(const TArrayView<const TCHAR*>& Filenames)
+	{
+		bool bOneFailed = false;
+
+		for (const TCHAR* File : Filenames)
+		{
+			bOneFailed |= !DeleteFile(File);
+		}
+
+		return !bOneFailed;
+	}
 	/** Return true if the file is read only. **/
 	virtual bool		IsReadOnly(const TCHAR* Filename) = 0;
 	/** Attempt to move a file. Return true if successful. Will not overwrite existing files. **/
@@ -394,6 +463,16 @@ public:
 
 		virtual ~FDirectoryVisitor() { }
 
+		/**
+		 * Called with the LeafPathname (FullPath == Path/LeafPathname, LeafPathname == BaseName.Extension) before
+		 * calling Visit. If it returns true, Visit will be called on the path, otherwise Visit will be skipped, and
+		 * the return value of Visit is treated as true (continue iterating). Called both for directories and files.
+		 */
+		virtual bool ShouldVisitLeafPathname(FStringView LeafPathname)
+		{
+			return true;
+		}
+
 		/** 
 		 * Callback for a single file or a directory in a directory iteration.
 		 * @param FilenameOrDirectory		If bIsDirectory is true, this is a directory (with no trailing path delimiter), otherwise it is a file name.
@@ -401,6 +480,12 @@ public:
 		 * @return							true if the iteration should continue.
 		**/
 		virtual bool Visit(const TCHAR* FilenameOrDirectory, bool bIsDirectory) = 0;
+
+		/**
+		 * Helper function for receivers of FDirectoryVisitor. Enforces the contract for whether Visit should be
+		 * called after calling ShouldVisitLeafPathName.
+		 */
+		CORE_API bool CallShouldVisitAndVisit(const TCHAR* FilenameOrDirectory, bool bIsDirectory);
 
 		/** True if the Visit function can be called from multiple threads at once. **/
 		FORCEINLINE bool IsThreadSafe() const
@@ -419,13 +504,30 @@ public:
 	{
 	public:
 		virtual ~FDirectoryStatVisitor() { }
-		/** 
+
+		/**
+		 * Called with the LeafPathname (FullPath == Path/LeafPathname, LeafPathname == BaseName.Extension) before
+		 * calling Visit. If it returns true, Visit will be called on the path, otherwise Visit will be skipped, and
+		 * the return value of Visit is treated as true (continue iterating). Called both for directories and files.
+		 */
+		virtual bool ShouldVisitLeafPathname(FStringView LeafPathname)
+		{
+			return true;
+		}
+
+		/**
 		 * Callback for a single file or a directory in a directory iteration.
 		 * @param FilenameOrDirectory		If bIsDirectory is true, this is a directory (with no trailing path delimiter), otherwise it is a file name.
 		 * @param StatData					The stat data for the file or directory.
 		 * @return							true if the iteration should continue.
 		**/
 		virtual bool Visit(const TCHAR* FilenameOrDirectory, const FFileStatData& StatData) = 0;
+
+		/**
+		 * Helper function for receivers of FDirectoryStatVisitor. Enforces the contract for whether Visit should be
+		 *  called after calling ShouldVisitLeafPathName.
+		 */
+		CORE_API bool CallShouldVisitAndVisit(const TCHAR* FilenameOrDirectory, const FFileStatData& StatData);
 	};
 
 	/** File and directory visitor function that takes all the stat data */
@@ -447,6 +549,80 @@ public:
 	**/
 	virtual bool		IterateDirectoryStat(const TCHAR* Directory, FDirectoryStatVisitor& Visitor) = 0;
 
+	/**
+	 * Return whether FileJournal functionality is available on the current platform if VolumeName is nullptr or for
+	 * the given Volume if VolumeName is non-null. Optionally returns a user-displayable string for why it is not
+	 * available and a severity level for the reason. VolumeName may be a VolumeName as returned by
+	 * FileJournalGetVolumeName or any path to a file or directory on the Volume.
+	 */
+	CORE_API virtual bool FileJournalIsAvailable(const TCHAR* VolumeOrPath = nullptr,
+		ELogVerbosity::Type* OutErrorLevel = nullptr, FString* OutError = nullptr);
+
+	/**
+	 * Report the current end of the journal for the given volume, to be used as the StartingJournalEntry
+	 * in FileJournalGetModifiedDirectories. If !FileJournalIsAvaiable for the given volume, sets OutEntryHandle
+	 * to FileJournalEntryHandleInvalid. Returns EFileJournalResult::Success if successful, otherwise an error code
+	 * and optionally a user-displayable explanation for the error code.
+	 */
+	CORE_API virtual EFileJournalResult FileJournalGetLatestEntry(const TCHAR* VolumeName,
+		FFileJournalId& OutJournalId, FFileJournalEntryHandle& OutEntryHandle, FString* OutError = nullptr);
+
+	/** File and directory visitor function that takes FileJournal data. */
+	typedef TFunctionRef<bool(const TCHAR*, const FFileJournalData&)> FDirectoryJournalVisitorFunc;
+
+	/**
+	 * Iterate the given directory as with IterateDirectoryStat, but report a FFileJournalData for each 
+	 * file and directory, which notably includes the FFileJournalFileHandle for the file/directory.
+	 * 
+	 * The paths returned as the first argument of the visitor function are the combined paths produced
+	 * by combining the input directory with the relative path of the child file or directory.
+	 * 
+	 * If the FileJournal is unavailable on the current system the iteration will still succeed but the 
+	 * FFileJournalFileHandle for each child path will be set to FileJournalFileHandleInvalid.
+	 * 
+	 * If the FileJournal is available on the current system but not on the volume of the given directory,
+	 * it is arbitrary whether the FFileJournalFileHandle will be validly set; if not valid they will be
+	 * set to FileJournalFileHandleInvalid.
+	 * 
+	 * @return	false if the directory did not exist or if the visitor returned false.
+	 */
+	CORE_API virtual bool FileJournalIterateDirectory(const TCHAR* Directory, FDirectoryJournalVisitorFunc Visitor);
+
+	/**
+	 * Return the data for the given path as with GetStatData, but report a FFileJournalData instead, which
+	 * notably includes the FFileJournalFileHandle for the file/directory.
+	 * Check the FFileJournalData::bIsValid member before using the returned data 
+	 */
+	CORE_API virtual FFileJournalData FileJournalGetFileData(const TCHAR* FilenameOrDirectory);
+
+	/**
+	 * Query the FileJournal to find a list of all directories on the given volume with files that have been added,
+	 * deleted, or modified in the specified time range. The beginning of the time range is specified by
+	 * JournalIdOfStartingEntry and StartingJournalEntry, which came from FileJournalGetLatestEntry or a previous
+	 * call to FileJournalReadModified. The end of the range is the latest modification on the volume. VolumeName can
+	 * be the return value from FileJournalGetVolumeName, or any path on the desired volume.
+	 * 
+	 * The caller must provide the mapping from FFileJournalFileHandle to DirectoryName; the FFileJournalFileHandle 
+	 * for each Directory can be found from FileJournalGetFileData or FileJournalIterateDirectory.
+	 *
+	 * Modified directories are appended into OutModifiedDirectories, and the next FileJournal entry to scan is written
+	 * into OutNextJournalEntry.
+	 * 
+	 * Returns EFileJournalResult::Success if successful, otherwise an error code and optionally a user-displayable
+	 * explanation for the error code. In an error case, partial results may still be written into the output.
+	 */
+	CORE_API virtual EFileJournalResult FileJournalReadModified(const TCHAR* VolumeName,
+		const FFileJournalId& JournalIdOfStartingEntry, const FFileJournalEntryHandle& StartingJournalEntry,
+		TMap<FFileJournalFileHandle, FString>& KnownDirectories, TSet<FString>& OutModifiedDirectories,
+		FFileJournalEntryHandle& OutNextJournalEntry, FString* OutError = nullptr);
+
+	/**
+	 * Return the VolumeSpecifier present in the given path. Returns empty string if path does not have a valid
+	 * volume specifier for use by the FileJournal (e.g. some platforms do not support \\paths for FileJournal).
+	 * @see FPathViews::SplitVolumeSpecifier for a more general function that can return specifiers not usable
+	 * by the FileJournal.
+	 */
+	CORE_API virtual FString FileJournalGetVolumeName(FStringView InPath);
 
 	/////////////////////////////////////////////////////////////////////////////////////////////////////////
 	/////////// Utility Functions. These have a default implementation that uses the pure virtual operations.
@@ -711,3 +887,31 @@ public:
 
 	virtual int32 GetNumFiles() const = 0;
 };
+
+inline uint32 GetTypeHash(const FFileJournalFileHandle& A)
+{
+	constexpr uint32 Mult = 103;
+	uint32 Hash = 0;
+	const uint8* EndA = reinterpret_cast<const uint8*>(&A) + sizeof(FFileJournalFileHandle);
+	for (const uint8* PA = reinterpret_cast<const uint8*>(&A); PA < EndA; ++PA)
+	{
+		Hash = Hash * Mult + *PA;
+	}
+	return Hash;
+}
+
+inline bool FFileJournalFileHandle::operator==(const FFileJournalFileHandle& Other) const
+{
+	return 0 == FPlatformMemory::Memcmp(this, &Other, sizeof(FFileJournalFileHandle));
+}
+
+inline bool FFileJournalFileHandle::operator!=(const FFileJournalFileHandle& Other) const
+{
+	return 0 != FPlatformMemory::Memcmp(this, &Other, sizeof(FFileJournalFileHandle));
+}
+
+inline FFileJournalData::FFileJournalData()
+	: bIsValid(false)
+	, bIsDirectory(false)
+{
+}

@@ -2,6 +2,7 @@
 
 #include "MassCrowdVisualizationLODProcessor.h"
 #include "MassCommonFragments.h"
+#include "MassCommonTypes.h"
 #include "MassExecutionContext.h"
 #include "MassCrowdFragments.h"
 #include "MassEntityManager.h"
@@ -18,8 +19,8 @@ namespace UE::MassCrowd
 
 	FAutoConsoleVariableRef ConsoleVariables[] =
 	{
-		FAutoConsoleVariableRef(TEXT("ai.debug.CrowdVisualizationLOD"), bDebugCrowdVisualizationLOD, TEXT("Debug crowd visualization LOD"), ECVF_Cheat),
-		FAutoConsoleVariableRef(TEXT("ai.debug.ShowISMUnderSpecifiedRange"), bDebugShowISMUnderSpecifiedRange, TEXT("Show ISM under a specified range (meters)"), ECVF_Cheat)
+		FAutoConsoleVariableRef(TEXT("mass.debug.crowd.VisualizationLOD"), bDebugCrowdVisualizationLOD, TEXT("Debug crowd visualization LOD"), ECVF_Cheat),
+		FAutoConsoleVariableRef(TEXT("mass.debug.crowd.ShowISMUnderSpecifiedRange"), bDebugShowISMUnderSpecifiedRange, TEXT("Show ISM under a specified range (meters)"), ECVF_Cheat)
 	};
 
 } // UE::MassCrowd
@@ -55,13 +56,14 @@ void UMassCrowdVisualizationLODProcessor::Execute(FMassEntityManager& EntityMana
 
 	ForceOffLOD((bool)UE::MassCrowd::GCrowdTurnOffVisualization);
 
-	TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("CrowdVisualizationLOD"))
+	TRACE_CPUPROFILER_EVENT_SCOPE(CrowdVisualizationLOD)
 
 	Super::Execute(EntityManager, Context);
-	
+
+#if WITH_MASSGAMEPLAY_DEBUG
 	if (UE::MassCrowd::bDebugCrowdVisualizationLOD)
 	{
-		TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("DebugDisplayLOD"))
+		TRACE_CPUPROFILER_EVENT_SCOPE(DebugDisplayLOD)
 
 		DebugEntityQuery.ForEachEntityChunk(EntityManager, Context, [World](FMassExecutionContext& Context)
 		{
@@ -71,10 +73,11 @@ void UMassCrowdVisualizationLODProcessor::Execute(FMassEntityManager& EntityMana
 			LODSharedFragment.LODCalculator.DebugDisplayLOD(Context, VisualizationLODList, LocationList, World);
 		});
 	}
+#endif // WITH_MASSGAMEPLAY_DEBUG
 
 	if (UE::MassCrowd::bDebugShowISMUnderSpecifiedRange > 0)
 	{
-		TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("ShowISMUnderSpecifiedRange"))
+		TRACE_CPUPROFILER_EVENT_SCOPE(ShowISMUnderSpecifiedRange)
 
 		DebugEntityQuery.ForEachEntityChunk(EntityManager, Context, [World](const FMassExecutionContext& Context)
 		{

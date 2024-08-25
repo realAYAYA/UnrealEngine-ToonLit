@@ -8,7 +8,7 @@
 #if SHADER_TANGENT
 uint PointCount;
 
-Buffer<uint4>  	 PositionBuffer;
+ByteAddressBuffer PositionBuffer;
 RWBuffer<float4> OutputTangentBuffer;
 
 uint			HairStrandsVF_bCullingEnable;
@@ -31,6 +31,10 @@ void MainCS(uint DispatchThreadId : SV_DispatchThreadID)
 	int IndexCurr = DispatchThreadId;
 	int IndexPrev = clamp(IndexCurr-1, 0, MaxPointCount-1);
 	int IndexNext = clamp(IndexCurr+1, 0, MaxPointCount-1);
+
+	bool bPrevValid = (IndexCurr-1) >= 0;
+	bool bNextValid = (IndexCurr+1) < MaxPointCount;
+
 	bool bValid = IndexCurr < MaxPointCount;
 #if PERMUTATION_CULLING
 	if (HairStrandsVF_bCullingEnable)
@@ -48,6 +52,9 @@ void MainCS(uint DispatchThreadId : SV_DispatchThreadID)
 			IndexCurr = HairStrandsVF_CullingIndexBuffer[FetchIndexCurr];
 			IndexNext = HairStrandsVF_CullingIndexBuffer[FetchIndexNext];
 
+			bPrevValid = FetchIndex-1 >= 0;
+			bNextValid = FetchIndex+1 < PointCountAfterCulling;
+
 			bValid = true;
 		}
 	}
@@ -55,19 +62,19 @@ void MainCS(uint DispatchThreadId : SV_DispatchThreadID)
 
 	if (IndexCurr < MaxPointCount)
 	{
-		const FHairControlPoint CPCurr = UnpackHairControlPoint(PositionBuffer[IndexCurr]);
-		const FHairControlPoint CPPrev = UnpackHairControlPoint(PositionBuffer[IndexPrev]);
-		const FHairControlPoint CPNext = UnpackHairControlPoint(PositionBuffer[IndexNext]);
+		const FHairControlPoint CPCurr = ReadHairControlPoint(PositionBuffer,IndexCurr);
+		const FHairControlPoint CPPrev = ReadHairControlPoint(PositionBuffer,IndexPrev);
+		const FHairControlPoint CPNext = ReadHairControlPoint(PositionBuffer,IndexNext);
 
 		float3 T0 = 0;
-		const bool bIsPrevValid = CPPrev.Type == HAIR_CONTROLPOINT_INSIDE || CPPrev.Type == HAIR_CONTROLPOINT_START;
+		const bool bIsPrevValid = bPrevValid && (CPPrev.Type == HAIR_CONTROLPOINT_INSIDE || CPPrev.Type == HAIR_CONTROLPOINT_START);
 		if (bIsPrevValid)
 		{
 			T0 = normalize(CPCurr.Position - CPPrev.Position);
 		}
 
 		float3 T1 = 0;
-		const bool bIsNextValid = CPNext.Type == HAIR_CONTROLPOINT_INSIDE || CPNext.Type == HAIR_CONTROLPOINT_END;
+		const bool bIsNextValid = bNextValid && (CPNext.Type == HAIR_CONTROLPOINT_INSIDE || CPNext.Type == HAIR_CONTROLPOINT_END);
 		if (bIsNextValid)
 		{
 			T1 = normalize(CPNext.Position - CPCurr.Position);

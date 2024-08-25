@@ -11,6 +11,25 @@ UCommonVisualAttachment::UCommonVisualAttachment(const FObjectInitializer& Objec
 {
 }
 
+
+FVector2D UCommonVisualAttachment::GetContentAnchor() const
+{
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	return ContentAnchor;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+}
+
+void UCommonVisualAttachment::SetContentAnchor(FVector2D InContentAnchor)
+{
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	ContentAnchor = InContentAnchor;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	if (MyAttachmentBox)
+	{
+		MyAttachmentBox->SetContentAnchor(GetContentAnchor());
+	}
+}
+
 void UCommonVisualAttachment::ReleaseSlateResources(bool bReleaseChildren)
 {
 	Super::ReleaseSlateResources(bReleaseChildren);
@@ -35,5 +54,8 @@ void UCommonVisualAttachment::SynchronizeProperties()
 {
 	Super::SynchronizeProperties();
 
-	MyAttachmentBox->SetContentAnchor(ContentAnchor);
+	if (MyAttachmentBox)
+	{
+		MyAttachmentBox->SetContentAnchor(GetContentAnchor());
+	}
 }

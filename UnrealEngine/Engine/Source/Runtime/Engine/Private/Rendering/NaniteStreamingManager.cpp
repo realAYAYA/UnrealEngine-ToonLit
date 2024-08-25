@@ -1,14 +1,17 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Rendering/NaniteStreamingManager.h"
+#include "DataDrivenShaderPlatformInfo.h"
 #include "GlobalShader.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"
 #include "Async/ParallelFor.h"
 #include "RenderUtils.h"
 #include "Rendering/NaniteResources.h"
+#include "ShaderCompilerCore.h"
 #include "Stats/StatsTrace.h"
 #include "RHIGPUReadback.h"
+#include "HAL/PlatformFileManager.h"
 
 #if WITH_EDITOR
 #include "DerivedDataCache.h"
@@ -18,13 +21,15 @@ using namespace UE::DerivedData;
 
 #define MAX_LEGACY_REQUESTS_PER_UPDATE		32u		// Legacy IO requests are slow and cause lots of bubbles, so we NEED to limit them.
 
-#define MAX_RUNTIME_RESOURCE_VERSIONS_BITS	8										// Just needs to be large enough to cover maximum number of in-flight versions
+#define MAX_RUNTIME_RESOURCE_VERSIONS_BITS	8								// Just needs to be large enough to cover maximum number of in-flight versions
 #define MAX_RUNTIME_RESOURCE_VERSIONS_MASK	((1 << MAX_RUNTIME_RESOURCE_VERSIONS_BITS) - 1)	
 
 #define MAX_RESOURCE_PREFETCH_PAGES			16
 
-#define LRU_INDEX_MASK					0x7FFFFFFFu
-#define LRU_FLAG_REFERENCED_THIS_UPDATE	0x80000000u
+#define LRU_INDEX_MASK						0x7FFFFFFFu
+#define LRU_FLAG_REFERENCED_THIS_UPDATE		0x80000000u
+
+#define DEBUG_TRANSCODE_PAGES_REPEATEDLY	0
 
 static int32 GNaniteStreamingAsync = 1;
 static FAutoConsoleVariableRef CVarNaniteStreamingAsync(
@@ -130,6 +135,35 @@ static FAutoConsoleVariableRef CVarNaniteStreamingPrefetch(
 	ECVF_RenderThreadSafe
 );
 
+static TAutoConsoleVariable<int32> CVarNaniteStreamingTranscodeWaveSize(
+	TEXT("r.Nanite.Streaming.TranscodeWaveSize"), 0,
+	TEXT("Overrides the wave size to use for transcoding.\n")
+	TEXT(" 0: Automatic (default);\n")
+	TEXT(" 4: Wave size 4;\n")
+	TEXT(" 8: Wave size 8;\n")
+	TEXT(" 16: Wave size 16;\n")
+	TEXT(" 32: Wave size 32;\n")
+	TEXT(" 64: Wave size 64;\n")
+	TEXT(" 128: Wave size 128;\n"),
+	ECVF_RenderThreadSafe
+);
+
+static int32 GNaniteStreamingDynamicPageUploadBuffer = 0;
+static FAutoConsoleVariableRef CVarNaniteStreamingDynamicPageUploadBuffer(
+	TEXT("r.Nanite.Streaming.DynamicPageUploadBuffer"),
+	GNaniteStreamingDynamicPageUploadBuffer,
+	TEXT("Set Dynamic flag on the page upload buffer. This can eliminate a buffer copy on some platforms, but potentially also make the transcode shader slower."),
+	ECVF_RenderThreadSafe
+);
+
+static int32 GNaniteStreamingReservedResources = 0;
+static FAutoConsoleVariableRef CVarNaniteStreamingReservedResources(
+	TEXT("r.Nanite.Streaming.ReservedResources"),
+	GNaniteStreamingReservedResources,
+	TEXT("Allow allocating Nanite GPU resources as reserved resources for better memory utilization and more efficient resizing (EXPERIMENTAL)"),
+	ECVF_ReadOnly
+);
+
 static_assert(NANITE_MAX_GPU_PAGES_BITS + MAX_RUNTIME_RESOURCE_VERSIONS_BITS + NANITE_STREAMING_REQUEST_MAGIC_BITS <= 32,		"Streaming request member RuntimeResourceID_Magic doesn't fit in 32 bits");
 static_assert(NANITE_MAX_RESOURCE_PAGES_BITS + NANITE_MAX_GROUP_PARTS_BITS + NANITE_STREAMING_REQUEST_MAGIC_BITS <= 32,			"Streaming request member PageIndex_NumPages_Magic doesn't fit in 32 bits");
 
@@ -140,6 +174,7 @@ DECLARE_DWORD_ACCUMULATOR_STAT(	TEXT("Imposters"),							STAT_NaniteStreaming01_
 DECLARE_DWORD_ACCUMULATOR_STAT( TEXT("Root Pages"),							STAT_NaniteStreaming02_RootPages,						STATGROUP_NaniteStreaming);
 DECLARE_DWORD_ACCUMULATOR_STAT(	TEXT("    Peak"),							STAT_NaniteStreaming03_PeakRootPages,					STATGROUP_NaniteStreaming);
 DECLARE_DWORD_ACCUMULATOR_STAT(	TEXT("    Allocated"),						STAT_NaniteStreaming04_AllocatedRootPages,				STATGROUP_NaniteStreaming);
+DECLARE_DWORD_ACCUMULATOR_STAT(	TEXT("    Max"),							STAT_NaniteStreaming05_MaxRootPages,					STATGROUP_NaniteStreaming);
 DECLARE_DWORD_ACCUMULATOR_STAT(	TEXT("Streaming Pool Pages"),				STAT_NaniteStreaming06_StreamingPoolPages,				STATGROUP_NaniteStreaming);
 DECLARE_DWORD_ACCUMULATOR_STAT(	TEXT("Total Streaming Pages"),				STAT_NaniteStreaming07_TotalStreamingPages,				STATGROUP_NaniteStreaming);
 DECLARE_DWORD_ACCUMULATOR_STAT( TEXT("Max Hierarchy Levels"),				STAT_NaniteStreaming08_MaxHierarchyLevels,				STATGROUP_NaniteStreaming);
@@ -147,6 +182,7 @@ DECLARE_DWORD_ACCUMULATOR_STAT( TEXT("Max Hierarchy Levels"),				STAT_NaniteStre
 DECLARE_FLOAT_ACCUMULATOR_STAT(	TEXT("Total Pool Size (MB)"),				STAT_NaniteStreaming10_TotalPoolSizeMB,					STATGROUP_NaniteStreaming);
 DECLARE_FLOAT_ACCUMULATOR_STAT(	TEXT("    Root Pool Size (MB)"),			STAT_NaniteStreaming11_AllocatedRootPagesSizeMB,		STATGROUP_NaniteStreaming);
 DECLARE_FLOAT_ACCUMULATOR_STAT(	TEXT("    Streaming Pool Size (MB)"),		STAT_NaniteStreaming12_StreamingPoolSizeMB,				STATGROUP_NaniteStreaming);
+DECLARE_FLOAT_ACCUMULATOR_STAT(	TEXT("Max Total Pool Size (MB)"),			STAT_NaniteStreaming13_MaxTotalPoolSizeMB,				STATGROUP_NaniteStreaming);
 
 DECLARE_DWORD_COUNTER_STAT(		TEXT("Page Requests"),						STAT_NaniteStreaming20_PageRequests,					STATGROUP_NaniteStreaming);
 DECLARE_DWORD_COUNTER_STAT(		TEXT("    GPU"),							STAT_NaniteStreaming21_PageRequestsGPU,					STATGROUP_NaniteStreaming);
@@ -187,7 +223,8 @@ DECLARE_CYCLE_STAT(				TEXT("VerifyLRU"),							STAT_NaniteStreaming_VerifyLRU,	
 DECLARE_LOG_CATEGORY_EXTERN(LogNaniteStreaming, Log, All);
 DEFINE_LOG_CATEGORY(LogNaniteStreaming);
 
-CSV_DEFINE_CATEGORY(NaniteStreaming, false);
+CSV_DEFINE_CATEGORY(NaniteStreaming, true);
+CSV_DEFINE_CATEGORY(NaniteStreamingDetail, false);
 
 namespace Nanite
 {
@@ -214,22 +251,51 @@ static uint32 RoundUpToSignificantBits(uint32 x, uint32 NumSignificantBits)
 	return (x + Mask) & ~Mask;
 }
 
+static uint32 GetMaxPagePoolSizeInMB()
+{
+	if (IsRHIDeviceAMD())
+	{
+		return 4095;
+	}
+	else
+	{
+		return 2048;
+	}
+}
+
 class FTranscodePageToGPU_CS : public FGlobalShader
 {
 	DECLARE_GLOBAL_SHADER(FTranscodePageToGPU_CS);
 	SHADER_USE_PARAMETER_STRUCT(FTranscodePageToGPU_CS, FGlobalShader);
 
+	class FTranscodePassDim : SHADER_PERMUTATION_SPARSE_INT("NANITE_TRANSCODE_PASS", NANITE_TRANSCODE_PASS_INDEPENDENT, NANITE_TRANSCODE_PASS_PARENT_DEPENDENT);
+	class FGroupSizeDim : SHADER_PERMUTATION_SPARSE_INT("GROUP_SIZE", 4, 8, 16, 32, 64, 128);
+	using FPermutationDomain = TShaderPermutationDomain<FTranscodePassDim, FGroupSizeDim>;
+
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		SHADER_PARAMETER(uint32,								StartPageIndex)
-		SHADER_PARAMETER(FIntVector4,							PageConstants)
-		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FPageInstallInfo>,InstallInfoBuffer)
-		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>,	PageDependenciesBuffer)
-		SHADER_PARAMETER_RDG_BUFFER_SRV(ByteAddressBuffer,		SrcPageBuffer)
-		SHADER_PARAMETER_RDG_BUFFER_UAV(RWByteAddressBuffer,	DstPageBuffer)
+		SHADER_PARAMETER(uint32,													StartClusterIndex)
+		SHADER_PARAMETER(uint32,													NumClusters)
+		SHADER_PARAMETER(uint32,													ZeroUniform)
+		SHADER_PARAMETER(FIntVector4,												PageConstants)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FPackedClusterInstallInfo>,ClusterInstallInfoBuffer)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>,						PageDependenciesBuffer)
+		SHADER_PARAMETER_RDG_BUFFER_SRV(ByteAddressBuffer,							SrcPageBuffer)
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWByteAddressBuffer,						DstPageBuffer)
 	END_SHADER_PARAMETER_STRUCT()
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
 	{
+		FPermutationDomain PermutationVector(Parameters.PermutationId);
+
+		const uint32 GroupSize = PermutationVector.Get<FGroupSizeDim>();
+		
+		const uint32 MinWaveSize = FDataDrivenShaderPlatformInfo::GetMinimumWaveSize(Parameters.Platform);
+		const uint32 MaxWaveSize = FDataDrivenShaderPlatformInfo::GetMaximumWaveSize(Parameters.Platform);
+		if (GroupSize < MinWaveSize || GroupSize > MaxWaveSize)
+		{
+			return false;
+		}
+		
 		return DoesPlatformSupportNanite(Parameters.Platform);
 	}
 
@@ -237,6 +303,10 @@ class FTranscodePageToGPU_CS : public FGlobalShader
 	{
 		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
 		OutEnvironment.SetDefine(TEXT("VF_SUPPORTS_PRIMITIVE_SCENE_DATA"), 1);
+
+		OutEnvironment.CompilerFlags.Add(CFLAG_ForceDXC);
+		OutEnvironment.CompilerFlags.Add(CFLAG_HLSL2021);
+		OutEnvironment.CompilerFlags.Add(CFLAG_WarningsAsErrors);
 	}
 };
 IMPLEMENT_GLOBAL_SHADER(FTranscodePageToGPU_CS, "/Engine/Private/Nanite/NaniteTranscode.usf", "TranscodePageToGPU", SF_Compute);
@@ -308,6 +378,10 @@ static void AddPass_ClearStreamingRequestCount(FRDGBuilder& GraphBuilder, FRDGBu
 static void AddPass_UpdateClusterLeafFlags(FRDGBuilder& GraphBuilder, FRDGBufferUAVRef ClusterPageBufferUAV, const TArray<uint32>& PackedUpdates)
 {
 	const uint32 NumClusterUpdates = PackedUpdates.Num();
+	if (NumClusterUpdates == 0u)
+	{
+		return;
+	}
 
 	const uint32 NumUpdatesBufferElements = FMath::RoundUpToPowerOfTwo(NumClusterUpdates);
 	FRDGBufferRef UpdatesBuffer = CreateStructuredBuffer(	GraphBuilder, TEXT("Nanite.PackedClusterUpdatesBuffer"), PackedUpdates.GetTypeSize(),
@@ -328,8 +402,54 @@ static void AddPass_UpdateClusterLeafFlags(FRDGBuilder& GraphBuilder, FRDGBuffer
 		);
 }
 
+static int32 SelectTranscodeWaveSize()
+{
+	const int32 WaveSizeOverride = CVarNaniteStreamingTranscodeWaveSize.GetValueOnRenderThread();
+
+	int32 WaveSize = 0;
+	if (WaveSizeOverride != 0 && WaveSizeOverride >= GRHIMinimumWaveSize && WaveSizeOverride <= GRHIMaximumWaveSize && FMath::IsPowerOfTwo(WaveSizeOverride))
+	{
+		WaveSize = WaveSizeOverride;
+	}
+	else if (IsRHIDeviceIntel() && 16 >= GRHIMinimumWaveSize && 16 <= GRHIMaximumWaveSize)
+	{
+		WaveSize = 16;
+	}
+	else
+	{
+		WaveSize = GRHIMaximumWaveSize;
+	}
+	
+	return WaveSize;
+}
+
+struct FPackedClusterInstallInfo
+{
+	uint32 LocalPageIndex_LocalClusterIndex;
+	uint32 SrcPageOffset;
+	uint32 DstPageOffset;
+	uint32 PageDependenciesOffset;
+};
+
 class FStreamingPageUploader
 {
+	struct FAddedPageInfo
+	{
+		FPageKey	GPUPageKey;
+		uint32		SrcPageOffset;
+		uint32		DstPageOffset;
+		uint32		PageDependenciesOffset;
+		uint32		NumPageDependencies;
+		uint32		ClustersOffset;
+		uint32		NumClusters;
+		uint32		InstallPassIndex;
+	};
+
+	struct FPassInfo
+	{
+		uint32 NumPages;
+		uint32 NumClusters;
+	};
 public:
 	FStreamingPageUploader()
 	{
@@ -347,7 +467,7 @@ public:
 		if (IsRegistered(GraphBuilder, PageUploadBuffer))
 		{
 			PageUploadBuffer = nullptr;
-			InstallInfoUploadBuffer = nullptr;
+			ClusterInstallInfoUploadBuffer = nullptr;
 			PageDependenciesBuffer = nullptr;
 		}
 
@@ -355,13 +475,17 @@ public:
 		
 		// Add EBufferUsageFlags::Dynamic to skip the unneeded copy from upload to VRAM resource on d3d12 RHI
 		FRDGBufferDesc BufferDesc = FRDGBufferDesc::CreateByteAddressUploadDesc(PageAllocationSize);
-		BufferDesc.Usage = BufferDesc.Usage | EBufferUsageFlags::Dynamic;
+		if (GNaniteStreamingDynamicPageUploadBuffer)
+		{
+			BufferDesc.Usage |= EBufferUsageFlags::Dynamic;
+		}
+		
 		AllocatePooledBuffer(BufferDesc, PageUploadBuffer, TEXT("Nanite.PageUploadBuffer"));
 	
 		PageDataPtr = (uint8*)GraphBuilder.RHICmdList.LockBuffer(PageUploadBuffer->GetRHI(), 0, MaxPageBytes, RLM_WriteOnly);
 	}
 
-	uint8* Add_GetRef(uint32 PageSize, uint32 DstPageOffset, const FPageKey& GPUPageKey, const TArray<uint32>& PageDependencies)
+	uint8* Add_GetRef(uint32 PageSize, uint32 NumClusters, uint32 DstPageOffset, const FPageKey& GPUPageKey, const TArray<uint32>& PageDependencies)
 	{
 		check(IsAligned(PageSize, 4));
 		check(IsAligned(DstPageOffset, 4));
@@ -373,23 +497,26 @@ public:
 
 		FAddedPageInfo& Info = AddedPageInfos.AddDefaulted_GetRef();
 		Info.GPUPageKey = GPUPageKey;
-		Info.InstallInfo.SrcPageOffset = NextPageByteOffset;
-		Info.InstallInfo.DstPageOffset = DstPageOffset;
-		Info.InstallInfo.PageDependenciesStart = FlattenedPageDependencies.Num();
-		Info.InstallInfo.PageDependenciesNum = PageDependencies.Num();
+		Info.SrcPageOffset = NextPageByteOffset;
+		Info.DstPageOffset = DstPageOffset;
+		Info.PageDependenciesOffset = FlattenedPageDependencies.Num();
+		Info.NumPageDependencies = PageDependencies.Num();
+		Info.ClustersOffset = NextClusterIndex;
+		Info.NumClusters = NumClusters;
 		Info.InstallPassIndex = 0xFFFFFFFFu;
 		FlattenedPageDependencies.Append(PageDependencies);
 		GPUPageKeyToAddedIndex.Add(GPUPageKey, PageIndex);
-		
+
 		uint8* ResultPtr = PageDataPtr + NextPageByteOffset;
 		NextPageByteOffset += PageSize;
+		NextClusterIndex += NumClusters;
 		
 		return ResultPtr;
 	}
 
 	void Release()
 	{
-		InstallInfoUploadBuffer.SafeRelease();
+		ClusterInstallInfoUploadBuffer.SafeRelease();
 		PageUploadBuffer.SafeRelease();
 		PageDependenciesBuffer.SafeRelease();
 		ResetState();
@@ -397,6 +524,7 @@ public:
 
 	void ResourceUploadTo(FRDGBuilder& GraphBuilder, FRDGBuffer* DstBuffer)
 	{
+		RDG_EVENT_SCOPE(GraphBuilder, "Nanite::Transcode");
 		GraphBuilder.RHICmdList.UnlockBuffer(PageUploadBuffer->GetRHI());
 
 		const uint32 NumPages = AddedPageInfos.Num();
@@ -406,15 +534,15 @@ public:
 			return;
 		}
 
-		uint32 InstallInfoAllocationSize = FMath::RoundUpToPowerOfTwo(NumPages * sizeof(FPageInstallInfo));
-		if (InstallInfoAllocationSize > TryGetSize(InstallInfoUploadBuffer))
+		const uint32 ClusterInstallInfoAllocationSize = FMath::RoundUpToPowerOfTwo(NextClusterIndex * sizeof(FPackedClusterInstallInfo));
+		if (ClusterInstallInfoAllocationSize > TryGetSize(ClusterInstallInfoUploadBuffer))
 		{
-			const uint32 BytesPerElement = sizeof(FPageInstallInfo);
+			const uint32 BytesPerElement = sizeof(FPackedClusterInstallInfo);
 
-			AllocatePooledBuffer(FRDGBufferDesc::CreateStructuredUploadDesc(BytesPerElement, InstallInfoAllocationSize / BytesPerElement), InstallInfoUploadBuffer, TEXT("Nanite.InstallInfoUploadBuffer"));
+			AllocatePooledBuffer(FRDGBufferDesc::CreateStructuredUploadDesc(BytesPerElement, ClusterInstallInfoAllocationSize / BytesPerElement), ClusterInstallInfoUploadBuffer, TEXT("Nanite.ClusterInstallInfoUploadBuffer"));
 		}
 
-		FPageInstallInfo* InstallInfoPtr = (FPageInstallInfo*)GraphBuilder.RHICmdList.LockBuffer(InstallInfoUploadBuffer->GetRHI(), 0, InstallInfoAllocationSize, RLM_WriteOnly);
+		FPackedClusterInstallInfo* ClusterInstallInfoPtr = (FPackedClusterInstallInfo*)GraphBuilder.RHICmdList.LockBuffer(ClusterInstallInfoUploadBuffer->GetRHI(), 0, ClusterInstallInfoAllocationSize, RLM_WriteOnly);
 
 		uint32 PageDependenciesAllocationSize = FMath::RoundUpToPowerOfTwo(FMath::Max(FlattenedPageDependencies.Num(), 4096) * sizeof(uint32));
 		if (PageDependenciesAllocationSize > TryGetSize(PageDependenciesBuffer))
@@ -431,21 +559,24 @@ public:
 		// Split page installs into passes.
 		// Every pass adds the pages that no longer have any unresolved dependency.
 		// Essentially a naive multi-pass topology sort, but with a low number of passes in practice.
-		check(NumInstalledPagesPerPass.Num() == 0);
+		check(PassInfos.Num() == 0);
 		uint32 NumRemainingPages = NumPages;
+		uint32 NumClusters = 0;
+		uint32 NextSortedPageIndex = 0;
 		while (NumRemainingPages > 0)
 		{
-			const uint32 CurrentPassIndex = NumInstalledPagesPerPass.Num();
+			const uint32 CurrentPassIndex = PassInfos.Num();
 			uint32 NumPassPages = 0;
-			for (FAddedPageInfo& PageInfo : AddedPageInfos)
+			uint32 NumPassClusters = 0;
+			for(FAddedPageInfo& PageInfo : AddedPageInfos)
 			{
 				if (PageInfo.InstallPassIndex < CurrentPassIndex)
 					continue;	// Page already installed in an earlier pass
 
 				bool bMissingDependency = false;
-				for (uint32 i = 0; i < PageInfo.InstallInfo.PageDependenciesNum; i++)
+				for (uint32 i = 0; i < PageInfo.NumPageDependencies; i++)
 				{
-					const uint32 GPUPageIndex = FlattenedPageDependencies[PageInfo.InstallInfo.PageDependenciesStart + i];
+					const uint32 GPUPageIndex = FlattenedPageDependencies[PageInfo.PageDependenciesOffset + i];
 					const FPageKey DependencyGPUPageKey = { PageInfo.GPUPageKey.RuntimeResourceID, GPUPageIndex };
 					const uint32* DependencyAddedIndexPtr = GPUPageKeyToAddedIndex.Find(DependencyGPUPageKey);
 
@@ -460,71 +591,107 @@ public:
 
 				if (!bMissingDependency)
 				{
-					*InstallInfoPtr++ = PageInfo.InstallInfo;
 					PageInfo.InstallPassIndex = CurrentPassIndex;
+
+					// Add cluster infos
+					check(PageInfo.NumClusters <= NANITE_MAX_CLUSTERS_PER_PAGE);
+					for(uint32 i = 0; i < PageInfo.NumClusters; i++)
+					{
+						ClusterInstallInfoPtr->LocalPageIndex_LocalClusterIndex = (NextSortedPageIndex << NANITE_MAX_CLUSTERS_PER_PAGE_BITS) | i;
+						ClusterInstallInfoPtr->SrcPageOffset					= PageInfo.SrcPageOffset;
+						ClusterInstallInfoPtr->DstPageOffset					= PageInfo.DstPageOffset;
+						ClusterInstallInfoPtr->PageDependenciesOffset			= PageInfo.PageDependenciesOffset;
+						ClusterInstallInfoPtr++;
+					}
+					NextSortedPageIndex++;
 					NumPassPages++;
+					NumPassClusters += PageInfo.NumClusters;
 				}
 			}
 
-			NumInstalledPagesPerPass.Add(NumPassPages);
+			FPassInfo PassInfo;
+			PassInfo.NumPages = NumPassPages;
+			PassInfo.NumClusters = NumPassClusters;
+			PassInfos.Add(PassInfo);
 			NumRemainingPages -= NumPassPages;
 		}
 
-		GraphBuilder.RHICmdList.UnlockBuffer(InstallInfoUploadBuffer->GetRHI());
+		GraphBuilder.RHICmdList.UnlockBuffer(ClusterInstallInfoUploadBuffer->GetRHI());
 
 		FRDGBufferSRV* PageUploadBufferSRV = GraphBuilder.CreateSRV(GraphBuilder.RegisterExternalBuffer(PageUploadBuffer));
-		FRDGBufferSRV* InstallInfoUploadBufferSRV = GraphBuilder.CreateSRV(GraphBuilder.RegisterExternalBuffer(InstallInfoUploadBuffer));
+		FRDGBufferSRV* ClusterInstallInfoUploadBufferSRV = GraphBuilder.CreateSRV(GraphBuilder.RegisterExternalBuffer(ClusterInstallInfoUploadBuffer));
 		FRDGBufferSRV* PageDependenciesBufferSRV = GraphBuilder.CreateSRV(GraphBuilder.RegisterExternalBuffer(PageDependenciesBuffer));
 		FRDGBufferUAV* DstBufferUAV = GraphBuilder.CreateUAV(DstBuffer);
 
-		auto ComputeShader = GetGlobalShaderMap(GMaxRHIFeatureLevel)->GetShader<FTranscodePageToGPU_CS>();
-
 		// Disable async compute for streaming systems when MGPU is active, to work around GPU hangs
 		const bool bAsyncCompute = GSupportsEfficientAsyncCompute && (GNaniteStreamingAsyncCompute != 0) && (GNumExplicitGPUsForRendering == 1);
-		const uint32 NumPasses = NumInstalledPagesPerPass.Num();
-		uint32 StartPageIndex = 0;
-		for (uint32 PassIndex = 0; PassIndex < NumPasses; PassIndex++)
+		
+		check(GRHISupportsWaveOperations);
+
+		const uint32 PreferredGroupSize = (uint32)SelectTranscodeWaveSize();
+
+		FTranscodePageToGPU_CS::FPermutationDomain PermutationVector;
+		PermutationVector.Set<FTranscodePageToGPU_CS::FGroupSizeDim>(PreferredGroupSize);
+
+		// Independent transcode
 		{
 			FTranscodePageToGPU_CS::FParameters* PassParameters = GraphBuilder.AllocParameters<FTranscodePageToGPU_CS::FParameters>();
-			PassParameters->InstallInfoBuffer      = InstallInfoUploadBufferSRV;
-			PassParameters->PageDependenciesBuffer = PageDependenciesBufferSRV;
-			PassParameters->SrcPageBuffer          = PageUploadBufferSRV;
-			PassParameters->DstPageBuffer          = DstBufferUAV;
-			PassParameters->StartPageIndex         = StartPageIndex;
-			PassParameters->PageConstants          = FIntVector4(0, MaxStreamingPages, 0, 0);
-			
-			const uint32 NumPagesInPass = NumInstalledPagesPerPass[PassIndex];
+			PassParameters->ClusterInstallInfoBuffer	= ClusterInstallInfoUploadBufferSRV;
+			PassParameters->PageDependenciesBuffer		= PageDependenciesBufferSRV;
+			PassParameters->SrcPageBuffer				= PageUploadBufferSRV;
+			PassParameters->DstPageBuffer				= DstBufferUAV;
+			PassParameters->StartClusterIndex			= 0;
+			PassParameters->NumClusters					= NextClusterIndex;
+			PassParameters->ZeroUniform					= 0;
+			PassParameters->PageConstants				= FIntVector4(0, MaxStreamingPages, 0, 0);
 
+			PermutationVector.Set<FTranscodePageToGPU_CS::FTranscodePassDim>(NANITE_TRANSCODE_PASS_INDEPENDENT);
+			auto ComputeShader = GetGlobalShaderMap(GMaxRHIFeatureLevel)->GetShader<FTranscodePageToGPU_CS>(PermutationVector);
+			
 			FComputeShaderUtils::AddPass(
 				GraphBuilder,
-				RDG_EVENT_NAME("TranscodePageToGPU (PageOffset: %u, PageCount: %u)", StartPageIndex, NumPagesInPass),
+				RDG_EVENT_NAME("TranscodePageToGPU Independent (ClusterCount: %u, GroupSize: %u)", NextClusterIndex, PreferredGroupSize),
 				bAsyncCompute ? ERDGPassFlags::AsyncCompute : ERDGPassFlags::Compute,
 				ComputeShader,
 				PassParameters,
-				FIntVector(NANITE_MAX_TRANSCODE_GROUPS_PER_PAGE, NumPagesInPass, 1));
-
-			StartPageIndex += NumPagesInPass;
+				FComputeShaderUtils::GetGroupCountWrapped(NextClusterIndex));
 		}
 
+		// Parent-dependent transcode
+		const uint32 NumPasses = PassInfos.Num();
+		uint32 StartClusterIndex = 0;
+
+		for (uint32 PassIndex = 0; PassIndex < NumPasses; PassIndex++)
+		{
+			const FPassInfo& PassInfo = PassInfos[PassIndex];
+
+			FTranscodePageToGPU_CS::FParameters* PassParameters = GraphBuilder.AllocParameters<FTranscodePageToGPU_CS::FParameters>();
+			PassParameters->ClusterInstallInfoBuffer	= ClusterInstallInfoUploadBufferSRV;
+			PassParameters->PageDependenciesBuffer		= PageDependenciesBufferSRV;
+			PassParameters->SrcPageBuffer				= PageUploadBufferSRV;
+			PassParameters->DstPageBuffer				= DstBufferUAV;
+			PassParameters->StartClusterIndex			= StartClusterIndex;
+			PassParameters->NumClusters					= PassInfo.NumClusters;
+			PassParameters->ZeroUniform					= 0;
+			PassParameters->PageConstants				= FIntVector4(0, MaxStreamingPages, 0, 0);
+			
+			PermutationVector.Set<FTranscodePageToGPU_CS::FTranscodePassDim>(NANITE_TRANSCODE_PASS_PARENT_DEPENDENT);
+			auto ComputeShader = GetGlobalShaderMap(GMaxRHIFeatureLevel)->GetShader<FTranscodePageToGPU_CS>(PermutationVector);
+			
+			FComputeShaderUtils::AddPass(
+				GraphBuilder,
+				RDG_EVENT_NAME("TranscodePageToGPU Dependent (ClusterOffset: %u, ClusterCount: %u, GroupSize: %u)", StartClusterIndex, PassInfo.NumClusters, PreferredGroupSize),
+				bAsyncCompute ? ERDGPassFlags::AsyncCompute : ERDGPassFlags::Compute,
+				ComputeShader,
+				PassParameters,
+				FComputeShaderUtils::GetGroupCountWrapped(PassInfo.NumClusters));
+
+			StartClusterIndex += PassInfo.NumClusters;
+		}	
 		Release();
 	}
 private:
-	struct FPageInstallInfo
-	{
-		uint32 SrcPageOffset;
-		uint32 DstPageOffset;
-		uint32 PageDependenciesStart;
-		uint32 PageDependenciesNum;
-	};
-
-	struct FAddedPageInfo
-	{
-		FPageInstallInfo	InstallInfo;
-		FPageKey			GPUPageKey;
-		uint32				InstallPassIndex;
-	};
-
-	TRefCountPtr<FRDGPooledBuffer> InstallInfoUploadBuffer;
+	TRefCountPtr<FRDGPooledBuffer> ClusterInstallInfoUploadBuffer;
 	TRefCountPtr<FRDGPooledBuffer> PageUploadBuffer;
 	TRefCountPtr<FRDGPooledBuffer> PageDependenciesBuffer;
 	uint8*					PageDataPtr;
@@ -532,10 +699,11 @@ private:
 	uint32					MaxPageBytes;
 	uint32					MaxStreamingPages;
 	uint32					NextPageByteOffset;
+	uint32					NextClusterIndex;
 	TArray<FAddedPageInfo>	AddedPageInfos;
 	TMap<FPageKey, uint32>	GPUPageKeyToAddedIndex;
 	TArray<uint32>			FlattenedPageDependencies;
-	TArray<uint32>			NumInstalledPagesPerPass;
+	TArray<FPassInfo>		PassInfos;
 	
 	void ResetState()
 	{
@@ -543,10 +711,11 @@ private:
 		MaxPages = 0;
 		MaxPageBytes = 0;
 		NextPageByteOffset = 0;
+		NextClusterIndex = 0;
 		AddedPageInfos.Reset();
 		GPUPageKeyToAddedIndex.Reset();
 		FlattenedPageDependencies.Reset();
-		NumInstalledPagesPerPass.Reset();
+		PassInfos.Reset();
 	}
 };
 
@@ -577,6 +746,57 @@ uint32 FStreamingManager::FHierarchyDepthManager::CalculateNumLevels() const
 		}
 	}
 	return 0u;
+}
+
+void FStreamingManager::FRingBufferAllocator::Init(uint32 Size)
+{
+	BufferSize = Size;
+	ReadOffset = 0u;
+	WriteOffset = 0u;
+}
+
+bool FStreamingManager::FRingBufferAllocator::TryAllocate(uint32 Size, uint32& AllocatedOffset)
+{
+	if (WriteOffset < ReadOffset)
+	{
+		if (Size + 1u > ReadOffset - WriteOffset)	// +1 to leave one element free, so we can distinguish between full and empty
+		{
+			return false;
+		}
+	}
+	else
+	{
+		// WriteOffset >= ReadOffset
+		if (Size + (ReadOffset == 0u ? 1u : 0u) > BufferSize - WriteOffset)
+		{
+			// Doesn't fit at the end. Try from the beginning
+			if (Size + 1u > ReadOffset)
+			{
+				return false;
+			}
+			WriteOffset = 0u;
+		}
+	}
+
+#if DO_CHECK
+	SizeQueue.Enqueue(Size);
+#endif
+	AllocatedOffset = WriteOffset;
+	WriteOffset += Size;
+	check(AllocatedOffset + Size <= BufferSize);
+	return true;
+}
+
+void FStreamingManager::FRingBufferAllocator::Free(uint32 Size)
+{
+#if DO_CHECK
+	uint32 QueuedSize;
+	bool bNonEmpty = SizeQueue.Dequeue(QueuedSize);
+	check(bNonEmpty);
+	check(QueuedSize == Size);
+#endif
+	const uint32 Next = ReadOffset + Size;
+	ReadOffset = (Next <= BufferSize) ? Next : Size;
 }
 
 FStreamingManager::FStreamingManager() :
@@ -612,8 +832,29 @@ void FStreamingManager::InitRHI(FRHICommandListBase&)
 
 	LLM_SCOPE_BYTAG(Nanite);
 
-	MaxStreamingPages = (uint32)((uint64)GNaniteStreamingPoolSize * 1024 * 1024 / NANITE_STREAMING_PAGE_GPU_SIZE);
-	check(MaxStreamingPages + GNaniteStreamingNumInitialRootPages <= NANITE_MAX_GPU_PAGES);
+	const uint32 MaxPoolSizeInMB		= GetMaxPagePoolSizeInMB();
+	const uint32 StreamingPoolSizeInMB	= GNaniteStreamingPoolSize;
+	if (StreamingPoolSizeInMB >= MaxPoolSizeInMB)
+	{
+		UE_LOG(LogNaniteStreaming, Fatal, TEXT("Streaming pool size (%dMB) must be smaller than the largest allocation supported by the graphics hardware (%dMB)"), StreamingPoolSizeInMB, MaxPoolSizeInMB);
+	}
+	
+	const uint64 MaxRootPoolSizeInMB	= MaxPoolSizeInMB - StreamingPoolSizeInMB;
+	MaxStreamingPages					= uint32((uint64(StreamingPoolSizeInMB) << 20) >> NANITE_STREAMING_PAGE_GPU_SIZE_BITS);
+	MaxRootPages						= uint32((uint64(MaxRootPoolSizeInMB) << 20) >> NANITE_ROOT_PAGE_GPU_SIZE_BITS);
+
+	check(MaxStreamingPages + MaxRootPages <= NANITE_MAX_GPU_PAGES);
+	check((MaxStreamingPages << NANITE_STREAMING_PAGE_MAX_CLUSTERS_BITS) + (MaxRootPages << NANITE_ROOT_PAGE_MAX_CLUSTERS_BITS) <= (1u << NANITE_POOL_CLUSTER_REF_BITS));
+
+	NumInitialRootPages = GNaniteStreamingNumInitialRootPages;
+	if (NumInitialRootPages > MaxRootPages)
+	{
+		UE_LOG(LogNaniteStreaming, Log, TEXT("r.Nanite.Streaming.NumInitialRootPages clamped from %d to %d.\n"
+											"Graphics hardware max buffer size: %dMB, Streaming pool size: %dMB, Max root pool size: %dMB (%d pages)."),
+											NumInitialRootPages, MaxRootPages,
+											MaxPoolSizeInMB, StreamingPoolSizeInMB, MaxRootPoolSizeInMB, MaxRootPages);
+		NumInitialRootPages = MaxRootPages;
+	}
 
 	MaxPendingPages = GNaniteStreamingMaxPendingPages;
 	MaxPageInstallsPerUpdate = (uint32)FMath::Min(GNaniteStreamingMaxPageInstallsPerFrame, GNaniteStreamingMaxPendingPages);
@@ -636,12 +877,25 @@ void FStreamingManager::InitRHI(FRHICommandListBase&)
 
 	PendingPages.SetNum(MaxPendingPages);
 
-	PendingPageStagingMemory.SetNumUninitialized(MaxPendingPages * NANITE_MAX_PAGE_DISK_SIZE);
+	PendingPageStagingMemory.SetNumUninitialized(MaxPendingPages * NANITE_ESTIMATED_MAX_PAGE_DISK_SIZE);
+	PendingPageStagingAllocator.Init(PendingPageStagingMemory.Num());
 
 	PageUploader		= new FStreamingPageUploader();
 
+	FRDGBufferDesc ClusterDataBufferDesc = {};
+	if (GRHIGlobals.ReservedResources.Supported && GNaniteStreamingReservedResources)
+	{
+		uint64 MaxSizeInBytes = uint64(GetMaxPagePoolSizeInMB()) << 20;
+		ClusterDataBufferDesc = FRDGBufferDesc::CreateByteAddressDesc(MaxSizeInBytes);
+		ClusterDataBufferDesc.Usage |= EBufferUsageFlags::ReservedResource;
+	}
+	else
+	{
+		ClusterDataBufferDesc = FRDGBufferDesc::CreateByteAddressDesc(4);
+	}
+
 	ImposterData.DataBuffer = AllocatePooledBuffer(FRDGBufferDesc::CreateByteAddressDesc(4), TEXT("Nanite.StreamingManager.ImposterDataInitial"));
-	ClusterPageData.DataBuffer = AllocatePooledBuffer(FRDGBufferDesc::CreateByteAddressDesc(4), TEXT("Nanite.StreamingManager.ClusterPageDataInitial"));
+	ClusterPageData.DataBuffer = AllocatePooledBuffer(ClusterDataBufferDesc, TEXT("Nanite.StreamingManager.ClusterPageDataInitial"));
 	Hierarchy.DataBuffer = AllocatePooledBuffer(FRDGBufferDesc::CreateByteAddressDesc(4), TEXT("Nanite.StreamingManager.HierarchyDataInitial"));
 
 #if WITH_EDITOR
@@ -709,7 +963,7 @@ void FStreamingManager::Add( FResources* Resources )
 		INC_DWORD_STAT_BY( STAT_NaniteStreaming02_RootPages, Resources->NumRootPages );
 
 		Resources->RootPageIndex = ClusterPageData.Allocator.Allocate( Resources->NumRootPages );
-		if (GNaniteStreamingDynamicallyGrowAllocations == 0 && ClusterPageData.Allocator.GetMaxSize() > GNaniteStreamingNumInitialRootPages)
+		if (GNaniteStreamingDynamicallyGrowAllocations == 0 && (uint32)ClusterPageData.Allocator.GetMaxSize() > NumInitialRootPages)
 		{
 			UE_LOG(LogNaniteStreaming, Fatal, TEXT("Out of root pages. Increase the initial root page allocation (r.Nanite.Streaming.NumInitialRootPages) or allow it to grow dynamically (r.Nanite.Streaming.DynamicallyGrowAllocations)."));
 		}
@@ -732,9 +986,13 @@ void FStreamingManager::Add( FResources* Resources )
 			INC_DWORD_STAT_BY( STAT_NaniteStreaming01_Imposters, 1 );
 		}
 
-		// Version root pages so we can disregard invalid streaming requests.
-		// TODO: We only need enough versions to cover the frame delay from the GPU, so most of the version bits can be reclaimed.
-		check(Resources->RootPageIndex < NANITE_MAX_GPU_PAGES);
+		if ((uint32)Resources->RootPageIndex >= MaxRootPages)
+		{
+			const uint32 MaxPagePoolSize = GetMaxPagePoolSizeInMB();
+			UE_LOG(LogNaniteStreaming, Fatal, TEXT(	"Cannot allocate more root pages %d/%d. Pool resource has grown to maximum size of %dMB.\n"
+													"%dMB is spent on streaming data, leaving %dMB for %d root pages."),
+													MaxRootPages, MaxRootPages, MaxPagePoolSize, GNaniteStreamingPoolSize, MaxPagePoolSize - GNaniteStreamingPoolSize, MaxRootPages);
+		}
 		RootPageInfos.SetNum(ClusterPageData.Allocator.GetMaxSize());
 		
 		const uint32 NumResourcePages = Resources->PageStreamingStates.Num();
@@ -747,6 +1005,8 @@ void FStreamingManager::Add( FResources* Resources )
 		uint32 RuntimeResourceID;
 		{
 			FRootPageInfo& RootPageInfo = RootPageInfos[Resources->RootPageIndex];
+			// Version root pages so we can disregard invalid streaming requests.
+			// TODO: We only need enough versions to cover the frame delay from the GPU, so most of the version bits can be reclaimed.
 			RuntimeResourceID = (RootPageInfo.NextVersion << NANITE_MAX_GPU_PAGES_BITS) | Resources->RootPageIndex;
 			RootPageInfo.NextVersion = (RootPageInfo.NextVersion + 1u) & MAX_RUNTIME_RESOURCE_VERSIONS_MASK;
 		}
@@ -1084,8 +1344,8 @@ void FStreamingManager::ApplyFixups( const FFixupChunk& FixupChunk, const FResou
 			const uint32 ClusterIndex = Fixup.GetClusterIndex();
 			const uint32 FlagsOffset = offsetof( FPackedCluster, Flags );
 			const uint32 Offset = GPUPageIndexToGPUOffset( TargetGPUPageIndex ) + NANITE_GPU_PAGE_HEADER_SIZE + ( ( FlagsOffset >> 4 ) * NumTargetPageClusters + ClusterIndex ) * 16 + ( FlagsOffset & 15 );
-			check(Offset < (1u << 31));
-			ClusterLeafFlagUpdates.Add((Offset << 1) | (bUninstall ? 1u : 0u));
+			check((Offset & 3u) == 0);
+			ClusterLeafFlagUpdates.Add( Offset | (bUninstall ? 1u : 0u) );
 		}
 	}
 
@@ -1343,7 +1603,7 @@ void FStreamingManager::InstallReadyPages( uint32 NumReadyPages )
 				const FPageKey GPUPageKey = FPageKey{ PendingPage.InstallKey.RuntimeResourceID, PendingPage.GPUPageIndex };
 
 				UploadTask.PendingPage = &PendingPage;
-				UploadTask.Dst = PageUploader->Add_GetRef(DataSize, PageOffset, GPUPageKey, GPUPageDependencies);
+				UploadTask.Dst = PageUploader->Add_GetRef(DataSize, FixupChunk->Header.NumClusters, PageOffset, GPUPageKey, GPUPageDependencies);
 				UploadTask.Src = SrcPtr + FixupChunkSize;
 				UploadTask.SrcSize = DataSize;
 				NumInstalledPages++;
@@ -1367,12 +1627,13 @@ void FStreamingManager::InstallReadyPages( uint32 NumReadyPages )
 			{
 				FMemory::Memcpy(Task.Dst, Task.Src, Task.SrcSize);
 			}
-
+		#if !DEBUG_TRANSCODE_PAGES_REPEATEDLY
 		#if WITH_EDITOR
 			Task.PendingPage->SharedBuffer.Reset();
 		#else
 			check(Task.PendingPage->Request.IsCompleted());
 			Task.PendingPage->Request.Reset();
+		#endif
 		#endif
 		});
 	}
@@ -1388,6 +1649,56 @@ void FStreamingManager::InstallReadyPages( uint32 NumReadyPages )
 #endif
 }
 
+FRDGBuffer* FStreamingManager::GrowPoolAllocationIfNeeded(FRDGBuilder& GraphBuilder)
+{
+	uint32 NumAllocatedRootPages;
+	if(GNaniteStreamingDynamicallyGrowAllocations)
+	{
+		if((uint32)ClusterPageData.Allocator.GetMaxSize() <= NumInitialRootPages)
+		{
+			NumAllocatedRootPages = NumInitialRootPages;	// Don't round up initial allocation
+		}
+		else
+		{
+			NumAllocatedRootPages = FMath::Clamp(RoundUpToSignificantBits(ClusterPageData.Allocator.GetMaxSize(), 2), (uint32)NumInitialRootPages, MaxRootPages);
+		}
+	}
+	else
+	{
+		NumAllocatedRootPages = NumInitialRootPages;
+	}
+
+	check(NumAllocatedRootPages >= (uint32)ClusterPageData.Allocator.GetMaxSize());	// Root pages just don't fit!
+	StatNumAllocatedRootPages = NumAllocatedRootPages;
+
+	SET_DWORD_STAT(STAT_NaniteStreaming04_AllocatedRootPages, NumAllocatedRootPages);
+	SET_DWORD_STAT(STAT_NaniteStreaming05_MaxRootPages, MaxRootPages);
+	SET_FLOAT_STAT(STAT_NaniteStreaming11_AllocatedRootPagesSizeMB, NumAllocatedRootPages * (NANITE_ROOT_PAGE_GPU_SIZE / 1048576.0f));
+	
+
+	const uint32 NumAllocatedPages = MaxStreamingPages + NumAllocatedRootPages;
+	const uint64 AllocatedPagesSize = GPUPageIndexToGPUOffset(NumAllocatedPages);
+	check(NumAllocatedPages <= NANITE_MAX_GPU_PAGES);
+	check(AllocatedPagesSize <= (uint64(GetMaxPagePoolSizeInMB()) << 20));
+
+	SET_DWORD_STAT(STAT_NaniteStreaming06_StreamingPoolPages, MaxStreamingPages);
+	SET_FLOAT_STAT(STAT_NaniteStreaming12_StreamingPoolSizeMB, MaxStreamingPages * (NANITE_STREAMING_PAGE_GPU_SIZE / 1048576.0f));
+	SET_FLOAT_STAT(STAT_NaniteStreaming10_TotalPoolSizeMB, AllocatedPagesSize / 1048576.0f);
+	SET_FLOAT_STAT(STAT_NaniteStreaming13_MaxTotalPoolSizeMB, (float)GetMaxPagePoolSizeInMB());
+
+#if CSV_PROFILER
+	if ( ClusterPageData.DataBuffer && AllocatedPagesSize > ClusterPageData.DataBuffer->GetAlignedSize() )
+	{
+		CSV_EVENT(NaniteStreaming, TEXT("GrowPoolAllocation"));
+	}
+#endif
+
+	FRDGBuffer* ClusterPageDataBuffer = ResizeByteAddressBufferIfNeeded(GraphBuilder, ClusterPageData.DataBuffer, AllocatedPagesSize, TEXT("Nanite.StreamingManager.ClusterPageData"));
+	RootPageInfos.SetNum(NumAllocatedRootPages);
+
+	return ClusterPageDataBuffer;
+}
+
 void FStreamingManager::ProcessNewResources( FRDGBuilder& GraphBuilder)
 {
 	LLM_SCOPE_BYTAG(Nanite);
@@ -1399,48 +1710,10 @@ void FStreamingManager::ProcessNewResources( FRDGBuilder& GraphBuilder)
 
 	TRACE_CPUPROFILER_EVENT_SCOPE(FStreamingManager::ProcessNewResources);
 
+	FRDGBuffer* ClusterPageDataBuffer = GrowPoolAllocationIfNeeded(GraphBuilder);
+
 	// Upload hierarchy for pending resources
 	FRDGBuffer* HierarchyDataBuffer = ResizeByteAddressBufferIfNeeded(GraphBuilder, Hierarchy.DataBuffer, FMath::RoundUpToPowerOfTwo(Hierarchy.Allocator.GetMaxSize()) * sizeof(FPackedHierarchyNode), TEXT("Nanite.StreamingManager.Hierarchy"));
-
-	check(MaxStreamingPages <= NANITE_MAX_GPU_PAGES);
-	uint32 MaxRootPages = NANITE_MAX_GPU_PAGES - MaxStreamingPages;
-	
-	uint32 NumAllocatedRootPages;	
-	if(GNaniteStreamingDynamicallyGrowAllocations)
-	{
-		if(ClusterPageData.Allocator.GetMaxSize() <= GNaniteStreamingNumInitialRootPages)
-		{
-			NumAllocatedRootPages = GNaniteStreamingNumInitialRootPages;	// Don't round up initial allocation
-		}
-		else
-		{
-			NumAllocatedRootPages = FMath::Clamp( RoundUpToSignificantBits( ClusterPageData.Allocator.GetMaxSize(), 2 ), (uint32)GNaniteStreamingNumInitialRootPages, MaxRootPages);
-		}
-	}
-	else
-	{
-		NumAllocatedRootPages = GNaniteStreamingNumInitialRootPages;
-	}
-
-	check( NumAllocatedRootPages >= (uint32)ClusterPageData.Allocator.GetMaxSize() );	// Root pages just don't fit!
-	StatNumAllocatedRootPages = NumAllocatedRootPages;
-
-	SET_DWORD_STAT(STAT_NaniteStreaming04_AllocatedRootPages, NumAllocatedRootPages);
-	SET_FLOAT_STAT(STAT_NaniteStreaming11_AllocatedRootPagesSizeMB, NumAllocatedRootPages * (NANITE_ROOT_PAGE_GPU_SIZE / 1048576.0f));
-	
-	const uint32 NumAllocatedPages = MaxStreamingPages + NumAllocatedRootPages;
-	const uint32 AllocatedPagesSize = GPUPageIndexToGPUOffset( NumAllocatedPages );
-	check(NumAllocatedPages <= NANITE_MAX_GPU_PAGES);
-
-	SET_DWORD_STAT(STAT_NaniteStreaming06_StreamingPoolPages, MaxStreamingPages);
-	SET_FLOAT_STAT(STAT_NaniteStreaming12_StreamingPoolSizeMB, MaxStreamingPages * (NANITE_STREAMING_PAGE_GPU_SIZE / 1048576.0f));
-	SET_FLOAT_STAT(STAT_NaniteStreaming10_TotalPoolSizeMB, AllocatedPagesSize / 1048576.0f);
-
-	FRDGBuffer* ClusterPageDataBuffer = ResizeByteAddressBufferIfNeeded(GraphBuilder, ClusterPageData.DataBuffer, AllocatedPagesSize, TEXT("Nanite.StreamingManager.ClusterPageData"));
-	RootPageInfos.SetNum( NumAllocatedRootPages );
-
-	check( AllocatedPagesSize <= ( 1u << 31 ) );	// 2GB seems to be some sort of limit.
-													// TODO: Is it a GPU/API limit or is it a signed integer bug on our end?
 
 	FRDGBuffer* ImposterDataBuffer = nullptr;
 
@@ -1501,7 +1774,9 @@ void FStreamingManager::ProcessNewResources( FRDGBuilder& GraphBuilder)
 			const uint32 PageDiskSize = PageStreamingState.PageSize;
 			check(PageDiskSize == PageStreamingState.BulkSize - FixupChunkSize);
 			const uint32 PageOffset = GPUPageIndexToGPUOffset(GPUPageIndex);
-			uint8* Dst = RootPageUploader.Add_GetRef(PageDiskSize, PageOffset, GPUPageKey, GPUPageDependencies);
+
+			uint8* Dst = RootPageUploader.Add_GetRef(PageDiskSize, NumClusters, PageOffset, GPUPageKey, GPUPageDependencies);
+
 			FMemory::Memcpy(Dst, Ptr + FixupChunkSize, PageDiskSize);
 
 			// Root node should only have fixups that depend on other non-root pages and cannot be satisfied yet.
@@ -1607,7 +1882,7 @@ uint32 FStreamingManager::DetermineReadyPages(uint32& TotalPageSize)
 		{
 			uint32 PendingPageIndex = ( StartPendingPageIndex + i ) % MaxPendingPages;
 			FPendingPage& PendingPage = PendingPages[ PendingPageIndex ];
-			
+			bool bFreePageFromStagingAllocator = false;
 #if WITH_EDITOR
 			if (PendingPage.State == FPendingPage::EState::DDC_Ready)
 			{
@@ -1676,6 +1951,10 @@ uint32 FStreamingManager::DetermineReadyPages(uint32& TotalPageSize)
 							break;
 						}
 					}
+
+				#if !DEBUG_TRANSCODE_PAGES_REPEATEDLY
+					bFreePageFromStagingAllocator = true;
+				#endif
 				}
 				else
 				{
@@ -1691,6 +1970,12 @@ uint32 FStreamingManager::DetermineReadyPages(uint32& TotalPageSize)
 				SimulatedBytesRemaining -= SimulatedBytesRead;
 				if(PendingPage.BytesLeftToStream > 0)
 					break;
+			}
+
+
+			if(bFreePageFromStagingAllocator)
+			{
+				PendingPageStagingAllocator.Free(PendingPage.RequestBuffer.DataSize());
 			}
 
 			FResources* Resources = GetResources(PendingPage.InstallKey.RuntimeResourceID);
@@ -1890,9 +2175,9 @@ void FStreamingManager::SanityCheckStreamingRequests(const FGPUStreamingRequest*
 		const FGPUStreamingRequest& GPURequest = StreamingRequestsPtr[Index];
 
 		// Validate request magics
-		if ((GPURequest.RuntimeResourceID_Magic & 0xF0) != 0xA0 ||
-			(GPURequest.PageIndex_NumPages_Magic & 0xF0) != 0xB0 ||
-			(GPURequest.Priority_Magic & 0xF0) != 0xC0)
+		if ((GPURequest.RuntimeResourceID_Magic & 0x30) != 0x10 ||
+			(GPURequest.PageIndex_NumPages_Magic & 0x30) != 0x20 ||
+			(GPURequest.Priority_Magic & 0x30) != 0x30)
 		{
 			UE_LOG(LogNaniteStreaming, Fatal, TEXT("Validation of Nanite streaming request failed! The magic doesn't match. This likely indicates an issue with the GPU readback."));
 		}
@@ -1922,9 +2207,9 @@ void FStreamingManager::SanityCheckStreamingRequests(const FGPUStreamingRequest*
 			// Resource could have been uninstalled in the meantime, which is ok. The request is ignored.
 			// We don't have to worry about RuntimeResourceIDs being reused because MAX_RUNTIME_RESOURCE_VERSIONS is high enough to never have two resources with the same ID in flight.
 			const uint32 MaxPageIndex = PageStartIndex + NumPages - 1;
-			if (MaxPageIndex >= (uint32)(*Resources)->PageStreamingStates.Num())
+			if (MaxPageIndex >= (uint32)Resources->PageStreamingStates.Num())
 			{
-				UE_LOG(LogNaniteStreaming, Fatal, TEXT("Validation of Nanite streaming request failed! Page range out of bounds. Start: %d Num: %d Total: %d"), PageStartIndex, NumPages, (*Resources)->PageStreamingStates.Num());
+				UE_LOG(LogNaniteStreaming, Fatal, TEXT("Validation of Nanite streaming request failed! Page range out of bounds. Start: %d Num: %d Total: %d"), PageStartIndex, NumPages, Resources->PageStreamingStates.Num());
 			}
 		}
 	}
@@ -2215,7 +2500,7 @@ void FStreamingManager::SelectHighestPriorityPagesAndUpdateLRU(uint32 MaxSelecte
 	const uint32 NumUniqueRequests = RequestedRegisteredPages.Num() + RequestedNewPages.Num();
 
 	SET_DWORD_STAT(STAT_NaniteStreaming27_PageRequestsNew, NumNewPageRequests);
-	CSV_CUSTOM_STAT(NaniteStreaming, NewStreamingDataSizeMB, NumNewPageRequests * (NANITE_STREAMING_PAGE_GPU_SIZE / 1048576.0f), ECsvCustomStatOp::Set);
+	CSV_CUSTOM_STAT(NaniteStreamingDetail, NewStreamingDataSizeMB, NumNewPageRequests * (NANITE_STREAMING_PAGE_GPU_SIZE / 1048576.0f), ECsvCustomStatOp::Set);
 
 	StatVisibleSetSize = NumUniqueRequests;
 
@@ -2261,7 +2546,7 @@ void FStreamingManager::SelectHighestPriorityPagesAndUpdateLRU(uint32 MaxSelecte
 		while ((uint32)SelectedPages.Num() < MaxSelectedPages && PrioritizedRequestsHeap.Num() > 0)
 		{
 			FStreamingRequest SelectedRequest;
-			PrioritizedRequestsHeap.HeapPop(SelectedRequest, StreamingRequestPriorityPredicate, false);
+			PrioritizedRequestsHeap.HeapPop(SelectedRequest, StreamingRequestPriorityPredicate, EAllowShrinking::No);
 
 			FResources* Resources = GetResources(SelectedRequest.Key.RuntimeResourceID);
 			if (Resources)
@@ -2384,7 +2669,6 @@ void FStreamingManager::AsyncUpdate()
 						break;	// Couldn't find a free page. Abort.
 					}
 
-					UnregisterStreamingPage(Page->Key);
 					const FPageStreamingState& PageStreamingState = Resources->PageStreamingStates[SelectedKey.PageIndex];
 					check(!Resources->IsRootPage(SelectedKey.PageIndex));
 
@@ -2407,7 +2691,14 @@ void FStreamingManager::AsyncUpdate()
 					else
 #endif
 					{
-						uint8* Dst = PendingPageStagingMemory.GetData() + NextPendingPageIndex * NANITE_MAX_PAGE_DISK_SIZE;
+						uint32 AllocatedOffset;
+						if (!PendingPageStagingAllocator.TryAllocate(PageStreamingState.BulkSize, AllocatedOffset))
+						{
+							// Staging ring buffer full. Postpone any remaining pages to next frame.
+							// UE_LOG(LogNaniteStreaming, Verbose, TEXT("This should be a rare event."));
+							break;
+						}
+						uint8* Dst = PendingPageStagingMemory.GetData() + AllocatedOffset;
 						PendingPage.RequestBuffer = FIoBuffer(FIoBuffer::Wrap, Dst, PageStreamingState.BulkSize);
 						Batch.Read(BulkData, PageStreamingState.BulkOffset, PageStreamingState.BulkSize, AIOP_Low, PendingPage.RequestBuffer, PendingPage.Request);
 						bIssueIOBatch = true;
@@ -2420,6 +2711,8 @@ void FStreamingManager::AsyncUpdate()
 						PendingPage.State = FPendingPage::EState::Disk;
 #endif
 					}
+
+					UnregisterStreamingPage(Page->Key);
 
 					TotalIORequestSizeMB += PageStreamingState.BulkSize * (1.0f / 1048576.0f);
 
@@ -2438,8 +2731,8 @@ void FStreamingManager::AsyncUpdate()
 
 			INC_FLOAT_STAT_BY(STAT_NaniteStreaming40_IORequestSizeMB, TotalIORequestSizeMB);
 				
-			CSV_CUSTOM_STAT(NaniteStreaming, IORequestSizeMB, TotalIORequestSizeMB, ECsvCustomStatOp::Set);
-			CSV_CUSTOM_STAT(NaniteStreaming, IORequestSizeMBps, TotalIORequestSizeMB / FPlatformTime::ToSeconds(StartTime - StatPrevUpdateTime), ECsvCustomStatOp::Set);
+			CSV_CUSTOM_STAT(NaniteStreamingDetail, IORequestSizeMB, TotalIORequestSizeMB, ECsvCustomStatOp::Set);
+			CSV_CUSTOM_STAT(NaniteStreamingDetail, IORequestSizeMBps, TotalIORequestSizeMB / FPlatformTime::ToSeconds(StartTime - StatPrevUpdateTime), ECsvCustomStatOp::Set);
 
 #if WITH_EDITOR
 			if (DDCRequests.Num() > 0)
@@ -2461,7 +2754,8 @@ void FStreamingManager::AsyncUpdate()
 
 #if !WITH_EDITOR
 		// Issue warning if we end up taking the legacy path
-		if (NumLegacyRequestsIssued > 0)
+		static const bool bUsingPakFiles = FPlatformFileManager::Get().FindPlatformFile(TEXT("PakFile")) != nullptr;
+		if (NumLegacyRequestsIssued > 0 && bUsingPakFiles)
 		{
 			static bool bHasWarned = false;
 			if(!bHasWarned)
@@ -2475,12 +2769,12 @@ void FStreamingManager::AsyncUpdate()
 	}
 	
 	StatPrevUpdateTime = StartTime;
-	CSV_CUSTOM_STAT(NaniteStreaming, StreamingPoolSizeMB, MaxStreamingPages * (NANITE_STREAMING_PAGE_GPU_SIZE / 1048576.0f), ECsvCustomStatOp::Set);
+	CSV_CUSTOM_STAT(NaniteStreamingDetail, StreamingPoolSizeMB, MaxStreamingPages * (NANITE_STREAMING_PAGE_GPU_SIZE / 1048576.0f), ECsvCustomStatOp::Set);
 
 	const float VisibleStreamingDataSizeMB = StatVisibleSetSize * (NANITE_STREAMING_PAGE_GPU_SIZE / 1048576.0f);
 	SET_FLOAT_STAT(STAT_NaniteStreaming30_VisibleStreamingDataSizeMB, VisibleStreamingDataSizeMB);
-	CSV_CUSTOM_STAT(NaniteStreaming, VisibleStreamingDataSizeMB, VisibleStreamingDataSizeMB, ECsvCustomStatOp::Set);
-	CSV_CUSTOM_STAT(NaniteStreaming, AsyncUpdateMs, 1000.0f * FPlatformTime::ToSeconds(FPlatformTime::Cycles() - StartTime), ECsvCustomStatOp::Set);
+	CSV_CUSTOM_STAT(NaniteStreamingDetail, VisibleStreamingDataSizeMB, VisibleStreamingDataSizeMB, ECsvCustomStatOp::Set);
+	CSV_CUSTOM_STAT(NaniteStreamingDetail, AsyncUpdateMs, 1000.0f * FPlatformTime::ToSeconds(FPlatformTime::Cycles() - StartTime), ECsvCustomStatOp::Set);
 }
 
 void FStreamingManager::EndAsyncUpdate(FRDGBuilder& GraphBuilder)
@@ -2525,7 +2819,9 @@ void FStreamingManager::EndAsyncUpdate(FRDGBuilder& GraphBuilder)
 		AddPass_UpdateClusterLeafFlags(GraphBuilder, GraphBuilder.CreateUAV(ClusterPageDataBuffer), ClusterLeafFlagUpdates);
 		ClusterLeafFlagUpdates.Empty();
 
+	#if !DEBUG_TRANSCODE_PAGES_REPEATEDLY
 		NumPendingPages -= AsyncState.NumReadyPages;
+	#endif
 	}
 
 	AsyncState.bUpdateActive = false;

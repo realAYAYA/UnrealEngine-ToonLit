@@ -34,7 +34,7 @@ namespace ChaosTest {
 			Test.Evolution.AdvanceOneTimeStep(Dt);
 			Test.Evolution.EndFrame(Dt);
 		}
-		EXPECT_NEAR(Test.GetParticle(1)->X().Z, Test.ParticlePositions[1].Z, 1.0f);
+		EXPECT_NEAR(Test.GetParticle(1)->GetX().Z, Test.ParticlePositions[1].Z, 1.0f);
 
 		// Nothing should have broken
 		EXPECT_FALSE(bBrokenCallbackCalled);
@@ -54,7 +54,7 @@ namespace ChaosTest {
 			Test.Evolution.EndFrame(Dt);
 		}
 		FReal ExpectedZ = Test.ParticlePositions[1].Z - 0.5f * Gravity * (NumIts * Dt) * (NumIts * Dt);
-		EXPECT_NEAR(Test.GetParticle(1)->X().Z, ExpectedZ, 1.0f);
+		EXPECT_NEAR(Test.GetParticle(1)->GetX().Z, ExpectedZ, 1.0f);
 	}
 
 	GTEST_TEST(AllEvolutions, JointBreakTests_TestManualBreak)

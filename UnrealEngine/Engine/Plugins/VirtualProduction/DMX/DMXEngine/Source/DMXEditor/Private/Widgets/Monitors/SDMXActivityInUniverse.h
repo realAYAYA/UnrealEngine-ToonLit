@@ -3,8 +3,6 @@
 #pragma once
 
 #include "DMXProtocolConstants.h"
-
-#include "CoreMinimal.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/Views/SListView.h"

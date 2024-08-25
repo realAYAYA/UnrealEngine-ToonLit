@@ -12,10 +12,9 @@ class FString;
 struct FShaderCompilerInput;
 struct FShaderCompilerOutput;
 
-/** Governs the behavior for adding shader defines to the preprocessed source. Can be helpful for the debugging, but makes the source unique
-    which can prevent efficient caching.
-  */
-enum class EDumpShaderDefines : uint8
+enum class 
+	UE_DEPRECATED(5.4, "EDumpShaderDefines is no longer used. Shader defines will always be included in preprocessed source debug dumps, but no longer explicitly added to the source by preprocessing.")
+	EDumpShaderDefines : uint8
 {
 	/** Will not be dumped unless Input.DumpDebugInfoPath is set */
 	DontCare,
@@ -25,21 +24,16 @@ enum class EDumpShaderDefines : uint8
 	AlwaysIncludeDefines
 };
 
-/**
- * Preprocess a shader.
- * @param OutPreprocessedShader - Upon return contains the preprocessed source code.
- * @param ShaderOutput - ShaderOutput to which errors can be added.
- * @param ShaderInput - The shader compiler input.
- * @param AdditionalDefines - Additional defines with which to preprocess the shader.
- * @param bShaderDumpDefinesAsCommentedCode - Whether to add shader definitions as comments.
- * @returns true if the shader is preprocessed without error.
- */
+UE_DEPRECATED(5.4, "Please use overload of PreprocessShader accepting a FShaderPreprocessOutput struct.")
 extern SHADERPREPROCESSOR_API bool PreprocessShader(
 	FString& OutPreprocessedShader,
 	FShaderCompilerOutput& ShaderOutput,
 	const FShaderCompilerInput& ShaderInput,
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS		// FShaderCompilerDefinitions will be made internal in the future, marked deprecated until then
 	const FShaderCompilerDefinitions& AdditionalDefines,
-	EDumpShaderDefines DefinesPolicy = EDumpShaderDefines::DontCare);
+	EDumpShaderDefines DefinesPolicy = EDumpShaderDefines::DontCare
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	);
 
 /**
  * Preprocess a shader.
@@ -49,12 +43,28 @@ extern SHADERPREPROCESSOR_API bool PreprocessShader(
  * (it is assumed this overload is called outside of the worker process which merges this in-place, so this merge step must be
  * performed by the caller)
  * @param AdditionalDefines - Additional defines with which to preprocess the shader.
- * @param bShaderDumpDefinesAsCommentedCode - Whether to add shader definitions as comments.
  * @returns true if the shader is preprocessed without error.
  */
 extern SHADERPREPROCESSOR_API bool PreprocessShader(
 	FShaderPreprocessOutput& Output,
 	const FShaderCompilerInput& Input,
 	const FShaderCompilerEnvironment& MergedEnvironment,
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS		// FShaderCompilerDefinitions will be made internal in the future, marked deprecated until then
+	const FShaderCompilerDefinitions& AdditionalDefines = FShaderCompilerDefinitions()
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+);
+
+UE_DEPRECATED(5.4, "EDumpShaderDefines is no longer used. Shader defines will always be included in preprocessed source debug dumps, but no longer explicitly added to the source by preprocessing.")
+inline bool PreprocessShader(
+	FShaderPreprocessOutput& Output,
+	const FShaderCompilerInput& Input,
+	const FShaderCompilerEnvironment& MergedEnvironment,
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS		// FShaderCompilerDefinitions will be made internal in the future, marked deprecated until then
 	const FShaderCompilerDefinitions& AdditionalDefines,
-	EDumpShaderDefines DefinesPolicy = EDumpShaderDefines::DontCare);
+	EDumpShaderDefines DefinesPolicy
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+)
+{
+	return PreprocessShader(Output, Input, MergedEnvironment, AdditionalDefines);
+}
+

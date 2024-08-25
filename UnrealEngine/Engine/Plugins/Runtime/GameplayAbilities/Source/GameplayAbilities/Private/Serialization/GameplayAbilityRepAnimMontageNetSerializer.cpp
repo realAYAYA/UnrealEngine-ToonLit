@@ -6,6 +6,8 @@
 
 #if UE_WITH_IRIS
 
+#include "Animation/AnimSequenceBase.h"
+#include "Animation/AnimMontage.h"
 #include "Abilities/GameplayAbilityTypes.h"
 #include "Abilities/GameplayAbilityRepAnimMontage.h"
 #include "Net/Core/NetBitArray.h"
@@ -31,17 +33,22 @@ struct FGameplayAbilityRepAnimMontageNetSerializer
 	static constexpr bool bHasConnectionSpecificSerialization = true; // One of our members requires connection specific serialization
 	static constexpr bool bHasCustomNetReference = true; // We have object references that are not directly accessible
 	static constexpr bool bUseSerializerIsEqual = true; // Since FGameplayAbilityRepAnimMontageNetSerializer conditionally replicates position and SectionId we need to use the IsEqual function provided by the NetSerializer when comparing the property
+	static constexpr bool bHasDynamicState = true;
 
 	// Types
 	enum EReplicationFlags : uint8
 	{
 		ReplicatePosition = 1U,
+		IsAnimMontage = ReplicatePosition << 1U,
 	};
 
 	struct FQuantizedType
 	{
-		alignas(16) uint8 GameplayAbilityRepAnimMontage[40];
+		alignas(16) uint8 GameplayAbilityRepAnimMontage[80];
+
 		float Position;
+		float BlendOutTime;
+
 		uint8 ReplicationFlags;
 		uint8 SectionIdToPlay;
 	};
@@ -101,7 +108,7 @@ void FGameplayAbilityRepAnimMontageNetSerializer::Serialize(FNetSerializationCon
 	const uint8 ReplicationFlags = Value.ReplicationFlags;
 
 	// We do not really need to serialize this as it is part of the basestate, but it makes it easier to access from quantized state and as long as it is a single bit it does not matter much
-	Writer->WriteBits(ReplicationFlags, 1U);
+	Writer->WriteBits(ReplicationFlags, 2U);
 
 	// Forward to normal StructNetSerializer
 	FNetSerializeArgs NetSerializeArgs = {};
@@ -124,7 +131,21 @@ void FGameplayAbilityRepAnimMontageNetSerializer::Serialize(FNetSerializationCon
 	else
 	{
 		UE_NET_TRACE_SCOPE(SectionIdToPlay, *Writer, Context.GetTraceCollector(), ENetTraceVerbosity::Verbose);
-		Writer->WriteBits(Value.SectionIdToPlay, 7U);
+		if (ReplicationFlags & EReplicationFlags::IsAnimMontage)
+		{
+			Writer->WriteBits(Value.SectionIdToPlay, 7U);
+		}
+	}
+
+	if ((ReplicationFlags & EReplicationFlags::IsAnimMontage) == 0U)
+	{
+		const FNetSerializer& FloatSerializer = UE_NET_GET_SERIALIZER(FFloatNetSerializer);
+
+		FNetSerializeArgs FloatNetSerializeArgs = {};
+		FloatNetSerializeArgs.Version = FloatSerializer.Version;
+		FloatNetSerializeArgs.Source = NetSerializerValuePointer(&Value.BlendOutTime);
+		FloatNetSerializeArgs.NetSerializerConfig = NetSerializerConfigParam(FloatSerializer.DefaultConfig);
+		FloatSerializer.Serialize(Context, FloatNetSerializeArgs);
 	}
 }
 
@@ -134,7 +155,7 @@ void FGameplayAbilityRepAnimMontageNetSerializer::Deserialize(FNetSerializationC
 
 	FNetBitStreamReader* Reader = Context.GetBitStreamReader();
 
-	const uint8 ReplicationFlags = Reader->ReadBits(1U);
+	const uint8 ReplicationFlags = Reader->ReadBits(2U);
 	Target.ReplicationFlags = ReplicationFlags;
 
 	// Forward to normal StructNetSerializer
@@ -162,7 +183,25 @@ void FGameplayAbilityRepAnimMontageNetSerializer::Deserialize(FNetSerializationC
 		UE_NET_TRACE_SCOPE(SectionIdToPlay, *Reader, Context.GetTraceCollector(), ENetTraceVerbosity::Verbose);
 
 		Target.Position = 0.f;
-		Target.SectionIdToPlay = Reader->ReadBits(7U);
+		if (ReplicationFlags & EReplicationFlags::IsAnimMontage)
+		{
+			Target.SectionIdToPlay = Reader->ReadBits(7U);
+		}
+		else
+		{
+			Target.SectionIdToPlay = 0U;
+		}
+	}
+
+	if ((ReplicationFlags & EReplicationFlags::IsAnimMontage) == 0U)
+	{
+		const FNetSerializer& FloatSerializer = UE_NET_GET_SERIALIZER(FFloatNetSerializer);
+
+		FNetDeserializeArgs FloatNetDeserializeArgs = {};
+		FloatNetDeserializeArgs.Version = FloatSerializer.Version;
+		FloatNetDeserializeArgs.Target = NetSerializerValuePointer(&Target.BlendOutTime);
+		FloatNetDeserializeArgs.NetSerializerConfig = NetSerializerConfigParam(FloatSerializer.DefaultConfig);
+		FloatSerializer.Deserialize(Context, FloatNetDeserializeArgs);		
 	}
 }
 
@@ -177,7 +216,7 @@ void FGameplayAbilityRepAnimMontageNetSerializer::SerializeDelta(FNetSerializati
 	const uint32 ReplicationFlags = Value.ReplicationFlags;
 
 	// We do not really need to serialize this as it is part of the basestate, but it makes it easier to access and as long as it is a single bit it does not matter much
-	Writer->WriteBits(ReplicationFlags, 1U);
+	Writer->WriteBits(ReplicationFlags, 2U);
 
 	// Forward to normal StructNetSerializer
 	FNetSerializeDeltaArgs NetSerializeDeltaArgs = {};
@@ -205,10 +244,25 @@ void FGameplayAbilityRepAnimMontageNetSerializer::SerializeDelta(FNetSerializati
 	else
 	{
 		UE_NET_TRACE_SCOPE(SectionIdToPlay, *Writer, Context.GetTraceCollector(), ENetTraceVerbosity::Verbose);
-		if (Writer->WriteBool(Value.SectionIdToPlay != PrevValue.SectionIdToPlay))
+		if (ReplicationFlags & EReplicationFlags::IsAnimMontage)
 		{
-			Writer->WriteBits(Value.SectionIdToPlay, 7U);
+			if (Writer->WriteBool(Value.SectionIdToPlay != PrevValue.SectionIdToPlay))
+			{
+				Writer->WriteBits(Value.SectionIdToPlay, 7U);
+			}
 		}
+	}
+
+	if ((ReplicationFlags & EReplicationFlags::IsAnimMontage) == 0U)
+	{
+		const FNetSerializer& FloatSerializer = UE_NET_GET_SERIALIZER(FFloatNetSerializer);
+
+		FNetSerializeDeltaArgs FloatNetSerializeDeltaArgs = {};
+		FloatNetSerializeDeltaArgs.Version = FloatSerializer.Version;
+		FloatNetSerializeDeltaArgs.Source = NetSerializerValuePointer(&Value.BlendOutTime);
+		FloatNetSerializeDeltaArgs.Prev = NetSerializerValuePointer(&PrevValue.BlendOutTime);
+		FloatNetSerializeDeltaArgs.NetSerializerConfig = NetSerializerConfigParam(FloatSerializer.DefaultConfig);
+		FloatSerializer.SerializeDelta(Context, FloatNetSerializeDeltaArgs);
 	}
 }
 
@@ -219,7 +273,7 @@ void FGameplayAbilityRepAnimMontageNetSerializer::DeserializeDelta(FNetSerializa
 
 	FNetBitStreamReader* Reader = Context.GetBitStreamReader();
 
-	const uint32 ReplicationFlags = Reader->ReadBits(1U);
+	const uint32 ReplicationFlags = Reader->ReadBits(2U);
 	Target.ReplicationFlags = ReplicationFlags;
 
 	FNetDeserializeDeltaArgs NetDeserializeDeltaArgs = {};
@@ -248,14 +302,34 @@ void FGameplayAbilityRepAnimMontageNetSerializer::DeserializeDelta(FNetSerializa
 	{
 		UE_NET_TRACE_SCOPE(SectionIdToPlay, *Reader, Context.GetTraceCollector(), ENetTraceVerbosity::Verbose);
 		Target.Position = 0.f;
-		if (Reader->ReadBool())
+
+		if (ReplicationFlags & EReplicationFlags::IsAnimMontage)
 		{
-			Target.SectionIdToPlay = Reader->ReadBits(7U);
+			if (Reader->ReadBool())
+			{
+				Target.SectionIdToPlay = Reader->ReadBits(7U);
+			}
+			else
+			{
+				Target.SectionIdToPlay = Prev.SectionIdToPlay;
+			}
 		}
 		else
 		{
-			Target.SectionIdToPlay = Prev.SectionIdToPlay;
+			Target.SectionIdToPlay = 0;
 		}
+	}
+
+	if ((ReplicationFlags & EReplicationFlags::IsAnimMontage) == 0U)
+	{
+		const FNetSerializer& FloatSerializer = UE_NET_GET_SERIALIZER(FFloatNetSerializer);
+
+		FNetDeserializeDeltaArgs FloatNetDeserializeDeltaArgs = {};
+		FloatNetDeserializeDeltaArgs.Version = FloatSerializer.Version;
+		FloatNetDeserializeDeltaArgs.Target = NetSerializerValuePointer(&Target.BlendOutTime);
+		FloatNetDeserializeDeltaArgs.Prev = NetSerializerValuePointer(&Prev.BlendOutTime);
+		FloatNetDeserializeDeltaArgs.NetSerializerConfig = NetSerializerConfigParam(FloatSerializer.DefaultConfig);
+		FloatSerializer.DeserializeDelta(Context, FloatNetDeserializeDeltaArgs);
 	}
 }
 
@@ -265,7 +339,10 @@ void FGameplayAbilityRepAnimMontageNetSerializer::Quantize(FNetSerializationCont
 	QuantizedType& TargetValue = *reinterpret_cast<QuantizedType*>(Args.Target);
 	
 	uint32 ReplicationFlags = 0;
+
 	ReplicationFlags |= SourceValue.bRepPosition == 1 ? EReplicationFlags::ReplicatePosition : 0U;
+	ReplicationFlags |= (SourceValue.Animation && SourceValue.Animation->IsA<UAnimMontage>()) ? EReplicationFlags::IsAnimMontage : 0U;
+
 	TargetValue.ReplicationFlags = ReplicationFlags;
 
 	// Forward to normal StructNetSerializer
@@ -283,7 +360,26 @@ void FGameplayAbilityRepAnimMontageNetSerializer::Quantize(FNetSerializationCont
 	else
 	{
 		TargetValue.Position = 0.f;
-		TargetValue.SectionIdToPlay = SourceValue.SectionIdToPlay;
+		if (ReplicationFlags & IsAnimMontage)
+		{
+
+			TargetValue.SectionIdToPlay = SourceValue.SectionIdToPlay;
+		}
+		else
+		{
+			// Always set to zero if not included to be deterministic
+			TargetValue.SectionIdToPlay	= 0;
+		}
+	}
+
+	if ((ReplicationFlags & IsAnimMontage) == 0U)
+	{
+		TargetValue.BlendOutTime = SourceValue.BlendOutTime;
+	}
+	else
+	{
+		// Always set to zero if not included to be deterministic
+		TargetValue.BlendOutTime = 0.f;
 	}
 }
 
@@ -310,8 +406,24 @@ void FGameplayAbilityRepAnimMontageNetSerializer::Dequantize(FNetSerializationCo
 	else
 	{
 		TargetValue.Position = 0.f;
-		TargetValue.SectionIdToPlay = SourceValue.SectionIdToPlay;
+		if (ReplicationFlags & IsAnimMontage)
+		{
+			TargetValue.SectionIdToPlay = SourceValue.SectionIdToPlay;
+		}
+		else
+		{
+			TargetValue.SectionIdToPlay = 0;
+		}
 		TargetValue.SkipPositionCorrection = 1;
+	}
+
+	if (ReplicationFlags & IsAnimMontage)
+	{
+		TargetValue.BlendOutTime = 0.f;
+	}
+	else
+	{
+		TargetValue.BlendOutTime = SourceValue.BlendOutTime;
 	}
 }
 
@@ -338,7 +450,7 @@ bool FGameplayAbilityRepAnimMontageNetSerializer::IsEqual(FNetSerializationConte
 			return false;
 		}
 
-		if (Value0.Position != Value1.Position || Value0.SectionIdToPlay != Value1.SectionIdToPlay)
+		if (Value0.Position != Value1.Position || Value0.SectionIdToPlay != Value1.SectionIdToPlay || Value0.BlendOutTime != Value1.BlendOutTime)
 		{
 			return false;
 		}
@@ -365,6 +477,11 @@ bool FGameplayAbilityRepAnimMontageNetSerializer::IsEqual(FNetSerializationConte
 			return false;
 		}
 		else if (SourceValue0.SectionIdToPlay != SourceValue1.SectionIdToPlay)
+		{
+			return false;
+		}
+
+		if (SourceValue0.BlendOutTime != SourceValue1.BlendOutTime)
 		{
 			return false;
 		}
@@ -433,12 +550,16 @@ void FGameplayAbilityRepAnimMontageNetSerializer::FNetSerializerRegistryDelegate
 
 void FGameplayAbilityRepAnimMontageNetSerializer::FNetSerializerRegistryDelegates::OnPostFreezeNetSerializerRegistry()
 {
-	constexpr SIZE_T ExpectedSizeOfFGameplayAbilityRepAnimMontage = 56;
+	/*
+#if PLATFORM_WINDOWS && UE_BUILD_DEVELOPMENT && !UE_EDITOR
+	constexpr SIZE_T ExpectedSizeOfFGameplayAbilityRepAnimMontage = 64;
 	constexpr SIZE_T ExpectedAlignOfFGameplayAbilityRepAnimMontage = 8;
 
 	// Do our best to detect changes to FGameplayAbilityRepAnimMontage
 	// If this assert triggers, this implementation must be verified against FGameplayAbilityRepAnimMontage::NetSerializee before updating the size and alignment
 	static_assert(sizeof(FGameplayAbilityRepAnimMontage) == ExpectedSizeOfFGameplayAbilityRepAnimMontage && alignof(FGameplayAbilityRepAnimMontage) == ExpectedAlignOfFGameplayAbilityRepAnimMontage, "FGameplayAbilityRepAnimMontage layout has changed. Might need to update FGameplayAbilityRepAnimMontageNetSerializer to include new data or update the size.");
+#endif
+	*/
 
 	// Use helper to avoid getting hold of the FGameplayAbilityRepAnimMontageNetSerializer that we are setting up and validating.
 	const UStruct* BaseStruct = FGameplayAbilityRepAnimMontage::StaticStruct();

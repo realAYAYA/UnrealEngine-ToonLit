@@ -42,6 +42,14 @@
 #pragma warning(disable: 4191)
 // disable(SU2019 & SU2020): 'register' is no longer a supported storage class	
 #pragma warning(disable: 5033)
+// disable(SU2024): '_Header_cstdbool': warning STL4004: <ccomplex>, <cstdalign>, <cstdbool>, and <ctgmath> are deprecated in C++17. You can define _SILENCE_CXX17_C_HEADER_DEPRECATION_WARNING or _SILENCE_ALL_CXX17_DEPRECATION_WARNINGS to suppress this warning.
+#pragma warning(disable: 4996)
+// disable(SU2024): Implicit conversion from 'VALUE' to bool. Possible information loss
+#pragma warning(disable: 4800)
+// disable(SU2024): Dereferencing NULL pointer
+#pragma warning(disable: 6011)
+
+
 #undef DEPRECATED
 #include <ruby.h>
 #pragma warning(pop)

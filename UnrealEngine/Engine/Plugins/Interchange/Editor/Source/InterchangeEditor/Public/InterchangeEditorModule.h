@@ -6,7 +6,7 @@
 #define INTERCHANGEEDITOR_MODULE_NAME TEXT("InterchangeEditor")
 
 /**
- * This module allow out of process interchange translator in case a third party SDK is not thread safe.
+ * This module allows out-of-process Interchange translators in case a third-party SDK is not thread-safe.
  */
 class FInterchangeEditorModule : public IModuleInterface
 {

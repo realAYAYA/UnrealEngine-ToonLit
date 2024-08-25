@@ -278,7 +278,7 @@ void FD3D11DynamicRHI::RHICopyBuffer(FRHIBuffer* SourceBufferRHI, FRHIBuffer* De
 	GPUProfilingData.RegisterGPUWork(1);
 }
 
-void FD3D11DynamicRHI::RHITransferBufferUnderlyingResource(FRHIBuffer* DestBuffer, FRHIBuffer* SrcBuffer)
+void FD3D11DynamicRHI::RHITransferBufferUnderlyingResource(FRHICommandListBase& RHICmdList, FRHIBuffer* DestBuffer, FRHIBuffer* SrcBuffer)
 {
 	FD3D11Buffer* Dst = ResourceCast(DestBuffer);
 	FD3D11Buffer* Src = ResourceCast(SrcBuffer);
@@ -298,7 +298,7 @@ void FD3D11DynamicRHI::RHITransferBufferUnderlyingResource(FRHIBuffer* DestBuffe
 	Dst->UpdateLinkedViews();
 }
 
-void FD3D11DynamicRHI::RHIBindDebugLabelName(FRHIBuffer* BufferRHI, const TCHAR* Name)
+void FD3D11DynamicRHI::RHIBindDebugLabelName(FRHICommandListBase& RHICmdList, FRHIBuffer* BufferRHI, const TCHAR* Name)
 {
 	check(BufferRHI);
 	FName DebugName(Name);

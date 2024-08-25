@@ -5,12 +5,13 @@
 #include "CoreMinimal.h"
 #include "HAL/LowLevelMemTracker.h"
 #include "Misc/Optional.h"
-#include "Modules/Boilerplate/ModuleBoilerplate.h"
-#include "Templates/SharedPointer.h"
 #include "Misc/ScopeRWLock.h"
+#include "Modules/Boilerplate/ModuleBoilerplate.h"
+#include "Modules/ModuleManager.h"
+#include "Templates/SharedPointer.h"
 #include "Templates/UnrealTemplate.h"
 
-LLM_DECLARE_TAG_API( Usd, UNREALUSDWRAPPER_API );
+LLM_DECLARE_TAG_API(Usd, UNREALUSDWRAPPER_API);
 
 /**
  * This file is used to handle memory allocation issues when interacting with the USD SDK.
@@ -18,11 +19,14 @@ LLM_DECLARE_TAG_API( Usd, UNREALUSDWRAPPER_API );
  * Modules looking to use the USD SDK and the memory tools provided here need to use IMPLEMENT_MODULE_USD instead of the regular IMPLEMENT_MODULE.
  * The USD memory tools are only supported in non monolithic builds at this time, since it requires overriding new and delete per module.
  *
- * The USD SDK uses the shared C runtime allocator. This means that objects returned by the USD SDK might try to delete objects that were allocated through the CRT.
- * Since UE overrides new and delete per module, USD objects that try to call delete will end up freeing memory with the UE allocator but the malloc was made using the CRT, leading in a crash.
+ * The USD SDK uses the shared C runtime allocator. This means that objects returned by the USD SDK might try to delete objects that were allocated
+ *through the CRT. Since UE overrides new and delete per module, USD objects that try to call delete will end up freeing memory with the UE allocator
+ *but the malloc was made using the CRT, leading in a crash.
  *
- * To go around this problem, modules using the USD SDK need special operators for new and delete. Those operators have the ability to redirect the malloc or free calls to either the UE allocator or to the CRT allocator.
- * The choice of the allocator is made in the FUsdMemoryManager. FUsdMemoryManager manages a stack of active allocators per thread. Using ActivateAllocator and DeactivateAllocator, we can push and pop which allocator is active on the calling thread.
+ * To go around this problem, modules using the USD SDK need special operators for new and delete. Those operators have the ability to redirect the
+ *malloc or free calls to either the UE allocator or to the CRT allocator. The choice of the allocator is made in the FUsdMemoryManager.
+ *FUsdMemoryManager manages a stack of active allocators per thread. Using ActivateAllocator and DeactivateAllocator, we can push and pop which
+ *allocator is active on the calling thread.
  *
  * To simplify the workflow, TScopedAllocs is provided to make sure a certain block of code is bound to the right allocator.
  * FScopedUsdAllocs is a TScopedAllocs that activates the CRT allocator, while FScopedUnrealAllocs is the one that activates the UE allocator.
@@ -61,16 +65,16 @@ public:
 	static void Shutdown();
 
 	/** Pushes Allocator on the stack of active allocators */
-	static void ActivateAllocator( EUsdActiveAllocator Allocator );
+	static void ActivateAllocator(EUsdActiveAllocator Allocator);
 
 	/** Pops Allocator from the stack of active allocators */
-	static bool DeactivateAllocator( EUsdActiveAllocator Allocator );
+	static bool DeactivateAllocator(EUsdActiveAllocator Allocator);
 
 	/** Redirects the call to malloc to the currently active allocator. */
-	static void* Malloc( SIZE_T Count );
+	static void* Malloc(SIZE_T Count);
 
 	/** Redirects the call to free to the currently active allocator. */
-	static void Free( void* Original );
+	static void Free(void* Original);
 
 private:
 	static FActiveAllocatorsStack& GetActiveAllocatorsStackForThread();
@@ -78,31 +82,32 @@ private:
 	/** Returns if the current active allocator is EActiveAllocator::System */
 	static bool IsUsingSystemMalloc();
 
-	static TOptional< FTlsSlot > ActiveAllocatorsStackTLS;
+	static TOptional<FTlsSlot> ActiveAllocatorsStackTLS;
 
 	struct FThreadSafeSet
 	{
 	public:
-		void Add( void* Ptr )
+		void Add(void* Ptr)
 		{
-			FSubSet& SubSet = SubSets[GetTypeHash( Ptr ) % BucketCount];
-			FWriteScopeLock ScopeLock( SubSet.Lock );
-			SubSet.Set.Add( Ptr );
+			FSubSet& SubSet = SubSets[GetTypeHash(Ptr) % BucketCount];
+			FWriteScopeLock ScopeLock(SubSet.Lock);
+			SubSet.Set.Add(Ptr);
 		}
 
-		bool Remove( void* Ptr )
+		bool Remove(void* Ptr)
 		{
-			FSubSet& SubSet = SubSets[GetTypeHash( Ptr ) % BucketCount];
-			FWriteScopeLock ScopeLock( SubSet.Lock );
-			return SubSet.Set.Remove( Ptr ) > 0;
+			FSubSet& SubSet = SubSets[GetTypeHash(Ptr) % BucketCount];
+			FWriteScopeLock ScopeLock(SubSet.Lock);
+			return SubSet.Set.Remove(Ptr) > 0;
 		}
 
 	private:
 		struct FSubSet
 		{
 			FRWLock Lock;
-			TSet< void* > Set;
+			TSet<void*> Set;
 		};
+
 		static constexpr int32 BucketCount = 61; /* Prime number for better modulo distribution */
 		FSubSet SubSets[BucketCount];
 	};
@@ -115,133 +120,148 @@ private:
 /**
  * Activates an allocator on construction and deactivates it on destruction
  */
-template< EUsdActiveAllocator AllocatorType >
+template<EUsdActiveAllocator AllocatorType>
 class TScopedAllocs final
 {
 public:
 	TScopedAllocs()
 	{
-		FUsdMemoryManager::ActivateAllocator( AllocatorType );
+		FUsdMemoryManager::ActivateAllocator(AllocatorType);
 	}
 
 	~TScopedAllocs()
 	{
-		FUsdMemoryManager::DeactivateAllocator( AllocatorType );
+		FUsdMemoryManager::DeactivateAllocator(AllocatorType);
 	}
 
-	TScopedAllocs( const TScopedAllocs< AllocatorType >& Other ) = delete;
-	TScopedAllocs( TScopedAllocs< AllocatorType >&& Other ) = delete;
+	TScopedAllocs(const TScopedAllocs<AllocatorType>& Other) = delete;
+	TScopedAllocs(TScopedAllocs<AllocatorType>&& Other) = delete;
 
-	TScopedAllocs& operator=( const TScopedAllocs< AllocatorType >& Other ) = delete;
-	TScopedAllocs& operator=( TScopedAllocs< AllocatorType >&& Other ) = delete;
+	TScopedAllocs& operator=(const TScopedAllocs<AllocatorType>& Other) = delete;
+	TScopedAllocs& operator=(TScopedAllocs<AllocatorType>&& Other) = delete;
 };
 
-using FScopedUsdAllocs = TScopedAllocs< EUsdActiveAllocator::System >;
-using FScopedUnrealAllocs = TScopedAllocs< EUsdActiveAllocator::Unreal >;
+using FScopedUsdAllocs = TScopedAllocs<EUsdActiveAllocator::System>;
+using FScopedUnrealAllocs = TScopedAllocs<EUsdActiveAllocator::Unreal>;
 
 /**
  * Stores a USD object.
  * Ensures that its constructed, copied, moved and destroyed using the USD allocator.
  */
-template < typename UsdObjectType >
+template<typename UsdObjectType>
 class TUsdStore final
 {
 public:
 	TUsdStore()
 	{
-		StoredUsdObject = TOptional< UsdObjectType >{}; // Force init with current allocator
+		StoredUsdObject = TOptional<UsdObjectType>{};	 // Force init with current allocator
 
 		{
 			FScopedUsdAllocs UsdAllocs;
-			StoredUsdObject.Emplace(); // Create UsdObjectType with USD allocator
+			StoredUsdObject.Emplace();	  // Create UsdObjectType with USD allocator
 		}
 	}
 
-	TUsdStore( const TUsdStore< UsdObjectType >& Other )
+	TUsdStore(const TUsdStore<UsdObjectType>& Other)
 	{
 		FScopedUsdAllocs UsdAllocs;
-		StoredUsdObject.Emplace( Other.StoredUsdObject.GetValue() );
+		StoredUsdObject.Emplace(Other.StoredUsdObject.GetValue());
 	}
 
-	TUsdStore( TUsdStore< UsdObjectType >&& Other )
+	TUsdStore(TUsdStore<UsdObjectType>&& Other)
 	{
 		FScopedUsdAllocs UsdAllocs;
-		StoredUsdObject = MoveTemp( Other.StoredUsdObject );
+		StoredUsdObject = MoveTemp(Other.StoredUsdObject);
 	}
 
-	TUsdStore< UsdObjectType >& operator=( const TUsdStore< UsdObjectType >& Other )
+	TUsdStore<UsdObjectType>& operator=(const TUsdStore<UsdObjectType>& Other)
 	{
 		FScopedUsdAllocs UsdAllocs;
-		StoredUsdObject.Emplace( Other.StoredUsdObject.GetValue() );
+		StoredUsdObject.Emplace(Other.StoredUsdObject.GetValue());
 		return *this;
 	}
 
-	TUsdStore< UsdObjectType >& operator=( TUsdStore< UsdObjectType >&& Other )
+	TUsdStore<UsdObjectType>& operator=(TUsdStore<UsdObjectType>&& Other)
 	{
 		FScopedUsdAllocs UsdAllocs;
-		StoredUsdObject = MoveTemp( Other.StoredUsdObject );
+		StoredUsdObject = MoveTemp(Other.StoredUsdObject);
 		return *this;
 	}
 
-	TUsdStore( const UsdObjectType& UsdObject )
+	TUsdStore(const UsdObjectType& UsdObject)
 	{
 		FScopedUsdAllocs UsdAllocs;
 		StoredUsdObject = UsdObject;
 	}
 
-	TUsdStore( UsdObjectType&& UsdObject )
+	TUsdStore(UsdObjectType&& UsdObject)
 	{
 		FScopedUsdAllocs UsdAllocs;
-		StoredUsdObject = MoveTemp( UsdObject );
+		StoredUsdObject = MoveTemp(UsdObject);
 	}
 
-	TUsdStore< UsdObjectType >& operator=( const UsdObjectType& UsdObject )
+	TUsdStore<UsdObjectType>& operator=(const UsdObjectType& UsdObject)
 	{
 		FScopedUsdAllocs UsdAllocs;
 		StoredUsdObject = UsdObject;
 		return *this;
 	}
 
-	TUsdStore< UsdObjectType >& operator=( UsdObjectType&& UsdObject )
+	TUsdStore<UsdObjectType>& operator=(UsdObjectType&& UsdObject)
 	{
 		FScopedUsdAllocs UsdAllocs;
-		StoredUsdObject = MoveTemp( UsdObject );
+		StoredUsdObject = MoveTemp(UsdObject);
 		return *this;
 	}
 
 	~TUsdStore()
 	{
 		FScopedUsdAllocs UsdAllocs;
-		StoredUsdObject.Reset(); // Destroy UsdObjectType with USD allocator
+		StoredUsdObject.Reset();	// Destroy UsdObjectType with USD allocator
 	}
 
-	UsdObjectType& Get() { return StoredUsdObject.GetValue(); }
-	const UsdObjectType& Get() const { return StoredUsdObject.GetValue(); }
+	UsdObjectType& Get()
+	{
+		return StoredUsdObject.GetValue();
+	}
 
-	UsdObjectType& operator*() { return Get(); }
-	const UsdObjectType& operator*() const { return Get(); }
+	const UsdObjectType& Get() const
+	{
+		return StoredUsdObject.GetValue();
+	}
+
+	UsdObjectType& operator*()
+	{
+		return Get();
+	}
+
+	const UsdObjectType& operator*() const
+	{
+		return Get();
+	}
 
 private:
-	TOptional< UsdObjectType > StoredUsdObject;
+	TOptional<UsdObjectType> StoredUsdObject;
 };
 
-template< typename UsdObjectType, typename... ArgTypes >
-TUsdStore< UsdObjectType > MakeUsdStore( ArgTypes&&... Args )
+template<typename UsdObjectType, typename... ArgTypes>
+TUsdStore<UsdObjectType> MakeUsdStore(ArgTypes&&... Args)
 {
 	FScopedUsdAllocs UsdAllocs;
-	return TUsdStore< UsdObjectType >( UsdObjectType( Forward< ArgTypes >( Args )... ) );
+	return TUsdStore<UsdObjectType>(UsdObjectType(Forward<ArgTypes>(Args)...));
 }
 
 // MakeShared version that makes sure that the SharedPointer allocs are made with the Unreal allocator
-template< typename ObjectType, typename... ArgTypes >
-TSharedRef< ObjectType > MakeSharedUnreal( ArgTypes&&... Args )
+template<typename ObjectType, typename... ArgTypes>
+TSharedRef<ObjectType> MakeSharedUnreal(ArgTypes&&... Args)
 {
 	FScopedUnrealAllocs UnrealAllocs;
-	return MakeShared< ObjectType >( Forward< ArgTypes >( Args )... );
+	return MakeShared<ObjectType>(Forward<ArgTypes>(Args)...);
 }
 
 // See comment on UnrealUSDWrapper.Build.cs to understand why we disable these for monolithic builds (everything will still work,
 // they're just unnecessary)
+// clang-format off
 #if !FORCE_ANSI_ALLOCATOR && !IS_MONOLITHIC
 	#define REPLACEMENT_OPERATOR_NEW_AND_DELETE_USD \
 		OPERATOR_NEW_MSVC_PRAGMA void* operator new  ( size_t Size                        ) OPERATOR_NEW_THROW_SPEC      { return FUsdMemoryManager::Malloc( Size ); } \
@@ -279,3 +299,4 @@ TSharedRef< ObjectType > MakeSharedUnreal( ArgTypes&&... Args )
 #else
 	#define IMPLEMENT_MODULE_USD( ModuleImplClass, ModuleName ) IMPLEMENT_MODULE( ModuleImplClass, ModuleName )
 #endif
+// clang-format on

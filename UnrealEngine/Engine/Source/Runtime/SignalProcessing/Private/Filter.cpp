@@ -7,7 +7,7 @@ namespace Audio
 {
     float FBiquadFilter::ClampCutoffFrequency(float InCutoffFrequency)
     {
-        return FMath::Clamp(InCutoffFrequency, 5.0f, SampleRate / 2.0f - 1.0f);
+        return FMath::Clamp(InCutoffFrequency, 5.0f, 0.9f * (SampleRate / 2.0f));
     }
     
 	FBiquadFilter::FBiquadFilter()
@@ -66,9 +66,35 @@ namespace Audio
 	{
 		if (bEnabled)
 		{
-			for (int32 SampleIndex = 0; SampleIndex < InNumSamples; SampleIndex += NumChannels)
+			if (NumChannels == 1)
 			{
-				ProcessAudioFrame(&InBuffer[SampleIndex], &OutBuffer[SampleIndex]);
+				for (int32 SampleIndex = 0; SampleIndex < InNumSamples; ++SampleIndex)
+				{
+					OutBuffer[SampleIndex] = Biquad->ProcessAudio(InBuffer[SampleIndex]);
+				}
+			}
+			else
+			{
+				for (int32 SampleIndex = 0; SampleIndex < InNumSamples; SampleIndex += NumChannels)
+				{
+					ProcessAudioFrame(&InBuffer[SampleIndex], &OutBuffer[SampleIndex]);
+				}
+			}
+		}
+	}
+
+	void FBiquadFilter::ProcessAudio(const float* const* InBuffers, const int32 InNumSamples, float* const* OutBuffers)
+	{
+		if (bEnabled)
+		{
+			for (int32 Channel = 0; Channel < NumChannels; ++Channel)
+			{
+				const float* Source = InBuffers[Channel];
+				float* Destination = OutBuffers[Channel];
+				for (int32 SampleIndex = 0; SampleIndex < InNumSamples; ++SampleIndex)
+				{
+					Destination[SampleIndex] = Biquad[Channel].ProcessAudio(Source[SampleIndex]);
+				}
 			}
 		}
 	}
@@ -385,7 +411,7 @@ namespace Audio
 	{
 		if (BaseFrequency != InCutoffFrequency)
 		{
-			BaseFrequency = InCutoffFrequency;
+			BaseFrequency = FMath::Clamp(InCutoffFrequency, 20.f, 0.9f * (SampleRate / 2.f));
 			bChanged = true;
 		}
 	}
@@ -434,7 +460,7 @@ namespace Audio
 		{
 			bChanged = false;
 
-			Frequency = FMath::Clamp(BaseFrequency * GetFrequencyMultiplier(ModFrequency + ExternalModFrequency), 80.0f, 18000.0f);
+			Frequency = FMath::Clamp(BaseFrequency * GetFrequencyMultiplier(ModFrequency + ExternalModFrequency), 80.0f, 0.9f * (SampleRate / 2.f));
 			Q = BaseQ + ModQ + ExternalModQ;
 		}
 	}
@@ -543,6 +569,43 @@ namespace Audio
 		}
 	}
 
+	void FOnePoleFilter::ProcessAudio(const float* const* InBuffers, const int32 InNumSamples, float* const* OutBuffers)
+	{
+		if (FilterType == EFilter::HighPass)
+		{
+			for (int32 Channel = 0; Channel < NumChannels; ++Channel)
+			{
+				const float* Source = InBuffers[Channel];
+				float* Destination = OutBuffers[Channel];
+				for (int32 SampleIndex = 0; SampleIndex < InNumSamples; ++SampleIndex)
+				{
+					const float InputSample = Source[SampleIndex];
+					const float Vn = (InputSample - Z1[Channel]) * A0;
+					const float LPF = Vn + Z1[Channel];
+					Z1[Channel] = Vn + LPF;
+
+					Destination[SampleIndex] = InputSample - LPF;
+				}
+			}
+		}
+		else
+		{
+			for (int32 Channel = 0; Channel < NumChannels; ++Channel)
+			{
+				const float* Source = InBuffers[Channel];
+				float* Destination = OutBuffers[Channel];
+				for (int32 SampleIndex = 0; SampleIndex < InNumSamples; ++SampleIndex)
+				{
+					const float Vn = (Source[SampleIndex] - Z1[Channel]) * A0;
+					const float LPF = Vn + Z1[Channel];
+					Z1[Channel] = Vn + LPF;
+
+					Destination[SampleIndex] = LPF;
+				}
+			}
+		}
+	}
+
 	FStateVariableFilter::FStateVariableFilter()
 		: InputScale(1.0f)
 		, A0(1.0f)
@@ -630,6 +693,42 @@ namespace Audio
 		}
 	}
 
+	void FStateVariableFilter::ProcessAudio(const float* const* InBuffers, const int32 InNumSamples, float* const* OutBuffers)
+	{
+		float FilterResults[4];
+		enum ResultSourceType { kLPF = 0, kHPF = 1, kBPF = 2, kBSF = 3 };
+		int32 OutputSource = 0;
+		switch (FilterType)
+		{
+		default:
+		case EFilter::LowPass:  OutputSource = ResultSourceType::kLPF; break;
+		case EFilter::HighPass: OutputSource = ResultSourceType::kHPF; break;
+		case EFilter::BandPass: OutputSource = ResultSourceType::kBPF; break;
+		case EFilter::BandStop: OutputSource = ResultSourceType::kBSF; break;
+		}
+
+		for (int32 Channel = 0; Channel < NumChannels; ++Channel)
+		{
+			const float* Source = InBuffers[Channel];
+			float* Destination = OutBuffers[Channel];
+			FFilterState& ChannelFilterState = FilterState[Channel];
+			for (int32 SampleIndex = 0; SampleIndex < InNumSamples; ++SampleIndex)
+			{
+				FilterResults[ResultSourceType::kHPF] = InputScale * (Source[SampleIndex] - Feedback * ChannelFilterState.Z1_1 - ChannelFilterState.Z1_2);
+				FilterResults[ResultSourceType::kBPF] = Audio::FastTanh(A0 * FilterResults[ResultSourceType::kHPF] + ChannelFilterState.Z1_1);
+
+				FilterResults[kLPF] = A0 * FilterResults[kBPF] + ChannelFilterState.Z1_2;
+				const float Dampening = 0.5f / Q;
+				FilterResults[kBSF] = BandStopParam * FilterResults[kHPF] + (1.0f - BandStopParam) * FilterResults[kLPF];
+
+				ChannelFilterState.Z1_1 = A0 * FilterResults[kHPF] + FilterResults[kBPF];
+				ChannelFilterState.Z1_2 = A0 * FilterResults[kBPF] + FilterResults[kLPF];
+
+				Destination[SampleIndex] = FilterResults[OutputSource];
+			}
+		}
+
+	}
 
 	void FStateVariableFilter::ProcessAudio(const float* InSamples, const int32 InNumSamples
 		, float* LpfOutput, float* HpfOutput, float* BpfOutput, float* BsfOutput)
@@ -656,6 +755,36 @@ namespace Audio
 		}
 	}
 
+	void FStateVariableFilter::ProcessAudio(const float* const* InBuffers, const int32 InNumSamples, 
+		float* const* LpfOutBuffers, float* const* HpfOutBuffers, float* const* BpfOutBuffers, float* const* BsfOutBuffers)
+	{
+		for (int32 Channel = 0; Channel < NumChannels; ++Channel)
+		{
+			const float* Source = InBuffers[Channel];
+			float* LpfDestination = LpfOutBuffers[Channel];
+			float* HpfDestination = HpfOutBuffers[Channel];
+			float* BpfDestination = BpfOutBuffers[Channel];
+			float* BsfDestination = BsfOutBuffers[Channel];
+			FFilterState& ChannelFilterState = FilterState[Channel];
+			for (int32 SampleIndex = 0; SampleIndex < InNumSamples; ++SampleIndex)
+			{
+				const float HPF = InputScale * (Source[SampleIndex] - Feedback * ChannelFilterState.Z1_1 - ChannelFilterState.Z1_2);
+				float BPF = Audio::FastTanh(A0 * HPF + ChannelFilterState.Z1_1);
+
+				const float LPF = A0 * BPF + ChannelFilterState.Z1_2;
+				const float Dampening = 0.5f / Q;
+				const float BSF = BandStopParam * HPF + (1.0f - BandStopParam) * LPF;
+
+				ChannelFilterState.Z1_1 = A0 * HPF + BPF;
+				ChannelFilterState.Z1_2 = A0 * BPF + LPF;
+
+				LpfDestination[SampleIndex] = LPF;
+				HpfDestination[SampleIndex] = HPF;
+				BpfDestination[SampleIndex] = BPF;
+				BsfDestination[SampleIndex] = BSF;
+			}
+		}
+	}
 	FLadderFilter::FLadderFilter()
 		: K(0.0f)
 		, Gamma(0.0f)
@@ -802,4 +931,46 @@ namespace Audio
 		}
 	}
 
+	void FLadderFilter::ProcessAudio(const float* const* InBuffers, const int32 InNumSamples, float* const* OutBuffers)
+	{
+		float U[MaxFilterChannels];
+
+		float OutputFilter0[MaxFilterChannels];
+		float OutputFilter1[MaxFilterChannels];
+		float OutputFilter2[MaxFilterChannels];
+		float OutputFilter3[MaxFilterChannels];
+
+		for (int32 SampleIndex = 0; SampleIndex < InNumSamples; ++SampleIndex)
+		{
+			for (int32 Channel = 0; Channel < NumChannels; ++Channel)
+			{
+				float Sigma = 0.0f;
+				for (int32 i = 0; i < 4; ++i)
+				{
+					Sigma += OnePoleFilters[i].GetState(Channel) * Beta[i];
+				}
+
+				float InSample = InBuffers[Channel][SampleIndex];
+				InSample *= 1.0f + PassBandGainCompensation * K;
+
+				// Compute input into first LPF
+				U[Channel] = FMath::Min(Audio::FastTanh((InSample - K * Sigma) * Alpha), 1.0f);
+			}
+
+			OnePoleFilters[0].ProcessAudioFrame(U, OutputFilter0);
+			OnePoleFilters[1].ProcessAudioFrame(OutputFilter0, OutputFilter1);
+			OnePoleFilters[2].ProcessAudioFrame(OutputFilter1, OutputFilter2);
+			OnePoleFilters[3].ProcessAudioFrame(OutputFilter2, OutputFilter3);
+
+			for (int32 Channel = 0; Channel < NumChannels; ++Channel)
+			{
+				// Feed U into first filter, then cascade down
+				OutBuffers[Channel][SampleIndex] = Factors[0] * U[Channel];
+				OutBuffers[Channel][SampleIndex] += Factors[1] * OutputFilter0[Channel];
+				OutBuffers[Channel][SampleIndex] += Factors[2] * OutputFilter1[Channel];
+				OutBuffers[Channel][SampleIndex] += Factors[3] * OutputFilter2[Channel];
+				OutBuffers[Channel][SampleIndex] += Factors[4] * OutputFilter3[Channel];
+			}
+		}
+	}
 }

@@ -21,7 +21,10 @@ public:
 	/** Constructor */
 	UNREALED_API FMainMRUFavoritesList();
 
+	UE_DEPRECATED(5.4, "Use the constructor that takes in an override section for the favorites as well")
 	UNREALED_API FMainMRUFavoritesList(const FString& IniSectionOverride, const int32 InitMaxItems = 12);
+
+	UNREALED_API FMainMRUFavoritesList(const FString& IniSectionOverride, const FString& IniFavoritesSectionOverride, const int32 InitMaxItems = 12);
 	
 	/** Destructor */
 	UNREALED_API ~FMainMRUFavoritesList();
@@ -132,5 +135,5 @@ private:
 	TArray<FString> FavoriteItems;
 
 	/** INI section to read/write favorite items to */
-	static UNREALED_API const FString FAVORITES_INI_SECTION;
+	FString INIFavoritesSection;
 };

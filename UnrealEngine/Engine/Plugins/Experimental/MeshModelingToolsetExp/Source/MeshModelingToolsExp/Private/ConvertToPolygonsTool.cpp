@@ -56,6 +56,7 @@ public:
 	// parameters set by the tool
 	EConvertToPolygonsMode ConversionMode = EConvertToPolygonsMode::FaceNormalDeviation;
 	double AngleTolerance = 0.1f;
+	bool bUseAverageGroupNormal = true;
 	int32 NumPoints = 10;
 	bool bSubdivideExisting = false;
 	FPolygroupsGenerator::EWeightingType WeightingType = FPolygroupsGenerator::EWeightingType::None;
@@ -135,7 +136,8 @@ public:
 			Generator.FindPolygroupsFromFaceNormals(
 				DotTolerance,
 				bRespectUVSeams, 
-				bRespectHardNormals );
+				bRespectHardNormals,
+				bUseAverageGroupNormal);
 			break;
 		}
 		case EConvertToPolygonsMode::FindPolygons:
@@ -324,6 +326,7 @@ void UConvertToPolygonsTool::Setup()
 	Settings->WatchProperty(Settings->ConversionMode, [this](EConvertToPolygonsMode) { OnSettingsModified(); });
 	Settings->WatchProperty(Settings->bShowGroupColors, [this](bool) { UpdateVisualization(); });
 	Settings->WatchProperty(Settings->AngleTolerance, [this](float) { OnSettingsModified(); });
+	Settings->WatchProperty(Settings->bUseAverageGroupNormal, [this](float) { OnSettingsModified(); });
 	Settings->WatchProperty(Settings->NumPoints, [this](int32) { OnSettingsModified(); });
 	Settings->WatchProperty(Settings->bSplitExisting, [this](bool) { OnSettingsModified(); });
 	Settings->WatchProperty(Settings->bNormalWeighted, [this](bool) { OnSettingsModified(); });
@@ -397,6 +400,7 @@ void UConvertToPolygonsTool::UpdateOpParameters(FConvertToPolygonsOp& ConvertToP
 	ConvertToPolygonsOp.bCalculateNormals = Settings->bCalculateNormals;
 	ConvertToPolygonsOp.ConversionMode    = Settings->ConversionMode;
 	ConvertToPolygonsOp.AngleTolerance    = Settings->AngleTolerance;
+	ConvertToPolygonsOp.bUseAverageGroupNormal = Settings->bUseAverageGroupNormal;
 	ConvertToPolygonsOp.NumPoints = Settings->NumPoints;
 	ConvertToPolygonsOp.bSubdivideExisting = Settings->bSplitExisting;
 	ConvertToPolygonsOp.WeightingType = (Settings->bNormalWeighted) ? FPolygroupsGenerator::EWeightingType::NormalDeviation : FPolygroupsGenerator::EWeightingType::None;
@@ -606,7 +610,7 @@ void UConvertToPolygonsTool::UpdateVisualization()
 		int32 NumMaterials = MaterialTarget->GetNumMaterials();
 		for (int32 i = 0; i < NumMaterials; ++i)
 		{ 
-			MaterialSet.Materials.Add(ToolSetupUtil::GetSelectionMaterial(GetToolManager()));
+			MaterialSet.Materials.Add(ToolSetupUtil::GetVertexColorMaterial(GetToolManager()));
 		}
 		PreviewCompute->PreviewMesh->SetTriangleColorFunction([this](const FDynamicMesh3* Mesh, int TriangleID)
 		{

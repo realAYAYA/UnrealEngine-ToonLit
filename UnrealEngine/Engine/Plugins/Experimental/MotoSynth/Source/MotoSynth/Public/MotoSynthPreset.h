@@ -8,11 +8,6 @@
 
 class UMotoSynthPreset;
 struct FPropertyChangedEvent;
-
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "AudioDevice.h"
-#endif
-
 class UMotoSynthSource;
 class FMotoSynthEngine;
 
@@ -191,6 +186,7 @@ public:
 
 	// ISubmixBufferListener
 	void OnNewSubmixBuffer(const USoundSubmix* OwningSubmix, float* AudioData, int32 NumSamples, int32 NumChannels, const int32 InSampleRate, double AudioClock) override;
+	const FString& GetListenerName() const override;
 	// ~ ISubmixBufferListener
 
 private:

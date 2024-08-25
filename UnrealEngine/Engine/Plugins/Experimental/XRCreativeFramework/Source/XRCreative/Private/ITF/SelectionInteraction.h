@@ -6,10 +6,14 @@
 #include "BaseBehaviors/SingleClickBehavior.h"
 #include "Elements/Actor/ActorElementData.h"
 #include "Elements/Framework/TypedElementOwnerStore.h"
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
+#include "Engine/HitResult.h"
+#endif // UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "InputBehaviorSet.h"
 #include "SelectionInteraction.generated.h"
 
 
+struct FHitResult;
 class UTypedElementSelectionSet;
 
 
@@ -19,16 +23,27 @@ class UXRCreativeSelectionInteraction : public UObject, public IInputBehaviorSou
 	GENERATED_BODY()
 
 public:
+	static constexpr double RayLength = 999999.0;
+
+	using FActorPredicate = TUniqueFunction<bool(AActor*)>;
+	using FTraceMethod = TUniqueFunction<FHitResult(const FInputDeviceRay&)>;
+	
+	UXRCreativeSelectionInteraction();
+
 	/**
 	 * Set up the Interaction, creates and registers Behaviors/etc. 
 	 * 
 	 * @param InSelectionSet the typed element selection set we maintain a weak pointer to and operate on
-	 * @param InCanChangeSelectionCallback this function will be called to determine if the current Selection is allowed to be modified (for example, when a Tool is active, we may wish to lock selection)
+	 * @param InCanSelectCallback this function will be called to determine if the selection can be changed to the specified actor (or null); when a tool is active, we may wish to lock selection
+	 * @param InTraceCallback can be provided to override the default scene trace implementation
 	 */
-	void Initialize(UTypedElementSelectionSet* InSelectionSet, TUniqueFunction<bool()> InCanChangeSelectionCallback);
+	void Initialize(
+		UTypedElementSelectionSet* InSelectionSet,
+		FActorPredicate InCanSelectCallback = nullptr,
+		FTraceMethod InTraceCallback = nullptr);
+
 	void Shutdown();
 
-public:
 	// IInputBehaviorSource interface
 	virtual const UInputBehaviorSet* GetInputBehaviors() const { return BehaviorSet; }
 
@@ -41,6 +56,8 @@ public:
 
 protected:
 	FTypedElementHandle AcquireActorElementHandle(const AActor* Actor, const bool bAllowCreate);
+
+	FHitResult DefaultTrace(const FInputDeviceRay& InRay) const;
 
 protected:
 	// click-to-select behavior
@@ -57,8 +74,10 @@ protected:
 
 	TWeakObjectPtr<UTypedElementSelectionSet> WeakSelectionSet;
 
-	// default change-selection callback always allows selection change
-	TUniqueFunction<bool()> CanChangeSelectionCallback = []() { return true; };
+	// default predicate allows anything
+	FActorPredicate CanSelectCallback = [](AActor*) { return true; };
+
+	FTraceMethod TraceCallback;
 
 	// flags used to identify behavior modifier keys/buttons
 	static const int AddToSelectionModifier = 1;

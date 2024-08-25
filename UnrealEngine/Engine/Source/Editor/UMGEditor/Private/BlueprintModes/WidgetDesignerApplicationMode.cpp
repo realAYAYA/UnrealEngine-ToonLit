@@ -41,7 +41,7 @@ FWidgetDesignerApplicationMode::FWidgetDesignerApplicationMode(TSharedPtr<FWidge
 	FDisplayMetrics DisplayMetrics;
 	FSlateApplication::Get().GetDisplayMetrics(DisplayMetrics);
 
-	const float DPIScale = FPlatformApplicationMisc::GetDPIScaleFactorAtPoint(DisplayMetrics.PrimaryDisplayWorkAreaRect.Left, DisplayMetrics.PrimaryDisplayWorkAreaRect.Top);
+	const double DPIScale = FPlatformApplicationMisc::GetDPIScaleFactorAtPoint(static_cast<float>(DisplayMetrics.PrimaryDisplayWorkAreaRect.Left), static_cast<float>(DisplayMetrics.PrimaryDisplayWorkAreaRect.Top));
 
 	const float CenterScale = 0.4f;
 	const FVector2D DisplaySize(

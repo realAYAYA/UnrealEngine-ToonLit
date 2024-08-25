@@ -6,6 +6,9 @@
 #include "PixelCaptureBufferFormat.h"
 #include "PixelCaptureUtils.h"
 
+#include "Async/Async.h"
+#include "Containers/UnrealString.h"
+
 #include "libyuv/convert.h"
 
 TSharedPtr<FPixelCaptureCapturerRHIToI420CPU> FPixelCaptureCapturerRHIToI420CPU::Create(float InScale)
@@ -20,7 +23,6 @@ FPixelCaptureCapturerRHIToI420CPU::FPixelCaptureCapturerRHIToI420CPU(float InSca
 
 FPixelCaptureCapturerRHIToI420CPU::~FPixelCaptureCapturerRHIToI420CPU()
 {
-	CleanUp();
 }
 
 void FPixelCaptureCapturerRHIToI420CPU::Initialize(int32 InputWidth, int32 InputHeight)
@@ -44,20 +46,9 @@ void FPixelCaptureCapturerRHIToI420CPU::Initialize(int32 InputWidth, int32 Input
 		TextureDesc.AddFlags(ETextureCreateFlags::Shared);
 	}
 
-	StagingTexture = GDynamicRHI->RHICreateTexture(TextureDesc);
+	StagingTexture = RHICreateTexture(TextureDesc);
 
-	FRHITextureCreateDesc ReadbackDesc =
-		FRHITextureCreateDesc::Create2D(TEXT("FPixelCaptureCapturerRHIToI420CPU ReadbackTexture"), Width, Height, EPixelFormat::PF_B8G8R8A8)
-			.SetClearValue(FClearValueBinding::None)
-			.SetFlags(ETextureCreateFlags::CPUReadback)
-			.SetInitialState(ERHIAccess::CPURead)
-			.DetermineInititialState();
-
-	ReadbackTexture = GDynamicRHI->RHICreateTexture(ReadbackDesc);
-
-	int32 BufferWidth = 0, BufferHeight = 0;
-	GDynamicRHI->RHIMapStagingSurface(ReadbackTexture, nullptr, ResultsBuffer, BufferWidth, BufferHeight);
-	MappedStride = BufferWidth;
+	TextureReader = MakeShared<FRHIGPUTextureReadback>(TEXT("FPixelCaptureCapturerRHIToI420CPUReadback"));
 
 	FPixelCaptureCapturer::Initialize(InputWidth, InputHeight);
 }
@@ -85,12 +76,9 @@ void FPixelCaptureCapturerRHIToI420CPU::BeginProcess(const IPixelCaptureInputFra
 	RHICmdList.Transition(FRHITransitionInfo(SourceTexture, ERHIAccess::Unknown, ERHIAccess::CopySrc));
 	RHICmdList.Transition(FRHITransitionInfo(StagingTexture, ERHIAccess::CopySrc, ERHIAccess::CopyDest));
 	CopyTexture(RHICmdList, SourceTexture, StagingTexture, nullptr);
-
 	RHICmdList.Transition(FRHITransitionInfo(StagingTexture, ERHIAccess::CopyDest, ERHIAccess::CopySrc));
-	RHICmdList.Transition(FRHITransitionInfo(ReadbackTexture, ERHIAccess::CPURead, ERHIAccess::CopyDest));
-	RHICmdList.CopyTexture(StagingTexture, ReadbackTexture, {});
 
-	RHICmdList.Transition(FRHITransitionInfo(ReadbackTexture, ERHIAccess::CopyDest, ERHIAccess::CPURead));
+	TextureReader->EnqueueCopy(RHICmdList, StagingTexture, FIntVector(0, 0, 0), 0, FIntVector(StagingTexture->GetSizeXY().X, StagingTexture->GetSizeXY().Y, 0));
 
 	MarkCPUWorkEnd();
 
@@ -98,8 +86,22 @@ void FPixelCaptureCapturerRHIToI420CPU::BeginProcess(const IPixelCaptureInputFra
 	// until after the rhi thread is done with it, so all the commands will still have valid references.
 	TSharedRef<FPixelCaptureCapturerRHIToI420CPU> ThisRHIRef = StaticCastSharedRef<FPixelCaptureCapturerRHIToI420CPU>(AsShared());
 	RHICmdList.EnqueueLambda([ThisRHIRef, OutputBuffer](FRHICommandListImmediate&) {
-		ThisRHIRef->OnRHIStageComplete(OutputBuffer);
+		ThisRHIRef->CheckComplete(OutputBuffer);
 	});
+}
+
+void FPixelCaptureCapturerRHIToI420CPU::CheckComplete(IPixelCaptureOutputFrame* OutputBuffer)
+{
+	if (!TextureReader->IsReady())
+	{
+		TSharedRef<FPixelCaptureCapturerRHIToI420CPU> ThisRHIRef = StaticCastSharedRef<FPixelCaptureCapturerRHIToI420CPU>(AsShared());
+		AsyncTask(ENamedThreads::AnyBackgroundHiPriTask, [ThisRHIRef, OutputBuffer]() { ThisRHIRef->CheckComplete(OutputBuffer); });
+	}
+	else
+	{
+		TSharedRef<FPixelCaptureCapturerRHIToI420CPU> ThisRHIRef = StaticCastSharedRef<FPixelCaptureCapturerRHIToI420CPU>(AsShared());
+		AsyncTask(ENamedThreads::ActualRenderingThread, [ThisRHIRef, OutputBuffer]() { ThisRHIRef->OnRHIStageComplete(OutputBuffer); });
+	}
 }
 
 void FPixelCaptureCapturerRHIToI420CPU::OnRHIStageComplete(IPixelCaptureOutputFrame* OutputBuffer)
@@ -107,11 +109,14 @@ void FPixelCaptureCapturerRHIToI420CPU::OnRHIStageComplete(IPixelCaptureOutputFr
 	MarkGPUWorkEnd();
 	MarkCPUWorkStart();
 
+	int32 OutRowPitchInPixels = 0;
+	void* PixelData = TextureReader->Lock(OutRowPitchInPixels);
+
 	FPixelCaptureOutputFrameI420* OutputI420Buffer = StaticCast<FPixelCaptureOutputFrameI420*>(OutputBuffer);
 	TSharedPtr<FPixelCaptureBufferI420> I420Buffer = OutputI420Buffer->GetI420Buffer();
 	libyuv::ARGBToI420(
-		static_cast<uint8*>(ResultsBuffer),
-		MappedStride * 4,
+		static_cast<uint8*>(PixelData),
+		OutRowPitchInPixels * 4,
 		I420Buffer->GetMutableDataY(),
 		I420Buffer->GetStrideY(),
 		I420Buffer->GetMutableDataU(),
@@ -121,12 +126,8 @@ void FPixelCaptureCapturerRHIToI420CPU::OnRHIStageComplete(IPixelCaptureOutputFr
 		I420Buffer->GetWidth(),
 		I420Buffer->GetHeight());
 
+	TextureReader->Unlock();
+
 	MarkCPUWorkEnd();
 	EndProcess();
-}
-
-void FPixelCaptureCapturerRHIToI420CPU::CleanUp()
-{
-	GDynamicRHI->RHIUnmapStagingSurface(ReadbackTexture);
-	ResultsBuffer = nullptr;
 }

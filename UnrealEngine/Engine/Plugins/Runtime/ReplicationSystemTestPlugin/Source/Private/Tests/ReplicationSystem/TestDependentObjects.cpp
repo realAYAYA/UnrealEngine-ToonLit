@@ -1,15 +1,96 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "ReplicationSystemServerClientTestFixture.h"
-#include "Iris/Serialization/NetBitStreamReader.h"
-#include "Iris/Serialization/NetBitStreamWriter.h"
 #include "Iris/ReplicationSystem/ReplicationSystem.h"
+#include "Iris/ReplicationSystem/Filtering/NetObjectFilterDefinitions.h"
+#include "Tests/ReplicationSystem/Filtering/MockNetObjectFilter.h"
 
-#include "Iris/ReplicationSystem/ReplicationSystemInternal.h"
-#include "Iris/ReplicationSystem/NetTokenStore.h"
 
 namespace UE::Net::Private
 {
+	
+class FTestFilteredDependentObjectFixture : public FReplicationSystemServerClientTestFixture
+{
+protected:
+	virtual void SetUp() override
+	{
+		InitFilterDefinitions();
+		FReplicationSystemServerClientTestFixture::SetUp();
+		InitFilterHandles();
+	}
+
+	virtual void TearDown() override
+	{
+		FReplicationSystemServerClientTestFixture::TearDown();
+		RestoreFilterDefinitions();
+	}
+
+	void SetMockFilterStatus(UE::Net::ENetFilterStatus FilterStatus)
+	{
+		UMockNetObjectFilter::FFunctionCallSetup CallSetup;
+		CallSetup.AddObject.bReturnValue = true;
+		CallSetup.Filter.bFilterOutByDefault = FilterStatus == UE::Net::ENetFilterStatus::Disallow;
+		MockFilter->SetFunctionCallSetup(CallSetup);
+	}
+
+	FNetObjectFilterHandle NotRoutedFilterHandle = InvalidNetObjectFilterHandle;
+	FNetObjectFilterHandle MockFilterHandle = InvalidNetObjectFilterHandle;
+	TObjectPtr<UMockNetObjectFilter> MockFilter = nullptr;
+
+private:
+	void InitFilterDefinitions()
+	{
+		const UClass* NetObjectFilterDefinitionsClass = UNetObjectFilterDefinitions::StaticClass();
+		const FProperty* DefinitionsProperty = NetObjectFilterDefinitionsClass->FindPropertyByName("NetObjectFilterDefinitions");
+		check(DefinitionsProperty != nullptr);
+
+		// Save CDO state.
+		UNetObjectFilterDefinitions* FilterDefinitions = GetMutableDefault<UNetObjectFilterDefinitions>();
+		DefinitionsProperty->CopyCompleteValue(&OriginalFilterDefinitions, (void*)(UPTRINT(FilterDefinitions) + DefinitionsProperty->GetOffset_ForInternal()));
+
+		// Modify definitions to only include our filters. 
+		TArray<FNetObjectFilterDefinition> NewFilterDefinitions;
+		{
+			FNetObjectFilterDefinition& NotRoutedDefinition = NewFilterDefinitions.Emplace_GetRef();
+			NotRoutedDefinition.FilterName = "NotRouted";
+			NotRoutedDefinition.ClassName = "/Script/IrisCore.FilterOutNetObjectFilter";
+			NotRoutedDefinition.ConfigClassName = "/Script/IrisCore.NetObjectGridFilterConfig";
+		}
+
+		{
+			FNetObjectFilterDefinition& MockDefinition = NewFilterDefinitions.Emplace_GetRef();
+			MockDefinition.FilterName = "Mock";
+			MockDefinition.ClassName = "/Script/ReplicationSystemTestPlugin.MockNetObjectFilter";
+			MockDefinition.ConfigClassName = "/Script/ReplicationSystemTestPlugin.MockNetObjectFilterConfig";
+		}
+
+		DefinitionsProperty->CopyCompleteValue((void*)(UPTRINT(FilterDefinitions) + DefinitionsProperty->GetOffset_ForInternal()), &NewFilterDefinitions);
+	}
+
+	void RestoreFilterDefinitions()
+	{
+		// Restore CDO state from the saved state.
+		const UClass* NetObjectFilterDefinitionsClass = UNetObjectFilterDefinitions::StaticClass();
+		const FProperty* DefinitionsProperty = NetObjectFilterDefinitionsClass->FindPropertyByName("NetObjectFilterDefinitions");
+		UNetObjectFilterDefinitions* FilterDefinitions = GetMutableDefault<UNetObjectFilterDefinitions>();
+		DefinitionsProperty->CopyCompleteValue((void*)(UPTRINT(FilterDefinitions) + DefinitionsProperty->GetOffset_ForInternal()), &OriginalFilterDefinitions);
+		OriginalFilterDefinitions.Empty();
+
+		NotRoutedFilterHandle = InvalidNetObjectFilterHandle;
+		MockFilterHandle = InvalidNetObjectFilterHandle;
+		MockFilter = nullptr;
+	}
+
+	void InitFilterHandles()
+	{
+		NotRoutedFilterHandle = Server->GetReplicationSystem()->GetFilterHandle("NotRouted");
+		MockFilterHandle = Server->GetReplicationSystem()->GetFilterHandle("Mock");
+		MockFilter = Cast<UMockNetObjectFilter>(Server->GetReplicationSystem()->GetFilter("Mock"));
+	}
+
+private:
+	TArray<FNetObjectFilterDefinition> OriginalFilterDefinitions;
+};
 
 UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestDependentObjectDroppedDataIsRetransmitted)
 {
@@ -83,7 +164,7 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestDependentObje
 
 	// Filter out Server object to start with
 	FNetObjectGroupHandle FilterGroup = ReplicationSystem->CreateGroup();
-	ReplicationSystem->AddGroupFilter(FilterGroup);
+	ReplicationSystem->AddExclusionFilterGroup(FilterGroup);
 	ReplicationSystem->AddToGroup(FilterGroup, ServerObject->NetRefHandle);
 
 	// Setup dependent object to only replicate with ServerObject
@@ -131,7 +212,7 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestChainedDepend
 
 	// Filter out Server object to start with
 	FNetObjectGroupHandle FilterGroup = ReplicationSystem->CreateGroup();
-	ReplicationSystem->AddGroupFilter(FilterGroup);
+	ReplicationSystem->AddExclusionFilterGroup(FilterGroup);
 	ReplicationSystem->AddToGroup(FilterGroup, ServerObject->NetRefHandle);
 
 	// Setup dependent object to only replicate with ServerObject
@@ -719,6 +800,149 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestLateAddedNest
 
 	// Verify that they have replicated in expected order 
 	UE_NET_ASSERT_LT(ClientNestedDependentObject->LastRepOrderCounter, ClientObject->LastRepOrderCounter);
+}
+
+UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestLateAddedNestedDependentObjectPendingWaitOnCreateConfirmation)
+{
+	UReplicationSystem* ReplicationSystem = Server->ReplicationSystem;
+	UReplicatedTestObjectBridge* Bridge = Server->GetReplicationBridge();
+
+	// Add a client
+	FReplicationSystemTestClient* Client = CreateClient();
+
+	// Spawn objects on server
+	UReplicatedSubObjectOrderObject* ServerSharedDependentObject = Server->CreateObject<UReplicatedSubObjectOrderObject>();
+	UReplicatedSubObjectOrderObject* ServerDependentObject = Server->CreateObject<UReplicatedSubObjectOrderObject>();
+
+	// Set static prio to only replicate with parent
+	ReplicationSystem->SetStaticPriority(ServerDependentObject->NetRefHandle, 1.f);
+
+	// Reset RepOrderCounter
+	UReplicatedSubObjectOrderObject::RepOrderCounter = 0U;
+
+	// Create server object
+	UReplicatedSubObjectOrderObject* ServerObject = Server->CreateObject<UReplicatedSubObjectOrderObject>();
+
+	// Add same dependent to both ServerObject and ServerDependentObject
+	Bridge->AddDependentObject(ServerObject->NetRefHandle, ServerDependentObject->NetRefHandle);
+	Bridge->AddDependentObject(ServerObject->NetRefHandle, ServerSharedDependentObject->NetRefHandle);
+	Bridge->AddDependentObject(ServerDependentObject->NetRefHandle, ServerSharedDependentObject->NetRefHandle);
+
+	// Send data
+	Server->PreSendUpdate();
+	Server->SendAndDeliverTo(Client, true);
+	Server->PostSendUpdate();
+
+	// Verify that objects have replicated
+	UReplicatedSubObjectOrderObject* ClientObject = Cast<UReplicatedSubObjectOrderObject>(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle));
+	UReplicatedSubObjectOrderObject* ClientDependentObject = Cast<UReplicatedSubObjectOrderObject>(Client->GetReplicationBridge()->GetReplicatedObject(ServerDependentObject->NetRefHandle));
+	UReplicatedSubObjectOrderObject* ClientSharedDependentObject = Cast<UReplicatedSubObjectOrderObject>(Client->GetReplicationBridge()->GetReplicatedObject(ServerSharedDependentObject->NetRefHandle));
+}
+
+UE_NET_TEST_FIXTURE(FTestFilteredDependentObjectFixture, TestDependentObjectIsFilteredOutTogetherWithParent)
+{
+	UReplicationSystem* ReplicationSystem = Server->ReplicationSystem;
+	UReplicatedTestObjectBridge* Bridge = Server->GetReplicationBridge();
+
+	// Add a client
+	FReplicationSystemTestClient* Client = CreateClient();
+
+	// Spawn objects on server
+	UTestReplicatedIrisObject* ServerObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+	UTestReplicatedIrisObject* ServerDependentObject = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+	Bridge->AddDependentObject(ServerObject->NetRefHandle, ServerDependentObject->NetRefHandle);
+
+	// Dynamically filter out dependent object
+	ReplicationSystem->SetFilter(ServerDependentObject->NetRefHandle, NotRoutedFilterHandle);
+
+	// Add parent object to MockFilter so we can filter in/out as desired.
+	SetMockFilterStatus(UE::Net::ENetFilterStatus::Allow);
+	ReplicationSystem->SetFilter(ServerObject->NetRefHandle, MockFilterHandle);
+
+	// Send data
+	Server->UpdateAndSend({Client});
+
+	// Verify that objects have replicated
+	UTestReplicatedIrisObject* ClientObject = Cast<UTestReplicatedIrisObject>(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle));
+	UE_NET_ASSERT_NE(ClientObject, nullptr);
+	UTestReplicatedIrisObject* ClientDependentObject = Cast<UTestReplicatedIrisObject>(Client->GetReplicationBridge()->GetReplicatedObject(ServerDependentObject->NetRefHandle));
+	UE_NET_ASSERT_NE(ClientDependentObject, nullptr);
+
+	// Filter out parent object. Dependent object should be filtered out as well due to being filtered out by default.
+	SetMockFilterStatus(UE::Net::ENetFilterStatus::Disallow);
+
+	// Send data
+	Server->UpdateAndSend({Client});
+
+	// Both parent and dependent should now be filtered out.
+	ClientObject = Cast<UTestReplicatedIrisObject>(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle));
+	UE_NET_ASSERT_EQ(ClientObject, nullptr);
+	ClientDependentObject = Cast<UTestReplicatedIrisObject>(Client->GetReplicationBridge()->GetReplicatedObject(ServerDependentObject->NetRefHandle));
+	UE_NET_ASSERT_EQ(ClientDependentObject, nullptr);
+
+	// Restore filtering such that both objects are expected to be replicated again.
+	SetMockFilterStatus(UE::Net::ENetFilterStatus::Allow);
+
+	// Send data
+	Server->UpdateAndSend({Client});
+
+	ClientObject = Cast<UTestReplicatedIrisObject>(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle));
+	UE_NET_ASSERT_NE(ClientObject, nullptr);
+	ClientDependentObject = Cast<UTestReplicatedIrisObject>(Client->GetReplicationBridge()->GetReplicatedObject(ServerDependentObject->NetRefHandle));
+	UE_NET_ASSERT_NE(ClientDependentObject, nullptr);
+}
+
+UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestDependentObjectScheduledBeforeParentWithHighPriority)
+{
+	UReplicationSystem* ReplicationSystem = Server->ReplicationSystem;
+	UReplicatedTestObjectBridge* Bridge = Server->GetReplicationBridge();
+
+	// Add a client
+	FReplicationSystemTestClient* Client = CreateClient();
+
+	// Spawn object on server
+	UReplicatedSubObjectOrderObject* ServerObject = Server->CreateObject<UReplicatedSubObjectOrderObject>();
+
+	// Spawn dependent object
+	UReplicatedSubObjectOrderObject* ServerDependentObject = Server->CreateObject<UReplicatedSubObjectOrderObject>();
+	Bridge->AddDependentObject(ServerObject->NetRefHandle, ServerDependentObject->NetRefHandle, EDependentObjectSchedulingHint::ScheduleBeforeParent);
+
+	// Set prio to only replicate with parent
+	ReplicationSystem->SetStaticPriority(ServerDependentObject->NetRefHandle, 0.f);
+
+	// Set high prio on parent
+	const float VeryHighPriority = 1.0E7f;
+	ReplicationSystem->SetStaticPriority(ServerObject->NetRefHandle, VeryHighPriority);
+
+	// Reset RepOrderCounter
+	UReplicatedSubObjectOrderObject::RepOrderCounter = 0U;
+
+	// Send and deliver packet
+	Server->PreSendUpdate();
+	Server->SendAndDeliverTo(Client, true);
+	Server->PostSendUpdate();
+
+	// Verify that objects have replicated
+	UReplicatedSubObjectOrderObject* ClientObject = Cast<UReplicatedSubObjectOrderObject>(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle));
+	UReplicatedSubObjectOrderObject* ClientDependentObject = Cast<UReplicatedSubObjectOrderObject>(Client->GetReplicationBridge()->GetReplicatedObject(ServerDependentObject->NetRefHandle));
+
+	UE_NET_ASSERT_NE(ClientObject, nullptr);
+	UE_NET_ASSERT_NE(ClientDependentObject, nullptr);
+
+	// Verify that they have replicated in expected order for initial objects
+	UE_NET_ASSERT_LT(ClientDependentObject->LastRepOrderCounter, ClientObject->LastRepOrderCounter);
+
+	// Modify both parent and dependent
+	ServerObject->IntA = 1;
+	ServerDependentObject->IntA = 1;
+
+	// Send and deliver packet
+	Server->PreSendUpdate();
+	Server->SendAndDeliverTo(Client, true);
+	Server->PostSendUpdate();
+
+	// Verify that they have replicated in expected order
+	UE_NET_ASSERT_LT(ClientDependentObject->LastRepOrderCounter, ClientObject->LastRepOrderCounter);
 }
 
 }

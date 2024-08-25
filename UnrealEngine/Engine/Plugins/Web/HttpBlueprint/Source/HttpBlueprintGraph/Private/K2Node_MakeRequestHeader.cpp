@@ -33,7 +33,7 @@ namespace UE::HttpBlueprint::Private
 
 	namespace Pin
 	{
-		UE_NODISCARD static FString MakePinName(int32 PinIndex)
+		[[nodiscard]] static FString MakePinName(int32 PinIndex)
 		{
 			const int32 PairIndex = PinIndex / 2;
 			if (PinIndex % 2 == 0)
@@ -44,7 +44,7 @@ namespace UE::HttpBlueprint::Private
 			return *FString::Printf(TEXT("%s %d"), *UE::HttpBlueprint::Private::MakeRequestHeaderGlobals::InputValuePrefix.ToString(), PairIndex);
 		}
 	
-		UE_NODISCARD static bool IsValidInputPin(const UEdGraphPin* InputPin)
+		[[nodiscard]] static bool IsValidInputPin(const UEdGraphPin* InputPin)
 		{
 			return InputPin
 				&& InputPin->Direction == EGPD_Input

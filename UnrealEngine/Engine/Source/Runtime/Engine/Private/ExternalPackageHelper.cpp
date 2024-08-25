@@ -1,15 +1,27 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "ExternalPackageHelper.h"
-#include "Misc/ArchiveMD5.h"
 
 #if WITH_EDITOR
 
+#include "AssetRegistry/IAssetRegistry.h"
+#include "Misc/ArchiveMD5.h"
+#include "Misc/Paths.h"
+#include "HAL/PlatformApplicationMisc.h"
+
 FExternalPackageHelper::FOnObjectPackagingModeChanged FExternalPackageHelper::OnObjectPackagingModeChanged;
 
-UPackage* FExternalPackageHelper::CreateExternalPackage(UObject* InObjectOuter, const FString& InObjectPath, EPackageFlags InFlags)
+EPackageFlags FExternalPackageHelper::GetDefaultExternalPackageFlags()
 {
-	UPackage* Package = CreatePackage(*FExternalPackageHelper::GetExternalPackageName(InObjectOuter->GetPackage()->GetName(), InObjectPath));
+	return (PKG_EditorOnly | PKG_ContainsMapData | PKG_NewlyCreated);
+}
+
+UPackage* FExternalPackageHelper::CreateExternalPackage(UObject* InObjectOuter, const FString& InObjectPath, EPackageFlags InFlags, const UExternalDataLayerAsset* InExternalDataLayerAsset)
+{
+	const UPackage* OutermostPackage = InObjectOuter->IsA<UPackage>() ? CastChecked<UPackage>(InObjectOuter) : InObjectOuter->GetOutermostObject()->GetPackage();
+	const FString RootPath = InExternalDataLayerAsset ? FExternalDataLayerHelper::GetExternalDataLayerLevelRootPath(InExternalDataLayerAsset, OutermostPackage->GetName()) : OutermostPackage->GetName();
+	const FString ExternalObjectPackageName = FExternalPackageHelper::GetExternalPackageName(RootPath, InObjectPath);
+	UPackage* Package = CreatePackage(*ExternalObjectPackageName);
 	Package->SetPackageFlags(InFlags);
 	return Package;
 }
@@ -26,7 +38,9 @@ void FExternalPackageHelper::SetPackagingMode(UObject* InObject, UObject* InObje
 
 	if (bInIsPackageExternal)
 	{
-		UPackage* NewObjectPackage = FExternalPackageHelper::CreateExternalPackage(InObjectOuter, InObject->GetPathName(), InExternalPackageFlags);
+		const IDataLayerInstanceProvider* DataLayerInstanceProvider = InObject->GetImplementingOuter<IDataLayerInstanceProvider>();
+		const UExternalDataLayerAsset* ExternalDataLayerAsset = DataLayerInstanceProvider ? DataLayerInstanceProvider->GetRootExternalDataLayerAsset() : nullptr;
+		UPackage* NewObjectPackage = FExternalPackageHelper::CreateExternalPackage(InObjectOuter, InObject->GetPathName(), InExternalPackageFlags, ExternalDataLayerAsset);
 		InObject->SetExternalPackage(NewObjectPackage);
 	}
 	else
@@ -140,5 +154,41 @@ void FExternalPackageHelper::GetExternalSaveableObjects(UObject* InOuter, TArray
 		}
 	}
 }
+
+TArray<FString> FExternalPackageHelper::GetObjectsExternalPackageFilePath(const TArray<const UObject*>& InObjects)
+{
+	TArray<FString> PackageFilePaths;
+	for (const UObject* Object : InObjects)
+	{
+		if (Object && Object->IsPackageExternal())
+		{
+			const FString LocalFullPath(Object->GetExternalPackage()->GetLoadedPath().GetLocalFullPath());
+			if (!LocalFullPath.IsEmpty())
+			{
+				PackageFilePaths.Add(FPaths::ConvertRelativePathToFull(LocalFullPath));
+			}
+		}
+	}
+	return PackageFilePaths;
+}
+
+void FExternalPackageHelper::CopyObjectsExternalPackageFilePathToClipboard(const TArray<const UObject*>& InObjects)
+{
+	TArray<FString> PackageFilePaths = GetObjectsExternalPackageFilePath(InObjects);
+	if (!PackageFilePaths.IsEmpty())
+	{
+		FString Result = FString::Join(PackageFilePaths, TEXT("\n"));
+		check(Result.Len());
+		FPlatformApplicationMisc::ClipboardCopy(*Result);
+	}
+}
+
+void FExternalPackageHelper::GetSortedAssets(const FARFilter& Filter, TArray<FAssetData>& OutAssets)
+{
+	OutAssets.Reset();
+	IAssetRegistry::GetChecked().GetAssets(Filter, OutAssets);
+	OutAssets.Sort();
+}
+
 
 #endif

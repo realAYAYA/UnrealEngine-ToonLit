@@ -7,6 +7,7 @@
 #include "Misc/App.h"
 #include "Misc/Parse.h"
 #include "Misc/Paths.h"
+#include "Misc/PathViews.h"
 #include "Misc/Optional.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Templates/UniquePtr.h"
@@ -25,6 +26,25 @@ const FGuid FTextLocalizationResourceVersion::LocResMagic = FGuid(0x7574140E, 0x
 
 /** LocRes files can be quite large, so we won't pre-load those by default */
 #define PRELOAD_LOCRES_FILES (0)
+
+namespace TextLocalizationResourceUtil
+{
+
+int32 GetLocalizationTargetPathIdFromLocResId(const FTextKey& InLocResID)
+{
+	int32 LocalizationTargetPathId = INDEX_NONE;
+	if (!InLocResID.IsEmpty())
+	{
+		// LocResID would be "/Path/To/LocalizationTarget/Culture/LocalizationTarget.locres" so trim this back to "/Path/To/LocalizationTarget"
+		FStringView LocalizationTargetPath = InLocResID.GetChars();
+		LocalizationTargetPath = FPathViews::GetPath(LocalizationTargetPath); // Remove "LocalizationTarget.locres"
+		LocalizationTargetPath = FPathViews::GetPath(LocalizationTargetPath); // Remove "Culture"
+		LocalizationTargetPathId = FTextLocalizationManager::Get().GetLocalizationTargetPathId(LocalizationTargetPath);
+	}
+	return LocalizationTargetPathId;
+}
+
+}
 
 bool FTextLocalizationMetaDataResource::LoadFromFile(const FString& FilePath)
 {
@@ -170,6 +190,7 @@ void FTextLocalizationResource::AddEntry(const FTextKey& InNamespace, const FTex
 {
 	FEntry NewEntry;
 	NewEntry.LocResID = InLocResID;
+	NewEntry.LocalizationTargetPathId = TextLocalizationResourceUtil::GetLocalizationTargetPathIdFromLocResId(InLocResID);
 	NewEntry.SourceStringHash = InSourceStringHash;
 	NewEntry.LocalizedString = InLocalizedString;
 	NewEntry.Priority = InPriority;
@@ -318,6 +339,7 @@ bool FTextLocalizationResource::LoadFromArchive(FArchive& Archive, const FTextKe
 		}
 	};
 
+	const int32 LocalizationTargetPathId = TextLocalizationResourceUtil::GetLocalizationTargetPathIdFromLocResId(LocResID);
 	for (uint32 i = 0; i < NamespaceCount; ++i)
 	{
 		// Read namespace
@@ -336,6 +358,7 @@ bool FTextLocalizationResource::LoadFromArchive(FArchive& Archive, const FTextKe
 
 			FEntry NewEntry;
 			NewEntry.LocResID = LocResID;
+			NewEntry.LocalizationTargetPathId = LocalizationTargetPathId;
 			NewEntry.Priority = Priority;
 
 			Archive << NewEntry.SourceStringHash;
@@ -520,9 +543,9 @@ bool FTextLocalizationResource::ShouldReplaceEntry(const FTextKey& Namespace, co
 		const bool bDidConflict = CurrentEntry.SourceStringHash != NewEntry.SourceStringHash || !CurrentEntry.LocalizedString->Equals(*NewEntry.LocalizedString, ESearchCase::CaseSensitive);
 		if (bDidConflict)
 		{
-			const FString LogMsg = FString::Printf(TEXT("Text translation conflict for namespace \"%s\" and key \"%s\". The current translation is \"%s\" (from \"%s\" and source hash 0x%08x) and the conflicting translation of \"%s\" (from \"%s\" and source hash 0x%08x) will be ignored."), 
-				Namespace.GetChars(),
-				Key.GetChars(),
+			const FString SummaryMessage = FString::Printf(TEXT("Text translation conflict for namespace \"%s\" and key \"%s\"."),
+				Namespace.GetChars(), Key.GetChars());
+			const FString DetailsMessage = FString::Printf(TEXT("The current translation is \"%s\" (from \"%s\" and source hash 0x%08x) and the conflicting translation of \"%s\" (from \"%s\" and source hash 0x%08x) will be ignored."), 
 				**CurrentEntry.LocalizedString,
 				CurrentEntry.LocResID.GetChars(),
 				CurrentEntry.SourceStringHash,
@@ -531,14 +554,22 @@ bool FTextLocalizationResource::ShouldReplaceEntry(const FTextKey& Namespace, co
 				NewEntry.SourceStringHash
 				);
 
-			static const bool bLogConflictAsWarning = FParse::Param(FCommandLine::Get(), TEXT("LogLocalizationConflicts")) || !GIsBuildMachine;
-			if (bLogConflictAsWarning)
+			static const bool bLoggingConflictsRequested = FParse::Param(FCommandLine::Get(), TEXT("LogLocalizationConflicts"));
+			if (bLoggingConflictsRequested)
 			{
-				UE_LOG(LogTextLocalizationResource, Warning, TEXT("%s"), *LogMsg);
+				// Log the entire message as warning. Include the details in the warning log so they appear in stdout.
+				UE_LOG(LogTextLocalizationResource, Warning, TEXT("%s"), *(SummaryMessage + TEXT(" ") + DetailsMessage));
+			}
+			else if (!GIsBuildMachine)
+			{
+				// Log just the summary as a warning and hide the rest in the log.
+				UE_LOG(LogTextLocalizationResource, Warning, TEXT("%s"), *SummaryMessage);
+				UE_LOG(LogTextLocalizationResource, Log, TEXT("%s"), *DetailsMessage);
 			}
 			else
 			{
-				UE_LOG(LogTextLocalizationResource, Log, TEXT("%s"), *LogMsg);
+				// Hide the entire message in the log.
+				UE_LOG(LogTextLocalizationResource, Log, TEXT("%s"), *(SummaryMessage + TEXT(" ") + DetailsMessage));
 			}
 		}
 	}

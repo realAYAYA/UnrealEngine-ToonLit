@@ -178,7 +178,7 @@ namespace EpicGames.Horde.Logs
 		static byte[] GetTokenChars()
 		{
 			byte[] chars = new byte[256];
-			for(int idx = 0; idx < 256; idx++)
+			for (int idx = 0; idx < 256; idx++)
 			{
 				chars[idx] = (byte)idx;
 			}

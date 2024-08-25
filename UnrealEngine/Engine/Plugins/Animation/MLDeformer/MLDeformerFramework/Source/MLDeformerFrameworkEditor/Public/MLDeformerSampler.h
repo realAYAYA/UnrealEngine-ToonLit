@@ -37,7 +37,10 @@ namespace UE::MLDeformer
 		virtual ~FMLDeformerSampler();
 
 		/** Call Init whenever assets or other relevant settings change. */
+		UE_DEPRECATED(5.4, "Please switch to using Init(Model, AnimIndex) instead.")
 		virtual void Init(FMLDeformerEditorModel* Model);
+
+		virtual void Init(FMLDeformerEditorModel* Model, int32 AnimIndex);
 
 		/** Call this every time the frame changes. This will update all buffer contents. */
 		virtual void Sample(int32 AnimFrameIndex);
@@ -93,11 +96,15 @@ namespace UE::MLDeformer
 		/** Get the number of floats per curve. */
 		int32 GetNumFloatsPerCurve() const								{ return NumFloatsPerCurve; }
 
+		/** Get the skinned positions for a given LOD level. */
+		void ExtractSkinnedPositions(int32 LODIndex, TArray<FVector3f>& OutPositions);
+
 	protected:
 		/** Create the actors used for sampling. This creates two actors, one for the base skeletal mesh and one for the target mesh. */
 		virtual void CreateActors();
 
 		/** Register the target mesh components. */
+		UE_DEPRECATED(5.4, "Please create your target component inside the overloaded Init method instead.")
 		virtual void RegisterTargetComponents() {}
 
 		/** Extract the skinned vertex positions, of the skeletal mesh. */
@@ -176,6 +183,9 @@ namespace UE::MLDeformer
 
 		/** The animation frame we sampled the deltas for. */
 		int32 AnimFrameIndex = -1;
+
+		/** The animation index for which this is a sampler for. This is in range of 0..GetNumTrainingInputAnims(). */
+		int32 AnimIndex = -1;
 
 		/**
 		 * The number of floats per curve value. If this is larger than 1, the remaining floats (after the first one) will be set to 0. 

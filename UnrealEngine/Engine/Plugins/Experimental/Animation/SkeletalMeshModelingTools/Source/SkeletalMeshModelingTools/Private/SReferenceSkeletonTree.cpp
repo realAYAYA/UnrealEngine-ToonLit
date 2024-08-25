@@ -4,6 +4,7 @@
 
 #include "SkeletonModifier.h"
 #include "SkeletalMeshModelingToolsCommands.h"
+#include "SkeletonClipboard.h"
 
 #include "SPositiveActionButton.h"
 
@@ -13,6 +14,7 @@
 
 #include "Framework/MultiBox/MultiBoxBuilder.h"
 #include "Editor.h"
+
 #include "Misc/ITransaction.h"
 
 #define LOCTEXT_NAMESPACE "SReferenceSkeletonTree"
@@ -359,6 +361,18 @@ void SReferenceSkeletonTree::BindCommands()
 	CommandList->MapAction(Commands.UnParentBone,
 		FExecuteAction::CreateSP(this, &SReferenceSkeletonTree::HandleUnParentBone),
 		FCanExecuteAction::CreateSP(this, &SReferenceSkeletonTree::CanUnParentBone));
+
+	CommandList->MapAction(Commands.CopyBones,
+		FExecuteAction::CreateSP(this, &SReferenceSkeletonTree::HandleCopyBones),
+		FCanExecuteAction::CreateSP(this, &SReferenceSkeletonTree::CanCopyBones));
+	
+	CommandList->MapAction(Commands.PasteBones,
+		FExecuteAction::CreateSP(this, &SReferenceSkeletonTree::HandlePasteBones),
+		FCanExecuteAction::CreateSP(this, &SReferenceSkeletonTree::CanPasteBones));
+	
+	CommandList->MapAction(Commands.DuplicateBones,
+		FExecuteAction::CreateSP(this, &SReferenceSkeletonTree::HandleDuplicateBones),
+		FCanExecuteAction::CreateSP(this, &SReferenceSkeletonTree::CanDuplicateBones));
 }
 
 void SReferenceSkeletonTree::HandleNewBone()
@@ -466,6 +480,101 @@ bool SReferenceSkeletonTree::CanUnParentBone() const
 	return HasSelectedItems();
 }
 
+void SReferenceSkeletonTree::HandleCopyBones() const
+{
+	if (!ensure(Modifier.IsValid()))
+	{
+		return;
+	}
+
+	TArray<FName> BoneNames;
+	GetSelectedBoneNames(BoneNames);
+
+	if (BoneNames.IsEmpty())
+	{
+		return;
+	}
+
+	SkeletonClipboard::CopyToClipboard(*Modifier.Get(), BoneNames);
+}
+
+bool SReferenceSkeletonTree::CanCopyBones() const
+{
+	return Modifier.IsValid() && HasSelectedItems();
+}
+
+void SReferenceSkeletonTree::HandlePasteBones()
+{
+	TArray<FName> BoneNames;
+	GetSelectedBoneNames(BoneNames);
+
+	const FName DefaultParent = BoneNames.IsEmpty() ? NAME_None : BoneNames[0];  
+
+	BeginChange();
+	
+	const TArray<FName> NewBones = SkeletonClipboard::PasteFromClipboard(*Modifier.Get(), DefaultParent);
+	if (NewBones.IsEmpty())
+	{
+		CancelChange();
+		return;
+	}
+
+	static constexpr bool bRebuildAll = true;
+	RefreshTreeView(bRebuildAll);
+	static constexpr bool bFrameSelection = true;
+	SelectItemFromNames(NewBones, bFrameSelection);
+
+	if (Notifier.IsValid())
+	{
+		Notifier->Notify(NewBones, ESkeletalMeshNotifyType::HierarchyChanged);
+		Notifier->Notify(NewBones, ESkeletalMeshNotifyType::BonesSelected);
+	}
+
+	EndChange();
+}
+
+bool SReferenceSkeletonTree::CanPasteBones() const
+{
+	return Modifier.IsValid() && SkeletonClipboard::IsClipboardValid();
+}
+
+void SReferenceSkeletonTree::HandleDuplicateBones()
+{
+	HandleCopyBones();
+
+	if (!SkeletonClipboard::IsClipboardValid())
+	{
+		return;
+	}  
+
+	BeginChange();
+	
+	const TArray<FName> NewBones = SkeletonClipboard::PasteFromClipboard(*Modifier.Get(), NAME_None);
+	if (NewBones.IsEmpty())
+	{
+		CancelChange();
+		return;
+	}
+
+	static constexpr bool bRebuildAll = true;
+	RefreshTreeView(bRebuildAll);
+	static constexpr bool bFrameSelection = true;
+	SelectItemFromNames(NewBones, bFrameSelection);
+
+	if (Notifier.IsValid())
+	{
+		Notifier->Notify(NewBones, ESkeletalMeshNotifyType::HierarchyChanged);
+		Notifier->Notify(NewBones, ESkeletalMeshNotifyType::BonesSelected);
+	}
+
+	EndChange();
+}
+
+bool SReferenceSkeletonTree::CanDuplicateBones() const
+{
+	return CanCopyBones();
+}
+
 void SReferenceSkeletonTree::GetSelectedBoneNames(TArray<FName>& OutSelectedBoneNames) const
 {
 	OutSelectedBoneNames.Reset();
@@ -478,12 +587,18 @@ void SReferenceSkeletonTree::GetSelectedBoneNames(TArray<FName>& OutSelectedBone
 	});
 }
 
-void SReferenceSkeletonTree::SelectItemFromNames(const TArray<FName>& InBoneNames)
+void SReferenceSkeletonTree::SelectItemFromNames(const TArray<FName>& InBoneNames, bool bFrameSelection)
 {
 	for (const TSharedPtr<FBoneElement>& Item : AllElements)
 	{
 		const bool bSelect = InBoneNames.Contains(Item->BoneName);
 		TreeView->SetItemSelection(Item, bSelect, ESelectInfo::Direct);
+
+		if (bFrameSelection && bSelect)
+		{
+			TreeView->RequestScrollIntoView(Item);
+			bFrameSelection = false;
+		}
 	}
 }
 
@@ -728,8 +843,22 @@ void SReferenceSkeletonTree::HandleGetChildrenForTree(
 	OutChildren = InItem.Get()->Children;
 }
 
-void SReferenceSkeletonTree::OnSelectionChanged(TSharedPtr<FBoneElement> Selection, ESelectInfo::Type SelectInfo)
+void SReferenceSkeletonTree::OnSelectionChanged(TSharedPtr<FBoneElement> InItem, ESelectInfo::Type InSelectInfo)
 {
+	if (InSelectInfo == ESelectInfo::Direct)
+	{
+		return;
+	}
+	
+	if (!InItem)
+	{
+		if (Notifier.IsValid())
+		{
+			Notifier->Notify({}, ESkeletalMeshNotifyType::BonesSelected);
+		}
+		return;
+	}
+	
 	TArray<FName> BoneNames;
 	GetSelectedBoneNames(BoneNames);
 	
@@ -768,6 +897,12 @@ TSharedPtr<SWidget> SReferenceSkeletonTree::CreateContextMenu()
 		MenuBuilder.AddMenuEntry(Commands.NewBone);
 
 		MenuBuilder.EndSection();
+
+		MenuBuilder.BeginSection("CopyPasteBones", LOCTEXT("CopyPasteBonesOperations", "Copy & Paste"));
+
+		MenuBuilder.AddMenuEntry(Commands.PasteBones);
+
+		MenuBuilder.EndSection();
 	}
 	else
 	{
@@ -777,6 +912,14 @@ TSharedPtr<SWidget> SReferenceSkeletonTree::CreateContextMenu()
 		MenuBuilder.AddMenuEntry(Commands.RemoveBone);
 		MenuBuilder.AddMenuEntry(Commands.UnParentBone);
 		MenuBuilder.AddMenuEntry(Commands.RenameBone);
+
+		MenuBuilder.EndSection();
+
+		MenuBuilder.BeginSection("CopyPasteBones", LOCTEXT("CopyPasteBonesOperations", "Copy & Paste"));
+
+		MenuBuilder.AddMenuEntry(Commands.CopyBones);
+		MenuBuilder.AddMenuEntry(Commands.PasteBones);
+		MenuBuilder.AddMenuEntry(Commands.DuplicateBones);
 
 		MenuBuilder.EndSection();
 	}
@@ -888,6 +1031,7 @@ FReply SReferenceSkeletonTree::OnAcceptDrop(const FDragDropEvent& DragDropEvent,
 		if (Notifier.IsValid())
 		{
 			Notifier->Notify( {BoneName}, ESkeletalMeshNotifyType::HierarchyChanged);
+			Notifier->Notify( {BoneName}, ESkeletalMeshNotifyType::BonesSelected);
 		}
 		EndChange();
 	}
@@ -906,7 +1050,7 @@ FReferenceSkeletonWidgetNotifier::FReferenceSkeletonWidgetNotifier(TSharedRef<SR
 
 void FReferenceSkeletonWidgetNotifier::HandleNotification(const TArray<FName>& InBoneNames, const ESkeletalMeshNotifyType InNotifyType)
 {
-	if (!Tree.IsValid())
+	if (Notifying() || !Tree.IsValid())
 	{
 		return;
 	}
@@ -923,8 +1067,11 @@ void FReferenceSkeletonWidgetNotifier::HandleNotification(const TArray<FName>& I
 		case ESkeletalMeshNotifyType::BonesMoved:
 			break;
 		case ESkeletalMeshNotifyType::BonesSelected:
-			TreePtr->SelectItemFromNames(InBoneNames);
-			break;
+			{
+				static constexpr bool bFrameSelection = true;
+				TreePtr->SelectItemFromNames(InBoneNames, bFrameSelection);
+				break;
+			}
 		case ESkeletalMeshNotifyType::BonesRenamed:
 			TreePtr->RefreshTreeView();
 			TreePtr->SelectItemFromNames(InBoneNames);

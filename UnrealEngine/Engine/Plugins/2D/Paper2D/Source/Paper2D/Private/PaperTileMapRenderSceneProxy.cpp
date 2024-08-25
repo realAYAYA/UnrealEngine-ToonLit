@@ -264,7 +264,6 @@ void FPaperTileMapRenderSceneProxy::DrawHexagonalGridLines(FPrimitiveDrawInterfa
 void FPaperTileMapRenderSceneProxy::GetDynamicMeshElements(const TArray<const FSceneView*>& Views, const FSceneViewFamily& ViewFamily, uint32 VisibilityMap, FMeshElementCollector& Collector) const
 {
 	SCOPE_CYCLE_COUNTER(STAT_TileMap_GetDynamicMeshElements);
-	checkSlow(IsInRenderingThread());
 
 	for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ViewIndex++)
 	{

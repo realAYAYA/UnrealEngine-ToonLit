@@ -2,15 +2,25 @@
 
 #pragma once
 
+#include "AutomationState.h"
 #include "CoreTypes.h"
 #include "Containers/UnrealString.h"
-#include "Misc/Guid.h"
 #include "Misc/AutomationTest.h"
-#include "AutomationState.h"
+#include "Misc/Guid.h"
 #include "UObject/ObjectMacros.h"
 
 #include "AutomationWorkerMessages.generated.h"
 
+USTRUCT()
+struct FAutomationWorkerMessageBase
+{
+	GENERATED_USTRUCT_BODY()
+
+public:
+
+	UPROPERTY(EditAnywhere, Category = "Message")
+	FGuid InstanceId = FGuid{};
+};
 
 /* Worker discovery messages
  *****************************************************************************/
@@ -19,7 +29,7 @@
  * Implements a message that is published to find automation workers.
  */
 USTRUCT()
-struct FAutomationWorkerFindWorkers
+struct FAutomationWorkerFindWorkers : public FAutomationWorkerMessageBase
 {
 	GENERATED_USTRUCT_BODY()
 
@@ -56,7 +66,7 @@ struct FAutomationWorkerFindWorkers
  * Implements a message that is sent in response to FAutomationWorkerFindWorkers.
  */
 USTRUCT()
-struct FAutomationWorkerFindWorkersResponse
+struct FAutomationWorkerFindWorkersResponse : public FAutomationWorkerMessageBase
 {
 	GENERATED_USTRUCT_BODY()
 
@@ -113,7 +123,7 @@ struct FAutomationWorkerFindWorkersResponse
  * Implements a message that notifies automation controllers that a worker went off-line.
  */
 USTRUCT()
-struct FAutomationWorkerWorkerOffline
+struct FAutomationWorkerWorkerOffline : public FAutomationWorkerMessageBase
 {
 	GENERATED_USTRUCT_BODY()
 };
@@ -122,7 +132,7 @@ struct FAutomationWorkerWorkerOffline
 /**
  */
 USTRUCT()
-struct FAutomationWorkerPing
+struct FAutomationWorkerPing : public FAutomationWorkerMessageBase
 {
 	GENERATED_USTRUCT_BODY()
 };
@@ -131,7 +141,16 @@ struct FAutomationWorkerPing
 /**
  */
 USTRUCT()
-struct FAutomationWorkerResetTests
+struct FAutomationWorkerStartTestSession : public FAutomationWorkerMessageBase
+{
+	GENERATED_USTRUCT_BODY()
+};
+
+
+/**
+ */
+USTRUCT()
+struct FAutomationWorkerStopTestSession : public FAutomationWorkerMessageBase
 {
 	GENERATED_USTRUCT_BODY()
 };
@@ -140,7 +159,7 @@ struct FAutomationWorkerResetTests
 /**
 */
 USTRUCT()
-struct FAutomationWorkerStopTests
+struct FAutomationWorkerStopTests : public FAutomationWorkerMessageBase
 {
 	GENERATED_USTRUCT_BODY()
 };
@@ -149,7 +168,7 @@ struct FAutomationWorkerStopTests
 /**
  */
 USTRUCT()
-struct FAutomationWorkerPong
+struct FAutomationWorkerPong : public FAutomationWorkerMessageBase
 {
 	GENERATED_USTRUCT_BODY()
 };
@@ -159,7 +178,7 @@ struct FAutomationWorkerPong
  * Implements a message for requesting available automation tests from a worker.
  */
 USTRUCT()
-struct FAutomationWorkerRequestTests
+struct FAutomationWorkerRequestTests : public FAutomationWorkerMessageBase
 {
 	GENERATED_USTRUCT_BODY()
 
@@ -186,7 +205,7 @@ struct FAutomationWorkerRequestTests
  * A single test reply, used by FAutomationWorkerRequestTestsReplyComplete
  */
 USTRUCT()
-struct FAutomationWorkerSingleTestReply
+struct FAutomationWorkerSingleTestReply : public FAutomationWorkerMessageBase
 {
 	GENERATED_USTRUCT_BODY()
 
@@ -259,7 +278,7 @@ struct FAutomationWorkerSingleTestReply
  * Returns list of all tests
  */
 USTRUCT()
-struct FAutomationWorkerRequestTestsReplyComplete
+struct FAutomationWorkerRequestTestsReplyComplete : public FAutomationWorkerMessageBase
 {
 	GENERATED_USTRUCT_BODY()
 
@@ -272,7 +291,7 @@ struct FAutomationWorkerRequestTestsReplyComplete
  * Implements a message to request the running of automation tests on a worker.
  */
 USTRUCT()
-struct FAutomationWorkerRunTests
+struct FAutomationWorkerRunTests : public FAutomationWorkerMessageBase
 {
 	GENERATED_USTRUCT_BODY()
 
@@ -319,12 +338,11 @@ struct FAutomationWorkerRunTests
  * Implements a message that is sent in response to FAutomationWorkerRunTests.
  */
 USTRUCT()
-struct FAutomationWorkerRunTestsReply
+struct FAutomationWorkerRunTestsReply : public FAutomationWorkerMessageBase
 {
 	GENERATED_USTRUCT_BODY()
 
 public:
-
 	/** */
 	UPROPERTY(EditAnywhere, Category="Message")
 	FString TestName;
@@ -356,7 +374,7 @@ public:
 /**
  */
 USTRUCT()
-struct FAutomationWorkerRequestNextNetworkCommand
+struct FAutomationWorkerRequestNextNetworkCommand : public FAutomationWorkerMessageBase
 {
 	GENERATED_USTRUCT_BODY()
 
@@ -377,7 +395,7 @@ struct FAutomationWorkerRequestNextNetworkCommand
 /**
  */
 USTRUCT()
-struct FAutomationWorkerNextNetworkCommandReply
+struct FAutomationWorkerNextNetworkCommandReply : public FAutomationWorkerMessageBase
 {
 	GENERATED_USTRUCT_BODY()
 };
@@ -392,6 +410,9 @@ public:
 
 	UPROPERTY(EditAnywhere, Category="Message")
 	FString ScreenShotName;
+
+	UPROPERTY(EditAnywhere, Category = "Message")
+	FString VariantName;
 
 	UPROPERTY(EditAnywhere, Category="Message")
 	FString Context;
@@ -519,6 +540,7 @@ public:
 
 		// Human readable name and associated context the screenshot was taken in.
 		ScreenShotName = Data.ScreenShotName;
+		VariantName = Data.VariantName;
 		Context = Data.Context;
 		TestName = Data.TestName;
 		Notes = Data.Notes;
@@ -683,12 +705,11 @@ public:
 	}
 };
 
-
 /**
  * Implements a message that is sent in containing a screen shot run during performance test.
  */
 USTRUCT()
-struct FAutomationWorkerScreenImage
+struct FAutomationWorkerScreenImage : public FAutomationWorkerMessageBase
 {
 	GENERATED_USTRUCT_BODY()
 
@@ -714,33 +735,57 @@ struct FAutomationWorkerScreenImage
  * Implements a message that is sent in containing a screen shot run during performance test.
  */
 USTRUCT()
-struct FAutomationWorkerImageComparisonResults
+struct FAutomationWorkerImageComparisonResults : public FAutomationWorkerMessageBase
 {
 	GENERATED_USTRUCT_BODY()
 
 public:
 
-	FAutomationWorkerImageComparisonResults()
-		: bNew(false)
+	FAutomationWorkerImageComparisonResults(FGuid InInstanceId = FGuid{})
+		: FAutomationWorkerMessageBase{InInstanceId}
+		, bNew(false)
 		, bSimilar(false)
 		, MaxLocalDifference(0.0)
 		, GlobalDifference(0.0)
 	{
 	}
 
-	FAutomationWorkerImageComparisonResults(FGuid InUniqueId, bool InIsNew, bool InAreSimilar, double InMaxLocalDifference, double InGlobalDifference, FString InErrorMessage)
-		: UniqueId(InUniqueId)
+	FAutomationWorkerImageComparisonResults(
+		FGuid InInstanceId,
+		FGuid InUniqueId,
+		const FString& InScreenshotPath,
+		bool InIsNew,
+		bool InAreSimilar,
+		double InMaxLocalDifference,
+		double InGlobalDifference,
+		const FString& InErrorMessage,
+		const FString& InIncomingFilePath,
+		const FString& InReportComparisonFilePath,
+		const FString& InReportApprovedFilePath,
+		const FString& InReportIncomingFilePath
+	)
+		: FAutomationWorkerMessageBase{ InInstanceId }
+		, UniqueId(InUniqueId)
+		, ScreenshotPath(InScreenshotPath)
 		, bNew(InIsNew)
 		, bSimilar(InAreSimilar)
 		, MaxLocalDifference(InMaxLocalDifference)
 		, GlobalDifference(InGlobalDifference)
 		, ErrorMessage(InErrorMessage)
+		, IncomingFilePath(InIncomingFilePath)
+		, ReportComparisonFilePath(InReportComparisonFilePath)
+		, ReportApprovedFilePath(InReportApprovedFilePath)
+		, ReportIncomingFilePath(InReportIncomingFilePath)
 	{
 	}
 
 	/** The unique id for the comparison. */
 	UPROPERTY(EditAnywhere, Category="Message")
 	FGuid UniqueId;
+
+	/** The path of the screenshot. */
+	UPROPERTY(EditAnywhere, Category = "Message")
+	FString ScreenshotPath;
 
 	/** Was this a new image we've never seen before and have no ground truth for? */
 	UPROPERTY(EditAnywhere, Category="Message")
@@ -758,6 +803,18 @@ public:
 
 	UPROPERTY(EditAnywhere, Category="Message")
 	FString ErrorMessage;
+
+	UPROPERTY(EditAnywhere, Category = "Message")
+	FString IncomingFilePath;
+
+	UPROPERTY(EditAnywhere, Category = "Message")
+	FString ReportComparisonFilePath;
+
+	UPROPERTY(EditAnywhere, Category = "Message")
+	FString ReportApprovedFilePath;
+
+	UPROPERTY(EditAnywhere, Category = "Message")
+	FString ReportIncomingFilePath;
 };
 
 
@@ -766,7 +823,7 @@ public:
  * for the first time this test is run, it might need to store things, or get things.
  */
 USTRUCT()
-struct FAutomationWorkerTestDataRequest
+struct FAutomationWorkerTestDataRequest : public FAutomationWorkerMessageBase
 {
 	GENERATED_USTRUCT_BODY()
 
@@ -795,7 +852,7 @@ struct FAutomationWorkerTestDataRequest
  * Implements a message that responds to TestDataRequests.
  */
 USTRUCT()
-struct FAutomationWorkerTestDataResponse
+struct FAutomationWorkerTestDataResponse : public FAutomationWorkerMessageBase
 {
 	GENERATED_USTRUCT_BODY()
 
@@ -811,7 +868,7 @@ struct FAutomationWorkerTestDataResponse
  * Implements a message to request the performance data for this hardware.
  */
 USTRUCT()
-struct FAutomationWorkerPerformanceDataRequest
+struct FAutomationWorkerPerformanceDataRequest : public FAutomationWorkerMessageBase
 {
 	GENERATED_USTRUCT_BODY()
 
@@ -836,7 +893,7 @@ struct FAutomationWorkerPerformanceDataRequest
  * Implements a message that responds to PerformanceDataRequest.
  */
 USTRUCT()
-struct FAutomationWorkerPerformanceDataResponse
+struct FAutomationWorkerPerformanceDataResponse : public FAutomationWorkerMessageBase
 {
 	GENERATED_USTRUCT_BODY()
 
@@ -853,7 +910,7 @@ struct FAutomationWorkerPerformanceDataResponse
  * Implements a message that contains telemetry data point.
  */
 USTRUCT()
-struct FAutomationWorkerTelemetryItem
+struct FAutomationWorkerTelemetryItem : public FAutomationWorkerMessageBase
 {
 	GENERATED_USTRUCT_BODY()
 
@@ -890,7 +947,7 @@ struct FAutomationWorkerTelemetryItem
  * Implements a message that contains telemetry data.
  */
 USTRUCT()
-struct FAutomationWorkerTelemetryData
+struct FAutomationWorkerTelemetryData : public FAutomationWorkerMessageBase
 {
 	GENERATED_USTRUCT_BODY()
 

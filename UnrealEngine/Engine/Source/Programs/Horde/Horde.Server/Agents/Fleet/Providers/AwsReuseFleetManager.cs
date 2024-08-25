@@ -33,7 +33,7 @@ namespace Horde.Server.Agents.Fleet.Providers
 			InstanceTypes = instanceTypes;
 		}
 	}
-	
+
 	/// <summary>
 	/// Fleet manager for handling AWS EC2 instances
 	/// Will start already existing but stopped instances to reuse existing EBS disks.
@@ -45,7 +45,7 @@ namespace Horde.Server.Agents.Fleet.Providers
 		/// Settings for fleet manager
 		/// </summary>
 		public AwsReuseFleetManagerSettings Settings { get; }
-		
+
 		private readonly IAmazonEC2 _ec2;
 		private readonly IAgentCollection _agentCollection;
 		private readonly Tracer _tracer;
@@ -75,7 +75,7 @@ namespace Horde.Server.Agents.Fleet.Providers
 			using (TelemetrySpan describeSpan = _tracer.StartActiveSpan("DescribeInstances"))
 			{
 				// Find stopped instances in the correct pool
-				DescribeInstancesRequest describeRequest = new ();
+				DescribeInstancesRequest describeRequest = new();
 				describeRequest.Filters = new List<Filter>();
 				describeRequest.Filters.Add(new Filter("instance-state-name", new List<string> { InstanceStateName.Stopped.Value }));
 				describeRequest.Filters.Add(new Filter("tag:" + AwsFleetManager.PoolTagName, new List<string> { pool.Name }));
@@ -91,10 +91,13 @@ namespace Horde.Server.Agents.Fleet.Providers
 				InstanceType newInstanceType = InstanceType.FindValue(Settings.InstanceTypes[0]);
 				foreach (Instance stoppedInstance in stoppedInstances)
 				{
-					if (stoppedInstance.InstanceType == newInstanceType) { continue; }
+					if (stoppedInstance.InstanceType == newInstanceType)
+					{
+						continue;
+					}
 					using TelemetrySpan modifySpan = _tracer.StartActiveSpan("ModifyInstanceAttribute");
 
-					ModifyInstanceAttributeRequest request = new () { InstanceId = stoppedInstance.InstanceId, InstanceType = newInstanceType };
+					ModifyInstanceAttributeRequest request = new() { InstanceId = stoppedInstance.InstanceId, InstanceType = newInstanceType };
 					ModifyInstanceAttributeResponse response = await _ec2.ModifyInstanceAttributeAsync(request, cancellationToken);
 					if ((int)response.HttpStatusCode >= 200 && (int)response.HttpStatusCode <= 299)
 					{
@@ -110,10 +113,10 @@ namespace Horde.Server.Agents.Fleet.Providers
 			using (TelemetrySpan startSpan = _tracer.StartActiveSpan("StartInstances"))
 			{
 				// Try to start the given instances
-				StartInstancesRequest startRequest = new ();
+				StartInstancesRequest startRequest = new();
 				startRequest.InstanceIds.AddRange(describeResponse.Reservations.SelectMany(x => x.Instances).Select(x => x.InstanceId).Take(requestedInstancesCount));
 				int stoppedInstancesCount = startRequest.InstanceIds.Count;
-				
+
 				startSpan.SetAttribute("req.instanceIds", String.Join(",", startRequest.InstanceIds));
 				int startedInstancesCount = 0;
 				if (startRequest.InstanceIds.Count > 0)
@@ -134,14 +137,20 @@ namespace Horde.Server.Agents.Fleet.Providers
 				if (startRequest.InstanceIds.Count < requestedInstancesCount)
 				{
 					string reason = "";
-					if (stoppedInstancesCount < requestedInstancesCount) { reason += " Not enough stopped instances to accommodate the pool expansion."; }
-					if (startedInstancesCount < stoppedInstancesCount) { reason += " Not all instances were able to start."; }
+					if (stoppedInstancesCount < requestedInstancesCount)
+					{
+						reason += " Not enough stopped instances to accommodate the pool expansion.";
+					}
+					if (startedInstancesCount < stoppedInstancesCount)
+					{
+						reason += " Not all instances were able to start.";
+					}
 
-					_logger.LogInformation("Unable to expand pool {PoolName}.\n" + 
-					                       "Reason={Reason}\n" +  
-					                       "RequestedInstancesCount={RequestedCount}\n" +
-					                       "StoppedInstancesCount={StoppedInstancesCount}\n" +
-					                       "StartedInstancesCount={StartedInstancesCount}",
+					_logger.LogInformation("Unable to expand pool {PoolName}.\n" +
+										   "Reason={Reason}\n" +
+										   "RequestedInstancesCount={RequestedCount}\n" +
+										   "StoppedInstancesCount={StoppedInstancesCount}\n" +
+										   "StartedInstancesCount={StartedInstancesCount}",
 						pool.Name, reason.Trim(), requestedInstancesCount, stoppedInstancesCount, startedInstancesCount);
 				}
 
@@ -149,12 +158,12 @@ namespace Horde.Server.Agents.Fleet.Providers
 				{
 					return new ScaleResult(FleetManagerOutcome.Success, startedInstancesCount, 0);
 				}
-				
+
 				if (startedInstancesCount > 0 && startedInstancesCount < requestedInstancesCount)
 				{
 					return new ScaleResult(FleetManagerOutcome.PartialSuccess, startedInstancesCount, 0);
 				}
-				
+
 				return new ScaleResult(FleetManagerOutcome.Failure, startedInstancesCount, 0);
 			}
 		}
@@ -164,10 +173,10 @@ namespace Horde.Server.Agents.Fleet.Providers
 		{
 			await AwsFleetManager.ShrinkPoolViaAgentShutdownRequestAsync(_agentCollection, pool, agents, count, cancellationToken);
 			return new ScaleResult(FleetManagerOutcome.Success, 0, count);
-		} 
+		}
 
 		/// <inheritdoc/>
-		public async Task<int> GetNumStoppedInstancesAsync(IPool pool, CancellationToken cancellationToken)
+		public async Task<int> GetNumStoppedInstancesAsync(IPoolConfig pool, CancellationToken cancellationToken)
 		{
 			// Find all instances in the pool
 			DescribeInstancesRequest describeRequest = new DescribeInstancesRequest();

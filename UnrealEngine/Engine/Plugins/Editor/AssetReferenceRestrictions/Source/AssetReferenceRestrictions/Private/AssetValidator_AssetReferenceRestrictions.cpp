@@ -1,6 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "AssetValidator_AssetReferenceRestrictions.h"
+
+#include "AssetRegistry/AssetData.h"
+#include "AssetRegistry/AssetDataToken.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Editor.h"
 #include "AssetReferencingPolicySubsystem.h"
@@ -19,11 +22,10 @@ UAssetValidator_AssetReferenceRestrictions::UAssetValidator_AssetReferenceRestri
 {
 }
 
-bool UAssetValidator_AssetReferenceRestrictions::CanValidateAsset_Implementation(UObject* InAsset) const
+bool UAssetValidator_AssetReferenceRestrictions::CanValidateAsset_Implementation(const FAssetData& AssetData, UObject* InAsset, FDataValidationContext& InContext) const
 {
 	if (InAsset)
 	{
-		const FAssetData AssetData(InAsset);
 		TSharedPtr<FDomainData> DomainData = GEditor->GetEditorSubsystem<UAssetReferencingPolicySubsystem>()->GetDomainDB()->FindDomainFromAssetData(AssetData);
 
 		const bool bIsInUnrestrictedFolder = DomainData && DomainData->IsValid() && DomainData->bCanSeeEverything;
@@ -36,7 +38,7 @@ bool UAssetValidator_AssetReferenceRestrictions::CanValidateAsset_Implementation
 	return false;
 }
 
-EDataValidationResult UAssetValidator_AssetReferenceRestrictions::ValidateLoadedAsset_Implementation(UObject* InAsset, TArray<FText>& ValidationErrors)
+EDataValidationResult UAssetValidator_AssetReferenceRestrictions::ValidateLoadedAsset_Implementation(const FAssetData& InAssetData, UObject* InAsset, FDataValidationContext& InContext)
 {
 	check(InAsset);
 
@@ -70,7 +72,7 @@ EDataValidationResult UAssetValidator_AssetReferenceRestrictions::ValidateLoaded
 			{
 				if (SoftDependency != TransientName)
 				{
-					AssetFails(InAsset, FText::Format(LOCTEXT("IllegalReference_MissingSoftRef", "Soft references {0} which does not exist"), FText::FromString(SoftDependencyStr)), ValidationErrors);
+					AssetFails(InAsset, FText::Format(LOCTEXT("IllegalReference_MissingSoftRef", "Soft references {0} which does not exist"), FText::FromString(SoftDependencyStr)));
 				}
 			}
 			else
@@ -91,7 +93,7 @@ EDataValidationResult UAssetValidator_AssetReferenceRestrictions::ValidateLoaded
 		FString UncookedFolderName;
 		if (IsInUncookedFolder(HardDependencyStr, &UncookedFolderName))
 		{
-			AssetFails(InAsset, FText::Format(LOCTEXT("IllegalReference_HardDependency", "Illegally hard references {0} asset {1}"), FText::FromString(UncookedFolderName), FText::FromString(HardDependencyStr)), ValidationErrors);
+			AssetFails(InAsset, FText::Format(LOCTEXT("IllegalReference_HardDependency", "Illegally hard references {0} asset {1}"), FText::FromString(UncookedFolderName), FText::FromString(HardDependencyStr)));
 		}
 #endif
 
@@ -101,7 +103,7 @@ EDataValidationResult UAssetValidator_AssetReferenceRestrictions::ValidateLoaded
 	if ((GetValidationResult() != EDataValidationResult::Invalid) && (AllDependencyAssets.Num() > 0))
 	{
 		FAssetReferenceFilterContext AssetReferenceFilterContext;
-		AssetReferenceFilterContext.ReferencingAssets = { FAssetData(InAsset) };
+		AssetReferenceFilterContext.ReferencingAssets = { InAssetData };
 		TSharedPtr<IAssetReferenceFilter> AssetReferenceFilter = GEditor ? GEditor->MakeAssetReferenceFilter(AssetReferenceFilterContext) : nullptr;
 		if (ensure(AssetReferenceFilter.IsValid()))
 		{
@@ -110,7 +112,9 @@ EDataValidationResult UAssetValidator_AssetReferenceRestrictions::ValidateLoaded
 				FText FailureReason;
 				if (!AssetReferenceFilter->PassesFilter(Dependency, &FailureReason))
 				{
-					AssetFails(InAsset, FText::Format(LOCTEXT("IllegalReference_AssetFilterFail", "Illegally references asset {0}. {1}"), FText::FromName(Dependency.PackageName), FailureReason), ValidationErrors);
+					AssetMessage(InAsset, EMessageSeverity::Error, FText::Format(LOCTEXT("IllegalReference_AssetFilterFail", "Illegal reference:"), FailureReason))
+						->AddToken(FAssetDataToken::Create(Dependency))
+						->AddText(FText::Format(LOCTEXT("IllegalReference_FailureReason", ". {0}"), FailureReason));
 				}
 			}
 		}

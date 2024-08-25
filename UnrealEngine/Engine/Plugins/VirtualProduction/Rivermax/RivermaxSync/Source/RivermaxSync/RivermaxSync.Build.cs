@@ -8,14 +8,14 @@ public class RivermaxSync : ModuleRules
 	{
 		PublicDependencyModuleNames.AddRange(
 			new string[] {
-				"DisplayClusterMedia"
+				"DisplayClusterMedia",
+				"RivermaxCore"
 			});
 
 		PrivateDependencyModuleNames.AddRange(
 			new string[] {
 				"Core",
 				"CoreUObject",
-				"RivermaxCore",
 				"RivermaxMedia"
 			});
 

@@ -50,6 +50,9 @@ static FAutoConsoleVariableRef CVarDurationeGameplayCues(TEXT("AbilitySystem.Gam
 int32 GameplayCueRunOnDedicatedServer = 0;
 static FAutoConsoleVariableRef CVarDedicatedServerGameplayCues(TEXT("AbilitySystem.GameplayCue.RunOnDedicatedServer"), GameplayCueRunOnDedicatedServer, TEXT("Run gameplay cue events on dedicated server"), ECVF_Default );
 
+bool EnableSuppressCuesOnGameplayCueManager = true;
+static FAutoConsoleVariableRef CVarEnableSuppressCuesOnGameplayCueManager(TEXT("AbilitySystem.GameplayCue.EnableSuppressCuesOnGameplayCueManager"), EnableSuppressCuesOnGameplayCueManager, TEXT("Allows the GameplayCueManager to suppress cues when the bSuppressGameplayCues is set on the target AbilitySystemComponent"), ECVF_Default );
+
 #if WITH_EDITOR
 USceneComponent* UGameplayCueManager::PreviewComponent = nullptr;
 UWorld* UGameplayCueManager::PreviewWorld = nullptr;
@@ -195,8 +198,8 @@ void UGameplayCueManager::RouteGameplayCue(AActor* TargetActor, FGameplayTag Gam
 	if (DisplayGameplayCues && !(Options & EGameplayCueExecutionOptions::IgnoreDebug))
 	{
 		FString DebugStr = FString::Printf(TEXT("[%s] %s - %s"), *GetNameSafe(TargetActor), *GameplayCueTag.ToString(), *EGameplayCueEventToString(EventType) );
-		FColor DebugColor = FColor::Green;
-		DrawDebugString(TargetActor->GetWorld(), FVector(0.f, 0.f, 100.f), DebugStr, TargetActor, DebugColor, DisplayGameplayCueDuration);
+		FColor DebugColor = EventType == EGameplayCueEvent::Removed ? FColor::Red : FColor::Green;
+		DrawDebugString(TargetActor->GetWorld(), FVector(0.f, 0.f, -10.0f * static_cast<int>(EventType)), DebugStr, TargetActor, DebugColor, DisplayGameplayCueDuration);
 		ABILITY_LOG(Display, TEXT("%s"), *DebugStr);
 	}
 #endif // ENABLE_DRAW_DEBUG
@@ -408,6 +411,12 @@ AGameplayCueNotify_Actor* UGameplayCueManager::GetInstancedCueActor(AActor* Targ
 		return nullptr;
 	}
 
+	if (TargetActor && TargetActor->GetActorTransform().ContainsNaN())
+	{
+		UE_LOG(LogAbilitySystem, Error, TEXT("GetInstancedCueActor called with invalid target actor transform (TargetActor = %s)"), *GetNameSafe(TargetActor));
+		return nullptr;
+	}
+
 	// There used to be special code here to handle the case where the TargetActor was a CDO.  I'm not sure why that would be (or how that's even possible -- perhaps in the default Blueprint Viewport? But I can't trigger it.)
 	// Let's log it in case a user comes across this issue.
 	//	Animtion preview hack. If we are trying to play the GC on a CDO, then don't use actor recycling and don't set the owner (to the CDO, which would cause problems)
@@ -460,13 +469,14 @@ AGameplayCueNotify_Actor* UGameplayCueManager::GetInstancedCueActor(AActor* Targ
 	SpawnParams.Owner = TargetActor;
 	SpawnParams.OverrideLevel = World->PersistentLevel;
 	AGameplayCueNotify_Actor* SpawnedCue = World->SpawnActor<AGameplayCueNotify_Actor>(CueClass, TargetActor->GetActorLocation(), TargetActor->GetActorRotation(), SpawnParams);
-	SpawnedCue->CueInstigator = Parameters.GetInstigator();
-	SpawnedCue->CueSourceObject = Parameters.GetSourceObject();
+	if (ensureMsgf(SpawnedCue != nullptr, TEXT("[%s] - Failed to spawn the cue actor! Check the log for a potential reason spawn actor failed!"), ANSI_TO_TCHAR(__FUNCTION__)))
+	{
+		SpawnedCue->CueInstigator = Parameters.GetInstigator();
+		SpawnedCue->CueSourceObject = Parameters.GetSourceObject();
+	}
 
 	UE_CLOG(LogGameplayCueActorSpawning > 0, LogAbilitySystem, Warning, TEXT("Spawned Gameplay Cue Notify Actor: %s (instance %s)"), *CueClass->GetName(), *GetNameSafe(SpawnedCue));
-
 	return SpawnedCue;
-
 }
 
 AGameplayCueNotify_Actor* UGameplayCueManager::FindRecycledCue(const TSubclassOf<AGameplayCueNotify_Actor>& CueClass, const UWorld& FindInWorld)
@@ -481,7 +491,7 @@ AGameplayCueNotify_Actor* UGameplayCueManager::FindRecycledCue(const TSubclassOf
 
 	while (PreallocatedList->Actors.Num() > 0)
 	{
-		AGameplayCueNotify_Actor* RecycledCue = PreallocatedList->Actors.Pop(false);
+		AGameplayCueNotify_Actor* RecycledCue = PreallocatedList->Actors.Pop(EAllowShrinking::No);
 
 		// Normal check: if cue was destroyed or is pending kill, then don't use it.
 		if (IsValid(RecycledCue))
@@ -891,6 +901,11 @@ void UGameplayCueManager::BuildCuesToAddToGlobalSet(const TArray<FAssetData>& As
 				// Add a new NotifyData entry to our flat list for this one
 				FSoftObjectPath StringRef;
 				StringRef.SetPath(FPackageName::ExportTextPathToObjectPath(GeneratedClassTag));
+				bool bFixedUpRef = StringRef.FixupCoreRedirects();
+				if (bFixedUpRef)
+				{
+					ABILITY_LOG(Log, TEXT("GameplayCueManager Redirected: %s -> %s"), *GeneratedClassTag, *StringRef.ToString());
+				}
 
 				OutCuesToAdd.Add(FGameplayCueReferencePair(GameplayCueTag, StringRef));
 
@@ -1233,6 +1248,11 @@ void UGameplayCueManager::InvokeGameplayCueAddedAndWhileActive_FromSpec(UAbility
 		return;
 	}
 
+	if (EnableSuppressCuesOnGameplayCueManager && OwningComponent && OwningComponent->bSuppressGameplayCues)
+	{
+		return;
+	}
+
 	IAbilitySystemReplicationProxyInterface* ReplicationInterface = OwningComponent->GetReplicationInterface();
 	if (ReplicationInterface == nullptr)
 	{
@@ -1283,6 +1303,11 @@ void UGameplayCueManager::InvokeGameplayCueExecuted_FromSpec(UAbilitySystemCompo
 		return;
 	}
 
+	if (EnableSuppressCuesOnGameplayCueManager && OwningComponent && OwningComponent->bSuppressGameplayCues)
+	{
+		return;
+	}
+
 	FGameplayCuePendingExecute PendingCue;
 
 	if (AbilitySystemAlwaysConvertGESpecToGCParams)
@@ -1315,6 +1340,11 @@ void UGameplayCueManager::InvokeGameplayCueExecuted_FromSpec(UAbilitySystemCompo
 
 void UGameplayCueManager::InvokeGameplayCueExecuted(UAbilitySystemComponent* OwningComponent, const FGameplayTag GameplayCueTag, FPredictionKey PredictionKey, FGameplayEffectContextHandle EffectContext)
 {
+	if (EnableSuppressCuesOnGameplayCueManager && OwningComponent && OwningComponent->bSuppressGameplayCues)
+	{
+		return;
+	}
+
 	if (OwningComponent)
 	{
 		FGameplayCuePendingExecute PendingCue;
@@ -1330,6 +1360,11 @@ void UGameplayCueManager::InvokeGameplayCueExecuted(UAbilitySystemComponent* Own
 
 void UGameplayCueManager::InvokeGameplayCueExecuted_WithParams(UAbilitySystemComponent* OwningComponent, const FGameplayTag GameplayCueTag, FPredictionKey PredictionKey, FGameplayCueParameters GameplayCueParameters)
 {
+	if (EnableSuppressCuesOnGameplayCueManager && OwningComponent && OwningComponent->bSuppressGameplayCues)
+	{
+		return;
+	}
+
 	if (OwningComponent)
 	{
 		FGameplayCuePendingExecute PendingCue;
@@ -1560,7 +1595,7 @@ void UGameplayCueManager::UpdatePreallocation(UWorld* World)
 
 			if (PreallocatedList.Actors.Num() >= CDO->NumPreallocatedInstances)
 			{
-				Info.ClassesNeedingPreallocation.Pop(false);
+				Info.ClassesNeedingPreallocation.Pop(EAllowShrinking::No);
 			}
 		}
 	}
@@ -1604,7 +1639,7 @@ void UGameplayCueManager::OnPostWorldCleanup(UWorld* World, bool bSessionEnded, 
 		DumpPreallocationStats(PreallocationInfo, bWarnOnActiveActors);
 
 		// Actually remove the entry which can contain hard references
-		PreallocationInfoList_Internal.RemoveAtSwap(idx, 1, false);
+		PreallocationInfoList_Internal.RemoveAtSwap(idx, 1, EAllowShrinking::No);
 		idx--;
 	}
 

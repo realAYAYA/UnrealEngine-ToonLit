@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.IO;
 using EpicGames.Core;
 
 namespace EpicGames.Perforce.Managed
@@ -54,7 +53,7 @@ namespace EpicGames.Perforce.Managed
 		/// <summary>
 		/// Encodes the current tree state and returns a reference to it
 		/// </summary>
-		/// <param name="Objects">Dictionary of encoded objects</param>
+		/// <param name="writeTree">Dictionary of encoded objects</param>
 		/// <returns></returns>
 		public StreamTree Encode(Func<StreamTree, IoHash> writeTree)
 		{
@@ -128,6 +127,9 @@ namespace EpicGames.Perforce.Managed
 	/// </summary>
 	public class DepotStreamTreeBuilder : StreamTreeBuilder
 	{
+		/// <summary>
+		/// Adds a file to the tree
+		/// </summary>
 		public void AddFile(string clientFile, StreamFile depotFile)
 		{
 			if (clientFile[0] == '/')
@@ -135,7 +137,7 @@ namespace EpicGames.Perforce.Managed
 				// Strip any slash at the start
 				clientFile = clientFile[1..];
 			}
-			
+
 			StreamTreeBuilder currentStreamDirectory = this;
 			string[] pathFragments = clientFile.Split('/');
 
@@ -144,7 +146,7 @@ namespace EpicGames.Perforce.Managed
 			for (int i = 0; i < pathFragments.Length - 1; i++)
 			{
 				string pathFragment = pathFragments[i];
-				Utf8String unescapedFragment = PerforceUtils.UnescapePath(pathFragment);
+				Utf8String unescapedFragment = new Utf8String(PerforceUtils.UnescapePath(pathFragment));
 
 				if (!currentStreamDirectory.NameToTreeBuilder.TryGetValue(unescapedFragment, out StreamTreeBuilder? nextStreamDirectory))
 				{
@@ -154,7 +156,7 @@ namespace EpicGames.Perforce.Managed
 				currentStreamDirectory = nextStreamDirectory;
 			}
 
-			string filename = PerforceUtils.UnescapePath(pathFragments[^1]); // Last fragment is filename
+			Utf8String filename = new Utf8String(PerforceUtils.UnescapePath(pathFragments[^1])); // Last fragment is filename
 			currentStreamDirectory.NameToFile[filename] = depotFile;
 		}
 	}

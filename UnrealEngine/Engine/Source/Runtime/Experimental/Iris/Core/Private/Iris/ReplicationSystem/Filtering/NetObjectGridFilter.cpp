@@ -5,12 +5,17 @@
 #include "Iris/ReplicationSystem/RepTag.h"
 #include "Iris/ReplicationSystem/ReplicationProtocol.h"
 #include "Iris/ReplicationSystem/ReplicationSystem.h"
+#include "Iris/ReplicationSystem/ReplicationSystemInternal.h"
+#include "Iris/ReplicationSystem/NetRefHandleManager.h"
 #include "Iris/ReplicationSystem/WorldLocations.h"
+#include "Iris/Core/IrisCsv.h"
 #include "Iris/Core/IrisLog.h"
 #include "Iris/Core/IrisProfiler.h"
 
 void UNetObjectGridFilter::OnInit(FNetObjectFilterInitParams& Params)
 {
+	AddFilterTraits(ENetFilterTraits::Spatial);
+
 	Config = TStrongObjectPtr<UNetObjectGridFilterConfig>(CastChecked<UNetObjectGridFilterConfig>(Params.Config));
 	checkf(Config.IsValid(), TEXT("Need config to operate."));
 
@@ -18,6 +23,7 @@ void UNetObjectGridFilter::OnInit(FNetObjectFilterInitParams& Params)
 
 	PerConnectionInfos.SetNum(Params.MaxConnectionCount + 1);
 
+	NetRefHandleManager = &Params.ReplicationSystem->GetReplicationSystemInternal()->GetNetRefHandleManager();
 	NetCullDistanceOverrides = &Params.ReplicationSystem->GetNetCullDistanceOverrides();
 }
 
@@ -29,6 +35,26 @@ void UNetObjectGridFilter::AddConnection(uint32 ConnectionId)
 void UNetObjectGridFilter::RemoveConnection(uint32 ConnectionId)
 {
 	PerConnectionInfos[ConnectionId] = {};
+}
+
+uint16 UNetObjectGridFilter::GetFrameCountBeforeCulling(FName ProfileName) const
+{
+	uint16 FrameCount = Config->DefaultFrameCountBeforeCulling;
+	
+	if (ProfileName.IsNone())
+	{
+		return FrameCount;
+	}
+
+	FNetObjectGridFilterProfile* FilterProfile = Config->FilterProfiles.FindByKey(ProfileName);
+	ensureMsgf(FilterProfile, TEXT("UNetObjectGridFilterConfig does not hold any profile named %s"), *ProfileName.ToString());
+
+	if (FilterProfile)
+	{
+		FrameCount = FilterProfile->FrameCountBeforeCulling;
+	}
+
+	return FrameCount;
 }
 
 bool UNetObjectGridFilter::AddObject(uint32 ObjectIndex, FNetObjectFilterAddObjectParams& Params)
@@ -47,15 +73,17 @@ bool UNetObjectGridFilter::AddObject(uint32 ObjectIndex, FNetObjectFilterAddObje
 	ObjectLocationInfo.SetInfoIndex(InfoIndex);
 
 	FPerObjectInfo& PerObjectInfo = ObjectInfos[InfoIndex];
+
 	PerObjectInfo.ObjectIndex = ObjectIndex;
+	PerObjectInfo.FrameCountBeforeCulling = GetFrameCountBeforeCulling(Params.ProfileName);
 
 	AddCellInfoForObject(ObjectLocationInfo, Params.InstanceProtocol);
 	
-	if (PerObjectInfo.CullDistance > Config->MaxCullDistance)
+	if (Config->MaxCullDistance > 0.0f && PerObjectInfo.GetCullDistance() > Config->MaxCullDistance)
 	{
 		// Too big an object. We expect it to be costly to move it across cells.
+		UE_LOG(LogIris, Warning, TEXT("ReplicatedObject %s cull distance %f is above the max %f. Object will become always relevant instead"), *NetRefHandleManager->PrintObjectFromIndex(ObjectIndex), PerObjectInfo.GetCullDistance(), Config->MaxCullDistance);
 		RemoveObject(ObjectIndex, ObjectLocationInfo);
-		//TODO: Should we log these objects so they can get flagged and properly set always relevant ?
 		return false;
 	}
 
@@ -64,6 +92,12 @@ bool UNetObjectGridFilter::AddObject(uint32 ObjectIndex, FNetObjectFilterAddObje
 
 void UNetObjectGridFilter::RemoveObject(uint32 ObjectIndex, const FNetObjectFilteringInfo& Info)
 {
+	// Remove the object from connection lists
+	for (FPerConnectionInfo& ConnectionInfo : PerConnectionInfos)
+	{
+		ConnectionInfo.RecentObjectFrameCount.Remove(ObjectIndex);
+	}
+
 	const FObjectLocationInfo& ObjectLocationInfo = static_cast<const FObjectLocationInfo&>(Info);
 	RemoveCellInfoForObject(ObjectLocationInfo);
 
@@ -73,21 +107,12 @@ void UNetObjectGridFilter::RemoveObject(uint32 ObjectIndex, const FNetObjectFilt
 	FreeObjectInfo(InfoIndex);
 }
 
-void UNetObjectGridFilter::UpdateObjects(FNetObjectFilterUpdateParams& Params)
-{
-	for (SIZE_T ObjectIt = 0, ObjectEndIt = Params.ObjectCount; ObjectIt != ObjectEndIt; ++ObjectIt)
-	{
-		const uint32 ObjectIndex = Params.ObjectIndices[ObjectIt];
-
-		const FObjectLocationInfo& ObjectLocationInfo = static_cast<const FObjectLocationInfo&>(Params.FilteringInfos[ObjectIndex]);
-		const UE::Net::FReplicationInstanceProtocol* InstanceProtocol = Params.InstanceProtocols ? Params.InstanceProtocols[ObjectIt] : nullptr;
-		UpdateCellInfoForObject(ObjectLocationInfo, InstanceProtocol);
-	}
-}
-
 void UNetObjectGridFilter::PreFilter(FNetObjectPreFilteringParams&)
 {
 	++FrameIndex;
+#if UE_NET_IRIS_CSV_STATS
+	Stats.Reset();
+#endif
 }
 
 void UNetObjectGridFilter::Filter(FNetObjectFilteringParams& Params)
@@ -120,8 +145,9 @@ void UNetObjectGridFilter::Filter(FNetObjectFilteringParams& Params)
 		}
 	}
 
-	// Prune old cells and insert still relevant in the new list.
+	if (!Config->bUseExactCullDistance)
 	{
+		// Prune old cells and insert still relevant in the new list.
 		const uint32 MaxFrameCount = Config->ViewPosRelevancyFrameCount;
 		for (const FCellAndTimestamp& PrevCell : PrevCells)
 		{
@@ -148,16 +174,79 @@ void UNetObjectGridFilter::Filter(FNetObjectFilteringParams& Params)
 	 * object indices and then iterate over that. In both cases one do need to iterate over all
 	 * objects in all relevant cells anyway and setting a bit should be faster than inserting into a set.
 	 */
-	for (const FCellAndTimestamp& CellAndTimestamp : NewCells)
+
+	if (Config->bUseExactCullDistance)
 	{
-		if (FCellObjects* Objects = Cells.Find(CellAndTimestamp.Cell))
+#if UE_NET_IRIS_CSV_STATS
+		const uint64 StartTimeInCycles = FPlatformTime::Cycles64();
+		uint32 CullTestedObjects = 0;
+#endif
+		for (const FCellAndTimestamp& CellAndTimestamp : NewCells)
 		{
-			for (const uint32 ObjectIndex : Objects->ObjectIndices)
+			if (FCellObjects* Objects = Cells.Find(CellAndTimestamp.Cell))
 			{
-				AllowedObjects.SetBit(ObjectIndex);
+				for (const uint32 ObjectIndex : Objects->ObjectIndices)
+				{
+					const FObjectLocationInfo& ObjectLocationInfo = static_cast<const FObjectLocationInfo&>(Params.FilteringInfos[ObjectIndex]);
+					const FPerObjectInfo& PerObjectInfo = ObjectInfos[ObjectLocationInfo.GetInfoIndex()];
+
+					for (const FReplicationView::FView& View : Params.View.Views)
+					{
+						const double DistSq = PerObjectInfo.GetCullDistanceSq();
+						const double ObjectToViewDistSq = FVector::DistSquared2D(PerObjectInfo.Position, View.Pos);
+
+						if (ObjectToViewDistSq <= DistSq)
+						{
+							ConnectionInfo.RecentObjectFrameCount.Add(ObjectIndex, PerObjectInfo.FrameCountBeforeCulling);
+							break; // Don't need to test all connections once one is within Distance
+						}
+					}
+				}
+#if UE_NET_IRIS_CSV_STATS
+				Stats.CullTestedObjects += Objects->ObjectIndices.Num();
+#endif
+			}
+		}
+
+#if UE_NET_IRIS_CSV_STATS
+		Stats.CullTestingTimeInCycles += (FPlatformTime::Cycles64() - StartTimeInCycles);
+#endif
+
+		// Set the AllowedObjects and decrease their frame count
+		for (TMap<uint32, uint16>::TIterator It = ConnectionInfo.RecentObjectFrameCount.CreateIterator(); It; ++It)
+		{
+			if (It->Value > 0)
+			{
+				It->Value--;
+				AllowedObjects.SetBit(It->Key);
+			}
+			else
+			{
+				It.RemoveCurrent();
 			}
 		}
 	}
+	else
+	{
+		for (const FCellAndTimestamp& CellAndTimestamp : NewCells)
+		{
+			if (FCellObjects* Objects = Cells.Find(CellAndTimestamp.Cell))
+			{
+				for (const uint32 ObjectIndex : Objects->ObjectIndices)
+				{
+					AllowedObjects.SetBit(ObjectIndex);
+				}
+			}
+		}
+	}
+}
+
+void UNetObjectGridFilter::PostFilter(FNetObjectPostFilteringParams&)
+{
+#if UE_NET_IRIS_CSV_STATS
+	CSV_CUSTOM_STAT(Iris, CullTestingTimeInMS, FPlatformTime::ToMilliseconds64(Stats.CullTestingTimeInCycles), ECsvCustomStatOp::Set);
+	CSV_CUSTOM_STAT(Iris, CullTestedObjectsCount, (int32)Stats.CullTestedObjects, ECsvCustomStatOp::Set);
+#endif
 }
 
 uint32 UNetObjectGridFilter::AllocObjectInfo()
@@ -183,12 +272,20 @@ void UNetObjectGridFilter::AddCellInfoForObject(const FObjectLocationInfo& Objec
 {
 	// Called for completely new objects
 	FPerObjectInfo& PerObjectInfo = ObjectInfos[ObjectLocationInfo.GetInfoIndex()];
-	PerObjectInfo.CullDistance = Config->DefaultCullDistance;
-	UpdatePositionAndCullDistance(ObjectLocationInfo, PerObjectInfo, InstanceProtocol);
+	
+	// Set cull distance
+	{
+		PerObjectInfo.SetCullDistance(Config->DefaultCullDistance);
+		UpdatePositionAndCullDistance(ObjectLocationInfo, PerObjectInfo, InstanceProtocol);
+	}
 
 	FCellBox NewCellBox;
-	CalculateCellBox(PerObjectInfo, NewCellBox);
-	PerObjectInfo.CellBox = NewCellBox;
+
+	// Set cellbox info
+	{
+		CalculateCellBox(PerObjectInfo, NewCellBox);
+		PerObjectInfo.CellBox = NewCellBox;
+	}
 
 	const uint32 ObjectIndex = PerObjectInfo.ObjectIndex;
 
@@ -353,14 +450,14 @@ void UNetObjectGridFilter::UpdatePositionAndCullDistance(const UNetObjectGridFil
 	// Optionally update cull distance
 	if (NetCullDistanceOverrides->HasCullDistanceOverride(PerObjectInfo.ObjectIndex))
 	{
-		const float CullDistanceSqr = NetCullDistanceOverrides->GetCullDistanceSqr(PerObjectInfo.ObjectIndex);
-		PerObjectInfo.CullDistance = FPlatformMath::Sqrt(CullDistanceSqr);
+		const float CullDistanceSq = NetCullDistanceOverrides->GetCullDistanceSqr(PerObjectInfo.ObjectIndex);
+		PerObjectInfo.SetCullDistanceSq(CullDistanceSq);
 	}
 }
 
 void UNetObjectGridFilter::CalculateCellBox(const UNetObjectGridFilter::FPerObjectInfo& PerObjectInfo, UNetObjectGridFilter::FCellBox& OutCellBox)
 {
-	const float CullDistance = PerObjectInfo.CullDistance;
+	const double CullDistance = PerObjectInfo.GetCullDistance();
 	const FVector Position = PerObjectInfo.Position;
 	FVector MinPosition = Position - CullDistance;
 	FVector MaxPosition = Position + CullDistance;
@@ -404,6 +501,39 @@ bool UNetObjectGridFilter::DoesCellContainCoord(const UNetObjectGridFilter::FCel
 	return (Coord.X >= Cell.MinX) & (Coord.X <= Cell.MaxX) & (Coord.Y >= Cell.MinY) & (Coord.Y <= Cell.MaxY);
 }
 
+FString UNetObjectGridFilter::PrintDebugInfoForObject(const FDebugInfoParams& Params, uint32 ObjectIndex) const
+{
+	using namespace UE::Net;
+
+	const FObjectLocationInfo& ObjectLocationInfo = static_cast<const FObjectLocationInfo&>(Params.FilteringInfos[ObjectIndex]);
+
+	if (ObjectLocationInfo.GetInfoIndex() == 0)
+	{
+		return TEXT("NoGridFilter Info");
+	}
+
+	const FPerObjectInfo& PerObjectInfo = ObjectInfos[ObjectLocationInfo.GetInfoIndex()];
+
+	const FPerConnectionInfo* const PerConnectionInfo = PerConnectionInfos.IsValidIndex(Params.ConnectionId) ? &PerConnectionInfos[Params.ConnectionId] : nullptr;
+	const uint16* CulledFrameCountPtr = PerConnectionInfo ? PerConnectionInfo->RecentObjectFrameCount.Find(ObjectIndex) : nullptr;
+	const uint16 CulledFrameCount = CulledFrameCountPtr ? *CulledFrameCountPtr : 0;
+
+	double Dist2d = DOUBLE_BIG_NUMBER;
+	double DistZ = DOUBLE_BIG_NUMBER;
+	
+	for (const FReplicationView::FView& View : Params.View.Views)
+	{
+		Dist2d = FMath::Min(FVector::Dist2D(PerObjectInfo.Position, View.Pos), Dist2d);
+		DistZ = FMath::Min(FMath::Abs(PerObjectInfo.Position.Z - View.Pos.Z), DistZ);
+	}
+	
+
+	return FString::Printf(TEXT("[GridFilter] Dist2D: %.2f, CullDistance: %.2f, CulledFrameCount: %u, DistZ: %.2f, Pos: %s"),
+		Dist2d, PerObjectInfo.GetCullDistance(), CulledFrameCount, DistZ, *PerObjectInfo.Position.ToCompactString()
+	);
+}
+
+
 //*************************************************************************************************
 // UNetObjectGridWorldLocFilter
 //*************************************************************************************************
@@ -417,6 +547,26 @@ void UNetObjectGridWorldLocFilter::OnInit(FNetObjectFilterInitParams& Params)
 	WorldLocations = &Params.ReplicationSystem->GetWorldLocations();
 }
 
+void UNetObjectGridWorldLocFilter::UpdateObjects(FNetObjectFilterUpdateParams&)
+{
+}
+
+void UNetObjectGridWorldLocFilter::PreFilter(FNetObjectPreFilteringParams& Params)
+{
+	Super::PreFilter(Params);
+
+	// Update logic performed here in order to not rely on any object being dirtied.
+	auto UpdateCells = [this, &Params](uint32 ObjectIndex)
+		{
+			const FObjectLocationInfo& ObjectLocationInfo = static_cast<const FObjectLocationInfo&>(Params.FilteringInfos[ObjectIndex]);
+			this->UpdateCellInfoForObject(ObjectLocationInfo, static_cast<const UE::Net::FReplicationInstanceProtocol*>(nullptr));
+		};
+
+	// Update cell info for all objects that have moved.
+	UE::Net::FNetBitArrayView ObjectsWithDirtyWorldLocations = WorldLocations->GetObjectsWithDirtyInfo();
+	UE::Net::FNetBitArrayView::ForAllSetBits(Params.FilteredObjects, ObjectsWithDirtyWorldLocations, UE::Net::FNetBitArrayBase::AndOp, UpdateCells);
+}
+
 void UNetObjectGridWorldLocFilter::UpdateObjectInfo(UNetObjectGridFilter::FPerObjectInfo& PerObjectInfo, const UNetObjectGridFilter::FObjectLocationInfo& ObjectLocationInfo, const UE::Net::FReplicationInstanceProtocol* InstanceProtocol)
 {
 	check(ObjectLocationInfo.IsUsingWorldLocations());
@@ -424,7 +574,7 @@ void UNetObjectGridWorldLocFilter::UpdateObjectInfo(UNetObjectGridFilter::FPerOb
 	const UE::Net::FWorldLocations::FObjectInfo& CachedObjectInfo = WorldLocations->GetObjectInfo(PerObjectInfo.ObjectIndex);
 	
 	PerObjectInfo.Position = CachedObjectInfo.WorldLocation;
-	PerObjectInfo.CullDistance = CachedObjectInfo.CullDistance;
+	PerObjectInfo.SetCullDistance(CachedObjectInfo.CullDistance);
 }
 
 bool UNetObjectGridWorldLocFilter::BuildObjectInfo(uint32 ObjectIndex, FNetObjectFilterAddObjectParams& Params)
@@ -448,6 +598,17 @@ void UNetObjectGridFragmentLocFilter::OnInit(FNetObjectFilterInitParams& InitPar
 	Super::OnInit(InitParams);
 
 	SetupFilterType(ENetFilterType::PostPoll_FragmentBased);
+}
+
+void UNetObjectGridFragmentLocFilter::UpdateObjects(FNetObjectFilterUpdateParams& Params)
+{
+	for (SIZE_T ObjectIt = 0, ObjectEndIt = Params.ObjectCount; ObjectIt != ObjectEndIt; ++ObjectIt)
+	{
+		const uint32 ObjectIndex = Params.ObjectIndices[ObjectIt];
+		const FObjectLocationInfo& ObjectLocationInfo = static_cast<const FObjectLocationInfo&>(Params.FilteringInfos[ObjectIndex]);
+		const UE::Net::FReplicationInstanceProtocol* InstanceProtocol = Params.InstanceProtocols ? Params.InstanceProtocols[ObjectIt] : nullptr;
+		UpdateCellInfoForObject(ObjectLocationInfo, InstanceProtocol);
+	}
 }
 
 bool UNetObjectGridFragmentLocFilter::BuildObjectInfo(uint32 ObjectIndex, FNetObjectFilterAddObjectParams& Params)
@@ -511,7 +672,7 @@ void UNetObjectGridFragmentLocFilter::UpdateObjectInfo(UNetObjectGridFilter::FPe
 		const UE::Net::FReplicationInstanceProtocol::FFragmentData& FragmentData = FragmentDatas[CullDistanceFragmentInfo->CullDistanceSqrStateIndex];
 		const uint8* CullDistanceSqrAddress = FragmentData.ExternalSrcBuffer + CullDistanceFragmentInfo->CullDistanceSqrStateOffset;
 		const float CullDistanceSqr = *reinterpret_cast<const float*>(CullDistanceSqrAddress);
-		PerObjectInfo.CullDistance = FPlatformMath::Sqrt(CullDistanceSqr);
+		PerObjectInfo.SetCullDistanceSq(CullDistanceSqr);
 	}
 }
 

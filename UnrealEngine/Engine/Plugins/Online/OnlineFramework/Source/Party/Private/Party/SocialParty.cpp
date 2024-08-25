@@ -1631,7 +1631,7 @@ FPartyJoinDenialReason ReservationResponseToJoinDenialReason(const EPartyReserva
 	switch (ReservationResponse)
 	{
 	case EPartyReservationResult::PartyLimitReached:
-		return EPartyJoinDenialReason::GameFull;
+		return EPartyJoinDenialReason::PartyFull;
 	case EPartyReservationResult::ReservationDenied:
 		return EPartyJoinDenialReason::GameFull; // Not really a more specific reason available
 	case EPartyReservationResult::ReservationDenied_CrossPlayRestriction:
@@ -1785,6 +1785,7 @@ void USocialParty::DisconnectParty()
 
 void USocialParty::FinalizePartyLeave(EMemberExitedReason Reason)
 {
+	QUICK_SCOPE_CYCLE_COUNTER(STAT_USocialParty_FinalizePartyLeave);
 	UE_LOG(LogParty, Verbose, TEXT("Local player [%s] is no longer in party [%s]. Reason [%s]."), *GetOwningLocalMember().ToDebugString(false), *ToDebugString(), ToString(Reason));
 
 	if (!bIsLeavingParty)

@@ -15,7 +15,7 @@
 	[
 		{
 			"Name" : "WorldPartitionHLODUtilities",
-			"Type" : "Editor",
+			"Type" : "UncookedOnly",
 			"LoadingPhase" : "Default"
 		}
 	]

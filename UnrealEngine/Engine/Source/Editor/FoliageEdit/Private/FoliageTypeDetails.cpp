@@ -97,8 +97,8 @@ void FFoliageTypeDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder)
 	const static FName InstanceSettingsName("InstanceSettings");
 
 	FFoliageTypeCustomizationHelpers::HideFoliageCategory(DetailBuilder, ReapplyName);
-	FFoliageTypeCustomizationHelpers::HideFoliageCategory(DetailBuilder, PaintingName);
 
+	AddSubcategoryProperties(DetailBuilder, PaintingName);
 	AddSubcategoryProperties(DetailBuilder, PlacementName);
 
 	// If enabled, show the properties for procedural placement

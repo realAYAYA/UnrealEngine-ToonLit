@@ -9,6 +9,8 @@
 #include "UserInterface/PropertyEditor/PropertyEditorConstants.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SButton.h"
+#include "DetailsViewStyle.h"
+#include "SDetailsView.h"
 
 class SAdvancedDropdownRow : public SDetailTableRowBase
 {
@@ -50,7 +52,7 @@ public:
 		+ SHorizontalBox::Slot()
 		.HAlign(HAlign_Left)
 		.VAlign(VAlign_Center)
-		.Padding(2, 0, 0, 0)
+		.Padding(2.0f, 0.0f, 0.0f, 0.0f)
 		.AutoWidth()
 		[
 			SAssignNew(ExpanderButton, SButton)
@@ -60,7 +62,7 @@ public:
 			.ClickMethod(EButtonClickMethod::MouseDown)
 			.OnClicked(InArgs._OnClicked)
 			.IsEnabled(InArgs._IsButtonEnabled)
-			.ContentPadding(0)
+			.ContentPadding(0.0f)
 			.IsFocusable(false)
 			.ToolTipText(this, &SAdvancedDropdownRow::GetAdvancedPulldownToolTipText )
 			[
@@ -72,7 +74,7 @@ public:
 		+ SHorizontalBox::Slot()
 		.VAlign(VAlign_Center)
 		.HAlign(HAlign_Fill)
-		.Padding(4, 0, 0, 0)
+		.Padding(4.0f, 0.0f, 0.0f, 0.0f)
 		[
 			SNew(SBox)
 			.VAlign(VAlign_Center)
@@ -85,26 +87,28 @@ public:
 			]
 		];
 
-		TWeakPtr<STableViewBase> OwnerTableViewWeak = InOwnerTableView;
-		auto GetScrollbarWellBrush = [this, OwnerTableViewWeak]()
+		OwnerTableViewWeak = InOwnerTableView;
+		auto GetScrollbarWellBrush = [this]()
 		{
 			return SDetailTableRowBase::IsScrollBarVisible(OwnerTableViewWeak) ?
 				FAppStyle::Get().GetBrush("DetailsView.GridLine") : 
 				FAppStyle::Get().GetBrush("DetailsView.CategoryMiddle");
 		};
 
-		auto GetScrollbarWellTint = [this, OwnerTableViewWeak]()
+		auto GetScrollbarWellTint = [this]()
 		{
-			return SDetailTableRowBase::IsScrollBarVisible(OwnerTableViewWeak) ?
+			return IsScrollBarVisible(OwnerTableViewWeak) ?
 				FStyleColors::White : 
 				this->GetRowBackgroundColor();
 		};
+
+		FDetailsViewStyle ViewStyle = DetailsView ? DetailsView->GetStyleKey() : SDetailsView::GetPrimaryDetailsViewStyleKey();
 
 		ChildSlot
 		[
 			SNew(SBorder)
 			.BorderImage(FAppStyle::Get().GetBrush("DetailsView.GridLine"))
-			.Padding(FMargin(0, 0, 0, 1))
+			.Padding( 0.0f, 0.0f, 0.0f, 1.0f )
 			[
 				SNew(SHorizontalBox)
 				+ SHorizontalBox::Slot()
@@ -113,20 +117,10 @@ public:
 					SNew(SBorder)
 					.BorderImage(FAppStyle::Get().GetBrush("DetailsView.CategoryMiddle"))
 					.BorderBackgroundColor(this, &SAdvancedDropdownRow::GetRowBackgroundColor)
-					.Padding(0)
+					.Padding(0.0f)
 					[
 						ContentWidget.ToSharedRef()
 					]
-				]
-				+ SHorizontalBox::Slot()
-				.HAlign(HAlign_Right)
-				.VAlign(VAlign_Fill)
-				.AutoWidth()
-				[
-					SNew(SBorder)
-					.BorderImage_Lambda(GetScrollbarWellBrush)
-					.BorderBackgroundColor_Lambda(GetScrollbarWellTint)
-					.Padding(FMargin(0, 0, SDetailTableRowBase::ScrollBarPadding, 0))
 				]
 			]
 		];

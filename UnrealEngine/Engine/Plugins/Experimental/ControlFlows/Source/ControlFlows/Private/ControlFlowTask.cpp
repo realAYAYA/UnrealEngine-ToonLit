@@ -15,6 +15,11 @@ FControlFlowSubTaskBase::FControlFlowSubTaskBase(const FString& TaskName)
 
 }
 
+TWeakPtr<FControlFlow> FControlFlowSubTaskBase::GetOwningFlowForTaskNode() const
+{
+	return ensureAlways(OwningNode.IsValid()) ? OwningNode.Pin()->Parent : nullptr;
+}
+
 void FControlFlowSubTaskBase::Execute()
 {
 	TaskCompleteCallback.ExecuteIfBound();
@@ -79,7 +84,11 @@ TSharedRef<FControlFlow> FControlFlowTask_BranchLegacy::GetOrAddBranch(int32 Bra
 {
 	if (!Branches.Contains(BranchIndex))
 	{
-		Branches.Add(BranchIndex, MakeShared<FControlFlow>());
+		TSharedRef<FControlFlow> NewBranchFlow = MakeShared<FControlFlow>();
+
+		NewBranchFlow->ParentFlow = GetOwningFlowForTaskNode();
+		
+		Branches.Add(BranchIndex, NewBranchFlow);
 	}
 
 	return Branches[BranchIndex];
@@ -91,7 +100,9 @@ void FControlFlowTask_BranchLegacy::Execute()
 	{
 		SelectedBranch = BranchDelegate.Execute();
 
-		TSharedRef<FControlFlow> FlowToExecute = GetOrAddBranch(SelectedBranch);
+		TSharedRef<FControlFlow> FlowToExecute = GetOrAddBranch(*SelectedBranch);
+
+		FlowToExecute->LastZeroSecondDelay = GetOwningFlowForTaskNode().Pin()->LastZeroSecondDelay;
 
 		FlowToExecute->OnCompleteDelegate_Internal.BindSP(SharedThis(this), &FControlFlowTask_BranchLegacy::HandleBranchCompleted);
 		FlowToExecute->OnExecutedWithoutAnyNodesDelegate_Internal.BindSP(SharedThis(this), &FControlFlowTask_BranchLegacy::HandleBranchCompleted);
@@ -107,9 +118,9 @@ void FControlFlowTask_BranchLegacy::Execute()
 
 void FControlFlowTask_BranchLegacy::Cancel()
 {
-	if (Branches.Contains(SelectedBranch) && Branches[SelectedBranch]->IsRunning())
+	if (ensureAlways(SelectedBranch.IsSet()) && Branches.Contains(*SelectedBranch) && Branches[*SelectedBranch]->IsRunning())
 	{
-		Branches[SelectedBranch]->CancelFlow();
+		Branches[*SelectedBranch]->CancelFlow();
 	}
 	else
 	{
@@ -121,17 +132,18 @@ void FControlFlowTask_BranchLegacy::Cancel()
 //FControlFlowSimpleSubTask
 //////////////////////////////////
 
-FControlFlowSimpleSubTask::FControlFlowSimpleSubTask(const FString& TaskName, TSharedRef<FControlFlow> FlowOwner)
+FControlFlowSimpleSubTask::FControlFlowSimpleSubTask(const FString& TaskName)
 	: FControlFlowSubTaskBase(TaskName)
-	, TaskFlow(FlowOwner)
+	, TaskFlow(MakeShared<FControlFlow>(TaskName))
 {
-
 }
 
 void FControlFlowSimpleSubTask::Execute()
 {
 	if (TaskPopulator.IsBound() && GetTaskFlow().IsValid())
 	{
+		GetTaskFlow()->LastZeroSecondDelay = GetOwningFlowForTaskNode().Pin()->LastZeroSecondDelay;
+
 		GetTaskFlow()->OnCompleteDelegate_Internal.BindSP(SharedThis(this), &FControlFlowSimpleSubTask::CompletedSubTask);
 		GetTaskFlow()->OnExecutedWithoutAnyNodesDelegate_Internal.BindSP(SharedThis(this), &FControlFlowSimpleSubTask::CompletedSubTask);
 		GetTaskFlow()->OnCancelledDelegate_Internal.BindSP(SharedThis(this), &FControlFlowSimpleSubTask::CancelledSubTask);
@@ -176,8 +188,8 @@ void FControlFlowSimpleSubTask::CancelledSubTask()
 //FControlFlowLoop
 //////////////////////////////////
 
-FControlFlowTask_LoopDeprecated::FControlFlowTask_LoopDeprecated(FControlFlowLoopComplete& TaskCompleteDelegate, const FString& TaskName, TSharedRef<FControlFlow> FlowOwner)
-	: FControlFlowSimpleSubTask(TaskName, FlowOwner)
+FControlFlowTask_LoopDeprecated::FControlFlowTask_LoopDeprecated(FControlFlowLoopComplete& TaskCompleteDelegate, const FString& TaskName)
+	: FControlFlowSimpleSubTask(TaskName)
 	, TaskCompleteDecider(TaskCompleteDelegate)
 {}
 
@@ -191,6 +203,8 @@ void FControlFlowTask_LoopDeprecated::Execute()
 		}
 		else
 		{
+			GetTaskFlow()->LastZeroSecondDelay = GetOwningFlowForTaskNode().Pin()->LastZeroSecondDelay;
+
 			GetTaskFlow()->OnCompleteDelegate_Internal.BindSP(SharedThis(this), &FControlFlowTask_LoopDeprecated::CompletedLoop);
 			GetTaskFlow()->OnExecutedWithoutAnyNodesDelegate_Internal.BindSP(SharedThis(this), &FControlFlowTask_LoopDeprecated::CompletedLoop);
 			GetTaskFlow()->OnCancelledDelegate_Internal.BindSP(SharedThis(this), &FControlFlowTask_LoopDeprecated::CancelledLoop);
@@ -251,6 +265,10 @@ void FControlFlowTask_Branch::Execute()
 		if (ensureAlwaysMsgf(BranchDefinitions->Contains(SelectedBranchKey), TEXT("You've returned a Branch Key that doesn't exist!")))
 		{
 			SelectedBranchFlow = BranchDefinitions->FindChecked(SelectedBranchKey);
+
+			SelectedBranchFlow->ParentFlow = GetOwningFlowForTaskNode();
+			SelectedBranchFlow->LastZeroSecondDelay = GetOwningFlowForTaskNode().Pin()->LastZeroSecondDelay;
+
 			SelectedBranchFlow->Activity = Activity;
 
 			SelectedBranchFlow->OnCompleteDelegate_Internal.BindSP(SharedThis(this), &FControlFlowTask_Branch::HandleBranchCompleted);
@@ -317,6 +335,8 @@ void FControlFlowTask_ConcurrentFlows::Execute()
 	if (ensureAlways(ConcurrentFlowDelegate.IsBound() && !ConcurrentFlows.IsValid()))
 	{
 		ConcurrentFlows = MakeShared<FConcurrentControlFlows>();
+		ConcurrentFlows->OwningTask = AsWeak();
+
 		ConcurrentFlows->OnConcurrencyCompleted.BindSP(SharedThis(this), &FControlFlowTask_ConcurrentFlows::HandleConcurrentFlowsCompleted);
 		ConcurrentFlows->OnConcurrencyCancelled.BindSP(SharedThis(this), &FControlFlowTask_ConcurrentFlows::HandleConcurrentFlowsCancelled);
 

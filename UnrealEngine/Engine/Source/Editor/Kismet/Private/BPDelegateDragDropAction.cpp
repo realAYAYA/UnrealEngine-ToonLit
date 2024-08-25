@@ -24,7 +24,6 @@
 #include "Layout/WidgetPath.h"
 #include "ScopedTransaction.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SubclassOf.h"
 #include "Textures/SlateIcon.h"
 #include "UObject/Field.h"

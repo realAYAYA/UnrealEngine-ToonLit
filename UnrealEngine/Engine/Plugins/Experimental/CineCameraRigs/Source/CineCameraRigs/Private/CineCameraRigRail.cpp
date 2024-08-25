@@ -12,6 +12,7 @@
 #include "Engine/World.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Math/UnrealMathUtility.h"
 #include "UObject/Package.h"
 
 #if WITH_EDITOR
@@ -327,7 +328,6 @@ FVector ACineCameraRigRail::GetVelocityAtPosition(const float InPosition, const 
 		FVector const P1 = CineSplineComponent->GetLocationAtDistanceAlongSpline(t1 * SplineLen, ESplineCoordinateSpace::World);
 		return (P1 - P0) / (t1 - t0) * TimeMultiplier;
 	}
-	return FVector::ZeroVector;
 }
 
 void ACineCameraRigRail::OnSplineEdited()
@@ -355,11 +355,11 @@ void ACineCameraRigRail::SetMIDParameters()
 void ACineCameraRigRail::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-	if (DriveMode == ECineCameraRigRailDriveMode::Duration)
+	if (DriveMode == ECineCameraRigRailDriveMode::Duration && bPlay)
 	{
 		DriveByParam(DeltaTime);
 	}
-	else if (DriveMode == ECineCameraRigRailDriveMode::Speed)
+	else if (DriveMode == ECineCameraRigRailDriveMode::Speed && bPlay)
 	{
 		DriveBySpeed(DeltaTime);
 	}
@@ -377,12 +377,14 @@ void ACineCameraRigRail::PostLoad()
 
 void ACineCameraRigRail::DriveByParam(float DeltaTime)
 {
+	const float AdjustedDeltaTime = AdjustDeltaTime(DeltaTime);
 	const float PositionDuration = LastPositionValue() - StartPositionValue();
-	float Param = PositionDuration * UKismetMathLibrary::SafeDivide(DeltaTime, CineSplineComponent->Duration);
+	const float Increment = bReverse ? -AdjustedDeltaTime : AdjustedDeltaTime;
+	float Param = PositionDuration * UKismetMathLibrary::SafeDivide(Increment, CineSplineComponent->Duration);
 	Param += bUseAbsolutePosition ? AbsolutePositionOnRail : CurrentPositionOnRail;
 	if (bLoop)
 	{
-		Param = PositionDuration > 0.0f ? FMath::Fmod(Param - StartPositionValue(), PositionDuration) : 0.0;
+		Param = PositionDuration > 0.0f ? FMath::Fmod(Param - StartPositionValue() + PositionDuration, PositionDuration) : 0.0;
 		Param += StartPositionValue();
 	}
 	else
@@ -398,18 +400,19 @@ void ACineCameraRigRail::DriveBySpeed(float DeltaTime)
 	{
 		return;
 	}
-
-	float TotalTime = CineSplineComponent->GetSplineLength() / FMath::Abs(Speed);
+	const float AdjustedDeltaTime = AdjustDeltaTime(DeltaTime);
+	const float TotalTime = CineSplineComponent->GetSplineLength() / FMath::Abs(Speed);
 	float CurrentTime = TotalTime * SpeedProgress;
-	CurrentTime += (FMath::Sign(Speed) * DeltaTime);
+	const float Increment = bReverse ? -AdjustedDeltaTime : AdjustedDeltaTime;
+	CurrentTime += (FMath::Sign(Speed) * Increment);
 	CurrentTime = bLoop ? FMath::Fmod(CurrentTime + TotalTime, TotalTime) : FMath::Clamp(CurrentTime, 0.0f, TotalTime);
 
 	SpeedProgress = CurrentTime / TotalTime;
 	
 	if (bUseAbsolutePosition)
 	{
-		float Distance = CineSplineComponent->GetSplineLength() * SpeedProgress;
-		float InputKey = CineSplineComponent->GetInputKeyValueAtDistanceAlongSpline(Distance);
+		const float Distance = CineSplineComponent->GetSplineLength() * SpeedProgress;
+		const float InputKey = CineSplineComponent->GetInputKeyValueAtDistanceAlongSpline(Distance);
 		AbsolutePositionOnRail = CineSplineComponent->GetPositionAtInputKey(InputKey);
 	}
 	else
@@ -541,8 +544,15 @@ bool ACineCameraRigRail::IsSequencerDriven()
 {
 #if WITH_EDITOR
 	return bSequencerDriven;
-#endif
+#else
 	return false;
+#endif
+}
+
+float ACineCameraRigRail::AdjustDeltaTime(float InDeltaTime) const
+{
+	const float TimeDilation = FMath::Max(GetActorTimeDilation(), UE_KINDA_SMALL_NUMBER);
+	return bCompensateTimeScale ? InDeltaTime / TimeDilation : InDeltaTime;
 }
 
 #if WITH_EDITOR
@@ -560,7 +570,7 @@ UMovieSceneFloatTrack* ACineCameraRigRail::FindPositionTrack(const UMovieSceneSe
 	for (const FMovieSceneBinding& Binding : Bindings)
 	{
 		TArray<UObject*, TInlineAllocator<1>> BoundObjects;
-		InSequence->LocateBoundObjects(Binding.GetObjectGuid(), nullptr, BoundObjects);
+		InSequence->LocateBoundObjects(Binding.GetObjectGuid(), UE::UniversalObjectLocator::FResolveParams(GetWorld()), BoundObjects);
 		if (BoundObjects.IsEmpty() || BoundObjects[0] != this)
 		{
 			continue;

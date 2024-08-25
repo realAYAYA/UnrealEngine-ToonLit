@@ -97,16 +97,17 @@ public:
 
 	//~ Unfortunately it seems that there isn't a way to make the automatic tooltip
 	//~ here platform-specific, so we can't be specific about the hotkeys
-	/** Determines cube grid scale. Can also be adjusted with hotkeys. */
+	/** Determines cube grid scale. Can also be adjusted with hotkeys. This changes Current
+	 Block Size to match the current Base Block Size and Grid Power (differently depending
+	 on the Power of Two setting). */
 	UPROPERTY(EditAnywhere, Category = Options, meta = (
 		EditCondition = "bAllowedToEditGrid", HideEditConditionToggle,
 		UIMin = "0", UIMax = "10", ClampMin = "0", ClampMax = "31"))
 	uint8 GridPower = DEFAULT_GRID_POWER;
 
 	/** 
-	 * Sets the size of a block at the current grid power. This is done by changing the 
-	 * base block size (i.e. the size at grid power 0) such that the target size is achieved at 
-	 * the the current value of Grid Power.
+	 * Sets the size of a block at the current grid power. This changes Base Block Size
+	 * such that the given value is achieved at the the current value of Grid Power.
 	 */
 	UPROPERTY(EditAnywhere, Category = Options, meta = (
 		EditCondition = "bAllowedToEditGrid", HideEditConditionToggle,
@@ -119,7 +120,7 @@ public:
 	int32 BlocksPerStep = 1;
 
 	/** 
-	 * When true, block sizes change by powers of two as grid power is changed. When false, block
+	 * When true, block sizes change by powers of two as Grid Power is changed. When false, block
 	 * sizes change by twos and fives, much like the default editor grid snapping options (for
 	 * instance, sizes might increase from 10 to 50 to 100 to 500).
 	 * Note that toggling this option will reset Grid Power and Current Block Size to default values.
@@ -130,8 +131,8 @@ public:
 	// Must match ClampMax in GridPower, used to make hotkeys not exceed it.
 	const uint8 MaxGridPower = 31;
 
-	/** Smallest block size to use in the grid. For instance, 3.125 results in
-	 blocks that are 100 sized at 5 power of two since 3.125 * 2^5 = 100. */
+	/** Smallest block size to use in the grid, i.e. the block size at Grid Power 0. This
+	 changes Current Block Size according to current value of Grid Power. */
 	UPROPERTY(EditAnywhere, Category = Options, AdvancedDisplay, meta = (
 		EditCondition = "bAllowedToEditGrid", HideEditConditionToggle,
 		UIMin = "0.1", UIMax = "10", ClampMin = "0.001", ClampMax = "1000"))
@@ -149,6 +150,10 @@ public:
 	 result in different group topology around the sides compared to a single Ctrl+drag). */
 	UPROPERTY(EditAnywhere, Category = Options, AdvancedDisplay)
 	bool bKeepSideGroups = true;
+
+	/** When true, displays dimensions of the given selection in the viewport. */
+	UPROPERTY(EditAnywhere, Category = Options, AdvancedDisplay)
+	bool bShowSelectionMeasurements = true;
 
 	/** When performing selection, the tolerance to use when determining
 	 whether things lie in the same plane as a cube face. */
@@ -226,8 +231,7 @@ enum class ECubeGridToolAction
 	CornerMode,
 	// FitGrid,
 	ResetFromActor,
-	Done,
-	Cancel,
+	AcceptAndStartNew
 };
 
 UCLASS()
@@ -281,27 +285,16 @@ public:
 	 */
 	UFUNCTION(CallInEditor, Category = GridReinitialization)
 	void ResetGridFromActor () { PostAction(ECubeGridToolAction::ResetFromActor); }
-};
 
-UCLASS()
-class MESHMODELINGTOOLSEXP_API UCubeGridDuringActivityActions : public UInteractiveToolPropertySet
-{
-	GENERATED_BODY()
-
-public:
-	TWeakObjectPtr<UCubeGridTool> ParentTool;
-
-	void Initialize(UCubeGridTool* ParentToolIn) { ParentTool = ParentToolIn; }
-
-	void PostAction(ECubeGridToolAction Action);
-
-	/** Accept and complete current action. */
-	UFUNCTION(CallInEditor, Category = Actions)
-	void Done() { PostAction(ECubeGridToolAction::Done); }
-
-	/** Cancel and exit current action */
-	UFUNCTION(CallInEditor, Category = Actions)
-	void Cancel() { PostAction(ECubeGridToolAction::Cancel); }
+	/**
+	 * Accepts the output of the current tool and restarts it in "create new asset" mode.
+	 * Used to avoid creating one huge mesh when working on different parts of a level.
+	 * Note that undoing object creation will not remove any created assets on disc (i.e.
+	 * undoing the creation of a static mesh will remove the actor from the world but not
+	 * remove the static mesh asset from disc).
+	 */
+	UFUNCTION(CallInEditor, Category = AssetActions)
+	void AcceptAndStartNew() { PostAction(ECubeGridToolAction::AcceptAndStartNew); }
 };
 
 /** Tool that allows for blocky boolean operations on an orientable power-of-two grid. */
@@ -373,6 +366,7 @@ public:
 
 	virtual void OnTick(float DeltaTime) override;
 	virtual void Render(IToolsContextRenderAPI* RenderAPI) override;
+	virtual void DrawHUD(FCanvas* Canvas, IToolsContextRenderAPI* RenderAPI) override;
 
 	virtual void OnPropertyModified(UObject* PropertySet, FProperty* Property) override;
 
@@ -389,6 +383,7 @@ public:
 	virtual bool IsInCornerMode() const;
 	virtual void RevertToDefaultMode();
 	virtual void SetChangesMade(bool bChangesMadeIn);
+	virtual void SetCurrentMeshTransform(const FTransform& TransformIn);
 	virtual void SetCurrentExtrudeAmount(int32 ExtrudeAmount);
 	virtual void SetCornerSelection(bool CornerSelectedFlags[4]);
 
@@ -453,9 +448,6 @@ protected:
 
 	UPROPERTY()
 	TObjectPtr<UCubeGridToolActions> ToolActions = nullptr;
-
-	UPROPERTY()
-	TObjectPtr<UCubeGridDuringActivityActions> DuringActivityActions = nullptr;
 
 	UPROPERTY()
 	TObjectPtr<UNewMeshMaterialProperties> MaterialProperties = nullptr;
@@ -556,6 +548,7 @@ protected:
 
 	ECubeGridToolAction PendingAction = ECubeGridToolAction::NoAction;
 	void ApplyAction(ECubeGridToolAction ActionType);
+	void ClearViewportButtonCustomization();
 
 	int32 GridPowerWatcherIdx;
 	int32 BlockBaseSizeWatcherIdx;
@@ -615,4 +608,7 @@ protected:
 
 	// Used to see if we need to update the asset that we've been modifying
 	bool bChangesMade = false;
+
+	void OutputCurrentResults(bool bSetSelection);
+	void AcceptToolAndStartNew();
 };

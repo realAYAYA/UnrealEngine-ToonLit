@@ -5,44 +5,21 @@
 #include "CoreMinimal.h"
 
 #include "InterchangePipelineBase.h"
-#include "InterchangeSourceData.h"
 #include "Nodes/InterchangeBaseNodeContainer.h"
 
 #include "Engine/DeveloperSettings.h"
-#include "Templates/Tuple.h"
-#include "UObject/Object.h"
-#include "UObject/ObjectMacros.h"
-#include "UObject/SoftObjectPath.h"
+#include "MaterialX/InterchangeMaterialXDefinitions.h"
 
 #include "InterchangeMaterialXPipeline.generated.h"
-
-class UInterchangeDatasmithPbrMaterialNode;
-class UInterchangeFactoryBaseNode;
-class UInterchangeMaterialFactoryNode;
-class UInterchangeMaterialInstanceFactoryNode;
-class UInterchangeShaderGraphNode;
-class UInterchangeMaterialInstanceNode;
 
 class UMaterialFunction;
 class UMaterialInterface;
 
-UENUM(BlueprintType)
-enum class EInterchangeMaterialXShaders : uint8
-{
-	/** Default settings for Autodesk's Standard Surface shader	*/
-	StandardSurface,
+using EInterchangeMaterialXSettings = TVariant<EInterchangeMaterialXShaders, EInterchangeMaterialXBSDF, EInterchangeMaterialXEDF, EInterchangeMaterialXVDF>;
 
-	/** Standard Surface shader used for translucency	*/
-	StandardSurfaceTransmission,
+uint32 INTERCHANGEPIPELINES_API GetTypeHash(EInterchangeMaterialXSettings Key);
 
-	/** Shader used for unlit surface*/
-	SurfaceUnlit,
-
-	/** Default settings for USD's Surface shader	*/
-	UsdPreviewSurface,
-
-	MaxShaderCount
-};
+bool INTERCHANGEPIPELINES_API operator==(EInterchangeMaterialXSettings Lhs, EInterchangeMaterialXSettings Rhs);
 
 UCLASS(config = Interchange, meta = (DisplayName = "Interchange MaterialX"))
 class INTERCHANGEPIPELINES_API UMaterialXPipelineSettings : public UDeveloperSettings
@@ -50,28 +27,66 @@ class INTERCHANGEPIPELINES_API UMaterialXPipelineSettings : public UDeveloperSet
 	GENERATED_BODY()
 
 public:
-	UPROPERTY(EditAnywhere, config, Category = "MaterialXPredefined", meta = (DisplayName = "MaterialX Predefined Surface Shaders"))
-	TMap<EInterchangeMaterialXShaders, FSoftObjectPath> PredefinedSurfaceShaders;
+	UMaterialXPipelineSettings();
 
 	bool AreRequiredPackagesLoaded();
 
-	FString GetAssetPathString(EInterchangeMaterialXShaders ShaderType) const;
+	FString GetAssetPathString(EInterchangeMaterialXSettings EnumType) const;
 
-private:
+	template<typename EnumT>
+	FString GetAssetPathString(EnumT EnumValue) const
+	{
+		static_assert(std::is_same_v<EnumT, EInterchangeMaterialXShaders> ||
+					  std::is_same_v<EnumT, EInterchangeMaterialXBSDF> ||
+					  std::is_same_v<EnumT, EInterchangeMaterialXEDF> ||
+					  std::is_same_v<EnumT, EInterchangeMaterialXVDF>,
+					  "Enum type not supported");
+
+		return GetAssetPathString(EInterchangeMaterialXSettings{ TInPlaceType<EnumT>{}, EnumValue });
+	}
+
+	UPROPERTY(EditAnywhere, config, Category = "MaterialXPredefined | Surface Shaders", meta = (DisplayName = "MaterialX Predefined Surface Shaders"))
+	TMap<EInterchangeMaterialXShaders, FSoftObjectPath> PredefinedSurfaceShaders;
+
+	UPROPERTY(EditAnywhere, config, Category = "MaterialXPredefined | BSDF", meta = (DisplayName = "MaterialX Predefined BSDF"))
+	TMap<EInterchangeMaterialXBSDF, FSoftObjectPath> PredefinedBSDF;
+
+	UPROPERTY(EditAnywhere, config, Category = "MaterialXPredefined | EDF", meta = (DisplayName = "MaterialX Predefined EDF"))
+	TMap<EInterchangeMaterialXEDF, FSoftObjectPath> PredefinedEDF;
+
+	UPROPERTY(EditAnywhere, config, Category = "MaterialXPredefined | VDF", meta = (DisplayName = "MaterialX Predefined VDF"))
+	TMap<EInterchangeMaterialXVDF, FSoftObjectPath> PredefinedVDF;
 
 #if WITH_EDITOR
+	/** Init the Predefined with Substrate assets, since the default value is set in BaseInterchange.ini and we have no way in the config file to conditionally init a property*/
+	void InitPredefinedAssets();
+
+private:
 	friend class FInterchangeMaterialXPipelineSettingsCustomization;
+	friend class UInterchangeMaterialXPipeline;
+
+	using FMaterialXSettings = TMap<EInterchangeMaterialXSettings, TPair<TSet<FName>, TSet<FName>>>;
 
 	static bool ShouldFilterAssets(UMaterialFunction* Asset, const TSet<FName>& Inputs, const TSet<FName>& Outputs);
 
-	static TSet<FName> StandardSurfaceInputs;
-	static TSet<FName> StandardSurfaceOutputs;
-	static TSet<FName> TransmissionSurfaceInputs;
-	static TSet<FName> TransmissionSurfaceOutputs;
-	static TSet<FName> SurfaceUnlitInputs;
-	static TSet<FName> SurfaceUnlitOutputs;
-	static TSet<FName> UsdPreviewSurfaceInputs;
-	static TSet<FName> UsdPreviewSurfaceOutputs;
+	static EInterchangeMaterialXSettings ToEnumKey(uint8 EnumType, uint8 EnumValue);
+
+	template<typename EnumT>
+	static EInterchangeMaterialXSettings ToEnumKey(EnumT EnumValue)
+	{
+		static_assert(std::is_same_v<EnumT, EInterchangeMaterialXShaders> ||
+					  std::is_same_v<EnumT, EInterchangeMaterialXBSDF> ||
+					  std::is_same_v<EnumT, EInterchangeMaterialXEDF> ||
+					  std::is_same_v<EnumT, EInterchangeMaterialXVDF>,
+					  "Enum type not supported");
+
+		return EInterchangeMaterialXSettings{ TInPlaceType<EnumT>{}, EnumValue };
+	}
+
+	/** The key is a combination of the index in the variant + the corresponding enum */
+	static FMaterialXSettings SettingsInputsOutputs;
+
+	bool bIsSubstrateEnabled{ false };
 #endif // WITH_EDITOR
 };
 
@@ -83,12 +98,11 @@ class INTERCHANGEPIPELINES_API UInterchangeMaterialXPipeline : public UInterchan
 	UInterchangeMaterialXPipeline();
 
 public:
-	
 	TObjectPtr<UMaterialXPipelineSettings> MaterialXSettings;
 
 protected:
 	virtual void AdjustSettingsForContext(EInterchangePipelineContext ImportType, TObjectPtr<UObject> ReimportAsset) override;
-	virtual void ExecutePipeline(UInterchangeBaseNodeContainer* BaseNodeContainer, const TArray<UInterchangeSourceData*>& SourceDatas) override;
+	virtual void ExecutePipeline(UInterchangeBaseNodeContainer* BaseNodeContainer, const TArray<UInterchangeSourceData*>& SourceDatas, const FString& ContentBasePath) override;
 
 	virtual bool CanExecuteOnAnyThread(EInterchangePipelineTask PipelineTask) override
 	{
@@ -97,5 +111,6 @@ protected:
 	}
 
 private:
-	static TMap<FString, EInterchangeMaterialXShaders> PathToEnumMapping;
+
+	static TMap<FString, EInterchangeMaterialXSettings> PathToEnumMapping;
 };

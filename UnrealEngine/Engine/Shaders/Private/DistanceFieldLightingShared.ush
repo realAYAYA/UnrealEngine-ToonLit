@@ -152,7 +152,7 @@ uint GetCulledNumObjects()
 
 struct FDFObjectBounds
 {
-	FLWCVector3 Center;	// World space bounds center
+	FDFVector3 Center;	// World space bounds center
 	float SphereRadius;	// World space bounding sphere extent
 	float3 BoxExtent;	// World space AABB extent
 	uint OftenMoving;
@@ -176,12 +176,12 @@ FDFObjectBounds LoadDFObjectBounds(uint ObjectIndex)
 	FDFObjectBounds Bounds;
 
 	float4 Vector0 = SceneObjectBounds[ObjectIndex * DF_OBJECT_BOUNDS_STRIDE + 0];
-	float3 TilePosition = Vector0.xyz;
+	float3 PositionHigh = Vector0.xyz;
 
 	float4 Vector1 = SceneObjectBounds[ObjectIndex * DF_OBJECT_BOUNDS_STRIDE + 1];
-	float3 RelativeWorldPosition = Vector1.xyz;
+	float3 PositionLow = Vector1.xyz;
 
-	Bounds.Center = MakeLWCVector3(TilePosition, RelativeWorldPosition);
+	Bounds.Center = MakeDFVector3(PositionHigh, PositionLow);
 	Bounds.SphereRadius = Vector1.w;
 
 	float4 Vector2 = SceneObjectBounds[ObjectIndex * DF_OBJECT_BOUNDS_STRIDE + 2];
@@ -200,7 +200,7 @@ FDFObjectBounds LoadDFObjectBounds(uint ObjectIndex)
 
 struct FHeightfieldObjectBounds
 {
-	FLWCVector3 BoxOrigin;	// World space AABB center
+	FDFVector3 BoxOrigin;	// World space AABB center
 	float3 BoxExtent;		// World space AABB extent
 	bool bInAtlas;
 };
@@ -213,10 +213,10 @@ FHeightfieldObjectBounds LoadHeightfieldObjectBounds(uint ObjectIndex)
 	float4 Vector0 = SceneHeightfieldObjectBounds[ObjectIndex * HEIGHTFIELD_OBJECT_BOUNDS_STRIDE + 0];
 	float4 Vector1 = SceneHeightfieldObjectBounds[ObjectIndex * HEIGHTFIELD_OBJECT_BOUNDS_STRIDE + 1];
 
-	float3 TilePosition = Vector0.xyz;
+	float3 PositionHigh = Vector0.xyz;
 	float3 RelativeWorldPosition = Vector1.xyz;
 
-	Bounds.BoxOrigin = MakeLWCVector3(TilePosition, RelativeWorldPosition);
+	Bounds.BoxOrigin = DFTwoSum(PositionHigh, RelativeWorldPosition);
 
 	float4 Vector2 = SceneHeightfieldObjectBounds[ObjectIndex * HEIGHTFIELD_OBJECT_BOUNDS_STRIDE + 2];
 	Bounds.BoxExtent = Vector2.xyz;
@@ -250,8 +250,8 @@ struct FDFObjectData
 	uint GPUSceneInstanceIndex;
 
 	// Transforms between world space and the volume space that tracing happens in
-	FLWCInverseMatrix WorldToVolume;
-	FLWCMatrix VolumeToWorld;
+	FDFInverseMatrix WorldToVolume;
+	FDFMatrix VolumeToWorld;
 
 	// Scales along each axis to transform from volume space to world space.  Transform a scaled direction to better handle non-uniform scaling.
 	float3 VolumeToWorldScale;
@@ -262,7 +262,7 @@ struct FDFObjectData
 
 FDFObjectData LoadDFObjectDataFromBuffer(StructuredBuffer<float4> SourceBuffer, uint ObjectIndex)
 {
-	float3 TilePosition = SourceBuffer[ObjectIndex * DF_OBJECT_DATA_STRIDE + 0].xyz;
+	float3 PositionHigh = SourceBuffer[ObjectIndex * DF_OBJECT_DATA_STRIDE + 0].xyz;
 
 	FDFObjectData Data;
 
@@ -271,7 +271,7 @@ FDFObjectData LoadDFObjectDataFromBuffer(StructuredBuffer<float4> SourceBuffer, 
 	float4 V2 = SourceBuffer[ObjectIndex * DF_OBJECT_DATA_STRIDE + 3];
 	float4x4 RelativeWorldToVolume = transpose(float4x4(V0, V1, V2, float4(0.0f, 0.0f, 0.0f, 1.0f)));
 
-	Data.WorldToVolume = MakeLWCInverseMatrix4x3(TilePosition, RelativeWorldToVolume);
+	Data.WorldToVolume = MakeDFInverseMatrix4x3(PositionHigh, RelativeWorldToVolume);
 
 	float4 Vector3 = SourceBuffer[ObjectIndex * DF_OBJECT_DATA_STRIDE + 4];
 	Data.VolumePositionExtent = Vector3.xyz;
@@ -288,7 +288,7 @@ FDFObjectData LoadDFObjectDataFromBuffer(StructuredBuffer<float4> SourceBuffer, 
 	V2 = SourceBuffer[ObjectIndex * DF_OBJECT_DATA_STRIDE + 8];
 	float4x4 VolumeToRelativeWorld = transpose(float4x4(V0, V1, V2, float4(0.0f, 0.0f, 0.0f, 1.0f)));
 
-	Data.VolumeToWorld = MakeLWCMatrix(TilePosition, VolumeToRelativeWorld);
+	Data.VolumeToWorld = MakeDFMatrix(PositionHigh, VolumeToRelativeWorld);
 
 	float4 Vector8 = SourceBuffer[ObjectIndex * DF_OBJECT_DATA_STRIDE + 9];
 	Data.VolumeToWorldScale = Vector8.xyz;
@@ -300,7 +300,7 @@ FDFObjectData LoadDFObjectDataFromBuffer(StructuredBuffer<float4> SourceBuffer, 
 
 struct FHeightfieldObjectData
 {
-	FLWCInverseMatrix WorldToLocal;
+	FDFInverseMatrix WorldToLocal;
 	float4 SizeScale;
 	float4 AtlasUVScaleBias;
 	float4 VisibilityAtlasUVScaleBias;
@@ -310,14 +310,14 @@ FHeightfieldObjectData LoadHeightfieldObjectDataFromBuffer(StructuredBuffer<floa
 {
 	FHeightfieldObjectData Data;
 
-	float3 TilePosition = SourceBuffer[ObjectIndex * HEIGHTFIELD_OBJECT_DATA_STRIDE + 0].xyz;
+	float3 PositionHigh = SourceBuffer[ObjectIndex * HEIGHTFIELD_OBJECT_DATA_STRIDE + 0].xyz;
 
 	float4 V0 = SourceBuffer[ObjectIndex * HEIGHTFIELD_OBJECT_DATA_STRIDE + 1];
 	float4 V1 = SourceBuffer[ObjectIndex * HEIGHTFIELD_OBJECT_DATA_STRIDE + 2];
 	float4 V2 = SourceBuffer[ObjectIndex * HEIGHTFIELD_OBJECT_DATA_STRIDE + 3];
 	float4x4 RelativeWorldToVolume = transpose(float4x4(V0, V1, V2, float4(0.0f, 0.0f, 0.0f, 1.0f)));
 
-	Data.WorldToLocal = MakeLWCInverseMatrix4x3(TilePosition, RelativeWorldToVolume);
+	Data.WorldToLocal = MakeDFInverseMatrix4x3(PositionHigh, RelativeWorldToVolume);
 
 	Data.SizeScale = SourceBuffer[ObjectIndex * HEIGHTFIELD_OBJECT_DATA_STRIDE + 4];
 	Data.AtlasUVScaleBias = SourceBuffer[ObjectIndex * HEIGHTFIELD_OBJECT_DATA_STRIDE + 5];

@@ -26,11 +26,27 @@
 #define MDBG()
 #endif
 
+// Unreal 5.2+ assumes SSE 4.2 is available on x64 processors
+#if (defined(_M_X64) || defined(__amd64__) || defined(__x86_64__)) && !defined(_M_ARM64EC)
+#include <immintrin.h>
+#define PREPROCESSOR_USE_SSE4_2 1
+#define SSE_READ_PADDING 16
+#else
+#define PREPROCESSOR_USE_SSE4_2 0
+#define SSE_READ_PADDING 0
+#endif
+
+// Strips whitespace on blank lines and leading whitespace in directives
+#define STRIP_BLANK_LINE_WHITESPACE 1
+
 #pragma warning(push)
 // arrput calls are incorrectly reported by MSVC analysis to be potentially dereferencing null
 // (the maybegrow macro will inline allocate if given a null pointer to begin with)
 // not obvious how to get it to sort itself out, so just disabling the warning for expediency
 #pragma warning(disable:6011) 
+
+// Silence completely incorrect misparsing of the arrsetlen macros
+//-V::521
 
 //////////////////////////////////////////////////////////////////////////////
 //
@@ -86,6 +102,7 @@ struct macro_definition
 	uint8 predefined;
 	uint8 is_variadic;	// if true, then __VA_ARGS__ will be specified using 'num_arguments' as argument_index
 	uint8 disabled;
+	uint8 preprocess_args_first;	// only applies to custom macros
 	struct macro_definition* next;	// push/pop stack
 };
 
@@ -94,6 +111,7 @@ struct macro_definition
 #define MACRO_NUM_PARAMETERS_line -3
 #define MACRO_NUM_PARAMETERS_defined -4
 #define MACRO_NUM_PARAMETERS_counter -5
+#define MACRO_NUM_PARAMETERS_custom -6
 
 static struct macro_definition predefined_FILE = {"__FILE__", 8, {0}, 0, MACRO_NUM_PARAMETERS_file, 1};
 static struct macro_definition predefined_LINE = {"__LINE__", 8, {0}, 0, MACRO_NUM_PARAMETERS_line, 1};
@@ -106,6 +124,13 @@ static struct macro_definition predefined_defined = {"defined", 7, {0}, 0, MACRO
 #define strdup(x) _strdup(x)
 #endif
 
+#if !defined(FORCE_INLINE)
+#if defined(_MSC_VER)
+#define FORCE_INLINE __forceinline
+#else
+#define FORCE_INLINE inline __attribute__((always_inline))
+#endif
+#endif
 
 typedef struct
 {
@@ -117,7 +142,7 @@ typedef struct
 #define DIRECTIVE_HASH_SIZE 32
 struct
 {
-	char* name;
+	char name[8];
 	size_t name_len;
 } directive_hash[DIRECTIVE_HASH_SIZE];
 
@@ -155,6 +180,8 @@ typedef struct
 static loadfile_callback_func loadfile_callback;
 static freefile_callback_func freefile_callback;
 static resolveinclude_callback_func resolveinclude_callback;
+static custommacro_begin_callback_func custommacro_begin;
+static custommacro_end_callback_func custommacro_end;
 
 #define HASH_EMPTY_MARKER 0
 #define HASH_TOMBSTONE 1
@@ -173,12 +200,26 @@ typedef struct
 	shpair* verify;
 } pphash;
 
+#define MACRO_BLOOM_FILTER_SIZE 128
+
 typedef struct pp_context
 {
 	pphash macro_map;				  // map of macro names to their definitions
 	macro_hash_entry* undef_map;	  // map of macro names to a flag for whether they've ever been undef'd, for more useful error messages
-	uint8 (*macro_name_filter)[256];  // 64KB table indicating whether 1 & 2-character identifiers are macros
 	include_once* once_map;			  // map of which filenames have been #onced
+
+	// 3KB table by identifier length, with 3 masks indicating whether macros exist with the given key character at a certain location (first,
+	// middle, last).  Functions as a trivially cheap bloom filter with 4 keys (length plus the 3 characters), as it has fixed cost regardless
+	// of identifier length, and the filter table accesses for a given identifier are cache friendly, since character masks for a given length
+	// are adjacent.  Valid identifier characters are in the ASCII range 64-127, so we only need 64 bits of mask.
+	//
+	// In histogram testing, the middle character was actually the most unique, but all three make a contribution to improving effectiveness.
+	// The filter rejects 99.5% of identifiers that aren't macros in HLSL code.
+	//
+	// The length of the identifier is clamped -- in testing, no identifiers longer than 64 characters were observed.  Using a fixed size
+	// table in the structure avoids a couple memory accesses fetching a pointer and current allocated length, which adds up given how
+	// often maybe_expand_macro is called.
+	uint64 macro_bloom_filter[MACRO_BLOOM_FILTER_SIZE][3];
 
 	int include_nesting_level;	// we stop after a certain number in case of unbounded recursive includes
 	int macro_expansion_level;	// because recursive macros are prevented, we don't need to stop this, but we do in case of bugs in recursive macro processing
@@ -189,7 +230,7 @@ typedef struct pp_context
 	ifdef_info* ifdef_stack;
 
 	pp_where* include_stack;
-	pp_diagnostic* error;
+	pp_diagnostic* diagnostics;
 	int stop;  // if we hit an error that causes us to stop processing
 
 	int num_lines;
@@ -215,7 +256,7 @@ typedef struct parse_state
 	size_t src_length;
 
 	char* dest;
-	char* fast_dest;
+	size_t copied_identifier_length;			// Set by copy_and_filter_macro, used by maybe_expand_macro
 
 	int src_line_number;
 	int dest_line_number;
@@ -402,15 +443,10 @@ static void output_line_directive(parse_state* cs)
 	size_t filename_len = strlen(cs->filename);
 	size_t expansion_length = 6 + 16 + filename_len + 2 + 2 + 1;
 
-	if (cs->fast_dest)
-		q = cs->fast_dest;
-	else
-	{
-		// make sure there's room in the output for the #line directive plus all the remaining text
-		arrsetcap(out, arrlen(out) + (size_t)(cs->src_length - cs->src_offset) + expansion_length);
+	// make sure there's room in the output for the #line directive plus all the remaining text
+	arrsetcap(out, arrlen(out) + (size_t)(cs->src_length - cs->src_offset) + expansion_length);
 
-		q = out + arrlen(out);
-	}
+	q = out + arrlen(out);
 
 	// write the line directive
 	STB_ASSUME(q != NULL);
@@ -435,13 +471,9 @@ static void output_line_directive(parse_state* cs)
 	*q++ = '\n';
 
 	cs->dest_line_number = cs->src_line_number;
-	if (cs->fast_dest)
-		cs->fast_dest = q;
-	else
-	{
-		arrsetlen(out, (q - out));
-		cs->dest = out;
-	}
+
+	arrsetlen(out, (q - out));
+	cs->dest = out;
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -498,7 +530,7 @@ static int error_explicit(parse_state* ps, int code, int line_number, char* text
 		stack = stack->parent;
 	}
 
-	arrpush(ps->context->error, d);
+	arrpush(ps->context->diagnostics, d);
 
 	if (d.error_level == PP_RESULT_MODE_error)
 		ps->context->stop = 1;
@@ -702,6 +734,44 @@ void stringhash_init_table(pphash* ht, unsigned int size)
 		table[i] = t;  // hope for 8-byte-at-a-time init
 }
 
+static int fast_preprocess_string_equals(const char* a, const char* b, int length)
+{
+#if PREPROCESSOR_USE_SSE4_2
+	// Does equality compare rather than ordinal compare, and assumes it's safe to read 7 bytes past end of buffer,
+	// which is true for strings in the preprocessor, which are in padded arenas, source files, or buffers.
+	if (length > 8)
+	{
+		// Longer string, compare 8 byte words, then a pair of possibly overlapping words at the end.
+		for (; length > 16; length-=8, a+=8, b+=8)
+		{
+			if (*(const uint64*)a != *(const uint64*)b)
+			{
+				return 0;
+			}
+		}
+		return ((*(const uint64*)a ^ *(const uint64*)b) | (*(const uint64*)(a + length - 8) ^ *(const uint64*)(b + length - 8))) == 0;
+	}
+	else
+	{
+		// Short string, compare up to 8 masked bytes.  May read up to 7 bytes past end of input strings.
+		return (((uint64)(-1ll)) >> ((8 - length) * 8) & (*(const uint64*)a ^ *(const uint64*)b)) == 0;
+	}
+#else
+	return memcmp(a, b, length) == 0;
+#endif
+}
+
+// For known short length strings (such as directives)
+static int fast_preprocess_string_equals_short(const char* a, const char* b, int length)
+{
+#if PREPROCESSOR_USE_SSE4_2
+	// Short string, compare up to 8 masked bytes.  May read up to 7 bytes past end of input strings.
+	return (((uint64)(-1ll)) >> ((8 - length) * 8) & (*(const uint64*)a ^ *(const uint64*)b)) == 0;
+#else
+	return memcmp(a, b, length) == 0;
+#endif
+}
+
 void* stringhash_get(pphash* ht, const char* key, size_t keylen)
 {
 	uint32 mask = ht->table_mask;
@@ -724,7 +794,7 @@ void* stringhash_get(pphash* ht, const char* key, size_t keylen)
 	if (table[slot].hash == hash)
 	{
 		uint32 i = table[slot].index;
-		if (ht->pair[i].key_length == keylen && 0 == memcmp(key, ht->pair[i].key, keylen))
+		if (ht->pair[i].key_length == keylen && fast_preprocess_string_equals(key, ht->pair[i].key, keylen))
 		{
 			if (ht->verify)
 				assert(vresult == ht->pair[i].value);
@@ -745,7 +815,7 @@ void* stringhash_get(pphash* ht, const char* key, size_t keylen)
 		if (table[slot].hash == hash)
 		{
 			uint32 i = table[slot].index;
-			if (ht->pair[i].key_length == keylen && 0 == memcmp(key, ht->pair[i].key, keylen))
+			if (ht->pair[i].key_length == keylen && fast_preprocess_string_equals(key, ht->pair[i].key, keylen))
 			{
 				if (ht->verify)
 					assert(vresult == ht->pair[i].value);
@@ -781,7 +851,7 @@ int stringhash_delete(pphash* ht, char* key, size_t keylen)
 	if (table[slot].hash == hash)
 	{
 		i = table[slot].index;
-		if (ht->pair[i].key_length == keylen && 0 == memcmp(key, ht->pair[i].key, keylen))
+		if (ht->pair[i].key_length == keylen && fast_preprocess_string_equals(key, ht->pair[i].key, keylen))
 			goto del;
 	}
 	if (table[slot].hash == HASH_EMPTY_MARKER)
@@ -795,7 +865,7 @@ int stringhash_delete(pphash* ht, char* key, size_t keylen)
 		if (table[slot].hash == hash)
 		{
 			i = table[slot].index;
-			if (ht->pair[i].key_length == keylen && 0 == memcmp(key, ht->pair[i].key, keylen))
+			if (ht->pair[i].key_length == keylen && fast_preprocess_string_equals(key, ht->pair[i].key, keylen))
 				goto del;
 		}
 		if (table[slot].hash == HASH_EMPTY_MARKER)
@@ -1297,6 +1367,73 @@ static int scan_whitespace_and_comments(parse_state* cs)
 	return state;
 }
 
+// Returns NULL if possibly a macro, or the end of the identifier if definitely not a macro
+static FORCE_INLINE const char* copy_and_filter_macro(parse_state* cs, const char* in, char* out)
+{
+	pp_context* c = cs->context;
+	const char* p = in;
+	char* q = out;
+	const char* start = p;
+	char ch_first = *p;
+
+#if PREPROCESSOR_USE_SSE4_2
+	__m128i k_identifier_needle = _mm_setr_epi8('A', 'Z', 'a', 'z', '0', '9', '_', '_', '$', '$', '$', '$', '$', '$', '$', '$');
+
+	__m128i identifier_word = _mm_loadu_si128((const __m128i*)p);
+	int end_index = _mm_cmpistri(k_identifier_needle, identifier_word, _SIDD_UBYTE_OPS | _SIDD_CMP_RANGES | _SIDD_NEGATIVE_POLARITY);
+
+	_mm_storeu_si128((__m128i*)q, identifier_word);
+	p += end_index;
+	q += end_index;
+
+	// Write as long we had a full word
+	while (end_index == 16)
+	{
+		identifier_word = _mm_loadu_si128((const __m128i*)p);
+		end_index = _mm_cmpistri(k_identifier_needle, identifier_word, _SIDD_UBYTE_OPS | _SIDD_CMP_RANGES | _SIDD_NEGATIVE_POLARITY);
+		if (!end_index)
+		{
+			break;
+		}
+		_mm_storeu_si128((__m128i*)q, identifier_word);
+		p += end_index;
+		q += end_index;
+	}
+
+#else  // PREPROCESSOR_USE_SSE4_2
+
+	// copy the rest of the identifier so we can NUL-terminate it
+	// we copy it to the output buffer since we've already allocated space for it,
+	// and that's where we'll need to copy it if it's not a macro
+	// There is always at least 1 identifier character, so copy the first unconditionally
+	p++;
+	*q++ = ch_first;
+	while (char_is_pp_identifier(*p))
+		*q++ = *p++;
+
+#endif  // !PREPROCESSOR_USE_SSE4_2
+
+	size_t identifier_length = p - start;
+
+	// Test bits for three key characters of the macro by length (first, middle, last)
+	size_t bloom_filter_offset = identifier_length < MACRO_BLOOM_FILTER_SIZE ? identifier_length : MACRO_BLOOM_FILTER_SIZE - 1;
+	if (!(c->macro_bloom_filter[bloom_filter_offset][0] & (1ull << (ch_first & 0x3f))) ||
+		!(c->macro_bloom_filter[bloom_filter_offset][1] & (1ull << (start[identifier_length >> 1] & 0x3f))) ||
+		!(c->macro_bloom_filter[bloom_filter_offset][2] & (1ull << (start[identifier_length - 1] & 0x3f))))
+	{
+		cs->src_offset = p - cs->src;
+		arrsetlennocap(cs->dest, (size_t)(q - cs->dest));  // set the output buffer size to account for the above-copied identifier
+		return p;		// Not a macro, return end of parse
+	}
+
+	// There is an implicit contract that "maybe_expand_macro" should consume identifiers copied by "copy_and_filter_macro".
+	// To allow validation of this, the length starts as zero, is set to non-zero here, then back to zero in "maybe_expand_macro".
+	assert(cs->copied_identifier_length == 0);
+
+	cs->copied_identifier_length = identifier_length;
+	return NULL;		// Could be a macro, return NULL
+}
+
 // Following routine is the workhorse; this copies from a file's text buffer
 // into the output buffer until it finds a directive, a preprocessor Identifier
 // (which might be a macro name), or the end of the file.
@@ -1308,46 +1445,91 @@ static int copy_to_action_point(parse_state* cs)
 	int state;
 	const char* p = cs->src + cs->src_offset;
 	char* out;
-	char* q;
+	char* q = NULL;
 
 	out = cs->dest;
 
 	state = cs->in_leading_whitespace ? PP_STATE_in_leading_whitespace : PP_STATE_ready;
 	MDBG();
 
-	if (cs->fast_dest)
-		q = cs->fast_dest;
-	else
-		q = NULL;
-
 	for (;;)
 	{
 		int prev_state;
 
-		if (cs->fast_dest == NULL)
-		{
-			// expand output so there's room to copy entire file unmodified
-			arrsetcap(out, arrlen(out) + (cs->src_length - cs->src_offset) + 1);
-			q = out + arrlen(out);
-		}
+		// expand output so there's room to copy entire file unmodified, plus padding so SSE operations can write to the end of the buffer without special cases
+		int out_len = arrlen(out);
+		arrsetcap(out, out_len + (cs->src_length - cs->src_offset) + SSE_READ_PADDING);
+		q = out + out_len;
+
+#if STRIP_BLANK_LINE_WHITESPACE
+		char* q_linestart = q;
+#endif
 
 		{  // make lifetime of line_count unambiguous
 			const int state_limit = cs->state_limit;
 			int line_count = 0;
 
+		resume_parsing:
 			do
 			{
+#if STRIP_BLANK_LINE_WHITESPACE
 				uint8 ch = (uint8)*p++;
 				uint8 ch_class;
-				assert(cs->fast_dest != NULL || q < out + arrcap(out));
+				assert(q < out + arrcap(out));
+				STB_ASSUME(q != NULL);
+				ch_class = pp_char_class[ch];
+				prev_state = state;
+				STB_ASSUME(state < PP_STATE_active_count && ch_class < PP_CHAR_CLASS_count);
+				state = pp_transition_table[state][ch_class];
+				if (ch == '\n')				// pp_state_is_end_of_line[state] -- Assume newlines are normalized
+				{
+					// Eliminate leading whitespace before a newline, by backing up to the line start
+					if (prev_state == PP_STATE_in_leading_whitespace)
+					{
+						q = q_linestart;
+					}
+					line_count++;
+					q_linestart = q + 1;
+				}
+				*q++ = ch;
+#else
+				uint8 ch = (uint8)*p++;
+				uint8 ch_class;
+				assert(q < out + arrcap(out));
 				STB_ASSUME(q != NULL);
 				*q++ = ch;
 				ch_class = pp_char_class[ch];
 				prev_state = state;
 				STB_ASSUME(state < PP_STATE_active_count && ch_class < PP_CHAR_CLASS_count);
 				state = pp_transition_table[state][ch_class];
-				line_count += pp_state_is_end_of_line[state];
+				line_count += (ch == '\n') ? 1 : 0;				// pp_state_is_end_of_line[state] -- Assume newlines are normalized, avoid memory read
+#endif
 			} while (state < state_limit);
+
+			if (state == PP_STATE_saw_identifier_start)
+			{
+				// Copy the identifier and check if it might be a macro.  The first identifier character will already have been written
+				// by the parse loop, so we need to go back one.
+				const char* identifier_start = p - 1;
+				const char* identifier_end = copy_and_filter_macro(cs, identifier_start, q - 1);
+
+				if (identifier_end)
+				{
+					// If not a macro, we can resume parsing
+					q += identifier_end - p;
+					p = identifier_end;
+					state = PP_STATE_ready;
+					cs->in_leading_whitespace = 0;
+					goto resume_parsing;
+				}
+				else
+				{
+					// Breaking out of the loop skips the line increment below, so do it here as well
+					cs->src_line_number += line_count;
+					cs->dest_line_number += line_count;
+					break;
+				}
+			}
 
 			cs->src_line_number += line_count;
 			cs->dest_line_number += line_count;
@@ -1369,7 +1551,18 @@ static int copy_to_action_point(parse_state* cs)
 		// identifier case
 
 		if (state > PP_STATE_saw_backslash)
+		{
+#if STRIP_BLANK_LINE_WHITESPACE
+			if (state == PP_STATE_saw_leading_hash)
+			{
+				// Eliminate leading whitespace before a hash, by backing up to the line start.  Need to add one
+				// as we subtract one below to remove what would have been the last character copied (the hash),
+				// if we weren't backing up to line start.
+				q = q_linestart + 1;
+			}
+#endif
 			break;
+		}
 
 		if (state == PP_STATE_saw_backslash)
 		{
@@ -1388,8 +1581,7 @@ static int copy_to_action_point(parse_state* cs)
 				cs->state_limit = PP_STATE_saw_cr;	// line_number mismatches, so need to output match newlines at first opportunity, namely next time we see a
 													// newline not in a comment
 				state = prev_state;					// reset parse state to before the backslash
-				if (cs->fast_dest == NULL)
-					arrsetlen(out, (size_t)(q - out));
+				arrsetlen(out, (size_t)(q - out));
 			}
 		}
 		else
@@ -1407,38 +1599,19 @@ static int copy_to_action_point(parse_state* cs)
 			cs->state_limit = PP_STATE_active_count;
 
 			// output newlines to the output buffer until synchronized again
-			if (cs->fast_dest)
+			arrsetlen(out, (size_t)(q - out));
+			while (cs->dest_line_number < cs->src_line_number)
 			{
-				int n = cs->src_line_number - cs->dest_line_number;
-				while (n > 0)
-				{
-					*q++ = '\n';
-					--n;
-				}
-				cs->dest_line_number = cs->src_line_number;
-			}
-			else
-			{
-				arrsetlen(out, (size_t)(q - out));
-				while (cs->dest_line_number < cs->src_line_number)
-				{
-					arrput(out, '\n');
-					++cs->dest_line_number;
-				}
+				arrput(out, '\n');
+				++cs->dest_line_number;
 			}
 		}
 	}
 
 	// set output to the amount we actually copied... don't count the copy of the last character
-	if (cs->fast_dest)
-	{
-		cs->fast_dest = q - 1;
-	}
-	else
-	{
-		arrsetlen(out, (size_t)(q - 1 - out));
-		cs->dest = out;
-	}
+	arrsetlennocap(out, (size_t)(q - 1 - out));
+	cs->dest = out;
+
 	cs->src_offset = (size_t)(p - 1 - cs->src);
 	cs->in_leading_whitespace = (state == PP_STATE_saw_leading_hash);
 
@@ -1461,38 +1634,56 @@ static int copy_to_action_point_macro_expansion(parse_state* cs)
 	STB_ASSUME(out != NULL);
 	char* q;
 
-	if (cs->fast_dest)
-		q = cs->fast_dest;
-	else
-	{
-		// expand output so copying entire file unmodified
-		arrsetcap(out, arrlen(out) + (cs->src_length - cs->src_offset) + 1);
-		q = out + arrlen(out);
-	}
+	// expand output so copying entire file unmodified is possible
+	int out_len = arrlen(out);
+	arrsetcap(out, out_len + (cs->src_length - cs->src_offset) + SSE_READ_PADDING);
+	q = out + out_len;
 
 	STB_ASSUME(q != NULL);
 
 	state = PP_STATE_ready;
 
-	do
+	for (;;)
 	{
-		uint8 ch = (uint8)*p++;
-		uint8 ch_class;
-		*q++ = ch;
-		ch_class = pp_char_class[ch];
-		state = pp_transition_table[state][ch_class];
-	} while (state < PP_STATE_active_count);
+		do
+		{
+			uint8 ch = (uint8)*p++;
+			uint8 ch_class;
+			*q++ = ch;
+			ch_class = pp_char_class[ch];
+			state = pp_transition_table[state][ch_class];
+		} while (state < PP_STATE_active_count);
+
+		if (state == PP_STATE_saw_identifier_start)
+		{
+			// Copy the identifier and check if it might be a macro.  The first identifier character will already have been written
+			// by the parse loop, so we need to go back one.
+			const char* identifier_start = p - 1;
+			const char* identifier_end = copy_and_filter_macro(cs, identifier_start, q - 1);
+
+			if (identifier_end)
+			{
+				q += identifier_end - p;
+				p = identifier_end;
+				state = PP_STATE_ready;
+				cs->in_leading_whitespace = 0;
+			}
+			else
+			{
+				break;
+			}
+		}
+		else
+		{
+			break;
+		}
+	}
 
 	cs->src_offset = (size_t)(p - 1 - cs->src);
 
-	if (cs->fast_dest)
-		cs->fast_dest = q - 1;
-	else
-	{
-		// set output to the amount we actually copied... don't count the copy of the last character
-		arrsetlen(out, (size_t)(q - 1 - out));
-		cs->dest = out;
-	}
+	// set output to the amount we actually copied... don't count the copy of the last character
+	arrsetlennocap(out, (size_t)(q - 1 - out));
+	cs->dest = out;
 
 	return state;
 }
@@ -1503,6 +1694,109 @@ static int copy_to_action_point_macro_expansion(parse_state* cs)
 static const char* scan_to_directive(const char* p, int* p_line_number)
 {
 	int line_number = *p_line_number;
+
+#if PREPROCESSOR_USE_SSE4_2
+	// Fast loop assumes comments have been stripped, and newlines normalized.  Searches for a # not in quoted text.  Range is the
+	// negation of the characters we want, which will also stop at the null terminator.  Around 10x faster than original loop.
+	// Note that the source may still contain comments added via DumpShaderDefinesAsCommentedCode, but those defines are pasted
+	// in externally, and will be outside of any directive, and therefore not break this code.
+	__m128i k_directive_needle_negated = _mm_setr_epi8(
+		0    + 1, '\"' - 1,		// null         to double quote
+		'#'  + 1, '\'' - 1,		// hash         to single quote
+		'\'' + 1, (char)255,	// single quote to rest of characters -- cast to char to avoid compiler sign warning, but intrinsic uses UBYTE, so code is correct
+		0,0,0,0,0,0,0,0,0,0);
+
+	__m128i k_newlines = _mm_set1_epi8('\n');
+
+	for (;;)
+	{
+		__m128i scan_word = _mm_loadu_si128((const __m128i*)p);
+		int newline_mask = _mm_movemask_epi8(_mm_cmpeq_epi8(k_newlines, scan_word));
+
+		// Check for full word with no relevant characters (common case)
+		if (!_mm_cmpistrc(k_directive_needle_negated, scan_word, _SIDD_UBYTE_OPS | _SIDD_CMP_RANGES | _SIDD_NEGATIVE_POLARITY))
+		{
+			line_number += _mm_popcnt_u32(newline_mask);
+			p += 16;
+			continue;
+		}
+
+		// Find the matching character
+		int end_index = _mm_cmpistri(k_directive_needle_negated, scan_word, _SIDD_UBYTE_OPS | _SIDD_CMP_RANGES | _SIDD_NEGATIVE_POLARITY);
+		newline_mask = newline_mask & (0xffff >> (16 - end_index));
+		p += end_index;
+		line_number += _mm_popcnt_u32(newline_mask);
+
+		char found_char = *p;
+		if (found_char == '#')
+		{
+			// Scan backwards for a newline.  Writing this non-SSE, with the theory that most directives are at the start of a line,
+			// and so testing a single character is all that's required 99% of the time, and an SSE string instruction is much slower
+			// for that common case.  We are in a commented out #if block, so there must be a newline related to the #if block earlier
+			// in the file, so we don't need to check for beginning of string.
+			for (const char* leading_whitespace_scan = p - 1;; leading_whitespace_scan--)
+			{
+				if (*leading_whitespace_scan == '\n')
+				{
+					// Leading whitespace hash!  Return result.
+					*p_line_number = line_number;
+					return p;
+				}
+				else if (pp_char_class[(uint8)*leading_whitespace_scan] != PP_CHAR_CLASS_whitespace)
+				{
+					// Not a leading hash!  Continue parsing
+					p++;
+					break;
+				}
+			}
+		}
+		else if (found_char == '\"' || found_char == '\'')
+		{
+			// Quoted text.  Not bothering to SSE optimize this, as it is rarely reached.  Directives containing text aren't scanned
+			// in this loop, and other sources of text are rare.
+			char current_char;
+			for (p++; (current_char = *p); p++)
+			{
+				if (current_char == found_char)
+				{
+					// Found close quote, skip it and break out
+					p++;
+					break;
+				}
+				else if (current_char == '\\')
+				{
+					// Escape, skip the next character unconditionally if not EOF
+					if (p[1] != 0)
+					{
+						p++;
+						current_char = *p;
+					}
+				}
+
+				// Track newlines (including escaped newlines)
+				if (current_char == '\n')
+				{
+					line_number++;
+				}
+			}
+
+			if (!current_char)
+			{
+				// Unterminated string
+				*p_line_number = line_number;
+				return p;
+			}
+		}
+		else
+		{
+			// Null terminator
+			*p_line_number = line_number;
+			return p;
+		}
+	}
+
+#else  // PREPROCESSOR_USE_SSE4_2
+
 	int state = PP_STATE_ready, prev_state;
 	for (;;)
 	{
@@ -1533,6 +1827,8 @@ static const char* scan_to_directive(const char* p, int* p_line_number)
 		else
 			state = PP_STATE_ready;
 	}
+
+#endif  // !PREPROCESSOR_USE_SSE4_2
 }
 
 //
@@ -1706,6 +2002,9 @@ static char* copy_line_without_comments(char* buffer, size_t buffer_size, const 
 				if (p[0] == 0 || p[-1] != '\\')
 				{
 					arrput(out, 0);
+#if SSE_READ_PADDING
+					arrsetcap(out, arrlennonull(out) + SSE_READ_PADDING);
+#endif
 					*endp = p;
 					return out;
 				}
@@ -1721,6 +2020,9 @@ static char* copy_line_without_comments(char* buffer, size_t buffer_size, const 
 					while (!char_is_end_of_line(*p))
 						++p;
 					arrput(out, 0);
+#if SSE_READ_PADDING
+					arrsetcap(out, arrlennonull(out) + SSE_READ_PADDING);
+#endif
 					*endp = p;
 					return out;
 				}
@@ -1910,8 +2212,8 @@ static int parse_directive_after_hash(const char** ptr_p, int* newlines)
 	while (char_is_pp_identifier_first(*p))
 		sum += (uint8)*p++;
 	sum &= (DIRECTIVE_HASH_SIZE - 1);
-	// @OPTIMIZE: use a masked 8-byte comparison?
-	if (0 == memcmp(start, directive_hash[sum].name, directive_hash[sum].name_len) && !char_is_pp_identifier(directive_hash[sum].name_len))
+
+	if (fast_preprocess_string_equals_short(start, directive_hash[sum].name, directive_hash[sum].name_len) && !char_is_pp_identifier(directive_hash[sum].name_len))
 	{
 		*ptr_p = p;
 		return sum;
@@ -2001,22 +2303,10 @@ static void preprocess_string(parse_state* cs, int in_macro_expansion, char* in_
 				if (cs->last_output_filename == cs->filename && cs->dest_line_number < cs->src_line_number && cs->src_line_number < cs->dest_line_number + 12)
 				{
 					int n = cs->src_line_number - cs->dest_line_number;
-					if (cs->fast_dest)
+					while (cs->dest_line_number < cs->src_line_number)
 					{
-						while (n > 0)
-						{
-							*cs->fast_dest++ = '\n';
-							--n;
-						}
-						cs->dest_line_number = cs->src_line_number;
-					}
-					else
-					{
-						while (cs->dest_line_number < cs->src_line_number)
-						{
-							arrput(cs->dest, '\n');
-							++cs->dest_line_number;
-						}
+						arrput(cs->dest, '\n');
+						++cs->dest_line_number;
 					}
 				}
 				else
@@ -2078,16 +2368,8 @@ static void preprocess_string(parse_state* cs, int in_macro_expansion, char* in_
 					// the final macro wasn't copied into the output destination yet, so do it now
 					{
 						size_t len = strlen(md->symbol_name);
-						if (cs->fast_dest)
-						{
-							memcpy(cs->fast_dest, md->symbol_name, len);
-							cs->fast_dest += len;
-						}
-						else
-						{
-							size_t off = arraddnindex(cs->dest, len);
-							memcpy(cs->dest + off, md->symbol_name, len);
-						}
+						size_t off = arraddnindex(cs->dest, len);
+						memcpy(cs->dest + off, md->symbol_name, len);
 					}
 				}
 				break;
@@ -2127,9 +2409,9 @@ static void preprocess_string(parse_state* cs, int in_macro_expansion, char* in_
 					int i, stop = 0;
 					for (i = (int)arrlen(c->ifdef_stack) - 1; i >= 0; --i)
 					{
-						if (do_error(cs, "No #endif found for previous #%s", directive_hash[c->ifdef_stack[i].type].name))
+						if (do_error(cs, "No #endif found for previous #%s", &directive_hash[c->ifdef_stack[i].type].name[0]))
 							stop = 1;
-						error_supplement(cs, PP_RESULT_ERROR, c->ifdef_stack[i].line, "Location of #%s", directive_hash[c->ifdef_stack[i].type].name);
+						error_supplement(cs, PP_RESULT_ERROR, c->ifdef_stack[i].line, "Location of #%s", &directive_hash[c->ifdef_stack[i].type].name[0]);
 					}
 					if (stop)
 						return;
@@ -2162,11 +2444,16 @@ static void preprocess_string(parse_state* cs, int in_macro_expansion, char* in_
 
 #define MAX_MACRO_PARAMETER_NAME_LENGTH 256
 
-static void update_macro_filter(pp_context* c, char* identifier)
+static void update_macro_filter(pp_context* c, char* identifier, size_t identifier_length)
 {
-	assert(identifier[0] != 0);
-	if (identifier[1] == 0 || identifier[2] == 0)
-		c->macro_name_filter[(uint8)identifier[0]][(uint8)identifier[1]] = 1;
+	assert(identifier[0] != 0 && identifier_length > 0);
+
+	size_t bloom_filter_offset = identifier_length < MACRO_BLOOM_FILTER_SIZE ? identifier_length : MACRO_BLOOM_FILTER_SIZE - 1;
+
+	// Set bits for three key characters of the macro by length (first, middle, last)
+	c->macro_bloom_filter[bloom_filter_offset][0] |= (1ull << (identifier[0] & 0x3f));
+	c->macro_bloom_filter[bloom_filter_offset][1] |= (1ull << (identifier[identifier_length >> 1] & 0x3f));
+	c->macro_bloom_filter[bloom_filter_offset][2] |= (1ull << (identifier[identifier_length - 1] & 0x3f));
 }
 
 static struct macro_definition* create_macro_definition(parse_state* ps, const char* def)
@@ -2607,7 +2894,7 @@ static const char* copy_argument(const char* text, int* line_number, char** p_ou
 		{
 			++p;
 		}
-		oldlen = arrlen(out);
+		oldlen = arrlennonull(out);
 		addlen = p - q;
 		STB_ASSUME(out != NULL && oldlen > 0);
 		arrsetlen(out, oldlen + addlen);
@@ -2734,12 +3021,10 @@ static void maybe_expand_macro(parse_state* cs, struct macro_definition* pending
 {
 	pp_context* c = cs->context;
 	struct macro_definition* md;
-	char* identifier = cs->fast_dest ? cs->fast_dest : (char*)cs->dest + arrlennonull(cs->dest);
+	char* identifier = (char*)cs->dest + arrlennonull(cs->dest);
 	size_t identifier_length;
 	const char* p = cs->src + cs->src_offset;
 	char* q = identifier;
-	uint8 c0 = (uint8)p[0];
-	uint8 c1 = (uint8)p[1];
 
 	if (pending)
 	{
@@ -2748,49 +3033,22 @@ static void maybe_expand_macro(parse_state* cs, struct macro_definition* pending
 	}
 	else
 	{
-		const char* start = p;
+		// Identifier will have been copied and length set by copy_and_filter_macro
+		identifier_length = cs->copied_identifier_length;
+		cs->copied_identifier_length = 0;
 
-#ifndef DISABLE_SHORT_MACRO_FILTER
-		if (!char_is_pp_identifier(c1))
-		{
-			// 1-character identifier
-			if (c->macro_name_filter[c0][0] == 0)
-			{
-				*q++ = c0;
-				p += 1;
-				goto not_macro;
-			}
-		}
-		else if (!char_is_pp_identifier(p[2]))
-		{
-			// 2-character identifier
-			// could use bloom filter instead, but while this is 64KB, only portions of it will ever
-			if (c->macro_name_filter[c0][c1] == 0)
-			{
-				*q++ = c0;
-				*q++ = c1;
-				p += 2;
-				goto not_macro;
-			}
-		}
-#endif
+		// "maybe_expand_macro" consumes identifiers originally copied by "copy_and_filter_macro" -- make sure one was copied
+		assert(identifier_length > 0);
 
-		// copy the rest of the identifier so we can NUL-terminate it
-		// we copy it to the output buffer since we've already allocated space for it,
-		// and that's where we'll need to copy it if it's not a macro
-		while (char_is_pp_identifier(*p))
-			*q++ = *p++;
+		p += identifier_length;
+		q += identifier_length;
 
-		identifier_length = p - start;
 		md = (struct macro_definition*)stringhash_get(&c->macro_map, identifier, identifier_length);
 		if (md == NULL || md->disabled)
 		{
 		not_macro:
 			cs->src_offset = p - cs->src;
-			if (cs->fast_dest)
-				cs->fast_dest = q;
-			else
-				arrsetlen(cs->dest, (size_t)(q - cs->dest));  // set the output buffer size to account for the above-copied identifier
+			arrsetlen(cs->dest, (size_t)(q - cs->dest));  // set the output buffer size to account for the above-copied identifier
 			return;
 		}
 
@@ -2813,10 +3071,7 @@ static void maybe_expand_macro(parse_state* cs, struct macro_definition* pending
 					//   command:            cpp -DFOO foo.c
 					//   desired output:     + +x;
 					//   without next line:  ++x;
-					if (cs->fast_dest)
-						*cs->fast_dest++ = ' ';
-					else
-						arrput(cs->dest, ' ');
+					arrput(cs->dest, ' ');
 				else
 				{
 					parse_state ncs = *cs;
@@ -2828,7 +3083,6 @@ static void maybe_expand_macro(parse_state* cs, struct macro_definition* pending
 					preprocess_string(&ncs, IN_MACRO_yes, md->symbol_name, final_function_macro);
 					md->disabled = 0;
 					cs->dest = ncs.dest;
-					cs->fast_dest = ncs.fast_dest;
 				}
 				break;
 			}
@@ -2891,33 +3145,19 @@ static void maybe_expand_macro(parse_state* cs, struct macro_definition* pending
 			{
 				size_t len = strlen(cs->filename);
 				// @TODO: backslash escape filename and cache it in stack, ready for string printing... also use when printing the line number?
-				if (cs->fast_dest)
-				{
-					*cs->fast_dest++ = '"';
-					cs->fast_dest += sprintf(cs->fast_dest, "%s", cs->filename);
-					*cs->fast_dest++ = '"';
-				}
-				else
-				{
-					size_t off = arraddnindex(cs->dest, len + 2);
-					cs->dest[off] = '"';
-					memcpy(cs->dest + off + 1, cs->filename, len);
-					cs->dest[off + 1 + len] = '"';
-				}
+				size_t off = arraddnindex(cs->dest, len + 2);
+				cs->dest[off] = '"';
+				memcpy(cs->dest + off + 1, cs->filename, len);
+				cs->dest[off + 1 + len] = '"';
 				break;
 			}
 			case MACRO_NUM_PARAMETERS_line:
 			{
-				if (cs->fast_dest)
-					cs->fast_dest += sprintf(cs->fast_dest, "%d", cs->src_line_number);
-				else
-				{
-					int len;
-					q = identifier;
-					arrsetcap(cs->dest, arrlen(cs->dest) + 12);
-					len = sprintf(cs->dest + arrlen(cs->dest), "%d", cs->src_line_number);
-					arrsetlen(cs->dest, arrlen(cs->dest) + len);
-				}
+				int len;
+				q = identifier;
+				arrsetcap(cs->dest, arrlen(cs->dest) + 12);
+				len = sprintf(cs->dest + arrlen(cs->dest), "%d", cs->src_line_number);
+				arrsetlen(cs->dest, arrlen(cs->dest) + len);
 				break;
 			}
 			case MACRO_NUM_PARAMETERS_counter:
@@ -2928,17 +3168,111 @@ static void maybe_expand_macro(parse_state* cs, struct macro_definition* pending
 					do_error_code(cs, PP_RESULT_counter_overflowed, "__COUNTER__ was used too many times (%u)", c->counter);
 					return;
 				}
-				if (cs->fast_dest)
-					cs->fast_dest += sprintf(cs->fast_dest, "%d", c->counter);
-				else
-				{
-					int len;
-					q = identifier;
-					arrsetcap(cs->dest, arrlen(cs->dest) + 12);
-					len = sprintf(cs->dest + arrlen(cs->dest), "%d", c->counter);
-					arrsetlen(cs->dest, arrlen(cs->dest) + len);
-				}
+				int len;
+				q = identifier;
+				arrsetcap(cs->dest, arrlen(cs->dest) + 12);
+				len = sprintf(cs->dest + arrlen(cs->dest), "%d", c->counter);
+				arrsetlen(cs->dest, arrlen(cs->dest) + len);
 				++c->counter;
+				break;
+			}
+			case MACRO_NUM_PARAMETERS_custom:
+			{
+				while (char_is_whitespace(*p))
+					++p;
+
+				// If no parentheses or the macro is disabled (say because we are encountering it nested), just leave the echoed identifier
+				if (*p != '(' || md->disabled)
+				{
+					arrsetlen(cs->dest, (size_t)(q - cs->dest));  // set the output buffer size to account for the above-copied identifier
+					return;
+				}
+				++p;
+
+				// Generate a buffer and append the rest of the arguments to it
+				int arg_newlines = 0;
+				char* custom_macro_buffer = 0;
+				arrsetcap(custom_macro_buffer, identifier_length + 512);
+				arrsetlen(custom_macro_buffer, identifier_length + 1);
+				memcpy(custom_macro_buffer, identifier, identifier_length);
+				custom_macro_buffer[identifier_length] = '(';
+
+				for (;;)
+				{
+					p = copy_argument(p, &arg_newlines, &custom_macro_buffer);
+					if (*p == 0)
+					{
+						arrfree(custom_macro_buffer);
+						do_error(cs, "End-of-file in macro '%s' argument list", md->symbol_name);
+						return;
+					}
+
+					// Add the comma or close parentheses to macro buffer
+					arrput(custom_macro_buffer, *p);
+					if (*p++ == ')')
+					{
+						break;
+					}
+				}
+
+				// Null terminate
+				arrput(custom_macro_buffer, 0);
+
+				// Optionally preprocess the macro args before calling the custom macro callback.  Need to disable the macro first.
+				md->disabled = 1;
+
+				if (md->preprocess_args_first)
+				{
+					parse_state ncs = *cs;
+					ncs.parent = cs;
+					ncs.src = custom_macro_buffer;
+					ncs.src_offset = 0;
+					ncs.src_length = arrlennonull(custom_macro_buffer) - 1;
+					ncs.dest = 0;
+					// Add some padding, preprocess_string is crashing on Mac, and until we figure root cause, this workaround is removing the known crashes
+					arrsetcap(ncs.dest, ncs.src_length + 512);
+					// Create new dest string
+					preprocess_string(&ncs, IN_MACRO_yes, md->symbol_name, NULL);
+
+					// Replace custom_macro_buffer with new dest string
+					arrfree(custom_macro_buffer);
+					custom_macro_buffer = ncs.dest;
+					
+					if (!custom_macro_buffer)
+					{
+						md->disabled = 0;
+						do_error(cs, "Preprocessing args for custom macro handler '%s' failed", md->symbol_name);
+						return;
+					}
+					arrput(custom_macro_buffer, 0);
+				}
+
+				// Send the custom macro text to the callback, preprocess it, then signal the end of the custom macro
+				const char* substitution_text = custommacro_begin(custom_macro_buffer, c->custom_context);
+
+				if (substitution_text == 0)
+				{
+					md->disabled = 0;
+					arrfree(custom_macro_buffer);
+					do_error(cs, "Custom macro handler for '%s' failed", md->symbol_name);
+					return;
+				}
+
+				parse_state ncs = *cs;
+				ncs.parent = cs;
+				ncs.src = substitution_text;
+				ncs.src_offset = 0;
+				ncs.src_length = strlen(substitution_text);
+				preprocess_string(&ncs, IN_MACRO_yes, md->symbol_name, NULL);
+				md->disabled = 0;
+				cs->dest = ncs.dest;
+
+				custommacro_end(custom_macro_buffer, c->custom_context, substitution_text);
+				arrfree(custom_macro_buffer);
+
+				// Set source offset to the end of the macro
+				cs->src_offset = p - cs->src;
+				cs->src_line_number += arg_newlines;
 				break;
 			}
 		}
@@ -2952,6 +3286,8 @@ static void maybe_expand_macro(parse_state* cs, struct macro_definition* pending
 		int temp_lines;
 		int parse_rest = 0;
 		const char* s = p;
+
+		stbds_arrinline(arguments, char*, 16);
 
 		// plan:
 		//   1. find opening parenthesis, if any
@@ -2988,12 +3324,9 @@ static void maybe_expand_macro(parse_state* cs, struct macro_definition* pending
 		p = s + 1;
 
 #if 0
-    // WHAT?!?
-    // undo '(' from output
-    if (cs->fast_dest)
-      --cs->fast_dest;
-    else
-      arrsetlen(cs->dest, arrlen(cs->dest)-1);
+	// WHAT?!?
+	// undo '(' from output
+	arrsetlen(cs->dest, arrlen(cs->dest)-1);
 #endif
 
 		//////////////////////////////////////////////////////////////////
@@ -3001,9 +3334,13 @@ static void maybe_expand_macro(parse_state* cs, struct macro_definition* pending
 		//   2. parse arguments into arguments[] array
 		//
 
+		// Inline storage shared for all argument strings.  Uses stbds_arrinline_suballoc to reuse remaining portion of buffer.
+		char* argument_buffer;
+		stbds_arrinline(argument_buffer, char, 4096);
+
 		for (i = 0; i < md->num_parameters; ++i)
 		{
-			char* copy = 0;
+			char* copy = argument_buffer;
 			int arg_newlines = 0;
 
 			p = preprocessor_skip_whitespace(p, &cs->src_line_number);
@@ -3062,6 +3399,27 @@ static void maybe_expand_macro(parse_state* cs, struct macro_definition* pending
 				}
 				*e = 0;
 
+#if SSE_READ_PADDING
+				// Need to ensure padding for safe SSE reads without special cases -- normally this comes from a stack allocated buffer with plenty
+				// of padding, so it won't need to reallocate, but we need to handle edge cases.  We need to check padding before the
+				// stbds_arrinline_suballoc_char call, which trims the allocation.
+				int copy_len = arrlennonull(copy);
+				int copy_capacity_padding = arrcapnonull(copy) - copy_len;
+#endif
+
+				// Sub-allocate the remaining space in argument_buffer for subsequent arguments.  Note that it's necessary to do the suballocation BEFORE
+				// the call to arrsetlen below, because downstream code assumes there is a null terminator beyond the official length of the array.  Doing
+				// the sub-allocation first preserves the null terminator -- without this, the sub-allocation will overwrite it.  We only suballocate if
+				// a minimum of 200 characters is available, as copy_argument reserves this.
+				stbds_arrinline_suballoc_char(argument_buffer, 200);
+
+#if SSE_READ_PADDING
+				if (copy_capacity_padding < SSE_READ_PADDING)
+				{
+					arrsetcap(copy, copy_len + SSE_READ_PADDING);
+				}
+#endif
+
 				arrsetlen(copy, e - p);
 				arrput(arguments, copy);
 				cs->src_line_number += arg_newlines;
@@ -3076,7 +3434,7 @@ static void maybe_expand_macro(parse_state* cs, struct macro_definition* pending
 			s = p;
 		}
 
-		if (c->error)
+		if (c->diagnostics && c->stop)
 		{
 			arrfree(arguments);
 			return;
@@ -3099,7 +3457,7 @@ static void maybe_expand_macro(parse_state* cs, struct macro_definition* pending
 			else
 			{
 				int arg_newlines = 0;
-				char *e, *copy = 0;
+				char *e, *copy = argument_buffer;
 				p = preprocessor_skip_whitespace(p, &cs->src_line_number);
 				// parse all the remaining arguments
 				s = p;
@@ -3137,6 +3495,16 @@ static void maybe_expand_macro(parse_state* cs, struct macro_definition* pending
 					e = copy;
 				*e = 0;
 
+#if SSE_READ_PADDING
+				// Need to ensure padding for safe SSE reads without special cases -- normally this comes from a stack allocated buffer with
+				// plenty of padding, so this will have sufficient padding, but we need to handle edge cases.
+				int copy_len = arrlennonull(copy);
+				if (arrcapnonull(copy) - copy_len < SSE_READ_PADDING)
+				{
+					arrsetcap(copy, copy_len + SSE_READ_PADDING);
+				}
+#endif
+
 				arrput(arguments, copy);
 				cs->src_line_number += arg_newlines;
 			}
@@ -3163,10 +3531,11 @@ static void maybe_expand_macro(parse_state* cs, struct macro_definition* pending
 
 		// each argument will be parsed using acs, so set that up now
 		acs = *cs;
-		acs.dest = acs.fast_dest = 0;
+		acs.dest = 0;
 
 		// populate temporary buffer
 		char* tmp = 0;
+		stbds_arrinline(tmp, char, 4096);
 		for (i = 0; i < arrlen(md->expansion) - 1; ++i)
 		{
 			int an;
@@ -3228,7 +3597,6 @@ static void maybe_expand_macro(parse_state* cs, struct macro_definition* pending
 				acs.src = arguments[an];
 				acs.src_length = arrlen(arguments[an]);
 				acs.dest = tmp;
-				acs.fast_dest = 0;
 				acs.src_offset = 0;
 				preprocess_string(&acs, in_macro_expansion, identifier, &ffm);
 				tmp = acs.dest;
@@ -3250,6 +3618,9 @@ static void maybe_expand_macro(parse_state* cs, struct macro_definition* pending
 		}
 
 		arrput(tmp, 0);
+#if SSE_READ_PADDING
+		arrsetcap(tmp, arrlen(tmp) + SSE_READ_PADDING);
+#endif
 
 		{
 			for (i = 0; i < arrlen(arguments); ++i)
@@ -3269,7 +3640,6 @@ static void maybe_expand_macro(parse_state* cs, struct macro_definition* pending
 		md->disabled = 1;  // don't disable earlier, because if you CALL foo() WITH foo, it should still get expanded
 		preprocess_string(&ncs, IN_MACRO_yes, identifier, final_function_macro);
 		cs->dest = ncs.dest;
-		cs->fast_dest = ncs.fast_dest;
 		arrfree(ncs.src);
 
 		md->disabled = 0;
@@ -3290,13 +3660,15 @@ static char* macro_expand_directive(parse_state* cs, const char* p, char* direct
 	ncs.src_offset = 0;
 	ncs.parent = cs;
 	ncs.dest = 0;
-	ncs.fast_dest = 0;
 	preprocess_string(&ncs, IN_MACRO_directive, directive, NULL);
 	return ncs.dest;
 }
 
 static int evaluate_if(parse_state* cs, const char* p, int* syntax_error)
 {
+	char* dest = 0;
+	stbds_arrinline(dest, char, 1024);
+
 	int result = 0;
 	parse_state ncs;
 	ncs = *cs;
@@ -3304,8 +3676,7 @@ static int evaluate_if(parse_state* cs, const char* p, int* syntax_error)
 	ncs.src_length = strlen(p);
 	ncs.src_offset = 0;
 	ncs.parent = cs;
-	ncs.dest = 0;
-	ncs.fast_dest = 0;
+	ncs.dest = dest;
 
 	preprocess_string(&ncs, IN_MACRO_if_condition, "#if", NULL);
 
@@ -3453,10 +3824,7 @@ static int process_include(parse_state* cs, const char* start, conditional_state
 				
 				(*freefile_callback)(filename, data, c->custom_context);
 
-				if (cs->fast_dest)
-					cs->fast_dest = result;
-				else
-					cs->dest = result;
+				cs->dest = result;
 				if (c->stop)
 					return RETURN_BEHAVIOR_return;
 			}
@@ -3484,11 +3852,11 @@ static void process_directive(parse_state* cs, conditional_state* cons)
 	pp_context* c = cs->context;
 	const char *p, *endptr;
 	const char* alloc = NULL;	 // all exit paths SHOULD do 'if (alloc) arrfree(alloc)', but we allow it to leak on error-handling returns
-	char buffer[1000];
+	char buffer[2048 + SSE_READ_PADDING];
 	int dummy;	// uninitialized, should never get incremented by parse_directive_after_hash
 
 	assert(cs->src[cs->src_offset] == '#');
-	p = copy_line_without_comments(buffer, sizeof(buffer), cs->src + cs->src_offset + 1, &cs->src_line_number, &endptr);
+	p = copy_line_without_comments(buffer, sizeof(buffer) - SSE_READ_PADDING, cs->src + cs->src_offset + 1, &cs->src_line_number, &endptr);
 	if (p != buffer)
 		alloc = p;
 
@@ -3586,17 +3954,6 @@ static void process_directive(parse_state* cs, conditional_state* cons)
 
 		case HASH_line:
 			// copy line directive through to output... existing code will output the newline, so don't do it here
-			if (cs->fast_dest)
-			{
-				size_t out_length = strlen(p);
-				char* z = cs->fast_dest;
-				memcpy(z, "#line ", 6);
-				z += 6;
-				memcpy(z, p, out_length);
-				z += out_length;
-				cs->fast_dest = z;
-			}
-			else
 			{
 				size_t out_length = strlen(p);
 				size_t s = arraddnindex(cs->dest, 6);
@@ -3688,24 +4045,13 @@ static void process_directive(parse_state* cs, conditional_state* cons)
 						diag.message[len - 1] = 0;
 						diag.where = 0;
 
-						arrpush(cs->context->error, diag);
+						arrpush(cs->context->diagnostics, diag);
 						goto handled;
 					}
 				}
 			}
 
 			// copy pragma through to output... existing code will output the newline, so don't do it here
-			if (cs->fast_dest)
-			{
-				size_t out_length = strlen(p);
-				char* z = cs->fast_dest;
-				memcpy(z, "#pragma ", 8);
-				z += 8;
-				memcpy(z, p, out_length);
-				z += out_length;
-				cs->fast_dest = z;
-			}
-			else
 			{
 				size_t out_length = strlen(p);
 				size_t s = arraddnindex(cs->dest, 8);
@@ -3739,8 +4085,7 @@ static void process_directive(parse_state* cs, conditional_state* cons)
 					stringhash_delete(&c->macro_map, m->symbol_name, m->symbol_name_length);
 				}
 				stringhash_put(&c->macro_map, m->symbol_name, m->symbol_name_length, m);
-				if (m->symbol_name[1] == 0 || m->symbol_name[2] == 0)
-					c->macro_name_filter[(uint8)m->symbol_name[0]][(uint8)m->symbol_name[1]] = 1;
+				update_macro_filter(c, m->symbol_name, m->symbol_name_length);
 			}
 			if (alloc)
 				arrfree(alloc);
@@ -4140,8 +4485,8 @@ static void process_directive(parse_state* cs, conditional_state* cons)
 					int i;
 					for (i = (int)arrlen(c->ifdef_stack) - 1; i >= cs->conditional_nesting_depth_at_start; --i)
 					{
-						do_error(cs, "No #endif found for previous #%s", directive_hash[c->ifdef_stack[i].type].name);
-						error_supplement(cs, PP_RESULT_ERROR, c->ifdef_stack[i].line, "Location of #%s", directive_hash[c->ifdef_stack[i].type].name);
+						do_error(cs, "No #endif found for previous #%s", &directive_hash[c->ifdef_stack[i].type].name[0]);
+						error_supplement(cs, PP_RESULT_ERROR, c->ifdef_stack[i].line, "Location of #%s", &directive_hash[c->ifdef_stack[i].type].name[0]);
 					}
 				}
 				return;
@@ -4174,7 +4519,7 @@ static void process_directive(parse_state* cs, conditional_state* cons)
 					{
 						if (cons->conditionally_disable == CONDITIONAL_skip_current_block)
 						{
-							p = copy_line_without_comments(buffer, sizeof(buffer), p, &cs->src_line_number, &endptr);
+							p = copy_line_without_comments(buffer, sizeof(buffer) - SSE_READ_PADDING, p, &cs->src_line_number, &endptr);
 							if (p != buffer)
 								alloc = p;
 							if (endptr == NULL)
@@ -4199,7 +4544,7 @@ static void process_directive(parse_state* cs, conditional_state* cons)
 				case HASH_endif:
 					if (disable_nesting_level == 0)
 					{
-						p = copy_line_without_comments(buffer, sizeof(buffer), p, &cs->src_line_number, &endptr);
+						p = copy_line_without_comments(buffer, sizeof(buffer) - SSE_READ_PADDING, p, &cs->src_line_number, &endptr);
 						if (p != buffer)
 							alloc = p;
 						if (endptr == NULL)
@@ -4219,7 +4564,7 @@ static void process_directive(parse_state* cs, conditional_state* cons)
 					{
 						if (cons->conditionally_disable == CONDITIONAL_skip_current_block)
 						{
-							p = copy_line_without_comments(buffer, sizeof(buffer), p, &cs->src_line_number, &endptr);
+							p = copy_line_without_comments(buffer, sizeof(buffer) - SSE_READ_PADDING, p, &cs->src_line_number, &endptr);
 							if (p != buffer)
 								alloc = p;
 							if (endptr == NULL)
@@ -4263,20 +4608,18 @@ static char* preprocess_string_from_file(parse_state* ps, const char* filename, 
 	cs.filename = filename;
 	cs.last_output_filename = "";  // force #line directive to include filename
 	cs.src = text;
+	cs.copied_identifier_length = 0;
 	cs.src_line_number = 1;
 	cs.dest_line_number = 1;
 	cs.in_leading_whitespace = 1;
 	cs.src_length = textlen;
 	cs.src_offset = 0;
 	cs.conditional_nesting_depth_at_start = conditional_compilation_nesting;
-	// dest & fast_dest are inherited
+	// dest is inherited
 	preprocess_string(&cs, is_header && preprocessor_automatic_include_guard_detection ? IN_MACRO_include_guard_scan : IN_MACRO_no, 0, 0);
 	cs.context->num_lines += cs.src_line_number;
 	ps->last_output_filename = "";
-	if (cs.fast_dest)
-		return cs.fast_dest;
-	else
-		return cs.dest;
+	return cs.dest;
 }
 
 #define DEFAULT -1
@@ -4570,19 +4913,41 @@ static void define_macro(pphash* map, struct macro_definition* m)
 	stringhash_put(map, m->symbol_name, m->symbol_name_length, m);
 }
 
-char* preprocess_file(char* output_autobuffer,
-	const char* filename,
+struct macro_definition* pp_define_custom_macro(struct stb_arena* a, const char* identifier, unsigned char preprocess_args_first)
+{
+	struct macro_definition* md = (struct macro_definition*)stb_arena_alloc(a, sizeof(*md));
+
+	memset(md, 0, sizeof(*md));
+	md->symbol_name = (char*)identifier;
+	md->symbol_name_length = strlen(identifier);
+	md->simple_expansion = 0;
+	md->simple_expansion_length = 0;
+	md->num_parameters = MACRO_NUM_PARAMETERS_custom;
+	md->predefined = 1;
+	md->preprocess_args_first = preprocess_args_first;
+
+	return md;
+}
+
+char* preprocess_file(const char* filename,
 	void* custom_context,
 	struct macro_definition** predefined_macros,
 	int num_predefined_macros,
 	pp_diagnostic** pd,
-	int* num_pd)
+	int* num_pd,
+	char* output_inlinebuffer,
+	size_t output_inlinebuffersize)
 {
 	char* output = 0;
 	pp_context c = { 0 };
 	int i;
 	size_t length;
 	const char* main_file;
+
+	if (output_inlinebuffer && output_inlinebuffersize)
+	{
+		output = (char*)stbds_arrinlinef((size_t*)output_inlinebuffer, sizeof(char), output_inlinebuffersize - sizeof(stbds_array_header));
+	}
 
 	main_file = (*loadfile_callback)(filename, custom_context, &length);
 	*num_pd = 0;
@@ -4594,8 +4959,8 @@ char* preprocess_file(char* output_autobuffer,
 		ps.src_line_number = 0;
 		ps.context = &c;
 		do_error(&ps, "Couldn't open '%s'.", filename);
-		*pd = c.error;
-		*num_pd = (int)arrlen(c.error);
+		*pd = c.diagnostics;
+		*num_pd = (int)arrlen(c.diagnostics);
 		return NULL;
 	}
 
@@ -4605,12 +4970,11 @@ char* preprocess_file(char* output_autobuffer,
 	// and (b) so most things hit in there first slot. but going too much bigger can
 	// backfire by slowing down the initialization
 	stringhash_create(&c.macro_map, 4096);
+	
+	// enable string arena allocation for undef_map, as the map is passed stack memory identifiers that need to be duplicated
+	stbds_sh_new_arena(c.undef_map);
 
-	c.macro_name_filter = STB_COMMON_MALLOC(65536);
-	if (c.macro_name_filter == NULL)
-		return NULL;
-
-	memset(c.macro_name_filter, 0, 65536);
+	memset(c.macro_bloom_filter, 0, sizeof(c.macro_bloom_filter));
 
 	for (i = 0; i < arrlen(predefined_macros); ++i)
 		define_macro(&c.macro_map, predefined_macros[i]);
@@ -4621,25 +4985,17 @@ char* preprocess_file(char* output_autobuffer,
 	define_macro(&c.macro_map, &predefined_COUNTER);
 
 	for (i = 0; i < arrlen(c.macro_map.pair); ++i)
-		update_macro_filter(&c, c.macro_map.pair[i].key);
+		update_macro_filter(&c, c.macro_map.pair[i].key, c.macro_map.pair[i].key_length);
 
 	{
 		// initial parse_state for preprocess_string_from_file to initialize from
 		parse_state ps = {0};
 		ps.context = &c;
-		ps.fast_dest = output_autobuffer;
+		ps.dest = output;
 		ps.state_limit = PP_STATE_active_count;
 
 		output = preprocess_string_from_file(&ps, filename, main_file, length, 0, 0);
-		if (output_autobuffer)
-		{
-			*output = 0;
-			output = output_autobuffer;
-		}
-		else
-		{
-			arrpush(output, 0);
-		}
+		arrpush(output, 0);
 	}
 
 	(*freefile_callback)(filename, main_file, custom_context);
@@ -4660,17 +5016,15 @@ char* preprocess_file(char* output_autobuffer,
 	shfree(c.undef_map);
 	arrfree(c.ifdef_stack);
 	stringhash_destroy(&c.macro_map);
-	STB_COMMON_FREE(c.macro_name_filter);
 	stb_arena_free(&c.macro_arena);
 
-	if (c.error)
+	if (c.diagnostics)
 	{
-		*pd = c.error;
+		*pd = c.diagnostics;
 		*num_pd = (int)arrlen(*pd);
 		if (c.stop)
 		{
-			if (output_autobuffer == NULL)
-				arrfree(output);
+			arrfree(output);
 			output = NULL;
 		}
 	}
@@ -4681,6 +5035,32 @@ char* preprocess_file(char* output_autobuffer,
 	// c.num_disabled_lines, c.num_onced_files, c.num_includes);
 
 	return output;
+}
+
+int preprocessor_file_size(char* text)
+{
+	return text ? arrlen(text) : 0;
+}
+int preprocessor_file_capacity(char* text)
+{
+	return text ? arrcap(text) : 0;
+}
+
+void preprocessor_file_append(char* text, const char* appended_text, int appended_text_len)
+{
+	if (text)
+	{
+		int text_len = arrlen(text);
+
+		// The preprocessor text array length includes the null terminator, so we don't need to add one here
+		arrsetlen(text, text_len + appended_text_len);
+
+		// Subtract one, so we start writing at original null terminator
+		memcpy(text + text_len - 1, appended_text, appended_text_len);
+
+		// And add a new null terminator
+		text[text_len + appended_text_len - 1] = 0;
+	}
 }
 
 void preprocessor_file_free(char* text, pp_diagnostic* pd)
@@ -4714,13 +5094,14 @@ static void init_directive(char* s, int hash)
 		fprintf(stderr, "Preprocessor fatal internal error: hash initialization mismatch for '%s' (%s %d).\n", s, __FILE__, __LINE__);
 		exit(1);
 	}
-	if (directive_hash[hash].name != 0)
+	if (directive_hash[hash].name[0] != 0)
 	{
 		fprintf(stderr, "Preprocessor fatal internal error: hash collision between '%s' and '%s' (%s %d).\n", s, directive_hash[hash].name, __FILE__, __LINE__);
 		exit(1);
 	}
 
-	directive_hash[hash].name = s;
+	// name member is sized to fit the largest directive (7 characters plus null) -- use strncpy to avoid warnings
+	strncpy(directive_hash[hash].name, s, sizeof(directive_hash[hash].name));
 	directive_hash[hash].name_len = strlen(s);
 }
 
@@ -4765,7 +5146,9 @@ static void init_char_type(void)
 void init_preprocessor(
 	loadfile_callback_func load_callback, 
 	freefile_callback_func free_callback,
-	resolveinclude_callback_func resolve_callback)
+	resolveinclude_callback_func resolve_callback,
+	custommacro_begin_callback_func custommacro_begin_callback,
+	custommacro_end_callback_func custommacro_end_callback)
 {
 #ifdef HASHTEST
 	test_stringhash();
@@ -4791,6 +5174,8 @@ void init_preprocessor(
 	loadfile_callback = load_callback;
 	freefile_callback = free_callback;
 	resolveinclude_callback = resolve_callback;
+	custommacro_begin = custommacro_begin_callback;
+	custommacro_end = custommacro_end_callback;
 }
 
 #pragma warning(pop)

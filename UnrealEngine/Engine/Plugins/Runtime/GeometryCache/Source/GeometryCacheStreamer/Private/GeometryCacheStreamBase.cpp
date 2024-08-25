@@ -131,7 +131,7 @@ bool FGeometryCacheStreamBase::RequestFrameData()
 		PrepareRead();
 
 		// Get any ReadIndex available
-		const int32 ReadIndex = ReadIndices.Pop(false);
+		const int32 ReadIndex = ReadIndices.Pop(EAllowShrinking::No);
 
 		// Take the ReadRequest from the pool at ReadIndex and initialize it
 		FGeometryCacheStreamReadRequest*& ReadRequest = ReadRequestsPool[ReadIndex];
@@ -388,7 +388,7 @@ const FGeometryCacheStreamStats& FGeometryCacheStreamBase::GetStreamStats() cons
 	check(IsInGameThread());
 
 	const int32 NumFrames = FramesAvailable.Num();
-	const float Secs = Details.SecondsPerFrame * NumFrames;
+	const float Secs = Details.SecondsPerFrame * static_cast<float>(NumFrames);
 
 	Stats.NumCachedFrames = NumFrames;
 	Stats.CachedDuration = Secs;
@@ -417,8 +417,7 @@ void FGeometryCacheStreamBase::IncrementMemoryStat(const FGeometryCacheMeshData&
 	FResourceSizeEx ResSize;
 	MeshData.GetResourceSizeEx(ResSize);
 
-	float SizeInBytes = ResSize.GetTotalMemoryBytes();
-	MemoryUsed += SizeInBytes / (1024 * 1024);
+	MemoryUsed += static_cast<float>(ResSize.GetTotalMemoryBytes()) / (1024.0f * 1024.0f);
 }
 
 void FGeometryCacheStreamBase::DecrementMemoryStat(const FGeometryCacheMeshData& MeshData)
@@ -426,8 +425,7 @@ void FGeometryCacheStreamBase::DecrementMemoryStat(const FGeometryCacheMeshData&
 	FResourceSizeEx ResSize;
 	MeshData.GetResourceSizeEx(ResSize);
 
-	float SizeInBytes = ResSize.GetTotalMemoryBytes();
-	MemoryUsed -= SizeInBytes / (1024 * 1024);
+	MemoryUsed -= static_cast<float>(ResSize.GetTotalMemoryBytes()) / (1024.0f * 1024.0f);
 }
 
 void FGeometryCacheStreamBase::UpdateCurrentFrameIndex(int32 FrameIndex)

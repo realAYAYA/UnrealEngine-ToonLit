@@ -1027,7 +1027,7 @@ void SSlateFileOpenDlg::OnPathClicked(const FString& NewPath)
 
 	if ((History.Num()-HistoryIndex-1) > 0)
 	{
-		History.RemoveAt(HistoryIndex+1, History.Num()-HistoryIndex-1, true);
+		History.RemoveAt(HistoryIndex+1, History.Num()-HistoryIndex-1, EAllowShrinking::Yes);
 	}
 
 	History.Add(CurrentPath);
@@ -1045,7 +1045,7 @@ void SSlateFileOpenDlg::OnPathMenuItemClicked( FString ClickedPath )
 
 	if ((History.Num()-HistoryIndex-1) > 0)
 	{
-		History.RemoveAt(HistoryIndex+1, History.Num()-HistoryIndex-1, true);
+		History.RemoveAt(HistoryIndex+1, History.Num()-HistoryIndex-1, EAllowShrinking::Yes);
 	}
 
 	History.Add(CurrentPath);
@@ -1154,7 +1154,7 @@ FReply SSlateFileOpenDlg::OnQuickLinkClick(FSlateFileDlgWindow::EResult ButtonID
 	
 	if ((History.Num()-HistoryIndex-1) > 0)
 	{
-		History.RemoveAt(HistoryIndex+1, History.Num()-HistoryIndex-1, true);
+		History.RemoveAt(HistoryIndex+1, History.Num()-HistoryIndex-1, EAllowShrinking::Yes);
 	}
 
 	History.Add(CurrentPath);
@@ -1414,7 +1414,7 @@ void SSlateFileOpenDlg::OnItemDoubleClicked(TSharedPtr<FFileEntry> Item)
 
 		if ((History.Num()-HistoryIndex-1) > 0)
 		{
-			History.RemoveAt(HistoryIndex+1, History.Num()-HistoryIndex-1, true);
+			History.RemoveAt(HistoryIndex+1, History.Num()-HistoryIndex-1, EAllowShrinking::Yes);
 		}
 
 		History.Add(CurrentPath);

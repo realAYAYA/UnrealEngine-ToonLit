@@ -17,6 +17,7 @@
 	#pragma warning(disable : 4005) // macro redefinition
 	#include <d3d11.h>
 	#pragma warning(pop)
+	#include <d3d12.h>
 
 THIRD_PARTY_INCLUDES_START
 	#include "mfobjects.h"
@@ -43,7 +44,6 @@ public:
 	virtual uint32 GetStride() const = 0;
 
 #if PLATFORM_WINDOWS
-	virtual TRefCountPtr<IMFSample> GetMFSample() const = 0;
 	virtual TRefCountPtr<IUnknown> GetTexture() const = 0;
 	virtual TRefCountPtr<IUnknown> GetSync(uint64& SyncValue) const = 0;
 	virtual TRefCountPtr<ID3D11Device> GetDevice() const = 0;

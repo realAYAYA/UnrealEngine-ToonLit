@@ -152,9 +152,60 @@ UAnimSequenceBase* FAnimNode_SequenceEvaluator::GetSequence() const
 	return GET_ANIM_NODE_DATA(TObjectPtr<UAnimSequenceBase>, Sequence);
 }
 
+bool FAnimNode_SequenceEvaluator::SetShouldUseExplicitFrame(bool bFlag)
+{	
+#if WITH_EDITORONLY_DATA
+	bUseExplicitFrame = bFlag;
+#endif
+
+	if (bool* bUseExplicitFrameState = GET_INSTANCE_ANIM_NODE_DATA_PTR(bool, bUseExplicitFrame))
+	{
+		*bUseExplicitFrameState = bFlag;
+		return true;
+	}
+
+	return false;
+}
+
+bool FAnimNode_SequenceEvaluator::ShouldUseExplicitFrame() const
+{
+	return GET_ANIM_NODE_DATA(bool, bUseExplicitFrame);
+}
+
+int32 FAnimNode_SequenceEvaluator::GetExplicitFrame() const
+{
+	return GET_ANIM_NODE_DATA(int32, ExplicitFrame);
+}
+
+bool FAnimNode_SequenceEvaluator::SetExplicitFrame(int32 InFrame)
+{	
+#if WITH_EDITORONLY_DATA
+	ExplicitFrame = InFrame;
+#endif
+
+	if (int32* ExplicitFramePtr = GET_INSTANCE_ANIM_NODE_DATA_PTR(int32, ExplicitFrame))
+	{
+		*ExplicitFramePtr = InFrame;
+		return true;
+	}
+
+	return false;
+}
+
 float FAnimNode_SequenceEvaluator::GetExplicitTime() const
 {
-	return GET_ANIM_NODE_DATA(float, ExplicitTime);
+	if(ShouldUseExplicitFrame())
+	{
+		if(const UAnimSequenceBase* SequenceBase = GetSequence())
+		{
+			const int32 Frame = GET_ANIM_NODE_DATA(int32, ExplicitFrame);
+			return SequenceBase->GetSamplingFrameRate().AsSeconds(Frame);
+		}
+
+		return 0.f;
+	}
+	  
+	 return GET_ANIM_NODE_DATA(float, ExplicitTime);
 }
 
 bool FAnimNode_SequenceEvaluator::SetExplicitTime(float InTime)

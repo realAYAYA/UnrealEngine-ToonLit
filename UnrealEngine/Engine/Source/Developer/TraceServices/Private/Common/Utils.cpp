@@ -12,10 +12,14 @@ DEFINE_LOG_CATEGORY(LogTraceServices);
 namespace TraceServices
 {
 
-void Table2Csv(const IUntypedTable& Table, const TCHAR* Filename)
+bool Table2Csv(const IUntypedTable& Table, const TCHAR* Filename)
 {
-	TSharedPtr<FArchive> OutputFile = MakeShareable(IFileManager::Get().CreateFileWriter(Filename));
-	check(OutputFile);
+	TUniquePtr<FArchive> OutputFile(IFileManager::Get().CreateFileWriter(Filename));
+	if (!OutputFile.IsValid())
+	{
+		return false;
+	}
+
 	FString Header;
 	const ITableLayout& Layout = Table.GetLayout();
 	const uint64 ColumnCount = Layout.GetColumnCount();
@@ -72,6 +76,8 @@ void Table2Csv(const IUntypedTable& Table, const TCHAR* Filename)
 		OutputFile->Serialize((void*)AnsiLine.Get(), AnsiLine.Length());
 	}
 	OutputFile->Close();
+
+	return true;
 }
 
 void StringFormat(TCHAR* Out, uint64 MaxOut, TCHAR* Temp, uint64 MaxTemp, const TCHAR* FormatString, const uint8* FormatArgs)

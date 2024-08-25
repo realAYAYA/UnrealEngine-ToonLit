@@ -284,6 +284,8 @@ FMaterialVertexParameters GetMaterialVertexParameters(FVertexFactoryInput Input,
 	Result.PrimitiveId = Intermediates.SceneData.PrimitiveId;
 #endif
 
+	Result.LWCData = MakeMaterialLWCData(Result);
+
 	return Result;
 }
 
@@ -321,7 +323,7 @@ half3x3 CalcTangentToLocal(FVertexFactoryInput Input)
 
 void CalcTangentToWorld(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates, out float3 TangentToWorld0, out float4 TangentToWorld2)
 {
-	float3x3 LocalToWorld = LWCToFloat3x3(Intermediates.SceneData.InstanceData.LocalToWorld);
+	float3x3 LocalToWorld = DFToFloat3x3(Intermediates.SceneData.InstanceData.LocalToWorld);
 
 	// Remove scaling.
 	half3 InvScale = GetPrimitiveData(Intermediates).InvNonUniformScale;
@@ -442,10 +444,7 @@ float3 CalcPreviousPosition(FVertexFactoryInput Input, FVertexFactoryIntermediat
 // @return previous translated world position
 float4 VertexFactoryGetPreviousWorldPosition(FVertexFactoryInput Input, FVertexFactoryIntermediates Intermediates)
 {
-	float4x4 PreviousLocalToWorldTranslated = LWCMultiplyTranslation(GetPrimitiveData(Intermediates).PreviousLocalToWorld, ResolvedView.PrevPreViewTranslation);
-
-	float4 PrevSkinPosInWorld = mul(float4(CalcPreviousPosition(Input, Intermediates),1), PreviousLocalToWorldTranslated);
-	return PrevSkinPosInWorld;
+	return TransformPreviousLocalPositionToTranslatedWorld(CalcPreviousPosition(Input, Intermediates), GetPrimitiveData(Intermediates).PreviousLocalToWorld);
 }
 
 

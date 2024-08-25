@@ -17,7 +17,10 @@ UAudioMotorSimComponent::UAudioMotorSimComponent(const FObjectInitializer& Objec
 
 void UAudioMotorSimComponent::Update(FAudioMotorSimInputContext& Input, FAudioMotorSimRuntimeContext& RuntimeInfo)
 {
-	BP_Update(Input, RuntimeInfo);
+	if (bEnabled)
+	{
+		BP_Update(Input, RuntimeInfo);
+	}
 
 #if WITH_EDITORONLY_DATA
 	CachedInput = Input;
@@ -33,6 +36,11 @@ void UAudioMotorSimComponent::Reset()
 	CachedInput = FAudioMotorSimInputContext();
 	CachedRuntimeInfo = FAudioMotorSimRuntimeContext();
 #endif
+}
+
+void UAudioMotorSimComponent::SetEnabled(bool bNewEnabled)
+{
+	bEnabled = bNewEnabled;
 }
 
 #if WITH_EDITORONLY_DATA

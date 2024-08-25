@@ -9,11 +9,6 @@
 
 #include "Editor/EditorEngine.h"		// FActorLabelUtilities
 #include "ComponentAssetBroker.h"		// FComponentAssetBrokerage
-#include "ChildActorSubobjectData.h"
-#include "InheritedSubobjectData.h"
-#include "BaseSubobjectDataFactory.h"
-#include "ChildSubobjectDataFactory.h"
-#include "InheritedSubobjectDataFactory.h"
 #include "Serialization/ArchiveReplaceOrClearExternalReferences.h"
 
 #include "BlueprintEditorSettings.h"	// bHideConstructionScriptComponentsInDetailsView
@@ -69,21 +64,10 @@ static void BroadcastInstanceChanges()
 
 void USubobjectDataSubsystem::Initialize(FSubsystemCollectionBase& Collection)
 {
-	FactoryManager = new FSubobjectFactoryManager();
-	check(FactoryManager);
-
-	FactoryManager->RegisterFactory(MakeShared<FBaseSubobjectDataFactory>());
-	FactoryManager->RegisterFactory(MakeShared<FChildSubobjectDataFactory>());
-	FactoryManager->RegisterFactory(MakeShared<FInheritedSubobjectDataFactory>());
 }
 
 void USubobjectDataSubsystem::Deinitialize()
 {
-	if(ensure(FactoryManager))
-	{
-		delete FactoryManager;
-		FactoryManager = nullptr;
-	}
 }
 
 USubobjectDataSubsystem* USubobjectDataSubsystem::Get()
@@ -305,8 +289,7 @@ void USubobjectDataSubsystem::GatherSubobjectData(UObject* Context, TArray<FSubo
 						if (USceneComponent* ParentComponent = SCS_Node->GetParentComponentTemplate(ActorBP))
 						{
 							FSubobjectDataHandle ParentHandle = FindAttachParentForInheritedComponent(ParentComponent, RootActorHandle, ActorBP);
-
-							if (ensure(ParentHandle.IsValid()))
+							if (ParentHandle.IsValid())
 							{
 								NewHandle = FactoryCreateInheritedBpSubobject(SCS_Node, ParentHandle, /* bIsInherited = */ StackIndex > 0, OutArray);
 							}
@@ -1017,7 +1000,8 @@ FSubobjectDataHandle USubobjectDataSubsystem::AddNewSubobject(const FAddNewSubob
 				{
 					// If this is an actor with no subobjects on it, then set the new subobject as scene root of the actor.
 					// This can occur if the user has placed in a native C++ class to the world with no subobjects on it
-					if (ParentObjData->IsActor() && ParentObjData->GetChildrenHandles().IsEmpty())
+					if ((ParentObjData->IsActor() && ParentObjData->GetChildrenHandles().IsEmpty()) || 
+						ActorInstance->GetRootComponent() == nullptr)
 					{
 						ActorInstance->SetRootComponent(NewSceneComponent);
 					}
@@ -1596,11 +1580,12 @@ bool USubobjectDataSubsystem::ChangeSubobjectClass(const FSubobjectDataHandle& H
 
 						// Avoid the new instance going in to the transaction buffer as we are managing that manually through the custom change record
 						TGuardValue<ITransaction*> SuppressTransaction(GUndo, nullptr);
-						UObject* NewInstance = NewObject<UObject>(GetTransientPackage(), NewClass, *ReplacementName, ArchetypeInstance->GetFlags());
+						UObject* NewInstance = NewObject<UObject>(GetTransientOuterForRename(const_cast<UClass*>(NewClass)), NewClass, *ReplacementName, ArchetypeInstance->GetFlags());
+
 						UEngine::CopyPropertiesForUnrelatedObjects(ArchetypeInstance, NewInstance);
 						ReplacementObjects.Add(NewInstance);
 
-						StaticDuplicateObject(ArchetypeInstance, GetTransientPackage(), *ReplacedName);
+						StaticDuplicateObject(ArchetypeInstance, GetTransientOuterForRename(const_cast<UClass*>(NewClass)), *ReplacedName);
 					}
 				}
 
@@ -2366,14 +2351,14 @@ void USubobjectDataSubsystem::PasteSubobjects(const FSubobjectDataHandle& PasteT
 				}
 			}
 
-			TSharedPtr<FInheritedSubobjectData> TargetData = StaticCastSharedPtr<FInheritedSubobjectData>(TargetParentHandle.GetSharedDataPtr());
+			TSharedPtr<FSubobjectData> TargetData = TargetParentHandle.GetSharedDataPtr();
 			
 			// Create a new subobject data set with this component. Use the SCS node here and the subobject data
 			// will correctly associate the component template
 			FSubobjectDataHandle NewDataHandle = FactoryCreateSubobjectDataWithParent(
 				NewSCSNode,
 				TargetParentHandle,
-				TargetData ? TargetData->bIsInheritedSCS : false
+				TargetData ? TargetData->IsInheritedSCSNode() : false
 			);
 
 			AttachSubobject(TargetParentHandle, NewDataHandle);
@@ -2580,19 +2565,12 @@ FScopedTransaction* USubobjectDataSubsystem::BeginTransaction(const TArray<FSubo
 
 FSubobjectDataHandle USubobjectDataSubsystem::CreateSubobjectData(UObject* Context, const FSubobjectDataHandle& ParentHandle /* = FSubobjectDataHandle::InvalidHandle */, bool bIsInheritedSCS/* = false */)
 {
-	FCreateSubobjectParams Params;
-	Params.Context = Context;
-	Params.ParentHandle = ParentHandle;
-	Params.bIsInheritedSCS = bIsInheritedSCS;
-
-	ISubobjectDataFactory* Factory = FactoryManager->FindFactoryToUse(Params);
-	check(Factory);
-	TSharedPtr<FSubobjectData> SharedPtr = Factory->CreateSubobjectData(Params);
+	TSharedPtr<FSubobjectData> SharedPtr = TSharedPtr<FSubobjectData>(new FSubobjectData(Context, ParentHandle, bIsInheritedSCS));
 	
 	if(!SharedPtr.IsValid())
 	{
 		ensureMsgf(false, TEXT("The subobject data factories failed to create subobject data!"));
-		SharedPtr = TSharedPtr<FSubobjectData>(new FSubobjectData(Context, ParentHandle));
+		SharedPtr = TSharedPtr<FSubobjectData>(new FSubobjectData(Context, ParentHandle, bIsInheritedSCS));
 	}
 
 	check(SharedPtr.IsValid());
@@ -2619,7 +2597,7 @@ FSubobjectDataHandle USubobjectDataSubsystem::FactoryCreateSubobjectDataWithPare
 	}
 
 	// Otherwise, we need to create a new handle
-	FSubobjectDataHandle OutHandle = CreateSubobjectData(Context, ParentHandle);
+	FSubobjectDataHandle OutHandle = CreateSubobjectData(Context, ParentHandle, bIsInheritedSCS);
 	
 	// Inform the parent that it has a new child
 	const bool bSuccess = ParentData->AddChildHandleOnly(OutHandle);
@@ -2637,16 +2615,9 @@ FSubobjectDataHandle USubobjectDataSubsystem::FactoryCreateInheritedBpSubobject(
 	
 	check(InSCSNode && ParentData && ParentData->IsValid());
 	// Get a handle for us to work with
-	FSubobjectDataHandle OutHandle = FactoryCreateSubobjectDataWithParent(InSCSNode, ParentHandle);
+	FSubobjectDataHandle OutHandle = FactoryCreateSubobjectDataWithParent(InSCSNode, ParentHandle, bIsInherited);
 	check(OutHandle.IsValid());
 	FSubobjectData* NewData = OutHandle.GetData();
-
-	// @todo the concept of inherited SCS nodes will not exist once the
-	// larger subobject refactor roles out, but this is necessary for now.
-	if(TSharedPtr<FInheritedSubobjectData> InheritedData = StaticCastSharedPtr<FInheritedSubobjectData>(OutHandle.GetSharedDataPtr()))
-	{
-		InheritedData->bIsInheritedSCS = bIsInherited;
-	}
 	
 	// Determine whether or not the given node is inherited from a parent Blueprint
 	USimpleConstructionScript* NodeSCS = InSCSNode->GetSCS();

@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using Horde.Server.Acls;
+using EpicGames.Horde.Acls;
 
 namespace Horde.Server.Jobs.Bisect
 {
@@ -12,16 +12,16 @@ namespace Horde.Server.Jobs.Bisect
 		/// <summary>
 		/// Ability to start new bisect tasks
 		/// </summary>
-		public static readonly AclAction CreateBisectTask = new AclAction("CreateBisectTask");
+		public static AclAction CreateBisectTask { get; } = new AclAction("CreateBisectTask");
 
 		/// <summary>
 		/// Ability to update a bisect task
 		/// </summary>
-		public static readonly AclAction UpdateBisectTask = new AclAction("UpdateBisectTask");
+		public static AclAction UpdateBisectTask { get; } = new AclAction("UpdateBisectTask");
 
 		/// <summary>
 		/// Ability to view a bisect task
 		/// </summary>
-		public static readonly AclAction ViewBisectTask = new AclAction("ViewBisectTask");
+		public static AclAction ViewBisectTask { get; } = new AclAction("ViewBisectTask");
 	}
 }

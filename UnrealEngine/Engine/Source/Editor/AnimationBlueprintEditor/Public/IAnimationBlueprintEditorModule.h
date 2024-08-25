@@ -12,6 +12,8 @@
 
 DECLARE_LOG_CATEGORY_EXTERN(LogAnimationBlueprintEditor, Log, All);
 
+class FBlueprintActionDatabaseRegistrar;
+
 class IAnimationBlueprintEditorModule : public IModuleInterface, public IHasMenuExtensibility, public IHasToolBarExtensibility
 {
 public:
@@ -37,4 +39,10 @@ public:
 
 	DECLARE_MULTICAST_DELEGATE_TwoParams(FOnGetCustomDebugObjects, const IAnimationBlueprintEditor& /*AnimationBlueprintEditor*/, TArray<FCustomDebugObject>& /*DebugList*/);
 	virtual FOnGetCustomDebugObjects& OnGetCustomDebugObjects() = 0;
+
+	/** Get anim blueprint type actions */
+	virtual void GetTypeActions(FBlueprintActionDatabaseRegistrar& ActionRegistrar) const = 0;
+
+	/** Get anim blueprint instance actions */
+	virtual void GetInstanceActions(const UAnimBlueprint* InAnimBlueprint, FBlueprintActionDatabaseRegistrar& ActionRegistrar) const = 0;
 };

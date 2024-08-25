@@ -6,6 +6,7 @@
 #include "Chaos/PBDSoftsEvolutionFwd.h"
 #include "Chaos/PBDActiveView.h"
 #include "Chaos/PBDStiffness.h"
+#include "Chaos/SoftsSolverParticlesRange.h"
 #include "Containers/Map.h"
 #include "Containers/Set.h"
 
@@ -32,6 +33,16 @@ public:
 	};
 
 	typedef TTuple<int32, int32, FRealSingle> FTether;
+
+	CHAOS_API FPBDLongRangeConstraintsBase(
+		const FSolverParticlesRange& Particles,
+		const TArray<TConstArrayView<TTuple<int32, int32, FRealSingle>>>& InTethers,
+		const TConstArrayView<FRealSingle>& StiffnessMultipliers,
+		const TConstArrayView<FRealSingle>& ScaleMultipliers,
+		const FSolverVec2& InStiffness = FSolverVec2::UnitVector,
+		const FSolverVec2& InScale = FSolverVec2::UnitVector,
+		FSolverReal MaxStiffness = FPBDStiffness::DefaultPBDMaxStiffness,
+		FSolverReal MeshScale = (FSolverReal)1.);
 
 	CHAOS_API FPBDLongRangeConstraintsBase(
 		const FSolverParticles& Particles,
@@ -111,7 +122,8 @@ protected:
 	void ApplyScale() { TetherScale.ApplyValues(); }
 
 	// Return a vector representing the amount of segment required for the tether to shrink back to its maximum target length constraint, or zero if the constraint is already met
-	inline FSolverVec3 GetDelta(const FSolverParticles& Particles, const FTether& Tether, const FSolverReal InScale) const
+	template<typename SolverParticlesOrRange>
+	inline FSolverVec3 GetDelta(const SolverParticlesOrRange& Particles, const FTether& Tether, const FSolverReal InScale) const
 	{
 		const int32 Start = GetStartParticle(Tether);
 		const int32 End = GetEndParticle(Tether);
@@ -125,7 +137,8 @@ protected:
 	};
 
 	// Return a direction and length representing the amount of segment required for the tether to shrink back to its maximum target length constraint, or zero if the constraint is already met
-	inline void GetDelta(const FSolverParticles& Particles, const FTether& Tether, const FSolverReal InScale, FSolverVec3& OutDirection, FSolverReal& OutOffset) const
+	template<typename SolverParticlesOrRange>
+	inline void GetDelta(const SolverParticlesOrRange& Particles, const FTether& Tether, const FSolverReal InScale, FSolverVec3& OutDirection, FSolverReal& OutOffset) const
 	{
 		const int32 Start = GetStartParticle(Tether);
 		const int32 End = GetEndParticle(Tether);

@@ -3,7 +3,6 @@
 #pragma once
 
 #include "HAL/Platform.h"
-#include "Misc/AssertionMacros.h"
 
 #if PLATFORM_MICROSOFT
 
@@ -12,6 +11,7 @@
 #endif
 
 #include "RHIDefinitions.h"
+#include "Misc/AssertionMacros.h"
 
 #include "Microsoft/AllowMicrosoftPlatformTypes.h"
 THIRD_PARTY_INCLUDES_START
@@ -228,6 +228,14 @@ namespace UE::DXGIUtilities
 			{
 			case DXGI_FORMAT_R8_UNORM: return 0;
 			case DXGI_FORMAT_R8G8_UNORM: return 1;
+			}
+			break;
+
+		case DXGI_FORMAT_P010:
+			switch (ViewFormat)
+			{
+			case DXGI_FORMAT_R16_UNORM: return 0;
+			case DXGI_FORMAT_R16G16_UNORM: return 1;
 			}
 			break;
 		}

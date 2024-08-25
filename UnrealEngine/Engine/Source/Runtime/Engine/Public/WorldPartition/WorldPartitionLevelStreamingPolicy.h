@@ -12,8 +12,10 @@
 
 #include "CoreMinimal.h"
 #include "WorldPartition/WorldPartitionStreamingPolicy.h"
+#include "WorldPartition/WorldPartitionRuntimeContainerResolving.h"
 #include "WorldPartitionLevelStreamingPolicy.generated.h"
 
+struct FResourceSizeEx;
 class UWorldPartitionRuntimeLevelStreamingCell;
 enum class EWorldPartitionRuntimeCellState : uint8;
 
@@ -29,10 +31,12 @@ public:
 #if WITH_EDITOR
 	virtual TSubclassOf<class UWorldPartitionRuntimeCell> GetRuntimeCellClass() const override;
 	virtual void PrepareActorToCellRemapping() override;
+	virtual void SetContainerResolver(const FWorldPartitionRuntimeContainerResolver& InContainerResolver) override { ContainerResolver = InContainerResolver; }
 	virtual void RemapSoftObjectPath(FSoftObjectPath& ObjectPath) const override;
 	static FString GetCellPackagePath(const FName& InCellName, const UWorld* InWorld);
 
-	virtual bool StoreToExternalStreamingObject(URuntimeHashExternalStreamingObjectBase& OutExternalStreamingObject) override;
+	virtual bool StoreStreamingContentToExternalStreamingObject(URuntimeHashExternalStreamingObjectBase& OutExternalStreamingObject) override;
+	virtual bool ConvertContainerPathToEditorPath(const FActorContainerID& InContainerID, const FSoftObjectPath& InPath, FSoftObjectPath& OutPath) const;
 #endif
 
 	virtual bool ConvertEditorPathToRuntimePath(const FSoftObjectPath& InPath, FSoftObjectPath& OutPath) const override;
@@ -41,11 +45,12 @@ public:
 	virtual bool InjectExternalStreamingObject(URuntimeHashExternalStreamingObjectBase* ExternalStreamingObject) override;
 	virtual bool RemoveExternalStreamingObject(URuntimeHashExternalStreamingObjectBase* ExternalStreamingObject) override;
 
+	virtual void GetResourceSizeEx(FResourceSizeEx& CumulativeResourceSize) override;
 protected:
 	void ForEachActiveRuntimeCell(TFunctionRef<void(const UWorldPartitionRuntimeCell*)> Func) const;
 
 private:
-	const FName* FindCellNameForSubObject(FName SubObjectName) const;
+	const FName* FindCellNameForSubObject(const FString& InSubObjectString, bool bInResolveContainers, FString& OutSubObjectString, const UObject*& OutLevelMountPointContext) const;
 	const UWorldPartitionRuntimeLevelStreamingCell* FindCellForSubObject(FName SubObjectName) const;
 
 	UPROPERTY()
@@ -53,6 +58,9 @@ private:
 
 	UPROPERTY()
 	TMap<FName, FName> SubObjectsToCellRemapping;
+
+	UPROPERTY()
+	FWorldPartitionRuntimeContainerResolver ContainerResolver;
 
 	UPROPERTY(Transient)
 	TArray<TWeakObjectPtr<URuntimeHashExternalStreamingObjectBase>> ExternalStreamingObjects;

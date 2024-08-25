@@ -279,6 +279,11 @@ FRigVMFunction_MathFloatAtan_Execute()
 	Result = FMath::Atan(Value);
 }
 
+FRigVMFunction_MathFloatAtan2_Execute()
+{
+	Result = FMath::Atan2(A, B);
+}
+
 FRigVMFunction_MathFloatLawOfCosine_Execute()
 {
 	if ((A <= 0.f) || (B <= 0.f) || (C <= 0.f) || (A + B < C) || (A + C < B) || (B + C < A))

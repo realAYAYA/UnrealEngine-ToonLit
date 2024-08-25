@@ -19,9 +19,13 @@ public class Swift : ModuleRules
 		{
 			PlatformPath = "macosx";
 		}
-        else if (Target.Platform == UnrealTargetPlatform.TVOS)
+		else if (Target.Platform == UnrealTargetPlatform.TVOS)
 		{
 			PlatformPath = "appletvos";
+		}
+		else if (Target.Platform == UnrealTargetPlatform.VisionOS)
+		{
+			PlatformPath = "xros";
 		}
 
 		if(PlatformPath != null)

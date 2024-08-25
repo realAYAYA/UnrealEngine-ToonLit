@@ -45,7 +45,6 @@ class UScriptStruct;
 class UToolMenu;
 struct FAssetData;
 struct FToolMenuSection;
-struct FTypesDatabase;
 template <typename T> struct TObjectPtr;
 
 /** Reference to an structure (only used in 'docked' palette) */
@@ -279,6 +278,9 @@ public:
 	/** Metadata that should be used with UPARAM to specify whether a TSubclassOf argument allows abstract classes */
 	static const FName MD_AllowAbstractClasses;
 
+	/** Metadata that should be used with UPARAM to specify a function name that generates a list of available values */
+	static const FName MD_GetOptions;
+
 	/** Namespace into which a type can be optionally defined; if empty or not set, the type will belong to the global namespace (default). */
 	static const FName MD_Namespace;
 
@@ -342,8 +344,6 @@ enum class ETypeTreeFilter : uint8
 };
 
 ENUM_CLASS_FLAGS(ETypeTreeFilter);
-
-struct FTypesDatabase;
 
 UCLASS(config=Editor)
 class BLUEPRINTGRAPH_API UEdGraphSchema_K2 : public UEdGraphSchema
@@ -444,11 +444,14 @@ public:
 		FEdGraphPinType PinType;
 		uint8 PossibleObjectReferenceTypes;
 
-		/** Asset Reference, used when PinType.PinSubCategoryObject is not loaded yet */
-		FSoftObjectPath SubCategoryObjectAssetReference;
+		/** Asset Data, used when PinType.PinSubCategoryObject is not loaded yet */
+		FAssetData CachedAssetData;
 
+		/** The pin type description, localized */
 		FText CachedDescription;
 
+		/** A copy of the localized CachedDescription string, for sorting */
+		TSharedPtr<FString> CachedDescriptionString;
 	public:
 		/** The children of this pin type */
 		TArray< TSharedPtr<FPinTypeTreeInfo> > Children;
@@ -456,36 +459,30 @@ public:
 		/** Whether or not this pin type is selectable as an actual type, or is just a category, with some subtypes */
 		bool bReadOnly;
 
-		/** Friendly display name of pin type; also used to see if it has subtypes */
-		FText FriendlyName;
-
 		/** Text for regular tooltip */
 		FText Tooltip;
 
 	public:
 		const FEdGraphPinType& GetPinType(bool bForceLoadedSubCategoryObject);
+		const FEdGraphPinType& GetPinTypeNoResolve() const { return PinType; }
 		void SetPinSubTypeCategory(const FName SubCategory)
 		{
 			PinType.PinSubCategory = SubCategory;
 		}
 
-		FPinTypeTreeInfo(const FText& InFriendlyName, const FName CategoryName, const UEdGraphSchema_K2* Schema, const FText& InTooltip, bool bInReadOnly = false, FTypesDatabase* TypesDatabase = nullptr);
+		FPinTypeTreeInfo(const FText& InFriendlyName, const FName CategoryName, const UEdGraphSchema_K2* Schema, const FText& InTooltip, bool bInReadOnly = false);
 		FPinTypeTreeInfo(const FName CategoryName, UObject* SubCategoryObject, const FText& InTooltip, bool bInReadOnly = false, uint8 InPossibleObjectReferenceTypes = 0);
-		FPinTypeTreeInfo(const FText& InFriendlyName, const FName CategoryName, const FSoftObjectPath& SubCategoryObject, const FText& InTooltip, bool bInReadOnly = false, uint8 InPossibleObjectReferenceTypes = 0);
-
-		FPinTypeTreeInfo(TSharedPtr<FPinTypeTreeInfo> InInfo)
-		{
-			PinType = InInfo->PinType;
-			bReadOnly = InInfo->bReadOnly;
-			FriendlyName = InInfo->FriendlyName;
-			Tooltip = InInfo->Tooltip;
-			SubCategoryObjectAssetReference = InInfo->SubCategoryObjectAssetReference;
-			CachedDescription = InInfo->CachedDescription;
-			PossibleObjectReferenceTypes = InInfo->PossibleObjectReferenceTypes;
-		}
+		FPinTypeTreeInfo(const FText& InFriendlyName, const FName CategoryName, const FAssetData& AssetData, const FText& InTooltip, bool bInReadOnly = false, uint8 InPossibleObjectReferenceTypes = 0);
+		FPinTypeTreeInfo(TSharedPtr<FPinTypeTreeInfo> InInfo);
 		
 		/** Returns a succinct menu description of this type */
-		FText GetDescription() const;
+		const FText& GetDescription() const;
+		
+		/** Returns the localized description as a string, for faster sorting */
+		const FString& GetCachedDescriptionString() const
+		{
+			return *CachedDescriptionString;
+		}
 
 		FText GetToolTip() const
 		{
@@ -507,10 +504,7 @@ public:
 			return PossibleObjectReferenceTypes;
 		}
 
-		const FSoftObjectPath& GetSubCategoryObjectAsset() const
-		{
-			return SubCategoryObjectAssetReference;
-		}
+		const FAssetData& GetCachedAssetData() const;
 
 	private:
 
@@ -518,8 +512,6 @@ public:
 			: PossibleObjectReferenceTypes(0)
 			, bReadOnly(false)
 		{}
-
-		void Init(const FText& FriendlyCategoryName, const FName CategoryName, const UEdGraphSchema_K2* Schema, const FText& InTooltip, bool bInReadOnly, FTypesDatabase* TypesDatabase);
 
 		FText GenerateDescription();
 	};
@@ -1126,7 +1118,7 @@ public:
 		FName TargetFunction;
 		UClass* FunctionOwner = nullptr;
 	};
-	UE_NODISCARD virtual TOptional<FSearchForAutocastFunctionResults> SearchForAutocastFunction(const FEdGraphPinType& OutputPinType, const FEdGraphPinType& InputPinType) const;
+	[[nodiscard]] virtual TOptional<FSearchForAutocastFunctionResults> SearchForAutocastFunction(const FEdGraphPinType& OutputPinType, const FEdGraphPinType& InputPinType) const;
 
 	UE_DEPRECATED(5.2, "Use the FFindSpecializedConversionNodeResults variant.")
 	virtual bool FindSpecializedConversionNode(const UEdGraphPin* OutputPin, const UEdGraphPin* InputPin, bool bCreateNode, /*out*/ class UK2Node*& TargetNode) const;
@@ -1139,7 +1131,7 @@ public:
 	{
 		class UK2Node* TargetNode = nullptr;
 	};
-	UE_NODISCARD virtual TOptional<FFindSpecializedConversionNodeResults> FindSpecializedConversionNode(const FEdGraphPinType& OutputPinType, const UEdGraphPin& InputPin, bool bCreateNode) const;
+	[[nodiscard]] virtual TOptional<FFindSpecializedConversionNodeResults> FindSpecializedConversionNode(const FEdGraphPinType& OutputPinType, const UEdGraphPin& InputPin, bool bCreateNode) const;
 
 	/** Create menu for variable get/set nodes which refer to a variable which does not exist. */
 	void GetNonExistentVariableMenu(FToolMenuSection& Section, const UEdGraphNode* InGraphNode, UBlueprint* OwnerBlueprint) const;

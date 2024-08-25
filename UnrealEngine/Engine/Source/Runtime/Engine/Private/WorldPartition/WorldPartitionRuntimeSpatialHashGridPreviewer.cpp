@@ -17,19 +17,20 @@ FWorldPartitionRuntimeSpatialHashGridPreviewer::FWorldPartitionRuntimeSpatialHas
 #if WITH_EDITORONLY_DATA
 	: MID(nullptr)
 	, Volume(nullptr)
+	, bIsInitialized(false)
 #endif
 {
-#if WITH_EDITORONLY_DATA
-	if (!IsRunningCookCommandlet())
-	{
-		Material = LoadObject<UMaterial>(nullptr, TEXT("/Engine/EditorMaterials/WorldPartition/WorldPartitionSpatialHashGridPreviewMaterial"));
-	}
-#endif
 }
 
 #if WITH_EDITOR
-void FWorldPartitionRuntimeSpatialHashGridPreviewer::Draw(UWorld* World, const TArray<FSpatialHashRuntimeGrid>& Grids, bool bEnabled, int32 PreviewGridLevel)
+void FWorldPartitionRuntimeSpatialHashGridPreviewer::Draw(UWorld* World, const TArray<FSpatialHashRuntimeGrid>& Grids, bool bEnabled, int32 PreviewGridLevel, bool bUseAlignedGridLevels)
 {
+	if (!bIsInitialized)
+	{
+		Material = LoadObject<UMaterial>(nullptr, TEXT("/Engine/EditorMaterials/WorldPartition/WorldPartitionSpatialHashGridPreviewMaterial"));
+		bIsInitialized = true;
+	}
+
 	if (bEnabled && Material)
 	{
 		if (!Volume)
@@ -83,7 +84,7 @@ void FWorldPartitionRuntimeSpatialHashGridPreviewer::Draw(UWorld* World, const T
 						CachedParameters.GridColor = Grid.DebugColor;
 					}
 
-					FVector GridOffset = FVector(Grid.Origin, 0) + (GRuntimeSpatialHashUseAlignedGridLevelsEffective ? FVector(0.5 * PreviewCellSize) : FVector::ZeroVector);
+					FVector GridOffset = FVector(Grid.Origin, 0) + (bUseAlignedGridLevels ? FVector(0.5 * PreviewCellSize) : FVector::ZeroVector);
 					if (CachedParameters.GridOffset != GridOffset)
 					{
 						MID->SetVectorParameterValue(*FString::Printf(TEXT("Grid%d_Offset"), i), GridOffset);

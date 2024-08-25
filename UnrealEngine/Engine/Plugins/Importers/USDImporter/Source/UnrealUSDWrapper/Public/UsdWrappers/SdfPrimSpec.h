@@ -8,18 +8,17 @@
 #include "UsdWrappers/ForwardDeclarations.h"
 
 #if USE_USD_SDK
-
 #include "USDIncludesStart.h"
-	#include "pxr/pxr.h"
+#include "pxr/pxr.h"
 #include "USDIncludesEnd.h"
 
 PXR_NAMESPACE_OPEN_SCOPE
 	class SdfPrimSpec;
-	template <class T> class SdfHandle;
-	using SdfPrimSpecHandle = SdfHandle< SdfPrimSpec >;
+	template<class T>
+	class SdfHandle;
+	using SdfPrimSpecHandle = SdfHandle<SdfPrimSpec>;
 PXR_NAMESPACE_CLOSE_SCOPE
-
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 namespace UE
 {
@@ -58,31 +57,31 @@ namespace UE
 	public:
 		FSdfPrimSpec();
 
-		FSdfPrimSpec( const FSdfPrimSpec& Other );
-		FSdfPrimSpec( FSdfPrimSpec&& Other );
+		FSdfPrimSpec(const FSdfPrimSpec& Other);
+		FSdfPrimSpec(FSdfPrimSpec&& Other);
 		~FSdfPrimSpec();
 
-		FSdfPrimSpec& operator=( const FSdfPrimSpec& Other );
-		FSdfPrimSpec& operator=( FSdfPrimSpec&& Other );
+		FSdfPrimSpec& operator=(const FSdfPrimSpec& Other);
+		FSdfPrimSpec& operator=(FSdfPrimSpec&& Other);
 
-		bool operator==( const FSdfPrimSpec& Other ) const;
-		bool operator!=( const FSdfPrimSpec& Other ) const;
+		bool operator==(const FSdfPrimSpec& Other) const;
+		bool operator!=(const FSdfPrimSpec& Other) const;
 
 		explicit operator bool() const;
 
-	// Auto conversion from/to pxr::SdfPrimSpecHandle
+		// Auto conversion from/to pxr::SdfPrimSpecHandle
 	public:
 #if USE_USD_SDK
-		explicit FSdfPrimSpec( const pxr::SdfPrimSpecHandle& InSdfPrimSpec );
-		explicit FSdfPrimSpec( pxr::SdfPrimSpecHandle&& InSdfPrimSpec );
-		FSdfPrimSpec& operator=( const pxr::SdfPrimSpecHandle& InSdfPrimSpec );
-		FSdfPrimSpec& operator=( pxr::SdfPrimSpecHandle&& InSdfPrimSpec );
+		explicit FSdfPrimSpec(const pxr::SdfPrimSpecHandle& InSdfPrimSpec);
+		explicit FSdfPrimSpec(pxr::SdfPrimSpecHandle&& InSdfPrimSpec);
+		FSdfPrimSpec& operator=(const pxr::SdfPrimSpecHandle& InSdfPrimSpec);
+		FSdfPrimSpec& operator=(pxr::SdfPrimSpecHandle&& InSdfPrimSpec);
 
 		operator pxr::SdfPrimSpecHandle&();
 		operator const pxr::SdfPrimSpecHandle&() const;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
-	// Wrapped pxr::SdfPrimSpecHandle functions, refer to the USD SDK documentation
+		  // Wrapped pxr::SdfPrimSpecHandle functions, refer to the USD SDK documentation
 	public:
 		ESdfSpecType GetSpecType() const;
 		FSdfLayerWeak GetLayer() const;
@@ -91,12 +90,12 @@ namespace UE
 		FSdfPrimSpec GetRealNameParent() const;
 		bool RemoveNameChild(const FSdfPrimSpec& Child);
 
-		UE::FSdfAttributeSpec GetAttributeAtPath( const UE::FSdfPath& Path ) const;
+		UE::FSdfAttributeSpec GetAttributeAtPath(const UE::FSdfPath& Path) const;
 
 		FName GetTypeName() const;
 		FName GetName() const;
 
 	private:
-		TUniquePtr< Internal::FSdfPrimSpecImpl > Impl;
+		TUniquePtr<Internal::FSdfPrimSpecImpl> Impl;
 	};
-}
+}	 // namespace UE

@@ -43,6 +43,12 @@ float IGeometryExtension::UpdateVirtualGeometry(float InitialVirtualPosition, TS
 			{
 				It->ReportVirtualGeometry(Geometry);
 			}
+
+			for (TTypedIterator<IGeometryExtension, FViewModelVariantIterator>
+				It(TrackAreaExtension->GetTopLevelChildTrackAreaModels()); It; ++It)
+			{
+				It->ReportVirtualGeometry(Geometry);
+			}
 		}
 	}
 	else

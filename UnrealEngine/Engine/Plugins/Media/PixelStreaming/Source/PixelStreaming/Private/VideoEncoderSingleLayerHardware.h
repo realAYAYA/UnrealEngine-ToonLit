@@ -46,7 +46,7 @@ namespace UE::PixelStreaming
 		void UpdateFrameMetadataPrePacketization(IPixelCaptureOutputFrame& Frame);
 		void UpdateFrameMetadataPostPacketization(IPixelCaptureOutputFrame& Frame);
 		webrtc::VideoFrame WrapAdaptedFrame(const webrtc::VideoFrame& ExistingFrame, const IPixelCaptureOutputFrame& AdaptedLayer);
-
+		
 		FVideoEncoderFactorySingleLayer& Factory;
 		EPixelStreamingCodec Codec;
 
@@ -64,5 +64,8 @@ namespace UE::PixelStreaming
 
 		// used to key into active hardware encoders and pull the correct encoder for the stream.
 		uint32 EncodingStreamId;
+
+		// Used to track how often we encode the same frame
+		uint64 LastEncodedFrameId = 0;
 	};
 } // namespace UE::PixelStreaming

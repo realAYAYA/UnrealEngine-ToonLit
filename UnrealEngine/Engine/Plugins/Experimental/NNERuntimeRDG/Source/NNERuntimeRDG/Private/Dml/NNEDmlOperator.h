@@ -10,40 +10,51 @@
 #include "NNEAttributeMap.h"
 #include "NNERuntimeRDGBase.h"
 
+#define OP_DML_CLASS(OpName) FOperatorDml##OpName
+#define OP_DML_CLASS_TEMPL(OpName,OpVer) OP_TEST_CLASS(OpName) <OpVer>
+
 #define NNE_DML_REGISTER_OP(OpName) \
 struct FDmlOperator##OpName##Registrator \
 { \
 	FDmlOperator##OpName##Registrator() \
 	{ \
-		FOperatorRegistryDml::Get()->OpAdd(TEXT(#OpName), FOperatorDml##OpName##::Create, FOperatorDml##OpName##::Validate); \
+		FOperatorRegistryDml::Get()->OpAdd({{TEXT(#OpName), TEXT("Onnx")}}, OP_DML_CLASS(OpName)::Create, OP_DML_CLASS(OpName)::Validate); \
 	} \
 }; \
 \
 static FDmlOperator##OpName##Registrator RegisterDmlOperator##OpName;
 
+#define NNE_DML_REGISTER_OP_VERSION(OpName, OpVer) \
+struct FDmlOperator##OpName##OpVer##Registrator \
+{ \
+	FDmlOperator##OpName##OpVer##Registrator() \
+	{ \
+		FOperatorRegistryDml::Get()->OpAdd({{TEXT(#OpName), TEXT("Onnx")}, OpVer}, OP_DML_CLASS(OpName)::Create, OP_DML_CLASS(OpName)::Validate); \
+	} \
+}; \
+\
+static FDmlOperator##OpName##OpVer##Registrator RegisterDmlOperator##OpName##OpVer;
+
+#define NNE_DML_REGISTER_OP_TEMPL_VERSION(OpName, OpTemplVer, OpVer) \
+struct FDmlOperator##OpName##OpVer##Registrator \
+{ \
+	FDmlOperator##OpName##OpVer##Registrator() \
+	{ \
+		FOperatorRegistryDml::Get()->OpAdd({{TEXT(#OpName), TEXT("Onnx")}, OpVer}, OP_DML_CLASS_TEMPL(OpName,OpTemplVer)::Create, OP_DML_CLASS_TEMPL(OpName,OpTemplVer)::Validate); \
+	} \
+}; \
+\
+static FDmlOperator##OpName##OpVer##Registrator RegisterDmlOperator##OpName##OpVer;
+
 
 namespace UE::NNERuntimeRDG::Private::Dml
 {
 
-static constexpr uint32_t NcdhwDimensionCount = 5;
-static constexpr uint32_t NcdhwSpatialDimensionCount = 3;
-static constexpr uint32_t NonspatialDimensionCount = 2; // The batch and channel dimensions of NCW, NCHW, NCDHW....
+static constexpr int32  GMaxTensorRank = DML_TENSOR_DIMENSION_COUNT_MAX1;
+static constexpr uint32 NcdhwDimensionCount = 5;
+static constexpr uint32 NcdhwSpatialDimensionCount = 3;
+static constexpr uint32 NonspatialDimensionCount = 2;		//!< The batch and channel dimensions of NCW, NCHW, NCDHW....
 
-template<typename T>
-inline TArrayView<T> MakeEmptyArrayView()
-{
-	return MakeArrayView(static_cast<T*>(nullptr), 0);
-}
-
-template<typename T>
-inline TConstArrayView<T> MakeEmptyConstArrayView()
-{
-	return TConstArrayView<T>(static_cast<const T*>(nullptr), 0);
-}
-
-//
-//
-//
 class FDmlDeviceContext
 {
 public:
@@ -58,6 +69,14 @@ class FTensorDescDml;
 
 namespace Util
 {
+
+// DML requires buffer size to be aligned at 4 byte boundary
+template<typename T>
+inline T AlignBufferSize(T BuffSizeInBytes)
+{
+	static_assert(std::is_integral<T>::value);
+	return (BuffSizeInBytes + 3) & ~3ull;
+}
 	
 template<typename T>
 using FSmallArray = TArray<T, TInlineAllocator<NNE::FTensorShape::MaxRank>>;
@@ -68,7 +87,7 @@ template<typename InputType, typename OutputType>
 inline bool IsOverflowing(InputType Input)
 {
 	OutputType Output = static_cast<OutputType>(Input);
-	if(Input != static_cast<InputType>(Output))
+	if (Input != static_cast<InputType>(Output))
 	{
 		return true;
 	}
@@ -79,9 +98,9 @@ template<typename InputType, typename OutputType>
 inline bool ConvertArrayViewNoOverflow(TConstArrayView<InputType> InputView, TArrayView<OutputType>& OutputView)
 {
 	OutputView = MakeArrayView((OutputType*) InputView.GetData(), InputView.Num());
-	for(int32 Idx = 0; Idx < InputView.Num(); ++Idx)
+	for (int32 Idx = 0; Idx < InputView.Num(); ++Idx)
 	{
-		if(InputView[Idx] != static_cast<InputType>(OutputView[Idx]))
+		if (InputView[Idx] != static_cast<InputType>(OutputView[Idx]))
 		{
 			return false;
 		}
@@ -93,36 +112,37 @@ template<typename OutputType, typename AllocatorType>
 inline bool GetArrayAttributeNoOverflow(
 	const FNNEAttributeValue* Attr, 
 	TArray<OutputType, AllocatorType>& OutputArray, 
-	TConstArrayView<OutputType> DefaultValues = MakeEmptyConstArrayView<OutputType>()
+	TConstArrayView<OutputType> DefaultValues = TConstArrayView<OutputType>()
 	)
 {
 	if (Attr)
 	{
-
 		TArrayView<OutputType> ConvertedView;
 		TArray<int32> IntArray;
 		TArray<float> FloatArray;
 
-		switch(Attr->GetType())
+		switch (Attr->GetType())
 		{
 		case ENNEAttributeDataType::Int32Array:
 			{
 				IntArray = Attr->GetValue<TArray<int32>>();
-				if(!ConvertArrayViewNoOverflow(TConstArrayView<int32>(IntArray), ConvertedView))
+				if (!ConvertArrayViewNoOverflow(TConstArrayView<int32>(IntArray), ConvertedView))
 				{
 					return false;
 				}
 			}
 			break;
+
 		case ENNEAttributeDataType::FloatArray:
 			{
 				FloatArray = Attr->GetValue<TArray<float>>();
-				if(!ConvertArrayViewNoOverflow(TConstArrayView<float>(FloatArray), ConvertedView))
+				if (!ConvertArrayViewNoOverflow(TConstArrayView<float>(FloatArray), ConvertedView))
 				{
 					return false;
 				}
 			}
 			break;
+
 		default:
 			return false;
 		}
@@ -136,7 +156,6 @@ inline bool GetArrayAttributeNoOverflow(
 	return true;
 }
 
-extern bool IsSameShape(const NNE::Internal::FTensor& Left, const NNE::Internal::FTensor& Right);
 extern bool IsSameShape(const FTensorDescDml& Left, const FTensorDescDml& Right);
 extern DML_TENSOR_DATA_TYPE GetTensorDataType(ENNETensorDataType DataType);
 
@@ -253,6 +272,12 @@ public:
 	// Validate the tensor descriptor, once it's validated any calls to SetXXX() will be ignored
 	bool Validate();
 
+	// Invalidate tensor description, this will reset internal validation to allow calling SetXXX() again.
+	void Invalidate()
+	{
+		bIsValidated = false;
+	}
+
 	// Return filled DML tensor descriptor
 	// NOTE: Call this method only after Validate() is called
 	const DML_TENSOR_DESC* GetDmlDesc() const
@@ -282,26 +307,42 @@ private:
 	bool					bIsValidated;
 };
 
-//
-// DirectML operator base class
-//
-class FOperatorDml
+/**
+*  DirectML operator base class
+*/
+class FOperatorDml : public IPrepareOperator
 {
 public:
 
 	virtual ~FOperatorDml() = default;
 
-	virtual bool Initialize(IDMLDevice* Device, TArrayView<const NNE::Internal::FTensor> InputTensors, TArrayView<const NNE::Internal::FTensor> OutputTensors, const NNE::FAttributeMap& Attributes) = 0;
+	/**
+	* Initialize is used to only read attributes, not that tensor descriptors can be symbolic
+	*/
+	virtual bool Initialize(TConstArrayView<NNE::FTensorDesc> Inputs, TConstArrayView<NNE::FTensorDesc> Outputs, const NNE::FAttributeMap& Attributes) = 0;
 
+	/**
+	* Evaluate tensor shapes
+	*/
+	virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) = 0;
+
+	/**
+	* Once the tensors have concrete shapes we can create the instance of the operator. The concrete shapes are evaluated in PrepareOutputs()
+	*/
+	virtual bool Create(IDMLDevice* Device, TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TConstArrayView<NNE::Internal::FTensorRef> OutputTensors) = 0;
+
+	// Certain operators require tensors to be constant CPU data
 	virtual TConstArrayView<int32> GetConstantCPUInputs() const;
 
+	// Certain operators have different tensor input mappings from ONNX
 	virtual TConstArrayView<int32> GetRemappedInputs() const;
 
+	// Return created DML operator instance
 	IDMLOperator* GetOperator();
 
 protected:
 	
-	bool CreateOperator(IDMLDevice* Device, const DML_OPERATOR_DESC& DmlOpDesc);
+	bool CreateOperator(IDMLDevice* Device, const DML_OPERATOR_DESC& OpDesc);
 
 	TComPtr<IDMLOperator>		DmlOp;
 	Util::FSmallIntArray		ConstantCPUInputs;

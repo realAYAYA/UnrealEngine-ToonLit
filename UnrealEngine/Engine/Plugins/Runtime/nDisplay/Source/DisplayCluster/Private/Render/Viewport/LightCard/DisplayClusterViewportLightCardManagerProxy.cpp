@@ -42,6 +42,8 @@ void FDisplayClusterViewportLightCardManagerProxy::ReleaseUVLightCardResource()
 
 void FDisplayClusterViewportLightCardManagerProxy::RenderUVLightCard(FSceneInterface* InScene, const FDisplayClusterShaderParameters_UVLightCards& InParameters) const
 {
+	UE::RenderCommandPipe::FSyncScope SyncScope;
+
 	ENQUEUE_RENDER_COMMAND(DisplayClusterViewportLightCardManagerProxy_RenderUVLightCard)(
 		[InProxyData = SharedThis(this), Scene = InScene, Parameters = InParameters](FRHICommandListImmediate& RHICmdList)
 		{

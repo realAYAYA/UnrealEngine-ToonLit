@@ -16,31 +16,28 @@ bool UMetaSoundOutputSubsystem::WatchOutput(
 	const FName AnalyzerName,
 	const FName AnalyzerOutputName)
 {
-	METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE(UMetasoundOutputSubsystem::WatchOutput);
+	METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE(UMetasoundOutputSubsystem::WatchOutput_Dynamic);
 
-	if (nullptr == AudioComponent)
+	UMetasoundGeneratorHandle* Handle = GetOrCreateGeneratorHandle(AudioComponent);
+
+	if (nullptr == Handle)
 	{
 		return false;
 	}
 
-	UMetasoundGeneratorHandle* Handle = nullptr;
+	return Handle->WatchOutput(OutputName, OnOutputValueChanged, AnalyzerName, AnalyzerOutputName);
+}
 
-	// Try to find an existing handle
-	const uint64 AudioComponentId = AudioComponent->GetAudioComponentID();
-	if (const TObjectPtr<UMetasoundGeneratorHandle>* FoundHandle = TrackedGenerators.FindByPredicate(
-		[AudioComponentId](const TObjectPtr<UMetasoundGeneratorHandle> ExistingHandle)
-		{
-			return ExistingHandle->IsValid() && ExistingHandle->GetAudioComponentId() == AudioComponentId;
-		}))
-	{
-		Handle = *FoundHandle;
-	}
-	// Create a new one
-	else
-	{
-		Handle = UMetasoundGeneratorHandle::CreateMetaSoundGeneratorHandle(AudioComponent);
-		TrackedGenerators.Add(Handle);
-	}
+bool UMetaSoundOutputSubsystem::WatchOutput(
+	UAudioComponent* AudioComponent,
+	const FName OutputName,
+	const FOnMetasoundOutputValueChangedNative& OnOutputValueChanged,
+	const FName AnalyzerName,
+	const FName AnalyzerOutputName)
+{
+	METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE(UMetasoundOutputSubsystem::WatchOutput_Native);
+
+	UMetasoundGeneratorHandle* Handle = GetOrCreateGeneratorHandle(AudioComponent);
 
 	if (nullptr == Handle)
 	{
@@ -75,4 +72,37 @@ void UMetaSoundOutputSubsystem::Tick(float DeltaTime)
 TStatId UMetaSoundOutputSubsystem::GetStatId() const
 {
 	RETURN_QUICK_DECLARE_CYCLE_STAT(UMetasoundGeneratorAccessSubsystem, STATGROUP_Tickables);
+}
+
+UMetasoundGeneratorHandle* UMetaSoundOutputSubsystem::GetOrCreateGeneratorHandle(UAudioComponent* AudioComponent)
+{
+	if (nullptr == AudioComponent)
+	{
+		return nullptr;
+	}
+
+	UMetasoundGeneratorHandle* Handle = nullptr;
+
+	// Try to find an existing handle
+	const uint64 AudioComponentId = AudioComponent->GetAudioComponentID();
+	if (const TObjectPtr<UMetasoundGeneratorHandle>* FoundHandle = TrackedGenerators.FindByPredicate(
+		[AudioComponentId](const TObjectPtr<UMetasoundGeneratorHandle> ExistingHandle)
+		{
+			return ExistingHandle->IsValid() && ExistingHandle->GetAudioComponentId() == AudioComponentId;
+		}))
+	{
+		Handle = *FoundHandle;
+	}
+	// Create a new one
+	else
+	{
+		Handle = UMetasoundGeneratorHandle::CreateMetaSoundGeneratorHandle(AudioComponent);
+
+		if (nullptr != Handle && Handle->IsValid())
+		{
+			TrackedGenerators.Add(Handle);
+		}
+	}
+
+	return Handle;
 }

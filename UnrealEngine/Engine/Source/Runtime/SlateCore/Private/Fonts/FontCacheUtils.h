@@ -6,9 +6,6 @@
 #include "Stats/Stats.h"
 #include "SlateGlobals.h"
 
-typedef FString KeyType;
-typedef FVector2f ValueType;
-
 DECLARE_MEMORY_STAT_EXTERN(TEXT("Font Measure Memory"), STAT_SlateFontMeasureCacheMemory, STATGROUP_SlateMemory, SLATECORE_API);
 
 /**
@@ -32,9 +29,9 @@ public:
 	/**
 	 * Accesses an item in the cache.  
 	 */
-	FORCEINLINE const ValueType* AccessItem(const KeyType& Key)
+	FORCEINLINE const FVector2f* AccessItem(FStringView Key)
 	{
-		CacheEntry** Entry = LookupSet.Find( Key );
+		FCacheEntry** Entry = LookupSet.FindByHash(FLookupSet::KeyFuncsType::GetKeyHash(Key), Key);
 		if( Entry )
 		{
 			MarkAsRecent( *Entry );
@@ -44,9 +41,9 @@ public:
 		return nullptr;
 	}
 
-	void Add( const KeyType& Key, const ValueType& Value )
+	void Add( FStringView Key, const FVector2f& Value )
 	{
-		CacheEntry** Entry = LookupSet.Find( Key );
+		FCacheEntry** Entry = LookupSet.FindByHash(FLookupSet::KeyFuncsType::GetKeyHash(Key), Key);
 	
 		// Make a new link
 		if( !Entry )
@@ -57,7 +54,7 @@ public:
 				checkf( LookupSet.Num() < MaxNumElements, TEXT("Could not eject item from the LRU: (%d of %d), %s"), LookupSet.Num(), MaxNumElements, LeastRecent ? *LeastRecent->Key : TEXT("NULL"));
 			}
 
-			CacheEntry* NewEntry = new CacheEntry( Key, Value );
+			FCacheEntry* NewEntry = new FCacheEntry( FString(Key), Value );
 
 			// Link before the most recent so that we become the most recent
 			NewEntry->Link(MostRecent);
@@ -76,11 +73,11 @@ public:
 		else
 		{
 			// Trying to add an existing value 
-			CacheEntry* EntryPtr = *Entry;
+			FCacheEntry* EntryPtr = *Entry;
 			
 			// Update the value
 			EntryPtr->Value = Value;
-			checkSlow( EntryPtr->Key == Key );
+			checkSlow(FLookupSet::KeyFuncsType::Matches(EntryPtr->Key, Key));
 			// Mark as the most recent
 			MarkAsRecent( EntryPtr );
 		}
@@ -90,9 +87,9 @@ public:
 	{
 		DEC_MEMORY_STAT_BY( STAT_SlateFontMeasureCacheMemory, LookupSet.GetAllocatedSize() );
 
-		for( TSet<CacheEntry*, FCaseSensitiveStringKeyFuncs >::TIterator It(LookupSet); It; ++It )
+		for( TSet<FCacheEntry*, FCaseSensitiveStringKeyFuncs >::TIterator It(LookupSet); It; ++It )
 		{
-			CacheEntry* Entry = *It;
+			FCacheEntry* Entry = *It;
 			// Note no need to unlink anything here. we are emptying the entire list
 			delete Entry;
 		}
@@ -101,15 +98,15 @@ public:
 		MostRecent = LeastRecent = nullptr;
 	}
 private:
-	struct CacheEntry
+	struct FCacheEntry
 	{
-		KeyType Key;
-		ValueType Value;
-		CacheEntry* Next;
-		CacheEntry* Prev;
+		FString Key;
+		FVector2f Value;
+		FCacheEntry* Next;
+		FCacheEntry* Prev;
 
-		CacheEntry( const KeyType& InKey, const ValueType& InValue )
-			: Key( InKey )
+		FCacheEntry( FString InKey, const FVector2f& InValue )
+			: Key( MoveTemp(InKey) )
 			, Value( InValue )
 			, Next( nullptr )
 			, Prev( nullptr )
@@ -117,12 +114,12 @@ private:
 			INC_MEMORY_STAT_BY( STAT_SlateFontMeasureCacheMemory, Key.GetAllocatedSize()+sizeof(Value)+sizeof(Next)+sizeof(Prev) );
 		}
 
-		~CacheEntry()
+		~FCacheEntry()
 		{
 			DEC_MEMORY_STAT_BY( STAT_SlateFontMeasureCacheMemory, Key.GetAllocatedSize()+sizeof(Value)+sizeof(Next)+sizeof(Prev) );
 		}
 
-		FORCEINLINE void Link( CacheEntry* Before )
+		FORCEINLINE void Link( FCacheEntry* Before )
 		{
 			Next = Before;
 
@@ -149,32 +146,31 @@ private:
 		}
 	};
 
-	struct FCaseSensitiveStringKeyFuncs : BaseKeyFuncs<CacheEntry*, FString>
+	struct FCaseSensitiveStringKeyFuncs : BaseKeyFuncs<FCacheEntry*, FString>
 	{
-		FORCEINLINE static const KeyType& GetSetKey( const CacheEntry* Entry )
+		FORCEINLINE static const FString& GetSetKey( const FCacheEntry* Entry )
 		{
 			return Entry->Key;
 		}
 
-		FORCEINLINE static bool Matches(const KeyType& A,const KeyType& B)
+		FORCEINLINE static bool Matches(const FString& A, const FStringView& B)
 		{
-			return A.Equals( B, ESearchCase::CaseSensitive );
+			return FStringView(A).Equals( B, ESearchCase::CaseSensitive );
 		}
 
-		FORCEINLINE static uint32 GetKeyHash(const KeyType& Identifier)
+		FORCEINLINE static uint32 GetKeyHash(FStringView Identifier)
 		{
-			return FCrc::StrCrc32( *Identifier );
+			return CityHash32(reinterpret_cast<const char*>(Identifier.GetData()), Identifier.Len() * sizeof(TCHAR));
 		}
 	};
-
 	
 
 	/**
 	 * Marks the link as the the most recent
 	 *
-	 * @param Link	The link to mark as most recent
+	 * @param Entry	The link to mark as most recent
 	 */
-	FORCEINLINE void MarkAsRecent( CacheEntry* Entry )
+	FORCEINLINE void MarkAsRecent( FCacheEntry* Entry )
 	{
 		checkSlow( LeastRecent && MostRecent );
 
@@ -202,7 +198,7 @@ private:
 	 */
 	FORCEINLINE void Eject()
 	{
-		CacheEntry* EntryToRemove = LeastRecent;
+		FCacheEntry* EntryToRemove = LeastRecent;
 		// Eject the least recent, no more space
 		check( EntryToRemove );
 		STAT( uint32 CurrentMemUsage = LookupSet.GetAllocatedSize() );
@@ -219,11 +215,12 @@ private:
 	}
 
 private:
-	TSet< CacheEntry*, FCaseSensitiveStringKeyFuncs > LookupSet;
+	using FLookupSet = TSet< FCacheEntry*, FCaseSensitiveStringKeyFuncs >;
+	FLookupSet LookupSet;
 	/** Most recent item in the cache */
-	CacheEntry* MostRecent;
+	FCacheEntry* MostRecent;
 	/** Least recent item in the cache */
-	CacheEntry* LeastRecent;
+	FCacheEntry* LeastRecent;
 	/** The maximum number of elements in the cache */
 	int32 MaxNumElements;
 };

@@ -115,13 +115,13 @@ void FUMGViewportClient::Tick(float InDeltaTime)
 	{
 		// Begin Play
 		UWorld* PreviewWorld = PreviewScene->GetWorld();
-		if ( !PreviewWorld->bBegunPlay )
+		if ( !PreviewWorld->GetBegunPlay() )
 		{
 			for ( FActorIterator It(PreviewWorld); It; ++It )
 			{
 				It->DispatchBeginPlay();
 			}
-			PreviewWorld->bBegunPlay = true;
+			PreviewWorld->SetBegunPlay(true);
 		}
 
 		// Tick
@@ -251,7 +251,7 @@ FLinearColor FUMGViewportClient::GetBackgroundColor() const
 
 float FUMGViewportClient::GetOrthoUnitsPerPixel(const FViewport* InViewport) const
 {
-	const float SizeX = InViewport->GetSizeXY().X;
+	const int32 SizeX = InViewport->GetSizeXY().X;
 
 	// 15.0f was coming from the CAMERA_ZOOM_DIV marco, seems it was chosen arbitrarily
 	return ( GetOrthoZoom() / ( SizeX * 15.f ) )/* * ComputeOrthoZoomFactor(SizeX)*/;
@@ -291,11 +291,6 @@ FSceneView* FUMGViewportClient::CalcSceneView(FSceneViewFamily* ViewFamily)
 	ViewInitOptions.BackgroundColor = GetBackgroundColor();
 
 	//ViewInitOptions.EditorViewBitflag = 0, // send the bit for this view - each actor will check it's visibility bits against this
-
-	// for ortho views to steal perspective view origin
-	//ViewInitOptions.OverrideLODViewOrigin = FVector::ZeroVector;
-	//ViewInitOptions.bUseFauxOrthoViewPos = true;
-
 	//ViewInitOptions.CursorPos = CurrentMousePos;
 
 	FSceneView* View = new FSceneView(ViewInitOptions);
@@ -499,6 +494,46 @@ AActor* UViewport::Spawn(TSubclassOf<AActor> ActorClass)
 	// TODO UMG Report spawning actor error before the world is ready.
 
 	return NULL;
+}
+
+void UViewport::SetShowFlag(FString InShowFlagName, bool InValue)
+{
+	if (ShowFlags.IsNameThere(*InShowFlagName, 0))
+	{
+		int32 FlagIndex = ShowFlags.FindIndexByName(*InShowFlagName);
+		ShowFlags.SetSingleFlag(FlagIndex, InValue);
+		ViewportWidget->ViewportClient->SetEngineShowFlags(ShowFlags);
+	}
+}
+
+void UViewport::SetEnableAdvancedFeatures(bool InEnableAdvancedFeatures)
+{
+	ShowFlags.DisableAdvancedFeatures();
+	if (ViewportWidget.IsValid())
+	{
+		check(ViewportWidget->ViewportClient.IsValid());
+		if (InEnableAdvancedFeatures)
+		{
+			ShowFlags.EnableAdvancedFeatures();
+			ViewportWidget->ViewportClient->SetEngineShowFlags(ShowFlags);
+		}
+		else
+		{
+			ShowFlags.DisableAdvancedFeatures();
+			ViewportWidget->ViewportClient->SetEngineShowFlags(ShowFlags);
+		}
+
+	}
+}
+
+void UViewport::SetLightIntensity(float InLightIntensity)
+{
+	ViewportWidget->PreviewScene.SetLightBrightness(InLightIntensity);
+}
+
+void UViewport::SetSkyIntensity(float InLightIntensity)
+{
+	ViewportWidget->PreviewScene.SetSkyBrightness(InLightIntensity);
 }
 
 PRAGMA_DISABLE_DEPRECATION_WARNINGS

@@ -67,6 +67,21 @@ void FLinkerDiff::PrintDiff(FOutputDevice& Ar)
 		Builder.Append(LexToString(RHSRef.Member));	\
 		Diffs.Add(Builder.ToString());				\
 	}
+#define COMPARE_CALCULATED_VALUE(LHSValue, RHSValue, ValueNameText) \
+	{												\
+		auto LocalLHS = LHSValue;					\
+		auto LocalRHS = RHSValue;					\
+		if (LocalLHS != LocalRHS)					\
+		{											\
+			TStringBuilder<256> Builder;			\
+			Builder.Append(ValueNameText);			\
+			Builder.Append(TEXT(": "));				\
+			Builder.Append(LexToString(LocalLHS));	\
+			Builder.Append(TEXT(" vs "));			\
+			Builder.Append(LexToString(LocalRHS));	\
+			Diffs.Add(Builder.ToString());			\
+		}											\
+	}
 
 
 void FLinkerDiff::Generate(FLinker* LHSLinker, FLinker* RHSLinker)
@@ -119,10 +134,8 @@ void FLinkerDiff::GenerateSummaryDiff(FLinker* LHSLinker, FLinker* RHSLinker)
 	//COMPARE_MEMBER(LHSSummary, RHSSummary, SearchableNamesOffset);
 	//COMPARE_MEMBER(LHSSummary, RHSSummary, ThumbnailTableOffset);
 
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	COMPARE_MEMBER(LHSSummary, RHSSummary, Guid);
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 #if WITH_EDITORONLY_DATA
+	COMPARE_CALCULATED_VALUE(LHSSummary.GetSavedHash(), RHSSummary.GetSavedHash(), TEXT("SavedHash"));
 	COMPARE_MEMBER(LHSSummary, RHSSummary, PersistentGuid);
 #endif
 	// Generations
@@ -447,11 +460,6 @@ void FLinkerDiff::GenerateSearchableNameMapDiff(FLinker* LHSLinker, FLinker* RHS
 			Diffs.Add(Builder.ToString());
 		}
 	}
-}
-
-FString LexToString(EObjectFlags Flags)
-{
-	return LexToString((int32)Flags);
 }
 
 void FLinkerDiff::GenerateExportDiff(FLinker* LHSLinker, const FLinkerExportObject& LHSExport, const FLinkerExportObject& RHSExport)

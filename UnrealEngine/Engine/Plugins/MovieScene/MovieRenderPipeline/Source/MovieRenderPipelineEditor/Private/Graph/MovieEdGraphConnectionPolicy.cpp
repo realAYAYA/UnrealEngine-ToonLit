@@ -26,11 +26,8 @@ void FMovieEdGraphConnectionDrawingPolicy::DetermineWiringStyle(UEdGraphPin* Out
 	Params.AssociatedPin2 = InputPin;
 	Params.WireColor = Schema->GetPinTypeColor(OutputPin->PinType);
 
-	if (OutputPin)
+	if (OutputPin->PinType.PinCategory == UMovieGraphSchema::PC_Branch)
 	{
-		if (OutputPin->PinType.PinCategory == UMovieGraphSchema::PC_Branch)
-		{
-			Params.WireThickness = Settings->DefaultExecutionWireThickness;
-		}
+		Params.WireThickness = Settings->DefaultExecutionWireThickness;
 	}
 }

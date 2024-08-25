@@ -147,7 +147,7 @@ struct FInstanceStack
 		InstanceType* Instance = nullptr;
 		if (AvailableInstances.Num())
 		{
-			Instance = AvailableInstances.Pop(false);
+			Instance = AvailableInstances.Pop(EAllowShrinking::No);
 			InUseInstances.Add(Instance);
 		}
 

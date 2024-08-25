@@ -2,8 +2,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
-using Horde.Server.Configuration;
+using Horde.Server.Agents;
 using Horde.Server.Devices;
 using Horde.Server.Issues;
 using Horde.Server.Jobs;
@@ -24,17 +25,19 @@ namespace Horde.Server.Notifications
 		/// Send notifications that a job has been scheduled
 		/// </summary>
 		/// <param name="notifications">List of notifications to send</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Async task</returns>
-		Task NotifyJobScheduledAsync(List<JobScheduledNotification> notifications);
-		
+		Task NotifyJobScheduledAsync(List<JobScheduledNotification> notifications, CancellationToken cancellationToken);
+
 		/// <summary>
 		/// Send notifications that a job has completed
 		/// </summary>
 		/// <param name="job">The job containing the step</param>
 		/// <param name="graph"></param>
 		/// <param name="outcome"></param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Async task</returns>
-		Task NotifyJobCompleteAsync(IJob job, IGraph graph, LabelOutcome outcome);
+		Task NotifyJobCompleteAsync(IJob job, IGraph graph, LabelOutcome outcome, CancellationToken cancellationToken);
 
 		/// <summary>
 		/// Send notifications that a job has completed
@@ -43,8 +46,9 @@ namespace Horde.Server.Notifications
 		/// <param name="job">The job containing the step</param>
 		/// <param name="graph"></param>
 		/// <param name="outcome"></param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Async task</returns>
-		Task NotifyJobCompleteAsync(IUser user, IJob job, IGraph graph, LabelOutcome outcome);
+		Task NotifyJobCompleteAsync(IUser user, IJob job, IGraph graph, LabelOutcome outcome, CancellationToken cancellationToken);
 
 		/// <summary>
 		/// Send notifications that a job step has completed
@@ -55,8 +59,9 @@ namespace Horde.Server.Notifications
 		/// <param name="step">The step id</param>
 		/// <param name="node">Corresponding node for the step</param>
 		/// <param name="jobStepEventData"></param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Async task</returns>
-		Task NotifyJobStepCompleteAsync(IUser user, IJob job, IJobStepBatch batch, IJobStep step, INode node, List<ILogEventData> jobStepEventData);
+		Task NotifyJobStepCompleteAsync(IUser user, IJob job, IJobStepBatch batch, IJobStep step, INode node, List<ILogEventData> jobStepEventData, CancellationToken cancellationToken);
 
 		/// <summary>
 		/// Send notifications that a job step has completed
@@ -67,8 +72,9 @@ namespace Horde.Server.Notifications
 		/// <param name="labelIdx"></param>
 		/// <param name="outcome"></param>
 		/// <param name="stepData"></param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Async task</returns>
-		Task NotifyLabelCompleteAsync(IUser user, IJob job, ILabel label, int labelIdx, LabelOutcome outcome, List<(string, JobStepOutcome, Uri)> stepData);
+		Task NotifyLabelCompleteAsync(IUser user, IJob job, ILabel label, int labelIdx, LabelOutcome outcome, List<(string, JobStepOutcome, Uri)> stepData, CancellationToken cancellationToken);
 
 		#region Issues
 
@@ -76,15 +82,17 @@ namespace Horde.Server.Notifications
 		/// Send notifications that a new issue has been created or assigned
 		/// </summary>
 		/// <param name="issue"></param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns></returns>
-		Task NotifyIssueUpdatedAsync(IIssue issue);
+		Task NotifyIssueUpdatedAsync(IIssue issue, CancellationToken cancellationToken);
 
 		/// <summary>
 		/// Notify the status of issues in a stream
 		/// </summary>
 		/// <param name="report"></param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns></returns>
-		Task SendIssueReportAsync(IssueReportGroup report);
+		Task SendIssueReportAsync(IssueReportGroup report, CancellationToken cancellationToken);
 
 		#endregion
 
@@ -92,7 +100,8 @@ namespace Horde.Server.Notifications
 		/// Notification that the configuration state has changed
 		/// </summary>
 		/// <param name="ex">Exception during update. Null if the update completed successfully.</param>
-		Task NotifyConfigUpdateAsync(Exception? ex);
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
+		Task NotifyConfigUpdateAsync(Exception? ex, CancellationToken cancellationToken);
 
 		/// <summary>
 		/// Notification that a stream has failed to update
@@ -102,8 +111,9 @@ namespace Horde.Server.Notifications
 		/// <param name="change"></param>
 		/// <param name="author"></param>
 		/// <param name="description"></param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns></returns>
-		Task NotifyConfigUpdateFailureAsync(string errorMessage, string fileName, int? change = null, IUser? author = null, string? description = null);
+		Task NotifyConfigUpdateFailureAsync(string errorMessage, string fileName, int? change = null, IUser? author = null, string? description = null, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Notification for device service
@@ -116,8 +126,22 @@ namespace Horde.Server.Notifications
 		/// <param name="step"></param>
 		/// <param name="node"></param>
 		/// <param name="user"></param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns></returns>
-		Task NotifyDeviceServiceAsync(string message, IDevice? device = null, IDevicePool? pool = null, StreamConfig? streamConfig = null, IJob? job = null, IJobStep? step = null, INode? node = null, IUser? user = null);
-    }
+		Task NotifyDeviceServiceAsync(string message, IDevice? device = null, IDevicePool? pool = null, StreamConfig? streamConfig = null, IJob? job = null, IJobStep? step = null, INode? node = null, IUser? user = null, CancellationToken cancellationToken = default);
+
+		/// <summary>
+		/// Notify the status of devices
+		/// </summary>
+		/// <param name="report"></param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
+		/// <returns></returns>
+		Task SendDeviceIssueReportAsync(DeviceIssueReport report, CancellationToken cancellationToken);
+
+		/// <summary>
+		/// Notify the status of agents in the farm
+		/// </summary>
+		Task SendAgentReportAsync(AgentReport report, CancellationToken cancellationToken);
+	}
 }
 

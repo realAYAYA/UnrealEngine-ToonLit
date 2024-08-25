@@ -85,7 +85,6 @@
 #include "Styling/SlateTypes.h"
 #include "Styling/StyleDefaults.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SubclassOf.h"
 #include "Textures/SlateIcon.h"
 #include "TutorialMetaData.h"

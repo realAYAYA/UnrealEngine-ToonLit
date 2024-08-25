@@ -14,7 +14,7 @@ class AWindDirectionalSource : public AInfo
 
 private:
 #if WITH_EDITOR
-	virtual bool IsDataLayerTypeSupported(TSubclassOf<UDataLayerInstance> DataLayerType) const override { return true; }
+	virtual bool ActorTypeSupportsDataLayer() const override { return true; }
 #endif
 
 	UPROPERTY(Category = WindDirectionalSource, VisibleAnywhere, BlueprintReadOnly, meta = (AllowPrivateAccess = "true"))

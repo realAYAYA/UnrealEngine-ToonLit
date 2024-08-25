@@ -255,7 +255,7 @@ UEditorLevelFolders& FLevelFolders::Initialize(TSharedRef<FLevelModel> LevelMode
 			auto Reader = TJsonReaderFactory<TCHAR>::Create(Ar.Get());
 			if (FJsonSerializer::Deserialize(Reader, RootObject))
 			{
-				const TSharedPtr<FJsonObject>& JsonFolders = RootObject->GetObjectField("Folders");
+				const TSharedPtr<FJsonObject>& JsonFolders = RootObject->GetObjectField(TEXT("Folders"));
 				for (const auto& Pair : JsonFolders->Values)
 				{
 					// Only load properties for folders that still exist in the world

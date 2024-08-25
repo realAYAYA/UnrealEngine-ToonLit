@@ -2,6 +2,8 @@
 
 #include "SNiagaraSimCacheViewportToolbar.h"
 
+#include "NiagaraEditorCommands.h"
+
 void SNiagaraSimCacheViewportToolbar::Construct(const FArguments& InArgs, TSharedPtr<SNiagaraSimCacheViewport> InViewport)
 {
 	SCommonEditorViewportToolbarBase::Construct(SCommonEditorViewportToolbarBase::FArguments(), InViewport);
@@ -10,6 +12,8 @@ void SNiagaraSimCacheViewportToolbar::Construct(const FArguments& InArgs, TShare
 void SNiagaraSimCacheViewportToolbar::ExtendOptionsMenu(FMenuBuilder& OptionsMenuBuilder) const
 {
 	SCommonEditorViewportToolbarBase::ExtendOptionsMenu(OptionsMenuBuilder);
+
+	OptionsMenuBuilder.AddMenuEntry(FNiagaraEditorCommands::Get().ToggleOrbit);
 }
 
 void SNiagaraSimCacheViewportToolbar::ExtendLeftAlignedToolbarSlots(TSharedPtr<SHorizontalBox> MainBoxPtr,

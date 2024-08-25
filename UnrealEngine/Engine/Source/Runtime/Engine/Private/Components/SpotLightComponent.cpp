@@ -75,6 +75,7 @@ public:
 		LightParameters.RectLightAtlasUVScale = FVector2f::ZeroVector;
 		LightParameters.RectLightAtlasMaxLevel = FLightRenderParameters::GetRectLightAtlasInvalidMIPLevel();
 		LightParameters.IESAtlasIndex = INDEX_NONE;
+		LightParameters.LightFunctionAtlasLightIndex = GetLightFunctionAtlasLightIndex();
 		LightParameters.InverseExposureBlend = InverseExposureBlend;
 
 		if (IESAtlasId != uint32(INDEX_NONE))
@@ -115,7 +116,7 @@ public:
 	 */
 	virtual bool GetWholeSceneProjectedShadowInitializer(const FSceneViewFamily& ViewFamily, TArray<FWholeSceneProjectedShadowInitializer, TInlineAllocator<6> >& OutInitializers) const override
 	{
-		FWholeSceneProjectedShadowInitializer& OutInitializer = *new(OutInitializers) FWholeSceneProjectedShadowInitializer;
+		FWholeSceneProjectedShadowInitializer& OutInitializer = OutInitializers.AddDefaulted_GetRef();
 		OutInitializer.PreShadowTranslation = -GetLightToWorld().GetOrigin();
 		OutInitializer.WorldToLight = GetWorldToLight().RemoveTranslation();
 		OutInitializer.Scales = FVector2D(InvTanOuterCone,InvTanOuterCone);

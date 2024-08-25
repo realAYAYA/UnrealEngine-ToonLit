@@ -33,6 +33,10 @@ private:
 	void HandleShowCurvePoints();
 	bool IsShowCurvePointsEnabled() const;
 
+	/** Handlers for switching to and from tree view */
+	void HandleUseTreeView();
+	bool IsUseTreeViewEnabled() const;
+	
 	/** Curve Picker Callbacks */
 	void OnMetadataCurveNamePicked(const FName& InCurveName);
 	void OnVariableCurveNamePicked(const FName& InCurveName);

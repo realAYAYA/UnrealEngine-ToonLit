@@ -247,8 +247,8 @@ namespace WaveTable
 				const int32  CurveIndexFromBottom = CurveInfoByID.Num() - Pair.Value.CurveIndex - 1;
 				const double PaddingToBottomOfView = (CurveIndexFromBottom + 1) * ValueSpacePadding;
 
-				const float PixelBottom = ViewSpace.ValueToScreen(CurveIndexFromBottom + PaddingToBottomOfView);
-				const float PixelTop = ViewSpace.ValueToScreen(CurveIndexFromBottom + PaddingToBottomOfView + 1.0);
+				const double PixelBottom = ViewSpace.ValueToScreen(CurveIndexFromBottom + PaddingToBottomOfView);
+				const double PixelTop = ViewSpace.ValueToScreen(CurveIndexFromBottom + PaddingToBottomOfView + 1.0);
 
 				if (!FSlateRect::DoRectanglesIntersect(MyCullingRect, TransformRect(AllottedGeometry.GetAccumulatedLayoutTransform(), FSlateRect(0, PixelTop, LocalSize.X, PixelBottom))))
 				{

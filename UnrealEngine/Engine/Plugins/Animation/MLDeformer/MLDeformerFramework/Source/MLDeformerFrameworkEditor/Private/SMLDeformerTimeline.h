@@ -13,6 +13,7 @@
 #include "ITransportControl.h"
 #include "Framework/Commands/Commands.h"
 #include "MLDeformerEditorToolkit.h"
+#include "MLDeformerTrainingInputAnim.h"
 
 struct FPaintPlaybackRangeArgs;
 class SSearchBox;
@@ -60,11 +61,19 @@ namespace UE::MLDeformer
 
 		void SetModel(TWeakPtr<FMLDeformerEditorModel> InModel);
 
+		/** Set the list of names to show in the timeline animation list combobox. */
+		void SetTrainingAnimNames(const TArray<TSharedPtr<FMLDeformerTrainingInputAnimName>>& Names);
+
+		void OnDeletedTrainingInputAnim(int32 Index);
+
 	private:
 		/**
 		 * @return The fill percentage of the animation outliner.
 		 */
 		float GetColumnFillCoefficient(int32 ColumnIndex) const { return ColumnFillCoefficients[ColumnIndex]; }
+
+		TSharedRef<SWidget> OnGenerateAnimListComboWidget(TSharedPtr<FMLDeformerTrainingInputAnimName> Item) const;
+		void OnSelectTrainingAnim(TSharedPtr<FMLDeformerTrainingInputAnimName> Item, ESelectInfo::Type SelectInfo);
 
 		/** Get numeric Type interface for converting between frame numbers and display formats. */
 		TSharedRef<INumericTypeInterface<double>> GetNumericTypeInterface() const;
@@ -117,6 +126,12 @@ namespace UE::MLDeformer
 
 		/** Filter text used to search the tree. */
 		FText FilterText;
+
+		/** The training animation names as they will appear inside the timeline combobox on the left (in training mode only). */
+		TArray<TSharedPtr<FMLDeformerTrainingInputAnimName>> TrainingAnimNames;
+
+		/** The currently selected animation index. Index into the TrainingAnimNames array.*/
+		int32 SelectedTrainingAnimNameIndex = INDEX_NONE;
 	};
 
 }// namespace UE::MLDeformer

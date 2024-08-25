@@ -103,12 +103,14 @@ void FAddKinematicParticlesDataflowNode::Evaluate(Dataflow::FContext& Context, c
 						BranchIndices.Add(IndexValue);
 					}
 
+					// Add standalone particles, not bound to a transform group - so for these particles BoneMap = INDEX_NONE.
 					int32 ParticleIndex = InCollection.AddElements(BranchIndices.Num(), FGeometryCollection::VerticesGroup);
 					TManagedArray<FVector3f>& CurrentVertices = InCollection.ModifyAttribute<FVector3f>("Vertex", FGeometryCollection::VerticesGroup);
 
 					for (int32 Index = 0; Index < BranchIndices.Num(); Index++)
 					{
-						FVector3f BonePosition(ComponentPose[BranchIndices[Index]].GetTranslation());
+						const int32 BoneIndex = BranchIndices[Index];
+						FVector3f BonePosition(ComponentPose[BoneIndex].GetTranslation());
 
 						CurrentVertices[ParticleIndex+Index] = BonePosition;
 
@@ -119,11 +121,10 @@ void FAddKinematicParticlesDataflowNode::Evaluate(Dataflow::FContext& Context, c
 						BoundWeights.Add(1.0);
 						TargetIndices.Emplace(ParticleIndex + Index);
 
-
 						if (BoundVerts.Num())
 						{
 							GeometryCollection::Facades::FKinematicBindingFacade Kinematics(InCollection);
-							Kinematics.AddKinematicBinding(Kinematics.SetBoneBindings(Index, BoundVerts, BoundWeights));
+							Kinematics.AddKinematicBinding(Kinematics.SetBoneBindings(BoneIndex, BoundVerts, BoundWeights));
 						}
 					}
 

@@ -6,11 +6,11 @@
 
 REGISTER_TYPEID(FVideoDecoderConfigH264);
 
-FAVResult FVideoDecoderConfigH264::Parse(TSharedRef<FAVInstance> const& Instance, FVideoPacket const& Packet, TArray<UE::AVCodecCore::H264::Slice_t>& OutSlices)
+FAVResult FVideoDecoderConfigH264::Parse(FVideoPacket const& Packet, TArray<UE::AVCodecCore::H264::Slice_t>& OutSlices)
 {
 	using namespace UE::AVCodecCore::H264;
 
-	TArray<FNaluInfo> FoundNalus;
+	TArray<FNaluH264> FoundNalus;
 
 	FAVResult Result;
 	Result = FindNALUs(Packet, FoundNalus);
@@ -135,4 +135,20 @@ FAVResult FVideoDecoderConfigH264::Parse(TSharedRef<FAVInstance> const& Instance
 	}
 
 	return Result;
+}
+
+TOptional<int> FVideoDecoderConfigH264::GetLastSliceQP(TArray<UE::AVCodecCore::H264::Slice_t>& Slices)
+{
+    using namespace UE::AVCodecCore::H264;
+
+    Slice_t& LastSlice = Slices.Last();
+    PPS_t& LastSlicePPS = PPS[LastSlice.pic_parameter_set_id];
+
+    const int QP = 26 + LastSlicePPS.pic_init_qp_minus26 + LastSlice.slice_qp_delta;
+    if(QP < 0 || QP > 51)
+    {
+		FAVResult::Log(EAVResult::Warning, FString::Printf(TEXT("QP of %d was outside of range 0 to 51 inclusive. Defaulting to 0"), QP), TEXT("H264"));
+        return TOptional<int>();
+    }
+    return QP;
 }

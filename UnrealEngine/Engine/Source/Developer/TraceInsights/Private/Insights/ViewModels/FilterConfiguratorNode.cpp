@@ -37,7 +37,6 @@ TSharedRef<FFilterConfiguratorNode> FFilterConfiguratorNode::DeepCopy(const FFil
 	NodeCopy.AvailableFilters = InSourceNode.AvailableFilters;
 	NodeCopy.AvailableFilterOperators = InSourceNode.AvailableFilterOperators;
 	NodeCopy.SelectedFilter = InSourceNode.SelectedFilter;
-	NodeCopy.SelectedFilterOperator = InSourceNode.SelectedFilterOperator;
 	NodeCopy.SelectedFilterGroupOperator = InSourceNode.SelectedFilterGroupOperator;
 	NodeCopy.TextBoxValue = InSourceNode.TextBoxValue;
 
@@ -54,6 +53,10 @@ TSharedRef<FFilterConfiguratorNode> FFilterConfiguratorNode::DeepCopy(const FFil
 			NodeCopy.AddChildAndSetParent(ChildCopy);
 		}
 	}
+	else
+	{
+		NodeCopy.FilterState = InSourceNode.FilterState->DeepCopy();
+	}
 
 	return NodeCopyPtr;
 }
@@ -63,9 +66,24 @@ TSharedRef<FFilterConfiguratorNode> FFilterConfiguratorNode::DeepCopy(const FFil
 bool FFilterConfiguratorNode::operator==(const FFilterConfiguratorNode& Other) const
 {
 	bool bIsEqual = true;
+	
+	if (!IsGroup())
+	{
+		check(FilterState.IsValid());
+		check(Other.FilterState.IsValid());
+
+		if (FilterState->GetTypeName() == Other.FilterState->GetTypeName())
+		{
+			bIsEqual &= FilterState->Equals(*Other.FilterState);
+		}
+		else
+		{
+			return false;
+		}
+	}
+
 	bIsEqual &= AvailableFilters.Get() == Other.AvailableFilters.Get();
 	bIsEqual &= SelectedFilter.Get() == Other.SelectedFilter.Get();
-	bIsEqual &= SelectedFilterOperator.Get() == Other.SelectedFilterOperator.Get();
 	bIsEqual &= SelectedFilterGroupOperator.Get() == Other.SelectedFilterGroupOperator.Get();
 	bIsEqual &= TextBoxValue == Other.TextBoxValue;
 	bIsEqual &= GetChildrenCount() == Other.GetChildrenCount();
@@ -84,7 +102,7 @@ bool FFilterConfiguratorNode::operator==(const FFilterConfiguratorNode& Other) c
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-const TArray<TSharedPtr<FFilterGroupOperator>>& FFilterConfiguratorNode::GetFilterGroupOperators()
+const TArray<TSharedPtr<FFilterGroupOperator>>& FFilterConfiguratorNode::GetFilterGroupOperators() const
 {
 	return FFilterService::Get()->GetFilterGroupOperators();
 }
@@ -105,13 +123,23 @@ void FFilterConfiguratorNode::SetAvailableFilters(TSharedPtr<TArray<TSharedPtr<F
 
 void FFilterConfiguratorNode::SetSelectedFilter(TSharedPtr<FFilter> InSelectedFilter)
 {
+	if (SelectedFilter.Get() == InSelectedFilter.Get())
+	{
+		return;
+	}
+
+	TextBoxValue.Empty();
 	SelectedFilter = InSelectedFilter;
-	if (SelectedFilter.IsValid() && SelectedFilter->GetSupportedOperators()->Num() > 0)
+	check(SelectedFilter.IsValid());
+
+	FilterState = SelectedFilter->BuildFilterState();
+
+	if (SelectedFilter->GetSupportedOperators()->Num() > 0)
 	{
 		SetSelectedFilterOperator(SelectedFilter->GetSupportedOperators()->GetData()[0]);
 
 		AvailableFilterOperators->Empty();
-		SupportedOperatorsArrayPtr AvailableOperators = InSelectedFilter->GetSupportedOperators();
+		SupportedOperatorsArrayConstPtr AvailableOperators = InSelectedFilter->GetSupportedOperators();
 		for (auto& FilterOperator : *AvailableOperators)
 		{
 			AvailableFilterOperators->Add(FilterOperator);
@@ -125,8 +153,8 @@ void FFilterConfiguratorNode::ProcessFilter()
 {
 	if (IsGroup())
 	{
-		TArray<FBaseTreeNodePtr> ChildArray = GetChildrenMutable();
-		for (FBaseTreeNodePtr Child : ChildArray)
+		TArray<FBaseTreeNodePtr>& ChildArray = GetChildrenMutable();
+		for (FBaseTreeNodePtr& Child : ChildArray)
 		{
 			FFilterConfiguratorNodePtr CastedChild = StaticCastSharedPtr<FFilterConfiguratorNode>(Child);
 			CastedChild->ProcessFilter();
@@ -134,61 +162,15 @@ void FFilterConfiguratorNode::ProcessFilter()
 	}
 	else
 	{
-		switch (SelectedFilter->GetDataType())
+		if (FilterState.IsValid())
 		{
-		case EFilterDataType::Double:
-		{
-			if (SelectedFilter->GetConverter().IsValid())
-			{
-				double Value = 0.0;
-				FText Errors;
-				bool Result = SelectedFilter->GetConverter()->Convert(TextBoxValue, Value, Errors);
-				FilterValue.Set<double>(Result ? Value : 0.0);
-			}
-			else
-			{
-				FilterValue.Set<double>(FCString::Atod(*TextBoxValue));
-			}
-			break;
-		}
-		case EFilterDataType::Int64:
-		{
-			if (SelectedFilter->GetConverter().IsValid())
-			{
-				int64 Value = 0;
-				FText Errors;
-				bool Result = SelectedFilter->GetConverter()->Convert(TextBoxValue, Value, Errors);
-				FilterValue.Set<int64>(Result ? Value : 0);
-			}
-			else
-			{
-				if (TextBoxValue.Contains(TEXT("x")))
-				{
-					FilterValue.Set<int64>((int64)FParse::HexNumber64(*TextBoxValue));
-				}
-				else
-				{
-					FilterValue.Set<int64>(FCString::Atoi64(*TextBoxValue));
-				}
-			}
-			break;
-		}
-		case EFilterDataType::String:
-		{
-			FilterValue.Set<FString>(TextBoxValue);
-			break;
-		}
-		case EFilterDataType::StringInt64Pair:
-		{
-			checkf(SelectedFilter->GetConverter().IsValid(), TEXT("StringToInt64Pair filters must have a converter set"));
-			int64 Value = 0;
-			FText Errors;
-			bool Result = SelectedFilter->GetConverter()->Convert(TextBoxValue, Value, Errors);
-			FilterValue.Set<int64>(Result ? Value : -1);
-		}
+			FilterState->SetFilterValue(TextBoxValue);
+			FilterState->Update();
 		}
 	}
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void FFilterConfiguratorNode::GetUsedKeys(TSet<int32>& KeysUsed) const
 {
@@ -242,48 +224,61 @@ bool FFilterConfiguratorNode::ApplyFilters(const FFilterContext& Context) const
 	}
 	else
 	{
-		if (!Context.HasFilterData(SelectedFilter->GetKey()))
-		{
-			// If data is not set for this filter return the value specified in the Context.
-			return Context.GetReturnValueForUnsetFilters();
-		}
-
-		switch (SelectedFilter->GetDataType())
-		{
-		case EFilterDataType::Double:
-		{
-			FFilterOperator<double>* Operator = (FFilterOperator<double>*) SelectedFilterOperator.Get();
-			double Value = 0.0;
-			Context.GetFilterData<double>(SelectedFilter->GetKey(), Value);
-
-			Ret = Operator->Apply(Value, FilterValue.Get<double>());
-			break;
-		}
-		case EFilterDataType::Int64:
-		case EFilterDataType::StringInt64Pair:
-		{
-			FFilterOperator<int64>* Operator = (FFilterOperator<int64>*) SelectedFilterOperator.Get();
-			int64 Value = 0;
-			Context.GetFilterData<int64>(SelectedFilter->GetKey(), Value);
-
-			Ret = Operator->Apply(Value, FilterValue.Get<int64>());
-			break;
-		}
-		case EFilterDataType::String:
-		{
-			FFilterOperator<FString>* Operator = (FFilterOperator<FString>*) SelectedFilterOperator.Get();
-			FString Value;
-			Context.GetFilterData<FString>(SelectedFilter->GetKey(), Value);
-
-			Ret = Operator->Apply(Value, FilterValue.Get<FString>());
-			break;
-		}
-		default:
-			break;
-		}
+		Ret = FilterState->ApplyFilter(Context);
 	}
 
 	return Ret;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void FFilterConfiguratorNode::Update()
+{
+	if (IsGroup())
+	{
+		TArray<FBaseTreeNodePtr>& ChildArray = GetChildrenMutable();
+		for (FBaseTreeNodePtr& Child : ChildArray)
+		{
+			FFilterConfiguratorNodePtr CastedChild = StaticCastSharedPtr<FFilterConfiguratorNode>(Child);
+			CastedChild->Update();
+		}
+	}
+	else
+	{
+		if (FilterState.IsValid())
+		{
+			FilterState->Update();
+		}
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void FFilterConfiguratorNode::SetTextBoxValue(const FString& InValue)
+{
+	TextBoxValue = InValue;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void FFilterConfiguratorNode::SetSelectedFilterOperator(TSharedPtr<IFilterOperator> InSelectedFilterOperator)
+{
+	if (FilterState.IsValid())
+	{
+		FilterState->SetSelectedOperator(InSelectedFilterOperator);
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+TSharedPtr<const IFilterOperator> FFilterConfiguratorNode::GetSelectedFilterOperator() const
+{
+	if (FilterState.IsValid())
+	{
+		return FilterState->GetSelectedOperator();
+	}
+
+	return nullptr;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -139,11 +139,12 @@ namespace BuildPatchServices
 		/**
 		 * Constructs a particular file referenced by the given BuildManifest. The function takes an interface to a class that can provide availability information of chunks so that this
 		 * file construction process can be ran alongside chunk acquisition threads. It will Sleep while waiting for chunks that it needs.
+		 * @param BuildFilename		The relative build filename to use for construction.
 		 * @param FileManifest		The FFileManifest for the file to construct.
 		 * @param bResumeExisting	Whether we should resume from an existing file
 		 * @return	true if no file errors occurred
 		 */
-		bool ConstructFileFromChunks(const FFileManifest& FileManifest, bool bResumeExisting);
+		bool ConstructFileFromChunks(const FString& BuildFilename, const FFileManifest& FileManifest, bool bResumeExisting);
 
 		/**
 		 * Inserts the data data from a chunk into the destination file according to the chunk part info

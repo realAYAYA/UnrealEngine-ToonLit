@@ -5,7 +5,7 @@ using System.IO;
 
 public class zlib : ModuleRules
 {
-	protected readonly string Version = "1.2.13";
+	protected readonly string Version = "1.3";
 	protected string VersionPath { get => Path.Combine(ModuleDirectory, Version); }
 	protected string LibraryPath { get => Path.Combine(VersionPath, "lib"); }
 

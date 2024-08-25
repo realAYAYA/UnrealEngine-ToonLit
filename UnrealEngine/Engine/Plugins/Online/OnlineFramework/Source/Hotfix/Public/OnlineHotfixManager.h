@@ -243,6 +243,9 @@ protected:
 	/** @return our current world */
 	UWorld* GetWorld() const override;
 
+	/** Stop tracking hotfixed assets marked as garbage */
+	void StopTrackingInvalidHotfixedAssets();
+	
 protected:
 
 	/**
@@ -344,10 +347,21 @@ protected:
 	/** Called after any hotfixes are applied to apply last-second changes to certain asset types from .ini file data */
 	virtual void PatchAssetsFromIniFiles();
 	
+	/** Called after any hotfixes are applied to apply last-second changes to Config properties from .ini file data */
+	virtual void ReloadConfigsFromIniFiles();
+
 	/** Used in PatchAssetsFromIniFiles to hotfix only a row in a table. 
 	 *  If ChangedTables is not null then HandleDataTableChanged will not be called and the caller should call it on the data tables in ChangedTables when they're ready to
 	 */
-	void HotfixRowUpdate(UObject* Asset, const FString& AssetPath, const FString& RowName, const FString& ColumnName, const FString& NewValue, TArray<FString>& ProblemStrings, TSet<class UDataTable*>* ChangedTables = nullptr);
+	void HotfixRowUpdate(
+		UObject* Asset,
+		const FString& AssetPath,
+		const FString& RowName,
+		const FString& ColumnName,
+		const FString& NewValue,
+		TArray<FString>& ProblemStrings,
+		TSet<class UDataTable*>* ChangedDataTables = nullptr,
+		TSet<class UCurveTable*>* ChangedCurveTables = nullptr);
 	
 	/** Used in PatchAssetsFromIniFiles to hotfix an entire table. */
 	void HotfixTableUpdate(UObject* Asset, const FString& AssetPath, const FString& JsonData, TArray<FString>& ProblemStrings);
@@ -365,6 +379,14 @@ protected:
 
 	/** Allow the application to override the dedicated server filename prefix. */
 	virtual FString GetDedicatedServerPrefix() const;
+
+	/** Allow child classes to determine if specific assets should be hotfixed or not */
+	virtual bool ShouldHotfixAsset(const FString& AssetPath) const;
+
+#if !UE_BUILD_SHIPPING
+	/** Test function that applies a local file as if it were a hotfix. */
+	void ApplyLocalTestHotfix(FString Filename);
+#endif
 
 public:
 	UOnlineHotfixManager();
@@ -402,6 +424,8 @@ public:
 
 	/** Factory method that returns the configured hotfix manager */
 	static UOnlineHotfixManager* Get(UWorld* World);
+
+	static void ReloadObjectsAffectedByConfigFile(const FString& IniDataFileName, const FString& IniData, const FString& ConfigFilename, TArray<FString>& ReloadedClassesPathNames, bool bUseLoadConfig);
 };
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2

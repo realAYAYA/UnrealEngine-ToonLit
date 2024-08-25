@@ -53,6 +53,8 @@ namespace mu
 
 			BoneMapIndex = 0;
 			BoneMapCount = 0;
+
+			bCastShadow = false;
 		}
 
 		int32 m_firstVertex;
@@ -64,6 +66,8 @@ namespace mu
 		uint32 BoneMapIndex;
 		uint32 BoneMapCount;
 
+		bool bCastShadow;
+
 		//!
 		inline bool operator==(const MESH_SURFACE& o) const
 		{
@@ -73,7 +77,8 @@ namespace mu
 				&& m_indexCount == o.m_indexCount
 				&& m_id == o.m_id
 				&& BoneMapIndex == o.BoneMapIndex
-				&& BoneMapCount == o.BoneMapCount;
+				&& BoneMapCount == o.BoneMapCount
+				&& bCastShadow == o.bCastShadow;
 		}
 
 		inline void Serialise(OutputArchive& arch) const;
@@ -105,7 +110,10 @@ namespace mu
 		SkeletonDeformBinding,
 		PhysicsBodyDeformBinding,
 		PhysicsBodyDeformSelection,
-		PhysicsBodyDeformOffsets
+		PhysicsBodyDeformOffsets,
+		MeshLaplacianData,
+		MeshLaplacianOffsets,
+		UniqueVertexMap
 	};
 
 	//!
@@ -142,12 +150,12 @@ namespace mu
 		WithBoneMap = 1 << 13,
 		WithSkeletonIDs = 1 << 14,
 		WithAdditionalPhysics = 1 << 15,
+		WithStreamedResources = 1 << 16,
 
 		AllFlags = 0xFFFFFFFF
 	};
 	
 	ENUM_CLASS_FLAGS(EMeshCopyFlags);
-
 
     //! \brief Mesh object containing any number of buffers with any number of channels.
     //! The buffers can be per-index or per-vertex.
@@ -214,7 +222,8 @@ namespace mu
         void GetSurface( int32 surfaceIndex,
                          int32* FirstVertex, int32* VertexCount,
                          int32* FirstIndex, int32* IndexCount,
-						 int32* FirstBone, int32* BoneCount) const;
+						 int32* FirstBone, int32* BoneCount,
+						 bool* bCastShadow) const;
 
         //! Return an internal id that can be used to match mesh surfaces and instance surfaces.
         //! Only valid for meshes that are part of instances.
@@ -259,33 +268,6 @@ namespace mu
 
         //! \}
 
-        //! \name Face groups
-        //! \{
-
-        //!
-        void SetFaceGroupCount( int count );
-
-        //!
-        int GetFaceGroupCount() const;
-
-        //!
-        const char* GetFaceGroupName( int group ) const;
-
-        //!
-        void SetFaceGroupName( int group, const char* strName );
-
-        //!
-        int GetFaceGroupFaceCount( int group ) const;
-
-        //!
-        const int32* GetFaceGroupFaces( int group ) const;
-
-        //!
-        void SetFaceGroupFaces( int group, int count, const int32* faces );
-
-        //! \}
-
-
         //! \name Tags
         //! \{
 
@@ -296,10 +278,16 @@ namespace mu
         int GetTagCount() const;
 
         //!
-        const char* GetTag( int tagIndex ) const;
+        const FString& GetTag( int tagIndex ) const;
 
         //!
-        void SetTag( int tagIndex, const char* strName );
+        void SetTag( int tagIndex, const FString& Name );
+
+		//!
+		void AddStreamedResource(uint32 ResourceId);
+
+		//!
+		const TArray<uint32>& GetStreamedResources() const;
 
 		//!
 		int32 FindBonePose(uint16 BoneId) const;
@@ -370,7 +358,7 @@ namespace mu
 		FMeshBufferSet m_FaceBuffers;
 
 		//! Additional buffers used for temporary or custom data in different algorithms.
-		TArray< TPair<EMeshBufferType, FMeshBufferSet> > m_AdditionalBuffers;
+		TArray<TPair<EMeshBufferType, FMeshBufferSet>> AdditionalBuffers;
 
 		//! This is bit-mask on the STATIC_MESH_FORMATS enumeration, marking what static formats
 		//! are compatible with this one. Usually precalculated at model compilation time.
@@ -392,30 +380,13 @@ namespace mu
 
 		//! Texture Layout blocks attached to this mesh. They are const because they could be shared with
 		//! other meshes, so they need to be cloned and replaced if a modification is needed.
-		TArray<Ptr<const Layout>> m_layouts;
-
-		struct FACE_GROUP
-		{
-			string m_name;
-			TArray<int32> m_faces;
-
-			inline void Serialise(OutputArchive& arch) const;
-
-
-			inline void Unserialise(InputArchive& arch);
-
-			//!
-			inline bool operator==(const FACE_GROUP& o) const
-			{
-				return m_name == o.m_name
-					&& m_faces == o.m_faces;
-			}
-
-		};
-		TArray<FACE_GROUP> m_faceGroups;
+		TArray<Ptr<const Layout>> m_layouts;		
 
 		//!
-		TArray<string> m_tags;
+		TArray<FString> m_tags;
+
+		// Opaque handle to external resources.
+		TArray<uint32> StreamedResources;
 
 		struct FBonePose
 		{
@@ -434,8 +405,7 @@ namespace mu
 			//!
 			inline bool operator==(const FBonePose& Other) const
 			{
-				return BoneUsageFlags == Other.BoneUsageFlags
-					&& BoneId == Other.BoneId;
+				return BoneUsageFlags == Other.BoneUsageFlags && BoneId == Other.BoneId;
 			}
 		};
 		// This is the pose used by this mesh fragment, used to update the transforms of the final skeleton
@@ -472,8 +442,8 @@ namespace mu
 					equal = false;
 				}
 			}
+			if (equal) equal = (StreamedResources == o.StreamedResources);
 			if (equal) equal = (m_surfaces == o.m_surfaces);
-			if (equal) equal = (m_faceGroups == o.m_faceGroups);
 			if (equal) equal = (m_tags == o.m_tags);
 			if (equal) equal = (SkeletonIDs == o.SkeletonIDs);
 
@@ -482,10 +452,10 @@ namespace mu
 				equal &= (*m_layouts[i]) == (*o.m_layouts[i]);
 			}
 
-			equal &= m_AdditionalBuffers.Num() == o.m_AdditionalBuffers.Num();
-			for (int32 i = 0; equal && i < m_AdditionalBuffers.Num(); ++i)
+			equal &= AdditionalBuffers.Num() == o.AdditionalBuffers.Num();
+			for (int32 i = 0; equal && i < AdditionalBuffers.Num(); ++i)
 			{
-				equal &= m_AdditionalBuffers[i] == o.m_AdditionalBuffers[i];
+				equal &= AdditionalBuffers[i] == o.AdditionalBuffers[i];
 			}
 
 			equal &= BonePoses.Num() == o.BonePoses.Num();

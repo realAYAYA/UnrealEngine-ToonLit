@@ -29,7 +29,9 @@ public:
 	UVertexDeltaModel(const FObjectInitializer& ObjectInitializer);
 
 	// UObject overrides.
-	void PostLoad() override;
+	virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
+	virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 	// ~END UObject overrides.
 
 	// UMLDeformerModel overrides.
@@ -37,9 +39,7 @@ public:
 	virtual UMLDeformerModelInstance* CreateModelInstance(UMLDeformerComponent* Component) override;
 	virtual bool IsNeuralNetworkOnGPU() const override		{ return true; }	// GPU neural network.
 	virtual FString GetDefaultDeformerGraphAssetPath() const override;
-#if WITH_EDITOR
-	virtual void UpdateMemoryUsage() override;
-#endif
+	virtual bool IsTrained() const override;
 	// ~END UMLDeformerModel overrides.
 
 #if WITH_EDITORONLY_DATA
@@ -49,13 +49,14 @@ public:
 	int32 GetBatchSize() const								{ return BatchSize; }
 	float GetLearningRate() const							{ return LearningRate; }
 #endif
-	void SetNNEModelData(TObjectPtr<UNNEModelData> ModelData);
-	const FString GetNNERuntimeName() const { return TEXT("NNERuntimeRDGDml"); }
-public:
 
+	void SetNNEModelData(TObjectPtr<UNNEModelData> ModelData);
+	const FString GetNNERuntimeName() const					{ return TEXT("NNERuntimeRDGDml"); }
+
+public:
 	/** The NNE neural network model. */
 	UPROPERTY()
-	TObjectPtr<UNNEModelData> NNEModel; 
+	TObjectPtr<UNNEModelData> NNEModel;
 
 #if WITH_EDITORONLY_DATA
 	/** The number of hidden layers that the neural network model will have.\nHigher numbers will slow down performance but can deal with more complex deformations. */
@@ -78,5 +79,4 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Training Settings", meta = (ClampMin = "0.000001", ClampMax = "1.0"))
 	float LearningRate = 0.001f;
 #endif // WITH_EDITORONLY_DATA
-
 };

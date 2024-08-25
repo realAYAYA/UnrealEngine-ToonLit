@@ -80,7 +80,7 @@ UNaniteDisplacedMesh* LinkDisplacedMeshAsset(UNaniteDisplacedMesh* ExistingDispl
 	FNaniteDisplacedMeshEditorModule& NaniteDisplacedMeshEditorModule = FNaniteDisplacedMeshEditorModule::GetModule();
 	if (NaniteDisplacedMeshEditorModule.OnLinkDisplacedMeshOverride.IsBound())
 	{
-		return NaniteDisplacedMeshEditorModule.OnLinkDisplacedMeshOverride.Execute(InParameters, DisplacedMeshFolder);
+		return NaniteDisplacedMeshEditorModule.OnLinkDisplacedMeshOverride.Execute(InParameters, DisplacedMeshFolder, LinkDisplacedMeshAssetSetting);
 	}
 
 	using namespace UE::NaniteDisplacedMesh;

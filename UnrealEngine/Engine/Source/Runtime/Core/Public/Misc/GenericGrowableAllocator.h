@@ -267,7 +267,7 @@ public:
 #if !UE_BUILD_SHIPPING
 			Allocation->OwnerType = OwnerType;
 #endif
-			LLM(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Default, GetAddressForTracking(Offset), Size));
+			LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Default, GetAddressForTracking(Offset), Size));
 			MemoryTrace_Alloc(uint64(GetAddressForTracking(Offset)), Size, Alignment, EMemoryTraceRootHeap::SystemMemory);
 
 			// let the implementation fill in any more
@@ -290,7 +290,7 @@ public:
 		uint64 AllocationSize = Padding + Size;
 		uint32 Offset = Memory->Offset;
 
-		LLM(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Default, GetAddressForTracking(Offset)));
+		LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Default, GetAddressForTracking(Offset)));
 		MemoryTrace_Free(uint64(GetAddressForTracking(Offset)), EMemoryTraceRootHeap::SystemMemory);
 
 		// we are now done with the Allocation object

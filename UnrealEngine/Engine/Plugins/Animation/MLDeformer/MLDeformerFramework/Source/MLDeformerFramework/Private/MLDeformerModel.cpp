@@ -14,6 +14,9 @@
 #include "RHICommandList.h"
 #include "UObject/UObjectGlobals.h"
 #include "RHICommandList.h"
+#include "AssetRegistry/AssetData.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "UObject/AssetRegistryTagsContext.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MLDeformerModel)
 
@@ -71,12 +74,14 @@ void UMLDeformerModel::Init(UMLDeformerAsset* InDeformerAsset)
 
 void UMLDeformerModel::Serialize(FArchive& Archive)
 {
+	Archive.UsingCustomVersion(UE::MLDeformer::FMLDeformerObjectVersion::GUID);
+
 	#if WITH_EDITOR
 		if (Archive.IsSaving())
 		{
 			if (Archive.IsCooking())
 			{
-				AnimSequence = nullptr;
+				AnimSequence_DEPRECATED = nullptr;
 				VizSettings = nullptr;
 			}
 
@@ -152,6 +157,37 @@ bool UMLDeformerModel::IsReadyForFinishDestroy()
 	return Super::IsReadyForFinishDestroy() && RenderResourceDestroyFence.IsFenceComplete();
 }
 
+void UMLDeformerModel::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
+{
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UMLDeformerModel::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	Super::GetAssetRegistryTags(Context);
+
+	Context.AddTag(FAssetRegistryTag("MLDeformer.ModelType", GetClass()->GetName(), FAssetRegistryTag::TT_Alphabetical));
+	Context.AddTag(FAssetRegistryTag("MLDeformer.IsTrained", IsTrained() ? TEXT("True") : TEXT("False"), FAssetRegistryTag::TT_Alphabetical));
+	Context.AddTag(FAssetRegistryTag("MLDeformer.NumBaseMeshVerts", FString::FromInt(NumBaseMeshVerts), FAssetRegistryTag::TT_Numerical));
+	Context.AddTag(FAssetRegistryTag("MLDeformer.NumTargetMeshVerts", FString::FromInt(NumTargetMeshVerts), FAssetRegistryTag::TT_Numerical));
+	Context.AddTag(FAssetRegistryTag("MLDeformer.SkeletalMesh", SkeletalMesh ? FAssetData(SkeletalMesh).ToSoftObjectPath().ToString() : TEXT("None"), FAssetRegistryTag::TT_Alphabetical));
+	Context.AddTag(FAssetRegistryTag("MLDeformer.MaxNumLODs", FString::FromInt(GetMaxNumLODs()), FAssetRegistryTag::TT_Numerical));
+
+	#if WITH_EDITORONLY_DATA
+		Context.AddTag(FAssetRegistryTag("MLDeformer.NumBones", FString::FromInt(BoneIncludeList.Num()), FAssetRegistryTag::TT_Numerical));
+		Context.AddTag(FAssetRegistryTag("MLDeformer.NumCurves", FString::FromInt(CurveIncludeList.Num()), FAssetRegistryTag::TT_Numerical));
+		Context.AddTag(FAssetRegistryTag("MLDeformer.DeltaCutoffLength", FString::Printf(TEXT("%f"), DeltaCutoffLength), FAssetRegistryTag::TT_Numerical));
+		Context.AddTag(FAssetRegistryTag("MLDeformer.MaxTrainingFrames", FString::FromInt(MaxTrainingFrames), FAssetRegistryTag::TT_Numerical));
+	#endif
+
+	if (InputInfo)
+	{
+		InputInfo->GetAssetRegistryTags(Context);
+	}
+}
+
 void UMLDeformerModel::InitGPUData()
 {
 	BeginReleaseResource(&VertexMapBuffer);
@@ -171,6 +207,65 @@ void UMLDeformerModel::FloatArrayToVector3Array(const TArray<float>& FloatArray,
 		OutVectorArray[VertexIndex] = FVector3f(FloatArray[FloatBufferOffset + 0], FloatArray[FloatBufferOffset + 1], FloatArray[FloatBufferOffset + 2]);
 	}
 }
+
+bool UMLDeformerModel::IsCompatibleDebugActor(const AActor* Actor, UMLDeformerComponent** OutDebugComponent) const
+{
+	// Set it to nullptr first, in case we exit this method early.
+	if (OutDebugComponent)
+	{
+		*OutDebugComponent = nullptr;
+	}
+
+	if (Actor == nullptr || !IsValid(Actor))
+	{
+		return false;
+	}
+
+	// Iterate over all skeletal mesh components, see if one matches our currently loaded character.
+	USkeletalMesh* SkelMesh = nullptr;
+	for (const UActorComponent* Component : Actor->GetComponents())
+	{
+		const USkeletalMeshComponent* SkelMeshComponent = Cast<USkeletalMeshComponent>(Component);
+		if (!SkelMeshComponent)
+		{
+			continue;
+		}
+
+		if (SkelMeshComponent->GetSkeletalMeshAsset() == SkeletalMesh)
+		{
+			SkelMesh = SkeletalMesh;
+			break;
+		}
+	}
+
+	// If we haven't found a matching skeletal mesh, we can ignore this actor.
+	if (!SkelMesh)
+	{
+		return false;
+	}
+
+	// Now check if we have an ML Deformer component on the actor uses the same ML Deformer asset.
+	for (UActorComponent* Component : Actor->GetComponents())
+	{
+		UMLDeformerComponent* MLDeformerComponent = Cast<UMLDeformerComponent>(Component);
+		if (!MLDeformerComponent)
+		{
+			continue;
+		}
+
+		if (MLDeformerComponent->GetDeformerAsset() == GetDeformerAsset())
+		{
+			if (OutDebugComponent)
+			{
+				*OutDebugComponent = MLDeformerComponent;
+			}
+			return true;
+		}
+	}
+
+	return false;
+}
+
 
 #if WITH_EDITOR
 	void UMLDeformerModel::UpdateNumTargetMeshVertices()
@@ -214,9 +309,14 @@ void UMLDeformerModel::FloatArrayToVector3Array(const TArray<float>& FloatArray,
 		bInvalidateMemUsage = true;
 	}
 
-	uint64 UMLDeformerModel::GetMemUsageInBytes(UE::MLDeformer::EMemUsageRequestFlags Flags) const
+	uint64 UMLDeformerModel::GetCookedAssetSizeInBytes() const
 	{
-		return (Flags == UE::MLDeformer::EMemUsageRequestFlags::Cooked) ? CookedMemUsageInBytes : MemUsageInBytes;
+		return CookedAssetSizeInBytes;
+	}
+
+	uint64 UMLDeformerModel::GetMainMemUsageInBytes() const
+	{
+		return MemUsageInBytes;
 	}
 
 	uint64 UMLDeformerModel::GetGPUMemUsageInBytes() const
@@ -229,20 +329,31 @@ void UMLDeformerModel::FloatArrayToVector3Array(const TArray<float>& FloatArray,
 		return bInvalidateMemUsage;
 	}
 
+	uint64 UMLDeformerModel::GetEditorAssetSizeInBytes() const
+	{
+		return EditorAssetSizeInBytes;
+	}
+
 	void UMLDeformerModel::UpdateMemoryUsage()
 	{
 		bInvalidateMemUsage = false;
+
+		// Start everything at 0 bytes.
 		MemUsageInBytes = 0;
 		GPUMemUsageInBytes = 0;
+		EditorAssetSizeInBytes = 0;
+		CookedAssetSizeInBytes = 0;
 
-		// Get the size of the model to get an approximate size.
+		// Get the resource size of the ML Deformer model.
 		UMLDeformerModel* Model = const_cast<UMLDeformerModel*>(this);
-		MemUsageInBytes += static_cast<uint64>(Model->GetResourceSizeBytes(EResourceSizeMode::Type::EstimatedTotal));
+		EditorAssetSizeInBytes += static_cast<uint64>(Model->GetResourceSizeBytes(EResourceSizeMode::Type::EstimatedTotal));
 
-		// Init the cooked size. We can subtract bytes from this to simulate a cook.
-		CookedMemUsageInBytes = MemUsageInBytes;
+		// Set the main mem usage and cooked sizes also to this.
+		// We are going to subtract from this later, to simulate a cook, as we know which data we strip at cook time for example.
+		CookedAssetSizeInBytes += EditorAssetSizeInBytes;
+		MemUsageInBytes += EditorAssetSizeInBytes;
 
-		// Add GPU memory.
+		// Add the VertexMap buffer to the GPU memory usage.
 		if (VertexMapBuffer.VertexBufferRHI.IsValid())
 		{
 			GPUMemUsageInBytes += VertexMapBuffer.VertexBufferRHI->GetSize();

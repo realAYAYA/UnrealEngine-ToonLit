@@ -39,5 +39,6 @@ namespace UE::PixelStreaming
 		TFunction<bool()> ShouldGenerateFramesCheck;
 
 		void PushFrame();
+		void PushEmptyFrame();
 	};
 } // namespace UE::PixelStreaming

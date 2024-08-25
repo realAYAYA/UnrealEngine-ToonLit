@@ -7,18 +7,19 @@
 class FActorModeInteractive : public FActorMode
 {
 public:
-	FActorModeInteractive(const FActorModeParams& Params);
-	virtual ~FActorModeInteractive();
+	SCENEOUTLINER_API FActorModeInteractive(const FActorModeParams& Params);
+	SCENEOUTLINER_API virtual ~FActorModeInteractive();
 
-	virtual bool IsInteractive() const override { return true; }
-private:
+	SCENEOUTLINER_API virtual bool IsInteractive() const override { return true; }
+protected:
 	/* Events */
 
 	void OnMapChange(uint32 MapFlags);
 	void OnNewCurrentLevel();
 
+	SCENEOUTLINER_API virtual void OnActorLabelChanged(AActor* ChangedActor);
+	
 	void OnLevelSelectionChanged(UObject* Obj);
-	void OnActorLabelChanged(AActor* ChangedActor);
 	void OnObjectsReplaced(const TMap<UObject*, UObject*>& ReplacementMap);
 	void OnLevelActorRequestsRename(const AActor* Actor);
 	void OnPostLoadMapWithWorld(UWorld* World);

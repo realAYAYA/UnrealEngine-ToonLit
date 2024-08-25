@@ -23,6 +23,7 @@ FFeedbackContext::~FFeedbackContext()
 
 void FFeedbackContext::Serialize(const TCHAR* V, ELogVerbosity::Type Verbosity, const FName& Category)
 {
+	Verbosity = ResolveVerbosity(Verbosity);
 	if (IsRunningCommandlet())
 	{
 		if (Verbosity == ELogVerbosity::Error || Verbosity == ELogVerbosity::Warning)
@@ -42,6 +43,7 @@ void FFeedbackContext::Serialize(const TCHAR* V, ELogVerbosity::Type Verbosity, 
 
 void FFeedbackContext::Serialize(const TCHAR* V, ELogVerbosity::Type Verbosity, const FName& Category, double Time)
 {
+	Verbosity = ResolveVerbosity(Verbosity);
 	if (IsRunningCommandlet())
 	{
 		if (Verbosity == ELogVerbosity::Error || Verbosity == ELogVerbosity::Warning)
@@ -61,30 +63,46 @@ void FFeedbackContext::Serialize(const TCHAR* V, ELogVerbosity::Type Verbosity, 
 
 void FFeedbackContext::SerializeRecord(const UE::FLogRecord& Record)
 {
+	ELogVerbosity::Type Verbosity = ResolveVerbosity(Record.GetVerbosity());
+	TOptional<UE::FLogRecord> RecordOverride;
+	if (Record.GetVerbosity() != Verbosity)
+	{
+		RecordOverride = Record;
+		RecordOverride->SetVerbosity(Verbosity);
+	}
 	if (IsRunningCommandlet())
 	{
-		const ELogVerbosity::Type Verbosity = Record.GetVerbosity();
 		if (Verbosity == ELogVerbosity::Error || Verbosity == ELogVerbosity::Warning)
 		{
-			AddRecordToHistory(Record);
+			AddRecordToHistory(RecordOverride.Get(Record));
 		}
 		if (GLogConsole && !GLog->IsRedirectingTo(GLogConsole))
 		{
-			GLogConsole->SerializeRecord(Record);
+			GLogConsole->SerializeRecord(RecordOverride.Get(Record));
 		}
 	}
 	if (!GLog->IsRedirectingTo(this))
 	{
-		GLog->SerializeRecord(Record);
+		GLog->SerializeRecord(RecordOverride.Get(Record));
 	}
+}
+
+ELogVerbosity::Type FFeedbackContext::ResolveVerbosity(ELogVerbosity::Type Verbosity) const
+{
+	if (Verbosity == ELogVerbosity::Error && TreatErrorsAsWarnings)
+	{
+		return ELogVerbosity::Warning;
+	}
+	if (Verbosity == ELogVerbosity::Warning && TreatWarningsAsErrors)
+	{
+		return ELogVerbosity::Error;
+	}
+	return Verbosity;
 }
 
 void FFeedbackContext::FormatLine(FStringBuilderBase& Out, const TCHAR* V, ELogVerbosity::Type Verbosity, const FName& Category, double Time, ELogVerbosity::Type* OutVerbosity) const
 {
-	if (TreatWarningsAsErrors && Verbosity == ELogVerbosity::Warning)
-	{
-		Verbosity = ELogVerbosity::Error;
-	}
+	Verbosity = ResolveVerbosity(Verbosity);
 	if (OutVerbosity)
 	{
 		*OutVerbosity = Verbosity;
@@ -98,11 +116,7 @@ void FFeedbackContext::FormatLine(FStringBuilderBase& Out, const TCHAR* V, ELogV
 
 void FFeedbackContext::FormatRecordLine(FStringBuilderBase& Out, const UE::FLogRecord& Record, ELogVerbosity::Type* OutVerbosity) const
 {
-	ELogVerbosity::Type Verbosity = Record.GetVerbosity();
-	if (TreatWarningsAsErrors && Verbosity == ELogVerbosity::Warning)
-	{
-		Verbosity = ELogVerbosity::Error;
-	}
+	ELogVerbosity::Type Verbosity = ResolveVerbosity(Record.GetVerbosity());
 	if (OutVerbosity)
 	{
 		*OutVerbosity = Verbosity;
@@ -188,7 +202,6 @@ void FFeedbackContext::UpdateUI()
 /**** Begin legacy API ****/
 void FFeedbackContext::BeginSlowTask( const FText& Task, bool ShowProgressDialog, bool bShowCancelButton )
 {
-	TaskName = Task;
 	ensure(IsInGameThread());
 
 	TUniquePtr<FSlowTask> NewScope(new FSlowTask(0, Task, true, *this));
@@ -210,7 +223,7 @@ void FFeedbackContext::UpdateProgress( int32 Numerator, int32 Denominator )
 		LegacyAPIScopes.Last()->TotalAmountOfWork = (float)Denominator;
 		LegacyAPIScopes.Last()->CompletedWork = (float)Numerator;
 		LegacyAPIScopes.Last()->CurrentFrameScope = (float)(Denominator - Numerator);
-		RequestUpdateUI();
+		LegacyAPIScopes.Last()->TickProgress();
 	}
 }
 

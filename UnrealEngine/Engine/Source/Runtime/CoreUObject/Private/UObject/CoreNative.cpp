@@ -9,6 +9,7 @@
 #include "Misc/PackageName.h"
 #include "Misc/RuntimeErrors.h"
 #include "UObject/Stack.h"
+#include "UObject/OverridableManager.h"
 
 void UClassRegisterAllCompiledInClasses();
 bool IsInAsyncLoadingThreadCoreUObjectInternal();
@@ -17,6 +18,7 @@ void SuspendAsyncLoadingInternal();
 void ResumeAsyncLoadingInternal();
 bool IsAsyncLoadingSuspendedInternal();
 bool IsAsyncLoadingMultithreadedCoreUObjectInternal();
+ELoaderType GetLoaderTypeInternal();
 
 // CoreUObject module. Handles UObject system pre-init (registers init function with Core callbacks).
 class FCoreUObjectModule : public FDefaultModuleImpl
@@ -46,6 +48,7 @@ public:
 		ResumeAsyncLoading = &ResumeAsyncLoadingInternal;
 		IsAsyncLoadingSuspended = &IsAsyncLoadingSuspendedInternal;
 		IsAsyncLoadingMultithreaded = &IsAsyncLoadingMultithreadedCoreUObjectInternal;
+		GetLoaderType = &GetLoaderTypeInternal;
 
 		// Register the script callstack callback to the runtime error logging
 #if UE_RAISE_RUNTIME_ERRORS
@@ -140,8 +143,10 @@ UObject* FObjectInstancingGraph::GetInstancedSubobject( UObject* SourceSubobject
 {
 	checkSlow(SourceSubobject);
 
-	bool bDoNotCreateNewInstance = !!(Flags & EInstancePropertyValueFlags::DoNotCreateNewInstance);
-	bool bAllowSelfReference     = !!(Flags & EInstancePropertyValueFlags::AllowSelfReference);
+	const bool bAreOverridesEnabled = SourceSubobject && FOverridableManager::Get().IsEnabled(*SourceSubobject);
+	const bool bDoNotCreateNewInstance = !!(Flags & EInstancePropertyValueFlags::DoNotCreateNewInstance);
+	const bool bAllowSelfReference     = !!(Flags & EInstancePropertyValueFlags::AllowSelfReference) || bAreOverridesEnabled;
+
 
 	UObject* InstancedSubobject = INVALID_OBJECT;
 
@@ -163,6 +168,12 @@ UObject* FObjectInstancingGraph::GetInstancedSubobject( UObject* SourceSubobject
 
 		if ( bShouldInstance )
 		{
+			// If the CurrentValue is within the SourceRoot, lets use it to instantiate as it must have come from the merge result of the serialization
+			if (bAreOverridesEnabled && SourceSubobject != CurrentValue && CurrentValue->IsIn(SourceRoot))
+			{
+				SourceSubobject = CurrentValue;
+			}
+
 			// search for the unique subobject instance that corresponds to this subobject template
 			InstancedSubobject = GetDestinationObject(SourceSubobject);
 			if ( InstancedSubobject == nullptr )

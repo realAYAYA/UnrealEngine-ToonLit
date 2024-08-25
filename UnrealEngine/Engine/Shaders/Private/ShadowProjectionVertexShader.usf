@@ -7,9 +7,19 @@
 #include "Common.ush"
 
 void ShadowProjectionNoTransformVS(
-	in float4 InPosition : ATTRIBUTE0,
-	out float4 OutPosition : SV_POSITION)
+	in float4 InPosition : ATTRIBUTE0
+#if INSTANCED_STEREO
+	, in uint InstanceId : SV_InstanceID
+	, out nointerpolation uint EyeIndex : TEXCOORD0
+	, out nointerpolation uint LayerIndex : SV_RenderTargetArrayIndex
+#endif
+	, out float4 OutPosition : SV_POSITION
+)
 {
+#if INSTANCED_STEREO
+	EyeIndex = GetEyeIndex(InstanceId);
+	LayerIndex = EyeIndex;
+#endif
 	OutPosition = float4(InPosition.xyz, 1);
 }
 
@@ -19,14 +29,31 @@ float4x4 InvReceiverInnerMatrix;
 float4 PreShadowToPreViewTranslation;
 
 void ShadowVolumeBoundProjectionVS(
-	in float4 InPosition : ATTRIBUTE0,
-	out float4 OutPosition : SV_POSITION)
+	in float4 InPosition : ATTRIBUTE0
+#if INSTANCED_STEREO
+	, in uint InstanceId : SV_InstanceID
+	, out nointerpolation uint EyeIndex : TEXCOORD0
+	, out uint LayerIndex : SV_RenderTargetArrayIndex
+#elif MOBILE_MULTI_VIEW
+	, in nointerpolation uint ViewId : SV_ViewID
+#endif
+	, out float4 OutPosition : SV_POSITION
+)
 {
+#if INSTANCED_STEREO
+	EyeIndex = GetEyeIndex(InstanceId);
+	LayerIndex = EyeIndex;
+	ResolvedView = ResolveView(EyeIndex);
+#elif MOBILE_MULTI_VIEW
+	ResolvedView = ResolveView(ViewId);
+#else
+	ResolvedView = ResolveView();
+#endif
 	float4 UnprojectedVertex = mul(float4(InPosition.xyz, 1), InvReceiverInnerMatrix);
 	float3 OutVertex = UnprojectedVertex.xyz / UnprojectedVertex.w + PreShadowToPreViewTranslation.xyz;
 
 	float3 WorldPosition = OutVertex.xyz * StencilingGeometryPosAndScale.w + StencilingGeometryPosAndScale.xyz;
-	OutPosition = mul(float4(WorldPosition, 1), View.TranslatedWorldToClip);
+	OutPosition = mul(float4(WorldPosition, 1), ResolvedView.TranslatedWorldToClip);
 }
 
 

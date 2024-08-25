@@ -8,4 +8,4 @@
 class UGeometryCacheTrackUsd;
 struct FGeometryCacheMeshData;
 
-typedef TFunction< bool( const TWeakObjectPtr<UGeometryCacheTrackUsd>, float Time, FGeometryCacheMeshData& ) > FReadUsdMeshFunction;
+typedef TFunction<bool(const TWeakObjectPtr<UGeometryCacheTrackUsd>, float Time, FGeometryCacheMeshData&)> FReadUsdMeshFunction;

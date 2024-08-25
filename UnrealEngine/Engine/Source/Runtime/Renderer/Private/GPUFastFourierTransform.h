@@ -129,7 +129,7 @@ namespace GPUFFT
 			FRDGBuilder& GraphBuilder,
 			const FGlobalShaderMap* ShaderMap,
 			const FFTDescription& FFTDesc,
-			FRDGTextureRef SrcTexture, const FIntRect& SrcWindow,
+			FRDGTextureSRVRef SrcTexture, const FIntRect& SrcWindow,
 			FRDGTextureRef DstTexture,
 			FRDGBufferRef PostFilterParameters = nullptr,
 			const bool bScrubNaNs = false);
@@ -179,7 +179,7 @@ namespace GPUFFT
 			FRDGBuilder& GraphBuilder,
 			const FGlobalShaderMap* ShaderMap,
 			const FFTDescription& FFTDesc,
-			FRDGTextureRef SrcTexture, const FIntRect& SrcWindow,
+			FRDGTextureSRVRef SrcTexture, const FIntRect& SrcWindow,
 			FRDGTextureRef DstTexture, const FIntRect& DstWindow,
 			const FPreFilter& PreFilter = FPreFilter(TNumericLimits<float>::Max(), TNumericLimits<float>::Lowest(), 0.f),
 			FRDGBufferRef PostFilterParameters = nullptr);
@@ -226,7 +226,7 @@ namespace GPUFFT
 			FRDGBuilder& GraphBuilder,
 			const FGlobalShaderMap* ShaderMap,
 			const FFTDescription& FFTDesc,
-			FRDGTextureRef SrcTexture, const FIntRect& SrcWindow,
+			FRDGTextureSRVRef SrcTexture, const FIntRect& SrcWindow,
 			FRDGTextureRef TransformedKernel,
 			FRDGTextureRef DstTexture);
 	};
@@ -252,7 +252,7 @@ namespace GPUFFT
 		FRDGBuilder& GraphBuilder,
 		const FGlobalShaderMap* ShaderMap,
 		const FIntPoint& FrequencySize, bool bHorizontalFirst,
-		FRDGTextureRef SrcTexture, const FIntRect& ROIRect,
+		FRDGTextureSRVRef SrcTexture, const FIntRect& ROIRect,
 		FRDGTextureRef ResultTexture);
 
 
@@ -288,7 +288,7 @@ namespace GPUFFT
 		const FIntPoint& FrequencySize,
 		bool bHorizontalFirst,
 		FRDGTextureRef TransformedKernel,
-		FRDGTextureRef SrcTexture, const FIntRect& ROIRect,
+		FRDGTextureSRVRef SrcTexture, const FIntRect& ROIRect,
 		FRDGTextureRef DstTexture, const FIntRect& DstRect,
 		const FPreFilter& PreFilter,
 		FRDGBufferRef PostFilterParameters,
@@ -316,7 +316,7 @@ namespace GPUFFT
 		FRDGBuilder& GraphBuilder,
 		ERDGPassFlags ComputePassFlags,
 		const FGlobalShaderMap* ShaderMap,
-		FRDGTextureRef SrcTexture, const FIntRect& SrcWindow,
+		FRDGTextureSRVRef SrcTexture, const FIntRect& SrcWindow,
 		FRDGTextureRef DstTexture, const FIntRect& DstWindow,
 		const FPreFilter& PreFilter = FPreFilter(TNumericLimits<float>::Max(), TNumericLimits<float>::Lowest(), 0.f));
 };

@@ -63,6 +63,7 @@ BEGIN_SHADER_PARAMETER_STRUCT(FEyeAdaptationParameters, )
 	SHADER_PARAMETER(float, LuminanceMin)
 	SHADER_PARAMETER(float, BlackHistogramBucketInfluence)
 	SHADER_PARAMETER(float, GreyMult)
+	SHADER_PARAMETER(FVector3f, LuminanceWeights)
 	SHADER_PARAMETER(float, ExponentialUpM)
 	SHADER_PARAMETER(float, ExponentialDownM)
 	SHADER_PARAMETER(float, StartDistance)
@@ -77,7 +78,7 @@ BEGIN_SHADER_PARAMETER_STRUCT(FEyeAdaptationParameters, )
 	SHADER_PARAMETER_SAMPLER(SamplerState, MeterMaskSampler)
 END_SHADER_PARAMETER_STRUCT()
 
-FEyeAdaptationParameters GetEyeAdaptationParameters(const FViewInfo& ViewInfo, ERHIFeatureLevel::Type MinFeatureLevel);
+FEyeAdaptationParameters GetEyeAdaptationParameters(const FViewInfo& ViewInfo);
 
 // Computes the a fixed exposure to be used to replace the dynamic exposure when it's not supported (< SM5).
 float GetEyeAdaptationFixedExposure(const FViewInfo& View);
@@ -116,7 +117,7 @@ FRDGBufferRef AddBasicEyeAdaptationPass(
 	const FViewInfo& View,
 	const FEyeAdaptationParameters& EyeAdaptationParameters,
 	const FLocalExposureParameters& LocalExposureParameters,
-	FScreenPassTexture SceneColor,
+	FScreenPassTextureSlice SceneColor,
 	FRDGBufferRef EyeAdaptationBuffer,
 	bool bComputeAverageLocalExposure);
 

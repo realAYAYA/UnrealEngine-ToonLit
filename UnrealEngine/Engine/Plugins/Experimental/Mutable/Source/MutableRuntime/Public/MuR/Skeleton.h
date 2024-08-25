@@ -11,13 +11,12 @@
 #include "MuR/Ptr.h"
 #include "MuR/RefCounted.h"
 
+// Remove when removin deprecated data
 #include <string>
 
 
 namespace mu
-{
-	typedef std::string string;
-	
+{	
 	// Forward references
     class Skeleton;
 
@@ -77,7 +76,7 @@ namespace mu
 	public:
 
 		//! Deprecated
-		TArray<string> m_bones_DEPRECATED;
+		TArray<std::string> m_bones_DEPRECATED;
 		TArray<FTransform3f> m_boneTransforms_DEPRECATED;
 
 

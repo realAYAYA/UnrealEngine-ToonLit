@@ -135,37 +135,22 @@ private:
 		FMovieSceneWarpCounter LoopCounter;
 		FMovieSceneSequenceTransform RootToLocalTransform;
 
+		// TODO: It seems a bit silly to store this as a TransformStack when we need to do the same work to inverse it.
+
 		for (int32 Index = 0; Index < TransformStack.Num(); ++Index)
 		{
-			const FTransformStep& Step(TransformStack[Index]);
-			FMovieSceneSequenceTransform StepTransform;
-			StepTransform.LinearTransform = Step.LinearTransform;
-			if (Step.Warping.IsValid())
+			RootToLocalTransform.NestedTransforms.Add(FMovieSceneNestedSequenceTransform(TransformStack[Index].LinearTransform, TransformStack[Index].Warping));
+			if (TransformStack[Index].Warping.IsValid())
 			{
-				StepTransform.NestedTransforms.Add(FMovieSceneNestedSequenceTransform(Step.Warping));
+				LoopCounter.AddWarpingLevel(TransformStack[Index].WarpCounter);
 			}
-
-			const bool bWasRootToLocalTransformWarping = RootToLocalTransform.IsWarping();
-			RootToLocalTransform = StepTransform * RootToLocalTransform;
-
-			ensure(Step.WarpCounter == FMovieSceneTimeWarping::InvalidWarpCount || Step.Warping.IsValid());
-
-			// The linear part of StepTransform will be added as a nested transform only if it's 
-			// actually doing something (non identity), and if RootToLocalTransform was warping already
-			// (meaning that StepTransform's linear part couldn't be "merged" into an existing linear
-			// transform).
-			if (!StepTransform.LinearTransform.IsIdentity() && bWasRootToLocalTransformWarping)
+			else
 			{
 				LoopCounter.AddNonWarpingLevel();
 			}
-			// If StepTransform is warping, we need to add the loop index for it.
-			if (Step.Warping.IsValid())
-			{
-				LoopCounter.AddWarpingLevel(Step.WarpCounter);
-			}
 		}
 
-		CachedInverseTransform = RootToLocalTransform.InverseFromWarp(LoopCounter);
+		CachedInverseTransform = RootToLocalTransform.InverseFromLoop(LoopCounter);
 	}
 
 private:
@@ -182,7 +167,7 @@ private:
 	};
 	TArray<FTransformStep> TransformStack;
 
-	FMovieSceneTimeTransform CachedInverseTransform;
+	FMovieSceneSequenceTransform CachedInverseTransform;
 };
 
 template<typename DataType>

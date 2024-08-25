@@ -3,15 +3,9 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Interfaces/OnlineAchievementsInterface.h"
 #include "OnlineSubsystemTypes.h"
-#include "AndroidRuntimeSettings.h"
+#include "OnlineAchievementGooglePlayCommon.h"
 #include "OnlineSubsystemGooglePlayPackage.h"
-
-THIRD_PARTY_INCLUDES_START
-#include <jni.h>
-#include "gpg/achievement_manager.h"
-THIRD_PARTY_INCLUDES_END
 
 /**
  *	IOnlineAchievements - Interface class for Achievements
@@ -20,37 +14,20 @@ class FOnlineAchievementsGooglePlay : public IOnlineAchievements
 {
 private:
 
-	/** Reference to the main GameCenter subsystem */
-	class FOnlineSubsystemGooglePlay* AndroidSubsystem;
+	/** Reference to the main subsystem */
+	class FOnlineSubsystemGooglePlay* Subsystem;
 	
-	/** hide the default constructor, we need a reference to our OSS */
-	FOnlineAchievementsGooglePlay() {}
+	/** Cached achievements retrieved from Google Play */
+	TArray<FOnlineAchievementGooglePlay> Achievements;
 
-	/** Our own cache of achievement data directly from Google Play */
-	gpg::AchievementManager::FetchAllResponse GoogleAchievements;
+	/** Cached achievement descriptions retrieved from Google Play */
+	TMap<FString, FOnlineAchievementDesc> AchievementDescriptions;
 
-	/** Looks up the Google achievement id in the mapping and returns the corresponding cached Achievement object */
-	gpg::Achievement GetGoogleAchievementFromUnrealId(const FString& UnrealId) const;
-
-	/** Uses the mapping to convert a Google achievement id to an Unreal achievement name */
-	static FString GetUnrealIdFromGoogleId(const UAndroidRuntimeSettings* Settings, const FString& GoogleId);
-
-	/** Convert the progress of a Google achievement to a double percentage 0.0 - 100.0 */
-	static double GetProgressFromGoogleAchievement(const gpg::Achievement& InAchievement);
+	static TOptional<FString> GetUnrealAchievementIdFromGoogleAchievementId(const class UAndroidRuntimeSettings* Settings, const FString& GoogleId);
+	static TOptional<FString> GetGoogleAchievementIdFromUnrealAchievementId(const class UAndroidRuntimeSettings* Settings, const FString& UnrealId);
 
 	/**
-	 * Convenience function to create an Unreal achievement from a Google achievement
-	 *
-	 * @param Settings the Android runtime settings containing the achievement id mapping
-	 * @param GoogleAchievement the Google achievement object to convert
-	 */
-	static FOnlineAchievement GetUnrealAchievementFromGoogleAchievement(
-		const UAndroidRuntimeSettings* Settings,
-		const gpg::Achievement& GoogleAchievement);
-
-	/**
-	 * Using the WriteObject, fires off achievement progress calls to the Google backend. Non-blocking.
-	 * The GoogleAchievements list should be valid before this is called.
+	 * Using the WriteObject, fires off achievement progress calls to the Google Java backend. Non-blocking.
 	 *
 	 * @param PlayerId the id of the player who's making progress
 	 * @param bWasSuccessful whether a previous QueryAchievements call was successful
@@ -63,13 +40,17 @@ private:
 		FOnlineAchievementsWriteRef WriteObject,
 		FOnAchievementsWrittenDelegate Delegate);
 	
+	/** Asks the identity interface it this PlayerId refers to the local player. We can only get information about the local player from GooglePlay */
+	bool IsLocalPlayer(const FUniqueNetId& PlayerId) const;
 PACKAGE_SCOPE:
 	/** Clears the cache of Google achievements that was populated by a QueryAchievements() call. */
 	void ClearCache();
 
 	/** Called from the query achievements task to fill in the cache. */
-	void UpdateCache(const gpg::AchievementManager::FetchAllResponse& Results);
+	void UpdateCache(TArray<FOnlineAchievementGooglePlay>&& Results, TArray<FOnlineAchievementDesc>&& Descriptions);
 
+	/** Called from the write achievements task to update cache with written data. */
+	void UpdateCacheAfterWrite(const TArray<FGooglePlayAchievementWriteData>& WrittenData);
 public:
 
 	//~ Begin IOnlineAchievements Interface

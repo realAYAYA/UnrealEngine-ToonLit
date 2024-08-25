@@ -37,28 +37,27 @@ public:
 
 	bool IsCalledFunctionPure(UEdGraphNode* Node)
 	{
-		if(UK2Node_CallFunction* CallFunctionNode = Cast<UK2Node_CallFunction>(Node))
+		if (UK2Node_CallFunction* CallFunctionNode = Cast<UK2Node_CallFunction>(Node))
 		{
 			return CallFunctionNode->bIsPureFunc;
 		}
+
 		return false;
 	}
 
+	UE_DEPRECATED(5.4, "IsCalledFunctionFinal is deprecated")
 	bool IsCalledFunctionFinal(UEdGraphNode* Node)
 	{
-		if(UK2Node_CallFunction* CallFunctionNode = Cast<UK2Node_CallFunction>(Node))
-		{
-			return CallFunctionNode->bIsFinalFunction;
-		}
 		return false;
 	}
 
 	bool IsCalledFunctionFromInterface(UEdGraphNode* Node)
 	{
-		if(UK2Node_CallFunction* CallFunctionNode = Cast<UK2Node_CallFunction>(Node))
+		if (UK2Node_CallFunction* CallFunctionNode = Cast<UK2Node_CallFunction>(Node))
 		{
 			return CallFunctionNode->bIsInterfaceCall;
 		}
+
 		return false;
 	}
 

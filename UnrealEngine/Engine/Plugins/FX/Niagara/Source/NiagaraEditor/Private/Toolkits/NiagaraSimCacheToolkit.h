@@ -42,6 +42,8 @@ private:
 	TSharedRef<SDockTab> SpawnTab_PreviewSettings(const FSpawnTabArgs& Args);
 	TSharedRef<SDockTab> SpawnTab_Overview(const FSpawnTabArgs& Args);
 
+	void ExtendToolbar();
+
 	// The sim cache being viewed.
 	TWeakObjectPtr <UNiagaraSimCache> SimCache;
 

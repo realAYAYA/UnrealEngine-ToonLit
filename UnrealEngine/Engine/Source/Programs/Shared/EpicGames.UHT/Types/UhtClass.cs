@@ -94,11 +94,6 @@ namespace EpicGames.UHT.Types
 		/// legacy generated body.  If this flag is set, generate the legacy instead of the GENERATED_BODY macros.
 		/// </summary>
 		UsesGeneratedBodyLegacy = 1 << 12,
-		
-		/// <summary>
-		/// Class has one or more auto getters/setters
-		/// </summary>
-		HasAutoGettersSetters = 1 << 13,
 	}
 
 	/// <summary>
@@ -303,8 +298,8 @@ namespace EpicGames.UHT.Types
 		/// <summary>
 		/// If needed, the #if block define for the serializer
 		/// </summary>
-		[JsonIgnore]
-		public string EnclosingDefine { get; set; } = String.Empty;
+		[JsonConverter(typeof(JsonStringEnumConverter))]
+		public UhtDefineScope SerializerDefineScope { get; set; } = UhtDefineScope.None;
 
 		/// <summary>
 		/// The class within
@@ -880,7 +875,6 @@ namespace EpicGames.UHT.Types
 									// if it's Auto, it will be generated so no need to look for a user implementation
 									if (property.PropertyExportFlags.HasAnyFlags(UhtPropertyExportFlags.GetterSpecifiedAuto))
 									{
-										ClassExportFlags |= UhtClassExportFlags.HasAutoGettersSetters;
 										property.PropertyExportFlags |= UhtPropertyExportFlags.GetterFound;
 										property.Getter = "Get" + property.SourceName;
 									}
@@ -898,7 +892,6 @@ namespace EpicGames.UHT.Types
 									// if it's Auto, it will be generated so no need to look for a user implementation
 									if (property.PropertyExportFlags.HasAnyFlags(UhtPropertyExportFlags.SetterSpecifiedAuto))
 									{
-										ClassExportFlags |= UhtClassExportFlags.HasAutoGettersSetters;
 										property.PropertyExportFlags |= UhtPropertyExportFlags.SetterFound;
 										property.Setter = "Set" + property.SourceName;
 									}

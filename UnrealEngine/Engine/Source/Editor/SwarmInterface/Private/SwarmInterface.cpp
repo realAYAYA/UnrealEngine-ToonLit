@@ -4,8 +4,6 @@
 
 #if PLATFORM_WINDOWS
 
-#include "Windows/WindowsHWrapper.h"
-
 // To avoid compile problems with C++/CLI in VS11
 #pragma warning(disable:4538)
 #pragma warning(disable:4564)

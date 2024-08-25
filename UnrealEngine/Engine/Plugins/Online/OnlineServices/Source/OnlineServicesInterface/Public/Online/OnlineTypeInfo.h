@@ -50,8 +50,10 @@ struct TOnlineTypeInfo
 		{
 			return TOnlineTypeInfo<typename T::Super>::IsA(TypeName);
 		}
-
-		return false;
+		else
+		{
+			return false;
+		}
 	}
 };
 

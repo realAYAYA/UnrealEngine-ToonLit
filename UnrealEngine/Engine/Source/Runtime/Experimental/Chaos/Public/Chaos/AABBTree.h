@@ -40,8 +40,6 @@ struct FAABBTreeCVars
 	static CHAOS_API int32 DynamicTreeLeafCapacity;
 	static CHAOS_API FAutoConsoleVariableRef CVarDynamicTreeLeafCapacity;
 
-	static CHAOS_API bool DynamicTreeSkipCheckAuntOnRotate;
-	static CHAOS_API FAutoConsoleVariableRef CVarDynamicTreeSkipCheckAuntOnRotate;
 };
 
 struct FAABBTreeDirtyGridCVars
@@ -57,6 +55,21 @@ struct FAABBTreeDirtyGridCVars
 
 	static CHAOS_API int32 DirtyElementMaxCellCapacity;
 	static CHAOS_API FAutoConsoleVariableRef CVarDirtyElementMaxCellCapacity;
+};
+
+struct FAABBTimeSliceCVars
+{
+	static CHAOS_API bool bUseTimeSliceMillisecondBudget;
+	static CHAOS_API FAutoConsoleVariableRef CVarUseTimeSliceByMillisecondBudget;
+
+	static CHAOS_API float MaxProcessingTimePerSliceSeconds;
+	static CHAOS_API FAutoConsoleVariableRef CVarMaxProcessingTimePerSlice;
+
+	static CHAOS_API int32 MinNodesChunkToProcessBetweenTimeChecks;
+	static CHAOS_API FAutoConsoleVariableRef CVarMinNodesChunkToProcessBetweenTimeChecks;
+
+	static CHAOS_API int32 MinDataChunkToProcessBetweenTimeChecks;
+	static CHAOS_API FAutoConsoleVariableRef CVarMinDataChunkToProcessBetweenTimeChecks;
 };
 
 namespace Chaos
@@ -243,7 +256,7 @@ struct TAABBTreeLeafArray : public TBoundsWrapperHelper<TPayloadType, T, bComput
 		this->ComputeBounds(Elems);
 	}
 
-	void GatherElements(TArray<TPayloadBoundsElement<TPayloadType, T>>& OutElements)
+	void GatherElements(TArray<TPayloadBoundsElement<TPayloadType, T>>& OutElements) const
 	{
 		OutElements.Append(Elems);
 	}
@@ -733,9 +746,21 @@ struct DirtyGridHashEntry
 	int32 Count;  // Number of valid entries from Index in FlattenedCellArrayOfDirtyIndices
 };
 
-template <typename TPayloadType, typename TLeafType, bool bMutable = true, typename T = FReal>
+template<typename PayloadType>
+struct TDefaultAABBTreeStorageTraits
+{
+	using PayloadToInfoType = TArrayAsMap<PayloadType, FAABBTreePayloadInfo>;
+
+	static void InitPayloadToInfo(PayloadToInfoType& PayloadToInfo)
+	{}
+};
+
+template <typename TPayloadType, typename TLeafType, bool bMutable = true, typename T = FReal, typename StorageTraits = TDefaultAABBTreeStorageTraits<TPayloadType>>
 class TAABBTree final : public ISpatialAcceleration<TPayloadType, T, 3> 
 {
+private:
+	using FElement = TPayloadBoundsElement<TPayloadType, T>;
+	using FNode = TAABBTreeNode<T>;
 public:
 	using PayloadType = TPayloadType;
 	static constexpr int D = 3;
@@ -761,6 +786,8 @@ public:
 		, bBuildOverlapCache(true)		
 	{
 		GetCVars();
+
+		StorageTraits::InitPayloadToInfo(PayloadToInfo);
 	}
 
 	virtual void Reset() override
@@ -782,6 +809,11 @@ public:
 		OverlappingCounts.Reset();
 		
 		NumProcessedThisSlice = 0;
+
+		StartSliceTimeStamp = 0.0;
+		CurrentDataElementsCopiedSinceLastCheck = 0;
+		CurrentProcessedNodesSinceChecked = 0;
+		
 		WorkStack.Reset();
 		WorkPoolFreeList.Reset();
 		WorkPool.Reset();
@@ -821,6 +853,7 @@ public:
 		if (WorkStack.Num())
 		{
 			NumProcessedThisSlice = 0;
+			StartSliceTimeStamp = FPlatformTime::Seconds();
 			SplitNode();
 		}
 	}
@@ -839,10 +872,36 @@ public:
 	{
 		if (bInUseDirtyTree)
 		{
-			DirtyElementTree = TUniquePtr<TAABBTree<TPayloadType, TLeafType, bMutable, T>>(new TAABBTree<TPayloadType, TLeafType, bMutable, T>());
+			DirtyElementTree = TUniquePtr<TAABBTree>(new TAABBTree());
 			DirtyElementTree->SetTreeToDynamic();
-		}		
+		}
+
+		StorageTraits::InitPayloadToInfo(PayloadToInfo);
+
 		GenerateTree(Particles);
+	}
+
+	// Tag dispatch enable for the below constructor to allow setting up the defaults without an initial set of particles
+	struct EmptyInit {};
+
+	TAABBTree(EmptyInit, int32 InMaxChildrenInLeaf = DefaultMaxChildrenInLeaf, int32 InMaxTreeDepth = DefaultMaxTreeDepth, T InMaxPayloadBounds = DefaultMaxPayloadBounds, int32 InMaxNumToProcess = DefaultMaxNumToProcess, bool bInDynamicTree = false, bool bInUseDirtyTree = false, bool bInBuildOverlapCache = true)
+		: ISpatialAcceleration<TPayloadType, T, 3>(StaticType)
+		, bDynamicTree(bInDynamicTree)
+		, MaxChildrenInLeaf(InMaxChildrenInLeaf)
+		, MaxTreeDepth(InMaxTreeDepth)
+		, MaxPayloadBounds(InMaxPayloadBounds)
+		, MaxNumToProcess(InMaxNumToProcess)
+		, bModifyingTreeMultiThreadingFastCheck(false)
+		, bShouldRebuild(true)
+		, bBuildOverlapCache(bInBuildOverlapCache)
+	{
+		if(bInUseDirtyTree)
+		{
+			DirtyElementTree = TUniquePtr<TAABBTree>(new TAABBTree());
+			DirtyElementTree->SetTreeToDynamic();
+		}
+
+		StorageTraits::InitPayloadToInfo(PayloadToInfo);
 	}
 
 	template <typename ParticleView>
@@ -878,14 +937,14 @@ public:
 
 	virtual ~TAABBTree() {}
 
-	void CopyFrom(const TAABBTree<TPayloadType, TLeafType, bMutable, T>& Other)
+	void CopyFrom(const TAABBTree& Other)
 	{
 		(*this) = Other;
 	}
 
 	virtual TUniquePtr<ISpatialAcceleration<TPayloadType, T, 3>> Copy() const override
 	{
-		return TUniquePtr<ISpatialAcceleration<TPayloadType, T, 3>>(new TAABBTree<TPayloadType, TLeafType, bMutable, T>(*this));
+		return TUniquePtr<ISpatialAcceleration<TPayloadType, T, 3>>(new TAABBTree(*this));
 	}
 
 	virtual void Raycast(const FVec3& Start, const FVec3& Dir, const FReal Length, ISpatialVisitor<TPayloadType, FReal>& Visitor) const override
@@ -1149,11 +1208,18 @@ public:
 		return DirtyGridOverflowIdx;
 	}
 
-	// Expensive function: Don't call unless debugging
-	void DynamicTreeDebugStats()
+	struct FElementsCollection
 	{
 		TArray<FElement> AllElements;
-		for (int LeafIndex = 0; LeafIndex < Leaves.Num(); LeafIndex++)
+		int32 DepthTotal;
+		int32 MaxDepth;
+		int32 DirtyElementCount;
+	};
+
+	FElementsCollection DebugGetElementsCollection() const 
+	{
+		TArray<FElement> AllElements;
+		for(int LeafIndex = 0; LeafIndex < Leaves.Num(); LeafIndex++)
 		{
 			const TLeafType& Leaf = Leaves[LeafIndex];
 			Leaf.GatherElements(AllElements);
@@ -1161,33 +1227,84 @@ public:
 
 		int32 MaxDepth = 0;
 		int32 DepthTotal = 0;
-		for (const FElement& Element : AllElements)
+		for(const FElement& Element : AllElements)
 		{
-			FAABBTreePayloadInfo* PayloadInfo = PayloadToInfo.Find(Element.Payload);
+			const FAABBTreePayloadInfo* PayloadInfo = PayloadToInfo.Find(Element.Payload);
+
+			if(!PayloadInfo)
+			{
+				continue;
+			}
+
 			int32 Depth = 0;
 			int32 Node = PayloadInfo->NodeIdx;
-			check(Node != INDEX_NONE);
-			while (Node != INDEX_NONE)
+
+			while(Node != INDEX_NONE)
 			{
 				Node = Nodes[Node].ParentNode;
-				if (Node != INDEX_NONE)
+				if(Node != INDEX_NONE)
 				{
 					Depth++;
 				}
 			}
-			if (Depth > MaxDepth)
+			if(Depth > MaxDepth)
 			{
 				MaxDepth = Depth;
 			}
 			DepthTotal += Depth;
 		}
+
+		return { AllElements, DepthTotal, MaxDepth, DirtyElements.Num() };
+	}
+
+	// Expensive function: Don't call unless debugging
+	void DynamicTreeDebugStats() const
+	{
+		const FElementsCollection ElemData = DebugGetElementsCollection();
+
 #if !WITH_EDITOR
-		CSV_CUSTOM_STAT(ChaosPhysicsTimers, MaximumTreeDepth, MaxDepth, ECsvCustomStatOp::Max);
-		CSV_CUSTOM_STAT(ChaosPhysicsTimers, AvgTreeDepth, DepthTotal / AllElements.Num(), ECsvCustomStatOp::Max);
-		CSV_CUSTOM_STAT(ChaosPhysicsTimers, Dirty,DirtyElements.Num(), ECsvCustomStatOp::Max);
+		CSV_CUSTOM_STAT(ChaosPhysicsTimers, MaximumTreeDepth, ElemData.MaxDepth, ECsvCustomStatOp::Max);
+		CSV_CUSTOM_STAT(ChaosPhysicsTimers, AvgTreeDepth, ElemData.DepthTotal / ElemData.AllElements.Num(), ECsvCustomStatOp::Max);
+		CSV_CUSTOM_STAT(ChaosPhysicsTimers, Dirty, ElemData.DirtyElementCount, ECsvCustomStatOp::Max);
 #endif
 
 	}
+
+#if !UE_BUILD_SHIPPING
+	void DumpStats() const override
+	{
+		if(GLog)
+		{
+			DumpStatsTo(*GLog);
+		}
+	}
+
+	void DumpStatsTo(FOutputDevice& Ar) const override
+	{
+		const FElementsCollection ElemData = DebugGetElementsCollection();
+
+		const int32 ElementsNum = ElemData.AllElements.Num();
+		const int32 PayloadMapNum = PayloadToInfo.Num();
+		const int32 PayloadMapCapacity = PayloadToInfo.Capacity();
+		const uint64 PayloadAllocsize = (uint64)PayloadToInfo.GetAllocatedSize();
+		const float AvgDepth = ElementsNum > 0 ? (float)ElemData.DepthTotal / (float)ElementsNum : 0.0f;
+
+		Ar.Logf(ELogVerbosity::Log, TEXT("\t\tContains %d elements"), ElementsNum);
+		Ar.Logf(ELogVerbosity::Log, TEXT("\t\tMax depth is %d"), ElemData.MaxDepth);
+		Ar.Logf(ELogVerbosity::Log, TEXT("\t\tAvg depth is %.3f"), AvgDepth);
+		Ar.Logf(ELogVerbosity::Log, TEXT("\t\tDirty element count is %d"), ElemData.DirtyElementCount);
+		Ar.Logf(ELogVerbosity::Log, TEXT("\t\tPayload container size is %d elements"), PayloadMapNum);
+		Ar.Logf(ELogVerbosity::Log, TEXT("\t\tPayload container capacity is %d elements"), PayloadMapCapacity);
+		Ar.Logf(ELogVerbosity::Log, TEXT("\t\tAllocated size of payload container is %u bytes (%u per tree element)"), PayloadAllocsize, ElementsNum > 0 ? PayloadAllocsize / (uint32)ElementsNum : 0);
+		
+		if(DirtyElementTree)
+		{
+			Ar.Logf(ELogVerbosity::Log, TEXT(""));
+			Ar.Logf(ELogVerbosity::Log, TEXT("\t\tDirty Tree:"));
+			DirtyElementTree->DumpStatsTo(Ar);
+		}
+	}
+#endif
 
 	int32 AllocateInternalNode()
 	{
@@ -1305,10 +1422,6 @@ public:
 	{
 		return(WhichChildAmI(NodeIdx) ^ 1);
 	}
-
-private:
-	using FElement = TPayloadBoundsElement<TPayloadType, T>;
-	using FNode = TAABBTreeNode<T>;
 
 public:
 	int32 FindBestSibling(const TAABB<T, 3>& InNewBounds, bool& bOutAddToLeaf)
@@ -1435,12 +1548,10 @@ public:
 			}
 		}
 
-		// Speculative fix for FORT-562490 introduced past hardlock, change protected with cvar.
-		const bool bValidAunt = FAABBTreeCVars::DynamicTreeSkipCheckAuntOnRotate || (BestAuntToSwap != INDEX_NONE);
-
 		// Now do the rotation if required
-		if (BestGrandChildToSwap != INDEX_NONE && bValidAunt)
+		if (BestGrandChildToSwap != INDEX_NONE)
 		{
+			check(BestAuntToSwap != INDEX_NONE);
 			if (debugAssert)
 			{
 				check(false);
@@ -1659,7 +1770,7 @@ public:
 		DeAllocateLeafNode(LeafNodeIdx);
 	}
 
-	virtual bool RemoveElement(const TPayloadType& Payload)
+	virtual bool RemoveElement(const TPayloadType& Payload) override
 	{
 		if (UNLIKELY(!ensure(bModifyingTreeMultiThreadingFastCheck == false)))
 		{
@@ -1746,10 +1857,14 @@ public:
 #if CHAOS_DEBUG_NAME			
 			if constexpr (std::is_same_v<TPayloadType, FAccelerationStructureHandle>)
 			{
-				if (IsInPhysicsThreadContext())
+				if (const FGeometryParticleHandle* Particle = Payload.GetGeometryParticleHandle_PhysicsThread())
 				{
-					FString DebugStr = *(Payload.GetGeometryParticleHandle_PhysicsThread()->DebugName());
-					UE_LOG(LogChaos, Warning, TEXT("AABBTree encountered invalid bounds input : %s"), *DebugStr);
+					const TSharedPtr<FString, ESPMode::ThreadSafe>& DebugName = Particle->DebugName();
+					if (IsInPhysicsThreadContext())
+					{
+						FString DebugStr = DebugName ? *DebugName : TEXT("No Name");
+						UE_LOG(LogChaos, Warning, TEXT("AABBTree encountered invalid bounds input : %s"), *DebugStr);
+					}
 				}
 			}
 #endif
@@ -2015,7 +2130,7 @@ public:
 	{
 		check(this != &InFrom);
 		check(InFrom.GetType() == ESpatialAcceleration::AABBTree);
-		const TAABBTree<TPayloadType, TLeafType, bMutable, T>& From = static_cast<const TAABBTree<TPayloadType, TLeafType, bMutable, T>&>(InFrom);
+		const TAABBTree& From = static_cast<const TAABBTree&>(InFrom);
 
 		Reset();
 
@@ -2034,6 +2149,9 @@ public:
 		MaxPayloadBounds = From.MaxPayloadBounds;
 		MaxNumToProcess = From.MaxNumToProcess;
 		NumProcessedThisSlice = From.NumProcessedThisSlice;
+
+		StartSliceTimeStamp = From.StartSliceTimeStamp;
+
 		bShouldRebuild = From.bShouldRebuild;
 
 		RootNode = From.RootNode;
@@ -2061,7 +2179,7 @@ public:
 		{
 			if (!DirtyElementTree)
 			{
-				DirtyElementTree = TUniquePtr<TAABBTree<TPayloadType, TLeafType, bMutable, T>>(new TAABBTree<TPayloadType, TLeafType, bMutable, T>());
+				DirtyElementTree = TUniquePtr<TAABBTree>(new TAABBTree());
 			}
 			DirtyElementTree->PrepareCopyTimeSliced(*(From.DirtyElementTree));
 		}
@@ -2070,58 +2188,107 @@ public:
 			DirtyElementTree = nullptr;
 		}
 	}
-	
-	virtual void ProgressCopyTimeSliced(const  ISpatialAcceleration<TPayloadType, T, 3>& InFrom, int MaximumBytesToCopy) override
+
+	virtual void ProgressCopyTimeSliced(const ISpatialAcceleration<TPayloadType, T, 3>& InFrom, int MaximumBytesToCopy) override
 	{
 		check(this != &InFrom);
 		check(InFrom.GetType() == ESpatialAcceleration::AABBTree);
-		const TAABBTree<TPayloadType, TLeafType, bMutable, T>& From = static_cast<const TAABBTree<TPayloadType, TLeafType, bMutable, T>&>(InFrom);
+		const TAABBTree& From = static_cast<const TAABBTree&>(InFrom);
 
 		int32 SizeToCopyLeft = MaximumBytesToCopy;
 		check(From.CellHashToFlatArray.Num() == 0); // Partial Copy of TMAPs not implemented, and this should be empty for our current use cases
 
-		if (!ContinueTimeSliceCopy(From.Nodes, Nodes, SizeToCopyLeft))
+		auto CanContinueCopyingDataCallback = [this](int32 MaxSizeToCopy, int32 CurrentCopiedSize)
+		{
+			bool bCanContinueCopy = true;
+			const bool bForceCopyAll = MaxSizeToCopy == -1;
+			if (bForceCopyAll)
+			{
+				return bCanContinueCopy;
+			}
+
+			if (FAABBTimeSliceCVars::bUseTimeSliceMillisecondBudget)
+			{
+				// Checking for platform time every time is expensive as its cost adds up fast, so only do it between a configured amount of elements.
+				// This means we might overshoot the budget, but on the other hand we will keep most of the time doing actual work.
+				CurrentDataElementsCopiedSinceLastCheck++;
+				if (CurrentDataElementsCopiedSinceLastCheck > FAABBTimeSliceCVars::MinDataChunkToProcessBetweenTimeChecks)
+				{
+					CurrentDataElementsCopiedSinceLastCheck = 0;
+					return bCanContinueCopy;
+				}
+
+				const double ElapseTime = FPlatformTime::Seconds() - StartSliceTimeStamp;
+
+				if (!FMath::IsNearlyZero(StartSliceTimeStamp) && ElapseTime > FAABBTimeSliceCVars::MaxProcessingTimePerSliceSeconds)
+				{
+					bCanContinueCopy = false;
+				}
+			}
+			else
+			{
+				bCanContinueCopy = MaxSizeToCopy < 0 || CurrentCopiedSize < MaxSizeToCopy;
+			}
+
+			return bCanContinueCopy;
+		};
+
+		constexpr int32 SizeCopiedSoFar = 0;
+		if (!CanContinueCopyingDataCallback(MaximumBytesToCopy, SizeCopiedSoFar))
+		{
+			// For data copy, the time stamp is set from the setup phase, and it is copied from the tree we are copying from.
+			// Therefore if we reach this point with no time available left, just reset it so the next frame can start counting from scratch 
+			StartSliceTimeStamp = 0.0;
+			return;
+		}
+
+		if (FMath::IsNearlyZero(StartSliceTimeStamp))
+		{
+			StartSliceTimeStamp = FPlatformTime::Seconds();
+		}
+
+		if (!ContinueTimeSliceCopy(From.Nodes, Nodes, SizeToCopyLeft, CanContinueCopyingDataCallback))
 		{
 			return;
 		}
-		if (!ContinueTimeSliceCopy(From.Leaves, Leaves, SizeToCopyLeft))
+		if (!ContinueTimeSliceCopy(From.Leaves, Leaves, SizeToCopyLeft, CanContinueCopyingDataCallback))
 		{
 			return;
 		}
-		if (!ContinueTimeSliceCopy(From.DirtyElements, DirtyElements, SizeToCopyLeft))
+		if (!ContinueTimeSliceCopy(From.DirtyElements, DirtyElements, SizeToCopyLeft, CanContinueCopyingDataCallback))
 		{
 			return;
 		}
 
-		if (!ContinueTimeSliceCopy(From.FlattenedCellArrayOfDirtyIndices, FlattenedCellArrayOfDirtyIndices, SizeToCopyLeft))
+		if (!ContinueTimeSliceCopy(From.FlattenedCellArrayOfDirtyIndices, FlattenedCellArrayOfDirtyIndices, SizeToCopyLeft, CanContinueCopyingDataCallback))
 		{
 			return;
 		}
-		if (!ContinueTimeSliceCopy(From.DirtyElementsGridOverflow, DirtyElementsGridOverflow, SizeToCopyLeft))
+		if (!ContinueTimeSliceCopy(From.DirtyElementsGridOverflow, DirtyElementsGridOverflow, SizeToCopyLeft, CanContinueCopyingDataCallback))
 		{
 			return;
 		}
-		if (!ContinueTimeSliceCopy(From.GlobalPayloads, GlobalPayloads, SizeToCopyLeft))
+		if (!ContinueTimeSliceCopy(From.GlobalPayloads, GlobalPayloads, SizeToCopyLeft, CanContinueCopyingDataCallback))
 		{
 			return;
 		}
-		if (!ContinueTimeSliceCopy(From.PayloadToInfo, PayloadToInfo, SizeToCopyLeft))
+		if (!ContinueTimeSliceCopy(From.PayloadToInfo, PayloadToInfo, SizeToCopyLeft, CanContinueCopyingDataCallback))
 		{
 			return;
 		}
-		if (!ContinueTimeSliceCopy(From.OverlappingLeaves, OverlappingLeaves, SizeToCopyLeft))
+		if (!ContinueTimeSliceCopy(From.OverlappingLeaves, OverlappingLeaves, SizeToCopyLeft, CanContinueCopyingDataCallback))
 		{
 			return;
 		}
-		if (!ContinueTimeSliceCopy(From.OverlappingOffsets, OverlappingOffsets, SizeToCopyLeft))
+		if (!ContinueTimeSliceCopy(From.OverlappingOffsets, OverlappingOffsets, SizeToCopyLeft, CanContinueCopyingDataCallback))
 		{
 			return;
 		}
-		if (!ContinueTimeSliceCopy(From.OverlappingCounts, OverlappingCounts, SizeToCopyLeft))
+		if (!ContinueTimeSliceCopy(From.OverlappingCounts, OverlappingCounts, SizeToCopyLeft, CanContinueCopyingDataCallback))
 		{
 			return;
 		}
-		if (!ContinueTimeSliceCopy(From.OverlappingPairs, OverlappingPairs, SizeToCopyLeft))
+		if (!ContinueTimeSliceCopy(From.OverlappingPairs, OverlappingPairs, SizeToCopyLeft, CanContinueCopyingDataCallback))
 		{
 			return;
 		}
@@ -2244,7 +2411,7 @@ public:
 		int32 NodeIndex = INDEX_NONE;
 		while (NodeStack.Num())
 		{
-			NodeIndex = NodeStack.Pop(false);
+			NodeIndex = NodeStack.Pop(EAllowShrinking::No);
 			const FNode& Node = Nodes[NodeIndex];
 			
 			// If a leaf directly test the bounds
@@ -2382,8 +2549,8 @@ public:
 	{
 		if(!bDynamicTree || (bDynamicTree && RootNode == INDEX_NONE)) return;
 		
-		OverlappingOffsets.SetNum(Leaves.Num()+1, false);
-		OverlappingCounts.SetNum(Leaves.Num(), false);
+		OverlappingOffsets.SetNum(Leaves.Num()+1, EAllowShrinking::No);
+		OverlappingCounts.SetNum(Leaves.Num(), EAllowShrinking::No);
 		OverlappingPairs.Reset();
 		
 		if(bDirtyFilter)
@@ -2408,7 +2575,7 @@ public:
 			OverlappingOffsets[LeafIndex+1] = OverlappingOffsets[LeafIndex] + OverlappingCounts[LeafIndex];
 			OverlappingCounts[LeafIndex] = OverlappingOffsets[LeafIndex];
 		}
-		OverlappingLeaves.SetNum(OverlappingOffsets.Last(), false);
+		OverlappingLeaves.SetNum(OverlappingOffsets.Last(), EAllowShrinking::No);
 		for(auto& OverlappingPair : OverlappingPairs)
 		{
 			if(OverlappingPair[0] != OverlappingPair[1])
@@ -2437,7 +2604,7 @@ public:
 	/** Sequential loop over the leaves to fill the overlapping pairs */
 	void ComputeOverlappingCacheFromLeaf()
 	{
-		OverlappingOffsets.SetNum(Leaves.Num()+1, false);
+		OverlappingOffsets.SetNum(Leaves.Num()+1, EAllowShrinking::No);
 		OverlappingLeaves.Reset();
 		
 		if(!bDynamicTree || (bDynamicTree && RootNode == INDEX_NONE)) return;
@@ -2523,7 +2690,7 @@ private:
 			Leaf.GatherElements(AllElements);
 		}
 
-		TAABBTree<TPayloadType,TLeafType,bMutable, T> NewTree(AllElements);
+		TAABBTree NewTree(AllElements);
 		*this = NewTree;
 		bShouldRebuild = true; // No changes since last time tree was built
 	}
@@ -2809,7 +2976,7 @@ private:
 			FReal TOI;
 		};
 
-		// Caching is for now only available for dyanmic tree
+		// Caching is for now only available for dynanmic tree
 		if (bDynamicTree && !OverlappingLeaves.IsEmpty())
 		{
 			// For overlap query and dynamic tree we are using the cached overlapping leaves
@@ -2820,21 +2987,20 @@ private:
 			}
 		}
 		
-		constexpr int32 MaxNodeStackNum = 255;
-		check(MaxTreeDepth + 2 <= MaxNodeStackNum);
-		FNodeQueueEntry NodeStack[MaxNodeStackNum];
-		int32 NodeStackNum = 0;
+		constexpr int32 MaxNodeStackNumOnSystemStack = 255;
+		TArray<FNodeQueueEntry, TSizedInlineAllocator<MaxNodeStackNumOnSystemStack,32> > NodeStack;
+		
 		if (bDynamicTree)
 		{
 
 			if (RootNode != INDEX_NONE)
 			{
-				NodeStack[NodeStackNum++] = FNodeQueueEntry{ RootNode, 0 };
+				NodeStack.Emplace(FNodeQueueEntry{RootNode, 0});
 			}
 		}
 		else if (Nodes.Num())
 		{
-			NodeStack[NodeStackNum++] = FNodeQueueEntry{ 0, 0 };
+			NodeStack.Emplace(FNodeQueueEntry{ 0, 0 });
 		}
 
 // Slow debug code
@@ -2862,7 +3028,7 @@ private:
 			LengthSimd = VectorSetDouble1(CurData.CurrentLength);
 		}
 
-		while (NodeStackNum)
+		while (NodeStack.Num())
 		{
 			PHYSICS_CSV_SCOPED_VERY_EXPENSIVE(PhysicsVerbose, QueryImp_NodeTraverse);
 
@@ -2872,9 +3038,8 @@ private:
 //				CSV_CUSTOM_STAT(ChaosPhysicsTimers, AABBCheckCount, 1, ECsvCustomStatOp::Accumulate);
 //			}
 //#endif
-
-			const FNodeQueueEntry NodeEntry = NodeStack[--NodeStackNum];
-			if (Query != EAABBQueryType::Overlap)
+			const FNodeQueueEntry NodeEntry = NodeStack.Pop(EAllowShrinking::No);
+			if constexpr (Query != EAABBQueryType::Overlap)
 			{
 				if (NodeEntry.TOI > CurData.CurrentLength)
 				{
@@ -2887,14 +3052,14 @@ private:
 			{
 				PHYSICS_CSV_SCOPED_VERY_EXPENSIVE(PhysicsVerbose, NodeTraverse_Leaf);
 				const auto& Leaf = Leaves[Node.ChildrenNodes[0]];
-				if (Query == EAABBQueryType::Overlap)
+				if constexpr (Query == EAABBQueryType::Overlap)
 				{
 					if (Leaf.OverlapFast(QueryBounds, Visitor) == false)
 					{
 						return false;
 					}
 				}
-				else if (Query == EAABBQueryType::Sweep)
+				else if constexpr (Query == EAABBQueryType::Sweep)
 				{
 					if (Leaf.SweepFast(Start, CurData, QueryHalfExtents, Visitor, Dir, InvDir, bParallel) == false)
 					{
@@ -2938,22 +3103,22 @@ private:
 					{
 						if (TOI1 > TOI0)
 						{
-							NodeStack[NodeStackNum++] = FNodeQueueEntry{ Node.ChildrenNodes[1], TOI1 };
-							NodeStack[NodeStackNum++] = FNodeQueueEntry{ Node.ChildrenNodes[0], TOI0 };
+							NodeStack.Emplace(FNodeQueueEntry{Node.ChildrenNodes[1], TOI1});
+							NodeStack.Emplace(FNodeQueueEntry{Node.ChildrenNodes[0], TOI0});
 						}
 						else
 						{
-							NodeStack[NodeStackNum++] = FNodeQueueEntry{ Node.ChildrenNodes[0], TOI0 };
-							NodeStack[NodeStackNum++] = FNodeQueueEntry{ Node.ChildrenNodes[1], TOI1 };
+							NodeStack.Emplace(FNodeQueueEntry{Node.ChildrenNodes[0], TOI0});
+							NodeStack.Emplace(FNodeQueueEntry{ Node.ChildrenNodes[1], TOI1 });
 						}
 					}
 					else if (bIntersect0)
 					{
-						NodeStack[NodeStackNum++] = FNodeQueueEntry{ Node.ChildrenNodes[0], TOI0 };
+						NodeStack.Emplace(FNodeQueueEntry{Node.ChildrenNodes[0], TOI0});
 					}
 					else if (bIntersect1)
 					{
-						NodeStack[NodeStackNum++] = FNodeQueueEntry{ Node.ChildrenNodes[1], TOI1 };
+						NodeStack.Emplace(FNodeQueueEntry{ Node.ChildrenNodes[1], TOI1 });
 					}
 				}
 				else
@@ -2962,7 +3127,7 @@ private:
 					{
 						if (TAABBTreeIntersectionHelper<TQueryFastData, Query>::Intersects(Start, CurData, TOI, FAABB3(AABB.Min(), AABB.Max()), QueryBounds, QueryHalfExtents, Dir, InvDir, bParallel))
 						{
-							NodeStack[NodeStackNum++] = FNodeQueueEntry{ Node.ChildrenNodes[Idx], TOI };
+							NodeStack.Emplace(FNodeQueueEntry{ Node.ChildrenNodes[Idx], TOI });
 						}
 						++Idx;
 					}
@@ -3037,6 +3202,9 @@ private:
 		TreeExpensiveStats.Reset();
 		PayloadToInfo.Reset();
 		NumProcessedThisSlice = 0;
+
+		StartSliceTimeStamp = FPlatformTime::Seconds();
+
 		GetCVars();  // Safe to copy CVARS here
 
 		if (bDynamicTree)
@@ -3206,12 +3374,79 @@ private:
 		FSplitInfo SplitInfos[2];
 	};
 
-	void FindBestBounds(const int32 StartElemIdx, const int32 LastElem, FWorkSnapshot& CurrentSnapshot, int32 MaxAxis, const TVec3<T>& SplitCenter)
+	int32 GetLastIndexToProcess(int32 CurrentIndex)
+	{
+		int32 LastNodeToProcessIndex = 0;
+		if (FAABBTimeSliceCVars::bUseTimeSliceMillisecondBudget)
+		{
+			// When TimeSlicing by a millisecond budget, try to process all nodes.
+			// We will stop if we ran out of time and continue on the next frame
+			LastNodeToProcessIndex = WorkPool[CurrentIndex].Elems.Num();
+		}
+		else
+		{
+			const bool WeAreTimeslicing = (MaxNumToProcess > 0);
+			const int32 NumWeCanProcess = MaxNumToProcess - NumProcessedThisSlice;
+			LastNodeToProcessIndex = WeAreTimeslicing ? FMath::Min(WorkPool[CurrentIndex].BestBoundsCurIdx + NumWeCanProcess, WorkPool[CurrentIndex].Elems.Num()) : WorkPool[CurrentIndex].Elems.Num();
+		}
+
+		return LastNodeToProcessIndex;
+	}
+
+	bool CanContinueProcessingNodes(bool bOnlyUseTimeStampCheck = true)
+	{
+		bool bCanDoWork = true;
+
+		if (FAABBTimeSliceCVars::bUseTimeSliceMillisecondBudget)
+		{
+			bool bCheckIfHasAvailableTime = false;
+
+			if (bOnlyUseTimeStampCheck)
+			{
+				bCheckIfHasAvailableTime = true;
+			}
+			else
+			{
+				// Checking for platform time every time is expensive, so only do it between a configured amount of elements.
+				// This means we might overshoot the budget, but on the other hand we will keep most of the time doing actual work.
+				CurrentProcessedNodesSinceChecked++;
+				if (CurrentProcessedNodesSinceChecked > FAABBTimeSliceCVars::MinNodesChunkToProcessBetweenTimeChecks)
+				{
+					CurrentProcessedNodesSinceChecked = 0;
+					bCheckIfHasAvailableTime = true;
+				}	
+			}
+	
+			if (bCheckIfHasAvailableTime)
+			{
+				const double ElapsedTime = FPlatformTime::Seconds() - StartSliceTimeStamp;
+				const bool WeAreTimeslicing = FAABBTimeSliceCVars::MaxProcessingTimePerSliceSeconds > 0 && MaxNumToProcess > 0;	
+				if (WeAreTimeslicing && !FMath::IsNearlyZero(StartSliceTimeStamp) && ElapsedTime > FAABBTimeSliceCVars::MaxProcessingTimePerSliceSeconds)
+				{
+					// done enough
+					bCanDoWork = false; 
+				}
+			}
+		}
+		else
+		{
+			const bool WeAreTimeslicing = (MaxNumToProcess > 0);
+			if (WeAreTimeslicing && (NumProcessedThisSlice >= MaxNumToProcess))
+			{
+				// done enough
+				bCanDoWork = false;  
+			}
+		}
+
+		return bCanDoWork;
+	}
+
+	void FindBestBounds(const int32 StartElemIdx, int32& InOutLastElem, FWorkSnapshot& CurrentSnapshot, int32 MaxAxis, const TVec3<T>& SplitCenter)
 	{
 		const T SplitVal = SplitCenter[MaxAxis];
 
 		// add all elements to one of the two split infos at this level - root level [ not taking into account the max number allowed or anything
-		for(int32 ElemIdx = StartElemIdx; ElemIdx < LastElem; ++ElemIdx)
+		for (int32 ElemIdx = StartElemIdx; ElemIdx < InOutLastElem; ++ElemIdx)
 		{
 			const FElement& Elem = CurrentSnapshot.Elems[ElemIdx];
 			int32 BoxIdx = 0;
@@ -3241,15 +3476,22 @@ private:
 			TVec3<T> CenterDelta = ElemCenter - WorkSnapshot.AverageCenter;
 			WorkSnapshot.AverageCenter += CenterDelta / NumElems;
 			WorkSnapshot.ScaledCenterVariance += (ElemCenter - WorkSnapshot.AverageCenter) * CenterDelta;
+
+			constexpr bool bOnlyUSeTimeStampCheck = false;
+			if (!CanContinueProcessingNodes(bOnlyUSeTimeStampCheck))
+			{
+				// If we ended before processing all the requested nodes, update the out last element index variable
+				const bool bIsProcessingLastRequestedIndex = ElemIdx == InOutLastElem - 1;
+				InOutLastElem = bIsProcessingLastRequestedIndex ? InOutLastElem : ElemIdx + 1;
+				break; // done enough
+			}
 		}
 
-		NumProcessedThisSlice += LastElem - StartElemIdx;
+		NumProcessedThisSlice += InOutLastElem - StartElemIdx;
 	}
 	
 	void SplitNode()
-	{
-		const bool WeAreTimeslicing = (MaxNumToProcess > 0);
-
+	{		
 		while (WorkStack.Num())
 		{
 			//NOTE: remember to be careful with this since it's a pointer on a tarray
@@ -3258,7 +3500,7 @@ private:
 			if (WorkPool[CurIdx].TimeslicePhase == eTimeSlicePhase::ProcessingChildren)
 			{
 				//If we got to this it must be that my children are done, so I'm done as well
-				WorkStack.Pop(/*bResize=*/false);
+				WorkStack.Pop(EAllowShrinking::No);
 				FreeWorkSnapshot(CurIdx);
 				continue;
 			}
@@ -3271,7 +3513,7 @@ private:
 				Nodes.AddDefaulted((1 + NewNodeIdx) - Nodes.Num());
 			}
 
-			if (WeAreTimeslicing && (NumProcessedThisSlice >= MaxNumToProcess))
+			if (!CanContinueProcessingNodes())
 			{
 				return; // done enough
 			}
@@ -3301,7 +3543,7 @@ private:
 			{
 
 				MakeLeaf();
-				WorkStack.Pop(/*bResize=*/false);	//finished with this node
+				WorkStack.Pop(EAllowShrinking::No);	//finished with this node
 				FreeWorkSnapshot(CurIdx);
 				continue;
 			}
@@ -3334,12 +3576,17 @@ private:
 					WorkPool[SecondChildIdx].AverageCenter = TVec3<T>(0);
 					WorkPool[SecondChildIdx].ScaledCenterVariance = TVec3<T>(0);
 				}
+				
+				if (!CanContinueProcessingNodes())
+				{
+					// done enough
+					return; 
+				}
 			}
 
 			if (WorkPool[CurIdx].TimeslicePhase == eTimeSlicePhase::DuringFindBestBounds)
 			{
-				const int32 NumWeCanProcess = MaxNumToProcess - NumProcessedThisSlice;
-				const int32 LastIdxToProcess = WeAreTimeslicing ? FMath::Min(WorkPool[CurIdx].BestBoundsCurIdx + NumWeCanProcess, WorkPool[CurIdx].Elems.Num()) : WorkPool[CurIdx].Elems.Num();
+				int32 LastIdxToProcess = GetLastIndexToProcess(CurIdx);
 
 				// Determine the axis to split the AABB on based on the SplitOnVarianceAxis console variable. If it is not 1, simply use the largest axis
 				// of the work snapshot bounds; otherwise, select the axis with the greatest center variance. Note that the variance times the number of
@@ -3355,13 +3602,13 @@ private:
 
 				FindBestBounds(WorkPool[CurIdx].BestBoundsCurIdx, LastIdxToProcess, WorkPool[CurIdx], MaxAxis, Center);
 				WorkPool[CurIdx].BestBoundsCurIdx = LastIdxToProcess;
-
-				if (WeAreTimeslicing && (NumProcessedThisSlice >= MaxNumToProcess))
+				
+				if (!CanContinueProcessingNodes())
 				{
-					return; // done enough
+					// done enough
+					return; 
 				}
 			}
-
 
 			const int32 FirstChildIdx = WorkPool[CurIdx].SplitInfos[0].WorkSnapshotIdx;
 			const int32 SecondChildIdx = WorkPool[CurIdx].SplitInfos[1].WorkSnapshotIdx;
@@ -3394,14 +3641,14 @@ private:
 				// create the actual node so that no one else can use our children node indices
 				const int32 HighestNodeIdx = Nodes[NewNodeIdx].ChildrenNodes[1];
 				Nodes.AddDefaulted((1 + HighestNodeIdx) - Nodes.Num());
-				
+			
 				WorkPool[CurIdx].TimeslicePhase = eTimeSlicePhase::ProcessingChildren;
 			}
 			else
 			{
 				//couldn't split so just make a leaf - THIS COULD CONTAIN MORE THAN MaxChildrenInLeaf!!!
 				MakeLeaf();
-				WorkStack.Pop(/*bResize=*/false);	//we are done with this node
+				WorkStack.Pop(EAllowShrinking::No);	//we are done with this node
 				FreeWorkSnapshot(CurIdx);
 			}
 		}
@@ -3467,6 +3714,10 @@ private:
 		{
 			ContainerTo.AddFrom(ContainerFrom, Index);
 		}
+		else if constexpr(std::is_same_v<ContainerType, TSQMap<TPayloadType, FAABBTreePayloadInfo>>)
+		{
+			ContainerTo.AddFrom(ContainerFrom, Index);
+		}
 		else
 		{
 			ContainerTo.Add(ContainerFrom[Index]);
@@ -3490,12 +3741,12 @@ private:
 		}
 	}
 
-	template<typename ContainerType>
-	static bool ContinueTimeSliceCopy(const ContainerType& ContainerFrom, ContainerType& ContainerTo, int32& InOutMaxSize)
+	template<typename ContainerType, typename TCanContinueCallback>
+	static bool ContinueTimeSliceCopy(const ContainerType& ContainerFrom, ContainerType& ContainerTo, int32& InOutMaxSize, const TCanContinueCallback& CanContinueCallback)
 	{
 		int32 SizeCopied = 0;
 
-		for (int32 Index = ContainerTo.Num(); Index < ContainerFrom.Num() && (InOutMaxSize < 0 || SizeCopied < InOutMaxSize); Index++)
+		for (int32 Index = ContainerTo.Num(); Index < ContainerFrom.Num() && CanContinueCallback(InOutMaxSize, SizeCopied); Index++)
 		{
 			AddToContainerHelper(ContainerFrom, ContainerTo, Index);
 			SizeCopied += ContainerElementSizeHelper(ContainerFrom, Index);
@@ -3538,7 +3789,7 @@ private:
 #endif
 
 
-	TAABBTree(const TAABBTree<TPayloadType, TLeafType, bMutable, T>& Other)
+	TAABBTree(const TAABBTree& Other)
 		: ISpatialAcceleration<TPayloadType, T, 3>(StaticType)
 		, Nodes(Other.Nodes)
 		, Leaves(Other.Leaves)
@@ -3565,6 +3816,7 @@ private:
 		, MaxPayloadBounds(Other.MaxPayloadBounds)
 		, MaxNumToProcess(Other.MaxNumToProcess)
 		, NumProcessedThisSlice(Other.NumProcessedThisSlice)
+		, StartSliceTimeStamp(Other.StartSliceTimeStamp)
 		, bModifyingTreeMultiThreadingFastCheck(Other.bModifyingTreeMultiThreadingFastCheck)
 		, bShouldRebuild(Other.bShouldRebuild)
 		, bBuildOverlapCache(Other.bBuildOverlapCache)		
@@ -3577,17 +3829,17 @@ private:
 		PriorityQ.Reserve(32);
 		if (Other.DirtyElementTree)
 		{
-			DirtyElementTree = TUniquePtr<TAABBTree<TPayloadType, TLeafType, bMutable, T>>(new TAABBTree<TPayloadType, TLeafType, bMutable, T>(*(Other.DirtyElementTree)));
+			DirtyElementTree = TUniquePtr<TAABBTree>(new TAABBTree(*(Other.DirtyElementTree)));
 		}
 	}
 
 	virtual void DeepAssign(const ISpatialAcceleration<TPayloadType, T, 3>& Other) override
 	{
 		check(Other.GetType() == ESpatialAcceleration::AABBTree);
-		*this = static_cast<const TAABBTree<TPayloadType, TLeafType, bMutable, T>&>(Other);
+		*this = static_cast<const TAABBTree&>(Other);
 	}
 
-	TAABBTree<TPayloadType,TLeafType, bMutable, T>& operator=(const TAABBTree<TPayloadType,TLeafType,bMutable, T>& Rhs)
+	TAABBTree& operator=(const TAABBTree& Rhs)
 	{
 		ISpatialAcceleration<TPayloadType, T, 3>::DeepAssign(Rhs);
 		ensure(Rhs.WorkStack.Num() == 0);
@@ -3625,6 +3877,7 @@ private:
 			MaxPayloadBounds = Rhs.MaxPayloadBounds;
 			MaxNumToProcess = Rhs.MaxNumToProcess;
 			NumProcessedThisSlice = Rhs.NumProcessedThisSlice;
+			StartSliceTimeStamp = Rhs.StartSliceTimeStamp;
 			bModifyingTreeMultiThreadingFastCheck = Rhs.bModifyingTreeMultiThreadingFastCheck;
 			bShouldRebuild = Rhs.bShouldRebuild;
 			bBuildOverlapCache = Rhs.bBuildOverlapCache;			
@@ -3632,7 +3885,7 @@ private:
 			{
 				if (!DirtyElementTree)
 				{
-					DirtyElementTree = TUniquePtr<TAABBTree<TPayloadType, TLeafType, bMutable, T>>(new TAABBTree<TPayloadType, TLeafType, bMutable, T>());
+					DirtyElementTree = TUniquePtr<TAABBTree>(new TAABBTree());
 				}				
 				*DirtyElementTree = *Rhs.DirtyElementTree;
 			}
@@ -3662,8 +3915,7 @@ private:
 	TArray<int32> DirtyElementsGridOverflow; // Array of indices of DirtyElements that is not in the grid for some reason
 
 	// Members for using a dynamic tree as a dirty element acceleration structure
-	TUniquePtr<TAABBTree<TPayloadType, TLeafType, bMutable, T>> DirtyElementTree;
-
+	TUniquePtr<TAABBTree> DirtyElementTree;
 
 	// Copy of CVARS
 	T DirtyElementGridCellSize;
@@ -3676,14 +3928,18 @@ private:
 	AABBTreeExpensiveStatistics TreeExpensiveStats;
 
 	TArray<FElement> GlobalPayloads;
-	TArrayAsMap<TPayloadType, FAABBTreePayloadInfo> PayloadToInfo;
+	typename StorageTraits::PayloadToInfoType PayloadToInfo;
 
 	int32 MaxChildrenInLeaf;
 	int32 MaxTreeDepth;
 	T MaxPayloadBounds;
 	int32 MaxNumToProcess;
-
 	int32 NumProcessedThisSlice;
+
+	double StartSliceTimeStamp = 0.0;
+	int32 CurrentProcessedNodesSinceChecked = 0;
+	int32 CurrentDataElementsCopiedSinceLastCheck = 0;
+	
 	TArray<int32> WorkStack;
 	TArray<int32> WorkPoolFreeList;
 	TArray<FWorkSnapshot> WorkPool;
@@ -3714,8 +3970,8 @@ private:
 
 };
 
-template<typename TPayloadType, typename TLeafType, bool bMutable, typename T>
-FArchive& operator<<(FChaosArchive& Ar, TAABBTree<TPayloadType, TLeafType, bMutable, T>& AABBTree)
+template<typename TPayloadType, typename TLeafType, bool bMutable, typename T, typename StorageTraits>
+FArchive& operator<<(FChaosArchive& Ar, TAABBTree<TPayloadType, TLeafType, bMutable, T, StorageTraits>& AABBTree)
 {
 	AABBTree.Serialize(Ar);
 	return Ar;

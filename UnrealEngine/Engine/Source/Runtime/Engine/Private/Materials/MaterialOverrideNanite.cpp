@@ -47,6 +47,11 @@ bool FMaterialOverrideNanite::FixupLegacySoftReference(UObject* OptionalOwner)
 				}
 			}));
 	}
+	else
+	{
+		// Even if RF_NeedLoad is not there, it doesn't mean the object is fully postloaded
+		OverrideMaterialEditor->ConditionalPostLoad();
+	}
 
 	// Reset the deprecated ref.
 	OverrideMaterialRef.Reset();

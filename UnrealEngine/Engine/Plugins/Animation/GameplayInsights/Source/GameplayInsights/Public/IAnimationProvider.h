@@ -29,6 +29,13 @@ struct FSkeletalMeshNamedCurve
 	float Value = 0.0f;
 };
 
+struct FExternalMorphWeightMessage
+{
+	int32 Index = 0;
+	int32 NumMorphs = 0;
+	TArray<float> Weights;
+};
+
 struct FSkeletalMeshPoseMessage
 {
 	FTransform ComponentToWorld;
@@ -37,11 +44,13 @@ struct FSkeletalMeshPoseMessage
 	uint64 CurveStartIndex = 0;
 	uint64 ComponentId = 0;	
 	uint64 MeshId = 0;
+	uint64 ExternalMorphStartIndex = 0;
 	const TCHAR* MeshName = nullptr;
 	uint16 NumTransforms = 0;
 	uint16 NumCurves = 0;
 	uint16 FrameCounter = 0;
 	uint16 LodIndex = 0;
+	uint16 NumExternalMorphSets = 0;
 };
 
 struct FPoseWatchMessage
@@ -276,6 +285,22 @@ struct FAnimMontageMessage
 	uint16 FrameCounter = 0;
 };
 
+enum class EInertializationType : uint8
+{
+	Inertialization = 0,
+	DeadBlending = 1
+};
+
+struct FInertializationMessage
+{
+	uint64 AnimInstanceId = 0;
+	double ProfileTime;
+	double RecordingTime;
+	int32 NodeId;
+	float Weight;
+	EInertializationType Type;
+};
+
 struct FAnimAttributeMessage
 {
 	int32 SourceNodeId = 0;
@@ -305,6 +330,7 @@ public:
 	typedef TraceServices::ITimeline<FAnimAttributeMessage> AnimAttributeTimeline;
 	typedef TraceServices::ITimeline<FAnimSyncMessage> AnimSyncTimeline;
 	typedef TraceServices::ITimeline<FPoseWatchMessage> PoseWatchTimeline;
+	typedef TraceServices::ITimeline<FInertializationMessage> InertializationTimeline;
 
 	virtual void EnumerateSkeletalMeshPoseTimelines(TFunctionRef<void(uint64 ObjectId, const SkeletalMeshPoseTimeline&)> Callback) const =0;
 	virtual bool ReadSkeletalMeshPoseTimeline(uint64 InObjectId, TFunctionRef<void(const SkeletalMeshPoseTimeline&, bool)> Callback) const = 0;
@@ -313,7 +339,10 @@ public:
 	virtual void GetPoseWatchData(const FPoseWatchMessage& InMessage, TArray<FTransform>& BoneTransforms, TArray<uint16>& RequiredBones) const = 0;
 	virtual void EnumerateSkeletalMeshCurves(const FSkeletalMeshPoseMessage& InMessage, TFunctionRef<void(const FSkeletalMeshNamedCurve&)> Callback) const = 0;
 	virtual void EnumeratePoseWatchCurves(const FPoseWatchMessage& InMessage, TFunctionRef<void(const FSkeletalMeshNamedCurve&)> Callback) const = 0;
+	virtual void EnumerateExternalMorphSets(const FSkeletalMeshPoseMessage& InMessage, TFunctionRef<void(const FExternalMorphWeightMessage&)> Callback) const = 0;
 	virtual bool ReadTickRecordTimeline(uint64 InObjectId, TFunctionRef<void(const TickRecordTimeline&)> Callback) const = 0;
+	virtual bool ReadInertializationTimeline(uint64 InObjectId, TFunctionRef<void(const InertializationTimeline&)> Callback) const = 0;
+	virtual void EnumerateInertializationNodes(uint64 InObjectId, TFunctionRef<void(int32, EInertializationType)> Callback) const = 0;
 	virtual void EnumerateTickRecordIds(uint64 InObjectId, TFunctionRef<void(uint64, int32)> Callback) const = 0;
 	virtual void EnumerateAnimGraphTimelines(TFunctionRef<void(uint64 ObjectId, const AnimGraphTimeline&)> Callback) const =0;
 	virtual bool ReadAnimGraphTimeline(uint64 InObjectId, TFunctionRef<void(const AnimGraphTimeline&)> Callback) const = 0;

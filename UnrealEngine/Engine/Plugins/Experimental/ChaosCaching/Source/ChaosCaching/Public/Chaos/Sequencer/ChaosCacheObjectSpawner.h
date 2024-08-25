@@ -15,7 +15,7 @@ public:
 
 	// IMovieSceneObjectSpawner interface
 	CHAOSCACHING_API virtual UClass* GetSupportedTemplateType() const override;
-	CHAOSCACHING_API virtual UObject* SpawnObject(FMovieSceneSpawnable& Spawnable, FMovieSceneSequenceIDRef TemplateID, IMovieScenePlayer& Player) override;
+	CHAOSCACHING_API virtual UObject* SpawnObject(FMovieSceneSpawnable& Spawnable, FMovieSceneSequenceIDRef TemplateID, TSharedRef<const UE::MovieScene::FSharedPlaybackState> SharedPlaybackState) override;
 	CHAOSCACHING_API virtual void DestroySpawnedObject(UObject& Object) override;
 	virtual bool IsEditor() const override { return true; }
 	virtual int32 GetSpawnerPriority() const override { return 1; }

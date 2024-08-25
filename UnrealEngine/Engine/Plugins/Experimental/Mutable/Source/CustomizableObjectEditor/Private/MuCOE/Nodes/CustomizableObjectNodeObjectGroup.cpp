@@ -88,7 +88,7 @@ FText UCustomizableObjectNodeObjectGroup::GetNodeTitle(ENodeTitleType::Type Titl
 	if (TitleType == ENodeTitleType::ListView ||
 		GroupName.IsEmpty())
 	{
-		return LOCTEXT("Object_Group", "Object Group");;
+		return LOCTEXT("Object_Group", "Object Group");
 	}
 	else
 	{

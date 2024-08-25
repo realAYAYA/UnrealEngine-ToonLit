@@ -7,6 +7,7 @@
 #include "Engine/AssetManager.h"
 #include "UObject/UObjectIterator.h"
 #include "ConversationContext.h"
+#include "ConversationInstance.h"
 #include "Engine/StreamableManager.h"
 #include "GameFeaturesSubsystem.h"
 
@@ -129,15 +130,22 @@ bool FNetSerializeScriptStructCache_ConvVersion::NetSerialize(FArchive& Ar, UScr
 
 //======================================================================================
 
-const UConversationNode* FConversationNodeHandle::TryToResolve_Slow(UWorld* InWorld) const
+const UConversationNode* FConversationNodeHandle::TryToResolve_Slow(UWorld* InWorld, const UConversationDatabase* Graph) const
 {
-	UConversationRegistry* Registry = UConversationRegistry::GetFromWorld(InWorld);
-	return Registry->GetRuntimeNodeFromGUID(NodeGUID);
+	if (UConversationRegistry* Registry = UConversationRegistry::GetFromWorld(InWorld))
+	{
+		return Registry->TryGetRuntimeNodeFromGUID(NodeGUID, Graph);
+	}
+	return nullptr;
 }
 
 const UConversationNode* FConversationNodeHandle::TryToResolve(const FConversationContext& Context) const
 {
-	return Context.GetConversationRegistry().GetRuntimeNodeFromGUID(NodeGUID);
+	if (UConversationInstance* Instance = Context.TryGetActiveConversation())
+	{
+		return Context.GetConversationRegistry().TryGetRuntimeNodeFromGUID(NodeGUID, Instance->GetActiveConversationGraph());
+	}
+	return Context.GetConversationRegistry().TryGetRuntimeNodeFromGUID(NodeGUID);
 }
 
 UConversationRegistry::UConversationRegistry()
@@ -187,7 +195,21 @@ void UConversationRegistry::OnGameFeatureDeactivating(const UGameFeatureData* Ga
 	GameFeatureStateModified();
 }
 
-UConversationNode* UConversationRegistry::GetRuntimeNodeFromGUID(const FGuid& NodeGUID) const
+UConversationNode* UConversationRegistry::GetRuntimeNodeFromGUID(const FGuid& NodeGUID, const UConversationDatabase* Graph) const
+{
+	// It's possible this is just a null/empty guid, if that happens just return null.
+	if (!NodeGUID.IsValid())
+	{
+		UE_LOG(LogCommonConversationRuntime, Verbose, TEXT("UConversationRegistry::GetRuntimeNodeFromGUID - NodeGUID not valid"));
+		return nullptr;
+	}
+
+	UConversationNode* Node = TryGetRuntimeNodeFromGUID(NodeGUID, Graph);
+	ensureMsgf(Node != nullptr, TEXT("Unexpected GetRuntimeNodeFromGUID(%s) Failed. Nodes Searched: %d"), *NodeGUID.ToString(), NodeGuidToConversation.Num());
+	return Node;
+}
+
+UConversationNode* UConversationRegistry::TryGetRuntimeNodeFromGUID(const FGuid& NodeGUID, const UConversationDatabase* Graph) const
 {
 	UE_LOG(LogCommonConversationRuntime, Verbose, TEXT("Start UConversationRegistry::GetRuntimeNodeFromGUID with NodeGUID: (%s)"), *NodeGUID.ToString());
 
@@ -196,28 +218,25 @@ UConversationNode* UConversationRegistry::GetRuntimeNodeFromGUID(const FGuid& No
 	// It's possible this is just a null/empty guid, if that happens just return null.
 	if (!NodeGUID.IsValid())
 	{
-		UE_LOG(LogCommonConversationRuntime, Verbose, TEXT("UConversationRegistry::GetRuntimeNodeFromGUID - NodeGUID not valid"));
-
 		return nullptr;
 	}
 
-	if (const UConversationDatabase* ConversationDB = GetConversationFromNodeGUID(NodeGUID))
+	if (const UConversationDatabase* ConversationDB = Graph ? Graph : GetConversationFromNodeGUID(NodeGUID))
 	{
 		return ConversationDB->ReachableNodeMap.FindRef(NodeGUID);
 	}
 
-	ensureMsgf(false, TEXT("Unexpected GetRuntimeNodeFromGUID(%s) Failed. Nodes Searched: %d"), *NodeGUID.ToString(), NodeGuidToConversation.Num());
 	return nullptr;
 }
 
-TArray<FGuid> UConversationRegistry::GetEntryPointGUIDs(FGameplayTag EntryPoint) const
+TArray<FGuid> UConversationRegistry::GetEntryPointGUIDs(const FGameplayTag& EntryPoint) const
 {
 	const_cast<UConversationRegistry*>(this)->BuildDependenciesGraph();
 
 	return EntryTagToEntryList.FindRef(EntryPoint);
 }
 
-TArray<FGuid> UConversationRegistry::GetOutputLinkGUIDs(FGameplayTag EntryPoint) const
+TArray<FGuid> UConversationRegistry::GetOutputLinkGUIDs(const FGameplayTag& EntryPoint) const
 {
 	TArray<FGuid> SourceGUIDs = GetEntryPointGUIDs(EntryPoint);
 	return GetOutputLinkGUIDs(SourceGUIDs);
@@ -239,13 +258,67 @@ TArray<FGuid> UConversationRegistry::GetOutputLinkGUIDs(const TArray<FGuid>& Sou
 		if (const UConversationDatabase* SourceConversation = GetConversationFromNodeGUID(SourceGUID))
 		{
 			UConversationNode* SourceNode = SourceConversation->ReachableNodeMap.FindRef(SourceGUID);
-			if (ensure(SourceNode))
+			if (SourceNode)
 			{
 				if (UConversationNodeWithLinks* SourceNodeWithLinks = CastChecked<UConversationNodeWithLinks>(SourceNode))
 				{
 					Result.Append(SourceNodeWithLinks->OutputConnections);
 				}
 			}
+		}
+	}
+
+	return Result;
+}
+
+TArray<FGuid> UConversationRegistry::GetOutputLinkGUIDs(const UConversationDatabase* Graph, const FGameplayTag& EntryPoint) const
+{
+	if (Graph == nullptr)
+	{
+		return GetOutputLinkGUIDs(EntryPoint);
+	}
+
+	TArray<FGuid> Result;
+
+	for (const FConversationEntryList& Tag : Graph->EntryTags)
+	{
+		if (Tag.EntryTag == EntryPoint)
+		{
+			for (const FGuid& Destination : Tag.DestinationList)
+			{
+				UConversationNode* SourceNode = Graph->ReachableNodeMap.FindRef(Destination);
+				if (SourceNode)
+				{
+					if (UConversationNodeWithLinks* SourceNodeWithLinks = CastChecked<UConversationNodeWithLinks>(SourceNode))
+					{
+						Result.Append(SourceNodeWithLinks->OutputConnections);
+					}
+				}
+			}
+			break;
+		}
+	}
+
+	return Result;
+}
+
+TArray<FGuid> UConversationRegistry::GetOutputLinkGUIDs(const UConversationDatabase* Graph, const FGuid& SourceGUID) const
+{
+	if (Graph == nullptr)
+	{
+		return GetOutputLinkGUIDs(SourceGUID);
+	}
+
+	const_cast<UConversationRegistry*>(this)->BuildDependenciesGraph();
+
+	TArray<FGuid> Result;
+
+	UConversationNode* SourceNode = Graph->ReachableNodeMap.FindRef(SourceGUID);
+	if (SourceNode)
+	{
+		if (UConversationNodeWithLinks* SourceNodeWithLinks = CastChecked<UConversationNodeWithLinks>(SourceNode))
+		{
+			Result.Append(SourceNodeWithLinks->OutputConnections);
 		}
 	}
 
@@ -356,6 +429,15 @@ TArray<FPrimaryAssetId> UConversationRegistry::GetPrimaryAssetIdsForEntryPoint(F
 	);
 
 	return AssetsWithTheEntryPoint;
+}
+
+TArray<FGameplayTag> UConversationRegistry::GetLinkedExitConversationEntryTags(const UConversationDatabase* ConversationDatabase) const
+{
+	if (ConversationDatabase)
+	{
+		return ConversationDatabase->ExitTags.GetGameplayTagArray();
+	}
+	return {};
 }
 
 void UConversationRegistry::BuildDependenciesGraph()

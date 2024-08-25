@@ -2,7 +2,6 @@
 
 #pragma once
 
-#include "BaseGizmos/TransformProxy.h"
 #include "CoreMinimal.h"
 #include "EditorInteractiveGizmoSelectionBuilder.h"
 #include "InteractiveGizmoBuilder.h"
@@ -14,6 +13,7 @@
 
 class UInteractiveGizmo;
 class UObject;
+class UEditorTransformGizmoContextObject;
 struct FToolBuilderState;
 
 UCLASS()
@@ -29,6 +29,9 @@ public:
 
 	// If set, this function will be passed to UTransformGizmo instances to override the default material and display size.
 	TFunction<const FGizmoCustomization()> CustomizationFunction;
+
+private:
+	static const UEditorTransformGizmoContextObject* GetTransformGizmoContext(const FToolBuilderState& InSceneState);
 };
 
 

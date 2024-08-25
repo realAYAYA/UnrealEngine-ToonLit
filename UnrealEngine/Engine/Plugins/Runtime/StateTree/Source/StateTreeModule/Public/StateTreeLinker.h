@@ -4,6 +4,7 @@
 
 #include "StateTreeSchema.h"
 #include "StateTreeExecutionTypes.h"
+#include "Templates/Casts.h"
 #include "StateTreeLinker.generated.h"
 
 UENUM()
@@ -21,16 +22,7 @@ struct FStateTreeLinker
 {
 	explicit FStateTreeLinker(const UStateTreeSchema* InSchema) : Schema(InSchema) {}
 	
-	/** Sets base index for all external data handles. */
-	void SetExternalDataBaseIndex(const int32 InExternalDataBaseIndex) { ExternalDataBaseIndex = InExternalDataBaseIndex; }
-
-	/** Sets currently linked item's instance data type and index. */ 
-	void SetCurrentInstanceDataType(const UStruct* Struct, const int32 Index)
-	{
-		CurrentInstanceStruct = Struct;
-		CurrentInstanceIndex = Index;
-	}
-
+	/** @returns the linking status. */
 	EStateTreeLinkerStatus GetStatus() const { return Status; }
 	
 	/**
@@ -44,13 +36,23 @@ struct FStateTreeLinker
 	}
 
 	/**
-	 * Links reference to an external UObject.
+	 * Links reference to an external UStruct.
 	 * @param Handle Reference to TStateTreeExternalDataHandle<> with USTRUCT type to link to.
 	 */
 	template <typename T>
-	typename TEnableIf<!TIsDerivedFrom<typename T::DataType, UObject>::IsDerived, void>::Type LinkExternalData(T& Handle)
+	typename TEnableIf<!TIsDerivedFrom<typename T::DataType, UObject>::IsDerived && !TIsIInterface<typename T::DataType>::Value, void>::Type LinkExternalData(T& Handle)
 	{
 		LinkExternalData(Handle, T::DataType::StaticStruct(), T::DataRequirement);
+	}
+
+	/**
+	 * Links reference to an external IInterface.
+	 * @param Handle Reference to TStateTreeExternalDataHandle<> with IINTERFACE type to link to.
+	 */
+	template <typename T>
+	typename TEnableIf<TIsIInterface<typename T::DataType>::Value, void>::Type LinkExternalData(T& Handle)
+	{
+		LinkExternalData(Handle, T::DataType::UClassType::StaticClass(), T::DataRequirement);
 	}
 
 	/**
@@ -76,24 +78,25 @@ struct FStateTreeLinker
 		
 		const FStateTreeExternalDataDesc Desc(Struct, Requirement);
 		int32 Index = ExternalDataDescs.Find(Desc);
+		
 		if (Index == INDEX_NONE)
 		{
 			Index = ExternalDataDescs.Add(Desc);
-			check(FStateTreeExternalDataHandle::IsValidIndex(Index + ExternalDataBaseIndex));
-			ExternalDataDescs[Index].Handle.DataViewIndex = FStateTreeIndex16(Index + ExternalDataBaseIndex);
+			ExternalDataDescs[Index].Handle.DataHandle = FStateTreeDataHandle(EStateTreeDataSourceType::ExternalData, Index);
 		}
-		Handle.DataViewIndex = FStateTreeIndex16(Index + ExternalDataBaseIndex);
+		
+		Handle.DataHandle = ExternalDataDescs[Index].Handle.DataHandle;
 	}
 
 	/** @return linked external data descriptors. */
 	TConstArrayView<FStateTreeExternalDataDesc> GetExternalDataDescs() const { return ExternalDataDescs; }
 
+	UE_DEPRECATED(5.4, "Not used anymore.")
+	void SetExternalDataBaseIndex(const int32 InExternalDataBaseIndex) {}
+
 protected:
 
 	const UStateTreeSchema* Schema = nullptr;
 	EStateTreeLinkerStatus Status = EStateTreeLinkerStatus::Succeeded;
-	const UStruct* CurrentInstanceStruct = nullptr;
-	int32 CurrentInstanceIndex = INDEX_NONE;
-	int32 ExternalDataBaseIndex = 0;
 	TArray<FStateTreeExternalDataDesc> ExternalDataDescs;
 };

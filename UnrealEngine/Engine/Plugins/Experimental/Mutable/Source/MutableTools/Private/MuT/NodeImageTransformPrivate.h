@@ -17,11 +17,7 @@ namespace mu
 	{
 	public:
 
-		MUTABLE_DEFINE_CONST_VISITABLE();
-
-	public:
-
-		static NODE_TYPE s_type;
+		static FNodeType s_type;
 
 		NodeImagePtr m_pBase;
 		NodeScalarPtr m_pOffsetX;
@@ -31,11 +27,18 @@ namespace mu
 		NodeScalarPtr m_pRotation;
 
 		EAddressMode AddressMode = EAddressMode::Wrap;
+		uint32 SizeX = 0;
+		uint32 SizeY = 0;
+		
+		bool bKeepAspectRatio = false;
+		uint8 UnusedPadding[sizeof(NodeImagePtr) - sizeof(bool)] = {0}; 
+		static_assert(sizeof(NodeImagePtr) - sizeof(bool) >= 1);
+
 
 		//!
-		void Serialise( OutputArchive& arch ) const
+		void Serialise(OutputArchive& arch) const
 		{
-            uint32 ver = 1;
+            uint32 ver = 3;
 			arch << ver;
 
 			arch << m_pBase;
@@ -45,14 +48,17 @@ namespace mu
 			arch << m_pScaleY;
 			arch << m_pRotation;
 			arch << static_cast<uint32>(AddressMode);
+			arch << SizeX;
+			arch << SizeY;
+			arch << bKeepAspectRatio;
 		}
 
 		//!
-		void Unserialise( InputArchive& arch )
+		void Unserialise(InputArchive& arch)
 		{
             uint32 ver;
 			arch >> ver;
-			check(ver <= 1);
+			check(ver <= 3);
 
 			arch >> m_pBase;
 			arch >> m_pOffsetX;
@@ -62,12 +68,23 @@ namespace mu
 			arch >> m_pRotation;
 
 			uint32 AddressModeValue = static_cast<uint32>(EAddressMode::Wrap);
-			if (ver == 1)
+			if (ver >= 1)
 			{
 				arch >> AddressModeValue;
 			}
 
 			AddressMode = static_cast<EAddressMode>(AddressModeValue);
+
+			if (ver >= 2)
+			{
+				arch >> SizeX;
+				arch >> SizeY;
+			}
+
+			if (ver >= 3)
+			{
+				arch >> bKeepAspectRatio;
+			}
 		}
 	};
 

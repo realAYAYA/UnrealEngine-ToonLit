@@ -80,7 +80,10 @@ namespace Chaos
 
 		CHAOS_API virtual void Serialize(FChaosArchive& Ar);
 
-		CHAOS_API void UpdateShapeBounds(const FRigidTransform3& WorldTM, const FVec3& BoundsExpansion = FVec3(0));
+		CHAOS_API void UpdateShapeBounds(const FRigidTransform3& WorldTM);
+
+		UE_DEPRECATED(5.4, "Bounds no longer expanded. Use UpdateShapeBounds without BoundsExpansion")
+		CHAOS_API void UpdateShapeBounds(const FRigidTransform3& WorldTM, const FVec3& BoundsExpansion) { UpdateShapeBounds(WorldTM); }
 
 		CHAOS_API void* GetUserData() const;
 		CHAOS_API void SetUserData(void* InUserData);
@@ -91,11 +94,17 @@ namespace Chaos
 		CHAOS_API const FCollisionFilterData& GetSimData() const;
 		CHAOS_API void SetSimData(const FCollisionFilterData& InSimData);
 
-		CHAOS_API TSerializablePtr<FImplicitObject> GetGeometry() const;
+		CHAOS_API FImplicitObjectRef GetGeometry() const;
 
-		CHAOS_API const TAABB<FReal, 3>& GetWorldSpaceInflatedShapeBounds() const;
+		CHAOS_API const TAABB<FReal, 3>& GetWorldSpaceShapeBounds() const;
 
-		CHAOS_API void UpdateWorldSpaceState(const FRigidTransform3& WorldTransform, const FVec3& BoundsExpansion);
+		CHAOS_API void UpdateWorldSpaceState(const FRigidTransform3& WorldTransform);
+
+		UE_DEPRECATED(5.4, "Bounds no longer expanded. Use GetWorldSpaceShapeBounds()")
+		CHAOS_API const TAABB<FReal, 3>& GetWorldSpaceInflatedShapeBounds() const { return GetWorldSpaceShapeBounds(); }
+		
+		UE_DEPRECATED(5.4, "Bounds no longer expanded. Use UpdateWorldSpaceState() without BoundsExpansion")
+		CHAOS_API void UpdateWorldSpaceState(const FRigidTransform3& WorldTransform, const FVec3& BoundsExpansion) { UpdateWorldSpaceState(WorldTransform); }
 
 		// The leaf shape (with transformed and implicit wrapper removed).
 		CHAOS_API const FImplicitObject* GetLeafGeometry() const;
@@ -120,12 +129,15 @@ namespace Chaos
 
 		CHAOS_API const TArray<FMaterialMaskHandle>& GetMaterialMasks() const;
 		CHAOS_API void SetMaterialMasks(const TArray<FMaterialMaskHandle>& InMaterialMasks);
+		CHAOS_API void SetMaterialMasks(TArray<FMaterialMaskHandle>&& InMaterialMasks);
 
 		CHAOS_API const TArray<uint32>& GetMaterialMaskMaps() const;
 		CHAOS_API void SetMaterialMaskMaps(const TArray<uint32>& InMaterialMaskMaps);
+		CHAOS_API void SetMaterialMaskMaps(TArray<uint32>&& InMaterialMaskMaps);
 
 		CHAOS_API const TArray<FMaterialHandle>& GetMaterialMaskMapMaterials() const;
 		CHAOS_API void SetMaterialMaskMapMaterials(const TArray<FMaterialHandle>& InMaterialMaskMapMaterials);
+		CHAOS_API void SetMaterialMaskMapMaterials(TArray<FMaterialHandle>&& InMaterialMaskMapMaterials);
 
 		CHAOS_API const FShapeDirtyFlags GetDirtyFlags() const;
 
@@ -166,16 +178,27 @@ namespace Chaos
 			, bIsSingleMaterial(false)
 			, ShapeIdx(InShapeIdx)
 			, Geometry()
-			, WorldSpaceInflatedShapeBounds(FAABB3(FVec3(0), FVec3(0)))
+			, WorldSpaceShapeBounds(FAABB3(FVec3(0), FVec3(0)))
 		{
 		}
-
+		
+		UE_DEPRECATED(5.4, "Use FPerShapeData with FImplicitObjectPtr instead")
 		FPerShapeData(const EPerShapeDataType InType, int32 InShapeIdx, TSerializablePtr<FImplicitObject> InGeometry)
 			: Type(InType)
 			, bIsSingleMaterial(false)
 			, ShapeIdx(InShapeIdx)
+			, Geometry()
+			, WorldSpaceShapeBounds(FAABB3(FVec3(0), FVec3(0)))
+		{
+			check(false);
+		}
+
+		FPerShapeData(const EPerShapeDataType InType, int32 InShapeIdx, const FImplicitObjectPtr& InGeometry)
+			: Type(InType)
+			, bIsSingleMaterial(false)
+			, ShapeIdx(InShapeIdx)
 			, Geometry(InGeometry)
-			, WorldSpaceInflatedShapeBounds(FAABB3(FVec3(0), FVec3(0)))
+			, WorldSpaceShapeBounds(FAABB3(FVec3(0), FVec3(0)))
 		{
 		}
 
@@ -184,7 +207,7 @@ namespace Chaos
 			, bIsSingleMaterial(Other.bIsSingleMaterial)
 			, ShapeIdx(Other.ShapeIdx)
 			, Geometry(Other.Geometry)
-			, WorldSpaceInflatedShapeBounds(Other.WorldSpaceInflatedShapeBounds)
+			, WorldSpaceShapeBounds(Other.WorldSpaceShapeBounds)
 		{
 		}
 
@@ -194,8 +217,8 @@ namespace Chaos
 		uint32 bIsSingleMaterial : 1;	// For use by FShapeInstance (here because the space is available for free)
 		uint32 ShapeIdx : 29;
 		FShapeDirtyFlags DirtyFlags;	// For use by FShapeInstanceProxy as there's 4 bytes of padding here
-		TSerializablePtr<FImplicitObject> Geometry;
-		TAABB<FReal, 3> WorldSpaceInflatedShapeBounds;
+		FImplicitObjectPtr Geometry;
+		TAABB<FReal, 3> WorldSpaceShapeBounds;
 	};
 
 
@@ -231,11 +254,24 @@ namespace Chaos
 	public:
 		friend class FPerShapeData;
 
-		static CHAOS_API TUniquePtr<FShapeInstanceProxy> Make(int32 InShapeIdx, TSerializablePtr<FImplicitObject> InGeometry);
-		static CHAOS_API void UpdateGeometry(TUniquePtr<FShapeInstanceProxy>& InOutShapePtr, TSerializablePtr<FImplicitObject> InGeometry);
+		UE_DEPRECATED(5.4, "Use Make with FImplicitObjectPtr instead")
+		static CHAOS_API TUniquePtr<FShapeInstanceProxy> Make(int32 InShapeIdx, TSerializablePtr<FImplicitObject> InGeometry)
+		{
+			check(false);
+			return nullptr;
+		}
+
+		UE_DEPRECATED(5.4, "Use UpdateGeometry with FImplicitObjectPtr instead")
+        static CHAOS_API void UpdateGeometry(TUniquePtr<FShapeInstanceProxy>& InOutShapePtr, TSerializablePtr<FImplicitObject> InGeometry)
+		{
+			check(false);
+		}
+
+		static CHAOS_API TUniquePtr<FShapeInstanceProxy> Make(int32 InShapeIdx, const FImplicitObjectPtr& InGeometry);
+		static CHAOS_API void UpdateGeometry(TUniquePtr<FShapeInstanceProxy>& InOutShapePtr, const FImplicitObjectPtr& InGeometry);
 		static CHAOS_API FShapeInstanceProxy* SerializationFactory(FChaosArchive& Ar, FShapeInstanceProxy*);
 
-		CHAOS_API void UpdateShapeBounds(const FRigidTransform3& WorldTM, const FVec3& BoundsExpansion = FVec3(0));
+		CHAOS_API void UpdateShapeBounds(const FRigidTransform3& WorldTM);
 
 		void* GetUserData() const { return CollisionData.Read().UserData; }
 		void SetUserData(void* InUserData)
@@ -255,7 +291,7 @@ namespace Chaos
 			CollisionData.Modify(true, DirtyFlags, Proxy, ShapeIdx, [InSimData](FCollisionData& Data) { Data.SimData = InSimData; });
 		}
 
-		CHAOS_API void UpdateWorldSpaceState(const FRigidTransform3& WorldTransform, const FVec3& BoundsExpansion);
+		CHAOS_API void UpdateWorldSpaceState(const FRigidTransform3& WorldTransform);
 
 		// The leaf shape (with transformed and implicit wrapper removed).
 		CHAOS_API const FImplicitObject* GetLeafGeometry() const;
@@ -439,8 +475,18 @@ namespace Chaos
 			, Materials()
 		{
 		}
-
+		
+		UE_DEPRECATED(5.4, "Use FShapeInstanceProxy with FImplicitObjectPtr instead")
 		FShapeInstanceProxy(int32 InShapeIdx, TSerializablePtr<FImplicitObject> InGeometry)
+			: FPerShapeData(EPerShapeDataType::Proxy, InShapeIdx)
+			, Proxy(nullptr)
+			, CollisionData()
+			, Materials()
+		{
+			check(false);
+		}
+
+		FShapeInstanceProxy(int32 InShapeIdx, const FImplicitObjectPtr& InGeometry)
 			: FPerShapeData(EPerShapeDataType::Proxy, InShapeIdx, InGeometry)
 			, Proxy(nullptr)
 			, CollisionData()
@@ -491,8 +537,8 @@ namespace Chaos
 	public:
 		friend class FPerShapeData;
 
-		CHAOS_API static TUniquePtr<FShapeInstance> Make(int32 InShapeIdx, TSerializablePtr<FImplicitObject> InGeometry);
-		CHAOS_API static void UpdateGeometry(TUniquePtr<FShapeInstance>& InOutShapePtr, TSerializablePtr<FImplicitObject> InGeometry);
+		CHAOS_API static TUniquePtr<FShapeInstance> Make(int32 InShapeIdx, const FImplicitObjectPtr& InGeometry);
+		CHAOS_API static void UpdateGeometry(TUniquePtr<FShapeInstance>& InOutShapePtr, const FImplicitObjectPtr& InGeometry);
 		CHAOS_API static FShapeInstance* SerializationFactory(FChaosArchive& Ar, FShapeInstance*);
 
 		virtual ~FShapeInstance()
@@ -503,7 +549,7 @@ namespace Chaos
 			}
 		}
 
-		CHAOS_API void UpdateShapeBounds(const FRigidTransform3& WorldTM, const FVec3& BoundsExpansion = FVec3(0));
+		CHAOS_API void UpdateShapeBounds(const FRigidTransform3& WorldTM);
 
 		void* GetUserData() const { return CollisionData.UserData; }
 		void SetUserData(void* InUserData) { CollisionData.UserData = InUserData; }
@@ -514,7 +560,7 @@ namespace Chaos
 		const FCollisionFilterData& GetSimData() const { return CollisionData.SimData; }
 		void SetSimData(const FCollisionFilterData& InSimData) { CollisionData.SimData = InSimData; }
 
-		CHAOS_API void UpdateWorldSpaceState(const FRigidTransform3& WorldTransform, const FVec3& BoundsExpansion);
+		CHAOS_API void UpdateWorldSpaceState(const FRigidTransform3& WorldTransform);
 
 		// The leaf shape (with transformed and implicit wrapper removed).
 		CHAOS_API const FImplicitObject* GetLeafGeometry() const;
@@ -603,7 +649,15 @@ namespace Chaos
 			bIsSingleMaterial = true;
 		}
 
+		UE_DEPRECATED(5.4, "Use FShapeInstance with FImplicitObjectPtr instead")
 		FShapeInstance(int32 InShapeIdx, TSerializablePtr<FImplicitObject> InGeometry)
+			: FPerShapeData(EPerShapeDataType::Sim, InShapeIdx)
+			, CollisionData()
+		{
+			check(false);
+		}
+
+		FShapeInstance(int32 InShapeIdx, const FImplicitObjectPtr& InGeometry)
 			: FPerShapeData(EPerShapeDataType::Sim, InShapeIdx, InGeometry)
 			, CollisionData()
 		{
@@ -624,8 +678,16 @@ namespace Chaos
 				Other.Material.MaterialData = nullptr;
 			}
 		}
-
+		
+		UE_DEPRECATED(5.4, "Use FShapeInstance with FImplicitObjectPtr instead")
 		FShapeInstance(const EPerShapeDataType InType, int32 InShapeIdx, TSerializablePtr<FImplicitObject> InGeometry)
+			: FPerShapeData(InType, InShapeIdx)
+			, CollisionData()
+		{
+			check(false);
+		}
+
+		FShapeInstance(const EPerShapeDataType InType, int32 InShapeIdx, FImplicitObjectPtr InGeometry)
 			: FPerShapeData(InType, InShapeIdx, InGeometry)
 			, CollisionData()
 		{
@@ -761,10 +823,17 @@ namespace Chaos
 			}
 
 		protected:
-			FShapeInstanceExtended(int32 InShapeIdx, TSerializablePtr<FImplicitObject> InGeometry)
+			FShapeInstanceExtended(int32 InShapeIdx, FImplicitObjectPtr InGeometry)
 				: FShapeInstance(EPerShapeDataType::SimExtended, InShapeIdx, InGeometry)
 			{
 			}
+
+			UE_DEPRECATED(5.4, "Use FShapeInstanceExtended with FImplicitObjectPtr instead")
+			FShapeInstanceExtended(int32 InShapeIdx, TSerializablePtr<FImplicitObject> InGeometry)
+            	: FShapeInstance(InShapeIdx)
+            {
+				check(false);
+            }
 
 			FShapeInstanceExtended(FShapeInstance&& PerShapeData)
 				: FShapeInstance(EPerShapeDataType::SimExtended, MoveTemp(PerShapeData))
@@ -879,9 +948,9 @@ namespace Chaos
 	///////////////////////////////////////////////////////////////////////////////////////////////
 
 
-	inline void FPerShapeData::UpdateShapeBounds(const FRigidTransform3& WorldTM, const FVec3& BoundsExpansion)
+	inline void FPerShapeData::UpdateShapeBounds(const FRigidTransform3& WorldTM)
 	{
-		DownCast([&WorldTM, &BoundsExpansion](auto& ShapeInstance) { ShapeInstance.UpdateShapeBounds(WorldTM, BoundsExpansion); });
+		DownCast([&WorldTM](auto& ShapeInstance) { ShapeInstance.UpdateShapeBounds(WorldTM); });
 	}
 
 	inline void* FPerShapeData::GetUserData() const
@@ -914,19 +983,19 @@ namespace Chaos
 		return DownCast([&InSimData](auto& ShapeInstance) { ShapeInstance.SetSimData(InSimData); });
 	}
 
-	inline TSerializablePtr<FImplicitObject> FPerShapeData::GetGeometry() const
+	inline FImplicitObjectRef FPerShapeData::GetGeometry() const
 	{
-		return Geometry;
+		return Geometry.GetReference();
 	}
 
-	inline const TAABB<FReal, 3>& FPerShapeData::GetWorldSpaceInflatedShapeBounds() const
+	inline const TAABB<FReal, 3>& FPerShapeData::GetWorldSpaceShapeBounds() const
 	{
-		return WorldSpaceInflatedShapeBounds;
+		return WorldSpaceShapeBounds;
 	}
 
-	inline void FPerShapeData::UpdateWorldSpaceState(const FRigidTransform3& WorldTransform, const FVec3& BoundsExpansion)
+	inline void FPerShapeData::UpdateWorldSpaceState(const FRigidTransform3& WorldTransform)
 	{
-		DownCast([&WorldTransform, &BoundsExpansion](auto& ShapeInstance) { ShapeInstance.UpdateWorldSpaceState(WorldTransform, BoundsExpansion); });
+		DownCast([&WorldTransform](auto& ShapeInstance) { ShapeInstance.UpdateWorldSpaceState(WorldTransform); });
 	}
 
 	inline const FImplicitObject* FPerShapeData::GetLeafGeometry() const
@@ -1004,14 +1073,29 @@ namespace Chaos
 		DownCast([&InMaterialMasks](auto& ShapeInstance) { ShapeInstance.SetMaterialMasks(InMaterialMasks); });
 	}
 
+	inline void FPerShapeData::SetMaterialMasks(TArray<FMaterialMaskHandle>&& InMaterialMasks)
+	{
+		DownCast([&InMaterialMasks](auto& ShapeInstance) { ShapeInstance.SetMaterialMasks(MoveTemp(InMaterialMasks)); });
+	}
+
 	inline void FPerShapeData::SetMaterialMaskMaps(const TArray<uint32>& InMaterialMaskMaps)
 	{
 		DownCast([&InMaterialMaskMaps](auto& ShapeInstance) { ShapeInstance.SetMaterialMaskMaps(InMaterialMaskMaps); });
 	}
 
+	inline void FPerShapeData::SetMaterialMaskMaps(TArray<uint32>&& InMaterialMaskMaps)
+	{
+		DownCast([&InMaterialMaskMaps](auto& ShapeInstance) { ShapeInstance.SetMaterialMaskMaps(MoveTemp(InMaterialMaskMaps)); });
+	}
+
 	inline void FPerShapeData::SetMaterialMaskMapMaterials(const TArray<FMaterialHandle>& InMaterialMaskMapMaterials)
 	{
 		DownCast([&InMaterialMaskMapMaterials](auto& ShapeInstance) { ShapeInstance.SetMaterialMaskMapMaterials(InMaterialMaskMapMaterials); });
+	}
+
+	inline void FPerShapeData::SetMaterialMaskMapMaterials(TArray<FMaterialHandle>&& InMaterialMaskMapMaterials)
+	{
+		DownCast([&InMaterialMaskMapMaterials](auto& ShapeInstance) { ShapeInstance.SetMaterialMaskMapMaterials(MoveTemp(InMaterialMaskMapMaterials)); });
 	}
 
 	inline bool FPerShapeData::GetQueryEnabled() const

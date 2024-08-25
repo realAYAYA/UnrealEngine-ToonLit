@@ -14,35 +14,24 @@
 	"IsBetaVersion": true,
 	"Hidden": true,
 	"Installed": false,
+	"SupportedPrograms": [ "LiveLinkHub" ],
 	"Modules": [
 		{
 			"Name": "CameraCalibrationCore",
 			"Type": "Runtime",
+			"ProgramAllowlist": [ "LiveLinkHub" ],
 			"LoadingPhase": "PostConfigInit"
 		},
 		{
 			"Name": "CameraCalibrationCoreEditor",
 			"Type": "Editor",
-			"LoadingPhase": "Default"
-		},
-		{
-			"Name": "CameraCalibrationCoreMovieScene",
-			"Type": "Runtime",
-			"LoadingPhase": "Default"
-		},
-		{
-			"Name": "CameraCalibrationCoreSequencer",
-			"Type": "UncookedOnly",
+			"ProgramAllowlist": [ "LiveLinkHub" ],
 			"LoadingPhase": "Default"
 		}
 	],
 	"Plugins": [
 		{
 			"Name": "ProceduralMeshComponent",
-			"Enabled": true
-		},
-		{
-			"Name": "LiveLink",
 			"Enabled": true
 		}
 	]

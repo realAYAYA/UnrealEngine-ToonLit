@@ -1,27 +1,29 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "NearestNeighborGeomCacheSampler.h"
-#include "BoneWeights.h"
-#include "NearestNeighborModel.h"
-#include "Engine/SkeletalMesh.h"
-#include "Animation/DebugSkelMeshComponent.h"
+
 #include "Animation/AnimSequence.h"
-#include "Rendering/SkeletalMeshModel.h"
-#include "Rendering/SkeletalMeshLODModel.h"
-#include "Rendering/SkeletalMeshLODRenderData.h"
-#include "Rendering/SkeletalMeshRenderData.h"
-#include "GeometryCacheComponent.h"
+#include "Animation/AnimSingleNodeInstance.h"
+#include "Animation/DebugSkelMeshComponent.h"
+#include "Async/ParallelFor.h"
+#include "BoneWeights.h"
+#include "Engine/SkeletalMesh.h"
 #include "GeometryCache.h"
+#include "GeometryCacheComponent.h"
 #include "GeometryCacheMeshData.h"
 #include "GeometryCacheTrack.h"
+#include "NearestNeighborModel.h"
+#include "SkeletalMeshAttributes.h"
+#include "Rendering/SkeletalMeshModel.h"
+#include "Rendering/SkeletalMeshRenderData.h"
 
-using namespace UE::MLDeformer;
 namespace UE::NearestNeighborModel
 {
 	void FNearestNeighborGeomCacheSampler::Sample(int32 InAnimFrameIndex)
 	{
-		UNearestNeighborModel* NearestNeighborModel = static_cast<UNearestNeighborModel*>(Model);
-		if (NearestNeighborModel->DoesUseDualQuaternionDeltas() && VertexDeltaSpace == EVertexDeltaSpace::PreSkinning)
+		const UNearestNeighborModel* const NearestNeighborModel = static_cast<UNearestNeighborModel*>(Model);
+		using UE::MLDeformer::EVertexDeltaSpace;
+		if (NearestNeighborModel && NearestNeighborModel->DoesUseDualQuaternionDeltas() && VertexDeltaSpace == EVertexDeltaSpace::PreSkinning)
 		{
 			FMLDeformerSampler::Sample(InAnimFrameIndex);
 			UpdateSkinnedPositions();
@@ -33,40 +35,149 @@ namespace UE::NearestNeighborModel
 		}
 	}
 
+	namespace Private
+	{
+		UAnimSequence* GetAnimSequence(const USkeletalMeshComponent* SkeletalMeshComponent)
+		{
+			if (SkeletalMeshComponent)
+			{
+				if (UAnimSingleNodeInstance* SingleNodeInstance =  Cast<UAnimSingleNodeInstance>(SkeletalMeshComponent->GetAnimInstance()))
+				{
+					return Cast<UAnimSequence>(SingleNodeInstance->GetCurrentAsset());
+				}
+			}
+			return nullptr;
+		}
+	}
+
+	bool FNearestNeighborGeomCacheSampler::CustomSample(int32 Frame)
+	{
+		if (!SkeletalMeshComponent)
+		{
+			return false;
+		}
+		
+		UAnimSequence* AnimSequence = Private::GetAnimSequence(SkeletalMeshComponent.Get());
+		if (!AnimSequence)
+		{
+			return false;
+		}
+		AnimSequence->Interpolation = EAnimInterpolationType::Step;
+		const IAnimationDataModel* DataModel = AnimSequence->GetDataModel();
+		if (!DataModel)
+		{
+			return false;
+		}
+		const int32 NumKeys = DataModel->GetNumberOfKeys();
+		if (Frame < 0 || Frame >= NumKeys)
+		{
+			UE_LOG(LogNearestNeighborModel, Warning, TEXT("AnimSequence only has %d keys, but being sampled with key %d"), NumKeys, Frame);
+			return false;
+		}
+
+		Sample(Frame);
+		return true;
+	}
+
+	void FNearestNeighborGeomCacheSampler::Customize(UAnimSequence* Anim, UGeometryCache* Cache)
+	{
+		const TObjectPtr<USkeletalMeshComponent> SkelMeshComp = GetSkeletalMeshComponent();
+		if (SkelMeshComp)
+		{
+			SkelMeshComp->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+			SkelMeshComp->SetAnimation(Anim);
+			SkelMeshComp->SetPosition(0.0f);
+			SkelMeshComp->SetPlayRate(1.0f);
+			SkelMeshComp->Play(false);
+			SkelMeshComp->RefreshBoneTransforms();
+			if (SkelMeshComp->GetAnimInstance())
+			{
+				SkelMeshComp->GetAnimInstance()->GetRequiredBones().SetUseRAWData(true);
+			}
+		}
+
+		const TObjectPtr<UGeometryCacheComponent> GeomCacheComp = GetGeometryCacheComponent();
+		if (GeomCacheComp)
+		{
+			GeomCacheComp->SetGeometryCache(Cache);
+			GeomCacheComp->ResetAnimationTime();
+			GeomCacheComp->SetLooping(false);
+			GeomCacheComp->SetManualTick(true);
+			GeomCacheComp->SetPlaybackSpeed(1.0f);
+			GeomCacheComp->Play();
+		}
+
+		if (Anim && SkelMeshComp && Cache && GeomCacheComp)
+		{
+			GenerateMeshMappings();
+		}
+	}
+
 	void FNearestNeighborGeomCacheSampler::SampleDualQuaternionDeltas(int32 InAnimFrameIndex)
 	{
-		USkeletalMesh* SkeletalMesh = SkeletalMeshComponent.Get() ? SkeletalMeshComponent->GetSkeletalMeshAsset() : nullptr;
-		UGeometryCache* GeometryCache = GeometryCacheComponent->GetGeometryCache();
-		if (SkeletalMeshComponent && SkeletalMesh && GeometryCacheComponent && GeometryCache)
+		USkeletalMesh* const SkeletalMesh = SkeletalMeshComponent.Get() ? SkeletalMeshComponent->GetSkeletalMeshAsset() : nullptr;
+		UGeometryCache* const GeometryCache = GeometryCacheComponent->GetGeometryCache();
+		if (!SkeletalMeshComponent || !SkeletalMesh || !GeometryCacheComponent || !GeometryCache)
 		{
-			const FTransform& AlignmentTransform = Model->GetAlignmentTransform();
-			FSkeletalMeshModel* ImportedModel = SkeletalMesh->GetImportedModel();
+			VertexDeltas.Reset(0);
+			return;
+		}
+		const FTransform& AlignmentTransform = Model->GetAlignmentTransform();
+		constexpr int32 LODIndex = 0;
+		if (!SkeletalMesh->HasMeshDescription(LODIndex))
+		{
+			VertexDeltas.Reset(0);
+			return;
+		}
+		const FSkeletalMeshRenderData* RenderData = SkeletalMesh->GetResourceForRendering();
+		const FSkinWeightVertexBuffer* SkinWeightBuffer = SkeletalMeshComponent->GetSkinWeightBuffer(LODIndex);
+		if (!RenderData || !RenderData->LODRenderData.IsValidIndex(LODIndex) || !SkinWeightBuffer)
+		{
+			VertexDeltas.Reset(0);
+			return;
+		}
+		const FSkeletalMeshLODRenderData& LODRenderData = RenderData->LODRenderData[LODIndex];
+		const FMeshDescription* MeshDescription = SkeletalMesh->GetMeshDescription(LODIndex);
+		const FSkeletalMeshConstAttributes MeshAttributes(*MeshDescription);
+		const FSkeletalMeshAttributesShared::FSourceGeometryPartVertexOffsetAndCountConstRef PartOffsetAndCountRef = MeshAttributes.GetSourceGeometryPartVertexOffsetAndCounts();
+		
+		if (GeomCacheMeshDatas.Num() != MeshMappings.Num())
+		{
+			GeomCacheMeshDatas.SetNum(MeshMappings.Num());
+		}
 
-			// For all mesh mappings we found.
-			const int32 LODIndex = 0;
-			const FSkeletalMeshLODModel& LODModel = ImportedModel->LODModels[LODIndex];
-			const TArray<FSkelMeshImportedMeshInfo>& SkelMeshInfos = LODModel.ImportedMeshInfos;
-			for (int32 MeshMappingIndex = 0; MeshMappingIndex < MeshMappings.Num(); ++MeshMappingIndex)
+		// For all mesh mappings we found.
+		for (int32 MeshMappingIndex = 0; MeshMappingIndex < MeshMappings.Num(); ++MeshMappingIndex)
+		{
+			const UE::MLDeformer::FMLDeformerGeomCacheMeshMapping& MeshMapping = MeshMappings[MeshMappingIndex];
+			UGeometryCacheTrack* const Track = GeometryCache->Tracks[MeshMapping.TrackIndex];
+		
+			// Sample the mesh data of the geom cache.
+			FGeometryCacheMeshData& GeomCacheMeshData = GeomCacheMeshDatas[MeshMappingIndex];
+			if (!Track->GetMeshDataAtSampleIndex(InAnimFrameIndex, GeomCacheMeshData))
 			{
-				const UE::MLDeformer::FMLDeformerGeomCacheMeshMapping& MeshMapping = MeshMappings[MeshMappingIndex];
-				const FSkelMeshImportedMeshInfo& MeshInfo = SkelMeshInfos[MeshMapping.MeshIndex];
-				UGeometryCacheTrack* Track = GeometryCache->Tracks[MeshMapping.TrackIndex];
+				continue;
+			}
 
-				// Sample the mesh data of the geom cache.
-				FGeometryCacheMeshData& GeomCacheMeshData = GeomCacheMeshDatas[MeshMappingIndex];
-				if (!Track->GetMeshDataAtTime(SampleTime, GeomCacheMeshData))
+			TArrayView<const int32> OffsetAndCount = PartOffsetAndCountRef.Get(MeshMapping.MeshIndex);
+			const int32 VertexOffset = OffsetAndCount[0];
+			const int32 NumVertices = OffsetAndCount[1];
+			
+			constexpr int32 BatchSize = 500;
+			const int32 NumBatches = (NumVertices / BatchSize) + 1;
+			ParallelFor(NumBatches, [&](int32 BatchIndex)
+			{
+				const int32 StartVertex = BatchIndex * BatchSize;
+				if (StartVertex >= NumVertices || VertexDeltas.IsEmpty())
 				{
-					continue;
+					return;
 				}
-
-				// Calculate the vertex deltas.
-				const FSkeletalMeshLODRenderData& SkelMeshLODData = SkeletalMesh->GetResourceForRendering()->LODRenderData[LODIndex];
-				const FSkinWeightVertexBuffer& SkinWeightBuffer = *SkeletalMeshComponent->GetSkinWeightBuffer(LODIndex);
-				for (int32 VertexIndex = 0; VertexIndex < MeshInfo.NumVertices; ++VertexIndex)
+				const int32 NumVertsInBatch = (StartVertex + BatchSize) < NumVertices ? BatchSize : FMath::Max(NumVertices - StartVertex, 0);
+				for (int32 VertexIndex = StartVertex; VertexIndex < StartVertex + NumVertsInBatch; ++VertexIndex)
 				{
-					const int32 SkinnedVertexIndex = MeshInfo.StartImportedVertex + VertexIndex;
+					const int32 SkinnedVertexIndex = VertexOffset + VertexIndex;
 					const int32 GeomCacheVertexIndex = MeshMapping.SkelMeshToTrackVertexMap[VertexIndex];
-					if (GeomCacheVertexIndex != INDEX_NONE && GeomCacheMeshData.Positions.IsValidIndex(GeomCacheVertexIndex))
+					if (GeomCacheMeshData.Positions.IsValidIndex(GeomCacheVertexIndex))
 					{
 						FVector3f Delta = FVector3f::ZeroVector;
 						const int32 ArrayIndex = 3 * SkinnedVertexIndex;
@@ -76,56 +187,58 @@ namespace UE::NearestNeighborModel
 							const FVector3f SkinnedVertexPos = SkinnedVertexPositions[SkinnedVertexIndex];
 							const FVector3f GeomCacheVertexPos = (FVector3f)AlignmentTransform.TransformPosition((FVector)GeomCacheMeshData.Positions[GeomCacheVertexIndex]);
 							const FVector3f WorldDelta = GeomCacheVertexPos - SkinnedVertexPos;
-							Delta = CalcDualQuaternionDelta(RenderVertexIndex, WorldDelta, SkelMeshLODData, SkinWeightBuffer);
+							Delta = CalcDualQuaternionDelta(RenderVertexIndex, WorldDelta, LODRenderData, *SkinWeightBuffer);
 						}
-
 						VertexDeltas[ArrayIndex] = Delta.X;
 						VertexDeltas[ArrayIndex + 1] = Delta.Y;
 						VertexDeltas[ArrayIndex + 2] = Delta.Z;
 					}
 				}
-			}
+			});
 		}
-		else
+	}
+
+	namespace Private
+	{
+		template<typename QuatType>
+		QuatType Conjugate(const QuatType& Q)
 		{
-			VertexDeltas.Reset(0);
+			return QuatType(-Q.X, -Q.Y, -Q.Z, Q.W);
 		}
-	}
-
-	template<typename QuatType>
-	QuatType Conjugate(const QuatType& Q)
-	{
-		return QuatType(-Q.X, -Q.Y, -Q.Z, Q.W);
-	}
-
-	template<typename QuatType>
-	float Inner(const QuatType& Q1, const QuatType& Q2)
-	{
-		return Q1.X * Q2.X + Q1.Y * Q2.Y + Q1.Z * Q2.Z + Q1.W * Q2.W;
-	}
-
-	template<typename QuatType>
-	QuatType FromVector(const FVector3f& V)
-	{
-		return QuatType(V[0], V[1], V[2], 0);
-	}
-
-	template<typename QuatType>
-	FVector3f ToVector(const QuatType& Q)
-	{
-		return FVector3f(Q.X, Q.Y, Q.Z);
-	}
+		
+		template<typename QuatType>
+		float Inner(const QuatType& Q1, const QuatType& Q2)
+		{
+			return Q1.X * Q2.X + Q1.Y * Q2.Y + Q1.Z * Q2.Z + Q1.W * Q2.W;
+		}
+		
+		template<typename QuatType>
+		QuatType FromVector(const FVector3f& V)
+		{
+			return QuatType(V[0], V[1], V[2], 0);
+		}
+		
+		template<typename QuatType>
+		FVector3f ToVector(const QuatType& Q)
+		{
+			return FVector3f(Q.X, Q.Y, Q.Z);
+		}
+	};
 
 	FVector3f FNearestNeighborGeomCacheSampler::CalcDualQuaternionDelta(int32 VertexIndex, const FVector3f& WorldDelta, const FSkeletalMeshLODRenderData& SkelMeshLODData, const FSkinWeightVertexBuffer& SkinWeightBuffer) const
 	{
+		using namespace Private;
 		check(SkeletalMeshComponent);
 		const USkeletalMesh* Mesh = SkeletalMeshComponent->GetSkeletalMeshAsset();
 		check(Mesh);
+		const FSkeletalMeshRenderData* RenderData = Mesh->GetResourceForRendering();
+		constexpr int32 LODIndex = 0;
+		check(RenderData && RenderData->LODRenderData.IsValidIndex(LODIndex));
+		const FSkeletalMeshLODRenderData& LODData = RenderData->LODRenderData[LODIndex];
 
 		// Find the render section, which we need to find the right bone index.
 		int32 SectionIndex = INDEX_NONE;
 		int32 SectionVertexIndex = INDEX_NONE;
-		const FSkeletalMeshLODRenderData& LODData = Mesh->GetResourceForRendering()->LODRenderData[0];
 		LODData.GetSectionFromVertexIndex(VertexIndex, SectionIndex, SectionVertexIndex);
 
 		FQuat4f QuatSum = FQuat4f(0, 0, 0, 0);
@@ -151,7 +264,7 @@ namespace UE::NearestNeighborModel
 				{
 					Sign = Inner(R0, R) < 0 ? -1 : 1;
 				}
-				const float	Weight = Sign * static_cast<float>(WeightByte) * UE::AnimationCore::InvMaxRawBoneWeightFloat;
+				const float Weight = Sign * static_cast<float>(WeightByte) * UE::AnimationCore::InvMaxRawBoneWeightFloat;
 				QuatSum += R * Weight;
 			}
 		}
@@ -171,11 +284,11 @@ namespace UE::NearestNeighborModel
 		}
 	}
 
-	uint8 FNearestNeighborGeomCacheSampler::GenerateMeshMappings()
+	EOpFlag FNearestNeighborGeomCacheSampler::GenerateMeshMappings()
 	{
-		uint8 Result = EUpdateResult::SUCCESS;
-		USkeletalMesh* SkeletalMesh = SkeletalMeshComponent.Get() ? SkeletalMeshComponent->GetSkeletalMeshAsset() : nullptr;
-		UGeometryCache* GeometryCache = GeometryCacheComponent.Get() ? GeometryCacheComponent->GetGeometryCache() : nullptr;
+		EOpFlag Result = EOpFlag::Success;
+		USkeletalMesh* const SkeletalMesh = SkeletalMeshComponent.Get() ? SkeletalMeshComponent->GetSkeletalMeshAsset() : nullptr;
+		UGeometryCache* const GeometryCache = GeometryCacheComponent.Get() ? GeometryCacheComponent->GetGeometryCache() : nullptr;
 		if (SkeletalMeshComponent && SkeletalMesh && GeometryCacheComponent && GeometryCache)
 		{
 			TArray<FString> FailedNames;
@@ -183,7 +296,7 @@ namespace UE::NearestNeighborModel
 			GenerateGeomCacheMeshMappings(SkeletalMesh, GeometryCache, MeshMappings, FailedNames, VertexMisMatchNames);
 			if (!FailedNames.IsEmpty() || !VertexMisMatchNames.IsEmpty())
 			{
-				Result |= EUpdateResult::WARNING;
+				Result |= EOpFlag::Warning;
 			}
 			for(int32 i = 0; i < VertexMisMatchNames.Num(); i++)
 			{
@@ -197,85 +310,17 @@ namespace UE::NearestNeighborModel
 		return Result;
 	}
 
-	uint8 FNearestNeighborGeomCacheSampler::CheckMeshMappingsEmpty() const
+	EOpFlag FNearestNeighborGeomCacheSampler::CheckMeshMappingsEmpty() const
 	{
 		if(MeshMappings.IsEmpty())
 		{
 			UE_LOG(LogNearestNeighborModel, Error, TEXT("MeshMappings is empty. Unable to match skeletal mesh with geometry cache."));
-			return EUpdateResult::ERROR;
+			return EOpFlag::Error;
 		}
 		else
 		{
-			return EUpdateResult::SUCCESS;
+			return EOpFlag::Success;
 		}
-	}
-
-	bool FNearestNeighborGeomCacheSampler::SampleKMeansAnim(const int32 AnimId)
-	{
-		UNearestNeighborModel* NearestNeighborModel = static_cast<UNearestNeighborModel*>(Model);
-		if (NearestNeighborModel && AnimId < NearestNeighborModel->SourceAnims.Num() && SkeletalMeshComponent)
-		{
-			const TObjectPtr<UAnimSequence> AnimSequence = NearestNeighborModel->SourceAnims[AnimId];
-			SkeletalMeshComponent->SetAnimationMode(EAnimationMode::AnimationSingleNode);
-			SkeletalMeshComponent->SetAnimation(AnimSequence);
-			SkeletalMeshComponent->SetPosition(0.0f);
-			SkeletalMeshComponent->SetPlayRate(1.0f);
-			SkeletalMeshComponent->Play(false);
-			SkeletalMeshComponent->RefreshBoneTransforms();
-			KMeansAnimId = AnimId;
-			return true;
-		}
-		else
-		{
-			return false;
-		}
-	}
-
-	// Write a function to get the animation of a skeletal mesh component
-
-	bool FNearestNeighborGeomCacheSampler::SampleKMeansFrame(const int32 Frame)
-	{
-		const USkeletalMesh* SkeletalMesh = SkeletalMeshComponent->GetSkeletalMeshAsset();
-		if (SkeletalMeshComponent && SkeletalMesh)
-		{
-			UNearestNeighborModel* NearestNeighborModel = static_cast<UNearestNeighborModel*>(Model);
-			const UAnimSequence* AnimSequence = NearestNeighborModel->SourceAnims[KMeansAnimId];
-			if (NearestNeighborModel->GetSkeletalMesh() == nullptr)
-			{
-				UE_LOG(LogNearestNeighborModel, Error, TEXT("SkeletalMesh is nullptr. Unable to sample KMeans frame."));
-				return false;
-			}
-
-			if (AnimSequence)
-			{
-				if (Frame < AnimSequence->GetDataModel()->GetNumberOfKeys())
-				{
-					AnimFrameIndex = Frame;
-					SampleTime = GetTimeAtFrame(Frame);
-
-					UpdateSkeletalMeshComponent();
-					UpdateBoneRotations();
-					UpdateCurveValues();
-					return true;
-				}
-				else
-				{
-					UE_LOG(LogNearestNeighborModel, Error, TEXT("AnimSequence only has %d keys, but being sampled with key %d"), AnimSequence->GetDataModel()->GetNumberOfKeys(), Frame);
-					return false;
-				}
-			}
-			else
-			{
-				UE_LOG(LogNearestNeighborModel, Error, TEXT("AnimSequence %d is nullptr. Unable to sample KMeans frame."), KMeansAnimId);
-				return false;
-			}
-
-		}
-		else
-		{
-			UE_LOG(LogNearestNeighborModel, Error, TEXT("KMeans: SkeletalMesh does not exist"));
-		}
-		return false;
 	}
 
 	TArray<uint32> FNearestNeighborGeomCacheSampler::GetMeshIndexBuffer() const
@@ -287,18 +332,29 @@ namespace UE::NearestNeighborModel
 			return IndexBuffer;
 		}
 
-		USkeletalMesh* Mesh = SkeletalMeshComponent->GetSkeletalMeshAsset();
+		const USkeletalMesh* Mesh = SkeletalMeshComponent->GetSkeletalMeshAsset();
 		if (Mesh == nullptr)
 		{
 			return IndexBuffer;
 		}
 
+		const FSkeletalMeshRenderData* RenderData = Mesh->GetResourceForRendering();
 		constexpr int32 LODIndex = 0;
-		const FSkeletalMeshLODRenderData& SkelMeshLODData = Mesh->GetResourceForRendering()->LODRenderData[LODIndex];
-		SkelMeshLODData.MultiSizeIndexContainer.GetIndexBuffer(IndexBuffer);
+		if(!RenderData || !RenderData->LODRenderData.IsValidIndex(LODIndex))
+		{
+			return IndexBuffer;
+		}
+		const FSkeletalMeshLODRenderData& LODRenderData = Mesh->GetResourceForRendering()->LODRenderData[LODIndex];
 
 		const FSkeletalMeshModel* SkeletalMeshModel = Mesh->GetImportedModel();
-		const TArray<int32>& ImportedVertexNumbers = SkeletalMeshModel->LODModels[LODIndex].MeshToImportVertexMap;
+		if (!SkeletalMeshModel || !SkeletalMeshModel->LODModels.IsValidIndex(LODIndex))
+		{
+			return IndexBuffer;
+		}
+		const FSkeletalMeshLODModel& LODModel = SkeletalMeshModel->LODModels[LODIndex];
+
+		LODRenderData.MultiSizeIndexContainer.GetIndexBuffer(IndexBuffer);
+		TConstArrayView<int32> ImportedVertexNumbers {LODModel.MeshToImportVertexMap};
 		
 		if (ImportedVertexNumbers.Num() > 0)
 		{
@@ -308,6 +364,6 @@ namespace UE::NearestNeighborModel
 			}
 		}
 
-		return MoveTemp(IndexBuffer);
+		return IndexBuffer;
 	}
 };

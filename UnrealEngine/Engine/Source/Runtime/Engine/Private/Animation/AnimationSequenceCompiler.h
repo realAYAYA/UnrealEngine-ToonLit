@@ -3,10 +3,12 @@
 
 #if WITH_EDITOR
 
-#include "CoreMinimal.h"
-#include "AssetCompilingManager.h"
-#include "AsyncCompilationHelpers.h"
+#include "IAssetCompilingManager.h"
+#include "Containers/Set.h"
+#include "Templates/UniquePtr.h"
+#include "UObject/WeakObjectPtr.h"
 
+class FAsyncCompilationNotification;
 class UAnimSequence;
 class USkeleton;
 class FQueuedThreadPool;
@@ -49,7 +51,7 @@ namespace UE::Anim
 		friend class FAssetCompilingManager;
 	
 		TSet<TWeakObjectPtr<UAnimSequence>> RegisteredAnimSequences;
-		FAsyncCompilationNotification Notification;
+		TUniquePtr<FAsyncCompilationNotification> Notification;
 		FDelegateHandle PostReachabilityAnalysisHandle;
 	};
 }

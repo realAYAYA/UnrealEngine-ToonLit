@@ -85,18 +85,21 @@ namespace LLMPrivate
 	{
 	public:
 
-		FTagData(FName InName, ELLMTagSet InTagSet, FName InDisplayName, FName InParentName, FName InStatName, FName InSummaryStatName, bool bInHasEnumTag, ELLMTag InEnumTag, ETagReferenceSource InReferenceSource);
-		FTagData(FName InName, ELLMTagSet InTagSet, FName InDisplayName, const FTagData* InParent, FName InStatName, FName InSummaryStatName, bool bInHasEnumTag, ELLMTag InEnumTag, ETagReferenceSource InReferenceSource);
+		FTagData(FName InName, ELLMTagSet InTagSet, FName InDisplayName, FName InParentName, FName InStatName,
+			FName InSummaryStatName, bool bInHasEnumTag, ELLMTag InEnumTag, ETagReferenceSource InReferenceSource);
+		FTagData(FName InName, ELLMTagSet InTagSet, FName InDisplayName, const FTagData* InParent, FName InStatName,
+			FName InSummaryStatName, bool bInHasEnumTag, ELLMTag InEnumTag, ETagReferenceSource InReferenceSource);
 		~FTagData();
 
 		bool IsParentConstructed() const;
 		bool IsFinishConstructed() const;
 		FName GetName() const;
 		FName GetDisplayName() const;
-		FString GetDisplayPath() const;
-		void AppendDisplayPath(FStringBuilderBase& Result) const;
+		void GetDisplayPath(FStringBuilderBase& Result, int32 MaxLen=-1) const;
+		void AppendDisplayPath(FStringBuilderBase& Result, int32 MaxLen=-1) const;
 		const FTagData* GetParent() const;
 		FName GetParentName() const;
+		FName GetParentNameSafeBeforeFinishConstruct() const;
 		FName GetStatName() const;
 		FName GetSummaryStatName() const;
 		ELLMTag GetEnumTag() const;
@@ -107,10 +110,12 @@ namespace LLMPrivate
 		ETagReferenceSource GetReferenceSource() const;
 		int32 GetIndex() const;
 		bool IsReportable() const;
+		bool IsStatsReportable() const;
 
 		void SetParent(const FTagData* InParent);
 		void SetIndex(int32 InIndex);
 		void SetIsReportable(bool bInReportable);
+		void SetIsStatsReportable(bool bInReportable);
 		void SetFinishConstructed();
 
 		// These functions are normally invalid - these properties should be immutable - but are called for EnumTags during bootstrapping

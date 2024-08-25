@@ -304,7 +304,7 @@ void SGitSourceControlSettings::Construct(const FArguments& InArgs)
 				.ToolTipText(LOCTEXT("GitInitRepository_Tooltip", "Initialize current project as a new Git repository"))
 				.OnClicked(this, &SGitSourceControlSettings::OnClickedInitializeGitRepository)
 				.HAlign(HAlign_Center)
-				.ContentPadding(6)
+				.ContentPadding(6.0f)
 			]
 		]
 	];

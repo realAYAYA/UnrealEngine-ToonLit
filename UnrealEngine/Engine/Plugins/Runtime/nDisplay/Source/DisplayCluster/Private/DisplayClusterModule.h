@@ -27,11 +27,6 @@ public:
 	//////////////////////////////////////////////////////////////////////////////////////////////
 	// IDisplayCluster
 	//////////////////////////////////////////////////////////////////////////////////////////////
-	virtual bool IsModuleInitialized() const override
-	{
-		return bIsModuleInitialized;
-	}
-	
 	virtual EDisplayClusterOperationMode GetOperationMode() const override
 	{
 		return CurrentOperationMode;
@@ -84,10 +79,6 @@ private:
 #endif
 
 private:
-	// Is module initialized.
-	// This flag is not the same as EDisplayClusterOperationMode::Disabled which is used when we turn off the DC functionality in a game mode.
-	bool bIsModuleInitialized = false;
-
 	// DisplayCluster subsystems
 	IPDisplayClusterClusterManager*   MgrCluster   = nullptr;
 	IPDisplayClusterRenderManager*    MgrRender    = nullptr;

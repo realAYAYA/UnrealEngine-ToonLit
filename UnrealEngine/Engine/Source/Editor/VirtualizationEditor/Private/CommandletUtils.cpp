@@ -279,7 +279,7 @@ FWorkQueue::FJob FWorkQueue::GetJob()
 {
 	if (!Jobs.IsEmpty())
 	{
-		return Jobs.Pop(false);
+		return Jobs.Pop(EAllowShrinking::No);
 	}
 	else
 	{

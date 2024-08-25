@@ -86,8 +86,8 @@ bool SkeletalMesUtilsImpl::SkeletonsAreCompatible(const FReferenceSkeleton& NewS
 				if (!bFailNoError)
 				{
 					UnFbx::FFbxImporter* FFbxImporter = UnFbx::FFbxImporter::GetInstance();
-					FFbxImporter->AddTokenizedErrorMessage(FTokenizedMessage::Create(EMessageSeverity::Error, FText::Format(LOCTEXT("MeshHasDifferentRoot", "Root Bone is '{0}' instead of '{1}'.\nDiscarding existing LODs."),
-						FText::FromName(NewBoneName), FText::FromName(NewParentName))), FFbxErrors::SkeletalMesh_DifferentRoots);
+					FFbxImporter->AddTokenizedErrorMessage(FTokenizedMessage::Create(EMessageSeverity::Error, FText::Format(LOCTEXT("MeshHasDifferentParent", "Parent Bone of '{0}' is '{1}' instead of '{2}'. Discarding existing LODs."),
+						FText::FromName(NewBoneName), FText::FromName(NewParentName), FText::FromName(ExistParentName))), FFbxErrors::SkeletalMesh_DifferentRoots);
 				}
 				return false;
 			}
@@ -222,7 +222,7 @@ bool SkeletalMeshImportUtils::ProcessImportMeshSkeleton(const USkeleton* Skeleto
 */
 void SkeletalMeshImportUtils::ProcessImportMeshInfluences(FSkeletalMeshImportData& ImportData, const FString& SkeletalMeshName)
 {
-	FLODUtilities::ProcessImportMeshInfluences(ImportData.Wedges.Num(), ImportData.Influences, SkeletalMeshName);
+	FLODUtilities::ProcessImportMeshInfluences(ImportData.Points.Num(), ImportData.Influences, SkeletalMeshName);
 }
 
 void SkeletalMesUtilsImpl::SaveSkeletalMeshLODModelSections(USkeletalMesh* SourceSkeletalMesh, TSharedPtr<FExistingSkelMeshData>& ExistingMeshDataPtr, int32 LodIndex, bool bSaveNonReducedMeshData)
@@ -369,9 +369,10 @@ TSharedPtr<FExistingSkelMeshData> SkeletalMeshImportUtils::SaveExistingSkelMeshD
 			const FSkeletalMeshLODModel& LODModel = SourceMeshModel->LODModels[LODIndex];
 			ExistingMeshDataPtr->ExistingLODModels.Add(FSkeletalMeshLODModel::CreateCopy(&LODModel));
 			//Store the import data for every LODs
-			FSkeletalMeshLodImportDataBackup& LodMeshImportData = ExistingMeshDataPtr->ExistingLODImportDatas.AddDefaulted_GetRef();
-			SourceSkeletalMesh->LoadLODImportedData(LODIndex, LodMeshImportData.MeshImportData);
-			SourceSkeletalMesh->GetLODImportedDataVersions(LODIndex, LodMeshImportData.MeshGeoImportVersion, LodMeshImportData.MeshSkinningImportVersion);
+			FSkeletalMeshImportData& LodMeshImportData = ExistingMeshDataPtr->ExistingLODImportDatas.AddDefaulted_GetRef();
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
+			SourceSkeletalMesh->LoadLODImportedData(LODIndex, LodMeshImportData);
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		}
 		check(ExistingMeshDataPtr->ExistingLODModels.Num() == SourceMeshModel->LODModels.Num());
 
@@ -403,6 +404,7 @@ TSharedPtr<FExistingSkelMeshData> SkeletalMeshImportUtils::SaveExistingSkelMeshD
 	ExistingMeshDataPtr->ExistingClothingAssets = SourceSkeletalMesh->GetMeshClothingAssets();
 	ExistingMeshDataPtr->ExistingSamplingInfo = SourceSkeletalMesh->GetSamplingInfo();
 	ExistingMeshDataPtr->ExistingDefaultAnimatingRig = SourceSkeletalMesh->GetDefaultAnimatingRig();
+	ExistingMeshDataPtr->ExistingDefaultMeshDeformer = SourceSkeletalMesh->GetDefaultMeshDeformer();
 
 	if (ExistingMeshDataPtr->UseMaterialNameSlotWorkflow)
 	{
@@ -463,8 +465,8 @@ void SkeletalMesUtilsImpl::RestoreLODInfo(const TSharedPtr<const FExistingSkelMe
 	ImportedLODInfo.ScreenSize = ExistingLODInfo.ScreenSize;
 	ImportedLODInfo.LODHysteresis = ExistingLODInfo.LODHysteresis;
 	ImportedLODInfo.BuildSettings = ExistingLODInfo.BuildSettings;
-	//Old assets may have non-applied reduction settings, so only restore the reduction settings if the LOD was effectively reduced.
-	if (ExistingLODInfo.bHasBeenSimplified)
+	//Old assets may have non-applied reduction settings, so only restore the reduction settings if the LOD was effectively reduced and we did not import a custom LOD over this generated LOD.
+	if (ExistingLODInfo.bHasBeenSimplified && (!ExistingLODInfo.SourceImportFilename.IsEmpty() || ImportedLODInfo.SourceImportFilename.IsEmpty()))
 	{
 		ImportedLODInfo.ReductionSettings = ExistingLODInfo.ReductionSettings;
 	}
@@ -478,7 +480,9 @@ void SkeletalMesUtilsImpl::RestoreLODInfo(const TSharedPtr<const FExistingSkelMe
 	ImportedLODInfo.SkinCacheUsage = ExistingLODInfo.SkinCacheUsage;
 	ImportedLODInfo.MorphTargetPositionErrorTolerance = ExistingLODInfo.MorphTargetPositionErrorTolerance;
 	ImportedLODInfo.bAllowCPUAccess = ExistingLODInfo.bAllowCPUAccess;
+	ImportedLODInfo.bBuildHalfEdgeBuffers = ExistingLODInfo.bBuildHalfEdgeBuffers;
 	ImportedLODInfo.bSupportUniformlyDistributedSampling = ExistingLODInfo.bSupportUniformlyDistributedSampling;
+	ImportedLODInfo.bAllowMeshDeformer = ExistingLODInfo.bAllowMeshDeformer;
 }
 
 void SkeletalMeshImportUtils::ApplySkinning(USkeletalMesh* SkeletalMesh, FSkeletalMeshLODModel& SrcLODModel, FSkeletalMeshLODModel& DestLODModel)
@@ -774,7 +778,7 @@ void SkeletalMeshImportUtils::RestoreExistingSkelMeshData(const TSharedPtr<const
 						}
 						else
 						{
-							LODModelCopy->ActiveBoneIndices.RemoveAt(j, 1, false);
+							LODModelCopy->ActiveBoneIndices.RemoveAt(j, 1, EAllowShrinking::No);
 							--j;
 						}
 					}
@@ -801,7 +805,7 @@ void SkeletalMeshImportUtils::RestoreExistingSkelMeshData(const TSharedPtr<const
 						else
 						{
 							//Bone didn't exist in our required bones, clean up. 
-							LODModelCopy->RequiredBones.RemoveAt(j, 1, false);
+							LODModelCopy->RequiredBones.RemoveAt(j, 1, EAllowShrinking::No);
 							--j;
 						}
 					}
@@ -846,10 +850,11 @@ void SkeletalMeshImportUtils::RestoreExistingSkelMeshData(const TSharedPtr<const
 						SkeletalMeshImportedModel->LODModels.Add(LODModelCopy);
 						SkeletalMesh->AddLODInfo(LODInfo);
 						//Restore custom LOD import data
-						FSkeletalMeshLodImportDataBackup* LodMeshImportData = const_cast<FSkeletalMeshLodImportDataBackup*>(&(MeshData->ExistingLODImportDatas[LODIndex]));
+						const FSkeletalMeshImportData& LodMeshImportData = MeshData->ExistingLODImportDatas[LODIndex];
 						//SaveLODImportdData cannot take a const structure because it use serialization(which cannot be const because same function read and write)
-						SkeletalMesh->SaveLODImportedData(LODIndex, LodMeshImportData->MeshImportData);
-						SkeletalMesh->SetLODImportedDataVersions(LODIndex, LodMeshImportData->MeshGeoImportVersion, LodMeshImportData->MeshSkinningImportVersion);
+						PRAGMA_DISABLE_DEPRECATION_WARNINGS
+						SkeletalMesh->SaveLODImportedData(LODIndex, LodMeshImportData);
+						PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 						auto FillInlineReductionData = [&MeshData, &SkeletalMeshImportedModel, LODIndex]()
 						{
@@ -887,7 +892,7 @@ void SkeletalMeshImportUtils::RestoreExistingSkelMeshData(const TSharedPtr<const
 			
 			
 			//Old asset cannot use the new build system, we need to regenerate dependent LODs
-			if (SkeletalMesh->IsLODImportedDataBuildAvailable(SafeReimportLODIndex) == false)
+			if (!SkeletalMesh->HasMeshDescription(SafeReimportLODIndex))
 			{
 				FLODUtilities::RegenerateDependentLODs(SkeletalMesh, SafeReimportLODIndex, GetTargetPlatformManagerRef().GetRunningTargetPlatform());
 			}
@@ -912,6 +917,7 @@ void SkeletalMeshImportUtils::RestoreExistingSkelMeshData(const TSharedPtr<const
 		SkeletalMesh->SetSkeleton(MeshData->ExistingSkeleton);
 		SkeletalMesh->SetPostProcessAnimBlueprint(MeshData->ExistingPostProcessAnimBlueprint);
 		SkeletalMesh->SetDefaultAnimatingRig(MeshData->ExistingDefaultAnimatingRig);
+		SkeletalMesh->SetDefaultMeshDeformer(MeshData->ExistingDefaultMeshDeformer);
 
 		SkeletalMesh->GetMorphTargets().Empty(MeshData->ExistingMorphTargets.Num());
 		SkeletalMesh->GetMorphTargets().Append(MeshData->ExistingMorphTargets);

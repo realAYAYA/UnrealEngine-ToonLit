@@ -10,7 +10,6 @@
 #include "Async/ParallelFor.h"
 #include "Util/ProgressCancel.h"
 #include "BoneIndices.h"
-#include "BoneWeights.h"
 #include "IndexTypes.h"
 #include "TransformTypes.h"
 #include "Solvers/Internal/QuadraticProgramming.h"
@@ -29,6 +28,7 @@ namespace TransferBoneWeightsLocals
 	 * @param TriVertices The vertices of a triangle containing the point we are interpolating the weights for
 	 * @param Bary Barycentric coordinates of the point
 	 * @param Attribute Attribute containing bone weights of the mesh that TriVertices belong to
+	 * @param MaxNumInfluences The maximum allowed number of influences per vertex stored in OutWeights
 	 * @param SourceIndexToBone Optional map from bone index to bone name for the source mesh
 	 * @param TargetBoneToIndex OPtional map from bone name to bone index for the target mesh
 	 * @param bNormalizeToOne If true, OutWeights will be normalized to sum to 1.
@@ -37,6 +37,7 @@ namespace TransferBoneWeightsLocals
 								const FIndex3i& TriVertices,
 								const FVector3f& Bary,
 								const FDynamicMeshVertexSkinWeightsAttribute* Attribute,
+								const int32 MaxNumInfluences,
 								const TArray<FName>* SourceIndexToBone = nullptr,
 								const TMap<FName, FBoneIndexType>* TargetBoneToIndex = nullptr,
 								bool bNormalizeToOne = true)
@@ -49,8 +50,13 @@ namespace TransferBoneWeightsLocals
 		FBoneWeightsSettings BlendSettings;
 		BlendSettings.SetNormalizeType(bNormalizeToOne ? EBoneWeightNormalizeType::Always : EBoneWeightNormalizeType::None);
 		BlendSettings.SetBlendZeroInfluence(true);
+		BlendSettings.SetMaxWeightCount(MaxNumInfluences);
 		OutWeights = FBoneWeights::Blend(Weight1, Weight2, Weight3, Bary[0], Bary[1], Bary[2], BlendSettings);
 
+		// TODO: Blend method can potentially skip applying renormalization and prunning weights to match MaxNumInfluences
+		// using the BlendSettings so force renormalization. Remove this once FBoneWeights::Blend is fixed.
+		OutWeights.Renormalize(BlendSettings);
+		 
 		// Check if we need to remap the indices
 		if (SourceIndexToBone && TargetBoneToIndex) 
 		{
@@ -492,6 +498,9 @@ bool FTransferBoneWeights::TransferWeightsToMesh(FDynamicMesh3& InOutTargetMesh,
 			FBoneWeightsSettings BoneSettings;
 			BoneSettings.SetNormalizeType(EBoneWeightNormalizeType::None);
 			
+			FBoneWeightsSettings RenormalizeBoneSettings;
+			RenormalizeBoneSettings.SetMaxWeightCount(MaxNumInfluences);
+
 			// Iterate over every column containing all bone weights for the vertex
 			for (int32 ColIdx = 0; ColIdx < TargetWeightsTransposed.outerSize(); ++ColIdx)
 			{
@@ -506,7 +515,7 @@ bool FTransferBoneWeights::TransferWeightsToMesh(FDynamicMesh3& InOutTargetMesh,
 					WeightArray.SetBoneWeight(Bweight, BoneSettings);
 				}
 
-				WeightArray.Renormalize(FBoneWeightsSettings());
+				WeightArray.Renormalize(RenormalizeBoneSettings);
 
 				const int32 VertexIDLinearalized = bVariablesOnly ? static_cast<int32>(VaribleRows[ColIdx]) : ColIdx; // linearized vertex ID (matrix row) of the variable in the Energy matrix
 				const int32 VertexID = static_cast<int32>(ToMeshV[VertexIDLinearalized]);
@@ -528,6 +537,7 @@ bool FTransferBoneWeights::TransferWeightsToMesh(FDynamicMesh3& InOutTargetMesh,
 				}
 
 				FSmoothDynamicMeshVertexSkinWeights SmoothWeights(&InOutTargetMesh, InTargetProfileName);
+				SmoothWeights.MaxNumInfluences = MaxNumInfluences;
 				if (ensure(SmoothWeights.Validate() == EOperationValidationResult::Ok))
 				{
 					ensure(SmoothWeights.SmoothWeightsAtVerticesWithinDistance(VerticesToSmooth, SmoothingStrength, SearchRadius, NumSmoothingIterations));
@@ -575,7 +585,7 @@ bool FTransferBoneWeights::TransferWeightsToPoint(UE::AnimationCore::FBoneWeight
 	if (SearchRadius < 0 && NormalThreshold < 0)
 	{
 		// If the radius and normals are ignored, simply interpolate the weights and return the result
-		TransferBoneWeightsLocals::InterpolateBoneWeights(OutWeights, TriVertex, BaryF, SourceSkinWeights, SourceBoneNames, TargetBoneToIndex);
+		TransferBoneWeightsLocals::InterpolateBoneWeights(OutWeights, TriVertex, BaryF, SourceSkinWeights, MaxNumInfluences, SourceBoneNames, TargetBoneToIndex);
 	}
 	else
 	{
@@ -614,7 +624,7 @@ bool FTransferBoneWeights::TransferWeightsToPoint(UE::AnimationCore::FBoneWeight
 		
 		if (bPassedRadiusCheck && bPassedNormalsCheck)
 		{
-			TransferBoneWeightsLocals::InterpolateBoneWeights(OutWeights, TriVertex, BaryF, SourceSkinWeights, SourceBoneNames, TargetBoneToIndex);
+			TransferBoneWeightsLocals::InterpolateBoneWeights(OutWeights, TriVertex, BaryF, SourceSkinWeights, MaxNumInfluences, SourceBoneNames, TargetBoneToIndex);
 		}
 		else
 		{

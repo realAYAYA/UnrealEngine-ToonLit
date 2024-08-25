@@ -17,11 +17,11 @@ namespace Horde.Agent
 
 		public static ISpanBuilder WithServiceName(this ISpanBuilder builder, string? serviceName)
 		{
-			if(serviceName != null)
+			if (serviceName != null)
 			{
 				builder = builder.WithTag(Datadog.Trace.OpenTracing.DatadogTags.ServiceName, serviceName);
 			}
 			return builder;
 		}
-}
+	}
 }

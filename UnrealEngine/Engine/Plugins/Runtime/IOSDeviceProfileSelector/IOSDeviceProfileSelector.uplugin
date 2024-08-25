@@ -23,7 +23,8 @@
 			"PlatformAllowList" :
 			[
 				"IOS",
-				"TVOS"
+				"TVOS",
+				"VisionOS"
 			]
 		}
 	]

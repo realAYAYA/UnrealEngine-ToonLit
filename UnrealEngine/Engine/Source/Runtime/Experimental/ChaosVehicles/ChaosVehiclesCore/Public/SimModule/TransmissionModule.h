@@ -10,12 +10,60 @@ namespace Chaos
 	struct FAllInputs;
 	class FSimModuleTree;
 
+	struct CHAOSVEHICLESCORE_API FTransmissionSimModuleDatas : public FModuleNetData
+	{
+#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+		FTransmissionSimModuleDatas(int NodeArrayIndex, const FString& InDebugString) : FModuleNetData(NodeArrayIndex, InDebugString) {}
+#else
+		FTransmissionSimModuleDatas(int NodeArrayIndex) : FModuleNetData(NodeArrayIndex) {}
+#endif
+
+		virtual eSimType GetType() override { return eSimType::Transmission; }
+
+		virtual void FillSimState(ISimulationModuleBase* SimModule) override;
+
+		virtual void FillNetState(const ISimulationModuleBase* SimModule) override;
+
+		virtual void Serialize(FArchive& Ar) override
+		{
+			Ar << CurrentGear;
+			Ar << TargetGear;
+			Ar << CurrentGearChangeTime;
+		}
+
+		virtual void Lerp(const float LerpFactor, const FModuleNetData& Min, const FModuleNetData& Max) override;
+
+#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+		virtual FString ToString() const override;
+#endif
+
+		int32 CurrentGear = 0;
+		int32 TargetGear = 0;
+		float CurrentGearChangeTime = 0.0f;
+	};
+
+	struct CHAOSVEHICLESCORE_API FTransmissionOutputData : public FSimOutputData
+	{
+		virtual FSimOutputData* MakeNewData() override { return FTransmissionOutputData::MakeNew(); }
+		static FSimOutputData* MakeNew() { return new FTransmissionOutputData(); }
+
+		virtual eSimType GetType() override { return eSimType::Transmission; }
+		virtual void FillOutputState(const ISimulationModuleBase* SimModule) override;
+		virtual void Lerp(const FSimOutputData& InCurrent, const FSimOutputData& InNext, float Alpha) override;
+
+#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+		virtual FString ToString() override;
+#endif
+
+		int32 CurrentGear;
+	};
+
 	struct CHAOSVEHICLESCORE_API FTransmissionSettings
 	{
 		enum ETransType : uint8
 		{
-			Manual,
-			Automatic
+			ManualType,
+			AutomaticType
 		};
 
 		FTransmissionSettings()
@@ -24,7 +72,7 @@ namespace Chaos
 			, ChangeDownRPM(2500)
 			, GearChangeTime(0.5f)
 			, TransmissionEfficiency(1.f)
-			, TransmissionType(ETransType::Automatic)
+			, TransmissionType(ETransType::AutomaticType)
 			, AutoReverse(true)
 		{
 			ForwardRatios.Add(2.85f);
@@ -52,6 +100,9 @@ namespace Chaos
 
 	class CHAOSVEHICLESCORE_API FTransmissionSimModule : public FTorqueSimModule, public TSimModuleSettings<FTransmissionSettings>
 	{
+		friend FTransmissionSimModuleDatas;
+		friend FTransmissionOutputData;
+
 	public:
 
 		FTransmissionSimModule(const FTransmissionSettings& Settings)
@@ -61,6 +112,21 @@ namespace Chaos
 			, CurrentGearChangeTime(0.f)
 			, AllowedToChangeGear(true)
 		{
+		}
+
+		virtual TSharedPtr<FModuleNetData> GenerateNetData(int SimArrayIndex) const
+		{
+			return MakeShared<FTransmissionSimModuleDatas>(
+				SimArrayIndex
+#if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+				, GetDebugName()
+#endif			
+			);
+		}
+
+		virtual FSimOutputData* GenerateOutputData() const override
+		{
+			return FTransmissionOutputData::MakeNew();
 		}
 
 		virtual eSimType GetSimType() const { return eSimType::Transmission; }
@@ -73,7 +139,7 @@ namespace Chaos
 
 		virtual void Simulate(float DeltaTime, const FAllInputs& Inputs, FSimModuleTree& VehicleModuleSystem) override;
 
-	private:
+	protected:
 
 		/** set the target gear number to change to, can change gear immediately if specified
 		 *  i.e. rather than waiting for the gear change time to elapse
@@ -106,6 +172,10 @@ namespace Chaos
 			GearIndexInOut = FMath::Clamp(GearIndexInOut, -Setup().ReverseRatios.Num(), Setup().ForwardRatios.Num());
 		}
 
+		int32 GetCurrentGear() { return CurrentGear; }
+		int32 GetTargetGear() { return TargetGear; }
+
+	private:
 		int32 CurrentGear; // <0 reverse gear(s), 0 neutral, >0 forward gears
 		int32 TargetGear;  // <0 reverse gear(s), 0 neutral, >0 forward gears
 		float CurrentGearChangeTime; // Time to change gear, no power transmitted to the wheels during change

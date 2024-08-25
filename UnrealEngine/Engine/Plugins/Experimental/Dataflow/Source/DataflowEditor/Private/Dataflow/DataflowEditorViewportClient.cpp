@@ -1,247 +1,131 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #include "Dataflow/DataflowEditorViewportClient.h"
 
-#include "Dataflow/DataflowActor.h"
+#include "Dataflow/DataflowObject.h"
 #include "Dataflow/DataflowEditorToolkit.h"
 #include "Dataflow/DataflowEngineSceneHitProxies.h"
-#include "Dataflow/DataflowXml.h"
-#include "HAL/PlatformApplicationMisc.h"
+#include "Dataflow/DataflowPreviewScene.h"
+#include "EditorModeManager.h"
 #include "PreviewScene.h"
+#include "Selection.h"
 
-FDataflowEditorViewportClient::FDataflowEditorViewportClient(FPreviewScene* InPreviewScene, 
-	const TWeakPtr<SEditorViewport> InEditorViewportWidget,
-	TWeakPtr<FDataflowEditorToolkit> InDataflowEditorToolkitPtr)
-	: 
-	FEditorViewportClient(nullptr, InPreviewScene, InEditorViewportWidget)
-	, DataflowEditorToolkitPtr(InDataflowEditorToolkitPtr)
+FDataflowEditorViewportClient::FDataflowEditorViewportClient(FEditorModeTools* InModeTools,
+                                                             FPreviewScene* InPreviewScene,  const bool bCouldTickScene,
+                                                             const TWeakPtr<SEditorViewport> InEditorViewportWidget)
+	: FEditorViewportClient(InModeTools, InPreviewScene, InEditorViewportWidget)
 {
-	SetRealtime(true);
-	SetViewModes(VMI_Lit, VMI_Lit);
-	bSetListenerPosition = false;
-	EngineShowFlags.Grid = false;
+	// We want our near clip plane to be quite close so that we can zoom in further.
+	OverrideNearClipPlane(KINDA_SMALL_NUMBER);
+
+	EngineShowFlags.SetSelectionOutline(true);
+	EngineShowFlags.EnableAdvancedFeatures();
+
+	PreviewScene = static_cast<FDataflowPreviewScene*>(InPreviewScene);
+	bEnableSceneTicking = bCouldTickScene;
 }
 
-void FDataflowEditorViewportClient::SetSelectionMode(FDataflowSelectionState::EMode InState)
+void FDataflowEditorViewportClient::SetDataflowEditorToolkit(TWeakPtr<FDataflowEditorToolkit> InDataflowEditorToolkitPtr)
 {
-	FDataflowSelectionState State = DataflowActor->DataflowComponent->GetSelectionState();
-		
-	if (SelectionMode == InState)
-	{
-		SelectionMode = FDataflowSelectionState::EMode::DSS_Dataflow_None;
-	}
-	else
-	{
-		SelectionMode = InState;
-	}
-
-	State.Mode = SelectionMode;
-	DataflowActor->DataflowComponent->SetSelectionState(State);
-
-	if (SelectionMode == FDataflowSelectionState::EMode::DSS_Dataflow_None)
-	{
-		if (!DataflowActor->DataflowComponent->GetSelectionState().IsEmpty())
-		{
-			DataflowActor->DataflowComponent->SetSelectionState(FDataflowSelectionState(SelectionMode));
-		}
-	}
-}
-bool FDataflowEditorViewportClient::CanSetSelectionMode(FDataflowSelectionState::EMode InState)
-{
-	TSharedPtr<FDataflowEditorToolkit> DataflowEditorToolkit = DataflowEditorToolkitPtr.Pin();
-	if (DataflowEditorToolkitPtr.IsValid())
-	{
-		if (const UDataflow* Dataflow = DataflowEditorToolkit->GetDataflow())
-		{
-			if (Dataflow->GetRenderTargets().Num())
-			{
-				if (InState == FDataflowSelectionState::EMode::DSS_Dataflow_Object)
-				{
-					return true;
-				}
-
-				if (InState == FDataflowSelectionState::EMode::DSS_Dataflow_Vertex
-					&& !DataflowActor->DataflowComponent->GetSelectionState().Nodes.IsEmpty())
-				{
-					return true;
-				}
-			}
-		}
-	}
-
-	return false;
-}
-bool FDataflowEditorViewportClient::IsSelectionModeActive(FDataflowSelectionState::EMode InState) 
-{ 
-	return SelectionMode == InState;
+	DataflowEditorToolkitPtr = InDataflowEditorToolkitPtr;
 }
 
-Dataflow::FTimestamp FDataflowEditorViewportClient::LatestTimestamp(const UDataflow* Dataflow, const Dataflow::FContext* Context)
+void FDataflowEditorViewportClient::SetToolCommandList(TWeakPtr<FUICommandList> InToolCommandList)
 {
-	if (Dataflow && Context)
-	{
-		return FMath::Max(Dataflow->GetRenderingTimestamp().Value, Context->GetTimestamp().Value);
-	}
-	return Dataflow::FTimestamp::Invalid;
+	ToolCommandList = InToolCommandList;
 }
 
-bool FDataflowEditorViewportClient::InputKey(const FInputKeyEventArgs& EventArgs)
+//const UInputBehaviorSet* FDataflowEditorViewportClient::GetInputBehaviors() const
+//{
+//	return BehaviorSet;
+//}
+
+void FDataflowEditorViewportClient::Tick(float DeltaSeconds)
 {
-	bool bHandled = false;
-
-	FInputEventState InputState(EventArgs.Viewport, EventArgs.Key, EventArgs.Event);
-	if (InputState.IsCtrlButtonPressed() && EventArgs.Key == EKeys::C)
+	Super::Tick(DeltaSeconds);
+	if (PreviewScene)
 	{
-		if (DataflowActor->DataflowComponent->GetSelectionState().Vertices.Num())
-		{
-			FString XmlBuffer = FDataflowXmlWrite()
-				.Begin()
-				.MakeVertexSelectionBlock(DataflowActor->DataflowComponent->GetSelectionState().Vertices)
-				.End()
-				.ToString();
-			FPlatformApplicationMisc::ClipboardCopy(*XmlBuffer);
-		}
+		PreviewScene->TickDataflowScene(DeltaSeconds);
 	}
-
-
-	if (!bHandled)
-	{
-		bHandled = FEditorViewportClient::InputKey(EventArgs);
-	}
-
-	return bHandled;
 }
 
 void FDataflowEditorViewportClient::ProcessClick(FSceneView& View, HHitProxy* HitProxy, FKey Key, EInputEvent Event, uint32 HitX, uint32 HitY)
 {
 	Super::ProcessClick(View, HitProxy, Key, Event, HitX, HitY);
-	if (DataflowActor && DataflowActor->DataflowComponent)
+
+	USelection* SelectedComponents = ModeTools->GetSelectedComponents();
+
+	TArray<UPrimitiveComponent*> PreviouslySelectedComponents;
+	SelectedComponents->GetSelectedObjects<UPrimitiveComponent>(PreviouslySelectedComponents);
+
+	SelectedComponents->Modify();
+	SelectedComponents->BeginBatchSelectOperation();
+
+	SelectedComponents->DeselectAll();
+
+	if (HitProxy && HitProxy->IsA(HActor::StaticGetType()))
 	{
-		const bool bIsShiftKeyDown = Viewport->KeyState(EKeys::LeftShift) || Viewport->KeyState(EKeys::RightShift);
-		const bool bIsCtrltKeyDown = Viewport->KeyState(EKeys::LeftControl) || Viewport->KeyState(EKeys::RightControl);
-
-		FDataflowSelectionState SelectionState = DataflowActor->DataflowComponent->GetSelectionState();
-		FDataflowSelectionState PreState = SelectionState;
-
-		if (SelectionMode == FDataflowSelectionState::EMode::DSS_Dataflow_Object)
+		const HActor* ActorProxy = static_cast<HActor*>(HitProxy);
+		if (ActorProxy && ActorProxy->PrimComponent && ActorProxy->Actor)
 		{
-			if (HitProxy && HitProxy->IsA(HDataflowNode::StaticGetType()))
-			{
-				HDataflowNode* DataflowNode = (HDataflowNode*)(HitProxy);
-				FDataflowSelectionState::ObjectID ID(DataflowNode->NodeName, DataflowNode->GeometryIndex);
-
-				if (bIsShiftKeyDown)
-				{
-					if (!SelectionState.Nodes.Contains(ID))
-					{
-						SelectionState.Nodes.AddUnique(ID);
-					}
-				}
-				else if (bIsCtrltKeyDown)
-				{
-					if (SelectionState.Nodes.Contains(ID))
-					{
-						SelectionState.Nodes.Remove(ID);
-					}
-				}
-				else
-				{
-					SelectionState.Nodes.Empty();
-					SelectionState.Nodes.AddUnique(ID);
-				}
-			}
-			else if (!bIsShiftKeyDown && !bIsCtrltKeyDown)
-			{
-				SelectionState.Nodes.Empty();
-			}
+			UPrimitiveComponent* Component = const_cast<UPrimitiveComponent*>(ActorProxy->PrimComponent.Get());
+			SelectedComponents->Select(Component);
+			Component->PushSelectionToProxy();
 		}
+	}
 
-		if (SelectionMode == FDataflowSelectionState::EMode::DSS_Dataflow_Vertex)
-		{
-			if (HitProxy && HitProxy->IsA(HDataflowVertex::StaticGetType()))
-			{
-				HDataflowVertex* DataflowVertex = (HDataflowVertex*)(HitProxy);
-				int32 ID = DataflowVertex->SectionIndex;
-				if (bIsShiftKeyDown)
-				{
-					if (!SelectionState.Vertices.Contains(ID))
-					{
-						SelectionState.Vertices.AddUnique(ID);
-					}
-				}
-				else if (bIsCtrltKeyDown)
-				{
-					if (SelectionState.Vertices.Contains(ID))
-					{
-						SelectionState.Vertices.Remove(ID);
-					}
-				}
-				else
-				{
-					SelectionState.Vertices.Empty();
-					SelectionState.Vertices.AddUnique(ID);
-				}
-			}
-			else if (!bIsShiftKeyDown && !bIsCtrltKeyDown)
-			{
-				SelectionState.Vertices.Empty();
-			}
-		}
+	SelectedComponents->EndBatchSelectOperation();
 
-		if (PreState != SelectionState)
-		{
-			DataflowActor->DataflowComponent->SetSelectionState(SelectionState);
-		}
+	for (UPrimitiveComponent* const Component : PreviouslySelectedComponents)
+	{
+		Component->PushSelectionToProxy();
 	}
 }
 
-void FDataflowEditorViewportClient::Tick(float DeltaSeconds)
+void FDataflowEditorViewportClient::SetConstructionViewMode(Dataflow::EDataflowPatternVertexType InViewMode)
 {
-	Super::Tick(DeltaSeconds);
+	// @todo(Dataflow) : Add support for Sim2D
+	//const bool bSwitching2D3D = (ConstructionViewMode == Dataflow::EDataflowPatternVertexType::Sim2D) != (InViewMode == Dataflow::EDataflowPatternVertexType::Sim2D);
+	//if (bSwitching2D3D)
+	//{
+	//	Swap(SavedInactiveViewTransform, ViewTransformPerspective);
+	//}
 
-	TSharedPtr<FDataflowEditorToolkit> DataflowEditorToolkit = DataflowEditorToolkitPtr.Pin();
+	ConstructionViewMode = Dataflow::EDataflowPatternVertexType::Sim3D;
 
-	if (DataflowActor && DataflowEditorToolkitPtr.IsValid())
-	{
-		if (TSharedPtr<Dataflow::FContext> Context = DataflowEditorToolkit->GetContext())
-		{
-			if (const UDataflow* Dataflow = DataflowEditorToolkit->GetDataflow())
-			{
-				if (UDataflowComponent* DataflowComponent = DataflowActor->GetDataflowComponent())
-				{
-					Dataflow::FTimestamp SystemTimestamp = LatestTimestamp(Dataflow, Context.Get());
-					if (SystemTimestamp >= LastModifiedTimestamp)
-					{
-						if (Dataflow->GetRenderTargets().Num())
-						{
-							// Component Object Rendering
-							DataflowComponent->ResetRenderTargets();
-							DataflowComponent->SetDataflow(Dataflow);
-							DataflowComponent->SetContext(Context);
-							for (const UDataflowEdNode* Node : Dataflow->GetRenderTargets())
-							{
-								DataflowComponent->AddRenderTarget(Node);
-							}
-						}
-						else
-						{
-							DataflowComponent->ResetRenderTargets();
-						}
+	
+	//if (ConstructionViewMode == EDataflowPatternVertexType::Sim2D)
+	//{
+	//	for (UInputBehavior* const Behavior : BehaviorsFor2DMode)
+	//	{
+	//		BehaviorSet->Add(Behavior);
+	//	}
+	//
+	//	const double AbsZ = FMath::Abs(ViewTransformPerspective.GetLocation().Z);
+	//	constexpr double CameraFarPlaneWorldZ = -10.0;
+	//	constexpr double CameraNearPlaneProportionZ = 0.8;
+	//	OverrideFarClipPlane(static_cast<float>(AbsZ - CameraFarPlaneWorldZ));
+	//	OverrideNearClipPlane(static_cast<float>(AbsZ * (1.0 - CameraNearPlaneProportionZ)));
+	//}
+	//else
+	//{
+	OverrideFarClipPlane(0);
+	OverrideNearClipPlane(UE_KINDA_SMALL_NUMBER);
+	//}
 
-						LastModifiedTimestamp = LatestTimestamp(Dataflow, Context.Get()).Value + 1;
-					}
-				}
-			}
-		}
-	}
+	//ModeTools->GetInteractiveToolsContext()->InputRouter->DeregisterSource(this);
+	//ModeTools->GetInteractiveToolsContext()->InputRouter->RegisterSource(this);
 
-	// Tick the preview scene world.
-	PreviewScene->GetWorld()->Tick(IsRealtime() ? LEVELTICK_All : LEVELTICK_TimeOnly, DeltaSeconds);
 }
 
+
+Dataflow::EDataflowPatternVertexType FDataflowEditorViewportClient::GetConstructionViewMode() const
+{
+	return Dataflow::EDataflowPatternVertexType::Sim3D;// ConstructionViewMode;
+}
 
 void FDataflowEditorViewportClient::AddReferencedObjects(FReferenceCollector& Collector)
 {
 	Super::AddReferencedObjects(Collector);
+	Collector.AddReferencedObject(BehaviorSet);
 }
-
 

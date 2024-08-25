@@ -158,5 +158,5 @@ private:
 	TSet<TWeakObjectPtr<UPackage>, TWeakObjectPtrSetKeyFuncs<TWeakObjectPtr<UPackage>>> DirtyContentForAutoSave;
 
 	/** Restore information that was loaded following a crash */
-	TMap<FString, FString> PackagesThatCanBeRestored;
+	TMap<FString, TPair<FString, FString>> PackagesThatCanBeRestored;
 };

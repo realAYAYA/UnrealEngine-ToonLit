@@ -385,7 +385,7 @@ TArray<FGuid> FDisasterRecoverySessionManager::InitAndRotateSessions()
 			{
 				// Discard the oldest session. (Oldest is at the back of the list).
 				DiscardedList.Add(SessionList.Last().RepositoryId);
-				SessionList.Pop(/*bAllowShrinking*/false);
+				SessionList.Pop(EAllowShrinking::No);
 			}
 		};
 		RotateSessionsFn(RecoveryInfo.RecentSessions, RecoveryInfo.DiscardedRepositoryIds, GetRecentSessionMaxCount());

@@ -72,8 +72,8 @@ namespace Horde.Server.Utilities
 							inputEntryStream.CopyTo(memoryStream);
 
 							Dictionary<string, Dictionary<string, object>> document = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, object>>>(memoryStream.ToArray());
-							foreach (KeyValuePair<string, object> pair in settings) 
-							{								
+							foreach (KeyValuePair<string, object> pair in settings)
+							{
 								document["Horde"][pair.Key] = pair.Value;
 							}
 

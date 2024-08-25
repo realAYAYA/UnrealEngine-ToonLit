@@ -18,7 +18,7 @@ namespace EpicGames.Horde.Logs
 	/// Index for a log file.
 	/// 
 	/// The index consists of a sequence of compressed, plain text blocks (see <see cref="LogChunkRef"/>, and a 
-	/// set of (ngram, block index) pairs encoded as 64-bit integers (see <see cref="NgramSet"/>). 
+	/// set of (ngram, block index) pairs encoded as 64-bit integers (see <see cref="Logs.NgramSet"/>). 
 	/// 
 	/// Each ngram is a 1-4 byte sequence of utf8 bytes, padded out to 32-bits (see <see cref="Ngram"/>).
 	/// 
@@ -28,23 +28,18 @@ namespace EpicGames.Horde.Logs
 	/// Since alignment of ngrams may not match alignment of ngrams in the search term, we offset the search term by
 	/// 1-4 bytes and include the union of blocks matching at any offset.
 	/// </summary>
-	[NodeType("{BAE1A00E-FD63-474E-A804-8081E20134F9}", 1)]
-	public class LogIndexNode : Node
+	[BlobConverter(typeof(LogIndexNodeConverter))]
+	public class LogIndexNode
 	{
-		/// <summary>
-		/// Version number for serialized data
-		/// </summary>
-		const int CurrentVersion = 1;
-
 		/// <summary>
 		/// Index for tokens into the block list
 		/// </summary>
-		readonly NgramSet _ngramSet;
+		public NgramSet NgramSet { get; }
 
 		/// <summary>
 		/// Number of bits in the index devoted to the block index
 		/// </summary>
-		readonly int _numChunkBits;
+		public int NumChunkBits { get; }
 
 		/// <summary>
 		/// List of text blocks
@@ -79,35 +74,9 @@ namespace EpicGames.Horde.Logs
 		/// <param name="plainTextChunkRefs">Plain text chunks for this log file</param>
 		public LogIndexNode(NgramSet ngramSet, int numChunkBits, LogChunkRef[] plainTextChunkRefs)
 		{
-			_ngramSet = ngramSet;
-			_numChunkBits = numChunkBits;
+			NgramSet = ngramSet;
+			NumChunkBits = numChunkBits;
 			_plainTextChunkRefs = plainTextChunkRefs;
-		}
-
-		/// <summary>
-		/// Deserialization constructor
-		/// </summary>
-		/// <param name="reader">Reader for data</param>
-		public LogIndexNode(NodeReader reader)
-		{
-			int version = (int)reader.ReadUnsignedVarInt();
-			if (version != CurrentVersion)
-			{
-				throw new InvalidDataException("Incorrect version number for log data");
-			}
-
-			_ngramSet = reader.ReadNgramSet();
-			_numChunkBits = (int)reader.ReadUnsignedVarInt();
-			_plainTextChunkRefs = reader.ReadVariableLengthArray(() => new LogChunkRef(reader));
-		}
-
-		/// <inheritdoc/>
-		public override void Serialize(NodeWriter writer)
-		{
-			writer.WriteUnsignedVarInt(CurrentVersion);
-			writer.WriteNgramSet(_ngramSet);
-			writer.WriteUnsignedVarInt(_numChunkBits);
-			writer.WriteVariableLengthArray(_plainTextChunkRefs, x => writer.WriteNodeRef(x));
 		}
 
 		/// <summary>
@@ -117,7 +86,7 @@ namespace EpicGames.Horde.Logs
 		/// <param name="appendPlainTextChunks">Text blocks to append</param>
 		/// <param name="cancellationToken"></param>
 		/// <returns>New log index with the given blocks appended</returns>
-		public async ValueTask<LogIndexNode> AppendAsync(IStorageWriter writer, IReadOnlyList<LogChunkNode> appendPlainTextChunks, CancellationToken cancellationToken)
+		public async ValueTask<LogIndexNode> AppendAsync(IBlobWriter writer, IReadOnlyList<LogChunkNode> appendPlainTextChunks, CancellationToken cancellationToken)
 		{
 			using IScope scope = GlobalTracer.Instance.BuildSpan("LogIndex.Append").StartActive();
 
@@ -133,7 +102,7 @@ namespace EpicGames.Horde.Logs
 			for (int idx = 0; idx < appendPlainTextChunks.Count; idx++)
 			{
 				LogChunkNode newChunk = appendPlainTextChunks[idx];
-				NodeRef<LogChunkNode> newChunkRef = await writer.WriteNodeAsync(newChunk, cancellationToken);
+				IBlobRef<LogChunkNode> newChunkRef = await writer.WriteBlobAsync(newChunk, cancellationToken);
 				newChunks[_plainTextChunkRefs.Length + idx] = new LogChunkRef(lineIndex, newChunk.LineCount, offset, newChunk.Length, newChunkRef);
 				lineIndex += newChunk.LineCount;
 				offset += newChunk.Length;
@@ -149,10 +118,10 @@ namespace EpicGames.Horde.Logs
 			// Add the existing index data into a new ngram set
 			NgramSetBuilder newNgramSetBuilder = new NgramSetBuilder();
 
-			ulong blockMask = ((1UL << _numChunkBits) - 1);
-			foreach (ulong value in _ngramSet)
+			ulong blockMask = ((1UL << NumChunkBits) - 1);
+			foreach (ulong value in NgramSet)
 			{
-				ulong token = value >> _numChunkBits;
+				ulong token = value >> NumChunkBits;
 				ulong blockIdx = value & blockMask;
 
 				ulong newToken = (token << newNumBlockBits) | (blockIdx);
@@ -180,7 +149,7 @@ namespace EpicGames.Horde.Logs
 		/// <param name="stats">Receives stats for the search</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>List of line numbers for the text</returns>
-		public async IAsyncEnumerable<int> Search(int firstLineIndex, SearchTerm text, SearchStats stats, [EnumeratorCancellation] CancellationToken cancellationToken)
+		public async IAsyncEnumerable<int> SearchAsync(int firstLineIndex, SearchTerm text, SearchStats stats, [EnumeratorCancellation] CancellationToken cancellationToken = default)
 		{
 			int lastBlockCount = 0;
 			foreach (int blockIdx in EnumeratePossibleChunks(text.Bytes, firstLineIndex))
@@ -188,28 +157,28 @@ namespace EpicGames.Horde.Logs
 				LogChunkRef indexChunk = _plainTextChunkRefs[blockIdx];
 
 				stats.NumScannedBlocks++;
-//				stats.NumDecompressedBlocks += (indexChunk.Target == null)? 1 : 0;
+				//				stats.NumDecompressedBlocks += (indexChunk.Target == null)? 1 : 0;
 
 				stats.NumSkippedBlocks += blockIdx - lastBlockCount;
 				lastBlockCount = blockIdx + 1;
 
 				// Decompress the text
-				LogChunkNode chunk = await indexChunk.ExpandAsync(cancellationToken);
+				LogChunkNode chunk = await indexChunk.Target.ReadBlobAsync(cancellationToken);
 
 				// Find the initial offset within this block
 				int offset = 0;
-				if(firstLineIndex > indexChunk.LineIndex)
+				if (firstLineIndex > indexChunk.LineIndex)
 				{
 					int lineIndexWithinBlock = firstLineIndex - indexChunk.LineIndex;
 					offset = chunk.LineOffsets[lineIndexWithinBlock];
 				}
 
 				// Search within this block
-				for(; ;)
+				for (; ; )
 				{
 					// Find the next offset
 					int nextOffset = chunk.Data.Span.FindNextOcurrence(offset, text);
-					if(nextOffset == -1)
+					if (nextOffset == -1)
 					{
 						stats.NumScannedBytes += chunk.Data.Length - offset;
 						break;
@@ -228,7 +197,7 @@ namespace EpicGames.Horde.Logs
 				}
 
 				// If the last scanned bytes is zero, we didn't have any matches from this chunk
-				if(offset == 0 && _ngramSet != null)
+				if (offset == 0 && NgramSet != null)
 				{
 					stats.NumFalsePositiveBlocks++;
 				}
@@ -246,7 +215,7 @@ namespace EpicGames.Horde.Logs
 		{
 			// Find the starting chunk index
 			int chunkIdx = _plainTextChunkRefs.BinarySearch(x => x.LineIndex, lineIndex);
-			if(chunkIdx < 0)
+			if (chunkIdx < 0)
 			{
 				chunkIdx = Math.Max(~chunkIdx - 1, 0);
 			}
@@ -266,7 +235,7 @@ namespace EpicGames.Horde.Logs
 				List<Predicate<int>> predicates = new List<Predicate<int>>();
 
 				// If the index has a trie, tokenize the input and generate a list of enumerators and predicates.
-				if (_ngramSet != null)
+				if (NgramSet != null)
 				{
 					// Find a list of filters for matching chunks
 					HashSet<ulong> tokens = new HashSet<ulong>();
@@ -287,10 +256,10 @@ namespace EpicGames.Horde.Logs
 					// Create an enumerator for each token
 					foreach (ulong token in tokens)
 					{
-						ulong minValue = (token << _numChunkBits) | (ulong)(long)chunkIdx;
-						ulong maxValue = minValue + (1UL << _numChunkBits) - 1;
+						ulong minValue = (token << NumChunkBits) | (ulong)(long)chunkIdx;
+						ulong maxValue = minValue + (1UL << NumChunkBits) - 1;
 
-						IEnumerator<int> enumerator = _ngramSet.EnumerateRange(minValue, maxValue).Select(x => (int)(x - minValue)).GetEnumerator();
+						IEnumerator<int> enumerator = NgramSet.EnumerateRange(minValue, maxValue).Select(x => (int)(x - minValue)).GetEnumerator();
 						if (!enumerator.MoveNext())
 						{
 							yield break;
@@ -397,9 +366,9 @@ namespace EpicGames.Horde.Logs
 		/// <returns>True if the given block contains a token</returns>
 		bool ChunkContainsToken(int chunkIdx, ulong token, ulong tokenMask)
 		{
-			token = (token << _numChunkBits) | (uint)chunkIdx;
-			tokenMask = (tokenMask << _numChunkBits) | ((1UL << _numChunkBits) - 1);
-			return _ngramSet!.EnumerateValues((value, valueMask) => (value & tokenMask) == (token & valueMask)).Any();
+			token = (token << NumChunkBits) | (uint)chunkIdx;
+			tokenMask = (tokenMask << NumChunkBits) | ((1UL << NumChunkBits) - 1);
+			return NgramSet!.EnumerateValues((value, valueMask) => (value & tokenMask) == (token & valueMask)).Any();
 		}
 
 		/// <summary>
@@ -411,10 +380,50 @@ namespace EpicGames.Horde.Logs
 		/// <returns>True if the given block contains a token</returns>
 		IEnumerable<int> ChunksContainingNgram(ReadOnlySpan<byte> text, int offset, bool allowPartialMatch)
 		{
-			ulong token = Ngram.GetWindowedValue(text, offset) << _numChunkBits;
-			ulong tokenMask = Ngram.GetWindowedMask(text, offset, allowPartialMatch) << _numChunkBits;
-			ulong blockMask = (1UL << _numChunkBits) - 1;
-			return _ngramSet!.EnumerateValues((value, valueMask) => (value & tokenMask) == (token & valueMask)).Select(x => (int)(x & blockMask)).Distinct();
+			ulong token = Ngram.GetWindowedValue(text, offset) << NumChunkBits;
+			ulong tokenMask = Ngram.GetWindowedMask(text, offset, allowPartialMatch) << NumChunkBits;
+			ulong blockMask = (1UL << NumChunkBits) - 1;
+			return NgramSet!.EnumerateValues((value, valueMask) => (value & tokenMask) == (token & valueMask)).Select(x => (int)(x & blockMask)).Distinct();
+		}
+	}
+
+	class LogIndexNodeConverter : BlobConverter<LogIndexNode>
+	{
+		/// <summary>
+		/// Type for serializing index nodes
+		/// </summary>
+		public static BlobType BlobType { get; } = new BlobType("{BAE1A00E-474E-FD63-8180-04A8F93401E2}", 1);
+
+		/// <summary>
+		/// Version number for serialized data
+		/// </summary>
+		const int CurrentVersion = 1;
+
+		/// <inheritdoc/>
+		public override LogIndexNode Read(IBlobReader reader, BlobSerializerOptions options)
+		{
+			int version = (int)reader.ReadUnsignedVarInt();
+			if (version != CurrentVersion)
+			{
+				throw new InvalidDataException("Incorrect version number for log data");
+			}
+
+			NgramSet ngramSet = reader.ReadNgramSet();
+			int numChunkBits = (int)reader.ReadUnsignedVarInt();
+			LogChunkRef[] plainTextChunkRefs = reader.ReadVariableLengthArray(() => new LogChunkRef(reader));
+
+			return new LogIndexNode(ngramSet, numChunkBits, plainTextChunkRefs);
+		}
+
+		/// <inheritdoc/>
+		public override BlobType Write(IBlobWriter writer, LogIndexNode value, BlobSerializerOptions options)
+		{
+			writer.WriteUnsignedVarInt(CurrentVersion);
+			writer.WriteNgramSet(value.NgramSet);
+			writer.WriteUnsignedVarInt(value.NumChunkBits);
+			writer.WriteVariableLengthArray(value.PlainTextChunkRefs, x => x.Serialize(writer));
+
+			return BlobType;
 		}
 	}
 }

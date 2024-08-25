@@ -29,7 +29,7 @@ void FGroupTopologyUtils::AddNewEdgeLoopEdgesFromCorner(int32 EdgeID, int32 Corn
 		const FGroupTopology::FGroupEdge& LastEdge = GroupTopology->Edges[LastEdgeID];
 		LastCornerID = LastEdge.EndpointCorners[0] == LastCornerID ? LastEdge.EndpointCorners[1] : LastEdge.EndpointCorners[0];
 
-		check(LastCornerID != IndexConstants::InvalidID);
+		ensure(LastCornerID != IndexConstants::InvalidID);
 	}
 }
 
@@ -45,6 +45,15 @@ bool FGroupTopologyUtils::GetNextEdgeLoopEdge(int32 IncomingEdgeID, int32 Corner
 	if (CurrentCorner.NeighbourGroupIDs.Num() != 4)
 	{
 		return false; // Not a valence 4 corner
+	}
+
+	// We want to stop when we hit boundary vertices because our valence-4 method of finding the next edge typically
+	// breaks down at these points. In some single-hole cases we could treat the hole as a group and find the next
+	// edge, but it doesn't always make sense to do that, it gets in the way of us using loop selection to select
+	// hole boundaries, and it breaks down with more than one hole. Best to just stop.
+	if (GroupTopology->GetMesh()->IsBoundaryVertex(GroupTopology->GetCornerVertexID(CornerID)))
+	{
+		return false;
 	}
 
 	const FGroupTopology::FGroupEdge& IncomingEdge = GroupTopology->Edges[IncomingEdgeID];
@@ -81,6 +90,74 @@ bool FGroupTopologyUtils::GetNextEdgeLoopEdge(int32 IncomingEdgeID, int32 Corner
 	return false;
 }
 
+void FGroupTopologyUtils::AddNewBoundaryLoopEdges(int32 StartEdgeID, int32 ForwardCornerID, TSet<int32>& EdgeSet) const
+{
+	if (!GroupTopology->IsBoundaryEdge(StartEdgeID))
+	{
+		return;
+	}
+
+	int32 LastCornerID = ForwardCornerID;
+	int32 LastEdgeID = StartEdgeID;
+	while (true)
+	{
+		int32 NextEid;
+		if (!GetNextBoundaryLoopEdge(LastEdgeID, LastCornerID, NextEid))
+		{
+			break; // Hit a bowtie
+		}
+		if (EdgeSet.Contains(NextEid))
+		{
+			break; // Either we finished the loop, or we'll continue it from another selection
+		}
+
+		EdgeSet.Add(NextEid);
+
+		LastEdgeID = NextEid;
+		const FGroupTopology::FGroupEdge& LastEdge = GroupTopology->Edges[LastEdgeID];
+		LastCornerID = LastEdge.EndpointCorners[0] == LastCornerID ? LastEdge.EndpointCorners[1] : LastEdge.EndpointCorners[0];
+
+		ensure(LastCornerID != IndexConstants::InvalidID);
+	}
+}
+
+bool FGroupTopologyUtils::GetNextBoundaryLoopEdge(int32 IncomingEdgeID, int32 CornerID, int32& NextEdgeIDOut) const
+{
+	NextEdgeIDOut = IndexConstants::InvalidID;
+
+	if (!GroupTopology->IsBoundaryEdge(IncomingEdgeID))
+	{
+		return false;
+	}
+
+	TArray<int32> IncidentEdges;
+	GroupTopology->FindCornerNbrEdges(CornerID, IncidentEdges);
+	
+	for (int32 GroupEdgeID : IncidentEdges)
+	{
+		if (GroupTopology->IsBoundaryEdge(GroupEdgeID))
+		{
+			if (GroupEdgeID == IncomingEdgeID)
+			{
+				continue;
+			}
+			else if (NextEdgeIDOut == IndexConstants::InvalidID)
+			{
+				// Found a different boundary edge than IncomingEdgeID
+				NextEdgeIDOut = GroupEdgeID;
+			}
+			else
+			{
+				// Must be a bowtie, because we saw a third boundary edge
+				NextEdgeIDOut = IndexConstants::InvalidID;
+				return false;
+			}
+		}
+	}
+	
+	return ensure(NextEdgeIDOut != IndexConstants::InvalidID);
+}
+
 void FGroupTopologyUtils::AddNewEdgeRingEdges(int32 StartEdgeID, int32 ForwardGroupID, TSet<int32>& EdgeSet) const
 {
 	int32 CurrentEdgeID = StartEdgeID;
@@ -113,7 +190,10 @@ void FGroupTopologyUtils::AddNewEdgeRingEdges(int32 StartEdgeID, int32 ForwardGr
 bool FGroupTopologyUtils::GetQuadOppositeEdge(int32 EdgeIDIn, int32 GroupID, int32& OppositeEdgeIDOut) const
 {
 	const FGroupTopology::FGroup* Group = GroupTopology->FindGroupByID(GroupID);
-	check(Group);
+	if (!ensure(Group))
+	{
+		return false;
+	}
 
 	// Find the boundary that contains this edge
 	for (int32 i = 0; i < Group->Boundaries.Num(); ++i)
@@ -131,8 +211,7 @@ bool FGroupTopologyUtils::GetQuadOppositeEdge(int32 EdgeIDIn, int32 GroupID, int
 			return true;
 		}
 	}
-	check(false); // No boundary of the given group contained the given edge
-	return false;
+	return ensure(false); // No boundary of the given group contained the given edge
 }
 
 
@@ -151,8 +230,9 @@ FIndex2i FGroupTopologyUtils::GetEdgeGroups(int EdgeID) const
 
 bool FGroupTopologySelector::ExpandSelectionByEdgeLoops(FGroupTopologySelection& Selection)
 {
-	TSet<int32> EdgeSet(Selection.SelectedEdgeIDs);
+	TSet<int32>& EdgeSet = Selection.SelectedEdgeIDs;
 	int32 OriginalNumEdges = Selection.SelectedEdgeIDs.Num();
+	TSet<int32> ExpandedEdgeSet = EdgeSet; // make a copy of the edge set, to add to during iteration
 	for (int32 Eid : Selection.SelectedEdgeIDs)
 	{
 		const FIndex2i EndpointCorners = GroupTopologyUtils.GetEdgeEndpointCorners(Eid);
@@ -162,25 +242,46 @@ bool FGroupTopologySelector::ExpandSelectionByEdgeLoops(FGroupTopologySelection&
 		}
 
 		// Go forward and backward adding edges
-		GroupTopologyUtils.AddNewEdgeLoopEdgesFromCorner(Eid, EndpointCorners[0], EdgeSet);
-		GroupTopologyUtils.AddNewEdgeLoopEdgesFromCorner(Eid, EndpointCorners[1], EdgeSet);
+		GroupTopologyUtils.AddNewEdgeLoopEdgesFromCorner(Eid, EndpointCorners[0], ExpandedEdgeSet);
+		GroupTopologyUtils.AddNewEdgeLoopEdgesFromCorner(Eid, EndpointCorners[1], ExpandedEdgeSet);
 	}
+	EdgeSet = MoveTemp(ExpandedEdgeSet); // update the selection edges
 
-	if (EdgeSet.Num() > OriginalNumEdges)
+	return EdgeSet.Num() > OriginalNumEdges;
+}
+
+bool FGroupTopologySelector::ExpandSelectionByBoundaryLoops(FGroupTopologySelection& Selection)
+{
+	TSet<int32>& EdgeSet = Selection.SelectedEdgeIDs;
+	int32 OriginalNumEdges = Selection.SelectedEdgeIDs.Num();
+	TSet<int32> ExpandedEdgeSet = EdgeSet; // make a copy of the edge set, to add to during iteration
+	for (int32 Eid : Selection.SelectedEdgeIDs)
 	{
-		Selection.SelectedEdgeIDs.Append(EdgeSet);
-		return true;
+		if (!GroupTopologyUtils.GroupTopology->IsBoundaryEdge(Eid))
+		{
+			continue;
+		}
+
+		const FIndex2i EndpointCorners = GroupTopologyUtils.GetEdgeEndpointCorners(Eid);
+		if (EndpointCorners[0] == IndexConstants::InvalidID)
+		{
+			continue; // This FGroupEdge is a loop unto itself (and already in our selection, since we're looking at it).
+		}
+
+		// Go forward and backward adding edges
+		GroupTopologyUtils.AddNewBoundaryLoopEdges(Eid, EndpointCorners[0], ExpandedEdgeSet);
+		GroupTopologyUtils.AddNewBoundaryLoopEdges(Eid, EndpointCorners[1], ExpandedEdgeSet);
 	}
-	else
-	{
-		return false;
-	}
+	EdgeSet = MoveTemp(ExpandedEdgeSet); // update the selection edges
+
+	return EdgeSet.Num() > OriginalNumEdges;
 }
 
 bool FGroupTopologySelector::ExpandSelectionByEdgeRings(FGroupTopologySelection& Selection)
 {
-	TSet<int32> EdgeSet(Selection.SelectedEdgeIDs);
+	TSet<int32>& EdgeSet = Selection.SelectedEdgeIDs;
 	int32 OriginalNumEdges = Selection.SelectedEdgeIDs.Num();
+	TSet<int32> ExpandedEdgeSet = EdgeSet; // make a copy of the edge set, to add to during iteration
 	for (int32 Eid : Selection.SelectedEdgeIDs)
 	{
 		const FIndex2i EdgeGroups = GroupTopologyUtils.GetEdgeGroups(Eid);
@@ -188,23 +289,16 @@ bool FGroupTopologySelector::ExpandSelectionByEdgeRings(FGroupTopologySelection&
 		// Go forward and backward adding edges
 		if (EdgeGroups[0] != IndexConstants::InvalidID)
 		{
-			GroupTopologyUtils.AddNewEdgeRingEdges(Eid, EdgeGroups[0], EdgeSet);
+			GroupTopologyUtils.AddNewEdgeRingEdges(Eid, EdgeGroups[0], ExpandedEdgeSet);
 		}
 		if (EdgeGroups[0] != IndexConstants::InvalidID)
 		{
-			GroupTopologyUtils.AddNewEdgeRingEdges(Eid, EdgeGroups[1], EdgeSet);
+			GroupTopologyUtils.AddNewEdgeRingEdges(Eid, EdgeGroups[1], ExpandedEdgeSet);
 		}
 	}
+	EdgeSet = MoveTemp(ExpandedEdgeSet); // update the selection edges
 
-	if (EdgeSet.Num() > OriginalNumEdges)
-	{
-		Selection.SelectedEdgeIDs.Append(EdgeSet);
-		return true;
-	}
-	else
-	{
-		return false;
-	}
+	return EdgeSet.Num() > OriginalNumEdges;
 }
 
 FGroupTopologySelector::FGroupTopologySelector(const FDynamicMesh3* Mesh, const FGroupTopology* Topology) : 
@@ -220,10 +314,6 @@ void FGroupTopologySelector::Initialize(const FDynamicMesh3* MeshIn, const FGrou
 	GroupTopologyUtils.GroupTopology = TopologyIn;
 	bGeometryInitialized = false;
 	bGeometryUpToDate = false;
-
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	Topology = TopologyIn;
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
 

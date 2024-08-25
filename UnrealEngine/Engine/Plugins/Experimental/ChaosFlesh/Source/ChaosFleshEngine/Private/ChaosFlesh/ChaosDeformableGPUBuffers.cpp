@@ -193,7 +193,7 @@ uint32 FIndexArrayBufferWithSRV::GetBufferSize() const
 	return BufferSize;
 }
 
-#ifdef WITH_EDITOR
+#if WITH_EDITOR
 uint32 UnpackUInt(const uint32* Array, const uint32 Index, const uint32 Stride, const uint32 ArraySize)
 {
 	uint32 ValsPerEntry = 4 / Stride;
@@ -310,7 +310,7 @@ void FIndexArrayBufferWithSRV::InitRHI(FRHICommandListBase& RHICmdList)
 			}
         }
 
-#ifdef WITH_EDITOR
+#if WITH_EDITOR
 		if (Local::CVarParam.bTestUnpacking)
 		{
 			uint32* Indices32Bit = reinterpret_cast<uint32*>(Buffer);

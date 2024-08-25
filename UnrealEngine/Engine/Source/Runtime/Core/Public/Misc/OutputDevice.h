@@ -6,7 +6,6 @@
 #include "CoreTypes.h"
 #include "Logging/LogVerbosity.h"
 #include "Misc/VarArgs.h"
-#include "Templates/AndOrNot.h"
 #include "Templates/IsArrayOrRefOfTypeByPredicate.h"
 #include "Templates/IsValidVariadicFunctionArg.h"
 #include "Traits/IsCharEncodingCompatibleWith.h"
@@ -18,6 +17,10 @@ namespace UE { class FLogRecord; }
 
 #ifndef USE_DEBUG_LOGGING
 #define USE_DEBUG_LOGGING 1
+#endif
+
+#ifndef USE_EVENT_LOGGING
+#define USE_EVENT_LOGGING 1
 #endif
 
 #if !PLATFORM_SUPPORTS_COLORIZED_OUTPUT_DEVICE
@@ -241,7 +244,7 @@ public:
 	FORCEINLINE void Logf(const FmtType& Fmt, Types... Args)
 	{
 		static_assert(TIsArrayOrRefOfTypeByPredicate<FmtType, TIsCharEncodingCompatibleWithTCHAR>::Value, "Formatting string must be a TCHAR array.");
-		static_assert(TAnd<TIsValidVariadicFunctionArg<Types>...>::Value, "Invalid argument(s) passed to FOutputDevice::Logf");
+		static_assert((TIsValidVariadicFunctionArg<Types>::Value && ...), "Invalid argument(s) passed to FOutputDevice::Logf");
 
 		LogfImpl((const TCHAR*)Fmt, Args...);
 	}
@@ -250,7 +253,7 @@ public:
 	FORCEINLINE void Logf(ELogVerbosity::Type Verbosity, const FmtType& Fmt, Types... Args)
 	{
 		static_assert(TIsArrayOrRefOfTypeByPredicate<FmtType, TIsCharEncodingCompatibleWithTCHAR>::Value, "Formatting string must be a TCHAR array.");
-		static_assert(TAnd<TIsValidVariadicFunctionArg<Types>...>::Value, "Invalid argument(s) passed to FOutputDevice::Logf");
+		static_assert((TIsValidVariadicFunctionArg<Types>::Value && ...), "Invalid argument(s) passed to FOutputDevice::Logf");
 
 		LogfImpl(Verbosity, (const TCHAR*)Fmt, Args...);
 	}
@@ -259,7 +262,7 @@ public:
 	FORCEINLINE void CategorizedLogf(const FName& Category, ELogVerbosity::Type Verbosity, const FmtType& Fmt, Types... Args)
 	{
 		static_assert(TIsArrayOrRefOfTypeByPredicate<FmtType, TIsCharEncodingCompatibleWithTCHAR>::Value, "Formatting string must be a TCHAR array.");
-		static_assert(TAnd<TIsValidVariadicFunctionArg<Types>...>::Value, "Invalid argument(s) passed to FOutputDevice::CategorizedLogf");
+		static_assert((TIsValidVariadicFunctionArg<Types>::Value && ...), "Invalid argument(s) passed to FOutputDevice::CategorizedLogf");
 
 		CategorizedLogfImpl(Category, Verbosity, (const TCHAR*)Fmt, Args...);
 	}

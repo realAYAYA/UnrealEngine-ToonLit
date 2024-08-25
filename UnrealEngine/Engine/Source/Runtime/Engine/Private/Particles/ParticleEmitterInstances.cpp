@@ -205,7 +205,7 @@ FORCEINLINE static void* FastParticleSmallBlockAlloc(size_t AllocSize)
 		if ( Allocations  && Allocations->FreeAllocations.Num() )
 		{
 			void* Result = Allocations->FreeAllocations[0];
-			Allocations->FreeAllocations.RemoveAtSwap(0,1, false);
+			Allocations->FreeAllocations.RemoveAtSwap(0,1, EAllowShrinking::No);
 			Allocations->LastUsedTime = FPlatformTime::Seconds();
 			GFreePoolSizeBytes -= AllocSize;
 #if FASTPARTICLEALLOC_CHECKSIZE
@@ -276,7 +276,7 @@ FORCEINLINE static void FastParticleSmallBlockFree(void *RawMemory, size_t Alloc
 			check( OldestPool );
 			check( OldestPoolAllocSize  != 0 );
 			void* OldAllocation = OldestPool->FreeAllocations[0];
-			OldestPool->FreeAllocations.RemoveAtSwap(0, 1, false);
+			OldestPool->FreeAllocations.RemoveAtSwap(0, 1, EAllowShrinking::No);
 			GFreePoolSizeBytes -= OldestPoolAllocSize;
 			FMemory::Free(OldAllocation);
 		}

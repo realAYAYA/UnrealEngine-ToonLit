@@ -38,25 +38,23 @@ DECLARE_DELEGATE_RetVal(bool, FBuildPatchBoolRetDelegate);
 struct FBuildPatchUtils
 {
 	/**
-	 * Gets the filename for a chunk generated from it's GUID and Hash, which is the new format.
+	 * Gets the the relative cloud filename for a chunk generated from it's GUID and Hash, which is the new format.
 	 * @param FeatureLevel   The manifest version that references this chunk.
-	 * @param RootDirectory  The root directory.
 	 * @param ChunkGuid      The chunk Guid.
 	 * @param ChunkHash      The chunk rolling hash value.
 	 * @return the chunk path.
 	 */
-	static FString GetChunkNewFilename(BuildPatchServices::EFeatureLevel FeatureLevel, const FString& RootDirectory, const FGuid& ChunkGUID, const uint64& ChunkHash);
+	static FString GetChunkNewFilename(BuildPatchServices::EFeatureLevel FeatureLevel, const FGuid& ChunkGUID, const uint64& ChunkHash);
 
 	/**
-	 * Gets the filename for a file chunk generated from it's GUID and Hash, which is the new format.
+	 * Gets the the relative cloud filename for a file chunk generated from it's GUID and Hash, which is the new format.
 	 * @param FeatureLevel   The manifest version that references this file.
-	 * @param RootDirectory  The root directory.
 	 * @param FileGUID       The file chunk Guid.
 	 * @param FileHash       The file hash value.
 	 * @return the file chunk path.
 	 */
-	static FString GetFileNewFilename(BuildPatchServices::EFeatureLevel FeatureLevel, const FString& RootDirectory, const FGuid& FileGUID, const FSHAHash& FileHash);
-	static FString GetFileNewFilename(BuildPatchServices::EFeatureLevel FeatureLevel, const FString& RootDirectory, const FGuid& FileGUID, const uint64& FilePartHash);
+	static FString GetFileNewFilename(BuildPatchServices::EFeatureLevel FeatureLevel, const FGuid& FileGUID, const FSHAHash& FileHash);
+	static FString GetFileNewFilename(BuildPatchServices::EFeatureLevel FeatureLevel, const FGuid& FileGUID, const uint64& FilePartHash);
 
 	/**
 	 * Gets the chunk GUID and Hash, from the filename, which is the new format.
@@ -75,40 +73,35 @@ struct FBuildPatchUtils
 	static void GetFileDetailFromNewFilename(const FString& FileNewFilename, FGuid& FileGUID, FSHAHash& FileHash);
 
 	/**
-	 * Gets the filename for a chunk generated from it's GUID
-	 * @param RootDirectory		The root directory
+	 * Gets the the relative cloud filename for a chunk generated from it's GUID
 	 * @param ChunkGuid			The chunk Guid
 	 * @return	the chunk path
 	 */
-	static FString GetChunkOldFilename(const FString& RootDirectory, const FGuid& ChunkGUID);
+	static FString GetChunkOldFilename(const FGuid& ChunkGUID);
 
 	/**
-	 * Gets the filename for a file data part generated from it's GUID
-	 * @param RootDirectory		The root directory
+	 * Gets the the relative cloud filename for a file data part generated from it's GUID
 	 * @param FileGUID			The file part Guid
 	 * @return	The file data path
 	 */
-	static FString GetFileOldFilename(const FString& RootDirectory, const FGuid& FileGUID);
+	static FString GetFileOldFilename(const FGuid& FileGUID);
 
 	/**
 	 * Gets the filename for a specific data part type from it's GUID
 	 * @param DataType			The type of data
-	 * @param RootDirectory		The root directory
 	 * @param DataGUID			The data Guid
 	 * @return	the data part path
 	 */
-	static FString GetDataTypeOldFilename(EBuildPatchDataType DataType, const FString& RootDirectory, const FGuid& Guid);
+	static FString GetDataTypeOldFilename(EBuildPatchDataType DataType, const FGuid& Guid);
 
 	/**
-	 * Gets the filename for any data part. Wraps the choice between all of the above
+	 * Gets the relative cloud filename for any data part. Wraps the choice between all of the above
 	 * @param Manifest			The manifest referencing this data
-	 * @param RootDirectory		The root directory
 	 * @param DataGUID			The data Guid
 	 * @return	the data part path
 	 */
-	static FString GetDataFilename(const FBuildPatchAppManifestRef& Manifest, const FString& RootDirectory, const FGuid& DataGUID);
-	static FString GetDataFilename(const FBuildPatchAppManifest&    Manifest, const FString& RootDirectory, const FGuid& DataGUID);
-	//static FString GetDataFilename(IBuildManifestSet* ManifestSet, const FString& RootDirectory, const FGuid& DataGUID);
+	static FString GetDataFilename(const FBuildPatchAppManifestRef& Manifest, const FGuid& DataGUID);
+	static FString GetDataFilename(const FBuildPatchAppManifest&    Manifest, const FGuid& DataGUID);
 
 	/**
 	 * Gets the GUID for a data file according to it's filename (new or old)

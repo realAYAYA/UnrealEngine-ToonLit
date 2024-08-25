@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Windows/WindowsPlatformStackWalk.h"
+#include "Async/RecursiveMutex.h"
+#include "Async/UniqueLock.h"
 #include "HAL/PlatformMemory.h"
 #include "HAL/PlatformMisc.h"
 #include "Logging/LogMacros.h"
@@ -13,11 +15,12 @@
 #include "Misc/Paths.h"
 #include "Misc/CommandLine.h"
 #include "HAL/PlatformProcess.h"
+#include "HAL/CriticalSection.h"
 #include "CoreGlobals.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/OutputDeviceRedirector.h"
+#include "Misc/ScopeLock.h"
 
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 THIRD_PARTY_INCLUDES_START
 	#include <DbgHelp.h>
@@ -34,6 +37,9 @@ THIRD_PARTY_INCLUDES_END
 	Stack walking.
 	@TODO To be removed
 -----------------------------------------------------------------------------*/
+
+//@note Global lock as a tentative fix to narrow down UE-192420
+static UE::FRecursiveMutex GStackWalkingLock;
 
 /** Whether appInitStackWalking() has been called successfully or not. */
 static bool GStackWalkingInitialized = false;
@@ -132,6 +138,8 @@ void DetermineMaxCallstackDepth()
 
 void FWindowsPlatformStackWalk::StackWalkAndDump( ANSICHAR* HumanReadableString, SIZE_T HumanReadableStringSize, int32 IgnoreCount, void* Context )
 {
+	UE::TUniqueLock GlobalLock(GStackWalkingLock);
+
 	InitStackWalking();
 
 	// If the callstack is for the executing thread, ignore this function
@@ -151,12 +159,16 @@ void FWindowsPlatformStackWalk::StackWalkAndDump( ANSICHAR* HumanReadableString,
 
 void FWindowsPlatformStackWalk::StackWalkAndDump( ANSICHAR* HumanReadableString, SIZE_T HumanReadableStringSize, void* ProgramCounter, void* Context )
 {
+	UE::TUniqueLock GlobalLock(GStackWalkingLock);
+
 	InitStackWalking();
 	FGenericPlatformStackWalk::StackWalkAndDump(HumanReadableString, HumanReadableStringSize, ProgramCounter, Context);
 }
 
 FORCENOINLINE TArray<FProgramCounterSymbolInfo> FWindowsPlatformStackWalk::GetStack(int32 IgnoreCount, int32 MaxDepth, void* Context)
 {
+	UE::TUniqueLock GlobalLock(GStackWalkingLock);
+
 	InitStackWalking();
 
 	// If the callstack is for the executing thread, ignore this function
@@ -169,10 +181,16 @@ FORCENOINLINE TArray<FProgramCounterSymbolInfo> FWindowsPlatformStackWalk::GetSt
 
 void FWindowsPlatformStackWalk::ThreadStackWalkAndDump(ANSICHAR* HumanReadableString, SIZE_T HumanReadableStringSize, int32 IgnoreCount, uint32 ThreadId)
 {
+	UE::TUniqueLock GlobalLock(GStackWalkingLock);
+
 	InitStackWalking();
 	HANDLE ThreadHandle = OpenThread(THREAD_GET_CONTEXT | THREAD_SET_CONTEXT | THREAD_TERMINATE | THREAD_SUSPEND_RESUME, false, ThreadId);
 	if (ThreadHandle)
 	{
+		// sync with other threads that may try to suspend us as we try to suspend them
+		static FCriticalSection Mutex;
+		FScopeLock Lock(&Mutex);
+
 		// Suspend the thread before grabbing its context (possible fix for incomplete callstacks)
 		SuspendThread(ThreadHandle);
 		// Give task scheduler some time to actually suspend the thread
@@ -212,10 +230,17 @@ static int32 CaptureStackTraceExternalProcess(uint64* BackTrace, uint32 MaxDepth
 		StackFrame64.AddrStack.Mode      = AddrModeFlat;
 		StackFrame64.AddrFrame.Mode      = AddrModeFlat;
 #if PLATFORM_64BITS
-		StackFrame64.AddrPC.Offset = ContextCopy.Rip;
-		StackFrame64.AddrStack.Offset = ContextCopy.Rsp;
-		StackFrame64.AddrFrame.Offset = ContextCopy.Rbp;
+#if defined(_M_ARM64)
+		StackFrame64.AddrPC.Offset       = ContextCopy.Pc;
+		StackFrame64.AddrStack.Offset    = ContextCopy.Sp;
+		StackFrame64.AddrFrame.Offset    = ContextCopy.Fp;
+		MachineType                      = IMAGE_FILE_MACHINE_ARM64;
+#else
+		StackFrame64.AddrPC.Offset       = ContextCopy.Rip;
+		StackFrame64.AddrStack.Offset    = ContextCopy.Rsp;
+		StackFrame64.AddrFrame.Offset    = ContextCopy.Rbp;
 		MachineType                      = IMAGE_FILE_MACHINE_AMD64;
+#endif
 #else	//PLATFORM_64BITS
 		StackFrame64.AddrPC.Offset       = ContextCopy.Eip;
 		StackFrame64.AddrStack.Offset    = ContextCopy.Esp;
@@ -290,6 +315,8 @@ void FWindowsPlatformStackWalk::CaptureStackTraceByProcess(uint64* OutBacktrace,
 
 uint32 FWindowsPlatformStackWalk::CaptureThreadStackBackTrace(uint64 ThreadId, uint64* BackTrace, uint32 MaxDepth, void* Context)
 {
+	UE::TUniqueLock GlobalLock(GStackWalkingLock);
+
 	if (BackTrace == nullptr || MaxDepth == 0)
 	{
 		return 0;
@@ -358,6 +385,8 @@ uint32 FWindowsPlatformStackWalk::CaptureThreadStackBackTrace(uint64 ThreadId, u
  */
 uint32 FWindowsPlatformStackWalk::CaptureStackBackTrace( uint64* BackTrace, uint32 MaxDepth, void* Context )
 {
+	UE::TUniqueLock GlobalLock(GStackWalkingLock);
+
 	// Make sure we have place to store the information before we go through the process of raising
 	// an exception and handling it.
 	if (BackTrace == NULL || MaxDepth == 0)
@@ -429,6 +458,8 @@ uint32 FWindowsPlatformStackWalk::CaptureStackBackTrace( uint64* BackTrace, uint
 
 void FWindowsPlatformStackWalk::ProgramCounterToSymbolInfo( uint64 ProgramCounter, FProgramCounterSymbolInfo& out_SymbolInfo )
 {
+	UE::TUniqueLock GlobalLock(GStackWalkingLock);
+
 	// Initialize stack walking as it loads up symbol information which we require.
 	InitStackWalking();
 
@@ -499,6 +530,8 @@ void FWindowsPlatformStackWalk::ProgramCounterToSymbolInfo( uint64 ProgramCounte
 
 void FWindowsPlatformStackWalk::ProgramCounterToSymbolInfoEx(uint64 ProgramCounter, FProgramCounterSymbolInfoEx& out_SymbolInfo)
 {
+	UE::TUniqueLock GlobalLock(GStackWalkingLock);
+
 #if ON_DEMAND_SYMBOL_LOADING
 	// Load symbols for the module
 	bool bShouldReloadModuleMissingDebugSymbols = !FPlatformProperties::IsMonolithicBuild() && FPlatformStackWalk::WantsDetailedCallstacksInNonMonolithicBuilds();
@@ -736,6 +769,8 @@ void LoadSymbolsForModule(HMODULE ModuleHandle, const FString& RemoteStorage)
 		SearchPathList.Append(RemoteStorage);
 	}
 
+	UE::TUniqueLock GlobalLock(GStackWalkingLock);
+
 	SymSetSearchPathW(ProcessHandle, *SearchPathList);
 
 	// Load module.
@@ -781,6 +816,8 @@ void LoadSymbolsForProcessModules(const FString &RemoteStorage)
 
 void LoadSymbolsForModuleByAddress(uint64 Address, const FString& RemoteStorage, bool bShouldReloadModuleMissingDebugSymbols)
 {
+	UE::TUniqueLock GlobalLock(GStackWalkingLock);
+
 	HMODULE ModuleHandle = NULL;
 
 	if (GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCTSTR)Address, &ModuleHandle))
@@ -827,6 +864,8 @@ int32 FWindowsPlatformStackWalk::GetProcessModuleCount()
 
 int32 FWindowsPlatformStackWalk::GetProcessModuleSignatures(FStackWalkModuleInfo *ModuleSignatures, const int32 ModuleSignaturesSize)
 {
+	UE::TUniqueLock GlobalLock(GStackWalkingLock);
+
 	FPlatformStackWalk::InitStackWalking();
 
 	HANDLE		ProcessHandle = GProcessHandle; 
@@ -1019,10 +1058,7 @@ FString GetSymbolSearchPath()
  */
 bool FWindowsPlatformStackWalk::InitStackWalkingInternal(void* Process, bool bForceReinitOnProcessMismatch)
 {
-	// DbgHelp functions are not thread safe, but this function can potentially be called from different
-	// threads in our engine, so we take a critical section
-	static FCriticalSection CriticalSection;
-	FScopeLock Lock(&CriticalSection);
+	UE::TUniqueLock GlobalLock(GStackWalkingLock);
 
 	if (GStackWalkingInitialized)
 	{
@@ -1182,6 +1218,8 @@ void FWindowsPlatformStackWalk::RegisterOnModulesChanged()
 
 bool FWindowsPlatformStackWalk::GetFunctionDefinitionLocation(const FString& FunctionSymbolName, const FString& FunctionModuleName, FString& OutPathname, uint32& OutLineNumber, uint32& OutColumnNumber)
 {
+	UE::TUniqueLock GlobalLock(GStackWalkingLock);
+
 #if ON_DEMAND_SYMBOL_LOADING
 	bool bShouldReloadModuleMissingDebugSymbols = !FPlatformProperties::IsMonolithicBuild() && !FunctionModuleName.IsEmpty();
 	if (bShouldReloadModuleMissingDebugSymbols)

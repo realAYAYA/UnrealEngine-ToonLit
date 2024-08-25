@@ -24,6 +24,9 @@ public:
 	// Use to reset any state that might be desired. Will be called automatically if the entire MotorSim is Reset, or call it manually
 	UFUNCTION(BlueprintCallable, Category = "AudioMotorSim")
 	virtual void Reset() {}
+
+	UFUNCTION(BlueprintCallable, Category = "AudioMotorSim")
+	virtual bool GetEnabled() { return false; }
 };
 
 UCLASS(Abstract, Blueprintable, Category = "AudioMotorSim", meta=(BlueprintSpawnableComponent))
@@ -38,6 +41,8 @@ public:
 
 	virtual void Reset() override;
 
+	virtual bool GetEnabled() override { return bEnabled; }
+
 	/* Called every tick that this component is being updated. Use "Set Members in Struct" to update values for future components in the chain. The return value does nothing.
 	* @param Input			Holds values which are not saved between update frames which represent input to the simulation
 	* @param RuntimeInfo	Holds values which are saved between update frames to represent the output or state of the simulation
@@ -49,6 +54,10 @@ public:
 	// Called when something Resets this component
 	UFUNCTION(BlueprintImplementableEvent, BlueprintCallable, Category="AudioMotorSim", DisplayName = "OnReset")
 	void BP_Reset();
+	
+	// controls whether this will run its update function
+	UFUNCTION(BlueprintCallable, Category="AudioMotorSim")
+	void SetEnabled(bool bNewEnabled);
 
 #if WITH_EDITORONLY_DATA
 	// Input data after running this component
@@ -61,4 +70,8 @@ public:
 
 	virtual void GetCachedData(FAudioMotorSimInputContext& OutInput, FAudioMotorSimRuntimeContext& OutRuntimeInfo);
 #endif
+
+	// will only update if enabled
+    UPROPERTY(BlueprintReadOnly, Category="AudioMotorSim")
+    bool bEnabled = true;
 };

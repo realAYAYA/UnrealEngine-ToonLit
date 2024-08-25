@@ -69,7 +69,7 @@ FPlatformData::FPlatformData()
 {
 }
 
-uint32 FPlatformManager::IsInPlatformsLockTLSSlot = 0;
+uint32 FPlatformManager::IsInPlatformsLockTLSSlot = FPlatformTLS::InvalidTlsSlot;
 
 void FPlatformManager::InitializeTls()
 {
@@ -305,12 +305,18 @@ void FPlatformManager::AddRefCookOnTheFlyPlatform(FName PlatformName, UCookOnThe
 	if (!HasSessionPlatform(PlatformData->TargetPlatform))
 	{
 		CookOnTheFlyServer.WorkerRequests->AddCookOnTheFlyCallback([PlatformName,
-			LocalCookOnTheFlyServer = &CookOnTheFlyServer]()
+			LocalCookOnTheFlyServer = &CookOnTheFlyServer, this]()
 			{
 				ITargetPlatform* TargetPlatform = GetTargetPlatformManager()->FindTargetPlatform(PlatformName.ToString());
 				if (TargetPlatform)
 				{
-					LocalCookOnTheFlyServer->StartCookOnTheFlySessionFromGameThread(TargetPlatform);
+					// We might get multiple AddRef calls that add this callback before the first one reaches
+					// StartCookOnTheFlySessionFromGameThread, so check again whether some earlier request
+					// has already added the sessionplatform
+					if (!HasSessionPlatform(TargetPlatform))
+					{
+						LocalCookOnTheFlyServer->StartCookOnTheFlySessionFromGameThread(TargetPlatform);
+					}
 				}
 			});
 	}

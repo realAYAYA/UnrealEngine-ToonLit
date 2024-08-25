@@ -68,15 +68,6 @@ void UMaterialInstanceDynamic::InitializeMID(class UMaterialInterface* ParentMat
 	UpdateCachedDataDynamic();
 }
 
-UMaterialInstanceDynamic* UMaterialInstanceDynamic::Create(UMaterialInterface* ParentMaterial, UObject* InOuter)
-{
-	LLM_SCOPE(ELLMTag::MaterialInstance);
-	UObject* Outer = InOuter ? InOuter : GetTransientPackage();
-	UMaterialInstanceDynamic* MID = NewObject<UMaterialInstanceDynamic>(Outer);
-	MID->InitializeMID(ParentMaterial);
-	return MID;
-}
-
 UMaterialInstanceDynamic* UMaterialInstanceDynamic::Create(UMaterialInterface* ParentMaterial, UObject* InOuter, FName Name)
 {
 	LLM_SCOPE(ELLMTag::MaterialInstance);
@@ -84,6 +75,12 @@ UMaterialInstanceDynamic* UMaterialInstanceDynamic::Create(UMaterialInterface* P
 	UPackage* TransientPackage = GetTransientPackage();
 
 	UObject* Outer = InOuter ? InOuter : TransientPackage;
+
+	if (Name == NAME_None && ParentMaterial)
+	{
+		Name = MakeUniqueObjectName(InOuter, UMaterialInstanceDynamic::StaticClass(), FName(FString("MID_") + ParentMaterial->GetName()));
+	}
+
 	if (Name != NAME_None)
 	{
 		UMaterialInstanceDynamic* ExistingMID = FindObjectFast<UMaterialInstanceDynamic>(Outer, *Name.ToString(), true);
@@ -104,7 +101,7 @@ UMaterialInstanceDynamic* UMaterialInstanceDynamic::Create(UMaterialInterface* P
 				bRenamed = true;
 				// a collision, we're going to move this existing mid to the transient package and claim the name 
 				// for ourself:
-				ExistingMID	->Rename(
+				ExistingMID->Rename(
 					nullptr,
 					TransientPackage,
 					REN_DoNotDirty | REN_DontCreateRedirectors | REN_ForceNoResetLoaders | REN_NonTransactional

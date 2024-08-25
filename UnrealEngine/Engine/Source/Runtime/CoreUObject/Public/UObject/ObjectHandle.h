@@ -10,7 +10,6 @@
 #include "Misc/AssertionMacros.h"
 #include "Templates/TypeHash.h"
 #include "UObject/NameTypes.h"
-#include "UObject/Object.h"
 #include "UObject/ObjectHandleTracking.h"
 #include "UObject/ObjectMacros.h"
 #include "UObject/ObjectRef.h"
@@ -42,6 +41,7 @@ using FObjectHandle = UObject*;
 
 inline bool IsObjectHandleNull(FObjectHandle Handle);
 inline bool IsObjectHandleResolved(FObjectHandle Handle);
+inline bool IsObjectHandleTypeSafe(FObjectHandle Handle);
 
 //Private functions that forced public due to inlining.
 namespace UE::CoreUObject::Private
@@ -110,6 +110,18 @@ inline bool IsObjectHandleResolved(FObjectHandle Handle)
 {
 #if UE_WITH_OBJECT_HANDLE_LATE_RESOLVE
 	return !(Handle.PointerOrRef & 1);
+#else
+	return true;
+#endif
+}
+
+/* return true if a handle is type safe.
+ * null and unresolved handles are considered safe
+ */ 
+inline bool IsObjectHandleTypeSafe(FObjectHandle Handle)
+{
+#if UE_WITH_OBJECT_HANDLE_TYPE_SAFETY
+	return IsObjectHandleNull(Handle) || !IsObjectHandleResolved(Handle) || !UE::CoreUObject::Private::HasAnyFlags(UE::CoreUObject::Private::ReadObjectHandlePointerNoCheck(Handle), static_cast<int32>(RF_HasPlaceholderType));
 #else
 	return true;
 #endif
@@ -235,7 +247,7 @@ namespace UE::CoreUObject::Private
 		if (IsObjectHandleResolved(Handle))
 		{
 			UObject* Obj = ReadObjectHandlePointerNoCheck(Handle);
-			return Obj != nullptr ? Obj->GetClass() : nullptr;
+			return Obj != nullptr ? UE::CoreUObject::Private::GetClass(Obj) : nullptr;
 		}
 		else
 		{
@@ -246,7 +258,7 @@ namespace UE::CoreUObject::Private
 		}
 #else
 		UObject* Obj = ReadObjectHandlePointerNoCheck(Handle);
-		return Obj != nullptr ? Obj->GetClass() : nullptr;
+		return Obj != nullptr ? UE::CoreUObject::Private::GetClass(Obj) : nullptr;
 #endif
 	}
 
@@ -338,9 +350,9 @@ namespace UE::CoreUObject::Private
 		};
 	};
 
-	constexpr uint32 ObjectIdShift = 1;
-	constexpr uint32 PackageIdShift = 33;
-	constexpr uint32 PackageIdMask = 0x7FFF'FFFF;
+	inline constexpr uint32 ObjectIdShift = 1;
+	inline constexpr uint32 PackageIdShift = 33;
+	inline constexpr uint32 PackageIdMask = 0x7FFF'FFFF;
 
 #if UE_WITH_OBJECT_HANDLE_LATE_RESOLVE
 	//forward declarations
@@ -350,4 +362,3 @@ namespace UE::CoreUObject::Private
 	UE::CoreUObject::Private::FPackedObjectRef MakePackedObjectRef(const UObject* Object);
 #endif
 }
-

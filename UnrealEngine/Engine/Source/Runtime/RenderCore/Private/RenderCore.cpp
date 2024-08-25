@@ -14,6 +14,7 @@
 #include "RenderTimer.h"
 #include "RenderCounters.h"
 #include "RenderingThread.h"
+#include "RendererInterface.h"
 
 void UpdateShaderDevelopmentMode();
 
@@ -118,6 +119,7 @@ DEFINE_STAT(STAT_ViewRelevance);
 DEFINE_STAT(STAT_ComputeViewRelevance);
 DEFINE_STAT(STAT_OcclusionCull);
 DEFINE_STAT(STAT_UpdatePrimitiveFading);
+DEFINE_STAT(STAT_UpdateAlwaysVisible);
 DEFINE_STAT(STAT_DecompressPrecomputedOcclusion);
 DEFINE_STAT(STAT_ViewVisibilityTime);
 
@@ -404,6 +406,13 @@ static TAutoConsoleVariable<float> CVarHDRAcesColorMultiplier(
 	ECVF_RenderThreadSafe
 );
 
+static TAutoConsoleVariable<float> CVarHDRAcesGamutCompression(
+	TEXT("r.HDR.Aces.GamutCompression"),
+	0.0f,
+	TEXT("HDR equivalent of BlueCorrection: Bright blue desaturates instead of going to violet"),
+	ECVF_RenderThreadSafe
+);
+
 TAutoConsoleVariable<int32> CVarHDROutputEnabled(
 	TEXT("r.HDR.EnableHDROutput"),
 	0,
@@ -516,6 +525,20 @@ bool HdrHasWindowParamsFromCVars(void* OSWindow, FHDRMetaData& HDRMetaData)
 	return false;
 }
 
+static void HDRGetDeviceAndColorGamut(uint32 DeviceId, uint32 DisplayNitLevel, EDisplayOutputFormat& OutDisplayOutputFormat, EDisplayColorGamut& OutDisplayColorGamut)
+{
+	if (GRHIHDRNeedsVendorExtensions)
+	{
+		// all our implementations of HDR with vendor extensions happen with FP16 / ScRGB. See FD3D11DynamicRHI::EnableHDR / SetHDRMonitorMode*
+		OutDisplayOutputFormat = EDisplayOutputFormat::HDR_ACES_1000nit_ScRGB;
+		OutDisplayColorGamut = EDisplayColorGamut::sRGB_D65;
+	}
+	else
+	{
+		FPlatformMisc::ChooseHDRDeviceAndColorGamut(DeviceId, DisplayNitLevel, OutDisplayOutputFormat, OutDisplayColorGamut);
+	}
+}
+
 RENDERCORE_API void HDRGetMetaData(EDisplayOutputFormat& OutDisplayOutputFormat, EDisplayColorGamut& OutDisplayColorGamut, bool& OutbHDRSupported, 
 								   const FVector2D& WindowTopLeft, const FVector2D& WindowBottomRight, void* OSWindow)
 {
@@ -567,8 +590,8 @@ RENDERCORE_API void HDRGetMetaData(EDisplayOutputFormat& OutDisplayOutputFormat,
 
 	if (OutbHDRSupported)
 	{
-		FPlatformMisc::ChooseHDRDeviceAndColorGamut(GRHIVendorId, CVarHDRDisplayMaxLuminance.GetValueOnAnyThread(), OutDisplayOutputFormat, OutDisplayColorGamut);
-}
+		HDRGetDeviceAndColorGamut(GRHIVendorId, CVarHDRDisplayMaxLuminance.GetValueOnAnyThread(), OutDisplayOutputFormat, OutDisplayColorGamut);
+	}
 
 }
 
@@ -601,7 +624,7 @@ RENDERCORE_API void HDRConfigureCVars(bool bIsHDREnabled, uint32 DisplayNits, bo
 	// If we are turning it off, we'll reset back to 0/0
 	if (bIsHDREnabled)
 	{
-		FPlatformMisc::ChooseHDRDeviceAndColorGamut(GRHIVendorId, DisplayNits, OutputDevice, ColorGamut);
+		HDRGetDeviceAndColorGamut(GRHIVendorId, DisplayNits, OutputDevice, ColorGamut);
 	}
 
 	//CVarHDRDisplayMaxLuminance is ECVF_SetByCode as it's only a mean of communicating the information from UGameUserSettings to the rest of the engine
@@ -982,6 +1005,7 @@ void ConfigureACESTonemapParams(FACESTonemapParams& OutACESTonemapParams, float 
 	OutACESTonemapParams.ACESCoefsHigh_4 = PARAMS.coefsHigh[4];
 
 	OutACESTonemapParams.ACESSceneColorMultiplier = CVarHDRAcesColorMultiplier.GetValueOnAnyThread();
+	OutACESTonemapParams.ACESGamutCompression = CVarHDRAcesGamutCompression.GetValueOnAnyThread();
 
 }
 
@@ -1025,4 +1049,19 @@ RENDERCORE_API void ConvertPixelDataToSCRGB(TArray<FLinearColor>& InOutRawPixels
 			CurrentPixel.B = PixelFloat4.Z;
 		}
 	}
+}
+
+FVirtualTextureProducerHandle IRendererModule::RegisterVirtualTextureProducer(const FVTProducerDescription& Desc, IVirtualTexture* Producer)
+{
+	return RegisterVirtualTextureProducer(FRHICommandListImmediate::Get(), Desc, Producer);
+}
+
+IAllocatedVirtualTexture* IRendererModule::AllocateVirtualTexture(const FAllocatedVTDescription& Desc)
+{
+	return AllocateVirtualTexture(FRHICommandListImmediate::Get(), Desc);
+}
+
+IAdaptiveVirtualTexture* IRendererModule::AllocateAdaptiveVirtualTexture(const FAdaptiveVTDescription& AdaptiveVTDesc, const FAllocatedVTDescription& AllocatedVTDesc)
+{
+	return AllocateAdaptiveVirtualTexture(FRHICommandListImmediate::Get(), AdaptiveVTDesc, AllocatedVTDesc);
 }

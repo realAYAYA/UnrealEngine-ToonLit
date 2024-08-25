@@ -1556,19 +1556,18 @@ SYMS_U16 ver_build;
 typedef SYMS_U32 SYMS_CvCompile3Flags;
 enum{
 SYMS_CvCompile3Flag_Language_SHIFT = 0, SYMS_CvCompile3Flag_Language_MASK = 0xff,
-SYMS_CvCompile3Flag_unused_1 = (1 << 8),
-SYMS_CvCompile3Flag_EC = (1 << 9),
-SYMS_CvCompile3Flag_NoDbgInfo = (1 << 10),
-SYMS_CvCompile3Flag_LTCG = (1 << 11),
-SYMS_CvCompile3Flag_NoDataAlign = (1 << 12),
-SYMS_CvCompile3Flag_ManagedPresent = (1 << 13),
-SYMS_CvCompile3Flag_SecurityChecks = (1 << 14),
-SYMS_CvCompile3Flag_HotPatch = (1 << 15),
-SYMS_CvCompile3Flag_CVTCIL = (1 << 16),
-SYMS_CvCompile3Flag_MSILModule = (1 << 17),
-SYMS_CvCompile3Flag_SDL = (1 << 18),
-SYMS_CvCompile3Flag_PGO = (1 << 19),
-SYMS_CvCompile3Flag_EXP = (1 << 20),
+SYMS_CvCompile3Flag_EC = (1 << 8),
+SYMS_CvCompile3Flag_NoDbgInfo = (1 << 9),
+SYMS_CvCompile3Flag_LTCG = (1 << 10),
+SYMS_CvCompile3Flag_NoDataAlign = (1 << 11),
+SYMS_CvCompile3Flag_ManagedPresent = (1 << 12),
+SYMS_CvCompile3Flag_SecurityChecks = (1 << 13),
+SYMS_CvCompile3Flag_HotPatch = (1 << 14),
+SYMS_CvCompile3Flag_CVTCIL = (1 << 15),
+SYMS_CvCompile3Flag_MSILModule = (1 << 16),
+SYMS_CvCompile3Flag_SDL = (1 << 17),
+SYMS_CvCompile3Flag_PGO = (1 << 18),
+SYMS_CvCompile3Flag_EXP = (1 << 19),
 };
 #define SYMS_CvCompile3Flags_Extract_Language(f) (SYMS_CvLanguage)(((f) >> SYMS_CvCompile3Flag_Language_SHIFT) & SYMS_CvCompile3Flag_Language_MASK)
 typedef struct SYMS_CvCompile3{
@@ -2026,8 +2025,6 @@ SYMS_CvFastLinkFlag_IS_NAMESPACE = (1 << 6),
 typedef struct SYMS_CvFastLink{
 SYMS_CvTypeId itype;
 SYMS_CvFastLinkFlags flags;
-// variable-width: SYMS_U8 name;
-SYMS_U32 padding;
 } SYMS_CvFastLink;
 typedef SYMS_U16 SYMS_CvArmSwitchType;
 enum{
@@ -2564,6 +2561,11 @@ SYMS_U32 count;
 SYMS_U32 signature;
 // variable-width: SYMS_U8 name;
 } SYMS_CvLeafPreComp;
+typedef struct SYMS_CvLeafTypeServer{
+SYMS_U32 sig;
+SYMS_U32 age;
+// variable-width: SYMS_U8 name;
+} SYMS_CvLeafTypeServer;
 typedef struct SYMS_CvLeafTypeServer2{
 SYMS_CvGuid sig70;
 SYMS_U32 age;
@@ -2571,7 +2573,7 @@ SYMS_U32 age;
 } SYMS_CvLeafTypeServer2;
 typedef struct SYMS_CvLeafBuildInfo{
 SYMS_U16 count;
-SYMS_CvItemId arg;
+// variable-width: SYMS_CvItemId arg;
 } SYMS_CvLeafBuildInfo;
 typedef struct SYMS_CvLeafSkip_16t{
 SYMS_U16 type;//  pad data
@@ -2612,7 +2614,6 @@ SYMS_S32 thisadjust;
 } SYMS_CvLeafMFunction;
 typedef struct SYMS_CvLeafArgList{
 SYMS_U32 count;
-// variable-width: SYMS_U32 itypes;
 } SYMS_CvLeafArgList;
 typedef struct SYMS_CvLeafBitField{
 SYMS_CvTypeId itype;
@@ -2626,7 +2627,6 @@ SYMS_CvTypeId itype;
 typedef struct SYMS_CvLeafArray{
 SYMS_CvTypeId entry_itype;
 SYMS_CvTypeId index_itype;
-// variable-width: SYMS_PdbNumeric val;
 } SYMS_CvLeafArray;
 typedef struct SYMS_CvLeafStruct{
 SYMS_U16 count;
@@ -2634,26 +2634,20 @@ SYMS_CvTypeProps props;
 SYMS_CvTypeId field;
 SYMS_CvTypeId derived;
 SYMS_CvTypeId vshape;
-// variable-width: SYMS_PdbNumeric size;
-// variable-width: SYMS_U8 name;
 } SYMS_CvLeafStruct;
 typedef struct SYMS_CvLeafUnion{
 SYMS_U16 count;
 SYMS_CvTypeProps props;
 SYMS_CvTypeId field;
-// variable-width: SYMS_PdbNumeric size;
-// variable-width: SYMS_U8 name;
 } SYMS_CvLeafUnion;
 typedef struct SYMS_CvLeafEnum{
 SYMS_U16 count;
 SYMS_CvTypeProps props;
 SYMS_CvTypeId itype;
 SYMS_CvTypeId field;
-// variable-width: SYMS_U8 name;
 } SYMS_CvLeafEnum;
 typedef struct SYMS_CvLeafAlias{
 SYMS_CvTypeId itype;
-// variable-width: SYMS_U8 name;
 } SYMS_CvLeafAlias;
 typedef struct SYMS_CvLeafMember{
 SYMS_CvFieldAttribs attribs;
@@ -2666,10 +2660,14 @@ SYMS_CvFieldAttribs attribs;
 SYMS_CvTypeId itype;
 // variable-width: SYMS_U8 name;
 } SYMS_CvLeafStMember;
+typedef struct SYMS_CvLeafMethodListMember{
+SYMS_CvFieldAttribs attribs;
+SYMS_U16 pad;
+SYMS_CvTypeId index;
+} SYMS_CvLeafMethodListMember;
 typedef struct SYMS_CvLeafMethod{
 SYMS_U16 count;
 SYMS_CvTypeId itype_list;
-// variable-width: SYMS_U8 name;
 } SYMS_CvLeafMethod;
 typedef struct SYMS_CvLeafOneMethod{
 SYMS_CvFieldAttribs attribs;
@@ -2677,29 +2675,23 @@ SYMS_CvTypeId itype;
 } SYMS_CvLeafOneMethod;
 typedef struct SYMS_CvLeafEnumerate{
 SYMS_CvFieldAttribs attribs;
-// variable-width: SYMS_PdbNumeric val;
-// variable-width: SYMS_U8 name;
 } SYMS_CvLeafEnumerate;
 typedef struct SYMS_CvLeafNestType{
 SYMS_U16 pad;
 SYMS_CvTypeId index;
-// variable-width: SYMS_U8 name;
 } SYMS_CvLeafNestType;
 typedef struct SYMS_CvLeafNestTypeEx{
 SYMS_CvFieldAttribs attribs;
 SYMS_CvTypeId itype;
-// variable-width: SYMS_U8 name;
 } SYMS_CvLeafNestTypeEx;
 typedef struct SYMS_CvLeafBClass{
 SYMS_CvFieldAttribs attribs;
 SYMS_CvTypeId itype;
-// variable-width: SYMS_PdbNumeric offset;
 } SYMS_CvLeafBClass;
 typedef struct SYMS_CvLeafVBClass{
 SYMS_CvFieldAttribs attribs;
 SYMS_CvTypeId itype;
 SYMS_CvTypeId vbptr_itype;
-// variable-width: SYMS_PdbNumeric vbptr_off;
 } SYMS_CvLeafVBClass;
 typedef struct SYMS_CvLeafVFuncTab{
 SYMS_U16 pad;
@@ -2715,19 +2707,18 @@ SYMS_CvTypeId owner_itype;
 SYMS_CvTypeId base_table_itype;
 SYMS_U32 offset_in_object_layout;
 SYMS_U32 names_len;
-// variable-width: SYMS_U8 name;
 } SYMS_CvLeafVFTable;
+typedef struct SYMS_CvLeafVFPath{
+SYMS_U32 count;
+} SYMS_CvLeafVFPath;
 typedef struct SYMS_CvLeafFuncId{
 SYMS_CvItemId scope_id;
 //  parent scope of the ID, 0 if global
 SYMS_CvTypeId itype;
-//  function type
-// variable-width: SYMS_U8 name;
 } SYMS_CvLeafFuncId;
 typedef struct SYMS_CvLeafMFuncId{
 SYMS_CvItemId parent_itype;
 SYMS_CvItemId itype;
-// variable-width: SYMS_U8 name;
 } SYMS_CvLeafMFuncId;
 typedef struct SYMS_CvLeafStringId{
 //  TODO(allen): Whose "id" is this??
@@ -2770,7 +2761,9 @@ SYMS_CvSubSectionKind_FUNC_MDTOKEN_MAP = 0xfa,
 SYMS_CvSubSectionKind_TYPE_MDTOKEN_MAP = 0xfb,
 SYMS_CvSubSectionKind_MERGED_ASSEMBLY_INPUT = 0xfc,
 SYMS_CvSubSectionKind_COFF_SYMBOL_RVA = 0xfd,
-SYMS_CvSubSectionKind_COUNT = 13
+SYMS_CvSubSectionKind_XFG_HASH_TYPE = 0xff,
+SYMS_CvSubSectionKind_XFG_HASH_VRITUAL = 0x100,
+SYMS_CvSubSectionKind_COUNT = 15
 };
 typedef struct SYMS_CvSubSectionHeader{
 SYMS_CvSubSectionKind kind;
@@ -3249,7 +3242,7 @@ SYMS_GLOBAL SYMS_RegSlice syms_reg_slices_X64[688] = {
 {SYMS_RegX64Code_gs, 0, 2},
 {0, 0, 0},
 {SYMS_RegX64Code_rflags, 0, 2},
-{SYMS_RegX64Code_rip, 0, 2},
+{SYMS_RegX64Code_rip, 0, 8},
 {SYMS_RegX64Code_rflags, 0, 4},
 {0, 0, 0},
 {0, 0, 0},
@@ -3454,19 +3447,19 @@ SYMS_GLOBAL SYMS_RegSlice syms_reg_slices_X64[688] = {
 {SYMS_RegX64Code_ymm7, 8, 8},
 {SYMS_RegX64Code_fpr0, 0, 4},
 {SYMS_RegX64Code_fpr0, 4, 4},
+{SYMS_RegX64Code_fpr1, 0, 4},
 {SYMS_RegX64Code_fpr1, 4, 4},
-{SYMS_RegX64Code_fpr1, 4, 4},
+{SYMS_RegX64Code_fpr2, 0, 4},
 {SYMS_RegX64Code_fpr2, 4, 4},
-{SYMS_RegX64Code_fpr2, 4, 4},
+{SYMS_RegX64Code_fpr3, 0, 4},
 {SYMS_RegX64Code_fpr3, 4, 4},
-{SYMS_RegX64Code_fpr3, 4, 4},
+{SYMS_RegX64Code_fpr4, 0, 4},
 {SYMS_RegX64Code_fpr4, 4, 4},
-{SYMS_RegX64Code_fpr4, 4, 4},
+{SYMS_RegX64Code_fpr5, 0, 4},
 {SYMS_RegX64Code_fpr5, 4, 4},
-{SYMS_RegX64Code_fpr5, 4, 4},
+{SYMS_RegX64Code_fpr6, 0, 4},
 {SYMS_RegX64Code_fpr6, 4, 4},
-{SYMS_RegX64Code_fpr6, 4, 4},
-{SYMS_RegX64Code_fpr7, 4, 4},
+{SYMS_RegX64Code_fpr7, 0, 4},
 {SYMS_RegX64Code_fpr7, 4, 4},
 {SYMS_RegX64Code_ymm8, 0, 16},
 {SYMS_RegX64Code_ymm9, 0, 16},

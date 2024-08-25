@@ -1,10 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "CoreMinimal.h"
-#include "UObject/ObjectMacros.h"
-#include "UObject/Class.h"
-#include "UObject/Package.h"
-#include "Templates/Casts.h"
 #include "UObject/UnrealType.h"
 
 IMPLEMENT_FIELD(FNumericProperty)
@@ -30,16 +25,18 @@ int64 FNumericProperty::ReadEnumAsInt64(FStructuredArchive::FSlot Slot, UStruct*
 	FName EnumName;
 	Slot << EnumName;
 
-	UEnum* Enum = FindUField<UEnum>(dynamic_cast<UClass*>(DefaultsStruct) ? static_cast<UClass*>(DefaultsStruct) : DefaultsStruct->GetTypedOuter<UClass>(), Tag.EnumName);
+	FName EnumTypeName = Tag.GetType().GetParameterName(0);
+
+	UEnum* Enum = FindUField<UEnum>(dynamic_cast<UClass*>(DefaultsStruct) ? static_cast<UClass*>(DefaultsStruct) : DefaultsStruct->GetTypedOuter<UClass>(), EnumTypeName);
 	if (!Enum)
 	{
 		// Enums (at least native) are stored as short names (for now) so find the Tag enum by name
-		Enum = FindFirstObject<UEnum>(*Tag.EnumName.ToString(), EFindFirstObjectOptions::NativeFirst);
+		Enum = FindFirstObject<UEnum>(*WriteToString<128>(EnumTypeName), EFindFirstObjectOptions::NativeFirst);
 	}
 
 	if (!Enum)
 	{
-		UE_LOG(LogClass, Warning, TEXT("Failed to find enum '%s' when converting property '%s' during property loading - setting to 0"), *Tag.EnumName.ToString(), *Tag.Name.ToString());
+		UE_LOG(LogClass, Warning, TEXT("Failed to find enum '%s' when converting property '%s' during property loading - setting to 0"), *EnumTypeName.ToString(), *Tag.Name.ToString());
 		return 0;
 	}
 

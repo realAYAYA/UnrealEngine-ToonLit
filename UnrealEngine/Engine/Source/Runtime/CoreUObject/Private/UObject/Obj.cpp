@@ -31,6 +31,7 @@
 #include "UObject/Package.h"
 #include "UObject/MetaData.h"
 #include "Templates/Casts.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/LazyObjectPtr.h"
 #include "UObject/SoftObjectPtr.h"
 #include "UObject/PropertyPortFlags.h"
@@ -39,6 +40,7 @@
 #include "UObject/ObjectSaveContext.h"
 #include "UObject/UObjectAnnotation.h"
 #include "UObject/ReferenceChainSearch.h"
+#include "UObject/OverridableManager.h"
 #include "Serialization/ArchiveCountMem.h"
 #include "Serialization/ArchiveShowReferences.h"
 #include "Serialization/ArchiveFindCulprit.h"
@@ -48,6 +50,7 @@
 #include "Misc/RedirectCollector.h"
 #include "Misc/PlayInEditorLoadingScope.h"
 #include "UObject/GCScopeLock.h"
+#include "ProfilingDebugging/AssetMetadataTrace.h"
 #include "ProfilingDebugging/CookStats.h"
 #include "ProfilingDebugging/LoadTimeTracker.h"
 #include "UObject/GCObject.h"
@@ -67,6 +70,7 @@
 #include "ProfilingDebugging/AssetMetadataTrace.h"
 #include "Containers/VersePath.h"
 #include "Serialization/LoadTimeTracePrivate.h"
+#include "UObject/PropertyBagRepository.h"
 
 DEFINE_LOG_CATEGORY(LogObj);
 
@@ -128,8 +132,12 @@ static UPackage*			GObjTransientPkg								= NULL;
 		}
 	};
 	static FUObjectAnnotationSparse<FPropagatedEditChangeAnnotation, true> PropagatedEditChangeAnnotation;
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
 	UObject::FAssetRegistryTag::FOnGetObjectAssetRegistryTags UObject::FAssetRegistryTag::OnGetExtraObjectTags;
 	UObject::FAssetRegistryTag::FOnGetExtendedAssetRegistryTagsForSave UObject::FAssetRegistryTag::OnGetExtendedAssetRegistryTagsForSave;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+	UObject::FAssetRegistryTag::FOnGetObjectAssetRegistryTagsWithContext UObject::FAssetRegistryTag::OnGetExtraObjectTagsWithContext;
+	UObject::FOnGetPreviewPlatform UObject::OnGetPreviewPlatform;
 #endif // WITH_EDITOR
 
 UObject::UObject( EStaticConstructor, EObjectFlags InFlags )
@@ -468,6 +476,8 @@ void UObject::PreEditChange( FEditPropertyChain& PropertyAboutToChange )
 		GetArchetypeInstances(Objects);
 		PropagatePreEditChange(Objects, PropertyAboutToChange);
 	}
+
+	FOverridableManager::Get().PreOverrideProperty(*this, PropertyAboutToChange);
 }
 
 
@@ -499,12 +509,12 @@ void UObject::PostEditChangeChainProperty(FPropertyChangedChainEvent& PropertyCh
 	if (!FApp::IsGame())
 	{
 		if (HasAnyFlags(RF_ClassDefaultObject | RF_ArchetypeObject) && PropertyChangedEvent.PropertyChain.GetActiveMemberNode() == PropertyChangedEvent.PropertyChain.GetHead())
-	{
+		{
 			// Get a list of all archetype instances
 			TArray<UObject*> ArchetypeInstances;
 			GetArchetypeInstances(ArchetypeInstances);
 
-		// Propagate the editchange call to archetype instances
+			// Propagate the editchange call to archetype instances
 			PropagatePostEditChange(ArchetypeInstances, PropertyChangedEvent);
 		}
 		else if (GetOuter()->HasAnyFlags(RF_ClassDefaultObject | RF_ArchetypeObject))
@@ -531,7 +541,7 @@ void UObject::PostEditChangeChainProperty(FPropertyChangedChainEvent& PropertyCh
 					}
 				}
 
-				GetOuter()->PropagatePostEditChange(ArchetypeComponentInstances, PropertyChangedEvent);
+				PropagatePostEditChange(ArchetypeComponentInstances, PropertyChangedEvent);
 
 				break;
 			}
@@ -539,6 +549,8 @@ void UObject::PostEditChangeChainProperty(FPropertyChangedChainEvent& PropertyCh
 	}
 
 	PostEditChangeProperty(PropertyEvent);
+
+	FOverridableManager::Get().PostOverrideProperty(*this, PropertyChangedEvent, PropertyChangedEvent.PropertyChain);
 }
 
 bool UObject::CanEditChange( const FProperty* InProperty ) const
@@ -554,6 +566,13 @@ bool UObject::CanEditChange(const FEditPropertyChain& PropertyChain) const
 
 void UObject::PropagatePreEditChange( TArray<UObject*>& AffectedObjects, FEditPropertyChain& PropertyAboutToChange )
 {
+	// This feature is not essential for overridable serialization
+	// Disable it until we fix the fact that do it will create overrides on all the instances
+	if (FOverridableManager::Get().IsEnabled(*this))
+	{
+		return;
+	}
+
 	TArray<UObject*> Instances;
 
 	for ( int32 i = 0; i < AffectedObjects.Num(); i++ )
@@ -639,6 +658,13 @@ void UObject::PropagatePreEditChange( TArray<UObject*>& AffectedObjects, FEditPr
 
 void UObject::PropagatePostEditChange( TArray<UObject*>& AffectedObjects, FPropertyChangedChainEvent& PropertyChangedEvent )
 {
+	// This feature is not essential for overridable serialization
+	// Disable it until we fix the fact that do it will create overrides on all the instances
+	if (FOverridableManager::Get().IsEnabled(*this))
+	{
+		return;
+	}
+
 	TArray<UObject*> Instances;
 
 	for ( int32 i = 0; i < AffectedObjects.Num(); i++ )
@@ -852,21 +878,31 @@ FClassExclusionData GDedicatedClientExclusionList;
 
 bool UObject::NeedsLoadForServer() const
 {
-	return !GDedicatedServerExclusionList.IsExcluded(GetClass());
+	bool Ret = false;
+	UE_AUTORTFM_OPEN({
+		Ret = !GDedicatedServerExclusionList.IsExcluded(GetClass());
+	});
+	return Ret;
 }
 
 void UObject::UpdateClassesExcludedFromDedicatedServer(const TArray<FString>& InClassNames, const TArray<FString>& InModulesNames)
 {
+	// Avoid adding an UE_AUTORTFM_OPEN as this clears a list which wont be rolled back correctly
 	GDedicatedServerExclusionList.UpdateExclusionList(InClassNames, InModulesNames);
 }
 
 bool UObject::NeedsLoadForClient() const
 {
-	return !GDedicatedClientExclusionList.IsExcluded(GetClass());
+	bool Ret = false;
+	UE_AUTORTFM_OPEN({
+		Ret = !GDedicatedClientExclusionList.IsExcluded(GetClass());
+	});
+	return Ret;
 }
 
 void UObject::UpdateClassesExcludedFromDedicatedClient(const TArray<FString>& InClassNames, const TArray<FString>& InModulesNames)
 {
+	// Avoid adding an UE_AUTORTFM_OPEN as this clears a list which wont be rolled back correctly
 	GDedicatedClientExclusionList.UpdateExclusionList(InClassNames, InModulesNames);
 }
 
@@ -973,6 +1009,9 @@ void UObject::BeginDestroy()
 	// Remove any associated external package, at this point
 	SetExternalPackage(nullptr);
 
+	// Destroy any associated property bag.
+	UE::FPropertyBagRepository::Get().DestroyOuterBag(this);
+	
 	// ensure BeginDestroy has been routed back to UObject::BeginDestroy.
 #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
 	DebugBeginDestroyed.RemoveSingle(this);
@@ -1222,12 +1261,10 @@ void UObject::ConditionalPostLoad()
 {
 	LLM_SCOPE(ELLMTag::UObject);
 
-	check(!GEventDrivenLoaderEnabled || !HasAnyFlags(RF_NeedLoad)); //@todoio Added this as "nicks rule"
-									  // PostLoad only if the object needs it and has already been serialized
-	//@todoio note this logic should be unchanged compared to main
+	ensureAlwaysMsgf((GetLoaderType() != ELoaderType::ZenLoader) || !HasAnyFlags(RF_NeedLoad), TEXT("Object '%s' does not have RF_NeedLoad cleared in PostLoad!"), *GetFullName());
+
 	if (HasAnyFlags(RF_NeedPostLoad))
 	{
-
 		check(IsInGameThread() || HasAnyFlags(RF_ClassDefaultObject|RF_ArchetypeObject) || IsPostLoadThreadSafe() || IsA(UClass::StaticClass()))
 		UE_TRACK_REFERENCING_PACKAGE_SCOPED(this, PackageAccessTrackingOps::NAME_PostLoad);
 
@@ -1261,11 +1298,11 @@ void UObject::ConditionalPostLoad()
 #endif
 				UPackage* Package = GetPackage();
 				UE_SCOPED_COOK_STAT(Package->GetFName(), EPackageEventStatType::LoadPackage);
-				LLM_SCOPED_TAG_WITH_OBJECT_IN_SET(Package, ELLMTagSet::Assets);
-				LLM_SCOPED_TAG_WITH_OBJECT_IN_SET(GetClass(), ELLMTagSet::AssetClasses);
-				UE_TRACE_METADATA_SCOPE_ASSET(this, GetClass());
+				LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH(Package, ELLMTagSet::Assets);
+				LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH(GetClass(), ELLMTagSet::AssetClasses);
+				UE_TRACE_METADATA_SCOPE_ASSET_FNAME(GetFName(), GetClass()->GetFName(), Package->GetFName())
 				TRACE_LOADTIME_POSTLOAD_OBJECT_SCOPE(this);
-				
+
 				PostLoad();
 
 				LLM_PUSH_STATS_FOR_ASSET_TAGS();
@@ -1321,7 +1358,7 @@ void UObject::PostLoadSubobjects( FObjectInstancingGraph* OuterInstanceGraph/*=N
 		// 
 		// @todo_LoadPerf - Consider modifying to bypass this for cooked packages if the class doesn't include any instanced editor-only fields.
 		// Currently we do not have a flag that indicates this scenario, and it might be expensive to iterate over the linked property chain here.
-		if (!FPlatformProperties::RequiresCookedData())
+		if (!FPlatformProperties::RequiresCookedData() || FOverridableManager::Get().NeedSubObjectTemplateInstantiation(*this))
 		{
 			FObjectInstancingGraph CurrentInstanceGraph;
 
@@ -1335,10 +1372,9 @@ void UObject::PostLoadSubobjects( FObjectInstancingGraph* OuterInstanceGraph/*=N
 				InstanceGraph = &CurrentInstanceGraph;
 			}
 
-			// this will be filled with the list of component instances which were serialized from disk
 			TArray<UObject*> SerializedComponents;
-			// fill the array with the component contained by this object that were actually serialized to disk through property references
-			CollectDefaultSubobjects(SerializedComponents, false);
+			// fill the array with the top level default subobjects
+			GetDefaultSubobjects(SerializedComponents);
 
 			// now, add all of the instanced components to the instance graph that will be used for instancing any components that have been added
 			// to this object's archetype since this object was last saved
@@ -1611,6 +1647,13 @@ void UObject::Serialize(FStructuredArchive::FRecord Record)
 		// Handle derived UClass objects (exact UClass objects are native only and shouldn't be touched)
 		if (ObjClass != UClass::StaticClass())
 		{
+			// Serializing the overriden properties if using UPS (like object duplication)
+			// Also needed for transactions using TPS
+			if (UnderlyingArchive.UseUnversionedPropertySerialization() || UnderlyingArchive.IsTransacting())
+			{
+				FOverridableManager::Get().SerializeOverriddenProperties(*this, Record);
+			}
+
 			SerializeScriptProperties(Record.EnterField(TEXT("Properties")));
 		}
 
@@ -1638,12 +1681,6 @@ void UObject::Serialize(FStructuredArchive::FRecord Record)
 
 		// Serialize a GUID if this object has one mapped to it
 		FLazyObjectPtr::PossiblySerializeObjectGuid(this, Record);
-
-		// Invalidate asset pointer caches when loading a new object
-		if (UnderlyingArchive.IsLoading())
-		{
-			FSoftObjectPath::InvalidateTag();
-		}
 
 		// Keep track of sparse class data for undo/redo
 		if (UnderlyingArchive.IsTransacting() && HasAnyFlags(RF_ClassDefaultObject))
@@ -1680,7 +1717,13 @@ void UObject::DeclareCustomVersions(FArchive& Ar, const UClass* SpecificSubclass
 	// DeclareCustomVersions is called on the default object for each class
 	// We first Serialize the object, which catches all the UsingCustomVersion statements
 	// class authors have added unconditionally in their Serialize function
-	SpecificSubclass->GetDefaultObject()->Serialize(Ar);
+	UObject* CDO = SpecificSubclass->GetDefaultObject();
+	// Some classes such as Default__BlueprintGeneratedClass do not have a CDO
+	if (!CDO)
+	{
+		return;
+	}
+	CDO->Serialize(Ar);
 
 	// To further catch CustomVersions used by non-native structs that are in an array or don't
 	// otherwise exist on the default object, Construct an instance of the struct and serialize
@@ -1743,7 +1786,7 @@ void UObject::DeclareCustomVersions(FArchive& Ar, const UClass* SpecificSubclass
 		}
 		if (!bPushedStack)
 		{
-			StructStack.Pop(false /* bAllowShrinking */);
+			StructStack.Pop(EAllowShrinking::No);
 		}
 	}
 }
@@ -1760,6 +1803,27 @@ void UObject::DeclareConstructClasses(TArray<FTopLevelAssetPath>& OutConstructCl
 void UObject::SerializeScriptProperties(FArchive& Ar) const
 {
 	SerializeScriptProperties(FStructuredArchiveFromArchive(Ar).GetSlot());
+}
+
+namespace UE::Private
+{
+	/**
+	 *  Query if an object has another object used in its stead for TPS serialization
+	 *  This can be useful for backward compatibility testing or delaying version upgrading of data
+	 */
+	const UObject* GetDataImpersonator(const UObject* ThisObject)
+	{
+		if (ThisObject == nullptr)
+		{
+			return nullptr;
+		}
+		if (FUObjectSerializeContext* SerializeContext = FUObjectThreadContext::Get().GetSerializeContext();
+			SerializeContext && !SerializeContext->bImpersonateProperties)
+		{
+			return nullptr;
+		}
+		return FPropertyBagRepository::Get().FindInstanceDataObject(ThisObject);
+	}
 }
 
 void UObject::SerializeScriptProperties( FStructuredArchive::FSlot Slot ) const
@@ -1782,19 +1846,38 @@ void UObject::SerializeScriptProperties( FStructuredArchive::FSlot Slot ) const
 		{
 			DiffObject = GetArchetype();
 		}
+		UStruct* DiffClass = HasAnyFlags(RF_ClassDefaultObject) ? ObjClass->GetSuperClass() : ObjClass;
+
+		// Query if this object data is being impersonated 
+		const UObject* ThisObject = this;
+		if (const UObject* Impersonator = UE::Private::GetDataImpersonator(ThisObject))
+		{
+			ensureAlwaysMsgf(!HasAnyFlags(RF_ClassDefaultObject), TEXT("CDO '%s' shoudn't be impersonated"), *ThisObject->GetPathName());
+			ThisObject = Impersonator;
+			ObjClass = ThisObject->GetClass();
+
+			//@todo FH: Support for Default Object needs to be added when using impersonators
+			const UObject* DiffImpersonator = nullptr; //UE::Private::GetDataImpersonator(DiffObject);
+			DiffObject = DiffImpersonator ? const_cast<UObject*>(DiffImpersonator) : ObjClass->GetDefaultObject(false);
+			if (DiffObject)
+			{
+				DiffClass = DiffObject->GetClass();
+			}
+			ensureAlwaysMsgf(DiffClass == ObjClass, TEXT("Impersonation of '%s' using a different default class not appropriately supported at the moment. Class: '%s', DefaultClass: '%s'")
+				, *ThisObject->GetPathName(), *ObjClass->GetPathName(), *DiffClass->GetPathName());
+		}
+
 #if WITH_EDITOR
 		static const FBoolConfigValueHelper BreakSerializationRecursion(TEXT("StructSerialization"), TEXT("BreakSerializationRecursion"));
 		const bool bBreakSerializationRecursion = BreakSerializationRecursion && UnderlyingArchive.IsLoading() && UnderlyingArchive.GetLinker();
-#else 
-		const bool bBreakSerializationRecursion = false;
-#endif
-#if WITH_EDITOR
+
 		static const FName NAME_SerializeScriptProperties = FName(TEXT("SerializeScriptProperties"));
 		FArchive::FScopeAddDebugData P(UnderlyingArchive, NAME_SerializeScriptProperties);
 		FArchive::FScopeAddDebugData S(UnderlyingArchive, ObjClass->GetFName());
+#else 
+		const bool bBreakSerializationRecursion = false;
 #endif
-
-		ObjClass->SerializeTaggedProperties(Slot, (uint8*)this, HasAnyFlags(RF_ClassDefaultObject) ? ObjClass->GetSuperClass() : ObjClass, (uint8*)DiffObject, bBreakSerializationRecursion ? this : nullptr);
+		ObjClass->SerializeTaggedProperties(Slot, (uint8*)ThisObject, DiffClass, (uint8*)DiffObject, bBreakSerializationRecursion ? ThisObject : nullptr);
 	}
 	else if (UnderlyingArchive.GetPortFlags() != 0 && !UnderlyingArchive.ArUseCustomPropertyList )
 	{
@@ -1804,7 +1887,7 @@ void UObject::SerializeScriptProperties( FStructuredArchive::FSlot Slot ) const
 		{
 			DiffObject = GetArchetype();
 		}
-		ObjClass->SerializeBinEx(Slot, const_cast<UObject *>(this), DiffObject, DiffObject ? DiffObject->GetClass() : NULL);
+		ObjClass->SerializeBinEx(Slot, const_cast<UObject *>(this), DiffObject, DiffObject ? DiffObject->GetClass() : nullptr);
 	}
 	else
 	{
@@ -2045,28 +2128,26 @@ FString GetConfigFilename( UObject* SourceObject )
 	return SourceObject->GetClass()->GetConfigName();
 }
 
-namespace UE { namespace Object { namespace Private {
+namespace UE::Object::Private
+{
 
-// Thread local state to avoid UObject::GetAssetRegistryTags() API change
-thread_local FAssetBundleData const** TGetAssetRegistryTags_OutBundles = nullptr;
-
-static void GetAssetRegistryTagFromProperty(const void* BaseMemoryLocation, const UObject* OwnerObject, FProperty* Prop, TArray<UObject::FAssetRegistryTag>& OutTags)
+static void GetAssetRegistryTagFromProperty(const void* BaseMemoryLocation, const UObject* OwnerObject, FProperty* Prop, FAssetRegistryTagsContext Context)
 {
 	FStructProperty* StructProp = CastField<FStructProperty>(Prop);
 	if (StructProp && StructProp->Struct && StructProp->Struct->GetFName() == GAssetBundleDataName)
 	{
 		const FAssetBundleData* Bundles = reinterpret_cast<const FAssetBundleData*>(Prop->ContainerPtrToValuePtr<uint8>(BaseMemoryLocation));
 
-		if (FAssetBundleData const** OutBundles = TGetAssetRegistryTags_OutBundles)
+		if (Context.WantsBundleResult())
 		{
-			checkf(*OutBundles == nullptr, TEXT("Object %s has more than one FAssetBundleData!"), *OwnerObject->GetPathName());
-			*OutBundles = Bundles;
+			checkf(Context.GetBundleResult() == nullptr, TEXT("Object %s has more than one FAssetBundleData!"), *OwnerObject->GetPathName());
+			Context.SetBundleResult(Bundles);
 		}
 		else
 		{
 			FString PropertyStr;
 			Prop->ExportTextItem_Direct(PropertyStr, Bundles, Bundles, nullptr, PPF_None);
-			OutTags.Add(UObject::FAssetRegistryTag(GAssetBundleDataName, MoveTemp(PropertyStr), UObject::FAssetRegistryTag::ETagType::TT_Alphabetical));
+			Context.AddTag(UObject::FAssetRegistryTag(GAssetBundleDataName, MoveTemp(PropertyStr), UObject::FAssetRegistryTag::ETagType::TT_Alphabetical));
 		}
 	}
 	else if (Prop->HasAnyPropertyFlags(CPF_AssetRegistrySearchable))
@@ -2109,17 +2190,17 @@ static void GetAssetRegistryTagFromProperty(const void* BaseMemoryLocation, cons
 		const uint8* PropertyAddr = Prop->ContainerPtrToValuePtr<uint8>(BaseMemoryLocation);
 		Prop->ExportTextItem_Direct(PropertyStr, PropertyAddr, PropertyAddr, nullptr, PPF_None);
 
-		OutTags.Add(UObject::FAssetRegistryTag(Prop->GetFName(), MoveTemp(PropertyStr), TagType));
+		Context.AddTag(UObject::FAssetRegistryTag(Prop->GetFName(), MoveTemp(PropertyStr), TagType));
 	}
 }
 
-static void GetAssetRegistryTagsFromSearchableProperties(const UObject* Object, TArray<UObject::FAssetRegistryTag>& OutTags)
+static void GetAssetRegistryTagsFromSearchableProperties(const UObject* Object, FAssetRegistryTagsContext Context)
 {
 	check(nullptr != Object);
 
 	for (TFieldIterator<FProperty> FieldIt( Object->GetClass() ); FieldIt; ++FieldIt)
 	{
-		GetAssetRegistryTagFromProperty(Object, Object, CastField<FProperty>(*FieldIt), OutTags);
+		GetAssetRegistryTagFromProperty(Object, Object, CastField<FProperty>(*FieldIt), Context);
 	}
 
 	UScriptStruct* SparseClassDataStruct = Object->GetClass()->GetSparseClassDataStruct();
@@ -2128,41 +2209,115 @@ static void GetAssetRegistryTagsFromSearchableProperties(const UObject* Object, 
 		const void* SparseClassData = Object->GetClass()->GetSparseClassData(EGetSparseClassDataMethod::ArchetypeIfNull);
 		for (TFieldIterator<FProperty> FieldIt(SparseClassDataStruct); FieldIt; ++FieldIt)
 		{
-			GetAssetRegistryTagFromProperty(SparseClassData, Object, CastField<FProperty>(*FieldIt), OutTags);
+			GetAssetRegistryTagFromProperty(SparseClassData, Object, CastField<FProperty>(*FieldIt), Context);
 		}
 	}
 }
 
-}}} // end namespace UE::Object::Private
+} // end namespace UE::Object::Private
 
 const FName FPrimaryAssetId::PrimaryAssetTypeTag(TEXT("PrimaryAssetType"));
 const FName FPrimaryAssetId::PrimaryAssetNameTag(TEXT("PrimaryAssetName"));
+const FName FPrimaryAssetId::PrimaryAssetDisplayNameTag(TEXT("PrimaryAssetDisplayName"));
+
+// This list of the objects that are forwarding from one GetAssetRegistry tags to the other has to be a list rather
+// than merely a bool because some GetAssetRegistryTags calls call GetAssetRegistryTags on other objects, e.g. UWorld
+// calls it on its LevelBlueprint.
+// UE_DEPRECATED(5.4, "Used to provide backwards compatibility for the deprecated GetAssetRegistryTags function") // UE_DEPRECATED seems not to work with thread_local
+thread_local TArray<const UObject*, TInlineAllocator<2>> GAssetRegistryTagsObjectsBeingForwarded;
+// UE_DEPRECATED(5.4, "Used to provide backwards compatibility for the deprecated GetAssetRegistryTags function") // UE_DEPRECATED seems not to work with thread_local
+thread_local FAssetBundleData const** TLegacyGetAssetRegistryTags_OutBundles = nullptr;
+
 
 void UObject::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	if (!GAssetRegistryTagsObjectsBeingForwarded.Contains(this))
+	{
+		FAssetRegistryTagsContextData Context(this, EAssetRegistryTagsCaller::Uncategorized);
+		Context.bWantsBundleResult = TLegacyGetAssetRegistryTags_OutBundles != nullptr;
+
+		GAssetRegistryTagsObjectsBeingForwarded.Add(this);
+		GetAssetRegistryTags(Context);
+		check(!GAssetRegistryTagsObjectsBeingForwarded.IsEmpty() && GAssetRegistryTagsObjectsBeingForwarded.Last() == this);
+		GAssetRegistryTagsObjectsBeingForwarded.Pop(EAllowShrinking::No);
+
+		OutTags.Reserve(OutTags.Num() + Context.Tags.Num());
+		for (TPair<FName, FAssetRegistryTag>& Pair : Context.Tags)
+		{
+			OutTags.Add(MoveTemp(Pair.Value));
+		}
+		if (TLegacyGetAssetRegistryTags_OutBundles)
+		{
+			checkf(*TLegacyGetAssetRegistryTags_OutBundles == nullptr, TEXT("Object %s has more than one FAssetBundleData!"), *GetPathName());
+			*TLegacyGetAssetRegistryTags_OutBundles = Context.BundleResult;
+		}
+	}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UObject::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
 	using namespace UE::Object::Private;
+
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	auto AddLegacyTags = [&Context](auto&& Callback)
+	{
+		TArray<FAssetRegistryTag> LegacyTags;
+		Callback(LegacyTags);
+		for (FAssetRegistryTag& Tag : LegacyTags)
+		{
+			Context.AddTag(MoveTemp(Tag));
+		}
+	};
+
+	// Forward this call to the legacy version for classes that have not converted yet.
+	if (!GAssetRegistryTagsObjectsBeingForwarded.Contains(this))
+	{
+		const FAssetBundleData* BundleResult = nullptr;
+		TOptional<TGuardValue<const FAssetBundleData**>> WantsBundleScope;
+		if (Context.WantsBundleResult())
+		{
+			WantsBundleScope.Emplace(TLegacyGetAssetRegistryTags_OutBundles, &BundleResult);
+		}
+		GAssetRegistryTagsObjectsBeingForwarded.Add(this);
+		AddLegacyTags([this](TArray<FAssetRegistryTag>& Tags) { GetAssetRegistryTags(Tags); });
+		check(!GAssetRegistryTagsObjectsBeingForwarded.IsEmpty() && GAssetRegistryTagsObjectsBeingForwarded.Last() == this);
+		GAssetRegistryTagsObjectsBeingForwarded.Pop(EAllowShrinking::No);
+		if (Context.WantsBundleResult() && BundleResult)
+		{
+			Context.SetBundleResult(BundleResult);
+		}
+	}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+
 	UE::Core::Private::FPlayInEditorLoadingScope Scope(INDEX_NONE);
 
 	// Add primary asset info if valid
 	FPrimaryAssetId PrimaryAssetId = GetPrimaryAssetId();
 	if (PrimaryAssetId.IsValid())
 	{
-		OutTags.Add(FAssetRegistryTag(FPrimaryAssetId::PrimaryAssetTypeTag, PrimaryAssetId.PrimaryAssetType.ToString(), UObject::FAssetRegistryTag::TT_Alphabetical));
-		OutTags.Add(FAssetRegistryTag(FPrimaryAssetId::PrimaryAssetNameTag, PrimaryAssetId.PrimaryAssetName.ToString(), UObject::FAssetRegistryTag::TT_Alphabetical));
+		Context.AddTag(FAssetRegistryTag(FPrimaryAssetId::PrimaryAssetTypeTag, PrimaryAssetId.PrimaryAssetType.ToString(),
+			UObject::FAssetRegistryTag::TT_Alphabetical));
+		Context.AddTag(FAssetRegistryTag(FPrimaryAssetId::PrimaryAssetNameTag, PrimaryAssetId.PrimaryAssetName.ToString(),
+			UObject::FAssetRegistryTag::TT_Alphabetical));
 	}
 
-#if UE_USE_VERSE_PATHS
-	if (UE::Core::FVersePath VersePath = this->GetVersePath())
-	{
-		OutTags.Emplace(UObject::AssetVersePathTagName(), MoveTemp(VersePath).ToString(), UObject::FAssetRegistryTag::TT_Alphabetical);
-	}
-#endif
-
-	GetAssetRegistryTagsFromSearchableProperties(this, OutTags);
+	GetAssetRegistryTagsFromSearchableProperties(this, Context);
 
 #if WITH_EDITOR
 	// Notify external sources that we need tags.
-	FAssetRegistryTag::OnGetExtraObjectTags.Broadcast(this, OutTags);
+	FAssetRegistryTag::OnGetExtraObjectTagsWithContext.Broadcast(Context);
+
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	AddLegacyTags([this](TArray<FAssetRegistryTag>& Tags)
+		{ FAssetRegistryTag::OnGetExtraObjectTags.Broadcast(this, Tags); });
+	if (Context.IsFullUpdate())
+	{
+		AddLegacyTags([this, &Context](TArray<FAssetRegistryTag>& Tags)
+			{ GetExtendedAssetRegistryTagsForSave(Context.GetTargetPlatform(), Tags); });
+	}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
 
 	// Check if there's a UMetaData for this object that has tags that are requested in the settings to be transferred to the Asset Registry
 	const TSet<FName>& MetaDataTagsForAR = GetMetaDataTagsForAssetRegistry();
@@ -2176,7 +2331,7 @@ void UObject::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 				FName Tag = It->Key;
 				if (!Tag.IsNone() && MetaDataTagsForAR.Contains(Tag))
 				{
-					OutTags.Add(FAssetRegistryTag(Tag, It->Value, UObject::FAssetRegistryTag::TT_Alphabetical));
+					Context.AddTag(FAssetRegistryTag(Tag, It->Value, UObject::FAssetRegistryTag::TT_Alphabetical));
 				}
 			}
 		}
@@ -2185,23 +2340,32 @@ void UObject::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 }
 
 #if WITH_EDITOR
+void UObject::GetAdditionalAssetDataObjectsForCook(FArchiveCookContext& CookContext,
+	TArray<UObject*>& OutObjects) const
+{
+}
+
 void UObject::GetExtendedAssetRegistryTagsForSave(const ITargetPlatform* TargetPlatform, TArray<FAssetRegistryTag>& OutTags) const
 {
-	// Notify external sources that we need tags for save.
+	// DEPRECATION Note: This function will not return the data from classes that have been converted to use the new
+	// FAssetRegistryTagsContext API. We could make it do so, but it would require extra effort because this function is
+	// supposed to return only the expensive tags, and not the common tags that are also returned when called with
+	// EAssetRegistryTagsCaller::AssetRegistryLoad. Because this function was designed only to be called from SavePackage,
+	// and we have removed SavePackage's dependence on it, we decided not to make that extra effort. Any licensee calling
+	// this function should instead call GetAssetRegistryTags with EAssetRegistryTagsCaller::SavePackage.
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
 	FAssetRegistryTag::OnGetExtendedAssetRegistryTagsForSave.Broadcast(this, TargetPlatform, OutTags);
-
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	GetExternalActorExtendedAssetRegistryTags(OutTags);
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
 }
 #endif // WITH_EDITOR
 
-static FAssetDataTagMapSharedView MakeSharedTagMap(TArray<UObject::FAssetRegistryTag>&& Tags)
+static FAssetDataTagMapSharedView MakeSharedTagMap(TMap<FName, UObject::FAssetRegistryTag>&& Tags)
 {
 	FAssetDataTagMap Out;
 	Out.Reserve(Tags.Num());
-	for (UObject::FAssetRegistryTag& Tag : Tags)
+	for (TPair<FName,UObject::FAssetRegistryTag>& Pair : Tags)
 	{
+		UObject::FAssetRegistryTag& Tag = Pair.Value;
 		// Don't add empty tags
 		if (!Tag.Name.IsNone() && !Tag.Value.IsEmpty())
 		{
@@ -2224,17 +2388,20 @@ static TSharedPtr<FAssetBundleData, ESPMode::ThreadSafe> MakeSharedBundles(const
 
 void UObject::GetAssetRegistryTags(FAssetData& Out) const
 {
+	FAssetRegistryTagsContextData Context(this, EAssetRegistryTagsCaller::Uncategorized);
+	GetAssetRegistryTags(Context, Out);
+}
+
+void UObject::GetAssetRegistryTags(FAssetRegistryTagsContext Context, FAssetData& Out) const
+{
 	using namespace UE::Object::Private;
 
 	const FAssetBundleData* Bundles = nullptr;
-
-	TArray<FAssetRegistryTag> Tags;
-	TGetAssetRegistryTags_OutBundles = &Bundles;
-	GetAssetRegistryTags(Tags);
-	TGetAssetRegistryTags_OutBundles = nullptr;
-
-	Out.TagsAndValues = MakeSharedTagMap(MoveTemp(Tags));
-	Out.TaggedAssetBundles = MakeSharedBundles(Bundles);
+	FAssetRegistryTagsContextData& ContextData = Context.Data;
+	ContextData.bWantsBundleResult = true;
+	GetAssetRegistryTags(Context);
+	Out.TagsAndValues = MakeSharedTagMap(MoveTemp(ContextData.Tags));
+	Out.TaggedAssetBundles = MakeSharedBundles(ContextData.BundleResult);
 }
 
 const FName& UObject::SourceFileTagName()
@@ -2243,18 +2410,11 @@ const FName& UObject::SourceFileTagName()
 	return SourceFilePathName;
 }
 
-#if UE_USE_VERSE_PATHS
-const FName& UObject::AssetVersePathTagName()
-{
-	static const FName AssetVersePathTag = TEXT("AssetVersePath");
-	return AssetVersePathTag;
-}
-#endif
-
 #if WITH_EDITOR
 
 static void PostLoadAssetRegistryTagProperty(FProperty* Prop, const FAssetData& AssetData, TArray<UObject::FAssetRegistryTag>& OutTagsAndValuesToUpdate)
-{	
+{
+	// This TagType is ignored by the asset registry
 	UObject::FAssetRegistryTag::ETagType TagType = UObject::FAssetRegistryTag::ETagType::TT_Alphabetical;
 
 	if (Prop->HasAnyPropertyFlags(CPF_AssetRegistrySearchable))
@@ -2274,9 +2434,10 @@ static void PostLoadAssetRegistryTagProperty(FProperty* Prop, const FAssetData& 
 		}
 		else if (Prop->IsA<FObjectPropertyBase>())
 		{
+			// Update the export path for short class names, but leave None alone to match save behavior
 			FObjectPropertyBase* PropertyObject = CastFieldChecked<FObjectPropertyBase>(Prop);
 			FString ExportPath = AssetData.GetTagValueRef<FString>(Prop->GetFName());
-			if (!ExportPath.IsEmpty() && ExportPath[0] != '/')
+			if (!ExportPath.IsEmpty() && ExportPath[0] != '/' && ExportPath != TEXT("None"))
 			{
 				FString ObjectPath = FPackageName::ExportTextPathToObjectPath(ExportPath);
 				ExportPath = FObjectPropertyBase::GetExportPath(PropertyObject->PropertyClass->GetClassPathName(), ObjectPath);
@@ -2455,7 +2616,7 @@ void CheckMissingSection(const FString& SectionName, const FString& IniFilename)
 	};
 	static FMissingSections MissingSections[MISSINGSECTIONS_BUCKETS];
 
-	FConfigSection* Sec = GConfig->GetSectionPrivate(*SectionName, false, true, *IniFilename);
+	const FConfigSection* Sec = GConfig->GetSection(*SectionName, false, *IniFilename);
 
 	if (Sec == nullptr)
 	{
@@ -2477,7 +2638,7 @@ void CheckMissingSection(const FString& SectionName, const FString& IniFilename)
 			FString ShortSectionName = FPackageName::GetShortName(SectionName);
 			if (ShortSectionName != SectionName)
 			{
-				Sec = GConfig->GetSectionPrivate(*ShortSectionName, false, true, *IniFilename);
+				Sec = GConfig->GetSection(*ShortSectionName, false, *IniFilename);
 				if (Sec != nullptr)
 				{
 					UE_LOG(LogObj, Fatal, TEXT("Short class section names (%s) are not supported, please use long name: %s"), *ShortSectionName, *SectionName);
@@ -2666,16 +2827,29 @@ void UObject::LoadConfig( UClass* ConfigClass/*=NULL*/, const TCHAR* InFilename/
 
 	const bool bPerObject = UsesPerObjectConfig(this);
 
-	// does the class want to override the platform hierarchy (ignored if we passd in a specific ini file),
+	// does the class want to override the platform hierarchy (ignored if we passed in a specific ini file),
 	// and if the name isn't the current running platform (no need to load extra files if already in GConfig)
-	bool bUseConfigOverride = InFilename == nullptr && GetConfigOverridePlatform() != nullptr &&
-		FCString::Stricmp(GetConfigOverridePlatform(), ANSI_TO_TCHAR(FPlatformProperties::IniPlatformName())) != 0;
+	bool bUseConfigOverride = false;
 	FConfigFile* OverrideConfigFile = nullptr;
 	FConfigFile LocalOverrideConfig;
-	if (bUseConfigOverride)
+
+	if (InFilename == nullptr && GetConfigOverridePlatform() != nullptr &&
+		FCString::Stricmp(GetConfigOverridePlatform(), ANSI_TO_TCHAR(FPlatformProperties::IniPlatformName())) != 0)
 	{
 		OverrideConfigFile = FConfigCacheIni::FindOrLoadPlatformConfig(LocalOverrideConfig, *GetClass()->ClassConfigName.ToString(), GetConfigOverridePlatform());
+		bUseConfigOverride = true;
 	}
+#if WITH_EDITOR
+	else if (GetClass()->HasAnyClassFlags(CLASS_PerPlatformConfig) && UObject::OnGetPreviewPlatform.IsBound())
+	{
+		FName PreviewPlatform;
+		if (UObject::OnGetPreviewPlatform.Execute(PreviewPlatform))
+		{
+			OverrideConfigFile = FConfigCacheIni::FindOrLoadPlatformConfig(LocalOverrideConfig, *GetClass()->ClassConfigName.ToString(), *PreviewPlatform.ToString());
+			bUseConfigOverride = true;
+	}
+	}
+#endif
 
 	FString ClassSection;
 	FString ClassPathSection;
@@ -2744,11 +2918,11 @@ void UObject::LoadConfig( UClass* ConfigClass/*=NULL*/, const TCHAR* InFilename/
 	{
 		if (bUseConfigOverride)
 		{
-			return OverrideConfigFile->Find(SectionName);
+			return OverrideConfigFile->FindSection(SectionName);
 		}
 		else
 		{
-			return GConfig->GetSectionPrivate(SectionName, false, true, ConfigFilename);
+			return GConfig->GetSection(SectionName, false, ConfigFilename);
 		}
 	};
 
@@ -2803,11 +2977,185 @@ void UObject::LoadConfig( UClass* ConfigClass/*=NULL*/, const TCHAR* InFilename/
 			Key = CVarName;
 			PortFlags |= PPF_ConsoleVariable;
 		}
+
+		const bool bIsPerPlatformConfig = GetClass()->HasAnyClassFlags(CLASS_PerPlatformConfig);
 #endif // #if WITH_EDITOR
 
+		// Track if we loaded this config value using special handling (e.g. array or set)
+		bool bProcessedProperty = false;
+
 		UE_LOG(LogConfig, Verbose, TEXT("   Loading value for %s from [%s]"), *Key, *ClassSection);
-		FArrayProperty* Array = CastField<FArrayProperty>( Property );
-		if( Array == NULL )
+
+		FArrayProperty* Array = CastField<FArrayProperty>(Property);
+		FSetProperty* SetProperty = CastField<FSetProperty>(Property);
+
+		if (Array || SetProperty)
+		{
+			const FConfigSection* Sec = GetConfigSection(*ClassSection, *PropFileName);
+			if (!Sec && bPerObject && ClassPathSection.Len())
+			{
+				Sec = GetConfigSection(*ClassPathSection, *PropFileName);
+			}
+
+#if !UE_BUILD_SHIPPING
+			if (!Sec && !FPlatformProperties::RequiresCookedData())
+			{
+				CheckMissingSection(ClassSection, PropFileName);
+			}
+#endif
+
+			if (Array)
+			{
+				FScriptArrayHelper_InContainer ArrayHelper(Array, this);
+
+				bProcessedProperty = true;
+#if WITH_EDITOR
+				// Empty out any array properties if this is a PerPlatformConfig class
+				// as we are replacing the values with the Platform's version when entering
+				// a new preview platform.
+				if (bIsPerPlatformConfig)
+				{
+					ArrayHelper.EmptyValues();
+				}
+#endif
+				if (Sec)
+				{
+					TArray<FConfigValue> List;
+					const FName KeyName(*Key, FNAME_Find);
+					Sec->MultiFind(KeyName, List);
+
+					const int32 Size = Array->Inner->ElementSize;
+
+					// Only override default properties if there is something to override them with.
+					if (!List.IsEmpty())
+					{
+						ArrayHelper.EmptyAndAddValues(List.Num());
+						for (int32 i = List.Num() - 1, c = 0; i >= 0; i--, c++)
+						{
+							Array->Inner->ImportText_Direct(*List[i].GetValue(), ArrayHelper.GetRawPtr(c), this, PortFlags);
+						}
+					}
+					else
+					{
+						int32 Index = 0;
+						const FConfigValue* ElementValue = nullptr;
+						do
+						{
+							// Add array index number to end of key
+							FString IndexedKey = FString::Printf(TEXT("%s[%i]"), *Key, Index);
+
+							// Try to find value of key
+							const FName IndexedName(*IndexedKey, FNAME_Find);
+							if (IndexedName == NAME_None)
+							{
+								break;
+							}
+							ElementValue = Sec->Find(IndexedName);
+
+							// If found, import the element
+							if (ElementValue != nullptr)
+							{
+								// expand the array if necessary so that Index is a valid element
+								ArrayHelper.ExpandForIndex(Index);
+								Array->Inner->ImportText_Direct(*ElementValue->GetValue(), ArrayHelper.GetRawPtr(Index), this, PortFlags);
+							}
+
+							Index++;
+						} while (ElementValue || Index < ArrayHelper.Num());
+					}
+				}
+			}
+			else if (SetProperty)
+			{
+				FScriptSetHelper_InContainer SetHelper(SetProperty, this);
+
+#if WITH_EDITOR
+				// Empty out any set properties if this is a PerPlatformConfig class
+				// as we are replacing the values with the Platform's version when entering
+				// a new preview platform.
+				if (bIsPerPlatformConfig)
+				{
+					SetHelper.EmptyElements();
+				}
+#endif
+
+				if (Sec)
+				{
+					TArray<FConfigValue> List;
+					const FName KeyName(*Key, FNAME_Find);
+					Sec->MultiFind(KeyName, List);
+
+					bool bSingleSetEntry = false;
+					if (List.Num() == 1)
+					{
+						const FString& SingleListValue = List[0].GetValue();
+						if (SingleListValue.Len() > 1
+							&& SingleListValue[0] == TEXT('(')
+							&& SingleListValue[SingleListValue.Len() - 1] == TEXT(')'))
+						{
+							// If we have a single entry in the set that is surrounded with parentheses, fall back to
+							// the old processing method
+							bSingleSetEntry = true;
+						}
+					}
+
+					// Only override default properties if there is something to override them with.
+					if (!bSingleSetEntry && !List.IsEmpty())
+					{
+						bProcessedProperty = true;
+						SetHelper.EmptyElements(List.Num());
+
+						// Each config value entry can possibly specify multiple set elements - create a temporary
+						// set here that we can import to and add its elements to the object's property
+						void* TempSet = FMemory::Malloc(SetProperty->GetSize(), SetProperty->GetMinAlignment());
+						SetProperty->InitializeValue(TempSet);
+
+						// Importing elements to the set inline does not check for duplicates - create a temporary
+						// element that we can import to add uniquely to the set
+						void* TempElement = FMemory::Malloc(SetProperty->ElementProp->GetSize(),
+							SetProperty->ElementProp->GetMinAlignment());
+						SetProperty->ElementProp->InitializeValue(TempElement);
+
+						for (const FConfigValue& ListValue : List)
+						{
+							const FString& ListString = ListValue.GetValue();
+
+							// Try to import the config value as an entire set first
+							const TCHAR* SetImportResult =
+								SetProperty->ImportText_Direct(*ListString, TempSet, this, PortFlags);
+
+							if (SetImportResult && SetImportResult != *ListString)
+							{
+								FScriptSetHelper TempSetHelper(SetProperty, TempSet);
+								for (FScriptSetHelper::FIterator Itr = TempSetHelper.CreateIterator(); Itr; ++Itr)
+								{
+									SetHelper.AddElement(TempSetHelper.GetElementPtr(Itr));
+								}
+							}
+							else
+							{
+								// If we failed to import the value as an entire set, try to import it as a single
+								// element
+								const TCHAR* ElementImportResult = 
+									SetProperty->ElementProp->ImportText_Direct(*ListString, TempElement, this, PortFlags);
+
+								if (ElementImportResult && ElementImportResult != *ListString)
+								{
+									SetHelper.AddElement(TempElement);
+								}
+							}
+
+						}
+
+						SetProperty->DestroyAndFreeValue(TempSet);
+						SetProperty->ElementProp->DestroyAndFreeValue(TempElement);
+						SetHelper.Rehash();
+					}
+				}
+			}
+		}
+		
+		if (!bProcessedProperty)
 		{
 			for( int32 i=0; i<Property->ArrayDim; i++ )
 			{
@@ -2840,66 +3188,6 @@ void UObject::LoadConfig( UClass* ConfigClass/*=NULL*/, const TCHAR* InFilename/
 				}
 #endif
 			}
-		}
-		else
-		{
-			FConfigSection* Sec = GetConfigSection(*ClassSection, *PropFileName);
-			if (!Sec && bPerObject && ClassPathSection.Len())
-			{
-				Sec = GetConfigSection(*ClassPathSection, *PropFileName);
-			}
-			if( Sec )
-			{
-				TArray<FConfigValue> List;
-				const FName KeyName(*Key, FNAME_Find);
-				Sec->MultiFind(KeyName,List);
-
-				FScriptArrayHelper_InContainer ArrayHelper(Array, this);
-				const int32 Size = Array->Inner->ElementSize;
-				// Only override default properties if there is something to override them with.
-				if ( List.Num() > 0 )
-				{
-					ArrayHelper.EmptyAndAddValues(List.Num());
-					for( int32 i=List.Num()-1,c=0; i>=0; i--,c++ )
-					{
-						Array->Inner->ImportText_Direct( *List[i].GetValue(), ArrayHelper.GetRawPtr(c), this, PortFlags );
-					}
-				}
-				else
-				{
-					int32 Index = 0;
-					const FConfigValue* ElementValue = nullptr;
-					do
-					{
-						// Add array index number to end of key
-						FString IndexedKey = FString::Printf(TEXT("%s[%i]"), *Key, Index);
-
-						// Try to find value of key
-						const FName IndexedName(*IndexedKey,FNAME_Find);
-						if (IndexedName == NAME_None)
-						{
-							break;
-						}
-						ElementValue = Sec->Find(IndexedName);
-
-						// If found, import the element
-						if ( ElementValue != nullptr )
-						{
-							// expand the array if necessary so that Index is a valid element
-							ArrayHelper.ExpandForIndex(Index);
-							Array->Inner->ImportText_Direct(*ElementValue->GetValue(), ArrayHelper.GetRawPtr(Index), this, PortFlags);
-						}
-
-						Index++;
-					} while( ElementValue || Index < ArrayHelper.Num() );
-				}
-			}
-#if !UE_BUILD_SHIPPING
-			else if (!FPlatformProperties::RequiresCookedData())
-			{
-				CheckMissingSection(ClassSection, PropFileName);
-			}
-#endif
 		}
 	}
 
@@ -3010,36 +3298,62 @@ void UObject::SaveConfig( uint64 Flags, const TCHAR* InFilename, FConfigCacheIni
 			const bool bShouldCheckIfIdenticalBeforeAdding = !GetClass()->HasAnyClassFlags(CLASS_ConfigDoNotCheckDefaults) && !bPerObject && bIsPropertyInherited;
 			UObject* SuperClassDefaultObject = GetClass()->GetSuperClass()->GetDefaultObject();
 
+			bool bProcessedProperty = false;
+
 			FArrayProperty* Array   = CastField<FArrayProperty>( Property );
-			if( Array )
+			FSetProperty* SetProperty = CastField<FSetProperty>(Property);
+			if (Array || SetProperty)
 			{
-				FConfigSection* Sec = Config->GetSectionPrivate(*Section, 1, 0, PropFileName);
+				const FConfigSection* Sec = Config->GetSection(*Section, 1, PropFileName);
 				// Default ini's require the array syntax to be applied to the property name
 				FString CompleteKey = FString::Printf(TEXT("%s%s"), bIsADefaultIniWrite ? TEXT("+") : TEXT(""), *Key);
 				if (Sec)
 				{
 					// Delete the old value for the property in the ConfigCache before (conditionally) adding in the new value
-					Sec->Remove(*CompleteKey);
+					Config->RemoveKeyFromSection(*Section, *CompleteKey, PropFileName);
 				}
 
 				if (!bPropDeprecated && (!bShouldCheckIfIdenticalBeforeAdding || !Property->Identical_InContainer(this, SuperClassDefaultObject)))
 				{
 					check(Sec);
-					FScriptArrayHelper_InContainer ArrayHelper(Array, this);
-					for( int32 i=0; i<ArrayHelper.Num(); i++ )
+
+					if (Array)
 					{
-						FString	Buffer;
-						Array->Inner->ExportTextItem_Direct( Buffer, ArrayHelper.GetRawPtr(i), ArrayHelper.GetRawPtr(i), this, PortFlags );
-						Sec->Add(*CompleteKey, *Buffer);
+						FScriptArrayHelper_InContainer ArrayHelper(Array, this);
+						for( int32 i=0; i<ArrayHelper.Num(); i++ )
+						{
+							FString	Buffer;
+							Array->Inner->ExportTextItem_Direct( Buffer, ArrayHelper.GetRawPtr(i), ArrayHelper.GetRawPtr(i), this, PortFlags );
+							Config->AddToSection(*Section, *CompleteKey, *Buffer, PropFileName);
+						}
+						if (ArrayHelper.Num() == 0 && bIsADefaultIniWrite)
+						{
+							const FString EmptyKey = FString::Printf(TEXT("!%s"), *Key);
+							Config->AddToSection(*Section, *EmptyKey, TEXT("__ClearArray__"), PropFileName);
+						}
+						bProcessedProperty = true;
 					}
-					if (ArrayHelper.Num() == 0 && bIsADefaultIniWrite)
+					else if (SetProperty)
 					{
-						const FString EmptyKey = FString::Printf(TEXT("!%s"), *Key);
-						Sec->Add(*EmptyKey, TEXT("__ClearArray__"));
+						FScriptSetHelper_InContainer SetHelper(SetProperty, this);
+
+						// If we have one or fewer elements, fall back to the old export method so we match what we do
+						// on import
+						if (SetHelper.Num() > 1)
+						{
+							for (FScriptSetHelper::FIterator It = SetHelper.CreateIterator(); It; ++It)
+							{
+								FString	Buffer;
+								SetProperty->ElementProp->ExportTextItem_Direct(Buffer, SetHelper.GetElementPtr(It), SetHelper.GetElementPtr(It), this, PortFlags);
+								Config->AddToSection(*Section, *CompleteKey, *Buffer, PropFileName);
+							}
+							bProcessedProperty = true;
+						}
 					}
 				}
 			}
-			else
+			
+			if (!bProcessedProperty)
 			{
 				TCHAR TempKey[MAX_SPRINTF] = {};
 				for( int32 Index=0; Index<Property->ArrayDim; Index++ )
@@ -3096,7 +3410,7 @@ FString UObject::GetDefaultConfigFilename() const
 	FString OverridePlatform = GetFinalOverridePlatform(this);
 	if (OverridePlatform.Len())
 	{
-		bool bIsPlatformExtension = FPaths::DirectoryExists(FPaths::Combine(FPaths::EnginePlatformExtensionsDir(), OverridePlatform));
+		bool bIsPlatformExtension = FPaths::DirectoryExists(FPaths::EnginePlatformExtensionDir(*OverridePlatform));
 		FString RegularPath = FString::Printf(TEXT("%s%s"), *FPaths::SourceConfigDir(), *OverridePlatform, *OverridePlatform, *GetClass()->ClassConfigName.ToString());
 		FString SelectedPath = RegularPath;
 
@@ -3114,7 +3428,7 @@ FString UObject::GetDefaultConfigFilename() const
 		// if the project already uses platform configs in the regular directory, just use that, otherwise check if this is a platform extensions
 		if (bIsPlatformExtension && !bPlatformConfigExistsInRegular)
 		{
-			SelectedPath = FString::Printf(TEXT("%s%s/Config"), *FPaths::ProjectPlatformExtensionsDir(), *OverridePlatform);
+			SelectedPath = FPaths::Combine(FPaths::ProjectPlatformExtensionDir(*OverridePlatform), TEXT("Config"));
 		}
 
 		return FConfigCacheIni::NormalizeConfigIniPath(FString::Printf(TEXT("%s/%s%s.ini"), *SelectedPath, *OverridePlatform, *GetClass()->ClassConfigName.ToString()));
@@ -3839,6 +4153,7 @@ COREUOBJECT_API TArray<const TCHAR*> ParsePropertyFlags(EPropertyFlags InFlags)
 		TEXT("CPF_NativeAccessSpecifierProtected"),
 		TEXT("CPF_NativeAccessSpecifierPrivate"),
 		TEXT("CPF_SkipSerialization"),
+		TEXT("CPF_ExperimentalOverridableLogic"),
 	};
 
 	uint64 Flags = InFlags;
@@ -3916,13 +4231,13 @@ bool StaticExec( UWorld* InWorld, const TCHAR* Cmd, FOutputDevice& Ar )
 					if (AsteriskPos != INDEX_NONE && (QuestionPos == INDEX_NONE || QuestionPos > AsteriskPos))
 					{
 						WildcardPieces.Emplace(PropWildcard.Left(AsteriskPos), true);
-						PropWildcard.RightInline(PropWildcard.Len() - AsteriskPos - 1, false);
+						PropWildcard.RightInline(PropWildcard.Len() - AsteriskPos - 1, EAllowShrinking::No);
 						bFound = true;
 					}
 					else if (QuestionPos != INDEX_NONE)
 					{
 						WildcardPieces.Emplace(PropWildcard.Left(QuestionPos), false);
-						PropWildcard.RightInline(PropWildcard.Len() - QuestionPos - 1, false);
+						PropWildcard.RightInline(PropWildcard.Len() - QuestionPos - 1, EAllowShrinking::No);
 						bFound = true;
 					}
 				}
@@ -3966,7 +4281,7 @@ bool StaticExec( UWorld* InWorld, const TCHAR* Cmd, FOutputDevice& Ar )
 							break;
 						}
 
-						Match.RightInline(Match.Len() - Pos - WildcardPieces[i].Str.Len(), false);
+						Match.RightInline(Match.Len() - Pos - WildcardPieces[i].Str.Len(), EAllowShrinking::No);
 					}
 				}
 				if (bResult)
@@ -5008,12 +5323,12 @@ void StaticUObjectInit()
 
 	if (IConsoleVariable* CVarVerifyGCAssumptions = IConsoleManager::Get().FindConsoleVariable(TEXT("gc.VerifyAssumptions")))
 	{
-		if( FParse::Param( FCommandLine::Get(), TEXT("VERIFYGC") ) )
-		{
+	if( FParse::Param( FCommandLine::Get(), TEXT("VERIFYGC") ) )
+	{
 			CVarVerifyGCAssumptions->Set(true, ECVF_SetByCommandline);
-		}
-		if( FParse::Param( FCommandLine::Get(), TEXT("NOVERIFYGC") ) )
-		{
+	}
+	if( FParse::Param( FCommandLine::Get(), TEXT("NOVERIFYGC") ) )
+	{
 			CVarVerifyGCAssumptions->Set(false, ECVF_SetByCommandline);
 		}
 	}
@@ -5055,7 +5370,10 @@ void StaticExit()
 		GUObjectArray.CloseDisregardForGC();
 	}
 
-	// Complete any pending incremental GC
+	// Complete any pending incremental reachability analysis
+	FinalizeIncrementalReachabilityAnalysis();
+
+	// Complete any pending incremental purge
 	if (IsIncrementalPurgePending())
 	{
 		IncrementalPurgeGarbage(false);
@@ -5175,6 +5493,12 @@ void UObject::AbortInsideMemberFunction() const
 {
 	//put a trace of this in the log to help diagnostics at a glance.
 	UE_LOG(LogObj, Warning, TEXT("UObject::AbortInsideMemberFunction called on object %s."), *GetFullName());
+
+	if (GLog)
+	{
+		GLog->Flush();
+	}
+
 	//a bit more ideally, we could set GIsCriticalError = true and call FPlatformMisc::RequestExit. however, not all platforms would generate a dump as a result of this.
 	//as such, we commit an access violation right here. we explicitly want to avoid the standard platform error/AssertFailed paths as they are likely to pollute the
 	//callstack. this in turn is more likely to prevent useful (e.g. this object) memory from making its way into a minidump.

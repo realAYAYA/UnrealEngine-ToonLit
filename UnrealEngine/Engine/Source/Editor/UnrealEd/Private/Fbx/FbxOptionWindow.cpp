@@ -149,7 +149,7 @@ void SFbxOptionWindow::Construct(const FArguments& InArgs)
 			.VAlign(VAlign_Center)
 			.AutoWidth()
 			[
-				IDocumentation::Get()->CreateAnchor(FString("Engine/Content/FBX/ImportOptions"))
+				IDocumentation::Get()->CreateAnchor(FString("fbx-import-options-reference-in-unreal-engine"))
 			]
 			+ SHorizontalBox::Slot()
 			.HAlign(HAlign_Right)

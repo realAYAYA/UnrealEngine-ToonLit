@@ -9,6 +9,9 @@
 #include "MassEntityUtils.h"
 
 
+//-----------------------------------------------------------------------------
+// UMassLODCollectorTrait
+//-----------------------------------------------------------------------------
 void UMassLODCollectorTrait::BuildTemplate(FMassEntityTemplateBuildContext& BuildContext, const UWorld& World) const
 {
 	BuildContext.AddFragment<FMassViewerInfoFragment>();
@@ -16,6 +19,19 @@ void UMassLODCollectorTrait::BuildTemplate(FMassEntityTemplateBuildContext& Buil
 	BuildContext.RequireFragment<FTransformFragment>();
 }
 
+//-----------------------------------------------------------------------------
+// UMassDistanceLODCollectorTrait
+//-----------------------------------------------------------------------------
+void UMassDistanceLODCollectorTrait::BuildTemplate(FMassEntityTemplateBuildContext& BuildContext, const UWorld& World) const
+{
+	BuildContext.AddFragment<FMassViewerInfoFragment>();
+	BuildContext.AddTag<FMassCollectDistanceLODViewerInfoTag>();
+	BuildContext.RequireFragment<FTransformFragment>();
+}
+
+//-----------------------------------------------------------------------------
+// UMassSimulationLODTrait
+//-----------------------------------------------------------------------------
 void UMassSimulationLODTrait::BuildTemplate(FMassEntityTemplateBuildContext& BuildContext, const UWorld& World) const
 {
 	BuildContext.RequireFragment<FMassViewerInfoFragment>();

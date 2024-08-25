@@ -9,6 +9,7 @@ FNavigationConfig::FNavigationConfig()
 	: bTabNavigation(true)
 	, bKeyNavigation(true)
 	, bAnalogNavigation(true)
+	, bIgnoreModifiersForNavigationActions(true)
 	, AnalogNavigationHorizontalThreshold(0.50f)
 	, AnalogNavigationVerticalThreshold(0.50f)
 {
@@ -26,6 +27,15 @@ FNavigationConfig::FNavigationConfig()
 
 	KeyEventRules.Emplace(EKeys::Down, EUINavigation::Down);
 	KeyEventRules.Emplace(EKeys::Gamepad_DPad_Down, EUINavigation::Down);
+
+	// By default, enter, space, and gamepad accept are all counted as accept
+	KeyActionRules.Emplace(EKeys::Enter, EUINavigationAction::Accept);
+	KeyActionRules.Emplace(EKeys::SpaceBar, EUINavigationAction::Accept);
+	KeyActionRules.Emplace(EKeys::Virtual_Accept, EUINavigationAction::Accept);
+
+	// By default, escape and gamepad back count as leaving current scope
+	KeyActionRules.Emplace(EKeys::Escape, EUINavigationAction::Back);
+	KeyActionRules.Emplace(EKeys::Virtual_Back, EUINavigationAction::Back);
 }
 
 FNavigationConfig::~FNavigationConfig()
@@ -153,25 +163,24 @@ float FNavigationConfig::GetRepeatRateForPressure(float InPressure, int32 InRepe
 
 EUINavigationAction FNavigationConfig::GetNavigationActionFromKey(const FKeyEvent& InKeyEvent) const
 {
+	const bool bModifierHeld = InKeyEvent.IsControlDown() || InKeyEvent.IsAltDown() || InKeyEvent.IsCommandDown() || InKeyEvent.IsShiftDown();
+	if (bIgnoreModifiersForNavigationActions || !bModifierHeld)
+	{
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	// Call raw key version for back compatibility, subclasses should override this function
-	return GetNavigationActionForKey(InKeyEvent.GetKey());
+		// Call raw key version for back compatibility, subclasses should override this function
+		return GetNavigationActionForKey(InKeyEvent.GetKey());
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+	}
+	return EUINavigationAction::Invalid;
 }
 
 EUINavigationAction FNavigationConfig::GetNavigationActionForKey(const FKey& InKey) const
 {
-	if (InKey == EKeys::Enter || InKey == EKeys::SpaceBar || InKey == EKeys::Virtual_Accept)
+	if (const EUINavigationAction* Action = KeyActionRules.Find(InKey))
 	{
-		// By default, enter, space, and gamepad accept are all counted as accept
-		return EUINavigationAction::Accept;
+		return *Action;
 	}
-	else if (InKey == EKeys::Escape || InKey == EKeys::Virtual_Back)
-	{
-		// By default, escape and gamepad back count as leaving current scope
-		return EUINavigationAction::Back;
-	}
-
 	return EUINavigationAction::Invalid;
 }
 
@@ -194,6 +203,20 @@ FString FNavigationConfig::ToString() const
 	}
 
 	return Builder.ToString();
+}
+
+bool FNavigationConfig::IsAnalogEventBeyondNavigationThreshold(const FAnalogInputEvent& InAnalogEvent) const
+{
+	if (bAnalogNavigation)
+	{
+		const FKey& AnalogKey = InAnalogEvent.GetKey();
+		const float AbsAnalogValue = FMath::Abs(InAnalogEvent.GetAnalogValue());
+	 
+	 	return (IsAnalogHorizontalKey(AnalogKey) && AbsAnalogValue > AnalogNavigationHorizontalThreshold)
+			|| (IsAnalogVerticalKey(AnalogKey) 	 && AbsAnalogValue > AnalogNavigationVerticalThreshold);
+	}
+
+	return false;
 }
 
 FTwinStickNavigationConfig::FTwinStickNavigationConfig()

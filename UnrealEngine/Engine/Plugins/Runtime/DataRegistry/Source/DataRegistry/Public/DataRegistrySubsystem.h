@@ -147,6 +147,9 @@ public:
 	/** Returns true if the system is enabled via any config scan settings, will optionally warn if not enabled */
 	bool IsConfigEnabled(bool bWarnIfNotEnabled = false) const;
 
+	/** Accesses the delegate called when the subsystem has finished scanning for and initializing all known data registries */
+	FDataRegistrySubsystemInitializedCallback& OnSubsystemInitialized();
+
 	/** Initializes all loaded registries and prepares them for queries */
 	void InitializeAllRegistries(bool bResetIfInitialized = false);
 
@@ -250,6 +253,9 @@ protected:
 
 	// True if initialization is ready to start, will be true even if config disabled
 	bool bReadyForInitialization = false;
+
+	/** Callback for when the subsystem has finished scanning for and initializing all known data registries */
+	FDataRegistrySubsystemInitializedCallback OnSubsystemInitializedCallback;
 
 #if WITH_EDITOR
 	virtual void PreBeginPIE(bool bStartSimulate);

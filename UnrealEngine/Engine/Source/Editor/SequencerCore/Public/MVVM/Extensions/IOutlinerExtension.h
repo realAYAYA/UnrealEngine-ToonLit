@@ -41,6 +41,9 @@ enum class EOutlinerSelectionState
 	SelectedDirectly          = 1 << 0,
 	HasSelectedKeys           = 1 << 1,
 	HasSelectedTrackAreaItems = 1 << 2,
+
+	DescendentHasSelectedKeys = 1 << 3,
+	DescendentHasSelectedTrackAreaItems = 1 << 4,
 };
 ENUM_CLASS_FLAGS(EOutlinerSelectionState);
 
@@ -48,6 +51,8 @@ enum class EOutlinerSizingFlags
 {
 	None                      = 0,
 	DynamicSizing             = 1 << 0,
+	IncludeSeparator          = 1 << 1,
+	CustomHeight              = 1 << 2,
 };
 ENUM_CLASS_FLAGS(EOutlinerSizingFlags);
 
@@ -78,35 +83,48 @@ struct SEQUENCERCORE_API FOutlinerSizing
 		return !(A == B);
 	}
 
+	float GetSeparatorHeight() const
+	{
+		return EnumHasAnyFlags(Flags, EOutlinerSizingFlags::IncludeSeparator)
+			? 1.f
+			: 0.f;
+	}
+
 	float GetTotalHeight() const
 	{
-		return Height + PaddingTop + PaddingBottom;
+		return Height + PaddingTop + PaddingBottom + GetSeparatorHeight();
 	}
 
 	void Accumulate(const FOutlinerSizing& Other)
 	{
-		Height        = FMath::Max(Height, Other.Height);
+		const float ThisSeparatorHeight  = GetSeparatorHeight();
+		const float OtherSeparatorHeight = Other.GetSeparatorHeight();
+
+		Height        = FMath::Max(Height + ThisSeparatorHeight, Other.Height + OtherSeparatorHeight);
 		PaddingTop    = FMath::Max(PaddingTop, Other.PaddingTop);
 		PaddingBottom = FMath::Max(PaddingBottom, Other.PaddingBottom);
 		Flags |= Other.Flags;
+
+		Height -= GetSeparatorHeight();
 	}
 
 	float Height = 0.f;
 	float PaddingTop = 0.f;
 	float PaddingBottom = 0.f;
-	EOutlinerSizingFlags Flags = EOutlinerSizingFlags::None;
-
+	EOutlinerSizingFlags Flags = EOutlinerSizingFlags::IncludeSeparator;
 };
 
 /** Facade class to allow SOutlinerViewRow to be passed around publicly */
-class SEQUENCERCORE_API ISequencerTreeViewRow : public SMultiColumnTableRow<TWeakViewModelPtr<IOutlinerExtension>>
+class SEQUENCERCORE_API ISequencerTreeViewRow : public STableRow<TWeakViewModelPtr<IOutlinerExtension>>
 {
+public:
+	virtual bool IsColumnVisible(const FName& InColumnName) const = 0;
 };
 
 /** Parameters for creating an outliner item widget. */
-struct SEQUENCERCORE_API FCreateOutlinerViewParams
+struct FCreateOutlinerViewParams
 {
-	FCreateOutlinerViewParams(const TSharedRef<ISequencerTreeViewRow> InTreeViewRow, const TSharedPtr<FEditorViewModel> InEditor)
+	FCreateOutlinerViewParams(const TSharedRef<ISequencerTreeViewRow>& InTreeViewRow, const TSharedPtr<FEditorViewModel>& InEditor)
 		: TreeViewRow(InTreeViewRow), Editor(InEditor)
 	{}
 
@@ -115,7 +133,7 @@ struct SEQUENCERCORE_API FCreateOutlinerViewParams
 };
 
 /** Parameters for building a context menu widget */
-struct SEQUENCERCORE_API FCreateOutlinerContextMenuWidgetParams
+struct FCreateOutlinerContextMenuWidgetParams
 {
 	FCreateOutlinerContextMenuWidgetParams(const TSharedPtr<FEditorViewModel> InEditor)
 		: Editor(InEditor)
@@ -162,8 +180,11 @@ public:
 	/** Toggles a bit in the outliner item's selection state */
 	virtual void ToggleSelectionState(EOutlinerSelectionState InState, bool bInValue);
 
-	/** Create the visual outliner widget for the owning model */
-	virtual TSharedRef<SWidget> CreateOutlinerView(const FCreateOutlinerViewParams& InParams) = 0;
+	/** (deprecated) Create the outliner view for the label column */
+	virtual TSharedRef<SWidget> CreateOutlinerView(const FCreateOutlinerViewParams& InParams);
+
+	/** Create the visual outliner widget for the specified column */
+	virtual TSharedPtr<SWidget> CreateOutlinerViewForColumn(const FCreateOutlinerViewParams& InParams, const FName& InColumnName);
 
 	/** Build the context menu widget for this outliner item */
 	virtual TSharedPtr<SWidget> CreateContextMenuWidget(const FCreateOutlinerContextMenuWidgetParams& InParams) = 0;

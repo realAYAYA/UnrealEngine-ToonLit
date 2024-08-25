@@ -24,6 +24,7 @@
 #include "Tasks/GameplayTask_ClaimResource.h"
 #include "NetworkingDistanceConstants.h"
 #include "Navigation/PathFollowingComponent.h"
+#include "NavFilters/NavigationQueryFilter.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AIController)
 
@@ -626,8 +627,6 @@ FPathFollowingRequestResult AAIController::MoveTo(const FAIMoveRequest& MoveRequ
 		return ResultData;
 	}
 
-	ensure(MoveRequest.GetNavigationFilter() || !DefaultNavigationFilterClass);
-
 	bool bCanRequestMove = true;
 	bool bAlreadyAtGoal = false;
 	
@@ -1087,7 +1086,13 @@ bool AAIController::SuggestTossVelocity(FVector& OutTossVelocity, FVector Start,
 	float const GravityOverride = PhysicsVolume ? PhysicsVolume->GetGravityZ() : 0.f;
 	ESuggestProjVelocityTraceOption::Type const TraceOption = bOnlyTraceUp ? ESuggestProjVelocityTraceOption::OnlyTraceWhileAscending : ESuggestProjVelocityTraceOption::TraceFullPath;
 
-	return UGameplayStatics::SuggestProjectileVelocity(this, OutTossVelocity, Start, End, TossSpeed, bPreferHighArc, CollisionRadius, GravityOverride, TraceOption);
+	UGameplayStatics::FSuggestProjectileVelocityParameters VelocityParams = UGameplayStatics::FSuggestProjectileVelocityParameters(this, Start, End, TossSpeed);
+	VelocityParams.bFavorHighArc = bPreferHighArc;
+	VelocityParams.CollisionRadius = CollisionRadius;
+	VelocityParams.OverrideGravityZ = GravityOverride;
+	VelocityParams.TraceOption = TraceOption;
+
+	return UGameplayStatics::SuggestProjectileVelocity(VelocityParams, OutTossVelocity);
 }
 bool AAIController::PerformAction(UDEPRECATED_PawnAction& Action, EAIRequestPriority::Type Priority, UObject* const InInstigator /*= NULL*/)
 {

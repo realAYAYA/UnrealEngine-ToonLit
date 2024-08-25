@@ -12,14 +12,14 @@ UsageAndExit()
     echo
     echo "Usage examples:"
     echo
-    echo "    BuildForMac.command 1.80.0"
-    echo "      -- Installs Boost version 1.80.0 as header-only."
+    echo "    BuildForMac.command 1.82.0"
+    echo "      -- Installs Boost version 1.82.0 as header-only."
     echo
-    echo "    BuildForMac.command 1.80.0 iostreams system thread"
-    echo "      -- Builds and installs Boost version 1.80.0 with iostreams, system, and thread libraries."
+    echo "    BuildForMac.command 1.82.0 iostreams system thread"
+    echo "      -- Builds and installs Boost version 1.82.0 with iostreams, system, and thread libraries."
     echo
-    echo "    BuildForMac.command 1.80.0 all"
-    echo "      -- Builds and installs Boost version 1.80.0 with all of its libraries."
+    echo "    BuildForMac.command 1.82.0 all"
+    echo "      -- Builds and installs Boost version 1.82.0 with all of its libraries."
     exit 1
 }
 
@@ -121,7 +121,7 @@ else
     # Provide user config to specify Python configuration.
     BOOST_USER_CONFIG="$BUILD_SCRIPT_DIRECTORY/user-config.jam"
 
-    MACOS_DEPLOYMENT_TARGET=10.9
+    MACOS_DEPLOYMENT_TARGET=11.0
 
     ARCH_FLAGS="-arch x86_64 -arch arm64"
 

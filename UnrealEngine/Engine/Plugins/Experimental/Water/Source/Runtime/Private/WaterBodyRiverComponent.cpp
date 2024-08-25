@@ -302,7 +302,7 @@ bool UWaterBodyRiverComponent::GenerateWaterBodyMesh(UE::Geometry::FDynamicMesh3
 
 	TArray<double> Distances;
 	TArray<FVector> Points;
-	SplineComp->DivideSplineIntoPolylineRecursiveWithDistances(0.f, SplineComp->GetSplineLength(), ESplineCoordinateSpace::Local, FMath::Square(5.f), Points, Distances);
+	SplineComp->ConvertSplineToPolyLineWithDistances(ESplineCoordinateSpace::Local, FMath::Square(5.f), Points, Distances);
 	if (Distances.Num() == 0)
 	{
 		return false;
@@ -344,10 +344,11 @@ FBoxSphereBounds UWaterBodyRiverComponent::CalcBounds(const FTransform& LocalToW
 
 void UWaterBodyRiverComponent::UpdateMaterialInstances()
 {
-	Super::UpdateMaterialInstances();
-
 	CreateOrUpdateLakeTransitionMID();
 	CreateOrUpdateOceanTransitionMID();
+
+	// Must be called after the transition MIDs are created. Super::UpdateMaterialInstances will rebuild the water mesh if necessary to push new MIDs.
+	Super::UpdateMaterialInstances();
 }
 
 void UWaterBodyRiverComponent::SetLakeTransitionMaterial(UMaterialInterface* InMaterial)
@@ -360,6 +361,19 @@ void UWaterBodyRiverComponent::SetOceanTransitionMaterial(UMaterialInterface* In
 {
 	OceanTransitionMaterial = InMaterial;
 	UpdateMaterialInstances();
+}
+
+void UWaterBodyRiverComponent::SetLakeAndOceanTransitionMaterials(UMaterialInterface* InLakeTransition, UMaterialInterface* InOceanTransition)
+{
+	const bool bUpdateInstances = LakeTransitionMaterial != InLakeTransition || OceanTransitionMaterial != InOceanTransition;
+
+	LakeTransitionMaterial = InLakeTransition;
+	OceanTransitionMaterial = InOceanTransition;
+
+	if (bUpdateInstances)
+	{
+		UpdateMaterialInstances();
+	}
 }
 
 void UWaterBodyRiverComponent::Reset()
@@ -384,6 +398,16 @@ UMaterialInstanceDynamic* UWaterBodyRiverComponent::GetRiverToOceanTransitionMat
 {
 	CreateOrUpdateOceanTransitionMID();
 	return OceanTransitionMID;
+}
+
+UMaterialInterface* UWaterBodyRiverComponent::GetRiverToLakeTransitionMaterial() const
+{
+	return LakeTransitionMaterial;
+}
+
+UMaterialInterface* UWaterBodyRiverComponent::GetRiverToOceanTransitionMaterial() const
+{
+	return OceanTransitionMaterial;
 }
 
 #if WITH_EDITOR
@@ -518,9 +542,9 @@ void UWaterBodyRiverComponent::UpdateSplineMesh(USplineMeshComponent* MeshComp, 
 					ConvexVertices[VertIndex] = Elem.VertexData[VertIndex];
 				}
 
-				TSharedPtr<Chaos::FConvex, ESPMode::ThreadSafe> ChaosConvex = MakeShared<Chaos::FConvex, ESPMode::ThreadSafe>(ConvexVertices, 0.0f);
+				Chaos::FConvexPtr ChaosConvex( new Chaos::FConvex(ConvexVertices, 0.0f));
 
-				Elem.SetChaosConvexMesh(MoveTemp(ChaosConvex));
+				Elem.SetConvexMeshObject(MoveTemp(ChaosConvex));
 			}
 
 			MeshComp->RecreatePhysicsState();

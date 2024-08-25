@@ -12,6 +12,29 @@ FMessageLog::FMessageSelectionChanged FMessageLog::MessageSelectionChanged;
 
 LLM_DEFINE_TAG(EngineMisc_MessageLog);
 
+namespace UE::MessageLog::Private
+{
+	using FOverrideStackMap = TSortedMap<FName, TArray<const FMessageLogScopedOverride*>, FDefaultAllocator, FNameFastLess>;
+
+	/** Get the internal stack of FMessageLogScopedOverride's */
+	FOverrideStackMap& GetOverrideStack()
+	{
+		static FOverrideStackMap OverrideStack;
+		return OverrideStack;
+	}
+
+	/** Get the current FMessageLogScopedOverride for the given log name, if any */
+	const FMessageLogScopedOverride* GetOverride(const FName LogName)
+	{
+		if (TArray<const FMessageLogScopedOverride*>* NamedOverrideStack = GetOverrideStack().Find(LogName);
+			NamedOverrideStack && NamedOverrideStack->Num() > 0)
+		{
+			return NamedOverrideStack->Top();
+		}
+		return nullptr;
+	}
+}
+
 class FBasicMessageLog : public IMessageLog, public TSharedFromThis<FBasicMessageLog>
 {
 public:
@@ -94,7 +117,8 @@ private:
 };
 
 FMessageLog::FMessageLog( const FName& InLogName )
-	: bSuppressLoggingToOutputLog(false)
+	: LogName(InLogName)
+	, bSuppressLoggingToOutputLog(false)
 {
 	LLM_SCOPE_BYTAG(EngineMisc_MessageLog);
 	
@@ -252,7 +276,59 @@ void FMessageLog::Flush()
 {
 	if(Messages.Num() > 0)
 	{
-		MessageLog->AddMessages(Messages, !bSuppressLoggingToOutputLog);
+		bool bMirrorToOutputLog = !bSuppressLoggingToOutputLog;
+
+		// We defer querying the FMessageLogScopedOverride until Flush to minimize the number of map lookups while adding messages
+		// Though this does mean that messages added during an overload (and not flushed) may log with the wrong severity override
+		if (const FMessageLogScopedOverride* LogOverride = IsInGameThread() ? UE::MessageLog::Private::GetOverride(LogName) : nullptr)
+		{
+			bMirrorToOutputLog = !LogOverride->bSuppressLoggingToOutputLog.Get(bSuppressLoggingToOutputLog);
+
+			if (LogOverride->MessageSeverityRemapping.Num() > 0)
+			{
+				auto ResolveMessageSeverity = [LogOverride](const EMessageSeverity::Type BaseSeverity) -> EMessageSeverity::Type
+				{
+					EMessageSeverity::Type ResolvedSeverity = BaseSeverity;
+					{
+						TArray<EMessageSeverity::Type, TInlineAllocator<4>> CycleDetector;
+						EMessageSeverity::Type DemotedSeverity = BaseSeverity;
+						for (;;)
+						{
+							CycleDetector.Add(ResolvedSeverity);
+							if (const EMessageSeverity::Type* MessageSeverityOverride = LogOverride->MessageSeverityRemapping.Find(ResolvedSeverity))
+							{
+								if (CycleDetector.Contains(*MessageSeverityOverride))
+								{
+									// Remapping cycle!
+									// Since we can't tell whether the intent was to promote or demote this severity, 
+									// we pessimistically assume the intent was to demote and use the most demoted value
+									ResolvedSeverity = DemotedSeverity;
+									break;
+								}
+								ResolvedSeverity = *MessageSeverityOverride;
+								DemotedSeverity = FMath::Max(DemotedSeverity, ResolvedSeverity); // Bigger numbers are lower severity
+								continue;
+							}
+							break;
+						}
+					}
+					return ResolvedSeverity;
+				};
+
+				for (TSharedRef<FTokenizedMessage>& Message : Messages)
+				{
+					const EMessageSeverity::Type ResolvedSeverity = ResolveMessageSeverity(Message->GetSeverity());
+					if (ResolvedSeverity != Message->GetSeverity())
+					{
+						// Need to clone the FTokenizedMessage as the severity value may be shared with other usages of this message
+						Message = Message->Clone();
+						Message->SetSeverity(ResolvedSeverity);
+					}
+				}
+			}
+		}
+
+		MessageLog->AddMessages(Messages, bMirrorToOutputLog);
 		Messages.Empty();
 	}
 }
@@ -289,6 +365,54 @@ const TCHAR* const FMessageLog::GetLogColor( EMessageSeverity::Type InSeverity )
 		return nullptr;
 	}
 #endif
+}
+
+
+FMessageLogScopedOverride::FMessageLogScopedOverride(const FName InLogName)
+	: LogName(InLogName)
+{
+	LLM_SCOPE_BYTAG(EngineMisc_MessageLog);
+
+	checkf(IsInGameThread(), TEXT("FMessageLogScopedOverride should only be pushed from the game-thread!"));
+	TArray<const FMessageLogScopedOverride*>& NamedOverrideStack = UE::MessageLog::Private::GetOverrideStack().FindOrAdd(LogName);
+	if (NamedOverrideStack.Num() > 0)
+	{
+		// Set our initial state to the top of the current stack, as that "inherits" the current override state
+		const FMessageLogScopedOverride* CurrentOverride = NamedOverrideStack.Top();
+		bSuppressLoggingToOutputLog = CurrentOverride->bSuppressLoggingToOutputLog;
+		MessageSeverityRemapping = CurrentOverride->MessageSeverityRemapping;
+	}
+	NamedOverrideStack.Push(this);
+}
+
+FMessageLogScopedOverride::~FMessageLogScopedOverride()
+{
+	LLM_SCOPE_BYTAG(EngineMisc_MessageLog);
+
+	checkf(IsInGameThread(), TEXT("FMessageLogScopedOverride should only be popped from the game-thread!"));
+	if (TArray<const FMessageLogScopedOverride*>* NamedOverrideStack = UE::MessageLog::Private::GetOverrideStack().Find(LogName))
+	{
+		const FMessageLogScopedOverride* This = NamedOverrideStack->Pop();
+		checkf(this == This, TEXT("FMessageLogScopedOverride popped an unexpected override off the stack! Out of order destruction of FMessageLogScopedOverride!"));
+	}
+	else
+	{
+		checkf(false, TEXT("FMessageLogScopedOverride popped an unexpected log name off the stack! Out of order destruction of FMessageLogScopedOverride!"));
+	}
+}
+
+FMessageLogScopedOverride& FMessageLogScopedOverride::SuppressLoggingToOutputLog(const bool bShouldSuppress)
+{
+	bSuppressLoggingToOutputLog = bShouldSuppress;
+	return *this;
+}
+
+FMessageLogScopedOverride& FMessageLogScopedOverride::RemapMessageSeverity(const EMessageSeverity::Type SrcSeverity, const EMessageSeverity::Type DestSeverity)
+{
+	LLM_SCOPE_BYTAG(EngineMisc_MessageLog);
+
+	MessageSeverityRemapping.Add(SrcSeverity, DestSeverity);
+	return *this;
 }
 
 #undef LOCTEXT_NAMESPACE

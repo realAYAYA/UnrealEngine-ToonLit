@@ -41,8 +41,22 @@ typedef FOnEnumerateUserFilesComplete::FDelegate FOnEnumerateUserFilesCompleteDe
  * @param FileName the name of the file this was for
  *
  */
+UE_DEPRECATED(5.3, "OnWriteUserFileProgress has been deprecated, use OnWriteUserFileProgress64 instead")
 DECLARE_MULTICAST_DELEGATE_ThreeParams(FOnWriteUserFileProgress, int32, const FUniqueNetId&, const FString&);
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 typedef FOnWriteUserFileProgress::FDelegate FOnWriteUserFileProgressDelegate;
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+/**
+ * Delegate fired at intervals during a user file write to the network platform's storage
+ *
+ * @param BytesWritten the number of bytes written so far
+ * @param UserId User owning the storage
+ * @param FileName the name of the file this was for
+ *
+ */
+DECLARE_MULTICAST_DELEGATE_ThreeParams(FOnWriteUserFileProgress64, uint64, const FUniqueNetId&, const FString&);
+typedef FOnWriteUserFileProgress64::FDelegate FOnWriteUserFileProgress64Delegate;
 
 /**
  * Delegate fired when a user file write to the network platform's storage is complete
@@ -118,7 +132,9 @@ protected:
 	IOnlineUserCloud() {};
 
 public:
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	virtual ~IOnlineUserCloud() {};
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	/**
 	 * Copies the file data into the specified buffer for the specified file
@@ -216,7 +232,45 @@ public:
 	* @param FileName the name of the file this was for
 	*
 	*/
-	DEFINE_ONLINE_DELEGATE_THREE_PARAM(OnWriteUserFileProgress, int32, const FUniqueNetId&, const FString&);
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	// 	Expanded macro with deprecate warnings: DEFINE_ONLINE_DELEGATE_THREE_PARAM(OnWriteUserFileProgress, int32, const FUniqueNetId&, const FString&);
+
+	UE_DEPRECATED(5.3, "OnWriteUserFileProgress has been deprecated, use OnWriteUserFileProgress64 instead")
+	FOnWriteUserFileProgress OnWriteUserFileProgressDelegates;
+
+	UE_DEPRECATED(5.3, "AddOnWriteUserFileProgressDelegate_Handle has been deprecated, use AddOnWriteUserFileProgress64Delegate_Handle instead")
+	virtual FDelegateHandle AddOnWriteUserFileProgressDelegate_Handle(const FOnWriteUserFileProgressDelegate& Delegate)
+	{
+		OnWriteUserFileProgressDelegates.Add(Delegate);
+		return Delegate.GetHandle();
+	}
+	UE_DEPRECATED(5.3, "ClearOnWriteUserFileProgressDelegate_Handle has been deprecated, use ClearOnWriteUserFileProgress64Delegate_Handle instead")
+	virtual void ClearOnWriteUserFileProgressDelegate_Handle(FDelegateHandle& Handle)
+	{
+		OnWriteUserFileProgressDelegates.Remove(Handle);
+		Handle.Reset();
+	}
+	UE_DEPRECATED(5.3, "ClearOnWriteUserFileProgressDelegates has been deprecated, use ClearOnWriteUserFileProgress64Delegates instead")
+	virtual void ClearOnWriteUserFileProgressDelegates(void* Object)
+	{
+		OnWriteUserFileProgressDelegates.RemoveAll(Object);
+	}
+	UE_DEPRECATED(5.3, "TriggerOnWriteUserFileProgressDelegates has been deprecated, use TriggerOnWriteUserFileProgress64Delegates instead")
+	virtual void TriggerOnWriteUserFileProgressDelegates(int32 Param1, const FUniqueNetId& Param2, const FString& Param3)
+	{
+		OnWriteUserFileProgressDelegates.Broadcast(Param1, Param2, Param3);
+	}
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+	/**
+	* Delegate fired at intervals during a user file write to the network platform's storage
+	*
+	* @param BytesWritten the number of bytes written so far
+	* @param UserId User owning the storage
+	* @param FileName the name of the file this was for
+	*
+	*/
+	DEFINE_ONLINE_DELEGATE_THREE_PARAM(OnWriteUserFileProgress64, uint64, const FUniqueNetId&, const FString&);
 
 	/**
 	 * Delegate fired when a user file write to the network platform's storage is complete

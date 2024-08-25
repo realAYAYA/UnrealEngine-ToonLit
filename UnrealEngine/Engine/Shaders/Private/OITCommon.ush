@@ -30,14 +30,6 @@ struct FOITSample
 	float  Pad;
 };
 
-struct FOITPackedSample
-{
-	uint  Color;
-	uint  Trans;
-	float Depth;
-	uint  Pad;
-};
-
 //////////////////////////////////////////////////////////////////////////////////////////
 
 uint OITPack10F(float Value)
@@ -88,21 +80,25 @@ float3 OITUnpackR11G11B10F(uint rgb)
 // Per-attribut compaction 12bytes/96bits
 
 #if OIT_FORMAT == OIT_FORMAT_10BITS
+
+#define FOITPackedSample uint3
+#define OIT_DATA_COUNT 3
+
 FOITPackedSample PackOITSample(FOITSample In)
 {
 	FOITPackedSample Out = (FOITPackedSample)0;
-	Out.Color = OITPackR11G11B10F(In.Color);
-	Out.Trans = OITPackR11G11B10F(saturate(In.Trans));
-	Out.Depth = In.Depth;
+	Out.x = asuint(In.Depth);
+	Out.y = OITPackR11G11B10F(In.Color);
+	Out.z = OITPackR11G11B10F(saturate(In.Trans));
 	return Out;
 }
 
 FOITSample UnpackOITSample(FOITPackedSample In)
 {
 	FOITSample Out = (FOITSample)0;
-	Out.Color = OITUnpackR11G11B10F(In.Color);
-	Out.Trans = saturate(OITUnpackR11G11B10F(In.Trans));
-	Out.Depth = In.Depth;
+	Out.Depth = asfloat(In.x);
+	Out.Color = OITUnpackR11G11B10F(In.y);
+	Out.Trans = saturate(OITUnpackR11G11B10F(In.z));
 	return Out;
 }
 #endif
@@ -110,8 +106,12 @@ FOITSample UnpackOITSample(FOITPackedSample In)
 //////////////////////////////////////////////////////////////////////////////////////////
 // Fat compaction 16bytes/128bits
 
-#if OIT_FORMAT_16BITS
-uint4 PackOITSample(float3 InColor, float3 InTrans, float InDepth)
+#if OIT_FORMAT == OIT_FORMAT_16BITS
+
+#define FOITPackedSample uint4
+#define OIT_DATA_COUNT 4
+
+FOITPackedSample PackOITSample(float3 InColor, float3 InTrans, float InDepth)
 {
 	uint4 Out = 0;
 	Out.x = f32tof16(InColor.r) | (f32tof16(InColor.g) << 16);
@@ -121,7 +121,7 @@ uint4 PackOITSample(float3 InColor, float3 InTrans, float InDepth)
 	return Out;
 }
 
-void UnpackOITSample(uint4 In, inout float3 OutColor, inout float3 OutTrans, inout float OutDepth)
+void UnpackOITSample(FOITPackedSample In, inout float3 OutColor, inout float3 OutTrans, inout float OutDepth)
 {
 	OutColor.r = f16tof32(0xFFFF & (In.x));
 	OutColor.g = f16tof32(0xFFFF & (In.x >> 16));
@@ -139,7 +139,11 @@ void UnpackOITSample(uint4 In, inout float3 OutColor, inout float3 OutTrans, ino
 // Compact sample into 8bytes/64bits (untested|add dithering if banding)
 
 #if OIT_FORMAT == OIT_FORMAT_COMPACT
-uint2 PackOITSample(float3 InColor, float3 InTrans, float InDepth)
+
+#define FOITPackedSample uint2
+#define OIT_DATA_COUNT 2
+
+FOITPackedSample PackOITSample(float3 InColor, float3 InTrans, float InDepth)
 {
 	uint ColorR10 = OITPack10F(InColor.r);
 	uint ColorG10 = OITPack10F(InColor.g);
@@ -151,13 +155,13 @@ uint2 PackOITSample(float3 InColor, float3 InTrans, float InDepth)
 
 	uint Depth16 = f32tof16(InDepth);
 	
-	uint2 Out = 0;
+	FOITPackedSample Out = 0;
 	Out.x = ColorR10 | (ColorG10 << 10) | (ColorB10 << 20) | (((TransB6 >> 4) & 0x3) << 30);
 	Out.y = Depth16  | (TransR6  << 16) | (TransG6  << 22) | (TransB6 & 0xF) << 28);
 	return Out;
 }
 
-void UnpackOITSample(uint2 In, inout float3 OutColor, inout float3 OutTrans, inout float OutDepth)
+void UnpackOITSample(FOITPackedSample In, inout float3 OutColor, inout float3 OutTrans, inout float OutDepth)
 {
 	OutColor.r = OITUnpack10F((In.x)     & 3FF);
 	OutColor.g = OITUnpack10F((In.x>>10) & 3FF);
@@ -173,6 +177,22 @@ void UnpackOITSample(uint2 In, inout float3 OutColor, inout float3 OutTrans, ino
 
 //////////////////////////////////////////////////////////////////////////////////////////
 
+FOITSample OITLoadSample(Texture2DArray<uint> InTexture, uint2 InPixelCoord)
+{
+	FOITPackedSample Packed = (FOITPackedSample)0;
+	Packed.x = InTexture[uint3(InPixelCoord, 0)];
+#if OIT_DATA_COUNT > 1
+	Packed.y = InTexture[uint3(InPixelCoord, 1)];
+#endif
+#if OIT_DATA_COUNT > 2
+	Packed.z = InTexture[uint3(InPixelCoord, 2)];
+#endif
+#if OIT_DATA_COUNT > 3
+	Packed.w = InTexture[uint3(InPixelCoord, 3)];
+#endif
+	return UnpackOITSample(Packed);
+}
+
 #if OIT_IS_BASEPASS
 
 //////////////////////////////////////////////////////////////////////////////////////////
@@ -181,19 +201,32 @@ void UnpackOITSample(uint2 In, inout float3 OutColor, inout float3 OutTrans, ino
 FOITSample OITLoadSample(uint2 InPixelCoord)
 {
 	FOITPackedSample Packed = (FOITPackedSample)0;
-	Packed.Color = TranslucentBasePass.OIT.OutOITSampleColor[InPixelCoord];
-	Packed.Trans = TranslucentBasePass.OIT.OutOITSampleTrans[InPixelCoord];
-	Packed.Depth = TranslucentBasePass.OIT.OutOITSampleDepth[InPixelCoord];
-
+	Packed.x = TranslucentBasePass.OIT.OutOITSampleData[uint3(InPixelCoord, 0)];
+#if OIT_DATA_COUNT > 1
+	Packed.y = TranslucentBasePass.OIT.OutOITSampleData[uint3(InPixelCoord, 1)];
+#endif
+#if OIT_DATA_COUNT > 2
+	Packed.z = TranslucentBasePass.OIT.OutOITSampleData[uint3(InPixelCoord, 2)];
+#endif
+#if OIT_DATA_COUNT > 3
+	Packed.w = TranslucentBasePass.OIT.OutOITSampleData[uint3(InPixelCoord, 3)];
+#endif
 	return UnpackOITSample(Packed);
 }
 
 void OITStoreSample(uint2 InPixelCoord, FOITSample In)
 {
 	FOITPackedSample Packed = PackOITSample(In);
-	TranslucentBasePass.OIT.OutOITSampleColor[InPixelCoord] = Packed.Color;
-	TranslucentBasePass.OIT.OutOITSampleTrans[InPixelCoord] = Packed.Trans;
-	TranslucentBasePass.OIT.OutOITSampleDepth[InPixelCoord] = Packed.Depth;
+	TranslucentBasePass.OIT.OutOITSampleData[uint3(InPixelCoord, 0)] = Packed.x;
+#if OIT_DATA_COUNT > 1
+	TranslucentBasePass.OIT.OutOITSampleData[uint3(InPixelCoord, 1)] = Packed.y;
+#endif
+#if OIT_DATA_COUNT > 2
+	TranslucentBasePass.OIT.OutOITSampleData[uint3(InPixelCoord, 2)] = Packed.z;
+#endif
+#if OIT_DATA_COUNT > 3
+	TranslucentBasePass.OIT.OutOITSampleData[uint3(InPixelCoord, 4)] = Packed.w;
+#endif
 }
 
 // Simple k-buffer insertion
@@ -252,7 +285,9 @@ void AddOITSample_MLAB(uint2 InPixelCoord, float3 InColor, float3 InTrans, float
 		{
 			if (all(LastSample.Trans < TranslucentBasePass.OIT.TransmittanceThreshold))
 			{
+				// The return is import here as it avoid GPU hang. Discard is not enough here, probably due to ROV/UAV output
 				discard;
+				return;
 			}
 		}
 	}

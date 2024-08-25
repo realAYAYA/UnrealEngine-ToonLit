@@ -30,7 +30,7 @@ public:
 	TObjectPtr<UNNEModelData> ModelData;
 
 	/** The neural network controlling this agent. */
-	TUniquePtr<UE::NNE::IModelInstanceCPU> Brain;
+	TSharedPtr<UE::NNE::IModelInstanceCPU> Brain;
 
 private:
 	uint32 InputTensorSizeInBytes = 0;

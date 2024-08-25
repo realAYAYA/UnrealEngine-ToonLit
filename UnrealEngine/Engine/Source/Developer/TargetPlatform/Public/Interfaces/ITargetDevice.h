@@ -8,6 +8,7 @@
 
 class ITargetDevice;
 class ITargetDeviceOutput;
+class ITargetPlatform;
 
 /**
  * Enumerates features that may be supported by target devices.
@@ -87,7 +88,7 @@ namespace TargetDeviceTypes
 	/**
 	 * Returns the string representation of the specified ETargetDeviceTypes value.
 	 *
-	 * @param Configuration The value to get the string for.
+	 * @param DeviceType The value to get the string for.
 	 * @return A string value.
 	 */
 	inline FString ToString(ETargetDeviceTypes DeviceType)
@@ -115,6 +116,38 @@ namespace TargetDeviceTypes
 	}
 }
 
+namespace TargetDeviceConnectionTypes
+{
+	/**
+	 * Returns the string representation of the specified ETargetDeviceConnectionTypes value.
+	 *
+	 * @param DeviceConnectionType The value to get the string for.
+	 * @return A string value.
+	 */
+	inline FString ToString(ETargetDeviceConnectionTypes DeviceConnectionType)
+	{
+		switch (DeviceConnectionType)
+		{
+		case ETargetDeviceConnectionTypes::USB:
+			return FString("USB");
+
+		case ETargetDeviceConnectionTypes::Wifi:
+			return FString("Wifi");
+
+		case ETargetDeviceConnectionTypes::Ethernet:
+			return FString("Ethernet");
+
+		case ETargetDeviceConnectionTypes::Simulator:
+			return FString("Simulator");
+
+		case ETargetDeviceConnectionTypes::Proprietary:
+			return FString("Proprietary");
+
+		default:
+			return FString("Unknown");
+		}
+	}
+}
 
 /**
  * Enumerates states of threads running on a target device.
@@ -326,7 +359,19 @@ public:
 	/**
 	 * Gets the TargetPlatform that this device belongs to.
 	 */
-	virtual const class ITargetPlatform& GetTargetPlatform() const = 0;
+protected:
+	// Temporary until we get rid of this.
+	virtual const class ITargetPlatform& GetTargetPlatform() const
+	{
+		unimplemented();
+		static ITargetPlatform* DummyReference = nullptr;
+		// Code should never reach this point, this is just temporary until we port all platforms to new system
+		return *DummyReference; //-V522
+	};
+public:
+
+	TARGETPLATFORM_API virtual const class ITargetPlatformSettings& GetPlatformSettings() const;
+	TARGETPLATFORM_API virtual const class ITargetPlatformControls& GetPlatformControls() const;
 
 	/**
 	 * Checks whether this device is connected.

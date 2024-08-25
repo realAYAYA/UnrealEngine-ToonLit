@@ -8,6 +8,7 @@
 #include "Graph/MovieGraphSchema.h"
 #include "Graph/Nodes/MovieGraphVariableNode.h"
 #include "MovieEdGraphNode.h"
+#include "ScopedTransaction.h"
 #include "SGraphActionMenu.h"
 #include "Toolkits/AssetEditorToolkit.h"
 
@@ -34,13 +35,18 @@ namespace UE::MovieGraph::Private
 		return nullptr;
 	}
 
-	static bool GetIconAndColorFromDataType(EMovieGraphValueType VariableType, const FSlateBrush*& OutPrimaryBrush, FSlateColor& OutIconColor, const FSlateBrush*& OutSecondaryBrush, FSlateColor& OutSecondaryColor)
+	static bool GetIconAndColorFromDataType(const UMovieGraphVariable* InGraphVariable, const FSlateBrush*& OutPrimaryBrush, FSlateColor& OutIconColor, const FSlateBrush*& OutSecondaryBrush, FSlateColor& OutSecondaryColor)
 	{
+		if (!InGraphVariable)
+		{
+			return false;
+		}
+		
 		constexpr bool bIsBranch = false;
-		const FEdGraphPinType PinType = UMoviePipelineEdGraphNodeBase::GetPinType(VariableType, bIsBranch);
+		const FEdGraphPinType PinType = UMoviePipelineEdGraphNodeBase::GetPinType(InGraphVariable->GetValueType(), bIsBranch, InGraphVariable->GetValueTypeObject());
 
 		OutPrimaryBrush = FAppStyle::GetBrush("Kismet.AllClasses.VariableIcon");
-		OutIconColor = UMovieGraphSchema::GetTypeColor(PinType.PinCategory);
+		OutIconColor = UMovieGraphSchema::GetTypeColor(PinType.PinCategory, PinType.PinSubCategory);
 		OutSecondaryBrush = nullptr;
 		
 		return true;
@@ -60,6 +66,10 @@ void SMovieGraphMembersTabContent::Construct(const FArguments& InArgs)
 	EditorToolkit = InArgs._Editor;
 	CurrentGraph = InArgs._Graph;
 	OnActionSelected = InArgs._OnActionSelected;
+
+	// Update the UI whenever the graph adds/updates variables. In this case it's not known which variable is added/updated, so just pass nullptr.
+	UMovieGraphMember* UpdatedMember = nullptr;
+	CurrentGraph->OnGraphVariablesChangedDelegate.AddSP(this, &SMovieGraphMembersTabContent::RefreshMemberActions, UpdatedMember);
 	
 	ChildSlot
 	[
@@ -107,7 +117,7 @@ TSharedRef<SWidget> SMovieGraphMembersTabContent::CreateActionWidget(FCreateWidg
 			static_cast<FMovieGraphSchemaAction_NewVariableNode*>(InCreateData->Action.Get());
 		const UMovieGraphVariable* Variable = Cast<UMovieGraphVariable>(VariableAction->ActionTarget);
 		const FEdGraphPinType PinType = Variable
-			? UMoviePipelineEdGraphNodeBase::GetPinType(Variable->GetValueType(), false)
+			? UMoviePipelineEdGraphNodeBase::GetPinType(Variable->GetValueType(), false, Variable->GetValueTypeObject())
 			: FEdGraphPinType();
 		const FLinearColor PinColor = CurrentGraph->PipelineEdGraph->GetSchema()->GetPinTypeColor(PinType);
 		
@@ -148,7 +158,7 @@ void SMovieGraphMembersTabContent::ClearSelection() const
 	}
 }
 
-void SMovieGraphMembersTabContent::DeleteSelectedMembers() const
+void SMovieGraphMembersTabContent::DeleteSelectedMembers()
 {
 	if (!ActionMenu.IsValid() || !CurrentGraph)
 	{
@@ -161,6 +171,9 @@ void SMovieGraphMembersTabContent::DeleteSelectedMembers() const
 	{
 		if (UMovieGraphMember* GraphMember = UE::MovieGraph::Private::GetMemberFromAction(SelectedAction.Get()))
 		{
+			FScopedTransaction Transaction(LOCTEXT("DeleteGraphMember", "Delete Graph Member"));
+			
+			MemberChangedHandles.Remove(GraphMember);
 			CurrentGraph->DeleteMember(GraphMember);
 		}
 	}
@@ -193,6 +206,18 @@ bool SMovieGraphMembersTabContent::CanDeleteSelectedMembers() const
 	return true;
 }
 
+void SMovieGraphMembersTabContent::PostUndo(bool bSuccess)
+{
+	// Normally the UI relies on delegates to determine when to refresh. However, undo/redo do not fire those delegates, so refresh whenever there
+	// is an undo/redo.
+	RefreshMemberActions();
+}
+
+void SMovieGraphMembersTabContent::PostRedo(bool bSuccess)
+{
+	RefreshMemberActions();
+}
+
 void SMovieGraphMembersTabContent::CollectAllActions(FGraphActionListBuilderBase& OutAllActions)
 {
 	static const FText UserVariablesCategory = LOCTEXT("UserVariablesCategory", "User Variables");
@@ -207,7 +232,7 @@ void SMovieGraphMembersTabContent::CollectAllActions(FGraphActionListBuilderBase
 	FGraphActionMenuBuilder ActionMenuBuilder;
 
 	// Creates a new action in the action menu under a specific section w/ the provided action target
-	auto AddToActionMenu = [&ActionMenuBuilder](UMovieGraphMember* ActionTarget, const EActionSection Section, const FText& Category) -> void
+	auto AddToActionMenu = [&ActionMenuBuilder, this](UMovieGraphMember* ActionTarget, const EActionSection Section, const FText& Category) -> void
 	{
 		const FText MemberActionDesc = FText::FromString(ActionTarget->GetMemberName());
 		const FText MemberActionTooltip;
@@ -216,6 +241,31 @@ void SMovieGraphMembersTabContent::CollectAllActions(FGraphActionListBuilderBase
 		const TSharedPtr<FMovieGraphSchemaAction> MemberAction(new FMovieGraphSchemaAction(Category, MemberActionDesc, MemberActionTooltip, 0, MemberActionKeywords, MemberActionSectionID));
 		MemberAction->ActionTarget = ActionTarget;
 		ActionMenuBuilder.AddAction(MemberAction);
+
+		// Update actions when a member is updated (renamed, etc). Only subscribe to the delegate once.
+		if (!MemberChangedHandles.Contains(ActionTarget))
+		{
+			FDelegateHandle MemberChangedDelegate;
+			if (UMovieGraphInput* InputMember = Cast<UMovieGraphInput>(ActionTarget))
+			{
+				MemberChangedDelegate = InputMember->OnMovieGraphInputChangedDelegate.AddSP(this, &SMovieGraphMembersTabContent::RefreshMemberActions);
+			}
+			else if (UMovieGraphOutput* OutputMember = Cast<UMovieGraphOutput>(ActionTarget))
+			{
+				MemberChangedDelegate = OutputMember->OnMovieGraphOutputChangedDelegate.AddSP(this, &SMovieGraphMembersTabContent::RefreshMemberActions);
+			}
+			else if (UMovieGraphVariable* VariableMember = Cast<UMovieGraphVariable>(ActionTarget))
+			{
+				MemberChangedDelegate = VariableMember->OnMovieGraphVariableChangedDelegate.AddSP(this, &SMovieGraphMembersTabContent::RefreshMemberActions);
+			}
+			else
+			{
+				checkf(false, TEXT("Found an unsupported member type when adding it to the action menu."));
+				return;
+			}
+			
+			MemberChangedHandles.Add(ActionTarget, MemberChangedDelegate);
+		}
 	};
 
 	for (UMovieGraphInput* Input : CurrentGraph->GetInputs())
@@ -223,9 +273,6 @@ void SMovieGraphMembersTabContent::CollectAllActions(FGraphActionListBuilderBase
 		if (Input && Input->IsDeletable())
 		{
 			AddToActionMenu(Input, EActionSection::Inputs, EmptyCategory);
-            
-            // Update actions when an input is updated (renamed, etc)
-            Input->OnMovieGraphInputChangedDelegate.AddSP(this, &SMovieGraphMembersTabContent::RefreshMemberActions);
 		}
 	}
 
@@ -234,9 +281,6 @@ void SMovieGraphMembersTabContent::CollectAllActions(FGraphActionListBuilderBase
 		if (Output && Output->IsDeletable())
 		{
 			AddToActionMenu(Output, EActionSection::Outputs, EmptyCategory);
-
-			// Update actions when an output is updated (renamed, etc)
-			Output->OnMovieGraphOutputChangedDelegate.AddSP(this, &SMovieGraphMembersTabContent::RefreshMemberActions);
 		}
 	}
 
@@ -249,9 +293,6 @@ void SMovieGraphMembersTabContent::CollectAllActions(FGraphActionListBuilderBase
 		if (Variable && !Variable->IsGlobal())
 		{
 			AddToActionMenu(Variable, EActionSection::Variables, UserVariablesCategory);
-
-			// Update actions when a variable is updated (renamed, etc)
-			Variable->OnMovieGraphVariableChangedDelegate.AddSP(this, &SMovieGraphMembersTabContent::RefreshMemberActions);
 		}
 	}
 
@@ -363,14 +404,17 @@ FReply SMovieGraphMembersTabContent::OnAddButtonClickedOnSection(const int32 InS
 
 	if (Section == EActionSection::Inputs)
 	{
+		FScopedTransaction Transaction(LOCTEXT("AddNewInput", "Add New Input"));
 		CurrentGraph->AddInput();
 	}
 	else if (Section == EActionSection::Outputs)
 	{
+		FScopedTransaction Transaction(LOCTEXT("AddNewOutput", "Add New Output"));
 		CurrentGraph->AddOutput();
 	}
 	else if (Section == EActionSection::Variables)
 	{
+		FScopedTransaction Transaction(LOCTEXT("AddNewVariable", "Add New Variable"));
 		CurrentGraph->AddVariable();
 	}
 
@@ -379,7 +423,7 @@ FReply SMovieGraphMembersTabContent::OnAddButtonClickedOnSection(const int32 InS
 	return FReply::Handled();
 }
 
-void SMovieGraphMembersTabContent::RefreshMemberActions(UMovieGraphMember* UpdatedMember) const
+void SMovieGraphMembersTabContent::RefreshMemberActions(UMovieGraphMember* UpdatedMember)
 {
 	// Currently the entire action menu is refreshed rather than a specific action being targeted
 
@@ -449,7 +493,7 @@ void FMovieGraphDragAction_Variable::GetDefaultStatusSymbol(
 {
 	const UMovieGraphVariable* VariableMember = WeakVariable.Get();
 	if (!VariableMember ||
-		!UE::MovieGraph::Private::GetIconAndColorFromDataType(VariableMember->GetValueType(), OutPrimaryBrush, OutIconColor, OutSecondaryBrush, OutSecondaryColor))
+		!UE::MovieGraph::Private::GetIconAndColorFromDataType(VariableMember, OutPrimaryBrush, OutIconColor, OutSecondaryBrush, OutSecondaryColor))
 	{
 		return FGraphSchemaActionDragDropAction::GetDefaultStatusSymbol(OutPrimaryBrush, OutIconColor, OutSecondaryBrush, OutSecondaryColor);
 	}

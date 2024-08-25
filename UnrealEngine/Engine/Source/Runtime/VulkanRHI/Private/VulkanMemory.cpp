@@ -959,8 +959,11 @@ namespace VulkanRHI
 
 #if VULKAN_USE_LLM
 		LLM_PLATFORM_SCOPE_VULKAN(ELLMTagVulkan::VulkanDriverMemoryGPU);
-		LLM(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, (void*)NewAllocation->Handle, AllocationSize, ELLMTag::GraphicsPlatform, ELLMAllocType::System));
+		LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, (void*)NewAllocation->Handle, AllocationSize, ELLMTag::GraphicsPlatform, ELLMAllocType::System));
 		LLM_TRACK_VULKAN_SPARE_MEMORY_GPU((int64)AllocationSize);
+#else
+		LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Platform, (void*)NewAllocation->Handle, AllocationSize, ELLMTag::GraphicsPlatform));
+		LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Default, (void*)NewAllocation->Handle, AllocationSize, ELLMTag::Untagged));
 #endif
 
 		INC_DWORD_STAT(STAT_VulkanNumPhysicalMemAllocations);
@@ -1039,8 +1042,11 @@ namespace VulkanRHI
 		VulkanRHI::vkFreeMemory(DeviceHandle, Allocation->Handle, VULKAN_CPU_ALLOCATOR);
 
 #if VULKAN_USE_LLM
-		LLM(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, (void*)Allocation->Handle, ELLMAllocType::System));
+		LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, (void*)Allocation->Handle, ELLMAllocType::System));
 		LLM_TRACK_VULKAN_SPARE_MEMORY_GPU(-(int64)Allocation->Size);
+#else
+		LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Platform, (void*)Allocation->Handle));
+		LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Default, (void*)Allocation->Handle));
 #endif
 
 		--NumAllocations;
@@ -1482,7 +1488,7 @@ namespace VulkanRHI
 		else
 		{
 			// Remove this free entry.
-			Ranges.RemoveAt(Index, 1, false);
+			Ranges.RemoveAt(Index, 1, EAllowShrinking::No);
 #if UE_VK_MEMORY_KEEP_FREELIST_SORTED_CATCHBUGS
 			SanityCheck(Ranges);
 #endif
@@ -1642,7 +1648,7 @@ namespace VulkanRHI
 		{
 			if (UsedDedicatedImagePages.Find(InPage, Index))
 			{
-				UsedDedicatedImagePages.RemoveAtSwap(Index, 1, false);
+				UsedDedicatedImagePages.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 			}
 			else
 			{
@@ -1656,7 +1662,7 @@ namespace VulkanRHI
 			TArray<FVulkanSubresourceAllocator*>& Pages = ActivePages[BucketId];
 			if (Pages.Find(InPage, Index))
 			{
-				Pages.RemoveAtSwap(Index, 1, false);
+				Pages.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 			}
 			else
 			{
@@ -2232,7 +2238,7 @@ namespace VulkanRHI
 					if (bImmediately || BufferAllocation->FrameFreed + NUM_FRAMES_TO_WAIT_BEFORE_RELEASING_TO_OS < GFrameNumberRenderThread)
 					{
 						BufferAllocationsToRelease.Add(BufferAllocation);
-						FreeAllocations.RemoveAtSwap(Index, 1, false);
+						FreeAllocations.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 					}
 				}
 			}
@@ -2756,7 +2762,7 @@ namespace VulkanRHI
 				if(SubresourceAllocator->TryAllocate2(OutAllocation, AllocationOwner, Size, Alignment, MetaType, File, Line))
 				{
 					IncMetaStats(MetaType, OutAllocation.Size);
-					FreeBufferAllocations[PoolSize].RemoveAtSwap(Index, 1, false);
+					FreeBufferAllocations[PoolSize].RemoveAtSwap(Index, 1, EAllowShrinking::No);
 					UsedBufferAllocations[PoolSize].Add(SubresourceAllocator);
 					return true;
 				}
@@ -2876,7 +2882,7 @@ namespace VulkanRHI
 		{
 			if (SubresourceAllocator->Type == EVulkanAllocationPooledBuffer)
 			{
-				UsedBufferAllocations[SubresourceAllocator->PoolSizeIndex].RemoveSingleSwap(SubresourceAllocator, false);
+				UsedBufferAllocations[SubresourceAllocator->PoolSizeIndex].RemoveSingleSwap(SubresourceAllocator, EAllowShrinking::No);
 				SubresourceAllocator->FrameFreed = GFrameNumberRenderThread;
 				FreeBufferAllocations[SubresourceAllocator->PoolSizeIndex].Add(SubresourceAllocator);
 			}
@@ -3638,16 +3644,20 @@ namespace VulkanRHI
 
 	void FMemoryManager::AllocUniformBuffer(FVulkanAllocation& OutAllocation, uint32 Size)
 	{
-		if(!AllocateBufferPooled(OutAllocation, nullptr, Size, 0, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, EVulkanAllocationMetaUniformBuffer, __FILE__, __LINE__))
+		if (!AllocateBufferPooled(OutAllocation, nullptr, Size, 0, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, EVulkanAllocationMetaUniformBuffer, __FILE__, __LINE__))
 		{
 			HandleOOM(false);
 			checkNoEntry();
 		}
+
+		INC_MEMORY_STAT_BY(STAT_UniformBufferMemory, OutAllocation.Size);
 	}
 	void FMemoryManager::FreeUniformBuffer(FVulkanAllocation& InAllocation)
 	{
-		if(InAllocation.HasAllocation())
+		if (InAllocation.HasAllocation())
 		{
+			DEC_MEMORY_STAT_BY(STAT_UniformBufferMemory, InAllocation.Size);
+
 			FScopeLock ScopeLock(&UBAllocations.CS);
 			ProcessPendingUBFreesNoLock(false);
 			FUBPendingFree& Pending = UBAllocations.PendingFree.AddDefaulted_GetRef();
@@ -3716,7 +3726,7 @@ namespace VulkanRHI
 					}
 				}
 			}
-			UBAllocations.PendingFree.SetNum(NumAlloc - Index, false);
+			UBAllocations.PendingFree.SetNum(NumAlloc - Index, EAllowShrinking::No);
 		}
 	}
 
@@ -3968,13 +3978,33 @@ namespace VulkanRHI
 		return false;
 	}
 
+	static VkDeviceSize AdjustToNonCoherentAtomSize(const VkDeviceSize RequestedOffset, const VkDeviceSize RequestedSize, const VkDeviceSize WholeAllocationSize, const VkDeviceSize NonCoherentAtomSize)
+	{
+		if (RequestedSize == VK_WHOLE_SIZE)
+		{
+			return RequestedSize;
+		}
+		
+		check(RequestedOffset + RequestedSize <= WholeAllocationSize);
+		
+		return FMath::Min(WholeAllocationSize - RequestedOffset, AlignArbitrary(RequestedSize, NonCoherentAtomSize));
+	}
+
 	void FVulkanSubresourceAllocator::Flush(VkDeviceSize Offset, VkDeviceSize AllocationSize)
 	{
-		MemoryAllocation->FlushMappedMemory(Offset, AllocationSize);
+		if (!MemoryAllocation->IsCoherent() || GForceCoherent != 0)
+		{
+			const VkDeviceSize NonCoherentAtomSize = Owner->GetParent()->GetLimits().nonCoherentAtomSize;
+			MemoryAllocation->FlushMappedMemory(Offset, AdjustToNonCoherentAtomSize(Offset, AllocationSize, MemoryAllocation->GetSize(), NonCoherentAtomSize));
+		}
 	}
 	void FVulkanSubresourceAllocator::Invalidate(VkDeviceSize Offset, VkDeviceSize AllocationSize)
 	{
-		MemoryAllocation->InvalidateMappedMemory(Offset, AllocationSize);
+		if (!MemoryAllocation->IsCoherent() || GForceCoherent != 0)
+		{
+			const VkDeviceSize NonCoherentAtomSize = Owner->GetParent()->GetLimits().nonCoherentAtomSize;
+			MemoryAllocation->InvalidateMappedMemory(Offset, AdjustToNonCoherentAtomSize(Offset, AllocationSize, MemoryAllocation->GetSize(), NonCoherentAtomSize));
+		}
 	}
 
 	TArrayView<uint32> FVulkanSubresourceAllocator::GetMemoryUsed()
@@ -4313,7 +4343,7 @@ namespace VulkanRHI
 				if (FreeBuffer.StagingBuffer->GetSize() == Size && FreeBuffer.StagingBuffer->MemoryReadFlags == InMemoryReadFlags)
 				{
 					FStagingBuffer* Buffer = FreeBuffer.StagingBuffer;
-					FreeStagingBuffers.RemoveAtSwap(Index, 1, false);
+					FreeStagingBuffers.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 					UsedStagingBuffers.Add(Buffer);
 					VULKAN_FILL_TRACK_INFO(Buffer->Track, __FILE__, __LINE__);
 					return Buffer;
@@ -4365,9 +4395,9 @@ namespace VulkanRHI
 			}
 		}
 
-		FPendingItemsPerCmdBuffer* New = new(PendingFreeStagingBuffers) FPendingItemsPerCmdBuffer;
-		New->CmdBuffer = CmdBuffer;
-		return New;
+		FPendingItemsPerCmdBuffer& New = PendingFreeStagingBuffers.AddDefaulted_GetRef();
+		New.CmdBuffer = CmdBuffer;
+		return &New;
 	}
 
 	inline FStagingManager::FPendingItemsPerCmdBuffer::FPendingItems* FStagingManager::FPendingItemsPerCmdBuffer::FindOrAddItemsForFence(uint64 Fence)
@@ -4380,9 +4410,9 @@ namespace VulkanRHI
 			}
 		}
 
-		FPendingItems* New = new(PendingItems) FPendingItems;
-		New->FenceCounter = Fence;
-		return New;
+		FPendingItems& New = PendingItems.AddDefaulted_GetRef();
+		New.FenceCounter = Fence;
+		return &New;
 	}
 
 	void FStagingManager::ReleaseBuffer(FVulkanCmdBuffer* CmdBuffer, FStagingBuffer*& StagingBuffer)
@@ -4392,7 +4422,7 @@ namespace VulkanRHI
 #endif
 
 		FScopeLock Lock(&StagingLock);
-		UsedStagingBuffers.RemoveSingleSwap(StagingBuffer, false);
+		UsedStagingBuffers.RemoveSingleSwap(StagingBuffer, EAllowShrinking::No);
 
 		if (CmdBuffer)
 		{
@@ -4497,13 +4527,13 @@ namespace VulkanRHI
 						FreeStagingBuffers.Add({PendingItems.Resources[ResourceIndex], GFrameNumberRenderThread});
 					}
 
-					EntriesPerCmdBuffer.PendingItems.RemoveAtSwap(FenceIndex, 1, false);
+					EntriesPerCmdBuffer.PendingItems.RemoveAtSwap(FenceIndex, 1, EAllowShrinking::No);
 				}
 			}
 
 			if (EntriesPerCmdBuffer.PendingItems.Num() == 0)
 			{
-				PendingFreeStagingBuffers.RemoveAtSwap(Index, 1, false);
+				PendingFreeStagingBuffers.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 			}
 		}
 
@@ -4518,7 +4548,7 @@ namespace VulkanRHI
 					UsedMemory -= Entry.StagingBuffer->GetSize();
 					Entry.StagingBuffer->Destroy();
 					delete Entry.StagingBuffer;
-					FreeStagingBuffers.RemoveAtSwap(Index, 1, false);
+					FreeStagingBuffers.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 				}
 			}
 		}
@@ -4584,7 +4614,7 @@ namespace VulkanRHI
 		if (FreeFences.Num() != 0)
 		{
 			FFence* Fence = FreeFences[0];
-			FreeFences.RemoveAtSwap(0, 1, false);
+			FreeFences.RemoveAtSwap(0, 1, EAllowShrinking::No);
 			UsedFences.Add(Fence);
 
 			if (bCreateSignaled)
@@ -4604,7 +4634,7 @@ namespace VulkanRHI
 	{
 		FScopeLock Lock(&FenceLock);
 		ResetFence(Fence);
-		UsedFences.RemoveSingleSwap(Fence, false);
+		UsedFences.RemoveSingleSwap(Fence, EAllowShrinking::No);
 #if VULKAN_REUSE_FENCES
 		FreeFences.Add(Fence);
 #else
@@ -4622,7 +4652,7 @@ namespace VulkanRHI
 		}
 
 		ResetFence(Fence);
-		UsedFences.RemoveSingleSwap(Fence, false);
+		UsedFences.RemoveSingleSwap(Fence, EAllowShrinking::No);
 		FreeFences.Add(Fence);
 		Fence = nullptr;
 	}
@@ -4849,7 +4879,7 @@ namespace VulkanRHI
 					check(0);
 					break;
 				}
-				Entries.RemoveAtSwap(Index, 1, false);
+				Entries.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 			}
 		}
 	}
@@ -5041,6 +5071,8 @@ void* FVulkanCustomMemManager::Alloc(void* UserData, size_t Size, size_t Alignme
 {
 	check(AllocScope < VK_SYSTEM_ALLOCATION_SCOPE_RANGE_SIZE);
 	LLM_SCOPE_VULKAN(ELLMTagVulkan::VulkanDriverMemoryCPU);
+	LLM_PLATFORM_SCOPE(ELLMTag::GraphicsPlatform);
+
 	FScopeLock Lock(&GMemMgrCS);
 	void* Data = FMemory::Malloc(Size, Alignment);
 	FType& Type = GetType(UserData, AllocScope);
@@ -5053,6 +5085,8 @@ void* FVulkanCustomMemManager::Alloc(void* UserData, size_t Size, size_t Alignme
 void FVulkanCustomMemManager::Free(void* UserData, void* Mem)
 {
 	LLM_SCOPE_VULKAN(ELLMTagVulkan::VulkanDriverMemoryCPU);
+	LLM_PLATFORM_SCOPE(ELLMTag::GraphicsPlatform);
+
 	FScopeLock Lock(&GMemMgrCS);
 	FMemory::Free(Mem);
 	for (int32 Index = 0; Index < GVulkanInstrumentedMemMgr.Types.Num(); ++Index)
@@ -5071,6 +5105,8 @@ void* FVulkanCustomMemManager::Realloc(void* UserData, void* Original, size_t Si
 {
 	check(AllocScope < VK_SYSTEM_ALLOCATION_SCOPE_RANGE_SIZE);
 	LLM_SCOPE_VULKAN(ELLMTagVulkan::VulkanDriverMemoryCPU);
+	LLM_PLATFORM_SCOPE(ELLMTag::GraphicsPlatform);
+
 	FScopeLock Lock(&GMemMgrCS);
 	void* Data = FMemory::Realloc(Original, Size, Alignment);
 	FType& Type = GetType(UserData, AllocScope);

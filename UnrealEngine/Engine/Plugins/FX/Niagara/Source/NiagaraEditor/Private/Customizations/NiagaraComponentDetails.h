@@ -54,7 +54,6 @@ private:
 	TWeakObjectPtr<UNiagaraComponent> Component;
 	IDetailLayoutBuilder* Builder = nullptr;
 
-	TArray<FNiagaraSimCacheCapture> ComponentCaptures;
 	TArray<TWeakObjectPtr<UNiagaraSimCache>> CapturedCaches;
 };
 

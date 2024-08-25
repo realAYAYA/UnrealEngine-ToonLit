@@ -24,7 +24,6 @@ void FDMXPixelMappingEditorModule::StartupModule()
 	DMXPixelMappingCategory = AssetTools.RegisterAdvancedAssetCategory(FName(TEXT("DMX")), LOCTEXT("DmxCategory", "DMX"));
 	RegisterAssetTypeAction(AssetTools, MakeShared<FAssetTypeActions_DMXPixelMapping>());
 
-	FDMXPixelMappingEditorStyle::Initialize();
 	FDMXPixelMappingEditorCommands::Register();
 
 	// Any attempt to use GEditor right now will fail as it hasn't been initialized yet. Waiting for post engine init resolves that.
@@ -41,8 +40,6 @@ void FDMXPixelMappingEditorModule::ShutdownModule()
 			AssetTools.UnregisterAssetTypeActions(Action.ToSharedRef());
 		}
 	}
-
-	FDMXPixelMappingEditorStyle::Shutdown();
 
 	if (UObjectInitialized() && GIsEditor)
 	{

@@ -65,7 +65,13 @@ class DYNAMICMESH_API FSimpleIntrinsicEdgeFlipMesh
 public:
 	
 	using FEdge = FDynamicMesh3::FEdge;
-	using FEdgeFlipInfo = DynamicMeshInfo::FEdgeFlipInfo;
+	
+	// information collected when flipping an edge.
+	struct FEdgeFlipInfo : DynamicMeshInfo::FEdgeFlipInfo
+	{
+		bool bHadSameOrientations = true; // will be false if the original triangles had different orientations.
+	};
+	
 	/** InvalidID indicates that a vertex/edge/triangle ID is invalid */
 	constexpr static int InvalidID = IndexConstants::InvalidID;
 
@@ -83,6 +89,10 @@ public:
 	void Reset(const FDynamicMesh3& SrcMesh);
 	/**
 	* Flip a single edge in the Intrinsic Mesh.
+	* Note: After a successful flip, both triangles will share the same orientation (matching that of the pre-flip Edge.Tri.A)
+	* even if they had different orientations (e.g. cw & ccw) prior to flipping. 
+	*       
+	* @param EID indicates the edge to flip.
 	* @param EdgeFlipInfo [out] populated on return.
 	*
 	* @return a success or failure info.
@@ -303,6 +313,32 @@ public:
 		return Vector3Type(Src[Index], Src[AddOneModThree[Index]], Src[AddTwoModThree[Index]]);
 	}
 
+
+	/**
+	* @return false if the two triangles adjacent to the indicated edge have the different orientation (eg counter-clockwise and clockwise),
+	* otherwise return true.
+	* Note: by convention this will return true for boundary edges ( or invalid edges ).
+	*/
+	bool AreSameOrientation(int32 EID) const
+	{
+		if (!IsEdge(EID)) return true;
+
+		const FSimpleIntrinsicEdgeFlipMesh::FEdge Edge = GetEdge(EID);
+
+		// boundary edge is true by convention
+		if (Edge.Tri.B == FSimpleIntrinsicEdgeFlipMesh::InvalidID) return true;
+
+		const FIndex3i TriA = GetTriangle(Edge.Tri.A);
+		const FIndex3i TriB = GetTriangle(Edge.Tri.B);
+		const int V0 = Edge.Vert.A;
+		const int V1 = Edge.Vert.B;
+		const bool bOrderedAB = (IndexUtil::FindTriOrderedEdge(V0, V1, TriA) != FSimpleIntrinsicEdgeFlipMesh::InvalidID && IndexUtil::FindTriOrderedEdge(V1, V0, TriB) != FSimpleIntrinsicEdgeFlipMesh::InvalidID);
+		const bool bOrderedBA = (IndexUtil::FindTriOrderedEdge(V1, V0, TriA) != FSimpleIntrinsicEdgeFlipMesh::InvalidID && IndexUtil::FindTriOrderedEdge(V0, V1, TriB) != FSimpleIntrinsicEdgeFlipMesh::InvalidID);
+
+		// true if consistent orientation
+		return bOrderedAB || bOrderedBA;
+	}
+
 protected:
 	
 	/** @return three requested edge lengths */
@@ -328,7 +364,10 @@ protected:
 protected:
 	// basic mesh operations
 
-	/** update the mesh topology (e.g. triangles and edges) by doing an edge flip, but does not update the intrinsic edge lengths or angles.*/
+	/**
+	* update the mesh topology (e.g. triangles and edges) by doing an edge flip, but does not update the intrinsic edge lengths or angles.
+	* Note: this requires precomputed FlipInfo.bHadSameOrientation. 
+	*/
 	EMeshResult FlipEdgeTopology(int32 eab, FEdgeFlipInfo& FlipInfo);
 
 	/** update the existing edge to reference vertices 'a' and 'b'.*/
@@ -383,7 +422,7 @@ protected:
 
 	TDynamicVector<FIndex3i> Triangles;     // List of triangle vertex - index triplets[Vert0 Vert1 Vert2]
 	FRefCountVector TriangleRefCounts{};    // Reference counts of triangle indices. Ref count is always 1 if the triangle exists. Iterate over this to find out which triangle indices are valid.
-	TDynamicVector<FIndex3i> TriangleEdges; // List of triangle edge triplets [Edge0 Edge1 Edge2]
+	TDynamicVector<FIndex3i> TriangleEdges; // List of triangle edge triplets [Edge0 Edge1 Edge2], note these correspond to [Vert0-Vert1, Vert1-Vert2, Vert2-Vert0] for a given triangle.
 
 	TDynamicVector<FEdge> Edges;            // List of edge elements. An edge is four elements [VertA, VertB, Tri0, Tri1], where VertA < VertB, and Tri1 may be InvalidID (if the edge is a boundary edge)
 	FRefCountVector EdgeRefCounts{};        // Reference counts of edge indices. Ref count is always 1 if the edge exists. Iterate over this to find out which edge indices are valid.
@@ -414,8 +453,8 @@ class DYNAMICMESH_API FSimpleIntrinsicMesh : public FSimpleIntrinsicEdgeFlipMesh
 {
 public:
 	typedef FSimpleIntrinsicEdgeFlipMesh  MyBase;
-	using FEdge = FDynamicMesh3::FEdge;
-	using FEdgeFlipInfo     = DynamicMeshInfo::FEdgeFlipInfo;
+	using FEdge             = FSimpleIntrinsicEdgeFlipMesh::FEdge;
+	using FEdgeFlipInfo     = FSimpleIntrinsicEdgeFlipMesh::FEdgeFlipInfo;
 	using FPokeTriangleInfo = DynamicMeshInfo::FPokeTriangleInfo;
 	using FEdgeSplitInfo    = DynamicMeshInfo::FEdgeSplitInfo;
 
@@ -596,6 +635,8 @@ struct DYNAMICMESH_API TEdgeCorrespondence
 * NB: The lifetime of this structure should not exceed that of the original
 * FDynamicMesh as this class holds a pointer to that mesh to reference locations on its surface.
 * Also, this class isn't currently expected to work with surface meshes that have bow-ties.
+* 
+* Note:  This assumes but does not check that the FDynamicMesh3 "Surface Mesh" has consistent orientation of all triangles.
 */
 class DYNAMICMESH_API FIntrinsicEdgeFlipMesh : public  FSimpleIntrinsicEdgeFlipMesh
 {
@@ -716,6 +757,8 @@ protected:
 * NB: The lifetime of this structure should not exceed that of the original
 * FDynamicMesh as this class holds a pointer to that mesh to reference locations on its surface.
 * Also, this class isn't currently expected to work with surface meshes that have bow-ties.
+* 
+* Note:  This assumes but does not check that the FDynamicMesh3 "Surface Mesh" has consistent orientation of all triangles.
 */
 
 class DYNAMICMESH_API FIntrinsicMesh  : public  FSimpleIntrinsicMesh
@@ -723,8 +766,8 @@ class DYNAMICMESH_API FIntrinsicMesh  : public  FSimpleIntrinsicMesh
 public:
 	typedef FSimpleIntrinsicMesh     MyBase;
 
-	using FEdge = FIntrinsicEdgeFlipMesh::FEdge;
-	using FEdgeFlipInfo = FIntrinsicEdgeFlipMesh::FEdgeFlipInfo;
+	using FEdge = FSimpleIntrinsicMesh::FEdge;
+	using FEdgeFlipInfo = FSimpleIntrinsicMesh::FEdgeFlipInfo;
 	using FSurfacePoint = IntrinsicCorrespondenceUtils::FSurfacePoint;
 	using FEdgeAndCrossingIdx = IntrinsicCorrespondenceUtils::FNormalCoordinates::FEdgeAndCrossingIdx;
 	using FPokeTriangleInfo   = DynamicMeshInfo::FPokeTriangleInfo;
@@ -865,6 +908,8 @@ protected:
 * NB: The lifetime of this structure should not exceed that of the original
 * FDynamicMesh as this class holds a pointer to that mesh to reference locations on its surface.
 * Also, this class isn't currently expected to work with surface meshes that have bow-ties.
+* 
+* Note:  This assumes but does not check that the FDynamicMesh3 "Surface Mesh" has consistent orientation of all triangles.
 */ 
 class DYNAMICMESH_API FIntrinsicTriangulation : public  FSimpleIntrinsicMesh
 {
@@ -873,9 +918,9 @@ public:
 
 	typedef FSimpleIntrinsicMesh MyBase;
 
-	using FEdgeFlipInfo = DynamicMeshInfo::FEdgeFlipInfo;
-	using FEdgeSplitInfo = DynamicMeshInfo::FEdgeSplitInfo;
-	using FPokeTriangleInfo = DynamicMeshInfo::FPokeTriangleInfo;
+	using FEdgeFlipInfo = FSimpleIntrinsicMesh::FEdgeFlipInfo;
+	using FEdgeSplitInfo = FSimpleIntrinsicMesh::FEdgeSplitInfo;
+	using FPokeTriangleInfo = FSimpleIntrinsicMesh::FPokeTriangleInfo;
 	using FSurfacePoint  = IntrinsicCorrespondenceUtils::FSurfacePoint;
 
 	FIntrinsicTriangulation(const FDynamicMesh3& SrcMesh);
@@ -993,5 +1038,6 @@ int32 DYNAMICMESH_API FlipToDelaunay(FSimpleIntrinsicMesh& IntrinsicMesh, TSet<i
 int32 DYNAMICMESH_API FlipToDelaunay(FIntrinsicMesh& IntrinsicMesh, TSet<int>& Uncorrected, const int32 MaxFlipCount = TMathUtilConstants<int>::MaxReal);
 int32 DYNAMICMESH_API FlipToDelaunay(FIntrinsicTriangulation& IntrinsicMesh, TSet<int>& Uncorrected, const int32 MaxFlipCount = TMathUtilConstants<int>::MaxReal);
 
-}; // end namespace Geometry
-}; // end namespace UE
+
+} // end namespace Geometry
+} // end namespace UE

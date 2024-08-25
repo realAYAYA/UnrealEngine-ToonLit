@@ -54,6 +54,14 @@ static TAutoConsoleVariable<int32> CVarLumenSceneVisualizePrimitiveGroups(
 	ECVF_Scalability | ECVF_RenderThreadSafe
 );
 
+static TAutoConsoleVariable<int32> CVarOrthoLumenSceneMinCardResolution(
+	TEXT("r.Lumen.Ortho.LumenSceneMinCardResolution"),
+	1,
+	TEXT("If an orthographic view is present, forc the SurfaceCache MinCard to be set to OrthoMinCardResolution, otherwise use the standard MinCardResolution")
+	TEXT("0 is disabled, higher values will force the resolution in Orthographic views"),
+	ECVF_Scalability | ECVF_RenderThreadSafe
+);
+
 float LumenScene::GetCardMaxDistance(const FViewInfo& View)
 {
 	// Limit to global distance field range
@@ -86,8 +94,16 @@ float LumenScene::GetFarFieldCardMaxDistance()
 	return CVarLumenSceneFarFieldDistance.GetValueOnRenderThread();
 }
 
-int32 LumenScene::GetCardMinResolution()
+int32 LumenScene::GetCardMinResolution(bool bOrthographicCamera)
 {
+	if (bOrthographicCamera)
+	{
+		int32 OrthoMinCardResolution = CVarOrthoLumenSceneMinCardResolution.GetValueOnRenderThread();
+		if(OrthoMinCardResolution > 0)
+		{
+			return OrthoMinCardResolution;
+		}
+	}
 	return FMath::Clamp(CVarLumenSceneCardMinResolution.GetValueOnRenderThread(), 1, 1024);
 }
 
@@ -206,7 +222,7 @@ class FLumenSceneUpdateCS : public FGlobalShader
 		SHADER_PARAMETER(float, FarFieldCardMaxDistanceSq)
 		SHADER_PARAMETER(float, FarFieldCardTexelDensity)
 		SHADER_PARAMETER(float, MinCardResolution)
-		SHADER_PARAMETER_ARRAY(FVector4f, WorldCameraOrigins, [Lumen::MaxViews])
+		SHADER_PARAMETER_ARRAY(FVector4f, WorldCameraOrigins, [LUMEN_MAX_VIEWS])
 		SHADER_PARAMETER(uint32, NumCameraOrigins)
 	END_SHADER_PARAMETER_STRUCT()
 
@@ -312,15 +328,20 @@ void LumenScene::GPUDrivenUpdate(FRDGBuilder& GraphBuilder, const FScene* Scene,
 	AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(ReadbackBuffers.RemoveOps), 0);
 
 	{
-		TArray<FVector, TInlineAllocator<Lumen::MaxViews>> LumenSceneCameraOrigins;
+		TArray<FVector, TInlineAllocator<LUMEN_MAX_VIEWS>> LumenSceneCameraOrigins;
 		float CardMaxDistance = 0.0f;
 		float LumenSceneDetail = 0.0f;
+		bool bHasOrthographicView = false;
 
 		for (const FViewInfo& View : Views)
 		{
 			LumenSceneCameraOrigins.Add(Lumen::GetLumenSceneViewOrigin(View, Lumen::GetNumGlobalDFClipmaps(View) - 1));
 			CardMaxDistance = FMath::Max(CardMaxDistance, LumenScene::GetCardMaxDistance(View));
 			LumenSceneDetail = FMath::Max(LumenSceneDetail, FMath::Clamp<float>(View.FinalPostProcessSettings.LumenSceneDetail, .125f, 8.0f));
+			if (!bHasOrthographicView && !View.IsPerspectiveProjection())
+			{
+				bHasOrthographicView = true;
+			}
 		}
 
 		FLumenSceneUpdateCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FLumenSceneUpdateCS::FParameters>();
@@ -334,7 +355,7 @@ void LumenScene::GPUDrivenUpdate(FRDGBuilder& GraphBuilder, const FScene* Scene,
 		PassParameters->CardTexelDensity = LumenScene::GetCardTexelDensity();
 		PassParameters->FarFieldCardMaxDistanceSq = LumenScene::GetFarFieldCardMaxDistance() * LumenScene::GetFarFieldCardMaxDistance();
 		PassParameters->FarFieldCardTexelDensity = LumenScene::GetFarFieldCardTexelDensity();
-		PassParameters->MinCardResolution = FMath::Clamp(FMath::RoundToInt(LumenScene::GetCardMinResolution() / LumenSceneDetail), 1, 1024);
+		PassParameters->MinCardResolution = FMath::Clamp(FMath::RoundToInt(LumenScene::GetCardMinResolution(bHasOrthographicView) / LumenSceneDetail), 1, 1024);
 		for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ++ViewIndex)
 		{
 			PassParameters->WorldCameraOrigins[ViewIndex] = FVector4f((FVector3f)Views[ViewIndex].ViewMatrices.GetViewOrigin(), 0.0f);

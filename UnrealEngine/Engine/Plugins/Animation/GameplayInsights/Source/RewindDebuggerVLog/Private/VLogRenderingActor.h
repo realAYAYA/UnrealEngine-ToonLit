@@ -11,6 +11,8 @@
 *	Transient actor used to draw visual logger data on level
 */
 
+
+
 UCLASS(config = Engine, NotBlueprintable, Transient, notplaceable, AdvancedClassDisplay)
 class AVLogRenderingActor : public AVisualLoggerRenderingActorBase 
 {
@@ -21,7 +23,8 @@ public:
 	void AddLogEntry(const FVisualLogEntry& LogEntry);
 
 	virtual void IterateDebugShapes(TFunction<void(const FTimelineDebugShapes&) > Callback) override;
-
+	virtual bool MatchCategoryFilters(const FName& CategoryName, ELogVerbosity::Type Verbosity) const override;
+	
 private:
 	FTimelineDebugShapes DebugShapes;
 };

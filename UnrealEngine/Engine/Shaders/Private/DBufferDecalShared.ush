@@ -11,19 +11,26 @@
 #endif
 
 #if DBUFFER_BASEPASS_RESOURCE
-#define OpaqueBasePassDBufferATexture OpaqueBasePass.DBufferATexture
-#define OpaqueBasePassDBufferBTexture OpaqueBasePass.DBufferBTexture
-#define OpaqueBasePassDBufferCTexture OpaqueBasePass.DBufferCTexture
-#define OpaqueBasePassDBufferRenderMask OpaqueBasePass.DBufferRenderMask
+
+#if SHADING_PATH_MOBILE
+#define DBufferBasePass MobileBasePass
+#else
+#define DBufferBasePass OpaqueBasePass
+#endif
+
+#define OpaqueBasePassDBufferATexture DBufferBasePass.DBufferATexture
+#define OpaqueBasePassDBufferBTexture DBufferBasePass.DBufferBTexture
+#define OpaqueBasePassDBufferCTexture DBufferBasePass.DBufferCTexture
+#define OpaqueBasePassDBufferRenderMask DBufferBasePass.DBufferRenderMask
 
 #if SUPPORTS_INDEPENDENT_SAMPLERS
-#define OpaqueBasePassDBufferATextureSampler OpaqueBasePass.DBufferATextureSampler
-#define OpaqueBasePassDBufferBTextureSampler OpaqueBasePass.DBufferATextureSampler
-#define OpaqueBasePassDBufferCTextureSampler OpaqueBasePass.DBufferATextureSampler
+#define OpaqueBasePassDBufferATextureSampler DBufferBasePass.DBufferATextureSampler
+#define OpaqueBasePassDBufferBTextureSampler DBufferBasePass.DBufferATextureSampler
+#define OpaqueBasePassDBufferCTextureSampler DBufferBasePass.DBufferATextureSampler
 #else
-#define OpaqueBasePassDBufferATextureSampler OpaqueBasePass.DBufferATextureSampler
-#define OpaqueBasePassDBufferBTextureSampler OpaqueBasePass.DBufferBTextureSampler
-#define OpaqueBasePassDBufferCTextureSampler OpaqueBasePass.DBufferCTextureSampler
+#define OpaqueBasePassDBufferATextureSampler DBufferBasePass.DBufferATextureSampler
+#define OpaqueBasePassDBufferBTextureSampler DBufferBasePass.DBufferBTextureSampler
+#define OpaqueBasePassDBufferCTextureSampler DBufferBasePass.DBufferCTextureSampler
 #endif
 
 #endif // DBUFFER_BASEPASS_RESOURCE
@@ -58,7 +65,7 @@ uint GetDBufferTargetMask(uint2 PixelPos)
 }
 
 // all values that are output by the forward rendering pass
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 
 void ConvertFromMetalness(
 	in float3 BaseColor,
@@ -84,7 +91,7 @@ void ConvertToMetalness(
 }
 
 // @param BufferUV - UV space in the DBuffer textures
-FStrataDBuffer GetDBufferData(float2 BufferUV, uint RTMaskBit)
+FSubstrateDBuffer GetDBufferData(float2 BufferUV, uint RTMaskBit)
 {
 	// Setup default values, which mean that no decals are present in DBuffer
 	float4 DBufferA = float4(0.0, 0.0, 0.0, 1.0);
@@ -101,76 +108,76 @@ FStrataDBuffer GetDBufferData(float2 BufferUV, uint RTMaskBit)
 #elif USE_DBUFFER && RAYHITGROUPSHADER
 	BRANCH
 	if (RTMaskBit & 0x1) { DBufferA = CurrentPayloadDBufferA; }
-	BRANCH // StrataUnpackDBuffer expects DBufferB to have a specific scale and bias
+	BRANCH // SubstrateUnpackDBuffer expects DBufferB to have a specific scale and bias
 	if (RTMaskBit & 0x2) { DBufferB = float4(CurrentPayloadDBufferB.rgb * 0.5f + 128.0f / 255.0f, CurrentPayloadDBufferB.a); }
 	BRANCH
 	if (RTMaskBit & 0x4) { DBufferC = CurrentPayloadDBufferC; }
 #endif
-	return StrataUnpackDBuffer(DBufferA, DBufferB, DBufferC);
+	return SubstrateUnpackDBuffer(DBufferA, DBufferB, DBufferC);
 }
 
 
 // Define how DBuffer is applied onto existing layers:
 // * 0: Apply DBuffer as per-component parameter blending (legacy mode). Default. 
 // * 1: Apply DBuffer as a coating layer (using parameter blending for efficiency purpose). Not used for now
-#define STRATA_DBUFFER_LEGACY 0
-#define STRATA_DBUFFER_COATING 1
-#define STRATA_DBUFFER_BLENDING_MODE STRATA_DBUFFER_LEGACY
+#define SUBSTRATE_DBUFFER_LEGACY 0
+#define SUBSTRATE_DBUFFER_COATING 1
+#define SUBSTRATE_DBUFFER_BLENDING_MODE SUBSTRATE_DBUFFER_LEGACY
 
 // Define which DBuffers are valid to read from, for this material
-#define STRATA_DBUFFER_RESPONSE_BASECOLOR_BIT_OFFSET 0
-#define STRATA_DBUFFER_RESPONSE_NORMAL_BIT_OFFSET    1
-#define STRATA_DBUFFER_RESPONSE_ROUGHNESS_BIT_OFFSET 2
+#define SUBSTRATE_DBUFFER_RESPONSE_BASECOLOR_BIT_OFFSET 0
+#define SUBSTRATE_DBUFFER_RESPONSE_NORMAL_BIT_OFFSET    1
+#define SUBSTRATE_DBUFFER_RESPONSE_ROUGHNESS_BIT_OFFSET 2
 
-#define STRATA_DBUFFER_RESPONSE_BASECOLOR (MATERIALDECALRESPONSEMASK & (1<<STRATA_DBUFFER_RESPONSE_BASECOLOR_BIT_OFFSET))
-#define STRATA_DBUFFER_RESPONSE_NORMAL    (MATERIALDECALRESPONSEMASK & (1<<STRATA_DBUFFER_RESPONSE_NORMAL_BIT_OFFSET))
-#define STRATA_DBUFFER_RESPONSE_ROUGHNESS (MATERIALDECALRESPONSEMASK & (1<<STRATA_DBUFFER_RESPONSE_ROUGHNESS_BIT_OFFSET))
+#define SUBSTRATE_DBUFFER_RESPONSE_BASECOLOR (MATERIALDECALRESPONSEMASK & (1<<SUBSTRATE_DBUFFER_RESPONSE_BASECOLOR_BIT_OFFSET))
+#define SUBSTRATE_DBUFFER_RESPONSE_NORMAL    (MATERIALDECALRESPONSEMASK & (1<<SUBSTRATE_DBUFFER_RESPONSE_NORMAL_BIT_OFFSET))
+#define SUBSTRATE_DBUFFER_RESPONSE_ROUGHNESS (MATERIALDECALRESPONSEMASK & (1<<SUBSTRATE_DBUFFER_RESPONSE_ROUGHNESS_BIT_OFFSET))
 
-#if MATERIAL_IS_STRATA
-void ApplyDBufferData(in FStrataDBuffer StrataDBufferData, inout FStrataPixelHeader StrataPixelHeader, inout FStrataData StrataData)
+#if MATERIAL_IS_SUBSTRATE
+void ApplyDBufferData(in FSubstrateDBuffer SubstrateDBufferData, inout FSubstratePixelHeader SubstratePixelHeader, inout FSubstrateData SubstrateData)
 {
 	// We cannot early out due when coverage = 0 due to the possibility of using premultipled alpha.
 
 	// For normal, apply decal data onto all basis, without consideration of top layers
-	#if STRATA_DBUFFER_RESPONSE_NORMAL && STRATA_INLINE_SHADING
-	if(any(StrataDBufferData.WorldNormal != 0.0) || StrataDBufferData.OneMinusCoverage_WorldNormal < 1.0)
+	#if SUBSTRATE_DBUFFER_RESPONSE_NORMAL && SUBSTRATE_INLINE_SHADING
+	if(any(SubstrateDBufferData.WorldNormal != 0.0) || SubstrateDBufferData.OneMinusCoverage_WorldNormal < 1.0)
 	{
 		UNROLL
-		for (uint i = 0; i < StrataPixelHeader.SharedLocalBases.Count; ++i)
+		for (uint i = 0; i < SubstratePixelHeader.SharedLocalBases.Count; ++i)
 		{
 			// Note:
 			// * Assume Normal is already been normalized
 			// * After modification we normalize the normal to get smoother visual result (it helps to avoid having D_GGX explodes toward infinity)
 			// 
-			// STRATA_TODO: 
+			// SUBSTRATE_TODO: 
 			// * If the normal is shared by different layers on which decals would be applied differently (e.g., one affected, not the other), we 
 			//   would need to add a new normal entry and modify it. 
 			// * If the basis has a tangent, the average operation should be changed into a basis sler/rotation
-			StrataPixelHeader.SharedLocalBases.Normals[i] = normalize(StrataPixelHeader.SharedLocalBases.Normals[i] * StrataDBufferData.OneMinusCoverage_WorldNormal + StrataDBufferData.WorldNormal);
-			//if (StrataGetSharedLocalBasisType(StrataPixelHeader.SharedLocalBases.Types, i) == STRATA_BASIS_TYPE_TANGENT)
+			SubstratePixelHeader.SharedLocalBases.Normals[i] = normalize(SubstratePixelHeader.SharedLocalBases.Normals[i] * SubstrateDBufferData.OneMinusCoverage_WorldNormal + SubstrateDBufferData.WorldNormal);
+			//if (SubstrateGetSharedLocalBasisType(SubstratePixelHeader.SharedLocalBases.Types, i) == SUBSTRATE_BASIS_TYPE_TANGENT)
 			//{
-			//	StrataPixelHeader.SharedLocalBases.Tangents[i] = normalize(StrataPixelHeader.SharedLocalBases.Tangents[i]);
+			//	SubstratePixelHeader.SharedLocalBases.Tangents[i] = normalize(SubstratePixelHeader.SharedLocalBases.Tangents[i]);
 			//}
 		}
 	}
 	#endif
 
-	const bool bAffectDiffuse = any(StrataDBufferData.BaseColor > 0) || StrataDBufferData.OneMinusCoverage_BaseColor < 1.0;
-	const bool bAffectF0Rough = any(StrataDBufferData.Metallic > 0) || any(StrataDBufferData.Specular > 0) || any(StrataDBufferData.Roughness > 0) || StrataDBufferData.OneMinusCoverage_Roughness < 1.0;
+	const bool bAffectDiffuse = any(SubstrateDBufferData.BaseColor > 0) || SubstrateDBufferData.OneMinusCoverage_BaseColor < 1.0;
+	const bool bAffectF0Rough = any(SubstrateDBufferData.Metallic > 0) || any(SubstrateDBufferData.Specular > 0) || any(SubstrateDBufferData.Roughness > 0) || SubstrateDBufferData.OneMinusCoverage_Roughness < 1.0;
 	if (!bAffectDiffuse && !bAffectF0Rough)
 	{
 		return;
 	}
 
 	// For now apply decal data onto all layers, without consideration of top layers
-	STRATA_UNROLL_N(STRATA_CLAMPED_BSDF_COUNT)
-	for (int BSDFIdx = 0; BSDFIdx < StrataPixelHeader.StrataTree.BSDFCount; ++BSDFIdx)
+	SUBSTRATE_UNROLL_N(SUBSTRATE_CLAMPED_CLOSURE_COUNT)
+	for (int BSDFIdx = 0; BSDFIdx < SubstratePixelHeader.SubstrateTree.BSDFCount; ++BSDFIdx)
 	{
-	#define BSDF StrataPixelHeader.StrataTree.BSDFs[BSDFIdx]
+	#define BSDF SubstratePixelHeader.SubstrateTree.BSDFs[BSDFIdx]
 
 		switch (BSDF_GETTYPE(BSDF))
 		{
-			case STRATA_BSDF_TYPE_SLAB:
+			case SUBSTRATE_BSDF_TYPE_SLAB:
 			{	
 				// Note:
 				// * For Slab, since the DBuffer is stored with a Metalness parameterization for storage-space reason, 
@@ -181,49 +188,49 @@ void ApplyDBufferData(in FStrataDBuffer StrataDBufferData, inout FStrataPixelHea
 				//   but at least the null operation is identity and no more transition edges are visible.
 					
 				// Apply DBuffer as per-component parameter blending (legacy mode)
-				#if STRATA_DBUFFER_BLENDING_MODE == STRATA_DBUFFER_LEGACY
+				#if SUBSTRATE_DBUFFER_BLENDING_MODE == SUBSTRATE_DBUFFER_LEGACY
 				{
 					// The original metallic, before the decal touched the slab.
 					// We use MIN on F0 to nor remove too much energy when metallic is lowered and have smoother metallic gradient with low F0.
 					float SlabMetallic = F0ToMetallic(min(SLAB_F0(BSDF).r, min(SLAB_F0(BSDF).g, SLAB_F0(BSDF).b)));
 
-				#if STRATA_DBUFFER_RESPONSE_BASECOLOR || STRATA_DBUFFER_RESPONSE_ROUGHNESS
+				#if SUBSTRATE_DBUFFER_RESPONSE_BASECOLOR || SUBSTRATE_DBUFFER_RESPONSE_ROUGHNESS
 					float3 DecalDiffuse;
 					float3 DecalF0;
-					ConvertFromMetalness(StrataDBufferData.BaseColor, StrataDBufferData.Specular, StrataDBufferData.Metallic, DecalDiffuse, DecalF0);
+					ConvertFromMetalness(SubstrateDBufferData.BaseColor, SubstrateDBufferData.Specular, SubstrateDBufferData.Metallic, DecalDiffuse, DecalF0);
 
 					if (bAffectDiffuse || bAffectF0Rough)
 					{
 						// Affect F0 if basecolor or metallic are changed.
-						SLAB_F0(BSDF) = SLAB_F0(BSDF) * StrataDBufferData.OneMinusCoverage_BaseColor + DecalF0;
+						SLAB_F0(BSDF) = SLAB_F0(BSDF) * SubstrateDBufferData.OneMinusCoverage_BaseColor + DecalF0;
 					}
 				#endif
 
-				#if STRATA_DBUFFER_RESPONSE_BASECOLOR
+				#if SUBSTRATE_DBUFFER_RESPONSE_BASECOLOR
 					if (bAffectDiffuse)
 					{
 						// Diffuse albedo is affected by throughpu and decal diffuse contribution
-						SLAB_DIFFUSEALBEDO(BSDF) = SLAB_DIFFUSEALBEDO(BSDF) * StrataDBufferData.OneMinusCoverage_BaseColor	+ DecalDiffuse;
+						SLAB_DIFFUSEALBEDO(BSDF) = SLAB_DIFFUSEALBEDO(BSDF) * SubstrateDBufferData.OneMinusCoverage_BaseColor	+ DecalDiffuse;
 
 						// Fade out fuzz to avoid overbright decal.
-						SLAB_FUZZ_AMOUNT(BSDF) *= StrataDBufferData.OneMinusCoverage_BaseColor;
+						SLAB_FUZZ_AMOUNT(BSDF) *= SubstrateDBufferData.OneMinusCoverage_BaseColor;
 
 						// Disable SSS when the coverage reach one to preserve the decal color. 
 						// That operation also progressively makes non top layer disapear.
-						// Since this is ran before the strata tree is processed, we must use TmpMFP and not SLAB_SSSMFP.
-						BSDF.TmpMFP = BSDF.TmpMFP * StrataDBufferData.OneMinusCoverage_BaseColor;
-						if (StrataDBufferData.OneMinusCoverage_BaseColor == 0.0f)
+						// Since this is ran before the Substrate tree is processed, we must use TmpMFP and not SLAB_SSSMFP.
+						BSDF.TmpMFP = BSDF.TmpMFP * SubstrateDBufferData.OneMinusCoverage_BaseColor;
+						if (SubstrateDBufferData.OneMinusCoverage_BaseColor == 0.0f)
 						{
 							BSDF_SETSSSTYPE(BSDF, SSS_TYPE_INVALID);
 						}
 					}
 				#endif
 
-				#if STRATA_DBUFFER_RESPONSE_ROUGHNESS
+				#if SUBSTRATE_DBUFFER_RESPONSE_ROUGHNESS
 					if (bAffectF0Rough)
 					{
 						// Now also operate a change to reflect the change of metallic
-						float NewMetallic = SlabMetallic * StrataDBufferData.OneMinusCoverage_Roughness + StrataDBufferData.Metallic;
+						float NewMetallic = SlabMetallic * SubstrateDBufferData.OneMinusCoverage_Roughness + SubstrateDBufferData.Metallic;
 						
 						if (NewMetallic >= SlabMetallic)
 						{
@@ -243,90 +250,90 @@ void ApplyDBufferData(in FStrataDBuffer StrataDBufferData, inout FStrataPixelHea
 							SLAB_F0(BSDF)			-= TransferDelta * F0ThatCanTransfer;
 						}
 					
-						SLAB_ROUGHNESS(BSDF)	= SLAB_ROUGHNESS(BSDF) * StrataDBufferData.OneMinusCoverage_Roughness + StrataDBufferData.Roughness;
+						SLAB_ROUGHNESS(BSDF)	= SLAB_ROUGHNESS(BSDF) * SubstrateDBufferData.OneMinusCoverage_Roughness + SubstrateDBufferData.Roughness;
 					
 						// Also fade out other specular features since we consider decal to have not specular features.
 						if (BSDF_GETHASHAZINESS(BSDF))
 						{
 							FHaziness Haziness = UnpackHaziness(SLAB_HAZINESS(BSDF));
-							Haziness.Weight *= StrataDBufferData.OneMinusCoverage_Roughness;
+							Haziness.Weight *= SubstrateDBufferData.OneMinusCoverage_Roughness;
 							SLAB_HAZINESS(BSDF) = PackHaziness(Haziness);
 						}
 					
-						SLAB_ANISOTROPY(BSDF) *= StrataDBufferData.OneMinusCoverage_Roughness;
+						SLAB_ANISOTROPY(BSDF) *= SubstrateDBufferData.OneMinusCoverage_Roughness;
 					}
 				#endif
 				}
 				// Apply DBuffer as a coating layer (using parameter blending for efficiency purpose)
-				#elif STRATA_DBUFFER_BLENDING_MODE == STRATA_DBUFFER_COATING
+				#elif SUBSTRATE_DBUFFER_BLENDING_MODE == SUBSTRATE_DBUFFER_COATING
 				{
 					// Since all DBuffer parameters are not necessary initialized, take default value from the existing BDSF
-					FStrataDBuffer LocalStrataDBufferData = StrataDBufferData;
+					FSubstrateDBuffer LocalSubstrateDBufferData = SubstrateDBufferData;
 					{
 						float3 SlabBaseColor = 0;
 						float  SlabMetallic = 0;
 						float  SlabSpecular = 0;
 						ConvertToMetalness(SLAB_DIFFUSEALBEDO(BSDF), SLAB_F0(BSDF), SlabBaseColor, SlabSpecular, SlabMetallic);
-					#if !STRATA_DBUFFER_RESPONSE_BASECOLOR
-						LocalStrataDBufferData.BaseColor					= LocalStrataDBufferData.Coverage * SlabBaseColor;
-						LocalStrataDBufferData.OneMinusCoverage_BaseColor	= LocalStrataDBufferData.OneMinusCoverage;
+					#if !SUBSTRATE_DBUFFER_RESPONSE_BASECOLOR
+						LocalSubstrateDBufferData.BaseColor					= LocalSubstrateDBufferData.Coverage * SlabBaseColor;
+						LocalSubstrateDBufferData.OneMinusCoverage_BaseColor	= LocalSubstrateDBufferData.OneMinusCoverage;
 					#endif
-					#if !STRATA_DBUFFER_RESPONSE_ROUGHNESS
-						LocalStrataDBufferData.Metallic						= LocalStrataDBufferData.Coverage * SlabMetallic;
-						LocalStrataDBufferData.Specular						= LocalStrataDBufferData.Coverage * SlabSpecular;
-						LocalStrataDBufferData.Roughness					= LocalStrataDBufferData.Coverage * SLAB_ROUGHNESS(BSDF);
-						LocalStrataDBufferData.OneMinusCoverage_Roughness	= LocalStrataDBufferData.OneMinusCoverage;
+					#if !SUBSTRATE_DBUFFER_RESPONSE_ROUGHNESS
+						LocalSubstrateDBufferData.Metallic						= LocalSubstrateDBufferData.Coverage * SlabMetallic;
+						LocalSubstrateDBufferData.Specular						= LocalSubstrateDBufferData.Coverage * SlabSpecular;
+						LocalSubstrateDBufferData.Roughness					= LocalSubstrateDBufferData.Coverage * SLAB_ROUGHNESS(BSDF);
+						LocalSubstrateDBufferData.OneMinusCoverage_Roughness	= LocalSubstrateDBufferData.OneMinusCoverage;
 					#endif
 					}
 
-					FStrataPixelHeader StrataDecalHeader;
-					FStrataData StrataDecalData;
-					StrataDecalHeader.StrataConvertFromDBuffer(LocalStrataDBufferData, StrataDecalData);
+					FSubstratePixelHeader SubstrateDecalHeader;
+					FSubstrateData SubstrateDecalData;
+					SubstrateDecalHeader.SubstrateConvertFromDBuffer(LocalSubstrateDBufferData, SubstrateDecalData);
 
 					// Parameters blend attributes
-					const float Coverage = StrataDecalData.Layers[l].BSDFs[i].Coverage;
+					const float Coverage = SubstrateDecalData.Layers[l].BSDFs[i].Coverage;
 					const float DummyNoV = 1;
-					BSDF = StrataVerticalLayeringParameterBlending(StrataDecalData.Layers[l].BSDFs[i], BSDF, BasisIndex, DummyNoV);
+					BSDF = SubstrateVerticalLayeringParameterBlending(SubstrateDecalData.Layers[l].BSDFs[i], BSDF, BasisIndex, DummyNoV);
 				}
-				#endif // STRATA_DBUFFER_BLENDING_MODE
+				#endif // SUBSTRATE_DBUFFER_BLENDING_MODE
 				break;
 			}
 
-			case STRATA_BSDF_TYPE_HAIR:
+			case SUBSTRATE_BSDF_TYPE_HAIR:
 			{
-			#if STRATA_DBUFFER_RESPONSE_BASECOLOR
-				HAIR_BASECOLOR(BSDF) = HAIR_BASECOLOR(BSDF) * StrataDBufferData.OneMinusCoverage_BaseColor + StrataDBufferData.BaseColor;
+			#if SUBSTRATE_DBUFFER_RESPONSE_BASECOLOR
+				HAIR_BASECOLOR(BSDF) = HAIR_BASECOLOR(BSDF) * SubstrateDBufferData.OneMinusCoverage_BaseColor + SubstrateDBufferData.BaseColor;
 			#endif
 
-			#if STRATA_DBUFFER_RESPONSE_ROUGHNESS
-				HAIR_ROUGHNESS(BSDF) = HAIR_ROUGHNESS(BSDF) * StrataDBufferData.OneMinusCoverage_Roughness + StrataDBufferData.Roughness;
-				HAIR_SPECULAR(BSDF)  = HAIR_SPECULAR(BSDF)  * StrataDBufferData.OneMinusCoverage_Roughness + StrataDBufferData.Specular;
-			#endif
-				break;
-			}
-
-			case STRATA_BSDF_TYPE_EYE:
-			{
-			#if STRATA_DBUFFER_RESPONSE_BASECOLOR
-				EYE_DIFFUSEALBEDO(BSDF) = EYE_DIFFUSEALBEDO(BSDF) * StrataDBufferData.OneMinusCoverage_BaseColor + StrataDBufferData.BaseColor;
-			#endif
-
-			#if STRATA_DBUFFER_RESPONSE_ROUGHNESS
-				EYE_ROUGHNESS(BSDF) = EYE_ROUGHNESS(BSDF) * StrataDBufferData.OneMinusCoverage_Roughness + StrataDBufferData.Roughness;
+			#if SUBSTRATE_DBUFFER_RESPONSE_ROUGHNESS
+				HAIR_ROUGHNESS(BSDF) = HAIR_ROUGHNESS(BSDF) * SubstrateDBufferData.OneMinusCoverage_Roughness + SubstrateDBufferData.Roughness;
+				HAIR_SPECULAR(BSDF)  = HAIR_SPECULAR(BSDF)  * SubstrateDBufferData.OneMinusCoverage_Roughness + SubstrateDBufferData.Specular;
 			#endif
 				break;
 			}
 
-			case STRATA_BSDF_TYPE_SINGLELAYERWATER:
+			case SUBSTRATE_BSDF_TYPE_EYE:
 			{
-			#if STRATA_DBUFFER_RESPONSE_BASECOLOR
-				SLW_BASECOLOR(BSDF) = SLW_BASECOLOR(BSDF) * StrataDBufferData.OneMinusCoverage_BaseColor + StrataDBufferData.BaseColor;
+			#if SUBSTRATE_DBUFFER_RESPONSE_BASECOLOR
+				EYE_DIFFUSEALBEDO(BSDF) = EYE_DIFFUSEALBEDO(BSDF) * SubstrateDBufferData.OneMinusCoverage_BaseColor + SubstrateDBufferData.BaseColor;
 			#endif
 
-			#if STRATA_DBUFFER_RESPONSE_ROUGHNESS
-				SLW_ROUGHNESS(BSDF) = SLW_ROUGHNESS(BSDF) * StrataDBufferData.OneMinusCoverage_Roughness + StrataDBufferData.Roughness;
-				SLW_SPECULAR(BSDF)  = SLW_SPECULAR(BSDF)  * StrataDBufferData.OneMinusCoverage_Roughness + StrataDBufferData.Specular;
-				SLW_METALLIC(BSDF)  = SLW_METALLIC(BSDF)  * StrataDBufferData.OneMinusCoverage_Roughness + StrataDBufferData.Metallic;
+			#if SUBSTRATE_DBUFFER_RESPONSE_ROUGHNESS
+				EYE_ROUGHNESS(BSDF) = EYE_ROUGHNESS(BSDF) * SubstrateDBufferData.OneMinusCoverage_Roughness + SubstrateDBufferData.Roughness;
+			#endif
+				break;
+			}
+
+			case SUBSTRATE_BSDF_TYPE_SINGLELAYERWATER:
+			{
+			#if SUBSTRATE_DBUFFER_RESPONSE_BASECOLOR
+				SLW_BASECOLOR(BSDF) = SLW_BASECOLOR(BSDF) * SubstrateDBufferData.OneMinusCoverage_BaseColor + SubstrateDBufferData.BaseColor;
+			#endif
+
+			#if SUBSTRATE_DBUFFER_RESPONSE_ROUGHNESS
+				SLW_ROUGHNESS(BSDF) = SLW_ROUGHNESS(BSDF) * SubstrateDBufferData.OneMinusCoverage_Roughness + SubstrateDBufferData.Roughness;
+				SLW_SPECULAR(BSDF)  = SLW_SPECULAR(BSDF)  * SubstrateDBufferData.OneMinusCoverage_Roughness + SubstrateDBufferData.Specular;
+				SLW_METALLIC(BSDF)  = SLW_METALLIC(BSDF)  * SubstrateDBufferData.OneMinusCoverage_Roughness + SubstrateDBufferData.Metallic;
 			#endif
 				break;
 			}
@@ -335,8 +342,8 @@ void ApplyDBufferData(in FStrataDBuffer StrataDBufferData, inout FStrataPixelHea
 	#undef BSDF
 	}
 }
-#endif // MATERIAL_IS_STRATA
-#else // STRATA_ENABLED
+#endif // MATERIAL_IS_SUBSTRATE
+#else // SUBSTRATE_ENABLED
 struct FDBufferData
 {
 	// 0..1, premultiplied with ColorOpacity
@@ -413,19 +420,19 @@ FDBufferData GetDBufferData(float2 BufferUV, uint RTMaskBit)
 	BRANCH
 	if (RTMaskBit & 0x1)
 	{
-		DBufferA = Texture2DSampleLevel(OpaqueBasePass.DBufferATexture, OpaqueBasePassDBufferATextureSampler, BufferUV, 0);
+		DBufferA = Texture2DSampleLevel(OpaqueBasePassDBufferATexture, OpaqueBasePassDBufferATextureSampler, BufferUV, 0);
 	}
 
 	BRANCH
 	if (RTMaskBit & 0x2)
 	{
-		DBufferB = Texture2DSampleLevel(OpaqueBasePass.DBufferBTexture, OpaqueBasePassDBufferBTextureSampler, BufferUV, 0);
+		DBufferB = Texture2DSampleLevel(OpaqueBasePassDBufferBTexture, OpaqueBasePassDBufferBTextureSampler, BufferUV, 0);
 	}
 
 	BRANCH
 	if (RTMaskBit & 0x4)
 	{
-		DBufferC = Texture2DSampleLevel(OpaqueBasePass.DBufferCTexture, OpaqueBasePassDBufferCTextureSampler, BufferUV, 0);
+		DBufferC = Texture2DSampleLevel(OpaqueBasePassDBufferCTexture, OpaqueBasePassDBufferCTextureSampler, BufferUV, 0);
 	}
 #elif USE_DBUFFER && RAYHITGROUPSHADER
 	BRANCH
@@ -472,4 +479,4 @@ void ApplyDBufferData(
 	Specular = Specular * DBufferData.RoughnessOpacity + DBufferData.PreMulSpecular;
 #endif
 }
-#endif // STRATA_ENABLED
+#endif // SUBSTRATE_ENABLED

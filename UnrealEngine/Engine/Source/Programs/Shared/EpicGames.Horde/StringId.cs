@@ -23,12 +23,17 @@ namespace EpicGames.Horde
 		/// Enum used to disable validation on string arguments
 		/// </summary>
 		public enum Validate
-		{ 
+		{
 			/// <summary>
 			/// No validation required
 			/// </summary>
 			None,
 		};
+
+		/// <summary>
+		/// Maximum length for a string id
+		/// </summary>
+		public const int MaxLength = 64;
 
 		/// <summary>
 		/// The text representing this id
@@ -44,6 +49,15 @@ namespace EpicGames.Horde
 		/// Accessor for the string bytes
 		/// </summary>
 		public ReadOnlyMemory<byte> Memory => Text.Memory;
+
+		/// <summary>
+		/// Constructor
+		/// </summary>
+		/// <param name="text">Unique id for the string</param>
+		public StringId(string text)
+			: this(new Utf8String(text))
+		{
+		}
 
 		/// <summary>
 		/// Constructor
@@ -98,7 +112,7 @@ namespace EpicGames.Horde
 			{
 				result.Remove(result.Length - 1, 1);
 			}
-			return new StringId(result.ToString(), Validate.None);
+			return new StringId(new Utf8String(result.ToString()), Validate.None);
 		}
 
 		/// <summary>
@@ -109,15 +123,19 @@ namespace EpicGames.Horde
 		/// <returns></returns>
 		public static Utf8String ValidateArgument(Utf8String text, string paramName)
 		{
-			const int MaxLength = 64;
 			if (text.Length > MaxLength)
 			{
 				throw new ArgumentException($"String id may not be longer than {MaxLength} characters", paramName);
 			}
 
+			if (text.Length > 0 && (text[0] == '.' || text[^1] == '.'))
+			{
+				throw new ArgumentException($"'{text}' is not a valid string id (cannot start or end with a period)");
+			}
+
 			for (int idx = 0; idx < text.Length; idx++)
 			{
-				char character = (char)text[idx];
+				byte character = text[idx];
 				if (!IsValidCharacter(character))
 				{
 					if (character >= 'A' && character <= 'Z')
@@ -126,7 +144,7 @@ namespace EpicGames.Horde
 					}
 					else
 					{
-						throw new ArgumentException($"{text} is not a valid string id", paramName);
+						throw new ArgumentException($"'{text}' is not a valid string id (character '{(char)character}' is not allowed)", paramName);
 					}
 				}
 			}
@@ -159,7 +177,14 @@ namespace EpicGames.Horde
 		/// </summary>
 		/// <param name="character">The character to check</param>
 		/// <returns>True if the character is valid</returns>
-		static bool IsValidCharacter(char character)
+		public static bool IsValidCharacter(char character) => character <= 0x7f && IsValidCharacter((byte)character);
+
+		/// <summary>
+		/// Checks whether the given character is valid within a string id
+		/// </summary>
+		/// <param name="character">The character to check</param>
+		/// <returns>True if the character is valid</returns>
+		public static bool IsValidCharacter(byte character)
 		{
 			if (character >= 'a' && character <= 'z')
 			{
@@ -187,7 +212,7 @@ namespace EpicGames.Horde
 
 		/// <inheritdoc/>
 		public bool Equals(string? other) => other != null && Equals(other.AsMemory());
-	
+
 		/// <inheritdoc/>
 		public bool Equals(ReadOnlyMemory<char> other)
 		{

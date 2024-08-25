@@ -23,6 +23,16 @@
 		{
 			"Name": "VariantManagerContent",
 			"Enabled": true
+		},
+		{
+			"Name": "Interchange",
+			"Enabled": true,
+			"Optional": true,
+			"SupportedTargetPlatforms": [
+				"Win64",
+				"Linux",
+				"Mac"
+			]
 		}
 	]
 }

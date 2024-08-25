@@ -150,7 +150,10 @@ struct FMapErrors
 	static CORE_API FLazyName StaticComponentHasInvalidLightmapSettings;
    
 	/** Component is a using CastVolumetricTranslucentShadow but this feature is disabled for the project! Turn on r.Shadow.TranslucentPerObject.ProjectEnabled in a project ini if required. */
-	static CORE_API FLazyName PrimitiveComponentHasInvalidTranslucentShadowSetting;
+	static CORE_API FLazyName PrimitiveComponentHasInvalidTranslucentShadowSetting;	
+	
+	/** bUseFauxOrthoViewPos has been deprecated. Property will be lost on re-save. */
+	static CORE_API FLazyName UseFauxOrthoViewPosDeprecation_Warning;
 
 	/** Navigation */
 

@@ -115,6 +115,11 @@ namespace Electra
 				return &StringToIterate[Index];
 			}
 
+			int32 GetRemainingLength() const
+			{
+				return StringToIterate.Len() - Index;
+			}
+
 			/** Returns an index to the current element. */
 			int32 GetIndex() const
 			{

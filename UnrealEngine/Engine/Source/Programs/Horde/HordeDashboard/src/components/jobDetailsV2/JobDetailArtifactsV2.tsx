@@ -1,14 +1,14 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-import { Stack, Text, IColumn, mergeStyleSets, Icon, DetailsList, Selection, SelectionMode, DetailsListLayoutMode, ScrollablePane, ScrollbarVisibility, StickyPositionType, IDetailsListProps, IDetailsHeaderStyles, Sticky, DetailsHeader, PrimaryButton, SpinnerSize, Spinner, Link, TextField } from '@fluentui/react';
-import React, { useEffect, useState } from 'react';
-import { ArtifactData, GetArtifactResponse, GetArtifactZipRequest } from '../../backend/Api';
-import { hordeClasses } from '../../styles/Styles';
+import { DetailsHeader, DetailsList, DetailsListLayoutMode, IColumn, IDetailsHeaderStyles, IDetailsListProps, Icon, Link, PrimaryButton, ScrollablePane, ScrollbarVisibility, Selection, SelectionMode, Spinner, SpinnerSize, Stack, Sticky, StickyPositionType, Text, TextField, mergeStyleSets } from '@fluentui/react';
+import { action, makeObservable, observable } from 'mobx';
 import { observer } from 'mobx-react-lite';
-import { observable, action, makeObservable } from 'mobx';
+import React, { useEffect, useState } from 'react';
 import backend from '../../backend';
-import { JobDataView, JobDetailsV2 } from './JobDetailsViewCommon';
+import { ArtifactData, GetArtifactResponse, GetArtifactZipRequest } from '../../backend/Api';
 import { ISideRailLink } from '../../base/components/SideRail';
+import { getHordeStyling } from '../../styles/Styles';
+import { JobDataView, JobDetailsV2 } from './JobDetailsViewCommon';
 
 const sideRail: ISideRailLink = { text: "Artifacts", url: "rail_artifacts" };
 
@@ -181,7 +181,7 @@ class ArtifactsDataView extends JobDataView {
       }).catch((reason) => {
          console.log(`Error getting artifacts jobId: ${details.jobId} stepId: ${this.stepId} error: ${reason}`);
       }).finally(() => {
-         this.initialize(this.artifacts?.length ? [sideRail] : undefined)
+         this.initialize((this.artifacts?.length && !details.jobData?.useArtifactsV2) ? [sideRail] : undefined)
       });
 
    }
@@ -215,6 +215,7 @@ export const JobDetailArtifactsV2: React.FC<{ jobDetails: JobDetailsV2; stepId: 
    const dataView = jobDetails.getDataView<ArtifactsDataView>("ArtifactsDataView");
 
    const [state, setState] = useState<{ filter?: string }>({});
+   const { hordeClasses } = getHordeStyling();
 
    useEffect(() => {
       return () => {
@@ -223,10 +224,17 @@ export const JobDetailArtifactsV2: React.FC<{ jobDetails: JobDetailsV2; stepId: 
    }, [dataView]);
 
    dataView.subscribe();
-
    dataView.set(stepId);
 
-   if (!dataView.artifacts?.length || !jobDetails?.viewsReady) {
+   if (!jobDetails.viewReady(dataView.order)) {
+      return null;
+   }
+
+   if (jobDetails.jobData?.useArtifactsV2) {
+      return null;
+   }
+
+   if (!dataView.artifacts?.length) {
       return null;
    }
 
@@ -295,7 +303,7 @@ export const JobDetailArtifactsV2: React.FC<{ jobDetails: JobDetailsV2; stepId: 
 
                            const filter = newValue ? newValue : undefined;
                            if (filter !== state.filter) {
-                              setState({...state, filter: filter});
+                              setState({ ...state, filter: filter });
                            }
 
                            return undefined;

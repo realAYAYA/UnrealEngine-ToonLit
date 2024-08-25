@@ -49,8 +49,11 @@ namespace Audio
 		// Processes a single frame of audio
 		SIGNALPROCESSING_API void ProcessAudioFrame(const float* InFrame, float* OutFrame);
 
-		// Process a buffer of audio
+		// Process a mono buffer or an interleaved buffer of multichannel audio
 		SIGNALPROCESSING_API void ProcessAudio(const float* InBuffer, const int32 InNumSamples, float* OutBuffer);
+
+		// Process a non-interleaved buffer of multichannel audio
+		SIGNALPROCESSING_API void ProcessAudio(const float* const* InBuffers, const int32 InNumSamples, float* const* OutBuffers);
 
 		// Sets all filter parameters with one function
 		SIGNALPROCESSING_API void SetParams(const EBiquadFilter::Type InFilterType, const float InCutoffFrequency, const float InBandwidth, const float InGainDB);
@@ -164,8 +167,11 @@ namespace Audio
 			ProcessAudio(InFrame, NumChannels, OutFrame);
 		}
 
-		// Process an audio buffer.
+		// Process a mono buffer or an interleaved buffer of multichannel audio
 		virtual void ProcessAudio(const float* InBuffer, const int32 InNumSamples, float* OutBuffer) = 0;
+
+		// Process a non-interleaved buffer of multichannel audio
+		virtual void ProcessAudio(const float* const* InBuffers, const int32 InNumSamples, float* const* OutBuffers) = 0;
 
 		// Filter patch destinations
 		FPatchDestination GetModDestCutoffFrequency() const { return ModCutoffFrequencyDest; }
@@ -238,7 +244,10 @@ namespace Audio
 		SIGNALPROCESSING_API virtual void Reset() override;
 		SIGNALPROCESSING_API virtual void Update() override;
 		SIGNALPROCESSING_API virtual void ProcessAudioFrame(const float* InFrame, float* OutFrame) override;
+		// Process a mono buffer or an interleaved buffer of multichannel audio
 		SIGNALPROCESSING_API virtual void ProcessAudio(const float* InSamples, const int32 InNumSamples, float* OutSamples) override;
+		// Process a non-interleaved buffer of multichannel audio
+		SIGNALPROCESSING_API virtual void ProcessAudio(const float* const* InBuffers, const int32 InNumSamples, float* const* OutBuffers) override;
 
 		void SetCoefficient(const float InCoefficient) { A0 = InCoefficient; }
 		float GetCoefficient() const { return A0; }
@@ -260,10 +269,17 @@ namespace Audio
 		SIGNALPROCESSING_API virtual void SetBandStopControl(const float InBandStop) override;
 		SIGNALPROCESSING_API virtual void Reset() override;
 		SIGNALPROCESSING_API virtual void Update() override;
+		// Process a mono buffer or an interleaved buffer of multichannel audio
 		SIGNALPROCESSING_API virtual void ProcessAudio(const float* InSamples, const int32 InNumSamples, float* OutSamples) override;
+		// Process a non-interleaved buffer of multichannel audio
+		SIGNALPROCESSING_API virtual void ProcessAudio(const float* const* InBuffers, const int32 InNumSamples, float* const* OutBuffers) override;
 
-		SIGNALPROCESSING_API void ProcessAudio(const float* InSamples, const int32 InNumSamples
-			, float* LpfOutput, float* HpfOutput, float* BpfOutput, float* BsfOutput);
+		// Process a mono buffer or an interleaved buffer of multichannel audio
+		SIGNALPROCESSING_API void ProcessAudio(const float* InSamples, const int32 InNumSamples,
+			float* LpfOutput, float* HpfOutput, float* BpfOutput, float* BsfOutput);
+		// Process a non-interleaved buffer of multichannel audio
+		SIGNALPROCESSING_API void ProcessAudio(const float* const* InBuffers, const int32 InNumSamples,
+			float* const* LpfOutBuffers, float* const* HpfOutBuffers, float* const* BpfOutBuffers, float* const* BsfOutBuffers);
 
 	protected:
 		float InputScale;
@@ -297,7 +313,11 @@ namespace Audio
 		SIGNALPROCESSING_API virtual void SetQ(const float InQ) override;
 		SIGNALPROCESSING_API virtual void SetPassBandGainCompensation(const float InPassBandGainCompensation) override;
 
+		// Process a mono buffer or an interleaved buffer of multichannel audio
 		SIGNALPROCESSING_API virtual void ProcessAudio(const float* InSamples, const int32 InNumSamples, float* OutSamples) override;
+
+		// Process a non-interleaved buffer of multichannel audio
+		SIGNALPROCESSING_API virtual void ProcessAudio(const float* const* InBuffers, const int32 InNumSamples, float* const* OutBuffers) override;
 
 
 	protected:

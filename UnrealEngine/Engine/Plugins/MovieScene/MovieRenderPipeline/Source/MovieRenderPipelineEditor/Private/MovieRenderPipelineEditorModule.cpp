@@ -144,10 +144,13 @@ class FMovieRenderPipelineRenderer : public IMovieRendererInterface
 			UMoviePipelineEditorBlueprintLibrary::EnsureJobHasDefaultSettings(ActiveJob);
 		}
 
-		TArray<FString> ShotNames;
+		TArray<FString> SequenceNames;
 		for (UMovieSceneCinematicShotSection* ShotSection : InSections)
 		{
-			ShotNames.Add(ShotSection->GetShotDisplayName());
+			if (ShotSection && ShotSection->GetSequence())
+			{
+				SequenceNames.Add(ShotSection->GetSequence()->GetName());
+			}
 		}
 
 		if (!GEditor->IsTransactionActive())
@@ -162,7 +165,22 @@ class FMovieRenderPipelineRenderer : public IMovieRendererInterface
 			// If no specified shots, enabled them all
 			if (Shot)
 			{
-				Shot->bEnabled = ShotNames.Num() == 0 ? true : ShotNames.Contains(Shot->OuterName);
+				if (SequenceNames.Num() == 0)
+				{
+					Shot->bEnabled = true;
+				}
+				else
+				{
+					Shot->bEnabled = false;
+					for (const FString& SequenceName : SequenceNames)
+					{
+						if (Shot->OuterName.Contains(SequenceName))
+						{
+							Shot->bEnabled = true;
+							break;
+						}
+					}
+				}
 			}
 		}
 
@@ -202,10 +220,13 @@ void FMovieRenderPipelineEditorModule::RegisterTypeCustomizations()
 
 void FMovieRenderPipelineEditorModule::UnregisterTypeCustomizations()
 {
-	FPropertyEditorModule* PropertyModule = FModuleManager::GetModulePtr<FPropertyEditorModule>("PropertyEditor");
-	if (PropertyModule)
+	if (UObjectInitialized())
 	{
-		PropertyModule->UnregisterCustomPropertyTypeLayout(FMoviePipelineConsoleVariableEntry::StaticStruct()->GetFName());
+		FPropertyEditorModule* PropertyModule = FModuleManager::GetModulePtr<FPropertyEditorModule>("PropertyEditor");
+		if (PropertyModule)
+		{
+			PropertyModule->UnregisterCustomPropertyTypeLayout(FMoviePipelineConsoleVariableEntry::StaticStruct()->GetFName());
+		}
 	}
 }
 

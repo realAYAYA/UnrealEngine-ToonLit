@@ -46,6 +46,7 @@
 #include "Algo/Accumulate.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Widgets/Input/SEditableTextBox.h"
+#include "Widgets/Layout/SWidgetSwitcher.h"
 
 #define LOCTEXT_NAMESPACE "KismetNodeWithOptionalPinsDetails"
 
@@ -66,10 +67,8 @@ void FAnimGraphNodeDetails::CustomizeDetails(class IDetailLayoutBuilder& DetailB
 
 	// Hide the pin options property; it's represented inline per-property instead
 	IDetailCategoryBuilder& PinOptionsCategory = DetailBuilder.EditCategory("PinOptions");
-	TSharedRef<IPropertyHandle> AvailablePins = DetailBuilder.GetProperty("ShowPinForProperties");
+	TSharedRef<IPropertyHandle> AvailablePins = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UAnimGraphNode_Base, ShowPinForProperties));
 	DetailBuilder.HideProperty(AvailablePins);
-	TSharedRef<IPropertyHandle> PropertyBindings = DetailBuilder.GetProperty("PropertyBindings");
-	DetailBuilder.HideProperty(PropertyBindings);
 
 	// get first animgraph nodes
 	UAnimGraphNode_Base* AnimGraphNode = Cast<UAnimGraphNode_Base>(SelectedObjectsList[0].Get());
@@ -77,6 +76,16 @@ void FAnimGraphNodeDetails::CustomizeDetails(class IDetailLayoutBuilder& DetailB
 	{
 		return;
 	}
+
+	// Ensure that switching the binding type will nuke the details panel
+	IDetailCategoryBuilder& BindingCategory = DetailBuilder.EditCategory("Bindings");
+	BindingCategory.SetSortOrder(MAX_int32);
+	
+	TSharedRef<IPropertyHandle> BindingProperty = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UAnimGraphNode_Base, Binding));
+	BindingProperty->SetOnPropertyValueChanged(FSimpleDelegate::CreateLambda([&DetailBuilder]()
+	{
+		DetailBuilder.ForceRefreshDetails();
+	}));
 
 	AnimGraphNode->OnPinVisibilityChanged().AddSP(this, &FAnimGraphNodeDetails::OnPinVisibilityChanged);
 
@@ -499,37 +508,37 @@ TSharedRef<IPropertyTypeCustomization> FBoneReferenceCustomization::MakeInstance
 
 void FBoneReferenceCustomization::CustomizeHeader( TSharedRef<IPropertyHandle> StructPropertyHandle, class FDetailWidgetRow& HeaderRow, IPropertyTypeCustomizationUtils& StructCustomizationUtils )
 {
-	// set property handle 
-	SetPropertyHandle(StructPropertyHandle);
-	// set editable skeleton info from struct
-	SetEditableSkeleton(StructPropertyHandle);
-	if (TargetEditableSkeleton.IsValid() && BoneNameProperty->IsValidHandle())
-	{
-		HeaderRow
-		.NameContent()
-		[
-			StructPropertyHandle->CreatePropertyNameWidget()
-		]
-		.ValueContent()
-		.MaxDesiredWidth(0.0f)
+	StructProperty = StructPropertyHandle;
+	
+	BoneNameProperty = FindStructMemberProperty(StructProperty, GET_MEMBER_NAME_CHECKED(FBoneReference, BoneName));
+	check(BoneNameProperty->IsValidHandle());
+	
+	HeaderRow
+	.NameContent()
+	[
+		StructPropertyHandle->CreatePropertyNameWidget()
+	]
+	.ValueContent()
+	.MaxDesiredWidth(0.0f)
+	[
+		SNew(SWidgetSwitcher)
+		.WidgetIndex_Lambda([this]()
+		{
+			// If we have a skeleton, show the picker widget, otherwise default to the text box.
+			return GetSkeleton() != nullptr ? 0 : 1;
+		})
+		+ SWidgetSwitcher::Slot()
 		[
 			SNew(SBoneSelectionWidget)
 			.ToolTipText(StructPropertyHandle->GetToolTipText())
 			.OnBoneSelectionChanged(this, &FBoneReferenceCustomization::OnBoneSelectionChanged)
 			.OnGetSelectedBone(this, &FBoneReferenceCustomization::GetSelectedBone)
 			.OnGetReferenceSkeleton(this, &FBoneReferenceCustomization::GetReferenceSkeleton)
-		];
-	}
-	else
-	{
-		HeaderRow
-		.NameContent()
-		[
-			StructPropertyHandle->CreatePropertyNameWidget()
 		]
-		.ValueContent()
+		+ SWidgetSwitcher::Slot()
 		[
 			SNew(SEditableTextBox)
+			.Font(StructCustomizationUtils.GetRegularFont())
 			.ToolTipText(StructPropertyHandle->GetToolTipText())
 			.OnTextCommitted_Lambda([this](const FText& InText, ETextCommit::Type InTextCommit)
 			{
@@ -541,54 +550,46 @@ void FBoneReferenceCustomization::CustomizeHeader( TSharedRef<IPropertyHandle> S
 				BoneNameProperty->GetValue(Name);
 				return FText::FromName(Name);
 			})
-		];
-	}
+		]
+	];
 }
 
-void FBoneReferenceCustomization::CustomizeChildren(TSharedRef<IPropertyHandle> StructPropertyHandle, class IDetailChildrenBuilder& ChildBuilder, IPropertyTypeCustomizationUtils& StructCustomizationUtils)
-{
 
-}
-void FBoneReferenceCustomization::SetEditableSkeleton(TSharedRef<IPropertyHandle> StructPropertyHandle) 
+USkeleton* FBoneReferenceCustomization::GetSkeleton() const 
 {
 	TArray<UObject*> Objects;
-	StructPropertyHandle->GetOuterObjects(Objects);
+	StructProperty->GetOuterObjects(Objects);
 
-	USkeleton* TargetSkeleton = nullptr;
-	TSharedPtr<IEditableSkeleton> EditableSkeleton;
-
-	bEnsureOnInvalidSkeleton = true;
-
-	auto FindSkeletonForObject = [this, &TargetSkeleton, &EditableSkeleton, &StructPropertyHandle](UObject* InObject)
+	auto FindSkeletonForObject = [this](UObject* InObject) -> USkeleton* 
 	{
 		for( ; InObject; InObject = InObject->GetOuter())
 		{
-			if (UAnimGraphNode_Base* AnimGraphNode = Cast<UAnimGraphNode_Base>(InObject))
+			if (const UAnimGraphNode_Base* AnimGraphNode = Cast<UAnimGraphNode_Base>(InObject))
 			{
-				TargetSkeleton = AnimGraphNode->GetAnimBlueprint()->TargetSkeleton;
-				break;
+				return AnimGraphNode->GetAnimBlueprint()->TargetSkeleton;
 			}
 
 			if (USkeletalMesh* SkeletalMesh = Cast<USkeletalMesh>(InObject))
 			{
-				TargetSkeleton = SkeletalMesh->GetSkeleton();
-				break;
+				return SkeletalMesh->GetSkeleton();
 			}
 
-			if (ULODInfoUILayout* LODInfoUILayout = Cast<ULODInfoUILayout>(InObject))
+			if (const ULODInfoUILayout* LODInfoUILayout = Cast<ULODInfoUILayout>(InObject))
 			{
 				USkeletalMesh* SkeletalMesh = LODInfoUILayout->GetPersonaToolkit()->GetPreviewMesh();
-				check(SkeletalMesh);
-				TargetSkeleton = SkeletalMesh->GetSkeleton();
-				break;
+				if (ensure(SkeletalMesh))
+				{
+					return SkeletalMesh->GetSkeleton();
+				}
+
+				return nullptr;
 			}
 
-			if (UAnimationAsset* AnimationAsset = Cast<UAnimationAsset>(InObject))
+			if (const UAnimationAsset* AnimationAsset = Cast<UAnimationAsset>(InObject))
 			{
 				if(AnimationAsset->IsAsset())
 				{
-					TargetSkeleton = AnimationAsset->GetSkeleton();
-					break;
+					return AnimationAsset->GetSkeleton();
 				}
 			}
 
@@ -596,59 +597,50 @@ void FBoneReferenceCustomization::SetEditableSkeleton(TSharedRef<IPropertyHandle
 			{
 				if (AnimInstance->CurrentSkeleton)
 				{
-					TargetSkeleton = AnimInstance->CurrentSkeleton;
-					break;
+					return AnimInstance->CurrentSkeleton;
 				}
-				else if (UAnimBlueprintGeneratedClass* AnimBPClass = Cast<UAnimBlueprintGeneratedClass>(AnimInstance->GetClass()))
+				if (UAnimBlueprintGeneratedClass* AnimBPClass = Cast<UAnimBlueprintGeneratedClass>(AnimInstance->GetClass()))
 				{
-					TargetSkeleton = AnimBPClass->TargetSkeleton;
-					break;
+					return AnimBPClass->TargetSkeleton;
 				}
 			}
 
 			// editor animation curve bone links are responsible for linking joints to curve
 			// this is editor object that only exists for editor
-			if (UEditorAnimCurveBoneLinks* AnimCurveObj = Cast<UEditorAnimCurveBoneLinks>(InObject))
+			if (const UEditorAnimCurveBoneLinks* AnimCurveObj = Cast<UEditorAnimCurveBoneLinks>(InObject))
 			{
 				if(USkeleton* Skeleton = Cast<USkeleton>(AnimCurveObj->AnimCurveMetaData->GetOuter()))
 				{
-					TargetSkeleton = Skeleton;
+					return Skeleton;
 				}
-				else if(USkeletalMesh* SkeletalMesh = Cast<USkeletalMesh>(AnimCurveObj->AnimCurveMetaData->GetOuter()))
+				if(USkeletalMesh* SkeletalMesh = Cast<USkeletalMesh>(AnimCurveObj->AnimCurveMetaData->GetOuter()))
 				{
-					TargetSkeleton = SkeletalMesh->GetSkeleton();
+					return SkeletalMesh->GetSkeleton();
 				}
-				break;
 			}
 
 			if (IBoneReferenceSkeletonProvider* SkeletonProvider = Cast<IBoneReferenceSkeletonProvider>(InObject))
 			{
-				TargetSkeleton = SkeletonProvider->GetSkeleton(bEnsureOnInvalidSkeleton, &StructPropertyHandle.Get());
-				break;
+				bool bInvalidSkeletonIsError = false;
+				return SkeletonProvider->GetSkeleton(bInvalidSkeletonIsError, StructProperty.Get());
 			}
 		}
 
-		return TargetSkeleton != nullptr || EditableSkeleton != nullptr;
+		return nullptr;
 	};
 	
 	for (UObject* Object : Objects)
 	{
-		if(FindSkeletonForObject(Object))
+		if(USkeleton* Skeleton = FindSkeletonForObject(Object))
 		{
-			break;
+			return Skeleton;
 		}
 	}
 
-	if (TargetSkeleton != nullptr)
-	{
-		ISkeletonEditorModule& SkeletonEditorModule = FModuleManager::LoadModuleChecked<ISkeletonEditorModule>("SkeletonEditor");
-		EditableSkeleton = SkeletonEditorModule.CreateEditableSkeleton(TargetSkeleton);
-	}
-
-	TargetEditableSkeleton = EditableSkeleton;
+	return nullptr;
 }
 
-TSharedPtr<IPropertyHandle> FBoneReferenceCustomization::FindStructMemberProperty(TSharedRef<IPropertyHandle> PropertyHandle, const FName& PropertyName)
+TSharedPtr<IPropertyHandle> FBoneReferenceCustomization::FindStructMemberProperty(TSharedPtr<IPropertyHandle> PropertyHandle, const FName& PropertyName)
 {
 	uint32 NumChildren = 0;
 	PropertyHandle->GetNumChildren(NumChildren);
@@ -664,12 +656,6 @@ TSharedPtr<IPropertyHandle> FBoneReferenceCustomization::FindStructMemberPropert
 	return TSharedPtr<IPropertyHandle>();
 }
 
-void FBoneReferenceCustomization::SetPropertyHandle(TSharedRef<IPropertyHandle> StructPropertyHandle)
-{
-	BoneNameProperty = FindStructMemberProperty(StructPropertyHandle, GET_MEMBER_NAME_CHECKED(FBoneReference, BoneName));
-	check(BoneNameProperty->IsValidHandle());
-}
-
 void FBoneReferenceCustomization::OnBoneSelectionChanged(FName Name)
 {
 	BoneNameProperty->SetValue(Name);
@@ -679,7 +665,7 @@ FName FBoneReferenceCustomization::GetSelectedBone(bool& bMultipleValues) const
 {
 	FString OutText;
 	
-	FPropertyAccess::Result Result = BoneNameProperty->GetValueAsFormattedString(OutText);
+	const FPropertyAccess::Result Result = BoneNameProperty->GetValueAsFormattedString(OutText);
 	bMultipleValues = (Result == FPropertyAccess::MultipleValues);
 
 	return FName(*OutText);
@@ -687,10 +673,10 @@ FName FBoneReferenceCustomization::GetSelectedBone(bool& bMultipleValues) const
 
 const struct FReferenceSkeleton&  FBoneReferenceCustomization::GetReferenceSkeleton() const
 {
-	// retruning dummy skeleton if any reason, it is invalid
-	static FReferenceSkeleton DummySkeleton;
-
-	return (TargetEditableSkeleton.IsValid()) ? TargetEditableSkeleton.Get()->GetSkeleton().GetReferenceSkeleton() : DummySkeleton;
+	static FReferenceSkeleton EmptySkeleton;
+	
+	const USkeleton* Skeleton = GetSkeleton();
+	return Skeleton ? Skeleton->GetReferenceSkeleton() : EmptySkeleton; 
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////
@@ -701,41 +687,28 @@ TSharedRef<IPropertyTypeCustomization> FBoneSocketTargetCustomization::MakeInsta
 	return MakeShareable(new FBoneSocketTargetCustomization());
 }
 
-void FBoneSocketTargetCustomization::CustomizeChildren(TSharedRef<IPropertyHandle> StructPropertyHandle, class IDetailChildrenBuilder& ChildBuilder, IPropertyTypeCustomizationUtils& StructCustomizationUtils)
+void FBoneSocketTargetCustomization::CustomizeHeader(TSharedRef<IPropertyHandle> StructPropertyHandle, class FDetailWidgetRow& HeaderRow, IPropertyTypeCustomizationUtils& StructCustomizationUtils)
 {
-	// set property handle 
-	SetPropertyHandle(StructPropertyHandle);
-	// set editable skeleton info from struct
-	SetEditableSkeleton(StructPropertyHandle);
-	Build(StructPropertyHandle, ChildBuilder);
-}
-
-void FBoneSocketTargetCustomization::SetPropertyHandle(TSharedRef<IPropertyHandle> StructPropertyHandle)
-{
-	TSharedPtr<IPropertyHandle> BoneReferenceProperty = FindStructMemberProperty(StructPropertyHandle, GET_MEMBER_NAME_CHECKED(FBoneSocketTarget, BoneReference));
-	check(BoneReferenceProperty->IsValidHandle());
-	BoneNameProperty = FindStructMemberProperty(BoneReferenceProperty.ToSharedRef(), GET_MEMBER_NAME_CHECKED(FBoneReference, BoneName));
-	TSharedPtr<IPropertyHandle> SocketReferenceProperty = FindStructMemberProperty(StructPropertyHandle, GET_MEMBER_NAME_CHECKED(FBoneSocketTarget, SocketReference));
-	check(SocketReferenceProperty->IsValidHandle());
-	SocketNameProperty = FindStructMemberProperty(SocketReferenceProperty.ToSharedRef(), GET_MEMBER_NAME_CHECKED(FSocketReference, SocketName));
-	UseSocketProperty = FindStructMemberProperty(StructPropertyHandle, GET_MEMBER_NAME_CHECKED(FBoneSocketTarget, bUseSocket));
-
-	check(BoneNameProperty->IsValidHandle() && SocketNameProperty->IsValidHandle() && UseSocketProperty->IsValidHandle());
-}
-
-BEGIN_SLATE_FUNCTION_BUILD_OPTIMIZATION
-void FBoneSocketTargetCustomization::Build(TSharedRef<IPropertyHandle> StructPropertyHandle, class IDetailChildrenBuilder& ChildBuilder)
-{
-	if (TargetEditableSkeleton.IsValid() && BoneNameProperty->IsValidHandle())
-	{
-		ChildBuilder
-		.AddProperty(StructPropertyHandle)
-		.CustomWidget()
-		.NameContent()
-		[
-			StructPropertyHandle->CreatePropertyNameWidget()
-		]
-		.ValueContent()
+	// set property handle
+	StructProperty = StructPropertyHandle;
+	
+	ResolveChildProperties();
+	
+	HeaderRow
+	.NameContent()
+	[
+		StructPropertyHandle->CreatePropertyNameWidget()
+	]
+	.ValueContent()
+	[
+		SNew(SWidgetSwitcher)
+		.WidgetIndex_Lambda([this]()
+		{
+			// If we have a skeleton, show the picker widget, otherwise default to a text label indicating that
+			// none is available.
+			return GetSkeleton() != nullptr ? 0 : 1;
+		})
+		+ SWidgetSwitcher::Slot()
 		[
 			SNew(SBoneSelectionWidget)
 			.ToolTipText(StructPropertyHandle->GetToolTipText())
@@ -744,16 +717,31 @@ void FBoneSocketTargetCustomization::Build(TSharedRef<IPropertyHandle> StructPro
 			.OnGetSelectedBone(this, &FBoneSocketTargetCustomization::GetSelectedBone)
 			.OnGetReferenceSkeleton(this, &FBoneReferenceCustomization::GetReferenceSkeleton)
 			.OnGetSocketList(this, &FBoneSocketTargetCustomization::GetSocketList)
-		];
-	}
-	else
-	{
-		// if this FBoneSocketTarget is used by some other Outers, this will fail	
-		// should warn programmers instead of silent fail
-		ensureAlways(false);
-	}
+		]
+		+ SWidgetSwitcher::Slot()
+		[
+			SNew(STextBlock)
+			.Font(StructCustomizationUtils.GetRegularFont())
+			.Text(LOCTEXT("BoneSelectionNoSkeleton", "No Skeleton Available"))
+		]
+	];
 }
-END_SLATE_FUNCTION_BUILD_OPTIMIZATION
+
+void FBoneSocketTargetCustomization::ResolveChildProperties()
+{
+	const TSharedPtr<IPropertyHandle> BoneReferenceProperty = FindStructMemberProperty(StructProperty, GET_MEMBER_NAME_CHECKED(FBoneSocketTarget, BoneReference));
+	check(BoneReferenceProperty->IsValidHandle());
+	BoneNameProperty = FindStructMemberProperty(BoneReferenceProperty.ToSharedRef(), GET_MEMBER_NAME_CHECKED(FBoneReference, BoneName));
+	
+	const TSharedPtr<IPropertyHandle> SocketReferenceProperty = FindStructMemberProperty(StructProperty, GET_MEMBER_NAME_CHECKED(FBoneSocketTarget, SocketReference));
+	check(SocketReferenceProperty->IsValidHandle());
+	SocketNameProperty = FindStructMemberProperty(SocketReferenceProperty.ToSharedRef(), GET_MEMBER_NAME_CHECKED(FSocketReference, SocketName));
+	
+	UseSocketProperty = FindStructMemberProperty(StructProperty, GET_MEMBER_NAME_CHECKED(FBoneSocketTarget, bUseSocket));
+
+	check(BoneNameProperty->IsValidHandle() && SocketNameProperty->IsValidHandle() && UseSocketProperty->IsValidHandle());
+}
+
 
 TSharedPtr<IPropertyHandle> FBoneSocketTargetCustomization::GetNameProperty() const
 {
@@ -773,34 +761,31 @@ TSharedPtr<IPropertyHandle> FBoneSocketTargetCustomization::GetNameProperty() co
 void FBoneSocketTargetCustomization::OnBoneSelectionChanged(FName Name)
 {
 	// figure out if the name is BoneName or socket name
-	if (TargetEditableSkeleton.IsValid())
+	bool bUseSocket = false;
+	if (GetReferenceSkeleton().FindBoneIndex(Name) == INDEX_NONE)
 	{
-		bool bUseSocket = false;
-		if (GetReferenceSkeleton().FindBoneIndex(Name) == INDEX_NONE)
+		// make sure socket exists
+		const TArray<class USkeletalMeshSocket*>& Sockets = GetSocketList();
+		for (int32 Idx = 0; Idx < Sockets.Num(); ++Idx)
 		{
-			// make sure socket exists
-			const TArray<class USkeletalMeshSocket*>& Sockets = GetSocketList();
-			for (int32 Idx = 0; Idx < Sockets.Num(); ++Idx)
+			if (Sockets[Idx]->SocketName == Name)
 			{
-				if (Sockets[Idx]->SocketName == Name)
-				{
-					bUseSocket = true;
-					break;
-				}
+				bUseSocket = true;
+				break;
 			}
-
-			// we should find one
-			ensure(bUseSocket);
 		}
 
-		// set correct value
-		UseSocketProperty->SetValue(bUseSocket);
+		// we should find one
+		ensure(bUseSocket);
+	}
 
-		TSharedPtr<IPropertyHandle> NameProperty = GetNameProperty();
-		if (ensureAlways(NameProperty.IsValid()))
-		{
-			NameProperty->SetValue(Name);
-		}
+	// set correct value
+	UseSocketProperty->SetValue(bUseSocket);
+
+	const TSharedPtr<IPropertyHandle> NameProperty = GetNameProperty();
+	if (ensureAlways(NameProperty.IsValid()))
+	{
+		NameProperty->SetValue(Name);
 	}
 }
 
@@ -808,10 +793,10 @@ FName FBoneSocketTargetCustomization::GetSelectedBone(bool& bMultipleValues) con
 {
 	FString OutText;
 
-	TSharedPtr<IPropertyHandle> NameProperty = GetNameProperty();
+	const TSharedPtr<IPropertyHandle> NameProperty = GetNameProperty();
 	if (NameProperty.IsValid())
 	{
-		FPropertyAccess::Result Result = NameProperty->GetValueAsFormattedString(OutText);
+		const FPropertyAccess::Result Result = NameProperty->GetValueAsFormattedString(OutText);
 		bMultipleValues = (Result == FPropertyAccess::MultipleValues);
 	}
 	else
@@ -824,15 +809,15 @@ FName FBoneSocketTargetCustomization::GetSelectedBone(bool& bMultipleValues) con
 	return FName(*OutText);
 }
 
-const TArray<class USkeletalMeshSocket*>& FBoneSocketTargetCustomization::GetSocketList() const
+const TArray<USkeletalMeshSocket*>& FBoneSocketTargetCustomization::GetSocketList() const
 {
-	if (TargetEditableSkeleton.IsValid())
+	static TArray<USkeletalMeshSocket*> EmptySocketList;
+	
+	if (const USkeleton* Skeleton = GetSkeleton())
 	{
-		return  TargetEditableSkeleton.Get()->GetSkeleton().Sockets;
+		return Skeleton->Sockets;
 	}
-
-	static TArray<class USkeletalMeshSocket*> DummyList;
-	return DummyList;
+	return EmptySocketList;
 }
 
 /////////////////////////////////////////////////////////////////////////////////////////////

@@ -114,6 +114,25 @@ void FAnimSequencerInstanceProxy::ConstructNodes()
 
 }
 
+void FAnimSequencerInstanceProxy::AddReferencedObjects(UAnimInstance* InAnimInstance, FReferenceCollector& Collector)
+{
+	Super::AddReferencedObjects(InAnimInstance, Collector);
+
+	for (const TPair<uint32, FSequencerPlayerBase*>& IndexPlayerPair : SequencerToPlayerMap)
+	{
+		if(IndexPlayerPair.Value->IsOfType<FSequencerPlayerAnimSequence>())
+		{
+			FSequencerPlayerAnimSequence* SequencerPlayerAnimSequence = static_cast<FSequencerPlayerAnimSequence*>(IndexPlayerPair.Value);
+			Collector.AddPropertyReferencesWithStructARO(FAnimNode_SequenceEvaluator_Standalone::StaticStruct(), &SequencerPlayerAnimSequence->PlayerNode);
+		}
+	}
+
+	for (const TPair<uint32, FAnimNode_Mirror_Standalone*>& IndexMirrorPair : SequencerToMirrorMap)
+	{
+		Collector.AddPropertyReferencesWithStructARO(FAnimNode_Mirror_Standalone::StaticStruct(), IndexMirrorPair.Value);
+	}
+}
+
 void FAnimSequencerInstanceProxy::ClearSequencePlayerAndMirrorMaps()
 {
 	for (TPair<uint32, FSequencerPlayerBase*>& Iter : SequencerToPlayerMap)

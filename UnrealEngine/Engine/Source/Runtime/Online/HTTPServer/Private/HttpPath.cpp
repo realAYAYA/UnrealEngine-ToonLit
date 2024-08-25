@@ -59,8 +59,6 @@ bool FHttpPath::IsRoot() const
 
 void FHttpPath::MakeRelative(const FString& OtherPath)
 {
-	const bool bAllowShrinking = false;
-
 	if (OtherPath == TEXT("/"))
 	{
 		return;
@@ -68,12 +66,12 @@ void FHttpPath::MakeRelative(const FString& OtherPath)
 
 	if (Path == OtherPath)
 	{
-		Path.RemoveAt(1, Path.Len() - 1, bAllowShrinking);
+		Path.RemoveAt(1, Path.Len() - 1, EAllowShrinking::No);
 	}
 
 	if (Path.StartsWith(OtherPath))
 	{
-		Path.RemoveAt(0, OtherPath.Len(), bAllowShrinking);
+		Path.RemoveAt(0, OtherPath.Len(), EAllowShrinking::No);
 	}
 }
 

@@ -1,12 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using EpicGames.Core;
 
 namespace EpicGames.Serialization
 {
@@ -44,7 +44,7 @@ namespace EpicGames.Serialization
 		/// Begin writing an object field
 		/// </summary>
 		/// <param name="name">Name of the field. May be empty for fields that are not part of another object.</param>
-		void BeginObject(Utf8String name);
+		void BeginObject(CbFieldName name);
 
 		/// <summary>
 		/// End the current object
@@ -56,7 +56,7 @@ namespace EpicGames.Serialization
 		/// </summary>
 		/// <param name="name">Name of the field, or an empty string.</param>
 		/// <param name="elementType">Type of the field. May be <see cref="CbFieldType.None"/> for non-uniform arrays.</param>
-		void BeginArray(Utf8String name, CbFieldType elementType);
+		void BeginArray(CbFieldName name, CbFieldType elementType);
 
 		/// <summary>
 		/// End the current array
@@ -69,13 +69,29 @@ namespace EpicGames.Serialization
 		/// <param name="type">Type of the field</param>
 		/// <param name="name">Name of the field. May be empty for fields that are not part of another object.</param>
 		/// <param name="length">Length of data for the field</param>
-		Span<byte> WriteField(CbFieldType type, Utf8String name, int length);
+		Span<byte> WriteField(CbFieldType type, CbFieldName name, int length);
 
 		/// <summary>
 		/// Writes a reference to an external binary field into the output stream
 		/// </summary>
 		/// <param name="data">Data to reference</param>
 		void WriteReference(ReadOnlyMemory<byte> data);
+	}
+
+	/// <summary>
+	/// Wrapper for a field name, which can come from an encoded UTF8 string or regular C# string
+	/// </summary>
+	public record struct CbFieldName(Utf8String Text)
+	{
+		/// <summary>
+		/// Implicit conversion from a string
+		/// </summary>
+		public static implicit operator CbFieldName(string text) => new CbFieldName(new Utf8String(text));
+
+		/// <summary>
+		/// Implicit conversion from a utf8 string
+		/// </summary>
+		public static implicit operator CbFieldName(Utf8String text) => new CbFieldName(text);
 	}
 
 	/// <summary>
@@ -194,14 +210,14 @@ namespace EpicGames.Serialization
 		/// <summary>
 		/// Insert a new scope
 		/// </summary>
-		Scope EnterScope(CbFieldType fieldType, Utf8String name)
+		Scope EnterScope(CbFieldType fieldType, CbFieldName name)
 		{
 			Scope currentScope = _openScopes.Peek();
 
 			Scope scope = AllocScope();
 			scope._fieldType = fieldType;
 			scope._writeFieldType = currentScope._uniformFieldType == CbFieldType.None;
-			scope._name = name;
+			scope._name = name.Text;
 
 			currentScope.AddChild(scope);
 
@@ -307,7 +323,7 @@ namespace EpicGames.Serialization
 		/// Begin writing an object field
 		/// </summary>
 		/// <param name="name">Name of the field</param>
-		public void BeginObject(Utf8String name)
+		public void BeginObject(CbFieldName name)
 		{
 			WriteFields();
 
@@ -327,7 +343,7 @@ namespace EpicGames.Serialization
 		/// </summary>
 		/// <param name="name"></param>
 		/// <param name="elementType">Type of elements in the array</param>
-		public void BeginArray(Utf8String name, CbFieldType elementType)
+		public void BeginArray(CbFieldName name, CbFieldType elementType)
 		{
 			WriteFields();
 
@@ -361,7 +377,7 @@ namespace EpicGames.Serialization
 				_bufferPos = 0;
 				_bufferEnd = 0;
 			}
-			
+
 			Memory<byte> data = _buffer.Slice(_bufferEnd, length);
 			_bufferEnd += length;
 
@@ -381,9 +397,9 @@ namespace EpicGames.Serialization
 		/// <param name="type">Type of the field</param>
 		/// <param name="name">Name of the field</param>
 		/// <param name="size">Size of the field</param>
-		public Span<byte> WriteField(CbFieldType type, Utf8String name, int size)
+		public Span<byte> WriteField(CbFieldType type, CbFieldName name, int size)
 		{
-			WriteFieldHeader(type, name);
+			WriteFieldHeader(type, name.Text);
 
 			Span<byte> span = Allocate(size).Span;
 			if (_openScopes.Count == 1)
@@ -726,7 +742,7 @@ namespace EpicGames.Serialization
 	{
 		static int MeasureFieldWithLength(int length) => length + VarInt.MeasureUnsigned(length);
 
-		static Span<byte> WriteFieldWithLength(this ICbWriter writer, CbFieldType type, Utf8String name, int length)
+		static Span<byte> WriteFieldWithLength(this ICbWriter writer, CbFieldType type, CbFieldName name, int length)
 		{
 			int fullLength = MeasureFieldWithLength(length);
 			Span<byte> buffer = writer.WriteField(type, name, fullLength);
@@ -752,7 +768,7 @@ namespace EpicGames.Serialization
 		/// </summary>
 		/// <param name="writer">Writer for output data</param>
 		/// <param name="name">Name of the field</param>
-		public static void BeginArray(this ICbWriter writer, Utf8String name) => writer.BeginArray(name, CbFieldType.None);
+		public static void BeginArray(this ICbWriter writer, CbFieldName name) => writer.BeginArray(name, CbFieldType.None);
 
 		/// <summary>
 		/// Begin writing a uniform array field
@@ -767,7 +783,7 @@ namespace EpicGames.Serialization
 		/// <param name="writer">Writer for output data</param>
 		/// <param name="name">Name of the field</param>
 		/// <param name="fieldType">The field type for elements in the array</param>
-		public static void BeginUniformArray(this ICbWriter writer, Utf8String name, CbFieldType fieldType) => writer.BeginArray(name, fieldType);
+		public static void BeginUniformArray(this ICbWriter writer, CbFieldName name, CbFieldType fieldType) => writer.BeginArray(name, fieldType);
 
 		/// <summary>
 		/// End writing a uniform array field
@@ -795,7 +811,7 @@ namespace EpicGames.Serialization
 		/// <param name="writer">Writer for output data</param>
 		/// <param name="name">Name of the field</param>
 		/// <param name="field"></param>
-		public static void WriteField(this ICbWriter writer, Utf8String name, CbField field)
+		public static void WriteField(this ICbWriter writer, CbFieldName name, CbField field)
 		{
 			ReadOnlySpan<byte> source = field.GetPayloadView().Span;
 			Span<byte> target = writer.WriteField(field.GetType(), name, source.Length);
@@ -813,7 +829,7 @@ namespace EpicGames.Serialization
 		/// </summary>
 		/// <param name="writer">Writer for output data</param>
 		/// <param name="name">Name of the field</param>
-		public static void WriteNull(this ICbWriter writer, Utf8String name) => writer.WriteField(CbFieldType.Null, name, 0);
+		public static void WriteNull(this ICbWriter writer, CbFieldName name) => writer.WriteField(CbFieldType.Null, name, 0);
 
 		/// <summary>
 		/// Writes a boolean value
@@ -828,7 +844,7 @@ namespace EpicGames.Serialization
 		/// <param name="writer">Writer for output data</param>
 		/// <param name="name">Name of the field</param>
 		/// <param name="value">Value to be written</param>
-		public static void WriteBool(this ICbWriter writer, Utf8String name, bool value) => writer.WriteField(value ? CbFieldType.BoolTrue : CbFieldType.BoolFalse, name, 0);
+		public static void WriteBool(this ICbWriter writer, CbFieldName name, bool value) => writer.WriteField(value ? CbFieldType.BoolTrue : CbFieldType.BoolFalse, name, 0);
 
 		/// <summary>
 		/// Writes an unnamed integer field
@@ -850,7 +866,7 @@ namespace EpicGames.Serialization
 		/// <param name="writer">Writer for output data</param>
 		/// <param name="name">Name of the field</param>
 		/// <param name="value">Value to be written</param>
-		public static void WriteInteger(this ICbWriter writer, Utf8String name, int value) => WriteInteger(writer, name, (long)value);
+		public static void WriteInteger(this ICbWriter writer, CbFieldName name, int value) => WriteInteger(writer, name, (long)value);
 
 		/// <summary>
 		/// Writes an named integer field
@@ -858,7 +874,7 @@ namespace EpicGames.Serialization
 		/// <param name="writer">Writer for output data</param>
 		/// <param name="name">Name of the field</param>
 		/// <param name="value">Value to be written</param>
-		public static void WriteInteger(this ICbWriter writer, Utf8String name, long value)
+		public static void WriteInteger(this ICbWriter writer, CbFieldName name, long value)
 		{
 			if (value >= 0)
 			{
@@ -887,7 +903,7 @@ namespace EpicGames.Serialization
 		/// <param name="writer">Writer for output data</param>
 		/// <param name="name">Name of the field</param>
 		/// <param name="value">Value to be written</param>
-		public static void WriteInteger(this ICbWriter writer, Utf8String name, ulong value)
+		public static void WriteInteger(this ICbWriter writer, CbFieldName name, ulong value)
 		{
 			int length = VarInt.MeasureUnsigned((ulong)value);
 			Span<byte> data = writer.WriteField(CbFieldType.IntegerPositive, name, length);
@@ -907,7 +923,7 @@ namespace EpicGames.Serialization
 		/// <param name="writer">Writer for output data</param>
 		/// <param name="name">Name of the field</param>
 		/// <param name="value">Value to be written</param>
-		public static void WriteDouble(this ICbWriter writer, Utf8String name, double value)
+		public static void WriteDouble(this ICbWriter writer, CbFieldName name, double value)
 		{
 			Span<byte> buffer = writer.WriteField(CbFieldType.Float64, name, sizeof(double));
 			BinaryPrimitives.WriteDoubleBigEndian(buffer, value);
@@ -926,7 +942,7 @@ namespace EpicGames.Serialization
 		/// <param name="writer">Writer for output data</param>
 		/// <param name="name">Name of the field</param>
 		/// <param name="value">Value to be written</param>
-		public static void WriteDateTime(this ICbWriter writer, Utf8String name, DateTime value)
+		public static void WriteDateTime(this ICbWriter writer, CbFieldName name, DateTime value)
 		{
 			Span<byte> buffer = writer.WriteField(CbFieldType.DateTime, name, sizeof(long));
 			BinaryPrimitives.WriteInt64BigEndian(buffer, value.Ticks);
@@ -945,7 +961,7 @@ namespace EpicGames.Serialization
 		/// <param name="writer">Writer for output data</param>
 		/// <param name="name">Name of the field</param>
 		/// <param name="value">Value to be written</param>
-		public static void WriteHash(this ICbWriter writer, Utf8String name, IoHash value)
+		public static void WriteHash(this ICbWriter writer, CbFieldName name, IoHash value)
 		{
 			Span<byte> buffer = writer.WriteField(CbFieldType.Hash, name, IoHash.NumBytes);
 			value.CopyTo(buffer);
@@ -964,7 +980,7 @@ namespace EpicGames.Serialization
 		/// <param name="writer">Writer for output data</param>
 		/// <param name="name">Name of the field</param>
 		/// <param name="hash">Hash of the attachment</param>
-		public static void WriteBinaryAttachment(this ICbWriter writer, Utf8String name, IoHash hash)
+		public static void WriteBinaryAttachment(this ICbWriter writer, CbFieldName name, IoHash hash)
 		{
 			Span<byte> buffer = writer.WriteField(CbFieldType.BinaryAttachment, name, IoHash.NumBytes);
 			hash.CopyTo(buffer);
@@ -983,7 +999,7 @@ namespace EpicGames.Serialization
 		/// <param name="writer">Writer for output data</param>
 		/// <param name="name">Name of the object</param>
 		/// <param name="obj">Object to write</param>
-		public static void WriteObject(this ICbWriter writer, Utf8String name, CbObject obj)
+		public static void WriteObject(this ICbWriter writer, CbFieldName name, CbObject obj)
 		{
 			ReadOnlyMemory<byte> view = obj.AsField().Payload;
 			Span<byte> buffer = writer.WriteField(CbFieldType.Object, name, view.Length);
@@ -1003,7 +1019,7 @@ namespace EpicGames.Serialization
 		/// <param name="writer">Writer for output data</param>
 		/// <param name="name">Name of the field</param>
 		/// <param name="hash">Hash of the attachment</param>
-		public static void WriteObjectAttachment(this ICbWriter writer, Utf8String name, IoHash hash)
+		public static void WriteObjectAttachment(this ICbWriter writer, CbFieldName name, IoHash hash)
 		{
 			Span<byte> buffer = writer.WriteField(CbFieldType.ObjectAttachment, name, IoHash.NumBytes);
 			hash.CopyTo(buffer);
@@ -1014,7 +1030,7 @@ namespace EpicGames.Serialization
 		/// </summary>
 		/// <param name="writer">Writer for output data</param>
 		/// <param name="value">Value to be written</param>
-		public static void WriteStringValue(this ICbWriter writer, string value) => WriteUtf8StringValue(writer, value);
+		public static void WriteStringValue(this ICbWriter writer, string value) => WriteUtf8StringValue(writer, new Utf8String(value));
 
 		/// <summary>
 		/// Writes a named string value
@@ -1022,11 +1038,11 @@ namespace EpicGames.Serialization
 		/// <param name="writer">Writer for output data</param>
 		/// <param name="name">Name of the field</param>
 		/// <param name="value">Value to be written</param>
-		public static void WriteString(this ICbWriter writer, Utf8String name, string? value)
+		public static void WriteString(this ICbWriter writer, CbFieldName name, string? value)
 		{
-			if(value != null)
+			if (value != null)
 			{
-				writer.WriteUtf8String(name, value);
+				writer.WriteUtf8String(name, new Utf8String(value));
 			}
 		}
 
@@ -1043,7 +1059,7 @@ namespace EpicGames.Serialization
 		/// <param name="writer">Writer for output data</param>
 		/// <param name="name">Name of the field</param>
 		/// <param name="value">Value to be written</param>
-		public static void WriteUtf8String(this ICbWriter writer, Utf8String name, Utf8String value)
+		public static void WriteUtf8String(this ICbWriter writer, CbFieldName name, Utf8String value)
 		{
 			Span<byte> buffer = WriteFieldWithLength(writer, CbFieldType.String, name, value.Length);
 			value.Span.CopyTo(buffer);
@@ -1055,7 +1071,7 @@ namespace EpicGames.Serialization
 		/// <param name="writer">Writer for output data</param>
 		/// <param name="name">Name of the field</param>
 		/// <param name="data">Data to reference</param>
-		public static void WriteBinaryReference(this ICbWriter writer, Utf8String name, ReadOnlyMemory<byte> data)
+		public static void WriteBinaryReference(this ICbWriter writer, CbFieldName name, ReadOnlyMemory<byte> data)
 		{
 			int lengthBytes = VarInt.MeasureUnsigned(data.Length);
 			Span<byte> span = writer.WriteField(CbFieldType.Binary, name, lengthBytes);
@@ -1076,7 +1092,7 @@ namespace EpicGames.Serialization
 		/// <param name="writer">Writer for output data</param>
 		/// <param name="name">Name of the field</param>
 		/// <param name="value">Value to be written</param>
-		public static void WriteBinarySpan(this ICbWriter writer, Utf8String name, ReadOnlySpan<byte> value)
+		public static void WriteBinarySpan(this ICbWriter writer, CbFieldName name, ReadOnlySpan<byte> value)
 		{
 			Span<byte> buffer = WriteFieldWithLength(writer, CbFieldType.Binary, name, value.Length);
 			value.CopyTo(buffer);
@@ -1095,7 +1111,7 @@ namespace EpicGames.Serialization
 		/// <param name="writer">Writer for output data</param>
 		/// <param name="name">Name of the field</param>
 		/// <param name="value">Value to be written</param>
-		public static void WriteBinary(this ICbWriter writer, Utf8String name, ReadOnlyMemory<byte> value) => writer.WriteBinarySpan(name, value.Span);
+		public static void WriteBinary(this ICbWriter writer, CbFieldName name, ReadOnlyMemory<byte> value) => writer.WriteBinarySpan(name, value.Span);
 
 		/// <summary>
 		/// Writes an unnamed binary value
@@ -1110,6 +1126,6 @@ namespace EpicGames.Serialization
 		/// <param name="writer">Writer for output data</param>
 		/// <param name="name">Name of the field</param>
 		/// <param name="value">Value to be written</param>
-		public static void WriteBinaryArray(this ICbWriter writer, Utf8String name, byte[] value) => writer.WriteBinarySpan(name, value.AsSpan());
+		public static void WriteBinaryArray(this ICbWriter writer, CbFieldName name, byte[] value) => writer.WriteBinarySpan(name, value.AsSpan());
 	}
 }

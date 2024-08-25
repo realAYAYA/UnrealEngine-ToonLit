@@ -688,14 +688,14 @@ void FPendingDelete::CheckForReferences()
 	{
 		// Check and see whether we are referenced by any objects that won't be garbage collected (*including* the undo buffer)
 		FReferencerInformationList ReferencesIncludingUndo;
-		bool bReferencedInMemoryOrUndoStack = IsReferenced(Object, GARBAGE_COLLECTION_KEEPFLAGS, EInternalObjectFlags::GarbageCollectionKeepFlags, true, &ReferencesIncludingUndo);
+		bool bReferencedInMemoryOrUndoStack = IsReferenced(Object, GARBAGE_COLLECTION_KEEPFLAGS, EInternalObjectFlags_GarbageCollectionKeepFlags, true, &ReferencesIncludingUndo);
 
 		// Determine the in-memory references, *excluding* the undo buffer
 		if (GEditor && GEditor->Trans)
 		{
 			GEditor->Trans->DisableObjectSerialization();
 		}
-		bIsReferencedInMemoryByNonUndo = IsReferenced(Object, GARBAGE_COLLECTION_KEEPFLAGS, EInternalObjectFlags::GarbageCollectionKeepFlags, true, &MemoryReferences);
+		bIsReferencedInMemoryByNonUndo = IsReferenced(Object, GARBAGE_COLLECTION_KEEPFLAGS, EInternalObjectFlags_GarbageCollectionKeepFlags, true, &MemoryReferences);
 		if (GEditor && GEditor->Trans)
 		{
 			GEditor->Trans->EnableObjectSerialization();
@@ -720,7 +720,7 @@ void FPendingDelete::CheckForReferences()
 					FReferencerInformation& RefInfo = *RefIt;
 					if (RefInfo.Referencer->IsA(Blueprint->GeneratedClass))
 					{
-						if (IsReferenced(RefInfo.Referencer, GARBAGE_COLLECTION_KEEPFLAGS, EInternalObjectFlags::GarbageCollectionKeepFlags, true, &ReferencesIncludingUndo))
+						if (IsReferenced(RefInfo.Referencer, GARBAGE_COLLECTION_KEEPFLAGS, EInternalObjectFlags_GarbageCollectionKeepFlags, true, &ReferencesIncludingUndo))
 						{
 							if (GEditor && GEditor->Trans)
 							{
@@ -728,7 +728,7 @@ void FPendingDelete::CheckForReferences()
 							}
 
 							FReferencerInformationList ReferencesExcludingUndo;
-							if (IsReferenced(RefInfo.Referencer, GARBAGE_COLLECTION_KEEPFLAGS, EInternalObjectFlags::GarbageCollectionKeepFlags, true, &ReferencesExcludingUndo))
+							if (IsReferenced(RefInfo.Referencer, GARBAGE_COLLECTION_KEEPFLAGS, EInternalObjectFlags_GarbageCollectionKeepFlags, true, &ReferencesExcludingUndo))
 							{
 								bIsReferencedInMemoryByUndo = (ReferencesIncludingUndo.InternalReferences.Num() + ReferencesIncludingUndo.ExternalReferences.Num()) > (ReferencesExcludingUndo.InternalReferences.Num() + ReferencesExcludingUndo.ExternalReferences.Num());
 							}

@@ -37,6 +37,15 @@ namespace UE::MLDeformer
 		return false;
 	}
 
+	void FMLDeformerMorphModelEditorModel::OnMaxNumLODsChanged()
+	{
+		UpdateLODMappings();
+		if (GetMorphModel()->CanDynamicallyUpdateMorphTargets())
+		{
+			InitEngineMorphTargets(GetMorphModel()->GetMorphTargetDeltas());
+		}
+	}
+
 	void FMLDeformerMorphModelEditorModel::OnPropertyChanged(FPropertyChangedEvent& PropertyChangedEvent)
 	{
 		const FProperty* Property = PropertyChangedEvent.Property;
@@ -65,31 +74,14 @@ namespace UE::MLDeformer
 		{
 			ClampMorphTargetNumber();
 		}
-		else if (Property->GetFName() == UMLDeformerMorphModel::GetQualityLevelsPropertyName())
-		{
-			if (PropertyChangedEvent.ChangeType == EPropertyChangeType::ArrayAdd)
-			{
-				TArray<FMLDeformerMorphModelQualityLevel>& QualityLevels = GetMorphModel()->GetQualityLevelsArray();				
-				if (QualityLevels.Num() == 1)
-				{
-					const int32 NewQualityValue = FMath::Max(GetMorphModel()->GetNumMorphTargets() - 1, 1);
-					QualityLevels[QualityLevels.Num() - 1].SetMaxActiveMorphs(NewQualityValue);
-				}
-				else
-				{
-					int32 NewQuality = static_cast<int32>(QualityLevels[QualityLevels.Num() - 2].GetMaxActiveMorphs() * 0.75f);
-					NewQuality = FMath::Clamp<int32>(NewQuality, 1, GetMorphModel()->GetNumMorphTargets() - 1);
-					QualityLevels[QualityLevels.Num() - 1].SetMaxActiveMorphs(NewQuality);
-				}
-			}
-		}
 	}
 
 	void FMLDeformerMorphModelEditorModel::ClampMorphTargetNumber()
 	{
+		const int32 LOD = 0;
 		const UMLDeformerMorphModel* MorphModel = GetMorphModel();			
 		UMLDeformerMorphModelVizSettings* MorphViz = GetMorphModelVizSettings();
-		const int32 NumMorphTargets = MorphModel->GetMorphTargetSet().IsValid() ? MorphModel->GetMorphTargetSet()->MorphBuffers.GetNumMorphs() : 0;
+		const int32 NumMorphTargets = MorphModel->GetMorphTargetSet(LOD).IsValid() ? MorphModel->GetMorphTargetSet(LOD)->MorphBuffers.GetNumMorphs() : 0;
 		const int32 ClampedMorphTargetNumber = (NumMorphTargets > 0) ? FMath::Min<int32>(MorphViz->GetMorphTargetNumber(), NumMorphTargets - 1) : 0;
 		MorphViz->SetMorphTargetNumber(ClampedMorphTargetNumber);
 	}
@@ -113,6 +105,7 @@ namespace UE::MLDeformer
 	{
 		// Backup the morph target deltas in case we abort training.
 		MorphTargetDeltasBackup = GetMorphModel()->GetMorphTargetDeltas();
+		MorphTargetsMinMaxWeightsBackup = GetMorphModel()->GetMorphTargetsMinMaxWeights();
 	}
 
 	void FMLDeformerMorphModelEditorModel::OnPostTraining(ETrainingResult TrainingResult, bool bUsePartiallyTrainedWhenAborted)
@@ -122,6 +115,7 @@ namespace UE::MLDeformer
 		{
 			// Restore the morph target vertex deltas backup.
 			GetMorphModel()->SetMorphTargetDeltas(MorphTargetDeltasBackup);
+			GetMorphModel()->SetMorphTargetsMinMaxWeights(MorphTargetsMinMaxWeightsBackup);
 		}
 		else if (TrainingResult == ETrainingResult::Success || (TrainingResult == ETrainingResult::Aborted && bUsePartiallyTrainedWhenAborted))
 		{
@@ -134,55 +128,65 @@ namespace UE::MLDeformer
 		FMLDeformerGeomCacheEditorModel::OnPostTraining(TrainingResult, bUsePartiallyTrainedWhenAborted);
 	}
 
-	float CalcStandardDeviation(TArrayView<const float> Values)
+	namespace
 	{
-		if (Values.IsEmpty())
+		float CalcStandardDeviation(TArrayView<const float> Values)
 		{
-			return 0.0f;
-		}
+			if (Values.IsEmpty())
+			{
+				return 0.0f;
+			}
 
-		// First calculate the mean.
-		float Mean = 0.0f;
-		for (float Value : Values)
-		{
-			Mean += Value;
-		}
-		Mean /= static_cast<float>(Values.Num());
+			// First calculate the mean.
+			float Mean = 0.0f;
+			for (float Value : Values)
+			{
+				Mean += Value;
+			}
+			Mean /= static_cast<float>(Values.Num());
 
-		// Now calculate the standard deviation.
-		float Sum = 0.0f;
-		for (float Value : Values)
-		{
-			Sum += FMath::Square(Value - Mean);
-		}
-		Sum /= static_cast<float>(Values.Num());
+			// Now calculate the standard deviation.
+			float Sum = 0.0f;
+			for (float Value : Values)
+			{
+				Sum += FMath::Square(Value - Mean);
+			}
+			Sum /= static_cast<float>(Values.Num());
 
-		return FMath::Sqrt(Sum);
+			return FMath::Sqrt(Sum);
+		}
 	}
 
 	void FMLDeformerMorphModelEditorModel::UpdateMorphErrorValues(TArrayView<UMorphTarget*> MorphTargets)
 	{
 		if (MorphTargets.IsEmpty())
-		{
-			
+		{			
 			return;
 		}
 
 		// Check if we have max morph weight information.
 		// If we do not have this yet, we have to initialize the weights to 1.
 		UMLDeformerMorphModel* MorphModel = GetMorphModel();
-		TArrayView<const float> MaxMorphWeights = MorphModel->GetMorphTargetMaxWeights();
+		const TArray<FFloatInterval>& MinMaxMorphWeights = MorphModel->GetMorphTargetsMinMaxWeights();
+
+		const int32 NumMorphs = MinMaxMorphWeights.Num();
 
 		// Preallocate space for the standard deviation of each morph target.
 		TArray<float> ErrorValues;
-		ErrorValues.SetNumZeroed(MorphTargets.Num() - 1);
+		if (NumMorphs > 0)
+		{
+			ErrorValues.SetNumZeroed(NumMorphs - 1);
+		}
 
 		const int32 LOD = 0;
 		TArray<float> DeltaLengths;
-		for (int32 MorphIndex = 0; MorphIndex < MorphTargets.Num() - 1; ++MorphIndex)	// We have one extra morph for the means, skip that one.
+		for (int32 MorphIndex = 0; MorphIndex < NumMorphs - 1; ++MorphIndex)	// We have one extra morph for the means, skip that one.
 		{
 			const UMorphTarget* MorphTarget = MorphTargets[MorphIndex + 1];
-			const float MaxWeight = !MaxMorphWeights.IsEmpty() ? MaxMorphWeights[MorphIndex] : 1.0f;
+
+			// Calculate the maximum of the absolute values of the min and max weight we saw during training.
+			// We will multiply this with the length of the deltas later on to get an estimate of the maximum deformation for all deltas.
+			const float MaxWeight = !MinMaxMorphWeights.IsEmpty() ? FMath::Max(FMath::Abs(MinMaxMorphWeights[MorphIndex].Min), FMath::Abs(MinMaxMorphWeights[MorphIndex].Min)) : 1.0f;
 
 			// Get the array of deltas.
 			int32 NumDeltas = 0;
@@ -203,20 +207,23 @@ namespace UE::MLDeformer
 
 		// Build a list of array indices, so we know the order in which things got sorted.
 		TArray<int32> SortedIndices;
-		SortedIndices.SetNumUninitialized(MorphTargets.Num() - 1);
-		for (int32 Index = 0; Index < SortedIndices.Num(); ++Index)
+		if (NumMorphs > 0)
 		{
-			SortedIndices[Index] = Index;
-		}
-
-		// Now that we have a list of standard deviations, sort them.
-		SortedIndices.Sort
-		(
-			[&ErrorValues](const int32& IndexA, const int32& IndexB)
+			SortedIndices.SetNumUninitialized(NumMorphs - 1);
+			for (int32 Index = 0; Index < SortedIndices.Num(); ++Index)
 			{
-				return ErrorValues[IndexA] > ErrorValues[IndexB];
+				SortedIndices[Index] = Index;
 			}
-		);
+
+			// Now that we have a list of standard deviations, sort them.
+			SortedIndices.Sort
+			(
+				[&ErrorValues](const int32& IndexA, const int32& IndexB)
+				{
+					return ErrorValues[IndexA] > ErrorValues[IndexB];
+				}
+			);
+		}
 
 		// Update the morph model with the newly calculated error values.
 		MorphModel->SetMorphTargetsErrorOrder(SortedIndices, ErrorValues);
@@ -402,8 +409,15 @@ namespace UE::MLDeformer
 		EMLDeformerMaskChannel MaskChannel,
 		bool bInvertMaskChannel)
 	{
+		FMLDeformerSampler* Sampler = GetSamplerForActiveAnim();
+		// In case when ActiveTrainingInputAnimIndex == INDEX_NONE but we have a sampler (e.g. testing), use that.
+		if (Sampler == nullptr)
+		{
+			Sampler = GetSamplerForTrainingAnim(0);
+		}
+
 		OutMorphTargets.Reset();
-		if (Deltas.IsEmpty())
+		if (Deltas.IsEmpty() || Sampler == nullptr)
 		{
 			return;
 		}
@@ -415,7 +429,7 @@ namespace UE::MLDeformer
 		check(!Model->GetVertexMap().IsEmpty());
 
 		FScopedSlowTask Task(NumMorphTargets, LOCTEXT("CreateMorphTargetProgress", "Creating morph targets"));
-		Task.MakeDialog(false);	
+		Task.MakeDialog(false);
 
 		USkeletalMesh* SkelMesh = Model->GetSkeletalMesh();
 		FSkeletalMeshRenderData* RenderData = SkelMesh->GetResourceForRendering();
@@ -523,7 +537,7 @@ namespace UE::MLDeformer
 		const int32 NumRenderVertices = RenderData->LODRenderData[LOD].GetNumVertices();
 
 		// Release any existing morph buffer data.
-		if (OutMorphBuffers.IsRHIIntialized() && OutMorphBuffers.IsInitialized())
+		if (OutMorphBuffers.IsRHIInitialized() && OutMorphBuffers.IsInitialized())
 		{
 			ReleaseResourceAndFlush(&OutMorphBuffers);
 		}
@@ -549,23 +563,17 @@ namespace UE::MLDeformer
 			BeginInitResource(&OutMorphBuffers);
 		}
 
-		// Update the editor actor skel mesh components for all the ones that also have an ML Deformer on it.
-		for (FMLDeformerEditorActor* EditorActor : EditorActors)
-		{
-			const UMLDeformerComponent* MLDeformerComponent = EditorActor->GetMLDeformerComponent();
-			USkeletalMeshComponent* SkelMeshComponent = EditorActor->GetSkeletalMeshComponent();
-			if (SkelMeshComponent && MLDeformerComponent)
-			{
-				SkelMeshComponent->RefreshExternalMorphTargetWeights();
-			}
-		}
-
-		UpdateMemoryUsage();
 		Task.EnterProgressFrame();
 	}
 
 	void FMLDeformerMorphModelEditorModel::DebugDrawMorphTarget(FPrimitiveDrawInterface* PDI, const TArray<FVector3f>& MorphDeltas, float DeltaThreshold, int32 MorphTargetIndex, const FVector& DrawOffset)
 	{
+		FMLDeformerSampler* Sampler = GetSamplerForActiveAnim();
+		if (Sampler == nullptr)
+		{
+			return;
+		}
+
 		UMLDeformerVizSettings* VizSettings = Model->GetVizSettings();
 		const int32 NumVerts = Model->GetNumBaseMeshVerts();
 		const TArray<FVector3f>& UnskinnedPositions = Sampler->GetUnskinnedVertexPositions();
@@ -616,7 +624,7 @@ namespace UE::MLDeformer
 		ZeroDeltasByLengthThreshold(MorphTargetDeltas, MorphModel->GetMorphDeltaZeroThreshold());
 
 		// Turn the delta buffer in a set of engine morph targets.
-		const int32 LOD = 0;
+		const int32 LODZero = 0;
 		const bool bIncludeNormals = MorphModel->GetIncludeMorphTargetNormals();
 		const EMLDeformerMaskChannel MaskChannel = MorphModel->GetMaskChannel();
 		const bool bInvertMaskChannel = MorphModel->GetInvertMaskChannel();
@@ -627,7 +635,7 @@ namespace UE::MLDeformer
 			MorphTargets,
 			Deltas, 
 			TEXT("MLDeformerMorph_"), 
-			LOD,
+			LODZero,
 			MorphModel->GetMorphDeltaZeroThreshold(),
 			bIncludeNormals,
 			MaskChannel,
@@ -636,14 +644,24 @@ namespace UE::MLDeformer
 		// Analyze the error values of the morph targets.
 		UpdateMorphErrorValues(MorphTargets);
 
-		// Now compress the morph targets to GPU friendly buffers.
-		check(MorphModel->GetMorphTargetSet().IsValid());
-		FMorphTargetVertexInfoBuffers& MorphBuffers = MorphModel->GetMorphTargetSet()->MorphBuffers;
-		CompressMorphTargets(MorphBuffers, MorphTargets, LOD, MorphModel->GetMorphCompressionLevel());
+		// Transfer morphs to the LOD levels.
+		TransferMorphTargets(MorphTargets);
 
-		if (MorphBuffers.GetNumBatches() == 0 || MorphBuffers.GetNumMorphs() == 0)
+		// Resize to the new desired size.
+		MorphModel->ClearMorphTargetSets();
+		const int32 NumLODs = !MorphTargets.IsEmpty() ? MorphTargets[0]->GetMorphLODModels().Num() : 0;
+		MorphModel->AddMorphSets(NumLODs);
+
+		// Now compress the morph targets to GPU friendly buffers.
+		for (int32 LOD = 0; LOD < NumLODs; ++LOD)
 		{
-			MorphBuffers = FMorphTargetVertexInfoBuffers();
+			FMorphTargetVertexInfoBuffers& MorphBuffers = MorphModel->GetMorphTargetSet(LOD)->MorphBuffers;
+			CompressMorphTargets(MorphBuffers, MorphTargets, LOD, MorphModel->GetMorphCompressionLevel());
+
+			if (MorphBuffers.GetNumBatches() == 0 || MorphBuffers.GetNumMorphs() == 0)
+			{
+				MorphBuffers = FMorphTargetVertexInfoBuffers();
+			}
 		}
 
 		MorphModel->UpdateStatistics();
@@ -653,6 +671,119 @@ namespace UE::MLDeformer
 		{
 			MorphTarget->ConditionalBeginDestroy();
 		}
+
+		// Update the editor actor skel mesh components for all the ones that also have an ML Deformer on it.
+		for (FMLDeformerEditorActor* EditorActor : EditorActors)
+		{
+			UMLDeformerComponent* MLDeformerComponent = EditorActor->GetMLDeformerComponent();
+			USkeletalMeshComponent* SkelMeshComponent = EditorActor->GetSkeletalMeshComponent();
+			if (SkelMeshComponent && MLDeformerComponent)
+			{
+				SkelMeshComponent->RefreshExternalMorphTargetWeights();			
+				MLDeformerComponent->UpdateSkeletalMeshComponent();
+			}
+		}
+
+		UpdateMemoryUsage();
+	}
+
+	void FMLDeformerMorphModelEditorModel::TransferMorphTargets(TArray<UMorphTarget*> MorphTargetsLODZero)
+	{
+		const USkeletalMesh* SkelMesh = Model->GetSkeletalMesh();
+		if (!SkelMesh || !SkelMesh->GetImportedModel())
+		{
+			return;
+		}
+
+		const int32 MaxLodWithMorphs = Model->GetMaxNumLODs();
+		const int32 NumLODs = FMath::Min(SkelMesh->GetLODNum(), MaxLodWithMorphs);
+		const int32 NumTaskItems = 1 + (NumLODs - 1) * MorphTargetsLODZero.Num();	// +1 because we see preparing the lookup tables as one task item as well.
+		FScopedSlowTask Task(NumTaskItems, LOCTEXT("TransferMorphTargetProgress", "Generating morph target LODs"));
+		Task.MakeDialog(false);	
+
+		const double StartTime = FPlatformTime::Seconds();
+
+		FSkeletalMeshRenderData* RenderData = SkelMesh->GetResourceForRendering();
+		check(RenderData);
+
+		// Build a mapping table to eliminate linear searches.
+		// For every morph target build a map that maps a render vertex to a morph target vertex.
+		const FSkeletalMeshLODModel& LODModelZero = SkelMesh->GetImportedModel()->LODModels[0];
+		const int32 NumRenderVerticesLODZero = LODModelZero.NumVertices;
+		TArray<TMap<int32, int32>> RenderVertexToMorphVertexLodZero;
+		RenderVertexToMorphVertexLodZero.SetNum(MorphTargetsLODZero.Num());
+		for (int32 MorphIndex = 0; MorphIndex < MorphTargetsLODZero.Num(); ++MorphIndex)
+		{
+			UMorphTarget* MorphTarget = MorphTargetsLODZero[MorphIndex];
+			const TArray<FMorphTargetDelta>& MorphVertices = MorphTarget->GetMorphLODModels()[0].Vertices;
+			const int32 NumMorphVerts = MorphVertices.Num();
+			RenderVertexToMorphVertexLodZero[MorphIndex].Reserve(NumMorphVerts);
+			for (int32 MorphTargetVertexIndex = 0; MorphTargetVertexIndex < NumMorphVerts; ++MorphTargetVertexIndex)
+			{
+				const int32 RenderVertexIndex = MorphVertices[MorphTargetVertexIndex].SourceIdx;
+				RenderVertexToMorphVertexLodZero[MorphIndex].Add(RenderVertexIndex, MorphTargetVertexIndex);
+			}
+		}
+
+		Task.EnterProgressFrame();
+
+		for (int32 LOD = 1; LOD < NumLODs; ++LOD)
+		{
+			for (int32 MorphIndex = 0; MorphIndex < MorphTargetsLODZero.Num(); ++MorphIndex)
+			{
+				// Add an LOD to this morph target.
+				UMorphTarget* MorphTarget = MorphTargetsLODZero[MorphIndex];
+				MorphTarget->GetMorphLODModels().AddDefaulted();
+				FMorphTargetLODModel& MorphLODModel = MorphTarget->GetMorphLODModels().Last();
+
+				const FSkeletalMeshLODModel& LODModel = SkelMesh->GetImportedModel()->LODModels[LOD];
+				const int32 NumRenderVertices = LODModel.NumVertices;
+
+				// Initialize the morph target LOD level.
+				MorphLODModel.Reset();
+				MorphLODModel.bGeneratedByEngine = true;
+				MorphLODModel.Vertices.Reserve(NumRenderVertices);
+
+				const TArray<int32>& MappingToLODZero = LODMappings[LOD].VtxMappingToLODZero;
+				const FMorphTargetLODModel& MorphLODModelZero = MorphTarget->GetMorphLODModels()[0];
+
+				// Add all vertices.
+				for (int32 RenderVertexIndex = 0; RenderVertexIndex < NumRenderVertices; ++RenderVertexIndex)
+				{
+					// Try to locate a vertex in the morph target that uses the same render vertex index.
+					const int32* MorphVertexIndexLODZero = RenderVertexToMorphVertexLodZero[MorphIndex].Find(MappingToLODZero[RenderVertexIndex]);
+					const FMorphTargetDelta* DeltaInLODZero = MorphVertexIndexLODZero ? &MorphLODModelZero.Vertices[*MorphVertexIndexLODZero] : nullptr;
+					
+					// Make sure we found one, if we didn't find it, we can skip this vertex.
+					if (!DeltaInLODZero)
+					{
+						continue;
+					}
+
+					// Add the vertex to the morph target.
+					MorphLODModel.Vertices.AddDefaulted();
+					FMorphTargetDelta& MorphTargetDelta = MorphLODModel.Vertices.Last();
+					MorphTargetDelta.PositionDelta = DeltaInLODZero->PositionDelta;
+					MorphTargetDelta.SourceIdx = RenderVertexIndex;
+					MorphTargetDelta.TangentZDelta = DeltaInLODZero->TangentZDelta;
+
+					// Make sure we update the list of sections that we touch.
+					int32 RenderSection = INDEX_NONE;
+					int32 TempVertexIndex = INDEX_NONE;
+					RenderData->LODRenderData[LOD].GetSectionFromVertexIndex(RenderVertexIndex, RenderSection, TempVertexIndex);
+					if (RenderSection != INDEX_NONE)
+					{
+						MorphLODModel.SectionIndices.AddUnique(RenderSection);
+					}
+				}
+				MorphLODModel.NumBaseMeshVerts = NumRenderVertices;
+				MorphLODModel.NumVertices = NumRenderVertices;
+				MorphLODModel.Vertices.Shrink();
+			} // For each morph target.
+		} // For each LOD to generate.
+
+		const double TotalTime = FPlatformTime::Seconds() - StartTime;
+		UE_LOG(LogMLDeformer, Display, TEXT("Finished Morph Target LOD generation in %.2f seconds"), TotalTime);
 	}
 
 	void FMLDeformerMorphModelEditorModel::Render(const FSceneView* View, FViewport* Viewport, FPrimitiveDrawInterface* PDI)
@@ -745,7 +876,7 @@ namespace UE::MLDeformer
 		}
 	}
 
-	void FMLDeformerMorphModelEditorModel::RecursiveAddBoneToMaskUpwards(const FReferenceSkeleton& RefSkel, int32 SkeletonBoneIndex, int32 MaxHierarchyDepth, const TArray<int32>& VirtualParentTable, TArray<int32>& OutBonesAdded, int32 CurHierarchyDepth)
+	void FMLDeformerMorphModelEditorModel::RecursiveAddBoneToMaskUpwards(const FReferenceSkeleton& RefSkel, int32 SkeletonBoneIndex, int32 MaxHierarchyDepth, TArray<int32>& OutBonesAdded, int32 CurHierarchyDepth)
 	{
 		if (CurHierarchyDepth > MaxHierarchyDepth)
 		{
@@ -762,11 +893,16 @@ namespace UE::MLDeformer
 		const int32 ParentSkeletonBoneIndex = RefSkel.GetParentIndex(SkeletonBoneIndex);
 		if (ParentSkeletonBoneIndex != INDEX_NONE)
 		{
-			RecursiveAddBoneToMaskUpwards(RefSkel, ParentSkeletonBoneIndex, MaxHierarchyDepth, VirtualParentTable, OutBonesAdded, CurHierarchyDepth + 1);
+			RecursiveAddBoneToMaskUpwards(RefSkel, ParentSkeletonBoneIndex, MaxHierarchyDepth, OutBonesAdded, CurHierarchyDepth + 1);
 		}
 	}
 
-	void FMLDeformerMorphModelEditorModel::RecursiveAddBoneToMaskDownwards(const FReferenceSkeleton& RefSkel, int32 SkeletonBoneIndex, int32 MaxHierarchyDepth, const TArray<int32>& VirtualParentTable, TArray<int32>& OutBonesAdded, int32 CurHierarchyDepth)
+	void FMLDeformerMorphModelEditorModel::RecursiveAddBoneToMaskUpwards(const FReferenceSkeleton& RefSkel, int32 SkeletonBoneIndex, int32 MaxHierarchyDepth, const TArray<int32>& VirtualParentTable, TArray<int32>& OutBonesAdded, int32 CurHierarchyDepth)
+	{
+		RecursiveAddBoneToMaskUpwards(RefSkel, SkeletonBoneIndex, MaxHierarchyDepth, OutBonesAdded, CurHierarchyDepth);
+	}
+
+	void FMLDeformerMorphModelEditorModel::RecursiveAddBoneToMaskDownwards(const FReferenceSkeleton& RefSkel, int32 SkeletonBoneIndex, int32 MaxHierarchyDepth, TArray<int32>& OutBonesAdded, int32 CurHierarchyDepth)
 	{
 		if (CurHierarchyDepth > MaxHierarchyDepth)
 		{
@@ -787,8 +923,13 @@ namespace UE::MLDeformer
 		// Now recursively add the child bones.
 		for (const int32 ChildIndex : ChildBones)
 		{
-			RecursiveAddBoneToMaskDownwards(RefSkel, ChildIndex, MaxHierarchyDepth, VirtualParentTable, OutBonesAdded, CurHierarchyDepth + 1);
+			RecursiveAddBoneToMaskDownwards(RefSkel, ChildIndex, MaxHierarchyDepth, OutBonesAdded, CurHierarchyDepth + 1);
 		}
+	}
+
+	void FMLDeformerMorphModelEditorModel::RecursiveAddBoneToMaskDownwards(const FReferenceSkeleton& RefSkel, int32 SkeletonBoneIndex, int32 MaxHierarchyDepth, const TArray<int32>& VirtualParentTable, TArray<int32>& OutBonesAdded, int32 CurHierarchyDepth)
+	{
+		RecursiveAddBoneToMaskDownwards(RefSkel, SkeletonBoneIndex, MaxHierarchyDepth, OutBonesAdded, CurHierarchyDepth);
 	}
 
 	int32 FMLDeformerMorphModelEditorModel::FindVirtualParentIndex(const FReferenceSkeleton& RefSkel, int32 BoneIndex, const TArray<FName>& IncludedBoneNames) const
@@ -816,15 +957,17 @@ namespace UE::MLDeformer
 
 	TArray<int32> FMLDeformerMorphModelEditorModel::BuildVirtualParentTable(const FReferenceSkeleton& RefSkel, const TArray<FName>& IncludedBoneNames) const
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
+
 		TArray<int32> VirtualParentTable;
 		VirtualParentTable.SetNumUninitialized(RefSkel.GetNum());
-
 		for (int32 BoneIndex = 0; BoneIndex < RefSkel.GetNum(); ++BoneIndex)
 		{
 			VirtualParentTable[BoneIndex] = FindVirtualParentIndex(RefSkel, BoneIndex, IncludedBoneNames);
 		}
-
 		return MoveTemp(VirtualParentTable);
+
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
 
 }	// namespace UE::MLDeformer

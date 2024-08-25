@@ -28,15 +28,12 @@ void FMeshRepairOrientation::OrientComponents()
 	{
 		Remaining.Add(TID);
 	}
+	// note: this is only called after we've already verified there are elements in Remaining
 	auto PopOneTri = [&Remaining]()
 	{
-		for (int One : Remaining)
-		{
-			Remaining.Remove(One);
-			return One;
-		}
-		check(false);
-		return FDynamicMesh3::InvalidID;
+		int32 One = *Remaining.CreateConstIterator();
+		Remaining.Remove(One);
+		return One;
 	};
 	TArray<int> Stack;
 	while (Remaining.Num() > 0)
@@ -48,7 +45,7 @@ void FMeshRepairOrientation::OrientComponents()
 		C.Triangles.Add(Start);
 		Stack.Add(Start);
 		while (Stack.Num() > 0) {
-			int Cur = Stack.Pop(false);
+			int Cur = Stack.Pop(EAllowShrinking::No);
 			FIndex3i tcur = Mesh->GetTriangle(Cur);
 	
 			FIndex3i nbrs = Mesh->GetTriNeighbourTris(Cur);

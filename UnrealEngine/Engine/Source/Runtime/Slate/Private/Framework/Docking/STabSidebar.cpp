@@ -109,6 +109,7 @@ public:
 				ETextTransformPolicy::None,
 				FMargin(),
 				1.0f,
+				true,
 				ETextJustify::Left),
 			LayoutScaleMultiplier, TextStyle);
 		return FVector2D(DesiredHorizontalTextSize.Y, DesiredHorizontalTextSize.X);

@@ -85,6 +85,9 @@ class UMaterialExpressionCustom : public UMaterialExpression
 	UPROPERTY(EditAnywhere, Category=MaterialExpressionCustom)
 	TArray<FString> IncludeFilePaths;
 
+	UPROPERTY(VisibleAnywhere, Category=MaterialExpressionCustom)
+	bool ShowCode;
+
 	//~ Begin UObject Interface.
 #if WITH_EDITOR
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
@@ -105,6 +108,7 @@ class UMaterialExpressionCustom : public UMaterialExpression
 	virtual uint32 GetOutputType(int32 OutputIndex) override;
 	virtual bool IsResultMaterialAttributes(int32 OutputIndex) override;
 	virtual bool GenerateHLSLExpression(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope, int32 OutputIndex, UE::HLSLTree::FExpression const*& OutExpression) const override;
+	virtual void GetIncludeFilePaths(TSet<FString>& OutIncludeFilePaths) const override;
 #endif // WITH_EDITOR
 	//~ End UMaterialExpression Interface
 };

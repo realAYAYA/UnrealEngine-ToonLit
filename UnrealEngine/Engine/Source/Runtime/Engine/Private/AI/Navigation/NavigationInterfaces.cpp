@@ -7,6 +7,7 @@
 #include "AI/Navigation/NavigationTypes.h"
 #include "AI/RVOAvoidanceInterface.h"
 #include "AI/Navigation/NavigationDataInterface.h"
+#include "AI/Navigation/NavigationInvokerInterface.h"
 #include "AI/Navigation/PathFollowingAgentInterface.h"
 #include "UObject/Interface.h"
 
@@ -46,6 +47,11 @@ UNavigationDataInterface::UNavigationDataInterface(const FObjectInitializer& Obj
 }
 
 UPathFollowingAgentInterface::UPathFollowingAgentInterface(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+{
+}
+
+UNavigationInvokerInterface::UNavigationInvokerInterface(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
 }

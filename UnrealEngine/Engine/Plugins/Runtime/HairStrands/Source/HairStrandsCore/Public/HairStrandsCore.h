@@ -40,11 +40,7 @@ public:
 
 	virtual void StartupModule() override;
 	virtual void ShutdownModule() override;
-
-	virtual bool SupportsDynamicReloading() override
-	{
-		return true;
-	}
+	virtual bool SupportsDynamicReloading() override { return true; }
 
 	HAIRSTRANDSCORE_API static void RegisterAssetHelper(const FHairAssetHelper& Helper);
 	

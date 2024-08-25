@@ -175,7 +175,34 @@ void UMovieSceneNiagaraCacheTrack::SetCacheRecordingAllowed(bool bShouldRecord)
 
 bool UMovieSceneNiagaraCacheTrack::IsCacheRecordingAllowed() const
 {
-	return bCacheRecordingEnabled;
+	bool bAllSectionCanRecord = true;
+	for (UMovieSceneSection* Section : AnimationSections)
+	{
+		if (UMovieSceneNiagaraCacheSection* NiagaraCacheSection = Cast<UMovieSceneNiagaraCacheSection>(Section))
+		{
+			if (NiagaraCacheSection->IsLocked() || NiagaraCacheSection->Params.bLockCacheToReadOnly)
+			{
+				bAllSectionCanRecord = false;
+			}
+		}
+	}
+	return bCacheRecordingEnabled && !IsEvalDisabled() && bAllSectionCanRecord;
+}
+
+int32 UMovieSceneNiagaraCacheTrack::GetMinimumEngineScalabilitySetting() const
+{
+	int32 MinSetting = -1;
+	for (UMovieSceneSection* Section : AnimationSections)
+	{
+		if (UMovieSceneNiagaraCacheSection* NiagaraCacheSection = Cast<UMovieSceneNiagaraCacheSection>(Section))
+		{
+			if (NiagaraCacheSection->Params.bOverrideQualityLevel)
+			{
+				MinSetting = FMath::Max(MinSetting, static_cast<int32>(NiagaraCacheSection->Params.RecordQualityLevel));
+			}
+		}
+	}
+	return MinSetting;
 }
 
 #undef LOCTEXT_NAMESPACE

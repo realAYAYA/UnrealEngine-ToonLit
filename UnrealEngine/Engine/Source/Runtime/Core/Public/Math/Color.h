@@ -89,6 +89,17 @@ struct FLinearColor
 	CORE_API explicit FLinearColor(const FFloat16Color& C);
 
 	// Serializer.
+	
+	friend FArchive& operator<<(FArchive& Ar,FLinearColor& Color)
+	{
+		return Ar << Color.R << Color.G << Color.B << Color.A;
+	}
+
+	bool Serialize( FArchive& Ar )
+	{
+		Ar << *this;
+		return true;
+	}
 
 	friend void operator<<(FStructuredArchive::FSlot Slot, FLinearColor& Color)
 	{
@@ -409,10 +420,7 @@ struct FLinearColor
 		return FMath::Min( FMath::Min( FMath::Min( R, G ), B ), A );
 	}
 
-	FString ToString() const
-	{
-		return FString::Printf(TEXT("(R=%f,G=%f,B=%f,A=%f)"),R,G,B,A);
-	}
+	CORE_API FString ToString() const;
 
 	/**
 	 * Initialize this Color based on an FString. The String is expected to contain R=, G=, B=, A=.
@@ -421,19 +429,7 @@ struct FLinearColor
 	 * @param InSourceString FString containing the color values.
 	 * @return true if the R,G,B values were read successfully; false otherwise.
 	 */
-	bool InitFromString( const FString& InSourceString )
-	{
-		R = G = B = 0.f;
-		A = 1.f;
-
-		// The initialization is only successful if the R, G, and B values can all be parsed from the string
-		const bool bSuccessful = FParse::Value( *InSourceString, TEXT("R=") , R ) && FParse::Value( *InSourceString, TEXT("G="), G ) && FParse::Value( *InSourceString, TEXT("B="), B );
-		
-		// Alpha is optional, so don't factor in its presence (or lack thereof) in determining initialization success
-		FParse::Value( *InSourceString, TEXT("A="), A );
-		
-		return bSuccessful;
-	}
+	CORE_API bool InitFromString( const FString& InSourceString );
 
 	/**
 	 * Helper for pixel format conversions. Clamps to [0,1], mapping NaNs to 0,
@@ -597,28 +593,26 @@ public:
 
 	static uint8 QuantizeUNormFloatTo8( float UnitFloat )
 	{
-		UnitFloat = FMath::Clamp(UnitFloat,0.f,1.f);
-		return (uint8)( 0.5f + UnitFloat * 255.f );
+		return (uint8)( 0.5f + FLinearColor::Clamp01NansTo0(UnitFloat) * 255.f );
 	}
 	
 	static uint16 QuantizeUNormFloatTo16( float UnitFloat )
 	{
-		UnitFloat = FMath::Clamp(UnitFloat,0.f,1.f);
-		return (uint16)( 0.5f + UnitFloat * 65535.f );
+		return (uint16)( 0.5f + FLinearColor::Clamp01NansTo0(UnitFloat) * 65535.f );
 	}
 
 	static float DequantizeUNorm8ToFloat( int Value8 )
 	{
 		check( Value8 >= 0 && Value8 <= 255 );
 
-		return (float)Value8 / 255.f;
+		return (float)Value8 * (1.f/255.f);
 	}
 	
 	static float DequantizeUNorm16ToFloat( int Value16 )
 	{
 		check( Value16 >= 0 && Value16 <= 65535 );
 
-		return (float)Value16 / 65535.f;
+		return (float)Value16 * (1.f/65535.f);
 	}
 
 	static uint8 Requantize10to8( int Value10 )
@@ -682,7 +676,8 @@ public:
 	 */
 	FORCEINLINE FLinearColor ReinterpretAsLinear() const
 	{
-		return FLinearColor(R / 255.f, G / 255.f, B / 255.f, A / 255.f);
+		constexpr float inv255 = 1.f / 255.f;
+		return FLinearColor(R * inv255, G * inv255, B * inv255, A * inv255);
 	}
 
 	/**
@@ -693,10 +688,7 @@ public:
 	 * @return Hexadecimal string.
 	 * @see FromHex, ToString
 	 */
-	FORCEINLINE FString ToHex() const
-	{
-		return FString::Printf(TEXT("%02X%02X%02X%02X"), R, G, B, A);
-	}
+	CORE_API FString ToHex() const;
 
 	/**
 	 * Converts this color value to a string.
@@ -704,10 +696,7 @@ public:
 	 * @return The string representation.
 	 * @see ToHex
 	 */
-	FORCEINLINE FString ToString() const
-	{
-		return FString::Printf(TEXT("(R=%i,G=%i,B=%i,A=%i)"), R, G, B, A);
-	}
+	CORE_API FString ToString() const;
 
 	/**
 	 * Initialize this Color based on an FString. The String is expected to contain R=, G=, B=, A=.
@@ -716,19 +705,7 @@ public:
 	 * @param	InSourceString	FString containing the color values.
 	 * @return true if the R,G,B values were read successfully; false otherwise.
 	 */
-	bool InitFromString( const FString& InSourceString )
-	{
-		R = G = B = 0;
-		A = 255;
-
-		// The initialization is only successful if the R, G, and B values can all be parsed from the string
-		const bool bSuccessful = FParse::Value( *InSourceString, TEXT("R=") , R ) && FParse::Value( *InSourceString, TEXT("G="), G ) && FParse::Value( *InSourceString, TEXT("B="), B );
-		
-		// Alpha is optional, so don't factor in its presence (or lack thereof) in determining initialization success
-		FParse::Value( *InSourceString, TEXT("A="), A );
-		
-		return bSuccessful;
-	}
+	CORE_API bool InitFromString( const FString& InSourceString );
 
 	/**
 	 * Gets the color in a packed uint32 format packed in the order ARGB.

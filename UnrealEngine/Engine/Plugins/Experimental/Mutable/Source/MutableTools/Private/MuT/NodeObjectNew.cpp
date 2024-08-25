@@ -1,6 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-
 #include "MuT/NodeObjectNew.h"
 
 #include "HAL/PlatformString.h"
@@ -18,9 +17,6 @@
 #include "MuT/NodeSurface.h"
 #include "MuT/NodeSurfaceNew.h"
 
-#include <memory>
-#include <utility>
-
 
 namespace mu
 {
@@ -29,8 +25,7 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeObjectNew::Private::s_type =
-			NODE_TYPE( "Object", NodeObjectNew::GetStaticType() );
+	FNodeType NodeObjectNew::Private::s_type = FNodeType( "Object", NodeObject::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -41,110 +36,31 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	int NodeObjectNew::GetInputCount() const
-	{
-		return (m_pD->m_lods.Num() + m_pD->m_children.Num());
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	Node* NodeObjectNew::GetInputNode( int i ) const
-	{
-		check( i>=0 && i<GetInputCount() );
-
-		Node* pResult = 0;
-
-		if ( i<(int)m_pD->m_lods.Num() )
-		{
-			pResult = m_pD->m_lods[i].get();
-		}
-		else
-		{
-			i -= (int)m_pD->m_lods.Num();
-			
-			if ( i<(int) m_pD->m_children.Num() )
-			{
-				pResult = m_pD->m_children[i].get();
-			}
-			else
-			{
-				i -= (int)m_pD->m_children.Num();
-
-				pResult = m_pD->m_extensionDataNodes[i].Node.get();
-			}
-		}
-
-		return pResult;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeObjectNew::SetInputNode( int i, NodePtr pNode )
-	{
-		check( i>=0 && i<GetInputCount() );
-
-		if ( i<(int)m_pD->m_lods.Num() )
-		{
-			m_pD->m_lods[i] = dynamic_cast<NodeLOD*>( pNode.get() );
-		}
-		else
-		{
-			i -= (int)m_pD->m_lods.Num();
-
-			if (i < (int) m_pD->m_children.Num())
-			{
-				m_pD->m_children[i] = dynamic_cast<NodeObject*>( pNode.get() );
-			}
-			else
-			{
-				checkf(false, TEXT("Trying to set an input node for an extension input data. Please use AddExtensionDataNode for this"));
-			}
-		}
-	}
-
-
-	//---------------------------------------------------------------------------------------------
 	// Own Interface
 	//---------------------------------------------------------------------------------------------
-	const char* NodeObjectNew::GetName() const
+	const FString& NodeObjectNew::GetName() const
 	{
-		return m_pD->m_name.c_str();
+		return m_pD->m_name;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-	void NodeObjectNew::SetName( const char* strName )
+	void NodeObjectNew::SetName( const FString& Name )
 	{
-		if( strName )
-		{
-			m_pD->m_name = strName;
-		}
-		else
-		{
-			m_pD->m_name = "";
-		}
+		m_pD->m_name = Name;
 	}
 
 
-	const char* NodeObjectNew::GetUid() const
+	const FString& NodeObjectNew::GetUid() const
 	{
-		return m_pD->m_uid.c_str();
+		return m_pD->m_uid;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-	void NodeObjectNew::SetUid( const char* strUid )
+	void NodeObjectNew::SetUid( const FString& Uid )
 	{
-		if( strUid )
-		{
-			m_pD->m_uid = strUid;
-		}
-		else
-		{
-			m_pD->m_uid = "";
-		}
+		m_pD->m_uid = Uid;
 	}
 
 
@@ -225,28 +141,24 @@ namespace mu
 
 		NodeLayoutPtr pLayout;
 
-		const NodeComponentNew* pComp =
-			dynamic_cast<const NodeComponentNew*> ( m_lods[lod]->GetComponent( component ).get() );
+		const NodeComponent* pCompGeneric = m_lods[lod]->GetComponent( component ).get();
 
-        if (pComp)
+        if (pCompGeneric->GetType()==NodeComponentNew::GetStaticType())
         {
-            const NodeSurfaceNew* pSurface =
-                    dynamic_cast<const NodeSurfaceNew*> ( pComp->GetSurface( surface ) );
-
-            if ( pSurface )
+			const NodeComponentNew* pComp = static_cast<const NodeComponentNew*> (pCompGeneric);
+			const NodeSurface* pSurfaceGeneric = pComp->GetSurface( surface );
+            if (pSurfaceGeneric->GetType()==NodeSurfaceNew::GetStaticType())
             {
-                // TODO: Look for the layout index of the given texture
+				const NodeSurfaceNew* pSurface = static_cast<const NodeSurfaceNew*> (pSurfaceGeneric);
+				
+				// TODO: Look for the layout index of the given texture
                 // TODO: Multiple meshes
                 if ( pSurface->GetMeshCount()>0 )
                 {
-                     const NodeMesh* pMesh =
-                             dynamic_cast<const NodeMesh*> ( pSurface->GetMesh( 0 ).get() );
-
+                    const NodeMesh* pMesh = pSurface->GetMesh( 0 ).get();
                     if ( pMesh )
                     {
-                        NodeMesh::Private* pPrivate =
-                                dynamic_cast<NodeMesh::Private*>( pMesh->GetBasePrivate() );
-
+                        NodeMesh::Private* pPrivate = static_cast<NodeMesh::Private*>( pMesh->GetBasePrivate() );
                         pLayout = pPrivate->GetLayout( 0 );
                     }
                 }
@@ -272,29 +184,21 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	int NodeObjectNew::GetStateCount() const
+	int32 NodeObjectNew::GetStateCount() const
 	{
 		return m_pD->m_states.Num();
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-	void NodeObjectNew::SetStateCount( int c )
+	void NodeObjectNew::SetStateCount( int32 c )
 	{
 		m_pD->m_states.SetNum( c );
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-	const char* NodeObjectNew::GetStateName( int s ) const
-	{
-		check( s>=0 && s<GetStateCount() );
-		return m_pD->m_states[s].m_name.c_str();
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeObjectNew::SetStateName( int s, const char* n )
+	void NodeObjectNew::SetStateName( int32 s, const FString& n )
 	{
 		check( s>=0 && s<GetStateCount() );
 		m_pD->m_states[s].m_name = n;
@@ -302,7 +206,7 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	bool NodeObjectNew::HasStateParam( int s, const char* param ) const
+	bool NodeObjectNew::HasStateParam( int32 s, const FString& param ) const
 	{
 		check( s>=0 && s<GetStateCount() );
 		return m_pD->m_states[s].m_runtimeParams.Contains( param );
@@ -310,7 +214,7 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	void NodeObjectNew::AddStateParam( int s, const char* param )
+	void NodeObjectNew::AddStateParam( int32 s, const FString& param )
 	{
 		check( s>=0 && s<GetStateCount() );
 
@@ -322,7 +226,7 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	void NodeObjectNew::RemoveStateParam( int s, const char* param )
+	void NodeObjectNew::RemoveStateParam( int32 s, const FString& param )
 	{
 		check( s>=0 && s<GetStateCount() );
 
@@ -351,7 +255,7 @@ namespace mu
     }
 
     //---------------------------------------------------------------------------------------------
-	void NodeObjectNew::AddExtensionDataNode(NodeExtensionDataPtr Node, const char* Name)
+	void NodeObjectNew::AddExtensionDataNode(NodeExtensionDataPtr Node, const FString& Name)
 	{
 		NodeObjectNew::Private::NamedExtensionDataNode& Entry = m_pD->m_extensionDataNodes.AddDefaulted_GetRef();
 		Entry.Node = Node;

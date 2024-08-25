@@ -76,6 +76,13 @@ namespace Audio
 
 			// Parameter Setters
 			virtual bool SetParameters(TArray<FAudioParameter>&& InParameters) = 0;
+
+			// Called when the active sound is virtualized  
+			virtual void OnVirtualizeActiveSound() {}
+
+			// Called when the virtualized active sound is realized 
+			// @param Parameters to set 
+			virtual void OnRealizeVirtualizedActiveSound(TArray<FAudioParameter>&& InParameters) {}
 	};
 
 	/** Base implementation for the parameter transmitter, which caches parameters
@@ -93,8 +100,11 @@ namespace Audio
 		UE_DEPRECATED(5.2, "Use ResetParameters() or OnDeleteActiveSound() instead depending on use case.")
 		AUDIOEXTENSIONS_API virtual bool Reset() override;
 		AUDIOEXTENSIONS_API virtual bool SetParameters(TArray<FAudioParameter>&& InParameters) override;
+		AUDIOEXTENSIONS_API virtual void OnVirtualizeActiveSound() override;
+		AUDIOEXTENSIONS_API virtual void OnRealizeVirtualizedActiveSound(TArray<FAudioParameter>&& InParameters);
 
 	protected:
 		TArray<FAudioParameter> AudioParameters;
+		bool bIsVirtualized;
 	};
 } // namespace Audio

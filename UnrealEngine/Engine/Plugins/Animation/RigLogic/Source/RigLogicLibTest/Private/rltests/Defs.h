@@ -4,7 +4,7 @@
 
 #ifdef _MSC_VER
     #pragma warning(push)
-    #pragma warning(disable : 4061 4121 4365 4987 4668 4996 6330)
+    #pragma warning(disable : 4061 4121 4324 4365 4987 4668 4996 6330)
 #endif
 #ifdef __clang__
     #pragma clang diagnostic push

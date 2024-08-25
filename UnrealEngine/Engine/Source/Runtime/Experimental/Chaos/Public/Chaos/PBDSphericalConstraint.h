@@ -4,6 +4,7 @@
 #include "Chaos/PBDSoftsEvolutionFwd.h"
 #include "Chaos/PBDSoftsSolverParticles.h"
 #include "Chaos/CollectionPropertyFacade.h"
+#include "Chaos/SoftsSolverParticlesRange.h"
 #include "ChaosStats.h"
 #include "Containers/ArrayView.h"
 #include "Containers/ContainersFwd.h"
@@ -101,7 +102,9 @@ public:
 		SetProperties(PropertyCollection, TMap<FString, TConstArrayView<FRealSingle>>(), MeshScale);
 	}
 
-	void Apply(FSolverParticles& Particles, const FSolverReal Dt) const
+
+	template<typename SolverParticlesOrRange>
+	void Apply(SolverParticlesOrRange& Particles, const FSolverReal Dt) const
 	{
 		SCOPE_CYCLE_COUNTER(STAT_PBD_Spherical);
 
@@ -142,10 +145,12 @@ public:
 	}
 
 private:
-	template<bool bHasMaxDistance>
-	void ApplyHelper(FSolverParticles& Particles, const FSolverReal Dt) const
+
+	template<bool bHasMaxDistance, typename SolverParticlesOrRange>
+	void ApplyHelper(SolverParticlesOrRange& Particles, const FSolverReal Dt) const
 	{
-		PhysicsParallelFor(ParticleCount, [this, &Particles, Dt](int32 Index)  // TODO: profile need for parallel loop based on particle count
+		const TConstArrayView<FSolverVec3> AnimationPositionsView = Particles.GetConstArrayView(AnimationPositions);
+		PhysicsParallelFor(ParticleCount, [this, &Particles, Dt, &AnimationPositionsView](int32 Index)  // TODO: profile need for parallel loop based on particle count
 		{
 			const int32 ParticleIndex = ParticleOffset + Index;
 
@@ -155,7 +160,7 @@ private:
 			}
 
 			const FSolverReal Radius = (bHasMaxDistance ? MaxDistanceBase + MaxDistanceRange * SphereRadii[Index] : MaxDistanceBase) * Scale;
-			const FSolverVec3& Center = AnimationPositions[ParticleIndex];
+			const FSolverVec3& Center = AnimationPositionsView[ParticleIndex];
 
 			const FSolverVec3 CenterToParticle = Particles.P(ParticleIndex) - Center;
 			const FSolverReal DistanceSquared = CenterToParticle.SizeSquared();
@@ -170,7 +175,8 @@ private:
 		});
 	}
 
-	CHAOS_API void ApplyHelperISPC(FSolverParticles& Particles, const FSolverReal Dt) const;
+	template<typename SolverParticlesOrRange>
+	CHAOS_API void ApplyHelperISPC(SolverParticlesOrRange& Particles, const FSolverReal Dt) const;
 
 protected:
 	const TArray<FSolverVec3>& AnimationPositions;  // Use global indexation (will need adding ParticleOffset)
@@ -292,7 +298,8 @@ public:
 	void SetEnabled(bool bInEnabled) { bEnabled = bInEnabled; }
 	bool IsEnabled() const { return bEnabled; }
 
-	void Apply(FSolverParticles& Particles, const FSolverReal Dt) const
+	template<typename SolverParticlesOrRange>
+	void Apply(SolverParticlesOrRange& Particles, const FSolverReal Dt) const
 	{
 		SCOPE_CYCLE_COUNTER(STAT_PBD_SphericalBackstop);
 
@@ -400,11 +407,24 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		return bUseLegacyBackstop;
 	}
 
-private:
-	template<bool bHasBackstopDistance, bool bHasBackstopRadius>
-	void ApplyHelper(FSolverParticles& Particles, const FSolverReal Dt) const
+	FSolverReal GetBackstopRadius(int32 ConstraintIndex) const
 	{
-		PhysicsParallelFor(ParticleCount, [this, &Particles, Dt](int32 Index)  // TODO: profile need for parallel loop based on particle count
+		return SphereRadii.Num() == ParticleCount ? BackstopRadiusBase + BackstopRadiusRange * SphereRadii[ConstraintIndex] : BackstopRadiusBase;
+	}
+
+	FSolverReal GetBackstopDistance(int32 ConstraintIndex) const
+	{
+		return SphereOffsetDistances.Num() == ParticleCount ? BackstopDistanceBase + BackstopDistanceRange * SphereOffsetDistances[ConstraintIndex] : BackstopDistanceBase;
+	}
+
+private:
+
+	template<bool bHasBackstopDistance, bool bHasBackstopRadius, typename SolverParticlesOrRange>
+	void ApplyHelper(SolverParticlesOrRange& Particles, const FSolverReal Dt) const
+	{
+		const TConstArrayView<FSolverVec3> AnimationPositionsView = Particles.GetConstArrayView(AnimationPositions);
+		const TConstArrayView<FSolverVec3> AnimationNormalsView = Particles.GetConstArrayView(AnimationNormals);
+		PhysicsParallelFor(ParticleCount, [this, &Particles, Dt, &AnimationPositionsView, &AnimationNormalsView](int32 Index)  // TODO: profile need for parallel loop based on particle count
 		{
 			const int32 ParticleIndex = ParticleOffset + Index;
 
@@ -413,8 +433,8 @@ private:
 				return;
 			}
 
-			const FSolverVec3& AnimationPosition = AnimationPositions[ParticleIndex];
-			const FSolverVec3& AnimationNormal = AnimationNormals[ParticleIndex];
+			const FSolverVec3& AnimationPosition = AnimationPositionsView[ParticleIndex];
+			const FSolverVec3& AnimationNormal = AnimationNormalsView[ParticleIndex];
 
 			const FSolverReal SphereOffsetDistance = (bHasBackstopDistance ? BackstopDistanceBase + BackstopDistanceRange * SphereOffsetDistances[Index] : BackstopDistanceBase) * Scale;
 			const FSolverReal Radius = (bHasBackstopRadius ? BackstopRadiusBase + BackstopRadiusRange * SphereRadii[Index] : BackstopRadiusBase) * Scale;
@@ -437,10 +457,12 @@ private:
 		});
 	}
 
-	template<bool bHasBackstopDistance, bool bHasBackstopRadius>
-	void ApplyLegacyHelper(FSolverParticles& Particles, const FSolverReal Dt) const
+	template<bool bHasBackstopDistance, bool bHasBackstopRadius, typename SolverParticlesOrRange>
+	void ApplyLegacyHelper(SolverParticlesOrRange& Particles, const FSolverReal Dt) const
 	{
-		PhysicsParallelFor(ParticleCount, [this, &Particles, Dt](int32 Index)  // TODO: profile need for parallel loop based on particle count
+		const TConstArrayView<FSolverVec3> AnimationPositionsView = Particles.GetConstArrayView(AnimationPositions);
+		const TConstArrayView<FSolverVec3> AnimationNormalsView = Particles.GetConstArrayView(AnimationNormals);
+		PhysicsParallelFor(ParticleCount, [this, &Particles, Dt, &AnimationPositionsView, &AnimationNormalsView](int32 Index)  // TODO: profile need for parallel loop based on particle count
 		{
 			const int32 ParticleIndex = ParticleOffset + Index;
 
@@ -449,8 +471,8 @@ private:
 				return;
 			}
 
-			const FSolverVec3& AnimationPosition = AnimationPositions[ParticleIndex];
-			const FSolverVec3& AnimationNormal = AnimationNormals[ParticleIndex];
+			const FSolverVec3& AnimationPosition = AnimationPositionsView[ParticleIndex];
+			const FSolverVec3& AnimationNormal = AnimationNormalsView[ParticleIndex];
 
 			const FSolverReal SphereOffsetDistance = (bHasBackstopDistance ? BackstopDistanceBase + BackstopDistanceRange * SphereOffsetDistances[Index] : BackstopDistanceBase) * Scale;
 			const FSolverReal Radius = (bHasBackstopRadius ? BackstopRadiusBase + BackstopRadiusRange * SphereRadii[Index] : BackstopRadiusBase) * Scale;
@@ -473,8 +495,10 @@ private:
 		});
 	}
 
-	CHAOS_API void ApplyLegacyHelperISPC(FSolverParticles& Particles, const FSolverReal Dt) const;
-	CHAOS_API void ApplyHelperISPC(FSolverParticles& Particles, const FSolverReal Dt) const;
+	template<typename SolverParticlesOrRange>
+	CHAOS_API void ApplyLegacyHelperISPC(SolverParticlesOrRange& Particles, const FSolverReal Dt) const;
+	template<typename SolverParticlesOrRange>
+	CHAOS_API void ApplyHelperISPC(SolverParticlesOrRange& Particles, const FSolverReal Dt) const;
 
 private:
 	const TArray<FSolverVec3>& AnimationPositions;  // Positions of spheres, use global indexation (will need adding ParticleOffset)

@@ -74,7 +74,7 @@ public:
 	UEdGraphPin* GetSelectorPin() const;
 	
 	/** This is a hack used in the translator to check for inconsistencies with old static switches before auto refresh was a thing */
-	void CheckForOutdatedEnum(FTranslator* Translator);
+	void CheckForOutdatedEnum(FTranslator* Translator) const;
 
 	void UpdateCompilerConstantValue(FTranslator* Translator);
 

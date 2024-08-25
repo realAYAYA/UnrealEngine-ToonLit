@@ -14,11 +14,13 @@
 	"IsBetaVersion": false,
 	"IsExperimentalVersion": false,
 	"Installed": false,
+	"SupportedPrograms": ["LiveLinkHub"],
 	"Modules": [
 		{
 			"Name": "ARUtilities",
 			"Type": "Runtime",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "Default",
+			"ProgramAllowList": ["LiveLinkHub"]
 		}
 	],
 	"Plugins": [

@@ -38,7 +38,7 @@ TArray<TArray<FGuid>> GenerateObjectsClusters(const TArray<TPair<FGuid, TArray<F
 
 			while (!ObjectStack.IsEmpty())
 			{
-				const FGuid Object = ObjectStack.Pop(false);
+				const FGuid Object = ObjectStack.Pop(EAllowShrinking::No);
 				if (!VisitedObjects.Contains(Object))
 				{
 					VisitedObjects.Add(Object);

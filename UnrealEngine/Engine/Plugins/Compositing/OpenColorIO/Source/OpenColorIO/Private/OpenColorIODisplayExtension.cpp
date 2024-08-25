@@ -54,10 +54,14 @@ void FOpenColorIODisplayExtension::SetupView(FSceneViewFamily& InViewFamily, FSc
 		FOpenColorIORendering::PrepareView(InViewFamily, InView);
 	}
 	ENQUEUE_RENDER_COMMAND(ProcessColorSpaceTransform)(
-		[this, ResourcesRenderThread = MoveTemp(PassResources)](FRHICommandListImmediate& RHICmdList)
+		[WeakThis = AsWeak(), ResourcesRenderThread = MoveTemp(PassResources)](FRHICommandListImmediate& RHICmdList)
 		{
-			//Caches render thread resource to be used when applying configuration in PostRenderViewFamily_RenderThread
-			CachedResourcesRenderThread = ResourcesRenderThread;
+			TSharedPtr<FOpenColorIODisplayExtension> This = StaticCastWeakPtr<FOpenColorIODisplayExtension>(WeakThis).Pin();
+			if (This.IsValid())
+			{
+				//Caches render thread resource to be used when applying configuration in PostRenderViewFamily_RenderThread
+				This->CachedResourcesRenderThread = ResourcesRenderThread;
+			}
 		}
 	);
 }
@@ -72,7 +76,7 @@ void FOpenColorIODisplayExtension::SubscribeToPostProcessingPass(EPostProcessing
 
 FScreenPassTexture FOpenColorIODisplayExtension::PostProcessPassAfterTonemap_RenderThread(FRDGBuilder& GraphBuilder, const FSceneView& View, const FPostProcessMaterialInputs& InOutInputs)
 {
-	const FScreenPassTexture& SceneColor = InOutInputs.GetInput(EPostProcessMaterialInput::SceneColor);
+	const FScreenPassTexture& SceneColor = FScreenPassTexture::CopyFromSlice(GraphBuilder, InOutInputs.GetInput(EPostProcessMaterialInput::SceneColor));
 	check(SceneColor.IsValid());
 
 	FScreenPassRenderTarget Output = InOutInputs.OverrideOutput;

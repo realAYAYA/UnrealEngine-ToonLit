@@ -16,6 +16,7 @@
 #include "LandscapeEditorDetailCustomization_MiscTools.h"
 #include "LandscapeEditorDetailCustomization_AlphaBrush.h"
 #include "LandscapeEditorDetailCustomization_ImportExport.h"
+#include "LandscapeSettings.h"
 #include "DetailWidgetRow.h"
 #include "LandscapeEditorDetailCustomization_TargetLayers.h"
 #include "DetailCategoryBuilder.h"
@@ -81,7 +82,18 @@ void FLandscapeEditorDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBuild
 	};
 	
 	DetailBuilder.SortCategories(CategorySorter);
-	
+
+	// UIMax and ClampMax for the brush radius come from the project settings : 	
+	const ULandscapeSettings* Settings = GetDefault<ULandscapeSettings>();
+	TSharedRef<IPropertyHandle> BrushRadiusProperty = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(ULandscapeEditorObject, BrushRadius));
+	TSharedRef<IPropertyHandle> PaintBrushRadiusProperty = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(ULandscapeEditorObject, PaintBrushRadius));
+	const FString UIMaxString = FString::Printf(TEXT("%f"), Settings->GetBrushSizeUIMax());
+	const FString ClampMaxString = FString::Printf(TEXT("%f"), Settings->GetBrushSizeClampMax());
+	BrushRadiusProperty->SetInstanceMetaData(TEXT("UIMax"), *UIMaxString);
+	BrushRadiusProperty->SetInstanceMetaData(TEXT("ClampMax"), *ClampMaxString);
+	PaintBrushRadiusProperty->SetInstanceMetaData(TEXT("UIMax"), *UIMaxString);
+	PaintBrushRadiusProperty->SetInstanceMetaData(TEXT("ClampMax"), *ClampMaxString);
+
 	LandscapeEditorCategory.AddCustomRow(FText::GetEmpty())
 	.Visibility(TAttribute<EVisibility>::Create(TAttribute<EVisibility>::FGetter::CreateStatic(&FLandscapeEditorDetails::GetTargetLandscapeSelectorVisibility)))
 	[
@@ -150,7 +162,7 @@ void FLandscapeEditorDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBuild
 		SNew(STextBlock)
 		.TextStyle( &FCoreStyle::Get().GetWidgetStyle<FTextBlockStyle>( "SmallText" ) )
 		.Text(LOCTEXT("BrushSelector", "Brush Type"))
-
+		.ToolTipText(LOCTEXT("BrushSelectorToolTip", "Selects the type of brush to use"))
 	]
 	.ValueContent()
 	[
@@ -164,6 +176,7 @@ void FLandscapeEditorDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBuild
 		SNew(STextBlock)
 		.TextStyle( &FCoreStyle::Get().GetWidgetStyle<FTextBlockStyle>( "SmallText" ) )
 		.Text(LOCTEXT("BrushFalloff", "Brush Falloff"))
+		.ToolTipText(LOCTEXT("BrushFalloffToolTip", "Selects the profile shape of the brush falloff"))
 
 	]
 	.ValueContent()
@@ -253,7 +266,7 @@ FText FLandscapeEditorDetails::GetLocalizedName(FString Name)
 	}
 
 	FText Result;
-	ensure(FText::FindText(TEXT("LandscapeEditor"), Name, Result));
+	ensure(FText::FindText(TEXT(LOCTEXT_NAMESPACE), Name, Result));
 	return Result;
 }
 

@@ -11,6 +11,9 @@
 ##
 ## Lib specific constants
 
+# library versions - expected to match tarball and directory names
+VER=libvpx-1.13.1
+
 # Name of lib
 LIB_NAME="vpx"
 BUILD_UNIVERSAL=true
@@ -24,7 +27,7 @@ DROP_TO_LIBROOT=../..
 DROP_TO_THIRDPARTY=..
 
 # Path to libs from libroot
-LIB_PATH=lib/Mac
+LIB_PATH="${VER}/lib/Mac"
 
 # files we build
 LIBFILES=( 
@@ -65,9 +68,6 @@ saveFileStates ${LIBFILES[@]}
 #####################
 # configuration
 
-# library versions - expected to match tarball and directory names
-VER=libvpx-1.10.0
-
 # don't forget to match archive options with tarball type (bz/gz)
 TARBALL=${SCRIPT_DIR}/../$VER.tar.gz
 
@@ -102,29 +102,24 @@ echo changed to $PWD
 
 if [ "$BUILD_UNIVERSAL" = true ] ; then
 	SLICES=( 
-		"x86_64-darwin13-gcc"
-		"arm64-darwin20-gcc"
+		"x86_64-darwin22-gcc"
+		"arm64-darwin22-gcc"
 	)
 else
 	SLICES=( 
-		"x86_64-darwin13-gcc"
+		"x86_64-darwin22-gcc"
 	)
 fi
 
-# Unreal uses the dwarf-2 format.  Updating it will require removing '-gdwarf-2' from:
-#   Engine/Source/Programs/UnrealBuildTool/Platform/Mac/MacToolChain.cs
-export CFLAGS="-gdwarf-2"
-export CXXFLAGS="-gdwarf-2"
-
 for SLICE in "${SLICES[@]}"
 do
-	set BUILD_CFLAGS="-fvisibility=hidden -mmacosx-version-min=10.12 -stdlib=libc++"
-	set BUILD_CXXFLAGS="-fvisibility=hidden -mmacosx-version-min=10.12 -stdlib=libc++"
+	BUILD_CFLAGS="-fvisibility=hidden -mmacosx-version-min=10.9"
+	BUILD_CXXFLAGS="-fvisibility=hidden -mmacosx-version-min=10.9"
+	CONFIG_OPTIONS="--enable-postproc --enable-multi-res-encoding --enable-temporal-denoising --enable-vp9-temporal-denoising --enable-vp9-postproc --size-limit=16384x16384 --enable-realtime-only --disable-examples --disable-tools --disable-docs --disable-unit-tests --disable-libyuv --enable-vp9-highbitdepth --disable-avx512 --disable-shared --enable-static --as=yasm"
+
 	echo "#######################################"
-
 	echo "# Configuring $VER for ${SLICE}"
-	./configure --target=${SLICE} --disable-examples --disable-unit-tests --extra-cflags="${BUILD_CFLAGS}" --extra-cxxflags="${BUILD_CXXFLAGS}"
-
+	./configure --target=${SLICE} ${CONFIG_OPTIONS} --disable-pic --extra-cflags="${BUILD_CFLAGS}"
 	if [ $? -ne 0 ]; then
 		echo "#######################################"
 		echo "# ERROR: Failed to run .configure"
@@ -151,7 +146,7 @@ do
 	echo "#######################################"
 
 	echo "# Configuring $VER for ${SLICE} with PIC"
-	./configure --target=${SLICE} --enable-pic --enable-static --disable-examples --disable-unit-tests --extra-cflags="${BUILD_CFLAGS}" --extra-cxxflags="${BUILD_CXXFLAGS}"
+	./configure --target=${SLICE} ${CONFIG_OPTIONS} --enable-pic --extra-cflags="${BUILD_CFLAGS}"
 
 	if [ $? -ne 0 ]; then
 		echo "#######################################"

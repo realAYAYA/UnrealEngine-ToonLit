@@ -9,7 +9,10 @@ using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
 using EpicGames.Core;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Users;
 using EpicGames.Redis;
+using Horde.Server.Agents;
 using Horde.Server.Agents.Pools;
 using Horde.Server.Configuration;
 using Horde.Server.Devices;
@@ -35,7 +38,7 @@ namespace Horde.Server.Notifications
 	/// <summary>
 	/// Wraps functionality for delivering notifications.
 	/// </summary>
-	public class NotificationService : BackgroundService, INotificationService
+	public sealed class NotificationService : IHostedService, INotificationService, IAsyncDisposable
 	{
 		/// <summary>
 		/// The available notification sinks
@@ -68,11 +71,6 @@ namespace Horde.Server.Notifications
 		private readonly JobService _jobService;
 
 		/// <summary>
-		/// Instance of the <see cref="IStreamCollection"/>.
-		/// </summary>
-		private readonly IStreamCollection _streamCollection;
-
-		/// <summary>
 		/// 
 		/// </summary>
 		private readonly IssueService _issueService;
@@ -81,12 +79,12 @@ namespace Horde.Server.Notifications
 		/// Instance of the <see cref="_logFileService"/>.
 		/// </summary>
 		private readonly ILogFileService _logFileService;
-		
+
 		/// <summary>
 		/// Cache for de-duplicating queued notifications
 		/// </summary>
 		private readonly IMemoryCache _cache;
-		
+
 		/// <summary>
 		/// Lock object for manipulating the above cache
 		/// Used since batch notification queue handling is run async.
@@ -97,7 +95,7 @@ namespace Horde.Server.Notifications
 		/// Connection pool for Redis databases
 		/// </summary>
 		private readonly RedisConnectionPool _redisConnectionPool;
-		
+
 		/// <summary>
 		/// Settings for the application.
 		/// </summary>
@@ -117,7 +115,7 @@ namespace Horde.Server.Notifications
 		/// Settings for the application.
 		/// </summary>
 		private readonly ILogger<NotificationService> _logger;
-		
+
 		/// <summary>
 		/// Ticker for running batch sender method
 		/// </summary>
@@ -128,10 +126,9 @@ namespace Horde.Server.Notifications
 		/// </summary>
 		internal TimeSpan _notificationBatchInterval = TimeSpan.FromHours(12);
 
-		readonly IOptionsMonitor<GlobalConfig> _globalConfig;
-
 		readonly Counter<int> _jobCounter;
 		readonly Histogram<double> _jobDurationHistogram;
+		readonly BackgroundTask _backgroundTask;
 
 		static string RedisQueueListKey(string notificationType) => "NotificationService.queued." + notificationType;
 
@@ -147,14 +144,12 @@ namespace Horde.Server.Notifications
 			INotificationTriggerCollection triggerCollection,
 			IUserCollection userCollection,
 			JobService jobService,
-			IStreamCollection streamCollection,
 			IssueService issueService,
 			ILogFileService logFileService,
 			Meter meter,
 			IMemoryCache cache,
 			RedisService redisService,
 			ConfigService configService,
-			IOptionsMonitor<GlobalConfig> globalConfig,
 			IClock clock)
 		{
 			_sinks = sinks.ToList();
@@ -165,12 +160,11 @@ namespace Horde.Server.Notifications
 			_triggerCollection = triggerCollection;
 			_userCollection = userCollection;
 			_jobService = jobService;
-			_streamCollection = streamCollection;
 			_issueService = issueService;
 			_logFileService = logFileService;
 			_cache = cache;
 			_redisConnectionPool = redisService.ConnectionPool;
-			_globalConfig = globalConfig;
+			_backgroundTask = new BackgroundTask(ExecuteAsync);
 
 			issueService.OnIssueUpdated += NotifyIssueUpdated;
 			jobService.OnJobStepComplete += NotifyJobStepComplete;
@@ -184,21 +178,33 @@ namespace Horde.Server.Notifications
 		}
 
 		/// <inheritdoc/>
-		public override void Dispose()
+		public async Task StartAsync(CancellationToken cancellationToken)
 		{
-			base.Dispose();
+			_backgroundTask.Start();
+			await _ticker.StartAsync();
+		}
 
+		/// <inheritdoc/>
+		public async Task StopAsync(CancellationToken cancellationToken)
+		{
+			await _ticker.StopAsync();
+			await _backgroundTask.StopAsync(cancellationToken);
+		}
+
+		/// <inheritdoc/>
+		public async ValueTask DisposeAsync()
+		{
 			_issueService.OnIssueUpdated -= NotifyIssueUpdated;
 			_jobService.OnJobStepComplete -= NotifyJobStepComplete;
 			_jobService.OnJobScheduled += NotifyJobScheduled;
 			_jobService.OnLabelUpdate -= NotifyLabelUpdate;
 
-			GC.SuppressFinalize(this);
-			_ticker.Dispose();
+			await _ticker.DisposeAsync();
+			await _backgroundTask.DisposeAsync();
 		}
 
 		/// <inheritdoc/>
-		public async Task<bool> UpdateSubscriptionsAsync(ObjectId triggerId, ClaimsPrincipal user, bool? email, bool? slack)
+		public async Task<bool> UpdateSubscriptionsAsync(ObjectId triggerId, ClaimsPrincipal user, bool? email, bool? slack, CancellationToken cancellationToken)
 		{
 			UserId? userId = user.GetUserId();
 			if (userId == null)
@@ -207,13 +213,13 @@ namespace Horde.Server.Notifications
 				return false;
 			}
 
-			INotificationTrigger trigger = await _triggerCollection.FindOrAddAsync(triggerId);
-			await _triggerCollection.UpdateSubscriptionsAsync(trigger, userId.Value, email, slack);
+			INotificationTrigger trigger = await _triggerCollection.FindOrAddAsync(triggerId, cancellationToken);
+			await _triggerCollection.UpdateSubscriptionsAsync(trigger, userId.Value, email, slack, cancellationToken);
 			return true;
 		}
 
 		/// <inheritdoc/>
-		public async Task<INotificationSubscription?> GetSubscriptionsAsync(ObjectId triggerId, ClaimsPrincipal user)
+		public async Task<INotificationSubscription?> GetSubscriptionsAsync(ObjectId triggerId, ClaimsPrincipal user, CancellationToken cancellationToken)
 		{
 			UserId? userId = user.GetUserId();
 			if (userId == null)
@@ -221,8 +227,8 @@ namespace Horde.Server.Notifications
 				return null;
 			}
 
-			INotificationTrigger? trigger = await _triggerCollection.GetAsync(triggerId);
-			if(trigger == null)
+			INotificationTrigger? trigger = await _triggerCollection.GetAsync(triggerId, cancellationToken);
+			if (trigger == null)
 			{
 				return null;
 			}
@@ -231,30 +237,30 @@ namespace Horde.Server.Notifications
 		}
 
 		/// <inheritdoc/>
-		public void NotifyJobStepComplete(IJob job, IGraph graph, SubResourceId batchId, SubResourceId stepId)
+		public void NotifyJobStepComplete(IJob job, IGraph graph, JobStepBatchId batchId, JobStepId stepId)
 		{
 			// Enqueue job step complete notifications if needed
 			if (job.TryGetStep(batchId, stepId, out IJobStep? step))
 			{
 				_logger.LogInformation("Queuing step notifications for {JobId}:{BatchId}:{StepId}", job.Id, batchId, stepId);
-				EnqueueTask(() => SendJobStepNotificationsAsync(job, batchId, stepId));
+				EnqueueTask(ctx => SendJobStepNotificationsAsync(job, batchId, stepId, ctx));
 			}
 
 			// Enqueue job complete notifications if needed
 			if (job.GetState() == JobState.Complete)
 			{
 				_logger.LogInformation("Queuing job notifications for {JobId}:{BatchId}:{StepId}", job.Id, batchId, stepId);
-				EnqueueTask(() => SendJobNotificationsAsync(job, graph));
-				EnqueueTask(() => RecordJobCompleteMetrics(job));
+				EnqueueTask(ctx => SendJobNotificationsAsync(job, graph, ctx));
+				EnqueueTask(ctx => RecordJobCompleteMetricsAsync(job, ctx));
 			}
 		}
-		
+
 		/// <inheritdoc/>
-		public void NotifyJobScheduled(IPool pool, bool poolHasAgentsOnline, IJob job, IGraph graph, SubResourceId batchId)
+		public void NotifyJobScheduled(IPoolConfig pool, bool poolHasAgentsOnline, IJob job, IGraph graph, JobStepBatchId batchId)
 		{
 			if (pool.EnableAutoscaling && !poolHasAgentsOnline)
 			{
-				EnqueueTasks(sink => EnqueueNotificationForBatchSending(new JobScheduledNotification(job.Id.ToString(), job.Name, pool.Name)));
+				EnqueueTasks((sink, ctx) => EnqueueNotificationForBatchSendingAsync(new JobScheduledNotification(job.Id.ToString(), job.Name, pool.Name)));
 			}
 		}
 
@@ -266,7 +272,7 @@ namespace Horde.Server.Notifications
 			{
 				if (oldLabelStates[idx] != newLabelStates[idx])
 				{
-					EnqueueTask(() => SendAllLabelNotificationsAsync(job, oldLabelStates, newLabelStates));
+					EnqueueTask(ctx => SendAllLabelNotificationsAsync(job, oldLabelStates, newLabelStates, ctx));
 					break;
 				}
 			}
@@ -276,46 +282,62 @@ namespace Horde.Server.Notifications
 		public void NotifyIssueUpdated(IIssue issue)
 		{
 			_logger.LogInformation("Issue {IssueId} updated", issue.Id);
-			EnqueueTasks(sink => sink.NotifyIssueUpdatedAsync(issue));
+			EnqueueTasks((sink, ctx) => sink.NotifyIssueUpdatedAsync(issue, ctx));
 		}
 
 		/// <inheritdoc/>
 		public void NotifyConfigUpdate(Exception? ex)
 		{
 			_logger.LogInformation(ex, "Configuration updated ({Result})", (ex == null) ? "success" : "failure");
-			EnqueueTasks(sink => sink.NotifyConfigUpdateAsync(ex));
+			EnqueueTasks((sink, ctx) => sink.NotifyConfigUpdateAsync(ex, ctx));
 		}
 
 		/// <inheritdoc/>
 		public void NotifyConfigUpdateFailure(string errorMessage, string fileName, int? change = null, IUser? author = null, string? description = null)
 		{
-			EnqueueTasks(sink => sink.NotifyConfigUpdateFailureAsync(errorMessage, fileName, change, author, description));
+			EnqueueTasks((sink, ctx) => sink.NotifyConfigUpdateFailureAsync(errorMessage, fileName, change, author, description, ctx));
 		}
 
 		/// <inheritdoc/>
 		public void NotifyDeviceService(string message, IDevice? device = null, IDevicePool? pool = null, StreamConfig? streamConfig = null, IJob? job = null, IJobStep? step = null, INode? node = null, IUser? user = null)
 		{
-			EnqueueTasks(sink => sink.NotifyDeviceServiceAsync(message, device, pool, streamConfig, job, step, node, user));
+			EnqueueTasks((sink, ctx) => sink.NotifyDeviceServiceAsync(message, device, pool, streamConfig, job, step, node, user, ctx));
 		}
 
-		/// <summary>
-		/// Enqueues an async task
-		/// </summary>
-		/// <param name="taskFunc">Function to generate an async task</param>
-		void EnqueueTask(Func<Task> taskFunc)
-		{
-			_newTasks.Enqueue(Task.Run(taskFunc));
-		}
-
-		/// <summary>
-		/// Enqueues an async task
-		/// </summary>
-		/// <param name="taskFunc">Function to generate an async task</param>
-		void EnqueueTasks(Func<INotificationSink, Task> taskFunc)
+		/// <inheritdoc/>
+		public async Task SendDeviceIssueReportAsync(DeviceIssueReport report, CancellationToken cancellationToken)
 		{
 			foreach (INotificationSink sink in _sinks)
 			{
-				EnqueueTask(() => taskFunc(sink));
+				try
+				{
+					await sink.SendDeviceIssueReportAsync(report, cancellationToken);
+				}
+				catch (Exception e)
+				{
+					_logger.LogError(e, "Failed sending issue report to {Channel}", report.Channel);
+				}
+			}
+		}
+
+		/// <summary>
+		/// Enqueues an async task
+		/// </summary>
+		/// <param name="taskFunc">Function to generate an async task</param>
+		void EnqueueTask(Func<CancellationToken, Task> taskFunc)
+		{
+			_newTasks.Enqueue(Task.Run(() => taskFunc(CancellationToken.None), CancellationToken.None));
+		}
+
+		/// <summary>
+		/// Enqueues an async task
+		/// </summary>
+		/// <param name="taskFunc">Function to generate an async task</param>
+		void EnqueueTasks(Func<INotificationSink, CancellationToken, Task> taskFunc)
+		{
+			foreach (INotificationSink sink in _sinks)
+			{
+				EnqueueTask(ctx => taskFunc(sink, ctx));
 			}
 		}
 
@@ -325,7 +347,7 @@ namespace Horde.Server.Notifications
 		/// <param name="notification">Notification to enqueue</param>
 		/// <param name="deduplicate">True if notification should be deduplicated</param>
 		/// <typeparam name="T">Any INotification type</typeparam>
-		private async Task EnqueueNotificationForBatchSending<T>(T notification, bool deduplicate = true) where T : INotification<T>
+		private async Task EnqueueNotificationForBatchSendingAsync<T>(T notification, bool deduplicate = true) where T : INotification<T>
 		{
 			lock (_cacheLock)
 			{
@@ -336,7 +358,7 @@ namespace Horde.Server.Notifications
 					{
 						return;
 					}
-					_cache.Set(notification, notification, _notificationBatchInterval / 2);					
+					_cache.Set(notification, notification, _notificationBatchInterval / 2);
 				}
 			}
 
@@ -351,18 +373,18 @@ namespace Horde.Server.Notifications
 			}
 		}
 
-		private async ValueTask TickEveryTwelveHoursAsync(CancellationToken stoppingToken)
+		private async ValueTask TickEveryTwelveHoursAsync(CancellationToken cancellationToken)
 		{
 			List<JobScheduledNotification> jobScheduledNotifications = await GetAllQueuedNotificationsAsync<JobScheduledNotification>();
 			if (jobScheduledNotifications.Count > 0)
 			{
 				foreach (INotificationSink sink in _sinks)
 				{
-					await sink.NotifyJobScheduledAsync(jobScheduledNotifications);
+					await sink.NotifyJobScheduledAsync(jobScheduledNotifications, cancellationToken);
 				}
 			}
 		}
-		
+
 		/// <summary>
 		/// Get and clear all queued notifications of type T from Redis
 		/// </summary>
@@ -401,10 +423,8 @@ namespace Horde.Server.Notifications
 		}
 
 		/// <inheritdoc/>
-		protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+		async Task ExecuteAsync(CancellationToken stoppingToken)
 		{
-			await _ticker.StartAsync();
-			
 			// This background service just waits for tasks to finish and prints any exception info. The only reason to do this is to
 			// ensure we finish processing everything before shutdown.
 			using (CancellationTask stoppingTask = new CancellationTask(stoppingToken))
@@ -454,11 +474,9 @@ namespace Horde.Server.Notifications
 					}
 				}
 			}
-			
-			await _ticker.StopAsync();
 		}
 
-		internal Task ExecuteBackgroundForTest(CancellationToken stoppingToken)
+		internal Task ExecuteBackgroundForTestAsync(CancellationToken stoppingToken)
 		{
 			return ExecuteAsync(stoppingToken);
 		}
@@ -468,53 +486,56 @@ namespace Horde.Server.Notifications
 		/// </summary>
 		/// <param name="triggerId"></param>
 		/// <param name="fireTrigger">If true, the trigger is fired and cannot be reused</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns></returns>
-		private async Task<INotificationTrigger?> GetNotificationTrigger(ObjectId? triggerId, bool fireTrigger)
+		private async Task<INotificationTrigger?> GetNotificationTriggerAsync(ObjectId? triggerId, bool fireTrigger, CancellationToken cancellationToken)
 		{
 			if (triggerId == null)
 			{
 				return null;
 			}
 
-			INotificationTrigger? trigger = await _triggerCollection.GetAsync(triggerId.Value);
+			INotificationTrigger? trigger = await _triggerCollection.GetAsync(triggerId.Value, cancellationToken);
 			if (trigger == null)
 			{
 				return null;
 			}
 
-			return fireTrigger ? await _triggerCollection.FireAsync(trigger) : trigger;
+			return fireTrigger ? await _triggerCollection.FireAsync(trigger, cancellationToken) : trigger;
 		}
-	
-		private async Task SendJobNotificationsAsync(IJob job, IGraph graph)
+
+		private async Task SendJobNotificationsAsync(IJob job, IGraph graph, CancellationToken cancellationToken)
 		{
-			using IDisposable scope = _logger.BeginScope("Sending notifications for job {JobId}", job.Id);
+			using IDisposable? scope = _logger.BeginScope("Sending notifications for job {JobId}", job.Id);
 
 			job.GetJobState(job.GetStepForNodeMap(), out _, out LabelOutcome outcome);
 			JobCompleteEventRecord jobCompleteEvent = new JobCompleteEventRecord(job.StreamId, job.TemplateId, outcome);
 
-			List<IUser> usersToNotify = await GetUsersToNotify(jobCompleteEvent, job.NotificationTriggerId, true);
+			IReadOnlyList<IUser> usersToNotify = await GetUsersToNotifyAsync(jobCompleteEvent, job.NotificationTriggerId, true, cancellationToken);
 			foreach (IUser userToNotify in usersToNotify)
 			{
-				if(job.PreflightChange != 0)
+				if (job.PreflightChange != 0)
 				{
-					if(userToNotify.Id != job.StartedByUserId)
+					if (userToNotify.Id != job.StartedByUserId)
 					{
 						continue;
 					}
 				}
-				EnqueueTasks(sink => sink.NotifyJobCompleteAsync(userToNotify, job, graph, outcome));
+				EnqueueTasks((sink, ctx) => sink.NotifyJobCompleteAsync(userToNotify, job, graph, outcome, ctx));
 			}
 
 			if (job.PreflightChange == 0)
 			{
-				EnqueueTasks(sink => sink.NotifyJobCompleteAsync(job, graph, outcome));
+				EnqueueTasks((sink, ctx) => sink.NotifyJobCompleteAsync(job, graph, outcome, ctx));
 			}
 
 			_logger.LogDebug("Finished sending notifications for job {JobId}", job.Id);
 		}
 
-		private Task RecordJobCompleteMetrics(IJob job)
+		private Task RecordJobCompleteMetricsAsync(IJob job, CancellationToken cancellationToken)
 		{
+			_ = cancellationToken;
+
 			void RecordMetric(string type, JobStepOutcome outcome, DateTimeOffset? startTime, DateTimeOffset? finishTime)
 			{
 				string outcomeStr = outcome switch
@@ -525,7 +546,7 @@ namespace Horde.Server.Notifications
 					JobStepOutcome.Success => "success",
 					_ => "unspecified"
 				};
-				
+
 				KeyValuePair<string, object?>[] tags =
 				{
 					KeyValuePair.Create<string, object?>("stream", job.StreamId.ToString()),
@@ -562,7 +583,7 @@ namespace Horde.Server.Notifications
 			return Task.CompletedTask;
 		}
 
-		private async Task<List<IUser>> GetUsersToNotify(EventRecord? eventRecord, ObjectId? notificationTriggerId, bool fireTrigger)
+		private async Task<IReadOnlyList<IUser>> GetUsersToNotifyAsync(EventRecord? eventRecord, ObjectId? notificationTriggerId, bool fireTrigger, CancellationToken cancellationToken)
 		{
 			List<UserId> userIds = new List<UserId>();
 
@@ -582,7 +603,7 @@ namespace Horde.Server.Notifications
 			// Find the notifications for this particular step
 			if (notificationTriggerId != null)
 			{
-				INotificationTrigger? trigger = await GetNotificationTrigger(notificationTriggerId, fireTrigger);
+				INotificationTrigger? trigger = await GetNotificationTriggerAsync(notificationTriggerId, fireTrigger, cancellationToken);
 				if (trigger != null)
 				{
 					foreach (INotificationSubscription subscription in trigger.Subscriptions)
@@ -598,15 +619,15 @@ namespace Horde.Server.Notifications
 					}
 				}
 			}
-			return await _userCollection.FindUsersAsync(userIds);
+			return await _userCollection.FindUsersAsync(userIds, cancellationToken: cancellationToken);
 		}
 
-		private async Task SendJobStepNotificationsAsync(IJob job, SubResourceId batchId, SubResourceId stepId)
+		private async Task SendJobStepNotificationsAsync(IJob job, JobStepBatchId batchId, JobStepId stepId, CancellationToken cancellationToken)
 		{
-			using IDisposable scope = _logger.BeginScope("Sending notifications for step {JobId}:{BatchId}:{StepId}", job.Id, batchId, stepId);
+			using IDisposable? scope = _logger.BeginScope("Sending notifications for step {JobId}:{BatchId}:{StepId}", job.Id, batchId, stepId);
 
 			IJobStepBatch? batch;
-			if(!job.TryGetBatch(batchId, out batch))
+			if (!job.TryGetBatch(batchId, out batch))
 			{
 				_logger.LogError("Unable to find batch {BatchId} in job {JobId}", batchId, job.Id);
 				return;
@@ -619,13 +640,13 @@ namespace Horde.Server.Notifications
 				return;
 			}
 
-			IGraph jobGraph = await _graphCollection.GetAsync(job.GraphHash);
+			IGraph jobGraph = await _graphCollection.GetAsync(job.GraphHash, cancellationToken);
 			INode node = jobGraph.GetNode(new NodeRef(batch.GroupIdx, step.NodeIdx));
 
 			// Find the notifications for this particular step
 			EventRecord eventRecord = new StepCompleteEventRecord(job.StreamId, job.TemplateId, node.Name, step.Outcome);
 
-			List<IUser> usersToNotify = await GetUsersToNotify(eventRecord, step.NotificationTriggerId, true);
+			IReadOnlyList<IUser> usersToNotify = await GetUsersToNotifyAsync(eventRecord, step.NotificationTriggerId, true, cancellationToken);
 
 			// If this is not a success notification and the author isn't in the list to notify, add them manually if this is the outcome has gotten worse.
 			int failures = job.Batches.Sum(x => x.Steps.Count(y => y.Outcome == JobStepOutcome.Failure));
@@ -634,10 +655,12 @@ namespace Horde.Server.Notifications
 			if (job.StartedByUserId.HasValue && !usersToNotify.Any(x => x.Id == job.StartedByUserId) && (firstFailure || firstWarning))
 			{
 				_logger.LogInformation("Author {AuthorUserId} is not in notify list but step outcome is {JobStepOutcome}, adding them to the list...", job.StartedByUserId, step.Outcome);
-				IUser? authorUser = await _userCollection.GetUserAsync(job.StartedByUserId.Value);
+				IUser? authorUser = await _userCollection.GetUserAsync(job.StartedByUserId.Value, cancellationToken);
 				if (authorUser != null)
 				{
-					usersToNotify.Add(authorUser);
+					List<IUser> newUsersToNotify = usersToNotify.ToList();
+					newUsersToNotify.Add(authorUser);
+					usersToNotify = newUsersToNotify;
 				}
 			}
 
@@ -653,38 +676,38 @@ namespace Horde.Server.Notifications
 				return;
 			}
 
-			ILogFile? logFile = await _logFileService.GetLogFileAsync(step.LogId.Value, CancellationToken.None);
-			if(logFile == null)
+			ILogFile? logFile = await _logFileService.GetLogFileAsync(step.LogId.Value, cancellationToken);
+			if (logFile == null)
 			{
 				_logger.LogError("Step does not have a log file");
 				return;
 			}
 
-			List<ILogEvent> jobStepEvents = await _logFileService.FindEventsAsync(logFile);
+			List<ILogEvent> jobStepEvents = await _logFileService.FindEventsAsync(logFile, cancellationToken: cancellationToken);
 			List<ILogEventData> jobStepEventData = new List<ILogEventData>();
 			foreach (ILogEvent logEvent in jobStepEvents)
 			{
-				ILogEventData eventData = await _logFileService.GetEventDataAsync(logFile, logEvent.LineIndex, logEvent.LineCount);
+				ILogEventData eventData = await _logFileService.GetEventDataAsync(logFile, logEvent.LineIndex, logEvent.LineCount, cancellationToken);
 				jobStepEventData.Add(eventData);
 			}
 
 			foreach (IUser slackUser in usersToNotify)
 			{
-				if(job.PreflightChange != 0)
+				if (job.PreflightChange != 0)
 				{
-					if(slackUser.Id != job.StartedByUserId)
+					if (slackUser.Id != job.StartedByUserId)
 					{
 						continue;
 					}
 				}
-				EnqueueTasks(sink => sink.NotifyJobStepCompleteAsync(slackUser, job, batch, step, node, jobStepEventData));
+				EnqueueTasks((sink, ctx) => sink.NotifyJobStepCompleteAsync(slackUser, job, batch, step, node, jobStepEventData, ctx));
 			}
 			_logger.LogDebug("Finished sending notifications for step {JobId}:{BatchId}:{StepId}", job.Id, batchId, stepId);
 		}
 
-		private async Task SendAllLabelNotificationsAsync(IJob job, IReadOnlyList<(LabelState State, LabelOutcome Outcome)> oldLabelStates, IReadOnlyList<(LabelState, LabelOutcome)> newLabelStates)
+		private async Task SendAllLabelNotificationsAsync(IJob job, IReadOnlyList<(LabelState State, LabelOutcome Outcome)> oldLabelStates, IReadOnlyList<(LabelState, LabelOutcome)> newLabelStates, CancellationToken cancellationToken)
 		{
-			IGraph? graph = await _graphCollection.GetAsync(job.GraphHash);
+			IGraph? graph = await _graphCollection.GetAsync(job.GraphHash, cancellationToken);
 			if (graph == null)
 			{
 				_logger.LogError("Unable to find graph {GraphHash} for job {JobId}", job.GraphHash, job.Id);
@@ -734,7 +757,7 @@ namespace Horde.Server.Notifications
 
 					bool fireTrigger = newLabel.State == LabelState.Complete;
 
-					List<IUser> usersToNotify = await GetUsersToNotify(eventId, triggerId, fireTrigger);
+					IReadOnlyList<IUser> usersToNotify = await GetUsersToNotifyAsync(eventId, triggerId, fireTrigger, cancellationToken);
 
 					// filter preflight label notifications to only include initiator
 					if (usersToNotify.Count > 0 && job.PreflightChange != 0 && job.StartedByUserId != null)
@@ -754,7 +777,7 @@ namespace Horde.Server.Notifications
 			}
 		}
 
-		private void SendLabelUpdateNotifications(IJob job, IGraph graph, IReadOnlyDictionary<NodeRef, IJobStep> stepForNode, ILabel label, int labelIdx, LabelOutcome outcome, List<IUser> slackUsers)
+		private void SendLabelUpdateNotifications(IJob job, IGraph graph, IReadOnlyDictionary<NodeRef, IJobStep> stepForNode, ILabel label, int labelIdx, LabelOutcome outcome, IReadOnlyList<IUser> slackUsers)
 		{
 			List<(string, JobStepOutcome, Uri)> stepData = new List<(string, JobStepOutcome, Uri)>();
 			if (outcome != LabelOutcome.Success)
@@ -769,20 +792,36 @@ namespace Horde.Server.Notifications
 
 			foreach (IUser slackUser in slackUsers)
 			{
-				EnqueueTasks(sink => sink.NotifyLabelCompleteAsync(slackUser, job, label, labelIdx, outcome, stepData));
+				EnqueueTasks((sink, ctx) => sink.NotifyLabelCompleteAsync(slackUser, job, label, labelIdx, outcome, stepData, ctx));
 			}
 
 			_logger.LogDebug("Finished sending label notifications for label {DashboardName}/{UgsName} in job {JobId}", label.DashboardName, label.UgsName, job.Id);
 		}
 
 		/// <inheritdoc/>
-		public async Task SendIssueReportAsync(IssueReportGroup report)
+		public async Task SendAgentReportAsync(AgentReport report, CancellationToken cancellationToken)
 		{
 			foreach (INotificationSink sink in _sinks)
 			{
 				try
 				{
-					await sink.SendIssueReportAsync(report);
+					await sink.SendAgentReportAsync(report, cancellationToken);
+				}
+				catch (Exception e)
+				{
+					_logger.LogError(e, "Failed sending agent report to {Channel}", _settings.CurrentValue.AgentNotificationChannel);
+				}
+			}
+		}
+
+		/// <inheritdoc/>
+		public async Task SendIssueReportAsync(IssueReportGroup report, CancellationToken cancellationToken)
+		{
+			foreach (INotificationSink sink in _sinks)
+			{
+				try
+				{
+					await sink.SendIssueReportAsync(report, cancellationToken);
 				}
 				catch (Exception e)
 				{

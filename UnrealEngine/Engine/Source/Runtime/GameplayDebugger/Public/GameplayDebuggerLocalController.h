@@ -101,7 +101,9 @@ protected:
 	bool bDebugDrawEnabled = true;
 
 	void OnActivationPressed();
+	void OnActivationPressedWithModifier();
 	void OnActivationReleased();
+	void OnActivationReleasedWithModifier();
 	void OnCategory0Pressed();
 	void OnCategory1Pressed();
 	void OnCategory2Pressed();
@@ -117,6 +119,15 @@ protected:
 	void OnCategoryBindingEvent(int32 CategoryId, int32 HandlerId);
 	void OnExtensionBindingEvent(int32 ExtensionId, int32 HandlerId);
 
+	enum class ESelectionMode : uint8
+	{
+		BestPawnCandidate,
+		LocalPlayer
+	};
+
+	/** called short time after activation key was pressed and hold with 'Shift' */
+	void OnStartSelectingLocalPlayer();
+
 	/** sets the local player as the new debug actor */
 	void OnSelectLocalPlayer();
 
@@ -126,11 +137,13 @@ protected:
 	/** called in tick during actor selection */
 	void OnSelectActorTick();
 
+	void OnStartSelecting(ESelectionMode SelectionMode);
+	
 	/** toggle state of categories in given slot */
 	void ToggleSlotState(int32 SlotIdx);
 
 	/** toggle debugger on/off */
-	void ToggleActivation();
+	void ToggleActivation(ESelectionMode SelectionMode = ESelectionMode::BestPawnCandidate);
 
 	/** draw header row */
 	void DrawHeader(FGameplayDebuggerCanvasContext& CanvasContext);

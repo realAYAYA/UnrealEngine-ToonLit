@@ -42,7 +42,7 @@ static FString MakeAbsoluteNormalizedDir(const FString& InPath)
 	FString Out = FPaths::ConvertRelativePathToFull(InPath);
 	if (Out.EndsWith(TEXT("/")))
 	{
-		Out.RemoveAt(Out.Len() - 1, 1, false);
+		Out.RemoveAt(Out.Len() - 1, 1, EAllowShrinking::No);
 	}
 	return Out;
 }
@@ -62,6 +62,18 @@ struct FSandboxOnlyScope
 
 	FSandboxPlatformFile& Sandbox;
 };
+
+// These are marked unsafe because they do not work with Programs. However, COTF is unlikely to be used with Programs
+// These are also temporary until some issues can be debugged
+static FString UnsafeEnginePlatformExtensionDir()
+{
+	return FPaths::EnginePlatformExtensionDir(TEXT("")).TrimChar('/');
+}
+
+static FString UnsafeProjectPlatformExtensionDir()
+{
+	return FPaths::ProjectPlatformExtensionDir(TEXT("")).TrimChar('/');
+}
 
 /* FNetworkFileServerClientConnection structors
  *****************************************************************************/
@@ -91,8 +103,8 @@ FNetworkFileServerClientConnection::FNetworkFileServerClientConnection(const FNe
 
 	LocalEngineDir = FPaths::EngineDir();
 	LocalProjectDir = FPaths::ProjectDir();
-	LocalEnginePlatformExtensionsDir = FPaths::EnginePlatformExtensionsDir();
-	LocalProjectPlatformExtensionsDir = FPaths::ProjectPlatformExtensionsDir();
+	LocalEnginePlatformExtensionsDir = UnsafeEnginePlatformExtensionDir();
+	LocalProjectPlatformExtensionsDir = UnsafeProjectPlatformExtensionDir();
 
 	if (FPaths::IsProjectFilePathSet())
 	{
@@ -157,11 +169,11 @@ void FNetworkFileServerClientConnection::ConvertClientFilenameToServerFilename(F
 		// We do *not* want to replace the directory in that case.
 		return;
 	}
-	if (TrySubstituteDirectory(FilenameToConvert, FPaths::EnginePlatformExtensionsDir(), ConnectedEnginePlatformExtensionsDir))
+	if (TrySubstituteDirectory(FilenameToConvert, UnsafeEnginePlatformExtensionDir(), ConnectedEnginePlatformExtensionsDir))
 	{
 		return;
 	}
-	if (TrySubstituteDirectory(FilenameToConvert, FPaths::ProjectPlatformExtensionsDir(), ConnectedProjectPlatformExtensionsDir))
+	if (TrySubstituteDirectory(FilenameToConvert, UnsafeProjectPlatformExtensionDir(), ConnectedProjectPlatformExtensionsDir))
 	{
 		return;
 	}
@@ -1218,7 +1230,7 @@ bool FNetworkFileServerClientConnection::ProcessGetFileList( FArchive& In, FArch
 				int32 GameDirOffset = ConnectedContentFolder.Find(ConnectedProjectDir, ESearchCase::IgnoreCase, ESearchDir::FromEnd);
 				if (GameDirOffset != INDEX_NONE)
 				{
-					ConnectedContentFolder.RightChopInline(GameDirOffset, false);
+					ConnectedContentFolder.RightChopInline(GameDirOffset, EAllowShrinking::No);
 				}
 			}
 
@@ -1318,10 +1330,20 @@ bool FNetworkFileServerClientConnection::PackageFile( FString& Filename, FString
 		}
 		else
 		{
-			FileBytesSent += File->Size();
-			// read it
-			Contents.AddUninitialized(File->Size());
-			File->Read(Contents.GetData(), Contents.Num());
+			if (IntFitsIn<int32, int64>(File->Size()))
+			{
+				int32 FileSize32 = static_cast<int32>(File->Size());
+
+				FileBytesSent += FileSize32;
+				// read it
+				Contents.AddUninitialized(FileSize32);
+				File->Read(Contents.GetData(), Contents.Num());
+			}
+			else
+			{
+				UE_LOG(LogFileServer, Warning, TEXT("Unable to open %s because it is too large"), *Filename);
+				bRetVal = false;
+			}
 		}
 
 		// close it

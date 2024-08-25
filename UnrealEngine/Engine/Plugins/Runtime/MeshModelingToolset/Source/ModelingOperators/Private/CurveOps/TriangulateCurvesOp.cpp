@@ -300,7 +300,8 @@ void FTriangulateCurvesOp::CalculateResult(FProgressCancel* Progress)
 			FVector3d PlanePoint;
 			FVector3d Normal;
 			PolygonTriangulation::ComputePolygonPlane<double>(Paths[CurveIdx].Vertices, Normal, PlanePoint);
-			GroupIdx = ProcessPaths(Normal, SharedFrameOrigin, TArrayView<const FCurvePath>(&Paths[CurveIdx], 1), GroupIdx);
+			FVector3d ProjectedFrameOrigin = FVector3d::PointPlaneProject(SharedFrameOrigin, FPlane(PlanePoint, Normal));
+			GroupIdx = ProcessPaths(Normal, ProjectedFrameOrigin, TArrayView<const FCurvePath>(&Paths[CurveIdx], 1), GroupIdx);
 		}
 	}
 	else

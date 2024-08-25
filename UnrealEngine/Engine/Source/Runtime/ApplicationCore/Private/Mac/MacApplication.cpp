@@ -1029,7 +1029,7 @@ void FMacApplication::ProcessMouseDownEvent(const FDeferredMacEvent& Event, TSha
 				{
 					MainThreadCall(^{ [WindowHandle performMiniaturize:nil]; }, NSDefaultRunLoopMode, true);
 				}
-				else if (!FPlatformMisc::IsRunningOnMavericks())
+				else
 				{
 					MainThreadCall(^{ [WindowHandle zoom:nil]; }, NSDefaultRunLoopMode, true);
 				}

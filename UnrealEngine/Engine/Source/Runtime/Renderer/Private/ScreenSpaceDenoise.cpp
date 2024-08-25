@@ -803,7 +803,7 @@ BEGIN_SHADER_PARAMETER_STRUCT(FSSDCommonParameters, )
 	SHADER_PARAMETER(FVector2f, BufferUVBilinearCorrection)
 
 	SHADER_PARAMETER_STRUCT_INCLUDE(FSceneTextureParameters, SceneTextures)
-	SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+	SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 
 	SHADER_PARAMETER_RDG_TEXTURE_ARRAY(Texture2D<uint>, CompressedMetadata, [kCompressedMetadataTextures])
 
@@ -1258,25 +1258,6 @@ void SetupSceneViewInfoPooledRenderTargets(
 	OutViewInfoPooledRenderTargets->NextCompressedDepthViewNormal = &PrevFrameViewInfo.CompressedDepthViewNormal;
 }
 
-void SetupImaginaryReflectionViewInfoPooledRenderTargets(
-	const FViewInfo& View,
-	FViewInfoPooledRenderTargets* OutViewInfoPooledRenderTargets)
-{
-	auto&& PrevViewInfo = View.PrevViewInfo;
-	auto&& PrevFrameViewInfo = View.ViewState->PrevFrameViewInfo;
-
-	OutViewInfoPooledRenderTargets->PrevDepthBuffer = PrevViewInfo.ImaginaryReflectionDepthBuffer;
-	OutViewInfoPooledRenderTargets->PrevGBufferA = PrevViewInfo.ImaginaryReflectionGBufferA;
-	OutViewInfoPooledRenderTargets->PrevGBufferB = nullptr; // GBufferB not used
-	OutViewInfoPooledRenderTargets->PrevCompressedDepthViewNormal = PrevViewInfo.ImaginaryReflectionCompressedDepthViewNormal;
-
-	OutViewInfoPooledRenderTargets->NextDepthBuffer = &PrevFrameViewInfo.ImaginaryReflectionDepthBuffer;
-	OutViewInfoPooledRenderTargets->NextGBufferA = &PrevFrameViewInfo.ImaginaryReflectionGBufferA;
-	OutViewInfoPooledRenderTargets->NextGBufferB = nullptr; // GBufferB not used
-	OutViewInfoPooledRenderTargets->NextCompressedDepthViewNormal = &PrevFrameViewInfo.ImaginaryReflectionCompressedDepthViewNormal;
-}
-
-
 void Denoiser::SetupCommonShaderParameters(
 	const FViewInfo& View,
 	const FSceneTextureParameters& SceneTextures,
@@ -1304,19 +1285,14 @@ void Denoiser::SetupCommonShaderParameters(
 
 	OutPublicCommonParameters->SceneBufferUVToScreenPosition.X = float(FullResBufferExtent.X) / float(View.ViewRect.Width()) * 2.0f;
 	OutPublicCommonParameters->SceneBufferUVToScreenPosition.Y = -float(FullResBufferExtent.Y) / float(View.ViewRect.Height()) * 2.0f;
-	OutPublicCommonParameters->SceneBufferUVToScreenPosition.Z = float(View.ViewRect.Min.X) / float(View.ViewRect.Width()) * 2.0f - 1.0f;
-	OutPublicCommonParameters->SceneBufferUVToScreenPosition.W = -float(View.ViewRect.Min.Y) / float(View.ViewRect.Height()) * 2.0f + 1.0f;
+	OutPublicCommonParameters->SceneBufferUVToScreenPosition.Z = -float(View.ViewRect.Min.X) / float(View.ViewRect.Width()) * 2.0f - 1.0f;
+	OutPublicCommonParameters->SceneBufferUVToScreenPosition.W = float(View.ViewRect.Min.Y) / float(View.ViewRect.Height()) * 2.0f + 1.0f;
 
 	OutPublicCommonParameters->DenoiserBufferBilinearUVMinMax = FVector4f(
 		float(DenoiserViewport.Min.X + 0.5f) / float(DenoiserBufferExtent.X),
 		float(DenoiserViewport.Min.Y + 0.5f) / float(DenoiserBufferExtent.Y),
 		float(DenoiserViewport.Max.X - 0.5f) / float(DenoiserBufferExtent.X),
 		float(DenoiserViewport.Max.Y - 0.5f) / float(DenoiserBufferExtent.Y));
-
-	float TanHalfFieldOfView = View.ViewMatrices.GetInvProjectionMatrix().M[0][0];
-
-	// Should be multiplied 0.5* for the diameter to radius, and by 2.0 because GetTanHalfFieldOfView() cover only half of the pixels.
-	OutPublicCommonParameters->WorldDepthToPixelWorldRadius = TanHalfFieldOfView / float(View.ViewRect.Width());
 }
 
 
@@ -1543,7 +1519,7 @@ static void DenoiseSignalAtConstantPixelDensity(
 		CommonParameters.ViewportMax = Viewport.Max;
 
 		CommonParameters.SceneTextures = SceneTextures;
-		CommonParameters.Strata = Strata::BindStrataGlobalUniformParameters(View);
+		CommonParameters.Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 		CommonParameters.ViewUniformBuffer = View.ViewUniformBuffer;
 		CommonParameters.EyeAdaptationBuffer = GraphBuilder.CreateSRV(GetEyeAdaptationBuffer(GraphBuilder, View));
 
@@ -1936,8 +1912,8 @@ static void DenoiseSignalAtConstantPixelDensity(
 
 			PassParameters->PrevSceneBufferUVToScreenPosition.X = float(PrevFrameBufferExtent.X) / float(ViewportExtent.X) * 2.0f;
 			PassParameters->PrevSceneBufferUVToScreenPosition.Y = -float(PrevFrameBufferExtent.Y) / float(ViewportExtent.Y) * 2.0f;
-			PassParameters->PrevSceneBufferUVToScreenPosition.Z = float(ViewportOffset.X) / float(ViewportExtent.X) * 2.0f - 1.0f;
-			PassParameters->PrevSceneBufferUVToScreenPosition.W = -float(ViewportOffset.Y) / float(ViewportExtent.Y) * 2.0f + 1.0f;
+			PassParameters->PrevSceneBufferUVToScreenPosition.Z = -float(ViewportOffset.X) / float(ViewportExtent.X) * 2.0f - 1.0f;
+			PassParameters->PrevSceneBufferUVToScreenPosition.W = float(ViewportOffset.Y) / float(ViewportExtent.Y) * 2.0f + 1.0f;
 		}
 
 		if (bGlobalCameraCut)
@@ -1980,8 +1956,8 @@ static void DenoiseSignalAtConstantPixelDensity(
 
 			PassParameters->PrevSceneBufferUVToScreenPosition.X = float(PrevFrameBufferExtent.X) / float(ViewportExtent.X) * 2.0f;
 			PassParameters->PrevSceneBufferUVToScreenPosition.Y = -float(PrevFrameBufferExtent.Y) / float(ViewportExtent.Y) * 2.0f;
-			PassParameters->PrevSceneBufferUVToScreenPosition.Z = float(ViewportOffset.X) / float(ViewportExtent.X) * 2.0f - 1.0f;
-			PassParameters->PrevSceneBufferUVToScreenPosition.W = -float(ViewportOffset.Y) / float(ViewportExtent.Y) * 2.0f + 1.0f;
+			PassParameters->PrevSceneBufferUVToScreenPosition.Z = -float(ViewportOffset.X) / float(ViewportExtent.X) * 2.0f - 1.0f;
+			PassParameters->PrevSceneBufferUVToScreenPosition.W = float(ViewportOffset.Y) / float(ViewportExtent.Y) * 2.0f + 1.0f;
 		}
 
 		FScreenSpaceDenoiserHistory DummyPrevFrameHistory;
@@ -2792,53 +2768,7 @@ public:
 		GlobalIlluminationOutputs.Color = SignalOutput.Textures[0];
 		return GlobalIlluminationOutputs;
 	}
-
-	FDiffuseIndirectOutputs DenoiseReflectedSkyLight(
-		FRDGBuilder& GraphBuilder,
-		const FViewInfo& View,
-		FPreviousViewInfo* PreviousViewInfos,
-		const FSceneTextureParameters& SceneTextures,
-		const FDiffuseIndirectInputs& Inputs,
-		const FAmbientOcclusionRayTracingConfig Config) const override
-	{
-		RDG_GPU_STAT_SCOPE(GraphBuilder, DiffuseIndirectDenoiser);
-
-		FViewInfoPooledRenderTargets ViewInfoPooledRenderTargets;
-		SetupImaginaryReflectionViewInfoPooledRenderTargets(View, &ViewInfoPooledRenderTargets);
-
-		FSSDSignalTextures InputSignal;
-		InputSignal.Textures[0] = Inputs.Color;
-		InputSignal.Textures[1] = Inputs.RayHitDistance;
-
-		FSSDConstantPixelDensitySettings Settings;
-		Settings.FullResViewport = View.ViewRect;
-		Settings.SignalProcessing = ESignalProcessing::DiffuseAndAmbientOcclusion;
-		Settings.InputResolutionFraction = Config.ResolutionFraction;
-		Settings.ReconstructionSamples = FMath::Clamp(CVarGIReconstructionSampleCount.GetValueOnRenderThread(), 1, kStackowiakMaxSampleCountPerSet);
-		Settings.PreConvolutionCount = CVarGIPreConvolutionCount.GetValueOnRenderThread();
-		Settings.bUseTemporalAccumulation = CVarGITemporalAccumulation.GetValueOnRenderThread() != 0;
-		Settings.HistoryConvolutionSampleCount = CVarGIHistoryConvolutionSampleCount.GetValueOnRenderThread();
-		Settings.HistoryConvolutionKernelSpreadFactor = CVarGIHistoryConvolutionKernelSpreadFactor.GetValueOnRenderThread();
-		Settings.MaxInputSPP = Config.RayCountPerPixel;
-
-		TStaticArray<FScreenSpaceDenoiserHistory*, IScreenSpaceDenoiser::kMaxBatchSize> PrevHistories;
-		TStaticArray<FScreenSpaceDenoiserHistory*, IScreenSpaceDenoiser::kMaxBatchSize> NewHistories;
-		PrevHistories[0] = &PreviousViewInfos->ReflectedSkyLightHistory;
-		NewHistories[0] = View.ViewState ? &View.ViewState->PrevFrameViewInfo.ReflectedSkyLightHistory : nullptr;
-
-		FSSDSignalTextures SignalOutput;
-		DenoiseSignalAtConstantPixelDensity(
-			GraphBuilder, View, SceneTextures, ViewInfoPooledRenderTargets,
-			InputSignal, Settings,
-			PrevHistories,
-			NewHistories,
-			&SignalOutput);
-
-		FDiffuseIndirectOutputs GlobalIlluminationOutputs;
-		GlobalIlluminationOutputs.Color = SignalOutput.Textures[0];
-		return GlobalIlluminationOutputs;
-	}
-
+	
 	FSSDSignalTextures DenoiseDiffuseIndirectHarmonic(
 		FRDGBuilder& GraphBuilder,
 		const FViewInfo& View,

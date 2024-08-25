@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "NiagaraOverviewNode.h"
+#include "NiagaraSettings.h"
 #include "NiagaraSystem.h"
 #include "NiagaraEditorModule.h"
 #include "NiagaraEditorStyle.h"
@@ -23,6 +24,7 @@
 
 bool UNiagaraOverviewNode::bColorsAreInitialized = false;
 FLinearColor UNiagaraOverviewNode::EmitterColor;
+FLinearColor UNiagaraOverviewNode::StatelessEmitterColor;
 FLinearColor UNiagaraOverviewNode::SystemColor;
 FLinearColor UNiagaraOverviewNode::IsolatedColor;
 FLinearColor UNiagaraOverviewNode::NotIsolatedColor;
@@ -34,22 +36,6 @@ UNiagaraOverviewNode::UNiagaraOverviewNode()
 {
 	UEdGraphNode::bCanRenameNode = true;
 };
-
-void UNiagaraOverviewNode::Initialize(UNiagaraSystem* InOwningSystem)
-{
-	OwningSystem = InOwningSystem;
-}
-
-void UNiagaraOverviewNode::Initialize(UNiagaraSystem* InOwningSystem, FGuid InEmitterHandleGuid)
-{
-	OwningSystem = InOwningSystem;
-	EmitterHandleGuid = InEmitterHandleGuid;
-}
-
-const FGuid UNiagaraOverviewNode::GetEmitterHandleGuid() const
-{
-	return EmitterHandleGuid;
-}
 
 static FNiagaraEmitterHandle* FindEmitterHandleByID(UNiagaraSystem* System, const FGuid& Guid)
 {
@@ -67,7 +53,38 @@ static FNiagaraEmitterHandle* FindEmitterHandleByID(UNiagaraSystem* System, cons
 	return nullptr;
 }
 
-FNiagaraEmitterHandle* UNiagaraOverviewNode::TryGetEmitterHandle()
+void UNiagaraOverviewNode::Initialize(UNiagaraSystem* InOwningSystem)
+{
+	OwningSystem = InOwningSystem;
+}
+
+void UNiagaraOverviewNode::Initialize(UNiagaraSystem* InOwningSystem, FGuid InEmitterHandleGuid)
+{
+	OwningSystem = InOwningSystem;
+	EmitterHandleGuid = InEmitterHandleGuid;
+}
+
+void UNiagaraOverviewNode::UpdateStatus()
+{
+	if(FNiagaraEmitterHandle* EmitterHandle = FindEmitterHandleByID(OwningSystem, EmitterHandleGuid))
+	{
+		if(!GetDefault<UNiagaraSettings>()->bStatelessEmittersEnabled && EmitterHandle->GetEmitterMode() == ENiagaraEmitterMode::Stateless)
+		{
+			SetForceDisplayAsDisabled(true);
+		}
+		else
+		{
+			SetForceDisplayAsDisabled(false);
+		}
+	}
+}
+
+const FGuid UNiagaraOverviewNode::GetEmitterHandleGuid() const
+{
+	return EmitterHandleGuid;
+}
+
+FNiagaraEmitterHandle* UNiagaraOverviewNode::TryGetEmitterHandle() const
 {
 	return FindEmitterHandleByID(GetOwningSystem(), GetEmitterHandleGuid());
 }
@@ -101,19 +118,28 @@ FLinearColor UNiagaraOverviewNode::GetNodeTitleColor() const
 	{
 		FNiagaraEditorModule& NiagaraEditorModule = FModuleManager::LoadModuleChecked<FNiagaraEditorModule>("NiagaraEditor");
 		EmitterColor = NiagaraEditorModule.GetWidgetProvider()->GetColorForExecutionCategory(UNiagaraStackEntry::FExecutionCategoryNames::Emitter);
+		StatelessEmitterColor = NiagaraEditorModule.GetWidgetProvider()->GetColorForExecutionCategory(UNiagaraStackEntry::FExecutionCategoryNames::StatelessEmitter);
 		SystemColor = NiagaraEditorModule.GetWidgetProvider()->GetColorForExecutionCategory(UNiagaraStackEntry::FExecutionCategoryNames::System);
 		IsolatedColor = FNiagaraEditorStyle::Get().GetColor("NiagaraEditor.OverviewNode.IsolatedColor");
 		NotIsolatedColor = FNiagaraEditorStyle::Get().GetColor("NiagaraEditor.OverviewNode.NotIsolatedColor");
+		bColorsAreInitialized = true;
 	}
 
 	if (EmitterHandleGuid.IsValid())
 	{
-		if (OwningSystem != nullptr && OwningSystem->GetIsolateEnabled())
+		if (OwningSystem != nullptr)
 		{
 			const FNiagaraEmitterHandle* Handle = FindEmitterHandleByID(OwningSystem, EmitterHandleGuid);
 			if (ensureMsgf(Handle != nullptr, TEXT("Failed to find matching emitter handle for existing overview node!")))
 			{
-				return Handle->IsIsolated() ? IsolatedColor : NotIsolatedColor;
+				if (OwningSystem->GetIsolateEnabled())
+				{
+					return Handle->IsIsolated() ? IsolatedColor : NotIsolatedColor;
+				}
+				else if ( Handle->GetEmitterMode() == ENiagaraEmitterMode::Stateless )
+				{
+					return StatelessEmitterColor;
+				}
 			}
 		}
 		
@@ -284,6 +310,47 @@ void UNiagaraOverviewNode::GetNodeContextMenuActions(class UToolMenu* Menu, clas
 						)
 					)
 				);
+			#if 0
+				if (GetDefault<UNiagaraSettings>()->bStatelessEmittersEnabled)
+				{
+					Section.AddSubMenu(
+						"EmitterMode",
+						LOCTEXT("EmitterModeSubMenuLabel", "Emitter Mode..."),
+						FText(),
+						FNewToolMenuDelegate::CreateLambda([OwningSystemViewModel](UToolMenu* InMenu)
+						{
+							if (OwningSystemViewModel.IsValid())
+							{
+								bool bCanExecute = OwningSystemViewModel->GetSelectionViewModel()->GetSelectedEmitterHandleIds().Num() > 0;
+								FToolMenuSection& SubMenuSection = InMenu->AddSection("EmitterModeOptions", LOCTEXT("EmitterModeSubMenuHeader", "Emitter Mode"));
+								SubMenuSection.AddMenuEntry(
+									"SetEmitterModeStandard",
+									LOCTEXT("SetEmitterStandardModeMenuLabel", "Standard Mode"),
+									LOCTEXT("SetEmitterStandardModeMenuToolTip", "Set this emitter to use standard mode."),
+									FSlateIcon(),
+									FUIAction(
+										FExecuteAction::CreateStatic(&FNiagaraEditorUtilities::SetSelectedEmittersEmitterMode, OwningSystemViewModel.ToSharedRef(), ENiagaraEmitterMode::Standard),
+										FCanExecuteAction::CreateLambda([bCanExecute]() { return bCanExecute; }),
+										FGetActionCheckState::CreateStatic(&FNiagaraEditorUtilities::GetSelectedEmittersEmitterModeCheckState, OwningSystemViewModel.ToSharedRef(), ENiagaraEmitterMode::Standard)
+									),
+									EUserInterfaceActionType::RadioButton
+								);
+								SubMenuSection.AddMenuEntry(
+									"SetEmitterModeStateless",
+									LOCTEXT("SetEmitterStatelessModeMenuLabel", "Lightweight Mode"),
+									LOCTEXT("SetEmitterStatelessModeMenuToolTip", "Set this emitter to use lightweight mode."),
+									FSlateIcon(),
+									FUIAction(
+										FExecuteAction::CreateStatic(&FNiagaraEditorUtilities::SetSelectedEmittersEmitterMode, OwningSystemViewModel.ToSharedRef(), ENiagaraEmitterMode::Stateless),
+										FCanExecuteAction::CreateLambda([bCanExecute]() { return bCanExecute; }),
+										FGetActionCheckState::CreateStatic(&FNiagaraEditorUtilities::GetSelectedEmittersEmitterModeCheckState, OwningSystemViewModel.ToSharedRef(), ENiagaraEmitterMode::Stateless)
+									),
+									EUserInterfaceActionType::RadioButton
+								);
+							}
+						}));
+				}
+			#endif
 			}
 		}
 	}
@@ -326,7 +393,7 @@ bool UNiagaraOverviewNode::CanCreateUnderSpecifiedSchema(const UEdGraphSchema* S
 	return Schema->IsA<UEdGraphSchema_NiagaraSystemOverview>();
 }
 
-UNiagaraSystem* UNiagaraOverviewNode::GetOwningSystem()
+UNiagaraSystem* UNiagaraOverviewNode::GetOwningSystem() const
 {
 	return OwningSystem;
 }

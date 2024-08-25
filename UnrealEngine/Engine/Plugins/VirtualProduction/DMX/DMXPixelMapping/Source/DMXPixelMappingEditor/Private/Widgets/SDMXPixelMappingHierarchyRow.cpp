@@ -220,7 +220,7 @@ FReply SDMXPixelMappingHierarchyRow::OnRowDragDetected(const FGeometry& MyGeomet
 		}
 	);
 
-	return FReply::Handled().BeginDragDrop(FDMXPixelMappingDragDropOp::New(FVector2D::ZeroVector, DraggedComponents));
+	return FReply::Handled().BeginDragDrop(FDMXPixelMappingDragDropOp::New(WeakToolkit.Pin().ToSharedRef(), FVector2D::ZeroVector, DraggedComponents));
 }
 
 #undef LOCTEXT_NAMESPACE

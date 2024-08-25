@@ -88,7 +88,6 @@ DECLARE_CYCLE_STAT(TEXT("Clean and Sanitize Class"), EKismetCompilerStats_CleanA
 DECLARE_CYCLE_STAT(TEXT("Create Class Properties"), EKismetCompilerStats_CreateClassVariables, STATGROUP_KismetCompiler );
 DECLARE_CYCLE_STAT(TEXT("Bind and Link Class"), EKismetCompilerStats_BindAndLinkClass, STATGROUP_KismetCompiler );
 DECLARE_CYCLE_STAT(TEXT("Calculate checksum of CDO"), EKismetCompilerStats_ChecksumCDO, STATGROUP_KismetCompiler );
-DECLARE_CYCLE_STAT(TEXT("Analyze execution path"), EKismetCompilerStats_AnalyzeExecutionPath, STATGROUP_KismetCompiler);
 DECLARE_CYCLE_STAT(TEXT("Calculate checksum of signature"), EKismetCompilerStats_ChecksumSignature, STATGROUP_KismetCompiler);
 DECLARE_CYCLE_STAT(TEXT("Pruning"), EKismetCompilerStats_PruneIsolatedNodes, STATGROUP_KismetCompiler);
 DECLARE_CYCLE_STAT(TEXT("Merge Ubergraph Pages In"), EKismetCompilerStats_MergeUbergraphPagesIn, STATGROUP_KismetCompiler);
@@ -323,9 +322,10 @@ namespace UE::KismetCompiler::Private
 				check(KnotNode->GetOutputPin());
 				UEdGraphPin* OutputPin = KnotNode->GetOutputPin();
 				check(OutputPin);
-				check(OutputPin->LinkedTo.Num() > 0);
-				
-				LinkedNode = OutputPin->LinkedTo[0]->GetOwningNode();
+
+				// Knots don't necessarily have to be linked.
+				// In these cases, there simply isn't a corresponding signature to reference.
+				LinkedNode = (OutputPin->LinkedTo.Num() > 0) ? OutputPin->LinkedTo[0]->GetOwningNode() : nullptr;
 			}
 
 			// If the delegate pin has been linked, then we should run into either a
@@ -576,7 +576,6 @@ FKismetCompilerContext::~FKismetCompilerContext()
 
 UEdGraphSchema_K2* FKismetCompilerContext::CreateSchema()
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE(WILD_FKismetCompilerContext::CreateSchema);
 	return NewObject<UEdGraphSchema_K2>();
 }
 
@@ -796,7 +795,7 @@ void FKismetCompilerContext::SaveSubObjectsFromCleanAndSanitizeClass(FSubobjectC
 
 void FKismetCompilerContext::PostCreateSchema()
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE(WILD_FKismetCompilerContext::PostCreateSchema);
+	TRACE_CPUPROFILER_EVENT_SCOPE(PostCreateSchema);
 	NodeHandlers.Add(UEdGraphNode_Comment::StaticClass(), new FNodeHandlingFunctor(*this));
 
 	TArray<UClass*> ClassesOfUK2Node;
@@ -2535,9 +2534,10 @@ void FKismetCompilerContext::PrecompileFunction(FKismetFunctionContext& Context,
 			Context.Function->FunctionFlags |= FUNC_Delegate;
 
 			// We really don't want to find our parent's delegate property and accidentally 
-			// overwrite the signature function, so provide EFieldIterationFlags::None:
+			// overwrite the signature function, so EFieldIterationFlags::IncludeSuper is excluded:
+			const EFieldIterationFlags IterationFlags = EFieldIterationFlags::Default & ~EFieldIterationFlags::IncludeSuper;
 			if (FMulticastDelegateProperty* Property = FindFProperty<FMulticastDelegateProperty>(
-					NewClass, Context.DelegateSignatureName, EFieldIterationFlags::None))
+					NewClass, Context.DelegateSignatureName, IterationFlags))
 			{
 				Property->SignatureFunction = Context.Function;
 			}
@@ -2547,7 +2547,7 @@ void FKismetCompilerContext::PrecompileFunction(FKismetFunctionContext& Context,
 			}
 		}
 
-		if (Context.EntryPoint && Context.Function)
+		if (Context.EntryPoint)
 		{
 			if (Context.EntryPoint->MetaData.HasMetaData(FBlueprintMetadata::MD_FieldNotify) && NewClass->ImplementsInterface(UNotifyFieldValueChanged::StaticClass()))
 			{
@@ -3251,12 +3251,7 @@ void FKismetCompilerContext::BuildDynamicBindingObjects(UBlueprintGeneratedClass
  */ 
 void FKismetCompilerContext::CreatePinEventNodeForTimelineFunction(UK2Node_Timeline* TimelineNode, UEdGraph* SourceGraph, FName FunctionName, const FName PinName, FName ExecFuncName)
 {
-	UEdGraphPin* SourcePin = nullptr;
-	if (UK2Node_Timeline* SourceNode = Cast<UK2Node_Timeline>(MessageLog.FindSourceObject(TimelineNode)))
-	{
-		SourcePin = SourceNode->FindPin(PinName);
-	}
-	UK2Node_Event* TimelineEventNode = SpawnIntermediateEventNode<UK2Node_Event>(TimelineNode, SourcePin, SourceGraph);
+	UK2Node_Event* TimelineEventNode = SpawnIntermediateNode<UK2Node_Event>(TimelineNode, SourceGraph);
 	TimelineEventNode->EventReference.SetExternalMember(FunctionName, UTimelineComponent::StaticClass());
 	TimelineEventNode->CustomFunctionName = FunctionName; // Make sure we name this function the thing we are expecting
 	TimelineEventNode->bInternalEvent = true;
@@ -4033,7 +4028,7 @@ void FKismetCompilerContext::CreateAndProcessUbergraph()
 				if (!bFoundEntry)
 				{
 					// Create an entry node stub, so that we have a entry point for interfaces to call to
-					UK2Node_Event* EventNode = SpawnIntermediateEventNode<UK2Node_Event>(nullptr, nullptr, ConsolidatedEventGraph);
+					UK2Node_Event* EventNode = SpawnIntermediateNode<UK2Node_Event>(nullptr, ConsolidatedEventGraph);
 					EventNode->EventReference.SetExternalMember(FunctionName, InterfaceDesc.Interface);
 					EventNode->bOverrideFunction = true;
 					EventNode->AllocateDefaultPins();
@@ -4595,12 +4590,12 @@ void FKismetCompilerContext::ValidateFunctionGraphNames()
 // Creates a copy of the graph to allow further transformations to occur
 void FKismetCompilerContext::CreateFunctionList()
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE(WILD_FKismetCompilerContext::CreateFunctionList);
+	TRACE_CPUPROFILER_EVENT_SCOPE(CreateFunctionList);
 	{
 		BP_SCOPED_COMPILER_EVENT_STAT(EKismetCompilerStats_GenerateFunctionGraphs);
 
 		// Allow blueprint extensions for the blueprint to generate function graphs
-		for (TObjectPtr<UBlueprintExtension> Extension : Blueprint->GetExtensions())
+		for (const TObjectPtr<UBlueprintExtension>& Extension : Blueprint->GetExtensions())
 		{
 			Extension->GenerateFunctionGraphs(this);
 		}
@@ -4802,25 +4797,6 @@ void FKismetCompilerContext::CompileClassLayout(EInternalCompilerFlags InternalF
 		}
 	}
 
-	{
-		// the following calls may mark the blueprint as dirty, but we know that these operations just cleaned up the BP 
-		// so dependencies can still be considered 'up to date'
-		TGuardValue<bool> LockDependenciesUpToDate(Blueprint->bCachedDependenciesUpToDate, Blueprint->bCachedDependenciesUpToDate);
-
-		// Make sure that this blueprint is up-to-date with regards to its parent functions
-		FBlueprintEditorUtils::ConformCallsToParentFunctions(Blueprint);
-
-		// Conform implemented events here, to ensure we generate custom events if necessary after reparenting
-		FBlueprintEditorUtils::ConformImplementedEvents(Blueprint);
-
-		// Conform implemented interfaces here, to ensure we generate all functions required by the interface as stubs
-		FBlueprintEditorUtils::ConformImplementedInterfaces(Blueprint);
-
-		// Make sure we don't have any signature graphs with no corresponding variable - some assets have
-		// managed to get into this state - the UI does not provide a way to fix these objects manually
-		FBlueprintEditorUtils::ConformDelegateSignatureGraphs(Blueprint);
-	}
-
 	IKismetCompilerInterface& KismetCompilerModule = FModuleManager::LoadModuleChecked<IKismetCompilerInterface>("KismetCompiler");
 	KismetCompilerModule.ValidateBPAndClassType(Blueprint, MessageLog);
 
@@ -4838,7 +4814,14 @@ void FKismetCompilerContext::CompileClassLayout(EInternalCompilerFlags InternalF
 	CreateFunctionList();
 
 	// Function list creation should process captured variables. Something went wrong if we missed any.
-	UE_CLOG(!ConvertibleDelegates.IsEmpty(), LogK2Compiler, Warning, TEXT("%d convertible delegates were not processed during class layout compilation."), ConvertibleDelegates.Num());
+	if (!ConvertibleDelegates.IsEmpty())
+	{
+		UE_LOG(LogK2Compiler, Warning, TEXT("%d convertible delegates were not processed during class layout compilation. Listing delegates in log below."), ConvertibleDelegates.Num());
+		for (auto DelegateIt = ConvertibleDelegates.CreateConstIterator(); DelegateIt; ++DelegateIt)
+		{
+			UE_LOG(LogK2Compiler, Display, TEXT("  Node:%s Function:%s Variable:%s"), *GetPathNameSafe(DelegateIt.Key()), *DelegateIt.Value().ProxyFunctionName.ToString(), *DelegateIt.Value().CapturedVariableName.ToString());
+		}
+	}
 
 	// Precompile the functions
 	// Handle delegates signatures first, because they are needed by other functions
@@ -4879,7 +4862,7 @@ void FKismetCompilerContext::CompileFunctions(EInternalCompilerFlags InternalFla
 	// This is phase two, so we want to generated locals if PostponeLocalsGenerationUntilPhaseTwo is set:
 	const bool bGenerateLocals = !!(InternalFlags & EInternalCompilerFlags::PostponeLocalsGenerationUntilPhaseTwo);
 	// Don't propagate values to CDO if we're going to do that in reinstancing:
-	bool bPropagateValuesToCDO = !(InternalFlags & EInternalCompilerFlags::PostponeDefaultObjectAssignmentUntilReinstancing);
+	const bool bPropagateValuesToCDO = !(InternalFlags & EInternalCompilerFlags::PostponeDefaultObjectAssignmentUntilReinstancing);
 	// Don't RefreshExternalBlueprintDependencyNodes if the calling code has done so already:
 	const bool bSkipRefreshExternalBlueprintDependencyNodes = !!(InternalFlags & EInternalCompilerFlags::SkipRefreshExternalBlueprintDependencyNodes);
 	FKismetCompilerVMBackend Backend_VM(Blueprint, Schema, *this);
@@ -5003,10 +4986,10 @@ void FKismetCompilerContext::CompileFunctions(EInternalCompilerFlags InternalFla
 		UObject* NewCDO = NewClass->GetDefaultObject();
 
 		// Copy over the CDO properties if we're not already regenerating on load.  In that case, the copy will be done after compile on load is complete
-		FBlueprintEditorUtils::PropagateParentBlueprintDefaults(NewClass);
-
 		if(bPropagateValuesToCDO)
 		{
+			FBlueprintEditorUtils::PropagateParentBlueprintDefaults(NewClass);
+
 			if( !Blueprint->HasAnyFlags(RF_BeingRegenerated) )
 			{
 				// Propagate the old CDO's properties to the new

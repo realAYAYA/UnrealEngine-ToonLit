@@ -10,6 +10,7 @@
 #include "Engine/EngineTypes.h"
 #include "Kismet/GameplayStatics.h"
 #include "Rendering/RenderingCommon.h"
+#include "SceneView.h"
 
 #if SUPPORTS_ARKIT_1_0
 
@@ -227,6 +228,28 @@ float FAppleARKitCamera::GetVerticalFieldOfViewForScreen( EAppleARKitBackgroundF
 	// Fallback
 	return GetVerticalFieldOfView();
 }
+
+void FAppleARKitCamera::GetViewProjectionMatrix(EDeviceScreenOrientation DeviceOrientation, FSceneViewProjectionData& InOutProjectionData) const
+{
+	// Use the global viewport size as the screen size
+	FVector2D ViewportSize;
+	GEngine->GameViewport->GetViewportSize( ViewportSize );
+	
+	float FOV = 0.0f;
+	if (DeviceOrientation == EDeviceScreenOrientation::Portrait || DeviceOrientation == EDeviceScreenOrientation::PortraitUpsideDown)
+	{
+		// Portrait
+		FOV = GetVerticalFieldOfViewForScreen(EAppleARKitBackgroundFitMode::Fill);
+	}
+	else
+	{
+		// Landscape
+		FOV = GetHorizontalFieldOfViewForScreen(EAppleARKitBackgroundFitMode::Fill);
+	}
+	
+	InOutProjectionData.ProjectionMatrix = FReversedZPerspectiveMatrix(FMath::DegreesToRadians(FOV) * 0.5f, ViewportSize.X, ViewportSize.Y, 10.0f);
+}
+
 
 FVector2D FAppleARKitCamera::GetImageCoordinateForScreenPosition( FVector2D ScreenPosition, EAppleARKitBackgroundFitMode BackgroundFitMode, float ScreenWidth, float ScreenHeight ) const
 {

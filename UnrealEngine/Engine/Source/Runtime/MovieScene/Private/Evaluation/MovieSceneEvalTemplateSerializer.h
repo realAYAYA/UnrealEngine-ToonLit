@@ -11,7 +11,7 @@
 struct FMovieSceneEmptyStruct;
 
 /** Serialize an inline value that has a GetScriptStruct method */
-template<typename T, uint8 N>
+template<typename T, uint16 N>
 bool SerializeInlineValue(TInlineValue<T, N>& Impl, FArchive& Ar, bool bWarnOnError)
 {
 	Ar.UsingCustomVersion(FMovieSceneEvaluationCustomVersion::GUID);

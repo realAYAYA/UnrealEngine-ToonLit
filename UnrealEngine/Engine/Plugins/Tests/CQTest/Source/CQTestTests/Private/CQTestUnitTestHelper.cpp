@@ -2,6 +2,25 @@
 
 #include "CQTestUnitTestHelper.h"
 
+bool DoesEventExist(FAutomationTestBase& TestRunner, const FAutomationEvent& Event)
+{
+	FAutomationTestExecutionInfo TestInfo;
+	TestRunner.GetExecutionInfo(TestInfo);
+	const TArray<FAutomationExecutionEntry>& TestEntries = TestInfo.GetEntries();
+	if (TestEntries.Num() > 0)
+	{
+		for (const FAutomationExecutionEntry& Entry : TestEntries)
+		{
+			if (Entry.Event.Type == Event.Type && Entry.Event.Message.Equals(Event.Message))
+			{
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
 void ClearExpectedErrors(FAutomationTestBase& TestRunner, const TArray<FString>& ExpectedErrors)
 {
 	FAutomationTestExecutionInfo testInfo;

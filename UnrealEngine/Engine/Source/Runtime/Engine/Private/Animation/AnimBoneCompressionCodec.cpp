@@ -3,6 +3,7 @@
 #include "Animation/AnimBoneCompressionCodec.h"
 #include "Animation/AnimBoneCompressionSettings.h"
 #include "Animation/AnimBoneDecompressionData.h"
+#include "Animation/AnimSequence.h"
 #include "Misc/MemStack.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AnimBoneCompressionCodec)
@@ -12,6 +13,18 @@ UAnimBoneCompressionCodec::UAnimBoneCompressionCodec(const FObjectInitializer& O
 	, Description(TEXT("None"))
 {
 }
+
+#if WITH_EDITORONLY_DATA
+int64 UAnimBoneCompressionCodec::EstimateCompressionMemoryUsage(const UAnimSequence& AnimSequence) const
+{
+#if WITH_EDITOR
+	// This is a conservative estimate that gives a codec enough space to create two raw copies of the input data.
+	return 2 * AnimSequence.GetApproxRawSize();
+#else
+	return -1;
+#endif // WITH_EDITOR
+}
+#endif // WITH_EDITORONLY_DATA
 
 UAnimBoneCompressionCodec* UAnimBoneCompressionCodec::GetCodec(const FString& DDCHandle)
 {

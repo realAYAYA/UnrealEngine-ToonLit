@@ -51,7 +51,7 @@ void FControlRigStats::ReleaseCounter()
 	}
 	if (Stack.Num() > 0)
 	{
-		Stack.Pop(false);
+		Stack.Pop(EAllowShrinking::No);
 	}
 }
 

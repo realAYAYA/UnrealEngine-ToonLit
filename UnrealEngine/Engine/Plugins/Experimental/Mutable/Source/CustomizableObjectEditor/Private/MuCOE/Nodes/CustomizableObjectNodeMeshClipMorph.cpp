@@ -26,8 +26,6 @@ UCustomizableObjectNodeMeshClipMorph::UCustomizableObjectNodeMeshClipMorph()
 	Origin = FVector::ZeroVector;
 	Normal = -FVector::UpVector;
 	MaxEffectRadius = -1.f;
-
-	bUpdateViewportWidget = true;
 }
 
 
@@ -93,10 +91,8 @@ UEdGraphPin* UCustomizableObjectNodeMeshClipMorph::OutputPin() const
 }
 
 
-void UCustomizableObjectNodeMeshClipMorph::PostEditChangeProperty(FPropertyChangedEvent & PropertyChangedEvent)
+void UCustomizableObjectNodeMeshClipMorph::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 {
-	FProperty* PropertyThatChanged = PropertyChangedEvent.Property;
-
 	const FName PropertyName = PropertyChangedEvent.GetPropertyName();
 
 	if (PropertyName == "bLocalStartOffset")
@@ -104,7 +100,7 @@ void UCustomizableObjectNodeMeshClipMorph::PostEditChangeProperty(FPropertyChang
 		ChangeStartOffsetTransform();
 	}
 
-	bUpdateViewportWidget = true;
+	GetGraphEditor()->ShowGizmoClipMorph(*this);
 
 	Super::PostEditChangeProperty(PropertyChangedEvent);
 }
@@ -115,8 +111,9 @@ void UCustomizableObjectNodeMeshClipMorph::Serialize(FArchive& Ar)
 
 	Ar.UsingCustomVersion(FCustomizableObjectCustomVersion::GUID);
 
-	if (Ar.CustomVer(FCustomizableObjectCustomVersion::GUID) < FCustomizableObjectCustomVersion::PostLoadToCustomVersion
-		&& bLocalStartOffset)
+	if (Ar.CustomVer(FCustomizableObjectCustomVersion::GUID) < FCustomizableObjectCustomVersion::PostLoadToCustomVersion &&
+		bOldOffset_DEPRECATED &&
+		bLocalStartOffset)
 	{
 		// Previous Offset
 		FVector Tangent, Binormal;

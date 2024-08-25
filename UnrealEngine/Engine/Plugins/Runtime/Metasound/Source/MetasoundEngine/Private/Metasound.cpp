@@ -14,6 +14,8 @@
 #include "MetasoundFrontendQuery.h"
 #include "MetasoundFrontendQuerySteps.h"
 #include "MetasoundFrontendRegistries.h"
+#include "MetasoundFrontendRegistryContainer.h"
+#include "MetasoundFrontendRegistryKey.h"
 #include "MetasoundFrontendSearchEngine.h"
 #include "MetasoundGenerator.h"
 #include "MetasoundLog.h"
@@ -57,12 +59,38 @@ UMetaSoundPatch::UMetaSoundPatch(const FObjectInitializer& ObjectInitializer)
 {
 }
 
+Metasound::Frontend::FDocumentAccessPtr UMetaSoundPatch::GetDocumentAccessPtr()
+{
+	using namespace Metasound::Frontend;
+
+	// Mutation of a document via the soft deprecated access ptr/controller system is not tracked by
+	// the builder registry, so the document cache is invalidated here. It is discouraged to mutate
+	// documents using both systems at the same time as it can corrupt a builder document's cache.
+	if (UMetaSoundBuilderSubsystem* BuilderSubsystem = UMetaSoundBuilderSubsystem::Get())
+	{
+		const FMetasoundFrontendClassName& Name = RootMetaSoundDocument.RootGraph.Metadata.GetClassName();
+		BuilderSubsystem->InvalidateDocumentCache(Name);
+	}
+
+	// Return document using FAccessPoint to inform the TAccessPtr when the 
+	// object is no longer valid.
+	return MakeAccessPtr<FDocumentAccessPtr>(RootMetaSoundDocument.AccessPoint, RootMetaSoundDocument);
+}
+
+Metasound::Frontend::FConstDocumentAccessPtr UMetaSoundPatch::GetDocumentConstAccessPtr() const
+{
+	using namespace Metasound::Frontend;
+	// Return document using FAccessPoint to inform the TAccessPtr when the 
+	// object is no longer valid.
+	return MakeAccessPtr<FConstDocumentAccessPtr>(RootMetaSoundDocument.AccessPoint, RootMetaSoundDocument);
+}
+
 const UClass& UMetaSoundPatch::GetBaseMetaSoundUClass() const
 {
 	return *UMetaSoundPatch::StaticClass();
 }
 
-const FMetasoundFrontendDocument& UMetaSoundPatch::GetDocument() const
+const FMetasoundFrontendDocument& UMetaSoundPatch::GetConstDocument() const
 {
 	return RootMetaSoundDocument;
 }
@@ -90,7 +118,7 @@ void UMetaSoundPatch::PostEditUndo()
 
 void UMetaSoundPatch::BeginDestroy()
 {
-	UnregisterGraphWithFrontend();
+	OnNotifyBeginDestroy();
 	Super::BeginDestroy();
 }
 
@@ -128,7 +156,6 @@ const UEdGraph& UMetaSoundPatch::GetGraphChecked() const
 	check(Graph);
 	return *Graph;
 }
-
 FText UMetaSoundPatch::GetDisplayName() const
 {
 	FString TypeName = UMetaSoundPatch::StaticClass()->GetName();
@@ -142,15 +169,16 @@ void UMetaSoundPatch::SetRegistryAssetClassInfo(const Metasound::Frontend::FNode
 }
 #endif // WITH_EDITORONLY_DATA
 
+
+FTopLevelAssetPath UMetaSoundPatch::GetAssetPathChecked() const
+{
+	return Metasound::FMetaSoundEngineAssetHelper::GetAssetPathChecked(*this);
+}
+
 void UMetaSoundPatch::PostLoad() 
 {
 	Super::PostLoad();
 	Metasound::FMetaSoundEngineAssetHelper::PostLoad(*this);
-}
-
-Metasound::Frontend::FNodeClassInfo UMetaSoundPatch::GetAssetClassInfo() const
-{
-	return { GetDocumentChecked().RootGraph, FSoftObjectPath(this) };
 }
 
 #if WITH_EDITOR
@@ -173,6 +201,39 @@ const TSet<FSoftObjectPath>& UMetaSoundPatch::GetAsyncReferencedAssetClassPaths(
 void UMetaSoundPatch::OnAsyncReferencedAssetsLoaded(const TArray<FMetasoundAssetBase*>& InAsyncReferences)
 {
 	Metasound::FMetaSoundEngineAssetHelper::OnAsyncReferencedAssetsLoaded(*this, InAsyncReferences);
+}
+
+bool UMetaSoundPatch::IsBuilderActive() const
+{
+	return bIsBuilderActive;
+}
+
+void UMetaSoundPatch::OnBeginActiveBuilder()
+{
+	using namespace Metasound::Frontend;
+
+	if (bIsBuilderActive)
+	{
+		UE_LOG(LogMetaSound, Error, TEXT("OnBeginActiveBuilder() call while prior builder is still active. This may indicate that multiple builders are attempting to modify the MetaSound %s concurrently."), *GetOwningAssetName())
+	}
+
+	// If a builder is activating, make sure any in-flight registration
+	// tasks have completed. Async registration tasks use the FMetasoundFrontendDocument
+	// that lives on this object. We need to make sure that registration task
+	// completes so that the FMetasoundFrontendDocument does not get modified
+	// by a builder while it is also being read by async registration.
+	const FGraphRegistryKey GraphKey = GetGraphRegistryKey();
+	if (GraphKey.IsValid())
+	{
+		FMetasoundFrontendRegistryContainer::Get()->WaitForAsyncGraphRegistration(GraphKey);
+	}
+
+	bIsBuilderActive = true;
+}
+
+void UMetaSoundPatch::OnFinishActiveBuilder()
+{
+	bIsBuilderActive = false;
 }
 
 #undef LOCTEXT_NAMESPACE // MetaSound

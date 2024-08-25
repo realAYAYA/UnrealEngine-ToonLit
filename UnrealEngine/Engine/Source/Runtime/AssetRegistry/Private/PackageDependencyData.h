@@ -23,6 +23,11 @@ public:
 			Dependency.Property = static_cast<UE::AssetRegistry::EDependencyProperty>(PropertyAsInteger);
 			return Ar;
 		}
+
+		bool operator==(const FPackageDependency& Other) const
+		{
+			return PackageName == Other.PackageName && Property == Other.Property;
+		}
 	};
 	struct FSearchableNamesDependency
 	{

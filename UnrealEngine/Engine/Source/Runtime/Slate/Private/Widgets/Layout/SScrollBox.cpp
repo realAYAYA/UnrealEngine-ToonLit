@@ -126,6 +126,7 @@ void SScrollBox::Construct( const FArguments& InArgs )
 	bShowSoftwareCursor = false;
 	SoftwareCursorPosition = FVector2f::ZeroVector;
 	OnUserScrolled = InArgs._OnUserScrolled;
+	OnScrollBarVisibilityChanged = InArgs._OnScrollBarVisibilityChanged;
 	Orientation = InArgs._Orientation;
 	bScrollToEnd = false;
 	bIsScrollingActiveTimerRegistered = false;
@@ -148,6 +149,7 @@ void SScrollBox::Construct( const FArguments& InArgs )
 		// An external scroll bar was specified by the user
 		ScrollBar = InArgs._ExternalScrollbar;
 		ScrollBar->SetOnUserScrolled(FOnUserScrolled::CreateSP(this, &SScrollBox::ScrollBar_OnUserScrolled));
+		ScrollBar->SetOnScrollBarVisibilityChanged(FOnScrollBarVisibilityChanged::CreateSP(this, &SScrollBox::ScrollBar_OnScrollBarVisibilityChanged));
 		bScrollBarIsExternal = true;
 	}
 	else
@@ -158,6 +160,7 @@ void SScrollBox::Construct( const FArguments& InArgs )
 		ScrollBar->SetThickness(InArgs._ScrollBarThickness);
 		ScrollBar->SetUserVisibility(InArgs._ScrollBarVisibility);
 		ScrollBar->SetScrollBarAlwaysVisible(InArgs._ScrollBarAlwaysVisible);
+		ScrollBar->SetOnScrollBarVisibilityChanged(FOnScrollBarVisibilityChanged::CreateSP(this, &SScrollBox::ScrollBar_OnScrollBarVisibilityChanged));
 		ScrollBarSlotPadding = InArgs._ScrollBarPadding;
 
 		bScrollBarIsExternal = false;
@@ -1136,6 +1139,11 @@ void SScrollBox::ScrollBar_OnUserScrolled( float InScrollOffsetFraction )
 	OnUserScrolled.ExecuteIfBound(DesiredScrollOffset);
 
 	Invalidate(EInvalidateWidget::Layout);
+}
+
+void SScrollBox::ScrollBar_OnScrollBarVisibilityChanged( EVisibility NewVisibility )
+{
+	OnScrollBarVisibilityChanged.ExecuteIfBound(NewVisibility);
 }
 
 const float ShadowFadeDistance = 32.0f;

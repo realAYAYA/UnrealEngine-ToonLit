@@ -420,9 +420,10 @@ public:
 	virtual UFXSystemAsset* GetFXSystemAsset() const { return nullptr; };
 
 	/**
-	 *	Enables/Disables a sub-emitter
+	 *	Enables / disables an emitter by halting spawning of new particles.
+	 *  You will still pay the cost of the emitter update.
 	 *
-	 *	@param	EmitterName			The name of the sub-emitter to set it on
+	 *	@param	EmitterName			The name of the emitter
 	 *	@param	bNewEnableState		The value to set it to
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Effects|Components|ParticleSystem")
@@ -1476,6 +1477,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Rendering|Material")
 	ENGINE_API virtual class UMaterialInstanceDynamic* CreateNamedDynamicMaterialInstance(FName InName, class UMaterialInterface* SourceMaterial = NULL);
 
+	ENGINE_API virtual UMaterialInterface* GetMaterialByName(FName MaterialSlotName) const override;
 	ENGINE_API virtual void SetMaterialByName(FName MaterialSlotName, class UMaterialInterface* SourceMaterial) override;
 
 	/** Returns a named material. If this named material is not found, returns NULL. */

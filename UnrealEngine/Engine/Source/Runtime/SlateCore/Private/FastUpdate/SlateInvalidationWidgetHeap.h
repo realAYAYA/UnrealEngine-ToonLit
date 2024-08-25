@@ -57,11 +57,11 @@ public:
 	}
 
 	/** Returns and removes the biggest WidgetIndex from the list. */
-	UE_NODISCARD FSlateInvalidationWidgetIndex HeapPop()
+	[[nodiscard]] FSlateInvalidationWidgetIndex HeapPop()
 	{
 		check(Heap.Num() > 0);
 		FSlateInvalidationWidgetIndex Result = Heap.HeapTop().GetWidgetIndex();
-		Heap.HeapPopDiscard(SortPredicate(), false);
+		Heap.HeapPopDiscard(SortPredicate(), EAllowShrinking::No);
 		OwnerList[Result].bContainedByWidgetPreHeap = false;
 		return Result;
 	}
@@ -71,19 +71,19 @@ public:
 	{
 		check(Heap.Num() > 0);
 		FSlateInvalidationWidgetIndex Result = Heap.HeapTop().GetWidgetIndex();
-		Heap.HeapPopDiscard(SortPredicate(), false);
+		Heap.HeapPopDiscard(SortPredicate(), EAllowShrinking::No);
 		OwnerList[Result].bContainedByWidgetPreHeap = false;
 	}
 	
 	/** Returns the biggest WidgetIndex from the list. */
-	UE_NODISCARD inline FSlateInvalidationWidgetIndex HeapPeek() const
+	[[nodiscard]] inline FSlateInvalidationWidgetIndex HeapPeek() const
 	{
 		check(Heap.Num() > 0);
 		return Heap.HeapTop().GetWidgetIndex();
 	}
 	
 	/** Returns the biggest WidgetIndex from the list. */
-	UE_NODISCARD inline const FElement& HeapPeekElement() const
+	[[nodiscard]] inline const FElement& HeapPeekElement() const
 	{
 		check(Heap.Num() > 0);
 		return Heap.HeapTop();
@@ -122,13 +122,13 @@ public:
 	}
 
 	/** Returns the number of elements in the list. */
-	UE_NODISCARD inline int32 Num() const
+	[[nodiscard]] inline int32 Num() const
 	{
 		return Heap.Num();
 	}
 
 	/** Does it contains the widget index. */
-	UE_NODISCARD bool Contains_Debug(const FSlateInvalidationWidgetIndex WidgetIndex) const
+	[[nodiscard]] bool Contains_Debug(const FSlateInvalidationWidgetIndex WidgetIndex) const
 	{
 		return Heap.ContainsByPredicate([WidgetIndex](const FElement& Element)
 			{
@@ -137,13 +137,13 @@ public:
 	}
 
 	/** @retuns true if the heap is heapified. */
-	UE_NODISCARD inline bool IsValidHeap_Debug()
+	[[nodiscard]] inline bool IsValidHeap_Debug()
 	{
 		return Algo::IsHeap(Heap, SortPredicate());
 	}
 
 	/** Returns the raw list. */
-	UE_NODISCARD inline const FElementContainer& GetRaw() const
+	[[nodiscard]] inline const FElementContainer& GetRaw() const
 	{
 		return Heap;
 	}
@@ -240,11 +240,11 @@ public:
 	}
 
 	/** Returns and removes the biggest WidgetIndex from the list. */
-	UE_NODISCARD FElement HeapPop()
+	[[nodiscard]] FElement HeapPop()
 	{
 		check(bIsHeap == true);
 		FElement Result = Heap.HeapTop();
-		Heap.HeapPopDiscard(SortPredicate(), false);
+		Heap.HeapPopDiscard(SortPredicate(), EAllowShrinking::No);
 		OwnerList[Result.GetWidgetIndex()].bContainedByWidgetPostHeap = false;
 		return Result;
 	}
@@ -292,19 +292,19 @@ public:
 	}
 
 	/** Returns the number of elements in the list. */
-	UE_NODISCARD inline int32 Num() const
+	[[nodiscard]] inline int32 Num() const
 	{
 		return Heap.Num();
 	}
 
 	/** Returns the number of elements in the list. */
-	UE_NODISCARD inline bool IsHeap() const
+	[[nodiscard]] inline bool IsHeap() const
 	{
 		return bIsHeap;
 	}
 
 	/** Does it contains the widget index. */
-	UE_NODISCARD bool Contains_Debug(const FSlateInvalidationWidgetIndex WidgetIndex) const
+	[[nodiscard]] bool Contains_Debug(const FSlateInvalidationWidgetIndex WidgetIndex) const
 	{
 		return Heap.ContainsByPredicate([WidgetIndex](const FElement& Element)
 			{
@@ -313,13 +313,13 @@ public:
 	}
 
 	/** @retuns true if the heap is heapified. */
-	UE_NODISCARD inline bool IsValidHeap_Debug()
+	[[nodiscard]] inline bool IsValidHeap_Debug()
 	{
 		return Algo::IsHeap(Heap, SortPredicate());
 	}
 
 	/** Returns the raw list. */
-	UE_NODISCARD inline const FElementContainer& GetRaw() const
+	[[nodiscard]] inline const FElementContainer& GetRaw() const
 	{
 		return Heap;
 	}
@@ -431,11 +431,11 @@ public:
 	}
 
 	/** Returns and removes the biggest WidgetIndex from the list. */
-	UE_NODISCARD FElement HeapPop()
+	[[nodiscard]] FElement HeapPop()
 	{
 		check(bIsHeap == true);
 		FElement Result = Heap.HeapTop();
-		Heap.HeapPopDiscard(SortPredicate(), false);
+		Heap.HeapPopDiscard(SortPredicate(), EAllowShrinking::No);
 		OwnerList[Result.GetWidgetIndex()].bContainedByWidgetPrepassList = false;
 		return Result;
 	}
@@ -483,19 +483,19 @@ public:
 	}
 
 	/** Returns the number of elements in the list. */
-	UE_NODISCARD inline int32 Num() const
+	[[nodiscard]] inline int32 Num() const
 	{
 		return Heap.Num();
 	}
 
 	/** Returns the number of elements in the list. */
-	UE_NODISCARD inline bool IsHeap() const
+	[[nodiscard]] inline bool IsHeap() const
 	{
 		return bIsHeap;
 	}
 
 	/** Does it contains the widget index. */
-	UE_NODISCARD bool Contains_Debug(const FSlateInvalidationWidgetIndex WidgetIndex) const
+	[[nodiscard]] bool Contains_Debug(const FSlateInvalidationWidgetIndex WidgetIndex) const
 	{
 		return Heap.ContainsByPredicate([WidgetIndex](const FElement& Element)
 			{
@@ -504,13 +504,13 @@ public:
 	}
 
 	/** @retuns true if the heap is heapified. */
-	UE_NODISCARD inline bool IsValidHeap_Debug()
+	[[nodiscard]] inline bool IsValidHeap_Debug()
 	{
 		return Algo::IsHeap(Heap, SortPredicate());
 	}
 
 	/** Returns the raw list. */
-	UE_NODISCARD inline const FElementContainer& GetRaw() const
+	[[nodiscard]] inline const FElementContainer& GetRaw() const
 	{
 		return Heap;
 	}

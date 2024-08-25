@@ -60,6 +60,8 @@ void UDynamicMeshBrushTool::Shutdown(EToolShutdownType ShutdownType)
 {
 	UBaseBrushTool::Shutdown(ShutdownType);
 
+	LongTransactions.CloseAll(GetToolManager());
+
 	UE::ToolTarget::ShowSourceObject(Target);
 
 	if (PreviewMesh != nullptr)

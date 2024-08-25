@@ -2,6 +2,7 @@
 
 #include "RivermaxCoreModule.h"
 
+#include "HAL/IConsoleManager.h"
 #include "Modules/ModuleManager.h"
 #include "RivermaxBoundaryMonitor.h"
 #include "RivermaxInputStream.h"

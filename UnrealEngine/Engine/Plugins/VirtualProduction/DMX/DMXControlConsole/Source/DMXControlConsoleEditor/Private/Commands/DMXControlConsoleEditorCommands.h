@@ -18,20 +18,33 @@ public:
 
 	TSharedPtr<FUICommandInfo> OpenControlConsole;
 
-	TSharedPtr<FUICommandInfo> CreateNewConsole;
-	TSharedPtr<FUICommandInfo> SaveConsole;
-	TSharedPtr<FUICommandInfo> SaveConsoleAs;
-	TSharedPtr<FUICommandInfo> ToggleSendDMX;
+	TSharedPtr<FUICommandInfo> PlayDMX;
+	TSharedPtr<FUICommandInfo> PauseDMX;
+	TSharedPtr<FUICommandInfo> ResumeDMX;
+	TSharedPtr<FUICommandInfo> StopDMX;
+	TSharedPtr<FUICommandInfo> TogglePlayPauseDMX;
+	TSharedPtr<FUICommandInfo> TogglePlayStopDMX;
+
+	TSharedPtr<FUICommandInfo> EditorStopSendsDefaultValues;
+	TSharedPtr<FUICommandInfo> EditorStopSendsZeroValues;
+	TSharedPtr<FUICommandInfo> EditorStopKeepsLastValues;
+
 	TSharedPtr<FUICommandInfo> RemoveElements;
 	TSharedPtr<FUICommandInfo> SelectAll;
 	TSharedPtr<FUICommandInfo> ClearAll;
+	TSharedPtr<FUICommandInfo> ResetToDefault;
+	TSharedPtr<FUICommandInfo> ResetToZero;
 
-	TSharedPtr<FUICommandInfo> Mute;
-	TSharedPtr<FUICommandInfo> MuteAll;
-	TSharedPtr<FUICommandInfo> Unmute;
-	TSharedPtr<FUICommandInfo> UnmuteAll;
+	TSharedPtr<FUICommandInfo> Enable;
+	TSharedPtr<FUICommandInfo> EnableAll;
+	TSharedPtr<FUICommandInfo> Disable;
+	TSharedPtr<FUICommandInfo> DisableAll;
 
-	TSharedPtr<FUICommandInfo> AddPatchNext;
+	TSharedPtr<FUICommandInfo> AddPatchRight;
 	TSharedPtr<FUICommandInfo> AddPatchNextRow;
 	TSharedPtr<FUICommandInfo> AddPatchToSelection;
+	TSharedPtr<FUICommandInfo> GroupPatchRight;
+	TSharedPtr<FUICommandInfo> GroupPatchNextRow;
+	TSharedPtr<FUICommandInfo> AddEmptyGroupRight;
+	TSharedPtr<FUICommandInfo> AddEmptyGroupNextRow;
 };

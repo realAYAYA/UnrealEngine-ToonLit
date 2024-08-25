@@ -510,7 +510,7 @@ static void Draw_textures(BINKTEXTURES* ptextures, BINKSHADERS* pshaders, void* 
 			}
 
 			// Disable backface culling
-			GraphicsPSOInit.RasterizerState = TStaticRasterizerState<FM_Solid, CM_None, false, false>::GetRHI();
+			GraphicsPSOInit.RasterizerState = TStaticRasterizerState<FM_Solid, CM_None, ERasterizerDepthClipMode::DepthClip, false>::GetRHI();
 
 			// Disable Depth/Stencil test
 			GraphicsPSOInit.DepthStencilState = TStaticDepthStencilState<false, CF_Always>::GetRHI();

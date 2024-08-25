@@ -5,7 +5,7 @@
 #include "MassCommonTypes.h"
 #include "MassEntityTypes.h"
 #include "MassReplicationTypes.h"
-#include "Subsystems/WorldSubsystem.h"
+#include "MassSubsystemBase.h"
 
 #include "MassReplicationSubsystem.generated.h"
 
@@ -91,7 +91,7 @@ namespace UE::MassReplication
  *  ClientReplicationInfo relate to all the player controllers that have a parent or child UNetConnection to a single Client machine (split screen etc).
  */
 UCLASS()
-class MASSREPLICATION_API UMassReplicationSubsystem : public UWorldSubsystem
+class MASSREPLICATION_API UMassReplicationSubsystem : public UMassSubsystemBase
 {
 	GENERATED_BODY()
 

@@ -9,21 +9,15 @@
 #include "Iris/ReplicationState/ReplicationStateDescriptor.h"
 #include "Iris/ReplicationState/ReplicationStateFwd.h"
 
-namespace UE::Net::Private
-{
-	extern IRISCORE_API void MarkNetObjectStateDirty(uint32 ReplicationSystemId, uint32 NetObjectIndex);
-}
-
 namespace UE::Net
 {
-/** Mark the a NetObject/Handle as dirty which means it requires to be copied when we update the Replication system */
-inline void MarkNetObjectStateDirty(FReplicationStateHeader& Header)
-{
-	MarkNetObjectStateDirty(FNetHandleManager::MakeNetHandleFromId(Private::FReplicationStateHeaderAccessor::GetNetHandleId(Header)));
-	Private::FReplicationStateHeaderAccessor::MarkStateDirty(Header);
-}
+	/** Mark the Replication State Header as dirty so it can be copied in the CopyDirtyState pass. */
+	inline void MarkNetObjectStateHeaderDirty(FReplicationStateHeader& Header)
+	{
+		Private::FReplicationStateHeaderAccessor::MarkStateDirty(Header);
+	}
 
-}
+} // end namespace UE::Net
 
 namespace UE::Net::Private
 {
@@ -71,7 +65,7 @@ inline void MarkDirty(UE::Net::FReplicationStateHeader& InternalState, FNetBitAr
 	if (InternalState.IsBound() && !MemberChangeMask.GetBit(ChangeMaskInfo.BitOffset))
 	{
 		FReplicationStateHeaderAccessor::MarkStateDirty(InternalState);
-		MarkNetObjectStateDirty(InternalState);
+		MarkNetObjectStateHeaderDirty(InternalState);
 	}
 
 	MemberChangeMask.SetBits(ChangeMaskInfo.BitOffset, ChangeMaskInfo.BitCount);

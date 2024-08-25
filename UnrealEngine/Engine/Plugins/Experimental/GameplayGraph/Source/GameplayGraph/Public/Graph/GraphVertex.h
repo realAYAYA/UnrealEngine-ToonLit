@@ -18,20 +18,24 @@ public:
 
 	FGraphVertexHandle Handle() const
 	{
-		return FGraphVertexHandle{ GetUniqueIndex(), const_cast<UGraphVertex*>(this)};
+		return FGraphVertexHandle{ GetUniqueIndex(), GetGraph()};
 	}
 
 	bool HasEdgeTo(const FGraphVertexHandle& Other) const;
+	int32 NumEdges() const { return Edges.Num(); }
+
 	const FGraphIslandHandle& GetParentIsland() const { return ParentIsland; }
 
 	template<typename TLambda>
 	void ForEachAdjacentVertex(TLambda&& Lambda)
 	{
-		for (const TPair<FGraphVertexHandle, FGraphEdgeHandle>& Kvp : Edges)
+		for (const FGraphVertexHandle& Vertex : Edges)
 		{
-			Lambda(Kvp.Key);
+			Lambda(Vertex);
 		}
 	}
+	
+	const TSet<FGraphVertexHandle>& GetEdges() const { return Edges; }
 
 	FOnGraphVertexRemoved OnVertexRemoved;
 	FOnGraphVertexParentIslandSet OnParentIslandSet;
@@ -40,15 +44,15 @@ public:
 	friend class UGraphIsland;
 protected:
 
-	void AddEdgeTo(const FGraphVertexHandle& Node, const FGraphEdgeHandle& Edge);
-	void RemoveEdge(const FGraphEdgeHandle& EdgeHandle);
+	void AddEdgeTo(const FGraphVertexHandle& Node);
+	void RemoveEdge(const FGraphVertexHandle& AdjacentVertexHandle);
 	void SetParentIsland(const FGraphIslandHandle& Island);
 
 	virtual void HandleOnVertexRemoved();
 private:
 
 	UPROPERTY()
-	TMap<FGraphVertexHandle, FGraphEdgeHandle> Edges;
+	TSet<FGraphVertexHandle> Edges;
 
 	UPROPERTY()
 	FGraphIslandHandle ParentIsland;

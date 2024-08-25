@@ -22,7 +22,7 @@
 #include "ActorFactories/ActorFactoryEmptyActor.h"
 #include "ActorFactories/ActorFactoryPawn.h"
 #include "ActorFactories/ActorFactoryExponentialHeightFog.h"
-#include "ActorFactories/ActorFactoryLocalHeightFog.h"
+#include "ActorFactories/ActorFactoryLocalFogVolume.h"
 #include "ActorFactories/ActorFactorySkyAtmosphere.h"
 #include "ActorFactories/ActorFactoryVolumetricCloud.h"
 #include "ActorFactories/ActorFactoryPlayerStart.h"
@@ -48,6 +48,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "ActorPlacementInfo.h"
 #include "IPlacementModeModule.h"
+#include "Subsystems/PlacementSubsystem.h"
 #include "ToolMenus.h"
 #include "AssetToolsModule.h"
 #include "Kismet2/KismetEditorUtilities.h"
@@ -55,6 +56,15 @@
 #include "SPlacementModeTools.h"
 #include "AssetSelection.h"
 
+namespace PlacementModeModuleLocals
+{
+	FActorPlacementInfo MakePlacementInfo(const FPlaceableItem& Item)
+	{
+		FString ObjectString = Item.AssetData.IsValid() ? Item.AssetData.GetObjectPathString() : FString();
+		FString FactoryString = Item.AssetFactory ? Item.AssetFactory.GetObject()->GetPathName() : FString();
+		return FActorPlacementInfo(ObjectString, FactoryString);
+	}
+}
 
 TOptional<FLinearColor> GetBasicShapeColorOverride()
 {
@@ -82,6 +92,8 @@ FPlacementModeModule::FPlacementModeModule()
 
 void FPlacementModeModule::StartupModule()
 {
+	using namespace PlacementModeModuleLocals;
+
 	TArray< FString > RecentlyPlacedAsStrings;
 	GConfig->GetArray(TEXT("PlacementMode"), TEXT("RecentlyPlaced"), RecentlyPlacedAsStrings, GEditorPerProjectIni);
 
@@ -185,31 +197,31 @@ void FPlacementModeModule::StartupModule()
 		// Cube
 		{
 			TSharedPtr<FPlaceableItem> Cube = MakeShareable(new FPlaceableItem(*UActorFactoryBasicShape::StaticClass(), FAssetData(LoadObject<UStaticMesh>(nullptr, *UActorFactoryBasicShape::BasicCube.ToString())), FName("ClassThumbnail.Cube"), FName("ClassIcon.Cube"), BasicShapeColorOverride, SortOrder += 10, CubeText));
-			ManuallyCreatedPlaceableItems.Add(*UActorFactoryBasicShape::BasicCube.ToString(),Cube);
+			ManuallyCreatedPlaceableItems.Add(MakePlacementInfo(*Cube), Cube);
 			Category->Items.Add(CreateID(), Cube);
 		}
 		// Sphere
 		{
 			TSharedPtr<FPlaceableItem> Sphere = MakeShareable(new FPlaceableItem(*UActorFactoryBasicShape::StaticClass(), FAssetData(LoadObject<UStaticMesh>(nullptr, *UActorFactoryBasicShape::BasicSphere.ToString())), FName("ClassThumbnail.Sphere"), FName("ClassIcon.Sphere"), BasicShapeColorOverride, SortOrder += 10, SphereText));
-			ManuallyCreatedPlaceableItems.Add(*UActorFactoryBasicShape::BasicSphere.ToString(), Sphere);
+			ManuallyCreatedPlaceableItems.Add(MakePlacementInfo(*Sphere), Sphere);
 			Category->Items.Add(CreateID(), Sphere);
 		}
 		// Cylinder
 		{
 			TSharedPtr<FPlaceableItem> Cylinder = MakeShareable(new FPlaceableItem(*UActorFactoryBasicShape::StaticClass(), FAssetData(LoadObject<UStaticMesh>(nullptr, *UActorFactoryBasicShape::BasicCylinder.ToString())), FName("ClassThumbnail.Cylinder"), FName("ClassIcon.Cylinder"), BasicShapeColorOverride, SortOrder += 10, CylinderText));
-			ManuallyCreatedPlaceableItems.Add(*UActorFactoryBasicShape::BasicCylinder.ToString(), Cylinder);
+			ManuallyCreatedPlaceableItems.Add(MakePlacementInfo(*Cylinder), Cylinder);
 			Category->Items.Add(CreateID(), Cylinder);
 		}
 		// Cone
 		{
 			TSharedPtr<FPlaceableItem> Cone = MakeShareable(new FPlaceableItem(*UActorFactoryBasicShape::StaticClass(), FAssetData(LoadObject<UStaticMesh>(nullptr, *UActorFactoryBasicShape::BasicCone.ToString())), FName("ClassThumbnail.Cone"), FName("ClassIcon.Cone"), BasicShapeColorOverride, SortOrder += 10, ConeText));
-			ManuallyCreatedPlaceableItems.Add(*UActorFactoryBasicShape::BasicCone.ToString(),Cone);
+			ManuallyCreatedPlaceableItems.Add(MakePlacementInfo(*Cone), Cone);
 			Category->Items.Add(CreateID(), Cone);
 		}
 		// Plane
 		{
 			TSharedPtr<FPlaceableItem> Plane = MakeShareable(new FPlaceableItem(*UActorFactoryBasicShape::StaticClass(), FAssetData(LoadObject<UStaticMesh>(nullptr, *UActorFactoryBasicShape::BasicPlane.ToString())), FName("ClassThumbnail.Plane"), FName("ClassIcon.Plane"), BasicShapeColorOverride, SortOrder += 10, PlaneText));
-			ManuallyCreatedPlaceableItems.Add(*UActorFactoryBasicShape::BasicPlane.ToString(), Plane);
+			ManuallyCreatedPlaceableItems.Add(MakePlacementInfo(*Plane), Plane);
 			Category->Items.Add(CreateID(), Plane);
 		}
 	}
@@ -234,7 +246,7 @@ void FPlacementModeModule::StartupModule()
 		Category->Items.Add(CreateID(), MakeShareable(new FPlaceableItem(*UActorFactorySkyAtmosphere::StaticClass(), SortOrder += 10)));
 		Category->Items.Add(CreateID(), MakeShareable(new FPlaceableItem(*UActorFactoryVolumetricCloud::StaticClass(), SortOrder += 10)));
 		Category->Items.Add(CreateID(), MakeShareable(new FPlaceableItem(*UActorFactoryExponentialHeightFog::StaticClass(), SortOrder += 10)));
-		Category->Items.Add(CreateID(), MakeShareable(new FPlaceableItem(*UActorFactoryLocalHeightFog::StaticClass(), SortOrder += 10)));
+		Category->Items.Add(CreateID(), MakeShareable(new FPlaceableItem(*UActorFactoryLocalFogVolume::StaticClass(), SortOrder += 10)));
 		Category->Items.Add(CreateID(), MakeShareable(new FPlaceableItem(*UActorFactorySphereReflectionCapture::StaticClass(), SortOrder += 10)));
 		Category->Items.Add(CreateID(), MakeShareable(new FPlaceableItem(*UActorFactoryBoxReflectionCapture::StaticClass(), SortOrder += 10)));
 		Category->Items.Add(CreateID(), MakeShareable(new FPlaceableItem(*UActorFactoryPlanarReflection::StaticClass(), SortOrder += 10)));
@@ -381,12 +393,17 @@ void FPlacementModeModule::PreUnloadCallback()
 	}
 }
 
-void FPlacementModeModule::AddToRecentlyPlaced(const TArray<UObject *>& PlacedObjects, UActorFactory* FactoryUsed /* = NULL */)
+void FPlacementModeModule::AddToRecentlyPlaced(const TArray<UObject*>& PlacedObjects, UActorFactory* FactoryUsed /* = NULL */)
+{
+	AddToRecentlyPlaced(PlacedObjects, TScriptInterface<IAssetFactoryInterface>(FactoryUsed));
+}
+
+void FPlacementModeModule::AddToRecentlyPlaced(const TArray< UObject* >& PlacedObjects, TScriptInterface<IAssetFactoryInterface> FactoryUsed)
 {
 	FString FactoryPath;
 	if (FactoryUsed != NULL)
 	{
-		FactoryPath = FactoryUsed->GetPathName();
+		FactoryPath = FactoryUsed.GetObject()->GetPathName();
 	}
 
 	TArray< UObject* > FilteredPlacedObjects;
@@ -484,6 +501,11 @@ void FPlacementModeModule::OnInitialAssetsScanComplete()
 
 void FPlacementModeModule::AddToRecentlyPlaced(UObject* Asset, UActorFactory* FactoryUsed /* = NULL */)
 {
+	AddToRecentlyPlaced(Asset, TScriptInterface<IAssetFactoryInterface>(FactoryUsed));
+}
+
+void FPlacementModeModule::AddToRecentlyPlaced(UObject* Asset, TScriptInterface<IAssetFactoryInterface> FactoryUsed)
+{
 	TArray< UObject* > Assets;
 	Assets.Add(Asset);
 	AddToRecentlyPlaced(Assets, FactoryUsed);
@@ -535,11 +557,16 @@ void FPlacementModeModule::GetSortedCategories(TArray<FPlacementCategoryInfo>& O
 
 TOptional<FPlacementModeID> FPlacementModeModule::RegisterPlaceableItem(FName CategoryName, const TSharedRef<FPlaceableItem>& InItem)
 {
+	using namespace PlacementModeModuleLocals;
+
 	FPlacementCategory* Category = Categories.Find(CategoryName);
 	if (Category && !Category->CustomGenerator)
 	{
 		FPlacementModeID ID = CreateID(CategoryName);
 		Category->Items.Add(ID.UniqueID, InItem);
+
+		ManuallyCreatedPlaceableItems.Add(MakePlacementInfo(*InItem), InItem);
+
 		return ID;
 	}
 	return TOptional<FPlacementModeID>();
@@ -547,10 +574,17 @@ TOptional<FPlacementModeID> FPlacementModeModule::RegisterPlaceableItem(FName Ca
 
 void FPlacementModeModule::UnregisterPlaceableItem(FPlacementModeID ID)
 {
+	using namespace PlacementModeModuleLocals;
+
 	FPlacementCategory* Category = Categories.Find(ID.Category);
 	if (Category)
 	{
-		Category->Items.Remove(ID.UniqueID);
+		TSharedPtr<FPlaceableItem> Item;
+		Category->Items.RemoveAndCopyValue(ID.UniqueID, Item);
+		if (Item)
+		{
+			ManuallyCreatedPlaceableItems.Remove(MakePlacementInfo(*Item));
+		}
 	}
 }
 
@@ -641,29 +675,60 @@ void FPlacementModeModule::RefreshRecentlyPlaced()
 	for (const FActorPlacementInfo& RecentlyPlacedItem : RecentlyPlaced)
 	{
 		// First check if it's a manually created entry
-		if (TSharedPtr<FPlaceableItem>* ItemFound = ManuallyCreatedPlaceableItems.Find(RecentlyPlacedItem.ObjectPath))
+		TWeakPtr<FPlaceableItem>* ManualItem = ManuallyCreatedPlaceableItems.Find(RecentlyPlacedItem);
+		if (ManualItem)
 		{
-			Category->Items.Add(CreateID(), *ItemFound);
+			if (ManualItem->IsValid())
+			{
+				Category->Items.Add(CreateID(), ManualItem->Pin());
+				continue;
+			}
+
+			// A dead pointer here could theoretically be the result of an unregistered category that had 
+			// items manually registered but not manually unregistered. Just remove the dead pointer and
+			// try the other approaches.
+			ManuallyCreatedPlaceableItems.Remove(RecentlyPlacedItem);
+		}
+
+		UObject* Asset = FindObject<UObject>(nullptr, *RecentlyPlacedItem.ObjectPath);
+
+		// If asset is pending delete, it will not be marked as RF_Standalone, in which case we skip it
+		if (Asset == nullptr || !Asset->HasAnyFlags(RF_Standalone))
+		{
+			continue;
+		}
+
+		FAssetData AssetData = AssetRegistryModule.Get().GetAssetByObjectPath(FSoftObjectPath(RecentlyPlacedItem.ObjectPath));
+
+		if (!AssetData.IsValid())
+		{
+			continue;
+		}
+
+		TScriptInterface<IAssetFactoryInterface> Factory;
+		if (RecentlyPlacedItem.Factory.IsEmpty())
+		{
+			// The factory portion of the recently placed data is frequently null because it only gets set
+			// high up in the drop if we gave a specific factory (see FLevelEditorViewportClient::DropObjectsAtCoordinates).
+			// Otherwise, the actually used factory is gotten from the placement subsystem later based on the asset data.
+			// So, we do the same kind of lookup here if we don't have a factory.
+			if (UPlacementSubsystem* PlacementSubsystem = GEditor->GetEditorSubsystem<UPlacementSubsystem>())
+			{
+				Factory = PlacementSubsystem->FindAssetFactoryFromAssetData(AssetData);
+			}
 		}
 		else
 		{
-			UObject* Asset = FindObject<UObject>(nullptr, *RecentlyPlacedItem.ObjectPath);
-
-			// If asset is pending delete, it will not be marked as RF_Standalone, in which case we skip it
-			if (Asset != nullptr && Asset->HasAnyFlags(RF_Standalone))
-			{
-				FAssetData AssetData = AssetRegistryModule.Get().GetAssetByObjectPath(FSoftObjectPath(RecentlyPlacedItem.ObjectPath));
-
-				if (AssetData.IsValid())
-				{
-					if (UActorFactory* Factory = FindObject<UActorFactory>(nullptr, *RecentlyPlacedItem.Factory))
-					{
-						TSharedPtr<FPlaceableItem> Ptr = MakeShareable(new FPlaceableItem(Factory, AssetData));
-						Category->Items.Add(CreateID(), Ptr);
-					}
-				}
-			}
+			Factory = FindObject<UObject>(nullptr, *RecentlyPlacedItem.Factory);
 		}
+
+		if (!Factory)
+		{
+			continue;
+		}
+
+		TSharedPtr<FPlaceableItem> Ptr = MakeShareable(new FPlaceableItem(Factory, AssetData));
+		Category->Items.Add(CreateID(), Ptr);
 	}
 }
 

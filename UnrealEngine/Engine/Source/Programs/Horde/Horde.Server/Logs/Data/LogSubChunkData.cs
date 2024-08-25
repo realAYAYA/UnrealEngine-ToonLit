@@ -66,7 +66,7 @@ namespace Horde.Server.Logs.Data
 		/// </summary>
 		public ReadOnlyMemory<byte> DeflateText()
 		{
-			if(_compressedTextInternal.IsEmpty)
+			if (_compressedTextInternal.IsEmpty)
 			{
 				_compressedTextInternal = _textInternal!.Data.CompressBzip2();
 			}
@@ -78,7 +78,7 @@ namespace Horde.Server.Logs.Data
 		/// </summary>
 		public LogIndexData BuildIndex(ILogger logger)
 		{
-			if(_indexInternal == null)
+			if (_indexInternal == null)
 			{
 				ILogText plainText = InflateText();
 				if (Type != LogType.Text)

@@ -11,13 +11,10 @@
 #include "OpenColorIODisplayExtension.h"
 #include "OpenColorIOShader.h"
 
-#include "Shader.h"
-#include "SceneRendering.h"
 #include "SceneView.h"
 #include "ScreenPass.h"
 #include "CommonRenderResources.h"
-// for FPostProcessMaterialInputs
-#include "PostProcess/PostProcessMaterial.h"
+#include "PostProcess/PostProcessMaterialInputs.h"
 
 //////////////////////////////////////////////////////////////////////////
 // FDisplayClusterViewport_OpenColorIO
@@ -29,25 +26,20 @@ FDisplayClusterViewport_OpenColorIO::FDisplayClusterViewport_OpenColorIO(const F
 FDisplayClusterViewport_OpenColorIO::~FDisplayClusterViewport_OpenColorIO()
 { }
 
-void FDisplayClusterViewport_OpenColorIO::SetupSceneView(FSceneViewFamily& InOutViewFamily, FSceneView& InOutView) const
+void FDisplayClusterViewport_OpenColorIO::SetupSceneView(FSceneViewFamily& InOutViewFamily, FSceneView& InOutView)
 {
-	if (bShaderResourceValid)
+	FOpenColorIORenderPassResources PassResources = FOpenColorIORendering::GetRenderPassResources(ConversionSettings, InOutViewFamily.GetFeatureLevel());
+	if (PassResources.IsValid())
 	{
 		FOpenColorIORendering::PrepareView(InOutViewFamily, InOutView);
 	}
-}
 
-void FDisplayClusterViewport_OpenColorIO::UpdateOpenColorIORenderPassResources()
-{
-	FOpenColorIORenderPassResources PassResources = FOpenColorIORendering::GetRenderPassResources(ConversionSettings, GMaxRHIFeatureLevel);
-
-	bShaderResourceValid = PassResources.IsValid();
-
+	// Update data on rendering thread
 	ENQUEUE_RENDER_COMMAND(ProcessColorSpaceTransform)(
-		[This = SharedThis(this), PassResourcesRenderThread = MoveTemp(PassResources)](FRHICommandListImmediate& RHICmdList)
+		[This = SharedThis(this), ResourcesRenderThread = MoveTemp(PassResources)](FRHICommandListImmediate& RHICmdList)
 		{
 			//Caches render thread resource to be used when applying configuration in PostRenderViewFamily_RenderThread
-			This->CachedResourcesRenderThread = PassResourcesRenderThread;
+			This->CachedResourcesRenderThread = ResourcesRenderThread;
 		}
 	);
 }
@@ -99,21 +91,19 @@ bool FDisplayClusterViewport_OpenColorIO::AddPass_RenderThread(FRDGBuilder& Grap
 // This is a copy of FOpenColorIODisplayExtension::PostProcessPassAfterTonemap_RenderThread()
 FScreenPassTexture FDisplayClusterViewport_OpenColorIO::PostProcessPassAfterTonemap_RenderThread(FRDGBuilder& GraphBuilder, const FDisplayClusterViewport_Context& InViewportContext, const FSceneView& View, const FPostProcessMaterialInputs& InOutInputs)
 {
-	const FScreenPassTexture& SceneColor = InOutInputs.GetInput(EPostProcessMaterialInput::SceneColor);
+	const FScreenPassTexture& SceneColor = FScreenPassTexture::CopyFromSlice(GraphBuilder, InOutInputs.GetInput(EPostProcessMaterialInput::SceneColor));
 	check(SceneColor.IsValid());
-	checkSlow(View.bIsViewInfo);
-	const FViewInfo& ViewInfo = static_cast<const FViewInfo&>(View);
 	FScreenPassRenderTarget Output = InOutInputs.OverrideOutput;
 
 	// If the override output is provided, it means that this is the last pass in post processing.
 	if (!Output.IsValid())
 	{
-		Output = FScreenPassRenderTarget::CreateFromInput(GraphBuilder, SceneColor, ViewInfo.GetOverwriteLoadAction(), TEXT("OCIORenderTarget"));
+		Output = FScreenPassRenderTarget::CreateFromInput(GraphBuilder, SceneColor, View.GetOverwriteLoadAction(), TEXT("OCIORenderTarget"));
 	}
 
 	FOpenColorIORendering::AddPass_RenderThread(
 		GraphBuilder,
-		ViewInfo,
+		View,
 		SceneColor,
 		Output,
 		CachedResourcesRenderThread

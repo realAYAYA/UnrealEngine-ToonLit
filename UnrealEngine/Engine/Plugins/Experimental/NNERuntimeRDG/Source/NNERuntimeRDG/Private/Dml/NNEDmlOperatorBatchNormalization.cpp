@@ -2,6 +2,7 @@
 
 #ifdef NNE_USE_DIRECTML
 #include "NNEDmlOperator.h"
+#include "NNEDmlOperatorUtils.h"
 
 namespace UE::NNERuntimeRDG::Private::Dml
 {
@@ -20,6 +21,8 @@ class FOperatorDmlBatchNormalization : public FOperatorDml
 		Count
 	};
 
+	float Epsilon;
+
 public:
 
 	static FOperatorDml* Create()
@@ -29,16 +32,46 @@ public:
 
 	static bool Validate(const NNE::FAttributeMap& AttributeMap, TConstArrayView<ENNETensorDataType> InputTypes, TConstArrayView<NNE::FSymbolicTensorShape> InputShapes)
 	{
-		//TODO
+		const FString OpName = TEXT("BatchNormalization");
+
+		if (InputShapes.Num() != Count)
+		{
+			UE_LOG(LogNNE, Warning, TEXT("DML %s: invalid number of input tensors. %d provided, it should be %d."), *OpName, InputShapes.Num(), Count);
+        	return false;
+		}
+
+		if (!CheckGenericTensor(OpName, InputTypes[0], InputShapes[0], {ENNETensorDataType::Float, ENNETensorDataType::Half}))
+		{
+			return false;
+		}
+		
+		const int32 bTrainingMode = AttributeMap.GetValueOrDefault<int32>(TEXT("training_mode"), 0);
+		if (bTrainingMode)
+		{
+			UE_LOG(LogNNE, Warning, TEXT("DML %s: training mode not supported"), *OpName);
+			return false;
+		}
+
+		for (int32 Idx = X; Idx < Count; ++Idx)
+		{
+			if (!CheckGenericTensor(OpName, InputTypes[Idx], InputShapes[Idx], {ENNETensorDataType::Float, ENNETensorDataType::Half}))
+			{
+				return false;
+			}
+			
+			if (!IsEqualOrBroadcastable(InputShapes[0].GetData(), InputShapes[Idx].GetData()))
+			{
+				UE_LOG(LogNNE, Warning, TEXT("DML %s: tensor %d has shape that's not equal or broadcastable to input tensor's"), *OpName, Idx);
+				return false;
+			}
+		}
+
 		return true;
 	}
 
-	//
-	//
-	//
-	virtual bool Initialize(IDMLDevice* Device, TArrayView<const NNE::Internal::FTensor> InputTensors, TArrayView<const NNE::Internal::FTensor> OutputTensors, const NNE::FAttributeMap& Attributes) override
+	virtual bool Initialize(TConstArrayView<NNE::FTensorDesc> Inputs, TConstArrayView<NNE::FTensorDesc> OutputTensors, const NNE::FAttributeMap& Attributes) override
 	{
-		check(InputTensors.Num() == Count);
+		check(Inputs.Num() == Count);
 		check(OutputTensors.Num() >= 1);
 
 		RemappedInputs.Add(X);
@@ -47,17 +80,8 @@ public:
 		RemappedInputs.Add(Scale);
 		RemappedInputs.Add(Bias);
 
-		const NNE::Internal::FTensor& InputTensor = InputTensors[0];
-		const NNE::Internal::FTensor& OutputTensor = OutputTensors[0];
-
-		if (InputTensor.GetShape().Rank() > 8)
-		{
-			UE_LOG(LogNNE, Error, TEXT("InputTensor rank should be between 1 and 8, got:%d"), InputTensor.GetShape().Rank());
-			return false;
-		}
-
 		// Read attributes
-		const float Epsilon = Attributes.GetValueOrDefault<float>(TEXT("epsilon"), DefaultEpsilon);
+		Epsilon = Attributes.GetValueOrDefault<float>(TEXT("epsilon"), DefaultEpsilon);
 		const int32 bTrainingMode = Attributes.GetValueOrDefault<int32>(TEXT("training_mode"), 0);
 
 		if (bTrainingMode || OutputTensors.Num() > 1)
@@ -66,9 +90,27 @@ public:
 			return false;
 		}
 
-		FTensorDescDml DmlInputTensorDescs[Count];
+		return true;
+	}
+
+	virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) override
+	{
+		check(InputTensors.Num() == Count);
+		check(OutputTensors.Num() == 1);
+
+		OutputTensors[0]->SetShape(InputTensors[0]->GetShape());
+
+		return 0;
+	};
+
+	virtual bool Create(IDMLDevice* Device, TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TConstArrayView<NNE::Internal::FTensorRef> OutputTensors) override
+	{
+		const NNE::Internal::FTensor& InputTensor = *InputTensors[0];
+		const NNE::Internal::FTensor& OutputTensor = *OutputTensors[0];
+
+		FTensorDescDml DmlInputTensors[Count];
 			
-		if (!DmlInputTensorDescs[X]
+		if (!DmlInputTensors[X]
 				.SetFromTensor(InputTensor)
 				.Validate())
 		{
@@ -76,31 +118,17 @@ public:
 			return false;
 		}
 
-		for (int32 Idx = Scale; Idx < Count; ++Idx)
-		{
-			const NNE::Internal::FTensor& CurrTensor = InputTensors[Idx];
-			FTensorDescDml& DmlCurrTensorDesc = DmlInputTensorDescs[Idx];
+		bool bIsValid = true;
 
-			if (CurrTensor.GetShape().Rank() == 1)
-			{
-				if (!DmlCurrTensorDesc
-						.SetFromTensor1D(CurrTensor, InputTensor.GetShape().Rank())
-						.Validate())
-				{
-					UE_LOG(LogNNE, Error, TEXT("Failed to initialize tensor(s) for DML inference"));
-					return false;
-				}
-			}
-			else
-			{
-				if (!DmlCurrTensorDesc
-						.SetFromTensor(CurrTensor)
-						.Validate())
-				{
-					UE_LOG(LogNNE, Error, TEXT("Failed to initialize tensor(s) for DML inference"));
-					return false;
-				}
-			}
+		bIsValid &= SetDmlTensorDesc(DmlInputTensors[Mean],		*InputTensors[Mean], InputTensor.GetShape().Rank());
+		bIsValid &= SetDmlTensorDesc(DmlInputTensors[Variance],	*InputTensors[Variance], InputTensor.GetShape().Rank());
+		bIsValid &= SetDmlTensorDesc(DmlInputTensors[Scale],	*InputTensors[Scale], InputTensor.GetShape().Rank());
+		bIsValid &= SetDmlTensorDesc(DmlInputTensors[Bias],		*InputTensors[Bias], InputTensor.GetShape().Rank());
+
+		if (!bIsValid)
+		{
+			UE_LOG(LogNNE, Error, TEXT("Failed to initialize tensor(s) for DML inference"));
+			return false;
 		}
 		
 		FTensorDescDml	DmlOutputTensor;
@@ -115,11 +143,11 @@ public:
 
 		DML_BATCH_NORMALIZATION_OPERATOR_DESC	OpDesc{};
 
-		OpDesc.InputTensor = DmlInputTensorDescs[X].GetDmlDesc();
-		OpDesc.MeanTensor = DmlInputTensorDescs[Mean].GetDmlDesc();
-		OpDesc.VarianceTensor = DmlInputTensorDescs[Variance].GetDmlDesc();
-		OpDesc.ScaleTensor = DmlInputTensorDescs[Scale].GetDmlDesc();
-		OpDesc.BiasTensor = DmlInputTensorDescs[Bias].GetDmlDesc();
+		OpDesc.InputTensor = DmlInputTensors[X].GetDmlDesc();
+		OpDesc.MeanTensor = DmlInputTensors[Mean].GetDmlDesc();
+		OpDesc.VarianceTensor = DmlInputTensors[Variance].GetDmlDesc();
+		OpDesc.ScaleTensor = DmlInputTensors[Scale].GetDmlDesc();
+		OpDesc.BiasTensor = DmlInputTensors[Bias].GetDmlDesc();
 		OpDesc.OutputTensor = DmlOutputTensor.GetDmlDesc();
 		OpDesc.Spatial = static_cast<BOOL>(1);
 		OpDesc.Epsilon = Epsilon;
@@ -127,10 +155,38 @@ public:
 
 		return CreateOperator(Device, DML_OPERATOR_DESC{ DML_OPERATOR_BATCH_NORMALIZATION, &OpDesc });
 	}
+
+private:
+
+	inline bool SetDmlTensorDesc(FTensorDescDml& DmlTensorDesc, const NNE::Internal::FTensor& Tensor, int32 InputRank)
+	{
+		if (Tensor.GetShape().Rank() == 1)
+		{
+			if (!DmlTensorDesc
+				.SetFromTensor1D(Tensor, InputRank)
+				.Validate())
+			{
+				UE_LOG(LogNNE, Error, TEXT("Failed to initialize tensor(s) for DML inference"));
+				return false;
+			}
+		}
+		else
+		{
+			if (!DmlTensorDesc
+				.SetFromTensor(Tensor)
+				.Validate())
+			{
+				UE_LOG(LogNNE, Error, TEXT("Failed to initialize tensor(s) for DML inference"));
+				return false;
+			}
+		}
+
+		return true;
+	}
 };
 
 // Register operator on Module startup
-NNE_DML_REGISTER_OP(BatchNormalization)
+NNE_DML_REGISTER_OP_VERSION(BatchNormalization, 9)
 
 } // namespace UE::NNERuntimeRDG::Private::Dml
 

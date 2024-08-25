@@ -43,6 +43,8 @@ UGCObjectReferencer::UGCObjectReferencer(FVTableHelper& Helper)
 , Impl(new FImpl)
 {}
 
+UGCObjectReferencer::~UGCObjectReferencer() = default;
+
 void UGCObjectReferencer::AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector)
 {
 	UGCObjectReferencer* This = CastChecked<UGCObjectReferencer>(InThis);
@@ -163,7 +165,6 @@ class FInitialReferenceCollector final : public FReferenceCollector
 {
 	TArray<UObject**>& Result;
 
-#if !UE_REFERENCE_COLLECTOR_REQUIRE_OBJECTPTR
 	virtual void AddStableReference(UObject** Object) override
 	{
 		Result.Add(Object);
@@ -184,7 +185,6 @@ class FInitialReferenceCollector final : public FReferenceCollector
 			Result.Add(&Object);
 		}
 	}
-#endif
 	
 	virtual void AddStableReference(TObjectPtr<UObject>* Object) override
 	{
@@ -263,7 +263,17 @@ void FGCObject::RegisterGCObject()
 		StaticInit();
 
 		// Add this instance to the referencer's list
-		GGCObjectReferencer->AddObject(this);
+		UE_AUTORTFM_OPEN(
+		{
+			GGCObjectReferencer->AddObject(this);
+		});
+
+		// But if we abort, we don't want to leave a dangling reference!
+		UE_AUTORTFM_ONABORT(
+		{
+			GGCObjectReferencer->RemoveObject(this);
+		});
+
 		bReferenceAdded = true;
 	}
 }

@@ -11,7 +11,7 @@ FString TextNamespaceUtil::BuildFullNamespace(const FString& InTextNamespace, co
 	{
 		FString FullNamespace = InTextNamespace;
 
-		FullNamespace.RemoveAt(StartMarkerIndex + 1, EndMarkerIndex - StartMarkerIndex - 1, /*bAllowShrinking*/false);
+		FullNamespace.RemoveAt(StartMarkerIndex + 1, EndMarkerIndex - StartMarkerIndex - 1, EAllowShrinking::No);
 		FullNamespace.InsertAt(StartMarkerIndex + 1, InPackageNamespace);
 
 		return FullNamespace;
@@ -56,7 +56,7 @@ void TextNamespaceUtil::StripPackageNamespaceInline(FString& InOutTextNamespace)
 	int32 EndMarkerIndex = InOutTextNamespace.Len() - 1;
 	if (InOutTextNamespace.Len() > 0 && InOutTextNamespace[EndMarkerIndex] == PackageNamespaceEndMarker && InOutTextNamespace.FindLastChar(PackageNamespaceStartMarker, StartMarkerIndex))
 	{
-		InOutTextNamespace.RemoveAt(StartMarkerIndex, (EndMarkerIndex - StartMarkerIndex) + 1, /*bAllowShrinking*/false);
+		InOutTextNamespace.RemoveAt(StartMarkerIndex, (EndMarkerIndex - StartMarkerIndex) + 1, EAllowShrinking::No);
 		InOutTextNamespace.TrimEndInline();
 	}
 }

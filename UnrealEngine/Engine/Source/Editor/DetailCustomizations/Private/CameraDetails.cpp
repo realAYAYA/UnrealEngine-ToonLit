@@ -107,11 +107,23 @@ void FCameraDetails::CustomizeDetails( IDetailLayoutBuilder& DetailLayout )
 		IDetailPropertyRow& OrthoWidthRow = CameraCategory.AddProperty(DetailLayout.GetProperty(GET_MEMBER_NAME_CHECKED(UCameraComponent, OrthoWidth)));
 		OrthoWidthRow.Visibility(OrthographicVisibility);
 
+		IDetailPropertyRow& AutoCalculateOrthoPlanesRow = CameraCategory.AddProperty(DetailLayout.GetProperty(GET_MEMBER_NAME_CHECKED(UCameraComponent, bAutoCalculateOrthoPlanes)));
+		AutoCalculateOrthoPlanesRow.Visibility(OrthographicVisibility);
+
+		IDetailPropertyRow& AutoPlanesShift = CameraCategory.AddProperty(DetailLayout.GetProperty(GET_MEMBER_NAME_CHECKED(UCameraComponent, AutoPlaneShift)));
+		AutoPlanesShift.Visibility(OrthographicVisibility);
+
 		IDetailPropertyRow& OrthoNearClipPlaneRow = CameraCategory.AddProperty(DetailLayout.GetProperty(GET_MEMBER_NAME_CHECKED(UCameraComponent, OrthoNearClipPlane)));
 		OrthoNearClipPlaneRow.Visibility(OrthographicVisibility);
 
 		IDetailPropertyRow& OrthoFarClipPlaneRow = CameraCategory.AddProperty(DetailLayout.GetProperty(GET_MEMBER_NAME_CHECKED(UCameraComponent, OrthoFarClipPlane)));
 		OrthoFarClipPlaneRow.Visibility(OrthographicVisibility);
+
+		IDetailPropertyRow& UpdateOrthoPlanesRow = CameraCategory.AddProperty(DetailLayout.GetProperty(GET_MEMBER_NAME_CHECKED(UCameraComponent, bUpdateOrthoPlanes)));
+		UpdateOrthoPlanesRow.Visibility(OrthographicVisibility);
+
+		IDetailPropertyRow& CameraHeightAsViewTargetRow = CameraCategory.AddProperty(DetailLayout.GetProperty(GET_MEMBER_NAME_CHECKED(UCameraComponent, bUseCameraHeightAsViewTarget)));
+		CameraHeightAsViewTargetRow.Visibility(OrthographicVisibility);
 
 		// Aspect ratio
 		IDetailPropertyRow& AspectRatioRow = CameraCategory.AddProperty(AspectRatioProperty);
@@ -272,7 +284,7 @@ void FCameraDetails::OnCommitAspectRatioText(const FText& ItemFText, ETextCommit
 			FString RemainingText = ItemText.Mid(DelimIdx + 1).TrimStart();
 			if (RemainingText.FindChar(TCHAR(' '), WSIdx))
 			{
-				RemainingText.LeftInline(WSIdx, false);
+				RemainingText.LeftInline(WSIdx, EAllowShrinking::No);
 			}
 			int32 Height;
 			TTypeFromString<int32>::FromString(Height, *RemainingText);

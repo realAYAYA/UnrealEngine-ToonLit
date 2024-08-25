@@ -25,6 +25,7 @@ struct STRUCTUTILS_API FPropertyBagCustomVersion
 		// Added support for array types
 		ContainerTypes = 1,
 		NestedContainerTypes = 2,
+		MetaClass = 3,
 
 		// -----<new versions can be added above this line>-------------------------------------------------
 		VersionPlusOne,
@@ -113,9 +114,17 @@ namespace UE::StructUtils::Private
 		{
 			return EPropertyBagPropertyType::Int32;
 		}
+		if (CastField<FUInt32Property>(InSourceProperty))
+		{
+			return EPropertyBagPropertyType::UInt32;
+		}
 		if (CastField<FInt64Property>(InSourceProperty))
 		{
 			return EPropertyBagPropertyType::Int64;
+		}
+		if (CastField<FUInt64Property>(InSourceProperty))
+		{
+			return EPropertyBagPropertyType::UInt64;
 		}
 		if (CastField<FFloatProperty>(InSourceProperty))
 		{
@@ -147,19 +156,21 @@ namespace UE::StructUtils::Private
 		}
 		if (CastField<FObjectProperty>(InSourceProperty))
 		{
+			if (CastField<FClassProperty>(InSourceProperty))
+			{
+				return EPropertyBagPropertyType::Class;
+			}
+
 			return EPropertyBagPropertyType::Object;
 		}
 		if (CastField<FSoftObjectProperty>(InSourceProperty))
 		{
+			if (CastField<FSoftClassProperty>(InSourceProperty))
+			{
+				return EPropertyBagPropertyType::SoftClass;
+			}
+
 			return EPropertyBagPropertyType::SoftObject;
-		}
-		if (CastField<FClassProperty>(InSourceProperty))
-		{
-			return EPropertyBagPropertyType::Class;
-		}
-		if (CastField<FSoftClassProperty>(InSourceProperty))
-		{
-			return EPropertyBagPropertyType::SoftClass;
 		}
 
 		// Handle array property
@@ -171,7 +182,7 @@ namespace UE::StructUtils::Private
 		return EPropertyBagPropertyType::None;
 	}
 
-	UObject* GetValueTypeObjectFromProperty(const FProperty* InSourceProperty)
+	const UObject* GetValueTypeObjectFromProperty(const FProperty* InSourceProperty)
 	{
 		if (const FByteProperty* ByteProperty = CastField<FByteProperty>(InSourceProperty))
 		{
@@ -190,19 +201,21 @@ namespace UE::StructUtils::Private
 		}
 		if (const FObjectProperty* ObjectProperty = CastField<FObjectProperty>(InSourceProperty))
 		{
+			if (const FClassProperty* ClassProperty = CastField<FClassProperty>(InSourceProperty))
+			{
+				return ClassProperty->PropertyClass;
+			}
+
 			return ObjectProperty->PropertyClass;
 		}
 		if (const FSoftObjectProperty* SoftObjectProperty = CastField<FSoftObjectProperty>(InSourceProperty))
 		{
+			if (const FSoftClassProperty* SoftClassProperty = CastField<FSoftClassProperty>(InSourceProperty))
+			{
+				return SoftClassProperty->PropertyClass;
+			}
+
 			return SoftObjectProperty->PropertyClass;
-		}
-		if (const FClassProperty* ClassProperty = CastField<FClassProperty>(InSourceProperty))
-		{
-			return ClassProperty->PropertyClass;
-		}
-		if (const FSoftClassProperty* SoftClassProperty = CastField<FSoftClassProperty>(InSourceProperty))
-		{
-			return SoftClassProperty->PropertyClass;
 		}
 		
 		// Handle array property
@@ -210,7 +223,6 @@ namespace UE::StructUtils::Private
 		{
 			return GetValueTypeObjectFromProperty(ArrayProperty->Inner);
 		}
-
 
 		return nullptr;
 	}
@@ -278,9 +290,21 @@ namespace UE::StructUtils::Private
 				Prop->SetPropertyFlags(CPF_HasGetValueTypeHash);
 				return Prop;
 			}
+		case EPropertyBagPropertyType::UInt32:
+			{
+				FUInt32Property* Prop = new FUInt32Property(PropertyScope, Desc.Name, RF_Public);
+				Prop->SetPropertyFlags(CPF_HasGetValueTypeHash);
+				return Prop;
+			}
 		case EPropertyBagPropertyType::Int64:
 			{
 				FInt64Property* Prop = new FInt64Property(PropertyScope, Desc.Name, RF_Public);
+				Prop->SetPropertyFlags(CPF_HasGetValueTypeHash);
+				return Prop;
+			}
+		case EPropertyBagPropertyType::UInt64:
+			{
+				FUInt64Property* Prop = new FUInt64Property(PropertyScope, Desc.Name, RF_Public);
 				Prop->SetPropertyFlags(CPF_HasGetValueTypeHash);
 				return Prop;
 			}
@@ -314,20 +338,20 @@ namespace UE::StructUtils::Private
 				return Prop;
 			}
 		case EPropertyBagPropertyType::Enum:
-			if (UEnum* Enum = Cast<UEnum>(Desc.ValueTypeObject))
+			if (const UEnum* Enum = Cast<UEnum>(Desc.ValueTypeObject))
 			{
 				FEnumProperty* Prop = new FEnumProperty(PropertyScope, Desc.Name, RF_Public);
 				FNumericProperty* UnderlyingProp = new FByteProperty(Prop, "UnderlyingType", RF_Public); // HACK: Hardwire to byte property for now for BP compatibility
-				Prop->SetEnum(Enum);
+				Prop->SetEnum(const_cast<UEnum*>(Enum));
 				Prop->AddCppProperty(UnderlyingProp);
 				return Prop;
 			}
 			break;
 		case EPropertyBagPropertyType::Struct:
-			if (UScriptStruct* ScriptStruct = Cast<UScriptStruct>(Desc.ValueTypeObject))
+			if (const UScriptStruct* ScriptStruct = Cast<UScriptStruct>(Desc.ValueTypeObject))
 			{
 				FStructProperty* Prop = new FStructProperty(PropertyScope, Desc.Name, RF_Public);
-				Prop->Struct = ScriptStruct;
+				Prop->Struct = const_cast<UScriptStruct*>(ScriptStruct);
 
 				if (ScriptStruct->GetCppStructOps() && ScriptStruct->GetCppStructOps()->HasGetTypeHash())
 				{
@@ -342,48 +366,56 @@ namespace UE::StructUtils::Private
 				return Prop;
 			}
 			break;
-		case EPropertyBagPropertyType::Object:
-			if (UClass* Class = Cast<UClass>(Desc.ValueTypeObject))
-			{
-				FObjectProperty* Prop = new FObjectProperty(PropertyScope, Desc.Name, RF_Public);
-				if (Class->HasAnyClassFlags(CLASS_DefaultToInstanced))
-				{
-					Prop->SetPropertyFlags(CPF_InstancedReference);
-				}
-				Prop->SetPropertyClass(Class);
-				Prop->SetPropertyFlags(CPF_HasGetValueTypeHash);
-				return Prop;
-			}
-			break;
-		case EPropertyBagPropertyType::SoftObject:
-			if (UClass* Class = Cast<UClass>(Desc.ValueTypeObject))
-			{
-				FSoftObjectProperty* Prop = new FSoftObjectProperty(PropertyScope, Desc.Name, RF_Public);
-				if (Class->HasAnyClassFlags(CLASS_DefaultToInstanced))
-				{
-					Prop->SetPropertyFlags(CPF_InstancedReference);
-				}
-				Prop->SetPropertyClass(Class);
-				Prop->SetPropertyFlags(CPF_HasGetValueTypeHash);
-				return Prop;
-			}
-			break;
 		case EPropertyBagPropertyType::Class:
-			if (UClass* Class = Cast<UClass>(Desc.ValueTypeObject))
+			if (const UClass* Class = Cast<UClass>(Desc.ValueTypeObject))
 			{
 				FClassProperty* Prop = new FClassProperty(PropertyScope, Desc.Name, RF_Public);
-				Prop->SetMetaClass(Class);
+#if WITH_EDITORONLY_DATA
+				Prop->SetMetaClass(Desc.MetaClass ? Desc.MetaClass.Get() : const_cast<UClass*>(Class));
+#else
+				Prop->SetMetaClass(const_cast<UClass*>(Class));
+#endif
 				Prop->PropertyClass = UClass::StaticClass();
 				Prop->SetPropertyFlags(CPF_HasGetValueTypeHash);
 				return Prop;
 			}
 			break;
 		case EPropertyBagPropertyType::SoftClass:
-			if (UClass* Class = Cast<UClass>(Desc.ValueTypeObject))
+			if (const UClass* Class = Cast<UClass>(Desc.ValueTypeObject))
 			{
 				FSoftClassProperty* Prop = new FSoftClassProperty(PropertyScope, Desc.Name, RF_Public);
-				Prop->SetMetaClass(Class);
+#if WITH_EDITORONLY_DATA
+				Prop->SetMetaClass(Desc.MetaClass ? Desc.MetaClass.Get() : const_cast<UClass*>(Class));
+#else
+				Prop->SetMetaClass(const_cast<UClass*>(Class));
+#endif
 				Prop->PropertyClass = UClass::StaticClass();
+				Prop->SetPropertyFlags(CPF_HasGetValueTypeHash);
+				return Prop;
+			}
+			break;
+		case EPropertyBagPropertyType::Object:
+			if (const UClass* Class = Cast<UClass>(Desc.ValueTypeObject))
+			{
+				FObjectProperty* Prop = new FObjectProperty(PropertyScope, Desc.Name, RF_Public);
+				if (Class->HasAnyClassFlags(CLASS_DefaultToInstanced))
+				{
+					Prop->SetPropertyFlags(CPF_InstancedReference);
+				}
+				Prop->SetPropertyClass(const_cast<UClass*>(Class));
+				Prop->SetPropertyFlags(CPF_HasGetValueTypeHash | CPF_TObjectPtr);
+				return Prop;
+			}
+			break;
+		case EPropertyBagPropertyType::SoftObject:
+			if (const UClass* Class = Cast<UClass>(Desc.ValueTypeObject))
+			{
+				FSoftObjectProperty* Prop = new FSoftObjectProperty(PropertyScope, Desc.Name, RF_Public);
+				if (Class->HasAnyClassFlags(CLASS_DefaultToInstanced))
+				{
+					Prop->SetPropertyFlags(CPF_InstancedReference);
+				}
+				Prop->SetPropertyClass(const_cast<UClass*>(Class));
 				Prop->SetPropertyFlags(CPF_HasGetValueTypeHash);
 				return Prop;
 			}
@@ -436,10 +468,22 @@ namespace UE::StructUtils::Private
 				OutValue = Property->GetPropertyValue(Address);
 				return EPropertyBagResult::Success;
 			}
+		case EPropertyBagPropertyType::UInt32:
+			{
+				const FUInt32Property* Property = CastFieldChecked<FUInt32Property>(Desc->CachedProperty);
+				OutValue = (uint32)Property->GetPropertyValue(Address);
+				return EPropertyBagResult::Success;
+			}
 		case EPropertyBagPropertyType::Int64:
 			{
 				const FInt64Property* Property = CastFieldChecked<FInt64Property>(Desc->CachedProperty);
 				OutValue = Property->GetPropertyValue(Address);
+				return EPropertyBagResult::Success;
+			}
+		case EPropertyBagPropertyType::UInt64:
+			{
+				const FUInt64Property* Property = CastFieldChecked<FUInt64Property>(Desc->CachedProperty);
+				OutValue = (uint64)Property->GetPropertyValue(Address);
 				return EPropertyBagResult::Success;
 			}
 		case EPropertyBagPropertyType::Float:
@@ -462,6 +506,84 @@ namespace UE::StructUtils::Private
 				OutValue = UnderlyingProperty->GetSignedIntPropertyValue(Address);
 				return EPropertyBagResult::Success;
 			}
+		default:
+			return EPropertyBagResult::TypeMismatch;
+		}
+	}
+
+	EPropertyBagResult GetPropertyAsUInt64(const FPropertyBagPropertyDesc* Desc, const void* Address, uint64& OutValue)
+	{
+		if (Desc == nullptr || Desc->CachedProperty == nullptr)
+		{
+			return EPropertyBagResult::PropertyNotFound;
+		}
+		if (Address == nullptr)
+		{
+			return EPropertyBagResult::OutOfBounds;
+		}
+		if (Desc->ContainerTypes.Num() > 0)
+		{
+			return EPropertyBagResult::TypeMismatch;
+		}
+
+		switch (Desc->ValueType)
+		{
+		case EPropertyBagPropertyType::Bool:
+		{
+			const FBoolProperty* Property = CastFieldChecked<FBoolProperty>(Desc->CachedProperty);
+			OutValue = Property->GetPropertyValue(Address) ? 1 : 0;
+			return EPropertyBagResult::Success;
+		}
+		case EPropertyBagPropertyType::Byte:
+		{
+			const FByteProperty* Property = CastFieldChecked<FByteProperty>(Desc->CachedProperty);
+			OutValue = Property->GetPropertyValue(Address);
+			return EPropertyBagResult::Success;
+		}
+		case EPropertyBagPropertyType::Int32:
+		{
+			const FIntProperty* Property = CastFieldChecked<FIntProperty>(Desc->CachedProperty);
+			OutValue = (uint32)Property->GetPropertyValue(Address);
+			return EPropertyBagResult::Success;
+		}
+		case EPropertyBagPropertyType::UInt32:
+		{
+			const FUInt32Property* Property = CastFieldChecked<FUInt32Property>(Desc->CachedProperty);
+			OutValue = Property->GetPropertyValue(Address);
+			return EPropertyBagResult::Success;
+		}
+		case EPropertyBagPropertyType::Int64:
+		{
+			const FInt64Property* Property = CastFieldChecked<FInt64Property>(Desc->CachedProperty);
+			OutValue = (uint64)Property->GetPropertyValue(Address);
+			return EPropertyBagResult::Success;
+		}
+		case EPropertyBagPropertyType::UInt64:
+		{
+			const FUInt64Property* Property = CastFieldChecked<FUInt64Property>(Desc->CachedProperty);
+			OutValue = Property->GetPropertyValue(Address);
+			return EPropertyBagResult::Success;
+		}
+		case EPropertyBagPropertyType::Float:
+		{
+			const FFloatProperty* Property = CastFieldChecked<FFloatProperty>(Desc->CachedProperty);
+			OutValue = (uint64)Property->GetPropertyValue(Address);
+			return EPropertyBagResult::Success;
+		}
+		case EPropertyBagPropertyType::Double:
+		{
+			const FDoubleProperty* Property = CastFieldChecked<FDoubleProperty>(Desc->CachedProperty);
+			OutValue = (uint64)Property->GetPropertyValue(Address);
+			return EPropertyBagResult::Success;
+		}
+		case EPropertyBagPropertyType::Enum:
+		{
+			const FEnumProperty* EnumProperty = CastFieldChecked<FEnumProperty>(Desc->CachedProperty);
+			const FNumericProperty* UnderlyingProperty = EnumProperty->GetUnderlyingProperty();
+			check(UnderlyingProperty);
+			OutValue = UnderlyingProperty->GetUnsignedIntPropertyValue(Address);
+			return EPropertyBagResult::Success;
+		}
 		default:
 			return EPropertyBagResult::TypeMismatch;
 		}
@@ -502,9 +624,21 @@ namespace UE::StructUtils::Private
 				OutValue = Property->GetPropertyValue(Address);
 				return EPropertyBagResult::Success;
 			}
+		case EPropertyBagPropertyType::UInt32:
+			{
+				const FUInt32Property* Property = CastFieldChecked<FUInt32Property>(Desc->CachedProperty);
+				OutValue = Property->GetPropertyValue(Address);
+				return EPropertyBagResult::Success;
+			}
 		case EPropertyBagPropertyType::Int64:
 			{
 				const FInt64Property* Property = CastFieldChecked<FInt64Property>(Desc->CachedProperty);
+				OutValue = Property->GetPropertyValue(Address);
+				return EPropertyBagResult::Success;
+			}
+		case EPropertyBagPropertyType::UInt64:
+			{
+				const FUInt64Property* Property = CastFieldChecked<FUInt64Property>(Desc->CachedProperty);
 				OutValue = Property->GetPropertyValue(Address);
 				return EPropertyBagResult::Success;
 			}
@@ -728,10 +862,22 @@ namespace UE::StructUtils::Private
 				Property->SetPropertyValue(Address, (int32)InValue);
 				return EPropertyBagResult::Success;
 			}
+		case EPropertyBagPropertyType::UInt32:
+			{
+				const FUInt32Property* Property = CastFieldChecked<FUInt32Property>(Desc->CachedProperty);
+				Property->SetPropertyValue(Address, (uint32)InValue);
+				return EPropertyBagResult::Success;
+			}
 		case EPropertyBagPropertyType::Int64:
 			{
 				const FInt64Property* Property = CastFieldChecked<FInt64Property>(Desc->CachedProperty);
 				Property->SetPropertyValue(Address, InValue);
+				return EPropertyBagResult::Success;
+			}
+		case EPropertyBagPropertyType::UInt64:
+			{
+				const FUInt64Property* Property = CastFieldChecked<FUInt64Property>(Desc->CachedProperty);
+				Property->SetPropertyValue(Address, (uint64)InValue);
 				return EPropertyBagResult::Success;
 			}
 		case EPropertyBagPropertyType::Float:
@@ -754,6 +900,84 @@ namespace UE::StructUtils::Private
 				UnderlyingProperty->SetIntPropertyValue(Address, (uint64)InValue);
 				return EPropertyBagResult::Success;
 			}
+		default:
+			return EPropertyBagResult::TypeMismatch;
+		}
+	}
+
+	EPropertyBagResult SetPropertyFromUInt64(const FPropertyBagPropertyDesc* Desc, void* Address, const uint64 InValue)
+	{
+		if (Desc == nullptr || Desc->CachedProperty == nullptr)
+		{
+			return EPropertyBagResult::PropertyNotFound;
+		}
+		if (Address == nullptr)
+		{
+			return EPropertyBagResult::OutOfBounds;
+		}
+		if (Desc->ContainerTypes.Num() > 0)
+		{
+			return EPropertyBagResult::TypeMismatch;
+		}
+
+		switch (Desc->ValueType)
+		{
+		case EPropertyBagPropertyType::Bool:
+		{
+			const FBoolProperty* Property = CastFieldChecked<FBoolProperty>(Desc->CachedProperty);
+			Property->SetPropertyValue(Address, InValue != 0);
+			return EPropertyBagResult::Success;
+		}
+		case EPropertyBagPropertyType::Byte:
+		{
+			const FByteProperty* Property = CastFieldChecked<FByteProperty>(Desc->CachedProperty);
+			Property->SetPropertyValue(Address, (uint8)InValue);
+			return EPropertyBagResult::Success;
+		}
+		case EPropertyBagPropertyType::Int32:
+		{
+			const FIntProperty* Property = CastFieldChecked<FIntProperty>(Desc->CachedProperty);
+			Property->SetPropertyValue(Address, (int32)InValue);
+			return EPropertyBagResult::Success;
+		}
+		case EPropertyBagPropertyType::UInt32:
+		{
+			const FUInt32Property* Property = CastFieldChecked<FUInt32Property>(Desc->CachedProperty);
+			Property->SetPropertyValue(Address, (uint32)InValue);
+			return EPropertyBagResult::Success;
+		}
+		case EPropertyBagPropertyType::Int64:
+		{
+			const FInt64Property* Property = CastFieldChecked<FInt64Property>(Desc->CachedProperty);
+			Property->SetPropertyValue(Address, (int64)InValue);
+			return EPropertyBagResult::Success;
+		}
+		case EPropertyBagPropertyType::UInt64:
+		{
+			const FUInt64Property* Property = CastFieldChecked<FUInt64Property>(Desc->CachedProperty);
+			Property->SetPropertyValue(Address, InValue);
+			return EPropertyBagResult::Success;
+		}
+		case EPropertyBagPropertyType::Float:
+		{
+			const FFloatProperty* Property = CastFieldChecked<FFloatProperty>(Desc->CachedProperty);
+			Property->SetPropertyValue(Address, (float)InValue);
+			return EPropertyBagResult::Success;
+		}
+		case EPropertyBagPropertyType::Double:
+		{
+			const FDoubleProperty* Property = CastFieldChecked<FDoubleProperty>(Desc->CachedProperty);
+			Property->SetPropertyValue(Address, (double)InValue);
+			return EPropertyBagResult::Success;
+		}
+		case EPropertyBagPropertyType::Enum:
+		{
+			const FEnumProperty* EnumProperty = CastFieldChecked<FEnumProperty>(Desc->CachedProperty);
+			const FNumericProperty* UnderlyingProperty = EnumProperty->GetUnderlyingProperty();
+			check(UnderlyingProperty);
+			UnderlyingProperty->SetIntPropertyValue(Address, InValue);
+			return EPropertyBagResult::Success;
+		}
 		default:
 			return EPropertyBagResult::TypeMismatch;
 		}
@@ -794,9 +1018,21 @@ namespace UE::StructUtils::Private
 				Property->SetPropertyValue(Address, FMath::RoundToInt32(InValue));
 				return EPropertyBagResult::Success;
 			}
+		case EPropertyBagPropertyType::UInt32:
+			{
+				const FUInt32Property* Property = CastFieldChecked<FUInt32Property>(Desc->CachedProperty);
+				Property->SetPropertyValue(Address, FMath::RoundToInt32(InValue));
+				return EPropertyBagResult::Success;
+			}
 		case EPropertyBagPropertyType::Int64:
 			{
 				const FInt64Property* Property = CastFieldChecked<FInt64Property>(Desc->CachedProperty);
+				Property->SetPropertyValue(Address, FMath::RoundToInt64(InValue));
+				return EPropertyBagResult::Success;
+			}
+		case EPropertyBagPropertyType::UInt64:
+			{
+				const FUInt64Property* Property = CastFieldChecked<FUInt64Property>(Desc->CachedProperty);
 				Property->SetPropertyValue(Address, FMath::RoundToInt64(InValue));
 				return EPropertyBagResult::Success;
 			}
@@ -1012,7 +1248,13 @@ namespace UE::StructUtils::Private
 		return EPropertyBagResult::Success;
 	}
 
-	void CopyMatchingValuesByID(const FConstStructView Source, FStructView Target)
+	/**
+	 * Copies properties from Source to Target property bag. The bag layouts does not need to match.
+	 * Properties are matched based on the ID in the property bag descs.
+	 * If bHasOverrides == true, then only the matching properties, whose ID is found in Overrides are copied (if Overrides is empty, nothing is copied).
+	 * If bHasOverrides == false, all matching properties are copied.
+	 */
+	void CopyMatchingValuesByID(const FConstStructView Source, FStructView Target, bool bHasOverrides, TConstArrayView<FGuid> Overrides)
 	{
 		if (!Source.IsValid() || !Target.IsValid())
 		{
@@ -1030,6 +1272,12 @@ namespace UE::StructUtils::Private
 		// Iterate over source and copy to target if possible. Source is expected to usually have less items.
 		for (const FPropertyBagPropertyDesc& SourceDesc : SourceBagStruct->GetPropertyDescs())
 		{
+			const bool bShouldCopy = !bHasOverrides || Overrides.Contains(SourceDesc.ID);
+			if (!bShouldCopy)
+			{
+				continue;
+			}
+			
 			const FPropertyBagPropertyDesc* PotentialTargetDesc = TargetBagStruct->FindPropertyDescByID(SourceDesc.ID);
 			if (PotentialTargetDesc == nullptr
 				|| PotentialTargetDesc->CachedProperty == nullptr
@@ -1062,10 +1310,21 @@ namespace UE::StructUtils::Private
 					}
 					else
 					{
-						int64 Value = 0;
-						if (GetPropertyAsInt64(&SourceDesc, SourceAddress, Value) == EPropertyBagResult::Success)
+						if (TargetDesc.IsUnsignedNumericType())
 						{
-							SetPropertyFromInt64(&TargetDesc, TargetAddress, Value);
+							uint64 Value = 0;
+							if (GetPropertyAsUInt64(&SourceDesc, SourceAddress, Value) == EPropertyBagResult::Success)
+							{
+								SetPropertyFromUInt64(&TargetDesc, TargetAddress, Value);
+							}
+						}
+						else
+						{
+							int64 Value = 0;
+							if (GetPropertyAsInt64(&SourceDesc, SourceAddress, Value) == EPropertyBagResult::Success)
+							{
+								SetPropertyFromInt64(&TargetDesc, TargetAddress, Value);
+							}
 						}
 					}
 				}
@@ -1084,6 +1343,16 @@ namespace UE::StructUtils::Private
 				}
 			}
 		}
+	}
+
+	void CopyMatchingValuesByID(const FConstStructView Source, FStructView Target)
+	{
+		CopyMatchingValuesByID(Source, Target, /*bHasOverrides*/false, {});
+	}
+
+	void CopyMatchingValuesByIDWithOverrides(const FConstStructView Source, FStructView Target, TConstArrayView<FGuid> Overrides)
+	{
+		CopyMatchingValuesByID(Source, Target, /*bHasOverrides*/true, Overrides);
 	}
 
 	void RemovePropertyByName(TArray<FPropertyBagPropertyDesc>& Descs, const FName PropertyName, const int32 StartIndex = 0)
@@ -1172,6 +1441,11 @@ FPropertyBagPropertyDesc::FPropertyBagPropertyDesc(const FName InName, const FPr
 	ContainerTypes = UE::StructUtils::Private::GetContainerTypesFromProperty(InSourceProperty);
 
 #if WITH_EDITORONLY_DATA
+	if (const FClassProperty* ClassProperty = CastField<FClassProperty>(InSourceProperty))
+	{
+		MetaClass = ClassProperty->MetaClass;
+	}
+
 	if (const TMap<FName, FString>* SourcePropertyMetaData = InSourceProperty->GetMetaDataMap())
 	{
 		for (const TPair<FName, FString>& MetaDataPair : *SourcePropertyMetaData)
@@ -1209,9 +1483,9 @@ static FArchive& operator<<(FArchive& Ar, FPropertyBagPropertyDesc& Bag)
 
 	bool bHasMetaData = false;
 #if WITH_EDITORONLY_DATA
-	if (Ar.IsSaving())
+	if (Ar.IsSaving() && !Ar.IsCooking())
 	{
-		bHasMetaData = !Ar.IsCooking() && Bag.MetaData.Num() > 0;
+		bHasMetaData = Bag.MetaData.Num() > 0 || Bag.MetaClass;
 	}
 #endif
 	Ar << bHasMetaData;
@@ -1220,11 +1494,22 @@ static FArchive& operator<<(FArchive& Ar, FPropertyBagPropertyDesc& Bag)
 	{
 #if WITH_EDITORONLY_DATA
 		Ar << Bag.MetaData;
+
+		if (Ar.CustomVer(FPropertyBagCustomVersion::GUID) >= FPropertyBagCustomVersion::MetaClass)
+		{
+			Ar << Bag.MetaClass;
+		}
 #else
 		TArray<FPropertyBagPropertyDescMetaData> TempMetaData; 
 		Ar << TempMetaData;
+
+		if (Ar.CustomVer(FPropertyBagCustomVersion::GUID) >= FPropertyBagCustomVersion::MetaClass)
+		{
+			TObjectPtr<UClass> TempMetaClass = nullptr;
+			Ar << TempMetaClass;
+		}
 #endif
-	}	
+	}
 	
 	return Ar;
 }
@@ -1236,9 +1521,22 @@ bool FPropertyBagPropertyDesc::IsNumericType() const
 	case EPropertyBagPropertyType::Bool: return true;
 	case EPropertyBagPropertyType::Byte: return true;
 	case EPropertyBagPropertyType::Int32: return true;
+	case EPropertyBagPropertyType::UInt32: return true;
 	case EPropertyBagPropertyType::Int64: return true;
+	case EPropertyBagPropertyType::UInt64: return true;
 	case EPropertyBagPropertyType::Float: return true;
 	case EPropertyBagPropertyType::Double: return true;
+	default: return false;
+	}
+}
+
+bool FPropertyBagPropertyDesc::IsUnsignedNumericType() const
+{
+	switch (ValueType)
+	{
+	case EPropertyBagPropertyType::Byte: return true;
+	case EPropertyBagPropertyType::UInt32: return true;
+	case EPropertyBagPropertyType::UInt64: return true;
 	default: return false;
 	}
 }
@@ -1414,6 +1712,15 @@ void FInstancedPropertyBag::MigrateToNewBagInstance(const FInstancedPropertyBag&
 	Value = MoveTemp(NewValue);
 }
 
+void FInstancedPropertyBag::MigrateToNewBagInstanceWithOverrides(const FInstancedPropertyBag& NewBagInstance, TConstArrayView<FGuid> OverriddenPropertyIDs)
+{
+	FInstancedStruct NewValue(NewBagInstance.Value);
+
+	UE::StructUtils::Private::CopyMatchingValuesByIDWithOverrides(Value, NewValue, OverriddenPropertyIDs);
+	
+	Value = MoveTemp(NewValue);
+}
+
 const UPropertyBag* FInstancedPropertyBag::GetPropertyBagStruct() const
 {
 	return Value.IsValid() ? Cast<const UPropertyBag>(Value.GetScriptStruct()) : nullptr;
@@ -1470,8 +1777,8 @@ TValueOrError<bool, EPropertyBagResult> FInstancedPropertyBag::GetValueBool(cons
 TValueOrError<uint8, EPropertyBagResult> FInstancedPropertyBag::GetValueByte(const FName Name) const
 {
 	const FPropertyBagPropertyDesc* Desc = FindPropertyDescByName(Name);
-	int64 ReturnValue = 0;
-	const EPropertyBagResult Result = UE::StructUtils::Private::GetPropertyAsInt64(Desc, GetValueAddress(Desc), ReturnValue);
+	uint64 ReturnValue = 0;
+	const EPropertyBagResult Result = UE::StructUtils::Private::GetPropertyAsUInt64(Desc, GetValueAddress(Desc), ReturnValue);
 	if (Result != EPropertyBagResult::Success)
 	{
 		return MakeError(Result);
@@ -1491,6 +1798,18 @@ TValueOrError<int32, EPropertyBagResult> FInstancedPropertyBag::GetValueInt32(co
 	return MakeValue((int32)ReturnValue);
 }
 
+TValueOrError<uint32, EPropertyBagResult> FInstancedPropertyBag::GetValueUInt32(const FName Name) const
+{
+	const FPropertyBagPropertyDesc* Desc = FindPropertyDescByName(Name);
+	uint64 ReturnValue = 0;
+	const EPropertyBagResult Result = UE::StructUtils::Private::GetPropertyAsUInt64(Desc, GetValueAddress(Desc), ReturnValue);
+	if (Result != EPropertyBagResult::Success)
+	{
+		return MakeError(Result);
+	}
+	return MakeValue((uint32)ReturnValue);
+}
+
 TValueOrError<int64, EPropertyBagResult> FInstancedPropertyBag::GetValueInt64(const FName Name) const
 {
 	const FPropertyBagPropertyDesc* Desc = FindPropertyDescByName(Name);
@@ -1501,6 +1820,18 @@ TValueOrError<int64, EPropertyBagResult> FInstancedPropertyBag::GetValueInt64(co
 		return MakeError(Result);
 	}
 	return MakeValue(ReturnValue);
+}
+
+TValueOrError<uint64, EPropertyBagResult> FInstancedPropertyBag::GetValueUInt64(const FName Name) const
+{
+	const FPropertyBagPropertyDesc* Desc = FindPropertyDescByName(Name);
+	uint64 ReturnValue = 0;
+	const EPropertyBagResult Result = UE::StructUtils::Private::GetPropertyAsUInt64(Desc, GetValueAddress(Desc), ReturnValue);
+	if (Result != EPropertyBagResult::Success)
+	{
+		return MakeError(Result);
+	}
+	return MakeValue((uint64)ReturnValue);
 }
 
 TValueOrError<float, EPropertyBagResult> FInstancedPropertyBag::GetValueFloat(const FName Name) const
@@ -1660,7 +1991,7 @@ EPropertyBagResult FInstancedPropertyBag::SetValueBool(const FName Name, const b
 EPropertyBagResult FInstancedPropertyBag::SetValueByte(const FName Name, const uint8 InValue)
 {
 	const FPropertyBagPropertyDesc* Desc = FindPropertyDescByName(Name);
-	return UE::StructUtils::Private::SetPropertyFromInt64(Desc, GetMutableValueAddress(Desc), InValue);
+	return UE::StructUtils::Private::SetPropertyFromUInt64(Desc, GetMutableValueAddress(Desc), InValue);
 }
 
 EPropertyBagResult FInstancedPropertyBag::SetValueInt32(const FName Name, const int32 InValue)
@@ -1669,10 +2000,22 @@ EPropertyBagResult FInstancedPropertyBag::SetValueInt32(const FName Name, const 
 	return UE::StructUtils::Private::SetPropertyFromInt64(Desc, GetMutableValueAddress(Desc), InValue);
 }
 
+EPropertyBagResult FInstancedPropertyBag::SetValueUInt32(const FName Name, const uint32 InValue)
+{
+	const FPropertyBagPropertyDesc* Desc = FindPropertyDescByName(Name);
+	return UE::StructUtils::Private::SetPropertyFromUInt64(Desc, GetMutableValueAddress(Desc), (int64)InValue);
+}
+
 EPropertyBagResult FInstancedPropertyBag::SetValueInt64(const FName Name, const int64 InValue)
 {
 	const FPropertyBagPropertyDesc* Desc = FindPropertyDescByName(Name);
 	return UE::StructUtils::Private::SetPropertyFromInt64(Desc, GetMutableValueAddress(Desc), InValue);
+}
+
+EPropertyBagResult FInstancedPropertyBag::SetValueUInt64(const FName Name, const uint64 InValue)
+{
+	const FPropertyBagPropertyDesc* Desc = FindPropertyDescByName(Name);
+	return UE::StructUtils::Private::SetPropertyFromUInt64(Desc, GetMutableValueAddress(Desc), (int64)InValue);
 }
 
 EPropertyBagResult FInstancedPropertyBag::SetValueFloat(const FName Name, const float InValue)
@@ -1825,6 +2168,11 @@ TValueOrError<const FPropertyBagArrayRef, EPropertyBagResult> FInstancedProperty
 	return MakeValue(FPropertyBagArrayRef(*Desc, Address));
 }
 
+bool FInstancedPropertyBag::Identical(const FInstancedPropertyBag* Other, const uint32 PortFlags) const
+{
+	return Other && Value.Identical(&Other->Value, PortFlags);
+}
+
 bool FInstancedPropertyBag::Serialize(FArchive& Ar)
 {
 	// Obsolete, use custom version instead.
@@ -1858,6 +2206,14 @@ bool FInstancedPropertyBag::Serialize(FArchive& Ar)
 			TArray<FPropertyBagPropertyDesc> PropertyDescs;
 			Ar << PropertyDescs;
 
+			for (FPropertyBagPropertyDesc& PropDesc : PropertyDescs)
+			{
+				if (PropDesc.ValueTypeObject)
+				{
+					Ar.Preload(const_cast<UObject*>(PropDesc.ValueTypeObject.Get()));
+				}
+			}
+			
 			BagStruct = const_cast<UPropertyBag*>(UPropertyBag::GetOrCreateFromDescs(PropertyDescs));
 			Value.InitializeAs(BagStruct);
 
@@ -1923,6 +2279,14 @@ bool FInstancedPropertyBag::Serialize(FArchive& Ar)
 			Ar.Seek(FinalOffset);	// Reset archive to its position
 		}
 	}
+	else
+	{
+		if (Ar.IsLoading())
+		{
+			// If loading and there was no data saved in the archive, make sure the value is empty.
+			Reset();
+		}
+	}
 	
 	return true;
 }
@@ -1946,7 +2310,7 @@ void FInstancedPropertyBag::AddStructReferencedObjects(FReferenceCollector& Coll
 				{
 					if (Desc.ValueType == EPropertyBagPropertyType::Struct)
 					{
-						if (UUserDefinedStruct* UserDefinedStruct = Cast<UUserDefinedStruct>(Desc.ValueTypeObject))
+						if (const UUserDefinedStruct* UserDefinedStruct = Cast<UUserDefinedStruct>(Desc.ValueTypeObject))
 						{
 							if (UserDefinedStruct == StructureToReinstance->PrimaryStruct)
 							{
@@ -1992,6 +2356,31 @@ void FInstancedPropertyBag::AddStructReferencedObjects(FReferenceCollector& Coll
 #endif	
 }
 
+void FInstancedPropertyBag::GetPreloadDependencies(TArray<UObject*>& OutDeps)
+{
+	if (const UPropertyBag* BagStruct = GetPropertyBagStruct())
+	{
+		for (const FPropertyBagPropertyDesc& Desc : BagStruct->PropertyDescs)
+		{
+			if (Desc.ValueTypeObject)
+			{
+				OutDeps.Add(const_cast<UObject*>(Desc.ValueTypeObject.Get()));
+			}
+		}
+
+		// Report indirect dependencies of the instanced property bag struct
+		// The iterator will recursively loop through all structs in structs/containers too
+		for (TPropertyValueIterator<FStructProperty> It(BagStruct, Value.GetMutableMemory()); It; ++It)
+		{
+			const UScriptStruct* StructType = It.Key()->Struct;
+			if (UScriptStruct::ICppStructOps* CppStructOps = StructType->GetCppStructOps())
+			{
+				void* StructDataPtr = const_cast<void*>(It.Value());
+				CppStructOps->GetPreloadDependencies(StructDataPtr, OutDeps);
+			}
+		}
+	}
+}
 
 //----------------------------------------------------------------//
 //  FPropertyBagArrayRef
@@ -2010,8 +2399,8 @@ TValueOrError<bool, EPropertyBagResult> FPropertyBagArrayRef::GetValueBool(const
 
 TValueOrError<uint8, EPropertyBagResult> FPropertyBagArrayRef::GetValueByte(const int32 Index) const
 {
-	int64 IntValue = 0;
-	const EPropertyBagResult Result = UE::StructUtils::Private::GetPropertyAsInt64(&ValueDesc, GetAddress(Index), IntValue);
+	uint64 IntValue = 0;
+	const EPropertyBagResult Result = UE::StructUtils::Private::GetPropertyAsUInt64(&ValueDesc, GetAddress(Index), IntValue);
 	if (Result != EPropertyBagResult::Success)
 	{
 		return MakeError(Result);
@@ -2030,6 +2419,17 @@ TValueOrError<int32, EPropertyBagResult> FPropertyBagArrayRef::GetValueInt32(con
 	return MakeValue((int32)IntValue);
 }
 
+TValueOrError<uint32, EPropertyBagResult> FPropertyBagArrayRef::GetValueUInt32(const int32 Index) const
+{
+	uint64 IntValue = 0;
+	const EPropertyBagResult Result = UE::StructUtils::Private::GetPropertyAsUInt64(&ValueDesc, GetAddress(Index), IntValue);
+	if (Result != EPropertyBagResult::Success)
+	{
+		return MakeError(Result);
+	}
+	return MakeValue((uint32)IntValue);
+}
+
 TValueOrError<int64, EPropertyBagResult> FPropertyBagArrayRef::GetValueInt64(const int32 Index) const
 {
 	int64 IntValue = 0;
@@ -2039,6 +2439,17 @@ TValueOrError<int64, EPropertyBagResult> FPropertyBagArrayRef::GetValueInt64(con
 		return MakeError(Result);
 	}
 	return MakeValue(IntValue);
+}
+
+TValueOrError<uint64, EPropertyBagResult> FPropertyBagArrayRef::GetValueUInt64(const int32 Index) const
+{
+	uint64 IntValue = 0;
+	const EPropertyBagResult Result = UE::StructUtils::Private::GetPropertyAsUInt64(&ValueDesc, GetAddress(Index), IntValue);
+	if (Result != EPropertyBagResult::Success)
+	{
+		return MakeError(Result);
+	}
+	return MakeValue((uint64)IntValue);
 }
 
 TValueOrError<float, EPropertyBagResult> FPropertyBagArrayRef::GetValueFloat(const int32 Index) const
@@ -2207,7 +2618,7 @@ EPropertyBagResult FPropertyBagArrayRef::SetValueBool(const int32 Index, const b
 
 EPropertyBagResult FPropertyBagArrayRef::SetValueByte(const int32 Index, const uint8 InValue)
 {
-	return UE::StructUtils::Private::SetPropertyFromInt64(&ValueDesc, GetMutableAddress(Index), InValue);
+	return UE::StructUtils::Private::SetPropertyFromUInt64(&ValueDesc, GetMutableAddress(Index), InValue);
 }
 
 EPropertyBagResult FPropertyBagArrayRef::SetValueInt32(const int32 Index, const int32 InValue)
@@ -2215,9 +2626,19 @@ EPropertyBagResult FPropertyBagArrayRef::SetValueInt32(const int32 Index, const 
 	return UE::StructUtils::Private::SetPropertyFromInt64(&ValueDesc, GetMutableAddress(Index), InValue);
 }
 
+EPropertyBagResult FPropertyBagArrayRef::SetValueUInt32(const int32 Index, const uint32 InValue)
+{
+	return UE::StructUtils::Private::SetPropertyFromUInt64(&ValueDesc, GetMutableAddress(Index), InValue);
+}
+
 EPropertyBagResult FPropertyBagArrayRef::SetValueInt64(const int32 Index, const int64 InValue)
 {
 	return UE::StructUtils::Private::SetPropertyFromInt64(&ValueDesc, GetMutableAddress(Index), InValue);
+}
+
+EPropertyBagResult FPropertyBagArrayRef::SetValueUInt64(const int32 Index, const uint64 InValue)
+{
+	return UE::StructUtils::Private::SetPropertyFromUInt64(&ValueDesc, GetMutableAddress(Index), InValue);
 }
 
 EPropertyBagResult FPropertyBagArrayRef::SetValueFloat(const int32 Index, const float InValue)
@@ -2274,14 +2695,32 @@ EPropertyBagResult FPropertyBagArrayRef::SetValueSoftPath(const int32 Index, con
 //  UPropertyBag
 //----------------------------------------------------------------//
 
-const UPropertyBag* UPropertyBag::GetOrCreateFromDescs(const TConstArrayView<FPropertyBagPropertyDesc> PropertyDescs)
+namespace UE::StructUtils::Private
+{
+	// Lock to prevent concurrent access to lazily-constructed UPropertyBag objects in UPropertyBag::GetOrCreateFromDescs
+	static FCriticalSection GPropertyBagLock;
+}
+
+const UPropertyBag* UPropertyBag::GetOrCreateFromDescs(const TConstArrayView<FPropertyBagPropertyDesc> PropertyDescs, const TCHAR* PrefixName)
 {
 	const uint64 BagHash = UE::StructUtils::Private::CalcPropertyDescArrayHash(PropertyDescs);
-	const FString ScriptStructName = FString::Printf(TEXT("PropertyBag_%llx"), BagHash);
+	const FString ScriptStructName = PrefixName == nullptr
+		? FString::Printf(TEXT("PropertyBag_%llx"), BagHash)
+		: FString::Printf(TEXT("%s_%llx"), PrefixName, BagHash);
 
-	if (const UPropertyBag* ExistingBag = FindObject<UPropertyBag>(GetTransientPackage(), *ScriptStructName))
+	// We need to linearize this entire function otherwise threads that create bags of identical layouts can view
+	// partially-constructed objects 
+	FScopeLock ScopeLock(&UE::StructUtils::Private::GPropertyBagLock);
+
+	// we need to use StaticFindObjectFastInternal with ExclusiveInternalFlags = EInternalObjectFlags::None
+	// here because objects with RF_NeedPostLoad cannot be found by regular FindObject calls as they will have
+	// ExclusiveInternalFlags = EInternalObjectFlags::AsyncLoading when called from game thread.
+	if (UObject* ExistingObject = StaticFindObjectFastInternal(UPropertyBag::StaticClass(), GetTransientPackage(), *ScriptStructName, true, RF_NoFlags, EInternalObjectFlags::None))
 	{
-		return ExistingBag;
+		if (const UPropertyBag* ExistingBag = Cast<UPropertyBag>(ExistingObject))
+		{
+			return ExistingBag;
+		}
 	}
 
 	UPropertyBag* NewBag = NewObject<UPropertyBag>(GetTransientPackage(), *ScriptStructName, RF_Standalone | RF_Transient);
@@ -2358,6 +2797,13 @@ const UPropertyBag* UPropertyBag::GetOrCreateFromDescs(const TConstArrayView<FPr
 		}
 	}
 
+	// @hack:
+	// This method is called to prevent non-editor builds to not crash on IsChildOf().
+	// The issues is that the UScriptStruct(const FObjectInitializer& ObjectInitializer) ctor (which is macro/UHT generated)
+	// does not call ReinitializeBaseChainArray(), when the code is compiled with USTRUCT_ISCHILDOF_STRUCTARRAY.
+	// Calling SetSuperStruct() forces the ReinitializeBaseChainArray() to be called.
+	NewBag->SetSuperStruct(nullptr);
+	
 	NewBag->Bind();
 	NewBag->StaticLink(/*RelinkExistingProperties*/true);
 
@@ -2458,3 +2904,12 @@ const FPropertyBagPropertyDesc* UPropertyBag::FindPropertyDescByName(const FName
 	return PropertyDescs.FindByPredicate([&Name](const FPropertyBagPropertyDesc& Desc) { return Desc.Name == Name; });
 }
 
+const FPropertyBagPropertyDesc* UPropertyBag::FindPropertyDescByPropertyName(const FName PropertyName) const
+{
+	return PropertyDescs.FindByPredicate([&PropertyName](const FPropertyBagPropertyDesc& Desc) { return Desc.CachedProperty && Desc.CachedProperty->GetFName() == PropertyName; });
+}
+
+const FPropertyBagPropertyDesc* UPropertyBag::FindPropertyDescByProperty(const FProperty* Property) const
+{
+	return PropertyDescs.FindByPredicate([&Property](const FPropertyBagPropertyDesc& Desc) { return Desc.CachedProperty && Desc.CachedProperty == Property; });
+}

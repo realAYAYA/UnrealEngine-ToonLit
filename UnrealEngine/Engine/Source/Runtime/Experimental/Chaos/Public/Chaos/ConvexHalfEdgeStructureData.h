@@ -93,7 +93,14 @@ namespace Chaos
 		struct FVertexPlanes
 		{
 			FIndex PlaneIndices[3];
-			FIndex NumPlaneIndices;
+			FIndex NumPlaneIndices = 0;
+		};
+
+		// List of 3 halfedges per vertex for regular convexes  
+		struct FVertexHalfEdges
+		{
+			FIndex HalfEdgeIndices[3];
+			FIndex NumHalfEdgeIndices = 0;
 		};
 
 		// Initialize the structure data from the array of vertex indices per plane (in CW or CCW order - it is retained in structure)
@@ -323,6 +330,111 @@ namespace Chaos
 			PlaneIndex2 = (int32)VertexPlane.PlaneIndices[2];
 			return (int32)VertexPlane.NumPlaneIndices;
 		}
+
+		// Build half edge structure datas for regular convexes with exactly 3 faces per vertex
+		bool BuildRegularDatas(const TArray<TArray<int32>>& InPlaneVertices, int32 InNumVertices)
+		{
+			// Count the edges
+			int32 HalfEdgeCount = 0;
+			for (int32 PlaneIndex = 0; PlaneIndex < InPlaneVertices.Num(); ++PlaneIndex)
+			{
+				HalfEdgeCount += InPlaneVertices[PlaneIndex].Num();
+			}
+
+			if ((InPlaneVertices.Num() > MaxIndex) || (HalfEdgeCount > MaxIndex) || (InNumVertices > MaxIndex))
+			{
+				// We should never get here. See GetRequiredIndexType::GetRequiredIndexType which calls CanMake() on eachn index type until it fits
+				UE_LOG(LogChaos, Error, TEXT("Unable to create structure data for convex. MaxIndex too small (%d bytes) for Planes: %d HalfEdges: %d Verts: %d"), sizeof(FIndex), InPlaneVertices.Num(), HalfEdgeCount, InNumVertices);
+				return false;
+			}
+
+			Planes.SetNum(InPlaneVertices.Num());
+			HalfEdges.SetNum(HalfEdgeCount);
+			Vertices.SetNum(InNumVertices);
+			VertexPlanes.SetNum(InNumVertices);
+
+			TArray<FVertexHalfEdges> VertexHalfEdges;
+			TArray<FIndex> HalfEdgeVertices;
+			
+			VertexHalfEdges.SetNum(InNumVertices);
+			HalfEdgeVertices.SetNum(HalfEdgeCount);
+
+			// Initialize the vertex list - it will be filled in as we build the edge list
+			for (int32 VertexIndex = 0; VertexIndex < Vertices.Num(); ++VertexIndex)
+			{
+				GetVertex(VertexIndex).FirstHalfEdgeIndex = InvalidIndex;
+			}
+
+			// Build the planes and edges. The edges for a plane are stored sequentially in the half-edge array.
+			// On the first pass, the edges contain 2 vertex indices, rather than a vertex index and a twin edge index.
+			// We fix this up on a second pass.
+			int32 NextHalfEdgeIndex = 0;
+			for (int32 PlaneIndex = 0; PlaneIndex < InPlaneVertices.Num(); ++PlaneIndex)
+			{
+				const TArray<int32>& PlaneVertices = InPlaneVertices[PlaneIndex];
+
+				GetPlane(PlaneIndex) =
+				{
+					(FIndex)NextHalfEdgeIndex,
+					(FIndex)PlaneVertices.Num()
+				};
+
+				for (int32 PlaneVertexIndex = 0; PlaneVertexIndex < PlaneVertices.Num(); ++PlaneVertexIndex)
+				{
+					// Add a new edge
+					const int32 VertexIndex0 = PlaneVertices[PlaneVertexIndex];
+					const int32 VertexIndex1 = PlaneVertices[(PlaneVertexIndex + 1) % PlaneVertices.Num()];
+					GetHalfEdge(NextHalfEdgeIndex) =
+					{
+						(FIndex)PlaneIndex,
+						(FIndex)VertexIndex0,
+						(FIndex)VertexIndex1,	// Will get converted to a half-edge index later
+					};
+					HalfEdgeVertices[NextHalfEdgeIndex] = (FIndex)VertexIndex1;
+
+					// If this is the first time Vertex0 has showed up, set its edge index
+					// For valid and regular convexes each vertices have 2 halfedges starting from itself
+					if (Vertices[VertexIndex0].FirstHalfEdgeIndex == InvalidIndex)
+					{
+						Vertices[VertexIndex0].FirstHalfEdgeIndex = (FIndex)NextHalfEdgeIndex;
+					}
+					
+					// For regular convexes each vertices have exactly 3 halfedges
+                    VertexHalfEdges[VertexIndex0].HalfEdgeIndices[VertexHalfEdges[VertexIndex0].NumHalfEdgeIndices++] = (FIndex)NextHalfEdgeIndex;
+
+					// For regular convexes each vertices have exactly 3 planes
+					VertexPlanes[VertexIndex0].PlaneIndices[VertexPlanes[VertexIndex0].NumPlaneIndices++] = (FIndex)PlaneIndex;
+
+					++NextHalfEdgeIndex;
+				}
+			}
+			Edges.Empty();
+			Edges.Reserve(NumHalfEdges() / 2);
+			
+			for (int32 HalfEdgeIndex = 0; HalfEdgeIndex < HalfEdges.Num(); ++HalfEdgeIndex)
+			{
+				const int32 VertexIndex0 = HalfEdges[HalfEdgeIndex].VertexIndex;
+				const int32 VertexIndex1 = HalfEdges[HalfEdgeIndex].TwinHalfEdgeIndex;
+
+				for(int32 VertexHalfEdgeIndex = 0, NumHalfEdgeIndices = VertexHalfEdges[VertexIndex1].NumHalfEdgeIndices; 
+				                     VertexHalfEdgeIndex < NumHalfEdgeIndices; ++VertexHalfEdgeIndex)
+				{
+				    const FIndex TwinHalfEdgeIndex = VertexHalfEdges[VertexIndex1].HalfEdgeIndices[VertexHalfEdgeIndex];
+					if(HalfEdgeVertices[TwinHalfEdgeIndex] == VertexIndex0)
+					{
+						HalfEdges[HalfEdgeIndex].TwinHalfEdgeIndex = TwinHalfEdgeIndex;
+						break;
+					}
+				}
+
+				if(VertexIndex0 < HalfEdges[HalfEdges[HalfEdgeIndex].TwinHalfEdgeIndex].VertexIndex)
+				{
+					Edges.Add((FIndex)HalfEdgeIndex);
+				}
+			}
+			return true;
+		}
+		
 
 		// Initialize the structure data from the set of vertices associated with each plane.
 		// The vertex indices are assumed to be in CCW order (or CW order - doesn't matter here

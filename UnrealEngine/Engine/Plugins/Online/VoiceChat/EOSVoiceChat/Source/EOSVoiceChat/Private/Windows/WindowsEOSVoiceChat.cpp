@@ -2,7 +2,7 @@
 
 #include "WindowsEOSVoiceChat.h"
 
-#if WITH_EOS_RTC
+#if WITH_EOSVOICECHAT
 
 #include "HAL/FileManager.h"
 #include "Misc/Paths.h"
@@ -29,4 +29,4 @@ IEOSPlatformHandlePtr FWindowsEOSVoiceChat::EOSPlatformCreate(EOS_Platform_Optio
 	return FEOSVoiceChat::EOSPlatformCreate(PlatformOptions);
 }
 
-#endif // WITH_EOS_RTC
+#endif // WITH_EOSVOICECHAT

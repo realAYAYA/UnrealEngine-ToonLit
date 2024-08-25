@@ -3,6 +3,7 @@
 #include "ControlFlowConcurrency.h"
 #include "ControlFlow.h"
 #include "ControlFlows.h"
+#include "ControlFlowTask.h"
 
 FConcurrencySubFlowContainer::FConcurrencySubFlowContainer(const FString& InDebugName)
 	: SubFlow(MakeShared<FControlFlow>(InDebugName))
@@ -85,6 +86,10 @@ FControlFlow& FConcurrentControlFlows::AddOrGetFlow(int32 InIdentifier, const FS
 		const FString& DebugNameToUse = DebugSubFlowName.IsEmpty() ? FString::Format(TEXT("UnnamedConcurrencySubFlow_{0}"), { (UnnamedControlConcurrencyFlowCounter++) }) : DebugSubFlowName;
 
 		TSharedRef<FConcurrencySubFlowContainer> NewConcurrentFlow = MakeShared<FConcurrencySubFlowContainer>(DebugNameToUse);
+
+		check(OwningTask.IsValid());
+
+		NewConcurrentFlow->GetControlFlow()->ParentFlow = OwningTask.Pin()->GetOwningFlowForTaskNode();
 
 		NewConcurrentFlow->OnComplete().BindSP(SharedThis(this), &FConcurrentControlFlows::HandleConcurrentFlowCompleted, InIdentifier);
 		NewConcurrentFlow->OnExecutedWithoutAnyNodes().BindSP(SharedThis(this), &FConcurrentControlFlows::HandleConcurrentFlowCompleted, InIdentifier);
@@ -175,6 +180,8 @@ void FConcurrentControlFlows::Execute()
 		UE_LOG(LogControlFlows, Verbose, TEXT("ConcurrentControlFlow::Execute - Executing Subflow %s"), *PairIt.Value->GetDebugName());
 
 		bFlowExecuted = true;
+
+		PairIt.Value->GetControlFlow()->LastZeroSecondDelay = OwningTask.Pin()->GetOwningFlowForTaskNode().Pin()->LastZeroSecondDelay;
 		PairIt.Value->Execute();
 
 		if (bCancelAllHasBegun)

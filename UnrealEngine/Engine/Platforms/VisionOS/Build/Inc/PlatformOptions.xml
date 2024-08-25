@@ -1,0 +1,8 @@
+<?xml version='1.0' ?>
+<BuildGraph xmlns="http://www.epicgames.com/BuildGraph" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.epicgames.com/BuildGraph ../../Schema.xsd" >
+
+	<Option Name="WithVisionOS" Restrict="true|false" DefaultValue="false" Description="Include the VisionOS target platform"/>
+
+    <Expand Name="AddPlatform" Platform="VisionOS" IsConsole="false" IsEnabled="$(WithVisionOS)"/>
+
+</BuildGraph>

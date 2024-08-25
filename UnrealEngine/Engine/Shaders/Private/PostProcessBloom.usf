@@ -53,14 +53,15 @@ float4 BloomSetupCommon(float2 UV, float2 ViewportUV, float2 ExposureScaleMiddle
 	}
 #endif
 
-	// clamp to avoid artifacts from exceeding fp16 through framebuffer blending of multiple very bright lights
-	SceneColor.rgb = min(float3(256 * 256, 256 * 256, 256 * 256), SceneColor.rgb);
-
 	half3 LinearColor = SceneColor.rgb;
 
+#if USE_THRESHOLD
 	half TotalLuminance = Luminance(LinearColor) * ExposureScale;
 	half BloomLuminance = TotalLuminance - BloomThreshold;
 	half BloomAmount = saturate(BloomLuminance * 0.5f);
+#else
+	half BloomAmount = 1.0f;
+#endif
 
 	return float4(BloomAmount * LinearColor, 0) * View.PreExposure;
 }

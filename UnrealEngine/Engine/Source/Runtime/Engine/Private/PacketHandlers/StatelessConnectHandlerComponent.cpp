@@ -871,7 +871,7 @@ void StatelessConnectHandlerComponent::SetDriver(UNetDriver* InDriver)
 		}
 
 		GConfig->SetInt(ConfigSection.ToString(), ConfigKey, CachedClientID, GEngineIni);
-		GConfig->Flush(false);
+		GConfig->Flush(false, GEngineIni);
 
 		CachedClientID = CachedClientID & ((1 << ClientIDSizeBits) - 1);
 

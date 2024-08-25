@@ -1,35 +1,38 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "ZenStoreWriter.h"
-#include "ZenStoreHttpClient.h"
-#include "ZenFileSystemManifest.h"
-#include "PackageStoreOptimizer.h"
+
 #include "Algo/BinarySearch.h"
 #include "Algo/IsSorted.h"
 #include "Algo/Sort.h"
 #include "AssetRegistry/AssetRegistryState.h"
 #include "Async/Async.h"
 #include "Containers/Queue.h"
-#include "Serialization/ArrayReader.h"
-#include "Serialization/CompactBinaryContainerSerialization.h"
-#include "Serialization/CompactBinaryPackage.h"
-#include "Serialization/CompactBinaryWriter.h"
-#include "Serialization/CompactBinarySerialization.h"
-#include "Serialization/LargeMemoryWriter.h" 
-#include "SocketSubsystem.h"
-#include "IPAddress.h"
+#include "GenericPlatform/GenericPlatformFile.h"
 #include "HAL/FileManager.h"
 #include "HAL/PlatformFileManager.h"
+#include "Interfaces/ITargetPlatform.h"
 #include "IO/IoDispatcher.h"
+#include "IPAddress.h"
 #include "Misc/App.h"
 #include "Misc/CommandLine.h"
 #include "Misc/FileHelper.h"
-#include "Misc/StringBuilder.h"
-#include "Interfaces/ITargetPlatform.h"
 #include "Misc/Paths.h"
-#include "GenericPlatform/GenericPlatformFile.h"
-#include "UObject/SavePackage.h"
 #include "Misc/PathViews.h"
+#include "Misc/StringBuilder.h"
+#include "PackageStoreOptimizer.h"
+#include "Serialization/ArrayReader.h"
+#include "Serialization/CompactBinaryContainerSerialization.h"
+#include "Serialization/CompactBinaryPackage.h"
+#include "Serialization/CompactBinarySerialization.h"
+#include "Serialization/CompactBinaryWriter.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
+#include "Serialization/LargeMemoryWriter.h" 
+#include "SocketSubsystem.h"
+#include "UObject/SavePackage.h"
+#include "ZenFileSystemManifest.h"
+#include "ZenStoreHttpClient.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogZenStoreWriter, Log, All);
 
@@ -338,6 +341,11 @@ void FZenStoreWriter::WriteAdditionalFile(const FAdditionalFileInfo& Info, const
 
 	auto WriteToFile = [](const FString& Filename, const FIoBuffer& FileData)
 	{
+		ON_SCOPE_EXIT
+		{
+			UE::SavePackageUtilities::DecrementOutstandingAsyncWrites();
+		};
+
 		IFileManager& FileManager = IFileManager::Get();
 		int64 DataSize = IntCastChecked<int64>(FileData.DataSize());
 
@@ -364,6 +372,7 @@ void FZenStoreWriter::WriteAdditionalFile(const FAdditionalFileInfo& Info, const
 		UE_LOG(LogZenStoreWriter, Fatal, TEXT("Could not write to %s!"), *Filename);
 	};
 
+	UE::SavePackageUtilities::IncrementOutstandingAsyncWrites();
 	FileEntry.CompressedPayload = Async(EAsyncExecution::TaskGraph, [this, Info, FileData, WriteToFile]()
 	{
 		WriteToFile(Info.Filename, FileData);
@@ -409,22 +418,22 @@ void FZenStoreWriter::Initialize(const FCookInfo& Info)
 			IFileManager::Get().DeleteDirectory(*OutputPath, bRequireExists, bTree);
 		}
 
-		FString OplogLifetimeMarkerPath = OutputPath / TEXT(".projectstore");
+		FString OplogLifetimeMarkerPath = OutputPath / TEXT("ue.projectstore");
 		TUniquePtr<FArchive> OplogMarker(IFileManager::Get().CreateFileWriter(*OplogLifetimeMarkerPath));
 
 		bool bOplogEstablished = HttpClient->TryCreateOplog(ProjectId, OplogId, OplogLifetimeMarkerPath, CleanBuild);
 
 		if (bOplogEstablished && OplogMarker)
 		{
-			FCbWriter ManifestWriter;
-			ManifestWriter.BeginObject();
-			ManifestWriter.BeginObject("zenserver");
 			bool IsRunningLocally = false;
 #if UE_WITH_ZEN
 			IsRunningLocally = HttpClient->GetZenServiceInstance().IsServiceRunningLocally();
 #endif
-			ManifestWriter << "islocalhost" << IsRunningLocally;
-			ManifestWriter << "hostname" << HttpClient->GetHostName();
+			TSharedRef<TJsonWriter<UTF8CHAR, TPrettyJsonPrintPolicy<UTF8CHAR>>> Writer = TJsonWriterFactory<UTF8CHAR, TPrettyJsonPrintPolicy<UTF8CHAR>>::Create(OplogMarker.Get());
+			Writer->WriteObjectStart();
+			Writer->WriteObjectStart(TEXT("zenserver"));
+			Writer->WriteValue(TEXT("islocalhost"), IsRunningLocally);
+			Writer->WriteValue(TEXT("hostname"), HttpClient->GetHostName());
 			if (IsRunningLocally)
 			{
 				ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get();
@@ -433,21 +442,21 @@ void FZenStoreWriter::Initialize(const FCookInfo& Info)
 					TArray<TSharedPtr<FInternetAddr>> Addresses;
 					if (SocketSubsystem->GetLocalAdapterAddresses(Addresses))
 					{
-						ManifestWriter.BeginArray("remotehostnames");
+						Writer->WriteArrayStart("remotehostnames");
 						for (const TSharedPtr<FInternetAddr>& Address : Addresses)
 						{
-							ManifestWriter << Address->ToString(false);
+							Writer->WriteValue(Address->ToString(false));
 						}
-						ManifestWriter.EndArray();
+						Writer->WriteArrayEnd();
 					}
 				}
 			}
-			ManifestWriter << "hostport" << HttpClient->GetPort();
-			ManifestWriter << "projectid" << ProjectId;
-			ManifestWriter << "oplogid" << OplogId;
-			ManifestWriter.EndObject();
-			ManifestWriter.EndObject();
-			SaveCompactBinary(*OplogMarker, ManifestWriter.Save());
+			Writer->WriteValue(TEXT("hostport"), HttpClient->GetPort());
+			Writer->WriteValue(TEXT("projectid"), ProjectId);
+			Writer->WriteValue(TEXT("oplogid"), OplogId);
+			Writer->WriteObjectEnd();
+			Writer->WriteObjectEnd();
+			Writer->Close();
 		}
 
 		OplogMarker.Reset();
@@ -772,6 +781,11 @@ void FZenStoreWriter::CommitPackage(FCommitPackageInfo&& Info)
 	}
 
 	TUniquePtr<FPendingPackageState> PackageState = RemovePendingPackage(Info.PackageName);
+	if (EnumHasAnyFlags(Info.WriteOptions, IPackageWriter::EWriteOptions::Write | IPackageWriter::EWriteOptions::ComputeHash))
+	{
+		checkf(Info.Status != ECommitStatus::Success || !PackageState->PackageData.IsEmpty(),
+			TEXT("CommitPackage called with CommitStatus::Success but without first calling WritePackageData"));
+	}
 	FZenCommitInfo ZenCommitInfo{ Forward<FCommitPackageInfo>(Info), MoveTemp(PackageState) };
 	if (FPlatformProcess::SupportsMultithreading())
 	{
@@ -977,7 +991,10 @@ void FZenStoreWriter::CommitPackageInternal(FZenCommitInfo&& ZenCommitInfo)
 
 				OplogEntryDesc.BeginObject();
 				OplogEntryDesc << "id" << ToObjectId(File.Info.ChunkId);
-				OplogEntryDesc << "data" << FileDataAttachment;
+				// ZenServer treats the hash stored in "data" as mutually exlusive with the string stored in "serverpath".
+				// We must write data as a zero hash (or exclude it entirely) if we want to be able to get the serverpath from ZenServer later.
+				// This is relevant to iterative cooks which will obtain the filesystem manifest contents from ZenServer.
+				OplogEntryDesc << "data" << FIoHash::Zero;
 				OplogEntryDesc << "serverpath" << File.ZenManifestServerPath;
 				OplogEntryDesc << "clientpath" << File.ZenManifestClientPath;
 				OplogEntryDesc.EndObject();
@@ -1204,32 +1221,28 @@ void FZenStoreWriter::RemoveCookedPackages()
 	PackageNameToIndex.Empty();
 }
 
-void FZenStoreWriter::MarkPackagesUpToDate(TArrayView<const FName> UpToDatePackages)
+void FZenStoreWriter::UpdatePackageModificationStatus(FName PackageName, bool bIterativelyUnmodified,
+	bool& bInOutShouldIterativelySkip)
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE(FZenStoreWriter::MarkPackagesUpToDate);
+	TRACE_CPUPROFILER_EVENT_SCOPE(FZenStoreWriter::UpdatePackageModificationStatus);
 
 	IPackageStoreWriter::FMarkUpToDateEventArgs MarkUpToDateEventArgs;
 
-	MarkUpToDateEventArgs.PackageIndexes.Reserve(UpToDatePackages.Num());
-
 	{
 		FWriteScopeLock _(EntriesLock);
-		for (FName PackageName : UpToDatePackages)
+		int32* Index = PackageNameToIndex.Find(PackageName);
+		if (!Index)
 		{
-			int32* Index = PackageNameToIndex.Find(PackageName);
-			if (!Index)
+			if (!FPackageName::IsScriptPackage(WriteToString<128>(PackageName)))
 			{
-				if (!FPackageName::IsScriptPackage(WriteToString<128>(PackageName)))
-				{
-					UE_LOG(LogZenStoreWriter, Warning, TEXT("MarkPackagesUpToDate called with package %s that is not in the oplog."),
-						*PackageName.ToString());
-				}
-				continue;
+				UE_LOG(LogZenStoreWriter, Verbose, TEXT("UpdatePackageModificationStatus called with package %s that is not in the oplog."),
+					*PackageName.ToString());
 			}
-
-			MarkUpToDateEventArgs.PackageIndexes.Add(*Index);
-			CookedPackagesInfo[*Index].bUpToDate = true;
+			return;
 		}
+
+		MarkUpToDateEventArgs.PackageIndexes.Add(*Index);
+		CookedPackagesInfo[*Index].bUpToDate = true;
 	}
 	if (MarkUpToDateEventArgs.PackageIndexes.Num())
 	{

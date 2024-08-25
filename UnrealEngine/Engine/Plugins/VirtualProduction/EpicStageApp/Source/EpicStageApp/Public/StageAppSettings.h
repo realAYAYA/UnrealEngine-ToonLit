@@ -52,6 +52,7 @@ public:
 	/**
 	 * How many seconds to wait for app discovery messages.
 	 */
+	UE_DEPRECATED(5.4, "This setting is no longer used.")
 	UPROPERTY(config, EditAnywhere, Category = "Epic Stage App")
 	float DiscoverySocketWaitTime = 10.f;
 };

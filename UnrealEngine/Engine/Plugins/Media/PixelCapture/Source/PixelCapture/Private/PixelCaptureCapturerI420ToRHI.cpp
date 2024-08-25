@@ -56,7 +56,7 @@ IPixelCaptureOutputFrame *FPixelCaptureCapturerI420ToRHI::CreateOutputBuffer(int
 		TextureDesc.AddFlags(ETextureCreateFlags::Shared);
 	}
 
-	return new FPixelCaptureOutputFrameRHI(GDynamicRHI->RHICreateTexture(TextureDesc));
+	return new FPixelCaptureOutputFrameRHI(RHICreateTexture(TextureDesc));
 }
 
 void FPixelCaptureCapturerI420ToRHI::BeginProcess(const IPixelCaptureInputFrame &InputFrame, IPixelCaptureOutputFrame *OutputBuffer)

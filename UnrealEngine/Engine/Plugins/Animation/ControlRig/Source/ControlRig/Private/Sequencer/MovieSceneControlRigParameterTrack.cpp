@@ -8,14 +8,21 @@
 #include "MovieScene.h"
 #include "MovieSceneTimeHelpers.h"
 #include "Channels/MovieSceneChannelProxy.h"
+#include "Rigs/FKControlRig.h"
 #include "Rigs/RigHierarchyController.h"
 #include "UObject/Package.h"
 #include "Async/Async.h"
 
+#if WITH_EDITOR
+#include "ScopedTransaction.h"
+#endif//WITH_EDITOR
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MovieSceneControlRigParameterTrack)
 
 #define LOCTEXT_NAMESPACE "MovieSceneParameterControlRigTrack"
+
+FColor UMovieSceneControlRigParameterTrack::AbsoluteRigTrackColor = FColor(65, 89, 194, 65);
+FColor UMovieSceneControlRigParameterTrack::LayeredRigTrackColor = FColor(173, 151, 114);
 
 FControlRotationOrder::FControlRotationOrder()
 	:RotationOrder(EEulerRotationOrder::YZX),
@@ -28,9 +35,10 @@ FControlRotationOrder::FControlRotationOrder()
 UMovieSceneControlRigParameterTrack::UMovieSceneControlRigParameterTrack(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 	, ControlRig(nullptr)
+	, PriorityOrder(INDEX_NONE)
 {
 #if WITH_EDITORONLY_DATA
-	TrackTint = FColor(65, 89, 194, 65);
+	TrackTint = AbsoluteRigTrackColor;
 #endif
 
 	SupportedBlendTypes = FMovieSceneBlendTypeField::None();
@@ -44,7 +52,7 @@ void UMovieSceneControlRigParameterTrack::BeginDestroy()
 	Super::BeginDestroy();
 	if (IsValid(ControlRig))
 	{
-		ControlRig->OnInitialized_AnyThread().RemoveAll(this);
+		ControlRig->OnPostConstruction_AnyThread().RemoveAll(this);
 	}
 }
 
@@ -215,12 +223,12 @@ UMovieSceneSection* UMovieSceneControlRigParameterTrack::CreateControlRigSection
 
 	if (IsValid(ControlRig))
 	{
-		ControlRig->OnInitialized_AnyThread().RemoveAll(this);
+		ControlRig->OnPostConstruction_AnyThread().RemoveAll(this);
 	}
 
 	ControlRig = InControlRig;
 
-	ControlRig->OnInitialized_AnyThread().AddUObject(this, &UMovieSceneControlRigParameterTrack::HandleOnInitialized);
+	ControlRig->OnPostConstruction_AnyThread().AddUObject(this, &UMovieSceneControlRigParameterTrack::HandleOnPostConstructed);
 
 	UMovieSceneControlRigParameterSection* NewSection = Cast<UMovieSceneControlRigParameterSection>(CreateNewSection());
 
@@ -463,7 +471,7 @@ void UMovieSceneControlRigParameterTrack::PostLoad()
 
 	if (IsValid(ControlRig))
 	{
-		ControlRig->OnInitialized_AnyThread().AddUObject(this, &UMovieSceneControlRigParameterTrack::HandleOnInitialized);
+		ControlRig->OnPostConstruction_AnyThread().AddUObject(this, &UMovieSceneControlRigParameterTrack::HandleOnPostConstructed);
 	}
 }
 
@@ -530,12 +538,16 @@ namespace MovieSceneControlRigTrack
 	}
 }
 
-void UMovieSceneControlRigParameterTrack::HandleOnInitialized_GameThread()
+void UMovieSceneControlRigParameterTrack::HandleOnPostConstructed_GameThread()
 {
 	if (IsValid(ControlRig))
 	{
 		TArray<FRigControlElement*> SortedControls;
 		ControlRig->GetControlsInOrder(SortedControls);
+#if WITH_EDITOR
+		const FScopedTransaction PostConstructTransation(NSLOCTEXT("ControlRig", "PostConstructTransation", "Post Construct"), !GIsTransacting);
+#endif		
+		bool bSectionWasDifferent = false;
 		for (UMovieSceneSection* BaseSection : GetAllSections())
 		{
 			if (UMovieSceneControlRigParameterSection* Section = Cast<UMovieSceneControlRigParameterSection>(BaseSection))
@@ -543,8 +555,13 @@ void UMovieSceneControlRigParameterTrack::HandleOnInitialized_GameThread()
 				if (Section->IsDifferentThanLastControlsUsedToReconstruct(SortedControls))
 				{
 					Section->RecreateWithThisControlRig(ControlRig, Section->GetBlendType() == EMovieSceneBlendType::Absolute);
+					bSectionWasDifferent = true;
 				}
 			}
+		}
+		if (bSectionWasDifferent)
+		{
+			BroadcastChanged();
 		}
 		if (SortedControls.Num() > 0) //really set up
 		{
@@ -554,13 +571,13 @@ void UMovieSceneControlRigParameterTrack::HandleOnInitialized_GameThread()
 	}
 }
 
-void UMovieSceneControlRigParameterTrack::HandleOnInitialized(URigVMHost* Subject, const FName& InEventName)
+void UMovieSceneControlRigParameterTrack::HandleOnPostConstructed(UControlRig* Subject, const FName& InEventName)
 {
-	MovieSceneControlRigTrack::AsyncHelpers::ExecuteOnGameThread<void>([this]()
+	if(IsInGameThread())
 	{
-		HandleOnInitialized_GameThread();
+		HandleOnPostConstructed_GameThread();
 
-	}).Wait();
+	}
 }
 
 #if WITH_EDITORONLY_DATA
@@ -616,7 +633,7 @@ void UMovieSceneControlRigParameterTrack::PostEditImport()
 	{
 		if (ControlRig->OnInitialized_AnyThread().IsBoundToObject(this) == false)
 		{
-			ControlRig->OnInitialized_AnyThread().AddUObject(this, &UMovieSceneControlRigParameterTrack::HandleOnInitialized);
+			ControlRig->OnPostConstruction_AnyThread().AddUObject(this, &UMovieSceneControlRigParameterTrack::HandleOnPostConstructed);
 		}
 		ControlRig->ClearFlags(RF_Transient); //when copied make sure it's no longer transient, sequencer does this for tracks/sections 
 											  //but not for all objects in them since the control rig itself has transient objects.
@@ -648,14 +665,14 @@ void UMovieSceneControlRigParameterTrack::ReplaceControlRig(UControlRig* NewCont
 {
 	if (IsValid(ControlRig))
 	{
-		ControlRig->OnInitialized_AnyThread().RemoveAll(this);
+		ControlRig->OnPostConstruction_AnyThread().RemoveAll(this);
 	}
 
 	ControlRig = NewControlRig;
 
 	if (IsValid(ControlRig))
 	{
-		ControlRig->OnInitialized_AnyThread().AddUObject(this, &UMovieSceneControlRigParameterTrack::HandleOnInitialized);
+		ControlRig->OnPostConstruction_AnyThread().AddUObject(this, &UMovieSceneControlRigParameterTrack::HandleOnPostConstructed);
 
 		if (ControlRig->GetOuter() != this)
 		{
@@ -683,7 +700,7 @@ TOptional<EEulerRotationOrder> UMovieSceneControlRigParameterTrack::GetControlRo
 	TOptional<EEulerRotationOrder> Order;
 	if (bCurrent)
 	{
-		const FControlRotationOrder* RotationOrder = ControlsRotationOrder.Find(ControlElement->GetName());
+		const FControlRotationOrder* RotationOrder = ControlsRotationOrder.Find(ControlElement->GetFName());
 		if (RotationOrder)
 		{
 			Order = RotationOrder->RotationOrder;
@@ -717,7 +734,7 @@ TArray<FName> UMovieSceneControlRigParameterTrack::GetControlsWithDifferentRotat
 			TOptional<EEulerRotationOrder> Setting = GetControlRotationOrder(ControlElement, false);
 			if (Current != Setting)
 			{
-				Names.Add(ControlElement->GetName());
+				Names.Add(ControlElement->GetFName());
 			}
 
 		}
@@ -787,6 +804,23 @@ void UMovieSceneControlRigParameterTrack::GetSelectedNodes(TArray<FName>& Select
 	}
 }
 
+int32 UMovieSceneControlRigParameterTrack::GetPriorityOrder() const
+{
+	return PriorityOrder;
+}
+
+void UMovieSceneControlRigParameterTrack::SetPriorityOrder(int32 InPriorityIndex)
+{
+	if (InPriorityIndex >= 0)
+	{
+		PriorityOrder = InPriorityIndex;
+	}
+	else
+	{
+		PriorityOrder = 0;
+	}
+}
+
 #if WITH_EDITOR
 bool UMovieSceneControlRigParameterTrack::GetFbxCurveDataFromChannelMetadata(const FMovieSceneChannelMetaData& MetaData, FControlRigFbxCurveData& OutCurveData)
 {
@@ -840,6 +874,33 @@ bool UMovieSceneControlRigParameterTrack::GetFbxCurveDataFromChannelMetadata(con
 	return false;
 }
 #endif
+
+UControlRig* UMovieSceneControlRigParameterTrack::GetGameWorldControlRig(UWorld* InWorld) 
+{
+	if (GameWorldControlRigs.Find(InWorld) == nullptr && ControlRig)
+	{
+		UControlRig* NewGameWorldControlRig = NewObject<UControlRig>(this, ControlRig->GetClass(), NAME_None, RF_Transient);
+		NewGameWorldControlRig->Initialize();
+		if (UFKControlRig* FKControlRig = Cast<UFKControlRig>(Cast<UControlRig>(ControlRig)))
+		{
+			if (UFKControlRig* NewFKControlRig = Cast<UFKControlRig>(Cast<UControlRig>(NewGameWorldControlRig)))
+			{
+				NewFKControlRig->SetApplyMode(FKControlRig->GetApplyMode());
+			}
+		}
+		else
+		{
+			NewGameWorldControlRig->SetIsAdditive(ControlRig->IsAdditive());
+		}
+		GameWorldControlRigs.Add(InWorld, NewGameWorldControlRig);
+	}
+	TObjectPtr<UControlRig> * GameWorldControlRig = GameWorldControlRigs.Find(InWorld);
+	if (GameWorldControlRig != nullptr)
+	{
+		return GameWorldControlRig->Get();
+	}
+	return nullptr;
+}
 
 TArray<FRigControlFBXNodeAndChannels>* UMovieSceneControlRigParameterTrack::GetNodeAndChannelMappings(UMovieSceneSection* InSection )
 {

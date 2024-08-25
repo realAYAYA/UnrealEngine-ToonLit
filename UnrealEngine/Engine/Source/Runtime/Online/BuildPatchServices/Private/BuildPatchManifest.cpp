@@ -888,6 +888,13 @@ TArray<FString> FBuildPatchAppManifest::GetBuildFileList(const TSet<FString>& Ta
 	return Filenames;
 }
 
+TArray<FStringView> FBuildPatchAppManifest::GetBuildFileListView(const TSet<FString>& Tags) const
+{
+	TArray<FStringView> Filenames;
+	GetTaggedFileList(Tags, Filenames);
+	return Filenames;
+}
+
 int64 FBuildPatchAppManifest::GetFileSize(const TArray<FString>& Filenames) const
 {
 	return Algo::Accumulate<int64>(Filenames, 0, [this](int64 Size, const FString& Filename){ return Size + GetFileSize(Filename); });
@@ -898,7 +905,7 @@ int64 FBuildPatchAppManifest::GetFileSize(const TSet<FString>& Filenames) const
 	return Algo::Accumulate<int64>(Filenames, 0, [this](int64 Size, const FString& Filename){ return Size + GetFileSize(Filename); });
 }
 
-int64 FBuildPatchAppManifest::GetFileSize(const FString& Filename) const
+int64 FBuildPatchAppManifest::GetFileSize(FStringView Filename) const
 {
 	const FFileManifest *const *const FileManifest = FileManifestLookup.Find(Filename);
 	if (FileManifest)
@@ -975,6 +982,21 @@ void FBuildPatchAppManifest::GetTaggedFileList(const TSet<FString>& Tags, TArray
 	for (const FString& Tag : Tags)
 	{
 		const TArray<const FFileManifest*> *const Files = TaggedFilesLookup.Find(Tag);
+		if (Files != nullptr)
+		{
+			for (const FFileManifest* File : *Files)
+			{
+				TaggedFiles.Add(File->Filename);
+			}
+		}
+	}
+}
+
+void FBuildPatchAppManifest::GetTaggedFileList(const TSet<FString>& Tags, TArray<FStringView>& TaggedFiles) const
+{
+	for (const FString& Tag : Tags)
+	{
+		const TArray<const FFileManifest*>* const Files = TaggedFilesLookup.Find(Tag);
 		if (Files != nullptr)
 		{
 			for (const FFileManifest* File : *Files)
@@ -1371,16 +1393,19 @@ void FBuildPatchAppManifest::GetOutdatedFiles(const FBuildPatchAppManifest* OldM
 			const FFileManifest* NewFile = GetFileManifest(FileToCheck);
 			if (NewFile != nullptr)
 			{
-				const int64 ExistingFileSize = IFileManager::Get().FileSize(*(InstallDirectory / NewFile->Filename));
 				// Check changed
 				if (IsFileOutdated(*OldManifest, NewFile->Filename))
 				{
 					OutDatedFiles.Add(NewFile->Filename);
 				}
 				// Double check an unchanged file is not missing (size will be -1) or is incorrect size
-				else if (bCheckExistingFile && (ExistingFileSize < 0 || ExistingFileSize != NewFile->FileSize))
+				else if (bCheckExistingFile)
 				{
-					OutDatedFiles.Add(NewFile->Filename);
+					const int64 ExistingFileSize = IFileManager::Get().FileSize(*(InstallDirectory / NewFile->Filename));
+					if ((ExistingFileSize < 0) || (ExistingFileSize != NewFile->FileSize))
+					{
+						OutDatedFiles.Add(NewFile->Filename);
+					}
 				}
 			}
 		}

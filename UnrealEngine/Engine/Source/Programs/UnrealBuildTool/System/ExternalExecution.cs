@@ -20,18 +20,6 @@ using UnrealBuildTool.Modes;
 
 namespace UnrealBuildTool
 {
-
-	class CompilationResultException : BuildException
-	{
-		public readonly CompilationResult Result;
-
-		public CompilationResultException(CompilationResult Result)
-			: base("Error: {0}", Result)
-		{
-			this.Result = Result;
-		}
-	}
-
 	static class UHTModuleTypeExtensions
 	{
 		public static UHTModuleType? EngineModuleTypeFromHostType(ModuleHostType ModuleType)
@@ -334,7 +322,8 @@ namespace UnrealBuildTool
 				}
 				if (RulesObject.Plugin != null)
 				{
-					ModuleDescriptor? Module = RulesObject.Plugin.Descriptor.Modules?.FirstOrDefault(x => x.Name == RulesObject.Name);
+					string PluginName = !RulesObject.IsTestModule ? RulesObject.Name : TargetDescriptor.GetTestedName(RulesObject.Name);
+					ModuleDescriptor? Module = RulesObject.Plugin.Descriptor.Modules?.FirstOrDefault(x => x.Name == PluginName);
 					if (Module != null)
 					{
 						return GetEngineModuleTypeFromDescriptor(Module);
@@ -371,39 +360,28 @@ namespace UnrealBuildTool
 
 		static DirectoryReference FindIncludeBase(UEBuildModuleCPP Module, ILogger Logger)
 		{
-			DirectoryReference? ModuleIncludeBase = Module.PublicIncludePaths.FirstOrDefault() ??
-				Module.PrivateIncludePaths.FirstOrDefault() ??
-				Module.InternalIncludePaths.FirstOrDefault() ??
-				(Module.Rules.bLegacyParentIncludePaths ? Module.LegacyParentIncludePaths.FirstOrDefault() : null) ??
-				(Module.Rules.bLegacyPublicIncludePaths ? Module.LegacyPublicIncludePaths.FirstOrDefault() : null);
-
-			if (ModuleIncludeBase == null)
+			// Plugin Source directory may be an available include path for modules under a UPlugin (see UEBuildTarget.FindOrCreateModuleByName)
+			if (Module.Rules.Plugin != null)
 			{
-				// Project Source directory is also always for modules under a UProject (see UEBuildTarget.FindOrCreateModuleByName)
-				if (Module.Rules.Target.ProjectFile != null)
+				DirectoryReference PluginSourceDirectoryName = DirectoryReference.Combine(Module.Rules.Plugin.Directory, "Source");
+				if (Module.Rules.File.IsUnderDirectory(PluginSourceDirectoryName))
 				{
-					DirectoryReference ProjectSourceDirectoryName = DirectoryReference.Combine(Module.Rules.Target.ProjectFile.Directory, "Source");
-					if (Module.Rules.File.IsUnderDirectory(ProjectSourceDirectoryName))
-					{
-						ModuleIncludeBase = ProjectSourceDirectoryName;
-					}
-				}
-
-				// If we still cannot find an include base, this most likely means the module is set up incorrectly when using BuildSettingsVersion.V3.=
-				// Fall back to Engine/Source or the UHT generated directory, however this should be resolved by fixing the ModuleRules.
-				if (ModuleIncludeBase == null && Module.ModuleDirectory.IsUnderDirectory(Unreal.EngineSourceDirectory))
-				{
-					ModuleIncludeBase = Unreal.EngineSourceDirectory;
-					Logger.LogDebug("Unable to find a module include path for {Module}, using engine source path '{Path}' because no standard Public/Private/Internal include paths were added. Please resolve by updating the module's .Build.cs", Module.Name, ModuleIncludeBase);
-				}
-				if (ModuleIncludeBase == null)
-				{
-					ModuleIncludeBase = Module.GeneratedCodeDirectoryUHT!;
-					Logger.LogDebug("Unable to find a module include path for {Module}, using generated path '{Path}' because no standard Public/Private/Internal include paths were added. Please resolve by updating the module's .Build.cs", Module.Name, ModuleIncludeBase);
+					return PluginSourceDirectoryName;
 				}
 			}
 
-			return ModuleIncludeBase;
+			// Project Source directory is always an available include path for modules under a UProject (see UEBuildTarget.FindOrCreateModuleByName)
+			if (Module.Rules.Target.ProjectFile != null)
+			{
+				DirectoryReference ProjectSourceDirectoryName = DirectoryReference.Combine(Module.Rules.Target.ProjectFile.Directory, "Source");
+				if (Module.Rules.File.IsUnderDirectory(ProjectSourceDirectoryName))
+				{
+					return ProjectSourceDirectoryName;
+				}
+			}
+
+			// Otherwise use Engine/Source
+			return Unreal.EngineSourceDirectory;
 		}
 
 		public static void SetupUObjectModules(IEnumerable<UEBuildModuleCPP> ModulesToGenerateHeadersFor, UnrealTargetPlatform Platform, ProjectDescriptor? ProjectDescriptor, List<UHTModuleInfo> UObjectModules, List<UHTModuleHeaderInfo> UObjectModuleHeaders, EGeneratedCodeVersion GeneratedCodeVersion, SourceFileMetadataCache MetadataCache, ILogger Logger)

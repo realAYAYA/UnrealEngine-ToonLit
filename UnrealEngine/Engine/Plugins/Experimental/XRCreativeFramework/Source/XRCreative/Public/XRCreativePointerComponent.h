@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "CollisionQueryParams.h"
 #include "Components/SceneComponent.h"
 #include "Engine/HitResult.h"
 #include "XRCreativePointerComponent.generated.h"
@@ -13,7 +14,7 @@ namespace UE::XRCreative
 }
 
 
-UCLASS()
+UCLASS(ClassGroup = ("XR Creative"), meta=(BlueprintSpawnableComponent))
 class XRCREATIVE_API UXRCreativePointerComponent : public USceneComponent
 {
 	GENERATED_BODY()
@@ -26,7 +27,7 @@ public:
 	virtual void TickComponent(float InDeltaTime, enum ELevelTick InTickType, FActorComponentTickFunction* InThisTickFunction) override;
 
 	/**
-	* If bScaledByImpact is false, this returns the raw input to the smoothing filter, `TraceMaxLength` units away the +X direction.
+	* If bScaledByImpact is false, this returns the raw input to the smoothing filter, `TraceMaxLength` units away in the +X direction.
 	* If bScaledByImpact is true, the magnitude is shortened to the length of the blocking hit (if any).
 	*/
 	UFUNCTION(BlueprintCallable, Category="XR Creative")
@@ -48,6 +49,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category="XR Creative")
 	void SetEnabled(bool bInEnabled) { bEnabled = bInEnabled; }
 
+	FCollisionQueryParams GetQueryParams() const;
+
 protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="XR Creative")
 	float TraceMaxLength;
@@ -60,6 +63,12 @@ protected:
 
 	UPROPERTY(EditAnywhere, Getter=IsEnabled, Setter=SetEnabled, Category="XR Creative")
 	bool bEnabled;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="XR Creative")
+	TArray<TObjectPtr<AActor>> IgnoredActors;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="XR Creative")
+	TArray<TObjectPtr<UPrimitiveComponent>> IgnoredComponents;
 
 protected:
 	FVector RawTraceEnd;

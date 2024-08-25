@@ -32,15 +32,8 @@ struct FGeometry;
 
 void SCustomizableObjectEditorViewport::Construct(const FArguments& InArgs, const FCustomizableObjectEditorViewportRequiredArgs& InRequiredArgs)
 {
-	//SkeletonTreePtr = InRequiredArgs.SkeletonTree;
 	PreviewScenePtr = InRequiredArgs.PreviewScene;
 	TabBodyPtr = InRequiredArgs.TabBody;
-	//AssetEditorToolkitPtr = InRequiredArgs.AssetEditorToolkit;
-	bShowStats = InArgs._ShowStats;
-
-	// Not necessary, since there is no undo on instance parameter change
-	//InRequiredArgs.OnPostUndo.Add(FSimpleDelegate::CreateSP(this, &SCustomizableObjectEditorViewport::OnUndoRedo));
-
 
 	SEditorViewport::Construct(
 		SEditorViewport::FArguments()
@@ -53,7 +46,7 @@ void SCustomizableObjectEditorViewport::Construct(const FArguments& InArgs, cons
 
 TSharedRef<FEditorViewportClient> SCustomizableObjectEditorViewport::MakeEditorViewportClient()
 {
-	LevelViewportClient = MakeShareable(new FCustomizableObjectEditorViewportClient(TabBodyPtr.Pin()->CustomizableObjectEditorPtr, PreviewScenePtr.Pin().Get()));
+	LevelViewportClient = MakeShareable(new FCustomizableObjectEditorViewportClient(TabBodyPtr.Pin()->CustomizableObjectEditorPtr, PreviewScenePtr.Pin().Get(), SharedThis(this)));
 
 	LevelViewportClient->ViewportType = LVT_Perspective;
 	LevelViewportClient->bSetListenerPosition = false;
@@ -61,12 +54,6 @@ TSharedRef<FEditorViewportClient> SCustomizableObjectEditorViewport::MakeEditorV
 	LevelViewportClient->SetViewRotation(EditorViewportDefs::DefaultPerspectiveViewRotation);
 
 	SceneViewport = MakeShareable(new FSceneViewport(LevelViewportClient.Get(), ViewportWidget));
-	//Viewport = MakeShareable(new FSceneViewport(LevelViewportClient.Get(), ViewportWidget));
-	//LevelViewportClient->Viewport = Viewport.Get();
-	//LevelViewportClient->Viewport->SetUserFocus(true);
-
-	// The viewport widget needs an interface so it knows what should render
-	//ViewportWidget->SetViewportInterface(Viewport.ToSharedRef());
 
 	return LevelViewportClient.ToSharedRef();
 }
@@ -98,9 +85,6 @@ void SCustomizableObjectEditorViewportTabBody::Construct(const FArguments& InArg
 	UICommandList = MakeShareable(new FUICommandList);
 
 	CustomizableObjectEditorPtr = InArgs._CustomizableObjectEditor;
-
-	CurrentViewMode = VMI_Lit;
-	LODSelection = 0;
 
 	FCustomizableObjectEditorViewportMenuCommands::Register();
 	//FAnimViewportShowCommands::Register();
@@ -143,8 +127,6 @@ void SCustomizableObjectEditorViewportTabBody::Construct(const FArguments& InArg
 	//PreviewSkeletalMeshComponent = 0;
 
 	BindCommands();
-
-	AssetRegistryLoaded = false;
 }
 
 
@@ -168,169 +150,12 @@ void SCustomizableObjectEditorViewportTabBody::AddReferencedObjects( FReferenceC
 }
 
 
-void SCustomizableObjectEditorViewportTabBody::SetClipMorphPlaneVisibility(bool bVisible, const FVector& Origin, const FVector& Normal, float MorphLength, const FBoxSphereBounds& Bounds, float Radius1, float Radius2, float RotationAngle)
-{
-	LevelViewportClient->SetClipMorphPlaneVisibility(bVisible, Origin, Normal, MorphLength, Bounds, Radius1, Radius2, RotationAngle);
-}
-
-
-void SCustomizableObjectEditorViewportTabBody::SetClipMorphPlaneVisibility(bool bVisible, UCustomizableObjectNodeMeshClipMorph* NodeMeshClipMorph)
-{
-	TransformWidgetVisibility.State.bClipMorphPlaneVisible = bVisible && bVisible != LevelViewportClient->IsNodeMeshClipMorphSelected();
-
-	EVisibility ChildVisibility = TransformWidgetVisibility.Value ? EVisibility::Visible : EVisibility::Hidden;
-	if (ViewportToolbarTransformWidget.IsValid())
-	{
-		ViewportToolbarTransformWidget.Pin()->SetVisibility(ChildVisibility);
-	}
-
-	LevelViewportClient->SetClipMorphPlaneVisibility(bVisible, NodeMeshClipMorph);
-}
-
-
-void SCustomizableObjectEditorViewportTabBody::SetClipMeshVisibility(bool bVisible, UStaticMesh* ClipMesh, UCustomizableObjectNodeMeshClipWithMesh* ClipMeshNode)
-{	
-	TransformWidgetVisibility.State.bClipMeshVisible = ClipMesh && ClipMeshNode && bVisible;
-
-	EVisibility ChildVisibility = TransformWidgetVisibility.Value ? EVisibility::Visible : EVisibility::Hidden;
-	if (ViewportToolbarTransformWidget.IsValid())
-	{
-		ViewportToolbarTransformWidget.Pin()->SetVisibility(ChildVisibility);
-	}
-	
-
-	LevelViewportClient->SetClipMeshVisibility(bVisible, ClipMesh, ClipMeshNode);
-}
-
-
-void SCustomizableObjectEditorViewportTabBody::SetProjectorVisibility(bool bVisible, FString ProjectorParameterName, FString ProjectorParameterNameWithIndex, int32 RangeIndex, const FCustomizableObjectProjector& Data, int32 ProjectorParameterIndex)
-{
-	if (LevelViewportClient->GetGizmoProxy().HasAssignedData &&
-		!LevelViewportClient->GetGizmoProxy().AssignedDataIsFromNode &&
-		LevelViewportClient->GetGizmoProxy().ProjectorParameterIndex == ProjectorParameterIndex &&
-		LevelViewportClient->GetGizmoProxy().ProjectorRangeIndex == RangeIndex)
-	{
-		return;
-	}
-	
-	TransformWidgetVisibility.State.bProjectorVisible = bVisible;
-
-	EVisibility ChildVisibility = TransformWidgetVisibility.Value ? EVisibility::Visible : EVisibility::Hidden;
-	if (ViewportToolbarTransformWidget.IsValid())
-	{
-		ViewportToolbarTransformWidget.Pin()->SetVisibility(ChildVisibility);
-	}
-
-	if ((LevelViewportClient->GetWidgetVisibility() != bVisible) || 
-		(LevelViewportClient->GetGizmoProxy().HasAssignedData &&
-		(
-			LevelViewportClient->GetGizmoProxy().AssignedDataIsFromNode ||
-			LevelViewportClient->GetGizmoProxy().ProjectorParameterIndex != ProjectorParameterIndex ||
-		    LevelViewportClient->GetGizmoProxy().ProjectorRangeIndex != RangeIndex)
-		))
-	{
-		LevelViewportClient->SetProjectorVisibility(bVisible, ProjectorParameterName, ProjectorParameterNameWithIndex, RangeIndex, Data, ProjectorParameterIndex);
-		
-	}
-}
-
-
-void SCustomizableObjectEditorViewportTabBody::SetProjectorType(bool bVisible, FString ProjectorParameterName, FString ProjectorParameterNameWithIndex, int32 RangeIndex, const FCustomizableObjectProjector& Data, int32 ProjectorParameterIndex)
-{
-	LevelViewportClient->SetProjectorType(bVisible, ProjectorParameterName, ProjectorParameterNameWithIndex, RangeIndex, Data, ProjectorParameterIndex);
-}
-
-
-void SCustomizableObjectEditorViewportTabBody::SetProjectorVisibility(bool bVisible, UCustomizableObjectNodeProjectorConstant* Projector)
-{
-	if (((Projector == nullptr) && !LevelViewportClient->GetGizmoProxy().HasAssignedData) ||
-	    (bVisible && (Projector != nullptr) && LevelViewportClient->GetGizmoProxy().HasAssignedData &&
-		(LevelViewportClient->GetGizmoProxy().DataOriginConstant == Projector)))
-	{
-		return;
-	}
-
-	TransformWidgetVisibility.State.bProjectorVisible = Projector && bVisible;
-	EVisibility ChildVisibility = TransformWidgetVisibility.Value ? EVisibility::Visible : EVisibility::Hidden;
-	if (ViewportToolbarTransformWidget.IsValid())
-	{
-		ViewportToolbarTransformWidget.Pin()->SetVisibility(ChildVisibility);
-	}
-
-	LevelViewportClient->SetProjectorVisibility(bVisible, Projector);
-}
-
-
-void SCustomizableObjectEditorViewportTabBody::SetProjectorParameterVisibility(bool bVisible, class UCustomizableObjectNodeProjectorParameter* ProjectorParameter)
-{
-	if (((ProjectorParameter == nullptr) && !LevelViewportClient->GetGizmoProxy().HasAssignedData) ||
-	    (bVisible && (ProjectorParameter != nullptr) && LevelViewportClient->GetGizmoProxy().HasAssignedData &&
-		(LevelViewportClient->GetGizmoProxy().DataOriginParameter == ProjectorParameter)))
-	{
-		return;
-	}
-
-	TransformWidgetVisibility.State.bProjectorVisible = ProjectorParameter && bVisible;
-
-	EVisibility ChildVisibility = TransformWidgetVisibility.Value ? EVisibility::Visible : EVisibility::Hidden;
-	if (ViewportToolbarTransformWidget.IsValid())
-	{
-		ViewportToolbarTransformWidget.Pin()->SetVisibility(ChildVisibility);
-	}
-
-	LevelViewportClient->SetProjectorParameterVisibility(bVisible, ProjectorParameter);
-}
-
-
-void SCustomizableObjectEditorViewportTabBody::ResetProjectorVisibility(bool OnlyNonNodeProjector)
-{
-	if(LevelViewportClient->GetIsManipulating())
-	{
-		return;
-	}
-
-	if (OnlyNonNodeProjector &&
-		LevelViewportClient->GetGizmoProxy().HasAssignedData &&
-		LevelViewportClient->GetGizmoProxy().AssignedDataIsFromNode)
-	{
-		return;
-	}
-
-	LevelViewportClient->ResetProjectorVisibility();
-
-	// Check if the projector's alpha is being modified.
-	// ResetProjectorVisibility is called every tick while modifying a projector's alpha,
-	// that makes the widget UI flash in and out.
-	bool bProjectorAlphaChange = false;
-	if (CustomizableObjectEditorPtr.IsValid())
-	{
-		UCustomizableObjectInstance* PreviewInstance = CustomizableObjectEditorPtr.Pin()->GetPreviewInstance();
-		if (PreviewInstance)
-		{
-			bProjectorAlphaChange = PreviewInstance->ProjectorAlphaChange;
-		}
-	}
-
-	if (ViewportToolbarTransformWidget.IsValid() && TransformWidgetVisibility.Value && !bProjectorAlphaChange)
-	{
-		ViewportToolbarTransformWidget.Pin()->SetVisibility(EVisibility::Hidden);
-		TransformWidgetVisibility.State.bProjectorVisible = false;
-	}
-}
-
-
 void SCustomizableObjectEditorViewportTabBody::Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime)
 {
 	SCompoundWidget::Tick(AllottedGeometry, InCurrentTime, InDeltaTime);
 
 	// Needed?
 	PreviewScenePtr->GetWorld()->Tick(LEVELTICK_All, InDeltaTime);
-
-	//if (PreviewSkeletalMeshComponent != nullptr)
-	//{
-	//	PreviewSkeletalMeshComponent->TickAnimation(InDeltaTime, false);
-	//	PreviewSkeletalMeshComponent->RefreshBoneTransforms();
-	//}
 
 	// Update the material list. Not ideal to do it every tick, but tracking changes on materials in the current instance is not easy right now.
 	if (PreviewSkeletalMeshComponents.Num()>0)
@@ -358,6 +183,109 @@ void SCustomizableObjectEditorViewportTabBody::Tick(const FGeometry& AllottedGeo
 }
 
 
+void SCustomizableObjectEditorViewportTabBody::ShowGizmoClipMorph(UCustomizableObjectNodeMeshClipMorph& ClipPlainNode) const
+{
+	if (const TSharedPtr<SWidget> Toolbar = ViewportToolbarTransformWidget.Pin())
+	{
+		Toolbar->SetVisibility(EVisibility::Visible);		
+	}
+
+	LevelViewportClient->ShowGizmoClipMorph(ClipPlainNode);
+}
+
+
+void SCustomizableObjectEditorViewportTabBody::HideGizmoClipMorph() const
+{
+	if (const TSharedPtr<SWidget> Toolbar = ViewportToolbarTransformWidget.Pin())
+	{
+		Toolbar->SetVisibility(EVisibility::Hidden);		
+	}
+
+	LevelViewportClient->HideGizmoClipMorph();
+}
+
+
+void SCustomizableObjectEditorViewportTabBody::ShowGizmoClipMesh(UCustomizableObjectNodeMeshClipWithMesh& ClipMeshNode, UStaticMesh& ClipMesh) const
+{
+	if (const TSharedPtr<SWidget> Toolbar = ViewportToolbarTransformWidget.Pin())
+	{
+		Toolbar->SetVisibility(EVisibility::Visible);		
+	}
+	
+	LevelViewportClient->ShowGizmoClipMesh(ClipMeshNode, ClipMesh);
+}
+
+
+void SCustomizableObjectEditorViewportTabBody::HideGizmoClipMesh() const
+{
+	if (const TSharedPtr<SWidget> Toolbar = ViewportToolbarTransformWidget.Pin())
+	{
+		Toolbar->SetVisibility(EVisibility::Hidden);		
+	}
+	
+	LevelViewportClient->HideGizmoClipMesh();
+}
+
+
+void SCustomizableObjectEditorViewportTabBody::ShowGizmoProjector(
+	const FWidgetLocationDelegate& WidgetLocationDelegate, const FOnWidgetLocationChangedDelegate& OnWidgetLocationChangedDelegate,
+	const FWidgetDirectionDelegate& WidgetDirectionDelegate, const FOnWidgetDirectionChangedDelegate& OnWidgetDirectionChangedDelegate,
+	const FWidgetUpDelegate& WidgetUpDelegate, const FOnWidgetUpChangedDelegate& OnWidgetUpChangedDelegate,
+	const FWidgetScaleDelegate& WidgetScaleDelegate, const FOnWidgetScaleChangedDelegate& OnWidgetScaleChangedDelegate,
+	const FWidgetAngleDelegate& WidgetAngleDelegate,
+	const FProjectorTypeDelegate& ProjectorTypeDelegate,
+	const FWidgetColorDelegate& WidgetColorDelegate,
+	const FWidgetTrackingStartedDelegate& WidgetTrackingStartedDelegate) const
+{
+	if (const TSharedPtr<SWidget> Toolbar = ViewportToolbarTransformWidget.Pin())
+	{
+		Toolbar->SetVisibility(EVisibility::Visible);		
+	}
+
+	LevelViewportClient->ShowGizmoProjector(WidgetLocationDelegate, OnWidgetLocationChangedDelegate,
+		WidgetDirectionDelegate, OnWidgetDirectionChangedDelegate,
+		WidgetUpDelegate, OnWidgetUpChangedDelegate,
+		WidgetScaleDelegate, OnWidgetScaleChangedDelegate,
+		WidgetAngleDelegate,
+		ProjectorTypeDelegate,
+		WidgetColorDelegate,
+		WidgetTrackingStartedDelegate);
+}
+
+
+void SCustomizableObjectEditorViewportTabBody::HideGizmoProjector() const
+{
+	if (const TSharedPtr<SWidget> Toolbar = ViewportToolbarTransformWidget.Pin())
+	{
+		Toolbar->SetVisibility(EVisibility::Hidden);		
+	}
+	
+	LevelViewportClient->HideGizmoProjector();
+}
+
+
+void SCustomizableObjectEditorViewportTabBody::ShowGizmoLight(ULightComponent& SelectedLight) const
+{
+	if (const TSharedPtr<SWidget> Toolbar = ViewportToolbarTransformWidget.Pin())
+	{
+		Toolbar->SetVisibility(EVisibility::Visible);		
+	}
+	
+	LevelViewportClient->ShowGizmoLight(SelectedLight);
+}
+
+
+void SCustomizableObjectEditorViewportTabBody::HideGizmoLight() const
+{
+	if (const TSharedPtr<SWidget> Toolbar = ViewportToolbarTransformWidget.Pin())
+	{
+		Toolbar->SetVisibility(EVisibility::Hidden);		
+	}
+	
+	LevelViewportClient->HideGizmoLight();
+}
+
+
 void SCustomizableObjectEditorViewportTabBody::SetPreviewComponents(const TArray<UDebugSkelMeshComponent*>& InSkeletalMeshComponents)
 {
 	FTransform Transform = FTransform::Identity;
@@ -368,7 +296,6 @@ void SCustomizableObjectEditorViewportTabBody::SetPreviewComponents(const TArray
 		{
 			Transform = PreviewSkeletalMeshComponent->GetComponentToWorld();
 			PreviewScenePtr->RemoveComponent(PreviewSkeletalMeshComponent);
-			//PreviewSkeletalMeshComponent->DestroyComponent();
 		}
 	}
 
@@ -426,15 +353,15 @@ void SCustomizableObjectEditorViewportTabBody::BindCommands()
 
 	CommandList.MapAction(
 		Commands.SetShowGrid,
-		FExecuteAction::CreateSP( EditorViewportClientRef, &FCustomizableObjectEditorViewportClient::SetShowGrid ),
+		FExecuteAction::CreateSP( EditorViewportClientRef, &FCustomizableObjectEditorViewportClient::UpdateShowGridFromButton),
 		FCanExecuteAction(),
-		FIsActionChecked::CreateSP( EditorViewportClientRef, &FCustomizableObjectEditorViewportClient::IsSetShowGridChecked ) );
+		FIsActionChecked::CreateSP( EditorViewportClientRef, &FCustomizableObjectEditorViewportClient::IsShowGridChecked ) );
 
 	CommandList.MapAction(
 		Commands.SetShowSky,
-		FExecuteAction::CreateSP(EditorViewportClientRef, &FCustomizableObjectEditorViewportClient::SetShowSky),
+		FExecuteAction::CreateSP(EditorViewportClientRef, &FCustomizableObjectEditorViewportClient::UpdateShowSkyFromButton),
 		FCanExecuteAction(),
-		FIsActionChecked::CreateSP(EditorViewportClientRef, &FCustomizableObjectEditorViewportClient::IsSetShowSkyChecked));
+		FIsActionChecked::CreateSP(EditorViewportClientRef, &FCustomizableObjectEditorViewportClient::IsShowSkyChecked));
 
 	CommandList.MapAction(
 		Commands.SetShowBounds,
@@ -450,63 +377,10 @@ void SCustomizableObjectEditorViewportTabBody::BindCommands()
 
 	// Menu
 	CommandList.MapAction(
-		Commands.SetShowPivot,
-		FExecuteAction::CreateSP( EditorViewportClientRef, &FCustomizableObjectEditorViewportClient::SetShowPivot ),
-		FCanExecuteAction(),
-		FIsActionChecked::CreateSP( EditorViewportClientRef, &FCustomizableObjectEditorViewportClient::IsSetShowPivotChecked ) );
-
-
-	CommandList.MapAction(
 		Commands.BakeInstance,
 		FExecuteAction::CreateSP(EditorViewportClientRef, &FCustomizableObjectEditorViewportClient::BakeInstance),
 		FCanExecuteAction(),
 		FIsActionChecked());
-
-	// In-viewport tool bar
-
-	//Bind menu commands
-	const FCustomizableObjectEditorViewportMenuCommands& MenuActions = FCustomizableObjectEditorViewportMenuCommands::Get();
-
-	//CommandList.MapAction(
-	//	MenuActions.CameraFollow,
-	//	FExecuteAction::CreateSP(this, &SCustomizableObjectEditorViewport::ToggleCameraFollow),
-	//	FCanExecuteAction::CreateSP(this, &SCustomizableObjectEditorViewport::CanChangeCameraMode),
-	//	FIsActionChecked::CreateSP(this, &SCustomizableObjectEditorViewport::IsCameraFollowEnabled));
-
-	//CommandList.MapAction(
-	//	MenuActions.PreviewSceneSettings,
-	//	FExecuteAction::CreateSP(this, &SCustomizableObjectEditorViewport::OpenPreviewSceneSettings));
-
-	//CommandList.MapAction(
-	//	MenuActions.SetCPUSkinning,
-	//	FExecuteAction::CreateSP(EditorViewportClientRef, &FCustomizableObjectEditorViewportClient::ToggleCPUSkinning),
-	//	FCanExecuteAction(),
-	//	FIsActionChecked::CreateSP(EditorViewportClientRef, &FCustomizableObjectEditorViewportClient::IsSetCPUSkinningChecked));
-
-	//CommandList.MapAction(
-	//	MenuActions.SetShowNormals,
-	//	FExecuteAction::CreateSP(EditorViewportClientRef, &FCustomizableObjectEditorViewportClient::ToggleShowNormals),
-	//	FCanExecuteAction(),
-	//	FIsActionChecked::CreateSP(EditorViewportClientRef, &FCustomizableObjectEditorViewportClient::IsSetShowNormalsChecked));
-
-	//CommandList.MapAction(
-	//	MenuActions.SetShowTangents,
-	//	FExecuteAction::CreateSP(EditorViewportClientRef, &FCustomizableObjectEditorViewportClient::ToggleShowTangents),
-	//	FCanExecuteAction(),
-	//	FIsActionChecked::CreateSP(EditorViewportClientRef, &FCustomizableObjectEditorViewportClient::IsSetShowTangentsChecked));
-
-	//CommandList.MapAction(
-	//	MenuActions.SetShowBinormals,
-	//	FExecuteAction::CreateSP(EditorViewportClientRef, &FCustomizableObjectEditorViewportClient::ToggleShowBinormals),
-	//	FCanExecuteAction(),
-	//	FIsActionChecked::CreateSP(EditorViewportClientRef, &FCustomizableObjectEditorViewportClient::IsSetShowBinormalsChecked));
-
-	//CommandList.MapAction(
-	//	MenuActions.AnimSetDrawUVs,
-	//	FExecuteAction::CreateSP(EditorViewportClientRef, &FCustomizableObjectEditorViewportClient::ToggleDrawUVOverlay),
-	//	FCanExecuteAction(),
-	//	FIsActionChecked::CreateSP(EditorViewportClientRef, &FCustomizableObjectEditorViewportClient::IsSetDrawUVOverlayChecked));
-
 
 	//Bind LOD preview menu commands
 	const FCustomizableObjectEditorViewportLODCommands& ViewportLODMenuCommands = FCustomizableObjectEditorViewportLODCommands::Get();
@@ -529,19 +403,19 @@ void SCustomizableObjectEditorViewportTabBody::BindCommands()
 		ViewportLODMenuCommands.TranslateMode,
 		FExecuteAction::CreateSP(this, &SCustomizableObjectEditorViewportTabBody::ProjectorCheckboxStateChanged, UE::Widget::WM_Translate),
 		FCanExecuteAction(),
-		FIsActionChecked());
+		FIsActionChecked::CreateSP(this, &SCustomizableObjectEditorViewportTabBody::IsProjectorCheckboxState, UE::Widget::WM_Translate));
 
 	CommandList.MapAction(
 		ViewportLODMenuCommands.RotateMode,
 		FExecuteAction::CreateSP(this, &SCustomizableObjectEditorViewportTabBody::ProjectorCheckboxStateChanged, UE::Widget::WM_Rotate),
 		FCanExecuteAction(),
-		FIsActionChecked());
+		FIsActionChecked::CreateSP(this, &SCustomizableObjectEditorViewportTabBody::IsProjectorCheckboxState, UE::Widget::WM_Rotate));
 
 	CommandList.MapAction(
 		ViewportLODMenuCommands.ScaleMode,
 		FExecuteAction::CreateSP(this, &SCustomizableObjectEditorViewportTabBody::ProjectorCheckboxStateChanged, UE::Widget::WM_Scale),
 		FCanExecuteAction(),
-		FIsActionChecked());
+		FIsActionChecked::CreateSP(this, &SCustomizableObjectEditorViewportTabBody::IsProjectorCheckboxState, UE::Widget::WM_Scale));
 
 	CommandList.MapAction(
 		ViewportLODMenuCommands.RotationGridSnap,
@@ -636,12 +510,6 @@ void SCustomizableObjectEditorViewportTabBody::OnTakeHighResScreenshot()
 }
 
 
-bool SCustomizableObjectEditorViewportTabBody::GetIsManipulatingGizmo()
-{
-	return LevelViewportClient->GetIsManipulating();
-}
-
-
 void SCustomizableObjectEditorViewportTabBody::SetCameraMode(bool Value)
 {
 	LevelViewportClient->SetCameraMode(Value);
@@ -655,54 +523,26 @@ bool SCustomizableObjectEditorViewportTabBody::IsCameraModeActive(int Value)
 }
 
 
-void SCustomizableObjectEditorViewportTabBody::SetDrawDefaultUVMaterial(bool bIsCompilation)
+void SCustomizableObjectEditorViewportTabBody::SetDrawDefaultUVMaterial()
 {
-	GenerateUVMaterialOptions();
-	bool bMaterialFound = false;
-
-	if (!ArrayUVMaterialOptionString.IsEmpty())
-	{
-		if (!bIsCompilation && SelectedUVMaterial.IsValid())
-		{
-			// We check if the selected Material still exists after the update
-			FString MaterialName = *SelectedUVMaterial;
-
-			for (int32 MaterialIndex = 0; MaterialIndex < ArrayUVMaterialOptionString.Num(); ++MaterialIndex)
-			{
-				if (MaterialName == *ArrayUVMaterialOptionString[MaterialIndex])
-				{
-					bMaterialFound = true;
-					break;
-				}
-			}
-		}
-
-		if (bIsCompilation || !bMaterialFound)
-		{
-			LevelViewportClient->SetDrawUVOverlayMaterial(*(ArrayUVMaterialOptionString[0]), "0");
-			SelectedUVMaterial = ArrayUVMaterialOptionString[0];
-		}
-	}
-	else
-	{
-		SelectedUVMaterial = nullptr;
-	}
-
+	GenerateUVSectionOptions();
 	GenerateUVChannelOptions();
-
-	if (!ArrayUVChannelOptionString.IsEmpty() && (bIsCompilation || !bMaterialFound))
+	
+	if (!SelectedUVSection ||
+		!SelectedUVChannel)
 	{
-		SelectedUVChannel = ArrayUVChannelOptionString[0];
+		LevelViewportClient->SetDrawUV(-1, -1, -1, -1);
 	}
 	else
 	{
-		SelectedUVChannel = nullptr;
-	}
+		const int32 SectionOptionIndex = UVSectionOptionString.IndexOfByKey(SelectedUVSection);
+		check(SectionOptionIndex != INDEX_NONE);
+		const FSection& Section = UVSectionOption[SectionOptionIndex];
 
-	if (UVMaterialOptionCombo.IsValid() && UVChannelOptionCombo.IsValid())
-	{
-		UVMaterialOptionCombo->SetSelectedItem(SelectedUVMaterial);
-		UVChannelOptionCombo->SetSelectedItem(SelectedUVChannel);
+		const int32 UVIndex = UVChannelOptionString.IndexOfByKey(SelectedUVChannel);
+		check(UVIndex != INDEX_NONE);
+	
+		LevelViewportClient->SetDrawUV(Section.ComponentIndex, Section.LODIndex, Section.SectionIndex, UVIndex);
 	}
 }
 
@@ -733,21 +573,10 @@ int32 SCustomizableObjectEditorViewportTabBody::GetViewportCameraSpeed()
 
 TSharedRef<SWidget> SCustomizableObjectEditorViewportTabBody::BuildToolBar()
 {
-	//FToolBarBuilder SaveThumbnailToolbarBuilder(GetToolkitCommands());
-	//{
-	//	SaveThumbnailToolbarBuilder.AddToolBarButton(FCustomizableObjectEditorViewportCommands::Get().SaveThumbnail);
-	//}
-
-
 	FToolBarBuilder CommandToolbarBuilder(UICommandList, FMultiBoxCustomization::None);
 	{
 		CommandToolbarBuilder.AddToolBarButton(FCustomizableObjectEditorViewportCommands::Get().SetShowGrid);
 		CommandToolbarBuilder.AddToolBarButton(FCustomizableObjectEditorViewportCommands::Get().SetShowSky);
-		//CommandToolbarBuilder.AddToolBarButton(FCustomizableObjectEditorViewportCommands::Get().SetShowBounds);
-		//CommandToolbarBuilder.AddToolBarButton(FCustomizableObjectEditorViewportCommands::Get().SetShowPivot);
-		//CommandToolbarBuilder.AddToolBarButton(FCustomizableObjectEditorViewportCommands::Get().SetShowNormals);
-		//CommandToolbarBuilder.AddToolBarButton(FCustomizableObjectEditorViewportCommands::Get().SetShowTangents);
-		//CommandToolbarBuilder.AddToolBarButton(FCustomizableObjectEditorViewportCommands::Get().SetShowBinormals);
 	}
 	CommandToolbarBuilder.BeginSection("Material UVs");
 	{
@@ -794,85 +623,22 @@ TSharedRef<SWidget> SCustomizableObjectEditorViewportTabBody::GenerateUVMaterial
 	MenuBuilder.BeginSection("ShowUV");
 	{
 		// Generating an array with all the options of the combobox 
-		GenerateUVMaterialOptions();
-
-		// Sorting array
-        ArrayUVMaterialOptionString.Sort(::CompareNames);
-
-		// Setting initial selected option
-		if (ArrayUVMaterialOptionString.Num())
-		{
-			bool bFound = false;
-
-			if (SelectedUVMaterial.IsValid())
-			{
-				for (int32 i = 0; i < ArrayUVMaterialOptionString.Num(); ++i)
-				{
-					if (*SelectedUVMaterial == *ArrayUVMaterialOptionString[i])
-					{
-						bFound = true;
-						SelectedUVMaterial = ArrayUVMaterialOptionString[i];
-						break;
-					}
-				}
-			}
-
-			if (!bFound)
-			{
-				SelectedUVMaterial = ArrayUVMaterialOptionString[0];
-			}
-		}
-		else
-		{
-			SelectedUVMaterial = nullptr;
-		}
-	
-		UVMaterialOptionCombo = SNew(STextComboBox)
-			.OptionsSource(&ArrayUVMaterialOptionString)
-			.InitiallySelectedItem(SelectedUVMaterial)
-			.OnSelectionChanged(this, &SCustomizableObjectEditorViewportTabBody::OnMaterialChanged);
+		GenerateUVSectionOptions();
+		
+		UVSectionOptionCombo = SNew(STextComboBox)
+			.OptionsSource(&UVSectionOptionString)
+			.InitiallySelectedItem(SelectedUVSection)
+			.OnSelectionChanged(this, &SCustomizableObjectEditorViewportTabBody::OnSectionChanged);
 
 		// Generating an array with all the options of the combobox 
 		GenerateUVChannelOptions();
-
-		// Setting initial selected option
-		if (ArrayUVChannelOptionString.Num())
-		{
-			if (SelectedUVChannel.IsValid())
-			{
-				bool bFound = false;
-
-				for (int32 i = 0; i < ArrayUVChannelOptionString.Num(); ++i)
-				{
-					if (*SelectedUVChannel == *ArrayUVChannelOptionString[i])
-					{
-						bFound = true;
-						SelectedUVChannel = ArrayUVChannelOptionString[i];
-						break;
-					}
-				}
-
-				if (!bFound)
-				{
-					SelectedUVChannel = ArrayUVChannelOptionString[0];
-				}
-			}
-			else
-			{
-				SelectedUVChannel = ArrayUVChannelOptionString[0];
-			}
-		}
-		else
-		{
-			SelectedUVChannel = nullptr;
-		}
-
+		
 		UVChannelOptionCombo = SNew(STextComboBox)
-			.OptionsSource(&ArrayUVChannelOptionString)
+			.OptionsSource(&UVChannelOptionString)
 			.InitiallySelectedItem(SelectedUVChannel)
 			.OnSelectionChanged(this, &SCustomizableObjectEditorViewportTabBody::OnUVChannelChanged);
 		
-		MenuBuilder.AddWidget(UVMaterialOptionCombo.ToSharedRef(), FText::FromString(TEXT("Material")));
+		MenuBuilder.AddWidget(UVSectionOptionCombo.ToSharedRef(), FText::FromString(TEXT("Section")));
 		MenuBuilder.AddWidget(UVChannelOptionCombo.ToSharedRef(), FText::FromString(TEXT("UV Channel")));
 	}
 
@@ -898,20 +664,24 @@ TSharedRef<SWidget> SCustomizableObjectEditorViewportTabBody::ShowStateTestData(
 }
 
 
-bool SCustomizableObjectEditorViewportTabBody::IsMaterialsComboEnabled() const
+void SCustomizableObjectEditorViewportTabBody::GenerateUVSectionOptions()
 {
-	return true;
-	//return LevelViewportClient.IsValid() && LevelViewportClient->IsSetDrawUVOverlayChecked();
-}
-
-
-void SCustomizableObjectEditorViewportTabBody::GenerateUVMaterialOptions()
-{
-	ArrayUVMaterialOptionString.Empty();
-	
-	int32 ComponentIndex = 0;
-	for (UDebugSkelMeshComponent* PreviewSkeletalMeshComponent : PreviewSkeletalMeshComponents)
+	ON_SCOPE_EXIT
 	{
+		if (UVSectionOptionCombo)
+		{
+			UVSectionOptionCombo->RefreshOptions();
+			UVSectionOptionCombo->SetSelectedItem(SelectedUVSection);
+		}
+	};
+		
+	UVSectionOptionString.Empty();
+	UVSectionOption.Empty();
+	
+	for (int32 ComponentIndex = 0; ComponentIndex < PreviewSkeletalMeshComponents.Num(); ++ComponentIndex)
+	{
+		const UDebugSkelMeshComponent* PreviewSkeletalMeshComponent = PreviewSkeletalMeshComponents[ComponentIndex];
+		
 		if (PreviewSkeletalMeshComponent != nullptr && UE_MUTABLE_GETSKINNEDASSET(PreviewSkeletalMeshComponent) != nullptr && UE_MUTABLE_GETSKINNEDASSET(PreviewSkeletalMeshComponent)->GetResourceForRendering() != nullptr)
 		{
 			const TArray<UMaterialInterface*> Materials = PreviewSkeletalMeshComponent->GetMaterials();
@@ -921,99 +691,153 @@ void SCustomizableObjectEditorViewportTabBody::GenerateUVMaterialOptions()
 				for (int32 SectionIndex = 0; SectionIndex < MeshRes->LODRenderData[LODIndex].RenderSections.Num(); ++SectionIndex)
 				{
 					const FSkelMeshRenderSection& Section = MeshRes->LODRenderData[LODIndex].RenderSections[SectionIndex];
-					
-					if (!Materials.IsValidIndex(Section.MaterialIndex))
+
+					FString BaseMaterialName = FString::Printf(TEXT("Section %i"), SectionIndex);
+
+					if (Materials.IsValidIndex(Section.MaterialIndex))
 					{
-						continue;
+						if (UMaterialInterface* MaterialInterface = Materials[Section.MaterialIndex])
+						{
+							if (const UMaterial* BaseMaterial = MaterialInterface->GetBaseMaterial())
+							{
+								BaseMaterialName += " - " + BaseMaterial->GetName();
+							}
+						}
 					}
 
-					const UMaterial* BaseMaterial = Materials[Section.MaterialIndex]->GetBaseMaterial();
-					FString BaseMaterialName = BaseMaterial->GetName();
+					UVSectionOptionString.Add(MakeShared<FString>(BaseMaterialName));
 
-					BaseMaterialName += FString::Printf(TEXT(" LOD_%d_Component_%d"), LODIndex, ComponentIndex);
+					FSection SectionOption;
+					SectionOption.ComponentIndex = ComponentIndex;
+					SectionOption.SectionIndex = SectionIndex;
+					SectionOption.LODIndex = LODIndex;
 
-					ArrayUVMaterialOptionString.Add(MakeShareable(new FString(BaseMaterialName)));
+					UVSectionOption.Add(SectionOption);
 				}
 			}
 		}
-
-		ComponentIndex++;
 	}
+
+	if (SelectedUVSection)
+	{
+		if (const TSharedPtr<FString>* Result = UVSectionOptionString.FindByPredicate([this](const TSharedPtr<FString>& Other){ return *SelectedUVSection == *Other; }))
+		{
+			SelectedUVSection = *Result;
+			return;
+		}	
+	}
+	
+	SelectedUVSection = UVSectionOptionString.IsEmpty() ? nullptr : UVSectionOptionString[0];
 }
 
 
-void SCustomizableObjectEditorViewportTabBody::OnMaterialChanged(TSharedPtr<FString> Selected, ESelectInfo::Type SelectInfo)
+void SCustomizableObjectEditorViewportTabBody::OnSectionChanged(TSharedPtr<FString> Selected, ESelectInfo::Type SelectInfo)
 {
-	if (Selected.IsValid() && SelectInfo == ESelectInfo::OnMouseClick)
+	SelectedUVSection = Selected;
+	
+	// We need to update options for the new section
+	GenerateUVChannelOptions();
+
+	// Reset the UVChannel selection
+	SelectedUVChannel = UVChannelOptionString.IsEmpty() ? nullptr : UVChannelOptionString[0];
+	UVChannelOptionCombo->SetSelectedItem(SelectedUVChannel);
+	
+	if (!LevelViewportClient)
 	{
-		SelectedUVMaterial = Selected;
+		return;
+	}
 
-		//We need to update options for the new LOD
-		GenerateUVChannelOptions();
+	if (SelectedUVSection)
+	{
+		const int32 SectionOptionIndex = UVSectionOptionString.IndexOfByKey(SelectedUVSection);
+		check(SectionOptionIndex != INDEX_NONE);
+		const FSection& Section = UVSectionOption[SectionOptionIndex];
 
-		// Resets the value to the first element of the array
-		if (!ArrayUVChannelOptionString.IsEmpty())
-		{
-			SelectedUVChannel = ArrayUVChannelOptionString[0];
-			UVChannelOptionCombo->SetSelectedItem(SelectedUVChannel);
-		}
-
-		if (LevelViewportClient.IsValid() && SelectedUVChannel.IsValid())
-		{
-			LevelViewportClient->SetDrawUVOverlayMaterial(*Selected, *SelectedUVChannel);
-		}
+		const int32 UVIndex = UVChannelOptionString.IndexOfByKey(SelectedUVChannel);
+		check(UVIndex != INDEX_NONE);
+	
+		LevelViewportClient->SetDrawUV(Section.ComponentIndex, Section.LODIndex, Section.SectionIndex, UVIndex);
+	}
+	else
+	{
+		LevelViewportClient->SetDrawUV(-1, -1, -1, -1);
 	}
 }
 
 
 void SCustomizableObjectEditorViewportTabBody::GenerateUVChannelOptions()
 {
-	ArrayUVChannelOptionString.Empty();
-
-	if (!SelectedUVMaterial)
+	ON_SCOPE_EXIT
 	{
+		if (UVChannelOptionCombo)
+		{
+			UVChannelOptionCombo->RefreshOptions();
+			UVChannelOptionCombo->SetSelectedItem(SelectedUVChannel);
+		}
+	};
+	
+	UVChannelOptionString.Empty();
+	
+	if (!SelectedUVSection)
+	{
+		SelectedUVChannel = nullptr;
 		return;
 	}
+	
+	const int32 Index = UVSectionOptionString.IndexOfByKey(SelectedUVSection);
+	check(Index != INDEX_NONE);
+	const FSection& Section = UVSectionOption[Index];
 
-	FString SelectedMat = *SelectedUVMaterial;
-
-	// From String to values
-	FString NameWithLOD, ComponentString;
-	SelectedMat.Split(FString("_Component_"), &NameWithLOD, &ComponentString);
-	check(ComponentString.IsNumeric());
-	int32 ComponentIndex = FCString::Atoi(*ComponentString);
-	check(PreviewSkeletalMeshComponents.IsValidIndex(ComponentIndex));
-
-	FString Name, LODString;
-	bool bSplit = NameWithLOD.Split(FString(" LOD_"), &Name, &LODString);
-	int32 LODIndex = FCString::Atoi(*LODString);
-
-	UDebugSkelMeshComponent* PreviewSkeletalMeshComponent = PreviewSkeletalMeshComponents[ComponentIndex];
+	const UDebugSkelMeshComponent* PreviewSkeletalMeshComponent = PreviewSkeletalMeshComponents[Section.ComponentIndex];
 
 	if (PreviewSkeletalMeshComponent != nullptr && UE_MUTABLE_GETSKINNEDASSET(PreviewSkeletalMeshComponent) != nullptr
 		&& UE_MUTABLE_GETSKINNEDASSET(PreviewSkeletalMeshComponent)->GetResourceForRendering() != nullptr)
 	{
 		const FSkeletalMeshRenderData* MeshRes = UE_MUTABLE_GETSKINNEDASSET(PreviewSkeletalMeshComponent)->GetResourceForRendering();
 		
-		int32 UVChannels = MeshRes->LODRenderData[LODIndex].GetNumTexCoords();
-		
+		const int32 UVChannels = MeshRes->LODRenderData[Section.LODIndex].GetNumTexCoords();
 		for (int32 UVChan = 0; UVChan < UVChannels; ++UVChan)
 		{
-			ArrayUVChannelOptionString.Add(MakeShareable(new FString(FString::FromInt(UVChan))));
+			UVChannelOptionString.Add(MakeShareable(new FString(FString::FromInt(UVChan))));
 		}
 	}
+
+	if (SelectedUVChannel)
+	{
+		if (const TSharedPtr<FString>* Result = UVChannelOptionString.FindByPredicate([this](const TSharedPtr<FString>& Other) { return *SelectedUVChannel == *Other; }))
+		{
+			SelectedUVChannel = *Result;
+			return;
+		}
+	}
+
+	SelectedUVChannel = UVChannelOptionString.IsEmpty() ? nullptr : UVChannelOptionString[0];
 }
 
 
 void SCustomizableObjectEditorViewportTabBody::OnUVChannelChanged(TSharedPtr<FString> Selected, ESelectInfo::Type SelectInfo)
 {
-	if (Selected.IsValid() && SelectInfo == ESelectInfo::OnMouseClick)
+	SelectedUVChannel = Selected;
+
+	if (!LevelViewportClient)
 	{
-		SelectedUVChannel = Selected;
-		if (LevelViewportClient.IsValid() && SelectedUVMaterial.IsValid())
-		{
-			LevelViewportClient->SetDrawUVOverlayMaterial(*SelectedUVMaterial, *Selected);
-		}
+		return;
+	}
+
+	if (SelectedUVChannel)
+	{
+		const int32 SectionOptionIndex = UVSectionOptionString.IndexOfByKey(SelectedUVSection);
+		check(SectionOptionIndex != INDEX_NONE);
+		const FSection& Section = UVSectionOption[SectionOptionIndex];
+
+		const int32 UVIndex = UVChannelOptionString.IndexOfByKey(SelectedUVChannel);
+		check(UVIndex != INDEX_NONE);
+	
+		LevelViewportClient->SetDrawUV(Section.ComponentIndex, Section.LODIndex, Section.SectionIndex, UVIndex);
+	}
+	else
+	{
+		LevelViewportClient->SetDrawUV(-1, -1, -1, -1);
 	}
 }
 
@@ -1067,29 +891,15 @@ bool SCustomizableObjectEditorViewportTabBody::IsLODModelSelected(int32 LODSelec
 }
 
 
-void SCustomizableObjectEditorViewportTabBody::ProjectorCheckboxStateChanged(UE::Widget::EWidgetMode InNewMode)
+void SCustomizableObjectEditorViewportTabBody::ProjectorCheckboxStateChanged(const UE::Widget::EWidgetMode Mode)
 {
-	switch (InNewMode)
-	{
-		case UE::Widget::WM_Translate:
-		{
-			GetViewportClient()->SetWidgetMode(UE::Widget::WM_Translate);
-			GetViewportClient()->SetProjectorWidgetMode(UE::Widget::WM_Translate);
-			break;
-		}
-		case UE::Widget::WM_Rotate:
-		{
-			GetViewportClient()->SetWidgetMode(UE::Widget::WM_Rotate);
-			GetViewportClient()->SetProjectorWidgetMode(UE::Widget::WM_Rotate);
-			break;
-		}
-		case UE::Widget::WM_Scale:
-		{
-			GetViewportClient()->SetWidgetMode(UE::Widget::WM_Scale);
-			GetViewportClient()->SetProjectorWidgetMode(UE::Widget::WM_Scale);
-			break;
-		}
-	}
+	GetViewportClient()->SetWidgetMode(Mode);
+}
+
+
+bool SCustomizableObjectEditorViewportTabBody::IsProjectorCheckboxState(const UE::Widget::EWidgetMode Mode) const
+{
+	return GetViewportClient()->GetWidgetMode() == Mode;	
 }
 
 
@@ -1127,79 +937,26 @@ void SCustomizableObjectEditorViewportTabBody::OnSetLODModel(int32 LODSelectionT
 		if (PreviewComponent)
 		{
 			PreviewComponent->SetForcedLOD(LODSelection);
-			//PopulateUVChoices();
 		}
 	}
 }
 
-/*
-void SCustomizableObjectEditorViewportTabBody::SetEditorTransformViewportToolbar(TWeakPtr<class SCustomizableObjectEditorTransformViewportToolbar> EditorTransformViewportToolbarParam)
+
+TSharedPtr<FCustomizableObjectPreviewScene> SCustomizableObjectEditorViewportTabBody::GetPreviewScene() const
 {
-	EditorTransformViewportToolbar = EditorTransformViewportToolbarParam;
-}*/
+	return PreviewScenePtr;
+}
+
+
+TSharedPtr<FCustomizableObjectEditorViewportClient> SCustomizableObjectEditorViewportTabBody::GetViewportClient() const
+{
+	return LevelViewportClient;
+}
+
 
 void SCustomizableObjectEditorViewportTabBody::SetViewportToolbarTransformWidget(TWeakPtr<class SWidget> InTransformWidget)
 {
 	ViewportToolbarTransformWidget = InTransformWidget;
-}
-
-void SCustomizableObjectEditorViewportTabBody::UpdateGizmoDataToOrigin()
-{
-	LevelViewportClient->UpdateGizmoDataToOrigin();
-}
-
-
-void SCustomizableObjectEditorViewportTabBody::SetGizmoCallUpdateSkeletalMesh(bool Value)
-{
-	LevelViewportClient->SetGizmoCallUpdateSkeletalMesh(Value);
-}
-
-
-FString SCustomizableObjectEditorViewportTabBody::GetGizmoProjectorParameterName()
-{
-	return LevelViewportClient->GetGizmoProjectorParameterName();
-}
-
-
-FString SCustomizableObjectEditorViewportTabBody::GetGizmoProjectorParameterNameWithIndex()
-{
-	return LevelViewportClient->GetGizmoProjectorParameterNameWithIndex();
-}
-
-
-bool SCustomizableObjectEditorViewportTabBody::GetGizmoHasAssignedData()
-{
-	return LevelViewportClient->GetGizmoHasAssignedData();
-}
-
-
-bool SCustomizableObjectEditorViewportTabBody::GetGizmoAssignedDataIsFromNode()
-{
-	return LevelViewportClient->GetGizmoAssignedDataIsFromNode();
-}
-
-
-void SCustomizableObjectEditorViewportTabBody::CopyTransformFromOriginData()
-{
-    LevelViewportClient->CopyTransformFromOriginData();
-}
-
-
-void SCustomizableObjectEditorViewportTabBody::ProjectorParameterChanged(UCustomizableObjectNodeProjectorParameter* Node)
-{
-	LevelViewportClient->ProjectorParameterChanged(Node);
-}
-
-
-void SCustomizableObjectEditorViewportTabBody::ProjectorParameterChanged(UCustomizableObjectNodeProjectorConstant* Node)
-{
-	LevelViewportClient->ProjectorParameterChanged(Node);
-}
-
-
-bool SCustomizableObjectEditorViewportTabBody::AnyProjectorNodeSelected()
-{
-	return LevelViewportClient->AnyProjectorNodeSelected();
 }
 
 
@@ -1208,12 +965,6 @@ void SCustomizableObjectEditorViewportTabBody::SetCustomizableObject(UCustomizab
 	LevelViewportClient->SetCustomizableObject(CustomizableObjectParameter);
 }
 
-
-void SCustomizableObjectEditorViewportTabBody::SetAssetRegistryLoaded(bool Value)
-{
-	AssetRegistryLoaded = Value;
-	LevelViewportClient->SetAssetRegistryLoaded(Value);
-}
 
 FLinearColor SCustomizableObjectEditorViewportTabBody::GetViewportBackgroundColor() const
 {

@@ -29,7 +29,9 @@ public:
 	SLATE_BEGIN_ARGS(SEnumComboBox)
 		: _CurrentValue()
 		, _ContentPadding(FMargin(4.0, 2.0))
+		, _ComboButtonStyle(&FAppStyle::Get().GetWidgetStyle<FComboButtonStyle>("ComboButton"))
 		, _ButtonStyle(nullptr)
+		, _TextStyle(&FCoreStyle::Get().GetWidgetStyle<FTextBlockStyle>("NormalText"))
 	{}
 
 		SLATE_ATTRIBUTE(int32, CurrentValue)
@@ -37,7 +39,9 @@ public:
 		SLATE_ATTRIBUTE(FSlateFontInfo, Font)
 		SLATE_EVENT(FOnEnumSelectionChanged, OnEnumSelectionChanged)
 		SLATE_EVENT(FOnGetToolTipForValue, OnGetToolTipForValue)
+		SLATE_STYLE_ARGUMENT(FComboButtonStyle, ComboButtonStyle)
 		SLATE_STYLE_ARGUMENT(FButtonStyle, ButtonStyle)
+		SLATE_STYLE_ARGUMENT(FTextBlockStyle, TextStyle)
 		SLATE_ARGUMENT(TArray<int32>, EnumValueSubset)
 	SLATE_END_ARGS()
 

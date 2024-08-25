@@ -43,7 +43,7 @@ public:
 	NIAGARASHADER_API void AddJobs(TArray<FShaderCommonCompileJobPtr> InNewJobs);
 	NIAGARASHADER_API void ProcessAsyncResults();
 
-	void FinishCompilation(const TCHAR* ScriptName, const TArray<int32>& ShaderMapIdsToFinishCompiling);
+	void FinishCompilation(const TArray<int32>& ShaderMapIdsToFinishCompiling);
 private:
 	void ProcessCompiledNiagaraShaderMaps(TMap<int32, FNiagaraShaderMapFinalizeResults>& CompiledShaderMaps, float TimeBudget);
 

@@ -321,8 +321,8 @@ uint32 FOnlineSessionSteam::CreateInternetSession(int32 HostingPlayerNum, FNamed
 	uint32 Result = ONLINE_FAIL;
 
 	// Only allowed one published session with Steam
-	FNamedOnlineSession* MasterSession = GetGameServerSession();
-	if (MasterSession == nullptr)
+	FNamedOnlineSession* ListedSession = GetGameServerSession();
+	if (ListedSession == nullptr)
 	{
 		if (SteamSubsystem->IsSteamServerAvailable())
 		{
@@ -660,7 +660,7 @@ uint32 FOnlineSessionSteam::DestroyInternetSession(FNamedOnlineSession* Session,
 
 	if (bSteamworksGameServerConnected && GameServerSteamId->IsValid())
 	{
-		// Logoff the master server
+		// Remove this server from the server list
 		FOnlineAsyncTaskSteamLogoffServer* LogoffTask = new FOnlineAsyncTaskSteamLogoffServer(SteamSubsystem, Session->SessionName);
 		SteamSubsystem->QueueAsyncTask(LogoffTask);
 	}
@@ -828,7 +828,7 @@ bool FOnlineSessionSteam::CancelFindSessions()
 		}
 		else
 		{
-			// @TODO ONLINE Master Server Version
+			// @TODO ONLINE Server list version
 			Return = ONLINE_SUCCESS;
 			// There is no CANCEL lobby query
 			// NULLing out the object will prevent the async event from adding the results
@@ -1338,19 +1338,19 @@ FString FOnlineSessionSteam::GetCustomDedicatedServerName() const
 {
 	FString ServerName;
 
-	if (FParse::Value(FCommandLine::Get(), TEXT("-SteamServerName="), ServerName))
+	if (!FParse::Value(FCommandLine::Get(), TEXT("-SteamServerName="), ServerName))
 	{
-		if (ServerName.Len() >= k_cbMaxGameServerName)
-		{
-			UE_LOG_ONLINE_SESSION(Warning, TEXT("SteamServerName overflows the maximum amount of characters %d allowed, truncating."), k_cbMaxGameServerName);
-			// Must have space for the null terminator
-			ServerName.LeftInline(k_cbMaxGameServerName - 1);
-		}
-
-		return ServerName;
+		GConfig->GetString(TEXT("OnlineSubsystemSteam"), TEXT("SteamServerName"), ServerName, GEngineIni);
 	}
-	
-	return TEXT("");
+
+	if (ServerName.Len() >= k_cbMaxGameServerName)
+	{
+		UE_LOG_ONLINE_SESSION(Warning, TEXT("SteamServerName overflows the maximum amount of characters %d allowed, truncating."), k_cbMaxGameServerName);
+		// Must have space for the null terminator
+		ServerName.LeftInline(k_cbMaxGameServerName - 1);
+	}
+
+	return ServerName;
 }
 
 FUniqueNetIdPtr FOnlineSessionSteam::CreateSessionIdFromString(const FString& SessionIdStr)

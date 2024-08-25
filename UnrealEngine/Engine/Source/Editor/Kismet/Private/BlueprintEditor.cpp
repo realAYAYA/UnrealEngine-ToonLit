@@ -419,25 +419,22 @@ namespace BlueprintEditorImpl
 		// IPinTypeSelectorFilter interface
 		virtual bool ShouldShowPinTypeTreeItem(FPinTypeTreeItem InItem) const override
 		{
-			const FSoftObjectPath& AssetReference = InItem->GetSubCategoryObjectAsset();
 			FTopLevelAssetPath TopLevelAssetPath;
-
-			if (AssetReference.IsAsset())
+			const FAssetData& AssetData = InItem->GetCachedAssetData();
+			if (AssetData.IsValid())
 			{
-				TopLevelAssetPath = FTopLevelAssetPath(AssetReference.GetLongPackageFName(), *AssetReference.GetAssetName());
+				TopLevelAssetPath = FTopLevelAssetPath(AssetData.PackageName, AssetData.AssetName);
 			}
 
 			// First check pin type permissions
-			if (!FBlueprintActionDatabase::IsPinTypeAllowed(InItem->GetPinType(false), TopLevelAssetPath))
+			if (!FBlueprintActionDatabase::IsPinTypeAllowed(InItem->GetPinTypeNoResolve(), TopLevelAssetPath))
 			{
 				return false;
 			}
 
 			// Then asset permissions
-			if(AssetReferenceFilter.IsValid() && AssetReference.IsValid())
+			if(AssetReferenceFilter.IsValid() && AssetData.IsValid())
 			{
-				FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-				FAssetData AssetData = AssetRegistryModule.Get().GetAssetByObjectPath(AssetReference.GetWithoutSubPath());
 				if (!AssetReferenceFilter->PassesFilter(AssetData))
 				{
 					return false;
@@ -1195,6 +1192,28 @@ UObject* FBlueprintEditor::GetSubobjectEditorObjectContext() const
 
 void FBlueprintEditor::OnSelectionUpdated(const TArray<TSharedPtr<FSubobjectEditorTreeNode>>& SelectedNodes)
 {
+	// Check whether the active component visualizer is relevant for the selected components ...
+	if (const TSharedPtr<FComponentVisualizer> ComponentVisualizer = GUnrealEd->ComponentVisManager.GetActiveComponentVis())
+	{
+		bool bClearActiveVisualizer = true;
+		for (const FSubobjectEditorTreeNodePtrType& SelectedNode : SelectedNodes)
+		{
+			const FSubobjectData* const Data = SelectedNode->GetDataSource();
+			const UActorComponent* const Component = Data ? Data->FindComponentInstanceInActor(GetPreviewActor()) : nullptr;
+			if (Component != nullptr && Component->IsRegistered() && Component == ComponentVisualizer->GetEditedComponent())
+			{
+				bClearActiveVisualizer = false;
+				break;
+			}
+		}
+
+		// If the relevant component for the active visualizer is no longer selected, clear the active visualizer.
+		if (bClearActiveVisualizer)
+		{
+			GUnrealEd->ComponentVisManager.ClearActiveComponentVis();
+		}
+	}
+
 	if (SubobjectViewport.IsValid())
 	{
 		SubobjectViewport->OnComponentSelectionChanged();
@@ -1614,6 +1633,10 @@ TSharedRef<SGraphEditor> FBlueprintEditor::CreateGraphEditorWidget(TSharedRef<FT
 			GraphEditorCommands->MapAction( FGraphEditorCommands::Get().CreateComment,
 				FExecuteAction::CreateSP( this, &FBlueprintEditor::OnCreateComment )
 				);
+				
+			GraphEditorCommands->MapAction( FGraphEditorCommands::Get().CreateCustomEvent,
+				FExecuteAction::CreateSP( this, &FBlueprintEditor::OnCreateCustomEvent )
+				);
 
 			GraphEditorCommands->MapAction(FGraphEditorCommands::Get().ShowAllPins,
 				FExecuteAction::CreateSP(this, &FBlueprintEditor::SetPinVisibility, SGraphEditor::Pin_Show)
@@ -1628,7 +1651,27 @@ TSharedRef<SGraphEditor> FBlueprintEditor::CreateGraphEditorWidget(TSharedRef<FT
 				);
 
 			GraphEditorCommands->MapAction( FGraphEditorCommands::Get().FindReferences,
-				FExecuteAction::CreateSP( this, &FBlueprintEditor::OnFindReferences ),
+				FExecuteAction::CreateSP( this, &FBlueprintEditor::OnFindReferences, /*bSearchAllBlueprints=*/false, EGetFindReferenceSearchStringFlags::Legacy),
+				FCanExecuteAction::CreateSP( this, &FBlueprintEditor::CanFindReferences )
+				);
+			
+			GraphEditorCommands->MapAction( FGraphEditorCommands::Get().FindReferencesByNameLocal,
+				FExecuteAction::CreateSP( this, &FBlueprintEditor::OnFindReferences, /*bSearchAllBlueprints=*/false, EGetFindReferenceSearchStringFlags::None ),
+				FCanExecuteAction::CreateSP( this, &FBlueprintEditor::CanFindReferences )
+				);
+			
+			GraphEditorCommands->MapAction( FGraphEditorCommands::Get().FindReferencesByNameGlobal,
+				FExecuteAction::CreateSP( this, &FBlueprintEditor::OnFindReferences, /*bSearchAllBlueprints=*/true, EGetFindReferenceSearchStringFlags::None ),
+				FCanExecuteAction::CreateSP( this, &FBlueprintEditor::CanFindReferences )
+				);
+			
+			GraphEditorCommands->MapAction( FGraphEditorCommands::Get().FindReferencesByClassMemberLocal,
+				FExecuteAction::CreateSP( this, &FBlueprintEditor::OnFindReferences, /*bSearchAllBlueprints=*/false, EGetFindReferenceSearchStringFlags::UseSearchSyntax ),
+				FCanExecuteAction::CreateSP( this, &FBlueprintEditor::CanFindReferences )
+				);
+			
+			GraphEditorCommands->MapAction( FGraphEditorCommands::Get().FindReferencesByClassMemberGlobal,
+				FExecuteAction::CreateSP( this, &FBlueprintEditor::OnFindReferences, /*bSearchAllBlueprints=*/true, EGetFindReferenceSearchStringFlags::UseSearchSyntax ),
 				FCanExecuteAction::CreateSP( this, &FBlueprintEditor::CanFindReferences )
 				);
 
@@ -2014,7 +2057,8 @@ void FBlueprintEditor::CommonInitialization(const TArray<UBlueprint*>& InitBluep
 		// Update the blueprint if required
 		EBlueprintStatus OldStatus = InitBlueprint->Status;
 		EnsureBlueprintIsUpToDate(InitBlueprint);
-		bBlueprintModifiedOnOpen = (InitBlueprint->Status != OldStatus);
+		UPackage* BpPackage = InitBlueprint->GetOutermost();
+		bBlueprintModifiedOnOpen = (InitBlueprint->Status != OldStatus) && !BpPackage->HasAnyPackageFlags(PKG_NewlyCreated);
 
 		// Flag the blueprint as having been opened
 		InitBlueprint->bIsNewlyCreated = false;
@@ -2024,6 +2068,8 @@ void FBlueprintEditor::CommonInitialization(const TArray<UBlueprint*>& InitBluep
 		InitBlueprint->OnCompiled().AddSP(this, &FBlueprintEditor::OnBlueprintCompiled);
 		InitBlueprint->OnSetObjectBeingDebugged().AddSP(this, &FBlueprintEditor::HandleSetObjectBeingDebugged);
 	}
+
+	bWasOpenedInDefaultsMode = bShouldOpenInDefaultsMode;
 
 	CreateDefaultTabContents(InitBlueprints);
 
@@ -2057,13 +2103,25 @@ void FBlueprintEditor::LoadLibrariesFromAssetRegistry()
 			TArray<FAssetData> AssetData;
 			AssetRegistryModule.Get().GetAssetsByClass(UBlueprint::StaticClass()->GetClassPathName(), AssetData);
 
-			GWarn->BeginSlowTask(LOCTEXT("LoadingBlueprintAssetData", "Loading Blueprint Asset Data"), true);
-
 			const FName BPTypeName(GET_MEMBER_NAME_STRING_CHECKED(UBlueprint, BlueprintType));
-			const FName BPNamespaceName(GET_MEMBER_NAME_STRING_CHECKED(UBlueprint, BlueprintNamespace));
-			const FString BPMacroTypeStr(TEXT("BPTYPE_MacroLibrary"));
-			const FString BPFunctionTypeStr(TEXT("BPTYPE_FunctionLibrary"));
+			TArray<const FAssetData*> RelevantAssets;
+			const TCHAR* BPMacroTypeStr = TEXT("BPTYPE_MacroLibrary");
+			const TCHAR* BPFunctionTypeStr = TEXT("BPTYPE_FunctionLibrary");
+			for (const FAssetData& AssetEntry : AssetData)
+			{
+				const FString AssetBPType = AssetEntry.GetTagValueRef<FString>(BPTypeName);
 
+				// Only check for Blueprint Macros & Functions in the asset data for loading
+				if ((AssetBPType == BPMacroTypeStr) || (AssetBPType == BPFunctionTypeStr))
+				{
+					RelevantAssets.Add(&AssetEntry);
+				}
+			}
+
+			FScopedSlowTask LoadingMacrosAndFunctions(RelevantAssets.Num(), LOCTEXT("LoadingBlueprintAssetData", "Loading Blueprint Asset Data"));
+			LoadingMacrosAndFunctions.Visibility = ESlowTaskVisibility::Important; // this function can be very slow, users will benefit from our messages
+			const FName BPNamespaceName(GET_MEMBER_NAME_STRING_CHECKED(UBlueprint, BlueprintNamespace));
+			
 			struct FExpensiveObjectRecord
 			{
 				FExpensiveObjectRecord() : Seconds(0.0) {}
@@ -2078,54 +2136,45 @@ void FBlueprintEditor::LoadLibrariesFromAssetRegistry()
 			int32 NumLibariesLoaded = 0;
 
 			const double StartTimeAll = FPlatformTime::Seconds();
-			int32 AssetIndexBeingProcessed = 0;
-			for (const FAssetData& AssetEntry : AssetData)
+			for (const FAssetData* AssetEntryPtr : RelevantAssets)
 			{
-				const FString AssetBPType = AssetEntry.GetTagValueRef<FString>(BPTypeName);
+				const FAssetData& AssetEntry = *AssetEntryPtr;
+				const FString BlueprintPath = AssetEntry.GetSoftObjectPath().ToString();
 
-				// Only check for Blueprint Macros & Functions in the asset data for loading
-				if ((AssetBPType == BPMacroTypeStr) || (AssetBPType == BPFunctionTypeStr))
-				{
-					const FString BlueprintPath = AssetEntry.ToSoftObjectPath().ToString();
-
-					// See if this passes the namespace check
-					bool bAllowLoadBP = !ImportedNamespaceHelper.IsValid() || ImportedNamespaceHelper->IsImportedAsset(AssetEntry);
+				// See if this passes the namespace check
+				bool bAllowLoadBP = !ImportedNamespaceHelper.IsValid() || ImportedNamespaceHelper->IsImportedAsset(AssetEntry);
 					
-					// For blueprints inside developers folder, only allow the ones inside current user's developers folder.
-					if (bAllowLoadBP)
+				// For blueprints inside developers folder, only allow the ones inside current user's developers folder.
+				if (bAllowLoadBP)
+				{
+					if (BlueprintPath.StartsWith(DeveloperPath) && 
+						!BlueprintPath.StartsWith(UserDeveloperPath))
 					{
-						if (BlueprintPath.StartsWith(DeveloperPath))
-						{
-							if (!BlueprintPath.StartsWith(UserDeveloperPath))
-							{
-								bAllowLoadBP = false;
-							}
-						}
-					}
-
-					if (bAllowLoadBP)
-					{
-						GWarn->StatusUpdate(AssetIndexBeingProcessed, AssetData.Num(), FText::FromName(AssetEntry.AssetName));
-
-						++NumLibariesLoaded;
-						const double StartTime = FPlatformTime::Seconds();
-
-						// Load the blueprint
-						UBlueprint* BlueprintLibPtr = LoadObject<UBlueprint>(nullptr, *BlueprintPath, nullptr, 0, nullptr);
-						if (BlueprintLibPtr)
-						{
-							StandardLibraries.AddUnique(BlueprintLibPtr);
-						}
-
-						const double ElapsedTime = FPlatformTime::Seconds() - StartTime;
-						if (ElapsedTime > MinSecondsToReportExpensiveObject)
-						{
-							ExpensiveObjects.Add(FExpensiveObjectRecord(ElapsedTime, AssetEntry.PackageName));
-						}
+						bAllowLoadBP = false;
 					}
 				}
 
-				++AssetIndexBeingProcessed;
+				if (bAllowLoadBP)
+				{
+					LoadingMacrosAndFunctions.EnterProgressFrame(1.f, 
+						FText::Format(LOCTEXT("LoadingFuncMacroLib", "Loading Function or Macro library: {0}"), FText::FromName(AssetEntry.AssetName)));
+
+					++NumLibariesLoaded;
+					const double StartTime = FPlatformTime::Seconds();
+
+					// Load the blueprint
+					UBlueprint* BlueprintLibPtr = LoadObject<UBlueprint>(nullptr, *BlueprintPath, nullptr, 0, nullptr);
+					if (BlueprintLibPtr)
+					{
+						StandardLibraries.AddUnique(BlueprintLibPtr);
+					}
+
+					const double ElapsedTime = FPlatformTime::Seconds() - StartTime;
+					if (ElapsedTime > MinSecondsToReportExpensiveObject)
+					{
+						ExpensiveObjects.Add(FExpensiveObjectRecord(ElapsedTime, AssetEntry.PackageName));
+					}
+				}
 			}
 
 			if (ExpensiveObjects.Num() > 0)
@@ -2141,8 +2190,6 @@ void FBlueprintEditor::LoadLibrariesFromAssetRegistry()
 					UE_LOG(LogBlueprintEditor, Log, TEXT("Perf: %.1f seconds loading: %s"), ExpensiveObjectRecord.Seconds, *ExpensiveObjectRecord.Path.ToString());
 				}
 			}
-
-			GWarn->EndSlowTask();
 		}
 	}
 }
@@ -2717,6 +2764,14 @@ FReply FBlueprintEditor::OnEditParentClassClicked()
 			if (ParentBlueprintGeneratedClass)
 			{
 				GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(ParentBlueprintGeneratedClass->ClassGeneratedBy);
+				
+				if (UObject* DebugObject = Blueprint->GetObjectBeingDebugged())
+				{
+					if (UBlueprint* ParentBlueprint = Cast<UBlueprint>(ParentBlueprintGeneratedClass->ClassGeneratedBy))
+					{
+						ParentBlueprint->SetObjectBeingDebugged(DebugObject);
+					}
+				}
 			}
 		}
 	}
@@ -2930,15 +2985,15 @@ void FBlueprintEditor::CreateDefaultTabContents(const TArray<UBlueprint*>& InBlu
 
 	if ( InBlueprints.Num() > 0 )
 	{
-		const bool bShowPublicView = true;
-		const bool bHideNameArea = false;
+		// Don't show the object name in defaults mode.
+		const bool bHideNameArea = bWasOpenedInDefaultsMode;
 
 		this->DefaultEditor = 
 			SNew(SKismetInspector)
 			. Kismet2(SharedThis(this))
 			. ViewIdentifier(FName("BlueprintDefaults"))
 			. IsEnabled(!bIsInterface)
-			. ShowPublicViewControl(bShowPublicView)
+			. ShowPublicViewControl(this, &FBlueprintEditor::ShouldShowPublicViewControl)
 			. ShowTitleArea(false)
 			. HideNameArea(bHideNameArea)
 			. OnFinishedChangingProperties( FOnFinishedChangingProperties::FDelegate::CreateSP( this, &FBlueprintEditor::OnFinishedChangingProperties ) );
@@ -3523,20 +3578,32 @@ bool FBlueprintEditor::IsDetailsPanelEditingGlobalOptions() const
 
 void FBlueprintEditor::EditGlobalOptions_Clicked()
 {
-	UBlueprint* Blueprint = GetBlueprintObj();
-	if ( Blueprint != nullptr )
+	SetUISelectionState(FBlueprintEditor::SelectionState_ClassSettings);
+
+	if (bWasOpenedInDefaultsMode)
 	{
-		SetUISelectionState(FBlueprintEditor::SelectionState_ClassSettings);
+		RefreshStandAloneDefaultsEditor();
+	}
+	else
+	{
+		UBlueprint* Blueprint = GetBlueprintObj();
+		if (Blueprint != nullptr)
+		{
+			// Show details for the Blueprint instance we're editing
+			Inspector->ShowDetailsForSingleObject(Blueprint);
 
-		// Show details for the Blueprint instance we're editing
-		Inspector->ShowDetailsForSingleObject(Blueprint);
-
-		TryInvokingDetailsTab();
+			TryInvokingDetailsTab();
+		}
 	}
 }
 
 bool FBlueprintEditor::IsDetailsPanelEditingClassDefaults() const
 {
+	if (bWasOpenedInDefaultsMode)
+	{
+		return !IsDetailsPanelEditingGlobalOptions();
+	}
+
 	UBlueprint* Blueprint = GetBlueprintObj();
 	if ( Blueprint != nullptr )
 	{
@@ -3552,11 +3619,7 @@ bool FBlueprintEditor::IsDetailsPanelEditingClassDefaults() const
 
 void FBlueprintEditor::EditClassDefaults_Clicked()
 {
-	if ( IsEditingSingleBlueprint() )
-	{
-		UBlueprint* Blueprint = GetBlueprintObj();
-		StartEditingDefaults( true, true );
-	}
+	StartEditingDefaults(true, true);
 }
 
 // Zooming to fit the entire graph
@@ -3634,7 +3697,7 @@ void FBlueprintEditor::NavigateToChildGraph()
 			TObjectPtr<UEdGraphNode> SingleNode;
 			int32 NumEntries = 0;
 
-			for (TObjectPtr<UEdGraphNode> Node : SortedGraphNodes)
+			for (const TObjectPtr<UEdGraphNode>& Node : SortedGraphNodes)
 			{
 				// Just calling CanJumpToDefinition isn't enough as it returns true for functions (resulting in a jump
 				// to code, which isn't desired).
@@ -3686,7 +3749,7 @@ bool FBlueprintEditor::CanNavigateToChildGraph() const
 	if (FocusedGraphEdPtr.IsValid())
 	{
 		UEdGraph* CurrentGraph = FocusedGraphEdPtr.Pin()->GetCurrentGraph();
-		for (TObjectPtr<UEdGraphNode> Node : CurrentGraph->Nodes)
+		for (const TObjectPtr<UEdGraphNode>& Node : CurrentGraph->Nodes)
 		{
 			UObject* TargetObject = Node->GetJumpTargetForDoubleClick();
 			if (TargetObject && Node->CanJumpToDefinition())
@@ -4081,8 +4144,6 @@ void FBlueprintEditor::Compile()
 		FCompilerResultsLog LogResults;
 		LogResults.SetSourcePath(BlueprintObj->GetPathName());
 		LogResults.BeginEvent(TEXT("Compile"));
-		LogResults.bLogDetailedResults = GetDefault<UBlueprintEditorSettings>()->bShowDetailedCompileResults;
-		LogResults.EventDisplayThresholdMs = GetDefault<UBlueprintEditorSettings>()->CompileEventDisplayThresholdMs;
 		EBlueprintCompileOptions CompileOptions = EBlueprintCompileOptions::None;
 		if( bSaveIntermediateBuildProducts )
 		{
@@ -4674,7 +4735,7 @@ void FBlueprintEditor::DoPromoteToVariable( UBlueprint* InBlueprint, UEdGraphPin
 			// Ignore names from compact nodes that don't usually display the pin names
 			if (const UK2Node* K2Node = Cast<UK2Node>(InTargetPin->GetOwningNode()))
 			{
-				if (K2Node->ShouldDrawCompact() || K2Node->ShouldDrawAsBead())
+				if (K2Node->ShouldDrawCompact())
 				{
 					IdealVarName.Empty();
 				}
@@ -5163,6 +5224,7 @@ void FBlueprintEditor::OnResetPinToDefaultValue()
 		const FScopedTransaction Transaction(LOCTEXT("ResetPinToDefaultValue", "Reset Pin To Default Value"));
 
 		const UEdGraphSchema_K2* K2Schema = GetDefault<UEdGraphSchema_K2>();
+		TargetPin->Modify();
 		K2Schema->ResetPinToAutogeneratedDefaultValue(TargetPin);
 	}
 }
@@ -8734,6 +8796,15 @@ void FBlueprintEditor::CollapseNodesIntoGraph(UEdGraphNode* InGatewayNode, UK2No
 		}
 	}
 
+	if (UK2Node_FunctionEntry* EntryNode = Cast<UK2Node_FunctionEntry>(InEntryNode))
+	{
+		// If the source entry node is threadsafe, then our new entry node should also be threadsafe.
+		// It's implied that the source graph only has threadsafe nodes.
+		// This ensures that our newly collapsed graph can be still be used in the source graph.
+
+		EntryNode->MetaData.bThreadSafe = K2Schema->IsGraphMarkedThreadSafe(InSourceGraph);
+	}
+
 	const int32 CenterX = (NumNodes == 0) ? SumNodeX : SumNodeX / NumNodes;
 	const int32 CenterY = (NumNodes == 0) ? SumNodeY : SumNodeY / NumNodes;
 	const int32 MinusOffsetX = 160; //@TODO: Random magic numbers
@@ -9218,10 +9289,16 @@ void FBlueprintEditor::RefreshStandAloneDefaultsEditor()
 	TArray<UObject*> DefaultObjects;
 	for ( int32 i = 0; i < GetEditingObjects().Num(); ++i )
 	{
-		UBlueprintCore* Blueprint = Cast<UBlueprintCore>(GetEditingObjects()[i]);
-		if ( Blueprint && Blueprint->GeneratedClass )
+		if (UBlueprint* Blueprint = Cast<UBlueprint>(GetEditingObjects()[i]))
 		{
-			DefaultObjects.Add(Blueprint->GeneratedClass->GetDefaultObject());
+			if (CurrentUISelection == FBlueprintEditor::SelectionState_ClassSettings)
+			{
+				DefaultObjects.Add(Blueprint);
+			}
+			else if (Blueprint->GeneratedClass)
+			{
+				DefaultObjects.Add(Blueprint->GeneratedClass->GetDefaultObject());
+			}
 		}
 	}
 
@@ -9563,6 +9640,12 @@ void FBlueprintEditor::NotifyPostChange(const FPropertyChangedEvent& PropertyCha
 			UpdateSubobjectPreview(PropertyChangedEvent.ChangeType == EPropertyChangeType::Interactive);
 		}
 	}
+}
+
+bool FBlueprintEditor::ShouldShowPublicViewControl() const
+{
+	// In defaults-only mode, hide the "Public View" checkbox when Class Settings is selected into the Details view.
+	return !bWasOpenedInDefaultsMode || CurrentUISelection != FBlueprintEditor::SelectionState_ClassSettings;
 }
 
 void FBlueprintEditor::OnFinishedChangingProperties(const FPropertyChangedEvent& PropertyChangedEvent)
@@ -10105,40 +10188,49 @@ void FBlueprintEditor::OnCreateComment()
 	}
 }
 
+void FBlueprintEditor::OnCreateCustomEvent()
+{
+	TSharedPtr<SGraphEditor> GraphEditor = FocusedGraphEdPtr.Pin();
+	if (GraphEditor.IsValid())
+	{
+		if (UEdGraph* Graph = GraphEditor->GetCurrentGraph())
+		{
+			if (const UEdGraphSchema* Schema = Graph->GetSchema())
+			{
+				if (Schema->IsA(UEdGraphSchema_K2::StaticClass()))
+				{
+					// BlueprintEventNodeSpawner seems better but we'll use FEdGraphSchemaAction_K2AddCustomEvent
+					FEdGraphSchemaAction_K2AddCustomEvent EventAction;
+					EventAction.NodeTemplate = NewObject<UK2Node_CustomEvent>();
+					EventAction.PerformAction(Graph, nullptr, GraphEditor->GetPasteLocation());
+				}
+			}
+		}
+	}
+}
+
 void FBlueprintEditor::SetPinVisibility(SGraphEditor::EPinVisibility Visibility)
 {
 	PinVisibility = Visibility;
 	OnSetPinVisibility.Broadcast(PinVisibility);
 }
 
-void FBlueprintEditor::OnFindReferences()
+void FBlueprintEditor::OnFindReferences(bool bSearchAllBlueprints, const EGetFindReferenceSearchStringFlags Flags)
 {
 	TSharedPtr<SGraphEditor> GraphEditor = FocusedGraphEdPtr.Pin();
 	if (GraphEditor.IsValid())
 	{
-		FString SearchTerm;
-
 		const FGraphPanelSelectionSet SelectedNodes = GraphEditor->GetSelectedNodes();
 		for (FGraphPanelSelectionSet::TConstIterator NodeIt(SelectedNodes); NodeIt; ++NodeIt)
 		{
-			UEdGraphNode* SelectedNode = Cast<UEdGraphNode>(*NodeIt);
-			if (SelectedNode != nullptr)
+			if (UEdGraphNode* SelectedNode = Cast<UEdGraphNode>(*NodeIt))
 			{
-				if (UK2Node_CustomEvent* CustomEvent = Cast<UK2Node_CustomEvent>(SelectedNode))
+				FString SearchTerm = SelectedNode->GetFindReferenceSearchString(Flags);
+				if (!SearchTerm.IsEmpty())
 				{
-					SearchTerm =  CustomEvent->CustomFunctionName.ToString();
-					if (!SearchTerm.IsEmpty())
-					{
-						SummonSearchUI(true, FString::Printf(TEXT("\"%s\""), *SearchTerm));
-					}
-				}
-				else
-				{
-					SearchTerm = SelectedNode->GetFindReferenceSearchString();
-					if (!SearchTerm.IsEmpty())
-					{
-						SummonSearchUI(true, SearchTerm);
-					}
+					// Start the search
+					const bool bSetFindWithinBlueprint = !bSearchAllBlueprints;
+					SummonSearchUI(bSetFindWithinBlueprint, SearchTerm);
 				}
 			}
 		}

@@ -21,6 +21,7 @@ class ULODInfoUILayout : public UObject
 
 public:
 	void SetReferenceLODInfo(TWeakPtr<IPersonaToolkit> InPersonaToolkit, int32 InLODIndex);
+	void RefreshReferenceLODInfo();
 
 	TSharedPtr<IPersonaToolkit> GetPersonaToolkit() const
 	{

@@ -23,12 +23,14 @@ UCameraCalibrationSettings::UCameraCalibrationSettings()
 #if WITH_EDITORONLY_DATA
 	auto InitOverlayOverrides = [this]()
 	{
-		UCameraCalibrationSubsystem* SubSystem = GEngine->GetEngineSubsystem<UCameraCalibrationSubsystem>();
-		for (const FName& OverlayName : SubSystem->GetOverlayMaterialNames())
+		if (UCameraCalibrationSubsystem* SubSystem = GEngine->GetEngineSubsystem<UCameraCalibrationSubsystem>())
 		{
-			if (!CalibrationOverlayMaterialOverrides.Contains(OverlayName))
+			for (const FName& OverlayName : SubSystem->GetOverlayMaterialNames())
 			{
-				CalibrationOverlayMaterialOverrides.Add(OverlayName, nullptr);
+				if (!CalibrationOverlayMaterialOverrides.Contains(OverlayName))
+				{
+					CalibrationOverlayMaterialOverrides.Add(OverlayName, nullptr);
+				}
 			}
 		}
 	};

@@ -26,6 +26,13 @@
 #include "Windows/WindowsHWrapper.h"
 #endif
 
+static TAutoConsoleVariable<int32> CVarDetailedMipAlphaLogging(
+	TEXT("r.DetailedMipAlphaLogging"),
+	0,
+	TEXT("Prints extra log messages for tracking when alpha gets removed/introduced during texture")
+	TEXT("image processing.")
+);
+
 DEFINE_LOG_CATEGORY_STATIC(LogTextureCompressor, Log, All);
 
 /*------------------------------------------------------------------------------
@@ -1403,48 +1410,67 @@ static float GetDownscaleFinalSizeAndClampedDownscale(int32 SrcImageWidth, int32
 	check(Settings.Downscale > 1.0f); // must be already handled.
 	
 	float Downscale = FMath::Clamp(Settings.Downscale, 1.f, 8.f);
+	
+	// currently BlockSize always == 4
+	// if source was blocksize aligned, make sure final size is too
+	//	this is required if pixel format is DXT
+	bool bKeepBlockSizeAligned = (Settings.BlockSize > 1
+			&& (SrcImageWidth  % Settings.BlockSize) == 0
+			&& (SrcImageHeight % Settings.BlockSize) == 0);
 
-	// note: more accurate would be to use FMath::Max(1, FMath::RoundToInt(SrcImage.SizeX / Downscale))
-	int32 FinalSizeX = FMath::CeilToInt((float)SrcImageWidth / Downscale);
-	int32 FinalSizeY = FMath::CeilToInt((float)SrcImageHeight / Downscale);
+	int32 FinalSizeX,FinalSizeY;
 
-	// compute final size respecting image block size
-	if (Settings.BlockSize > 1
-		&& (SrcImageWidth % Settings.BlockSize) == 0
-		&& (SrcImageHeight % Settings.BlockSize) == 0)
+	if ( Settings.UseNewMipFilter )
 	{
-		// the following code finds non-zero dimensions of the scaled image which preserve both aspect ratio and block alignment, 
-		// it favors preserving aspect ratio at the expense of not scaling the desired factor when both are not possible
-		int32 GCD = FMath::GreatestCommonDivisor(SrcImageWidth, SrcImageHeight);
-		int32 ScalingGridSizeX = (SrcImageWidth / GCD) * Settings.BlockSize;
-		// note: more accurate would be to use (SrcImage.SizeX / Downscale) instead of FinalSizeX here
-		// GridSnap rounds to nearest, and can return zero
-		FinalSizeX = FMath::GridSnap(FinalSizeX, ScalingGridSizeX);
-		FinalSizeX = FMath::Max(ScalingGridSizeX, FinalSizeX);
-		FinalSizeY = (int32)( ((int64)FinalSizeX * SrcImageHeight) / SrcImageWidth );
-		// Final Size X and Y are gauranteed to be block aligned
+		// new way:
 
-		#if 0
-		
-		// simpler alternative :
-		// choose the block count in the smaller dimension first
-		// then make the larger dimension maintain aspect ratio
-		int32 FinalNumBlocksX,FinalNumBlocksY;
-		if ( SrcImage.SizeX >= SrcImage.SizeY )
+		if ( bKeepBlockSizeAligned )
 		{
-			FinalNumBlocksY = FMath::RoundToInt( SrcImage.SizeY / (Downscale * Settings.BlockSize) );
-			FinalNumBlocksX = FMath::RoundToInt( FinalNumBlocksY * SrcImage.SizeX / (float)SrcImage.SizeY );
+			// choose the block count in the smaller dimension first
+			// then make the larger dimension maintain aspect ratio
+			//  we favor block alignment and getting the desired downscale over exactly preserving aspect ratio
+			int32 FinalNumBlocksX,FinalNumBlocksY;
+			if ( SrcImageWidth >= SrcImageHeight )
+			{
+				FinalNumBlocksY = FMath::RoundToInt( SrcImageHeight / (Downscale * Settings.BlockSize) );
+				FinalNumBlocksX = FMath::RoundToInt( FinalNumBlocksY * SrcImageWidth / (float)SrcImageHeight );
+			}
+			else
+			{
+				FinalNumBlocksX = FMath::RoundToInt( SrcImageWidth / (Downscale * Settings.BlockSize) );
+				FinalNumBlocksY = FMath::RoundToInt( FinalNumBlocksX * SrcImageHeight / (float)SrcImageWidth );
+			}
+
+			FinalSizeX = FMath::Max(FinalNumBlocksX,1)*Settings.BlockSize;
+			FinalSizeY = FMath::Max(FinalNumBlocksY,1)*Settings.BlockSize;
 		}
 		else
 		{
-			FinalNumBlocksX = FMath::RoundToInt( SrcImage.SizeX / (Downscale * Settings.BlockSize) );
-			FinalNumBlocksY = FMath::RoundToInt( FinalNumBlocksX * SrcImage.SizeY / (float)SrcImage.SizeX );
+			FinalSizeX = FMath::Max(1, FMath::RoundToInt(SrcImageWidth / Downscale));
+			FinalSizeY = FMath::Max(1, FMath::RoundToInt(SrcImageHeight / Downscale));
 		}
+	}
+	else
+	{
+		// old way :
+		//  this has the flaw of being very far away from the desired downscale when Width/Height have no good GCD
 
-		FinalSizeX = FMath::Max(FinalNumBlocksX,1)*Settings.BlockSize;
-		FinalSizeY = FMath::Max(FinalNumBlocksY,1)*Settings.BlockSize;
+		FinalSizeX = FMath::CeilToInt((float)SrcImageWidth / Downscale);
+		FinalSizeY = FMath::CeilToInt((float)SrcImageHeight / Downscale);
 
-		#endif
+		if ( bKeepBlockSizeAligned )
+		{
+			// the following code finds non-zero dimensions of the scaled image which preserve both aspect ratio and block alignment, 
+			// it favors preserving aspect ratio at the expense of not scaling the desired factor when both are not possible
+			int32 GCD = FMath::GreatestCommonDivisor(SrcImageWidth, SrcImageHeight);
+			int32 ScalingGridSizeX = (SrcImageWidth / GCD) * Settings.BlockSize;
+			// note: more accurate would be to use (SrcImage.SizeX / Downscale) instead of FinalSizeX here
+			// GridSnap rounds to nearest, and can return zero
+			FinalSizeX = FMath::GridSnap(FinalSizeX, ScalingGridSizeX);
+			FinalSizeX = FMath::Max(ScalingGridSizeX, FinalSizeX);
+			FinalSizeY = (int32)( ((int64)FinalSizeX * SrcImageHeight) / SrcImageWidth );
+			// Final Size X and Y are gauranteed to be block aligned
+		}
 	}
 
 	OutWidth = FinalSizeX;
@@ -1454,6 +1480,7 @@ static float GetDownscaleFinalSizeAndClampedDownscale(int32 SrcImageWidth, int32
 
 static void DownscaleImage(const FImage& SrcImage, FImage& DstImage, const FTextureDownscaleSettings& Settings)
 {
+	// BEWARE: DownscaleImage is called with SrcImage == DstImage for in-place operation
 	if (Settings.Downscale <= 1.f)
 	{
 		return;
@@ -1467,9 +1494,38 @@ static void DownscaleImage(const FImage& SrcImage, FImage& DstImage, const FText
 
 	int32 FinalSizeX = 0, FinalSizeY =0;
 	float Downscale = GetDownscaleFinalSizeAndClampedDownscale(SrcImage.SizeX, SrcImage.SizeY, Settings, FinalSizeX, FinalSizeY);
-	
-	//@todo OodleImageResize : replace this whole function with better image resizer if NewFilters
 
+	if ( Settings.UseNewMipFilter )
+	{
+		// changed DDC key for affected textures
+				
+		// choose Filter from ETextureDownscaleOptions
+		FImageCore::EResizeImageFilter Filter;
+
+		if ( Settings.DownscaleOptions == (uint8)ETextureDownscaleOptions::Unfiltered )
+			Filter = FImageCore::EResizeImageFilter::PointSample;
+		else if ( Settings.DownscaleOptions == (uint8)ETextureDownscaleOptions::SimpleAverage )
+			Filter = FImageCore::EResizeImageFilter::Triangle;
+		else if ( Settings.DownscaleOptions >= (uint8)ETextureDownscaleOptions::Sharpen5 ) // sharpest
+			Filter = FImageCore::EResizeImageFilter::CubicSharp;
+		else if ( Settings.DownscaleOptions >= (uint8)ETextureDownscaleOptions::Sharpen0 ) // sharp
+			Filter = FImageCore::EResizeImageFilter::AdaptiveSharp;		
+		else
+			Filter = FImageCore::EResizeImageFilter::AdaptiveSmooth;		
+
+		FImage Temp; // needed because Src == Dst
+		FImageCore::ResizeImageAllocDest(SrcImage,Temp,FinalSizeX,FinalSizeY,Filter);
+		Temp.Swap(DstImage);
+		return;
+	}
+	
+	// legacy/bad path , not used for new textures that have UseNewMipFilter set
+	//	left as-is to prevent changing old content
+
+	// what this function does is 2X downsamples with the mip filter
+	//	and then a final bilinear resize to the desired final size
+	// instead just use ResizeImage to go directly from source size to final size in one step
+	
 	// recompute Downscale factor because it may have changed due to block alignment
 	// note: if aspect ratio was not exactly preserved, this could differ in X and Y
 	Downscale = (float)SrcImage.SizeX / (float)FinalSizeX;
@@ -1559,7 +1615,8 @@ static void DownscaleImage(const FImage& SrcImage, FImage& DstImage, const FText
 	FImageView2D SrcImageData(*ImageChain[0], 0);
 	FImageView2D DstImageData(*ImageChain[1], 0);
 				
-	// @todo OodleImageResize : not sure this is a correct image resize without shift; does it get pixel center offsets right?
+	// this is not a correct image resize without shift; does not get pixel center offsets right
+	//	this is in the legacy/deprecated path so leave as-is ; new path is correct
 	for (int32 Y = 0; Y < FinalSizeY; ++Y)
 	{
 		float SourceY = (float)Y * Downscale;
@@ -1568,12 +1625,12 @@ static void DownscaleImage(const FImage& SrcImage, FImage& DstImage, const FText
 		for (int32 X = 0; X < FinalSizeX; ++X)
 		{
 			float SourceX = (float)X * Downscale;
-			int32 IntSourceX = FMath::RoundToInt(SourceX);
 
 			FLinearColor FilteredColor(0,0,0,0);
 
 			if (bUnfiltered)
 			{
+				int32 IntSourceX = FMath::RoundToInt(SourceX);
 				FilteredColor = LookupSourceMip<MGTAM_Clamp>(SrcImageData, IntSourceX, IntSourceY);
 			}
 			else if(bBilinear)
@@ -1610,6 +1667,31 @@ static void LinearizeToWorkingColorSpace(const FImage& SrcImage, FImage& DstImag
 
 	FImageView SrcImageView(SrcImage);
 	const UE::Color::EEncoding SourceEncodingOverride = static_cast<UE::Color::EEncoding>(BuildSettings.SourceEncodingOverride);
+	
+	if ( ! BuildSettings.bHasColorSpaceDefinition )
+	{
+		if ( SourceEncodingOverride == UE::Color::EEncoding::Linear )
+		{
+			SrcImageView.GammaSpace = EGammaSpace::Linear;
+			FImageCore::CopyImage(SrcImageView, DstImage);
+			return;
+		}
+		else if ( SourceEncodingOverride == UE::Color::EEncoding::sRGB 
+			&& ERawImageFormat::GetFormatNeedsGammaSpace(SrcImage.Format) )
+		{
+			SrcImageView.GammaSpace = EGammaSpace::sRGB;
+			FImageCore::CopyImage(SrcImageView, DstImage);
+			return;
+		}
+		else if ( SourceEncodingOverride == UE::Color::EEncoding::Gamma22 
+			&& ERawImageFormat::GetFormatNeedsGammaSpace(SrcImage.Format) )
+		{
+			SrcImageView.GammaSpace = EGammaSpace::Pow22;
+			FImageCore::CopyImage(SrcImageView, DstImage);
+			return;
+		}
+		// could also early out for Encoding == None, but that's handled below
+	}
 
 	// If the source encoding override is active, we avoid CopyImage's de-gammatization and instead let OpenColorIO do the decoding below.
 	if (SourceEncodingOverride != UE::Color::EEncoding::None)
@@ -1617,6 +1699,7 @@ static void LinearizeToWorkingColorSpace(const FImage& SrcImage, FImage& DstImag
 		SrcImageView.GammaSpace = DstImage.GammaSpace; // EGammaSpace::Linear
 	}
 
+	// CopyImage to get pixels in RGAB32F , then OCIO will act on those in-place in DstImage
 	FImageCore::CopyImage(SrcImageView, DstImage);
 
 	// Decode and/or color transform to the working color space when needed
@@ -2106,7 +2189,23 @@ static inline FVector ComputeWSCubeDirectionAtTexelCenter(uint32 CubemapFace, ui
 
 static uint32 ComputeLongLatCubemapExtents(int32 SrcImageSizeX, const uint32 MaxCubemapTextureResolution)
 {
-	return FMath::Clamp(1U << FMath::FloorLog2(SrcImageSizeX / 2), 32U, MaxCubemapTextureResolution);
+	// MaxCubemapTextureResolution when not set is 0xFFFFFFFF
+
+	uint32 Out = 1U << FMath::FloorLog2(SrcImageSizeX / 2);
+
+	if ( Out <= 32 || MaxCubemapTextureResolution <= 32 )
+	{
+		return 32;
+	}
+	else if ( Out > MaxCubemapTextureResolution )
+	{
+		// RoundDownToPowerOfTwo
+		return 1U << FMath::FloorLog2(MaxCubemapTextureResolution);
+	}
+	else
+	{
+		return Out;
+	}
 }
 
 void ITextureCompressorModule::GenerateBaseCubeMipFromLongitudeLatitude2D(FImage* OutMip, const FImage& SrcImage, const uint32 MaxCubemapTextureResolution, uint8 SourceEncodingOverride)
@@ -2849,7 +2948,7 @@ void ITextureCompressorModule::AdjustImageColors(FImage& Image, const FTextureBu
 	{
 		TRACE_CPUPROFILER_EVENT_SCOPE(Texture.AdjustImageColors);
 
-		FImageCore::ImageParallelFor( TEXT("Texture.AdjustImageColorsFunc.PF"),Image, [&](FImageView & ImagePart)
+		FImageCore::ImageParallelFor( TEXT("Texture.AdjustImageColorsFunc.PF"),Image, [&](FImageView & ImagePart,int64 RowY)
 		{
 			TArrayView64<FLinearColor> ImageColors = ImagePart.AsRGBA32F();
 
@@ -2868,6 +2967,89 @@ void ITextureCompressorModule::AdjustImageColors(FImage& Image, const FTextureBu
 			}
 		});
 	}
+}
+
+bool ITextureCompressorModule::DetermineAlphaChannelTransparency(const FTextureBuildSettings& InBuildSettings, const FLinearColor& InChannelMin, const FLinearColor& InChannelMax, bool& bOutAlphaIsTransparent)
+{
+	// Settings that affect alpha:
+	// 1. ColorTransforms - if they have a color transform we assume it's not affecting alpha (this is the UE
+	//		integration assumption separate from this) this only gets dicey if we have ReplicateRed. Probably
+	//		the best thing to do is just assume the transform doesn't affects opaqueness and let them use the
+	//		force overrides if it's wrong.
+	// 2. ForceAlphaChannel - Note ForceNoAlpha forces BC1 before us so we don't see it.
+	// 3. AdjustMinAlpha, AdjustMaxAlpha
+	// 4. ReplicateRed.. which means we need to track all operations on the red channel. Can probably just call
+	//		AdjustImageColors directly on our boundaries and see where they go?
+	// 5. ChromaKey! I think if they have this on we assume it matches SOMEWHERE and we need alpha.
+
+	// ForceNo gets applied first because it happens at the texture format selection phase, so it effectively
+	// overrides everything as AutoDXT gets cleared.
+	if (InBuildSettings.bForceNoAlphaChannel)
+	{
+		bOutAlphaIsTransparent = false; // note we don't see this with autodxt as it gets forced to BC1 early.
+		return true;
+	}
+
+	if (InBuildSettings.bForceAlphaChannel ||
+		InBuildSettings.bChromaKeyTexture // If they have a chroma key they are expecting transparency!
+		)
+	{
+		bOutAlphaIsTransparent = true;
+		return true;
+	}
+
+	// No forces - try and predict how the color transforms will affect the colors.
+	if (InBuildSettings.bHasColorSpaceDefinition)
+	{
+		// We assert that color spaces don't affect alpha per our integration with OCIO. So, the only way 
+		// this affects us is if RepliateRed is set. 
+		// 
+		// We assume the color space doesn't change the opaquenss of the red channel so we can pass through to
+		// the normal replicate red behavior. This could definitely fail, but we don't really expect anyone
+		// to combine a color space remap _and_ replicate red, so if they hit this they can get what they want
+		// with Force/ForceNoAlpha.
+		if (InBuildSettings.bReplicateRed)
+		{
+			return false;
+		}
+	}
+
+	if (InBuildSettings.bComputeBokehAlpha)
+	{
+		// Bokeh stores information in the alpha channel during processing - so we need an alpha channel
+		bOutAlphaIsTransparent = true;
+		return true;
+	}
+
+	FLinearColor ChannelMinMax[2] = {InChannelMin, InChannelMax};
+
+	// If there's an image adjustment, run it on the colors so we see what happens.
+	// This also handles AdjustMinAlpha/MaxAlpha.
+	if (NeedAdjustImageColors(InBuildSettings))
+	{
+		if (InBuildSettings.bUseNewMipFilter)
+		{
+			AdjustColorsNew(ChannelMinMax, 2, InBuildSettings);
+		}
+		else
+		{
+			AdjustColorsOld(ChannelMinMax, 2, InBuildSettings);
+		}
+	}
+
+	if (InBuildSettings.bReplicateRed)
+	{
+		ChannelMinMax[0].A = ChannelMinMax[0].R;
+		ChannelMinMax[1].A = ChannelMinMax[1].R;
+	}
+
+	bOutAlphaIsTransparent = false;
+	if (ChannelMinMax[0].A < 1 ||
+		ChannelMinMax[1].A < 1)
+	{
+		bOutAlphaIsTransparent = true;
+	}
+	return true;
 }
 
 /**
@@ -2896,7 +3078,7 @@ static void ComputeBokehAlpha(FImage& Image)
 		Scale *= LumGoal / FMath::Max(RGBLum, 0.001f);
 	}
 
-	FImageCore::ImageParallelProcessLinearPixels(TEXT("PF.ComputeBokehAlpha"),Image,[&](TArrayView64<FLinearColor> & Colors) {
+	FImageCore::ImageParallelProcessLinearPixels(TEXT("PF.ComputeBokehAlpha"),Image,[&](TArrayView64<FLinearColor> & Colors,int64 RowY) {
 		for( FLinearColor & Color : Colors )
 		{
 			// Convert to a linear color
@@ -3409,61 +3591,23 @@ static void NormalizeMip(FImage& InOutMip)
 }
 
 
-// Returns true if the target texture size is different and padding/stretching is required.
-static bool GetPowerOfTwoTargetTextureSize(int32 InMip0SizeX, int32 InMip0SizeY, int32 InMip0NumSlices, bool bInIsVolume, ETexturePowerOfTwoSetting::Type InPow2Setting, int32& OutTargetSizeX, int32& OutTargetSizeY, int32& OutTargetSizeZ)
-{
-	check(InPow2Setting != ETexturePowerOfTwoSetting::None);
-
-	int32 TargetTextureSizeX = InMip0SizeX;
-	int32 TargetTextureSizeY = InMip0SizeY;
-	int32 TargetTextureSizeZ = bInIsVolume ? InMip0NumSlices : 1; // Only used for volume texture.
-
-	const int32 PowerOfTwoTextureSizeX = FMath::RoundUpToPowerOfTwo(TargetTextureSizeX);
-	const int32 PowerOfTwoTextureSizeY = FMath::RoundUpToPowerOfTwo(TargetTextureSizeY);
-	const int32 PowerOfTwoTextureSizeZ = FMath::RoundUpToPowerOfTwo(TargetTextureSizeZ);
-
-	switch (InPow2Setting)
-	{
-	// None should not get here
-
-	case ETexturePowerOfTwoSetting::PadToPowerOfTwo:
-		TargetTextureSizeX = PowerOfTwoTextureSizeX;
-		TargetTextureSizeY = PowerOfTwoTextureSizeY;
-		TargetTextureSizeZ = PowerOfTwoTextureSizeZ;
-		break;
-
-	case ETexturePowerOfTwoSetting::PadToSquarePowerOfTwo:
-		TargetTextureSizeX = TargetTextureSizeY = TargetTextureSizeZ =
-			FMath::Max3<int32>(PowerOfTwoTextureSizeX, PowerOfTwoTextureSizeY, PowerOfTwoTextureSizeZ);
-		break;
-
-	default:
-		checkf(false, TEXT("Unknown entry in ETexturePowerOfTwoSetting::Type"));
-		break;
-	}
-
-	// Z only matters as a sampling dimension if we are a volume texture.
-	if (bInIsVolume == false)
-	{
-		TargetTextureSizeZ = InMip0NumSlices;
-	}
-
-	OutTargetSizeX = TargetTextureSizeX;
-	OutTargetSizeY = TargetTextureSizeY;
-	OutTargetSizeZ = TargetTextureSizeZ;
-
-	return (TargetTextureSizeX != InMip0SizeX) ||
-		(TargetTextureSizeY != InMip0SizeY) ||
-		(bInIsVolume && TargetTextureSizeZ != InMip0NumSlices);
-}
-
-
 int32 ITextureCompressorModule::GetMipCountForBuildSettings(
 	int32 InMip0SizeX, int32 InMip0SizeY, int32 InMip0NumSlices,
 	int32 InExistingMipCount,
 	const FTextureBuildSettings& BuildSettings,
 	int32& OutMip0SizeX, int32& OutMip0SizeY, int32& OutMip0NumSlices)
 {
+	if (BuildSettings.bCPUAccessible)
+	{
+		// CPU accessible texture generates a placeholder gpu texture with 1 mip in all cases.
+		FImageInfo PlaceholderInfo;
+		UE::TextureBuildUtilities::GetPlaceholderTextureImageInfo(&PlaceholderInfo);
+		OutMip0SizeX = PlaceholderInfo.SizeX;
+		OutMip0SizeY = PlaceholderInfo.SizeY;
+		OutMip0NumSlices = PlaceholderInfo.NumSlices;
+		return 1;
+	}
+
 	// AFAICT LatLongCubeMaps don't do any of this - pow2 is broken with them but it runs, and max texture stuff
 	// is handled internally in the extents function.
 	int32 BaseSizeX = InMip0SizeX;
@@ -3478,7 +3622,7 @@ int32 ITextureCompressorModule::GetMipCountForBuildSettings(
 			PowerOfTwoMode != ETexturePowerOfTwoSetting::None)
 		{
 			int32 TargetSizeX, TargetSizeY, TargetSizeZ;
-			bool NeedsAdjustment = GetPowerOfTwoTargetTextureSize(BaseSizeX, BaseSizeY, BaseSizeY, BuildSettings.bVolume, PowerOfTwoMode, TargetSizeX, TargetSizeY, TargetSizeZ);
+			bool NeedsAdjustment = UE::TextureBuildUtilities::GetPowerOfTwoTargetTextureSize(BaseSizeX, BaseSizeY, BaseSizeZ, BuildSettings.bVolume, PowerOfTwoMode, BuildSettings.ResizeDuringBuildX, BuildSettings.ResizeDuringBuildY, TargetSizeX, TargetSizeY, TargetSizeZ);
 			if (NeedsAdjustment)
 			{
 				// In this case we are regenerating the entire mip chain.
@@ -3589,9 +3733,6 @@ public:
 		TArray<UE::Tasks::TTask<FXxHash64>, TInlineAllocator<16>> MipHashTasks;
 		MipHashTasks.Reserve(IntermediateMipChain.Num());
 
-		//double start_time = FPlatformTime::Seconds();
-		//uint64 raw_bytes_hashed = 0;
-
 		// Hash the mips before we compress them. This gets saved as part of the derived data and then added to the
 		// diff tags during cook so we can catch determinism issues.
 		FXxHash64Builder MipHashBuilder;
@@ -3608,10 +3749,6 @@ public:
 			check( Mip.RawData.Num() != 0 );
 
 			MipHashTasks.Add(UE::Tasks::Launch(TEXT("ComputeMipChainHash"), [&Mip] { return FXxHash64::HashBufferChunked(MakeMemoryView(Mip.RawData), 256 << 10); }));
-
-			//raw_bytes_hashed += Mip.RawData.Num();
-
-			//Blake3 is ~3.5 GB/s , around 4X slower than xxHash.
 		}
 
 		for (UE::Tasks::TTask<FXxHash64>& HashTask : MipHashTasks)
@@ -3619,11 +3756,6 @@ public:
 			FXxHash64 MipHash = HashTask.GetResult();
 			MipHashBuilder.Update(&MipHash.Hash, sizeof(MipHash.Hash));
 		}
-
-		//double end_time = FPlatformTime::Seconds();
-
-		//UE_LOG(LogTextureCompressor, Display, TEXT("Hashed %lld bytes in %.3f millis = %.3f GB/s"), raw_bytes_hashed, (end_time - start_time) * 1000, (raw_bytes_hashed / (end_time - start_time)) / (1000 * 1000 * 1000));
-		// Threaded chunked xxHash with 256kb blocks ~120 GB / s, has a lot of tiny hashes in this timing scope though.
 
 		return MipHashBuilder.Finalize().Hash;
 	}
@@ -3658,6 +3790,8 @@ public:
 
 			return false;
 		}
+
+		const bool bDoDetailedAlphaLogging = CVarDetailedMipAlphaLogging.GetValueOnAnyThread() != 0;
 		
 		// @todo Oodle: option to dump the Source image here
 		//		we have dump in TextureFormatOodle for the after-processing (before encoding) image
@@ -3666,9 +3800,10 @@ public:
 		TArray<FImage> IntermediateMipChain;
 
 		bool bSourceMipsAlphaDetected = false;
-		if (OutMetadata)
+		if (bDoDetailedAlphaLogging)
 		{
 			bSourceMipsAlphaDetected = FImageCore::DetectAlphaChannel(SourceMips[0]);
+			UE_LOG(LogTextureCompressor, Display, TEXT("[alpha] Source Mips: %d - %.*s"), bSourceMipsAlphaDetected, DebugTexturePathName.Len(), DebugTexturePathName.GetData());
 		}
 
 		// allow to leave texture in sRGB in case compressor accepts other than non-F32 input source
@@ -3719,17 +3854,61 @@ public:
 
 			if (!ApplyCompositeTextureToMips(IntermediateMipChain, IntermediateAssociatedNormalSourceMipChain, BuildSettings.CompositeTextureMode, BuildSettings.CompositePower, BuildSettings.LODBias))
 			{
-				UE_LOG(LogTextureCompressor, Warning, TEXT("ApplyCompositeTextureToMips failed [%.*s]"),
+				UE_LOG(LogTextureCompressor, Display, TEXT("ApplyCompositeTextureToMips failed [%.*s]"),
 					DebugTexturePathName.Len(),DebugTexturePathName.GetData());
 
 				return false;
 			}
+
+			if (bDoDetailedAlphaLogging)
+			{
+				UE_LOG(LogTextureCompressor, Display, TEXT("[alpha] Associated Normal Mips: %d - %.*s"), FImageCore::DetectAlphaChannel(IntermediateMipChain[0]),
+					DebugTexturePathName.Len(), DebugTexturePathName.GetData());
+			}
 		}
 
-		
+
+		bool bIntermediateMipsAlphaDetected = FImageCore::DetectAlphaChannel(IntermediateMipChain[0]);
+		if (bDoDetailedAlphaLogging)
+		{
+			UE_LOG(LogTextureCompressor, Display, TEXT("[alpha] Intermediate Mips: %d - %.*s"), bIntermediateMipsAlphaDetected,
+				DebugTexturePathName.Len(), DebugTexturePathName.GetData());
+
+			if (bIntermediateMipsAlphaDetected != bSourceMipsAlphaDetected)
+			{
+				UE_LOG(LogTextureCompressor, Display, TEXT("[alpha] Source / Intermediate diff (force %d force no %d) - %.*s"),
+					BuildSettings.bForceAlphaChannel, 
+					BuildSettings.bForceNoAlphaChannel, 
+					DebugTexturePathName.Len(),
+					DebugTexturePathName.GetData());
+			}
+		}
+
 		// DetectAlphaChannel on the top mip of the generated mip chain. SoonTM this will use the source mip chain. Testing has
 		// shown this to be 99.9% the same, and allows us to get the pixel format earlier.
-		const bool bImageHasAlphaChannel = BuildSettings.GetTextureExpectsAlphaInPixelFormat(FImageCore::DetectAlphaChannel(IntermediateMipChain[0]));
+		const bool bImageHasAlphaChannel = BuildSettings.GetTextureExpectsAlphaInPixelFormat(bIntermediateMipsAlphaDetected);
+
+		// If we know what our transparency is make sure it matches what we expect.
+		if (BuildSettings.bKnowAlphaTransparency)
+		{
+			if (BuildSettings.bHasTransparentAlpha != bImageHasAlphaChannel)
+			{
+				// We don't actually use this yet but we DO need to know when they aren't matching to hunt
+				// down bugs so we do a warning. The actual build is still good and this doesn't affect the output.
+
+				// We only actually care if it affects the output format.
+				FName ActualTextureFormat = UE::TextureBuildUtilities::TextureFormatRemovePrefixFromName(BuildSettings.TextureFormatName);
+				if (ActualTextureFormat == "AutoDXT")
+				{
+					UE_LOG(LogTextureCompressor, Warning, TEXT("Expected texture alpha didn't match reality: Expected: %s Reality: %s Texture: %.*s"),
+						BuildSettings.bHasTransparentAlpha ? TEXT("true") : TEXT("false"),
+						bImageHasAlphaChannel ? TEXT("true") : TEXT("false"),
+						DebugTexturePathName.Len(),
+						DebugTexturePathName.GetData());
+				}
+			}
+		}
+
 		
 		UE::Tasks::TTask<uint64> HashingTask;
 		TArray<FImageInfo> SaveImageInfos;
@@ -3743,12 +3922,6 @@ public:
 			{
 				SaveImageInfos[i] = IntermediateMipChain[i];
 			}
-
-			// The metadata is about trying to determine bImageHasAlphaChannel _before_ we launch a task, which 
-			// means it must be on the actual source mips, not the post-processed mips. At some point enough textures
-			// will have this saved as part of the creation process and we can rely on it - but for now we route it
-			// back out so that when textures happen to get saved, it goes with it.
-			OutMetadata->bSourceMipsAlphaDetected = bSourceMipsAlphaDetected;
 
 			OutMetadata->PreEncodeMipsHash = ComputeMipChainHash(IntermediateMipChain);
 		}
@@ -3835,6 +4008,8 @@ private:
 			}
 		}
 
+		const bool bDoDetailedAlphaLogging = CVarDetailedMipAlphaLogging.GetValueOnAnyThread() != 0;
+
 		// handling of bLongLatCubemap seems overly complicated
 		//	what it should do is convert it right at the start here
 		//	then treat it as a standard cubemap below, no special cases
@@ -3856,22 +4031,30 @@ private:
 			int32 TargetTextureSizeX = 0;
 			int32 TargetTextureSizeY = 0;
 			int32 TargetTextureSizeZ = 0;			
-			bool bPadOrStretchTexture = GetPowerOfTwoTargetTextureSize(
+			bool bPadOrStretchTexture = UE::TextureBuildUtilities::GetPowerOfTwoTargetTextureSize(
 				FirstSourceMipImage.SizeX, FirstSourceMipImage.SizeY, FirstSourceMipImage.NumSlices,
-				BuildSettings.bVolume, PowerOfTwoMode,
+				BuildSettings.bVolume, PowerOfTwoMode, BuildSettings.ResizeDuringBuildX, BuildSettings.ResizeDuringBuildY,
 				TargetTextureSizeX, TargetTextureSizeY, TargetTextureSizeZ);
 
 			if (bPadOrStretchTexture)
 			{
+				bool bResizeTexture = PowerOfTwoMode == ETexturePowerOfTwoSetting::StretchToPowerOfTwo || PowerOfTwoMode == ETexturePowerOfTwoSetting::StretchToSquarePowerOfTwo || PowerOfTwoMode == ETexturePowerOfTwoSetting::ResizeToSpecificResolution;
 				if (BuildSettings.MipGenSettings == TMGS_LeaveExistingMips)
 				{
-					// pad+leave existing is broken
-					UE_LOG(LogTextureCompressor, Error,	TEXT("Texture padded to pow2 + LeaveExistingMips forbidden"));
+					// pad/stretch+leave existing is broken
+					UE_LOG(LogTextureCompressor, Error,	TEXT("Texture padding or resizing is not allowed when leaving existing mips."));
 					return false;
 				}
 				if ( bLongLatCubemap )
 				{
-					UE_LOG(LogTextureCompressor, Warning, TEXT("PadPow2 + LongLat cubemap doesn't work, continuing.."));
+					if (bResizeTexture)
+					{
+						UE_LOG(LogTextureCompressor, Warning, TEXT("In order to improve the quality of the generated texture, resizing LongLat cubemaps should be avoided."));
+					}
+					else
+					{
+						UE_LOG(LogTextureCompressor, Warning, TEXT("Padding of a LongLat cubemap may result in incorrect mapping of the texture pixels to the cubemap faces and should be avoided."));
+					}
 				}
 
 				// Want to stretch or pad the texture
@@ -3887,44 +4070,92 @@ private:
 				// space for one source mip and one destination mip
 				const FImage& SourceImage = bSuitableFormat ? FirstSourceMipImage : Temp;
 				FImage& TargetImage = PaddedSourceMips.Emplace_GetRef(TargetTextureSizeX, TargetTextureSizeY, BuildSettings.bVolume ? TargetTextureSizeZ : SourceImage.NumSlices, SourceImage.Format);
-				FLinearColor FillColor = BuildSettings.PaddingColor;
 
-				FLinearColor* TargetPtr = (FLinearColor*)TargetImage.RawData.GetData();
-				FLinearColor* SourcePtr = (FLinearColor*)SourceImage.RawData.GetData();
-				check(SourceImage.GetBytesPerPixel() == sizeof(FLinearColor));
-				check(TargetImage.GetBytesPerPixel() == sizeof(FLinearColor));
+				if (bResizeTexture)
+				{		
+					// changed resizer for "stretch to power of two" , bumped ddc key
 
-				for (int32 SliceIndex = 0; SliceIndex < SourceImage.NumSlices; ++SliceIndex)
+					// choice of Filter?
+
+					FImageCore::ResizeImageAllocDest(SourceImage,TargetImage, TargetTextureSizeX, TargetTextureSizeY);
+				}
+				else
 				{
-					for (int32 Y = 0; Y < TargetTextureSizeY; ++Y)
-					{
-						int32 XStart = 0;
-						if (Y < SourceImage.SizeY)
-						{
-							XStart = SourceImage.SizeX;
-							FMemory::Memcpy(TargetPtr, SourcePtr, SourceImage.SizeX * sizeof(FLinearColor));
-							SourcePtr += SourceImage.SizeX;
-							TargetPtr += SourceImage.SizeX;
-						}
+					FLinearColor FillColor = BuildSettings.PaddingColor;
+					bool bPadWithBorderColor = BuildSettings.bPadWithBorderColor;
 
-						for (int32 XPad = XStart; XPad < TargetImage.SizeX; ++XPad)
+					FLinearColor* TargetPtr = (FLinearColor*)TargetImage.RawData.GetData();
+					FLinearColor* SourcePtr = (FLinearColor*)SourceImage.RawData.GetData();
+					check(SourceImage.GetBytesPerPixel() == sizeof(FLinearColor));
+					check(TargetImage.GetBytesPerPixel() == sizeof(FLinearColor));
+
+					for (int32 SliceIndex = 0; SliceIndex < SourceImage.NumSlices; ++SliceIndex)
+					{
+						for (int32 Y = 0; Y < TargetTextureSizeY; ++Y)
 						{
-							*TargetPtr++ = FillColor;
+							if (Y < SourceImage.SizeY)
+							{
+								FMemory::Memcpy(TargetPtr, SourcePtr, SourceImage.SizeX * sizeof(FLinearColor));
+								SourcePtr += SourceImage.SizeX;
+								TargetPtr += SourceImage.SizeX;
+								
+								int32 PadCount = TargetImage.SizeX - SourceImage.SizeX;
+								if ( bPadWithBorderColor )
+								{
+									const FLinearColor BorderColor = TargetPtr[-1];
+									for (int32 i=0;i<PadCount;i++)
+									{
+										*TargetPtr++ = BorderColor;
+									}
+								}
+								else
+								{
+									for (int32 i=0;i<PadCount;i++)
+									{
+										*TargetPtr++ = FillColor;
+									}
+								}
+							}
+							else if (bPadWithBorderColor)
+							{
+								// We're copying the entirely of the last line of the target image, which we know has proper padding horizontally
+								// because earlier passes (when Y < SourceImage.SizeY) will pad out the line in the loop below.
+								FMemory::Memcpy(TargetPtr, TargetPtr - TargetImage.SizeX, TargetImage.SizeX * sizeof(FLinearColor));
+								TargetPtr += TargetImage.SizeX;
+							}
+							else
+							{
+								// fill whole line with FillColor
+								
+								for (int32 i=0;i<TargetImage.SizeX;i++)
+								{
+									*TargetPtr++ = FillColor;
+								}
+							}
+						}
+					}
+					// Pad new slices for volume texture
+					for (int32 SliceIndex = SourceImage.NumSlices; SliceIndex < TargetImage.NumSlices; ++SliceIndex)
+					{
+						for (int32 Y = 0; Y < TargetImage.SizeY; ++Y)
+						{
+							if (bPadWithBorderColor)
+							{
+								// We're copying the entirely of the corresponding line from the previous slice, which we know has proper padding
+								// performed during earlier passes (SliceIndex < SourceImage.NumSlices).
+								FMemory::Memcpy(TargetPtr, TargetPtr - (int64) TargetImage.SizeX * TargetImage.SizeY, TargetImage.SizeX * sizeof(FLinearColor));
+								TargetPtr += TargetImage.SizeX;
+							}
+							else
+							{
+								for (int32 X = 0; X < TargetImage.SizeX; ++X)
+								{
+									*TargetPtr++ = FillColor;
+								}
+							}
 						}
 					}
 				}
-				// Pad new slices for volume texture
-				for (int32 SliceIndex = SourceImage.NumSlices; SliceIndex < TargetImage.NumSlices; ++SliceIndex)
-				{
-					for (int32 Y = 0; Y < TargetImage.SizeY; ++Y)
-					{
-						for (int32 X = 0; X< TargetImage.SizeX; ++X)
-						{
-							*TargetPtr++ = FillColor;
-						}
-					}
-				}
-				
 				// change pSourceMips to point at the one padded image we made
 				pSourceMips = &PaddedSourceMips;
 			}
@@ -3991,11 +4222,12 @@ private:
 
 				// Max Texture Size resizing happens here :
 				// note we do not check for TMGS_Angular here
+				// note that TMGS_NoMipMaps *can* use this path; in that case it generates mips using 2x2 simple average
 				const FImage& BaseMip = bSuitableFormat ? BaseImage : Temp;
 				GenerateMipChain(BuildSettings, BaseMip, BuildSourceImageMips, 1);
 
 				// mip data not needed anymore
-				// todo: this could free "BaseMip" image instead, if it's ok with caller (currently const type used)
+				// @todo: this could free "BaseMip" image instead, if it's ok with caller (currently const type used)
 				Temp.RawData.Empty();
 
 				while( BuildSourceImageMips.Last().SizeX > MaxTextureResolution || 
@@ -4083,6 +4315,11 @@ private:
 		{
 			const FImage& Image = (*pSourceMips)[MipIndex];
 
+			if (bDoDetailedAlphaLogging)
+			{
+				UE_LOG(LogTextureCompressor, Display, TEXT("[alpha] Pre Process: %d - %.*s"), FImageCore::DetectAlphaChannel(Image), DebugTexturePathName.Len(), DebugTexturePathName.GetData());
+			}
+			
 			// copy mips over + processing
 			// this is a code dupe of the processing done in GenerateMipChain
 
@@ -4093,7 +4330,6 @@ private:
 			{
 				// Generate the base mip from the long-lat source image.
 				GenerateBaseCubeMipFromLongitudeLatitude2D(&Mip, Image, BuildSettings);
-	
 				check( CopyCount == 1 );
 			}
 			else
@@ -4109,6 +4345,11 @@ private:
 					}
 
 					GenerateTopMip(Temp, Mip, BuildSettings);
+
+					if (bDoDetailedAlphaLogging)
+					{
+						UE_LOG(LogTextureCompressor, Display, TEXT("[alpha] ApplyKernel: %d - %.*s"), FImageCore::DetectAlphaChannel(Mip), DebugTexturePathName.Len(), DebugTexturePathName.GetData());
+					}
 				}
 				else
 				{
@@ -4118,6 +4359,11 @@ private:
 						if (BuildSettings.bRenormalizeTopMip)
 						{
 							NormalizeMip(Mip);
+						}
+
+						if (bDoDetailedAlphaLogging)
+						{
+							UE_LOG(LogTextureCompressor, Display, TEXT("[alpha] Linearize: %d - %.*s"), FImageCore::DetectAlphaChannel(Mip), DebugTexturePathName.Len(), DebugTexturePathName.GetData());
 						}
 					}
 					else
@@ -4132,8 +4378,12 @@ private:
 							DestGammaSpace = EGammaSpace::Linear;
 						}
 						Image.CopyTo(Mip, DestFormat, DestGammaSpace);
-
-						//@@CB todo : when Mip format == Image format, we can Move instead of Copy
+						
+						if (bDoDetailedAlphaLogging)
+						{
+							UE_LOG(LogTextureCompressor, Display, TEXT("[alpha] Copy: %d - %.*s"), FImageCore::DetectAlphaChannel(Mip), DebugTexturePathName.Len(), DebugTexturePathName.GetData());
+						}
+						//@todo : when Mip format == Image format, we can Move instead of Copy
 						//	have to make sure that's okay with SourceMips/TextureData
 					}
 				}
@@ -4144,15 +4394,30 @@ private:
 			if (BuildSettings.Downscale > 1.f)
 			{		
 				DownscaleImage(Mip, Mip, FTextureDownscaleSettings(BuildSettings));
+
+				if (bDoDetailedAlphaLogging)
+				{
+					UE_LOG(LogTextureCompressor, Display, TEXT("[alpha] Downscale: %d - %.*s"), FImageCore::DetectAlphaChannel(Mip), DebugTexturePathName.Len(), DebugTexturePathName.GetData());
+				}
 			}
 
 			// Apply color adjustments
 			AdjustImageColors(Mip, BuildSettings);
 
+			if (bDoDetailedAlphaLogging)
+			{
+				UE_LOG(LogTextureCompressor, Display, TEXT("[alpha] ColorAdjust: %d - %.*s"), FImageCore::DetectAlphaChannel(Mip), DebugTexturePathName.Len(), DebugTexturePathName.GetData());
+			}
+
 			if (BuildSettings.bComputeBokehAlpha)
 			{
 				// To get the occlusion in the BokehDOF shader working for all Bokeh textures.
 				ComputeBokehAlpha(Mip);
+
+				if (bDoDetailedAlphaLogging)
+				{
+					UE_LOG(LogTextureCompressor, Display, TEXT("[alpha] Bokeh: %d - %.*s"), FImageCore::DetectAlphaChannel(Mip), DebugTexturePathName.Len(), DebugTexturePathName.GetData());
+				}
 			}
 			if (BuildSettings.bFlipGreenChannel)
 			{
@@ -4209,6 +4474,12 @@ private:
 				NumOutputMips, OutMipChain[0].SizeX, OutMipChain[0].SizeY, OutMipChain[0].NumSlices);
 		}
 
+		if (bDoDetailedAlphaLogging)
+		{
+			UE_LOG(LogTextureCompressor, Display, TEXT("[alpha] BeginPost: %d - %.*s"), FImageCore::DetectAlphaChannel(OutMipChain[0]), DebugTexturePathName.Len(), DebugTexturePathName.GetData());
+		}
+
+
 		// Apply post-mip generation adjustments.
 		if ( BuildSettings.bNormalizeNormals )
 		{
@@ -4244,6 +4515,11 @@ private:
 		{
 			check( !BuildSettings.bReplicateAlpha ); // cannot both be set 
 			ReplicateRedChannel(OutMipChain);
+
+			if (bDoDetailedAlphaLogging)
+			{
+				UE_LOG(LogTextureCompressor, Display, TEXT("[alpha] ReplicateRed: %d - %.*s"), FImageCore::DetectAlphaChannel(OutMipChain[0]), DebugTexturePathName.Len(), DebugTexturePathName.GetData());
+			}
 		}
 		else if (BuildSettings.bReplicateAlpha)
 		{
@@ -4253,6 +4529,11 @@ private:
 		if (BuildSettings.bApplyYCoCgBlockScale)
 		{
 			ApplyYCoCgBlockScale(OutMipChain);
+		}
+
+		if (bDoDetailedAlphaLogging)
+		{
+			UE_LOG(LogTextureCompressor, Display, TEXT("[alpha] End: %d - %.*s"), FImageCore::DetectAlphaChannel(OutMipChain[0]), DebugTexturePathName.Len(), DebugTexturePathName.GetData());
 		}
 
 		return true;

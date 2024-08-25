@@ -11,6 +11,9 @@
 
 #include "OptimusNodeGraph.generated.h"
 
+class IOptimusNodePairProvider;
+class IOptimusComputeKernelProvider;
+class UOptimusNode_LoopTerminal;
 class UOptimusComponentSourceBinding;
 struct FOptimusCompoundAction;
 struct FOptimusPinTraversalContext;
@@ -21,7 +24,9 @@ class UOptimusComputeDataInterface;
 class IOptimusNodeGraphCollectionOwner;
 class UOptimusActionStack;
 class UOptimusNode;
+class UOptimusNodePair;
 class UOptimusNodeGraph;
+class UOptimusNodeSubGraph;
 class UOptimusNodeLink;
 class UOptimusNodePin;
 enum class EOptimusNodePinDirection : uint8;
@@ -39,6 +44,13 @@ enum class EOptimusNodeGraphType
 	Function,				/** Used to store function graphs */
 	SubGraph,				/** Used to store sub-graphs within other graphs */ 
 	Transient				/** Used to store nodes during duplication. Never serialized. */
+};
+
+enum class EOptimusNodePinTraversalDirection
+{
+	Default,
+	Upstream,
+	Downstream
 };
 
 namespace Optimus
@@ -64,7 +76,13 @@ public:
 	static const FName SetupGraphName;
 	static const FName UpdateGraphName;
 	static const TCHAR* LibraryRoot;
+	static const FName DefaultSubGraphName;
+	static const FName DefaultSubGraphRefNodeName;
+	
+	// Function Graphs are addressed in a special way
+	static FString GetFunctionGraphCollectionPath(const FString& InFunctionName);
 
+	
 	// Check if the duplication took place at the asset level
 	// if so, we have to recreate all constant/attribute nodes such that their class pointers
 	// don't point to classes in the source asset. This can happen because generated class
@@ -75,13 +93,13 @@ public:
 
 	UOptimusNodeGraph *GetParentGraph() const;
 	
-	FString GetGraphPath() const;
-
 	/** Verify if the given name is a valid graph name. */
 	static bool IsValidUserGraphName(
 		const FString& InGraphName,
 		FText* OutFailureReason = nullptr
 		);
+
+	static FString ConstructPath(const FString& GraphPath, const FString& NodeName, const FString& PinPath);
 	
 	UFUNCTION(BlueprintCallable, Category = OptimusNodeGraph)
 	EOptimusNodeGraphType GetGraphType() const { return GraphType; }
@@ -97,7 +115,9 @@ public:
 	{
 		return GraphType == EOptimusNodeGraphType::Function; 
 	}
-	
+
+	bool IsReadOnly() const;
+
 	UFUNCTION(BlueprintCallable, Category = OptimusNodeGraph)
 	int32 GetGraphIndex() const;
 
@@ -125,6 +145,17 @@ public:
 	UFUNCTION(BlueprintCallable, Category = OptimusNodeGraph)
 	UOptimusNode* AddDataInterfaceNode(
 		const TSubclassOf<UOptimusComputeDataInterface> InDataInterfaceClass,
+		const FVector2D& InPosition
+	);
+
+	UFUNCTION(BlueprintCallable, Category = OptimusNodeGraph)
+	TArray<UOptimusNode*> AddLoopTerminalNodes(
+		const FVector2D& InPosition
+	);
+
+	UFUNCTION(BlueprintCallable, Category = OptimusNodeGraph)
+	UOptimusNode* AddFunctionReferenceNode(
+		TSoftObjectPtr<UOptimusFunctionNodeGraph> InFunctionGraph,
 		const FVector2D& InPosition
 	);
 
@@ -165,9 +196,9 @@ public:
 	bool RemoveNodes(
 		const TArray<UOptimusNode*>& InNodes
 	);
-	bool RemoveNodes(
-		const TArray<UOptimusNode*>& InNodes,
-		const FString& InActionName
+
+	int32 RemoveNodesAndCount(
+		const TArray<UOptimusNode*>& InNodes
 	);
 
 	UFUNCTION(BlueprintCallable, Category = OptimusNodeGraph)
@@ -238,7 +269,17 @@ public:
 	 *  sub-graph was expanded, the sub-graph is deleted.
 	 */
 	UFUNCTION(BlueprintCallable, Category = OptimusNodeGraph)
-	TArray<UOptimusNode *> ExpandCollapsedNodes(UOptimusNode* InFunctionNode);
+	TArray<UOptimusNode *> ExpandCollapsedNodes(UOptimusNode* InGraphReferenceNode);
+	
+	/** Take a subgraph node convert it to a function in-place
+	 */
+	UFUNCTION(BlueprintCallable, Category = OptimusNodeGraph)
+	bool ConvertToFunction(UOptimusNode* InSubGraphNode);
+
+	/** Take a function node convert it to a subgraph node in-place
+	 */
+	UFUNCTION(BlueprintCallable, Category = OptimusNodeGraph)
+	bool ConvertToSubGraph(UOptimusNode* InFunctionNode);
 	
 	/** Returns true if the node in question is a custom kernel node that can be converted to
 	  * a kernel function with ConvertCustomKernelToFunction.
@@ -263,6 +304,14 @@ public:
 	  */
 	UFUNCTION(BlueprintCallable, Category = OptimusNodeGraph)
 	bool IsSubGraphReference(UOptimusNode *InNode) const;
+
+	/** Returns the node pair given a IOptimusNodePairProvider
+	  */
+	UOptimusNodePair* GetNodePair(const UOptimusNode* InNode) const;
+	
+	/** Returns the paired node for the given IOptimusNodePairProvider
+	  */
+	UOptimusNode* GetNodeCounterpart(const UOptimusNode* InNode) const;
 	
 	/** Returns all pins that have a _direct_ connection to this pin. If nothing is connected 
 	  * to this pin, it returns an empty array.
@@ -278,15 +327,45 @@ public:
 		const UOptimusNodePin* InNodePin,
 		const FOptimusPinTraversalContext& InContext
 		) const;
-
+	
+	TArray<FOptimusRoutedNodePin> GetConnectedPinsWithRouting(
+		const UOptimusNodePin* InNodePin,
+		const FOptimusPinTraversalContext& InContext,
+		EOptimusNodePinTraversalDirection Direction
+		) const;
 
 	/** Get all unique component bindings that lead to this pin. Note that only pins with a zero or single bindings
 	 *  are considered valid. We return all of them however for error messaging.
 	 */
 	TSet<UOptimusComponentSourceBinding*> GetComponentSourceBindingsForPin(
-		const UOptimusNodePin* InNodePin
+		const UOptimusNodePin* InNodePin,
+		const FOptimusPinTraversalContext& InContext
 		) const;
-		
+
+	/** Check if a pin represents time varying data */
+	bool IsPinMutable(
+		const UOptimusNodePin* InNodePin,
+		const FOptimusPinTraversalContext& InContext
+		) const;
+
+	/** Check if a Node has mutable input pins */
+	bool DoesNodeHaveMutableInput(
+		const UOptimusNode* InNode,
+		const FOptimusPinTraversalContext& InContext
+		) const;
+
+	/** Gather connected loop entry terminals */
+	TSet<FOptimusRoutedConstNode> GetLoopEntryTerminalForPin(
+		const UOptimusNodePin* InNodePin,
+		const FOptimusPinTraversalContext& InContext = {}	
+		) const;
+
+	/** Gather connected loop entry terminals */
+	TSet<FOptimusRoutedConstNode> GetLoopEntryTerminalForNode(
+		const UOptimusNode* InNode,
+		const FOptimusPinTraversalContext& InContext = {}
+		) const;
+
 	TArray<const UOptimusNodeLink *> GetPinLinks(const UOptimusNodePin* InNodePin) const;
 
 	/// Check to see if connecting these two nodes will form a graph cycle.
@@ -311,6 +390,7 @@ public:
 
 	const TArray<UOptimusNode*>& GetAllNodes() const { return Nodes; }
 	const TArray<UOptimusNodeLink*>& GetAllLinks() const { return Links; }
+	const TArray<UOptimusNodePair*>& GetAllNodePairs() const { return NodePairs; }
 
 	UOptimusActionStack* GetActionStack() const;      
 
@@ -322,22 +402,29 @@ public:
 	UFUNCTION(BlueprintCallable, Category = OptimusNodeGraph)
 	const TArray<UOptimusNodeGraph*> &GetGraphs() const override { return SubGraphs; }
 
-	UOptimusNodeGraph* CreateGraph(
+	UOptimusNodeGraph* FindGraphByName(FName InGraphName) const override;
+	
+	UOptimusNodeGraph* CreateGraphDirect(
 		EOptimusNodeGraphType InType,
 		FName InName,
 		TOptional<int32> InInsertBefore) override;
-	bool AddGraph(
+	bool AddGraphDirect(
 		UOptimusNodeGraph* InGraph,
 		int32 InInsertBefore) override;
-	bool RemoveGraph(
+	bool RemoveGraphDirect(
 		UOptimusNodeGraph* InGraph,
 		bool bInDeleteGraph) override;
 
 	UFUNCTION(BlueprintCallable, Category = OptimusNodeGraph)
-	bool MoveGraph(
+	bool MoveGraphDirect(
 		UOptimusNodeGraph* InGraph,
 		int32 InInsertBefore) override;
 
+	UFUNCTION(BlueprintCallable, Category = OptimusNodeGraph)
+	bool RenameGraphDirect(
+		UOptimusNodeGraph* InGraph,
+		const FString& InNewName) override;
+	
 	UFUNCTION(BlueprintCallable, Category = OptimusNodeGraph)
 	bool RenameGraph(
 		UOptimusNodeGraph* InGraph,
@@ -359,10 +446,12 @@ protected:
 	friend class UOptimusNode;
 	friend class UOptimusNodePin;
 	friend class UOptimusNode_ConstantValue;
+	friend class UOptimusNode_SubGraphReference;
 	friend class FOptimusEditorClipboard;
 	friend struct FOptimusNodeGraphAction_AddNode;
 	friend struct FOptimusNodeGraphAction_DuplicateNode;
 	friend struct FOptimusNodeGraphAction_RemoveNode;
+	friend struct FOptimusNodeGraphAction_AddRemoveNodePair;
 	friend struct FOptimusNodeGraphAction_AddRemoveLink;
 	friend struct FOptimusNodeGraphAction_PackageKernelFunction;
 	friend struct FOptimusNodeGraphAction_UnpackageKernelFunction;
@@ -378,16 +467,19 @@ protected:
 		UOptimusNode* InNode
 	);
 	
-	bool RemoveNodesToAction(
-			FOptimusCompoundAction* InAction,
-			const TArray<UOptimusNode*>& InNodes
-			) const;
-
+	void RemoveGraph(
+		UOptimusNodeGraph* InNodeGraph
+		);
+	
 	// Remove a node directly. If a node still has connections this call will fail. 
 	bool RemoveNodeDirect(
 		UOptimusNode* InNode,		
 		bool bFailIfLinks = true);
 
+	bool AddNodePairDirect(UOptimusNode* InFirstNode, UOptimusNode* InSecondNode);
+	
+	bool RemoveNodePairDirect(UOptimusNode* InFirstNode, UOptimusNode* InSecondNode);
+	
 	bool AddLinkDirect(UOptimusNodePin* InNodeOutputPin, UOptimusNodePin* InNodeInputPin);
 
 	bool RemoveLinkDirect(UOptimusNodePin* InNodeOutputPin, UOptimusNodePin* InNodeInputPin);
@@ -428,7 +520,30 @@ private:
 		const FVector2D& InPosition,
 		TFunction<void(UOptimusNode*)> InNodeConfigFunc
 	);
+	
+	TArray<UOptimusNode*> AddNodePairInternal(
+		const TSubclassOf<UOptimusNode> InNodeClass,
+		const FVector2D& InPosition,
+		TFunction<void(UOptimusNode*)> InFirstNodeConfigFunc,
+		TFunction<void(UOptimusNode*)> InSecondNodeConfigFunc
+	);
 
+	static void GatherRelatedObjects(
+		const TArray<UOptimusNode*>& InNodes,
+		TArray<UOptimusNode*>& OutNodes,
+		TArray<UOptimusNodePair*>& OutNodePairs,
+		TArray<UOptimusNodeSubGraph*>& OutSubGraphs
+		);
+
+	static bool DuplicateSubGraph(
+		UOptimusActionStack* InActionStack,
+		const FString& InGraphOwnerPath,
+		UOptimusNodeSubGraph* InSourceSubGraph,
+		FName InNewGraphName
+		);
+
+	void RemoveNodePairByIndex(int32 NodePairIndex);
+	
 	void RemoveLinkByIndex(int32 LinkIndex);
 
 	/// Returns the indexes of all links that connect to the node. If a direction is specified
@@ -453,6 +568,9 @@ private:
 		const UOptimusNodePin* InNodePin
 		) const;
 
+	FString ConstructSubGraphPath(const FString& InSubGraphName) const;
+	static FString ConstructSubGraphPath(const FString& InGraphOwnerPath, const FString& InSubGraphName);
+	
 	UPROPERTY(NonTransactional)
 	TArray<TObjectPtr<UOptimusNode>> Nodes;
 
@@ -460,7 +578,10 @@ private:
 	UPROPERTY(NonTransactional)
 	TArray<TObjectPtr<UOptimusNodeLink>> Links;
 
-	UPROPERTY()
+	UPROPERTY(NonTransactional)
+	TArray<TObjectPtr<UOptimusNodePair>> NodePairs;
+	
+	UPROPERTY(NonTransactional)
 	TArray<TObjectPtr<UOptimusNodeGraph>> SubGraphs;
 
 	FOptimusGraphNotifyDelegate GraphNotifyDelegate;

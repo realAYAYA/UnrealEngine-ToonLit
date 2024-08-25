@@ -12,6 +12,7 @@ using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 
 using static AutomationTool.CommandUtils;
+using UnrealBuildBase;
 
 namespace AutomationTool
 {
@@ -160,7 +161,7 @@ namespace AutomationTool
 				P4ClientInfo ThisClient;
 				if(String.IsNullOrEmpty(Client))
 				{
-					string HostName = System.Net.Dns.GetHostName();
+					string HostName = Unreal.MachineName;
 					ThisClient = DetectClient(DefaultConnection, User, HostName, CmdEnv.AutomationToolDll);
 					Logger.LogInformation("Using user {User} clientspec {ClientName} {ClientPath}", User, ThisClient.Name, ThisClient.RootPath);
 					Client = ThisClient.Name;

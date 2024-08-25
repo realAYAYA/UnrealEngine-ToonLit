@@ -21,7 +21,6 @@ class FWmfMediaSink
 	: public IMFClockStateSink
 	, public IMFGetService
 	, public IMFMediaSink
-	, public IMFMediaSinkPreroll
 	, public IMFRateSupport
 {
 public:
@@ -68,12 +67,6 @@ public:
 	STDMETHODIMP RemoveStreamSink(DWORD dwStreamSinkIdentifier);
 	STDMETHODIMP SetPresentationClock(__RPC__in_opt IMFPresentationClock* pPresentationClock);
 	STDMETHODIMP Shutdown();
-
-public:
-
-	//~ IMFMediaSinkPreroll interface
-
-	STDMETHODIMP NotifyPreroll(MFTIME hnsUpcomingStartTime);
 
 public:
 

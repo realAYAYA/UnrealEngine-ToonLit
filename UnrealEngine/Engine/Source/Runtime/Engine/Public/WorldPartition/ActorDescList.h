@@ -6,12 +6,22 @@
 #include "WorldPartition/WorldPartitionActorDesc.h"
 #include "WorldPartition/WorldPartitionActorDescType.h"
 
-class FActorDescList
+#if WITH_EDITOR
+// Default Iterator Value Type is the DescType itself
+template<typename DescType, class ActorType>
+struct TActorDescListIteratorValueType 
+{ 
+	using Type = DescType;
+};
+#endif
+
+template<class DescType>
+class TActorDescList
 {
 #if WITH_EDITOR
 	friend struct FWorldPartitionImplBase;
 
-	struct FActorGuidKeyFuncs : TDefaultMapKeyFuncs<FGuid, TUniquePtr<FWorldPartitionActorDesc>*, false>
+	struct FActorGuidKeyFuncs : TDefaultMapKeyFuncs<FGuid, TUniquePtr<DescType>*, false>
 	{
 		static FORCEINLINE uint32 GetKeyHash(const FGuid& Key)
 		{
@@ -19,28 +29,23 @@ class FActorDescList
 		}
 	};
 
-	using FGuidActorDescMap = TMap<FGuid, TUniquePtr<FWorldPartitionActorDesc>*, FDefaultSetAllocator, FActorGuidKeyFuncs>;
+	using FGuidActorDescMap = TMap<FGuid, TUniquePtr<DescType>*, FDefaultSetAllocator, FActorGuidKeyFuncs>;
+	using FActorDescArray = TChunkedArray<TUniquePtr<DescType>>;
 
 public:
-	FActorDescList() {}
-	virtual ~FActorDescList() {}
+	TActorDescList() {}
+	virtual ~TActorDescList() {}
 
 	// Non-copyable
-	FActorDescList(const FActorDescList&) = delete;
-	FActorDescList& operator=(const FActorDescList&) = delete;
-
-	ENGINE_API FWorldPartitionActorDesc* AddActor(const AActor* InActor);
-
-	ENGINE_API FWorldPartitionActorDesc* GetActorDesc(const FGuid& Guid);
-	ENGINE_API const FWorldPartitionActorDesc* GetActorDesc(const FGuid& Guid) const;
-
-	ENGINE_API FWorldPartitionActorDesc& GetActorDescChecked(const FGuid& Guid);
-	ENGINE_API const FWorldPartitionActorDesc& GetActorDescChecked(const FGuid& Guid) const;
-
-	int32 GetActorDescCount() const { return ActorsByGuid.Num(); }
-
-	bool IsEmpty() const { return GetActorDescCount() == 0; }
-	ENGINE_API void Empty();
+	TActorDescList(const TActorDescList&) = delete;
+	TActorDescList& operator=(const TActorDescList&) = delete;
+		
+	bool IsEmpty() const { return ActorsByGuid.Num() == 0; }
+	ENGINE_API void Empty()
+	{
+		ActorsByGuid.Empty();
+		ActorDescList.Empty();
+	}
 
 	template<bool bConst, class ActorType>
 	class TBaseIterator
@@ -49,10 +54,10 @@ public:
 
 	protected:
 		using MapType = FGuidActorDescMap;
-		using ValueType = typename FWorldPartitionActorDescType<ActorType>::Type;
-		using IteratorType = typename TChooseClass<bConst, MapType::TConstIterator, MapType::TIterator>::Result;
-		using ListType = typename TChooseClass<bConst, const FActorDescList*, FActorDescList*>::Result;
-		using ReturnType = typename TChooseClass<bConst, const ValueType*, ValueType*>::Result;
+		using ValueType = typename TActorDescListIteratorValueType<DescType, ActorType>::Type;
+		using IteratorType = std::conditional_t<bConst, typename MapType::TConstIterator, typename MapType::TIterator>;
+		using ListType = std::conditional_t<bConst, const TActorDescList<DescType>*, TActorDescList<DescType>*>;
+		using ReturnType = std::conditional_t<bConst, const ValueType*, ValueType*>;
 
 	public:
 		TBaseIterator(ListType InActorDescList, UClass* InActorClass)
@@ -69,14 +74,22 @@ public:
 		}
 
 		/**
-		 * Iterates to next suitable actor desc.
+		 * Iterates to next suitable actor desc
 		 */
-		void operator++()
+		FORCEINLINE void operator++()
 		{
 			do
 			{
 				++ActorsIterator;
 			} while (ShouldSkip());
+		}
+
+		/**
+		 * Removes the current iterator element
+		 */
+		FORCEINLINE void RemoveCurrent()
+		{
+			ActorsIterator.RemoveCurrent();
 		}
 
 		/**
@@ -111,7 +124,7 @@ public:
 		}
 
 		/**
-		 * Returns the actor class on which the iterator iterates on.
+		 * Returns the actor class on which the iterator iterates on
 		 *
 		 * @return the actor class
 		 */
@@ -119,7 +132,7 @@ public:
 
 	protected:
 		/**
-		 * Determines whether the iterator currently points to a valid actor desc or not.
+		 * Determines whether the iterator currently points to a valid actor desc or not
 		 * @return true if we should skip the actor desc
 		 */
 		FORCEINLINE bool ShouldSkip() const
@@ -158,15 +171,83 @@ public:
 		{}
 	};
 
-	ENGINE_API void AddActorDescriptor(FWorldPartitionActorDesc* ActorDesc);
-	ENGINE_API void RemoveActorDescriptor(FWorldPartitionActorDesc* ActorDesc);
+	void AddActorDescriptor(DescType* ActorDesc);
+	void RemoveActorDescriptor(DescType* ActorDesc);
 
 protected:
+	TUniquePtr<DescType>* GetActorDescriptor(const FGuid& ActorGuid);
+	const TUniquePtr<DescType>* GetActorDescriptor(const FGuid& ActorGuid) const;
 
-	ENGINE_API TUniquePtr<FWorldPartitionActorDesc>* GetActorDescriptor(const FGuid& ActorGuid);
+	TUniquePtr<DescType>* GetActorDescriptorChecked(const FGuid& ActorGuid);
+	const TUniquePtr<DescType>* GetActorDescriptorChecked(const FGuid& ActorGuid) const;
 
-	TChunkedArray<TUniquePtr<FWorldPartitionActorDesc>> ActorDescList;
-
+	FActorDescArray ActorDescList;
 	FGuidActorDescMap ActorsByGuid;
+#endif
+};
+
+#if WITH_EDITOR
+template<class DescType>
+void TActorDescList<DescType>::AddActorDescriptor(DescType* ActorDesc)
+{
+	check(ActorDesc);
+	checkf(!ActorsByGuid.Contains(ActorDesc->GetGuid()), TEXT("Duplicated actor descriptor guid '%s' detected: `%s`"), *ActorDesc->GetGuid().ToString(), *ActorDesc->GetActorName().ToString());
+
+	TUniquePtr<DescType>* NewActorDesc = new(ActorDescList) TUniquePtr<DescType>(ActorDesc);
+	ActorsByGuid.Add(ActorDesc->GetGuid(), NewActorDesc);
+}
+
+template<class DescType>
+void TActorDescList<DescType>::RemoveActorDescriptor(DescType* ActorDesc)
+{
+	check(ActorDesc);
+	verify(ActorsByGuid.Remove(ActorDesc->GetGuid()));
+}
+
+template<class DescType>
+TUniquePtr<DescType>* TActorDescList<DescType>::GetActorDescriptor(const FGuid& ActorGuid)
+{
+	return ActorsByGuid.FindRef(ActorGuid);
+}
+
+template<class DescType>
+const TUniquePtr<DescType>* TActorDescList<DescType>::GetActorDescriptor(const FGuid& ActorGuid) const
+{
+	return ActorsByGuid.FindRef(ActorGuid);
+}
+
+template<class DescType>
+TUniquePtr<DescType>* TActorDescList<DescType>::GetActorDescriptorChecked(const FGuid& ActorGuid)
+{
+	return ActorsByGuid.FindChecked(ActorGuid);
+}
+
+template<class DescType>
+const TUniquePtr<DescType>* TActorDescList<DescType>::GetActorDescriptorChecked(const FGuid& ActorGuid) const
+{
+	return ActorsByGuid.FindChecked(ActorGuid);
+}
+
+// FActorDescList supports subclassing through ActorType's and FWorldPartitionActorDescType will return  the proper iterator value type
+template<class ActorType>
+struct TActorDescListIteratorValueType<FWorldPartitionActorDesc, ActorType>
+{
+	using Type = typename FWorldPartitionActorDescType<ActorType>::Type;
+};
+#endif
+
+class FActorDescList : public TActorDescList<FWorldPartitionActorDesc>
+{
+#if WITH_EDITOR
+public:
+	ENGINE_API FWorldPartitionActorDesc* GetActorDesc(const FGuid& Guid);
+	ENGINE_API const FWorldPartitionActorDesc* GetActorDesc(const FGuid& Guid) const;
+
+	ENGINE_API FWorldPartitionActorDesc& GetActorDescChecked(const FGuid& Guid);
+	ENGINE_API const FWorldPartitionActorDesc& GetActorDescChecked(const FGuid& Guid) const;
+
+	int32 GetActorDescCount() const { return ActorsByGuid.Num(); }
+
+	ENGINE_API FWorldPartitionActorDesc* AddActor(const AActor* InActor);
 #endif
 };

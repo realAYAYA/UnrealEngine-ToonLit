@@ -29,7 +29,7 @@ void FClothPhysicalMeshData::MigrateFrom(FClothPhysicalMeshData& ClothPhysicalMe
 		BoneData = MoveTemp(ClothPhysicalMeshData.BoneData);
 		NumFixedVerts = ClothPhysicalMeshData.NumFixedVerts;
 		MaxBoneWeights = ClothPhysicalMeshData.MaxBoneWeights;
-		SelfCollisionIndices = MoveTemp(ClothPhysicalMeshData.SelfCollisionIndices);
+		SelfCollisionVertexSet = MoveTemp(ClothPhysicalMeshData.SelfCollisionVertexSet);
 	}
 }
 
@@ -45,7 +45,11 @@ void FClothPhysicalMeshData::MigrateFrom(UClothPhysicalMeshDataBase_Legacy* Clot
 	BoneData = MoveTemp(ClothPhysicalMeshDataBase->BoneData);
 	NumFixedVerts = ClothPhysicalMeshDataBase->NumFixedVerts;
 	MaxBoneWeights = ClothPhysicalMeshDataBase->MaxBoneWeights;
-	SelfCollisionIndices = MoveTemp(ClothPhysicalMeshDataBase->SelfCollisionIndices);
+	SelfCollisionVertexSet.Empty(ClothPhysicalMeshDataBase->SelfCollisionIndices.Num());
+	for (uint32 Index : ClothPhysicalMeshDataBase->SelfCollisionIndices)
+	{
+		SelfCollisionVertexSet.Add((int32)Index);
+	}
 
 	const TArray<uint32> FloatArrayIds = ClothPhysicalMeshDataBase->GetFloatArrayIds();
 	for (uint32 FloatArrayId : FloatArrayIds)
@@ -68,6 +72,8 @@ void FClothPhysicalMeshData::Reset(const int32 InNumVerts, const int32 InNumIndi
 	BoneData.Reset(InNumVerts);
 	BoneData.AddDefaulted(InNumVerts);
 	Indices.Init(0, InNumIndices);
+
+	SelfCollisionVertexSet.Reset();
 
 	NumFixedVerts = 0;
 	MaxBoneWeights = 0;
@@ -103,63 +109,54 @@ void FClothPhysicalMeshData::BuildSelfCollisionData(const TMap<FName, TObjectPtr
 
 void FClothPhysicalMeshData::BuildSelfCollisionData(float SelfCollisionRadius)
 {
-	const float SelfCollisionRadiusSq = SelfCollisionRadius * SelfCollisionRadius;
+	const float SelfCollisionDiamSq = 4.f *SelfCollisionRadius * SelfCollisionRadius;
 
 	// Start with the full set
 	const int32 NumVerts = Vertices.Num();
-	SelfCollisionIndices.Reset();
+	TArray<bool> VertexIsValid;
+	VertexIsValid.Init(true, NumVerts);
+
 	const FPointWeightMap& MaxDistances = GetWeightMap(EWeightMapTargetCommon::MaxDistance);
 	for (int32 Index = 0; Index < NumVerts; ++Index)
 	{
-		if (!MaxDistances.IsBelowThreshold(Index))
+		if (MaxDistances.IsBelowThreshold(Index))
 		{
-			SelfCollisionIndices.Add(Index);
+			VertexIsValid[Index] = false;
 		}
 	}
 
 	// Now start aggressively culling verts that are near others that we have accepted
-	for (int32 Vert0Itr = 0; Vert0Itr < SelfCollisionIndices.Num(); ++Vert0Itr)
+	SelfCollisionVertexSet.Reset();
+	for (int32 V0Index = 0; V0Index < NumVerts; ++V0Index)
 	{
-		const uint32 V0Index = SelfCollisionIndices[Vert0Itr];
-		if (V0Index == INDEX_NONE)
+		if (!VertexIsValid[V0Index])
 		{
-			// We'll remove these indices later.  Just skip it for now.
 			continue;
 		}
+		SelfCollisionVertexSet.Add(V0Index);
 
 		const FVector& V0Pos = (FVector)Vertices[V0Index];
 
 		// Start one after our current V0, we've done the other checks
-		for (int32 Vert1Itr = Vert0Itr + 1; Vert1Itr < SelfCollisionIndices.Num(); ++Vert1Itr)
+		for (int32 V1Index = V0Index + 1; V1Index < NumVerts; ++V1Index)
 		{
-			const uint32 V1Index = SelfCollisionIndices[Vert1Itr];
-			if (V1Index == INDEX_NONE)
+			if (!VertexIsValid[V1Index])
 			{
-				// We'll remove these indices later.  Just skip it for now.
 				continue;
 			}
 
 			const FVector& V1Pos = (FVector)Vertices[V1Index];
 			const float V0ToV1DistSq = (V1Pos - V0Pos).SizeSquared();
-			if (V0ToV1DistSq < SelfCollisionRadiusSq)
+			if (V0ToV1DistSq < SelfCollisionDiamSq)
 			{
 				// Points are in contact in the rest state.  Remove it.
 				//
 				// It's worth noting that this biases towards removing indices 
 				// of later in the list, and keeping ones earlier.  That's not
 				// a great criteria for choosing which one is more important.
-				SelfCollisionIndices[Vert1Itr] = INDEX_NONE;
+				VertexIsValid[V1Index] = false;
 				continue;
 			}
-		}
-	}
-
-	// Cull flagged indices.
-	for (int32 It = SelfCollisionIndices.Num(); It--;)
-	{
-		if (SelfCollisionIndices[It] == INDEX_NONE)
-		{
-			SelfCollisionIndices.RemoveAt(It);
 		}
 	}
 }

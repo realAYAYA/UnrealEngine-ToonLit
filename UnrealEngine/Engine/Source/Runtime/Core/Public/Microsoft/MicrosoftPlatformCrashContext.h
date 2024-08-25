@@ -15,6 +15,7 @@ struct FMicrosoftPlatformCrashContext : public FGenericCrashContext
 	CORE_API void CaptureAllThreadContexts();
 
 	CORE_API virtual void SetPortableCallStack(const uint64* StackTrace, int32 StackTraceDepth) override;
+	CORE_API virtual void AddPortableThreadCallStacks(TConstArrayView<FThreadCallStack> Threads) override;
 	CORE_API virtual void AddPortableThreadCallStack(uint32 ThreadId, const TCHAR* ThreadName, const uint64* StackFrames, int32 NumStackFrames) override;
 
 protected:

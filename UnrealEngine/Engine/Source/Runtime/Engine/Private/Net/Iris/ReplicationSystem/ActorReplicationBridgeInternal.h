@@ -51,6 +51,9 @@ struct FActorCreationHeader : public FActorReplicationBridgeCreationHeader
 struct FSubObjectCreationHeader : public FActorReplicationBridgeCreationHeader
 {
 	FNetObjectReference ObjectClassReference;
+	uint8 bOuterIsTransientLevel : 1;	// When set the OuterReference was not sent because the Outer is the default transient level.
+	uint8 bOuterIsRootObject : 1;		// When set the OuterReference was not sent because the Outer is the known RootObject.
+	FNetObjectReference OuterReference; // Optional: Outer ref sent only for dynamic subobjects.
 };
 
 const FActorReplicationBridgeSpawnInfo& GetDefaultActorReplicationBridgeSpawnInfo();

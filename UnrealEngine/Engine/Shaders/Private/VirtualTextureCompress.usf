@@ -308,11 +308,34 @@ void CopyBaseColorNormalSpecularMaskYCoCgPS(
 	OutColor2 = float4(RoughnessSpecularNormalZ, NormalXYMask.z);
 }
 
-/** Copy world height (without compression)
-  * This path is used when want to copy the world height data into a thumbnail. */
+/** Compress displacement to a single BC4 target. */
+[numthreads(8, 8, 1)]
+void CompressDisplacementCS(
+	uint3 ThreadId : SV_DispatchThreadID)
+{
+	if (any(ThreadId.xy * 4 >= SourceRect.zw))
+	{
+		return;
+	}
+
+	uint2 SamplePos = SourceRect.xy + ThreadId.xy * 4;
+	float2 TexelUVSize = 1.f / float2(SourceRect.zw);
+	float2 SampleUV = (float2(SamplePos) + 0.5f) * TexelUVSize;
+
+	float Block[16];
+	ReadBlockX(RenderTexture0, TextureSampler0, SampleUV, TexelUVSize, Block);
+#if ETC_PROFILE
+	OutCompressTexture0_64bit[ThreadId.xy + DestPos0] = PackRG32(CompressBlock_ETC2_Alpha(Block));
+#else
+	OutCompressTexture0_64bit[ThreadId.xy + DestPos0] = PackRG32(CompressBC4Block(Block));
+#endif
+}
+
+/** Copy world height or displacement (without compression)
+  * This path is used when want to copy the world height or displacement data into a thumbnail. */
 void CopyWorldHeightPS(
-	in float4 InPosition : SV_POSITION, 
-	in noperspective float2 InTexCoord : TEXCOORD0, 
+	in float4 InPosition : SV_POSITION,
+	in noperspective float2 InTexCoord : TEXCOORD0,
 	out float4 OutColor0 : SV_Target0)
 {
 	float WorldHeight = RenderTexture0.SampleLevel(TextureSampler0, InTexCoord, 0).r;

@@ -15,7 +15,6 @@
 #include "Misc/AssertionMacros.h"
 #include "Serialization/JsonInternationalizationArchiveSerializer.h"
 #include "Serialization/JsonInternationalizationManifestSerializer.h"
-#include "Templates/ChooseClass.h"
 #include "Trace/Detail/Channel.h"
 #include "UObject/NameTypes.h"
 
@@ -62,10 +61,10 @@ void UInternationalizationConditioningCommandlet::FLocalizationFile::CompareToCo
 	check(LocFile != NULL);
 
 	// Iterate through all sections in the loc file
-	for ( FConfigFile::TIterator SectionIt(*LocFile); SectionIt; ++SectionIt )
+	for ( const auto& Pair : *(const FConfigFile*)OtherFile )
 	{
-		const FString& LocSectionName = SectionIt.Key();
-		FConfigSection& MySection = SectionIt.Value();
+		const FString& LocSectionName = Pair.Key;
+		const FConfigSection& MySection = Pair.Value;
 
 		// Skip the [Language] and [Public] sections
 		if( LocSectionName == TEXT("Language") || LocSectionName == TEXT("Public") )
@@ -74,11 +73,11 @@ void UInternationalizationConditioningCommandlet::FLocalizationFile::CompareToCo
 		}
 
 		// Find this section in the counterpart loc file
-		FConfigSection* OtherSection = OtherFile->Find(LocSectionName);
+		const FConfigSection* OtherSection = OtherFile->FindSection(LocSectionName);
 		if ( OtherSection != NULL )
 		{
 			// Iterate through all keys in this section
-			for ( FConfigSection::TIterator It(MySection); It; ++It )
+			for ( FConfigSection::TConstIterator It(MySection); It; ++It )
 			{
 				const FName Propname = It.Key();
 				const FString& PropValue = It.Value().GetValue();
@@ -86,7 +85,7 @@ void UInternationalizationConditioningCommandlet::FLocalizationFile::CompareToCo
 				FString EscapedPropValue = PropValue.ReplaceQuotesWithEscapedQuotes();
 
 				// Find this key in the counterpart loc file
-				FConfigValue* OtherValue = OtherSection->Find(Propname);
+				const FConfigValue* OtherValue = OtherSection->Find(Propname);
 				if ( OtherValue != NULL )
 				{
 					FString EscapedOtherValue = OtherValue->GetValue().ReplaceQuotesWithEscapedQuotes();
@@ -98,24 +97,24 @@ void UInternationalizationConditioningCommandlet::FLocalizationFile::CompareToCo
 					}
 					else if ( PropValue == OtherValue->GetValue() )
 					{
-						new(IdenticalProperties) FLocalizationFileEntry( Other->GetFilename(), LocSectionName, Propname.ToString(), EscapedPropValue, EscapedPropValue );
+						IdenticalProperties.Emplace( Other->GetFilename(), LocSectionName, Propname.ToString(), EscapedPropValue, EscapedPropValue );
 					}
 					else
 					{
-						new(TranslatedProperties) FLocalizationFileEntry( Other->GetFilename(), LocSectionName, Propname.ToString(), EscapedPropValue, EscapedOtherValue );
+						TranslatedProperties.Emplace( Other->GetFilename(), LocSectionName, Propname.ToString(), EscapedPropValue, EscapedOtherValue );
 					}
 				}
 				else
 				{
 					// The counterpart didn't contain this key
-					new(UnmatchedProperties) FString(LocSectionName + TEXT(".") + Propname.ToString());
+					UnmatchedProperties.Add(LocSectionName + TEXT(".") + Propname.ToString());
 				}
 			}
 		}
 		else
 		{
 			// The counterpart didn't contain this section
-			new(UnmatchedSections) FString(FPaths::GetBaseFilename(LocFilename) + TEXT(".") + LocSectionName);
+			UnmatchedSections.Add(FPaths::GetBaseFilename(LocFilename) + TEXT(".") + LocSectionName);
 		}
 	}
 }
@@ -322,7 +321,7 @@ bool UInternationalizationConditioningCommandlet::ProcessManifest( const FString
 	IFileManager::Get().FindFiles(PathPrimaryFilenames, *PrimaryWildcardName, true, false);
 	for ( int32 FileIndex = 0; FileIndex < PathPrimaryFilenames.Num(); FileIndex++ )
 	{
-		FString* CompleteFilename = new(PrimaryFilenames) FString(PrimaryLocDirectory + PathPrimaryFilenames[FileIndex]);
+		PrimaryFilenames.Add(PrimaryLocDirectory + PathPrimaryFilenames[FileIndex]);
 	}
 
 	if ( PrimaryFilenames.Num() == 0 )
@@ -413,7 +412,7 @@ bool UInternationalizationConditioningCommandlet::ProcessArchive( const FString&
 	IFileManager::Get().FindFiles(PathPrimaryFilenames, *PrimaryWildcardName, true, false);
 	for ( int32 FileIndex = 0; FileIndex < PathPrimaryFilenames.Num(); FileIndex++ )
 	{
-		FString* CompleteFilename = new(PrimaryFilenames) FString(PrimaryLocDirectory + PathPrimaryFilenames[FileIndex]);
+		PrimaryFilenames.Add(PrimaryLocDirectory + PathPrimaryFilenames[FileIndex]);
 	}
 
 	if ( PrimaryFilenames.Num() == 0 )
@@ -436,7 +435,7 @@ bool UInternationalizationConditioningCommandlet::ProcessArchive( const FString&
 
 		for ( int32 FileIndex = 0; FileIndex < PathForeignFilenames.Num(); FileIndex++ )
 		{
-			FString* CompleteFilename = new(ForeignFilenames) FString(ForeignLocDirectory + PathForeignFilenames[FileIndex]);
+			ForeignFilenames.Add(ForeignLocDirectory + PathForeignFilenames[FileIndex]);
 		}
 
 		if ( ForeignFilenames.Num() == 0 )

@@ -109,9 +109,16 @@ namespace TypedElementQueryBuilder
 	//
 	
 	template<typename ColumnType>
-	FObserver::FObserver(EEvent MonitorForEvent)
-		: FObserver(MonitorForEvent, ColumnType::StaticStruct())
-	{}
+	FObserver FObserver::OnAdd()
+	{
+		return FObserver(FObserver::EEvent::Add, ColumnType::StaticStruct());
+	}
+
+	template<typename ColumnType>
+	FObserver FObserver::OnRemove()
+	{
+		return FObserver(FObserver::EEvent::Remove, ColumnType::StaticStruct());
+	}
 
 	template<typename ColumnType>
 	FObserver& FObserver::SetMonitoredColumn()
@@ -151,6 +158,11 @@ namespace TypedElementQueryBuilder
 		const TypedElementDataStorage::EQueryAccessType* AccessTypes)
 	{
 		ParentContext.GetColumnsUnguarded(TypeCount, RetrievedAddresses, ColumnTypes, AccessTypes);
+	}
+	
+	bool FQueryContextForwarder::HasColumn(const UScriptStruct* ColumnType) const
+	{
+		return ParentContext.HasColumn(ColumnType);
 	}
 
 	UObject* FQueryContextForwarder::GetMutableDependency(const UClass* DependencyClass)
@@ -217,6 +229,18 @@ namespace TypedElementQueryBuilder
 	TypedElementDataStorage::FQueryResult FQueryContextForwarder::RunSubquery(int32 SubqueryIndex)
 	{
 		return ParentContext.RunSubquery(SubqueryIndex);
+	}
+
+	TypedElementDataStorage::FQueryResult FQueryContextForwarder::RunSubquery(int32 SubqueryIndex,
+		TypedElementDataStorage::SubqueryCallbackRef Callback)
+	{
+		return ParentContext.RunSubquery(SubqueryIndex, Callback);
+	}
+
+	TypedElementDataStorage::FQueryResult FQueryContextForwarder::RunSubquery(int32 SubqueryIndex,
+		TypedElementDataStorage::RowHandle Row, TypedElementDataStorage::SubqueryCallbackRef Callback)
+	{
+		return ParentContext.RunSubquery(SubqueryIndex, Row, Callback);
 	}
 
 	//
@@ -510,22 +534,19 @@ namespace TypedElementQueryBuilder
 				}
 				else
 				{
-					if constexpr (sizeof...(Args) > 0)
+					for (TypedElementRowHandle Row : Rows)
 					{
-						for (TypedElementRowHandle Row : Rows)
+						if constexpr (sizeof...(Args) > 0)
 						{
-							if constexpr (sizeof...(Args) > 0)
-							{
-								std::apply([this, Row, &Caller](auto&&... Column)
-									{
-										Caller(this->ContextWrapper, Row, *Column...);
-										((++Column), ...);
-									}, this->Columns);
-							}
-							else
-							{
-								Caller(this->ContextWrapper, Row);
-							}
+							std::apply([this, Row, &Caller](auto&&... Column)
+								{
+									Caller(this->ContextWrapper, Row, *Column...);
+									((++Column), ...);
+								}, this->Columns);
+						}
+						else
+						{
+							Caller(this->ContextWrapper, Row);
 						}
 					}
 				}
@@ -1179,7 +1200,7 @@ e.g. void(IDirectQueryContext& Context, TypedElementRowHandle Row, ColumnType0& 
 	}
 
 	template<typename Function>
-	TypedElementDataStorage::DirectQueryCallback CreateSubqueryCallbackBinding(Function&& Callback)
+	TypedElementDataStorage::SubqueryCallback CreateSubqueryCallbackBinding(Function&& Callback)
 	{
 		static_assert(Internal::IsValidSelectFunctionSignature<ITypedElementDataStorageInterface::ISubqueryContext, Function>(),
 			R"(The function provided to the Query Builder's CreateSubqueryCallbackBinding call wasn't invocable or doesn't contain a supported combination of arguments.

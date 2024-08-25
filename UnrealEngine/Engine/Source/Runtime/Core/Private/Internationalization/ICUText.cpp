@@ -12,6 +12,7 @@
 
 #if UE_ENABLE_ICU
 #include "Internationalization/TextHistory.h"
+#include "HAL/IConsoleManager.h"
 
 THIRD_PARTY_INCLUDES_START
 	#include <unicode/utypes.h>
@@ -80,11 +81,17 @@ FString FTextChronoFormatter::AsDateTime(const FDateTime& DateTime, const FStrin
 
 FString FTextTransformer::ToLower(const FString& InStr)
 {
+	FInternationalization& I18N = FInternationalization::Get();
+	checkf(I18N.IsInitialized() == true, TEXT("FInternationalization is not initialized. An FText formatting method was likely used in static object initialization - this is not supported."));
+	
 	return ICUUtilities::ConvertString(ICUUtilities::ConvertString(InStr).toLower());
 }
 
 FString FTextTransformer::ToUpper(const FString& InStr)
 {
+	FInternationalization& I18N = FInternationalization::Get();
+	checkf(I18N.IsInitialized() == true, TEXT("FInternationalization is not initialized. An FText formatting method was likely used in static object initialization - this is not supported."));
+
 	return ICUUtilities::ConvertString(ICUUtilities::ConvertString(InStr).toUpper());
 }
 

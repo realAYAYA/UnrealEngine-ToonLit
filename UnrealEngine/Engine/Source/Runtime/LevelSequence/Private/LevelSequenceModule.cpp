@@ -9,11 +9,21 @@
 #include "LevelSequencePlayer.h"
 #include "MovieSceneMetaData.h"
 #include "UObject/UObjectBaseUtility.h"
+#include "IUniversalObjectLocatorModule.h"
+#include "UniversalObjectLocatorFragmentType.h"
+#include "LegacyLazyObjectPtrFragment.h"
 
 DEFINE_LOG_CATEGORY(LogLevelSequence);
 
 void FLevelSequenceModule::StartupModule()
 {
+	using namespace UE::UniversalObjectLocator;
+
+	IUniversalObjectLocatorModule& UOLModule = FModuleManager::Get().LoadModuleChecked<IUniversalObjectLocatorModule>("UniversalObjectLocator");
+
+	FFragmentTypeParameters Parameters("ls_lazy_obj_ptr", FText());
+	FLegacyLazyObjectPtrFragment::FragmentType = UOLModule.RegisterFragmentType<FLegacyLazyObjectPtrFragment>(Parameters);
+
 	OnCreateMovieSceneObjectSpawnerDelegateHandle = RegisterObjectSpawner(FOnCreateMovieSceneObjectSpawner::CreateStatic(&FLevelSequenceActorSpawner::CreateObjectSpawner));
 
 #if WITH_EDITOR

@@ -21,7 +21,12 @@ struct FSpatialPhotoParams
 	/** Coordinate system of the view camera - X() is forward, Z() is up */
 	FFrame3d Frame;
 
-	/** Near-plane distance for the camera, image pixels lie on this plane */
+	/**
+	 * Near-plane distance of the camera. Image pixels lie on this plane.
+	 *
+	 * Note: For best depth precision, the near plane should be placed as close as possible to the scene being captured.
+	 * For more on depth precision, see: https://www.reedbeta.com/blog/depth-precision-visualized/
+	 */	
 	double NearPlaneDist = 1.0;
 
 	/** Horizontal Field-of-View of the camera in degrees (full FOV, so generally calculations will use half this value) */

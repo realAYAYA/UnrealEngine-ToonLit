@@ -29,9 +29,7 @@ FColor FUsdAssetCacheAssetActions::GetTypeColor() const
 
 void FUsdAssetCacheAssetActions::OpenAssetEditor(const TArray<UObject*>& InObjects, TSharedPtr<class IToolkitHost> EditWithinLevelEditor)
 {
-	EToolkitMode::Type Mode = EditWithinLevelEditor.IsValid()
-		? EToolkitMode::WorldCentric
-		: EToolkitMode::Standalone;
+	EToolkitMode::Type Mode = EditWithinLevelEditor.IsValid() ? EToolkitMode::WorldCentric : EToolkitMode::Standalone;
 
 	for (auto ObjIt = InObjects.CreateConstIterator(); ObjIt; ++ObjIt)
 	{

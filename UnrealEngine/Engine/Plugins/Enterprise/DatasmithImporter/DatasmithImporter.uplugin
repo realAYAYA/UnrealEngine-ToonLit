@@ -90,10 +90,6 @@
 		{
 			"Name": "UdpMessaging",
 			"Enabled": true
-		},
-		{
-			"Name": "ChaosClothAsset",
-			"Enabled": true
 		}
 	]
 }

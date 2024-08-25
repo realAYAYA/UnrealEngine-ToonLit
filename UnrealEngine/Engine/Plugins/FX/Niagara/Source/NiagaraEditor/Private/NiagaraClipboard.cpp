@@ -2,7 +2,6 @@
 
 #include "NiagaraClipboard.h"
 #include "NiagaraDataInterface.h"
-#include "NiagaraScript.h"
 
 #include "Factories.h"
 #include "UObject/UObjectMarks.h"
@@ -13,6 +12,7 @@
 #include "HAL/PlatformApplicationMisc.h"
 #include "NiagaraNodeFunctionCall.h"
 #include "Engine/UserDefinedEnum.h"
+#include "Engine/UserDefinedStruct.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(NiagaraClipboard)
 
@@ -126,24 +126,48 @@ bool UNiagaraClipboardFunctionInput::CopyValuesFrom(const UNiagaraClipboardFunct
 	return true;
 }
 
-UNiagaraClipboardFunction* UNiagaraClipboardFunction::CreateScriptFunction(UObject* InOuter, FString InFunctionName, UNiagaraScript* InScript, const FGuid& InScriptVersion, const TArray<FNiagaraStackMessage> InMessages)
+const UNiagaraClipboardRenderer* UNiagaraClipboardRenderer::CreateRenderer(UObject* InOuter, UNiagaraRendererProperties* Renderer, TOptional<FNiagaraStackNoteData> StackNoteData)
+{
+	UNiagaraClipboardRenderer* NewRenderer = Cast<UNiagaraClipboardRenderer>(NewObject<UNiagaraClipboardRenderer>(InOuter));
+	NewRenderer->RendererProperties = CastChecked<UNiagaraRendererProperties>(StaticDuplicateObject(Renderer, InOuter));
+
+	if(StackNoteData.IsSet())
+	{
+		NewRenderer->StackNoteData = StackNoteData.GetValue();
+	}
+
+	return NewRenderer;
+}
+
+UNiagaraClipboardFunction* UNiagaraClipboardFunction::CreateScriptFunction(UObject* InOuter, FString InFunctionName, UNiagaraScript* InScript, const FGuid& InScriptVersion, const TOptional<FNiagaraStackNoteData>& InStackNote)
 {
 	UNiagaraClipboardFunction* NewFunction = Cast<UNiagaraClipboardFunction>(NewObject<UNiagaraClipboardFunction>(InOuter));
 	NewFunction->ScriptMode = ENiagaraClipboardFunctionScriptMode::ScriptAsset;
 	NewFunction->FunctionName = InFunctionName;
 	NewFunction->Script = InScript;
 	NewFunction->ScriptVersion = InScriptVersion;
-	NewFunction->Messages = InMessages;
+
+	if(InStackNote.IsSet())
+	{
+		NewFunction->StackNoteData = InStackNote.GetValue();
+	}
+	
 	return NewFunction;
 }
 
-UNiagaraClipboardFunction* UNiagaraClipboardFunction::CreateAssignmentFunction(UObject* InOuter, FString InFunctionName, const TArray<FNiagaraVariable>& InAssignmentTargets, const TArray<FString>& InAssignmentDefaults)
+UNiagaraClipboardFunction* UNiagaraClipboardFunction::CreateAssignmentFunction(UObject* InOuter, FString InFunctionName, const TArray<FNiagaraVariable>& InAssignmentTargets, const TArray<FString>& InAssignmentDefaults, TOptional<FNiagaraStackNoteData> InStackNoteData)
 {
 	UNiagaraClipboardFunction* NewFunction = Cast<UNiagaraClipboardFunction>(NewObject<UNiagaraClipboardFunction>(InOuter));
 	NewFunction->ScriptMode = ENiagaraClipboardFunctionScriptMode::Assignment;
 	NewFunction->FunctionName = InFunctionName;
 	NewFunction->AssignmentTargets = InAssignmentTargets;
 	NewFunction->AssignmentDefaults = InAssignmentDefaults;
+
+	if(InStackNoteData.IsSet())
+	{
+		NewFunction->StackNoteData = InStackNoteData.GetValue();
+	}
+	
 	return NewFunction;
 }
 

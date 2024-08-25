@@ -11,6 +11,7 @@
 #include "Components/SceneCaptureComponent2D.h"
 #include "Engine/Scene.h"
 #include "Engine/TextureRenderTarget2D.h"
+#include "Engine/Texture2D.h"
 #include "Engine/SceneCapture2D.h"
 #include "Engine/Level.h"
 #include "Engine/World.h"
@@ -109,7 +110,15 @@ void FWorldPartitionMiniMapHelper::CaptureBoundsMiniMapToTexture(UWorld* InWorld
 	}
 	else
 	{
-		RenderTargetTexture->UpdateTexture2D(InOutMiniMapTexture, TSF_BGRA8, CTF_Default);
+		FText ErrorMessage;
+		if (RenderTargetTexture->UpdateTexture(InOutMiniMapTexture, CTF_Default, /*InAlphaOverride = */nullptr, /*InTextureChangingDelegate =*/ [](UTexture*) {}, &ErrorMessage))
+		{
+			check(InOutMiniMapTexture->Source.GetFormat() == TSF_BGRA8);
+		}
+		else
+		{
+			UE_LOG(LogWorldPartitionMiniMapHelper, Error, TEXT("Couldn't copy render target to internal texture: %s"), *ErrorMessage.ToString());
+		}
 	}
 }
 

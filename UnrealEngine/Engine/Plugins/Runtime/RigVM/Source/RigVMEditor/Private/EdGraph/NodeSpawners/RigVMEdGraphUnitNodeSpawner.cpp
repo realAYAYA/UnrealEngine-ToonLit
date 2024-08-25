@@ -12,9 +12,11 @@
 #include "EditorCategoryUtils.h"
 #include "K2Node_Variable.h"
 #include "BlueprintNodeTemplateCache.h"
+#include "FindInBlueprintManager.h"
 #include "RigVMBlueprintUtils.h"
 #include "ScopedTransaction.h"
 #include "RigVMFunctions/Execution/RigVMFunction_UserDefinedEvent.h"
+#include "RigVMPropertyUtils.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(RigVMEdGraphUnitNodeSpawner)
 
@@ -163,34 +165,77 @@ URigVMEdGraphNode* URigVMEdGraphUnitNodeSpawner::SpawnNode(UEdGraph* ParentGraph
 	if (RigBlueprint != nullptr && RigGraph != nullptr)
 	{
 		bool const bIsTemplateNode = FBlueprintNodeTemplateCache::IsTemplateOuter(ParentGraph);
-		bool const bIsUserFacingNode = !bIsTemplateNode;
 
 		FName Name = bIsTemplateNode ? *StructTemplate->GetStructCPPName() : FRigVMBlueprintUtils::ValidateName(RigBlueprint, StructTemplate->GetFName().ToString());
+
+		if(bIsTemplateNode)
+		{
+			TArray<FPinInfo> Pins;
+			for (TFieldIterator<FProperty> It(StructTemplate); It; ++It)
+			{
+				FPinInfo Pin;
+				const FProperty* Property = *It;
+				Pin.Name = Property->GetFName();
+				RigVMPropertyUtils::GetTypeFromProperty(Property, Pin.CPPType, Pin.CPPTypeObject);
+				if(Pin.CPPType.IsNone())
+				{
+					continue;
+				}
+
+				if(UScriptStruct* ScriptStruct = Cast<UScriptStruct>(Pin.CPPTypeObject))
+				{
+					static UScriptStruct* ExecuteScriptStruct = FRigVMExecuteContext::StaticStruct();
+					static const FName ExecuteStructName = *ExecuteScriptStruct->GetStructCPPName();
+
+					if(ScriptStruct->IsChildOf(ExecuteScriptStruct))
+					{
+						Pin.CPPType = ExecuteStructName;
+						Pin.CPPTypeObject = ExecuteScriptStruct;
+					}
+				}
+
+				const bool bInput = Property->HasMetaData(FRigVMStruct::InputMetaName);
+				const bool bOutput = Property->HasMetaData(FRigVMStruct::OutputMetaName);
+
+				if(bInput && bOutput)
+				{
+					Pin.Direction = ERigVMPinDirection::IO;
+				}
+				else if(bInput)
+				{
+					Pin.Direction = ERigVMPinDirection::Input;
+				}
+				else if(bOutput)
+				{
+					Pin.Direction = ERigVMPinDirection::Output;
+				}
+
+				Pins.Add(Pin);
+			}
+			return SpawnTemplateNode(ParentGraph, Pins, Name);
+		}
 
 		FStructOnScope StructScope(StructTemplate);
 		const FRigVMStruct* StructInstance = (const FRigVMStruct*)StructScope.GetStructMemory();
 		const FName EventName = StructInstance->GetEventName();
 
 		// events can only exist once across all uber graphs
-		if(bIsUserFacingNode)
+		if(!EventName.IsNone())
 		{
-			if(!EventName.IsNone())
+			if(StructInstance->CanOnlyExistOnce() &&
+				(StructTemplate != FRigVMFunction_UserDefinedEvent::StaticStruct()))
 			{
-				if(StructInstance->CanOnlyExistOnce() &&
-					(StructTemplate != FRigVMFunction_UserDefinedEvent::StaticStruct()))
+				const TArray<URigVMGraph*> Models = RigBlueprint->GetAllModels();
+				for(URigVMGraph* Model : Models)
 				{
-					const TArray<URigVMGraph*> Models = RigBlueprint->GetAllModels();
-					for(URigVMGraph* Model : Models)
+					if(Model->IsRootGraph() && !Model->IsA<URigVMFunctionLibrary>())
 					{
-						if(Model->IsRootGraph() && !Model->IsA<URigVMFunctionLibrary>())
+						for(const URigVMNode* Node : Model->GetNodes())
 						{
-							for(const URigVMNode* Node : Model->GetNodes())
+							if(Node->GetEventName() == EventName)
 							{
-								if(Node->GetEventName() == EventName)
-								{
-									RigBlueprint->OnRequestJumpToHyperlink().Execute(Node);
-									return nullptr;
-								}
+								RigBlueprint->OnRequestJumpToHyperlink().Execute(Node);
+								return nullptr;
 							}
 						}
 					}
@@ -198,26 +243,23 @@ URigVMEdGraphNode* URigVMEdGraphUnitNodeSpawner::SpawnNode(UEdGraph* ParentGraph
 			}
 		}
 		
-		URigVMController* Controller = bIsTemplateNode ? RigGraph->GetTemplateController() : RigBlueprint->GetController(ParentGraph);
+		URigVMController* Controller = RigBlueprint->GetController(ParentGraph);
 		if(Controller == nullptr)
 		{
 			return nullptr;
 		}
 
-		if (!bIsTemplateNode)
-		{
-			Controller->OpenUndoBracket(FString::Printf(TEXT("Add '%s' Node"), *Name.ToString()));
-		}
+		Controller->OpenUndoBracket(FString::Printf(TEXT("Add '%s' Node"), *Name.ToString()));
 
 		FRigVMUnitNodeCreatedContext& UnitNodeCreatedContext = Controller->GetUnitNodeCreatedContext();
 		FRigVMUnitNodeCreatedContext::FScope ReasonScope(UnitNodeCreatedContext, ERigVMNodeCreatedReason::NodeSpawner);
 
-		if (URigVMUnitNode* ModelNode = Controller->AddUnitNode(StructTemplate, InMethodName, Location, Name.ToString(), bIsUserFacingNode, !bIsTemplateNode))
+		if (URigVMUnitNode* ModelNode = Controller->AddUnitNode(StructTemplate, InMethodName, Location, Name.ToString(), true, true))
 		{
 			NewNode = Cast<URigVMEdGraphNode>(RigGraph->FindNodeForModelNodeName(ModelNode->GetFName()));
 			check(NewNode);
 
-			if (NewNode && bIsUserFacingNode)
+			if (NewNode)
 			{
 				if(StructTemplate == FRigVMFunction_UserDefinedEvent::StaticStruct())
 				{
@@ -315,21 +357,11 @@ URigVMEdGraphNode* URigVMEdGraphUnitNodeSpawner::SpawnNode(UEdGraph* ParentGraph
 			*/
 #endif
 
-			if (bIsUserFacingNode)
-			{
-				Controller->CloseUndoBracket();
-			}
-			else
-			{
-				Controller->RemoveNode(ModelNode, false);
-			}
+			Controller->CloseUndoBracket();
 		}
 		else
 		{
-			if (bIsUserFacingNode)
-			{
-				Controller->CancelUndoBracket();
-			}
+			Controller->CancelUndoBracket();
 		}
 	}
 	return NewNode;

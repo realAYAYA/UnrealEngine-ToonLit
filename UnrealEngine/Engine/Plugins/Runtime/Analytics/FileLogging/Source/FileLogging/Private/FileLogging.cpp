@@ -173,6 +173,26 @@ void FAnalyticsProviderFileLogging::RecordEvent(const FString& EventName, const 
 			FileArchive->Logf(TEXT(",\t\t\t\"attributes\" : ["));
 			bool bHasWrittenFirstAttr = false;
 			// Write out the list of attributes as an array of attribute objects
+			for (auto Attr : DefaultEventAttributes)
+			{
+				if (bHasWrittenFirstAttr)
+				{
+					FileArchive->Logf(TEXT("\t\t\t,"));
+				}
+				FileArchive->Logf(TEXT("\t\t\t{"));
+				FileArchive->Logf(TEXT("\t\t\t\t\"name\" : \"%s\","), *Attr.GetName());
+				if (Attr.IsJsonFragment())
+				{
+					FileArchive->Logf(TEXT("\t\t\t\t\"value\" : %s"), *Attr.GetValue());
+				}
+				else
+				{
+					FileArchive->Logf(TEXT("\t\t\t\t\"value\" : \"%s\""), *Attr.GetValue());
+				}
+				FileArchive->Logf(TEXT("\t\t\t}"));
+				bHasWrittenFirstAttr = true;
+			}
+
 			for (auto Attr : Attributes)
 			{
 				if (bHasWrittenFirstAttr)
@@ -549,4 +569,24 @@ void FAnalyticsProviderFileLogging::RecordCurrencyGiven(const FString& GameCurre
 	{
 		UE_LOG(LogFileLoggingAnalytics, Warning, TEXT("FAnalyticsProviderFileLogging::RecordCurrencyGiven called before StartSession. Ignoring."));
 	}
+}
+
+void FAnalyticsProviderFileLogging::SetDefaultEventAttributes(TArray<FAnalyticsEventAttribute>&& Attributes)
+{
+	DefaultEventAttributes = Attributes;
+}
+
+TArray<FAnalyticsEventAttribute> FAnalyticsProviderFileLogging::GetDefaultEventAttributesSafe() const
+{
+	return DefaultEventAttributes;
+}
+
+int32 FAnalyticsProviderFileLogging::GetDefaultEventAttributeCount() const
+{
+	return DefaultEventAttributes.Num();
+}
+
+FAnalyticsEventAttribute FAnalyticsProviderFileLogging::GetDefaultEventAttribute(int AttributeIndex) const
+{
+	return DefaultEventAttributes[AttributeIndex];
 }

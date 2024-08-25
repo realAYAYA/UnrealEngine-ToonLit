@@ -20,7 +20,6 @@
 #include "Sound/SoundAttenuation.h"
 #include "Sound/SoundCue.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Textures/SlateIcon.h"
 #include "ToolMenuSection.h"
 #include "Toolkits/IToolkit.h"

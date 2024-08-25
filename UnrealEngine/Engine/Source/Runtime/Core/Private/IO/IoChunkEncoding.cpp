@@ -232,6 +232,8 @@ bool FIoChunkEncoding::Decode(
 
 bool FIoChunkEncoding::Decode(const FIoChunkDecodingParams& Params, FMemoryView EncodedBlocks, FMutableMemoryView OutRawData)
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FIoChunkEncoding::Decode);
+
 	if (Params.TotalRawSize < Params.RawOffset + OutRawData.GetSize())
 	{
 		return false;
@@ -245,6 +247,7 @@ bool FIoChunkEncoding::Decode(const FIoChunkDecodingParams& Params, FMemoryView 
 	}
 
 	const TConstArrayView<uint32>& EncodedBlockSize = Params.EncodedBlockSize;
+	const TConstArrayView<uint32>& BlockHash = Params.BlockHash;
 	const uint32 BlockSize = Params.BlockSize;
 	const uint64 RawOffset = Params.RawOffset;
 	const uint32 BlockCount = EncodedBlockSize.Num();
@@ -253,7 +256,7 @@ bool FIoChunkEncoding::Decode(const FIoChunkDecodingParams& Params, FMemoryView 
 	const uint32 LastBlockIndex = uint32((RawOffset + OutRawData.GetSize() - 1) / BlockSize);
 
 	uint64 RawBlockOffset = RawOffset % BlockSize;
-	
+
 	uint64 EncodedOffset = 0;
 	for (uint32 BlockIndex = 0; BlockIndex < FirstBlockIndex; ++BlockIndex)
 	{
@@ -262,6 +265,22 @@ bool FIoChunkEncoding::Decode(const FIoChunkDecodingParams& Params, FMemoryView 
 	// Subtract the encoded offset if the encoded blocks is a partial range of all encoded block(s)
 	EncodedBlocks += (EncodedOffset - Params.EncodedOffset);
 
+	// Buffer used to decrypt blocks into, only allocated if a valid ASE key is found
+	TUniquePtr<uint8[]> DecryptedBlockBuffer;
+	uint64 DecryptedScratchBufferSize = 0;
+
+	if (AESKey.IsValid())
+	{
+		for (uint32 BlockIndex = FirstBlockIndex; BlockIndex <= LastBlockIndex; BlockIndex++)
+		{
+			const uint64 AlignedBlockSize = Align(EncodedBlockSize[BlockIndex], FAES::AESBlockSize);
+			DecryptedScratchBufferSize = FMath::Max(AlignedBlockSize, DecryptedScratchBufferSize);
+		}
+
+		DecryptedBlockBuffer = MakeUnique<uint8[]>(DecryptedScratchBufferSize);
+	}
+
+	const bool bVerifyBlocks = BlockHash.IsEmpty() == false;
 	for (uint32 BlockIndex = FirstBlockIndex; BlockIndex <= LastBlockIndex; BlockIndex++)
 	{
 		const uint64 RawBlockSize = BlockIndex == BlockCount - 1 ? LastRawBlockSize : BlockSize;
@@ -269,27 +288,48 @@ bool FIoChunkEncoding::Decode(const FIoChunkDecodingParams& Params, FMemoryView 
 		const uint32 CompressedBlockSize = EncodedBlockSize[BlockIndex];
 		const uint32 AlignedBlockSize = Align(CompressedBlockSize, FAES::AESBlockSize);
 
-		FIoBuffer Tmp(AlignedBlockSize);
-		Tmp.GetMutableView().CopyFrom(EncodedBlocks.Left(AlignedBlockSize));
+		FMemoryView BlockView = EncodedBlocks.Left(AlignedBlockSize);
+
+		if (bVerifyBlocks)
+		{
+			check(BlockHash.IsEmpty() == false);
+			FIoBlockHash Hash = HashBlock(BlockView);
+			if (Hash != BlockHash[BlockIndex])
+			{
+				UE_LOG(LogIoDispatcher, Warning, TEXT("Block hash mismatch, index '%d', hash '0x%uX', expected hash '0x%uX'"),
+					BlockIndex, Hash, BlockHash[BlockIndex]);
+				return false;
+			}
+		}
+
 		if (AESKey.IsValid())
 		{
-			FAES::DecryptData(Tmp.GetData(), uint32(Tmp.GetSize()), AESKey);
+			check(BlockView.GetSize() <= DecryptedScratchBufferSize);
+			FMemory::Memcpy(DecryptedBlockBuffer.Get(), BlockView.GetData(), BlockView.GetSize());
+			
+			FAES::DecryptData(DecryptedBlockBuffer.Get(), BlockView.GetSize(), AESKey);
+
+			BlockView = MakeMemoryView(DecryptedBlockBuffer.Get(), BlockView.GetSize());
 		}
 
 		if (CompressedBlockSize < RawBlockSize)
 		{
 			if (RawBlockReadSize == RawBlockSize)
 			{
-				if (!FCompression::UncompressMemory(Params.CompressionFormat, OutRawData.GetData(), int32(RawBlockReadSize), Tmp.GetData(), CompressedBlockSize))
+				if (!FCompression::UncompressMemory(Params.CompressionFormat, OutRawData.GetData(), int32(RawBlockReadSize), BlockView.GetData(), CompressedBlockSize))
 				{
+					UE_LOG(LogIoDispatcher, Warning, TEXT("Failed to uncompress block '%d', format '%s', raw size '" UINT64_FMT "' compressed size '%u'"),
+						BlockIndex, *Params.CompressionFormat.ToString(), RawBlockSize, AlignedBlockSize);
 					return false;
 				}
 			}
 			else
 			{
 				FIoBuffer RawBlockTmp = FIoBuffer(RawBlockSize);
-				if (!FCompression::UncompressMemory(Params.CompressionFormat, RawBlockTmp.GetData(), int32(RawBlockSize), Tmp.GetData(), CompressedBlockSize))
+				if (!FCompression::UncompressMemory(Params.CompressionFormat, RawBlockTmp.GetData(), int32(RawBlockSize), BlockView.GetData(), CompressedBlockSize))
 				{
+					UE_LOG(LogIoDispatcher, Warning, TEXT("Failed to uncompress block '%d', format '%s', raw size '" UINT64_FMT "' compressed size '%u'"),
+						BlockIndex, *Params.CompressionFormat.ToString(), RawBlockSize, AlignedBlockSize);
 					return false;
 				}
 				OutRawData.CopyFrom(RawBlockTmp.GetView().Mid(RawBlockOffset, RawBlockReadSize));
@@ -297,7 +337,7 @@ bool FIoChunkEncoding::Decode(const FIoChunkDecodingParams& Params, FMemoryView 
 		}
 		else
 		{
-			OutRawData.CopyFrom(Tmp.GetView().Mid(RawBlockOffset, RawBlockReadSize));
+			OutRawData.CopyFrom(BlockView.Mid(RawBlockOffset, RawBlockReadSize));
 		}
 
 		RawBlockOffset = 0;
@@ -362,24 +402,10 @@ uint64 FIoChunkEncoding::GetTotalEncodedSize(TConstArrayView<uint32> EncodedBloc
 	return TotalEncodedSize;
 }
 
-FIoStatus FIoChunkEncoding::HashBlocks(const FIoChunkEncoding::FHeader& Header, FMemoryView EncodedData, TArray<FIoHash>& OutHashes)
+FIoBlockHash FIoChunkEncoding::HashBlock(FMemoryView Block)
 {
-	TConstArrayView<uint32> Blocks = Header.GetBlocks();
-	if (Blocks.IsEmpty())
-	{
-		return FIoStatus(EIoErrorCode::InvalidParameter);
-	}
-
-	OutHashes.Reserve(Blocks.Num());
-
-	for (uint32 BlockSize : Blocks)
-	{
-		check(!EncodedData.IsEmpty());
-		OutHashes.Add(FIoHash::HashBuffer(EncodedData.Left(BlockSize)));
-		EncodedData += BlockSize;
-	}
-
-	check(EncodedData.IsEmpty());
-	
-	return FIoStatus::Ok;
+	const FIoHash Hash = FIoHash::HashBuffer(Block);
+	FIoBlockHash BlockHash;
+	FMemory::Memcpy(&BlockHash, &Hash, sizeof(FIoBlockHash));
+	return BlockHash;
 }

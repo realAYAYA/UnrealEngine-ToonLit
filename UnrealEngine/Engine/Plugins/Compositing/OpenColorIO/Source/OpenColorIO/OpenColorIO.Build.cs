@@ -30,8 +30,7 @@ namespace UnrealBuildTool.Rules
 
 			PrivateIncludePathModuleNames.AddRange(
 				new string[] {
-					"DerivedDataCache",
-					"OpenColorIOWrapper" //for OpenColorIOWrapperDefines.h
+					"DerivedDataCache"
 				});
 
 			PublicDependencyModuleNames.AddRange(
@@ -39,7 +38,8 @@ namespace UnrealBuildTool.Rules
 					"Core",
 					"CoreUObject",
 					"Engine",
-					"DeveloperSettings"
+					"DeveloperSettings",
+					"OpenColorIOWrapper"
 				});
 
 			if (Target.bBuildEditor == true)
@@ -49,8 +49,7 @@ namespace UnrealBuildTool.Rules
 					{
 						"TargetPlatform",
 						"EditorFramework",
-						"UnrealEd",
-						"OpenColorIOWrapper"
+						"UnrealEd"
 					});
 			}
 		}

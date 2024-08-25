@@ -333,9 +333,9 @@ bool FTestPackedVectorNetSerializerBase::IsAlmostEqual(NetSerializerValuePointer
 	// Allow ULPs difference and absolute difference
 	const FVector V0 =  *reinterpret_cast<FVector*>(Value0);
 	const FVector V1 =  *reinterpret_cast<FVector*>(Value1);
-	const float AbsDiffX = FMath::Abs(V0.X - V1.X);
-	const float AbsDiffY = FMath::Abs(V0.Y - V1.Y);
-	const float AbsDiffZ = FMath::Abs(V0.Z - V1.Z);
+	const ScalarType AbsDiffX = FMath::Abs(V0.X - V1.X);
+	const ScalarType AbsDiffY = FMath::Abs(V0.Y - V1.Y);
+	const ScalarType AbsDiffZ = FMath::Abs(V0.Z - V1.Z);
 
 	const bool EqualUlpX = FMath::IsNearlyEqualByULP(V0.X, V1.X, MaxUlpDiff);
 	const bool EqualUlpY = FMath::IsNearlyEqualByULP(V0.Y, V1.Y, MaxUlpDiff);
@@ -396,7 +396,7 @@ void FTestVectorNetQuantizeNormalNetSerializer::TestIsEqual()
 
 	TArray<FVector> CompareValues[2];
 	TArray<bool> ExpectedResults[2];
-	const SIZE_T AllValueCount = AllValues.Num();
+	const int32 AllValueCount = AllValues.Num();
 
 	{
 		// Make sure nothing messes with our test values.

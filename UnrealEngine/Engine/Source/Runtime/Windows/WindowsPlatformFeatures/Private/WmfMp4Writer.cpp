@@ -21,6 +21,7 @@ bool FWmfMp4Writer::Initialize(const TCHAR* Filename)
 	return true;
 }
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 TOptional<DWORD> FWmfMp4Writer::CreateAudioStream(const FString& Codec, const AVEncoder::FAudioConfig& Config)
 {
 	GUID Format;
@@ -58,7 +59,9 @@ TOptional<DWORD> FWmfMp4Writer::CreateAudioStream(const FString& Codec, const AV
 	CHECK_HR_DEFAULT(Writer->SetInputMediaType(StreamIndex, MediaType, nullptr));
 	return TOptional<DWORD>(StreamIndex);
 }
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 TOptional<DWORD> FWmfMp4Writer::CreateVideoStream(const FString& Codec, const AVEncoder::FVideoConfig& Config)
 {
 	GUID Format;
@@ -94,6 +97,7 @@ TOptional<DWORD> FWmfMp4Writer::CreateVideoStream(const FString& Codec, const AV
 	CHECK_HR_DEFAULT(Writer->SetInputMediaType(StreamIndex, MediaType, nullptr));
 	return TOptional<DWORD>(StreamIndex);
 }
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 bool FWmfMp4Writer::Start()
 {
@@ -101,6 +105,7 @@ bool FWmfMp4Writer::Start()
 	return true;
 }
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 bool FWmfMp4Writer::Write(const AVEncoder::FMediaPacket& InSample, DWORD StreamIndex)
 {
 	AVEncoder::FIMFSampleWrapper Sample { InSample.Type };
@@ -128,6 +133,7 @@ bool FWmfMp4Writer::Write(const AVEncoder::FMediaPacket& InSample, DWORD StreamI
 
 	return true;
 }
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 bool FWmfMp4Writer::Finalize()
 {

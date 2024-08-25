@@ -68,9 +68,14 @@ const FSlateBrush* SCustomizableObjectNodeMaterialPinImage::GetPinIcon() const
 
 FText SCustomizableObjectNodeMaterialPinImage::GetTooltipText() const
 {
+	if (GraphPinObj->bOrphanedPin)
+	{
+		return LOCTEXT("PinModeMutableOrpahan", "Pin not disapearing due to being connected or having a property modified.");
+	}
+	
 	if (CastChecked<UCustomizableObjectNodeMaterial>(GraphPinObj->GetOwningNode())->IsImageMutableMode(*GraphPinObj))
 	{
-		return  LOCTEXT("PinModeMutableTooltip", "Texture Parameter goes through Mutable.");
+		return LOCTEXT("PinModeMutableTooltip", "Texture Parameter goes through Mutable.");
 	}
 	else
 	{

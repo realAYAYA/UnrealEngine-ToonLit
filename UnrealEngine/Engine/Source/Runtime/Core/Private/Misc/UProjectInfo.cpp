@@ -6,7 +6,7 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 
-DECLARE_LOG_CATEGORY_EXTERN(LogUProjectInfo, Verbose, All);
+DECLARE_LOG_CATEGORY_EXTERN(LogUProjectInfo, Log, All);
 DEFINE_LOG_CATEGORY(LogUProjectInfo);
 
 FUProjectDictionary::FUProjectDictionary(const FString& InRootDir)
@@ -140,10 +140,10 @@ FUProjectDictionary& FUProjectDictionary::GetDefault()
 	static bool bHaveLoggedProjects = false;
 	if(!bHaveLoggedProjects)
 	{
-		UE_LOG(LogUProjectInfo, Log, TEXT("Found projects:"));
+		UE_LOG(LogUProjectInfo, Verbose, TEXT("Found projects:"));
 		for(TMap<FString, FString>::TConstIterator Iter(DefaultDictionary.ShortProjectNameDictionary); Iter; ++Iter)
 		{
-			UE_LOG(LogUProjectInfo, Log, TEXT("    %s: \"%s\""), *Iter.Key(), *Iter.Value());
+			UE_LOG(LogUProjectInfo, Verbose, TEXT("    %s: \"%s\""), *Iter.Key(), *Iter.Value());
 		}
 		bHaveLoggedProjects = true;
 	}

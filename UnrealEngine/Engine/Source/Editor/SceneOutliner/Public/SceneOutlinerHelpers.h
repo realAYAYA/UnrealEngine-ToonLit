@@ -12,5 +12,6 @@ namespace SceneOutliner
 	public:
 		static FString GetExternalPackageName(const ISceneOutlinerTreeItem& TreeItem);
 		static UPackage* GetExternalPackage(const ISceneOutlinerTreeItem& TreeItem);
+		static TSharedPtr<SWidget> GetClassHyperlink(UObject* InObject);
 	};
 };

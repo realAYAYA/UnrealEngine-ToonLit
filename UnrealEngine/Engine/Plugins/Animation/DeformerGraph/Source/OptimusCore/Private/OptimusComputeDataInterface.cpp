@@ -60,7 +60,7 @@ TArray<TSubclassOf<UOptimusComputeDataInterface>> UOptimusComputeDataInterface::
 TSet<TArray<FName>> UOptimusComputeDataInterface::GetUniqueDomainDimensions()
 {
 	TSet<TArray<FName>> UniqueNestedContextNames;
-	for (const TSubclassOf<UOptimusComputeDataInterface> DataInterfaceClass: GetAllComputeDataInterfaceClasses())
+	for (const TSubclassOf<UOptimusComputeDataInterface>& DataInterfaceClass: GetAllComputeDataInterfaceClasses())
 	{
 		UOptimusComputeDataInterface* DataInterface = Cast<UOptimusComputeDataInterface>(DataInterfaceClass->GetDefaultObject());
 		if (DataInterface)
@@ -73,7 +73,7 @@ TSet<TArray<FName>> UOptimusComputeDataInterface::GetUniqueDomainDimensions()
 
 void UOptimusComputeDataInterface::RegisterAllTypes()
 {
-	for (const TSubclassOf<UOptimusComputeDataInterface> DataInterfaceClass : GetAllComputeDataInterfaceClasses())
+	for (const TSubclassOf<UOptimusComputeDataInterface>& DataInterfaceClass : GetAllComputeDataInterfaceClasses())
 	{
 		UOptimusComputeDataInterface* DataInterface = Cast<UOptimusComputeDataInterface>(DataInterfaceClass->GetDefaultObject());
 		if (DataInterface != nullptr)

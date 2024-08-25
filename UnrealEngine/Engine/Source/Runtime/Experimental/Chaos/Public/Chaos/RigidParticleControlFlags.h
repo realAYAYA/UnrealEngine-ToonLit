@@ -44,12 +44,13 @@ namespace Chaos
 		bool GetCCDEnabled() const { return Flags.bCCDEnabled; }
 		FRigidParticleControlFlags& SetCCDEnabled(const bool bEnabled) { Flags.bCCDEnabled = bEnabled; return *this; }
 
+		bool GetMACDEnabled() const { return Flags.bMACDEnabled; }
+		FRigidParticleControlFlags& SetMACDEnabled(const bool bEnabled) { Flags.bMACDEnabled = bEnabled; return *this; }
+
 		bool GetOneWayInteractionEnabled() const { return Flags.bOneWayInteractionEnabled; }
 		FRigidParticleControlFlags& SetOneWayInteractionEnabled(const bool bEnabled) { Flags.bOneWayInteractionEnabled = bEnabled; return *this; }
 
-		bool GetMaxDepenetrationVelocityOverrideEnabled() const { return Flags.bMaxDepenetrationVelocityOverrideEnabled; }
-		FRigidParticleControlFlags& SetMaxDepenetrationVelocityOverrideEnabled(const bool bEnabled) { Flags.bMaxDepenetrationVelocityOverrideEnabled = bEnabled; return *this; }
-
+		// If enabled, inertia may be increased to improve stability
 		bool GetInertiaConditioningEnabled() const { return Flags.bInertiaConditioningEnabled; }
 		FRigidParticleControlFlags& SetInertiaConditioningEnabled(const bool bEnabled) { Flags.bInertiaConditioningEnabled = bEnabled; return *this; }
 
@@ -63,16 +64,23 @@ namespace Chaos
 		// Serialization
 		friend FChaosArchive& operator<<(FChaosArchive& Ar, FRigidParticleControlFlags& Data);
 
+		UE_DEPRECATED(5.4, "Not used")
+		bool GetMaxDepenetrationVelocityOverrideEnabled() const { return false; }
+
+		UE_DEPRECATED(5.4, "Not used")
+		FRigidParticleControlFlags& SetMaxDepenetrationVelocityOverrideEnabled(const bool bEnabled) { return *this; }
+
 	private:
 		struct FFlags
 		{
 			FStorage bGravityEnabled : 1;
 			FStorage bCCDEnabled : 1;
 			FStorage bOneWayInteractionEnabled : 1;
-			FStorage bMaxDepenetrationVelocityOverrideEnabled : 1;
+			FStorage bEnableInitialOverlapDepenetration : 1;
 			FStorage bInertiaConditioningEnabled : 1;
 			FStorage GravityGroupIndex : 3;
 			FStorage bUpdateKinematicFromSimulation : 1;
+			FStorage bMACDEnabled : 1;
 			// Add new properties above this line
 			// Change FStorage typedef if we exceed the max bits
 		};
@@ -124,11 +132,18 @@ namespace Chaos
 		void SetUseIgnoreCollisionManager() { Flags.bUseIgnoreCollisionManager = true; }
 		void ClearUseIgnoreCollisionManager() { Flags.bUseIgnoreCollisionManager = false; }
 
+		// Is this particle kinematic and moving (velocity and angular velocity are non-zero). This is updated in ApplyKinematicTargets
+		// to help avoid checking velocity and angular velocity (especially for kinematics).
+		bool GetIsMovingKinematic() const { return Flags.bIsMovingKinematic; }
+		void SetIsMovingKinematic() { Flags.bIsMovingKinematic = true; }
+		void ClearIsMovingKinematic() { Flags.bIsMovingKinematic = false; }
+
 	private:
 		struct FFlags
 		{
 			FStorage bInertiaConditioningDirty : 1;
 			FStorage bUseIgnoreCollisionManager : 1;
+			FStorage bIsMovingKinematic : 1;
 			// Add new properties above this line
 			// Change FStorage typedef if we exceed the max bits
 		};

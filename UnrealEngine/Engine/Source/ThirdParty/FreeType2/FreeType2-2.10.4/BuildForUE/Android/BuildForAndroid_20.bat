@@ -6,9 +6,9 @@ set ROOT_DIR=%CD%
 set OUTPUT_ROOT_DIR=%CD%/../../lib/Android
 
 REM NDK OVERRIDE. Use a different NDK then your environment variable NDKROOT by setting it here
-set NDKROOT=G:/android-ndk-r20
+REM set NDKROOT=G:/android-ndk-r20
 
-set PATH=%PATH%;D:/NVPACK/android-sdk-windows/cmake/3.10.2.4988404/bin
+set PATH=%ANDROID_HOME%\cmake\3.22.1\bin;%PATH%
 
 set PATH_TO_CMAKE_FILE=%ROOT_DIR%/../../
 set PATH_TO_CROSS_COMPILE_CMAKE_FILES=%NDKROOT%/build/cmake/android.toolchain.cmake

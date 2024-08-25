@@ -73,6 +73,20 @@ namespace UnrealBuildTool
 		}
 
 		/// <summary>
+		/// Converts this object to a JsonObject to be saved or manipulated.
+		/// </summary>
+		/// <returns>The JsonObject representation of this object.</returns>
+		public JsonObject ToJsonObject()
+		{
+			JsonObject CustomBuildStepObject = new JsonObject();
+			foreach (KeyValuePair<UnrealTargetPlatform, string[]> Pair in HostPlatformToCommands.OrderBy(x => x.Key.ToString()))
+			{
+				CustomBuildStepObject.AddOrSetFieldValue(Pair.Key.ToString(), Pair.Value);
+			}
+			return CustomBuildStepObject;
+		}
+
+		/// <summary>
 		/// Tries to get the commands for a given host platform
 		/// </summary>
 		/// <param name="HostPlatform">The host platform to look for</param>

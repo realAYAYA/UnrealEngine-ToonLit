@@ -4,6 +4,9 @@
 
 #include "CoreMinimal.h"
 #include "Interfaces/ITurnkeySupportModule.h"
+
+#if UE_WITH_TURNKEY_SUPPORT
+
 #if WITH_EDITOR
 	#include "Misc/CoreMisc.h"
 #endif
@@ -20,6 +23,7 @@ public:
 
 	virtual void MakeTurnkeyMenu(struct FToolMenuSection& MenuSection) const override;
 	virtual void MakeQuickLaunchItems(class UToolMenu* Menu, FOnQuickLaunchSelected ExternalOnClickDelegate) const override;
+	virtual void MakeSimulatorItems(class UToolMenu* Menu, FOnQuickLaunchSelected ExternalOnClickDelegate) const override;
 	virtual void RepeatQuickLaunch(FString DeviceId) override;
 
 
@@ -62,3 +66,5 @@ private:
 #endif
 
 };
+
+#endif // UE_WITH_TURNKEY_SUPPORT

@@ -35,7 +35,7 @@ UStreamableRenderAsset::UStreamableRenderAsset(const FObjectInitializer& ObjectI
 	check(sizeof(FStreamableRenderResourceState) == sizeof(uint64));
 
 	SetNoRefStreamingLODBias(-1);
-	NoRefStreamingLODBias.Init(GNoRefBiasQualityLevelCVarName, GNoRefBiasQualityLevelScalabilitySection);
+	NoRefStreamingLODBias.SetQualityLevelCVarForCooking(GNoRefBiasQualityLevelCVarName, GNoRefBiasQualityLevelScalabilitySection);
 }
 
 UStreamableRenderAsset::~UStreamableRenderAsset() = default;

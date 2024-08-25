@@ -50,12 +50,14 @@ public:
 UENUM(BlueprintType)
 enum class ESetOperationEnum : uint8
 {
-	/** Bitwise AND of incoming TransformSelections */
+	/** Select elements that are selected in both incoming selections (Bitwise AND) */
 	Dataflow_SetOperation_AND UMETA(DisplayName = "Intersect"),
-	/** Bitwise OR of incoming TransformSelections */
+	/** Select elements that are selected in either incoming selections (Bitwise OR) */
 	Dataflow_SetOperation_OR UMETA(DisplayName = "Union"),
-	/** Bitwise XOR of incoming TransformSelections */
-	Dataflow_SetOperation_XOR UMETA(DisplayName = "Symmetric Difference"),
+	/** Select elements that are selected in exactly one incoming selection (Bitwise XOR) */
+	Dataflow_SetOperation_XOR UMETA(DisplayName = "Symmetric Difference (XOR)"),
+	/** Select elements that are selected in only the first of the incoming selections (Bitwise A AND (NOT B)) */
+	Dataflow_SetOperation_Subtract UMETA(DisplayName = "Difference"),
 	//~~~
 	//256th entry
 	Dataflow_Max                UMETA(Hidden)

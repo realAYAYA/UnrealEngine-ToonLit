@@ -194,6 +194,20 @@ struct DYNAMICMESH_API FSimpleShapeSet3d
 	 */
 	void FilterByVolume(int32 MaximumCount);
 
+	struct FMergeShapesSettings
+	{
+		/** Whether to use the negative space protection settings when merging collision shapes */
+		bool bMergeShapesProtectNegativeSpace = false;
+
+		/** Negative space closer to the input than this tolerance distance can be filled in */
+		double NegativeSpaceTolerance = 3;
+		/** Minimum radius of negative space to protect; tunnels with radius smaller than this could be filled in */
+		double NegativeSpaceMinRadius = 10;
+		/** Whether to ignore negative space that is not accessible by traversing from the convex hull (via paths w/ radius of at least Negative Space Tolerance) */
+		bool bIgnoreInternalNegativeSpace = true;
+	};
+	// Attempt to reduce the number of simple collision shapes by merging neighboring shapes, while still optionally protecting negative space
+	bool MergeShapes(int32 MergeAboveCount, const FMergeShapesSettings& MergeSettings);
 
 	/**
 	 * Transform shape elements. This will be a best-effort as if there is non-uniform scaling only Convexes can be transformed correctly

@@ -75,6 +75,9 @@ public:
 	*/
 	float GetDisplayGamma() const override;
 
+	// UE_DEPRECATED(5.4, "This using is there temporarily until the 2 deprecated ReadPixels 'overrides' are removed : they were hiding FRenderTarget's virtual functions")
+	using FRenderTarget::ReadPixels;
+
 	/**
 	* Copy the texels of a single depth slice of the 2d array into an array.
 	* @param OutImageData - float16 values will be stored in this array.
@@ -82,6 +85,7 @@ public:
 	* @param InRect - Rectangle of texels to copy.
 	* @return true if the read succeeded.
 	*/
+	UE_DEPRECATED(5.4, "Use FRenderTarget's ReadPixels, which is functionally equivalent")
 	ENGINE_API bool ReadPixels(TArray<FColor>& OutImageData, int32 InDepthSlice, FIntRect InRect = FIntRect(0, 0, 0, 0));
 
 	/**
@@ -91,6 +95,7 @@ public:
 	* @param InRect - Rectangle of texels to copy.
 	* @return true if the read succeeded.
 	*/
+	UE_DEPRECATED(5.4, "Use FRenderTarget's ReadFloat16Pixels, which is functionally equivalent")
 	ENGINE_API bool ReadPixels(TArray<FFloat16Color>& OutImageData, int32 InDepthSlice, FIntRect InRect = FIntRect(0, 0, 0, 0));
 
 protected:

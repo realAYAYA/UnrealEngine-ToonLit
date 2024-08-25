@@ -283,7 +283,14 @@ FAnalyticsProviderET::FAnalyticsProviderET(const FAnalyticsET::Config& ConfigVal
 		? FString(FApp::GetBuildVersion())
 		: ConfigAppVersion.Replace(TEXT("%VERSION%"), FApp::GetBuildVersion(), ESearchCase::CaseSensitive);
 
-	UE_LOG(LogAnalytics, Display, TEXT("[%s] APIServer = %s. AppVersion = %s"), *Config.APIKeyET, *Config.APIServerET, *Config.AppVersionET);
+	if ( Config.APIEndpointET.IsEmpty() )
+	{
+		// Set a default API Endpoint
+		Config.APIEndpointET = TEXT("datarouter/api/v1/public/data");
+	}
+
+	UE_LOG(LogAnalytics, Display, TEXT("[%s] APIServer = %s%s. AppVersion = %s"), *Config.APIKeyET, *Config.APIServerET, *Config.APIEndpointET, *Config.AppVersionET);
+
 	if (Config.APIServerET.IsEmpty())
 	{
 		UE_LOG(LogAnalytics, Warning, TEXT("AnalyticsET: APIServerET is empty for APIKey (%s), creating as a NULL provider!"), *Config.APIKeyET);
@@ -314,7 +321,9 @@ bool FAnalyticsProviderET::Tick(float DeltaSeconds)
 {
 	QUICK_SCOPE_CYCLE_COUNTER(STAT_FAnalyticsProviderET_Tick);
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	HttpRetryManager->Update();
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	// hold a lock the entire time here because we're making several calls to the event cache that we need to be consistent when we decide to flush.
 	// With more care, we can likely avoid holding this lock the entire time.
@@ -357,9 +366,10 @@ bool FAnalyticsProviderET::Tick(float DeltaSeconds)
 
 FAnalyticsProviderET::~FAnalyticsProviderET()
 {
-	UE_LOG(LogAnalytics, Verbose, TEXT("[%s] Destroying ET Analytics provider"), *Config.APIKeyET);
+	UE_LOG(LogAnalytics, Display, TEXT("[%s] Destroying ET Analytics provider"), *Config.APIKeyET);
 	bInDestructor = true;
 	EndSession();
+	UE_LOG(LogAnalytics, Display, TEXT("[%s] Destroyed ET Analytics provider"), *Config.APIKeyET);
 }
 
 bool FAnalyticsProviderET::StartSession(FString InSessionID, const TArray<FAnalyticsEventAttribute>& Attributes)
@@ -389,7 +399,9 @@ void FAnalyticsProviderET::EndSession()
 	if (bSessionInProgress)
 	{
 		RecordEvent(TEXT("SessionEnd"), TArray<FAnalyticsEventAttribute>());
+		UE_LOG(LogAnalytics, Display, TEXT("[%s] Ended ET Analytics provider session"), *Config.APIKeyET);
 	}
+
 	FlushEvents();
 	SessionID.Empty();
 
@@ -398,6 +410,11 @@ void FAnalyticsProviderET::EndSession()
 
 TSharedRef<IHttpRequest, ESPMode::ThreadSafe> FAnalyticsProviderET::CreateRequest()
 {
+	if (!ensure(FModuleManager::Get().IsModuleLoaded("HTTP")))
+	{
+		UE_LOG(LogAnalytics, Display, TEXT("[%s] ET Analytics provider tried to create a new HTTP request when HTTP was shutdown"), *Config.APIKeyET);
+	}
+
 	// TODO add config values for retries, for now, using default
 	TSharedRef<IHttpRequest, ESPMode::ThreadSafe> HttpRequest = HttpRetryManager->CreateRequest(FHttpRetrySystem::FRetryLimitCountSetting(),
 		FHttpRetrySystem::FRetryTimeoutRelativeSecondsSetting(),
@@ -441,7 +458,8 @@ void FAnalyticsProviderET::FlushEventsOnce()
 	{
 		TArray<uint8> Payload = EventCache.FlushCacheUTF8();
 		// UrlEncode NOTE: need to concatenate everything
-		FString URLPath  = TEXT("datarouter/api/v1/public/data?SessionID=") + FPlatformHttp::UrlEncode(SessionID);
+		FString URLPath = Config.APIEndpointET;
+				URLPath += TEXT("?SessionID=") + FPlatformHttp::UrlEncode(SessionID);
 				URLPath += TEXT("&AppID=") + FPlatformHttp::UrlEncode(Config.APIKeyET);
 				URLPath += TEXT("&AppVersion=") + FPlatformHttp::UrlEncode(Config.AppVersionET);
 				URLPath += TEXT("&UserID=") + FPlatformHttp::UrlEncode(UserID);
@@ -456,8 +474,9 @@ void FAnalyticsProviderET::FlushEventsOnce()
 			Payload.Add(TEXT('\0'));
 			// Recreate the URLPath for logging because we do not want to escape the parameters when logging.
 			// We cannot simply UrlEncode the entire Path after logging it because UrlEncode(Params) != UrlEncode(Param1) & UrlEncode(Param2) ...
-			FString LogString = FString::Printf(TEXT("[%s] AnalyticsET URL:datarouter/api/v1/public/data?SessionID=%s&AppID=%s&AppVersion=%s&UserID=%s&AppEnvironment=%s&UploadType=%s. Payload:%s"),
+			FString LogString = FString::Printf(TEXT("[%s] AnalyticsET URL:%s?SessionID=%s&AppID=%s&AppVersion=%s&UserID=%s&AppEnvironment=%s&UploadType=%s. Payload:%s"),
 				*Config.APIKeyET,
+				*Config.APIEndpointET,
 				*SessionID,
 				*Config.APIKeyET,
 				*Config.AppVersionET,
@@ -748,7 +767,7 @@ void FAnalyticsProviderET::FlushEventLegacy(const FString& EventName, const TArr
 		HttpRequest->SetHeader(TEXT("Content-Type"), TEXT("text/plain"));
 
 		// Don't need to URL encode the APIServer or the EventParams, which are already encoded, and contain parameter separaters that we DON'T want encoded.
-		FString URLPath = Config.APIServerET;
+		FString URLPath = Config.APIServerET+Config.APIEndpointET;
 		URLPath += TEXT("SendEvent.1?SessionID=") + FPlatformHttp::UrlEncode(SessionID);
 		URLPath += TEXT("&AppID=") + FPlatformHttp::UrlEncode(Config.APIKeyET);
 		URLPath += TEXT("&AppVersion=") + FPlatformHttp::UrlEncode(Config.AppVersionET);

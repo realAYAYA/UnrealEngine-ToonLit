@@ -6,7 +6,7 @@ UDataStream::~UDataStream()
 {
 }
 
-UDataStream::EWriteResult UDataStream::BeginWrite()
+UDataStream::EWriteResult UDataStream::BeginWrite(const FBeginWriteParameters& Params)
 {
 	return EWriteResult::HasMoreData;
 }

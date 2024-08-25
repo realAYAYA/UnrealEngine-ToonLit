@@ -33,6 +33,7 @@
 #include "Containers/Map.h"
 #include "Shader/ShaderTypes.h"
 #include "SparseVolumeTexture/SparseVolumeTexture.h"
+#include "Runtime/RenderCore/Internal/ShaderCompilerDefinitions.h"
 
 #if WITH_EDITORONLY_DATA
 #include "Materials/MaterialExpressionSceneTexture.h"
@@ -49,11 +50,17 @@
 #include "Containers/LazyPrintf.h"
 #include "Containers/HashTable.h"
 #include "Engine/Texture2D.h"
-#include "StrataMaterial.h"
+#include "SubstrateMaterial.h"
 #include "HLSLMaterialDerivativeAutogen.h"
 #endif
 
 class Error;
+class FAddUniformExpressionScope;
+
+namespace UE::DerivedData
+{
+	class FRequestOwner;
+}
 
 /**
  * Returns whether the specified class of material expression is permitted.
@@ -225,7 +232,7 @@ enum class EMaterialCastFlags : uint32
 };
 ENUM_CLASS_FLAGS(EMaterialCastFlags);
 
-enum EStrataCompilationContext : uint8
+enum ESubstrateCompilationContext : uint8
 {
 	SCC_Default = 0u,
 	SCC_FullySimplified = 1u,
@@ -263,8 +270,7 @@ protected:
 
 	/** Material being compiled.  Only transient compilation output like error information can be stored on the FMaterial. */
 	FMaterial* Material;
-	/** Compilation output which will be stored in the DDC. */
-	FMaterialCompilationOutput& MaterialCompilationOutput;
+
 	FStaticParameterSet StaticParameters;
 	FMaterialLayersFunctions CachedMaterialLayers;
 	EShaderPlatform Platform;
@@ -277,12 +283,6 @@ protected:
 	FString TranslatedAttributesCodeChunks[SF_NumFrequencies];
 
 	uint64 MaterialAttributesReturned[SF_NumFrequencies];
-
-	/** Line number of the #line in MaterialTemplate.usf */
-	int32 MaterialTemplateLineNumber;
-
-	/** Contents of the MaterialTemplate.usf file */
-	FString MaterialTemplate;
 
 	TArray<int32> ScopeStack;
 
@@ -385,6 +385,8 @@ protected:
 	uint32 bUsesInstanceLocalToWorldPS : 1;
 	/** true if the material reads per instance world to local in the pixel shader. */
 	uint32 bUsesInstanceWorldToLocalPS : 1;
+	/** true if the material uses per instance random in the pixel shader. */
+	uint32 bUsesPerInstanceRandomPS : 1;
 
 	/** true if the material uses any type of vertex position */
 	uint32 bUsesVertexPosition : 1;
@@ -407,10 +409,10 @@ protected:
 	/** True if this material write anisotropy material property */
 	uint32 bUsesAnisotropy : 1;
 
-	/** True if the material is detected as a strata material at compile time.
-	 * This is decoupled from runtime FMaterialResource::IsStrataMaterial but practically fine since this is only temporary until Strata is the main shading system. Only really used at runtime for translucency dual source blending.
+	/** True if the material is detected as a Substrate material at compile time.
+	 * This is decoupled from runtime FMaterialResource::IsSubstrateMaterial but practically fine since this is only temporary until Substrate is the main shading system. Only really used at runtime for translucency dual source blending.
 	 */
-	uint32 bMaterialIsStrata : 1;
+	uint32 bMaterialIsSubstrate : 1;
 
 	/** True if the opacity input is plugged in */
 	uint32 bOpacityPropertyIsUsed : 1;
@@ -418,6 +420,13 @@ protected:
 	uint32 bEnableExecutionFlow : 1;
 
 	uint32 bUsesCurvature : 1;
+	/** true if PerInstanceFadeAmount expression is used */
+	uint32 bUsesPerInstanceFadeAmount : 1;
+
+	uint32 bCullIntermediateUniformExpressions : 1;
+
+	/** Incremented and decremented by FAddUniformExpressionScope.  See comments on that class below */
+	int32 AddingUniformExpression;
 
 	/** Tracks the texture coordinates used by this material. */
 	TBitArray<> AllocatedUserTexCoords;
@@ -429,13 +438,19 @@ protected:
 	/** Will contain all the shading models picked up from the material expression graph */
 	FMaterialShadingModelField ShadingModelsFromCompilation;
 
+	struct FEnvironmentDefines;
+
 	// Describe the simplification status. Once the material has been compiled, it can be used to understand if and how it has been simplified.
-	struct FStrataSimplificationStatus
+	struct FSubstrateSimplificationStatus
 	{
 		bool bMaterialFitsInMemoryBudget = false;	// Track whether or not the material fits.
 
 		uint32 OriginalRequestedByteSize = 0;
+		uint32 OriginalRequestedClosureCount = 0;
 		bool bRunFullSimplification = false;	// Simple implementation for now: if the material does not fit, we simply everything.
+		bool bFullSimplificationStepHasBeenRun = false;
+
+		bool bSlabSimplificationStepHasBeenRun = false;
 
 		struct FOperatorToSimplify
 		{
@@ -463,89 +478,103 @@ protected:
 	};
 
 	/** Represent a shared local basis description with its associated code. */
-	struct FStrataSharedLocalBasesInfo
+	struct FSubstrateSharedLocalBasesInfo
 	{
-		FStrataRegisteredSharedLocalBasis SharedData;
+		FSubstrateRegisteredSharedLocalBasis SharedData;
 		FString NormalCode;
 		FString TangentCode;
 	};
 
-	struct FStrataCompilationContext
+	struct FSubstrateCompilationContext
 	{
-		FStrataCompilationContext();
+		FSubstrateCompilationContext();
 
-		FStrataCompilationContext(EStrataCompilationContext InCompilationContext);
+		FSubstrateCompilationContext(ESubstrateCompilationContext InCompilationContext);
 
-		EStrataCompilationContext CompilationContextIndex;
+		ESubstrateCompilationContext CompilationContextIndex;
 
 		/** The code initializing the array of shared local bases. */
-		FString StrataPixelNormalInitializerValues;
+		FString SubstratePixelNormalInitializerValues;
 		/** The next free index that can be used to represent a unique macros pointing to the position in the array of shared local bases written to memory once the shader is executed. */
-		uint8 NextFreeStrataShaderNormalIndex;
+		uint8 NextFreeSubstrateShaderNormalIndex;
 		/** The effective final shared local bases count used by the final shader. */
 		uint8 FinalUsedSharedLocalBasesCount;
-		/** Tracks shared local bases used by strata materials, mapping a normal code chunk hash to a SharedMaterialInfo.
+		/** Tracks shared local bases used by Substrate materials, mapping a normal code chunk hash to a SharedMaterialInfo.
 		 * A normal code chunk hash can point to multiple shared info in case it is paired with different tangents. */
-		TMultiMap<uint64, FStrataSharedLocalBasesInfo> CodeChunkToStrataSharedLocalBasis;
+		TMultiMap<uint64, FSubstrateSharedLocalBasesInfo> CodeChunkToSubstrateSharedLocalBasis;
 
-		TMap<FGuid, int32> StrataMaterialExpressionToOperatorIndex;
-		TArray<FStrataOperator> StrataMaterialExpressionRegisteredOperators;
-		FStrataOperator* StrataMaterialRootOperator;
-		uint32 StrataMaterialBSDFCount;
-		uint32 StrataMaterialRequestedSizeByte;
-		bool bStrataMaterialIsSimple;
-		bool bStrataMaterialIsSingle;
-		bool bStrataMaterialIsUnlitNode;
+		TMap<FGuid, int32> SubstrateMaterialExpressionToOperatorIndex;
+		TArray<FSubstrateOperator> SubstrateMaterialExpressionRegisteredOperators;
+		FSubstrateOperator* SubstrateMaterialRootOperator;
+		uint32 SubstrateMaterialEffectiveClosureCount; // Also acts as requested 
+		uint32 SubstrateMaterialRequestedSizeByte;
+		uint32 SubstrateMaterialClosureCount;
+		FSubstrateMaterialComplexity SubstrateMaterialComplexity;
+		bool bSubstrateMaterialIsUnlitNode;
 
-		/** Stack of unique id for each node of the strata tree
+		bool bSubstrateWritesEmissive;
+		bool bSubstrateWritesAmbientOcclusion;
+
+		/** Stack of unique id for each node of the Substrate tree
 		* This is transient and updated on the fly in the exact same way when parsing node for
-		*  1- StrataGenerateMaterialTopologyTree: generating a picture of the strata material tree for code generation and simplifications.
+		*  1- SubstrateGenerateMaterialTopologyTree: generating a picture of the Substrate material tree for code generation and simplifications.
 		*  2- CompilePropertyAndSetMaterialProperty(MP_ShadingModel): compiling the code with some features enabled/disabled and accounting for tree simplification decided beforehand.
 		* It is not valid to use that information outside of those functions.
 		*/
-		TArray<FGuid> StrataNodeIdentifierStack;
+		TArray<FGuid> SubstrateNodeIdentifierStack;
 
 		/**
-		 * This can be used to know if the strata tree we are trying to build is too deep and we should stop the compilation.
+		 * This can be used to know if the Substrate tree we are trying to build is too deep and we should stop the compilation.
 		 * True means that we have likely encountered node re-entry leading to cyclic graph we cannot handle and compile internally: we must fail the compilation.
 		 */
-		bool bStrataTreeOutOfStackDepthOccurred;
+		bool bSubstrateTreeOutOfStackDepthOccurred;
 
 		/** Stack of thickness input used for propagating thickness information from root node and vertical operation
-		* This is transient and updated when calling StrataGenerateMaterialTopologyTree. The information is then stored into the FStratOperator
+		* This is transient and updated when calling SubstrateGenerateMaterialTopologyTree. The information is then stored into the FStratOperator
 		*/
-		TArray<int32> StrataThicknessStack;
-		TArray<FExpressionInput*> StrataThicknessIndexToExpressionInput;
+		TArray<int32> SubstrateThicknessStack;
+		TArray<FExpressionInput*> SubstrateThicknessIndexToExpressionInput;
 
-		FStrataSimplificationStatus StrataSimplificationStatus;
+		FSubstrateSimplificationStatus SubstrateSimplificationStatus;
 
-		bool StrataGenerateDerivedMaterialOperatorData(FHLSLMaterialTranslator* Compiler);
+		bool SubstrateGenerateDerivedMaterialOperatorData(FHLSLMaterialTranslator* Compiler);
 
-		void StrataEvaluateSharedLocalBases(FHLSLMaterialTranslator* Compiler, uint8& RequestedSharedLocalBasesCount, FShaderCompilerEnvironment* OutEnvironment);
+		void SubstrateEvaluateSharedLocalBases(FHLSLMaterialTranslator* Compiler, uint8& RequestedSharedLocalBasesCount, FEnvironmentDefines* OutEnvironment);
 
-		FStrataSharedLocalBasesInfo StrataCompilationInfoGetMatchingSharedLocalBasisInfo(const FStrataRegisteredSharedLocalBasis& SearchedSharedLocalBasis);
+		FSubstrateSharedLocalBasesInfo SubstrateCompilationInfoGetMatchingSharedLocalBasisInfo(const FSubstrateRegisteredSharedLocalBasis& SearchedSharedLocalBasis);
 
 	private:
 		void Initialise();
 	};
-	FStrataCompilationContext StrataCompilationContext[EStrataCompilationContext::SCC_MAX];
+	FSubstrateCompilationContext SubstrateCompilationContext[ESubstrateCompilationContext::SCC_MAX];
 
-	EStrataCompilationContext CurrentStrataCompilationContext = EStrataCompilationContext::SCC_Default;
-	int32 FullySimplifiedStrataFrontMaterialCodeChunk = INDEX_NONE;
-	FString FullySimplifiedStrataFrontMaterialTranslatedCodeChunkDefinitions;
-	FString FullySimplifiedStrataFrontMaterialTranslatedCodeChunks;
+	ESubstrateCompilationContext CurrentSubstrateCompilationContext = ESubstrateCompilationContext::SCC_Default;
+	int32 FullySimplifiedSubstrateFrontMaterialCodeChunk = INDEX_NONE;
+	FString FullySimplifiedSubstrateFrontMaterialTranslatedCodeChunkDefinitions;
+	FString FullySimplifiedSubstrateFrontMaterialTranslatedCodeChunks;
 
-	bool bStrataUsesConversionFromLegacy;
-	bool bStrataOutputsOpaqueRoughRefractions;
+	bool bSubstrateWritesEmissive;
+	bool bSubstrateWritesAmbientOcclusion;
+
+	bool bSubstrateUsesConversionFromLegacy;
+	bool bSubstrateOutputsOpaqueRoughRefractions;
 
 	/** Tracks the total number of vt samples in the shader. */
 	uint32 NumVtSamples;
 
 	const ITargetPlatform* TargetPlatform;
 
-	/** Strata material compilation and simplification configuration. */
-	FStrataCompilationConfig StrataCompilationConfig;
+	/** Substrate material compilation and simplification configuration. */
+	FSubstrateCompilationConfig SubstrateCompilationConfig;
+	
+	/** The DDC key for the material translation results */
+	FIoHash DDCKeyHash;
+
 public: 
+	/**
+	 * Returns a string representation that identify the translator version. Used to keep shader DDC keys valid when material translation internals change.
+	 */
+	static void AppendVersionString(FString& Output, EShaderPlatform Platform);
 
 	FHLSLMaterialTranslator(FMaterial* InMaterial,
 		FMaterialCompilationOutput& InMaterialCompilationOutput,
@@ -554,9 +583,12 @@ public:
 		EMaterialQualityLevel::Type InQualityLevel,
 		ERHIFeatureLevel::Type InFeatureLevel,
 		const ITargetPlatform* InTargetPlatform = nullptr,
-		const FStrataCompilationConfig* InStrataCompilationConfig = nullptr);
+		const FSubstrateCompilationConfig* InSubstrateCompilationConfig = nullptr,
+		FString MaterialTranslationDDCKeyString = {});
 
 	~FHLSLMaterialTranslator();
+
+	bool ShouldStopTranslating() const override;
 
 	int32 GetNumUserTexCoords() const;
 	int32 GetNumUserVertexTexCoords() const;
@@ -614,7 +646,6 @@ public:
 	virtual FString GetParameterCodeDeriv(int32 Index, ECompiledPartialDerivativeVariation Variation);
 
 protected:
-
 	uint64 GetParameterHash(int32 Index);
 
 	uint64 GetParameterMaterialAttributeMask(int32 Index);
@@ -651,6 +682,9 @@ protected:
 
 	void AddEstimatedTextureSample(const uint32 Count = 1);
 	void AddLWCFuncUsage(ELWCFunctionKind Kind, const uint32 Count = 1);
+
+	/** If InWorldPosition is set, coerce it to the correct type, else get the position from the material params */
+	FString GetWorldPositionOrDefault(int32 InWorldPosition, EPositionOrigin PositionOrigin);
 
 	/** Creates a unique symbol name and adds it to the symbol list. */
 	FString CreateSymbolName(const TCHAR* SymbolNameHint);
@@ -691,21 +725,21 @@ protected:
 	template <typename... Types>
 	int32 AddCodeChunk(EMaterialValueType Type, const TCHAR* Format, Types... Args)
 	{
-		static_assert(TAnd<TIsValidVariadicFunctionArg<Types>...>::Value, "Invalid argument(s) passed to AddCodeChunk");
+		static_assert((TIsValidVariadicFunctionArg<Types>::Value && ...), "Invalid argument(s) passed to AddCodeChunk");
 		return AddCodeChunkInner(Type, EDerivativeStatus::NotAware, false, Format, Args...);
 	}
 
 	template <typename... Types>
 	int32 AddCodeChunkZeroDeriv(EMaterialValueType Type, const TCHAR* Format, Types... Args)
 	{
-		static_assert(TAnd<TIsValidVariadicFunctionArg<Types>...>::Value, "Invalid argument(s) passed to AddCodeChunkZeroDeriv");
+		static_assert((TIsValidVariadicFunctionArg<Types>::Value && ...), "Invalid argument(s) passed to AddCodeChunkZeroDeriv");
 		return AddCodeChunkInner(Type, EDerivativeStatus::Zero, false, Format, Args...);
 	}
 
 	template <typename... Types>
 	int32 AddCodeChunkFiniteDeriv(EMaterialValueType Type, const TCHAR* Format, Types... Args)
 	{
-		static_assert(TAnd<TIsValidVariadicFunctionArg<Types>...>::Value, "Invalid argument(s) passed to AddCodeChunkFiniteDeriv");
+		static_assert((TIsValidVariadicFunctionArg<Types>::Value && ...), "Invalid argument(s) passed to AddCodeChunkFiniteDeriv");
 		return AddCodeChunkInner(Type, EDerivativeStatus::NotValid, false, Format, Args...);
 	}
 	
@@ -717,28 +751,28 @@ protected:
 	template <typename... Types>
 	int32 AddInlinedCodeChunk(EMaterialValueType Type, const TCHAR* Format, Types... Args)
 	{
-		static_assert(TAnd<TIsValidVariadicFunctionArg<Types>...>::Value, "Invalid argument(s) passed to AddInlinedCodeChunk");
+		static_assert((TIsValidVariadicFunctionArg<Types>::Value && ...), "Invalid argument(s) passed to AddInlinedCodeChunk");
 		return AddCodeChunkInner(Type, EDerivativeStatus::NotAware, true, Format, Args...);
 	}
 
 	template <typename... Types>
 	int32 AddInlinedCodeChunkZeroDeriv(EMaterialValueType Type, const TCHAR* Format, Types... Args)
 	{
-		static_assert(TAnd<TIsValidVariadicFunctionArg<Types>...>::Value, "Invalid argument(s) passed to AddInlinedCodeChunkZeroDeriv");
+		static_assert((TIsValidVariadicFunctionArg<Types>::Value && ...), "Invalid argument(s) passed to AddInlinedCodeChunkZeroDeriv");
 		return AddCodeChunkInner(Type, EDerivativeStatus::Zero, true, Format, Args...);
 	}
 
 	template <typename... Types>
 	int32 AddInlinedCodeChunkFiniteDeriv(EMaterialValueType Type, const TCHAR* Format, Types... Args)
 	{
-		static_assert(TAnd<TIsValidVariadicFunctionArg<Types>...>::Value, "Invalid argument(s) passed to AddInlinedCodeChunkFiniteDeriv");
+		static_assert((TIsValidVariadicFunctionArg<Types>::Value && ...), "Invalid argument(s) passed to AddInlinedCodeChunkFiniteDeriv");
 		return AddCodeChunkInner(Type, EDerivativeStatus::NotValid, true, Format, Args...);
 	}
 
 	int32 AddUniformExpressionInner(uint64 Hash, FMaterialUniformExpression* UniformExpression, EMaterialValueType Type, const TCHAR* FormattedCode);
 
 	// AddUniformExpression - Adds an input to the Code array and returns its index.
-	int32 AddUniformExpression(FMaterialUniformExpression* UniformExpression, EMaterialValueType Type, const TCHAR* Format, ...);
+	int32 AddUniformExpression(FAddUniformExpressionScope& Scope, FMaterialUniformExpression* UniformExpression, EMaterialValueType Type, const TCHAR* Format, ...);
 
 	// AccessUniformExpression - Adds code to access the value of a uniform expression to the Code array and returns its index.
 	int32 AccessUniformExpression(int32 Index);
@@ -787,7 +821,8 @@ protected:
 
 	int32 GenericSwitch(const TCHAR* Function, int32 IfTrue, int32 IfFalse);
 
-	FString StrataGetCastParameterCode(int32 Index, EMaterialValueType DestType);
+	FString SubstrateGetCastParameterCode(int32 Index, EMaterialValueType DestType);
+	FString SubstrateGetCastParameterCodeWithDeriv(int32 Index, EMaterialValueType DestType);
 
 	// FMaterialCompiler interface.
 
@@ -932,6 +967,7 @@ protected:
 	virtual int32 ObjectBounds() override;
 
 	virtual int32 ObjectLocalBounds(int32 OutputIndex) override;
+	virtual int32 InstanceLocalBounds(int32 OutputIndex) override;
 	virtual int32 PreSkinnedLocalBounds(int32 OutputIndex) override;
 
 	virtual int32 DistanceCullFade() override;
@@ -1012,7 +1048,7 @@ protected:
 	virtual int32 VirtualTextureParameter(FName ParameterName, URuntimeVirtualTexture* DefaultValue, int32 TextureLayerIndex, int32 PageTableLayerIndex, int32& TextureReferenceIndex, EMaterialSamplerType SamplerType) override;
 	virtual int32 VirtualTextureUniform(int32 TextureIndex, int32 VectorIndex, UE::Shader::EValueType Type) override;
 	virtual int32 VirtualTextureUniform(FName ParameterName, int32 TextureIndex, int32 VectorIndex, UE::Shader::EValueType Type) override;
-	virtual int32 VirtualTextureWorldToUV(int32 WorldPositionIndex, int32 P0, int32 P1, int32 P2) override;
+	virtual int32 VirtualTextureWorldToUV(int32 WorldPositionIndex, int32 P0, int32 P1, int32 P2, EPositionOrigin PositionOrigin) override;
 	virtual int32 VirtualTextureUnpack(int32 CodeIndex0, int32 CodeIndex1, int32 CodeIndex2, int32 P0, EVirtualTextureUnpackType UnpackType) override;
 
 	virtual int32 ExternalTexture(const FGuid& ExternalTextureGuid) override;
@@ -1040,7 +1076,7 @@ protected:
 
 	virtual bool GetStaticBoolValue(int32 BoolIndex, bool& bSucceeded) override;
 
-	virtual int32 StaticTerrainLayerWeight(FName ParameterName, int32 Default) override;
+	virtual int32 StaticTerrainLayerWeight(FName ParameterName, int32 Default, bool bTextureArray = false) override;
 
 	virtual int32 VertexColor() override;
 
@@ -1114,8 +1150,8 @@ protected:
 	virtual int32 DepthOfFieldFunction(int32 Depth, int32 FunctionValueIndex) override;
 	virtual int32 Sobol(int32 Cell, int32 Index, int32 Seed) override;
 	virtual int32 TemporalSobol(int32 Index, int32 Seed) override;
-	virtual int32 Noise(int32 Position, float Scale, int32 Quality, uint8 NoiseFunction, bool bTurbulence, int32 Levels, float OutputMin, float OutputMax, float LevelScale, int32 FilterWidth, bool bTiling, uint32 RepeatSize) override;
-	virtual int32 VectorNoise(int32 Position, int32 Quality, uint8 NoiseFunction, bool bTiling, uint32 TileSize) override;
+	virtual int32 Noise(int32 Position, EPositionOrigin PositionOrigin, float Scale, int32 Quality, uint8 NoiseFunction, bool bTurbulence, int32 Levels, float OutputMin, float OutputMax, float LevelScale, int32 FilterWidth, bool bTiling, uint32 RepeatSize) override;
+	virtual int32 VectorNoise(int32 Position, EPositionOrigin PositionOrigin, int32 Quality, uint8 NoiseFunction, bool bTiling, uint32 TileSize) override;
 
 	virtual int32 BlackBody(int32 Temp) override;
 
@@ -1134,19 +1170,20 @@ protected:
 	virtual int32 GetHairAtlasUVs() override;
 	virtual int32 GetHairGroupIndex() override;
 	virtual int32 GetHairColorFromMelanin(int32 Melanin, int32 Redness, int32 DyeColor) override;
-	virtual int32 DistanceToNearestSurface(int32 PositionArg) override;
-	virtual int32 DistanceFieldGradient(int32 PositionArg) override;
-	virtual int32 DistanceFieldApproxAO(int32 PositionArg, int32 NormalArg, int32 BaseDistanceArg, int32 RadiusArg, uint32 NumSteps, float StepScale) override;
-	virtual int32 SamplePhysicsField(int32 PositionArg, const int32 OutputType, const int32 TargetIndex) override;
-	virtual int32 AtmosphericFogColor(int32 WorldPosition) override;
+	virtual int32 DistanceToNearestSurface(int32 PositionArg, EPositionOrigin PositionOrigin) override;
+	virtual int32 DistanceFieldGradient(int32 PositionArg, EPositionOrigin PositionOrigin) override;
+	virtual int32 DistanceFieldApproxAO(int32 PositionArg, EPositionOrigin PositionOrigin, int32 NormalArg, int32 BaseDistanceArg, int32 RadiusArg, uint32 NumSteps, float StepScale) override;
+	virtual int32 SamplePhysicsField(int32 PositionArg, EPositionOrigin PositionOrigin, const int32 OutputType, const int32 TargetIndex) override;
+	virtual int32 AtmosphericFogColor(int32 WorldPosition, EPositionOrigin PositionOrigin) override;
 	virtual int32 AtmosphericLightVector() override;
 	virtual int32 AtmosphericLightColor() override;
 
-	virtual int32 SkyAtmosphereLightIlluminance(int32 WorldPosition, int32 LightIndex) override;
+	virtual int32 SkyAtmosphereLightIlluminance(int32 WorldPosition, EPositionOrigin PositionOrigin, int32 LightIndex) override;
+	virtual int32 SkyAtmosphereLightIlluminanceOnGround(int32 LightIndex) override;
 	virtual int32 SkyAtmosphereLightDirection(int32 LightIndex) override;
 	virtual int32 SkyAtmosphereLightDiskLuminance(int32 LightIndex, int32 OverrideAtmosphereLightDiscCosHalfApexAngle) override;
 	virtual int32 SkyAtmosphereViewLuminance() override;
-	virtual int32 SkyAtmosphereAerialPerspective(int32 WorldPosition) override;
+	virtual int32 SkyAtmosphereAerialPerspective(int32 WorldPosition, EPositionOrigin PositionOrigin) override;
 	virtual int32 SkyAtmosphereDistantLightScatteredLuminance() override;
 
 	virtual int32 SkyLightEnvMapSample(int32 DirectionCodeChunk, int32 RoughnessCodeChunk) override;
@@ -1188,9 +1225,12 @@ protected:
 	virtual int32 SetLocal(const FName& LocalName, int32 Value) override;
 	virtual int32 GetLocal(const FName& LocalName) override;
 
-	// Strata
-	virtual int32 StrataCreateAndRegisterNullMaterial() override;
-	virtual int32 StrataSlabBSDF(
+	// Neural network nodes
+	virtual int32 NeuralOutput(int32 ViewportUV, uint32 NeuralIndexType) override;
+
+	// Substrate
+	virtual int32 SubstrateCreateAndRegisterNullMaterial() override;
+	virtual int32 SubstrateSlabBSDF(
 		int32 DiffuseAlbedo, int32 F0, int32 F90,
 		int32 Roughness, int32 Anisotropy,
 		int32 SSSProfileId, int32 SSSMFP, int32 SSSMFPScale, int32 SSSPhaseAniso, int32 bUseSSSDiffusion,
@@ -1202,8 +1242,8 @@ protected:
 		int32 SpecularProfileId,
 		bool bIsAtTheBottomOfTopology,
 		int32 Normal, int32 Tangent, const FString& SharedLocalBasisIndexMacro,
-		FStrataOperator* PromoteToOperator) override;
-	virtual int32 StrataConversionFromLegacy(
+		FSubstrateOperator* PromoteToOperator) override;
+	virtual int32 SubstrateConversionFromLegacy(
 		bool bHasDynamicShadingModel,
 		int32 BaseColor, int32 Specular, int32 Metallic,
 		int32 Roughness, int32 Anisotropy,
@@ -1217,51 +1257,51 @@ protected:
 		int32 Normal, int32 Tangent, const FString& SharedLocalBasisIndexMacro,
 		int32 ClearCoat_Normal, int32 ClearCoat_Tangent, const FString& ClearCoat_SharedLocalBasisIndexMacro, 
 		int32 CustomTangent_Tangent,
-		FStrataOperator* PromoteToOperator) override;
-	virtual int32 StrataVolumetricFogCloudBSDF(int32 Albedo, int32 Extinction, int32 EmissiveColor, int32 AmbientOcclusion) override;
-	virtual int32 StrataUnlitBSDF(int32 EmissiveColor, int32 TransmittanceColor, int32 Normal) override;
-	virtual int32 StrataHairBSDF(int32 BaseColor, int32 Scatter, int32 Specular, int32 Roughness, int32 Backlit, int32 EmissiveColor, int32 Tangent, const FString& SharedLocalBasisIndexMacro, FStrataOperator* PromoteToOperator) override;
-	virtual int32 StrataEyeBSDF(int32 DiffuseColor, int32 Roughness, int32 IrisMask, int32 IrisDistance, int32 EmissiveColor, int32 CorneaNormal, int32 IrisNormal, int32 IrisPlaneNormal, int32 SSSProfileId, const FString& SharedLocalBasisIndexMacro, FStrataOperator* PromoteToOperator) override;
-	virtual int32 StrataSingleLayerWaterBSDF(
+		FSubstrateOperator* PromoteToOperator) override;
+	virtual int32 SubstrateVolumetricFogCloudBSDF(int32 Albedo, int32 Extinction, int32 EmissiveColor, int32 AmbientOcclusion) override;
+	virtual int32 SubstrateUnlitBSDF(int32 EmissiveColor, int32 TransmittanceColor, int32 Normal, FSubstrateOperator* PromoteToOperator) override;
+	virtual int32 SubstrateHairBSDF(int32 BaseColor, int32 Scatter, int32 Specular, int32 Roughness, int32 Backlit, int32 EmissiveColor, int32 Tangent, const FString& SharedLocalBasisIndexMacro, FSubstrateOperator* PromoteToOperator) override;
+	virtual int32 SubstrateEyeBSDF(int32 DiffuseColor, int32 Roughness, int32 IrisMask, int32 IrisDistance, int32 EmissiveColor, int32 CorneaNormal, int32 IrisNormal, int32 IrisPlaneNormal, int32 SSSProfileId, const FString& SharedLocalBasisIndexMacro, FSubstrateOperator* PromoteToOperator) override;
+	virtual int32 SubstrateSingleLayerWaterBSDF(
 		int32 BaseColor, int32 Metallic, int32 Specular, int32 Roughness, 
 		int32 EmissiveColor, int32 TopMaterialOpacity, int32 WaterAlbedo, int32 WaterExtinction, int32 WaterPhaseG, 
-		int32 ColorScaleBehindWater, int32 Normal, const FString& SharedLocalBasisIndexMacro, FStrataOperator* PromoteToOperator) override;
-	virtual int32 StrataHorizontalMixing(int32 Background, int32 Foreground, int32 Mix, int OperatorIndex, uint32 MaxDistanceFromLeaves) override;
-	virtual int32 StrataHorizontalMixingParameterBlending(int32 Background, int32 Foreground, int32 HorizontalMixCodeChunk, int32 NormalMixCodeChunk, const FString& SharedLocalBasisIndexMacro, FStrataOperator* PromoteToOperator) override;
-	virtual int32 StrataVerticalLayering(int32 Top, int32 Base, int32 Thickness, int OperatorIndex, uint32 MaxDistanceFromLeaves) override;
-	virtual int32 StrataVerticalLayeringParameterBlending(int32 Top, int32 Base, int32 Thickness, const FString& SharedLocalBasisIndexMacro, int32 TopBSDFNormalCodeChunk, FStrataOperator* PromoteToOperator) override;
-	virtual int32 StrataAdd(int32 A, int32 B, int OperatorIndex, uint32 MaxDistanceFromLeaves) override;
-	virtual int32 StrataAddParameterBlending(int32 A, int32 B, int32 AMixWeight, const FString& SharedLocalBasisIndexMacro, FStrataOperator* PromoteToOperator) override;
-	virtual int32 StrataWeight(int32 A, int32 Weight, int OperatorIndex, uint32 MaxDistanceFromLeaves) override;
-	virtual int32 StrataWeightParameterBlending(int32 A, int32 Weight, FStrataOperator* PromoteToOperator) override;
-	virtual int32 StrataTransmittanceToMFP(int32 TransmittanceColor, int32 DesiredThickness, int32 OutputIndex) override;
-	virtual int32 StrataMetalnessToDiffuseAlbedoF0(int32 BaseColor, int32 Specular, int32 Metallic, int32 OutputIndex) override;
-	virtual int32 StrataHazinessToSecondaryRoughness(int32 BaseRoughness, int32 Haziness, int32 OutputIndex) override;
-	virtual int32 StrataThinFilm(int32 NormalCodeChunk, int32 SpecularColorCodeChunk, int32 EdgeSpecularColorCodeChunk, int32 ThicknessCodeChunk, int32 IORCodeChunk, int32 OutputIndex) override;
-	virtual int32 StrataCompilePreview(int32 StrataDataCodeChunk) override;
-	virtual bool StrataSkipsOpacityEvaluation() override;
+		int32 ColorScaleBehindWater, int32 Normal, const FString& SharedLocalBasisIndexMacro, FSubstrateOperator* PromoteToOperator) override;
+	virtual int32 SubstrateHorizontalMixing(int32 Background, int32 Foreground, int32 Mix, int OperatorIndex, uint32 MaxDistanceFromLeaves) override;
+	virtual int32 SubstrateHorizontalMixingParameterBlending(int32 Background, int32 Foreground, int32 HorizontalMixCodeChunk, int32 NormalMixCodeChunk, const FString& SharedLocalBasisIndexMacro, FSubstrateOperator* PromoteToOperator) override;
+	virtual int32 SubstrateVerticalLayering(int32 Top, int32 Base, int32 Thickness, int OperatorIndex, uint32 MaxDistanceFromLeaves) override;
+	virtual int32 SubstrateVerticalLayeringParameterBlending(int32 Top, int32 Base, int32 Thickness, const FString& SharedLocalBasisIndexMacro, int32 TopBSDFNormalCodeChunk, FSubstrateOperator* PromoteToOperator) override;
+	virtual int32 SubstrateAdd(int32 A, int32 B, int OperatorIndex, uint32 MaxDistanceFromLeaves) override;
+	virtual int32 SubstrateAddParameterBlending(int32 A, int32 B, int32 AMixWeight, const FString& SharedLocalBasisIndexMacro, FSubstrateOperator* PromoteToOperator) override;
+	virtual int32 SubstrateWeight(int32 A, int32 Weight, int OperatorIndex, uint32 MaxDistanceFromLeaves) override;
+	virtual int32 SubstrateWeightParameterBlending(int32 A, int32 Weight, FSubstrateOperator* PromoteToOperator) override;
+	virtual int32 SubstrateTransmittanceToMFP(int32 TransmittanceColor, int32 DesiredThickness, int32 OutputIndex) override;
+	virtual int32 SubstrateMetalnessToDiffuseAlbedoF0(int32 BaseColor, int32 Specular, int32 Metallic, int32 OutputIndex) override;
+	virtual int32 SubstrateHazinessToSecondaryRoughness(int32 BaseRoughness, int32 Haziness, int32 OutputIndex) override;
+	virtual int32 SubstrateThinFilm(int32 NormalCodeChunk, int32 SpecularColorCodeChunk, int32 EdgeSpecularColorCodeChunk, int32 ThicknessCodeChunk, int32 IORCodeChunk, int32 OutputIndex) override;
+	virtual int32 SubstrateCompilePreview(int32 SubstrateDataCodeChunk) override;
+	virtual bool SubstrateSkipsOpacityEvaluation() override;
 
-	virtual FGuid StrataTreeStackPush(UMaterialExpression* Expression, uint32 InputIndex) override;
-	virtual FGuid StrataTreeStackGetPathUniqueId() override;
-	virtual FGuid StrataTreeStackGetParentPathUniqueId() override;
-	virtual void StrataTreeStackPop() override;
-	virtual bool GetStrataTreeOutOfStackDepthOccurred() override;
+	virtual FGuid SubstrateTreeStackPush(UMaterialExpression* Expression, uint32 InputIndex) override;
+	virtual FGuid SubstrateTreeStackGetPathUniqueId() override;
+	virtual FGuid SubstrateTreeStackGetParentPathUniqueId() override;
+	virtual void SubstrateTreeStackPop() override;
+	virtual bool GetSubstrateTreeOutOfStackDepthOccurred() override;
 	
-	virtual int32 StrataThicknessStackGetThicknessIndex() override;
-	virtual int32 StrataThicknessStackGetThicknessCode(int32 Index) override;
-	virtual int32 StrataThicknessStackPush(UMaterialExpression* Expression, FExpressionInput* Input) override;
-	virtual void StrataThicknessStackPop() override;
+	virtual int32 SubstrateThicknessStackGetThicknessIndex() override;
+	virtual int32 SubstrateThicknessStackGetThicknessCode(int32 Index) override;
+	virtual int32 SubstrateThicknessStackPush(UMaterialExpression* Expression, FExpressionInput* Input) override;
+	virtual void SubstrateThicknessStackPop() override;
 
-	virtual FStrataOperator& StrataCompilationRegisterOperator(int32 OperatorType, FGuid StrataExpressionGuid, UMaterialExpression* Child, UMaterialExpression* Parent, FGuid StrataParentExpressionGuid, bool bUseParameterBlending = false) override;
-	virtual FStrataOperator& StrataCompilationGetOperator(FGuid StrataExpressionGuid) override;
-	virtual FStrataOperator* StrataCompilationGetOperatorFromIndex(int32 OperatorIndex) override;
+	virtual FSubstrateOperator& SubstrateCompilationRegisterOperator(int32 OperatorType, FGuid SubstrateExpressionGuid, UMaterialExpression* Child, UMaterialExpression* Parent, FGuid SubstrateParentExpressionGuid, bool bUseParameterBlending = false) override;
+	virtual FSubstrateOperator& SubstrateCompilationGetOperator(FGuid SubstrateExpressionGuid) override;
+	virtual FSubstrateOperator* SubstrateCompilationGetOperatorFromIndex(int32 OperatorIndex) override;
 
-	virtual FStrataRegisteredSharedLocalBasis StrataCompilationInfoRegisterSharedLocalBasis(int32 NormalCodeChunk) override;
-	virtual FStrataRegisteredSharedLocalBasis StrataCompilationInfoRegisterSharedLocalBasis(int32 NormalCodeChunk, int32 TangentCodeChunk) override;
-	virtual FString GetStrataSharedLocalBasisIndexMacro(const FStrataRegisteredSharedLocalBasis& SharedLocalBasis) override;
-	virtual int32 StrataAddParameterBlendingBSDFCoverageToNormalMixCodeChunk(int32 ACodeChunk, int32 BCodeChunk) override;
-	virtual int32 StrataVerticalLayeringParameterBlendingBSDFCoverageToNormalMixCodeChunk(int32 TopCodeChunk) override;
-	virtual int32 StrataHorizontalMixingParameterBlendingBSDFCoverageToNormalMixCodeChunk(int32 BackgroundCodeChunk, int32 ForegroundCodeChunk, int32 HorizontalMixCodeChunk) override;
+	virtual FSubstrateRegisteredSharedLocalBasis SubstrateCompilationInfoRegisterSharedLocalBasis(int32 NormalCodeChunk) override;
+	virtual FSubstrateRegisteredSharedLocalBasis SubstrateCompilationInfoRegisterSharedLocalBasis(int32 NormalCodeChunk, int32 TangentCodeChunk) override;
+	virtual FString GetSubstrateSharedLocalBasisIndexMacro(const FSubstrateRegisteredSharedLocalBasis& SharedLocalBasis) override;
+	virtual int32 SubstrateAddParameterBlendingBSDFCoverageToNormalMixCodeChunk(int32 ACodeChunk, int32 BCodeChunk) override;
+	virtual int32 SubstrateVerticalLayeringParameterBlendingBSDFCoverageToNormalMixCodeChunk(int32 TopCodeChunk) override;
+	virtual int32 SubstrateHorizontalMixingParameterBlendingBSDFCoverageToNormalMixCodeChunk(int32 BackgroundCodeChunk, int32 ForegroundCodeChunk, int32 HorizontalMixCodeChunk) override;
 
 #if HANDLE_CUSTOM_OUTPUTS_AS_MATERIAL_ATTRIBUTES
 	/** Used to translate code for custom output attributes such as ClearCoatBottomNormal */
@@ -1318,14 +1358,98 @@ protected:
 	/**Experimental access to the EyeAdaptation RT for applying an inverse. */
 	virtual int32 EyeAdaptationInverse(int32 LightValueArg, int32 AlphaArg) override;
 
-	// to only have one piece of code dealing with error handling if the Primitive constant buffer is not used.
-	// @param Name e.g. TEXT("ObjectWorldPositionAndRadius.w")
+	/**
+	 * To only have one piece of code dealing with error handling if the Primitive constant buffer is not used.
+	 * @param Name e.g. TEXT("ObjectWorldPositionAndRadius.w")
+	 */
 	int32 GetPrimitiveProperty(EMaterialValueType Type, const TCHAR* ExpressionName, const TCHAR* HLSLName);
 
-	// The compiler can run in a different state and this affects caching of sub expression, Expressions are different (e.g. View.PrevWorldViewOrigin) when using previous frame's values
+	/**
+	 * The compiler can run in a different state and this affects caching of sub expression, Expressions are different(e.g.View.PrevWorldViewOrigin) when using previous frame's values.
+	 */
 	virtual bool IsCurrentlyCompilingForPreviousFrame() const;
 
 	virtual bool IsDevelopmentFeatureEnabled(const FName& FeatureName) const override;
+	
+	/**
+	 * EFfectively performs the translation without querying the DDC first.
+	 */
+	void DoTranslate();
+
+	/**
+	 * Queries the DDC cache for a cached translation.
+	 * @return Whether the speecified key is in the DDC.
+	 */
+	void AsyncQueryDDC(UE::DerivedData::FRequestOwner& DDCRequestOwner, FSharedBuffer& EnvironmentDefinesBuffer);
+
+	/**
+	 * Pushes the final results to the DDC cache.
+	 */
+	void PushResultsToDDC();
+
+	/**
+	 * Prepares the material source generation parameters.
+	 */
+	void PrepareMaterialSourceStringParameters();
+
+	/**
+	 * Prepares the Environment Defines array based on compilation results.
+	 */
+	void PrepareEnvironmentDefines();
+
+	/** The final compilation output. */
+	FMaterialCompilationOutput& MaterialCompilationOutput;
+	FMaterialCompilationOutput DDCMaterialCompilationOutput;
+
+	/** The material shader source template parameters */
+	TMap<FString, FString> MaterialSourceTemplateParams;
+
+	/** The output material shader defines */
+	TUniquePtr<FEnvironmentDefines> EnvironmentDefines;
+
+	/** Signals when the async DDC query task has completed AND there was a hit */
+	TAtomic<bool> DDCQueryHit;
+
+#ifdef STATS
+	/** When a translation DDC request hits, this is set to the time spent serializing. */
+	double DDCRequestSerializeTime = 0;
+#endif
+
+	friend class FAddUniformExpressionScope;
+};
+
+/**
+ * The purpose of this class is to avoid generating unused preshaders, meaning preshaders not actually fetched in the HLSL code, saving performance.
+ * The translator normally generates preshaders when the function "AccessUniformExpression" is called the first time on a uniform expression.  We want
+ * to detect in that function whether the uniform expression access is from HLSL code or a parent uniform expression.  In the latter case, there is no
+ * need to generate a preshader.  The FAddUniformExpressionScope class provides that context.
+ *
+ * This class sets a flag in the translator when we enter a code path where we are adding a uniform expression (technically uses a count, so scopes can
+ * be nested).  To enforce usage of this scope class everywhere, the translator's AddUniformExpression function requires it to be passed in.  The reason
+ * we need a separate scope class, rather than setting the state in the AddUniformExpression function, is that the code that needs the context is actually
+ * the arguments to the AddUniformExpression function, not the function itself.  Calls to GetParameterCode and other utility functions that call
+ * GetParameterCode (CoerceParameter, ValidCast, ForceCast) are what call "AccessUniformExpression", and need to know whether they are being passed to
+ * "AddUniformExpression", versus functions like AddCodeChunk that emit the HLSL.
+ *
+ * If you make a mistake and place the scope somewhere it doesn't belong, it will generate stub code that will result in shader compile errors on
+ * symbols that look like "UniformStub[$0]".  Most likely, any new opcodes will be cut-and-paste from existing code, and thus already have the scope in
+ * the right place, so bugs should be rare.
+ */
+class FAddUniformExpressionScope
+{
+public:
+	FAddUniformExpressionScope(FHLSLMaterialTranslator* InTranslator)
+		: Translator(InTranslator)
+	{
+		Translator->AddingUniformExpression++;
+	}
+	~FAddUniformExpressionScope()
+	{
+		Translator->AddingUniformExpression--;
+		check(Translator->AddingUniformExpression >= 0);
+	}
+private:
+	FHLSLMaterialTranslator* Translator;
 };
 
 #endif // WITH_EDITORONLY_DATA

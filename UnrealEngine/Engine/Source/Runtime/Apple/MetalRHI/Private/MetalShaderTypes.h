@@ -11,3 +11,5 @@
 #include "Shaders/Types/MetalGeometryShader.h"
 #include "Shaders/Types/MetalPixelShader.h"
 #include "Shaders/Types/MetalComputeShader.h"
+#include "Shaders/Types/MetalMeshShader.h"
+#include "Shaders/Types/MetalAmplificationShader.h"

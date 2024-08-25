@@ -11,6 +11,7 @@
 class FLiveSessionTracker;
 class FMenuBuilder;
 class FUICommandList;
+class STraceServerControl;
 
 TSharedRef<SWidget> CreateInsightsStatusBarWidget();
 
@@ -91,8 +92,11 @@ private:
 
 	FText GetTraceMenuItemText() const;
 	FText GetTraceMenuItemTooltipText() const;
+	void ToggleTrace_OnClicked();
 
-	void ToggleTracing_OnClicked();
+	bool PauseTrace_CanExecute();
+	FText GetPauseTraceMenuItemTooltipText() const;
+	void TogglePauseTrace_OnClicked();
 
 	EVisibility GetStartTraceIconVisibility() const;
 	EVisibility GetStopTraceIconVisibility() const;
@@ -159,6 +163,8 @@ private:
 	TSharedPtr<FLiveSessionTracker> LiveSessionTracker;
 
 	TSharedPtr<FUICommandList> CommandList;
+	
+	TArray<STraceServerControl> ServerControls;
 
 	TArray<TSharedPtr<FTraceFileInfo>> Traces;
 	FName LogListingName;

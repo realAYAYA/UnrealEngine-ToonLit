@@ -130,6 +130,7 @@ class UBodySetup : public UBodySetupCore
 
 	/** Needs implementation in BodySetup.cpp to compile UniquePtr for forward declared class */
 	UBodySetup(FVTableHelper& Helper);
+
 	virtual ~UBodySetup();
 
 	/** Simplified collision representation of this  */
@@ -221,17 +222,9 @@ class UBodySetup : public UBodySetupCore
 
 	/** GUID used to uniquely identify this setup so it can be found in the DDC */
 	FGuid BodySetupGuid;
-
-private:
-#if WITH_EDITOR
-	/** Cooked physics data with runtime only optimizations. This allows us to remove editor only data (like face index remap) assuming the project doesn't use it at runtime. At runtime we load this into CookedFormatData */
-	FFormatContainer CookedFormatDataRuntimeOnlyOptimization;
-#endif
-
-public:
-
-	//FBodySetupTriMeshes* TriMeshWrapper;
-	TArray<TSharedPtr<Chaos::FTriangleMeshImplicitObject, ESPMode::ThreadSafe>> ChaosTriMeshes;
+	
+	/** list of chaos trimesh objects */
+	TArray<Chaos::FTriangleMeshImplicitObjectPtr> TriMeshGeometries;
 
 	/** Additional UV info, if available. Used for determining UV for a line trace impact. */
 	FBodySetupUVInfo UVInfo;
@@ -256,6 +249,9 @@ public:
 
 	// Will contain deserialized data from the serialization function that can be used at PostLoad time.
 	TUniquePtr<FChaosDerivedDataReader<float, 3>> ChaosDerivedDataReader;
+	
+	UE_DEPRECATED(5.4, "Please use TriMeshGeometries instead")
+    TArray<TSharedPtr<Chaos::FTriangleMeshImplicitObject, ESPMode::ThreadSafe>> ChaosTriMeshes;
 
 public:
 	//~ Begin UObject Interface.
@@ -304,8 +300,8 @@ private:
 	bool RuntimeCookPhysics_Chaos();
 	void FinishCreatingPhysicsMeshes_Chaos(FChaosDerivedDataReader<float, 3>& InReader);
 	void FinishCreatingPhysicsMeshes_Chaos(Chaos::FCookHelper& InHelper);
-	void FinishCreatingPhysicsMeshes_Chaos(TArray<TSharedPtr<Chaos::FConvex, ESPMode::ThreadSafe>>& InConvexImplicits, 
-										   TArray<TSharedPtr<Chaos::FTriangleMeshImplicitObject, ESPMode::ThreadSafe>>& InTrimeshImplicits,
+	void FinishCreatingPhysicsMeshes_Chaos(TArray<Chaos::FConvexPtr>& InConvexImplicits, 
+										   TArray<Chaos::FTriangleMeshImplicitObjectPtr>& InTrimeshImplicits,
 										   FBodySetupUVInfo& InUvInfo,
 										   TArray<int32>& InFaceRemap);
 
@@ -320,10 +316,9 @@ private:
 	* Given a format name returns its cooked data.
 	*
 	* @param Format Physics format name.
-	* @param bRuntimeOnlyOptimizedVersion whether we want the data that has runtime only optimizations. At runtime this flag is ignored and we use the runtime only optimized data regardless.
 	* @return Cooked data or NULL of the data was not found.
 	*/
-	FByteBulkData* GetCookedData(FName Format, bool bRuntimeOnlyOptimizedVersion = false);
+	FByteBulkData* GetCookedData(FName Format);
 
 public:
 

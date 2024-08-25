@@ -21,6 +21,8 @@ public:
 
 	virtual bool IsPropertyAnimated(const class IPropertyHandle& PropertyHandle, UObject *ParentObject) const override;
 
+	virtual EPropertyKeyedStatus GetPropertyKeyedStatus(const IPropertyHandle& PropertyHandle) const override;
+
 private:
 	TWeakPtr<class FWidgetBlueprintEditor> BlueprintEditor;
 };

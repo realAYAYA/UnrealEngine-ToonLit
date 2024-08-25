@@ -2,9 +2,11 @@
 
 #include "DiffUtils.h"
 
+#include "AssetDefinitionRegistry.h"
 #include "Components/ActorComponent.h"
 #include "Containers/BitArray.h"
 #include "EditorCategoryUtils.h"
+#include "IAssetTools.h"
 #include "Engine/Blueprint.h"
 #include "IAssetTypeActions.h"
 #include "ISourceControlModule.h"
@@ -20,7 +22,6 @@
 #include "SlotBase.h"
 #include "Styling/AppStyle.h"
 #include "Styling/SlateColor.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SubclassOf.h"
 #include "Templates/UnrealTemplate.h"
 #include "Types/SlateConstants.h"
@@ -30,19 +31,23 @@
 #include "UObject/Object.h"
 #include "UObject/ObjectMacros.h"
 #include "UObject/PropertyPortFlags.h"
+#include "UObject/SavePackage.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Views/STableRow.h"
 #include "Widgets/Views/STableViewBase.h"
 #include "Widgets/Views/STreeView.h"
+#include "HAL/PlatformFileManager.h"
+#include "UnrealEngine.h"
+#include "UObject/Linker.h"
 
 class ITableRow;
 class SWidget;
 
 namespace UEDiffUtils_Private
 {
-	FProperty* Resolve( const UStruct* Class, FName PropertyName )
+	static FProperty* Resolve( const UStruct* Class, FName PropertyName )
 	{
 		if(Class == nullptr )
 		{
@@ -60,9 +65,205 @@ namespace UEDiffUtils_Private
 		return nullptr;
 	}
 
-	FPropertySoftPathSet GetPropertyNameSet(const UStruct* ForStruct)
+	static FPropertySoftPathSet GetPropertyNameSet(const UStruct* ForStruct)
 	{
 		return FPropertySoftPathSet(DiffUtils::GetVisiblePropertiesInOrderDeclared(ForStruct));
+	}
+	
+	static const FString DiffSyntaxHelp = TEXT("format: 'diff <lhs> <rhs>");
+	static const FString MergeSyntaxHelp = TEXT("format: 'merge <remote> <local> <base> [-o out_path]' or 'merge <local> [-o out_path]'");
+	static void RunDiffCommand(const TArray<FString>& Args);
+	static void RunMergeCommand(const TArray<FString>& Args);
+
+	FAutoConsoleCommand DiffConsoleCommand(
+		TEXT("merge"),
+		*FString::Format(TEXT("Either merge three assets or a single conflicted asset.\n{0}"), {MergeSyntaxHelp}),
+		FConsoleCommandWithArgsDelegate::CreateStatic(&RunMergeCommand),
+		ECVF_Default
+	);
+
+	FAutoConsoleCommand MergeConsoleCommand(
+		TEXT("diff"),
+		*FString::Format(TEXT("diff two assets against one another.\n{0}"), {DiffSyntaxHelp}),
+		FConsoleCommandWithArgsDelegate::CreateStatic(&RunDiffCommand),
+		ECVF_Default
+	);
+}
+
+static UObject* LoadAssetFromExternalPath(FString Path)
+{
+	FPackagePath PackagePath;
+	if (!FPackagePath::TryFromPackageName(Path, PackagePath))
+	{
+		// copy to the temp directory so it can be loaded properly
+		FString File = FPaths::GetBaseFilename(Path) + TEXT("-");
+		for (const ANSICHAR Char : "#(){}[].")
+		{
+			File.ReplaceCharInline(Char, '-');
+		}
+		const FString Extension = TEXT(".") + FPaths::GetExtension(Path);
+		const FString SourcePath = Path;
+		FPlatformFileManager::Get().GetPlatformFile().CreateDirectory(*FPaths::DiffDir());
+		Path = FPaths::CreateTempFilename(*FPaths::DiffDir(), *File, *Extension);
+		Path = FPaths::ConvertRelativePathToFull(Path);
+		if (!FPlatformFileManager::Get().GetPlatformFile().CopyFile(*Path, *SourcePath))
+		{
+			UE_LOG(LogEngine, Display, TEXT("Failed to Copy %s"), *SourcePath);
+			return nullptr;
+		}
+		// load the temp package
+		PackagePath = FPackagePath::FromLocalPath(Path);
+	}
+	if (PackagePath.IsEmpty())
+	{
+		UE_LOG(LogEngine, Display, TEXT("Invalid Path: %s"), *Path);
+		return nullptr;
+	}
+	if (const UPackage* TempPackage = DiffUtils::LoadPackageForDiff(PackagePath, {}))
+	{
+		if (UObject* Object = TempPackage->FindAssetInPackage())
+		{
+			return Object;
+		}
+	}
+	UE_LOG(LogEngine, Display, TEXT("Failed to load: %s"), *Path);
+	return nullptr;
+}
+
+static void UEDiffUtils_Private::RunDiffCommand(const TArray<FString>& Args)
+{
+	if (Args.Num() != 2)
+	{
+		UE_LOG(LogEngine, Display, TEXT("%s"), *DiffSyntaxHelp);
+		return;
+	}
+	
+	UObject* LHS = LoadAssetFromExternalPath(Args[0]);
+	UObject* RHS = LoadAssetFromExternalPath(Args[1]);
+	if (LHS && RHS)
+	{
+		IAssetTools::Get().DiffAssets(LHS, RHS, {}, {});
+	}
+}
+
+namespace UE::CmdLink
+{
+	// CmdLinkServerModule will set these methods if loaded.
+	// they're used by the merge command because we need to keep the CmdLink client running until the user closes the merge window and saves the output
+	UNREALED_API void(*GBeginAsyncCommand)(const FString&, const TArray<FString>&) = [](const FString&, const TArray<FString>&){};
+	UNREALED_API void(*GEndAsyncCommand)(const FString&, const TArray<FString>&) = [](const FString&, const TArray<FString>&){};
+}
+
+static void UEDiffUtils_Private::RunMergeCommand(const TArray<FString>& Args)
+{
+	UObject* Local = nullptr;
+	UObject* Base = nullptr;
+	UObject* Remote = nullptr;
+	FString OutDirectory;
+	bool bThreeWayMerge = false;
+	bool bInvalidSyntax = false;
+	switch (Args.Num())
+	{
+	case 1: // merge <local>
+		Local = LoadAssetFromExternalPath(Args[0]);
+		bThreeWayMerge = false;
+		break;
+	case 3:
+		if (Args[1] == TEXT("-o")) // merge <local> -o <output_file>
+		{
+			Local = LoadAssetFromExternalPath(Args[0]);
+			OutDirectory = Args[2];
+			bThreeWayMerge = false;
+		}
+		else // merge <local> <base> <remote>
+		{
+			Remote = LoadAssetFromExternalPath(Args[0]);
+			Local = LoadAssetFromExternalPath(Args[1]);
+			Base = LoadAssetFromExternalPath(Args[2]);
+			bThreeWayMerge = true;
+		}
+		break;
+	case 5: // merge <local> <base> <remote> -o <output_file>
+		if (Args[3] == TEXT("-o"))
+		{
+			Remote = LoadAssetFromExternalPath(Args[0]);
+			Local = LoadAssetFromExternalPath(Args[1]);
+			Base = LoadAssetFromExternalPath(Args[2]);
+			OutDirectory = Args[4];
+			bThreeWayMerge = true;
+			break;
+		}
+
+		// 5 parameters requires output file at the end
+		bInvalidSyntax = true;
+		break;
+	default:
+		// unsupported parameter count
+		bInvalidSyntax = true;
+		break;
+	}
+
+	if (bInvalidSyntax)
+	{
+		// invalid syntax. display help.
+		UE_LOG(LogEngine, Display, TEXT("%s"), *MergeSyntaxHelp);
+		return;
+	}
+
+	const FOnAssetMergeResolved ResolutionCallback = FOnAssetMergeResolved::CreateLambda([Args, Local, OutDirectory](const FAssetMergeResults& Results)
+	{
+		if (!OutDirectory.IsEmpty() && Results.Result == EAssetMergeResult::Completed)
+		{
+			// save a copy of the asset to the output directory
+			
+			FSavePackageArgs SaveArgs;
+			SaveArgs.TopLevelFlags = RF_Standalone;
+			SaveArgs.Error = GLog;
+			UPackage::SavePackage(Results.MergedPackage, Local, *OutDirectory, SaveArgs);
+			ResetLoaders(Results.MergedPackage);
+		}
+		UE::CmdLink::GEndAsyncCommand(TEXT("merge"), Args);
+	});
+
+	if (bThreeWayMerge)
+	{
+		FAssetManualMergeArgs MergeArgs;
+		MergeArgs.LocalAsset = Local;
+		MergeArgs.BaseAsset = Base;
+		MergeArgs.RemoteAsset = Remote;
+		MergeArgs.ResolutionCallback = ResolutionCallback;
+		MergeArgs.Flags = MF_NONE;
+
+		if (MergeArgs.LocalAsset && MergeArgs.BaseAsset && MergeArgs.RemoteAsset)
+		{
+			const UAssetDefinition* AssetDefinition = UAssetDefinitionRegistry::Get()->GetAssetDefinitionForClass(Local->GetClass());
+			if (!AssetDefinition->CanMerge())
+			{
+				UE_LOG(LogEngine, Error, TEXT("%s of class type %s does not support merging"), *Local->GetName(), *Local->GetClass()->GetName());
+				return;
+			}
+			UE::CmdLink::GBeginAsyncCommand(TEXT("merge"), Args);
+			AssetDefinition->Merge(MergeArgs);
+		}
+	}
+	else
+	{
+		FAssetAutomaticMergeArgs MergeArgs;
+		MergeArgs.LocalAsset = Local;
+		MergeArgs.ResolutionCallback = ResolutionCallback;
+		MergeArgs.Flags = MF_NONE;
+		
+		if (MergeArgs.LocalAsset)
+		{
+			const UAssetDefinition* AssetDefinition = UAssetDefinitionRegistry::Get()->GetAssetDefinitionForClass(Local->GetClass());
+			if (!AssetDefinition->CanMerge())
+			{
+				UE_LOG(LogEngine, Error, TEXT("%s does not support merging"), *Local->GetName());
+				return;
+			}
+			UE::CmdLink::GBeginAsyncCommand(TEXT("merge"), Args);
+			AssetDefinition->Merge(MergeArgs);
+		}
 	}
 }
 
@@ -304,63 +505,41 @@ FPropertyPath FPropertySoftPath::ResolvePath(const UObject* Object) const
 		}
 		else if( const FSetProperty* SetProperty = CastField<FSetProperty>(ResolvedProperty) )
 		{
-			if(PropertyIndex != INDEX_NONE)
+			FScriptSetHelper SetHelper(SetProperty, SetProperty->ContainerPtrToValuePtr<const void*>( ContainerAddress ));
+			if (SetHelper.IsValidIndex(PropertyIndex))
 			{
-				FScriptSetHelper SetHelper(SetProperty, SetProperty->ContainerPtrToValuePtr<const void*>( ContainerAddress ));
+				const int32 InternalIndex = SetHelper.FindInternalIndex(PropertyIndex);
+				UpdateContainerAddress( SetProperty->ElementProp, SetHelper.GetElementPtr(InternalIndex), ContainerAddress, ContainerStruct );
 
-				// Figure out the real index in this instance of the set (sets have gaps in them):
-				int32 RealIndex = -1;
-				for( int32 J = 0; PropertyIndex >= 0; ++J)
-				{
-					++RealIndex;
-					if(SetHelper.IsValidIndex(J))
-					{
-						--PropertyIndex;
-					}
-				}
-
-				UpdateContainerAddress( SetProperty->ElementProp, SetHelper.GetElementPtr(RealIndex), ContainerAddress, ContainerStruct );
-
-				FPropertyInfo SetInfo(SetProperty->ElementProp, RealIndex);
+				FPropertyInfo SetInfo(SetProperty->ElementProp, PropertyIndex);
 				Ret.AddProperty(SetInfo);
 			}
 		}
 		else if( const FMapProperty* MapProperty = CastField<FMapProperty>(ResolvedProperty) )
 		{
-			if(PropertyIndex != INDEX_NONE)
+			FScriptMapHelper MapHelper(MapProperty, MapProperty->ContainerPtrToValuePtr<const void*>( ContainerAddress ));
+			if (MapHelper.IsValidIndex(PropertyIndex))
 			{
-				FScriptMapHelper MapHelper(MapProperty, MapProperty->ContainerPtrToValuePtr<const void*>( ContainerAddress ));
-				
-				// Figure out the real index in this instance of the map (map have gaps in them):
-				int32 RealIndex = -1;
-				for( int32 J = 0; PropertyIndex >= 0; ++J)
-				{
-					++RealIndex;
-					if(MapHelper.IsValidIndex(J))
-					{
-						--PropertyIndex;
-					}
-				}
-
+				const int32 InternalIndex = MapHelper.FindInternalIndex(PropertyIndex);
 				// we have an index, but are we looking into a key or value? Peek ahead to find out:
-				if(ensure(I + 1 < PropertyChain.Num()))
+				if(ensure((I + 1 < PropertyChain.Num())))
 				{
 					if(PropertyChain[I+1].PropertyName == MapProperty->KeyProp->GetFName())
 					{
 						++I;
 
-						UpdateContainerAddress( MapProperty->KeyProp, MapHelper.GetKeyPtr(RealIndex), ContainerAddress, ContainerStruct );
+						UpdateContainerAddress( MapProperty->KeyProp, MapHelper.GetKeyPtr(InternalIndex), ContainerAddress, ContainerStruct );
 
-						FPropertyInfo MakKeyInfo(MapProperty->KeyProp, RealIndex);
+						FPropertyInfo MakKeyInfo(MapProperty->KeyProp, PropertyIndex);
 						Ret.AddProperty(MakKeyInfo);
 					}
 					else if(ensure( PropertyChain[I+1].PropertyName == MapProperty->ValueProp->GetFName() ))
 					{	
 						++I;
 
-						UpdateContainerAddress( MapProperty->ValueProp, MapHelper.GetValuePtr(RealIndex), ContainerAddress, ContainerStruct );
-						
-						FPropertyInfo MapValueInfo(MapProperty->ValueProp, RealIndex);
+						UpdateContainerAddress( MapProperty->ValueProp, MapHelper.GetValuePtr(InternalIndex), ContainerAddress, ContainerStruct );
+
+						FPropertyInfo MapValueInfo(MapProperty->ValueProp, PropertyIndex);
 						Ret.AddProperty(MapValueInfo);
 					}
 				}
@@ -497,14 +676,23 @@ void DiffUtils::CompareUnrelatedSCS(const UBlueprint* Old, const TArray< FSCSRes
 {
 	const auto FindEntry = [](TArray< FSCSResolvedIdentifier > const& InArray, const FSCSIdentifier* Value) -> const FSCSResolvedIdentifier*
 	{
+		const FSCSResolvedIdentifier* BestMatch = nullptr;
+
 		for (const auto& Node : InArray)
 		{
 			if (Node.Identifier.Name == Value->Name)
 			{
-				return &Node;
+				if (Node.Identifier.TreeLocation == Value->TreeLocation)
+				{
+					return &Node;
+				}
+				else if (BestMatch == nullptr)
+				{
+					BestMatch = &Node;
+				}
 			}
 		}
-		return nullptr;
+		return BestMatch;
 	};
 
 	for (const auto& OldNode : OldHierarchy)
@@ -549,6 +737,23 @@ void DiffUtils::CompareUnrelatedSCS(const UBlueprint* Old, const TArray< FSCSRes
 				OutDifferingEntries.Entries.Push(Diff);
 			}
 
+			// did it become corrupted? or stop being corrupted?
+			const bool bNewIsCorrupt = New->GeneratedClass && NewEntry->Object && !NewEntry->Object->IsIn(New->GeneratedClass);
+			const bool bOldIsCorrupt = Old->GeneratedClass && OldNode.Object && !OldNode.Object->IsIn(Old->GeneratedClass);
+			if (bNewIsCorrupt != bOldIsCorrupt)
+			{
+				if (bNewIsCorrupt)
+				{
+					FSCSDiffEntry Diff = { NewEntry->Identifier, ETreeDiffType::NODE_CORRUPTED, FSingleObjectDiffEntry() };
+					OutDifferingEntries.Entries.Push(Diff);
+				}
+				else
+				{
+					FSCSDiffEntry Diff = { OldNode.Identifier, ETreeDiffType::NODE_FIXED, FSingleObjectDiffEntry() };
+					OutDifferingEntries.Entries.Push(Diff);
+				}
+			}
+
 			// no change! Do nothing.
 		}
 		else
@@ -570,25 +775,6 @@ void DiffUtils::CompareUnrelatedSCS(const UBlueprint* Old, const TArray< FSCSRes
 		}
 	}
 }
-
-static void AdvanceSetIterator( FScriptSetHelper& SetHelper, int32& Index)
-{
-	do
-	{
-		++Index;
-	}
-	while(Index < SetHelper.GetMaxIndex() && !SetHelper.IsValidIndex(Index));
-}
-
-static void AdvanceMapIterator( FScriptMapHelper& MapHelper, int32& Index)
-{
-	do
-	{
-		++Index;
-	}
-	while(Index < MapHelper.GetMaxIndex() && !MapHelper.IsValidIndex(Index));
-}
-
 
 static void IdenticalHelper(const FProperty* AProperty, const FProperty* BProperty, const void* AValue, const void* BValue,
 	const UObject* OwningOuterA, const UObject* OwningOuterB, const FPropertySoftPath& RootPath,
@@ -697,25 +883,14 @@ static void IdenticalHelper(const FProperty* AProperty, const FProperty* BProper
 			}
 
 			// note any differences in contained elements:
-			const int32 SetSizeA = SetHelperA.Num();
-			const int32 SetSizeB = SetHelperB.Num();
-			
-			int32 SetIndexA = -1;
-			int32 SetIndexB = -1;
-
-			AdvanceSetIterator(SetHelperA, SetIndexA);
-			AdvanceSetIterator(SetHelperB, SetIndexB);
-
-			for (int32 VirtualIndex = 0; VirtualIndex < SetSizeA && VirtualIndex < SetSizeB; ++VirtualIndex)
+			FScriptSetHelper::FIterator IteratorA(SetHelperA);
+			FScriptSetHelper::FIterator IteratorB(SetHelperB);
+			for (; IteratorA && IteratorB; ++IteratorA, ++IteratorB)
 			{
-				const void* SubValueA = SetHelperA.GetElementPtr(SetIndexA);
-				const void* SubValueB = SetHelperB.GetElementPtr(SetIndexB);
+				const void* SubValueA = SetHelperA.GetElementPtr(IteratorA);
+				const void* SubValueB = SetHelperB.GetElementPtr(IteratorB);
 				IdenticalHelper(APropAsSet->ElementProp, BPropAsSet->ElementProp, SubValueA, SubValueB,
-					OwningOuterA, OwningOuterB, FPropertySoftPath(RootPath, VirtualIndex), DifferingSubProperties);
-
-				// advance iterators in step:
-				AdvanceSetIterator(SetHelperA, SetIndexA);
-				AdvanceSetIterator(SetHelperB, SetIndexB);
+					OwningOuterA, OwningOuterB, FPropertySoftPath(RootPath, IteratorA.GetLogicalIndex()), DifferingSubProperties);
 			}
 		}
 		else
@@ -730,7 +905,6 @@ static void IdenticalHelper(const FProperty* AProperty, const FProperty* BProper
 		{
 			FScriptMapHelper MapHelperA(APropAsMap, AValue);
 			FScriptMapHelper MapHelperB(BPropAsMap, BValue);
-
 			if (MapHelperA.Num() != MapHelperB.Num())
 			{
 				// API not robust enough to indicate changes made to # of set elements, would
@@ -738,24 +912,15 @@ static void IdenticalHelper(const FProperty* AProperty, const FProperty* BProper
 				DifferingSubProperties.Push(RootPath);
 			}
 
-			int32 MapSizeA = MapHelperA.Num();
-			int32 MapSizeB = MapHelperB.Num();
-			
-			int32 MapIndexA = -1;
-			int32 MapIndexB = -1;
-
-			AdvanceMapIterator(MapHelperA, MapIndexA);
-			AdvanceMapIterator(MapHelperB, MapIndexB);
-			
-			for (int32 VirtualIndex = 0; VirtualIndex < MapSizeA && VirtualIndex < MapSizeB; ++VirtualIndex)
+			FScriptMapHelper::FIterator IteratorA(MapHelperA);
+			FScriptMapHelper::FIterator IteratorB(MapHelperB);
+			for (; IteratorA && IteratorB; ++IteratorA, ++IteratorB)
 			{
-				IdenticalHelper(APropAsMap->KeyProp, APropAsMap->KeyProp, MapHelperA.GetKeyPtr(MapIndexA), MapHelperB.GetKeyPtr(MapIndexB),
-					OwningOuterA, OwningOuterB, FPropertySoftPath(RootPath, VirtualIndex), DifferingSubProperties);
-				IdenticalHelper(APropAsMap->ValueProp, APropAsMap->ValueProp, MapHelperA.GetValuePtr(MapIndexA), MapHelperB.GetValuePtr(MapIndexB),
-					OwningOuterA, OwningOuterB, FPropertySoftPath(RootPath, VirtualIndex), DifferingSubProperties);
+				IdenticalHelper(APropAsMap->KeyProp, BPropAsMap->KeyProp, MapHelperA.GetKeyPtr(IteratorA), MapHelperB.GetKeyPtr(IteratorB),
+					OwningOuterA, OwningOuterB, FPropertySoftPath(RootPath, IteratorA.GetLogicalIndex()), DifferingSubProperties);
+				IdenticalHelper(APropAsMap->ValueProp, BPropAsMap->ValueProp, MapHelperA.GetValuePtr(IteratorA), MapHelperB.GetValuePtr(IteratorB),
+					OwningOuterA, OwningOuterB, FPropertySoftPath(RootPath, IteratorA.GetLogicalIndex()), DifferingSubProperties);
 
-				AdvanceMapIterator(MapHelperA, MapIndexA);
-				AdvanceMapIterator(MapHelperB, MapIndexB);
 			}
 		}
 		else
@@ -873,6 +1038,102 @@ bool DiffUtils::Identical(const FResolvedProperty& AProp, const FResolvedPropert
 	return DifferingProperties.Num() == 0;
 }
 
+bool DiffUtils::Identical(const TSharedPtr<IPropertyHandle>& PropertyHandleA, const TSharedPtr<IPropertyHandle>& PropertyHandleB,
+                          const TArray<TWeakObjectPtr<UObject>>& OwningOutersA, const TArray<TWeakObjectPtr<UObject>>& OwningOutersB)
+{
+	TArray<void*> ValuesA;
+	TArray<void*> ValuesB;
+	PropertyHandleA->AccessRawData(ValuesA);
+	PropertyHandleB->AccessRawData(ValuesB);
+
+	// if OwningOuters weren't provided, fallback to using the property handles to find them
+	TArray<UObject*> HandleOutersA;
+	TArray<UObject*> HandleOutersB;
+	if (OwningOutersA.IsEmpty())
+	{
+		PropertyHandleA->GetOuterObjects(HandleOutersA);
+	}
+	if (OwningOutersB.IsEmpty())
+	{
+		PropertyHandleB->GetOuterObjects(HandleOutersB);
+	}
+	
+	if (!ensure(ValuesA.Num() == OwningOutersA.Num()))
+	{
+		// Outer count mismatch
+		return false;
+	}
+	if (!ensure(ValuesB.Num() == OwningOutersB.Num()))
+	{
+		// Outer count mismatch
+		return false;
+	}
+
+	auto IsIdenticalAtIndex = [&](int32 IndexA, int32 IndexB)
+	{
+		const void* ValueA = ValuesA[IndexA];
+		const void* ValueB = ValuesB[IndexB];
+
+		const UObject* OwningOuterA = OwningOutersA.IsEmpty() ? HandleOutersA[IndexA] : OwningOutersA[IndexA].Get();
+		const UObject* OwningOuterB = OwningOutersB.IsEmpty() ? HandleOutersB[IndexB] : OwningOutersB[IndexB].Get();
+
+		if (!OwningOuterA || !OwningOuterB)
+		{
+			// objects were Garbage Collected!
+			return !OwningOuterA && !OwningOuterB;
+		}
+
+		// note that we're not directly calling FProperty::Identical because sub-object properties should be weakly compared based on
+		// their paths instead of their pointers or data
+		TArray<FPropertySoftPath> DifferingProperties;
+		IdenticalHelper(PropertyHandleA->GetProperty(), PropertyHandleB->GetProperty(), ValueA, ValueB,
+			OwningOuterA, OwningOuterB, {}, DifferingProperties, true);
+
+		return DifferingProperties.IsEmpty();
+	};
+	
+	if (ValuesA.Num() == ValuesB.Num())
+	{
+		// compare AValues[I] with BValues[I]
+		for (int32 I = 0; I < ValuesA.Num(); ++I)
+		{
+			if (!IsIdenticalAtIndex(I,I))
+			{
+				return false;
+			}
+		}
+	}
+	else if (ValuesA.Num() == 1)
+	{
+		// compare AValues[0] with BValues[0...N]
+		for (int32 I = 0; I < ValuesB.Num(); ++I)
+		{
+			if (!IsIdenticalAtIndex(0,I))
+			{
+				return false;
+			}
+		}
+	}
+	else if (ValuesB.Num() == 1)
+	{
+		// compare BValues[0] with AValues[0...N]
+		for (int32 I = 0; I < ValuesA.Num(); ++I)
+		{
+			if (!IsIdenticalAtIndex(I,0))
+			{
+				return false;
+			}
+		}
+	}
+	else
+	{
+		// number of values doesn't match... this cannot be compared
+		return ensure(false);
+	}
+	
+	return true;
+}
+
 TArray<FPropertySoftPath> DiffUtils::GetVisiblePropertiesInOrderDeclared(const UStruct* ForStruct, const FPropertySoftPath& Scope /*= TArray<FName>()*/)
 {
 	TArray<FPropertySoftPath> Ret;
@@ -918,6 +1179,12 @@ TArray<FPropertyPath> DiffUtils::ResolveAll(const UObject* Object, const TArray<
 
 UPackage* DiffUtils::LoadPackageForDiff(const FPackagePath& InTempPackagePath, const FPackagePath& InOriginalPackagePath)
 {
+	// if this is a local asset, load it normally
+	if (!FPackageName::IsTempPackage(InTempPackagePath.GetPackageName()))
+	{
+		return LoadPackage(nullptr, *InTempPackagePath.GetPackageName(), LOAD_None);
+	}
+	
 	// set up instancing context
 	FLinkerInstancingContext Context;
 	if (!InOriginalPackagePath.GetLocalFullPath().IsEmpty())
@@ -1201,6 +1468,12 @@ FText DiffViewUtils::SCSDiffMessage(const FSCSDiffEntry& Difference, FText Objec
 		break;
 	case ETreeDiffType::NODE_MOVED:
 		Text = FText::Format(NSLOCTEXT("DiffViewUtils", "NodeMoved", "Moved Node {0} in {1}"), NodeName, ObjectName);
+		break;
+	case ETreeDiffType::NODE_CORRUPTED:
+		Text = FText::Format(NSLOCTEXT("DiffViewUtils", "NodeCorrupted", "Node {0} in {1} has corrupt outer - must be recreated"), NodeName, ObjectName);
+		break;
+	case ETreeDiffType::NODE_FIXED:
+		Text = FText::Format(NSLOCTEXT("DiffViewUtils", "NodeFixed", "Node {0} in {1} has been recreated to correct outer"), NodeName, ObjectName);
 		break;
 	}
 	return Text;

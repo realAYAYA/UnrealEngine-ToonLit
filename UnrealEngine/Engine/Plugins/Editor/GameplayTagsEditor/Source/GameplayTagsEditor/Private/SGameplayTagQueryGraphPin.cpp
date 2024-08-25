@@ -25,6 +25,7 @@ void SGameplayTagQueryGraphPin::OnTagQueryChanged(const FGameplayTagQuery& NewTa
 	{
 		// Set Pin Data
 		const FScopedTransaction Transaction(NSLOCTEXT("GraphEditor", "ChangePinValue", "Change Pin Value"));
+		GraphPinObj->Modify();
 		GraphPinObj->GetSchema()->TrySetDefaultValue(*GraphPinObj, TagQueryExportText);
 	}
 }

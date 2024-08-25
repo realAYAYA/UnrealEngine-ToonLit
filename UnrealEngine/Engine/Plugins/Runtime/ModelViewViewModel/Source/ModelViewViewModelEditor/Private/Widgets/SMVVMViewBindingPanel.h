@@ -2,7 +2,7 @@
 
 #pragma once
 
-
+#include "WidgetReference.h"
 #include "Widgets/SCompoundWidget.h"
 
 
@@ -37,6 +37,9 @@ public:
 	virtual FReply OnKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent) override;
 	virtual bool SupportsKeyboardFocus() const override;
 	virtual void Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime) override;
+	virtual FReply OnDragOver(const FGeometry& MyGeometry, const FDragDropEvent& DragDropEvent) override;
+	virtual void OnDragLeave(const FDragDropEvent& DragDropEvent) override;
+	virtual FReply OnDrop(const FGeometry& MyGeometry, const FDragDropEvent& DragDropEvent) override;
 	//~ End SWidget Interface
 
 	void OnBindingListSelectionChanged(TConstArrayView<FMVVMBlueprintViewBinding*> Selection);
@@ -57,6 +60,7 @@ private:
 
 	TSharedRef<SWidget> GenerateEditViewWidget();
 
+	void AddBindingToWidgetList(const TSet<FWidgetReference>& WidgetsToAddBinding);
 	void AddDefaultBinding();
 	bool CanAddBinding() const;
 	FText GetAddBindingText() const;
@@ -72,6 +76,10 @@ private:
 	void HandleExtensionAdded(UBlueprintExtension* NewExtension);
 
 	FReply HandleCreateViewModelClicked();
+
+	bool IsDetailsViewEditingEnabled() const;
+	void RefreshDetailsView();
+	void RefreshNotifyHookBinding();
 
 	EVisibility GetVisibility(bool bVisibleWithBindings) const;
 

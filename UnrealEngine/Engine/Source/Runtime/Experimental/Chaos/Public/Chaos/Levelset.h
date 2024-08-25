@@ -41,10 +41,8 @@ class FLevelSet final : public FImplicitObject
 	CHAOS_API FLevelSet(FLevelSet&& Other);
 	CHAOS_API virtual ~FLevelSet();
 
-	virtual TUniquePtr<FImplicitObject> Copy() const override { return DeepCopy(); }
-	virtual TUniquePtr<FImplicitObject> CopyWithScale(const FVec3& Scale) const { return DeepCopyWithScale(Scale); }
-	CHAOS_API virtual TUniquePtr<FImplicitObject> DeepCopy() const;
-	CHAOS_API virtual TUniquePtr<FImplicitObject> DeepCopyWithScale(const FVec3& Scale) const;
+	CHAOS_API virtual Chaos::FImplicitObjectPtr CopyGeometry() const override;
+	CHAOS_API virtual Chaos::FImplicitObjectPtr CopyGeometryWithScale(const FVec3& Scale) const override;
 
 #if COMPILE_WITHOUT_UNREAL_SUPPORT
 	CHAOS_API void Write(std::ostream& Stream) const;

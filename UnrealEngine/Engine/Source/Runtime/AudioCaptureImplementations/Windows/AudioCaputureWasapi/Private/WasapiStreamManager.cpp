@@ -10,21 +10,7 @@ namespace Audio
 {
 	FWasapiStreamManager::FWasapiStreamManager()
 	{
-		const bool bResult = FWindowsPlatformMisc::CoInitialize();
-		if (bResult)
-		{
-			bCoInitialized = true;
-		}
-
 		DeviceEnumerator.Initialize();
-	}
-
-	FWasapiStreamManager::~FWasapiStreamManager()
-	{
-		if (bCoInitialized)
-		{
-			FWindowsPlatformMisc::CoUninitialize();
-		}
 	}
 
 	FString FWasapiStreamManager::GetDefaultInputDeviceId()

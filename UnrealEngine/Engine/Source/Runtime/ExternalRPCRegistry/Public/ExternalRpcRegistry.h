@@ -29,23 +29,32 @@ public:
 	FString Name;
 	FString Type;
 	FString Desc;
-	bool IsOptional;
+	bool bIsOptional = false;
 
-	FExternalRpcArgumentDesc()
-	{
-		Name = TEXT("");
-		Type = TEXT("");
-		Desc = TEXT("");
-		IsOptional = false;
-	}
-	FExternalRpcArgumentDesc(FString InName, FString InType, FString InDesc, bool InIsOptional = false)
+	FExternalRpcArgumentDesc() = default;
+	FExternalRpcArgumentDesc(FString InName, FString InType, FString InDesc, bool bInIsOptional = false)
 	{
 		Name = InName;
 		Type = InType;
 		Desc = InDesc;
-		IsOptional = InIsOptional;
+		bIsOptional = bInIsOptional;
+	}
+
+	bool operator==(const FExternalRpcArgumentDesc& Other) const
+	{
+		return
+			Name == Other.Name &&
+			Type == Other.Type &&
+			Desc == Other.Desc &&
+			bIsOptional == Other.bIsOptional;
+	}
+
+	bool operator!=(const FExternalRpcArgumentDesc& Other) const
+	{
+		return !(*this == Other);
 	}
 };
+
 USTRUCT()
 struct FExternalRouteInfo
 {
@@ -53,23 +62,15 @@ struct FExternalRouteInfo
 public:
 	FName RouteName;
 	FHttpPath RoutePath;
-	EHttpServerRequestVerbs RequestVerbs;
+	EHttpServerRequestVerbs RequestVerbs = EHttpServerRequestVerbs::VERB_NONE;
 	FString InputContentType;
-	TArray<FExternalRpcArgumentDesc*> ExpectedArguments;
-	FString RpcCategory;
-	bool bAlwaysOn;
+	TArray<FExternalRpcArgumentDesc> ExpectedArguments;
+	FString RpcCategory = TEXT("Unknown");
+	bool bAlwaysOn = false;
 
-	FExternalRouteInfo()
-	{
-		RouteName = FName(TEXT(""));
-		RoutePath = FHttpPath();
-		RequestVerbs = EHttpServerRequestVerbs::VERB_NONE;
-		InputContentType = TEXT("");
-		RpcCategory = TEXT("Unknown");
-		bAlwaysOn = false;
-	}
+	FExternalRouteInfo() = default;
 
-	FExternalRouteInfo(FName InRouteName, FHttpPath InRoutePath, EHttpServerRequestVerbs InRequestVerbs, FString InCategory = TEXT("Unknown"), bool bInAlwaysOn = false, FString InContentType = TEXT(""), TArray<FExternalRpcArgumentDesc*> InArguments = TArray<FExternalRpcArgumentDesc*>())
+	FExternalRouteInfo(FName InRouteName, FHttpPath InRoutePath, EHttpServerRequestVerbs InRequestVerbs, FString InCategory = TEXT("Unknown"), bool bInAlwaysOn = false, FString InContentType = {}, TArray<FExternalRpcArgumentDesc> InArguments = TArray<FExternalRpcArgumentDesc>())
 	{
 		RouteName = InRouteName;
 		RoutePath = InRoutePath;
@@ -78,6 +79,23 @@ public:
 		ExpectedArguments = InArguments;
 		RpcCategory = InCategory;
 		bAlwaysOn = false;
+	}
+
+	bool operator==(const FExternalRouteInfo& Other) const
+	{
+		return
+			RouteName == Other.RouteName &&
+			RoutePath == Other.RoutePath &&
+			RequestVerbs == Other.RequestVerbs &&
+			InputContentType == Other.InputContentType &&
+			ExpectedArguments == Other.ExpectedArguments &&
+			RpcCategory == Other.RpcCategory &&
+			bAlwaysOn == Other.bAlwaysOn;
+	}
+
+	bool operator!=(const FExternalRouteInfo& Other) const
+	{
+		return !(*this == Other);
 	}
 };
 
@@ -88,12 +106,9 @@ struct FExternalRouteDesc
 public:
 	FHttpRouteHandle Handle;
 	FString InputContentType;
-	TArray<FExternalRpcArgumentDesc*> ExpectedArguments;
-	FExternalRouteDesc()
-	{
-	
-	}
-	FExternalRouteDesc(FHttpRouteHandle InHandle, FString InContentType, TArray<FExternalRpcArgumentDesc*> InArguments)
+	TArray<FExternalRpcArgumentDesc> ExpectedArguments;
+	FExternalRouteDesc() = default;
+	FExternalRouteDesc(FHttpRouteHandle InHandle, FString InContentType, TArray<FExternalRpcArgumentDesc> InArguments)
 	{
 		Handle = InHandle;
 		InputContentType = InContentType;
@@ -136,14 +151,14 @@ public:
 	 * Register a new route.
 	 * Will override existing routes if option is set, otherwise will error and fail to bind.
 	 */
-	EXTERNALRPCREGISTRY_API void RegisterNewRouteWithArguments(FName RouteName, const FHttpPath& HttpPath, const EHttpServerRequestVerbs& RequestVerbs, const FHttpRequestHandler& Handler, TArray<FExternalRpcArgumentDesc*> InArguments, bool bOverrideIfBound = false, bool bIsAlwaysOn = false, FString OptionalCategory = TEXT("Unknown"), FString OptionalContentType = TEXT(""));
+	EXTERNALRPCREGISTRY_API void RegisterNewRouteWithArguments(FName RouteName, const FHttpPath& HttpPath, const EHttpServerRequestVerbs& RequestVerbs, const FHttpRequestHandler& Handler, TArray<FExternalRpcArgumentDesc> InArguments, bool bOverrideIfBound = false, bool bIsAlwaysOn = false, FString OptionalCategory = TEXT("Unknown"), FString OptionalContentType = {});
 
 	/**
 	* Deprecated way to register a new route.
 	* Will override existing routes if option is set, otherwise will error and fail to bind.
 	 */
 	UE_DEPRECATED(5.0, "RegisterNewRoute is deprecated when needing to add arguments, please use RegisterNewRouteWithArguments instead.")
-	EXTERNALRPCREGISTRY_API void RegisterNewRoute(FName RouteName, const FHttpPath& HttpPath, const EHttpServerRequestVerbs& RequestVerbs, const FHttpRequestHandler& Handler, bool bOverrideIfBound = false, bool bIsAlwaysOn = false, FString OptionalCategory = TEXT("Unknown"), FString OptionalContentType = TEXT(""), FString OptionalExpectedFormat = TEXT(""));
+	EXTERNALRPCREGISTRY_API void RegisterNewRoute(FName RouteName, const FHttpPath& HttpPath, const EHttpServerRequestVerbs& RequestVerbs, const FHttpRequestHandler& Handler, bool bOverrideIfBound = false, bool bIsAlwaysOn = false, FString OptionalCategory = TEXT("Unknown"), FString OptionalContentType = {}, FString OptionalExpectedFormat = {});
 
 	/**
 	 * Clean up all routes - generally called as part of the destructor to make sure we don't have any function pointers dangling around.

@@ -16,7 +16,7 @@ namespace EpicGames.Horde.Tests
 	public class TransportTests
 	{
 		[TestMethod]
-		public async Task TestStreamTransport()
+		public async Task TestStreamTransportAsync()
 		{
 			byte[] input = new byte[256 * 1024];
 			new Random(0).NextBytes(input);
@@ -24,15 +24,15 @@ namespace EpicGames.Horde.Tests
 			byte[] payload;
 			{
 				using MemoryStream memoryStream = new MemoryStream();
-				StreamTransport streamTransport = new StreamTransport(memoryStream);
-				await streamTransport.WriteAsync(input, CancellationToken.None);
+				await using StreamTransport streamTransport = new StreamTransport(memoryStream);
+				await streamTransport.SendAsync(input, CancellationToken.None);
 				payload = memoryStream.ToArray();
 			}
 
 			byte[] output = new byte[input.Length];
 			{
 				using MemoryStream memoryStream = new MemoryStream(payload);
-				StreamTransport streamTransport = new StreamTransport(memoryStream);
+				await using StreamTransport streamTransport = new StreamTransport(memoryStream);
 				await CopyToAsync(streamTransport, output);
 			}
 
@@ -45,7 +45,7 @@ namespace EpicGames.Horde.Tests
 		}
 
 		[TestMethod]
-		public async Task TestAesTransport()
+		public async Task TestAesTransportAsync()
 		{
 			byte[] key = new byte[AesTransport.KeyLength];
 			new Random(1).NextBytes(key);
@@ -60,21 +60,21 @@ namespace EpicGames.Horde.Tests
 
 			{
 				using MemoryStream memoryStream = new MemoryStream();
-				StreamTransport streamTransport = new StreamTransport(memoryStream);
+				await using StreamTransport streamTransport = new StreamTransport(memoryStream);
 				await using AesTransport aesTransport = new AesTransport(streamTransport, key, nonce);
-				await aesTransport.WriteAsync(input, CancellationToken.None);
+				await aesTransport.SendAsync(input, CancellationToken.None);
 				encrypted = memoryStream.ToArray();
 			}
 
 			byte[] output = new byte[input.Length];
 			{
 				using MemoryStream memoryStream = new MemoryStream(encrypted);
-				StreamTransport streamTransport = new StreamTransport(memoryStream);
+				await using StreamTransport streamTransport = new StreamTransport(memoryStream);
 				await using AesTransport aesTransport = new AesTransport(streamTransport, key, nonce);
 
 				for (int offset = 0; offset < output.Length;)
 				{
-					offset += await aesTransport.ReadPartialAsync(output.AsMemory(offset), CancellationToken.None);
+					offset += await aesTransport.RecvAsync(output.AsMemory(offset), CancellationToken.None);
 				}
 			}
 
@@ -85,11 +85,11 @@ namespace EpicGames.Horde.Tests
 			Assert.IsTrue(input.SequenceEqual(output));
 		}
 
-		public static async Task CopyToAsync(IComputeTransport transport, Memory<byte> buffer)
+		public static async Task CopyToAsync(ComputeTransport transport, Memory<byte> buffer)
 		{
 			for (int offset = 0; offset < buffer.Length;)
 			{
-				int size = await transport.ReadPartialAsync(buffer.Slice(offset), CancellationToken.None);
+				int size = await transport.RecvAsync(buffer.Slice(offset), CancellationToken.None);
 				Assert.IsTrue(size > 0);
 				offset += size;
 			}

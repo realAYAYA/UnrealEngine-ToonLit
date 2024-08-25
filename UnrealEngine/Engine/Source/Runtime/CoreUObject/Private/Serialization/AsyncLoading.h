@@ -329,7 +329,12 @@ struct FAsyncLoadEventArgs
 class FImportOrImportIndexArray : public TArray<int32>
 {
 public:
-	void HeapPop(int32& OutItem, bool bAllowShrinking = true);
+	void HeapPop(int32& OutItem, EAllowShrinking AllowShrinking = EAllowShrinking::Yes);
+	UE_ALLOWSHRINKING_BOOL_DEPRECATED("HeapPop")
+	FORCEINLINE void HeapPop(int32& OutItem, bool bAllowShrinking)
+	{
+		HeapPop(OutItem, bAllowShrinking ? EAllowShrinking::Yes : EAllowShrinking::No);
+	}
 };
 
 /**

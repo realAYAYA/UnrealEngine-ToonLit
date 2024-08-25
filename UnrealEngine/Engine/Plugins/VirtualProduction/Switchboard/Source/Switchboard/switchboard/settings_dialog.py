@@ -4,10 +4,10 @@ import os
 import pathlib
 import typing
 
-from PySide2 import QtCore
-from PySide2 import QtGui
-from PySide2 import QtUiTools
-from PySide2 import QtWidgets
+from PySide6 import QtCore
+from PySide6 import QtGui
+from PySide6 import QtUiTools
+from PySide6 import QtWidgets
 
 from switchboard import config
 from switchboard import switchboard_widgets as sb_widgets
@@ -33,7 +33,7 @@ class SettingsDialog(QtCore.QObject):
 
         # Set the UI object
         self.ui = QtWidgets.QDialog()
-        self.ui.resize(600, 800)
+        self.ui.resize(650, 800)
         dialog_layout = QtWidgets.QVBoxLayout(self.ui)
         dialog_layout.setContentsMargins(2, 2, 2, 2)
         self.ui.setWindowTitle("Settings")

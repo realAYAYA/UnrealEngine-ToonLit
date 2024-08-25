@@ -1,10 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System.Net.Http.Headers;
+using System.ComponentModel;
 using EpicGames.Core;
 using EpicGames.Horde.Storage;
-using EpicGames.Horde.Storage.Backends;
-using Microsoft.Extensions.Logging;
+using EpicGames.Horde.Storage.Bundles;
+using EpicGames.Horde.Storage.Clients;
+using Microsoft.Extensions.Options;
 
 namespace Horde.Commands
 {
@@ -16,53 +17,53 @@ namespace Horde.Commands
 		/// <summary>
 		/// Namespace to use
 		/// </summary>
-		[CommandLine("-Namespace=", Description = "Namespace for data to manipulate")]
-		public string Namespace { get; set; } = "default";
+		[CommandLine("-Namespace=")]
+		[Description("Namespace for data to manipulate")]
+		public NamespaceId Namespace { get; set; } = new NamespaceId("default");
 
 		/// <summary>
 		/// Base URI to upload to
 		/// </summary>
-		[CommandLine("-Path=", Description = "Relative path on the server for the store to write to/from (eg. api/v1/storage/default)")]
+		[CommandLine("-Path=")]
+		[Description("Relative path on the server for the store to write to/from (eg. api/v1/storage/default)")]
 		public string? Path { get; set; }
+
+		/// <summary>
+		/// Cache for storage
+		/// </summary>
+		public BundleCache BundleCache { get; }
+
+		/// <summary>
+		/// Configuration for the tool
+		/// </summary>
+		public CmdConfig Config { get; }
+
+		readonly HttpStorageClientFactory _storageClientFactory;
+
+		/// <summary>
+		/// Constructor
+		/// </summary>
+		public StorageCommandBase(HttpStorageClientFactory storageClientFactory, BundleCache bundleCache, IOptions<CmdConfig> config)
+		{
+			_storageClientFactory = storageClientFactory;
+
+			BundleCache = bundleCache;
+			Config = config.Value;
+		}
 
 		/// <summary>
 		/// Creates a new client instance
 		/// </summary>
-		/// <param name="logger">Logger for output messages</param>
-		/// <param name="cancellationToken"></param>
-		public async Task<IStorageClient> CreateStorageClientAsync(ILogger logger, CancellationToken cancellationToken = default)
+		public IStorageClient CreateStorageClient()
 		{
-			Uri? server = await Settings.GetServerAsync(cancellationToken);
-			if (server == null)
-			{
-				throw new Exception("No server is configured. Run 'horde login -server=...' to set up.");
-			}
-
-			string? token = await Settings.GetAccessTokenAsync(logger, cancellationToken);
-			if (token == null)
-			{
-				throw new Exception("Unable to log in to server.");
-			}
-
 			if (String.IsNullOrEmpty(Path))
 			{
-				Path = $"api/v1/storage/{Namespace}/";
+				return _storageClientFactory.CreateClient(Namespace);
 			}
-			else if(!Path.EndsWith("/", StringComparison.Ordinal))
+			else
 			{
-				Path += "/";
+				return _storageClientFactory.CreateClientWithPath(Path);
 			}
-
-			server = new Uri(server, Path);
-			return new HttpStorageClient(() => CreateDefaultHttpClient(server, token), () => new HttpClient(), null, logger);
-		}
-
-		static HttpClient CreateDefaultHttpClient(Uri server, string token)
-		{
-			HttpClient client = new HttpClient();
-			client.BaseAddress = server;
-			client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-			return client;
 		}
 	}
 }

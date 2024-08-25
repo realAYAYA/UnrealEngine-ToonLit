@@ -966,9 +966,9 @@ namespace ImportExportAssetHelper
 			TSharedPtr<SWindow> ActiveWindow = FSlateApplication::Get().GetActiveTopLevelWindow();
 			if (ActiveWindow.IsValid())
 			{
-				FString ScreenshotName;
+				FString ScreenshotPath;
 				const FString TestName = FString::Printf(TEXT("AssetImportExport/Screenshots/%s"), *ImportedAsset->GetName());
-				ScreenshotName = AutomationCommon::GetScreenshotName(TestName);
+				ScreenshotPath = AutomationCommon::GetScreenshotPath(TestName);
 
 				TSharedRef<SWidget> WindowRef = ActiveWindow.ToSharedRef();
 
@@ -979,7 +979,7 @@ namespace ImportExportAssetHelper
 					FAutomationScreenshotData Data;
 					Data.Width = OutImageSize.X;
 					Data.Height = OutImageSize.Y;
-					Data.ScreenshotName = ScreenshotName;
+					Data.ScreenshotPath = ScreenshotPath;
 					FAutomationTestFramework::Get().OnScreenshotCaptured().ExecuteIfBound(OutImageData, Data);
 				}
 
@@ -1011,7 +1011,7 @@ namespace ImportExportAssetHelper
 
 				if (Extension.StartsWith(TEXT("."), ESearchCase::CaseSensitive))
 				{
-					Extension.RightChopInline(1, false);
+					Extension.RightChopInline(1, EAllowShrinking::No);
 				}
 
 				//Export the asset

@@ -7,6 +7,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Amazon.Runtime;
+using Amazon.Runtime.Endpoints;
 using Amazon.SQS;
 using Amazon.SQS.Model;
 
@@ -20,7 +21,7 @@ namespace Horde.Server.Tests.Fleet;
 /// </summary>
 public sealed class FakeAmazonSqs : IAmazonSQS
 {
-	private readonly ConcurrentDictionary<string, List<string>> _queues = new ();
+	private readonly ConcurrentDictionary<string, List<string>> _queues = new();
 
 	public void Dispose()
 	{
@@ -33,11 +34,11 @@ public sealed class FakeAmazonSqs : IAmazonSQS
 			messages = new();
 			_queues[queueUrl] = messages;
 		}
-		
+
 		messages.Add(messageBody);
 		return Task.FromResult(new SendMessageResponse() { MessageId = "unset" });
 	}
-	
+
 	public Task<ReceiveMessageResponse> ReceiveMessageAsync(ReceiveMessageRequest request, CancellationToken cancellationToken = default)
 	{
 		if (_queues.TryGetValue(request.QueueUrl, out List<string>? messages))
@@ -50,17 +51,17 @@ public sealed class FakeAmazonSqs : IAmazonSQS
 
 		return Task.FromResult(new ReceiveMessageResponse());
 	}
-	
+
 	public Task<DeleteMessageResponse> DeleteMessageAsync(DeleteMessageRequest request, CancellationToken cancellationToken = default)
 	{
 		return Task.FromResult(new DeleteMessageResponse());
 	}
-	
-#region Not implemented
 
-public ISQSPaginatorFactory Paginators { get; } = null!;
+	#region Not implemented
+
+	public ISQSPaginatorFactory Paginators { get; } = null!;
 	public IClientConfig Config { get; } = null!;
-	
+
 	public Task<Dictionary<string, string>> GetAttributesAsync(string queueUrl)
 	{
 		throw new NotImplementedException();
@@ -240,7 +241,27 @@ public ISQSPaginatorFactory Paginators { get; } = null!;
 	{
 		throw new NotImplementedException();
 	}
-#endregion Not implemented	
+
+	public Task<CancelMessageMoveTaskResponse> CancelMessageMoveTaskAsync(CancelMessageMoveTaskRequest request, CancellationToken cancellationToken)
+	{
+		throw new NotImplementedException();
+	}
+
+	public Task<ListMessageMoveTasksResponse> ListMessageMoveTasksAsync(ListMessageMoveTasksRequest request, CancellationToken cancellationToken)
+	{
+		throw new NotImplementedException();
+	}
+
+	public Task<StartMessageMoveTaskResponse> StartMessageMoveTaskAsync(StartMessageMoveTaskRequest request, CancellationToken cancellationToken)
+	{
+		throw new NotImplementedException();
+	}
+
+	public Endpoint DetermineServiceOperationEndpoint(AmazonWebServiceRequest request)
+	{
+		throw new NotImplementedException();
+	}
+	#endregion Not implemented	
 }
 
 #pragma warning restore CA1054

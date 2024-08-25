@@ -7,12 +7,9 @@
 #include "Containers/Map.h"
 #include "Containers/UnrealString.h"
 #include "CoreMinimal.h"
-#include "CoreTypes.h"
-#include "HAL/PlatformCrt.h"
 #include "RigVMCore/RigVMTraits.h"
 #include "RigVMDispatchFactory.h"
 #include "RigVMFunction.h"
-#include "RigVMMemory.h"
 #include "RigVMTemplate.h"
 #include "RigVMTypeIndex.h"
 #include "Templates/EnableIf.h"
@@ -25,6 +22,7 @@
 #include "UObject/GCObject.h"
 
 class FProperty;
+class IPlugin;
 class UObject;
 struct FRigVMDispatchFactory;
 
@@ -41,8 +39,8 @@ struct RIGVM_API FRigVMRegistry : public FGCObject
 public:
 
 	DECLARE_MULTICAST_DELEGATE(FOnRigVMRegistryChanged);
-	
-	~FRigVMRegistry();
+
+	virtual ~FRigVMRegistry() override;
 	
 	// Returns the singleton registry
 	static FRigVMRegistry& Get();
@@ -62,12 +60,26 @@ public:
 	// Register a predicate contained in the input struct
 	void RegisterPredicate(UScriptStruct* InStruct, const TCHAR* InName, const TArray<FRigVMFunctionArgument>& InArguments);
 
-	// Initializes the registry by storing the defaults
-	void InitializeIfNeeded();
-	
+	// How to register an object's class when passed to RegisterObjectTypes
+	enum class ERegisterObjectOperation
+	{
+		Class,
+
+		ClassAndParents,
+
+		ClassAndChildren,
+	};
+
+	// Register a set of allowed object types
+	void RegisterObjectTypes(TConstArrayView<TPair<UClass*, ERegisterObjectOperation>> InClasses);
+
 	// Refreshes the list and finds the function pointers
 	// based on the names.
 	void RefreshEngineTypes();
+
+	// Refreshes the list and finds the function pointers
+	// based on the names.
+	void RefreshEngineTypesIfRequired();
 
 	// Update the registry when types are renamed
 	void OnAssetRenamed(const FAssetData& InAssetData, const FString& InOldObjectPath);
@@ -75,6 +87,9 @@ public:
 	// Update the registry when old types are removed
     void OnAssetRemoved(const FAssetData& InAssetData);
 
+	// Removes all types associated with a plugin that's being unloaded. 
+	void OnPluginUnloaded(IPlugin& InPlugin);
+	
 	// Update the registry when new types are added to the attribute system so that they can be selected
 	// on Attribute Nodes
 	void OnAnimationAttributeTypesChanged(const UScriptStruct* InStruct, bool bIsAdded);
@@ -83,15 +98,12 @@ public:
 	void Reset();
 
 	// Adds a type if it doesn't exist yet and returns its index.
-	// This function is not thead-safe
-	TRigVMTypeIndex FindOrAddType(const FRigVMTemplateArgumentType& InType)
-	{
-		return FindOrAddType_Internal(InType, false);
-	}
+	// This function is thread-safe
+	TRigVMTypeIndex FindOrAddType(const FRigVMTemplateArgumentType& InType, bool bForce = false);
 
 	// Removes a type from the registry, and updates all dependent templates
 	// which also creates invalid permutations in templates that we should ignore
-	bool RemoveType(const FAssetData& InAssetData);
+	bool RemoveType(const FSoftObjectPath& InObjectPath, const UClass* InObjectClass);
 
 	// Returns the type index given a type
 	TRigVMTypeIndex GetTypeIndex(const FRigVMTemplateArgumentType& InType) const;
@@ -154,7 +166,7 @@ public:
 	>
 	TRigVMTypeIndex GetTypeIndex(bool bAsArray = false) const
 	{
-		FRigVMTemplateArgumentType Type(T::StaticClass());
+		FRigVMTemplateArgumentType Type(T::StaticClass(), RigVMTypeUtils::EClassArgType::AsObject);
 		if(bAsArray)
 		{
 			Type.ConvertToArray();
@@ -205,10 +217,10 @@ public:
 	TRigVMTypeIndex GetBaseTypeFromArrayTypeIndex(TRigVMTypeIndex InTypeIndex) const;
 
 	// Returns the function given its name (or nullptr)
-	const FRigVMFunction* FindFunction(const TCHAR* InName) const;
+	const FRigVMFunction* FindFunction(const TCHAR* InName, const FRigVMUserDefinedTypeResolver& InTypeResolver = FRigVMUserDefinedTypeResolver()) const;
 
 	// Returns the function given its backing up struct and method name
-	const FRigVMFunction* FindFunction(UScriptStruct* InStruct, const TCHAR* InName) const;
+	const FRigVMFunction* FindFunction(UScriptStruct* InStruct, const TCHAR* InName, const FRigVMUserDefinedTypeResolver& InResolvalInfo = FRigVMUserDefinedTypeResolver()) const;
 
 	// Returns all current rigvm functions
 	const TChunkedArray<FRigVMFunction>& GetFunctions() const;
@@ -222,13 +234,13 @@ public:
 	// Defines and retrieves a template given its arguments
 	const FRigVMTemplate* GetOrAddTemplateFromArguments(
 		const FName& InName,
-		const TArray<FRigVMTemplateArgument>& InArguments,
+		const TArray<FRigVMTemplateArgumentInfo>& InInfos,
 		const FRigVMTemplateDelegates& InDelegates);
 
 	// Adds a new template given its arguments
 	const FRigVMTemplate* AddTemplateFromArguments(
 		const FName& InName,
-		const TArray<FRigVMTemplateArgument>& InArguments,
+		const TArray<FRigVMTemplateArgumentInfo>& InInfos,
 		const FRigVMTemplateDelegates& InDelegates);
 
 	// Returns a dispatch factory given its name (or nullptr)
@@ -282,8 +294,8 @@ private:
 
 	static const FName TemplateNameMetaName;
 
-	// disable default constructor
-	FRigVMRegistry() {}
+	FRigVMRegistry();
+
 	// disable copy constructor
 	FRigVMRegistry(const FRigVMRegistry&) = delete;
 	// disable assignment operator
@@ -308,7 +320,12 @@ private:
 		uint32 Hash;
 	};
 
-	TRigVMTypeIndex FindOrAddType_Internal(const FRigVMTemplateArgumentType& InType, bool bForce);
+	// Initialize the base types
+	void Initialize();
+	
+	TRigVMTypeIndex FindOrAddType_NoLock(const FRigVMTemplateArgumentType& InType, bool bForce);
+
+	void RefreshEngineTypes_NoLock();
 
 	static EObjectFlags DisallowedFlags()
 	{
@@ -320,22 +337,23 @@ private:
 		return RF_Public;
 	}
 
-	static bool IsAllowedType(const FProperty* InProperty);
-	static bool IsAllowedType(const UEnum* InEnum);
-	static bool IsAllowedType(const UStruct* InStruct);
-	static bool IsAllowedType(const UClass* InClass);
+	bool IsAllowedType(const FProperty* InProperty) const;
+	bool IsAllowedType(const UEnum* InEnum) const;
+	bool IsAllowedType(const UStruct* InStruct) const;
+	bool IsAllowedType(const UClass* InClass) const;
 
-	void RegisterTypeInCategory(FRigVMTemplateArgument::ETypeCategory InCategory, TRigVMTypeIndex InTypeIndex);
+	void RegisterTypeInCategory(const FRigVMTemplateArgument::ETypeCategory InCategory, const TRigVMTypeIndex InTypeIndex);
+	void PropagateTypeAddedToCategory(const FRigVMTemplateArgument::ETypeCategory InCategory, const TRigVMTypeIndex InTypeIndex);
 	
 	void RemoveTypeInCategory(FRigVMTemplateArgument::ETypeCategory InCategory, TRigVMTypeIndex InTypeIndex);
 
-	const FRigVMFunction* FindFunction_NoLock(const TCHAR* InName) const;
+	const FRigVMFunction* FindFunction_NoLock(const TCHAR* InName, const FRigVMUserDefinedTypeResolver& InTypeResolver = FRigVMUserDefinedTypeResolver()) const;
 	const FRigVMTemplate* FindTemplate_NoLock(const FName& InNotation, bool bIncludeDeprecated) const;
 	FRigVMDispatchFactory* FindDispatchFactory_NoLock(const FName& InFactoryName) const;
 
 	const FRigVMTemplate* AddTemplateFromArguments_NoLock(
 		const FName& InName,
-		const TArray<FRigVMTemplateArgument>& InArguments,
+		const TArray<FRigVMTemplateArgumentInfo>& InInfos,
 		const FRigVMTemplateDelegates& InDelegates);
 
 	// memory for all (known) types
@@ -370,27 +388,33 @@ private:
 	// Maps storing the default types per type category
 	TMap<FRigVMTemplateArgument::ETypeCategory, TArray<TRigVMTypeIndex>> TypesPerCategory;
 
-	// Lookup per type category to know which argument to keep in sync
-	TMap<FRigVMTemplateArgument::ETypeCategory, TArray<TPair<int32,int32>>> ArgumentsPerCategory;
+	// Lookup per type category to know which template to keep in sync
+	TMap<FRigVMTemplateArgument::ETypeCategory, TArray<int32>> TemplatesPerCategory;
 
 	// Name loop up for user defined types since they can be deleted.
 	// When that happens, it won't be safe to reload deleted assets so only type names are reliable
 	TMap<FSoftObjectPath, TRigVMTypeIndex> UserDefinedTypeToIndex;
 	
+	// All allowed classes
+	TSet<TObjectPtr<const UClass>> AllowedClasses;
+
 	// Notifies other system that types have been added/removed, and template permutations have been updated
 	FOnRigVMRegistryChanged OnRigVMRegistryChangedDelegate;
 
-	static FCriticalSection RefreshTypesMutex;
-	static FCriticalSection RegisterFunctionMutex;
-	static FCriticalSection RegisterTemplateMutex;
-	static FCriticalSection RegisterFactoryMutex;
-	static FCriticalSection FindFunctionMutex;
-	static FCriticalSection FindTemplateMutex;
-	static FCriticalSection FindFactoryMutex;
-	static FCriticalSection GetDispatchFunctionMutex;
-	static FCriticalSection GetDispatchPredicatesMutex;
-	static FCriticalSection GetPermutationMutex;
+	// If this is true the registry is currently refreshing all types
+	bool bIsRefreshingEngineTypes;
 
+	// This is true if the engine has ever refreshed the engine types
+	bool bEverRefreshedEngineTypes;
+
+	static FCriticalSection FindOrAddTypeMutex;
+	static FCriticalSection FunctionRegistryMutex;
+	static FCriticalSection FactoryRegistryMutex;
+	static FCriticalSection TemplateRegistryMutex;
+
+	static FCriticalSection DispatchFunctionMutex;
+	static FCriticalSection DispatchPredicatesMutex;
+	
 	friend struct FRigVMStruct;
 	friend struct FRigVMTemplate;
 	friend struct FRigVMTemplateArgument;

@@ -12,6 +12,8 @@ public:
 	ENGINE_API FLoaderAdapterList(UWorld* InWorld);
 	virtual ~FLoaderAdapterList() {}
 
+	const TSet<FWorldPartitionHandle>& GetActors() const { return Actors; }
+
 protected:
 	//~ Begin ILoaderAdapter interface
 	ENGINE_API virtual void ForEachActor(TFunctionRef<void(const FWorldPartitionHandle&)> InOperation) const override;

@@ -64,7 +64,9 @@ namespace BakeCustomizationLocals
 			{
 				EBakeMapType::VertexColor,
 				EBakeMapType::MaterialID,
-				EBakeMapType::PolyGroupID
+				EBakeMapType::PolyGroupID,
+				EBakeMapType::One,
+				EBakeMapType::Zero
 			}
 		};
 

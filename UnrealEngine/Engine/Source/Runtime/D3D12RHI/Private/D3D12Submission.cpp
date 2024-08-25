@@ -56,8 +56,12 @@ DECLARE_DWORD_ACCUMULATOR_STAT(TEXT("GPU HS Invocations"), STAT_D3D12RHI_HSInvoc
 DECLARE_DWORD_ACCUMULATOR_STAT(TEXT("GPU DS Invocations"), STAT_D3D12RHI_DSInvocations, STATGROUP_D3D12RHIPipeline);
 DECLARE_DWORD_ACCUMULATOR_STAT(TEXT("GPU CS Invocations"), STAT_D3D12RHI_CSInvocations, STATGROUP_D3D12RHIPipeline);
 
-// The maximum time, in seconds, that a submitted GPU command list is allowed to take before the RHI reports a GPU hang.
-const double SubmissionTimeOutInSeconds = 5.0;
+static float GD3D12SubmissionTimeout = 5.0;
+static FAutoConsoleVariableRef CVarD3D12SubmissionTimeout(
+	TEXT("r.D3D12.SubmissionTimeout"),
+	GD3D12SubmissionTimeout,
+	TEXT("The maximum time, in seconds, that a submitted GPU command list is allowed to take before the RHI reports a GPU hang"),
+	ECVF_RenderThreadSafe);
 
 class FD3D12Thread final : private FRunnable
 {
@@ -271,6 +275,7 @@ void FD3D12DynamicRHI::SubmitCommands(TConstArrayView<FD3D12FinalizedCommands*> 
 					}
 					FD3D12Payload* MergedPayload = MergedPayloadPerGPU[GPUIndex];
 
+					MergedPayload->ReservedResourcesToCommit.Append(Payload->ReservedResourcesToCommit);
 					MergedPayload->CommandListsToExecute.Append(Payload->CommandListsToExecute);
 					MergedPayload->SyncPointsToSignal.Append(Payload->SyncPointsToSignal);
 					MergedPayload->AllocatorsToRelease.Append(Payload->AllocatorsToRelease);
@@ -536,19 +541,10 @@ FD3D12DynamicRHI::FProcessResult FD3D12DynamicRHI::ProcessSubmissionQueue()
 								check(Range.End > Range.Start);
 
 	#if ENABLE_RESIDENCY_MANAGEMENT
-								FD3D12ResidencyHandle* ResidencyHandles[] =
-								{
-									&Range.Heap->GetHeapResidencyHandle(),
-									&Range.Heap->GetResultBuffer()->GetResidencyHandle()
-								};
-
-								for (FD3D12ResidencyHandle* Handle : ResidencyHandles)
-								{
-									if (Handle->IsInitialized())
-									{
-										GetResolveCommandList()->UpdateResidency({ Handle });
-									}
-								}
+								TArray<FD3D12ResidencyHandle*, TInlineAllocator<2>> ResidencyHandles;
+								ResidencyHandles.Add(&Range.Heap->GetHeapResidencyHandle());
+								ResidencyHandles.Append(Range.Heap->GetResultBuffer()->GetResidencyHandles());
+								GetResolveCommandList()->UpdateResidency(ResidencyHandles);
 	#endif // ENABLE_RESIDENCY_MANAGEMENT
 
 								if (Range.Heap->GetD3DQueryHeap())
@@ -700,7 +696,10 @@ FD3D12CommandList* FD3D12DynamicRHI::GenerateBarrierCommandListAndUpdateState(FD
 		}
 
 #if ENABLE_RESIDENCY_MANAGEMENT
-		ResidencyHandles.Add(&PRB.Resource->GetResidencyHandle());
+		for (FD3D12ResidencyHandle* Handle : PRB.Resource->GetResidencyHandles())
+		{
+			ResidencyHandles.Add(Handle);
+		}
 #endif // ENABLE_RESIDENCY_MANAGEMENT
 	}
 
@@ -778,6 +777,40 @@ uint64 FD3D12Queue::ExecutePayload()
 	}
 
 	PayloadToSubmit->PreExecute();
+
+	if (!PayloadToSubmit->ReservedResourcesToCommit.IsEmpty())
+	{
+		// On some devices, some queues cannot perform tile remapping operations.
+		// We can work around this limitation by running the remapping in lockstep on another queue:
+		// - tile mapping queue waits for commands on this queue to finish
+		// - tile mapping queue performs the commit/decommit operations
+		// - this queue waits for tile mapping queue to finish
+		// The extra sync is not required when the current queue is capable of the remapping operations.
+
+		ID3D12CommandQueue* TileMappingQueue = (bSupportsTileMapping ? D3DCommandQueue : Device->TileMappingQueue).GetReference();
+		FD3D12Fence& TileMappingFence = Device->TileMappingFence;
+
+		const bool bCrossQueueSyncRequired = TileMappingQueue != D3DCommandQueue.GetReference();
+
+		if (bCrossQueueSyncRequired)
+		{
+			// tile mapping queue waits for commands on this queue to finish
+			D3DCommandQueue->Signal(TileMappingFence.D3DFence, ++TileMappingFence.LastSignaledValue);
+			TileMappingQueue->Wait(TileMappingFence.D3DFence, TileMappingFence.LastSignaledValue);
+		}
+
+		for (const FD3D12CommitReservedResourceDesc& CommitDesc : PayloadToSubmit->ReservedResourcesToCommit)
+		{
+			CommitDesc.Resource->CommitReservedResource(TileMappingQueue, CommitDesc.CommitSizeInBytes);
+		}
+
+		if (bCrossQueueSyncRequired)
+		{
+			// this queue waits for tile mapping operations to finish
+			TileMappingQueue->Signal(TileMappingFence.D3DFence, ++TileMappingFence.LastSignaledValue);
+			D3DCommandQueue->Wait(TileMappingFence.D3DFence, TileMappingFence.LastSignaledValue);
+		}
+	}
 
 	if (const int32 NumCommandLists = PayloadToSubmit->CommandListsToExecute.Num())
 	{
@@ -998,7 +1031,7 @@ FD3D12DynamicRHI::FProcessResult FD3D12DynamicRHI::ProcessInterruptQueue()
 				// Detect a hung GPU
 				if (Payload->SubmissionTime.IsSet())
 				{
-					static const uint64 TimeoutCycles = FMath::TruncToInt64(SubmissionTimeOutInSeconds / FPlatformTime::GetSecondsPerCycle64());
+					static const uint64 TimeoutCycles = FMath::TruncToInt64(GD3D12SubmissionTimeout / FPlatformTime::GetSecondsPerCycle64());
 					static const double CyclesPerSecond = 1.0 / FPlatformTime::GetSecondsPerCycle64();
 
 					uint64 ElapsedCycles = FPlatformTime::Cycles64() - Payload->SubmissionTime.GetValue();
@@ -1156,6 +1189,14 @@ FD3D12PayloadBase::~FD3D12PayloadBase()
 	for (FD3D12CommandAllocator* Allocator : AllocatorsToRelease)
 	{
 		Queue.Device->ReleaseCommandAllocator(Allocator);
+	}
+}
+
+void FD3D12PayloadBase::PreExecute()
+{
+	if (PreExecuteCallback)
+	{
+		PreExecuteCallback(Queue.D3DCommandQueue);
 	}
 }
 

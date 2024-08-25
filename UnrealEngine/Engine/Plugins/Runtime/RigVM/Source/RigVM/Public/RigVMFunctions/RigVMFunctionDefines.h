@@ -7,7 +7,7 @@
 
 #include "RigVMFunctionDefines.generated.h"
 
-UENUM()
+UENUM(meta = (RigVMTypeAllowed))
 enum class ERigVMTransformSpace : uint8
 {
 	/** Apply in parent space */
@@ -20,14 +20,15 @@ enum class ERigVMTransformSpace : uint8
 	Max UMETA(Hidden),
 };
 
-UENUM()
+UENUM(meta = (RigVMTypeAllowed))
 namespace ERigVMClampSpatialMode
 {
 	enum Type : int
 	{
 		Plane,
 		Cylinder,
-		Sphere
+		Sphere,
+		Capsule
 	};
 }
 
@@ -35,7 +36,7 @@ namespace ERigVMClampSpatialMode
 #define UE_RIGVMSTRUCT_REPORT(Severity, Format, ...) \
 if(ExecuteContext.GetLog() != nullptr) \
 { \
-ExecuteContext.GetLog()->Report(EMessageSeverity::Severity, ExecuteContext.GetFunctionName(), ExecuteContext.GetInstructionIndex(), FString::Printf((Format), ##__VA_ARGS__)); \
+ExecuteContext.Report(EMessageSeverity::Severity, ExecuteContext.GetFunctionName(), ExecuteContext.GetInstructionIndex(), FString::Printf((Format), ##__VA_ARGS__)); \
 }
 #define UE_RIGVMSTRUCT_LOG_MESSAGE(Format, ...) UE_RIGVMSTRUCT_REPORT(Info, (Format), ##__VA_ARGS__)
 #define UE_RIGVMSTRUCT_REPORT_WARNING(Format, ...) UE_RIGVMSTRUCT_REPORT(Warning, (Format), ##__VA_ARGS__)

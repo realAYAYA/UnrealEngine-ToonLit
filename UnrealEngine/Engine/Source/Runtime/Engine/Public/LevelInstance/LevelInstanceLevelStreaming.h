@@ -6,6 +6,7 @@
 #include "UObject/ObjectMacros.h"
 #include "Engine/LevelStreamingDynamic.h"
 #include "LevelInstance/LevelInstanceTypes.h"
+#include "WorldPartition/ActorDescContainerInstance.h"
 #include "LevelInstanceLevelStreaming.generated.h"
 
 class ILevelInstanceInterface;
@@ -40,10 +41,13 @@ protected:
 private:
 #if WITH_EDITOR
 	ENGINE_API void ResetLevelInstanceLoaders();
-	ENGINE_API void PrepareLevelInstanceLoadedActor(AActor& InActor, ILevelInstanceInterface* InLevelInstance, bool bResetLoaders);
-	ENGINE_API void OnLoadedActorPreAddedToLevel(const TArray<AActor*>& InActors);
-	ENGINE_API void OnLoadedActorAddedToLevel(AActor& InActor);
-	ENGINE_API void OnLoadedActorRemovedFromLevel(AActor& InActor);
+	ENGINE_API virtual void OnLoadedActorsAddedToLevelPreEvent(const TArray<AActor*>& InActors);
+	ENGINE_API virtual void OnLoadedActorsAddedToLevelPostEvent(const TArray<AActor*>& InActors);
+	ENGINE_API virtual void OnLoadedActorsRemovedFromLevelPostEvent(const TArray<AActor*>& InActors);
+	ENGINE_API void OnLevelStreamingStateChanged(UWorld* InWorld, const ULevelStreaming* InLevelStreaming, ULevel* InLevelIfLoaded, ELevelStreamingState InPrevState, ELevelStreamingState InNewState);
+	ENGINE_API void OnPreInitializeContainerInstance(UActorDescContainerInstance::FInitializeParams& InInitParams, UActorDescContainerInstance* InContainerInstance);
+
+	bool IsEditorWorldMode() const;
 
 	TWeakObjectPtr<ALevelInstanceEditorInstanceActor> LevelInstanceEditorInstanceActor;
 

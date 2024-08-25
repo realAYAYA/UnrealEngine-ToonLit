@@ -148,7 +148,13 @@ STableTreeView::STableTreeView()
 
 STableTreeView::~STableTreeView()
 {
-	ensureMsgf(bIsCloseScheduled, TEXT("TableTreeView running in async mode was closed but OnClose() was not called. This can lead to a crash. Call OnClose() from the owner tab/window."));
+	if (!bIsCloseScheduled)
+	{
+		UE_LOG(LogInsights, Log, TEXT("TableTreeView running in async mode was closed but OnClose() was not called. Call OnClose() from the owner tab/window."));
+	}
+
+	// Backup call to OnClose() in case it was not called from the owner.
+	OnClose();
 
 	if (CurrentAsyncOpFilterConfigurator)
 	{
@@ -1468,7 +1474,39 @@ void STableTreeView::TreeView_OnGetChildren(FTableTreeNodePtr InParent, TArray<F
 	if (InParent->OnLazyCreateChildren(SharedThis(this)))
 	{
 		// Node filtering does not apply to lazy expanded nodes.
-		// Grouping is ignored for lazy expanded nodes.
+		
+		// Apply grouping only if the node specifies the grouping that created the node.
+		// In this case, it will apply groupings after the identified one.
+		const FTreeNodeGrouping* AuthorGrouping = InParent->GetAuthorGrouping();
+		if (AuthorGrouping)
+		{
+			TArray<TSharedPtr<FTreeNodeGrouping>> Groupings;
+
+			bool bFound = false;
+			for (TSharedPtr<FTreeNodeGrouping> Grouping : CurrentGroupings)
+			{
+				if (bFound)
+				{
+					Groupings.Add(Grouping);
+				}
+				else
+				{
+					if (Grouping.Get() == AuthorGrouping)
+					{
+						bFound = true;
+					}
+				}
+			}
+
+			if (Groupings.Num() > 0)
+			{
+				// Extract children nodes.
+				TArray<FTableTreeNodePtr> ChildNodes;
+				InParent->SwapChildrenFast(reinterpret_cast<TArray<FBaseTreeNodePtr>&>(ChildNodes));
+
+				GroupNodesRec(ChildNodes, *InParent, 0, Groupings);
+			}
+		}
 
 		// Update aggregation.
 		UpdateAggregatedValuesRec(*InParent);
@@ -2536,6 +2574,11 @@ void STableTreeView::UpdateAggregatedValuesSingleNode(FTableTreeNode& InOutGroup
 
 void STableTreeView::UpdateAggregatedValuesRec(FTableTreeNode& InOutGroupNode)
 {
+	if (AsyncOperationProgress.ShouldCancelAsyncOp())
+	{
+		return;
+	}
+
 	STableTreeView::UpdateAggregatedValues<true>(Table, InOutGroupNode);
 }
 
@@ -2857,7 +2900,6 @@ void STableTreeView::ShowColumn(FTableColumn& Column)
 			.VAlignCell(VAlign_Fill)
 			.InitialSortMode(Column.GetInitialSortMode())
 			.SortMode(this, &STableTreeView::GetSortModeForColumn, Column.GetId())
-			.OnSort(this, &STableTreeView::OnSortModeChanged)
 			.FillWidth(Column.GetInitialWidth())
 			//.FixedWidth(Column.IsFixedWidth() ? Column.GetInitialWidth() : TOptional<float>())
 			.HeaderContent()
@@ -2875,6 +2917,11 @@ void STableTreeView::ShowColumn(FTableColumn& Column)
 			[
 				TreeViewHeaderRow_GenerateColumnMenu(Column)
 			];
+
+		if (Column.CanBeSorted())
+		{
+			ColumnArgs.OnSort(this, &STableTreeView::OnSortModeChanged);
+		}
 
 		int32 ColumnIndex = 0;
 		const int32 NewColumnPosition = Table->GetColumnPositionIndex(Column.GetId());
@@ -3244,14 +3291,11 @@ void STableTreeView::OnClose()
 
 	bIsCloseScheduled = true;
 
-	if (bIsUpdateRunning && InProgressAsyncOperationEvent.IsValid() && !InProgressAsyncOperationEvent->IsComplete())
+	if (bIsUpdateRunning)
 	{
 		CancelCurrentAsyncOp();
-
-		FGraphEventArray Prerequisites;
-		Prerequisites.Add(InProgressAsyncOperationEvent);
-		AsyncCompleteTaskEvent = TGraphTask<FTableTreeViewAsyncCompleteTask>::CreateTask(&Prerequisites).ConstructAndDispatchWhenReady(SharedThis(this));
-		//TODO: FInsightsManager::Get()->AddInProgressAsyncOp(AsyncCompleteTaskEvent, TEXT("FTableTreeViewAsyncCompleteTask"));
+		check(InProgressAsyncOperationEvent.IsValid());
+		InProgressAsyncOperationEvent->Wait(ENamedThreads::GameThread);
 	}
 }
 
@@ -3301,6 +3345,11 @@ void STableTreeView::CancelCurrentAsyncOp()
 {
 	if (bIsUpdateRunning)
 	{
+		if (DispatchEvent.IsValid() && !DispatchEvent->IsComplete())
+		{
+			DispatchEvent->DispatchSubsequents();
+		}
+
 		AsyncOperationProgress.CancelCurrentAsyncOp();
 	}
 }

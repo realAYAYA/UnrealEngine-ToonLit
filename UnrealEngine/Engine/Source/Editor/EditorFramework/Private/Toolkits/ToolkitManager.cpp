@@ -37,7 +37,8 @@ FToolkitManager& FToolkitManager::Get()
 FToolkitManager::FToolkitManager()
 {
 	FGlobalTabmanager::Get()->RegisterTabSpawner( "StandaloneToolkit", FOnSpawnTab::CreateStatic( &SpawnStandaloneToolkitHost ) )
-		.SetReuseTabMethod( FOnFindTabToReuse::CreateStatic( &NeverReuse ) );
+		.SetReuseTabMethod(FOnFindTabToReuse::CreateStatic( &NeverReuse ) )
+		.SetAutoGenerateMenuEntry(false);
 }
 
 

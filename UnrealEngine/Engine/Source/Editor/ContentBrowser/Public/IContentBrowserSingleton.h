@@ -22,6 +22,7 @@ class FViewport;
 class IPlugin;
 class SWidget;
 class UFactory;
+class UToolMenu;
 
 typedef const FContentBrowserItem& FAssetFilterType;
 typedef TFilterCollection<FAssetFilterType> FAssetFilterCollectionType;
@@ -186,6 +187,9 @@ struct FAssetPickerConfig
 	/** The default scale for thumbnails. [0-1] range */
 	TAttribute< float > ThumbnailScale;
 
+	/** Initial thumbnail size */
+	EThumbnailSize InitialThumbnailSize;
+
 	/** Only display results in these collections */
 	TArray<FCollectionNameType> Collections;
 
@@ -265,6 +269,9 @@ struct FAssetPickerConfig
 	/** Whether to allow dragging of items */
 	bool bAllowDragging;
 
+	/** Whether to allow renaming of items */
+	bool bAllowRename;
+
 	/** Indicates if this view is allowed to show classes */
 	bool bCanShowClasses;
 
@@ -296,19 +303,27 @@ struct FAssetPickerConfig
 	/** If true, sort by path in column view. Only works if initial view type is Column */
 	bool bSortByPathInColumnView;
 
+	/** Can be used to freely change the Add Filter menu. This is executed on the dynamically instanced menu, not the registered menu. */
+	TDelegate<void(UToolMenu*)> OnExtendAddFilterMenu;
+	
 	/** Override the default filter context menu layout */
 	EAssetTypeCategories::Type DefaultFilterMenuExpansion;
+
+	/** If we display filters & set to true, we will add sections instead of sub-menus for other filters. Useful if the number of additional filters is small. */
+	bool bUseSectionsForCustomFilterCategories;
 
 	FAssetPickerConfig()
 		: SelectionMode( ESelectionMode::Multi )
 		, ThumbnailLabel( EThumbnailLabel::ClassName )
 		, ThumbnailScale(0.1f)
+		, InitialThumbnailSize(EThumbnailSize::Medium)
 		, InitialAssetViewType(EAssetViewType::Tile)
 		, bFocusSearchBoxWhenOpened(true)
 		, bAllowNullSelection(false)
 		, bShowBottomToolbar(true)
 		, bAutohideSearchBar(false)
 		, bAllowDragging(true)
+		, bAllowRename(true)
 		, bCanShowClasses(true)
 		, bCanShowFolders(false)
 		, bCanShowReadOnlyFolders(true)
@@ -321,6 +336,7 @@ struct FAssetPickerConfig
 		, bShowTypeInColumnView(true)
 		, bSortByPathInColumnView(false)
 		, DefaultFilterMenuExpansion(EAssetTypeCategories::Basic)
+		, bUseSectionsForCustomFilterCategories(false)
 	{}
 };
 
@@ -366,6 +382,9 @@ struct FPathPickerConfig
 	/** Whether or not to show the favorites selector. */
 	bool bShowFavorites : 1;
 
+	/** Whether to call OnPathSelected during construction for DefaultPath if DefaultPath is allowed */
+	bool bNotifyDefaultPathSelected : 1;
+
 	FPathPickerConfig()
 		: bFocusSearchBoxWhenOpened(true)
 		, bAllowContextMenu(true)
@@ -374,6 +393,7 @@ struct FPathPickerConfig
 		, bAddDefaultPath(false)
 		, bOnPathSelectedPassesVirtualPaths(false)
 		, bShowFavorites(true)
+		, bNotifyDefaultPathSelected(false)
 	{}
 };
 
@@ -413,6 +433,8 @@ struct FSharedAssetDialogConfig
 	TArray<FTopLevelAssetPath> AssetClassNames;
 	FVector2D WindowSizeOverride;
 	FOnPathSelected OnPathSelected;
+	/** When specified, this window will be used instead of the mainframe window. */
+	TSharedPtr<SWindow> WindowOverride;
 
 	virtual EAssetDialogType::Type GetDialogType() const = 0;
 
@@ -559,6 +581,11 @@ public:
 	/** Returns true if there is at least one browser open that is eligible to be a primary content browser */
 	virtual bool HasPrimaryContentBrowser() const = 0;
 
+	/** Sets the primary content browser for subsequent state changes through this singleton
+	 * Returns true if content browser was changed sucessfully
+	 */
+	virtual bool SetPrimaryContentBrowser(FName InstanceName) = 0;
+
 	/** Brings the primary content browser to the front or opens one if it does not exist. */
 	virtual void FocusPrimaryContentBrowser(bool bFocusSearch) = 0;
 
@@ -688,9 +715,6 @@ public:
 	/** Returns InPath if can be written to, otherwise picks a default path that can be written to */
 	virtual FContentBrowserItemPath GetInitialPathToSaveAsset(const FContentBrowserItemPath& InPath) = 0;
 
-	/** Returns true if the public/private state of the specified asset can be changed */
-	virtual bool CanChangeAssetPublicState(FStringView AssetPath) = 0;
-
 	/** Returns true if FolderPath is a private content edit folder */
 	virtual bool IsShowingPrivateContent(const FStringView VirtualFolderPath) = 0;
 
@@ -703,12 +727,6 @@ public:
 	/** Declares the Private Content Permission List dirty */
 	virtual void SetPrivateContentPermissionListDirty() = 0;
 
-	/** Registers the delegate called to determine whether the public/private state of the specified asset can be changed */
-	virtual void RegisterCanChangeAssetPublicStateDelegate(FCanChangeAssetPublicStateDelegate InCanChangeAssetPublicStateDelegate) = 0;
-
-	/** Unregisters the delegate called to determine whether the public/private state of the specified asset can be changed */
-	virtual void UnregisterCanChangeAssetPublicStateDelegate() = 0;
-
 	/** Registers the delegate for custom handling of if a Folder allows private content edits */
 	virtual void RegisterIsFolderShowPrivateContentToggleableDelegate(FIsFolderShowPrivateContentToggleableDelegate InIsFolderShowPrivateContentToggleableDelegate) = 0;
 
@@ -720,4 +738,12 @@ public:
 
 	/** Unregister a previously-registered handler for when Favorites changes. */
 	virtual void UnregisterOnFavoritesChangedDelegate(FDelegateHandle Handle) = 0;
+
+	/**
+	 * Get a list of other paths that the data source may be using to represent a specific path
+	 *
+	 * @param The internal path (or object path) of an asset to get aliases for
+	 * @return All alternative paths that represent the input path (not including the input path itself)
+	 */
+	virtual TArray<FString> GetAliasesForPath(const FSoftObjectPath& InPath) const = 0;
 };

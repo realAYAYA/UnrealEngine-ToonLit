@@ -4,15 +4,13 @@
 
 #include "DatasmithMaxDirectLink.h"
 
-#include "DatasmithMaxExporter.h"
-
 #include "DatasmithMaxSceneExporter.h"
 #include "DatasmithMaxHelper.h"
 #include "DatasmithMaxWriter.h"
 #include "DatasmithMaxClassIDs.h"
 
 #include "DatasmithMaxLogger.h"
-#include "DatasmithMaxSceneParser.h"
+#include "DatasmithMaxSceneHelper.h"
 #include "DatasmithMaxCameraExporter.h"
 #include "DatasmithMaxAttributes.h"
 #include "DatasmithMaxProgressManager.h"
@@ -625,7 +623,11 @@ public:
 
 	FString GetConfigPath()
 	{
+#if MAX_PRODUCT_YEAR_NUMBER >= 2025
+		FString PlugCfgPath = (TCHAR*)GetCOREInterface()->GetDir(APP_PLUGCFG_DIR).data();
+#else
 		FString PlugCfgPath = GetCOREInterface()->GetDir(APP_PLUGCFG_DIR);
+#endif
 		return FPaths::Combine(PlugCfgPath, TEXT("UnrealDatasmithMax.ini"));
 	}
 
@@ -2247,7 +2249,7 @@ public:
 
 		// Check if node changed its being assigned as collision
 		{
-			if (FDatasmithMaxSceneParser::HasCollisionName(NodeTracker.Node))
+			if (FDatasmithMaxSceneHelper::HasCollisionName(NodeTracker.Node))
 			{
 				CollisionNodes.Add(&NodeTracker); // Always view node with 'collision' name as a collision node(i.e. no render)
 
@@ -2370,7 +2372,7 @@ public:
 		{
 			SCENE_UPDATE_STAT_INC(UpdateNode, LightsEncontered);
 
-			if (EMaxLightClass::Unknown == FDatasmithMaxSceneParser::GetLightClass(NodeTracker.Node))
+			if (EMaxLightClass::Unknown == FDatasmithMaxSceneHelper::GetLightClass(NodeTracker.Node))
 			{
 				SCENE_UPDATE_STAT_INC(UpdateNode, LightsSkippedAsUnknown);
 				break;
@@ -2400,7 +2402,7 @@ public:
 			}
 			else
 			{
-				if (FDatasmithMaxSceneParser::HasCollisionName(NodeTracker.Node))
+				if (FDatasmithMaxSceneHelper::HasCollisionName(NodeTracker.Node))
 				{
 					ConvertNamedCollisionNode(NodeTracker);
 				}
@@ -2533,6 +2535,7 @@ public:
 
 
 		// Update geometry using selected Node
+		if (SelectedNodeTracker)
 		{
 			FNodeTracker& NodeTracker = *SelectedNodeTracker;
 
@@ -3654,8 +3657,14 @@ public:
 		LastInputInfo.dwTime = 0;
 		if (GetLastInputInfo(&LastInputInfo))
 		{
+
+// Disable "Consider using 'GetTickCount64' instead of 'GetTickCount'" warning - we don't GetLastInputInfo returns results of GetTickCount
+// and we won't miss much a single update when 32-bit timer wraparound would happen
+#pragma warning( push )
+#pragma warning( disable: 28159 )
 			DWORD CurrentTime = GetTickCount();
 			int32 IdlePeriod = GetTickCount() - LastInputInfo.dwTime;
+#pragma warning( pop )
 			LogDebug(FString::Printf(TEXT("CurrentTime: %ld, Idle time: %ld, IdlePeriod: %ld"), CurrentTime, LastInputInfo.dwTime, IdlePeriod));
 
 			if (IdlePeriod > FMath::RoundToInt(AutoSyncIdleDelaySeconds*1000))

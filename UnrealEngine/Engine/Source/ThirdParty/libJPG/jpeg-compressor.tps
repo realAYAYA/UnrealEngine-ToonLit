@@ -5,7 +5,7 @@
   <Date>2016-06-10T14:07:13.8351319-04:00</Date>
   <Function>Allows JPEG compression and decompression.</Function>
   <Justification>Compressing video frames at runtime for reduced memory usage. Decompression to access the data afterwards.</Justification>
-  <Eula>https://code.google.com/archive/p/jpeg-compressor/</Eula>
+  <Eula>https://github.com/richgel999/jpeg-compressor/blob/master/README.md</Eula>
   <RedistributeTo>
     <EndUserGroup>Licensees</EndUserGroup>
     <EndUserGroup>Git</EndUserGroup>

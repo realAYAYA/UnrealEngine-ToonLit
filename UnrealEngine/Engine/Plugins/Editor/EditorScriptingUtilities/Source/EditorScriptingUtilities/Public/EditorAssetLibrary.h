@@ -339,6 +339,19 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Editor Scripting | Asset")
 	static TMap<FName, FString> GetTagValues(const FString& AssetPath);
 
+	/**
+	 * Historically, all project assets were stored in the logical "/Game/" directory
+	 * when using plugins or UEFN projects, we want to ease asset reuse, and so the ambiguous
+	 * "/Game/" directory is untenable. This function will return the useful project name.
+	 * 
+	 * @return	The current project name in UEFN, otherwise /Game/ for .uprojects
+	 */
+	UFUNCTION(BlueprintPure, Category = "Editor Scripting | Asset")
+	static FString GetProjectRootAssetDirectory();
+
+	/** These are intentionally not exposed to scripts, used by editor state machines: */
+	static void OverrideProjectRootAssetDirectory(FStringView InProjectRootAssetDirectory);
+	static void ResetProjectRootAssetDirectory();
 public:
 	/**
 	 * Get all tags/values of a loaded asset's metadata.

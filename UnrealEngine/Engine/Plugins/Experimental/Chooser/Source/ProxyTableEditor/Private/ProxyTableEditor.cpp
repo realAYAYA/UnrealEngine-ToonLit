@@ -71,7 +71,7 @@ void FProxyRowDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder)
 	UProxyRowDetails* Row = Cast<UProxyRowDetails>(Objects[0]);
 	UProxyTable* ProxyTable = Row->ProxyTable;
 	
-	if (ProxyTable->Entries.Num() > Row->Row)
+	if (ProxyTable->Entries.IsValidIndex(Row->Row))
 	{
 		IDetailCategoryBuilder& PropertiesCategory = DetailBuilder.EditCategory("Row Properties");
 
@@ -422,6 +422,9 @@ public:
 
 	FReply OnDragDetected(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override
 	{
+		// clear row selection so that delete key can't cause the selected row to be deleted
+		ProxyEditor->ClearSelectedRows();
+		
 		TSharedRef<FProxyRowDragDropOp> DragDropOp = FProxyRowDragDropOp::New(Row);
 		return FReply::Handled().BeginDragDrop(DragDropOp);
 	}
@@ -631,12 +634,14 @@ public:
 				if (Row->ProxyTable == Operation->Row->ProxyTable)
 				{
 					// move row within a proxy table
-					Editor->MoveRow(Operation->Row->RowIndex, InsertIndex);
+					int NewIndex = Editor->MoveRow(Operation->Row->RowIndex, InsertIndex);
+					Editor->SelectRow(NewIndex);
 					return FReply::Handled();		
 				}
 				else
 				{
 					Editor->InsertEntry(Operation->Row->ProxyTable->Entries[Operation->Row->RowIndex], InsertIndex);
+					Editor->SelectRow(InsertIndex);
 					return FReply::Handled();
 				}
 			}
@@ -717,6 +722,23 @@ void FProxyTableEditor::DeleteSelectedRows()
 	
 	UpdateTableRows();
 }
+	
+	
+void FProxyTableEditor::ClearSelectedRows() 
+{
+	SelectedRows.SetNum(0);
+	TableView->ClearSelection();
+	SelectRootProperties();
+}
+	
+void FProxyTableEditor::SelectRow(TSharedPtr<FProxyTableRow> Row)
+{
+	if (!TableView->IsItemSelected(Row))
+	{
+		TableView->ClearSelection();
+		TableView->SetItemSelection(Row, true, ESelectInfo::OnMouseClick);
+	}
+}
 
 void FProxyTableEditor::InsertEntry(FProxyEntry& Entry, int RowIndex)
 {
@@ -734,7 +756,7 @@ void FProxyTableEditor::InsertEntry(FProxyEntry& Entry, int RowIndex)
 	UpdateTableRows();
 }
 
-void FProxyTableEditor::MoveRow(int SourceRowIndex, int TargetRowIndex)
+int FProxyTableEditor::MoveRow(int SourceRowIndex, int TargetRowIndex)
 {
 	UProxyTable* Table = Cast<UProxyTable>(EditingObjects[0]);
 	TargetRowIndex = FMath::Min(TargetRowIndex,Table->Entries.Num());
@@ -752,6 +774,7 @@ void FProxyTableEditor::MoveRow(int SourceRowIndex, int TargetRowIndex)
 	Table->Entries.Insert(Entry, TargetRowIndex);
 
 	UpdateTableRows();
+	return TargetRowIndex;
 }
 
 void FProxyTableEditor::TreeViewExpansionChanged(TSharedPtr<FProxyTableEditor::FProxyTableRow> InItem, bool bShouldBeExpanded)
@@ -1033,14 +1056,7 @@ TSharedRef<SWidget> CreateProxyTablePropertyWidget(bool bReadOnly, UObject* Tran
 
 	return SNew(UE::ChooserEditor::SPropertyAccessChainWidget).ContextClassOwner(HasContextClass).AllowFunctions(false).BindingColor("ClassPinTypeColor").TypeFilter("UProxyTable*")
 	.PropertyBindingValue(&ContextProperty->Binding)
-	.OnAddBinding_Lambda(
-		[ContextProperty, TransactionObject, ValueChanged](FName InPropertyName, const TArray<FBindingChainElement>& InBindingChain)
-		{
-			const FScopedTransaction Transaction(NSLOCTEXT("ContextPropertyWidget", "Change Property Binding", "Change Property Binding"));
-			TransactionObject->Modify(true);
-			ContextProperty->SetBinding(InBindingChain);
-			ValueChanged.ExecuteIfBound();
-		});
+	.OnValueChanged(ValueChanged);
 }
 
 TSharedRef<SWidget> CreateLookupProxyWidget(bool bReadOnly, UObject* TransactionObject, void* Value, UClass* ResultBaseClass, ChooserEditor::FChooserWidgetValueChanged ValueChanged)

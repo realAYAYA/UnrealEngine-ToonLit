@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "EditorUndoClient.h"
 #include "GraphEditorDragDropAction.h"
 #include "SGraphActionMenu.h"
 #include "Widgets/Input/SButton.h"
@@ -16,7 +17,7 @@ struct FGraphActionListBuilderBase;
 /**
  * Contents of the "Members" tab in the graph asset editor.
  */
-class SMovieGraphMembersTabContent : public SCompoundWidget
+class SMovieGraphMembersTabContent : public SCompoundWidget, public FSelfRegisteringEditorUndoClient
 {
 public:
 	DECLARE_DELEGATE_TwoParams(FOnActionSelected, const TArray<TSharedPtr<FEdGraphSchemaAction>>&, ESelectInfo::Type);
@@ -50,10 +51,15 @@ public:
 	void ClearSelection() const;
 
 	/** Deletes the member(s) which are currently selected from the graph and the UI. */
-	void DeleteSelectedMembers() const;
+	void DeleteSelectedMembers();
 
 	/** Determines if all selected member(s) can be deleted. */
 	bool CanDeleteSelectedMembers() const;
+
+	//~ Begin FSelfRegisteringEditorUndoClient Interface
+	virtual void PostUndo(bool bSuccess) override;
+	virtual void PostRedo(bool bSuccess) override;
+	//~ End FSelfRegisteringEditorUndoClient Interface
 
 private:
 	/** The section identifier in the action widget. */
@@ -86,7 +92,7 @@ private:
 	FReply OnAddButtonClickedOnSection(const int32 InSectionID);
 
 	/** Refresh/regenerate the action menu when the given member is updated. */
-	void RefreshMemberActions(class UMovieGraphMember* UpdatedMember = nullptr) const;
+	void RefreshMemberActions(class UMovieGraphMember* UpdatedMember = nullptr);
 
 private:
 	/** The editor that this widget is associated with. */
@@ -100,6 +106,9 @@ private:
 	
 	/** Delegate to call when an action is selected */
 	FOnActionSelected OnActionSelected;
+
+	/** Handles to delegates handling member changes. */
+	TMap<TWeakObjectPtr<UMovieGraphMember>, FDelegateHandle> MemberChangedHandles;
 };
 
 /* Drag-and-drop action which handles variable members. */

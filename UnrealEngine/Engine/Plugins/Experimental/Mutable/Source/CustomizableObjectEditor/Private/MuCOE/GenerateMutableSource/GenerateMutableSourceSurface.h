@@ -6,6 +6,5 @@
 
 class UEdGraphPin;
 struct FMutableGraphGenerationContext;
-struct FMutableGraphSurfaceGenerationData;
 
-mu::NodeSurfacePtr GenerateMutableSourceSurface(const UEdGraphPin * Pin, FMutableGraphGenerationContext & GenerationContext, FMutableGraphSurfaceGenerationData& SurfaceData);
+mu::NodeSurfacePtr GenerateMutableSourceSurface(const UEdGraphPin * Pin, FMutableGraphGenerationContext & GenerationContext);

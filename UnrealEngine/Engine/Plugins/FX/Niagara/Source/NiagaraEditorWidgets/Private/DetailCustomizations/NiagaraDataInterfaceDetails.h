@@ -18,6 +18,7 @@ class FNiagaraDataInterfaceDetailsBase : public IDetailCustomization
 public:
 	~FNiagaraDataInterfaceDetailsBase();
 	virtual void CustomizeDetails(IDetailLayoutBuilder& DetailBuilder) override;
+	virtual void CustomizeDetails(const TSharedPtr<IDetailLayoutBuilder>& DetailBuilder) override;
 	static TSharedRef<IDetailCustomization> MakeInstance();
 
 private:
@@ -27,6 +28,6 @@ private:
 	TWeakObjectPtr<UNiagaraDataInterface> DataInterface;
 	TSharedPtr<FNiagaraDataInterfaceCustomNodeBuilder> CustomBuilder;
 	IDetailCategoryBuilder* ErrorsCategoryBuilder;
-	IDetailLayoutBuilder* Builder;
+	TWeakPtr<IDetailLayoutBuilder> Builder;
 	TWeakPtr<IPropertyUtilities> PropertyUtilitiesWeak;
 };

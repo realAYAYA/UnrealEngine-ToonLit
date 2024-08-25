@@ -88,7 +88,7 @@ private:
 class FSlateFontTextureOpenGL : public FSlateFontAtlas
 {
 public:
-	FSlateFontTextureOpenGL(uint32 Width, uint32 Height, const bool InIsGrayscale);
+	FSlateFontTextureOpenGL(uint32 Width, uint32 Height, ESlateFontAtlasContentType InContentType);
 	~FSlateFontTextureOpenGL();
 
 	void CreateFontTexture();

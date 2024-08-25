@@ -2,13 +2,9 @@
 
 #pragma once
 
+#include "UObject/ObjectMacros.h"
 #include "Math/BoxSphereBounds.h"
 #include "UObject/UObjectGlobals.h"
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "Engine/EngineTypes.h"
-#include "Engine/OverlapInfo.h"
-#include "Engine/ScopedMovementUpdate.h"
-#endif
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
 #include "Engine/HitResult.h"
 #endif
@@ -59,26 +55,25 @@ enum ERelativeTransformSpace : int
 enum EMoveComponentFlags
 {
 	/** Default options */
-	MOVECOMP_NoFlags						= 0x0000,	
+	MOVECOMP_NoFlags							= 0x0000,	
 	/** Ignore collisions with things the Actor is based on */
-	MOVECOMP_IgnoreBases					= 0x0001,	
+	MOVECOMP_IgnoreBases						= 0x0001,	
 	/** When moving this component, do not move the physics representation. Used internally to avoid looping updates when syncing with physics. */
-	MOVECOMP_SkipPhysicsMove				= 0x0002,	
+	MOVECOMP_SkipPhysicsMove					= 0x0002,	
 	/** Never ignore initial blocking overlaps during movement, which are usually ignored when moving out of an object. MOVECOMP_IgnoreBases is still respected. */
-	MOVECOMP_NeverIgnoreBlockingOverlaps	= 0x0004,	
+	MOVECOMP_NeverIgnoreBlockingOverlaps		= 0x0004,	
 	/** avoid dispatching blocking hit events when the hit started in penetration (and is not ignored, see MOVECOMP_NeverIgnoreBlockingOverlaps). */
-	MOVECOMP_DisableBlockingOverlapDispatch	= 0x0008,	
+	MOVECOMP_DisableBlockingOverlapDispatch		= 0x0008,	
+	/** Compare the root actor of a blocking hit with the ignore UPrimitiveComponent::MoveIgnoreActors array */
+	MOVECOMP_CheckBlockingRootActorInIgnoreList	= 0x0016,	
 };
+// Declare bitwise operators to allow EMoveComponentFlags to be combined but still retain type safety
+ENUM_CLASS_FLAGS(EMoveComponentFlags);
 
 /** Comparison tolerance for checking if two FQuats are the same when moving SceneComponents. */
 #define SCENECOMPONENT_QUAT_TOLERANCE		(1.e-8f) 
 /** Comparison tolerance for checking if two FRotators are the same when moving SceneComponents. */
 #define SCENECOMPONENT_ROTATOR_TOLERANCE	(1.e-4f) 
-
-FORCEINLINE EMoveComponentFlags operator|(EMoveComponentFlags Arg1,EMoveComponentFlags Arg2)	{ return EMoveComponentFlags(uint32(Arg1) | uint32(Arg2)); }
-FORCEINLINE EMoveComponentFlags operator&(EMoveComponentFlags Arg1,EMoveComponentFlags Arg2)	{ return EMoveComponentFlags(uint32(Arg1) & uint32(Arg2)); }
-FORCEINLINE void operator&=(EMoveComponentFlags& Dest,EMoveComponentFlags Arg)					{ Dest = EMoveComponentFlags(Dest & Arg); }
-FORCEINLINE void operator|=(EMoveComponentFlags& Dest,EMoveComponentFlags Arg)					{ Dest = EMoveComponentFlags(Dest | Arg); }
 
 DECLARE_DYNAMIC_MULTICAST_SPARSE_DELEGATE_OneParam(FPhysicsVolumeChanged, USceneComponent, PhysicsVolumeChangedDelegate, class APhysicsVolume*, NewVolume);
 DECLARE_DYNAMIC_MULTICAST_SPARSE_DELEGATE_TwoParams(FIsRootComponentChanged, USceneComponent, IsRootComponentChanged, USceneComponent*, UpdatedComponent, bool, bIsRootComponent);
@@ -117,6 +112,8 @@ private:
 	UPROPERTY(ReplicatedUsing = OnRep_AttachSocketName)
 	FName AttachSocketName;
 
+	FName NetOldAttachSocketName;
+
 	/** List of child SceneComponents that are attached to us. */
 	UPROPERTY(ReplicatedUsing = OnRep_AttachChildren, Transient)
 	TArray<TObjectPtr<USceneComponent>> AttachChildren;
@@ -125,7 +122,6 @@ private:
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<USceneComponent>> ClientAttachedChildren;
 
-	FName NetOldAttachSocketName;
 	USceneComponent* NetOldAttachParent;
 
 public:
@@ -138,7 +134,7 @@ private:
 	FVector RelativeLocation;
 
 	/** Rotation of the component relative to its parent */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, ReplicatedUsing=OnRep_Transform, Category=Transform, meta=(AllowPrivateAccess="true", UIMin = "0.0", UIMax = "359.999"))
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, ReplicatedUsing=OnRep_Transform, Category=Transform, meta=(AllowPrivateAccess="true", LinearDeltaSensitivity = "1", Delta = "1.0"))
 	FRotator RelativeRotation;
 
 	/**
@@ -315,23 +311,6 @@ public:
 
 	/** Returns the current scoped movement update, or NULL if there is none. @see FScopedMovementUpdate */
 	ENGINE_API FScopedMovementUpdate* GetCurrentScopedMovement() const;
-
-#if WITH_EDITORONLY_DATA
-	/**
-	 * @todo_ow: This is needed because of order of registration of Actors
-	 * 
-	 * In World Partition Levels loaded actors are Registered in an atomic fashion meaning we register all their
-	 * components and then call RerunConstructionScripts before loading the next actor. This means that a Parent can be Reconstructed and trash its components
-	 * without notifying its attached actors.
-	 * 
-	 * In Non World Partition Levels when adding actors to world we sort all actors based on hierarchy, register all actors and then RerunConstructionScripts on all actors
-	 * which allows handling of Attachments as attached actors are already registered when the parent gets reconstructed and so attachment is preserved.
-	 * 
-	 * ReplacementSceneComponent is there as a temp solution to allow finding of the replacement component of a trashed scene component. 
-	 */
-	UPROPERTY(Transient)
-	TObjectPtr<USceneComponent> ReplacementSceneComponent;
-#endif
 
 private:
 	/** Stack of current movement scopes. */
@@ -724,7 +703,7 @@ public:
 	* @param  SocketName			Optional socket to attach to on the parent.
 	* @return True if attachment is successful (or already attached to requested parent/socket), false if attachment is rejected and there is no change in AttachParent.
 	*/
-	ENGINE_API bool AttachToComponent(USceneComponent* InParent, const FAttachmentTransformRules& AttachmentRules, FName InSocketName = NAME_None );
+	ENGINE_API virtual bool AttachToComponent(USceneComponent* InParent, const FAttachmentTransformRules& AttachmentRules, FName InSocketName = NAME_None );
 
 	/**
 	* Attach this component to another scene component, optionally at a named socket. It is valid to call this on components whether or not they have been Registered.
@@ -733,7 +712,7 @@ public:
 	* @param  LocationRule				How to handle translation when attaching.
 	* @param  RotationRule				How to handle rotation when attaching.
 	* @param  ScaleRule					How to handle scale when attaching.
-	* @param  bWeldSimulatedBodies		Whether to weld together simulated physics bodies.
+	* @param  bWeldSimulatedBodies		Whether to weld together simulated physics bodies. This transfers the shapes in the welded object into the parent (if simulated), which can result in permanent changes that persist even after subsequently detaching.
 	* @return True if attachment is successful (or already attached to requested parent/socket), false if attachment is rejected and there is no change in AttachParent.
 	*/
 	UFUNCTION(BlueprintCallable, Category = "Transformation", meta = (DisplayName = "Attach Component To Component", ScriptName = "AttachToComponent", bWeldSimulatedBodies=true))
@@ -745,7 +724,7 @@ public:
 	ENGINE_API virtual void DetachFromParent(bool bMaintainWorldPosition = false, bool bCallModify = true);
 
 	/** 
-	 * Detach this component from whatever it is attached to. Automatically unwelds components that are welded together (See WeldTo)
+	 * Detach this component from whatever it is attached to. Automatically unwelds components that are welded together (see AttachToComponent), though note that some effects of welding may not be undone.
 	 * @param LocationRule				How to handle translations when detaching.
 	 * @param RotationRule				How to handle rotation when detaching.
 	 * @param ScaleRule					How to handle scales when detaching.
@@ -755,7 +734,7 @@ public:
 	ENGINE_API void K2_DetachFromComponent(EDetachmentRule LocationRule = EDetachmentRule::KeepRelative, EDetachmentRule RotationRule = EDetachmentRule::KeepRelative, EDetachmentRule ScaleRule = EDetachmentRule::KeepRelative, bool bCallModify = true);
 
 	/** 
-	 * Detach this component from whatever it is attached to. Automatically unwelds components that are welded together (See WeldTo)
+	 * Detach this component from whatever it is attached to. Automatically unwelds components that are welded together (See AttachToComponent), though note that some effects of welding may not be undone.
 	 * @param DetachmentRules			How to handle transforms & modification when detaching.
 	 */
 	ENGINE_API virtual void DetachFromComponent(const FDetachmentTransformRules& DetachmentRules);
@@ -939,11 +918,10 @@ public:
 	ENGINE_API virtual void Serialize(FArchive& Ar) override;
 #if WITH_EDITORONLY_DATA
 	static ENGINE_API void AddReferencedObjects(UObject* InThis, FReferenceCollector& Collector);
-
-	ENGINE_API virtual void PostLoad() override;
 #endif
 
 #if WITH_EDITOR
+	ENGINE_API virtual EDataValidationResult IsDataValid(FDataValidationContext& Context) const override;
 	ENGINE_API virtual bool NeedsLoadForTargetPlatform(const ITargetPlatform* TargetPlatform) const;
 	ENGINE_API virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 	ENGINE_API virtual void PostEditChangeChainProperty(FPropertyChangedChainEvent& PropertyChangedEvent) override;
@@ -1358,6 +1336,13 @@ private:
 	ENGINE_API void ModifiedAttachChildren();
 
 public:
+
+	/**
+	* Called when client receive replication data, before replication is performed.
+	* Can be overridden in derived components to make use of replication data locally.
+	* Note that replication still applies when overriding this, it's not intended to replace replication.
+	*/
+	ENGINE_API virtual void OnReceiveReplicatedState(const FVector X, const FQuat R, const FVector V, const FVector W) {};
 
 	/**
 	 * Gets the property name for RelativeLocation.

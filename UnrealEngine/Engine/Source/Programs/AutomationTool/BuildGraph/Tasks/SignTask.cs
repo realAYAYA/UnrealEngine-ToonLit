@@ -1,15 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using AutomationTool;
-using EpicGames.BuildGraph;
-using System;
+using EpicGames.Core;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Threading.Tasks;
 using System.Xml;
-using EpicGames.Core;
-using UnrealBuildTool;
 using UnrealBuildBase;
 
 namespace AutomationTool.Tasks
@@ -26,10 +21,22 @@ namespace AutomationTool.Tasks
 		public string Files;
 
 		/// <summary>
+		/// Optional description for the signed content
+		/// </summary>
+		[TaskParameter(Optional = true)]
+		public string Description;
+
+		/// <summary>
 		/// Tag to be applied to build products of this task.
 		/// </summary>
 		[TaskParameter(Optional = true, ValidationType = TaskParameterValidationType.TagList)]
 		public string Tag;
+
+		/// <summary>
+		/// If true, the calls to the signing tool will be performed in parallel.
+		/// </summary>
+		[TaskParameter(Optional = true)]
+		public bool Parallel;
 	}
 
 	/// <summary>
@@ -64,7 +71,7 @@ namespace AutomationTool.Tasks
 			FileReference[] Files = ResolveFilespec(Unreal.RootDirectory, Parameters.Files, TagNameToFileSet).OrderBy(x => x.FullName).ToArray();
 
 			// Sign all the files
-			CodeSign.SignMultipleIfEXEOrDLL(Job.OwnerCommand, (Files.Select(x => x.FullName).ToList()));
+			CodeSign.SignMultipleIfEXEOrDLL(Job.OwnerCommand, (Files.Select(x => x.FullName).ToList()), Description: Parameters.Description, Parameters.Parallel);
 
 			// Apply the optional tag to the build products
 			foreach(string TagName in FindTagNamesFromList(Parameters.Tag))

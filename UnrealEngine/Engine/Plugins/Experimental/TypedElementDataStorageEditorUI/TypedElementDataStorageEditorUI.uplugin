@@ -1,0 +1,33 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "0.1",
+	"FriendlyName": "Typed Element Data Storage Outliner",
+	"Description": "Experimental Scene Outliner, based on the Typed Element Data Storage UI.",
+	"Category": "Editor",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "http://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"CanContainContent": false,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": true,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "TedsOutliner",
+			"Type": "Editor"
+		},
+		{
+			"Name": "TedsPropertyEditor",
+			"Type": "Editor"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "MassGameplay",
+			"Enabled": true
+		}
+	]
+}

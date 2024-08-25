@@ -3,7 +3,6 @@
 #pragma once
 
 #if PLATFORM_WINDOWS
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include <windows.h>
 

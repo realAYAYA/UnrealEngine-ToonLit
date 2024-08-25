@@ -1,33 +1,46 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "NearestNeighborEditorModelActor.h"
-#include "NearestNeighborModelInstance.h"
+
 #include "GeometryCacheComponent.h"
+#include "MLDeformerComponent.h"
+#include "NearestNeighborModelInstance.h"
 
 namespace UE::NearestNeighborModel
 {
-	using namespace UE::MLDeformer;
-
 	FNearestNeighborEditorModelActor::FNearestNeighborEditorModelActor(const FConstructSettings& Settings)
 		: FMLDeformerGeomCacheActor(Settings)
 	{
 	}
 
-	void FNearestNeighborEditorModelActor::InitNearestNeighborActor(const int32 InPartId, const UMLDeformerComponent* InComponent)
+	FNearestNeighborEditorModelActor::~FNearestNeighborEditorModelActor() = default;
+
+	void FNearestNeighborEditorModelActor::SetGeometryCache(UGeometryCache* InGeometryCache) const
 	{
-		PartId = InPartId;
-		MLDeformerComponent = InComponent;
+		if (GeomCacheComponent)
+		{
+			GeomCacheComponent->SetGeometryCache(InGeometryCache);
+		}
 	}
 
-	void FNearestNeighborEditorModelActor::TickNearestNeighborActor()
+	void FNearestNeighborEditorModelActor::SetTrackedComponent(const UMLDeformerComponent* InComponent, int32 InSectionIndex)
 	{
-		if (GeomCacheComponent && GeomCacheComponent->GetGeometryCache() && MLDeformerComponent)
+		TrackedComponent = InComponent;
+		SectionIndex = InSectionIndex;
+	}
+
+	void FNearestNeighborEditorModelActor::Tick() const
+	{
+		if (GeomCacheComponent && GeomCacheComponent->GetGeometryCache() && TrackedComponent.IsValid())
 		{
-			const UNearestNeighborModelInstance* ModelInstance = static_cast<UNearestNeighborModelInstance*>(MLDeformerComponent->GetModelInstance());
-			if (ModelInstance && PartId < ModelInstance->NeighborIdNum())
+			if (const UNearestNeighborModelInstance* ModelInstance = static_cast<UNearestNeighborModelInstance*>(TrackedComponent->GetModelInstance()))
 			{
-				GeomCacheComponent->SetManualTick(true);
-				GeomCacheComponent->TickAtThisTime(GeomCacheComponent->GetTimeAtFrame(ModelInstance->NearestNeighborId(PartId)), false, false, false);
+				const TArray<uint32> NearestNeighborIds = ModelInstance->GetNearestNeighborIds();
+				if (NearestNeighborIds.IsValidIndex(SectionIndex))
+				{
+					GeomCacheComponent->SetManualTick(true);
+					GeomCacheComponent->TickAtThisTime(GeomCacheComponent->GetTimeAtFrame(NearestNeighborIds[SectionIndex]), false, false, false);
+				}
 			}
 		}
 	}

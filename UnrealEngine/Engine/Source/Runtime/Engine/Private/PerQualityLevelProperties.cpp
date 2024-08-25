@@ -53,7 +53,6 @@ namespace QualityLevelProperty
 		{
 			return NAME_None;
 		}
-		return QualityLevelNames[QL];
 	}
 
 	int32 FNameToQualityLevel(FName QL)
@@ -292,7 +291,7 @@ template<typename StructType, typename ValueType, EName _BasePropertyName>
 void FPerQualityLevelProperty<StructType, ValueType, _BasePropertyName>::StripQualtiyLevelForCooking(const TCHAR* InPlatformName)
 {
 	StructType* This = StaticCast<StructType*>(this);
-	if (This->PerQuality.Num() > 0)
+	if (This->PerQuality.Num() > 0 && !CVarName.IsEmpty())
 	{
 		FSupportedQualityLevelArray CookQualityLevelInfo = This->GetSupportedQualityLevels(InPlatformName);
 		CookQualityLevelInfo.Sort([&](const int32& A, const int32& B) { return (A > B); });

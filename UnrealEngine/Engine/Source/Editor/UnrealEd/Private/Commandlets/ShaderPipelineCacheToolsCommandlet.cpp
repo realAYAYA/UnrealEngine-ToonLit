@@ -45,7 +45,6 @@
 #include "ShaderCodeLibrary.h"
 #include "ShaderPipelineCache.h"
 #include "Stats/Stats2.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/Function.h"
 #include "Templates/Tuple.h"
 #include "Templates/UnrealTemplate.h"

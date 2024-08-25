@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "SCurveEditorEventChannelView.h"
+#include "Channels/SCurveEditorEventChannelView.h"
 
 #include "Containers/SortedMap.h"
 #include "CurveEditor.h"
@@ -23,7 +23,6 @@
 #include "Styling/AppStyle.h"
 #include "Styling/CoreStyle.h"
 #include "Styling/ISlateStyle.h"
-#include "Templates/ChooseClass.h"
 
 class FPaintArgs;
 class FSlateRect;

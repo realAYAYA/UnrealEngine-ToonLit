@@ -176,13 +176,21 @@ struct MOTIONWARPING_API FMotionWarpingTarget
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Defaults")
 	bool bFollowComponent;
 
+	/** Optional static location offset. Only relevant when the warp target is created from a component */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Defaults")
+	FVector LocationOffset = FVector::ZeroVector;
+
+	/** Optional static rotation offset. Only relevant when the warp target is created from a component */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Defaults")
+	FRotator RotationOffset = FRotator::ZeroRotator;
+
 	FMotionWarpingTarget()
 		: Name(NAME_None), Location(FVector::ZeroVector), Rotation(FRotator::ZeroRotator), Component(nullptr), BoneName(NAME_None), bFollowComponent(false) {}
 
 	FMotionWarpingTarget(const FName& InName, const FTransform& InTransform)
 		: Name(InName), Location(InTransform.GetLocation()), Rotation(InTransform.Rotator()), Component(nullptr), BoneName(NAME_None), bFollowComponent(false) {}
 
-	FMotionWarpingTarget(const FName& InName, const USceneComponent* InComp, FName InBoneName, bool bInbFollowComponent);
+	FMotionWarpingTarget(const FName& InName, const USceneComponent* InComp, FName InBoneName, bool bInbFollowComponent, const FVector& InLocOffset = FVector::ZeroVector, const FRotator& InRotOffset = FRotator::ZeroRotator);
 
 	FTransform GetTargetTrasform() const;
 
@@ -192,12 +200,14 @@ struct MOTIONWARPING_API FMotionWarpingTarget
 
 	FORCEINLINE bool operator==(const FMotionWarpingTarget& Other) const
 	{
-		return Other.Name == Name && Other.Location.Equals(Location) && Other.Rotation.Equals(Rotation) && Other.Component == Component && Other.BoneName == BoneName && Other.bFollowComponent == bFollowComponent;
+		return Other.Name == Name && Other.Location.Equals(Location) && Other.Rotation.Equals(Rotation) && Other.Component == Component && Other.BoneName == BoneName && Other.bFollowComponent == bFollowComponent && 
+			Other.LocationOffset.Equals(LocationOffset) && Other.RotationOffset.Equals(RotationOffset);
 	}
 
 	FORCEINLINE bool operator!=(const FMotionWarpingTarget& Other) const
 	{
-		return Other.Name != Name || !Other.Location.Equals(Location) || !Other.Rotation.Equals(Rotation) || Other.Component != Component || Other.BoneName != BoneName || Other.bFollowComponent != bFollowComponent;
+		return Other.Name != Name || !Other.Location.Equals(Location) || !Other.Rotation.Equals(Rotation) || Other.Component != Component || Other.BoneName != BoneName || Other.bFollowComponent != bFollowComponent || 
+			!Other.LocationOffset.Equals(LocationOffset) || !Other.RotationOffset.Equals(RotationOffset);
 	}
 
 	static FTransform GetTargetTransformFromComponent(const USceneComponent* Comp, const FName& BoneName);

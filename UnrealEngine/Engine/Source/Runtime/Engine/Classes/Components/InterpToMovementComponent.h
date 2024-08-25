@@ -2,11 +2,15 @@
 
 #pragma once
 
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "CoreMinimal.h"
 #include "Engine/HitResult.h"
+#endif // UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "GameFramework/MovementComponent.h"
 #include "UObject/ObjectMacros.h"
 #include "InterpToMovementComponent.generated.h"
+
+struct FHitResult;
 
 /**
  * Controls the movement behaviour
@@ -173,6 +177,12 @@ class UInterpToMovementComponent : public UMovementComponent
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, meta=(ClampMin="0.0166", ClampMax="0.50", UIMin="0.0166", UIMax="0.50"), Category=Simulation)
 	float MaxSimulationTimeStep;
+
+	/**
+	 * Change the speed of movement.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Simulation)
+	float SpeedMultiplier;
 
 	/**
 	 * Max number of iterations used for each discrete simulation step.

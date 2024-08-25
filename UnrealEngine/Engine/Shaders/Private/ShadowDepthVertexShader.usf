@@ -36,6 +36,10 @@
 #include "/Engine/Generated/VertexFactory.ush"
 #include "ShadowDepthCommon.ush"
 
+// 
+#ifndef VF_USE_VSM_CONSTANT_BIAS
+#define VF_USE_VSM_CONSTANT_BIAS								0
+#endif
 
 #if VIRTUAL_SM_ENABLED
 #include "Nanite/NaniteDataDecode.ush"
@@ -140,7 +144,7 @@ void TransformToVirtualSmPage(inout float4 PointClip, inout float4 ClipPlanesInO
 	// Load nanite view and perform transform to SM space.
 	FNaniteView NaniteView = UnpackNaniteView(PassStruct.PackedNaniteViews[PageInfo.ViewId]);
 
-	PointTranslatedWorld += LWCToFloat( LWCSubtract( NaniteView.PreViewTranslation, ResolvedView.PreViewTranslation ) );
+	PointTranslatedWorld += DFFastSubtractDemote( NaniteView.PreViewTranslation, ResolvedView.PreViewTranslation );
 	PointClip = mul( float4( PointTranslatedWorld, 1 ), NaniteView.TranslatedWorldToClip );
 
 	// Clamp the vertex to the near plane if it is in front of the near plane
@@ -152,6 +156,13 @@ void TransformToVirtualSmPage(inout float4 PointClip, inout float4 ClipPlanesInO
 	}
 
 	ScaleBiasClipToPhysicalSmPage(NaniteView, PointClip, ClipPlanesInOut, PageInfo);
+
+#if VF_USE_VSM_CONSTANT_BIAS
+	{
+		const float ConstantDepthBias = VertexFactoryGetNonNaniteVirtualShadowMapConstantDepthBias();
+		PointClip.z = clamp(PointClip.z + ConstantDepthBias * NaniteView.ViewToClip[2][2], -PointClip.w, PointClip.w);
+	}
+#endif
 }
 
 #endif // VIRTUAL_SM_ENABLED
@@ -163,11 +174,7 @@ uint LayerId;
 
 void Main(
 	FVertexFactoryInput Input,
-#if ONEPASS_POINTLIGHT_SHADOW
 	out FShadowDepthVSToPS OutParameters,
-#else
-	out FShadowDepthVSToPS OutParameters,
-#endif
 #if VIRTUAL_SM_ENABLED
 	out nointerpolation uint PackedPageInfo : TEXCOORD8,
 #endif
@@ -185,6 +192,9 @@ void Main(
 	
 	FVertexFactoryIntermediates VFIntermediates = GetVertexFactoryIntermediates(Input);
 	float4 WorldPos = VertexFactoryGetWorldPosition(Input, VFIntermediates);
+#if USE_WORLD_POSITION_EXCLUDING_SHADER_OFFSETS && !IS_NANITE_PASS
+	OutParameters.PixelPositionExcludingWPO = WorldPos.xyz;
+#endif
 	half3x3 TangentToLocal = VertexFactoryGetTangentToLocal(Input, VFIntermediates);
 
 	FMaterialVertexParameters VertexParameters = GetMaterialVertexParameters(Input, VFIntermediates, WorldPos.xyz, TangentToLocal);
@@ -278,6 +288,10 @@ void PositionOnlyMain(
 	ResolvedView = ResolveView();
 
 	float4 WorldPos = VertexFactoryGetWorldPosition(Input);
+
+#if USE_WORLD_POSITION_EXCLUDING_SHADER_OFFSETS && !IS_NANITE_PASS
+	OutParameters.PixelPositionExcludingWPO = WorldPos.xyz;
+#endif
 
 #if INTERPOLATE_VF_ATTRIBUTES
 	OutParameters.FactoryInterpolants = (FVertexFactoryInterpolantsVSToPS)0;

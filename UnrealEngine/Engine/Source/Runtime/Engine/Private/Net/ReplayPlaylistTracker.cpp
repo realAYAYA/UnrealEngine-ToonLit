@@ -35,7 +35,7 @@ FReplayPlaylistTracker::FReplayPlaylistTracker(const FReplayPlaylistParams& Para
 		if (Replay.Len() == 0)
 		{
 			UE_LOG(LogDemo, Log, TEXT("FReplayPlaylistTracker: Removed invalid replay %s"), *Params.Playlist[i]);
-			Playlist.RemoveAt(i, 1, false);
+			Playlist.RemoveAt(i, 1, EAllowShrinking::No);
 		}
 	}
 

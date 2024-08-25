@@ -495,7 +495,7 @@ void FTestArrayPropertyNetSerializerBase::FreeDynamicState(void* StateBuffer)
 
 void FTestArrayPropertyNetSerializerBase::Serialize(const void* StateBuffer, void* BitStreamBuffer, SIZE_T BitStreamBufferSize)
 {
-	Writer.InitBytes(BitStreamBuffer, BitStreamBufferSize);
+	Writer.InitBytes(BitStreamBuffer, IntCastChecked<uint32>(BitStreamBufferSize));
 
 	FNetSerializeArgs Args = {};
 	Args.Version = ArrayPropertyNetSerializer->Version;
@@ -508,7 +508,7 @@ void FTestArrayPropertyNetSerializerBase::Serialize(const void* StateBuffer, voi
 
 void FTestArrayPropertyNetSerializerBase::SerializeDelta(const void* StateBuffer, const void* PrevStateBuffer, void* BitStreamBuffer, SIZE_T BitStreamBufferSize)
 {
-	Writer.InitBytes(BitStreamBuffer, BitStreamBufferSize);
+	Writer.InitBytes(BitStreamBuffer, IntCastChecked<uint32>(BitStreamBufferSize));
 
 	FNetSerializeDeltaArgs Args = {};
 	Args.Version = ArrayPropertyNetSerializer->Version;
@@ -535,7 +535,7 @@ void FTestSimpleArrayPropertyNetSerializer::SetUp()
 
 	NonEmptyArrayInstance0.ArrayOfUint.SetNumZeroed(3);
 	NonEmptyArrayInstance1.ArrayOfUint.SetNumZeroed(3);
-	for (SIZE_T It = 0, EndIt = 3; It != EndIt; ++It)
+	for (int32 It = 0, EndIt = 3; It != EndIt; ++It)
 	{
 		NonEmptyArrayInstance0.ArrayOfUint[It] = It + 1;
 		NonEmptyArrayInstance1.ArrayOfUint[It] = It + 1;
@@ -618,7 +618,7 @@ void FTestSimpleArrayPropertyNetSerializer::TestDequantize()
 	UE_NET_ASSERT_EQ(NonEmptyArrayInstance0.ArrayOfUint.Num(), TargetStruct.ArrayOfUint.Num());
 	for (const auto& OriginalValue : MakeArrayView(NonEmptyArrayInstance0.ArrayOfUint))
 	{
-		const SIZE_T ElementIndex = &OriginalValue - NonEmptyArrayInstance0.ArrayOfUint.GetData();
+		const int32 ElementIndex = static_cast<int32>(&OriginalValue - NonEmptyArrayInstance0.ArrayOfUint.GetData());
 		const auto& DequantizedValue =  TargetStruct.ArrayOfUint[ElementIndex];
 		UE_NET_ASSERT_EQ(OriginalValue, DequantizedValue);
 	}
@@ -645,7 +645,7 @@ void FTestSimpleArrayPropertyNetSerializer::TestCloneDynamicState()
 		UE_NET_ASSERT_EQ(NonEmptyArrayInstance0.ArrayOfUint.Num(), TargetStruct.ArrayOfUint.Num());
 		for (const auto& OriginalValue : MakeArrayView(NonEmptyArrayInstance0.ArrayOfUint))
 		{
-			const SIZE_T ElementIndex = &OriginalValue - NonEmptyArrayInstance0.ArrayOfUint.GetData();
+			const int32 ElementIndex = static_cast<uint32>(&OriginalValue - NonEmptyArrayInstance0.ArrayOfUint.GetData());
 			const auto& DequantizedValue = TargetStruct.ArrayOfUint[ElementIndex];
 			UE_NET_ASSERT_EQ(OriginalValue, DequantizedValue);
 		}
@@ -723,7 +723,7 @@ void FTestSimpleArrayPropertyNetSerializer::TestDeserialize()
 		UE_NET_ASSERT_EQ(NonEmptyArrayInstance0.ArrayOfUint.Num(), TargetStruct.ArrayOfUint.Num());
 		for (const auto& OriginalValue : MakeArrayView(NonEmptyArrayInstance0.ArrayOfUint))
 		{
-			const SIZE_T ElementIndex = &OriginalValue - NonEmptyArrayInstance0.ArrayOfUint.GetData();
+			const int32 ElementIndex = static_cast<int32>(&OriginalValue - NonEmptyArrayInstance0.ArrayOfUint.GetData());
 			const auto& DequantizedValue = TargetStruct.ArrayOfUint[ElementIndex];
 			UE_NET_ASSERT_EQ(OriginalValue, DequantizedValue);
 		}
@@ -839,7 +839,7 @@ void FTestSimpleArrayPropertyNetSerializer::TestDeserializeDelta()
 			UE_NET_ASSERT_EQ(NonEmptyArrayInstance0.ArrayOfUint.Num(), TargetStruct.ArrayOfUint.Num());
 			for (const auto& OriginalValue : MakeArrayView(NonEmptyArrayInstance0.ArrayOfUint))
 			{
-				const SIZE_T ElementIndex = &OriginalValue - NonEmptyArrayInstance0.ArrayOfUint.GetData();
+				const int32 ElementIndex = static_cast<int32>(&OriginalValue - NonEmptyArrayInstance0.ArrayOfUint.GetData());
 				const auto& DequantizedValue = TargetStruct.ArrayOfUint[ElementIndex];
 				UE_NET_ASSERT_EQ(OriginalValue, DequantizedValue);
 			}
@@ -903,7 +903,7 @@ void FTestSimpleArrayPropertyNetSerializer::TestDeserializeDelta()
 			UE_NET_ASSERT_EQ(NonEmptyArrayInstance0.ArrayOfUint.Num(), TargetStruct.ArrayOfUint.Num());
 			for (const auto& OriginalValue : MakeArrayView(NonEmptyArrayInstance0.ArrayOfUint))
 			{
-				const SIZE_T ElementIndex = &OriginalValue - NonEmptyArrayInstance0.ArrayOfUint.GetData();
+				const int32 ElementIndex = static_cast<int32>(&OriginalValue - NonEmptyArrayInstance0.ArrayOfUint.GetData());
 				const auto& DequantizedValue = TargetStruct.ArrayOfUint[ElementIndex];
 				UE_NET_ASSERT_EQ(OriginalValue, DequantizedValue);
 			}
@@ -1131,7 +1131,7 @@ void FTestComplexArrayPropertyNetSerializer::SetUp()
 	NonEmptyArrayInstance0.ArrayOfStructWithArray.SetNum(3);
 	NonEmptyArrayInstance1.ArrayOfStructWithArray.Empty(3);
 	NonEmptyArrayInstance1.ArrayOfStructWithArray.SetNum(3);
-	for (SIZE_T It = 0, EndIt = 3; It != EndIt; ++It)
+	for (int32 It = 0, EndIt = 3; It != EndIt; ++It)
 	{
 		NonEmptyArrayInstance0.ArrayOfStructWithArray[It].ArrayOfUint.SetNumZeroed(It + 1);
 		NonEmptyArrayInstance1.ArrayOfStructWithArray[It].ArrayOfUint.SetNumZeroed(It + 1);
@@ -1210,13 +1210,13 @@ void FTestComplexArrayPropertyNetSerializer::TestDequantize()
 	UE_NET_ASSERT_EQ(NonEmptyArrayInstance0.ArrayOfStructWithArray.Num(), TargetStruct.ArrayOfStructWithArray.Num());
 	for (const auto& OriginalValue : MakeArrayView(NonEmptyArrayInstance0.ArrayOfStructWithArray))
 	{
-		const SIZE_T ElementIndex = &OriginalValue - NonEmptyArrayInstance0.ArrayOfStructWithArray.GetData();
+		const int32 ElementIndex = static_cast<int32>(&OriginalValue - NonEmptyArrayInstance0.ArrayOfStructWithArray.GetData());
 		const auto& DequantizedValue =  TargetStruct.ArrayOfStructWithArray[ElementIndex];
 		UE_NET_ASSERT_EQ(OriginalValue.ArrayOfUint.Num(), DequantizedValue.ArrayOfUint.Num());
 
 		for (const auto& OriginalInnerValue : MakeArrayView(OriginalValue.ArrayOfUint))
 		{
-			const SIZE_T InnerElementIndex = &OriginalInnerValue - OriginalValue.ArrayOfUint.GetData();
+			const int32 InnerElementIndex = static_cast<int32>(&OriginalInnerValue - OriginalValue.ArrayOfUint.GetData());
 			const auto& DequantizedInnerValue = DequantizedValue.ArrayOfUint[InnerElementIndex];
 			UE_NET_ASSERT_EQ(OriginalInnerValue, DequantizedInnerValue);
 		}
@@ -1244,13 +1244,13 @@ void FTestComplexArrayPropertyNetSerializer::TestCloneDynamicState()
 		UE_NET_ASSERT_EQ(NonEmptyArrayInstance0.ArrayOfStructWithArray.Num(), TargetStruct.ArrayOfStructWithArray.Num());
 		for (const auto& OriginalValue : MakeArrayView(NonEmptyArrayInstance0.ArrayOfStructWithArray))
 		{
-			const SIZE_T ElementIndex = &OriginalValue - NonEmptyArrayInstance0.ArrayOfStructWithArray.GetData();
+			const int32 ElementIndex = static_cast<int32>(&OriginalValue - NonEmptyArrayInstance0.ArrayOfStructWithArray.GetData());
 			const auto& DequantizedValue = TargetStruct.ArrayOfStructWithArray[ElementIndex];
 			UE_NET_ASSERT_EQ(OriginalValue.ArrayOfUint.Num(), DequantizedValue.ArrayOfUint.Num());
 
 			for (const auto& OriginalInnerValue : MakeArrayView(OriginalValue.ArrayOfUint))
 			{
-				const SIZE_T InnerElementIndex = &OriginalInnerValue - OriginalValue.ArrayOfUint.GetData();
+				const int32 InnerElementIndex = static_cast<int32>(&OriginalInnerValue - OriginalValue.ArrayOfUint.GetData());
 				const auto& DequantizedInnerValue = DequantizedValue.ArrayOfUint[InnerElementIndex];
 				UE_NET_ASSERT_EQ(OriginalInnerValue, DequantizedInnerValue);
 			}

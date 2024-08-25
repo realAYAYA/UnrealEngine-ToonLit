@@ -29,17 +29,5 @@ void FContextualAnimPreviewScene::Tick(float InDeltaTime)
 {
 	FAdvancedPreviewScene::Tick(InDeltaTime);
 
-	// Trigger Begin Play in this preview world.
-	// This is needed for the CharacterMovementComponent to be able to switch to falling mode. See: UCharacterMovementComponent::StartFalling
-	if (PreviewWorld && !PreviewWorld->bBegunPlay)
-	{
-		for (FActorIterator It(PreviewWorld); It; ++It)
-		{
-			It->DispatchBeginPlay();
-		}
-
-		PreviewWorld->bBegunPlay = true;
-	}
-
 	GetWorld()->Tick(LEVELTICK_All, InDeltaTime);
 }

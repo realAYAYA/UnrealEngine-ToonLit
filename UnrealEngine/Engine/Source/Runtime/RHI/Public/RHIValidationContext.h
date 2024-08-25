@@ -28,6 +28,10 @@ inline void ValidateShaderParameters(FRHIShader* RHIShader, RHIValidation::FTrac
 		case FRHIShaderParameterResource::EType::Texture:
 			if (FRHITexture* Texture = static_cast<FRHITexture*>(Parameter.Resource))
 			{
+				if (GRHIValidationEnabled)
+				{
+					RHIValidation::ValidateShaderResourceView(RHIShader, Parameter.Index, Texture);
+				}
 				Tracker->Assert(Texture->GetWholeResourceIdentitySRV(), InRequiredAccess);
 			}
 			break;
@@ -42,13 +46,27 @@ inline void ValidateShaderParameters(FRHIShader* RHIShader, RHIValidation::FTrac
 			}
 			break;
 		case FRHIShaderParameterResource::EType::UnorderedAccessView:
-			Tracker->AssertUAV(static_cast<FRHIUnorderedAccessView*>(Parameter.Resource), InRequiredUAVMode, Parameter.Index);
+			if (FRHIUnorderedAccessView* UAV = static_cast<FRHIUnorderedAccessView*>(Parameter.Resource))
+			{
+				if (GRHIValidationEnabled)
+				{
+					RHIValidation::ValidateUnorderedAccessView(RHIShader, Parameter.Index, UAV);
+				}
+				Tracker->AssertUAV(static_cast<FRHIUnorderedAccessView*>(Parameter.Resource), InRequiredUAVMode, Parameter.Index);
+			}
 			break;
 		case FRHIShaderParameterResource::EType::Sampler:
 			// No validation
 			break;
 		case FRHIShaderParameterResource::EType::UniformBuffer:
-			StaticUniformBuffers.ValidateSetShaderUniformBuffer(static_cast<FRHIUniformBuffer*>(Parameter.Resource));
+			if (FRHIUniformBuffer* UniformBuffer = static_cast<FRHIUniformBuffer*>(Parameter.Resource))
+			{
+				if (GRHIValidationEnabled)
+				{
+					RHIValidation::ValidateUniformBuffer(RHIShader, Parameter.Index, UniformBuffer);
+				}
+				StaticUniformBuffers.ValidateSetShaderUniformBuffer(UniformBuffer);
+			}
 			break;
 		default:
 			checkf(false, TEXT("Unhandled resource type?"));
@@ -165,6 +183,47 @@ public:
 		RHIContext->RHIClearUAVUint(UnorderedAccessViewRHI, Values);
 	}
 
+	virtual void RHISetShaderRootConstants(const FUint32Vector4& Constants) final override
+	{
+		RHIContext->RHISetShaderRootConstants(Constants);
+	}
+
+	virtual void RHIDispatchShaderBundle(
+		FRHIShaderBundle* ShaderBundleRHI,
+		FRHIShaderResourceView* RecordArgBufferSRV,
+		TConstArrayView<FRHIShaderBundleDispatch> Dispatches,
+		bool bEmulated) final override
+	{
+		checkf(Dispatches.Num() > 0, TEXT("A shader bundle must be dispatched with at least one record."));
+		for (const FRHIShaderBundleDispatch& Dispatch : Dispatches)
+		{
+			State.bComputePSOSet = true;
+
+			// Reset the compute UAV tracker since the renderer must re-bind all resources after changing a shader.
+			Tracker->ResetUAVState(RHIValidation::EUAVMode::Compute);
+
+			ValidateShaderParameters(Dispatch.Shader, Tracker, State.StaticUniformBuffers, Dispatch.Parameters.ResourceParameters, ERHIAccess::SRVCompute, RHIValidation::EUAVMode::Compute);
+			ValidateShaderParameters(Dispatch.Shader, Tracker, State.StaticUniformBuffers, Dispatch.Parameters.BindlessParameters, ERHIAccess::SRVCompute, RHIValidation::EUAVMode::Compute);
+
+			if (bEmulated)
+			{
+				const uint32 ArgumentOffset = (Dispatch.RecordIndex * FRHIShaderBundle::ArgumentByteStride);
+				FValidationRHI::ValidateDispatchIndirectArgsBuffer(RecordArgBufferSRV->GetBuffer(), ArgumentOffset);
+			}
+		}
+
+		if (bEmulated)
+		{
+			Tracker->Assert(RecordArgBufferSRV->GetBuffer()->GetWholeResourceIdentity(), ERHIAccess::IndirectArgs);
+		}
+		else
+		{
+			Tracker->Assert(RecordArgBufferSRV->GetViewIdentity(),  ERHIAccess::SRVCompute);
+		}
+
+		RHIContext->RHIDispatchShaderBundle(ShaderBundleRHI, RecordArgBufferSRV, Dispatches, bEmulated);
+	}
+
 	virtual void RHIBeginUAVOverlap() final override
 	{
 		Tracker->AllUAVsOverlap(true);
@@ -199,76 +258,6 @@ public:
 	{
 		RHIValidation::FTracker::ReplayOpQueue(ERHIPipeline::AsyncCompute, Tracker->Finalize());
 		RHIContext->RHISubmitCommandsHint();
-	}
-
-	/** Set the shader resource view of a surface.  This is used for binding TextureMS parameter types that need a multi sampled view. */
-	virtual void RHISetShaderTexture(FRHIComputeShader* Shader, uint32 TextureIndex, FRHITexture* NewTexture) override final
-	{
-		checkf(State.bComputePSOSet, TEXT("A Compute PSO has to be set to set resources into a shader!"));
-		Tracker->Assert(NewTexture->GetWholeResourceIdentitySRV(), ERHIAccess::SRVCompute);
-		RHIContext->RHISetShaderTexture(Shader, TextureIndex, NewTexture);
-	}
-
-	/**
-	* Sets sampler state.
-	* @param Shader				The compute shader to set the sampler for.
-	* @param SamplerIndex		The index of the sampler.
-	* @param NewState			The new sampler state.
-	*/
-	virtual void RHISetShaderSampler(FRHIComputeShader* Shader, uint32 SamplerIndex, FRHISamplerState* NewState) override final
-	{
-		checkf(State.bComputePSOSet, TEXT("A Compute PSO has to be set to set resources into a shader!"));
-		RHIContext->RHISetShaderSampler(Shader, SamplerIndex, NewState);
-	}
-
-	/**
-	* Sets a compute shader UAV parameter.
-	* @param Shader	The compute shader to set the UAV for.
-	* @param UAVIndex		The index of the UAVIndex.
-	* @param UAV			The new UAV.
-	*/
-	virtual void RHISetUAVParameter(FRHIComputeShader* Shader, uint32 UAVIndex, FRHIUnorderedAccessView* UAV) override final
-	{
-		checkf(State.bComputePSOSet, TEXT("A Compute PSO has to be set to set resources into a shader!"));
-		Tracker->AssertUAV(UAV, RHIValidation::EUAVMode::Compute, UAVIndex);
-		RHIContext->RHISetUAVParameter(Shader, UAVIndex, UAV);
-	}
-
-	/**
-	* Sets a compute shader counted UAV parameter and initial count
-	* @param Shader	The compute shader to set the UAV for.
-	* @param UAVIndex		The index of the UAVIndex.
-	* @param UAV			The new UAV.
-	* @param InitialCount	The initial number of items in the UAV.
-	*/
-	virtual void RHISetUAVParameter(FRHIComputeShader* Shader, uint32 UAVIndex, FRHIUnorderedAccessView* UAV, uint32 InitialCount) override final
-	{
-		checkf(State.bComputePSOSet, TEXT("A Compute PSO has to be set to set resources into a shader!"));
-		Tracker->AssertUAV(UAV, RHIValidation::EUAVMode::Compute, UAVIndex);
-		RHIContext->RHISetUAVParameter(Shader, UAVIndex, UAV, InitialCount);
-	}
-
-	virtual void RHISetShaderResourceViewParameter(FRHIComputeShader* Shader, uint32 SamplerIndex, FRHIShaderResourceView* SRV) override final
-	{
-		checkf(State.bComputePSOSet, TEXT("A Compute PSO has to be set to set resources into a shader!"));
-		if (SRV) 
-		{
-			Tracker->Assert(SRV->GetViewIdentity(), ERHIAccess::SRVCompute);
-		}
-		RHIContext->RHISetShaderResourceViewParameter(Shader, SamplerIndex, SRV);
-	}
-
-	virtual void RHISetShaderUniformBuffer(FRHIComputeShader* Shader, uint32 BufferIndex, FRHIUniformBuffer* Buffer) override final
-	{
-		checkf(State.bComputePSOSet, TEXT("A Compute PSO has to be set to set resources into a shader!"));
-		State.StaticUniformBuffers.ValidateSetShaderUniformBuffer(Buffer);
-		RHIContext->RHISetShaderUniformBuffer(Shader, BufferIndex, Buffer);
-	}
-
-	virtual void RHISetShaderParameter(FRHIComputeShader* Shader, uint32 BufferIndex, uint32 BaseIndex, uint32 NumBytes, const void* NewValue) override final
-	{
-		checkf(State.bComputePSOSet, TEXT("A Compute PSO has to be set to set resources into a shader!"));
-		RHIContext->RHISetShaderParameter(Shader, BufferIndex, BaseIndex, NumBytes, NewValue);
 	}
 
 	virtual void RHISetShaderParameters(FRHIComputeShader* Shader, TConstArrayView<uint8> InParametersData, TConstArrayView<FRHIShaderParameter> InParameters, TConstArrayView<FRHIShaderParameterResource> InResourceParameters, TConstArrayView<FRHIShaderParameterResource> InBindlessParameters) final override
@@ -473,6 +462,47 @@ public:
 		RHIContext->RHIClearUAVUint(UnorderedAccessViewRHI, Values);
 	}
 
+	virtual void RHISetShaderRootConstants(const FUint32Vector4& Constants) final override
+	{
+		RHIContext->RHISetShaderRootConstants(Constants);
+	}
+
+	virtual void RHIDispatchShaderBundle(
+		FRHIShaderBundle* ShaderBundleRHI,
+		FRHIShaderResourceView* RecordArgBufferSRV,
+		TConstArrayView<FRHIShaderBundleDispatch> Dispatches,
+		bool bEmulated) final override
+	{
+		checkf(Dispatches.Num() > 0, TEXT("A shader bundle must be dispatched with at least one record."));
+		for (const FRHIShaderBundleDispatch& Dispatch : Dispatches)
+		{
+			State.bComputePSOSet = true;
+
+			// Reset the compute UAV tracker since the renderer must re-bind all resources after changing a shader.
+			Tracker->ResetUAVState(RHIValidation::EUAVMode::Compute);
+
+			ValidateShaderParameters(Dispatch.Shader, Tracker, State.StaticUniformBuffers, Dispatch.Parameters.ResourceParameters, ERHIAccess::SRVCompute, RHIValidation::EUAVMode::Compute);
+			ValidateShaderParameters(Dispatch.Shader, Tracker, State.StaticUniformBuffers, Dispatch.Parameters.BindlessParameters, ERHIAccess::SRVCompute, RHIValidation::EUAVMode::Compute);
+
+			if (bEmulated)
+			{
+				const uint32 ArgumentOffset = (Dispatch.RecordIndex * FRHIShaderBundle::ArgumentByteStride);
+				FValidationRHI::ValidateDispatchIndirectArgsBuffer(RecordArgBufferSRV->GetBuffer(), ArgumentOffset);
+			}
+		}
+
+		if (bEmulated)
+		{
+			Tracker->Assert(RecordArgBufferSRV->GetBuffer()->GetWholeResourceIdentity(), ERHIAccess::IndirectArgs);
+		}
+		else
+		{
+			Tracker->Assert(RecordArgBufferSRV->GetViewIdentity(),  ERHIAccess::SRVCompute);
+		}
+
+		RHIContext->RHIDispatchShaderBundle(ShaderBundleRHI, RecordArgBufferSRV, Dispatches, bEmulated);
+	}
+
 	virtual void RHIBeginUAVOverlap() final override
 	{
 		Tracker->AllUAVsOverlap(true);
@@ -507,6 +537,11 @@ public:
 	{
 		Tracker->Assert(DepthTexture->GetWholeResourceIdentity(), ERHIAccess::DSVWrite);
 		RHIContext->RHIResummarizeHTile(DepthTexture);
+	}
+
+	virtual void* RHIGetNativeCommandBuffer() override final
+	{
+		return RHIContext->RHIGetNativeCommandBuffer();
 	}
 
 	virtual void RHIBeginTransitions(TArrayView<const FRHITransition*> Transitions) override final
@@ -711,135 +746,6 @@ public:
 	}
 #endif
 
-	/** Set the shader resource view of a surface.  This is used for binding TextureMS parameter types that need a multi sampled view. */
-	virtual void RHISetShaderTexture(FRHIGraphicsShader* Shader, uint32 TextureIndex, FRHITexture* NewTexture) override final
-	{
-		checkf(State.bGfxPSOSet, TEXT("A Graphics PSO has to be set to set resources into a shader!"));
-		Tracker->Assert(NewTexture->GetWholeResourceIdentitySRV(), ERHIAccess::SRVGraphics);
-		RHIContext->RHISetShaderTexture(Shader, TextureIndex, NewTexture);
-	}
-
-	/** Set the shader resource view of a surface.  This is used for binding TextureMS parameter types that need a multi sampled view. */
-	virtual void RHISetShaderTexture(FRHIComputeShader* Shader, uint32 TextureIndex, FRHITexture* NewTexture) override final
-	{
-		checkf(State.bComputePSOSet, TEXT("A Compute PSO has to be set to set resources into a shader!"));
-		Tracker->Assert(NewTexture->GetWholeResourceIdentitySRV(), ERHIAccess::SRVCompute);
-		RHIContext->RHISetShaderTexture(Shader, TextureIndex, NewTexture);
-	}
-
-	/**
-	* Sets sampler state.
-	* @param Shader				The compute shader to set the sampler for.
-	* @param SamplerIndex		The index of the sampler.
-	* @param NewState			The new sampler state.
-	*/
-	virtual void RHISetShaderSampler(FRHIComputeShader* Shader, uint32 SamplerIndex, FRHISamplerState* NewState) override final
-	{
-		checkf(State.bComputePSOSet, TEXT("A Compute PSO has to be set to set resources into a shader!"));
-		RHIContext->RHISetShaderSampler(Shader, SamplerIndex, NewState);
-	}
-
-	/**
-	* Sets sampler state.
-	* @param Shader				The graphics shader to set the sampler for.
-	* @param SamplerIndex		The index of the sampler.
-	* @param NewState			The new sampler state.
-	*/
-	virtual void RHISetShaderSampler(FRHIGraphicsShader* Shader, uint32 SamplerIndex, FRHISamplerState* NewState) override final
-	{
-		checkf(State.bGfxPSOSet, TEXT("A Graphics PSO has to be set to set resources into a shader!"));
-		RHIContext->RHISetShaderSampler(Shader, SamplerIndex, NewState);
-	}
-
-	/**
-	* Sets a pixel shader UAV parameter.
-	* @param Shader	The pixel shader to set the UAV for.
-	* @param UAVIndex		The index of the UAVIndex.
-	* @param UAV			The new UAV.
-	*/
-	virtual void RHISetUAVParameter(FRHIPixelShader* Shader, uint32 UAVIndex, FRHIUnorderedAccessView* UAV) override final
-	{
-		checkf(State.bGfxPSOSet, TEXT("A Compute PSO has to be set to set resources into a shader!"));
-		Tracker->AssertUAV(UAV, RHIValidation::EUAVMode::Graphics, UAVIndex);
-		RHIContext->RHISetUAVParameter(Shader, UAVIndex, UAV);
-	}
-
-
-
-
-	/**
-	* Sets a compute shader UAV parameter.
-	* @param Shader	The compute shader to set the UAV for.
-	* @param UAVIndex		The index of the UAVIndex.
-	* @param UAV			The new UAV.
-	*/
-	virtual void RHISetUAVParameter(FRHIComputeShader* Shader, uint32 UAVIndex, FRHIUnorderedAccessView* UAV) override final
-	{
-		checkf(State.bComputePSOSet, TEXT("A Compute PSO has to be set to set resources into a shader!"));
-		Tracker->AssertUAV(UAV, RHIValidation::EUAVMode::Compute, UAVIndex);
-		RHIContext->RHISetUAVParameter(Shader, UAVIndex, UAV);
-	}
-
-	/**
-	* Sets a compute shader counted UAV parameter and initial count
-	* @param Shader	The compute shader to set the UAV for.
-	* @param UAVIndex		The index of the UAVIndex.
-	* @param UAV			The new UAV.
-	* @param InitialCount	The initial number of items in the UAV.
-	*/
-	virtual void RHISetUAVParameter(FRHIComputeShader* Shader, uint32 UAVIndex, FRHIUnorderedAccessView* UAV, uint32 InitialCount) override final
-	{
-		checkf(State.bComputePSOSet, TEXT("A Compute PSO has to be set to set resources into a shader!"));
-		Tracker->AssertUAV(UAV, RHIValidation::EUAVMode::Compute, UAVIndex);
-		RHIContext->RHISetUAVParameter(Shader, UAVIndex, UAV, InitialCount);
-	}
-
-	virtual void RHISetShaderResourceViewParameter(FRHIGraphicsShader* Shader, uint32 SamplerIndex, FRHIShaderResourceView* SRV) override final
-	{
-		checkf(State.bGfxPSOSet, TEXT("A Graphics PSO has to be set to set resources into a shader!"));
-		if (SRV)
-		{
-			Tracker->Assert(SRV->GetViewIdentity(), ERHIAccess::SRVGraphics);
-		}
-		RHIContext->RHISetShaderResourceViewParameter(Shader, SamplerIndex, SRV);
-	}
-
-	virtual void RHISetShaderResourceViewParameter(FRHIComputeShader* Shader, uint32 SamplerIndex, FRHIShaderResourceView* SRV) override final
-	{
-		checkf(State.bComputePSOSet, TEXT("A Compute PSO has to be set to set resources into a shader!"));
-		if (SRV)
-		{
-			Tracker->Assert(SRV->GetViewIdentity(), ERHIAccess::SRVCompute);
-		}
-		RHIContext->RHISetShaderResourceViewParameter(Shader, SamplerIndex, SRV);
-	}
-
-	virtual void RHISetShaderUniformBuffer(FRHIGraphicsShader* Shader, uint32 BufferIndex, FRHIUniformBuffer* Buffer) override final
-	{
-		checkf(State.bGfxPSOSet, TEXT("A Graphics PSO has to be set to set resources into a shader!"));
-		State.StaticUniformBuffers.ValidateSetShaderUniformBuffer(Buffer);
-		RHIContext->RHISetShaderUniformBuffer(Shader, BufferIndex, Buffer);
-	}
-
-	virtual void RHISetShaderUniformBuffer(FRHIComputeShader* Shader, uint32 BufferIndex, FRHIUniformBuffer* Buffer) override final
-	{
-		checkf(State.bComputePSOSet, TEXT("A Compute PSO has to be set to set resources into a shader!"));
-		State.StaticUniformBuffers.ValidateSetShaderUniformBuffer(Buffer);
-		RHIContext->RHISetShaderUniformBuffer(Shader, BufferIndex, Buffer);
-	}
-
-	virtual void RHISetShaderParameter(FRHIGraphicsShader* Shader, uint32 BufferIndex, uint32 BaseIndex, uint32 NumBytes, const void* NewValue) override final
-	{
-		checkf(State.bGfxPSOSet, TEXT("A Graphics PSO has to be set to set resources into a shader!"));
-		RHIContext->RHISetShaderParameter(Shader, BufferIndex, BaseIndex, NumBytes, NewValue);
-	}
-
-	virtual void RHISetShaderParameter(FRHIComputeShader* Shader, uint32 BufferIndex, uint32 BaseIndex, uint32 NumBytes, const void* NewValue) override final
-	{
-		checkf(State.bComputePSOSet, TEXT("A Compute PSO has to be set to set resources into a shader!"));
-		RHIContext->RHISetShaderParameter(Shader, BufferIndex, BaseIndex, NumBytes, NewValue);
-	}
-
 	virtual void RHISetShaderParameters(FRHIGraphicsShader* Shader, TConstArrayView<uint8> InParametersData, TConstArrayView<FRHIShaderParameter> InParameters, TConstArrayView<FRHIShaderParameterResource> InResourceParameters, TConstArrayView<FRHIShaderParameterResource> InBindlessParameters) final override
 	{
 		checkf(State.bGfxPSOSet, TEXT("A Graphics PSO has to be set to set resources into a shader!"));
@@ -1010,7 +916,7 @@ public:
 	virtual void RHIBeginRenderPass(const FRHIRenderPassInfo& InInfo, const TCHAR* InName) override final
 	{
 		checkf(!State.bInsideBeginRenderPass, TEXT("Trying to begin RenderPass '%s', but already inside '%s'!"), *State.RenderPassName, InName);
-		checkf(InName, TEXT("RenderPass should have a name!"));
+		checkf(InName!=nullptr, TEXT("RenderPass should have a name!"));
 		State.bInsideBeginRenderPass = true;
 		State.RenderPassInfo = InInfo;
 		State.RenderPassName = InName;
@@ -1029,7 +935,7 @@ public:
 
 			// Check all bound textures have the same dimensions
 			FIntVector MipDimensions = RTV.RenderTarget->GetMipDimensions(RTV.MipIndex);
-			checkf(ViewDimensions.IsZero() || ViewDimensions == MipDimensions, TEXT("Render target size mismatch. All render and depth target views must have the same effective dimensions."));
+			checkf(ViewDimensions.IsZero() || ViewDimensions == MipDimensions, TEXT("Render target size mismatch (RT%d: %dx%d vs. Expected: %dx%d). All render and depth target views must have the same effective dimensions."), RTVIndex, MipDimensions.X, MipDimensions.Y, ViewDimensions.X, ViewDimensions.Y);
 			ViewDimensions = MipDimensions;
 
 			uint32 ArraySlice = RTV.ArraySlice;
@@ -1060,7 +966,7 @@ public:
 		{
 			// Check all bound textures have the same dimensions
 			FIntVector MipDimensions = DSV.DepthStencilTarget->GetMipDimensions(0);
-			checkf(ViewDimensions.IsZero() || ViewDimensions == MipDimensions, TEXT("Depth target size mismatch. All render and depth target views must have the same effective dimensions."));
+			checkf(ViewDimensions.IsZero() || ViewDimensions == MipDimensions, TEXT("Depth target size mismatch (Depth: %dx%d vs. Expected: %dx%d). All render and depth target views must have the same effective dimensions."), MipDimensions.X, MipDimensions.Y, ViewDimensions.X, ViewDimensions.Y);
 			ViewDimensions = MipDimensions;
 
 			if (DSV.ResolveTarget)

@@ -19,5 +19,7 @@ public class NetCore : ModuleRules
 		);
 
 		UnsafeTypeCastWarningLevel = WarningLevel.Error;
+
+		bAllowAutoRTFMInstrumentation = true;
 	}
 }

@@ -12,7 +12,7 @@
 
 void FRecastInternalDebugData::vertex(const FVector::FReal x, const FVector::FReal y, const FVector::FReal z, unsigned int color, const FVector::FReal u, const FVector::FReal v)
 {
-	FVector::FReal RecastPos[3] = { x,y,z };
+	const FVector::FReal RecastPos[3] = { x,y,z };
 	const FVector Pos = Recast2UnrealPoint(RecastPos);
 	const FColor Color = Recast2UnrealColor(color);
 	switch(CurrentPrim)
@@ -32,6 +32,14 @@ void FRecastInternalDebugData::vertex(const FVector::FReal x, const FVector::FRe
 		TriangleColors.Push(Color);
 		break;
 	}
+}
+
+void FRecastInternalDebugData::text(const FVector::FReal x, const FVector::FReal y, const FVector::FReal z, const char* text)
+{
+	const FVector::FReal RecastPos[3] = { x,y,z };
+	const FVector Pos = Recast2UnrealPoint(RecastPos);
+	LabelVertices.Push(Pos);
+	Labels.Push(FString(text));
 }
 
 void FRecastInternalDebugData::end()

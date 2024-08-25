@@ -333,7 +333,7 @@ bool ULevelEditorSubsystem::GetAllowsCinematicControl(FName ViewportConfigKey)
  *
  **/
 
-bool ULevelEditorSubsystem::NewLevel(const FString& AssetPath)
+bool ULevelEditorSubsystem::NewLevel(const FString& AssetPath, bool bIsPartitionedWorld)
 {
 	TGuardValue<bool> UnattendedScriptGuard(GIsRunningUnattendedScript, true);
 
@@ -369,7 +369,7 @@ bool ULevelEditorSubsystem::NewLevel(const FString& AssetPath)
 		return false;
 	}
 
-	UWorld* World = GEditor->NewMap();
+	UWorld* World = GEditor->NewMap(bIsPartitionedWorld);
 	if (!World)
 	{
 		UE_LOG(LevelEditorSubsystem, Error, TEXT("NewLevel. Failed to create the new level."));

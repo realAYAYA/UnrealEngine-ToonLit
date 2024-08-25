@@ -19,7 +19,6 @@
 #include "Mf/MfMediaUtils.h"
 
 #if PLATFORM_MICROSOFT
-	#include "Microsoft/WindowsHWrapper.h"
 	#include "Microsoft/AllowMicrosoftPlatformTypes.h"
 #endif
 
@@ -109,7 +108,7 @@ void FMfMediaTracks::AppendStats(FString &OutStats) const
 void FMfMediaTracks::ClearFlags()
 {
 	FScopeLock Lock(&CriticalSection);
-	
+
 	MediaSourceChanged = false;
 	SelectionChanged = false;
 }
@@ -246,7 +245,7 @@ void FMfMediaTracks::Initialize(IMFMediaSource* InMediaSource, IMFSourceReaderCa
 	Algo::Reverse(CaptionTracks);
 	Algo::Reverse(VideoTracks);
 
-	if (PlayerOptions)
+	if (PlayerOptions && PlayerOptions->TrackSelection == EMediaPlayerOptionTrackSelectMode::UseTrackOptionIndices)
 	{
 		// Select tracks based on the options provided
 		SelectTrack(EMediaTrackType::Audio, PlayerOptions->Tracks.Audio);
@@ -366,7 +365,7 @@ void FMfMediaTracks::ProcessSample(IMFSample* Sample, HRESULT Status, DWORD Stre
 			UpdateCaptions();
 		}
 	}
-	
+
 	// process video sample
 	if (SelectedVideoTrack != INDEX_NONE)
 	{
@@ -836,7 +835,7 @@ bool FMfMediaTracks::SelectTrack(EMediaTrackType TrackType, int32 TrackIndex)
 		}
 
 		UE_LOG(LogMfMedia, Verbose, TEXT("Tracks %p: Enabled stream %i"), this, StreamIndex);
-			
+
 		*SelectedTrack = TrackIndex;
 		SelectionChanged = true;
 	}

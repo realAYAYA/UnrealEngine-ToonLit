@@ -162,7 +162,10 @@ namespace AutomationScripts
 
 			CommandletParams = GetGenericCookCommandletParams(Params);
 
-			CommandletParams += " -fileopenlog";
+			if (Params.KeepFileOpenLog)
+			{
+				CommandletParams += " -fileopenlog";
+			}
 
 			if (Params.Manifests)
 			{

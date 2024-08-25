@@ -1,4 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
+
 #include "MoviePipelinePIEExecutor.h"
 #include "MoviePipelinePrimaryConfig.h"
 #include "MoviePipelineShotConfig.h"
@@ -21,6 +22,7 @@
 #include "MessageLogModule.h"
 #include "Logging/MessageLog.h"
 #include "Graph/MovieGraphPipeline.h"
+#include "Graph/Nodes/MovieGraphGlobalGameOverrides.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MoviePipelinePIEExecutor)
 
@@ -132,10 +134,10 @@ void UMoviePipelinePIEExecutor::Start(const UMoviePipelineExecutorJob* InJob)
 		.ClientSize(WindowSize)
 		.AutoCenter(EAutoCenter::PrimaryWorkArea)
 		.UseOSWindowBorder(true)
-		.FocusWhenFirstShown(false)
+		.FocusWhenFirstShown(true)
 		.ActivationPolicy(EWindowActivationPolicy::Never)
 		.HasCloseButton(true)
-		.SupportsMaximize(false)
+		.SupportsMaximize(true)
 		.SupportsMinimize(true)
 		.SizingRule(ESizingRule::UserSized);
 
@@ -161,15 +163,9 @@ void UMoviePipelinePIEExecutor::Start(const UMoviePipelineExecutorJob* InJob)
 	// Initialize the transient settings so that they will exist in time for the GameOverrides check.
 	InJob->GetConfiguration()->InitializeTransientSettings();
 
-	TArray<UMoviePipelineSetting*> AllSettings = InJob->GetConfiguration()->GetAllSettings();
-	UMoviePipelineSetting** GameOverridesPtr = AllSettings.FindByPredicate([](UMoviePipelineSetting* InSetting) { return InSetting->GetClass() == UMoviePipelineGameOverrideSetting::StaticClass(); });
-	if (GameOverridesPtr)
-	{	
-		UMoviePipelineSetting* Setting = *GameOverridesPtr;
-		if (Setting)
-		{
-			Params.GameModeOverride = CastChecked<UMoviePipelineGameOverrideSetting>(Setting)->GameModeOverride;
-		}
+	if (TSubclassOf<AGameModeBase> GameModeOverride = UMovieGraphGlobalGameOverridesNode::GetGameModeOverride(InJob))
+	{
+		Params.GameModeOverride = GameModeOverride;
 	}
 
 	bPreviousUseFixedTimeStep = FApp::UseFixedTimeStep();
@@ -227,8 +223,8 @@ void UMoviePipelinePIEExecutor::OnPIEStartupFinished(bool)
 		return;
 	}
 
-	UMoviePipelineExecutorJob* CurrentJob = Queue->GetJobs()[CurrentPipelineIndex];
-	if (CurrentJob->GetGraphConfig())
+	const UMoviePipelineExecutorJob* CurrentJob = Queue->GetJobs()[CurrentPipelineIndex];
+	if (CurrentJob->IsUsingGraphConfiguration())
 	{
 		PipelineClass = UMovieGraphPipeline::StaticClass();
 	}
@@ -261,10 +257,18 @@ void UMoviePipelinePIEExecutor::OnPIEStartupFinished(bool)
 		if (PipelineAsLegacy)
 		{
 			PipelineAsLegacy->Initialize(Queue->GetJobs()[CurrentPipelineIndex]);
+			if (CustomInitializationTime.IsSet())
+			{
+				PipelineAsLegacy->SetInitializationTime(CustomInitializationTime.GetValue());
+			}
 		}
 		else if (UMovieGraphPipeline* PipelineAsGraph = Cast<UMovieGraphPipeline>(ActiveMoviePipeline))
 		{
 			PipelineAsGraph->Initialize(Queue->GetJobs()[CurrentPipelineIndex], FMovieGraphInitConfig());
+			if (CustomInitializationTime.IsSet())
+			{
+				PipelineAsGraph->SetInitializationTime(CustomInitializationTime.GetValue());
+			}
 		}
 		RemainingInitializationFrames = -1;
 	}
@@ -296,7 +300,11 @@ void UMoviePipelinePIEExecutor::OnTick()
 			}
 			else if (UMovieGraphPipeline* PipelineAsGraph = Cast<UMovieGraphPipeline>(ActiveMoviePipeline))
 			{
-				// PipelineAsGraph->Initialize(Queue->GetJobs()[CurrentPipelineIndex], FMovieGraphInitConfig());
+				PipelineAsGraph->Initialize(Queue->GetJobs()[CurrentPipelineIndex], FMovieGraphInitConfig());
+				if (CustomInitializationTime.IsSet())
+				{
+					PipelineAsGraph->SetInitializationTime(CustomInitializationTime.GetValue());
+				}
 			}
 		}
 
@@ -305,7 +313,7 @@ void UMoviePipelinePIEExecutor::OnTick()
 	
 	if (RemainingInitializationFrames <= 0)
 	{
-		Queue->GetJobs()[CurrentPipelineIndex]->SetStatusProgress(UMoviePipelineBlueprintLibrary::GetCompletionPercentage(Cast<UMoviePipeline>(ActiveMoviePipeline)));
+		Queue->GetJobs()[CurrentPipelineIndex]->SetStatusProgress(GetCompletionPercentageFromActivePipeline());
 	}
 	
 	FText WindowTitle = GetWindowTitle();
@@ -320,7 +328,10 @@ void UMoviePipelinePIEExecutor::OnPIEMoviePipelineFinished(FMoviePipelineOutputD
 {
 	if (!InOutputData.bSuccess)
 	{
-		OnPipelineErrored(InOutputData.Pipeline, true, FText());
+		// We do the cast to UMoviePipeline (which will return nullptr during a graph render) because the functions
+		// all take a pointer, but it's never actually used, and you can only have one pipeline at once so the API
+		// doesn't really need to pass back the pointer to a soon-to-be-destroyed object.
+		OnPipelineErrored(Cast<UMoviePipeline>(InOutputData.Pipeline), true, FText());
 	}
 
 	// Unsubscribe to the EndPIE event so we don't think the user canceled it.

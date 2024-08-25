@@ -7,9 +7,9 @@ import backend from "../backend";
 import { GetPerforceServerStatusResponse } from "../backend/Api";
 import { PollBase } from "../backend/PollBase";
 import { useWindowSize } from "../base/utilities/hooks";
-import { hordeClasses, modeColors } from "../styles/Styles";
 import { Breadcrumbs } from "./Breadcrumbs";
 import { TopNav } from "./TopNav";
+import { getHordeStyling } from "../styles/Styles";
 
 class PerforceServerHandler extends PollBase {
 
@@ -20,6 +20,7 @@ class PerforceServerHandler extends PollBase {
    }
 
    clear() {
+      this.loaded = false;
       super.stop();
    }
 
@@ -28,7 +29,7 @@ class PerforceServerHandler extends PollBase {
       try {
 
          this.status = await backend.getPerforceServerStatus();
-
+         this.loaded = true;
          this.setUpdated();
 
       } catch (err) {
@@ -36,7 +37,7 @@ class PerforceServerHandler extends PollBase {
       }
 
    }
-
+   loaded = false;
    status: GetPerforceServerStatusResponse[] = [];
 }
 
@@ -54,6 +55,8 @@ const ServerPanel: React.FC = observer(() => {
 
    }, []);
 
+   const { hordeClasses, modeColors } = getHordeStyling();
+
    // subscribe
    if (handler.updated) { };
 
@@ -66,6 +69,16 @@ const ServerPanel: React.FC = observer(() => {
    ];
 
    let status = [...handler.status];
+
+   if (!handler.loaded) {
+      return null;
+   }
+
+   if (!status.length) {
+      return <Stack horizontalAlign="center">
+         <Text variant="mediumPlus">No Perforce Servers Found</Text>
+      </Stack>
+   }
 
    status = status.sort((a, b) => {
 
@@ -83,30 +96,35 @@ const ServerPanel: React.FC = observer(() => {
       if (!column?.fieldName) {
          return null;
       }
-      return <Text style={{color: modeColors.text}}>{item[column?.fieldName] }</Text>
+      return <Text style={{ color: modeColors.text }}>{item[column?.fieldName]}</Text>
    };
 
-   return (<Stack>
-      <Stack styles={{ root: { paddingTop: 18, paddingLeft: 12, paddingRight: 12, width: "100%" } }} >
-         <Stack className={hordeClasses.raised}>
-            <Stack tokens={{ childrenGap: 12 }}>
-               <Text variant="mediumPlus" styles={{ root: { fontFamily: "Horde Open Sans SemiBold" } }}>Servers</Text>
-               <div style={{ overflowY: 'auto', overflowX: 'hidden', maxHeight: "calc(100vh - 312px)" }} data-is-scrollable={true}>
-                  <Stack>
-                     <DetailsList
-                        items={status}
-                        columns={columns}
-                        selectionMode={SelectionMode.none}
-                        layoutMode={DetailsListLayoutMode.justified}
-                        compact={true}
-                        onRenderItemColumn={renderItem}
-                     />
-                  </Stack>
-               </div>
+   return <Stack>
+      {!status.length && <Stack style={{ paddingBottom: 12 }}>
+         <Stack verticalAlign="center">
+            {!status.length && handler.loaded && <Stack horizontalAlign="center">
+               <Text variant="mediumPlus">No Perforce Servers Found</Text>
+            </Stack>}
+         </Stack>
+      </Stack>
+      }
+
+      {!!status.length && <Stack className={hordeClasses.raised} >
+         <Stack styles={{ root: { paddingLeft: 12, paddingRight: 12, paddingBottom: 12, width: "100%" } }} >
+            <Stack>
+               <DetailsList
+                  items={status}
+                  columns={columns}
+                  selectionMode={SelectionMode.none}
+                  layoutMode={DetailsListLayoutMode.justified}
+                  compact={true}
+                  onRenderItemColumn={renderItem}
+               />
             </Stack>
          </Stack>
       </Stack>
-   </Stack>);
+      }
+   </Stack>
 });
 
 
@@ -114,19 +132,26 @@ export const PerforceServerView: React.FC = () => {
 
    const windowSize = useWindowSize();
    const vw = Math.max(document.documentElement.clientWidth, window.innerWidth || 0);
+   const centerAlign = vw / 2 - 720;
+
+   const { hordeClasses, modeColors } = getHordeStyling();
+
+   const key = `windowsize_view_${windowSize.width}_${windowSize.height}`;
 
    return <Stack className={hordeClasses.horde}>
       <TopNav />
-      <Breadcrumbs items={[{ text: 'Perforce' }]} />
-      <Stack horizontal>
-         <div key={`windowsize_streamview_${windowSize.width}_${windowSize.height}`} style={{ width: vw / 2 - (1440/2), flexShrink: 0, backgroundColor: modeColors.background }} />
-         <Stack tokens={{ childrenGap: 0 }} styles={{ root: { backgroundColor: modeColors.background, width: "100%" } }}>
-            <Stack style={{ maxWidth: 1440, paddingTop: 6, marginLeft: 4, height: 'calc(100vh - 8px)' }}>
-               <Stack horizontal className={hordeClasses.raised}>
-                  <Stack style={{ width: "100%", height: 'calc(100vh - 228px)' }} tokens={{ childrenGap: 18 }}>
-                     <ServerPanel />
+      <Breadcrumbs items={[{ text: 'Perforce Servers' }]} />
+      <Stack styles={{ root: { width: "100%", backgroundColor: modeColors.background } }}>
+         <Stack style={{ width: "100%", backgroundColor: modeColors.background }}>
+            <Stack style={{ position: "relative", width: "100%", height: 'calc(100vh - 148px)' }}>
+               <div style={{ overflowX: "auto", overflowY: "visible" }}>
+                  <Stack horizontal style={{ paddingTop: 30, paddingBottom: 48 }}>
+                     <Stack key={`${key}`} style={{ paddingLeft: centerAlign }} />
+                     <Stack style={{ width: 1440 }}>
+                        <ServerPanel />
+                     </Stack>
                   </Stack>
-               </Stack>
+               </div>
             </Stack>
          </Stack>
       </Stack>

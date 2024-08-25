@@ -21,6 +21,7 @@
 #include "UObject/UObjectHash.h"
 #include "Serialization/FindObjectReferencers.h"
 #include "Serialization/ArchiveReplaceObjectRef.h"
+#include "String/ParseTokens.h"
 #include "Misc/PackageName.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
 #include "Textures/SlateIcon.h"
@@ -85,13 +86,6 @@
 #include "Settings/EditorStyleSettings.h"
 #include "ToolMenus.h"
 #include "Subsystems/AssetEditorSubsystem.h"
-
-DECLARE_CYCLE_STAT(TEXT("Compile Blueprint"), EKismetCompilerStats_CompileBlueprint, STATGROUP_KismetCompiler);
-DECLARE_CYCLE_STAT(TEXT("Broadcast Precompile"), EKismetCompilerStats_BroadcastPrecompile, STATGROUP_KismetCompiler);
-DECLARE_CYCLE_STAT(TEXT("Update Search Metadata"), EKismetCompilerStats_UpdateSearchMetaData, STATGROUP_KismetCompiler);
-DECLARE_CYCLE_STAT(TEXT("Garbage Collection"), EKismetCompilerStats_GarbageCollection, STATGROUP_KismetCompiler);
-DECLARE_CYCLE_STAT(TEXT("Refresh Dependent Blueprints"), EKismetCompilerStats_RefreshDependentBlueprints, STATGROUP_KismetCompiler);
-DECLARE_CYCLE_STAT(TEXT("Validate Generated Class"), EKismetCompilerStats_ValidateGeneratedClass, STATGROUP_KismetCompiler);
 
 #define LOCTEXT_NAMESPACE "UnrealEd.Editor"
 
@@ -412,8 +406,6 @@ void FKismetEditorUtilities::CreateDefaultEventGraphs(UBlueprint* Blueprint)
 	Blueprint->LastEditedDocuments.AddUnique(Ubergraph);
 }
 
-extern UNREALED_API FSecondsCounterData BlueprintCompileAndLoadTimerData;
-
 /** Create a new Blueprint and initialize it to a valid state but uses the associated blueprint types. */
 UBlueprint* FKismetEditorUtilities::CreateBlueprint(UClass* ParentClass, UObject* Outer, const FName NewBPName,	EBlueprintType BlueprintType, FName CallingContext)
 {
@@ -428,7 +420,7 @@ UBlueprint* FKismetEditorUtilities::CreateBlueprint(UClass* ParentClass, UObject
 /** Create a new Blueprint and initialize it to a valid state. */
 UBlueprint* FKismetEditorUtilities::CreateBlueprint(UClass* ParentClass, UObject* Outer, const FName NewBPName, EBlueprintType BlueprintType, TSubclassOf<UBlueprint> BlueprintClassType, TSubclassOf<UBlueprintGeneratedClass> BlueprintGeneratedClassType, FName CallingContext)
 {
-	FSecondsCounterScope Timer(BlueprintCompileAndLoadTimerData);
+	TRACE_CPUPROFILER_EVENT_SCOPE(CreateBlueprint);
 	check(FindObject<UBlueprint>(Outer, *NewBPName.ToString()) == NULL); 
 
 	// Not all types are legal for all parent classes, if the parent class is const then the blueprint cannot be an ubergraph-bearing one
@@ -763,12 +755,12 @@ bool FKismetEditorUtilities::IsReferencedByUndoBuffer(UBlueprint* Blueprint)
 {
 	UObject* BlueprintObj = Blueprint;
 	FReferencerInformationList ReferencesIncludingUndo;
-	IsReferenced(BlueprintObj, GARBAGE_COLLECTION_KEEPFLAGS, EInternalObjectFlags::GarbageCollectionKeepFlags, /*bCheckSubObjects =*/true, &ReferencesIncludingUndo);
+	IsReferenced(BlueprintObj, GARBAGE_COLLECTION_KEEPFLAGS, EInternalObjectFlags_GarbageCollectionKeepFlags, /*bCheckSubObjects =*/true, &ReferencesIncludingUndo);
 
 	FReferencerInformationList ReferencesExcludingUndo;
 	// Determine the in-memory references, *excluding* the undo buffer
 	GEditor->Trans->DisableObjectSerialization();
-	IsReferenced(BlueprintObj, GARBAGE_COLLECTION_KEEPFLAGS, EInternalObjectFlags::GarbageCollectionKeepFlags, /*bCheckSubObjects =*/true, &ReferencesExcludingUndo);
+	IsReferenced(BlueprintObj, GARBAGE_COLLECTION_KEEPFLAGS, EInternalObjectFlags_GarbageCollectionKeepFlags, /*bCheckSubObjects =*/true, &ReferencesExcludingUndo);
 	GEditor->Trans->EnableObjectSerialization();
 
 	// see if this object is the transaction buffer - set a flag so we know we need to clear the undo stack
@@ -789,7 +781,6 @@ void FKismetEditorUtilities::CompileBlueprint(UBlueprint* BlueprintObj, EBluepri
 bool FKismetEditorUtilities::GenerateBlueprintSkeleton(UBlueprint* BlueprintObj, bool bForceRegeneration)
 {
 	bool bRegeneratedSkeleton = false;
-	FSecondsCounterScope Timer(BlueprintCompileAndLoadTimerData); 
 	check(BlueprintObj);
 
 	if( BlueprintObj->SkeletonGeneratedClass == NULL || bForceRegeneration )
@@ -804,7 +795,7 @@ bool FKismetEditorUtilities::GenerateBlueprintSkeleton(UBlueprint* BlueprintObj,
 namespace ConformComponentsUtils
 {
 	static void ConformRemovedNativeComponents(UObject* BpCdo);
-	static UObject* FindNativeArchetype(UActorComponent* Component);
+	static UObject* FindNativeArchetype(const UObject* NativeCDO, UActorComponent* Component);
 };
 
 static void ConformComponentsUtils::ConformRemovedNativeComponents(UObject* BpCdo)
@@ -829,7 +820,7 @@ static void ConformComponentsUtils::ConformRemovedNativeComponents(UObject* BpCd
 	TSet<UObject*> DestroyedComponents;
 	for (UActorComponent* Component : OldNativeComponents)
 	{
-		UObject* NativeArchetype = FindNativeArchetype(Component);
+		UObject* NativeArchetype = FindNativeArchetype(NativeCDO, Component);
 		if ((NativeArchetype == nullptr) || !NativeArchetype->HasAnyFlags(RF_ClassDefaultObject))
 		{
 			// Keep track of components inherited from the native super class that are still valid.
@@ -949,7 +940,7 @@ static void ConformComponentsUtils::ConformRemovedNativeComponents(UObject* BpCd
 			// If the component in the Blueprint CDO was attached to a component that's been removed, update the Blueprint's component instance to match the archetype in the native parent CDO.
 			if (DestroyedComponents.Contains(SceneComponent->GetAttachParent()))
 			{
-				if (USceneComponent* NativeArchetype = Cast<USceneComponent>(FindNativeArchetype(SceneComponent)))
+				if (USceneComponent* NativeArchetype = Cast<USceneComponent>(FindNativeArchetype(NativeCDO, SceneComponent)))
 				{
 					USceneComponent* NewAttachParent = NativeArchetype->GetAttachParent();
 					if (NewAttachParent)
@@ -968,27 +959,39 @@ static void ConformComponentsUtils::ConformRemovedNativeComponents(UObject* BpCd
 	}
 }
 
-static UObject* ConformComponentsUtils::FindNativeArchetype(UActorComponent* Component)
+static UObject* ConformComponentsUtils::FindNativeArchetype(const UObject* NativeCDO, UActorComponent* Component)
 {
-	UActorComponent* Archetype = Cast<UActorComponent>(Component->GetArchetype());
-	if (Archetype == nullptr)
+	FSoftObjectPath Path(Component);
+	const FString& SubPathString = Path.GetSubPathString();
+	const FStringView SubobjectDelim = FStringView(TEXT("."));
+	const UE::String::EParseTokensOptions ParseOptions = UE::String::EParseTokensOptions::None;
+	UObject* Iterator = const_cast<UObject*>(NativeCDO);
+	UE::String::ParseTokens(SubPathString, SubobjectDelim,
+		[&Iterator](FStringView Token)
+		{
+			if (Iterator == nullptr)
+			{
+				return;
+			}
+
+			Iterator = StaticFindObjectFast(UObject::StaticClass(), Iterator, FName(Token));
+		},
+		ParseOptions);
+
+	UObject* NativeSubobject = const_cast<UObject*>(Iterator);
+
+	if (!NativeSubobject)
+	{
+		return Component->GetClass()->ClassDefaultObject;
+	}
+	else if (!Component->IsA(NativeSubobject->GetClass()))
 	{
 		return nullptr;
 	}
-
-	UObject* ArchetypeOwner = Archetype->GetOuter();
-	UClass* OwnerClass = ArchetypeOwner->GetClass();
-
-	const bool bOwnerIsNative = OwnerClass->HasAnyClassFlags(CLASS_Native);
-	if (bOwnerIsNative)
+	else
 	{
-		return Archetype;
+		return NativeSubobject;
 	}
-	if (Archetype == Component)
-	{
-		return nullptr;
-	}
-	return FindNativeArchetype(Archetype);
 }
 
 /** Tries to make sure that a blueprint is conformed to its native parent, in case any native class flags have changed */
@@ -1042,7 +1045,7 @@ bool FKismetEditorUtilities::CanCreateBlueprintOfClass(const UClass* Class)
 
 		const bool bIsValidClass = Class->GetBoolMetaDataHierarchical(FBlueprintMetadata::MD_IsBlueprintBase)
 			|| (Class == UObject::StaticClass())
-			|| (Class->HasAnyClassFlags(CLASS_CompiledFromBlueprint) || Class == USceneComponent::StaticClass() || Class == UActorComponent::StaticClass())
+			|| (Class == USceneComponent::StaticClass() || Class == UActorComponent::StaticClass())
 			|| bIsBPGC;  // BPs are always considered inheritable
 			
 		bCanCreateBlueprint &= bIsValidClass;
@@ -1749,7 +1752,7 @@ void CreateBlueprintFromActors_Internal(UBlueprint* Blueprint, const TArray<AAct
 					if (!RootActor->IsAttachedTo(PossibleCommonAttachParents[PossibleIndex]))
 					{
 						// If we're not attached to a given actor, then we can't possibly also be attached to its children, so clear all of them out
-						PossibleCommonAttachParents.RemoveAt(0, PossibleIndex + 1, false);
+						PossibleCommonAttachParents.RemoveAt(0, PossibleIndex + 1, EAllowShrinking::No);
 						break;
 					}
 				}
@@ -1772,7 +1775,7 @@ void CreateBlueprintFromActors_Internal(UBlueprint* Blueprint, const TArray<AAct
 			// Remove attached actors that are also in the set of actors being converted to blueprint
 			if (Actors.Contains(AttachedActors[Index]))
 			{
-				AttachedActors.RemoveAtSwap(Index, 1, false);
+				AttachedActors.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 			}
 		}
 

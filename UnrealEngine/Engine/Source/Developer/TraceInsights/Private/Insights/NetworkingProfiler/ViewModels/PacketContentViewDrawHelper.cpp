@@ -186,7 +186,8 @@ void FPacketContentViewDrawStateBuilder::AddEvent(const TraceServices::FNetProfi
 		TStringBuilder<512> Builder;
 
 		Builder.Appendf(TEXT("%s"), EventName ? EventName : TEXT("?"));
-		if (EventW > Builder.Len() * 2.0f + 48.0f)
+		const float MinWidth = static_cast<float>(Builder.Len()) * 2.0f + 48.0f;
+		if (EventW > MinWidth)
 		{
 			const TraceServices::FNetProfilerBunchInfo& Info = Event.BunchInfo;
 			if (Info.bIsValid)
@@ -380,7 +381,7 @@ void FPacketContentViewDrawHelper::Draw(const FPacketContentViewDrawState& DrawS
 		const float EventFillH = Viewport.GetEventHeight();
 		for (const FPacketContentViewDrawState::FBoxPrimitive& Box : DrawState.Boxes)
 		{
-			DrawContext.DrawBox(Box.X, BoxY0 + BoxDY * Box.Depth, Box.W, EventFillH, WhiteBrush, Box.Color.CopyWithNewOpacity(Opacity));
+			DrawContext.DrawBox(Box.X, BoxY0 + BoxDY * (float)Box.Depth, Box.W, EventFillH, WhiteBrush, Box.Color.CopyWithNewOpacity(Opacity));
 		}
 		DrawContext.LayerId++;
 	}
@@ -393,7 +394,7 @@ void FPacketContentViewDrawHelper::Draw(const FPacketContentViewDrawState& DrawS
 		const float EventFillH = Viewport.GetEventHeight() - 2.0f;
 		for (const FPacketContentViewDrawState::FBoxPrimitive& Box : DrawState.InsideBoxes)
 		{
-			DrawContext.DrawBox(Box.X, BoxY0 + BoxDY * Box.Depth, Box.W, EventFillH, WhiteBrush, Box.Color.CopyWithNewOpacity(Opacity));
+			DrawContext.DrawBox(Box.X, BoxY0 + BoxDY * (float)Box.Depth, Box.W, EventFillH, WhiteBrush, Box.Color.CopyWithNewOpacity(Opacity));
 		}
 		DrawContext.LayerId++;
 	}
@@ -407,7 +408,7 @@ void FPacketContentViewDrawHelper::Draw(const FPacketContentViewDrawState& DrawS
 		const float EventBorderH = Viewport.GetEventHeight();
 		for (const FPacketContentViewDrawState::FBoxPrimitive& Box : DrawState.Borders)
 		{
-			DrawContext.DrawBox(Box.X, BoxY0 + BoxDY * Box.Depth, Box.W, EventBorderH, EventBorderBrush, Box.Color.CopyWithNewOpacity(Opacity));
+			DrawContext.DrawBox(Box.X, BoxY0 + BoxDY * (float)Box.Depth, Box.W, EventBorderH, EventBorderBrush, Box.Color.CopyWithNewOpacity(Opacity));
 		}
 		DrawContext.LayerId++;
 #else
@@ -419,7 +420,7 @@ void FPacketContentViewDrawHelper::Draw(const FPacketContentViewDrawState& DrawS
 			const float EventBorderH = Viewport.GetEventHeight();
 			for (const FPacketContentViewDrawState::FBoxPrimitive& Box : DrawState.Borders)
 			{
-				DrawContext.DrawBox(EventBorderLayerId, Box.X, BoxY0 + BoxDY * Box.Depth, Box.W, EventBorderH, WhiteBrush, Box.Color);
+				DrawContext.DrawBox(EventBorderLayerId, Box.X, BoxY0 + BoxDY * (float)Box.Depth, Box.W, EventBorderH, WhiteBrush, Box.Color);
 			}
 		}
 		else
@@ -430,7 +431,7 @@ void FPacketContentViewDrawHelper::Draw(const FPacketContentViewDrawState& DrawS
 			for (const FPacketContentViewDrawState::FBoxPrimitive& Box : DrawState.Borders)
 			{
 				FSlateRoundedBoxBrush Brush(FLinearColor(0.0f, 0.0f, 0.0f, 0.0f), 0.0f, Box.Color.CopyWithNewOpacity(Opacity), 1.0f);
-				DrawContext.DrawBox(Box.X, BoxY0 + BoxDY * Box.Depth, Box.W, EventBorderH, &Brush, FLinearColor(0.0f, 0.0f, 0.0f, 0.0f));
+				DrawContext.DrawBox(Box.X, BoxY0 + BoxDY * (float)Box.Depth, Box.W, EventBorderH, &Brush, FLinearColor(0.0f, 0.0f, 0.0f, 0.0f));
 			}
 			DrawContext.LayerId++;
 		}
@@ -446,7 +447,7 @@ void FPacketContentViewDrawHelper::Draw(const FPacketContentViewDrawState& DrawS
 		const FLinearColor BlackColor(0.0f, 0.0f, 0.0f, Opacity);
 		for (const FPacketContentViewDrawState::FTextPrimitive& Text : DrawState.Texts)
 		{
-			DrawContext.DrawText(Text.X, TextY0 + TextDY * Text.Depth, Text.Text, EventFont, Text.bWhite ? WhiteColor : BlackColor);
+			DrawContext.DrawText(Text.X, TextY0 + TextDY * (float)Text.Depth, Text.Text, EventFont, Text.bWhite ? WhiteColor : BlackColor);
 		}
 		DrawContext.LayerId++;
 	}
@@ -491,7 +492,7 @@ void FPacketContentViewDrawHelper::DrawEventHighlight(const FNetworkPacketEvent&
 	}
 
 	const float EventW = EventX2 - EventX1;
-	const float EventY = Viewport.GetTopEventPosY() + (Viewport.GetEventHeight() + Viewport.GetEventDY()) * Event.Level;
+	const float EventY = Viewport.GetTopEventPosY() + (Viewport.GetEventHeight() + Viewport.GetEventDY()) * static_cast<float>(Event.Level);
 
 #if INSIGHTS_USE_LEGACY_BORDER
 	constexpr float BorderOffset = 1.0f;

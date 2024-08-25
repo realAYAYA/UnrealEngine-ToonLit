@@ -2,7 +2,7 @@
 
 #include "PostProcess/VisualizeShadingModels.h"
 #include "CanvasTypes.h"
-#include "RenderTargetTemp.h"
+#include "SceneRendering.h"
 #include "SceneTextureParameters.h"
 #include "UnrealEngine.h"
 #include "DataDrivenShaderPlatformInfo.h"

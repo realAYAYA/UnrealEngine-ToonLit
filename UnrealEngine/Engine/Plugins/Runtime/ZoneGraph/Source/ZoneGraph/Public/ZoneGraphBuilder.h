@@ -86,6 +86,12 @@ public:
 	*/
 	static void BuildSingleShape(const UZoneShapeComponent& ShapeComp, const FMatrix& LocalToWorld, FZoneGraphStorage& OutZoneStorage);
 
+	/** Returns items that potentially touch the bounds in the HashGrid. Operates on grid level, can have false positives.
+	 * @param Bounds - Query bounding box.
+	 * @param OutResults - Result of the query, IDs of potentially overlapping items.
+	 */
+	void QueryHashGrid(const FBox& Bounds, TArray<FZoneGraphBuilderHashGrid2D::ItemIDType>& OutResults);
+
 protected:
 	void Build(AZoneGraphData& ZoneGraphData);
 	void RequestRebuild();

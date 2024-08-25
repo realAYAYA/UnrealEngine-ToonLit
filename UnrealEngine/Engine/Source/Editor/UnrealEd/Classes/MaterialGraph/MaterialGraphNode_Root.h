@@ -18,6 +18,8 @@ class UMaterialGraphNode_Root : public UMaterialGraphNode_Base
 	UPROPERTY()
 	TObjectPtr<class UMaterial> Material;
 
+	void UpdateInputUseConstant(UEdGraphPin* Pin, bool bUseConstant);
+
 	//~ Begin UEdGraphNode Interface.
 	virtual FText GetNodeTitle(ENodeTitleType::Type TitleType) const override;
 	virtual FLinearColor GetNodeTitleColor() const override;
@@ -25,6 +27,8 @@ class UMaterialGraphNode_Root : public UMaterialGraphNode_Base
 	virtual bool CanUserDeleteNode() const override { return false; }
 	virtual bool CanDuplicateNode() const override { return false; }
 	virtual void PostPlacedNewNode() override;
+	virtual TSharedPtr<SGraphNode> CreateVisualWidget() override;
+	virtual void PinDefaultValueChanged(UEdGraphPin* Pin) override;
 	//~ End UEdGraphNode Interface.
 
 	//~ Begin UMaterialGraphNode_Base Interface

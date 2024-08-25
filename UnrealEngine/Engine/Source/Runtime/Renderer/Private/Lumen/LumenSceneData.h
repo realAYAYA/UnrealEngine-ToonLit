@@ -11,6 +11,7 @@
 #include "Lumen/LumenSceneGPUDrivenUpdate.h"
 #include "Lumen/LumenSurfaceCacheFeedback.h"
 #include "Lumen/LumenUniqueList.h"
+#include "LumenDefinitions.h"
 #include "MeshCardRepresentation.h"
 #include "RenderTransform.h"
 #include "ShaderParameterMacros.h"
@@ -53,7 +54,6 @@ END_GLOBAL_SHADER_PARAMETER_STRUCT()
 namespace Lumen
 {
 	constexpr uint32 FeedbackBufferElementStride = 2;
-	constexpr uint32 MaxViews = 2;
 
 	uint32 GetFeedbackBufferSize(const FViewFamilyInfo& ViewFamily);
 	uint32 GetCompactedFeedbackBufferSize();
@@ -206,6 +206,7 @@ public:
 	bool bFarField = false;
 	bool bHeightfield = false;
 	bool bEmissiveLightSource = false;
+	bool bOpaqueOrMasked = true;
 	uint32 LightingChannelMask = UINT32_MAX;
 
 	bool HasMergedInstances() const;
@@ -317,7 +318,7 @@ public:
 		TArray<FBinStats> Bins;
 	};
 
-	void Init(FIntPoint PageAtlasSizeInPages);
+	void Init(const FIntPoint& InPageAtlasSizeInPages);
 	void Allocate(const FLumenPageTableEntry& Page, FAllocation& Allocation);
 	void Free(const FLumenPageTableEntry& Page);
 	bool IsSpaceAvailable(const FLumenCard& Card, int32 ResLevel, bool bSinglePage) const;
@@ -328,30 +329,216 @@ private:
 	struct FPageBinAllocation
 	{
 	public:
+		void Init(const FIntPoint& InPageCoord, const FIntPoint& InPageSizeInElements)
+		{
+			static_assert(Lumen::MinResLevel == 3);
+			static_assert(Lumen::PhysicalPageSize == 128);
+
+			PageCoord = InPageCoord;
+			PageSizeInElements = InPageSizeInElements;
+			SubPageFreeCount = InPageSizeInElements.X * InPageSizeInElements.Y;
+			SubPageList.SetNum(SubPageFreeCount, false);
+		}
+
+		FIntPoint Add()
+		{
+			const int32 Index = SubPageList.FindAndSetFirstZeroBit();
+			checkSlow(Index != INDEX_NONE);
+			--SubPageFreeCount;
+			return FIntPoint(Index % PageSizeInElements.X, Index / PageSizeInElements.X);
+		}
+
+		void Remove(const FIntPoint& In)
+		{
+			const int32 Index = In.X + PageSizeInElements.X * In.Y;
+			checkSlow(SubPageList.IsValidIndex(Index));
+			++SubPageFreeCount;
+			SubPageList[Index] = false;
+		}
+
+		uint32 GetSubPageFreeCount() const
+		{
+			return SubPageFreeCount;
+		}
+
+		bool HasFreeElements() const
+		{
+			return SubPageFreeCount > 0;
+		}
+
 		FIntPoint PageCoord;
-		TArray<FIntPoint> FreeList;
+		FIntPoint PageSizeInElements;
+	private:
+		// 256 bits for storing sub-page elements
+		// * MinPage size is 2^Lumen::MinResLevel=8
+		// * Physical page is Lumen::PhysicalPageSize=128
+		// * Max sub-allocation within a physical page is (128/8)^2 = 16x16 = 256
+		// Values -> 0:free 1:used
+		TBitArray<TInlineAllocator<8>> SubPageList;
+		int32 SubPageFreeCount = 0;
 	};
 
 	struct FPageBin
 	{
-		FPageBin(FIntPoint InElementSize);
+		FPageBin(const FIntPoint& InElementSize);
 
-		int32 GetNumElements() const
+		int32 GetSubPageCount() const
 		{
 			return PageSizeInElements.X * PageSizeInElements.Y;
 		}
 
+		uint32 GetBinAllocationCount() const
+		{
+			return BinAllocations.Num();
+		}
+
+		uint32 GetSubPageFreeCount() const
+		{
+			uint32 Count = 0;
+			for (auto& BinAllocation : BinAllocations)
+			{
+				Count += BinAllocation.GetSubPageFreeCount();
+			}
+			return Count;
+		}
+
+		bool HasFreeElements() const
+		{
+			// Ideally, make a 0(1) lookup for this
+			for (auto& BinAllocation : BinAllocations)
+			{
+				if (BinAllocation.HasFreeElements())
+				{
+					return true;
+				}
+			}
+			return false;
+		}
+
+		FPageBinAllocation* GetBinAllocation()
+		{
+			// Ideally, make a 0(1) lookup for this
+			for (auto& BinAllocation : BinAllocations)
+			{
+				if (BinAllocation.HasFreeElements())
+				{
+					return &BinAllocation;
+				}
+			}
+			return nullptr;
+		}
+
+		FPageBinAllocation* AddBinAllocation(const FIntPoint& InPageCoord)
+		{
+			FPageBinAllocation& NewBinAllocation = BinAllocations.AddDefaulted_GetRef();
+			NewBinAllocation.Init(InPageCoord, PageSizeInElements);
+			return &NewBinAllocation;
+		}
+
+		// Return true if the bin is now completely empty (and can be deleted), false otherwise.
+		bool RemoveBinAllocation(const FLumenPageTableEntry& Page)
+		{
+			// Ideally, make a 0(1) lookup for this
+			for (uint32 BinAllocIt = 0, BinAllocCount = BinAllocations.Num(); BinAllocIt < BinAllocCount; ++BinAllocIt)
+			{
+				FPageBinAllocation& BinAllocation = BinAllocations[BinAllocIt];
+				if (BinAllocation.PageCoord == Page.PhysicalPageCoord)
+				{
+					const FIntPoint ElementCoord = (Page.PhysicalAtlasRect.Min - BinAllocation.PageCoord * Lumen::PhysicalPageSize) / ElementSize;
+					BinAllocation.Remove(ElementCoord);
+					const bool bIsEmpty = !BinAllocation.HasFreeElements();
+					if (bIsEmpty)
+					{
+						BinAllocations.RemoveAtSwap(BinAllocIt);
+					}
+					return bIsEmpty;
+				}
+			}
+			check(false); // Shouldn't reach this
+			return false;
+		}
+
 		FIntPoint ElementSize = FIntPoint(0, 0);
 		FIntPoint PageSizeInElements = FIntPoint(0, 0);
-
+	private:
 		TArray<FPageBinAllocation, TInlineAllocator<16>> BinAllocations;
 	};
 
+	// Physical pages
 	FIntPoint AllocatePhysicalAtlasPage();
-	void FreePhysicalAtlasPage(FIntPoint PageCoord);
-
-	TArray<FIntPoint> PhysicalPageFreeList;
+	void FreePhysicalAtlasPage(const FIntPoint& PageCoord);
+	// Stored into a bitfield (0:free,1:used)
+	// Mapping from page coord to bit is using simple linear remapping
+	TBitArray<TInlineAllocator<32>> PhysicalPageList;
+	int32 PhysicalPageFreeCount = 0;
+	FIntPoint PageAtlasSizeInPages = FIntPoint::ZeroValue;
+	
 	TArray<FPageBin> PageBins;
+
+	// Bin lookups are stored as 2D mapping (8x8 - [1-128]x[1-128])
+	// This mapping indexes PageX dim. and PageY dim.
+	// As an example, a 8x16 SubPage allocator will be stored at [3,4] (i.e., [log2(8),log2(16)] )
+	//          0 1 2 3 4  5  6   7
+	//          --------------------
+	//          1 2 4 8 16 32 64 128
+	// 0 |   1
+	// 1 |   2    X
+	// 2 |   4
+	// 3 |   8        X
+	// 4 |  16
+	// 5 |  32      X
+	// 6 |  64                X
+	// 7 | 128
+	static const uint8 InvalidPageBinIndex = 0xFF;
+	typedef TStaticArray<uint8, 64u> FPageBinLookup;
+	FPageBinLookup PageBinLookup;
+
+	uint8 GetLookupIndex(const FIntPoint& InRes) const
+	{
+		checkSlow(FMath::IsPowerOfTwo(InRes.X) && FMath::IsPowerOfTwo(InRes.Y));
+		checkSlow(InRes.X <= Lumen::PhysicalPageSize && InRes.Y <= Lumen::PhysicalPageSize);
+		const uint32 OutIndex = FMath::FloorLog2(InRes.X) + FMath::FloorLog2(InRes.Y) * 8u;
+		//check(OutIndex < 64u);
+		return (uint8)OutIndex;
+	}
+
+	const FPageBin* GetBin(const FIntPoint& InRes) const
+	{
+		const uint8 LookupIndex = GetLookupIndex(InRes);
+		const uint8 BinIndex = PageBinLookup[LookupIndex];
+		if (BinIndex != InvalidPageBinIndex)
+		{
+			return &PageBins[BinIndex];
+		}
+		return nullptr;
+	}
+
+	FPageBin* GetBin(const FIntPoint& InRes)
+	{
+		const uint8 LookupIndex = GetLookupIndex(InRes);
+		const uint8 BinIndex = PageBinLookup[LookupIndex];
+		if (BinIndex != InvalidPageBinIndex)
+		{
+			return &PageBins[BinIndex];
+		}
+		return nullptr;
+	}
+
+	FPageBin* GetOrAddBin(const FIntPoint& InRes)
+	{
+		const uint8 LookupIndex = GetLookupIndex(InRes);
+		const uint8 BinIndex = PageBinLookup[LookupIndex];
+		if (BinIndex == InvalidPageBinIndex)
+		{
+			PageBinLookup[LookupIndex] = PageBins.Num();
+			PageBins.Add(FPageBin(InRes));
+			return &PageBins.Last();
+		}
+		else
+		{
+			return &PageBins[BinIndex];
+		}
+	}
 };
 
 enum class ESurfaceCacheCompression : uint8
@@ -539,6 +726,7 @@ public:
 
 	void DumpStats(const FDistanceFieldSceneData& DistanceFieldSceneData, bool bDumpMeshDistanceFields, bool bDumpPrimitiveGroups);
 	bool UpdateAtlasSize();
+	void ReleaseAtlas();
 	void RemoveAllMeshCards();
 	void UploadPageTable(FRDGBuilder& GraphBuilder, FLumenSceneFrameTemporaries& FrameTemporaries);
 
@@ -579,7 +767,7 @@ public:
 		uint32 NumElements = 0;
 	};
 
-	void UpdateSurfaceCacheFeedback(FFeedbackData Data, const TArray<FVector, TInlineAllocator<2>>& LumenSceneCameraOrigins, TArray<FSurfaceCacheRequest, SceneRenderingAllocator>& MeshCardsUpdate, const FViewFamilyInfo& ViewFamily);
+	void UpdateSurfaceCacheFeedback(FFeedbackData Data, const TArray<FVector, TInlineAllocator<2>>& LumenSceneCameraOrigins, TArray<FSurfaceCacheRequest>& MeshCardsUpdate, const FViewFamilyInfo& ViewFamily, int32 RequestHistogram[Lumen::NumDistanceBuckets]);
 
 	void ProcessLumenSurfaceCacheRequests(
 		const FViewInfo& MainView,

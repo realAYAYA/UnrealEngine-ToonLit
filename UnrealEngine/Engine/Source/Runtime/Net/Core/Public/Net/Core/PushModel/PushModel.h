@@ -348,6 +348,12 @@ namespace UEPushModelPrivate
 		return bMakeBpPropertiesPushModel;
 	}
 
+	/** Are we allowed to create new push model handles */
+	NETCORE_API bool IsHandleCreationAllowed();
+
+	/** Control if we are allowed to create pushmodel handles */
+	NETCORE_API void SetHandleCreationAllowed(bool bAllow);
+	
 	static FString ToString(const FNetPushObjectId Id)
 	{
 		return FString::Printf(TEXT("0x%" UINT64_X_FMT), Id.GetValue());
@@ -453,7 +459,7 @@ namespace UEPushModelPrivate
 #define MARK_PROPERTY_DIRTY_FROM_NAME_STATIC_ARRAY_INDEX(ClassName, PropertyName, ArrayIndex, Object) CONDITIONAL_ON_OBJECT_NET_ID(Object, UEPushModelPrivate::MarkPropertyDirty(Object, PrivatePushId, GET_PROPERTY_REP_INDEX_STATIC_ARRAY_INDEX(ClassName, PropertyName, ArrayIndex)))
 
 // Marks an entire static array property dirty, given the Class Name, Property Name, and Object. This will fail to compile if the Property or Class aren't valid.
-#define MARK_PROPERTY_DIRTY_FROM_NAME_STATIC_ARRAY(ClassName, PropertyName, Object) CONDITIONAL_ON_OBJECT_NET_ID(Object, UEPushModelPrivate::MarkPropertyDirty(Object, PrivatePushId, GET_PROPERTY_REP_INDEX_STATIC_ARRAY_START(ClassName, PropertyName), GET_PROPERTY_REP_INDEX_STATIC_ARRAY_END(ClassName, PropertyName))
+#define MARK_PROPERTY_DIRTY_FROM_NAME_STATIC_ARRAY(ClassName, PropertyName, Object) CONDITIONAL_ON_OBJECT_NET_ID(Object, UEPushModelPrivate::MarkPropertyDirty(Object, PrivatePushId, GET_PROPERTY_REP_INDEX_STATIC_ARRAY_START(ClassName, PropertyName), GET_PROPERTY_REP_INDEX_STATIC_ARRAY_END(ClassName, PropertyName)))
 
 /**
  * This is used to reduce lines of code (mostly in setters) by doing the comparison check before changing the value and marking dirty only if we have changed the value. 
@@ -469,6 +475,7 @@ namespace UEPushModelPrivate
 
 #else // WITH_PUSH_MODEL
 
+#define MARK_PROPERTY_DIRTY_UNSAFE(Object, RepIndex)
 #define MARK_PROPERTY_DIRTY(Object, Property) 
 #define MARK_PROPERTY_DIRTY_STATIC_ARRAY_INDEX(Object, RepIndex, ArrayIndex) 
 #define MARK_PROPERTY_DIRTY_STATIC_ARRAY(Object, RepIndex, ArrayIndex) 

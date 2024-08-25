@@ -11,6 +11,7 @@
 UMassSignalProcessorBase::UMassSignalProcessorBase(const FObjectInitializer& ObjectInitializer)
 	: EntityQuery(*this)
 {
+	ExecutionFlags = (int32)EProcessorExecutionFlags::AllNetModes;
 }
 
 void UMassSignalProcessorBase::BeginDestroy()
@@ -54,8 +55,10 @@ void UMassSignalProcessorBase::Execute(FMassEntityManager& EntityManager, FMassE
 		return;
 	}
 
-	EntityQuery.CacheArchetypes(EntityManager);
-	if (EntityQuery.GetArchetypes().Num() > 0)
+	TArray<FMassArchetypeHandle> ValidArchetypes;
+	GetArchetypesMatchingOwnedQueries(EntityManager, ValidArchetypes);
+
+	if (ValidArchetypes.Num() > 0)
 	{
 		// EntitySet stores unique array of entities per specified archetype.
 		// FMassArchetypeEntityCollection expects an array of entities, a set is used to detect unique ones.
@@ -71,7 +74,7 @@ void UMassSignalProcessorBase::Execute(FMassEntityManager& EntityManager, FMassE
 		};
 		TArray<FEntitySet> EntitySets;
 
-		for (const FMassArchetypeHandle& Archetype : EntityQuery.GetArchetypes())
+		for (const FMassArchetypeHandle& Archetype : ValidArchetypes)
 		{
 			FEntitySet& Set = EntitySets.AddDefaulted_GetRef();
 			Set.Archetype = Archetype;

@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
 	"Version": 1,
-	"VersionName": "0.2",
+	"VersionName": "1.0",
 	"FriendlyName": "ML Deformer Neural Morph Model",
 	"Description": "Neural Morph Model for the ML Deformer Framework",
 	"Category": "Animation",
@@ -11,7 +11,7 @@
 	"MarketplaceURL": "",
 	"SupportURL": "https://forums.unrealengine.com/",
 	"CanContainContent": true,
-	"IsBetaVersion": true,
+	"IsBetaVersion": false,
 	"IsExperimentalVersion": false,
 	"Installed": false,
 	"Modules": [
@@ -41,6 +41,10 @@
 		},
 		{
 			"Name": "MLDeformerFramework",
+			"Enabled": true
+		},
+		{
+			"Name": "NNERuntimeBasicCpu",
 			"Enabled": true
 		}
 	]

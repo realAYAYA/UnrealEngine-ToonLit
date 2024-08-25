@@ -187,10 +187,16 @@ public:
 	}
 };
 
+/** Returns the string representation of the specified SPIR-V built-in variable, e.g. SpvBuiltInPosition to TEXT("gl_Position"). Returns nullptr for invalid value. */
+SHADERCOMPILERCOMMON_API const TCHAR* SpirvBuiltinToString(const SpvBuiltIn BuiltIn);
+
 /** Returns word offset to the entry point (OpEntryPoint) and name of the entry point (OpName). If the respective entry has not been found, the output offset is 0. */
-extern SHADERCOMPILERCOMMON_API void FindOffsetToSpirvEntryPoint(const FSpirv& Spirv, const ANSICHAR* EntryPointName, uint32& OutWordOffsetToEntryPoint, uint32& OutWordOffsetToMainName);
+SHADERCOMPILERCOMMON_API void FindOffsetToSpirvEntryPoint(const FSpirv& Spirv, const ANSICHAR* EntryPointName, uint32& OutWordOffsetToEntryPoint, uint32& OutWordOffsetToMainName);
 
 /** Renames the fixed-size entry point name (which must be "main_00000000_00000000") to the formatted name including a CRC over the module. Returns the new entry point name. */
-extern SHADERCOMPILERCOMMON_API const ANSICHAR* PatchSpirvEntryPointWithCRC(FSpirv& Spirv, uint32& OutCRC);
+SHADERCOMPILERCOMMON_API const ANSICHAR* PatchSpirvEntryPointWithCRC(FSpirv& Spirv, uint32& OutCRC);
+
+/** Parse global variables (anything but function local variables) of specified storage class from the specified SPIR-V module. */
+SHADERCOMPILERCOMMON_API void ParseSpirvGlobalVariables(const FSpirv& Spirv, SpvStorageClass StorageClass, TArray<FString>& OutVariableNames);
 
 

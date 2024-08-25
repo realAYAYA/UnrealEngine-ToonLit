@@ -13,7 +13,6 @@
 #include "Misc/EngineVersionBase.h"
 #include "Misc/VarArgs.h"
 #include "Serialization/ArchiveCookData.h"
-#include "Templates/AndOrNot.h"
 #include "Templates/EnableIf.h"
 #include "Templates/IsArrayOrRefOfTypeByPredicate.h"
 #include "Templates/IsEnumClass.h"
@@ -1837,7 +1836,7 @@ public:
 	void Logf(const FmtType& Fmt, Types... Args)
 	{
 		static_assert(TIsArrayOrRefOfTypeByPredicate<FmtType, TIsCharEncodingCompatibleWithTCHAR>::Value, "Formatting string must be a TCHAR array.");
-		static_assert(TAnd<TIsValidVariadicFunctionArg<Types>...>::Value, "Invalid argument(s) passed to FArchive::Logf");
+		static_assert((TIsValidVariadicFunctionArg<Types>::Value && ...), "Invalid argument(s) passed to FArchive::Logf");
 
 		LogfImpl(Fmt, Args...);
 	}
@@ -1973,17 +1972,17 @@ public:
 		const uint8* RESTRICT Src = ActiveFPLB->StartFastPathLoadBuffer;
 		if (Src + Size <= ActiveFPLB->EndFastPathLoadBuffer)
 		{
-			if (Size == 2)
+			if constexpr (Size == 2)
 			{
 				uint16 * RESTRICT Dest = (uint16 * RESTRICT)InDest;
 				*Dest = FPlatformMemory::ReadUnaligned<uint16>(Src);
 			}
-			else if (Size == 4)
+			else if constexpr (Size == 4)
 			{
 				uint32 * RESTRICT Dest = (uint32 * RESTRICT)InDest;
 				*Dest = FPlatformMemory::ReadUnaligned<uint32>(Src);
 			}
-			else if (Size == 8)
+			else if constexpr (Size == 8)
 			{
 				uint64 * RESTRICT Dest = (uint64 * RESTRICT)InDest;
 				*Dest = FPlatformMemory::ReadUnaligned<uint64>(Src);

@@ -13,6 +13,7 @@
 #include "EntitySystem/MovieSceneEntitySystemRunner.h"
 #include "EntitySystem/MovieSceneComponentTypeInfo.h"
 #include "EntitySystem/MovieSceneCachedEntityFilterResult.h"
+#include "EntitySystem/MovieSceneEntityGroupingSystem.h"
 #include "Evaluation/PreAnimatedState/MovieScenePreAnimatedObjectStorage.h"
 #include "MovieSceneTracksComponentTypes.h"
 #include "UObject/SoftObjectPtr.h"
@@ -103,6 +104,8 @@ public:
 	void OnPostSpawn(UMovieSceneEntitySystemLinker* InLinker, TComponentTypeID<RequiredComponents>... InRequiredComponents);
 
 protected:
+
+	UE::MovieScene::FEntityGroupingPolicyKey GroupingKey;
 
 	FEntityComponentFilter MaterialSwitcherFilter;
 	FEntityComponentFilter MaterialParameterFilter;
@@ -271,6 +274,10 @@ void TMovieSceneMaterialSystem<AccessorType, RequiredComponents...>::OnLink(UMov
 	FBuiltInComponentTypes*          BuiltInComponents = FBuiltInComponentTypes::Get();
 	FMovieSceneTracksComponentTypes* TracksComponents  = FMovieSceneTracksComponentTypes::Get();
 
+	// Define a grouping for these materials. This will make hierarchical bias work.
+	UMovieSceneEntityGroupingSystem* GroupingSystem = Linker->LinkSystem<UMovieSceneEntityGroupingSystem>();
+	GroupingKey = GroupingSystem->AddGrouping<RequiredComponents...>(InRequiredComponents...);
+
 	MaterialSwitcherFilter.Reset();
 	MaterialSwitcherFilter.All({ InRequiredComponents..., BuiltInComponents->ObjectResult });
 
@@ -278,7 +285,8 @@ void TMovieSceneMaterialSystem<AccessorType, RequiredComponents...>::OnLink(UMov
 	// Imported entities are implicitly excluded by way of filtering by BoundObject, which do not exist on imported entities
 	MaterialParameterFilter.Reset();
 	MaterialParameterFilter.All({ InRequiredComponents... });
-	MaterialParameterFilter.Any({ TracksComponents->ScalarParameterName, TracksComponents->ColorParameterName, TracksComponents->VectorParameterName });
+	MaterialParameterFilter.Any({ TracksComponents->ScalarParameterName, TracksComponents->ColorParameterName, TracksComponents->VectorParameterName, // Old style parameter types for deprecated UMovieSceneParameterSections
+		TracksComponents->ScalarMaterialParameterInfo, TracksComponents->ColorMaterialParameterInfo, TracksComponents->VectorMaterialParameterInfo }); // New style parameter types
 
 	Linker->Events.PostSpawnEvent.AddRaw(this, &TMovieSceneMaterialSystem<AccessorType, RequiredComponents...>::OnPostSpawn, InRequiredComponents...);
 
@@ -289,6 +297,13 @@ void TMovieSceneMaterialSystem<AccessorType, RequiredComponents...>::OnLink(UMov
 template<typename AccessorType, typename... RequiredComponents>
 void TMovieSceneMaterialSystem<AccessorType, RequiredComponents...>::OnUnlink(UMovieSceneEntitySystemLinker* Linker)
 {
+	UMovieSceneEntityGroupingSystem* GroupingSystem = Linker->FindSystem<UMovieSceneEntityGroupingSystem>();
+	if (ensure(GroupingSystem))
+	{
+		GroupingSystem->RemoveGrouping(GroupingKey);
+	}
+	GroupingKey = FEntityGroupingPolicyKey();
+
 	Linker->Events.PostSpawnEvent.RemoveAll(this);
 }
 
@@ -299,7 +314,6 @@ void TMovieSceneMaterialSystem<AccessorType, RequiredComponents...>::OnPostSpawn
 
 	SCOPE_CYCLE_COUNTER(MovieSceneEval_ReinitializeBoundMaterials)
 
-	FBuiltInComponentTypes*          BuiltInComponents = FBuiltInComponentTypes::Get();
 	FMovieSceneTracksComponentTypes* TracksComponents  = FMovieSceneTracksComponentTypes::Get();
 
 	FEntityAllocationWriteContext WriteContext(InLinker->EntityManager);
@@ -343,6 +357,7 @@ void TMovieSceneMaterialSystem<AccessorType, RequiredComponents...>::OnRun(UMovi
 		.ReadAllOf(InRequiredComponents...)
 		.Read(BuiltInComponents->ObjectResult)
 		.FilterAll({ BuiltInComponents->Tags.NeedsLink })
+		.FilterNone({ BuiltInComponents->Tags.Ignored })
 		.RunInline_PerEntity(&Linker->EntityManager, ApplyMaterialSwitchers);
 
 		// --------------------------------------------------------------------------------------
@@ -363,7 +378,7 @@ void TMovieSceneMaterialSystem<AccessorType, RequiredComponents...>::OnRun(UMovi
 		.ReadAllOf(InRequiredComponents...)
 		.Write(TracksComponents->BoundMaterial)
 		.FilterAll({ BuiltInComponents->Tags.NeedsLink })
-		.FilterNone({ BuiltInComponents->Tags.NeedsUnlink })
+		.FilterNone({ BuiltInComponents->Tags.Ignored, BuiltInComponents->Tags.NeedsUnlink })
 		.RunInline_PerEntity(&Linker->EntityManager, ReinitializeBoundMaterialsTask);
 	}
 }

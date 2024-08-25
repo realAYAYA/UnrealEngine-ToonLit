@@ -4,13 +4,15 @@
 
 #include "CompactBinaryTCP.h"
 #include "Containers/Array.h"
+#include "Cooker/CookTypes.h"
+#include "Cooker/MPCollector.h"
 #include "CookOnTheSide/CookOnTheFlyServer.h"
-#include "CookTypes.h"
 #include "HAL/CriticalSection.h"
 #include "IPAddress.h"
 #include "Misc/Guid.h"
 #include "Templates/UniquePtr.h"
 
+namespace UE::Cook { class FLogMessagesMessageHandler; }
 namespace UE::Cook { class FMPCollectorClientMessageContext; }
 namespace UE::Cook { class IMPCollector; }
 namespace UE::Cook { struct FAbortPackagesMessage; }
@@ -71,6 +73,9 @@ public:
 	/** Unegister a Collector that was registered. */
 	void Unregister(IMPCollector* Collector);
 
+	/** Called on worker cook process shutdown to flush any remaining log messages. */
+	void FlushLogs();
+
 private:
 	enum class EConnectStatus
 	{
@@ -105,14 +110,14 @@ private:
 	/** Helper for Tick, pump Send/Receive and check for whether we are done shutting down. */
 	void PumpDisconnect(FTickStackData& StackData);
 	/** Send the message immediately to the Socket. If cannot complete immediately, it will be finished during Tick. */
-	void SendMessage(const UE::CompactBinaryTCP::IMessage& Message);
+	void SendMessage(const IMPCollectorMessage& Message);
 	/** Send this into the given state. Update any state-dependent variables. */
 	void SendToState(EConnectStatus TargetStatus);
 	void LogInvalidMessage(const TCHAR* MessageTypeName);
 	/** Send packages assigned from the server into the request state. */
 	void AssignPackages(FAssignPackagesMessage& Message);
-	/** Tick the registered collectors. */
-	void TickCollectors(FTickStackData& StackData, bool bFlush);
+	/** Tick the registered collectors, or the single given collector if non-null. */
+	void TickCollectors(FTickStackData& StackData, bool bFlush, IMPCollector* SingleCollector = nullptr);
 	/** Helper for ReportDemote/ReportPromote: Collect IMPCollectors and asynchronously add the message to pending. */
 	void ReportPackageMessage(FName PackageName, TUniquePtr<FPackageRemoteResult>&& ResultOwner);
 	
@@ -141,6 +146,7 @@ private:
 	// Variables Read/Write only from the Scheduler thread
 	TSharedPtr<FInternetAddr> DirectorAddr;
 	TUniquePtr<FInitialConfigMessage> InitialConfigMessage;
+	TRefCountPtr<FLogMessagesMessageHandler> LogMessageHandler;
 	TArray<ITargetPlatform*> OrderedSessionPlatforms;
 	TArray<ITargetPlatform*> OrderedSessionAndSpecialPlatforms;
 	TArray<FDiscoveredPackageReplication> PendingDiscoveredPackages;

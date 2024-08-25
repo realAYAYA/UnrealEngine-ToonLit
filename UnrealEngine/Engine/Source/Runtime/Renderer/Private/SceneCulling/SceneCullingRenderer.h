@@ -13,11 +13,13 @@ BEGIN_SHADER_PARAMETER_STRUCT( FInstanceHierarchyParameters, )
 	SHADER_PARAMETER(uint32, CellBlockDimLog2)
 	SHADER_PARAMETER(uint32, LocalCellCoordMask) // (1 << NumCellsPerBlockLog2) - 1
 	SHADER_PARAMETER(int32, FirstLevel)
+	SHADER_PARAMETER(uint32, bUseExplicitCellBounds)
 
 	SHADER_PARAMETER_RDG_BUFFER_SRV( StructuredBuffer< FCellBlockData >, InstanceHierarchyCellBlockData)
-	SHADER_PARAMETER_RDG_BUFFER_SRV( StructuredBuffer< FCellHeader >, InstanceHierarchyCellHeaders)
+	SHADER_PARAMETER_RDG_BUFFER_SRV( StructuredBuffer< FPackedCellHeader >, InstanceHierarchyCellHeaders)
 	SHADER_PARAMETER_RDG_BUFFER_SRV( StructuredBuffer< uint >, InstanceHierarchyItemChunks)
-	SHADER_PARAMETER_RDG_BUFFER_SRV( StructuredBuffer< uint >, InstanceHierarchyItems)
+	SHADER_PARAMETER_RDG_BUFFER_SRV( StructuredBuffer< uint >, InstanceIds)
+	SHADER_PARAMETER_RDG_BUFFER_SRV( StructuredBuffer< float4 >, ExplicitCellBounds)
 END_SHADER_PARAMETER_STRUCT()
 
 /**
@@ -28,7 +30,7 @@ class FSceneCullingRenderer
 public:
 	friend class FSceneInstanceCullingQuery;
 
-	FSceneCullingRenderer(FSceneCulling& InSceneCulling) : SceneCulling(InSceneCulling) {}
+	FSceneCullingRenderer(FSceneCulling& InSceneCulling, ISceneRenderer &InSceneRenderer) : SceneCulling(InSceneCulling), SceneRenderer(InSceneRenderer) {}
 
 	inline bool IsEnabled() const { return SceneCulling.IsEnabled(); }
 
@@ -49,15 +51,21 @@ public:
 	 */
 	FSceneInstanceCullingQuery* CreateInstanceQuery(FRDGBuilder& GraphBuilder);
 
+	/**
+	 */
+	void DebugRender(FRDGBuilder& GraphBuilder, TArrayView<FViewInfo> Views);
+
 private:
 	FSceneCulling& SceneCulling;
+	ISceneRenderer &SceneRenderer;
 	using FSpatialHash = FSceneCulling::FSpatialHash;
 
 	FInstanceHierarchyParameters ShaderParameters;
 	FRDGBuffer* CellHeadersRDG = nullptr;
 	FRDGBuffer* ItemChunksRDG = nullptr;
-	FRDGBuffer* ItemsRDG = nullptr;
+	FRDGBuffer* InstanceIdsRDG = nullptr;
 	FRDGBuffer* CellBlockDataRDG = nullptr;
+	FRDGBuffer* ExplicitCellBoundsRDG = nullptr;
 };
 
 /**

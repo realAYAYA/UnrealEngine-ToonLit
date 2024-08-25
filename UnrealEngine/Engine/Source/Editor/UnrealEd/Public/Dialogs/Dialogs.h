@@ -5,8 +5,9 @@
 #include "CoreMinimal.h"
 #include "Input/Reply.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
-#include "Widgets/SWidget.h"
+#include "Widgets/Layout/SBorder.h"
 #include "Widgets/SCompoundWidget.h"
+#include "Widgets/SWidget.h"
 #include "Widgets/SWindow.h"
 
 class SModalDialogWithCheckbox;
@@ -77,7 +78,22 @@ class FSuppressableWarningDialog
 {
 public:
 
-	/** 
+	/**
+	 * Optional mode of operation for FSuppressableWarningDialog
+	 */
+	enum class EMode
+	{
+		/** Default behavior for dialog */
+		Default,
+
+		/** Dialog suppression will not persist after editor closes */
+		DontPersistSuppressionAcrossSessions,
+
+		/** Persist user result */
+		PersistUserResponse
+	};
+
+	/**
 	 * Struct used to initialize FSuppressableWarningDialog
 	 * 
 	 * User must provide confirm text, and cancel text (if using cancel button)
@@ -98,6 +114,16 @@ public:
 
 		/** If true the suppress checkbox defaults to true*/
 		bool bDefaultToSuppressInTheFuture;
+
+		/** If true suppression will not persist for future editor sessions */
+		UE_DEPRECATED(5.4, "bDontPersistSuppressionAcrossSessions is deprecated, please use FSetupInfo::DialogMode instead.")
+		bool bDontPersistSuppressionAcrossSessions;
+
+		/** Optional mode of operation for FSuppressableWarningDialog */
+		EMode DialogMode;
+
+		/** Wrap message at specified length, zero or negative number will disable the wrapping */
+		float WrapMessageAt;
 
 		/** Text used on the button which will return FSuppressableWarningDialog::Confirm */
 		FText ConfirmText;
@@ -125,6 +151,9 @@ public:
 			, IniSettingName(InIniSettingName)
 			, IniSettingFileName(InIniSettingFileName)
 			, bDefaultToSuppressInTheFuture(false)
+			, bDontPersistSuppressionAcrossSessions(false)
+			, DialogMode(EMode::Default)
+			, WrapMessageAt(512.0f)
 			, ConfirmText()
 			, CancelText()
 			, CheckBoxText(NSLOCTEXT("ModalDialogs", "DefaultCheckBoxMessage", "Don't show this again"))
@@ -156,6 +185,9 @@ private:
 	/** Name of the flag which controls whether to launch the warning */
 	FString IniSettingName;
 
+	/** The name of the setting which stores the user response when dismissing the dialog. */
+	FString ResponseIniSettingName;
+
 	/** Name of the file which stores the IniSettingName flag result */
 	FString IniSettingFileName;
 
@@ -168,6 +200,11 @@ private:
 	/** Cached pointer to the message box held within the window */
 	TSharedPtr<class SModalDialogWithCheckbox> MessageBox;
 
+	/** Optional mode of operation */
+	EMode DialogMode;
+
+	/** Set of session only suppressions */
+	static TSet<FString> SuppressedInTheSession;
 };
 
 
@@ -212,6 +249,60 @@ private:
 	TWeakPtr< SWindow > MyWindow;
 
 	FSimpleDelegate OkPressedDelegate;
+};
+
+namespace UE::Private
+{
+UNREALED_API TSharedRef<SWindow> CreateModalDialogWindow(const FText& InTitle, TSharedRef<SWidget> Contents, ESizingRule Sizing, FVector2D MinDimensions);
+UNREALED_API void ShowModalDialogWindow(TSharedRef<SWindow> Window);
+} // namespace UE::Private
+
+/**
+ * Base class for a dialog which can be shown modally and returns a user's selection after it is closed.
+ */
+template<typename ResultType>
+class SModalEditorDialog : public SCompoundWidget
+{
+public:
+	SLATE_BEGIN_ARGS(SGenericDialogWidget)
+	{
+	}
+	SLATE_END_ARGS()
+
+	ResultType ShowModalDialog(const FText& InTitle)
+	{
+		static_assert(std::is_default_constructible_v<ResultType>, "ResultType must be default constructable");
+		Window = UE::Private::CreateModalDialogWindow(InTitle, AsShared(), Sizing, MinDimensions);
+		Window->SetWidgetToFocusOnActivate(GetWidgetToFocusOnActivate());
+		ResultType Result;
+		ResultPointer = &Result;
+		UE::Private::ShowModalDialogWindow(Window.ToSharedRef());
+		Window.Reset();
+		ResultPointer = nullptr;
+		return MoveTemp(Result);
+	}
+
+protected:
+	// Derived classes call this function from their widget events to close the dialog and return the result to the calling context
+	void ProvideResult(ResultType InResult)
+	{
+		// Close owning window and move result into space where ShowDialog can return it
+		*ResultPointer = MoveTemp(InResult);
+		Window->RequestDestroyWindow();
+	}
+	
+	virtual TSharedPtr<SWidget> GetWidgetToFocusOnActivate() 
+	{
+		return {};
+	}
+
+	// Child classes can modify these
+	ESizingRule Sizing = ESizingRule::Autosized;
+	FVector2D MinDimensions = FVector2D(400.0f, 300.f);
+
+private:
+	TSharedPtr<SWindow> Window;
+	ResultType* ResultPointer = nullptr;
 };
 
 UE_DEPRECATED(4.26, "Creating groups (nested packages) is no longer supported. Use PromptUserIfExistingObject overload that does not take the Group paramater.")

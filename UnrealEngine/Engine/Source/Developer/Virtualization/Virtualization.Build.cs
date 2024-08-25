@@ -12,21 +12,24 @@ public class Virtualization : ModuleRules
 		PrivateIncludePathModuleNames.Add("Analytics");
 
 		PrivateDependencyModuleNames.AddRange(
-			new string[]
-			{
+			new string[] {
 				"Core",
 				"CoreUObject",
 				"DerivedDataCache",
-				"MessageLog",
 				"Projects",
 				"SourceControl"
-			});
+			}
+		);
 
 		if (Target.bUsesSlate)
 		{
-			// NOTE: Slate is being included via SourceControl anyway
-			PrivateDependencyModuleNames.Add("Slate");
-			PrivateDependencyModuleNames.Add("SlateCore");
+			PrivateDependencyModuleNames.AddRange(
+				new string[] {
+					"MessageLog",
+					"Slate",
+					"SlateCore"
+				}
+			);
 
 			PublicDefinitions.Add("UE_VA_WITH_SLATE=1");
 		}

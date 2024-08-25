@@ -76,16 +76,11 @@ class UAnimBoneCompressionCodec_ACLDatabase : public UAnimBoneCompressionCodec_A
 	virtual void PreSave(FObjectPreSaveContext ObjectSaveContext) override;
 
 	// UAnimBoneCompressionCodec implementation
-// @third part code - Epic Games Begin
 	virtual void PopulateDDCKey(const UE::Anim::Compression::FAnimDDCKeyArgs& KeyArgs, FArchive& Ar) override;
-// @third part code - Epic Games End
 
 	// UAnimBoneCompressionCodec_ACLBase implementation
-	virtual bool UseDatabase() const override { return true; }
-	virtual void RegisterWithDatabase(const FCompressibleAnimData& CompressibleAnimData, FCompressibleAnimDataResult& OutResult) override;
-// @third part code - Epic Games Begin
-	virtual void GetCompressionSettings(acl::compression_settings& OutSettings, const ITargetPlatform* TargetPlatform) const override;
-// @third part code - Epic Games End
+	virtual void PostCompression(const FCompressibleAnimData& CompressibleAnimData, FCompressibleAnimDataResult& OutResult) const override;
+	virtual void GetCompressionSettings(const class ITargetPlatform* TargetPlatform, acl::compression_settings& OutSettings) const override;
 	virtual TArray<class USkeletalMesh*> GetOptimizationTargets() const override { return OptimizationTargets; }
 #endif
 

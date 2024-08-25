@@ -3,11 +3,12 @@
 import { CollapseAllVisibility, ConstrainMode, DetailsHeader, DetailsList, DetailsListLayoutMode, DetailsRow, Text, FocusZone, FocusZoneDirection, IColumn, IDetailsListProps, ScrollablePane, ScrollbarVisibility, SelectionMode, Stack, Sticky, StickyPositionType, Modal, IconButton, PrimaryButton, DefaultButton, TextField } from '@fluentui/react';
 import React from 'react';
 import { useParams } from 'react-router-dom';
-import { detailClasses } from '../styles/Styles';
+import { getHordeStyling } from '../styles/Styles';
 
 export const SubmitQueue: React.FC = () => {
 
-	const { streamId } = useParams<{ streamId: string }>();
+   const { streamId } = useParams<{ streamId: string }>();   
+   const { detailClasses } = getHordeStyling();
 
 	const buildColumns = (): IColumn[] => {
 

@@ -12,7 +12,14 @@ UUsdAssetCacheFactory::UUsdAssetCacheFactory(const FObjectInitializer& ObjectIni
 	SupportedClass = UUsdAssetCache2::StaticClass();
 }
 
-UObject* UUsdAssetCacheFactory::FactoryCreateNew(UClass* Class, UObject* InParent, FName Name, EObjectFlags Flags, UObject* Context, FFeedbackContext* Warn)
+UObject* UUsdAssetCacheFactory::FactoryCreateNew(
+	UClass* Class,
+	UObject* InParent,
+	FName Name,
+	EObjectFlags Flags,
+	UObject* Context,
+	FFeedbackContext* Warn
+)
 {
 	return NewObject<UUsdAssetCache2>(InParent, Name, Flags | RF_Transactional | RF_Public | RF_Standalone);
 }

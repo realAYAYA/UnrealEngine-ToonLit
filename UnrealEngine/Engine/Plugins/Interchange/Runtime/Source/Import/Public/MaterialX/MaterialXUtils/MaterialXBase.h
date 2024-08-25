@@ -123,5 +123,7 @@ protected:
 
 	/** It's up to the derive class to initialize it with the proper node definition*/
 	const char* NodeDefinition; 
+
+	bool bIsSubstrateEnabled;
 };
 #endif

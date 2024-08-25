@@ -11,6 +11,8 @@
 #include "MassSignalSubsystem.h"
 #include "MassSmartObjectFragments.h"
 #include "Engine/World.h"
+#include "MassDebugger.h"
+
 
 namespace UE::Mass::SmartObject
 {
@@ -124,7 +126,7 @@ void FMassSmartObjectHandler::RemoveRequest(const FMassSmartObjectRequestID& Req
 	ExecutionContext.Defer().DestroyEntity(RequestEntity);
 }
 
-FSmartObjectClaimHandle FMassSmartObjectHandler::ClaimCandidate(const FMassEntityHandle Entity, FMassSmartObjectUserFragment& User, const FMassSmartObjectCandidateSlots& Candidates) const
+FSmartObjectClaimHandle FMassSmartObjectHandler::ClaimCandidate(const FMassEntityHandle Entity, FMassSmartObjectUserFragment& User, const FMassSmartObjectCandidateSlots& Candidates, ESmartObjectClaimPriority ClaimPriority) const
 {
 	checkf(!User.InteractionHandle.IsValid(), TEXT("User should not already have an interaction."));
 	
@@ -134,7 +136,7 @@ FSmartObjectClaimHandle FMassSmartObjectHandler::ClaimCandidate(const FMassEntit
 	
 	for (const FSmartObjectCandidateSlot& CandidateSlot : View)
 	{
-		ClaimedSlot = ClaimSmartObject(Entity, User, CandidateSlot.Result);  
+		ClaimedSlot = ClaimSmartObject(Entity, User, CandidateSlot.Result, ClaimPriority);  
 		if (ClaimedSlot.IsValid())
 		{
 #if WITH_MASSGAMEPLAY_DEBUG
@@ -153,9 +155,9 @@ FSmartObjectClaimHandle FMassSmartObjectHandler::ClaimCandidate(const FMassEntit
 	return ClaimedSlot;
 }
 
-FSmartObjectClaimHandle FMassSmartObjectHandler::ClaimSmartObject(const FMassEntityHandle Entity, FMassSmartObjectUserFragment& User, const FSmartObjectRequestResult& RequestResult) const
+FSmartObjectClaimHandle FMassSmartObjectHandler::ClaimSmartObject(const FMassEntityHandle Entity, FMassSmartObjectUserFragment& User, const FSmartObjectRequestResult& RequestResult, ESmartObjectClaimPriority ClaimPriority) const
 {
-	const FSmartObjectClaimHandle ClaimHandle = SmartObjectSubsystem.MarkSlotAsClaimed(RequestResult.SlotHandle, FConstStructView::Make(FSmartObjectMassEntityUserData(Entity)));
+	const FSmartObjectClaimHandle ClaimHandle = SmartObjectSubsystem.MarkSlotAsClaimed(RequestResult.SlotHandle, ClaimPriority, FConstStructView::Make(FSmartObjectMassEntityUserData(Entity)));
 
 #if WITH_MASSGAMEPLAY_DEBUG
 	UE_CVLOG(UE::Mass::Debug::IsDebuggingEntity(Entity),

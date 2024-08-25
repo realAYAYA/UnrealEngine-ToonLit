@@ -1,3 +1,5 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
 #include "../Common.ush"
 
 Texture2D<float4> HeterogeneousVolumeRadiance;
@@ -9,11 +11,11 @@ void HeterogeneousVolumesCompositeCS(
 	uint2 DispatchThreadId : SV_DispatchThreadID
 )
 {
-	uint2 PixelCoord = DispatchThreadId.xy;
-	if (any(PixelCoord >= View.ViewSizeAndInvSize.xy))
+	if (any(DispatchThreadId.xy >= View.ViewSizeAndInvSize.xy))
 	{
 		return;
 	}
+	uint2 PixelCoord = DispatchThreadId.xy + View.ViewRectMin.xy;
 
 	float4 Result;
 	float HeterogeneousVolumeTransmittance = saturate(1.0 - HeterogeneousVolumeRadiance[PixelCoord].a);

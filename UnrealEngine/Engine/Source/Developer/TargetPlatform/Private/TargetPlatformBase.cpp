@@ -56,9 +56,19 @@ bool FTargetPlatformBase::UsesRayTracing() const
 	return CVar ? (CVar->GetInt() != 0) : false;
 }
 
+uint32 FTargetPlatformBase::GetSupportedHardwareMask() const
+{
+	return 0;
+}
+
 EOfflineBVHMode FTargetPlatformBase::GetStaticMeshOfflineBVHMode() const
 {
 	return EOfflineBVHMode::Disabled;
+}
+
+bool FTargetPlatformBase::GetStaticMeshOfflineBVHCompression() const
+{
+	return false;
 }
 
 bool FTargetPlatformBase::ForcesSimpleSkyDiffuse() const
@@ -81,6 +91,12 @@ int32 FTargetPlatformBase::GetHeightFogModeForOpaque() const
 bool FTargetPlatformBase::UsesMobileAmbientOcclusion() const
 {
 	static IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.Mobile.AmbientOcclusion"));
+	return CVar ? (CVar->GetInt() != 0) : false;
+}
+
+bool FTargetPlatformBase::UsesMobileDBuffer() const
+{
+	static IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.Mobile.DBuffer"));
 	return CVar ? (CVar->GetInt() != 0) : false;
 }
 

@@ -303,8 +303,6 @@ void FPlaylistReaderMKV::ReadChunk(uint8* DestinationBuffer, int64 InFromOffset,
 	ReceiveBuffer = MakeSharedTS<IElectraHttpManager::FReceiveBuffer>();
 	ReceiveBuffer->Buffer.SetExternalBuffer(DestinationBuffer, ChunkSize);
 
-	const FParamDict& Options = PlayerSessionServices->GetOptions();
-
 	Request = MakeSharedTS<IElectraHttpManager::FRequest>();
 	Request->Parameters.URL = PlaylistURL;
 	Request->Parameters.Range.SetStart(InFromOffset);
@@ -314,8 +312,8 @@ void FPlaylistReaderMKV::ReadChunk(uint8* DestinationBuffer, int64 InFromOffset,
 		LastByte = FileSize - 1;
 	}
 	Request->Parameters.Range.SetEndIncluding(LastByte);
-	Request->Parameters.ConnectTimeout = Options.GetValue(MKV::OptionKeyMKVLoadConnectTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 8));
-	Request->Parameters.NoDataTimeout = Options.GetValue(MKV::OptionKeyMKVLoadNoDataTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 6));
+	Request->Parameters.ConnectTimeout = PlayerSessionServices->GetOptionValue(MKV::OptionKeyMKVLoadConnectTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 8));
+	Request->Parameters.NoDataTimeout = PlayerSessionServices->GetOptionValue(MKV::OptionKeyMKVLoadNoDataTimeout).SafeGetTimeValue(FTimeValue().SetFromMilliseconds(1000 * 6));
 	Request->ReceiveBuffer = ReceiveBuffer;
 	Request->ProgressListener = ProgressListener;
 	Request->ResponseCache = PlayerSessionServices->GetHTTPResponseCache();

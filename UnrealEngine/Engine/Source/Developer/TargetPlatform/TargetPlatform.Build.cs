@@ -59,6 +59,7 @@ public class TargetPlatform : ModuleRules
 					DynamicallyLoadedModuleNames.Add("AudioFormatOgg");
 					DynamicallyLoadedModuleNames.Add("AudioFormatOpus");
 					DynamicallyLoadedModuleNames.Add("AudioFormatBink");
+					DynamicallyLoadedModuleNames.Add("AudioFormatRad");
 				}
 			}
 			else if (Target.Platform == UnrealTargetPlatform.Mac)
@@ -72,6 +73,7 @@ public class TargetPlatform : ModuleRules
 					DynamicallyLoadedModuleNames.Add("AudioFormatOgg");
 					DynamicallyLoadedModuleNames.Add("AudioFormatOpus");
 					DynamicallyLoadedModuleNames.Add("AudioFormatBink");
+					DynamicallyLoadedModuleNames.Add("AudioFormatRad");
 				}
 
 			}
@@ -87,6 +89,7 @@ public class TargetPlatform : ModuleRules
 					DynamicallyLoadedModuleNames.Add("AudioFormatOgg");
 					DynamicallyLoadedModuleNames.Add("AudioFormatOpus");
 					DynamicallyLoadedModuleNames.Add("AudioFormatBink");
+					DynamicallyLoadedModuleNames.Add("AudioFormatRad");
 				}
 			}
 		}

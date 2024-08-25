@@ -178,6 +178,7 @@ class UTextRenderComponent : public UPrimitiveComponent
 
 	//~ Begin UActorComponent Interface.
 	ENGINE_API virtual bool RequiresGameThreadEndOfFrameUpdates() const override;
+	ENGINE_API virtual void PrecachePSOs() override;
 	//~ End UActorComponent Interface.
 
 	//~ Begin UObject Interface.

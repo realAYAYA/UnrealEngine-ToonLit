@@ -42,13 +42,13 @@ public:
 	FDMXZipper();
 
 	/** Loads the specified zip file */
-	UE_NODISCARD bool LoadFromFile(const FString& Filename);
+	[[nodiscard]] bool LoadFromFile(const FString& Filename);
 
 	/** Loads the data as zip file */
-	UE_NODISCARD bool LoadFromData(const TArray64<uint8>& Data);
+	[[nodiscard]] bool LoadFromData(const TArray64<uint8>& Data);
 
 	/** Saves the zip to specified Filename */
-	UE_NODISCARD bool SaveToFile(const FString& Filename);
+	[[nodiscard]] bool SaveToFile(const FString& Filename);
 
 	/** Returns the File Names in the Zip. Note, may contain relative paths */
 	TArray<FString> GetFiles() const;
@@ -65,7 +65,7 @@ public:
 	void AddFile(const FString& RelativeFilePathAndName, const TArray64<uint8>& Data, const bool bCompress = false);
 
 	/** Gets the Data of a File in the Zip */
-	UE_NODISCARD bool GetFileContent(const FString& Filename, TArray64<uint8>& OutData);
+	[[nodiscard]] bool GetFileContent(const FString& Filename, TArray64<uint8>& OutData);
 
 	/** Helper to unzip a file within the zip as temp file. Deletes the file when running out of scope. */
 	struct FDMXScopedUnzipToTempFile
@@ -79,13 +79,13 @@ public:
 
 protected:
 	/** Writes a zipped File to the array writer */
-	UE_NODISCARD bool AddFileInternal(FArrayWriter& Writer, const FString& Path, const TArray64<uint8>& Data, const bool bCompress = true);
+	[[nodiscard]] bool AddFileInternal(FArrayWriter& Writer, const FString& Path, const TArray64<uint8>& Data, const bool bCompress = true);
 
 	/** Adds an End of Central Directory entry to the zip */
 	void AddEndOfCentralDirectory(FArrayWriter& Writer);
 
 	/** Parses the Zip File */
-	UE_NODISCARD bool Parse();
+	[[nodiscard]] bool Parse();
 
 	/** The Size of the Central Directory */
 	uint32 SizeOfCentralDirectory = 0;

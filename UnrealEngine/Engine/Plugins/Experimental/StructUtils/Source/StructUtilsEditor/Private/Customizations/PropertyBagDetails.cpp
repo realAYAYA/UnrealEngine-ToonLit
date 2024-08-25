@@ -288,6 +288,12 @@ FEdGraphPinType GetPropertyDescAsPin(const FPropertyBagPropertyDesc& Desc)
 		PinType.PinCategory = UEdGraphSchema_K2::PC_SoftClass;
 		PinType.PinSubCategoryObject = const_cast<UObject*>(Desc.ValueTypeObject.Get());
 		break;
+	case EPropertyBagPropertyType::UInt32:	// Warning : Type only partially supported (Blueprint does not support unsigned type)
+		PinType.PinCategory = UEdGraphSchema_K2::PC_Int;
+		break;
+	case EPropertyBagPropertyType::UInt64:	// Warning : Type only partially supported (Blueprint does not support unsigned type)
+		PinType.PinCategory = UEdGraphSchema_K2::PC_Int64;
+		break;
 	default:
 		ensureMsgf(false, TEXT("Unhandled value type %s"), *UEnum::GetValueAsString(Desc.ValueType));
 		break;
@@ -713,6 +719,54 @@ TValueOrError<ReturnType, void> CallFunc(UObject* InTargetObject, UFunction* InF
 	}
 }
 
+/** Checks if the value for a source property in a source struct has the same value that the target property in the target struct. */
+bool ArePropertiesIdentical(
+	const FPropertyBagPropertyDesc* InSourcePropertyDesc,
+	const FInstancedPropertyBag& InSourceInstance,
+	const FPropertyBagPropertyDesc* InTargetPropertyDesc,
+	const FInstancedPropertyBag& InTargetInstance)
+{
+	if (!InSourceInstance.IsValid()
+		|| !InTargetInstance.IsValid()
+		|| !InSourcePropertyDesc
+		|| !InSourcePropertyDesc->CachedProperty
+		|| !InTargetPropertyDesc
+		|| !InTargetPropertyDesc->CachedProperty)
+	{
+		return false;
+	}
+
+	if (!InSourcePropertyDesc->CompatibleType(*InTargetPropertyDesc))
+	{
+		return false;
+	}
+
+	const uint8* SourceValueAddress = InSourceInstance.GetValue().GetMemory() + InSourcePropertyDesc->CachedProperty->GetOffset_ForInternal();
+	const uint8* TargetValueAddress = InTargetInstance.GetValue().GetMemory() + InTargetPropertyDesc->CachedProperty->GetOffset_ForInternal();
+
+	return InSourcePropertyDesc->CachedProperty->Identical(SourceValueAddress, TargetValueAddress);
+}
+
+/** Copy the value for a source property in a source struct to the target property in the target struct. */
+void CopyPropertyValue(const FPropertyBagPropertyDesc* InSourcePropertyDesc, const FInstancedPropertyBag& InSourceInstance, const FPropertyBagPropertyDesc* InTargetPropertyDesc, FInstancedPropertyBag& InTargetInstance)
+{
+	if (!InSourceInstance.IsValid() || !InTargetInstance.IsValid() || !InSourcePropertyDesc || !InSourcePropertyDesc->CachedProperty || !InTargetPropertyDesc || !InTargetPropertyDesc->CachedProperty)
+	{
+		return;
+	}
+
+	// Can't copy if they are not compatible.
+	if (!InSourcePropertyDesc->CompatibleType(*InTargetPropertyDesc))
+	{
+		return;
+	}
+
+	const uint8* SourceValueAddress = InSourceInstance.GetValue().GetMemory() + InSourcePropertyDesc->CachedProperty->GetOffset_ForInternal();
+	uint8* TargetValueAddress = InTargetInstance.GetMutableValue().GetMemory() + InTargetPropertyDesc->CachedProperty->GetOffset_ForInternal();
+
+	InSourcePropertyDesc->CachedProperty->CopyCompleteValue(TargetValueAddress, SourceValueAddress);
+}
+
 } // UE::StructUtils::Private
 
 
@@ -744,14 +798,37 @@ void FPropertyBagInstanceDataDetails::OnChildRowAdded(IDetailPropertyRow& ChildR
 	
 	bool bSupportedType = true;
 
+	FText UnsupportedTypeWarning;
+
 	TArray<FPropertyBagPropertyDesc> PropertyDescs = UE::StructUtils::Private::GetCommonPropertyDescs(BagStructProperty);
 	const FProperty* Property = ChildPropertyHandle->GetProperty();
 	if (FPropertyBagPropertyDesc* Desc = PropertyDescs.FindByPredicate([Property](const FPropertyBagPropertyDesc& Desc){ return Desc.CachedProperty == Property; }))
 	{
+		static const FName HideInDetailPanelsName(TEXT("HideInDetailPanel"));
+
 		if (Desc->ContainerTypes.Num() > 1)
 		{
+			static const FText UnsupportedTypeWarningNestedContainer = LOCTEXT("NestedContainersWarning", "This property type is not supported in the property bag UI.");
+
+			// The property editing for nested containers is not supported.
+			UnsupportedTypeWarning = UnsupportedTypeWarningNestedContainer;
 			bSupportedType = false;
+			// Do not allow to edit the data.
 			ChildRow.IsEnabled(false);
+		}
+		else if ((Desc->ValueType == EPropertyBagPropertyType::UInt32 || Desc->ValueType == EPropertyBagPropertyType::UInt64)
+			&& !bFixedLayout)
+		{
+			static const FText UnsupportedTypeWarningUnsigned = LOCTEXT("UnsignedTypesWarning", "Unsigned types are not supported throught the property type selection. If you change the type, you will not be able to change it back.");
+
+			// Warn that the unsinged types cannot be set via the type selection.
+			UnsupportedTypeWarning = UnsupportedTypeWarningUnsigned;
+			bSupportedType = false;
+		}
+		else if (Property->HasMetaData(HideInDetailPanelsName))
+		{
+			ChildRow.Visibility(EVisibility::Hidden);
+			return;
 		}
 	}
 
@@ -829,10 +906,10 @@ void FPropertyBagInstanceDataDetails::OnChildRowAdded(IDetailPropertyRow& ChildR
 				.HeightOverride(12)
 				[
 					SNew(SImage)
-					.ToolTipText_Lambda([ChildPropertyHandle, bSupportedType]()
+					.ToolTipText_Lambda([UnsupportedTypeWarning, bSupportedType]()
 					{
 						return !bSupportedType
-							? LOCTEXT("UnsupportedType", "This property type is not supported in the property bag UI.")
+							? UnsupportedTypeWarning
 							: LOCTEXT("MissingType", "The property is missing type. The Struct, Enum, or Object may have been removed.");
 					})
 					.Visibility_Lambda([ChildPropertyHandle, bSupportedType]()
@@ -853,6 +930,212 @@ void FPropertyBagInstanceDataDetails::OnChildRowAdded(IDetailPropertyRow& ChildR
 		[
 			ValueWidget.ToSharedRef()
 		];
+
+
+	if (HasPropertyOverrides())
+	{
+		TWeakPtr<FPropertyBagInstanceDataDetails> WeakSelf = SharedThis<FPropertyBagInstanceDataDetails>(this);
+
+		TAttribute<bool> EditConditionValue = TAttribute<bool>::CreateLambda(
+			[WeakSelf, ChildPropertyHandle]() -> bool
+			{
+				if (const TSharedPtr<FPropertyBagInstanceDataDetails> Self = WeakSelf.Pin())
+				{
+					return Self->IsPropertyOverridden(ChildPropertyHandle) == EPropertyOverrideState::Yes;
+				}
+				return true;
+			});
+		
+		FOnBooleanValueChanged OnEditConditionChanged = FOnBooleanValueChanged::CreateLambda([WeakSelf, ChildPropertyHandle](bool bNewValue)
+		{
+			if (const TSharedPtr<FPropertyBagInstanceDataDetails> Self = WeakSelf.Pin())
+			{
+				Self->SetPropertyOverride(ChildPropertyHandle, bNewValue);
+			}
+		});
+
+		ChildRow.EditCondition(std::move(EditConditionValue), std::move(OnEditConditionChanged));
+
+		FIsResetToDefaultVisible IsResetVisible = FIsResetToDefaultVisible::CreateLambda([WeakSelf](TSharedPtr<IPropertyHandle> PropertyHandle)
+		{
+			if (const TSharedPtr<FPropertyBagInstanceDataDetails> Self = WeakSelf.Pin())
+			{
+				return !Self->IsDefaultValue(PropertyHandle);
+			}
+			return false;
+		});
+		FResetToDefaultHandler ResetHandler = FResetToDefaultHandler::CreateLambda([WeakSelf](TSharedPtr<IPropertyHandle> PropertyHandle)
+		{
+			if (const TSharedPtr<FPropertyBagInstanceDataDetails> Self = WeakSelf.Pin())
+			{
+				Self->ResetToDefault(PropertyHandle);
+			}
+		});
+		FResetToDefaultOverride ResetOverride = FResetToDefaultOverride::Create(IsResetVisible, ResetHandler);
+
+		ChildRow.OverrideResetToDefault(ResetOverride);
+	}
+}
+
+FPropertyBagInstanceDataDetails::EPropertyOverrideState FPropertyBagInstanceDataDetails::IsPropertyOverridden(TSharedPtr<IPropertyHandle> ChildPropertyHandle) const
+{
+	if (!ChildPropertyHandle)
+	{
+		return EPropertyOverrideState::Undetermined;;
+	}
+
+	int32 NumValues = 0;
+	int32 NumOverrides = 0; 
+
+	const FProperty* Property = ChildPropertyHandle->GetProperty();
+	check(Property);
+
+	EnumeratePropertyBags(BagStructProperty,
+		[Property, &NumValues, &NumOverrides]
+		(const FInstancedPropertyBag& DefaultPropertyBag, const FInstancedPropertyBag& PropertyBag, const IPropertyBagOverrideProvider& OverrideProvider)
+		{
+			NumValues++;
+			if (const UPropertyBag* Bag = PropertyBag.GetPropertyBagStruct())
+			{
+				const FPropertyBagPropertyDesc* PropertyDesc = Bag->FindPropertyDescByProperty(Property);
+				if (PropertyDesc && OverrideProvider.IsPropertyOverridden(PropertyDesc->ID))
+				{
+					NumOverrides++;
+				}
+			}
+
+			return true;
+		});
+	
+	if (NumOverrides == 0)
+	{
+		return EPropertyOverrideState::No;
+	}
+	else if (NumOverrides == NumValues)
+	{
+		return EPropertyOverrideState::Yes;
+	}			
+	return EPropertyOverrideState::Undetermined;
+}
+	
+void FPropertyBagInstanceDataDetails::SetPropertyOverride(TSharedPtr<IPropertyHandle> ChildPropertyHandle, const bool bIsOverridden)
+{
+	if (!ChildPropertyHandle)
+	{
+		return;
+	}
+
+	const FProperty* Property = ChildPropertyHandle->GetProperty();
+	check(Property);
+
+	FScopedTransaction Transaction(FText::Format(LOCTEXT("OverrideChange", "Change Override for {0}"), FText::FromName(ChildPropertyHandle->GetProperty()->GetFName())));
+	
+	PreChangeOverrides();
+	
+	EnumeratePropertyBags(
+		BagStructProperty,
+		[Property, bIsOverridden]
+		(const FInstancedPropertyBag& DefaultPropertyBag, const FInstancedPropertyBag& PropertyBag, const IPropertyBagOverrideProvider& OverrideProvider)
+		{
+			if (const UPropertyBag* Bag = PropertyBag.GetPropertyBagStruct())
+			{
+				if (const FPropertyBagPropertyDesc* PropertyDesc = Bag->FindPropertyDescByProperty(Property))
+				{
+					OverrideProvider.SetPropertyOverride(PropertyDesc->ID, bIsOverridden);
+				}
+			}
+
+			return true;
+		});
+
+	PostChangeOverrides();
+}
+
+bool FPropertyBagInstanceDataDetails::IsDefaultValue(TSharedPtr<IPropertyHandle> ChildPropertyHandle) const
+{
+	if (!ChildPropertyHandle)
+	{
+		return true;
+	}
+
+	int32 NumValues = 0;
+	int32 NumOverridden = 0;
+	int32 NumIdentical = 0;
+
+	const FProperty* Property = ChildPropertyHandle->GetProperty();
+	check(Property);
+
+	EnumeratePropertyBags(
+		BagStructProperty,
+		[Property, &NumValues, &NumOverridden, &NumIdentical]
+		(const FInstancedPropertyBag& DefaultPropertyBag, const FInstancedPropertyBag& PropertyBag, const IPropertyBagOverrideProvider& OverrideProvider)
+		{
+			NumValues++;
+
+			const UPropertyBag* DefaultBag = DefaultPropertyBag.GetPropertyBagStruct();
+			const UPropertyBag* Bag = PropertyBag.GetPropertyBagStruct();
+			if (Bag && DefaultBag)
+			{
+				const FPropertyBagPropertyDesc* PropertyDesc = Bag->FindPropertyDescByProperty(Property);
+				const FPropertyBagPropertyDesc* DefaultPropertyDesc = DefaultBag->FindPropertyDescByProperty(Property);
+				if (PropertyDesc
+					&& DefaultPropertyDesc
+					&& OverrideProvider.IsPropertyOverridden(PropertyDesc->ID))
+				{
+					NumOverridden++;
+					if (UE::StructUtils::Private::ArePropertiesIdentical(DefaultPropertyDesc, DefaultPropertyBag, PropertyDesc, PropertyBag))
+					{
+						NumIdentical++;
+					}
+				}
+			}
+			return true;
+		});
+
+	if (NumOverridden == NumIdentical)
+	{
+		return true;
+	}
+	
+	return false;
+}
+
+void FPropertyBagInstanceDataDetails::ResetToDefault(TSharedPtr<IPropertyHandle> ChildPropertyHandle)
+{
+	if (!ChildPropertyHandle)
+	{
+		return;
+	}
+	
+	const FProperty* Property = ChildPropertyHandle->GetProperty();
+	check(Property);
+
+	FScopedTransaction Transaction(FText::Format(LOCTEXT("ResetToDefault", "Reset {0} to default value"), FText::FromName(ChildPropertyHandle->GetProperty()->GetFName())));
+	ChildPropertyHandle->NotifyPreChange();
+	
+	EnumeratePropertyBags(
+		BagStructProperty,
+		[Property]
+		(const FInstancedPropertyBag& DefaultPropertyBag, FInstancedPropertyBag& PropertyBag, const IPropertyBagOverrideProvider& OverrideProvider)
+		{
+			const UPropertyBag* DefaultBag = DefaultPropertyBag.GetPropertyBagStruct();
+			const UPropertyBag* Bag = PropertyBag.GetPropertyBagStruct();
+			if (Bag && DefaultBag)
+			{
+				const FPropertyBagPropertyDesc* PropertyDesc = Bag->FindPropertyDescByProperty(Property);
+				const FPropertyBagPropertyDesc* DefaultPropertyDesc = DefaultBag->FindPropertyDescByProperty(Property);
+				if (PropertyDesc
+					&& DefaultPropertyDesc
+					&& OverrideProvider.IsPropertyOverridden(PropertyDesc->ID))
+				{
+					UE::StructUtils::Private::CopyPropertyValue(DefaultPropertyDesc, DefaultPropertyBag, PropertyDesc, PropertyBag);
+				}
+			}
+			return true;
+		});
+
+	ChildPropertyHandle->NotifyPostChange(EPropertyChangeType::ValueSet);
+	ChildPropertyHandle->NotifyFinishedChangingProperties();
 }
 
 TSharedRef<SWidget> FPropertyBagInstanceDataDetails::OnPropertyNameContent(TSharedPtr<IPropertyHandle> ChildPropertyHandle, TSharedPtr<SInlineEditableTextBlock> InlineWidget) const
@@ -874,19 +1157,19 @@ TSharedRef<SWidget> FPropertyBagInstanceDataDetails::OnPropertyNameContent(TShar
 		{
 			check(IsPinTypeAcceptedFunc && IsPinTypeAcceptedTarget);
 
-			// We need to make sure the signature matches perfectly: bool(FEdGraphPinType)
-			bool bFuncIsValid = UE::StructUtils::Private::ValidateFunctionSignature<bool, FEdGraphPinType>(IsPinTypeAcceptedFunc);
+			// We need to make sure the signature matches perfectly: bool(FEdGraphPinType, bool)
+			bool bFuncIsValid = UE::StructUtils::Private::ValidateFunctionSignature<bool, FEdGraphPinType, bool>(IsPinTypeAcceptedFunc);
 			if (!ensureMsgf(bFuncIsValid, TEXT("[%s] Function %s does not have the right signature."), *UE::StructUtils::Metadata::IsPinTypeAcceptedName.ToString(), *IsPinTypeAcceptedFunc->GetName()))
 			{
 				return;
 			}
 		}
 
-		auto IsPinTypeAccepted = [IsPinTypeAcceptedFunc, IsPinTypeAcceptedTarget](const FEdGraphPinType& InPinType) -> bool
+		auto IsPinTypeAccepted = [IsPinTypeAcceptedFunc, IsPinTypeAcceptedTarget](const FEdGraphPinType& InPinType, bool bInIsChild) -> bool
 		{
 			if (IsPinTypeAcceptedFunc && IsPinTypeAcceptedTarget)
 			{
-				const TValueOrError<bool, void> bIsValid = UE::StructUtils::Private::CallFunc<bool>(IsPinTypeAcceptedTarget, IsPinTypeAcceptedFunc, InPinType);
+				const TValueOrError<bool, void> bIsValid = UE::StructUtils::Private::CallFunc<bool>(IsPinTypeAcceptedTarget, IsPinTypeAcceptedFunc, InPinType, bInIsChild);
 				return bIsValid.HasValue() && bIsValid.GetValue();
 			}
 			else
@@ -902,7 +1185,7 @@ TSharedRef<SWidget> FPropertyBagInstanceDataDetails::OnPropertyNameContent(TShar
 		// Filter
 		for (TSharedPtr<UEdGraphSchema_K2::FPinTypeTreeInfo>& PinType : TempTypeTree)
 		{
-			if (!PinType.IsValid() || !IsPinTypeAccepted(PinType->GetPinType(/*bForceLoadSubCategoryObject*/false)))
+			if (!PinType.IsValid() || !IsPinTypeAccepted(PinType->GetPinType(/*bForceLoadSubCategoryObject*/false), /*bInIsChild=*/ false))
 			{
 				continue;
 			}
@@ -914,7 +1197,7 @@ TSharedRef<SWidget> FPropertyBagInstanceDataDetails::OnPropertyNameContent(TShar
 				{
 					const FEdGraphPinType& ChildPinType = Child->GetPinType(/*bForceLoadSubCategoryObject*/false);
 
-					if (!UE::StructUtils::Private::CanHaveMemberVariableOfType(ChildPinType) || !IsPinTypeAccepted(ChildPinType))
+					if (!UE::StructUtils::Private::CanHaveMemberVariableOfType(ChildPinType) || !IsPinTypeAccepted(ChildPinType, /*bInIsChild=*/ true))
 					{
 						PinType->Children.RemoveAt(ChildIndex);
 						continue;

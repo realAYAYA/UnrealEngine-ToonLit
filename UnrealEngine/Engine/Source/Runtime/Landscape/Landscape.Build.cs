@@ -7,16 +7,11 @@ public class Landscape : ModuleRules
 {
 	public Landscape(ReadOnlyTargetRules Target) : base(Target)
 	{
-		PrivateIncludePaths.AddRange(
-			new string[] {
-				"../Shaders/Shared"
-            }
-		);
-
 		PrivateIncludePathModuleNames.AddRange(
 			new string[] {
 				"TargetPlatform",
 				"DerivedDataCache",
+				"Shaders"
 			}
 		);
 
@@ -26,10 +21,12 @@ public class Landscape : ModuleRules
 				"CoreUObject",
 				"ApplicationCore",
 				"Engine",
-				"RenderCore", 
+				"RenderCore",
+				"ImageCore",
 				"RHI",
 				"Renderer",
 				"Foliage",
+				"GeometryCore",
 				"DeveloperSettings"
 			}
 		);
@@ -64,6 +61,7 @@ public class Landscape : ModuleRules
 					"MeshUtilitiesCommon",
 					"MeshBuilderCommon",
 					"MeshBuilder",
+					"ActionableMessage"
 				}
 			);
 

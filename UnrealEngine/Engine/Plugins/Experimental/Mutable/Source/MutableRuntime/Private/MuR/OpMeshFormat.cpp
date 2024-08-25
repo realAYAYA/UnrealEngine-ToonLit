@@ -32,122 +32,123 @@ namespace mu
 #define MUTABLE_TANGENT_GENERATION_EPSILON_2    0.001f
 #define MUTABLE_TANGENT_MIN_AXIS_DIFFERENCE     0.999f
 
-		struct TVertex
-		{
+		//struct TVertex
+		//{
 
-			TVertex() = default;
+		//	TVertex() = default;
 
-			TVertex(const vec3<float>& p, const vec3<float>& n, const vec2<float>& t)
-			{
-				pos = p;
-				nor = n;
-				tex = t;
-			}
+		//	TVertex(const FVector3f& p, const FVector3f& n, const FVector2f& t)
+		//	{
+		//		pos = p;
+		//		nor = n;
+		//		tex = t;
+		//	}
 
-			vec3<float> pos;
-			vec3<float> nor;
-			vec2<float> tex;
+		//	FVector3f pos;
+		//	FVector3f nor;
+		//	FVector2f tex;
 
-			inline bool operator< (const TVertex& other) const
-			{
-				if (pos < other.pos)
-					return true;
-				if (other.pos < pos)
-					return false;
+		//	inline bool operator< (const TVertex& other) const
+		//	{
+		//		if (pos < other.pos)
+		//			return true;
+		//		if (other.pos < pos)
+		//			return false;
 
-				if (nor < other.nor)
-					return true;
-				if (other.nor < nor)
-					return false;
+		//		if (nor < other.nor)
+		//			return true;
+		//		if (other.nor < nor)
+		//			return false;
 
-				// Compare the texture coordinates with a particular precission.
-				vec2<int> uv0 = vec2<int>(int(tex[0] * MUTABLE_VERTEX_MERGE_TEX_RANGE),
-					int(tex[1] * MUTABLE_VERTEX_MERGE_TEX_RANGE));
-				vec2<int> uv1 = vec2<int>(int(other.tex[0] * MUTABLE_VERTEX_MERGE_TEX_RANGE),
-					int(other.tex[1] * MUTABLE_VERTEX_MERGE_TEX_RANGE));
+		//		// Compare the texture coordinates with a particular precission.
+		//		FIntVector2 uv0 = FIntVector2(int32(tex[0] * MUTABLE_VERTEX_MERGE_TEX_RANGE),
+		//			int32(tex[1] * MUTABLE_VERTEX_MERGE_TEX_RANGE));
+		//		FIntVector2 uv1 = FIntVector2(int32(other.tex[0] * MUTABLE_VERTEX_MERGE_TEX_RANGE),
+		//			int32(other.tex[1] * MUTABLE_VERTEX_MERGE_TEX_RANGE));
 
-				if (uv0 < uv1)
-					return true;
-				if (uv1 < uv0)
-					return false;
+		//		if (uv0 < uv1)
+		//			return true;
+		//		if (uv1 < uv0)
+		//			return false;
 
-				return false;
-			}
+		//		return false;
+		//	}
 
-			inline bool operator== (const TVertex& other) const
-			{
-				return  !((*this) < other)
-					&&
-					!(other < (*this));
-			}
-		};
+		//	inline bool operator== (const TVertex& other) const
+		//	{
+		//		return  !((*this) < other)
+		//			&&
+		//			!(other < (*this));
+		//	}
+		//};
 
 
-		struct TFace
-		{
-			vec3<float> T;
-			vec3<float> B;
-			vec3<float> N;
+		//struct TFace
+		//{
+		//	FVector3f T;
+		//	FVector3f B;
+		//	FVector3f N;
 
-			TFace()
-				: T(0, 0, 0)
-				, B(0, 0, 0)
-				, N(0, 0, 0)
-			{}
+		//	TFace()
+		//		: T(0, 0, 0)
+		//		, B(0, 0, 0)
+		//		, N(0, 0, 0)
+		//	{}
 
-			TFace
-			(
-				const vec3<float>& v1,
-				const vec3<float>& v2,
-				const vec3<float>& v3,
-				const vec2<float>& w1,
-				const vec2<float>& w2,
-				const vec2<float>& w3
-			)
-			{
-				vec3<float> E1 = v2 - v1;
-				vec3<float> E2 = v3 - v1;
+		//	TFace
+		//	(
+		//		const FVector3f& v1,
+		//		const FVector3f& v2,
+		//		const FVector3f& v3,
+		//		const FVector2f& w1,
+		//		const FVector2f& w2,
+		//		const FVector2f& w3
+		//	)
+		//	{
+		//		FVector3f E1 = v2 - v1;
+		//		FVector3f E2 = v3 - v1;
 
-				vec2<float> UV1 = w2 - w1;
-				vec2<float> UV2 = w3 - w1;
+		//		FVector2f UV1 = w2 - w1;
+		//		FVector2f UV2 = w3 - w1;
 
-				float  UVdet = UV1[0] * UV2[1] - UV2[0] * UV1[1];
+		//		float  UVdet = UV1[0] * UV2[1] - UV2[0] * UV1[1];
 
-				N = normalise(cross(E1, E2));
+		//		N = FVector3f::CrossProduct(E1, E2);
+		//		N.Normalize();
 
-				if (!(fabs(UVdet) <= MUTABLE_TANGENT_GENERATION_EPSILON_1))
-				{
-					double r = 1.0 / UVdet;
+		//		if (!(fabs(UVdet) <= MUTABLE_TANGENT_GENERATION_EPSILON_1))
+		//		{
+		//			double r = 1.0 / UVdet;
 
-					T = vec3<float>
-						(
-							(UV2[1] * E1[0] - UV1[1] * E2[0]),
-							(UV2[1] * E1[1] - UV1[1] * E2[1]),
-							(UV2[1] * E1[2] - UV1[1] * E2[2])
-							);
+		//			T = FVector3f
+		//				(
+		//					(UV2[1] * E1[0] - UV1[1] * E2[0]),
+		//					(UV2[1] * E1[1] - UV1[1] * E2[1]),
+		//					(UV2[1] * E1[2] - UV1[1] * E2[2])
+		//					);
 
-					B = vec3<float>
-						(
-							(UV1[0] * E2[0] - UV2[0] * E1[0]),
-							(UV1[0] * E2[1] - UV2[0] * E1[1]),
-							(UV1[0] * E2[2] - UV2[0] * E1[2])
-							);
+		//			B = FVector3f
+		//				(
+		//					(UV1[0] * E2[0] - UV2[0] * E1[0]),
+		//					(UV1[0] * E2[1] - UV2[0] * E1[1]),
+		//					(UV1[0] * E2[2] - UV2[0] * E1[2])
+		//					);
 
-					T = T * float(r);
-					B = B * float(r);
+		//			T = T * float(r);
+		//			B = B * float(r);
 
-					T = normalise(T);
-					B = normalise(B);
-				}
-				else
-				{
-					T = vec3<float>(0, 0, 0);
-					B = vec3<float>(0, 0, 0);
-					N = vec3<float>(0, 0, 0);
-				}
-			}
+		//			T.Normalize();
+		//			B.Normalize();
+		//		}
+		//		else
+		//		{
+		//			T = FVector3f(0, 0, 0);
+		//			B = FVector3f(0, 0, 0);
+		//			N = FVector3f(0, 0, 0);
+		//		}
+		//	}
 
-		};
+		//};
 
 	}
 
@@ -333,22 +334,20 @@ namespace mu
 								UntypedMeshBufferIteratorConst yIt(Source, MBS_BINORMAL, resultSemanticIndex);
 								UntypedMeshBufferIteratorConst zIt(Source, MBS_NORMAL, resultSemanticIndex);
 
-								mat3f mat;
 								xIt += v;
 								yIt += v;
 								zIt += v;
-								mat[0] = vec3f(xIt.GetAsVec3f());
-								mat[1] = vec3f(yIt.GetAsVec3f());
-								mat[2] = vec3f(zIt.GetAsVec3f());
+
+								FMatrix44f Mat(xIt.GetAsVec3f(), yIt.GetAsVec3f(), zIt.GetAsVec3f(), FVector3f(0, 0, 0));
 
 								uint8_t sign = 0;
 								if (resultFormat == MBF_PACKEDDIR8_W_TANGENTSIGN)
 								{
-									sign = mat.GetDeterminant() < 0 ? 0 : 255;
+									sign = Mat.RotDeterminant() < 0 ? 0 : 255;
 								}
 								else if (resultFormat == MBF_PACKEDDIRS8_W_TANGENTSIGN)
 								{
-									sign = mat.GetDeterminant() < 0 ? -128 : 127;
+									sign = Mat.RotDeterminant() < 0 ? -128 : 127;
 								}
 								pData[3] = sign;
 							}
@@ -522,7 +521,6 @@ namespace mu
 					);
 
 					if (sourceSemantic == MBS_LAYOUTBLOCK
-						|| sourceSemantic == MBS_CHART
 						|| (isVertexBuffer && sourceSemantic == MBS_VERTEXINDEX)
 						)
 					{
@@ -598,7 +596,8 @@ namespace mu
 							{
 								// If MAX_TOTAL_INFLUENCES ever changed, the next line would no longer work or compile and 
 								// GetAsVec12i would need to be changed accordingly
-								vec<int32_t, MAX_TOTAL_INFLUENCES> va = it.GetAsVec12i();
+								int32 va[MAX_TOTAL_INFLUENCES];
+								it.GetAsInt32Vec(va, MAX_TOTAL_INFLUENCES);
 								for (int c = 0; c < it.GetComponents(); ++c)
 								{
 									maxBoneIndex = FMath::Max(maxBoneIndex, va[c]);
@@ -682,8 +681,9 @@ namespace mu
 		}
 
 		Result->m_tags = pSource->m_tags;
+		Result->StreamedResources = pSource->StreamedResources;
 
-		Result->m_AdditionalBuffers = pSource->m_AdditionalBuffers;
+		Result->AdditionalBuffers = pSource->AdditionalBuffers;
 
 		Result->BonePoses = pSource->BonePoses;
 		Result->BoneMap = pSource->BoneMap;
@@ -693,9 +693,10 @@ namespace mu
 		// A shallow copy is done here, it should not be a problem.
 		Result->AdditionalPhysicsBodies = pSource->AdditionalPhysicsBodies;
 
+		Result->m_surfaces = pSource->m_surfaces;
+
 		Result->ResetStaticFormatFlags();
 		Result->EnsureSurfaceData();
 	}
 
 }
-

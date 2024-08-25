@@ -21,21 +21,11 @@ struct FPropertyChangedEvent;
 #define LOCTEXT_NAMESPACE "CustomizableObjectEditor"
 
 
-/** Copy pin data from old pin to new pin. Keeps the id of the new pin. */
-void CopyPin(UEdGraphPin& NewPin, UEdGraphPin& OldPin)
-{
-	FGuid PinId = NewPin.PinId;
-	
-	NewPin.CopyPersistentDataFromOldPin(OldPin);
-	NewPin.PinId = PinId;
-	NewPin.bHidden = OldPin.bHidden;
-}
-
-
 UCustomizableObjectGraph* UCustomizableObjectNode::GetCustomizableObjectGraph() const
 {
 	return Cast<UCustomizableObjectGraph>(GetOuter());
 }
+
 
 bool UCustomizableObjectNode::IsSingleOutputNode() const
 {
@@ -46,6 +36,8 @@ bool UCustomizableObjectNode::IsSingleOutputNode() const
 UEdGraphPin* UCustomizableObjectNode::CustomCreatePin(EEdGraphPinDirection Direction, const FName& Type, const FName& Name, bool bIsArray)
 {
 	UEdGraphPin* Pin = CreatePin(Direction, Type, Name);
+
+	Pin->PinFriendlyName = FText::FromName(Name);
 	if (bIsArray)
 	{
 		Pin->PinType.ContainerType = EPinContainerType::Array;
@@ -286,8 +278,9 @@ void UCustomizableObjectNode::ReconstructNode(UCustomizableObjectNodeRemapPins* 
 		if (bOrphanedPin)
 		{
 			FCustomizableObjectEditorLogger::CreateLog(LOCTEXT("OrphanPinsWarningReconstruct", "Failed to remap old pins"))
+			.BaseObject()
 			.Severity(EMessageSeverity::Warning)
-			.Node(*this)
+			.Context(*this)
 			.Log();
 		}
 
@@ -421,6 +414,16 @@ UCustomizableObjectNodeRemapPinsByName* UCustomizableObjectNode::CreateRemapPins
 }
 
 
+void UCustomizableObjectNode::RemapPin(UEdGraphPin& NewPin, const UEdGraphPin& OldPin)
+{
+	FGuid PinId = NewPin.PinId;
+	
+	NewPin.CopyPersistentDataFromOldPin(OldPin);
+	NewPin.PinId = PinId;
+	NewPin.bHidden = OldPin.bHidden;	
+}
+
+
 UCustomizableObjectNodeRemapPinsByPosition* UCustomizableObjectNode::CreateRemapPinsByPosition() const
 {
 	return NewObject<UCustomizableObjectNodeRemapPinsByPosition>();
@@ -431,7 +434,7 @@ void UCustomizableObjectNode::RemapPins(const TMap<UEdGraphPin*, UEdGraphPin*>& 
 {
 	for (const TTuple<UEdGraphPin*, UEdGraphPin*>& Pair : PinsToRemap)
 	{
-		CopyPin(*Pair.Value, *Pair.Key);
+		RemapPin(*Pair.Value, *Pair.Key);
 	}
 	
 	RemapPinsDelegate.Broadcast(PinsToRemap);

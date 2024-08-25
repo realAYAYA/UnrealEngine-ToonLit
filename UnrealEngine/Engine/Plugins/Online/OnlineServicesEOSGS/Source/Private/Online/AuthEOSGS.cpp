@@ -4,13 +4,14 @@
 
 #include "Containers/BackgroundableTicker.h"
 #include "EOSShared.h"
+#include "IEOSSDKManager.h"
 #include "Misc/CommandLine.h"
 #include "Online/AuthErrors.h"
 #include "Online/OnlineErrorEOSGS.h"
 #include "Online/OnlineIdEOSGS.h"
 #include "Online/OnlineServicesEOSGS.h"
-
 #include "Online/OnlineUtils.h"
+
 #include "eos_auth.h"
 #include "eos_connect.h"
 
@@ -87,7 +88,7 @@ const FEOSConnectTranslationTraits* FEOSConnectLoginOptions::GetConnectTranslati
 {
 	static const TMap<FName, FEOSConnectTranslationTraits> SupportedLoginTranslatorTraits = {
 		{ ExternalLoginType::Epic, { EOS_EExternalCredentialType::EOS_ECT_EPIC, EEOSConnectTranslationFlags::None } },
-		{ ExternalLoginType::SteamAppTicket, { EOS_EExternalCredentialType::EOS_ECT_STEAM_APP_TICKET, EEOSConnectTranslationFlags::None } },
+		{ ExternalLoginType::SteamSessionTicket, { EOS_EExternalCredentialType::EOS_ECT_STEAM_SESSION_TICKET, EEOSConnectTranslationFlags::None } },
 		{ ExternalLoginType::PsnIdToken, { EOS_EExternalCredentialType::EOS_ECT_PSN_ID_TOKEN, EEOSConnectTranslationFlags::None } },
 		{ ExternalLoginType::XblXstsToken, { EOS_EExternalCredentialType::EOS_ECT_XBL_XSTS_TOKEN, EEOSConnectTranslationFlags::None } },
 		{ ExternalLoginType::DiscordAccessToken, { EOS_EExternalCredentialType::EOS_ECT_DISCORD_ACCESS_TOKEN, EEOSConnectTranslationFlags::None } },
@@ -156,9 +157,10 @@ FEOSConnectLoginOptions::FEOSConnectLoginOptions()
 	CredentialsData.Token = nullptr;
 
 	// EOS_Connect_UserLoginInfo init
-	UserLoginInfoData.ApiVersion = 1;
-	UE_EOS_CHECK_API_MISMATCH(EOS_CONNECT_USERLOGININFO_API_LATEST, 1);
+	UserLoginInfoData.ApiVersion = 2;
+	UE_EOS_CHECK_API_MISMATCH(EOS_CONNECT_USERLOGININFO_API_LATEST, 2);
 	UserLoginInfoData.DisplayName = DisplayNameUtf8;
+	UserLoginInfoData.NsaIdToken = nullptr;
 }
 
 TDefaultErrorResultInternal<FEOSConnectLoginOptions> FEOSConnectLoginOptions::Create(FPlatformUserId PlatformUserId, const FExternalAuthToken& ExternalAuthToken)
@@ -255,7 +257,7 @@ const FEOSExternalAuthTranslationTraits* FEOSAuthLoginOptions::GetExternalAuthTr
 {
 	static const TMap<FName, FEOSExternalAuthTranslationTraits> SupportedExternalAuthTraits = {
 		{ ExternalLoginType::Epic, { EOS_EExternalCredentialType::EOS_ECT_EPIC } },
-		{ ExternalLoginType::SteamAppTicket, { EOS_EExternalCredentialType::EOS_ECT_STEAM_APP_TICKET } },
+		{ ExternalLoginType::SteamSessionTicket, { EOS_EExternalCredentialType::EOS_ECT_STEAM_SESSION_TICKET } },
 		{ ExternalLoginType::PsnIdToken, { EOS_EExternalCredentialType::EOS_ECT_PSN_ID_TOKEN } },
 		{ ExternalLoginType::XblXstsToken, { EOS_EExternalCredentialType::EOS_ECT_XBL_XSTS_TOKEN } },
 		{ ExternalLoginType::DiscordAccessToken, { EOS_EExternalCredentialType::EOS_ECT_DISCORD_ACCESS_TOKEN } },
@@ -313,14 +315,15 @@ FEOSAuthLoginOptions& FEOSAuthLoginOptions::operator=(FEOSAuthLoginOptions&& Oth
 FEOSAuthLoginOptions::FEOSAuthLoginOptions()
 {
 	// EOS_Auth_LoginOptions init
-	UE_EOS_CHECK_API_MISMATCH(EOS_AUTH_LOGIN_API_LATEST, 2);
+	UE_EOS_CHECK_API_MISMATCH(EOS_AUTH_LOGIN_API_LATEST, 3);
 	ApiVersion = 2;
 	Credentials = &CredentialsData;
 	ScopeFlags = EOS_EAuthScopeFlags::EOS_AS_NoFlags;
+	LoginFlags = 0;
 
 	// EOS_Auth_Credentials init
-	UE_EOS_CHECK_API_MISMATCH(EOS_AUTH_CREDENTIALS_API_LATEST, 3);
-	CredentialsData.ApiVersion = 3;
+	UE_EOS_CHECK_API_MISMATCH(EOS_AUTH_CREDENTIALS_API_LATEST, 4);
+	CredentialsData.ApiVersion = 4;
 	CredentialsData.Id = nullptr;
 	CredentialsData.Token = nullptr;
 	CredentialsData.Type = EOS_ELoginCredentialType::EOS_LCT_Password;
@@ -544,13 +547,14 @@ void FAuthEOSGS::Initialize()
 {
 	Super::Initialize();
 
-	RegisterHandlers();
-
-	AuthHandle = EOS_Platform_GetAuthInterface(static_cast<FOnlineServicesEOSGS&>(GetServices()).GetEOSPlatformHandle());
+	AuthHandle = EOS_Platform_GetAuthInterface(*static_cast<FOnlineServicesEOSGS&>(GetServices()).GetEOSPlatformHandle());
 	check(AuthHandle != nullptr);
 
-	ConnectHandle = EOS_Platform_GetConnectInterface(static_cast<FOnlineServicesEOSGS&>(GetServices()).GetEOSPlatformHandle());
+	ConnectHandle = EOS_Platform_GetConnectInterface(*static_cast<FOnlineServicesEOSGS&>(GetServices()).GetEOSPlatformHandle());
 	check(ConnectHandle != nullptr);
+
+	RegisterHandlers();
+
 }
 
 void FAuthEOSGS::PreShutdown()
@@ -594,7 +598,6 @@ TOnlineAsyncOpHandle<FAuthLogin> FAuthEOSGS::Login(FAuthLogin::Params&& Params)
 			if (!IsOnlineStatus(AccountInfoEOS->LoginStatus))
 			{
 				TPromise<void> Promise;
-				TFuture<void> Future = Promise.GetFuture();
 
 				const FAuthLogin::Params& Params = InAsyncOp.GetParams();
 
@@ -623,8 +626,6 @@ TOnlineAsyncOpHandle<FAuthLogin> FAuthEOSGS::Login(FAuthLogin::Params&& Params)
 
 					Promise.EmplaceValue();
 				});
-
-				return Future;
 			}
 			else
 			{
@@ -1429,7 +1430,7 @@ void FAuthEOSGS::RegisterHandlers()
 		// Register for EAS connection status updates.
 		const int ApiVersion = 1;
 		UE_EOS_CHECK_API_MISMATCH(EOS_AUTH_ADDNOTIFYLOGINSTATUSCHANGED_API_LATEST, ApiVersion);
-		OnConnectAuthNotifyExpirationEOSEventRegistration = EOS_RegisterComponentEventHandler(
+		OnAuthLoginStatusChangedEOSEventRegistration = EOS_RegisterComponentEventHandler(
 			this,
 			AuthHandle,
 			ApiVersion,
@@ -1443,7 +1444,7 @@ void FAuthEOSGS::UnregisterHandlers()
 {
 	OnConnectLoginStatusChangedEOSEventRegistration = nullptr;
 	OnConnectAuthNotifyExpirationEOSEventRegistration = nullptr;
-	OnConnectAuthNotifyExpirationEOSEventRegistration = nullptr;
+	OnAuthLoginStatusChangedEOSEventRegistration = nullptr;
 }
 
 void FAuthEOSGS::OnConnectLoginStatusChanged(const EOS_Connect_LoginStatusChangedCallbackInfo* Data)

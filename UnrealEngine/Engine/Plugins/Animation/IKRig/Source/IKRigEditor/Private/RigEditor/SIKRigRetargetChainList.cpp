@@ -19,6 +19,7 @@
 #include "Animation/MirrorDataTable.h"
 #include "Engine/SkeletalMesh.h"
 #include "Widgets/Input/SSearchBox.h"
+#include "ScopedTransaction.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(SIKRigRetargetChainList)
 
@@ -716,6 +717,10 @@ void SIKRigRetargetChainList::MirrorSelectedChains() const
 	const UIKRigController* AssetController = Controller.AssetController;
 	const FIKRigSkeleton& IKRigSkeleton = AssetController->GetIKRigSkeleton();
 
+	FScopedTransaction Transaction(LOCTEXT("MirrorRetargetChain_Label", "Mirror Retarget Chains"));
+	FScopedReinitializeIKRig Reinitialize(AssetController, true /*bGoalsChanged*/);
+	AssetController->GetAsset()->Modify();
+
 	for (const FName& SelectedChainName : SelectedChainNames)
 	{
 		const FBoneChain* Chain = AssetController->GetRetargetChainByName(SelectedChainName);
@@ -747,11 +752,7 @@ void SIKRigRetargetChainList::MirrorSelectedChains() const
 		MirroredChain.ChainName = UMirrorDataTable::GetSettingsMirrorName(MirroredChain.ChainName);
 		MirroredChain.StartBone = IKRigSkeleton.BoneNames[MirroredIndices[0]];
 		MirroredChain.EndBone = IKRigSkeleton.BoneNames[MirroredIndices.Last()];
-		const FName GoalOnMirroredBone = AssetController->GetGoalNameForBone(MirroredChain.EndBone.BoneName);
-		if (GoalOnMirroredBone != NAME_None)
-		{
-			MirroredChain.IKGoalName = GoalOnMirroredBone;
-		}
+		MirroredChain.IKGoalName = AssetController->GetGoalNameForBone(MirroredChain.EndBone.BoneName);
 
 		const FName NewChainName = Controller.PromptToAddNewRetargetChain(MirroredChain);
 		const FBoneChain* NewChain = AssetController->GetRetargetChainByName(NewChainName);

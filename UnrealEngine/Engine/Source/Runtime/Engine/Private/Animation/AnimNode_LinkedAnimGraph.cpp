@@ -8,6 +8,7 @@
 #include "Animation/BlendProfile.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Animation/ExposedValueHandler.h"
+#include "ObjectTrace.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AnimNode_LinkedAnimGraph)
 
@@ -123,7 +124,7 @@ void FAnimNode_LinkedAnimGraph::Update_AnyThread(const FAnimationUpdateContext& 
 				Request.Duration = PendingBlendOutDuration;
 				Request.BlendProfile = PendingBlendOutProfile;
 #if ANIM_TRACE_ENABLED
-				Request.Description = NSLOCTEXT("AnimNode_LinkedAnimGraph", "InertializationRequestDescriptionOut", "Out");
+				Request.DescriptionString = NSLOCTEXT("AnimNode_LinkedAnimGraph", "InertializationRequestDescriptionOut", "Out").ToString();
 				Request.NodeId = InContext.GetCurrentNodeId();
 				Request.AnimInstance = InContext.AnimInstanceProxy->GetAnimInstanceObject();
 #endif
@@ -137,7 +138,7 @@ void FAnimNode_LinkedAnimGraph::Update_AnyThread(const FAnimationUpdateContext& 
 				Request.Duration = PendingBlendInDuration;
 				Request.BlendProfile = PendingBlendInProfile;
 #if ANIM_TRACE_ENABLED
-				Request.Description = NSLOCTEXT("AnimNode_LinkedAnimGraph", "InertializationRequestDescriptionIn", "In");
+				Request.DescriptionString = NSLOCTEXT("AnimNode_LinkedAnimGraph", "InertializationRequestDescriptionIn", "In").ToString();
 				Request.NodeId = InContext.GetCurrentNodeId();
 				Request.AnimInstance = InContext.AnimInstanceProxy->GetAnimInstanceObject();
 #endif
@@ -171,22 +172,22 @@ void FAnimNode_LinkedAnimGraph::Evaluate_AnyThread(FPoseContext& Output)
 	UAnimInstance* InstanceToRun = GetTargetInstance<UAnimInstance>();
 	if(InstanceToRun && LinkedRoot)
 	{
+		// Stash current proxy for restoration after recursion
+		FAnimInstanceProxy& OldProxy = *Output.AnimInstanceProxy;
+
 		FAnimInstanceProxy& Proxy = InstanceToRun->GetProxyOnAnyThread<FAnimInstanceProxy>();
 		Proxy.EvaluationCounter.SynchronizeWith(Output.AnimInstanceProxy->EvaluationCounter);
 		Output.Pose.SetBoneContainer(&Proxy.GetRequiredBones());
-
-		// Create an evaluation context
-		FPoseContext EvaluationContext(&Proxy, Output.ExpectsAdditivePose());
-		EvaluationContext.ResetToRefPose();
-		EvaluationContext.SetNodeId(CachedLinkedNodeIndex);
+		Output.AnimInstanceProxy = &Proxy;
+		Output.SetNodeId(INDEX_NONE);
+		Output.SetNodeId(CachedLinkedNodeIndex);
 
 		// Run the anim blueprint
-		Proxy.EvaluateAnimation_WithRoot(EvaluationContext, LinkedRoot);
+		Proxy.EvaluateAnimation_WithRoot(Output, LinkedRoot);
 
-		// Move the curves
-		Output.Curve.MoveFrom(EvaluationContext.Curve);
-		Output.Pose.MoveBonesFrom(EvaluationContext.Pose);
-		Output.CustomAttributes.MoveFrom(EvaluationContext.CustomAttributes);
+		// Restore proxy & required bones after evaluation
+		Output.AnimInstanceProxy = &OldProxy;
+		Output.Pose.SetBoneContainer(&OldProxy.GetRequiredBones());
 	}
 	else if(InputPoses.Num() > 0)
 	{
@@ -252,6 +253,8 @@ void FAnimNode_LinkedAnimGraph::TeardownInstance(const UAnimInstance* InOwningAn
 	UAnimInstance* InstanceToRun = GetTargetInstance<UAnimInstance>();
 	if (InstanceToRun)
 	{
+		// trace lifetime end early, because by the time we get UninitializeAnimation below, the Owner has changed, and so the ObjectId has changed.
+		TRACE_OBJECT_LIFETIME_END(InstanceToRun);
 		DynamicUnlink(const_cast<UAnimInstance*>(InOwningAnimInstance));
 		// Never delete the owning animation instance
 		if (InstanceToRun != InOwningAnimInstance)
@@ -308,6 +311,12 @@ void FAnimNode_LinkedAnimGraph::ReinitializeLinkedAnimInstance(const UAnimInstan
 		{
 			// Initialize the new instance
 			InstanceToRun->InitializeAnimation();
+
+			if(MeshComp->HasBegunPlay())
+			{
+				InstanceToRun->NativeBeginPlay();
+				InstanceToRun->BlueprintBeginPlay();
+			}
 
 			MeshComp->GetLinkedAnimInstances().Add(InstanceToRun);
 		}

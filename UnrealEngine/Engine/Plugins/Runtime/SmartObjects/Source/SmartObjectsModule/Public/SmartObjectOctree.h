@@ -51,7 +51,7 @@ struct FSmartObjectOctree : TOctree2<FSmartObjectOctreeElement, FSmartObjectOctr
 {
 public:
 	FSmartObjectOctree();
-	FSmartObjectOctree(const FVector& Origin, float Radius);
+	FSmartObjectOctree(const FVector& Origin, FVector::FReal Radius);
 	virtual ~FSmartObjectOctree();
 
 	/** Add new node and initialize using SmartObject runtime data */
@@ -80,7 +80,7 @@ class SMARTOBJECTSMODULE_API USmartObjectOctree : public USmartObjectSpacePartit
 	GENERATED_BODY()
 
 protected:
-	virtual FInstancedStruct Add(const FSmartObjectHandle Handle, const FBox& Bounds) override;
+	virtual void Add(const FSmartObjectHandle Handle, const FBox& Bounds, FInstancedStruct& OutHandle) override;
 	virtual void Remove(const FSmartObjectHandle Handle, FStructView EntryData) override;
 	virtual void Find(const FBox& QueryBox, TArray<FSmartObjectHandle>& OutResults) override;
 	virtual void SetBounds(const FBox& Bounds) override;

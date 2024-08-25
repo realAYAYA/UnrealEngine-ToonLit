@@ -75,11 +75,9 @@ void FAnimNode_RemapCurvesFromMesh::Evaluate_AnyThread(
 	
 	Output = SourceData;
 
-	FBlendedCurve Curve;
-	Curve.Reserve(GetCompiledAssignments().Num());	
 	for (const TTuple<FName, FExpressionObject>& Assignment: GetCompiledAssignments())
 	{
-		Curve.Add(Assignment.Key, FEngine().Execute(Assignment.Value,
+		const float Value = FEngine().Execute(Assignment.Value,
 			[&CurveValues = SourceCurveValues](const FName InName) -> TOptional<float>
 			{
 				if (const float* Value = CurveValues.Find(InName))
@@ -87,10 +85,19 @@ void FAnimNode_RemapCurvesFromMesh::Evaluate_AnyThread(
 					return *Value;
 				}
 				return {};
-			}
-		));
+			});
+
+		// If the value is valid, set the curve's value. If the value is NaN, remove the curve, since it's a signal
+		// for removal from the expression (i.e. `undef()` was used).
+		if (!FMath::IsNaN(Value))
+		{
+			Output.Curve.Set(Assignment.Key, Value);
+		}
+		else
+		{
+			Output.Curve.InvalidateCurveWeight(Assignment.Key);
+		}
 	}
-	Output.Curve.Combine(Curve);
 }
 
 

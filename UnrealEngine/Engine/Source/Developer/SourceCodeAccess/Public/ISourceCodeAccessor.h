@@ -116,4 +116,11 @@ public:
 	{
 		return FName("MainFrame.RefreshSourceCodeEditor"); // Default Refresh Source Code Editor Icon
 	}
+	
+	/**
+	 * Get the style set where custom icons for the editors are defined.
+	 * By default uses FAppStyle::GetAppStyleSetName() == "CoreStyle"
+	 * @return the default style set for icons
+	 */
+	SOURCECODEACCESS_API virtual FName GetStyleSet() const;
 };

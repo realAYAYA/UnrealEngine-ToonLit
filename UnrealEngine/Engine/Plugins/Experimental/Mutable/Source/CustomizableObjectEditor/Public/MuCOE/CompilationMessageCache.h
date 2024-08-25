@@ -16,11 +16,11 @@ public:
 	/** Method designed to serve as a way to add a new message to the collection of messages the compiler has produced as
 	 * part of the compilation process.
 	 * @param InMessage The message's text.
-	 * @param InArrayNode The node that is related with the InMessage provided.
+	 * @param InContext The UObject that is related with the InMessage provided.
 	 * @param MessageSeverity Severity of the message.
 	 * @return True if the message is new and had not been added before. If it returns false it means it has not been logged again.
 	 */
-	 bool AddMessage(const FText& InMessage, const TArray<const UCustomizableObjectNode*>& InArrayNode, const EMessageSeverity::Type MessageSeverity = EMessageSeverity::Warning, const ELoggerSpamBin SpamBin = ELoggerSpamBin::ShowAll);
+	 bool AddMessage(const FText& InMessage, const TArray<const UObject*>& InContext, const EMessageSeverity::Type MessageSeverity = EMessageSeverity::Warning, const ELoggerSpamBin SpamBin = ELoggerSpamBin::ShowAll);
 	
 	
 	/** Provides the caller with separated arrays with all the warning and error messages.
@@ -62,7 +62,7 @@ private:
 	struct FLoggedMessage
 	{
 		FText Message;
-		TArray<const UCustomizableObjectNode*> Context;
+		TArray<const UObject*> Context;
 		EMessageSeverity::Type Severity;
 	
 		bool operator==( const FLoggedMessage& o) const

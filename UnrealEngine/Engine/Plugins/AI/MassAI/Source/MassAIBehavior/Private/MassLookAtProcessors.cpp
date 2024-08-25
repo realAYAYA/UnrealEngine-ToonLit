@@ -20,6 +20,8 @@
 #include "Engine/World.h"
 #include "MassLODFragments.h"
 #include "MassGameplayExternalTraits.h"
+#include "MassDebugger.h"
+
 
 #define UNSAFE_FOR_MT 1
 

@@ -8,6 +8,7 @@
 #include "DMXProtocolTypes.h"
 #include "DMXControlConsoleFaderGroup.h"
 #include "DMXControlConsoleFixturePatchCellAttributeFader.h"
+#include "Layouts/Controllers/DMXControlConsoleControllerBase.h"
 #include "Library/DMXEntityFixturePatch.h"
 #include "Library/DMXEntityFixtureType.h"
 
@@ -22,19 +23,22 @@ UDMXControlConsoleFaderGroup& UDMXControlConsoleFixturePatchMatrixCell::GetOwner
 	return *Outer;
 }
 
+UDMXControlConsoleControllerBase* UDMXControlConsoleFixturePatchMatrixCell::GetElementController() const
+{
+	return CachedWeakElementController.Get();
+}
+
+void UDMXControlConsoleFixturePatchMatrixCell::SetElementController(UDMXControlConsoleControllerBase* NewController)
+{
+	SoftControllerPtr = NewController;
+	CachedWeakElementController = NewController;
+}
+
 int32 UDMXControlConsoleFixturePatchMatrixCell::GetIndex() const
 {
-	int32 Index = -1;
-
-	const UDMXControlConsoleFaderGroup* Outer = Cast<UDMXControlConsoleFaderGroup>(GetOuter());
-	if (!ensureMsgf(Outer, TEXT("Invalid outer for '%s', cannot get fader index correctly."), *GetName()))
-	{
-		return Index;
-	}
-
-	const TArray<TScriptInterface<IDMXControlConsoleFaderGroupElement>>& Elements = Outer->GetElements();
-	Index = Elements.IndexOfByKey(this);
-
+	const UDMXControlConsoleFaderGroup& OwnerFaderGroup = GetOwnerFaderGroupChecked();
+	const TArray<TScriptInterface<IDMXControlConsoleFaderGroupElement>>& Elements = OwnerFaderGroup.GetElements();
+	const int32 Index = Elements.IndexOfByKey(this);
 	return Index;
 }
 
@@ -77,20 +81,16 @@ void UDMXControlConsoleFixturePatchMatrixCell::SetIsMatchingFilter(bool bMatches
 
 void UDMXControlConsoleFixturePatchMatrixCell::Destroy() 
 {
-	UDMXControlConsoleFaderGroup* Outer = Cast<UDMXControlConsoleFaderGroup>(GetOuter());
-	if (!ensureMsgf(Outer, TEXT("Invalid outer for '%s', cannot destroy fader correctly."), *GetName()))
-	{
-		return;
-	}
+	UDMXControlConsoleFaderGroup& OwnerFaderGroup = GetOwnerFaderGroupChecked();
 
 #if WITH_EDITOR
-	Outer->PreEditChange(UDMXControlConsoleFaderGroup::StaticClass()->FindPropertyByName(UDMXControlConsoleFaderGroup::GetElementsPropertyName()));
+	OwnerFaderGroup.PreEditChange(UDMXControlConsoleFaderGroup::StaticClass()->FindPropertyByName(UDMXControlConsoleFaderGroup::GetElementsPropertyName()));
 #endif // WITH_EDITOR
 
-	Outer->DeleteElement(this);
+	OwnerFaderGroup.DeleteElement(this);
 
 #if WITH_EDITOR
-	Outer->PostEditChange();
+	OwnerFaderGroup.PostEditChange();
 #endif // WITH_EDITOR
 }
 
@@ -162,10 +162,15 @@ void UDMXControlConsoleFixturePatchMatrixCell::SetPropertiesFromCell(const FDMXC
 		const int32 RelativeChannel = AttributeToChannelMap.FindRef(AttributeName) - 1;
 		const int32 AbsoluteChannel = StartingChannel + RelativeChannel;
 
-		AddFixturePatchCellAttributeFader(CellAttribute, InUniverseID, AbsoluteChannel);
+		UDMXControlConsoleFixturePatchCellAttributeFader* CellAttributeFader = AddFixturePatchCellAttributeFader(CellAttribute, InUniverseID, AbsoluteChannel);
 	}
 
-	auto SortFadersByStartingAddressLambda = [](const UDMXControlConsoleFaderBase* ItemA, const UDMXControlConsoleFaderBase* ItemB)
+	SortElementsByStartingAddress();
+}
+
+void UDMXControlConsoleFixturePatchMatrixCell::SortElementsByStartingAddress() const
+{
+	const auto SortElementsByStartingAddressLambda = [](const TScriptInterface<IDMXControlConsoleFaderGroupElement>& ItemA, const TScriptInterface<IDMXControlConsoleFaderGroupElement>& ItemB)
 		{
 			const int32 StartingAddressA = ItemA->GetStartingAddress();
 			const int32 StartingAddressB = ItemB->GetStartingAddress();
@@ -173,7 +178,7 @@ void UDMXControlConsoleFixturePatchMatrixCell::SetPropertiesFromCell(const FDMXC
 			return StartingAddressA < StartingAddressB;
 		};
 
-	Algo::Sort(CellAttributeFaders, SortFadersByStartingAddressLambda);
+	Algo::Sort(CellAttributeFaders, SortElementsByStartingAddressLambda);
 }
 
 #if WITH_EDITOR
@@ -209,6 +214,8 @@ void UDMXControlConsoleFixturePatchMatrixCell::ShowAllFadersInEditor()
 void UDMXControlConsoleFixturePatchMatrixCell::PostLoad()
 {
 	Super::PostLoad();
+
+	CachedWeakElementController = Cast<UDMXControlConsoleControllerBase>(SoftControllerPtr.ToSoftObjectPath().TryLoad());
 
 	UDMXControlConsoleFaderGroup& FaderGroup = GetOwnerFaderGroupChecked();
 	UDMXEntityFixturePatch* FixturePatch = FaderGroup.GetFixturePatch();
@@ -260,7 +267,7 @@ void UDMXControlConsoleFixturePatchMatrixCell::UpdateFixturePatchCellAttributeFa
 
 	InFixturePatch->GetMatrixCellChannelsRelative(Coordinate, AttributeToChannelMap);
 	// Destroy all FixturePatchCellAttributeFaders which Attribute is no longer in use
-	auto IsAttributNoLongerInUseLambda = [AttributeToChannelMap](UDMXControlConsoleFaderBase* Fader)
+	const auto IsAttributNoLongerInUseLambda = [AttributeToChannelMap](UDMXControlConsoleFaderBase* Fader)
 		{
 			const UDMXControlConsoleFixturePatchCellAttributeFader* CellAttributeFader = Cast<UDMXControlConsoleFixturePatchCellAttributeFader>(Fader);
 			if (!CellAttributeFader)
@@ -284,7 +291,7 @@ void UDMXControlConsoleFixturePatchMatrixCell::UpdateFixturePatchCellAttributeFa
 	{
 		const FDMXAttributeName& AttributeName = CellAttribute.Attribute;
 
-		auto IsAttributeAlreadyInUseLambda = [AttributeName](UDMXControlConsoleFaderBase* Fader)
+		const auto IsAttributeAlreadyInUseLambda = [AttributeName](UDMXControlConsoleFaderBase* Fader)
 			{
 				if (!Fader)
 				{
@@ -323,11 +330,11 @@ void UDMXControlConsoleFixturePatchMatrixCell::UpdateFixturePatchCellAttributeFa
 		}
 		else
 		{
-			AddFixturePatchCellAttributeFader(CellAttribute, UniverseID, AbsoluteChannel);
+			UDMXControlConsoleFixturePatchCellAttributeFader* NewCellAttributeFader = AddFixturePatchCellAttributeFader(CellAttribute, UniverseID, AbsoluteChannel);
 		}
 	}
 
-	auto SortFadersByStartingAddressLambda = [](const UDMXControlConsoleFaderBase* ItemA, const UDMXControlConsoleFaderBase* ItemB)
+	const auto SortFadersByStartingAddressLambda = [](const UDMXControlConsoleFaderBase* ItemA, const UDMXControlConsoleFaderBase* ItemB)
 	{
 		const int32 StartingAddressA = ItemA->GetStartingAddress();
 		const int32 StartingAddressB = ItemB->GetStartingAddress();

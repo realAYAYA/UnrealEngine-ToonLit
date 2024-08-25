@@ -417,7 +417,7 @@ void UEditPivotTool::UpdateAssets(const FFrame3d& NewPivotWorldFrame)
 
 	// If the targets have any convex hulls, we need to update those first in a separate transaction to work around a crash
 	// in the handling of convex DDC data
-	constexpr bool bWorkaroundForCrashIfConvexAndMeshModifiedInSameTransaction = true;
+	constexpr bool bWorkaroundForCrashIfConvexAndMeshModifiedInSameTransaction = false;
 	bool bNeedSeparateTransactionForSimpleCollision = false;
 	if constexpr (bWorkaroundForCrashIfConvexAndMeshModifiedInSameTransaction)
 	{
@@ -638,7 +638,7 @@ void UEditPivotTool::UpdateAssets(const FFrame3d& NewPivotWorldFrame)
 	}
 
 	// hack to ensure user sees the updated pivot immediately: request re-select of the original selection
-	FSelectedOjectsChangeList NewSelection;
+	FSelectedObjectsChangeList NewSelection;
 	NewSelection.ModificationType = ESelectedObjectsModificationType::Replace;
 	for (int OrigMeshIdx = 0; OrigMeshIdx < Targets.Num(); OrigMeshIdx++)
 	{

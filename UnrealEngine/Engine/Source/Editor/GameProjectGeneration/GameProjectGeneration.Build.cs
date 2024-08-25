@@ -25,6 +25,7 @@ public class GameProjectGeneration : ModuleRules
 				"Analytics",
 				"ApplicationCore",
 				"AppFramework",
+				"AssetTools",
 				"ClassViewer",
 				"Core",
 				"CoreUObject",
@@ -46,7 +47,8 @@ public class GameProjectGeneration : ModuleRules
 				"LauncherPlatform",
 				"AddContentDialog",
 				"AudioMixer",
-				"AudioMixerCore"
+				"AudioMixerCore",
+				"ContentBrowserData"
 			}
 		);
 

@@ -100,16 +100,7 @@ public:
 	static FWaterBodyManager* GetWaterBodyManager(const UWorld* InWorld);
 
 	/** Static helper function to get a weak ptr to the water scene view extension for a given world. */
-	static TWeakPtr<FWaterViewExtension, ESPMode::ThreadSafe> GetWaterViewExtension(const UWorld* InWorld);
-
-	UE_DEPRECATED(5.1, "Please use FWaterBodyManager::ForEachWaterBodyComponent instead.")
-	static void ForEachWaterBodyComponent(const UWorld* World, TFunctionRef<bool(UWaterBodyComponent*)> Predicate) {}
-
-	UE_DEPRECATED(5.1, "This will become a private member. Prefer calling GetWaterBodyManager instead")
-	FWaterBodyManager WaterBodyManager;
-
-	UE_DEPRECATED(5.1, "There may be multiple water zones per level. Prefer calling the GetWaterZone on a per-water body basis or iterating over all zones.")
-	AWaterZone* GetWaterZoneActor(ULevel* InPreferredOuterLevel = nullptr) const { return nullptr; }
+	static FWaterViewExtension* GetWaterViewExtension(const UWorld* InWorld);
 
 	ABuoyancyManager* GetBuoyancyManager() const { return BuoyancyManager; }
 
@@ -173,8 +164,8 @@ public:
 
 	UMaterialParameterCollection* GetMaterialParameterCollection() const {	return MaterialParameterCollection; }
 	
-	void MarkAllWaterZonesForRebuild(EWaterZoneRebuildFlags RebuildFlags = EWaterZoneRebuildFlags::All);
-	void MarkWaterZonesInRegionForRebuild(const FBox2D& InUpdateRegion, EWaterZoneRebuildFlags InRebuildFlags);
+	void MarkAllWaterZonesForRebuild(EWaterZoneRebuildFlags RebuildFlags = EWaterZoneRebuildFlags::All, const UObject* DebugRequestingObject = nullptr);
+	void MarkWaterZonesInRegionForRebuild(const FBox2D& InUpdateRegion, EWaterZoneRebuildFlags InRebuildFlags, const UObject* DebugRequestingObject = nullptr);
 
 	/** Returns the water with the highest priority within the bounds provided. */
 	static TSoftObjectPtr<AWaterZone> FindWaterZone(const UWorld* World, const FBox2D& Bounds, const TSoftObjectPtr<const ULevel> PreferredLevel = {});
@@ -255,7 +246,7 @@ private:
 
 	FUnderwaterPostProcessVolume UnderwaterPostProcessVolume;
 
-	TSharedPtr<FWaterViewExtension> WaterViewExtension;
+	FWaterBodyManager WaterBodyManager;
 
 #if WITH_EDITOR
 	FDelegateHandle OnHeightmapStreamedHandle;

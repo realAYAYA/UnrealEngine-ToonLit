@@ -46,6 +46,45 @@ void UInterchangeAssetImportData::PostLoad()
 	}
 }
 
+UObject* DeSerializeTranslatorSettings(const FString& TranslatorSettingsStr, UClass* TranslatorSettingsClass)
+{
+	UInterchangeTranslatorSettings* GeneratedTranslatorSettings = NewObject<UInterchangeTranslatorSettings>(GetTransientPackage(), TranslatorSettingsClass);
+	GeneratedTranslatorSettings->ClearInternalFlags(EInternalObjectFlags::Async);
+
+	TSharedPtr<FJsonObject> RootObject;
+	TSharedRef< TJsonReader<> > JsonReader = TJsonReaderFactory<>::Create(TranslatorSettingsStr);
+	if (FJsonSerializer::Deserialize(JsonReader, RootObject))
+	{
+		const TSharedPtr<FJsonObject> JsonTranslatorSettingsProperties = RootObject->GetObjectField(TEXT("GeneratedTranslatorSettings"));
+		FJsonObjectConverter::JsonObjectToUStruct(JsonTranslatorSettingsProperties.ToSharedRef(), TranslatorSettingsClass, GeneratedTranslatorSettings, 0, 0);
+	}
+
+	return GeneratedTranslatorSettings;
+}
+
+FString SerializeTranslatorSettings(UObject* TranslatorSettings)
+{
+	if (UClass* TranslatorSettingsClass = TranslatorSettings->GetClass())
+	{
+		TSharedRef<FJsonObject> RootObject = MakeShareable(new FJsonObject);
+		TSharedRef<FJsonObject> TranslatorSettingsPropertiesObject = MakeShareable(new FJsonObject);
+		if (FJsonObjectConverter::UStructToJsonObject(TranslatorSettingsClass, TranslatorSettings, TranslatorSettingsPropertiesObject, 0, 0))
+		{
+			RootObject->SetField(TEXT("GeneratedTranslatorSettings"), MakeShareable(new FJsonValueObject(TranslatorSettingsPropertiesObject)));
+		}
+		//Write the json file
+		FString Json;
+		TSharedRef<TJsonWriter<> > JsonWriter = TJsonWriterFactory<>::Create(&Json, 0);
+		if (FJsonSerializer::Serialize(RootObject, JsonWriter))
+		{
+			return Json;
+		}
+	}
+
+	return TEXT("");
+}
+
+
 UObject* DeSerializePipeline(const FString& PipelineStr, UClass* PipelineClass)
 {
 	UInterchangePipelineBase* GeneratedPipeline = NewObject<UInterchangePipelineBase>(GetTransientPackage(), PipelineClass);
@@ -124,6 +163,26 @@ void UInterchangeAssetImportData::SetNodeContainer(UInterchangeBaseNodeContainer
 	}
 }
 
+const UInterchangeTranslatorSettings* UInterchangeAssetImportData::GetTranslatorSettings() const
+{
+	ProcessTranslatorCache();
+	return TransientTranslatorSettings;
+}
+
+void UInterchangeAssetImportData::SetTranslatorSettings(UInterchangeTranslatorSettings* TranslatorSettings) const
+{
+	TransientTranslatorSettings = TranslatorSettings;
+
+	//Serialize cache
+	CachedTranslatorSettings = {};
+	if (TranslatorSettings)
+	{
+		FString TranslatorSettingsJSON = SerializePipeline(TranslatorSettings);
+
+		FString TranslatorSettingsClassFullName = TranslatorSettings->GetClass()->GetFullName();
+		CachedTranslatorSettings = TPair<FString, FString>(TranslatorSettingsClassFullName, TranslatorSettingsJSON);
+	}
+}
 
 void UInterchangeAssetImportData::SetPipelines(const TArray<UObject*>& InPipelines) const
 {
@@ -213,6 +272,43 @@ void UInterchangeAssetImportData::ProcessContainerCache() const
 		else if(!TransientNodeContainer)
 		{
 			ProcessDeprecatedData();
+		}
+	}
+}
+
+void UInterchangeAssetImportData::ProcessTranslatorCache() const
+{
+	if (UInterchangeManager::IsInterchangeImportEnabled())
+	{
+		//de-serialize
+		if (!TransientTranslatorSettings && !CachedTranslatorSettings.Key.IsEmpty())
+		{
+			TMap<FString, UClass*> ClassPerName;
+			for (FThreadSafeObjectIterator It(UClass::StaticClass()); It; ++It)
+			{
+				UClass* Class = Cast<UClass>(*It);
+				if (Class->IsChildOf(UInterchangeTranslatorSettings::StaticClass()))
+				{
+					ClassPerName.Add(Class->GetFullName(), Class);
+				}
+			}
+
+			FString ClassFullName = CachedTranslatorSettings.Key;
+			FCoreRedirectObjectName RedirectedObjectName = FCoreRedirects::GetRedirectedName(ECoreRedirectFlags::Type_Class, FCoreRedirectObjectName(ClassFullName));
+			if (RedirectedObjectName.IsValid())
+			{
+				ClassFullName = RedirectedObjectName.ToString();
+			}
+			//This cannot fail to make sure we have a healty serialization
+			if (!ensure(ClassPerName.Contains(ClassFullName)))
+			{
+				//We did not successfully serialize the content of the file into the node container
+				return;
+			}
+
+			UClass* ToCreateClass = ClassPerName.FindChecked(ClassFullName);
+
+			TransientTranslatorSettings = Cast<UInterchangeTranslatorSettings>(DeSerializeTranslatorSettings(CachedTranslatorSettings.Value, ToCreateClass));
 		}
 	}
 }

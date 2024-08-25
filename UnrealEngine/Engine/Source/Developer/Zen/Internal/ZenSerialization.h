@@ -32,6 +32,7 @@ enum class RpcAcceptOptions : uint32_t
 {
 	kNone = 0,
 	kAllowLocalReferences = (1u << 0),
+	kAllowPartialCacheChunks = (1u << 2)
 };
 
 ZEN_API void SaveCbPackage(const FCbPackage& Package, FArchive& Ar);

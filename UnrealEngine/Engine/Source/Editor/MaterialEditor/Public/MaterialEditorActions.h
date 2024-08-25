@@ -190,13 +190,22 @@ public:
 	/** Create component mask node */
 	TSharedPtr< FUICommandInfo > CreateComponentMaskNode;
 
-	/** Create component mask node */
+	/** Promote pin to parameter */
 	TSharedPtr< FUICommandInfo > PromoteToParameter;
+	
+	/** Reset pin to default value */
+	TSharedPtr< FUICommandInfo > ResetToDefault;
 
-	/** Create component mask node */
+	/** Create slab node */
 	TSharedPtr< FUICommandInfo > CreateSlabNode;
+
+	/** Create horizontal mix node */
 	TSharedPtr< FUICommandInfo > CreateHorizontalMixNode;
+
+	/** Create vertical layer node */
 	TSharedPtr< FUICommandInfo > CreateVerticalLayerNode;
+
+	/** Create weight node */
 	TSharedPtr< FUICommandInfo > CreateWeightNode;
 
 	TSharedPtr< FUICommandInfo > QualityLevel_All;

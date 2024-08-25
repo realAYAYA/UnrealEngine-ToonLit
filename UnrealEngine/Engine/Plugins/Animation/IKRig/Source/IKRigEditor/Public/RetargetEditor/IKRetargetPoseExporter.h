@@ -17,9 +17,11 @@ public:
 	/** import retarget pose from asset*/
 	void HandleImportFromPoseAsset();
 	FReply ImportPoseAsset() const;
-	void OnRetargetPoseSelected(const FAssetData& SelectedAsset);
+	bool OnShouldFilterPoseToImport(const struct FAssetData& AssetData) const;
+	void OnPoseAssetSelected(const FAssetData& SelectedAsset);
 	TSharedRef<SWidget> OnGeneratePoseComboWidget(TSharedPtr<FName> Item) const;
 	void OnSelectPoseFromPoseAsset(TSharedPtr<FName> Item, ESelectInfo::Type SelectInfo);
+	void RefreshPoseList();
 	FSoftObjectPath RetargetPoseToImport;
 	TSharedPtr<SWindow> ImportPoseWindow;
 	TArray<TSharedPtr<FName>> PosesInSelectedAsset;

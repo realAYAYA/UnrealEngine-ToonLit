@@ -47,6 +47,7 @@ struct PERSONA_API FPersonaTabs
 	static const FName DetailsID;
 	static const FName FindReplaceID;
 
+	static const FName ToolboxID;
 private:
 	FPersonaTabs() {}
 };

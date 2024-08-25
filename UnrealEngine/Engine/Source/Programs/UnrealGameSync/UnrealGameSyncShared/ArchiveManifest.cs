@@ -1,13 +1,13 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
-using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
+using EpicGames.Core;
+using Microsoft.Extensions.Logging;
 
 namespace UnrealGameSync
 {
@@ -53,13 +53,13 @@ namespace UnrealGameSync
 		public ArchiveManifest(FileStream inputStream)
 		{
 			using BinaryReader reader = new BinaryReader(inputStream, Encoding.UTF8, true);
-			if(reader.ReadInt32() != Signature)
+			if (reader.ReadInt32() != Signature)
 			{
 				throw new Exception("Archive manifest signature does not match");
 			}
 
 			int numFiles = reader.ReadInt32();
-			for(int idx = 0; idx < numFiles; idx++)
+			for (int idx = 0; idx < numFiles; idx++)
 			{
 				Files.Add(new ArchiveManifestFile(reader));
 			}
@@ -70,7 +70,7 @@ namespace UnrealGameSync
 			using BinaryWriter writer = new BinaryWriter(outputStream, Encoding.UTF8, true);
 			writer.Write(Signature);
 			writer.Write(Files.Count);
-			foreach(ArchiveManifestFile file in Files)
+			foreach (ArchiveManifestFile file in Files)
 			{
 				file.Write(writer);
 			}
@@ -109,9 +109,9 @@ namespace UnrealGameSync
 
 				// Extract all the files
 				int entryIdx = 0;
-				foreach(ZipArchiveEntry entry in zip.Entries)
+				foreach (ZipArchiveEntry entry in zip.Entries)
 				{
-					if(!entry.FullName.EndsWith("/", StringComparison.Ordinal) && !entry.FullName.EndsWith("\\", StringComparison.Ordinal))
+					if (!entry.FullName.EndsWith("/", StringComparison.Ordinal) && !entry.FullName.EndsWith("\\", StringComparison.Ordinal))
 					{
 						FileReference fileName = FileReference.Combine(baseDirectoryName, entry.FullName);
 						DirectoryReference.CreateDirectory(fileName.Directory);
@@ -129,22 +129,22 @@ namespace UnrealGameSync
 		{
 			// Read the manifest in
 			ArchiveManifest manifest;
-			using(FileStream inputStream = FileReference.Open(manifestFileName, FileMode.Open, FileAccess.Read))
+			using (FileStream inputStream = FileReference.Open(manifestFileName, FileMode.Open, FileAccess.Read))
 			{
 				manifest = new ArchiveManifest(inputStream);
 			}
 
 			// Remove all the files that haven't been modified match
-			for(int idx = 0; idx < manifest.Files.Count; idx++)
+			for (int idx = 0; idx < manifest.Files.Count; idx++)
 			{
 				FileInfo file = FileReference.Combine(baseDirectoryName, manifest.Files[idx].FileName).ToFileInfo();
-				if(file.Exists)
+				if (file.Exists)
 				{
-					if(file.Length != manifest.Files[idx].Length)
+					if (file.Length != manifest.Files[idx].Length)
 					{
 						logWriter.LogInformation("Skipping {FileName} due to modified length", file.FullName);
 					}
-					else if(Math.Abs((file.LastWriteTimeUtc - manifest.Files[idx].LastWriteTimeUtc).TotalSeconds) > 2.0)
+					else if (Math.Abs((file.LastWriteTimeUtc - manifest.Files[idx].LastWriteTimeUtc).TotalSeconds) > 2.0)
 					{
 						logWriter.LogInformation("Skipping {FileName} due to modified timestamp", file.FullName);
 					}

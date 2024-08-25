@@ -105,9 +105,7 @@ namespace mu
 		//! It will never be in the same buffer that other vertex semantics.
 		MBS_LAYOUTBLOCK,
 
-		//! Internal semantic indicating what chart does the given vertex or face belong to.
-		//! It can be safely ignored if present in meshes returned by the system.
-		MBS_CHART,
+		MBS_CHART_DEPRECATED,
 
 		//! To let users define channels with semantics unknown to the system.
 		//! These channels will never be transformed, and the per-vertex or per-index data will be
@@ -181,7 +179,7 @@ namespace mu
 		}
 
 		//!
-		TArray<mu::MESH_BUFFER_CHANNEL> m_channels;
+		TArray<MESH_BUFFER_CHANNEL> m_channels;
 
 		//!
 		TMemoryTrackedArray<uint8> m_data;
@@ -208,7 +206,7 @@ namespace mu
 
 
 	//! Set of buffers storing mesh element data. Elements can be vertices, indices or faces.
-	class MUTABLERUNTIME_API FMeshBufferSet : public Base
+	class MUTABLERUNTIME_API FMeshBufferSet
 	{
 	public:
 

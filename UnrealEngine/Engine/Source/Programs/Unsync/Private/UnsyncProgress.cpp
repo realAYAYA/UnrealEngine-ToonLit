@@ -22,13 +22,16 @@ AddGlobalProgress(uint64 Size, EBlockListType ListType)
 	GGlobalProgressCurrent += Size;
 }
 
-FLogProgressScope::FLogProgressScope(uint64 InTotal, ELogProgressUnits InUnits, uint64 InPeriodMilliseconds)
-: Current(0)
+FLogProgressScope::FLogProgressScope(uint64 InTotal, ELogProgressUnits InUnits, uint64 InPeriodMilliseconds, bool bInVerboseOnly)
+: bParentThreadVerbose(GLogVerbose)
+, ParentThreadIndent(GLogIndent)
+, Current(0)
 , Total(InTotal)
 , PeriodMilliseconds(InPeriodMilliseconds)
 , Units(InUnits)
 , NextProgressLogTime(TimePointNow())
 , bEnabled(true)
+, bVerboseOnly(bInVerboseOnly)
 {
 	Add(0);
 }
@@ -52,31 +55,34 @@ FLogProgressScope::Add(uint64 X, bool bForceComplete)
 	std::lock_guard<std::mutex> LockGuard(Mutex);
 	const uint64				CurrentClamped = std::min<uint64>(Current, Total);
 	const bool					bComplete	   = (CurrentClamped == Total) || bForceComplete;
-	if (bEnabled && GLogVerbose && (TimePointNow() > NextProgressLogTime || bComplete))
+
+	const ELogLevel LogLevel = bVerboseOnly ? ELogLevel::Debug : ELogLevel::Info;
+
+	if (bEnabled && (!bVerboseOnly || GLogVerbose) && (TimePointNow() > NextProgressLogTime || bComplete))
 	{
 		const wchar_t* Ending = bComplete ? L"\n" : L"\r";
 		switch (Units)
 		{
 			case ELogProgressUnits::GB:
-				LogPrintf(ELogLevel::Debug,
+				LogPrintf(LogLevel,
 						  L"%.2f / %.2f GB%ls",
 						  double(CurrentClamped) / double(1_GB),
 						  double(Total) / double(1_GB),
 						  Ending);
 				break;
 			case ELogProgressUnits::MB:
-				LogPrintf(ELogLevel::Debug,
+				LogPrintf(LogLevel,
 						  L"%.2f / %.2f MB%ls",
 						  double(CurrentClamped) / double(1_MB),
 						  double(Total) / double(1_MB),
 						  Ending);
 				break;
 			case ELogProgressUnits::Bytes:
-				LogPrintf(ELogLevel::Debug, L"%llu / %llu bytes%ls", (uint64)CurrentClamped, Total, Ending);
+				LogPrintf(LogLevel, L"%llu / %llu bytes%ls", (uint64)CurrentClamped, Total, Ending);
 				break;
 			case ELogProgressUnits::Raw:
 			default:
-				LogPrintf(ELogLevel::Debug, L"%llu / %llu%ls", (uint64)CurrentClamped, Total, Ending);
+				LogPrintf(LogLevel, L"%llu / %llu%ls", (uint64)CurrentClamped, Total, Ending);
 				break;
 		}
 

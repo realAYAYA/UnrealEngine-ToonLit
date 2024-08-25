@@ -10,6 +10,9 @@
 class SOverlay;
 class SSpacer;
 
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FOnActiveIndexChangedDelegate, UWidget*, ActiveWidget, int32, ActiveIndex);
+
 /**
  * A widget switcher that activates / deactivates CommonActivatableWidgets, allowing for associated animations to trigger.
  */
@@ -49,6 +52,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Common Widget Switcher")
 	bool IsTransitionPlaying() const;
 
+	UWidget* GetPendingActiveWidget() const;
+	int32 GetPendingActiveWidgetIndex() const;
+
 protected:
 	virtual void HandleSlateActiveIndexChanged(int32 ActiveIndex);
 
@@ -66,6 +72,10 @@ public:
 	/** Fires when the switcher changes its transition animation state */
 	DECLARE_EVENT_OneParam(UCommonAnimatedSwitcher, FOnTransitioningChanged, bool)
 	FOnTransitioningChanged OnTransitioningChanged;
+	
+	/** Fires when the active widget displayed by the switcher changes */
+	UPROPERTY(BlueprintAssignable, Category = "Common Widget Switcher")
+	FOnActiveIndexChangedDelegate OnActiveWidgetIndexChangedBP;
 
 protected:
 	/** The type of transition to play between widgets */
@@ -79,6 +89,10 @@ protected:
 	/** The total duration of a single transition between widgets */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Transition")
 	float TransitionDuration;
+
+	/** Controls how we will choose another widget if a transitioning widget is removed during the transition. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Transition")
+	ECommonSwitcherTransitionFallbackStrategy TransitionFallbackStrategy = ECommonSwitcherTransitionFallbackStrategy::None;
 
 	TSharedPtr<SOverlay> MyOverlay;
 	TSharedPtr<SSpacer> MyInputGuard;

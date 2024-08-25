@@ -72,7 +72,7 @@ UEMediaError FElectraRendererAudio::CreateBufferPool(const Electra::FParamDict& 
 	DecoderOutputPool.Reset();
 	NumOutputAudioBuffersInUse = 0;
 
-	const FVariantValue& variantNumBuffers = Parameters.GetValue("num_buffers");
+	const FVariantValue& variantNumBuffers = Parameters.GetValue(RenderOptionKeys::NumBuffers);
 	if (!variantNumBuffers.IsType(FVariantValue::EDataType::TypeInt64))
 	{
 		return UEMEDIA_ERROR_BAD_ARGUMENTS;
@@ -80,9 +80,9 @@ UEMediaError FElectraRendererAudio::CreateBufferPool(const Electra::FParamDict& 
 	NumBuffers = (int32)variantNumBuffers.GetInt64();
 
 	// Update dic for later query via GetBufferPoolProperties
-	BufferPoolProperties.Set("max_buffers", Electra::FVariantValue((int64)NumBuffers));
+	BufferPoolProperties.Set(RenderOptionKeys::MaxBuffers, Electra::FVariantValue((int64)NumBuffers));
 
-	const FVariantValue& variantMaxBufferSize = Parameters.GetValue("max_buffer_size");
+	const FVariantValue& variantMaxBufferSize = Parameters.GetValue(RenderOptionKeys::MaxBufferSize);
 	if (!variantMaxBufferSize.IsType(FVariantValue::EDataType::TypeInt64))
 	{
 		return UEMEDIA_ERROR_BAD_ARGUMENTS;
@@ -117,8 +117,8 @@ UEMediaError FElectraRendererAudio::AcquireBuffer(IBuffer*& OutBuffer, int32 Tim
 
 	// UE handles all with shared pointers...
 	FMediaBufferSharedPtrWrapper* MediaBufferSharedPtrWrapper = new FMediaBufferSharedPtrWrapper(DecoderOutput);
-	MediaBufferSharedPtrWrapper->BufferProperties.Set("size", FVariantValue((int64)DecoderOutput->GetReservedBufferBytes()));
-	MediaBufferSharedPtrWrapper->BufferProperties.Set("address", FVariantValue(const_cast<void*>(DecoderOutput->GetBuffer())));
+	MediaBufferSharedPtrWrapper->BufferProperties.Set(RenderOptionKeys::AllocatedSize, FVariantValue((int64)DecoderOutput->GetReservedBufferBytes()));
+	MediaBufferSharedPtrWrapper->BufferProperties.Set(RenderOptionKeys::AllocatedAddress, FVariantValue(const_cast<void*>(DecoderOutput->GetBuffer())));
 	OutBuffer = MediaBufferSharedPtrWrapper;
 
 	return UEMEDIA_ERROR_OK;
@@ -126,7 +126,7 @@ UEMediaError FElectraRendererAudio::AcquireBuffer(IBuffer*& OutBuffer, int32 Tim
 
 
 
-UEMediaError FElectraRendererAudio::ReturnBuffer(IBuffer* Buffer, bool bRender, const FParamDict& InSampleProperties)
+UEMediaError FElectraRendererAudio::ReturnBuffer(IBuffer* Buffer, bool bRender, FParamDict& InOutSampleProperties)
 {
 	if (Buffer == nullptr)
 	{
@@ -137,31 +137,31 @@ UEMediaError FElectraRendererAudio::ReturnBuffer(IBuffer* Buffer, bool bRender, 
 
 	if (bRender)
 	{
-		const FVariantValue& variantNumChannels = InSampleProperties.GetValue("num_channels");
+		const FVariantValue& variantNumChannels = InOutSampleProperties.GetValue(RenderOptionKeys::NumChannels);
 		if (!variantNumChannels.IsType(FVariantValue::EDataType::TypeInt64))
 		{
 			return UEMEDIA_ERROR_BAD_ARGUMENTS;
 		}
 
-		const FVariantValue& variantSampleRate = InSampleProperties.GetValue("sample_rate");
+		const FVariantValue& variantSampleRate = InOutSampleProperties.GetValue(RenderOptionKeys::SampleRate);
 		if (!variantSampleRate.IsType(FVariantValue::EDataType::TypeInt64))
 		{
 			return UEMEDIA_ERROR_BAD_ARGUMENTS;
 		}
 
-		const FVariantValue& variantBufferUsedBytes = InSampleProperties.GetValue("byte_size");
+		const FVariantValue& variantBufferUsedBytes = InOutSampleProperties.GetValue(RenderOptionKeys::UsedByteSize);
 		if (!variantBufferUsedBytes.IsType(FVariantValue::EDataType::TypeInt64))
 		{
 			return UEMEDIA_ERROR_BAD_ARGUMENTS;
 		}
 
-		const FVariantValue& variantPts = InSampleProperties.GetValue("pts");
+		const FVariantValue& variantPts = InOutSampleProperties.GetValue(RenderOptionKeys::PTS);
 		if (!variantPts.IsType(FVariantValue::EDataType::TypeTimeValue))
 		{
 			return UEMEDIA_ERROR_BAD_ARGUMENTS;
 		}
 
-		const FVariantValue& variantDuration = InSampleProperties.GetValue("duration");
+		const FVariantValue& variantDuration = InOutSampleProperties.GetValue(RenderOptionKeys::Duration);
 		if (!variantDuration.IsType(FVariantValue::EDataType::TypeTimeValue))
 		{
 			return UEMEDIA_ERROR_BAD_ARGUMENTS;
@@ -179,7 +179,7 @@ UEMediaError FElectraRendererAudio::ReturnBuffer(IBuffer* Buffer, bool bRender, 
 
 		//UE_LOG(LogElectraPlayer, VeryVerbose, TEXT("-- FElectraRendererAudio::ReturnBuffer: Audio sample for time %s"), *InPts.ToString(TEXT("%h:%m:%s.%f")));
 
-		DecoderOutput->GetMutablePropertyDictionary() = InSampleProperties;
+		DecoderOutput->GetMutablePropertyDictionary() = InOutSampleProperties;
 		DecoderOutput->Initialize(IAudioDecoderOutput::ESampleFormat::Float, InNumChannels, InSampleRate, InDuration, FDecoderTimeStamp(InPts, InSequenceIndex), InUsedBufferBytes);
 
 		// Push buffer to output queue...
@@ -212,6 +212,13 @@ bool FElectraRendererAudio::CanReceiveOutputFrames(uint64 NumFrames) const
 		return false;
 	}
 	return PinnedPlayer->CanPresentAudioFrames(NumFrames);
+}
+
+bool FElectraRendererAudio::GetEnqueuedFrameInfo(int32& OutNumberOfEnqueuedFrames, Electra::FTimeValue& OutDurationOfEnqueuedFrames) const
+{
+	OutNumberOfEnqueuedFrames = 0;
+	OutDurationOfEnqueuedFrames.SetToZero();
+	return false;
 }
 
 /**

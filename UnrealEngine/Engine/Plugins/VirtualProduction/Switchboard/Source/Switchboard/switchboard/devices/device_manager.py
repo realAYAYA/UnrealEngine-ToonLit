@@ -6,7 +6,7 @@ import os
 import traceback
 from typing import Dict, List, Type
 
-from PySide2 import QtCore, QtGui
+from PySide6 import QtCore, QtGui
 
 from switchboard.switchboard_logging import LOGGER
 from switchboard.devices.device_base import Device, DeviceStatus

@@ -52,7 +52,7 @@ static inline void ReadShaderOptionalData(FShaderCodeReader& InShaderCode, TShad
 	OutShader.bShaderNeedsGlobalConstantBuffer = EnumHasAnyFlags(PackedResourceCounts->UsageFlags, EShaderResourceUsageFlags::GlobalUniformBuffer);
 
 	int32 IsSm6ShaderSize = 1;
-	const uint8* IsSm6Shader = InShaderCode.FindOptionalData('6', IsSm6ShaderSize);
+	const uint8* IsSm6Shader = InShaderCode.FindOptionalData(EShaderOptionalDataKey::ShaderModel6, IsSm6ShaderSize);
 	OutShader.bIsSm6Shader = IsSm6Shader && IsSm6ShaderSize && *IsSm6Shader;
 
 	UE::RHICore::SetupShaderCodeValidationData(&OutShader, InShaderCode);

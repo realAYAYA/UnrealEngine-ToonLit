@@ -200,6 +200,25 @@ FText UProxyMediaSource::GetMediaOption(const FName& Key, const FText& DefaultVa
 	return Super::GetMediaOption(Key, DefaultValue);
 }
 
+TSharedPtr<IMediaOptions::FDataContainer, ESPMode::ThreadSafe> UProxyMediaSource::GetMediaOption(const FName& Key, const TSharedPtr<FDataContainer, ESPMode::ThreadSafe>& DefaultValue) const
+{
+	// Guard against reentrant calls.
+	if (bMediaOptionGuard)
+	{
+		UE_LOG(LogMediaFrameworkUtilities, Warning, TEXT("UMediaSourceProxy::GetMediaOption - Reentrant calls are not supported. Asset: %s"), *GetPathName());
+		return DefaultValue;
+	}
+	TGuardValue<bool> GettingOptionGuard(bMediaOptionGuard, true);
+
+	UMediaSource* CurrentProxy = GetMediaSource();
+	if (CurrentProxy != nullptr)
+	{
+		return CurrentProxy->GetMediaOption(Key, DefaultValue);
+	}
+
+	return Super::GetMediaOption(Key, DefaultValue);
+}
+
 
 bool UProxyMediaSource::HasMediaOption(const FName& Key) const
 {

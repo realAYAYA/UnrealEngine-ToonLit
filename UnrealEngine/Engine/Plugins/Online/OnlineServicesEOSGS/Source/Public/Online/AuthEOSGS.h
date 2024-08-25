@@ -249,6 +249,7 @@ protected:
 	EOS_HConnect ConnectHandle = nullptr;
 	EOSEventRegistrationPtr OnConnectLoginStatusChangedEOSEventRegistration;
 	EOSEventRegistrationPtr OnConnectAuthNotifyExpirationEOSEventRegistration;
+	EOSEventRegistrationPtr OnAuthLoginStatusChangedEOSEventRegistration;
 	FAccountInfoRegistryEOS AccountInfoRegistryEOS;
 };
 

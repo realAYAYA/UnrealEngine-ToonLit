@@ -142,23 +142,24 @@ void SDeviceDetails::Construct(const FArguments& InArgs, const TSharedRef<FDevic
 
 			if (TargetDevice.IsValid())
 			{
-				const ITargetPlatform& TargetPlatform = TargetDevice->GetTargetPlatform();
+				const ITargetPlatformSettings& TargetPlatformSettings = TargetDevice->GetPlatformSettings();
+				const ITargetPlatformControls& TargetPlatformControls = TargetDevice->GetPlatformControls();
 
 				// platform features
-				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("AudioStreaming"), TargetPlatform.SupportsFeature(ETargetPlatformFeatures::AudioStreaming))));
-				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("DistanceFieldShadows"), TargetPlatform.SupportsFeature(ETargetPlatformFeatures::DistanceFieldShadows))));
-				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("DistanceFieldAO"), TargetPlatform.SupportsFeature(ETargetPlatformFeatures::DistanceFieldAO))));
-				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("GrayscaleSRGB"), TargetPlatform.SupportsFeature(ETargetPlatformFeatures::GrayscaleSRGB))));
-				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("HighQualityLightmaps"), TargetPlatform.SupportsFeature(ETargetPlatformFeatures::HighQualityLightmaps))));
-				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("LowQualityLightmaps"), TargetPlatform.SupportsFeature(ETargetPlatformFeatures::LowQualityLightmaps))));
-				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("MultipleGameInstances"), TargetPlatform.SupportsFeature(ETargetPlatformFeatures::MultipleGameInstances))));
-				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("Packaging"), TargetPlatform.SupportsFeature(ETargetPlatformFeatures::Packaging))));
-				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("SdkConnectDisconnect"), TargetPlatform.SupportsFeature(ETargetPlatformFeatures::SdkConnectDisconnect))));
-				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("TextureStreaming"), TargetPlatform.SupportsFeature(ETargetPlatformFeatures::TextureStreaming))));
-				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("UserCredentials"), TargetPlatform.SupportsFeature(ETargetPlatformFeatures::UserCredentials))));
-				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("MobileRendering"), TargetPlatform.SupportsFeature(ETargetPlatformFeatures::MobileRendering))));
-				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("DeferredRendering"), TargetPlatform.SupportsFeature(ETargetPlatformFeatures::DeferredRendering))));
-				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("LumenGI"), TargetPlatform.SupportsFeature(ETargetPlatformFeatures::LumenGI))));
+				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("AudioStreaming"), TargetPlatformSettings.SupportsFeature(ETargetPlatformFeatures::AudioStreaming))));
+				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("DistanceFieldShadows"), TargetPlatformSettings.SupportsFeature(ETargetPlatformFeatures::DistanceFieldShadows))));
+				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("DistanceFieldAO"), TargetPlatformSettings.SupportsFeature(ETargetPlatformFeatures::DistanceFieldAO))));
+				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("GrayscaleSRGB"), TargetPlatformSettings.SupportsFeature(ETargetPlatformFeatures::GrayscaleSRGB))));
+				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("HighQualityLightmaps"), TargetPlatformSettings.SupportsFeature(ETargetPlatformFeatures::HighQualityLightmaps))));
+				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("LowQualityLightmaps"), TargetPlatformSettings.SupportsFeature(ETargetPlatformFeatures::LowQualityLightmaps))));
+				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("MultipleGameInstances"), TargetPlatformSettings.SupportsFeature(ETargetPlatformFeatures::MultipleGameInstances))));
+				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("Packaging"), TargetPlatformSettings.SupportsFeature(ETargetPlatformFeatures::Packaging))));
+				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("SdkConnectDisconnect"), TargetPlatformSettings.SupportsFeature(ETargetPlatformFeatures::SdkConnectDisconnect))));
+				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("TextureStreaming"), TargetPlatformSettings.SupportsFeature(ETargetPlatformFeatures::TextureStreaming))));
+				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("UserCredentials"), TargetPlatformSettings.SupportsFeature(ETargetPlatformFeatures::UserCredentials))));
+				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("MobileRendering"), TargetPlatformSettings.SupportsFeature(ETargetPlatformFeatures::MobileRendering))));
+				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("DeferredRendering"), TargetPlatformSettings.SupportsFeature(ETargetPlatformFeatures::DeferredRendering))));
+				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("LumenGI"), TargetPlatformSettings.SupportsFeature(ETargetPlatformFeatures::LumenGI))));
 
 				// device features
 				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("MultiLaunch"), TargetDevice->SupportsFeature(ETargetDeviceFeatures::MultiLaunch))));
@@ -168,7 +169,7 @@ void SDeviceDetails::Construct(const FArguments& InArgs, const TSharedRef<FDevic
 				FeatureList.Add(MakeShareable(new FDeviceDetailsFeature(TEXT("Reboot"), TargetDevice->SupportsFeature(ETargetDeviceFeatures::Reboot))));
 
 				// create custom widget for the platform and place it in the panel
-				TSharedPtr<SWidget> CustomWidget = TargetPlatform.GetCustomWidgetCreator()->CreateDeviceInfoWidget(TargetPlatform.PlatformName(), TargetDevice);
+				TSharedPtr<SWidget> CustomWidget = TargetPlatformControls.GetCustomWidgetCreator()->CreateDeviceInfoWidget(TargetPlatformControls.PlatformName(), TargetDevice);
 				if (CustomWidget)
 				{
 					CustomPlatformWidgetPanel->SetContent(CustomWidget.ToSharedRef());

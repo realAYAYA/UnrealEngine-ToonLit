@@ -10,10 +10,6 @@
 #include "MuT/CodeOptimiser.h"
 #include "MuT/StreamsPrivate.h"
 
-#include <algorithm>
-#include <memory>
-#include <utility>
-
 
 namespace mu
 {
@@ -38,8 +34,9 @@ namespace mu
 	//-------------------------------------------------------------------------------------------------
 	bool ASTOpInstanceAdd::IsEqual(const ASTOp& otherUntyped) const
 	{
-		if (auto other = dynamic_cast<const ASTOpInstanceAdd*>(&otherUntyped))
+		if (otherUntyped.GetOpType()==GetOpType())
 		{
+			const ASTOpInstanceAdd* other = static_cast<const ASTOpInstanceAdd*>(&otherUntyped);
 			return type == other->type &&
 				instance == other->instance &&
 				value == other->value &&
@@ -116,7 +113,7 @@ namespace mu
 		if (!linkedAddress)
 		{
 			OP::InstanceAddArgs args;
-			memset(&args, 0, sizeof(args));
+			FMemory::Memzero(&args, sizeof(args));
 			args.id = id;
 			args.ExternalId = ExternalId;
 			args.SharedSurfaceId = SharedSurfaceId;
@@ -134,7 +131,7 @@ namespace mu
 				visitor.Run(value.child());
 
 				TArray<uint16> params;
-				for (const string& paramName : visitor.m_params)
+				for (const FString& paramName : visitor.m_params)
 				{
 					for (int32 i = 0; i < program.m_parameters.Num(); ++i)
 					{

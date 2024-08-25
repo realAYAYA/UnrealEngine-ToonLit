@@ -26,6 +26,7 @@ UProjectileMovementComponent::UProjectileMovementComponent(const FObjectInitiali
 	bInterpMovement = false;
 	bInterpRotation = false;
 	bInterpolationComplete = true;
+	bSimulationUseScopedMovement = false;
 	bInterpolationUseScopedMovement = true;
 	InterpLocationTime = 0.100f;
 	InterpRotationTime = 0.050f;
@@ -190,6 +191,9 @@ void UProjectileMovementComponent::TickComponent(float DeltaTime, enum ELevelTic
 	int32 Iterations = 0;
 	FHitResult Hit(1.f);
 	
+	QUICK_SCOPE_CYCLE_COUNTER( STAT_ProjectileMovementComponent_PerformMovement );
+	const FScopedMovementUpdate ScopedProjectileUpdate(bSimulationUseScopedMovement ? UpdatedComponent : nullptr, EScopedUpdate::DeferredUpdates);
+
 	while (bSimulationEnabled && RemainingTime >= MIN_TICK_TIME && (Iterations < MaxSimulationIterations) && IsValid(ActorOwner) && !HasStoppedSimulation())
 	{
 		LoopCount++;
@@ -729,7 +733,8 @@ void UProjectileMovementComponent::SetInterpolatedComponent(USceneComponent* Com
 		InterpolatedComponentPtr = Component;
 		InterpInitialLocationOffset = Component->GetRelativeLocation();
 		InterpInitialRotationOffset = Component->GetRelativeRotation().Quaternion();
-		bInterpolationComplete = false;
+		// We start at the "completed" location, wait for MoveInterpolationTarget() to actually mark it dirty.
+		bInterpolationComplete = true;
 
 		// Space out interpolation skipping to avoid objects spawned on single frame from always updating in sync
 		ThrottleInterpolationFramesSinceInterp = ThrottleInterpolationSkipFramesRecent > 0 ? FMath::RandRange(0, ThrottleInterpolationSkipFramesRecent) : 0;

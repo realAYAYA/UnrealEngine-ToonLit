@@ -39,7 +39,7 @@ public:
 	
 private:
 
-	TArray< TObjectPtr<UTickableConstraint> > GetHandleTransformConstraints(UWorld* InWorld) const;
+	const TArray< TWeakObjectPtr<UTickableConstraint> > GetHandleTransformConstraints(UWorld* InWorld) const;
 
 	UTickableTransformConstraint* Constraint = nullptr;
 	UTransformableHandle* Handle = nullptr;
@@ -57,6 +57,10 @@ struct MOVIESCENETOOLS_API FMovieSceneConstraintChannelHelper
 {
 public:
 
+	static bool AddConstraintToSequencer(
+		const TSharedPtr<ISequencer>& InSequencer,
+		UTickableTransformConstraint* InConstraint);
+	
 	/** Adds an active key if needed and does the compensation when switching. Will use the optional active and time if set. 
 	Will return true if key is actually set, may not be if the value is the same.*/
 	static bool SmartConstraintKey(

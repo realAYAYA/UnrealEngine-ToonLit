@@ -16,7 +16,7 @@ namespace Chaos
 		template<class T_PARTICLES>
 		inline void ApplyHelper(T_PARTICLES& InParticles, const FReal Dt, const int32 Index) const
 		{
-			InParticles.V(Index) += InParticles.LinearImpulseVelocity(Index);
+			InParticles.SetV(Index, InParticles.GetV(Index) + InParticles.LinearImpulseVelocity(Index));
 		}
 
 		inline void Apply(FDynamicParticles& InParticles, const FReal Dt, const int32 Index) const override //-V762
@@ -39,15 +39,15 @@ namespace Chaos
 			//		 and W are in an inertial frame.
 			//
 
-			InParticles.W(Index) += InParticles.AngularImpulseVelocity(Index);
+			InParticles.SetW(Index, InParticles.GetW(Index) + InParticles.AngularImpulseVelocity(Index));
 			InParticles.LinearImpulseVelocity(Index) = FVec3(0);
 			InParticles.AngularImpulseVelocity(Index) = FVec3(0);
 		}
 
 		inline void Apply(TTransientPBDRigidParticleHandle<FReal, 3>& Particle, const FReal Dt) const override //-V762
 		{
-			Particle.V() += Particle.LinearImpulseVelocity();
-			Particle.W() += Particle.AngularImpulseVelocity();
+			Particle.SetV(Particle.GetV() + Particle.LinearImpulseVelocity());
+			Particle.SetW(Particle.GetW() + Particle.AngularImpulseVelocity());
 			Particle.LinearImpulseVelocity() = FVec3(0);
 			Particle.AngularImpulseVelocity() = FVec3(0);
 		}

@@ -12,6 +12,10 @@
 #include <atomic>
 #include <mutex>
 #include <vector>
+#include <chrono>
+
+#include <fmt/format.h>
+#include <fmt/chrono.h>
 
 #if UNSYNC_PLATFORM_WINDOWS
 #	include <Dbghelp.h>
@@ -35,12 +39,14 @@ IsDebuggerPresent()
 }
 #endif
 
-thread_local bool	GLogVerbose		= false;
-bool				GLogVeryVerbose = false;
-bool				GBreakOnError	= IsDebuggerPresent();
-bool				GBreakOnWarning = false;
-thread_local uint32 GLogIndent		= 0;
-bool				GLogProgress	= false;
+thread_local bool	GLogVerbose			= false;
+bool				GLogVeryVerbose		= false;
+bool				GLogSilent			= false;
+bool				GBreakOnError		= IsDebuggerPresent();
+bool				GBreakOnWarning		= false;
+thread_local uint32 GLogIndent			= 0;
+bool				GLogProgress		= false;
+bool				GLogMachineReadable = false;
 
 std::mutex GLogMutex;
 
@@ -48,6 +54,39 @@ std::atomic<uint32> GLogThreadIndexCounter;
 thread_local uint32 GLogThreadIndex = ~0u;
 
 FTimePoint GNextFlushTime = TimePointNow();
+
+std::vector<std::wstring> GCommandLine;
+
+void
+LogSaveCommandLineUtf8(int Argc, char** Argv)
+{
+	std::lock_guard<std::mutex> LockGuard(GLogMutex);
+	for (int i = 0; i < Argc; ++i)
+	{
+		GCommandLine.push_back(ConvertUtf8ToWide(Argv[i]));
+	}
+}
+
+static FILE*
+GetLogStream(ELogLevel LogLevel)
+{
+	if (GLogMachineReadable)
+	{
+		if (LogLevel == ELogLevel::MachineReadable)
+		{
+			return stdout;
+		}
+		else
+		{
+			return stderr;
+		}
+	}
+	else
+	{
+		return stdout;
+	}
+}
+
 static void
 LogConditionalFlush(FILE* Stream)
 {
@@ -58,6 +97,12 @@ LogConditionalFlush(FILE* Stream)
 		GNextFlushTime = CurrentTime + std::chrono::milliseconds(1000);
 		fflush(Stream);
 	}
+}
+
+static void
+LogConditionalFlush(ELogLevel LogLevel)
+{
+	LogConditionalFlush(GetLogStream(LogLevel));
 }
 
 static uint32
@@ -110,13 +155,29 @@ std::vector<std::unique_ptr<FLogFile>> GLogFileStack;
 
 FLogFileScope::FLogFileScope(const wchar_t* Filename)
 {
+	std::wstring CommandLine;
+
 	{
 		std::lock_guard<std::mutex> LockGuard(GLogMutex);
 		GLogFileStack.push_back(std::move(GLogFile));
 		LogSetFileInternal(Filename);
+
+		for (const std::wstring& Arg : GCommandLine)
+		{
+			if (!CommandLine.empty())
+			{
+				CommandLine += ' ';
+			}
+			CommandLine += Arg;
+		}
 	}
 
-	UNSYNC_VERBOSE2(L"UNSYNC %hs started logging to file '%ls'", GetVersionString().c_str(), Filename);
+	UNSYNC_VERBOSE2(L"UNSYNC v%hs started logging to file '%ls'", GetVersionString().c_str(), Filename);
+	
+	if (!CommandLine.empty())
+	{
+		UNSYNC_VERBOSE2(L"Command line: %ls", CommandLine.c_str());
+	}
 }
 
 FLogFileScope::~FLogFileScope()
@@ -143,7 +204,7 @@ LogProgress(const wchar_t* ItemName, uint64 Current, uint64 Total)
 	}
 	wprintf(L"@progress [%ls] %llu / %llu\n", ItemName, Current, Total);
 
-	LogConditionalFlush(stdout);
+	LogConditionalFlush(stdout); // progress is always reported to stdout
 }
 
 void
@@ -161,7 +222,7 @@ LogStatus(const wchar_t* InItemName, const wchar_t* Status)
 
 	if (InItemName)
 	{
-		LogConditionalFlush(stdout);
+		LogConditionalFlush(stdout); // status is always reported to stdout
 	}
 	else
 	{
@@ -174,6 +235,7 @@ LogFlush()
 {
 	std::lock_guard<std::mutex> LockGuard(GLogMutex);
 	fflush(stdout);
+	fflush(stderr);
 	if (GLogFile && GLogFile->Handle)
 	{
 		FILE* F = GLogFile->Handle;
@@ -181,21 +243,50 @@ LogFlush()
 	}
 }
 
+static constexpr size_t TimestampStringSize = sizeof("YYYY-MM-DDTHH:MM:SS.sssZ");
+
+using FTimestampString = fmt::basic_memory_buffer<char, TimestampStringSize>;
+
+static FTimestampString
+FormatTimestamp(std::chrono::system_clock::time_point Timestamp)
+{
+	auto	TimestampMilliseconds = std::chrono::time_point_cast<std::chrono::milliseconds>(Timestamp);
+	auto	TimestampSeconds	  = std::chrono::time_point_cast<std::chrono::seconds>(TimestampMilliseconds);
+	auto	DeltaMilliseconds	  = (TimestampMilliseconds - TimestampSeconds).count();
+	std::tm UtcTime				  = fmt::gmtime(std::chrono::system_clock::to_time_t(TimestampSeconds));
+
+	FTimestampString Result;
+	fmt::format_to(std::back_inserter(Result), "{:%FT%T}.{:03}Z", UtcTime, DeltaMilliseconds);
+	Result.push_back(0);
+
+	UNSYNC_ASSERT(Result.size() == TimestampStringSize);
+
+	return Result;
+}
+
 void
 LogPrintf(ELogLevel Level, const wchar_t* Str, ...)
 {
 	std::lock_guard<std::mutex> LockGuard(GLogMutex);
 
+	const auto Timestamp = std::chrono::system_clock::now();
+
 	bool		   bShouldIndent = false;
 	const wchar_t* Prefix		 = nullptr;
+
+	const uint32 ThreadIndex = GetLogThreadIndex();
+
+	bool bShouldOutputThreadIndex = false;
 
 	if (Level == ELogLevel::Error)
 	{
 		Prefix = L"ERROR: ";
+		bShouldOutputThreadIndex = ThreadIndex != 0;
 	}
 	else if (Level == ELogLevel::Warning)
 	{
 		Prefix = L"WARNING: ";
+		bShouldOutputThreadIndex = ThreadIndex != 0;
 	}
 	else if (GLogIndent)
 	{
@@ -205,7 +296,11 @@ LogPrintf(ELogLevel Level, const wchar_t* Str, ...)
 
 	ELogLevel MaxDisplayLevel = ELogLevel::Info;
 
-	if (GLogVerbose)
+	if (GLogSilent)
+	{
+		MaxDisplayLevel = ELogLevel::Warning;
+	}
+	else if (GLogVerbose)
 	{
 		if (GLogVeryVerbose)
 		{
@@ -217,49 +312,59 @@ LogPrintf(ELogLevel Level, const wchar_t* Str, ...)
 		}
 	}
 
-	if (Level <= MaxDisplayLevel)
+	FILE* LogStream = GetLogStream(Level);
+
+	if (Level <= MaxDisplayLevel || Level == ELogLevel::MachineReadable)
 	{
 		if (Prefix)
 		{
-			wprintf(Prefix);
+			fwprintf(LogStream, Prefix);
+		}
+
+		if (bShouldOutputThreadIndex)
+		{
+			fwprintf(LogStream, L"[Thread %u] ", ThreadIndex);
 		}
 
 		if (bShouldIndent)
 		{
-			wprintf(L"%*c", GLogIndent, L' ');
+			fwprintf(LogStream, L"%*c", GLogIndent, L' ');
 		}
 
 		va_list Va;
 		va_start(Va, Str);
-		vwprintf(Str, Va);
+		vfwprintf(LogStream, Str, Va);
 		va_end(Va);
 
-		LogConditionalFlush(stdout);
+		LogConditionalFlush(Level);
 	}
 
 	if (GLogFile && GLogFile->Handle)
 	{
-		FILE* F = GLogFile->Handle;
+		FILE* LogFileStream = GLogFile->Handle;
 
-		uint32 ThreadIndex = GetLogThreadIndex();
-		fwprintf(F, L"[%3d] ", ThreadIndex);
+		FTimestampString TimestampString = FormatTimestamp(Timestamp);
+
+		fwprintf(LogFileStream, L"[%hs] ", TimestampString.data());
+
+		fwprintf(LogFileStream, L"[%3u] ", ThreadIndex);
 
 		switch (Level)
 		{
 			case ELogLevel::Error:
-				fwprintf(F, L"[ERROR] ");
+				fwprintf(LogFileStream, L"[ERROR] ");
 				break;
 			case ELogLevel::Warning:
-				fwprintf(F, L"[WARN] ");
+				fwprintf(LogFileStream, L"[WARN] ");
 				break;
 			case ELogLevel::Info:
-				fwprintf(F, L"[INFO] ");
+				fwprintf(LogFileStream, L"[INFO] ");
 				break;
 			case ELogLevel::Debug:
-				fwprintf(F, L"[DEBUG] ");
+				fwprintf(LogFileStream, L"[DEBUG] ");
 				break;
 			case ELogLevel::Trace:
-				fwprintf(F, L"[TRACE] ");
+				fwprintf(LogFileStream, L"[TRACE] ");
 				break;
 			default:
 				break;
@@ -267,12 +372,12 @@ LogPrintf(ELogLevel Level, const wchar_t* Str, ...)
 
 		va_list Va;
 		va_start(Va, Str);
-		vfwprintf(F, Str, Va);
+		vfwprintf(LogFileStream, Str, Va);
 		va_end(Va);
 
 		if (Level == ELogLevel::Error || Level == ELogLevel::Warning)
 		{
-			fflush(F);
+			fflush(LogFileStream);
 		}
 	}
 }
@@ -376,8 +481,9 @@ LogWriteCrashDump(void* InExceptionPointers)
 		CreateFileW(CrashDumpFilename.c_str(), GENERIC_READ | GENERIC_WRITE, FILE_SHARE_WRITE | FILE_SHARE_READ, 0, CREATE_ALWAYS, 0, 0);
 	if (DumpFile != INVALID_HANDLE_VALUE)
 	{
-		BOOL Ok =
+		const BOOL Ok =
 			MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), DumpFile, MiniDumpWithDataSegs, &ExceptionInfo, nullptr, nullptr);
+
 		if (Ok)
 		{
 			LogPrintf(ELogLevel::Info, L"!!! Crash dump file written.\n");
@@ -385,12 +491,12 @@ LogWriteCrashDump(void* InExceptionPointers)
 		}
 		else
 		{
-			LogPrintf(ELogLevel::Error, L"!!! Failed to generate crash dump. Error code: %d.\n", GetLastError());
+			LogPrintf(ELogLevel::Error, L"!!! Failed to generate crash dump. %hs\n", FormatSystemErrorMessage(GetLastError()).c_str());
 		}
 	}
 	else
 	{
-		LogPrintf(ELogLevel::Error, L"!!! Failed to open output file. Error code: %d.\n", GetLastError());
+		LogPrintf(ELogLevel::Error, L"!!! Failed to open output file. %hs\n", FormatSystemErrorMessage(GetLastError()).c_str());
 	}
 
 	LogPrintf(ELogLevel::Error, L"!!! Failed to write dump file.\n");

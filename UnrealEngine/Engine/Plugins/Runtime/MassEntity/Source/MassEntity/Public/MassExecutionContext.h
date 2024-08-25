@@ -49,7 +49,7 @@ private:
 	FInstancedStruct AuxData;
 	float DeltaTimeSeconds = 0.0f;
 	int32 ChunkSerialModificationNumber = -1;
-	FMassTagBitSet CurrentArchetypesTagBitSet;
+	FMassArchetypeCompositionDescriptor CurrentArchetypeCompositionDescriptor;
 
 	TSharedRef<FMassEntityManager> EntityManager;
 
@@ -119,11 +119,28 @@ public:
 		return EntityListView[Index];
 	}
 
+	bool DoesArchetypeHaveFragment(const UScriptStruct& FragmentType) const
+	{
+		return CurrentArchetypeCompositionDescriptor.Fragments.Contains(FragmentType);
+	}
+
+	template<typename T>
+	bool DoesArchetypeHaveFragment() const
+	{
+		static_assert(TIsDerivedFrom<T, FMassFragment>::IsDerived, "Given struct is not of a valid fragment type.");
+		return CurrentArchetypeCompositionDescriptor.Fragments.Contains<T>();
+	}
+
+	bool DoesArchetypeHaveTag(const UScriptStruct& TagType) const
+	{
+		return CurrentArchetypeCompositionDescriptor.Tags.Contains(TagType);
+	}
+
 	template<typename T>
 	bool DoesArchetypeHaveTag() const
 	{
-		static_assert(TIsDerivedFrom<T, FMassTag>::IsDerived, "Given struct is not of a valid fragment type.");
-		return CurrentArchetypesTagBitSet.Contains<T>();
+		static_assert(TIsDerivedFrom<T, FMassTag>::IsDerived, "Given struct is not of a valid tag type.");
+		return CurrentArchetypeCompositionDescriptor.Tags.Contains<T>();
 	}
 
 	/** Chunk related operations */
@@ -225,8 +242,8 @@ public:
 	{
 		const UScriptStruct* FragmentType = TFragment::StaticStruct();
 		const FFragmentView* View = FragmentViews.FindByPredicate([FragmentType](const FFragmentView& Element) { return Element.Requirement.StructType == FragmentType; });
-		//checkfSlow(View != nullptr, TEXT("Requested fragment type not bound"));
-		//checkfSlow(View->Requirement.AccessMode == EMassFragmentAccess::ReadWrite, TEXT("Requested fragment has not been bound for writing"));
+		checkfSlow(View != nullptr, TEXT("Requested fragment type not bound"));
+		checkfSlow(View->Requirement.AccessMode == EMassFragmentAccess::ReadWrite, TEXT("Requested fragment has not been bound for writing"));
 		return MakeArrayView<TFragment>((TFragment*)View->FragmentView.GetData(), View->FragmentView.Num());
 	}
 
@@ -235,7 +252,7 @@ public:
 	{
 		const UScriptStruct* FragmentType = TFragment::StaticStruct();
 		const FFragmentView* View = FragmentViews.FindByPredicate([FragmentType](const FFragmentView& Element) { return Element.Requirement.StructType == FragmentType; });
-		//checkfSlow(View != nullptr, TEXT("Requested fragment type not bound"));
+		checkfSlow(View != nullptr, TEXT("Requested fragment type not bound. Make sure the Frament was requested in ReadOnly or ReadWrite mode."));
 		return TConstArrayView<TFragment>((const TFragment*)View->FragmentView.GetData(), View->FragmentView.Num());
 	}
 
@@ -317,9 +334,9 @@ public:
 	void FlushDeferred();
 
 	void ClearExecutionData();
-	void SetCurrentArchetypesTagBitSet(const FMassTagBitSet& BitSet)
+	void SetCurrentArchetypeCompositionDescriptor(const FMassArchetypeCompositionDescriptor& Descriptor)
 	{
-		CurrentArchetypesTagBitSet = BitSet;
+		CurrentArchetypeCompositionDescriptor = Descriptor;
 	}
 
 	/** 
@@ -426,4 +443,7 @@ public:
 	{
 		return CacheSubsystemRequirements(SubsystemRequirements);
 	}
+
+	UE_DEPRECATED(5.4, "Deprecated in favor of 'SetCurrentArchetypeCompositionDescriptor' as this provides information on the entire archetype.")
+	void SetCurrentArchetypesTagBitSet(const FMassTagBitSet&) {}
 };

@@ -53,7 +53,10 @@ void UCustomizableObjectNodeTextureLayer::AllocateDefaultPins(UCustomizableObjec
 
 	OutputPinReference = FEdGraphPinReference(OutputPin);
 
-	for (int LayerIndex = Layers.Num() - 1; LayerIndex >=0 ; --LayerIndex )
+	UEdGraphPin* BasePin = CustomCreatePin(EGPD_Input, Schema->PC_Image, FName(TEXT("Base")));
+	BasePin->bDefaultValueIsIgnored = true;
+	
+	for (int32 LayerIndex = 0; LayerIndex < Layers.Num() ; ++LayerIndex )
 	{
 		FString PinName = FString::Printf( TEXT("Layer %d "), LayerIndex );
 		UEdGraphPin* LayerPin = CustomCreatePin(EGPD_Input, Schema->PC_Image, *PinName);
@@ -63,9 +66,6 @@ void UCustomizableObjectNodeTextureLayer::AllocateDefaultPins(UCustomizableObjec
 		UEdGraphPin* MaskPin = CustomCreatePin(EGPD_Input, Schema->PC_Image, *PinName);
 		MaskPin->bDefaultValueIsIgnored = true;
 	}
-
-	UEdGraphPin* BasePin = CustomCreatePin(EGPD_Input, Schema->PC_Image, FName(TEXT("Base")));
-	BasePin->bDefaultValueIsIgnored = true;
 }
 
 

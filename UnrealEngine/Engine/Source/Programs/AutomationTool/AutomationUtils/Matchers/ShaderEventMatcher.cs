@@ -31,6 +31,7 @@ namespace AutomationUtils.Matchers
 
 		static readonly Regex s_pattern = new Regex(Prefix);
 		static readonly Regex s_patternWithFile = new Regex($"{Prefix}{FilePattern}(?:\\({LinePattern}\\))?:");
+		static readonly Regex s_content = new Regex(@"^(?:\s+|Validation failed)");
 
 		/// <inheritdoc/>
 		public LogEventMatch? Match(ILogCursor input)
@@ -49,6 +50,11 @@ namespace AutomationUtils.Matchers
 					builder.AnnotateSourceFile(fileMatch.Groups["file"], "");
 					builder.TryAnnotate(fileMatch.Groups["line"], LogEventMarkup.LineNumber);
 					builder.TryAnnotate(fileMatch.Groups["column"], LogEventMarkup.ColumnNumber);
+				}
+
+				while (builder.Next.IsMatch(s_content))
+				{
+					builder.MoveNext();
 				}
 
 				return builder.ToMatch(LogEventPriority.AboveNormal, level, KnownLogEvents.Engine_ShaderCompiler);

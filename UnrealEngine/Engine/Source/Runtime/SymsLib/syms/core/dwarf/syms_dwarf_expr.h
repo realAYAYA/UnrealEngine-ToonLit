@@ -289,7 +289,7 @@ SYMS_API SYMS_DwSimpleLoc syms_dw_expr__analyze_fast(void *base, SYMS_U64Range r
 // The analyzer also determines if there is any possibility for non-linear
 // flow. Jumps, branches, and call ops all create non-linear flow. An
 // expression that doesn't have non-linear flow is trivially gauranteed to
-// terminate and therefore a good candidate for convertion to a human readable
+// terminate and therefore a good candidate for conversion to a human readable
 // expression.
 //
 // The call config is optional (may be null). If is provided the analysis

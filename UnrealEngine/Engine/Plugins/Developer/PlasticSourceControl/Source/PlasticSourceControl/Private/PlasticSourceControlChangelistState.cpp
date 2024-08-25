@@ -35,14 +35,24 @@ const FDateTime& FPlasticSourceControlChangelistState::GetTimeStamp() const
 	return TimeStamp;
 }
 
-const TArray<FSourceControlStateRef>& FPlasticSourceControlChangelistState::GetFilesStates() const
+const TArray<FSourceControlStateRef> FPlasticSourceControlChangelistState::GetFilesStates() const
 {
 	return Files;
 }
 
-const TArray<FSourceControlStateRef>& FPlasticSourceControlChangelistState::GetShelvedFilesStates() const
+int32 FPlasticSourceControlChangelistState::GetFilesStatesNum() const
+{
+	return Files.Num();
+}
+
+const TArray<FSourceControlStateRef> FPlasticSourceControlChangelistState::GetShelvedFilesStates() const
 {
 	return ShelvedFiles;
+}
+
+int32 FPlasticSourceControlChangelistState::GetShelvedFilesStatesNum() const
+{
+	return ShelvedFiles.Num();
 }
 
 FSourceControlChangelistRef FPlasticSourceControlChangelistState::GetChangelist() const

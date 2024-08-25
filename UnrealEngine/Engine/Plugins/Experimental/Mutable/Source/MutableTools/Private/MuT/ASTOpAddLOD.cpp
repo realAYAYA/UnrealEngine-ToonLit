@@ -7,9 +7,6 @@
 #include "MuR/RefCounted.h"
 #include "MuT/StreamsPrivate.h"
 
-#include <memory>
-#include <utility>
-
 
 namespace mu
 {
@@ -32,8 +29,9 @@ namespace mu
 
 	bool ASTOpAddLOD::IsEqual(const ASTOp& otherUntyped) const
 	{
-		if (auto other = dynamic_cast<const ASTOpAddLOD*>(&otherUntyped))
+		if (otherUntyped.GetOpType() == GetOpType())
 		{
+			const ASTOpAddLOD* other = static_cast<const ASTOpAddLOD*>(&otherUntyped);
 			return lods == other->lods;
 		}
 		return false;

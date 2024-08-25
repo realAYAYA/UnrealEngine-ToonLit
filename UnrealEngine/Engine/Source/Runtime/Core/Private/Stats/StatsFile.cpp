@@ -92,7 +92,7 @@ void FStatsLoadedState::ProcessMetaDataAndLeaveDataOnly( TArray<FStatMessage>& C
 		else if (Op == EStatOperation::AdvanceFrameEventGameThread)
 		{
 			// The following messages contain only the stats data.
-			CondensedMessages.RemoveAt( 0, Index, true );
+			CondensedMessages.RemoveAt( 0, Index, EAllowShrinking::Yes );
 			break;
 		}
 	}

@@ -23,6 +23,8 @@
 #include "TargetInterfaces/MeshDescriptionProvider.h"
 #include "TargetInterfaces/PrimitiveComponentBackedTarget.h"
 #include "ToolTargetManager.h"
+#include "TargetInterfaces/DynamicMeshCommitter.h"
+#include "TargetInterfaces/DynamicMeshProvider.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(RemeshMeshTool)
 
@@ -42,6 +44,17 @@ bool URemeshMeshToolBuilder::CanBuildTool(const FToolBuilderState& SceneState) c
 UMultiSelectionMeshEditingTool* URemeshMeshToolBuilder::CreateNewTool(const FToolBuilderState& SceneState) const
 {
 	return NewObject<URemeshMeshTool>(SceneState.ToolManager);
+}
+
+const FToolTargetTypeRequirements& URemeshMeshToolBuilder::GetTargetRequirements() const
+{
+	static FToolTargetTypeRequirements TypeRequirements({
+		UMaterialProvider::StaticClass(),
+		UDynamicMeshCommitter::StaticClass(),
+		UDynamicMeshProvider::StaticClass(),
+		UPrimitiveComponentBackedTarget::StaticClass()
+	});
+	return TypeRequirements;
 }
 
 /*

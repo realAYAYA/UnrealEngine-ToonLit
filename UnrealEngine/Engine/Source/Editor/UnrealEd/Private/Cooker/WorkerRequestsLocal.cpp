@@ -104,11 +104,6 @@ void FWorkerRequestsLocal::OnRemoveSessionPlatform(const ITargetPlatform* Target
 	ExternalRequests.OnRemoveSessionPlatform(TargetPlatform);
 }
 
-void FWorkerRequestsLocal::ReportAccessedIniSettings(UCookOnTheFlyServer& COTFS, const FConfigFile& Config)
-{
-	COTFS.ProcessAccessedIniSettings(&Config, COTFS.AccessedIniStrings);
-}
-
 void FWorkerRequestsLocal::ReportDemoteToIdle(UE::Cook::FPackageData& PackageData, ESuppressCookReason Reason)
 {
 }

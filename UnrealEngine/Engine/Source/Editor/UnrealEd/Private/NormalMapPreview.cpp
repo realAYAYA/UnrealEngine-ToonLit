@@ -15,7 +15,9 @@
 
 /*------------------------------------------------------------------------------
 	Batched element shaders for previewing normal maps.
-------------------------------------------------------------------------------*/
+
+ * Deprecated, do not use.  Use FBatchedElementTexture2DPreviewParameters instead with normal map flag. 
+-----------------------------------------------------------------------------*/
 
 /**
  * Simple pixel shader that reconstructs a normal for the purposes of visualization.
@@ -74,6 +76,8 @@ void FNormalMapBatchedElementParameters::BindShaders(
 	TShaderMapRef<FSimpleElementVS> VertexShader(GetGlobalShaderMap(InFeatureLevel));
 	TShaderMapRef<FSimpleElementNormalMapPS> PixelShader(GetGlobalShaderMap(InFeatureLevel));
 
+	// bad : this does not pass Gamma
+
 	GraphicsPSOInit.BoundShaderState.VertexDeclarationRHI = GSimpleElementVertexDeclaration.VertexDeclarationRHI;
 	GraphicsPSOInit.BoundShaderState.VertexShaderRHI = VertexShader.GetVertexShader();
 	GraphicsPSOInit.BoundShaderState.PixelShaderRHI = PixelShader.GetPixelShader();
@@ -87,4 +91,3 @@ void FNormalMapBatchedElementParameters::BindShaders(
 	SetShaderParametersLegacyVS(RHICmdList, VertexShader, InTransform);
 	SetShaderParametersLegacyPS(RHICmdList, PixelShader, Texture);
 }
-

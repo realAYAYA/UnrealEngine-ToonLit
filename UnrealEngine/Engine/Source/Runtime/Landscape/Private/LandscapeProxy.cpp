@@ -30,3 +30,14 @@ void ALandscapeProxy::SetPerLODOverrideMaterials(const TArray<FLandscapePerLODMa
 {
 	PerLODOverrideMaterials = InValue;
 }
+
+uint32 ALandscapeProxy::ComputeLandscapeKey() const
+{
+	return ComputeLandscapeKey(GetWorld(), LODGroupKey, LandscapeGuid);
+}
+
+uint32 ALandscapeProxy::ComputeLandscapeKey(const UWorld* InWorld, uint32 InLODGroupKey, FGuid InLandscapeGuid)
+{
+	// use LODGroupKey instead of LandscapeGUID when LODGroupKey is non-zero
+	return HashCombine(GetTypeHash(InWorld), (InLODGroupKey != 0) ? InLODGroupKey : GetTypeHash(InLandscapeGuid));
+}

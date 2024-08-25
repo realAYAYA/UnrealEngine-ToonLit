@@ -45,7 +45,7 @@ namespace DrawPolyPathToolLocals
 
 	/// Generate path mesh
 	/// @return Offset to location of generated mesh 
-	UE_NODISCARD FVector3d GeneratePathMesh(FDynamicMesh3& Mesh,
+	[[nodiscard]] FVector3d GeneratePathMesh(FDynamicMesh3& Mesh,
 		const TArray<FFrame3d>& InPathPoints, 
 		const TArray<double>& InOffsetScaleFactors, 
 		double OffsetDistance, 

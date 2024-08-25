@@ -149,6 +149,7 @@ class GAMEPLAYABILITIES_API UAbilityTask : public UGameplayTask
 	FORCEINLINE static T* NewTask(UObject* WorldContextObject, FName InstanceName = FName())
 	{
 		static_assert(DelayedFalse<T>(), "UAbilityTask::NewTask should never be used. Use NewAbilityTask instead");
+		return nullptr;
 	}
 
 	/** Called when the ability task is waiting on remote player data. IF the remote player ends the ability prematurely, and a task with this set is still running, the ability is killed. */

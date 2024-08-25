@@ -33,10 +33,7 @@ namespace EpicGames.Core
 		/// <summary>
 		/// Direct constructor for a path
 		/// </summary>
-		protected FileSystemReference(string fullName)
-		{
-			FullName = fullName;
-		}
+		protected FileSystemReference(string fullName) => FullName = fullName;
 
 		static readonly ThreadLocal<StringBuilder> s_combineStringsStringBuilder = new ThreadLocal<StringBuilder>(() => new StringBuilder(260));
 
@@ -122,27 +119,24 @@ namespace EpicGames.Core
 		/// </summary>
 		/// <param name="extension">The extension to check</param>
 		/// <returns>True if this name has the given extension, false otherwise</returns>
-		public bool HasExtension(string extension)
-		{
-			if (extension.Length > 0 && extension[0] != '.')
-			{
-				return FullName.Length >= extension.Length + 1 && FullName[FullName.Length - extension.Length - 1] == '.' && FullName.EndsWith(extension, Comparison);
-			}
-			else
-			{
-				return FullName.EndsWith(extension, Comparison);
-			}
-		}
+		public bool HasExtension(string extension) => extension.Length > 0 && extension[0] != '.'
+				? FullName.Length >= extension.Length + 1 && FullName[FullName.Length - extension.Length - 1] == '.' && FullName.EndsWith(extension, Comparison)
+				: FullName.EndsWith(extension, Comparison);
 
 		/// <summary>
 		/// Determines if the given object is at or under the given directory
 		/// </summary>
 		/// <param name="other">Directory to check against</param>
 		/// <returns>True if this path is under the given directory</returns>
-		public bool IsUnderDirectory(DirectoryReference other)
-		{
-			return FullName.StartsWith(other.FullName, Comparison) && (FullName.Length == other.FullName.Length || FullName[other.FullName.Length] == Path.DirectorySeparatorChar || other.IsRootDirectory());
-		}
+		public bool IsUnderDirectory(DirectoryReference other) => FullName.StartsWith(other.FullName, Comparison) && (FullName.Length == other.FullName.Length || FullName[other.FullName.Length] == Path.DirectorySeparatorChar || other.IsRootDirectory());
+
+		/// <summary>
+		/// Checks to see if this exists as either a file or directory
+		/// This is helpful for Mac, because a binary may be a .app which is a directory
+		/// </summary>
+		/// <param name="location">FileSsytem object to check</param>
+		/// <returns>True if a file or a directory exists</returns>
+		public static bool Exists(FileSystemReference location) => File.Exists(location.FullName) || Directory.Exists(location.FullName);
 
 		/// <summary>
 		/// Searches the path fragments for the given name. Only complete fragments are considered a match.
@@ -150,10 +144,7 @@ namespace EpicGames.Core
 		/// <param name="name">Name to check for</param>
 		/// <param name="offset">Offset within the string to start the search</param>
 		/// <returns>True if the given name is found within the path</returns>
-		public bool ContainsName(string name, int offset)
-		{
-			return ContainsName(name, offset, FullName.Length - offset);
-		}
+		public bool ContainsName(string name, int offset) => ContainsName(name, offset, FullName.Length - offset);
 
 		/// <summary>
 		/// Searches the path fragments for the given name. Only complete fragments are considered a match.
@@ -165,25 +156,25 @@ namespace EpicGames.Core
 		public bool ContainsName(string name, int offset, int length)
 		{
 			// Check the substring to search is at least long enough to contain a match
-			if(length < name.Length)
+			if (length < name.Length)
 			{
 				return false;
 			}
 
 			// Find each occurence of the name within the remaining string, then test whether it's surrounded by directory separators
 			int matchIdx = offset;
-			for(;;)
+			for (; ; )
 			{
 				// Find the next occurrence
 				matchIdx = FullName.IndexOf(name, matchIdx, offset + length - matchIdx, Comparison);
-				if(matchIdx == -1)
+				if (matchIdx == -1)
 				{
 					return false;
 				}
 
 				// Check if the substring is a directory
 				int matchEndIdx = matchIdx + name.Length;
-				if(FullName[matchIdx - 1] == Path.DirectorySeparatorChar && (matchEndIdx == FullName.Length || FullName[matchEndIdx] == Path.DirectorySeparatorChar))
+				if (FullName[matchIdx - 1] == Path.DirectorySeparatorChar && (matchEndIdx == FullName.Length || FullName[matchEndIdx] == Path.DirectorySeparatorChar))
 				{
 					return true;
 				}
@@ -199,18 +190,7 @@ namespace EpicGames.Core
 		/// <param name="name">Name of a subfolder to also check for</param>
 		/// <param name="baseDir">Base directory to check against</param>
 		/// <returns>True if the path is under the given directory</returns>
-		public bool ContainsName(string name, DirectoryReference baseDir)
-		{
-			// Check that this is under the base directory
-			if(!IsUnderDirectory(baseDir))
-			{
-				return false;
-			}
-			else
-			{
-				return ContainsName(name, baseDir.FullName.Length);
-			}
-		}
+		public bool ContainsName(string name, DirectoryReference baseDir) => IsUnderDirectory(baseDir) && ContainsName(name, baseDir.FullName.Length);
 
 		/// <summary>
 		/// Determines if the given object is under the given directory, within a subfolder of the given name. Useful for masking out directories by name.
@@ -218,18 +198,7 @@ namespace EpicGames.Core
 		/// <param name="names">Names of subfolders to also check for</param>
 		/// <param name="baseDir">Base directory to check against</param>
 		/// <returns>True if the path is under the given directory</returns>
-		public bool ContainsAnyNames(IEnumerable<string> names, DirectoryReference baseDir)
-		{
-			// Check that this is under the base directory
-			if(!IsUnderDirectory(baseDir))
-			{
-				return false;
-			}
-			else
-			{
-				return names.Any(x => ContainsName(x, baseDir.FullName.Length));
-			}
-		}
+		public bool ContainsAnyNames(IEnumerable<string> names, DirectoryReference baseDir) => IsUnderDirectory(baseDir) && names.Any(x => ContainsName(x, baseDir.FullName.Length));
 
 		static readonly ThreadLocal<StringBuilder> s_makeRelativeToStringBuilder = new ThreadLocal<StringBuilder>(() => new StringBuilder(260));
 
@@ -284,7 +253,7 @@ namespace EpicGames.Core
 				else
 				{
 					// Check the two paths match, and bail if they don't. Increase the common directory length if we've reached a separator.
-					if(String.Compare(FullName, idx, directory.FullName, idx, 1, Comparison) != 0)
+					if (String.Compare(FullName, idx, directory.FullName, idx, 1, Comparison) != 0)
 					{
 						break;
 					}
@@ -333,18 +302,12 @@ namespace EpicGames.Core
 		/// Normalize the path to using forward slashes
 		/// </summary>
 		/// <returns></returns>
-		public string ToNormalizedPath()
-		{
-			return FullName.Replace("\\", "/", StringComparison.Ordinal);
-		}
+		public string ToNormalizedPath() => FullName.Replace("\\", "/", StringComparison.Ordinal);
 
 		/// <summary>
 		/// Returns a string representation of this filesystem object
 		/// </summary>
 		/// <returns>Full path to the object</returns>
-		public override string ToString()
-		{
-			return FullName;
-		}
+		public override string ToString() => FullName;
 	}
 }

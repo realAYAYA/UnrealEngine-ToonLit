@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using Horde.Server.Utilities;
+using EpicGames.Horde.Jobs;
 using MongoDB.Bson;
 
 namespace Horde.Server.Jobs.Artifacts
@@ -28,7 +28,7 @@ namespace Horde.Server.Jobs.Artifacts
 		/// <summary>
 		/// Unique id of the step containing this artifact
 		/// </summary>
-		public SubResourceId? StepId { get; }
+		public JobStepId? StepId { get; }
 
 		/// <summary>
 		/// Total size of the file

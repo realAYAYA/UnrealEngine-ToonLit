@@ -51,6 +51,7 @@ public:
 	void SetRenderingCollection(FManagedArrayCollection&& InCollection);
 	const FManagedArrayCollection& GetRenderingCollection() const;
 	      FManagedArrayCollection& ModifyRenderingCollection();
+	void BuildRenderCollection();
 
 
 	/** Dataflow */

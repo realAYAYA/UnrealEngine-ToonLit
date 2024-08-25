@@ -28,9 +28,37 @@ void FAnimNode_LiveLinkPose::OnInitializeAnimInstance(const FAnimInstanceProxy* 
 	Super::OnInitializeAnimInstance(InProxy, InAnimInstance);
 }
 
+void FAnimNode_LiveLinkPose::BuildPoseFromAnimData(const FLiveLinkSubjectFrameData& LiveLinkData, FPoseContext& Output)
+{
+	const FLiveLinkSkeletonStaticData* SkeletonData = LiveLinkData.StaticData.Cast<FLiveLinkSkeletonStaticData>();
+	const FLiveLinkAnimationFrameData* FrameData = LiveLinkData.FrameData.Cast<FLiveLinkAnimationFrameData>();
+	check(SkeletonData);
+	check(FrameData);
+
+	CurrentRetargetAsset->BuildPoseFromAnimationData(CachedDeltaTime, SkeletonData, FrameData, Output.Pose);
+	CurrentRetargetAsset->BuildPoseAndCurveFromBaseData(CachedDeltaTime, SkeletonData, FrameData, Output.Pose, Output.Curve);
+	CachedDeltaTime = 0.f; // Reset so that if we evaluate again we don't "create" time inside of the retargeter
+}
+
+void FAnimNode_LiveLinkPose::BuildPoseFromCurveData(const FLiveLinkSubjectFrameData& LiveLinkData, FPoseContext& Output)
+{
+	const FLiveLinkBaseStaticData* BaseStaticData = LiveLinkData.StaticData.Cast<FLiveLinkBaseStaticData>();
+	const FLiveLinkBaseFrameData* BaseFrameData = LiveLinkData.FrameData.Cast<FLiveLinkBaseFrameData>();
+	check(BaseStaticData);
+	check(BaseFrameData);
+
+	CurrentRetargetAsset->BuildPoseAndCurveFromBaseData(CachedDeltaTime, BaseStaticData, BaseFrameData, Output.Pose, Output.Curve);
+	CachedDeltaTime = 0.f; // Reset so that if we evaluate again we don't "create" time inside of the retargeter
+}
+
 void FAnimNode_LiveLinkPose::Initialize_AnyThread(const FAnimationInitializeContext& Context)
 {
 	InputPose.Initialize(Context);
+
+	if (CachedLiveLinkData.IsValid() == false)
+	{
+		CachedLiveLinkData = MakeShared<FLiveLinkSubjectFrameData>();
+	}
 }
 
 void FAnimNode_LiveLinkPose::PreUpdate(const UAnimInstance* InAnimInstance)
@@ -81,36 +109,51 @@ void FAnimNode_LiveLinkPose::Evaluate_AnyThread(FPoseContext& Output)
 
 	FLiveLinkSubjectFrameData SubjectFrameData;
 
-	TSubclassOf<ULiveLinkRole> SubjectRole = LiveLinkClient_AnyThread->GetSubjectRole_AnyThread(LiveLinkSubjectName);
-	if (SubjectRole)
+	if (bDoLiveLinkEvaluation)
 	{
-		if (LiveLinkClient_AnyThread->DoesSubjectSupportsRole_AnyThread(LiveLinkSubjectName, ULiveLinkAnimationRole::StaticClass()))
-		{
-			//Process animation data if the subject is from that type
-			if (LiveLinkClient_AnyThread->EvaluateFrame_AnyThread(LiveLinkSubjectName, ULiveLinkAnimationRole::StaticClass(), SubjectFrameData))
-			{
-				FLiveLinkSkeletonStaticData* SkeletonData = SubjectFrameData.StaticData.Cast<FLiveLinkSkeletonStaticData>();
-				FLiveLinkAnimationFrameData* FrameData = SubjectFrameData.FrameData.Cast<FLiveLinkAnimationFrameData>();
-				check(SkeletonData);
-				check(FrameData);
+		// Invalidate cached evaluated Role to make sure we have a valid one during the last evaluation when using it
+		CachedEvaluatedRole = nullptr;
 
-				CurrentRetargetAsset->BuildPoseFromAnimationData(CachedDeltaTime, SkeletonData, FrameData, Output.Pose);
-				CurrentRetargetAsset->BuildPoseAndCurveFromBaseData(CachedDeltaTime, SkeletonData, FrameData, Output.Pose, Output.Curve);
-				CachedDeltaTime = 0.f; // Reset so that if we evaluate again we don't "create" time inside of the retargeter
+		TSubclassOf<ULiveLinkRole> SubjectRole = LiveLinkClient_AnyThread->GetSubjectRole_AnyThread(LiveLinkSubjectName);
+		if (SubjectRole)
+		{
+			if (LiveLinkClient_AnyThread->DoesSubjectSupportsRole_AnyThread(LiveLinkSubjectName, ULiveLinkAnimationRole::StaticClass()))
+			{
+				//Process animation data if the subject is from that type
+				if (LiveLinkClient_AnyThread->EvaluateFrame_AnyThread(LiveLinkSubjectName, ULiveLinkAnimationRole::StaticClass(), SubjectFrameData))
+				{
+					BuildPoseFromAnimData(SubjectFrameData, Output);
+
+					CachedEvaluatedRole = ULiveLinkAnimationRole::StaticClass();
+				}
 			}
-		}
-		else if (LiveLinkClient_AnyThread->DoesSubjectSupportsRole_AnyThread(LiveLinkSubjectName, ULiveLinkBasicRole::StaticClass()))
-		{
-			//Otherwise, fetch basic data that contains property / curve data
-			if (LiveLinkClient_AnyThread->EvaluateFrame_AnyThread(LiveLinkSubjectName, ULiveLinkBasicRole::StaticClass(), SubjectFrameData))
+			else if (LiveLinkClient_AnyThread->DoesSubjectSupportsRole_AnyThread(LiveLinkSubjectName, ULiveLinkBasicRole::StaticClass()))
 			{
-				FLiveLinkBaseStaticData* BaseStaticData = SubjectFrameData.StaticData.Cast<FLiveLinkBaseStaticData>();
-				FLiveLinkBaseFrameData* BaseFrameData = SubjectFrameData.FrameData.Cast<FLiveLinkBaseFrameData>();
-				check(BaseStaticData);
-				check(BaseFrameData);
+				//Otherwise, fetch basic data that contains property / curve data
+				if (LiveLinkClient_AnyThread->EvaluateFrame_AnyThread(LiveLinkSubjectName, ULiveLinkBasicRole::StaticClass(), SubjectFrameData))
+				{
+					BuildPoseFromCurveData(SubjectFrameData, Output);
 
-				CurrentRetargetAsset->BuildPoseAndCurveFromBaseData(CachedDeltaTime, BaseStaticData, BaseFrameData, Output.Pose, Output.Curve);
-				CachedDeltaTime = 0.f; // Reset so that if we evaluate again we don't "create" time inside of the retargeter
+					CachedEvaluatedRole = ULiveLinkBasicRole::StaticClass();
+				}
+			}
+
+			// Keep a cached version of evaluated data to continue building pose with it when we pause evaluation
+			CachedLiveLinkData->StaticData = MoveTemp(SubjectFrameData.StaticData);
+			CachedLiveLinkData->FrameData = MoveTemp(SubjectFrameData.FrameData);
+		}
+	}
+	else
+	{
+		if(CachedLiveLinkData && CachedEvaluatedRole)
+		{
+			if (CachedEvaluatedRole == ULiveLinkAnimationRole::StaticClass())
+			{
+				BuildPoseFromAnimData(*CachedLiveLinkData, Output);
+			}
+			else if (CachedEvaluatedRole == ULiveLinkBasicRole::StaticClass())
+			{
+				BuildPoseFromCurveData(*CachedLiveLinkData, Output);
 			}
 		}
 	}

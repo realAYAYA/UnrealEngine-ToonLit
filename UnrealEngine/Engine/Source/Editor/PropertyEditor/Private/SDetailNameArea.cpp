@@ -115,7 +115,7 @@ TSharedRef< SWidget > SDetailNameArea::BuildObjectNameArea( const TArray< TWeakO
 		.AutoWidth()
 		.HAlign(HAlign_Left)
 		.VAlign(VAlign_Center)
-		.Padding(0)
+		.Padding(0.0f)
 		[
 			SNew(SImage)
 			.Image(ActorIcon)
@@ -134,8 +134,8 @@ TSharedRef< SWidget > SDetailNameArea::BuildObjectNameArea( const TArray< TWeakO
 			TSharedRef<IObjectNameEditableTextBox> ObjectNameBox = EdWidgetsModule.CreateObjectNameEditableTextBox(SelectedObjects);
 
 			ObjectNameArea->AddSlot()
-				.FillWidth(1.0)
-				.Padding(8, 0, 3, 0)
+				.FillWidth(1.0f)
+				.Padding(8.0f, 0.0f, 3.0f, 0.0f)
 				[
 					SNew(SBox)
 					.WidthOverride(200.0f)
@@ -161,7 +161,7 @@ TSharedRef< SWidget > SDetailNameArea::BuildObjectNameArea( const TArray< TWeakO
 			ObjectNameArea->AddSlot()
 				.HAlign(HAlign_Right)
 				.VAlign(VAlign_Center)
-				.Padding(4,0,4,0)
+				.Padding(4.0f,0.0f,4.0f,0.0f)
 				.AutoWidth()
 				[
 					SNew( SButton )

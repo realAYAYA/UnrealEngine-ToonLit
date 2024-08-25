@@ -11,6 +11,7 @@
 #include "IO/DMXInputPort.h"
 #include "IO/DMXOutputPort.h"
 #include "IO/DMXPortManager.h"
+#include "IO/DMXTrace.h"
 #include "Library/DMXLibrary.h"
 #include "Library/DMXEntityFixturePatch.h"
 #include "Library/DMXEntityFixtureType.h"
@@ -590,12 +591,10 @@ TArray<UDMXEntityFixturePatch*> UMovieSceneDMXLibrarySection::GetFixturePatches(
 	for (const FDMXFixturePatchChannel& PatchRef : FixturePatchChannels)
 	{
 		// Add only valid patches
-		if (UDMXEntityFixturePatch* Patch = PatchRef.Reference.GetFixturePatch())
+		UDMXEntityFixturePatch* Patch = PatchRef.Reference.GetFixturePatch();
+		if (IsValid(Patch))
 		{
-			if (!Patch->IsValidLowLevelFast())
-			{
-				Result.Add(Patch);
-			}
+			Result.Add(Patch);
 		}
 	}
 
@@ -695,6 +694,7 @@ void UMovieSceneDMXLibrarySection::EvaluateAndSendDMX(const FFrameTime& FrameTim
 		}
 	}
 
+	UE_DMX_SCOPED_TRACE_SENDDMX(GetOutermost()->GetFName());
 	for (const TPair<int32, TMap<int32, uint8>>& UniverseToChannelToValueMapKvp : UniverseToChannelToValueMap)
 	{
 		for (const FDMXOutputPortSharedRef& OutputPort : CachedOutputPorts)
@@ -745,6 +745,7 @@ void UMovieSceneDMXLibrarySection::SendDMXForChannelsToInitialize() const
 		}
 	}
 
+	UE_DMX_SCOPED_TRACE_SENDDMX(GetOutermost()->GetFName());
 	for (const TPair<int32, TMap<int32, uint8>>& UniverseToChannelToValueMapKvp : UniverseToChannelToValueMap)
 	{
 		for (const FDMXOutputPortSharedRef& OutputPort : CachedOutputPorts)

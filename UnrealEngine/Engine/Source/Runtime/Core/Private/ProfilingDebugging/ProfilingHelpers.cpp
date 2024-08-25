@@ -164,7 +164,7 @@ FString CreateProfileFilename( const FString& InFilename, const FString& InFileE
 	{
 		// now create the string
 		FolderName = FString::Printf(TEXT("%s-%s-%s"), *MapNameStr, *PlatformStr, *FDateTime::Now().ToString(TEXT("%m.%d-%H.%M.%S")));
-		FolderName.RightInline(MaxFilenameLen, false);
+		FolderName.RightInline(MaxFilenameLen, EAllowShrinking::No);
 
 		ProfilingSessionFolderName = FolderName;
 		bSetProfilingSessionFolderName = true;
@@ -177,7 +177,7 @@ FString CreateProfileFilename( const FString& InFilename, const FString& InFileE
 	// now create the string
 	// NOTE: due to the changelist this is implicitly using the same directory
 	FString FolderNameOfProfileNoDate = FString::Printf( TEXT("%s-%s-%i"), *MapNameStr, *PlatformStr, GetChangeListNumberForPerfTesting() );
-	FolderNameOfProfileNoDate.RightInline(MaxFilenameLen, false);
+	FolderNameOfProfileNoDate.RightInline(MaxFilenameLen, EAllowShrinking::No);
 
 
 	FString NameOfProfile;
@@ -189,7 +189,7 @@ FString CreateProfileFilename( const FString& InFilename, const FString& InFileE
 	{
 		NameOfProfile = InFilename;
 	}
-	NameOfProfile.RightInline(MaxFilenameLen, false);
+	NameOfProfile.RightInline(MaxFilenameLen, EAllowShrinking::No);
 
 #if WITH_SERVER_CODE
 	FString FileNameWithExtension = FString::Printf(TEXT("Pid%d_%s%s"), FPlatformProcess::GetCurrentProcessId(), *NameOfProfile, *InFileExtension);
@@ -197,7 +197,7 @@ FString CreateProfileFilename( const FString& InFilename, const FString& InFileE
 	FString FileNameWithExtension = FString::Printf(TEXT("%s%s"), *NameOfProfile, *InFileExtension);
 #endif
 
-	FileNameWithExtension.RightInline(MaxFilenameLen, false);
+	FileNameWithExtension.RightInline(MaxFilenameLen, EAllowShrinking::No);
 
 	FString Filename;
 	if( bIncludeDateForDirectoryName == true )
@@ -234,7 +234,7 @@ FString CreateProfileDirectoryAndFilename( const FString& InSubDirectoryName, co
 
 	// create the directory name of this profile
 	FString NameOfProfile = FString::Printf(TEXT("%s-%s-%s"), *MapNameStr, *PlatformStr, *FDateTime::Now().ToString(TEXT("%m.%d-%H.%M")));	
-	NameOfProfile.RightInline(MaxFilenameLen, false);
+	NameOfProfile.RightInline(MaxFilenameLen, EAllowShrinking::No);
 
 	IFileManager::Get().MakeDirectory( *(PathName+NameOfProfile) );
 	//UE_LOG(LogProfilingDebugging, Warning, TEXT( "CreateProfileDirectoryAndFilename: %s"), *(PathName+NameOfProfile) );
@@ -242,7 +242,7 @@ FString CreateProfileDirectoryAndFilename( const FString& InSubDirectoryName, co
 
 	// create the actual file name
 	FString FileNameWithExtension = FString::Printf( TEXT("%s%s"), *NameOfProfile, *InFileExtension );
-	FileNameWithExtension.LeftInline(MaxFilenameLen, false);
+	FileNameWithExtension.LeftInline(MaxFilenameLen, EAllowShrinking::No);
 	//UE_LOG(LogProfilingDebugging, Warning, TEXT( "CreateProfileDirectoryAndFilename: %s"), *FileNameWithExtension );
 
 

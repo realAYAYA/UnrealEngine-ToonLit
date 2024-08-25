@@ -25,7 +25,6 @@
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Layout/SExpandableArea.h"
 #include "Widgets/Layout/SScrollBox.h"
-#include "IRewindDebuggerViewCreator.h"
 #include "RewindDebuggerViewCreators.h"
 #include "IRewindDebuggerDoubleClickHandler.h"
 

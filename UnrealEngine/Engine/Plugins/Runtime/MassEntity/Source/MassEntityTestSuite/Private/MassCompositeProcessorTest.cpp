@@ -54,6 +54,8 @@ struct FCompositeProcessorTest_NoWork : FEntityTestBase
 			{
 				UMassTestProcessorBase* Processor = NewObject<UMassTestProcessorBase>();
 				Processor->ForEachEntityChunkExecutionFunction = QueryExecFunction;
+				// need to set up some requirements to make EntityQuery valid
+				Processor->EntityQuery.AddRequirement<FTestFragment_Float>(EMassFragmentAccess::ReadOnly);
 				Processors.Add(Processor);
 			}
 

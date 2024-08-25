@@ -16,7 +16,7 @@ UClass* UInterchangeStaticMeshActorFactory::GetFactoryClass() const
 	return AStaticMeshActor::StaticClass();
 }
 
-UObject* UInterchangeStaticMeshActorFactory::ProcessActor(AActor& SpawnedActor, const UInterchangeActorFactoryNode& FactoryNode, const UInterchangeBaseNodeContainer& NodeContainer)
+UObject* UInterchangeStaticMeshActorFactory::ProcessActor(AActor& SpawnedActor, const UInterchangeActorFactoryNode& FactoryNode, const UInterchangeBaseNodeContainer& NodeContainer, const FImportSceneObjectsParams& /*Params*/)
 {
 	using namespace UE::Interchange;
 
@@ -31,11 +31,10 @@ UObject* UInterchangeStaticMeshActorFactory::ProcessActor(AActor& SpawnedActor, 
 	{
 		bool bHasGeometricTransform = false;
 		FTransform GeometricTransform;
-		if (FactoryNode.IsA(UInterchangeMeshActorFactoryNode::StaticClass()))
+		const UInterchangeMeshActorFactoryNode* MeshActorFactoryNode = Cast<UInterchangeMeshActorFactoryNode>(&FactoryNode);
+		if (MeshActorFactoryNode)
 		{
-			const UInterchangeMeshActorFactoryNode& MeshActorFactoryNode = static_cast<const UInterchangeMeshActorFactoryNode&>(FactoryNode);
-
-			if (MeshActorFactoryNode.GetCustomGeometricTransform(GeometricTransform))
+			if (MeshActorFactoryNode->GetCustomGeometricTransform(GeometricTransform))
 			{
 				bHasGeometricTransform = true;
 			}
@@ -69,8 +68,6 @@ UObject* UInterchangeStaticMeshActorFactory::ProcessActor(AActor& SpawnedActor, 
 #endif
 				StaticMeshActor->AddInstanceComponent(GeometricTransformMeshComponent);
 
-				GeometricTransformMeshComponent->SetMobility(StaticMeshComponent->Mobility);
-				
 				if (const UInterchangeFactoryBaseNode* MeshNode = ActorHelper::FindAssetInstanceFactoryNode(&NodeContainer, &FactoryNode))
 				{
 					FSoftObjectPath ReferenceObject;
@@ -81,23 +78,30 @@ UObject* UInterchangeStaticMeshActorFactory::ProcessActor(AActor& SpawnedActor, 
 						{
 							GeometricTransformMeshComponent->SetStaticMesh(StaticMesh);
 						}
+						if (MeshActorFactoryNode)
+						{
+							UE::Interchange::ActorHelper::ApplySlotMaterialDependencies(NodeContainer, *MeshActorFactoryNode, *GeometricTransformMeshComponent);
+						}
 					}
 				}
 
 				GeometricTransformMeshComponent->SetupAttachment(StaticMeshComponent);
 
-				StaticMeshActor->ReregisterAllComponents();
+				StaticMeshActor->RegisterAllComponents();
 
+				EComponentMobility::Type MobilityToSet = StaticMeshComponent->Mobility;
+				GeometricTransformMeshComponent->SetMobility(EComponentMobility::Type::Movable); //so that RelativeTransform can be set
 				GeometricTransformMeshComponent->SetRelativeTransform(GeometricTransform);
+				GeometricTransformMeshComponent->SetMobility(MobilityToSet);
 
 				return StaticMeshComponent;
 			}
 		}
 
-		StaticMeshComponent->UnregisterComponent();		
-
 		if (const UInterchangeFactoryBaseNode* MeshNode = ActorHelper::FindAssetInstanceFactoryNode(&NodeContainer, &FactoryNode))
 		{
+			StaticMeshComponent->UnregisterComponent();
+
 			FSoftObjectPath ReferenceObject;
 			MeshNode->GetCustomReferenceObject(ReferenceObject);
 			if (UStaticMesh* StaticMesh = Cast<UStaticMesh>(ReferenceObject.TryLoad()))
@@ -106,7 +110,13 @@ UObject* UInterchangeStaticMeshActorFactory::ProcessActor(AActor& SpawnedActor, 
 				{
 					StaticMeshComponent->SetStaticMesh(StaticMesh);
 				}
+				if (MeshActorFactoryNode)
+				{
+					UE::Interchange::ActorHelper::ApplySlotMaterialDependencies(NodeContainer, *MeshActorFactoryNode, *StaticMeshComponent);
+				}
 			}
+
+			StaticMeshComponent->RegisterComponent();
 		}
 		else
 		{

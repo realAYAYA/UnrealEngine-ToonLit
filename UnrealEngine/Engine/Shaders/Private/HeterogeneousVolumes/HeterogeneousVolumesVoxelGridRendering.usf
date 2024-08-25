@@ -7,6 +7,7 @@
 #include "../ComputeShaderUtils.ush"
 #include "HeterogeneousVolumesTracingUtils.ush"
 #include "HeterogeneousVolumesVoxelGridTraversal.ush"
+#include "HeterogeneousVolumesVoxelGridRenderingUtils.ush"
 
 #include "../PathTracing/Utilities/PathTracingRandomSequence.ush"
 
@@ -40,13 +41,16 @@
 
 struct FRenderDebugData
 {
+	float3 Estimate;
 	float3 RayOrigin;
 	float3 RayDirection;
 	float TMin;
 	float TMax;
-	float3 Estimate;
 	float Pdf;
 	float Distance;
+
+	float4x4 ScreenToTranslatedWorld;
+	float4x4 ClipToTranslatedWorld;
 };
 
 // Ray data
@@ -120,7 +124,7 @@ FTrackingResult DivideTrackingResult(FTrackingResult Value, int SPP)
 
 float3 GetTranslatedWorldPos(float3 WorldPos)
 {
-	float3 TranslatedWorldPos = LWCHackToFloat(LWCAdd(WorldPos, PrimaryView.PreViewTranslation));
+	float3 TranslatedWorldPos = DFFastToTranslatedWorld(WorldPos, PrimaryView.PreViewTranslation);
 	return TranslatedWorldPos;
 }
 
@@ -143,68 +147,7 @@ FMajorantData EvalMajorant(float3 TranslatedWorldPos)
 	return MajorantData;
 }
 
-float3 EvalExtinction(float3 TranslatedWorldPos, inout int LinearBottomLevelVoxelPos)
-{
-	float3 Extinction = 0;
-
-	float3 TranslatedWorldBoundsMin = GetTranslatedWorldPos(OrthoGridUniformBuffer.TopLevelGridWorldBoundsMin);
-	float3 TranslatedWorldBoundsMax = GetTranslatedWorldPos(OrthoGridUniformBuffer.TopLevelGridWorldBoundsMax);
-	float3 TranslatedWorldBoundsExtent = TranslatedWorldBoundsMax - TranslatedWorldBoundsMin;
-	float3 GridUV = (TranslatedWorldPos - TranslatedWorldBoundsMin) / TranslatedWorldBoundsExtent;
-	if (all(GridUV >= 0.0) && all(GridUV <= 1.0))
-	{
-		float3 TopLevelVoxelPos = GridUV * OrthoGridUniformBuffer.TopLevelGridResolution;
-		uint LinearTopLevelVoxelPos = GetLinearIndex(TopLevelVoxelPos, OrthoGridUniformBuffer.TopLevelGridResolution);
-
-		if (OrthoGridUniformBuffer.bEnableIndirectionGrid)
-		{
-			FTopLevelGridData TopLevelGridData = OrthoGridUniformBuffer.TopLevelGridBuffer[LinearTopLevelVoxelPos];
-			if (IsBottomLevelAllocated(TopLevelGridData))
-			{
-				uint IndirectionGridIndex = GetBottomLevelIndex(TopLevelGridData);
-				uint3 IndirectionGridVoxelResolution = GetBottomLevelVoxelResolution(TopLevelGridData);
-
-				// Convert to Indirection voxel-space
-				float3 IndirectionGridVoxelPos = frac(TopLevelVoxelPos) * IndirectionGridVoxelResolution;
-				int3 IndirectionGridVoxelPosAsInt = clamp(IndirectionGridVoxelPos, 0, IndirectionGridVoxelResolution - 1);
-				FTopLevelGridData IndirectionData = OrthoGridUniformBuffer.IndirectionGridBuffer[IndirectionGridIndex + MortonEncode3(IndirectionGridVoxelPosAsInt)];
-				if (IsBottomLevelAllocated(IndirectionData))
-				{
-					uint BottomLevelIndex = GetBottomLevelIndex(IndirectionData);
-					uint3 BottomLevelVoxelResolution = GetBottomLevelVoxelResolution(IndirectionData);
-
-					// Constant interpolation
-					float3 BottomLevelVoxelPos = frac(IndirectionGridVoxelPos) * BottomLevelVoxelResolution;
-					int3 BottomLevelVoxelPosAsInt = clamp(BottomLevelVoxelPos, 0, BottomLevelVoxelResolution - 1);
-					LinearBottomLevelVoxelPos = BottomLevelIndex + MortonEncode3(BottomLevelVoxelPosAsInt);
-					Extinction = GetExtinction(OrthoGridUniformBuffer.ExtinctionGridBuffer[LinearBottomLevelVoxelPos]);
-					//Albedo = GetAlbedo(OrthoGridUniformBuffer.ScatteringGridBuffer[LinearBottomLevelVoxelPos]);
-				}
-			}
-		}
-		else
-		{
-			FTopLevelGridData TopLevelData = OrthoGridUniformBuffer.TopLevelGridBuffer[LinearTopLevelVoxelPos];
-			if (IsBottomLevelAllocated(TopLevelData))
-			{
-				uint BottomLevelIndex = GetBottomLevelIndex(OrthoGridUniformBuffer.TopLevelGridBuffer[LinearTopLevelVoxelPos]);
-				uint3 BottomLevelVoxelResolution = GetBottomLevelVoxelResolution(OrthoGridUniformBuffer.TopLevelGridBuffer[LinearTopLevelVoxelPos]);
-
-				// Constant Interpolation
-				float3 BottomLevelVoxelPos = frac(TopLevelVoxelPos) * BottomLevelVoxelResolution;
-				int3 BottomLevelVoxelPosAsInt = clamp(BottomLevelVoxelPos, 0, BottomLevelVoxelResolution - 1);
-				LinearBottomLevelVoxelPos = BottomLevelIndex + MortonEncode3(BottomLevelVoxelPosAsInt);
-
-				Extinction = GetExtinction(OrthoGridUniformBuffer.ExtinctionGridBuffer[LinearBottomLevelVoxelPos]);
-				//Albedo = GetAlbedo(OrthoGridUniformBuffer.ScatteringGridBuffer[LinearBottomLevelVoxelPos]);
-			}
-		}
-	}
-
-	return Extinction;
-}
-
-float CalcStepSize(float3 WorldDirection)
+float CalcStepSizeLocal(float3 WorldDirection)
 {
 	float3 TranslatedWorldBoundsMin = GetTranslatedWorldPos(OrthoGridUniformBuffer.TopLevelGridWorldBoundsMin);
 	float3 TranslatedWorldBoundsMax = GetTranslatedWorldPos(OrthoGridUniformBuffer.TopLevelGridWorldBoundsMax);
@@ -230,7 +173,7 @@ FTrackingResult SampleBasedMarch(float3 WorldRayOrigin, float3 WorldRayDirection
 		float3 WorldPosition = WorldRayOrigin + WorldRayDirection * HitT;
 
 		int LinearVoxelPos = -1;
-		float3 Extinction = EvalExtinction(WorldPosition, LinearVoxelPos);
+		float3 Extinction = EvalExtinctionOutOfFrustum(WorldPosition, LinearVoxelPos);
 		if (any(Extinction > 0))
 		{
 			Result.Radiance += GetEmission(OrthoGridUniformBuffer.EmissionGridBuffer[LinearVoxelPos]) * Result.Throughput;
@@ -262,7 +205,7 @@ FTrackingResult SampleBasedMajorantMarch(float3 WorldRayOrigin, float3 WorldRayD
 		HitT += WorldStepSize;
 	}
 	Result.Distance = HitT;
-	Result.Pdf = Result.Throughput;
+	Result.Pdf = Result.Throughput.x; // TODO: handle RGB?
 
 	return Result;
 }
@@ -285,7 +228,7 @@ FTrackingResult SampleBasedMaxMajorantMarch(float3 WorldRayOrigin, float3 WorldR
 		HitT += WorldStepSize;
 	}
 	Result.Distance = HitT;
-	Result.Pdf = Result.Throughput;
+	Result.Pdf = Result.Throughput.x; // TODO: handle RGB?
 
 	return Result;
 }
@@ -312,7 +255,7 @@ FTrackingResult DeltaTracking(float3 WorldRayOrigin, float3 WorldRayDirection, f
 		{
 			float3 WorldPosition = WorldRayOrigin + WorldRayDirection * Result.Distance;
 			int LinearVoxelPos = -1;
-			float3 Extinction = EvalExtinction(WorldPosition, LinearVoxelPos);
+			float3 Extinction = EvalExtinctionOutOfFrustum(WorldPosition, LinearVoxelPos);
 			float SigmaT = Luminance(Extinction);
 
 			//float AcceptanceProbability = MaxComponent(SigmaT) / SigmaBar;
@@ -348,7 +291,7 @@ FTrackingResult SpectralWeightedDeltaTracking(float3 WorldRayOrigin, float3 Worl
 		{
 			float3 WorldPosition = WorldRayOrigin + WorldRayDirection * Result.Distance;
 			int LinearVoxelPos = -1;
-			float3 Extinction = EvalExtinction(WorldPosition, LinearVoxelPos);
+			float3 Extinction = EvalExtinctionOutOfFrustum(WorldPosition, LinearVoxelPos);
 
 			// Pick a volume coefficient, based on proportional weight
 			float3 Albedo = GetAlbedo(OrthoGridUniformBuffer.ScatteringGridBuffer[LinearVoxelPos]) / Extinction;
@@ -438,7 +381,7 @@ FTrackingResult RatioTracking(float3 WorldRayOrigin, float3 WorldRayDirection, f
 		{
 			float3 WorldPosition = WorldRayOrigin + WorldRayDirection * Result.Distance;
 			int LinearVoxelPos = -1;
-			float3 Extinction = EvalExtinction(WorldPosition, LinearVoxelPos);
+			float3 Extinction = EvalExtinctionOutOfFrustum(WorldPosition, LinearVoxelPos);
 			float SigmaT = Luminance(Extinction);
 
 			float AcceptanceProbability = min(SigmaT / SigmaBar, 1);
@@ -473,7 +416,7 @@ FTrackingResult SpectralRatioTracking(float3 WorldRayOrigin, float3 WorldRayDire
 		{
 			float3 WorldPosition = WorldRayOrigin + WorldRayDirection * Result.Distance;
 			int LinearVoxelPos = -1;
-			float3 Extinction = EvalExtinction(WorldPosition, LinearVoxelPos);
+			float3 Extinction = EvalExtinctionOutOfFrustum(WorldPosition, LinearVoxelPos);
 
 			// Pick a component, based on proportional weight
 			float3 SpectralCdf = float3(Extinction.x, Extinction.x + Extinction.y, Extinction.x + Extinction.y + Extinction.z);
@@ -508,8 +451,8 @@ FTrackingResult DDABasedMajorantMarch(float3 WorldRayOrigin, float3 Direction, f
 	float WorldRayTMax = length(WorldRayEnd - WorldRayBegin);
 
 	// Transform to voxel-space
-	float3 WorldBoundsMin = GetTranslatedWorldPos(OrthoGridUniformBuffer.TopLevelGridWorldBoundsMin);
-	float3 WorldBoundsMax = GetTranslatedWorldPos(OrthoGridUniformBuffer.TopLevelGridWorldBoundsMax);
+	float3 WorldBoundsMin = OrthoGridUniformBuffer.TopLevelGridWorldBoundsMin;
+	float3 WorldBoundsMax = OrthoGridUniformBuffer.TopLevelGridWorldBoundsMax;
 	float3 TopLevelGridWorldBoundsExtent = WorldBoundsMax - WorldBoundsMin;
 	float3 VoxelRayBegin = (WorldRayBegin - WorldBoundsMin) / TopLevelGridWorldBoundsExtent * OrthoGridUniformBuffer.TopLevelGridResolution;
 	float3 VoxelRayEnd = (WorldRayEnd - WorldBoundsMin) / TopLevelGridWorldBoundsExtent * OrthoGridUniformBuffer.TopLevelGridResolution;
@@ -584,7 +527,7 @@ FTrackingResult DDABasedMajorantMarch(float3 WorldRayOrigin, float3 Direction, f
 		float3 TranslatedWorldPos = WorldRayBegin + Direction * VoxelRayMarchT * VoxelToWorldScale;
 		if (DistanceSamplingMethod == DEBUG_MODE_SAMPLE_BASED_MARCHING)
 		{
-			float StepSize = CalcStepSize(Direction);
+			float StepSize = CalcStepSizeLocal(Direction);
 			FTrackingResult Sample = SampleBasedMarch(TranslatedWorldPos, Direction, 0.0, VoxelRayMarchDeltaT * VoxelToWorldScale, StepSize);
 			TrackingResult = ConcatenateTrackingResult(TrackingResult, Sample);
 		}
@@ -595,7 +538,8 @@ FTrackingResult DDABasedMajorantMarch(float3 WorldRayOrigin, float3 Direction, f
 		}
 		else if (DistanceSamplingMethod == DEBUG_MODE_TRACKING_BASED_DELTA_TRACKING)
 		{
-			FTrackingResult Sample = SpectralWeightedDeltaTracking(TranslatedWorldPos, Direction, 0.0, VoxelRayMarchDeltaT * VoxelToWorldScale, MajorantData.Majorant, CollisionSamplingMethod, RandSequence);
+			//FTrackingResult Sample = SpectralWeightedDeltaTracking(TranslatedWorldPos, Direction, 0.0, VoxelRayMarchDeltaT * VoxelToWorldScale, MajorantData.Majorant, CollisionSamplingMethod, RandSequence);
+			FTrackingResult Sample = DeltaTracking(TranslatedWorldPos, Direction, 0.0, VoxelRayMarchDeltaT * VoxelToWorldScale, MajorantData.Majorant, RandSequence);
 			TrackingResult = ConcatenateTrackingResult(TrackingResult, Sample);
 		}
 		else
@@ -660,7 +604,7 @@ void RenderTransmittanceWithVoxelGridCS(
 #if DEBUG_MODE_SAMPLING_BASED
 	if (ClipHitT.x < ClipHitT.y)
 	{
-		float StepSize = CalcStepSize(RayDirection);
+		float StepSize = CalcStepSizeLocal(RayDirection);
 		Jitter *= StepSize;
 #if DEBUG_MODE == DEBUG_MODE_SAMPLE_BASED_MARCHING
 		FTrackingResult Result = SampleBasedMarch(RayOrigin, RayDirection, ClipHitT.x + Jitter, ClipHitT.y, StepSize);
@@ -753,8 +697,8 @@ void RenderTransmittanceWithVoxelGridCS(
 		FrustumRayTMin += RayTOffset;
 		FrustumRayTMax += RayTOffset;
 #else
-		float3 WorldRayOrigin = LWCHackToFloat(SvPositionToWorld(float4(PixelCoord + 0.5, DeviceNearZ, 1)));
-		float3 WorldRayEnd = LWCHackToFloat(SvPositionToWorld(float4(PixelCoord + 0.5, DeviceFarZ, 1)));
+		float3 WorldRayOrigin = DFHackToFloat(SvPositionToWorld(float4(PixelCoord + 0.5, DeviceNearZ, 1)));
+		float3 WorldRayEnd = DFHackToFloat(SvPositionToWorld(float4(PixelCoord + 0.5, DeviceFarZ, 1)));
 		float3 WorldRayDirection = WorldRayEnd - WorldRayOrigin;
 		float WorldRayLength = length(WorldRayDirection);
 		WorldRayDirection /= WorldRayLength;

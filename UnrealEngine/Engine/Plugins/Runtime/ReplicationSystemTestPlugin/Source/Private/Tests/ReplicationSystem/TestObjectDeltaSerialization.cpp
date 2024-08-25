@@ -433,6 +433,77 @@ UE_NET_TEST_FIXTURE(FTestObjectDeltaSerialization, InFlightChangesForDisabledCon
 	UE_NET_ASSERT_EQ(ClientObject->IntA, ServerObject->IntA);
 }
 
+UE_NET_TEST_FIXTURE(FTestObjectDeltaSerialization, LostChangesDuringPendingDestroyArePartOfBaselineAfterCancellingPendingDestroy)
+{
+	FReplicationSystemTestClient* Client = CreateClient();
+
+	// Spawn object on server
+	UTestReplicatedIrisObject* ServerObject = Server->CreateObject({ .DynamicStateComponentCount = 1 });
+	Server->ReplicationSystem->SetDeltaCompressionStatus(ServerObject->NetRefHandle, ENetObjectDeltaCompressionStatus::Allow);
+
+	// Send and deliver packet
+	Server->UpdateAndSend({ Client });
+
+	const UTestReplicatedIrisObject* ClientObject = Cast<UTestReplicatedIrisObject>(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle));
+	UE_NET_ASSERT_NE(ClientObject, nullptr);
+
+	AllowNewBaselineCreation();
+
+	// Modify array
+	ServerObject->DynamicStateComponents[0]->IntArray.Add(23456789);
+
+	// Send and deliver packet
+	Server->UpdateAndSend({ Client });
+
+	// Clear array
+	DisallowNewBaselineCreation();
+	ServerObject->DynamicStateComponents[0]->IntArray.Empty();
+
+	// Fake latency by acking/naking later
+	Server->PreSendUpdate();
+	Server->SendTo(Client);
+	Server->PostSendUpdate();
+
+	// Filter out object to cause a PendingDestroy
+	Server->GetReplicationSystem()->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
+	Server->PreSendUpdate();
+	Server->SendTo(Client);
+	Server->PostSendUpdate();
+
+	// Drop all packets
+	{
+		const auto& ConnectionInfo = Server->GetConnectionInfo(Client->ConnectionIdOnServer);
+		SIZE_T PacketCount = ConnectionInfo.WrittenPackets.Count();
+		for (SIZE_T PacketIt = 0; PacketIt != PacketCount; ++PacketIt)
+		{
+			Server->DeliverTo(Client, DoNotDeliverPacket);
+		}
+	}
+
+	// Remove object from filter to cause object to end up in CancelPendingDestroy
+	DisallowNewBaselineCreation();
+	Server->GetReplicationSystem()->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerObject->NetRefHandle);
+	Server->UpdateAndSend({ Client });
+
+	// Change other properties to force replication
+	ServerObject->IntA += 1;
+	ServerObject->DynamicStateComponents[0]->IntStaticArray[0] += 1;
+
+	AllowNewBaselineCreation();
+	Server->UpdateAndSend({ Client });
+
+	// Finally modify the IntArray.
+	ServerObject->IntA += 1;
+	ServerObject->DynamicStateComponents[0]->IntArray.Add(-12345);
+
+	DisallowNewBaselineCreation();
+	Server->UpdateAndSend({ Client });
+
+	// Verify IntArray contents
+	UE_NET_ASSERT_EQ(ClientObject->DynamicStateComponents[0]->IntArray.Num(), ServerObject->DynamicStateComponents[0]->IntArray.Num());
+	UE_NET_ASSERT_EQ(ClientObject->DynamicStateComponents[0]->IntArray[0], ServerObject->DynamicStateComponents[0]->IntArray[0]);
+}
+
 // FTestObjectDeltaSerialization implementation
 void FTestObjectDeltaSerialization::SetUp()
 {

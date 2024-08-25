@@ -201,7 +201,7 @@ struct evaluator<PlainObjectBase<Derived> >
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE
   CoeffReturnType coeff(Index row, Index col) const
   {
-    if (IsRowMajor)
+    if constexpr (IsRowMajor)
       return m_d.data[row * m_d.outerStride() + col];
     else
       return m_d.data[row + col * m_d.outerStride()];
@@ -216,7 +216,7 @@ struct evaluator<PlainObjectBase<Derived> >
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE
   Scalar& coeffRef(Index row, Index col)
   {
-    if (IsRowMajor)
+    if constexpr (IsRowMajor)
       return const_cast<Scalar*>(m_d.data)[row * m_d.outerStride() + col];
     else
       return const_cast<Scalar*>(m_d.data)[row + col * m_d.outerStride()];
@@ -232,7 +232,7 @@ struct evaluator<PlainObjectBase<Derived> >
   EIGEN_STRONG_INLINE
   PacketType packet(Index row, Index col) const
   {
-    if (IsRowMajor)
+    if constexpr (IsRowMajor)
       return ploadt<PacketType, LoadMode>(m_d.data + row * m_d.outerStride() + col);
     else
       return ploadt<PacketType, LoadMode>(m_d.data + row + col * m_d.outerStride());
@@ -249,7 +249,7 @@ struct evaluator<PlainObjectBase<Derived> >
   EIGEN_STRONG_INLINE
   void writePacket(Index row, Index col, const PacketType& x)
   {
-    if (IsRowMajor)
+  if constexpr (IsRowMajor)
       return pstoret<Scalar, PacketType, StoreMode>
 	            (const_cast<Scalar*>(m_d.data) + row * m_d.outerStride() + col, x);
     else

@@ -50,6 +50,7 @@ public:
 	virtual void ResetCache() override;
 	virtual void SetCacheRecordingAllowed(bool bShouldRecord) override;
 	virtual bool IsCacheRecordingAllowed() const override;
+	virtual int32 GetMinimumEngineScalabilitySetting() const override;
 	
 	UPROPERTY(Transient)
 	bool bIsRecording = false;

@@ -29,7 +29,6 @@
 #include "SCurveEditorView.h"
 #include "Styling/AppStyle.h"
 #include "Styling/ISlateStyle.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/Tuple.h"
 #include "Templates/UniquePtr.h"
 
@@ -266,8 +265,8 @@ void SCurveEditorViewStacked::DrawLabels(const FGeometry& AllottedGeometry, cons
 		const int32  CurveIndexFromBottom = CurveInfoByID.Num() - It->Value.CurveIndex - 1;
 		const double PaddingToBottomOfView = (CurveIndexFromBottom + 1)*ValueSpacePadding;
 		
-		const float PixelBottom = ViewSpace.ValueToScreen(CurveIndexFromBottom + PaddingToBottomOfView);
-		const float PixelTop = ViewSpace.ValueToScreen(CurveIndexFromBottom + PaddingToBottomOfView + 1.0);
+		const double PixelBottom = ViewSpace.ValueToScreen(CurveIndexFromBottom + PaddingToBottomOfView);
+		const double PixelTop = ViewSpace.ValueToScreen(CurveIndexFromBottom + PaddingToBottomOfView + 1.0);
 
 		if (!FSlateRect::DoRectanglesIntersect(MyCullingRect, TransformRect(AllottedGeometry.GetAccumulatedLayoutTransform(), FSlateRect(0, PixelTop, LocalSize.X, PixelBottom))))
 		{

@@ -1,6 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using Horde.Server.Acls;
+using EpicGames.Horde.Acls;
 
 namespace Horde.Server.Agents.Sessions
 {
@@ -12,11 +12,11 @@ namespace Horde.Server.Agents.Sessions
 		/// <summary>
 		/// Granted to agents to call CreateSession, which returns a bearer token identifying themselves valid to call UpdateSesssion via gRPC.
 		/// </summary>
-		public static readonly AclAction CreateSession = new AclAction("CreateSession");
+		public static AclAction CreateSession { get; } = new AclAction("CreateSession");
 
 		/// <summary>
 		/// Allows viewing information about an agent session
 		/// </summary>
-		public static readonly AclAction ViewSession = new AclAction("ViewSession");
+		public static AclAction ViewSession { get; } = new AclAction("ViewSession");
 	}
 }

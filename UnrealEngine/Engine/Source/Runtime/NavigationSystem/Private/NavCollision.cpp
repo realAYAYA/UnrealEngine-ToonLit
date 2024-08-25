@@ -47,11 +47,13 @@ public:
 	FNavCollisionConvex& TriMeshCollision;
 	FNavCollisionConvex& ConvexCollision;
 	TNavStatArray<int32>& ConvexShapeIndices;
+	FBox& Bounds;
 
-	FNavCollisionDataReader(FByteBulkData& InBulkData, FNavCollisionConvex& InTriMeshCollision, FNavCollisionConvex& InConvexCollision, TNavStatArray<int32>& InShapeIndices)
+	FNavCollisionDataReader(FByteBulkData& InBulkData, FNavCollisionConvex& InTriMeshCollision, FNavCollisionConvex& InConvexCollision, TNavStatArray<int32>& InShapeIndices, FBox& InBounds)
 		: TriMeshCollision(InTriMeshCollision)
 		, ConvexCollision(InConvexCollision)
 		, ConvexShapeIndices(InShapeIndices)
+		, Bounds(InBounds)
 	{
 		// Read cooked data
 		uint8* DataPtr = (uint8*)InBulkData.Lock( LOCK_READ_ONLY );
@@ -66,6 +68,7 @@ public:
 		Ar << ConvexCollision.VertexBuffer;
 		Ar << ConvexCollision.IndexBuffer;
 		Ar << ConvexShapeIndices;
+		Ar << Bounds;
 
 		InBulkData.Unlock();
 	}
@@ -93,7 +96,7 @@ public:
 
 	virtual const TCHAR* GetVersionString() const override
 	{
-		return TEXT("F33FFAC3B070461781F1B11C4EAC7100");
+		return TEXT("8F4645C7A18B40C487C7E50E19CD6B6C");
 	}
 
 	virtual FString GetPluginSpecificCacheKeySuffix() const override
@@ -158,6 +161,7 @@ bool FDerivedDataNavCollisionCooker::Build( TArray<uint8>& OutData )
 	Ar << NavCollisionInstance->GetMutableConvexCollision().VertexBuffer;
 	Ar << NavCollisionInstance->GetMutableConvexCollision().IndexBuffer;
 	Ar << NavCollisionInstance->ConvexShapeIndices;
+	Ar << NavCollisionInstance->Bounds;
 
 	// Whatever got cached return true. We want to cache 'failure' too.
 	return true;
@@ -226,6 +230,8 @@ void UNavCollision::Setup(UBodySetup* BodySetup)
 		return;
 	}
 
+	LLM_SCOPE_BYNAME(TEXT("NavigationCollision"));
+
 	BodySetupGuid = BodySetup->BodySetupGuid;
 
 	// Make sure all are cleared before we start
@@ -239,7 +245,7 @@ void UNavCollision::Setup(UBodySetup* BodySetup)
 		if (FormatData->IsLocked() == false)
 		{
 			// Create physics objects
-			FNavCollisionDataReader CookedDataReader(*FormatData, TriMeshCollision, ConvexCollision, ConvexShapeIndices);
+			FNavCollisionDataReader CookedDataReader(*FormatData, TriMeshCollision, ConvexCollision, ConvexShapeIndices, Bounds);
 			bHasConvexGeometry = true;
 		}
 	}
@@ -247,6 +253,11 @@ void UNavCollision::Setup(UBodySetup* BodySetup)
 	{
 		GatherCollision();
 	}
+}
+
+FBox UNavCollision::GetBounds() const
+{
+	return Bounds;
 }
 
 void UNavCollision::GatherCollision()
@@ -301,6 +312,7 @@ void UNavCollision::ClearCollision()
 	ConvexCollision.VertexBuffer.Reset();
 	ConvexCollision.IndexBuffer.Reset();
 	ConvexShapeIndices.Reset();
+	Bounds = FBox();
 
 	bHasConvexGeometry = false;
 }

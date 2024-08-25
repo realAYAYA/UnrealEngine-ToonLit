@@ -47,6 +47,7 @@ class UStaticMesh;
 class USkeletalMesh;
 class UStreamableRenderAsset;
 class FSoundSource;
+class FAudioStreamCacheMemoryHandle;
 struct FWaveInstance;
 struct FRenderAssetStreamingManager;
 
@@ -139,7 +140,7 @@ private:
 	int32 CachedDataNumBytes;
 
 	FName CorrespondingWaveName;
-	FObjectKey CorrespondingWaveObjectKey;
+	FGuid CorrespondingWaveGuid;
 
 	// The index of this chunk in the sound wave's full set of chunks of compressed audio.
 	int32 ChunkIndex;
@@ -200,11 +201,8 @@ struct IStreamingManager
 	 * @param TimeLimit					Maximum number of seconds to wait for streaming I/O. If zero, uses .ini setting
 	 * @return							Number of streaming requests still in flight, if the time limit was reached before they were finished.
 	 */
-	virtual int32 StreamAllResources(float TimeLimit = 0.0f)
-	{
-		return 0;
-	}
-
+	ENGINE_API virtual int32 StreamAllResources(float TimeLimit = 0.0f);
+	
 	/**
 	 * Blocks till all pending requests are fulfilled.
 	 *
@@ -435,8 +433,8 @@ struct IRenderAssetStreamingManager : public IStreamingManager
 	*/
 	virtual void UpdateIndividualRenderAsset(UStreamableRenderAsset* RenderAsset) = 0;
 
-	/** Stream in non-resident mips for an asset ASAP. */
-	virtual void FastForceFullyResident(UStreamableRenderAsset* RenderAsset) = 0;
+	/** Stream in non-resident mips for an asset ASAP. Returns true if streaming request will be successful. */
+	virtual bool FastForceFullyResident(UStreamableRenderAsset* RenderAsset) = 0;
 
 	/**
 	* Temporarily boosts the streaming distance factor by the specified number.
@@ -523,6 +521,12 @@ struct IAudioStreamingManager : public IStreamingManager
 	/** Removes a Sound Wave from the streaming manager. */
 	virtual void RemoveStreamingSoundWave(const FSoundWaveProxyPtr& SoundWave) = 0;
 
+	/** Adds the memory usage of the force inline sound to the streaming cache budget */
+	virtual void AddForceInlineSoundWave(const FSoundWaveProxyPtr& SoundWave) { };
+
+	/** Removes the memory usage of the force inline sound from the streaming cache budget */
+	virtual void RemoveForceInlineSoundWave(const FSoundWaveProxyPtr& SoundWave) { };
+
 	/** Adds the decoder to the streaming manager to prevent stream chunks from getting reaped from underneath it */
 	virtual void AddDecoder(ICompressedAudioInfo* CompressedAudioInfo) = 0;
 
@@ -592,6 +596,7 @@ struct IAudioStreamingManager : public IStreamingManager
 
 protected:
 	friend FAudioChunkHandle;
+	friend FAudioStreamCacheMemoryHandle;
 
 	/** This can be called by implementers of IAudioStreamingManager to construct an FAudioChunkHandle using an otherwise inaccessible constructor. */
 	static FAudioChunkHandle BuildChunkHandle(const uint8* InData, uint32 NumBytes, const FSoundWaveProxyPtr& InSoundWave, const FName& SoundWaveName, uint32 InChunkIndex, uint64 CacheLookupID);
@@ -605,6 +610,57 @@ protected:
 	 * This can be used to decrement reference counted handles to audio chunks. Called by the destructor of FAudioChunkHandle.
 	 */
 	virtual void RemoveReferenceToChunk(const FAudioChunkHandle& InHandle) = 0;
+
+	/**
+     * This can be used to increase the memory count for external features. Called by FAudioStreamCacheMemoryHandle.
+     * The pattern for _changing_ the amount of memory of an already added feature is to first remove and then add again with the new number
+     */
+	virtual void AddMemoryCountedFeature(const FAudioStreamCacheMemoryHandle& Feature) { };
+
+	/**
+	* This can be used to decrease the memory count for external features. Called by FAudioStreamCacheMemoryHandle.
+	*/
+	virtual void RemoveMemoryCountedFeature(const FAudioStreamCacheMemoryHandle& Feature) { };
+};
+
+/**
+ * Dummy audio streaming manager used on the servers and whenever we cannot render audio
+ */
+struct FDummyAudioStreamingManager final : public IAudioStreamingManager
+{
+	virtual void UpdateResourceStreaming(float DeltaTime, bool bProcessEverything = false) override {}
+	virtual int32 BlockTillAllRequestsFinished(float TimeLimit = 0.0f, bool bLogResults = false) override { return 0; }
+	virtual void CancelForcedResources() override {}
+	virtual void NotifyLevelChange() override {}
+	virtual void SetDisregardWorldResourcesForFrames(int32 NumFrames) {}
+	virtual void AddLevel(class ULevel* Level) {}
+	virtual void RemoveLevel(class ULevel* Level) {}
+	virtual void NotifyLevelOffset(class ULevel* Level, const FVector& Offset) {}
+
+	virtual void AddStreamingSoundWave(const FSoundWaveProxyPtr& SoundWave) override {}
+	virtual void RemoveStreamingSoundWave(const FSoundWaveProxyPtr& SoundWave) override {}
+	virtual void AddForceInlineSoundWave(const FSoundWaveProxyPtr& SoundWave) override {}
+	virtual void RemoveForceInlineSoundWave(const FSoundWaveProxyPtr& SoundWave) override {}
+	virtual void AddMemoryCountedFeature(const FAudioStreamCacheMemoryHandle& Feature) override {}
+	virtual void RemoveMemoryCountedFeature(const FAudioStreamCacheMemoryHandle& Feature) override {}
+	virtual void AddDecoder(ICompressedAudioInfo* CompressedAudioInfo) override {}
+	virtual void RemoveDecoder(ICompressedAudioInfo* CompressedAudioInfo) override {}
+	virtual bool IsManagedStreamingSoundWave(const FSoundWaveProxyPtr& SoundWave) const override { return false; }
+	virtual bool IsStreamingInProgress(const FSoundWaveProxyPtr& SoundWave) override { return false; }
+	virtual bool CanCreateSoundSource(const FWaveInstance* WaveInstance) const override { return false; }
+	virtual void AddStreamingSoundSource(FSoundSource* SoundSource) override {}
+	virtual void RemoveStreamingSoundSource(FSoundSource* SoundSource) override {}
+	virtual bool IsManagedStreamingSoundSource(const FSoundSource* SoundSource) const override { return false; }
+	virtual bool RequestChunk(const FSoundWaveProxyPtr& SoundWave, uint32 ChunkIndex, TFunction<void(EAudioChunkLoadResult)> OnLoadCompleted = [](EAudioChunkLoadResult) {}, ENamedThreads::Type ThreadToCallOnLoadCompletedOn = ENamedThreads::AnyThread, bool bForImmediatePlayback = false) override { return false; }
+	virtual FAudioChunkHandle GetLoadedChunk(const FSoundWaveProxyPtr& SoundWave, uint32 ChunkIndex, bool bBlockForLoad = false, bool bForImmediatePlayback = false) const override { return FAudioChunkHandle(); }
+	virtual uint64 TrimMemory(uint64 NumBytesToFree) override { return 0; }
+	virtual int32 RenderStatAudioStreaming(UWorld* World, FViewport* Viewport, FCanvas* Canvas, int32 X, int32 Y, const FVector* ViewLocation, const FRotator* ViewRotation) override { return 0; }
+	virtual FString GenerateMemoryReport() override { return TEXT(""); }
+	virtual void SetProfilingMode(bool bEnabled) override {}
+
+protected:
+	virtual void AddReferenceToChunk(const FAudioChunkHandle& InHandle) override {}
+	virtual void RemoveReferenceToChunk(const FAudioChunkHandle& InHandle) override {}
 };
 
 /**
@@ -849,4 +905,3 @@ protected:
 	mutable FCriticalSection AudioStreamingManagerCriticalSection;
 #endif
 };
-

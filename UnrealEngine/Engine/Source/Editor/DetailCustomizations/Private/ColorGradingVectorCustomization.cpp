@@ -537,7 +537,7 @@ bool FColorGradingVectorCustomizationBase::IsEntryBoxEnabled(int32 ColorIndex) c
 	return OnSliderGetValue(ColorIndex) != TOptional<float>();
 }
 
-TSharedRef<SNumericEntryBox<float>> FColorGradingVectorCustomizationBase::MakeNumericEntryBox(int32 ColorIndex, TOptional<float>& MinValue, TOptional<float>& MaxValue, TOptional<float>& SliderMinValue, TOptional<float>& SliderMaxValue, float& SliderExponent, float& Delta, int32 &ShiftMouseMovePixelPerDelta, bool& SupportDynamicSliderMaxValue, bool& SupportDynamicSliderMinValue)
+TSharedRef<SNumericEntryBox<float>> FColorGradingVectorCustomizationBase::MakeNumericEntryBox(int32 ColorIndex, TOptional<float>& MinValue, TOptional<float>& MaxValue, TOptional<float>& SliderMinValue, TOptional<float>& SliderMaxValue, float& SliderExponent, float& Delta, float& ShiftMultiplier, float& CtrlMultiplier, bool& SupportDynamicSliderMaxValue, bool& SupportDynamicSliderMinValue)
 {
 	TAttribute<FText> TextGetter = TAttribute<FText>::Create(TAttribute<FText>::FGetter::CreateSP(this, &FColorGradingVectorCustomizationBase::OnGetColorLabelText, ColorGradingPropertyHandle.Pin()->GetPropertyDisplayName(), ColorIndex));
 	TSharedRef<SWidget> LabelWidget = SNumericEntryBox<float>::BuildLabel(TextGetter, FLinearColor::White, FLinearColor(0.2f, 0.2f, 0.2f));
@@ -553,7 +553,8 @@ TSharedRef<SNumericEntryBox<float>> FColorGradingVectorCustomizationBase::MakeNu
 		.OnEndSliderMovement(this, &FColorGradingVectorCustomizationBase::OnEndSliderMovement, ColorIndex)
 		// Only allow spin on handles with one object.  Otherwise it is not clear what value to spin
 		.AllowSpin(ColorGradingPropertyHandle.Pin()->GetNumOuterObjects() == 1)
-		.ShiftMouseMovePixelPerDelta(ShiftMouseMovePixelPerDelta)
+		.ShiftMultiplier(ShiftMultiplier)
+		.CtrlMultiplier(CtrlMultiplier)
 		.SupportDynamicSliderMaxValue(this, &FColorGradingVectorCustomizationBase::GetSupportDynamicSliderMaxValue, SupportDynamicSliderMaxValue, ColorIndex)
 		.SupportDynamicSliderMinValue(this, &FColorGradingVectorCustomizationBase::GetSupportDynamicSliderMinValue, SupportDynamicSliderMinValue, ColorIndex)
 		.OnDynamicSliderMaxValueChanged(this, &FColorGradingVectorCustomizationBase::OnDynamicSliderMaxValueChanged)
@@ -626,7 +627,7 @@ void FColorGradingVectorCustomization::MakeHeaderRow(FDetailWidgetRow& Row, TSha
 			TWeakPtr<IPropertyHandle> WeakHandlePtr = SortedChildArray[ColorIndex];
 			TSharedRef<SNumericEntryBox<float>> NumericEntryBox = MakeNumericEntryBox(ColorIndex, Metadata.MinValue, Metadata.MaxValue, 
 				Metadata.SliderMinValue, Metadata.SliderMaxValue, Metadata.SliderExponent, Metadata.Delta, 
-				Metadata.ShiftMouseMovePixelPerDelta, Metadata.bSupportDynamicSliderMaxValue, Metadata.bSupportDynamicSliderMinValue);
+				Metadata.ShiftMultiplier, Metadata.CtrlMultiplier, Metadata.bSupportDynamicSliderMaxValue, Metadata.bSupportDynamicSliderMinValue);
 			TSharedPtr<SSpinBox<float>> NumericEntrySpinBox = StaticCastSharedPtr<SSpinBox<float>>(NumericEntryBox->GetSpinBox());
 			 
 			NumericEntryBoxWidgetList.Add(NumericEntryBox);
@@ -884,7 +885,8 @@ void FColorGradingCustomBuilder::GenerateHeaderRowContent(FDetailWidgetRow& Node
 				.MainDelta(Metadata.Delta)
 				.SupportDynamicSliderMaxValue(Metadata.bSupportDynamicSliderMaxValue)
 				.SupportDynamicSliderMinValue(Metadata.bSupportDynamicSliderMinValue)
-				.MainShiftMouseMovePixelPerDelta(Metadata.ShiftMouseMovePixelPerDelta)
+				.MainShiftMultiplier(Metadata.ShiftMultiplier)
+				.MainCtrlMultiplier(Metadata.CtrlMultiplier)
 				.ColorGradingModes(ColorGradingMode)
 				.OnColorCommitted(this, &FColorGradingCustomBuilder::OnColorGradingPickerChanged)
 				.OnQueryCurrentColor(this, &FColorGradingCustomBuilder::GetCurrentColorGradingValue)
@@ -954,7 +956,7 @@ void FColorGradingCustomBuilder::GenerateHeaderRowContent(FDetailWidgetRow& Node
 
 		TSharedRef<SNumericEntryBox<float>> NumericEntryBox = MakeNumericEntryBox(ColorIndex, Metadata.MinValue, Metadata.MaxValue, 
 			Metadata.SliderMinValue, Metadata.SliderMaxValue, Metadata.SliderExponent, Metadata.Delta, 
-			Metadata.ShiftMouseMovePixelPerDelta, Metadata.bSupportDynamicSliderMaxValue, Metadata.bSupportDynamicSliderMinValue);
+			Metadata.ShiftMultiplier, Metadata.CtrlMultiplier, Metadata.bSupportDynamicSliderMaxValue, Metadata.bSupportDynamicSliderMinValue);
 		TSharedPtr<SSpinBox<float>> NumericEntrySpinBox = StaticCastSharedPtr<SSpinBox<float>>(NumericEntryBox->GetSpinBox());
 
 		NumericEntryBoxWidgetList.Add(NumericEntryBox);

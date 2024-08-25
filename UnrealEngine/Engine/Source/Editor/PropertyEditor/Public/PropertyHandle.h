@@ -14,6 +14,7 @@ class FResetToDefaultOverride;
 class IPropertyHandleArray;
 class IPropertyHandleMap;
 class IPropertyHandleSet;
+class IPropertyHandleOptional;
 class IPropertyHandleStruct;
 class IStructureDataProvider;
 
@@ -75,6 +76,11 @@ public:
 	 * Helper to fetch a PropertyPath 
 	 */
 	virtual FStringView GetPropertyPath() const = 0;
+
+	/**
+	 * Helper to fetch a PropertyPath 
+	 */
+	virtual TSharedPtr<FPropertyPath> CreateFPropertyPath() const = 0;
 
 	/**
 	 * Helper to fetch the ArrayIndex
@@ -465,6 +471,13 @@ public:
 	virtual void GetOuterObjects( TArray<UObject*>& OuterObjects ) const = 0;
 
 	/**
+	 * Get the structures that contain this property 
+	 *
+	 * @param OutStructs	An array that will be populated with the outer structures 
+	 */
+	virtual void GetOuterStructs( TArray<TSharedPtr<FStructOnScope>>& OutStructs ) const = 0;
+
+	/**
 	 * Get the shared base class of the objects that contain this property.
 	 *
 	 * @return The shared base class of the outer objects, or null if none are selected.
@@ -520,6 +533,11 @@ public:
 	 * @return This handle as a map if possible
 	 */
 	virtual TSharedPtr<IPropertyHandleMap> AsMap() = 0;
+
+	/**
+	 * @return This handle as an optional if possible
+	 */
+	virtual TSharedPtr<IPropertyHandleOptional> AsOptional() = 0;
 
 	/**
 	 * @return This handle as struct if possible
@@ -611,12 +629,25 @@ public:
 	 * @param ToolTipOverride			The tooltip override to use instead of the property name
 	 */
 	virtual TSharedRef<SWidget> CreatePropertyNameWidget(const FText& NameOverride = FText::GetEmpty(), const FText& ToolTipOverride = FText::GetEmpty()) const = 0;
+	
 	/**
 	 * Creates a value widget for this property
-
+	 * 
+	 * @param bDisplayDefaultPropertyButtons	If the value widget should include the property buttons.
+	 *
 	 * @return the value widget for this property
 	 */
 	virtual TSharedRef<SWidget> CreatePropertyValueWidget( bool bDisplayDefaultPropertyButtons = true ) const = 0;
+
+	/**
+	 * Creates a value widget for this property using customization, if available.
+	 * Note that this is only the value widget for the header/main row for properties with child rows (ie: structs)
+	 * 
+	 * @param DetailsView						The details view to create the value widget for. Used to retrieve per details view customizations.
+	 * 
+	 * @return the value widget for this property
+	 */
+	virtual TSharedRef<SWidget> CreatePropertyValueWidgetWithCustomization( const IDetailsView* DetailsView ) = 0;
 
 	/**
 	 * Creates the default buttons which appear next to value widgets.  This is useful when creating customizations
@@ -728,6 +759,8 @@ public:
 	* It does not handle the property being moved to another category during customization
 	*/
 	virtual FText GetDefaultCategoryText() const = 0;
+
+	virtual bool IsCategoryHandle() const = 0;
 };
 
 /**
@@ -892,6 +925,11 @@ public:
 	virtual FPropertyAccess::Result GetNumElements(uint32& OutNumElements) = 0;
 
 	/**
+	 * @return a handle to the element at the specified index
+	 */
+	virtual TSharedRef<IPropertyHandle> GetElement(int32 Index) const = 0;
+
+	/**
 	 * Sets a delegate to call when the number of elements changes
 	 */
 	virtual FDelegateHandle SetOnNumElementsChanged(const FSimpleDelegate& InOnNumElementsChanged) = 0;
@@ -911,4 +949,32 @@ public:
 	virtual ~IPropertyHandleStruct() {}
 
 	virtual TSharedPtr<FStructOnScope> GetStructData() const = 0;
+};
+
+/**
+ * A handle to an optional property which allows you to manipulate the optional
+ */
+class IPropertyHandleOptional
+{
+public:
+	virtual ~IPropertyHandleOptional() {}
+
+	/**
+	 * Get the item
+	 * @param OutValue	The value of the optional if it is set.
+	 */
+	virtual FPropertyAccess::Result GetOptionalValue(FProperty*& OutValue) = 0;
+
+	/**
+	 * Set the item
+	 * @param NewValue	The value to set the optional to. Pass in nullptr to default-initialize the value.
+	 * @return			Whether or not this was successful
+	 */
+	virtual FPropertyAccess::Result SetOptionalValue(FProperty* NewValue) = 0;
+
+	/**
+	 * Clear the item
+	 * @return Whether or not this was successful
+	 */
+	virtual FPropertyAccess::Result ClearOptionalValue() = 0;
 };

@@ -30,6 +30,7 @@ FMVVMEditorStyle::FMVVMEditorStyle()
 	if (ensure(MVVMPlugin))
 	{
 		SetContentRoot(MVVMPlugin->GetContentDir() / TEXT("Editor"));
+		SetCoreContentRoot(FPaths::EngineContentDir() / TEXT("Slate"));
 	}
 
 	// Class Icons
@@ -64,6 +65,18 @@ FMVVMEditorStyle::FMVVMEditorStyle()
 		.SetOddRowBackgroundHoveredBrush(*FAppStyle::Get().GetBrush("Brushes.Header"))
 	);
 
+	FButtonStyle NoStyleComboButtonButtonStyle = FButtonStyle()
+		.SetNormal(FSlateBoxBrush(RootToContentDir("Common/ButtonHoverHint.png"), FMargin(4.0f / 16.0f), FLinearColor(1.0f, 1.0f, 1.0f, 0.15f)))
+		.SetHovered(FSlateBoxBrush(RootToContentDir("Common/ButtonHoverHint.png"), FMargin(4.0f / 16.0f), FLinearColor(1.0f, 1.0f, 1.0f, 0.25f)))
+		.SetPressed(FSlateBoxBrush(RootToContentDir("Common/ButtonHoverHint.png"), FMargin(4.0f / 16.0f), FLinearColor(1.0f, 1.0f, 1.0f, 0.30f)))
+		.SetNormalPadding(FMargin(0.0f, 0.0f, 0.0f, 1.0f))
+		.SetPressedPadding(FMargin(0.0f, 1.0f, 0.0f, 0.0f));
+	Set("NoStyleComboButton", FComboButtonStyle()
+		.SetButtonStyle(NoStyleComboButtonButtonStyle)
+		.SetDownArrowImage(FSlateNoResource())
+		.SetMenuBorderBrush(FSlateNoResource())
+		.SetMenuBorderPadding(FMargin(0.0f)));
+
 	// ViewModelSelectionWidget Icons
 	{
 		Set("ViewModelSelection.AddIcon", new IMAGE_BRUSH("Slate/MVVMViewModelSelection_Add_16x", Icon16x16));
@@ -89,6 +102,8 @@ FMVVMEditorStyle::FMVVMEditorStyle()
 
 	Set("ConversionFunction.DestToSource", new IMAGE_BRUSH_SVG("Slate/ConversionFunction_DestToSource", Icon16x16));
 	Set("ConversionFunction.SourceToDest", new IMAGE_BRUSH_SVG("Slate/ConversionFunction_SourceToDest", Icon16x16));
+
+	Set("Icon.Ellipsis", new CORE_IMAGE_BRUSH_SVG("Starship/Common/ellipsis-vertical-narrow", FVector2D(6.0, 24.0)));
 
 	Set("FieldSelector.ComboButton", 
 		FComboButtonStyle(FAppStyle::Get().GetWidgetStyle<FComboButtonStyle>("ComboButton"))

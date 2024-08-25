@@ -116,7 +116,7 @@ public:
 			Device->SetUserCredentials(Username, Password);
 		}
 
-		this->OnDeviceDiscovered().Broadcast(Device.ToSharedRef());
+		ITargetPlatformControls::OnDeviceDiscovered().Broadcast(Device.ToSharedRef());
 		return true;
 	}
 
@@ -196,6 +196,11 @@ public:
 		if (Feature == ETargetPlatformFeatures::UserCredentials || Feature == ETargetPlatformFeatures::Packaging)
 		{
 			return true;
+		}
+
+		if (Feature == ETargetPlatformFeatures::CanCookPackages)
+		{
+			return TProperties::HasEditorOnlyData();
 		}
 
 		return TSuper::SupportsFeature(Feature);

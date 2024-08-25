@@ -4,6 +4,7 @@
 #include "Engine/SkeletalMesh.h"
 #include "MeshBuild.h"
 #include "MeshUtilities.h"
+#include "OverlappingCorners.h"
 #include "RawIndexBuffer.h"
 #include "Rendering/SkeletalMeshModel.h"
 
@@ -72,9 +73,8 @@ namespace SkeletalMeshTools
 
 	void BuildSkeletalMeshChunks( const TArray<SkeletalMeshImportData::FMeshFace>& Faces, const TArray<FSoftSkinBuildVertex>& RawVertices, TArray<FSkeletalMeshVertIndexAndZ>& RawVertIndexAndZ, const FOverlappingThresholds &OverlappingThresholds, TArray<FSkinnedMeshChunk*>& OutChunks, bool& bOutTooManyVerts )
 	{
-		TArray<int32> DupVerts;
-
-		TMultiMap<int32, int32> RawVerts2Dupes;
+		FOverlappingCorners OverlappingCorners;
+		OverlappingCorners.Init(RawVertIndexAndZ.Num());
 		{
 
 			// Sorting function for vertex Z/index pairs
@@ -106,12 +106,12 @@ namespace SkeletalMeshTools
 						RawVertices[RawVertIndexAndZ[i].Index].Position,
 						RawVertices[RawVertIndexAndZ[j].Index].Position, OverlappingThresholds))
 					{
-						RawVerts2Dupes.Add(RawVertIndexAndZ[i].Index, RawVertIndexAndZ[j].Index);
-						RawVerts2Dupes.Add(RawVertIndexAndZ[j].Index, RawVertIndexAndZ[i].Index);
+						OverlappingCorners.Add(RawVertIndexAndZ[i].Index, RawVertIndexAndZ[j].Index);
 					}
 				}
 			}
 		}
+		OverlappingCorners.FinishAdding();
 
 		TMap<FSkinnedMeshChunk* , TMap<int32, int32> > ChunkToFinalVerts;
 
@@ -147,10 +147,7 @@ namespace SkeletalMeshTools
 				const FSoftSkinBuildVertex& Vertex = RawVertices[WedgeIndex];
 
 				int32 FinalVertIndex = INDEX_NONE;
-				DupVerts.Reset();
-				RawVerts2Dupes.MultiFind(WedgeIndex, DupVerts);
-				DupVerts.Sort();
-
+				const TArray<int32>& DupVerts = OverlappingCorners.FindIfOverlapping(WedgeIndex);
 
 				for(int32 k = 0; k < DupVerts.Num(); k++)
 				{
@@ -345,7 +342,7 @@ namespace SkeletalMeshTools
 				FaceAdded[FaceIndex] = true;
 				while (TriangleQueue.Num() > 0)
 				{
-					int32 CurrentTriangleIndex = TriangleQueue.Pop(false);
+					int32 CurrentTriangleIndex = TriangleQueue.Pop(EAllowShrinking::No);
 					TArray<FBoneIndexType> BonesToAdd = BonesPerFace[CurrentTriangleIndex];
 					for (const FBoneIndexType BoneIndex : BonesToAdd)
 					{

@@ -22,17 +22,18 @@ const FSlateBrush* GetSourceIcon(const FBindingSource& Source)
 		return nullptr;
 	}
 
-	return FSlateIconFinder::FindIconBrushForClass(Source.Class.Get());
+	return FSlateIconFinder::FindIconBrushForClass(Source.GetClass());
 }
 
 FLinearColor GetSourceColor(const FBindingSource& Source)
 {
-	if (!Source.IsValid())
+	const UClass* SourceClass = Source.GetClass();
+	if (SourceClass == nullptr)
 	{
 		return FLinearColor::White;
 	}
 
-	uint32 Hash = GetTypeHash(Source.Class->GetName());
+	uint32 Hash = GetTypeHash(SourceClass->GetName());
 	FLinearColor Color = FLinearColor::White;
 	Color.R = ((Hash * 1 % 96) + 32) / 256.f;
 	Color.G = ((Hash * 2 % 96) + 32) / 256.f;
@@ -42,12 +43,7 @@ FLinearColor GetSourceColor(const FBindingSource& Source)
 
 FText GetSourceDisplayName(const FBindingSource& Source)
 {
-	if (!Source.IsValid())
-	{
-		return LOCTEXT("None", "<None>");
-	}
-
-	return !Source.DisplayName.IsEmpty() ? Source.DisplayName : FText::FromString(Source.Name.ToString());
+	return Source.GetDisplayName();
 }
 
 } // namespace Private
@@ -86,14 +82,14 @@ void SBindingContextEntry::RefreshSource(const FBindingSource& Source)
 
 	if (Source.IsValid())
 	{
-		if (Source.Class != nullptr)
+		if (const UClass* SourceClass = Source.GetClass())
 		{
-			const FText ToolTipText = FText::Join(FText::FromString(TEXT("\n")), Source.DisplayName, Source.Class->GetDisplayNameText());
+			const FText ToolTipText = FText::Join(FText::FromString(TEXT("\n")), Source.GetDisplayName(), SourceClass->GetDisplayNameText());
 			SetToolTipText(ToolTipText);
 		}
 		else
 		{
-			SetToolTipText(Source.DisplayName);
+			SetToolTipText(Source.GetDisplayName());
 		}
 	}
 }

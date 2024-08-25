@@ -10,6 +10,10 @@
 #include "Engine/Texture2DDynamic.h"
 #include "Widgets/Images/SImage.h"
 
+#if WITH_EDITOR
+#include "TextureCompiler.h"
+#endif
+
 #include UE_INLINE_GENERATED_CPP_BY_NAME(CommonLazyImage)
 
 UCommonLazyImage::UCommonLazyImage(const FObjectInitializer& Initializer)
@@ -246,6 +250,9 @@ void UCommonLazyImage::SetBrushObjectInternal(UTexture* Texture, bool bMatchSize
 				}
 				else if (UTexture2D* AsTexture2D = Cast<UTexture2D>(Texture))
 				{
+#if WITH_EDITOR
+					FTextureCompilingManager::Get().FinishCompilation({ Texture });
+#endif
 					CurrentBrush.ImageSize.X = AsTexture2D->GetSizeX();
 					CurrentBrush.ImageSize.Y = AsTexture2D->GetSizeY();
 				}

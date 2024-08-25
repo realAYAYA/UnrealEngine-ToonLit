@@ -112,6 +112,9 @@ protected:
 
 	/** Sorting mode (ascending or descending) for current sorting column. */
 	EColumnSortMode::Type SortMode;
+
+	/** The total size of modules. */
+	uint64 TotalSize;
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

@@ -30,7 +30,7 @@ END_SHADER_PARAMETER_STRUCT()
 
 // Used by Translucency Base Pass
 BEGIN_SHADER_PARAMETER_STRUCT(FLumenFrontLayerTranslucencyReflectionParameters, )
-	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, Radiance)
+    SHADER_PARAMETER_RDG_TEXTURE(Texture2DArray, Radiance)
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, Normal)
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, SceneDepth)
 	SHADER_PARAMETER(uint32, Enabled)

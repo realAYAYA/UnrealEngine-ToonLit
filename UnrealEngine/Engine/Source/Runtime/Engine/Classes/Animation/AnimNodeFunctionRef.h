@@ -100,9 +100,10 @@ private:
 
 	// Call the Update function of this node
 	static void Update(const FAnimationUpdateContext& InContext, FAnimNode_Base& InNode);
-	
+
+public:
 	// Call a generic function for this node
-	static void CallFunction(const FAnimNodeFunctionRef& InFunction, const FAnimationBaseContext& InContext, FAnimNode_Base& InNode);
+	ENGINE_API static void CallFunction(const FAnimNodeFunctionRef& InFunction, const FAnimationBaseContext& InContext, FAnimNode_Base& InNode);
 };
 
 }}

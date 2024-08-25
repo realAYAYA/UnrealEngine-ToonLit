@@ -573,25 +573,6 @@ FString UNiagaraHierarchyViewModelBase::OnItemToStringDebug(TSharedPtr<FNiagaraH
 	return ItemBaseViewModel->ToString();	
 }
 
-const TArray<TSharedRef<IDetailTreeNode>>& UNiagaraHierarchyViewModelBase::RequestDetailTreeNodesForObject(UObject* Object)
-{
-	if(ObjectTreeNodeMap.Contains(Object))
-	{
-		return ObjectTreeNodeMap[Object];
-	}
-
-	if(ObjectToPropertyRowGeneratorMap.Contains(Object))
-	{
-		ObjectTreeNodeMap.Add(Object, ObjectToPropertyRowGeneratorMap[Object]->GetRootTreeNodes());
-		return ObjectTreeNodeMap[Object];
-	}
-	
-	FPropertyEditorModule& PropertyEditorModule = FModuleManager::Get().LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
-	ObjectToPropertyRowGeneratorMap.Add(Object, PropertyEditorModule.CreatePropertyRowGenerator(FPropertyRowGeneratorArgs()));
-	ObjectToPropertyRowGeneratorMap[Object]->SetObjects({Object});
-	return RequestDetailTreeNodesForObject(Object);
-}
-
 FNiagaraHierarchyItemViewModelBase::~FNiagaraHierarchyItemViewModelBase()
 {
 	Children.Empty();

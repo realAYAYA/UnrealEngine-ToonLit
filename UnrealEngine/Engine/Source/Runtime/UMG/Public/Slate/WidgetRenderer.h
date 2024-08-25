@@ -144,6 +144,14 @@ public:
 		const FSlateInvalidationContext& Context,
 		bool bDeferRenderTargetUpdate = false);
 
+	UMG_API bool DrawInvalidationRoot(
+		TSharedRef<SVirtualWindow>& VirtualWindow,
+		UTextureRenderTarget2D* RenderTarget,
+		FPaintArgs PaintArgs,
+		float DrawScale,
+		FVector2D DrawSize,
+		bool bDeferRenderTargetUpdate = false);
+
 	TArray< TSharedPtr<FSlateWindowElementList::FDeferredPaint> > DeferredPaints;
 private:
 	/** The slate 3D renderer used to render the user slate widget */

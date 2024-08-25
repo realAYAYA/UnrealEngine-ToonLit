@@ -3,17 +3,18 @@
 
 #include "CoreMinimal.h"
 
-#include "ISoundfieldFormat.h"
+#include "AudioDeviceHandle.h"
+#include "AudioLinkSettingsAbstract.h"
+#include "DSP/SpectrumAnalyzer.h"
 #include "IAudioEndpoint.h"
 #include "ISoundfieldEndpoint.h"
+#include "ISoundfieldFormat.h"
 #include "SampleBufferIO.h"
 #include "SoundEffectSubmix.h"
 #include "SoundModulationDestination.h"
 #include "SoundSubmixSend.h"
 #include "UObject/Object.h"
 #include "UObject/ObjectMacros.h"
-#include "DSP/SpectrumAnalyzer.h"
-#include "AudioLinkSettingsAbstract.h"
 
 #include "SoundSubmix.generated.h"
 
@@ -159,6 +160,15 @@ public:
 };
 #endif
 
+USTRUCT()
+struct FDynamicChildSubmix  
+{
+	GENERATED_USTRUCT_BODY()
+	
+	UPROPERTY(Transient)
+	TArray<TObjectPtr<USoundSubmixBase>> ChildSubmixes;
+};
+
 UCLASS(config = Engine, abstract, hidecategories = Object, editinlinenew, BlueprintType, MinimalAPI)
 class USoundSubmixBase : public UObject
 {
@@ -171,17 +181,59 @@ public:
 #endif
 
 	// Auto-manage enabling and disabling the submix as a CPU optimization. It will be disabled if the submix and all child submixes are silent. It will re-enable if a sound is sent to the submix or a child submix is audible.
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = AutoDisablement)
+	UPROPERTY(config, EditAnywhere, BlueprintReadOnly, Category = AutoDisablement)
 	bool bAutoDisable = true;
 
 	// The minimum amount of time to wait before automatically disabling a submix if it is silent. Will immediately re-enable if source audio is sent to it. 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = AutoDisablement, meta = (EditCondition = "bAutoDisable"))
+	UPROPERTY(config, EditAnywhere, BlueprintReadWrite, Category = AutoDisablement, meta = (EditCondition = "bAutoDisable"))
 	float AutoDisableTime = 0.01f;
 
 	// Child submixes to this sound mix
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = SoundSubmix)
 	TArray<TObjectPtr<USoundSubmixBase>> ChildSubmixes;
 
+	// Dynamic Child submixes (Map of AudioDevice -> [Submix] )
+	UPROPERTY(Transient)
+	TMap<uint32, FDynamicChildSubmix> DynamicChildSubmixes;
+		
+	/** Dynamically Connects to a parent submix.
+	* @param	WorldContextObject	UObject that's used to GetWorld
+	* @param	InParent	Parent Submix to connect to
+	**/
+	UFUNCTION(BlueprintCallable, Category = "Submix", meta = (WorldContext = "WorldContextObject", DisplayName = "Connect"))	
+	ENGINE_API virtual bool DynamicConnect(
+		const UObject* WorldContextObject, 
+		UPARAM(DisplayName="Parent") USoundSubmixBase* InParent) 
+	{ 
+		return false; 
+	}
+
+	/** Dynamically Disconnect from a parent.
+	* @param	WorldContextObject	UObject that's used to GetWorld
+	**/
+	UFUNCTION(BlueprintCallable, Category = "Submix", meta = (WorldContext = "WorldContextObject", DisplayName = "Disconnect"))
+	ENGINE_API virtual bool DynamicDisconnect(const UObject* WorldContextObject) 
+	{ 
+		return false; 
+	}
+	
+	/** Searching upwards from this Submix to the root looking for the first Submix marked Dynamic
+	 *  If this Submix is Dynamic this will be returned.
+	**/
+	UFUNCTION(BlueprintCallable, Category = "Submix", meta = (WorldContext = "WorldContextObject"))
+	ENGINE_API virtual USoundSubmixBase* FindDynamicAncestor() 
+	{ 
+		return nullptr; 
+	}
+	
+	/** If this Submix is (or any of its parents are marked dynamic).
+	* @param	bIncludeAncestors	Whether to traverse upwards through the ancestors looking for anything with a dynamic flag.
+	**/
+	virtual bool IsDynamic(const bool bIncludeAncestors) const 
+	{ 
+		return false; 
+	}
+	
 protected:
 	//~ Begin UObject Interface.
 	ENGINE_API virtual FString GetDesc() override;
@@ -189,13 +241,9 @@ protected:
 	ENGINE_API virtual void PostLoad() override;
 
 public:
+
 	// Sound Submix Editor functionality
 #if WITH_EDITOR
-
-	/**
-	* @return true if the child sound class exists in the tree
-	*/
-	ENGINE_API bool RecurseCheckChild(const USoundSubmixBase* ChildSoundSubmix) const;
 
 	/**
 	* Add Referenced objects
@@ -207,11 +255,9 @@ public:
 
 protected:
 
-#if WITH_EDITOR
 	ENGINE_API virtual void PostDuplicate(EDuplicateMode::Type DuplicateMode) override;
 	ENGINE_API virtual void PreEditChange(FProperty* PropertyAboutToChange) override;
 	ENGINE_API virtual void PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent) override;
-#endif // WITH_EDITOR
 	//~ End UObject Interface.
 
 private:
@@ -228,18 +274,44 @@ class USoundSubmixWithParentBase : public USoundSubmixBase
 	GENERATED_UCLASS_BODY()
 public:
 
-	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = SoundSubmix)
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = SoundSubmix, meta = (EditCondition = "!bIsDynamic"))
 	TObjectPtr<USoundSubmixBase> ParentSubmix;
 
 	/**
+	* Holds the dynamic (not serialized) parent for this Submix.
+	* Overrides the serialized one.
+	*/
+	
+	ENGINE_API TObjectPtr<USoundSubmixBase> GetParent(Audio::FDeviceId InDeviceId) const;
+	
+	UPROPERTY(Transient)
+	TMap<uint32, TObjectPtr<USoundSubmixBase>> DynamicParentSubmix;
+	
+	/**
 	* Set the parent submix of this SoundSubmix, removing it as a child from its previous owner
 	*
-	* @param	InParentSubmix	The New Parent Submix of this
+	* @param	InParentSubmix	The New Parent Submix of this submix
+	* @param	bModifyAssets	Whether or not to mark the UObjects as modified.
 	*/
-	ENGINE_API void SetParentSubmix(USoundSubmixBase* InParentSubmix);
+	ENGINE_API void SetParentSubmix(USoundSubmixBase* InParentSubmix, bool bModifyAssets = true);
+
+	ENGINE_API virtual bool DynamicConnect(const UObject* WorldContextObject, USoundSubmixBase* Parent) override;
+	ENGINE_API bool DynamicConnect(FAudioDeviceHandle Handle, USoundSubmixBase* Parent);
+	ENGINE_API virtual bool DynamicDisconnect(const UObject* WorldContextObject) override;
+	ENGINE_API bool DynamicDisconnect(FAudioDeviceHandle Handle);
+	ENGINE_API virtual bool IsDynamic(const bool bIncludeAncestors) const override;
+	ENGINE_API virtual USoundSubmixBase* FindDynamicAncestor() override;
 
 protected:
 
+	/** Is Submix Dynamic. (i.e. allows connect/disconnect at runtime.)  **/
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = SoundSubmix, meta = (DisplayPriority=-1, EditCondition = "ParentSubmix == nullptr"))
+	uint8 bIsDynamic : 1;
+
+	// Const version. 
+	const USoundSubmixBase* FindDynamicAncestor() const;
+	
 #if WITH_EDITOR
 	ENGINE_API virtual void PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent) override;
 	ENGINE_API virtual void PostDuplicate(EDuplicateMode::Type DuplicateMode) override;
@@ -282,18 +354,6 @@ public:
 	/** The release time in milliseconds for the envelope follower. Delegate callbacks can be registered to get the envelope value of sounds played with this submix. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = EnvelopeFollower, meta = (ClampMin = "0", UIMin = "0"))
 	int32 EnvelopeFollowerReleaseTime;
-
-	/** Deprecated -- The output volume of the submix. Applied after submix effects and analysis are performed.*/
-	UPROPERTY(meta = (DeprecatedProperty, DeprecationMessage = "5.0 - Removed in favor of OutputVolumeModulation."))
-	float OutputVolume;
-
-	/** Deprecated -- The wet level of the submix. Applied after submix effects and analysis are performed. */
-	UPROPERTY(meta = (DeprecatedProperty, DeprecationMessage = "5.0 - Removed in favor of WetLevelModulation."))
-	float WetLevel;
-
-	/** Deprecated -- The dry level of the submix. Applied before submix effects and analysis are performed. */
-	UPROPERTY(meta = (DeprecatedProperty, DeprecationMessage = "5.0 - Removed in favor of DryLevelModulation."))
-	float DryLevel;
 
 	/** The output volume of the submix in Decibels. Applied after submix effects and analysis are performed.*/
 	UPROPERTY(EditAnywhere, BlueprintSetter=SetOutputVolumeModulation, Category = SubmixLevel, meta = (DisplayName = "Output Volume (dB)", AudioParam = "Volume", AudioParamClass = "SoundModulationParameterVolume", ClampMin = "-96.0", ClampMax = "0.0", UIMin = "-96.0", UIMax = "0.0"))
@@ -403,6 +463,7 @@ public:
 protected:
 
 	ENGINE_API virtual void Serialize(FArchive& Ar) override;
+	ENGINE_API virtual void PostLoad() override;
 
 #if WITH_EDITOR
 	ENGINE_API virtual void PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent) override;
@@ -423,6 +484,22 @@ protected:
 
 	// State handling for bouncing output.
 	TUniquePtr<Audio::FAudioRecordingData> RecordingData;
+
+#if WITH_EDITORONLY_DATA
+
+	// Forever deprecated properties.
+	// These must be kept to always be able to migrate older assets.
+	UPROPERTY()
+	float OutputVolume_DEPRECATED;
+	UPROPERTY()
+	float WetLevel_DEPRECATED;
+	UPROPERTY()
+	float DryLevel_DEPRECATED;
+
+	void InitDeprecatedDefaults();
+	void HandleVersionMigration(const int32 Version);
+
+#endif //WITH_EDITORONLY_DATA
 };
 	
 
@@ -554,7 +631,12 @@ protected:
 
 namespace SubmixUtils
 {
+	ENGINE_API void ForEachStaticChildRecursive(USoundSubmixBase* StartingPoint, const TFunction<void(USoundSubmixBase*)>& Op);
+
 	ENGINE_API bool AreSubmixFormatsCompatible(const USoundSubmixBase* ChildSubmix, const USoundSubmixBase* ParentSubmix);
+
+	ENGINE_API bool FindInGraph(const USoundSubmixBase* InEntryPoint, const USoundSubmixBase* InToMatch, bool bShouldAcsend, FAudioDeviceHandle InDevice = {});
+	ENGINE_API const USoundSubmixBase* FindRoot(const USoundSubmixBase* InStartingPoint, FAudioDeviceHandle InDevice);
 
 #if WITH_EDITOR
 	ENGINE_API void RefreshEditorForSubmix(const USoundSubmixBase* InSubmix);

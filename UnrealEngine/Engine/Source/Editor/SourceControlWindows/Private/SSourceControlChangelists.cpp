@@ -104,6 +104,15 @@ FText UpdateChangelistDescriptionToSubmitIfNeeded(const bool bInValidationResult
 		return DescriptionString.Find(ValidationString) != INDEX_NONE;
 	};
 
+	auto RemoveValidationFlag = [&GetChangelistValidationTag](const FText& InChangelistDescription)
+	{
+		FString DescriptionString = InChangelistDescription.ToString();
+		FString ValidationString = GetChangelistValidationTag().ToString();
+		DescriptionString.ReplaceInline(*ValidationString, TEXT(""));
+
+		return DescriptionString;
+	};
+
 	if (bInValidationResult && USourceControlPreferences::IsValidationTagEnabled() && !ContainsValidationFlag(InChangelistDescription))
 	{
 		FStringOutputDevice Str;
@@ -113,6 +122,12 @@ FText UpdateChangelistDescriptionToSubmitIfNeeded(const bool bInValidationResult
 		Str.Log(GetChangelistValidationTag());
 
 		return FText::FromString(Str);
+	}
+
+	if (!bInValidationResult && USourceControlPreferences::IsValidationTagEnabled() && ContainsValidationFlag(InChangelistDescription))
+	{
+		FString NewChangelistDescription = RemoveValidationFlag(InChangelistDescription);
+		return FText::FromString(NewChangelistDescription);
 	}
 
 	return InChangelistDescription;
@@ -647,7 +662,7 @@ void SSourceControlChangelistsWidget::Tick(const FGeometry& AllottedGeometry, co
 
 	if (bShouldRefresh)
 	{
-		if (bInitialRefreshDone)
+		if (!bInitialRefreshDone)
 		{
 			// Ensure the UI is built from the current cached states once because all UI updates are hooked on 'state change' callbacks and those will only
 			// be called when the state changed.
@@ -1067,7 +1082,7 @@ void SSourceControlChangelistsWidget::OnRefreshSourceControlWidgets(int64 CurrUp
 		}
 		ShelvedChangelistTreeItem = ChangelistTreeItem->ShelvedChangelistItem;
 
-		const bool bShelvedChangelistPassesFilter = ChangelistState->GetShelvedFilesStates().Num() > 0 && ChangelistTextFilter->PassesFilter(*ShelvedChangelistTreeItem);
+		const bool bShelvedChangelistPassesFilter = ChangelistState->GetShelvedFilesStatesNum() > 0 && ChangelistTextFilter->PassesFilter(*ShelvedChangelistTreeItem);
 		const bool bShelvedChangelistMustBeDisplayed = bShelvedChangelistPassesFilter && !ChangelistTextFilter->GetRawFilterText().IsEmpty();
 		const bool bChangelistPassedFilter = bShelvedChangelistMustBeDisplayed || ChangelistTextFilter->PassesFilter(*ChangelistTreeItem);
 		if (bChangelistPassedFilter)
@@ -1975,7 +1990,7 @@ bool SSourceControlChangelistsWidget::CanDeleteChangelist(FText* OutFailureMessa
 		}
 		return false;
 	}
-	else if (ChangelistState->GetFilesStates().Num() > 0 || ChangelistState->GetShelvedFilesStates().Num() > 0)
+	else if (ChangelistState->GetFilesStatesNum() > 0 || ChangelistState->GetShelvedFilesStatesNum() > 0)
 	{
 		if (OutFailureMessage)
 		{
@@ -2031,7 +2046,7 @@ void SSourceControlChangelistsWidget::OnRevertUnchanged()
 
 bool SSourceControlChangelistsWidget::CanRevertUnchanged()
 {
-	return HasFilesSelected() || (GetCurrentChangelistState() && GetCurrentChangelistState()->GetFilesStates().Num() > 0);
+	return HasFilesSelected() || (GetCurrentChangelistState() && GetCurrentChangelistState()->GetFilesStatesNum() > 0);
 }
 
 void SSourceControlChangelistsWidget::OnRevert()
@@ -2136,7 +2151,7 @@ bool SSourceControlChangelistsWidget::CanRevert()
 	FUncontrolledChangelistStatePtr CurrentUncontrolledChangelistState = GetCurrentUncontrolledChangelistState();
 
 	return HasFilesSelected()
-		|| (CurrentChangelistState.IsValid() && CurrentChangelistState->GetFilesStates().Num() > 0)
+		|| (CurrentChangelistState.IsValid() && CurrentChangelistState->GetFilesStatesNum() > 0)
 		|| (CurrentUncontrolledChangelistState.IsValid() && CurrentUncontrolledChangelistState->GetFilesStates().Num() > 0);
 }
 
@@ -2246,10 +2261,6 @@ static bool GetChangelistValidationResult(FSourceControlChangelistPtr InChangeli
 			OutValidationTitleText = LOCTEXT("SourceControl.Submit.ChangelistValidationSuccess", "Changelist validation successful!").ToString();
 		}
 
-		FMessageLog SourceControlLog("SourceControl");
-		
-		SourceControlLog.Message(MessageSeverity, FText::FromString(*OutValidationTitleText));
-
 		auto AppendInfo = [](const TArray<FText>& Info, const FString& InfoType, FString& OutText)
 		{
 			const int32 MaxNumLinesDisplayed = 5;
@@ -2277,24 +2288,8 @@ static bool GetChangelistValidationResult(FSourceControlChangelistPtr InChangeli
 			}
 		};
 
-		auto LogInfo = [&SourceControlLog](const TArray<FText>& Info, const FString& InfoType, const EMessageSeverity::Type LogVerbosity)
-		{
-			if (Info.Num() > 0)
-			{
-				SourceControlLog.Message(LogVerbosity, FText::Format(LOCTEXT("SourceControl.Validation.ErrorEncountered", "Encountered {0} {1}:"), FText::AsNumber(Info.Num()), FText::FromString(*InfoType)));
-
-				for (const FText& Line : Info)
-				{
-					SourceControlLog.Message(LogVerbosity, Line);
-				}
-			}
-		};
-
 		AppendInfo(ValidationErrors, TEXT("errors"), OutValidationErrorsText);
 		AppendInfo(ValidationWarnings, TEXT("warnings"), OutValidationWarningsText);
-
-		LogInfo(ValidationErrors, TEXT("errors"), EMessageSeverity::Error);
-		LogInfo(ValidationWarnings, TEXT("warnings"), EMessageSeverity::Warning);
 	}
 
 	return bValidationResult;
@@ -2337,6 +2332,62 @@ void SSourceControlChangelistsWidget::OnSubmitChangelist()
 	if (!ChangelistState)
 	{
 		return;
+	}
+
+	// first check if there is a submit override bound
+	if (ISourceControlWindowsModule::Get().SubmitOverrideDelegate.IsBound())
+	{
+		// save the changelist description from the widget to perforce
+		const FString Identifier = ChangelistState->GetChangelist()->GetIdentifier();
+
+		SSubmitOverrideParameters SubmitOverrideParameters;
+		SubmitOverrideParameters.Description = ChangelistState->GetDescriptionText().ToString();
+		SubmitOverrideParameters.ToSubmit.SetSubtype<FString>(Identifier);
+
+		FSubmitOverrideReply SubmitOverrideReply = ISourceControlWindowsModule::Get().SubmitOverrideDelegate.Execute(SubmitOverrideParameters);
+
+		switch (SubmitOverrideReply)
+		{
+			//////////////////////////////////////////////////////////
+			case FSubmitOverrideReply::Handled:
+			{
+				FNotificationInfo Info(LOCTEXT("SCC_Checkin_SubmitOverride_Succeeded", "Successfully invoked the submit override!"));
+
+				Info.Text = LOCTEXT("SCC_Checkin_SubmitOverride_Succeeded", "Successfully invoked the submit override!");
+				Info.ExpireDuration = 8.0f;
+				Info.HyperlinkText = LOCTEXT("SCC_Checkin_ShowLog", "Show Message Log");
+				Info.Hyperlink = FSimpleDelegate::CreateLambda([]() { FMessageLog("SourceControl").Open(EMessageSeverity::Warning, true); });
+
+				TSharedPtr<SNotificationItem> Notification = FSlateNotificationManager::Get().AddNotification(Info);
+				Notification->SetCompletionState(SNotificationItem::CS_Success);
+
+				this->OnRefreshUI(ERefreshFlags::SourceControlChangelists);
+				return;
+			}
+			
+			//////////////////////////////////////////////////////////
+			case FSubmitOverrideReply::Error:
+			{
+				FNotificationInfo Info(LOCTEXT("SCC_Checkin_SubmitOverride_Failed", "Failed to invoke the submit override!"));
+
+				Info.Text = LOCTEXT("SCC_Checkin_SubmitOverride_Failed", "Failed to invoke the submit override!");
+				Info.ExpireDuration = 8.0f;
+				Info.HyperlinkText = LOCTEXT("SCC_Checkin_ShowLog", "Show Message Log");
+				Info.Hyperlink = FSimpleDelegate::CreateLambda([]() { FMessageLog("SourceControl").Open(EMessageSeverity::Error, true); });
+
+				TSharedPtr<SNotificationItem> Notification = FSlateNotificationManager::Get().AddNotification(Info);
+				Notification->SetCompletionState(SNotificationItem::CS_Fail);
+
+				this->OnRefreshUI(ERefreshFlags::SourceControlChangelists);
+				return;
+			}
+
+			//////////////////////////////////////////////////////////
+			case FSubmitOverrideReply::ProviderNotSupported:
+			default:
+				// continue default flow
+				break;
+		}
 	}
 
 	FString ChangelistValidationTitle;
@@ -2460,7 +2511,7 @@ bool SSourceControlChangelistsWidget::CanSubmitChangelist(FText* OutFailureMessa
 		}
 		return false;
 	}
-	else if (Changelist->GetFilesStates().Num() <= 0)
+	else if (Changelist->GetFilesStatesNum() <= 0)
 	{
 		if (OutFailureMessage)
 		{
@@ -2468,7 +2519,7 @@ bool SSourceControlChangelistsWidget::CanSubmitChangelist(FText* OutFailureMessa
 		}
 		return false;
 	}
-	else if (Changelist->GetShelvedFilesStates().Num() > 0)
+	else if (Changelist->GetShelvedFilesStatesNum() > 0)
 	{
 		if (OutFailureMessage)
 		{
@@ -2514,7 +2565,7 @@ void SSourceControlChangelistsWidget::OnValidateChangelist()
 bool SSourceControlChangelistsWidget::CanValidateChangelist()
 {
 	FSourceControlChangelistStatePtr Changelist = GetCurrentChangelistState();
-	return Changelist != nullptr && Changelist->GetFilesStates().Num() > 0;
+	return Changelist != nullptr && Changelist->GetFilesStatesNum() > 0;
 }
 
 void SSourceControlChangelistsWidget::OnNewUncontrolledChangelist()
@@ -2985,12 +3036,12 @@ TSharedPtr<SWidget> SSourceControlChangelistsWidget::OnOpenContextMenu()
 				FCanExecuteAction::CreateSP(this, &SSourceControlChangelistsWidget::CanRevert)));
 	}
 
-	if (bHasSelectedChangelist && (bHasSelectedFiles || bHasSelectedShelvedFiles || (bHasSelectedChangelist && (GetCurrentChangelistState()->GetFilesStates().Num() > 0 || GetCurrentChangelistState()->GetShelvedFilesStates().Num() > 0))))
+	if (bHasSelectedChangelist && (bHasSelectedFiles || bHasSelectedShelvedFiles || (bHasSelectedChangelist && (GetCurrentChangelistState()->GetFilesStatesNum() > 0 || GetCurrentChangelistState()->GetShelvedFilesStates().Num() > 0))))
 	{
 		Section.AddSeparator("ShelveSeparator");
 	}
 
-	if (bHasSelectedChangelist && (bHasSelectedFiles || (bHasSelectedChangelist && GetCurrentChangelistState()->GetFilesStates().Num() > 0)))
+	if (bHasSelectedChangelist && (bHasSelectedFiles || (bHasSelectedChangelist && GetCurrentChangelistState()->GetFilesStatesNum() > 0)))
 	{
 		Section.AddMenuEntry("Shelve",
 			LOCTEXT("SourceControl_Shelve", "Shelve Files"),
@@ -3348,7 +3399,8 @@ TSharedRef<ITableRow> SSourceControlChangelistsWidget::OnGenerateRow(TSharedPtr<
 		bUpdateMonitoredFileStatusList = true;
 		return SNew(SOfflineFileTableRow, OwnerTable)
 			.TreeItemToVisualize(InTreeItem)
-			.HighlightText_Lambda([this]() { return FileSearchBox->GetText(); });
+			.HighlightText_Lambda([this]() { return FileSearchBox->GetText(); })
+			.OnDragDetected(this, &SSourceControlChangelistsWidget::OnUnsavedAssetsDragged);
 
 	case IChangelistTreeItem::ShelvedChangelist:
 		return SNew(SShelvedFilesTableRow, OwnerTable)
@@ -3398,6 +3450,30 @@ FReply SSourceControlChangelistsWidget::OnFilesDragged(const FGeometry& InGeomet
 		Operation->Construct();
 
  		return FReply::Handled().BeginDragDrop(Operation);
+	}
+
+	return FReply::Unhandled();
+}
+
+FReply SSourceControlChangelistsWidget::OnUnsavedAssetsDragged(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent)
+{
+	if (InMouseEvent.IsMouseButtonDown(EKeys::LeftMouseButton) && !UnsavedAssetsFileListView->GetSelectedItems().IsEmpty())
+	{
+		TSharedRef<FSCCFileDragDropOp> Operation = MakeShared<FSCCFileDragDropOp>();
+
+		for (const FChangelistTreeItemPtr& InTreeItem : UnsavedAssetsFileListView->GetSelectedItems())
+		{
+			if (InTreeItem->GetTreeItemType() == IChangelistTreeItem::OfflineFile)
+			{
+				TSharedRef<FOfflineFileTreeItem> FileTreeItem = StaticCastSharedRef<FOfflineFileTreeItem>(InTreeItem.ToSharedRef());
+				Operation->OfflineFiles.Emplace(FileTreeItem->GetFilename());
+			}
+		}
+
+		Operation->Construct();
+
+		// Initiates drag-drop operation.
+		return FReply::Handled().BeginDragDrop(Operation);
 	}
 
 	return FReply::Unhandled();

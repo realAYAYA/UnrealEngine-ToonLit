@@ -40,14 +40,5 @@ void UActorFactoryChaosSolver::PostSpawnActor(UObject* Asset, AActor* NewActor)
 	AChaosSolverActor* NewChaosSolverActor = CastChecked<AChaosSolverActor>(NewActor);
 }
 
-void UActorFactoryChaosSolver::PostCreateBlueprint(UObject* Asset, AActor* CDO)
-{
-	if (Asset != NULL && CDO != NULL)
-	{
-		UChaosSolver* ChaosSolver = CastChecked<UChaosSolver>(Asset);
-		AChaosSolverActor* ChaosSolverActor = CastChecked<AChaosSolverActor>(CDO);
-	}
-}
-
 #undef LOCTEXT_NAMESPACE
 

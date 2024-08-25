@@ -130,9 +130,9 @@ static EPixelFormat GetSceneColorFormat(bool bRequiresAlphaChannel)
 	return Format;
 }
 
-static void GetSceneColorFormatAndCreateFlags(ERHIFeatureLevel::Type FeatureLevel, bool bRequiresAlphaChannel, ETextureCreateFlags ExtraSceneColorCreateFlags, uint32 NumSamples, bool bMemorylessMSAA, EPixelFormat& SceneColorFormat, ETextureCreateFlags& SceneColorCreateFlags)
+void GetSceneColorFormatAndCreateFlags(ERHIFeatureLevel::Type FeatureLevel, bool bRequiresAlphaChannel, ETextureCreateFlags ExtraSceneColorCreateFlags, uint32 NumSamples, bool bMemorylessMSAA, EPixelFormat& SceneColorFormat, ETextureCreateFlags& SceneColorCreateFlags)
 {
-	EShadingPath ShadingPath = FSceneInterface::GetShadingPath(FeatureLevel);
+	EShadingPath ShadingPath = GetFeatureLevelShadingPath(FeatureLevel);
 	switch (ShadingPath)
 	{
 	case EShadingPath::Deferred:
@@ -214,11 +214,20 @@ static uint32 GetEditorPrimitiveNumSamples(ERHIFeatureLevel::Type FeatureLevel)
 static void SetupMobileGBufferFlags(FGBufferBindings GBufferBindings[GBL_Num], bool bRequiresMultiPass)
 {
 	ETextureCreateFlags AddFlags = TexCreate_InputAttachmentRead;
+	
+	// Mobile uses FBF/subpassLoad to fetch data from GBuffer, and FBF does not always work with sRGB targets 
+	ETextureCreateFlags RemoveFlags = TexCreate_SRGB;
 
 	if (!bRequiresMultiPass)
 	{
 		// use memoryless GBuffer when possible
 		AddFlags |= TexCreate_Memoryless;
+		// memoryless GBuffer cant be used with compute
+		RemoveFlags |= TexCreate_UAV;
+	}
+	else
+	{
+		RemoveFlags |= TexCreate_Memoryless;
 	}
 
 	for (uint32 Layout = 0; Layout < GBL_Num; ++Layout)
@@ -230,13 +239,12 @@ static void SetupMobileGBufferFlags(FGBufferBindings GBufferBindings[GBL_Num], b
 		Bindings.GBufferC.Flags |= AddFlags;
 		Bindings.GBufferD.Flags |= AddFlags;
 		Bindings.GBufferE.Flags |= AddFlags;
-
-		// Mobile uses FBF/subpassLoad to fetch data from GBuffer, and FBF does not always work with sRGB targets 
-		Bindings.GBufferA.Flags &= (~TexCreate_SRGB);
-		Bindings.GBufferB.Flags &= (~TexCreate_SRGB);
-		Bindings.GBufferC.Flags &= (~TexCreate_SRGB);
-		Bindings.GBufferD.Flags &= (~TexCreate_SRGB);
-		Bindings.GBufferE.Flags &= (~TexCreate_SRGB);
+		
+		Bindings.GBufferA.Flags &= (~RemoveFlags);
+		Bindings.GBufferB.Flags &= (~RemoveFlags);
+		Bindings.GBufferC.Flags &= (~RemoveFlags);
+		Bindings.GBufferD.Flags &= (~RemoveFlags);
+		Bindings.GBufferE.Flags &= (~RemoveFlags);
 
 		// Input attachments with PF_R8G8B8A8 has better support on mobile than PF_B8G8R8A8
 		auto OverrideB8G8R8A8 = [](FGBufferBinding& Binding) { if (Binding.Format == PF_B8G8R8A8) Binding.Format = PF_R8G8B8A8; };
@@ -251,7 +259,7 @@ static void SetupMobileGBufferFlags(FGBufferBindings GBufferBindings[GBL_Num], b
 void FSceneTexturesConfig::Init(const FSceneTexturesConfigInitSettings& InitSettings)
 {
 	FeatureLevel			= InitSettings.FeatureLevel;
-	ShadingPath				= FSceneInterface::GetShadingPath(FeatureLevel);
+	ShadingPath				= GetFeatureLevelShadingPath(FeatureLevel);
 	ShaderPlatform			= GetFeatureLevelShaderPlatform(FeatureLevel);
 	Extent					= InitSettings.Extent;
 	NumSamples				= GetDefaultMSAACount(FeatureLevel, GDynamicRHI->RHIGetPlatformTextureMaxSampleCount());
@@ -288,12 +296,16 @@ void FSceneTexturesConfig::Init(const FSceneTexturesConfigInitSettings& InitSett
 				GBufferParams[Layout] = (Layout == GBL_Default) ? DefaultParams : FShaderCompileUtilities::FetchGBufferParamsRuntime(ShaderPlatform, (EGBufferLayout)Layout);
 				const FGBufferInfo GBufferInfo = FetchFullGBufferInfo(GBufferParams[Layout]);
 
-				BindingCache.Bindings[Layout].GBufferA = FindGBufferBindingByName(GBufferInfo, TEXT("GBufferA"));
-				BindingCache.Bindings[Layout].GBufferB = FindGBufferBindingByName(GBufferInfo, TEXT("GBufferB"));
-				BindingCache.Bindings[Layout].GBufferC = FindGBufferBindingByName(GBufferInfo, TEXT("GBufferC"));
-				BindingCache.Bindings[Layout].GBufferD = FindGBufferBindingByName(GBufferInfo, TEXT("GBufferD"));
-				BindingCache.Bindings[Layout].GBufferE = FindGBufferBindingByName(GBufferInfo, TEXT("GBufferE"));
-				BindingCache.Bindings[Layout].GBufferVelocity = FindGBufferBindingByName(GBufferInfo, TEXT("Velocity"));
+				BindingCache.Bindings[Layout].GBufferA = FindGBufferBindingByName(GBufferInfo, TEXT("GBufferA"), ShaderPlatform);
+				BindingCache.Bindings[Layout].GBufferB = FindGBufferBindingByName(GBufferInfo, TEXT("GBufferB"), ShaderPlatform);
+				BindingCache.Bindings[Layout].GBufferC = FindGBufferBindingByName(GBufferInfo, TEXT("GBufferC"), ShaderPlatform);
+				BindingCache.Bindings[Layout].GBufferD = FindGBufferBindingByName(GBufferInfo, TEXT("GBufferD"), ShaderPlatform);
+				BindingCache.Bindings[Layout].GBufferE = FindGBufferBindingByName(GBufferInfo, TEXT("GBufferE"), ShaderPlatform);
+				BindingCache.Bindings[Layout].GBufferVelocity = FindGBufferBindingByName(GBufferInfo, TEXT("Velocity"), ShaderPlatform);
+
+				// Remove DisableDCC flag for velocity. Only Nanite fast tile clear sets this flag currently
+				// but we want to exclude velocity because it usually doesn't have many written pixels
+				EnumRemoveFlags(BindingCache.Bindings[Layout].GBufferVelocity.Flags, TexCreate_DisableDCC);
 			}
 
 			BindingCache.GBufferParams = DefaultParams;

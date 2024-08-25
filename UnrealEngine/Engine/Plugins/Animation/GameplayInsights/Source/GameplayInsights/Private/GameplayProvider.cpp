@@ -593,6 +593,7 @@ TRange<double> FGameplayProvider::GetObjectTraceLifetime(uint64 ObjectId) const
 
 TRange<double> FGameplayProvider::GetObjectRecordingLifetime(uint64 ObjectId) const
 {
+	TRACE_CPUPROFILER_EVENT_SCOPE(FGameplayProvider::GetObjectRecordingLifetime);
 	Session.ReadAccessCheck();
 
 	if (const uint64 *FoundIndex = ActiveObjectRecordingLifetimes.Find(ObjectId))
@@ -613,6 +614,11 @@ void FGameplayProvider::ReadViewTimeline(TFunctionRef<void(const IGameplayProvid
 	{
 		Callback(*ViewTimeline);
 	}
+}
+
+double FGameplayProvider::GetRecordingDuration() const
+{
+	return RecordingDuration;
 }
 
 void FGameplayProvider::AppendView(uint64 InPlayerId, double InTime, const FVector& InPosition, const FRotator& InRotation, float InFov, float InAspectRatio)
@@ -676,6 +682,7 @@ void FGameplayProvider::AppendRecordingInfo(uint64 InWorldId, double InProfileTi
 				NewRecordingInfo.RecordingIndex = InRecordingIndex;
 				NewRecordingInfo.FrameIndex = InFrameIndex;
 				NewRecordingInfo.ElapsedTime = InElapsedTime;
+				RecordingDuration = FMath::Max(RecordingDuration,InElapsedTime);
 
 				if (TSharedRef<TraceServices::TPointTimeline<FRecordingInfoMessage>>* ExistingRecording = Recordings.Find(InRecordingIndex))
 				{

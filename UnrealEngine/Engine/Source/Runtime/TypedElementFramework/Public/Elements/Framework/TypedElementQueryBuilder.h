@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Elements/Interfaces/TypedElementDataStorageInterface.h"
 #include "Templates/SubclassOf.h"
+#include "UObject/WeakObjectPtrTemplates.h"
 
 class UScriptStruct;
 class USubsystem;
@@ -189,9 +190,12 @@ namespace TypedElementQueryBuilder
 			Remove
 		};
 
-		template<typename ColumnType>
-		explicit FObserver(EEvent MonitorForEvent);
 		TYPEDELEMENTFRAMEWORK_API FObserver(EEvent MonitorForEvent, const UScriptStruct* MonitoredColumn);
+
+		template<typename ColumnType>
+		static FObserver OnAdd();
+		template<typename ColumnType>
+		static FObserver OnRemove();
 
 		TYPEDELEMENTFRAMEWORK_API FObserver& SetEvent(EEvent MonitorForEvent);
 		TYPEDELEMENTFRAMEWORK_API FObserver& SetMonitoredColumn(const UScriptStruct* MonitoredColumn);
@@ -238,6 +242,8 @@ namespace TypedElementQueryBuilder
 		inline void GetColumnsUnguarded(int32 TypeCount, char** RetrievedAddresses, const TWeakObjectPtr<const UScriptStruct>* ColumnTypes,
 			const ITypedElementDataStorageInterface::EQueryAccessType* AccessTypes) override;
 
+		inline bool HasColumn(const UScriptStruct* ColumnType) const override;
+		
 		inline UObject* GetMutableDependency(const UClass* DependencyClass) override;
 		inline const UObject* GetDependency(const UClass* DependencyClass) override;
 		inline void GetDependencies(TArrayView<UObject*> RetrievedAddresses, TConstArrayView<TWeakObjectPtr<const UClass>> SubsystemTypes,
@@ -253,8 +259,11 @@ namespace TypedElementQueryBuilder
 		inline void RemoveColumns(TypedElementRowHandle Row, TConstArrayView<const UScriptStruct*> ColumnTypes) override;
 		inline void RemoveColumns(TConstArrayView<TypedElementRowHandle> Rows, TConstArrayView<const UScriptStruct*> ColumnTypes) override;
 
-		inline ITypedElementDataStorageInterface::FQueryResult RunQuery(TypedElementQueryHandle Query) override;
-		inline ITypedElementDataStorageInterface::FQueryResult RunSubquery(int32 SubqueryIndex) override;
+		inline TypedElementDataStorage::FQueryResult RunQuery(TypedElementQueryHandle Query) override;
+		inline TypedElementDataStorage::FQueryResult RunSubquery(int32 SubqueryIndex) override;
+		inline TypedElementDataStorage::FQueryResult RunSubquery(int32 SubqueryIndex, TypedElementDataStorage::SubqueryCallbackRef Callback) override;
+		inline TypedElementDataStorage::FQueryResult RunSubquery(int32 SubqueryIndex, TypedElementDataStorage::RowHandle Row,
+			TypedElementDataStorage::SubqueryCallbackRef Callback) override;
 
 		ITypedElementDataStorageInterface::IQueryContext& ParentContext;
 		const ITypedElementDataStorageInterface::FQueryDescription& Description;
@@ -289,11 +298,11 @@ namespace TypedElementQueryBuilder
 		template<typename... TargetTypes>
 		Select& ReadOnly();
 		TYPEDELEMENTFRAMEWORK_API Select& ReadOnly(const UScriptStruct* Target);
-		TYPEDELEMENTFRAMEWORK_API Select& ReadOnly(std::initializer_list<const UScriptStruct*> Targets);
+		TYPEDELEMENTFRAMEWORK_API Select& ReadOnly(TConstArrayView<const UScriptStruct*> Targets);
 		template<typename... TargetTypes>
 		Select& ReadWrite();
 		TYPEDELEMENTFRAMEWORK_API Select& ReadWrite(const UScriptStruct* Target);
-		TYPEDELEMENTFRAMEWORK_API Select& ReadWrite(std::initializer_list<const UScriptStruct*> Targets);
+		TYPEDELEMENTFRAMEWORK_API Select& ReadWrite(TConstArrayView<const UScriptStruct*> Targets);
 
 		TYPEDELEMENTFRAMEWORK_API ITypedElementDataStorageInterface::FQueryDescription&& Compile();
 		TYPEDELEMENTFRAMEWORK_API FSimpleQuery Where();
@@ -317,9 +326,9 @@ namespace TypedElementQueryBuilder
 	};
 
 	template<typename Function>
-	ITypedElementDataStorageInterface::DirectQueryCallback CreateDirectQueryCallbackBinding(Function&& Callback);
+	TypedElementDataStorage::DirectQueryCallback CreateDirectQueryCallbackBinding(Function&& Callback);
 	template<typename Function>
-	ITypedElementDataStorageInterface::DirectQueryCallback CreateSubqueryCallbackBinding(Function&& Callback);
+	TypedElementDataStorage::SubqueryCallback CreateSubqueryCallbackBinding(Function&& Callback);
 
 } // namespace TypedElementQueryBuilder
 

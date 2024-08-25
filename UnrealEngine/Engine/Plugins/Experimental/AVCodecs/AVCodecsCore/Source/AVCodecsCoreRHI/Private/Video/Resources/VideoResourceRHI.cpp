@@ -4,18 +4,24 @@
 
 #include "Video/Resources/VideoResourceCPU.h"
 
-#if PLATFORM_WINDOWS
+#if AVCODECS_USE_D3D
 	#include "ID3D11DynamicRHI.h"
 	#include "ID3D12DynamicRHI.h"
 	#include "D3D12RHI.h"
 	#include "BoundShaderStateCache.h"
 	#include "D3D12ShaderResources.h"
-	#include "Video/Resources/Windows/VideoResourceD3D.h"
+	#include "Video/Resources/D3D/VideoResourceD3D.h"
+#endif 
+#if AVCODECS_USE_VULKAN
+	#include "IVulkanDynamicRHI.h"
+	#include "Video/Resources/Vulkan/VideoResourceVulkan.h"
+#endif
+#if AVCODECS_USE_METAL
+	#include "Video/Resources/Metal/VideoResourceMetal.h"
 #endif
 
-#include "IVulkanDynamicRHI.h"
-#include "Video/Resources/VideoResourceVulkan.h"
 #include "Async/Async.h"
+#include "CoreGlobals.h"
 #include "HAL/Event.h"
 #include "RHIStaticStates.h"
 #include "MediaShaders.h"
@@ -26,10 +32,18 @@
 REGISTER_TYPEID(FVideoContextRHI);
 REGISTER_TYPEID(FVideoResourceRHI);
 
+#define CFSafeRelease(x)                \
+    if (x != nullptr)                   \
+    {                                   \
+        CFRelease(x);                   \
+        x = nullptr;                    \
+    }
+
 FAVLayout FVideoResourceRHI::GetLayoutFrom(TSharedRef<FAVDevice> const& Device, FTextureRHIRef const& Raw)
 {
 	switch (GDynamicRHI->GetInterfaceType())
 	{
+#if AVCODECS_USE_VULKAN
 	case ERHIInterfaceType::Vulkan:
 		{
 			FRHITextureDesc const& Desc = Raw->GetDesc();
@@ -51,7 +65,8 @@ FAVLayout FVideoResourceRHI::GetLayoutFrom(TSharedRef<FAVDevice> const& Device, 
 		}
 		
 		break;
-#if PLATFORM_WINDOWS
+#endif
+#if AVCODECS_USE_D3D
 	case ERHIInterfaceType::D3D11:
 		{
 			// This is a guess because D3D11 doesn't expose the actual allocation size
@@ -92,6 +107,21 @@ FAVLayout FVideoResourceRHI::GetLayoutFrom(TSharedRef<FAVDevice> const& Device, 
 		
 		break;
 #endif
+#if AVCODECS_USE_METAL
+        case ERHIInterfaceType::Metal:
+            {
+                uint32 const Size =  GDynamicRHI->RHIComputeMemorySize(Raw);
+
+                uint32 const BlockSizeX = GPixelFormats[Raw->GetFormat()].BlockSizeX;
+                uint32 const BlockBytes = GPixelFormats[Raw->GetFormat()].BlockBytes;
+                uint32 const NumBlocksX = (Raw->GetSizeX() + BlockSizeX - 1) / BlockSizeX;
+
+                // TODO (Andrew) Actually get the offset, may not be possible
+                return FAVLayout(NumBlocksX * BlockBytes, 0, Size);
+            }
+            
+            break;
+#endif
 	default:
 		break;
 	}
@@ -112,15 +142,16 @@ TSharedPtr<FVideoResourceRHI> FVideoResourceRHI::Create(TSharedPtr<FAVDevice> co
 		FRHITextureCreateDesc TextureDesc = FRHITextureCreateDesc::Create2D(TEXT("AVCodecs Resource"), Descriptor.Width, Descriptor.Height, static_cast<EPixelFormat>(Descriptor.Format));
 
 		TextureDesc.SetClearValue(FClearValueBinding::None);
-		TextureDesc.SetFlags(ETextureCreateFlags::RenderTargetable);
+    	TextureDesc.SetFlags(ETextureCreateFlags::RenderTargetable);
 		TextureDesc.SetInitialState(ERHIAccess::Present);
+
 		TextureDesc.SetNumMips(1);
 
 		if (RHIGetInterfaceType() == ERHIInterfaceType::Vulkan)
 		{
 			TextureDesc.AddFlags(ETextureCreateFlags::External);
 		}
-		else if (RHIGetInterfaceType() == ERHIInterfaceType::D3D11 || RHIGetInterfaceType() == ERHIInterfaceType::D3D12)
+		else
 		{
 			TextureDesc.AddFlags(ETextureCreateFlags::Shared);
 		}
@@ -131,6 +162,11 @@ TSharedPtr<FVideoResourceRHI> FVideoResourceRHI::Create(TSharedPtr<FAVDevice> co
 		}
 
 		TextureDesc.AddFlags(AdditionalFlags);
+        
+        if (Descriptor.BulkData)
+        {
+            TextureDesc.SetBulkData(Descriptor.BulkData);
+        }
 
 		// Unreals support for NV12 asnd P010 is not universally supported so we actually use R8 or G16 under the hood
 		switch (Descriptor.Format)
@@ -157,12 +193,16 @@ TSharedPtr<FVideoResourceRHI> FVideoResourceRHI::Create(TSharedPtr<FAVDevice> co
 			TextureDesc.Extent.X *= 3;
 			Descriptor.RawDescriptor = new FVideoDescriptor(EVideoFormat::G16, TextureDesc.Extent.X, TextureDesc.Extent.Y);
 			break;
+        case EVideoFormat::BGRA:
+			TextureDesc.Format = EPixelFormat::PF_B8G8R8A8;
+			Descriptor.RawDescriptor = new FVideoDescriptor(EVideoFormat::BGRA, TextureDesc.Extent.X, TextureDesc.Extent.Y);
+			break;
 		default:
 			break;
 		}
 
 //TODO-TE THIS IS THE REAL DEAL?
-		return MakeShareable(new FVideoResourceRHI(Device.ToSharedRef(), { GDynamicRHI->RHICreateTexture(TextureDesc), nullptr, 0 }, Descriptor));
+		return MakeShareable(new FVideoResourceRHI(Device.ToSharedRef(), { GDynamicRHI->RHICreateTexture(FRHICommandListExecutor::GetImmediateCommandList(), TextureDesc), nullptr, 0 }, Descriptor));
 	}
 
 	return nullptr;
@@ -172,7 +212,7 @@ FVideoResourceRHI::FVideoResourceRHI(TSharedRef<FAVDevice> const& Device, FRawDa
 	: TVideoResource(Device, GetLayoutFrom(Device, Raw.Texture), OverrideDescriptor)
 	, Raw(Raw)
 {
-#if PLATFORM_WINDOWS
+#if AVCODECS_USE_D3D
 	if (RHIGetInterfaceType() == ERHIInterfaceType::D3D12)
 	{
 		// Create a fence if we did not pass one in
@@ -431,7 +471,7 @@ DLLEXPORT FAVResult FAVExtension::TransformResource(TSharedPtr<FVideoResourceRHI
 	return FAVResult(EAVResult::ErrorMapping, TEXT("Input resource is not valid"), TEXT("RHI"));
 }
 
-#if PLATFORM_WINDOWS
+#if AVCODECS_USE_D3D
 
 template <>
 DLLEXPORT FAVResult FAVExtension::TransformResource(TSharedPtr<FVideoResourceD3D11>& OutResource, TSharedPtr<FVideoResourceRHI> const& InResource)
@@ -494,6 +534,7 @@ DLLEXPORT FAVResult FAVExtension::TransformResource(TSharedPtr<FVideoResourceD3D
 
 #endif
 
+#if AVCODECS_USE_VULKAN
 template <>
 DLLEXPORT FAVResult FAVExtension::TransformResource(TSharedPtr<FVideoResourceVulkan>& OutResource, TSharedPtr<FVideoResourceRHI> const& InResource)
 {
@@ -515,3 +556,92 @@ DLLEXPORT FAVResult FAVExtension::TransformResource(TSharedPtr<FVideoResourceVul
 
 	return FAVResult(EAVResult::ErrorMapping, TEXT("Input resource is not valid"), TEXT("RHI"));
 }
+#endif
+
+#if AVCODECS_USE_METAL
+template <>
+DLLEXPORT FAVResult FAVExtension::TransformResource(TSharedPtr<FVideoResourceMetal>& OutResource, TSharedPtr<FVideoResourceRHI> const& InResource)
+{
+	if (InResource.IsValid())
+	{
+		if (InResource->GetDevice()->HasContext<FVideoContextMetal>())
+		{
+			FTextureRHIRef InResourceTexture = InResource->GetRaw().Texture;
+            if(bool(InResourceTexture->GetDesc().Flags & TexCreate_CPUReadback))
+            {
+                /*
+                 * NOTE (william.belcher): If the texture passed in has was created with 'ETextureCreateFlags::CPUReadback', we can simply copy the raw bytes
+                 * out of the texture. This is the preferred way as it prevents an ~50ms block on the encoding thread
+                 */
+				const FVideoDescriptor& Descriptor = InResource->GetDescriptor();
+            
+            	CFMutableDictionaryRef SourceAttributes = CFDictionaryCreateMutable(kCFAllocatorDefault, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+            	CFDictionarySetValue(SourceAttributes, kCVPixelBufferOpenGLCompatibilityKey, kCFBooleanTrue);
+	
+            	CFDictionaryRef IOSurfaceValue = CFDictionaryCreate(kCFAllocatorDefault, nullptr, nullptr, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+            	CFDictionarySetValue(SourceAttributes, kCVPixelBufferIOSurfacePropertiesKey, IOSurfaceValue);
+	
+            	int64 PixelType = 0;
+            	switch(Descriptor.Format)
+            	{
+            	    case EVideoFormat::BGRA:
+            	        PixelType = kCVPixelFormatType_32BGRA;
+            	        break;
+            	    case EVideoFormat::ABGR10:
+            	        PixelType = kCVPixelFormatType_ARGB2101010LEPacked;
+            	        break;
+            	    default:
+            	        checkNoEntry();
+            	}
+	
+            	CFNumberRef PixelFormat = CFNumberCreate(nullptr, kCFNumberLongType, &PixelType);
+            	CFDictionarySetValue(SourceAttributes, kCVPixelBufferPixelFormatTypeKey, PixelFormat);
+	
+            	CFSafeRelease(IOSurfaceValue);
+            	CFSafeRelease(PixelFormat);
+	
+            	CVPixelBufferRef PixelBuffer;
+            	CVReturn Result = CVPixelBufferCreate(kCFAllocatorDefault, Descriptor.Width, Descriptor.Height, PixelType, SourceAttributes, &PixelBuffer);
+            	if (Result != kCVReturnSuccess)
+            	{
+            	    return FAVResult(EAVResult::Error, TEXT("Failed to create CVPixelBufferRef"), TEXT("RHI"), Result);
+            	}
+            	CFSafeRelease(SourceAttributes);
+
+                Result = CVPixelBufferLockBaseAddress(PixelBuffer, 0);
+                if (Result != kCVReturnSuccess)
+                {
+                    return FAVResult(EAVResult::Error, TEXT("Failed to lock base address"), TEXT("RHI"), Result);
+                }
+
+                // NOTE (belchy06): GetBytes assumes the raw texture has been created with with TexCreate_CPUReadback
+                static_cast<MTL::Texture*>(InResource->GetRaw().Texture->GetNativeResource())->getBytes(reinterpret_cast<uint8*>(CVPixelBufferGetBaseAddressOfPlane(PixelBuffer, 0)), CVPixelBufferGetBytesPerRow(PixelBuffer), MTL::Region(0, 0, Descriptor.Width, Descriptor.Height), 0);
+                CVPixelBufferUnlockBaseAddress(PixelBuffer, 0);
+                
+                OutResource = MakeShared<FVideoResourceMetal>(InResource->GetDevice(),
+                                                              PixelBuffer,
+                                                              InResource->GetLayout());
+
+				CVPixelBufferRelease(PixelBuffer);
+			
+			    return OutResource->Validate();
+            }
+            else
+            {
+                static bool bLogWarning = true;
+				if(bLogWarning)
+				{
+					bLogWarning = false;
+					FAVResult::Log(EAVResult::Warning, TEXT("Unable to transform video resource! Metal RHI requires FVideoResourceRHI textures be created with the ETextureCreateFlags::CPUReadback flag"), TEXT("RHI"));
+				}
+
+				return EAVResult::Error;
+            }
+		}
+
+		return FAVResult(EAVResult::ErrorMapping, TEXT("No Metal context found"), TEXT("RHI"));
+	}
+
+	return FAVResult(EAVResult::ErrorMapping, TEXT("Input resource is not valid"), TEXT("RHI"));
+}
+#endif

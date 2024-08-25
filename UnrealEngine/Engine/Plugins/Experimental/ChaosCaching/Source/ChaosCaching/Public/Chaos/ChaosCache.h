@@ -65,6 +65,8 @@ struct FParticleTransformTrack
 	const float GetDuration() const;
 	const float GetBeginTime() const;
 	const float GetEndTime() const;
+
+	void Compress();
 };
 
 USTRUCT()
@@ -443,6 +445,8 @@ private:
 	// @return Whether or not any particle data was written
 	template<EQueueMode Mode>
 	bool FlushPendingFrames_MainPass(TQueue<FPendingFrameWrite, Mode>& InPendingWrites, bool bCanSimpleCopyChannelData);
+
+	void CompressTracks();
 
 	friend class AChaosCacheManager;
 

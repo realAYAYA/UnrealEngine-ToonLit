@@ -7,6 +7,7 @@
 #include "MuT/AST.h"
 
 #include "MuR/MutableMath.h"
+#include "MuR/Serialisation.h"
 
 
 namespace mu
@@ -17,34 +18,30 @@ namespace mu
 	{
 	public:
 
-		MUTABLE_DEFINE_CONST_VISITABLE()
+		static FNodeType s_type;
 
-	public:
-
-		static NODE_TYPE s_type;
-
-		NodeMeshPtr m_pSource;
-        mat4f m_transform;
+		NodeMeshPtr Source;
+		FMatrix44f Transform;
 
 		//!
 		void Serialise( OutputArchive& arch ) const
 		{
-            uint32_t ver = 0;
+            uint32 ver = 0;
 			arch << ver;
 
-			arch << m_pSource;
-            arch << m_transform;
+			arch << Source;
+            arch << Transform;
 		}
 
 		//!
 		void Unserialise( InputArchive& arch )
 		{
-            uint32_t ver;
+            uint32 ver;
 			arch >> ver;
 			check(ver==0);
 
-			arch >> m_pSource;
-            arch >> m_transform;
+			arch >> Source;
+            arch >> Transform;
 		}
 
 		// NodeMesh::Private interface

@@ -3,23 +3,17 @@
 	"Version": 1,
 	"VersionName": "1.0",
 	"FriendlyName": "Chaos Cloth Editor",
-	"Description": "Editor module accompanying the Chaos Cloth runtime module.",
+	"Description": "Deprecated plugin, please use the Chaos Cloth plugin instead.",
 	"Category": "Physics",
 	"CreatedBy": "Epic Games, Inc.",
 	"CreatedByURL": "https://epicgames.com",
 	"DocsURL": "",
 	"MarketplaceURL": "",
 	"SupportURL": "",
-	"EnabledByDefault": true,
+	"EnabledByDefault": false,
 	"CanContainContent": true,
 	"Installed": false,
-	"Modules": [
-		{
-			"Name": "ChaosClothEditor",
-			"Type": "Editor",
-			"LoadingPhase": "Default"
-		}
-	],
+	"Modules": [],
 	"Plugins": [
 		{
 			"Name": "ChaosCloth",

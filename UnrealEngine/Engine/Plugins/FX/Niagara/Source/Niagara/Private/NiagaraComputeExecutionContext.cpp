@@ -2,7 +2,6 @@
 
 #include "NiagaraComputeExecutionContext.h"
 #include "NiagaraGpuComputeDispatchInterface.h"
-#include "NiagaraGpuComputeDispatch.h"
 #include "NiagaraDataInterface.h"
 #include "NiagaraScript.h"
 #include "NiagaraSystemInstance.h"
@@ -39,21 +38,13 @@ void FNiagaraComputeExecutionContext::Reset(FNiagaraGpuComputeDispatchInterface*
 	);
 }
 
-void FNiagaraComputeExecutionContext::InitParams(UNiagaraScript* InGPUComputeScript, ENiagaraSimTarget InSimTarget)
+void FNiagaraComputeExecutionContext::InitParams(UNiagaraScript* InGPUComputeScript, const FNiagaraSimStageExecutionDataPtr& InSimStageExecData, ENiagaraSimTarget InSimTarget)
 {
 	GPUScript = InGPUComputeScript;
+	SimStageExecData = InSimStageExecData;
 	CombinedParamStore.InitFromOwningContext(InGPUComputeScript, InSimTarget, true);
 	
 	HasInterpolationParameters = GPUScript && GPUScript->GetComputedVMCompilationId().HasInterpolatedParameters();
-
-	if (InGPUComputeScript)
-	{
-		FNiagaraVMExecutableData& VMData = InGPUComputeScript->GetVMExecutableData();
-		if ( VMData.IsValid() )
-		{
-			SimStageInfo = VMData.SimulationStageMetaData;
-		}
-	}
 
 #if DO_CHECK
 	// DI Parameters are the same between all shader permutations so we can just get the first one
@@ -82,7 +73,7 @@ bool FNiagaraComputeExecutionContext::IsOutputStage(FNiagaraDataInterfaceProxy* 
 {
 	if (DIProxy && !DIProxy->SourceDIName.IsNone())
 	{		
-		return SimStageInfo[SimulationStageIndex].OutputDestinations.Contains(DIProxy->SourceDIName);
+		return SimStageExecData->SimStageMetaData[SimulationStageIndex].OutputDestinations.Contains(DIProxy->SourceDIName);
 	}
 	return false;
 }
@@ -91,7 +82,7 @@ bool FNiagaraComputeExecutionContext::IsInputStage(FNiagaraDataInterfaceProxy* D
 {
 	if (DIProxy && !DIProxy->SourceDIName.IsNone())
 	{
-		return SimStageInfo[SimulationStageIndex].InputDataInterfaces.Contains(DIProxy->SourceDIName);
+		return SimStageExecData->SimStageMetaData[SimulationStageIndex].InputDataInterfaces.Contains(DIProxy->SourceDIName);
 	}
 	return false;
 }
@@ -100,7 +91,7 @@ bool FNiagaraComputeExecutionContext::IsIterationStage(FNiagaraDataInterfaceProx
 {
 	if (DIProxy && !DIProxy->SourceDIName.IsNone())
 	{
-		return SimStageInfo[SimulationStageIndex].IterationSourceType == ENiagaraIterationSource::DataInterface && (SimStageInfo[SimulationStageIndex].IterationDataInterface == DIProxy->SourceDIName);
+		return SimStageExecData->SimStageMetaData[SimulationStageIndex].IterationSourceType == ENiagaraIterationSource::DataInterface && (SimStageExecData->SimStageMetaData[SimulationStageIndex].IterationDataInterface == DIProxy->SourceDIName);
 	}
 	return false;
 }
@@ -108,20 +99,20 @@ bool FNiagaraComputeExecutionContext::IsIterationStage(FNiagaraDataInterfaceProx
 FNiagaraDataInterfaceProxyRW* FNiagaraComputeExecutionContext::FindIterationInterface(const TArray<FNiagaraDataInterfaceProxyRW*>& InProxies, uint32 SimulationStageIndex) const
 {
 	// Particle stage
-	if ( SimStageInfo[SimulationStageIndex].IterationSourceType != ENiagaraIterationSource::DataInterface )
+	if (SimStageExecData->SimStageMetaData[SimulationStageIndex].IterationSourceType != ENiagaraIterationSource::DataInterface )
 	{
 		return nullptr;
 	}
 
 	for (FNiagaraDataInterfaceProxyRW* Proxy : InProxies)
 	{
-		if (Proxy->SourceDIName == SimStageInfo[SimulationStageIndex].IterationDataInterface)
+		if (Proxy->SourceDIName == SimStageExecData->SimStageMetaData[SimulationStageIndex].IterationDataInterface)
 		{
 			return Proxy;
 		}
 	}
 
-	UE_LOG(LogNiagara, Verbose, TEXT("FNiagaraComputeExecutionContext::FindIterationInterface could not find IterationInterface %s"), *SimStageInfo[SimulationStageIndex].IterationDataInterface.ToString());
+	UE_LOG(LogNiagara, Verbose, TEXT("FNiagaraComputeExecutionContext::FindIterationInterface could not find IterationInterface %s"), *SimStageExecData->SimStageMetaData[SimulationStageIndex].IterationDataInterface.ToString());
 
 	return nullptr;
 }
@@ -224,7 +215,7 @@ void FNiagaraComputeExecutionContext::ResetInternal(FNiagaraGpuComputeDispatchIn
 
 	if (ComputeDispatchInterface)
 	{
-		static_cast<FNiagaraGpuComputeDispatch*>(ComputeDispatchInterface)->GetGPUInstanceCounterManager().FreeEntry(CountOffset_RT);
+		ComputeDispatchInterface->GetGPUInstanceCounterManager().FreeEntry(CountOffset_RT);
 	}
 
 	CurrentNumInstances_RT = 0;
@@ -254,6 +245,34 @@ void FNiagaraComputeExecutionContext::SetTranslucentDataToRender(FNiagaraDataBuf
 void FNiagaraComputeExecutionContext::SetMultiViewPreviousDataToRender(FNiagaraDataBuffer* InMultiViewPreviousDataToRender)
 {
 	MultiViewPreviousDataToRender = InMultiViewPreviousDataToRender;
+}
+
+int32 FNiagaraComputeExecutionContext::GetConstantBufferSize() const
+{
+	return Align(CombinedParamStore.GetExternalParameterSize(), SHADER_PARAMETER_STRUCT_ALIGNMENT);
+}
+
+uint8* FNiagaraComputeExecutionContext::WriteConstantBufferInstanceData(uint8* InTargetBuffer, FNiagaraComputeInstanceData& InstanceData) const
+{
+	const int32 InterpFactor = HasInterpolationParameters ? 2 : 1;
+
+	InstanceData.ExternalParamDataSize = InterpFactor * GetConstantBufferSize();
+	InstanceData.ExternalParamData = InTargetBuffer;
+
+	const TArray<uint8>& ParameterDataArray = CombinedParamStore.GetParameterDataArray();
+	const int32 SourceDataSize = CombinedParamStore.GetExternalParameterSize();
+	const int32 ConstantBufferSize = GetConstantBufferSize();
+
+	check(SourceDataSize <= ParameterDataArray.Num());
+	FMemory::Memcpy(InstanceData.ExternalParamData, ParameterDataArray.GetData(), SourceDataSize);
+
+	if (HasInterpolationParameters)
+	{
+		check(SourceDataSize + SourceDataSize <= ParameterDataArray.Num());
+		FMemory::Memcpy(InstanceData.ExternalParamData + ConstantBufferSize, ParameterDataArray.GetData() + SourceDataSize, SourceDataSize);
+	}
+
+	return InTargetBuffer + InstanceData.ExternalParamDataSize;
 }
 
 bool FNiagaraComputeInstanceData::IsOutputStage(FNiagaraDataInterfaceProxy* DIProxy, uint32 SimulationStageIndex) const

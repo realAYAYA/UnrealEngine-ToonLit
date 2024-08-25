@@ -16,9 +16,11 @@ public:
 	FDisplayClusterConfiguratorClusterNodeViewModel(UDisplayClusterConfigurationClusterNode* ClusterNode);
 
 	void SetWindowRect(const FDisplayClusterConfigurationRectangle& NewWindowRect);
+	void SetHost(const FString& NewHost);
 
 private:
 	TWeakObjectPtr<UDisplayClusterConfigurationClusterNode> ClusterNodePtr;
 
 	PROPERTY_HANDLE(WindowRect);
+	PROPERTY_HANDLE(Host);
 };

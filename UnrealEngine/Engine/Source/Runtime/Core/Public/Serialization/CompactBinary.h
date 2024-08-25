@@ -535,6 +535,9 @@ inline FCbObjectId::FCbObjectId(const ByteArray& ObjectId)
 	FMemory::Memcpy(Bytes, ObjectId, sizeof(ByteArray));
 }
 
+FGuid			ToGuid(const FCbObjectId& Id);
+FCbObjectId		FromGuid(const FGuid& Id);
+
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 /** A custom compact binary field type with an integer identifier. */
@@ -1422,22 +1425,26 @@ public:
 
 inline FCbObject FCbField::AsObject() &
 {
-	return IsObject() ? FCbObject(AsObjectView(), *this) : FCbObject();
+	const FCbObjectView View = AsObjectView();
+	return !HasError() ? FCbObject(View, *this) : FCbObject();
 }
 
 inline FCbObject FCbField::AsObject() &&
 {
-	return IsObject() ? FCbObject(AsObjectView(), MoveTemp(*this)) : FCbObject();
+	const FCbObjectView View = AsObjectView();
+	return !HasError() ? FCbObject(View, MoveTemp(*this)) : FCbObject();
 }
 
 inline FCbArray FCbField::AsArray() &
 {
-	return IsArray() ? FCbArray(AsArrayView(), *this) : FCbArray();
+	const FCbArrayView View = AsArrayView();
+	return !HasError() ? FCbArray(View, *this) : FCbArray();
 }
 
 inline FCbArray FCbField::AsArray() &&
 {
-	return IsArray() ? FCbArray(AsArrayView(), MoveTemp(*this)) : FCbArray();
+	const FCbArrayView View = AsArrayView();
+	return !HasError() ? FCbArray(View, MoveTemp(*this)) : FCbArray();
 }
 
 inline FSharedBuffer FCbField::AsBinary(const FSharedBuffer& Default) &

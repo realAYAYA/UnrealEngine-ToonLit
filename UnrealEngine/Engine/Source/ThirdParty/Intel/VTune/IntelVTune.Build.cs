@@ -8,7 +8,7 @@ public class IntelVTune : ModuleRules
 	{
 		Type = ModuleType.External;
 
-		string IntelVTunePath = Target.UEThirdPartySourceDirectory + "Intel/VTune/VTune-2019/";
+		string IntelVTunePath = Target.UEThirdPartySourceDirectory + "Intel/VTune/VTune-2023/";
 
 		if (Target.Platform.IsInGroup(UnrealPlatformGroup.Windows))
 		{

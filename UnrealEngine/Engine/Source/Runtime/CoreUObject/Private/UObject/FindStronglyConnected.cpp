@@ -121,7 +121,7 @@ bool FFindStronglyConnected::FindSimpleCycleForComponentInner( TArray<UObject*>&
 		{
 			while (1)
 			{
-				UObject* Out = Stack.Pop(/*bAllowShrinking=*/ false);
+				UObject* Out = Stack.Pop(EAllowShrinking::No);
 				Dest.Add(Out);
 				if (Out == Other)
 				{
@@ -182,7 +182,7 @@ FFindStronglyConnected::NodeInfo* FFindStronglyConnected::StrongConnectInner( UO
 		TArray<UObject*>& Dest = Components[Components.Add(TArray<UObject*>())];
 		while (1)
 		{
-			UObject* Out = Stack.Pop(/*bAllowShrinking=*/ false);
+			UObject* Out = Stack.Pop(EAllowShrinking::No);
 			NodeInfo* OutVal = NodeIndex.Find(Out);
 			OutVal->InStack = false;
 			Dest.Add(Out);

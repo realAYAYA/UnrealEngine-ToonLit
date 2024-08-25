@@ -6,6 +6,7 @@
 #include "Evaluation/MovieSceneEvaluationField.h"
 #include "EntitySystem/BuiltInComponentTypes.h"
 #include "MovieSceneTracksComponentTypes.h"
+#include "Sections/MovieSceneComponentMaterialParameterSection.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MovieSceneMaterialParameterCollectionTrack)
 
@@ -21,7 +22,8 @@ UMovieSceneMaterialParameterCollectionTrack::UMovieSceneMaterialParameterCollect
 
 UMovieSceneSection* UMovieSceneMaterialParameterCollectionTrack::CreateNewSection()
 {
-	UMovieSceneSection* NewSection = Super::CreateNewSection();
+	UMovieSceneSection* NewSection = NewObject<UMovieSceneParameterSection>(this, NAME_None, RF_Transactional);
+	NewSection->SetBlendType(EMovieSceneBlendType::Absolute);
 	NewSection->SetRange(TRange<FFrameNumber>::All());
 	return NewSection;
 }
@@ -54,22 +56,32 @@ bool UMovieSceneMaterialParameterCollectionTrack::PopulateEvaluationFieldImpl(co
 {
 	const FMovieSceneTrackEvaluationField& LocalEvaluationField = GetEvaluationField();
 
-	// Define entities for every entry in our evaluation field
+	// Define entities for the old style parameter sections. ComponentMaterialParameterSections define their own.
 	for (const FMovieSceneTrackEvaluationFieldEntry& Entry : LocalEvaluationField.Entries)
 	{
 		UMovieSceneParameterSection* ParameterSection = Cast<UMovieSceneParameterSection>(Entry.Section);
-		if (!ParameterSection || IsRowEvalDisabled(ParameterSection->GetRowIndex()))
+		UMovieSceneComponentMaterialParameterSection* ComponentMaterialParameterSection = Cast<UMovieSceneComponentMaterialParameterSection>(Entry.Section);
+		if (ParameterSection || ComponentMaterialParameterSection)
 		{
-			continue;
-		}
+			if (IsRowEvalDisabled(Entry.Section->GetRowIndex()))
+			{
+				continue;
+			}
 
-		TRange<FFrameNumber> SectionEffectiveRange = TRange<FFrameNumber>::Intersection(EffectiveRange, Entry.Range);
-		if (!SectionEffectiveRange.IsEmpty())
-		{
-			FMovieSceneEvaluationFieldEntityMetaData SectionMetaData = InMetaData;
-			SectionMetaData.Flags = Entry.Flags;
-
-			ParameterSection->ExternalPopulateEvaluationField(SectionEffectiveRange, SectionMetaData, OutFieldBuilder);
+			TRange<FFrameNumber> SectionEffectiveRange = TRange<FFrameNumber>::Intersection(EffectiveRange, Entry.Range);
+			if (!SectionEffectiveRange.IsEmpty())
+			{
+				FMovieSceneEvaluationFieldEntityMetaData SectionMetaData = InMetaData;
+				SectionMetaData.Flags = Entry.Flags;
+				if (ParameterSection)
+				{
+					ParameterSection->ExternalPopulateEvaluationField(SectionEffectiveRange, SectionMetaData, OutFieldBuilder);
+				}
+				else if (ComponentMaterialParameterSection)
+				{
+					ComponentMaterialParameterSection->ExternalPopulateEvaluationField(SectionEffectiveRange, SectionMetaData, OutFieldBuilder);
+				}
+			}
 		}
 	}
 
@@ -78,7 +90,7 @@ bool UMovieSceneMaterialParameterCollectionTrack::PopulateEvaluationFieldImpl(co
 
 bool UMovieSceneMaterialParameterCollectionTrack::SupportsType(TSubclassOf<UMovieSceneSection> SectionClass) const
 {
-	return SectionClass == UMovieSceneParameterSection::StaticClass();
+	return SectionClass == UMovieSceneComponentMaterialParameterSection::StaticClass() || SectionClass == UMovieSceneParameterSection::StaticClass();
 }
 
 #if WITH_EDITORONLY_DATA

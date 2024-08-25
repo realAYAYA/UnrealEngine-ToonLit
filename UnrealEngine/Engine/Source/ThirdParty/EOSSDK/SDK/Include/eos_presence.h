@@ -71,8 +71,9 @@ EOS_DECLARE_FUNC(EOS_EResult) EOS_Presence_CreatePresenceModification(EOS_HPrese
 EOS_DECLARE_FUNC(void) EOS_Presence_SetPresence(EOS_HPresence Handle, const EOS_Presence_SetPresenceOptions* Options, void* ClientData, const EOS_Presence_SetPresenceCompleteCallback CompletionDelegate);
 
 /**
- * Register to receive notifications when presence changes. If the returned NotificationId is valid, you must call RemoveNotifyOnPresenceChanged when you no longer wish to
- * have your NotificationHandler called
+ * Register to receive notifications when presence changes.
+ * @note If the returned NotificationId is valid, you must call EOS_Presence_RemoveNotifyOnPresenceChanged when you no longer wish to have your NotificationHandler called.
+ *
  *
  * @param ClientData Data the is returned to when NotificationHandler is invoked
  * @param NotificationHandler The callback to be fired when a presence change occurs
@@ -92,7 +93,7 @@ EOS_DECLARE_FUNC(void) EOS_Presence_RemoveNotifyOnPresenceChanged(EOS_HPresence 
 
 /**
  * Register to receive notifications when a user accepts a join game option via the social overlay.
- * @note must call RemoveNotifyJoinGameAccepted to remove the notification
+ * @note If the returned NotificationId is valid, you must call EOS_Presence_RemoveNotifyJoinGameAccepted when you no longer wish to have your NotificationHandler called.
  *
  * @param Options Structure containing information about the request.
  * @param ClientData Arbitrary data that is passed back to you in the CompletionDelegate.

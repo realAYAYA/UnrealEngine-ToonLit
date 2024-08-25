@@ -59,10 +59,32 @@ UWidgetBlueprintGeneratedClass* FWidgetBlueprintCompilerContext::FCreateVariable
 	return Context.NewWidgetBlueprintClass;
 }
 
+UWidgetBlueprintGeneratedClass* FWidgetBlueprintCompilerContext::FCreateVariableContext::GetGeneratedClass() const
+{
+	return Context.NewWidgetBlueprintClass;
+}
+
 
 EKismetCompileType::Type FWidgetBlueprintCompilerContext::FCreateVariableContext::GetCompileType() const
 {
 	return Context.CompileOptions.CompileType;
+}
+
+
+//////////////////////////////////////////////////////////////////////////
+// FWidgetBlueprintCompiler::FCreateFunctionContext
+FWidgetBlueprintCompilerContext::FCreateFunctionContext::FCreateFunctionContext(FWidgetBlueprintCompilerContext& InContext)
+	: Context(InContext)
+{}
+
+void FWidgetBlueprintCompilerContext::FCreateFunctionContext::AddGeneratedFunctionGraph(UEdGraph* Graph) const
+{
+	Context.GeneratedFunctionGraphs.Add(Graph);
+}
+
+UWidgetBlueprintGeneratedClass* FWidgetBlueprintCompilerContext::FCreateFunctionContext::GetGeneratedClass() const
+{
+	return Context.NewWidgetBlueprintClass;
 }
 
 
@@ -159,9 +181,9 @@ UEdGraphSchema_K2* FWidgetBlueprintCompilerContext::CreateSchema()
 
 void FWidgetBlueprintCompilerContext::CreateFunctionList()
 {
-	UWidgetBlueprintExtension::ForEachExtension(WidgetBlueprint(), [this](UWidgetBlueprintExtension* InExtension)
+	UWidgetBlueprintExtension::ForEachExtension(WidgetBlueprint(), [Self = this](UWidgetBlueprintExtension* InExtension)
 		{
-			InExtension->CreateFunctionList();
+			InExtension->CreateFunctionList(FCreateFunctionContext(*Self));
 		});
 
 	Super::CreateFunctionList();
@@ -452,6 +474,11 @@ void FWidgetBlueprintCompilerContext::SaveSubObjectsFromCleanAndSanitizeClass(FS
 			SubObjectsToSave.AddObject(CDONamedSlotBinding.Content);
 		}
 	}
+
+	UWidgetBlueprintExtension::ForEachExtension(WidgetBlueprint(), [&SubObjectsToSave, LocalClass = NewWidgetBlueprintClass](UWidgetBlueprintExtension* InExtension)
+		{
+			SubObjectsToSave.AddObjects(InExtension->SaveSubObjectsFromCleanAndSanitizeClass(LocalClass));
+		});
 }
 
 void FWidgetBlueprintCompilerContext::CreateClassVariablesFromBlueprint()
@@ -478,15 +505,40 @@ void FWidgetBlueprintCompilerContext::CreateClassVariablesFromBlueprint()
 		Widgets = WidgetBPToScan->GetAllSourceWidgets();
 		if (Widgets.Num() != 0)
 		{
-			// We found widgets.
+			// We found widgets. Stop search, but still check if we have a parent for bind widget validation
+			UWidgetBlueprint* ParentWidgetBP = WidgetBPToScan->ParentClass && WidgetBPToScan->ParentClass->ClassGeneratedBy
+				? Cast<UWidgetBlueprint>(WidgetBPToScan->ParentClass->ClassGeneratedBy)
+				: nullptr;
+
+			if (ParentWidgetBP)
+			{
+				TArray<UWidget*> ParentOwnedWidgets = ParentWidgetBP->GetAllSourceWidgets();
+				ParentOwnedWidgets.Sort([](const UWidget& Lhs, const UWidget& Rhs) { return Rhs.GetFName().LexicalLess(Lhs.GetFName()); });
+
+				for (UWidget* ParentOwnedWidget : ParentOwnedWidgets)
+				{
+					// Look in the Parent class properties to find a property with the BindWidget meta tag of the same name and Type.
+					FObjectPropertyBase* ExistingProperty = CastField<FObjectPropertyBase>(ParentClass->FindPropertyByName(ParentOwnedWidget->GetFName()));
+					if (ExistingProperty &&
+						FWidgetBlueprintEditorUtils::IsBindWidgetProperty(ExistingProperty) &&
+						ParentOwnedWidget->IsA(ExistingProperty->PropertyClass))
+					{
+						ParentWidgetToBindWidgetMap.Add(ParentOwnedWidget, ExistingProperty);
+					}
+				}
+			}
+
 			break;
 		}
+
 		// We don't want to create variables for widgets that are in a parent blueprint. They will be created at the Parent compilation.
 		// But we want them to be added to the Member variable map for validation of the BindWidget property
 		bSkipVariableCreation = true;
 		
 		// Get the parent WidgetBlueprint
-		WidgetBPToScan = WidgetBPToScan->ParentClass && WidgetBPToScan->ParentClass->ClassGeneratedBy ? Cast<UWidgetBlueprint>(WidgetBPToScan->ParentClass->ClassGeneratedBy):nullptr;
+		WidgetBPToScan = WidgetBPToScan->ParentClass && WidgetBPToScan->ParentClass->ClassGeneratedBy 
+			? Cast<UWidgetBlueprint>(WidgetBPToScan->ParentClass->ClassGeneratedBy)
+			: nullptr;
 	}
 
 	// Sort the widgets alphabetically
@@ -918,6 +970,7 @@ void FWidgetBlueprintCompilerContext::FinishCompilingClass(UClass* Class)
 
 		// Add all the names of the named slot widgets to the slot names structure.
 		{
+			TArray<FName> NamedSlotsWithContentInSameTree;
 		#if WITH_EDITOR
 			BPGClass->NamedSlotsWithID.Reset();
 		#endif
@@ -939,6 +992,13 @@ void FWidgetBlueprintCompilerContext::FinishCompilingClass(UClass* Class)
 						{
 							BPGClass->InstanceNamedSlots.Add(Widget->GetFName());
 						}
+
+						// A namedslot whose content is in the same blueprint class is treated as a regular panel widget.
+						// We need to keep track of these to later remove them from the available namedslots list.
+						if (NamedSlot->GetChildrenCount() > 0)
+						{
+							NamedSlotsWithContentInSameTree.Add(NamedSlot->GetFName());
+						}
 					}
 				});
 				
@@ -953,6 +1013,12 @@ void FWidgetBlueprintCompilerContext::FinishCompilingClass(UClass* Class)
 				// If we find content for this slot, remove it from the available set.
 				BPGClass->AvailableNamedSlots.Remove(SlotName);
 			});
+
+			// Remove any named slots with content in the same widget tree from the available slots.
+			for (const FName& NamedSlotWithContent : NamedSlotsWithContentInSameTree)
+			{
+				BPGClass->AvailableNamedSlots.Remove(NamedSlotWithContent);
+			}
 
 			// Remove any available subclass named slots that are marked as instance named slot.
 			for (const FName& InstanceNamedSlot : BPGClass->InstanceNamedSlots)
@@ -1045,6 +1111,13 @@ void FWidgetBlueprintCompilerContext::FinishCompilingClass(UClass* Class)
 				const FText IncorrectWidgetTypeError = LOCTEXT("IncorrectWidgetTypes", "The widget @@ is of type @@, but the bind widget property is of type @@.");
 
 				UWidget* const* Widget = WidgetToMemberVariableMap.FindKey(WidgetProperty);
+
+				// If at first we don't find the binding, search the parent binding map
+				if (!Widget)
+				{
+					Widget = ParentWidgetToBindWidgetMap.FindKey(WidgetProperty);
+				}
+
 				if (!Widget)
 				{
 					if (bIsOptional)
@@ -1118,6 +1191,8 @@ void FWidgetBlueprintCompilerContext::FinishCompilingClass(UClass* Class)
 			}
 		}
 	}
+
+	BPGClass->bCanCallInitializedWithoutPlayerContext = WidgetBP->bCanCallInitializedWithoutPlayerContext;
 
 	Super::FinishCompilingClass(Class);
 
@@ -1196,6 +1271,7 @@ void FWidgetBlueprintCompilerContext::OnPostCDOCompiled(const UObject::FPostCDOC
 
 	WidgetToMemberVariableMap.Empty();
 	WidgetAnimToMemberVariableMap.Empty();
+	ParentWidgetToBindWidgetMap.Empty();
 
 	UWidgetBlueprintGeneratedClass* WidgetClass = NewWidgetBlueprintClass;
 	UWidgetBlueprint* WidgetBP = WidgetBlueprint();

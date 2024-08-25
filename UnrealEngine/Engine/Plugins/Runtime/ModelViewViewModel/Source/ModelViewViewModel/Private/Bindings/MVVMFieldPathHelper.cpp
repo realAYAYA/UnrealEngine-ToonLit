@@ -491,6 +491,32 @@ TValueOrError<UObject*, void> EvaluateObjectProperty(const FFieldContext& InSour
 	}
 }
 
+TValueOrError<const UStruct*, void> GetFieldAsContainer(const UE::MVVM::FMVVMConstFieldVariant Field)
+{
+	const FProperty* PropertyToTest = nullptr;
+	if (Field.IsProperty())
+	{
+		PropertyToTest = Field.GetProperty();
+	}
+	else if (Field.IsFunction())
+	{
+		PropertyToTest = BindingHelper::GetReturnProperty(Field.GetFunction());
+	}
+
+	if (PropertyToTest)
+	{
+		if (const FObjectPropertyBase* ObjectProperty = CastField<const FObjectPropertyBase>(PropertyToTest))
+		{
+			return MakeValue(ObjectProperty->PropertyClass);
+		}
+		else if (const FStructProperty* StructProperty = CastField<const FStructProperty>(PropertyToTest))
+		{
+			return MakeValue(StructProperty->Struct);
+		}
+	}
+	return MakeError();
+}
+
 } // namespace
 
 #undef LOCTEXT_NAMESPACE

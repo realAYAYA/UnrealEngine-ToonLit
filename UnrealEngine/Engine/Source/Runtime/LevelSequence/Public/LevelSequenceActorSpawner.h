@@ -12,6 +12,6 @@ public:
 
 	// IMovieSceneObjectSpawner interface
 	LEVELSEQUENCE_API virtual UClass* GetSupportedTemplateType() const override;
-	LEVELSEQUENCE_API virtual UObject* SpawnObject(FMovieSceneSpawnable& Spawnable, FMovieSceneSequenceIDRef TemplateID, IMovieScenePlayer& Player) override;
+	LEVELSEQUENCE_API virtual UObject* SpawnObject(FMovieSceneSpawnable& Spawnable, FMovieSceneSequenceIDRef TemplateID, TSharedRef<const UE::MovieScene::FSharedPlaybackState> SharedPlaybackState) override;
 	LEVELSEQUENCE_API virtual void DestroySpawnedObject(UObject& Object) override;
 };

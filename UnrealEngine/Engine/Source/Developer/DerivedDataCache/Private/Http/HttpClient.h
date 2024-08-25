@@ -146,6 +146,9 @@ struct FHttpConnectionPoolParams final
 	/** Minimum number of concurrent connections maintained by the pool for reuse. Use 0 for the default limit. */
 	uint32 MinConnections = 0;
 
+	/** Maximum number of concurrent requests in flight for a connection when multiplexing. Use 0 for the default limit. */
+	uint32 MaxRequestsPerConnection = 0;
+
 	/** Allow requests to send async using the pool. Requests will block on execution when this is disabled. */
 	bool bAllowAsync = true;
 };
@@ -204,6 +207,9 @@ struct FHttpClientParams final
 	bool bFollow302Post : 1;
 	bool bFollow303Post : 1;
 
+	/** Avoid use of configured proxy on the client. */
+	bool bBypassProxy : 1;
+
 	/** Verbose logging for requests created by the client. */
 	bool bVerbose : 1;
 
@@ -212,6 +218,7 @@ struct FHttpClientParams final
 		, bFollow301Post(false)
 		, bFollow302Post(false)
 		, bFollow303Post(false)
+		, bBypassProxy(false)
 		, bVerbose(false)
 	{
 	}

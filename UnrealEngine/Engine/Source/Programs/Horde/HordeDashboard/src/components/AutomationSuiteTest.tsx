@@ -56,6 +56,7 @@ class SuiteTestHandler {
       this.events = [];
       this.jobId = undefined;
       this.stepId = undefined;
+      this.artifactV2Id = undefined;
    }
 
    get jobArtifacts(): ArtifactData[] | undefined {
@@ -65,6 +66,22 @@ class SuiteTestHandler {
 
       const key = this.jobId + this.stepId;
       return this.artifacts.get(key);
+   }
+
+   getArtifactImagePath(referencePath: string) {
+
+      const artifactName = referencePath.replace(/\\/g, '/');
+
+      if (this.artifactV2Id) {
+         return `${backend.serverUrl}/api/v2/artifacts/${this.artifactV2Id}/file?path=Engine/Programs/AutomationTool/Saved/Logs/RunUnreal/${encodeURIComponent(referencePath)}&inline=true`;
+      } 
+
+      const artifact = this.jobArtifacts!.find(a => a.name.indexOf(artifactName) > -1);
+      if (artifact) {
+         return `${backend.serverUrl}/api/v1/artifacts/${artifact.id}/download?Code=${artifact.code}`;         
+      } 
+      return undefined;
+  
    }
 
    getSuiteTest(metaId: string) {
@@ -162,10 +179,21 @@ class SuiteTestHandler {
          let needArtifacts = !!this.events.find(e => e.Tag === EventTag.ImageComparison);
 
          if (needArtifacts) {
-            const key = this.jobId + this.stepId;
-            if (!this.artifacts.get(key)) {
-               const artifacts = await backend.getJobArtifacts(this.jobId, this.stepId);
-               this.artifacts.set(key, artifacts);
+                        
+            if (!this.artifactV2Id) {                              
+               const v = await backend.getJobArtifactsV2(undefined, [`job:${this.jobId}/step:${this.stepId}`]);               
+               const av2 = v?.artifacts.find(a => a.type === "step-saved")
+               if (av2?.id) {
+                  this.artifactV2Id = av2.id;
+               }
+            }
+
+            if (!this.artifactV2Id) {
+               const key = this.jobId + this.stepId;
+               if (!this.artifacts.get(key)) {                                    
+                  const artifacts = await backend.getJobArtifacts(this.jobId, this.stepId);                  
+                  this.artifacts.set(key, artifacts);                     
+               }   
             }
          }
       }
@@ -244,6 +272,7 @@ class SuiteTestHandler {
    jobId?: string;
    stepId?: string;
    artifacts: Map<string, ArtifactData[]> = new Map();
+   artifactV2Id?: string;
    events: TestEvent[] = [];
 
 }
@@ -278,23 +307,19 @@ const EventPanel: React.FC<{ handler: SuiteTestHandler }> = observer(({ handler 
          const oa = order.get(a.Tag) ?? -1;
          const ob = order.get(b.Tag) ?? -1;
          return oa - ob;
-      });
+      });      
 
-      if (e.Tag === EventTag.ImageComparison && handler.jobArtifacts?.length && imageArtifacts?.length) {
+      if (e.Tag === EventTag.ImageComparison && (handler.artifactV2Id || handler.jobArtifacts?.length) && imageArtifacts?.length) {         
 
          imageArtifacts.forEach(ta => {
 
             if (ta.Tag !== ArtifactTag.Approved && ta.Tag !== ArtifactTag.Unapproved && ta.Tag !== ArtifactTag.Difference) {
                return;
             }
-
-            const artifactName = ta.ReferencePath.replace(/\\/g, '/');
-            const artifact = handler.jobArtifacts!.find(a => a.name.indexOf(artifactName) > -1);
-            if (artifact) {
-               const imageLink = `${backend.serverUrl}/api/v1/artifacts/${artifact.id}/download?Code=${artifact.code}`;
+            
+            const imageLink = handler.getArtifactImagePath(ta.ReferencePath);         
+            if (imageLink) {
                artifactMap.set(ta.ReferencePath, imageLink);
-            } else {
-               console.error(`Missing artifact ${artifactName}`);
             }
          })
       }

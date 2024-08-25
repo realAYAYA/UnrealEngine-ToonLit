@@ -46,7 +46,7 @@ bool GSlateEnableRenderWithLocalTransform = true;
 FAutoConsoleVariableRef CVarGlateEnableRenderWithLocalTransform(
 	TEXT("Slate.EnableRetainedRenderingWithLocalTransform"),
 	GSlateEnableRenderWithLocalTransform,
-	TEXT("Whether to render with the local transform or the one passed down from the parent widget.")
+	TEXT("This console variable is no longer useful, as the SRetainerWidget render bugs workedaround by it have been fixed. It will be removed.")
 );
 
 static bool IsRetainedRenderingEnabled()
@@ -211,12 +211,12 @@ void SRetainerWidget::Construct(const FArguments& InArgs)
 
 	bEnableRetainedRenderingDesire = true;
 	bEnableRetainedRendering = false;
-	bEnableRenderWithLocalTransform = InArgs._RenderWithLocalTransform;
 	SetVolatilePrepass(bEnableRetainedRendering);
 
 #if WITH_EDITOR
 	bIsDesignTime = false;
 	bShowEffectsInDesigner = true;
+	bWarnOnInvalidSize = InArgs._bWarnOnInvalidSize;
 #endif // WITH_EDITOR
 
 	RefreshRenderingMode();
@@ -502,13 +502,26 @@ SRetainerWidget::EPaintRetainedContentResult SRetainerWidget::PaintRetainedConte
 			if (!bInvalidSizeLogged)
 			{
 				bInvalidSizeLogged = true;
+
+				const bool bEnableWarnOnInvalidSize =
+#if WITH_EDITOR
+					bWarnOnInvalidSize;
+#else
+					true;
+#endif
 				if (bTextureIsTooLarge)
 				{
-					UE_LOG(LogUMG, Warning, TEXT("The requested size for SRetainerWidget is too large. W:%i H:%i"), RenderTargetWidth, RenderTargetHeight);
+					if (bEnableWarnOnInvalidSize)
+					{
+						UE_LOG(LogUMG, Warning, TEXT("The requested size for SRetainerWidget is too large. W:%i H:%i"), RenderTargetWidth, RenderTargetHeight);
+					}
 				}
 				else
 				{
-					UE_LOG(LogUMG, Warning, TEXT("The requested size for SRetainerWidget is 0. W:%i H:%i"), RenderTargetWidth, RenderTargetHeight);
+					if (bEnableWarnOnInvalidSize)
+					{
+						UE_LOG(LogUMG, Warning, TEXT("The requested size for SRetainerWidget is 0. W:%i H:%i"), RenderTargetWidth, RenderTargetHeight);
+					}
 				}
 			}
 			return bTextureIsTooLarge ? EPaintRetainedContentResult::TextureSizeTooBig : EPaintRetainedContentResult::TextureSizeZero;
@@ -550,6 +563,17 @@ SRetainerWidget::EPaintRetainedContentResult SRetainerWidget::PaintRetainedConte
 				SurfaceBrush.ImageSize = DrawSize;
 
 				WidgetRenderer->ViewOffset = -ViewOffset;
+				WidgetRenderer->SetIsPrepassNeeded(false);
+
+				FVector2f WindowSize(RenderSize);
+				SWindow* PaintWindow = Context.WindowElementList->GetPaintWindow();
+				if (PaintWindow)
+				{
+					const FVector2f ViewportSize = PaintWindow->GetViewportSize();
+					WindowSize.X = FMath::Max(WindowSize.X, ViewportSize.X);
+					WindowSize.Y = FMath::Max(WindowSize.Y, ViewportSize.Y);
+				}
+				VirtualWindow->Resize(WindowSize);
 
 				bool bRepaintedWidgets = WidgetRenderer->DrawInvalidationRoot(VirtualWindow, RenderTarget, *this, Context, GDeferRetainedRenderingRenderThread != 0);
 				bRenderRequested = false;
@@ -655,8 +679,14 @@ int32 SRetainerWidget::OnPaint(const FPaintArgs& Args, const FGeometry& Allotted
 				);
 			}
 
+			const bool bInheritedHittestability = Args.GetInheritedHittestability();
+			const bool bOutgoingHittestability = bInheritedHittestability && GetVisibility().AreChildrenHitTestVisible();
+
 			// add our widgets to the root hit test grid
-			Args.GetHittestGrid().AddGrid(HittestGrid);
+			if (bOutgoingHittestability)
+			{
+				Args.GetHittestGrid().AddGrid(HittestGrid);
+			}
 
 			return GetCachedMaxLayerId();
 		}
@@ -690,6 +720,10 @@ bool SRetainerWidget::CustomPrepass(float LayoutScaleMultiplier)
 {
 	if (bEnableRetainedRendering)
 	{
+		if (NeedsPrepass())
+		{
+			SetNeedsSlowPath(true);
+		}
 		ProcessInvalidation();
 		if (NeedsSlowPath())
 		{
@@ -711,15 +745,10 @@ TSharedRef<SWidget> SRetainerWidget::GetRootWidget()
 
 int32 SRetainerWidget::PaintSlowPath(const FSlateInvalidationContext& Context)
 {
-	if (bEnableRenderWithLocalTransform && GSlateEnableRenderWithLocalTransform)
-	{
-		FGeometry OriginalPaintSpaceGeometry = GetPaintSpaceGeometry();
-		FSlateRenderTransform SimplifiedRenderTransform(OriginalPaintSpaceGeometry.GetAccumulatedRenderTransform().GetMatrix().GetScale(), OriginalPaintSpaceGeometry.GetAccumulatedRenderTransform().GetTranslation());
-		const FGeometry NewPaintSpaceGeometry = FGeometry::MakeRoot(OriginalPaintSpaceGeometry.GetLocalSize(), FSlateLayoutTransform()).MakeChild(SimplifiedRenderTransform, FVector2D::ZeroVector);
-		return SCompoundWidget::OnPaint(*Context.PaintArgs, NewPaintSpaceGeometry, Context.CullingRect, *Context.WindowElementList, Context.IncomingLayerId, Context.WidgetStyle, Context.bParentEnabled);
-	}
-	else
-	{
-		return SCompoundWidget::OnPaint(*Context.PaintArgs, GetPaintSpaceGeometry(), Context.CullingRect, *Context.WindowElementList, Context.IncomingLayerId, Context.WidgetStyle, Context.bParentEnabled);
-	}
+	const FGeometry& OriginalPaintSpaceGeometry = GetPaintSpaceGeometry();
+	FSlateRenderTransform SimplifiedRenderTransform(OriginalPaintSpaceGeometry.GetAccumulatedRenderTransform().GetMatrix().GetScale(), OriginalPaintSpaceGeometry.GetAccumulatedRenderTransform().GetTranslation());
+	FTransform2D ScalePosTransform(OriginalPaintSpaceGeometry.Scale, OriginalPaintSpaceGeometry.AbsolutePosition);
+	SimplifiedRenderTransform = Concatenate(SimplifiedRenderTransform, Inverse(ScalePosTransform));
+	const FGeometry NewPaintSpaceGeometry = FGeometry::MakeRoot(OriginalPaintSpaceGeometry.GetLocalSize(), FSlateLayoutTransform(OriginalPaintSpaceGeometry.Scale, OriginalPaintSpaceGeometry.AbsolutePosition)).MakeChild(SimplifiedRenderTransform, FVector2D::ZeroVector);
+	return SCompoundWidget::OnPaint(*Context.PaintArgs, NewPaintSpaceGeometry, Context.CullingRect, *Context.WindowElementList, Context.IncomingLayerId, Context.WidgetStyle, Context.bParentEnabled);
 }

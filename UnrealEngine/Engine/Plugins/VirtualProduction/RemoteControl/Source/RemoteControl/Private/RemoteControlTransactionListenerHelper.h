@@ -22,7 +22,7 @@ public:
 	 * @param InDelegateToBroadcast Multicast delegate to broadcast
 	 * @param InOrderedArgs Ordered arguments that should be passed to the MulticastDelegate
 	 */
-	FRCTransactionListenerHelper(ERCTransaction::Type InType, const FGuid& PresetGuid, TMulticastDelegate<void(CallbackTypeArgs...)> InDelegateToBroadcast, CallbackTypeArgs... InOrderedArgs)
+	FRCTransactionListenerHelper(ERCTransaction::Type InType, const FGuid& PresetGuid, TMulticastDelegate<void(CallbackTypeArgs...)>& InDelegateToBroadcast, CallbackTypeArgs... InOrderedArgs)
 	{
 #if WITH_EDITOR
 		if (!IRemoteControlModule::Get().IsPresetTransient(PresetGuid))

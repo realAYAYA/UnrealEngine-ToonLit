@@ -13,7 +13,7 @@
 #include "Interfaces/ITargetPlatformManagerModule.h"
 #include "Materials/MaterialInterface.h"
 #include "MaterialShared.h"
-#include "MeshDescription.h"
+#include "Misc/App.h"
 #include "Misc/ScopeRWLock.h"
 #include "PhysicsEngine/PhysicsAsset.h"
 #include "Serialization/ObjectAndNameAsStringProxyArchive.h"
@@ -27,7 +27,9 @@ static bool GOnDemandCachedAssetLoading = true;
 static FAutoConsoleVariableRef COnDemandCachedAssetLoading(
 	TEXT("USD.OnDemandCachedAssetLoading"),
 	GOnDemandCachedAssetLoading,
-	TEXT("When true will cause the USD Asset Cache to only load cached UObjects from disk once they are needed, regardless of when the actual Asset Cache asset itself is loaded."));
+	TEXT("When true will cause the USD Asset Cache to only load cached UObjects from disk once they are needed, regardless of when the actual Asset "
+		 "Cache asset itself is loaded.")
+);
 
 static int32 GCurrentCacheVersion = 1;
 static int32 GCurrentAssetInfoVersion = 2;
@@ -43,7 +45,12 @@ namespace UE::AssetCache::Private
 			return Result;
 		}
 
-		if (UObjectRedirector* RenamedClassRedirector = FindFirstObject<UObjectRedirector>(ClassName, EFindFirstObjectOptions::None, ELogVerbosity::Warning, TEXT("USDAssetCache2")))
+		if (UObjectRedirector* RenamedClassRedirector = FindFirstObject<UObjectRedirector>(
+				ClassName,
+				EFindFirstObjectOptions::None,
+				ELogVerbosity::Warning,
+				TEXT("USDAssetCache2")
+			))
 		{
 			return CastChecked<UClass>(RenamedClassRedirector->DestinationObject);
 		}
@@ -57,7 +64,14 @@ namespace UE::AssetCache::Private
 		{
 			return false;
 		}
+
+		// Note we may fail to find a class even if the name is correct if we're running this on
+		// engine exit
 		UClass* AssetClass = FindClass(ClassName);
+		if (!AssetClass)
+		{
+			return false;
+		}
 
 		static TArray<const UClass*> AllowedPersistentClasses = {
 			UTexture2D::StaticClass(),
@@ -65,8 +79,7 @@ namespace UE::AssetCache::Private
 			UStaticMesh::StaticClass(),
 			UPhysicsAsset::StaticClass(),
 			USkeleton::StaticClass(),
-			USkeletalMesh::StaticClass()
-		};
+			USkeletalMesh::StaticClass()};
 
 		for (const UClass* AllowedClass : AllowedPersistentClasses)
 		{
@@ -94,7 +107,7 @@ namespace UE::AssetCache::Private
 				return static_cast<uint64>(Texture->Source.GetSizeOnDisk());
 			}
 			else
-#endif // WITH_EDITOR
+#endif	  // WITH_EDITOR
 			{
 				// TODO: Try doing this without calling GetPlatformData() if this is ever a speed bottleneck,
 				// as apparently that can stall.
@@ -102,11 +115,7 @@ namespace UE::AssetCache::Private
 				if (FTexturePlatformData* PlatformData = Texture->GetPlatformData())
 				{
 					const uint32 MipCount = 1;
-					return GPixelFormats[PlatformData->PixelFormat].Get2DTextureSizeInBytes(
-						PlatformData->SizeX,
-						PlatformData->SizeY,
-						MipCount
-					);
+					return GPixelFormats[PlatformData->PixelFormat].Get2DTextureSizeInBytes(PlatformData->SizeX, PlatformData->SizeY, MipCount);
 				}
 			}
 		}
@@ -116,7 +125,7 @@ namespace UE::AssetCache::Private
 
 	// Extends FObjectAndNameAsStringProxyArchive to support FLazyObjectPtr
 	// Copied from FSnapshotCustomArchive
-	struct FArchiveObjectPtrAsStringWrapper: public FObjectAndNameAsStringProxyArchive
+	struct FArchiveObjectPtrAsStringWrapper : public FObjectAndNameAsStringProxyArchive
 	{
 		FArchiveObjectPtrAsStringWrapper(FArchive& InInnerArchive)
 			: FObjectAndNameAsStringProxyArchive(InInnerArchive, false)
@@ -176,7 +185,7 @@ namespace UE::AssetCache::Private
 	class FAssetCacheObjectWriter final : public FObjectWriter
 	{
 	public:
-		FAssetCacheObjectWriter(UObject& Object, TArray< uint8 >& Bytes)
+		FAssetCacheObjectWriter(UObject& Object, TArray<uint8>& Bytes)
 			: FObjectWriter(Bytes)
 		{
 			SetIsLoading(false);
@@ -189,7 +198,7 @@ namespace UE::AssetCache::Private
 	class FAssetCacheObjectReader final : public FObjectReader
 	{
 	public:
-		FAssetCacheObjectReader(UObject& Object, const TArray< uint8 >& Bytes)
+		FAssetCacheObjectReader(UObject& Object, const TArray<uint8>& Bytes)
 			: FObjectReader(Bytes)
 		{
 			SetIsLoading(true);
@@ -212,7 +221,8 @@ namespace UE::AssetCache::Private
 			FObjectDependencyAnalyzer(UObject* InSourceObject, const TSet<UObject*>& InValidObjects)
 				: SourceObject(InSourceObject)
 				, ValidObjects(InValidObjects)
-			{ }
+			{
+			}
 
 			virtual FArchive& operator<<(UObject*& Obj) override
 			{
@@ -238,8 +248,8 @@ namespace UE::AssetCache::Private
 			TSet<UObject*> ConsumerObjects;
 		};
 
-		FAssetCacheObjectWriter Writer{ *Object, Buffer };
-		FArchiveObjectPtrAsStringWrapper Ar{ Writer };
+		FAssetCacheObjectWriter Writer{*Object, Buffer};
+		FArchiveObjectPtrAsStringWrapper Ar{Writer};
 
 		// Transfer over whether we're cooking or not, but otherwise leave at the default settings, as that is
 		// how we'll try to deserialize on the other end, which is potentially at runtime
@@ -252,7 +262,7 @@ namespace UE::AssetCache::Private
 		ensure(!Object->IsEditorOnly() || !Ar.IsCooking());
 
 		// Collect sub-objects depending on input object including nested objects
-		TArray< UObject* > SubObjectsArray;
+		TArray<UObject*> SubObjectsArray;
 		GetObjectsWithOuter(Object, SubObjectsArray, /*bIncludeNestedObjects = */ true);
 		TSet<UObject*> AllowedSubObjectsSet(SubObjectsArray);
 
@@ -271,7 +281,7 @@ namespace UE::AssetCache::Private
 		// Sort array of sub-objects based on their inter-dependency
 		{
 			// Create and initialize graph of dependency between sub-objects
-			TMap< UObject*, TSet<UObject*> > SubObjectDependencyGraph;
+			TMap<UObject*, TSet<UObject*>> SubObjectDependencyGraph;
 			SubObjectDependencyGraph.Reserve(SubObjectsArray.Num());
 
 			// Build graph of dependency: each entry contains the set of sub-objects to create before itself.
@@ -327,16 +337,13 @@ namespace UE::AssetCache::Private
 			FilteredSubObjects.Reserve(SubObjectsArray.Num());
 			for (UObject* SubObject : SubObjectsArray)
 			{
-				if (SubObject &&
-					!SubObject->HasAnyFlags(RF_DefaultSubObject) &&
-					(!SubObject->IsEditorOnly() || !Ar.IsCooking()))
+				if (SubObject && !SubObject->HasAnyFlags(RF_DefaultSubObject) && (!SubObject->IsEditorOnly() || !Ar.IsCooking()))
 				{
 					FilteredSubObjects.Add(SubObject);
 				}
 			}
 			Swap(FilteredSubObjects, SubObjectsArray);
 		}
-
 
 		// Serialize size of array
 		int32 SubObjectsCount = SubObjectsArray.Num();
@@ -405,7 +412,7 @@ namespace UE::AssetCache::Private
 		// This method must obviously be called just after the InObject is created
 		auto RemoveDefaultDependencies = [](UObject* InObject)
 		{
-			TArray< UObject* > ObjectsWithOuter;
+			TArray<UObject*> ObjectsWithOuter;
 			GetObjectsWithOuter(InObject, ObjectsWithOuter, /*bIncludeNestedObjects = */ true);
 
 			for (UObject* ObjectWithOuter : ObjectsWithOuter)
@@ -415,7 +422,8 @@ namespace UE::AssetCache::Private
 				{
 					if (ObjectWithOuter != nullptr)
 					{
-						ObjectWithOuter->Rename(nullptr, GetTransientPackage(), REN_NonTransactional | REN_DontCreateRedirectors | REN_ForceNoResetLoaders);
+						ObjectWithOuter
+							->Rename(nullptr, GetTransientPackage(), REN_NonTransactional | REN_DontCreateRedirectors | REN_ForceNoResetLoaders);
 					}
 					ObjectWithOuter->MarkAsGarbage();
 				}
@@ -424,8 +432,8 @@ namespace UE::AssetCache::Private
 
 		RemoveDefaultDependencies(Object);
 
-		FAssetCacheObjectReader Reader{ *Object, InBuffer };
-		FArchiveObjectPtrAsStringWrapper Ar{ Reader };
+		FAssetCacheObjectReader Reader{*Object, InBuffer};
+		FArchiveObjectPtrAsStringWrapper Ar{Reader};
 		Ar.bLoadIfFindFails = true;
 
 		// Deserialize count of sub-objects
@@ -433,7 +441,7 @@ namespace UE::AssetCache::Private
 		Ar << SubObjectsCount;
 
 		// Create empty sub-objects based on class and patch
-		TArray< UObject* > SubObjectsArray;
+		TArray<UObject*> SubObjectsArray;
 		SubObjectsArray.SetNumZeroed(SubObjectsCount);
 
 		// Create root name to avoid name collision
@@ -518,19 +526,22 @@ namespace UE::AssetCache::Private
 			// We only need these in the editor: When we're cooking we'll just save the cooked mesh data into the
 			// asset itself, so at runtime there is no need for an additional "build" step that we have to handle here
 
-			StaticMesh->SetRenderData(MakeUnique< FStaticMeshRenderData >());
-			ITargetPlatformManagerModule& TargetPlatformManager = GetTargetPlatformManagerRef();
-			ITargetPlatform* RunningPlatform = TargetPlatformManager.GetRunningTargetPlatform();
-			const FStaticMeshLODSettings& LODSettings = RunningPlatform->GetStaticMeshLODSettings();
-			StaticMesh->GetRenderData()->Cache(RunningPlatform, StaticMesh, LODSettings);
-			StaticMesh->InitResources();
+			if (FApp::CanEverRender() || !FPlatformProperties::RequiresCookedData())
+			{
+				StaticMesh->SetRenderData(MakeUnique<FStaticMeshRenderData>());
+				ITargetPlatformManagerModule& TargetPlatformManager = GetTargetPlatformManagerRef();
+				ITargetPlatform* RunningPlatform = TargetPlatformManager.GetRunningTargetPlatform();
+				const FStaticMeshLODSettings& LODSettings = RunningPlatform->GetStaticMeshLODSettings();
+				StaticMesh->GetRenderData()->Cache(RunningPlatform, StaticMesh, LODSettings);
+				StaticMesh->InitResources();
+			}
 		}
 		else if (USkeletalMesh* SkeletalMesh = Cast<USkeletalMesh>(Object))
 		{
 			SkeletalMesh->CalculateInvRefMatrices();
 			SkeletalMesh->InitMorphTargetsAndRebuildRenderData();
 		}
-#endif // WITH_EDITOR
+#endif	  // WITH_EDITOR
 		if (UMaterialInterface* Material = Cast<UMaterialInterface>(Object))
 		{
 			// TODO: If this presents a performance issue we could possibly just do part of the work that this seems
@@ -539,7 +550,7 @@ namespace UE::AssetCache::Private
 			UpdateContext.AddMaterialInterface(Material);
 		}
 	}
-}
+}	 // namespace UE::AssetCache::Private
 
 FArchive& operator<<(FArchive& Ar, UUsdAssetCache2::ECacheStorageType& Type)
 {
@@ -564,7 +575,8 @@ void UUsdAssetCache2::FCachedAssetInfo::Serialize(FArchive& Ar, UObject* Owner)
 	UE_LOG(
 		LogUsd,
 		Verbose,
-		TEXT("Serializing Asset Info '%s' (%s) with version %d, storage type: %d, disk bytes: %d, memory bytes: %d, bulkdata size: %d, saving? %d, persistent? %d, "
+		TEXT("Serializing Asset Info '%s' (%s) with version %d, storage type: %d, disk bytes: %d, memory bytes: %d, bulkdata size: %d, saving? %d, "
+			 "persistent? %d, "
 			 "transacting? %d, duplicating? %d, cooking? %d"),
 		*AssetName,
 		*Hash,
@@ -607,7 +619,7 @@ void UUsdAssetCache2::FCachedAssetInfo::Serialize(FArchive& Ar, UObject* Owner)
 }
 
 UUsdAssetCache2::UUsdAssetCache2()
-	: LRUCache(-1)  // Negative MaxElements as we don't want the cache to drop elements by itself
+	: LRUCache(-1)	  // Negative MaxElements as we don't want the cache to drop elements by itself
 {
 }
 
@@ -626,8 +638,10 @@ void UUsdAssetCache2::PostEditChangeProperty(FPropertyChangedEvent& PropertyChan
 	{
 		RefreshStorage();
 	}
+
+	Super::PostEditChangeProperty(PropertyChangedEvent);
 }
-#endif // #if WITH_EDITOR
+#endif	  // #if WITH_EDITOR
 
 void UUsdAssetCache2::CacheAsset(const FString& Hash, UObject* Asset, const UObject* Referencer)
 {
@@ -646,7 +660,10 @@ void UUsdAssetCache2::CacheAsset(const FString& Hash, UObject* Asset, const UObj
 		{
 			if (FoundInfo->Hash != Hash)
 			{
-				UE_LOG(LogUsd, Warning, TEXT("Attempted to store asset '%s' more than once into the USD Asset Cache '%s'! (old hash: '%s', new hash: '%s')"),
+				UE_LOG(
+					LogUsd,
+					Warning,
+					TEXT("Attempted to store asset '%s' more than once into the USD Asset Cache '%s'! (old hash: '%s', new hash: '%s')"),
 					*Asset->GetPathName(),
 					*GetPathName(),
 					*FoundInfo->Hash,
@@ -663,7 +680,10 @@ void UUsdAssetCache2::CacheAsset(const FString& Hash, UObject* Asset, const UObj
 	{
 		if (Asset == ExistingAsset)
 		{
-			UE_LOG(LogUsd, Verbose, TEXT("Recaching asset '%s' with hash '%s' into the USD Asset Cache '%s'"),
+			UE_LOG(
+				LogUsd,
+				Verbose,
+				TEXT("Recaching asset '%s' with hash '%s' into the USD Asset Cache '%s'"),
 				*Asset->GetPathName(),
 				*Hash,
 				*GetPathName()
@@ -685,7 +705,10 @@ void UUsdAssetCache2::CacheAsset(const FString& Hash, UObject* Asset, const UObj
 				if (UObject* OldAsset = RemoveAsset(Hash))
 				{
 					bRemoved = true;
-					UE_LOG(LogUsd, Log, TEXT("Overwriting asset '%s' with '%s' (for hash '%s') in the USD Asset Cache '%s'"),
+					UE_LOG(
+						LogUsd,
+						Log,
+						TEXT("Overwriting asset '%s' with '%s' (for hash '%s') in the USD Asset Cache '%s'"),
 						*OldAsset->GetPathName(),
 						*Asset->GetPathName(),
 						*Hash,
@@ -694,9 +717,13 @@ void UUsdAssetCache2::CacheAsset(const FString& Hash, UObject* Asset, const UObj
 				}
 			}
 
-			if(!bRemoved)
+			if (!bRemoved)
 			{
-				UE_LOG(LogUsd, Error, TEXT("Irrecoverable hash collision! Asset '%s' cannot be cached into USD Asset Cache '%s' as the existing asset '%s' with the same hash '%s' could not be discarded!"),
+				UE_LOG(
+					LogUsd,
+					Error,
+					TEXT("Irrecoverable hash collision! Asset '%s' cannot be cached into USD Asset Cache '%s' as the existing asset '%s' with the "
+						 "same hash '%s' could not be discarded!"),
 					*Asset->GetPathName(),
 					*GetPathName(),
 					*ExistingAsset->GetPathName(),
@@ -707,11 +734,7 @@ void UUsdAssetCache2::CacheAsset(const FString& Hash, UObject* Asset, const UObj
 		}
 	}
 
-	UE_LOG(LogUsd, Verbose, TEXT("Caching asset '%s' with hash '%s' into the USD Asset Cache '%s'"),
-		*Asset->GetPathName(),
-		*Hash,
-		*GetPathName()
-	);
+	UE_LOG(LogUsd, Verbose, TEXT("Caching asset '%s' with hash '%s' into the USD Asset Cache '%s'"), *Asset->GetPathName(), *Hash, *GetPathName());
 
 	Modify();
 
@@ -737,7 +760,7 @@ void UUsdAssetCache2::CacheAsset(const FString& Hash, UObject* Asset, const UObj
 	NewInfo.AssetFlags = Asset->GetFlags();
 	if (ReferencerToUse)
 	{
-		NewInfo.Referencers.Add(FObjectKey{ ReferencerToUse });
+		NewInfo.Referencers.Add(FObjectKey{ReferencerToUse});
 	}
 
 	AssetStorage.Add(Hash, Asset);
@@ -830,7 +853,10 @@ UObject* UUsdAssetCache2::GetCachedAsset(const FString& Hash)
 		FReadScopeLock Lock{RWLock};
 		FoundAsset = AssetStorage.FindRef(Hash);
 	}
-	UE_LOG(LogUsd, Verbose, TEXT("Fetching cached asset with hash '%s' for cache '%s'. Loaded in AssetStorage? %d. Size of LRU cache: %d, Pending persistent assets: %d"),
+	UE_LOG(
+		LogUsd,
+		Verbose,
+		TEXT("Fetching cached asset with hash '%s' for cache '%s'. Loaded in AssetStorage? %d. Size of LRU cache: %d, Pending persistent assets: %d"),
 		*Hash,
 		*GetPathName(),
 		FoundAsset != nullptr,
@@ -851,15 +877,12 @@ UObject* UUsdAssetCache2::GetCachedAsset(const FString& Hash)
 		FoundAssetPath = PendingPersistentStorage.Find(Hash);
 		if (!FoundAssetPath)
 		{
-			UE_LOG(LogUsd, Verbose, TEXT("Full cache miss: We do not know about any assets with hash '%s' in cache '%s'"),
-				*Hash,
-				*GetPathName()
-			);
+			UE_LOG(LogUsd, Verbose, TEXT("Full cache miss: We do not know about any assets with hash '%s' in cache '%s'"), *Hash, *GetPathName());
 			return nullptr;
 		}
 	}
 
-	TFunction<UObject* (FCachedAssetInfo* ObjectInfo)> LoadAssetFromBulkData = [this](FCachedAssetInfo* ObjectInfo) -> UObject*
+	TFunction<UObject*(FCachedAssetInfo * ObjectInfo)> LoadAssetFromBulkData = [this](FCachedAssetInfo* ObjectInfo) -> UObject*
 	{
 		if (!ObjectInfo)
 		{
@@ -870,7 +893,10 @@ UObject* UUsdAssetCache2::GetCachedAsset(const FString& Hash)
 		UClass* FoundClass = UE::AssetCache::Private::FindClass(*ClassNameString);
 		if (!FoundClass)
 		{
-			UE_LOG(LogUsd, Warning, TEXT("Failed to find object class '%s' when deserializing asset '%s' with hash '%s'"),
+			UE_LOG(
+				LogUsd,
+				Warning,
+				TEXT("Failed to find object class '%s' when deserializing asset '%s' with hash '%s'"),
 				*ClassNameString,
 				*ObjectInfo->AssetName,
 				*ObjectInfo->Hash
@@ -896,7 +922,10 @@ UObject* UUsdAssetCache2::GetCachedAsset(const FString& Hash)
 		UE::AssetCache::Private::DeserializeObjectAndSubObjects(NewAsset, BulkDataCopy);
 		ensure(NewAsset);
 
-		UE_LOG(LogUsd, Log, TEXT("Deserialized asset at '%s' (%s, hash '%s', storage %d) from bulkdata (%.3f MB)"),
+		UE_LOG(
+			LogUsd,
+			Log,
+			TEXT("Deserialized asset at '%s' (%s, hash '%s', storage %d) from bulkdata (%.3f MB)"),
 			*ObjectInfo->AssetName,
 			NewAsset ? *NewAsset->GetPathName() : TEXT("nullptr"),
 			*ObjectInfo->Hash,
@@ -931,9 +960,7 @@ UObject* UUsdAssetCache2::GetCachedAsset(const FString& Hash)
 		}
 		else
 		{
-			UE_LOG(LogUsd, Warning, TEXT("Failed to find info about asset '%s' when deserializing on-demand"),
-				*AssetPath.ToString()
-			);
+			UE_LOG(LogUsd, Warning, TEXT("Failed to find info about asset '%s' when deserializing on-demand"), *AssetPath.ToString());
 		}
 	};
 	{
@@ -942,7 +969,10 @@ UObject* UUsdAssetCache2::GetCachedAsset(const FString& Hash)
 	}
 
 	ensure(AssetsToLoad.Num() > 0);
-	UE_LOG(LogUsd, Verbose, TEXT("Partial cache miss: Will attempt to load %d assets from bulk data of cache '%s'"),
+	UE_LOG(
+		LogUsd,
+		Verbose,
+		TEXT("Partial cache miss: Will attempt to load %d assets from bulk data of cache '%s'"),
 		AssetsToLoad.Num(),
 		*GetPathName()
 	);
@@ -956,7 +986,7 @@ UObject* UUsdAssetCache2::GetCachedAsset(const FString& Hash)
 				ensure(LoadedAsset);
 
 				TouchAssetInternal(LoadedAsset, CurrentScopedReferencer);
-				FoundAsset = LoadedAsset;  // The very last asset we loaded is our main asset, as it's pushed last into AssetsToLoad
+				FoundAsset = LoadedAsset;	 // The very last asset we loaded is our main asset, as it's pushed last into AssetsToLoad
 			}
 		}
 	}
@@ -992,7 +1022,7 @@ bool UUsdAssetCache2::AddAssetReference(const UObject* Asset, const UObject* Ref
 
 bool UUsdAssetCache2::RemoveAssetReference(const UObject* Asset, const UObject* Referencer)
 {
-	if (!Asset || !Referencer)
+	if (!Asset)
 	{
 		return false;
 	}
@@ -1002,15 +1032,27 @@ bool UUsdAssetCache2::RemoveAssetReference(const UObject* Asset, const UObject* 
 	bool bRemovedSomething = false;
 	if (FCachedAssetInfo* Info = LRUCache.Find(Asset))
 	{
-		const int32 NumRemoved = Info->Referencers.Remove(FObjectKey{Referencer});
-		if (NumRemoved > 0)
+		if (Referencer)
 		{
-			UE_LOG(LogUsd, Verbose, TEXT("Removed referencer '%s' from asset '%s'"),
-				*Referencer->GetPathName(),
-				*Asset->GetPathName()
-			);
+			const int32 NumRemoved = Info->Referencers.Remove(FObjectKey{Referencer});
+			if (NumRemoved > 0)
+			{
+				UE_LOG(LogUsd, Verbose, TEXT("Removed referencer '%s' from asset '%s'"), *Referencer->GetPathName(), *Asset->GetPathName());
 
-			bRemovedSomething = true;
+				bRemovedSomething = true;
+			}
+		}
+		else
+		{
+			const int32 NumRemoved = Info->Referencers.Num();
+			Info->Referencers.Reset();
+
+			if (NumRemoved > 0)
+			{
+				UE_LOG(LogUsd, Verbose, TEXT("Removed all '%d' referencers for asset '%s'"), NumRemoved, *Asset->GetPathName());
+
+				bRemovedSomething = true;
+			}
 		}
 	}
 
@@ -1078,7 +1120,7 @@ TArray<FString> UUsdAssetCache2::GetAllAssetHashes() const
 	TArray<FString> Hashes;
 	Hashes.Reserve(LRUCache.Num());
 
-	for (TLruCache<FSoftObjectPath, FCachedAssetInfo>::TConstIterator Iter{ LRUCache }; Iter; ++Iter)
+	for (TLruCache<FSoftObjectPath, FCachedAssetInfo>::TConstIterator Iter{LRUCache}; Iter; ++Iter)
 	{
 		Hashes.Add(Iter.Value().Hash);
 	}
@@ -1108,7 +1150,7 @@ TArray<FString> UUsdAssetCache2::GetAllCachedAssetPaths() const
 	TArray<FString> Paths;
 	Paths.Reserve(LRUCache.Num());
 
-	for (TLruCache<FSoftObjectPath, FCachedAssetInfo>::TConstIterator Iter{ LRUCache }; Iter; ++Iter)
+	for (TLruCache<FSoftObjectPath, FCachedAssetInfo>::TConstIterator Iter{LRUCache}; Iter; ++Iter)
 	{
 		Paths.Add(Iter.Key().ToString());
 	}
@@ -1126,7 +1168,7 @@ void UUsdAssetCache2::Reset()
 	const int32 MaxElements = -1;
 	AssetStorage.Reset();
 	ActiveAssets.Reset();
-	for (TLruCache<FSoftObjectPath, FCachedAssetInfo>::TIterator Iter{ LRUCache }; Iter; ++Iter)
+	for (TLruCache<FSoftObjectPath, FCachedAssetInfo>::TIterator Iter{LRUCache}; Iter; ++Iter)
 	{
 		FCachedAssetInfo& Info = Iter.Value();
 		Info.BulkData.RemoveBulkData();
@@ -1142,12 +1184,12 @@ void UUsdAssetCache2::RefreshStorage()
 	const bool bIsTransientAssetCache = GetOutermost() == GetTransientPackage();
 
 	const uint64 MaxUnreferencedTransientBytes = UnreferencedAssetStorageSizeMB < 0.0
-		? TNumericLimits<uint64>::Max()
-		: static_cast<uint64>(FMath::Max(UnreferencedAssetStorageSizeMB, 0.0) + 0.5) * 1000000;
+													 ? TNumericLimits<uint64>::Max()
+													 : static_cast<uint64>(FMath::Max(UnreferencedAssetStorageSizeMB, 0.0) + 0.5) * 1000000;
 
 	const uint64 MaxPersistentBytes = PersistentAssetStorageSizeMB < 0.0
-		? TNumericLimits<uint64>::Max()
-		: static_cast<uint64>(FMath::Max(PersistentAssetStorageSizeMB, 0.0) + 0.5) * 1000000;
+										  ? TNumericLimits<uint64>::Max()
+										  : static_cast<uint64>(FMath::Max(PersistentAssetStorageSizeMB, 0.0) + 0.5) * 1000000;
 
 	uint64 UnreferencedAssetsSumBytes = 0;
 	uint64 PersistentAssetSumBytes = 0;
@@ -1167,7 +1209,7 @@ void UUsdAssetCache2::RefreshStorage()
 	double StartTime = FPlatformTime::Cycles64();
 
 	// Do an initial pass to reset our current storage types and fetch some remaining data
-	for (TLruCache<FSoftObjectPath, FCachedAssetInfo>::TIterator Iter{ LRUCache }; Iter; ++Iter)
+	for (TLruCache<FSoftObjectPath, FCachedAssetInfo>::TIterator Iter{LRUCache}; Iter; ++Iter)
 	{
 		FCachedAssetInfo& Info = Iter.Value();
 
@@ -1233,171 +1275,176 @@ void UUsdAssetCache2::RefreshStorage()
 	};
 
 	TFunction<ECacheStorageType(FCachedAssetInfo&, FSoftObjectPath&)> VisitEntryRecursively;
-	VisitEntryRecursively =
-		[
-			this,
-			&ConsumerTreeHasReferencedAsset,
-			&VisitEntryRecursively,
-			&VisitedAssets,
-			bIsTransientAssetCache,
-			MaxUnreferencedTransientBytes,
-			MaxPersistentBytes,
-			&UnreferencedAssetsSumBytes,
-			&PersistentAssetSumBytes,
-			&NewAssetStorage,
-			&NewPendingPersistentStorage
-		]
-		(FCachedAssetInfo& Info, FSoftObjectPath& AssetPath) -> ECacheStorageType
+	VisitEntryRecursively = [this,
+							 &ConsumerTreeHasReferencedAsset,
+							 &VisitEntryRecursively,
+							 &VisitedAssets,
+							 bIsTransientAssetCache,
+							 MaxUnreferencedTransientBytes,
+							 MaxPersistentBytes,
+							 &UnreferencedAssetsSumBytes,
+							 &PersistentAssetSumBytes,
+							 &NewAssetStorage,
+							 &NewPendingPersistentStorage](FCachedAssetInfo& Info, FSoftObjectPath& AssetPath) -> ECacheStorageType
+	{
+		if (AssetPath.IsNull())
 		{
-			if (AssetPath.IsNull())
+			ensure(false);
+			return ECacheStorageType::None;
+		}
+
+		if (VisitedAssets.Contains(AssetPath))
+		{
+			return Info.CurrentStorageType;
+		}
+		VisitedAssets.Add(AssetPath);
+
+		// Always visit dependencies first: We can only ever persist an asset if its dependencies are also
+		// persisted. Here we'll also track the "worst" storage any of our dependencies got (e.g. if one of our
+		// textures managed Persistent, but the other got Referenced, we'll track Referenced)
+		ECacheStorageType WorstDependencyStorage = ECacheStorageType::Persistent;
+		for (FSoftObjectPath& Dependency : Info.Dependencies)
+		{
+			FCachedAssetInfo* DependencyInfo = LRUCache.Find(Dependency);
+			if (!ensure(DependencyInfo))
+			{
+				continue;
+			}
+
+			ECacheStorageType DependencyStorage = VisitEntryRecursively(*DependencyInfo, Dependency);
+			WorstDependencyStorage = static_cast<ECacheStorageType>(
+				FMath::Min(static_cast<uint8>(WorstDependencyStorage), static_cast<uint8>(DependencyStorage))
+			);
+		}
+
+		const bool bAssetFitsInPersistent = PersistentAssetSumBytes + Info.SizeOnDiskInBytes <= MaxPersistentBytes;
+		const bool bAssetFitsInUnreferenced = UnreferencedAssetsSumBytes + Info.SizeOnMemoryInBytes <= MaxUnreferencedTransientBytes;
+		const bool bDependenciesArePersistent = WorstDependencyStorage == ECacheStorageType::Persistent;
+		const bool bAllDependenciesInStorage = WorstDependencyStorage != ECacheStorageType::None;
+		const bool bConsumerIsReferenced = ConsumerTreeHasReferencedAsset(Info);
+
+		const FString AssetPathStr = AssetPath.ToString();
+		const FString AssetClassNameStr = Info.AssetClassName.ToString();
+		UObject* Asset = AssetStorage.FindRef(Info.Hash);
+
+		// Priority 1: Asset can be moved to persistent storage
+		if (!bIsTransientAssetCache && bAssetFitsInPersistent && bDependenciesArePersistent && AssetCanBePersisted(*AssetClassNameStr))
+		{
+			Info.CurrentStorageType = ECacheStorageType::Persistent;
+		}
+
+		// Priority 2: Asset is kept on transient storage because it (or a Consumer) is referenced
+		else if (Info.Referencers.Num() > 0 || bConsumerIsReferenced)
+		{
+			Info.CurrentStorageType = ECacheStorageType::Referenced;
+		}
+
+		// Priority 3: Asset fits on transient storage even while unreferenced, as long as all dependencies also
+		// made it somewhere and weren't evicted
+		else if (bAssetFitsInUnreferenced && bAllDependenciesInStorage)
+		{
+			Info.CurrentStorageType = ECacheStorageType::Unreferenced;
+		}
+
+		UE_LOG(
+			LogUsd,
+			Verbose,
+			TEXT("Asset '%s' (class %s, hash '%s', size %.3f MB on memory, %.3f MB on disk) fits in persistent? %d, fits in unreferenced? %d, "
+				 "referencer count %d, dependency count %d. Target storage: %d"),
+			*AssetPathStr,
+			*AssetClassNameStr,
+			*Info.Hash,
+			Info.SizeOnMemoryInBytes / 1000000.0,
+			Info.SizeOnDiskInBytes / 1000000.0,
+			bAssetFitsInPersistent,
+			bAssetFitsInUnreferenced,
+			Info.Referencers.Num(),
+			Info.Dependencies.Num(),
+			int(Info.CurrentStorageType)
+		);
+
+		switch (Info.CurrentStorageType)
+		{
+			case ECacheStorageType::None:
+			{
+				Info.BulkData.UnloadBulkData();
+				break;
+			}
+			case ECacheStorageType::Referenced:
+			{
+				// We'll at least unload the bulkdata here, but not actually remove it from disk yet, in case we
+				// put this asset back in persistent later and can reuse the same bulkdata.
+				// We'll get rid of the bulkdata for sure on UUsdAssetCache2::Serialize(), if the asset is not
+				// persistent by then
+				Info.BulkData.UnloadBulkData();
+
+				ensure(Asset);
+				NewAssetStorage.Add(Info.Hash, Asset);
+				break;
+			}
+			case ECacheStorageType::Unreferenced:
+			{
+				Info.BulkData.UnloadBulkData();
+
+				if (Asset)
+				{
+					ensure(AssetStorage.Contains(Info.Hash));
+					NewAssetStorage.Add(Info.Hash, Asset);
+				}
+				// It's possible to end up with an asset that is currently persistent but living in
+				// Unreferenced storage if we load an asset cache and discover the asset fits in the latter
+				// but not in the former (e.g. if size on disk > size in memory somehow, or if the storage
+				// sizes are tweaked to cause that)
+				else
+				{
+					ensure(!AssetStorage.Contains(Info.Hash));
+					NewPendingPersistentStorage.Add(Info.Hash, AssetPath);
+				}
+
+				UnreferencedAssetsSumBytes += Info.SizeOnMemoryInBytes;
+				UE_LOG(
+					LogUsd,
+					Verbose,
+					TEXT("Updated unreferenced sum to %.3f out of max %u MB"),
+					UnreferencedAssetsSumBytes / 1000000.0,
+					MaxUnreferencedTransientBytes / 1000000
+				);
+				break;
+			}
+			case ECacheStorageType::Persistent:
+			{
+				if (Asset)
+				{
+					ensure(AssetStorage.Contains(Info.Hash));
+					NewAssetStorage.Add(Info.Hash, Asset);
+				}
+				else
+				{
+					ensure(!AssetStorage.Contains(Info.Hash));
+					NewPendingPersistentStorage.Add(Info.Hash, AssetPath);
+				}
+
+				PersistentAssetSumBytes += Info.SizeOnDiskInBytes;
+				UE_LOG(
+					LogUsd,
+					Verbose,
+					TEXT("Updated persistent sum to %.3f out of max %u MB"),
+					PersistentAssetSumBytes / 1000000.0,
+					MaxPersistentBytes / 1000000
+				);
+				break;
+			}
+			default:
 			{
 				ensure(false);
-				return ECacheStorageType::None;
+				break;
 			}
+		}
 
-			if (VisitedAssets.Contains(AssetPath))
-			{
-				return Info.CurrentStorageType;
-			}
-			VisitedAssets.Add(AssetPath);
+		return Info.CurrentStorageType;
+	};
 
-			// Always visit dependencies first: We can only ever persist an asset if its dependencies are also
-			// persisted. Here we'll also track the "worst" storage any of our dependencies got (e.g. if one of our
-			// textures managed Persistent, but the other got Referenced, we'll track Referenced)
-			ECacheStorageType WorstDependencyStorage = ECacheStorageType::Persistent;
-			for (FSoftObjectPath& Dependency : Info.Dependencies)
-			{
-				FCachedAssetInfo* DependencyInfo = LRUCache.Find(Dependency);
-				if (!ensure(DependencyInfo))
-				{
-					continue;
-				}
-
-				ECacheStorageType DependencyStorage = VisitEntryRecursively(*DependencyInfo, Dependency);
-				WorstDependencyStorage = static_cast<ECacheStorageType>(FMath::Min(
-					static_cast<uint8>(WorstDependencyStorage),
-					static_cast<uint8>(DependencyStorage)
-				));
-			}
-
-			const bool bAssetFitsInPersistent = PersistentAssetSumBytes + Info.SizeOnDiskInBytes <= MaxPersistentBytes;
-			const bool bAssetFitsInUnreferenced = UnreferencedAssetsSumBytes + Info.SizeOnMemoryInBytes <= MaxUnreferencedTransientBytes;
-			const bool bDependenciesArePersistent = WorstDependencyStorage == ECacheStorageType::Persistent;
-			const bool bAllDependenciesInStorage = WorstDependencyStorage != ECacheStorageType::None;
-			const bool bConsumerIsReferenced = ConsumerTreeHasReferencedAsset(Info);
-
-			const FString AssetPathStr = AssetPath.ToString();
-			const FString AssetClassNameStr = Info.AssetClassName.ToString();
-			UObject* Asset = AssetStorage.FindRef(Info.Hash);
-
-			// Priority 1: Asset can be moved to persistent storage
-			if (!bIsTransientAssetCache && bAssetFitsInPersistent && bDependenciesArePersistent && AssetCanBePersisted(*AssetClassNameStr))
-			{
-				Info.CurrentStorageType = ECacheStorageType::Persistent;
-			}
-
-			// Priority 2: Asset is kept on transient storage because it (or a Consumer) is referenced
-			else if (Info.Referencers.Num() > 0 || bConsumerIsReferenced)
-			{
-				Info.CurrentStorageType = ECacheStorageType::Referenced;
-			}
-
-			// Priority 3: Asset fits on transient storage even while unreferenced, as long as all dependencies also
-			// made it somewhere and weren't evicted
-			else if (bAssetFitsInUnreferenced && bAllDependenciesInStorage)
-			{
-				Info.CurrentStorageType = ECacheStorageType::Unreferenced;
-			}
-
-			UE_LOG(LogUsd, Verbose, TEXT("Asset '%s' (class %s, hash '%s', size %.3f MB on memory, %.3f MB on disk) fits in persistent? %d, fits in unreferenced? %d, referencer count %d, dependency count %d. Target storage: %d"),
-				*AssetPathStr,
-				*AssetClassNameStr,
-				*Info.Hash,
-				Info.SizeOnMemoryInBytes / 1000000.0,
-				Info.SizeOnDiskInBytes / 1000000.0,
-				bAssetFitsInPersistent,
-				bAssetFitsInUnreferenced,
-				Info.Referencers.Num(),
-				Info.Dependencies.Num(),
-				int(Info.CurrentStorageType)
-			);
-
-			switch (Info.CurrentStorageType)
-			{
-				case ECacheStorageType::None:
-				{
-					Info.BulkData.UnloadBulkData();
-					break;
-				}
-				case ECacheStorageType::Referenced:
-				{
-					// We'll at least unload the bulkdata here, but not actually remove it from disk yet, in case we
-					// put this asset back in persistent later and can reuse the same bulkdata.
-					// We'll get rid of the bulkdata for sure on UUsdAssetCache2::Serialize(), if the asset is not
-					// persistent by then
-					Info.BulkData.UnloadBulkData();
-
-					ensure(Asset);
-					NewAssetStorage.Add(Info.Hash, Asset);
-					break;
-				}
-				case ECacheStorageType::Unreferenced:
-				{
-					Info.BulkData.UnloadBulkData();
-
-					if (Asset)
-					{
-						ensure(AssetStorage.Contains(Info.Hash));
-						NewAssetStorage.Add(Info.Hash, Asset);
-					}
-					// It's possible to end up with an asset that is currently persistent but living in
-					// Unreferenced storage if we load an asset cache and discover the asset fits in the latter
-					// but not in the former (e.g. if size on disk > size in memory somehow, or if the storage
-					// sizes are tweaked to cause that)
-					else
-					{
-						ensure(!AssetStorage.Contains(Info.Hash));
-						NewPendingPersistentStorage.Add(Info.Hash, AssetPath);
-					}
-
-					UnreferencedAssetsSumBytes += Info.SizeOnMemoryInBytes;
-					UE_LOG(LogUsd, Verbose, TEXT("Updated unreferenced sum to %.3f out of max %u MB"),
-						UnreferencedAssetsSumBytes / 1000000.0,
-						MaxUnreferencedTransientBytes / 1000000
-					);
-					break;
-				}
-				case ECacheStorageType::Persistent:
-				{
-					if (Asset)
-					{
-						ensure(AssetStorage.Contains(Info.Hash));
-						NewAssetStorage.Add(Info.Hash, Asset);
-					}
-					else
-					{
-						ensure(!AssetStorage.Contains(Info.Hash));
-						NewPendingPersistentStorage.Add(Info.Hash, AssetPath);
-					}
-
-					PersistentAssetSumBytes += Info.SizeOnDiskInBytes;
-					UE_LOG(LogUsd, Verbose, TEXT("Updated persistent sum to %.3f out of max %u MB"),
-						PersistentAssetSumBytes / 1000000.0,
-						MaxPersistentBytes / 1000000
-					);
-					break;
-				}
-				default:
-				{
-					ensure(false);
-					break;
-				}
-			}
-
-			return Info.CurrentStorageType;
-		};
-
-	for (TLruCache<FSoftObjectPath, FCachedAssetInfo>::TIterator Iter{ LRUCache }; Iter; ++Iter)
+	for (TLruCache<FSoftObjectPath, FCachedAssetInfo>::TIterator Iter{LRUCache}; Iter; ++Iter)
 	{
 		FSoftObjectPath& AssetPath = Iter.Key();
 		FCachedAssetInfo& Info = Iter.Value();
@@ -1411,7 +1458,7 @@ void UUsdAssetCache2::RefreshStorage()
 	// Evict from the LRUCache assets that never made it into any storage: These assets are unreferenced and don't fit
 	// anymore
 	{
-		TLruCache<FSoftObjectPath, FCachedAssetInfo>::TIterator Iter{ LRUCache };
+		TLruCache<FSoftObjectPath, FCachedAssetInfo>::TIterator Iter{LRUCache};
 		while (Iter)
 		{
 			FSoftObjectPath& AssetPath = Iter.Key();
@@ -1419,7 +1466,14 @@ void UUsdAssetCache2::RefreshStorage()
 
 			if (Info.CurrentStorageType == ECacheStorageType::None)
 			{
-				UE_LOG(LogUsd, Verbose, TEXT("Evicting asset '%s' (hash '%s') from the cache '%s'"), *AssetPath.ToString(), *Info.Hash, *GetPathName());
+				UE_LOG(
+					LogUsd,
+					Verbose,
+					TEXT("Evicting asset '%s' (hash '%s') from the cache '%s'"),
+					*AssetPath.ToString(),
+					*Info.Hash,
+					*GetPathName()
+				);
 
 				// Discard data on disk
 				TryUnloadAsset(Info);
@@ -1447,7 +1501,7 @@ void UUsdAssetCache2::RefreshStorage()
 	// unload all persistent assets that aren't being currently used
 	if (GOnDemandCachedAssetLoading)
 	{
-		for (TLruCache<FSoftObjectPath, FCachedAssetInfo>::TIterator Iter{ LRUCache }; Iter; ++Iter)
+		for (TLruCache<FSoftObjectPath, FCachedAssetInfo>::TIterator Iter{LRUCache}; Iter; ++Iter)
 		{
 			FCachedAssetInfo& Info = Iter.Value();
 			TryUnloadAsset(Info);
@@ -1456,7 +1510,11 @@ void UUsdAssetCache2::RefreshStorage()
 
 	double ElapsedSeconds = FPlatformTime::ToSeconds64(FPlatformTime::Cycles64() - StartTime);
 
-	UE_LOG(LogUsd, Log, TEXT("Finished asset cache '%s' storage refresh in %.3f seconds: %.3f out of max %u MB of unreferenced assets, %.3f out of max %u MB of persistent assets"),
+	UE_LOG(
+		LogUsd,
+		Log,
+		TEXT("Finished asset cache '%s' storage refresh in %.3f seconds: %.3f out of max %u MB of unreferenced assets, %.3f out of max %u MB of "
+			 "persistent assets"),
 		*GetName(),
 		ElapsedSeconds,
 		UnreferencedAssetsSumBytes / 1000000.0,
@@ -1504,8 +1562,9 @@ bool UUsdAssetCache2::TryUnloadAsset(FCachedAssetInfo& InOutInfo)
 		if (TObjectPtr<UObject> Asset = AssetStorage.FindRef(InOutInfo.Hash))
 		{
 			// Check to see if all of its Consumers can be unloaded too
-			for (const FSoftObjectPath& Consumer : InOutInfo.Consumers)
+			for (auto It = InOutInfo.Consumers.CreateIterator(); It; ++It)
 			{
+				const FSoftObjectPath& Consumer = *It;
 				if (FCachedAssetInfo* ConsumerInfo = LRUCache.Find(Consumer))
 				{
 					ensure(ConsumerInfo->Dependencies.Contains(Asset));
@@ -1520,7 +1579,7 @@ bool UUsdAssetCache2::TryUnloadAsset(FCachedAssetInfo& InOutInfo)
 				// We don't know about this Consumer anymore (maybe it was evicted?)
 				else
 				{
-					InOutInfo.Consumers.Remove(Consumer);
+					It.RemoveCurrent();
 				}
 			}
 
@@ -1554,10 +1613,7 @@ bool UUsdAssetCache2::AddAssetReferenceInternal(const UObject* Asset, const UObj
 	{
 		Info->Referencers.Add(FObjectKey{Referencer});
 
-		UE_LOG(LogUsd, Verbose, TEXT("Added referencer '%s' for asset '%s'"),
-			*Referencer->GetPathName(),
-			*Asset->GetPathName()
-		);
+		UE_LOG(LogUsd, Verbose, TEXT("Added referencer '%s' for asset '%s'"), *Referencer->GetPathName(), *Asset->GetPathName());
 		return true;
 	}
 
@@ -1634,7 +1690,10 @@ void UUsdAssetCache2::Serialize(FArchive& Ar)
 			int32 NumInfos = Ar.IsPersistent() ? PersistentAssetsWithInfo.Num() : LRUCache.Num();
 			Ar << NumInfos;
 
-			UE_LOG(LogUsd, Verbose, TEXT("Serializing USD Asset Cache '%s' with %d asset infos. Persistent? %d, transacting? %d, duplicating? %d, cooking? %d"),
+			UE_LOG(
+				LogUsd,
+				Verbose,
+				TEXT("Serializing USD Asset Cache '%s' with %d asset infos. Persistent? %d, transacting? %d, duplicating? %d, cooking? %d"),
 				*GetPathName(),
 				NumInfos,
 				Ar.IsPersistent(),
@@ -1742,10 +1801,7 @@ void UUsdAssetCache2::Serialize(FArchive& Ar)
 			TArray<FSoftObjectPath> AssetPaths;
 			AssetPaths.Reserve(NumInfos);
 
-			UE_LOG(LogUsd, Verbose, TEXT("Deserializing USD Asset Cache '%s' with %d asset infos"),
-				*GetPathName(),
-				NumInfos
-			);
+			UE_LOG(LogUsd, Verbose, TEXT("Deserializing USD Asset Cache '%s' with %d asset infos"), *GetPathName(), NumInfos);
 
 			for (int32 Index = 0; Index < NumInfos; ++Index)
 			{

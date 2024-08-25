@@ -6,28 +6,9 @@
 #include "MuCOE/CustomizableObjectPin.h"
 #include "MuCOE/EdGraphSchema_CustomizableObject.h"
 #include "MuCOE/Nodes/CustomizableObjectNodeExposePin.h"
+#include "MuCOE/RemapPins/CustomizableObjectNodeRemapPinsByPosition.h"
 
 #define LOCTEXT_NAMESPACE "CustomizableObjectEditor"
-
-
-void UCustomizableObjectNodeRemapPinsCustomExternalPin::RemapPins(const UCustomizableObjectNode& Node, const TArray<UEdGraphPin*>& OldPins, const TArray<UEdGraphPin*>& NewPins, TMap<UEdGraphPin*, UEdGraphPin*>& PinsToRemap, TArray<UEdGraphPin*>& PinsToOrphan)
-{
-	const UCustomizableObjectNodeExternalPin* ExternalPinNode = Cast<UCustomizableObjectNodeExternalPin>(&Node);
-	
-	if (OldPins.Num()) 
-	{
-		UEdGraphPin* const OldPin = OldPins[0];
-		if (NewPins.Num())
-		{
-			PinsToRemap.Add(OldPin, NewPins[0]);
-		}
-
-		if (!ExternalPinNode->GetNodeExposePin())
-		{
-			PinsToOrphan.Add(OldPin);
-		}
-	}
-}
 
 
 void UCustomizableObjectNodeExternalPin::Serialize(FArchive& Ar)
@@ -108,29 +89,12 @@ UCustomizableObjectNodeExposePin* UCustomizableObjectNodeExternalPin::GetNodeExp
 }
 
 
-UEdGraphPin* UCustomizableObjectNodeExternalPin::CreateExternalPin(const UCustomizableObjectNodeExposePin* NodeExposePin)
-{
-	FName PinName = NodeExposePin ? FName(NodeExposePin->GetNodeName()) : FName("Object");
-	const bool bIsArrayPinCategory = PinType == UEdGraphSchema_CustomizableObject::PC_GroupProjector;
-
-	return CustomCreatePin(EGPD_Output, PinType, PinName, bIsArrayPinCategory);
-}
-
-
-void UCustomizableObjectNodeExternalPin::BeginConstruct()
-{
-	// Create a pin already orphaned since the node does not have a linked Expose Pin node yet.
-	UEdGraphPin* Pin = CreateExternalPin(GetNodeExposePin());
-	OrphanPin(*Pin);
-}
-
-
 void UCustomizableObjectNodeExternalPin::AllocateDefaultPins(UCustomizableObjectNodeRemapPins* RemapPins)
 {
-	if (UCustomizableObjectNodeExposePin* NodeExposePin = GetNodeExposePin())
-	{
-		CreateExternalPin(NodeExposePin);
-	}
+	FName PinName = GetNodeExposePin() ? FName(GetNodeExposePin()->GetNodeName()) : FName("Object");
+	const bool bIsArrayPinCategory = PinType == UEdGraphSchema_CustomizableObject::PC_GroupProjector;
+
+	CustomCreatePin(EGPD_Output, PinType, PinName, bIsArrayPinCategory);
 }
 
 
@@ -195,7 +159,7 @@ void UCustomizableObjectNodeExternalPin::UpdateReferencedNodeId(const FGuid& New
 
 UCustomizableObjectNodeRemapPins* UCustomizableObjectNodeExternalPin::CreateRemapPinsDefault() const
 {
-	return NewObject<UCustomizableObjectNodeRemapPinsCustomExternalPin>();
+	return NewObject<UCustomizableObjectNodeRemapPinsByPosition>();
 }
 
 

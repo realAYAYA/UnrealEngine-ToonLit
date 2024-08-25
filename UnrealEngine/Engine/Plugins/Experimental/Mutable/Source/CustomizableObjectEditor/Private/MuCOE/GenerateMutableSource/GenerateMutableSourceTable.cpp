@@ -3,12 +3,17 @@
 #include "MuCOE/GenerateMutableSource/GenerateMutableSourceTable.h"
 
 #include "Animation/AnimInstance.h"
+#include "AssetRegistry/ARFilter.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "Engine/CompositeDataTable.h"
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture2DArray.h"
 #include "GameplayTagContainer.h"
+#include "Kismet2/StructureEditorUtils.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialInstance.h"
 #include "MuCO/CustomizableObjectSystem.h"
+#include "MuCO/CustomizableObjectUIData.h"
 #include "MuCO/UnrealPortabilityHelpers.h"
 #include "MuCOE/CustomizableObjectCompiler.h"
 #include "MuCOE/GenerateMutableSource/GenerateMutableSourceMesh.h"
@@ -17,6 +22,8 @@
 #include "PhysicsEngine/PhysicsAsset.h"
 #include "Rendering/SkeletalMeshLODModel.h"
 #include "Rendering/SkeletalMeshModel.h"
+#include "MuCOE/CustomizableObjectVersionBridge.h"
+#include "ClothingAsset.h"
 
 #define LOCTEXT_NAMESPACE "CustomizableObjectEditor"
 
@@ -25,6 +32,7 @@ bool FillTableColumn(const UCustomizableObjectNodeTable* TableNode,	mu::TablePtr
 	const int LODIndexConnected, const int32 SectionIndexConnected, int32 LODIndex, int32 SectionIndex, const bool bOnlyConnectedLOD, FMutableGraphGenerationContext& GenerationContext)
 {
 	int32 CurrentColumn;
+	UDataTable* DataTablePtr = GetDataTable(TableNode, GenerationContext);
 
 	// Getting property type
 	if (const FSoftObjectProperty* SoftObjectProperty = CastField<FSoftObjectProperty>(ColumnProperty))
@@ -40,11 +48,11 @@ bool FillTableColumn(const UCustomizableObjectNodeTable* TableNode,	mu::TablePtr
 				// Generating an Empty cell
 				FString MutableColumnName = TableNode->GenerateSkeletalMeshMutableColumName(ColumnName, LODIndex, SectionIndex);
 
-				CurrentColumn = MutableTable.get()->FindColumn(StringCast<ANSICHAR>(*MutableColumnName).Get());
+				CurrentColumn = MutableTable.get()->FindColumn(MutableColumnName);
 
 				if (CurrentColumn == -1)
 				{
-					CurrentColumn = MutableTable->AddColumn(StringCast<ANSICHAR>(*MutableColumnName).Get(), mu::TABLE_COLUMN_TYPE::TCT_MESH);
+					CurrentColumn = MutableTable->AddColumn(MutableColumnName, mu::ETableColumnType::Mesh);
 				}
 
 				mu::MeshPtr EmptySkeletalMesh = nullptr;
@@ -56,23 +64,24 @@ bool FillTableColumn(const UCustomizableObjectNodeTable* TableNode,	mu::TablePtr
 			// Getting Animation Blueprint and Animation Slot
 			FString AnimBP, AnimSlot, GameplayTag, AnimBPAssetTag;
 			TArray<FGameplayTag> GameplayTags;
+			FGuid ColumnPropertyId = FStructureEditorUtils::GetGuidForProperty(ColumnProperty);
 
-			TableNode->GetAnimationColumns(ColumnName, AnimBP, AnimSlot, GameplayTag);
+			TableNode->GetAnimationColumns(ColumnPropertyId, AnimBP, AnimSlot, GameplayTag);
 
 			if (!AnimBP.IsEmpty())
 			{
 				if (!AnimSlot.IsEmpty())
 				{
-					if (TableNode->Table)
+					if (DataTablePtr)
 					{
-						uint8* AnimRowData = TableNode->Table->FindRowUnchecked(FName(*RowName));
+						uint8* AnimRowData = DataTablePtr->FindRowUnchecked(FName(*RowName));
 
 						if (AnimRowData)
 						{
 							FName SlotIndex;
 
 							// Getting animation slot row value from data table
-							if (FProperty* AnimSlotProperty = TableNode->Table->FindTableProperty(FName(*AnimSlot)))
+							if (FProperty* AnimSlotProperty = DataTablePtr->FindTableProperty(FName(*AnimSlot)))
 							{
 								uint8* AnimSlotData = AnimSlotProperty->ContainerPtrToValuePtr<uint8>(AnimRowData, 0);
 
@@ -97,7 +106,7 @@ bool FillTableColumn(const UCustomizableObjectNodeTable* TableNode,	mu::TablePtr
 							if (SlotIndex.GetStringLength() != 0)
 							{
 								// Getting animation instance soft class from data table
-								if (FProperty* AnimBPProperty = TableNode->Table->FindTableProperty(FName(*AnimBP)))
+								if (FProperty* AnimBPProperty = DataTablePtr->FindTableProperty(FName(*AnimBP)))
 								{
 									uint8* AnimBPData = AnimBPProperty->ContainerPtrToValuePtr<uint8>(AnimRowData, 0);
 
@@ -109,9 +118,14 @@ bool FillTableColumn(const UCustomizableObjectNodeTable* TableNode,	mu::TablePtr
 
 											if (!AnimInstance.IsNull())
 											{
-												GenerationContext.AnimBPAssetsMap.Add(AnimInstance.ToString(), AnimInstance);
+												if (UClass* Anim = AnimInstance.LoadSynchronous())
+												{
+													GenerationContext.AddParticipatingObject(*Anim);													
+												}
 
-												AnimBPAssetTag = GenerateAnimationInstanceTag(AnimInstance.ToString(), SlotIndex);
+												const int32 AnimInstanceIndex = GenerationContext.AnimBPAssets.AddUnique(AnimInstance);
+
+												AnimBPAssetTag = GenerateAnimationInstanceTag(AnimInstanceIndex, SlotIndex);
 											}
 										}
 									}
@@ -120,7 +134,7 @@ bool FillTableColumn(const UCustomizableObjectNodeTable* TableNode,	mu::TablePtr
 							else
 							{
 								FString msg = FString::Printf(TEXT("Could not find the Slot column of the animation blueprint column [%s] for the mesh column [%s] row [%s]."), *AnimBP, *ColumnName, *RowName);
-								GenerationContext.Compiler->CompilerLog(FText::FromString(msg), TableNode);
+								LogRowGenerationMessage(TableNode, DataTablePtr, GenerationContext, msg, RowName);
 							}
 						}
 					}
@@ -135,14 +149,14 @@ bool FillTableColumn(const UCustomizableObjectNodeTable* TableNode,	mu::TablePtr
 			// Getting Gameplay tags
 			if (!GameplayTag.IsEmpty())
 			{
-				if (TableNode->Table)
+				if (DataTablePtr)
 				{
-					uint8* GameplayRowData = TableNode->Table->FindRowUnchecked(FName(*RowName));
+					uint8* GameplayRowData = DataTablePtr->FindRowUnchecked(FName(*RowName));
 
 					if (GameplayRowData)
 					{
 						// Getting animation tag row value from data table
-						if (FProperty* GameplayTagProperty = TableNode->Table->FindTableProperty(FName(*GameplayTag)))
+						if (FProperty* GameplayTagProperty = DataTablePtr->FindTableProperty(FName(*GameplayTag)))
 						{
 							uint8* GameplayTagData = GameplayTagProperty->ContainerPtrToValuePtr<uint8>(GameplayRowData, 0);
 
@@ -188,7 +202,8 @@ bool FillTableColumn(const UCustomizableObjectNodeTable* TableNode,	mu::TablePtr
 
 					FString msg = FString::Printf(TEXT("Mesh from column [%s] row [%s] needs LOD %d but has less LODs than the reference mesh. LOD %d will be used instead. This can cause some performance penalties."),
 						*ColumnName, *RowName, LODIndex, LODIndex);
-					GenerationContext.Compiler->CompilerLog(FText::FromString(msg), TableNode);
+
+					LogRowGenerationMessage(TableNode, DataTablePtr, GenerationContext, msg, RowName);
 				}
 			}
 
@@ -205,17 +220,17 @@ bool FillTableColumn(const UCustomizableObjectNodeTable* TableNode,	mu::TablePtr
 					FString Dif_2 = NumSections > ReferenceNumMaterials ? "Some will be ignored" : "This can cause some compilation errors.";
 
 					FString msg = FString::Printf(TEXT("Mesh from column [%s] row [%s] has %s Sections than the reference mesh. %s"), *ColumnName, *RowName, *Dif_1, *Dif_2);
-					GenerationContext.Compiler->CompilerLog(FText::FromString(msg), TableNode);
+					LogRowGenerationMessage(TableNode, DataTablePtr, GenerationContext, msg, RowName);
 				}
 			}
 
 			FString MutableColumnName = TableNode->GenerateSkeletalMeshMutableColumName(ColumnName, LODIndex, SectionIndex);
 
-			CurrentColumn = MutableTable.get()->FindColumn(StringCast<ANSICHAR>(*MutableColumnName).Get());
+			CurrentColumn = MutableTable.get()->FindColumn(MutableColumnName);
 
 			if (CurrentColumn == -1)
 			{
-				CurrentColumn = MutableTable->AddColumn(StringCast<ANSICHAR>(*MutableColumnName).Get(), mu::TABLE_COLUMN_TYPE::TCT_MESH);
+				CurrentColumn = MutableTable->AddColumn(MutableColumnName, mu::ETableColumnType::Mesh);
 			}
 
 			// First process the mesh tags that are going to make the mesh unique and affect whether it's repeated in 
@@ -233,19 +248,78 @@ bool FillTableColumn(const UCustomizableObjectNodeTable* TableNode,	mu::TablePtr
 			{
 				MeshUniqueTags += GenerateGameplayTag(Tag.ToString());
 			}
+			
+			TArray<int32> StreamedResources;
+
+			if (GenerationContext.Object->bEnableAssetUserDataMerge)
+			{
+				const TArray<UAssetUserData*>* AssetUserDataArray = SkeletalMesh->GetAssetUserDataArray();
+
+				if (AssetUserDataArray)
+				{
+					for (UAssetUserData* AssetUserData : *AssetUserDataArray)
+					{
+						if (!AssetUserData)
+						{
+							continue;
+						}
+
+						const int32 ResourceIndex = GenerationContext.AddAssetUserDataToStreamedResources(AssetUserData);
+						
+						if (ResourceIndex >= 0)
+						{
+							check(ResourceIndex < (1 << 24) - 1);
+
+							FCustomizableObjectStreameableResourceId ResourceId;
+							ResourceId.Id = GenerationContext.AddAssetUserDataToStreamedResources(AssetUserData);
+							ResourceId.Type = (uint8)FCustomizableObjectStreameableResourceId::EType::AssetUserData;
+
+							StreamedResources.Add(BitCast<uint32>(ResourceId));
+						}
+
+						MeshUniqueTags += AssetUserData->GetPathName();
+					}
+				}
+			}
 
 			//TODO: Add AnimBp physics to Tables.
-			mu::MeshPtr MutableMesh = GenerateMutableMesh(SkeletalMesh, TSoftClassPtr<UAnimInstance>(), LODIndexConnected, SectionIndexConnected, LODIndex, SectionIndex, MeshUniqueTags, GenerationContext, TableNode);
+			mu::Ptr<mu::Mesh> MutableMesh = GenerateMutableMesh(SkeletalMesh, TSoftClassPtr<UAnimInstance>(), LODIndexConnected, SectionIndexConnected, LODIndex, SectionIndex, MeshUniqueTags, GenerationContext, TableNode);
 
 			if (MutableMesh)
 			{
  				if (SkeletalMesh->GetPhysicsAsset() && MutableMesh->GetPhysicsBody() && MutableMesh->GetPhysicsBody()->GetBodyCount())
-				{	
-					TSoftObjectPtr<UPhysicsAsset> PhysicsAsset = SkeletalMesh->GetPhysicsAsset();
-					GenerationContext.PhysicsAssetMap.Add(PhysicsAsset.ToString(), PhysicsAsset);
-					FString PhysicsAssetTag = FString("__PhysicsAsset:") + PhysicsAsset.ToString();
+				{
+ 					TSoftObjectPtr<UPhysicsAsset> PhysicsAsset = SkeletalMesh->GetPhysicsAsset();
+
+					GenerationContext.AddParticipatingObject(*PhysicsAsset); 						
+
+					const int32 AssetIndex = GenerationContext.PhysicsAssets.AddUnique(PhysicsAsset);
+					FString PhysicsAssetTag = FString("__PA:") + FString::FromInt(AssetIndex);
 
 					AddTagToMutableMeshUnique(*MutableMesh, PhysicsAssetTag);
+				}
+
+				if (GenerationContext.Options.bClothingEnabled)
+				{
+					UClothingAssetBase* ClothingAssetBase = SkeletalMesh->GetSectionClothingAsset(LODIndex, SectionIndex);	
+					UClothingAssetCommon* ClothingAssetCommon = Cast<UClothingAssetCommon>(ClothingAssetBase);
+
+					if (ClothingAssetCommon && ClothingAssetCommon->PhysicsAsset)
+					{	
+						int32 AssetIndex = GenerationContext.ContributingClothingAssetsData.IndexOfByPredicate( 
+						[Guid = ClothingAssetBase->GetAssetGuid()](const FCustomizableObjectClothingAssetData& A)
+						{
+							return A.OriginalAssetGuid == Guid;
+						});
+
+						check(AssetIndex != INDEX_NONE);
+
+						GenerationContext.AddParticipatingObject(*ClothingAssetCommon->PhysicsAsset);
+						
+						const int32 PhysicsAssetIndex = GenerationContext.PhysicsAssets.AddUnique(ClothingAssetCommon->PhysicsAsset);
+						FString ClothPhysicsAssetTag = FString::Printf(TEXT("__ClothPA:%d_%d"), AssetIndex, PhysicsAssetIndex);
+						AddTagToMutableMeshUnique(*MutableMesh, ClothPhysicsAssetTag);
+					}
 				}
 
 				if (!AnimBPAssetTag.IsEmpty())
@@ -258,6 +332,11 @@ bool FillTableColumn(const UCustomizableObjectNodeTable* TableNode,	mu::TablePtr
 					AddTagToMutableMeshUnique(*MutableMesh, GenerateGameplayTag(Tag.ToString()));
 				}
 
+				for (int32 ResourceIndex : StreamedResources)
+				{
+					MutableMesh->AddStreamedResource(ResourceIndex);
+				}
+
 				AddSocketTagsToMesh(SkeletalMesh, MutableMesh, GenerationContext);
 
 				if (UCustomizableObjectSystem::GetInstance()->IsMutableAnimInfoDebuggingEnabled())
@@ -268,13 +347,13 @@ bool FillTableColumn(const UCustomizableObjectNodeTable* TableNode,	mu::TablePtr
 					AddTagToMutableMeshUnique(*MutableMesh, MeshTag);
 				}
 
-				MutableTable->SetCell(CurrentColumn, RowIdx, MutableMesh.get());
+				MutableTable->SetCell(CurrentColumn, RowIdx, MutableMesh.get(), SkeletalMesh);
 			}
 			else
 			{
 				FString msg = FString::Printf(TEXT("Error converting skeletal mesh LOD %d, Section %d from column [%s] row [%s] to mutable."),
 					LODIndex, SectionIndex, *ColumnName, *RowName);
-				GenerationContext.Compiler->CompilerLog(FText::FromString(msg), TableNode);
+				LogRowGenerationMessage(TableNode, DataTablePtr, GenerationContext, msg, RowName);
 			}
 		}
 
@@ -309,7 +388,7 @@ bool FillTableColumn(const UCustomizableObjectNodeTable* TableNode,	mu::TablePtr
 
 				FString msg = FString::Printf(TEXT("Mesh from column [%s] row [%s] needs LOD %d but has less LODs than the reference mesh. LOD %d will be used instead. This can cause some performance penalties."),
 					*ColumnName, *RowName, LODIndex, CurrentLOD);
-				GenerationContext.Compiler->CompilerLog(FText::FromString(msg), TableNode);
+				LogRowGenerationMessage(TableNode, DataTablePtr, GenerationContext, msg, RowName);
 			}
 
 			int32 NumMaterials = StaticMesh->GetRenderData()->LODResources[CurrentLOD].Sections.Num();
@@ -321,85 +400,70 @@ bool FillTableColumn(const UCustomizableObjectNodeTable* TableNode,	mu::TablePtr
 				FString SecondTextOption = NumMaterials > ReferenceNumMaterials ? "Some will be ignored" : "This can cause some compilation errors.";
 
 				FString msg = FString::Printf(TEXT("Mesh from column [%s] row [%s] has %s Sections than the reference mesh. %s"), *ColumnName, *RowName, *FirstTextOption, *SecondTextOption);
-				GenerationContext.Compiler->CompilerLog(FText::FromString(msg), TableNode);
+				LogRowGenerationMessage(TableNode, DataTablePtr, GenerationContext, msg, RowName);
 			}
 
 			FString MutableColumnName = TableNode->GenerateStaticMeshMutableColumName(ColumnName, SectionIndex);
 
-			CurrentColumn = MutableTable.get()->FindColumn(StringCast<ANSICHAR>(*MutableColumnName).Get());
+			CurrentColumn = MutableTable.get()->FindColumn(MutableColumnName);
 
 			if (CurrentColumn == -1)
 			{
-				CurrentColumn = MutableTable->AddColumn(StringCast<ANSICHAR>(*MutableColumnName).Get(), mu::TABLE_COLUMN_TYPE::TCT_MESH);
+				CurrentColumn = MutableTable->AddColumn(MutableColumnName, mu::ETableColumnType::Mesh);
 			}
 
-			mu::MeshPtr MutableMesh = GenerateMutableMesh(StaticMesh, TSoftClassPtr<UAnimInstance>(), CurrentLOD, SectionIndex, CurrentLOD, SectionIndex, FString(), GenerationContext, TableNode); // TODO GMT
+			mu::MeshPtr MutableMesh = GenerateMutableMesh(StaticMesh, TSoftClassPtr<UAnimInstance>(), CurrentLOD, SectionIndex, CurrentLOD, SectionIndex, FString(), GenerationContext, TableNode);
 
 			if (MutableMesh)
 			{
-				MutableTable->SetCell(CurrentColumn, RowIdx, MutableMesh.get());
+				MutableTable->SetCell(CurrentColumn, RowIdx, MutableMesh.get(), StaticMesh);
 			}
 			else
 			{
 				FString msg = FString::Printf(TEXT("Error converting skeletal mesh LOD %d, Section %d from column [%s] row [%s] to mutable."),
 					LODIndex, SectionIndex, *ColumnName, *RowName);
-
-				GenerationContext.Compiler->CompilerLog(FText::FromString(msg), TableNode);
+				LogRowGenerationMessage(TableNode, DataTablePtr, GenerationContext, msg, RowName);
 			}
 		}
 
 		else if (SoftObjectProperty->PropertyClass->IsChildOf(UTexture::StaticClass()))
 		{
-			UTexture* Texture = nullptr;
+			UTexture* Texture = Cast<UTexture>(Object);
 
-			// Two supported texture types
-			UTexture2D* Texture2D = Cast<UTexture2D>(Object);
-			UTexture2DArray* TextureArray = Cast<UTexture2DArray>(Object);
+			// Removing encoding part
+			const FString PinName = ColumnName.Replace(TEXT("--PassThrough"), TEXT(""), ESearchCase::CaseSensitive);
 
-			if (!Texture2D && !TextureArray)
+			if (!Texture)
 			{
-				Texture2D = TableNode->GetColumnDefaultAssetByType<UTexture2D>(ColumnName);
-				TextureArray = TableNode->GetColumnDefaultAssetByType<UTexture2DArray>(ColumnName);
+				Texture = TableNode->GetColumnDefaultAssetByType<UTexture>(PinName);
 
 				FString Message = Cast<UObject>(Object) ? "not a suported Texture" : "null";
-				FString WarningMessage = FString::Printf(TEXT("Texture from column [%s] row [%s] is %s. The default texture will be used instead."), *ColumnName, *RowName, *Message);
-				GenerationContext.Compiler->CompilerLog(FText::FromString(WarningMessage), TableNode);
+				FString WarningMessage = FString::Printf(TEXT("Texture from column [%s] row [%s] is %s. The default texture will be used instead."), *PinName, *RowName, *Message);
+				LogRowGenerationMessage(TableNode, DataTablePtr, GenerationContext, WarningMessage, RowName);
 			}
 
-			check(Texture2D || TextureArray);
+			// There will be always one of the two options
+			check(Texture);
 
 			// Getting column index from column name
-			CurrentColumn = MutableTable->FindColumn(StringCast<ANSICHAR>(*ColumnName).Get());
+			CurrentColumn = MutableTable->FindColumn(ColumnName);
 
 			if (CurrentColumn == INDEX_NONE)
 			{
-				CurrentColumn = MutableTable->AddColumn(StringCast<ANSICHAR>(*ColumnName).Get(), mu::TABLE_COLUMN_TYPE::TCT_IMAGE);
+				CurrentColumn = MutableTable->AddColumn(ColumnName, mu::ETableColumnType::Image);
 			}
 
-			if (TableNode->GetColumnImageMode(ColumnName) == ETableTextureType::PASSTHROUGH_TEXTURE)
+			bool bIsPassthroughTexture = TableNode->GetColumnImageMode(PinName) == ETableTextureType::PASSTHROUGH_TEXTURE;
+			if (!bIsPassthroughTexture)
 			{
-				// There will be always one of the two options
-				Texture = Texture2D ? Cast<UTexture>(Texture2D) : Cast<UTexture>(TextureArray);
-
-				uint32* FoundIndex = GenerationContext.PassThroughTextureToIndexMap.Find(Texture);
-				uint32 ImageReferenceID;
-
-				if (!FoundIndex)
+				if (Texture)
 				{
-					ImageReferenceID = GenerationContext.PassThroughTextureToIndexMap.Num();
-					GenerationContext.PassThroughTextureToIndexMap.Add(Texture, ImageReferenceID);
+					GenerationContext.AddParticipatingObject(*Texture);
 				}
-				else
-				{
-					ImageReferenceID = *FoundIndex;
-				}
+			}
 
-				MutableTable->SetCell(CurrentColumn, RowIdx, mu::Image::CreateAsReference(ImageReferenceID).get());
-			}
-			else
-			{
-				GenerationContext.ArrayTextureUnrealToMutableTask.Add(FTextureUnrealToMutableTask(MutableTable, Texture2D, TableNode, CurrentColumn, RowIdx));
-			}
+			mu::Ptr<mu::ResourceProxyMemory<mu::Image>> Proxy = new mu::ResourceProxyMemory<mu::Image>(GenerateImageConstant(Texture, GenerationContext, bIsPassthroughTexture));
+			MutableTable->SetCell(CurrentColumn, RowIdx, Proxy.get());
 		}
 
 		else if (SoftObjectProperty->PropertyClass->IsChildOf(UMaterialInstance::StaticClass()))
@@ -418,7 +482,13 @@ bool FillTableColumn(const UCustomizableObjectNodeTable* TableNode,	mu::TablePtr
 				return false;
 			}
 
-			if (!Material || ReferenceMaterial->GetMaterial() != Material->GetMaterial())
+			GenerationContext.AddParticipatingObject(*ReferenceMaterial);
+
+			const bool bTableMaterialCheckDisabled = GenerationContext.Object->bDisableTableMaterialsParentCheck;
+			const bool bMaterialParentMismatch = !bTableMaterialCheckDisabled && Material 
+												 && ReferenceMaterial->GetMaterial() != Material->GetMaterial();
+
+			if (!Material || bMaterialParentMismatch)
 			{
 				FText Warning;
 
@@ -435,17 +505,19 @@ bool FillTableColumn(const UCustomizableObjectNodeTable* TableNode,	mu::TablePtr
 
 				Material = ReferenceMaterial;
 
-				GenerationContext.Compiler->CompilerLog(Warning, TableNode);
+				LogRowGenerationMessage(TableNode, DataTablePtr, GenerationContext, Warning.ToString(), RowName);
 			}
 
+			GenerationContext.AddParticipatingObject(*Material);
+			
 			FString EncodedSwitchParameterName = "__MutableMaterialId";
 			if (ColumnName.Contains(EncodedSwitchParameterName))
 			{
-				CurrentColumn = MutableTable.get()->FindColumn(StringCast<ANSICHAR>(*ColumnName).Get());
+				CurrentColumn = MutableTable.get()->FindColumn(ColumnName);
 
 				if (CurrentColumn == -1)
 				{
-					CurrentColumn = MutableTable->AddColumn(StringCast<ANSICHAR>(*ColumnName).Get(), mu::TABLE_COLUMN_TYPE::TCT_SCALAR);
+					CurrentColumn = MutableTable->AddColumn(ColumnName, mu::ETableColumnType::Scalar);
 				}
 
 				const int32 lastMaterialAmount = GenerationContext.ReferencedMaterials.Num();
@@ -479,12 +551,12 @@ bool FillTableColumn(const UCustomizableObjectNodeTable* TableNode,	mu::TablePtr
 			if (ParameterIndex != INDEX_NONE && ParameterInfos[ParameterIndex].Name == GenerationContext.CurrentMaterialTableParameter)
 			{
 				// Getting column index from parameter name
-				ColumnIndex = MutableTable->FindColumn(StringCast<ANSICHAR>(*ColumnName).Get());
+				ColumnIndex = MutableTable->FindColumn(ColumnName);
 
 				if (ColumnIndex == INDEX_NONE)
 				{
 					// If there is no column with the parameters name, we generate a new one
-					ColumnIndex = MutableTable->AddColumn(StringCast<ANSICHAR>(*ColumnName).Get(), mu::TABLE_COLUMN_TYPE::TCT_IMAGE);
+					ColumnIndex = MutableTable->AddColumn(ColumnName, mu::ETableColumnType::Image);
 				}
 
 				UTexture* ParentTextureValue = nullptr;
@@ -497,7 +569,7 @@ bool FillTableColumn(const UCustomizableObjectNodeTable* TableNode,	mu::TablePtr
 					FString Message = Cast<UObject>(ParentParameterTexture) ? "not a Texture2D" : "null";
 					
 					FString msg = FString::Printf(TEXT("Parameter [%s] from Default Material Instance of column [%s] is %s. This parameter will be ignored."), *ParamName, *MaterialColumnName, *Message);
-					GenerationContext.Compiler->CompilerLog(FText::FromString(msg), TableNode);
+					LogRowGenerationMessage(TableNode, DataTablePtr, GenerationContext, msg, RowName);
 					 
 					 return false;
 				}
@@ -515,10 +587,12 @@ bool FillTableColumn(const UCustomizableObjectNodeTable* TableNode,	mu::TablePtr
 					FString Message = Cast<UObject>(TextureValue) ? "not a Texture2D" : "null";
 
 					FString msg = FString::Printf(TEXT("Parameter [%s] from material instance of column [%s] row [%s] is %s. The parameter texture of the default material will be used instead."), *ParamName, *MaterialColumnName, *RowName, *Message);
-					GenerationContext.Compiler->CompilerLog(FText::FromString(msg), TableNode);
+					LogRowGenerationMessage(TableNode, DataTablePtr, GenerationContext, msg, RowName);
 				}
 
-				GenerationContext.ArrayTextureUnrealToMutableTask.Add(FTextureUnrealToMutableTask(MutableTable, ParameterTexture, TableNode, ColumnIndex, RowIdx));
+				bool bIsPassthroughTexture = false;
+				mu::Ptr<mu::ResourceProxyMemory<mu::Image>> Proxy = new mu::ResourceProxyMemory<mu::Image>(GenerateImageConstant(ParameterTexture, GenerationContext, bIsPassthroughTexture));
+				MutableTable->SetCell(ColumnIndex, RowIdx, Proxy.get());
 
 				return true;
 			}
@@ -535,16 +609,16 @@ bool FillTableColumn(const UCustomizableObjectNodeTable* TableNode,	mu::TablePtr
 	{
 		if (StructProperty->Struct == TBaseStructure<FLinearColor>::Get())
 		{
-			CurrentColumn = MutableTable->FindColumn(StringCast<ANSICHAR>(*ColumnName).Get());
+			CurrentColumn = MutableTable->FindColumn(ColumnName);
 
 			if (CurrentColumn == INDEX_NONE)
 			{
-				CurrentColumn = MutableTable->AddColumn(StringCast<ANSICHAR>(*ColumnName).Get(), mu::TABLE_COLUMN_TYPE::TCT_COLOUR);
+				CurrentColumn = MutableTable->AddColumn(ColumnName, mu::ETableColumnType::Color);
 			}
 
 			// Setting cell value
 			FLinearColor Value = *(FLinearColor*)CellData;
-			MutableTable->SetCell(CurrentColumn, RowIdx, Value.R, Value.G, Value.B, Value.A);
+			MutableTable->SetCell(CurrentColumn, RowIdx, Value);
 		}
 		
 		else
@@ -556,11 +630,11 @@ bool FillTableColumn(const UCustomizableObjectNodeTable* TableNode,	mu::TablePtr
 
 	else if (const FNumericProperty* FloatNumProperty = CastField<FFloatProperty>(ColumnProperty))
 	{
-		CurrentColumn = MutableTable->FindColumn(StringCast<ANSICHAR>(*ColumnName).Get());
+		CurrentColumn = MutableTable->FindColumn(ColumnName);
 
 		if (CurrentColumn == INDEX_NONE)
 		{
-			CurrentColumn = MutableTable->AddColumn(StringCast<ANSICHAR>(*ColumnName).Get(), mu::TABLE_COLUMN_TYPE::TCT_SCALAR);
+			CurrentColumn = MutableTable->AddColumn(ColumnName, mu::ETableColumnType::Scalar);
 		}
 
 		// Setting cell value
@@ -570,11 +644,11 @@ bool FillTableColumn(const UCustomizableObjectNodeTable* TableNode,	mu::TablePtr
 
 	else if (const FNumericProperty* DoubleNumProperty = CastField<FDoubleProperty>(ColumnProperty))
 	{
-		CurrentColumn = MutableTable->FindColumn(StringCast<ANSICHAR>(*ColumnName).Get());
+		CurrentColumn = MutableTable->FindColumn(ColumnName);
 	
 		if (CurrentColumn == INDEX_NONE)
 		{
-			CurrentColumn = MutableTable->AddColumn(StringCast<ANSICHAR>(*ColumnName).Get(), mu::TABLE_COLUMN_TYPE::TCT_SCALAR);
+			CurrentColumn = MutableTable->AddColumn(ColumnName, mu::ETableColumnType::Scalar);
 		}
 	
 		// Setting cell value
@@ -592,38 +666,189 @@ bool FillTableColumn(const UCustomizableObjectNodeTable* TableNode,	mu::TablePtr
 }
 
 
+uint8* GetCellData(const FName& RowName, const UDataTable& DataTable, const FProperty& ColumnProperty)
+{
+	// Get Row Data
+	uint8* RowData = DataTable.FindRowUnchecked(RowName);
+
+	if (RowData)
+	{
+		return ColumnProperty.ContainerPtrToValuePtr<uint8>(RowData, 0);
+	}
+
+	return nullptr;
+}
+
+
+FName GetAnotherOption(FName SelectedOptionName, const TArray<FName>& RowNames)
+{
+	for (const FName& CandidateOption : RowNames)
+	{
+		if (CandidateOption != SelectedOptionName)
+		{
+			return CandidateOption;
+		}
+	}
+
+	return FName("None");
+}
+
+
+TArray<FName> GetEnabledRows(const UDataTable& DataTable, const UCustomizableObjectNodeTable& TableNode)
+{
+	TArray<FName> RowNames;
+	const UScriptStruct* TableStruct = DataTable.GetRowStruct();
+
+	if (!TableStruct)
+	{
+		return RowNames;
+	}
+
+	TArray<FName> TableRowNames = DataTable.GetRowNames();
+	FBoolProperty* BoolProperty = nullptr;
+
+	for (TFieldIterator<FProperty> PropertyIt(TableStruct); PropertyIt && TableNode.bDisableCheckedRows; ++PropertyIt)
+	{
+		BoolProperty = CastField<FBoolProperty>(*PropertyIt);
+
+		if (BoolProperty)
+		{
+			for (const FName& RowName : TableRowNames)
+			{
+				if (uint8* CellData = GetCellData(RowName, DataTable, *BoolProperty))
+				{
+					if (!BoolProperty->GetPropertyValue(CellData))
+					{
+						RowNames.Add(RowName);
+					}
+				}
+			}
+
+			// There should be only one Bool column
+			break;
+		}
+	}
+
+	// There is no Bool column or we don't want to disable rows
+	if (!BoolProperty)
+	{
+		return TableRowNames;
+	}
+
+	return RowNames;
+}
+
+
+void RestrictRowNamesToSelectedOption(TArray<FName>& InOutRowNames, const UCustomizableObjectNodeTable& TableNode, FMutableGraphGenerationContext& GenerationContext)
+{
+	// If the param is in the map restrict to only the selected option
+	FString* SelectedOptionString = GenerationContext.ParamNamesToSelectedOptions.Find(TableNode.ParameterName);
+
+	if (SelectedOptionString)
+	{
+		FName SelectedOptionName = FName(*SelectedOptionString);
+
+		if (InOutRowNames.Contains(SelectedOptionName))
+		{
+			FName AnotherOption = GetAnotherOption(SelectedOptionName, InOutRowNames);
+			InOutRowNames.Empty(2);
+			InOutRowNames.Add(SelectedOptionName);
+
+			// To prevent the optimization of the parameter for having just one option, which would prevent the restriction 
+			// of that parameter in the next compile only selected
+			InOutRowNames.Add(AnotherOption);
+		}
+		else
+		{
+			InOutRowNames.Empty(0);
+		}
+	}
+}
+
+
+void RestrictRowContentByVersion( TArray<FName>& InOutRowNames, const UDataTable& DataTable, const UCustomizableObjectNodeTable& TableNode, FMutableGraphGenerationContext& GenerationContext)
+{
+	FProperty* ColumnProperty = DataTable.FindTableProperty(TableNode.VersionColumn);
+
+	if (!ColumnProperty)
+	{
+		return;
+	}
+
+	ICustomizableObjectVersionBridgeInterface* CustomizableObjectVersionBridgeInterface = Cast<ICustomizableObjectVersionBridgeInterface>(GenerationContext.Object->VersionBridge);
+	if (!CustomizableObjectVersionBridgeInterface)
+	{
+		const FString Message = "Found a data table with at least a row with a Custom Version asset but the Root Object does not have a Version Bridge asset assigned.";
+		GenerationContext.Compiler->CompilerLog(FText::FromString(Message), &TableNode, EMessageSeverity::Error);
+		return;
+	}
+
+	TArray<FName> OutRowNames;
+	OutRowNames.Reserve(InOutRowNames.Num());
+
+	for (int32 RowIndex = 0; RowIndex < InOutRowNames.Num(); ++RowIndex)
+	{
+		if (uint8* CellData = GetCellData(InOutRowNames[RowIndex], DataTable, *ColumnProperty))
+		{
+			if (!CustomizableObjectVersionBridgeInterface->IsVersionPropertyIncludedInCurrentRelease(*ColumnProperty, CellData))
+			{
+				continue;
+			}
+
+			OutRowNames.Add(InOutRowNames[RowIndex]);
+		}
+	}
+
+	InOutRowNames = OutRowNames;
+}
+
+
+TArray<FName> GetRowsToCompile(const UDataTable& DataTable, const UCustomizableObjectNodeTable& TableNode, FMutableGraphGenerationContext& GenerationContext)
+{
+	TArray<FName> RowNames = GetEnabledRows(DataTable, TableNode);
+
+	if (!RowNames.IsEmpty())
+	{
+		RestrictRowNamesToSelectedOption(RowNames, TableNode, GenerationContext);
+		RestrictRowContentByVersion(RowNames, DataTable, TableNode, GenerationContext);
+	}
+
+	return RowNames;
+}
+
+
 bool GenerateTableColumn(const UCustomizableObjectNodeTable* TableNode, const UEdGraphPin* Pin, mu::TablePtr MutableTable, const FString& DataTableColumnName, const FProperty* ColumnProperty,
 	const int32 LODIndexConnected, const int32 SectionIndexConnected, const int32 LODIndex, const int32 SectionIndex, const bool bOnlyConnectedLOD, FMutableGraphGenerationContext& GenerationContext)
 {
 	SCOPED_PIN_DATA(GenerationContext, Pin)
 
-	if (!TableNode || !TableNode->Table || !TableNode->Table->GetRowStruct())
+	if (!TableNode)
 	{
 		return false;
 	}
 
+	UDataTable* DataTable = GetDataTable(TableNode, GenerationContext);
+
+	if (!DataTable || !DataTable->GetRowStruct())
+	{
+		return false;
+	}
+	
+	GenerationContext.AddParticipatingObject(*DataTable);
+
 	// Getting names of the rows to access the information
-	TArray<FName> RowNames = TableNode->GetRowNames();
+	TArray<FName> RowNames = GetRowsToCompile(*DataTable, *TableNode, GenerationContext);
 
 	for (int32 RowIndex = 0; RowIndex < RowNames.Num(); ++RowIndex)
 	{
-		// Getting Row Data
-		uint8* RowData = TableNode->Table->FindRowUnchecked(RowNames[RowIndex]);
-
-		if (RowData)
+		if (uint8* CellData = GetCellData(RowNames[RowIndex], *DataTable, *ColumnProperty))
 		{
-			// Getting Cell Data
-			uint8* CellData = ColumnProperty->ContainerPtrToValuePtr<uint8>(RowData, 0);
+			bool bCellGenerated = FillTableColumn(TableNode, MutableTable, DataTableColumnName, RowNames[RowIndex].ToString(), RowIndex, CellData, ColumnProperty,
+				LODIndexConnected, SectionIndexConnected, LODIndex, SectionIndex, bOnlyConnectedLOD, GenerationContext);
 
-			if (CellData)
+			if (!bCellGenerated)
 			{
-				bool bCellGenerated = FillTableColumn(TableNode, MutableTable, DataTableColumnName, RowNames[RowIndex].ToString(), RowIndex, CellData, ColumnProperty,
-					LODIndexConnected, SectionIndexConnected, LODIndex, SectionIndex, bOnlyConnectedLOD, GenerationContext);
-				
-				if (!bCellGenerated)
-				{
-					return false;
-				}
+				return false;
 			}
 		}
 	}
@@ -632,78 +857,104 @@ bool GenerateTableColumn(const UCustomizableObjectNodeTable* TableNode, const UE
 }
 
 
-mu::TablePtr GenerateMutableSourceTable(const FString& TableName, const UEdGraphPin* Pin, FMutableGraphGenerationContext& GenerationContext)
-{	
+void GenerateTableParameterUIData(const UDataTable* DataTable, const UCustomizableObjectNodeTable* TableNode, FMutableGraphGenerationContext& GenerationContext)
+{
+	// Checking if the parameter name already exists
+	GenerationContext.AddParameterNameUnique(TableNode, TableNode->ParameterName);
+
+	// Generating Parameter UI MetaData if not exists
+	if (!GenerationContext.ParameterUIDataMap.Contains(TableNode->ParameterName))
+	{
+		// Getting Table and row names to access the information
+		TArray<FName> RowNames = GetRowsToCompile(*DataTable, *TableNode, GenerationContext);
+
+		FParameterUIData ParameterUIData(TableNode->ParameterName, TableNode->ParamUIMetadata, EMutableParameterType::Int);
+		ParameterUIData.IntegerParameterGroupType = TableNode->bAddNoneOption ? ECustomizableObjectGroupType::COGT_ONE_OR_NONE : ECustomizableObjectGroupType::COGT_ONE;
+		FParameterUIData& ParameterUIDataRef = GenerationContext.ParameterUIDataMap.Add(TableNode->ParameterName, ParameterUIData);
+
+		if (TableNode->ParamUIMetadataColumn.IsNone())
+		{
+			return;
+		}
+
+		FProperty* ColumnProperty = DataTable->FindTableProperty(TableNode->ParamUIMetadataColumn);
+
+		if (!ColumnProperty)
+		{
+			FString msg = "Couldn't find Options UI Metadata Column [" + TableNode->ParamUIMetadataColumn.ToString() + "] in the Structure of the Node.";
+			GenerationContext.Compiler->CompilerLog(FText::FromString(msg), TableNode);
+
+			return;
+		}
+
+		FString WrongTypeMessage = "Column with name [" + TableNode->ParamUIMetadataColumn.ToString() + "] is not a Mutable Param UI Metadata type.";
+
+		if (const FStructProperty* StructProperty = CastField<FStructProperty>(ColumnProperty))
+		{
+			if (StructProperty->Struct != FMutableParamUIMetadata::StaticStruct())
+			{
+				GenerationContext.Compiler->CompilerLog(FText::FromString(WrongTypeMessage), TableNode);
+
+				return;
+			}
+			
+			for (int32 NameIndex = 0; NameIndex < RowNames.Num(); ++NameIndex)
+			{
+				if (uint8* CellData = GetCellData(RowNames[NameIndex], *DataTable, *ColumnProperty))
+				{
+					FMutableParamUIMetadata Value = *(FMutableParamUIMetadata*)CellData;
+					ParameterUIDataRef.ArrayIntegerParameterOption.Add(FIntegerParameterUIData(RowNames[NameIndex].ToString(), Value));
+				}
+			}
+		}
+		else
+		{
+			GenerationContext.Compiler->CompilerLog(FText::FromString(WrongTypeMessage), TableNode);
+			return;
+		}
+	}
+}
+
+
+mu::TablePtr GenerateMutableSourceTable(const UDataTable* DataTable, const UCustomizableObjectNodeTable* TableNode, FMutableGraphGenerationContext& GenerationContext)
+{
+	check(DataTable && TableNode);
+
+	// Checking if the table in the cache
+	const FString TableName = DataTable->GetName();
+
 	if (mu::TablePtr* Result = GenerationContext.GeneratedTables.Find(TableName))
 	{
+		// Generating Parameter Metadata for parameters that reuse a Table
+		GenerateTableParameterUIData(DataTable, TableNode, GenerationContext);
+
 		return *Result;
 	}
 
 	mu::TablePtr MutableTable = new mu::Table();
-	
-	UCustomizableObjectNode* Node = CastChecked<UCustomizableObjectNode>(Pin->GetOwningNode());
-	if (Node->IsNodeOutDatedAndNeedsRefresh())
+
+	if (const UScriptStruct* TableStruct = DataTable->GetRowStruct())
 	{
-		Node->SetRefreshNodeWarning();
-	}
+		// Getting Table and row names to access the information
+		TArray<FName> RowNames = GetRowsToCompile(*DataTable, *TableNode, GenerationContext);
 
-	if (const UCustomizableObjectNodeTable* TypedTable = Cast<UCustomizableObjectNodeTable>(Node))
-	{
-		UDataTable* Table = TypedTable->Table;
+		// Adding and filling Name Column
+		MutableTable->AddColumn("Name", mu::ETableColumnType::String);
 
-		if (!Table)
+		for (int32 NameIndex = 0; NameIndex < RowNames.Num(); ++NameIndex)
 		{
-			FString msg = "Couldn't find the Data Table asset in the Node.";
-			GenerationContext.Compiler->CompilerLog(FText::FromString(msg), Node);
-
-			return nullptr;
+			MutableTable->AddRow(NameIndex);
+			MutableTable->SetCell(0, NameIndex, RowNames[NameIndex].ToString());
 		}
 
-		const UScriptStruct* TableStruct = Table->GetRowStruct();
-
-		if (TableStruct)
-		{
-			// Getting names of the rows to access the information
-			TArray<FName> RowNames = TypedTable->GetRowNames();
-
-			// Adding and filling Name Column
-			MutableTable->AddColumn("Name", mu::TABLE_COLUMN_TYPE::TCT_STRING);
-
-			// Add metadata
-			FParameterUIData ParameterUIData(
-				TypedTable->ParameterName,
-				TypedTable->ParamUIMetadata,
-				EMutableParameterType::Int);
-			
-			ParameterUIData.IntegerParameterGroupType = TypedTable->bAddNoneOption ? ECustomizableObjectGroupType::COGT_ONE_OR_NONE : ECustomizableObjectGroupType::COGT_ONE;
-
-			// Adding a None Option
-			MutableTable->SetNoneOption(TypedTable->bAddNoneOption);
-
-			for (int32 i = 0; i < RowNames.Num(); ++i)
-			{
-				MutableTable->AddRow(i);
-				FString RowName= RowNames[i].ToString();
-				MutableTable->SetCell(0, i, StringCast<ANSICHAR>(*RowName).Get());
-				ParameterUIData.ArrayIntegerParameterOption.Add(FIntegerParameterUIData(
-					RowName,
-					FMutableParamUIMetadata()));
-			}
-
-			GenerationContext.ParameterUIDataMap.Add(TypedTable->ParameterName, ParameterUIData);
-		}
-		else
-		{
-			FString msg = "Couldn't find the Data Table's Struct asset in the Node.";
-			GenerationContext.Compiler->CompilerLog(FText::FromString(msg), Node);
-			
-			return nullptr;
-		}
+		// Generating Parameter Metadata for new table parameters
+		GenerateTableParameterUIData(DataTable, TableNode, GenerationContext);
 	}
 	else
 	{
-		GenerationContext.Compiler->CompilerLog(LOCTEXT("UnimplementedNode", "Node type not implemented yet."), Node);
-
+		FString msg = "Couldn't find the Data Table's Struct asset in the Node.";
+		GenerationContext.Compiler->CompilerLog(FText::FromString(msg), DataTable);
+		
 		return nullptr;
 	}
 
@@ -712,5 +963,191 @@ mu::TablePtr GenerateMutableSourceTable(const FString& TableName, const UEdGraph
 	return MutableTable;
 }
 
-#undef LOCTEXT_NAMESPACE
 
+void AddCompositeTablesToParticipatingObjetcts(const UDataTable* Table, FMutableGraphGenerationContext& GenerationContext)
+{
+	if (const UCompositeDataTable* CompositeTable = Cast<UCompositeDataTable>(Table))
+	{
+		GenerationContext.AddParticipatingObject(*CompositeTable);
+
+		/*for (const TArray<TObjectPtr<UDataTable>>& ParentTable : CompositeTable.ParentTables) // TODO 
+		{
+			AddCompositeTablesToParticipatingObjetcts(ParentTable, GenerationContext);
+		}*/
+	}
+}
+
+
+UDataTable* GetDataTable(const UCustomizableObjectNodeTable* TableNode, FMutableGraphGenerationContext& GenerationContext)
+{
+	UDataTable* OutDataTable = nullptr;
+
+	if (TableNode->TableDataGatheringMode == ETableDataGatheringSource::ETDGM_AssetRegistry)
+	{
+		OutDataTable = GenerateDataTableFromStruct(TableNode, GenerationContext);
+	}
+	else
+	{
+		OutDataTable = TableNode->Table;
+	}
+
+	AddCompositeTablesToParticipatingObjetcts(OutDataTable, GenerationContext);
+
+	return OutDataTable;
+}
+
+
+UDataTable* GenerateDataTableFromStruct(const UCustomizableObjectNodeTable* TableNode, FMutableGraphGenerationContext& GenerationContext)
+{
+	if (!TableNode->Structure)
+	{
+		GenerationContext.Compiler->CompilerLog(LOCTEXT("EmptyStructureError", "Empty structure asset."), TableNode);
+		return nullptr;
+	}
+
+	FMutableGraphGenerationContext::FGeneratedDataTablesData DataTableData;
+	DataTableData.ParentStruct = TableNode->Structure;
+	DataTableData.FilterPaths = TableNode->FilterPaths;
+	
+	//Checking cache of generated data tables
+	int32 DataTableIndex = GenerationContext.GeneratedCompositeDataTables.Find(DataTableData);
+	if (DataTableIndex != INDEX_NONE)
+	{
+		// DataTable already generated
+		UCompositeDataTable* GeneratedDataTable = GenerationContext.GeneratedCompositeDataTables[DataTableIndex].GeneratedDataTable;
+		return Cast<UDataTable>(GeneratedDataTable);
+	}
+
+	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+	IAssetRegistry& AssetRegistry = AssetRegistryModule.GetRegistry();
+
+	if (TableNode->FilterPaths.IsEmpty())
+	{
+		// Preventing load all data tables of the project
+		GenerationContext.Compiler->CompilerLog(LOCTEXT("NoFilePathsError", "There are no filter paths selected. This is an error to prevent loading all data table of the project."), TableNode);
+
+		return nullptr;
+	}
+
+	TArray<FAssetData> DataTableAssets = TableNode->GetParentTables();
+
+	UCompositeDataTable* CompositeDataTable = NewObject<UCompositeDataTable>();
+	CompositeDataTable->RowStruct = TableNode->Structure;
+
+	TArray<UDataTable*> ParentTables;
+
+	for (const FAssetData& DataTableAsset : DataTableAssets)
+	{
+		if (DataTableAsset.IsValid())
+		{
+			if (UDataTable* DataTable = Cast<UDataTable>(DataTableAsset.GetAsset()))
+			{
+				ParentTables.Add(DataTable);
+			}
+		}
+	}
+
+	if (ParentTables.IsEmpty())
+	{
+		GenerationContext.Compiler->CompilerLog(LOCTEXT("NoDataTablesFoundWarning", "Could not find a data table with the specified struct in the selected paths."), TableNode);
+
+		return nullptr;
+	}
+
+	// Map to find the original data table of a row
+	TMap<FName, TArray<UDataTable*>> OriginalTableRowsMap;
+
+	// Set to iterate faster the repeated rows inside the map
+	TSet<FName> RepeatedRowNamesArray;
+
+	// Checking if a row name is repeated in several tables
+	for (int32 ParentIndx = 0; ParentIndx < ParentTables.Num(); ++ParentIndx)
+	{
+		const TArray<FName>& RowNames = ParentTables[ParentIndx]->GetRowNames();
+
+		for (const FName& RowName : RowNames)
+		{
+			TArray<UDataTable*>* DataTablesNames = OriginalTableRowsMap.Find(RowName);
+
+			if (DataTablesNames == nullptr)
+			{
+				TArray<UDataTable*> ArrayTemp;
+				ArrayTemp.Add(ParentTables[ParentIndx]);
+				OriginalTableRowsMap.Add(RowName, ArrayTemp);
+			}
+			else
+			{
+				DataTablesNames->Add(ParentTables[ParentIndx]);
+				RepeatedRowNamesArray.Add(RowName);
+			}
+		}
+	}
+
+	for (const FName& RowName : RepeatedRowNamesArray)
+	{
+		const TArray<UDataTable*>& DataTablesNames = OriginalTableRowsMap[RowName];
+
+		FString TableNames;
+
+		for (int32 NameIndx = 0; NameIndx < DataTablesNames.Num(); ++NameIndx)
+		{
+			TableNames += DataTablesNames[NameIndx]->GetName();
+
+			if (NameIndx + 1 < DataTablesNames.Num())
+			{
+				TableNames += ", ";
+			}
+		}
+
+		FString Message = FString::Printf(TEXT("Row with name [%s] repeated in the following Data Tables: [%s]. The last row processed will be used [%s]."),
+			*RowName.ToString(), *TableNames, *DataTablesNames.Last()->GetName());
+		GenerationContext.Compiler->CompilerLog(FText::FromString(Message), TableNode);
+	}
+
+	CompositeDataTable->AppendParentTables(ParentTables);
+
+	// Adding Generated Data Table to the cache
+	DataTableData.GeneratedDataTable = CompositeDataTable;
+	GenerationContext.GeneratedCompositeDataTables.Add(DataTableData);
+	GenerationContext.CompositeDataTableRowToOriginalDataTableMap.Add(CompositeDataTable, OriginalTableRowsMap);
+	
+	return Cast<UDataTable>(CompositeDataTable);
+}
+
+
+void LogRowGenerationMessage(const UCustomizableObjectNodeTable* TableNode, const UDataTable* DataTable, FMutableGraphGenerationContext& GenerationContext, const FString& Message, const FString& RowName)
+{
+	FString FinalMessage = Message;
+
+	if (TableNode->TableDataGatheringMode == ETableDataGatheringSource::ETDGM_AssetRegistry)
+	{
+		TMap<FName, TArray<UDataTable*>>* ParameterDataTableMap = GenerationContext.CompositeDataTableRowToOriginalDataTableMap.Find(DataTable);
+
+		if (ParameterDataTableMap)
+		{
+			TArray<UDataTable*>* DataTables = ParameterDataTableMap->Find(FName(*RowName));
+
+			if (DataTables)
+			{
+				FString TableNames;
+
+				for (int32 NameIndx = 0; NameIndx < DataTables->Num(); ++NameIndx)
+				{
+					TableNames += (*DataTables)[NameIndx]->GetName();
+
+					if (NameIndx + 1 < DataTables->Num())
+					{
+						TableNames += ", ";
+					}
+				}
+
+				FinalMessage += " Row from Composite Data Table, original Data Table/s: " + TableNames;
+			}
+		}
+	}
+
+	GenerationContext.Compiler->CompilerLog(FText::FromString(FinalMessage), TableNode);
+}
+
+
+#undef LOCTEXT_NAMESPACE

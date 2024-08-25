@@ -6,6 +6,7 @@
 #include "IPAddress.h"
 #include "IRemoteControlModule.h"
 #include "IWebSocketNetworkingModule.h"
+#include "Misc/Compression.h"
 #include "Misc/WildcardString.h"
 #include "RemoteControlRequest.h"
 #include "RemoteControlSettings.h"
@@ -15,6 +16,12 @@
 #include "WebSocketNetworkingDelegates.h"
 
 #define LOCTEXT_NAMESPACE "RCWebSocketServer"
+
+static TAutoConsoleVariable<int32> CVarWebSocketMaxUncompressedMessageSize(
+	TEXT("WebSocket.MaxUncompressedMessageSize"),
+	1024 * 1024 * 256,
+	TEXT("If a compressed WebSocket message reports an uncompressed size larger than this, reject the message.")
+);
 
 namespace RemoteControlWebSocketServer
 {
@@ -180,25 +187,36 @@ void FRCWebSocketServer::Broadcast(const TArray<uint8>& InUTF8Payload)
 {
 	for (FWebSocketConnection& Connection : Connections)
 	{
-		if (Connection.Socket)
-		{
-			Connection.Socket->Send(InUTF8Payload.GetData(), InUTF8Payload.Num(), /*PrependSize=*/false);
-		}
+		SendOnConnection(Connection, InUTF8Payload);
 	}
 }
 
 void FRCWebSocketServer::Send(const FGuid& InTargetClientId, const TArray<uint8>& InUTF8Payload)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FRCWebSocketServer::Send);
-	if (FWebSocketConnection* Connection = Connections.FindByPredicate([&InTargetClientId](const FWebSocketConnection& InConnection) { return InConnection.Id == InTargetClientId; }))
+	if (FWebSocketConnection* Connection = GetClientById(InTargetClientId))
 	{
-		Connection->Socket->Send(InUTF8Payload.GetData(), InUTF8Payload.Num(), /*PrependSize=*/false);
+		SendOnConnection(*Connection, InUTF8Payload);
 	}
 }
 
 bool FRCWebSocketServer::IsRunning() const
 {
 	return !!Server;
+}
+
+void FRCWebSocketServer::SetClientCompressionMode(const FGuid& ClientId, ERCWebSocketCompressionMode Mode)
+{
+	for (FWebSocketConnection& Connection : Connections)
+	{
+		if (ClientId != Connection.Id)
+		{
+			continue;
+		}
+
+		Connection.CompressionMode = Mode;
+		break;
+	}
 }
 
 bool FRCWebSocketServer::Tick(float DeltaTime)
@@ -234,9 +252,65 @@ void FRCWebSocketServer::ReceivedRawPacket(void* Data, int32 Size, FGuid ClientI
 	}
 	
 	TRACE_CPUPROFILER_EVENT_SCOPE(FRCWebSocketServer::ReceivedRawPacket);
-	
+
 	TArray<uint8> Payload;
-	WebRemoteControlUtils::ConvertToTCHAR(MakeArrayView(static_cast<uint8*>(Data), Size), Payload);
+
+	if (FWebSocketConnection* Connection = GetClientById(ClientId))
+	{
+		switch (Connection->CompressionMode)
+		{
+			case ERCWebSocketCompressionMode::ZLIB:
+			{
+				TRACE_CPUPROFILER_EVENT_SCOPE(DecompressWebSocketData);
+				
+				// Read the header containing the message's uncompressed size
+				const TArrayView<uint8> CompressedData = MakeArrayView(static_cast<uint8*>(Data), Size);
+				FMemoryReaderView Archive(CompressedData);
+
+#if !PLATFORM_LITTLE_ENDIAN
+				// Use canonical little-endian ordering
+				Archive.SetByteSwapping(true);
+#endif
+
+				int64 HeaderSize;
+				int32 UncompressedSize;
+				Archive << UncompressedSize;
+				HeaderSize = Archive.Tell();
+
+				if (UncompressedSize <= 0)
+				{
+					// Invalid size; don't try to allocate this or we'll crash
+					return;
+				}
+
+				if (UncompressedSize > CVarWebSocketMaxUncompressedMessageSize.GetValueOnGameThread())
+				{
+					return;
+				}
+
+				TArray<uint8> UncompressedData;
+				UncompressedData.SetNumUninitialized(UncompressedSize);
+
+				const bool bUncompressOk = FCompression::UncompressMemory(
+					NAME_Zlib,
+					UncompressedData.GetData(), UncompressedSize,
+					CompressedData.GetData() + HeaderSize, CompressedData.Num() - HeaderSize
+				);
+
+				if (!bUncompressOk)
+				{
+					return;
+				}
+
+				WebRemoteControlUtils::ConvertToTCHAR(UncompressedData, Payload);
+			}
+			break;
+
+			default:
+				WebRemoteControlUtils::ConvertToTCHAR(MakeArrayView(static_cast<uint8*>(Data), Size), Payload);
+				break;
+		}
+	}
 
 	if (TOptional<FRemoteControlWebSocketMessage> Message = RemoteControlWebSocketServer::ParseWebsocketMessage(Payload))
 	{
@@ -255,6 +329,48 @@ void FRCWebSocketServer::OnSocketClose(INetworkingWebSocket* Socket)
 		OnConnectionClosed().Broadcast(Connections[Index].Id);
 		Connections.RemoveAtSwap(Index);
 	}
+}
+
+FRCWebSocketServer::FWebSocketConnection* FRCWebSocketServer::GetClientById(const FGuid& Id)
+{
+	return Connections.FindByPredicate([&Id](const FWebSocketConnection& InConnection) { return InConnection.Id == Id; });
+}
+
+void FRCWebSocketServer::SendOnConnection(FWebSocketConnection& Connection, const TArray<uint8>& InUTF8Payload)
+{
+	if (!Connection.Socket)
+	{
+		return;
+	}
+
+	switch (Connection.CompressionMode)
+	{
+	case ERCWebSocketCompressionMode::ZLIB:
+		{
+			TRACE_CPUPROFILER_EVENT_SCOPE(CompressWebSocketData);
+
+			int32 CompressedSize = InUTF8Payload.Num();
+
+			TArray<uint8> CompressedPayload;
+			CompressedPayload.SetNumUninitialized(CompressedSize);
+
+			const bool bCompressOk = FCompression::CompressMemory(
+				NAME_Zlib,
+				CompressedPayload.GetData(), CompressedSize,
+				InUTF8Payload.GetData(), InUTF8Payload.Num()
+			);
+
+			if (bCompressOk && CompressedSize < InUTF8Payload.Num())
+			{
+				Connection.Socket->Send(CompressedPayload.GetData(), CompressedSize, /*PrependSize=*/false);
+				return;
+			}
+		}
+		break;
+	}
+
+	// Send uncompressed data
+	Connection.Socket->Send(InUTF8Payload.GetData(), InUTF8Payload.Num(), /*PrependSize=*/false);
 }
 
 EWebsocketConnectionFilterResult FRCWebSocketServer::FilterConnection(FString OriginHeader, FString ClientIP) const

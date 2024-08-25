@@ -318,7 +318,7 @@ bool FillMesh(const FMeshConversionContext& MeshConversionContext, FBodyMesh& Bo
 		if (PolyGroupIndex < FImportParameters::GMaxMaterialCountPerMesh)
 		{
 			uint32 MaterialHash = Material.Key;
-			FName ImportedSlotName = *LexToString<uint32>(MaterialHash);
+			FName ImportedSlotName = *LexToString(MaterialHash);
 			PolyGroupID = MeshDescription.CreatePolygonGroup();
 			PolygonGroupImportedMaterialSlotNames[PolyGroupID] = ImportedSlotName;
 		}
@@ -523,7 +523,7 @@ bool FillMesh(const FMeshConversionContext& MeshConversionContext, FBodyMesh& Bo
 			{
 				// compute normals of Symmetric vertex
 				FMatrix44f SymmetricMatrix = FDatasmithUtils::GetSymmetricMatrix(MeshConversionContext.MeshParameters.SymmetricOrigin, MeshConversionContext.MeshParameters.SymmetricNormal);
-				for (const FVertexInstanceID& VertexInstanceID : MeshVertexInstanceIDs)
+				for (const FVertexInstanceID& VertexInstanceID : MeshVertexInstanceIDs) //-V1078
 				{
 					VertexInstanceNormals[VertexInstanceID] = SymmetricMatrix.TransformVector(VertexInstanceNormals[VertexInstanceID]);
 				}
@@ -555,6 +555,10 @@ bool ConvertBodyMeshToMeshDescription(const FMeshConversionContext& MeshConversi
 	if (!FillMesh(MeshConversionContext, Body, MeshDescription))
 	{
 		return false;
+	}
+	if (!Body.bIsFromCad)
+	{
+		MeshOperator::FixNonManifoldMesh(MeshDescription);
 	}
 
 	// Workaround SDHE-19725: Compute any null normals.

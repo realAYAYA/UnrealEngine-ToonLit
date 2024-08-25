@@ -2,8 +2,8 @@
 
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using EpicGames.Horde.Logs;
 using Horde.Server.Logs.Data;
-using Horde.Server.Utilities;
 
 namespace Horde.Server.Logs.Storage
 {
@@ -23,19 +23,9 @@ namespace Horde.Server.Logs.Storage
 		readonly Dictionary<(LogId, long), Task<LogIndexData?>> _indexReadTasks = new Dictionary<(LogId, long), Task<LogIndexData?>>();
 
 		/// <summary>
-		/// Pending index reads
-		/// </summary>
-		readonly Dictionary<(LogId, long), Task> _indexWriteTasks = new Dictionary<(LogId, long), Task>();
-
-		/// <summary>
 		/// Pending chunk reads
 		/// </summary>
 		readonly Dictionary<(LogId, long), Task<LogChunkData?>> _chunkReadTasks = new Dictionary<(LogId, long), Task<LogChunkData?>>();
-
-		/// <summary>
-		/// Pending chunk reads
-		/// </summary>
-		readonly Dictionary<(LogId, long), Task> _chunkWriteTasks = new Dictionary<(LogId, long), Task>();
 
 		/// <summary>
 		/// Constructor
@@ -68,21 +58,6 @@ namespace Horde.Server.Logs.Storage
 		}
 
 		/// <inheritdoc/>
-		public Task WriteIndexAsync(LogId logId, long length, LogIndexData indexData)
-		{
-			Task? task;
-			lock (_indexWriteTasks)
-			{
-				if (!_indexWriteTasks.TryGetValue((logId, length), out task))
-				{
-					task = InnerWriteIndexAsync(logId, length, indexData);
-					_indexWriteTasks.Add((logId, length), task);
-				}
-			}
-			return task;
-		}
-
-		/// <inheritdoc/>
 		public Task<LogChunkData?> ReadChunkAsync(LogId logId, long offset, int lineIndex)
 		{
 			Task<LogChunkData?>? task;
@@ -92,21 +67,6 @@ namespace Horde.Server.Logs.Storage
 				{
 					task = InnerReadChunkAsync(logId, offset, lineIndex);
 					_chunkReadTasks[(logId, offset)] = task;
-				}
-			}
-			return task;
-		}
-
-		/// <inheritdoc/>
-		public Task WriteChunkAsync(LogId logId, long offset, LogChunkData chunkData)
-		{
-			Task? task;
-			lock (_chunkWriteTasks)
-			{
-				if (!_chunkWriteTasks.TryGetValue((logId, offset), out task))
-				{
-					task = InnerWriteChunkAsync(logId, offset, chunkData);
-					_chunkWriteTasks[(logId, offset)] = task;
 				}
 			}
 			return task;
@@ -131,25 +91,6 @@ namespace Horde.Server.Logs.Storage
 		}
 
 		/// <summary>
-		/// Wrapper for reading an index from the inner storage provider
-		/// </summary>
-		/// <param name="logId">The log file to read the index for</param>
-		/// <param name="length">Length of the indexed data</param>
-		/// <param name="indexData">The index data to write</param>
-		/// <returns>The index data</returns>
-		async Task InnerWriteIndexAsync(LogId logId, long length, LogIndexData indexData)
-		{
-			await Task.Yield();
-
-			await _inner.WriteIndexAsync(logId, length, indexData);
-
-			lock (_indexWriteTasks)
-			{
-				_indexWriteTasks.Remove((logId, length));
-			}
-		}
-
-		/// <summary>
 		/// Wrapper for reading a chunk from the inner storage provider
 		/// </summary>
 		/// <param name="logId">The log file to read the index for</param>
@@ -164,26 +105,6 @@ namespace Horde.Server.Logs.Storage
 			lock (_chunkReadTasks)
 			{
 				_chunkReadTasks.Remove((logId, offset));
-			}
-			return chunkData;
-		}
-
-		/// <summary>
-		/// Wrapper for reading a chunk from the inner storage provider
-		/// </summary>
-		/// <param name="logId">The log file to write the chunk for</param>
-		/// <param name="offset">Offset of the chunk within the log</param>
-		/// <param name="chunkData">The chunk data</param>
-		/// <returns>The index data</returns>
-		async Task<LogChunkData> InnerWriteChunkAsync(LogId logId, long offset, LogChunkData chunkData)
-		{
-			await Task.Yield();
-
-			await _inner.WriteChunkAsync(logId, offset, chunkData);
-
-			lock (_chunkWriteTasks)
-			{
-				_chunkWriteTasks.Remove((logId, offset));
 			}
 			return chunkData;
 		}

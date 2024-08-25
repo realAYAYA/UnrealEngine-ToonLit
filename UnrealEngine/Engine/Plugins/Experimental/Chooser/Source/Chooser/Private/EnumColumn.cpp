@@ -1,84 +1,21 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #include "EnumColumn.h"
+#include "ChooserIndexArray.h"
 #include "ChooserPropertyAccess.h"
-
+#include "ChooserTrace.h"
 #if WITH_EDITOR
-#include "IPropertyAccessEditor.h"
+#include "PropertyBag.h"
 #endif
 
 bool FEnumContextProperty::GetValue(FChooserEvaluationContext& Context, uint8& OutResult) const
 {
-	const UStruct* StructType = nullptr;
-	const void* Container = nullptr;
-
-	if (UE::Chooser::ResolvePropertyChain(Context, Binding, Container, StructType))
-	{
-		if (const FEnumProperty* EnumProperty = FindFProperty<FEnumProperty>(StructType, Binding.PropertyBindingChain.Last()))
-		{
-			OutResult = *EnumProperty->ContainerPtrToValuePtr<uint8>(Container);
-			return true;
-		}
-
-		if (const FByteProperty* ByteProperty = FindFProperty<FByteProperty>(StructType, Binding.PropertyBindingChain.Last()))
-		{
-			if (ByteProperty->IsEnum())
-			{
-				OutResult = *ByteProperty->ContainerPtrToValuePtr<uint8>(Container);
-				return true;
-			}
-		}
-	}
-
-	return false;
+	return Binding.GetValue(Context, OutResult);
 }
 
 bool FEnumContextProperty::SetValue(FChooserEvaluationContext& Context, uint8 InValue) const
 {
-	const UStruct* StructType = nullptr;
-	const void* Container = nullptr;
-
-	if (UE::Chooser::ResolvePropertyChain(Context, Binding, Container, StructType))
-	{
-		if (const FEnumProperty* EnumProperty = FindFProperty<FEnumProperty>(StructType, Binding.PropertyBindingChain.Last()))
-		{
-			*EnumProperty->ContainerPtrToValuePtr<uint8>(const_cast<void*>(Container)) = InValue;
-			return true;
-		}
-
-		if (const FByteProperty* ByteProperty = FindFProperty<FByteProperty>(StructType, Binding.PropertyBindingChain.Last()))
-		{
-			if (ByteProperty->IsEnum())
-			{
-				*ByteProperty->ContainerPtrToValuePtr<uint8>(const_cast<void*>(Container)) = InValue;
-				return true;
-			}
-		}
-	}
-
-	return false;
+	return Binding.SetValue(Context, InValue);
 }
-
-#if WITH_EDITOR
-
-void FEnumContextProperty::SetBinding(const TArray<FBindingChainElement>& InBindingChain)
-{
-	const UEnum* PreviousEnum = Binding.Enum;
-	Binding.Enum = nullptr;
-
-	UE::Chooser::CopyPropertyChain(InBindingChain, Binding);
-
-	const FField* Field = InBindingChain.Last().Field.ToField();
-	if (const FEnumProperty* EnumProperty = CastField<FEnumProperty>(Field))
-	{
-		Binding.Enum = EnumProperty->GetEnum();
-	}
-	else if (const FByteProperty* ByteProperty = CastField<FByteProperty>(Field))
-	{
-		Binding.Enum = ByteProperty->Enum;
-	}
-}
-
-#endif // WITH_EDITOR
 
 FEnumColumn::FEnumColumn()
 {
@@ -87,13 +24,48 @@ FEnumColumn::FEnumColumn()
 #endif
 }
 
+#if WITH_EDITORONLY_DATA
+void FEnumColumn::PostLoad()
+
+{
+	Super::PostLoad();
+	
+	if (InputValue.IsValid())
+	{
+		InputValue.GetMutable<FChooserParameterBase>().PostLoad();
+	}
+
+	// upgrade data for "Any" support
+	for(FChooserEnumRowData& CellData : RowValues)
+	{
+		if (CellData.CompareNotEqual_DEPRECATED)
+		{
+			CellData.CompareNotEqual_DEPRECATED = false;
+			CellData.Comparison = EEnumColumnCellValueComparison::MatchNotEqual;
+		}
+	}
+}
+#endif
+
 bool FChooserEnumRowData::Evaluate(const uint8 LeftHandSide) const
 {
-	bool Equal = LeftHandSide == Value;
-	return Equal ^ CompareNotEqual;
+	switch (Comparison)
+	{
+		case EEnumColumnCellValueComparison::MatchEqual:
+			return LeftHandSide == Value;
+
+		case EEnumColumnCellValueComparison::MatchNotEqual:
+			return LeftHandSide != Value;
+
+		case EEnumColumnCellValueComparison::MatchAny:
+			return true;
+
+		default:
+			return false;
+	}
 }
 
-void FEnumColumn::Filter(FChooserEvaluationContext& Context, const TArray<uint32>& IndexListIn, TArray<uint32>& IndexListOut) const
+void FEnumColumn::Filter(FChooserEvaluationContext& Context, const FChooserIndexArray& IndexListIn, FChooserIndexArray& IndexListOut) const
 {
 	uint8 Result = 0;
 	if (InputValue.IsValid() &&
@@ -105,6 +77,8 @@ void FEnumColumn::Filter(FChooserEvaluationContext& Context, const TArray<uint32
 			TestValue = Result;
 		}
 #endif
+
+		TRACE_CHOOSER_VALUE(Context, ToCStr(InputValue.Get<FChooserParameterBase>().GetDebugName()), Result);
 		
 		for (const uint32 Index : IndexListIn)
 		{
@@ -113,7 +87,7 @@ void FEnumColumn::Filter(FChooserEvaluationContext& Context, const TArray<uint32
 				const FChooserEnumRowData& RowValue = RowValues[Index];
 				if (RowValue.Evaluate(Result))
 				{
-					IndexListOut.Emplace(Index);
+					IndexListOut.Push(Index);
 				}
 			}
 		}
@@ -124,3 +98,48 @@ void FEnumColumn::Filter(FChooserEvaluationContext& Context, const TArray<uint32
 		IndexListOut = IndexListIn;
 	}
 }
+
+#if WITH_EDITOR
+	void FEnumColumn::AddToDetails (FInstancedPropertyBag& PropertyBag, int32 ColumnIndex, int32 RowIndex)
+	{
+		FText DisplayName;
+		InputValue.Get<FChooserParameterBase>().GetDisplayName(DisplayName);
+		FName PropertyName("RowData",ColumnIndex);
+
+		// make another property bag in place of our struct, just so that the value enum will be correctly typed in the details panel
+		FInstancedPropertyBag Struct;
+		Struct.AddProperty("Value", EPropertyBagPropertyType::Enum, const_cast<UEnum*>(InputValue.Get<FChooserParameterEnumBase>().GetEnum()));
+		Struct.SetValueEnum("Value", RowValues[RowIndex].Value, InputValue.Get<FChooserParameterEnumBase>().GetEnum());
+		Struct.AddProperty("Comparison", EPropertyBagPropertyType::Enum, StaticEnum<EEnumColumnCellValueComparison>());
+		Struct.SetValueEnum("Comparison", static_cast<uint8>(RowValues[RowIndex].Comparison), StaticEnum<EEnumColumnCellValueComparison>());
+		
+		FPropertyBagPropertyDesc PropertyDesc(PropertyName,  EPropertyBagPropertyType::Struct, const_cast<UPropertyBag*>(Struct.GetPropertyBagStruct()));
+		PropertyDesc.MetaData.Add(FPropertyBagPropertyDescMetaData("DisplayName", DisplayName.ToString()));
+		PropertyBag.AddProperties({PropertyDesc});
+		PropertyBag.SetValueStruct(PropertyName, Struct.GetValue());
+	}
+	
+	void FEnumColumn::SetFromDetails(FInstancedPropertyBag& PropertyBag, int32 ColumnIndex, int32 RowIndex)
+	{
+		FName PropertyName("RowData",ColumnIndex);
+
+		FInstancedPropertyBag Struct;
+		Struct.AddProperty("Value", EPropertyBagPropertyType::Enum, const_cast<UEnum*>(InputValue.Get<FChooserParameterEnumBase>().GetEnum()));
+		Struct.AddProperty("Comparison", EPropertyBagPropertyType::Enum, StaticEnum<EEnumColumnCellValueComparison>());
+		
+		TValueOrError<FStructView, EPropertyBagResult> Result = PropertyBag.GetValueStruct(PropertyName, const_cast<UPropertyBag*>(Struct.GetPropertyBagStruct()));
+		if (FStructView* StructView = Result.TryGetValue())
+		{
+			const UScriptStruct* StructDefinition = StructView->GetScriptStruct();
+			if (const FEnumProperty* ValueProperty = CastField<FEnumProperty>(StructDefinition->FindPropertyByName("Value")))
+			{
+				ValueProperty->GetValue_InContainer(StructView->GetMemory(), &RowValues[RowIndex].Value);
+			}
+			
+			if (const FEnumProperty* ComparisonProperty = CastField<FEnumProperty>(StructDefinition->FindPropertyByName("Comparison")))
+			{
+				ComparisonProperty->GetValue_InContainer(StructView->GetMemory(), &RowValues[RowIndex].Comparison);
+			}
+		}
+	}
+#endif

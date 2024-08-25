@@ -5,6 +5,7 @@
 #include "WorldPartition/WorldPartitionActorDesc.h"
 #include "WorldPartition/WorldPartitionHelpers.h"
 #include "WorldPartition/WorldPartitionHandle.h"
+#include "WorldPartition/WorldPartitionActorDescInstance.h"
 #include "Components/RuntimeVirtualTextureComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "VT/VirtualTextureBuilder.h"
@@ -33,7 +34,7 @@ void UWorldPartitionRuntimeVirtualTextureBuilder::LoadRuntimeVirtualTextureActor
 	ForEachActorWithLoadingParams.FilterActorDesc = [](const FWorldPartitionActorDesc* ActorDesc) -> bool { return ActorDesc->HasProperty(UPrimitiveComponent::RVTActorDescProperty); };
 		
 	// @todo: in order to scale the RVTs should be generated with tiling so that we don't need to load all actors writing to RVTs at once.
-	FWorldPartitionHelpers::ForEachActorWithLoading(WorldPartition, [](const FWorldPartitionActorDesc*) { return true; }, ForEachActorWithLoadingParams, Result);
+	FWorldPartitionHelpers::ForEachActorWithLoading(WorldPartition, [](const FWorldPartitionActorDescInstance*) { return true; }, ForEachActorWithLoadingParams, Result);
 
 	// Make sure all assets are finished compiling
 	FAssetCompilingManager::Get().FinishAllCompilation();

@@ -56,7 +56,7 @@ See the Authentication section in readme.md under the UnrealCloudDDC root for a 
 
 Setting up scylla is documented in the readme.md in the UnrealCloudDDC root.
 
-Scylla will require a connection stringof where to connect to. Notice that scylla will find the layout of the cluster itself so you only need to point it to one node and it will find the best nodes to query. Example: `Contact Points=your-scylla-dns.your-domain.com`
+Scylla will require a connection string of where to connect to. Notice that scylla will find the layout of the cluster itself so you only need to point it to one node and it will find the best nodes to query. Example: `Contact Points=your-scylla-dns.your-domain.com;;Default Keyspace=jupiter;`
 
 Each region also needs to setup some configuration of the local table (we keep a table that is not replicated within the cluster for data that is unique to each region):
 

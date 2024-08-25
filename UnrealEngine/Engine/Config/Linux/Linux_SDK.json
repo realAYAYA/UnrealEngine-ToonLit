@@ -1,0 +1,7 @@
+{
+"MainVersion" : "v22_clang-16.0.6-centos7",
+"MinVersion" : "v22_clang-16.0.6-centos7",
+"MaxVersion" : "v22_clang-16.0.6-centos7",
+
+"AutoSDKPlatform" : "Linux_x64",
+}

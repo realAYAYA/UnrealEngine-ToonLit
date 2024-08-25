@@ -5,6 +5,7 @@
 #include "Async/TaskGraphInterfaces.h"
 #include "D3D12RHICommon.h"
 #include "Templates/RefCounting.h"
+#include "D3D12BindlessDescriptors.h"
 
 enum class ED3D12QueueType;
 
@@ -14,6 +15,8 @@ class FD3D12DynamicRHI;
 class FD3D12QueryHeap;
 class FD3D12Queue;
 class FD3D12Timing;
+class FD3D12Buffer;
+class FD3D12Resource;
 
 class FD3D12SyncPoint;
 using FD3D12SyncPointRef = TRefCountPtr<FD3D12SyncPoint>;
@@ -206,6 +209,12 @@ struct FD3D12QueryRange
 	inline bool IsFull() const;
 };
 
+struct FD3D12CommitReservedResourceDesc
+{
+	FD3D12Resource* Resource = nullptr;
+	uint64 CommitSizeInBytes = 0;
+};
+
 // A single unit of work (specific to a single GPU node and queue type) to be processed by the submission thread.
 struct FD3D12PayloadBase
 {
@@ -237,10 +246,13 @@ struct FD3D12PayloadBase
 
 	} SyncPointsToWait;
 
-	virtual void PreExecute() {}
+	virtual void PreExecute();
 
 	// Wait
 	TArray<FManualFence> FencesToWait;
+
+	// UpdateReservedResources
+	TArray<FD3D12CommitReservedResourceDesc> ReservedResourcesToCommit;
 
 	// Execute
 	TArray<FD3D12CommandList*> CommandListsToExecute;
@@ -267,6 +279,9 @@ struct FD3D12PayloadBase
 	TArray<TSharedPtr<FBreadcrumbStack>> BreadcrumbStacks;
 
 	virtual ~FD3D12PayloadBase();
+
+	// Used by RHIRunOnQueue
+	TFunction<void(ID3D12CommandQueue*)> PreExecuteCallback;
 
 protected:
 	FD3D12PayloadBase(FD3D12Device* Device, ED3D12QueueType QueueType);

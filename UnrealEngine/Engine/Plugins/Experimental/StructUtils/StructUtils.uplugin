@@ -15,11 +15,13 @@
 	"IsBetaVersion": false,
 	"IsExperimentalVersion": true,
 	"Installed": false,
+	"SupportedPrograms": [ "LiveLinkHub" ],
 	"Modules": [
 		{
 			"Name": "StructUtils",
 			"Type": "Runtime",
-			"LoadingPhase": "PreDefault"
+			"LoadingPhase": "PreDefault",
+			"ProgramAllowList": [ "LiveLinkHub" ]
 		},
 		{
 			"Name": "StructUtilsEngine",

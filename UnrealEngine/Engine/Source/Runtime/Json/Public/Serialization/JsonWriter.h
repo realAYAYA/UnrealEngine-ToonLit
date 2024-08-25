@@ -87,6 +87,11 @@ public:
 		return CanWriteObjectWithoutIdentifier();
 	}
 
+	EJson GetCurrentElementType() const
+	{
+		return Stack.Num() > 0 ? Stack.Top() : EJson::None;
+	}
+
 	void WriteObjectStart()
 	{
 		check(CanWriteObjectWithoutIdentifier());
@@ -277,7 +282,7 @@ public:
 
 	// WARNING: THIS IS DANGEROUS. Use this only if you know for a fact that the Value is valid JSON!
 	// Use this to insert the results of a different JSON Writer in.
-	void WriteRawJSONValue(const FString& Value)
+	void WriteRawJSONValue(FStringView Value)
 	{
 		check(CanWriteValueWithoutIdentifier());
 		WriteCommaIfNeeded();

@@ -1,20 +1,20 @@
 {
-	"FileVersion" : 3,
-	"Version" : 1,
-	"VersionName" : "1.0",
-	"FriendlyName" : "Azure Spatial Anchors For ARKit",
-	"Description" : "Microsoft Azure Spatial Anchors implementation for ARKit",
-	"Category" : "Augmented Reality",
-	"CreatedBy" : "Epic Games, Inc.",
-	"CreatedByURL" : "https://epicgames.com",
-	"DocsURL" : "",
-	"MarketplaceURL" : "",
-	"SupportURL" : "",
-	"EnabledByDefault" : false,
-	"CanContainContent" : false,
-	"IsExperimentalVersion" : true,
-	"IsBetaVersion" : true,
-	"Installed" : false,
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Azure Spatial Anchors For ARKit (Deprecated, service ending)",
+	"Description": "Microsoft Azure Spatial Anchor cloud service will cease to function November 20, 2024.",
+	"Category": "Augmented Reality",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "https://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EnabledByDefault": false,
+	"CanContainContent": false,
+	"IsExperimentalVersion": true,
+	"IsBetaVersion": true,
+	"Installed": false,
 	"SupportedTargetPlatforms": [
 		"IOS"
 	],
@@ -35,12 +35,12 @@
 				"IOS"
 			]
 		},
-        {
-            "Name": "AppleARKit",
-            "Enabled": true,
-            "PlatformAllowList": [
-                "IOS"
-            ]
-        }
+		{
+			"Name": "AppleARKit",
+			"Enabled": true,
+			"PlatformAllowList": [
+				"IOS"
+			]
+		}
 	]
 }

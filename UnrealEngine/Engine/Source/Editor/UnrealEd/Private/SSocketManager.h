@@ -23,8 +23,11 @@ class SSocketManager : public ISocketManager, public FNotifyHook
 {
 public:
 	SLATE_BEGIN_ARGS( SSocketManager ) :
-		 _StaticMeshEditorPtr(){}
+		 _StaticMeshEditorPtr(),
+		_ReadOnly(false)
+		{}
 		SLATE_ARGUMENT( TSharedPtr< IStaticMeshEditor >, StaticMeshEditorPtr )
+		SLATE_ARGUMENT(bool, ReadOnly)
 		SLATE_EVENT( FSimpleDelegate, OnSocketSelectionChanged )
 	SLATE_END_ARGS()
 
@@ -75,6 +78,9 @@ private:
 
 	/** Callback for the Create Socket button. */
 	FReply CreateSocket_Execute();
+
+	/** Determines if the Create Socket button is visible. */
+	EVisibility CreateSocket_IsVisible() const;
 
 	FText GetSocketHeaderText() const;
 
@@ -130,4 +136,7 @@ private:
 
 	/** Points to an item that is being requested to be renamed */
 	TWeakPtr<SocketListItem> DeferredRenameRequest;
+
+	/** true if the owning asset editor is in read only mode*/
+	bool bReadOnly;
 };

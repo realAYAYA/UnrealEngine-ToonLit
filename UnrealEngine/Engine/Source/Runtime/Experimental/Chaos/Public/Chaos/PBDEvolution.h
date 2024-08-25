@@ -6,7 +6,10 @@
 #include "Chaos/PBDActiveView.h"
 #include "Chaos/PBDSoftsEvolutionFwd.h"
 #include "Chaos/PBDSoftsSolverParticles.h"
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "Chaos/KinematicGeometryParticles.h"
+#endif
+#include "Chaos/SoftsSolverCollisionParticles.h"
 #include "Chaos/VelocityField.h"
 
 namespace Chaos::Softs
@@ -18,7 +21,7 @@ class FPBDEvolution : public TArrayCollection
 	// TODO: Tidy up this constructor (and update Headless Chaos)
 	CHAOS_API FPBDEvolution(
 		FSolverParticles&& InParticles,
-		FSolverRigidParticles&& InGeometryParticles,
+		FSolverCollisionParticles&& InGeometryParticles,
 		TArray<TVec3<int32>>&& CollisionTriangles,
 		int32 NumIterations = 1,
 		FSolverReal CollisionThickness = (FSolverReal)0.,
@@ -60,6 +63,10 @@ class FPBDEvolution : public TArrayCollection
 	const FSolverParticles& Particles() const { return MParticles; }
 	FSolverParticles& Particles() { return MParticles; }
 	const TPBDActiveView<FSolverParticles>& ParticlesActiveView() { return MParticlesActiveView; }
+	// These versions just help share code with Softs::FEvolution which follows UE naming standards.
+	const FSolverParticles& GetParticles() const { return MParticles; }
+	FSolverParticles& GetParticles() { return MParticles; }
+
 
 	const TArray<uint32>& ParticleGroupIds() const { return MParticleGroupIds; }
 
@@ -83,12 +90,12 @@ class FPBDEvolution : public TArrayCollection
 	int32 GetCollisionParticleRangeSize(int32 Offset) const { return MCollisionParticlesActiveView.GetRangeSize(Offset); }
 
 	// Collision particles accessors
-	const FSolverRigidParticles& CollisionParticles() const { return MCollisionParticles; }
-	FSolverRigidParticles& CollisionParticles() { return MCollisionParticles; }
+	const FSolverCollisionParticles& CollisionParticles() const { return MCollisionParticles; }
+	FSolverCollisionParticles& CollisionParticles() { return MCollisionParticles; }
 	TArray<uint32>& CollisionParticleGroupIds() { return MCollisionParticleGroupIds; }
 	const TArray<uint32>& CollisionParticleGroupIds() const { return MCollisionParticleGroupIds; }
-	TPBDActiveView<FSolverRigidParticles>& CollisionParticlesActiveView() { return MCollisionParticlesActiveView; }
-	const TPBDActiveView<FSolverRigidParticles>& CollisionParticlesActiveView() const { return MCollisionParticlesActiveView; }
+	TPBDActiveView<FSolverCollisionParticles>& CollisionParticlesActiveView() { return MCollisionParticlesActiveView; }
+	const TPBDActiveView<FSolverCollisionParticles>& CollisionParticlesActiveView() const { return MCollisionParticlesActiveView; }
 
 	// Reset all constraint init and rule functions.
 	void ResetConstraintRules() 
@@ -132,13 +139,15 @@ class FPBDEvolution : public TArrayCollection
 	TArray<TFunction<void(FSolverParticles&, const FSolverReal)>>& ConstraintPostprocessings() { return MConstraintPostprocessings; }
 	
 	void SetKinematicUpdateFunction(TFunction<void(FSolverParticles&, const FSolverReal, const FSolverReal, const int32)> KinematicUpdate) { MKinematicUpdate = KinematicUpdate; }
-	void SetCollisionKinematicUpdateFunction(TFunction<void(FSolverRigidParticles&, const FSolverReal, const FSolverReal, const int32)> KinematicUpdate) { MCollisionKinematicUpdate = KinematicUpdate; }
+	void SetCollisionKinematicUpdateFunction(TFunction<void(FSolverCollisionParticles&, const FSolverReal, const FSolverReal, const int32)> KinematicUpdate) { MCollisionKinematicUpdate = KinematicUpdate; }
 
 	TFunction<void(FSolverParticles&, const FSolverReal, const int32)>& GetForceFunction(const uint32 GroupId = 0) { return MGroupForceRules[GroupId]; }
 	const TFunction<void(FSolverParticles&, const FSolverReal, const int32)>& GetForceFunction(const uint32 GroupId = 0) const { return MGroupForceRules[GroupId]; }
 
 	const FSolverVec3& GetGravity(const uint32 GroupId = 0) const { check(GroupId < TArrayCollection::Size()); return MGroupGravityAccelerations[GroupId]; }
 	void SetGravity(const FSolverVec3& Acceleration, const uint32 GroupId = 0) { check(GroupId < TArrayCollection::Size()); MGroupGravityAccelerations[GroupId] = Acceleration; }
+
+	void SetQuasistatics(const bool bDoQuasistaticsIn) { bDoQuasistatics = bDoQuasistaticsIn; }
 
 	FVelocityAndPressureField& GetVelocityAndPressureField(const uint32 GroupId = 0) { check(GroupId < TArrayCollection::Size()); return MGroupVelocityAndPressureFields[GroupId]; }
 	const FVelocityAndPressureField& GetVelocityAndPressureField(const uint32 GroupId = 0) const { check(GroupId < TArrayCollection::Size()); return MGroupVelocityAndPressureFields[GroupId]; }
@@ -199,8 +208,8 @@ class FPBDEvolution : public TArrayCollection
 private:
 	FSolverParticles MParticles;
 	TPBDActiveView<FSolverParticles> MParticlesActiveView;
-	FSolverRigidParticles MCollisionParticles;
-	TPBDActiveView<FSolverRigidParticles> MCollisionParticlesActiveView;
+	FSolverCollisionParticles MCollisionParticles;
+	TPBDActiveView<FSolverCollisionParticles> MCollisionParticlesActiveView;
 	TArray<FParticleVievToken> RemovedCollisionIndices;
 
 	TArrayCollectionArray<FSolverRigidTransform3> MCollisionTransforms;  // Used for CCD to store the initial state before the kinematic update
@@ -233,7 +242,7 @@ private:
 	TPBDActiveView<TArray<TFunction<void(FSolverParticles&, const FSolverReal)>>> MConstraintPostprocessingsActiveView;
 
 	TFunction<void(FSolverParticles&, const FSolverReal, const FSolverReal, const int32)> MKinematicUpdate;
-	TFunction<void(FSolverRigidParticles&, const FSolverReal, const FSolverReal, const int32)> MCollisionKinematicUpdate;
+	TFunction<void(FSolverCollisionParticles&, const FSolverReal, const FSolverReal, const int32)> MCollisionKinematicUpdate;
 
 	int32 MNumIterations;
 	FSolverVec3 MGravity;

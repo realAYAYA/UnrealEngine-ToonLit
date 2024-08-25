@@ -18,7 +18,11 @@ struct FRasterTri
 	float3	DepthPlane;
 	float3	InvW;
 
+	float3	Barycentrics_dx;
+	float3	Barycentrics_dy;
+
 	bool	bIsValid;
+	bool	bBackFace;
 };
 
 template< uint SubpixelSamples, bool bBackFaceCull >
@@ -33,6 +37,8 @@ FRasterTri SetupTriangle( int4 ScissorRect, float4 Verts[3] )
 
 	float DetXY = v01.x * v02.y - v01.y * v02.x;
 	const bool bBackFace = (DetXY >= 0.0f);
+
+	Tri.bBackFace = bBackFace;
 
 	if( bBackFaceCull )
 		Tri.bIsValid = !bBackFace;
@@ -116,6 +122,10 @@ FRasterTri SetupTriangle( int4 ScissorRect, float4 Verts[3] )
 	Tri.C1 *= (1.0f / SubpixelSamples);
 	Tri.C2 *= (1.0f / SubpixelSamples);
 #endif
+
+	const float ScaleToUnit = 1.0f / ( Tri.C0 + Tri.C1 + Tri.C2 );
+	Tri.Barycentrics_dx = float3( -Tri.Edge12.y, -Tri.Edge20.y, -Tri.Edge01.y ) * ScaleToUnit;
+	Tri.Barycentrics_dy = float3(  Tri.Edge12.x,  Tri.Edge20.x,  Tri.Edge01.x ) * ScaleToUnit;
 
 	Tri.DepthPlane.x = Verts[0].z;
 	Tri.DepthPlane.y = Verts[1].z - Verts[0].z;
@@ -285,7 +295,7 @@ void RasterizeTri_Scanline( FRasterTri Tri, FWritePixel WritePixel )
 template< typename FWritePixel >
 void RasterizeTri_Adaptive( FRasterTri Tri, FWritePixel WritePixel )
 {
-	bool bScanline = WaveActiveAnyTrue( Tri.MaxPixel.x - Tri.MinPixel.x > 4 );
+	bool bScanline = NANITE_PIXEL_PROGRAMMABLE || WaveActiveAnyTrue( Tri.MaxPixel.x - Tri.MinPixel.x > 4 );
 
 	if( bScanline )
 		RasterizeTri_Scanline( Tri, WritePixel );

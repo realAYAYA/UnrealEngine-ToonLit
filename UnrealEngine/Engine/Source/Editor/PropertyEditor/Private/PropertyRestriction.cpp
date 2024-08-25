@@ -39,6 +39,11 @@ void FPropertyRestriction::AddDisabledValue(FString InValue)
 	DisabledValues.Add(MoveTemp(InValue));
 }
 
+void FPropertyRestriction::AddClassFilter(TSharedRef<IClassViewerFilter> InValue)
+{
+	ClassViewFilter.Add(MoveTemp(InValue));
+}
+
 void FPropertyRestriction::RemoveHiddenValue(FString Value)
 {
 	HiddenValues.Remove(Value);
@@ -49,8 +54,14 @@ void FPropertyRestriction::RemoveDisabledValue(FString Value)
 	DisabledValues.Remove(Value);
 }
 
+void FPropertyRestriction::RemoveClassFilter(TSharedRef<IClassViewerFilter> Value)
+{
+	ClassViewFilter.Remove(Value);
+}
+
 void FPropertyRestriction::RemoveAll()
 {
 	HiddenValues.Empty();
 	DisabledValues.Empty();
+	ClassViewFilter.Empty();
 }

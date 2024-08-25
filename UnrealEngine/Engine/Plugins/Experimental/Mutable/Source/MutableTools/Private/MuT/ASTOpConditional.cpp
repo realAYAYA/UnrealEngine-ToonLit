@@ -39,8 +39,9 @@ namespace mu
 	//-------------------------------------------------------------------------------------------------
 	bool ASTOpConditional::IsEqual(const ASTOp& otherUntyped) const
 	{
-		if (auto other = dynamic_cast<const ASTOpConditional*>(&otherUntyped))
+		if (otherUntyped.GetOpType() == GetOpType())
 		{
+			const ASTOpConditional* other = static_cast<const ASTOpConditional*>(&otherUntyped);
 			return type == other->type && condition == other->condition &&
 				yes == other->yes && no == other->no;
 		}
@@ -299,7 +300,7 @@ namespace mu
 		// Constant condition?
 		if (condition->GetOpType() == OP_TYPE::BO_CONSTANT)
 		{
-			auto typedCondition = dynamic_cast<const ASTOpConstantBool*>(condition.child().get());
+			const ASTOpConstantBool* typedCondition = static_cast<const ASTOpConstantBool*>(condition.child().get());
 			if (typedCondition->value)
 			{
 				return yes.child();
@@ -313,7 +314,7 @@ namespace mu
 			// If the yes branch is a conditional with the same condition
 			if (yes && yes->GetOpType() == type)
 			{
-				auto typedYes = dynamic_cast<const ASTOpConditional*>(yes.child().get());
+				const ASTOpConditional* typedYes = static_cast<const ASTOpConditional*>(yes.child().get());
 				if (condition.child() == typedYes->condition.child()
 					||
 					*condition.child() == *typedYes->condition.child())
@@ -327,7 +328,7 @@ namespace mu
 			// If the no branch is a conditional with the same condition
 			else if (no && no->GetOpType() == type)
 			{
-				auto typedNo = dynamic_cast<const ASTOpConditional*>(no.child().get());
+				const ASTOpConditional* typedNo = static_cast<const ASTOpConditional*>(no.child().get());
 				if (condition.child() == typedNo->condition.child()
 					||
 					*condition.child() == *typedNo->condition.child())

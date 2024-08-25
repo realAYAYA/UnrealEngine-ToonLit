@@ -1148,13 +1148,14 @@ public:
 			ColorCurveOwner->OnColorCurveChanged().AddSP(this, &SNiagaraDataInterfaceGradientEditor::ColorCurveChanged);
 			TSharedRef<SColorGradientEditor> GradientEditor = SNew(SColorGradientEditor)
 				.ViewMinInput(0.0f)
-				.ViewMaxInput(1.0f);
+				.ViewMaxInput(1.0f)
+				.ClampStopsToViewRange(true);
 
 			GradientEditor->SetCurveOwner(ColorCurveOwner.Get());
 			ChildSlot
 			[
 				SNew(SBox)
-				.Padding(FMargin(0, 0, 10, 0))
+				.Padding(0, 2, 5, 2)
 				[
 					GradientEditor
 				]

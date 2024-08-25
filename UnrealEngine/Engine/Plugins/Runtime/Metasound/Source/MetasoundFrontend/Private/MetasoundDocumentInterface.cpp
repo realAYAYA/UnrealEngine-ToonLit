@@ -7,10 +7,23 @@ namespace Metasound::Frontend
 {
 	namespace DocumentBuilderRegistryPrivate
 	{
-		TUniqueFunction<IMetaSoundDocumentBuilderRegistry&()> GetInstance;
+		static bool bInitialized = false;
+		TUniqueFunction<IDocumentBuilderRegistry&()> GetInstance;
 	} // namespace DocumentBuilderRegistryPrivate
 
-	IMetaSoundDocumentBuilderRegistry& IMetaSoundDocumentBuilderRegistry::GetChecked()
+	IDocumentBuilderRegistry* IDocumentBuilderRegistry::Get()
+	{
+		using namespace DocumentBuilderRegistryPrivate;
+
+		if (!DocumentBuilderRegistryPrivate::bInitialized)
+		{
+			return nullptr;
+		}
+		
+		return &GetInstance();
+	}
+
+	IDocumentBuilderRegistry& IDocumentBuilderRegistry::GetChecked()
 	{
 		using namespace DocumentBuilderRegistryPrivate;
 
@@ -18,11 +31,17 @@ namespace Metasound::Frontend
 		return GetInstance();
 	}
 
-	void IMetaSoundDocumentBuilderRegistry::Set(TUniqueFunction<IMetaSoundDocumentBuilderRegistry&()>&& InGetInstance)
+	void IDocumentBuilderRegistry::Set(TUniqueFunction<IDocumentBuilderRegistry&()>&& InGetInstance)
 	{
 		using namespace DocumentBuilderRegistryPrivate;
 
 		checkf(!GetInstance, TEXT("Failed to initialize MetaSoundDocumentBuilderRegistry getter: Cannot reinitialize once initialized."))
 		GetInstance = MoveTemp(InGetInstance);
+		DocumentBuilderRegistryPrivate::bInitialized = true;
+	}
+
+	IMetaSoundDocumentBuilderRegistry& IMetaSoundDocumentBuilderRegistry::GetChecked()
+	{
+		return static_cast<IMetaSoundDocumentBuilderRegistry&>(IDocumentBuilderRegistry::GetChecked());
 	}
 } // namespace Metasound::Frontend

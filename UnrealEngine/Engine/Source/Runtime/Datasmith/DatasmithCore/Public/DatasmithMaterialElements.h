@@ -259,6 +259,7 @@ public:
 	template< typename T >
 	T* AddMaterialExpression()
 	{
+		return nullptr;
 	}
 
 	/** Reset all expression to their default values and remove all connections */

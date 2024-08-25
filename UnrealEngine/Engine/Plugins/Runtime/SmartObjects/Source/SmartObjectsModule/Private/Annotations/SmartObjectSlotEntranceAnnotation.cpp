@@ -1,16 +1,16 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Annotations/SmartObjectSlotEntranceAnnotation.h"
-#include "SmartObjectSubsystem.h"
+#include "Engine/HitResult.h"
+#include "Engine/OverlapResult.h"
 #include "SmartObjectDefinition.h"
 #include "SmartObjectVisualizationContext.h"
 #include "SceneManagement.h" // FPrimitiveDrawInterface
 #include "NavigationSystem.h"
 #include "NavigationData.h"
+#include "NavFilters/NavigationQueryFilter.h"
 #include "AI/Navigation/NavAgentInterface.h"
-#include "SmartObjectSettings.h"
 #include "SmartObjectUserComponent.h"
-#include "PhysicsEngine/ClusterUnionComponent.h"
 
 #if WITH_GAMEPLAY_DEBUGGER
 #include "GameplayDebuggerCategory.h"
@@ -321,7 +321,7 @@ void FSmartObjectSlotEntranceAnnotation::DrawVisualization(FSmartObjectVisualiza
 
 void FSmartObjectSlotEntranceAnnotation::DrawVisualizationHUD(FSmartObjectVisualizationContext& VisContext) const
 {
-	// @tooo: move this into a setting.
+	// @todo: move this into a setting.
 	constexpr FVector::FReal MaxDrawDistance = 1500.0;
 	constexpr FVector::FReal FadeDrawDistance = MaxDrawDistance * 0.75;
 
@@ -343,7 +343,7 @@ void FSmartObjectSlotEntranceAnnotation::DrawVisualizationHUD(FSmartObjectVisual
 		}
 		
 		FLinearColor Color = FLinearColor::White;
-		Color.A = FMath::Clamp(1.0 - (Distance - FadeDrawDistance) / (MaxDrawDistance - FadeDrawDistance), 0.0, 1.0);
+		Color.A = static_cast<float>(FMath::Clamp(1.0 - (Distance - FadeDrawDistance) / (MaxDrawDistance - FadeDrawDistance), 0.0, 1.0));
 		
 		VisContext.DrawString(AnnotationWorldLocation, *Text, Color);
 	}

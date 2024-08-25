@@ -1,21 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "GLTFExporterModule.h"
-#include "Json/GLTFJsonEnums.h"
-#include "Converters/GLTFObjectArrayScopeGuard.h"
-#include "Materials/Material.h"
 #include "Utilities/GLTFProxyMaterialUtilities.h"
+#include "UI/GLTFMaterialBakeSizeCustomization.h"
 #include "Actions/GLTFProxyAssetActions.h"
 #include "Interfaces/IPluginManager.h"
 #include "Misc/Paths.h"
 #include "ShaderCore.h"
-#if WITH_EDITOR
-#include "Materials/MaterialInstanceConstant.h"
-#include "Materials/MaterialInstanceDynamic.h"
-#include "AssetToolsModule.h"
-
-class FAssetTypeActions_Base;
-#endif
 
 DEFINE_LOG_CATEGORY(LogGLTFExporter);
 
@@ -31,6 +22,7 @@ public:
 
 #if WITH_EDITOR
 		// TODO: UI and editor-only functions should be moved (as much as possible) into their own module
+		FCoreDelegates::OnPostEngineInit.AddStatic(&FGLTFMaterialBakeSizeCustomization::Register);
 		FCoreDelegates::OnPostEngineInit.AddStatic(&FGLTFProxyAssetActions::AddMenuEntry);
 #endif
 	}
@@ -38,6 +30,7 @@ public:
 	virtual void ShutdownModule() override
 	{
 #if WITH_EDITOR
+		FGLTFMaterialBakeSizeCustomization::Unregister();
 		FGLTFProxyAssetActions::RemoveMenuEntry();
 #endif
 	}

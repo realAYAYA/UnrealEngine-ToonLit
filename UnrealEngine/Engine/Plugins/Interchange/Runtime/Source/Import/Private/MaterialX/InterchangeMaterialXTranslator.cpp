@@ -1,20 +1,15 @@
 // Copyright Epic Games, Inc. All Rights Reserved. 
 
 #include "MaterialX/InterchangeMaterialXTranslator.h"
-#include "InterchangeImportLog.h"
 #include "InterchangeManager.h"
+#include "MaterialX/MaterialXUtils/MaterialXManager.h"
 #include "Nodes/InterchangeSourceNode.h"
 #include "UObject/GCObjectScopeGuard.h"
 
-#include "Misc/PackageName.h"
-
 #if WITH_EDITOR
-#include "MaterialX/MaterialXUtils/MaterialXManager.h"
 #include "MaterialXFormat/Util.h"
-#include "MaterialXUtils/MaterialXSurfaceMaterial.h"
-#include "MaterialXUtils/MaterialXSpotLightShader.h"
-#include "MaterialXUtils/MaterialXPointLightShader.h"
-#include "MaterialXUtils/MaterialXDirectionalLightShader.h"
+#include "MaterialX/InterchangeMaterialXDefinitions.h"
+#include "MaterialX/MaterialXUtils/MaterialXBase.h"
 #endif
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(InterchangeMaterialXTranslator)
@@ -28,44 +23,9 @@ static FAutoConsoleVariableRef CCvarInterchangeEnableMaterialXImport(
 	TEXT("Whether MaterialX support is enabled."),
 	ECVF_Default);
 
-namespace UE::Interchange::MaterialX
-{
-	bool AreMaterialFunctionPackagesLoaded()
-	{
-		auto ArePackagesLoaded = [](const TArray<FString> & TextPaths) -> bool
-		{
-			bool bAllLoaded = true;
-			for(const FString & TextPath : TextPaths)
-			{
-				const FString FunctionPath{ FPackageName::ExportTextPathToObjectPath(TextPath) };
-				if(FPackageName::DoesPackageExist(FunctionPath))
-				{
-					if(!FSoftObjectPath(FunctionPath).TryLoad())
-					{
-						UE_LOG(LogInterchangeImport, Warning, TEXT("Couldn't load %s"), *FunctionPath);
-						bAllLoaded = false;
-					}
-				}
-				else
-				{
-					UE_LOG(LogInterchangeImport, Warning, TEXT("Couldn't find %s"), *FunctionPath);
-					bAllLoaded = false;
-				}
-			}
-
-			return bAllLoaded;
-		};
-
-		static const bool bPackagesLoaded = 
-			ArePackagesLoaded({ TEXT("MaterialFunction'/Engine/Functions/Engine_MaterialFunctions03/Procedurals/NormalFromHeightmap.NormalFromHeightmap'") });
-
-		return bPackagesLoaded;
-	}
-}
-
 EInterchangeTranslatorType UInterchangeMaterialXTranslator::GetTranslatorType() const
 {
-	return EInterchangeTranslatorType::Scenes;
+	return EInterchangeTranslatorType::Assets;
 }
 
 EInterchangeTranslatorAssetType UInterchangeMaterialXTranslator::GetSupportedAssetTypes() const

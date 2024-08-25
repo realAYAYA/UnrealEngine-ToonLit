@@ -5,12 +5,14 @@
 #include "CoreMinimal.h"
 #include "RigHierarchyDefines.h"
 #include "RigHierarchyMetadata.h"
+#include "RigConnectionRules.h"
 #include "RigHierarchyElements.generated.h"
 
 struct FRigVMExecuteContext;
 struct FRigBaseElement;
 struct FRigControlElement;
 class URigHierarchy;
+class FRigElementKeyRedirector;
 
 DECLARE_DELEGATE_RetVal_ThreeParams(FTransform, FRigReferenceGetWorldTransformDelegate, const FRigVMExecuteContext*, const FRigElementKey& /* Key */, bool /* bInitial */);
 DECLARE_DELEGATE_TwoParams(FRigElementMetadataChangedDelegate, const FRigElementKey& /* Key */, const FName& /* Name */);
@@ -37,7 +39,8 @@ template<typename T> \
 friend T* CastChecked(ElementType* InElement) \
 { \
 	return CastChecked<T>((FRigBaseElement*) InElement); \
-}
+} \
+virtual int32 GetElementTypeIndex() const override { return (int32)ElementType::ElementTypeIndex; }
 
 UENUM()
 namespace ERigTransformType
@@ -283,7 +286,7 @@ USTRUCT(BlueprintType)
 struct CONTROLRIG_API FRigLocalAndGlobalTransform
 {
 	GENERATED_BODY()
-
+	
 	FRigLocalAndGlobalTransform()
     : Local()
     , Global()
@@ -553,22 +556,50 @@ struct CONTROLRIG_API FRigBaseElement
 
 public:
 
-	FRigBaseElement()
-    : Key()
-	, NameString()
-    , Index(INDEX_NONE)
-	, SubIndex(INDEX_NONE)
-	, CreatedAtInstructionIndex(INDEX_NONE)
-	, OwnedInstances(0)
-	, TopologyVersion(0)
-	, MetadataVersion(0)
-	, bSelected(false)
-	{}
+	enum EElementIndex
+	{
+		BaseElement,
+		TransformElement,
+		SingleParentElement,
+		MultiParentElement,
+		BoneElement,
+		NullElement,
+		ControlElement,
+		CurveElement,
+		RigidBodyElement,
+		ReferenceElement,
+		ConnectorElement,
+		SocketElement,
 
-	FRigBaseElement(const FRigBaseElement& InOther);
-	FRigBaseElement& operator= (const FRigBaseElement& InOther);
+		Max
+	};
 
+	static const EElementIndex ElementTypeIndex;
+
+	FRigBaseElement() = default;
 	virtual ~FRigBaseElement();
+
+	FRigBaseElement(const FRigBaseElement& InOther)
+	{
+		*this = InOther;
+	}
+	
+	FRigBaseElement& operator=(const FRigBaseElement& InOther)
+	{
+		// We purposefully do not copy any non-UPROPERTY entries, including Owner. This is so that when the copied
+		// element is deleted, the metadata is not deleted with it. These copies are purely intended for interfacing
+		// with BP and details view wrappers. 
+		// These copies are solely intended for UControlRig::OnControlSelected_BP
+		Key = InOther.Key;
+		Index = InOther.Index;
+		SubIndex = InOther.SubIndex;
+		CreatedAtInstructionIndex = InOther.CreatedAtInstructionIndex;
+		bSelected = InOther.bSelected;
+		return *this;
+	}
+	
+	virtual int32 GetElementTypeIndex() const { return ElementTypeIndex; }
+	static int32 GetElementTypeCount() { return EElementIndex::Max; }
 
 	enum ESerializationPhase
 	{
@@ -577,37 +608,65 @@ public:
 	};
 
 protected:
-
-	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category = RigElement, meta = (AllowPrivateAccess = "true"))
-	FRigElementKey Key;
-
-	UPROPERTY(transient)
-	FString NameString;
-
-	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category = RigElement, meta = (AllowPrivateAccess = "true"))
-	int32 Index;
-
-	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category = RigElement, meta = (AllowPrivateAccess = "true"))
-	int32 SubIndex;
-
-	TArray<FRigBaseMetadata*> Metadata;
-	TMap<FName,int32> MetadataNameToIndex;
+	// Only derived types should be able to construct this one.
+	explicit FRigBaseElement(URigHierarchy* InOwner, ERigElementType InElementType)
+		: Owner(InOwner)
+		, Key(InElementType)
+	{
+	}
 
 	static bool IsClassOf(const FRigBaseElement* InElement)
 	{
 		return true;
 	}
 
+	// ReSharper disable once CppUE4ProbableMemoryIssuesWithUObject
+	URigHierarchy* Owner = nullptr;
+	
+	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category = RigElement, meta = (AllowPrivateAccess = "true"))
+	FRigElementKey Key;
+
+	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category = RigElement, meta = (AllowPrivateAccess = "true"))
+	int32 Index = INDEX_NONE;
+
+	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category = RigElement, meta = (AllowPrivateAccess = "true"))
+	int32 SubIndex = INDEX_NONE;
+
+	UPROPERTY(BlueprintReadOnly, Transient, Category = RigElement, meta = (AllowPrivateAccess = "true"))
+	int32 CreatedAtInstructionIndex = INDEX_NONE;
+
+	UPROPERTY(BlueprintReadOnly, Transient, Category = RigElement, meta = (AllowPrivateAccess = "true"))
+	bool bSelected = false;
+
+	// used for constructing / destructing the memory. typically == 1
+	// Set by URigHierarchy::NewElement.
+	int32 OwnedInstances = 0;
+
+	// Index into the child cache offset and count table in URigHierarchy. Set by URigHierarchy::UpdateCachedChildren
+	int32 ChildCacheIndex = INDEX_NONE;
+
+	// Index into the metadata storage for this element.
+	int32 MetadataStorageIndex = INDEX_NONE;
+	
+	mutable FString CachedNameString;
+
 public:
 
 	UScriptStruct* GetElementStruct() const;
-	void Serialize(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase);
-	virtual void Save(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase);
-	virtual void Load(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase);
+	void Serialize(FArchive& Ar, ESerializationPhase SerializationPhase);
+	virtual void Save(FArchive& Ar, ESerializationPhase SerializationPhase);
+	virtual void Load(FArchive& Ar, ESerializationPhase SerializationPhase);
 
-	const FName& GetName() const { return Key.Name; }
-	const FString& GetNameString() const { return NameString; }
-	virtual const FName& GetDisplayName() const { return GetName(); }
+	const FName& GetFName() const { return Key.Name; }
+	const FString& GetName() const
+	{
+		if(CachedNameString.IsEmpty() && !Key.Name.IsNone())
+		{
+			CachedNameString = Key.Name.ToString();
+		}
+		return CachedNameString;
+	}
+	virtual const FName& GetDisplayName() const { return GetFName(); }
 	ERigElementType GetType() const { return Key.Type; }
 	const FRigElementKey& GetKey() const { return Key; }
 	int32 GetIndex() const { return Index; }
@@ -615,41 +674,19 @@ public:
 	bool IsSelected() const { return bSelected; }
 	int32 GetCreatedAtInstructionIndex() const { return CreatedAtInstructionIndex; }
 	bool IsProcedural() const { return CreatedAtInstructionIndex != INDEX_NONE; }
-	int32 GetMetadataVersion() const { return MetadataVersion; }
+	const URigHierarchy* GetOwner() const { return Owner; }
+	URigHierarchy* GetOwner() { return Owner; }
 
-	int32 NumMetadata() const { return Metadata.Num(); }
-	FRigBaseMetadata* GetMetadata(int32 InIndex) const { return Metadata[InIndex]; }
-	FRigBaseMetadata* GetMetadata(const FName& InName) const
-	{
-		if(const int32* MetadataIndex = MetadataNameToIndex.Find(InName))
-		{
-			return GetMetadata(*MetadataIndex);
-		}
-		return nullptr;
-	}
-	FRigBaseMetadata* GetMetadata(const FName& InName, ERigMetadataType InType) const
-	{
-		if(const int32* MetadataIndex = MetadataNameToIndex.Find(InName))
-		{
-			FRigBaseMetadata* Md = GetMetadata(*MetadataIndex);
-			if(Md->GetType() == InType)
-			{
-				return Md;
-			}
-		}
-		return nullptr;
-	}
-	bool SetMetaData(const FName& InName, ERigMetadataType InType, const void* InData, int32 InSize)
-	{
-		if(FRigBaseMetadata* Md = SetupValidMetadata(InName, InType))
-		{
-			return Md->SetValueData(InData, InSize);
-		}
-		return false;
-	}
+	// Metadata
+	FRigBaseMetadata* GetMetadata(const FName& InName, ERigMetadataType InType = ERigMetadataType::Invalid);
+	const FRigBaseMetadata* GetMetadata(const FName& InName, ERigMetadataType InType) const;
+	bool SetMetadata(const FName& InName, ERigMetadataType InType, const void* InData, int32 InSize);
+	FRigBaseMetadata* SetupValidMetadata(const FName& InName, ERigMetadataType InType);
 	bool RemoveMetadata(const FName& InName);
 	bool RemoveAllMetadata();
-
+	
+	void NotifyMetadataTagChanged(const FName& InTag, bool bAdded);
+	
 	template<typename T>
 	bool IsA() const { return T::IsClassOf(this); }
 
@@ -703,59 +740,53 @@ public:
 	virtual void CopyPose(FRigBaseElement* InOther, bool bCurrent, bool bInitial, bool bWeights) {}
 
 protected:
+	// Used to initialize this base element during URigHierarchy::CopyHierarchy. Once all elements are
+	// initialized, the sub-class data copying is done using CopyFrom.
+	void InitializeFrom(const FRigBaseElement* InOther);
 
 	// helper function to be called as part of URigHierarchy::CopyHierarchy
-	virtual void CopyFrom(URigHierarchy* InHierarchy, FRigBaseElement* InOther, URigHierarchy* InOtherHierarchy);
+	virtual void CopyFrom(const FRigBaseElement* InOther);
+
 	
-	// sets up the metadata and ensures the right type
-	FRigBaseMetadata* SetupValidMetadata(const FName& InName, ERigMetadataType InType);
-
-	void NotifyMetadataChanged(const FName& InName);
-	void NotifyMetadataTagChanged(const FName& InTag, bool bAdded);
-
-	mutable FRigBaseElementChildrenArray CachedChildren;
-
-	FRigElementMetadataChangedDelegate MetadataChangedDelegate;
-	FRigElementMetadataTagChangedDelegate MetadataTagChangedDelegate;
-
-	UPROPERTY(BlueprintReadOnly, Transient, Category = RigElement, meta = (AllowPrivateAccess = "true"))
-	int32 CreatedAtInstructionIndex;
-
-	// used for constructing / destructing the memory. typically == 1
-	int32 OwnedInstances;
-
-	mutable uint16 TopologyVersion;
-	mutable uint16 MetadataVersion;
-
-	UPROPERTY(BlueprintReadOnly, Transient, Category = RigElement, meta = (AllowPrivateAccess = "true"))
-	bool bSelected;
-
+	friend class FControlRigEditor;
 	friend class URigHierarchy;
 	friend class URigHierarchyController;
-	friend struct FRigDispatch_SetMetadata;
-	friend struct FRigUnit_SetMetadataTag;
-	friend struct FRigUnit_SetMetadataTagArray;
-	friend struct FRigUnit_RemoveMetadataTag;
 };
 
 USTRUCT(BlueprintType)
 struct CONTROLRIG_API FRigTransformElement : public FRigBaseElement
 {
-public:
-	
 	GENERATED_BODY()
 	DECLARE_RIG_ELEMENT_METHODS(FRigTransformElement)
 
-	virtual ~FRigTransformElement(){}
+	static const EElementIndex ElementTypeIndex;
 
-	virtual void Save(FArchive& A, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase) override;
-	virtual void Load(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase) override;
+	FRigTransformElement() = default;
+	FRigTransformElement(const FRigTransformElement& InOther)
+	{
+		*this = InOther;
+	}
+	FRigTransformElement& operator=(const FRigTransformElement& InOther)
+	{
+		Super::operator=(InOther);
+		Pose = InOther.Pose;
+		return *this;
+	}
+	virtual ~FRigTransformElement() override {}
 
+	virtual void Save(FArchive& A, ESerializationPhase SerializationPhase) override;
+	virtual void Load(FArchive& Ar, ESerializationPhase SerializationPhase) override;
+
+	virtual void CopyPose(FRigBaseElement* InOther, bool bCurrent, bool bInitial, bool bWeights) override;
+	
 	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category = RigElement, meta = (DisplayAfter = "Index"))
 	FRigCurrentAndInitialTransform Pose;
-
+	
 protected:
-
+	FRigTransformElement(URigHierarchy* InOwner, const ERigElementType InType) :
+		FRigBaseElement(InOwner, InType)
+	{}
+	
 	struct FElementToDirty
 	{
 		FElementToDirty()
@@ -792,55 +823,49 @@ protected:
 			InElement->GetType() == ERigElementType::Null ||
 			InElement->GetType() == ERigElementType::Control ||
 			InElement->GetType() == ERigElementType::RigidBody ||
-			InElement->GetType() == ERigElementType::Reference;
+			InElement->GetType() == ERigElementType::Reference ||
+			InElement->GetType() == ERigElementType::Socket;
 	}
 
-public:
-	
-	virtual void CopyPose(FRigBaseElement* InOther, bool bCurrent, bool bInitial, bool bWeights) override;
-	
-protected:
+	virtual void CopyFrom(const FRigBaseElement* InOther) override;
 
-	virtual void CopyFrom(URigHierarchy* InHierarchy, FRigBaseElement* InOther, URigHierarchy* InOtherHierarchy) override;
-
-	friend struct FRigBaseElement;
-	friend struct FRigSingleParentElement;
-	friend struct FRigMultiParentElement;
 	friend class URigHierarchy;
 	friend class URigHierarchyController;
+	friend struct FRigBaseElement;
 };
 
 USTRUCT(BlueprintType)
 struct CONTROLRIG_API FRigSingleParentElement : public FRigTransformElement
 {
-public:
-	
 	GENERATED_BODY()
 	DECLARE_RIG_ELEMENT_METHODS(FRigSingleParentElement)
 
-	FRigSingleParentElement()
-	: FRigTransformElement()
-	, ParentElement(nullptr)
-	{}
+	static const EElementIndex ElementTypeIndex;
 
-	virtual ~FRigSingleParentElement(){}
+	FRigSingleParentElement() = default;
+	virtual ~FRigSingleParentElement() override {}
 
-	virtual void Save(FArchive& A, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase) override;
-	virtual void Load(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase) override;
+	virtual void Save(FArchive& A, ESerializationPhase SerializationPhase) override;
+	virtual void Load(FArchive& Ar, ESerializationPhase SerializationPhase) override;
 
-	FRigTransformElement* ParentElement;
+	FRigTransformElement* ParentElement = nullptr;
 
 protected:
+	explicit FRigSingleParentElement(URigHierarchy* InOwner, ERigElementType InType)
+		: FRigTransformElement(InOwner, InType)
+	{}
 
-	virtual void CopyFrom(URigHierarchy* InHierarchy, FRigBaseElement* InOther, URigHierarchy* InOtherHierarchy) override;
+	virtual void CopyFrom(const FRigBaseElement* InOther) override;
 
 	static bool IsClassOf(const FRigBaseElement* InElement)
 	{
 		return InElement->GetType() == ERigElementType::Bone ||
 			InElement->GetType() == ERigElementType::RigidBody ||
-			InElement->GetType() == ERigElementType::Reference;
+			InElement->GetType() == ERigElementType::Reference ||
+			InElement->GetType() == ERigElementType::Socket;
 	}
-
+	
+	friend class URigHierarchy;
 	friend struct FRigBaseElement;
 };
 
@@ -961,39 +986,37 @@ typedef TArray<FRigElementParentConstraint, TInlineAllocator<1>> FRigElementPare
 USTRUCT(BlueprintType)
 struct CONTROLRIG_API FRigMultiParentElement : public FRigTransformElement
 {
-public:
-	
 	GENERATED_BODY()
 	DECLARE_RIG_ELEMENT_METHODS(FRigMultiParentElement)
 
-    FRigMultiParentElement()
-    : FRigTransformElement()
-	{}
+	static const EElementIndex ElementTypeIndex;
 
-	virtual ~FRigMultiParentElement(){}
+	FRigMultiParentElement() = default;	
+	virtual ~FRigMultiParentElement() override {}
 
-	virtual void Save(FArchive& A, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase) override;
-	virtual void Load(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase) override;
+	virtual void Save(FArchive& A, ESerializationPhase SerializationPhase) override;
+	virtual void Load(FArchive& Ar, ESerializationPhase SerializationPhase) override;
+
+	virtual void CopyPose(FRigBaseElement* InOther, bool bCurrent, bool bInitial, bool bWeights) override;
 	
 	FRigElementParentConstraintArray ParentConstraints;
 	TMap<FRigElementKey, int32> IndexLookup;
 
 protected:
+	explicit FRigMultiParentElement(URigHierarchy* InOwner, const ERigElementType InType)
+		: FRigTransformElement(InOwner, InType)
+	{}
 
-	virtual void CopyFrom(URigHierarchy* InHierarchy, FRigBaseElement* InOther, URigHierarchy* InOtherHierarchy) override;
-
+	virtual void CopyFrom(const FRigBaseElement* InOther) override;
+	
+private:
 	static bool IsClassOf(const FRigBaseElement* InElement)
 	{
 		return InElement->GetType() == ERigElementType::Null ||
 			InElement->GetType() == ERigElementType::Control;
 	}
 
-public:
-	
-	virtual void CopyPose(FRigBaseElement* InOther, bool bCurrent, bool bInitial, bool bWeights) override;
-
-protected:
-	
+	friend class URigHierarchy;
 	friend struct FRigBaseElement;
 };
 
@@ -1006,56 +1029,72 @@ public:
 	GENERATED_BODY()
 	DECLARE_RIG_ELEMENT_METHODS(FRigBoneElement)
 
-	FRigBoneElement()
-		: FRigSingleParentElement()
-	{
-		Key.Type = ERigElementType::Bone;
-		BoneType = ERigBoneType::User;
-	}
-	
-	virtual ~FRigBoneElement(){}
-
-	virtual void Save(FArchive& A, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase) override;
-	virtual void Load(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase) override;
+	static const EElementIndex ElementTypeIndex;
 
 	UPROPERTY(BlueprintReadOnly, VisibleAnywhere, Category = RigElement)
-	ERigBoneType BoneType;
+	ERigBoneType BoneType = ERigBoneType::User;
 
-protected:
+	FRigBoneElement()
+		: FRigBoneElement(nullptr)
+	{}
+	FRigBoneElement(const FRigBoneElement& InOther)
+	{
+		*this = InOther;
+	}
+	FRigBoneElement& operator=(const FRigBoneElement& InOther)
+	{
+		BoneType = InOther.BoneType;
+		return *this;
+	}
+	
+	virtual ~FRigBoneElement() override {}
 
-	virtual void CopyFrom(URigHierarchy* InHierarchy, FRigBaseElement* InOther, URigHierarchy* InOtherHierarchy) override;
+	virtual void Save(FArchive& A, ESerializationPhase SerializationPhase) override;
+	virtual void Load(FArchive& Ar, ESerializationPhase SerializationPhase) override;
+
+private:
+	explicit FRigBoneElement(URigHierarchy* InOwner)
+		: FRigSingleParentElement(InOwner, ERigElementType::Bone)
+	{}
+
+	virtual void CopyFrom(const FRigBaseElement* InOther) override;
 
 	static bool IsClassOf(const FRigBaseElement* InElement)
 	{
 		return InElement->GetType() == ERigElementType::Bone;
 	}
 
+	friend class URigHierarchy;
 	friend struct FRigBaseElement;
 };
 
 USTRUCT(BlueprintType)
-struct CONTROLRIG_API FRigNullElement : public FRigMultiParentElement
+struct CONTROLRIG_API FRigNullElement final : public FRigMultiParentElement
 {
 public:
 	
 	GENERATED_BODY()
 	DECLARE_RIG_ELEMENT_METHODS(FRigNullElement)
 
-	FRigNullElement()
-    : FRigMultiParentElement()
-	{
-		Key.Type = ERigElementType::Null; 
-	}
+	static const EElementIndex ElementTypeIndex;
 
-	virtual ~FRigNullElement(){}
+	FRigNullElement() 
+		: FRigNullElement(nullptr)
+	{}
 
-protected:
-	
+	virtual ~FRigNullElement() override {}
+
+private:
+	explicit FRigNullElement(URigHierarchy* InOwner)
+		: FRigMultiParentElement(InOwner, ERigElementType::Null)
+	{}
+
 	static bool IsClassOf(const FRigBaseElement* InElement)
 	{
 		return InElement->GetType() == ERigElementType::Null;
 	}
 
+	friend class URigHierarchy;
 	friend struct FRigBaseElement;
 };
 
@@ -1152,7 +1191,7 @@ struct CONTROLRIG_API FRigControlSettings
 	UPROPERTY(BlueprintReadWrite, Category = Control)
 	bool bIsTransientControl;
 
-	/** If the control is 4transient and only visible in the control rig editor */
+	/** If the control is integer it can use this enum to choose values */
 	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category = Control)
 	TObjectPtr<UEnum> ControlEnum;
 
@@ -1199,7 +1238,7 @@ struct CONTROLRIG_API FRigControlSettings
 	EEulerRotationOrder PreferredRotationOrder;
 
 	/**
-	* Whether to use a specfied rotation order or just use the default FRotator order and conversion functions
+	* Whether to use a specified rotation order or just use the default FRotator order and conversion functions
 	*/
 	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category = Animation)
 	bool bUsePreferredRotationOrder;
@@ -1348,20 +1387,48 @@ struct CONTROLRIG_API FRigControlSettings
 };
 
 USTRUCT(BlueprintType)
-struct CONTROLRIG_API FRigControlElement : public FRigMultiParentElement
+struct CONTROLRIG_API FRigControlElement final : public FRigMultiParentElement
 {
 	public:
 	
 	GENERATED_BODY()
 	DECLARE_RIG_ELEMENT_METHODS(FRigControlElement)
 
+	static const EElementIndex ElementTypeIndex;
+
+	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category = Control)
+	FRigControlSettings Settings;
+
+	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category = RigElement)
+	FRigCurrentAndInitialTransform Offset;
+
+	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category = RigElement)
+	FRigCurrentAndInitialTransform Shape;
+
+	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category = RigElement)
+	FRigPreferredEulerAngles PreferredEulerAngles;
+	
+
 	FRigControlElement()
-		: FRigMultiParentElement()
+		: FRigControlElement(nullptr)
+	{ }
+	
+	FRigControlElement(const FRigControlElement& InOther)
 	{
-		Key.Type = ERigElementType::Control; 
+		*this = InOther;
+	}
+	
+	FRigControlElement& operator=(const FRigControlElement& InOther)
+	{
+		Super::operator=(InOther);
+		Settings = InOther.Settings;
+		Offset = InOther.Offset;
+		Shape = InOther.Shape;
+		PreferredEulerAngles = InOther.PreferredEulerAngles;
+		return *this;
 	}
 
-	virtual ~FRigControlElement(){}
+	virtual ~FRigControlElement() override {}
 	
 	virtual const FName& GetDisplayName() const override
 	{
@@ -1376,88 +1443,80 @@ struct CONTROLRIG_API FRigControlElement : public FRigMultiParentElement
 
 	bool CanDriveControls() const { return Settings.AnimationType == ERigControlAnimationType::ProxyControl || Settings.AnimationType == ERigControlAnimationType::AnimationControl; }
 
-	virtual void Save(FArchive& A, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase) override;
-	virtual void Load(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase) override;
+	bool CanTreatAsAdditive() const
+	{
+		if (Settings.ControlType == ERigControlType::Bool)
+		{
+			return false;
+		}
+		if (Settings.ControlType == ERigControlType::Integer && Settings.ControlEnum != nullptr)
+		{
+			return false;
+		}
+		return true;
+	}
 
-private:
+	virtual void Save(FArchive& A, ESerializationPhase SerializationPhase) override;
+	virtual void Load(FArchive& Ar, ESerializationPhase SerializationPhase) override;
 
-	virtual void CopyFrom(URigHierarchy* InHierarchy, FRigBaseElement* InOther, URigHierarchy* InOtherHierarchy) override;
-
-public:
-
-	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category = Control)
-	FRigControlSettings Settings;
-
-	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category = RigElement)
-	FRigCurrentAndInitialTransform Offset;
-
-	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category = RigElement)
-	FRigCurrentAndInitialTransform Shape;
-
-	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category = RigElement)
-	FRigPreferredEulerAngles PreferredEulerAngles;
+	virtual void CopyPose(FRigBaseElement* InOther, bool bCurrent, bool bInitial, bool bWeights) override;
 	
-protected:
+private:
+	explicit FRigControlElement(URigHierarchy* InOwner)
+		: FRigMultiParentElement(InOwner, ERigElementType::Control)
+	{ }
+
+	virtual void CopyFrom(const FRigBaseElement* InOther) override;
 
 	static bool IsClassOf(const FRigBaseElement* InElement)
 	{
 		return InElement->GetType() == ERigElementType::Control;
 	}
 
-public:
-	
-	virtual void CopyPose(FRigBaseElement* InOther, bool bCurrent, bool bInitial, bool bWeights) override;
-
-protected:
-
-	friend struct FRigBaseElement;
 	friend class URigHierarchy;
-	friend class URigHierarchyController;
+	friend struct FRigBaseElement;
 };
 
 USTRUCT(BlueprintType)
-struct CONTROLRIG_API FRigCurveElement : public FRigBaseElement
+struct CONTROLRIG_API FRigCurveElement final : public FRigBaseElement
 {
-public:
-	
 	GENERATED_BODY()
 	DECLARE_RIG_ELEMENT_METHODS(FRigCurveElement)
 
-	FRigCurveElement()
-		: FRigBaseElement()
-		, bIsValueSet(true)
-		, Value(0.f)
-	{
-		Key.Type = ERigElementType::Curve;
-	}
+	static const EElementIndex ElementTypeIndex;
 
-	virtual ~FRigCurveElement() override {}
-
-	virtual void Save(FArchive& A, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase) override;
-	virtual void Load(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase) override;
-
-private:
-
-	virtual void CopyFrom(URigHierarchy* InHierarchy, FRigBaseElement* InOther, URigHierarchy* InOtherHierarchy) override;
-
-public:
 	// Set to true if the value was actually set. Used to carry back and forth blend curve
 	// value validity state.
-	bool bIsValueSet;
+	bool bIsValueSet = true;
 	
-	float Value;
+	float Value = 0.0f;
+
+	
+	FRigCurveElement()
+		: FRigCurveElement(nullptr)
+	{}
+	
+	virtual ~FRigCurveElement() override {}
+
+	virtual void Save(FArchive& A, ESerializationPhase SerializationPhase) override;
+	virtual void Load(FArchive& Ar, ESerializationPhase SerializationPhase) override;
+
+	virtual void CopyPose(FRigBaseElement* InOther, bool bCurrent, bool bInitial, bool bWeights) override;
+	
+private:
+	FRigCurveElement(URigHierarchy* InOwner)
+		: FRigBaseElement(InOwner, ERigElementType::Curve)
+	{}
+	
+	virtual void CopyFrom(const FRigBaseElement* InOther) override;
 
 	static bool IsClassOf(const FRigBaseElement* InElement)
 	{
 		return InElement->GetType() == ERigElementType::Curve;
 	}
 
-public:
-	
-	virtual void CopyPose(FRigBaseElement* InOther, bool bCurrent, bool bInitial, bool bWeights) override;
-
-protected:
-	
+	friend class URigHierarchy;
+	friend class URigHierarchyController;
 	friend struct FRigBaseElement;
 };
 
@@ -1484,73 +1543,278 @@ public:
 	GENERATED_BODY()
 	DECLARE_RIG_ELEMENT_METHODS(FRigRigidBodyElement)
 
-    FRigRigidBodyElement()
-        : FRigSingleParentElement()
-	{
-		Key.Type = ERigElementType::RigidBody;
-	}
-	
-	virtual ~FRigRigidBodyElement(){}
-
-	virtual void Save(FArchive& A, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase) override;
-	virtual void Load(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase) override;
-
-private:
-
-	virtual void CopyFrom(URigHierarchy* InHierarchy, FRigBaseElement* InOther, URigHierarchy* InOtherHierarchy) override;
-
-public:
+	static const EElementIndex ElementTypeIndex;
 
 	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category = Control, meta=(ShowOnlyInnerProperties))
 	FRigRigidBodySettings Settings;
-
-protected:
 	
+	FRigRigidBodyElement()
+        : FRigRigidBodyElement(nullptr)
+	{ }
+	
+	FRigRigidBodyElement(const FRigRigidBodyElement& InOther)
+	{
+		*this = InOther;
+	}
+	
+	FRigRigidBodyElement& operator=(const FRigRigidBodyElement& InOther)
+	{
+		Super::operator=(InOther);
+		Settings = InOther.Settings;
+		return *this;
+	}
+	
+	virtual ~FRigRigidBodyElement() override {}
+
+	virtual void Save(FArchive& A, ESerializationPhase SerializationPhase) override;
+	virtual void Load(FArchive& Ar, ESerializationPhase SerializationPhase) override;
+
+private:
+	explicit FRigRigidBodyElement(URigHierarchy* InOwner)
+		: FRigSingleParentElement(InOwner, ERigElementType::RigidBody)
+	{ }
+	
+	virtual void CopyFrom(const FRigBaseElement* InOther) override;
+
 	static bool IsClassOf(const FRigBaseElement* InElement)
 	{
 		return InElement->GetType() == ERigElementType::RigidBody;
 	}
 
+	friend class URigHierarchy;
 	friend struct FRigBaseElement;
 };
 
 USTRUCT(BlueprintType)
-struct CONTROLRIG_API FRigReferenceElement : public FRigSingleParentElement
+struct CONTROLRIG_API FRigReferenceElement final : public FRigSingleParentElement
 {
 public:
 	
 	GENERATED_BODY()
 	DECLARE_RIG_ELEMENT_METHODS(FRigReferenceElement)
 
-    FRigReferenceElement()
-        : FRigSingleParentElement()
-	{
-		Key.Type = ERigElementType::Reference;
-	}
-	
-	virtual ~FRigReferenceElement(){}
+	static const EElementIndex ElementTypeIndex;
 
-	virtual void Save(FArchive& A, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase) override;
-	virtual void Load(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase) override;
+    FRigReferenceElement()
+        : FRigReferenceElement(nullptr)
+	{ }
+	
+	virtual ~FRigReferenceElement() override {}
+
+	virtual void Save(FArchive& A, ESerializationPhase SerializationPhase) override;
+	virtual void Load(FArchive& Ar, ESerializationPhase SerializationPhase) override;
 
 	FTransform GetReferenceWorldTransform(const FRigVMExecuteContext* InContext, bool bInitial) const;
 
 	virtual void CopyPose(FRigBaseElement* InOther, bool bCurrent, bool bInitial, bool bWeights) override;
 
-protected:
+private:
+	explicit FRigReferenceElement(URigHierarchy* InOwner)
+		: FRigSingleParentElement(InOwner, ERigElementType::Reference)
+	{ }
 
 	FRigReferenceGetWorldTransformDelegate GetWorldTransformDelegate;
 
-	virtual void CopyFrom(URigHierarchy* InHierarchy, FRigBaseElement* InOther, URigHierarchy* InOtherHierarchy) override;
+	virtual void CopyFrom(const FRigBaseElement* InOther) override;
 
 	static bool IsClassOf(const FRigBaseElement* InElement)
 	{
 		return InElement->GetType() == ERigElementType::Reference;
 	}
 
-	friend struct FRigBaseElement;
+	friend class URigHierarchy;
 	friend class URigHierarchyController;
+	friend struct FRigBaseElement;
 };
+
+UENUM(BlueprintType)
+enum class EConnectorType : uint8
+{
+	Primary, // Single primary connector, non-optional and always visible. When dropped on another element, this connector will resolve to that element.
+	Secondary, // Could be multiple, can auto-solve (visible if not solved), can be optional
+};
+
+
+USTRUCT(BlueprintType)
+struct CONTROLRIG_API FRigConnectorSettings
+{
+	GENERATED_BODY()
+
+	FRigConnectorSettings();
+	static FRigConnectorSettings DefaultSettings();
+
+	void Save(FArchive& Ar);
+	void Load(FArchive& Ar);
+
+	friend uint32 GetTypeHash(const FRigConnectorSettings& Settings);
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = Connector)
+	FString Description;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = Connector)
+	EConnectorType Type;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = Connector)
+	bool bOptional;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = Connector)
+	TArray<FRigConnectionRuleStash> Rules;
+
+	bool operator == (const FRigConnectorSettings& InOther) const;
+
+	bool operator != (const FRigConnectorSettings& InOther) const
+	{
+		return !(*this == InOther);
+	}
+
+	template<typename T>
+	int32 AddRule(const T& InRule)
+	{
+		return Rules.Emplace(&InRule);
+	}
+
+	uint32 GetRulesHash() const;
+};
+
+USTRUCT(BlueprintType)
+struct CONTROLRIG_API FRigConnectorState
+{
+	GENERATED_BODY()
+
+	FRigConnectorState()
+		: Name(NAME_None)
+	{}
+	
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = Connector)
+	FName Name;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = Connector)
+	FRigElementKey ResolvedTarget;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = Connector)
+	FRigConnectorSettings Settings;
+};
+
+USTRUCT(BlueprintType)
+struct CONTROLRIG_API FRigConnectorElement final : public FRigBaseElement
+{
+	GENERATED_BODY()
+	DECLARE_RIG_ELEMENT_METHODS(FRigConnectorElement)
+
+	static const EElementIndex ElementTypeIndex;
+
+	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category = Control)
+	FRigConnectorSettings Settings;
+	
+	FRigConnectorElement()
+		: FRigConnectorElement(nullptr)
+	{}
+	FRigConnectorElement(const FRigConnectorElement& InOther)
+	{
+		*this = InOther;
+	}
+	FRigConnectorElement& operator=(const FRigConnectorElement& InOther)
+	{
+		Super::operator=(InOther);
+		Settings = InOther.Settings;
+		return *this;
+	}
+
+	virtual ~FRigConnectorElement() override {}
+	
+	virtual void Save(FArchive& A, ESerializationPhase SerializationPhase) override;
+	virtual void Load(FArchive& Ar, ESerializationPhase SerializationPhase) override;
+
+	FRigConnectorState GetConnectorState(const URigHierarchy* InHierarchy) const;
+
+	bool IsPrimary() const { return Settings.Type == EConnectorType::Primary; }
+	bool IsSecondary() const { return Settings.Type == EConnectorType::Secondary; }
+	bool IsOptional() const { return IsSecondary() && Settings.bOptional; }
+
+private:
+	explicit FRigConnectorElement(URigHierarchy* InOwner)
+		: FRigBaseElement(InOwner, ERigElementType::Connector)
+	{ }
+	
+	virtual void CopyFrom(const FRigBaseElement* InOther) override;
+
+	static bool IsClassOf(const FRigBaseElement* InElement)
+	{
+		return InElement->GetType() == ERigElementType::Connector;
+	}
+
+	friend class URigHierarchy;
+	friend struct FRigBaseElement;
+};
+
+USTRUCT(BlueprintType)
+struct CONTROLRIG_API FRigSocketState
+{
+	GENERATED_BODY()
+	
+	FRigSocketState();
+	
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = Connector)
+	FName Name;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = Connector)
+	FRigElementKey Parent;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = Connector)
+	FTransform InitialLocalTransform;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = Connector)
+	FLinearColor Color;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = Connector)
+	FString Description;
+};
+
+USTRUCT(BlueprintType)
+struct CONTROLRIG_API FRigSocketElement final : public FRigSingleParentElement
+{
+	GENERATED_BODY()
+	DECLARE_RIG_ELEMENT_METHODS(FRigSocketElement)
+
+	static const EElementIndex ElementTypeIndex;
+	static const FName ColorMetaName;
+	static const FName DescriptionMetaName;
+	static const FName DesiredParentMetaName;
+	static const FLinearColor SocketDefaultColor;
+
+	FRigSocketElement()
+		: FRigSocketElement(nullptr)
+	{}
+			
+	virtual ~FRigSocketElement() override {}
+	
+	virtual void Save(FArchive& A, ESerializationPhase SerializationPhase) override;
+	virtual void Load(FArchive& Ar, ESerializationPhase SerializationPhase) override;
+
+	FRigSocketState GetSocketState(const URigHierarchy* InHierarchy) const;
+
+	FLinearColor GetColor(const URigHierarchy* InHierarchy) const;
+	void SetColor(const FLinearColor& InColor, URigHierarchy* InHierarchy, bool bNotify = true);
+
+	FString GetDescription(const URigHierarchy* InHierarchy) const;
+	void SetDescription(const FString& InDescription, URigHierarchy* InHierarchy, bool bNotify = true);
+
+private:
+	explicit FRigSocketElement(URigHierarchy* InOwner)
+		: FRigSingleParentElement(InOwner, ERigElementType::Socket)
+	{ }
+	
+	virtual void CopyFrom(const FRigBaseElement* InOther) override;
+
+	static bool IsClassOf(const FRigBaseElement* InElement)
+	{
+		return InElement->GetType() == ERigElementType::Socket;
+	}
+
+	friend class URigHierarchy;
+	friend struct FRigBaseElement;
+};
+
 
 USTRUCT()
 struct CONTROLRIG_API FRigHierarchyCopyPasteContentPerElement

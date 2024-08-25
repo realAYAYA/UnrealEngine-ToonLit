@@ -276,7 +276,11 @@ public:
 	int32 GetIndexDataSize() const { return IndexStorage.Num(); }
 
 	/** Create an RHI index buffer with CPU data. CPU data may be discarded after creation (see TResourceArray::Discard) */
+	FBufferRHIRef CreateRHIBuffer(FRHICommandListBase& RHICmdList);
+
+	UE_DEPRECATED(5.4, "Use CreateRHIBuffer instead.")
 	FBufferRHIRef CreateRHIBuffer_RenderThread();
+	UE_DEPRECATED(5.4, "Use CreateRHIBuffer instead.")
 	FBufferRHIRef CreateRHIBuffer_Async();
 
 	/** Take over ownership of IntermediateBuffer */
@@ -309,9 +313,6 @@ public:
 	inline bool Is32Bit() const { return b32Bit; }
 
 private:
-	template <bool bRenderThread>
-	FBufferRHIRef CreateRHIBuffer_Internal();
-
 	/** Storage for indices. */
 	TResourceArray<uint8, INDEXBUFFER_ALIGNMENT> IndexStorage;
 
@@ -365,13 +366,13 @@ protected:
 	void ReleaseRHIForStreaming(FRHIResourceUpdateBatcher& Batcher);
 
 	static ENGINE_API FBufferRHIRef CreateRHIIndexBufferInternal(
+		FRHICommandListBase& RHICmdList,
 		const TCHAR* InDebugName,
 		const FName& InOwnerName,
 		int32 IndexCount,
 		size_t IndexSize,
 		FResourceArrayInterface* ResourceArray,
-		bool bNeedSRV,
-		bool bRenderThread
+		bool bNeedSRV
 	);
 
 	// guaranteed only to be valid if the vertex buffer is valid and the buffer was created with the SRV flags
@@ -399,7 +400,7 @@ public:
 	virtual void InitRHI(FRHICommandListBase& RHICmdList) override
 	{
 		const bool bHadIndexData = Num() > 0;
-		IndexBufferRHI = CreateRHIBuffer_RenderThread();
+		IndexBufferRHI = CreateRHIBuffer(RHICmdList);
 
 		if (IndexBufferRHI && IsSRVNeeded(Indices.GetAllowCPUAccess()) && bHadIndexData)
 		{
@@ -497,8 +498,31 @@ public:
 	}
 
 	/** Create an RHI index buffer with CPU data. CPU data may be discarded after creation (see TResourceArray::Discard) */
-	FBufferRHIRef CreateRHIBuffer_RenderThread() { return CreateRHIBuffer_Internal<true>(); }
-	FBufferRHIRef CreateRHIBuffer_Async() { return CreateRHIBuffer_Internal<false>(); }
+	FBufferRHIRef CreateRHIBuffer(FRHICommandListBase& RHICmdList)
+	{
+		if (CachedNumIndices)
+		{
+			// Need to cache number of indices from the source array *before* RHICreateIndexBuffer is called
+			// because it will empty the source array.
+			CachedNumIndices = Indices.Num();
+
+			return CreateRHIIndexBufferInternal(
+				RHICmdList,
+				sizeof(INDEX_TYPE) == 4 ? TEXT("FRawStaticIndexBuffer32") : TEXT("FRawStaticIndexBuffer16"),
+				GetOwnerName(),
+				Indices.Num(),
+				sizeof(INDEX_TYPE),
+				&Indices,
+				IsSRVNeeded(Indices.GetAllowCPUAccess())
+			);
+		}
+		return nullptr;
+	}
+
+	UE_DEPRECATED(5.4, "Use CreateRHIBuffer instead.")
+	FBufferRHIRef CreateRHIBuffer_RenderThread();
+	UE_DEPRECATED(5.4, "Use CreateRHIBuffer instead.")
+	FBufferRHIRef CreateRHIBuffer_Async();
 
 	/** Similar to Init/ReleaseRHI but only update existing SRV so references to the SRV stays valid */
 	void InitRHIForStreaming(FRHIBuffer* IntermediateBuffer, FRHIResourceUpdateBatcher& Batcher)
@@ -516,25 +540,4 @@ private:
 
 	int32 CachedNumIndices;
 
-	template <bool bRenderThread>
-	FBufferRHIRef CreateRHIBuffer_Internal()
-	{
-		if (CachedNumIndices)
-		{
-			// Need to cache number of indices from the source array *before* RHICreateIndexBuffer is called
-			// because it will empty the source array.
-			CachedNumIndices = Indices.Num();
-
-			return CreateRHIIndexBufferInternal(
-				sizeof(INDEX_TYPE) == 4 ? TEXT("FRawStaticIndexBuffer32") : TEXT("FRawStaticIndexBuffer16"),
-				GetOwnerName(),
-				Indices.Num(),
-				sizeof(INDEX_TYPE),
-				&Indices,
-				IsSRVNeeded(Indices.GetAllowCPUAccess()),
-				bRenderThread
-			);
-		}
-		return nullptr;
-	}
 };

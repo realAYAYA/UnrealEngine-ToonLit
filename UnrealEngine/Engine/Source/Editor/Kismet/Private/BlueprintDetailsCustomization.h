@@ -216,17 +216,21 @@ private:
 	TSharedRef< ITableRow > MakeCategoryViewWidget( TSharedPtr<FText> Item, const TSharedRef< STableViewBase >& OwnerTable );
 	void OnCategorySelectionChanged( TSharedPtr<FText> ProposedSelection, ESelectInfo::Type /*SelectInfo*/ );
 	
-	EVisibility ShowEditableCheckboxVisibilty() const;
+	EVisibility ShowEditableCheckboxVisibility() const;
 	ECheckBoxState OnEditableCheckboxState() const;
 	void OnEditableChanged(ECheckBoxState InNewState);
 
-	EVisibility ShowReadOnlyCheckboxVisibilty() const;
+	EVisibility ShowReadOnlyCheckboxVisibility() const;
 	ECheckBoxState OnReadyOnlyCheckboxState() const;
 	void OnReadyOnlyChanged(ECheckBoxState InNewState);
+
+	EVisibility GetVariableUnitsVisibility() const;
+	TSharedPtr<FString> GetVariableUnits() const;
+	void OnVariableUnitsChanged(TSharedPtr<FString> ItemSelected, ESelectInfo::Type SelectInfo);
 	
 	ECheckBoxState OnFieldNotifyCheckboxState() const;
 	void OnFieldNotifyChanged(ECheckBoxState InNewState);
-	EVisibility GetFieldNotifyCheckboxListVisiblity() const;
+	EVisibility GetFieldNotifyCheckboxListVisibility() const;
 
 	ECheckBoxState OnCreateWidgetCheckboxState() const;
 	void OnCreateWidgetChanged(ECheckBoxState InNewState);
@@ -328,6 +332,9 @@ private:
 
 	/** Array of replication options for our combo text box */
 	TArray<TSharedPtr<FString>> ReplicationOptions;
+
+	/** Array of units options for our combo text box */
+	TArray<TSharedPtr<FString>> UnitsOptions;
 
 	/** Array of enum type names for integers used as bitmasks */
 	TArray<TSharedPtr<FTopLevelAssetPath>> BitmaskEnumTypePaths;

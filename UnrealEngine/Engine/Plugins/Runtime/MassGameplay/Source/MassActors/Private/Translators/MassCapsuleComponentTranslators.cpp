@@ -13,7 +13,7 @@
 UMassCapsuleTransformToMassTranslator::UMassCapsuleTransformToMassTranslator()
 	: EntityQuery(*this)
 {
-	ExecutionFlags = (int32)EProcessorExecutionFlags::All;
+	ExecutionFlags = (int32)EProcessorExecutionFlags::AllNetModes;
 	RequiredTags.Add<FMassCapsuleTransformCopyToMassTag>();
 	ExecutionOrder.ExecuteInGroup = UE::Mass::ProcessorGroupNames::SyncWorldToMass;
 }
@@ -47,7 +47,7 @@ void UMassCapsuleTransformToMassTranslator::Execute(FMassEntityManager& EntityMa
 UMassTransformToActorCapsuleTranslator::UMassTransformToActorCapsuleTranslator()
 	: EntityQuery(*this)
 {
-	ExecutionFlags = (int32)EProcessorExecutionFlags::All;
+	ExecutionFlags = (int32)EProcessorExecutionFlags::AllNetModes;
 	RequiredTags.Add<FMassCapsuleTransformCopyToActorTag>();
 	ExecutionOrder.ExecuteInGroup = UE::Mass::ProcessorGroupNames::UpdateWorldFromMass;
 	ExecutionOrder.ExecuteAfter.Add(UE::Mass::ProcessorGroupNames::Movement);

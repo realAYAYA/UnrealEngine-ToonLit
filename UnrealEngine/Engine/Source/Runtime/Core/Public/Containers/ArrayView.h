@@ -3,9 +3,6 @@
 #pragma once
 
 #include "CoreTypes.h"
-#include "Templates/IsConst.h"
-#include "Templates/IsSigned.h"
-#include "Templates/PointerIsConvertibleFromTo.h"
 #include "Misc/AssertionMacros.h"
 #include "Misc/ReverseIterate.h"
 #include "Templates/Invoke.h"
@@ -13,22 +10,18 @@
 #include "Traits/ElementType.h"
 #include "Containers/Array.h"
 #include "Math/UnrealMathUtility.h"
+#include <type_traits>
 
-namespace ArrayViewPrivate
+namespace UE::Core::ArrayView::Private
 {
 	/**
 	 * Trait testing whether a type is compatible with the view type
+	 *
+	 * The extra stars here are *IMPORTANT*
+	 * They prevent TMultiArrayView<Base>(TArray<Derived>&) from compiling!
 	 */
 	template <typename T, typename ElementType>
-	struct TIsCompatibleElementType
-	{
-	public:
-		/** NOTE:
-		 * The stars in the TPointerIsConvertibleFromTo test are *IMPORTANT*
-		 * They prevent TArrayView<Base>(TArray<Derived>&) from compiling!
-		 */
-		enum { Value = TPointerIsConvertibleFromTo<T*, ElementType* const>::Value };
-	};
+	constexpr bool TIsCompatibleElementType_V =std::is_convertible_v<T**, ElementType* const*>;
 
 	// Simply forwards to an unqualified GetData(), but can be called from within TArrayView
 	// where GetData() is already a member and so hides any others.
@@ -43,7 +36,7 @@ namespace ArrayViewPrivate
 	FORCEINLINE decltype(auto) GetReinterpretedDataHelper(T&& Arg)
 	{
 		auto NaturalPtr = GetData(Forward<T>(Arg));
-		using NaturalElementType = typename TRemovePointer<decltype(NaturalPtr)>::Type;
+		using NaturalElementType = std::remove_pointer_t<decltype(NaturalPtr)>;
 
 		auto Size = GetNum(Arg);
 		auto EndPtr = NaturalPtr + Size;
@@ -58,12 +51,12 @@ namespace ArrayViewPrivate
 	template <typename RangeType, typename ElementType>
 	struct TIsCompatibleRangeType
 	{
-		static constexpr bool Value = TIsCompatibleElementType<typename TRemovePointer<decltype(GetData(DeclVal<RangeType&>()))>::Type, ElementType>::Value;
+		static constexpr bool Value = TIsCompatibleElementType_V<std::remove_pointer_t<decltype(GetData(DeclVal<RangeType&>()))>, ElementType>;
 
 		template <typename T>
 		static decltype(auto) GetData(T&& Arg)
 		{
-			return ArrayViewPrivate::GetDataHelper(Forward<T>(Arg));
+			return UE::Core::ArrayView::Private::GetDataHelper(Forward<T>(Arg));
 		}
 	};
 
@@ -74,14 +67,14 @@ namespace ArrayViewPrivate
 	struct TIsReinterpretableRangeType
 	{
 	private:
-		using NaturalElementType = typename TRemovePointer<decltype(GetData(DeclVal<RangeType&>()))>::Type;
+		using NaturalElementType = std::remove_pointer_t<decltype(GetData(DeclVal<RangeType&>()))>;
 		using TypeCompat = TContainerElementTypeCompatibility<NaturalElementType>;
 
 	public:
 		static constexpr bool Value = 
 			!std::is_same_v<typename TypeCompat::ReinterpretType, NaturalElementType>
 			&&
-			TIsCompatibleElementType<typename TypeCompat::ReinterpretType, ElementType>::Value
+			TIsCompatibleElementType_V<typename TypeCompat::ReinterpretType, ElementType>
 			&&
 			(!UE_DEPRECATE_MUTABLE_TOBJECTPTR
 			 || std::is_same_v<ElementType, std::remove_pointer_t<typename TypeCompat::ReinterpretType>* const>
@@ -90,16 +83,23 @@ namespace ArrayViewPrivate
 		template <typename T>
 		static decltype(auto) GetData(T&& Arg)
 		{
-			return ArrayViewPrivate::GetReinterpretedDataHelper(Forward<T>(Arg));
+			return UE::Core::ArrayView::Private::GetReinterpretedDataHelper(Forward<T>(Arg));
 		}
 	};
 }
 
-template <typename T>                                  struct TIsTArrayView                                                       { static constexpr bool Value = false; };
-template <typename InElementType, typename InSizeType> struct TIsTArrayView<               TArrayView<InElementType, InSizeType>> { static constexpr bool Value = true;  };
-template <typename InElementType, typename InSizeType> struct TIsTArrayView<      volatile TArrayView<InElementType, InSizeType>> { static constexpr bool Value = true;  };
-template <typename InElementType, typename InSizeType> struct TIsTArrayView<const          TArrayView<InElementType, InSizeType>> { static constexpr bool Value = true;  };
-template <typename InElementType, typename InSizeType> struct TIsTArrayView<const volatile TArrayView<InElementType, InSizeType>> { static constexpr bool Value = true;  };
+template <typename T>                                  constexpr bool TIsTArrayView_V                                                       = false;
+template <typename InElementType, typename InSizeType> constexpr bool TIsTArrayView_V<               TArrayView<InElementType, InSizeType>> = true;
+template <typename InElementType, typename InSizeType> constexpr bool TIsTArrayView_V<      volatile TArrayView<InElementType, InSizeType>> = true;
+template <typename InElementType, typename InSizeType> constexpr bool TIsTArrayView_V<const          TArrayView<InElementType, InSizeType>> = true;
+template <typename InElementType, typename InSizeType> constexpr bool TIsTArrayView_V<const volatile TArrayView<InElementType, InSizeType>> = true;
+
+template <typename T>
+struct TIsTArrayView
+{
+	static constexpr bool Value = TIsTArrayView_V<T>;
+	static constexpr bool value = TIsTArrayView_V<T>;
+};
 
 /**
  * Templated fixed-size view of another array
@@ -138,7 +138,12 @@ public:
 	using ElementType = InElementType;
 	using SizeType = InSizeType;
 
-	static_assert(TIsSigned<SizeType>::Value, "TArrayView only supports signed index types");
+	static_assert(std::is_signed_v<SizeType>, "TArrayView only supports signed index types");
+
+	// Defaulted object behavior - we want compiler-generated functions rather than going through the generic range constructor.
+	TArrayView(const TArrayView&) = default;
+	TArrayView& operator=(const TArrayView&) = default;
+	~TArrayView() = default;
 
 	/**
 	 * Constructor.
@@ -151,13 +156,10 @@ public:
 
 private:
 	template <typename T>
-	using TIsCompatibleElementType = ArrayViewPrivate::TIsCompatibleElementType<T, ElementType>;
+	using TIsCompatibleRangeType = UE::Core::ArrayView::Private::TIsCompatibleRangeType<T, ElementType>;
 
 	template <typename T>
-	using TIsCompatibleRangeType = ArrayViewPrivate::TIsCompatibleRangeType<T, ElementType>;
-
-	template <typename T>
-	using TIsReinterpretableRangeType = ArrayViewPrivate::TIsReinterpretableRangeType<T, ElementType>;
+	using TIsReinterpretableRangeType = UE::Core::ArrayView::Private::TIsReinterpretableRangeType<T, ElementType>;
 
 public:
 	/**
@@ -167,52 +169,68 @@ public:
 	 */
 	template <
 		typename OtherRangeType,
-		typename CVUnqualifiedOtherRangeType = std::remove_cv_t<typename TRemoveReference<OtherRangeType>::Type>,
-		typename = typename TEnableIf<
+		typename CVUnqualifiedOtherRangeType = std::remove_cv_t<std::remove_reference_t<OtherRangeType>>
+		UE_REQUIRES(
 			TAnd<
 				TIsContiguousContainer<CVUnqualifiedOtherRangeType>,
 				TOr<
 					TIsCompatibleRangeType<OtherRangeType>,
 					TIsReinterpretableRangeType<OtherRangeType>
 				>
-			>::Value
-		>::Type,
-		std::enable_if_t<TIsTArrayView<std::decay_t<OtherRangeType>>::Value>* = nullptr
+			>::Value &&
+			TIsTArrayView_V<CVUnqualifiedOtherRangeType> &&
+			!std::is_same_v<CVUnqualifiedOtherRangeType, TArrayView>
+		)
 	>
 	FORCEINLINE TArrayView(OtherRangeType&& Other)
-		: DataPtr(TChooseClass<
+		: DataPtr(std::conditional_t<
 						TIsCompatibleRangeType<OtherRangeType>::Value,
 						TIsCompatibleRangeType<OtherRangeType>,
 						TIsReinterpretableRangeType<OtherRangeType>
-					>::Result::GetData(Forward<OtherRangeType>(Other)))
+					>::GetData(Forward<OtherRangeType>(Other)))
 	{
 		const auto InCount = GetNum(Forward<OtherRangeType>(Other));
-		check((InCount >= 0) && ((sizeof(InCount) < sizeof(SizeType)) || (InCount <= static_cast<decltype(InCount)>(TNumericLimits<SizeType>::Max()))));
+		using InCountType = decltype(InCount);
+
+		// Unlike the other constructor, we don't need to check(InCount >= 0), because it's coming from a TArrayView which guarantees that
+		if constexpr (sizeof(InCountType) > sizeof(SizeType) || (sizeof(InCountType) == sizeof(SizeType) && std::is_unsigned_v<InCountType>))
+		{
+			check(InCount <= static_cast<InCountType>(TNumericLimits<SizeType>::Max()));
+		}
+
 		ArrayNum = (SizeType)InCount;
 	}
 	template <
 		typename OtherRangeType,
-		typename CVUnqualifiedOtherRangeType = std::remove_cv_t<typename TRemoveReference<OtherRangeType>::Type>,
-		typename = typename TEnableIf<
-		TAnd<
-		TIsContiguousContainer<CVUnqualifiedOtherRangeType>,
-		TOr<
-		TIsCompatibleRangeType<OtherRangeType>,
-		TIsReinterpretableRangeType<OtherRangeType>
-		>
-		>::Value
-		>::Type,
-		std::enable_if_t<!TIsTArrayView<std::decay_t<OtherRangeType>>::Value>* = nullptr
+		typename CVUnqualifiedOtherRangeType = std::remove_cv_t<std::remove_reference_t<OtherRangeType>>
+		UE_REQUIRES(
+			TAnd<
+				TIsContiguousContainer<CVUnqualifiedOtherRangeType>,
+				TOr<
+					TIsCompatibleRangeType<OtherRangeType>,
+					TIsReinterpretableRangeType<OtherRangeType>
+				>
+			>::Value &&
+			!TIsTArrayView_V<CVUnqualifiedOtherRangeType>
+		)
 	>
 	FORCEINLINE TArrayView(OtherRangeType&& Other UE_LIFETIMEBOUND)
-		: DataPtr(TChooseClass<
+		: DataPtr(std::conditional_t<
 			TIsCompatibleRangeType<OtherRangeType>::Value,
 			TIsCompatibleRangeType<OtherRangeType>,
 			TIsReinterpretableRangeType<OtherRangeType>
-		>::Result::GetData(Forward<OtherRangeType>(Other)))
+		>::GetData(Forward<OtherRangeType>(Other)))
 	{
 		const auto InCount = GetNum(Forward<OtherRangeType>(Other));
-		check((InCount >= 0) && ((sizeof(InCount) < sizeof(SizeType)) || (InCount <= static_cast<decltype(InCount)>(TNumericLimits<SizeType>::Max()))));
+		using InCountType = decltype(InCount);
+		if constexpr (sizeof(InCountType) > sizeof(SizeType) || (sizeof(InCountType) == sizeof(SizeType) && std::is_unsigned_v<InCountType>))
+		{
+			check(InCount >= 0 && InCount <= static_cast<InCountType>(TNumericLimits<SizeType>::Max()));
+		}
+		else
+		{
+			check(InCount >= 0);
+		}
 		ArrayNum = (SizeType)InCount;
 	}
 
@@ -222,8 +240,10 @@ public:
 	 * @param InData	The data to view
 	 * @param InCount	The number of elements
 	 */
-	template <typename OtherElementType,
-		typename = typename TEnableIf<TIsCompatibleElementType<OtherElementType>::Value>::Type>
+	template <
+		typename OtherElementType
+		UE_REQUIRES(UE::Core::ArrayView::Private::TIsCompatibleElementType_V<OtherElementType, ElementType>)
+	>
 	FORCEINLINE TArrayView(OtherElementType* InData UE_LIFETIMEBOUND, SizeType InCount)
 		: DataPtr(InData)
 		, ArrayNum(InCount)
@@ -237,7 +257,7 @@ public:
 	 * The caller is responsible for ensuring that the view does not outlive the initializer list.
 	 */
 	FORCEINLINE TArrayView(std::initializer_list<ElementType> List UE_LIFETIMEBOUND)
-		: DataPtr(ArrayViewPrivate::GetDataHelper(List))
+		: DataPtr(UE::Core::ArrayView::Private::GetDataHelper(List))
 		, ArrayNum(GetNum(List))
 	{
 		static_assert(std::is_const_v<ElementType>, "Only views of const elements can bind to initializer lists");
@@ -777,23 +797,21 @@ struct TIsContiguousContainer<TArrayView<T, SizeType>>
 
 template <
 	typename OtherRangeType,
-	typename CVUnqualifiedOtherRangeType = std::remove_cv_t<typename TRemoveReference<OtherRangeType>::Type>,
-	typename = typename TEnableIf<TIsContiguousContainer<CVUnqualifiedOtherRangeType>::Value>::Type,
-	std::enable_if_t<TIsTArrayView<std::decay_t<OtherRangeType>>::Value>* = nullptr
+	typename CVUnqualifiedOtherRangeType = std::remove_cv_t<std::remove_reference_t<OtherRangeType>>
+	UE_REQUIRES(TIsContiguousContainer<CVUnqualifiedOtherRangeType>::Value && TIsTArrayView_V<CVUnqualifiedOtherRangeType>)
 >
 auto MakeArrayView(OtherRangeType&& Other)
 {
-	return TArrayView<typename TRemovePointer<decltype(GetData(DeclVal<OtherRangeType&>()))>::Type>(Forward<OtherRangeType>(Other));
+	return TArrayView<std::remove_pointer_t<decltype(GetData(DeclVal<OtherRangeType&>()))>>(Forward<OtherRangeType>(Other));
 }
 template <
 	typename OtherRangeType,
-	typename CVUnqualifiedOtherRangeType = std::remove_cv_t<typename TRemoveReference<OtherRangeType>::Type>,
-	typename = typename TEnableIf<TIsContiguousContainer<CVUnqualifiedOtherRangeType>::Value>::Type,
-	std::enable_if_t<!TIsTArrayView<std::decay_t<OtherRangeType>>::Value>* = nullptr
+	typename CVUnqualifiedOtherRangeType = std::remove_cv_t<std::remove_reference_t<OtherRangeType>>
+	UE_REQUIRES(TIsContiguousContainer<CVUnqualifiedOtherRangeType>::Value && !TIsTArrayView_V<CVUnqualifiedOtherRangeType>)
 >
 auto MakeArrayView(OtherRangeType&& Other UE_LIFETIMEBOUND)
 {
-	return TArrayView<typename TRemovePointer<decltype(GetData(DeclVal<OtherRangeType&>()))>::Type>(Forward<OtherRangeType>(Other));
+	return TArrayView<std::remove_pointer_t<decltype(GetData(DeclVal<OtherRangeType&>()))>>(Forward<OtherRangeType>(Other));
 }
 
 template<typename ElementType>
@@ -888,3 +906,9 @@ FORCEINLINE TArray<InElementType, InAllocatorType>& TArray<InElementType, InAllo
 	CopyToEmpty(Other.GetData(), Other.Num(), ArrayMax);
 	return *this;
 }
+
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
+#include "Templates/IsConst.h"
+#include "Templates/IsSigned.h"
+#include "Templates/PointerIsConvertibleFromTo.h"
+#endif

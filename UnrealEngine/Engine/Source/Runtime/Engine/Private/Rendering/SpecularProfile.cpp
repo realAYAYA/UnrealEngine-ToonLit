@@ -287,7 +287,7 @@ IPooledRenderTarget* FSpecularProfileTextureManager::GetAtlasTexture()
 
 IPooledRenderTarget* FSpecularProfileTextureManager::GetAtlasTexture(FRDGBuilder& GraphBuilder, EShaderPlatform ShaderPlatform)
 {
-	if (!Strata::IsStrataEnabled())
+	if (!Substrate::IsSubstrateEnabled())
 	{
 		return nullptr;
 	}
@@ -384,6 +384,11 @@ IPooledRenderTarget* FSpecularProfileTextureManager::GetAtlasTexture(FRDGBuilder
 
 			SpecularProfileEntries[LayerIt].CachedResolution = Texture ? Texture->TextureReferenceRHI->GetDesc().Extent : FIntPoint(0,0);
 		}
+
+		// Transit texture to SRV for letting the non-RDG resource to be bound later by the various passes
+		FRDGExternalAccessQueue ExternalAccessQueue;
+		ExternalAccessQueue.Add(SpecularProfileTexture);
+		ExternalAccessQueue.Submit(GraphBuilder);
 	}
 	return GSpecularProfileTextureAtlas;
 }

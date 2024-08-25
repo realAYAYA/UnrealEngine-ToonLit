@@ -128,9 +128,6 @@ DECLARE_DELEGATE_OneParam(FOnAssetsChosenForOpen, const TArray<FAssetData>& /*Se
 /** Called from the Asset Dialog when an asset name is chosen in non-modal Save dialogs */
 DECLARE_DELEGATE_OneParam(FOnObjectPathChosenForSave, const FString& /*ObjectPath*/);
 
-/** Called to determine whether the public/private state of the specified asset can be changed */
-DECLARE_DELEGATE_RetVal_OneParam(bool, FCanChangeAssetPublicStateDelegate, const FStringView /*AssetPath*/);
-
 /** Called when custom behavior is needed for allowing folders to toggle their private content edit state */
 DECLARE_DELEGATE_RetVal_OneParam(bool, FIsFolderShowPrivateContentToggleableDelegate, const FStringView /*VirtualFolderPath*/);
 

@@ -3,7 +3,7 @@
 
 #include "Animation/AnimationSettings.h"
 #include "CoreMinimal.h"
-#include "InterchangeAnimationTrackSetFactoryNode.h"
+#include "InterchangeLevelSequenceFactoryNode.h"
 #include "InterchangeAnimationTrackSetNode.h"
 #include "InterchangeAnimSequenceFactoryNode.h"
 #include "InterchangeMeshNode.h"
@@ -21,10 +21,26 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(InterchangeGenericAnimationPipeline)
 
+#if WITH_EDITOR
+bool UInterchangeGenericAnimationPipeline::CanEditChange(const FProperty* InProperty) const
+{
+	// If other logic prevents editing, we want to respect that
+	const bool ParentVal = Super::CanEditChange(InProperty);
+
+	// Can we edit flower color?
+	if (InProperty->GetFName() == GET_MEMBER_NAME_CHECKED(UInterchangeGenericAnimationPipeline, FrameImportRange))
+	{
+		return ParentVal && bImportAnimations && bImportBoneTracks && AnimationRange == EInterchangeAnimationRange::SetRange;
+	}
+	return ParentVal;
+}
+#endif
+
 void UInterchangeGenericAnimationPipeline::AdjustSettingsForContext(EInterchangePipelineContext ImportType, TObjectPtr<UObject> ReimportAsset)
 {
 	Super::AdjustSettingsForContext(ImportType, ReimportAsset);
 
+#if WITH_EDITOR
 	check(CommonSkeletalMeshesAndAnimationsProperties.IsValid());
 	
 	bSceneImport = ImportType == EInterchangePipelineContext::SceneImport
@@ -36,6 +52,7 @@ void UInterchangeGenericAnimationPipeline::AdjustSettingsForContext(EInterchange
 		|| ImportType == EInterchangePipelineContext::AssetAlternateSkinningReimport)
 	{
 		bImportAnimations = false;
+		CommonSkeletalMeshesAndAnimationsProperties->Skeleton = nullptr;
 		CommonSkeletalMeshesAndAnimationsProperties->bImportOnlyAnimations = false;
 	}
 	
@@ -61,13 +78,14 @@ void UInterchangeGenericAnimationPipeline::AdjustSettingsForContext(EInterchange
 			HidePropertiesOfCategory(OuterMostPipeline, this, HideCategoryName);
 		}
 	}
+#endif //WITH_EDITOR
 }
 
-void UInterchangeGenericAnimationPipeline::ExecutePipeline(UInterchangeBaseNodeContainer* InBaseNodeContainer, const TArray<UInterchangeSourceData*>& InSourceDatas)
+void UInterchangeGenericAnimationPipeline::ExecutePipeline(UInterchangeBaseNodeContainer* InBaseNodeContainer, const TArray<UInterchangeSourceData*>& InSourceDatas, const FString& ContentBasePath)
 {
 	if (!InBaseNodeContainer)
 	{
-		UE_LOG(LogInterchangePipeline, Warning, TEXT("UInterchangeGenericAnimationPipeline: Cannot execute pre-import pipeline because InBaseNodeContrainer is null"));
+		UE_LOG(LogInterchangePipeline, Warning, TEXT("UInterchangeGenericAnimationPipeline: Cannot execute pre-import pipeline because InBaseNodeContainer is null."));
 		return;
 	}
 
@@ -141,10 +159,63 @@ void UInterchangeGenericAnimationPipeline::ExecutePipeline(UInterchangeBaseNodeC
 
 	if (!bSceneImport)
 	{
+		//Extract any skeleton node use by the skeletal mesh animation track
+		TArray<FString> SceneNodesUsedBySkeleton;
+		BaseNodeContainer->IterateNodesOfType<UInterchangeSkeletalAnimationTrackNode>([&](const FString& NodeUid, UInterchangeSkeletalAnimationTrackNode* Node)
+			{
+				if (Node)
+				{
+					FString SkeletonNodeUid;
+					if (Node->GetCustomSkeletonNodeUid(SkeletonNodeUid))
+					{
+						SceneNodesUsedBySkeleton.Add(SkeletonNodeUid);
+						BaseNodeContainer->IterateNodeChildren(SkeletonNodeUid, [&SceneNodesUsedBySkeleton](const UInterchangeBaseNode* Node)
+							{
+								if (const UInterchangeSceneNode* SceneNode = Cast<UInterchangeSceneNode>(Node))
+								{
+									SceneNodesUsedBySkeleton.Add(Node->GetUniqueID());
+								}
+							});
+					}
+				}
+			});
+
+		auto IsTrackOverrideBySkeletalMeshAnimation = [this, &SceneNodesUsedBySkeleton](TArray<FString>& AnimationTrackUids)
+			{
+				//Skip track node that is using one or more scene node used by any skeletal mesh skeleton.
+				bool bSomeTrackNodeUsedBySkeletalMesh = false;
+				for (const FString& AnimationTrackUid : AnimationTrackUids)
+				{
+					if (const UInterchangeTransformAnimationTrackNode* TransformTrackNode = Cast<UInterchangeTransformAnimationTrackNode>(BaseNodeContainer->GetNode(AnimationTrackUid)))
+					{
+						FString ActorNodeUid;
+						if (TransformTrackNode->GetCustomActorDependencyUid(ActorNodeUid))
+						{
+							if (SceneNodesUsedBySkeleton.Contains(ActorNodeUid))
+							{
+								bSomeTrackNodeUsedBySkeletalMesh = true;
+								break;
+							}
+						}
+					}
+				}
+				return bSomeTrackNodeUsedBySkeletalMesh;
+			};
 		//Support rigid mesh animation animation data  (UAnimSequence for rigid mesh)
 		for (UInterchangeAnimationTrackSetNode* TrackSetNode : TrackSetNodes)
 		{
-			if (!TrackSetNode) continue;
+			if (!TrackSetNode)
+			{
+				continue;
+			}
+
+			TArray<FString> AnimationTrackUids;
+			TrackSetNode->GetCustomAnimationTrackUids(AnimationTrackUids);
+			
+			if (IsTrackOverrideBySkeletalMeshAnimation(AnimationTrackUids))
+			{
+				continue;
+			}
 
 			UInterchangeSkeletalAnimationTrackNode* SkeletalAnimationNode = NewObject< UInterchangeSkeletalAnimationTrackNode >(BaseNodeContainer);
 			FString SkeletalAnimationNodeUid = "\\SkeletalAnimation\\ConvertedFromRigidAnimation\\" + TrackSetNode->GetUniqueID();
@@ -152,8 +223,7 @@ void UInterchangeGenericAnimationPipeline::ExecutePipeline(UInterchangeBaseNodeC
 
 			bool bCustomSkeletonNodeUidSet = false;
 
-			TArray<FString> AnimationTrackUids;
-			TrackSetNode->GetCustomAnimationTrackUids(AnimationTrackUids);
+			
 			float CustomFrameRate;
 			if (!TrackSetNode->GetCustomFrameRate(CustomFrameRate))
 			{
@@ -227,7 +297,7 @@ void UInterchangeGenericAnimationPipeline::ExecutePipeline(UInterchangeBaseNodeC
 		{
 			if (TrackSetNode)
 			{
-				CreateAnimationTrackSetFactoryNode(*TrackSetNode);
+				CreateLevelSequenceFactoryNode(*TrackSetNode);
 			}
 		}
 	}
@@ -239,7 +309,7 @@ void UInterchangeGenericAnimationPipeline::ExecutePipeline(UInterchangeBaseNodeC
 
 	if (CommonSkeletalMeshesAndAnimationsProperties->bImportOnlyAnimations && !CommonSkeletalMeshesAndAnimationsProperties->Skeleton.IsValid())
 	{
-		UE_LOG(LogInterchangePipeline, Warning, TEXT("UInterchangeGenericAnimationPipeline: Cannot execute pre-import pipeline because we cannot import animation only but not specify any valid skeleton"));
+		UE_LOG(LogInterchangePipeline, Warning, TEXT("UInterchangeGenericAnimationPipeline: Cannot execute pre-import pipeline because importing animation only requires a valid skeleton."));
 		return;
 	}
 	SourceDatas.Empty(InSourceDatas.Num());
@@ -264,11 +334,11 @@ void UInterchangeGenericAnimationPipeline::ExecutePipeline(UInterchangeBaseNodeC
 	}
 }
 
-void UInterchangeGenericAnimationPipeline::CreateAnimationTrackSetFactoryNode(UInterchangeAnimationTrackSetNode& TranslatedNode)
+void UInterchangeGenericAnimationPipeline::CreateLevelSequenceFactoryNode(UInterchangeAnimationTrackSetNode& TranslatedNode)
 {
 	const FString FactoryNodeUid = UInterchangeFactoryBaseNode::BuildFactoryNodeUid(TranslatedNode.GetUniqueID());
 
-	UInterchangeAnimationTrackSetFactoryNode* FactoryNode = NewObject<UInterchangeAnimationTrackSetFactoryNode>(BaseNodeContainer, NAME_None);
+	UInterchangeLevelSequenceFactoryNode* FactoryNode = NewObject<UInterchangeLevelSequenceFactoryNode>(BaseNodeContainer, NAME_None);
 
 	FactoryNode->InitializeNode(FactoryNodeUid, TranslatedNode.GetDisplayLabel(), EInterchangeNodeContainerType::FactoryData);
 	FactoryNode->SetEnabled(true);
@@ -492,7 +562,7 @@ void UInterchangeGenericAnimationPipeline::CreateAnimSequenceFactoryNode(UInterc
 				Message->SourceAssetName = SourceDatas[0]->GetFilename();
 				Message->DestinationAssetName = TrackNode.GetDisplayLabel();
 				Message->AssetType = UAnimSequence::StaticClass();
-				Message->Text = FText::Format(NSLOCTEXT("UInterchangeGenericAnimationPipeline", "WrongSequenceLength", "Animation length {0} is not compatible with import frame-rate {1} (sub frame {2}), animation has to be frame-border aligned."),
+				Message->Text = FText::Format(NSLOCTEXT("UInterchangeGenericAnimationPipeline", "WrongSequenceLength", "Animation length {0} is not compatible with import frame-rate {1} (sub frame {2}). The animation has to be frame-border aligned."),
 					FText::AsNumber(SequenceLength), FrameRate.ToPrettyText(), FText::AsNumber(SubFrame));
 				//Skip this anim sequence factory node
 				return;
@@ -627,7 +697,7 @@ void UInterchangeGenericAnimationPipeline::CreateAnimSequenceFactoryNode(UInterc
 		}
 		else
 		{
-			UInterchangeResultError_Generic* Message = AddMessage<UInterchangeResultError_Generic>();
+			UInterchangeResultDisplay_Generic* Message = AddMessage<UInterchangeResultDisplay_Generic>();
 			Message->Text = FText::Format(NSLOCTEXT("UInterchangeGenericAnimationPipeline", "IncompatibleSkeleton", "Incompatible skeleton {0} when importing AnimSequence {1}."),
 				FText::FromString(CommonSkeletalMeshesAndAnimationsProperties->Skeleton->GetName()),
 				FText::FromString(TrackNode.GetDisplayLabel()));

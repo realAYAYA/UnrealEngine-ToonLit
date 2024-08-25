@@ -30,7 +30,7 @@ struct FLiveLinkSubjectTimeSyncData
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
 struct FLiveLinkSkeletonStaticData;
 
-class FLiveLinkClient_Base_DEPRECATED : public ILiveLinkClient
+class LIVELINK_API FLiveLinkClient_Base_DEPRECATED : public ILiveLinkClient
 {
 public:
 	//~ Begin ILiveLinkClient implementation
@@ -78,6 +78,10 @@ public:
 	virtual TArray<FGuid> GetVirtualSources(bool bEvenIfPendingKill = false) const override;
 	virtual FLiveLinkSourcePreset GetSourcePreset(FGuid SourceGuid, UObject* DuplicatedObjectOuter) const override;
 	virtual FText GetSourceType(FGuid EntryGuid) const override;
+	virtual FText GetSourceStatus(FGuid EntryGuid) const override;
+	virtual FText GetSourceMachineName(FGuid EntryGuid) const override;
+	virtual bool IsSourceStillValid(FGuid EntryGuid) const override;
+
 
 	virtual void PushSubjectStaticData_AnyThread(const FLiveLinkSubjectKey& SubjectKey, TSubclassOf<ULiveLinkRole> Role, FLiveLinkStaticDataStruct&& StaticData) override;
 	virtual void PushSubjectFrameData_AnyThread(const FLiveLinkSubjectKey& SubjectKey, FLiveLinkFrameDataStruct&& FrameData) override;
@@ -159,9 +163,6 @@ public:
 
 	FLiveLinkSubjectTimeSyncData GetTimeSyncData(FLiveLinkSubjectName SubjectName);
 
-	FText GetSourceMachineName(FGuid EntryGuid) const;
-	FText GetSourceStatus(FGuid EntryGuid) const;
-	bool IsSourceStillValid(FGuid EntryGuid) const;
 	UE_DEPRECATED(4.23, "FLiveLinkClient::GetSourceTypeForEntry is deprecated. Please use GetSourceType instead!")
 	FText GetSourceTypeForEntry(FGuid EntryGuid) const { return GetSourceType(EntryGuid); }
 	UE_DEPRECATED(4.23, "FLiveLinkClient::GetMachineNameForEntry is deprecated. Please use GetSourceMachineName instead!")
@@ -239,10 +240,13 @@ private:
 	/** Removes a subject from the rebroadcast provider and resets it if there are no more subjects */
 	void RemoveRebroadcastedSubject(FLiveLinkSubjectKey InSubjectKey);
 
-private:
+protected:
+	/** Broadcast out to the SubjectFrameAddedHandles a frame data update. */
+	void BroadcastFrameDataUpdate(const FLiveLinkSubjectKey& InSubjectKey, const FLiveLinkFrameDataStruct& InFrameData);
+
 	/** The current collection used. */
 	TUniquePtr<FLiveLinkSourceCollection> Collection;
-
+private:
 	/** Pending static info to add to a subject. */
 	TArray<FPendingSubjectStatic> SubjectStaticToPush;
 

@@ -74,6 +74,11 @@ mu::NodeScalarPtr GenerateMutableSourceFloat(const UEdGraphPin* Pin, FMutableGra
 		return static_cast<mu::NodeScalar*>(Generated->Node.get());
 	}
 
+	if (Node->IsNodeOutDatedAndNeedsRefresh())
+	{
+		Node->SetRefreshNodeWarning();
+	}
+
 	bool bDoNotAddToGeneratedCache = false;
 
 	mu::NodeScalarPtr Result;
@@ -93,8 +98,8 @@ mu::NodeScalarPtr GenerateMutableSourceFloat(const UEdGraphPin* Pin, FMutableGra
 
 		GenerationContext.AddParameterNameUnique(Node, FloatParameterNode->ParameterName);
 
-		ScalarNode->SetName(StringCast<ANSICHAR>(*FloatParameterNode->ParameterName).Get());
-		ScalarNode->SetUid(StringCast<ANSICHAR>(*GenerationContext.GetNodeIdUnique(Node).ToString()).Get());
+		ScalarNode->SetName(FloatParameterNode->ParameterName);
+		ScalarNode->SetUid(GenerationContext.GetNodeIdUnique(Node).ToString());
 		ScalarNode->SetDefaultValue(FloatParameterNode->DefaultValue);
 
 		GenerationContext.ParameterUIDataMap.Add(FloatParameterNode->ParameterName, FParameterUIData(
@@ -113,8 +118,8 @@ mu::NodeScalarPtr GenerateMutableSourceFloat(const UEdGraphPin* Pin, FMutableGra
 
 		GenerationContext.AddParameterNameUnique(Node, EnumParamNode->ParameterName);
 
-		EnumParameterNode->SetName(StringCast<ANSICHAR>(*EnumParamNode->ParameterName).Get());
-		EnumParameterNode->SetUid(StringCast<ANSICHAR>(*GenerationContext.GetNodeIdUnique(Node).ToString()).Get());
+		EnumParameterNode->SetName(EnumParamNode->ParameterName);
+		EnumParameterNode->SetUid(GenerationContext.GetNodeIdUnique(Node).ToString());
 		EnumParameterNode->SetValueCount(NumSelectors);
 		EnumParameterNode->SetDefaultValueIndex(DefaultValue);
 
@@ -123,7 +128,7 @@ mu::NodeScalarPtr GenerateMutableSourceFloat(const UEdGraphPin* Pin, FMutableGra
 
 		for (int SelectorIndex = 0; SelectorIndex < NumSelectors; ++SelectorIndex)
 		{
-			EnumParameterNode->SetValue(SelectorIndex, (float)SelectorIndex, StringCast<ANSICHAR>(*EnumParamNode->Values[SelectorIndex].Name).Get());
+			EnumParameterNode->SetValue(SelectorIndex, (float)SelectorIndex, EnumParamNode->Values[SelectorIndex].Name);
 
 			ParameterUIData.ArrayIntegerParameterOption.Add(FIntegerParameterUIData(
 				EnumParamNode->Values[SelectorIndex].Name,
@@ -275,18 +280,15 @@ mu::NodeScalarPtr GenerateMutableSourceFloat(const UEdGraphPin* Pin, FMutableGra
 				GenerationContext.Compiler->CompilerLog(LOCTEXT("FloatFailed", "Float generation failed."), Node);
 			}
 		}
-		else
-		{
-			GenerationContext.Compiler->CompilerLog(LOCTEXT("FloatVarMissingDef", "Float variation node requires a default value."), Node);
-		}
 
-		FloatNode->SetVariationCount(TypedNodeFloatVar->Variations.Num());
-		for (int VariationIndex = 0; VariationIndex < TypedNodeFloatVar->Variations.Num(); ++VariationIndex)
+		const int32 NumVariations = TypedNodeFloatVar->GetNumVariations();
+		FloatNode->SetVariationCount(NumVariations);
+		for (int VariationIndex = 0; VariationIndex < NumVariations; ++VariationIndex)
 		{
 			UEdGraphPin* VariationPin = TypedNodeFloatVar->VariationPin(VariationIndex);
 			if (!VariationPin) continue;
 
-			FloatNode->SetVariationTag(VariationIndex, StringCast<ANSICHAR>(*TypedNodeFloatVar->Variations[VariationIndex].Tag).Get());
+			FloatNode->SetVariationTag(VariationIndex, TypedNodeFloatVar->GetVariation(VariationIndex).Tag);
 			if (const UEdGraphPin* ConnectedPin = FollowInputPin(*VariationPin))
 			{
 				mu::NodeScalarPtr ChildNode = GenerateMutableSourceFloat(ConnectedPin, GenerationContext);
@@ -310,11 +312,12 @@ mu::NodeScalarPtr GenerateMutableSourceFloat(const UEdGraphPin* Pin, FMutableGra
 		}
 
 		bool bSuccess = true;
+		UDataTable* DataTable = GetDataTable(TypedNodeTable, GenerationContext);
 
-		if (TypedNodeTable->Table)
+		if (DataTable)
 		{
 			FString ColumnName = Pin->PinFriendlyName.ToString();
-			FProperty* Property = TypedNodeTable->Table->FindTableProperty(FName(*ColumnName));
+			FProperty* Property = DataTable->FindTableProperty(FName(*ColumnName));
 
 			if (!Property)
 			{
@@ -328,7 +331,7 @@ mu::NodeScalarPtr GenerateMutableSourceFloat(const UEdGraphPin* Pin, FMutableGra
 			{
 				// Generating a new data table if not exists
 				mu::TablePtr Table;
-				Table = GenerateMutableSourceTable(TypedNodeTable->Table->GetName(), Pin, GenerationContext);
+				Table = GenerateMutableSourceTable(DataTable, TypedNodeTable, GenerationContext);
 
 				if (Table)
 				{
@@ -341,7 +344,7 @@ mu::NodeScalarPtr GenerateMutableSourceFloat(const UEdGraphPin* Pin, FMutableGra
 					}
 
 					// Generating a new Float column if not exists
-					if (Table->FindColumn(StringCast<ANSICHAR>(*ColumnName).Get()) == INDEX_NONE)
+					if (Table->FindColumn(ColumnName) == INDEX_NONE)
 					{
 						int32 Dummy = -1; // TODO MTBL-1512
 						bool Dummy2 = false;
@@ -359,10 +362,10 @@ mu::NodeScalarPtr GenerateMutableSourceFloat(const UEdGraphPin* Pin, FMutableGra
 						Result = ScalarTableNode;
 
 						ScalarTableNode->SetTable(Table);
-						ScalarTableNode->SetColumn(StringCast<ANSICHAR>(*ColumnName).Get());
-						ScalarTableNode->SetParameterName(StringCast<ANSICHAR>(*TypedNodeTable->ParameterName).Get());
-
-						GenerationContext.AddParameterNameUnique(Node, TypedNodeTable->ParameterName);
+						ScalarTableNode->SetColumn(ColumnName);
+						ScalarTableNode->SetParameterName(TypedNodeTable->ParameterName);
+						ScalarTableNode->SetNoneOption(TypedNodeTable->bAddNoneOption);
+						ScalarTableNode->SetDefaultRowName(TypedNodeTable->DefaultRowName.ToString());
 					}
 				}
 				else

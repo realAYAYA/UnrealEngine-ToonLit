@@ -72,14 +72,17 @@ void rcFilterLowHangingWalkableObstacles(rcContext* ctx, const int walkableClimb
 	ctx->stopTimer(RC_TIMER_FILTER_LOW_OBSTACLES);
 }
 
-void rcFilterLedgeSpansImp(rcContext* ctx, const int walkableHeight, const int walkableClimb, const bool filterNeighborSlope, const int filterLedgeSpansAtY, //UE
-	rcHeightfield& solid)
+void rcFilterLedgeSpansImp(rcContext* ctx, const int walkableHeight, const int walkableClimb,
+                           const rcNeighborSlopeFilterMode neighborSlopeFilterMode, const rcReal maxStepFromWalkableSlope, const rcReal ch,	// UE
+                           const int filterLedgeSpansAtY, rcHeightfield& solid)
 {
 	rcAssert(ctx);
 
 	const int w = solid.width;
 	const int h = solid.height;
 	const int MAX_HEIGHT = RC_SPAN_MAX_HEIGHT;
+
+	const int maxStepFor2CellsVx = rcCeil(2*maxStepFromWalkableSlope / ch);	// UE
 
 	// Mark border spans.
 	for (int x = 0; x < w; ++x)
@@ -130,12 +133,11 @@ void rcFilterLedgeSpansImp(rcContext* ctx, const int walkableHeight, const int w
 						minh = rcMin(minh, nbot - bot);
 
 						// Find min/max accessible neighbour height. 
-						if (filterNeighborSlope && rcAbs(nbot - bot) <= walkableClimb)	//UE
+						if (neighborSlopeFilterMode != RC_SLOPE_FILTER_NONE && rcAbs(nbot - bot) <= walkableClimb)	//UE
 						{
 							if (nbot < asmin) asmin = nbot;
 							if (nbot > asmax) asmax = nbot;
 						}
-
 					}
 				}
 			}
@@ -155,11 +157,17 @@ void rcFilterLedgeSpansImp(rcContext* ctx, const int walkableHeight, const int w
 			// the actual height of the step to climb. Because of that, depending on the number of voxel represented by
 			// the agent radius, the following test might cause more problems than improvements.
 			// That's why we decided to allow to control it via the filterNeighborSlope parameter
-			else if (filterNeighborSlope && (asmax - asmin) > walkableClimb)
-//@UE END
+			else if (neighborSlopeFilterMode == RC_SLOPE_FILTER_RECAST && (asmax - asmin) > walkableClimb)
+
 			{
 				s->data.area = RC_NULL_AREA;
 			}
+			// Compare the step between the min and the max with the maximum step made by a uniform slope for 2 spans (since min and max can be 2 cells apart).
+			else if (neighborSlopeFilterMode == RC_SLOPE_FILTER_USE_HEIGHT_FROM_WALKABLE_SLOPE && (asmax - asmin) > maxStepFor2CellsVx)
+			{
+				s->data.area = RC_NULL_AREA;
+			}
+//@UE END			
 		}
 	}
 }
@@ -174,7 +182,8 @@ void rcFilterLedgeSpansImp(rcContext* ctx, const int walkableHeight, const int w
 /// A span is a ledge if: <tt>rcAbs(currentSpan.smax - neighborSpan.smax) > walkableClimb</tt>
 /// 
 /// @see rcHeightfield, rcConfig
-void rcFilterLedgeSpans(rcContext* ctx, const int walkableHeight, const int walkableClimb, const bool filterNeighborSlope, //UE
+void rcFilterLedgeSpans(rcContext* ctx, const int walkableHeight, const int walkableClimb,
+						const rcNeighborSlopeFilterMode neighborSlopeFilterMode, const rcReal maxStepFromWalkableSlope, const rcReal ch,	//UE
 						rcHeightfield& solid)
 {
 	rcAssert(ctx);
@@ -186,7 +195,7 @@ void rcFilterLedgeSpans(rcContext* ctx, const int walkableHeight, const int walk
 	// Mark border spans.
 	for (int y = 0; y < h; ++y)
 	{
-		rcFilterLedgeSpansImp(ctx, walkableHeight, walkableClimb, filterNeighborSlope, y, solid);	//UE
+		rcFilterLedgeSpansImp(ctx, walkableHeight, walkableClimb, neighborSlopeFilterMode, maxStepFromWalkableSlope, ch, y, solid);	//UE
 	}
 
 	ctx->stopTimer(RC_TIMER_FILTER_BORDER);
@@ -194,7 +203,9 @@ void rcFilterLedgeSpans(rcContext* ctx, const int walkableHeight, const int walk
 
 
 /// @see rcHeightfield, rcConfig
-void rcFilterLedgeSpans(rcContext* ctx, const int walkableHeight, const int walkableClimb, const bool filterNeighborSlope, const int yStart, const int maxYProcess, //UE
+void rcFilterLedgeSpans(rcContext* ctx, const int walkableHeight, const int walkableClimb,
+	const rcNeighborSlopeFilterMode neighborSlopeFilterMode, const rcReal maxStepFromWalkableSlope, const rcReal ch,	// UE
+	const int yStart, const int maxYProcess, //UE
 	rcHeightfield& solid)
 {
 	rcAssert(ctx);
@@ -205,7 +216,7 @@ void rcFilterLedgeSpans(rcContext* ctx, const int walkableHeight, const int walk
 
 	for (int y = yStart; y < h; ++y)
 	{
-		rcFilterLedgeSpansImp(ctx, walkableHeight, walkableClimb, filterNeighborSlope, y, solid);
+		rcFilterLedgeSpansImp(ctx, walkableHeight, walkableClimb, neighborSlopeFilterMode, maxStepFromWalkableSlope, ch, y, solid);
 	}
 
 	ctx->stopTimer(RC_TIMER_FILTER_BORDER);

@@ -45,7 +45,7 @@ const FString& DataprepCorePrivateUtils::GetRootTemporaryDir()
 
 const FString& DataprepCorePrivateUtils::GetRootPackagePath()
 {
-	static FString RootPackagePath( TEXT("/Engine/DataprepCore/Transient") );
+	static FString RootPackagePath( TEXT("/DataprepCore/Transient") );
 	return RootPackagePath;
 }
 

@@ -10,8 +10,32 @@
 #include <vector>
 #include <list>
 #include <string>
+#include <android/sharedmem.h>
+#include <sys/mman.h>
+#include <unistd.h>
+
+#define ENABLETRACING 0
+
+#if ENABLETRACING
+	#include <android/trace.h>
+	#define BEGIN_TRACE(x) ATrace_beginSection(x)
+	#define END_TRACE() ATrace_endSection()
+#else
+	#define BEGIN_TRACE(x) 
+	#define END_TRACE() 
+#endif
+
 
 #define APPNAME "UEPSOService"
+
+#define LOG_ERROR(...) __android_log_print(ANDROID_LOG_ERROR, APPNAME, ## __VA_ARGS__)
+#ifdef NDEBUG
+#define LOG_INFO(...)
+#define LOG_VERBOSE(...)
+#else
+#define LOG_INFO(...) __android_log_print(ANDROID_LOG_DEBUG, APPNAME, ## __VA_ARGS__)
+#define LOG_VERBOSE(...) __android_log_print(ANDROID_LOG_VERBOSE, APPNAME, ## __VA_ARGS__)
+#endif
 
 #define JNI_METHOD __attribute__ ((visibility ("default"))) extern "C"
 
@@ -25,7 +49,7 @@ VKAPI_ATTR VkBool32 VKAPI_CALL VKValidationCallback(
 	const char* pMessage,
 	void* pUserData)
 {
-	__android_log_print(ANDROID_LOG_VERBOSE, APPNAME, "VK Validation: %s", pMessage);
+	LOG_INFO( "VK Validation: %s", pMessage);
 	return VK_FALSE;
 }
 
@@ -38,11 +62,7 @@ class FVulkanPSOCompiler
 	std::vector<VkPhysicalDevice> devices;
 	PFN_vkCreateRenderPass2KHR vkCreateRenderPass2;
 
-	size_t PSOCacheSize = 0;
-	char * PSOCacheData = nullptr;
-	bool bSinglePSOPerCache = true;
 	VkPipelineCache PipelineCache = VK_NULL_HANDLE;
-
 public:
 	static FVulkanPSOCompiler& Get()
 	{
@@ -54,6 +74,7 @@ public:
 	{
 		if (bInitialized)
 			return;
+		BEGIN_TRACE("InitDevice");
 
 		bInitialized = true;
 
@@ -63,7 +84,7 @@ public:
 		appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
 		appInfo.pEngineName = nullptr;
 		appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-		appInfo.apiVersion = VK_API_VERSION_1_0;
+		appInfo.apiVersion = VK_API_VERSION_1_1;
 
 		VkInstanceCreateInfo createInfo{};
 		createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
@@ -80,7 +101,7 @@ public:
 
 			if (bEnableValidation)
 			{
-				__android_log_print(ANDROID_LOG_VERBOSE, APPNAME, " VK_LAYER_KHRONOS_validation Validation Enabled");
+				LOG_INFO( " VK_LAYER_KHRONOS_validation Validation Enabled");
 				break;
 			}
 		}
@@ -90,7 +111,7 @@ public:
 
 		if (Result != VK_SUCCESS)
 		{
-			__android_log_print(ANDROID_LOG_VERBOSE, APPNAME, " Failed to Create VKInstance %d ", Result);
+			LOG_ERROR( " Failed to Create VKInstance %d ", Result);
 			exit(-1);
 		}
 
@@ -111,7 +132,7 @@ public:
 			/* Register the callback */
 			VkDebugReportCallbackEXT Callback;
 			Result = vkCreateDebugReportCallbackEXT(Instance, &CallbackCreateInfo, nullptr, &Callback);
-			__android_log_print(ANDROID_LOG_VERBOSE, APPNAME, " Created Debug Hooks %d ", Result);
+			LOG_INFO( " Created Debug Hooks %d ", Result);
 		}
 
 		// Get the number of devices (GPUs) available.
@@ -120,7 +141,7 @@ public:
 
 		if (Result != VK_SUCCESS)
 		{
-			__android_log_print(ANDROID_LOG_VERBOSE, APPNAME, " Failed to Enumerate Physical Devices 1 %d ", Result);
+			LOG_ERROR( " Failed to Enumerate Physical Devices 1 %d ", Result);
 			exit(-1);
 		}
 		
@@ -130,7 +151,7 @@ public:
 
 		if (Result != VK_SUCCESS)
 		{
-			__android_log_print(ANDROID_LOG_VERBOSE, APPNAME, " Failed to Enumerate Physical Devices 2 %d ", Result);
+			LOG_ERROR( " Failed to Enumerate Physical Devices 2 %d ", Result);
 		}
 
 		uint32_t queue_count = 0;
@@ -190,16 +211,16 @@ public:
 
 		if (Result != VK_SUCCESS)
 		{
-			__android_log_print(ANDROID_LOG_VERBOSE, APPNAME, " Failed to Create Device %d ", Result);
+			LOG_ERROR( " Failed to Create Device %d ", Result);
 		}
 
 		vkCreateRenderPass2 = (PFN_vkCreateRenderPass2KHR)vkGetDeviceProcAddr(Device, "vkCreateRenderPass2KHR");
 
 		if (vkCreateRenderPass2 == nullptr)
 		{
-			__android_log_print(ANDROID_LOG_VERBOSE, APPNAME, "Failed getting pointer to vkCreateRenderPass2 ");
+			LOG_ERROR( "Failed getting pointer to vkCreateRenderPass2 ");
 		}
-
+		END_TRACE();
 	}
 
 	void ShutDownDevice()
@@ -211,12 +232,7 @@ public:
 			return;
 		}
 
-		if (PipelineCache != VK_NULL_HANDLE)
-		{
-			vkDestroyPipelineCache(Device, PipelineCache, nullptr);
-			PipelineCache = VK_NULL_HANDLE;
-		}
-
+		DestroyPipelineCache();
 		vkDestroyDevice(Device, nullptr);
 		vkDestroyInstance(Instance, nullptr);
 	}
@@ -258,8 +274,19 @@ public:
 		}
 	}
 
-	std::string CompileGFXPSO(const uint8_t* VS, uint64_t VSSize, const uint8_t* PS, uint64_t PSSize, const uint8_t* PSO, uint64_t PSOSize)
+	void DestroyPipelineCache()
 	{
+		if(PipelineCache != VK_NULL_HANDLE)
+		{
+			vkDestroyPipelineCache(Device, PipelineCache, nullptr);
+			PipelineCache = VK_NULL_HANDLE;
+		}
+	}
+
+	std::string CompileGFXPSO(const uint8_t* VS, uint64_t VSSize, const uint8_t* PS, uint64_t PSSize, const uint8_t* PSO, uint64_t PSOSize, const uint8_t* PSOCacheDataSource, uint64_t PSOCacheDataSourceSize)
+	{
+		BEGIN_TRACE("CompileGFXPSO");
+
 		std::string errorLog;
 		uint32_t MemoryOffset = 0;
 
@@ -278,17 +305,9 @@ public:
 		GraphicsPipelineCreateInfo PipelineCreateInfo;
 		VkGraphicsPipelineCreateInfo CreateInfo;
 
-		//__android_log_print(ANDROID_LOG_VERBOSE, APPNAME, "CompileGFXPSO: VSSize %d, PSSize %d, PSOSize %d", (uint32_t)VSSize, (uint32_t)PSSize, (uint32_t)PSOSize);
-
-		if (bSinglePSOPerCache && PSOCacheData)
-		{
-			free(PSOCacheData);
-			PSOCacheSize = 0;
-			PSOCacheData = nullptr;
-
-			vkDestroyPipelineCache(Device, PipelineCache, nullptr);
-			PipelineCache = VK_NULL_HANDLE;
-		}
+		// clear any existing cache
+		DestroyPipelineCache();
+		//LOG_INFO( "CompileGFXPSO: VSSize %d, PSSize %d, PSOSize %d", (uint32_t)VSSize, (uint32_t)PSSize, (uint32_t)PSOSize);
 
 		// Create PSO
 		COPY_FROM_BUFFER(&PipelineCreateInfo, PSO, MemoryOffset, sizeof(GraphicsPipelineCreateInfo));
@@ -478,7 +497,7 @@ public:
 		Result = vkCreatePipelineLayout(Device, &PipelineLayoutCreateInfo, nullptr, &PipelineLayout);
 		if (Result != VK_SUCCESS)
 		{
-			__android_log_print(ANDROID_LOG_VERBOSE, APPNAME, " vkCreatePipelineLayout Failed %d ", Result);
+			LOG_ERROR( " vkCreatePipelineLayout Failed %d ", Result);
 			exit(-1);
 		}
 
@@ -607,7 +626,7 @@ public:
 			Result = vkCreateRenderPass2(Device, &RenderPassCreateInfo, nullptr, &RenderPass);
 			if (Result != VK_SUCCESS)
 			{
-				__android_log_print(ANDROID_LOG_VERBOSE, APPNAME, " vkCreateRenderPass2 Failed %d ", Result);
+				LOG_ERROR( " vkCreateRenderPass2 Failed %d ", Result);
 				exit(-1);
 			}
 
@@ -685,7 +704,7 @@ public:
 			Result = vkCreateRenderPass(Device, &RenderPassCreateInfo, nullptr, &RenderPass);
 			if (Result != VK_SUCCESS)
 			{
-				__android_log_print(ANDROID_LOG_VERBOSE, APPNAME, " vkCreateRenderPass2 Failed %d ", Result);
+				LOG_ERROR( " vkCreateRenderPass2 Failed %d ", Result);
 				exit(-1);
 			}
 
@@ -709,7 +728,7 @@ public:
 			Result = vkCreateShaderModule(Device, &ModuleCreateInfo, nullptr, &VSModule);
 			if (Result != VK_SUCCESS)
 			{
-				__android_log_print(ANDROID_LOG_VERBOSE, APPNAME, " vkCreateShaderModule VS Failed %d ", Result);
+				LOG_ERROR( " vkCreateShaderModule VS Failed %d ", Result);
 				exit(-1);
 			}
 
@@ -727,7 +746,7 @@ public:
 			Result = vkCreateShaderModule(Device, &ModuleCreateInfo, nullptr, &PSModule);
 			if (Result != VK_SUCCESS)
 			{
-				__android_log_print(ANDROID_LOG_VERBOSE, APPNAME, " vkCreateShaderModule PS Failed %d ", Result);
+				LOG_ERROR( " vkCreateShaderModule PS Failed %d ", Result);
 				exit(-1);
 			}
 
@@ -740,10 +759,13 @@ public:
 			memset(&PipelineCacheCreateInfo, 0, sizeof(VkPipelineCacheCreateInfo));
 			PipelineCacheCreateInfo.flags = 0;
 			PipelineCacheCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
+			PipelineCacheCreateInfo.pInitialData = PSOCacheDataSource;
+			PipelineCacheCreateInfo.initialDataSize = PSOCacheDataSourceSize;
+			
 			Result = vkCreatePipelineCache(Device, &PipelineCacheCreateInfo, nullptr, &PipelineCache);
 			if (Result != VK_SUCCESS)
 			{
-				__android_log_print(ANDROID_LOG_VERBOSE, APPNAME, " vkCreatePipelineCache Failed %d ", Result);
+				LOG_ERROR( " vkCreatePipelineCache Failed %d ", Result);
 				exit(-1);
 			}
 		}
@@ -751,7 +773,7 @@ public:
 		Result = vkCreateGraphicsPipelines(Device, PipelineCache, 1, &CreateInfo, nullptr, &Pipeline);
 		if (Result != VK_SUCCESS)
 		{
-			__android_log_print(ANDROID_LOG_VERBOSE, APPNAME, " vkCreateGraphicsPipelines Failed %d ", Result);
+			LOG_ERROR( " vkCreateGraphicsPipelines Failed %d ", Result);
 			exit(-1);
 		}
 
@@ -774,45 +796,45 @@ public:
 		{
 			delete[] DescriptorSetLayouts;
 		}
+		END_TRACE();
 
 		return errorLog;
 	}
 
-	void GetPSOBinary(char* & BinaryData, uint32_t& Size, bool bCompileThread)
+	// If BinaryData == nullptr then SizeINOUT is set.
+	// If BinaryData != nullptr it is filled with the output, SizeINOUT specifies the size of BinaryData.
+	void GetPSOBinary(char* BinaryData, uint32_t& SizeINOUT)
 	{
-		if (bCompileThread && !bSinglePSOPerCache)
+		size_t Size = 0;
+		if(BinaryData == nullptr)
 		{
-			Size = 0;
-			BinaryData = nullptr;
-			return;
+			BEGIN_TRACE("GetPSOBinarySize");
+
+			VkResult Result = vkGetPipelineCacheData(Device, PipelineCache, &Size, nullptr);
+			if (Result != VK_SUCCESS)
+			{
+				LOG_ERROR( " vkGetPipelineCacheData 1 Failed %d ", Result);
+				exit(-1);
+			}
+			SizeINOUT = (uint32_t)Size;
+		}
+		else
+		{
+			BEGIN_TRACE("GetPSOBinaryData");
+			Size = SizeINOUT;
+			VkResult Result = vkGetPipelineCacheData(Device, PipelineCache, &Size, BinaryData);
+			if (Result != VK_SUCCESS)
+			{
+				LOG_ERROR( " vkGetPipelineCacheData 2 Failed %d (%d,%zu)", Result, SizeINOUT, Size);
+				exit(-1);
+			}
+			SizeINOUT = (uint32_t)Size;
+			DestroyPipelineCache();
 		}
 
-		if (PSOCacheData)
-		{
-			free(PSOCacheData);
-			PSOCacheData = nullptr;
-			PSOCacheSize = 0;
-		}
-
-		PSOCacheSize = 0;
-		VkResult Result = vkGetPipelineCacheData(Device, PipelineCache, &PSOCacheSize, nullptr);
-		if (Result != VK_SUCCESS)
-		{
-			__android_log_print(ANDROID_LOG_VERBOSE, APPNAME, " vkGetPipelineCacheData 1 Failed %d ", Result);
-			exit(-1);
-		}
-
-		PSOCacheData = (char*)malloc(PSOCacheSize);
-		Result = vkGetPipelineCacheData(Device, PipelineCache, &PSOCacheSize, PSOCacheData);
-		if (Result != VK_SUCCESS)
-		{
-			__android_log_print(ANDROID_LOG_VERBOSE, APPNAME, " vkGetPipelineCacheData 2 Failed %d ", Result);
-			exit(-1);
-		}
-
-		Size = PSOCacheSize;
-		BinaryData = PSOCacheData;
+		END_TRACE();
 	}
+
 };
 
 JNI_METHOD void Java_com_epicgames_unreal_psoservices_PSOProgramService_InitVKDevice(JNIEnv* jenv, jobject thiz)
@@ -825,45 +847,143 @@ JNI_METHOD void Java_com_epicgames_unreal_psoservices_PSOProgramService_Shutdown
 	FVulkanPSOCompiler::Get().ShutDownDevice();
 }
 
-JNI_METHOD jobject Java_com_epicgames_unreal_psoservices_PSOProgramService_CompileVKGFXPSO(JNIEnv* jenv, jobject thiz, jbyteArray jVS, jbyteArray jPS, jbyteArray jPSO)
+static const int GExitAfterJobCount = 0;
+int GJobCount = 0;
+void ExitTest()
 {
+	if (GExitAfterJobCount)
+	{
+		if (GJobCount == GExitAfterJobCount)
+		{
+			LOG_ERROR( " exit test! ");
+			exit(-1);
+		}
+		GJobCount++;
+	}
+}
+
+JNI_METHOD jobject Java_com_epicgames_unreal_psoservices_PSOProgramService_CompileVKGFXPSO(JNIEnv* jenv, jobject thiz, jbyteArray jVS, jbyteArray jPS, jbyteArray jPSO, jbyteArray jPSOCacheDataSource)
+{
+	ExitTest();
+
 	const uint8_t* VS = (const uint8_t*)jenv->GetByteArrayElements(jVS, nullptr);
 	uint64_t VSSize = jenv->GetArrayLength(jVS);
 	const uint8_t* PS = (const uint8_t*)jenv->GetByteArrayElements(jPS, nullptr);
 	uint64_t PSSize = jenv->GetArrayLength(jPS);
 	const uint8_t* PSO = (const uint8_t*)jenv->GetByteArrayElements(jPSO, nullptr);
 	uint64_t PSOSize = jenv->GetArrayLength(jPSO);
-;	
-	FVulkanPSOCompiler::Get().CompileGFXPSO(VS, VSSize, PS, PSSize, PSO, PSOSize);
+	const uint8_t* PSOCacheDataSource = (const uint8_t*)jenv->GetByteArrayElements(jPSOCacheDataSource, nullptr);
+	uint64_t PSOCacheDataSourceSize = jenv->GetArrayLength(jPSOCacheDataSource);
 
-	char* BinaryData;
+	FVulkanPSOCompiler::Get().CompileGFXPSO(VS, VSSize, PS, PSSize, PSO, PSOSize, PSOCacheDataSource, PSOCacheDataSourceSize);
+
 	uint32_t Size = 0;
 
-	FVulkanPSOCompiler::Get().GetPSOBinary(BinaryData, Size, true);
+	FVulkanPSOCompiler::Get().GetPSOBinary(nullptr, Size);
 
 	jbyteArray Data = jenv->NewByteArray(Size);
 
 	if (Size > 0)
 	{
+		char* BinaryData = (char*)malloc(Size);
+		FVulkanPSOCompiler::Get().GetPSOBinary(BinaryData, Size);
 		jenv->SetByteArrayRegion(Data, 0, Size, (jbyte*)BinaryData);
+		free(BinaryData);
 	}
 
 	return Data;
 }
 
-JNI_METHOD jobject Java_com_epicgames_unreal_psoservices_PSOProgramService_GetVKPSOCacheData(JNIEnv* jenv, jobject thiz)
+// the shared mem version takes an FD and a bunch of offsets.
+// another shared FD containing the result is returned.
+JNI_METHOD jint Java_com_epicgames_unreal_psoservices_PSOProgramService_CompileVKGFXPSOSHM(JNIEnv* jenv, jobject thiz, jint SHMemFD, jlong jVSSize, jlong jPSSize, jlong jPSOSize, jlong jPSOCacheDataSourceSize)
 {
-	char* BinaryData;
-	uint32_t Size = 0;
-
-	FVulkanPSOCompiler::Get().GetPSOBinary(BinaryData, Size, false);
-
-	jbyteArray Data = jenv->NewByteArray(Size);
-
-	if (Size > 0)
+	ExitTest();
 	{
-		jenv->SetByteArrayRegion(Data, 0, Size, (jbyte*)BinaryData);
+		BEGIN_TRACE("CompileVKGFXPSOSHM");
+		BEGIN_TRACE("CompileVKGFXPSOSHM_1");
+		LOG_VERBOSE("SHMemFD %d ", SHMemFD);
+
+		size_t memSize = ASharedMemory_getSize(SHMemFD);
+		uint8_t* ParamsSharedBuffer = (uint8_t*)mmap(NULL, memSize, PROT_READ, MAP_SHARED, SHMemFD, 0);
+		if (ParamsSharedBuffer == nullptr)
+		{
+			LOG_ERROR( "failed to map %zu input bytes (%d, %d)", memSize, SHMemFD, errno);
+			exit(-1);
+		}
+
+		LOG_VERBOSE("ParamsSharedBuffer %zu, %p ", memSize, ParamsSharedBuffer);
+
+		uint32_t CurrOffset = 0;
+		const uint8_t* VS = (const uint8_t*)ParamsSharedBuffer;
+		uint64_t VSSize = jVSSize;
+		CurrOffset += VSSize;
+
+		LOG_VERBOSE("vs %lu", VSSize);
+
+		const uint8_t* PS = (const uint8_t*)ParamsSharedBuffer + CurrOffset;
+		uint64_t PSSize = jPSSize;
+		CurrOffset += PSSize;
+
+		LOG_VERBOSE("ps %lu", PSSize);
+
+		const uint8_t* PSO = (const uint8_t*)ParamsSharedBuffer + CurrOffset;
+		uint64_t PSOSize = jPSOSize;
+		CurrOffset += PSOSize;
+
+		LOG_VERBOSE("PSO %lu", PSOSize);
+
+		const uint8_t* PSOCacheDataSource = (const uint8_t*)ParamsSharedBuffer + CurrOffset;
+		uint64_t PSOCacheDataSourceSize = jPSOCacheDataSourceSize;
+
+		LOG_VERBOSE("PSOCacheDataSourceSize %lu", PSOCacheDataSourceSize);
+
+		END_TRACE();
+		FVulkanPSOCompiler::Get().CompileGFXPSO(VS, VSSize, PS, PSSize, PSO, PSOSize, PSOCacheDataSource, PSOCacheDataSourceSize);
+
+		munmap(ParamsSharedBuffer, memSize);
+		END_TRACE();
 	}
 
-	return Data;
+	BEGIN_TRACE("CompileVKGFXPSOSHM_GB");
+
+	uint32_t Size = 0;
+	FVulkanPSOCompiler::Get().GetPSOBinary(nullptr, Size);
+
+	static const uint32_t PageSize = sysconf(_SC_PAGESIZE);
+	uint32_t AllocSize = Size + sizeof(Size);
+	uint32_t AlignedSize = (((uint32_t)AllocSize + PageSize - 1) & ~(PageSize - 1));
+
+	int SharedMemOutputFD = ASharedMemory_create("", AlignedSize);
+	if( SharedMemOutputFD != -1)
+	{
+		BEGIN_TRACE("CompileVKGFXPSOSHM_GB_1");
+		char* OutputSharedBuffer = (char*)mmap(NULL, AlignedSize, PROT_READ | PROT_WRITE, MAP_SHARED, SharedMemOutputFD, 0);
+		END_TRACE();
+		if (OutputSharedBuffer == nullptr)
+		{
+			LOG_ERROR( "out map failed (%d), shm %d, size %d, alloc %d", errno, SharedMemOutputFD, Size, AlignedSize);
+			exit(-1);
+		}
+		memcpy(OutputSharedBuffer, &Size, sizeof(Size));
+		FVulkanPSOCompiler::Get().GetPSOBinary(OutputSharedBuffer + sizeof(Size), Size);
+
+		BEGIN_TRACE("CompileVKGFXPSOSHM_GB_3");
+
+		// limit access to read only
+		ASharedMemory_setProt(SharedMemOutputFD, PROT_READ);
+
+		LOG_VERBOSE("success, shm %d, size %d, alloc %d", SharedMemOutputFD, Size, AlignedSize);
+
+		munmap(OutputSharedBuffer, AlignedSize);
+		END_TRACE();
+	}
+	else
+	{
+		LOG_ERROR( "Mem alloc %d bytes failed (errno %d) ", AllocSize, errno);
+	}
+
+	END_TRACE();
+
+	return SharedMemOutputFD;
 }

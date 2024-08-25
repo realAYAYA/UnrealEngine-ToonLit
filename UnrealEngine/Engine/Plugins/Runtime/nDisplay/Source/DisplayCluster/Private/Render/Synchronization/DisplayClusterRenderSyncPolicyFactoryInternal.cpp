@@ -5,13 +5,25 @@
 #include "Render/Synchronization/DisplayClusterRenderSyncPolicyNone.h"
 #include "Render/Synchronization/DisplayClusterRenderSyncPolicyEthernet.h"
 #include "Render/Synchronization/DisplayClusterRenderSyncPolicyEthernetBarrier.h"
-#include "Render/Synchronization/DisplayClusterRenderSyncPolicyNvidia.h"
+#include "Render/Synchronization/DisplayClusterRenderSyncPolicyNvidiaSwapBarrier.h"
+#include "Render/Synchronization/DisplayClusterRenderSyncPolicyNvidiaPresentBarrier.h"
 
 #include "Misc/DisplayClusterLog.h"
 #include "Misc/DisplayClusterStrings.h"
 #include "DisplayClusterConfigurationStrings.h"
 #include "RHI.h"
 #include "RHIDefinitions.h"
+
+
+// This cvar allows to replace the original NVIDIA sync policy with the new Present Barrier (DX12 only).
+// While in testing, it's controled by this cvar. Later on, Present Barrier policy will be exposed to
+// the GUI configurator as well as other policies are.
+static TAutoConsoleVariable<bool> CVarUseNvidiaPresentBarrierPolicy(
+	TEXT("nDisplay.sync.nvidia.UsePresentBarrierPolicy"),
+	false,
+	TEXT("NVIDIA Present Barrier synchronization policy (experimental)"),
+	ECVF_ReadOnly
+);
 
 TSharedPtr<IDisplayClusterRenderSyncPolicy> FDisplayClusterRenderSyncPolicyFactoryInternal::Create(const FString& InPolicyType, const TMap<FString, FString>& Parameters)
 {
@@ -50,9 +62,14 @@ TSharedPtr<IDisplayClusterRenderSyncPolicy> FDisplayClusterRenderSyncPolicyFacto
 	else if (InPolicyType.Equals(DisplayClusterConfigurationStrings::config::cluster::render_sync::Nvidia, ESearchCase::IgnoreCase))
 	{
 #if PLATFORM_WINDOWS
-		if (RHIType == ERHIInterfaceType::D3D11 || RHIType == ERHIInterfaceType::D3D12)
+		if (RHIType == ERHIInterfaceType::D3D12 && CVarUseNvidiaPresentBarrierPolicy.GetValueOnGameThread())
 		{
-			return MakeShared<FDisplayClusterRenderSyncPolicyNvidia>(Parameters);
+			UE_LOG(LogDisplayClusterRenderSync, Log, TEXT("Experimental NVIDIA synchronization approach will be used!"));
+			return MakeShared<FDisplayClusterRenderSyncPolicyNvidiaPresentBarrier>(Parameters);
+		}
+		else if (RHIType == ERHIInterfaceType::D3D11 || RHIType == ERHIInterfaceType::D3D12)
+		{
+			return MakeShared<FDisplayClusterRenderSyncPolicyNvidiaSwapBarrier>(Parameters);
 		}
 		else if (RHIType == ERHIInterfaceType::Vulkan)
 		{

@@ -72,19 +72,19 @@ namespace UnrealGameSync
 		public AlertButtonTheme Theme
 		{
 			get => _themeValue;
-			set 
-			{ 
-				_themeValue = value; 
-				UpdateThemeColors(); 
+			set
+			{
+				_themeValue = value;
+				UpdateThemeColors();
 			}
 		}
 
 		public AlertButtonColors CustomColors
 		{
 			get => _customColorsValue;
-			set 
-			{ 
-				_customColorsValue = value; 
+			set
+			{
+				_customColorsValue = value;
 				UpdateThemeColors();
 			}
 		}
@@ -97,7 +97,7 @@ namespace UnrealGameSync
 
 		private void UpdateThemeColors()
 		{
-			switch(Theme)
+			switch (Theme)
 			{
 				case AlertButtonTheme.Normal:
 					_colors.ForeColor = Color.FromArgb(64, 86, 106);
@@ -133,7 +133,7 @@ namespace UnrealGameSync
 					_colors.ForeColor = Color.FromArgb(255, 255, 255);
 					_colors.BorderColor = Color.FromArgb(230, 232, 235);
 					_colors.BackgroundColor1 = Color.FromArgb(200, 74, 49);
-					_colors.BackgroundColor2 = Color.FromArgb(200, 74, 49); 
+					_colors.BackgroundColor2 = Color.FromArgb(200, 74, 49);
 					_colors.BackgroundColorHover1 = Color.FromArgb(222, 108, 86);
 					_colors.BackgroundColorHover2 = Color.FromArgb(222, 108, 86);
 					_colors.BackgroundColorDown1 = Color.FromArgb(204, 59, 54);
@@ -183,7 +183,7 @@ namespace UnrealGameSync
 		protected override void OnPaint(PaintEventArgs e)
 		{
 			e.Graphics.FillRectangle(SystemBrushes.Window, 0, 0, Width, Height);
-			using(GraphicsPath path = new GraphicsPath())
+			using (GraphicsPath path = new GraphicsPath())
 			{
 				const int diameter = 4;
 
@@ -194,14 +194,14 @@ namespace UnrealGameSync
 				path.AddArc(Width - 1 - diameter, 0, diameter, diameter, 270, 90);
 				path.CloseFigure();
 
-				Color backgroundColorMin = (_mouseDown && _mouseOver)? _colors.BackgroundColorDown1 : _mouseOver? _colors.BackgroundColorHover1 : _colors.BackgroundColor1;
-				Color backgroundColorMax = (_mouseDown && _mouseOver)? _colors.BackgroundColorDown2 : _mouseOver? _colors.BackgroundColorHover2 : _colors.BackgroundColor2;
+				Color backgroundColorMin = (_mouseDown && _mouseOver) ? _colors.BackgroundColorDown1 : _mouseOver ? _colors.BackgroundColorHover1 : _colors.BackgroundColor1;
+				Color backgroundColorMax = (_mouseDown && _mouseOver) ? _colors.BackgroundColorDown2 : _mouseOver ? _colors.BackgroundColorHover2 : _colors.BackgroundColor2;
 
-				using(LinearGradientBrush brush = new LinearGradientBrush(new Point(0, 0), new Point(0, Height), backgroundColorMin, backgroundColorMax))
+				using (LinearGradientBrush brush = new LinearGradientBrush(new Point(0, 0), new Point(0, Height), backgroundColorMin, backgroundColorMax))
 				{
 					e.Graphics.FillPath(brush, path);
 				}
-				using(Pen solidPen = new Pen(_colors.BorderColor))
+				using (Pen solidPen = new Pen(_colors.BorderColor))
 				{
 					e.Graphics.DrawPath(solidPen, path);
 				}

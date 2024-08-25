@@ -36,6 +36,7 @@ public:
 	virtual void PrimeChildWavePlayers(bool bRecurse) override;
 	virtual void RetainChildWavePlayers(bool bRecurse) override;
 	virtual void ReleaseRetainerOnChildWavePlayers(bool bRecurse) override;
+	void LoadChildWavePlayers(bool bAddToRoot, bool bRecurse);
 
 #if WITH_EDITOR
 	virtual FText GetInputPinName(int32 PinIndex) const override;

@@ -53,6 +53,9 @@ TSharedRef<SWidget> SFilterConfiguratorRow::GenerateWidgetForColumn(const FName&
 				.ShouldDrawWires(true)
 			];
 
+		TSharedPtr<FFilterState> FilterState = FilterConfiguratorNodePtr->GetSelectedFilterState();
+		check(FilterState.IsValid());
+
 		// Filter combo box
 		LeftBox->AddSlot()
 			.HAlign(HAlign_Left)
@@ -69,64 +72,71 @@ TSharedRef<SWidget> SFilterConfiguratorRow::GenerateWidgetForColumn(const FName&
 					.Text(this, &SFilterConfiguratorRow::AvailableFilters_GetSelectionText)
 				]
 			];
-
-		// Operator combo box
-		LeftBox->AddSlot()
-			.HAlign(HAlign_Left)
-			.VAlign(VAlign_Center)
-			.FillWidth(1.0)
-			.Padding(FMargin(4.0f, 0.0f, 0.0f, 0.0f))
-			.AutoWidth()
-			[
-				SAssignNew(FilterOperatorComboBox, SComboBox<TSharedPtr<IFilterOperator>>)
-				.OptionsSource(GetAvailableFilterOperators())
-				.OnSelectionChanged(this, &SFilterConfiguratorRow::AvailableFilterOperators_OnSelectionChanged)
-				.OnGenerateWidget(this, &SFilterConfiguratorRow::AvailableFilterOperators_OnGenerateWidget)
-				[
-					SNew(STextBlock)
-					.Text(this, &SFilterConfiguratorRow::AvailableFilterOperators_GetSelectionText)
-				]
-			];
-
-		if (FilterConfiguratorNodePtr->GetSelectedFilter()->Is<FFilterWithSuggestions>())
+		
+		if (!FilterState->HasCustomUI())
 		{
-			SuggestionTextBoxValue = FilterConfiguratorNodePtr->GetTextBoxValue();
-
+			// Operator combo box
 			LeftBox->AddSlot()
-				.AutoWidth()
-				.VAlign(VAlign_Center)
 				.HAlign(HAlign_Left)
-				.Padding(FMargin(4.0f, 0.0f, 4.0f, 0.0f))
+				.VAlign(VAlign_Center)
+				.FillWidth(1.0)
+				.Padding(FMargin(4.0f, 0.0f, 0.0f, 0.0f))
+				.AutoWidth()
 				[
-					SNew(SSuggestionTextBox)
-					.MinDesiredWidth(300.0f)
-					.ForegroundColor(FSlateColor::UseForeground())
-					.OnTextCommitted(this, &SFilterConfiguratorRow::SuggestionTextBox_OnValueCommitted)
-					.OnTextChanged(this, &SFilterConfiguratorRow::SuggestionTextBox_OnValueChanged)
-					.Text(this, &SFilterConfiguratorRow::SuggestionTextBox_GetValue)
-					.ToolTipText(this, &SFilterConfiguratorRow::GetTextBoxTooltipText)
-					.HintText(this, &SFilterConfiguratorRow::GetTextBoxHintText)
-					.OnShowingSuggestions(FOnShowingSuggestions::CreateSP(this, &SFilterConfiguratorRow::SuggestionTextBox_GetSuggestions))
-					.OnShowingHistory(FOnShowingHistory::CreateSP(this, &SFilterConfiguratorRow::SuggestionTextBox_GetHistory))
+					SAssignNew(FilterOperatorComboBox, SComboBox<TSharedPtr<IFilterOperator>>)
+					.OptionsSource(GetAvailableFilterOperators())
+					.OnSelectionChanged(this, &SFilterConfiguratorRow::AvailableFilterOperators_OnSelectionChanged)
+					.OnGenerateWidget(this, &SFilterConfiguratorRow::AvailableFilterOperators_OnGenerateWidget)
+					[
+						SNew(STextBlock)
+						.Text(this, &SFilterConfiguratorRow::AvailableFilterOperators_GetSelectionText)
+					]
 				];
+
+			if (FilterConfiguratorNodePtr->GetSelectedFilter()->Is<FFilterWithSuggestions>())
+			{
+				SuggestionTextBoxValue = FilterConfiguratorNodePtr->GetTextBoxValue();
+
+				LeftBox->AddSlot()
+					.AutoWidth()
+					.VAlign(VAlign_Center)
+					.HAlign(HAlign_Left)
+					.Padding(FMargin(4.0f, 0.0f, 4.0f, 0.0f))
+					[
+						SNew(SSuggestionTextBox)
+						.MinDesiredWidth(300.0f)
+						.ForegroundColor(FSlateColor::UseForeground())
+						.OnTextCommitted(this, &SFilterConfiguratorRow::SuggestionTextBox_OnValueCommitted)
+						.OnTextChanged(this, &SFilterConfiguratorRow::SuggestionTextBox_OnValueChanged)
+						.Text(this, &SFilterConfiguratorRow::SuggestionTextBox_GetValue)
+						.ToolTipText(this, &SFilterConfiguratorRow::GetTextBoxTooltipText)
+						.HintText(this, &SFilterConfiguratorRow::GetTextBoxHintText)
+						.OnShowingSuggestions(FOnShowingSuggestions::CreateSP(this, &SFilterConfiguratorRow::SuggestionTextBox_GetSuggestions))
+						.OnShowingHistory(FOnShowingHistory::CreateSP(this, &SFilterConfiguratorRow::SuggestionTextBox_GetHistory))
+					];
+			}
+			else
+			{
+				LeftBox->AddSlot()
+					.AutoWidth()
+					.VAlign(VAlign_Center)
+					.HAlign(HAlign_Left)
+					.FillWidth(1.0)
+					.Padding(FMargin(4.0f, 0.0f, 4.0f, 0.0f))
+					[
+						SNew(SEditableTextBox)
+						.MinDesiredWidth(50.0f)
+						.OnTextCommitted(this, &SFilterConfiguratorRow::OnTextBoxValueCommitted)
+						.Text(this, &SFilterConfiguratorRow::GetTextBoxValue)
+						.ToolTipText(this, &SFilterConfiguratorRow::GetTextBoxTooltipText)
+						.HintText(this, &SFilterConfiguratorRow::GetTextBoxHintText)
+						.OnVerifyTextChanged(this, &SFilterConfiguratorRow::TextBox_OnVerifyTextChanged)
+					];
+			}
 		}
 		else
 		{
-			LeftBox->AddSlot()
-				.AutoWidth()
-				.VAlign(VAlign_Center)
-				.HAlign(HAlign_Left)
-				.FillWidth(1.0)
-				.Padding(FMargin(4.0f, 0.0f, 4.0f, 0.0f))
-				[
-					SNew(SEditableTextBox)
-					.MinDesiredWidth(50.0f)
-					.OnTextCommitted(this, &SFilterConfiguratorRow::OnTextBoxValueCommitted)
-					.Text(this, &SFilterConfiguratorRow::GetTextBoxValue)
-					.ToolTipText(this, &SFilterConfiguratorRow::GetTextBoxTooltipText)
-					.HintText(this, &SFilterConfiguratorRow::GetTextBoxHintText)
-					.OnVerifyTextChanged(this, &SFilterConfiguratorRow::TextBox_OnVerifyTextChanged)
-				];
+			FilterState->AddCustomUI(LeftBox);
 		}
 
 		RightBox->AddSlot()

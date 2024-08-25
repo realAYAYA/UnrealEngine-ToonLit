@@ -309,8 +309,6 @@ public:
 
 	virtual bool OnUpdateHover(const FInputDeviceRay& DevicePos) override;
 
-	virtual void OnPropertyModified(UObject* PropertySet, FProperty* Property) override;
-
 	bool IsInBrushSubMode() const;
 
 	virtual void CommitResult(UBaseDynamicMeshComponent* Component, bool bModifiedTopology) override;
@@ -365,6 +363,9 @@ protected:
 
 	virtual void OnBeginStroke(const FRay& WorldRay) override;
 	virtual void OnEndStroke() override;
+	virtual void OnCancelStroke() override;
+
+	virtual bool SharesBrushPropertiesChanges() const override { return false; }
 
 	virtual TUniquePtr<FMeshSculptBrushOp>& GetActiveBrushOp();
 	// end UMeshSculptToolBase API

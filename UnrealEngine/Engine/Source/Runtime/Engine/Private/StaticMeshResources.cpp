@@ -154,7 +154,7 @@ FStaticMeshComponentBulkReregisterContext::FStaticMeshComponentBulkReregisterCon
 FStaticMeshComponentBulkReregisterContext::~FStaticMeshComponentBulkReregisterContext()
 {
 	// Remove any components that are pending kill, in case a creation script rebuilt the component from scratch (versus just re-registering).
-	StaticMeshComponents.RemoveAllSwap([](const UActorComponent* Component) { return !IsValidChecked(Component); }, false);
+	StaticMeshComponents.RemoveAllSwap([](const UActorComponent* Component) { return !IsValidChecked(Component); }, EAllowShrinking::No);
 
 	if (StaticMeshComponents.Num())
 	{
@@ -192,7 +192,7 @@ void FStaticMeshComponentBulkReregisterContext::AddSimpleConstructionScript(USim
 void FStaticMeshComponentBulkReregisterContext::SanitizeMeshComponents()
 {
 	// for contexts in which side effects are less predictable, e.g. in editor:
-	StaticMeshComponents.RemoveAllSwap([](const UPrimitiveComponent* Component) { return !IsValidChecked(Component) || Component->SceneProxy != nullptr; }, false);
+	StaticMeshComponents.RemoveAllSwap([](const UPrimitiveComponent* Component) { return !IsValidChecked(Component) || !Component->IsRegistered() || Component->SceneProxy != nullptr; }, EAllowShrinking::No);
 }
 
 void FStaticMeshComponentBulkReregisterContext::AddConstructedComponent(USceneComponent* SceneComp)

@@ -108,7 +108,7 @@ void UEnhancedInputLocalPlayerSubsystem::ControlMappingsRebuiltThisFrame()
 
 bool UEnhancedInputWorldSubsystem::ShouldCreateSubsystem(UObject* Outer) const
 {
-	if (!FSlateApplication::IsInitialized())
+	if (!Super::ShouldCreateSubsystem(Outer) || !FSlateApplication::IsInitialized())
 	{
 		return false;
 	}
@@ -117,10 +117,10 @@ bool UEnhancedInputWorldSubsystem::ShouldCreateSubsystem(UObject* Outer) const
 	const bool bShouldCreate = GetDefault<UEnhancedInputDeveloperSettings>()->bEnableWorldSubsystem;
 	if (!bShouldCreate)
 	{
-		UE_LOG(LogWorldSubsystemInput, Log, TEXT("UEnhancedInputDeveloperSettings::bEnableWorldSubsystem is false, the world subsystem will not be created!"));
+		UE_LOG(LogWorldSubsystemInput, Verbose, TEXT("UEnhancedInputDeveloperSettings::bEnableWorldSubsystem is false, the world subsystem will not be created!"));
 	}
 
-	return bShouldCreate && Super::ShouldCreateSubsystem(Outer);
+	return bShouldCreate;
 }
 
 void UEnhancedInputWorldSubsystem::Initialize(FSubsystemCollectionBase& Collection)
@@ -280,9 +280,21 @@ void UEnhancedInputWorldSubsystem::AddDefaultMappingContexts()
 		{
 			if (const UInputMappingContext* IMC = ContextSetting.InputMappingContext.LoadSynchronous())
 			{
-				if (!HasMappingContext(IMC))
+				if (ContextSetting.bAddImmediately)
 				{
-					AddMappingContext(IMC, ContextSetting.Priority);
+					if (!HasMappingContext(IMC))
+					{
+						FModifyContextOptions Opts = {};
+						Opts.bNotifyUserSettings = ContextSetting.bRegisterWithUserSettings;
+						AddMappingContext(IMC, ContextSetting.Priority, Opts);	
+					}					
+				}
+				else if (ContextSetting.bRegisterWithUserSettings)
+				{
+					if (UEnhancedInputUserSettings* Settings = GetUserSettings())
+					{
+						Settings->RegisterInputMappingContext(IMC);
+					}
 				}
 			}
 		}
@@ -297,7 +309,9 @@ void UEnhancedInputWorldSubsystem::RemoveDefaultMappingContexts()
 		{
 			if (const UInputMappingContext* IMC = ContextSetting.InputMappingContext.LoadSynchronous())
 			{
-				RemoveMappingContext(IMC);
+				FModifyContextOptions Opts = {};
+				Opts.bNotifyUserSettings = ContextSetting.bRegisterWithUserSettings;
+				RemoveMappingContext(IMC, Opts);
 			}
 		}
 	}

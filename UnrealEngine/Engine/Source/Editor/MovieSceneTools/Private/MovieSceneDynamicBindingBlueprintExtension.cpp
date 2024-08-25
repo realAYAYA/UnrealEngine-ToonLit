@@ -102,7 +102,7 @@ void UMovieSceneDynamicBindingBlueprintExtension::HandleGenerateFunctionGraphs(F
 			}
 			for (auto& Pair : DynamicBinding.PayloadVariables)
 			{
-				EndpointCall.PayloadVariables.Add(Pair.Key, Pair.Value.Value);
+				EndpointCall.PayloadVariables.Add(Pair.Key, FMovieSceneDirectorBlueprintVariableValue{ Pair.Value.ObjectValue, Pair.Value.Value });
 			}
 
 			// Create the endpoint call, and clean-up stale payload variables.

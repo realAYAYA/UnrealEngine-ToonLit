@@ -78,7 +78,7 @@ public:
 	static int32 GetDefaultVolumeResolutionMaxAxis() { return 0; }
 	static FVector3f GetDefaultVolumeWorldSpaceSize() { return FVector3f::ZeroVector; }
 	static float GetDefaultStepFactor() { return 1.0f; }
-	static float GetDefaultShadowStepFactor() { return 8.0f; }
+	static float GetDefaultShadowStepFactor() { return 2.0f; }
 	static float GetDefaultShadowBiasFactor() { return 0.5f; }
 	static float GetDefaultLightingDownsampleFactor() { return 2.0f; }
 
@@ -111,7 +111,7 @@ public:
 	float LightingDownsampleFactor = 2.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Volume Rendering")
-	float ShadowStepFactor = 8.0f;
+	float ShadowStepFactor = 2.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Volume Rendering")
 	float ShadowBiasFactor = 0.5f;

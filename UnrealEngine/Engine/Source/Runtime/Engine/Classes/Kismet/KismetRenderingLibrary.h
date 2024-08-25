@@ -86,15 +86,57 @@ class UKismetRenderingLibrary : public UBlueprintFunctionLibrary
 	* Creates a new Static Texture from a Render Target 2D.
 	* Only works in the editor
 	*/
-	UFUNCTION(BlueprintCallable, meta = (DisplayName = "Render Target Create Static Texture Editor Only", Keywords = "Create Static Texture from Render Target", UnsafeDuringActorConstruction = "true"), Category = Game)
+	UFUNCTION(BlueprintCallable, Category = "Editor Scripting | Rendering", meta = (DisplayName = "Render Target 2D Create Static Texture 2D Editor Only", Keywords = "Create Static Texture from Render Target", UnsafeDuringActorConstruction = "true"))
 	static ENGINE_API UTexture2D* RenderTargetCreateStaticTexture2DEditorOnly(UTextureRenderTarget2D* RenderTarget, FString Name = "Texture", enum TextureCompressionSettings CompressionSettings = TC_Default, enum TextureMipGenSettings MipSettings = TMGS_FromTextureGroup);
 
 	/**
-	 * Copies the contents of a render target to a UTexture2D
+	* Creates a new Static Texture 2D Array from a Render Target 2D Array.
+	* Only works in the editor
+	*/
+	UFUNCTION(BlueprintCallable, Category = "Editor Scripting | Rendering", meta = (DisplayName = "Render Target 2D Array Create Static Texture 2D Array Editor Only", Keywords = "Create Static Texture from Render Target", UnsafeDuringActorConstruction = "true"))
+	static ENGINE_API UTexture2DArray* RenderTargetCreateStaticTexture2DArrayEditorOnly(UTextureRenderTarget2DArray* RenderTarget, FString Name = "Texture", enum TextureCompressionSettings CompressionSettings = TC_Default, enum TextureMipGenSettings MipSettings = TMGS_FromTextureGroup);
+
+	/**
+	* Creates a new Static Texture Cube from a Render Target Cube.
+	* Only works in the editor
+	*/
+	UFUNCTION(BlueprintCallable, Category = "Editor Scripting | Rendering", meta = (DisplayName = "Render Target Cube Create Static Texture Cube Editor Only", Keywords = "Create Static Texture from Render Target", UnsafeDuringActorConstruction = "true"))
+	static ENGINE_API UTextureCube* RenderTargetCreateStaticTextureCubeEditorOnly(UTextureRenderTargetCube* RenderTarget, FString Name = "Texture", enum TextureCompressionSettings CompressionSettings = TC_Default, enum TextureMipGenSettings MipSettings = TMGS_FromTextureGroup);
+
+	/**
+	* Creates a new Static Volume Texture from a Render Target Volume.
+	* Only works in the editor
+	*/
+	UFUNCTION(BlueprintCallable, Category = "Editor Scripting | Rendering", meta = (DisplayName = "Render Target Volume Create Static Volume Texture Editor Only", Keywords = "Create Static Texture from Render Target", UnsafeDuringActorConstruction = "true"))
+	static ENGINE_API UVolumeTexture* RenderTargetCreateStaticVolumeTextureEditorOnly(UTextureRenderTargetVolume* RenderTarget, FString Name = "Texture", enum TextureCompressionSettings CompressionSettings = TC_Default, enum TextureMipGenSettings MipSettings = TMGS_FromTextureGroup);
+
+	/**
+	 * Copies the contents of a UTextureRenderTarget2D to a UTexture2D
 	 * Only works in the editor
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Rendering", meta = (Keywords = "ConvertRenderTarget", WorldContext = "WorldContextObject", UnsafeDuringActorConstruction = "true"))
+	UFUNCTION(BlueprintCallable, Category = "Editor Scripting | Rendering", meta = (Keywords = "Convert Render Target", WorldContext = "WorldContextObject", UnsafeDuringActorConstruction = "true"))
 	static ENGINE_API void ConvertRenderTargetToTexture2DEditorOnly(UObject* WorldContextObject, UTextureRenderTarget2D* RenderTarget, UTexture2D* Texture);
+
+	/**
+	 * Copies the contents of a UTextureRenderTarget2DArray to a UTexture2DArray
+	 * Only works in the editor
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Editor Scripting | Rendering", meta = (Keywords = "Convert Render Target", WorldContext = "WorldContextObject", UnsafeDuringActorConstruction = "true"))
+	static ENGINE_API void ConvertRenderTargetToTexture2DArrayEditorOnly(UObject* WorldContextObject, UTextureRenderTarget2DArray* RenderTarget, UTexture2DArray* Texture);
+
+	/**
+	 * Copies the contents of a UTextureRenderTargetCube to a UTextureCube
+	 * Only works in the editor
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Editor Scripting | Rendering", meta = (Keywords = "Convert Render Target", WorldContext = "WorldContextObject", UnsafeDuringActorConstruction = "true"))
+	static ENGINE_API void ConvertRenderTargetToTextureCubeEditorOnly(UObject* WorldContextObject, UTextureRenderTargetCube* RenderTarget, UTextureCube* Texture);
+
+	/**
+	 * Copies the contents of a UTextureRenderTargetVolume to a UVolumeTexture
+	 * Only works in the editor
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Editor Scripting | Rendering", meta = (Keywords = "Convert Render Target", WorldContext = "WorldContextObject", UnsafeDuringActorConstruction = "true"))
+	static ENGINE_API void ConvertRenderTargetToTextureVolumeEditorOnly(UObject* WorldContextObject, UTextureRenderTargetVolume* RenderTarget, UVolumeTexture* Texture);
 
 	/**
 	 * Exports a render target as a HDR or PNG image onto the disk (depending on the format of the render target)

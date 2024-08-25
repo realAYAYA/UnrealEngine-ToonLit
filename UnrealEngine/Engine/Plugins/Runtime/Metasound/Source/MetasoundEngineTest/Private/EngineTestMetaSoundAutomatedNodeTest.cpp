@@ -668,7 +668,7 @@ namespace Metasound::EngineTest{
 		FMetasoundFrontendClass NodeClass;
 		if (!NodeRegistry->FindFrontendClassFromRegistered(InNodeRegistryKey, NodeClass))
 		{
-			UE_LOG(LogMetaSound, Error, TEXT("Failed to find registered class with registry key %s"), *InNodeRegistryKey);
+			UE_LOG(LogMetaSound, Error, TEXT("Failed to find registered class with registry key %s"), *InNodeRegistryKey.ToString());
 			return MoveTemp(Node);
 		}
 
@@ -742,6 +742,30 @@ namespace Metasound::EngineTest{
 		Frontend::ISearchEngine& NodeSearchEngine = Frontend::ISearchEngine::Get();
 		TArray<FMetasoundFrontendClass> AllClasses = NodeSearchEngine.FindAllClasses(true /* IncludeAllVersions */);
 
+		for (const FMetasoundFrontendClass& NodeClass : AllClasses)
+		{
+			// Exclude template classes because they cannot be created directly from the node registry
+			if (NodeClass.Metadata.GetType() == EMetasoundFrontendClassType::Template)
+			{
+				continue;
+			}
+
+			OutBeautifiedNames.Add(FString::Printf(TEXT("%s %s"), *NodeClass.Metadata.GetClassName().ToString(), *NodeClass.Metadata.GetVersion().ToString()));
+
+			// Test commands are node registry keys
+			Frontend::FNodeRegistryKey NodeRegistryKey(NodeClass.Metadata);
+			OutTestCommands.Add(NodeRegistryKey.ToString());
+		}
+	}
+
+	void GetAllRegisteredNativeNodes(TArray<FString>& OutBeautifiedNames, TArray <FString>& OutTestCommands)
+	{
+		using namespace Metasound;
+
+		// Get all the classes that have been registered
+		Frontend::ISearchEngine& NodeSearchEngine = Frontend::ISearchEngine::Get();
+		TArray<FMetasoundFrontendClass> AllClasses = NodeSearchEngine.FindAllClasses(true /* IncludeAllVersions */);
+
 		FMetasoundFrontendRegistryContainer* NodeRegistry = FMetasoundFrontendRegistryContainer::Get();
 		check(nullptr != NodeRegistry);
 
@@ -753,14 +777,20 @@ namespace Metasound::EngineTest{
 				continue;
 			}
 
-			Frontend::FNodeRegistryKey NodeRegistryKey = NodeRegistry->GetRegistryKey(NodeClass.Metadata);
-			
+			Frontend::FNodeRegistryKey NodeRegistryKey(NodeClass.Metadata);
+
+			// Exclude non-native nodes (Nodes defined by assets instead of C++)
+			if (!NodeRegistry->IsNodeNative(NodeRegistryKey))
+			{
+				continue;
+			}
+
 			OutBeautifiedNames.Add(FString::Printf(TEXT("%s %s"), *NodeClass.Metadata.GetClassName().ToString(), *NodeClass.Metadata.GetVersion().ToString()));
+
 			// Test commands are node registry keys
-			OutTestCommands.Add(NodeRegistryKey);
+			OutTestCommands.Add(NodeRegistryKey.ToString());
 		}
 	}
-
 
 	void CreateVariables(const FOperatorSettings& InOperatorSettings, FInputVertexInterfaceData& OutVertexData)
 	{

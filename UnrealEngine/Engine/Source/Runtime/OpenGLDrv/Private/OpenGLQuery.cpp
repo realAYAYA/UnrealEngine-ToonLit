@@ -108,14 +108,14 @@ struct FGLQueryBatcher
 				if (Item.BeginSequence < Query->TotalBegins.GetValue())
 				{
 					// stale entry, was never checked, but was reused
-					Batch->BatchContents.RemoveAtSwap(IndexInner--, 1, false);
+					Batch->BatchContents.RemoveAtSwap(IndexInner--, 1, EAllowShrinking::No);
 					continue;
 				}
 			
 				RHI.GetRenderQueryResult_OnThisThread(Query, false);
 				if (Query->TotalResults.GetValue() == Query->TotalBegins.GetValue())
 				{
-					Batch->BatchContents.RemoveAtSwap(IndexInner--, 1, false);
+					Batch->BatchContents.RemoveAtSwap(IndexInner--, 1, EAllowShrinking::No);
 				}
 				else
 				{
@@ -165,14 +165,14 @@ struct FGLQueryBatcher
 				if (Item.BeginSequence < Query->TotalBegins.GetValue())
 				{
 					// stale entry, was never checked, but was reused
-					Batch->BatchContents.RemoveAtSwap(IndexInner--, 1, false);
+					Batch->BatchContents.RemoveAtSwap(IndexInner--, 1, EAllowShrinking::No);
 					continue;
 				}
 
 				RHI.GetRenderQueryResult_OnThisThread(Query, false);
 				if (Query->TotalResults.GetValue() == Query->TotalBegins.GetValue())
 				{
-					Batch->BatchContents.RemoveAtSwap(IndexInner--, 1, false);
+					Batch->BatchContents.RemoveAtSwap(IndexInner--, 1, EAllowShrinking::No);
 				}
 			}
 			if (Batch->BatchContents.Num() == 0)
@@ -1229,12 +1229,23 @@ bool FOpenGLGPUFence::Poll() const
 		return true;
 	}
 
-	RunOnGLRenderContextThread([Proxy = Proxy]()
+	if (!(IsInRenderingThread() || IsInRHIThread()))
 	{
-		VERIFY_GL_SCOPE();
-		check(Proxy != nullptr);
-		Proxy->Poll();
-	});
+		ENQUEUE_RENDER_COMMAND(FOpenGLGPUFence_Poll)(
+		[this](FRHICommandListImmediate& RHICmdList)
+		{
+			Poll();
+		});
+	}
+	else
+	{
+		RunOnGLRenderContextThread([Proxy = Proxy]()
+		{
+			VERIFY_GL_SCOPE();
+			check(Proxy != nullptr);
+			Proxy->Poll();
+		});
+	}
 
 	return Proxy->bIsSignaled;
 }

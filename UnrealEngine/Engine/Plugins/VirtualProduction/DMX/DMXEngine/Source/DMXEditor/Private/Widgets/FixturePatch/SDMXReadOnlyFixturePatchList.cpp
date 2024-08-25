@@ -11,6 +11,11 @@
 #include "Library/DMXEntityFixtureType.h"
 #include "Library/DMXLibrary.h"
 #include "TimerManager.h"
+#include "ToolMenu.h"
+#include "ToolMenus.h"
+#include "ToolMenuContext.h"
+#include "ToolMenuSection.h"
+#include "Widgets/DMXReadOnlyFixturePatchListItem.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/Input/SComboButton.h"
 #include "Widgets/Input/SSearchBox.h"
@@ -28,19 +33,19 @@ namespace UE::DMX::SDMXReadOnlyFixturePatchListNamespace::Private
 		FScopedRestoreSelection(const TSharedRef<SDMXReadOnlyFixturePatchList>& InFixturePatchList)
 			: FixturePatchList(InFixturePatchList)
 		{
-			SelectedItemsToRestore = FixturePatchList->GetSelectedFixturePatchRefs();
+			SelectedItemsToRestore = FixturePatchList->GetSelectedItems();
 		}
 
 		~FScopedRestoreSelection()
 		{
-			const TArray<TSharedPtr<FDMXEntityFixturePatchRef>> NewListItems = FixturePatchList->GetListItems();
+			const TArray<TSharedPtr<FDMXReadOnlyFixturePatchListItem>> NewListItems = FixturePatchList->GetListItems();
 			
-			TArray<TSharedPtr<FDMXEntityFixturePatchRef>> NewSelection;
-			for (const TSharedPtr<FDMXEntityFixturePatchRef>& ItemToRestore : SelectedItemsToRestore)
+			TArray<TSharedPtr<FDMXReadOnlyFixturePatchListItem>> NewSelection;
+			for (const TSharedPtr<FDMXReadOnlyFixturePatchListItem>& ItemToRestore : SelectedItemsToRestore)
 			{
-				const TSharedPtr<FDMXEntityFixturePatchRef>* CorrespondingItemPtr = Algo::FindByPredicate(NewListItems, [ItemToRestore](const TSharedPtr<FDMXEntityFixturePatchRef> NewItem)
+				const TSharedPtr<FDMXReadOnlyFixturePatchListItem>* CorrespondingItemPtr = Algo::FindByPredicate(NewListItems, [ItemToRestore](const TSharedPtr<FDMXReadOnlyFixturePatchListItem> NewItem)
 					{
-						return NewItem->GetFixturePatch() == ItemToRestore->GetFixturePatch();
+						return NewItem.IsValid() && ItemToRestore.IsValid() && NewItem->GetFixturePatch() == ItemToRestore->GetFixturePatch();
 					});
 				if (CorrespondingItemPtr)
 				{
@@ -56,7 +61,7 @@ namespace UE::DMX::SDMXReadOnlyFixturePatchListNamespace::Private
 		TSharedRef<SDMXReadOnlyFixturePatchList> FixturePatchList;
 
 		/** Items to restore */
-		TArray<TSharedPtr<FDMXEntityFixturePatchRef>> SelectedItemsToRestore;
+		TArray<TSharedPtr<FDMXReadOnlyFixturePatchListItem>> SelectedItemsToRestore;
 	};
 }
 
@@ -70,12 +75,7 @@ const FName FDMXReadOnlyFixturePatchListCollumnIDs::Patch = "Patch";
 void SDMXReadOnlyFixturePatchList::Construct(const FArguments& InArgs)
 {
 	WeakDMXLibrary = InArgs._DMXLibrary;
-
-	IsRowEnabledDelegate = InArgs._IsRowEnabled;
-	IsRowVisibleDelegate = InArgs._IsRowVisibile;
 	OnRowDragDetectedDelegate = InArgs._OnRowDragDetected;
-
-	UpdateListItems();
 
 	ChildSlot
 		[
@@ -96,7 +96,7 @@ void SDMXReadOnlyFixturePatchList::Construct(const FArguments& InArgs)
 					SNew(SComboButton)
 					.ComboButtonStyle(FAppStyle::Get(), "SimpleComboButton")
 					.HasDownArrow(true)
-					.OnGetMenuContent(this, &SDMXReadOnlyFixturePatchList::GenerateHeaderRowVisibilityMenu)
+					.OnGetMenuContent(this, &SDMXReadOnlyFixturePatchList::GenerateHeaderRowFilterMenu)
 					.ButtonContent()
 					[
 						SNew(SImage)
@@ -116,7 +116,7 @@ void SDMXReadOnlyFixturePatchList::Construct(const FArguments& InArgs)
 			// ListView section
 			+ SVerticalBox::Slot()
 			[
-				SAssignNew(ListView, SListView<TSharedPtr<FDMXEntityFixturePatchRef>>)
+				SAssignNew(ListView, SListView<TSharedPtr<FDMXReadOnlyFixturePatchListItem>>)
 				.HeaderRow(GenerateHeaderRow())
 				.ItemHeight(60.0f)
 				.ListItemsSource(&ListItems)
@@ -134,74 +134,96 @@ void SDMXReadOnlyFixturePatchList::Construct(const FArguments& InArgs)
 	UDMXLibrary::GetOnEntitiesRemoved().AddSP(this, &SDMXReadOnlyFixturePatchList::OnEntityAddedOrRemoved);
 	UDMXEntityFixturePatch::GetOnFixturePatchChanged().AddSP(this, &SDMXReadOnlyFixturePatchList::OnFixturePatchChanged);
 	UDMXEntityFixtureType::GetOnFixtureTypeChanged().AddSP(this, &SDMXReadOnlyFixturePatchList::OnFixtureTypeChanged);
-	
-	// 5.3 Hotfix for crashes and bugs when reloading DMX Library assets. 
-	// Note, the workaround here is not ideal and should not be transported to future versions. A proper fix already exists in 5.4 with 27111707. 
-	FCoreUObjectDelegates::OnPackageReloaded.AddLambda(
-		[WeakThis = TWeakPtr<SDMXReadOnlyFixturePatchList>(StaticCastSharedRef<SDMXReadOnlyFixturePatchList>(AsShared()))](const EPackageReloadPhase InPackageReloadPhase, FPackageReloadedEvent* InPackageReloadedEvent)
-		{
-			if (WeakThis.IsValid())
-			{
-				WeakThis.Pin()->RefreshList();
-			}
-		});
 
-	InitializeByListDescriptor(InArgs._ListDescriptor);
+	ApplyListDescriptor(InArgs._ListDescriptor);
+
+	ForceRefresh();
 }
 
-void SDMXReadOnlyFixturePatchList::RequestListRefresh()
+void SDMXReadOnlyFixturePatchList::RequestRefresh()
 {
 	if (!ListRefreshTimerHandle.IsValid())
 	{
-		ListRefreshTimerHandle = GEditor->GetTimerManager()->SetTimerForNextTick(FTimerDelegate::CreateSP(this, &SDMXReadOnlyFixturePatchList::RefreshList));
+		ListRefreshTimerHandle = GEditor->GetTimerManager()->SetTimerForNextTick(FTimerDelegate::CreateSP(this, &SDMXReadOnlyFixturePatchList::ForceRefresh));
 	}
+}
+
+TArray<UDMXEntityFixturePatch*> SDMXReadOnlyFixturePatchList::GetFixturePatchesInDMXLibrary() const
+{
+	if (WeakDMXLibrary.IsValid())
+	{
+		return WeakDMXLibrary->GetEntitiesTypeCast<UDMXEntityFixturePatch>();
+	}
+	
+	return TArray<UDMXEntityFixturePatch*>();
+}
+
+TArray<UDMXEntityFixturePatch*> SDMXReadOnlyFixturePatchList::GetFixturePatchesInList() const
+{
+	TArray<UDMXEntityFixturePatch*> FixturePatches;
+	Algo::TransformIf(ListItems, FixturePatches,
+		[](const TSharedPtr<FDMXReadOnlyFixturePatchListItem>& Item)
+		{
+			return Item.IsValid() && Item->GetFixturePatch();
+		},
+		[](const TSharedPtr<FDMXReadOnlyFixturePatchListItem>& Item)
+		{
+			return Item->GetFixturePatch();
+		});
+
+	return FixturePatches;
+}
+
+TArray<UDMXEntityFixturePatch*> SDMXReadOnlyFixturePatchList::GetSelectedFixturePatches() const
+{
+	const TArray<TSharedPtr<FDMXReadOnlyFixturePatchListItem>> SelectedItems = GetSelectedItems();
+	TArray<UDMXEntityFixturePatch*> Result;
+	Algo::TransformIf(SelectedItems, Result,
+		[](const TSharedPtr<FDMXReadOnlyFixturePatchListItem>& Item)
+		{
+			return Item.IsValid() && Item->GetFixturePatch();
+		},
+		[](const TSharedPtr<FDMXReadOnlyFixturePatchListItem>& Item)
+		{
+			return Item->GetFixturePatch();
+		});
+
+	return Result;
 }
 
 void SDMXReadOnlyFixturePatchList::SetDMXLibrary(UDMXLibrary* InDMXLibrary)
 {
-	WeakDMXLibrary = InDMXLibrary;
-	RequestListRefresh();
-}
-
-void SDMXReadOnlyFixturePatchList::SetItemSelection(const TSharedPtr<FDMXEntityFixturePatchRef> SelectedItem, bool bSelected)
-{
-	if (ListView.IsValid() && SelectedItem.IsValid())
+	if (WeakDMXLibrary.Get() != InDMXLibrary)
 	{
-		ListView->SetItemSelection(SelectedItem, bSelected);
+		WeakDMXLibrary = InDMXLibrary;
+		RequestRefresh();
 	}
 }
 
-void SDMXReadOnlyFixturePatchList::SetExcludedFixturePatches(const TArray<FDMXEntityFixturePatchRef>& NewExcludedFixturePatches)
+void SDMXReadOnlyFixturePatchList::SetExcludedFixturePatches(const TArray<UDMXEntityFixturePatch*>& NewExcludedFixturePatches)
 {
 	ExcludedFixturePatches = NewExcludedFixturePatches;
-	RequestListRefresh();
 }
 
-void SDMXReadOnlyFixturePatchList::SelectItems(const TArray<TSharedPtr<FDMXEntityFixturePatchRef>>& ItemsToSelect, ESelectInfo::Type SelectInfo)
+void SDMXReadOnlyFixturePatchList::SelectItems(const TArray<TSharedPtr<FDMXReadOnlyFixturePatchListItem>>& ItemsToSelect, ESelectInfo::Type SelectInfo)
 {
-	constexpr bool bSelected = true;
 	ListView->ClearSelection();
+
+	constexpr bool bSelected = true;
 	ListView->SetItemSelection(ItemsToSelect, bSelected, SelectInfo);
 }
 
-TArray<TSharedPtr<FDMXEntityFixturePatchRef>> SDMXReadOnlyFixturePatchList::GetSelectedFixturePatchRefs() const
+void SDMXReadOnlyFixturePatchList::SetItemSelection(TSharedPtr<FDMXReadOnlyFixturePatchListItem> SelectedItem, bool bSelected, ESelectInfo::Type SelectInfo)
 {
-	return ListView.IsValid() ? ListView->GetSelectedItems() : TArray<TSharedPtr<FDMXEntityFixturePatchRef>>();
+	if (ListView.IsValid())
+	{
+		ListView->SetItemSelection(SelectedItem, bSelected, SelectInfo);
+	}
 }
 
-TArray<TSharedPtr<FDMXEntityFixturePatchRef>> SDMXReadOnlyFixturePatchList::GetVisibleFixturePatchRefs() const
+TArray<TSharedPtr<FDMXReadOnlyFixturePatchListItem>> SDMXReadOnlyFixturePatchList::GetSelectedItems() const
 {
-	TArray<TSharedPtr<FDMXEntityFixturePatchRef>> VisilbleFixturePatchRefs = ListItems;
-	VisilbleFixturePatchRefs.RemoveAll([this](const TSharedPtr<FDMXEntityFixturePatchRef>& FixturePatchRef)
-		{
-			if (FixturePatchRef.IsValid() && IsRowVisibleDelegate.IsBound())
-			{
-				return !IsRowVisibleDelegate.Execute(FixturePatchRef);
-			}
-			return false;
-		});
-	
-	return VisilbleFixturePatchRefs;
+	return ListView.IsValid() ? ListView->GetSelectedItems() : TArray<TSharedPtr<FDMXReadOnlyFixturePatchListItem>>();
 }
 
 FDMXReadOnlyFixturePatchListDescriptor SDMXReadOnlyFixturePatchList::MakeListDescriptor() const
@@ -213,238 +235,57 @@ FDMXReadOnlyFixturePatchListDescriptor SDMXReadOnlyFixturePatchList::MakeListDes
 	return ListDescriptor;
 }
 
-void SDMXReadOnlyFixturePatchList::InitializeByListDescriptor(const FDMXReadOnlyFixturePatchListDescriptor& InListDescriptor)
+void SDMXReadOnlyFixturePatchList::AddReferencedObjects(FReferenceCollector& Collector)
 {
-	SortedByColumnID = InListDescriptor.SortedByColumnID;
-	SortByColumnID(EColumnSortPriority::None, SortedByColumnID, SortMode);
-
-	ColumnIDToShowStateMap.Append(InListDescriptor.ColumnIDToShowStateMap);
-	for (const TPair<FName, bool>& ColumnIDToShowState : ColumnIDToShowStateMap)
-	{
-		if (!HeaderRow.IsValid())
-		{
-			break;
-		}
-
-		const FName& ColumnID = ColumnIDToShowState.Key;
-		// EditorColor column should always be showed
-		if (ColumnID == FDMXReadOnlyFixturePatchListCollumnIDs::EditorColor)
-		{
-			continue;
-		}
-
-		const bool bShowState = ColumnIDToShowState.Value;
-		HeaderRow->SetShowGeneratedColumn(ColumnID, bShowState);
-	}
+	Collector.AddReferencedObjects(ExcludedFixturePatches);
 }
 
-void SDMXReadOnlyFixturePatchList::RefreshList()
+FString SDMXReadOnlyFixturePatchList::GetReferencerName() const
+{
+	return TEXT("SDMXReadOnlyFixturePatchList");
+}
+
+void SDMXReadOnlyFixturePatchList::ForceRefresh()
 {
 	ListRefreshTimerHandle.Invalidate();
 
 	using namespace UE::DMX::SDMXReadOnlyFixturePatchListNamespace::Private;
 	const FScopedRestoreSelection ScopedRestoreSelection(StaticCastSharedRef<SDMXReadOnlyFixturePatchList>(AsShared()));
 
-	UpdateListItems();
+	// Create new list items
+	ListItems.Empty();
+	if (WeakDMXLibrary.IsValid())
+	{
+		const TArray<UDMXEntityFixturePatch*> FixturePatchesInLibrary = WeakDMXLibrary->GetEntitiesTypeCast<UDMXEntityFixturePatch>();
+		Algo::TransformIf(FixturePatchesInLibrary, ListItems,
+			[](UDMXEntityFixturePatch* FixturePatch)
+			{
+				return FixturePatch != nullptr;
+			},
+			[](UDMXEntityFixturePatch* FixturePatch)
+			{
+				return MakeShared<FDMXReadOnlyFixturePatchListItem>(FixturePatch);;
+			});
+
+		ListItems.RemoveAll([this](const TSharedPtr<FDMXReadOnlyFixturePatchListItem>& Item)
+			{
+				return ExcludedFixturePatches.Contains(Item->GetFixturePatch());
+			});
+		ListItems = FilterListItems(SearchBox->GetText());
+	}
+
+	// Reset cached rows
 	ListRows.Reset(ListItems.Num());
 
+	// Sort
 	SortByColumnID(EColumnSortPriority::Max, SortedByColumnID, SortMode);
-	ListItems = FilterListItems(SearchBox->GetText());
 
-	ListItems.RemoveAll([this](const TSharedPtr<FDMXEntityFixturePatchRef>& FixturePatchRef)
-		{
-			return ExcludedFixturePatches.Contains(FixturePatchRef->GetFixturePatch());
-		});
-
-	if (ListView.IsValid())
-	{
-		ListView->RebuildList();
-	}
-}
-
-TArray<TSharedPtr<FDMXEntityFixturePatchRef>> SDMXReadOnlyFixturePatchList::FilterListItems(const FText& SearchText)
-{
-	// Filter and return in order of precendence
-	if (SearchText.IsEmpty())
-	{
-		return ListItems;
-	}
-
-	TArray<TSharedPtr<FDMXEntityFixturePatchRef>> Items = ListItems;
-	const FString SearchString = SearchText.ToString();
-
-	const TArray<int32> Universes = FDMXEditorUtils::ParseUniverses(SearchString);
-	if (!Universes.IsEmpty())
-	{
-		Items.RemoveAll([Universes](const TSharedPtr<FDMXEntityFixturePatchRef>& FixturePatchRef)
-			{
-				const UDMXEntityFixturePatch* FixturePatch = FixturePatchRef.IsValid() ? FixturePatchRef->GetFixturePatch() : nullptr;
-				if (FixturePatch)
-				{
-					return !Universes.Contains(FixturePatch->GetUniverseID());
-				}
-
-				return true;
-			});
-
-		return Items;
-	}
-
-	int32 Address;
-	if (FDMXEditorUtils::ParseAddress(SearchString, Address))
-	{
-		Items.RemoveAll([Address](const TSharedPtr<FDMXEntityFixturePatchRef>& FixturePatchRef)
-			{
-				const UDMXEntityFixturePatch* FixturePatch = FixturePatchRef.IsValid() ? FixturePatchRef->GetFixturePatch() : nullptr;
-				if (FixturePatch)
-				{
-					return FixturePatch->GetStartingChannel() != Address;
-				}
-
-				return true;
-			});
-
-		return Items;
-	}
-
-	const TArray<int32> FixtureIDs = FDMXEditorUtils::ParseFixtureIDs(SearchString);
-	for (int32 FixtureID : FixtureIDs)
-	{
-		Items.RemoveAll([FixtureID](const TSharedPtr<FDMXEntityFixturePatchRef>& FixturePatchRef)
-			{
-				const UDMXEntityFixturePatch* FixturePatch = FixturePatchRef.IsValid() ? FixturePatchRef->GetFixturePatch() : nullptr;
-				if (FixturePatch)
-				{
-					int32 FID;
-					if (FixturePatch->FindFixtureID(FID))
-					{
-						return FID != FixtureID;
-					}
-				}
-
-				return true;
-			});
-
-		if (ListItems.Num() > 0)
-		{
-			return Items;
-		}
-	}
-
-	Items.RemoveAll([SearchString](const TSharedPtr<FDMXEntityFixturePatchRef>& FixturePatchRef)
-		{
-			const UDMXEntityFixturePatch* FixturePatch = FixturePatchRef.IsValid() ? FixturePatchRef->GetFixturePatch() : nullptr;
-			if (FixturePatch)
-			{
-				return !FixturePatch->Name.Contains(SearchString);
-			}
-
-			return true;
-		});
-
-	return Items;
-}
-
-void SDMXReadOnlyFixturePatchList::UpdateListItems()
-{
-	ListItems.Empty();
-
-	if (!WeakDMXLibrary.IsValid())
-	{
-		return;
-	}
-
-	const TArray<UDMXEntityFixturePatch*> FixturePatchesInLibrary = WeakDMXLibrary->GetEntitiesTypeCast<UDMXEntityFixturePatch>();
-	for (UDMXEntityFixturePatch* FixturePatch : FixturePatchesInLibrary)
-	{
-		if (!FixturePatch)
-		{
-			continue;
-		}
-
-		const TSharedPtr<FDMXEntityFixturePatchRef> FixturePatchRef = MakeShared<FDMXEntityFixturePatchRef>();
-		FixturePatchRef->SetEntity(FixturePatch);
-		ListItems.Add(FixturePatchRef);
-	}
-}
-
-TSharedRef<ITableRow> SDMXReadOnlyFixturePatchList::OnGenerateRow(TSharedPtr<FDMXEntityFixturePatchRef> InItem, const TSharedRef<STableViewBase>& OwnerTable)
-{
-	const TSharedRef<SDMXReadOnlyFixturePatchListRow> NewRow =
-		SNew(SDMXReadOnlyFixturePatchListRow, OwnerTable, InItem.ToSharedRef())
-		.IsEnabled(this, &SDMXReadOnlyFixturePatchList::IsRowEnabled, InItem)
-		.Visibility(TAttribute<EVisibility>::CreateSP(this, &SDMXReadOnlyFixturePatchList::GetRowVisibility, InItem))
-		.OnRowDragDetected(OnRowDragDetectedDelegate);
-
-	return NewRow;
-}
-
-bool SDMXReadOnlyFixturePatchList::IsRowEnabled(const TSharedPtr<FDMXEntityFixturePatchRef> InFixturePatchRef) const
-{
-	if (IsRowEnabledDelegate.IsBound())
-	{
-		return IsRowEnabledDelegate.Execute(InFixturePatchRef);
-	}
-
-	return true;
-}
-
-EVisibility SDMXReadOnlyFixturePatchList::GetRowVisibility(const TSharedPtr<FDMXEntityFixturePatchRef> InFixturePatchRef) const
-{
-	const bool bIsEnabled = IsRowEnabled(InFixturePatchRef);
-	bool bIsVisible = IsRowVisibleDelegate.IsBound() ? IsRowVisibleDelegate.Execute(InFixturePatchRef) : true;
-
-	switch (ShowMode)
-	{
-	case EDMXReadOnlyFixturePatchListShowMode::All:
-		break;
-	case EDMXReadOnlyFixturePatchListShowMode::Active:
-		bIsVisible &= bIsEnabled;
-		break;
-	case EDMXReadOnlyFixturePatchListShowMode::Inactive:
-		bIsVisible &= !bIsEnabled;
-		break;
-	}
-
-	return bIsVisible ? EVisibility::Visible : EVisibility::Collapsed;
-}
-
-void SDMXReadOnlyFixturePatchList::OnSearchTextChanged(const FText& SearchText)
-{
-	RequestListRefresh();
-}
-
-void SDMXReadOnlyFixturePatchList::OnEntityAddedOrRemoved(UDMXLibrary* InDMXLibrary, TArray<UDMXEntity*> Entities)
-{
-	if (InDMXLibrary == WeakDMXLibrary)
-	{	
-		// Requires forcing the refresh to hotfix for crases and bugs when deleting patches in use in the list.
-		// Note, the workaround here is not ideal and should not be transported to future versions. A proper fix already exists in 5.4 with 27111707. 
-		RefreshList();
-	}
-}
-
-void SDMXReadOnlyFixturePatchList::OnFixturePatchChanged(const UDMXEntityFixturePatch* FixturePatch)
-{
-	// Refresh only if the fixture patch is in the library this editor handles
-	if (FixturePatch && FixturePatch->GetParentLibrary() == WeakDMXLibrary)
-	{
-		RequestListRefresh();
-	}
-}
-
-void SDMXReadOnlyFixturePatchList::OnFixtureTypeChanged(const UDMXEntityFixtureType* FixtureType)
-{
-	// Refresh only if the fixture type is in the library this editor handles
-	if (FixtureType && FixtureType->GetParentLibrary() == WeakDMXLibrary)
-	{
-		RequestListRefresh();
-	}
+	ListView->RequestListRefresh();
 }
 
 TSharedRef<SHeaderRow> SDMXReadOnlyFixturePatchList::GenerateHeaderRow()
 {
-	HeaderRow = SNew(SHeaderRow);
+	TSharedRef<SHeaderRow> HeaderRow = SNew(SHeaderRow);
 
 	HeaderRow->AddColumn(
 		SHeaderRow::FColumn::FArguments()
@@ -452,7 +293,7 @@ TSharedRef<SHeaderRow> SDMXReadOnlyFixturePatchList::GenerateHeaderRow()
 		.DefaultLabel(LOCTEXT("EditorColorColumnLabel", ""))
 		.FixedWidth(16.f)
 	);
-
+	
 	HeaderRow->AddColumn(
 		SHeaderRow::FColumn::FArguments()
 		.ColumnId(FDMXReadOnlyFixturePatchListCollumnIDs::FixturePatchName)
@@ -528,106 +369,339 @@ TSharedRef<SHeaderRow> SDMXReadOnlyFixturePatchList::GenerateHeaderRow()
 		]
 	);
 
-	return HeaderRow.ToSharedRef();
+	return HeaderRow;
 }
 
-TSharedRef<SWidget> SDMXReadOnlyFixturePatchList::GenerateHeaderRowVisibilityMenu()
+TSharedRef<ITableRow> SDMXReadOnlyFixturePatchList::OnGenerateRow(TSharedPtr<FDMXReadOnlyFixturePatchListItem> InItem, const TSharedRef<STableViewBase>& OwnerTable)
 {
-	FMenuBuilder MenuBuilder(false, nullptr);
+	const TSharedRef<SDMXReadOnlyFixturePatchListRow> NewRow =
+		SNew(SDMXReadOnlyFixturePatchListRow, OwnerTable, InItem)
+		.OnRowDragDetected(OnRowDragDetectedDelegate);
 
-	MenuBuilder.BeginSection(NAME_None, LOCTEXT("FixturePatchListShowPatchFilterSection", "Filter"));
+	return NewRow;
+}
+
+FName SDMXReadOnlyFixturePatchList::GetHeaderRowFilterMenuName() const
+{
+	return "DMXEditor.ReadOnlyFixturePatchList.HeaderRowFilterMenu";
+}
+
+TSharedRef<SWidget> SDMXReadOnlyFixturePatchList::GenerateHeaderRowFilterMenu()
+{
+	const FName MenuName = GetHeaderRowFilterMenuName();
+
+	UToolMenus* ToolMenus = UToolMenus::Get();
+	if (!ToolMenus->IsMenuRegistered(MenuName))
 	{
-		auto AddMenuEntryLambda = [this, &MenuBuilder](const FText& Label, const FText& ToolTip, const EDMXReadOnlyFixturePatchListShowMode InShowMode)
+		UToolMenu* Menu = ToolMenus->RegisterMenu(MenuName);
+		FToolMenuSection& Section = Menu->AddSection("ShowColumnSection", LOCTEXT("ShowColumnSection", "Columns"));
+		
+		auto AddMenuEntryLambda = [this, &Section](const FName& Name, const FText& Label, const FText& ToolTip, const FName& ColumnID)
 		{
-			MenuBuilder.AddMenuEntry(
+			Section.AddMenuEntry
+			(
+				Name,
 				Label,
 				ToolTip,
 				FSlateIcon(),
-				FUIAction(
-					FExecuteAction::CreateSP(this, &SDMXReadOnlyFixturePatchList::SetShowMode, InShowMode),
-					FCanExecuteAction(),
-					FIsActionChecked::CreateSP(this, &SDMXReadOnlyFixturePatchList::IsUsingShowMode, InShowMode)
-				),
-				NAME_None,
-				EUserInterfaceActionType::RadioButton
-			);
-		};
-
-		AddMenuEntryLambda(
-			LOCTEXT("FixturePatchAllPatchesFilter_Label", "All Patches"),
-			LOCTEXT("FixturePatchAllPatchesFilter", "Show all the Fixture Patches in the list"),
-			EDMXReadOnlyFixturePatchListShowMode::All
-		);
-
-		AddMenuEntryLambda(
-			LOCTEXT("FixturePatchActivePatchesFilter_Label", "Only Active"),
-			LOCTEXT("FixturePatchActivePatchesFilter", "Show only active Fixture Patches in the list"),
-			EDMXReadOnlyFixturePatchListShowMode::Active
-		);
-
-		AddMenuEntryLambda(
-			LOCTEXT("FixturePatchInactivePatchesFilter_Label", "Only Inactive"),
-			LOCTEXT("FixturePatchInactivePatchesFilter", "Show only inactive Fixture Patches in the list"),
-			EDMXReadOnlyFixturePatchListShowMode::Inactive
-		);
-	}
-	MenuBuilder.EndSection();
-
-	MenuBuilder.BeginSection(NAME_None, LOCTEXT("FixturePatchListShowColumnSection", "Columns"));
-	{
-		auto AddMenuEntryLambda = [this, &MenuBuilder](const FText& Label, const FText& ToolTip, const FName& ColumnID)
-		{
-			MenuBuilder.AddMenuEntry(
-				Label,
-				ToolTip,
-				FSlateIcon(),
-				FUIAction(
+				FUIAction
+				(
 					FExecuteAction::CreateSP(this, &SDMXReadOnlyFixturePatchList::ToggleColumnShowState, ColumnID),
 					FCanExecuteAction(),
 					FIsActionChecked::CreateSP(this, &SDMXReadOnlyFixturePatchList::IsColumnShown, ColumnID)
 				),
-				NAME_None,
 				EUserInterfaceActionType::ToggleButton
 			);
 		};
 
 		AddMenuEntryLambda(
+			"ShowNameColumn",
 			LOCTEXT("FixturePatchNameColumn_Label", "Show Name"),
 			LOCTEXT("FixturePatchLNameColumn_Tooltip", "Show/Hide Name Column"),
 			FDMXReadOnlyFixturePatchListCollumnIDs::FixturePatchName
 		);
 
 		AddMenuEntryLambda(
+			"ShowFIDColumn",
 			LOCTEXT("FixturePatchFIDColumn_Label", "Show FID"),
 			LOCTEXT("FixturePatchFIDColumn_Tooltip", "Show/Hide FID Column"),
 			FDMXReadOnlyFixturePatchListCollumnIDs::FixtureID
 		);
 
 		AddMenuEntryLambda(
+			"ShowTypeColumn",
 			LOCTEXT("FixturePatchTypeColumn_Label", "Show Type"),
 			LOCTEXT("FixturePatchTypeColumn_Tooltip", "Show/Hide Type Column"),
 			FDMXReadOnlyFixturePatchListCollumnIDs::FixtureType
 		);
 
 		AddMenuEntryLambda(
+			"ShowModeColumn",
 			LOCTEXT("FixturePatchModeColumn_Label", "Show Mode"),
 			LOCTEXT("FixturePatchModeColumn_Tooltip", "Show/Hide Mode Column"),
 			FDMXReadOnlyFixturePatchListCollumnIDs::Mode
 		);
 
 		AddMenuEntryLambda(
+			"ShowPatchColumn",
 			LOCTEXT("FixturePatchyColumn_Label", "Show Patch"),
 			LOCTEXT("FixturePatchColumn_Tooltip", "Show/Hide Patch Column"),
 			FDMXReadOnlyFixturePatchListCollumnIDs::Patch
 		);
 	}
-	MenuBuilder.EndSection();
 
-	return MenuBuilder.MakeWidget();
+	FToolMenuContext Context;
+	UToolMenu* Menu = ToolMenus->GenerateMenu(MenuName, Context);
+
+	return ToolMenus->GenerateWidget(Menu);
+}
+
+void SDMXReadOnlyFixturePatchList::ApplyListDescriptor(const FDMXReadOnlyFixturePatchListDescriptor& InListDescriptor)
+{
+	const TSharedPtr<SHeaderRow> HeaderRow = ListView.IsValid() ? ListView->GetHeaderRow() : nullptr;
+	if (!HeaderRow.IsValid())
+	{
+		return;
+	}
+
+	ColumnIDToShowStateMap = InListDescriptor.ColumnIDToShowStateMap;
+	SortedByColumnID = InListDescriptor.SortedByColumnID;
+	SortByColumnID(EColumnSortPriority::None, SortedByColumnID, SortMode);
+
+	for (const SHeaderRow::FColumn& Column : HeaderRow->GetColumns())
+	{
+		// Use the column show state of the descriptor if possilble. Always show columns not present in the descriptor.
+		const bool* bShowColumnPtr = ColumnIDToShowStateMap.Find(Column.ColumnId);
+		const bool bShowColumn = bShowColumnPtr ? *bShowColumnPtr : true;
+
+		HeaderRow->SetShowGeneratedColumn(Column.ColumnId, bShowColumn);
+	}
+
+	ColumnIDToShowStateMap.Append(InListDescriptor.ColumnIDToShowStateMap);
+}
+
+TArray<TSharedPtr<FDMXReadOnlyFixturePatchListItem>> SDMXReadOnlyFixturePatchList::FilterListItems(const FText& SearchText)
+{
+	// Filter and return in order of precendence
+	if (SearchText.IsEmpty())
+	{
+		return ListItems;
+	}
+
+	TArray<TSharedPtr<FDMXReadOnlyFixturePatchListItem>> Items = ListItems;
+	const FString SearchString = SearchText.ToString();
+
+	const TArray<int32> Universes = FDMXEditorUtils::ParseUniverses(SearchString);
+	if (!Universes.IsEmpty())
+	{
+		Items.RemoveAll([Universes](const TSharedPtr<FDMXReadOnlyFixturePatchListItem>& FixturePatchRef)
+			{
+				const UDMXEntityFixturePatch* FixturePatch = FixturePatchRef.IsValid() ? FixturePatchRef->GetFixturePatch() : nullptr;
+				if (FixturePatch)
+				{
+					return !Universes.Contains(FixturePatch->GetUniverseID());
+				}
+
+				return true;
+			});
+
+		return Items;
+	}
+
+	int32 Address;
+	if (FDMXEditorUtils::ParseAddress(SearchString, Address))
+	{
+		Items.RemoveAll([Address](const TSharedPtr<FDMXReadOnlyFixturePatchListItem>& FixturePatchRef)
+			{
+				const UDMXEntityFixturePatch* FixturePatch = FixturePatchRef.IsValid() ? FixturePatchRef->GetFixturePatch() : nullptr;
+				if (FixturePatch)
+				{
+					return FixturePatch->GetStartingChannel() != Address;
+				}
+
+				return true;
+			});
+
+		return Items;
+	}
+
+	const TArray<int32> FixtureIDs = FDMXEditorUtils::ParseFixtureIDs(SearchString);
+	for (int32 FixtureID : FixtureIDs)
+	{
+		Items.RemoveAll([FixtureID](const TSharedPtr<FDMXReadOnlyFixturePatchListItem>& FixturePatchRef)
+			{
+				const UDMXEntityFixturePatch* FixturePatch = FixturePatchRef.IsValid() ? FixturePatchRef->GetFixturePatch() : nullptr;
+				if (FixturePatch)
+				{
+					int32 FID;
+					if (FixturePatch->FindFixtureID(FID))
+					{
+						return FID != FixtureID;
+					}
+				}
+
+				return true;
+			});
+
+		if (ListItems.Num() > 0)
+		{
+			return Items;
+		}
+	}
+
+	Items.RemoveAll([SearchString](const TSharedPtr<FDMXReadOnlyFixturePatchListItem>& FixturePatchRef)
+		{
+			const UDMXEntityFixturePatch* FixturePatch = FixturePatchRef.IsValid() ? FixturePatchRef->GetFixturePatch() : nullptr;
+			if (FixturePatch)
+			{
+				return !FixturePatch->Name.Contains(SearchString);
+			}
+
+			return true;
+		});
+
+	return Items;
+}
+
+void SDMXReadOnlyFixturePatchList::SortByColumnID(const EColumnSortPriority::Type SortPriority, const FName& ColumnID, const EColumnSortMode::Type InSortMode)
+{
+	SortMode = InSortMode;
+	SortedByColumnID = ColumnID;
+
+	const bool bAscending = InSortMode == EColumnSortMode::Ascending ? true : false;
+
+	if (ColumnID == FDMXReadOnlyFixturePatchListCollumnIDs::FixturePatchName)
+	{
+		Algo::StableSort(ListItems, [bAscending](const TSharedPtr<FDMXReadOnlyFixturePatchListItem>& ItemA, const TSharedPtr<FDMXReadOnlyFixturePatchListItem>& ItemB)
+			{
+				const UDMXEntityFixturePatch* FixturePatchA = ItemA->GetFixturePatch();
+				const UDMXEntityFixturePatch* FixturePatchB = ItemB->GetFixturePatch();
+				if (!FixturePatchA || !FixturePatchB)
+				{
+					return false;
+				}
+
+				const FString FixturePatchNameA = FixturePatchA->Name;
+				const FString FixturePatchNameB = FixturePatchB->Name;
+
+				const bool bIsGreater = FixturePatchNameA >= FixturePatchNameB;
+				return bAscending ? !bIsGreater : bIsGreater;
+			});
+	}
+	else if (ColumnID == FDMXReadOnlyFixturePatchListCollumnIDs::FixtureID)
+	{
+		Algo::StableSort(ListItems, [bAscending](const TSharedPtr<FDMXReadOnlyFixturePatchListItem>& ItemA, const TSharedPtr<FDMXReadOnlyFixturePatchListItem>& ItemB)
+			{
+				bool bIsGreater = [ItemA, ItemB]()
+				{
+					const UDMXEntityFixturePatch* FixturePatchA = ItemA->GetFixturePatch();
+					const UDMXEntityFixturePatch* FixturePatchB = ItemB->GetFixturePatch();
+					if (!FixturePatchA || !FixturePatchB)
+					{
+						return false;
+					}
+
+					int32 FixtureIDA;
+					int32 FixtureIDB;
+					FixturePatchA->FindFixtureID(FixtureIDA);
+					FixturePatchB->FindFixtureID(FixtureIDB);
+
+					return FixtureIDA >= FixtureIDB;
+				}();
+
+				return bAscending ? !bIsGreater : bIsGreater;
+			});
+	}
+	else if (ColumnID == FDMXReadOnlyFixturePatchListCollumnIDs::FixtureType)
+	{
+		Algo::StableSort(ListItems, [bAscending](const TSharedPtr<FDMXReadOnlyFixturePatchListItem>& ItemA, const TSharedPtr<FDMXReadOnlyFixturePatchListItem>& ItemB)
+			{
+				const UDMXEntityFixturePatch* FixturePatchA = ItemA->GetFixturePatch();
+				const UDMXEntityFixturePatch* FixturePatchB = ItemB->GetFixturePatch();
+				if (!FixturePatchA || !FixturePatchB)
+				{
+					return false;
+				}
+
+				const FString FixtureTypeA = FixturePatchA->GetFixtureType()->Name;
+				const FString FixtureTypeB = FixturePatchB->GetFixtureType()->Name;
+
+				const bool bIsGreater = FixtureTypeA >= FixtureTypeB;
+				return bAscending ? !bIsGreater : bIsGreater;
+			});
+	}
+	else if (ColumnID == FDMXReadOnlyFixturePatchListCollumnIDs::Mode)
+	{
+		Algo::StableSort(ListItems, [bAscending](const TSharedPtr<FDMXReadOnlyFixturePatchListItem>& ItemA, const TSharedPtr<FDMXReadOnlyFixturePatchListItem>& ItemB)
+			{
+				const UDMXEntityFixturePatch* FixturePatchA = ItemA->GetFixturePatch();
+				const UDMXEntityFixturePatch* FixturePatchB = ItemB->GetFixturePatch();
+				if (!FixturePatchA || !FixturePatchB)
+				{
+					return false;
+				}
+
+				const bool bIsGreater = FixturePatchA->GetActiveModeIndex() >= FixturePatchB->GetActiveModeIndex();
+				return bAscending ? !bIsGreater : bIsGreater;
+			});
+	}
+	else if (ColumnID == FDMXReadOnlyFixturePatchListCollumnIDs::Patch)
+	{
+		Algo::StableSort(ListItems, [bAscending](const TSharedPtr<FDMXReadOnlyFixturePatchListItem>& ItemA, const TSharedPtr<FDMXReadOnlyFixturePatchListItem>& ItemB)
+			{
+				const UDMXEntityFixturePatch* FixturePatchA = ItemA->GetFixturePatch();
+				const UDMXEntityFixturePatch* FixturePatchB = ItemB->GetFixturePatch();
+				if (!FixturePatchA || !FixturePatchB)
+				{
+					return false;
+				}
+
+				const bool bIsUniverseIDGreater = FixturePatchA->GetUniverseID() > FixturePatchB->GetUniverseID();
+				const bool bIsSameUniverse = FixturePatchA->GetUniverseID() == FixturePatchB->GetUniverseID();
+				const bool bAreAddressesGreater = FixturePatchA->GetStartingChannel() > FixturePatchB->GetStartingChannel();
+
+				const bool bIsGreater = bIsUniverseIDGreater || (bIsSameUniverse && bAreAddressesGreater);
+				return bAscending ? !bIsGreater : bIsGreater;
+			});
+	}
+
+	ListView->RequestListRefresh();
+}
+
+void SDMXReadOnlyFixturePatchList::OnSearchTextChanged(const FText& SearchText)
+{
+	RequestRefresh();
+}
+
+void SDMXReadOnlyFixturePatchList::OnEntityAddedOrRemoved(UDMXLibrary* InDMXLibrary, TArray<UDMXEntity*> Entities)
+{
+	if (InDMXLibrary == WeakDMXLibrary)
+	{
+		RequestRefresh();
+	}
+}
+
+void SDMXReadOnlyFixturePatchList::OnFixturePatchChanged(const UDMXEntityFixturePatch* FixturePatch)
+{
+	// Refresh only if the fixture patch is in the library this editor handles
+	if (FixturePatch && FixturePatch->GetParentLibrary() == WeakDMXLibrary)
+	{
+		RequestRefresh();
+	}
+}
+
+void SDMXReadOnlyFixturePatchList::OnFixtureTypeChanged(const UDMXEntityFixtureType* FixtureType)
+{
+	// Refresh only if the fixture type is in the library this editor handles
+	if (FixtureType && FixtureType->GetParentLibrary() == WeakDMXLibrary)
+	{
+		RequestRefresh();
+	}
 }
 
 void SDMXReadOnlyFixturePatchList::ToggleColumnShowState(const FName ColumnID)
 {
+	const TSharedPtr<SHeaderRow> HeaderRow = ListView.IsValid() ? ListView->GetHeaderRow() : nullptr;
 	if (!HeaderRow.IsValid())
 	{
 		return;
@@ -652,121 +726,6 @@ EColumnSortMode::Type SDMXReadOnlyFixturePatchList::GetColumnSortMode(const FNam
 	}
 
 	return SortMode;
-}
-
-void SDMXReadOnlyFixturePatchList::SortByColumnID(const EColumnSortPriority::Type SortPriority, const FName& ColumnID, const EColumnSortMode::Type InSortMode)
-{
-	SortMode = InSortMode;
-	SortedByColumnID = ColumnID;
-
-	const bool bAscending = InSortMode == EColumnSortMode::Ascending ? true : false;
-
-	if (ColumnID == FDMXReadOnlyFixturePatchListCollumnIDs::FixturePatchName)
-	{
-		Algo::Sort(ListItems, [bAscending](const TSharedPtr<FDMXEntityFixturePatchRef>& ItemA, const TSharedPtr<FDMXEntityFixturePatchRef>& ItemB)
-			{
-				const UDMXEntityFixturePatch* FixturePatchA = ItemA->GetFixturePatch();
-				const UDMXEntityFixturePatch* FixturePatchB = ItemB->GetFixturePatch();
-				if (!FixturePatchA || !FixturePatchB)
-				{
-					return false;
-				}
-
-				const FString FixturePatchNameA = FixturePatchA->Name;
-				const FString FixturePatchNameB = FixturePatchB->Name;
-
-				const bool bIsGreater = FixturePatchNameA >= FixturePatchNameB;
-				return bAscending ? !bIsGreater : bIsGreater;
-			});
-	}
-	else if (ColumnID == FDMXReadOnlyFixturePatchListCollumnIDs::FixtureID)
-	{
-		Algo::Sort(ListItems, [bAscending](const TSharedPtr<FDMXEntityFixturePatchRef>& ItemA, const TSharedPtr<FDMXEntityFixturePatchRef>& ItemB)
-			{
-				bool bIsGreater = [ItemA, ItemB]()
-				{
-					const UDMXEntityFixturePatch* FixturePatchA = ItemA->GetFixturePatch();
-					const UDMXEntityFixturePatch* FixturePatchB = ItemB->GetFixturePatch();
-					if (!FixturePatchA || !FixturePatchB)
-					{
-						return false;
-					}
-
-					int32 FixtureIDA;
-					int32 FixtureIDB;
-					FixturePatchA->FindFixtureID(FixtureIDA);
-					FixturePatchB->FindFixtureID(FixtureIDB);
-
-					return FixtureIDA >= FixtureIDB;
-				}();
-
-				return bAscending ? !bIsGreater : bIsGreater;
-			});
-	}
-	else if (ColumnID == FDMXReadOnlyFixturePatchListCollumnIDs::FixtureType)
-	{
-		Algo::Sort(ListItems, [bAscending](const TSharedPtr<FDMXEntityFixturePatchRef>& ItemA, const TSharedPtr<FDMXEntityFixturePatchRef>& ItemB)
-			{
-				const UDMXEntityFixturePatch* FixturePatchA = ItemA->GetFixturePatch();
-				const UDMXEntityFixturePatch* FixturePatchB = ItemB->GetFixturePatch();
-				if (!FixturePatchA || !FixturePatchB)
-				{
-					return false;
-				}
-
-				const FString FixtureTypeA = FixturePatchA->GetFixtureType()->Name;
-				const FString FixtureTypeB = FixturePatchB->GetFixtureType()->Name;
-
-				const bool bIsGreater = FixtureTypeA >= FixtureTypeB;
-				return bAscending ? !bIsGreater : bIsGreater;
-			});
-	}
-	else if (ColumnID == FDMXReadOnlyFixturePatchListCollumnIDs::Mode)
-	{
-		Algo::Sort(ListItems, [bAscending](const TSharedPtr<FDMXEntityFixturePatchRef>& ItemA, const TSharedPtr<FDMXEntityFixturePatchRef>& ItemB)
-			{
-				const UDMXEntityFixturePatch* FixturePatchA = ItemA->GetFixturePatch();
-				const UDMXEntityFixturePatch* FixturePatchB = ItemB->GetFixturePatch();
-				if (!FixturePatchA || !FixturePatchB)
-				{
-					return false;
-				}
-
-				const bool bIsGreater = FixturePatchA->GetActiveModeIndex() >= FixturePatchB->GetActiveModeIndex();
-				return bAscending ? !bIsGreater : bIsGreater;
-			});
-	}
-	else if (ColumnID == FDMXReadOnlyFixturePatchListCollumnIDs::Patch)
-	{
-		Algo::Sort(ListItems, [bAscending](const TSharedPtr<FDMXEntityFixturePatchRef>& ItemA, const TSharedPtr<FDMXEntityFixturePatchRef>& ItemB)
-			{
-				const UDMXEntityFixturePatch* FixturePatchA = ItemA->GetFixturePatch();
-				const UDMXEntityFixturePatch* FixturePatchB = ItemB->GetFixturePatch();
-				if (!FixturePatchA || !FixturePatchB)
-				{
-					return false;
-				}
-
-				const bool bIsUniverseIDGreater = FixturePatchA->GetUniverseID() > FixturePatchB->GetUniverseID();
-				const bool bIsSameUniverse = FixturePatchA->GetUniverseID() == FixturePatchB->GetUniverseID();
-				const bool bAreAddressesGreater = FixturePatchA->GetStartingChannel() > FixturePatchB->GetStartingChannel();
-
-				const bool bIsGreater = bIsUniverseIDGreater || (bIsSameUniverse && bAreAddressesGreater);
-				return bAscending ? !bIsGreater : bIsGreater;
-			});
-	}
-
-	ListView->RequestListRefresh();
-}
-
-void SDMXReadOnlyFixturePatchList::SetShowMode(EDMXReadOnlyFixturePatchListShowMode NewShowMode)
-{
-	ShowMode = NewShowMode;
-}
-
-bool SDMXReadOnlyFixturePatchList::IsUsingShowMode(EDMXReadOnlyFixturePatchListShowMode ShowModeToCheck) const
-{
-	return ShowModeToCheck == ShowMode;
 }
 
 #undef LOCTEXT_NAMESPACE

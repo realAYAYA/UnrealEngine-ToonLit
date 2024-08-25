@@ -330,6 +330,11 @@ bool UGeometryCacheTrackAbcFile::GetMeshDataAtTime(float Time, FGeometryCacheMes
 	return GetMeshData(SampleIndex, OutMeshData);
 }
 
+bool UGeometryCacheTrackAbcFile::GetMeshDataAtSampleIndex(int32 SampleIndex, FGeometryCacheMeshData& OutMeshData)
+{
+	return GetMeshData(SampleIndex, OutMeshData);
+}
+
 bool UGeometryCacheTrackAbcFile::GetMeshData(int32 SampleIndex, FGeometryCacheMeshData& OutMeshData)
 {
 	if (AbcFile)

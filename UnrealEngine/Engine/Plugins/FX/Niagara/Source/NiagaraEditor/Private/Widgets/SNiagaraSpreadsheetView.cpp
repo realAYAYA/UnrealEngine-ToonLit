@@ -1048,12 +1048,11 @@ void SNiagaraSpreadsheetView::HandleTimeChange()
 					FName EntryName = NAME_None;
 					if (i != UISystemUpdate)
 					{
-						auto EmitterInstances = SystemInstance->GetEmitters();
-						for (auto EmitterInstance : EmitterInstances)
+						for (const FNiagaraEmitterInstanceRef& EmitterInstance : SystemInstance->GetEmitters())
 						{
-							if (SelectedEmitterHandle->GetEmitterHandle()->GetInstance() == EmitterInstance->GetCachedEmitter())
+							if (SelectedEmitterHandle->GetEmitterHandle()->GetInstance() == EmitterInstance->GetVersionedEmitter())
 							{
-								EntryName = EmitterInstance->GetCachedIDName();
+								EntryName = EmitterInstance->GetEmitterHandle().GetIdName();
 							}
 						}
 

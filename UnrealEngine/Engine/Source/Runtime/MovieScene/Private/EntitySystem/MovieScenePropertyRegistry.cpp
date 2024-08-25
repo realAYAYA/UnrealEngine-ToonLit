@@ -120,6 +120,12 @@ TOptional<uint16> ComputeFastPropertyPtrOffset(UClass* ObjectClass, const FMovie
 		return TOptional<uint16>();
 	}
 
+	// For object properties, we can't use the fast path, as reference tracking may be necessary
+	if (FObjectPropertyBase* ObjectProperty = CastField<FObjectPropertyBase>(PropertyAndAddress.Property))
+	{
+		return TOptional<uint16>();
+	}
+
 	// @todo: Constructing FNames from strings is _very_ costly and we really shouldn't be doing this at runtime.
 	//        This is a little better now we use a string builder and an FNAME_Find, but it's still not ideal
 	TStringBuilder<128> SetterName;

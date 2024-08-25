@@ -17,12 +17,14 @@ class UObject;
 class UToolMenu;
 class UContentBrowserDataSource;
 
+DECLARE_LOG_CATEGORY_EXTERN(LogContentBrowserAssetDataSource, Log, All);
+
 namespace ContentBrowserAssetData
 {
 
-	CONTENTBROWSERASSETDATASOURCE_API FContentBrowserItemData CreateAssetFolderItem(UContentBrowserDataSource* InOwnerDataSource, const FName InVirtualPath, const FName InFolderPath, const bool bIsCookedPath = false);
+	CONTENTBROWSERASSETDATASOURCE_API FContentBrowserItemData CreateAssetFolderItem(UContentBrowserDataSource* InOwnerDataSource, const FName InVirtualPath, const FName InFolderPath, const bool bIsCookedPath = false, const bool bIsPlugin = false);
 
-	CONTENTBROWSERASSETDATASOURCE_API FContentBrowserItemData CreateAssetFileItem(UContentBrowserDataSource* InOwnerDataSource, const FName InVirtualPath, const FAssetData& InAssetData);
+	CONTENTBROWSERASSETDATASOURCE_API FContentBrowserItemData CreateAssetFileItem(UContentBrowserDataSource* InOwnerDataSource, const FName InVirtualPath, const FAssetData& InAssetData, const bool bIsPlugin = false);
 
 	CONTENTBROWSERASSETDATASOURCE_API FContentBrowserItemData CreateUnsupportedAssetFileItem(UContentBrowserDataSource* InOwnerDataSource, const FName InVirtualPath, const FAssetData& InAssetData);
 

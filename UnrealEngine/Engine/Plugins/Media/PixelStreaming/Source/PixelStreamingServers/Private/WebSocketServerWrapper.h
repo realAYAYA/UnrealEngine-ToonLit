@@ -21,6 +21,7 @@ namespace UE::PixelStreamingServers
 		FWebSocketConnection(INetworkingWebSocket* InSocketConnection);
 		~FWebSocketConnection();
 		uint16 GetId() const;
+		TArray<FString> GetUrlArgs() const;
 		bool Send(FString Message) const;
 		void SetCallbacks();
 
@@ -31,6 +32,7 @@ namespace UE::PixelStreamingServers
 	private:
 		static FThreadSafeCounter IdGenerator;
 		uint16 Id;
+		TArray<FString> UrlArgs;
 		INetworkingWebSocket* SocketConnection;
 	};
 

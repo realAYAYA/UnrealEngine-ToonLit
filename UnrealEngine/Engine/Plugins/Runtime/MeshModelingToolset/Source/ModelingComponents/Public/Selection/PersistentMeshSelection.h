@@ -6,7 +6,6 @@
 #include "IndexTypes.h"
 #include "SegmentTypes.h"
 
-#include "PersistentMeshSelection.generated.h"
 
 class UPrimitiveComponent;
 class UInteractiveTool;
@@ -24,9 +23,9 @@ PREDECLARE_USE_GEOMETRY_CLASS(FCompactMaps);
  * In addition, "Render" geometry is stored, which can be used by higher-level
  * code to draw the selection in some way (eg a selection highlight)
  * 
- * @warning this class is likely to change in the future
+ * @warning this class will be removed in the future
  */
-struct MODELINGCOMPONENTS_API FGenericMeshSelection
+struct UE_DEPRECATED(5.4, "Use FGeometrySelection instead") FGenericMeshSelection
 {
 	// selection type
 	enum class ETopologyType
@@ -93,53 +92,5 @@ struct MODELINGCOMPONENTS_API FGenericMeshSelection
 			&& FaceIDs == Other.FaceIDs;
 	}
 
-};
-
-
-
-
-
-/**
- * UPersistentMeshSelection is a UObject wrapper for a FGenericMeshSelection
- */
-//UE_DEPRECATED(5.2, "UPersistentMeshSelection and related functions are deprecated")
-UCLASS(Deprecated)
-class MODELINGCOMPONENTS_API UDEPRECATED_PersistentMeshSelection : public UObject
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Resets the contents of the object using the given selection.
-	 *
-	 * @param CompactMaps If the mesh was compacted without updating the passed in topology object, these
-	 *  maps will be used to give an object that will work with the new mesh vids.
-	 */
-	void SetSelection(const FGroupTopology& TopologyIn, const FGroupTopologySelection& SelectionIn, const FCompactMaps* CompactMaps = nullptr);
-
-	/**
-	 * Initializes a FGroupTopologySelection using the current contents of the object. The topology
-	 * must already be initialized.
-	 */
-	void ExtractIntoSelectionObject(const FGroupTopology& TopologyIn, FGroupTopologySelection& SelectionOut) const;
-
-	/** @return true if the selection is empty */
-	bool IsEmpty() const
-	{
-		return Selection.IsEmpty();
-	}
-
-	UPrimitiveComponent* GetTargetComponent() const { return Selection.SourceComponent; }
-	FGenericMeshSelection::ETopologyType GetSelectionType() const { return Selection.TopologyType; }
-
-	/** replace the internal Selection data */
-	void SetSelection(const FGenericMeshSelection& SelectionIn) { Selection = SelectionIn; }
-
-	/** @return the internal Selection data */
-	const FGenericMeshSelection& GetSelection() const { return Selection; }
-
-protected:
-	FGenericMeshSelection Selection;
 };
 

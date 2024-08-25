@@ -3,76 +3,85 @@
 #include "WaterBodyManager.h"
 #include "WaterBodyComponent.h"
 #include "WaterSubsystem.h"
-#include "GerstnerWaterWaveViewExtension.h"
+#include "WaterViewExtension.h"
 
 void FWaterBodyManager::Initialize(UWorld* World)
 {
 	if (World != nullptr)
 	{
-		GerstnerWaterWaveViewExtension = FSceneViewExtensions::NewExtension<FGerstnerWaterWaveViewExtension>(World);
-		GerstnerWaterWaveViewExtension->Initialize();
+		WaterViewExtension = FSceneViewExtensions::NewExtension<FWaterViewExtension>(World);
+		WaterViewExtension->Initialize();
 	}
 }
 
 void FWaterBodyManager::Deinitialize()
 {
-	GerstnerWaterWaveViewExtension->Deinitialize();
-	GerstnerWaterWaveViewExtension.Reset();
+	WaterViewExtension->Deinitialize();
+	WaterViewExtension.Reset();
 }
 
 int32 FWaterBodyManager::AddWaterBodyComponent(UWaterBodyComponent* InWaterBodyComponent)
 {
-	int32 Index = INDEX_NONE;
-	if (UnusedWaterBodyIndices.Num())
-	{
-		Index = UnusedWaterBodyIndices.Pop();
-		check(WaterBodyComponents[Index] == nullptr);
-		WaterBodyComponents[Index] = InWaterBodyComponent;
-	}
-	else
-	{
-		Index = WaterBodyComponents.Add(InWaterBodyComponent);
-	}
-
 	RequestWaveDataRebuild();
-
-	check(Index != INDEX_NONE);
-	return Index;
+	int32 LowestFreeIndex = 0;
+	const int32 WaterIndex = WaterBodyComponents.EmplaceAtLowestFreeIndex(LowestFreeIndex, InWaterBodyComponent);
+	OnWaterBodyAdded.Broadcast(InWaterBodyComponent);
+	return WaterIndex;
 }
 
 void FWaterBodyManager::RemoveWaterBodyComponent(UWaterBodyComponent* InWaterBodyComponent)
 {
-	const int32 WaterBodyIndex = InWaterBodyComponent->GetWaterBodyIndex();
-	check(WaterBodyIndex != INDEX_NONE);
-	UnusedWaterBodyIndices.Add(WaterBodyIndex);
-	WaterBodyComponents[WaterBodyIndex] = nullptr;
-
 	RequestWaveDataRebuild();
+	WaterBodyComponents.RemoveAt(InWaterBodyComponent->GetWaterBodyIndex());
+	OnWaterBodyRemoved.Broadcast(InWaterBodyComponent);
+}
 
-	// Reset all arrays once there are no more waterbodies
-	if (UnusedWaterBodyIndices.Num() == WaterBodyComponents.Num())
+int32 FWaterBodyManager::AddWaterZone(AWaterZone* InWaterZone)
+{
+	int32 LowestFreeIndex = 0;
+	int32 WaterZoneIndex = WaterZones.EmplaceAtLowestFreeIndex(LowestFreeIndex, InWaterZone);
+
+	if (WaterViewExtension)
 	{
-		UnusedWaterBodyIndices.Empty();
-		WaterBodyComponents.Empty();
+		WaterViewExtension->AddWaterZone(InWaterZone);
+	}
+
+	RequestGPUDataRebuild();
+
+	return WaterZoneIndex;
+}
+
+void FWaterBodyManager::RemoveWaterZone(AWaterZone* InWaterZone)
+{
+	if (WaterViewExtension)
+	{
+		WaterViewExtension->RemoveWaterZone(InWaterZone);
+	}
+
+	WaterZones.RemoveAt(InWaterZone->GetWaterZoneIndex());
+
+	RequestGPUDataRebuild();
+}
+
+void FWaterBodyManager::RequestGPUDataRebuild()
+{
+	if (WaterViewExtension)
+	{
+		WaterViewExtension->MarkGPUDataDirty();
 	}
 }
 
 void FWaterBodyManager::RequestWaveDataRebuild()
 {
-	if (GerstnerWaterWaveViewExtension)
-	{
-		GerstnerWaterWaveViewExtension->bRebuildGPUData = true;
-	}
+	RequestGPUDataRebuild();
 
 	// Recompute the maximum of all MaxWaveHeight : 
 	GlobalMaxWaveHeight = 0.0f;
-	for (const UWaterBodyComponent* WaterBodyComponent : WaterBodyComponents)
+	ForEachWaterBodyComponent([this](UWaterBodyComponent* WaterBodyComponent)
 	{
-		if (WaterBodyComponent != nullptr)
-		{
-			GlobalMaxWaveHeight = FMath::Max(GlobalMaxWaveHeight, WaterBodyComponent->GetMaxWaveHeight());
-		}
-	}
+		GlobalMaxWaveHeight = FMath::Max(GlobalMaxWaveHeight, WaterBodyComponent->GetMaxWaveHeight());
+		return true;
+	});
 }
 
 void FWaterBodyManager::ForEachWaterBodyComponent(TFunctionRef<bool(UWaterBodyComponent*)> Pred) const
@@ -96,3 +105,32 @@ void FWaterBodyManager::ForEachWaterBodyComponent(const UWorld* World, TFunction
 		Manager->ForEachWaterBodyComponent(Pred);
 	}
 }
+
+void FWaterBodyManager::ForEachWaterZone(TFunctionRef<bool(AWaterZone*)> Pred) const
+{
+	for (AWaterZone* WaterZone : WaterZones)
+	{
+		if (WaterZone)
+		{
+			if (!Pred(WaterZone))
+			{
+				return;
+			}
+		}
+	}
+}
+
+void FWaterBodyManager::ForEachWaterZone(const UWorld* World, TFunctionRef<bool(AWaterZone*)> Pred)
+{
+	if (FWaterBodyManager* Manager = UWaterSubsystem::GetWaterBodyManager(World))
+	{
+		Manager->ForEachWaterZone(Pred);
+	}
+}
+
+void FWaterBodyManager::Shrink()
+{
+	WaterBodyComponents.Shrink();
+	WaterZones.Shrink();
+}
+

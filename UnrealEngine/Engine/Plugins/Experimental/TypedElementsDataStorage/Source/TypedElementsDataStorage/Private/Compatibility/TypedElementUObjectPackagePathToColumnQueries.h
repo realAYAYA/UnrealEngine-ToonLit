@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "Elements/Common/TypedElementHandles.h"
 #include "Elements/Interfaces/TypedElementDataStorageFactory.h"
 #include "UObject/ObjectMacros.h"
 
@@ -15,5 +16,9 @@ class UTypedElementUObjectPackagePathFactory : public UTypedElementDataStorageFa
 public:
 	~UTypedElementUObjectPackagePathFactory() override = default;
 
-	void RegisterQueries(ITypedElementDataStorageInterface& DataStorage) const override;
+	void RegisterQueries(ITypedElementDataStorageInterface& DataStorage) override;
+
+private:
+	void RegisterTryAddPackageRef(ITypedElementDataStorageInterface& DataStorage);
+	TypedElementDataStorage::QueryHandle TryAddPackageRef = TypedElementDataStorage::InvalidQueryHandle;
 };

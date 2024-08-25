@@ -129,15 +129,11 @@ public:
 	/** Default constructor. */
 	FNiagaraMeshVertexFactory(ENiagaraVertexFactoryType InType, ERHIFeatureLevel::Type InFeatureLevel)
 		: FNiagaraVertexFactoryBase(InType, InFeatureLevel)
-		, MeshIndex(-1)
-		, LODIndex(-1)
 		, bAddPrimitiveIDElement(true)
 	{}
 
 	FNiagaraMeshVertexFactory()
 		: FNiagaraVertexFactoryBase(NVFT_MAX, ERHIFeatureLevel::Num)
-		, MeshIndex(-1)
-		, LODIndex(-1)
 		, bAddPrimitiveIDElement(true)
 	{}
 
@@ -162,7 +158,7 @@ public:
 	/**
 	* An implementation of the interface used by TSynchronizedResource to update the resource with new data from the game thread.
 	*/
-	NIAGARAVERTEXFACTORIES_API void SetData(const FStaticMeshDataType& InData);
+	NIAGARAVERTEXFACTORIES_API void SetData(FRHICommandListBase& RHICmdList, const FStaticMeshDataType& InData);
 
 	/**
 	* Set the uniform buffer for this vertex factory.
@@ -208,12 +204,6 @@ public:
 	// FRenderResource interface.
 	NIAGARAVERTEXFACTORIES_API virtual void InitRHI(FRHICommandListBase& RHICmdList) override;
 
-	int32 GetMeshIndex() const { return MeshIndex; }
-	void SetMeshIndex(int32 InMeshIndex) { MeshIndex = InMeshIndex; }
-
-	int32 GetLODIndex() const { return LODIndex; }
-	void SetLODIndex(int32 InLODIndex) { LODIndex = InLODIndex; }
-
 	bool IsPrimitiveIDElementEnabled() const { return bAddPrimitiveIDElement; }
 	void EnablePrimitiveIDElement(bool bEnable) { bAddPrimitiveIDElement = bEnable; }
 	
@@ -226,8 +216,6 @@ protected:
 
 protected:
 	FStaticMeshDataType Data;
-	int32 MeshIndex;	
-	int32 LODIndex;
 	bool bAddPrimitiveIDElement;
 
 	/** Uniform buffer with mesh particle parameters. */

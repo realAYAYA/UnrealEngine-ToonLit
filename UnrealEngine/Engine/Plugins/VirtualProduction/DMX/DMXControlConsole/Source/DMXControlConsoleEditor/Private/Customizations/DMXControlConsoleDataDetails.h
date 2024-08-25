@@ -5,28 +5,29 @@
 #include "IDetailCustomization.h"
 #include "UObject/WeakObjectPtr.h"
 
-class IPropertyUtilities;
+class UDMXControlConsoleEditorModel;
 
 
-/** Details Customization for DMX DMX Control Console */
-class FDMXControlConsoleDataDetails
-	: public IDetailCustomization
+namespace UE::DMX::Private
 {
-public:
-	/** Makes an instance of this Details Customization */
-	static TSharedRef<IDetailCustomization> MakeInstance()
+	/** Details Customization for DMX Control Console */
+	class FDMXControlConsoleDataDetails
+		: public IDetailCustomization
 	{
-		return MakeShared<FDMXControlConsoleDataDetails>();
-	}
+	public:
+		/** Constructor */
+		FDMXControlConsoleDataDetails(const TWeakObjectPtr<UDMXControlConsoleEditorModel> InWeakEditorModel);
 
-	//~ Begin of IDetailCustomization interface
-	virtual void CustomizeDetails(IDetailLayoutBuilder& InDetailLayout) override;
-	//~ End of IDetailCustomization interface
+		/** Makes an instance of this Details Customization */
+		static TSharedRef<IDetailCustomization> MakeInstance(const TWeakObjectPtr<UDMXControlConsoleEditorModel> InWeakEditorModel);
 
-private:
-	/** Forces a refresh on the entire Details View */
-	void ForceRefresh() const;
+	protected:
+		//~ Begin of IDetailCustomization interface
+		virtual void CustomizeDetails(IDetailLayoutBuilder& InDetailLayout) override;
+		//~ End of IDetailCustomization interface
 
-	/** Property Utilities for this Details Customization layout */
-	TSharedPtr<IPropertyUtilities> PropertyUtilities;
-};
+	private:
+		/** Weak reference to the Control Console editor model */
+		TWeakObjectPtr<UDMXControlConsoleEditorModel> WeakEditorModel;
+	};
+}

@@ -567,7 +567,8 @@ public:
 };
 
 /** Encapsulates information about a shader's serialization behavior, used to detect when C++ serialization changes to auto-recompile. */
-class FSerializationHistory
+
+class UE_DEPRECATED(5.4, "FSerializationHistory is no longer used and will be removed") FSerializationHistory 
 {
 public: 
 
@@ -844,6 +845,8 @@ public:
 	using FPermutationParameters = FShaderPermutationParameters;
 	using CompiledShaderInitializerType = FShaderCompiledShaderInitializerType;
 	using ShaderMetaType = FShaderType;
+	using ShaderStatKeyType = FMemoryImageName;
+	using FShaderStatisticMap = TMemoryImageMap<ShaderStatKeyType, FShaderStatVariant>;
 
 	/** 
 	 * Used to construct a shader for deserialization.
@@ -899,6 +902,7 @@ public:
 	inline uint32 GetNumTextureSamplers() const { return NumTextureSamplers; }
 	inline uint32 GetCodeSize() const { return CodeSize; }
 	inline void SetNumInstructions(uint32 Value) { NumInstructions = Value; }
+	inline const FShaderStatisticMap& GetShaderStatistics() const { return ShaderStatistics; }
 #else
 	inline uint32 GetNumTextureSamplers() const { return 0u; }
 	inline uint32 GetCodeSize() const { return 0u; }
@@ -1008,6 +1012,9 @@ private:
 
 	/** Size of shader's compiled code */
 	LAYOUT_FIELD_EDITORONLY(uint32, CodeSize);
+
+	/** Generic, data-driven key/value pairs of statistics. */
+	LAYOUT_FIELD_EDITORONLY(FShaderStatisticMap, ShaderStatistics);
 };
 
 RENDERCORE_API const FTypeLayoutDesc& GetTypeLayoutDesc(const FPointerTableBase* PtrTable, const FShader& Shader);
@@ -1440,16 +1447,7 @@ public:
 	/** Adds include statements for uniform buffers that this shader type references. */
 	RENDERCORE_API void AddUniformBufferIncludesToEnvironment(FShaderCompilerEnvironment& OutEnvironment, EShaderPlatform Platform) const;
 
-	UE_DEPRECATED(5.2, "AddReferencedUniformBufferIncludes has moved to AddUniformBufferIncludesToEnvironment and no longer takes a prefix argument.")
-	inline void AddReferencedUniformBufferIncludes(FShaderCompilerEnvironment& OutEnvironment, FString& OutSourceFilePrefix, EShaderPlatform Platform) const
-	{
-		AddUniformBufferIncludesToEnvironment(OutEnvironment, Platform);
-	}
-
 	RENDERCORE_API void UpdateReferencedUniformBufferNames(const TMap<FString, TArray<const TCHAR*>>& ShaderFileToUniformBufferVariables);
-
-	UE_DEPRECATED(5.2, "FlushShaderFileCache is deprecated. UpdateReferencedUniformBufferNames should be used to flush any uniform buffer changes")
-	RENDERCORE_API void FlushShaderFileCache(const TMap<FString, TArray<const TCHAR*> >& ShaderFileToUniformBufferVariables);
 
 	RENDERCORE_API void GetShaderStableKeyParts(struct FStableShaderKeyAndValue& SaveKeyVal);
 #endif // WITH_EDITOR
@@ -1537,6 +1535,7 @@ struct FShaderCompiledShaderInitializerType
 	uint32 NumTextureSamplers;
 	uint32 CodeSize;
 	int32 PermutationId;
+	TMap<FString, FShaderStatVariant> ShaderStatistics;
 
 	RENDERCORE_API FShaderCompiledShaderInitializerType(
 		const FShaderType* InType,
@@ -2205,6 +2204,8 @@ public:
 	RENDERCORE_API void GetOutdatedTypes(const FShaderMapBase& InShaderMap, TArray<const FShaderType*>& OutdatedShaderTypes, TArray<const FShaderPipelineType*>& OutdatedShaderPipelineTypes, TArray<const FVertexFactoryType*>& OutdatedFactoryTypes) const;
 
 	RENDERCORE_API void SaveShaderStableKeys(const FShaderMapBase& InShaderMap, EShaderPlatform TargetShaderPlatform, const struct FStableShaderKeyAndValue& SaveKeyVal);
+
+	RENDERCORE_API const FShader::FShaderStatisticMap GetShaderStatisticsMapForShader(const FShaderMapBase& InShaderMap, FShaderType* ShaderType) const;
 #endif // WITH_EDITOR
 
 	/** @return true if the map is empty */
@@ -2283,7 +2284,7 @@ public:
 
 	RENDERCORE_API void FinalizeContent();
 	RENDERCORE_API void UnfreezeContent();
-	RENDERCORE_API bool Serialize(FArchive& Ar, bool bInlineShaderResources, bool bLoadedByCookedMaterial, bool bInlineShaderCode=false);
+	RENDERCORE_API bool Serialize(FArchive& Ar, bool bInlineShaderResources, bool bLoadedByCookedMaterial, bool bInlineShaderCode=false, const FName& SerializingAsset = NAME_None);
 
 	EShaderPermutationFlags GetPermutationFlags() const
 	{
@@ -2426,164 +2427,48 @@ public:
 };
 
 /** Tracks state when traversing a FSerializationHistory. */
-class FSerializationHistoryTraversalState
+class UE_DEPRECATED(5.4, "FSerializationHistoryTraversalState is no longer used and will be removed") FSerializationHistoryTraversalState
 {
 public:
-
-	const FSerializationHistory& History;
-	int32 NextTokenIndex;
-	int32 NextFullLengthIndex;
-
-	FSerializationHistoryTraversalState(const FSerializationHistory& InHistory) :
-		History(InHistory),
-		NextTokenIndex(0),
-		NextFullLengthIndex(0)
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	FSerializationHistoryTraversalState(const FSerializationHistory& InHistory)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{}
 
 	/** Gets the length value from NextTokenIndex + Offset into history. */
 	uint32 GetValue(int32 Offset)
 	{
-		int32 CurrentOffset = Offset;
-
-		// Move to the desired offset
-		while (CurrentOffset > 0)
-		{
-			StepForward();
-			CurrentOffset--;
-		}
-
-		while (CurrentOffset < 0)
-		{
-			StepBackward();
-			CurrentOffset++;
-		}
-		check(CurrentOffset == 0);
-
-		// Decode
-		const int8 Token = History.GetToken(NextTokenIndex);
-		const uint32 Value = Token == 0 ? History.FullLengths[NextFullLengthIndex] : (int32)Token;
-
-		// Restore state
-		while (CurrentOffset < Offset)
-		{
-			StepBackward();
-			CurrentOffset++;
-		}
-
-		while (CurrentOffset > Offset)
-		{
-			StepForward();
-			CurrentOffset--;
-		}
-		check(CurrentOffset == Offset);
-
-		return Value;
+		return 0;
 	}
 
 	FORCEINLINE void StepForward()
 	{
-		const int8 Token = History.GetToken(NextTokenIndex);
-
-		if (Token == 0)
-		{
-			checkSlow(NextFullLengthIndex - 1 < History.FullLengths.Num());
-			NextFullLengthIndex++;
-		}
-
-		// Not supporting seeking past the front most serialization in the history
-		checkSlow(NextTokenIndex - 1 < History.NumTokens);
-		NextTokenIndex++;
 	}
 
 	void StepBackward()
 	{
-		// Not supporting seeking outside of the history tracked
-		check(NextTokenIndex > 0);
-		NextTokenIndex--;
-
-		const int8 Token = History.GetToken(NextTokenIndex);
-
-		if (Token == 0)
-		{
-			check(NextFullLengthIndex > 0);
-			NextFullLengthIndex--;
-		}
 	}
 };
 
 /** Archive used when saving shaders, which generates data used to detect serialization mismatches on load. */
-class FShaderSaveArchive final : public FArchiveProxy
+class UE_DEPRECATED(5.4, "FShaderSaveArchive is no longer used and will be removed") FShaderSaveArchive final : public FArchiveProxy
 {
 public:
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FShaderSaveArchive(FArchive& Archive, FSerializationHistory& InHistory) : 
-		FArchiveProxy(Archive),
-		HistoryTraversalState(InHistory),
-		History(InHistory)
+		FArchiveProxy(Archive)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
-		OriginalPosition = Archive.Tell();
 	}
 
 	virtual ~FShaderSaveArchive()
 	{
-		// Seek back to the original archive position so we can undo any serializations that went through this archive
-		InnerArchive.Seek(OriginalPosition);
 	}
 
 	virtual void Serialize( void* V, int64 Length )
 	{
-		if (HistoryTraversalState.NextTokenIndex < HistoryTraversalState.History.NumTokens)
-		{
-			// We are no longer appending (due to a seek), make sure writes match up in size with what's already been written
-			check(Length == HistoryTraversalState.GetValue(0));
-		}
-		else
-		{
-			// Appending to the archive, track the size of this serialization
-			check(Length >= 0 && Length <= TNumericLimits<uint32>::Max());
-			History.AddValue((uint32)Length);
-		}
-		HistoryTraversalState.StepForward();
-		
-		if (V)
-		{
-			FArchiveProxy::Serialize(V, Length);
-		}
 	}
-
-	virtual void Seek( int64 InPos )
-	{
-		int64 Offset = InPos - Tell();
-		if (Offset <= 0)
-		{
-			// We're seeking backward, walk backward through the serialization history while updating NextSerialization
-			while (Offset < 0)
-			{
-				Offset += HistoryTraversalState.GetValue(-1);
-				HistoryTraversalState.StepBackward();
-			}
-		}
-		else
-		{
-			// We're seeking forward, walk forward through the serialization history while updating NextSerialization
-			while (Offset > 0)
-			{
-				Offset -= HistoryTraversalState.GetValue(-1);
-				HistoryTraversalState.StepForward();
-			}
-			HistoryTraversalState.StepForward();
-		}
-		check(Offset == 0);
-		
-		FArchiveProxy::Seek(InPos);
-	}
-
-	FSerializationHistoryTraversalState HistoryTraversalState;
-	FSerializationHistory& History;
-
-private:
-	/** Stored off position of the original archive we are wrapping. */
-	int64 OriginalPosition;
 };
 
 /**

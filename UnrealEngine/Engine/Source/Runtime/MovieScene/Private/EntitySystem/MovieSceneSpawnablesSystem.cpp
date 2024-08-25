@@ -6,12 +6,15 @@
 #include "EntitySystem/MovieSceneEntityRange.h"
 #include "EntitySystem/MovieSceneEntitySystemTask.h"
 #include "EntitySystem/MovieSceneEntityInstantiatorSystem.h"
+#include "EntitySystem/MovieSceneSharedPlaybackState.h"
 #include "EntitySystem/BuiltInComponentTypes.h"
 #include "Evaluation/MovieSceneEvaluationOperand.h"
 
 #include "MovieScene.h"
 #include "MovieSceneSequence.h"
 #include "MovieSceneExecutionToken.h"
+#include "MovieSceneSpawnRegister.h"
+
 #include "IMovieScenePlayer.h"
 #include "IMovieScenePlaybackClient.h"
 
@@ -40,18 +43,19 @@ struct FSpawnTrackPreAnimatedTokenProducer : IMovieScenePreAnimatedTokenProducer
 
 			virtual void RestoreState(UObject& Object, const UE::MovieScene::FRestoreStateParams& Params) override
 			{
-				IMovieScenePlayer* Player = Params.GetTerminalPlayer();
-				if (!ensure(Player))
+				TSharedPtr<const FSharedPlaybackState> PlaybackState = Params.GetTerminalPlaybackState();
+				if (!ensure(PlaybackState))
 				{
 					return;
 				}
 
-				if (!Player->GetSpawnRegister().DestroySpawnedObject(OperandToDestroy.ObjectBindingID, OperandToDestroy.SequenceID, *Player))
+				FMovieSceneSpawnRegister* SpawnRegister = PlaybackState->FindCapability<FMovieSceneSpawnRegister>();
+				if (SpawnRegister && !SpawnRegister->DestroySpawnedObject(OperandToDestroy.ObjectBindingID, OperandToDestroy.SequenceID, PlaybackState.ToSharedRef()))
 				{
 					// This branch should only be taken for Externally owned spawnables that have been 'forgotten',
 					// but still had RestoreState tokens generated for them (ie, in FSequencer, or if bRestoreState is enabled)
 					// on a UMovieSceneSequencePlayer
-					Player->GetSpawnRegister().DestroyObjectDirectly(Object);
+					SpawnRegister->DestroyObjectDirectly(Object);
 				}
 			}
 		};
@@ -127,13 +131,13 @@ void UMovieSceneSpawnablesSystem::OnRun(FSystemTaskPrerequisites& InPrerequisite
 		if (ensure(InstanceRegistry->IsHandleValid(InstanceHandle)))
 		{
 			const FSequenceInstance& Instance = InstanceRegistry->GetInstance(InstanceHandle);
-			IMovieScenePlayer* Player = Instance.GetPlayer();
+			TSharedRef<FSharedPlaybackState> SharedPlaybackState = Instance.GetSharedPlaybackState();
 
 			// If the sequence instance has finished and it is a sub sequence, we do not destroy the spawnable
 			// if it is owned by the root sequence or externally. These will get destroyed or forgotten by the player when it ends
 			if (Instance.HasFinished() && Instance.IsSubSequence())
 			{
-				const UMovieSceneSequence* Sequence = Player->State.FindSequence(Instance.GetSequenceID());
+				const UMovieSceneSequence* Sequence = SharedPlaybackState->GetSequence(Instance.GetSequenceID());
 				FMovieSceneSpawnable* Spawnable = Sequence ? Sequence->GetMovieScene()->FindSpawnable(SpawnableObjectID) : nullptr;
 				if (!Spawnable || Spawnable->GetSpawnOwnership() != ESpawnOwnership::InnerSequence)
 				{
@@ -153,24 +157,43 @@ void UMovieSceneSpawnablesSystem::OnRun(FSystemTaskPrerequisites& InPrerequisite
 
 		const FSequenceInstance& SequenceInstance = InstanceRegistry->GetInstance(InstanceHandle);
 
-		FMovieSceneSequenceID SequenceID  = SequenceInstance.GetSequenceID();
-		IMovieScenePlayer*    Player      = SequenceInstance.GetPlayer();
+		TSharedRef<const FSharedPlaybackState> SharedPlaybackState = SequenceInstance.GetSharedPlaybackState();
+		FMovieSceneSpawnRegister* SpawnRegister = SharedPlaybackState->FindCapability<FMovieSceneSpawnRegister>();
+		if (!SpawnRegister)
+		{
+			return;
+		}
 
+		FMovieSceneSequenceID SequenceID = SequenceInstance.GetSequenceID();
 		const FMovieSceneEvaluationOperand SpawnableOperand(SequenceID, SpawnableBindingID);
-		if (const FMovieSceneEvaluationOperand* OperandOverride = Player->BindingOverrides.Find(SpawnableOperand))
+		IStaticBindingOverridesPlaybackCapability* StaticOverrides = SharedPlaybackState->FindCapability<IStaticBindingOverridesPlaybackCapability>();
+		if (StaticOverrides && StaticOverrides->GetBindingOverride(SpawnableOperand))
 		{
 			// Don't do anything if this operand was overriden... someone else will take care of it (either another spawn track, or
 			// some possessable).
 			return;
 		}
 
-		UObject* ExistingSpawnedObject = Player->GetSpawnRegister().FindSpawnedObject(SpawnableBindingID, SequenceID).Get();
+		UObject* ExistingSpawnedObject = SpawnRegister->FindSpawnedObject(SpawnableBindingID, SequenceID).Get();
+
+		FMovieSceneEvaluationState* State = SharedPlaybackState->FindCapability<FMovieSceneEvaluationState>();
+		if (State && !State->GetBindingActivation(SpawnableBindingID, SequenceID))
+		{
+			// If the binding is currently inactive, don't spawn the object.
+
+			// If we have an existing spawned object, then we need to destroy the spawned object here.
+			if (ExistingSpawnedObject)
+			{
+				DestroyOldSpawnables(InstanceHandle, SpawnableBindingID);
+			}
+			return;
+		}
 
 		// Check whether the binding is overridden - if it is we cannot spawn a new object
-		if (const IMovieScenePlaybackClient* PlaybackClient = Player->GetPlaybackClient())
+		if (IMovieScenePlaybackClient* DynamicOverrides = SharedPlaybackState->FindCapability<IMovieScenePlaybackClient>())
 		{
 			TArray<UObject*, TInlineAllocator<1>> FoundObjects;
-			bool bUseDefaultBinding = PlaybackClient->RetrieveBindingOverrides(SpawnableBindingID, SequenceID, FoundObjects);
+			bool bUseDefaultBinding = DynamicOverrides->RetrieveBindingOverrides(SpawnableBindingID, SequenceID, FoundObjects);
 			if (!bUseDefaultBinding)
 			{
 				// If the binding has been overridden but we have an existing spawned object, then the binding is new and we need to destroy the spawned object.
@@ -191,14 +214,15 @@ void UMovieSceneSpawnablesSystem::OnRun(FSystemTaskPrerequisites& InPrerequisite
 		}
 
 		// At this point we've decided that we need to spawn a whole new object
-		const UMovieSceneSequence* Sequence = Player->State.FindSequence(SequenceID);
+		const UMovieSceneSequence* Sequence = SharedPlaybackState->GetSequence(SequenceID);
 		if (!Sequence)
 		{
 			return;
 		}
 
-		UObject* SpawnedObject = Player->GetSpawnRegister().SpawnObject(SpawnableBindingID, *Sequence->GetMovieScene(), SequenceID, *Player);
-		if (SpawnedObject)
+		UObject* SpawnedObject = SpawnRegister->SpawnObject(SpawnableBindingID, *Sequence->GetMovieScene(), SequenceID, SharedPlaybackState);
+		IMovieScenePlayer* Player = FPlayerIndexPlaybackCapability::GetPlayer(SharedPlaybackState);
+		if (SpawnedObject && Player)
 		{
 			FMovieSceneEvaluationOperand Operand(SequenceID, SpawnableBindingID);
 			Player->OnObjectSpawned(SpawnedObject, Operand);
@@ -230,8 +254,11 @@ void UMovieSceneSpawnablesSystem::OnRun(FSystemTaskPrerequisites& InPrerequisite
 		// Have to check whether the player is still valid because there is a possibility it got cleaned up
 		if (InstanceRegistry->IsHandleValid(Tuple.Get<2>()))
 		{
-			IMovieScenePlayer* Player = InstanceRegistry->GetInstance(Tuple.Get<2>()).GetPlayer();
-			Player->GetSpawnRegister().DestroySpawnedObject(Tuple.Get<0>(), Tuple.Get<1>(), *Player);
+			TSharedRef<const FSharedPlaybackState> SharedPlaybackState = InstanceRegistry->GetInstance(Tuple.Get<2>()).GetSharedPlaybackState();
+			if (FMovieSceneSpawnRegister* SpawnRegister = SharedPlaybackState->FindCapability<FMovieSceneSpawnRegister>())
+			{
+				SpawnRegister->DestroySpawnedObject(Tuple.Get<0>(), Tuple.Get<1>(), SharedPlaybackState);
+			}
 		}
 	}
 }

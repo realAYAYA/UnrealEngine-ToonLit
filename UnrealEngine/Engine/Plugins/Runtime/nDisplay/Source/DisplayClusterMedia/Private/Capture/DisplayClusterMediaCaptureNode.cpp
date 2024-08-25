@@ -4,6 +4,8 @@
 
 #include "Config/IDisplayClusterConfigManager.h"
 #include "DisplayClusterConfigurationTypes.h"
+#include "DisplayClusterMediaLog.h"
+
 #include "IDisplayCluster.h"
 #include "IDisplayClusterCallbacks.h"
 
@@ -48,8 +50,14 @@ FIntPoint FDisplayClusterMediaCaptureNode::GetCaptureSize() const
 	// Return backbuffer runtime size
 	if (GEngine && GEngine->GameViewport && GEngine->GameViewport->Viewport)
 	{
-		return GEngine->GameViewport->Viewport->GetSizeXY();
+		const FIntPoint Size = GEngine->GameViewport->Viewport->GetSizeXY();
+
+		UE_LOG(LogDisplayClusterMedia, Log, TEXT("'%s' capture size is [%d, %d]"), *GetMediaId(), Size.X, Size.Y);
+
+		return Size;
 	}
+
+	UE_LOG(LogDisplayClusterMedia, Warning, TEXT("'%s' couldn't get viewport size"), *GetMediaId());
 
 	return FIntPoint();
 }

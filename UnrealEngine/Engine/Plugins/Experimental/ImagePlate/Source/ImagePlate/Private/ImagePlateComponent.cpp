@@ -10,8 +10,6 @@
 #include "RayTracingInstance.h"
 #include "SceneManagement.h"
 #include "Engine/Engine.h"
-#include "Engine/LevelStreaming.h"
-#include "LevelUtils.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "DynamicMeshBuilder.h"
 #include "Components/SceneCaptureComponent2D.h"
@@ -67,28 +65,11 @@ namespace
 			: FPrimitiveSceneProxy(InComponent)
 			, VertexFactory(GetScene().GetFeatureLevel(), "FImagePlateSceneProxy")
 		{
-			AActor* Owner = InComponent->GetOwner();
-			if (Owner)
-			{
-				// Level colorization
-				ULevel* Level = Owner->GetLevel();
-				ULevelStreaming* LevelStreaming = FLevelUtils::FindStreamingLevel( Level );
-				if ( LevelStreaming )
-				{
-					// Selection takes priority over level coloration.
-					SetLevelColor(LevelStreaming->LevelColor);
-				}
-			}
-
 			Material = InComponent->GetPlate().DynamicMaterial ? InComponent->GetPlate().DynamicMaterial : InComponent->GetPlate().Material;
 			if (Material)
 			{
 				MaterialRelevance |= Material->GetRelevance_Concurrent(GetScene().GetFeatureLevel());
 			}
-
-			FColor NewPropertyColor;
-			GEngine->GetPropertyColorationColor(InComponent, NewPropertyColor);
-			SetPropertyColor(NewPropertyColor);
 		}
 
 		~FImagePlateSceneProxy()
@@ -106,41 +87,35 @@ namespace
 #endif
 		}
 
-		virtual void CreateRenderThreadResources() override
+		virtual void CreateRenderThreadResources(FRHICommandListBase& RHICmdList) override
 		{
-			FRHICommandListBase& RHICmdList = FRHICommandListImmediate::Get();
-
-			BuildMesh();
+			BuildMesh(RHICmdList);
 			IndexBuffer.InitResource(RHICmdList);
 #if RHI_RAYTRACING
 			if (IsRayTracingEnabled())
 			{
 				FRayTracingGeometryInitializer Initializer;
 				Initializer.DebugName = GetOwnerName();
-				Initializer.IndexBuffer = nullptr;
-				Initializer.TotalPrimitiveCount = 0;
+				Initializer.IndexBuffer = IndexBuffer.IndexBufferRHI;
+				Initializer.TotalPrimitiveCount = IndexBuffer.Indices.Num() / 3;
 				Initializer.GeometryType = RTGT_Triangles;
 				Initializer.bFastBuild = true;
 				Initializer.bAllowUpdate = false;
 
-				RayTracingGeometry.SetInitializer(Initializer);
-				RayTracingGeometry.InitResource(RHICmdList);
-
-				RayTracingGeometry.Initializer.IndexBuffer = IndexBuffer.IndexBufferRHI;
-				RayTracingGeometry.Initializer.TotalPrimitiveCount = IndexBuffer.Indices.Num() / 3;
-
 				FRayTracingGeometrySegment Segment;
 				Segment.VertexBuffer = VertexBuffers.PositionVertexBuffer.VertexBufferRHI;
-				Segment.NumPrimitives = RayTracingGeometry.Initializer.TotalPrimitiveCount;
 				Segment.MaxVertices = VertexBuffers.PositionVertexBuffer.GetNumVertices();
-				RayTracingGeometry.Initializer.Segments.Add(Segment);
+				Segment.NumPrimitives = Initializer.TotalPrimitiveCount;
 
-				RayTracingGeometry.UpdateRHI(RHICmdList);
+				Initializer.Segments.Add(Segment);
+
+				RayTracingGeometry.SetInitializer(Initializer);
+				RayTracingGeometry.InitResource(RHICmdList);
 			}
 #endif
 		}
 
-		void BuildMesh()
+		void BuildMesh(FRHICommandListBase& RHICmdList)
 		{
 			TArray<FDynamicMeshVertex> Vertices;
 			Vertices.Empty(4);
@@ -157,7 +132,7 @@ namespace
 			Vertices[2].TextureCoordinate[0] = FVector2f(1,0);
 			Vertices[3].TextureCoordinate[0] = FVector2f(1,1);
 
-			VertexBuffers.InitFromDynamicVertex(&VertexFactory, Vertices);
+			VertexBuffers.InitFromDynamicVertex(RHICmdList, &VertexFactory, Vertices);
 
 			IndexBuffer.Indices.Empty(6);
 			IndexBuffer.Indices.AddUninitialized(6);
@@ -197,7 +172,7 @@ namespace
 			}
 		}
 
-		virtual void GetDynamicMeshElements(const TArray<const FSceneView*>& Views, const FSceneViewFamily& ViewFamily, uint32 VisibilityMap, FMeshElementCollector& Collector) const
+		virtual void GetDynamicMeshElements(const TArray<const FSceneView*>& Views, const FSceneViewFamily& ViewFamily, uint32 VisibilityMap, FMeshElementCollector& Collector) const override
 		{
 			QUICK_SCOPE_CYCLE_COUNTER( STAT_ImagePlateSceneProxy_GetDynamicMeshElements );
 
@@ -320,7 +295,7 @@ namespace
 				bOutputVelocity |= AlwaysHasVelocity();
 
 				FDynamicPrimitiveUniformBuffer& DynamicPrimitiveUniformBuffer = Context.RayTracingMeshResourceCollector.AllocateOneFrameResource<FDynamicPrimitiveUniformBuffer>();
-				DynamicPrimitiveUniformBuffer.Set(GetLocalToWorld(), PreviousLocalToWorld, GetBounds(), GetLocalBounds(), GetLocalBounds(), true, bHasPrecomputedVolumetricLightmap, bOutputVelocity, GetCustomPrimitiveData());
+				DynamicPrimitiveUniformBuffer.Set(Context.RHICmdList, GetLocalToWorld(), PreviousLocalToWorld, GetBounds(), GetLocalBounds(), GetLocalBounds(), true, bHasPrecomputedVolumetricLightmap, bOutputVelocity, GetCustomPrimitiveData());
 				BatchElement.PrimitiveUniformBufferResource = &DynamicPrimitiveUniformBuffer.UniformBuffer;
 
 				BatchElement.FirstIndex = 0;

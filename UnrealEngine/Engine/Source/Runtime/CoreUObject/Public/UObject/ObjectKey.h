@@ -101,17 +101,23 @@ public:
 	}
 
 	/**
-	 * Attempt to access the object from which this key was constructed, even if it is marked as pending kill.
+	 * Attempt to access the object from which this key was constructed, even if it is marked as Garbage.
 	 * @return The object used to construct this key, or nullptr if it is no longer valid
 	 */
-	UObject* ResolveObjectPtrEvenIfPendingKill() const
+	UObject* ResolveObjectPtrEvenIfGarbage() const
 	{
 		FWeakObjectPtr WeakPtr;
 		WeakPtr.ObjectIndex = ObjectIndex;
 		WeakPtr.ObjectSerialNumber = ObjectSerialNumber;
 
-		constexpr bool bEvenIfPendingKill = true;
-		return WeakPtr.Get(bEvenIfPendingKill);
+		constexpr bool bEvenIfGarbage = true;
+		return WeakPtr.Get(bEvenIfGarbage);
+	}
+
+	UE_DEPRECATED(5.4, "Use ResolveObjectPtrEvenIfGarbage().")
+	UObject* ResolveObjectPtrEvenIfPendingKill() const
+	{
+		return ResolveObjectPtrEvenIfGarbage();
 	}
 
 	/**
@@ -217,12 +223,18 @@ public:
 	}
 
 	/**
-	 * Attempt to access the object from which this key was constructed, even if it is marked as pending kill.
+	 * Attempt to access the object from which this key was constructed, even if it is marked as Garbage.
 	 * @return The object used to construct this key, or nullptr if it is no longer valid
 	 */
+	InElementType* ResolveObjectPtrEvenIfGarbage() const
+	{
+		return static_cast<InElementType*>(ObjectKey.ResolveObjectPtrEvenIfGarbage());
+	}
+
+	UE_DEPRECATED(5.4, "Use ResolveObjectPtrEvenIfGarbage().")
 	InElementType* ResolveObjectPtrEvenIfPendingKill() const
 	{
-		return static_cast<InElementType*>(ObjectKey.ResolveObjectPtrEvenIfPendingKill());
+		return static_cast<InElementType*>(ObjectKey.ResolveObjectPtrEvenIfGarbage());
 	}
 
 private:

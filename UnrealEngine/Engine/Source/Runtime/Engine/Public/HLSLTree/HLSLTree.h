@@ -291,7 +291,7 @@ public:
 
 	/** Converts to a requested type, based on IsRequestedEvaluation() */
 	FRequestedType GetRequestedType() const;
-	
+
 	Shader::EValueComponentType GetValueComponentType() const;
 	const TCHAR* GetName() const { return Type.GetName(); }
 	bool IsVoid() const { return Type.IsVoid(); }
@@ -423,7 +423,6 @@ public:
 	FEmitShaderExpression* GetValueShader(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType) const;
 	FEmitShaderExpression* GetValueShader(FEmitContext& Context, FEmitScope& Scope, const Shader::FType& ResultType) const;
 	FEmitShaderExpression* GetValueShader(FEmitContext& Context, FEmitScope& Scope, Shader::EValueType ResultType) const;
-	FEmitShaderExpression* GetValueShader(FEmitContext& Context, FEmitScope& Scope) const;
 
 	Shader::FType GetValuePreshader(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, const Shader::FType& ResultType, Shader::FPreshaderData& OutPreshader) const;
 	Shader::FType GetValuePreshader(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, Shader::FPreshaderData& OutPreshader) const;
@@ -467,10 +466,13 @@ public:
 
 protected:
 	/** Create new expressions representing DDX/DDY of this expression */
-	virtual void ComputeAnalyticDerivatives(FTree& Tree, FExpressionDerivatives& OutResult) const;
+	ENGINE_API virtual void ComputeAnalyticDerivatives(FTree& Tree, FExpressionDerivatives& OutResult) const;
 
 	/** Creates a new expression representing this expression on the previous frame.  By default returns nullptr, which means the previous frame is the same as the current frame */
-	virtual const FExpression* ComputePreviousFrame(FTree& Tree, const FRequestedType& RequestedType) const;
+	ENGINE_API virtual const FExpression* ComputePreviousFrame(FTree& Tree, const FRequestedType& RequestedType) const;
+
+	/** Non-numeric expressions need to override and return numeric preview expressions. Returns this expression itself by default */
+	ENGINE_API virtual const FExpression* GetPreviewExpression(FTree& Tree) const;
 
 	/**
 	 * Computes a FPreparedType for this expression, given a FRequestedType.  Will be called multiple times, with potentially different requested types, if the FExpression is used multiple times.
@@ -487,19 +489,19 @@ protected:
 	virtual bool PrepareValue(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FPrepareValueResult& OutResult) const = 0;
 
 	/** Emit HLSL shader code representing this expression */
-	virtual void EmitValueShader(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FEmitValueShaderResult& OutResult) const;
+	ENGINE_API virtual void EmitValueShader(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FEmitValueShaderResult& OutResult) const;
 
 	/** Emit Preshader code representing this expression */
-	virtual void EmitValuePreshader(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FEmitValuePreshaderResult& OutResult) const;
+	ENGINE_API virtual void EmitValuePreshader(FEmitContext& Context, FEmitScope& Scope, const FRequestedType& RequestedType, FEmitValuePreshaderResult& OutResult) const;
 
 	/** Emit an object.  The given 'ObjectTypeName' determines the C++ type pointed to by OutObjectBase */
-	virtual bool EmitValueObject(FEmitContext& Context, FEmitScope& Scope, const FName& ObjectTypeName, void* OutObjectBase) const;
+	ENGINE_API virtual bool EmitValueObject(FEmitContext& Context, FEmitScope& Scope, const FName& ObjectTypeName, void* OutObjectBase) const;
 
 	/**
 	 * Allows custom objects to be passed to custom HLSL functions.  This needs to initialize some HLSL code that facilitates this interface.
 	 * If this returns 'true', then EmitValueShader() will be called to generate the actual HLSL code for the FExpression
 	 */
-	virtual bool EmitCustomHLSLParameter(FEmitContext& Context, FEmitScope& Scope, const FName& ObjectTypeName, const TCHAR* ParameterName, FEmitCustomHLSLParameterResult& OutResult) const;
+	ENGINE_API virtual bool EmitCustomHLSLParameter(FEmitContext& Context, FEmitScope& Scope, const FName& ObjectTypeName, const TCHAR* ParameterName, FEmitCustomHLSLParameterResult& OutResult) const;
 
 private:
 	TArray<UObject*, TInlineAllocator<2>> Owners;
@@ -507,8 +509,10 @@ private:
 	friend class FTree;
 	friend class FEmitContext;
 	friend class FExpressionForward;
+	friend class FExpressionPreviousFrameSwitch;
 	friend class FExpressionFunctionCall;
 	friend class FExpressionOperation;
+	friend class FExpressionSetStructField;
 };
 
 /**
@@ -624,19 +628,20 @@ public:
 
 	const FExpression* NewFunctionCall(FScope& Scope, FFunction* Function, int32 OutputIndex);
 
-	FExpressionDerivatives GetAnalyticDerivatives(const FExpression* InExpression);
+	ENGINE_API FExpressionDerivatives GetAnalyticDerivatives(const FExpression* InExpression);
 	const FExpression* GetPreviousFrame(const FExpression* InExpression, const FRequestedType& RequestedType);
+	const FExpression* GetPreview(const FExpression* InExpression);
 
 	FScope* NewScope(FScope& Scope);
 	FScope* NewOwnedScope(FStatement& Owner);
 	FFunction* NewFunction();
 
 	/** Shortcuts to create various common expression types */
-	const FExpression* NewConstant(const Shader::FValue& Value);
-	const FExpression* NewSwizzle(const FSwizzleParameters& Params, const FExpression* Input);
-	const FExpression* NewUnaryOp(EOperation Op, const FExpression* Input);
-	const FExpression* NewBinaryOp(EOperation Op, const FExpression* Lhs, const FExpression* Rhs);
-	const FExpression* NewTernaryOp(EOperation Op, const FExpression* Input0, const FExpression* Input1, const FExpression* Input2);
+	ENGINE_API const FExpression* NewConstant(const Shader::FValue& Value);
+	ENGINE_API const FExpression* NewSwizzle(const FSwizzleParameters& Params, const FExpression* Input);
+	ENGINE_API const FExpression* NewUnaryOp(EOperation Op, const FExpression* Input);
+	ENGINE_API const FExpression* NewBinaryOp(EOperation Op, const FExpression* Lhs, const FExpression* Rhs);
+	ENGINE_API const FExpression* NewTernaryOp(EOperation Op, const FExpression* Input0, const FExpression* Input1, const FExpression* Input2);
 
 	const FExpression* NewAbs(const FExpression* Input) { return NewUnaryOp(EOperation::Abs, Input); }
 	const FExpression* NewNeg(const FExpression* Input) { return NewUnaryOp(EOperation::Neg, Input); }
@@ -678,6 +683,16 @@ public:
 
 	const FExpression* NewTruncateLWC(const FExpression* Input) { return NewUnaryOp(EOperation::TruncateLWC, Input); }
 
+	ENGINE_API const FExpression* NewAppend(const FExpression* Lhs, const FExpression* Rhs);
+
+	template <typename... ArgTypes>
+	const FExpression* NewAppend(const FExpression* Lhs, ArgTypes&&... Rhs)
+	{
+		return NewAppend(Lhs, NewAppend(Forward<ArgTypes>(Rhs)...));
+	}
+
+	FActiveStructFieldStack ActiveStructFieldStack;
+
 private:
 	template<typename T, typename... ArgTypes>
 	inline T* NewNode(ArgTypes&&... Args)
@@ -687,12 +702,12 @@ private:
 		return Node;
 	}
 
-	void RegisterNode(FNode* Node);
-	void RegisterExpression(FExpression* Expression, FXxHash64 Hash);
+	ENGINE_API void RegisterNode(FNode* Node);
+	ENGINE_API void RegisterExpression(FExpression* Expression, FXxHash64 Hash);
 	void RegisterExpression(FExpressionLocalPHI* Expression, FXxHash64 Hash);
-	void AddCurrentOwner(FExpression* Expression);
+	ENGINE_API void AddCurrentOwner(FExpression* Expression);
 	void RegisterStatement(FScope& Scope, FStatement* Statement);
-	FExpression* FindExpression(FXxHash64 Hash);
+	ENGINE_API FExpression* FindExpression(FXxHash64 Hash);
 
 	FMemStackBase* Allocator = nullptr;
 	FNode* Nodes = nullptr;

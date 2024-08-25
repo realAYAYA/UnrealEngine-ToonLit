@@ -111,5 +111,10 @@ void FDataflowNodeView::OnNodeInvalidated(FDataflowNode* InvalidatedNode)
 	}
 }
 
+void FDataflowNodeView::AddReferencedObjects(FReferenceCollector& Collector)
+{
+	Collector.AddReferencedObject(SelectedNode);
+}
+
 
 #undef LOCTEXT_NAMESPACE

@@ -7,8 +7,6 @@
 #include "MuT/NodeMeshPrivate.h"
 #include "MuT/AST.h"
 
-#include "MuR/MeshPrivate.h"
-
 
 namespace mu
 {
@@ -18,11 +16,7 @@ namespace mu
 	{
 	public:
 
-		MUTABLE_DEFINE_CONST_VISITABLE()
-
-	public:
-
-		static NODE_TYPE s_type;
+		static FNodeType s_type;
 
 		NodeScalarPtr m_pFactor;
 		TArray<NodeMeshPtr> m_targets;

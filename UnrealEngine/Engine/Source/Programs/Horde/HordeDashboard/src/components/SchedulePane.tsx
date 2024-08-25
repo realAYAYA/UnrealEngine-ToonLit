@@ -8,7 +8,6 @@ import backend from '../backend';
 import { GetJobResponse, GetTemplateRefResponse, JobState } from '../backend/Api';
 import dashboard from '../backend/Dashboard';
 import { displayTimeZone } from "../base/utilities/timeUtils";
-import { projectStore } from '../backend/ProjectStore';
 
 const classes = mergeStyleSets({
    detailsRow: {
@@ -17,14 +16,7 @@ const classes = mergeStyleSets({
             overflow: "hidden",
             whiteSpace: "nowrap",
             padding: 8
-         },
-         '.ms-List-cell:nth-child(odd)': {
-            background: "rgb(240, 239, 239)",
-         },
-         '.ms-List-cell:nth-child(even)': {
-            background: "#FFFFFF",
          }
-
       }
    }
 });
@@ -180,7 +172,12 @@ export const SchedulePane: React.FC<{ templates: GetTemplateRefResponse[] }> = (
 
          const nprops = { ...props, styles: { root: { backgroundColor: "unset", padding: 8 } } };
 
-         return <DetailsRow {...nprops} />
+         let background: string | undefined;
+         if (props.itemIndex % 2 === 0) {
+            background  =  dashboard.darktheme ? "#1D2021" : "#FAF9F9";
+         }
+
+         return <DetailsRow {...nprops} styles={{root: {background: background}}}/>
 
       }
       return null;

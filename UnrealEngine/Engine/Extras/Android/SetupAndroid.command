@@ -65,7 +65,7 @@ if [[ -z "${BUILDTOOLS_VERSION}" ]]; then
     BUILDTOOLS_VERSION="33.0.1"
 fi
 if [[ -z "${CMAKE_VERSION}" ]]; then
-    CMAKE_VERSION="3.10.2.4988404"
+    CMAKE_VERSION="3.22.1"
 fi
 if [[ -z "${NDK_VERSION}" ]]; then
     NDK_VERSION="25.1.8937393"

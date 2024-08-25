@@ -49,11 +49,11 @@ bool UAudioGameplayComponent::HasPayloadType(PayloadFlags InType) const
 
 void UAudioGameplayComponent::Enable()
 {
-	UE_LOG(AudioGameplayLog, Verbose, TEXT("AudioGameplayComponent Enabled (%s)."), *GetFullName());
+	UE_LOG(AudioGameplayLog, VeryVerbose, TEXT("AudioGameplayComponent Enabled (%s)."), *GetFullName());
 }
 
 void UAudioGameplayComponent::Disable()
 {
-	UE_LOG(AudioGameplayLog, Verbose, TEXT("AudioGameplayComponent Disabled (%s)."), *GetFullName());
+	UE_LOG(AudioGameplayLog, VeryVerbose, TEXT("AudioGameplayComponent Disabled (%s)."), *GetFullName());
 }
 

@@ -42,7 +42,7 @@ void FCompensationEvaluator::ComputeLocalTransforms(
 		return;
 	}
 
-	using ConstraintPtr = TObjectPtr<UTickableConstraint>;
+	using ConstraintPtr = TWeakObjectPtr<UTickableConstraint>;
 	const TArray< ConstraintPtr > Constraints = GetHandleTransformConstraints(InWorld);
 	if (Constraints.IsEmpty())
 	{
@@ -93,7 +93,7 @@ void FCompensationEvaluator::ComputeLocalTransforms(
 	for (int32 Index = 0; Index < NumFrames + 1; ++Index)
 	{
 		FFrameNumber FrameNumber = (Index == 0) ? InFrames[0] - 1 : InFrames[Index - 1];
-		FrameNumber = (FFrameTime(FrameNumber) * RootToLocalTransform.InverseLinearOnly()).GetFrame();
+		FrameNumber = (FFrameTime(FrameNumber) * RootToLocalTransform.InverseNoLooping()).GetFrame();
 		// evaluate animation
 		const FMovieSceneEvaluationRange EvaluationRange = FMovieSceneEvaluationRange(FFrameTime(FrameNumber), TickResolution);
 		const FMovieSceneContext Context = FMovieSceneContext(EvaluationRange, PlaybackStatus).SetHasJumped(true);
@@ -105,12 +105,15 @@ void FCompensationEvaluator::ComputeLocalTransforms(
 				BakeHelper->PreEvaluation(MovieScene, FrameNumber);
 			}
 		}
-		InSequencer->GetEvaluationTemplate().EvaluateSynchronousBlocking(Context, *InSequencer);
+		InSequencer->GetEvaluationTemplate().EvaluateSynchronousBlocking(Context);
 
 		// evaluate constraints
-		for (const UTickableConstraint* InConstraint : AllConstraints)
+		for (const TWeakObjectPtr<UTickableConstraint>& InConstraint : AllConstraints)
 		{
-			InConstraint->Evaluate();
+			if (InConstraint.IsValid())
+			{
+				InConstraint->Evaluate();
+			}
 		}
 
 		for (IMovieSceneToolsAnimationBakeHelper* BakeHelper : BakeHelpers)
@@ -190,6 +193,8 @@ void FCompensationEvaluator::ComputeLocalTransforms(
 			BakeHelper->StopBaking(MovieScene);
 		}
 	}
+	//get back to where we are at, should also make sure things are active
+	InSequencer->ForceEvaluate();
 }
 
 void FCompensationEvaluator::ComputeLocalTransformsForBaking(UWorld* InWorld, const TSharedPtr<ISequencer>& InSequencer, const TArray<FFrameNumber>& InFrames)
@@ -199,7 +204,12 @@ void FCompensationEvaluator::ComputeLocalTransformsForBaking(UWorld* InWorld, co
 		return;
 	}
 
-	using ConstraintPtr = TObjectPtr<UTickableConstraint>;
+	if (!IsValid(Handle) || !Handle->IsValid())
+	{
+		return;
+	}
+	
+	using ConstraintPtr = TWeakObjectPtr<UTickableConstraint>;
 	const TArray< ConstraintPtr > Constraints = GetHandleTransformConstraints(InWorld);
 	
 	const TArray< ConstraintPtr > ConstraintsMinusThis =
@@ -247,7 +257,7 @@ void FCompensationEvaluator::ComputeLocalTransformsForBaking(UWorld* InWorld, co
 
 	for (int32 Index = 0; Index < NumFrames; ++Index)
 	{
-		const FFrameNumber& FrameNumber = (FFrameTime(InFrames[Index]) * RootToLocalTransform.InverseLinearOnly()).GetFrame();
+		const FFrameNumber& FrameNumber = (FFrameTime(InFrames[Index]) * RootToLocalTransform.InverseNoLooping()).GetFrame();
 
 		// evaluate animation
 		const FMovieSceneEvaluationRange EvaluationRange = FMovieSceneEvaluationRange(FFrameTime(FrameNumber), TickResolution);
@@ -260,12 +270,15 @@ void FCompensationEvaluator::ComputeLocalTransformsForBaking(UWorld* InWorld, co
 				BakeHelper->PreEvaluation(MovieScene, FrameNumber);
 			}
 		}
-		InSequencer->GetEvaluationTemplate().EvaluateSynchronousBlocking(Context, *InSequencer);
+		InSequencer->GetEvaluationTemplate().EvaluateSynchronousBlocking(Context);
 
 		// evaluate constraints
-		for (UTickableConstraint* InConstraint : AllConstraints)
+		for (const TWeakObjectPtr<UTickableConstraint>& InConstraint : AllConstraints)
 		{
-			InConstraint->Evaluate(true);
+			if (InConstraint.IsValid())
+			{
+				InConstraint->Evaluate(true);
+			}
 		}
 
 		for (IMovieSceneToolsAnimationBakeHelper* BakeHelper : BakeHelpers)
@@ -307,6 +320,13 @@ void FCompensationEvaluator::ComputeLocalTransformsForBaking(UWorld* InWorld, co
 		}
 	}
 
+	const bool bIsValidAfterBaking = IsValid(Handle) && Handle->IsValid();
+	if (!bIsValidAfterBaking)
+	{
+		// the handle might not be valid after baking due to spawnables or baking out of the sequence boundaries
+		// so force sequencer evaluation to make sure we're back to normal
+		InSequencer->ForceEvaluate();
+	}
 }
 void FCompensationEvaluator::ComputeLocalTransformsBeforeDeletion(
 	UWorld* InWorld,
@@ -318,12 +338,12 @@ void FCompensationEvaluator::ComputeLocalTransformsBeforeDeletion(
 		return;
 	}
 
-	using ConstraintPtr = TObjectPtr<UTickableConstraint>;
+	using ConstraintPtr = TWeakObjectPtr<UTickableConstraint>;
 	const TArray<ConstraintPtr> Constraints = GetHandleTransformConstraints(InWorld);
 	const TArray<ConstraintPtr> ConstraintsMinusThis = Constraints.FilterByPredicate(
 		[this](const ConstraintPtr& InConstraint)
 		{
-			return InConstraint != Constraint;
+			return InConstraint.Get() != Constraint;
 		});
 
 	// find last active constraint in the list that is different than the on we want to compensate for
@@ -362,7 +382,7 @@ void FCompensationEvaluator::ComputeLocalTransformsBeforeDeletion(
 
 	for (int32 Index = 0; Index < NumFrames; ++Index)
 	{
-		const FFrameNumber& FrameNumber = (FFrameTime(InFrames[Index]) * RootToLocalTransform.InverseLinearOnly()).GetFrame();
+		const FFrameNumber& FrameNumber = (FFrameTime(InFrames[Index]) * RootToLocalTransform.InverseNoLooping()).GetFrame();
 
 		// evaluate animation
 		const FMovieSceneEvaluationRange EvaluationRange = FMovieSceneEvaluationRange(FFrameTime(FrameNumber), TickResolution);
@@ -375,12 +395,15 @@ void FCompensationEvaluator::ComputeLocalTransformsBeforeDeletion(
 				BakeHelper->PreEvaluation(MovieScene, FrameNumber);
 			}
 		}
-		InSequencer->GetEvaluationTemplate().EvaluateSynchronousBlocking(Context, *InSequencer);
+		InSequencer->GetEvaluationTemplate().EvaluateSynchronousBlocking(Context);
 
 		// evaluate constraints
-		for (const UTickableConstraint* InConstraint : AllConstraints)
+		for (const TWeakObjectPtr<UTickableConstraint>& InConstraint : AllConstraints)
 		{
-			InConstraint->Evaluate(true);
+			if (InConstraint.IsValid())
+			{
+				InConstraint->Evaluate(true);
+			}
 		}
 		
 		for (IMovieSceneToolsAnimationBakeHelper* BakeHelper : BakeHelpers)
@@ -424,7 +447,7 @@ void FCompensationEvaluator::ComputeLocalTransformsBeforeDeletion(
 
 void FCompensationEvaluator::ComputeCompensation(UWorld* InWorld, const TSharedPtr<ISequencer>& InSequencer, const FFrameNumber& InTime)
 {
-	using ConstraintPtr = TObjectPtr<UTickableConstraint>;
+	using ConstraintPtr = TWeakObjectPtr<UTickableConstraint>;
 	const TArray<ConstraintPtr> Constraints = GetHandleTransformConstraints(InWorld);
 	if (Constraints.IsEmpty())
 	{
@@ -456,10 +479,10 @@ void FCompensationEvaluator::ComputeCompensation(UWorld* InWorld, const TSharedP
 		}
 	}
 	
-	auto EvaluateAt = [InSequencer, &AllConstraints, &BakeHelpers](FFrameNumber InFrame)
+	auto EvaluateAt = [Handle = this->Handle, InSequencer, &AllConstraints, &BakeHelpers](FFrameNumber InFrame)
 	{
 		FMovieSceneSequenceTransform RootToLocalTransform = InSequencer->GetFocusedMovieSceneSequenceTransform();
-		InFrame = (FFrameTime(InFrame) * RootToLocalTransform.InverseLinearOnly()).GetFrame();
+		InFrame = (FFrameTime(InFrame) * RootToLocalTransform.InverseNoLooping()).GetFrame();
 
 		UMovieScene* MovieScene = InSequencer->GetFocusedMovieSceneSequence()->GetMovieScene();
 		const FFrameRate TickResolution = MovieScene->GetTickResolution();
@@ -475,11 +498,14 @@ void FCompensationEvaluator::ComputeCompensation(UWorld* InWorld, const TSharedP
 				BakeHelper->PreEvaluation(MovieScene, InFrame);
 			}
 		}
-		InSequencer->GetEvaluationTemplate().EvaluateSynchronousBlocking(Context0, *InSequencer);
+		InSequencer->GetEvaluationTemplate().EvaluateSynchronousBlocking(Context0);
 
-		for (const UTickableConstraint* InConstraint : AllConstraints)
+		for (const TWeakObjectPtr<UTickableConstraint>& InConstraint : AllConstraints)
 		{
-			InConstraint->Evaluate(true);
+			if (InConstraint.IsValid())
+			{
+				InConstraint->Evaluate(true);
+			}
 		}
 
 		for (IMovieSceneToolsAnimationBakeHelper* BakeHelper : BakeHelpers)
@@ -490,7 +516,10 @@ void FCompensationEvaluator::ComputeCompensation(UWorld* InWorld, const TSharedP
 			}
 		}
 
-		// ControlRig->Evaluate_AnyThread();
+		if (Handle)
+		{
+			Handle->PreEvaluate();
+		}
 	};
 
 
@@ -531,8 +560,10 @@ void FCompensationEvaluator::ComputeCompensation(UWorld* InWorld, const TSharedP
 	{
 		const FTransform ChildLocal = ChildLocals[0];
 		Handle->SetGlobalTransform(ChildGlobals[0]);
+		Handle->PreEvaluate();
 		ChildLocals[0] = Handle->GetLocalTransform();
 		Handle->SetLocalTransform(ChildLocal);
+		Handle->PreEvaluate();
 	}
 }
 
@@ -543,7 +574,7 @@ void FCompensationEvaluator::CacheTransforms(UWorld* InWorld, const TSharedPtr<I
 		return;
 	}
 
-	using ConstraintPtr = TObjectPtr<UTickableConstraint>;
+	using ConstraintPtr = TWeakObjectPtr<UTickableConstraint>;
 
 	// get all constraints for evaluation
 	const FConstraintsManagerController& Controller = FConstraintsManagerController::Get(InWorld);
@@ -567,7 +598,7 @@ void FCompensationEvaluator::CacheTransforms(UWorld* InWorld, const TSharedPtr<I
 		const FMovieSceneEvaluationRange EvaluationRange = FMovieSceneEvaluationRange(FFrameTime(InFrame), TickResolution);
 		const FMovieSceneContext Context = FMovieSceneContext(EvaluationRange, PlaybackStatus).SetHasJumped(true);
 		FMovieSceneSequenceTransform RootToLocalTransform = InSequencer->GetFocusedMovieSceneSequenceTransform();
-		InFrame = (FFrameTime(InFrame) * RootToLocalTransform.InverseLinearOnly()).GetFrame();
+		InFrame = (FFrameTime(InFrame) * RootToLocalTransform.InverseNoLooping()).GetFrame();
 
 		for (IMovieSceneToolsAnimationBakeHelper* BakeHelper : BakeHelpers)
 		{
@@ -576,12 +607,15 @@ void FCompensationEvaluator::CacheTransforms(UWorld* InWorld, const TSharedPtr<I
 				BakeHelper->PreEvaluation(MovieScene, InFrame);
 			}
 		}
-		InSequencer->GetEvaluationTemplate().EvaluateSynchronousBlocking(Context, *InSequencer);
+		InSequencer->GetEvaluationTemplate().EvaluateSynchronousBlocking(Context);
 
 		// evaluate constraints
-		for (const UTickableConstraint* InConstraint : AllConstraints)
+		for (const TWeakObjectPtr<UTickableConstraint>& InConstraint : AllConstraints)
 		{
-			InConstraint->Evaluate(true);
+			if (InConstraint.IsValid())
+			{
+				InConstraint->Evaluate(true);
+			}
 		}
 		
 		for (IMovieSceneToolsAnimationBakeHelper* BakeHelper : BakeHelpers)
@@ -625,16 +659,19 @@ void FCompensationEvaluator::ComputeCurrentTransforms(UWorld* InWorld)
 {
 	ChildLocals = ChildGlobals = SpaceGlobals = {FTransform::Identity};
 
-	using ConstraintPtr = TObjectPtr<UTickableConstraint>;
+	using ConstraintPtr = TWeakObjectPtr<UTickableConstraint>;
 	const TArray< ConstraintPtr > Constraints = GetHandleTransformConstraints(InWorld);
 	if (Constraints.IsEmpty())
 	{
 		return;
 	}
 
-	for (const UTickableConstraint* InConstraint : Constraints)
+	for (const TWeakObjectPtr<UTickableConstraint>& InConstraint : Constraints)
 	{
-		InConstraint->Evaluate();
+		if (InConstraint.IsValid())
+		{
+			InConstraint->Evaluate();
+		}
 	}
 
 	ChildLocals[0] = Handle->GetLocalTransform();
@@ -661,9 +698,9 @@ void FCompensationEvaluator::ComputeCurrentTransforms(UWorld* InWorld)
 	}
 }
 
-TArray< TObjectPtr<UTickableConstraint> > FCompensationEvaluator::GetHandleTransformConstraints(UWorld* InWorld) const
+const TArray< TWeakObjectPtr<UTickableConstraint> > FCompensationEvaluator::GetHandleTransformConstraints(UWorld* InWorld) const
 {
-	using ConstraintPtr = TObjectPtr<UTickableConstraint>;
+	using ConstraintPtr = TWeakObjectPtr<UTickableConstraint>;
 	
 	if (Handle)
 	{
@@ -673,7 +710,7 @@ TArray< TObjectPtr<UTickableConstraint> > FCompensationEvaluator::GetHandleTrans
 		const TArray< ConstraintPtr > Constraints = Controller.GetParentConstraints(Handle->GetHash(), bSorted);
 		return Constraints.FilterByPredicate([](const ConstraintPtr& InConstraint)
 		{
-			return IsValid(InConstraint) && InConstraint.IsA<UTickableTransformConstraint>();  
+			return IsValid(InConstraint.Get()) && InConstraint.Get()->IsA<UTickableTransformConstraint>();  
 		});
 	}
 
@@ -747,6 +784,11 @@ void FMovieSceneConstraintChannelHelper::HandleConstraintKeyDeleted(
 	UMovieSceneSection* InSection,
 	const FFrameNumber& InTime)
 {
+	if (bDoNotCompensate)
+	{
+		return;
+	}
+	
 	if (!InConstraint || !InConstraint->NeedsCompensation())
 	{
 		return;
@@ -854,6 +896,39 @@ void FMovieSceneConstraintChannelHelper::HandleConstraintKeyMoved(
 
 }
 
+bool FMovieSceneConstraintChannelHelper::AddConstraintToSequencer(
+	const TSharedPtr<ISequencer>& InSequencer,
+	UTickableTransformConstraint* InConstraint)
+{
+	if (!InSequencer.IsValid() || !InSequencer->GetFocusedMovieSceneSequence())
+	{
+		return false;
+	}
+	
+	ITransformConstraintChannelInterface* Interface = InConstraint ? GetHandleInterface(InConstraint->ChildTRSHandle) : nullptr;
+	if (!Interface)
+	{
+		return false;
+	}
+
+	// create bindings before smart keying so added to spawn copies
+	CreateBindingIDForHandle(InSequencer, InConstraint->ChildTRSHandle);
+	CreateBindingIDForHandle(InSequencer, InConstraint->ParentTRSHandle);
+
+	// adding the child to sequencer can trigger that same function so the constraint might already be added 
+	const bool IsOuterASection = !!Cast<IMovieSceneConstrainedSection>(InConstraint->GetOuter());
+	if (IsOuterASection)
+	{
+		return true;
+	}
+
+	const FFrameRate TickResolution = InSequencer->GetFocusedTickResolution();
+	const FFrameTime FrameTime = InSequencer->GetLocalTime().ConvertTo(TickResolution);
+	const FFrameNumber Time = FrameTime.GetFrame();
+	
+	return Interface->SmartConstraintKey(InConstraint, TOptional<bool>(), Time, InSequencer);
+}
+
 bool FMovieSceneConstraintChannelHelper::SmartConstraintKey(
 	const TSharedPtr<ISequencer>& InSequencer,
 	UTickableTransformConstraint* InConstraint, 
@@ -883,11 +958,11 @@ bool FMovieSceneConstraintChannelHelper::SmartConstraintKey(
 		Time = FrameTime.GetFrame();
 	}
 
-	const bool bSucceeded = Interface->SmartConstraintKey(InConstraint, InOptActive, Time, InSequencer);
-
-	//todo need to revisit this to see if we need to create this even if we don't set a key, it's harmless I think either way
+	//create bindings before smart keying so added to spawn copies
 	CreateBindingIDForHandle(InSequencer, InConstraint->ChildTRSHandle);
 	CreateBindingIDForHandle(InSequencer, InConstraint->ParentTRSHandle);
+
+	const bool bSucceeded = Interface->SmartConstraintKey(InConstraint, InOptActive, Time, InSequencer);
 
 	return bSucceeded;
 }
@@ -956,18 +1031,19 @@ void FMovieSceneConstraintChannelHelper::CompensateIfNeeded(
 	Algo::CopyIf(ConstraintChannels, TransformConstraintsChannels,
 		[InChildHash](const FConstraintAndActiveChannel& InChannel)
 		{
-			if (!InChannel.Constraint.IsValid())
+			if (!InChannel.GetConstraint().Get())
 			{
 				return false;
 			}
 
-			if ((InChildHash != INDEX_NONE) && (InChannel.Constraint->GetTargetHash() != InChildHash))
+			if ((InChildHash != INDEX_NONE) && (InChannel.GetConstraint()->GetTargetHash() != InChildHash))
 			{
 				return false;
 			}
 
-			const UTickableTransformConstraint* Constraint = Cast<UTickableTransformConstraint>(InChannel.Constraint.Get());
-			return Constraint && (Constraint->GetTargetHash() == InChildHash) && Constraint->NeedsCompensation();
+			const UTickableTransformConstraint* Constraint = Cast<UTickableTransformConstraint>(InChannel.GetConstraint().Get());
+			//if no InChildHash specified(== INDEX_NONE) then do all!
+			return Constraint && (InChildHash == INDEX_NONE || Constraint->GetTargetHash() == InChildHash) && Constraint->NeedsCompensation();
 		}
 	);
 
@@ -990,7 +1066,7 @@ void FMovieSceneConstraintChannelHelper::CompensateIfNeeded(
 
 			if (CurrentValue != PreviousValue) //if they are the same no need to do anything
 			{
-				UTickableTransformConstraint* Constraint = Cast<UTickableTransformConstraint>(Channel.Constraint.Get());
+				UTickableTransformConstraint* Constraint = Cast<UTickableTransformConstraint>(Channel.GetConstraint().Get());
 
 				// is the child already in that array?
 				int32 DataIndex = ToCompensate.IndexOfByPredicate([Constraint](const CompensationData& InData)
@@ -1077,7 +1153,7 @@ FConstraintSections FMovieSceneConstraintChannelHelper::GetConstraintSectionAndC
 		return ReturnValue;
 	}
 
-	ReturnValue.ActiveChannel = ConstrainedSection->GetConstraintChannel(InConstraint->GetFName());
+	ReturnValue.ActiveChannel = ConstrainedSection->GetConstraintChannel(InConstraint->ConstraintID);
 	return ReturnValue;
 }
 
@@ -1175,7 +1251,7 @@ void FMovieSceneConstraintChannelHelper::CreateBindingIDForHandle(const TSharedP
 			}
 			else
 			{
-				const FGuid Guid = InSequencer->GetHandleToObject(Actor, false); //don't create it???
+				const FGuid Guid = InSequencer->GetHandleToObject(Actor, true); //make sure object is in sequencer or binding id will be empty we won't resolve the binding
 				InHandle->ConstraintBindingID = UE::MovieScene::FRelativeObjectBindingID(Guid);
 			}
 		}

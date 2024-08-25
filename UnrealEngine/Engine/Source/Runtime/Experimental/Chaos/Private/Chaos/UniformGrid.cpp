@@ -290,9 +290,6 @@ namespace Chaos
 		{
 			return (MCells[1] + 1) * (MCells[2] + 1) * (Index[0] + 1) + (MCells[2] + 1) * (Index[1] + 1) + Index[2] + 1;
 		}
-
-
-		return -1;
 	}
 
 	template<class T>
@@ -358,8 +355,6 @@ namespace Chaos
 		{
 			return IndexIn + (MCells[1] + 1) * (MCells[2] + 1) * (LocalIndexIn[0] - 1) + (MCells[2] + 1) * (LocalIndexIn[1] - 1) + LocalIndexIn[2] - 1;
 		}
-
-		return -1;
 
 	}
 

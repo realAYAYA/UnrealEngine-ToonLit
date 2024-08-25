@@ -58,6 +58,10 @@ struct FAssetGatherDiagnostics
 	float DiscoveryTimeSeconds;
 	/** Time spent reading asset files on disk / from cache */
 	float GatherTimeSeconds;
+	/** How many directories in the search results were read from the cache. */
+	int32 NumCachedDirectories;
+	/** How many directories in the search results were not in the cache and were read by scanning the disk. */
+	int32 NumUncachedDirectories;
 	/** How many files in the search results were read from the cache. */
 	int32 NumCachedAssetFiles;
 	/** How many files in the search results were not in the cache and were read by parsing the file. */
@@ -74,6 +78,7 @@ public:
 		const TArray<FString>& InMountRelativePathsDenyList, bool bInAsyncEnabled);
 	virtual ~FAssetDataGatherer();
 
+	void OnInitialSearchCompleted();
 
 	// Extra at-construction configuration 
 
@@ -161,7 +166,7 @@ public:
 	void ScanPathsSynchronous(const TArray<FString>& InPaths, bool bForceRescan, bool bIgnoreDenyListScanFilters,
 		const FString& SaveCacheFilename, const TArray<FString>& SaveCacheLongPackageNameDirs);
 	/** Wait for all monitored assets to be added to search results. */
-	void WaitForIdle();
+	void WaitForIdle(float TimeoutSeconds = -1.0f);
 	/**
 	 * Report whether all monitored assets have been added to search results, AND these results have been gathered
 	 * through a GetAndTrimSearchResults call.
@@ -240,17 +245,23 @@ public:
 		FPackageReader::EReadOptions Options);
 
 private:
-
+	enum class ETickResult
+	{
+		KeepTicking,
+		PollDiscovery,
+		Idle,
+		Interrupt,
+	};
 	/**
 	 * Helper function to run the tick in a loop-within-a-loop to minimize critical section entry, and to move expensive
 	 * operations out of the critical section
 	 */
-	void InnerTickLoop(bool bInSynchronousTick, bool bContributeToCacheSave);
+	void InnerTickLoop(bool bInSynchronousTick, bool bContributeToCacheSave, double EndTimeSeconds);
 	/**
 	 * Tick function to pump scanning and push results into the search results structure. May be called from devoted
 	 * thread or inline from synchronous functions on other threads.
 	 */
-	void TickInternal(bool& bOutIsIdle, double& TickStartTime);
+	ETickResult TickInternal(double& TickStartTime, bool bPollDiscovery);
 	/** Add any new package files from the background directory scan to our work list **/
 	void IngestDiscoveryResults();
 
@@ -370,6 +381,8 @@ private:
 	 * If null, results will only be added when Wait functions are called. Constant during threading.
 	 */
 	FRunnableThread* Thread;
+	int32 TickInternalBatchSize = 1;
+
 	/**
 	 * True if async gathering is enabled, false if e.g. singlethreaded or disabled by commandline.
  	 * Even when enabled, gathering is still synchronous until StartAsync is called.
@@ -460,13 +473,6 @@ private:
 	bool bFirstTickAfterIdle;
 	/** True if we have finished discovering our first wave of files, to report metrics for that most-important wave. */
 	bool bFinishedInitialDiscovery;
-	/**
-	 * Flag to indicate LaunchEngineLoop's AllModuleLoadingPhases is complete; finishing the initial discovery is
-	 * blocked until preloading complete because plugins can be mounted during startup up until that point, and
-	 * we need to wait for all the plugins that will load before declaring completion.
-	 */
-	bool bAllModuleLoadingPhasesComplete = false;
-
 
 	// Variable section for variables that are read/writable only within TickLock.
 
@@ -483,7 +489,7 @@ private:
 	TMap<FName, FDiskCachedAssetData*> DiskCachedAssetDataMap;
 	/** Map of PackageName to cached discovered assets that will be written to disk at shutdown. */
 	TMap<FName, FDiskCachedAssetData*> NewCachedAssetDataMap;
-	/** Used to block on gather results. If non-zero, tick should end when WaitBatchCount files have been processed. */
+	/** Used to block on gather results. If non-negative, tick should end when WaitBatchCount files have been processed. */
 	int32 WaitBatchCount;
 	/** How many uncached asset files had been discovered at the last async cache save */
 	int32 LastMonolithicCacheSaveUncachedAssetFiles;

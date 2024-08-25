@@ -37,9 +37,12 @@ protected:
 	virtual void StartPipelineByIndex(int32 InPipelineIndex);
 	virtual void Start(const UMoviePipelineExecutorJob* InJob) {}
 	virtual FText GetWindowTitle();
+	virtual float GetCompletionPercentageFromActivePipeline();
 public:
+	/** Note: When using a Movie Graph Pipeline this pointer will always be null. */
 	virtual void OnIndividualPipelineFinished(UMoviePipeline* /* FinishedPipeline */);
 	virtual void OnExecutorFinishedImpl();
+	/** Note: When using a Movie Graph Pipeline InPipeline will always be null. */
 	virtual void OnPipelineErrored(UMoviePipeline* InPipeline, bool bIsFatal, FText ErrorText);
 
 	virtual void CancelCurrentJob_Implementation();

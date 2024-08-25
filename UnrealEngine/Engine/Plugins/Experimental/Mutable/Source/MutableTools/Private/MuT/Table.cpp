@@ -12,14 +12,10 @@
 #include "MuR/SerialisationPrivate.h"
 #include "MuT/TablePrivate.h"
 
-#include <memory>
-#include <string>
-#include <utility>
-
 
 namespace mu
 {
-	MUTABLE_IMPLEMENT_ENUM_SERIALISABLE(TABLE_COLUMN_TYPE)
+	MUTABLE_IMPLEMENT_ENUM_SERIALISABLE(ETableColumnType)
 
 
 	//---------------------------------------------------------------------------------------------
@@ -46,70 +42,62 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-	TablePtr Table::StaticUnserialise( InputArchive& arch )
+	Ptr<Table> Table::StaticUnserialise( InputArchive& arch )
 	{
-		TablePtr pResult = new Table();
+		Ptr<Table> pResult = new Table();
 		arch >> *pResult->m_pD;
 		return pResult;
 	}
 
 
-	//---------------------------------------------------------------------------------------------
 	Table::Private* Table::GetPrivate() const
 	{
 		return m_pD;
 	}
 
 
-	//---------------------------------------------------------------------------------------------
-	void Table::SetName( const char* strName )
+	void Table::SetName( const FString& InName )
 	{
-		m_pD->m_name = strName;
+		m_pD->Name = InName;
 	}
 
 
-	//---------------------------------------------------------------------------------------------
-	const char* Table::GetName() const
+	const FString& Table::GetName() const
 	{
-		return m_pD->m_name.c_str();
+		return m_pD->Name;
 	}
 
 
-	//---------------------------------------------------------------------------------------------
-	int Table::AddColumn( const char* strName, TABLE_COLUMN_TYPE type )
+	int32 Table::AddColumn(const FString& Name, ETableColumnType type )
 	{
-		int result = m_pD->m_columns.Num();
+		int32 result = m_pD->Columns.Num();
 
-		TABLE_COLUMN c;
+		FTableColumn c;
 
-		if (strName)
-		{
-			c.m_name = strName;
-		}
-		c.m_type = type;
+		c.Name = Name;
+		c.Type = type;
 
-		m_pD->m_columns.Add(c);
+		m_pD->Columns.Add(c);
 
 		// Add it to all rows
-		for ( std::size_t r=0; r<m_pD->m_rows.Num(); ++r )
+		for ( int32 r=0; r<m_pD->Rows.Num(); ++r )
 		{
-			m_pD->m_rows[r].m_values.Add( TABLE_VALUE() );
+			m_pD->Rows[r].Values.Add( FTableValue() );
 		}
 
 		return result;
 	}
 
 
-	//---------------------------------------------------------------------------------------------
-	int Table::FindColumn( const char* strName ) const
+	int32 Table::FindColumn(const FString& Name ) const
 	{
-		int res = -1;
+		int32 res = -1;
 
-		for ( std::size_t c=0; c<m_pD->m_columns.Num(); ++c )
+		for ( int32 c=0; c<m_pD->Columns.Num(); ++c )
 		{
-			if ( m_pD->m_columns[c].m_name == strName )
+			if ( m_pD->Columns[c].Name == Name )
 			{
-				res = (int)c;
+				res = c;
 			}
 		}
 
@@ -117,87 +105,79 @@ namespace mu
 	}
 
 
-	//---------------------------------------------------------------------------------------------
-    void Table::AddRow( uint32_t id )
+    void Table::AddRow( uint32 id )
 	{
 		check( m_pD->FindRow(id)<0 );
 
-		TABLE_ROW r;
-		r.m_id = id;
-		r.m_values.SetNum( m_pD->m_columns.Num() );
-		m_pD->m_rows.Add( r );
+		FTableRow r;
+		r.Id = id;
+		r.Values.SetNum( m_pD->Columns.Num() );
+		m_pD->Rows.Add( r );
 	}
 
 
-	//---------------------------------------------------------------------------------------------
-	void Table::SetNoneOption(bool bAddOption)
+    void Table::SetCell( int32 Column, uint32 RowId, float Value, const void* ErrorContext)
 	{
-		m_pD->m_NoneOption = bAddOption;
+		int32 Row = m_pD->FindRow(RowId);
+		check( Row>=0 );
+		check( Column < m_pD->Columns.Num() );
+		check( Column < m_pD->Rows[Row].Values.Num() );
+		check( m_pD->Columns[Column].Type == ETableColumnType::Scalar );
+
+		m_pD->Rows[ Row ].Values[Column].Scalar = Value;
+		m_pD->Rows[ Row ].Values[Column].ErrorContext = ErrorContext;
 	}
 
 
-	//---------------------------------------------------------------------------------------------
-    void Table::SetCell( int column, uint32_t rowId, float value )
+    void Table::SetCell( int32 Column, uint32 RowId, const FVector4f& Value, const void* ErrorContext)
 	{
-		int row = m_pD->FindRow(rowId);
-		check( row>=0 );
-		check( column < (int)m_pD->m_columns.Num() );
-		check( column < (int)m_pD->m_rows[row].m_values.Num() );
-		check( m_pD->m_columns[column].m_type == TCT_SCALAR );
+		int32 Row = m_pD->FindRow(RowId);
+		check( Row>=0 );
+		check( Column < m_pD->Columns.Num() );
+		check( Column < m_pD->Rows[Row].Values.Num() );
+		check( m_pD->Columns[Column].Type == ETableColumnType::Color );
 
-		m_pD->m_rows[ row ].m_values[column].m_scalar = value;
+		m_pD->Rows[ Row ].Values[Column].Color = Value;
+		m_pD->Rows[ Row ].Values[Column].ErrorContext = ErrorContext;
 	}
 
 
-	//---------------------------------------------------------------------------------------------
-    void Table::SetCell( int column, uint32_t rowId, float r, float g, float b, float a)
+    void Table::SetCell(int32 Column, uint32 RowId, ResourceProxy<Image>* Value, const void* ErrorContext)
 	{
-		int row = m_pD->FindRow(rowId);
-		check( row>=0 );
-		check( column < (int)m_pD->m_columns.Num() );
-		check( column < (int)m_pD->m_rows[row].m_values.Num() );
-		check( m_pD->m_columns[column].m_type == TCT_COLOUR );
+		int32 Row = m_pD->FindRow(RowId);
+		check( Row>=0 );
+		check( Column < m_pD->Columns.Num() );
+		check( Column < m_pD->Rows[Row].Values.Num() );
+		check( m_pD->Columns[Column].Type == ETableColumnType::Image );
 
-		m_pD->m_rows[ row ].m_values[column].m_colour = FVector4f(r, g, b, a);
+		m_pD->Rows[ Row ].Values[Column].ProxyImage = Value;
+		m_pD->Rows[ Row ].Values[Column].ErrorContext = ErrorContext;
 	}
 
 
-	//---------------------------------------------------------------------------------------------
-    void Table::SetCell( int column, uint32_t rowId, Image* pImage )
+    void Table::SetCell( int32 Column, uint32 RowId, Mesh* Value, const void* ErrorContext )
 	{
-		int row = m_pD->FindRow(rowId);
-		check( row>=0 );
-		check( column < (int)m_pD->m_columns.Num() );
-		check( column < (int)m_pD->m_rows[row].m_values.Num() );
-		check( m_pD->m_columns[column].m_type == TCT_IMAGE );
+		int32 Row = m_pD->FindRow(RowId);
+		check( Row>=0 );
+		check( Column < m_pD->Columns.Num() );
+		check( Column < m_pD->Rows[Row].Values.Num() );
+		check( m_pD->Columns[Column].Type == ETableColumnType::Mesh );
 
-		m_pD->m_rows[ row ].m_values[column].m_pProxyImage = new ResourceProxyMemory<Image>(pImage);
+		m_pD->Rows[ Row ].Values[Column].Mesh = Value;
+		m_pD->Rows[ Row ].Values[Column].ErrorContext = ErrorContext;
 	}
 
 
-	//---------------------------------------------------------------------------------------------
-    void Table::SetCell( int column, uint32_t rowId, Mesh* pMesh )
+    void Table::SetCell( int32 Column, uint32 RowId, const FString& Value, const void* ErrorContext )
 	{
-		int row = m_pD->FindRow(rowId);
-		check( row>=0 );
-		check( column < (int)m_pD->m_columns.Num() );
-		check( column < (int)m_pD->m_rows[row].m_values.Num() );
-		check( m_pD->m_columns[column].m_type == TCT_MESH );
+		int32 Row = m_pD->FindRow(RowId);
+		check( Row>=0 );
+		check( Column < m_pD->Columns.Num() );
+		check( Column < m_pD->Rows[Row].Values.Num() );
+		check( m_pD->Columns[Column].Type == ETableColumnType::String );
 
-		m_pD->m_rows[ row ].m_values[column].m_pMesh = pMesh;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    void Table::SetCell( int column, uint32_t rowId, const char* strValue )
-	{
-		int row = m_pD->FindRow(rowId);
-		check( row>=0 );
-		check( column < (int)m_pD->m_columns.Num() );
-		check( column < (int)m_pD->m_rows[row].m_values.Num() );
-		check( m_pD->m_columns[column].m_type == TCT_STRING );
-
-		m_pD->m_rows[ row ].m_values[column].m_string = strValue;
+		m_pD->Rows[ Row ].Values[Column].String = Value;
+		m_pD->Rows[ Row ].Values[Column].ErrorContext = ErrorContext;
 	}
 
 

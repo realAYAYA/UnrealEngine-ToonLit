@@ -21,40 +21,68 @@ CmdSync(const FCmdSyncOptions& Options)
 		return Options.Filter ? Options.Filter->Resolve(Path) : Path;
 	};
 
+	FProxyPool ProxyPool(Options.Remote, Options.AuthDesc);
+
 	std::error_code ErrorCode	   = {};
 	FPath			ResolvedSource = ResolvePath(Options.Source);
 
 	if (Options.Source == ResolvedSource)
 	{
-		UNSYNC_VERBOSE(L"Sync source: '%ls'", Options.Source.wstring().c_str());
+		UNSYNC_LOG(L"Sync source: '%ls'", Options.Source.wstring().c_str());
 	}
 	else
 	{
-		UNSYNC_VERBOSE(L"Sync source: '%ls' ('%ls')", Options.Source.wstring().c_str(), ResolvedSource.wstring().c_str());
+		UNSYNC_LOG(L"Sync source: '%ls' ('%ls')", Options.Source.wstring().c_str(), ResolvedSource.wstring().c_str());
 	}
 
 	if (!Options.Filter->SyncIncludedWords.empty())
 	{
-		UNSYNC_VERBOSE(L"Include filter: ");
+		UNSYNC_LOG(L"Include filter: ");
+		UNSYNC_LOG_INDENT;
 		for( const std::wstring& include : Options.Filter->SyncIncludedWords)
 		{ 
-			UNSYNC_VERBOSE(L"\t%s", include.c_str());
+			UNSYNC_LOG(L" %ls", include.c_str());
 		}
 	}
 	if(!Options.Filter->SyncExcludedWords.empty())
 	{
-		UNSYNC_VERBOSE(L"Exclude filter: ");
+		UNSYNC_LOG(L"Exclude filter: ");
+		UNSYNC_LOG_INDENT;
 		for( const std::wstring& exclude : Options.Filter->SyncExcludedWords)
 		{ 
-			UNSYNC_VERBOSE(L"\t%s", exclude.c_str());
+			UNSYNC_LOG(L"%ls", exclude.c_str());
 		}
 	}
 
-	const bool bSourcePathExists	 = PathExists(ResolvedSource, ErrorCode);
-	const bool bSourceIsDirectory	 = bSourcePathExists && unsync::IsDirectory(ResolvedSource);
-	const bool bSourceIsManifestHash = !bSourcePathExists && LooksLikeHash160(Options.Source.native());
+	bool bSourceFileSystemRequired = true;
+	bool bSourcePathExists		   = false;
+	bool bSourceIsDirectory		   = false;
+	bool bSourceIsManifestHash	   = LooksLikeHash160(Options.Source.native());
 
-	bool bSourceFileSystemRequired = !bSourceIsManifestHash;
+	if (ProxyPool.IsValid())
+	{
+		const FRemoteProtocolFeatures& Features = ProxyPool.GetFeatures();
+		if (Features.bFileDownload && Features.bDirectoryListing)
+		{
+			UNSYNC_LOG(L"Server supports direct file access");
+			bSourceFileSystemRequired = false;
+		}
+		else if (Features.bDownloadByHash && bSourceIsManifestHash)
+		{
+			UNSYNC_LOG(L"Server supports access by manifest hash");
+			bSourceFileSystemRequired = false;
+		}
+		else
+		{
+			UNSYNC_VERBOSE2(L"Server does not support direct file access or download by manifest hash. Source file system access is required.");
+		}
+	}
+
+	if (bSourceFileSystemRequired)
+	{
+		bSourcePathExists  = PathExists(ResolvedSource, ErrorCode);
+		bSourceIsDirectory = bSourcePathExists && unsync::IsDirectory(ResolvedSource);
+	}
 
 	std::vector<FPath> ResolvedOverlays;
 
@@ -65,35 +93,42 @@ CmdSync(const FCmdSyncOptions& Options)
 			FPath ResolvedEntry = ResolvePath(Entry);
 			if (ResolvedEntry == Entry)
 			{
-				UNSYNC_VERBOSE(L"Sync overlay: '%ls'", ResolvedEntry.wstring().c_str());
+				UNSYNC_LOG(L"Sync overlay: '%ls'", ResolvedEntry.wstring().c_str());
 			}
 			else
 			{
-				UNSYNC_VERBOSE(L"Sync overlay: '%ls' ('%ls')", Entry.wstring().c_str(), ResolvedEntry.wstring().c_str());
+				UNSYNC_LOG(L"Sync overlay: '%ls' ('%ls')", Entry.wstring().c_str(), ResolvedEntry.wstring().c_str());
 			}
 			ResolvedOverlays.push_back(ResolvedEntry);
 		}
 
-		bSourceFileSystemRequired = true;
-
-		if (!bSourcePathExists || !bSourceIsDirectory)
+		if (bSourceFileSystemRequired)
 		{
-			UNSYNC_ERROR(L"Sync overlay option requires sync source to be a directory that exists on disk.");
+			if (!bSourcePathExists || !bSourceIsDirectory)
+			{
+				UNSYNC_ERROR(L"Sync overlay option requires sync source to be a directory that exists on disk.");
+				return 1;
+			}
+		}
+		
+		if (bSourceIsManifestHash)
+		{
+			UNSYNC_ERROR(L"Sync overlay option is not compatible with sync by manifest hash.");
 			return 1;
 		}
 
-		if (bSourceIsManifestHash)
+		if (!Options.SourceManifestOverride.empty())
 		{
 			UNSYNC_ERROR(L"Sync overlay option is not compatible with manifest override.");
 			return 1;
 		}
 	}
 
-	UNSYNC_VERBOSE(L"Sync target: '%ls'", Options.Target.wstring().c_str());
+	UNSYNC_LOG(L"Sync target: '%ls'", Options.Target.wstring().c_str());
 
 	if (!Options.SourceManifestOverride.empty())
 	{
-		UNSYNC_VERBOSE(L"Manifest override: %ls", Options.SourceManifestOverride.wstring().c_str());
+		UNSYNC_LOG(L"Manifest override: %ls", Options.SourceManifestOverride.wstring().c_str());
 
 		if (Options.Remote.IsValid() && !Options.bFullSourceScan)
 		{
@@ -109,48 +144,53 @@ CmdSync(const FCmdSyncOptions& Options)
 		{
 			if (bSourceIsDirectory)
 			{
-				UNSYNC_VERBOSE(L"'%ls' is a directory", Options.Source.wstring().c_str());
+				UNSYNC_LOG(L"'%ls' is a directory", Options.Source.wstring().c_str());
 			}
 			else
 			{
-				UNSYNC_VERBOSE(L"Assuming '%ls' is a directory", Options.Source.wstring().c_str());
+				UNSYNC_LOG(L"Assuming '%ls' is a directory", Options.Source.wstring().c_str());
 			}
 
 			FSyncDirectoryOptions SyncOptions;
 
-			if (bSourceIsManifestHash || !bSourceFileSystemRequired)
-			{
-				SyncOptions.SourceType = ESyncSourceType::Server;
-			}
-			else
+			if (bSourceFileSystemRequired)
 			{
 				SyncOptions.SourceType = ESyncSourceType::FileSystem;
 			}
+			else if (bSourceIsManifestHash)
+			{
+				SyncOptions.SourceType = ESyncSourceType::ServerWithManifestHash;
+			}
+			else
+			{
+				SyncOptions.SourceType = ESyncSourceType::Server;
+			}
 
-			SyncOptions.Source				   = ResolvedSource;
-			SyncOptions.Base				   = Options.Target;  // read base data from existing target
-			SyncOptions.Target				   = Options.Target;
-			SyncOptions.ScavengeRoot		   = Options.ScavengeRoot;
-			SyncOptions.ScavengeDepth		   = Options.ScavengeDepth;
-			SyncOptions.Overlays			   = ResolvedOverlays;
-			SyncOptions.SourceManifestOverride = Options.SourceManifestOverride;
-			SyncOptions.Remote				   = &Options.Remote;
-			SyncOptions.SyncFilter			   = Options.Filter;
-			SyncOptions.bCleanup			   = Options.bCleanup;
-			SyncOptions.bValidateSourceFiles   = Options.bFullSourceScan;
-			SyncOptions.bFullDifference		   = Options.bFullDifference;
-			SyncOptions.bValidateTargetFiles   = Options.bValidateTargetFiles;
-			SyncOptions.bCheckAvailableSpace   = Options.bCheckAvailableSpace;
+			SyncOptions.Source					   = ResolvedSource;
+			SyncOptions.Base					   = Options.Target;  // read base data from existing target
+			SyncOptions.Target					   = Options.Target;
+			SyncOptions.ScavengeRoot			   = Options.ScavengeRoot;
+			SyncOptions.ScavengeDepth			   = Options.ScavengeDepth;
+			SyncOptions.Overlays				   = ResolvedOverlays;
+			SyncOptions.SourceManifestOverride	   = Options.SourceManifestOverride;
+			SyncOptions.ProxyPool				   = &ProxyPool;
+			SyncOptions.SyncFilter				   = Options.Filter;
+			SyncOptions.bCleanup				   = Options.bCleanup;
+			SyncOptions.bValidateSourceFiles	   = Options.bFullSourceScan;
+			SyncOptions.bFullDifference			   = Options.bFullDifference;
+			SyncOptions.bValidateTargetFiles	   = Options.bValidateTargetFiles;
+			SyncOptions.bCheckAvailableSpace	   = Options.bCheckAvailableSpace;
+			SyncOptions.BackgroundTaskMemoryBudget = Options.BackgroundTaskMemoryBudget;
 
 			return SyncDirectory(SyncOptions) ? 0 : 1;
 		}
 		else
 		{
-			UNSYNC_VERBOSE(L"'%ls' is a file", Options.Source.wstring().c_str());
+			UNSYNC_LOG(L"'%ls' is a file", Options.Source.wstring().c_str());
 
 			FSyncFileOptions SyncFileOptions;
 			SyncFileOptions.Algorithm			 = Options.Algorithm;
-			SyncFileOptions.BlockSize			 = Options.BlockSize;
+			SyncFileOptions.BlockSize			 = uint32(64_KB);
 			SyncFileOptions.bValidateTargetFiles = Options.bValidateTargetFiles;
 
 			return SyncFile(Options.Source, Options.Target, Options.Target, SyncFileOptions).Succeeded() ? 0 : 1;
@@ -165,7 +205,7 @@ CmdSync(const FCmdSyncOptions& Options)
 		}
 		else
 		{
-			UNSYNC_ERROR(L"Source path does not exist");
+			UNSYNC_ERROR(L"Source path '%ls' does not exist", ResolvedSource.wstring().c_str());
 			return 1;
 		}
 	}

@@ -28,6 +28,7 @@
 #include "GameFramework/PlayerInput.h"
 #include "EngineUtils.h"
 #include "HAL/IConsoleManager.h"
+#include "SceneInterface.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(GameplayDebuggerLocalController)
 
@@ -151,6 +152,12 @@ void UGameplayDebuggerLocalController::Cleanup()
 	}
 #endif // WITH_EDITOR
 
+	// If we are cleaning up while enabled, restore the screen messages flag
+	if (bIsLocallyEnabled && !GAreScreenMessagesEnabled)
+	{
+		GAreScreenMessagesEnabled = bPrevScreenMessagesEnabled;
+	}
+
 	bNeedsCleanup = false;
 }
 
@@ -192,8 +199,18 @@ void UGameplayDebuggerLocalController::OnCategoriesChanged()
 }
 
 #if WITH_GAMEPLAY_DEBUGGER_MENU
-void UGameplayDebuggerLocalController::OnDebugDraw(class UCanvas* Canvas, class APlayerController* PC)
+void UGameplayDebuggerLocalController::OnDebugDraw(UCanvas* Canvas, APlayerController* PC)
 {
+	// this change is required for multi-client PIE, since even though every client has its own UWorld this OnDebugDraw
+	// gets called by a multicast-delegate - the same for all the clients. 
+	CA_SUPPRESS(6011);
+	const FSceneInterface* Scene = (Canvas && Canvas->Canvas) ? Canvas->Canvas->GetScene() : nullptr;
+	if (Scene && Scene->GetWorld() != CachedReplicator->GetWorld())
+	{
+		return;
+	}
+	check(Canvas);
+	
 	if (CachedReplicator && CachedReplicator->IsEnabled() && bDebugDrawEnabled)
 	{
 		FGameplayDebuggerCanvasContext CanvasContext(Canvas, HUDFont);
@@ -295,10 +312,19 @@ void UGameplayDebuggerLocalController::DrawHeader(FGameplayDebuggerCanvasContext
 	}
 	else
 	{
-		CanvasContext.Printf(TEXT("Tap {yellow}%s{white} to close, use %s to toggle categories."), *ActivationKeyDesc, *CategoryKeysDesc);
+		const UGameplayDebuggerConfig* Config = UGameplayDebuggerConfig::StaticClass()->GetDefaultObject<UGameplayDebuggerConfig>();
+		CanvasContext.Printf(TEXT("Tap {yellow}%s{white} to close or hold to select new Pawn (hold {yellow}[Shift+%s]{white} to select local player). Use %s to toggle categories."),
+			*ActivationKeyDesc,
+			*Config->ActivationKey.ToString(),
+			*CategoryKeysDesc);
 	}
 
-	const FString DebugActorDesc = FString::Printf(TEXT("Debug actor: {cyan}%s"), *CachedReplicator->GetDebugActorName().ToString());
+	// Get the NetRole string so we can hint if the user has selected a local Actor or not
+	const AActor* DebugActor = CachedReplicator ? CachedReplicator->GetDebugActor() : nullptr;
+	const ENetRole DebugNetRole = DebugActor ? DebugActor->GetLocalRole() : ENetRole::ROLE_None;
+	const FString DebugNetRoleString = UEnum::GetValueAsString<ENetRole>(DebugNetRole);
+	
+	const FString DebugActorDesc = FString::Printf(TEXT("Debug actor: {cyan}%s{white} [%s]"), *CachedReplicator->GetDebugActorName().ToString(), *DebugNetRoleString);
 	float DebugActorSizeX = 0.0f, DebugActorSizeY = 0.0f;
 	CanvasContext.MeasureString(DebugActorDesc, DebugActorSizeX, DebugActorSizeY);
 	CanvasContext.PrintAt((CanvasContext.Canvas->SizeX / DPIScale) - PaddingRight - DebugActorSizeX, UsePaddingTop, DebugActorDesc);
@@ -457,8 +483,11 @@ void UGameplayDebuggerLocalController::BindInput(UInputComponent& InputComponent
 	const UGameplayDebuggerConfig* SettingsCDO = UGameplayDebuggerConfig::StaticClass()->GetDefaultObject<UGameplayDebuggerConfig>();
 	if (!bSimulateMode)
 	{
-		InputComponent.BindKey(SettingsCDO->ActivationKey, IE_Pressed, this, &UGameplayDebuggerLocalController::OnActivationPressed);
-		InputComponent.BindKey(SettingsCDO->ActivationKey, IE_Released, this, &UGameplayDebuggerLocalController::OnActivationReleased);
+		InputComponent.BindKey(FInputChord(EModifierKey::None, SettingsCDO->ActivationKey), IE_Pressed, this, &UGameplayDebuggerLocalController::OnActivationPressed);
+		InputComponent.BindKey(FInputChord(EModifierKey::None, SettingsCDO->ActivationKey), IE_Released, this, &UGameplayDebuggerLocalController::OnActivationReleased);
+		InputComponent.BindKey(FInputChord(EModifierKey::Shift, SettingsCDO->ActivationKey), IE_Pressed, this, &UGameplayDebuggerLocalController::OnActivationPressedWithModifier);
+		InputComponent.BindKey(FInputChord(EModifierKey::Shift, SettingsCDO->ActivationKey), IE_Released, this, &UGameplayDebuggerLocalController::OnActivationReleasedWithModifier);
+
 		NewBindings.Add(SettingsCDO->ActivationKey.GetFName());
 	}
 
@@ -570,12 +599,28 @@ void UGameplayDebuggerLocalController::OnActivationPressed()
 	}
 }
 
-void UGameplayDebuggerLocalController::OnActivationReleased()
+void UGameplayDebuggerLocalController::OnActivationPressedWithModifier()
 {
-	ToggleActivation();
+	if (CachedReplicator)
+	{
+		//OnStartSelectingLocalPlayer();
+		const double HoldTimeThr = 0.2 * (FApp::UseFixedTimeStep() ? (FApp::GetFixedDeltaTime() * 60.) : 1.);
+		
+		CachedReplicator->GetWorldTimerManager().SetTimer(StartSelectingActorHandle, this, &UGameplayDebuggerLocalController::OnStartSelectingLocalPlayer, static_cast<float>(HoldTimeThr));
+	}
 }
 
-void UGameplayDebuggerLocalController::ToggleActivation()
+void UGameplayDebuggerLocalController::OnActivationReleased()
+{
+	ToggleActivation(ESelectionMode::BestPawnCandidate);
+}
+
+void UGameplayDebuggerLocalController::OnActivationReleasedWithModifier()
+{
+	ToggleActivation(ESelectionMode::LocalPlayer);
+}
+
+void UGameplayDebuggerLocalController::ToggleActivation(const ESelectionMode SelectionMode)
 {
 	if (CachedReplicator)
 	{
@@ -591,7 +636,17 @@ void UGameplayDebuggerLocalController::ToggleActivation()
 				bPrevScreenMessagesEnabled = GAreScreenMessagesEnabled;
 				GAreScreenMessagesEnabled = false;
 				DebugActorCandidate = nullptr;
-				OnSelectActorTick();
+
+				if (SelectionMode == ESelectionMode::BestPawnCandidate)
+				{
+					OnSelectActorTick();
+				}
+
+				// If no actor got selected use local player
+				if (DebugActorCandidate == nullptr)
+				{
+					OnSelectLocalPlayer();
+				}
 			}
 			else
 			{
@@ -699,6 +754,16 @@ void UGameplayDebuggerLocalController::OnExtensionBindingEvent(int32 ExtensionId
 
 void UGameplayDebuggerLocalController::OnStartSelectingActor()
 {
+	OnStartSelecting(ESelectionMode::BestPawnCandidate);
+}
+
+void UGameplayDebuggerLocalController::OnStartSelectingLocalPlayer()
+{
+	OnStartSelecting(ESelectionMode::LocalPlayer);
+}
+
+void UGameplayDebuggerLocalController::OnStartSelecting(ESelectionMode SelectionMode)
+{
 	StartSelectingActorHandle.Invalidate();
 	if (CachedReplicator)
 	{
@@ -714,10 +779,17 @@ void UGameplayDebuggerLocalController::OnStartSelectingActor()
 		bIsSelectingActor = true;
 		DebugActorCandidate = nullptr;
 
-		const bool bLooping = true;
-		CachedReplicator->GetWorldTimerManager().SetTimer(SelectActorTickHandle, this, &UGameplayDebuggerLocalController::OnSelectActorTick, 0.01f, bLooping);
+		if (SelectionMode == ESelectionMode::BestPawnCandidate)
+		{
+			const bool bLooping = true;
+			CachedReplicator->GetWorldTimerManager().SetTimer(SelectActorTickHandle, this, &UGameplayDebuggerLocalController::OnSelectActorTick, 0.01f, bLooping);
 
-		OnSelectActorTick();
+			OnSelectActorTick();
+		}
+		else if (SelectionMode == ESelectionMode::LocalPlayer)
+		{
+			OnSelectLocalPlayer();
+		}
 	}
 }
 

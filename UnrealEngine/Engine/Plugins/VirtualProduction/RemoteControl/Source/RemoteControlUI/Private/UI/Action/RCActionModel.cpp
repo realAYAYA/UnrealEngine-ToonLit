@@ -1,7 +1,8 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "RCActionModel.h"
 
+#include "Algo/Count.h"
 #include "Commands/RemoteControlCommands.h"
 #include "Controller/RCController.h"
 #include "IDetailTreeNode.h"
@@ -119,7 +120,7 @@ TSharedRef<SWidget> FRCActionModel::GetTypeColorTagWidget() const
 		[
 			SNew(SBorder)
 			.Visibility(EVisibility::HitTestInvisible)
-			.BorderImage(FAppStyle::Get().GetBrush("NumericEntrySpinBox.NarrowDecorator"))
+			.BorderImage(FAppStyle::Get().GetBrush("NumericEntrySpinBox.Decorator"))
 			.BorderBackgroundColor(TypeColor)
 			.Padding(FMargin(5.0f, 0.0f, 0.0f, 0.f))
 		];
@@ -177,6 +178,10 @@ TSharedPtr<FRCActionModel> FRCActionModel::GetModelByActionType(URCAction* InAct
 	{
 		return MakeShared<FRCFunctionActionModel>(FunctionAction, InBehaviourItem, InRemoteControlPanel);
 	}
+	else if (URCPropertyIdAction* PropertyIdAction = Cast<URCPropertyIdAction>(InAction))
+	{
+		return MakeShared<FRCPropertyIdActionModel>(PropertyIdAction, InBehaviourItem, InRemoteControlPanel);
+	}
 	else
 		return nullptr;
 }
@@ -195,7 +200,8 @@ FRCPropertyActionType::FRCPropertyActionType(URCPropertyAction* InPropertyAction
 		if (const TSharedPtr<FStructOnScope> StructOnScope = InPropertyAction->PropertySelfContainer->CreateStructOnScope())
 		{
 			PropertyRowGenerator->SetStructure(StructOnScope);
-			
+			PropertyRowGenerator->OnFinishedChangingProperties().AddRaw(this, &FRCPropertyActionType::OnFinishedChangingProperties);
+
 			for (const TSharedRef<IDetailTreeNode>& CategoryNode : PropertyRowGenerator->GetRootTreeNodes())
 			{
 				TArray<TSharedRef<IDetailTreeNode>> Children;
@@ -240,6 +246,14 @@ FRCPropertyActionType::FRCPropertyActionType(URCPropertyAction* InPropertyAction
 	}
 }
 
+FRCPropertyActionType::~FRCPropertyActionType()
+{
+	if (PropertyRowGenerator.IsValid())
+	{
+		PropertyRowGenerator->OnFinishedChangingProperties().RemoveAll(this);
+	}
+}
+
 const FName& FRCPropertyActionType::GetPropertyName() const
 {
 	return PropertyActionWeakPtr.Get()->PropertySelfContainer->PropertyName;
@@ -270,6 +284,22 @@ FLinearColor FRCPropertyActionType::GetPropertyTypeColor() const
 	return TypeColor;
 }
 
+void FRCPropertyActionType::OnActionValueChange() const
+{
+	if (PropertyActionWeakPtr.IsValid())
+	{
+		PropertyActionWeakPtr->NotifyActionValueChanged();
+	}
+}
+
+void FRCPropertyActionType::OnFinishedChangingProperties(const FPropertyChangedEvent& InPropertyChangeEvent) const
+{
+	if (InPropertyChangeEvent.ChangeType == EPropertyChangeType::ValueSet)
+	{
+		OnActionValueChange();
+	}
+}
+
 void FRCActionModel::AddSpecialContextMenuOptions(FMenuBuilder& MenuBuilder)
 {
 	if (TSharedPtr<SRemoteControlPanel> RemoteControlPanel = PanelWeakPtr.Pin())
@@ -287,6 +317,268 @@ void FRCActionModel::OnSelectionExit()
 	if (EditableVirtualPropertyWidget)
 	{
 		EditableVirtualPropertyWidget->ExitEditMode();
+	}
+}
+
+FRCPropertyIdActionType::FRCPropertyIdActionType(URCPropertyIdAction* InPropertyIdAction)
+	: PropertyIdActionWeakPtr(InPropertyIdAction)
+{
+	FPropertyRowGeneratorArgs Args;
+	Args.bShouldShowHiddenProperties = true;
+	
+	PropertyIdNameRowGenerator = FModuleManager::GetModuleChecked<FPropertyEditorModule>("PropertyEditor").CreatePropertyRowGenerator(Args);
+	if (InPropertyIdAction)
+	{
+		RefreshNameWidget();
+		RefreshValueWidget();
+#if WITH_EDITOR
+		if (const URemoteControlPreset* Preset = InPropertyIdAction->PresetWeakPtr.Get())
+		{
+			Preset->GetPropertyIdRegistry()->OnPropertyIdActionNeedsRefresh().AddRaw(this, &FRCPropertyIdActionType::RefreshValueWidget);
+		}
+#endif
+	}
+}
+
+FRCPropertyIdActionType::~FRCPropertyIdActionType()
+{
+#if WITH_EDITOR
+	if (const URCPropertyIdAction* PropertyIdAction = PropertyIdActionWeakPtr.Get())
+	{
+		if (const URemoteControlPreset* Preset = PropertyIdAction->PresetWeakPtr.Get())
+		{
+			Preset->GetPropertyIdRegistry()->OnPropertyIdActionNeedsRefresh().RemoveAll(this);
+		}
+	}
+#endif
+
+	for (const TPair<FPropertyIdContainerKey, TSharedPtr<IPropertyRowGenerator>>& CachedGenerator : CachedPropertyIdValueRowGenerator)
+	{
+		if (CachedGenerator.Value.IsValid())
+		{
+			CachedGenerator.Value->OnFinishedChangingProperties().RemoveAll(this);
+		}
+	}
+	PropertyIdValueRowGenerator.Reset();
+}
+
+FLinearColor FRCPropertyIdActionType::GetPropertyIdTypeColor() const
+{
+	// @todo: Confirm color to be used for this with VP team.
+	return FLinearColor(FColor(32, 191, 107));
+}
+
+TSharedRef<SWidget> FRCPropertyIdActionType::GetPropertyIdNameWidget() const
+{
+	if (!FieldIdTreeNodeWeakPtr.IsValid())
+	{
+		return SNullWidget::NullWidget;
+	}
+
+	const FNodeWidgets FieldIdNodeWidgets = FieldIdTreeNodeWeakPtr.Pin()->CreateNodeWidgets();
+	const TSharedRef<SHorizontalBox> NameWidget = SNew(SHorizontalBox);
+
+	if (FieldIdNodeWidgets.ValueWidget)
+	{
+		NameWidget->AddSlot()
+			.Padding(10.f, 2.f)
+			.VAlign(VAlign_Center)
+			[
+				FieldIdNodeWidgets.ValueWidget.ToSharedRef()
+			];
+	}
+
+	return NameWidget;
+}
+
+TSharedRef<SWidget> FRCPropertyIdActionType::GetPropertyIdValueWidget() const
+{
+	TSharedRef<SVerticalBox> VerticalBox = SNew(SVerticalBox);
+
+	TArray<FPropertyIdContainerKey> SortedTreeNodesKeys;
+	ValueTreeNodeWeakPtr.GetKeys(SortedTreeNodesKeys);
+	SortedTreeNodesKeys.Sort();
+
+	FName LastPropId = NAME_None;
+	constexpr float Offset = 5.f;
+
+	FMargin TitlePadding = FMargin(0.f);
+	FMargin ValuePadding = FMargin(0.f);
+	ValuePadding.Right = Offset;
+
+	int32 OriginalPropIdLength = 0;
+	int32 OriginalDotCount = 0;
+
+	if (const URCPropertyIdAction* PropIdAction = PropertyIdActionWeakPtr.Get())
+	{
+		const FString PropIdAsString = PropIdAction->PropertyId.ToString();
+		OriginalDotCount = Algo::Count(PropIdAsString, '.');
+		OriginalPropIdLength = PropIdAction->PropertyId.GetStringLength();
+	}
+
+	for (const FPropertyIdContainerKey& TreeNodeKey : SortedTreeNodesKeys)
+	{
+		FString PropIdAsString = TEXT("");
+
+		if (LastPropId != TreeNodeKey.PropertyId)
+		{
+			if (LastPropId != NAME_None)
+			{
+				TitlePadding.Top = Offset;
+			}
+
+			LastPropId = TreeNodeKey.PropertyId;
+			PropIdAsString = LastPropId.ToString();
+			if (PropIdAsString.Len() != OriginalPropIdLength)
+			{
+				FString LabelToUse = PropIdAsString.RightChop(OriginalPropIdLength);
+				const int32 CurrentDotCount = Algo::Count(LabelToUse, '.');
+				TitlePadding.Left = Offset * (CurrentDotCount - OriginalDotCount);
+				ValuePadding.Left = TitlePadding.Left + 2.f;
+
+				VerticalBox->AddSlot()
+					.AutoHeight()
+					.Padding(TitlePadding)
+					[
+						SNew(STextBlock)
+						.Text(FText::FromString(LabelToUse))
+					];
+			}
+		}
+
+		if (const TWeakPtr<IDetailTreeNode>* Node = ValueTreeNodeWeakPtr.Find(TreeNodeKey))
+		{
+			if (Node->IsValid())
+			{
+				VerticalBox->AddSlot()
+					.Padding(ValuePadding)
+					.AutoHeight()
+					[
+						SNew(SHorizontalBox)
+						+ SHorizontalBox::Slot()
+						.FillWidth(0.7f)
+						[
+							UE::RCUIHelpers::GetGenericFieldWidget(Node->Pin())
+						]
+					];
+			}
+		}
+	}
+
+	return VerticalBox;
+}
+
+void FRCPropertyIdActionType::OnActionValueChange() const
+{
+	if (PropertyIdActionWeakPtr.IsValid())
+	{
+		PropertyIdActionWeakPtr->NotifyActionValueChanged();
+	}
+}
+
+void FRCPropertyIdActionType::OnFinishedChangingProperties(const FPropertyChangedEvent& InPropertyChangeEvent) const
+{
+	if (InPropertyChangeEvent.ChangeType == EPropertyChangeType::ValueSet)
+	{
+		OnActionValueChange();
+	}
+}
+
+void FRCPropertyIdActionType::RefreshNameWidget()
+{
+	if (URCPropertyIdAction* PropertyIdAction = PropertyIdActionWeakPtr.Get())
+	{
+		// Since we must keep many PRG objects alive in order to access the handle data, validating the nodes each tick is very taxing.
+		// We can override the validation with a lambda since the validation function in PRG is not necessary for our implementation
+		auto ValidationLambda = ([](const FRootPropertyNodeList& PropertyNodeList) { return true; });
+		PropertyIdNameRowGenerator->SetObjects({ PropertyIdAction });
+		PropertyIdNameRowGenerator->SetCustomValidatePropertyNodesFunction(FOnValidatePropertyRowGeneratorNodes::CreateLambda(MoveTemp(ValidationLambda)));
+		for (const TSharedRef<IDetailTreeNode>& CategoryNode : PropertyIdNameRowGenerator->GetRootTreeNodes())
+		{
+			TArray<TSharedRef<IDetailTreeNode>> Children;
+			CategoryNode->GetChildren(Children);
+			bool bFoundFieldId = false;
+			for (const TSharedRef<IDetailTreeNode>& Child : Children)
+			{
+				const TSharedPtr<IPropertyHandle> PropertyHandle = Child->CreatePropertyHandle();
+				if (PropertyHandle && PropertyHandle->IsValidHandle())
+				{
+					if (const FProperty* Property = PropertyHandle->GetProperty())
+					{
+						if (Property->GetFName() == GET_MEMBER_NAME_CHECKED(URCPropertyIdAction, PropertyId))
+						{
+							FieldIdTreeNodeWeakPtr = Child;
+							bFoundFieldId = true;
+						}
+						if (bFoundFieldId)
+						{
+							break;
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+void FRCPropertyIdActionType::RefreshValueWidget()
+{
+	if (URCPropertyIdAction* PropertyIdAction = PropertyIdActionWeakPtr.Get())
+	{
+		// Generate UI widget for Action input
+		PropertyIdValueRowGenerator.Reset();
+		ValueTreeNodeWeakPtr.Reset();
+		PropertyIdAction->PropertySelfContainer.KeySort([] (const FPropertyIdContainerKey& InFirst, const FPropertyIdContainerKey& InSecond)
+		{
+			return InSecond < InFirst;
+		});
+
+
+		for (const TPair<FPropertyIdContainerKey, TObjectPtr<URCVirtualPropertySelfContainer>>& PropertyContainer : PropertyIdAction->PropertySelfContainer)
+		{
+			if (IsValid(PropertyContainer.Value))
+			{
+				if (const TSharedPtr<FStructOnScope> StructOnScope = PropertyContainer.Value->CreateStructOnScope())
+				{
+					if (const TSharedPtr<IPropertyRowGenerator>* Generator = CachedPropertyIdValueRowGenerator.Find(PropertyContainer.Key))
+					{
+						PropertyIdValueRowGenerator.Add(PropertyContainer.Key, (*Generator));
+					}
+					else
+					{
+						FPropertyRowGeneratorArgs Args;
+						Args.bShouldShowHiddenProperties = true;
+
+						CachedPropertyIdValueRowGenerator.Add(PropertyContainer.Key, FModuleManager::GetModuleChecked<FPropertyEditorModule>("PropertyEditor").CreatePropertyRowGenerator(Args));
+						CachedPropertyIdValueRowGenerator[PropertyContainer.Key]->SetStructure(StructOnScope);
+						CachedPropertyIdValueRowGenerator[PropertyContainer.Key]->OnFinishedChangingProperties().AddRaw(this, &FRCPropertyIdActionType::OnFinishedChangingProperties);
+
+						PropertyIdValueRowGenerator.Add(PropertyContainer.Key, CachedPropertyIdValueRowGenerator[PropertyContainer.Key]);
+					}
+
+					for (const TSharedRef<IDetailTreeNode>& CategoryNode : PropertyIdValueRowGenerator[PropertyContainer.Key]->GetRootTreeNodes())
+					{
+						TArray<TSharedRef<IDetailTreeNode>> Children;
+						CategoryNode->GetChildren(Children);
+						for (const TSharedRef<IDetailTreeNode>& Child : Children)
+						{
+							// For regular properties (non-container)
+							if (const TWeakPtr<IDetailTreeNode>* ValueTreeNode = CachedValueTreeNodeWeakPtr.Find(PropertyContainer.Key))
+							{
+								ValueTreeNodeWeakPtr.Add(PropertyContainer.Key, (*ValueTreeNode));
+								break;
+							}
+							else
+							{
+								CachedValueTreeNodeWeakPtr.Add(PropertyContainer.Key, Child);
+								ValueTreeNodeWeakPtr.Add(PropertyContainer.Key, CachedValueTreeNodeWeakPtr[PropertyContainer.Key]);
+								break;
+							}
+						}
+					}
+				}
+			}
+		}
 	}
 }
 

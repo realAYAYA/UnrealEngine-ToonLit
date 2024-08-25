@@ -111,6 +111,11 @@ public:
 	virtual bool CanMoveElement(const FTypedElementHandle& InElementHandle, const ETypedElementWorldType InWorldType) { return false; }
 
 	/**
+	 * Can the given element be scaled?
+	 */
+	virtual bool CanScaleElement(const FTypedElementHandle& InElementHandle) { return true; }
+
+	/**
 	 * Get the transform of this element within its owner world, if any.
 	 */
 	virtual bool GetWorldTransform(const FTypedElementHandle& InElementHandle, FTransform& OutTransform) { return false; }
@@ -333,6 +338,12 @@ public:
 	ENGINE_API virtual bool CanMoveElement(const FScriptTypedElementHandle& InElementHandle, const ETypedElementWorldType InWorldType);
 
 	/**
+	 * Can the given element be scaled?
+	 */
+	UFUNCTION(BlueprintCallable, Category="TypedElementInterfaces|World")
+	ENGINE_API virtual bool CanScaleElement(const FScriptTypedElementHandle& InElementHandle);
+
+	/**
 	 * Get the transform of this element within its owner world, if any.
 	 */
 	UFUNCTION(BlueprintCallable, Category="TypedElementInterfaces|World")
@@ -446,6 +457,7 @@ struct TTypedElement<ITypedElementWorldInterface> : public TTypedElementBase<ITy
 	UWorld* GetOwnerWorld() const { return InterfacePtr->GetOwnerWorld(*this); }
 	bool GetBounds(FBoxSphereBounds& OutBounds) const { return InterfacePtr->GetBounds(*this, OutBounds); }
 	bool CanMoveElement(const ETypedElementWorldType InWorldType) const { return InterfacePtr->CanMoveElement(*this, InWorldType); }
+	bool CanScaleElement() const { return InterfacePtr->CanScaleElement(*this); }
 	bool GetWorldTransform(FTransform& OutTransform) const { return InterfacePtr->GetWorldTransform(*this, OutTransform); }
 	bool SetWorldTransform(const FTransform& InTransform) const { return InterfacePtr->SetWorldTransform(*this, InTransform); }
 	bool GetRelativeTransform(FTransform& OutTransform) const { return InterfacePtr->GetRelativeTransform(*this, OutTransform); }

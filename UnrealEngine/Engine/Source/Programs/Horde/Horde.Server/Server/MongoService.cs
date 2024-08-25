@@ -15,14 +15,11 @@ using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
-using System.Threading.Channels;
 using System.Threading.Tasks;
 using EpicGames.Core;
 using EpicGames.Redis.Utility;
-using Horde.Server.Secrets;
 using Horde.Server.Utilities;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Bson;
@@ -30,6 +27,7 @@ using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Attributes;
 using MongoDB.Driver;
 using MongoDB.Driver.Core.Events;
+using MongoDB.Driver.Linq;
 using OpenTelemetry.Trace;
 using StackExchange.Redis;
 
@@ -187,9 +185,14 @@ namespace Horde.Server.Server
 	}
 
 	/// <summary>
+	/// Task used to update indexes
+	/// </summary>
+	record class MongoUpgradeTask(Func<CancellationToken, Task> UpgradeAsync, TaskCompletionSource CompletionSource);
+
+	/// <summary>
 	/// Singleton for accessing the database
 	/// </summary>
-	public sealed class MongoService : IHealthCheck, IDisposable
+	public sealed class MongoService : IHealthCheck, IAsyncDisposable
 	{
 		/// <summary>
 		/// The database instance
@@ -251,20 +254,35 @@ namespace Horde.Server.Server
 		/// </summary>
 		const int DefaultMongoPort = 27017;
 
-		readonly HashSet<string> _collectionNames = new HashSet<string>(StringComparer.Ordinal);
-		readonly Channel<Func<CancellationToken, Task>> _updateIndexesChannel = Channel.CreateUnbounded<Func<CancellationToken, Task>>();
+		static readonly RedisKey s_schemaLockKey = new RedisKey("server/schema-upgrade/lock");
+
+		readonly MongoClient _client;
+		readonly RedisService _redisService;
+#pragma warning disable CA2213 // Disposable fields should be disposed
+		readonly SemaphoreSlim _upgradeSema = new SemaphoreSlim(1);
+#pragma warning restore CA2213 // Disposable fields should be disposed
+		CancellationTokenSource _upgradeCancellationSource = new CancellationTokenSource();
+		readonly Dictionary<string, Task> _collectionUpgradeTasks = new Dictionary<string, Task>(StringComparer.Ordinal);
+		readonly Task<bool> _setSchemaVersionTask;
+
+		static string? s_existingInstance;
 
 		/// <summary>
 		/// Constructor
 		/// </summary>
-		/// <param name="settingsSnapshot">The settings instance</param>
-		/// <param name="tracer">Tracer</param>
-		/// <param name="loggerFactory">Instance of the logger for this service</param>
-		public MongoService(IOptions<ServerSettings> settingsSnapshot, Tracer tracer, ILoggerFactory loggerFactory)
+		public MongoService(IOptions<ServerSettings> settingsSnapshot, RedisService redisService, Tracer tracer, ILogger<MongoService> logger, ILoggerFactory loggerFactory)
 		{
+			if (s_existingInstance != null)
+			{
+				throw new Exception("Existing instance on MongoService!");
+			}
+
+			s_existingInstance = Environment.StackTrace;
+
 			Settings = settingsSnapshot.Value;
+			_redisService = redisService;
 			_tracer = tracer;
-			_logger = loggerFactory.CreateLogger<MongoService>();
+			_logger = logger;
 			_loggerFactory = loggerFactory;
 
 			try
@@ -304,7 +322,7 @@ namespace Horde.Server.Server
 					}
 					else
 					{
-						throw new Exception($"Unable to connect to MongoDB server. Setup a MongoDB server and set the connection string in {Program.UserConfigFile}");
+						throw new Exception($"Unable to connect to MongoDB server. Setup a MongoDB server and set the connection string in {ServerApp.ServerConfigFile}");
 					}
 				}
 
@@ -317,14 +335,15 @@ namespace Horde.Server.Server
 					}
 				};
 
+				mongoSettings.LinqProvider = LinqProvider.V2;
 				mongoSettings.SslSettings = new SslSettings();
 				mongoSettings.SslSettings.ServerCertificateValidationCallback = CertificateValidationCallBack;
 				mongoSettings.MaxConnectionPoolSize = 300; // Default is 100
 
 				//TestSslConnection(MongoSettings.Server.Host, MongoSettings.Server.Port, Logger);
 
-				MongoClient client = new MongoClient(mongoSettings);
-				Database = client.GetDatabase(Settings.DatabaseName);
+				_client = new MongoClient(mongoSettings);
+				Database = _client.GetDatabase(Settings.DatabaseName);
 
 				SingletonsV1 = GetCollection<BsonDocument>("Singletons");
 				SingletonsV2 = GetCollection<BsonDocument>("SingletonsV2");
@@ -334,6 +353,8 @@ namespace Horde.Server.Server
 				_logger.LogError(ex, "Exception while initializing MongoService");
 				throw;
 			}
+
+			_setSchemaVersionTask = SetSchemaVersionAsync(ServerApp.Version, CancellationToken.None);
 		}
 
 		internal const int CtrlCEvent = 0;
@@ -342,24 +363,73 @@ namespace Horde.Server.Server
 		internal static extern bool GenerateConsoleCtrlEvent(int eventId, int processGroupId);
 
 		/// <inheritdoc/>
-		public void Dispose()
+		public async ValueTask DisposeAsync()
 		{
+			if (_upgradeCancellationSource != null)
+			{
+				await _upgradeCancellationSource.CancelAsync();
+
+				if (_collectionUpgradeTasks.Count > 0)
+				{
+					_logger.LogInformation("Waiting for upgrade tasks to cancel...");
+					try
+					{
+						await Task.WhenAll(_collectionUpgradeTasks.Values);
+					}
+					catch (Exception ex)
+					{
+						_logger.LogInformation(ex, "Discarded upgrade task exception: {Message}", ex.Message);
+					}
+				}
+
+				_upgradeCancellationSource.Dispose();
+				_upgradeCancellationSource = null!;
+			}
+
 			if (_mongoProcess != null)
 			{
-				GenerateConsoleCtrlEvent(CtrlCEvent, _mongoProcess.Id);
+				_logger.LogInformation("Stopping MongoDB...");
+				try
+				{
+					_logger.LogDebug("  Sent shutdown command");
+					IMongoDatabase adminDb = _client.GetDatabase("admin");
+					await adminDb.RunCommandAsync(new JsonCommand<BsonDocument>("{shutdown: 1}"));
+				}
+				catch
+				{
+					// Ignore errors due to connection termination
+				}
 
-				_mongoOutputTask?.Wait();
-				_mongoOutputTask = null;
+				try
+				{
+					_logger.LogInformation("  Waiting for MongoDB to exit");
+					await _mongoProcess.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5.0));
 
-				_mongoProcess.WaitForExit();
-				_mongoProcess.Dispose();
-				_mongoProcess = null;
+					_mongoProcess.Dispose();
+					_mongoProcess = null;
+
+					if (_mongoOutputTask != null)
+					{
+						_logger.LogInformation("  Waiting for logger task");
+						await _mongoOutputTask;
+						_mongoOutputTask = null;
+					}
+				}
+				catch (Exception ex)
+				{
+					_logger.LogInformation(ex, "  Unable to terminate mongo process: {Message}", ex.Message);
+				}
+				_logger.LogInformation("Done");
 			}
+
 			if (_mongoProcessGroup != null)
 			{
 				_mongoProcessGroup.Dispose();
 				_mongoProcessGroup = null;
 			}
+
+			//_upgradeSema.Dispose();
+			s_existingInstance = null;
 		}
 
 		/// <summary>
@@ -392,14 +462,14 @@ namespace Horde.Server.Server
 				return false;
 			}
 
-			FileReference mongoExe = FileReference.Combine(Program.AppDir, "ThirdParty", "Mongo", "mongod.exe");
+			FileReference mongoExe = FileReference.Combine(ServerApp.AppDir, "ThirdParty", "Mongo", "mongod.exe");
 			if (!FileReference.Exists(mongoExe))
 			{
 				logger.LogWarning("Unable to find Mongo executable.");
 				return false;
 			}
 
-			DirectoryReference mongoDir = DirectoryReference.Combine(Program.DataDir, "Mongo");
+			DirectoryReference mongoDir = DirectoryReference.Combine(ServerApp.DataDir, "Mongo");
 
 			DirectoryReference mongoDataDir = DirectoryReference.Combine(mongoDir, "Data");
 			DirectoryReference.CreateDirectory(mongoDataDir);
@@ -431,7 +501,7 @@ namespace Horde.Server.Server
 			{
 				_mongoProcess = new ManagedProcess(_mongoProcessGroup, mongoExe.FullName, $"--config \"{configFile}\"", null, null, ProcessPriorityClass.Normal);
 				_mongoProcess.StdIn.Close();
-				_mongoOutputTask = Task.Run(() => RelayMongoOutput());
+				_mongoOutputTask = Task.Run(() => RelayMongoOutputAsync());
 				return true;
 			}
 			catch (Exception ex)
@@ -445,7 +515,7 @@ namespace Horde.Server.Server
 		/// Copies output from the mongo process to the logger
 		/// </summary>
 		/// <returns></returns>
-		async Task RelayMongoOutput()
+		async Task RelayMongoOutputAsync()
 		{
 			ILogger mongoLogger = _loggerFactory.CreateLogger("MongoDB");
 
@@ -617,7 +687,7 @@ namespace Horde.Server.Server
 		/// <returns></returns>
 		public IMongoCollection<T> GetCollection<T>(string name)
 		{
-			return new MongoTracingCollection<T>(Database.GetCollection<T>(name), _tracer);
+			return GetCollection<T>(name, Enumerable.Empty<MongoIndex<T>>());
 		}
 
 		/// <summary>
@@ -644,36 +714,54 @@ namespace Horde.Server.Server
 		/// <returns></returns>
 		public IMongoCollection<T> GetCollection<T>(string name, IEnumerable<MongoIndex<T>> indexes)
 		{
-			IMongoCollection<T> collection = GetCollection<T>(name);
-			lock (_collectionNames)
+			IMongoCollection<T> collection = Database.GetCollection<T>(name);
+
+			Task? upgradeTask = Task.CompletedTask;
+			if (indexes.Any())
 			{
-				_logger.LogDebug("Queuing update for collection {Name}", name);
-
-				if (!_collectionNames.Add(name))
+				lock (_collectionUpgradeTasks)
 				{
-					throw new NotImplementedException();
+					if (!_collectionUpgradeTasks.TryGetValue(name, out upgradeTask))
+					{
+						_logger.LogDebug("Queuing update for collection {Name}", name);
+
+						MongoIndex<T>[] indexesCopy = indexes.ToArray();
+						upgradeTask = Task.Run(() => UpdateIndexesAsync(name, collection, indexesCopy, CancellationToken.None));
+
+						_collectionUpgradeTasks.Add(name, upgradeTask);
+					}
 				}
-
-				MongoIndex<T>[] indexesCopy = indexes.ToArray();
-				_updateIndexesChannel.Writer.TryWrite(ctx => UpdateIndexesAsync(name, collection, indexesCopy, ctx));
 			}
-			return collection;
-		}
 
-		/// <summary>
-		/// Pops an upgrade task from the queue. This method should only be called by <see cref="MongoUpgradeService"/>
-		/// </summary>
-		/// <param name="cancellationToken"></param>
-		/// <returns></returns>
-		public ValueTask<Func<CancellationToken, Task>> ReadNextUpgradeTask(CancellationToken cancellationToken)
-		{
-			return _updateIndexesChannel.Reader.ReadAsync(cancellationToken);
+			return new MongoTracingCollection<T>(Database.GetCollection<T>(name), upgradeTask, _tracer);
 		}
 
 		private async Task UpdateIndexesAsync<T>(string collectionName, IMongoCollection<T> collection, MongoIndex<T>[] newIndexes, CancellationToken cancellationToken)
 		{
-			_logger.LogDebug("Updating indexes for collection {CollectionName}", collectionName);
+			// Check we're allowed to upgrade the DB
+			if (!await _setSchemaVersionTask)
+			{
+				return;
+			}
 
+			int attemptIdx = 1;
+			for (; ; )
+			{
+				try
+				{
+					await UpdateIndexesInternalAsync<T>(collectionName, collection, newIndexes, cancellationToken);
+					break;
+				}
+				catch (Exception ex)
+				{
+					_logger.LogError(ex, "Error updating indexes ({Message}) - retrying (attempt {Attempt})", ex.Message, attemptIdx);
+					attemptIdx++;
+				}
+			}
+		}
+
+		private async Task UpdateIndexesInternalAsync<T>(string collectionName, IMongoCollection<T> collection, MongoIndex<T>[] newIndexes, CancellationToken cancellationToken)
+		{
 			// Find all the current indexes, excluding the default
 			Dictionary<string, MongoIndex> nameToExistingIndex = new Dictionary<string, MongoIndex>(StringComparer.Ordinal);
 			using (IAsyncCursor<BsonDocument> cursor = await collection.Indexes.ListAsync(cancellationToken))
@@ -710,44 +798,104 @@ namespace Horde.Server.Server
 
 			if (removeIndexNames.Count > 0 || createIndexes.Count > 0)
 			{
-				// Drop any indexes that are no longer needed
-				foreach (string removeIndexName in removeIndexNames)
+				await _upgradeSema.WaitAsync(cancellationToken);
+				try
 				{
-					if (ReadOnlyMode)
+					// Aquire a lock for updating the DB
+					await using RedisLock schemaLock = new(_redisService.GetDatabase(), s_schemaLockKey);
+					while (!await schemaLock.AcquireAsync(TimeSpan.FromMinutes(5.0)))
 					{
-						_logger.LogWarning("Would drop unused index {CollectionName}.{IndexName} - skipping due to read-only setting.", collectionName, removeIndexName);
+						_logger.LogDebug("Unable to acquire lock for upgrade task; pausing for 1s");
+						await Task.Delay(TimeSpan.FromSeconds(1.0), cancellationToken);
 					}
-					else
+
+					_logger.LogDebug("Updating indexes for collection {CollectionName}", collectionName);
+
+					// Drop any indexes that are no longer needed
+					foreach (string removeIndexName in removeIndexNames)
 					{
-						_logger.LogInformation("Dropping unused index {IndexName}", removeIndexName);
-						await collection.Indexes.DropOneAsync(removeIndexName, cancellationToken);
+						if (ReadOnlyMode)
+						{
+							_logger.LogWarning("Would drop unused index {CollectionName}.{IndexName} - skipping due to read-only setting.", collectionName, removeIndexName);
+						}
+						else
+						{
+							_logger.LogInformation("Dropping unused index {IndexName}", removeIndexName);
+							await collection.Indexes.DropOneAsync(removeIndexName, cancellationToken);
+						}
+					}
+
+					// Create all the new indexes
+					foreach (MongoIndex<T> createIndex in createIndexes)
+					{
+						if (ReadOnlyMode)
+						{
+							_logger.LogWarning("Would create index {CollectionName}.{IndexName} - skipping due to read-only setting.", collectionName, createIndex.Name);
+						}
+						else
+						{
+							_logger.LogInformation("Creating index {IndexName} in {CollectionName}", createIndex.Name, collectionName);
+
+							CreateIndexOptions<T> options = new CreateIndexOptions<T>();
+							options.Name = createIndex.Name;
+							options.Unique = createIndex.Unique;
+							options.Sparse = createIndex.Sparse;
+
+							CreateIndexModel<T> model = new CreateIndexModel<T>(createIndex.Keys, options);
+
+							try
+							{
+								string result = await collection.Indexes.CreateOneAsync(model, cancellationToken: cancellationToken);
+								_logger.LogInformation("Created index {IndexName}", result);
+							}
+							catch (Exception ex)
+							{
+								_logger.LogError(ex, "Unable to create index {IndexName}: {Message}", createIndex.Name, ex.Message);
+								throw;
+							}
+						}
 					}
 				}
-
-				// Create all the new indexes
-				foreach (MongoIndex<T> createIndex in createIndexes)
+				finally
 				{
-					if (ReadOnlyMode)
-					{
-						_logger.LogWarning("Would create index {CollectionName}.{IndexName} - skipping due to read-only setting.", collectionName, createIndex.Name);
-					}
-					else
-					{
-						_logger.LogInformation("Creating index {IndexName} in {CollectionName}", createIndex.Name, collectionName);
-
-						CreateIndexOptions<T> options = new CreateIndexOptions<T>();
-						options.Name = createIndex.Name;
-						options.Unique = createIndex.Unique;
-						options.Sparse = createIndex.Sparse;
-
-						CreateIndexModel<T> model = new CreateIndexModel<T>(createIndex.Keys, options);
-
-						string result = await collection.Indexes.CreateOneAsync(model, cancellationToken: cancellationToken);
-						_logger.LogInformation("Created index {IndexName}", result);
-					}
+					_upgradeSema.Release();
 				}
 
 				_logger.LogInformation("Finished updating indexes for collection {CollectionName}", collectionName);
+			}
+		}
+
+		async Task<bool> SetSchemaVersionAsync(SemVer schemaVersion, CancellationToken cancellationToken)
+		{
+			// Check we're not downgrading the data
+			for (; ; )
+			{
+				MongoSchemaDocument currentSchema = await GetSingletonAsync<MongoSchemaDocument>(cancellationToken);
+				if (!String.IsNullOrEmpty(currentSchema.Version))
+				{
+					SemVer currentVersion = SemVer.Parse(currentSchema.Version);
+					if (schemaVersion < currentVersion)
+					{
+						_logger.LogInformation("Ignoring upgrade command; server is older than current schema version ({ProgramVer} < {CurrentVer})", ServerApp.Version, currentVersion);
+						return false;
+					}
+					if (schemaVersion == currentVersion)
+					{
+						return true;
+					}
+				}
+
+				_logger.LogInformation("Upgrading schema version {OldVersion} -> {NewVersion}", currentSchema.Version, schemaVersion.ToString());
+				currentSchema.Version = schemaVersion.ToString();
+
+				if (ReadOnlyMode)
+				{
+					return false;
+				}
+				if (await TryUpdateSingletonAsync(currentSchema, cancellationToken))
+				{
+					return true;
+				}
 			}
 		}
 
@@ -770,24 +918,25 @@ namespace Horde.Server.Server
 		/// Gets a singleton document by id
 		/// </summary>
 		/// <returns>The document</returns>
-		public Task<T> GetSingletonAsync<T>() where T : SingletonBase, new()
+		public Task<T> GetSingletonAsync<T>(CancellationToken cancellationToken) where T : SingletonBase, new()
 		{
-			return GetSingletonAsync(() => new T());
+			return GetSingletonAsync(() => new T(), cancellationToken);
 		}
 
 		/// <summary>
 		/// Gets a singleton document by id
 		/// </summary>
 		/// <param name="constructor">Method to use to construct a new object</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>The document</returns>
-		public async Task<T> GetSingletonAsync<T>(Func<T> constructor) where T : SingletonBase, new()
+		public async Task<T> GetSingletonAsync<T>(Func<T> constructor, CancellationToken cancellationToken) where T : SingletonBase, new()
 		{
-			SingletonDocumentAttribute Attribute = SingletonInfo<T>.Attribute;
+			SingletonDocumentAttribute attribute = SingletonInfo<T>.Attribute;
 
-			FilterDefinition<BsonDocument> filter = new BsonDocument(new BsonElement("_id", Attribute.Id));
+			FilterDefinition<BsonDocument> filter = new BsonDocument(new BsonElement("_id", attribute.Id));
 			for (; ; )
 			{
-				BsonDocument? document = await SingletonsV2.Find(filter).FirstOrDefaultAsync();
+				BsonDocument? document = await SingletonsV2.Find(filter).FirstOrDefaultAsync(cancellationToken);
 				if (document != null)
 				{
 					T item = BsonSerializer.Deserialize<T>(document);
@@ -796,9 +945,9 @@ namespace Horde.Server.Server
 				}
 
 				T? newItem = null;
-				if (Attribute.LegacyId != null)
+				if (attribute.LegacyId != null)
 				{
-					BsonDocument? legacyDocument = await SingletonsV1.Find(new BsonDocument(new BsonElement("_id", ObjectId.Parse(Attribute.LegacyId)))).FirstOrDefaultAsync();
+					BsonDocument? legacyDocument = await SingletonsV1.Find(new BsonDocument(new BsonElement("_id", ObjectId.Parse(attribute.LegacyId)))).FirstOrDefaultAsync(cancellationToken);
 					if (legacyDocument != null)
 					{
 						legacyDocument.Remove("_id");
@@ -808,8 +957,8 @@ namespace Horde.Server.Server
 				}
 				newItem ??= constructor();
 
-				newItem.Id = new SingletonId(Attribute.Id);
-				await SingletonsV2.InsertOneIgnoreDuplicatesAsync(newItem.ToBsonDocument());
+				newItem.Id = new SingletonId(attribute.Id);
+				await SingletonsV2.InsertOneIgnoreDuplicatesAsync(newItem.ToBsonDocument(), cancellationToken);
 			}
 		}
 
@@ -818,15 +967,16 @@ namespace Horde.Server.Server
 		/// </summary>
 		/// <typeparam name="T"></typeparam>
 		/// <param name="updater"></param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns></returns>
-		public Task UpdateSingletonAsync<T>(Action<T> updater) where T : SingletonBase, new()
+		public Task UpdateSingletonAsync<T>(Action<T> updater, CancellationToken cancellationToken) where T : SingletonBase, new()
 		{
 			bool Update(T instance)
 			{
 				updater(instance);
 				return true;
 			}
-			return UpdateSingletonAsync<T>(Update);
+			return UpdateSingletonAsync<T>(Update, cancellationToken);
 		}
 
 		/// <summary>
@@ -834,17 +984,18 @@ namespace Horde.Server.Server
 		/// </summary>
 		/// <typeparam name="T"></typeparam>
 		/// <param name="updater"></param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns></returns>
-		public async Task UpdateSingletonAsync<T>(Func<T, bool> updater) where T : SingletonBase, new()
+		public async Task UpdateSingletonAsync<T>(Func<T, bool> updater, CancellationToken cancellationToken) where T : SingletonBase, new()
 		{
 			for (; ; )
 			{
-				T document = await GetSingletonAsync(() => new T());
+				T document = await GetSingletonAsync(() => new T(), cancellationToken);
 				if (!updater(document))
 				{
 					break;
 				}
-				if (await TryUpdateSingletonAsync(document))
+				if (await TryUpdateSingletonAsync(document, cancellationToken))
 				{
 					break;
 				}
@@ -855,15 +1006,16 @@ namespace Horde.Server.Server
 		/// Attempts to update a singleton object
 		/// </summary>
 		/// <param name="singletonObject">The singleton object</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>True if the singleton document was updated</returns>
-		public async Task<bool> TryUpdateSingletonAsync<T>(T singletonObject) where T : SingletonBase
+		public async Task<bool> TryUpdateSingletonAsync<T>(T singletonObject, CancellationToken cancellationToken) where T : SingletonBase
 		{
 			int prevRevision = singletonObject.Revision++;
 
 			BsonDocument filter = new BsonDocument { new BsonElement("_id", singletonObject.Id.ToString()), new BsonElement(nameof(SingletonBase.Revision), prevRevision) };
 			try
 			{
-				ReplaceOneResult result = await SingletonsV2.ReplaceOneAsync(filter, singletonObject.ToBsonDocument(), new ReplaceOptions { IsUpsert = true });
+				ReplaceOneResult result = await SingletonsV2.ReplaceOneAsync(filter, singletonObject.ToBsonDocument(), new ReplaceOptions { IsUpsert = true }, cancellationToken);
 				return result.MatchedCount > 0;
 			}
 			catch (MongoWriteException ex)
@@ -905,139 +1057,5 @@ namespace Horde.Server.Server
 		/// Current version number
 		/// </summary>
 		public string? Version { get; set; }
-	}
-
-	/// <summary>
-	/// Service which updates the database state
-	/// </summary>
-	public sealed class MongoUpgradeService : IDisposable, IHostedService
-	{
-		static readonly RedisKey s_schemaLockKey = new RedisKey("server/schema-upgrade/lock");
-
-		readonly MongoService _mongoService;
-		readonly RedisService _redisService;
-		readonly ISingletonDocument<MongoSchemaDocument> _schemaDocument;
-		readonly ILogger _logger;
-		readonly BackgroundTask _updateIndexesTask;
-
-		/// <summary>
-		/// Constructor
-		/// </summary>
-		public MongoUpgradeService(MongoService mongoService, RedisService redisService, ISingletonDocument<MongoSchemaDocument> schemaDocument, ILogger<MongoUpgradeService> logger)
-		{
-			_mongoService = mongoService;
-			_redisService = redisService;
-			_schemaDocument = schemaDocument;
-			_logger = logger;
-			_updateIndexesTask = new BackgroundTask(UpdateAsync);
-		}
-
-		/// <inheritdoc/>
-		public void Dispose()
-		{
-			_updateIndexesTask.Dispose();
-		}
-
-		/// <inheritdoc/>
-		public Task StartAsync(CancellationToken cancellationToken)
-		{
-			_updateIndexesTask.Start();
-			return Task.CompletedTask;
-		}
-
-		/// <inheritdoc/>
-		public async Task StopAsync(CancellationToken cancellationToken)
-		{
-			await _updateIndexesTask.StopAsync();
-		}
-
-		async Task UpdateAsync(CancellationToken cancellationToken)
-		{
-			for (; ; )
-			{
-				try
-				{
-					Func<CancellationToken, Task> updateIndexTask = await _mongoService.ReadNextUpgradeTask(cancellationToken);
-					for (; ; )
-					{
-						using (RedisLock schemaLock = new(_redisService.GetDatabase(), s_schemaLockKey))
-						{
-							if (await schemaLock.AcquireAsync(TimeSpan.FromMinutes(5.0)))
-							{
-								await UpdateOneAsync(updateIndexTask, cancellationToken);
-								break;
-							}
-							else
-							{
-								_logger.LogDebug("Unable to acquire lock for upgrade task; pausing for 1m");
-								await Task.Delay(TimeSpan.FromMinutes(1.0), cancellationToken);
-							}
-						}
-					}
-				}
-				catch(OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-				{
-					break;
-				}
-				catch (Exception ex)
-				{
-					_logger.LogWarning(ex, "Exception updating indexes: {Message}", ex.Message);
-					await Task.Delay(TimeSpan.FromSeconds(30.0), cancellationToken);
-				}
-			}
-		}
-
-		async ValueTask UpdateOneAsync(Func<CancellationToken, Task> taskAsync, CancellationToken cancellationToken)
-		{
-			try
-			{
-				if (await SetSchemaVersion(Program.Version))
-				{
-					await taskAsync(cancellationToken);
-				}
-			}
-			catch (MongoCommandException ex)
-			{
-				_logger.LogWarning(ex, "Command exception while attempting to update indexes ({Code})", ex.Code);
-			}
-			catch (Exception ex)
-			{
-				_logger.LogWarning(ex, "Exception while attempting to update indexes");
-			}
-		}
-
-		async Task<bool> SetSchemaVersion(SemVer schemaVersion)
-		{
-			// Check we're not downgrading the data
-			for (; ; )
-			{
-				MongoSchemaDocument currentSchema = await _schemaDocument.GetAsync();
-				if (!String.IsNullOrEmpty(currentSchema.Version))
-				{
-					SemVer currentVersion = SemVer.Parse(currentSchema.Version);
-					if (schemaVersion < currentVersion)
-					{
-						_logger.LogDebug("Ignoring upgrade command; server is older than current schema version ({ProgramVer} < {CurrentVer})", Program.Version, currentVersion);
-						return false;
-					}
-					if (schemaVersion == currentVersion)
-					{
-						return true;
-					}
-				}
-
-				_logger.LogDebug("Upgrading schema version {OldVersion} -> {NewVersion}", currentSchema.Version, schemaVersion.ToString());
-				currentSchema.Version = schemaVersion.ToString();
-
-				if (_mongoService.ReadOnlyMode)
-				{
-					return false;
-				}
-				if (await _schemaDocument.TryUpdateAsync(currentSchema))
-				{
-					return true;
-				}
-			}
-		}
 	}
 }

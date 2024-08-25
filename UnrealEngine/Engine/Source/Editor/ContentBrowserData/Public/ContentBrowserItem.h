@@ -136,6 +136,12 @@ public:
 	bool IsFile() const;
 
 	/**
+	 * Check to see whether this item is in a plugin.
+	 * @note Equivalent to testing whether EContentBrowserItemFlags::Category_Plugin is set on GetItemFlags().
+	 */
+	bool IsInPlugin() const;
+
+	/**
 	 * Check if the item is representing a supported item
 	 * The content browser can also display some unsupported asset
 	 * @note Equivalent to testing whether EContentBrowserItemFlags::Misc_Unsupported is not set on GetItemFlags()
@@ -259,6 +265,15 @@ public:
 	 * @return True if the item can be previewed, false otherwise.
 	 */
 	bool CanPreview(FText* OutErrorMsg = nullptr) const;
+
+	/**
+	 * Query whether the given item is can be viewed (a read-only asset editor), optionally providing error information if it cannot.
+	 *
+	 * @param OutErrorMessage Optional error message to fill on failure.
+	 *
+	 * @return True if the item can be viewed in a read-only editor, false otherwise.
+	 */
+	bool CanView(FText* OutErrorMsg = nullptr) const;
 
 	/**
 	 * Attempt to preview this item.

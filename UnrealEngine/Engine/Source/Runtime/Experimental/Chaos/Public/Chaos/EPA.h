@@ -346,7 +346,7 @@ void EPAComputeVisibilityBorder(TEPAWorkingArray<TEPAEntry<T>>& Entries, int32 E
 
 	while (ToVisitStack.Num() && Iteration++ < MaxIteration)
 	{
-		const FEPAFloodEntry FloodEntry = ToVisitStack.Pop(false);
+		const FEPAFloodEntry FloodEntry = ToVisitStack.Pop(EAllowShrinking::No);
 		TEPAEntry<T>& Entry = Entries[FloodEntry.EntryIdx];
 		if (!Entry.bObsolete)
 		{
@@ -515,7 +515,7 @@ EEPAResult EPA(TArray<TVec3<T>>& VertsABuffer, TArray<TVec3<T>>& VertsBBuffer, c
 			bQueueDirty = false;
 		}
 
-		int32 EntryIdx = Queue.Pop(false);
+		int32 EntryIdx = Queue.Pop(EAllowShrinking::No);
 		TEPAEntry<T>& Entry = Entries[EntryIdx];
 		//bool bBadFace = Entry.IsOriginProjectedInside(VertsABuffer.GetData(), VertsBBuffer.GetData());
 		{

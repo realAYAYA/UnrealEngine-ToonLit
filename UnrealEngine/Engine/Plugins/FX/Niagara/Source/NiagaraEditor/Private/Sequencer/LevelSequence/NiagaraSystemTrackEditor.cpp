@@ -16,6 +16,9 @@
 #include "NiagaraSystemEditorData.h"
 #include "SEnumCombo.h"
 
+#include "MVVM/ViewModels/OutlinerColumns/OutlinerColumnTypes.h"
+#include "MVVM/Extensions/ITrackExtension.h"
+
 #define LOCTEXT_NAMESPACE "NiagaraSystemTrackEditor"
 
 TSharedRef<ISequencerTrackEditor> FNiagaraSystemTrackEditor::CreateTrackEditor(TSharedRef<ISequencer> InSequencer)
@@ -41,16 +44,13 @@ bool FNiagaraSystemTrackEditor::SupportsType(TSubclassOf<UMovieSceneTrack> Type)
 
 bool HasLifeCycleTrack(UMovieScene& MovieScene, FGuid ObjectBinding)
 {
-	for (const FMovieSceneBinding& Binding : MovieScene.GetBindings())
+	if (const FMovieSceneBinding* Binding = MovieScene.FindBinding(ObjectBinding))
 	{
-		if (Binding.GetObjectGuid() == ObjectBinding)
+		for (const UMovieSceneTrack* Track : Binding->GetTracks())
 		{
-			for (UMovieSceneTrack* Track : Binding.GetTracks())
+			if (Track->IsA<UMovieSceneNiagaraSystemTrack>())
 			{
-				if (Track->IsA<UMovieSceneNiagaraSystemTrack>())
-				{
-					return true;
-				}
+				return true;
 			}
 		}
 	}
@@ -59,19 +59,15 @@ bool HasLifeCycleTrack(UMovieScene& MovieScene, FGuid ObjectBinding)
 
 void GetAnimatedParameterNames(UMovieScene& MovieScene, FGuid ObjectBinding, TSet<FName>& AnimatedParameterNames)
 {
-	for (const FMovieSceneBinding& Binding : MovieScene.GetBindings())
+	if (const FMovieSceneBinding* Binding = MovieScene.FindBinding(ObjectBinding))
 	{
-		if (Binding.GetObjectGuid() == ObjectBinding)
+		for (const UMovieSceneTrack* Track : Binding->GetTracks())
 		{
-			for (UMovieSceneTrack* Track : Binding.GetTracks())
+			const UMovieSceneNiagaraParameterTrack* ParameterTrack = Cast<UMovieSceneNiagaraParameterTrack>(Track);
+			if (ParameterTrack != nullptr)
 			{
-				UMovieSceneNiagaraParameterTrack* ParameterTrack = Cast<UMovieSceneNiagaraParameterTrack>(Track);
-				if (ParameterTrack != nullptr)
-				{
-					AnimatedParameterNames.Add(ParameterTrack->GetParameter().GetName());
-				}
+				AnimatedParameterNames.Add(ParameterTrack->GetParameter().GetName());
 			}
-			break;
 		}
 	}
 }
@@ -139,15 +135,20 @@ void FNiagaraSystemTrackEditor::BuildObjectBindingTrackMenu(FMenuBuilder& MenuBu
 	}
 }
 
-TSharedPtr<SWidget> FNiagaraSystemTrackEditor::BuildOutlinerEditWidget(const FGuid& ObjectBinding, UMovieSceneTrack* Track, const FBuildEditWidgetParams& Params)
+TSharedPtr<SWidget> FNiagaraSystemTrackEditor::BuildOutlinerColumnWidget(const FBuildColumnWidgetParams& Params, const FName& ColumnName)
 {
-	if (UMovieSceneNiagaraSystemTrack* NiagaraSystemTrack = Cast<UMovieSceneNiagaraSystemTrack>(Track))
+	using namespace UE::Sequencer;
+
+	UMovieSceneNiagaraSystemTrack* NiagaraSystemTrack = Cast<UMovieSceneNiagaraSystemTrack>(Params.TrackModel->GetTrack());
+	if (!NiagaraSystemTrack)
 	{
-		return SNew(SHorizontalBox)
-			+ SHorizontalBox::Slot()
-			.Padding(5, 0, 5, 0)
-			.VAlign(VAlign_Center)
-			.AutoWidth()
+		return nullptr;
+	}
+
+	if (ColumnName == FCommonOutlinerNames::Edit)
+	{
+		return SNew(SBox)
+			.HAlign(HAlign_Left)
 			[
 				SNew(SEnumComboBox, StaticEnum<ENiagaraAgeUpdateMode>())
 				.Font(FAppStyle::GetFontStyle(TEXT("PropertyWindow.NormalFont")))
@@ -175,7 +176,7 @@ TSharedPtr<SWidget> FNiagaraSystemTrackEditor::BuildOutlinerEditWidget(const FGu
 				})
 			];
 	}
-	return FMovieSceneTrackEditor::BuildOutlinerEditWidget(ObjectBinding, Track, Params);
+	return FMovieSceneTrackEditor::BuildOutlinerColumnWidget(Params, ColumnName);
 }
 
 void FNiagaraSystemTrackEditor::AddDefaultSystemTracks(const AActor& SourceActor, const FGuid& Binding,	TSharedPtr<ISequencer> Sequencer)

@@ -28,7 +28,7 @@ static_assert(MAX_ROOT_CBVS <= MAX_CBS, "MAX_ROOT_CBVS must be <= MAX_CBS.");
 static_assert((8 * sizeof(CBVSlotMask)) >= MAX_CBS, "CBVSlotMask isn't large enough to cover all CBs. Please increase the size.");
 static_assert((8 * sizeof(CBVSlotMask)) >= MAX_ROOT_CBVS, "CBVSlotMask isn't large enough to cover all CBs. Please increase the size.");
 static const CBVSlotMask GRootCBVSlotMask = (1 << MAX_ROOT_CBVS) - 1; // Mask for all slots that are used by root descriptors.
-static const CBVSlotMask GDescriptorTableCBVSlotMask = static_cast<CBVSlotMask>(-1) & ~(GRootCBVSlotMask); // Mask for all slots that are used by a root descriptor table.
+static const CBVSlotMask GDescriptorTableCBVSlotMask = static_cast<CBVSlotMask>((1<<MAX_CBS) - 1) & ~(GRootCBVSlotMask); // Mask for all slots that are used by a root descriptor table.
 
 #if MAX_SRVS > 32
 	typedef uint64 SRVSlotMask;
@@ -37,7 +37,7 @@ static const CBVSlotMask GDescriptorTableCBVSlotMask = static_cast<CBVSlotMask>(
 #endif
 static_assert((8 * sizeof(SRVSlotMask)) >= MAX_SRVS, "SRVSlotMask isn't large enough to cover all SRVs. Please increase the size.");
 
-typedef uint16 SamplerSlotMask;
+typedef uint32 SamplerSlotMask;
 static_assert((8 * sizeof(SamplerSlotMask)) >= MAX_SAMPLERS, "SamplerSlotMask isn't large enough to cover all Samplers. Please increase the size.");
 
 typedef uint16 UAVSlotMask;

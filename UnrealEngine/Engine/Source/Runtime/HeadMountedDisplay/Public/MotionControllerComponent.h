@@ -6,7 +6,6 @@
 #include "SceneViewExtension.h"
 #include "IMotionController.h"
 #include "LateUpdateManager.h"
-#include "IIdentifiableXRDevice.h" // for FXRDeviceId
 #include "MotionControllerComponent.generated.h"
 
 class FPrimitiveSceneInfo;
@@ -36,40 +35,6 @@ class UMotionControllerComponent : public UPrimitiveComponent
 	UPROPERTY(BlueprintReadOnly, Category = "MotionController")
 	ETrackingStatus CurrentTrackingStatus;
 
-	/** Used to automatically render a model associated with the set hand. */
-	UE_DEPRECATED(5.2, "bDisplayDeviceModel is deprecated. Please use the XRDeviceVisualizationComponent for rendering instead.")
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, BlueprintSetter = SetShowDeviceModel, Category = "Visualization", meta = (DeprecatedProperty, DeprecationMessage = "bDisplayDeviceModel is deprecated. Please use the XRDeviceVisualizationComponent for rendering instead."))
-	bool bDisplayDeviceModel;
-
-	/** Determines the source of the desired model. By default, the active XR system(s) will be queried and (if available) will provide a model for the associated device. NOTE: this may fail if there's no default model; use 'Custom' to specify your own. */
-	UE_DEPRECATED(5.2, "DisplayModelSource is deprecated. Please use the XRDeviceVisualizationComponent for rendering instead.")
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, BlueprintSetter = SetDisplayModelSource, Category = "Visualization", meta = (editcondition = "bDisplayDeviceModel", DeprecatedProperty, DeprecationMessage = "DisplayModelSource is deprecated. Please use the XRDeviceVisualizationComponent for rendering instead."))
-	FName DisplayModelSource;
-
-	static HEADMOUNTEDDISPLAY_API FName CustomModelSourceId;
-
-	/** A mesh override that'll be displayed attached to this MotionController. */
-	UE_DEPRECATED(5.2, "CustomDisplayMesh is deprecated. Please use the XRDeviceVisualizationComponent for rendering instead.")
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, BlueprintSetter = SetCustomDisplayMesh, Category = "Visualization", meta = (editcondition = "bDisplayDeviceModel", DeprecatedProperty, DeprecationMessage = "CustomDisplayMesh is deprecated. Please use the XRDeviceVisualizationComponent for rendering instead."))
-	TObjectPtr<UStaticMesh> CustomDisplayMesh;
-
-	/** Material overrides for the specified display mesh. */
-	UE_DEPRECATED(5.2, "DisplayMeshMaterialOverrides is deprecated. Please use the XRDeviceVisualizationComponent for rendering instead.")
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Visualization", meta = (editcondition = "bDisplayDeviceModel", DeprecatedProperty, DeprecationMessage = "DisplayMeshMaterialOverrides is deprecated. Please use the XRDeviceVisualizationComponent for rendering instead."))
-	TArray<TObjectPtr<UMaterialInterface>> DisplayMeshMaterialOverrides;
-
-	UE_DEPRECATED(5.2, "SetShowDeviceModel is deprecated. Please use the XRDeviceVisualizationComponent for rendering instead.")
-	UFUNCTION(BlueprintSetter, meta = (DeprecatedFunction, DeprecationMessage = "SetShowDeviceModel is deprecated. Please use the XRDeviceVisualizationComponent for rendering instead."))
-	HEADMOUNTEDDISPLAY_API void SetShowDeviceModel(const bool bShowControllerModel);
-
-	UE_DEPRECATED(5.2, "SetDisplayModelSource is deprecated. Please use the XRDeviceVisualizationComponent for rendering instead.")
-	UFUNCTION(BlueprintSetter, meta = (DeprecatedFunction, DeprecationMessage = "SetDisplayModelSource is deprecated. Please use the XRDeviceVisualizationComponent for rendering instead."))
-	HEADMOUNTEDDISPLAY_API void SetDisplayModelSource(const FName NewDisplayModelSource);
-
-	UE_DEPRECATED(5.2, "SetCustomDisplayMesh is deprecated. Please use the XRDeviceVisualizationComponent for rendering instead.")
-	UFUNCTION(BlueprintSetter, meta = (DeprecatedFunction, DeprecationMessage = "SetCustomDisplayMesh is deprecated. Please use the XRDeviceVisualizationComponent for rendering instead."))
-	HEADMOUNTEDDISPLAY_API void SetCustomDisplayMesh(UStaticMesh* NewDisplayMesh);
-
 	/** Whether or not this component had a valid tracked device this frame */
 	UFUNCTION(BlueprintPure, Category = "MotionController")
 	bool IsTracked() const
@@ -94,44 +59,12 @@ class UMotionControllerComponent : public UPrimitiveComponent
 	HEADMOUNTEDDISPLAY_API void TickComponent(float DeltaTime, enum ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 	HEADMOUNTEDDISPLAY_API void BeginDestroy() override;
 
-	// The following private properties/members are now deprecated and will be removed in later versions.
-	HEADMOUNTEDDISPLAY_API void RefreshDisplayComponent(const bool bForceDestroy = false);
-	HEADMOUNTEDDISPLAY_API void PostLoad() override;
-
-	/** Callback for asynchronous display model loads (to set materials, etc.) */
-	HEADMOUNTEDDISPLAY_API void OnDisplayModelLoaded(UPrimitiveComponent* DisplayComponent);
-
-	UPROPERTY(Transient, BlueprintReadOnly, Category = Visualization, meta = (AllowPrivateAccess = "true"))
-	TObjectPtr<UPrimitiveComponent> DisplayComponent;
-
-	enum class EModelLoadStatus : uint8
-	{
-		Unloaded,
-		Pending,
-		InProgress,
-		Complete
-	};
-	EModelLoadStatus DisplayModelLoadState = EModelLoadStatus::Unloaded;
-
-	FXRDeviceId DisplayDeviceId;
-
-#if WITH_EDITOR
-	int32 PreEditMaterialCount = 0;
-#endif
-
 public:
 	//~ UObject interface
 	HEADMOUNTEDDISPLAY_API virtual void Serialize(FArchive& Ar) override;
 
-#if WITH_EDITOR
-	HEADMOUNTEDDISPLAY_API virtual void PreEditChange(FProperty* PropertyAboutToChange) override;
-	HEADMOUNTEDDISPLAY_API virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
-#endif 
-
 	//~ UActorComponent interface
-	HEADMOUNTEDDISPLAY_API virtual void OnRegister() override;
 	HEADMOUNTEDDISPLAY_API virtual void InitializeComponent() override;
-	HEADMOUNTEDDISPLAY_API virtual void OnComponentDestroyed(bool bDestroyingHierarchy) override;
 
 	// Delegate for activation of XRDeviceVisualizationComponent
 	DECLARE_MULTICAST_DELEGATE_OneParam(FActivateVisualizationComponent, bool);

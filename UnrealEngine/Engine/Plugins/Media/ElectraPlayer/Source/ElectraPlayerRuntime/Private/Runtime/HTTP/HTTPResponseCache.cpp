@@ -7,14 +7,14 @@
 
 namespace Electra
 {
-	const TCHAR* const OptionKeyResponseCacheMaxEntries = TEXT("httpcache_max_entries");
-	const TCHAR* const OptionKeyResponseCacheMaxByteSize = TEXT("httpcache_max_bytesize");
+	static const FName OptionKeyResponseCacheMaxEntries(TEXT("httpcache_max_entries"));
+	static const FName OptionKeyResponseCacheMaxByteSize(TEXT("httpcache_max_bytesize"));
 
 
 class FHTTPResponseCache : public IHTTPResponseCache
 {
 public:
-	FHTTPResponseCache(IPlayerSessionServices* SessionServices, const FParamDict& Options, TSharedPtr<IElectraPlayerDataCache, ESPMode::ThreadSafe> ExternalCache);
+	FHTTPResponseCache(IPlayerSessionServices* SessionServices, TSharedPtr<IElectraPlayerDataCache, ESPMode::ThreadSafe> ExternalCache);
 	virtual ~FHTTPResponseCache();
 
 	void Disable() override;
@@ -359,30 +359,30 @@ private:
 /***************************************************************************************************************************************************/
 /***************************************************************************************************************************************************/
 
-TSharedPtrTS<IHTTPResponseCache> IHTTPResponseCache::Create(IPlayerSessionServices* SessionServices, const FParamDict& Options, TSharedPtr<IElectraPlayerDataCache, ESPMode::ThreadSafe> ExternalCache)
+TSharedPtrTS<IHTTPResponseCache> IHTTPResponseCache::Create(IPlayerSessionServices* SessionServices, TSharedPtr<IElectraPlayerDataCache, ESPMode::ThreadSafe> ExternalCache)
 {
-	return MakeSharedTS<FHTTPResponseCache>(SessionServices, Options, ExternalCache);
+	return MakeSharedTS<FHTTPResponseCache>(SessionServices, ExternalCache);
 }
 
 /***************************************************************************************************************************************************/
 /***************************************************************************************************************************************************/
 /***************************************************************************************************************************************************/
 
-FHTTPResponseCache::FHTTPResponseCache(IPlayerSessionServices* InSessionServices, const FParamDict& InOptions, TSharedPtr<IElectraPlayerDataCache, ESPMode::ThreadSafe> InExternalCache)
+FHTTPResponseCache::FHTTPResponseCache(IPlayerSessionServices* InSessionServices, TSharedPtr<IElectraPlayerDataCache, ESPMode::ThreadSafe> InExternalCache)
 	: ExternalCache(InExternalCache), SessionServices(InSessionServices)
 {
 	// Only configure our cache when there is no external one!
 	if (!ExternalCache.IsValid())
 	{
 		int64 v;
-		v = InOptions.GetValue(OptionKeyResponseCacheMaxByteSize).SafeGetInt64(0);
+		v = InSessionServices->GetOptionValue(OptionKeyResponseCacheMaxByteSize).SafeGetInt64(0);
 		if (v >= 0)
 		{
 			MaxElementSize = (int64)v;
 		}
 		// Max number of elements is probably not used a lot, if at all.
 		// If not specified we allow for some reasonable number.
-		v = InOptions.GetValue(OptionKeyResponseCacheMaxEntries).SafeGetInt64(8192);
+		v = InSessionServices->GetOptionValue(OptionKeyResponseCacheMaxEntries).SafeGetInt64(8192);
 		if (v >= 0)
 		{
 			MaxNumElements = (int32) v;

@@ -249,7 +249,7 @@ bool FLoadAllMapsInEditorTest::RunTest(const FString& Parameters)
 
 		//Create a screen shot filename and path
 		const FString LoadAllMapsTestName = FString::Printf(TEXT("LoadAllMaps_Editor/%s"), *FPaths::GetBaseFilename(MapName));
-		WindowParameters.ScreenshotName = AutomationCommon::GetScreenshotName(LoadAllMapsTestName);
+		WindowParameters.ScreenshotName = AutomationCommon::GetScreenshotPath(LoadAllMapsTestName);
 
 		//Get the current number of seconds.  This will be used to track how long it took to load the map.
 		MapLoadStartTime = FPlatformTime::Seconds();

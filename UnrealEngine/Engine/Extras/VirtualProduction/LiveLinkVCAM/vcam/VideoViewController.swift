@@ -17,33 +17,37 @@ class VideoViewController : BaseViewController {
     var demoMode : Bool {
         liveLink == nil
     }
+    
+    weak var liveLink : LiveLinkProvider?
+    
+    // Required public for reconnection picker
+    var pickerData: [String] = [String]()
+    var selectedStreamer: String = ""
 
     private var displayLink: CADisplayLink?
+    private var refreshRateHint : CADisplayLink?
+    private var lastTimestamp: CFTimeInterval = 0.0
 
     private var arSession : ARSession?
+    private var arCoachingView : ARCoachingOverlayView?
     
     @IBOutlet weak var renderView : UIView!
     
     @IBOutlet weak var headerView : HeaderView!
     @IBOutlet weak var headerViewTopConstraint : NSLayoutConstraint!
-    var headerViewY : CGFloat = 0
-    var headerViewHeight : CGFloat = 0
-    var headerViewTopConstraintStartValue : CGFloat = 0
-    var headerPanGestureRecognizer : UIPanGestureRecognizer!
-    var headerPullDownGestureRecognizer : UIScreenEdgePanGestureRecognizer!
+    private var headerViewY : CGFloat = 0
+    private var headerViewHeight : CGFloat = 0
+    private var headerViewTopConstraintStartValue : CGFloat = 0
+    private var headerPanGestureRecognizer : UIPanGestureRecognizer!
+    private var headerPullDownGestureRecognizer : UIScreenEdgePanGestureRecognizer!
     
-    var streamingConnection : StreamingConnection?
-    var pickerData: [String] = [String]()
-    var selectedStreamer: String = ""
-
-    weak var liveLink : LiveLinkProvider?
-    var dismissOnDisconnect = false
-    var forceDisconnectTimer : Timer?
+    private var statsTimer : Timer?
+    private var showStats : Bool = false
     
-    var statsTimer : Timer?
-    var showStats : Bool = false
+    private var gameControllerSnapshot : GCController?
     
-    var gameControllerSnapshot : GCController?
+    // streamingConnection and gameController are passed from StartViewController
+    weak var streamingConnection : StreamingConnection?
     weak var gameController : GCController? {
         didSet {
             if let gc = gameController {
@@ -92,47 +96,107 @@ class VideoViewController : BaseViewController {
     @objc func applicationDidEnterBackground(notification: NSNotification) {
         disconnect()
     }
+    @objc func controllerDidConnect(notification: NSNotification) {
+        guard let gc = notification.object as? GCController else { return }
+        self.controllerConnected(gamepad: gc)
+    }
+    @objc func controllerDidDisconnect(notification: NSNotification) {
+        guard let gc = notification.object as? GCController else { return }
+        self.controllerDisconnected(gamepad: gc)
+    }
     
-    override func viewDidLoad() {
-        super.viewDidLoad()
+    // Constructor (before view is even loaded)
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setupObservers()
+        setupARSession()
+    }
+    
+    // Destructor (called when view controller is destroyed)
+    deinit {
+        Log.info("VideoViewController destructed.")
+        self.headerView = nil
+    }
+    
+    func setupObservers(){
+        // According to: https://stackoverflow.com/a/40339926
+        // There is no need to remove observers because they are captured weakly and automatically removed (as long as they are not using closure blocks)
         
         NotificationCenter.default.addObserver(self, selector: #selector(applicationDidBecomeActive), name: UIApplication.willEnterForegroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(applicationDidEnterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
         
+        // Add notifications for when new controllers connect or disconnect
+        NotificationCenter.default.addObserver(self, selector: #selector(controllerDidConnect), name: .GCControllerDidConnect, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(controllerDidDisconnect), name: .GCControllerDidDisconnect, object: nil)
+    }
+    
+    func setupGestureRecognizers(){
+        self.headerPanGestureRecognizer = UIPanGestureRecognizer(target: self, action: #selector(handleHeaderPanGesture))
+        self.headerView.addGestureRecognizer(self.headerPanGestureRecognizer)
+
+        self.headerPullDownGestureRecognizer = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleHeaderPanGesture))
+        self.headerPullDownGestureRecognizer.edges = [ .top ]
+        self.view.addGestureRecognizer(self.headerPullDownGestureRecognizer)
+        
+        self.headerPanGestureRecognizer.require(toFail: headerPullDownGestureRecognizer)
+    }
+    
+    func removeGestureRecognizers(){
+        self.headerView.removeGestureRecognizer(self.headerPanGestureRecognizer)
+        self.view.removeGestureRecognizer(self.headerPullDownGestureRecognizer)
+    }
+    
+    func setupARSession(){
+        arSession = ARSession()
+        arSession?.delegate = self
+    }
+    
+    func startARSession(){
+        // Create a ARKit tracking config for purely tracking device transform (we don't care about the computer vision features)
+        let config = ARPositionalTrackingConfiguration()
+        config.worldAlignment = .gravity
+        config.planeDetection = []
+        config.isLightEstimationEnabled = false
+        config.providesAudioData = false
+        if self.arSession == nil {
+            setupARSession()
+        }
+        self.arSession?.run(config)
+    }
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        
         self.headerView.start()
         headerViewHeight = self.headerView.frame.height
-
-        headerPanGestureRecognizer = UIPanGestureRecognizer(target: self, action: #selector(handleHeaderPanGesture))
-        self.headerView.addGestureRecognizer(headerPanGestureRecognizer)
-
-        headerPullDownGestureRecognizer = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(handleHeaderPanGesture))
-        headerPullDownGestureRecognizer.edges = [ .top ]
-        self.view.addGestureRecognizer(headerPullDownGestureRecognizer)
         
-        headerPanGestureRecognizer.require(toFail: headerPullDownGestureRecognizer)
-        
-        // The AR video feed & CG objects only exist in demo mode. In normal operation, they are replaced by a live feed of the Unreal Engine rendering, with the virtual camera's position determined by the device & ARKit.
+        // The AR video feed & CG objects only exist in demo mode. 
+        // In normal operation, they are replaced by a live feed of the Unreal Engine rendering, with the virtual camera's position determined by the device & ARKit.
         //self.demoModeBlurView.isHidden = !self.demoMode
         showReconnecting(false, animated: false)
         
-        let config = ARWorldTrackingConfiguration()
-        config.worldAlignment = .gravity
+        // setup gesture recognition has to start here because it references view that need to have loaded
+        self.setupGestureRecognizers()
         
-        arSession = ARSession()
-        arSession?.delegate = self
-        arSession?.run(config)
+        // Start running AR session
+        self.startARSession()
         
+        // Attach an empty view where the relevant stream connection can setup its own view once this is set
         self.streamingConnection?.renderView = self.renderView
         
+        if let existingARCoachingView = self.arCoachingView {
+            existingARCoachingView.removeFromSuperview()
+        }
         
+        // Insert coaching overlay into subview
         let coachingOverlayView = ARCoachingOverlayView()
-        
         self.view.insertSubview(coachingOverlayView, belowSubview: self.reconnectingBlurView)
         coachingOverlayView.layout(.left, .right, .top, .bottom, to: self.arView)
         coachingOverlayView.goal = .tracking
         coachingOverlayView.session = self.arSession
         coachingOverlayView.activatesAutomatically = true
         coachingOverlayView.delegate = self
+        self.arCoachingView = coachingOverlayView
 
         statsTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true, block: { t in
             self.updateStreamingStats()
@@ -141,34 +205,70 @@ class VideoViewController : BaseViewController {
     
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        
+        // Ensure we do not go into sleep mode while this view is active
         UIApplication.shared.isIdleTimerDisabled = true
         
         // Check for already connected controllers
         for gc in GCController.controllers() {
             self.controllerConnected(gamepad: gc)
         }
-
-        let notificationCenter = NotificationCenter.default;
         
-        // Add notifications for when new controllers connect or disconnect
-        notificationCenter.addObserver(forName: .GCControllerDidConnect, object: nil, queue: .main) { (note) in
-            guard let gc = note.object as? GCController else { return }
-            self.controllerConnected(gamepad: gc)
-        }
-        
-        notificationCenter.addObserver(forName: .GCControllerDidDisconnect, object: nil, queue: .main) { (note) in
-            guard let gc = note.object as? GCController else { return }
-            self.controllerDisconnected(gamepad: gc)
-        }
+        // Todo: Could dynamically adjust this
+        self.setRefreshRateFps(fps: 60)
     }
     
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        
+        // Now this view is going away we can let the device go to sleep if there is not touch input
         UIApplication.shared.isIdleTimerDisabled = false
         
-        let notificationCenter = NotificationCenter.default
-        notificationCenter.removeObserver(self, name: .GCControllerDidConnect, object: nil)
-        notificationCenter.removeObserver(self, name: .GCControllerDidDisconnect, object: nil)
+        // If view is going away we will remove out refresh rate hint so battery usage can return to normal values
+        self.resetRefreshRateFps()
+        
+        // Clear stats timer
+        self.statsTimer?.invalidate()
+        
+        // pause ar session when view goes away
+        self.arSession?.pause()
+        
+        // remove the gesture recognizers as this view will not longer be shown
+        self.removeGestureRecognizers()
+        
+        // disconnect from streaming if we haven't already
+        self.disconnect()
+        
+    }
+    
+    @objc func refreshRateCallback(_ displayLink: CADisplayLink) {
+        // Todo: We could show the refresh rate in the UI from here?
+        //let deltaTime = displayLink.timestamp - self.lastTimestamp
+        //Log.info(String(deltaTime))
+        //let workingTime = displayLink.targetTimestamp - CACurrentMediaTime()
+        //Log.info(String(workingTime))
+        self.lastTimestamp = displayLink.timestamp
+    }
+    
+    func setRefreshRateFps(fps: Int) {
+        self.resetRefreshRateFps()
+        
+        // Attempt to force the display refresh rate to the 60-120hz range for WebRTC video streaming (it seems iOS does not auto detect the rate of received frames and adjust)
+        self.refreshRateHint = CADisplayLink(target: self, selector: #selector(refreshRateCallback))
+        self.refreshRateHint?.preferredFrameRateRange = CAFrameRateRange(minimum: Float(fps), maximum: Float(fps), preferred: Float(fps))
+        self.refreshRateHint?.add(to: .main, forMode: .common)
+        
+        for subview in self.renderView.subviews {
+            if let webrtcView = subview as? WebRTCView {
+                webrtcView.videoView?.setPreferredFramerate(fps: fps)
+            }
+        }
+    }
+    
+    func resetRefreshRateFps() {
+        self.refreshRateHint?.remove(from: .main, forMode: .common)
+        self.refreshRateHint?.invalidate()
+        self.refreshRateHint = nil
     }
     
     func showReconnecting(_ visible : Bool, animated: Bool) {
@@ -192,42 +292,29 @@ class VideoViewController : BaseViewController {
     }
 
     func exit() {
-        
-        // if still connected, we need to send a disconnect/goodbye, then dismiss the view controller when
-        // the goodbye msg is sent.
-        // otherwise, we can call disconnect (which tears down some objects) and dismiss this VC immediately.
-        if self.streamingConnection?.isConnected ?? false {
-            dismissOnDisconnect = true
-            disconnect()
-        } else {
-            self.forceDisconnectAndDismiss()
-        }
+        disconnect()
     }
     
     func reconnect() {
-        
         showReconnecting(true, animated: true)
         self.streamingConnection?.reconnect()
     }
     
     func disconnect() {
-        self.forceDisconnectTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false, block: { timer in
-            Log.info("Forcing disconnect due to timeout.")
-            self.forceDisconnectAndDismiss()
-        })
         // Tell UE that the controllers connected to this device are no longer used
         for gc in GCController.controllers() {
             self.controllerDisconnected(gamepad: gc)
         }
         
         self.streamingConnection?.disconnect()
-    }
-    
-    func forceDisconnectAndDismiss() {
-        self.forceDisconnectTimer?.invalidate()
-        self.forceDisconnectTimer = nil
+        
+        // Clear the delegate on the streaming connection (which is a reference to this view controller)
         self.streamingConnection?.delegate = nil
+        
+        // Clear the streaming connection itself
         self.streamingConnection = nil
+        
+        // Dismiss this UIViewController and return to the presenting view that segued to here
         self.presentingViewController?.dismiss(animated: true, completion: nil)
     }
     
@@ -306,19 +393,17 @@ class VideoViewController : BaseViewController {
             
             // we also need a display link here to properly communicate the new headerY from the presentation layer to
             // the metal renderer.
-            self.displayLink = CADisplayLink(
-              target: self, selector: #selector(displayLinkDidFire)
-            )
+            self.displayLink = CADisplayLink(target: self, selector: #selector(displayLinkDidFire))
             self.displayLink!.add(to: .main, forMode: .common)
 
-            UIView.animate(withDuration: 0.2) {
+            UIView.animate(withDuration: 0.2) { [weak self] in
                 // animate to the new position
-                self.headerViewTopConstraint.constant = newTopY
-                self.view.layoutIfNeeded()
-            } completion: { _ in
+                self?.headerViewTopConstraint.constant = newTopY
+                self?.view.layoutIfNeeded()
+            } completion: { [weak self] _ in
                 // all done, we kill the display link
-                self.displayLink?.invalidate()
-                self.displayLink = nil
+                self?.displayLink?.invalidate()
+                self?.displayLink = nil
             }
         }
     }
@@ -350,7 +435,6 @@ class VideoViewController : BaseViewController {
         ]
         
         for input in inputs {
-            
             if (input.value.newValue != 0.0) || ((input.value.oldValue ?? 0.0) != input.value.newValue) {
                 sc.sendControllerAnalog(input.key, controllerIndex: UInt8(controllerIndex), value: input.value.newValue)
             }
@@ -455,15 +539,14 @@ extension VideoViewController : HeaderViewDelegate {
     func headerViewExitButtonTapped(_ headerView : HeaderView) {
      
         let disconnectAlert = UIAlertController(title: nil, message: NSLocalizedString("Disconnect from the remote session?", comment: "Prompt disconnect from a remote session."), preferredStyle: .alert)
-        disconnectAlert.addAction(UIAlertAction(title: NSLocalizedString("Disconnect", comment: "Button to disconnect from a UE instance"), style: .destructive, handler: { _ in
-            self.exit()
+        disconnectAlert.addAction(UIAlertAction(title: NSLocalizedString("Disconnect", comment: "Button to disconnect from a UE instance"), style: .destructive, handler: { [weak self] _ in
+            self?.exit()
         }))
         disconnectAlert.addAction(UIAlertAction(title: Localized.buttonCancel(), style: .cancel))
         self.present(disconnectAlert, animated:true)
     }
 
     func headerViewLogButtonTapped(_ headerView : HeaderView) {
-     
         performSegue(withIdentifier: "showLog", sender: headerView)
     }
     

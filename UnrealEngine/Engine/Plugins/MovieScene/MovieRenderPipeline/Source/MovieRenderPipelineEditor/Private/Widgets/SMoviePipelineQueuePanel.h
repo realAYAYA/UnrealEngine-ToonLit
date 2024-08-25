@@ -48,7 +48,7 @@ private:
 	void OnConfigUpdatedForJobToPreset(TWeakObjectPtr<UMoviePipelineExecutorJob> InJob, TWeakObjectPtr<UMoviePipelineExecutorShot> InShot, UMoviePipelineConfigBase* InConfig);
 	void OnConfigWindowClosed();
 
-	void OnSelectionChanged(const TArray<UMoviePipelineExecutorJob*>& InSelectedJobs);
+	void OnSelectionChanged(const TArray<UMoviePipelineExecutorJob*>& InSelectedJobs, const TArray<UMoviePipelineExecutorShot*>& InSelectedShots);
 	int32 GetDetailsViewWidgetIndex() const;
 	bool IsDetailsViewEnabled() const;
 
@@ -63,6 +63,12 @@ private:
 	bool IsQueueDirty() const;
 	UMoviePipelineQueue* GetQueueOrigin() const;
 	FString GetQueueOriginName() const;
+
+	/**
+	 * Generates and returns a new shot subgraph based on the given job and shot. Returns nullptr if there was an issue creating the graph. If the
+	 * graph was successfully created, it will be assigned to the shot.
+	 */
+	class UMovieGraphConfig* GenerateNewShotSubgraph(const UMoviePipelineExecutorJob* InJob, UMoviePipelineExecutorShot* InShot) const;
 
 private:
 	/** Allocates a transient preset so that the user can use the pipeline without saving it to an asset first. */

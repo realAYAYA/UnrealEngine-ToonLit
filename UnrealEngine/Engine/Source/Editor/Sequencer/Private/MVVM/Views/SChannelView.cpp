@@ -607,15 +607,15 @@ int32 SChannelView::DrawLane(const FPaintArgs& Args, const FGeometry& AllottedGe
 	if (Selection.Outliner.IsSelected(OutlinerItem))
 	{
 		static const FName SelectionColorName("SelectionColor");
-		static const FName SelectedTrackTintBrushName("Sequencer.Section.SelectedTrackTint");
+		static const FName HighlightBrushName("Sequencer.AnimationOutliner.DefaultBorder");
 
 		FSlateDrawElement::MakeBox(
 			OutDrawElements,
 			LayerId++,
 			AllottedGeometry.ToPaintGeometry(),
-			FAppStyle::GetBrush(SelectedTrackTintBrushName),
+			FAppStyle::GetBrush(HighlightBrushName),
 			DrawEffects,
-			FAppStyle::GetSlateColor(SelectionColorName).GetColor(InWidgetStyle)
+			FAppStyle::GetSlateColor(SelectionColorName).GetColor(InWidgetStyle).CopyWithNewOpacity(0.2f)
 		);
 	}
 

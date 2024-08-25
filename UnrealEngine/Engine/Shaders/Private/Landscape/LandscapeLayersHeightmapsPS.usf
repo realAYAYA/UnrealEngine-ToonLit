@@ -210,7 +210,7 @@ float UnscaleHeight(float InScaledHeight)
 // Load from the main heightmap and returns the position (.xyz) and whether the sample is valid or not (.w = 1 because the main heightmap is always valid)
 float4 LoadHeightmapScaledPosition(uint2 InRelativeTextureCoordinates)
 {
-	float Height = LoadHeightmapUnpackedHeight(InRelativeTextureCoordinates);
+	float Height = LoadHeightmapUnpackedHeight(InRelativeTextureCoordinates).x;
 	return float4(InRelativeTextureCoordinates * InLandscapeGridScale.xy, ScaleHeight(Height), 1.0f);
 }
 

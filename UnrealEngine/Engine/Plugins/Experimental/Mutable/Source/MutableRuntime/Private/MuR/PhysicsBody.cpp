@@ -27,7 +27,7 @@ namespace mu
 	//-------------------------------------------------------------------------------------------------
 	void FBodyShape::Serialise(OutputArchive& arch) const
 	{
-		const uint32 ver = 0;
+		const uint32 ver = 1;
 		arch << ver;
 
 		arch << Name;
@@ -40,9 +40,19 @@ namespace mu
 	{
 		uint32 ver;
 		arch >> ver;
-		check(ver == 0);
+		check(ver <= 1);
 
-		arch >> Name;
+		if (ver == 0)
+		{
+			std::string Temp;
+			arch >> Temp;
+			Name = Temp.c_str();
+		}
+		else
+		{
+			arch >> Name;
+		}
+
 		arch >> Flags;
 	}
 
@@ -661,48 +671,48 @@ namespace mu
 	}
 
 	//-------------------------------------------------------------------------------------------------
-	const char* PhysicsBody::GetSphereName(int32 B, int32 I) const
+	const FString& PhysicsBody::GetSphereName(int32 B, int32 I) const
 	{
 		check(B >= 0 && B < Bodies.Num());
 		check(I >= 0 && I < Bodies[B].Spheres.Num());
 
-		return Bodies[B].Spheres[I].Name.c_str();
+		return Bodies[B].Spheres[I].Name;
 	}
 
 	//-------------------------------------------------------------------------------------------------
-	const char* PhysicsBody::GetBoxName(int32 B, int32 I) const
+	const FString& PhysicsBody::GetBoxName(int32 B, int32 I) const
 	{
 		check(B >= 0 && B < Bodies.Num());
 		check(I >= 0 && I < Bodies[B].Boxes.Num());
 
-		return Bodies[B].Boxes[I].Name.c_str();
+		return Bodies[B].Boxes[I].Name;
 	}
 
 	//-------------------------------------------------------------------------------------------------
-	const char* PhysicsBody::GetConvexName(int32 B, int32 I) const
+	const FString& PhysicsBody::GetConvexName(int32 B, int32 I) const
 	{
 		check(B >= 0 && B < Bodies.Num());
 		check(I >= 0 && I < Bodies[B].Convex.Num());
 
-		return Bodies[B].Convex[I].Name.c_str();
+		return Bodies[B].Convex[I].Name;
 	}
 
 	//-------------------------------------------------------------------------------------------------
-	const char* PhysicsBody::GetSphylName(int32 B, int32 I) const
+	const FString& PhysicsBody::GetSphylName(int32 B, int32 I) const
 	{
 		check(B >= 0 && B < Bodies.Num());
 		check(I >= 0 && I < Bodies[B].Sphyls.Num());
 
-		return Bodies[B].Sphyls[I].Name.c_str();
+		return Bodies[B].Sphyls[I].Name;
 	}
 
 	//-------------------------------------------------------------------------------------------------
-	const char* PhysicsBody::GetTaperedCapsuleName(int32 B, int32 I) const
+	const FString& PhysicsBody::GetTaperedCapsuleName(int32 B, int32 I) const
 	{
 		check(B >= 0 && B < Bodies.Num());
 		check(I >= 0 && I < Bodies[B].TaperedCapsules.Num());
 
-		return Bodies[B].TaperedCapsules[I].Name.c_str();
+		return Bodies[B].TaperedCapsules[I].Name;
 	}
 
 
@@ -740,11 +750,11 @@ namespace mu
 		}
 		else
 		{
-			TArray<string> BoneNames;
+			TArray<std::string> BoneNames;
 			arch >> BoneNames;
 
 			const int32 NumBoneNames = BoneNames.Num();
-			TArray<string> UniqueBoneNames;
+			TArray<std::string> UniqueBoneNames;
 			UniqueBoneNames.Reserve(NumBoneNames);
 			BoneIds.Reserve(NumBoneNames);
 			for (int32 BoneIndex = 0; BoneIndex < NumBoneNames; ++BoneIndex)

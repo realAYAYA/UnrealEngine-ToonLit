@@ -5,15 +5,17 @@ using System;
 namespace EpicGames.Horde.Compute
 {
 	/// <summary>
-	/// Base class for compute errors
+	/// Generic class for compute errors
 	/// </summary>
-	public abstract class ComputeException : Exception
+	public class ComputeException : Exception
 	{
-		/// <summary>
-		/// Constructor
-		/// </summary>
-		protected ComputeException(string message)
-			: base(message)
+		/// <inheritdoc/>
+		public ComputeException(string message) : base(message)
+		{
+		}
+
+		/// <inheritdoc/>
+		public ComputeException(string? message, Exception? innerException) : base(message, innerException)
 		{
 		}
 	}
@@ -44,7 +46,7 @@ namespace EpicGames.Horde.Compute
 		/// Constructor
 		/// </summary>
 		public ComputeRemoteException(ExceptionMessage message)
-			: this(message.Message, message.Description)
+			: this("Remote exception: " + message.Message, message.Description)
 		{
 		}
 
@@ -54,7 +56,7 @@ namespace EpicGames.Horde.Compute
 		public ComputeRemoteException(string message, string description)
 			: base(message)
 		{
-			_description = description;
+			_description = "From remote machine: " + description;
 		}
 
 		/// <inheritdoc/>

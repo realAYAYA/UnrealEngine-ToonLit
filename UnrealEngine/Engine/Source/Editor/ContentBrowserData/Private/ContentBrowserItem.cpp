@@ -290,6 +290,12 @@ bool FContentBrowserItem::IsFile() const
 	return PrimaryItemData && PrimaryItemData->IsFile();
 }
 
+bool FContentBrowserItem::IsInPlugin() const
+{
+	const FContentBrowserItemData* PrimaryItemData = GetPrimaryInternalItem();
+	return PrimaryItemData && PrimaryItemData->IsPlugin();
+}
+
 bool FContentBrowserItem::IsSupported() const
 {
 	const FContentBrowserItemData* PrimaryItemData = GetPrimaryInternalItem();
@@ -446,6 +452,11 @@ bool FContentBrowserItem::Edit() const
 bool FContentBrowserItem::CanPreview(FText* OutErrorMsg) const
 {
 	return FContentBrowserItemHelper::CallDataSourceImpl<UContentBrowserDataSource>(*this, UE_PROJECTION_MEMBER(UContentBrowserDataSource, CanPreviewItem), OutErrorMsg);
+}
+
+bool FContentBrowserItem::CanView(FText* OutErrorMsg) const
+{
+	return FContentBrowserItemHelper::CallDataSourceImpl<UContentBrowserDataSource>(*this, UE_PROJECTION_MEMBER(UContentBrowserDataSource, CanViewItem), OutErrorMsg);
 }
 
 bool FContentBrowserItem::Preview() const

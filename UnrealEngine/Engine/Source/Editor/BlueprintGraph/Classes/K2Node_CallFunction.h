@@ -55,12 +55,10 @@ class BLUEPRINTGRAPH_API UK2Node_CallFunction : public UK2Node
 	UPROPERTY()
 	uint32 bIsInterfaceCall:1;
 
-	/** Indicates that this is a call to a final / superclass's function */
-	UPROPERTY()
+	UE_DEPRECATED(5.4, "bIsFinalFunction is deprecated.")
 	uint32 bIsFinalFunction:1;
 
-	/** Indicates that this is a 'bead' function with no fixed location; it is drawn between the nodes that it is wired to */
-	UPROPERTY()
+	UE_DEPRECATED(5.4, "bIsBeadFunction is deprecated")
 	uint32 bIsBeadFunction:1;
 
 	/** The function to call */
@@ -97,6 +95,7 @@ public:
 	virtual void GetPinHoverText(const UEdGraphPin& Pin, FString& HoverTextOut) const override;
 	virtual void AllocateDefaultPins() override;
 	virtual FLinearColor GetNodeTitleColor() const override;
+	virtual FString GetFindReferenceSearchString_Impl(EGetFindReferenceSearchStringFlags InFlags) const override;
 	virtual FText GetTooltipText() const override;
 	virtual FText GetNodeTitle(ENodeTitleType::Type TitleType) const override;
 	virtual FString GetDescriptiveCompiledName() const override;
@@ -109,6 +108,7 @@ public:
 	virtual bool CanPasteHere(const UEdGraph* TargetGraph) const override;
 	virtual void PinDefaultValueChanged(UEdGraphPin* Pin) override;
 	virtual void AddSearchMetaDataInfo(TArray<struct FSearchTagDataPair>& OutTaggedMetaData) const override;
+	virtual void AddPinSearchMetaDataInfo(const UEdGraphPin* Pin, TArray<struct FSearchTagDataPair>& OutTaggedMetaData) const override;
 	virtual TSharedPtr<SWidget> CreateNodeImage() const override;
 	virtual UObject* GetJumpTargetForDoubleClick() const override;
 	virtual bool CanJumpToDefinition() const override;
@@ -123,7 +123,8 @@ public:
 	virtual bool IsNodePure() const override { return bIsPureFunc; }
 	virtual void PostReconstructNode() override;
 	virtual bool ShouldDrawCompact() const override;
-	virtual bool ShouldDrawAsBead() const override;
+	UE_DEPRECATED(5.4, "ShouldDrawAsBead is deprecated")
+	virtual bool ShouldDrawAsBead() const override { return false; }
 	virtual FText GetCompactNodeTitle() const override;
 	virtual void PostPasteNode() override;
 	virtual bool CanSplitPin(const UEdGraphPin* Pin) const override;
@@ -163,7 +164,7 @@ public:
 	 * @return	Pointer to the pin that was created
 	 */
 	virtual UEdGraphPin* CreateSelfPin(const UFunction* Function);
-	
+
 	/**
 	 * Creates all of the pins required to call a particular UFunction.
 	 *

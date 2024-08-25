@@ -24,10 +24,9 @@ UNSYNC_THIRD_PARTY_INCLUDES_START
 #endif	// UNSYNC_PLATFORM_UNIX
 
 #include <unordered_set>
+#include <limits>
 
-#if UNSYNC_USE_TLS
-#	include <tls.h>
-#endif	// UNSYNC_USE_TLS
+#include <tls.h>
 
 UNSYNC_THIRD_PARTY_INCLUDES_END
 
@@ -42,6 +41,8 @@ namespace unsync {
 static_assert(sizeof(FSocketAddress) >= sizeof(sockaddr), "SocketAddress is too small");
 static_assert(sizeof(FSocketAddress) >= sizeof(sockaddr_in), "SocketAddress is too small");
 
+const FSocketHandle InvalidSocketHandle = INVALID_SOCKET;
+
 struct FSocketInitHelper
 {
 	FSocketInitHelper()
@@ -54,9 +55,7 @@ struct FSocketInitHelper
 		}
 #endif	// UNSYNC_PLATFORM_WINDOWS
 
-#if UNSYNC_USE_TLS
 		tls_init();
-#endif	// UNSYNC_USE_TLS
 	}
 	~FSocketInitHelper()
 	{
@@ -89,6 +88,65 @@ GetCurrentHostName()
 	}
 }
 
+static int32
+GetLastSocketError()
+{
+#if UNSYNC_PLATFORM_WINDOWS
+	return WSAGetLastError();
+#else
+	return -1; // TODO: report unix socket error
+#endif
+}
+
+FSocketHandle
+SocketListenTcp(const char* Address, uint16 Port)
+{
+	LazyInitSockets();
+
+	SOCKET ListenSocket = socket(AF_INET, SOCK_STREAM, 0);
+
+	if (ListenSocket == InvalidSocketHandle)
+	{
+		UNSYNC_ERROR(L"Failed to create TCP socket (error code %d)", GetLastSocketError());
+		return InvalidSocketHandle;
+	}
+
+	sockaddr_in Service;
+	Service.sin_family		= AF_INET;
+	Service.sin_addr.s_addr = inet_addr(Address);
+	Service.sin_port		= htons(Port);
+
+	int32 BindResult = bind(ListenSocket, (sockaddr*)&Service, sizeof(Service));
+	if (BindResult == SOCKET_ERROR)
+	{
+		UNSYNC_ERROR(L"Failed to bind TCP socket (error code %d)", GetLastSocketError());
+		SocketClose(ListenSocket);
+		return InvalidSocketHandle;
+	}
+
+	int32 ListenResult = listen(ListenSocket, 1);
+	if (ListenResult == SOCKET_ERROR)
+	{
+		UNSYNC_ERROR(L"Failed to listen on TCP socket (error code %d)", GetLastSocketError());
+		SocketClose(ListenSocket);
+		return InvalidSocketHandle;
+	}
+
+	return ListenSocket;
+}
+
+FSocketHandle
+SocketAccept(FSocketHandle ListenSocket)
+{
+	SOCKET AcceptSocket = accept(ListenSocket, nullptr, nullptr);
+	if (AcceptSocket == InvalidSocketHandle)
+	{
+		UNSYNC_ERROR(L"Failed to accept connection on TCP socket (error code %d)", GetLastSocketError());
+		return InvalidSocketHandle;
+	}
+	return AcceptSocket;
+}
+
 FSocketHandle
 SocketConnectTcp(const char* DestAddress, uint16 Port)
 {
@@ -96,14 +154,10 @@ SocketConnectTcp(const char* DestAddress, uint16 Port)
 
 	SOCKET Sock = socket(AF_INET, SOCK_STREAM, 0);
 
-	if (Sock == INVALID_SOCKET)
+	if (Sock == InvalidSocketHandle)
 	{
-#if UNSYNC_PLATFORM_WINDOWS
-		UNSYNC_ERROR(L"Failed to create TCP socket (error code %d)", WSAGetLastError());
-#else
-		UNSYNC_ERROR(L"Failed to create TCP socket");  // TODO: report unix socket error
-#endif	// UNSYNC_PLATFORM_WINDOWS
-		return 0;
+		UNSYNC_ERROR(L"Failed to create TCP socket (error code %d)", GetLastSocketError());
+		return InvalidSocketHandle;
 	}
 
 	sockaddr_in SockAddr = {};
@@ -141,7 +195,7 @@ SocketConnectTcp(const char* DestAddress, uint16 Port)
 	else
 	{
 		UNSYNC_ERROR(L"Invalid address '%hs'", DestAddress);
-		return 0;
+		return InvalidSocketHandle;
 	}
 
 	if (Addr)
@@ -152,13 +206,15 @@ SocketConnectTcp(const char* DestAddress, uint16 Port)
 	if (inet_pton(SockAddr.sin_family, DestAddress, &SockAddr.sin_addr) <= 0)
 	{
 		UNSYNC_ERROR(L"Invalid address '%hs'", DestAddress);
-		return 0;
+		return InvalidSocketHandle;
 	}
 
-	if (connect(Sock, (struct sockaddr*)&SockAddr, sizeof(SockAddr)) < 0)
+	int32 ConnectResult = connect(Sock, (struct sockaddr*)&SockAddr, sizeof(SockAddr));
+	if (ConnectResult < 0)
 	{
+		closesocket(Sock);
 		UNSYNC_LOG(L"Warning: Failed to connect to '%hs' on port %d", DestAddress, Port);
-		return 0;
+		return InvalidSocketHandle;
 	}
 
 	return Sock;
@@ -167,7 +223,7 @@ SocketConnectTcp(const char* DestAddress, uint16 Port)
 void
 SocketClose(FSocketHandle Socket)
 {
-	if (Socket)
+	if (Socket != InvalidSocketHandle)
 	{
 		closesocket(Socket);
 	}
@@ -179,6 +235,8 @@ SocketSend(FSocketHandle Socket, const void* Data, size_t DataSize)
 	if (DataSize == 0)
 		return 0;
 
+	UNSYNC_ASSERT(DataSize < INT_MAX);
+
 	int Result = send(Socket, reinterpret_cast<const char*>(Data), (int)DataSize, 0);
 	return Result;
 }
@@ -189,7 +247,25 @@ SocketRecvAll(FSocketHandle Socket, void* Data, size_t DataSize)
 	if (DataSize == 0)
 		return 0;
 
-	return recv(Socket, reinterpret_cast<char*>(Data), (int)DataSize, MSG_WAITALL);
+	UNSYNC_ASSERT(DataSize < INT_MAX);
+
+	// If socket timeout is set, recv may read partial data and return the
+	// number of bytes read before timeout or <=0 if another error occurred.
+
+	int ProcessedBytes = 0;
+	while (ProcessedBytes < int(DataSize))
+	{
+		char* BatchPtr		= reinterpret_cast<char*>(Data) + ProcessedBytes;
+		int	  BatchSize		= (int)DataSize - ProcessedBytes;
+		int	  Res = recv(Socket, BatchPtr, BatchSize, MSG_WAITALL);
+		if (Res <= 0)
+		{
+			break;
+		}
+		ProcessedBytes += Res;
+	}
+
+	return ProcessedBytes;
 }
 
 int
@@ -198,7 +274,25 @@ SocketRecvAny(FSocketHandle Socket, void* Data, size_t DataSize)
 	if (DataSize == 0)
 		return 0;
 
+	UNSYNC_ASSERT(DataSize < INT_MAX);
+
 	return recv(Socket, reinterpret_cast<char*>(Data), (int)DataSize, 0);
+}
+
+bool
+SocketSetRecvTimeout(FSocketHandle Socket, uint32 Seconds)
+{
+#if UNSYNC_PLATFORM_WINDOWS
+	uint32 Timeout = Seconds * 1000;  // Winsock uses timeout in milliseconds
+#else
+	struct timeval Timeout;
+	Timeout.tv_sec	= long(Seconds);
+	Timeout.tv_usec = 0;
+#endif
+
+	int Result = setsockopt(Socket, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&Timeout), int(sizeof(Timeout)));
+
+	return Result == 0;
 }
 
 bool
@@ -238,16 +332,15 @@ FSocketRaw::RecvAny(void* Data, size_t DataSize)
 	return SocketRecvAny(Handle, Data, DataSize);
 }
 
-#if UNSYNC_USE_TLS
 FSocketTls::FSocketTls(FSocketHandle InHandle, FTlsClientSettings ClientSettings) : FSocketBase(InHandle)
 {
 	Security = ESocketSecurity::Unknown;
 
 	tls_config* TlsCfg = tls_config_new();
 
-	if (ClientSettings.CacertData)
+	if (ClientSettings.CACert.Data)
 	{
-		tls_config_set_ca_mem(TlsCfg, ClientSettings.CacertData, (size_t)ClientSettings.CacertSize);
+		tls_config_set_ca_mem(TlsCfg, ClientSettings.CACert.Data, (size_t)ClientSettings.CACert.Size);
 	}
 	else
 	{
@@ -260,7 +353,7 @@ FSocketTls::FSocketTls(FSocketHandle InHandle, FTlsClientSettings ClientSettings
 		tls_config_insecure_noverifycert(TlsCfg);
 	}
 
-	if (!ClientSettings.Subject)
+	if (!ClientSettings.bVerifySubject)
 	{
 		tls_config_insecure_noverifyname(TlsCfg);
 	}
@@ -278,7 +371,9 @@ FSocketTls::FSocketTls(FSocketHandle InHandle, FTlsClientSettings ClientSettings
 
 	if (Err == 0)
 	{
-		Err = tls_connect_socket(TlsCtx, (int)Handle, ClientSettings.Subject);
+		UNSYNC_ASSERT(!ClientSettings.Subject.empty());
+		std::string TlsSubject(ClientSettings.Subject);
+		Err = tls_connect_socket(TlsCtx, (int)Handle, TlsSubject.c_str());
 	}
 
 	if (Err == 0)
@@ -332,6 +427,8 @@ FSocketTls::Send(const void* Data, size_t DataSize)
 	if (DataSize == 0)
 		return 0;
 
+	UNSYNC_ASSERT(DataSize < INT_MAX);
+
 	int ProcessedBytes = 0;
 	while (ProcessedBytes < DataSize)
 	{
@@ -351,6 +448,8 @@ FSocketTls::RecvAll(void* Data, size_t DataSize)
 {
 	if (DataSize == 0)
 		return 0;
+
+	UNSYNC_ASSERT(DataSize < INT_MAX);
 
 	int ProcessedBytes = 0;
 	while (ProcessedBytes < DataSize)
@@ -372,6 +471,8 @@ FSocketTls::RecvAny(void* Data, size_t DataSize)
 	if (DataSize == 0)
 		return 0;
 
+	UNSYNC_ASSERT(DataSize < INT_MAX);
+
 	int ProcessedBytes = 0;
 	do
 	{
@@ -385,7 +486,6 @@ FSocketTls::RecvAny(void* Data, size_t DataSize)
 
 	return ProcessedBytes;
 }
-#endif	// UNSYNC_USE_TLS
 
 FSocketBase::~FSocketBase()
 {
@@ -399,25 +499,30 @@ ToString(ESocketSecurity Security)
 	{
 		case ESocketSecurity::None:
 			return "None";
-#if UNSYNC_USE_TLS
 		case ESocketSecurity::TLSv1_2:
 			return "TLS 1.2";
 		case ESocketSecurity::TLSv1_3:
 			return "TLS 1.3";
-#endif	// UNSYNC_USE_TLS
 		default:
 			return "Unknown";
 	}
 }
 
 bool
-SendBuffer(FSocketBase& Socket, const FBuffer& Data)
+SendBuffer(FSocketBase& Socket, const FBufferView& Data)
 {
-	int32 Size = int32(Data.Size());
+	UNSYNC_ASSERT(Data.Size <= std::numeric_limits<int32>::max());
+	int32 Size = int32(Data.Size);
 	bool  bOk  = true;
 	bOk &= SocketSendT(Socket, Size);
-	bOk &= (SocketSend(Socket, Data.Data(), Size) == Size);
+	bOk &= (SocketSend(Socket, Data.Data, Size) == Size);
 	return bOk;
+}
+
+bool
+SendBuffer(FSocketBase& Socket, const FBuffer& Data)
+{
+	return SendBuffer(Socket, Data.View());
 }
 
 }  // namespace unsync

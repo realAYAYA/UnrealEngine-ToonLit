@@ -6,17 +6,18 @@ import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArtifactContextType, JobState, JobStepOutcome, JobStepState, StepData } from '../../backend/Api';
 import dashboard from '../../backend/Dashboard';
-import { hordeClasses } from '../../styles/Styles';
 import { EditJobModal } from '../EditJobModal';
 import { useQuery } from '../JobDetailCommon';
 import { NewBuild } from '../NewBuild';
 import { NotificationDropdown } from '../NotificationDropdown';
 import { PauseStepModal } from '../StepPauseModal';
+import { JobArtifactsModal } from '../artifacts/ArtifactsModal';
+import { BisectionCreateModal } from '../bisection/CreateModal';
 import { AbortJobModal } from './AbortJobModal';
 import { JobDetailsV2 } from './JobDetailsViewCommon';
 import { RetryStepsModal, StepRetryModal, StepRetryType } from './StepRetryModal';
-import { JobArtifactsModal } from '../artifacts/ArtifactsModal';
 import { getSiteConfig } from '../../backend/Config';
+import { getHordeStyling } from '../../styles/Styles';
 
 enum ParameterState {
    Hidden,
@@ -33,6 +34,8 @@ export const JobOperations: React.FC<{ jobDetails: JobDetailsV2 }> = observer(({
    const [retryStepsShown, setRetryStepsShown] = useState(false);
 
    const [parametersState, setParametersState] = useState(query.get("newbuild") ? ParameterState.Clone : ParameterState.Hidden);
+
+   const { hordeClasses } = getHordeStyling();
 
    const stepId = query.get("step") ? query.get("step")! : undefined;
    const batchFilter = query.get("batch");
@@ -59,12 +62,12 @@ export const JobOperations: React.FC<{ jobDetails: JobDetailsV2 }> = observer(({
 
       const retries = jobDetails.getStepRetries(s.id);
       const retryNumber = jobDetails.getStepRetryNumber(s.id);
-      if (retries.length && retryNumber < (retries.length - 1) ) {
+      if (retries.length && retryNumber < (retries.length - 1)) {
          return false;
       }
 
       return true;
-      
+
    });
    const retryFailedStepsDisabled = !failedSteps.length;
 
@@ -95,13 +98,13 @@ export const JobOperations: React.FC<{ jobDetails: JobDetailsV2 }> = observer(({
 
    //if (getSiteConfig().environment !== "production") {
 
-      opsList.push({
-         key: 'jobops_runfailedsteps',
-         text: "Retry Steps",
-         disabled: retryFailedStepsDisabled,
-         iconProps: { iconName: "Repeat" },
-         onClick: () => { setRetryStepsShown(true); }
-      });
+   opsList.push({
+      key: 'jobops_runfailedsteps',
+      text: "Retry Steps",
+      disabled: retryFailedStepsDisabled,
+      iconProps: { iconName: "Repeat" },
+      onClick: () => { setRetryStepsShown(true); }
+   });
    //}
 
    opsList.push({
@@ -206,8 +209,14 @@ export const JobOperations: React.FC<{ jobDetails: JobDetailsV2 }> = observer(({
 });
 
 const StepArtifactsOperations: React.FC<{ jobDetails: JobDetailsV2, stepId: string }> = observer(({ jobDetails, stepId }) => {
+   
+   const { hordeClasses } = getHordeStyling();
 
-   const [artifactsShown, setArtifactsShown] = useState<ArtifactContextType | undefined>(undefined);
+   const navigate = useNavigate();
+
+   const query = useQuery();
+   const artifactContext = !!query.get("artifactContext") ? query.get("artifactContext")! as ArtifactContextType : undefined;
+   const artifactPath = !!query.get("artifactPath") ? query.get("artifactPath")! : undefined;
 
    const jobData = jobDetails.jobData;
 
@@ -227,6 +236,7 @@ const StepArtifactsOperations: React.FC<{ jobDetails: JobDetailsV2, stepId: stri
    }
 
    const atypes = new Map<ArtifactContextType, number>();
+   const knownTypes = new Set<string>(["step-saved", "step-output", "step-trace"]);
 
    stepArtifacts?.forEach(a => {
       let c = atypes.get(a.type) ?? 0;
@@ -236,29 +246,42 @@ const StepArtifactsOperations: React.FC<{ jobDetails: JobDetailsV2, stepId: stri
 
    const opsList: IContextualMenuItem[] = [];
 
+   const baseUrl = window.location.pathname + window.location.search;
+   
+
    opsList.push({
       key: 'stepops_artifacts_step',
-      text: "Step Artifacts",
+      text: "Logs",
       iconProps: { iconName: "Folder" },
       disabled: !atypes.get("step-saved"),
-      onClick: () => { setArtifactsShown("step-saved") }
+      onClick: () => { navigate(`${baseUrl}&artifactContext=step-saved`, { replace: true }) }
    });
 
    opsList.push({
       key: 'stepops_artifacts_output',
-      text: "Output Artifacts",
+      text: "Temp Storage",
       iconProps: { iconName: "MenuOpen" },
       disabled: !atypes.get("step-output"),
-      onClick: () => { setArtifactsShown("step-output") }
+      onClick: () => { navigate(`${baseUrl}&artifactContext=step-output`, { replace: true }) }
    });
 
    opsList.push({
       key: 'stepops_artifacts_trace',
-      text: "Trace Artifacts",
+      text: "Traces",
       iconProps: { iconName: "SearchTemplate" },
       disabled: !atypes.get("step-trace"),
-      onClick: () => { setArtifactsShown("step-trace") }
+      onClick: () => { navigate(`${baseUrl}&artifactContext=step-trace`, { replace: true }) }
    });
+
+   const custom = stepArtifacts?.filter(a => !knownTypes.has(a.type)).sort((a, b) => a.type.localeCompare(b.type));
+   custom?.forEach(c => {
+      opsList.push({
+         key: `stepops_artifacts_${c.type}`,
+         text: c.description ?? c.name,
+         iconProps: { iconName: "Clean" },
+         onClick: () => { navigate(`${baseUrl}&artifactContext=${c.type}`, { replace: true }) }
+      });   
+   })
 
    const opsItems: ICommandBarItemProps[] = [
       {
@@ -273,7 +296,7 @@ const StepArtifactsOperations: React.FC<{ jobDetails: JobDetailsV2, stepId: stri
    ];
 
    return <Stack>
-      {!!artifactsShown && <JobArtifactsModal stepId={step.id} jobId={jobDetails.jobId!} contextType={artifactsShown} artifacts={stepArtifacts} onClose={() => { setArtifactsShown(undefined); }} />}
+      {!!artifactContext && <JobArtifactsModal stepId={step.id} jobId={jobDetails.jobId!} contextType={artifactContext} artifactPath={artifactPath} artifacts={stepArtifacts} onClose={() => { navigate(window.location.pathname + `?step=${stepId}`, { replace: true }) }} />}
       <Stack horizontal styles={{ root: { paddingLeft: 0 } }}>
          <Stack grow />
          <Stack horizontal>
@@ -291,8 +314,10 @@ const StepArtifactsOperations: React.FC<{ jobDetails: JobDetailsV2, stepId: stri
 
 const StepOperations: React.FC<{ jobDetails: JobDetailsV2, stepId: string }> = observer(({ jobDetails, stepId }) => {
 
-   const [shown, setShown] = useState<{ abortShown?: boolean, retryShown?: boolean, pauseShown?: boolean }>({});
+   const [shown, setShown] = useState<{ abortShown?: boolean, retryShown?: boolean, pauseShown?: boolean, bisectShown?: boolean }>({});
    const [runType, setRunType] = useState(StepRetryType.RunAgain);
+
+   const { hordeClasses } = getHordeStyling();
 
    // subscribe
    if (dashboard.updated) { }
@@ -312,8 +337,13 @@ const StepOperations: React.FC<{ jobDetails: JobDetailsV2, stepId: string }> = o
 
    const node = jobDetails.nodeByStepId(stepId);
 
-   const canRunDisabled = !node?.allowRetry || !!step.retriedByUserInfo;
+   const canRunDisabled = !node?.allowRetry || !!step.retriedByUserInfo || !!jobData.abortedByUserInfo;
    const canTryFix = jobDetails.template?.allowPreflights;
+   let canBisect = (step.outcome === JobStepOutcome.Failure || step.outcome === JobStepOutcome.Warnings) && !!jobDetails.template?.allowPreflights;
+
+   if (getSiteConfig().environment === "production") {
+      canBisect = false;
+   }
 
    const opsList: IContextualMenuItem[] = [];
 
@@ -342,6 +372,13 @@ const StepOperations: React.FC<{ jobDetails: JobDetailsV2, stepId: string }> = o
       onClick: () => { setShown({ retryShown: true }); setRunType(StepRetryType.TestFix); }
    });
 
+   opsList.push({
+      key: 'stepops_bisect',
+      text: "Bisect",
+      iconProps: { iconName: "FlowReview" },
+      disabled: !canBisect,
+      onClick: () => { setShown({ bisectShown: true }); }
+   });
 
    opsList.push({
       key: 'stepops_buildlocally',
@@ -405,9 +442,16 @@ const StepOperations: React.FC<{ jobDetails: JobDetailsV2, stepId: string }> = o
    }
 
    return <Stack>
-      {shown.pauseShown && <PauseStepModal streamId={jobDetails.stream!.id} stepName={node!.name} templateName={jobDetails.template!.name} onClose={() => setShown({ pauseShown: false })} />}
-      <StepRetryModal stepId={stepId} jobDetails={jobDetails} type={runType} show={shown.retryShown ?? false} onClose={() => { setShown({}); }} />
-      <AbortJobModal stepId={stepId} jobDetails={jobDetails} show={shown.abortShown ?? false} onClose={() => { setShown({}); }} />
+      {!!shown.pauseShown && <PauseStepModal streamId={jobDetails.stream!.id} stepName={node!.name} templateName={jobDetails.template!.name} onClose={() => setShown({ pauseShown: false })} />}
+      {!!shown.retryShown && <StepRetryModal stepId={stepId} jobDetails={jobDetails} type={runType} show={true} onClose={() => { setShown({}); }} />}
+      {!!shown.abortShown && <AbortJobModal stepId={stepId} jobDetails={jobDetails} show={true} onClose={() => { setShown({}); }} />}
+      {!!shown.bisectShown && <BisectionCreateModal jobId={jobId} nodeName={node?.name ?? "Unknown Node"} onClose={(response) => {
+         if (response) {
+            jobDetails.bisectionUpdated();
+         }
+
+         setShown({});
+      }} />}
       <Stack horizontal styles={{ root: { paddingLeft: 0 } }}>
          <Stack grow />
          <Stack horizontal>

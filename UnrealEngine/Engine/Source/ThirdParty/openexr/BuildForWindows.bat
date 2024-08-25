@@ -1,7 +1,10 @@
 @echo off
 setlocal
 
-set OPENEXR_VERSION=3.1.6
+set LIBRARY_NAME="OpenEXR"
+set REPOSITORY_NAME="openexr"
+
+set LIBRARY_VERSION=3.2.1
 
 if [%1]==[] goto usage
 
@@ -11,15 +14,11 @@ set COMPILER_VERSION_NAME=VS2015
 set ARCH_NAME=%1
 
 set UE_THIRD_PARTY_LOCATION=%cd%\..
-set IMATH_CMAKE_LOCATION=%UE_THIRD_PARTY_LOCATION%\Imath\Deploy\Imath-3.1.3\%COMPILER_VERSION_NAME%\%ARCH_NAME%\lib\cmake\Imath
-set ZLIB_LOCATION=%UE_THIRD_PARTY_LOCATION%\zlib\v1.2.8
-set ZLIB_INCLUDE_LOCATION=%ZLIB_LOCATION%\include\Win64\%COMPILER_VERSION_NAME%
-set ZLIB_LIBRARY_LOCATION_RELEASE=%ZLIB_LOCATION%\lib\Win64\%COMPILER_VERSION_NAME%\Release\zlibstatic.lib
-set ZLIB_LIBRARY_LOCATION_DEBUG=%ZLIB_LOCATION%\lib\Win64\%COMPILER_VERSION_NAME%\Debug\zlibstatic.lib
+set IMATH_CMAKE_LOCATION=%UE_THIRD_PARTY_LOCATION%\Imath\Deploy\Imath-3.1.9\%COMPILER_VERSION_NAME%\%ARCH_NAME%\lib\cmake\Imath
 
 set UE_MODULE_LOCATION=%cd%
 
-set SOURCE_LOCATION=%UE_MODULE_LOCATION%\openexr-%OPENEXR_VERSION%
+set SOURCE_LOCATION=%UE_MODULE_LOCATION%\%REPOSITORY_NAME%-%LIBRARY_VERSION%
 
 set BUILD_LOCATION=%UE_MODULE_LOCATION%\Intermediate
 
@@ -29,7 +28,7 @@ set INSTALL_INCLUDEDIR=include
 set INSTALL_BIN_DIR=%COMPILER_VERSION_NAME%\%ARCH_NAME%\bin
 set INSTALL_LIB_DIR=%COMPILER_VERSION_NAME%\%ARCH_NAME%\lib
 
-set INSTALL_LOCATION=%UE_MODULE_LOCATION%\Deploy\openexr-%OPENEXR_VERSION%
+set INSTALL_LOCATION=%UE_MODULE_LOCATION%\Deploy\%REPOSITORY_NAME%-%LIBRARY_VERSION%
 set INSTALL_INCLUDE_LOCATION=%INSTALL_LOCATION%\%INSTALL_INCLUDEDIR%
 set INSTALL_WIN_LOCATION=%INSTALL_LOCATION%\%COMPILER_VERSION_NAME%\%ARCH_NAME%
 
@@ -43,37 +42,34 @@ if exist %INSTALL_WIN_LOCATION% (
 mkdir %BUILD_LOCATION%
 pushd %BUILD_LOCATION%
 
-echo Configuring build for OpenEXR version %OPENEXR_VERSION%...
+echo Configuring build for %LIBRARY_NAME% version %LIBRARY_VERSION%...
 cmake -G "Visual Studio 17 2022" %SOURCE_LOCATION%^
     -A %ARCH_NAME%^
     -DCMAKE_INSTALL_PREFIX="%INSTALL_LOCATION%"^
     -DCMAKE_PREFIX_PATH="%IMATH_CMAKE_LOCATION%"^
-    -DZLIB_INCLUDE_DIR="%ZLIB_INCLUDE_LOCATION%"^
-    -DZLIB_LIBRARY_RELEASE="%ZLIB_LIBRARY_LOCATION_RELEASE%"^
-    -DZLIB_LIBRARY_DEBUG="%ZLIB_LIBRARY_LOCATION_DEBUG%"^
     -DCMAKE_INSTALL_INCLUDEDIR="%INSTALL_INCLUDEDIR%"^
     -DCMAKE_INSTALL_BINDIR="%INSTALL_BIN_DIR%"^
     -DCMAKE_INSTALL_LIBDIR="%INSTALL_LIB_DIR%"^
+    -DBUILD_TESTING=OFF^
     -DBUILD_SHARED_LIBS=OFF^
     -DOPENEXR_BUILD_TOOLS=OFF^
-    -DBUILD_TESTING=OFF^
     -DOPENEXR_INSTALL_EXAMPLES=OFF^
     -DOPENEXR_INSTALL_PKG_CONFIG=OFF
 if %errorlevel% neq 0 exit /B %errorlevel%
 
-echo Building OpenEXR for Debug...
+echo Building %LIBRARY_NAME% for Debug...
 cmake --build . --config Debug -j8
 if %errorlevel% neq 0 exit /B %errorlevel%
 
-echo Installing OpenEXR for Debug...
+echo Installing %LIBRARY_NAME% for Debug...
 cmake --install . --config Debug
 if %errorlevel% neq 0 exit /B %errorlevel%
 
-echo Building OpenEXR for Release...
+echo Building %LIBRARY_NAME% for Release...
 cmake --build . --config Release -j8
 if %errorlevel% neq 0 exit /B %errorlevel%
 
-echo Installing OpenEXR for Release...
+echo Installing %LIBRARY_NAME% for Release...
 cmake --install . --config Release
 if %errorlevel% neq 0 exit /B %errorlevel%
 

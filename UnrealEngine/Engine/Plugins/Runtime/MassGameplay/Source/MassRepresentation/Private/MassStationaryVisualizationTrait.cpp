@@ -2,7 +2,7 @@
 
 #include "MassStationaryVisualizationTrait.h"
 #include "MassEntityTemplateRegistry.h"
-#include "MassInstancedStaticMeshComponent.h"
+#include "VisualLogger/VisualLogger.h"
 
 
 UMassStationaryVisualizationTrait::UMassStationaryVisualizationTrait(const FObjectInitializer& ObjectInitializer)
@@ -12,11 +12,13 @@ UMassStationaryVisualizationTrait::UMassStationaryVisualizationTrait(const FObje
 
 void UMassStationaryVisualizationTrait::BuildTemplate(FMassEntityTemplateBuildContext& BuildContext, const UWorld& World) const
 {
+	bool bIssuesFound = false;
 	for (FMassStaticMeshInstanceVisualizationMeshDesc& MeshDesc : StaticMeshInstanceDesc.Meshes)
 	{
+		bIssuesFound = bIssuesFound || (MeshDesc.Mobility != EComponentMobility::Stationary);
 		MeshDesc.Mobility = EComponentMobility::Stationary;
-		MeshDesc.ISMComponentClass = UMassInstancedStaticMeshComponent::StaticClass();
 	}
+	UE_CVLOG_UELOG(bIssuesFound, this, LogMass, Log, TEXT("%s some Meshes' mobility has been set to non-Stationary. Theese settings will be overridden. "), *GetPathName());
 
 	Super::BuildTemplate(BuildContext, World);
 
@@ -35,7 +37,6 @@ void UMassStationaryVisualizationTrait::PostEditChangeProperty(struct FPropertyC
 		for (FMassStaticMeshInstanceVisualizationMeshDesc& MeshDesc : StaticMeshInstanceDesc.Meshes)
 		{
 			MeshDesc.Mobility = EComponentMobility::Stationary;
-			MeshDesc.ISMComponentClass = UMassInstancedStaticMeshComponent::StaticClass();
 		}
 	}
 }

@@ -16,7 +16,7 @@
 		{
 			"Name": "AnimationWarpingRuntime",
 			"Type": "Runtime",
-			"LoadingPhase": "Default"
+			"LoadingPhase": "PreDefault"
 		},
 		{
 			"Name": "AnimationWarpingEditor",

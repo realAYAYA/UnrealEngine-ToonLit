@@ -9,6 +9,7 @@
 #include "RenderResource.h"
 #include "RendererInterface.h"
 #include "RenderGraphResources.h"
+#include "Async/RecursiveMutex.h"
 
 class FRDGBufferPool : public FRenderResource
 {
@@ -18,12 +19,19 @@ public:
 	/** Call once per frame to trim elements from the pool. */
 	RENDERCORE_API void TickPoolElements();
 
-	RENDERCORE_API TRefCountPtr<FRDGPooledBuffer> FindFreeBuffer(const FRDGBufferDesc& Desc, const TCHAR* InDebugName, ERDGPooledBufferAlignment Alignment = ERDGPooledBufferAlignment::Page);
+	RENDERCORE_API TRefCountPtr<FRDGPooledBuffer> FindFreeBuffer(FRHICommandListBase& RHICmdList, const FRDGBufferDesc& Desc, const TCHAR* InDebugName, ERDGPooledBufferAlignment Alignment = ERDGPooledBufferAlignment::Page);
+
+	TRefCountPtr<FRDGPooledBuffer> FindFreeBuffer(const FRDGBufferDesc& Desc, const TCHAR* InDebugName, ERDGPooledBufferAlignment Alignment = ERDGPooledBufferAlignment::Page)
+	{
+		return FindFreeBuffer(FRHICommandListImmediate::Get(), Desc, InDebugName, Alignment);
+	}
 
 	RENDERCORE_API void DumpMemoryUsage(FOutputDevice& OutputDevice);
 
 private:
 	RENDERCORE_API void ReleaseRHI() override;
+
+	mutable UE::FRecursiveMutex Mutex;
 
 	/** Elements can be 0, we compact the buffer later. */
 	TArray<TRefCountPtr<FRDGPooledBuffer>> AllocatedBuffers;

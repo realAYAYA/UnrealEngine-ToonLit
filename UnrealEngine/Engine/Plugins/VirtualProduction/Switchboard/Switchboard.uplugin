@@ -16,6 +16,15 @@
 	"Installed": false,
 	"Modules": [
 		{
+			"Name": "SwitchboardCommon",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"PlatformAllowList": [
+				"Win64",
+				"Linux"
+			]
+		},
+		{
 			"Name": "SwitchboardEditor",
 			"Type": "Editor",
 			"LoadingPhase": "PostEngineInit",

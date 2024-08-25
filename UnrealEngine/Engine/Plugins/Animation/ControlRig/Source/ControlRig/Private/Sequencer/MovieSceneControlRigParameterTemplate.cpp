@@ -177,13 +177,11 @@ struct FEulerTransformParameterStringAndValue
 
 struct FConstraintAndActiveValue
 {
-	FConstraintAndActiveValue(TWeakObjectPtr<UTickableConstraint> InConstraint, TWeakObjectPtr<UTickableConstraint> InSpawnConstraint, bool InValue)
+	FConstraintAndActiveValue(TWeakObjectPtr<UTickableConstraint> InConstraint,  bool InValue)
 		: Constraint(InConstraint)
-		, SpawnConstraint(InSpawnConstraint)
 		, Value(InValue)
 	{}
 	TWeakObjectPtr<UTickableConstraint> Constraint;
-	TWeakObjectPtr<UTickableConstraint> SpawnConstraint;
 	bool Value;
 };
 
@@ -285,7 +283,7 @@ struct FEvaluatedControlRigParameterSectionChannelMasks : IPersistentEvaluationD
 	TBitArray<> ColorCurveMask;
 	TBitArray<> TransformCurveMask;
 
-	void Initialize(const UMovieSceneControlRigParameterSection* Section,
+	void Initialize(UMovieSceneControlRigParameterSection* Section,
 		TArrayView<const FScalarParameterNameAndCurve> Scalars,
 		TArrayView<const FBoolParameterNameAndCurve> Bools,
 		TArrayView<const FIntegerParameterNameAndCurve> Integers,
@@ -647,7 +645,7 @@ void FControlRigBindingHelper::UnBindFromSequencerInstance(UControlRig* ControlR
 	check(ControlRig);
 
 	if (!ControlRig->IsValidLowLevel() ||
-	    ControlRig->HasAnyFlags(RF_BeginDestroyed) ||
+	    URigVMHost::IsGarbageOrDestroyed(ControlRig) ||
 		!IsValid(ControlRig))
 	{
 		return;
@@ -661,17 +659,18 @@ void FControlRigBindingHelper::UnBindFromSequencerInstance(UControlRig* ControlR
 	else if (USkeletalMeshComponent* SkeletalMeshComponent = Cast<USkeletalMeshComponent>(ControlRig->GetObjectBinding()->GetBoundObject()))
 	{
 		if (!SkeletalMeshComponent->IsValidLowLevel() ||
-			SkeletalMeshComponent->HasAnyFlags(RF_BeginDestroyed) ||
+			URigVMHost::IsGarbageOrDestroyed(SkeletalMeshComponent) ||
 			!IsValid(SkeletalMeshComponent))
 		{
 			return;
 		}
 
 		UControlRigLayerInstance* AnimInstance = Cast<UControlRigLayerInstance>(SkeletalMeshComponent->GetAnimInstance());
+		bool bShouldUnbind = true;
 		if (AnimInstance)
 		{
 			if (!AnimInstance->IsValidLowLevel() ||
-                AnimInstance->HasAnyFlags(RF_BeginDestroyed) ||
+                URigVMHost::IsGarbageOrDestroyed(AnimInstance) ||
                 !IsValid(AnimInstance))
 			{
 				return;
@@ -680,12 +679,65 @@ void FControlRigBindingHelper::UnBindFromSequencerInstance(UControlRig* ControlR
 			AnimInstance->ResetNodes();
 			AnimInstance->RecalcRequiredBones();
 			AnimInstance->RemoveControlRigTrack(ControlRig->GetUniqueID());
+
+			bShouldUnbind = AnimInstance->GetFirstAvailableControlRig() == nullptr;
 		}
 
-		FAnimCustomInstanceHelper::UnbindFromSkeletalMeshComponent< UControlRigLayerInstance>(SkeletalMeshComponent);
+		if (bShouldUnbind)
+		{
+			FAnimCustomInstanceHelper::UnbindFromSkeletalMeshComponent< UControlRigLayerInstance>(SkeletalMeshComponent);
+		}
 	}
 }
 
+struct FControlRigSkeletalMeshComponentBindingTokenProducer : IMovieScenePreAnimatedTokenProducer
+{
+	FControlRigSkeletalMeshComponentBindingTokenProducer(FMovieSceneSequenceIDRef InSequenceID, UControlRig* InControlRig)
+		: SequenceID(InSequenceID), ControlRigUniqueID(InControlRig->GetUniqueID())
+	{}
+
+	static FMovieSceneAnimTypeID GetAnimTypeID()
+	{
+		return TMovieSceneAnimTypeID<FControlRigSkeletalMeshComponentBindingTokenProducer>();
+	}
+
+	virtual IMovieScenePreAnimatedTokenPtr CacheExistingState(UObject& Object) const
+	{
+		struct FToken : IMovieScenePreAnimatedToken
+		{
+			FToken(FMovieSceneSequenceIDRef InSequenceID, uint32 InControlRigUniqueID)
+				: SequenceID(InSequenceID), ControlRigUniqueID(InControlRigUniqueID)
+			{
+
+			}
+			
+			virtual void RestoreState(UObject& InObject, const UE::MovieScene::FRestoreStateParams& Params) override
+			{
+				if (USkeletalMeshComponent* SkeletalMeshComponent = Cast<USkeletalMeshComponent>(&InObject))
+				{
+					if (UControlRigLayerInstance* ControlRigLayerInstance = Cast<UControlRigLayerInstance>(SkeletalMeshComponent->GetAnimInstance()))
+					{
+						ControlRigLayerInstance->RemoveControlRigTrack(ControlRigUniqueID);
+						if (!ControlRigLayerInstance->GetFirstAvailableControlRig())
+						{
+							FAnimCustomInstanceHelper::UnbindFromSkeletalMeshComponent<UControlRigLayerInstance>(SkeletalMeshComponent);
+						}
+					}
+				}
+			}
+
+			FMovieSceneSequenceID SequenceID;
+			uint32 ControlRigUniqueID;
+		};
+
+
+		FToken Token(SequenceID, ControlRigUniqueID);
+		return MoveTemp(Token);
+	}
+
+	FMovieSceneSequenceID SequenceID;
+	uint32 ControlRigUniqueID;
+};
 
 struct FControlRigParameterPreAnimatedTokenProducer : IMovieScenePreAnimatedTokenProducer
 {
@@ -706,6 +758,7 @@ struct FControlRigParameterPreAnimatedTokenProducer : IMovieScenePreAnimatedToke
 			void SetSkelMesh(USkeletalMeshComponent* InComponent)
 			{
 				SkeletalMeshRestoreState.SaveState(InComponent);
+				AnimationMode = InComponent->GetAnimationMode();
 			}
 
 			virtual void RestoreState(UObject& InObject, const UE::MovieScene::FRestoreStateParams& Params) override
@@ -715,132 +768,138 @@ struct FControlRigParameterPreAnimatedTokenProducer : IMovieScenePreAnimatedToke
 				{
 					if (ControlRig->GetObjectBinding())
 					{
-						// control rig evaluate critical section: when restoring the state, we can be poking into running instances of Control Rigs
-						// on the anim thread so using a lock here to avoid this thread and anim thread both touching the rig
-						// at the same time, which can lead to various issues like double-freeing some random array when doing SetControlValue
-						// note: the critical section accepts recursive locking so it is ok that we
-						// are calling evaluate_anythread later within the same scope
-						FScopeLock EvaluateLock(&ControlRig->GetEvaluateMutex());
-						
-						//Restore control rig first
-						const bool bSetupUndo = false;
-						if (URigHierarchy* RigHierarchy = ControlRig->GetHierarchy())
 						{
+							// Reduce the EvaluationMutex lock to only the absolutely necessary
+							// After locking, the call to UnBindFromSequencerInstance might wait for parallel evaluations to finish
+							// and some control rigs might have been queued to evaluate (but haven's started yet), so they could get stuck
+							// waiting on the evaluation lock.
 
-							FRigElementKey ControlKey;
-							ControlKey.Type = ERigElementType::Control;
-							for (FControlSpaceAndValue& SpaceNameAndValue : SpaceValues)
+							
+							// control rig evaluate critical section: when restoring the state, we can be poking into running instances of Control Rigs
+							// on the anim thread so using a lock here to avoid this thread and anim thread both touching the rig
+							// at the same time, which can lead to various issues like double-freeing some random array when doing SetControlValue
+							// note: the critical section accepts recursive locking so it is ok that we
+							// are calling evaluate_anythread later within the same scope
+							FScopeLock EvaluateLock(&ControlRig->GetEvaluateMutex());
+						
+							//Restore control rig first
+							const bool bSetupUndo = false;
+							if (URigHierarchy* RigHierarchy = ControlRig->GetHierarchy())
 							{
-								ControlKey.Name = SpaceNameAndValue.ControlName;
-								switch (SpaceNameAndValue.Value.SpaceType)
+								FRigElementKey ControlKey;
+								ControlKey.Type = ERigElementType::Control;
+								for (FControlSpaceAndValue& SpaceNameAndValue : SpaceValues)
 								{
-								case EMovieSceneControlRigSpaceType::Parent:
-									RigHierarchy->SwitchToDefaultParent(ControlKey);
-									break;
-								case EMovieSceneControlRigSpaceType::World:
-									RigHierarchy->SwitchToWorldSpace(ControlKey);
-									break;
-								case EMovieSceneControlRigSpaceType::ControlRig:
-								{
+									ControlKey.Name = SpaceNameAndValue.ControlName;
+									switch (SpaceNameAndValue.Value.SpaceType)
+									{
+										case EMovieSceneControlRigSpaceType::Parent:
+											ControlRig->SwitchToParent(ControlKey, RigHierarchy->GetDefaultParent(ControlKey), false, true);
+										break;
+										case EMovieSceneControlRigSpaceType::World:
+											ControlRig->SwitchToParent(ControlKey, RigHierarchy->GetWorldSpaceReferenceKey(), false, true);
+										break;
+										case EMovieSceneControlRigSpaceType::ControlRig:
+										{
 #if WITH_EDITOR
-									URigHierarchy::TElementDependencyMap Dependencies = RigHierarchy->GetDependenciesForVM(ControlRig->GetVM());
-									RigHierarchy->SwitchToParent(ControlKey, SpaceNameAndValue.Value.ControlRigElement, false, true, Dependencies, nullptr);
+											ControlRig->SwitchToParent(ControlKey, SpaceNameAndValue.Value.ControlRigElement, false, true);
 #else
-									RigHierarchy->SwitchToParent(ControlKey, SpaceNameAndValue.Value.ControlRigElement);
-#endif
+											ControlRig->SwitchToParent(ControlKey, SpaceNameAndValue.Value.ControlRigElement, false, true);
+#endif	
+										}
+										break;
+									}
 								}
-								break;
-								}
-							}
 							
 
-							for (TNameAndValue<float>& Value : ScalarValues)
-							{
-								if (ControlRig->FindControl(Value.Name))
-								{
-									ControlRig->SetControlValue<float>(Value.Name, Value.Value, true, FRigControlModifiedContext(EControlRigSetKey::Never), bSetupUndo);
-								}
-							}
-
-							for (TNameAndValue<bool>& Value : BoolValues)
-							{
-								if (ControlRig->FindControl(Value.Name))
-								{
-									ControlRig->SetControlValue<bool>(Value.Name, Value.Value, true, FRigControlModifiedContext(EControlRigSetKey::Never), bSetupUndo);
-								}
-							}
-
-							for (TNameAndValue<int32>& Value : IntegerValues)
-							{
-								if (ControlRig->FindControl(Value.Name))
-								{
-									ControlRig->SetControlValue<int32>(Value.Name, Value.Value, true, FRigControlModifiedContext(EControlRigSetKey::Never), bSetupUndo);
-								}
-							}
-							for (int32 TwiceHack = 0; TwiceHack < 2; ++TwiceHack)
-							{
-								for (TNameAndValue<FVector2D>& Value : Vector2DValues)
+								for (TNameAndValue<float>& Value : ScalarValues)
 								{
 									if (ControlRig->FindControl(Value.Name))
 									{
-										const FVector3f Vector3(Value.Value.X, Value.Value.Y, 0.f);
-										//okay to use vector3 for 2d here
-										ControlRig->SetControlValue<FVector3f>(Value.Name, Vector3, true, FRigControlModifiedContext(EControlRigSetKey::Never), bSetupUndo);
+										ControlRig->SetControlValue<float>(Value.Name, Value.Value, true, FRigControlModifiedContext(EControlRigSetKey::Never), bSetupUndo);
 									}
 								}
 
-								for (TNameAndValue<FVector>& Value : VectorValues)
+								for (TNameAndValue<bool>& Value : BoolValues)
 								{
-									if (FRigControlElement* ControlElement = ControlRig->FindControl(Value.Name))
+									if (ControlRig->FindControl(Value.Name))
 									{
-										if (ControlElement->Settings.ControlType == ERigControlType::Rotator)
-										{
-											RigHierarchy->SetControlSpecifiedEulerAngle(ControlElement, Value.Value);
-										}
-										ControlRig->SetControlValue<FVector3f>(Value.Name, (FVector3f)Value.Value, true, FRigControlModifiedContext(EControlRigSetKey::Never), bSetupUndo);
+										ControlRig->SetControlValue<bool>(Value.Name, Value.Value, true, FRigControlModifiedContext(EControlRigSetKey::Never), bSetupUndo);
 									}
 								}
 
-								for (TNameAndValue<FEulerTransform>& Value : TransformValues)
+								for (TNameAndValue<int32>& Value : IntegerValues)
 								{
-									if (FRigControlElement* ControlElement = ControlRig->FindControl(Value.Name))
+									if (ControlRig->FindControl(Value.Name))
 									{
-										switch (ControlElement->Settings.ControlType)
+										ControlRig->SetControlValue<int32>(Value.Name, Value.Value, true, FRigControlModifiedContext(EControlRigSetKey::Never), bSetupUndo);
+									}
+								}
+								for (int32 TwiceHack = 0; TwiceHack < 2; ++TwiceHack)
+								{
+									for (TNameAndValue<FVector2D>& Value : Vector2DValues)
+									{
+										if (ControlRig->FindControl(Value.Name))
 										{
-										case ERigControlType::Transform:
-										{
-											FVector EulerAngle(Value.Value.Rotation.Roll, Value.Value.Rotation.Pitch, Value.Value.Rotation.Yaw);
-											RigHierarchy->SetControlSpecifiedEulerAngle(ControlElement, EulerAngle);
-											ControlRig->SetControlValue<FRigControlValue::FTransform_Float>(Value.Name, Value.Value.ToFTransform(), true, FRigControlModifiedContext(EControlRigSetKey::Never), bSetupUndo);
-											break;
+											const FVector3f Vector3(Value.Value.X, Value.Value.Y, 0.f);
+											//okay to use vector3 for 2d here
+											ControlRig->SetControlValue<FVector3f>(Value.Name, Vector3, true, FRigControlModifiedContext(EControlRigSetKey::Never), bSetupUndo);
 										}
-										case ERigControlType::TransformNoScale:
+									}
+
+									for (TNameAndValue<FVector>& Value : VectorValues)
+									{
+										if (FRigControlElement* ControlElement = ControlRig->FindControl(Value.Name))
 										{
-											FTransformNoScale NoScale = Value.Value.ToFTransform();
-											FVector EulerAngle(Value.Value.Rotation.Roll, Value.Value.Rotation.Pitch, Value.Value.Rotation.Yaw);
-											RigHierarchy->SetControlSpecifiedEulerAngle(ControlElement, EulerAngle);
-											ControlRig->SetControlValue<FRigControlValue::FTransformNoScale_Float>(Value.Name, NoScale, true, FRigControlModifiedContext(EControlRigSetKey::Never), bSetupUndo);
-											break;
+											if (ControlElement->Settings.ControlType == ERigControlType::Rotator)
+											{
+												RigHierarchy->SetControlSpecifiedEulerAngle(ControlElement, Value.Value);
+											}
+											ControlRig->SetControlValue<FVector3f>(Value.Name, (FVector3f)Value.Value, true, FRigControlModifiedContext(EControlRigSetKey::Never), bSetupUndo);
 										}
-										case ERigControlType::EulerTransform:
+									}
+
+									for (TNameAndValue<FEulerTransform>& Value : TransformValues)
+									{
+										if (FRigControlElement* ControlElement = ControlRig->FindControl(Value.Name))
 										{
-											FEulerTransform EulerTransform = Value.Value;
-											FVector EulerAngle(Value.Value.Rotation.Roll, Value.Value.Rotation.Pitch, Value.Value.Rotation.Yaw);
-											RigHierarchy->SetControlSpecifiedEulerAngle(ControlElement, EulerAngle);
-											ControlRig->SetControlValue<FRigControlValue::FEulerTransform_Float>(Value.Name, EulerTransform, true, FRigControlModifiedContext(EControlRigSetKey::Never), bSetupUndo);
-											break;
-										}
-										default:
-										{
-											break;
-										}
+											switch (ControlElement->Settings.ControlType)
+											{
+											case ERigControlType::Transform:
+												{
+													FVector EulerAngle(Value.Value.Rotation.Roll, Value.Value.Rotation.Pitch, Value.Value.Rotation.Yaw);
+													RigHierarchy->SetControlSpecifiedEulerAngle(ControlElement, EulerAngle);
+													ControlRig->SetControlValue<FRigControlValue::FTransform_Float>(Value.Name, Value.Value.ToFTransform(), true, FRigControlModifiedContext(EControlRigSetKey::Never), bSetupUndo);
+													break;
+												}
+											case ERigControlType::TransformNoScale:
+												{
+													FTransformNoScale NoScale = Value.Value.ToFTransform();
+													FVector EulerAngle(Value.Value.Rotation.Roll, Value.Value.Rotation.Pitch, Value.Value.Rotation.Yaw);
+													RigHierarchy->SetControlSpecifiedEulerAngle(ControlElement, EulerAngle);
+													ControlRig->SetControlValue<FRigControlValue::FTransformNoScale_Float>(Value.Name, NoScale, true, FRigControlModifiedContext(EControlRigSetKey::Never), bSetupUndo);
+													break;
+												}
+											case ERigControlType::EulerTransform:
+												{
+													FEulerTransform EulerTransform = Value.Value;
+													FVector EulerAngle(Value.Value.Rotation.Roll, Value.Value.Rotation.Pitch, Value.Value.Rotation.Yaw);
+													RigHierarchy->SetControlSpecifiedEulerAngle(ControlElement, EulerAngle);
+													ControlRig->SetControlValue<FRigControlValue::FEulerTransform_Float>(Value.Name, EulerTransform, true, FRigControlModifiedContext(EControlRigSetKey::Never), bSetupUndo);
+													break;
+												}
+											default:
+												{
+													break;
+												}
+											}
 										}
 									}
 								}
 							}
+							//make sure to evaluate the control rig
+							ControlRig->Evaluate_AnyThread();
 						}
-						//make sure to evaluate the control rig
-						ControlRig->Evaluate_AnyThread();
 
 						//unbind instances and reset animbp
 						FControlRigBindingHelper::UnBindFromSequencerInstance(ControlRig);
@@ -848,18 +907,27 @@ struct FControlRigParameterPreAnimatedTokenProducer : IMovieScenePreAnimatedToke
 						//do a tick and restore skel mesh
 						if (USkeletalMeshComponent* SkeletalMeshComponent = Cast<USkeletalMeshComponent>(ControlRig->GetObjectBinding()->GetBoundObject()))
 						{
-							// Restore pose after unbinding to force the restored pose
-							SkeletalMeshComponent->SetUpdateAnimationInEditor(true);
-							SkeletalMeshComponent->SetUpdateClothInEditor(true);
-							SkeletalMeshComponent->TickAnimation(0.f, false);
+							// If the skel mesh comp owner has been removed from the world, no need to restore anything
+							if (SkeletalMeshComponent->IsRegistered())
+							{
+								// Restore pose after unbinding to force the restored pose
+								SkeletalMeshComponent->SetUpdateAnimationInEditor(true);
+								SkeletalMeshComponent->SetUpdateClothInEditor(true);
+								SkeletalMeshComponent->TickAnimation(0.f, false);
 
-							SkeletalMeshComponent->RefreshBoneTransforms();
-							SkeletalMeshComponent->RefreshFollowerComponents();
-							SkeletalMeshComponent->UpdateComponentToWorld();
-							SkeletalMeshComponent->FinalizeBoneTransform();
-							SkeletalMeshComponent->MarkRenderTransformDirty();
-							SkeletalMeshComponent->MarkRenderDynamicDataDirty();
-							SkeletalMeshRestoreState.RestoreState(SkeletalMeshComponent);
+								SkeletalMeshComponent->RefreshBoneTransforms();
+								SkeletalMeshComponent->RefreshFollowerComponents();
+								SkeletalMeshComponent->UpdateComponentToWorld();
+								SkeletalMeshComponent->FinalizeBoneTransform();
+								SkeletalMeshComponent->MarkRenderTransformDirty();
+								SkeletalMeshComponent->MarkRenderDynamicDataDirty();
+								SkeletalMeshRestoreState.RestoreState(SkeletalMeshComponent);
+
+								if (SkeletalMeshComponent->GetAnimationMode() != AnimationMode)
+								{
+									SkeletalMeshComponent->SetAnimationMode(AnimationMode);
+								}
+							}
 						}
 						//only unbind if not a component
 						if (Cast<UControlRigComponent>(ControlRig->GetObjectBinding()->GetBoundObject()) == nullptr)
@@ -880,7 +948,7 @@ struct FControlRigParameterPreAnimatedTokenProducer : IMovieScenePreAnimatedToke
 			TArray< TNameAndValue<FVector2D> > Vector2DValues;
 			TArray< TNameAndValue<FEulerTransform> > TransformValues;
 			FSkeletalMeshRestoreState SkeletalMeshRestoreState;
-
+			EAnimationMode::Type AnimationMode;
 		};
 
 
@@ -888,6 +956,7 @@ struct FControlRigParameterPreAnimatedTokenProducer : IMovieScenePreAnimatedToke
 
 		if (UControlRig* ControlRig = Cast<UControlRig>(&Object))
 		{
+			URigHierarchy* RigHierarchy = ControlRig->GetHierarchy();
 			TArray<FRigControlElement*> Controls = ControlRig->AvailableControls();
 			FRigControlValue Value;
 			
@@ -897,47 +966,47 @@ struct FControlRigParameterPreAnimatedTokenProducer : IMovieScenePreAnimatedToke
 				{
 					case ERigControlType::Bool:
 					{
-						const bool Val = ControlRig->GetHierarchy()->GetControlValue(ControlElement, ERigControlValueType::Current).Get<bool>();
-						Token.BoolValues.Add(TNameAndValue<bool>{ ControlElement->GetName(), Val });
+						const bool Val = ControlRig->GetControlValue(ControlElement, ERigControlValueType::Current).Get<bool>();
+						Token.BoolValues.Add(TNameAndValue<bool>{ ControlElement->GetFName(), Val });
 						break;
 					}
 					case ERigControlType::Integer:
 					{
-						const int32 Val = ControlRig->GetHierarchy()->GetControlValue(ControlElement, ERigControlValueType::Current).Get<int32>();
-						Token.IntegerValues.Add(TNameAndValue<int32>{ ControlElement->GetName(), Val });
+						const int32 Val = ControlRig->GetControlValue(ControlElement, ERigControlValueType::Current).Get<int32>();
+						Token.IntegerValues.Add(TNameAndValue<int32>{ ControlElement->GetFName(), Val });
 						break;
 					}
 					case ERigControlType::Float:
+					case ERigControlType::ScaleFloat:
 					{
-						const float Val = ControlRig->GetHierarchy()->GetControlValue(ControlElement, ERigControlValueType::Current).Get<float>();
-						Token.ScalarValues.Add(TNameAndValue<float>{ ControlElement->GetName(), Val });
+						const float Val = ControlRig->GetControlValue(ControlElement, ERigControlValueType::Current).Get<float>();
+						Token.ScalarValues.Add(TNameAndValue<float>{ ControlElement->GetFName(), Val });
 						break;
 					}
 					case ERigControlType::Vector2D:
 					{
-						const FVector3f Val = ControlRig->GetHierarchy()->GetControlValue(ControlElement, ERigControlValueType::Current).Get<FVector3f>();
-						Token.Vector2DValues.Add(TNameAndValue<FVector2D>{ ControlElement->GetName(), FVector2D(Val.X, Val.Y) });
+						const FVector3f Val = ControlRig->GetControlValue(ControlElement, ERigControlValueType::Current).Get<FVector3f>();
+						Token.Vector2DValues.Add(TNameAndValue<FVector2D>{ ControlElement->GetFName(), FVector2D(Val.X, Val.Y) });
 						break;
 					}
 					case ERigControlType::Position:
 					case ERigControlType::Scale:
 					case ERigControlType::Rotator:
 					{
-						URigHierarchy* RigHierarchy = ControlRig->GetHierarchy();
 						FMovieSceneControlRigSpaceBaseKey SpaceValue;
 						//@helge how can we get the correct current space here? this is for restoring it.
 						//for now just using parent space
 						//FRigElementKey DefaultParent = RigHierarchy->GetFirstParent(ControlElement->GetKey());
 						SpaceValue.ControlRigElement = ControlElement->GetKey();
 						SpaceValue.SpaceType = EMovieSceneControlRigSpaceType::Parent;
-						Token.SpaceValues.Add(FControlSpaceAndValue(ControlElement->GetName(), SpaceValue));
-						FVector3f Val = ControlRig->GetHierarchy()->GetControlValue(ControlElement, ERigControlValueType::Current).Get<FVector3f>();
+						Token.SpaceValues.Add(FControlSpaceAndValue(ControlElement->GetFName(), SpaceValue));
+						FVector3f Val = ControlRig->GetControlValue(ControlElement, ERigControlValueType::Current).Get<FVector3f>();
 						if (ControlElement->Settings.ControlType == ERigControlType::Rotator)
 						{
-							FVector Vector = ControlRig->GetHierarchy()->GetControlSpecifiedEulerAngle(ControlElement);
+							FVector Vector = ControlRig->GetControlSpecifiedEulerAngle(ControlElement);
 							Val = FVector3f(Vector.X, Vector.Y, Vector.Z);
 						}
-						Token.VectorValues.Add(TNameAndValue<FVector>{ ControlElement->GetName(), (FVector)Val });
+						Token.VectorValues.Add(TNameAndValue<FVector>{ ControlElement->GetFName(), (FVector)Val });
 						//mz todo specify rotator special so we can do quat interps
 						break;
 					}
@@ -949,33 +1018,33 @@ struct FControlRigParameterPreAnimatedTokenProducer : IMovieScenePreAnimatedToke
 						//FRigElementKey DefaultParent = RigHierarchy->GetFirstParent(ControlElement->GetKey());
 						SpaceValue.ControlRigElement = ControlElement->GetKey();
 						SpaceValue.SpaceType = EMovieSceneControlRigSpaceType::Parent;
-						Token.SpaceValues.Add(FControlSpaceAndValue(ControlElement->GetName(), SpaceValue));
-						const FTransform Val = ControlRig->GetHierarchy()->GetControlValue(ControlElement, ERigControlValueType::Current).Get<FRigControlValue::FTransform_Float>().ToTransform();
+						Token.SpaceValues.Add(FControlSpaceAndValue(ControlElement->GetFName(), SpaceValue));
+						const FTransform Val = ControlRig->GetControlValue(ControlElement, ERigControlValueType::Current).Get<FRigControlValue::FTransform_Float>().ToTransform();
 						FEulerTransform EulerTransform(Val);
-						FVector Vector = ControlRig->GetHierarchy()->GetControlSpecifiedEulerAngle(ControlElement);
+						FVector Vector = ControlRig->GetControlSpecifiedEulerAngle(ControlElement);
 						EulerTransform.Rotation = FRotator(Vector.Y, Vector.Z, Vector.X);
-						Token.TransformValues.Add(TNameAndValue<FEulerTransform>{ ControlElement->GetName(), EulerTransform });
+						Token.TransformValues.Add(TNameAndValue<FEulerTransform>{ ControlElement->GetFName(), EulerTransform });
 						break;
 					}
 					case ERigControlType::TransformNoScale:
 					{
 						const FTransformNoScale NoScale = 
-							ControlRig->GetHierarchy()
+							ControlRig
 							->GetControlValue(ControlElement, ERigControlValueType::Current).Get<FRigControlValue::FTransformNoScale_Float>().ToTransform();
 						FEulerTransform EulerTransform(NoScale.ToFTransform());
-						FVector Vector = ControlRig->GetHierarchy()->GetControlSpecifiedEulerAngle(ControlElement);
+						FVector Vector = ControlRig->GetControlSpecifiedEulerAngle(ControlElement);
 						EulerTransform.Rotation = FRotator(Vector.Y, Vector.Z, Vector.X);
-						Token.TransformValues.Add(TNameAndValue<FEulerTransform>{ ControlElement->GetName(), EulerTransform });
+						Token.TransformValues.Add(TNameAndValue<FEulerTransform>{ ControlElement->GetFName(), EulerTransform });
 						break;
 					}
 					case ERigControlType::EulerTransform:
 					{
 						FEulerTransform EulerTransform = 
-							ControlRig->GetHierarchy()
+							ControlRig
 							->GetControlValue(ControlElement, ERigControlValueType::Current).Get<FRigControlValue::FEulerTransform_Float>().ToTransform();
-						FVector Vector = ControlRig->GetHierarchy()->GetControlSpecifiedEulerAngle(ControlElement);
+						FVector Vector = ControlRig->GetControlSpecifiedEulerAngle(ControlElement);
 						EulerTransform.Rotation = FRotator(Vector.Y, Vector.Z, Vector.X);
-						Token.TransformValues.Add(TNameAndValue<FEulerTransform>{ ControlElement->GetName(), EulerTransform });
+						Token.TransformValues.Add(TNameAndValue<FEulerTransform>{ ControlElement->GetFName(), EulerTransform });
 						break;
 					}
 				}
@@ -1037,7 +1106,8 @@ struct FControlRigParameterPreAnimatedTokenProducer : IMovieScenePreAnimatedToke
 
 static UControlRig* GetControlRig(const UMovieSceneControlRigParameterSection* Section,UObject* BoundObject)
 {
-	UControlRig* ControlRig = Section->GetControlRig();
+	UWorld* GameWorld = (BoundObject && BoundObject->GetWorld() && BoundObject->GetWorld()->IsGameWorld()) ? BoundObject->GetWorld() : nullptr;
+	UControlRig* ControlRig =  Section->GetControlRig(GameWorld);
 	if (ControlRig->GetObjectBinding())
 	{
 		if (UControlRigComponent* ControlRigComponent = Cast<UControlRigComponent>(ControlRig->GetObjectBinding()->GetBoundObject()))
@@ -1114,6 +1184,34 @@ static UControlRig* GetControlRig(const UMovieSceneControlRigParameterSection* S
 	return ControlRig;
 }
 
+static UTickableConstraint* CreateConstraintIfNeeded(UWorld* InWorld, const FConstraintAndActiveValue& InConstraintValue, UMovieSceneControlRigParameterSection* InSection)
+{
+	UTickableConstraint* Constraint = InConstraintValue.Constraint.Get();
+	if (!Constraint) 
+	{
+		return nullptr;
+	}
+	
+	// it's possible that we have it but it's not in the manager, due to manager not being saved with it (due to spawning or undo/redo).
+	if (InWorld)
+	{
+		const FConstraintsManagerController& Controller = FConstraintsManagerController::Get(InWorld);
+		if (Controller.GetConstraint(Constraint->ConstraintID) == nullptr)
+		{
+			Controller.AddConstraint(InConstraintValue.Constraint.Get());
+			//need to reconstuct channels here.. note this is now lazy and so will recreate it next time view requests it
+			//but only do it if the control rig has a valid world it may not for example in PIE
+			if (InSection->GetControlRig() && InSection->GetControlRig()->GetWorld())
+			{
+				InSection->ReconstructChannelProxy();
+				InSection->MarkAsChanged();
+			}
+		}
+	}
+
+	return Constraint;
+}
+
 /* Simple token used for non-blendables*/
 struct FControlRigParameterExecutionToken : IMovieSceneExecutionToken
 {
@@ -1138,80 +1236,89 @@ struct FControlRigParameterExecutionToken : IMovieSceneExecutionToken
 		MOVIESCENE_DETAILED_SCOPE_CYCLE_COUNTER(MovieSceneEval_ControlRigParameterTrack_TokenExecute)
 		
 		FMovieSceneSequenceID SequenceID = Operand.SequenceID;
-		UControlRig* ControlRig = Section->GetControlRig();
-
-		// Update the animation's state
-		
-		if (ControlRig)
-		{
+		TArrayView<TWeakObjectPtr<>> BoundObjects = Player.FindBoundObjects(Operand);
 			const UMovieSceneSequence* Sequence = Player.State.FindSequence(Operand.SequenceID);
-			TArrayView<TWeakObjectPtr<>> BoundObjects = Player.FindBoundObjects(Operand);
-
-			UObject* BoundObject = BoundObjects.Num() > 0 ? BoundObjects[0].Get() : nullptr;
-			if (Sequence && BoundObject)
+		UControlRig* ControlRig = nullptr;
+		UObject* BoundObject = BoundObjects.Num() > 0 ? BoundObjects[0].Get() : nullptr;
+		if (Sequence && BoundObject)
+		{
+			UWorld* GameWorld = (BoundObject->GetWorld() && BoundObject->GetWorld()->IsGameWorld()) ? BoundObject->GetWorld() : nullptr;
+			ControlRig = Section->GetControlRig(GameWorld);
+			if (!ControlRig->GetObjectBinding())
 			{
-				if (!ControlRig->GetObjectBinding())
-				{
-					ControlRig->SetObjectBinding(MakeShared<FControlRigObjectBinding>());
-				}
+				ControlRig->SetObjectBinding(MakeShared<FControlRigObjectBinding>());
+			}
 
-				if (ControlRig->GetObjectBinding()->GetBoundObject() != FControlRigObjectBinding::GetBindableObject(BoundObject))
+			if (ControlRig->GetObjectBinding()->GetBoundObject() != FControlRigObjectBinding::GetBindableObject(BoundObject))
+			{
+				ControlRig->GetObjectBinding()->BindToObject(BoundObject);
+				TArray<FName> SelectedControls = ControlRig->CurrentControlSelection();
+				ControlRig->Initialize();
+				if (USkeletalMeshComponent* SkeletalMeshComponent = Cast<USkeletalMeshComponent>(FControlRigObjectBinding::GetBindableObject(BoundObject)))
 				{
-					ControlRig->GetObjectBinding()->BindToObject(BoundObject);
-					TArray<FName> SelectedControls = ControlRig->CurrentControlSelection();
-					ControlRig->Initialize();
-					if (USkeletalMeshComponent* SkeletalMeshComponent = Cast<USkeletalMeshComponent>(FControlRigObjectBinding::GetBindableObject(BoundObject)))
+					ControlRig->RequestInit();
+					ControlRig->SetBoneInitialTransformsFromSkeletalMeshComponent(SkeletalMeshComponent, true);
+					ControlRig->Evaluate_AnyThread();
+				};
+				if (GameWorld == nullptr && ControlRig->IsA<UFKControlRig>())// mz only in editor replace Fk Control rig, will look post 29.20 to see if this really needed but want to unblock folks
+				{
+					UMovieSceneControlRigParameterTrack* Track = Section->GetTypedOuter<UMovieSceneControlRigParameterTrack>();
+					if (Track)
 					{
-						ControlRig->RequestInit();
-						ControlRig->SetBoneInitialTransformsFromSkeletalMeshComponent(SkeletalMeshComponent, true);
-						ControlRig->Evaluate_AnyThread();
-					};
-					if (ControlRig->IsA<UFKControlRig>())
-					{
-						UMovieSceneControlRigParameterTrack* Track = Section->GetTypedOuter<UMovieSceneControlRigParameterTrack>();
-						if (Track)
-						{
-							Track->ReplaceControlRig(ControlRig, true);
-						}
-					}
-					TArray<FName> NewSelectedControls = ControlRig->CurrentControlSelection();
-					if (SelectedControls != NewSelectedControls)
-					{
-						SelectControls(ControlRig, SelectedControls);
+						Track->ReplaceControlRig(ControlRig, true);
 					}
 				}
+				TArray<FName> NewSelectedControls = ControlRig->CurrentControlSelection();
+				if (SelectedControls != NewSelectedControls)
+				{
+					SelectControls(ControlRig, SelectedControls);
+				}
+			}
 
-				// make sure to pick the correct CR instance for the  Components to bind.
-				// In case of PIE + Spawnable Actor + CR component, sequencer should grab
-				// CR component's CR instance for evaluation, see comment in BindToSequencerInstance
-				// i.e. CR component should bind to the instance that it owns itself.
-				ControlRig = GetControlRig(Section, BoundObjects[0].Get());
+			// make sure to pick the correct CR instance for the  Components to bind.
+			// In case of PIE + Spawnable Actor + CR component, sequencer should grab
+			// CR component's CR instance for evaluation, see comment in BindToSequencerInstance
+			// i.e. CR component should bind to the instance that it owns itself.
+			ControlRig = GetControlRig(Section, BoundObjects[0].Get());
 				
-				// ensure that pre animated state is saved, must be done before bind
-				Player.SavePreAnimatedState(*ControlRig, FMovieSceneControlRigParameterTemplate::GetAnimTypeID(), FControlRigParameterPreAnimatedTokenProducer(Operand.SequenceID));
+			// ensure that pre animated state is saved, must be done before bind
+			Player.SavePreAnimatedState(*ControlRig, FMovieSceneControlRigParameterTemplate::GetAnimTypeID(), FControlRigParameterPreAnimatedTokenProducer(Operand.SequenceID));
+			if (USkeletalMeshComponent* SkeletalMeshComponent = Cast<USkeletalMeshComponent>(FControlRigObjectBinding::GetBindableObject(BoundObject)))
+			{
+				Player.SavePreAnimatedState(*SkeletalMeshComponent, FControlRigSkeletalMeshComponentBindingTokenProducer::GetAnimTypeID(), FControlRigSkeletalMeshComponentBindingTokenProducer(Operand.SequenceID, ControlRig));
+			}
 
-				FControlRigBindingHelper::BindToSequencerInstance(ControlRig);
+			FControlRigBindingHelper::BindToSequencerInstance(ControlRig);
 
-				if (ControlRig->GetObjectBinding())
+			if (ControlRig->GetObjectBinding())
+			{
+				if (USkeletalMeshComponent* SkeletalMeshComponent = Cast<USkeletalMeshComponent>(ControlRig->GetObjectBinding()->GetBoundObject()))
 				{
-					if (USkeletalMeshComponent* SkeletalMeshComponent = Cast<USkeletalMeshComponent>(ControlRig->GetObjectBinding()->GetBoundObject()))
+					if (UControlRigLayerInstance* AnimInstance = Cast<UControlRigLayerInstance>(SkeletalMeshComponent->GetAnimInstance()))
 					{
-						if (UControlRigLayerInstance* AnimInstance = Cast<UControlRigLayerInstance>(SkeletalMeshComponent->GetAnimInstance()))
+						float Weight = Section->EvaluateEasing(Context.GetTime());
+						if (EnumHasAllFlags(Section->TransformMask.GetChannels(), EMovieSceneTransformChannel::Weight))
 						{
-							float Weight = 1.0f;
-							FControlRigIOSettings InputSettings;
-							InputSettings.bUpdateCurves = true;
-							InputSettings.bUpdatePose = true;
+							float ManualWeight = 1.f;
+							Section->Weight.Evaluate(Context.GetTime(), ManualWeight);
+							Weight *= ManualWeight;
+						}
+						FControlRigIOSettings InputSettings;
+						InputSettings.bUpdateCurves = true;
+						InputSettings.bUpdatePose = true;
+						//this is not great but assumes we have 1 absolute track that will be used for weighting
+						if (Section->GetBlendType() == EMovieSceneBlendType::Absolute)
+						{
 							AnimInstance->UpdateControlRigTrack(ControlRig->GetUniqueID(), Weight, InputSettings, true);
 						}
 					}
-					else
-					{
-						ControlRig = GetControlRig(Section, BoundObject);
-					}
 				}
-			}		
-		}
+				else
+				{
+					ControlRig = GetControlRig(Section, BoundObject);
+				}
+			}
+		}		
 
 		//Do Bool straight up no blending
 		if (Section->GetBlendType().Get() != EMovieSceneBlendType::Additive)
@@ -1238,18 +1345,17 @@ struct FControlRigParameterExecutionToken : IMovieSceneExecutionToken
 								switch (SpaceNameAndValue.Value.SpaceType)
 								{
 									case EMovieSceneControlRigSpaceType::Parent:
-										RigHierarchy->SwitchToDefaultParent(ControlKey);
+										ControlRig->SwitchToParent(ControlKey, RigHierarchy->GetDefaultParent(ControlKey), false, true);
 										break;
 									case EMovieSceneControlRigSpaceType::World:
-										RigHierarchy->SwitchToWorldSpace(ControlKey);
+										ControlRig->SwitchToParent(ControlKey, RigHierarchy->GetWorldSpaceReferenceKey(), false, true);
 										break;
 									case EMovieSceneControlRigSpaceType::ControlRig:
 										{
 #if WITH_EDITOR
-											URigHierarchy::TElementDependencyMap Dependencies = RigHierarchy->GetDependenciesForVM(ControlRig->GetVM());
-											RigHierarchy->SwitchToParent(ControlKey, SpaceNameAndValue.Value.ControlRigElement, false, true, Dependencies, nullptr);
+											ControlRig->SwitchToParent(ControlKey, SpaceNameAndValue.Value.ControlRigElement, false, true);
 #else
-											RigHierarchy->SwitchToParent(ControlKey, SpaceNameAndValue.Value.ControlRigElement);
+											ControlRig->SwitchToParent(ControlKey, SpaceNameAndValue.Value.ControlRigElement, false, true);
 #endif	
 										}
 										break;
@@ -1294,35 +1400,47 @@ struct FControlRigParameterExecutionToken : IMovieSceneExecutionToken
 						}
 					}
 				}
-
-				const FConstraintsManagerController& Controller = FConstraintsManagerController::Get(ControlRig->GetWorld());
-				for (FConstraintAndActiveValue& ConstraintValue : ConstraintsValues)
+				if (BoundObject)
 				{
-					//if the constraint isn't valid try to make a copy of our spawn copy if it exists and add that
-					if (ConstraintValue.Constraint.IsValid() == false && ConstraintValue.SpawnConstraint.IsValid())
+					for (FConstraintAndActiveValue& ConstraintValue : ConstraintsValues)
 					{
-						UTickableConstraint* NewOne = Controller.AddConstraintFromCopy(ConstraintValue.SpawnConstraint.Get());
-						ConstraintValue.Constraint = NewOne;
 						UMovieSceneControlRigParameterSection* NonConstSection = const_cast<UMovieSceneControlRigParameterSection*>(Section);
-						NonConstSection->ReplaceConstraint(ConstraintValue.SpawnConstraint.Get()->GetFName(), NewOne);
+						CreateConstraintIfNeeded(BoundObject->GetWorld(), ConstraintValue, NonConstSection);
+
+						if (ConstraintValue.Constraint.IsValid())
+						{
+							//For Control Rig we may need to explicitly set the control rig
+							if (UTickableTransformConstraint* TransformConstraint = Cast<UTickableTransformConstraint>(ConstraintValue.Constraint))
+							{
+								TransformConstraint->InitConstraint(BoundObject->GetWorld());
+							}
+							ConstraintValue.Constraint->ResolveBoundObjects(Operand.SequenceID, Player, ControlRig);
+							ConstraintValue.Constraint->SetActive(ConstraintValue.Value);
+						}
 					}
-					if (ConstraintValue.Constraint.IsValid())
+					//unfortunately for Constraints with ControlRig we need to resolve all Parents also. Don't need to do children since they wil be handled by
+					//the channel resolve above
+					const FConstraintsManagerController& Controller = FConstraintsManagerController::Get(BoundObject->GetWorld());
+					const TArray< TWeakObjectPtr<UTickableConstraint>> Constraints = Controller.GetAllConstraints();
+					for (const TWeakObjectPtr<UTickableConstraint>& TickConstraint : Constraints)
 					{
-						//For Control Rig we may need to explicitly set the control rig
-						ConstraintValue.Constraint->ResolveBoundObjects(Operand.SequenceID, Player, ControlRig);
-						ConstraintValue.Constraint->SetActive(ConstraintValue.Value);
+						if (UTickableTransformConstraint* TransformConstraint = Cast< UTickableTransformConstraint>(TickConstraint.Get()))
+						{
+							if (TransformConstraint->ParentTRSHandle)
+							{
+								TransformConstraint->ParentTRSHandle->ResolveBoundObjects(Operand.SequenceID, Player, ControlRig);
+								TransformConstraint->EnsurePrimaryDependency(BoundObject->GetWorld());
+							}
+						}
 					}
 				}
-				//unfortunately for Constraints with ControlRig we need to resolve all Parents also. Don't need to do children since they wil be handled by
-				//the channel resolve above
-				TArray< TObjectPtr<UTickableConstraint>> Constraints =  Controller.GetAllConstraints();
-				for (UTickableConstraint* TickConstraint : Constraints)
+				else  //no bound object so turn off constraint
 				{
-					if (UTickableTransformConstraint* TransformConstraint = Cast< UTickableTransformConstraint>(TickConstraint))
+					for (FConstraintAndActiveValue& ConstraintValue : ConstraintsValues)
 					{
-						if (TransformConstraint->ParentTRSHandle)
+						if (ConstraintValue.Constraint.IsValid())
 						{
-							TransformConstraint->ParentTRSHandle->ResolveBoundObjects(Operand.SequenceID, Player, ControlRig);
+							ConstraintValue.Constraint->SetActive(ConstraintValue.Value);
 						}
 					}
 				}
@@ -1376,9 +1494,9 @@ struct TControlRigParameterActuatorFloat : TMovieSceneBlendingActuator<FControlR
 			FRigControlElement* ControlElement = ControlRig->FindControl(ParameterName);
 			if (ControlElement && ControlElement->Settings.AnimationType != ERigControlAnimationType::ProxyControl &&
 				ControlElement->Settings.AnimationType != ERigControlAnimationType::VisualCue
-				&& ControlElement->Settings.ControlType == ERigControlType::Float)
+				&& (ControlElement->Settings.ControlType == ERigControlType::Float || ControlElement->Settings.ControlType == ERigControlType::ScaleFloat))
 			{
-				const float Val = ControlRig->GetHierarchy()->GetControlValue(ControlElement, ERigControlValueType::Current).Get<float>();
+				const float Val = ControlRig->GetControlValue(ControlElement, ERigControlValueType::Current).Get<float>();
 				return FControlRigTrackTokenFloat(Val);
 			}
 
@@ -1403,7 +1521,8 @@ struct TControlRigParameterActuatorFloat : TMovieSceneBlendingActuator<FControlR
 			{
 				FRigControlElement* ControlElement = ControlRig->FindControl(ParameterName);
 				if (ControlElement && ControlElement->Settings.AnimationType != ERigControlAnimationType::ProxyControl &&
-					ControlElement->Settings.AnimationType != ERigControlAnimationType::VisualCue && ControlElement->Settings.ControlType == ERigControlType::Float)
+					ControlElement->Settings.AnimationType != ERigControlAnimationType::VisualCue &&
+					(ControlElement->Settings.ControlType == ERigControlType::Float || ControlElement->Settings.ControlType == ERigControlType::ScaleFloat))
 				{
 					ControlRig->SetControlValue<float>(ParameterName, InFinalValue.Value, true, EControlRigSetKey::Never,bSetupUndo);
 				}
@@ -1451,7 +1570,7 @@ struct TControlRigParameterActuatorVector2D : TMovieSceneBlendingActuator<FContr
 				ControlElement->Settings.AnimationType != ERigControlAnimationType::VisualCue
 				&& (ControlElement->Settings.ControlType == ERigControlType::Vector2D))
 			{
-				FVector3f Val = ControlRig->GetHierarchy()->GetControlValue(ControlElement, ERigControlValueType::Current).Get<FVector3f>();
+				FVector3f Val = ControlRig->GetControlValue(ControlElement, ERigControlValueType::Current).Get<FVector3f>();
 				return FControlRigTrackTokenVector2D(FVector2D(Val.X, Val.Y));
 			}
 		}
@@ -1525,10 +1644,10 @@ struct TControlRigParameterActuatorVector : TMovieSceneBlendingActuator<FControl
 				ControlElement->Settings.AnimationType != ERigControlAnimationType::VisualCue
 				&& (ControlElement->Settings.ControlType == ERigControlType::Position || ControlElement->Settings.ControlType == ERigControlType::Scale || ControlElement->Settings.ControlType == ERigControlType::Rotator))
 			{
-				FVector3f Val = ControlRig->GetHierarchy()->GetControlValue(ControlElement, ERigControlValueType::Current).Get<FVector3f>();
+				FVector3f Val = ControlRig->GetControlValue(ControlElement, ERigControlValueType::Current).Get<FVector3f>();
 				if (ControlElement->Settings.ControlType == ERigControlType::Rotator)
 				{
-					FVector Vector = ControlRig->GetHierarchy()->GetControlSpecifiedEulerAngle(ControlElement);
+					FVector Vector = ControlRig->GetControlSpecifiedEulerAngle(ControlElement);
 					Val = FVector3f(Vector.X, Vector.Y, Vector.Z);
 				}
 				return FControlRigTrackTokenVector((FVector)Val);
@@ -1599,31 +1718,32 @@ struct TControlRigParameterActuatorTransform : TMovieSceneBlendingActuator<FCont
 
 		if (ControlRig && Section && (Section->ControlsToSet.Num() == 0 || Section->ControlsToSet.Contains(ParameterName)))
 		{
+			URigHierarchy* Hierarchy = ControlRig->GetHierarchy();
 			FRigControlElement* ControlElement = ControlRig->FindControl(ParameterName);
 			if (ControlElement && ControlElement->Settings.AnimationType != ERigControlAnimationType::ProxyControl &&
 				ControlElement->Settings.AnimationType != ERigControlAnimationType::VisualCue)
 			{
 				if (ControlElement && ControlElement->Settings.ControlType == ERigControlType::Transform)
 				{
-					const FTransform Val = ControlRig->GetHierarchy()->GetControlValue(ControlElement, ERigControlValueType::Current).Get<FRigControlValue::FTransform_Float>().ToTransform();
+					const FTransform Val = ControlRig->GetControlValue(ControlElement, ERigControlValueType::Current).Get<FRigControlValue::FTransform_Float>().ToTransform();
 					FEulerTransform EulerTransform(Val);
-					FVector Vector = ControlRig->GetHierarchy()->GetControlSpecifiedEulerAngle(ControlElement);
+					FVector Vector = ControlRig->GetControlSpecifiedEulerAngle(ControlElement);
 					EulerTransform.Rotation = FRotator(Vector.Y, Vector.Z, Vector.X);
 					return FControlRigTrackTokenTransform(EulerTransform);
 				}
 				else if (ControlElement && ControlElement->Settings.ControlType == ERigControlType::TransformNoScale)
 				{
-					FTransformNoScale ValNoScale = ControlRig->GetHierarchy()->GetControlValue(ControlElement, ERigControlValueType::Current).Get<FRigControlValue::FTransformNoScale_Float>().ToTransform();
+					FTransformNoScale ValNoScale = ControlRig->GetControlValue(ControlElement, ERigControlValueType::Current).Get<FRigControlValue::FTransformNoScale_Float>().ToTransform();
 					FTransform Val = ValNoScale;
 					FEulerTransform EulerTransform(Val);
-					FVector Vector = ControlRig->GetHierarchy()->GetControlSpecifiedEulerAngle(ControlElement);
+					FVector Vector = ControlRig->GetControlSpecifiedEulerAngle(ControlElement);
 					EulerTransform.Rotation = FRotator(Vector.Y, Vector.Z, Vector.X);
 					return FControlRigTrackTokenTransform(EulerTransform);
 				}
 				else if (ControlElement && ControlElement->Settings.ControlType == ERigControlType::EulerTransform)
 				{
-					FEulerTransform EulerTransform = ControlRig->GetHierarchy()->GetControlValue(ControlElement, ERigControlValueType::Current).Get<FRigControlValue::FEulerTransform_Float>().ToTransform();
-					FVector Vector = ControlRig->GetHierarchy()->GetControlSpecifiedEulerAngle(ControlElement);
+					FEulerTransform EulerTransform = ControlRig->GetControlValue(ControlElement, ERigControlValueType::Current).Get<FRigControlValue::FEulerTransform_Float>().ToTransform();
+					FVector Vector = ControlRig->GetControlSpecifiedEulerAngle(ControlElement);
 					EulerTransform.Rotation = FRotator(Vector.Y, Vector.Z, Vector.X);
 					return FControlRigTrackTokenTransform(EulerTransform);
 				}
@@ -1654,6 +1774,7 @@ struct TControlRigParameterActuatorTransform : TMovieSceneBlendingActuator<FCont
 
 			if (ControlRig && (Section->ControlsToSet.Num() == 0 || Section->ControlsToSet.Contains(ParameterName)))
 			{
+				URigHierarchy* Hierarchy = ControlRig->GetHierarchy();
 				FRigControlElement* ControlElement = ControlRig->FindControl(ParameterName);
 				if (ControlElement && ControlElement->Settings.AnimationType != ERigControlAnimationType::ProxyControl &&
 					ControlElement->Settings.AnimationType != ERigControlAnimationType::VisualCue)
@@ -1661,21 +1782,21 @@ struct TControlRigParameterActuatorTransform : TMovieSceneBlendingActuator<FCont
 					if (ControlElement && ControlElement->Settings.ControlType == ERigControlType::Transform)
 					{
 						FVector EulerAngle(InFinalValue.Value.Rotation.Roll, InFinalValue.Value.Rotation.Pitch, InFinalValue.Value.Rotation.Yaw);
-						ControlRig->GetHierarchy()->SetControlSpecifiedEulerAngle(ControlElement, EulerAngle);
+						Hierarchy->SetControlSpecifiedEulerAngle(ControlElement, EulerAngle);
 						ControlRig->SetControlValue<FRigControlValue::FTransform_Float>(ParameterName, InFinalValue.Value.ToFTransform(), true, EControlRigSetKey::Never, bSetupUndo);
 					}
 					else if (ControlElement && ControlElement->Settings.ControlType == ERigControlType::TransformNoScale)
 					{
 						const FTransformNoScale NoScale = InFinalValue.Value.ToFTransform();
 						FVector EulerAngle(InFinalValue.Value.Rotation.Roll, InFinalValue.Value.Rotation.Pitch, InFinalValue.Value.Rotation.Yaw);
-						ControlRig->GetHierarchy()->SetControlSpecifiedEulerAngle(ControlElement, EulerAngle);
+						Hierarchy->SetControlSpecifiedEulerAngle(ControlElement, EulerAngle);
 						ControlRig->SetControlValue<FRigControlValue::FTransformNoScale_Float>(ParameterName, NoScale, true, EControlRigSetKey::Never, bSetupUndo);
 					}
 					else if (ControlElement && ControlElement->Settings.ControlType == ERigControlType::EulerTransform)
 					{
 						FVector EulerAngle(InFinalValue.Value.Rotation.Roll, InFinalValue.Value.Rotation.Pitch, InFinalValue.Value.Rotation.Yaw);
-						FQuat Quat = ControlRig->GetHierarchy()->GetControlQuaternion(ControlElement, EulerAngle);
-						ControlRig->GetHierarchy()->SetControlSpecifiedEulerAngle(ControlElement, EulerAngle);
+						FQuat Quat = Hierarchy->GetControlQuaternion(ControlElement, EulerAngle);
+						Hierarchy->SetControlSpecifiedEulerAngle(ControlElement, EulerAngle);
 						FRotator UERotator(Quat);
 						FEulerTransform Transform = InFinalValue.Value;
 						Transform.Rotation = UERotator;
@@ -1707,13 +1828,25 @@ void FMovieSceneControlRigParameterTemplate::Evaluate(const FMovieSceneEvaluatio
 	const UMovieSceneControlRigParameterSection* Section = Cast<UMovieSceneControlRigParameterSection>(GetSourceSection());
 	if (Section && Section->GetControlRig())
 	{
+		UControlRig* ControlRig = Section->GetControlRig(); //this will be default(editor) control rig
+		if (Operand.ObjectBindingID.IsValid())
+		{
+			TArrayView<TWeakObjectPtr<>> BoundObjects = PersistentData.GetMovieScenePlayer().FindBoundObjects(Operand);
+			if(BoundObjects.Num() > 0 && BoundObjects[0].IsValid() && BoundObjects[0].Get()->GetWorld() && BoundObjects[0].Get()->GetWorld()->IsGameWorld()) //just support one bound object per control rig
+			{
+				UWorld* GameWorld =  BoundObjects[0].Get()->GetWorld();
+				ControlRig = Section->GetControlRig(GameWorld);
+			}
+		}
+
 		FEvaluatedControlRigParameterSectionChannelMasks* ChannelMasks = PersistentData.FindSectionData<FEvaluatedControlRigParameterSectionChannelMasks>();
 		if (!ChannelMasks)
 		{
 			// Naughty const_cast here, but we can't create this inside Initialize because of hotfix restrictions
 			// The cast is ok because we actually do not have any threading involved
 			ChannelMasks = &const_cast<FPersistentEvaluationData&>(PersistentData).GetOrAddSectionData<FEvaluatedControlRigParameterSectionChannelMasks>();
-			ChannelMasks->Initialize(Section, Scalars, Bools, Integers, Enums, Vector2Ds, Vectors, Colors, Transforms);
+			UMovieSceneControlRigParameterSection* NonConstSection = const_cast<UMovieSceneControlRigParameterSection*>(Section);
+			ChannelMasks->Initialize(NonConstSection, Scalars, Bools, Integers, Enums, Vector2Ds, Vectors, Colors, Transforms);
 		}
 
 		UMovieSceneTrack* Track = Cast<UMovieSceneTrack>(Section->GetOuter());
@@ -1726,9 +1859,7 @@ void FMovieSceneControlRigParameterTemplate::Evaluate(const FMovieSceneEvaluatio
 		//Do blended tokens
 		FEvaluatedControlRigParameterSectionValues Values;
 
-		HACK_ChannelMasks = ChannelMasks;
-		EvaluateCurvesWithMasks(Context, Values);
-		HACK_ChannelMasks = nullptr;
+		EvaluateCurvesWithMasks(Context, *ChannelMasks, Values);
 
 		float Weight = EvaluateEasing(Context.GetTime());
 		if (EnumHasAllFlags(Section->TransformMask.GetChannels(), EMovieSceneTransformChannel::Weight))
@@ -1742,7 +1873,8 @@ void FMovieSceneControlRigParameterTemplate::Evaluate(const FMovieSceneEvaluatio
 		FControlRigParameterExecutionToken ExecutionToken(Section,Values);
 		ExecutionTokens.Add(MoveTemp(ExecutionToken));
 
-		FControlRigAnimTypeIDsPtr TypeIDs = FControlRigAnimTypeIDs::Get(Section->GetControlRig());
+
+		FControlRigAnimTypeIDsPtr TypeIDs = FControlRigAnimTypeIDs::Get(ControlRig);
 
 		for (const FScalarParameterStringAndValue& ScalarNameAndValue : Values.ScalarValues)
 		{
@@ -1820,12 +1952,9 @@ void FMovieSceneControlRigParameterTemplate::Evaluate(const FMovieSceneEvaluatio
 }
 
 
-void FMovieSceneControlRigParameterTemplate::EvaluateCurvesWithMasks(const FMovieSceneContext& Context, FEvaluatedControlRigParameterSectionValues& Values) const
+void FMovieSceneControlRigParameterTemplate::EvaluateCurvesWithMasks(const FMovieSceneContext& Context, FEvaluatedControlRigParameterSectionChannelMasks& InMasks, FEvaluatedControlRigParameterSectionValues& Values) const
 {
 	const FFrameTime Time = Context.GetTime();
-
-	check(HACK_ChannelMasks);
-
 
 	const UMovieSceneControlRigParameterSection* Section = Cast<UMovieSceneControlRigParameterSection>(GetSourceSection());
 	if (Section)
@@ -1847,7 +1976,7 @@ void FMovieSceneControlRigParameterTemplate::EvaluateCurvesWithMasks(const FMovi
 			const FScalarParameterNameAndCurve& Scalar = this->Scalars[Index];
 			float Value = 0;
 
-			if (HACK_ChannelMasks->ScalarCurveMask[Index])
+			if (InMasks.ScalarCurveMask[Index])
 			{
 				Scalar.ParameterCurve.Evaluate(Time, Value);
 			}
@@ -1881,18 +2010,14 @@ void FMovieSceneControlRigParameterTemplate::EvaluateCurvesWithMasks(const FMovi
 			bool Value = false;
 			const FConstraintAndActiveChannel& ConstraintAndActiveChannel = Constraints[Index];
 			ConstraintAndActiveChannel.ActiveChannel.Evaluate(RoundTime, Value);
-			if (ConstraintAndActiveChannel.Constraint.IsPending())
-			{
-				ConstraintAndActiveChannel.Constraint.LoadSynchronous();
-			}
-			Values.ConstraintsValues.Emplace(ConstraintAndActiveChannel.Constraint.Get(), ConstraintAndActiveChannel.ConstraintCopyToSpawn, Value);
+			Values.ConstraintsValues.Emplace(ConstraintAndActiveChannel.GetConstraint().Get(), Value);
 		}
 		
 		for (int32 Index = 0; Index < Bools.Num(); ++Index)
 		{
 			bool Value = false;
 			const FBoolParameterNameAndCurve& Bool = Bools[Index];
-			if (HACK_ChannelMasks->BoolCurveMask[Index])
+			if (InMasks.BoolCurveMask[Index])
 			{
 				Bool.ParameterCurve.Evaluate(Time, Value);
 			}
@@ -1909,7 +2034,7 @@ void FMovieSceneControlRigParameterTemplate::EvaluateCurvesWithMasks(const FMovi
 		{
 			int32  Value = 0;
 			const FIntegerParameterNameAndCurve& Integer = Integers[Index];
-			if (HACK_ChannelMasks->IntegerCurveMask[Index])
+			if (InMasks.IntegerCurveMask[Index])
 			{
 				Integer.ParameterCurve.Evaluate(Time, Value);
 			}
@@ -1926,7 +2051,7 @@ void FMovieSceneControlRigParameterTemplate::EvaluateCurvesWithMasks(const FMovi
 		{
 			uint8  Value = 0;
 			const FEnumParameterNameAndCurve& Enum = Enums[Index];
-			if (HACK_ChannelMasks->EnumCurveMask[Index])
+			if (InMasks.EnumCurveMask[Index])
 			{
 				Enum.ParameterCurve.Evaluate(Time, Value);
 			}
@@ -1945,7 +2070,7 @@ void FMovieSceneControlRigParameterTemplate::EvaluateCurvesWithMasks(const FMovi
 			FVector2f Value(ForceInitToZero);
 			const FVector2DParameterNameAndCurves& Vector2D = Vector2Ds[Index];
 
-			if (HACK_ChannelMasks->Vector2DCurveMask[Index])
+			if (InMasks.Vector2DCurveMask[Index])
 			{
 				Vector2D.XCurve.Evaluate(Time, Value.X);
 				Vector2D.YCurve.Evaluate(Time, Value.Y);
@@ -1973,7 +2098,7 @@ void FMovieSceneControlRigParameterTemplate::EvaluateCurvesWithMasks(const FMovi
 			FVector3f Value(ForceInitToZero);
 			const FVectorParameterNameAndCurves& Vector = Vectors[Index];
 
-			if (HACK_ChannelMasks->VectorCurveMask[Index])
+			if (InMasks.VectorCurveMask[Index])
 			{
 				Vector.XCurve.Evaluate(Time, Value.X);
 				Vector.YCurve.Evaluate(Time, Value.Y);
@@ -2004,7 +2129,7 @@ void FMovieSceneControlRigParameterTemplate::EvaluateCurvesWithMasks(const FMovi
 		{
 			FLinearColor ColorValue = FLinearColor::White;
 			const FColorParameterNameAndCurves& Color = Colors[Index];
-			if (HACK_ChannelMasks->ColorCurveMask[Index])
+			if (InMasks.ColorCurveMask[Index])
 			{
 				Color.RedCurve.Evaluate(Time, ColorValue.R);
 				Color.GreenCurve.Evaluate(Time, ColorValue.G);
@@ -2049,7 +2174,7 @@ void FMovieSceneControlRigParameterTemplate::EvaluateCurvesWithMasks(const FMovi
 			FRotator3f Rotator(0.0f, 0.0f, 0.0f);
 
 			const FTransformParameterNameAndCurves& Transform = Transforms[Index];
-			if (HACK_ChannelMasks->TransformCurveMask[Index])
+			if (InMasks.TransformCurveMask[Index])
 			{
 				if (EnumHasAllFlags(ChannelMask, EMovieSceneTransformChannel::TranslationX))
 				{
@@ -2224,14 +2349,12 @@ void FMovieSceneControlRigParameterTemplate::Interrogate(const FMovieSceneContex
 	if (Section && Section->GetControlRig() && MovieSceneHelpers::IsSectionKeyable(Section))
 	{
 		FEvaluatedControlRigParameterSectionChannelMasks ChannelMasks;
-		ChannelMasks.Initialize(Section, Scalars, Bools, Integers, Enums, Vector2Ds, Vectors, Colors, Transforms);
+		UMovieSceneControlRigParameterSection* NonConstSection = const_cast<UMovieSceneControlRigParameterSection*>(Section);
+		ChannelMasks.Initialize(NonConstSection, Scalars, Bools, Integers, Enums, Vector2Ds, Vectors, Colors, Transforms);
 
 		//Do blended tokens
 		FEvaluatedControlRigParameterSectionValues Values;
-
-		HACK_ChannelMasks = &ChannelMasks;
-		EvaluateCurvesWithMasks(Context, Values);
-		HACK_ChannelMasks = nullptr;
+		EvaluateCurvesWithMasks(Context, ChannelMasks, Values);
 
 		FControlRigAnimTypeIDsPtr TypeIDs = FControlRigAnimTypeIDs::Get(Section->GetControlRig());
 

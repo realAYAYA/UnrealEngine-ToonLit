@@ -103,6 +103,10 @@ void DebugPrintVisitor::visit(ir_variable* ir)
 		irdump_printf("/*RI*/");
 		break;
 	}
+	if (ir->precise)
+	{
+		irdump_printf("/*P*/");
+	}
 	PrintType(ir->type);
 	irdump_printf(" %s", GetVarName(ir).c_str());
 	if (bIRVarEOL)

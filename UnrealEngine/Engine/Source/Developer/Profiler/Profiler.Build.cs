@@ -6,12 +6,14 @@ public class Profiler : ModuleRules
 {
 	public Profiler( ReadOnlyTargetRules Target ) : base(Target)
 	{
-		PublicDependencyModuleNames.AddRange
-		(
+		UnsafeTypeCastWarningLevel = WarningLevel.Error;
+
+		PublicDependencyModuleNames.AddRange(
 			new string[] {
 				"Core",
+				"CoreUObject",
 				"ApplicationCore",
-                "InputCore",
+				"InputCore",
 				"RHI",
 				"RenderCore",
 				"Slate",
@@ -20,14 +22,14 @@ public class Profiler : ModuleRules
 			}
 		);
 
-        if (Target.bBuildEditor)
-        {
-            PrivateDependencyModuleNames.AddRange(
-                new string[] {
+		if (Target.bBuildEditor)
+		{
+			PrivateDependencyModuleNames.AddRange(
+				new string[] {
 					"Engine",
 				}
-            );
-        }
+			);
+		}
 
 		PrivateDependencyModuleNames.AddRange(
 			new string[] {

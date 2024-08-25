@@ -1,6 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#pragma once
 #include "Blueprints/TextureShareBlueprintContainers.h"
 #include "Misc/TextureShareCoreStrings.h"
 #include "UObject/Package.h"

@@ -261,11 +261,6 @@ void USocialChatManager::InitializeChatManager()
 	{
 		// separate warning?  this is the expected result of running a subsystem-less execution (testing / no network)
 	}
-
-
-	// KAIROS INIT
-	// MERGE-REVIEW: OnFinishedStartupQueries has bee removed
-	//OwningToolkit.OnFinishedStartupQueries().AddUObject(this, &ThisClass::InitializeGroupChannels);
 }
 
 IOnlineChatPtr USocialChatManager::GetOnlineChatInterface(ESocialSubsystem InSocialSubsystem) const

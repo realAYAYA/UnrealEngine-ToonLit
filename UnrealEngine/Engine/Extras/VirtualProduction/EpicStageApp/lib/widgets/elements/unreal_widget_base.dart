@@ -1,17 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-import 'package:flutter/cupertino.dart';
-import 'package:flutter/foundation.dart';
-import 'package:flutter_gen/gen_l10n/app_localizations.dart';
-import 'package:logging/logging.dart';
-import 'package:provider/provider.dart';
+import 'package:flutter/material.dart';
 
 import '../../models/property_modify_operations.dart';
 import '../../models/unreal_property_manager.dart';
+import '../../models/unreal_property_controller.dart';
 import '../../models/unreal_types.dart';
 import 'delta_widget_base.dart';
-
-final _log = Logger('UnrealWidget');
 
 /// Represents a single value shared by all controlled properties of a widget (if such a value exists).
 class SingleSharedValue<T> {
@@ -108,91 +103,45 @@ abstract class UnrealWidget extends StatefulWidget {
 /// - Call [handleOnResetByUser] when the user presses the widget's reset button.
 /// - Override [modifyOperation] if needed.
 mixin UnrealWidgetStateMixin<WidgetType extends UnrealWidget, PropertyType> on State<WidgetType> {
-  /// The property manager this widget uses to update its properties.
-  late final UnrealPropertyManager _propertyManager;
-
-  /// A list of properties currently controlled by the widget.
-  final List<WidgetControlledUnrealProperty<PropertyType>?> _properties = [];
-
-  /// A list of properties for enabling widget properties current controlled by the widget.
-  final List<WidgetControlledUnrealProperty<bool>?> _enableProperties = [];
-
-  /// The last list of properties that were passed to the widget. This is stored so we can compare the list on rebuild
-  /// and register/unregister properties when the list changes.
-  final List<UnrealProperty> _lastUnrealProperties = [];
-
-  /// The last list of enable properties that were passed to the widget. This is stored so we can compare the list on
-  /// rebuild and register/unregister properties when the list changes.
-  final List<UnrealProperty> _lastEnableProperties = [];
-
-  /// The property's metadata as received from the engine.
-  UnrealPropertyMetadata? _propertyMetadata;
-
-  /// This is incremented whenever the set of tracked properties changes so we can ignore any callbacks from previous
-  /// versions. For example, if the user rapidly changes the list multiple times, we may get changed value or newly
-  /// tracked value callbacks for properties that we no longer care about.
-  int _latestTrackedPropertyVersion = 0;
-
-  /// Whether the properties' values are ready to display to the user.
-  bool _bIsReady = false;
-
-  /// Whether the widget is actively in a transaction.
-  bool _bIsInTransaction = false;
-
-  /// Whether the properties' values are ready to display to the user.
-  bool get bIsReady => _bIsReady;
-
-  /// The property's metadata as received from the engine.
-  UnrealPropertyMetadata? get propertyMetadata => _propertyMetadata;
+  late final UnrealPropertyController<PropertyType> _singlePropertyController;
 
   /// The label of the property to show to users.
-  String get propertyLabel => widget.overrideName ?? (propertyMetadata?.displayName ?? '');
+  String get propertyLabel => widget.overrideName ?? (_singlePropertyController.propertyLabel);
 
   /// The property's minimum value as received from the engine.
-  PropertyType? get engineMin => propertyMetadata?.minValue;
+  PropertyType? get engineMin => _singlePropertyController.engineMin;
 
   /// The property's maximum value as received from the engine.
-  PropertyType? get engineMax => propertyMetadata?.maxValue;
+  PropertyType? get engineMax => _singlePropertyController.engineMax;
 
   /// The overridden minimum value the controlled properties can reach. If null, [engineMin] will be used.
-  PropertyType? get overrideMin => null;
+  PropertyType? get overrideMin => _singlePropertyController.overrideMin;
 
   /// The overridden maximum value the controlled properties can reach. If null, [engineMax] will be used.
-  PropertyType? get overrideMax => null;
-
-  /// The property's possible enum values as received from the engine.
-  List<String> get propertyEnumValues => propertyMetadata?.enumValues ?? [];
-
-  /// The number of properties this is controlling.
-  int get propertyCount => _properties.length;
+  PropertyType? get overrideMax => _singlePropertyController.overrideMax;
 
   /// The type of modify operation this widget uses to apply deltas.
-  PropertyModifyOperation get modifyOperation => const AddOperation();
+  PropertyModifyOperation get modifyOperation => _singlePropertyController.modifyOperation;
 
-  /// Extra meta-data properties to pass to conversion functions operating on this widget's value.
-  Map<String, dynamic>? get conversionMetadata => null;
+  /// The number of properties this is controlling.
+  int get propertyCount => _singlePropertyController.properties.length;
+
+  /// The property's possible enum values as received from the engine.
+  List<String> get propertyEnumValues => _singlePropertyController.propertyEnumValues;
 
   @override
   void initState() {
-    super.initState();
+    _singlePropertyController = UnrealPropertyController(context);
+    _singlePropertyController.trackAllProperties(widget.unrealProperties, widget.enableProperties);
+    _singlePropertyController.addListener(_handleOnPropertiesChanged);
 
-    _propertyManager = Provider.of<UnrealPropertyManager>(context, listen: false);
-    _trackAllProperties();
+    super.initState();
   }
 
   @override
   void dispose() {
-    for (final WidgetControlledUnrealProperty<PropertyType>? property in _properties) {
-      if (property != null) {
-        _propertyManager.stopTrackingProperty(property.trackedId, property.changedCallback);
-      }
-    }
-
-    for (final WidgetControlledUnrealProperty<bool>? property in _enableProperties) {
-      if (property != null) {
-        _propertyManager.stopTrackingProperty(property.trackedId, property.changedCallback);
-      }
-    }
+    _singlePropertyController.removeListener(_handleOnPropertiesChanged);
+    _singlePropertyController.dispose();
 
     super.dispose();
   }
@@ -200,8 +149,7 @@ mixin UnrealWidgetStateMixin<WidgetType extends UnrealWidget, PropertyType> on S
   @override
   void didUpdateWidget(WidgetType oldWidget) {
     super.didUpdateWidget(oldWidget);
-
-    _trackAllPropertiesIfChanged();
+    _singlePropertyController.trackAllPropertiesIfChanged(widget.unrealProperties, widget.enableProperties);
   }
 
   /// Call this to indicate that the user has started interacting with the widget.
@@ -209,67 +157,24 @@ mixin UnrealWidgetStateMixin<WidgetType extends UnrealWidget, PropertyType> on S
   /// A [description] will be automatically generated if null is passed.
   /// Returns true if a new transaction was started.
   bool beginTransaction([String? description]) {
-    if (_bIsInTransaction) {
-      return false;
-    }
-
-    if (_propertyManager
-        .beginTransaction(description ?? AppLocalizations.of(context)!.transactionEditProperty(propertyLabel))) {
-      _bIsInTransaction = true;
-      return true;
-    }
-
-    return false;
+    return _singlePropertyController.beginTransaction(description);
   }
 
   /// Call this to indicate that the user has finished interacting with the widget.
   void endTransaction() {
-    if (!_bIsInTransaction) {
-      return;
-    }
-
-    _bIsInTransaction = false;
-    _propertyManager.endTransaction();
+    _singlePropertyController.endTransaction();
   }
 
   /// Generate a list of [DeltaWidgetValueData] containing the data needed to display each control in the widget.
   /// Values may be null if the value hasn't been received from the engine yet.
-  List<DeltaWidgetValueData<PropertyType>?> makeValueDataList() =>
-      _bIsReady ? _properties.map((property) => property?.toValueData()).toList() : [];
-
-  /// Called when the user changes controlled values.
-  void handleOnChangedByUser(List<PropertyType> deltaValues) {
-    modifyProperties(modifyOperation, values: deltaValues);
-  }
-
-  /// Called when the user presses the reset button.
-  void handleOnResetByUser() {
-    if (!_propertyManager.beginTransaction(AppLocalizations.of(context)!.transactionResetProperty(propertyLabel))) {
-      return;
-    }
-
-    for (final WidgetControlledUnrealProperty<PropertyType>? property in _properties) {
-      if (property != null) {
-        _propertyManager.modifyTrackedPropertyValue(property.trackedId, const ResetOperation());
-      }
-    }
-
-    if (widget.enableProperties != null) {
-      for (final WidgetControlledUnrealProperty<bool>? property in _enableProperties) {
-        if (property != null) {
-          _propertyManager.modifyTrackedPropertyValue(property.trackedId, const ResetOperation());
-        }
-      }
-    }
-
-    _propertyManager.endTransaction();
-  }
+  List<DeltaWidgetValueData<PropertyType>?> makeValueDataList() => _singlePropertyController.makeValueDataList();
 
   /// Return a SingleSharedValue indicating whether there is a single value shared by all controlled properties.
   /// If there are no controlled values, the SingleSharedValue will instead contain [defaultValue].
   SingleSharedValue<PropertyType> getSingleSharedValue([PropertyType? defaultValue]) {
     // Get the value of all non-null properties
-    final List<PropertyType?> controlledValues = _properties.map((property) => property?.value).toList();
+    final List<PropertyType?> controlledValues =
+        _singlePropertyController.properties.map((property) => property?.value).toList();
     controlledValues.removeWhere((element) => element == null);
 
     bool bHasMultipleValues = false;
@@ -297,201 +202,31 @@ mixin UnrealWidgetStateMixin<WidgetType extends UnrealWidget, PropertyType> on S
     return SingleSharedValue(value: sharedValue, bHasMultipleValues: bHasMultipleValues);
   }
 
+  /// handle state change for [properties].
+  void _handleOnPropertiesChanged() {
+    setState(() {});
+  }
+
+  /// Called when the user changes controlled values.
+  void handleOnChangedByUser(List<PropertyType> deltaValues) {
+    setState(() {
+      _singlePropertyController.modifyProperties(
+        modifyOperation,
+        values: deltaValues,
+        onChangedByUser: widget.onChangedByUser,
+      );
+    });
+  }
+
+  /// Called when the user presses the reset button.
+  void handleOnResetByUser() {
+    setState(() => _singlePropertyController.handleOnResetByUser(widget.enableProperties));
+  }
+
   /// Apply an [operation] to each property this controls by the amounts specified in [values].
   /// If [values] is null, this is treated as if it was a list of null values matching the number of properties.
   /// If [bIgnoreLimits] is true, the min and max for the widget will be ignored.
   void modifyProperties(PropertyModifyOperation operation, {List<dynamic>? values, bool bIgnoreLimits = false}) {
-    assert(values == null || values.length == _properties.length);
-
-    if (!_bIsInTransaction) {
-      if (!beginTransaction()) {
-        // If we can't start a transaction, ignore user input or we'll get out of sync with the engine
-        return;
-      }
-    }
-
-    // Enable the property in the engine
-    for (final WidgetControlledUnrealProperty<bool>? property in _enableProperties) {
-      if (property != null) {
-        if (!_propertyManager.getTrackedPropertyValue(property.trackedId)) {
-          _propertyManager.modifyTrackedPropertyValue(property.trackedId, const SetOperation(), deltaValue: true);
-        }
-      }
-    }
-
-    for (int propertyIndex = 0; propertyIndex < _properties.length; ++propertyIndex) {
-      final WidgetControlledUnrealProperty<PropertyType>? property = _properties[propertyIndex];
-
-      if (property != null) {
-        _propertyManager.modifyTrackedPropertyValue(
-          property.trackedId,
-          operation,
-          deltaValue: values?[propertyIndex],
-          minMaxBehaviour: bIgnoreLimits ? PropertyMinMaxBehaviour.ignore : widget.minMaxBehaviour,
-          overrideMin: overrideMin,
-          overrideMax: overrideMax,
-        );
-      }
-    }
-
-    if (widget.onChangedByUser != null) {
-      widget.onChangedByUser!();
-    }
+    _singlePropertyController.modifyProperties(operation, values: values, bIgnoreLimits: bIgnoreLimits);
   }
-
-  /// Check whether the widget's list of properties has changed, and if so, update our list of tracked properties.
-  void _trackAllPropertiesIfChanged() {
-    bool bHavePropertiesChanged = widget.unrealProperties.length != _lastUnrealProperties.length ||
-        (widget.enableProperties?.length ?? 0) != _lastEnableProperties.length;
-
-    if (!bHavePropertiesChanged) {
-      bHavePropertiesChanged = !listEquals(widget.unrealProperties, _lastUnrealProperties);
-    }
-
-    if (!bHavePropertiesChanged && widget.enableProperties != null) {
-      bHavePropertiesChanged = !listEquals(widget.enableProperties!, _lastEnableProperties);
-    }
-
-    if (!bHavePropertiesChanged) {
-      return;
-    }
-
-    _trackAllProperties();
-  }
-
-  /// Resets the internal list of properties and starts tracking them again.
-  void _trackAllProperties() {
-    _bIsReady = false;
-    ++_latestTrackedPropertyVersion;
-
-    // The tracked property version when we started this function, so we can ignore callbacks later in the function
-    // if they come back too late to be relevant.
-    final int trackedPropertyVersion = _latestTrackedPropertyVersion;
-
-    // Futures that will complete when each property is exposed.
-    final List<Future<void>> exposeFutures = [];
-
-    _trackRelevantProperties<PropertyType>(
-      trackedProperties: _properties,
-      oldProperties: _lastUnrealProperties,
-      newProperties: widget.unrealProperties,
-      exposeFutures: exposeFutures,
-      callback: _handleOnManagedValueChanged,
-    );
-
-    _trackRelevantProperties<bool>(
-      trackedProperties: _enableProperties,
-      oldProperties: _lastEnableProperties,
-      newProperties: widget.enableProperties ?? [],
-      exposeFutures: exposeFutures,
-      callback: _handleOnEnableValueChanged,
-    );
-
-    // Wait for all properties to be subscribed, then mark the widget as ready to be used
-    Future.wait(exposeFutures).then((_) {
-      if (_latestTrackedPropertyVersion != trackedPropertyVersion || !mounted) {
-        return;
-      }
-
-      _onPropertiesReady();
-    }).onError((error, stackTrace) {
-      _log.severe('Error while waiting for Unreal widget properties', error, stackTrace);
-    });
-  }
-
-  /// Given a list of [trackedProperties], a corresponding list of [oldProperties] that are being tracked, and a list
-  /// of [newProperties] that are about to be tracked, stop tracking any properties that are no longer relevant and
-  /// start any properties that are newly relevant. [exposeFutures] will be filled with futures for each newly-tracked
-  /// property that will complete when the property is exposed, and [callback] will be called in the future whenever a
-  /// property's value changes.
-  void _trackRelevantProperties<T>({
-    required List<WidgetControlledUnrealProperty<T>?> trackedProperties,
-    required List<UnrealProperty> oldProperties,
-    required List<UnrealProperty> newProperties,
-    required List<Future<void>> exposeFutures,
-    required Function(int trackedPropertyVersion, int index, dynamic newValue) callback,
-  }) {
-    assert(oldProperties.length == trackedProperties.length);
-
-    // Stop tracking all properties. We either aren't tracking them anymore, or we may need to update their
-    // propertyIndex if the number tracked has changed size, in which case we need to recreate the callback anyway.
-    for (int propertyIndex = 0; propertyIndex < oldProperties.length; ++propertyIndex) {
-      final WidgetControlledUnrealProperty<T>? property = trackedProperties[propertyIndex];
-
-      if (property != null) {
-        _propertyManager.stopTrackingProperty(property.trackedId, property.changedCallback);
-      }
-    }
-
-    oldProperties.clear();
-    oldProperties.addAll(newProperties);
-
-    trackedProperties.length = newProperties.length;
-
-    // Track each property we want to control with the remote property manager.
-    for (int propertyIndex = 0; propertyIndex < newProperties.length; ++propertyIndex) {
-      final UnrealProperty property = newProperties[propertyIndex];
-
-      // Create a callback function for this property
-      changedCallback(newValue) => callback(_latestTrackedPropertyVersion, propertyIndex, newValue);
-
-      // Start tracking the property in the property manager
-      final TrackedPropertyId trackedId =
-          _propertyManager.trackProperty(property, changedCallback, conversionMetadata: conversionMetadata);
-
-      final newProperty = WidgetControlledUnrealProperty<T>(
-        trackedId: trackedId,
-        propertyIndex: propertyIndex,
-        changedCallback: changedCallback,
-        value: _propertyManager.getTrackedPropertyValue(trackedId),
-        ownerName: property.objectName,
-      );
-      trackedProperties[propertyIndex] = newProperty;
-
-      // Add to the list of properties we're waiting for
-      final Future<void> exposeFuture = _propertyManager.waitForProperty(trackedId);
-      exposeFutures.add(exposeFuture);
-
-      exposeFuture.then((_) {
-        newProperty.value = _propertyManager.getTrackedPropertyValue(trackedId);
-      }).onError((error, stackTrace) {
-        _log.severe(
-            'Error while exposing property ${property.propertyName} on ${property.objectName}', error, stackTrace);
-      });
-    }
-  }
-
-  /// Called when all properties have been subscribed and the widget is ready to be interacted with.
-  void _onPropertiesReady() {
-    if (_properties.isNotEmpty) {
-      // Properties could differ in their metadata, but for now we'll assume they share the same values
-      final WidgetControlledUnrealProperty<PropertyType>? firstProperty = _properties[0];
-
-      if (firstProperty == null) {
-        assert(false, 'If an Unreal widget is ready, all properties should be non-null');
-        return;
-      }
-
-      _propertyMetadata = _propertyManager.getTrackedPropertyMetaData(firstProperty.trackedId);
-    }
-
-    setState(() {
-      _bIsReady = true;
-    });
-  }
-
-  /// Called when the property manager reports a [newValue] for the property with the given [index] in the widget.
-  /// If [trackedPropertyVersion] does not match [_latestTrackedPropertyVersion], the change will be ignored.
-  void _handleOnManagedValueChanged(int trackedPropertyVersion, int index, dynamic newValue) {
-    if (trackedPropertyVersion != _latestTrackedPropertyVersion) {
-      return;
-    }
-
-    setState(() {
-      _properties[index]?.value = newValue;
-    });
-  }
-
-  /// Called when an enable value for one of the properties changes.
-  void _handleOnEnableValueChanged(int trackedPropertyVersion, int index, dynamic newValue) {}
 }

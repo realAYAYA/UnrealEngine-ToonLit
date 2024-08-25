@@ -29,6 +29,10 @@ public:
 	TArray<int32> BevelGroupEdges;
 	TArray<int32> BevelGroupFaces;
 	double BevelDistance = 1.0;
+	int32 Subdivisions = 0;
+	double RoundWeight = 1.0;
+	bool bInferMaterialID = true;
+	int32 SetMaterialID = 0;
 
 	void SetTransform(const FTransformSRT3d& Transform)
 	{
@@ -47,7 +51,10 @@ public:
 		UE::Geometry::FMeshBevel Bevel;
 		Bevel.InsetDistance = BevelDistance;
 		Bevel.MaterialIDMode = FMeshBevel::EMaterialIDMode::InferMaterialID;
-		Bevel.SetConstantMaterialID = 0;
+		Bevel.MaterialIDMode = (bInferMaterialID) ? FMeshBevel::EMaterialIDMode::InferMaterialID_ConstantIfAmbiguous : FMeshBevel::EMaterialIDMode::ConstantMaterialID;
+		Bevel.SetConstantMaterialID = SetMaterialID;
+		Bevel.NumSubdivisions = Subdivisions;
+		Bevel.RoundWeight = RoundWeight;
 		bool bBevelSetupValid = false;
 		if (BevelGroupEdges.Num() > 0)
 		{
@@ -84,6 +91,10 @@ TUniquePtr<FDynamicMeshOperator> UPolyEditBevelEdgeActivity::MakeNewOperator()
 	Op->OriginalMesh = ActivityContext->CurrentMesh;
 	Op->MeshTopology = ActivityContext->CurrentTopology;
 	Op->BevelDistance = BevelProperties->BevelDistance;
+	Op->Subdivisions = BevelProperties->Subdivisions;
+	Op->RoundWeight = BevelProperties->RoundWeight;
+	Op->bInferMaterialID = BevelProperties->bInferMaterialID;
+	Op->SetMaterialID = BevelProperties->SetMaterialID;
 
 	// copy edge selection
 	if (ActiveSelection.SelectedEdgeIDs.Num() > 0)
@@ -122,6 +133,26 @@ void UPolyEditBevelEdgeActivity::Setup(UInteractiveTool* ParentToolIn)
 	AddToolPropertySource(BevelProperties);
 	SetToolPropertySourceEnabled(BevelProperties, false);
 	BevelProperties->WatchProperty(BevelProperties->BevelDistance, [this](float) {  
+		if (bIsRunning) {
+			ActivityContext->Preview->InvalidateResult();
+		}
+	});
+	BevelProperties->WatchProperty(BevelProperties->Subdivisions, [this](int) {
+		if (bIsRunning) {
+			ActivityContext->Preview->InvalidateResult();
+		}
+	});
+	BevelProperties->WatchProperty(BevelProperties->RoundWeight, [this](float) {
+		if (bIsRunning) {
+			ActivityContext->Preview->InvalidateResult();
+		}
+	});
+	BevelProperties->WatchProperty(BevelProperties->bInferMaterialID, [this](bool) {
+		if (bIsRunning) {
+			ActivityContext->Preview->InvalidateResult();
+		}
+	});
+	BevelProperties->WatchProperty(BevelProperties->SetMaterialID, [this](int) {
 		if (bIsRunning) {
 			ActivityContext->Preview->InvalidateResult();
 		}

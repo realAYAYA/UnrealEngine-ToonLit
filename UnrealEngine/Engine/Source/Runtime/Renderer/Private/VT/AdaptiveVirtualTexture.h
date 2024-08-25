@@ -10,6 +10,7 @@
 class FAllocatedVirtualTexture;
 class FRHICommandListImmediate;
 class FVirtualTextureSystem;
+class FRHICommandListBase;
 
 /**
  * Concrete implementation of an adaptive virtual texture.
@@ -24,7 +25,7 @@ public:
 	FAdaptiveVirtualTexture(FAdaptiveVTDescription const& InAdaptiveDesc, FAllocatedVTDescription const& InAllocatedDesc);
 
 	/** Initialize the object. This creates the persistent low mips allocated VT. */
-	void Init(FVirtualTextureSystem* InSystem);
+	void Init(FRHICommandListBase& RHICmdList, FVirtualTextureSystem* InSystem);
 
 	/** Get a packed allocation key based on a virtual texture feedback request. The virtual texture system collects these opaque keys before queuing them for processing. */
 	uint32 GetPackedAllocationRequest(uint32 vAddress, uint32 vLevelPlusOne, uint32 Frame) const;
@@ -62,13 +63,27 @@ private:
 	uint32 GetAllocationIndex(FAllocatedVirtualTexture* InAllocatedVT) const;
 
 	/** Allocate a packed request. */
-	void Allocate(FVirtualTextureSystem* InSystem, uint32 InRequest, uint32 InFrame);
+	void Allocate(FRHICommandListBase& RHICmdList, FVirtualTextureSystem* InSystem, uint32 InRequest, uint32 InFrame);
 	/** Allocate or reallocate the allocated virtual texture at InGridIndex. */
-	void Allocate(FVirtualTextureSystem* InSystem, uint32 InGridIndex, uint32 InAllocationIndex, uint32 InNewLevel, uint32 InFrame);
+	void Allocate(FRHICommandListBase& RHICmdList, FVirtualTextureSystem* InSystem, uint32 InGridIndex, uint32 InAllocationIndex, uint32 InNewLevel, uint32 InFrame);
 	/** Free an allocated virtual texture. */
 	void Free(FVirtualTextureSystem* InSystem, uint32 InAllocationIndex, uint32 InFrame);
 	/** Free or reduce and reallocate the least recently used allocation. */
-	bool FreeLRU(FVirtualTextureSystem* InSystem, uint32 InFrame, uint32 InFrameUnusedThreshold);
+	bool FreeLRU(FRHICommandListBase& RHICmdList, FVirtualTextureSystem* InSystem, uint32 InFrame, uint32 InFrameUnusedThreshold);
+
+	static IAllocatedVirtualTexture* AllocateVirtualTexture(
+		FRHICommandListBase& RHICmdList,
+		FVirtualTextureSystem* InSystem,
+		FAllocatedVTDescription const& InAllocatedDesc,
+		FIntPoint InGridSize,
+		uint8 InForcedSpaceID,
+		int32 InWidthInTiles,
+		int32 InHeightInTiles,
+		FIntPoint InAddressOffset,
+		int32 InLevelOffset);
+
+	static void DestroyVirtualTexture(FVirtualTextureSystem* InSystem, IAllocatedVirtualTexture* InAllocatedVT);
+	static void RemapVirtualTexturePages(FVirtualTextureSystem* InSystem, FAllocatedVirtualTexture* OldAllocatedVT, FAllocatedVirtualTexture* NewAllocatedVT, uint32 InFrame);
 
 private:
 	/** Adaptive virtual texture description. */

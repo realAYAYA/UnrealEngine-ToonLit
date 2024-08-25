@@ -261,14 +261,26 @@ bool FVirtualTextureBuilderDerivedInfo::InitializeFromBuildSettings(const FTextu
 	case ETexturePowerOfTwoSetting::None:
 		break;
 	case ETexturePowerOfTwoSetting::PadToPowerOfTwo:
+	case ETexturePowerOfTwoSetting::StretchToPowerOfTwo:
 		BlockSizeX = FMath::RoundUpToPowerOfTwo(BlockSizeX);
 		BlockSizeY = FMath::RoundUpToPowerOfTwo(BlockSizeY);
 		break;
 	case ETexturePowerOfTwoSetting::PadToSquarePowerOfTwo:
+	case ETexturePowerOfTwoSetting::StretchToSquarePowerOfTwo:
 		BlockSizeX = FMath::RoundUpToPowerOfTwo(BlockSizeX);
 		BlockSizeY = FMath::RoundUpToPowerOfTwo(BlockSizeY);
 		BlockSizeX = FMath::Max(BlockSizeX, BlockSizeY);
 		BlockSizeY = BlockSizeX;
+		break;
+	case ETexturePowerOfTwoSetting::ResizeToSpecificResolution:
+		if (BuildSettingsLayer0.ResizeDuringBuildX)
+		{
+			BlockSizeX = BuildSettingsLayer0.ResizeDuringBuildX;
+		}
+		if (BuildSettingsLayer0.ResizeDuringBuildY)
+		{
+			BlockSizeY = BuildSettingsLayer0.ResizeDuringBuildY;
+		}
 		break;
 	default:
 		checkNoEntry();
@@ -648,6 +660,7 @@ void FVirtualTextureDataBuilder::BuildBlockTiles(uint32 LayerIndex, uint32 Block
 		TBSettings.OodleUniversalTiling = BuildSettingsForLayer.OodleUniversalTiling;
 		TBSettings.bOodleUsesRDO = BuildSettingsForLayer.bOodleUsesRDO;
 		TBSettings.OodleRDO = BuildSettingsForLayer.OodleRDO;
+		TBSettings.bOodlePreserveExtremes = BuildSettingsForLayer.bOodlePreserveExtremes;
 		TBSettings.OodleTextureSdkVersion = BuildSettingsForLayer.OodleTextureSdkVersion;
 
 		check(TBSettings.GetDestGammaSpace() == BuildSettingsForLayer.GetDestGammaSpace());
@@ -1036,8 +1049,9 @@ void FVirtualTextureDataBuilder::BuildLayerBlocks(FSlowTask& BuildTask, uint32 L
 
 		// We skip the first compressed mip output, since that will just be a copy of the input
 		check(CompressedMips.Num() >= BlockData.NumMips + 1);
-		check(BlockData.SizeX == CompressedMips[1].SizeX);
-		check(BlockData.SizeY == CompressedMips[1].SizeY);
+		// not true with padding options :
+		//check(BlockData.SizeX == CompressedMips[1].SizeX);
+		//check(BlockData.SizeY == CompressedMips[1].SizeY);
 
 		BlockData.Mips.Reserve(CompressedMips.Num() - 1);
 		for (int32 MipIndex = 1; MipIndex < BlockData.NumMips + 1; ++MipIndex)

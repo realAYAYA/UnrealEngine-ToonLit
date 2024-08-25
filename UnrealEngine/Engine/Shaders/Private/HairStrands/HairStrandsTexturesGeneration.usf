@@ -12,6 +12,64 @@
 #endif
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Helpers
+
+#if HAIR_CARDS_MAX_TEXTURE_COUNT != 6
+#error Max cards texture count is != 6. This codes needs to be updated.
+#endif
+
+#define WriteValue1(InLayout, InAttribute, In)\
+{ \
+	if (IsHairCardTextureIndexValid(InLayout, InAttribute))\
+	{\
+		const uint TexIndex = GetHairCardTextureIndex(InLayout, InAttribute);\
+		const uint ChannelIndex = GetHairCardChannelIndex(InLayout, InAttribute);\
+		switch (TexIndex)\
+		{\
+			case 0: ChannelIndex == 0 ? OutTexture0.x = In : (ChannelIndex == 1 ? OutTexture0.y = In : (ChannelIndex == 2 ? OutTexture0.z = In : OutTexture0.w = In)); break;\
+			case 1: ChannelIndex == 0 ? OutTexture1.x = In : (ChannelIndex == 1 ? OutTexture1.y = In : (ChannelIndex == 2 ? OutTexture1.z = In : OutTexture1.w = In)); break;\
+			case 2: ChannelIndex == 0 ? OutTexture2.x = In : (ChannelIndex == 1 ? OutTexture2.y = In : (ChannelIndex == 2 ? OutTexture2.z = In : OutTexture2.w = In)); break;\
+			case 3: ChannelIndex == 0 ? OutTexture3.x = In : (ChannelIndex == 1 ? OutTexture3.y = In : (ChannelIndex == 2 ? OutTexture3.z = In : OutTexture3.w = In)); break;\
+			case 4: ChannelIndex == 0 ? OutTexture4.x = In : (ChannelIndex == 1 ? OutTexture4.y = In : (ChannelIndex == 2 ? OutTexture4.z = In : OutTexture4.w = In)); break;\
+			case 5: ChannelIndex == 0 ? OutTexture5.x = In : (ChannelIndex == 1 ? OutTexture5.y = In : (ChannelIndex == 2 ? OutTexture5.z = In : OutTexture5.w = In)); break;\
+		}\
+	}\
+}
+#define WriteValue2(InLayout, InAttribute, In)\
+{\
+	if (IsHairCardTextureIndexValid(InLayout, InAttribute))\
+	{\
+		const uint TexIndex = GetHairCardTextureIndex(InLayout, InAttribute);\
+		const uint ChannelIndex = GetHairCardChannelIndex(InLayout, InAttribute);\
+		switch (TexIndex)\
+		{\
+			case 0: ChannelIndex < 2 ? OutTexture0.xy = In : OutTexture0.zw = In; break;\
+			case 1: ChannelIndex < 2 ? OutTexture1.xy = In : OutTexture1.zw = In; break;\
+			case 2: ChannelIndex < 2 ? OutTexture2.xy = In : OutTexture2.zw = In; break;\
+			case 3: ChannelIndex < 2 ? OutTexture3.xy = In : OutTexture3.zw = In; break;\
+			case 4: ChannelIndex < 2 ? OutTexture4.xy = In : OutTexture4.zw = In; break;\
+			case 5: ChannelIndex < 2 ? OutTexture5.xy = In : OutTexture5.zw = In; break;\
+		}\
+	}\
+}
+#define WriteValue3(InLayout, InAttribute, In)\
+{\
+	if (IsHairCardTextureIndexValid(InLayout, InAttribute))\
+	{\
+	const uint TexIndex = GetHairCardTextureIndex(InLayout, InAttribute);\
+		switch (TexIndex)\
+		{\
+			case 0: OutTexture0.xyz = In; break;\
+			case 1: OutTexture1.xyz = In; break;\
+			case 2: OutTexture2.xyz = In; break;\
+			case 3: OutTexture3.xyz = In; break;\
+			case 4: OutTexture4.xyz = In; break;\
+			case 5: OutTexture5.xyz = In; break;\
+		}\
+	}\
+}
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 #if SHADER_VERTEX
 
@@ -61,6 +119,7 @@ void MainVS(
 
 #include "HairStrandsVertexFactoryCommon.ush"
 #include "HairStrandsAttributeCommon.ush"
+#include "HairCardsAttributeCommon.ush"
 
 HAIR_STRANDS_INSTANCE_PARAMETERS(InVF)
 
@@ -85,6 +144,7 @@ float3 ComputeTangent(
 	return normalize(CP1.Position - CP0.Position);
 }
 
+uint LayoutIndex;
 int2 OutputResolution;
 uint VertexCount;
 uint PrimitiveCount;
@@ -108,6 +168,7 @@ uint Voxel_Data_MaxCount;
 
 StructuredBuffer<uint2> Voxel_OffsetAndCount;
 StructuredBuffer<uint2> Voxel_Data;
+RWTexture2DArray<float4> OutTexture;
 
 uint3 PositionToCoord(float3 P, float3 InMinAABB, float3 InMaxAABB, uint3 InResolution)
 {
@@ -261,11 +322,8 @@ bool Trace(
 						const uint P0 = P0_P1.x;
 						const uint P1 = P0_P1.y;
 
-						const uint4 PackedCP_P0 = InVF_PositionBuffer[P0];
-						const uint4 PackedCP_P1 = InVF_PositionBuffer[P1];
-
-						const FHairControlPoint CP_Curr = UnpackHairControlPoint(PackedCP_P0, InVF_PositionOffset, InVF_Radius, InVF_RootScale, InVF_TipScale);
-						const FHairControlPoint CP_Next = UnpackHairControlPoint(PackedCP_P1, InVF_PositionOffset, InVF_Radius, InVF_RootScale, InVF_TipScale);
+						const FHairControlPoint CP_Curr = ReadHairControlPoint(InVF_PositionBuffer, P0, InVF_PositionOffset, InVF_Radius, InVF_RootScale, InVF_TipScale);
+						const FHairControlPoint CP_Next = ReadHairControlPoint(InVF_PositionBuffer, P1, InVF_PositionOffset, InVF_Radius, InVF_RootScale, InVF_TipScale);
 
 						const float3 Tangent = ComputeTangent(CP_Curr, CP_Next);
 
@@ -292,7 +350,7 @@ bool Trace(
 							OutDepth 	= Distance;
 							OutSeed		= GetHairStrandsSeed(P0);
 							OutRootUV	= GetHairStrandsRootUV(P0);
-							OutU		= GetHairStrandsDimensions(P0, VertexU).x;
+							OutU		= GetHairStrandsUV(P0, VertexU).x; 
 							OutMaterial	= 0;
 
 							if (HasHairStrandsColor())
@@ -342,12 +400,7 @@ void MainPS(
 	in float3  InTangent	: MESH_TANGENT,
 	in float3  InBitangent	: MESH_BITANGENT,
 	in float3  InNormal		: MESH_NORMAL,
-	out float  OutDepth		: SV_Target0,
-	out float4 OutTangent	: SV_Target1,
-	out float  OutCoverage	: SV_Target2,
-	out float4 OutAttribute : SV_Target3,
-	out float4 OutMaterial  : SV_Target4,
-	out uint   OutTriangleMask : SV_Target5,
+	out uint   OutTriangleMask : SV_Target0,
 	out float  OutDepthTest	: SV_Depth)
 {
 	const float3 T = normalize(InTangent);
@@ -357,12 +410,22 @@ void MainPS(
 	const float3 PixelAxisX = ddx_fine(InPosition);
 	const float3 PixelAxisY = ddy_fine(InPosition);
 
-	OutDepth = max(0, MaxDistance);
-	OutCoverage = 0;
-	OutTangent = 0;
-	OutAttribute = 0;
-	OutMaterial = 0;
-	OutDepthTest = 1;
+	float4 OutTexture0 = 0;
+	float4 OutTexture1	= 0;
+	float4 OutTexture2	= 0;
+	float4 OutTexture3	= 0;
+	float4 OutTexture4	= 0;
+	float4 OutTexture5	= 0;
+
+	float  OutDepth = max(0, MaxDistance);
+	float  OutSeed = 0;
+	float  OutCoordU = 0;
+	float  OutGroupIndex = 0;
+	float  OutRoughness = 0;
+	float2 OutRootUV = 0;
+	float3 OutColor = 0;
+	float3 OutTangent = 0;
+	float  OutCoverage = 0;
 
 	float3 Tangent_ObjectSpace = 0;
 	const int2 PixelCoord = int2(SvPosition.xy);
@@ -414,10 +477,11 @@ void MainPS(
 		{
 			if (SampleDepth < OutDepth)
 			{
-				OutAttribute.xy = SampleRootUV;
-				OutAttribute.z = SampleU;
-				OutAttribute.w = SampleSeed;
-				OutMaterial.xyz= SampleMaterial.xyz;
+				OutRootUV    = SampleRootUV;
+				OutCoordU    = SampleU;
+				OutSeed      = SampleSeed;
+				OutColor     = SampleMaterial.xyz;
+				OutRoughness = SampleMaterial.w;
 			}
 
 			OutDepth = min(OutDepth, SampleDepth);
@@ -436,22 +500,45 @@ void MainPS(
 			dot(Tangent_ObjectSpace, N));
 
 		OutCoverage /= SampleCount;
-		OutTangent.xyz = (Tangent_FrameSpace + 1) * 0.5f;
-		OutTangent.w = 1;
-		OutMaterial.w = InVF_GroupIndex / 255.f;
+		OutTangent = (Tangent_FrameSpace + 1) * 0.5f;
+		OutGroupIndex = InVF_GroupIndex / 255.f;
 	}
 	else
 	{
 		OutDepth = MaxDistance;
-		OutCoverage = 0;
+		OutSeed = 0;
+		OutCoordU = 0;
+		OutGroupIndex = 0;
+		OutRoughness = 0;
+		OutRootUV = 0;
+		OutColor = 0;
 		OutTangent = 0;
-		OutAttribute = 0;
-		OutMaterial = 0;
+		OutCoverage = 0;
 	}
 
 	OutDepth = saturate(OutDepth / MaxDistance);
 	OutDepthTest = OutDepth;
 	OutTriangleMask = 1;
+
+	if (bValidCount > 0)
+	{
+		WriteValue3(LayoutIndex, EHairCardsVFAttribute_Color,      OutColor);
+		WriteValue1(LayoutIndex, EHairCardsVFAttribute_Depth,      OutDepth);
+		WriteValue1(LayoutIndex, EHairCardsVFAttribute_Seed,       OutSeed);
+		WriteValue1(LayoutIndex, EHairCardsVFAttribute_CoordU,     OutCoordU);
+		WriteValue1(LayoutIndex, EHairCardsVFAttribute_GroupIndex, OutGroupIndex);
+		WriteValue1(LayoutIndex, EHairCardsVFAttribute_Roughness,  OutRoughness);
+		WriteValue2(LayoutIndex, EHairCardsVFAttribute_RootUV,     OutRootUV);
+		WriteValue3(LayoutIndex, EHairCardsVFAttribute_Tangent,    OutTangent);
+		WriteValue1(LayoutIndex, EHairCardsVFAttribute_Coverage,   OutCoverage);
+
+		OutTexture[uint3(PixelCoord, 0)] = OutTexture0;
+		OutTexture[uint3(PixelCoord, 1)] = OutTexture1;
+		OutTexture[uint3(PixelCoord, 2)] = OutTexture2;
+		OutTexture[uint3(PixelCoord, 3)] = OutTexture3;
+		OutTexture[uint3(PixelCoord, 4)] = OutTexture4;
+		OutTexture[uint3(PixelCoord, 5)] = OutTexture5;
+	}
 }
 
 #endif // SHADER_PIXEL
@@ -460,62 +547,62 @@ void MainPS(
 
 #if SHADER_TEXTURE_DILATION
 
-uint PackDistance(float x)							{ return x * 1000.f; }
-float UnpackDistance(float x, inout bool bIsValid)	{ bIsValid = x != 0; return float(x) / 1000.f; }
+#include "HairCardsAttributeCommon.ush"
 
+uint LayoutIndex;
+uint bClearPass;
+uint TextureCount;
 int2 Resolution;
 int ClearDistance;
-RWTexture2D<uint> TriangleMaskTexture;
-
-Texture2D<float>  Source_DepthTexture;
-Texture2D<float>  Source_CoverageTexture;
-Texture2D<float4> Source_TangentTexture;
-Texture2D<float4> Source_AttributeTexture;
-Texture2D<float4> Source_MaterialTexture;
-
-RWTexture2D<float>  Target_DepthTexture;
-RWTexture2D<float>  Target_CoverageTexture;
-RWTexture2D<float4> Target_TangentTexture;
-RWTexture2D<float4> Target_AttributeTexture;
-RWTexture2D<float4> Target_MaterialTexture;
+Texture2D<float> DepthTestTexture;
+Texture2D<uint> OriginalTriangleMaskTexture;
+Texture2D<uint> SourceTriangleMaskTexture;
+RWTexture2D<uint> TargetTriangleMaskTexture;
+Texture2DArray<float4> SourceTexture;
+RWTexture2DArray<float4> TargetTexture;
 
 // Dilate the source texture (Depth/Coverage/Tanget/Attribute), using a distance to triangle edge metric. 
 // Original valid pixel are marked into the triangleMasktexture during the texture generation. Then 
 // successive dilation pass are run. At each pass the triangleMaskTexure stored the distance to triangle
 // edge in order to propagate correctly the pixel edge information.
-[numthreads(8, 4, 1)]
+[numthreads(8, 8, 1)]
 void MainCS(int2 DispatchThreadId : SV_DispatchThreadID)
 {
-	if (DispatchThreadId.x >= Resolution.x || DispatchThreadId.y >= Resolution.y)
-		return;
-
-	const float MaxDistance = 1000000.f;
-
 	const uint2 PixelCoord = DispatchThreadId.xy;
-	const uint  PackedDistance = TriangleMaskTexture.Load(PixelCoord);
+	if (any(PixelCoord >= Resolution))
+	{
+		return;
+	}
 
-	bool bIsValid = false;
-	const float Distance = UnpackDistance(PackedDistance, bIsValid);
-
-	if (bIsValid)
+	const bool bIsValid = SourceTriangleMaskTexture.Load(uint3(PixelCoord,0)) > 0;
+	if (bClearPass || bIsValid)
 	{
 		// Fast path: the pixel is valid, we copy value
-		Target_DepthTexture[PixelCoord]		= Source_DepthTexture.Load(uint3(PixelCoord,0));
-		Target_CoverageTexture[PixelCoord]	= Source_CoverageTexture.Load(uint3(PixelCoord, 0));
-		Target_TangentTexture[PixelCoord]	= Source_TangentTexture.Load(uint3(PixelCoord, 0));
-		Target_AttributeTexture[PixelCoord] = Source_AttributeTexture.Load(uint3(PixelCoord, 0));
-		Target_MaterialTexture[PixelCoord]  = Source_MaterialTexture.Load(uint3(PixelCoord, 0));
-		return;
+		for (uint TextureIt = 0; TextureIt < TextureCount; ++TextureIt)
+		{
+			TargetTexture[uint3(PixelCoord, TextureIt)] = SourceTexture[uint3(PixelCoord, TextureIt)];
+		}
+
+		if (bClearPass)
+		{
+			TargetTriangleMaskTexture[PixelCoord] = DepthTestTexture.Load(uint3(PixelCoord,0)) < 1.f ? 1u : 0u;
+		}
+		else
+		{
+			TargetTriangleMaskTexture[PixelCoord] = SourceTriangleMaskTexture.Load(uint3(PixelCoord,0));
+		}
 	}
 	else
 	{
-		float Target_Depth = 0;
-		float Target_Coverage = 0;
-		float4 Target_Tangent = 0;
-		float4 Target_Attribute = 0;
-		float4 Target_Material = 0;
+		const uint CoverageTextureIndex = GetHairCardTextureIndex(LayoutIndex, EHairCardsVFAttribute_Coverage);
+		const uint CoverageChannelIndex = GetHairCardChannelIndex(LayoutIndex, EHairCardsVFAttribute_Coverage);
 
 		// Find the closest neighbor from triangle, amoung valid neighbord
+		float4 Values[HAIR_CARDS_MAX_TEXTURE_COUNT];
+		for (uint TextureIt = 0; TextureIt < HAIR_CARDS_MAX_TEXTURE_COUNT; ++TextureIt)
+		{
+			Values[TextureIt] = 0;
+		}
 		bool bIsDilatedPixelValid = false;
 		float MinDistance = 9999999;
 		for (int y = -1; y <= 1; ++y)
@@ -524,34 +611,42 @@ void MainCS(int2 DispatchThreadId : SV_DispatchThreadID)
 			if (x == 0 && y == 0)
 				continue;
 
-			const int2 NPixelOffset = int2(x, y);
-			const int2 NPixelCoord = clamp(PixelCoord + NPixelOffset, 0, Resolution);
+			const uint2 NPixelCoord = clamp(int2(PixelCoord) + int2(x, y), int2(0,0), int2(Resolution-1));
 
-			bool bNIsValid = false;
-			const uint NPackedDistance = TriangleMaskTexture.Load(uint2(NPixelCoord));
-			const float NDistance = UnpackDistance(NPackedDistance, bNIsValid);
-			if (bNIsValid && NDistance <= MinDistance)
+			const bool bNIsValid = SourceTriangleMaskTexture.Load(uint3(NPixelCoord,0)) > 0;
+			if (bNIsValid)
 			{
-				Target_Depth		= Source_DepthTexture.Load(uint3(NPixelCoord,0));
-				Target_Coverage		= Source_CoverageTexture.Load(uint3(NPixelCoord, 0));
-				Target_Tangent		= Source_TangentTexture.Load(uint3(NPixelCoord, 0));
-				Target_Attribute	= Source_AttributeTexture.Load(uint3(NPixelCoord, 0));
-				Target_Material		= Source_MaterialTexture.Load(uint3(NPixelCoord, 0));
-				MinDistance			= NDistance;
+				for (uint TextureIt = 0; TextureIt < TextureCount; ++TextureIt)
+				{
+					Values[TextureIt] = SourceTexture[uint3(NPixelCoord, TextureIt)];
+				}
 				bIsDilatedPixelValid= true;
 			}
 		}
 
+		// For coverage dialation, we only allow dilation outside of the triangles
+		const bool bIsInsideTriangle = OriginalTriangleMaskTexture.Load(uint3(PixelCoord,0)) > 0;
+
 		// If a valid neighbord has been bound, update pixel value
 		if (bIsDilatedPixelValid)
 		{
-			Target_DepthTexture[PixelCoord]		= Target_Depth;
-			Target_CoverageTexture[PixelCoord]	= Target_Coverage;
-			Target_TangentTexture[PixelCoord]	= Target_Tangent;
-			Target_AttributeTexture[PixelCoord] = Target_Attribute;
-			Target_MaterialTexture[PixelCoord]  = Target_Material;
-
-			TriangleMaskTexture[PixelCoord] = PackDistance(MinDistance);
+			for (uint TextureIt = 0; TextureIt < TextureCount; ++TextureIt)
+			{
+				// Write all attributes but coverage, as coverage should remain untouched.
+				float4 WriteOut = Values[TextureIt];
+				if (bIsInsideTriangle && TextureIt == CoverageTextureIndex)
+				{
+					switch (CoverageChannelIndex)
+					{
+						case 0 : WriteOut.x = 0.f; break;
+						case 1 : WriteOut.y = 0.f; break;
+						case 2 : WriteOut.z = 0.f; break;
+						case 3 : WriteOut.w = 0.f; break;
+					}
+				}
+				TargetTexture[uint3(PixelCoord, TextureIt)] = WriteOut;
+			}
+			TargetTriangleMaskTexture[PixelCoord] = 1.f;
 		}
 	}
 }
@@ -564,7 +659,7 @@ void MainCS(int2 DispatchThreadId : SV_DispatchThreadID)
 #include "HairStrandsVertexFactoryCommon.ush"
 
 uint MaxVertexCount;
-Buffer<uint4> InPositions;
+ByteAddressBuffer InPositions;
 Buffer<float4> InPositionOffset;
 RWBuffer<float4> OutPositions;
 [numthreads(128, 1, 1)]
@@ -573,11 +668,72 @@ void MainCS(int2 DispatchThreadId : SV_DispatchThreadID)
 	uint VertexIndex = DispatchThreadId.x;
 	if (VertexIndex < MaxVertexCount)
 	{
-		const uint4 PackedPosition = InPositions[VertexIndex];
 		const float3 PositionOffset = InPositionOffset[0].xyz;
-		const FHairControlPoint CP = UnpackHairControlPoint(PackedPosition, PositionOffset, 1.0f /*InVF_Radius*/, 1.0f /*InVF_RootScale*/, 1.0f /*InVF_TipScale*/);
+		const FHairControlPoint CP = ReadHairControlPoint(InPositions, VertexIndex, PositionOffset, 1.0f /*InVF_Radius*/, 1.0f /*InVF_RootScale*/, 1.0f /*InVF_TipScale*/);
 		
 		OutPositions[VertexIndex] = float4(CP.Position, CP.Type);
 	}
 }
 #endif // SHADER_READ_POSITIONS
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#if SHADER_TEXTURE_CLEAR
+
+#include "HairCardsAttributeCommon.ush"
+int2 Resolution;
+uint LayoutIndex;
+RWTexture2DArray<float4> OutTexture;
+
+[numthreads(8, 8, 1)]
+void MainCS(int2 DispatchThreadId : SV_DispatchThreadID)
+{
+	int2 PixelCoord = DispatchThreadId.xy;
+	if (all(PixelCoord < Resolution))
+	{	
+		float4 OutTexture0 = 0;
+		float4 OutTexture1 = 0;
+		float4 OutTexture2 = 0;
+		float4 OutTexture3 = 0;
+		float4 OutTexture4 = 0;
+		float4 OutTexture5 = 0;
+
+		WriteValue3(LayoutIndex, EHairCardsVFAttribute_Color,      0.f);
+		WriteValue1(LayoutIndex, EHairCardsVFAttribute_Depth,      1.f);
+		WriteValue1(LayoutIndex, EHairCardsVFAttribute_Seed,       0.f);
+		WriteValue1(LayoutIndex, EHairCardsVFAttribute_CoordU,     0.f);
+		WriteValue1(LayoutIndex, EHairCardsVFAttribute_GroupIndex, 0.f);
+		WriteValue1(LayoutIndex, EHairCardsVFAttribute_Roughness,  0.f);
+		WriteValue2(LayoutIndex, EHairCardsVFAttribute_RootUV,     0.f);
+		WriteValue3(LayoutIndex, EHairCardsVFAttribute_Tangent,    0.f);
+		WriteValue1(LayoutIndex, EHairCardsVFAttribute_Coverage,   0.f);
+
+		OutTexture[uint3(PixelCoord, 0)] = OutTexture0;
+		OutTexture[uint3(PixelCoord, 1)] = OutTexture1;
+		OutTexture[uint3(PixelCoord, 2)] = OutTexture2;
+		OutTexture[uint3(PixelCoord, 3)] = OutTexture3;
+		OutTexture[uint3(PixelCoord, 4)] = OutTexture4;
+		OutTexture[uint3(PixelCoord, 5)] = OutTexture5;
+	}
+}
+#endif // SHADER_TEXTURE_CLEAR
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+#if SHADER_TEXTURE_COPY
+
+uint TextureIndex;
+int2 Resolution;
+Texture2DArray<float4> InTexture;
+RWTexture2D<float4> OutTexture;
+
+[numthreads(8, 8, 1)]
+void MainCS(int2 DispatchThreadId : SV_DispatchThreadID)
+{
+	int2 PixelCoord = DispatchThreadId.xy;
+	if (all(PixelCoord < Resolution))
+	{	
+		OutTexture[PixelCoord] = InTexture[uint3(PixelCoord, TextureIndex)];
+	}
+}
+#endif // SHADER_TEXTURE_COPY

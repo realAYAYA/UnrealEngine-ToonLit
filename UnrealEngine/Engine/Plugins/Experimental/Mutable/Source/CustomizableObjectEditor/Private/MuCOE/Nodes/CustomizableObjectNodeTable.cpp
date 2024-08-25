@@ -4,6 +4,8 @@
 
 #include "Engine/StaticMesh.h"
 #include "Engine/Texture2DArray.h"
+#include "Engine/UserDefinedStruct.h"
+#include "Kismet2/StructureEditorUtils.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialInstance.h"
 #include "MuCO/UnrealPortabilityHelpers.h"
@@ -18,6 +20,9 @@
 #include "MuCOE/UnrealEditorPortabilityHelpers.h"
 #include "Rendering/SkeletalMeshLODModel.h"
 #include "Rendering/SkeletalMeshModel.h"
+#include "Animation/AnimInstance.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetRegistry/IAssetRegistry.h"
 
 class ICustomizableObjectEditor;
 class UCustomizableObjectNodeRemapPins;
@@ -27,17 +32,39 @@ class UCustomizableObjectNodeRemapPins;
 
 bool UCustomizableObjectNodeTableRemapPins::Equal(const UCustomizableObjectNode& Node, const UEdGraphPin& OldPin, const UEdGraphPin& NewPin) const
 {
+	const UCustomizableObjectNodeTableObjectPinData& OldPinData = Node.GetPinData<UCustomizableObjectNodeTableObjectPinData>(OldPin);
+	const UCustomizableObjectNodeTableObjectPinData& NewPinData = Node.GetPinData<UCustomizableObjectNodeTableObjectPinData>(NewPin);
+
+	// If one of these two option fails, pins are different
+	if (OldPinData.StructColumnId != NewPinData.StructColumnId || OldPin.Direction != NewPin.Direction)
+	{
+		return false;
+	}
+
+	// In this case pin type may have changed but we consider them the same type
 	if (OldPin.PinType.PinCategory == UEdGraphSchema_CustomizableObject::PC_Image ||
 		OldPin.PinType.PinCategory == UEdGraphSchema_CustomizableObject::PC_PassThroughImage)
 	{
-		// In this case pin type may have changed but we consider them the same type
-		return Helper_GetPinName(&OldPin) == Helper_GetPinName(&NewPin) &&
-			OldPin.Direction == NewPin.Direction;
+		return true;
 	}
 
-	return Helper_GetPinName(&OldPin) == Helper_GetPinName(&NewPin) &&
-		OldPin.PinType == NewPin.PinType &&
-		OldPin.Direction == NewPin.Direction;
+	// Non image pins must remain the same pin type
+	if (OldPin.PinType != NewPin.PinType)
+	{
+		return false;
+	}
+
+	if (OldPin.PinType.PinCategory == UEdGraphSchema_CustomizableObject::PC_Mesh)
+	{
+		const UCustomizableObjectNodeTableMeshPinData& OldMeshPinData = Node.GetPinData<UCustomizableObjectNodeTableMeshPinData>(OldPin);
+		const UCustomizableObjectNodeTableMeshPinData& NewMeshPinData = Node.GetPinData<UCustomizableObjectNodeTableMeshPinData>(NewPin);
+
+		// LOD and Section must remain the same
+		return 	OldMeshPinData.LOD == NewMeshPinData.LOD &&
+			OldMeshPinData.Material == NewMeshPinData.Material;
+	}
+
+	return true;
 }
 
 
@@ -93,6 +120,66 @@ void UCustomizableObjectNodeTable::BackwardsCompatibleFixup()
 			}
 		}
 	}
+	
+	// Adding StructColumnID
+	if(CustomizableObjectCustomVersion < FCustomizableObjectCustomVersion::AddedColumnIdDataToTableNodePins)
+	{
+		const UScriptStruct* TableStruct = GetTableNodeStruct();
+
+		if (TableStruct)
+		{
+			for (UEdGraphPin* Pin : Pins)
+			{
+				UCustomizableObjectNodeTableObjectPinData* PinData = Cast<UCustomizableObjectNodeTableObjectPinData>(GetPinData(*(Pin)));
+
+				// Adding pindata to float and colors
+				if (!PinData)
+				{
+					PinData = NewObject<UCustomizableObjectNodeTableObjectPinData>(this);
+					PinData->ColumnName = Pin->PinFriendlyName.ToString();
+
+					AddPinData(*Pin, *PinData);
+				}
+
+				FProperty* ColumnProperty = FindTableProperty(TableStruct, FName(*PinData->ColumnName));
+
+				if (!ColumnProperty)
+				{
+					continue;
+				}
+
+				FGuid ColumnPropertyId = FStructureEditorUtils::GetGuidForProperty(ColumnProperty);
+				PinData->StructColumnId = ColumnPropertyId;
+
+				// Store anim columns in the node instead of the pin
+				if (UCustomizableObjectNodeTableMeshPinData* MeshPinData = Cast<UCustomizableObjectNodeTableMeshPinData>(GetPinData(*(Pin))))
+				{
+					if (!MeshPinData->AnimInstanceColumnName_DEPRECATED.IsEmpty())
+					{
+						FTableNodeColumnData NewColumnData;
+						NewColumnData.AnimInstanceColumnName = MeshPinData->AnimInstanceColumnName_DEPRECATED;
+						NewColumnData.AnimSlotColumnName = MeshPinData->AnimSlotColumnName_DEPRECATED;
+						NewColumnData.AnimTagColumnName = MeshPinData->AnimTagColumnName_DEPRECATED;
+
+						ColumnDataMap.Add(ColumnPropertyId, NewColumnData);
+					}
+				}
+			}
+		}
+	}
+
+	if (CustomizableObjectCustomVersion < FCustomizableObjectCustomVersion::AddedAnyTextureTypeToPassThroughTextures)
+	{
+		for (UEdGraphPin* Pin : Pins)
+		{
+			UCustomizableObjectNodePinData* PinData = GetPinData(*Pin);
+
+			if (UCustomizableObjectNodeTableImagePinData* ImagePinData = Cast<UCustomizableObjectNodeTableImagePinData>(PinData))
+			{
+				ImagePinData->ConvertArrayTextureToAnyTextureFixup();
+			}
+		}
+	}
 }
 
 
@@ -145,7 +232,14 @@ FText UCustomizableObjectNodeTable::GetNodeTitle(ENodeTitleType::Type TitleType)
 		FFormatNamedArguments Args;
 		Args.Add(TEXT("TableName"), FText::FromString(Table->GetName()));
 
-		return FText::Format(LOCTEXT("TableNode_Title", "{TableName}\nTable"), Args);
+		return FText::Format(LOCTEXT("TableNode_Title_DataTable", "{TableName}\nData Table"), Args);
+	}
+	else if (Structure)
+	{
+		FFormatNamedArguments Args;
+		Args.Add(TEXT("StructureName"), FText::FromString(Structure->GetName()));
+
+		return FText::Format(LOCTEXT("TableNode_Title_ScriptedStruct", "{StructureName}\nScript Struct"), Args);
 	}
 	
 	return LOCTEXT("Mutable Table", "Table");
@@ -172,7 +266,7 @@ void UCustomizableObjectNodeTable::PinConnectionListChanged(UEdGraphPin* Pin)
 	{
 		if (UCustomizableObjectNodeTableImagePinData* ImagePinData = Cast<UCustomizableObjectNodeTableImagePinData>(GetPinData(*(Pin))))
 		{
-			if (!ImagePinData->IsArrayTexture() && ImagePinData->IsDefaultImageMode() && ImagePinData->ImageMode != DefaultImageMode)
+			if (!ImagePinData->IsNotTexture2D() && ImagePinData->IsDefaultImageMode() && ImagePinData->ImageMode != DefaultImageMode)
 			{
 				ImagePinData->ImageMode = DefaultImageMode;
 				ReconstructNode();
@@ -190,8 +284,10 @@ void UCustomizableObjectNodeTable::PostEditChangeProperty(FPropertyChangedEvent&
 
 	if (PropertyThatChanged)
 	{
-		if (PropertyThatChanged->GetName() == TEXT("Table"))
+		if (PropertyThatChanged->GetName() == TEXT("Table") || PropertyThatChanged->GetName() == TEXT("Structure"))
 		{
+			ParamUIMetadataColumn = NAME_None;
+			VersionColumn = NAME_None;
 			ReconstructNode();
 		}
 		else if (PropertyThatChanged->GetName() == TEXT("DefaultImageMode"))
@@ -202,7 +298,7 @@ void UCustomizableObjectNodeTable::PostEditChangeProperty(FPropertyChangedEvent&
 			{
 				if (UCustomizableObjectNodeTableImagePinData* TexturePinData = Cast<UCustomizableObjectNodeTableImagePinData>(GetPinData(*(Pin))))
 				{
-					if (!Pin->LinkedTo.Num() && !TexturePinData->IsArrayTexture() && TexturePinData->IsDefaultImageMode())
+					if (!Pin->LinkedTo.Num() && !TexturePinData->IsNotTexture2D() && TexturePinData->IsDefaultImageMode())
 					{
 						ETableTextureType Mode = TexturePinData->ImageMode == ETableTextureType::PASSTHROUGH_TEXTURE ? ETableTextureType::MUTABLE_TEXTURE : ETableTextureType::PASSTHROUGH_TEXTURE;
 						TexturePinData->ImageMode = Mode;
@@ -217,38 +313,47 @@ void UCustomizableObjectNodeTable::PostEditChangeProperty(FPropertyChangedEvent&
 				ReconstructNode();
 			}
 		}
+		else if (PropertyThatChanged->GetName() == TEXT("TableDataGatheringMode"))
+		{
+			if (Table)
+			{
+				Table->OnDataTableChanged().Remove(OnTableChangedDelegateHandle);
+			}
+
+			Table = nullptr;
+			Structure = nullptr;
+
+			FilterPaths.Empty();
+
+			ReconstructNode();
+		}
 	}
 }
 
 
 void UCustomizableObjectNodeTable::AllocateDefaultPins(UCustomizableObjectNodeRemapPins* RemapPins)
 {
-	if (!Table)
-	{
-		return;
-	}
+	// Reset of the column data map
+	TMap<FGuid, FTableNodeColumnData> AuxOldColumnData = ColumnDataMap;
+	ColumnDataMap.Reset();
 
 	// Getting Struct Pointer
-	const UScriptStruct* TableStruct = Table->GetRowStruct();
+	const UScriptStruct* TableStruct = GetTableNodeStruct();
 
 	if (!TableStruct)
 	{
 		return;
 	}
 
-	NumProperties = Table->GetColumnTitles().Num();
+	NumProperties = GetColumnTitles(TableStruct).Num();
 
 	// Getting Default Struct Values
-	uint8* DefaultRowData = (uint8*)FMemory::Malloc(TableStruct->GetStructureSize());
-	
-	if (!DefaultRowData)
-	{
-		return;
-	}
+	// A Script Struct always has at leaset one property
+	TArray<int8> DefaultDataArray;
+	DefaultDataArray.SetNumZeroed(TableStruct->GetStructureSize());
+	TableStruct->InitializeStruct(DefaultDataArray.GetData());
 
 	TArray<UEdGraphPin*> OldPins(Pins);
-
-	TableStruct->InitializeStruct(DefaultRowData);
 	
 	for (TFieldIterator<FProperty> It(TableStruct); It; ++It)
 	{
@@ -258,20 +363,21 @@ void UCustomizableObjectNodeTable::AllocateDefaultPins(UCustomizableObjectNodeRe
 		{
 			continue;
 		}
-		
+
 		const UEdGraphSchema_CustomizableObject* Schema = GetDefault<UEdGraphSchema_CustomizableObject>();
 
 		UEdGraphPin* OutPin = nullptr;
 
 		FString ColumnName = DataTableUtils::GetPropertyExportName(ColumnProperty);
 		FString PinName = ColumnName;
+		FGuid ColumnPropertyId = FStructureEditorUtils::GetGuidForProperty(ColumnProperty);
 
 		if (const FSoftObjectProperty* SoftObjectProperty = CastField<FSoftObjectProperty>(ColumnProperty))
 		{
 			UObject* Object = nullptr;
 
 			// Getting default UObject
-			uint8* CellData = SoftObjectProperty->ContainerPtrToValuePtr<uint8>(DefaultRowData);
+			uint8* CellData = SoftObjectProperty->ContainerPtrToValuePtr<uint8>(DefaultDataArray.GetData());
 
 			if (CellData)
 			{
@@ -282,14 +388,20 @@ void UCustomizableObjectNodeTable::AllocateDefaultPins(UCustomizableObjectNodeRe
 			{
 				if (Object->IsA(USkeletalMesh::StaticClass()) || Object->IsA(UStaticMesh::StaticClass()))
 				{
-					GenerateMeshPins(Object, ColumnName);
+					GenerateMeshPins(Object, ColumnName, ColumnPropertyId);
+
+					if (FTableNodeColumnData* ColumnData = AuxOldColumnData.Find(ColumnPropertyId))
+					{
+						ColumnDataMap.Add(ColumnPropertyId, *ColumnData);
+					}
 				}
 
 				else if (Object->IsA(UTexture2D::StaticClass()))
 				{
 					UCustomizableObjectNodeTableImagePinData* PinData = NewObject<UCustomizableObjectNodeTableImagePinData>(this);
 					PinData->ColumnName = ColumnName;
-					PinData->SetIsArrayTexture(false);
+					PinData->StructColumnId = ColumnPropertyId;
+					PinData->SetIsNotTexture2D(false);
 
 					FName PinCategory = DefaultImageMode == ETableTextureType::PASSTHROUGH_TEXTURE ? Schema->PC_PassThroughImage : Schema->PC_Image;
 
@@ -309,12 +421,13 @@ void UCustomizableObjectNodeTable::AllocateDefaultPins(UCustomizableObjectNodeRe
 					OutPin = CustomCreatePin(EGPD_Output, PinCategory, FName(*PinName), PinData);
 				}
 
-				else if (Object->IsA(UTexture2DArray::StaticClass()))
+				else if (Object->IsA(UTexture::StaticClass()))
 				{
 					UCustomizableObjectNodeTableImagePinData* PinData = NewObject<UCustomizableObjectNodeTableImagePinData>(this);
 					PinData->ColumnName = ColumnName;
+					PinData->StructColumnId = ColumnPropertyId;
 					PinData->ImageMode = ETableTextureType::PASSTHROUGH_TEXTURE;
-					PinData->SetIsArrayTexture(true);
+					PinData->SetIsNotTexture2D(true);
 
 					OutPin = CustomCreatePin(EGPD_Output, Schema->PC_PassThroughImage, FName(*PinName), PinData);
 				}
@@ -323,6 +436,7 @@ void UCustomizableObjectNodeTable::AllocateDefaultPins(UCustomizableObjectNodeRe
 				{
 					UCustomizableObjectNodeTableObjectPinData* PinData = NewObject<UCustomizableObjectNodeTableObjectPinData>(this);
 					PinData->ColumnName = ColumnName;
+					PinData->StructColumnId = ColumnPropertyId;
 
 					OutPin = CustomCreatePin(EGPD_Output, Schema->PC_MaterialAsset, FName(*PinName), PinData);
 				}
@@ -334,7 +448,7 @@ void UCustomizableObjectNodeTable::AllocateDefaultPins(UCustomizableObjectNodeRe
 				FCustomizableObjectEditorLogger::CreateLog(Text)
 					.Category(ELoggerCategory::General)
 					.Severity(EMessageSeverity::Warning)
-					.Node(*this)
+					.Context(*this)
 					.Log();
 			}
 		}
@@ -343,18 +457,30 @@ void UCustomizableObjectNodeTable::AllocateDefaultPins(UCustomizableObjectNodeRe
 		{
 			if (StructProperty->Struct == TBaseStructure<FLinearColor>::Get())
 			{
-				OutPin = CustomCreatePin(EGPD_Output, Schema->PC_Color, FName(*PinName));
+				UCustomizableObjectNodeTableObjectPinData* PinData = NewObject<UCustomizableObjectNodeTableObjectPinData>(this);
+				PinData->ColumnName = ColumnName;
+				PinData->StructColumnId = ColumnPropertyId;
+
+				OutPin = CustomCreatePin(EGPD_Output, Schema->PC_Color, FName(*PinName), PinData);
 			}
 		}
 
 		else if (const FNumericProperty* NumFloatProperty = CastField<FFloatProperty>(ColumnProperty))
 		{
-			OutPin = CustomCreatePin(EGPD_Output, Schema->PC_Float, FName(*PinName));
+			UCustomizableObjectNodeTableObjectPinData* PinData = NewObject<UCustomizableObjectNodeTableObjectPinData>(this);
+			PinData->ColumnName = ColumnName;
+			PinData->StructColumnId = ColumnPropertyId;
+
+			OutPin = CustomCreatePin(EGPD_Output, Schema->PC_Float, FName(*PinName), PinData);
 		}
 		
 		else if (const FNumericProperty* NumDoubleProperty = CastField<FDoubleProperty>(ColumnProperty))
 		{
-			OutPin = CustomCreatePin(EGPD_Output, Schema->PC_Float, FName(*PinName));
+			UCustomizableObjectNodeTableObjectPinData* PinData = NewObject<UCustomizableObjectNodeTableObjectPinData>(this);
+			PinData->ColumnName = ColumnName;
+			PinData->StructColumnId = ColumnPropertyId;
+
+			OutPin = CustomCreatePin(EGPD_Output, Schema->PC_Float, FName(*PinName), PinData);
 		}
 
 		else if (const FObjectProperty* ObjectProperty = CastField<FObjectProperty>(ColumnProperty))
@@ -364,7 +490,7 @@ void UCustomizableObjectNodeTable::AllocateDefaultPins(UCustomizableObjectNodeRe
 			FCustomizableObjectEditorLogger::CreateLog(Text)
 				.Category(ELoggerCategory::General)
 				.Severity(EMessageSeverity::Warning)
-				.Node(*this)
+				.Context(*this)
 				.Log();
 		}
 
@@ -376,13 +502,11 @@ void UCustomizableObjectNodeTable::AllocateDefaultPins(UCustomizableObjectNodeRe
 		}
 	}
 
-	// Cleaning Default Structure Pointer
-	TableStruct->DestroyStruct(DefaultRowData);
-	FMemory::Free(DefaultRowData);
+	TableStruct->DestroyStruct(DefaultDataArray.GetData());
 }
 
 
-void UCustomizableObjectNodeTable::GenerateMeshPins(UObject* Mesh, const FString& Name)
+void UCustomizableObjectNodeTable::GenerateMeshPins(UObject* Mesh, const FString& ColumnName, const FGuid& ColumnId)
 {
 	if (USkeletalMesh* SkeletalMesh = Cast<USkeletalMesh>(Mesh))
 	{
@@ -395,10 +519,14 @@ void UCustomizableObjectNodeTable::GenerateMeshPins(UObject* Mesh, const FString
 
 			for (int32 MatIndex = 0; MatIndex < NumMaterials; ++MatIndex)
 			{
-				FString TableMeshPinName = GenerateSkeletalMeshMutableColumName(Name, LODIndex, MatIndex);
+				FString TableMeshPinName = GenerateSkeletalMeshMutableColumName(ColumnName, LODIndex, MatIndex);
 
+				// Pin Data
 				UCustomizableObjectNodeTableMeshPinData* PinData = NewObject<UCustomizableObjectNodeTableMeshPinData>(this);
-				PinData->ColumnName = Name;
+				PinData->ColumnName = ColumnName;
+				PinData->StructColumnId = ColumnId;
+
+				// Mesh Data
 				PinData->MutableColumnName = TableMeshPinName;
 				PinData->LOD = LODIndex;
 				PinData->Material = MatIndex;
@@ -445,10 +573,13 @@ void UCustomizableObjectNodeTable::GenerateMeshPins(UObject* Mesh, const FString
 
 			for (int32 MatIndex = 0; MatIndex < NumMaterials; ++MatIndex)
 			{
-				FString TableMeshPinName = GenerateStaticMeshMutableColumName(Name, MatIndex);
+				FString TableMeshPinName = GenerateStaticMeshMutableColumName(ColumnName, MatIndex);
 
 				UCustomizableObjectNodeTableMeshPinData* PinData = NewObject<UCustomizableObjectNodeTableMeshPinData>(this);
-				PinData->ColumnName = Name;
+				PinData->ColumnName = ColumnName;
+				PinData->StructColumnId = ColumnId;
+
+				// Mesh Data
 				PinData->MutableColumnName = TableMeshPinName;
 				PinData->LOD = 0;
 				PinData->Material = MatIndex;
@@ -464,33 +595,24 @@ void UCustomizableObjectNodeTable::GenerateMeshPins(UObject* Mesh, const FString
 
 bool UCustomizableObjectNodeTable::IsNodeOutDatedAndNeedsRefresh()
 {
-	if (!Table)
-	{
-		return Pins.Num() > 0;
-	}
-
 	// Getting Struct Pointer
-	const UScriptStruct* TableStruct = Table->GetRowStruct();
+	const UScriptStruct* TableStruct = GetTableNodeStruct();
 
 	if (!TableStruct)
 	{
 		return Pins.Num() > 0;
 	}
 
-	if (NumProperties != Table->GetColumnTitles().Num())
+	if (NumProperties != GetColumnTitles(TableStruct).Num())
 	{
 		return true;
 	}
 
-	// Getting Default Struct 
-	uint8* DefaultRowData = (uint8*)FMemory::Malloc(TableStruct->GetStructureSize());
-
-	if (!DefaultRowData)
-	{
-		return Pins.Num() > 0;
-	}
-
-	TableStruct->InitializeStruct(DefaultRowData);
+	// Getting Default Struct Values
+	// A Script Struct always has at leaset one property
+	TArray<int8> DefaultDataArray;
+	DefaultDataArray.SetNumZeroed(TableStruct->GetStructureSize());
+	TableStruct->InitializeStruct(DefaultDataArray.GetData());
 
 	int32  NumPins = 0;
 
@@ -511,7 +633,7 @@ bool UCustomizableObjectNodeTable::IsNodeOutDatedAndNeedsRefresh()
 				UObject* Object = nullptr;
 
 				// Getting default UObject
-				uint8* CellData = SoftObjectProperty->ContainerPtrToValuePtr<uint8>(DefaultRowData);
+				uint8* CellData = SoftObjectProperty->ContainerPtrToValuePtr<uint8>(DefaultDataArray.GetData());
 
 				if (CellData)
 				{
@@ -642,9 +764,7 @@ bool UCustomizableObjectNodeTable::IsNodeOutDatedAndNeedsRefresh()
 		}
 	}
 
-	// Cleaning Default Structure Pointer
-	TableStruct->DestroyStruct(DefaultRowData);
-	FMemory::Free(DefaultRowData);
+	TableStruct->DestroyStruct(DefaultDataArray.GetData());
 
 	if (Pins.Num() != NumPins)
 	{
@@ -660,7 +780,7 @@ FString UCustomizableObjectNodeTable::GetRefreshMessage() const
 	return "Node data outdated. Please refresh node.";
 }
 
-
+// TODO(MTBL-1652): Move this to the Copy method of the NodePinData class which is more PinType specific (and the right plece to do this)
 void UCustomizableObjectNodeTable::RemapPinsData(const TMap<UEdGraphPin*, UEdGraphPin*>& PinsToRemap)
 {
 	const UEdGraphSchema_CustomizableObject* Schema = GetDefault<UEdGraphSchema_CustomizableObject>();
@@ -672,40 +792,24 @@ void UCustomizableObjectNodeTable::RemapPinsData(const TMap<UEdGraphPin*, UEdGra
 			UCustomizableObjectNodeTableMeshPinData* PinDataOldPin = Cast<UCustomizableObjectNodeTableMeshPinData>(GetPinData(*(Pair.Key)));
 			UCustomizableObjectNodeTableMeshPinData* PinDataNewPin = Cast<UCustomizableObjectNodeTableMeshPinData>(GetPinData(*(Pair.Value)));
 
-			if (PinDataOldPin && PinDataNewPin)
+			const UScriptStruct* ScriptStruct = GetTableNodeStruct();
+
+			if (PinDataOldPin && PinDataNewPin && ScriptStruct && GetPinMeshType(Pair.Value) == ETableMeshPinType::SKELETAL_MESH)
 			{
-				if (Table->FindTableProperty(FName(*PinDataOldPin->AnimInstanceColumnName)))
+				// Keeping information added in layout editor if the layout is the same
+				for (TObjectPtr<UCustomizableObjectLayout>& NewLayout : PinDataNewPin->Layouts)
 				{
-					PinDataNewPin->AnimInstanceColumnName = PinDataOldPin->AnimInstanceColumnName;
-				}
-
-				if (Table->FindTableProperty(FName(*PinDataOldPin->AnimSlotColumnName)))
-				{
-					PinDataNewPin->AnimSlotColumnName = PinDataOldPin->AnimSlotColumnName;
-				}
-
-				if (Table->FindTableProperty(FName(*PinDataOldPin->AnimTagColumnName)))
-				{
-					PinDataNewPin->AnimTagColumnName = PinDataOldPin->AnimTagColumnName;
-				}
-
-				if (GetPinMeshType(Pair.Value) == ETableMeshPinType::SKELETAL_MESH)
-				{
-					// Keeping information added in layout editor if the layout is the same
-					for (TObjectPtr<UCustomizableObjectLayout>& NewLayout : PinDataNewPin->Layouts)
+					for (TObjectPtr<UCustomizableObjectLayout>& OldLayout : PinDataOldPin->Layouts)
 					{
-						for (TObjectPtr<UCustomizableObjectLayout>& OldLayout : PinDataOldPin->Layouts)
+						if (NewLayout->GetLayoutName() == OldLayout->GetLayoutName())
 						{
-							if (NewLayout->GetLayoutName() == OldLayout->GetLayoutName())
-							{
-								NewLayout->Blocks = OldLayout->Blocks;
-								NewLayout->SetGridSize(OldLayout->GetGridSize());
-								NewLayout->SetMaxGridSize(OldLayout->GetMaxGridSize());
-								NewLayout->SetPackingStrategy(OldLayout->GetPackingStrategy());
-								NewLayout->SetBlockReductionMethod(OldLayout->GetBlockReductionMethod());
+							NewLayout->Blocks = OldLayout->Blocks;
+							NewLayout->SetGridSize(OldLayout->GetGridSize());
+							NewLayout->SetMaxGridSize(OldLayout->GetMaxGridSize());
+							NewLayout->SetPackingStrategy(OldLayout->GetPackingStrategy());
+							NewLayout->SetBlockReductionMethod(OldLayout->GetBlockReductionMethod());
 
-								break;
-							}
+							break;
 						}
 					}
 				}
@@ -720,7 +824,7 @@ void UCustomizableObjectNodeTable::RemapPinsData(const TMap<UEdGraphPin*, UEdGra
 			{
 				PinDataNewPin->ImageMode = PinDataOldPin->ImageMode;
 				PinDataNewPin->SetDefaultImageMode(PinDataOldPin->IsDefaultImageMode());
-				PinDataNewPin->SetIsArrayTexture(PinDataOldPin->IsArrayTexture());
+				PinDataNewPin->SetIsNotTexture2D(PinDataOldPin->IsNotTexture2D());
 			}
 		}
 	}
@@ -885,30 +989,6 @@ FString UCustomizableObjectNodeTable::GetColumnNameByPin(const UEdGraphPin* Pin)
 }
 
 
-FString UCustomizableObjectNodeTable::GetMutableColumnName(const UEdGraphPin* Pin, const int32& LOD) const
-{
-	UCustomizableObjectNodeTableMeshPinData* PinData = Cast<UCustomizableObjectNodeTableMeshPinData >(GetPinData(*Pin));
-
-	if (PinData)
-	{
-		FString ColumnName = PinData->ColumnName;
-		int32 MaterialIndex = PinData->Material;
-
-		for (const UEdGraphPin* NodePin : Pins)
-		{
-			const UCustomizableObjectNodeTableMeshPinData* MeshPinData = Cast<UCustomizableObjectNodeTableMeshPinData >(GetPinData(*NodePin));
-
-			if (MeshPinData && MeshPinData->ColumnName == ColumnName && MeshPinData->LOD == LOD && MeshPinData->Material == MaterialIndex)
-			{
-				return MeshPinData->MutableColumnName;
-			}
-		}
-	}
-
-	return FString();
-}
-
-
 void UCustomizableObjectNodeTable::GetPinLODAndSection(const UEdGraphPin* Pin, int32& LODIndex, int32& SectionIndex) const
 {
 	if (const UCustomizableObjectNodeTableMeshPinData* PinData = Cast<UCustomizableObjectNodeTableMeshPinData >(GetPinData(*Pin)))
@@ -924,21 +1004,14 @@ void UCustomizableObjectNodeTable::GetPinLODAndSection(const UEdGraphPin* Pin, i
 }
 
 
-void UCustomizableObjectNodeTable::GetAnimationColumns(const FString& ColumnName, FString& AnimBPColumnName, FString& AnimSlotColumnName, FString& AnimTagColumnName) const
+void UCustomizableObjectNodeTable::GetAnimationColumns(const FGuid& ColumnId, FString& AnimBPColumnName, FString& AnimSlotColumnName, FString& AnimTagColumnName) const
 {
-	for (const UEdGraphPin* Pin : Pins)
+	if (ColumnDataMap.Contains(ColumnId))
 	{
-		const UCustomizableObjectNodeTableMeshPinData* PinData = Cast<UCustomizableObjectNodeTableMeshPinData >(GetPinData(*Pin));
-
-		if (PinData)
-		{
-			if (PinData->ColumnName == ColumnName)
-			{
-				AnimBPColumnName = PinData->AnimInstanceColumnName;
-				AnimSlotColumnName = PinData->AnimSlotColumnName;
-				AnimTagColumnName = PinData->AnimTagColumnName;
-			}
-		}
+		const FTableNodeColumnData* ColumnData = ColumnDataMap.Find(ColumnId);
+		AnimBPColumnName = ColumnData->AnimInstanceColumnName;
+		AnimSlotColumnName = ColumnData->AnimSlotColumnName;
+		AnimTagColumnName = ColumnData->AnimTagColumnName;
 	}
 }
 
@@ -979,39 +1052,37 @@ bool UCustomizableObjectNodeTable::CheckPinUpdated(const FString& PinName, const
 }
 
 
-USkeletalMesh* UCustomizableObjectNodeTable::GetSkeletalMeshAt(const UEdGraphPin* Pin, const FName& RowName) const
+USkeletalMesh* UCustomizableObjectNodeTable::GetSkeletalMeshAt(const UEdGraphPin* Pin, const UDataTable* DataTable, const FName& RowName) const
 {
-	if (!Table || !Table->GetRowStruct() || !Pin || !Table->GetRowNames().Contains(RowName))
+	if (!DataTable || !DataTable->GetRowStruct() || !Pin || !DataTable->GetRowNames().Contains(RowName))
+	{
+		return nullptr;
+	}
+	
+	const UScriptStruct* TableStruct = DataTable->GetRowStruct();
+
+	FString ColumnName = GetColumnNameByPin(Pin);
+
+	// Here we are using the DataTable function because we are only calling GetSkeletalMeshAt() at Generation Time
+	// If we want to use it elswhere, we can use our FindTablreProperty method
+	FProperty* ColumnProperty = DataTable->FindTableProperty(FName(*ColumnName));
+
+	if (!ColumnProperty)
 	{
 		return nullptr;
 	}
 
-	// Getting Struct Pointer
-	const UScriptStruct* TableStruct = Table->GetRowStruct();
-
-	FString ColumnName = GetColumnNameByPin(Pin);
-
-	for (TFieldIterator<FProperty> It(TableStruct); It; ++It)
+	if (const FSoftObjectProperty* SoftObjectProperty = CastField<FSoftObjectProperty>(ColumnProperty))
 	{
-		FProperty* ColumnProperty = *It;
-
-		if (!ColumnProperty || ColumnName != DataTableUtils::GetPropertyExportName(ColumnProperty))
+		if (uint8* RowData = DataTable->FindRowUnchecked(RowName))
 		{
-			continue;
-		}
-
-		if (const FSoftObjectProperty* SoftObjectProperty = CastField<FSoftObjectProperty>(ColumnProperty))
-		{
-			if (uint8* RowData = Table->FindRowUnchecked(RowName))
+			if (uint8* CellData = ColumnProperty->ContainerPtrToValuePtr<uint8>(RowData, 0))
 			{
-				if (uint8* CellData = ColumnProperty->ContainerPtrToValuePtr<uint8>(RowData, 0))
+				if (UObject* Object = SoftObjectProperty->GetPropertyValue(CellData).LoadSynchronous())
 				{
-					if (UObject* Object = SoftObjectProperty->GetPropertyValue(CellData).LoadSynchronous())
+					if (USkeletalMesh* SkeletalMesh = Cast<USkeletalMesh>(Object))
 					{
-						if (USkeletalMesh* SkeletalMesh = Cast<USkeletalMesh>(Object))
-						{
-							return SkeletalMesh;
-						}
+						return SkeletalMesh;
 					}
 				}
 			}
@@ -1021,34 +1092,47 @@ USkeletalMesh* UCustomizableObjectNodeTable::GetSkeletalMeshAt(const UEdGraphPin
 	return nullptr;
 }
 
-TSoftClassPtr<UAnimInstance> UCustomizableObjectNodeTable::GetAnimInstanceAt(const UEdGraphPin* Pin, const FName& RowName) const
+
+TSoftClassPtr<UAnimInstance> UCustomizableObjectNodeTable::GetAnimInstanceAt(const UEdGraphPin* Pin, const UDataTable* DataTable, const FName& RowName) const
 {
-	if (!Table || !Table->GetRowStruct() || !Pin || !Table->GetRowNames().Contains(RowName))
+	if (!DataTable || !DataTable->GetRowStruct() || !Pin || !DataTable->GetRowNames().Contains(RowName))
 	{
 		return TSoftClassPtr<UAnimInstance>();
 	}
 
-	// Getting Struct Pointer
-	const UScriptStruct* TableStruct = Table->GetRowStruct();
+	const UCustomizableObjectNodeTableObjectPinData* PinData = Cast<UCustomizableObjectNodeTableObjectPinData>(GetPinData(*Pin));
 
-	FString ColumnName = GetColumnNameByPin(Pin);
-
-	for (TFieldIterator<FProperty> It(TableStruct); It; ++It)
+	if (!PinData)
 	{
-		FProperty* ColumnProperty = *It;
+		return TSoftClassPtr<UAnimInstance>();
+	}
 
-		if (!ColumnProperty || ColumnName != DataTableUtils::GetPropertyExportName(ColumnProperty))
+	if (const FTableNodeColumnData* ColumnData = ColumnDataMap.Find(PinData->StructColumnId))
+	{
+		FString AnimColumn = ColumnData->AnimInstanceColumnName;
+
+		// Here we are using the DataTable function because we are only calling GetAnimInstanceAt() at Generation Time
+		// If we want to use it elswhere, we can use our FindTablreProperty method
+		FProperty* ColumnProperty = DataTable->FindTableProperty(FName(*AnimColumn));
+
+		if (!ColumnProperty)
 		{
-			continue;
+			return TSoftClassPtr<UAnimInstance>();
 		}
 
 		if (const FSoftClassProperty* SoftClassProperty = CastField<FSoftClassProperty>(ColumnProperty))
 		{
-			TSoftClassPtr<UAnimInstance> AnimInstance(SoftClassProperty->GetPropertyValue(SoftClassProperty).ToSoftObjectPath());
-
-			if (!AnimInstance.IsNull())
+			if (uint8* RowData = DataTable->FindRowUnchecked(RowName))
 			{
-				return AnimInstance;
+				if (uint8* CellData = ColumnProperty->ContainerPtrToValuePtr<uint8>(RowData, 0))
+				{
+					TSoftClassPtr<UAnimInstance> AnimInstance(SoftClassProperty->GetPropertyValue(CellData).ToSoftObjectPath());
+
+					if (!AnimInstance.IsNull())
+					{
+						return AnimInstance;
+					}
+				}
 			}
 		}
 	}
@@ -1056,55 +1140,14 @@ TSoftClassPtr<UAnimInstance> UCustomizableObjectNodeTable::GetAnimInstanceAt(con
 	return TSoftClassPtr<UAnimInstance>();
 }
 
-TArray<FName> UCustomizableObjectNodeTable::GetRowNames() const
+
+void UCustomizableObjectNodeTableImagePinData::ConvertArrayTextureToAnyTextureFixup()
 {
-	TArray<FName> RowNames;
-
-	if (Table)
+	if (bIsArrayTexture_DEPRECATED)
 	{
-		const UScriptStruct* TableStruct = Table->GetRowStruct();
-
-		if (!TableStruct)
-		{
-			return RowNames;
-		}
-
-		TArray<FName> TableRowNames = Table->GetRowNames();
-		FBoolProperty* BoolProperty = nullptr;
-
-		for (TFieldIterator<FProperty> PropertyIt(TableStruct); PropertyIt && bDisableCheckedRows; ++PropertyIt)
-		{
-			BoolProperty = CastField<FBoolProperty>(*PropertyIt);
-
-			if (BoolProperty)
-			{
-				for (const FName& RowName : TableRowNames)
-				{
-					if (uint8* RowData = Table->FindRowUnchecked(RowName))
-					{
-						if (uint8* CellData = BoolProperty->ContainerPtrToValuePtr<uint8>(RowData, 0))
-						{
-							if (!BoolProperty->GetPropertyValue(CellData))
-							{
-								RowNames.Add(RowName);
-							}
-						}
-					}
-				}
-
-				// There should be only one Bool column
-				break;
-			}
-		}
-
-		// There is no Bool column or we don't want to disable rows
-		if (!BoolProperty)
-		{
-			return TableRowNames;
-		}
+		bIsNotTexture2D = true;
+		bIsArrayTexture_DEPRECATED = false;
 	}
-
-	return RowNames;
 }
 
 
@@ -1112,7 +1155,7 @@ void UCustomizableObjectNodeTable::ChangeImagePinMode(UEdGraphPin* Pin, bool bSe
 {
 	if (UCustomizableObjectNodeTableImagePinData* PinData = Cast<UCustomizableObjectNodeTableImagePinData>(GetPinData(*(Pin))))
 	{
-		if (PinData->IsArrayTexture())
+		if (PinData->IsNotTexture2D())
 		{
 			return;
 		}
@@ -1150,7 +1193,7 @@ UCustomizableObjectNodeTableRemapPins* UCustomizableObjectNodeTable::CreateRemap
 }
 
 
-bool UCustomizableObjectNodeTable::IsImagePinDefault(UEdGraphPin* Pin)
+bool UCustomizableObjectNodeTable::IsImagePinDefault(const UEdGraphPin* Pin) const
 {
 	if (UCustomizableObjectNodeTableImagePinData* PinData = Cast<UCustomizableObjectNodeTableImagePinData>(GetPinData(*(Pin))))
 	{
@@ -1161,22 +1204,11 @@ bool UCustomizableObjectNodeTable::IsImagePinDefault(UEdGraphPin* Pin)
 }
 
 
-bool UCustomizableObjectNodeTable::IsImageArrayPin(UEdGraphPin* Pin)
-{
-	if (UCustomizableObjectNodeTableImagePinData* PinData = Cast<UCustomizableObjectNodeTableImagePinData>(GetPinData(*(Pin))))
-	{
-		return PinData->IsArrayTexture();
-	}
-
-	return false;
-}
-
-
 ETableTextureType UCustomizableObjectNodeTable::GetColumnImageMode(const FString& ColumnName) const
 {
-	for (UEdGraphPin* Pin : Pins)
+	for (const UEdGraphPin* Pin : Pins)
 	{
-		if (UCustomizableObjectNodeTableImagePinData* PinData = Cast<UCustomizableObjectNodeTableImagePinData>(GetPinData(*(Pin))))
+		if (const UCustomizableObjectNodeTableImagePinData* PinData = Cast<UCustomizableObjectNodeTableImagePinData>(GetPinData(*(Pin))))
 		{
 			if (PinData->ColumnName == ColumnName)
 			{
@@ -1189,12 +1221,26 @@ ETableTextureType UCustomizableObjectNodeTable::GetColumnImageMode(const FString
 }
 
 
+bool UCustomizableObjectNodeTable::IsNotTexture2DPin(const UEdGraphPin* Pin) const
+{
+	if (UCustomizableObjectNodeTableImagePinData* PinData = Cast<UCustomizableObjectNodeTableImagePinData>(GetPinData(*(Pin))))
+	{
+		return PinData->IsNotTexture2D();
+	}
+
+	return false;
+}
+
+
 ETableMeshPinType UCustomizableObjectNodeTable::GetPinMeshType(const UEdGraphPin* Pin) const
 {
-	if (Pin && Pin->PinType.PinCategory == UEdGraphSchema_CustomizableObject::PC_Mesh)
+	// Getting Struct Pointer
+	const UScriptStruct* TableStruct = GetTableNodeStruct();
+
+	if (TableStruct && Pin && Pin->PinType.PinCategory == UEdGraphSchema_CustomizableObject::PC_Mesh)
 	{
 		FString ColumnName = GetColumnNameByPin(Pin);
-		FProperty* Property = Table->FindTableProperty(FName(*ColumnName));
+		FProperty* Property = FindTableProperty(TableStruct, FName(*ColumnName));
 
 		if (const FSoftObjectProperty* SoftObjectProperty = CastField<FSoftObjectProperty>(Property))
 		{
@@ -1223,5 +1269,138 @@ FString UCustomizableObjectNodeTable::GenerateStaticMeshMutableColumName(const F
 {
 	return PinName + FString::Printf(TEXT(" Mat_%d"), MaterialIndex);
 }
+
+
+const UScriptStruct* UCustomizableObjectNodeTable::GetTableNodeStruct() const
+{
+	const UScriptStruct* TableStruct = nullptr;
+
+	if (TableDataGatheringMode == ETableDataGatheringSource::ETDGM_AssetRegistry)
+	{
+		if (Structure)
+		{
+			TableStruct = Structure;
+		}
+	}
+	else
+	{
+		if (Table)
+		{
+			TableStruct = Table->GetRowStruct();
+		}
+	}
+
+	return TableStruct;
+}
+
+
+TArray<FString> UCustomizableObjectNodeTable::GetColumnTitles(const UScriptStruct* ScriptStruct) const
+{
+	TArray<FString> Result;
+	Result.Add(TEXT("Name"));
+	if (ScriptStruct)
+	{
+		for (TFieldIterator<FProperty> It(ScriptStruct); It; ++It)
+		{
+			FProperty* Prop = *It;
+			check(Prop != nullptr);
+			const FString DisplayName = DataTableUtils::GetPropertyExportName(Prop);
+			Result.Add(DisplayName);
+		}
+	}
+
+	return Result;
+}
+
+
+FProperty* UCustomizableObjectNodeTable::FindTableProperty(const UScriptStruct* ScriptStruct, const FName& PropertyName) const
+{
+	FProperty* Property = nullptr;
+
+	if (ScriptStruct)
+	{
+		Property = ScriptStruct->FindPropertyByName(PropertyName);
+		if (Property == nullptr && ScriptStruct->IsA<UUserDefinedStruct>())
+		{
+			const FString PropertyNameStr = PropertyName.ToString();
+
+			for (TFieldIterator<FProperty> It(ScriptStruct); It; ++It)
+			{
+				if (PropertyNameStr == ScriptStruct->GetAuthoredNameForField(*It))
+				{
+					Property = *It;
+					break;
+				}
+			}
+		}
+		if (!DataTableUtils::IsSupportedTableProperty(Property))
+		{
+			Property = nullptr;
+		}
+	}
+
+	return Property;
+}
+
+
+FGuid UCustomizableObjectNodeTable::GetColumnIdByName(const FName& ColumnName) const
+{
+	if (const UScriptStruct* TableStruct = GetTableNodeStruct())
+	{
+		if(FProperty* ColumnProperty = FindTableProperty(TableStruct, ColumnName))
+		{
+			return FStructureEditorUtils::GetGuidForProperty(ColumnProperty);
+		}
+		else
+		{
+			// We could not find the property by name
+			for (const UEdGraphPin* Pin : GetAllNonOrphanPins())
+			{
+				if (UCustomizableObjectNodeTableMeshPinData* PinData = Cast< UCustomizableObjectNodeTableMeshPinData>(GetPinData(*Pin)))
+				{
+					if (PinData->ColumnName != ColumnName)
+					{
+						continue;
+					}
+
+					return PinData->StructColumnId;
+				}
+			}
+		}
+	}
+
+	return FGuid();
+}
+
+
+TArray<FAssetData> UCustomizableObjectNodeTable::GetParentTables() const
+{
+	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+	IAssetRegistry& AssetRegistry = AssetRegistryModule.GetRegistry();
+	
+	TArray<FName> ReferencedTables;
+	AssetRegistry.Get()->GetReferencers(Structure.GetPackage().GetFName(), ReferencedTables, UE::AssetRegistry::EDependencyCategory::Package, UE::AssetRegistry::EDependencyQuery::NoRequirements);
+	
+	FARFilter Filter;
+	Filter.ClassPaths.Add(FTopLevelAssetPath(UDataTable::StaticClass()));
+
+	for (const FName& ReferencedTable : ReferencedTables)
+	{
+		Filter.PackageNames.Add(ReferencedTable);
+	}
+
+	for (int32 PathIndex = 0; PathIndex < FilterPaths.Num(); ++PathIndex)
+	{
+		Filter.PackagePaths.Add(FilterPaths[PathIndex]);
+	}
+
+	Filter.bRecursivePaths = true;
+
+	TArray<FAssetData> DataTableAssets;
+	AssetRegistry.Get()->GetAssets(Filter, DataTableAssets);
+
+	return DataTableAssets;
+}
+
 
 #undef LOCTEXT_NAMESPACE

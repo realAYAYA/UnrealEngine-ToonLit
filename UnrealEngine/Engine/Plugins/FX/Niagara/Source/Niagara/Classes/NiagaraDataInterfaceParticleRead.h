@@ -5,6 +5,7 @@
 #include "NiagaraDataInterfaceRW.h"
 #include "NiagaraCommon.h"
 #include "NiagaraEmitterInstance.h"
+#include "NiagaraDataInterfaceEmitterBinding.h"
 #include "NiagaraDataInterfaceParticleRead.generated.h"
 
 UCLASS(EditInlineNew, Category = "ParticleRead", CollapseCategories, meta = (DisplayName = "Particle Attribute Reader"), MinimalAPI)
@@ -28,11 +29,13 @@ class UNiagaraDataInterfaceParticleRead : public UNiagaraDataInterfaceRWBase
 	END_SHADER_PARAMETER_STRUCT()
 
 public:
-	UPROPERTY(EditAnywhere, Category = "ParticleRead")
-	FString EmitterName;
+	/** Selects which emitter the data interface will bind to, i.e the emitter we are contained within or a named emitter. */
+	UPROPERTY(EditAnywhere, Category = "Emitter")
+	FNiagaraDataInterfaceEmitterBinding EmitterBinding;
 
 	//UObject Interface
-	NIAGARA_API virtual void PostInitProperties()override;
+	NIAGARA_API virtual void PostInitProperties() override;
+	NIAGARA_API virtual void PostLoad() override;
 #if WITH_EDITOR
 	NIAGARA_API virtual void PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent);
 #endif
@@ -42,7 +45,6 @@ public:
 	NIAGARA_API virtual bool InitPerInstanceData(void* PerInstanceData, FNiagaraSystemInstance* SystemInstance) override;
 	NIAGARA_API virtual void DestroyPerInstanceData(void* PerInstanceData, FNiagaraSystemInstance* SystemInstance) override;
 	NIAGARA_API virtual int32 PerInstanceDataSize() const override;
-	NIAGARA_API virtual void GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions) override;
 	NIAGARA_API virtual void GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction& OutFunc) override;
 	virtual bool CanExecuteOnTarget(ENiagaraSimTarget Target) const override { return true; }
 	NIAGARA_API virtual bool Equals(const UNiagaraDataInterface* Other) const override;
@@ -97,7 +99,16 @@ public:
 	NIAGARA_API void ReadIDByIndex(FVectorVMExternalFunctionContext& Context, FName AttributeToRead);
 
 protected:
-	NIAGARA_API void GetPersistentIDFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions);
-	NIAGARA_API void GetIndexFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions);
+#if WITH_EDITORONLY_DATA
+	virtual void GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const override;
+
+	NIAGARA_API void GetPersistentIDFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions) const;
+	NIAGARA_API void GetIndexFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions) const;
+#endif
 	NIAGARA_API virtual bool CopyToInternal(UNiagaraDataInterface* Destination) const override;
+
+#if WITH_EDITORONLY_DATA
+	UPROPERTY()
+	FString EmitterName_DEPRECATED;
+#endif
 };

@@ -429,7 +429,7 @@ private:
 			}
 			// Success state - move on to the next task
 		case EConcertResponseCode::Success:
-			ConnectionTasks.RemoveAt(0, 1, /*bAllowShrinking*/false);
+			ConnectionTasks.RemoveAt(0, 1, EAllowShrinking::No);
 			if (ConnectionTasks.Num() > 0)
 			{
 				Notification->SetNotificationState(FAsyncNotificationStateData(Config.PendingTitleText.Get(FText::GetEmpty()), ConnectionTasks[0]->GetDescription(), EAsyncTaskNotificationState::Pending));

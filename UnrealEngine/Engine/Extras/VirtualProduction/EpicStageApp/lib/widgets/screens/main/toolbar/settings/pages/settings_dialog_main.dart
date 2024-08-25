@@ -1,18 +1,19 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+import 'package:epic_common/theme.dart';
+import 'package:epic_common/utilities/version.dart';
+import 'package:epic_common/widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../../../models/engine_connection.dart';
 import '../../../../../../models/navigator_keys.dart';
 import '../../../../../../models/settings/selected_actor_settings.dart';
 import '../../../../../../models/unreal_actor_manager.dart';
-import '../../../../../../utilities/debug_utilities.dart';
-import '../../../../../../utilities/unreal_colors.dart';
-import '../../../../../elements/asset_icon.dart';
 import '../../../../eula/eula_screen.dart';
-import '../settings_generic.dart';
+import 'settings_advanced_view.dart';
 import 'settings_log_list.dart';
 import 'settings_root_actor_picker.dart';
 
@@ -21,6 +22,9 @@ class SettingsDialogMain extends StatelessWidget {
   static const String route = '/';
 
   const SettingsDialogMain({Key? key}) : super(key: key);
+
+  final String _documentationUri =
+      'https://dev.epicgames.com/community/learning/courses/OKO/unreal-engine-unreal-stage-ios-app/';
 
   @override
   Widget build(BuildContext context) {
@@ -40,7 +44,7 @@ class SettingsDialogMain extends StatelessWidget {
               stream: Provider.of<SelectedActorSettings>(context, listen: false).displayClusterRootPath,
               builder: (_, final AsyncSnapshot<String> rootPath) => SettingsMenuItem(
                 title: localizations.settingsDialogRootActorSettingLabel,
-                iconPath: 'assets/images/icons/ndisplay.svg',
+                iconPath: 'packages/epic_common/assets/icons/ndisplay.svg',
                 trailing: Text(actorManager.getActorAtPath(rootPath.data ?? '')?.name ?? ''),
                 onTap: () => Navigator.of(context).pushNamed(SettingsDialogRootActorPicker.route),
               ),
@@ -48,29 +52,44 @@ class SettingsDialogMain extends StatelessWidget {
           if (bIsConnected) const SettingsMenuDivider(),
           SettingsMenuItem(
             title: localizations.settingsDialogApplicationLogLabel,
-            iconPath: 'assets/images/icons/log.svg',
+            iconPath: 'packages/epic_common/assets/icons/log.svg',
             onTap: () => Navigator.of(context).pushNamed(SettingsLogList.route),
+          ),
+          SettingsMenuItem(
+            title: localizations.settingsDialogAdvancedLabel,
+            iconPath: 'packages/epic_common/assets/icons/advanced.svg',
+            onTap: () => Navigator.of(context).pushNamed(SettingsAdvancedView.route),
           ),
           const SettingsMenuDivider(),
           SettingsMenuItem(
             title: localizations.settingsDialogApplicationHelpLabel,
-            iconPath: 'assets/images/icons/help.svg',
+            iconPath: 'packages/epic_common/assets/icons/help.svg',
             trailingIconPath: null,
-            onTap: () => showDebugAlert('Coming soon!'),
+            onTap: () => launchUrl(Uri.parse(_documentationUri)),
           ),
           SettingsMenuItem(
             title: localizations.settingsDialogApplicationAboutLabel,
-            iconPath: 'assets/images/icons/info.svg',
+            iconPath: 'packages/epic_common/assets/icons/info.svg',
             onTap: () => rootNavigatorKey.currentState?.pushNamed(EulaScreen.route, arguments: {'onPressed': () {}}),
           ),
-          if (bIsConnected) const SettingsMenuDivider(),
-          if (bIsConnected)
-            Container(
-              padding: EdgeInsets.all(8),
-              child: Row(
-                children: const [_DisconnectButton()],
-              ),
+          const SettingsMenuDivider(),
+          Container(
+            padding: EdgeInsets.symmetric(horizontal: 8),
+            height: 54,
+            child: Row(
+              children: [
+                if (bIsConnected) const _DisconnectButton(),
+                const Spacer(),
+                FutureBuilder<String>(
+                  future: getFriendlyPackageVersion(),
+                  builder: (context, snapshot) => Text(
+                    snapshot.data ?? '',
+                    style: Theme.of(context).textTheme.labelMedium,
+                  ),
+                ),
+              ],
             ),
+          ),
         ],
       ),
     );
@@ -103,7 +122,7 @@ class _DisconnectButton extends StatelessWidget {
             child: Center(
               child: Row(children: [
                 AssetIcon(
-                  path: 'assets/images/icons/exit.svg',
+                  path: 'packages/epic_common/assets/icons/exit.svg',
                   size: 24,
                   color: UnrealColors.warning,
                 ),

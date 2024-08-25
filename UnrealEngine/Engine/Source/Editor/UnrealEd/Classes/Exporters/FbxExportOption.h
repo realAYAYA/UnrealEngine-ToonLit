@@ -24,6 +24,18 @@ enum class EFbxExportCompatibility : uint8
 	FBX_2020,
 };
 
+// Bake options for animated properties of exported objects
+UENUM(BlueprintType)
+enum class EMovieSceneBakeType : uint8
+{
+	None = 0x000,
+
+	BakeChannels = 0x001,
+	BakeTransforms = 0x002,
+
+	BakeAll = BakeChannels | BakeTransforms,
+};
+
 UCLASS(config = EditorPerProjectUserSettings, MinimalAPI, BlueprintType)
 class UFbxExportOption : public UObject
 {
@@ -77,6 +89,14 @@ public:
 	/** If enabled, export sequencer animation in its local time, relative to its sequence. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, config, category = Animation)
 	uint32 bExportLocalTime : 1;
+
+	/** Bake settings for camera and light animation curves. Camera Scale not exported. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, AdvancedDisplay, config, Category = Animation)
+	EMovieSceneBakeType BakeCameraAndLightAnimation;
+
+	/** Bake settings for exported non-camera, non-light object animation */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, AdvancedDisplay, config, Category = Animation)
+	EMovieSceneBakeType BakeActorAnimation;
 
 	/* Set all the FProperty to the CDO value */
 	void ResetToDefault();

@@ -8,60 +8,6 @@
 class IHttpRequest;
 class IHttpResponse;
 
-namespace EHttpRequestStatus
-{
-	/**
-	 * Enumerates the current state of an Http request
-	 */
-	enum Type
-	{
-		/** Has not been started via ProcessRequest() */
-		NotStarted,
-		/** Currently being ticked and processed */
-		Processing,
-		/** Finished but failed */
-		Failed,
-		/** Failed because it was unable to connect (safe to retry) */
-		Failed_ConnectionError,
-		/** Finished and was successful */
-		Succeeded
-	};
-
-	/** @return the stringified version of the enum passed in */
-	inline const TCHAR* ToString(EHttpRequestStatus::Type EnumVal)
-	{
-		switch (EnumVal)
-		{
-			case NotStarted:
-			{
-				return TEXT("NotStarted");
-			}
-			case Processing:
-			{
-				return TEXT("Processing");
-			}
-			case Failed:
-			{
-				return TEXT("Failed");
-			}
-			case Failed_ConnectionError:
-			{
-				return TEXT("ConnectionError");
-			}
-			case Succeeded:
-			{
-				return TEXT("Succeeded");
-			}
-		}
-		return TEXT("");
-	}
-
-	inline bool IsFinished(const EHttpRequestStatus::Type Value)
-	{
-		return Value == Failed || Value == Failed_ConnectionError || Value == Succeeded;
-	}
-}
-
 /**
  * Enumerates thread policy about which thread to complete the http request
  */
@@ -87,7 +33,15 @@ typedef TSharedRef<IHttpResponse, ESPMode::ThreadSafe> FHttpResponseRef;
  * @param Response response received from the server if a successful connection was established
  * @param bConnectedSuccessfully - indicates whether or not the request was able to connect successfully
  */
-DECLARE_DELEGATE_ThreeParams(FHttpRequestCompleteDelegate, FHttpRequestPtr /*Request*/, FHttpResponsePtr /*Response*/, bool /*bConnectedSuccessfully*/);
+using FHttpRequestCompleteDelegate = TTSDelegate<void(FHttpRequestPtr /*Request*/, FHttpResponsePtr /*Response*/, bool /*bConnectedSuccessfully*/)>;
+
+/**
+ * Delegate called when an Http request receives status code
+ *
+ * @param Request original Http request that started things
+ * @param status code
+ */
+using FHttpRequestStatusCodeReceivedDelegate = TTSDelegate<void(FHttpRequestPtr /*Request*/, int32 /*StatusCode*/)>;
 
 /**
  * Delegate called when an Http request receives a header
@@ -96,7 +50,7 @@ DECLARE_DELEGATE_ThreeParams(FHttpRequestCompleteDelegate, FHttpRequestPtr /*Req
  * @param HeaderName the name of the header
  * @param NewHeaderValue the value of the header
  */
-DECLARE_DELEGATE_ThreeParams(FHttpRequestHeaderReceivedDelegate, FHttpRequestPtr /*Request*/, const FString& /*HeaderName*/, const FString& /*NewHeaderValue*/);
+using FHttpRequestHeaderReceivedDelegate = TTSDelegate<void(FHttpRequestPtr /*Request*/, const FString& /*HeaderName*/, const FString& /*NewHeaderValue*/)>;
 
 /**
  * Delegate called per tick to update an Http request upload or download size progress
@@ -105,7 +59,16 @@ DECLARE_DELEGATE_ThreeParams(FHttpRequestHeaderReceivedDelegate, FHttpRequestPtr
  * @param BytesSent the number of bytes sent / uploaded in the request so far.
  * @param BytesReceived the number of bytes received / downloaded in the response so far.
  */
-DECLARE_DELEGATE_ThreeParams(FHttpRequestProgressDelegate, FHttpRequestPtr /*Request*/, int32 /*BytesSent*/, int32 /*BytesReceived*/);
+using FHttpRequestProgressDelegate = TTSDelegate<void(FHttpRequestPtr /*Request*/, int32 /*BytesSent*/, int32 /*BytesReceived*/)>;
+
+/**
+ * Delegate called per tick to update an Http request upload or download size progress
+ *
+ * @param Request original Http request that started things
+ * @param BytesSent the number of bytes sent / uploaded in the request so far.
+ * @param BytesReceived the number of bytes received / downloaded in the response so far.
+ */
+using FHttpRequestProgressDelegate64 = TTSDelegate<void(FHttpRequestPtr /*Request*/, uint64 /*BytesSent*/, uint64 /*BytesReceived*/)>;
 
 /**
  * Delegate called when an Http request will be retried in the future
@@ -114,7 +77,7 @@ DECLARE_DELEGATE_ThreeParams(FHttpRequestProgressDelegate, FHttpRequestPtr /*Req
  * @param Response - response received from the server if a successful connection was established
  * @param SecondsToRetry - seconds in the future when the response will be retried
  */
-DECLARE_DELEGATE_ThreeParams(FHttpRequestWillRetryDelegate, FHttpRequestPtr /*Request*/, FHttpResponsePtr /*Response*/, float /*SecondsToRetry*/);
+using FHttpRequestWillRetryDelegate = TTSDelegate<void(FHttpRequestPtr /*Request*/, FHttpResponsePtr /*Response*/, float /*SecondsToRetry*/)>;
 
 /**
  * Delegate called when an Http request will send/recv data through stream
@@ -123,8 +86,7 @@ DECLARE_DELEGATE_ThreeParams(FHttpRequestWillRetryDelegate, FHttpRequestPtr /*Re
  * @param Length - The length of buffer to read/write
  * @return true if succeed, false if failed to read/write data
  */
-DECLARE_DELEGATE_RetVal_TwoParams(bool, FHttpRequestStreamDelegate, void*/*Ptr*/, int64/*Length*/);
-
+using FHttpRequestStreamDelegate = TTSDelegate<bool(void*/*Ptr*/, int64/*Length*/)>;
 
 /**
  * Delegate version of FArchive, for streaming interface
@@ -207,14 +169,14 @@ public:
 	 * @param ContentString - payload to set.
 	 */
 	virtual void SetContentAsString(const FString& ContentString) = 0;
-    
-    /**
-     * Sets the content of the request to stream from a file.
-     *
-     * @param FileName - filename from which to stream the body.
+
+	/**
+	 * Sets the content of the request to stream from a file.
+	 *
+	 * @param FileName - filename from which to stream the body.
 	 * @return True if the file is valid and will be used to stream the request. False otherwise.
-     */
-    virtual bool SetContentAsStreamedFile(const FString& Filename) = 0;
+	 */
+	virtual bool SetContentAsStreamedFile(const FString& Filename) = 0;
 
 	/**
 	 * Sets the content of the request to stream directly from an archive.
@@ -227,8 +189,13 @@ public:
 
 	/**
 	 * Sets the content of the request to stream directly from an delegate.
-	 * NOTE: The delegate will be called from another thread other than the game thread
-	 *
+	 * NOTE: 
+	 *   - The delegate will be called from another thread other than the game thread, make sure 
+	 *     it's thread-safe in there
+	 *   - Make sure the delegate is safe to be called until receiving the process complete callback
+	 *     or after canceling the request
+	 *     For example: don't destroy the instance even if using BindThreadSafeSP, because internally 
+	 *     it's calling Execute to handle error by returned value instead of calling ExecuteIfBound
 	 * @param StreamDelegate - delegate from which the payload should be streamed.
 	 * @return True if the delegate can be used to stream the request. False otherwise.
 	 */
@@ -296,6 +263,16 @@ public:
 	virtual void SetTimeout(float InTimeoutSecs) = 0;
 
 	/**
+	 * Sets an optional activity timeout in seconds for this HTTP request. After connecting to 
+	 * web server, if there is no activity(send or receive) happen for this time period, it will
+	 * trigger activity timeout
+	 * If set, this value overrides the default HTTP activity timeout
+	 *
+	 * @param InTimeoutSecs - Timeout for this HTTP request instance, in seconds
+	 */
+	virtual void SetActivityTimeout(float InTimeoutSecs) = 0;
+
+	/**
 	 * Clears the optional timeout in seconds for this HTTP request, causing the default value
 	 * from FHttpModule::GetTimeout() to be used.
 	 */
@@ -326,7 +303,13 @@ public:
 	/**
 	 * Delegate called to update the request/response progress. See FHttpRequestProgressDelegate
 	 */
+	UE_DEPRECATED(5.3, "OnRequestProgress has been deprecated, use OnRequestProgress64 instead")
 	virtual FHttpRequestProgressDelegate& OnRequestProgress() = 0;
+
+	/**
+	 * Delegate called to update the request/response progress. See FHttpRequestProgressDelegate64
+	 */
+	virtual FHttpRequestProgressDelegate64& OnRequestProgress64() = 0;
 	
 	/**
 	* Delegate called when the request will be retried
@@ -338,17 +321,15 @@ public:
 	 */
 	virtual FHttpRequestHeaderReceivedDelegate& OnHeaderReceived() = 0;
 
+	/** 
+	 * Delegate called to signal the receipt of a header.  See FHttpRequestStatusCodeReceivedDelegate
+	 */
+	virtual FHttpRequestStatusCodeReceivedDelegate& OnStatusCodeReceived() = 0;
+
 	/**
 	 * Called to cancel a request that is still being processed
 	 */
 	virtual void CancelRequest() = 0;
-
-	/**
-	 * Get the current status of the request being processed
-	 *
-	 * @return the current status
-	 */
-	virtual EHttpRequestStatus::Type GetStatus() const = 0;
 
 	/**
 	 * Get the associated Response
@@ -372,7 +353,14 @@ public:
 	virtual float GetElapsedTime() const = 0;
 
 	/**
-	 * Set thread policy about which thread to complete this request
+	 * Set thread policy about which thread to trigger the delegates, set by FHttpManager::SetRequestCompletedDelegate, 
+	 * IHttpRequest::OnStatusCodeReceived, IHttpRequest::OnHeaderReceived, IHttpRequest::OnRequestProgress64 and IHttpRequest::OnProcessRequestComplete.
+	 *
+	 * Note that when set it as CompleteOnHttpThread, the thread to trigger delegates could be any thread 
+	 * depends on the implementation. User code should make the delegate thread-safe and shouldn't assume 
+	 * it's triggered by the thread where this request get created.
+	 * 
+	 * @param InThreadPolicy - The thread policy to indicate which thread to trigger the delegates
 	 */
 	virtual void SetDelegateThreadPolicy(EHttpRequestDelegateThreadPolicy InThreadPolicy) = 0;
 
@@ -382,6 +370,19 @@ public:
 	 * @return The thread policy
 	 */
 	virtual EHttpRequestDelegateThreadPolicy GetDelegateThreadPolicy() const = 0;
+
+	/**
+	 * Blocking call to wait the request until it's completed
+	 *
+	 * WARNINGS: 
+	 *
+	 * - This is a blocking call, DON'T use this in a time-sensitive context
+	 * - Complete delegate will be used in this function so customized complete delegate is not supported
+	 * - This will force the usage of EHttpRequestDelegateThreadPolicy::CompleteOnHttpThread to make sure the
+	 *   request can complete, when this function get called from main thread. So if any other delegate is
+	 *   bound, make sure the bound delegate can handle the custom logic in a thread-safe way
+	 */
+	virtual void ProcessRequestUntilComplete() = 0;
 
 	/** 
 	 * Destructor for overrides 

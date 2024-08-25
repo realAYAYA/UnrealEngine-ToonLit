@@ -2,6 +2,7 @@
 
 #include "ConcertConsoleCommandExecutor.h"
 
+#include "ConsoleSettings.h"
 #include "Framework/Commands/InputChord.h"
 
 #define LOCTEXT_NAMESPACE "UnrealMultiUserUI"
@@ -47,6 +48,7 @@ namespace UE::MultiUserServer
 		};
 
 		IConsoleManager::Get().ForEachConsoleObjectThatContains(FConsoleObjectVisitor::CreateLambda(OnConsoleVariable), Input);
+		Out.Append(GetDefault<UConsoleSettings>()->GetFilteredManualAutoCompleteCommands(Input));
 	}
 
 	void FConcertConsoleCommandExecutor::GetExecHistory(TArray<FString>& Out)

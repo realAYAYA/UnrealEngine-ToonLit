@@ -133,15 +133,18 @@ TUniquePtr<FPackageWriterRecords::FPackage> FPackageWriterRecords::FindAndRemove
 
 void FPackageWriterRecords::ValidateCommit(FPackage& Record, const IPackageWriter::FCommitPackageInfo& Info) const
 {
-	checkf(Info.Status != IPackageWriter::ECommitStatus::Success || Record.Packages.Num() > 0,
-		TEXT("IPackageWriter->WritePackageData must be called before Commit if the Package save was successful."));
-	checkf(Info.Status != IPackageWriter::ECommitStatus::Success || Record.Packages.FindByPredicate([](const FPackageWriterRecords::FWritePackage& Package) { return Package.Info.MultiOutputIndex == 0; }),
-		TEXT("SavePackage must provide output 0 when saving multioutput packages."));
-	uint8 HasBulkDataType[IPackageWriter::FBulkDataInfo::NumTypes]{};
-	for (FBulkData& BulkRecord : Record.BulkDatas)
+	if (EnumHasAnyFlags(Info.WriteOptions, IPackageWriter::EWriteOptions::Write | IPackageWriter::EWriteOptions::ComputeHash))
 	{
-		checkf((HasBulkDataType[(int32)BulkRecord.Info.BulkDataType] & (1 << BulkRecord.Info.MultiOutputIndex)) == 0,
-			TEXT("IPackageWriter->WriteBulkData must not be called with more than one BulkData of the same type."));
-		HasBulkDataType[(int32)BulkRecord.Info.BulkDataType] |= 1 << BulkRecord.Info.MultiOutputIndex;
+		checkf(Info.Status != IPackageWriter::ECommitStatus::Success || Record.Packages.Num() > 0,
+			TEXT("IPackageWriter->WritePackageData must be called before Commit if the Package save was successful."));
+		checkf(Info.Status != IPackageWriter::ECommitStatus::Success || Record.Packages.FindByPredicate([](const FPackageWriterRecords::FWritePackage& Package) { return Package.Info.MultiOutputIndex == 0; }),
+			TEXT("SavePackage must provide output 0 when saving multioutput packages."));
+		uint8 HasBulkDataType[IPackageWriter::FBulkDataInfo::NumTypes]{};
+		for (FBulkData& BulkRecord : Record.BulkDatas)
+		{
+			checkf((HasBulkDataType[(int32)BulkRecord.Info.BulkDataType] & (1 << BulkRecord.Info.MultiOutputIndex)) == 0,
+				TEXT("IPackageWriter->WriteBulkData must not be called with more than one BulkData of the same type."));
+			HasBulkDataType[(int32)BulkRecord.Info.BulkDataType] |= 1 << BulkRecord.Info.MultiOutputIndex;
+		}
 	}
 }

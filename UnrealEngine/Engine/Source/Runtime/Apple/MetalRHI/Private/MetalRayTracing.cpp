@@ -125,7 +125,7 @@ FMetalRayTracingCompactionRequestHandler::FMetalRayTracingCompactionRequestHandl
 {
 	PendingRequests.Reserve(GMetalRayTracingMaxBatchedCompaction);
 
-	CompactedStructureSizeBuffer = FMetalBuffer(DeviceContext->GetDevice().NewBuffer(GMetalRayTracingMaxBatchedCompaction * sizeof(uint32), mtlpp::ResourceOptions::StorageModeShared));
+	CompactedStructureSizeBuffer = FMetalBuffer(DeviceContext->GetDevice().NewBuffer(GMetalRayTracingMaxBatchedCompaction * sizeof(uint32), MTL::ResourceStorageModeShared));
 	check(CompactedStructureSizeBuffer);
 
 	NumActiveRequests = 0;
@@ -167,14 +167,14 @@ void FMetalRayTracingCompactionRequestHandler::Update(FMetalDeviceContext* Devic
 	check(CompactedStructureSizeBuffer);
 
 	// Submit build commands.
-	mtlpp::Device& Device = DeviceContext->GetDevice();
+	MTL::Device* Device = DeviceContext->GetDevice();
 	FMetalRenderPass& RenderPass = DeviceContext->GetCurrentRenderPass();
 	FMetalCommandEncoder& Encoder = RenderPass.GetCurrentCommandEncoder();
 	Encoder.EndEncoding();
 	DeviceContext->GetCurrentState().SetStateDirty();
 
 	Encoder.BeginAccelerationStructureCommandEncoding();
-	mtlpp::AccelerationStructureCommandEncoder CommandEncoder = Encoder.GetAccelerationStructureCommandEncoder();
+	MTL::AccelerationStructureCommandEncoder* CommandEncoder = Encoder.GetAccelerationStructureCommandEncoder();
 	check(CommandEncoder.GetPtr());
 
 	// Process pending requests.
@@ -220,8 +220,8 @@ void FMetalRayTracingCompactionRequestHandler::Update(FMetalDeviceContext* Devic
 			break;
 		}
 
-		mtlpp::AccelerationStructure& SrcBLAS = ActiveRequestsTail->GetAccelerationStructureRead()->AccelerationStructureHandle;
-		mtlpp::AccelerationStructure& CompactedBLAS = ActiveRequestsTail->GetAccelerationStructureWrite()->AccelerationStructureHandle;
+		MTL::AccelerationStructure* SrcBLAS = ActiveRequestsTail->GetAccelerationStructureRead()->AccelerationStructureHandle;
+		MTL::AccelerationStructure* CompactedBLAS = ActiveRequestsTail->GetAccelerationStructureWrite()->AccelerationStructureHandle;
 		check(CompactedBLAS);
 
 		CommandEncoder.CopyAndCompactAccelerationStructure(SrcBLAS, CompactedBLAS);
@@ -237,7 +237,7 @@ void FMetalRayTracingCompactionRequestHandler::Update(FMetalDeviceContext* Devic
 /** Fills a MTLPrimitiveAccelerationStructureDescriptor with infos provided by the UE5 geometry descriptor.
  * This function assumes that GeometryDescriptors has already been allocated, and that you are responsible of its lifetime.
  */
-static void FillPrimitiveAccelerationStructureDesc(mtlpp::PrimitiveAccelerationStructureDescriptor& AccelerationStructureDescriptor, const FRayTracingGeometryInitializer& Initializer,  NSMutableArray<MTLAccelerationStructureGeometryDescriptor*>*& GeometryDescriptors)
+static void FillPrimitiveAccelerationStructureDesc(MTL::PrimitiveAccelerationStructureDescriptor* AccelerationStructureDescriptor, const FRayTracingGeometryInitializer& Initializer,  NSMutableArray<MTLAccelerationStructureGeometryDescriptor*>*& GeometryDescriptors)
 {
 	// Populate Segments Descriptors.
 	FMetalRHIBuffer* IndexBuffer = ResourceCast(Initializer.IndexBuffer.GetReference());
@@ -251,7 +251,7 @@ static void FillPrimitiveAccelerationStructureDesc(mtlpp::PrimitiveAccelerationS
 		FMetalRHIBuffer* VertexBuffer = ResourceCast(Segment.VertexBuffer.GetReference());
 		check(VertexBuffer);
 
-		mtlpp::AccelerationStructureTriangleGeometryDescriptor GeometryDescriptor = mtlpp::AccelerationStructureTriangleGeometryDescriptor();
+		MTL::AccelerationStructureTriangleGeometryDescriptor GeometryDescriptor = MTL::AccelerationStructureTriangleGeometryDescriptor();
 		GeometryDescriptor.SetOpaque(Segment.bForceOpaque);
 		GeometryDescriptor.SetTriangleCount((Segment.bEnabled) ? Segment.NumPrimitives : 0);
 		GeometryDescriptor.SetAllowDuplicateIntersectionFunctionInvocation(Segment.bAllowDuplicateAnyHitShaderInvocation);
@@ -277,12 +277,12 @@ static void FillPrimitiveAccelerationStructureDesc(mtlpp::PrimitiveAccelerationS
 	}
 
 	// Populate Acceleration Structure Descriptor.
-	mtlpp::AccelerationStructureUsage Usage = mtlpp::AccelerationStructureUsage::None;
+	MTL::AccelerationStructureUsage Usage = MTL::AccelerationStructureUsage::None;
 
 	if (Initializer.bAllowUpdate)
-		Usage = mtlpp::AccelerationStructureUsage::Refit;
+		Usage = MTL::AccelerationStructureUsageRefit;
 	else if (Initializer.bFastBuild)
-		Usage = mtlpp::AccelerationStructureUsage::PreferFastBuild;
+		Usage = MTL::AccelerationStructureUsagePreferFastBuild;
 
 	AccelerationStructureDescriptor.SetUsage(Usage);
 	AccelerationStructureDescriptor.SetGeometryDescriptors((__bridge NSArray*)GeometryDescriptors);
@@ -291,13 +291,13 @@ static void FillPrimitiveAccelerationStructureDesc(mtlpp::PrimitiveAccelerationS
 	[AccelerationStructureDescriptor retain];
 }
 
-static FRayTracingAccelerationStructureSize CalcRayTracingGeometrySize(mtlpp::AccelerationStructureDescriptor& AccelerationStructureDescriptor)
+static FRayTracingAccelerationStructureSize CalcRayTracingGeometrySize(MTL::AccelerationStructureDescriptor* AccelerationStructureDescriptor)
 {
 	// Fill and return the descriptor.
 	FMetalDeviceContext& Context = GetMetalDeviceContext();
-	mtlpp::Device& Device = Context.GetDevice();
+	MTL::Device* Device = Context.GetDevice();
 
-	mtlpp::AccelerationStructureSizes DescriptorSize = Device.AccelerationStructureSizesWithDescriptor(AccelerationStructureDescriptor);
+	MTL::AccelerationStructureSizes DescriptorSize = Device.AccelerationStructureSizesWithDescriptor(AccelerationStructureDescriptor);
 
 	FRayTracingAccelerationStructureSize SizeInfo = {};
 	SizeInfo.ResultSize = Align(DescriptorSize.accelerationStructureSize, GRHIRayTracingAccelerationStructureAlignment);
@@ -307,30 +307,28 @@ static FRayTracingAccelerationStructureSize CalcRayTracingGeometrySize(mtlpp::Ac
 	return SizeInfo;
 }
 
-FRayTracingAccelerationStructureSize FMetalDynamicRHI::RHICalcRayTracingGeometrySize(const FRayTracingGeometryInitializer& Initializer)
+FRayTracingAccelerationStructureSize FMetalDynamicRHI::RHICalcRayTracingGeometrySize(FRHICommandListBase& RHICmdList, const FRayTracingGeometryInitializer& Initializer)
 {
-	@autoreleasepool
-	{
-		mtlpp::PrimitiveAccelerationStructureDescriptor AccelerationStructureDescriptor = mtlpp::PrimitiveAccelerationStructureDescriptor();
-		NSMutableArray<MTLAccelerationStructureGeometryDescriptor*>* GeometryDescriptors = [[NSMutableArray<MTLAccelerationStructureGeometryDescriptor*> new] init];
-		FillPrimitiveAccelerationStructureDesc(AccelerationStructureDescriptor, Initializer, GeometryDescriptors);
-		[GeometryDescriptors release];
+    MTL_SCOPED_AUTORELEASE_POOL;
+	
+	MTL::PrimitiveAccelerationStructureDescriptor AccelerationStructureDescriptor = MTL::PrimitiveAccelerationStructureDescriptor();
+	NSMutableArray<MTLAccelerationStructureGeometryDescriptor*>* GeometryDescriptors = [[NSMutableArray<MTLAccelerationStructureGeometryDescriptor*> new] init];
+	FillPrimitiveAccelerationStructureDesc(AccelerationStructureDescriptor, Initializer, GeometryDescriptors);
+	[GeometryDescriptors release];
 
-		return CalcRayTracingGeometrySize(AccelerationStructureDescriptor);
-	}
+	return CalcRayTracingGeometrySize(AccelerationStructureDescriptor);
 }
 
 FRayTracingAccelerationStructureSize FMetalDynamicRHI::RHICalcRayTracingSceneSize(uint32 MaxInstances, ERayTracingAccelerationStructureFlags Flags)
 {
 	// TODO: Do we need to take in account the flags provided by the function call?
 	// TODO: Can we get away with the instance count only? (works on AS; what about AMD?)
-	@autoreleasepool
-	{
-		mtlpp::InstanceAccelerationStructureDescriptor InstanceDescriptor = mtlpp::InstanceAccelerationStructureDescriptor();
-		InstanceDescriptor.SetInstanceCount(MaxInstances);
+    MTL_SCOPED_AUTORELEASE_POOL;
+    
+    MTL::InstanceAccelerationStructureDescriptor InstanceDescriptor = MTL::InstanceAccelerationStructureDescriptor();
+    InstanceDescriptor.SetInstanceCount(MaxInstances);
 
-		return CalcRayTracingGeometrySize(InstanceDescriptor);
-	}
+    return CalcRayTracingGeometrySize(InstanceDescriptor);
 }
 
 FMetalRayTracingGeometry::FMetalRayTracingGeometry(FRHICommandListBase& RHICmdList, const FRayTracingGeometryInitializer& InInitializer)
@@ -350,7 +348,7 @@ FMetalRayTracingGeometry::FMetalRayTracingGeometry(FRHICommandListBase& RHICmdLi
 
 	GeomArray = [NSMutableArray arrayWithCapacity:Initializer.Segments.Num()];
 
-	AccelerationStructureDescriptor = mtlpp::PrimitiveAccelerationStructureDescriptor();
+	AccelerationStructureDescriptor = MTL::PrimitiveAccelerationStructureDescriptor();
 	RebuildDescriptors();
 
 	// NOTE: We do not use the RHI API in order to avoid re-filling another descriptor.
@@ -428,9 +426,9 @@ void FMetalRayTracingGeometry::RebuildDescriptors()
 	[GeomArray removeAllObjects];
 
 	FMetalDeviceContext& Context = GetMetalDeviceContext();
-	mtlpp::Device& Device = Context.GetDevice();
+	MTL::Device* Device = Context.GetDevice();
 
-	AccelerationStructureDescriptor = mtlpp::PrimitiveAccelerationStructureDescriptor();
+	AccelerationStructureDescriptor = MTL::PrimitiveAccelerationStructureDescriptor();
 	FillPrimitiveAccelerationStructureDesc(AccelerationStructureDescriptor, Initializer, GeomArray);
 }
 
@@ -450,7 +448,7 @@ FMetalRayTracingScene::FMetalRayTracingScene(FRayTracingSceneInitializer2 InInit
 	{
 		FLayerData& Layer = Layers[LayerIndex];
 
-		mtlpp::InstanceAccelerationStructureDescriptor InstanceDescriptor;
+		MTL::InstanceAccelerationStructureDescriptor* InstanceDescriptor;
 		InstanceDescriptor.SetInstanceCount(Initializer.NumNativeInstancesPerLayer[LayerIndex]);
 
 		Layer.SizeInfo = CalcRayTracingGeometrySize(InstanceDescriptor);
@@ -492,7 +490,7 @@ void FMetalRayTracingScene::BindBuffer(FRHIBuffer* InBuffer, uint32 InBufferOffs
 	AccelerationStructureBuffer = ResourceCast(InBuffer);
 
 	FMetalDeviceContext& Context = GetMetalDeviceContext();
-	mtlpp::Device& Device = Context.GetDevice();
+	MTL::Device* Device = Context.GetDevice();
 
 	for (auto& Layer : Layers)
 	{
@@ -532,9 +530,9 @@ void FMetalRayTracingScene::BuildPerInstanceGeometryParameterBuffer()
 		FMetalRayTracingGeometry* Geometry = ResourceCast(GeometryRHI);
 		Geometry->SceneIndex = ParameterIndex;
 
-		mtlpp::AccelerationStructure& AS = Geometry->GetAccelerationStructureRead()->AccelerationStructureHandle;
+		MTL::AccelerationStructure* AS = Geometry->GetAccelerationStructureRead()->AccelerationStructureHandle;
 		[MutableAccelerationStructures addObject:AS];
-		InstanceBufferSRV->ReferencedResources.Add(TTuple<ns::AutoReleased<mtlpp::Resource>, mtlpp::ResourceUsage>(ns::AutoReleased<mtlpp::Resource>(AS), mtlpp::ResourceUsage::Read));
+		InstanceBufferSRV->ReferencedResources.Add(TTuple<MTL::Resource*, MTL::ResourceUsage>((MTL::Resource*)(AS), MTL::ResourceUsageRead));
 
 		const FRayTracingGeometryInitializer& GeometryInitializer = Geometry->GetInitializer();
 
@@ -609,7 +607,7 @@ void FMetalRayTracingScene::BuildAccelerationStructure(
 	}
 
 	FMetalDeviceContext& Context = GetMetalDeviceContext();
-	mtlpp::Device& Device = Context.GetDevice();
+	MTL::Device* Device = Context.GetDevice();
 
 	// Reset current renderpass to kick off acceleration structures build
 	FMetalRenderPass& RenderPass = Context.GetCurrentRenderPass();
@@ -624,7 +622,7 @@ void FMetalRayTracingScene::BuildAccelerationStructure(
 	Context.GetCurrentState().SetStateDirty();
 
 	Encoder.BeginAccelerationStructureCommandEncoding();
-	mtlpp::AccelerationStructureCommandEncoder CommandEncoder = Encoder.GetAccelerationStructureCommandEncoder();
+	MTL::AccelerationStructureCommandEncoder* CommandEncoder = Encoder.GetAccelerationStructureCommandEncoder();
 	check(CommandEncoder.GetPtr());
 
 	const uint32 NumLayers = Initializer.NumNativeInstancesPerLayer.Num();
@@ -637,15 +635,15 @@ void FMetalRayTracingScene::BuildAccelerationStructure(
 	{
 		FLayerData& Layer = Layers[LayerIndex];
 
-		mtlpp::InstanceAccelerationStructureDescriptor InstanceDescriptor = mtlpp::InstanceAccelerationStructureDescriptor();
+		MTL::InstanceAccelerationStructureDescriptor* InstanceDescriptor = MTL::InstanceAccelerationStructureDescriptor();
 		InstanceDescriptor.SetInstanceCount(Initializer.NumNativeInstancesPerLayer[LayerIndex]);
 		InstanceDescriptor.SetInstanceDescriptorBuffer(CurInstanceBuffer);
 		InstanceDescriptor.SetInstanceDescriptorBufferOffset(InstanceBufferOffset);
 		InstanceDescriptor.SetInstancedAccelerationStructures((__bridge NSArray*)MutableAccelerationStructures);
 		InstanceDescriptor.SetInstanceDescriptorStride(GRHIRayTracingInstanceDescriptorSize);
-		InstanceDescriptor.SetInstanceDescriptorType(mtlpp::AccelerationStructureInstanceDescriptorType::UserID);
+		InstanceDescriptor.SetInstanceDescriptorType(MTL::AccelerationStructureInstanceDescriptorType::UserID);
 
-		mtlpp::AccelerationStructure& AS = ResourceCast(Layer.ShaderResourceView->GetBuffer())->AccelerationStructureHandle;
+		MTL::AccelerationStructure* AS = ResourceCast(Layer.ShaderResourceView->GetBuffer())->AccelerationStructureHandle;
 		CommandEncoder.BuildAccelerationStructure(AS, InstanceDescriptor, CurScratchBuffer, ScratchOffset);
 	}
 
@@ -664,7 +662,7 @@ void FMetalRHICommandContext::RHIBuildAccelerationStructure(const FRayTracingSce
 		InstanceBuffer, SceneBuildParams.InstanceBufferOffset);
 }
 
-void FMetalDynamicRHI::RHITransferRayTracingGeometryUnderlyingResource(FRHIRayTracingGeometry* DestGeometry, FRHIRayTracingGeometry* SrcGeometry)
+void FMetalDynamicRHI::RHITransferRayTracingGeometryUnderlyingResource(FRHICommandListBase& RHICmdList, FRHIRayTracingGeometry* DestGeometry, FRHIRayTracingGeometry* SrcGeometry)
 {
 	check(DestGeometry);
 	FMetalRayTracingGeometry* Dest = ResourceCast(DestGeometry);
@@ -722,7 +720,7 @@ void FMetalRHICommandContext::RHIBuildAccelerationStructures(const TArrayView<co
 	FMetalRHIBuffer* ScratchBuffer = ResourceCast(ScratchBufferRange.Buffer);
 	uint32 ScratchBufferOffset = static_cast<uint32>(ScratchBufferRange.Offset);
 
-	mtlpp::Device& Device = Context->GetDevice();
+	MTL::Device* Device = Context->GetDevice();
 
 	TArray<TTuple<FMetalRayTracingGeometry*, uint32>, TInlineAllocator<32>> GeometryToBuild;
 	TArray<TTuple<FMetalRayTracingGeometry*, uint32>, TInlineAllocator<32>> GeometryToRefit;
@@ -764,7 +762,7 @@ void FMetalRHICommandContext::RHIBuildAccelerationStructures(const TArrayView<co
 	Context->GetCurrentState().SetStateDirty();
 
 	Encoder.BeginAccelerationStructureCommandEncoding();
-	mtlpp::AccelerationStructureCommandEncoder CommandEncoder = Encoder.GetAccelerationStructureCommandEncoder();
+	MTL::AccelerationStructureCommandEncoder* CommandEncoder = Encoder.GetAccelerationStructureCommandEncoder();
 	check(CommandEncoder.GetPtr());
 
 	for (TTuple<FMetalRayTracingGeometry*, uint32>& BuildRequest : GeometryToBuild)
@@ -785,8 +783,8 @@ void FMetalRHICommandContext::RHIBuildAccelerationStructures(const TArrayView<co
 		FMetalRayTracingGeometry* Geometry = RefitRequest.Key;
 		uint32 ScratchOffset = RefitRequest.Value;
 
-		mtlpp::AccelerationStructure& SrcBLAS = Geometry->GetAccelerationStructureRead()->AccelerationStructureHandle;
-		mtlpp::AccelerationStructure& DstBLAS = Geometry->GetAccelerationStructureWrite()->AccelerationStructureHandle;
+		MTL::AccelerationStructure* SrcBLAS = Geometry->GetAccelerationStructureRead()->AccelerationStructureHandle;
+		MTL::AccelerationStructure* DstBLAS = Geometry->GetAccelerationStructureWrite()->AccelerationStructureHandle;
 
 		CommandEncoder.RefitAccelerationStructure(
 			SrcBLAS,
@@ -883,16 +881,14 @@ void FMetalRHICommandContext::RHISetRayTracingBindings(
 
 FRayTracingSceneRHIRef FMetalDynamicRHI::RHICreateRayTracingScene(FRayTracingSceneInitializer2 Initializer)
 {
-	@autoreleasepool {
-		return new FMetalRayTracingScene(MoveTemp(Initializer));
-	}
+    MTL_SCOPED_AUTORELEASE_POOL;
+    return new FMetalRayTracingScene(MoveTemp(Initializer));
 }
 
 FRayTracingGeometryRHIRef FMetalDynamicRHI::RHICreateRayTracingGeometry(FRHICommandListBase& RHICmdList, const FRayTracingGeometryInitializer& Initializer)
 {
-	@autoreleasepool {
-		return new FMetalRayTracingGeometry(RHICmdList, Initializer);
-	}
+    MTL_SCOPED_AUTORELEASE_POOL;
+    return new FMetalRayTracingGeometry(RHICmdList, Initializer);
 }
 
 FRayTracingPipelineStateRHIRef FMetalDynamicRHI::RHICreateRayTracingPipelineState(const FRayTracingPipelineStateInitializer& Initializer)

@@ -93,6 +93,7 @@ protected:
 
 	// Map of allocated v3 nodes that are members of the class
 	TMap<class UAnimGraphNode_Base*, FProperty*> AllocatedAnimNodes;
+	TMap<class UAnimGraphNode_Base*, FProperty*> AllocatedAnimNodeHandlers;
 	TMap<FProperty*, class UAnimGraphNode_Base*> AllocatedNodePropertiesToNodes;
 	TMap<FProperty*, class UAnimGraphNode_Base*> AllocatedNodeConstantPropertiesToNodes;
 	TMap<int32, FProperty*> AllocatedPropertiesByIndex;

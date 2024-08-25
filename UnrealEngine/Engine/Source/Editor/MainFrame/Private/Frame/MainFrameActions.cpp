@@ -293,7 +293,11 @@ void FMainFrameActionCallbacks::ChoosePackagesToSave()
 	const bool bClosingEditor = false;
 	const bool bNotifyNoPackagesSaved = true;
 	const bool bCanBeDeclined = false;
-	FEditorFileUtils::SaveDirtyPackages( bPromptUserToSave, bSaveMapPackages, bSaveContentPackages, bFastSave, bNotifyNoPackagesSaved, bCanBeDeclined );
+
+	// Skip because user will be prompted to select the packages to save, so we don't want the parent package save actually saving an unselected external package
+	const bool bSkipExternalObjectSave = true;
+		
+	FEditorFileUtils::SaveDirtyPackages( bPromptUserToSave, bSaveMapPackages, bSaveContentPackages, bFastSave, bNotifyNoPackagesSaved, bCanBeDeclined, nullptr, FEditorFileUtils::FShouldIgnorePackage::Default, bSkipExternalObjectSave);
 }
 
 void FMainFrameActionCallbacks::ViewChangelists()

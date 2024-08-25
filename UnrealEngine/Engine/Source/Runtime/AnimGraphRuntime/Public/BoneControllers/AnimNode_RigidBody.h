@@ -14,7 +14,8 @@ struct FBodyInstance;
 struct FConstraintInstance;
 class FEvent;
 
-extern ANIMGRAPHRUNTIME_API TAutoConsoleVariable<int32> CVarEnableRigidBodyNode;
+extern ANIMGRAPHRUNTIME_API bool bEnableRigidBodyNode;
+extern ANIMGRAPHRUNTIME_API FAutoConsoleVariableRef CVarEnableRigidBodyNode;
 extern ANIMGRAPHRUNTIME_API TAutoConsoleVariable<int32> CVarEnableRigidBodyNodeSimulation;
 extern ANIMGRAPHRUNTIME_API TAutoConsoleVariable<int32> CVarRigidBodyLODThreshold;
 
@@ -178,20 +179,38 @@ struct FAnimNode_RigidBody : public FAnimNode_SkeletalControlBase
 	// TEMP: Exposed for use in PhAt as a quick way to get drag handles working with Chaos
 	virtual ImmediatePhysics::FSimulation* GetSimulation() { return PhysicsSimulation; }
 
+	/**
+	 * Set the override physics asset. This will automatically trigger a physics re-init in case the override physics asset changes. 
+	 * Users can get access to this in the Animation Blueprint via the Animation Node Functions.
+	 */
+	void SetOverridePhysicsAsset(UPhysicsAsset* PhysicsAsset);
+
 	UPhysicsAsset* GetPhysicsAsset() const { return UsePhysicsAsset; }
 
 public:
-	/** Physics asset to use. If empty use the skeletal mesh's default physics asset */
+	/** Physics asset to use. If empty use the skeletal mesh's default physics asset in case Default To Skeletal Mesh Physics Asset is set to True. */
 	UPROPERTY(EditAnywhere, Category = Settings)
 	TObjectPtr<UPhysicsAsset> OverridePhysicsAsset;
 
+	/** Use the skeletal mesh physics asset as default in case set to True. The Override Physics Asset will always have priority over this. */
+	UPROPERTY(EditAnywhere, Category = Settings)
+	bool bDefaultToSkeletalMeshPhysicsAsset = true;
+
 private:
+	/** Get the physics asset candidate to be used while respecting the bDefaultToSkeletalMeshPhysicsAsset and the priority to the override physics asset. */
+	UPhysicsAsset* GetPhysicsAssetToBeUsed(const UAnimInstance* InAnimInstance) const;
+
 	FTransform PreviousCompWorldSpaceTM;
 	FTransform CurrentTransform;
 	FTransform PreviousTransform;
 
 	UPhysicsAsset* UsePhysicsAsset;
+
 public:
+	/** Enable if you want to ignore the p.RigidBodyLODThreshold CVAR and force the node to solely use the LOD threshold. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = Performance, meta = (PinHiddenByDefault))
+	bool bUseLocalLODThresholdOnly = false;
+
 	/** Override gravity*/
 	UPROPERTY(EditAnywhere, Category = Settings, meta = (PinHiddenByDefault, editcondition = "bOverrideWorldGravity"))
 	FVector OverrideWorldGravity;

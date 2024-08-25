@@ -73,7 +73,7 @@ void FConcertServerSequencerManager::HandleSequencerOpenEvent(const FConcertSess
 	FConcertOpenSequencerState& SequencerState = SequencerStates.FindOrAdd(*InEvent.SequenceObjectPath);
 	SequencerState.ClientEndpointIds.AddUnique(InEventContext.SourceEndpointId);
 	SequencerState.State.SequenceObjectPath = InEvent.SequenceObjectPath;
-	SequencerState.TakeData = InEvent.TakeData;
+	SequencerState.TakeData = InEvent.TakeData.Bytes.Num() > 0 ? InEvent.TakeData : SequencerState.TakeData;
 
 	// Forward the message to the other clients
 	TArray<FGuid> ClientIds = LiveSession->GetSession().GetSessionClientEndpointIds();

@@ -5,7 +5,7 @@ from switchboard.switchboard_logging import LOGGER
 
 from . import version_helpers
 
-from PySide2 import QtCore
+from PySide6 import QtCore
 
 import pathlib, re, subprocess, threading, time, typing
 

@@ -65,19 +65,22 @@ private:
 };
 
 // ----------------------------------------------------------------------------------
-// Describes a texture and an associated subregion (for heightmap texture sharing):
+// Describes a texture and an associated subregion (for heightmap texture sharing), and, optionally, a single channel (for weightmap texture sharing) :
 struct FTexture2DResourceSubregion
 {
 	FTexture2DResourceSubregion() = default;
 
-	FTexture2DResourceSubregion(FTexture2DResource* InTexture, const FIntRect& InSubregion)
+	FTexture2DResourceSubregion(FTexture2DResource* InTexture, const FIntRect& InSubregion, int32 InChannelIndex = INDEX_NONE)
 		: Texture(InTexture)
 		, Subregion(InSubregion)
+		, ChannelIndex(InChannelIndex)
 	{}
 
 	FTexture2DResource* Texture = nullptr;
 	FIntRect Subregion;
+	int32 ChannelIndex = INDEX_NONE;
 };
+
 
 // ----------------------------------------------------------------------------------
 // Struct that helps tracking external textures in the render graph

@@ -48,7 +48,7 @@ namespace RewindDebugger
 		{
 			// Clear curve
 			TArray<SCurveTimelineView::FTimelineCurveData::CurvePoint> & CurvePoints = CurveData->Points;
-			CurvePoints.SetNum(0, false);
+			CurvePoints.SetNum(0, EAllowShrinking::No);
 
 			// Draw curve overtime
 			ReadObjectPropertyValueOverTime(StartTime, EndTime, [&CurvePoints](const FObjectPropertyValue& InValue, uint32 InValueIndex, const FObjectPropertiesMessage& InMessage, const IGameplayProvider::ObjectPropertiesTimeline &  InTimeline , double InStart, double InEndTime)

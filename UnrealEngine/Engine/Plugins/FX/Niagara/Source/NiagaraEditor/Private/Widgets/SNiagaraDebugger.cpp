@@ -719,9 +719,12 @@ void SNiagaraDebugger::Construct(const FArguments& InArgs)
 	Debugger = InArgs._Debugger;
 
 	NiagaraDebugHudTab::RegisterTabSpawner(TabManager);
+	NiagaraOutlinerTab::RegisterTabSpawner(TabManager, Debugger);
+
+#if WITH_UNREAL_TARGET_DEVELOPER_TOOLS
 	NiagaraDebugSpawnTab::RegisterTabSpawner(TabManager, Debugger);
 	NiagaraPerformanceTab::RegisterTabSpawner(TabManager, FOnExecConsoleCommand::CreateSP(Debugger.ToSharedRef(), &FNiagaraDebugger::ExecConsoleCommand));
-	NiagaraOutlinerTab::RegisterTabSpawner(TabManager, Debugger);
+#endif
 
 #if WITH_SESSION_FRONTEND
 	ISessionServicesModule& SessionServicesModule = FModuleManager::LoadModuleChecked<ISessionServicesModule>("SessionServices");
@@ -746,11 +749,13 @@ void SNiagaraDebugger::Construct(const FArguments& InArgs)
 					->SetHideTabWell(true)
 					->AddTab(NiagaraDebugHudTab::TabName, ETabState::OpenedTab)
 					->AddTab(NiagaraOutlinerTab::TabName, ETabState::OpenedTab)
-					->AddTab(NiagaraPerformanceTab::TabName, ETabState::OpenedTab)
 #if WITH_SESSION_FRONTEND
 					->AddTab(NiagaraSessionBrowserTab::TabName, ETabState::OpenedTab)
 #endif
+#if WITH_UNREAL_TARGET_DEVELOPER_TOOLS
+					->AddTab(NiagaraPerformanceTab::TabName, ETabState::OpenedTab)
 					->AddTab(NiagaraDebugSpawnTab::TabName, ETabState::OpenedTab)
+#endif
 					->SetForegroundTab(NiagaraDebugHudTab::TabName)
 				)
 			)

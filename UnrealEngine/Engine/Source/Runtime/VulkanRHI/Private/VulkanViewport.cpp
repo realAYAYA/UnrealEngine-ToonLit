@@ -373,9 +373,10 @@ FVulkanFramebuffer::FVulkanFramebuffer(FVulkanDevice& Device, const FRHISetRende
 				, ArraySliceIndex
 				, NumArraySlices
 				, true
+				, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | (Texture->ImageUsageFlags & VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT)
 			);
 		}
-		else if (Texture->GetViewType() == VK_IMAGE_VIEW_TYPE_CUBE)
+		else if (Texture->GetViewType() == VK_IMAGE_VIEW_TYPE_CUBE || Texture->GetViewType() == VK_IMAGE_VIEW_TYPE_CUBE_ARRAY)
 		{
 			// Cube always renders one face at a time
 			INC_DWORD_STAT(STAT_VulkanNumImageViews);
@@ -391,6 +392,7 @@ FVulkanFramebuffer::FVulkanFramebuffer(FVulkanDevice& Device, const FRHISetRende
 				, InRTInfo.ColorRenderTarget[Index].ArraySliceIndex
 				, 1
 				, true
+				, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | (Texture->ImageUsageFlags & VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT)
 			);
 		}
 		else if (Texture->GetViewType() == VK_IMAGE_VIEW_TYPE_3D)
@@ -406,7 +408,7 @@ FVulkanFramebuffer::FVulkanFramebuffer(FVulkanDevice& Device, const FRHISetRende
 				, 0
 				, Desc.Depth
 				, true
-				, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+				, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | (Texture->ImageUsageFlags & VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT)
 			);
 		}
 		else
@@ -737,9 +739,9 @@ void FVulkanViewport::CreateSwapchain(FVulkanSwapChainRecreateInfo* RecreateInfo
 			}
 
 #if VULKAN_ENABLE_DRAW_MARKERS
-			if (Device->GetDebugMarkerSetObjectName())
+			if (Device->GetSetDebugName())
 			{
-				VulkanRHI::SetDebugMarkerName(Device->GetDebugMarkerSetObjectName(), Device->GetInstanceHandle(), BackBufferImages[Index], "RenderingBackBuffer");
+				VulkanRHI::SetDebugName(Device->GetSetDebugName(), Device->GetInstanceHandle(), BackBufferImages[Index], "RenderingBackBuffer");
 			}
 #endif
 		}
@@ -783,9 +785,9 @@ void FVulkanViewport::CreateSwapchain(FVulkanSwapChainRecreateInfo* RecreateInfo
 
 		RenderingBackBuffer = new FVulkanTexture(*Device, Desc, nullptr);
 #if VULKAN_ENABLE_DRAW_MARKERS
-		if (Device->GetDebugMarkerSetObjectName())
+		if (Device->GetSetDebugName())
 		{
-			VulkanRHI::SetDebugMarkerName(Device->GetDebugMarkerSetObjectName(), Device->GetInstanceHandle(), RenderingBackBuffer->Image, "RenderingBackBuffer");
+			VulkanRHI::SetDebugName(Device->GetSetDebugName(), Device->GetInstanceHandle(), RenderingBackBuffer->Image, "RenderingBackBuffer");
 		}
 #endif
 	}

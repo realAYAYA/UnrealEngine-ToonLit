@@ -38,6 +38,8 @@ public:
 	DECLARE_DERIVED_EVENT(FLevelInstanceEditorModule, ILevelInstanceEditorModule::FTryExitEditorModeEvent, FTryExitEditorModeEvent);
 	virtual FTryExitEditorModeEvent& OnTryExitEditorMode() override { return TryExitEditorModeEvent; }
 
+	virtual bool IsEditInPlaceStreamingEnabled() const override;
+
 private:
 	void OnEditorModeIDChanged(const FEditorModeID& InModeID, bool bIsEnteringMode);
 	void OnLevelActorDeleted(AActor* Actor);

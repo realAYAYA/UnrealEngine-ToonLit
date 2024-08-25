@@ -23,6 +23,8 @@
 struct FMetasoundFrontendClass;
 struct FMetasoundFrontendClassInterface;
 
+enum class EMetasoundFrontendClassType : uint8;
+
 
 namespace Metasound
 {
@@ -121,7 +123,7 @@ UENUM()
 enum class EMetasoundFrontendClassType : uint8
 {
 	// The MetaSound class is defined externally, in compiled code or in another document.
-	External,
+	External = 0,
 
 	// The MetaSound class is a graph within the containing document.
 	Graph,
@@ -148,11 +150,12 @@ enum class EMetasoundFrontendClassType : uint8
 	VariableMutator,
 
 	// The MetaSound class is defined only by the Frontend, and associatively
-	// performs a functional replacement operation in a pre-build step.
+	// performs a functional operation within the given document in a registration/cook step.
 	Template,
 
 	Invalid UMETA(Hidden)
 };
+
 
 // General purpose version number for Metasound Frontend objects.
 USTRUCT(BlueprintType)
@@ -596,6 +599,26 @@ struct FMetasoundFrontendEdge
 	{
 		return FMetasoundFrontendVertexHandle { ToNodeID, ToVertexID };
 	}
+
+	friend bool operator==(const FMetasoundFrontendEdge& InLHS, const FMetasoundFrontendEdge& InRHS)
+	{
+		return InLHS.FromNodeID == InRHS.FromNodeID
+			&& InLHS.FromVertexID == InRHS.FromVertexID
+			&& InLHS.ToNodeID == InRHS.ToNodeID
+			&& InLHS.ToVertexID == InRHS.ToVertexID;
+	}
+
+	friend bool operator!=(const FMetasoundFrontendEdge& InLHS, const FMetasoundFrontendEdge& InRHS)
+	{
+		return !(InLHS == InRHS);
+	}
+
+	friend FORCEINLINE uint32 GetTypeHash(const FMetasoundFrontendEdge& InEdge)
+	{
+		const int32 FromHash = HashCombineFast(InEdge.FromNodeID.A, InEdge.FromVertexID.B);
+		const int32 ToHash = HashCombineFast(InEdge.ToNodeID.C, InEdge.ToVertexID.D);
+		return HashCombineFast(FromHash, ToHash);
+	}
 };
 
 USTRUCT()
@@ -995,7 +1018,7 @@ public:
 	TArray<FMetasoundFrontendClassEnvironmentVariable> Environment;
 
 private:
-	UPROPERTY()
+	UPROPERTY(Transient)
 	FGuid ChangeID;
 
 public:
@@ -1195,9 +1218,8 @@ struct METASOUNDFRONTEND_API FMetasoundFrontendClassName
 	GENERATED_BODY()
 
 	FMetasoundFrontendClassName() = default;
-
+	FMetasoundFrontendClassName(const FName& InNamespace, const FName& InName);
 	FMetasoundFrontendClassName(const FName& InNamespace, const FName& InName, const FName& InVariant);
-
 	FMetasoundFrontendClassName(const Metasound::FNodeClassName& InName);
 
 	// Namespace of class.
@@ -1218,23 +1240,46 @@ struct METASOUNDFRONTEND_API FMetasoundFrontendClassName
 	// Returns scoped name representing namespace and name. 
 	FName GetScopedName() const;
 
+	// Invalid form of class name (i.e. empty namespace, name, and variant)
+	static const FMetasoundFrontendClassName InvalidClassName;
+
+	// Whether or not this instance of a class name is a valid name.
+	bool IsValid() const;
+
 	// Returns NodeClassName version of full name
-	Metasound::FNodeClassName ToNodeClassName() const
-	{
-		return { Namespace, Name, Variant };
-	}
+	Metasound::FNodeClassName ToNodeClassName() const;
 
 	// Return string version of full name.
 	FString ToString() const;
 
+	// Parses string into class name.  For deserialization and debug use only.
+	static bool Parse(const FString& InClassName, FMetasoundFrontendClassName& OutClassName);
+
 	friend FORCEINLINE uint32 GetTypeHash(const FMetasoundFrontendClassName& ClassName)
 	{
-		return GetTypeHash(ClassName.GetFullName());
+		const int32 NameHash = HashCombineFast(GetTypeHash(ClassName.Namespace), GetTypeHash(ClassName.Name));
+		return HashCombineFast(NameHash, GetTypeHash(ClassName.Variant));
 	}
 
-	METASOUNDFRONTEND_API friend bool operator==(const FMetasoundFrontendClassName& InLHS, const FMetasoundFrontendClassName& InRHS);
+	friend FORCEINLINE bool operator==(const FMetasoundFrontendClassName& InLHS, const FMetasoundFrontendClassName& InRHS)
+	{
+		return (InLHS.Namespace == InRHS.Namespace) && (InLHS.Name == InRHS.Name) && (InLHS.Variant == InRHS.Variant);
+	}
 
-	METASOUNDFRONTEND_API friend bool operator!=(const FMetasoundFrontendClassName& InLHS, const FMetasoundFrontendClassName& InRHS);
+	friend FORCEINLINE bool operator<(const FMetasoundFrontendClassName& InLHS, const FMetasoundFrontendClassName& InRHS)
+	{
+		if (InLHS.Namespace == InRHS.Namespace)
+		{
+			if (InLHS.Name == InRHS.Name)
+			{
+				return InLHS.Variant.FastLess(InRHS.Variant);
+			}
+
+			return InLHS.Name.FastLess(InRHS.Name);
+		}
+
+		return InLHS.Namespace.FastLess(InRHS.Namespace);
+	}
 };
 
 
@@ -1315,7 +1360,7 @@ private:
 
 	// ID used to identify if any of the above have been modified,
 	// to determine if the parent class should be auto-updated.
-	UPROPERTY()
+	UPROPERTY(Transient)
 	FGuid ChangeID;
 
 public:
@@ -1552,6 +1597,7 @@ struct METASOUNDFRONTEND_API FMetasoundFrontendGraphClass : public FMetasoundFro
 	FMetasoundFrontendGraphClassPresetOptions PresetOptions;
 };
 
+
 USTRUCT()
 struct METASOUNDFRONTEND_API FMetasoundFrontendDocumentMetadata
 {
@@ -1592,12 +1638,20 @@ public:
 	UPROPERTY()
 	TArray<FMetasoundFrontendClass> Dependencies;
 
+	uint32 GetNextIdCounter() const
+	{
+		return IdCounter++;
+	}
+
 private:
 	UPROPERTY(meta = (DeprecatedProperty, DeprecationMessage = "5.0 - ArchetypeVersion has been migrated to InterfaceVersions array."))
 	FMetasoundFrontendVersion ArchetypeVersion;
 
 	UPROPERTY(meta = (DeprecatedProperty, DeprecationMessage = "5.0 - InterfaceVersions has been migrated to Interfaces set."))
 	TArray<FMetasoundFrontendVersion> InterfaceVersions;
+
+	// Used for generating deterministic IDs per document
+	mutable uint32 IdCounter = 1;
 
 public:
 	// Data migration for 5.0 Early Access data. ArchetypeVersion/InterfaceVersions properties can be removed post 5.0 release
@@ -1624,3 +1678,24 @@ public:
 
 METASOUNDFRONTEND_API const TCHAR* LexToString(EMetasoundFrontendClassType InClassType);
 METASOUNDFRONTEND_API const TCHAR* LexToString(EMetasoundFrontendVertexAccessType InVertexAccess);
+
+namespace Metasound::Frontend
+{
+		METASOUNDFRONTEND_API bool StringToClassType(const FString& InString, EMetasoundFrontendClassType& OutClassType);
+
+		/** Signature of function called for each found literal. */
+		using FForEachLiteralFunctionRef = TFunctionRef<void(const FName& InDataTypeName, const FMetasoundFrontendLiteral&)>; 
+
+		/** Execute the provided function for each literal on a FMetasoundFrontendDocument.*/
+		METASOUNDFRONTEND_API void ForEachLiteral(const FMetasoundFrontendDocument& InDoc, FForEachLiteralFunctionRef OnLiteral);
+
+		/** Execute the provided function for each literal on a FMetasoundFrontendGraphClass.*/
+		METASOUNDFRONTEND_API void ForEachLiteral(const FMetasoundFrontendGraphClass& InGraphClass, FForEachLiteralFunctionRef OnLiteral);
+
+		/** Execute the provided function for each literal on a FMetasoundFrontendClass.*/
+		METASOUNDFRONTEND_API void ForEachLiteral(const FMetasoundFrontendClass& InClass, FForEachLiteralFunctionRef OnLiteral);
+
+		/** Execute the provided function for each literal on a FMetasoundFrontendNode.*/
+		METASOUNDFRONTEND_API void ForEachLiteral(const FMetasoundFrontendNode& InNode, FForEachLiteralFunctionRef OnLiteral);
+} // namespace Metasound::Frontend
+

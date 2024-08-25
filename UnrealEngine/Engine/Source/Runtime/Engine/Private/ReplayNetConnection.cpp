@@ -216,9 +216,9 @@ TSharedPtr<const FInternetAddr> UReplayNetConnection::GetRemoteAddr()
 	return FInternetAddrDemo::DemoInternetAddr;
 }
 
-bool UReplayNetConnection::ClientHasInitializedLevelFor(const AActor* TestActor) const
+bool UReplayNetConnection::ClientHasInitializedLevel(const ULevel* TestLevel) const
 {
-	return (DemoFrameNum > 2 || Super::ClientHasInitializedLevelFor(TestActor));
+	return (DemoFrameNum > 2 || Super::ClientHasInitializedLevel(TestLevel));
 }
 
 void UReplayNetConnection::AddEvent(const FString& Group, const FString& Meta, const TArray<uint8>& Data)

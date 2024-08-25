@@ -174,9 +174,12 @@ public:
 	{ BufferIndex = InIndex; }
 	void SetValidCount(int32 InValidCount) override
 	{ ValidCount = InValidCount; }
+	bool ShouldReleaseBufferImmediately() override
+	{ return bReleaseImmediately; }
 
 	int32 BufferIndex = -1;
 	int32 ValidCount = -1;
+	bool bReleaseImmediately = false;
 };
 
 
@@ -192,28 +195,28 @@ bool FElectraDecoderResourceManagerAndroid::SetupRenderBufferFromDecoderOutput(I
 	
 	FInstanceVars* InInst = static_cast<FInstanceVars*>(InPlatformSpecificResource);
 	TSharedPtr<IVideoDecoderResourceDelegate, ESPMode::ThreadSafe> PinnedResourceDelegate = InInst->VideoDecoderResourceDelegate.Pin();
-	TSharedPtr<FElectraPlayerVideoDecoderOutputAndroid, ESPMode::ThreadSafe> DecoderOutput = InOutBufferToSetup->GetBufferProperties().GetValue("texture").GetSharedPointer<FElectraPlayerVideoDecoderOutputAndroid>();
+	TSharedPtr<FElectraPlayerVideoDecoderOutputAndroid, ESPMode::ThreadSafe> DecoderOutput = InOutBufferToSetup->GetBufferProperties().GetValue(RenderOptionKeys::Texture).GetSharedPointer<FElectraPlayerVideoDecoderOutputAndroid>();
 	if (DecoderOutput.IsValid() && PinnedResourceDelegate.IsValid())
 	{
 		FElectraVideoDecoderOutputCropValues Crop = InDecoderOutput->GetCropValues();
-		InOutBufferPropertes->Set(TEXT("width"), FVariantValue((int64) InDecoderOutput->GetWidth()));
-		InOutBufferPropertes->Set(TEXT("height"), FVariantValue((int64) InDecoderOutput->GetHeight()));
-		InOutBufferPropertes->Set(TEXT("crop_left"), FVariantValue((int64) Crop.Left));
-		InOutBufferPropertes->Set(TEXT("crop_right"), FVariantValue((int64) Crop.Right));
-		InOutBufferPropertes->Set(TEXT("crop_top"), FVariantValue((int64) Crop.Top));
-		InOutBufferPropertes->Set(TEXT("crop_bottom"), FVariantValue((int64) Crop.Bottom));
-		InOutBufferPropertes->Set(TEXT("aspect_ratio"), FVariantValue((double) InDecoderOutput->GetAspectRatioW() / (double) InDecoderOutput->GetAspectRatioH()));
-		InOutBufferPropertes->Set(TEXT("aspect_w"), FVariantValue((int64) InDecoderOutput->GetAspectRatioW()));
-		InOutBufferPropertes->Set(TEXT("aspect_h"), FVariantValue((int64) InDecoderOutput->GetAspectRatioH()));
-		InOutBufferPropertes->Set(TEXT("fps_num"), FVariantValue((int64) InDecoderOutput->GetFrameRateNumerator()));
-		InOutBufferPropertes->Set(TEXT("fps_denom"), FVariantValue((int64) InDecoderOutput->GetFrameRateDenominator()));
+		InOutBufferPropertes->Set(IDecoderOutputOptionNames::Width, FVariantValue((int64)InDecoderOutput->GetWidth()));
+		InOutBufferPropertes->Set(IDecoderOutputOptionNames::Height, FVariantValue((int64)InDecoderOutput->GetHeight()));
+		InOutBufferPropertes->Set(IDecoderOutputOptionNames::CropLeft, FVariantValue((int64)Crop.Left));
+		InOutBufferPropertes->Set(IDecoderOutputOptionNames::CropRight, FVariantValue((int64)Crop.Right));
+		InOutBufferPropertes->Set(IDecoderOutputOptionNames::CropTop, FVariantValue((int64)Crop.Top));
+		InOutBufferPropertes->Set(IDecoderOutputOptionNames::CropBottom, FVariantValue((int64)Crop.Bottom));
+		InOutBufferPropertes->Set(IDecoderOutputOptionNames::AspectRatio, FVariantValue((double)InDecoderOutput->GetAspectRatioW() / (double)InDecoderOutput->GetAspectRatioH()));
+		InOutBufferPropertes->Set(IDecoderOutputOptionNames::AspectW, FVariantValue((int64)InDecoderOutput->GetAspectRatioW()));
+		InOutBufferPropertes->Set(IDecoderOutputOptionNames::AspectH, FVariantValue((int64)InDecoderOutput->GetAspectRatioH()));
+		InOutBufferPropertes->Set(IDecoderOutputOptionNames::FPSNumerator, FVariantValue((int64)InDecoderOutput->GetFrameRateNumerator()));
+		InOutBufferPropertes->Set(IDecoderOutputOptionNames::FPSDenominator, FVariantValue((int64)InDecoderOutput->GetFrameRateDenominator()));
 		int32 NumBits = InDecoderOutput->GetNumberOfBits();
-		InOutBufferPropertes->Set(TEXT("pixelfmt"), FVariantValue((int64)((NumBits > 8)  ? EPixelFormat::PF_A2B10G10R10 : EPixelFormat::PF_B8G8R8A8)));
-		InOutBufferPropertes->Set(TEXT("bits_per"), FVariantValue((int64) NumBits));
-
-		InOutBufferPropertes->Set(TEXT("pitch"), FVariantValue((int64)InDecoderOutput->GetDecodedWidth() * ((NumBits > 8) ? 2 : 1)));
+		InOutBufferPropertes->Set(IDecoderOutputOptionNames::PixelFormat, FVariantValue((int64)((NumBits > 8)  ? EPixelFormat::PF_A2B10G10R10 : EPixelFormat::PF_B8G8R8A8)));
+		InOutBufferPropertes->Set(IDecoderOutputOptionNames::BitsPerComponent, FVariantValue((int64) NumBits));
+		InOutBufferPropertes->Set(IDecoderOutputOptionNames::Pitch, FVariantValue((int64)InDecoderOutput->GetDecodedWidth() * ((NumBits > 8) ? 2 : 1)));
 
 		FElectraDecoderVideoOutputCopyResources cr;
+		cr.bReleaseImmediately = InInst->SurfaceType == IDecoderPlatformResourceAndroid::ISurfaceRequestCallback::ESurfaceType::Surface;
 		IElectraDecoderVideoOutput::EImageCopyResult CopyResult = InDecoderOutput->CopyPlatformImage(&cr);
 		if (CopyResult != IElectraDecoderVideoOutput::EImageCopyResult::Succeeded)
 		{

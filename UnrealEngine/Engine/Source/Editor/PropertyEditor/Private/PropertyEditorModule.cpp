@@ -1,8 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-
 #include "PropertyEditorModule.h"
 #include "AssetToolsModule.h"
+#include "DetailRowMenuContextPrivate.h"
 #include "IAssetTools.h"
 #include "IDetailsView.h"
 #include "IPropertyChangeListener.h"
@@ -31,7 +31,8 @@
 #include "UserInterface/PropertyTable/TextPropertyTableCellPresenter.h"
 #include "Widgets/Colors/SColorPicker.h"
 #include "Widgets/Layout/SBorder.h"
-
+#include "DetailsViewStyle.h"
+#include "ToolMenus.h"
 
 IMPLEMENT_MODULE( FPropertyEditorModule, PropertyEditor );
 
@@ -91,10 +92,17 @@ void FPropertyEditorModule::StartupModule()
 	StructOnScopePropertyOwner = nullptr;
 
 	FCoreUObjectDelegates::OnObjectsReplaced.AddRaw(this, &FPropertyEditorModule::ReplaceViewedObjects);
+
+	FDetailsViewStyle::InitializeDetailsViewStyles();
+
+	UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FPropertyEditorModule::RegisterMenus));
 }
 
 void FPropertyEditorModule::ShutdownModule()
 {
+	UToolMenus::UnRegisterStartupCallback(this);
+	UToolMenus::UnregisterOwner(this);
+	
 	// No need to remove this object from root since the final GC pass doesn't care about root flags
 	StructOnScopePropertyOwner = nullptr;
 
@@ -294,34 +302,50 @@ TSharedPtr<IDetailsView> FPropertyEditorModule::FindDetailView( const FName View
 
 TSharedPtr<ISinglePropertyView> FPropertyEditorModule::CreateSingleProperty( UObject* InObject, FName InPropertyName, const FSinglePropertyParams& InitParams )
 {
+	return CreateSinglePropertyImpl(InObject, TSharedPtr<IStructureDataProvider>(), InPropertyName, InitParams);
+}
+
+TSharedPtr<class ISinglePropertyView> FPropertyEditorModule::CreateSingleProperty( const TSharedPtr<IStructureDataProvider>& InStruct, FName InPropertyName, const struct FSinglePropertyParams& InitParams )
+{
+	return CreateSinglePropertyImpl(nullptr, InStruct, InPropertyName, InitParams);
+}
+
+TSharedPtr<class ISinglePropertyView> FPropertyEditorModule::CreateSinglePropertyImpl(UObject* InObject, const TSharedPtr<IStructureDataProvider>& InStruct, FName InPropertyName, const struct FSinglePropertyParams& InitParams)
+{
 	// Compact the list of detail view instances
-	for( int32 ViewIndex = 0; ViewIndex < AllSinglePropertyViews.Num(); ++ViewIndex )
-	{
-		if ( !AllSinglePropertyViews[ViewIndex].IsValid() )
-		{
-			AllSinglePropertyViews.RemoveAtSwap( ViewIndex );
-			--ViewIndex;
-		}
-	}
+	CompactSinglePropertyViewArray();
 
-	TSharedRef<SSingleProperty> Property = 
-		SNew( SSingleProperty )
-		.Object( InObject )
-		.PropertyName( InPropertyName )
-		.NamePlacement( InitParams.NamePlacement )
-		.NameOverride( InitParams.NameOverride )
-		.NotifyHook( InitParams.NotifyHook )
-		.PropertyFont( InitParams.Font )
-		.bShouldHideAssetThumbnail( InitParams.bHideAssetThumbnail);
+	TSharedRef<SSingleProperty> Property =
+		SNew(SSingleProperty)
+		.Object(InObject)
+		.StructData(InStruct)
+		.PropertyName(InPropertyName)
+		.NamePlacement(InitParams.NamePlacement)
+		.NameOverride(InitParams.NameOverride)
+		.NotifyHook(InitParams.NotifyHook)
+		.PropertyFont(InitParams.Font)
+		.bShouldHideAssetThumbnail(InitParams.bHideAssetThumbnail);
 
-	if( Property->HasValidProperty() )
+	if (Property->HasValidProperty())
 	{
-		AllSinglePropertyViews.Add( Property );
+		AllSinglePropertyViews.Add(Property);
 
 		return Property;
 	}
 
-	return NULL;
+	return nullptr;
+}
+
+void FPropertyEditorModule::CompactSinglePropertyViewArray()
+{
+	for( int32 ViewIndex = 0; ViewIndex < AllSinglePropertyViews.Num(); ++ViewIndex )
+	{
+		if (!AllSinglePropertyViews[ViewIndex].IsValid())
+		{
+			AllSinglePropertyViews.RemoveAtSwap(ViewIndex);
+			--ViewIndex;
+		}
+	}
 }
 
 TSharedRef< IPropertyTable > FPropertyEditorModule::CreatePropertyTable()
@@ -684,6 +708,57 @@ void FPropertyEditorModule::FindSectionsForCategoryHelper(const UStruct* Struct,
 	}
 }
 
+void FPropertyEditorModule::RegisterMenus()
+{
+	// Owner will be used for cleanup in call to UToolMenus::UnregisterOwner
+	FToolMenuOwnerScoped OwnerScoped(this);
+
+	UToolMenus* ToolMenus = UToolMenus::Get();
+	if (!ToolMenus)
+	{
+		return;		
+	}
+
+	// Property row context menu
+	{
+		static FName MenuName = UE::PropertyEditor::RowContextMenuName;
+		if (!ToolMenus->IsMenuRegistered(MenuName))
+		{
+			UToolMenu* Menu = ToolMenus->RegisterMenu(MenuName, NAME_None, EMultiBoxType::Menu, false);
+			Menu->AddSection(
+				TEXT("Expansion"),
+				NSLOCTEXT("PropertyView", "ExpansionHeading", "Expansion"),
+				FToolMenuInsert(TEXT("Edit"), EToolMenuInsertType::Before));
+		
+			Menu->AddSection(TEXT("Edit"), NSLOCTEXT("PropertyView", "EditHeading", "Edit"));
+
+			Menu->AddDynamicSection(NAME_None, FNewToolMenuDelegate::CreateStatic(&FPropertyEditorModule::PopulateRowContextMenu));
+		}
+	}
+}
+
+void FPropertyEditorModule::PopulateRowContextMenu(UToolMenu* InToolMenu)
+{
+	if (!InToolMenu)
+	{
+		return;
+	}
+				
+	const UDetailRowMenuContextPrivate* MenuContext = InToolMenu->FindContext<UDetailRowMenuContextPrivate>();
+	if (!MenuContext)
+	{
+		return;
+	}
+
+	const TSharedPtr<SDetailTableRowBase> RowContext = MenuContext->GetRowWidget<SDetailTableRowBase>();
+	if (!RowContext.IsValid())
+	{
+		return;
+	}
+
+	RowContext->PopulateContextMenu(InToolMenu);
+}
+
 void FPropertyEditorModule::GetAllSections(const UStruct* Struct, TArray<TSharedPtr<FPropertySection>>& OutSections) const
 {
 	if (Struct == nullptr)
@@ -853,6 +928,20 @@ bool FPropertyEditorModule::IsCustomizedStruct(const UStruct* Struct, const FCus
 		{
 			bFound = GlobalPropertyTypeToLayoutMap.Contains( Struct->GetFName() );
 		}
+		
+		if( !bFound )
+		{
+			static const FName NAME_PresentAsTypeMetadata(TEXT("PresentAsType"));
+			if (const FString* DisplayType = Struct->FindMetaData(NAME_PresentAsTypeMetadata))
+			{
+				// try finding DisplayType instead
+				bFound = InstancePropertyTypeLayoutMap.Contains( FName(*DisplayType) );
+				if( !bFound )
+				{
+					bFound = GlobalPropertyTypeToLayoutMap.Contains( FName(*DisplayType) );
+				}
+			}
+		}
 	}
 	
 	return bFound;
@@ -929,6 +1018,24 @@ FPropertyTypeLayoutCallback FPropertyEditorModule::FindPropertyTypeLayoutCallbac
 		if( !LayoutCallbacks )
 		{
 			LayoutCallbacks = GlobalPropertyTypeToLayoutMap.Find(PropertyTypeName);
+		}
+		
+		if( !LayoutCallbacks )
+		{
+			if (const FStructProperty* AsStructProperty = CastField<FStructProperty>(PropertyHandle.GetProperty()))
+			{
+				static const FName NAME_PresentAsTypeMetadata(TEXT("PresentAsType"));
+				if (const FString* DisplayType = AsStructProperty->Struct->FindMetaData(NAME_PresentAsTypeMetadata))
+				{
+					// try finding DisplayType instead
+					LayoutCallbacks = InstancedPropertyTypeLayoutMap.Find(FName(*DisplayType));
+	
+					if( !LayoutCallbacks )
+					{
+						LayoutCallbacks = GlobalPropertyTypeToLayoutMap.Find(FName(*DisplayType));
+					}
+				}
+			}
 		}
 
 		if ( LayoutCallbacks )

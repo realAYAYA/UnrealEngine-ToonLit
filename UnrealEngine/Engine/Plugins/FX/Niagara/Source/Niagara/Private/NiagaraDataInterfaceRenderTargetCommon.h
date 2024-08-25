@@ -15,6 +15,8 @@ namespace NiagaraDataInterfaceRenderTargetCommon
 
 	extern bool GetRenderTargetFormat(bool bOverrideFormat, ETextureRenderTargetFormat OverrideFormat, ETextureRenderTargetFormat& OutRenderTargetFormat);
 
+	extern const ETextureRenderTargetFormat GetRenderTargetFormatFromPixelFormat(EPixelFormat InPixelFormat);
+
 	template<typename TRenderTargetType, typename TInstanceDataType>
 	static bool CreateRenderTarget(FNiagaraSystemInstance* SystemInstance, TInstanceDataType* InstanceData)
 	{
@@ -38,6 +40,8 @@ namespace NiagaraDataInterfaceRenderTargetCommon
 		{
 			if (FNiagaraWorldManager* WorldManager = SystemInstance->GetWorldManager())
 			{
+				InstanceData->TargetTexture->OverrideFormat = PF_Unknown;
+
 				WorldManager->ObjectPoolReturn(InstanceData->TargetTexture);
 				WorldManager->RemoveReferencedObject(InstanceData->TargetTexture);
 				InstanceData->TargetTexture = nullptr;

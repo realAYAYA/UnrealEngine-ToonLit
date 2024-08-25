@@ -17,6 +17,215 @@ namespace UE
 namespace MovieScene
 {
 
+static constexpr int16 GInvalidBlendTarget = std::numeric_limits<int16>::lowest();
+static const int16 GInitialBlendTargets[7] = {
+	GInvalidBlendTarget, GInvalidBlendTarget, GInvalidBlendTarget, GInvalidBlendTarget,
+	GInvalidBlendTarget, GInvalidBlendTarget, GInvalidBlendTarget
+};
+
+FHierarchicalBlendTarget::FHierarchicalBlendTarget()
+	: Capacity(InlineCapacity)
+{
+	// Fill with invalid values
+	static_assert(sizeof(Data) == sizeof(GInitialBlendTargets));
+	FMemory::Memcpy(this->Data, GInitialBlendTargets, sizeof(Data));
+}
+
+FHierarchicalBlendTarget::FHierarchicalBlendTarget(const FHierarchicalBlendTarget& RHS)
+	: Capacity(InlineCapacity)
+{
+	// Make an allocation if necessary
+	if (RHS.Capacity != InlineCapacity)
+	{
+		int16* NewAllocation = new int16[RHS.Capacity];
+		Capacity = RHS.Capacity;
+		*reinterpret_cast<int16**>(Data) = NewAllocation;
+	}
+
+	// Copy the data
+	FMemory::Memcpy(this->GetMemory(), RHS.GetMemory(), sizeof(int16)*Capacity);
+}
+
+FHierarchicalBlendTarget& FHierarchicalBlendTarget::operator=(const FHierarchicalBlendTarget& RHS)
+{
+	// Release our allocation if it's the wrong size
+	if (this->Capacity != RHS.Capacity)
+	{
+		FreeAllocation();
+	}
+
+	// Make an allocation if necessary
+	if (RHS.Capacity != InlineCapacity)
+	{
+		int16* NewAllocation = new int16[RHS.Capacity];
+		Capacity = RHS.Capacity;
+		*reinterpret_cast<int16**>(Data) = NewAllocation;
+	}
+
+	// Copy the data
+	FMemory::Memcpy(this->GetMemory(), RHS.GetMemory(), sizeof(int16)*Capacity);
+	return *this;
+}
+
+FHierarchicalBlendTarget::FHierarchicalBlendTarget(FHierarchicalBlendTarget&& RHS)
+	: Capacity(RHS.Capacity)
+{
+	FMemory::Memcpy(this->Data, RHS.Data, sizeof(Data));
+
+	// Reset RHS
+	RHS.Capacity = InlineCapacity;
+	static_assert(sizeof(Data) == sizeof(GInitialBlendTargets));
+	FMemory::Memcpy(RHS.Data, GInitialBlendTargets, sizeof(Data));
+}
+
+FHierarchicalBlendTarget& FHierarchicalBlendTarget::operator=(FHierarchicalBlendTarget&& RHS)
+{
+	// Free our allocation if it is allocated
+	FreeAllocation();
+
+	// Steal RHS
+	Capacity = RHS.Capacity;
+	FMemory::Memcpy(this->Data, RHS.Data, sizeof(Data));
+
+	// Reset RHS
+	RHS.Capacity = InlineCapacity;
+	static_assert(sizeof(Data) == sizeof(GInitialBlendTargets));
+	FMemory::Memcpy(RHS.Data, GInitialBlendTargets, sizeof(Data));
+
+	return *this;
+}
+
+FHierarchicalBlendTarget::~FHierarchicalBlendTarget()
+{
+	FreeAllocation();
+}
+
+void FHierarchicalBlendTarget::FreeAllocation()
+{
+	// Free our allocation if it is allocated
+	if (Capacity != InlineCapacity)
+	{
+		delete[] GetMemory();
+	}
+}
+
+void FHierarchicalBlendTarget::Grow(uint16 NewCapacity)
+{
+	int16* NewAllocation = new int16[NewCapacity];
+	int16* OldAllocation = GetMemory();
+
+	// Copy old allocation
+	FMemory::Memmove(NewAllocation, OldAllocation, Capacity*sizeof(int16));
+
+	// Initialize the tail of the new allocation
+	for (uint16 Index = Capacity; Index < NewCapacity; ++Index)
+	{
+		NewAllocation[Index] = GInvalidBlendTarget;
+	}
+
+	if (Capacity != InlineCapacity)
+	{
+		delete[] OldAllocation;
+	}
+
+	Capacity = NewCapacity;
+	*reinterpret_cast<int16**>(Data) = NewAllocation;
+}
+
+void FHierarchicalBlendTarget::Add(int16 InValue)
+{
+	TArrayView<int16> HBiasChain = GetAllEntries();
+
+	const int32 Index = Algo::LowerBound(HBiasChain, InValue, TGreater<>());
+	
+	if (Index < HBiasChain.Num() && HBiasChain[Index] == InValue)
+	{
+		// Already exists
+		return;
+	}
+
+	// If our insertion index is beyond our capacity we need to grow.
+	const bool bAtMaxCapacity = HBiasChain[Capacity-1] != GInvalidBlendTarget;
+	const bool bNeedToGrow    = bAtMaxCapacity || Index >= Capacity;
+
+	if (bNeedToGrow)
+	{
+		if (Capacity == InlineCapacity)
+		{
+			Grow(16u);
+		}
+		else
+		{
+			Grow(Capacity + 16u);
+		}
+
+		// Re-retrieve the memory
+		HBiasChain = GetAllEntries();
+	}
+
+	// Right shift by 1 if necessary
+	if (Index < Capacity-1 && HBiasChain[Index] != GInvalidBlendTarget)
+	{
+		// Example: Inserting 500 into the following:
+		// [ 1000, 100, 50, 10, 5, 0, -32768 ] w/ Capacity=7
+		// Results in:
+		// [ 1000, 500, 100, 50, 10, 5, 0 ] 
+		// Index=1
+		// NumToRelocate=5
+		void* Src = &HBiasChain[Index];
+		void* Dst = &HBiasChain[Index + 1];
+		int32 NumToRelocate = Capacity-Index-1; // -1 to avoid buffer overrun. The last one will always get overwritten. See comment above.
+		FMemory::Memmove(Dst, Src, sizeof(int16)*NumToRelocate);
+	}
+
+	// Set the value
+	HBiasChain[Index] = InValue;
+}
+
+int32 FHierarchicalBlendTarget::Num() const
+{
+	TArrayView<const int16> HBiasChain = GetAllEntries();
+	return Algo::LowerBound(HBiasChain, GInvalidBlendTarget, TGreater<>());
+}
+
+int16 FHierarchicalBlendTarget::operator[](int32 Index) const
+{
+	check(Index < static_cast<int32>(Capacity));
+	return GetAllEntries()[Index];
+}
+
+int16* FHierarchicalBlendTarget::GetMemory()
+{
+	return const_cast<int16*>(const_cast<const FHierarchicalBlendTarget*>(this)->GetMemory());
+}
+
+const int16* FHierarchicalBlendTarget::GetMemory() const
+{
+	if (Capacity == InlineCapacity)
+	{
+		return reinterpret_cast<const int16*>(Data);
+	}
+	else
+	{
+		return *reinterpret_cast<const int16* const*>(Data);
+	}
+}
+
+TArrayView<int16> FHierarchicalBlendTarget::GetAllEntries()
+{
+	return MakeArrayView(GetMemory(), Capacity);
+}
+
+TArrayView<const int16> FHierarchicalBlendTarget::GetAllEntries() const
+{
+	return MakeArrayView(GetMemory(), Capacity);
+}
+
+TArrayView<const int16> FHierarchicalBlendTarget::AsArray() const
+{
+	return GetAllEntries().Left(Num());
+}
+
 bool FObjectComponent::IsStrongReference() const
 {
 	return ObjectKey == FObjectKey();
@@ -31,11 +240,11 @@ UObject* FObjectComponent::GetObject() const
 	return ObjectKey.ResolveObjectPtr();
 }
 
-void AddReferencedObjectForComponent(FReferenceCollector& ReferenceCollector, FObjectComponent* ComponentData)
+void AddReferencedObjectForComponent(FReferenceCollector* ReferenceCollector, FObjectComponent* ComponentData)
 {
 	if (ComponentData->IsStrongReference())
 	{
-		ReferenceCollector.AddReferencedObject(ComponentData->ObjectPtr);
+		ReferenceCollector->AddReferencedObject(ComponentData->ObjectPtr);
 	}
 }
 
@@ -71,6 +280,8 @@ FBuiltInComponentTypes::FBuiltInComponentTypes()
 
 	ComponentRegistry->NewComponentType(&EvalTime,              TEXT("Eval Time"));
 	ComponentRegistry->NewComponentType(&EvalSeconds,           TEXT("Eval Seconds"));
+
+	ComponentRegistry->NewComponentType(&Group,					TEXT("Entity Group"));
 
 	ComponentRegistry->NewComponentType(&BoundObjectKey,        TEXT("Bound Object Key"));
 	// Intentionally hidden from the reference graph because they are always accompanied by a BoundObjectKey which is used for garbage collection
@@ -175,6 +386,8 @@ FBuiltInComponentTypes::FBuiltInComponentTypes()
 	ComponentRegistry->NewComponentType(&Interrogation.Instance,  TEXT("Interrogation Instance"));
 	ComponentRegistry->NewComponentType(&Interrogation.OutputKey, TEXT("Interrogation Output"));
 
+	ComponentRegistry->NewComponentType(&BindingLifetime, TEXT("Binding Lifetime"));
+
 	Tags.RestoreState            = ComponentRegistry->NewTag(TEXT("Is Restore State Entity"));
 	Tags.IgnoreHierarchicalBias  = ComponentRegistry->NewTag(TEXT("Ignore Hierarchical Bias"));
 	Tags.BlendHierarchicalBias   = ComponentRegistry->NewTag(TEXT("Blend Hierarchical Bias"));
@@ -194,6 +407,7 @@ FBuiltInComponentTypes::FBuiltInComponentTypes()
 	Tags.Finished                = ComponentRegistry->NewTag(TEXT("Finished Evaluating"));
 	Tags.Ignored                 = ComponentRegistry->NewTag(TEXT("Ignored"));
 	Tags.DontOptimizeConstants   = ComponentRegistry->NewTag(TEXT("Don't Optimize Constants"));
+	Tags.RemoveHierarchicalBlendTarget = ComponentRegistry->NewTag(TEXT("Remove Hierarchical Blend Target"));
 	Tags.FixedTime               = ComponentRegistry->NewTag(TEXT("Fixed Time"));
 	Tags.PreRoll                 = ComponentRegistry->NewTag(TEXT("Pre Roll"));
 	Tags.SectionPreRoll          = ComponentRegistry->NewTag(TEXT("Section Pre Roll"));

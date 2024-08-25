@@ -132,7 +132,7 @@ void UPawnMovementComponent::ApplyAsyncPhysicsStateAction(const UPrimitiveCompon
 		{
 			if (PlayerController->IsLocalController() && !PlayerController->IsNetMode(NM_DedicatedServer))
 			{
-				FAsyncPhysicsTimestamp TimeStamp = PlayerController->GetAsyncPhysicsTimestamp();
+				FAsyncPhysicsTimestamp TimeStamp = PlayerController->GetPhysicsTimestamp();
 				ExecuteAsyncPhysicsStateAction(ActionComponent, BoneName, TimeStamp, ActionType, ActionDatas, ActionPosition);
 
 				if (!PlayerController->IsNetMode(NM_Standalone))
@@ -168,7 +168,7 @@ void UPawnMovementComponent::MulticastAsyncPhysicsStateAction_Implementation(con
 			if (GetController() == nullptr)
 			{
 				FAsyncPhysicsTimestamp LocalTimeStamp = Timestamp;
-				LocalTimeStamp.LocalFrame = LocalTimeStamp.ServerFrame - PlayerController->GetLocalToServerAsyncPhysicsTickOffset();
+				LocalTimeStamp.LocalFrame = LocalTimeStamp.ServerFrame - PlayerController->GetNetworkPhysicsTickOffset();
 
 				ExecuteAsyncPhysicsStateAction(ActionComponent, BoneName, LocalTimeStamp, ActionType, ActionDatas, ActionPosition);
 			}

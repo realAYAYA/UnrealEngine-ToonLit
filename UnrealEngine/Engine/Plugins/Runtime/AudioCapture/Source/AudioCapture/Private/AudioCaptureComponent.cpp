@@ -130,6 +130,7 @@ int32 UAudioCaptureComponent::OnGenerateAudio(float* OutAudio, int32 NumSamples)
 	if (!bIsStreamOpen || !CaptureSynth.IsStreamOpen() || !CaptureSynth.IsCapturing())
 	{
 		// Just return NumSamples, which uses zero'd buffer
+		FMemory::Memzero(OutAudio, NumSamples * sizeof(float));
 		return NumSamples;
 	}
 	int32 OutputSamplesGenerated = 0;
@@ -139,6 +140,7 @@ int32 UAudioCaptureComponent::OnGenerateAudio(float* OutAudio, int32 NumSamples)
 		//Clear the CaptureSynth's data, too
 		CaptureSynth.GetAudioData(CaptureAudioData);
 		CaptureAudioData.Reset();
+		FMemory::Memzero(OutAudio, NumSamples * sizeof(float));
 		return NumSamples;
 	}
 	if (CapturedAudioDataSamples > 0 || CaptureSynth.GetNumSamplesEnqueued() > 1024)
@@ -192,7 +194,13 @@ int32 UAudioCaptureComponent::OnGenerateAudio(float* OutAudio, int32 NumSamples)
 	else
 	{
 		// Say we generated the full samples, this will result in silence
+		FMemory::Memzero(OutAudio, NumSamples * sizeof(float));
 		OutputSamplesGenerated = NumSamples;
+	}
+
+	if (OutputSamplesGenerated < NumSamples)
+	{
+		FMemory::Memzero(&OutAudio[OutputSamplesGenerated], (NumSamples - OutputSamplesGenerated) * sizeof(float));
 	}
 	return OutputSamplesGenerated;
 }

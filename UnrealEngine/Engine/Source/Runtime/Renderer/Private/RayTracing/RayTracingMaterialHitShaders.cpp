@@ -84,11 +84,10 @@ public:
 		const FPrimitiveSceneProxy* PrimitiveSceneProxy,
 		const FMaterialRenderProxy& MaterialRenderProxy,
 		const FMaterial& Material,
-		const FMeshPassProcessorRenderState& DrawRenderState,
 		const TBasePassShaderElementData<FUniformLightMapPolicy>& ShaderElementData,
 		FMeshDrawSingleShaderBindings& ShaderBindings) const
 	{
-		FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, DrawRenderState, ShaderElementData, ShaderBindings);
+		FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, ShaderElementData, ShaderBindings);
 		
 		FUniformLightMapPolicy::GetPixelShaderBindings(
 			PrimitiveSceneProxy,
@@ -157,7 +156,7 @@ public:
 		LightMapPolicyType::ModifyCompilationEnvironment(Parameters, OutEnvironment);
 		FMeshMaterialShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
 		static const auto CVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.VirtualTexturedLightmaps"));
-		const bool VirtualTextureLightmaps = (CVar->GetValueOnAnyThread() != 0) && UseVirtualTexturing(GMaxRHIFeatureLevel, OutEnvironment.TargetPlatform);
+		const bool VirtualTextureLightmaps = (CVar->GetValueOnAnyThread() != 0) && UseVirtualTexturing(Parameters.Platform);
 		OutEnvironment.SetDefine(TEXT("LIGHTMAP_VT_ENABLED"), VirtualTextureLightmaps);
 	}
 
@@ -388,17 +387,14 @@ static bool GetRayTracingMeshProcessorShaders(
 	return true;
 }
 
-FRayTracingMeshProcessor::FRayTracingMeshProcessor(FRayTracingMeshCommandContext* InCommandContext, const FScene* InScene, const FSceneView* InViewIfDynamicMeshCommand, FMeshPassProcessorRenderState InPassDrawRenderState, ERayTracingMeshCommandsMode InRayTracingMeshCommandsMode)
+FRayTracingMeshProcessor::FRayTracingMeshProcessor(FRayTracingMeshCommandContext* InCommandContext, const FScene* InScene, const FSceneView* InViewIfDynamicMeshCommand, ERayTracingMeshCommandsMode InRayTracingMeshCommandsMode)
 	:
 	CommandContext(InCommandContext),
 	Scene(InScene),
 	ViewIfDynamicMeshCommand(InViewIfDynamicMeshCommand),
 	FeatureLevel(InScene ? InScene->GetFeatureLevel() : ERHIFeatureLevel::SM5),
-	PassDrawRenderState(InPassDrawRenderState),
 	RayTracingMeshCommandsMode(InRayTracingMeshCommandsMode)
 {
-	PassDrawRenderState.SetBlendState(TStaticBlendState<CW_RGBA, BO_Add, BF_One, BF_One, BO_Add, BF_Zero, BF_One>::GetRHI());
-	PassDrawRenderState.SetDepthStencilState(TStaticDepthStencilState<false, CF_DepthNearOrEqual>::GetRHI());
 }
 
 FRayTracingMeshProcessor::~FRayTracingMeshProcessor() = default;
@@ -411,15 +407,10 @@ bool FRayTracingMeshProcessor::Process(
 	const FMaterial& RESTRICT MaterialResource,
 	const FUniformLightMapPolicy& RESTRICT LightMapPolicy)
 {
-	TMeshProcessorShaders<
-		FMeshMaterialShader,
-		FMeshMaterialShader,
-		FMeshMaterialShader,
-		FMaterialCHS> RayTracingShaders;
-
+	TShaderRef<FMaterialCHS> RayTracingShader;
 	if (GRHISupportsRayTracingShaders)
 	{
-		if (!GetRayTracingMeshProcessorShaders(LightMapPolicy, MeshBatch.VertexFactory, MaterialResource, RayTracingShaders.RayTracingShader))
+		if (!GetRayTracingMeshProcessorShaders(LightMapPolicy, MeshBatch.VertexFactory, MaterialResource, RayTracingShader))
 		{
 			return false;
 		}
@@ -434,8 +425,7 @@ bool FRayTracingMeshProcessor::Process(
 		PrimitiveSceneProxy,
 		MaterialRenderProxy,
 		MaterialResource,
-		PassDrawRenderState,
-		RayTracingShaders,
+		RayTracingShader,
 		ShaderElementData,
 		ERayTracingViewMaskMode::RayTracing);
 
@@ -486,8 +476,7 @@ bool FRayTracingMeshProcessor::TryAddMeshBatch(
 
 		// Check for a cached light-map.
 		const bool bIsLitMaterial = Material.GetShadingModels().IsLit();
-		static const auto AllowStaticLightingVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-		const bool bAllowStaticLighting = (!AllowStaticLightingVar || AllowStaticLightingVar->GetValueOnRenderThread() != 0);
+		const bool bAllowStaticLighting = IsStaticLightingAllowed();
 
 		const FLightMapInteraction LightMapInteraction = (bAllowStaticLighting && MeshBatch.LCI && bIsLitMaterial)
 			? MeshBatch.LCI->GetLightMapInteraction(FeatureLevel)

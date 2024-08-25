@@ -279,12 +279,12 @@ struct DATASMITHFBXTRANSLATOR_API FDatasmithFBXSceneNode : public TSharedFromThi
 
 	void MoveChildren(TSharedPtr<FDatasmithFBXSceneNode>& NewParent)
 	{
-		NewParent->Children = Children;
-		Children.Empty();
 		for (auto& Child : Children)
 		{
 			Child->Parent = NewParent;
 		}
+		NewParent->Children = MoveTemp(Children);
+		Children.Empty();
 	}
 
 	/** Remove this node from hierarchy. */

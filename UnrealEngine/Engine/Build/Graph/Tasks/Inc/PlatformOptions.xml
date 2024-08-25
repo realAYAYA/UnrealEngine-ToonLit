@@ -6,11 +6,11 @@
 		into three + separated lists.
 
 		1) EditorPlatforms - these are editor platforms the user requested directly or via WithWin64Editor=true
-		2) TargetPlatforms - these are cooked platforms the user requested directly or via WithPS4=true
+		2) TargetPlatforms - these are cooked platforms the user requested directly or via WithIOS=true
 		3) RequiredEditorPlatforms - these are editor platforms that need to be build due to #2, but shouldn't be
 		 used for tests etc because they weren't in #1
 
-		Both 1) and 2) can be specified directly for convenience. E.g. -set:TargetPlatforms=PS5+XSX
+		Both 1) and 2) can be specified directly for convenience. E.g. -set:TargetPlatforms=Android+IOS
 
 		Downstream code can make the distinction of an editor to build but not test by the following 
 		condition being true - ContainsItem('$(EditorName)', '$(EditorPlatforms)', '+')
@@ -24,13 +24,14 @@
 		OutProperty: RequiredEditorPlatforms - Editor platforms to build to cook targets      
 	-->
 
-<Property Name="ShowExplicitFlags" Value="true" />
-
-<Property Name="AllEditorPlatforms" Value="Mac+Win64+Linux" />
-<Property Name="AllTargetPlatforms" Value="Android+iOS+Mac+PS4+PS5+Switch+tvOS+Win64+WinGDK+XboxOneGDK+XB1+XSX" />
+<Property Name="AllDesktopPlatforms" Value="Mac+Win64+Linux" />
+<Property Name="AllEditorPlatforms" Value="$(AllDesktopPlatforms)" />
+<Property Name="AllConsolePlatforms" Value="" />
+<Property Name="AllTargetPlatforms" Value="Android+IOS+Mac+TVOS+Win64+Linux" />
+<Property Name="AllVirtualizedPlatforms" Value="" />
 
 <Option Name="EditorPlatforms" DefaultValue="" Description="Alternative to 'WithFooEditor', a list of editors to build and test. Win64+Mac etc"/>
-<Option Name="TargetPlatforms" DefaultValue="" Description="Alternative to 'WithFoo', a list of Platforms to build and test. PS4+XSX etc"/>
+<Option Name="TargetPlatforms" DefaultValue="" Description="Alternative to 'WithFoo', a list of Platforms to build and test. Android+IOS etc"/>
 <Option Name="CookedEditorPlatforms" DefaultValue="" Description="Alternative to 'WithFooCookedEditor', a list of editors to build and cooked. Win64+Mac etc"/>
 
 <!-- Support simple One+Two+Three style -->
@@ -41,65 +42,56 @@
 
 <!-- No means of reliably running these tests atm -->
 <Option Name="EditorPlatformsToSkipTests" DefaultValue="" Restrict=".*" Description="List of editor platforms that editor tests won't be run on" />
-<Option Name="TargetPlatformsToSkipTests" DefaultValue="IOS+Linux+TVOS" Restrict=".*" Description="List of target platforms that target tests won't be run on" />
+<Option Name="TargetPlatformsToSkipTests" DefaultValue="IOS+TVOS" Restrict=".*" Description="List of target platforms that target tests won't be run on" />
 <Option Name="CookedEditorPlatformsToSkipTests" DefaultValue="" Restrict=".*" Description="List of editor cooked platforms that editor tests won't be run on" />
 <Option Name="PlatformsToSkipTests" DefaultValue="" Restrict=".*" Description="List of platforms that all tests won't be run on. Overrides Editor/TargetPlatformsToSkipTests when non-empty." />
 
-<!-- Support explicit flags for horde but hide them otherwise as the option list is overwhelming..-->
-<Do If="$(ShowExplicitFlags)" >
-	<Option Name="WithWin64Editor" DefaultValue="false" Description="Build and test Win64 Editor"/>
-	<Option Name="WithMacEditor" DefaultValue="false" Description="Build and test Mac Editor"/>
-	<Option Name="WithLinuxEditor" DefaultValue="false" Description="Build and test Linux Editor"/>
+<Macro Name="AddPlatform" Arguments="Platform;IsConsole;IsEnabled" OptionalArguments="IsVirtualized">
+	<Property Name="IsVirtualized" Value="('$(IsVirtualized)' != '' and '$(IsVirtualized)' != 'false')"/>
+	<Property Name="AllTargetPlatforms" Value="$(AllTargetPlatforms)+$(Platform)" If="!ContainsItem('$(AllTargetPlatforms)', '$(Platform)', '+')"/>
+	<Property Name="AllConsolePlatforms" Value="$(AllConsolePlatforms)+$(Platform)" If="$(IsConsole) and !ContainsItem('$(AllConsolePlatforms)', '$(Platform)', '+')"/>
+	<Property Name="AllVirtualizedPlatforms" Value="$(AllVirtualizedPlatforms)+$(Platform)" If="$(IsVirtualized) And !ContainsItem('$(AllVirtualizedPlatforms)', '$(Platform)', '+')"/>
+	<Property Name="TargetPlatforms" Value="$(TargetPlatforms)+$(Platform)" If="$(IsEnabled) and !ContainsItem('$(TargetPlatforms)', '$(Platform)', '+')"/>
+</Macro>
+	
+<!-- Include any scripts from platform extensions -->
+<Include Script="../../../../Platforms/*/Build/Inc/PlatformOptions.xml"/>
 
-	<Option Name="WithWin64CookedEditor" DefaultValue="false" Description="Build and cook Win64 CookedEditor"/>
-	<Option Name="WithMacCookedEditor" DefaultValue="false" Description="Build and cook Mac CookedEditor"/>
-	<Option Name="WithLinuxCookedEditor" DefaultValue="false" Description="Build and cook Linux CookedEditor"/>
+<Option Name="WithWin64Editor" DefaultValue="false" Description="Build and test Win64 Editor"/>
+<Option Name="WithMacEditor" DefaultValue="false" Description="Build and test Mac Editor"/>
+<Option Name="WithLinuxEditor" DefaultValue="false" Description="Build and test Linux Editor"/>
 
-	<Option Name="WithAndroid" DefaultValue="false" Description="Build and test Android"/>
-	<Option Name="WithIOS" DefaultValue="false" Description="Build and test IOS"/>
-	<Option Name="WithLinux" DefaultValue="false" Description="Build and test Linux"/>
-	<Option Name="WithMac" DefaultValue="false" Description="Build and test Mac"/>
-	<Option Name="WithPS4" DefaultValue="false" Description="Build and test PS4"/>
-	<Option Name="WithPS5" DefaultValue="false" Description="Build and test PS5"/>
-	<Option Name="WithSwitch" DefaultValue="false" Description="Build and test Switch"/>
-	<Option Name="WithTvOS" DefaultValue="false" Description="Build and test TvOS"/>
-	<Option Name="WithWin64" DefaultValue="false" Description="Build and test Win64"/>
-	<Option Name="WithWinGDK" DefaultValue="false" Description="Build and test WinGDK"/>
-	<Option Name="WithXboxOneGDK" DefaultValue="false" Description="Build and test XboxOneGDK"/>
-	<Option Name="WithXB1" DefaultValue="false" Description="Build and test XB1"/>
-	<Option Name="WithXSX" DefaultValue="false" Description="Build and test XSX"/>
+<Option Name="WithWin64CookedEditor" DefaultValue="false" Description="Build and cook Win64 CookedEditor"/>
+<Option Name="WithMacCookedEditor" DefaultValue="false" Description="Build and cook Mac CookedEditor"/>
+<Option Name="WithLinuxCookedEditor" DefaultValue="false" Description="Build and cook Linux CookedEditor"/>
 
-	<Do If="'$(EditorPlatforms)' == ''" >
-		<Property Name="EditorPlatforms" Value="" />
-		<Property Name="EditorPlatforms" Value="$(EditorPlatforms)Win64+" If="$(WithWin64Editor)" />
-		<Property Name="EditorPlatforms" Value="$(EditorPlatforms)Mac+" If="$(WithMacEditor)" />
-		<Property Name="EditorPlatforms" Value="$(EditorPlatforms)Linux+" If="$(WithLinuxEditor)" />
-	</Do>
+<Option Name="WithAndroid" DefaultValue="false" Description="Build and test Android"/>
+<Option Name="WithIOS" DefaultValue="false" Description="Build and test IOS"/>
+<Option Name="WithLinux" DefaultValue="false" Description="Build and test Linux"/>
+<Option Name="WithMac" DefaultValue="false" Description="Build and test Mac"/>
+<Option Name="WithTVOS" DefaultValue="false" Description="Build and test TVOS"/>
+<Option Name="WithWin64" DefaultValue="false" Description="Build and test Win64"/>
 
-	<Do If="'$(CookedEditorPlatforms)' == ''">
-		<Property Name="CookedEditorPlatforms" Value="" />
-		<Property Name="CookedEditorPlatforms" Value="$(CookedEditorPlatforms)Win64+" If="$(WithWin64CookedEditor)" />
-		<Property Name="CookedEditorPlatforms" Value="$(CookedEditorPlatforms)Mac+" If="$(WithMacCookedEditor)" />
-		<Property Name="CookedEditorPlatforms" Value="$(CookedEditorPlatforms)Linux+" If="$(WithLinuxCookedEditor)" />
-	</Do>
-
-	<Do If="'$(TargetPlatforms)' == ''" >
-		<Property Name="TargetPlatforms" Value="" />
-		<Property Name="TargetPlatforms" Value="$(TargetPlatforms)Android+" If="$(WithAndroid)" />
-		<Property Name="TargetPlatforms" Value="$(TargetPlatforms)IOS+" If="$(WithIOS)" />
-		<Property Name="TargetPlatforms" Value="$(TargetPlatforms)Linux+" If="$(WithLinux)" />
-		<Property Name="TargetPlatforms" Value="$(TargetPlatforms)Mac+" If="$(WithMac)" />
-		<Property Name="TargetPlatforms" Value="$(TargetPlatforms)PS4+" If="$(WithPS4)" />
-		<Property Name="TargetPlatforms" Value="$(TargetPlatforms)PS5+" If="$(WithPS5)" />
-		<Property Name="TargetPlatforms" Value="$(TargetPlatforms)Switch+" If="$(WithSwitch)" />
-		<Property Name="TargetPlatforms" Value="$(TargetPlatforms)TVOS+" If="$(WithTVOS)" />
-		<Property Name="TargetPlatforms" Value="$(TargetPlatforms)Win64+" If="$(WithWin64)" />
-		<Property Name="TargetPlatforms" Value="$(TargetPlatforms)WinGDK+" If="$(WithWinGDK)" />
-		<Property Name="TargetPlatforms" Value="$(TargetPlatforms)XboxOneGDK+" If="$(WithXboxOneGDK)" />
-		<Property Name="TargetPlatforms" Value="$(TargetPlatforms)XB1+" If="$(WithXB1)" />
-		<Property Name="TargetPlatforms" Value="$(TargetPlatforms)XSX+" If="$(WithXSX)" />
-	</Do>
+<Do If="'$(EditorPlatforms)' == ''" >
+	<Property Name="EditorPlatforms" Value="" />
+	<Property Name="EditorPlatforms" Value="$(EditorPlatforms)Win64+" If="$(WithWin64Editor)" />
+	<Property Name="EditorPlatforms" Value="$(EditorPlatforms)Mac+" If="$(WithMacEditor)" />
+	<Property Name="EditorPlatforms" Value="$(EditorPlatforms)Linux+" If="$(WithLinuxEditor)" />
 </Do>
+
+<Do If="'$(CookedEditorPlatforms)' == ''">
+	<Property Name="CookedEditorPlatforms" Value="" />
+	<Property Name="CookedEditorPlatforms" Value="$(CookedEditorPlatforms)Win64+" If="$(WithWin64CookedEditor)" />
+	<Property Name="CookedEditorPlatforms" Value="$(CookedEditorPlatforms)Mac+" If="$(WithMacCookedEditor)" />
+	<Property Name="CookedEditorPlatforms" Value="$(CookedEditorPlatforms)Linux+" If="$(WithLinuxCookedEditor)" />
+</Do>
+
+<Expand Name="AddPlatform" Platform="Android" IsConsole="false" IsEnabled="$(WithAndroid)"/>
+<Expand Name="AddPlatform" Platform="IOS" IsConsole="false" IsEnabled="$(WithIOS)"/>
+<Expand Name="AddPlatform" Platform="Linux" IsConsole="false" IsEnabled="$(WithLinux)"/>
+<Expand Name="AddPlatform" Platform="Mac" IsConsole="false" IsEnabled="$(WithMac)"/>
+<Expand Name="AddPlatform" Platform="TVOS" IsConsole="false" IsEnabled="$(WithTVOS)"/>
+<Expand Name="AddPlatform" Platform="Win64" IsConsole="false" IsEnabled="$(WithWin64)"/>
 
 <!-- If still no platforms, pick the defaults that the script should have specified-->
 <Do If="'$(EditorPlatforms)' == ''" >
@@ -125,7 +117,7 @@
 	<Property Name="TargetPlatforms" Value="" />
 </Do>
 
-<!-- 'None' means don't do any platforms. We need to do this because an empty string means use defaults.. -->
+<!-- 'All' means that we want to support all available platforms -->
 <Do If="'$(EditorPlatforms)' == 'All'" >
 	<Property Name="EditorPlatforms" Value="$(AllEditorPlatforms)" />
 </Do>
@@ -145,7 +137,7 @@
 	</Do>
 	<!-- Declare type of host required to build & cook this platform-->
 	<Property Name="HostAgentType" Value="Win64" />
-	<Property Name="HostAgentType" Value="Mac" If="'$(TargetPlatform)' == 'Mac' or '$(TargetPlatform)' == 'IOS' or '$(TargetPlatform)' == 'tvOS'"/>
+	<Property Name="HostAgentType" Value="Mac" If="'$(TargetPlatform)' == 'Mac' or '$(TargetPlatform)' == 'IOS' or '$(TargetPlatform)' == 'TVOS'"/>
 	<Property Name="HostAgentType" Value="Linux" If="'$(TargetPlatform)' == 'Linux'"/>
 
 	<Do If="!ContainsItem('$(RequiredEditorPlatforms)','$(HostAgentType)', '+')">
@@ -163,61 +155,58 @@
 	</Do>
 </ForEach>
 
-<!-- PS5 packaging isn't supported by Gauntlet yet :( )-->
-<Property Name="PlatformsToSkipPackaging" Value="Win64+Linux" />
+<!-- Packaging isn't supported by Gauntlet yet :( )-->
+<Property Name="PlatformsToSkipPackaging" Value="Win64+Linux+Mac" />
 
 <!-- These platforms can't run from loose staged content-->
-<Property Name="PlatformsThatRequirePackaging" Value="Android+iOS" />
+<Property Name="PlatformsThatRequirePackaging" Value="Android+IOS" />
 
-<!-- Support explicit flags for horde but hide them otherwise as the option list is overwhelming..-->
-<Do If="$(ShowExplicitFlags)" >
-	<Option Name="WithDebugTargets" DefaultValue="false" Description="Build Debug configurations"/>
-	<Option Name="WithDevelopmentTargets" DefaultValue="false" Description="Build Development configurations"/>
-	<Option Name="WithTestTargets" DefaultValue="false" Description="Build Test configurations"/>
-	<Option Name="WithShippingTargets" DefaultValue="false" Description="Build Shipping configurations"/>
+<Option Name="WithDebugTargets" DefaultValue="false" Description="Build Debug configurations"/>
+<Option Name="WithDevelopmentTargets" DefaultValue="false" Description="Build Development configurations"/>
+<Option Name="WithTestTargets" DefaultValue="false" Description="Build Test configurations"/>
+<Option Name="WithShippingTargets" DefaultValue="false" Description="Build Shipping configurations"/>
 
-	<Option Name="WithDebugPackages" DefaultValue="false" Description="Build Debug packages"/>
-	<Option Name="WithDevelopmentPackages" DefaultValue="false" Description="Build Development packages"/>
-	<Option Name="WithTestPackages" DefaultValue="false" Description="Build Test packages"/>
-	<Option Name="WithShippingPackages" DefaultValue="false" Description="Build Shipping packages"/>
+<Option Name="WithDebugPackages" DefaultValue="false" Description="Build Debug packages"/>
+<Option Name="WithDevelopmentPackages" DefaultValue="false" Description="Build Development packages"/>
+<Option Name="WithTestPackages" DefaultValue="false" Description="Build Test packages"/>
+<Option Name="WithShippingPackages" DefaultValue="false" Description="Build Shipping packages"/>
 
-	<Option Name="WithDebugTests" DefaultValue="false" Description="Run tests on Debug builds"/>
-	<Option Name="WithDevelopmentTests" DefaultValue="false" Description="Run tests on Development builds"/>
-	<Option Name="WithTestTests" DefaultValue="false" Description="Run tests on Test builds"/>
-	<Option Name="WithShippingTests" DefaultValue="false" Description="Run tests on Shipping builds"/>
+<Option Name="WithDebugTests" DefaultValue="false" Description="Run tests on Debug builds"/>
+<Option Name="WithDevelopmentTests" DefaultValue="false" Description="Run tests on Development builds"/>
+<Option Name="WithTestTests" DefaultValue="false" Description="Run tests on Test builds"/>
+<Option Name="WithShippingTests" DefaultValue="false" Description="Run tests on Shipping builds"/>
 
-	<Option Name="WithDevelopmentCookedEditor" DefaultValue="false" Description="Build Development configuration for Editor cooked"/>
-	<Option Name="WithShippingCookedEditor" DefaultValue="false" Description="Build Shipping configuration for Editor cooked"/>
+<Option Name="WithDevelopmentCookedEditor" DefaultValue="false" Description="Build Development configuration for Editor cooked"/>
+<Option Name="WithShippingCookedEditor" DefaultValue="false" Description="Build Shipping configuration for Editor cooked"/>
 
-	<Do If="'$(TargetConfigurations)' == ''" >	
-		<Property Name="TargetConfigurations" Value="" />
-		<Property Name="TargetConfigurations" Value="$(TargetConfigurations)Debug+"  If="$(WithDebugTargets)" />
-		<Property Name="TargetConfigurations" Value="$(TargetConfigurations)Development+"  If="$(WithDevelopmentTargets)" />
-		<Property Name="TargetConfigurations" Value="$(TargetConfigurations)Test+"  If="$(WithTestTargets)" />
-		<Property Name="TargetConfigurations" Value="$(TargetConfigurations)Shipping+"  If="$(WithShippingTargets)" />
-	</Do>
+<Do If="'$(TargetConfigurations)' == ''" >	
+	<Property Name="TargetConfigurations" Value="" />
+	<Property Name="TargetConfigurations" Value="$(TargetConfigurations)Debug+"  If="$(WithDebugTargets)" />
+	<Property Name="TargetConfigurations" Value="$(TargetConfigurations)Development+"  If="$(WithDevelopmentTargets)" />
+	<Property Name="TargetConfigurations" Value="$(TargetConfigurations)Test+"  If="$(WithTestTargets)" />
+	<Property Name="TargetConfigurations" Value="$(TargetConfigurations)Shipping+"  If="$(WithShippingTargets)" />
+</Do>
 
-	<Do If="'$(PackageConfigurations)' == ''" >	
-		<Property Name="PackageConfigurations" Value="" />
-		<Property Name="PackageConfigurations" Value="$(PackageConfigurations)Debug+"  If="$(WithDebugPackages)" />
-		<Property Name="PackageConfigurations" Value="$(PackageConfigurations)Development+"  If="$(WithDevelopmentPackages)" />
-		<Property Name="PackageConfigurations" Value="$(PackageConfigurations)Test+"  If="$(WithTestPackages)" />
-		<Property Name="PackageConfigurations" Value="$(PackageConfigurations)Shipping+"  If="$(WithShippingPackages)" />
-	</Do>
+<Do If="'$(PackageConfigurations)' == ''" >	
+	<Property Name="PackageConfigurations" Value="" />
+	<Property Name="PackageConfigurations" Value="$(PackageConfigurations)Debug+"  If="$(WithDebugPackages)" />
+	<Property Name="PackageConfigurations" Value="$(PackageConfigurations)Development+"  If="$(WithDevelopmentPackages)" />
+	<Property Name="PackageConfigurations" Value="$(PackageConfigurations)Test+"  If="$(WithTestPackages)" />
+	<Property Name="PackageConfigurations" Value="$(PackageConfigurations)Shipping+"  If="$(WithShippingPackages)" />
+</Do>
 
-	<Do If="'$(TestConfigurations)' == ''" >	
-		<Property Name="TestConfigurations" Value="" />
-		<Property Name="TestConfigurations" Value="$(TestConfigurations)Debug+"  If="$(WithDebugTests)" />
-		<Property Name="TestConfigurations" Value="$(TestConfigurations)Development+"  If="$(WithDevelopmentTests)" />
-		<Property Name="TestConfigurations" Value="$(TestConfigurations)Test+"  If="$(WithTestTests)" />
-		<Property Name="TestConfigurations" Value="$(TestConfigurations)Shipping+"  If="$(WithShippingTests)" />
-	</Do>
+<Do If="'$(TestConfigurations)' == ''" >	
+	<Property Name="TestConfigurations" Value="" />
+	<Property Name="TestConfigurations" Value="$(TestConfigurations)Debug+"  If="$(WithDebugTests)" />
+	<Property Name="TestConfigurations" Value="$(TestConfigurations)Development+"  If="$(WithDevelopmentTests)" />
+	<Property Name="TestConfigurations" Value="$(TestConfigurations)Test+"  If="$(WithTestTests)" />
+	<Property Name="TestConfigurations" Value="$(TestConfigurations)Shipping+"  If="$(WithShippingTests)" />
+</Do>
 
-	<Do If="'$(CookedEditorConfigurations)' == ''" >	
-		<Property Name="CookedEditorConfigurations" Value="" />
-		<Property Name="CookedEditorConfigurations" Value="$(CookedEditorConfigurations)Development+"  If="$(WithDevelopmentCookedEditor)" />
-		<Property Name="CookedEditorConfigurations" Value="$(CookedEditorConfigurations)Shipping+"  If="$(WithShippingCookedEditor)" />
-	</Do>
+<Do If="'$(CookedEditorConfigurations)' == ''" >	
+	<Property Name="CookedEditorConfigurations" Value="" />
+	<Property Name="CookedEditorConfigurations" Value="$(CookedEditorConfigurations)Development+"  If="$(WithDevelopmentCookedEditor)" />
+	<Property Name="CookedEditorConfigurations" Value="$(CookedEditorConfigurations)Shipping+"  If="$(WithShippingCookedEditor)" />
 </Do>
 
 <Do If="'$(TargetConfigurations)' == ''" >

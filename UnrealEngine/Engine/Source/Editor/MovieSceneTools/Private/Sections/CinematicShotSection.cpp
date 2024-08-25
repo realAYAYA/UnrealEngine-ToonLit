@@ -18,7 +18,6 @@
 #include "Tracks/MovieSceneCameraCutTrack.h"
 #include "Sections/MovieSceneCameraCutSection.h"
 #include "Evaluation/MovieSceneEvaluationTemplateInstance.h"
-#include "CommonMovieSceneTools.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "Editor.h"
 
@@ -67,9 +66,9 @@ FText FCinematicShotSection::GetSectionTitle() const
 	return GetRenameVisibility() == EVisibility::Visible ? FText::GetEmpty() : HandleThumbnailTextBlockText();
 }
 
-float FCinematicShotSection::GetSectionHeight() const
+float FCinematicShotSection::GetSectionHeight(const UE::Sequencer::FViewDensityInfo& ViewDensity) const
 {
-	return FViewportThumbnailSection::GetSectionHeight() + 2*9.f;
+	return FViewportThumbnailSection::GetSectionHeight(ViewDensity) + 2*13.f;
 }
 
 FMargin FCinematicShotSection::GetContentPadding() const

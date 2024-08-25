@@ -13,12 +13,6 @@ public class AnimationBlueprintEditor : ModuleRules
 			}
 		);
 
-		PrivateIncludePaths.AddRange(
-			new string[] {
-				System.IO.Path.Combine(GetModuleDirectory("Persona"), "Private"),
-			}
-		);
-
 		PrivateDependencyModuleNames.AddRange(
 			new string[] {
                 "AppFramework",

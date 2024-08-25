@@ -12,7 +12,6 @@
 #include "HAL/PlatformProcess.h"
 #include "HAL/FileManager.h"
 
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include "dbgeng.h"
 #include <DbgHelp.h>

@@ -721,7 +721,7 @@ bool FProfilerClientManager::HandleMessagesTicker(float DeltaTime)
 				Connection.ReceivedData.Remove(FrameNum);
 
 				// see if we need to yield
-				double DurationSeconds = (FPlatformTime::Cycles64() - StartTimeCycles) * FPlatformTime::GetSecondsPerCycle64();
+				double DurationSeconds = static_cast<double>(FPlatformTime::Cycles64() - StartTimeCycles) * FPlatformTime::GetSecondsPerCycle64();
 				if (DurationSeconds > MaxDurationSeconds)
 				{
 					UE_CLOG(Index < Frames.Num()-1, LogProfilerClient, Verbose, TEXT("Over time - %d/%d frames processed for connection %s"), Index, Frames.Num() - Index, *Connection.InstanceId.ToString() );
@@ -949,7 +949,7 @@ int32 FServiceConnection::FindOrAddStat(const FStatNameAndInfo& StatNameAndInfo,
 		StatDescription.Name = !Description.IsEmpty() ? Description : StatName.ToString();
 		if(StatDescription.Name.Contains(TEXT("STAT_")))
 		{
-			StatDescription.Name.RightChopInline(FString(TEXT("STAT_")).Len(), false);
+			StatDescription.Name.RightChopInline(FString(TEXT("STAT_")).Len(), EAllowShrinking::No);
 		}
 		StatDescription.StatType = StatType;
 

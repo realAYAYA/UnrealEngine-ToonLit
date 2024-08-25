@@ -7,11 +7,13 @@
 #include "Iris/ReplicationState/InternalPropertyReplicationState.h"
 #include "Iris/ReplicationState/ReplicationStateDescriptorBuilder.h"
 #include "Iris/ReplicationState/ReplicationStateUtil.h"
+#include "Iris/ReplicationSystem/ReplicationFragmentUtil.h"
 #include "Iris/Serialization/NetSerializers.h"
 #include "Misc/EnumClassFlags.h"
 #include "UObject/StrongObjectPtr.h"
 #include "Net/UnrealNetwork.h"
 #include "Net/Core/NetHandle/NetHandleManager.h"
+#include "Tests/ReplicationSystem/ReplicationSystemServerClientTestFixture.h"
 
 
 void UTestPropertyReplicationState_TestClass::GetLifetimeReplicatedProps( TArray< class FLifetimeProperty > & OutLifetimeProps ) const
@@ -44,10 +46,26 @@ void UTestPropertyReplicationState_TestClassWithInitAndCArrays::GetLifetimeRepli
 	DOREPLIFETIME(ThisClass, StructWithArrayOfNotFullyReplicatedStruct);
 }
 
+void UTestPropertyReplicationState_TestClassWithTArray::GetLifetimeReplicatedProps(TArray<class FLifetimeProperty>& OutLifetimeProps) const
+{
+	DOREPLIFETIME(ThisClass, ReferencedObjects);
+	DOREPLIFETIME(ThisClass, ForceReplication);
+}
+
+void UTestPropertyReplicationState_TestClassWithTArray::RegisterReplicationFragments(UE::Net::FFragmentRegistrationContext& Context, UE::Net::EFragmentRegistrationFlags RegistrationFlags)
+{
+	UE::Net::FReplicationFragmentUtil::CreateAndRegisterFragmentsForObject(this, Context, RegistrationFlags);
+}
+
+void UTestPropertyReplicationState_TestClassWithTArray::OnRep_ReferencedObjects()
+{
+	bOnRepWasCalled = true;
+}
+
 namespace UE::Net::Private
 {
 
-class FTestPropertyReplicationStateContext : public FNetworkAutomationTestSuiteFixture
+class FTestPropertyReplicationStateContext : public FReplicationSystemServerClientTestFixture
 {
 protected:
 	FReplicationStateDescriptorBuilder::FResult Descriptors;
@@ -364,7 +382,7 @@ UE_NET_TEST_FIXTURE(FTestPropertyReplicationStateContext, PropertyReplicationSta
 	ReplicationState.SetPropertyValue(NotFullyReplicatedArrayElementIndex, &NotFullyReplicatedArrayElementValue);
 
 	ReplicationStateB.Set(ReplicationState);
-	for (SIZE_T MemberIt = 0, MemberEndIt = Descriptor->MemberCount; MemberIt != MemberEndIt; ++MemberIt)
+	for (uint32 MemberIt = 0, MemberEndIt = Descriptor->MemberCount; MemberIt != MemberEndIt; ++MemberIt)
 	{
 		// Init state doesn't have changemasks
 		UE_NET_ASSERT_TRUE_MSG(ReplicationStateB.IsDirty(MemberIt), "Member '" << Descriptor->MemberProperties[MemberIt]->GetName() << "' index " << MemberIt);
@@ -395,7 +413,7 @@ UE_NET_TEST_FIXTURE(FTestPropertyReplicationStateContext, PropertyReplicationSta
 	ReplicationState.SetPropertyValue(NotFullyReplicatedArrayElementIndex, &NotFullyReplicatedArrayElementValue);
 
 	ReplicationStateB.Set(ReplicationState);
-	for (SIZE_T MemberIt = 0, MemberEndIt = Descriptor->MemberCount; MemberIt != MemberEndIt; ++MemberIt)
+	for (uint32 MemberIt = 0, MemberEndIt = Descriptor->MemberCount; MemberIt != MemberEndIt; ++MemberIt)
 	{
 		if (MemberIt == FullyReplicatedArrayElementIndex || (MemberIt == NotFullyReplicatedArrayElementIndex))
 		{
@@ -432,7 +450,7 @@ UE_NET_TEST_FIXTURE(FTestPropertyReplicationStateContext, PropertyReplicationSta
 	ReplicationState.SetPropertyValue(NotFullyReplicatedArrayElementIndex, &NotFullyReplicatedArrayElementValue);
 
 	ReplicationStateB.Set(ReplicationState);
-	for (SIZE_T MemberIt = 0, MemberEndIt = Descriptor->MemberCount; MemberIt != MemberEndIt; ++MemberIt)
+	for (uint32 MemberIt = 0, MemberEndIt = Descriptor->MemberCount; MemberIt != MemberEndIt; ++MemberIt)
 	{
 		UE_NET_ASSERT_FALSE_MSG(ReplicationStateB.IsDirty(MemberIt), "Member '" << Descriptor->MemberProperties[MemberIt]->GetName() << "' index " << MemberIt);
 	}
@@ -468,7 +486,7 @@ UE_NET_TEST_FIXTURE(FTestPropertyReplicationStateContext, PropertyReplicationSta
 	ReplicationState.SetPropertyValue(NotFullyReplicatedArrayElementIndex, &NotFullyReplicatedArrayElementValue1);
 
 	ReplicationStateB.Set(ReplicationState);
-	for (SIZE_T MemberIt = 0, MemberEndIt = Descriptor->MemberCount; MemberIt != MemberEndIt; ++MemberIt)
+	for (uint32 MemberIt = 0, MemberEndIt = Descriptor->MemberCount; MemberIt != MemberEndIt; ++MemberIt)
 	{
 		if (MemberIt == FullyReplicatedArrayElementIndex || (MemberIt == NotFullyReplicatedArrayElementIndex))
 		{
@@ -477,6 +495,130 @@ UE_NET_TEST_FIXTURE(FTestPropertyReplicationStateContext, PropertyReplicationSta
 		else
 		{
 			UE_NET_ASSERT_FALSE_MSG(ReplicationStateB.IsDirty(MemberIt), "Member '" << Descriptor->MemberProperties[MemberIt]->GetName() << "' index " << MemberIt);
+		}
+	}
+}
+
+// Test OnRep behavior on TArray when unresolved references are involved.
+UE_NET_TEST_FIXTURE(FTestPropertyReplicationStateContext, TestArrayOnRepWithUnresolvedReferences)
+{
+	IConsoleVariable* CVarbApplyPreviouslyReceivedState = IConsoleManager::Get().FindConsoleVariable(TEXT("net.Iris.DispatchUnresolvedPreviouslyReceivedChanges"), false);
+	UE_NET_ASSERT_NE(CVarbApplyPreviouslyReceivedState, nullptr);
+	UE_NET_ASSERT_TRUE(CVarbApplyPreviouslyReceivedState->IsVariableBool());
+
+	const bool bOldApplyPreviouslyReceivedState = CVarbApplyPreviouslyReceivedState->GetBool();
+	ON_SCOPE_EXIT { CVarbApplyPreviouslyReceivedState->Set(bOldApplyPreviouslyReceivedState, ECVF_SetByCode); };
+
+	for (const bool bApplyPreviouslyReceivedState : {false, true})
+	{
+		CVarbApplyPreviouslyReceivedState->Set(bApplyPreviouslyReceivedState, ECVF_SetByCode);
+
+		// Add a client
+		FReplicationSystemTestClient* Client = CreateClient();
+
+		// Spawn objects on server
+		UTestPropertyReplicationState_TestClassWithTArray* ServerObject = Server->CreateObject<UTestPropertyReplicationState_TestClassWithTArray>();
+
+		// Spawn objects to reference
+		UReplicatedTestObject* ServerReferencedObjectA = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+		UReplicatedTestObject* ServerReferencedObjectB = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+		UReplicatedTestObject* ServerReferencedObjectC = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+		UReplicatedTestObject* ServerReferencedObjectD = Server->CreateObject(UTestReplicatedIrisObject::FComponents{});
+
+		// Prevent objects C and D from being replicated.
+		FNetObjectGroupHandle NotReplicatedGroupHandle = Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup();
+		Server->ReplicationSystem->AddToGroup(NotReplicatedGroupHandle, ServerReferencedObjectC->NetRefHandle);
+		Server->ReplicationSystem->AddToGroup(NotReplicatedGroupHandle, ServerReferencedObjectD->NetRefHandle);
+
+		UTestPropertyReplicationState_TestClassWithTArray* ClientObject = nullptr;
+
+		// Step 1. Create a fully resolvable payload and make sure it got replicated properly.
+		{
+			ServerObject->ReferencedObjects.Add(ServerReferencedObjectA);
+
+			// Send and make sure everything is as expected on the client
+			Server->UpdateAndSend({ Client });
+
+			ClientObject = Cast<UTestPropertyReplicationState_TestClassWithTArray>(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle));
+			UE_NET_ASSERT_NE(ClientObject, nullptr);
+			UE_NET_ASSERT_FALSE(ClientObject->ReferencedObjects.IsEmpty());
+			UE_NET_ASSERT_NE(ClientObject->ReferencedObjects[0], nullptr);
+		}
+
+		// Step 2. Modify the referenced objects array such that it contains both resolvable and unresolvable references.
+		{
+			// Add not yet replicated objects to the mix.
+			ServerObject->ReferencedObjects.Add(ServerReferencedObjectC);
+			ServerObject->ReferencedObjects.Add(ServerReferencedObjectD);
+
+			// Send and make sure everything is as expected on the client
+			Server->UpdateAndSend({ Client });
+
+			ClientObject = Cast<UTestPropertyReplicationState_TestClassWithTArray>(Client->GetReplicationBridge()->GetReplicatedObject(ServerObject->NetRefHandle));
+			UE_NET_ASSERT_EQ(ClientObject->ReferencedObjects.Num(), 3);
+			UE_NET_ASSERT_EQ(ClientObject->ReferencedObjects[0], Client->GetReplicationBridge()->GetReplicatedObject(ServerReferencedObjectA->NetRefHandle));
+			UE_NET_ASSERT_EQ(ClientObject->ReferencedObjects[1], nullptr);
+			UE_NET_ASSERT_EQ(ClientObject->ReferencedObjects[2], nullptr);
+		}
+
+		// Step 3. Modify non-array property on server and null out reference on client. OnRep call depending on whether we're applying previously received state with unresolved references or not.
+		{
+			++ServerObject->ForceReplication;
+			ClientObject->bOnRepWasCalled = false;
+			ClientObject->ReferencedObjects[0] = nullptr;
+
+			// Send and make sure everything is as expected on the client
+			Server->UpdateAndSend({ Client });
+
+			UE_NET_ASSERT_EQ(ClientObject->bOnRepWasCalled, bApplyPreviouslyReceivedState);
+		}
+
+		// Step 4. Allow object C to be replicated. Expecting OnRep.
+		{
+			Server->ReplicationSystem->RemoveFromGroup(NotReplicatedGroupHandle, ServerReferencedObjectC->NetRefHandle);
+
+			ClientObject->bOnRepWasCalled = false;
+
+			Server->UpdateAndSend({ Client });
+
+			UE_NET_ASSERT_TRUE(ClientObject->bOnRepWasCalled);
+			UE_NET_ASSERT_EQ(ClientObject->ReferencedObjects[1], Client->GetReplicationBridge()->GetReplicatedObject(ServerReferencedObjectC->NetRefHandle));
+		}
+
+		// Step 5. Allow object D to be replicated. Expecting OnRep.
+		{
+			Server->ReplicationSystem->RemoveFromGroup(NotReplicatedGroupHandle, ServerReferencedObjectD->NetRefHandle);
+
+			ClientObject->bOnRepWasCalled = false;
+
+			Server->UpdateAndSend({ Client });
+
+			UE_NET_ASSERT_TRUE(ClientObject->bOnRepWasCalled);
+			UE_NET_ASSERT_EQ(ClientObject->ReferencedObjects[2], Client->GetReplicationBridge()->GetReplicatedObject(ServerReferencedObjectD->NetRefHandle));
+		}
+
+		// Step 6. Resize array on server. Expecting OnRep.
+		{
+			ServerObject->ReferencedObjects.SetNum(1);
+
+			ClientObject->bOnRepWasCalled = false;
+
+			Server->UpdateAndSend({ Client });
+
+			UE_NET_ASSERT_TRUE(ClientObject->bOnRepWasCalled);
+		}
+
+		// Step 7. Finally modify non-array property on server and null out reference on client and make sure we don't get an OnRep call.
+		{
+			++ServerObject->ForceReplication;
+
+			ClientObject->bOnRepWasCalled = false;
+			ClientObject->ReferencedObjects[0] = nullptr;
+
+			// Send and make sure everything is as expected on the client
+			Server->UpdateAndSend({ Client });
+
+			UE_NET_ASSERT_FALSE(ClientObject->bOnRepWasCalled);
 		}
 	}
 }

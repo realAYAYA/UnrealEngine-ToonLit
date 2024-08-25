@@ -11,6 +11,7 @@
 void SScrollBar::Construct(const FArguments& InArgs)
 {
 	OnUserScrolled = InArgs._OnUserScrolled;
+	OnScrollBarVisibilityChanged = InArgs._OnScrollBarVisibilityChanged;
 	Orientation = InArgs._Orientation;
 	DragFocusCause = InArgs._DragFocusCause;
 	UserVisibility = InArgs._Visibility;
@@ -89,6 +90,11 @@ void SScrollBar::Construct(const FArguments& InArgs)
 void SScrollBar::SetOnUserScrolled( const FOnUserScrolled& InHandler )
 {
 	OnUserScrolled = InHandler;
+}
+
+void SScrollBar::SetOnScrollBarVisibilityChanged( const FOnScrollBarVisibilityChanged& InHandler )
+{
+	OnScrollBarVisibilityChanged = InHandler;
 }
 
 void SScrollBar::SetState( float InOffsetFraction, float InThumbSizeFraction, bool bCallOnUserScrolled )
@@ -316,18 +322,24 @@ const FSlateBrush* SScrollBar::GetDragThumbImage() const
 
 EVisibility SScrollBar::ShouldBeVisible() const
 {
+	const EVisibility CurrentVisibility = GetVisibility();
+    EVisibility NewVisibility = ScrollbarDisabledVisibility;
+    
 	if ( this->HasMouseCapture() )
 	{
-		return EVisibility::Visible;
+		NewVisibility = EVisibility::Visible;
 	}
 	else if( Track->IsNeeded() )
 	{
-		return UserVisibility.Get();
+		NewVisibility = UserVisibility.Get();
 	}
-	else
+
+	if (NewVisibility != CurrentVisibility)
 	{
-		return EVisibility::Collapsed;
+		OnScrollBarVisibilityChanged.ExecuteIfBound(NewVisibility);
 	}
+	
+	return NewVisibility;
 }
 
 bool SScrollBar::IsScrolling() const
@@ -407,6 +419,11 @@ void SScrollBar::SetScrollBarTrackAlwaysVisible(bool InAlwaysVisible)
 {
 	// Doesn't need to be invalidated here, tick updates these values.
 	bAlwaysShowScrollbarTrack = InAlwaysVisible;
+}
+
+SLATE_API void SScrollBar::SetScrollbarDisabledVisibility(EVisibility InVisibility)
+{
+	ScrollbarDisabledVisibility = InVisibility;
 }
 
 bool SScrollBar::AlwaysShowScrollbar() const

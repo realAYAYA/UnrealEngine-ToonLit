@@ -476,6 +476,11 @@ void UNiagaraSystemSelectionViewModel::UpdateExternalSelectionState()
 	int32 NumRemoved = 0;
 	for (const FVersionedNiagaraEmitter& SelectedEmitter : SelectedEmitters)
 	{
+		//-TODO:Stateless: Do we need stateless support here?
+		if (SelectedEmitter.GetEmitterData() == nullptr)
+		{
+			continue;
+		}
 		FGuid EmitterId = GetSystemViewModel()->GetEmitterHandleViewModelForEmitter(SelectedEmitter)->GetId();
 		NumRemoved += OldSelectedEmitterHandleIds.Remove(EmitterId);
 		SelectedEmitterHandleIds.Add(EmitterId);

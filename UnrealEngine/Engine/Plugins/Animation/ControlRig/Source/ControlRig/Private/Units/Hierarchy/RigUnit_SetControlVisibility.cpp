@@ -45,7 +45,7 @@ FRigUnit_SetControlVisibility_Execute()
 		{
 			Hierarchy->ForEach<FRigControlElement>([&Keys, Pattern](FRigControlElement* ControlElement) -> bool
 			{
-				if (ControlElement->GetName().ToString().Contains(Pattern, ESearchCase::CaseSensitive))
+				if (ControlElement->GetFName().ToString().Contains(Pattern, ESearchCase::CaseSensitive))
 				{
 					Keys.Add(ControlElement->GetKey());
 				}
@@ -69,9 +69,10 @@ FRigUnit_SetControlVisibility_Execute()
 			if (CachedControlIndex.IsValid())
 			{
 #if WITH_EDITOR
-				if (FRigControlElement* ControlElement = Cast<FRigControlElement>(Hierarchy->Find(CachedControlIndex.GetKey())))
+				if (const FRigControlElement* ControlElement = Cast<FRigControlElement>(Hierarchy->Find(CachedControlIndex.GetKey())))
 				{
-					if (ControlElement->Settings.ShapeVisibility == ERigControlVisibility::BasedOnSelection)
+					if (ControlElement->Settings.AnimationType == ERigControlAnimationType::ProxyControl &&
+						ControlElement->Settings.ShapeVisibility == ERigControlVisibility::BasedOnSelection)
 					{
 						UE_CONTROLRIG_RIGUNIT_REPORT_WARNING(
 						TEXT("SetControlVisibility: visibility of '%s' is based on selection, and cannot be modified through SetControlVisibility. "

@@ -48,27 +48,39 @@ namespace UnrealBuildTool.Rules
 
             if (Target.Platform == UnrealTargetPlatform.Win64)
             {
-                PrivateDependencyModuleNames.AddRange(new string[] {
+				PublicDependencyModuleNames.AddRange(new string[] {
 					"D3D11RHI",
 					"D3D12RHI"
 				});
 
-                AddEngineThirdPartyPrivateStaticDependencies(Target, "DX11", "DX12");
-            }
+				if (!bUsePrecompiled || Target.LinkType == TargetLinkType.Monolithic)
+				{
+					PublicDependencyModuleNames.AddRange(new string[] {
+						"DX11",
+						"DX12"
+					});
+				}
+			}
 
             if (Target.Platform == UnrealTargetPlatform.Win64 || Target.Platform == UnrealTargetPlatform.Android)
             {
-                PrivateDependencyModuleNames.Add("OpenGLDrv");
+				PublicDependencyModuleNames.Add("OpenGLDrv");
 
-                AddEngineThirdPartyPrivateStaticDependencies(Target, "OpenGL");
+				if (!bUsePrecompiled || Target.LinkType == TargetLinkType.Monolithic)
+				{
+					PublicDependencyModuleNames.Add("OpenGL");
+				}
 			}
 
 			if (Target.Platform == UnrealTargetPlatform.Win64 || Target.Platform == UnrealTargetPlatform.Android  
 			    || Target.IsInPlatformGroup(UnrealPlatformGroup.Linux))
             {
-                PrivateDependencyModuleNames.Add("VulkanRHI");
+				PublicDependencyModuleNames.Add("VulkanRHI");
 
-                AddEngineThirdPartyPrivateStaticDependencies(Target, "Vulkan");
+				if (!bUsePrecompiled || Target.LinkType == TargetLinkType.Monolithic)
+				{
+					PublicDependencyModuleNames.Add("Vulkan");
+				}
 			}
 
 			if (Target.Platform == UnrealTargetPlatform.Android)

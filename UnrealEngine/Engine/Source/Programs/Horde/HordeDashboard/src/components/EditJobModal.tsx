@@ -3,11 +3,13 @@ import { DefaultButton, Dropdown, IconButton, IDropdownOption, MessageBar, Messa
 import React, { useState } from 'react';
 import backend from '../backend';
 import { GetJobResponse, JobState, Priority } from '../backend/Api';
-import { hordeClasses } from '../styles/Styles';
+import { getHordeStyling } from '../styles/Styles';
 
 export const EditJobModal: React.FC<{ jobData: GetJobResponse | undefined; show: boolean; onClose: () => void }> = ({ jobData, show, onClose }) => {
 
    const [error, setError] = useState("");
+
+   const { hordeClasses } = getHordeStyling();
    
    if (!jobData) {
       return null;

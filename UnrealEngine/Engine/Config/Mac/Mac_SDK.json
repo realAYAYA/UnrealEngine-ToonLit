@@ -1,0 +1,12 @@
+{
+	"ParentSDKFile": "../Apple/Apple_SDK.json",
+
+	"EditorDeploymentTarget": "13.0.0",
+	"EditorBuildTarget": "13.00",
+
+	"DeploymentTarget": "13.00",
+	"BuildTarget": "13.00",
+
+	// macOS Ventura 13.0 (Released October 24, 2022)
+	"MinSoftwareVersion": "13.00"
+}

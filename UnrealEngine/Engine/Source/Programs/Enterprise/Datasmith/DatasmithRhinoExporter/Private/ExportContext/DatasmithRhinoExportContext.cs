@@ -23,7 +23,7 @@ namespace DatasmithRhino.ExportContext
 		public bool bIsInWorksession {
 			get {
 				//Only check for worksession on Windows, the feature is not implemented on Mac and calling the API throws exception.
-				return Environment.OSVersion.Platform == PlatformID.Win32NT 
+				return System.Environment.OSVersion.Platform == PlatformID.Win32NT 
 					&& RhinoDocument.Worksession != null
 					&& RhinoDocument.Worksession.ModelCount > 1;
 			}
@@ -829,13 +829,13 @@ namespace DatasmithRhino.ExportContext
 		private bool IsUnsupportedObject(RhinoObject InObject)
 		{
 //Disabling obsolete warning as GetRenderPrimitiveList() is deprecated since Rhino5 but as of Rhino7 no alternative exists.
-#pragma warning disable CS0612
+#pragma warning disable CS0612, CS0618
 			// Geometry objects without meshes are currently not supported, unless they are points.
 			return InObject.ComponentType == ModelComponentType.ModelGeometry 
 				&& !InObject.IsMeshable(MeshType.Render)
 				&& InObject.ObjectType != ObjectType.Point
-				&& (InObject.ObjectType != ObjectType.Curve || null == InObject.GetRenderPrimitiveList(ActiveViewportInfo, true));
-#pragma warning restore CS0612
+				&& (InObject.ObjectType != ObjectType.Curve || null == InObject.GetRenderPrimitiveList(ActiveViewportInfo, false));
+#pragma warning restore CS0612, CS0618
 		}
 
 		private void InstanciateDefinition(DatasmithActorInfo ParentNode, DatasmithActorInfo DefinitionNode)
@@ -1534,9 +1534,9 @@ namespace DatasmithRhino.ExportContext
 			if (ActiveViewportInfo != null)
 			{
 				//Disabling obsolete warning as GetRenderPrimitiveList() is deprecated since Rhino5 but as of Rhino7 no alternative exists.
-#pragma warning disable CS0612
+#pragma warning disable CS0612, CS0618
 				RenderMeshes = InRhinoObject.GetRenderPrimitiveList(ActiveViewportInfo, false)?.ToMeshArray();
-#pragma warning restore CS0612
+#pragma warning restore CS0612, CS0618
 			}
 			if (RenderMeshes == null)
 			{

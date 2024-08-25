@@ -25,8 +25,27 @@ public:
 	UFUNCTION(BlueprintCallable, Category = CommonUserWidget)
 	void SetConsumePointerInput(bool bInConsumePointerInput);
 
+	/** Add a widget to the list of widgets to get scroll events for this input root node */
+	UFUNCTION(BlueprintCallable, Category = CommonUserWidget)
+	void RegisterScrollRecipientExternal(const UWidget* AnalogScrollRecipient);
+
+	/** Remove a widget from the list of widgets to get scroll events for this input root node */
+	UFUNCTION(BlueprintCallable, Category = CommonUserWidget)
+	void UnregisterScrollRecipientExternal(const UWidget* AnalogScrollRecipient);
+
+public:
+
 	const TArray<FUIActionBindingHandle>& GetActionBindings() const { return ActionBindings; }
 	const TArray<TWeakObjectPtr<const UWidget>> GetScrollRecipients() const { return ScrollRecipients; }
+
+	/**
+	 * Convenience methods for menu action registrations (any UWidget can register via FCommonUIActionRouter directly, though generally that shouldn't be needed).
+	 * Persistent bindings are *always* listening for input while registered, while normal bindings are only listening when all of this widget's activatable parents are activated.
+	 */
+	FUIActionBindingHandle RegisterUIActionBinding(const FBindUIActionArgs& BindActionArgs);
+
+	void RemoveActionBinding(FUIActionBindingHandle ActionBinding);
+	void AddActionBinding(FUIActionBindingHandle ActionBinding);
 
 protected:
 	virtual void OnWidgetRebuilt() override;
@@ -63,15 +82,6 @@ protected:
 
 	void RegisterScrollRecipient(const UWidget& AnalogScrollRecipient);
 	void UnregisterScrollRecipient(const UWidget& AnalogScrollRecipient);
-
-	/** 
-	 * Convenience methods for menu action registrations (any UWidget can register via FCommonUIActionRouter directly, though generally that shouldn't be needed).
-	 * Persistent bindings are *always* listening for input while registered, while normal bindings are only listening when all of this widget's activatable parents are activated.
-	 */
-	FUIActionBindingHandle RegisterUIActionBinding(const FBindUIActionArgs& BindActionArgs);
-
-	void RemoveActionBinding(FUIActionBindingHandle ActionBinding);
-	void AddActionBinding(FUIActionBindingHandle ActionBinding);
 
 	/** True to generally display this widget's actions in the action bar, assuming it has actions. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input, meta = (AllowPrivateAccess = true))

@@ -7,6 +7,7 @@
 #include "GameTime.h"
 #include "RendererInterface.h"
 #include "Rendering/RenderingCommon.h"
+#include "Rendering/SlateRendererTypes.h"
 #include "Rendering/ShaderResourceManager.h"
 #include "Rendering/DrawElements.h"
 #include "Rendering/RenderingPolicy.h"
@@ -32,17 +33,21 @@ struct FSlateRenderingParams
 {
 	FMatrix44f ViewProjectionMatrix;
 	FVector2f ViewOffset;
+	FIntRect ViewRect;
 	FGameTime Time;
 	TRefCountPtr<IPooledRenderTarget> UITarget;
 	EDisplayColorGamut HDRDisplayColorGamut;
+	ESlatePostRT UsedSlatePostBuffers;
 	bool bWireFrame;
 	bool bIsHDR;
 
 	FSlateRenderingParams(const FMatrix& InViewProjectionMatrix, FGameTime InTime)
 		: ViewProjectionMatrix(InViewProjectionMatrix)
 		, ViewOffset(0.f, 0.f)
+		, ViewRect(FIntRect())
 		, Time(InTime)
 		, HDRDisplayColorGamut(EDisplayColorGamut::sRGB_D65)
+		, UsedSlatePostBuffers(ESlatePostRT::None)
 		, bWireFrame(false)
 		, bIsHDR(false)
 	{
@@ -71,12 +76,16 @@ public:
 	void SetUseGammaCorrection( bool bInUseGammaCorrection ) { bGammaCorrect = bInUseGammaCorrection; }
 	void SetApplyColorDeficiencyCorrection(bool bInApplyColorCorrection) { bApplyColorDeficiencyCorrection = bInApplyColorCorrection; }
 
+	void TickPostProcessResources();
+
 	bool GetApplyColorDeficiencyCorrection() const { return bApplyColorDeficiencyCorrection; }
 
 	virtual void AddSceneAt(FSceneInterface* Scene, int32 Index) override;
 	virtual void ClearScenes() override;
 
 	virtual void FlushGeneratedResources();
+
+	void BlurRectExternal(FRHICommandListImmediate& RHICmdList, FRHITexture* BlurSrc, FRHITexture* BlurDst, FIntRect SrcRect, FIntRect DstRect, float BlurStrength) const;
 
 private:
 	ETextureSamplerFilter GetSamplerFilter(const UTexture* Texture) const;

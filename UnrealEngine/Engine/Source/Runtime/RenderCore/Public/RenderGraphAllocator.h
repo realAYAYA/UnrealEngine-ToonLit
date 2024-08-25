@@ -3,6 +3,7 @@
 #pragma once
 
 #include "Containers/Array.h"
+#include "Containers/StaticArray.h"
 #include "Containers/ContainerAllocationPolicies.h"
 #include "CoreGlobals.h"
 #include "CoreMinimal.h"
@@ -15,9 +16,11 @@
 #include "Templates/UnrealTemplate.h"
 
 #define RDG_USE_MALLOC USING_ADDRESS_SANITISER
+#define RDG_ALLOCATOR_DEBUG UE_BUILD_DEBUG
 
-/** Private allocator used by RDG to track its internal memory. All memory is released after RDG builder execution. */
-class FRDGAllocator final
+class FRDGAllocator;
+
+class FRDGAllocator
 {
 public:
 	class FObject
@@ -39,19 +42,35 @@ public:
 		T Alloc;
 	};
 
-	static RENDERCORE_API FRDGAllocator& Get();
-	RENDERCORE_API ~FRDGAllocator();
+	RENDERCORE_API static FRDGAllocator& GetTLS();
+
+	FRDGAllocator();
+	FRDGAllocator(FRDGAllocator&&);
+	FRDGAllocator& operator=(FRDGAllocator&&);
+	~FRDGAllocator();
 
 	/** Allocates raw memory. */
 	FORCEINLINE void* Alloc(uint64 SizeInBytes, uint32 AlignInBytes)
 	{
-#if RDG_USE_MALLOC
-		void* Memory = FMemory::Malloc(SizeInBytes, AlignInBytes);
-		GetContext().RawAllocs.Emplace(Memory);
-		return Memory;
-#else
-		return GetContext().MemStack.Alloc(SizeInBytes, AlignInBytes);
+		void* Memory;
+
+#if RDG_ALLOCATOR_DEBUG
+		AcquireAccess();
 #endif
+
+#if RDG_USE_MALLOC
+		Memory = FMemory::Malloc(SizeInBytes, AlignInBytes);
+		Mallocs.Emplace(Memory);
+		NumMallocBytes += SizeInBytes;
+#else
+		Memory = MemStack.Alloc(SizeInBytes, AlignInBytes);
+#endif
+
+#if RDG_ALLOCATOR_DEBUG
+		ReleaseAccess();
+#endif
+
+		return Memory;
 	}
 
 	/** Allocates an uninitialized type without destructor tracking. */
@@ -65,14 +84,22 @@ public:
 	template <typename T, typename... TArgs>
 	FORCEINLINE T* Alloc(TArgs&&... Args)
 	{
-		FContext& LocalContext = GetContext();
-	#if RDG_USE_MALLOC
+#if RDG_ALLOCATOR_DEBUG
+		AcquireAccess();
+#endif
+
+#if RDG_USE_MALLOC
 		TObject<T>* Object = new TObject<T>(Forward<TArgs&&>(Args)...);
-	#else
-		TObject<T>* Object = new(LocalContext.MemStack) TObject<T>(Forward<TArgs&&>(Args)...);
-	#endif
+		NumMallocBytes += sizeof(Object);
+#else
+		TObject<T>* Object = new(MemStack) TObject<T>(Forward<TArgs&&>(Args)...);
+#endif
 		check(Object);
-		LocalContext.Objects.Add(Object);
+		Objects.Add(Object);
+
+#if RDG_ALLOCATOR_DEBUG
+		ReleaseAccess();
+#endif
 		return &Object->Alloc;
 	}
 
@@ -80,78 +107,52 @@ public:
 	template <typename T, typename... TArgs>
 	FORCEINLINE T* AllocNoDestruct(TArgs&&... Args)
 	{
-#if RDG_USE_MALLOC
 		return new (AllocUninitialized<T>(1)) T(Forward<TArgs&&>(Args)...);
-#else
-		return new (GetContext().MemStack) T(Forward<TArgs&&>(Args)...);
-#endif
 	}
 
 	FORCEINLINE int32 GetByteCount() const
 	{
-	#if RDG_USE_MALLOC
-		return 0;
-	#else
-		return Context.MemStack.GetByteCount() + ContextForTasks.MemStack.GetByteCount();
-	#endif
+#if RDG_USE_MALLOC
+		return static_cast<int32>(NumMallocBytes);
+#else
+		return MemStack.GetByteCount();
+#endif
 	}
+
+	void ReleaseAll();
 
 private:
-	FRDGAllocator() = default;
-	FRDGAllocator(FRDGAllocator&&) = default;
-	FRDGAllocator& operator = (FRDGAllocator&&) = default;
-
-	RENDERCORE_API void ReleaseAll();
-
-	struct FContext
-	{
 #if RDG_USE_MALLOC
-		TArray<void*> RawAllocs;
+	TArray<void*> Mallocs;
+	uint64 NumMallocBytes = 0;
 #else
-		FMemStackBase MemStack;
+	FMemStackBase MemStack;
 #endif
-		TArray<FObject*> Objects;
+	TArray<FObject*> Objects;
 
-		void ReleaseAll();
-	};
+#if RDG_ALLOCATOR_DEBUG
+	RENDERCORE_API void AcquireAccess();
+	RENDERCORE_API void ReleaseAccess();
 
-	FContext Context;
-	uint8 Pad[PLATFORM_CACHE_LINE_SIZE];
-	FContext ContextForTasks;
+	std::atomic_int32_t NumAccesses{0};
+	static thread_local int32 NumAccessesTLS;
+#endif
 
-	FORCEINLINE FContext& GetContext()
-	{
-		return FTaskTagScope::IsCurrentTag(ETaskTag::ERenderingThread) ? Context : ContextForTasks;
-	}
-
-	template <uint32>
-	friend class TRDGArrayAllocator;
 	friend class FRDGAllocatorScope;
+	static uint32 AllocatorTLSSlot;
 };
 
-#define RDG_FRIEND_ALLOCATOR_FRIEND(Type) friend class FRDGAllocator::TObject<Type>
-
-/** Base class for RDG builder which scopes the allocations and releases them in the destructor. */
 class FRDGAllocatorScope
 {
 public:
-	FRDGAllocatorScope()
-		: Allocator(FRDGAllocator::Get())
-	{}
-
+	RENDERCORE_API FRDGAllocatorScope(FRDGAllocator& Allocator);
 	RENDERCORE_API ~FRDGAllocatorScope();
 
-protected:
-	FRDGAllocator& Allocator;
-
-	void BeginAsyncDelete(TUniqueFunction<void()>&& InAsyncDeleteFunction)
-	{
-		AsyncDeleteFunction = MoveTemp(InAsyncDeleteFunction);
-	}
-
 private:
-	TUniqueFunction<void()> AsyncDeleteFunction;
+	void* AllocatorToRestore;
 };
+
+#define RDG_FRIEND_ALLOCATOR_FRIEND(Type) friend class FRDGAllocator::TObject<Type>
 
 namespace UE::RenderCore::Private
 {
@@ -203,7 +204,7 @@ public:
 				// Allocate memory from the allocator.
 				const int32 AllocSize = (int32)(NumElements * NumBytesPerElement);
 				const int32 AllocAlignment = FMath::Max(Alignment, (uint32)alignof(ElementType));
-				Data = (ElementType*)FRDGAllocator::Get().Alloc(AllocSize, FMath::Max(AllocSize >= 16 ? (int32)16 : (int32)8, AllocAlignment));
+				Data = (ElementType*)FRDGAllocator::GetTLS().Alloc(AllocSize, FMath::Max(AllocSize >= 16 ? (int32)16 : (int32)8, AllocAlignment));
 
 				// If the container previously held elements, copy them into the new allocation.
 				if (OldData && PreviousNumElements)

@@ -16,6 +16,16 @@ public:
 	virtual void BuildTemplate(FMassEntityTemplateBuildContext& BuildContext, const UWorld& World) const override;
 };
 
+// Simplest version of UMassLODCollectorTrait that will ensure collection strictly based on Distance from Viewer
+UCLASS(meta = (DisplayName = "DistanceLODCollector"))
+class MASSLOD_API UMassDistanceLODCollectorTrait : public UMassEntityTraitBase
+{
+	GENERATED_BODY()
+
+public:
+	virtual void BuildTemplate(FMassEntityTemplateBuildContext& BuildContext, const UWorld& World) const override;
+};
+
 UCLASS(meta = (DisplayName = "SimulationLOD"))
 class MASSLOD_API UMassSimulationLODTrait : public UMassEntityTraitBase
 {

@@ -36,7 +36,8 @@ public class SkeletalMeshModelingTools : ModuleRules
 				"AnimationWidgets",
 				"ApplicationCore",
 				"WidgetRegistration",
-				"SkeletalMeshModifiers"
+				"SkeletalMeshModifiers",
+				"Persona"
 			}
 		);
 

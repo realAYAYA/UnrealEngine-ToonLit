@@ -7,7 +7,7 @@ import tempfile
 import calendar
 import datetime
 
-from PySide2 import QtCore
+from PySide6 import QtCore
 
 logging.MESSAGE_LEVEL_NUM = logging.DEBUG - 2
 logging.OSC_LEVEL_NUM = logging.DEBUG - 1
@@ -57,7 +57,7 @@ class QtHandler(logging.Handler):
             initial = 'S'
             color = '#A6E22E'
 
-        return self.html_format.format(datetime.datetime.now().strftime("%H:%M:%S"), initial, color, record.msg)
+        return self.html_format.format(datetime.datetime.now().strftime("%H:%M:%S"), initial, color, record.message)
 
     def get_record(self):
         return self.record

@@ -100,7 +100,7 @@ void FLiveLinkComponentDetailCustomization::CustomizeDetails(IDetailLayoutBuilde
 				}
 
 				//Since we're displaying properties of another object, add it as external to the current one being edited. 
-				IDetailPropertyRow* ThisRoleRow = DetailBuilder.EditCategory(TEXT("Role Controllers")).AddExternalObjects(ExternalObjects);
+				IDetailPropertyRow* ThisRoleRow = DetailBuilder.EditCategory(TEXT("Role Controllers")).AddExternalObjects(ExternalObjects, EPropertyLocation::Type::Default, FAddPropertyParams().UniqueId("LiveLinkControllerRow"));
 
 				//As external objects, each map entry will generate a custom widget for its detail property row like this: 
 				//(NameWidget) | (ValueWidget)

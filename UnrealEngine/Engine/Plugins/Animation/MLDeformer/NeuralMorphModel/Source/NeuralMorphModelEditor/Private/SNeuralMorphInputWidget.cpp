@@ -46,12 +46,12 @@ namespace UE::NeuralMorphModel
 		// Bone commands.
 		UI_COMMAND(ResetAllBoneMasks, "Reset All Bone Masks", "Reset all masks for every bone in the input list.", EUserInterfaceActionType::Button, FInputChord());
 		UI_COMMAND(ResetSelectedBoneMasks, "Reset Selected Bone Masks", "Reset the masks for all selected bones.", EUserInterfaceActionType::Button, FInputChord());
-		UI_COMMAND(ExpandSelectedBoneMasks, "Add Bones To Mask", "Add specific bones to the masks for the selected bones.", EUserInterfaceActionType::Button, FInputChord());
+		UI_COMMAND(ExpandSelectedBoneMasks, "Edit Bone Mask", "Specify which bones to include inside the mask.", EUserInterfaceActionType::Button, FInputChord());
 
 		// Bone group commands.
 		UI_COMMAND(ResetAllBoneGroupMasks, "Reset All Bone Group Masks", "Reset all masks for every bone group.", EUserInterfaceActionType::Button, FInputChord());
 		UI_COMMAND(ResetSelectedBoneGroupMasks, "Reset Selected Bone Group Masks", "Reset the masks for all selected bone groups.", EUserInterfaceActionType::Button, FInputChord());
-		UI_COMMAND(ExpandSelectedBoneGroupMasks, "Add Bones To Group Mask", "Add specific bones to the masks for the selected bone groups.", EUserInterfaceActionType::Button, FInputChord());
+		UI_COMMAND(ExpandSelectedBoneGroupMasks, "Edit Group Mask", "Specify which bones to include inside the mask for this group.", EUserInterfaceActionType::Button, FInputChord());
 	}
 
 	void SNeuralMorphInputWidget::BindCommands()
@@ -197,7 +197,8 @@ namespace UE::NeuralMorphModel
 			.RefSkeleton(&SkelMesh->GetRefSkeleton())
 			.AllowMultiSelect(true)
 			.HighlightBoneNamesColor(FSlateColor(HighlightColor))
-			.HighlightBoneNames(HighlightedBones);
+			.HighlightBoneNames(HighlightedBones)
+			.InitialSelectedBoneNames(HighlightedBones);
 
 		Dialog->ShowModal();
 
@@ -221,6 +222,7 @@ namespace UE::NeuralMorphModel
 				}
 
 				check(MaskInfo);
+				MaskInfo->BoneNames.Reset();
 				for (const FName PickedBoneName : PickedBoneNames)
 				{
 					MaskInfo->BoneNames.AddUnique(PickedBoneName);
@@ -334,7 +336,8 @@ namespace UE::NeuralMorphModel
 			.RefSkeleton(&SkelMesh->GetRefSkeleton())
 			.AllowMultiSelect(true)
 			.HighlightBoneNamesColor(FSlateColor(HighlightColor))
-			.HighlightBoneNames(HighlightedBones);
+			.HighlightBoneNames(HighlightedBones)
+			.InitialSelectedBoneNames(HighlightedBones);
 
 		Dialog->ShowModal();
 
@@ -359,6 +362,7 @@ namespace UE::NeuralMorphModel
 					MaskInfo = &NeuralEditorModel->GetNeuralMorphModel()->BoneGroupMaskInfos.Add(Item->Name, FNeuralMorphMaskInfo());
 				}
 				check(MaskInfo);
+				MaskInfo->BoneNames.Reset();
 				for (const FName PickedBoneName : PickedBoneNames)
 				{
 					MaskInfo->BoneNames.AddUnique(PickedBoneName);
@@ -386,7 +390,10 @@ namespace UE::NeuralMorphModel
 			const int32 NumSelectedItems = InputBonesWidget->GetTreeWidget()->GetNumItemsSelected();
 			if (NumSelectedItems > 0)
 			{
-				MenuBuilder.AddMenuEntry(Commands.ExpandSelectedBoneMasks);
+				if (NumSelectedItems == 1)
+				{
+					MenuBuilder.AddMenuEntry(Commands.ExpandSelectedBoneMasks);
+				}
 				MenuBuilder.AddMenuEntry(Commands.ResetSelectedBoneMasks);
 			}
 		}
@@ -461,7 +468,10 @@ namespace UE::NeuralMorphModel
 			const FNeuralMorphInputWidgetCommands& Commands = FNeuralMorphInputWidgetCommands::Get();
 			if (BoneGroupsWidget->GetNumSelectedGroups() > 0)
 			{
-				MenuBuilder.AddMenuEntry(Commands.ExpandSelectedBoneGroupMasks);
+				if (BoneGroupsWidget->GetNumSelectedGroups() == 1)
+				{
+					MenuBuilder.AddMenuEntry(Commands.ExpandSelectedBoneGroupMasks);
+				}
 				MenuBuilder.AddMenuEntry(Commands.ResetSelectedBoneGroupMasks);
 			}
 		}

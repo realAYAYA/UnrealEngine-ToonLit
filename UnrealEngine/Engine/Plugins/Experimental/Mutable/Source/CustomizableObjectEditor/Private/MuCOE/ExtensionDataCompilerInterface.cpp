@@ -3,7 +3,7 @@
 #include "MuCOE/ExtensionDataCompilerInterface.h"
 
 #include "InstancedStruct.h"
-#include "MuCO/CustomizableObjectStreamedExtensionData.h"
+#include "MuCO/CustomizableObjectStreamedResourceData.h"
 #include "MuCOE/GenerateMutableSource/GenerateMutableSource.h"
 #include "MuCOE/CustomizableObjectCompiler.h"
 #include "MuR/ExtensionData.h"
@@ -13,7 +13,7 @@ FExtensionDataCompilerInterface::FExtensionDataCompilerInterface(FMutableGraphGe
 {
 }
 
-mu::ExtensionDataPtrConst FExtensionDataCompilerInterface::MakeStreamedExtensionData(UCustomizableObjectExtensionDataContainer*& OutContainer)
+mu::ExtensionDataPtrConst FExtensionDataCompilerInterface::MakeStreamedExtensionData(UCustomizableObjectResourceDataContainer*& OutContainer)
 {
 	mu::ExtensionDataPtr Result = new mu::ExtensionData;
 	Result->Origin = mu::ExtensionData::EOrigin::ConstantStreamed;
@@ -35,7 +35,7 @@ mu::ExtensionDataPtrConst FExtensionDataCompilerInterface::MakeStreamedExtension
 	}
 
 	check(GenerationContext.Object);
-	OutContainer = NewObject<UCustomizableObjectExtensionDataContainer>(
+	OutContainer = NewObject<UCustomizableObjectResourceDataContainer>(
 		GenerationContext.Object,
 		FName(*ContainerName),
 		RF_Public);
@@ -51,7 +51,7 @@ mu::ExtensionDataPtrConst FExtensionDataCompilerInterface::MakeAlwaysLoadedExten
 	Result->Origin = mu::ExtensionData::EOrigin::ConstantAlwaysLoaded;
 	Result->Index = GenerationContext.AlwaysLoadedExtensionData.Num();
 
-	FCustomizableObjectExtensionData* CompileTimeExtensionData = &GenerationContext.AlwaysLoadedExtensionData.AddDefaulted_GetRef();
+	FCustomizableObjectResourceData* CompileTimeExtensionData = &GenerationContext.AlwaysLoadedExtensionData.AddDefaulted_GetRef();
 	CompileTimeExtensionData->Data = MoveTemp(Data);
 
 	return Result;

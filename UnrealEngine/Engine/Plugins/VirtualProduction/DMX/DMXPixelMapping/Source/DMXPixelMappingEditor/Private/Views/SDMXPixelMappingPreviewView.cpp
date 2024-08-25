@@ -216,7 +216,7 @@ float SDMXPixelMappingPreviewView::GetGridScaleAmount() const
 	return 1.0f; // Parent override
 }
 
-int32 SDMXPixelMappingPreviewView::GetSnapGridSize() const
+int32 SDMXPixelMappingPreviewView::GetGridSize() const
 {
 	return 4; // Parent override
 }
@@ -289,13 +289,11 @@ TSharedRef<SWidget> SDMXPixelMappingPreviewView::CreateOverlayUI()
 			[
 				SNew(SButton)
 				.ButtonColorAndOpacity(FLinearColor::Transparent)
-				.ButtonStyle(FAppStyle::Get(), "ViewportMenu.Button")
 				.ToolTipText(LOCTEXT("ZoomToFit_ToolTip", "Zoom To Fit"))
 				.OnClicked(this, &SDMXPixelMappingPreviewView::HandleZoomToFitClicked)
-				.ContentPadding(FAppStyle::Get().GetMargin("ViewportMenu.SToolBarButtonBlock.Button.Padding"))
 				[
 					SNew(SImage)
-					.Image(FDMXPixelMappingEditorStyle::Get().GetBrush("Icons.ZoomToFit"))
+					.Image(FAppStyle::GetBrush("UMGEditor.ZoomToFit"))
 				]
 			]
 		];

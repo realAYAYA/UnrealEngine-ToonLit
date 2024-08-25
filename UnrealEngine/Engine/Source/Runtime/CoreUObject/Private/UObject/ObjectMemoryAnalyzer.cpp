@@ -42,9 +42,8 @@ void FObjectMemoryAnalyzer::AnalyzeObjects(const TArray<class UObject*>& InObjec
 
 void FObjectMemoryAnalyzer::AnalyzeObject(UObject* Object)
 {
-	if (ObjectList.Contains(Object) ||
-		(!(AnalyzeFlags&EAnalyzeFlags::IncludeDefaultObjects) && Object->HasAnyFlags(RF_ClassDefaultObject|RF_ArchetypeObject)) ||
-		Object->IsDefaultSubobject())
+	if (ObjectList.Contains(Object) || 
+		(!(AnalyzeFlags&EAnalyzeFlags::IncludeDefaultObjects) && Object->IsTemplate()))
 	{
 		return;
 	}
@@ -84,7 +83,7 @@ void FObjectMemoryAnalyzer::AnalyzeObjects( UClass* InBaseClass )
 	{
 		UObject* Object	= *It;
 
-		if (!(AnalyzeFlags&EAnalyzeFlags::IncludeDefaultObjects) && Object->IsDefaultSubobject()) { continue; };
+		if (!(AnalyzeFlags&EAnalyzeFlags::IncludeDefaultObjects) && Object->IsTemplate()) { continue; };
 
 		FObjectMemoryUsage& Annotation = MemUsageAnnotations.GetAnnotationRef(Object);
 
@@ -100,7 +99,7 @@ void FObjectMemoryAnalyzer::AnalyzeObjects( UClass* InBaseClass )
 	{
 		UObject* Object	= *It;
 
-		if (!(AnalyzeFlags&EAnalyzeFlags::IncludeDefaultObjects) && Object->IsDefaultSubobject()) { continue; };
+		if (!(AnalyzeFlags&EAnalyzeFlags::IncludeDefaultObjects) && Object->IsTemplate()) { continue; };
 	
 		FObjectMemoryUsage& Annotation = MemUsageAnnotations.GetAnnotationRef(Object);
 			
@@ -114,7 +113,7 @@ void FObjectMemoryAnalyzer::AnalyzeObjects( UClass* InBaseClass )
 	{
 		UObject* Object	= *It;
 		
-		if (!(AnalyzeFlags&EAnalyzeFlags::IncludeDefaultObjects) && Object->IsDefaultSubobject()) { continue; };
+		if (!(AnalyzeFlags&EAnalyzeFlags::IncludeDefaultObjects) && Object->IsTemplate()) { continue; };
 
 		FObjectMemoryUsage& Annotation = MemUsageAnnotations.GetAnnotationRef(Object);
 		
@@ -329,7 +328,7 @@ int32 FObjectMemoryAnalyzer::GetResults(TArray<FObjectMemoryUsage>& Results)
 		for( FThreadSafeObjectIterator It(BaseClass, false, (EObjectFlags)ExclusionFlags); It; ++It )
 		{
 			UObject* Object	= *It;
-			if (!(AnalyzeFlags&EAnalyzeFlags::IncludeDefaultObjects) && Object->IsDefaultSubobject()) { continue; };
+			if (!(AnalyzeFlags&EAnalyzeFlags::IncludeDefaultObjects) && Object->IsTemplate()) { continue; };
 			FObjectMemoryUsage& Annotation = MemUsageAnnotations.GetAnnotationRef(Object);
 
 			if (Annotation.IsRoot())

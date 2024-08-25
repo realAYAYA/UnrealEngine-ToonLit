@@ -33,7 +33,6 @@
 #include "Styling/AppStyle.h"
 #include "Styling/SlateIconFinder.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/UnrealTemplate.h"
 #include "UObject/Class.h"
 #include "UObject/Object.h"
@@ -264,22 +263,25 @@ FLinearColor UK2Node_Variable::GetNodeTitleColor() const
 	return FLinearColor::White;
 }
 
-FString UK2Node_Variable::GetFindReferenceSearchString() const
+FString UK2Node_Variable::GetFindReferenceSearchString_Impl(EGetFindReferenceSearchStringFlags InFlags) const
 {
-	FString ResultSearchString;
-	if (VariableReference.IsLocalScope())
+	// Legacy behavior for variable nodes was to do an exact search
+	if (EnumHasAnyFlags(InFlags, EGetFindReferenceSearchStringFlags::UseSearchSyntax) || EnumHasAnyFlags(InFlags, EGetFindReferenceSearchStringFlags::Legacy))
 	{
-		ResultSearchString = VariableReference.GetReferenceSearchString(nullptr);
-	}
-	else
-	{
-		FProperty* VariableProperty = VariableReference.ResolveMember<FProperty>(GetBlueprintClassFromNode());
-		if (VariableProperty)
+		if (VariableReference.IsLocalScope())
 		{
-			ResultSearchString = VariableReference.GetReferenceSearchString(VariableProperty->GetOwnerClass());
+			// Generate local variable search query
+			return VariableReference.GetReferenceSearchString(nullptr);
+		}
+		else if (FProperty* VariableProperty = VariableReference.ResolveMember<FProperty>(GetBlueprintClassFromNode()))
+		{
+			// Generate member variable search query
+			return VariableReference.GetReferenceSearchString(VariableProperty->GetOwnerClass());
 		}
 	}
-	return ResultSearchString;
+
+	// Simple query: just search for variable name
+	return FString::Printf(TEXT("\"%s\""), *VariableReference.GetMemberName().ToString());
 }
 
 UK2Node::ERedirectType UK2Node_Variable::DoPinsMatchForReconstruction(const UEdGraphPin* NewPin, int32 NewPinIndex, const UEdGraphPin* OldPin, int32 OldPinIndex) const 
@@ -562,10 +564,10 @@ void UK2Node_Variable::ValidateNodeDuringCompilation(class FCompilerResultsLog& 
 			UBlueprint* Blueprint = GetBlueprint();
 			if (Blueprint != nullptr)
 			{
-				OwnerName = Blueprint->GetName();
+				OwnerName = Blueprint->GetPathName();
 				if (UClass* VarOwnerClass = VariableReference.GetMemberParentClass(Blueprint->GeneratedClass))
 				{
-					OwnerName = VarOwnerClass->GetName();
+					OwnerName = VarOwnerClass->GetPathName();
 				}
 			}
 

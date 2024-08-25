@@ -16,6 +16,7 @@ struct FMobileLightShaftInfo
 	FVector2D Center = FVector2D::ZeroVector;
 	FLinearColor ColorMask = FLinearColor::Transparent;
 	FLinearColor ColorApply = FLinearColor::Transparent;
+	float BloomMaxBrightness = 100.0f;
 };
 
 // Returns mobile light shaft info for the light.

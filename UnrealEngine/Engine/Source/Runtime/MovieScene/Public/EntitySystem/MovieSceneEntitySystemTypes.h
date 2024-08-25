@@ -814,28 +814,28 @@ struct FEntityAllocation
 	/**
 	 * Read type-erased component data for the specified component type
 	 */
-	UE_NODISCARD MOVIESCENE_API TComponentLock<FReadErased> ReadComponentsErased(FComponentTypeID ComponentType) const;
+	[[nodiscard]] MOVIESCENE_API TComponentLock<FReadErased> ReadComponentsErased(FComponentTypeID ComponentType) const;
 
 	/**
 	 * Write type-erased component data for the specified component type
 	 */
-	UE_NODISCARD MOVIESCENE_API TComponentLock<FWriteErased> WriteComponentsErased(FComponentTypeID ComponentType, FEntityAllocationWriteContext InWriteContext) const;
+	[[nodiscard]] MOVIESCENE_API TComponentLock<FWriteErased> WriteComponentsErased(FComponentTypeID ComponentType, FEntityAllocationWriteContext InWriteContext) const;
 
 	/**
 	 * Attempt to read type-erased component data for the specified component type
 	 */
-	UE_NODISCARD MOVIESCENE_API TComponentLock<FReadErasedOptional> TryReadComponentsErased(FComponentTypeID ComponentType) const;
+	[[nodiscard]] MOVIESCENE_API TComponentLock<FReadErasedOptional> TryReadComponentsErased(FComponentTypeID ComponentType) const;
 
 	/**
 	 * Attempt to write type-erased component data for the specified component type
 	 */
-	UE_NODISCARD MOVIESCENE_API TComponentLock<FWriteErasedOptional> TryWriteComponentsErased(FComponentTypeID ComponentType, FEntityAllocationWriteContext InWriteContext) const;
+	[[nodiscard]] MOVIESCENE_API TComponentLock<FWriteErasedOptional> TryWriteComponentsErased(FComponentTypeID ComponentType, FEntityAllocationWriteContext InWriteContext) const;
 
 	/**
 	 * Read typed component data for the specified component type
 	 */
 	template<typename T>
-	UE_NODISCARD TComponentLock<TRead<T>> ReadComponents(TComponentTypeID<T> ComponentType) const
+	[[nodiscard]] TComponentLock<TRead<T>> ReadComponents(TComponentTypeID<T> ComponentType) const
 	{
 		const FComponentHeader& Header = GetComponentHeaderChecked(ComponentType);
 		return TComponentLock<TRead<T>>(&Header, LockMode);
@@ -845,7 +845,7 @@ struct FEntityAllocation
 	 * Write typed component data for the specified component type
 	 */
 	template<typename T>
-	UE_NODISCARD TComponentLock<TReadOptional<T>> TryReadComponents(TComponentTypeID<T> ComponentType) const
+	[[nodiscard]] TComponentLock<TReadOptional<T>> TryReadComponents(TComponentTypeID<T> ComponentType) const
 	{
 		if (const FComponentHeader* Header = FindComponentHeader(ComponentType))
 		{
@@ -858,7 +858,7 @@ struct FEntityAllocation
 	 * Write typed component data for the specified component type
 	 */
 	template<typename T>
-	UE_NODISCARD TComponentLock<TWrite<T>> WriteComponents(TComponentTypeID<T> ComponentType, FEntityAllocationWriteContext InWriteContext) const
+	[[nodiscard]] TComponentLock<TWrite<T>> WriteComponents(TComponentTypeID<T> ComponentType, FEntityAllocationWriteContext InWriteContext) const
 	{
 		const FComponentHeader& Header = GetComponentHeaderChecked(ComponentType);
 		return TComponentLock<TWrite<T>>(&Header, LockMode, InWriteContext);
@@ -868,7 +868,7 @@ struct FEntityAllocation
 	 * Attempt to write typed component data for the specified component type
 	 */
 	template<typename T>
-	UE_NODISCARD TComponentLock<TWriteOptional<T>> TryWriteComponents(TComponentTypeID<T> ComponentType, FEntityAllocationWriteContext InWriteContext) const
+	[[nodiscard]] TComponentLock<TWriteOptional<T>> TryWriteComponents(TComponentTypeID<T> ComponentType, FEntityAllocationWriteContext InWriteContext) const
 	{
 		if (const FComponentHeader* Header = FindComponentHeader(ComponentType))
 		{

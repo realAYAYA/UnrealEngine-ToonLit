@@ -173,8 +173,6 @@ bool FGameplayAbilityTargetDataHandleNetSerializer::IsEqual(FNetSerializationCon
 		const SourceType& ValueB = *reinterpret_cast<const SourceType*>(Args.Source1);
 		return ValueA == ValueB;
 	}
-
-	return true;
 }
 
 bool FGameplayAbilityTargetDataHandleNetSerializer::Validate(FNetSerializationContext& Context, const FNetValidateArgs& Args)

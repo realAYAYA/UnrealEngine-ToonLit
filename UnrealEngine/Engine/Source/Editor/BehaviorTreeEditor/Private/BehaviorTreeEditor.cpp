@@ -16,6 +16,7 @@
 #include "BehaviorTree/Services/BTService_BlueprintBase.h"
 #include "BehaviorTree/Tasks/BTTask_BlueprintBase.h"
 #include "BehaviorTree/Tasks/BTTask_RunBehavior.h"
+#include "BehaviorTree/Tasks/BTTask_RunBehaviorDynamic.h"
 #include "BehaviorTreeColors.h"
 #include "BehaviorTreeDebugger.h"
 #include "BehaviorTreeDecoratorGraphNode_Logic.h"
@@ -119,6 +120,9 @@ class SWidget;
 const FName FBehaviorTreeEditor::BehaviorTreeMode(TEXT("BehaviorTree"));
 const FName FBehaviorTreeEditor::BlackboardMode(TEXT("Blackboard"));
 
+FText FBehaviorTreeEditor::BehaviorTreeModeText(LOCTEXT("BehaviorTreeMode", "Behavior Tree"));
+FText FBehaviorTreeEditor::BlackboardModeText(LOCTEXT("BlackboardMode", "Blackboard"));
+
 //////////////////////////////////////////////////////////////////////////
 FBehaviorTreeEditor::FBehaviorTreeEditor() 
 	: IBehaviorTreeEditor()
@@ -144,6 +148,7 @@ FBehaviorTreeEditor::FBehaviorTreeEditor()
 	GraphName = "Behavior Tree";
 	CornerText = LOCTEXT("AppearanceCornerText", "BEHAVIOR TREE");
 	TitleText = LOCTEXT("BehaviorTreeGraphLabel", "Behavior Tree");
+	RootNodeNoteText = LOCTEXT("RootLevelNode", "Root-level decorators are only valid and will be executed if this BT is be used\nas static a sub-tree (via \"Run Behavior\"). These decorators will be ignored if\ndynamically injected with \"Run Dynamic Behavior\".");
 }
 
 FBehaviorTreeEditor::~FBehaviorTreeEditor()
@@ -282,7 +287,6 @@ void FBehaviorTreeEditor::InitBehaviorTreeEditor( const EToolkitMode::Type Mode,
 
 		Debugger = MakeShareable(new FBehaviorTreeDebugger);
 		Debugger->Setup(BehaviorTree, SharedThis(this));
-		Debugger->OnDebuggedBlackboardChanged().AddSP(this, &FBehaviorTreeEditor::HandleDebuggedBlackboardChanged);
 		BindDebuggerToolbarCommands();
 
 		FBehaviorTreeEditorModule& BehaviorTreeEditorModule = FModuleManager::LoadModuleChecked<FBehaviorTreeEditorModule>( "BehaviorTreeEditor" );
@@ -306,7 +310,6 @@ void FBehaviorTreeEditor::InitBehaviorTreeEditor( const EToolkitMode::Type Mode,
 				.OnIsDebuggerPaused(this, &FBehaviorTreeEditor::IsDebuggerPaused)
 				.OnGetDebugTimeStamp(this, &FBehaviorTreeEditor::HandleGetDebugTimeStamp)
 				.OnGetDisplayCurrentState(this, &FBehaviorTreeEditor::HandleGetDisplayCurrentState)
-				.OnBlackboardKeyChanged(this, &FBehaviorTreeEditor::HandleBlackboardKeyChanged)
 				.OnIsBlackboardModeActive(this, &FBehaviorTreeEditor::HandleIsBlackboardModeActive);
 	}
 	else
@@ -456,15 +459,6 @@ bool FBehaviorTreeEditor::HandleGetDisplayCurrentState() const
 	return false;
 }
 
-void FBehaviorTreeEditor::HandleBlackboardKeyChanged(UBlackboardData* InBlackboardData, FBlackboardEntry* const InKey)
-{
-	if(BlackboardView.IsValid())
-	{
-		// re-set object in blackboard view to keep it up to date
-		BlackboardView->SetObject(InBlackboardData);
-	}
-}
-
 bool FBehaviorTreeEditor::HandleIsBlackboardModeActive() const
 {
 	return GetCurrentMode() == BlackboardMode;
@@ -538,6 +532,11 @@ FGraphAppearanceInfo FBehaviorTreeEditor::GetGraphAppearance() const
 	else if (FBehaviorTreeDebugger::IsPlaySessionPaused())
 	{
 		AppearanceInfo.PIENotifyText = LOCTEXT("PausedLabel", "PAUSED");
+	}
+
+	if (Debugger.IsValid() && Debugger->IsBehaviorExecutionPaused())
+	{
+		AppearanceInfo.WarningText = LOCTEXT("BehaviorExecutionPausedLabel", "BEHAVIOR EXECUTION PAUSED");
 	}
 	
 	return AppearanceInfo;
@@ -707,7 +706,7 @@ TSharedRef<SWidget> FBehaviorTreeEditor::SpawnProperties()
 				.Padding(FMargin(5.0f))
 				[
 					SNew(STextBlock)
-					.Text(LOCTEXT("RootLevelNode", "Root-level decorators are only valid and will be executed if this BT is be used\nas static a sub-tree (via \"Run Behavior\"). These decorators will be ignored if\ndynamically injected with \"Run Dynamic Behavior\"."))
+					.Text(RootNodeNoteText)
 				]
 			]
 			+SVerticalBox::Slot()
@@ -1256,19 +1255,34 @@ void FBehaviorTreeEditor::OnNodeDoubleClicked(class UEdGraphNode* Node)
 			}
 		}
 	}
-	else if (UBehaviorTreeGraphNode_SubtreeTask* Task = Cast<UBehaviorTreeGraphNode_SubtreeTask>(Node))
+	else if (UBehaviorTreeGraphNode_Task* Task = Cast<UBehaviorTreeGraphNode_Task>(Node))
 	{
-		if (UBTTask_RunBehavior* RunTask = Cast<UBTTask_RunBehavior>(Task->NodeInstance))
+		UBehaviorTree* SubTreeToOpen = nullptr;
+		if (UBTTask_RunBehavior* SubtreeTask = Cast<UBTTask_RunBehavior>(Task->NodeInstance))
 		{
-			if (RunTask->GetSubtreeAsset())
+			SubTreeToOpen = SubtreeTask->GetSubtreeAsset();
+		}
+		else if (UBTTask_RunBehaviorDynamic* DynamicSubTreeTask = Cast<UBTTask_RunBehaviorDynamic>(Task->NodeInstance))
+		{
+			if (Debugger)
 			{
-				GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(RunTask->GetSubtreeAsset());
+				SubTreeToOpen = Debugger->GetDynamicSubtreeTaskBehaviorTree(DynamicSubTreeTask);
+			}
+			
+			if (!SubTreeToOpen)
+			{
+				SubTreeToOpen = DynamicSubTreeTask->GetDefaultBehaviorAsset();
+			}
+		}
 
-				IBehaviorTreeEditor* ChildNodeEditor = static_cast<IBehaviorTreeEditor*>(GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->FindEditorForAsset(RunTask->GetSubtreeAsset(), true));
-				if (ChildNodeEditor)
-				{
-					ChildNodeEditor->InitializeDebuggerState(Debugger.Get());
-				}
+		if (SubTreeToOpen)
+		{
+			GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(SubTreeToOpen);
+
+			IBehaviorTreeEditor* ChildNodeEditor = static_cast<IBehaviorTreeEditor*>(GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->FindEditorForAsset(SubTreeToOpen, true));
+			if (ChildNodeEditor)
+			{
+				ChildNodeEditor->InitializeDebuggerState(Debugger.Get());
 			}
 		}
 	}
@@ -1600,8 +1614,8 @@ FText FBehaviorTreeEditor::GetLocalizedMode(FName InMode)
 
 	if (LocModes.Num() == 0)
 	{
-		LocModes.Add( BehaviorTreeMode, LOCTEXT("BehaviorTreeMode", "Behavior Tree") );
-		LocModes.Add( BlackboardMode, LOCTEXT("BlackboardMode", "Blackboard") );
+		LocModes.Add( BehaviorTreeMode, BehaviorTreeModeText );
+		LocModes.Add( BlackboardMode, BlackboardModeText );
 	}
 
 	check( InMode != NAME_None );
@@ -1645,6 +1659,12 @@ void FBehaviorTreeEditor::FocusWindow(UObject* ObjectToFocusOn)
 	}
 
 	FWorkflowCentricApplication::FocusWindow(ObjectToFocusOn);
+}
+
+bool FBehaviorTreeEditor::IncludeAssetInRestoreOpenAssetsPrompt(UObject* Asset) const
+{
+	// If we're in a BT editor which has a valid BehaviorTree, then don't reopen the BB during restore, only the BT
+	return Asset && (!Asset->IsA(UBlackboardData::StaticClass()) || !BehaviorTree);
 }
 
 void FBehaviorTreeEditor::OnNodeTitleCommitted(const FText& NewText, ETextCommit::Type CommitInfo, UEdGraphNode* NodeBeingChanged)

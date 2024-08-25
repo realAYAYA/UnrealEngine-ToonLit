@@ -50,6 +50,25 @@
 #include "Misc/MessageDialog.h"
 #include "UnrealEdMisc.h"
 #endif
+static const TCHAR* HMDThreadString()
+{
+	if (IsInGameThread())
+	{
+		return TEXT("T~G");
+	}
+	else if (IsInRenderingThread())
+	{
+		return TEXT("T~R");
+	}
+	else if (IsInRHIThread())
+	{
+		return TEXT("T~I");
+	}
+	else
+	{
+		return TEXT("T~?");
+	}
+}
 
 #define LOCTEXT_NAMESPACE "OpenXR"
 
@@ -106,6 +125,12 @@ static TAutoConsoleVariable<bool> CVarOpenXRAllowDepthLayer(
 	TEXT("xr.OpenXRAllowDepthLayer"),
 	true,
 	TEXT("Enables the depth composition layer if the XR_KHR_composition_layer_depth extension is supported.\n"),
+	ECVF_Default);
+
+static TAutoConsoleVariable<bool> CVarOpenXRUseWaitCountToAvoidExtraXrBeginFrameCalls(
+	TEXT("xr.OpenXRUseWaitCountToAvoidExtraXrBeginFrameCalls"),
+	true,
+	TEXT("If true we use the WaitCount in the PipelinedFrameState to avoid extra xrBeginFrame calls.  Without this level loads can cause two additional xrBeginFrame calls.\n"),
 	ECVF_Default);
 
 namespace {
@@ -369,19 +394,35 @@ float FOpenXRHMD::GetWorldToMetersScale() const
 
 FVector2D FOpenXRHMD::GetPlayAreaBounds(EHMDTrackingOrigin::Type Origin) const
 {
-	XrReferenceSpaceType Space = XR_REFERENCE_SPACE_TYPE_STAGE;
+	XrReferenceSpaceType Space = XR_REFERENCE_SPACE_TYPE_LOCAL;
 	switch (Origin)
 	{
-	case EHMDTrackingOrigin::Eye:
+	case EHMDTrackingOrigin::View:
 		Space = XR_REFERENCE_SPACE_TYPE_VIEW;
 		break;
-	case EHMDTrackingOrigin::Floor:
+	case EHMDTrackingOrigin::Local:
 		Space = XR_REFERENCE_SPACE_TYPE_LOCAL;
+		break;
+	case EHMDTrackingOrigin::LocalFloor:
+		Space = XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR_EXT;
 		break;
 	case EHMDTrackingOrigin::Stage:
 		Space = XR_REFERENCE_SPACE_TYPE_STAGE;
 		break;
+	case EHMDTrackingOrigin::CustomOpenXR:
+		if (bUseCustomReferenceSpace)
+		{
+			Space = TrackingSpaceType;
+			break;
+		}
+		else
+		{
+			UE_LOG(LogHMD, Warning, TEXT("GetPlayAreaBounds(EHMDTrackingOrigin::CustomOpenXR), but we are not using a custom reference space now. Returning zero vector."));
+			return FVector2D::ZeroVector;
+		}
 	default:
+		check(false);
+
 		break;
 	}
 	XrExtent2Df Bounds;
@@ -446,7 +487,7 @@ bool FOpenXRHMD::GetTrackingOriginTransform(TEnumAsByte<EHMDTrackingOrigin::Type
 	XrSpace Space = XR_NULL_HANDLE;
 	switch (Origin)
 	{
-	case EHMDTrackingOrigin::Eye:
+	case EHMDTrackingOrigin::Local:
 		{
 			FReadScopeLock DeviceLock(DeviceMutex);
 			if (DeviceSpaces.Num())
@@ -455,15 +496,15 @@ bool FOpenXRHMD::GetTrackingOriginTransform(TEnumAsByte<EHMDTrackingOrigin::Type
 			}
 		}
 		break;
-	case EHMDTrackingOrigin::Floor:
-		Space = LocalSpace;
+	case EHMDTrackingOrigin::LocalFloor:
+		Space = bLocalFloorExtensionSupported? LocalFloorSpace : LocalSpace;
 		break;
 	case EHMDTrackingOrigin::Stage:
 		Space = StageSpace;
 		break;
-	//case EHMDTrackingOrigin::???:
-		//Space = CustomSpace
-		//break;
+	case EHMDTrackingOrigin::CustomOpenXR:
+		Space = CustomSpace;
+		break;
 	default:
 		check(false);
 		break;
@@ -654,6 +695,15 @@ bool FOpenXRHMD::GetPoseForTime(int32 DeviceId, FTimespan Timespan, bool& OutTim
 	{
 		OutTimeWasUsed = false;
 		TargetTime = GetDisplayTime();
+
+		
+		if (TargetTime == 0)
+		{
+			// We might still get an out-of-sync query after the session has ended.
+			// We could return the last known location via PipelineState.DeviceLocations
+			// but UpdateDeviceLocations doesn't do that right now. We'll just fail for now.
+			return false;
+		}
 	}
 	else
 	{
@@ -709,11 +759,6 @@ bool FOpenXRHMD::IsChromaAbCorrectionEnabled() const
 	return false;
 }
 
-void FOpenXRHMD::VRHeadsetRecenterDelegate()
-{
-	Recenter(EOrientPositionSelector::OrientationAndPosition, 0.f);
-}
-
 void FOpenXRHMD::ResetOrientationAndPosition(float Yaw)
 {
 	Recenter(EOrientPositionSelector::OrientationAndPosition, Yaw);
@@ -747,7 +792,15 @@ void FOpenXRHMD::Recenter(EOrientPositionSelector::Type Selector, float Yaw)
 	}
 	XrSpaceLocation DeviceLocation = { XR_TYPE_SPACE_LOCATION, nullptr };
 
-	XrSpace BaseSpace = TrackingSpaceType == XR_REFERENCE_SPACE_TYPE_STAGE ? StageSpace : LocalSpace;
+	XrSpace BaseSpace = XR_NULL_HANDLE;
+	if (bLocalFloorExtensionSupported && TrackingSpaceType == XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR_EXT)
+	{
+		BaseSpace = LocalFloorSpace;
+	}
+	else
+	{
+		BaseSpace = TrackingSpaceType == XR_REFERENCE_SPACE_TYPE_STAGE ? StageSpace : LocalSpace;
+	}
 	if (bUseCustomReferenceSpace)
 	{
 		BaseSpace = CustomSpace;
@@ -817,6 +870,81 @@ FVector FOpenXRHMD::GetBasePosition() const
 	return BasePosition;
 }
 
+void FOpenXRHMD::SetTrackingOrigin(EHMDTrackingOrigin::Type NewOrigin)
+{
+	if (NewOrigin == EHMDTrackingOrigin::View)
+	{
+		UE_LOG(LogHMD, Warning, TEXT("SetTrackingOrigin(EHMDTrackingOrigin::View) called, which is invalid (We allow getting the view transform as a tracking space, but we do not allow setting the tracking space origin to the View).  We are setting the tracking space to Local, to maintain legacy behavior, however ideally the blueprint calling this would be fixed to use Local space."), OpenXRReferenceSpaceTypeToString(TrackingSpaceType));
+		TrackingSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;  // Local space is always supported
+	}
+
+	if (NewOrigin == EHMDTrackingOrigin::CustomOpenXR)
+	{
+		if (!bUseCustomReferenceSpace)
+		{
+			UE_LOG(LogHMD, Warning, TEXT("SetTrackingOrigin(EHMDTrackingOrigin::CustomOpenXR) called when bUseCustomReferenceSpace is false.  This call is being ignored.  Reference space will remain %s."), OpenXRReferenceSpaceTypeToString(TrackingSpaceType));
+			return;
+		}
+		// The case, where we set to custom and custom is supported doesn't need to do anything.
+		// It isn't really useful to do this, but it is easy to imagine that allowing it to happen might make implementing a project that supports multiple types of reference spaces easier.
+		return;
+	}
+	
+	if (bUseCustomReferenceSpace)
+	{
+		UE_LOG(LogHMD, Warning, TEXT("SetTrackingOrigin(%i) called when bUseCustomReferenceSpace is true.  This call is being ignored.  Reference space will remain custom %s."), NewOrigin, OpenXRReferenceSpaceTypeToString(TrackingSpaceType));
+		return;
+	}
+
+	if (NewOrigin == EHMDTrackingOrigin::LocalFloor && bLocalFloorExtensionSupported)
+	{
+		TrackingSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR_EXT;
+	}
+	else if (NewOrigin == EHMDTrackingOrigin::Local)
+	{
+		TrackingSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;  // Local space is always supported
+	}
+	else if (StageSpace) // Either stage is requested, or floor was requested but floor is not supported.
+	{
+		TrackingSpaceType = XR_REFERENCE_SPACE_TYPE_STAGE;
+	}
+	else
+	{
+		TrackingSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
+	}
+
+	// Force the tracking space to refresh next frame
+	bTrackingSpaceInvalid = true;
+}
+
+EHMDTrackingOrigin::Type FOpenXRHMD::GetTrackingOrigin() const
+{
+	switch (TrackingSpaceType)
+	{
+	case XR_REFERENCE_SPACE_TYPE_STAGE:
+		return EHMDTrackingOrigin::Stage;
+	case XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR_EXT:
+		return EHMDTrackingOrigin::LocalFloor;
+	case XR_REFERENCE_SPACE_TYPE_LOCAL:
+		return EHMDTrackingOrigin::Local;
+	case XR_REFERENCE_SPACE_TYPE_VIEW:
+		check(false); // Note: we do not expect this to actually happen because view cannot be the tracking origin.
+		return EHMDTrackingOrigin::View;
+	default:
+		if (bUseCustomReferenceSpace)
+		{
+			// The custom reference space covers multiple potential extension tracking origins
+			return EHMDTrackingOrigin::CustomOpenXR;
+		}
+		else
+		{
+			UE_LOG(LogHMD, Warning, TEXT("GetTrackingOrigin() called when unexpected tracking space %s is in use.  Returning EHMDTrackingOrigin::Local because it gives the fewest guarantees, but this value is not correct!  Perhaps this function needs to support more TrackingSpaceTypes?"), OpenXRReferenceSpaceTypeToString(TrackingSpaceType));
+			check(false);
+			return EHMDTrackingOrigin::Local;
+		}
+	}
+}
+
 bool FOpenXRHMD::IsStereoEnabled() const
 {
 	return bStereoEnabled;
@@ -844,6 +972,8 @@ bool FOpenXRHMD::EnableStereo(bool stereo)
 			{
 				GEngine->SetMaxFPS(0);
 			}
+
+			// Note: This StartSession may not work, but if not we should receive a SESSION_STATE_READY and try again or a LOSS_PENDING and session destruction
 			StartSession();
 
 			FApp::SetUseVRFocus(true);
@@ -1127,6 +1257,11 @@ void FOpenXRHMD::BeginRenderViewFamily(FSceneViewFamily& InViewFamily)
 	PipelinedLayerStateRendering.DepthImages.SetNum(PipelinedFrameStateRendering.ViewConfigs.Num());
 	PipelinedLayerStateRendering.EmulatedLayerState.EmulationImages.SetNum(PipelinedFrameStateRendering.ViewConfigs.Num());
 
+	if (bCompositionLayerColorScaleBiasSupported)
+	{
+		PipelinedLayerStateRendering.LayerColorScaleAndBias = { LayerColorScale, LayerColorBias };
+	}
+
 	if (SpectatorScreenController)
 	{
 		SpectatorScreenController->BeginRenderViewFamily();
@@ -1290,9 +1425,10 @@ FOpenXRHMD::FOpenXRHMD(const FAutoRegister& AutoRegister, XrInstance InInstance,
 	, InputModule(nullptr)
 	, ExtensionPlugins(std::move(InExtensionPlugins))
 	, Instance(InInstance)
-	, System(IOpenXRHMDModule::Get().GetSystemId())
+	, System(XR_NULL_SYSTEM_ID)
 	, Session(XR_NULL_HANDLE)
 	, LocalSpace(XR_NULL_HANDLE)
+	, LocalFloorSpace(XR_NULL_HANDLE)
 	, StageSpace(XR_NULL_HANDLE)
 	, CustomSpace(XR_NULL_HANDLE)
 	, TrackingSpaceType(XR_REFERENCE_SPACE_TYPE_STAGE)
@@ -1307,6 +1443,8 @@ FOpenXRHMD::FOpenXRHMD(const FAutoRegister& AutoRegister, XrInstance InInstance,
 	, bUseCustomReferenceSpace(false)
 	, BaseOrientation(FQuat::Identity)
 	, BasePosition(FVector::ZeroVector)
+	, LayerColorScale{ 1.0f, 1.0f, 1.0f, 1.0f }
+	, LayerColorBias{ 0.0f, 0.0f, 0.0f, 0.0f }
 {
 	InstanceProperties = { XR_TYPE_INSTANCE_PROPERTIES, nullptr };
 	XR_ENSURE(xrGetInstanceProperties(Instance, &InstanceProperties));
@@ -1316,9 +1454,11 @@ FOpenXRHMD::FOpenXRHMD(const FAutoRegister& AutoRegister, XrInstance InInstance,
 	bHiddenAreaMaskSupported = IsExtensionEnabled(XR_KHR_VISIBILITY_MASK_EXTENSION_NAME) &&
 		!FCStringAnsi::Strstr(InstanceProperties.runtimeName, "Oculus");
 	bViewConfigurationFovSupported = IsExtensionEnabled(XR_EPIC_VIEW_CONFIGURATION_FOV_EXTENSION_NAME);
+	bCompositionLayerColorScaleBiasSupported = IsExtensionEnabled(XR_KHR_COMPOSITION_LAYER_COLOR_SCALE_BIAS_EXTENSION_NAME);
 	bSupportsHandTracking = IsExtensionEnabled(XR_EXT_HAND_TRACKING_EXTENSION_NAME);
 	bSpaceAccelerationSupported = IsExtensionEnabled(XR_EPIC_SPACE_ACCELERATION_NAME);
 	bIsAcquireOnAnyThreadSupported = CheckPlatformAcquireOnAnyThreadSupport(InstanceProperties);
+	bUseWaitCountToAvoidExtraXrBeginFrameCalls = CVarOpenXRUseWaitCountToAvoidExtraXrBeginFrameCalls.GetValueOnAnyThread();
 	ReconfigureForShaderPlatform(GMaxRHIShaderPlatform);
 
 	bFoveationExtensionSupported = IsExtensionEnabled(XR_FB_SWAPCHAIN_UPDATE_STATE_EXTENSION_NAME) &&
@@ -1328,6 +1468,8 @@ FOpenXRHMD::FOpenXRHMD(const FAutoRegister& AutoRegister, XrInstance InInstance,
 #ifdef XR_USE_GRAPHICS_API_VULKAN
 	bFoveationExtensionSupported &= IsExtensionEnabled(XR_FB_FOVEATION_VULKAN_EXTENSION_NAME) && GRHISupportsAttachmentVariableRateShading && GRHIVariableRateShadingImageDataType == VRSImage_Fractional;
 #endif
+
+	bLocalFloorExtensionSupported = IsExtensionEnabled(XR_EXT_LOCAL_FLOOR_EXTENSION_NAME);
 
 #if PLATFORM_HOLOLENS || PLATFORM_ANDROID
 	bIsStandaloneStereoOnlyDevice = IStereoRendering::IsStartInVR();
@@ -1448,22 +1590,25 @@ void FOpenXRHMD::UpdateDeviceLocations(bool bUpdateOpenXRExtensionPlugins)
 					// The display time is no longer valid so set the location as invalid as well
 					PipelineState.DeviceLocations[DeviceIndex].locationFlags = 0;
 				}
+				else if (Result != XR_SUCCESS)
+				{
+					PipelineState.DeviceLocations[DeviceIndex].locationFlags = 0;
+					ensureMsgf(XR_SUCCEEDED(Result), TEXT("OpenXR xrLocateSpace failed with result %s.  No pose fetched."), OpenXRResultToString(Result)); \
+				}
 				else
 				{
-					XR_ENSURE(Result);
-				}
-				
-				// Clear the location tracked bits
-				CachedDeviceLocation.locationFlags &= ~(XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT);
-				if (NewDeviceLocation.locationFlags & (XR_SPACE_LOCATION_POSITION_VALID_BIT))
-				{
-					CachedDeviceLocation.pose.position = NewDeviceLocation.pose.position;
-					CachedDeviceLocation.locationFlags |= (NewDeviceLocation.locationFlags & (XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT));
-				}
-				if (NewDeviceLocation.locationFlags & (XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
-				{
-					CachedDeviceLocation.pose.orientation = NewDeviceLocation.pose.orientation;
-					CachedDeviceLocation.locationFlags |= (NewDeviceLocation.locationFlags & (XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT));
+					// Clear the location tracked bits
+					CachedDeviceLocation.locationFlags &= ~(XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT);
+					if (NewDeviceLocation.locationFlags & (XR_SPACE_LOCATION_POSITION_VALID_BIT))
+					{
+						CachedDeviceLocation.pose.position = NewDeviceLocation.pose.position;
+						CachedDeviceLocation.locationFlags |= (NewDeviceLocation.locationFlags & (XR_SPACE_LOCATION_POSITION_TRACKED_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT));
+					}
+					if (NewDeviceLocation.locationFlags & (XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
+					{
+						CachedDeviceLocation.pose.orientation = NewDeviceLocation.pose.orientation;
+						CachedDeviceLocation.locationFlags |= (NewDeviceLocation.locationFlags & (XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT));
+					}
 				}
 			}
 			else
@@ -1786,8 +1931,11 @@ bool FOpenXRHMD::OnStereoStartup()
 
 	if (!XR_ENSURE(xrCreateSession(Instance, &SessionInfo, &Session)))
 	{
+		UE_LOG(LogHMD, Warning, TEXT("xrCreateSession failed."), Session)
 		return false;
 	}
+
+	UE_LOG(LogHMD, Verbose, TEXT("xrCreateSession created %llu"), Session);
 
 	for (IOpenXRExtensionPlugin* Module : ExtensionPlugins)
 	{
@@ -1822,8 +1970,21 @@ bool FOpenXRHMD::OnStereoStartup()
 	SpaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
 	XR_ENSURE(xrCreateReferenceSpace(Session, &SpaceInfo, &LocalSpace));
 
+	if(bLocalFloorExtensionSupported)
+	{
+		ensure(ReferenceSpaces.Contains(XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR_EXT));
+		SpaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR_EXT;
+		XR_ENSURE(xrCreateReferenceSpace(Session, &SpaceInfo, &LocalFloorSpace));
+	}
+
+	if (ReferenceSpaces.Contains(XR_REFERENCE_SPACE_TYPE_STAGE))
+	{
+		SpaceInfo.referenceSpaceType = TrackingSpaceType;
+		XR_ENSURE(xrCreateReferenceSpace(Session, &SpaceInfo, &StageSpace));
+	}
+
 	bUseCustomReferenceSpace = false;
-	XrReferenceSpaceType CustomReferenceSpaceType;
+	XrReferenceSpaceType CustomReferenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
 	for (IOpenXRExtensionPlugin* Module : ExtensionPlugins)
 	{
 		if (Module->UseCustomReferenceSpaceType(CustomReferenceSpaceType))
@@ -1844,8 +2005,11 @@ bool FOpenXRHMD::OnStereoStartup()
 	else if (ReferenceSpaces.Contains(XR_REFERENCE_SPACE_TYPE_STAGE))
 	{
 		TrackingSpaceType = XR_REFERENCE_SPACE_TYPE_STAGE;
-		SpaceInfo.referenceSpaceType = TrackingSpaceType;
-		XR_ENSURE(xrCreateReferenceSpace(Session, &SpaceInfo, &StageSpace));
+	}
+	else if (bLocalFloorExtensionSupported)
+	{
+		ensure(ReferenceSpaces.Contains(XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR_EXT));
+		TrackingSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR_EXT;
 	}
 	else
 	{
@@ -1905,8 +2069,6 @@ bool FOpenXRHMD::OnStereoStartup()
 			UE_LOG(LogHMD, Verbose, TEXT("OpenXR using extension spectator screen."));
 		}
 	}
-
-	FCoreDelegates::VRHeadsetRecenter.AddRaw(this, &FOpenXRHMD::VRHeadsetRecenterDelegate);
 
 	return true;
 }
@@ -2022,15 +2184,18 @@ void FOpenXRHMD::DestroySession()
 		bNeedReBuildOcclusionMesh = true;
 	}
 }
-
 int32 FOpenXRHMD::AddTrackedDevice(XrAction Action, XrPath Path)
+{
+	return AddTrackedDevice(Action, Path, XR_NULL_PATH);
+}
+int32 FOpenXRHMD::AddTrackedDevice(XrAction Action, XrPath Path, XrPath SubactionPath)
 {
 	FWriteScopeLock DeviceLock(DeviceMutex);
 
 	// Ensure the HMD device is already emplaced
 	ensure(DeviceSpaces.Num() > 0);
 
-	int32 DeviceId = DeviceSpaces.Emplace(Action, Path);
+	int32 DeviceId = DeviceSpaces.Emplace(Action, Path, SubactionPath);
 
 	//FReadScopeLock Lock(SessionHandleMutex); // This is called from StartSession(), which already has this lock.
 	if (Session)
@@ -2196,6 +2361,7 @@ IStereoRenderTargetManager* FOpenXRHMD::GetRenderTargetManager()
 
 int32 FOpenXRHMD::AcquireColorTexture()
 {
+	check(IsInGameThread());
 	if (Session)
 	{
 		const FXRSwapChainPtr& ColorSwapchain = PipelinedLayerStateRendering.ColorSwapchain;
@@ -2283,7 +2449,7 @@ bool FOpenXRHMD::AllocateRenderTargetTextures(uint32 SizeX, uint32 SizeY, uint8 
 		}
 		if (FBFoveationImageGenerator && FBFoveationImageGenerator->IsFoveationExtensionEnabled())
 		{
-			FBFoveationImageGenerator->UpdateFoveationImages();
+			FBFoveationImageGenerator->UpdateFoveationImages(/* bReallocatedSwapchain */ true);
 		}
 	}
 
@@ -2770,7 +2936,10 @@ void FOpenXRHMD::OnBeginRendering_RenderThread(FRHICommandListImmediate& RHICmdL
 	{
 		Module->OnBeginRendering_RenderThread(Session);
 	}
-
+	
+	// Snapshot new poses for late update.
+	UpdateDeviceLocations(false);
+	
 	SetupFrameLayers_RenderThread(RHICmdList);
 
 	const float WorldToMeters = GetWorldToMetersScale();
@@ -2817,6 +2986,7 @@ void FOpenXRHMD::OnBeginRendering_RenderThread(FRHICommandListImmediate& RHICmdL
 	{
 		// Locate the views we will actually be rendering for.
 		// This is required to support late-updating the field-of-view.
+        //Note: This LocateViews happens before xrBeginFrame.  Which I don't think is correct.
 		LocateViews(PipelinedFrameStateRendering, false);
 
 		SCOPED_NAMED_EVENT(EnqueueFrame, FColor::Red);
@@ -2837,9 +3007,11 @@ void FOpenXRHMD::OnBeginRendering_RenderThread(FRHICommandListImmediate& RHICmdL
 
 		if (bFoveationExtensionSupported && FBFoveationImageGenerator.IsValid())
 		{
+			FBFoveationImageGenerator->UpdateFoveationImages();
 			FBFoveationImageGenerator->SetCurrentFrameSwapchainIndex(ColorSwapchain->GetSwapChainIndex_RHIThread());
 		}
 
+		UE_LOG(LogHMD, VeryVerbose, TEXT("%s WF_%i EnqueueLambda OnBeginRendering_RHIThread"), HMDThreadString(), PipelinedFrameStateRendering.WaitCount);
 		RHICmdList.EnqueueLambda([this, FrameState = PipelinedFrameStateRendering, ColorSwapchain, DepthSwapchain, EmulationSwapchain](FRHICommandListImmediate& InRHICmdList)
 		{
 			OnBeginRendering_RHIThread(FrameState, ColorSwapchain, DepthSwapchain, EmulationSwapchain);
@@ -2867,7 +3039,7 @@ void FOpenXRHMD::LocateViews(FPipelinedFrameState& PipelineState, bool ResizeVie
 	XR_ENSURE(xrLocateViews(Session, &ViewInfo, &PipelineState.ViewState, 0, &ViewCount, nullptr));
 	if (ResizeViewsArray)
 	{
-		PipelineState.Views.SetNum(ViewCount, false);
+		PipelineState.Views.SetNum(ViewCount, EAllowShrinking::No);
 	}
 	else
 	{
@@ -2923,6 +3095,14 @@ void FOpenXRHMD::OnBeginRendering_GameThread()
 	// can wait for the next frame in the next tick. Without this signal it's possible that two ticks
 	// happen before the next frame is actually rendered.
 	bShouldWait = true;
+    
+    if (bIsReady && bIsRunning)
+    {
+        for (IOpenXRExtensionPlugin* Module : ExtensionPlugins)
+        {
+            Module->OnBeginRendering_GameThread(Session);
+        }
+    }
 
 	ENQUEUE_RENDER_COMMAND(TransferFrameStateToRenderingThread)(
 		[this, GameFrameState = PipelinedFrameStateGame, bBackgroundLayerVisible = IsBackgroundLayerVisible()](FRHICommandListImmediate& RHICmdList) mutable
@@ -2930,13 +3110,9 @@ void FOpenXRHMD::OnBeginRendering_GameThread()
 			UE_CLOG(PipelinedFrameStateRendering.FrameState.predictedDisplayTime >= GameFrameState.FrameState.predictedDisplayTime,
 				LogHMD, VeryVerbose, TEXT("Predicted display time went backwards from %lld to %lld"), PipelinedFrameStateRendering.FrameState.predictedDisplayTime, GameFrameState.FrameState.predictedDisplayTime);
 
+			UE_LOG(LogHMD, VeryVerbose, TEXT("%s WF_%i FOpenXRHMD TransferFrameStateToRenderingThread"), HMDThreadString(), GameFrameState.WaitCount);
 			PipelinedFrameStateRendering = GameFrameState;
-
-			// Snapshot new poses for late update.
-			// We do this here instead of in OnBeginRendering_RenderThread in order to have this ready before Scene Captures and Reflection
-			// Captures render, as these may need to use the HMDs location to calculate accurate view matrices.
-			UpdateDeviceLocations(false);
-
+			
 			PipelinedLayerStateRendering.LayerStateFlags = EOpenXRLayerStateFlags::None;
 
 			// If we are emulating layers, we still need to submit background layer since we composite into it
@@ -2977,12 +3153,17 @@ void FOpenXRHMD::OnBeginSimulation_GameThread()
 	{
 		FrameState.next = Module->OnWaitFrame(Session, FrameState.next);
 	}
+	static int WaitCount = 0;
+	++WaitCount;
+	UE_LOG(LogHMD, VeryVerbose, TEXT("%s WF_%i xrWaitFrame Calling..."), HMDThreadString(), WaitCount);
 	XR_ENSURE(xrWaitFrame(Session, &WaitInfo, &FrameState));
+	UE_LOG(LogHMD, VeryVerbose, TEXT("%s WF_%i xrWaitFrame Complete"), HMDThreadString(), WaitCount);
 
 	// The pipeline state on the game thread can only be safely modified after xrWaitFrame which will be unblocked by
 	// the runtime when xrBeginFrame is called. The rendering thread will clone the game pipeline state before calling
 	// xrBeginFrame so the game pipeline state can safely be modified after xrWaitFrame returns.
 
+	PipelineState.WaitCount = WaitCount;
 	PipelineState.bXrFrameStateUpdated = true;
 	PipelineState.FrameState = FrameState;
 	PipelineState.WorldToMetersScale = WorldToMetersScale;
@@ -3151,22 +3332,13 @@ bool FOpenXRHMD::OnStartGameFrame(FWorldContext& WorldContext)
 		{
 			const XrEventDataReferenceSpaceChangePending& SpaceChange =
 				reinterpret_cast<XrEventDataReferenceSpaceChangePending&>(event);
-			if (SpaceChange.referenceSpaceType == TrackingSpaceType)
-			{
-				OnTrackingOriginChanged();
-
-				// Reset base orientation and position
-				// TODO: If poseValid is true we can use poseInPreviousSpace to make the old base transform valid in the new space
-				BaseOrientation = FQuat::Identity;
-				BasePosition = FVector::ZeroVector;
-				bTrackingSpaceInvalid = true;
-			}
 
 			if (SpaceChange.referenceSpaceType == XR_REFERENCE_SPACE_TYPE_STAGE)
 			{
 				OnPlayAreaChanged();
 			}
 
+			FCoreDelegates::VRHeadsetRecenter.Broadcast();
 			break;
 		}
 		case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED:
@@ -3193,6 +3365,18 @@ bool FOpenXRHMD::OnStartGameFrame(FWorldContext& WorldContext)
 	// Snapshot new poses for game simulation.
 	UpdateDeviceLocations(true);
 
+	return true;
+}
+
+bool FOpenXRHMD::SetColorScaleAndBias(FLinearColor ColorScale, FLinearColor ColorBias)
+{
+	if (!bCompositionLayerColorScaleBiasSupported)
+	{
+		return false;
+	}
+
+	LayerColorScale = XrColor4f{ ColorScale.R, ColorScale.G, ColorScale.B, ColorScale.A };
+	LayerColorBias = XrColor4f{ ColorBias.R, ColorBias.G, ColorBias.B, ColorBias.A };
 	return true;
 }
 
@@ -3228,8 +3412,21 @@ void FOpenXRHMD::OnBeginRendering_RHIThread(const FPipelinedFrameState& InFrameS
 	SCOPED_NAMED_EVENT(BeginFrame, FColor::Red);
 
 	FReadScopeLock Lock(SessionHandleMutex);
-	if (!bIsRunning || !RenderBridge)
+	if (!bIsRunning || (!RenderBridge && !bIsTrackingOnlySession))
 	{
+		return;
+	}
+
+	// We do not want xrBeginFrame to run twice based on a single xrWaitFrame.
+	// During LoadMap RedrawViewports(false) is called twice to pump the render thread without a new game thread pump.  This results in this function being
+	// called two additional times without corresponding xrWaitFrame calls from the game thread and therefore two extra xrBeginFrame calls.  On SteamVR, at least,
+	// this then leaves us in a situation where our xrWaitFrame immediately returns forever.
+	// To avoid this we ensure that each xrWaitFrame is consumed by xrBeginFrame only once.  We use the count of xrWaitFrame calls as an identifier.  Before 
+	// xrBeginFrame if the PipelinedFrameStateRHI wait count equals the incoming pipelined xrWaitFrame count then that xrWaitFrame has already been consumed,
+	// so we early out.  Once a new game frame happens and a new xrWaitFrame the early out will fail and xrBeginFrame will happen.
+	if ((PipelinedFrameStateRHI.WaitCount == InFrameState.WaitCount) && bUseWaitCountToAvoidExtraXrBeginFrameCalls)
+	{
+		UE_LOG(LogHMD, Verbose, TEXT("FOpenXRHMD::OnBeginRendering_RHIThread returning before xrBeginFrame because xrWaitFrame %i is already consumed.  This is expected twice during LoadMap and may also happen during other 'extra' render pumps."), InFrameState.WaitCount);
 		return;
 	}
 
@@ -3244,7 +3441,9 @@ void FOpenXRHMD::OnBeginRendering_RHIThread(const FPipelinedFrameState& InFrameS
 	{
 		BeginInfo.next = Module->OnBeginFrame(Session, DisplayTime, BeginInfo.next);
 	}
-
+	static int BeginCount = 0;
+	PipelinedFrameStateRHI.BeginCount = ++BeginCount;
+	UE_LOG(LogHMD, VeryVerbose, TEXT("%s WF_%i xrBeginFrame BeginCount: %i"), HMDThreadString(), PipelinedFrameStateRHI.WaitCount, PipelinedFrameStateRHI.BeginCount);
 	XrResult Result = xrBeginFrame(Session, &BeginInfo);
 	if (XR_SUCCEEDED(Result))
 	{
@@ -3284,7 +3483,9 @@ void FOpenXRHMD::OnBeginRendering_RHIThread(const FPipelinedFrameState& InFrameS
 
 		bIsRendering = true;
 
-		UE_LOG(LogHMD, VeryVerbose, TEXT("Rendering frame predicted to be displayed at %lld"), InFrameState.FrameState.predictedDisplayTime);
+		UE_LOG(LogHMD, VeryVerbose, TEXT("%s WF_%i Rendering frame predicted to be displayed at %lld"), 
+			   HMDThreadString(), PipelinedFrameStateRHI.WaitCount,
+			   PipelinedFrameStateRHI.FrameState.predictedDisplayTime);
 	}
 	else
 	{
@@ -3307,6 +3508,8 @@ void FOpenXRHMD::OnFinishRendering_RHIThread()
 	{
 		return;
 	}
+	
+	UE_LOG(LogHMD, VeryVerbose, TEXT("%s WF_%i FOpenXRHMD::OnFinishRendering_RHIThread releasing swapchain images now."), HMDThreadString(), PipelinedFrameStateRHI.WaitCount, PipelinedFrameStateRHI.BeginCount);
 
 	// We need to ensure we release the swap chain images even if the session is not running.
 	if (PipelinedLayerStateRHI.ColorSwapchain)
@@ -3329,6 +3532,7 @@ void FOpenXRHMD::OnFinishRendering_RHIThread()
 		TArray<const XrCompositionLayerBaseHeader*> Headers;
 		XrCompositionLayerProjection Layer = {};
 		XrCompositionLayerAlphaBlendFB LayerAlphaBlend = { XR_TYPE_COMPOSITION_LAYER_ALPHA_BLEND_FB };
+		XrCompositionLayerColorScaleBiasKHR ColorScaleBias = { XR_TYPE_COMPOSITION_LAYER_COLOR_SCALE_BIAS_KHR };
 		if (EnumHasAnyFlags(PipelinedLayerStateRHI.LayerStateFlags, EOpenXRLayerStateFlags::SubmitBackgroundLayer))
 		{
 			Layer.type = XR_TYPE_COMPOSITION_LAYER_PROJECTION;
@@ -3349,6 +3553,15 @@ void FOpenXRHMD::OnFinishRendering_RHIThread()
 				LayerAlphaBlend.dstFactorAlpha = PipelinedLayerStateRHI.BasePassLayerBlendParams.dstFactorAlpha;
 
 				Layer.next = &LayerAlphaBlend;
+			}
+
+			if (bCompositionLayerColorScaleBiasSupported)
+			{
+				ColorScaleBias.next = const_cast<void*>(Layer.next);
+				ColorScaleBias.colorScale = PipelinedLayerStateRHI.LayerColorScaleAndBias.ColorScale;
+				ColorScaleBias.colorBias = PipelinedLayerStateRHI.LayerColorScaleAndBias.ColorBias;
+
+				Layer.next = &ColorScaleBias;
 			}
 
 			for (IOpenXRExtensionPlugin* Module : ExtensionPlugins)
@@ -3403,7 +3616,9 @@ void FOpenXRHMD::OnFinishRendering_RHIThread()
 		// thread. We have to do this per-frame because we can detach if app loses focus.
 		FAndroidApplication::GetJavaEnv();
 #endif
-
+		static int EndCount = 0;
+		PipelinedFrameStateRHI.EndCount = ++EndCount;
+		UE_LOG(LogHMD, VeryVerbose, TEXT("%s WF_%i xrEndFrame WaitCount: %i BeginCount: %i EndCount: %i"), HMDThreadString(), PipelinedFrameStateRHI.WaitCount, PipelinedFrameStateRHI.WaitCount, PipelinedFrameStateRHI.BeginCount, PipelinedFrameStateRHI.EndCount);
 		XR_ENSURE(xrEndFrame(Session, &EndInfo));
 	}
 
@@ -3963,6 +4178,15 @@ FOpenXRHMD::FDeviceSpace::FDeviceSpace(XrAction InAction, XrPath InPath)
 	: Action(InAction)
 	, Space(XR_NULL_HANDLE)
 	, Path(InPath)
+	, SubactionPath(XR_NULL_PATH)
+{
+}
+
+FOpenXRHMD::FDeviceSpace::FDeviceSpace(XrAction InAction, XrPath InPath, XrPath InSubactionPath)
+	: Action(InAction)
+	, Space(XR_NULL_HANDLE)
+	, Path(InPath)
+	, SubactionPath(InSubactionPath)
 {
 }
 
@@ -3981,7 +4205,7 @@ bool FOpenXRHMD::FDeviceSpace::CreateSpace(XrSession InSession)
 	XrActionSpaceCreateInfo ActionSpaceInfo;
 	ActionSpaceInfo.type = XR_TYPE_ACTION_SPACE_CREATE_INFO;
 	ActionSpaceInfo.next = nullptr;
-	ActionSpaceInfo.subactionPath = XR_NULL_PATH;
+	ActionSpaceInfo.subactionPath = SubactionPath;
 	ActionSpaceInfo.poseInActionSpace = ToXrPose(FTransform::Identity);
 	ActionSpaceInfo.action = Action;
 	return XR_ENSURE(xrCreateActionSpace(InSession, &ActionSpaceInfo, &Space));

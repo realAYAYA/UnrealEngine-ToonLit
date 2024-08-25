@@ -21,15 +21,24 @@ namespace Chaos
 	{
 		FUniqueIdx ParticleIdx;
 		FTransform ChildToParent;
+		IPhysicsProxyBase* Proxy = nullptr;
+		void* CachedOwner = nullptr;
+		int32 BoneId = INDEX_NONE;
 	};
 
 	struct FClusterUnionInitData
 	{
 		void* UserData;
+		FTransform InitialTransform;
 		uint32 ActorId = INDEX_NONE;
 		uint32 ComponentId = INDEX_NONE;
-		bool bNeedsClusterXRInitialization = true;
 		bool bCheckConnectivity = true;
+		bool bUnbreakable = false;
+		bool bGenerateConnectivityEdges = true;
+		int32 GravityGroupOverride = INDEX_NONE;
+#if CHAOS_DEBUG_NAME
+		TSharedPtr<FString, ESPMode::ThreadSafe> DebugName;
+#endif
 	};
 
 	/**
@@ -38,7 +47,10 @@ namespace Chaos
 	struct FClusterUnionSyncedData
 	{
 		// Whether the cluster is anchored or not.
-		bool bIsAnchored;
+		bool bIsAnchored = true;
+
+		// Whether we assigned new geometry from the PT in PullFromPhysicsState
+		bool bDidSyncGeometry = false;
 
 		// Data on every child particle in the cluster union.
 		TArray<FClusterUnionChildData> ChildParticles;
@@ -70,8 +82,27 @@ namespace Chaos
 		CHAOS_API EObjectStateType GetObjectState_External() const;
 		CHAOS_API void SetObjectState_External(EObjectStateType State);
 
+		// Explicitly wake the physics object. The wakes the physics object if it is sleeping and resets any sleep state (whether awake or sleeping)
+		CHAOS_API void Wake_External();
+
+		// Set the cluster mass.
+		// NOTE: When a cluster breaks its mass will be recalculated from the remaining children on the PT, effectively undoing this work.
+		CHAOS_API void SetMass_External(Chaos::FReal Mass);
+
 		// Set GT geometry - this is only for smoothing over any changes until the PT syncs back to the GT.
-		CHAOS_API void SetSharedGeometry_External(const TSharedPtr<Chaos::FImplicitObject, ESPMode::ThreadSafe>& Geometry, const TArray<FPBDRigidParticle*>& ShapeParticles);
+		CHAOS_API void SetGeometry_External(const Chaos::FImplicitObjectPtr& Geometry, const TArray<FPBDRigidParticle*>& ShapeParticles);
+
+		// Merge GT geometry into the existing union
+		CHAOS_API void MergeGeometry_External(TArray<Chaos::FImplicitObjectPtr>&& ImplicitGeometries, const TArray<FPBDRigidParticle*>& ShapeParticles);
+
+		// Remove GT shapes from the existing unions
+		CHAOS_API void RemoveShapes_External(const TArray<FPBDRigidParticle*>& ShapeParticles);
+		
+		UE_DEPRECATED(5.4, "Please use SetGeometry_External instead")
+		CHAOS_API void SetSharedGeometry_External(const TSharedPtr<Chaos::FImplicitObject, ESPMode::ThreadSafe>& Geometry, const TArray<FPBDRigidParticle*>& ShapeParticles)
+		{
+			check(false);
+		}
 
 		// Cluster union proxy initialization happens in two first on the game thread (external) then on the
 		// physics thread (internal). Cluster unions are a primarily physics concept so the things exposed to
@@ -97,13 +128,14 @@ namespace Chaos
 		CHAOS_API void SetAngularVelocity_External(const FVector& W);
 		CHAOS_API void SetChildToParent_External(FPhysicsObjectHandle Child, const FTransform& RelativeTransform, bool bLock);
 		CHAOS_API void BulkSetChildToParent_External(const TArray<FPhysicsObjectHandle>& Objects, const TArray<FTransform>& Transforms, bool bLock);
+		CHAOS_API void ChangeMainParticleStatus_External(const TArray<FPhysicsObjectHandle>& Objects, bool bIsMain);
 
 		//
 		// These functions take care of marshaling data back and forth between the game thread
 		// and the physics thread.
 		//
 		CHAOS_API void PushToPhysicsState(const FDirtyPropertiesManager& Manager, int32 DataIdx, const FDirtyProxy& Dirty);
-		CHAOS_API bool PullFromPhysicsState(const FDirtyClusterUnionData& PullData, int32 SolverSyncTimestamp, const FDirtyClusterUnionData* NextPullData = nullptr, const FRealSingle* Alpha = nullptr);
+		CHAOS_API bool PullFromPhysicsState(const FDirtyClusterUnionData& PullData, int32 SolverSyncTimestamp, const FDirtyClusterUnionData* NextPullData = nullptr, const FRealSingle* Alpha = nullptr, const FDirtyRigidParticleReplicationErrorData* Error = nullptr, const Chaos::FReal AsyncFixedTimeStep = 0);
 
 		CHAOS_API void BufferPhysicsResults_Internal(FDirtyClusterUnionData& BufferData);
 		CHAOS_API void BufferPhysicsResults_External(FDirtyClusterUnionData& BufferData);
@@ -116,8 +148,15 @@ namespace Chaos
 
 		FClusterUnionIndex GetClusterUnionIndex() const { return ClusterUnionIndex; }
 
+		void ForceSetGeometryChildParticles_External(TArray<FExternalParticle*>&& InParticles) { GeometryChildParticles_External = InParticles; }
+
+		CHAOS_API void SetEnableStrainOnCollision_External(bool bEnable);
+		CHAOS_API bool GetEnableStrainOnCollision_Internal() const { return bEnableStrainOnCollision_Internal; }
+
 	private:
-		bool bIsInitializedOnPhysicsThread = false;
+		bool bIsInitializedOnPhysicsThread: 1 = false;
+		bool bEnableStrainOnCollision_Internal : 1 = true;
+
 		FClusterCreationParameters ClusterParameters;
 		const FClusterUnionInitData InitData;
 
@@ -128,7 +167,12 @@ namespace Chaos
 		FInternalParticle* Particle_Internal = nullptr;
 		FClusterUnionIndex ClusterUnionIndex = INDEX_NONE;
 
-		FProxyInterpolationBase InterpolationData;
+		FProxyInterpolationError InterpolationData;
+
+		// An array of a particles that exist in the external implicit object union.
+		// Note that this array should only be used for book-keeping. It is generally
+		// unsafe to try and access the particles within this array.
+		TArray<FExternalParticle*> GeometryChildParticles_External;
 
 		//~ Begin TPhysicsProxy Interface
 	public:
@@ -140,7 +184,7 @@ namespace Chaos
 		void DisableCollisionsCallback(TSet<TTuple<int32, int32>>& InPairs) {}
 		void AddForceCallback(FParticlesType& InParticles, const float InDt, const int32 InIndex) {}
 		void BindParticleCallbackMapping(Chaos::TArrayCollectionArray<PhysicsProxyWrapper>& PhysicsProxyReverseMap, Chaos::TArrayCollectionArray<int32>& ParticleIDReverseMap) {}
-		static EPhysicsProxyType ConcreteType() { return EPhysicsProxyType::ClusterUnionProxy; }
+		static constexpr EPhysicsProxyType ConcreteType() { return EPhysicsProxyType::ClusterUnionProxy; }
 		void SyncBeforeDestroy() {}
 		void OnRemoveFromScene() {}
 		bool IsDirty() { return false; }

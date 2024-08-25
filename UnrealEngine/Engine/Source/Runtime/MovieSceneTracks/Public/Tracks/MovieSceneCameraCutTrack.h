@@ -62,15 +62,30 @@ public:
 	virtual FText GetDefaultDisplayName() const override;
 #endif
 
+	/** @return Whether camera cut sections should automatically resize to fill gaps */
+	bool IsAutoManagingSections() const
+	{
+		return bAutoArrangeSections;
+	}
+
+	/** Sets whether camera cut sections should automatically resize to fill gaps */
+	void SetIsAutoManagingSections(bool bInAutoArrangeSections)
+	{
+		bAutoArrangeSections = bInAutoArrangeSections;
+	}
+
 #if WITH_EDITOR
 	virtual EMovieSceneSectionMovedResult OnSectionMoved(UMovieSceneSection& Section, const FMovieSceneSectionMovedParams& Params) override;
 #endif
 
+	MOVIESCENETRACKS_API void RearrangeAllSections();
 	MOVIESCENETRACKS_API FFrameNumber FindEndTimeForCameraCut(FFrameNumber StartTime);
 
 protected:
 
 	virtual void PreCompileImpl(FMovieSceneTrackPreCompileResult& OutPreCompileResult) override;
+
+	bool AutoArrangeSectionsIfNeeded(UMovieSceneSection& ChangedSection, bool bWasDeletion, bool bCleanUp = false);
 
 public:
 	UPROPERTY()
@@ -81,4 +96,9 @@ private:
 	/** All movie scene sections. */
 	UPROPERTY()
 	TArray<TObjectPtr<UMovieSceneSection>> Sections;
+
+	/** Whether camera cut sections should automatically resize to fill gaps */
+	UPROPERTY()
+	bool bAutoArrangeSections;
 };
+

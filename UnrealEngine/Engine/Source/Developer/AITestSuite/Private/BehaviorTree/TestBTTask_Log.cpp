@@ -52,6 +52,16 @@ uint16 UTestBTTask_Log::GetInstanceMemorySize() const
 	return sizeof(FBTLogTaskMemory);
 }
 
+void UTestBTTask_Log::InitializeMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryInit::Type InitType) const
+{
+	InitializeNodeMemory<FBTLogTaskMemory>(NodeMemory, InitType);
+}
+
+void UTestBTTask_Log::CleanupMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryClear::Type CleanupType) const
+{
+	CleanupNodeMemory<FBTLogTaskMemory>(NodeMemory, CleanupType);
+}
+
 void UTestBTTask_Log::LogExecution(UBehaviorTreeComponent& OwnerComp, int32 LogNumber)
 {
 	if (LogNumber >= 0)

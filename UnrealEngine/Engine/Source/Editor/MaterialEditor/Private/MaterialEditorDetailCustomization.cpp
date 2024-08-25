@@ -18,6 +18,7 @@
 #include "Materials/MaterialExpressionTextureSampleParameter.h"
 #include "MaterialLayersFunctionsCustomization.h"
 #include "PropertyEditorModule.h"
+#include "PropertyRestriction.h"
 #include "MaterialEditor/MaterialEditorPreviewParameters.h"
 #include "Widgets/Input/SButton.h"
 #include "MaterialEditor/MaterialEditorInstanceConstant.h"
@@ -47,11 +48,11 @@
 
 #define LOCTEXT_NAMESPACE "MaterialEditor"
 
-// Update the blend mode names based on what is supported in legacy mode or Strata mode
+// Update the blend mode names based on what is supported in legacy mode or Substrate mode
 UEnum* GetBlendModeEnum()
 {
 	UEnum* BlendModeEnum = StaticEnum<EBlendMode>();
-	if (Strata::IsStrataEnabled())
+	if (Substrate::IsSubstrateEnabled())
 	{
 		// BLEND_Translucent & BLEND_TranslucentGreyTransmittance are mapped onto the same enum index
 		BlendModeEnum->SetMetaData(TEXT("DisplayName"), TEXT("TranslucentGreyTransmittance"), BLEND_Translucent);
@@ -59,7 +60,7 @@ UEnum* GetBlendModeEnum()
 		// BLEND_Modulate & BLEND_ColoredTransmittanceOnly are mapped onto the same enum index
 		BlendModeEnum->SetMetaData(TEXT("DisplayName"), TEXT("ColoredTransmittanceOnly"), BLEND_Modulate);
 
-		// BLEND_TranslucentColoredTransmittance is only supported in Strata mode
+		// BLEND_TranslucentColoredTransmittance is only supported in Substrate mode
 		BlendModeEnum->SetMetaData(TEXT("DisplayName"), TEXT("TranslucentColoredTransmittance"), BLEND_TranslucentColoredTransmittance);
 	}
 	else
@@ -785,6 +786,7 @@ void FMaterialDetailCustomization::CustomizeDetails( IDetailLayoutBuilder& Detai
 
 	bool bUIMaterial = true;
 	bool bIsShadingModelFromMaterialExpression = false;
+	bool bIsAlphaHoldout = false;
 	for( TWeakObjectPtr<UObject>& Object : Objects )
 	{
 		UMaterial* Material = Cast<UMaterial>( Object.Get() );
@@ -794,6 +796,8 @@ void FMaterialDetailCustomization::CustomizeDetails( IDetailLayoutBuilder& Detai
 
 			// If any Object has its shading model from material expression
 			bIsShadingModelFromMaterialExpression |= Material->IsShadingModelFromMaterialExpression();
+			
+			bIsAlphaHoldout |= Material->BlendMode == BLEND_AlphaHoldout;
 		}
 		else
 		{
@@ -819,13 +823,14 @@ void FMaterialDetailCustomization::CustomizeDetails( IDetailLayoutBuilder& Detai
 				if(		PropertyName != GET_MEMBER_NAME_CHECKED(UMaterial, MaterialDomain) 
 					&&	PropertyName != GET_MEMBER_NAME_CHECKED(UMaterial, BlendMode) 
 					&&	PropertyName != GET_MEMBER_NAME_CHECKED(UMaterial, OpacityMaskClipValue) 
-					&& 	PropertyName != GET_MEMBER_NAME_CHECKED(UMaterial, NumCustomizedUVs) )
+					&& 	PropertyName != GET_MEMBER_NAME_CHECKED(UMaterial, NumCustomizedUVs)
+					&&	PropertyName != GET_MEMBER_NAME_CHECKED(UMaterial, bEnableNewHLSLGenerator))
 				{
 					DetailLayout.HideProperty( PropertyHandle );
 				}
 			}
 
-			if (!Strata::IsStrataEnabled())
+			if (!Substrate::IsSubstrateEnabled())
 			{
 				if (PropertyName == GET_MEMBER_NAME_CHECKED(UMaterial, bIsThinSurface))
 				{
@@ -838,6 +843,12 @@ void FMaterialDetailCustomization::CustomizeDetails( IDetailLayoutBuilder& Detai
 			{
 				FByteProperty* BlendModeProperty = (FByteProperty*)Property;
 				BlendModeProperty->Enum = GetBlendModeEnum();
+
+				PropertyHandle->SetOnPropertyValueChanged(FSimpleDelegate::CreateLambda([&DetailLayout]()
+					{
+						// Refresh to update translucency pass restrictions below
+						DetailLayout.ForceRefreshDetails();
+					}));
 			}
 
 			if (PropertyName == GET_MEMBER_NAME_CHECKED(UMaterial, bEnableExecWire) && !AllowMaterialControlFlow())
@@ -859,6 +870,36 @@ void FMaterialDetailCustomization::CustomizeDetails( IDetailLayoutBuilder& Detai
 #endif
 		}
 	}
+
+	// Translucency category
+	{
+		IDetailCategoryBuilder& TranslucencyCategory = DetailLayout.EditCategory(TEXT("Translucency"));
+
+		TArray<TSharedRef<IPropertyHandle>> AdvancedProperties;
+		TranslucencyCategory.GetDefaultProperties(AdvancedProperties, false, true);
+
+		for (TSharedRef<IPropertyHandle>& PropertyHandle : AdvancedProperties)
+		{
+			FProperty* Property = PropertyHandle->GetProperty();
+			FName PropertyName = Property->GetFName();
+
+			if (PropertyName == GET_MEMBER_NAME_CHECKED(UMaterial, TranslucencyPass))
+			{
+				if (bIsAlphaHoldout)
+				{
+					static FText RestrictReason = NSLOCTEXT("PropertyEditor", "TranslucencyPassRestriction", "Seperate translucency pass should not be used with Alpha Holdout blend mode.");
+					TSharedPtr<FPropertyRestriction> EnumRestriction = MakeShared<FPropertyRestriction>(RestrictReason);
+
+					FByteProperty* TranslucencyPassProperty = (FByteProperty*)Property;
+					EnumRestriction->AddDisabledValue(TranslucencyPassProperty->Enum->GetNameStringByValue(static_cast<int64>(MTP_AfterDOF)));
+					EnumRestriction->AddDisabledValue(TranslucencyPassProperty->Enum->GetNameStringByValue(static_cast<int64>(MTP_AfterMotionBlur)));
+
+					PropertyHandle->AddRestriction(EnumRestriction.ToSharedRef());
+				}
+			}
+		}
+	}
+
 
 	if( bUIMaterial )
 	{

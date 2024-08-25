@@ -80,13 +80,16 @@ enum class EPipelineCacheFileFormatVersions : uint32
 	MoreRenderTargetFlags = 23,
 	FragmentDensityAttachment = 24,
 	AddingDepthClipMode = 25,
+	BeforeStableCacheVersioning = 26,
+	RemovingLineAA = 27,
+	AddingDepthBounds = 28,
 };
 
 const uint64 FPipelineCacheFileFormatMagic = 0x5049504543414348; // PIPECACH
 const uint64 FPipelineCacheTOCFileFormatMagic = 0x544F435354415232; // TOCSTAR2
 const uint64 FPipelineCacheEOFFileFormatMagic = 0x454F462D4D41524B; // EOF-MARK
-const RHI_API uint32 FPipelineCacheFileFormatCurrentVersion = (uint32)EPipelineCacheFileFormatVersions::AddingDepthClipMode;
-const int32  FPipelineCacheGraphicsDescPartsNum = 66; // parser will expect this number of parts in a description string
+const RHI_API uint32 FPipelineCacheFileFormatCurrentVersion = (uint32)EPipelineCacheFileFormatVersions::AddingDepthBounds;
+const int32  FPipelineCacheGraphicsDescPartsNum = 67; // parser will expect this number of parts in a description string
 
 /**
   * PipelineFileCache API access
@@ -379,29 +382,44 @@ struct FPipelineCacheFileFormatPSOMetaData
 	}
 };
 
+RHI_API FArchive& operator<<(FArchive& Ar, FPipelineFileCacheRasterizerState& RasterizerStateInitializer)
+{
+	Ar << RasterizerStateInitializer.DepthBias;
+	Ar << RasterizerStateInitializer.SlopeScaleDepthBias;
+	Ar << RasterizerStateInitializer.FillMode;
+	Ar << RasterizerStateInitializer.CullMode;
+	Ar << RasterizerStateInitializer.DepthClipMode;
+	Ar << RasterizerStateInitializer.bAllowMSAA;
+
+	if (Ar.GameNetVer() < (uint32)EPipelineCacheFileFormatVersions::RemovingLineAA)
+	{
+		bool bEnableLineAA = false;
+		Ar << bEnableLineAA;
+	}
+	return Ar;
+}
 
 FString FPipelineFileCacheRasterizerState::ToString() const
 {
-	return FString::Printf(TEXT("<%f %f %u %u %u %u %u>")
+	return FString::Printf(TEXT("<%f %f %u %u %u %u>")
 		, DepthBias
 		, SlopeScaleDepthBias
 		, uint32(FillMode)
 		, uint32(CullMode)
 		, uint32(DepthClipMode)
 		, uint32(!!bAllowMSAA)
-		, uint32(!!bEnableLineAA)
 	);
 }
 
 void FPipelineFileCacheRasterizerState::FromString(const FStringView& Src)
 {
-	constexpr int32 PartCount = 7;
+	constexpr int32 PartCount = 6;
 
 	TArray<FStringView, TInlineAllocator<PartCount>> Parts;
 	UE::String::ParseTokensMultiple(Src.TrimStartAndEnd(), {TEXT('\r'), TEXT('\n'), TEXT('\t'), TEXT('<'), TEXT('>'), TEXT(' ')},
 		[&Parts](FStringView Part) { if (!Part.IsEmpty()) { Parts.Add(Part); } });
 
-	check(Parts.Num() == PartCount && sizeof(FillMode) == 1 && sizeof(CullMode) == 1 && sizeof(DepthClipMode) == 1 && sizeof(bAllowMSAA) == 1 && sizeof(bEnableLineAA) == 1); //not a very robust parser
+	check(Parts.Num() == PartCount && sizeof(FillMode) == 1 && sizeof(CullMode) == 1 && sizeof(DepthClipMode) == 1 && sizeof(bAllowMSAA) == 1); //not a very robust parser
 	const FStringView* PartIt = Parts.GetData();
 
 	LexFromString(DepthBias, *PartIt++);
@@ -410,7 +428,6 @@ void FPipelineFileCacheRasterizerState::FromString(const FStringView& Src)
 	LexFromString((uint8&)CullMode, *PartIt++);
 	LexFromString((uint8&)DepthClipMode, *PartIt++);
 	LexFromString((uint8&)bAllowMSAA, *PartIt++);
-	LexFromString((uint8&)bEnableLineAA, *PartIt++);
 
 	check(Parts.GetData() + PartCount == PartIt);
 }
@@ -548,6 +565,10 @@ FString FPipelineCacheFileFormatPSO::GraphicsDescriptor::StateToString() const
 		, uint32(MultiViewCount)
 		, uint32(bHasFragmentDensityAttachment)
 	);
+
+	Result += FString::Printf(TEXT("%d,")
+		, uint32(bDepthBounds)
+	);
 	
 	FVertexElement NullVE;
 	FMemory::Memzero(NullVE);
@@ -631,6 +652,10 @@ void FPipelineCacheFileFormatPSO::GraphicsDescriptor::AddStateToReadableString(T
 	OutBuilder << MultiViewCount;
 	OutBuilder << TEXT(" HasFDM:");
 	OutBuilder << bHasFragmentDensityAttachment;
+	OutBuilder << TEXT("\n");
+
+	OutBuilder << TEXT(" DB:");
+	OutBuilder << bDepthBounds;
 	OutBuilder << TEXT("\n");
 
 	OutBuilder << TEXT(" NumVE ");
@@ -727,6 +752,14 @@ bool FPipelineCacheFileFormatPSO::GraphicsDescriptor::StateFromString(const FStr
 		LexFromString(LocalHasFDM, *PartIt++);
 		MultiViewCount = (uint8)LocalMultiViewCount;
 		bHasFragmentDensityAttachment = (bool)LocalHasFDM;
+	}
+
+	// parse depth bounds
+	{
+		uint32 DepthBounds = 0;
+		check(PartEnd - PartIt >= 1);
+		LexFromString(DepthBounds, *PartIt++);
+		bDepthBounds = (bool)DepthBounds;
 	}
 
 	check(PartEnd - PartIt >= 1); //not a very robust parser
@@ -1124,6 +1157,8 @@ bool FPipelineCacheFileFormatPSO::Verify() const
 			KeyHash = FCrc::MemCrc32(&Key.GraphicsDesc.MultiViewCount, sizeof(Key.GraphicsDesc.MultiViewCount), KeyHash);
 			KeyHash = FCrc::MemCrc32(&Key.GraphicsDesc.bHasFragmentDensityAttachment, sizeof(Key.GraphicsDesc.bHasFragmentDensityAttachment), KeyHash);
 
+			KeyHash = FCrc::MemCrc32(&Key.GraphicsDesc.bDepthBounds, sizeof(Key.GraphicsDesc.bDepthBounds), KeyHash);
+
 			for(auto const& Element : Key.GraphicsDesc.VertexDescriptor)
 			{
 				KeyHash = FCrc::MemCrc32(&Element, sizeof(FVertexElement), KeyHash);
@@ -1134,7 +1169,6 @@ bool FPipelineCacheFileFormatPSO::Verify() const
 			KeyHash = FCrc::MemCrc32(&Key.GraphicsDesc.RasterizerState.FillMode, sizeof(Key.GraphicsDesc.RasterizerState.FillMode), KeyHash);
 			KeyHash = FCrc::MemCrc32(&Key.GraphicsDesc.RasterizerState.CullMode, sizeof(Key.GraphicsDesc.RasterizerState.CullMode), KeyHash);
 			KeyHash = FCrc::MemCrc32(&Key.GraphicsDesc.RasterizerState.bAllowMSAA, sizeof(Key.GraphicsDesc.RasterizerState.bAllowMSAA), KeyHash);
-			KeyHash = FCrc::MemCrc32(&Key.GraphicsDesc.RasterizerState.bEnableLineAA, sizeof(Key.GraphicsDesc.RasterizerState.bEnableLineAA), KeyHash);
 				
 			KeyHash = FCrc::MemCrc32(&Key.GraphicsDesc.DepthStencilState.bEnableDepthWrite, sizeof(Key.GraphicsDesc.DepthStencilState.bEnableDepthWrite), KeyHash);
 			KeyHash = FCrc::MemCrc32(&Key.GraphicsDesc.DepthStencilState.DepthTest, sizeof(Key.GraphicsDesc.DepthStencilState.DepthTest), KeyHash);
@@ -1334,6 +1368,11 @@ bool FPipelineCacheFileFormatPSO::Verify() const
 				Ar << Info.GraphicsDesc.bHasFragmentDensityAttachment;
 			}
 
+			if (Ar.GameNetVer() >= (uint32)EPipelineCacheFileFormatVersions::AddingDepthBounds)
+			{
+				Ar << Info.GraphicsDesc.bDepthBounds;
+			}
+
 			break;
 		}
 		case FPipelineCacheFileFormatPSO::DescriptorType::RayTracing:
@@ -1514,6 +1553,8 @@ FPipelineCacheFileFormatPSO::FPipelineCacheFileFormatPSO()
 	PSO.GraphicsDesc.MultiViewCount = (uint8)Init.MultiViewCount;
 	PSO.GraphicsDesc.bHasFragmentDensityAttachment = Init.bHasFragmentDensityAttachment;
 
+	PSO.GraphicsDesc.bDepthBounds = Init.bDepthBounds;
+
 #if !UE_BUILD_SHIPPING
 	bOK = bOK && PSO.Verify();
 #endif
@@ -1569,6 +1610,7 @@ bool FPipelineCacheFileFormatPSO::operator==(const FPipelineCacheFileFormatPSO& 
 						GraphicsDesc.DepthStore == Other.GraphicsDesc.DepthStore && GraphicsDesc.StencilLoad == Other.GraphicsDesc.StencilLoad && GraphicsDesc.StencilStore == Other.GraphicsDesc.StencilStore &&
 						GraphicsDesc.SubpassHint == Other.GraphicsDesc.SubpassHint && GraphicsDesc.SubpassIndex == Other.GraphicsDesc.SubpassIndex &&
 						GraphicsDesc.MultiViewCount == Other.GraphicsDesc.MultiViewCount && GraphicsDesc.bHasFragmentDensityAttachment == Other.GraphicsDesc.bHasFragmentDensityAttachment &&
+						GraphicsDesc.bDepthBounds == Other.GraphicsDesc.bDepthBounds &&
 					FMemory::Memcmp(&GraphicsDesc.BlendState, &Other.GraphicsDesc.BlendState, sizeof(FBlendStateInitializerRHI)) == 0 &&
 					FMemory::Memcmp(&GraphicsDesc.RasterizerState, &Other.GraphicsDesc.RasterizerState, sizeof(FPipelineFileCacheRasterizerState)) == 0 &&
 					FMemory::Memcmp(&GraphicsDesc.DepthStencilState, &Other.GraphicsDesc.DepthStencilState, sizeof(FDepthStencilStateInitializerRHI)) == 0 &&
@@ -2128,7 +2170,9 @@ public:
 			GRHILazyShaderCodeLoading = true;
 		}
 
+#if !UE_BUILD_SHIPPING
 		uint32 InvalidEntryCount = 0;
+#endif
 		
         for (auto const& Entry : TOC.MetaData)
         {
@@ -2151,10 +2195,12 @@ public:
 #endif
         }
 		
-        if(InvalidEntryCount > 0)
+#if !UE_BUILD_SHIPPING
+		if(InvalidEntryCount > 0)
         {
         	UE_LOG(LogRHI, Warning, TEXT("Found %d / %d PSO entries marked as invalid."), InvalidEntryCount, TOC.MetaData.Num());
         }
+#endif
 		
 		INC_MEMORY_STAT_BY(STAT_FileCacheMemory, TOC.MetaData.GetAllocatedSize());
 
@@ -2243,7 +2289,9 @@ public:
 				TOCOffset = 0;
 			}
 
+#if !UE_BUILD_SHIPPING
 			uint32 InvalidEntryCount = 0;
+#endif
 
 			for (auto const& Entry : TOC.MetaData)
 			{
@@ -2263,10 +2311,12 @@ public:
 #endif
 			}
 
+#if !UE_BUILD_SHIPPING
 			if (InvalidEntryCount > 0)
 			{
 				UE_LOG(LogRHI, Warning, TEXT("Found %d / %d PSO entries marked as invalid."), InvalidEntryCount, TOC.MetaData.Num());
 			}
+#endif
 		}
 		INC_MEMORY_STAT_BY(STAT_FileCacheMemory, TOC.MetaData.GetAllocatedSize());
 		return bUserFileOk;
@@ -3401,22 +3451,29 @@ void FPipelineFileCacheManager::LogNewGraphicsPSOToConsoleAndCSV(FPipelineCacheF
 	}
 	else
 	{
-		UE_LOG(LogRHI, Log, TEXT("Encountered a new graphics PSO for the file cache but it was already precached at runtime: %u"), PSOHash);
+		UE_LOG(LogRHI, Verbose, TEXT("Encountered a new graphics PSO for the file cache but it was already precached at runtime: %u"), PSOHash);
 	}
 }
 
-void FPipelineFileCacheManager::LogNewComputePSOToConsoleAndCSV(FPipelineCacheFileFormatPSO& PSO, uint32 PSOHash)
+void FPipelineFileCacheManager::LogNewComputePSOToConsoleAndCSV(FPipelineCacheFileFormatPSO& PSO, uint32 PSOHash, bool bWasPSOPrecached)
 {
 	if (!LogNewPSOsToConsoleAndCSV)
 	{
 		return;
 	}
 
-	CSV_EVENT(PSO, TEXT("Encountered new compute PSO"));
-	UE_LOG(LogRHI, Display, TEXT("Encountered a new compute PSO: %u"), PSOHash);
-	if (GPSOFileCachePrintNewPSODescriptors > 0)
+	if (!bWasPSOPrecached)
 	{
-		UE_LOG(LogRHI, Display, TEXT("New compute PSO (%u) Description: %s"), PSOHash, *PSO.ComputeDesc.ComputeShader.ToString());
+		CSV_EVENT(PSO, TEXT("Encountered new compute PSO"));
+		UE_LOG(LogRHI, Display, TEXT("Encountered a new compute PSO: %u"), PSOHash);
+		if (GPSOFileCachePrintNewPSODescriptors > 0)
+		{
+			UE_LOG(LogRHI, Display, TEXT("New compute PSO (%u) Description: %s"), PSOHash, *PSO.ComputeDesc.ComputeShader.ToString());
+		}
+	}
+	else
+	{
+		UE_LOG(LogRHI, Verbose, TEXT("Encountered a new compute PSO for the file cache but it was already precached at runtime: %u"), PSOHash);
 	}
 }
 
@@ -3520,7 +3577,7 @@ void FPipelineFileCacheManager::CacheGraphicsPSO(uint32 RunTimeHash, FGraphicsPi
 	}
 }
 
-void FPipelineFileCacheManager::CacheComputePSO(uint32 RunTimeHash, FRHIComputeShader const* Initializer)
+void FPipelineFileCacheManager::CacheComputePSO(uint32 RunTimeHash, FRHIComputeShader const* Initializer, bool bWasPSOPrecached)
 {
 	if(IsPipelineFileCacheEnabled() && (LogPSOtoFileCache() || ReportNewPSOs()))
 	{
@@ -3547,20 +3604,28 @@ void FPipelineFileCacheManager::CacheComputePSO(uint32 RunTimeHash, FRHIComputeS
 						bool bActuallyNewPSO = !NewPSOHashes.Contains(PSOHash);
 						if (bActuallyNewPSO)
 						{
-							LogNewComputePSOToConsoleAndCSV(NewEntry, PSOHash);
-							
+							LogNewComputePSOToConsoleAndCSV(NewEntry, PSOHash, bWasPSOPrecached);
+
+							if (bWasPSOPrecached)
+							{
+								bActuallyNewPSO = !GPSOExcludePrecachePSOsInFileCache;
+							}							
+						}
+
+						if (bActuallyNewPSO)
+						{
 							if (LogPSOtoFileCache())
 							{
 								NewPSOs.Add(NewEntry);
 								INC_MEMORY_STAT_BY(STAT_NewCachedPSOMemory, sizeof(FPipelineCacheFileFormatPSO) + sizeof(uint32) + sizeof(uint32));
 							}
-							
+
 							NewPSOHashes.Add(PSOHash);
-							
+
 							NumNewPSOs++;
 							INC_DWORD_STAT(STAT_NewComputePipelineStateCount);
 							INC_DWORD_STAT(STAT_TotalComputePipelineStateCount);
-							
+
 							if (ReportNewPSOs() && PSOLoggedEvent.IsBound())
 							{
 								PSOLoggedEvent.Broadcast(NewEntry);

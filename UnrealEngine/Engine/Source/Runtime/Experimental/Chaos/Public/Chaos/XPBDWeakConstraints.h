@@ -80,7 +80,7 @@ namespace Chaos::Softs
 
 		void ApplyInParallel(ParticleType& Particles, const T Dt) const
 		{
-			TRACE_CPUPROFILER_EVENT_SCOPE(TEXT("STAT_ChaosXPBDWeakConstraintApply"));
+			TRACE_CPUPROFILER_EVENT_SCOPE(STAT_ChaosXPBDWeakConstraintApply);
 
 			if ((ConstraintsPerColor.Num() > 0))
 			{

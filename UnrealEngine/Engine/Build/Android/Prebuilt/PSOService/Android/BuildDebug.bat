@@ -5,7 +5,7 @@ REM Copyright Epic Games, Inc. All Rights Reserved.
 setlocal
 
 set PATH_TO_CMAKE_FILE=%CD%
-set PATH_TO_CMAKE_BIN=%ANDROID_HOME%/cmake/3.10.2.4988404/bin
+set PATH_TO_CMAKE_BIN=%ANDROID_HOME%/cmake/3.22.1/bin
 
 REM Temporary build directories (used as working directories when running CMake)
 set ANDROID_BUILD_PATH="%PATH_TO_CMAKE_FILE%\Build"

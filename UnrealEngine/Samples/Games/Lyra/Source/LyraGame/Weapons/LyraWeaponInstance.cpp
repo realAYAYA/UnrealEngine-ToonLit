@@ -98,7 +98,7 @@ void ULyraWeaponInstance::ApplyDeviceProperties()
 	{
 		if (UInputDeviceSubsystem* InputDeviceSubsystem = UInputDeviceSubsystem::Get())
 		{
-			for (TObjectPtr<UInputDeviceProperty> DeviceProp : ApplicableDeviceProperties)
+			for (TObjectPtr<UInputDeviceProperty>& DeviceProp : ApplicableDeviceProperties)
 			{
 				FActivateDevicePropertyParams Params = {};
 				Params.UserId = UserId;

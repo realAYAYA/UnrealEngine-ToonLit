@@ -83,10 +83,7 @@ public:
 	 * @brief Enable or disable determinism.
 	 * Support for determinism requires that we sort active constraints each tick, so there is additional cost.
 	*/
-	void SetIsDeterministic(const bool bInIsDeterministic)
-	{
-		bIsDeterministic = bInIsDeterministic;
-	}
+	void SetIsDeterministic(const bool bInIsDeterministic);
 
 	/**
 	 *  Clears the list of active constraints.
@@ -148,7 +145,6 @@ public:
 	* Disable the constraints associated with the ParticleHandle.
 	*/
 	void DisableConstraints(const TSet<FGeometryParticleHandle*>& ParticleHandle) {}
-
 
 	//
 	// FConstraintContainer Implementation
@@ -237,7 +233,24 @@ public:
 
 	void SetMaxPushOutVelocity(const FReal InMaxPushOutVelocity)
 	{
-		SolverSettings.MaxPushOutVelocity = InMaxPushOutVelocity;
+		SolverSettings.MaxPushOutVelocity = FMath::Max(InMaxPushOutVelocity, FReal(0));
+	}
+
+	void SetDepenetrationVelocity(const FRealSingle InVel)
+	{
+		// The user can specify a very large number up to float_max or any negative number to mean "infinity".
+		// However, we don't use float_max for infinity because we want to be able to perform simple math on
+		// it without numeric limit issues (search MaxDepenetrationVelocity).
+		constexpr float MaxDepenetrationVelocity = 1e10f;	// [cm/s] almost speed of light :)
+
+		if (InVel >= 0.0f)
+		{
+			SolverSettings.DepenetrationVelocity = FMath::Min(InVel, MaxDepenetrationVelocity);
+		}
+		else
+		{
+			SolverSettings.DepenetrationVelocity = MaxDepenetrationVelocity;
+		}
 	}
 
 	void SetPositionFrictionIterations(const int32 InNumIterations)
@@ -302,6 +315,12 @@ public:
 	{
 		DetectorSettings.BoundsVelocityInflation = BoundsVelocityMultiplier;
 		DetectorSettings.MaxVelocityBoundsExpansion = MaxVelocityBoundsExpansion;
+	}
+
+	void SetVelocityBoundsExpansionMACD(const FReal BoundsVelocityMultiplier, const FReal MaxVelocityBoundsExpansion)
+	{
+		DetectorSettings.BoundsVelocityInflationMACD = BoundsVelocityMultiplier;
+		DetectorSettings.MaxVelocityBoundsExpansionMACD = MaxVelocityBoundsExpansion;
 	}
 
 protected:

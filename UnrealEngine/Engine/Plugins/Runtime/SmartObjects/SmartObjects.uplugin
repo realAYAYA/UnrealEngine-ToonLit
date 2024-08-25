@@ -39,11 +39,19 @@
 			"Enabled": true
 		},
 		{
+			"Name": "TargetingSystem",
+			"Enabled": true
+		},
+		{
 			"Name": "StructUtils",
 			"Enabled": true
 		},
 		{
 			"Name": "WorldConditions",
+			"Enabled": true
+		},
+		{
+			"Name": "PropertyBindingUtils",
 			"Enabled": true
 		}
 	]

@@ -223,6 +223,4 @@ bool DoesThreadOwnSlateRendering()
 	{
 		return FPlatformTLS::GetCurrentThreadId() == GSlateLoadingThreadId;
 	}
-
-	return false;
 }

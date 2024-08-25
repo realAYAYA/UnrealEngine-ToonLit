@@ -130,7 +130,7 @@ void FIOManagerBSDSocketSelectImpl::PollInternal(FTimespan WaitTime)
 		SOCKET RemovedSocket;
 		if (SocketInternalHandleIndex.RemoveAndCopyValue(RemovedHandle, RemovedSocket))
 		{
-			UE_LOG(LogEventLoop, VeryVerbose, TEXT("[FIOManagerBSDSocketSelectImpl::PollInternal] Request removed: Socket: %p, Handle: %s"), RemovedSocket, *RemovedHandle.ToString());
+			UE_LOG(LogEventLoop, VeryVerbose, TEXT("[FIOManagerBSDSocketSelectImpl::PollInternal] Request removed: Socket: %p, Handle: %s"), reinterpret_cast<void*>(RemovedSocket), *RemovedHandle.ToString());
 			SocketIndex.Remove(RemovedSocket);
 		}
 	}
@@ -143,7 +143,7 @@ void FIOManagerBSDSocketSelectImpl::PollInternal(FTimespan WaitTime)
 			// Check whether there are enough resources available to handle the request.
 			if (SocketIndex.Num() >= FD_SETSIZE)
 			{
-				UE_LOG(LogEventLoop, Verbose, TEXT("[FIOManagerBSDSocketSelectImpl::PollInternal] Request failed: Socket: %p, Reason: %s"), NewRequest->Socket, *LexToString(ESocketIoRequestStatus::NoResources));
+				UE_LOG(LogEventLoop, Verbose, TEXT("[FIOManagerBSDSocketSelectImpl::PollInternal] Request failed: Socket: %p, Reason: %s"), reinterpret_cast<void*>(NewRequest->Socket), *LexToString(ESocketIoRequestStatus::NoResources));
 				NewRequest->Callback(NewRequest->Socket, ESocketIoRequestStatus::NoResources, EIOFlags::None);
 				IORequestStorage.Remove(AddedHandle);
 				continue;
@@ -152,13 +152,13 @@ void FIOManagerBSDSocketSelectImpl::PollInternal(FTimespan WaitTime)
 			// Only one request may be active for a socket at one time.
 			if (SocketIndex.Contains(NewRequest->Socket))
 			{
-				UE_LOG(LogEventLoop, Verbose, TEXT("[FIOManagerBSDSocketSelectImpl::PollInternal] Request failed: Socket: %p, Reason: %s"), NewRequest->Socket, *LexToString(ESocketIoRequestStatus::Invalid));
+				UE_LOG(LogEventLoop, Verbose, TEXT("[FIOManagerBSDSocketSelectImpl::PollInternal] Request failed: Socket: %p, Reason: %s"), reinterpret_cast<void*>(NewRequest->Socket), *LexToString(ESocketIoRequestStatus::Invalid));
 				NewRequest->Callback(NewRequest->Socket, ESocketIoRequestStatus::Invalid, EIOFlags::None);
 				IORequestStorage.Remove(AddedHandle);
 				continue;
 			}
 
-			UE_LOG(LogEventLoop, VeryVerbose, TEXT("[FIOManagerBSDSocketSelectImpl::PollInternal] Request added: Socket: %p, Handle: %s, Flags: 0x%08X"), NewRequest->Socket, *AddedHandle.ToString(), NewRequest->Flags);
+			UE_LOG(LogEventLoop, VeryVerbose, TEXT("[FIOManagerBSDSocketSelectImpl::PollInternal] Request added: Socket: %p, Handle: %s, Flags: 0x%08X"), reinterpret_cast<void*>(NewRequest->Socket), *AddedHandle.ToString(), NewRequest->Flags);
 
 			SocketInternalHandleIndex.Add(AddedHandle, NewRequest->Socket);
 			SocketIndex.Add(NewRequest->Socket, AddedHandle);
@@ -208,7 +208,7 @@ void FIOManagerBSDSocketSelectImpl::PollInternal(FTimespan WaitTime)
 			if (SignaledFlags != EIOFlags::None)
 			{
 				// Signal event status.
-				UE_LOG(LogEventLoop, VeryVerbose, TEXT("[FIOManagerBSDSocketSelectImpl::PollInternal] Request signaled: Socket: %p, Handle: %s, Flags: 0x%08X"), IORequest.Socket, *IORequestEntry.Key.ToString(), SignaledFlags);
+				UE_LOG(LogEventLoop, VeryVerbose, TEXT("[FIOManagerBSDSocketSelectImpl::PollInternal] Request signaled: Socket: %p, Handle: %s, Flags: 0x%08X"), reinterpret_cast<void*>(IORequest.Socket), *IORequestEntry.Key.ToString(), SignaledFlags);
 				IORequest.Callback(IORequest.Socket, ESocketIoRequestStatus::Ok, SignaledFlags);
 			}
 		}

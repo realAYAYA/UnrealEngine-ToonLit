@@ -3,6 +3,7 @@
 #pragma once
 
 #include "Action/Bind/RCPropertyBindAction.h"
+#include "Action/RCPropertyIdAction.h"
 #include "UI/Action/RCActionModel.h"
 
 class SActionItemListRow;
@@ -46,6 +47,36 @@ public:
 
 	/** Color code for this Action*/
 	virtual FLinearColor GetActionTypeColor() const override;
+};
+
+/**
+ * FRCPropertyIdActionBindModel
+ *
+ * UI model for PropertyId based Bind Actions
+ */
+class FRCPropertyIdActionBindModel : public FRCActionBindModel, public FRCPropertyIdActionType
+{
+public:
+	FRCPropertyIdActionBindModel(URCPropertyIdAction* InPropertyIdAction, const TSharedPtr<class FRCBehaviourModel> InBehaviourItem, const TSharedPtr<SRemoteControlPanel> InRemoteControlPanel)
+		: FRCActionBindModel(InPropertyIdAction, InBehaviourItem, InRemoteControlPanel)
+		, FRCPropertyIdActionType(InPropertyIdAction)
+	{
+	}
+	/** Color code for this Action*/
+	virtual FLinearColor GetActionTypeColor() const override
+	{
+		return GetPropertyIdTypeColor();
+	}
+	/** Widget representing Action Name field */
+	virtual TSharedRef<SWidget> GetNameWidget() const override
+	{
+		return GetPropertyIdNameWidget();
+	}
+	/** Widget representing the Value field */
+	virtual TSharedRef<SWidget> GetWidget() const override
+	{
+		return GetPropertyIdValueWidget();
+	}
 };
 
 // Note: Bind only supports Property based Actions, so Function action model is not necessary here

@@ -26,10 +26,13 @@ public:
 
 	/** ISequencerObjectChangeListener interface */
 	virtual FOnAnimatablePropertyChanged& GetOnAnimatablePropertyChanged( FAnimatedPropertyKey PropertyKey ) override;
+	virtual FOnAnimatablePropertyChanged& GetOnAnimatablePropertyChanged(const FProperty* Property) override;
 	virtual FOnPropagateObjectChanges& GetOnPropagateObjectChanges() override;
 	virtual FOnObjectPropertyChanged& GetOnAnyPropertyChanged(UObject& Object) override;
 	virtual void ReportObjectDestroyed(UObject& Object) override;
+	UE_DEPRECATED(5.4, "CanKeyProperty taking in only FCanKeyPropertyParams is deprecated. Please use the alternative CanKeyProperty that takes in FCanKeyPropertyParams and an out FPropertyPath.")
 	virtual bool CanKeyProperty(FCanKeyPropertyParams KeyPropertyParams) const override;
+	virtual bool CanKeyProperty(FCanKeyPropertyParams KeyPropertyParams, FPropertyPath& OutPropertyPath) const override;
 	virtual void KeyProperty(FKeyPropertyParams KeyPropertyParams) const override;
 	virtual void TriggerAllPropertiesChanged(UObject* Object) override;
 
@@ -91,6 +94,9 @@ private:
 
 	/** A mapping of property classes to multi-cast delegate that is broadcast when properties of that type change */
 	TMap< FAnimatedPropertyKey, FOnAnimatablePropertyChanged > PropertyChangedEventMap;
+
+	/** A mapping of an explicitly supported property path to multi-cast delegate that is broadcast when properties of that type change */
+	TMap<const FProperty*, FOnAnimatablePropertyChanged> PropertyPathChangedEventMap;
 
 	/** A mapping of object instance to property change event */
 	TMap< FObjectKey, FOnObjectPropertyChanged > ObjectToPropertyChangedEvent;

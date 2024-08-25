@@ -31,10 +31,10 @@ FVulkanDescriptorPool::FVulkanDescriptorPool(FVulkanDevice* InDevice, const FVul
 		uint32 NumTypesUsed = Layout.GetTypesUsed(DescriptorType);
 		if (NumTypesUsed > 0)
 		{
-			VkDescriptorPoolSize* Type = new(Types) VkDescriptorPoolSize;
-			FMemory::Memzero(*Type);
-			Type->type = DescriptorType;
-			Type->descriptorCount = NumTypesUsed * MaxSetsAllocations;
+			VkDescriptorPoolSize& Type = Types.AddDefaulted_GetRef();
+			FMemory::Memzero(Type);
+			Type.type = DescriptorType;
+			Type.descriptorCount = NumTypesUsed * MaxSetsAllocations;
 		}
 	}
 
@@ -43,10 +43,10 @@ FVulkanDescriptorPool::FVulkanDescriptorPool(FVulkanDevice* InDevice, const FVul
 		uint32 NumTypesUsed = Layout.GetTypesUsed(VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR);
 		if (NumTypesUsed > 0)
 		{
-			VkDescriptorPoolSize* Type = new(Types) VkDescriptorPoolSize;
-			FMemory::Memzero(*Type);
-			Type->type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
-			Type->descriptorCount = NumTypesUsed * MaxSetsAllocations;
+			VkDescriptorPoolSize& Type = Types.AddDefaulted_GetRef();
+			FMemory::Memzero(Type);
+			Type.type = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR;
+			Type.descriptorCount = NumTypesUsed * MaxSetsAllocations;
 		}
 	}
 #endif
@@ -298,7 +298,7 @@ void FVulkanDescriptorPoolsManager::GC()
 		auto* PoolSet = PoolSets[Index];
 		if (PoolSet->IsUnused() && GFrameNumberRenderThread - PoolSet->GetLastFrameUsed() > NUM_FRAMES_TO_WAIT_BEFORE_RELEASING_TO_OS)
 		{
-			PoolSets.RemoveAtSwap(Index, 1, true);
+			PoolSets.RemoveAtSwap(Index, 1, EAllowShrinking::Yes);
 
 			if (AsyncDeletionTask)
 			{
@@ -549,8 +549,6 @@ void FVulkanPendingGfxState::UpdateInputAttachments(FVulkanFramebuffer* Framebuf
 		switch (AttachmentData.Type)
 		{
 		case FVulkanShaderHeader::EAttachmentType::Color0:
-			CurrentState->SetInputAttachment(AttachmentData.DescriptorSet, AttachmentData.BindingIndex, Framebuffer->AttachmentTextureViews[0]->GetTextureView(), VK_IMAGE_LAYOUT_GENERAL);
-			break;
 		case FVulkanShaderHeader::EAttachmentType::Color1:
 		case FVulkanShaderHeader::EAttachmentType::Color2:
 		case FVulkanShaderHeader::EAttachmentType::Color3:
@@ -757,7 +755,7 @@ void FVulkanDescriptorSetCache::GC()
 			UE_LOG(LogVulkanRHI, Warning, TEXT("FVulkanDescriptorSetCache::GC() Free Pool is not empty! Too small r.Vulkan.DSetCacheTargetSetsPerPool?"));
 		}
 		FreePool = MoveTemp(CachedPools[RemoveIndex]);
-		CachedPools.RemoveAt(RemoveIndex, 1, false);
+		CachedPools.RemoveAt(RemoveIndex, 1, EAllowShrinking::No);
 	}
 }
 

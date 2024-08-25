@@ -117,7 +117,7 @@ public:
 	TSharedRef<FUICommandList> GetCommandList() const { return WeakCommandList.Pin().ToSharedRef(); }
 
 	/** Get whether a track is selected */
-	bool IsTrackSelected(const TSharedRef<FAnimTimelineTrack>& InTrack) const;
+	bool IsTrackSelected(const TSharedRef<const FAnimTimelineTrack>& InTrack) const;
 
 	/** Clear all track selection */
 	void ClearTrackSelection();

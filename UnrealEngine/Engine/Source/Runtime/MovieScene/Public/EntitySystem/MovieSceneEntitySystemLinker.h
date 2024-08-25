@@ -4,6 +4,7 @@
 
 #include "MovieSceneEntityIDs.h"
 #include "MovieSceneSequenceID.h"
+#include "Engine/World.h"
 #include "Evaluation/MovieScenePlayback.h"
 #include "EntitySystem/MovieSceneEntityManager.h"
 #include "EntitySystem/MovieSceneInstanceRegistry.h"
@@ -212,6 +213,16 @@ public:
 	 */
 	MOVIESCENE_API void Reset();
 
+	/**
+	 * Gets the world context for this linker
+	 */
+	virtual UWorld* GetWorld() const override { return WeakWorld.IsValid() ? WeakWorld.Get() : Super::GetWorld(); }
+
+	/**
+	 * Sets the world context for this linker
+	 */
+	void SetWorld(UWorld* InWorld) { WeakWorld = InWorld; }
+
 public:
 
 	/**
@@ -333,6 +344,8 @@ public:
 
 	MOVIESCENE_API void ResetActiveRunners();
 
+	MOVIESCENE_API void DestroyInstanceImmediately(UE::MovieScene::FRootInstanceHandle Instance);
+
 private:
 
 	MOVIESCENE_API UMovieSceneEntitySystem* LinkSystemImpl(TSubclassOf<UMovieSceneEntitySystem> InClassType);
@@ -385,6 +398,7 @@ private:
 	uint64 LastInstantiationVersion;
 
 	TWeakPtr<bool> GlobalStateCaptureToken;
+	TWeakObjectPtr<UWorld> WeakWorld;
 
 protected:
 

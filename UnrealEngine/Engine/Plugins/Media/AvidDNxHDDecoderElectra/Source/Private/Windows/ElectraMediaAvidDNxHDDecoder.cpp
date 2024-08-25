@@ -18,6 +18,7 @@
 #include "IElectraDecoderOutputVideo.h"
 #include "IElectraDecoderResourceDelegate.h"
 #include "ElectraDecodersUtils.h"
+#include COMPILED_PLATFORM_HEADER(ElectraDecoderGPUBufferHelpers.h)
 
 #include "AvidDNxCodec.h"
 //#include "dnx_uncompressed_sdk.h"
@@ -138,7 +139,24 @@ public:
 	}
 	void* GetBufferTextureByIndex(int32 InBufferIndex) const override
 	{
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+		if (InBufferIndex == 0)
+		{
+			return GPUBuffer.Resource.GetReference();
+		}
+#endif
 		return nullptr;
+	}
+	virtual bool GetBufferTextureSyncByIndex(int32 InBufferIndex, FElectraDecoderOutputSync& SyncObject) const override
+	{
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+		if (InBufferIndex == 0)
+		{
+			SyncObject = { GPUBuffer.Fence.GetReference(), GPUBuffer.FenceValue, nullptr, GPUBuffer_TaskSync };
+			return true;
+		}
+#endif
+	return false;
 	}
 	EElectraDecoderPlatformPixelFormat GetBufferFormatByIndex(int32 InBufferIndex) const override
 	{
@@ -187,6 +205,10 @@ public:
 	TSharedPtr<TArray<uint8>, ESPMode::ThreadSafe> Buffer;
 	EElectraDecoderPlatformPixelFormat BufferFormat = EElectraDecoderPlatformPixelFormat::INVALID;
 	EElectraDecoderPlatformPixelEncoding BufferEncoding = EElectraDecoderPlatformPixelEncoding::Native;
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+	FElectraMediaDecoderOutputBufferPool_DX12::FOutputData GPUBuffer;
+	TSharedPtr<IElectraDecoderResourceDelegateBase::IAsyncConsecutiveTaskSync> GPUBuffer_TaskSync;
+#endif
 };
 
 
@@ -249,22 +271,17 @@ private:
 	struct FDecoderHandle
 	{
 		int32 PrepareForDecoding(const void* InInput, uint32 InInputSize, int32 InNumDecodeThreads, bool bIgnoreAlpha);
-		int32 GetDecodedBufferSize() const
-		{ return BufferAllocSize; }
 		int32 GetNumOutputBits() const
 		{ return NumOutputBits; }
-		int32 Decode(TSharedPtr<TArray<uint8>, ESPMode::ThreadSafe> OutBuffer, const void* InInput, uint32 InInputSize);
+		int32 Decode(uint8* OutBufferData, uint32 OutBufferSize, const void* InInput, uint32 InInputSize);
 		void Reset();
 		bool SetupDecompressStruct();
-		static int32 GetNumberOfOutputColorComponents(DNX_ColorComponentOrder_t InOutputComponentOrder);
-		static int32 GetNumberOfOutputColorBytesPerPixel(DNX_ComponentType_t InOutputComponentType);
 		static int32 GetNumberOfOutputColorBitsPerPixel(DNX_ComponentType_t InOutputComponentType);
 		DNX_Decoder Handle = nullptr;
 		DNX_CompressedParams_t CurrentCompressedParams;
 		DNX_UncompressedParams_t CurrentUncompressedParams;
 		DNX_SignalStandard_t CurrentSignalStandard = DNX_SignalStandard_t::DNX_SS_INVALID;
 		DNX_DecodeOperationParams_t DecodeOperationParams;
-		uint32 BufferAllocSize = 0;
 		int32 NumOutputBits = 0;
 		bool bHasAlpha = false;
 	};
@@ -275,6 +292,14 @@ private:
 
 	TSharedPtr<FVideoDecoderOutputAvidDNxHDElectra, ESPMode::ThreadSafe> CurrentOutput;
 	bool bFlushPending = false;
+
+	TWeakPtr<IElectraDecoderResourceDelegate, ESPMode::ThreadSafe> ResourceDelegate;
+
+	uint32 MaxOutputBuffers;
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+	mutable TSharedPtr<FElectraMediaDecoderOutputBufferPool_DX12> D3D12ResourcePool;
+	mutable TSharedPtr<IElectraDecoderResourceDelegateBase::IAsyncConsecutiveTaskSync> TaskSync;
+#endif
 };
 
 
@@ -388,6 +413,8 @@ void FElectraMediaAvidDNxHDDecoder::Shutdown()
 
 FVideoDecoderAvidDNxHDElectra::FVideoDecoderAvidDNxHDElectra(const TMap<FString, FVariant>& InOptions, TSharedPtr<IElectraDecoderResourceDelegate, ESPMode::ThreadSafe> InResourceDelegate)
 {
+	ResourceDelegate = InResourceDelegate;
+
 	DisplayWidth = (int32)ElectraDecodersUtil::GetVariantValueSafeI64(InOptions, TEXT("width"), 0);
 	DisplayHeight = (int32)ElectraDecodersUtil::GetVariantValueSafeI64(InOptions, TEXT("height"), 0);
 
@@ -399,6 +426,9 @@ FVideoDecoderAvidDNxHDElectra::FVideoDecoderAvidDNxHDElectra(const TMap<FString,
 
 	// FIXME: How many exactly?
 	DesiredNumberOfDecoderThreads = 8;
+
+	MaxOutputBuffers = (uint32)ElectraDecodersUtil::GetVariantValueSafeU64(InOptions, TEXT("max_output_buffers"), 5);
+	MaxOutputBuffers += kElectraDecoderPipelineExtraFrames;
 }
 
 FVideoDecoderAvidDNxHDElectra::~FVideoDecoderAvidDNxHDElectra()
@@ -455,6 +485,18 @@ TSharedPtr<IElectraDecoderDefaultOutputFormat, ESPMode::ThreadSafe> FVideoDecode
 	return nullptr;
 }
 
+static void CopyData(TRefCountPtr<ID3D12Resource> BufferResource, uint32 BufferPitch, const uint8* TempBuffer, uint32 TempBufferPitch, uint32 Height)
+{
+	uint8* ResourceAddr = nullptr;
+	HRESULT Res = BufferResource->Map(0, nullptr, (void**)&ResourceAddr);
+	check(SUCCEEDED(Res));
+
+	FElectraMediaDecoderOutputBufferPool_DX12::CopyWithPitchAdjust(ResourceAddr, BufferPitch, TempBuffer, TempBufferPitch, Height);
+
+	// We decoded into the resource: Unmap the resource memory and signal that it's usable by the GPU
+	BufferResource->Unmap(0, nullptr);
+}
+
 IElectraDecoder::EDecoderError FVideoDecoderAvidDNxHDElectra::DecodeAccessUnit(const FInputAccessUnit& InInputAccessUnit, const TMap<FString, FVariant>& InAdditionalOptions)
 {
 	// If already in error do nothing!
@@ -476,6 +518,14 @@ IElectraDecoder::EDecoderError FVideoDecoderAvidDNxHDElectra::DecodeAccessUnit(c
 		return IElectraDecoder::EDecoderError::NoBuffer;
 	}
 
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+	// If we will create a new resource pool or we have still buffers in an existing one, we can proceed, else we'd have no resources to output the data
+	if (D3D12ResourcePool.IsValid() && !D3D12ResourcePool->BufferAvailable())
+	{
+		return IElectraDecoder::EDecoderError::NoBuffer;
+	}
+#endif
+
 	// Decode data. This immediately produces a new output frame.
 	if (InInputAccessUnit.Data && InInputAccessUnit.DataSize)
 	{
@@ -486,6 +536,18 @@ IElectraDecoder::EDecoderError FVideoDecoderAvidDNxHDElectra::DecodeAccessUnit(c
 			PostError(Result, TEXT("PrepareForDecoding() failed"), ERRCODE_INTERNAL_FAILED_TO_DECODE_INPUT);
 			return IElectraDecoder::EDecoderError::Error;
 		}
+
+		void* PlatformDevice = nullptr;
+		int32 PlatformDeviceVersion = 0;
+		bool bUseGPUBuffers = false;
+		auto PinnedResourceDelegate = ResourceDelegate.Pin();
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+		if (PinnedResourceDelegate.IsValid())
+		{
+			PinnedResourceDelegate->GetD3DDevice(&PlatformDevice, &PlatformDeviceVersion);
+			bUseGPUBuffers = (PlatformDevice && PlatformDeviceVersion >= 12000);
+		}
+#endif
 
 		TSharedPtr<FVideoDecoderOutputAvidDNxHDElectra, ESPMode::ThreadSafe> NewOutput = MakeShared<FVideoDecoderOutputAvidDNxHDElectra>();
 		NewOutput->PTS = InInputAccessUnit.PTS;
@@ -509,6 +571,7 @@ IElectraDecoder::EDecoderError FVideoDecoderAvidDNxHDElectra::DecodeAccessUnit(c
 
 		NewOutput->PixelFormat = (int32) Decoder.CurrentUncompressedParams.compType;
 
+		bool bIsPlanar = false;
 		switch (Decoder.CurrentUncompressedParams.compType)
 		{
 			case	DNX_CT_UCHAR:
@@ -549,7 +612,11 @@ IElectraDecoder::EDecoderError FVideoDecoderAvidDNxHDElectra::DecodeAccessUnit(c
 					{
 						NewOutput->BufferFormat = EElectraDecoderPlatformPixelFormat::NV12;
 						NewOutput->BufferEncoding = EElectraDecoderPlatformPixelEncoding::Native;
-						NewOutput->Height = (NewOutput->Height * 3) / 2;
+						if (!bUseGPUBuffers)
+						{
+							NewOutput->Height = (NewOutput->Height * 3) / 2;
+						}
+						bIsPlanar = true;
 						break;
 					}
 					default:
@@ -600,7 +667,11 @@ IElectraDecoder::EDecoderError FVideoDecoderAvidDNxHDElectra::DecodeAccessUnit(c
 					{
 						NewOutput->BufferFormat = EElectraDecoderPlatformPixelFormat::P010;
 						NewOutput->BufferEncoding = EElectraDecoderPlatformPixelEncoding::Native;
-						NewOutput->Height = (NewOutput->Height * 3) / 2;
+						if (!bUseGPUBuffers)
+						{
+							NewOutput->Height = (NewOutput->Height * 3) / 2;
+						}
+						bIsPlanar = true;
 						break;
 					}
 					default:
@@ -629,15 +700,110 @@ IElectraDecoder::EDecoderError FVideoDecoderAvidDNxHDElectra::DecodeAccessUnit(c
 
 		NewOutput->ExtraValues.Emplace(TEXT("avid_color_volume"), FVariant((int32) Decoder.CurrentUncompressedParams.colorVolume));
 
-		NewOutput->Buffer = MakeShared<TArray<uint8>, ESPMode::ThreadSafe>();
-		NewOutput->Buffer->AddUninitialized(Decoder.GetDecodedBufferSize());
+		uint32 BPP = NewOutput->Pitch / NewOutput->Width;
 
-		Result = Decoder.Decode(NewOutput->Buffer, InInputAccessUnit.Data, (unsigned int)InInputAccessUnit.DataSize);
+		uint8* OutBufferData;
+		uint32 OutBufferSize;
+		TArray<uint8> TempBuffer;
+
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+		uint32 ResourcePitch = 0;
+		if (bUseGPUBuffers)
+		{
+			TRefCountPtr D3D12Device(static_cast<ID3D12Device*>(PlatformDevice));
+
+			uint32 AllocHeight = bIsPlanar ? (NewOutput->Height * 3 / 2) : NewOutput->Height;
+
+			// Create the resource pool as needed...
+			if (!D3D12ResourcePool || !D3D12ResourcePool->IsCompatibleAsBuffer(MaxOutputBuffers, NewOutput->Width, AllocHeight, BPP))
+			{
+				// Note: if we reconfigure the pool, we will end up with >1 heaps until all older users are destroyed - so streams with lots of changes will be quite resource hungry
+				D3D12ResourcePool = MakeShared<FElectraMediaDecoderOutputBufferPool_DX12, ESPMode::ThreadSafe>(D3D12Device, MaxOutputBuffers, NewOutput->Width, AllocHeight, BPP);
+			}
+
+			// Create a tasksync instance so we can have our own async jobs run in consecutive order
+			if (!TaskSync.IsValid())
+			{
+				TaskSync = PinnedResourceDelegate->CreateAsyncConsecutiveTaskSync();
+			}
+
+			// Request resource and fence...
+			D3D12ResourcePool->AllocateOutputDataAsBuffer(NewOutput->GPUBuffer, ResourcePitch);
+
+			NewOutput->Pitch = ResourcePitch;
+
+			uint32 OutputPitch = BPP * NewOutput->Width;
+
+			// Pitch compatible with DX12 resource?
+			if (OutputPitch != ResourcePitch)
+			{
+				// No, decode to temp buffer...
+				TempBuffer.AddUninitialized(OutputPitch * AllocHeight);
+
+				OutBufferData = TempBuffer.GetData();
+				OutBufferSize = TempBuffer.Num();
+
+				check(OutBufferSize <= AllocHeight * ResourcePitch);
+			}
+			else
+			{
+				// Yes, decode directly into the DX12 resource...
+				HRESULT Res = NewOutput->GPUBuffer.Resource->Map(0, nullptr, (void**)&OutBufferData);
+				check(SUCCEEDED(Res));
+				OutBufferSize = ResourcePitch * AllocHeight;
+			}
+		}
+		else
+#endif
+		{
+			NewOutput->Buffer = MakeShared<TArray<uint8>, ESPMode::ThreadSafe>();
+			NewOutput->Buffer->AddUninitialized(BPP * NewOutput->Width * NewOutput->Height);
+
+			OutBufferData = NewOutput->Buffer->GetData();
+			OutBufferSize = NewOutput->Buffer->Num();
+		}
+
+		Result = Decoder.Decode(OutBufferData, OutBufferSize, InInputAccessUnit.Data, (unsigned int)InInputAccessUnit.DataSize);
+
+#if ELECTRA_MEDIAGPUBUFFER_DX12
+		if (bUseGPUBuffers)
+		{
+			if (Result == 0)
+			{
+				// If we have a temp buffer, we need to copy the data first...
+				if (!TempBuffer.IsEmpty())
+				{
+					if (PinnedResourceDelegate->RunCodeAsync([BufferResource = NewOutput->GPUBuffer.Resource, Width = NewOutput->Width, Height = NewOutput->Height, ResourcePitch, BPP, TempBuffer, BufferFence = NewOutput->GPUBuffer.Fence, BufferFenceValue = NewOutput->GPUBuffer.FenceValue]()
+						{
+							CopyData(BufferResource, ResourcePitch, TempBuffer.GetData(), Width * BPP, Height);
+							BufferFence->Signal(BufferFenceValue);
+						}, TaskSync.Get()))
+					{
+						NewOutput->GPUBuffer_TaskSync = TaskSync;
+					}
+					else
+					{
+						// Async copy failed, do it synchronously...
+						CopyData(NewOutput->GPUBuffer.Resource, ResourcePitch, TempBuffer.GetData(), NewOutput->Width * BPP, NewOutput->Height);
+						NewOutput->GPUBuffer.Fence->Signal(NewOutput->GPUBuffer.FenceValue);
+					}
+				}
+				else
+				{
+					// We decoded into the resource: Unmap the resource memory and signal that it's usable by the GPU
+					NewOutput->GPUBuffer.Resource->Unmap(0, nullptr);
+					NewOutput->GPUBuffer.Fence->Signal(NewOutput->GPUBuffer.FenceValue);
+				}
+			}
+		}
+#endif
+
 		if (Result)
 		{
 			PostError(Result, TEXT("DNX_DecodeFrame() failed"), ERRCODE_INTERNAL_FAILED_TO_DECODE_INPUT);
 			return IElectraDecoder::EDecoderError::Error;
 		}
+
 		CurrentOutput = MoveTemp(NewOutput);
 	}
 	return IElectraDecoder::EDecoderError::None;
@@ -731,16 +897,11 @@ int32 FVideoDecoderAvidDNxHDElectra::FDecoderHandle::PrepareForDecoding(const vo
 			if (Result == DNX_NO_ERROR)
 			{
 				NumOutputBits = GetNumberOfOutputColorBitsPerPixel(CurrentUncompressedParams.compType);
-				BufferAllocSize = CurrentCompressedParams.width
-					* CurrentCompressedParams.height
-					* GetNumberOfOutputColorComponents(CurrentUncompressedParams.compOrder)
-					* GetNumberOfOutputColorBytesPerPixel(CurrentUncompressedParams.compType);
 			}
 			else
 			{
 				DNX_DeleteDecoder(Handle);
 				Handle = nullptr;
-				BufferAllocSize = 0;
 				NumOutputBits = 0;
 				bHasAlpha = false;
 			}
@@ -772,10 +933,6 @@ int32 FVideoDecoderAvidDNxHDElectra::FDecoderHandle::PrepareForDecoding(const vo
 		}
 
 		NumOutputBits = GetNumberOfOutputColorBitsPerPixel(CurrentUncompressedParams.compType);
-		BufferAllocSize = CurrentCompressedParams.width
-			* CurrentCompressedParams.height
-			* GetNumberOfOutputColorComponents(CurrentUncompressedParams.compOrder)
-			* GetNumberOfOutputColorBytesPerPixel(CurrentUncompressedParams.compType);
 	}
 
 	return Result;
@@ -819,22 +976,22 @@ bool FVideoDecoderAvidDNxHDElectra::FDecoderHandle::SetupDecompressStruct()
 		return false;
 	}
 
-	if (CurrentUncompressedParams.compType == DNX_ComponentType_t::DNX_CT_SHORT_2_14)
+	/*if (CurrentUncompressedParams.compType == DNX_ComponentType_t::DNX_CT_SHORT_2_14)
 	{
 		CurrentUncompressedParams.blackPoint = DNX_DEFAULT_SHORT_2_14_BLACK_POINT;
 		CurrentUncompressedParams.whitePoint = DNX_DEFAULT_SHORT_2_14_WHITE_POINT;
 		CurrentUncompressedParams.chromaExcursion = DNX_DEFAULT_CHROMA_SHORT_2_14_EXCURSION;
-	}
+	}*/
 	return true;
 }
 
-int32 FVideoDecoderAvidDNxHDElectra::FDecoderHandle::Decode(TSharedPtr<TArray<uint8>, ESPMode::ThreadSafe> OutBuffer, const void* InInput, uint32 InInputSize)
+int32 FVideoDecoderAvidDNxHDElectra::FDecoderHandle::Decode(uint8* OutBufferData, uint32 OutBufferSize, const void* InInput, uint32 InInputSize)
 {
 	if (!Handle)
 	{
 		return DNX_NOT_INITIALIZED_ERROR;
 	}
-	int32 Result = DNX_DecodeFrame(Handle, InInput, OutBuffer->GetData(), InInputSize, (unsigned int)OutBuffer->Num());
+	int32 Result = DNX_DecodeFrame(Handle, InInput, OutBufferData, InInputSize, (unsigned int)OutBufferSize);
 	return Result;
 }
 
@@ -846,57 +1003,7 @@ void FVideoDecoderAvidDNxHDElectra::FDecoderHandle::Reset()
 		DNX_DeleteDecoder(Handle);
 		Handle = nullptr;
 	}
-	BufferAllocSize = 0;
 	NumOutputBits = 0;
-}
-
-int32 FVideoDecoderAvidDNxHDElectra::FDecoderHandle::GetNumberOfOutputColorComponents(DNX_ColorComponentOrder_t InOutputComponentOrder)
-{
-	switch(InOutputComponentOrder)
-	{
-		case DNX_ColorComponentOrder_t::DNX_CCO_CbYCrY_NoA:			// CbY0CrY1
-		case DNX_ColorComponentOrder_t::DNX_CCO_YCbYCr_NoA:			// Y0CbY1Cr
-		case DNX_ColorComponentOrder_t::DNX_CCO_RGB_NoA:			// RGB
-		case DNX_ColorComponentOrder_t::DNX_CCO_BGR_NoA:			// BGR
-		case DNX_ColorComponentOrder_t::DNX_CCO_YCbCr_Interleaved:	// YCbCr 444
-		case DNX_ColorComponentOrder_t::DNX_CCO_Ch1Ch2Ch3:			// Arbitrary 444 subsampled color components for any colorspace other than RGB and YCbCr
-		case DNX_ColorComponentOrder_t::DNX_CCO_YCbCr_Planar:		// YCbCr 420 stored in planar form. Y followed by Cb followed by Cr
-			return 3;
-		case DNX_ColorComponentOrder_t::DNX_CCO_ARGB_Interleaved:	// ARGB
-		case DNX_ColorComponentOrder_t::DNX_CCO_BGRA_Interleaved:	// BGRA
-		case DNX_ColorComponentOrder_t::DNX_CCO_RGBA_Interleaved:	// RGBA
-		case DNX_ColorComponentOrder_t::DNX_CCO_ABGR_Interleaved:	// ABGR
-		case DNX_ColorComponentOrder_t::DNX_CCO_Ch1Ch2Ch1Ch3:		// Arbitrary 422 subsampled color components for any colorspace other than RGB and YCbCr with not subsampled channel first
-		case DNX_ColorComponentOrder_t::DNX_CCO_Ch2Ch1Ch3Ch1:		// Arbitrary 422 subsampled color components for any colorspace other than RGB and YCbCr with subsampled channel first
-		case DNX_ColorComponentOrder_t::DNX_CCO_CbYACrYA_Interleaved: // YCbCrA 4224
-		case DNX_ColorComponentOrder_t::DNX_CCO_CbYCrA_Interleaved:	// YCbCrA 4444
-		case DNX_ColorComponentOrder_t::DNX_CCO_YCbCrA_Planar:		// YCbCrA 4204 stored in planar form. Y followed by Cb followed by Cr followed by A
-		case DNX_ColorComponentOrder_t::DNX_CCO_Ch1Ch2Ch3A:			// Arbitrary 4444 subsampled color components for any colorspace other than RGB and YCbCr with Alpha (Alpha channel last)
-		case DNX_ColorComponentOrder_t::DNX_CCO_Ch3Ch2Ch1A:			// Arbitrary 4444 subsampled color components for any colorspace other than RGB and YCbCr with Alpha with reversed channel order (Alpha channel last)
-		case DNX_ColorComponentOrder_t::DNX_CCO_ACh1Ch2Ch3:			// Arbitrary 4444 subsampled color components for any colorspace other than RGB and YCbCr with Alpha (Alpha channel first)
-		case DNX_ColorComponentOrder_t::DNX_CCO_Ch2Ch1ACh3Ch1A:		// Arbitrary 4224 subsampled color components for any colorspace other than RGB and YCbCr with not subsampled channel first with Alpha
-		case DNX_ColorComponentOrder_t::DNX_CCO_CbYCrY_A:			// YCbCrA 4224 mixed-planar (separate Alpha plane)
-			return 4;
-		default:
-			return 4;
-	}
-}
-
-int32 FVideoDecoderAvidDNxHDElectra::FDecoderHandle::GetNumberOfOutputColorBytesPerPixel(DNX_ComponentType_t InOutputComponentType)
-{
-	switch(InOutputComponentType)
-	{
-		default:
-		case DNX_ComponentType_t::DNX_CT_UCHAR:			// 8 bit
-			return 1;
-		case DNX_ComponentType_t::DNX_CT_USHORT_10_6:	// 10 bit
-		case DNX_ComponentType_t::DNX_CT_SHORT_2_14:	// Fixed point 
-		case DNX_ComponentType_t::DNX_CT_SHORT:			// 16 bit. Premultiplied by 257. Byte ordering is machine dependent.
-		case DNX_ComponentType_t::DNX_CT_10Bit_2_8:		// 10 bit in 2_8 format. Byte ordering is fixed. This is to be used with 10-bit 4:2:2 YCbCr components.
-		case DNX_ComponentType_t::DNX_CT_V210:			// Apple's V210 
-		case DNX_ComponentType_t::DNX_CT_USHORT_12_4:	// 12 bit
-			return 2;
-	}
 }
 
 int32 FVideoDecoderAvidDNxHDElectra::FDecoderHandle::GetNumberOfOutputColorBitsPerPixel(DNX_ComponentType_t InOutputComponentType)

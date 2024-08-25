@@ -61,6 +61,8 @@ namespace Metasound
 	/** FCreateOperatorParams holds the parameters provided to operator factories
 	 * during the creation of an IOperator
 	 */
+	struct UE_DEPRECATED(5.4, "Update APIs to use FBuildOperatorParams. Operator creation routines should have the following signature \"TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams&, FBuildResults&)\"") FCreateOperatorParams;
+
 	struct FCreateOperatorParams
 	{
 		/** The node associated with this factory and the desired IOperator. */

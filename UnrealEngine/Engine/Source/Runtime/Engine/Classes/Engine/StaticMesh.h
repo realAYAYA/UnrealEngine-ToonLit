@@ -44,6 +44,7 @@ class FStaticMeshUpdate;
 class UPackage;
 struct FMeshDescription;
 struct FStaticMeshLODResources;
+class IStaticMeshComponent;
 
 /*-----------------------------------------------------------------------------
 	Async Static Mesh Compilation
@@ -71,6 +72,7 @@ enum class EStaticMeshAsyncProperties : uint32
 	LightMapCoordinateIndex = 1 << 16,
 	LightMapResolution      = 1 << 17,
 	HiResSourceModel		= 1 << 18,
+	UseLegacyTangentScaling = 1 << 19,
 
 	All                     = MAX_uint32
 };
@@ -117,6 +119,8 @@ inline const TCHAR* ToString(EStaticMeshAsyncProperties Value)
 			return TEXT("LightMapResolution");
 		case EStaticMeshAsyncProperties::HiResSourceModel:
 			return TEXT("HiResSourceModel");
+		case EStaticMeshAsyncProperties::UseLegacyTangentScaling:
+			return TEXT("UseLegacyTangentScaling");
 		default: 
 			check(false); 
 			return TEXT("Unknown");
@@ -729,9 +733,7 @@ public:
 
 	static FName GetQualityLevelMinLODMemberName()
 	{
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		return GET_MEMBER_NAME_CHECKED(UStaticMesh, MinQualityLevelLOD);
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
 
 	const FPerQualityLevelInt& GetQualityLevelMinLOD() const
@@ -773,10 +775,8 @@ public:
 	{
 #if WITH_EDITORONLY_DATA
 		WaitUntilAsyncPropertyReleased(EStaticMeshAsyncProperties::MinLOD);
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		MinQualityLevelLOD.PerQuality = QualityLevelProperty::ConvertQualtiyLevelData(QualityLevelMinimumLODs);
 		MinQualityLevelLOD.Default = Default >= 0 ? Default : MinQualityLevelLOD.Default;
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 #endif
 	}
 
@@ -785,10 +785,8 @@ public:
 	{
 #if WITH_EDITORONLY_DATA
 		WaitUntilAsyncPropertyReleased(EStaticMeshAsyncProperties::MinLOD);
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		QualityLevelMinimumLODs = QualityLevelProperty::ConvertQualtiyLevelData(MinQualityLevelLOD.PerQuality);
 		Default = MinQualityLevelLOD.Default;
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 #endif
 	}
 
@@ -1070,6 +1068,31 @@ public:
 	*/
 	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = StaticMesh)
 	uint8 bSupportPhysicalMaterialMasks : 1;
+
+#if WITH_EDITORONLY_DATA
+private:
+	// If true, will incorrectly scale tangents when applying a non-uniform BuildScale to match what legacy code did. Only use for consistency on old assets.
+	UE_DEPRECATED(5.4, "Please do not access this member directly; use UStaticMesh::GetLegacyTangentScaling() or UStaticMesh::SetLegacyTangentScaling().")
+	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = StaticMesh)
+	uint8 bUseLegacyTangentScaling : 1;
+public:
+
+	bool GetLegacyTangentScaling() const
+	{
+		WaitUntilAsyncPropertyReleased(EStaticMeshAsyncProperties::UseLegacyTangentScaling);
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
+		return bUseLegacyTangentScaling;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	}
+
+	void SetLegacyTangentScaling(bool bInUseLegacyTangentScaling)
+	{
+		WaitUntilAsyncPropertyReleased(EStaticMeshAsyncProperties::UseLegacyTangentScaling);
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
+		bUseLegacyTangentScaling = bInUseLegacyTangentScaling;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	}
+#endif // WITH_EDITORONLY_DATA
 
 	/**
 	 * If true, a ray tracing acceleration structure will be built for this mesh and it may be used in ray tracing effects
@@ -1538,6 +1561,7 @@ private:
 public:
 	ENGINE_API void SetNavCollision(UNavCollisionBase*);
 	ENGINE_API UNavCollisionBase* GetNavCollision() const;
+	ENGINE_API FBox GetNavigationBounds(const FTransform& LocalToWorld) const;
 	ENGINE_API bool IsNavigationRelevant() const;
 
 	/**
@@ -1572,6 +1596,13 @@ public:
 	 * @Param SourceDataFilename - The source filename thta need to set into the LOD to allow re-import.
 	 */
 	ENGINE_API bool SetCustomLOD(const UStaticMesh* SourceStaticMesh, int32 LodIndex, const FString& SourceDataFilename);
+
+	/*
+	 * Static function that remove any trailing unused material.
+	 *
+	 * @Param StaticMesh - The static mesh we want to remove the trailing materials.
+	 */
+	ENGINE_API static void RemoveUnusedMaterialSlots(UStaticMesh* StaticMesh);
 
 	//SourceModels API
 	ENGINE_API FStaticMeshSourceModel& AddSourceModel();
@@ -1617,6 +1648,8 @@ public:
 	ENGINE_API virtual bool IsPostLoadThreadSafe() const override;
 	ENGINE_API virtual void BeginDestroy() override;
 	ENGINE_API virtual bool IsReadyForFinishDestroy() override;
+	ENGINE_API virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	ENGINE_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 	ENGINE_API virtual FString GetDesc() override;
 	ENGINE_API virtual void GetResourceSizeEx(FResourceSizeEx& CumulativeResourceSize) override;
@@ -1815,6 +1848,9 @@ public:
 	ENGINE_API int32 GetMaterialIndex(FName MaterialSlotName) const;
 
 	ENGINE_API int32 GetMaterialIndexFromImportedMaterialSlotName(FName ImportedMaterialSlotName) const;
+
+
+	ENGINE_API void GetUsedMaterials(TArray<UMaterialInterface*>& OutMaterials, TFunctionRef<UMaterialInterface*(int32)> OverrideMaterial) const;
 
 	/**
 	 * Returns the render data to use for exporting the specified LOD. This method should always
@@ -2022,12 +2058,7 @@ private:
 	/**
 	 * Complete the static mesh building process - Can't be done in parallel.
 	 */
-	void FinishBuildInternal(const TArray<UStaticMeshComponent*>& InAffectedComponents, bool bHasRenderDataChanged, bool bShouldComputeExtendedBounds = true);
-
-	/**
-	 * Get an estimate of the peak amount of memory required to build this mesh.
-	 */
-	int64 GetBuildRequiredMemory() const;
+	void FinishBuildInternal(const TArray<IStaticMeshComponent*>& InAffectedComponents, bool bHasRenderDataChanged, bool bShouldComputeExtendedBounds = true);
 
 #if WITH_EDITORONLY_DATA
 	/**
@@ -2041,6 +2072,11 @@ public:
 	 * Caches derived renderable data.
 	 */
 	ENGINE_API void CacheDerivedData();
+
+	/**
+	 * Get an estimate of the peak amount of memory required to build this mesh.
+	 */
+	ENGINE_API int64 GetBuildRequiredMemoryEstimate() const;
 
 	/**
 	 * Caches derived renderable for cooked platforms currently active.

@@ -148,6 +148,11 @@ public class DeploymentContext //: ProjectParams
 	public string CustomConfig;
 
 	/// <summary>
+	/// Allows a platform to change how it is packaged, staged and deployed - for example, when packaging for a specific game store
+	/// </summary>
+	public CustomDeploymentHandler CustomDeployment = null;
+
+	/// <summary>
 	/// This is the root directory that contains the engine: d:\a\UE\
 	/// </summary>
 	public DirectoryReference LocalRoot;
@@ -166,6 +171,12 @@ public class DeploymentContext //: ProjectParams
 	/// The directory that contains the DLC being processed (or null for non-DLC)
 	/// </summary>
 	public DirectoryReference DLCRoot;
+
+	/// <summary>
+	/// The list of AdditionalPluginDirectories from the project.uproject. Files in plugins in these
+	/// directories are staged into <StageRoot>/RemappedPlugins/PluginName.
+	/// </summary>
+	public List<DirectoryReference> AdditionalPluginDirectories;
 
 	/// <summary>
 	///  raw name used for platform subdirectories Win32
@@ -302,6 +313,11 @@ public class DeploymentContext //: ProjectParams
 	/// </summary>
 	public HashSet<StagedFileReference> ExtraFilesAllowList = new HashSet<StagedFileReference>();
 
+	/// <summary>
+	/// Optional stage handler that during CopyOrWriteManifestFilesToStageDir will handle the copy operation of files and creation
+	/// of the plugin manifest file.
+	/// </summary>
+	public CustomStageCopyHandler CustomStageCopyHandler = null;
 
 	/// <summary>
 	/// List of ini keys to strip when staging
@@ -407,7 +423,8 @@ public class DeploymentContext //: ProjectParams
 		bool IsClientInsteadOfNoEditor,
         bool InForceChunkManifests,
 		bool InSeparateDebugStageDirectory,
-		DirectoryReference InDLCRoot
+		DirectoryReference InDLCRoot,
+		List<DirectoryReference> InAdditionalPluginDirectories
 		)
 	{
 		bStageCrashReporter = InStageCrashReporter;
@@ -424,6 +441,7 @@ public class DeploymentContext //: ProjectParams
 		Stage = InStage;
 		Archive = InArchive;
 		DLCRoot = InDLCRoot;
+		AdditionalPluginDirectories = InAdditionalPluginDirectories;
 
         if (CookSourcePlatform != null && InCooked)
         {
@@ -630,7 +648,8 @@ public class DeploymentContext //: ProjectParams
 			"editorsettings.ini",
 			"editorusersettings.ini",
 			"lightmass.ini",
-			"pakfilerules.ini"
+			"pakfilerules.ini",
+			"sourcecontrolsettings.ini"
 		};
 
 		// If we were configured to use manifests across the whole project, then this platform should use manifests.
@@ -738,34 +757,32 @@ public class DeploymentContext //: ProjectParams
 	public StagedFileReference GetStagedFileLocation(FileReference InputFile)
 	{
 		StagedFileReference OutputFile;
-		if(InputFile.IsUnderDirectory(ProjectRoot))
+		foreach (DirectoryReference AdditionalPluginDir in AdditionalPluginDirectories)
+		{
+			if (InputFile.IsUnderDirectory(AdditionalPluginDir))
+			{
+				// This is a plugin that lives outside of the Engine/Plugins or Game/Plugins directory so needs to be remapped for staging/packaging
+				// We need to remap C:\SomePath\PluginName\RelativePath to RemappedPlugins\PluginName\RelativePath
+				OutputFile = new StagedFileReference(
+					String.Format("RemappedPlugins/{0}", InputFile.MakeRelativeTo(AdditionalPluginDir)));
+				return OutputFile;
+			}
+		}
+
+		if (InputFile.IsUnderDirectory(ProjectRoot))
 		{
 			OutputFile = StagedFileReference.Combine(RelativeProjectRootForStage, InputFile.MakeRelativeTo(ProjectRoot));
 		}
-        else if (InputFile.HasExtension(".uplugin"))
-        {
-			DirectoryReference EnterpriseRoot = DirectoryReference.Combine(EngineRoot, "..", "Enterprise"); // Enterprise plugins aren't under the project additional plugin directories, so they shouldn't be remapped
-            if (InputFile.IsUnderDirectory(EngineRoot) || InputFile.IsUnderDirectory(EnterpriseRoot))
-			{
-				OutputFile = new StagedFileReference(InputFile.MakeRelativeTo(LocalRoot));
-			}
-            else
-			{
-				// This is a plugin that lives outside of the Engine/Plugins or Game/Plugins directory so needs to be remapped for staging/packaging
-				// We need to remap C:\SomePath\PluginName\PluginName.uplugin to RemappedPlugins\PluginName\PluginName.uplugin
-				OutputFile = new StagedFileReference(String.Format("RemappedPlugins/{0}/{1}", InputFile.GetFileNameWithoutExtension(), InputFile.GetFileName()));
-			}
-        }
-        else if (InputFile.IsUnderDirectory(LocalRoot))
-        {
+		else if (InputFile.IsUnderDirectory(LocalRoot))
+		{
 			OutputFile = new StagedFileReference(InputFile.MakeRelativeTo(LocalRoot));
-        }
-        else if (DLCRoot != null && InputFile.IsUnderDirectory(DLCRoot))
+		}
+		else if (DLCRoot != null && InputFile.IsUnderDirectory(DLCRoot))
 		{
 			OutputFile = new StagedFileReference(InputFile.MakeRelativeTo(DLCRoot));
 		}
 		else
-        {
+		{
 			throw new AutomationException("Can't deploy {0} because it doesn't start with {1} or {2}", InputFile, ProjectRoot, LocalRoot);
 		}
 		return OutputFile;
@@ -920,16 +937,16 @@ public class DeploymentContext //: ProjectParams
 			StageCrashReporterFile(FileType, InputFile, StagedFile);
 		}
 	}
-
-	public void StageVulkanValidationLayerFiles(StagedFileType FileType, DirectoryReference InputDir, StageFilesSearch Option)
+	
+	public void StageVulkanValidationLayerFiles(ProjectParams Params, StagedFileType FileType, DirectoryReference InputDir, StageFilesSearch Option)
 	{
-			StageVulkanValidationLayerFiles(FileType, InputDir, Option, new StagedDirectoryReference(InputDir.MakeRelativeTo(LocalRoot)));
-		}
+		StageVulkanValidationLayerFiles(Params, FileType, InputDir, Option, new StagedDirectoryReference(InputDir.MakeRelativeTo(LocalRoot)));
+	}
 
-	public void StageVulkanValidationLayerFiles(StagedFileType FileType, DirectoryReference InputDir, StageFilesSearch Option, StagedDirectoryReference OutputDir)
+	public void StageVulkanValidationLayerFiles(ProjectParams Params, StagedFileType FileType, DirectoryReference InputDir, StageFilesSearch Option, StagedDirectoryReference OutputDir)
 	{
 		// This needs to match the c++ define VULKAN_HAS_DEBUGGING_ENABLED to avoid mismatched functionality/files
-		bool bShouldStageVulkanLayers = StageTargetConfigurations.Contains(UnrealTargetConfiguration.Debug) || StageTargetConfigurations.Contains(UnrealTargetConfiguration.Development);
+		bool bShouldStageVulkanLayers = !Params.IsProgramTarget && (StageTargetConfigurations.Contains(UnrealTargetConfiguration.Debug) || StageTargetConfigurations.Contains(UnrealTargetConfiguration.Development));
 		if (bShouldStageVulkanLayers)
 		{
 			List<FileReference> InputFiles = FindFilesToStage(InputDir, Option);
@@ -1166,31 +1183,75 @@ public class DeploymentContext //: ProjectParams
 
 	public static StagedFileReference MakeRelativeStagedReference(DeploymentContext SC, FileSystemReference Ref, out DirectoryReference RootDir)
 	{
+		foreach (DirectoryReference AdditionalPluginDir in SC.AdditionalPluginDirectories)
+		{
+			if (Ref.IsUnderDirectory(AdditionalPluginDir))
+			{
+				// This is a plugin that lives outside of the Engine/Plugins or Game/Plugins directory so needs to be remapped for staging/packaging
+				// We need to remap C:\SomePath\PluginName\RelativePath to RemappedPlugins\PluginName\RelativePath
+				string RemainingPath = Ref.MakeRelativeTo(AdditionalPluginDir).Replace('\\', '/');
+				int PluginEndIndex = RemainingPath.IndexOf("/");
+				if (PluginEndIndex >= 0 && PluginEndIndex < RemainingPath.Length - 1)
+				{
+					string PluginName = RemainingPath.Substring(0, PluginEndIndex);
+					RemainingPath = RemainingPath.Substring(PluginEndIndex + 1);
+					RootDir = DirectoryReference.Combine(AdditionalPluginDir, PluginName);
+					StagedFileReference StagedFile = new StagedFileReference(String.Format("RemappedPlugins/{0}/{1}", PluginName, RemainingPath));
+					return ApplyDirectoryRemap(SC, StagedFile);
+				}
+			}
+		}
+
 		if (Ref.IsUnderDirectory(SC.ProjectRoot))
 		{
 			RootDir = SC.ProjectRoot;
 			return ApplyDirectoryRemap(SC, new StagedFileReference(SC.ShortProjectName + "/" + Ref.MakeRelativeTo(SC.ProjectRoot).Replace('\\', '/')));
 		}
-		else if (Ref.IsUnderDirectory(SC.EngineRoot))
+
+		if (Ref.IsUnderDirectory(SC.EngineRoot))
 		{
 			RootDir = SC.EngineRoot;
 			return ApplyDirectoryRemap(SC, new StagedFileReference("Engine/" + Ref.MakeRelativeTo(SC.EngineRoot).Replace('\\', '/')));
 		}
+
 		throw new Exception();
 	}
 	public static FileReference UnmakeRelativeStagedReference(DeploymentContext SC, StagedFileReference Ref)
 	{
-		// paths will be in the form "Engine/Foo" or "{ProjectName}/Foo" (or something that we don't handle, so assert)
-		// So, replace the Engine/ with {EngineDir} and {ProjectName}/ with {ProjectDir}, and then append Foo
-		if (Ref.Name.StartsWith("Engine/"))
+		// paths will be in the form "Engine/Foo" or "{ProjectName}/Foo" or "RemappedPlugins/{PluginName}/Foo
+		// Anything else we don't handle.
+		// So, replace the Engine/ with {EngineDir} and {ProjectName}/ with {ProjectDir}, or change PluginDir to RemappedPlugins/{PluginName}
+		// with the plugin path from AdditionalPluginDirectories, and then append Foo
+
+		string RemappedPluginsStr = "RemappedPlugins/";
+		if (Ref.Name.StartsWith(RemappedPluginsStr, StringComparison.CurrentCultureIgnoreCase))
+		{
+			int PluginEndIndex = Ref.Name.IndexOf("/", RemappedPluginsStr.Length);
+			if (PluginEndIndex >= 0 && PluginEndIndex < Ref.Name.Length - 1)
+			{
+				string PluginName = Ref.Name.Substring(RemappedPluginsStr.Length, PluginEndIndex - RemappedPluginsStr.Length);
+				foreach (DirectoryReference AdditionalPluginDir in SC.AdditionalPluginDirectories)
+				{
+					DirectoryReference PossiblePluginDir = DirectoryReference.Combine(AdditionalPluginDir, PluginName);
+					if (System.IO.Directory.Exists(PossiblePluginDir.FullName))
+					{
+						return FileReference.Combine(PossiblePluginDir, Ref.Name.Substring(PluginEndIndex+1));
+					}
+				}
+			}
+		}
+
+		if (Ref.Name.StartsWith("Engine/", StringComparison.CurrentCultureIgnoreCase))
 		{
 			// skip over "Engine/" which is 7 chars long
 			return FileReference.Combine(SC.EngineRoot, Ref.Name.Substring(7));
 		}
-		else if (Ref.Name.StartsWith(SC.ShortProjectName + "/"))
+
+		if (Ref.Name.StartsWith(SC.ShortProjectName + "/", StringComparison.CurrentCultureIgnoreCase))
 		{
 			return FileReference.Combine(SC.ProjectRoot, Ref.Name.Substring(SC.ShortProjectName.Length + 1));
 		}
-		throw new Exception();
+
+		throw new Exception($"Don't know how to convert staged file {Ref.Name} to its original editor path, because it is not in a recognized root directory.");
 	}
 }

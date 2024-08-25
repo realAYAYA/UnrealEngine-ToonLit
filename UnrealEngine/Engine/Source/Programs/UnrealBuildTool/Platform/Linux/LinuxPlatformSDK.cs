@@ -21,11 +21,6 @@ namespace UnrealBuildTool
 		{
 		}
 
-		public override string GetAutoSDKPlatformName()
-		{
-			return TargetPlatformName;
-		}
-
 		protected override string? GetInstalledSDKVersion()
 		{
 			// @todo turnkey: ForceUseSystemCompiler() returns true, we should probably run system clang -V or similar to get version
@@ -121,7 +116,7 @@ namespace UnrealBuildTool
 			string? SDKRoot = Environment.GetEnvironmentVariable(SDKRootEnvVar);
 			if (!String.IsNullOrEmpty(SDKRoot))
 			{
-				string AutoSDKPath = Path.Combine(SDKRoot, "Host" + BuildHostPlatform.Current.Platform, TargetPlatformName, GetAutoSDKDirectoryForMainVersion(), LinuxPlatform.DefaultHostArchitecture.LinuxName);
+				string AutoSDKPath = Path.Combine(SDKRoot, "Host" + BuildHostPlatform.Current.Platform, GetAutoSDKPlatformName(), GetAutoSDKDirectoryForMainVersion(), LinuxPlatform.DefaultHostArchitecture.LinuxName);
 				if (DirectoryReference.Exists(new DirectoryReference(AutoSDKPath)))
 				{
 					return AutoSDKPath;

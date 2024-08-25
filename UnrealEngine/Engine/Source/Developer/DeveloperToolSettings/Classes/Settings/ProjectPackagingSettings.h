@@ -68,7 +68,7 @@ enum class EProjectPackagingBuild
 	/** Never build. */
 	Never UMETA(DisplayName="Never"),
 
-	/** Default (if the Never build. */
+	/** Default (if the never build.) */
 	IfProjectHasCode UMETA(DisplayName="If project has code, or running a locally built editor"),
 
 	/** If we're not packaging from a promoted build. */
@@ -325,6 +325,12 @@ public:
 	*/
 	UPROPERTY(config, EditAnywhere, Category = Packaging, AdvancedDisplay)
 	EAssetRegistryWritebackMethod WriteBackMetadataToAssetRegistry;
+
+	/**
+	* Whether or not to write a json summary file that contains size information to the cooked Metadata/PluginJsons directory
+	*/
+	UPROPERTY(config, EditAnywhere, Category = Packaging, AdvancedDisplay, meta = (EditCondition = "WriteBackMetadataToAssetRegistry != EAssetRegistryWritebackMethod::Disabled"))
+	bool bWritePluginSizeSummaryJsons;
 
 	/**
 	 * Create compressed cooked packages (decreased deployment size)
@@ -624,11 +630,21 @@ public:
 	UPROPERTY(config, EditAnywhere, Category=Packaging, meta=(DisplayName = "Additional builds for this project."))
 	TArray<FProjectBuildSettings> ProjectCustomBuilds;
 
+	/** If set, platforms that destructively edit the iostore containers during packaging will save a copy prior to doing so. */
+	UPROPERTY(config, EditAnywhere, Category = Packaging)
+	bool bRetainStagedDirectory;
+
 	/**
 	 * A list of custom builds, specified in engine ini files, and not editable in editor, that will show up in the Platforms menu to allow customized builds for all projects
 	 */
 	UPROPERTY(config)
 	TArray<FProjectBuildSettings> EngineCustomBuilds;
+
+	/**
+	* The type name of a CustomStageCopyHandler subclass to instanciate during the copy build to staging directory step. See SetupCustomStageCopyHandler() in CopyBuildToStagingDirectory.Automation.cs and CustomStageCopyHandler.cs
+	*/
+	UPROPERTY(config)
+	FString CustomStageCopyHandler;
 
 private:
 	/** Helper array used to mirror Blueprint asset selections across edits */

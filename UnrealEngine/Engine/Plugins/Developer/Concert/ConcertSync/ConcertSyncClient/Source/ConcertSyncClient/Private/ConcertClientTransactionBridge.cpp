@@ -1,17 +1,22 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "ConcertClientTransactionBridge.h"
+#include "ConcertClientObjectFactory.h"
 #include "ConcertLogGlobal.h"
 #include "ConcertSyncSettings.h"
 #include "ConcertSyncClientUtil.h"
-
 #include "ConcertTransactionEvents.h"
 #include "IConcertClientTransactionBridge.h"
-#include "TransactionCommon.h"
+
+#include "GameFramework/Actor.h"
+#include "HAL/IConsoleManager.h"
 #include "Misc/ITransactionObjectAnnotation.h"
 #include "Misc/PackageName.h"
 #include "Misc/CoreDelegates.h"
-#include "HAL/IConsoleManager.h"
+#include "TransactionCommon.h"
+#include "UObject/Package.h"
+#include "LevelInstance/LevelInstanceActor.h"
+#include "LevelInstance/LevelInstanceComponent.h"
 
 #if WITH_EDITOR
 	#include "Editor.h"
@@ -59,6 +64,7 @@ bool RunTransactionFilters(const TArray<FTransactionClassFilter>& InFilters, UOb
 	return bMatchFilter;
 }
 
+#if WITH_EDITOR
 template <typename TUObjectType>
 FTypedElementHandle AcquireTypedElementHandle(const TUObjectType* InObject)
 {
@@ -70,7 +76,10 @@ FTypedElementHandle AcquireTypedElementHandle(const TUObjectType* InObject)
 	{
 		return UEngineElementsLibrary::AcquireEditorComponentElementHandle(InObject, /*bAllowCreate*/false);
 	}
-	return {};
+	else
+	{
+		return {};
+	}
 }
 
 template <typename TUObjectArrayType>
@@ -92,6 +101,7 @@ void DeselectElements(UTypedElementSelectionSet* InSelectionSet, const TUObjectA
 	}
 	InSelectionSet->DeselectElements(HandlesToRemoveFromSelection, SelectionOptions);
 }
+#endif
 
 void DeselectActorsAndActorComponents(const TArray<AActor*>& DeletedActors, const TArray<UActorComponent*>& DeletedActorComponents)
 {
@@ -130,13 +140,26 @@ ETransactionFilterResult ApplyCustomFilter(const TMap<FName, FTransactionFilterD
 
 ETransactionFilterResult ApplyTransactionFilters(const TMap<FName, FTransactionFilterDelegate>& CustomFilters, UObject* InObject, UPackage* InChangedPackage)
 {
+	// An object is persistent if neither it nor any of its outers are transient
+	auto IsObjectPersistent = [](const UObject* Obj)
+	{
+		for (; Obj; Obj = Obj->GetOuter())
+		{
+			if (Obj->HasAnyFlags(RF_Transient))
+			{
+				return false;
+			}
+		}
+		return true;
+	};
+
 	ETransactionFilterResult FilterResult = ConcertClientTransactionBridgeUtil::ApplyCustomFilter(CustomFilters, InObject, InChangedPackage);
 	if (FilterResult != ETransactionFilterResult::UseDefault)
 	{
 		return FilterResult;
 	}
 	// Ignore transient packages and objects, compiled in package are not considered Multi-user content.
-	if (!InChangedPackage || InChangedPackage == GetTransientPackage() || InChangedPackage->HasAnyFlags(RF_Transient) || InChangedPackage->HasAnyPackageFlags(PKG_CompiledIn) || InObject->HasAnyFlags(RF_Transient))
+	if (!InChangedPackage || InChangedPackage == GetTransientPackage() || InChangedPackage->HasAnyPackageFlags(PKG_CompiledIn) || !IsObjectPersistent(InObject))
 	{
 		return ETransactionFilterResult::ExcludeObject;
 	}
@@ -280,11 +303,28 @@ void ProcessTransactionEvent(const FConcertTransactionEventBase& InEvent, const 
 	// --------------------------------------------------------------------------------------------------------------------
 	// Phase 0
 	// --------------------------------------------------------------------------------------------------------------------
+
+#if WITH_EDITOR
+	const bool bIsWorldPartitionWorldInGame = !GIsEditor && ConcertSyncClientUtil::IsWorldPartitionWorld();
+#endif
+
 	TArray<const FConcertExportedObject*, TInlineAllocator<32>> SortedExportedObjects;
 	{
 		SortedExportedObjects.Reserve(InEvent.ExportedObjects.Num());
 		for (const FConcertExportedObject& ExportedObject : InEvent.ExportedObjects)
 		{
+#if WITH_EDITOR
+			// If the exported object in a level instance and we are not in
+			// -game or in a WP -game then skip processing. We can't process in
+			// -game with WP due to constraints with cell generation and in
+			// editor sessions the normal transaction flow will handle the proxy
+			// object.
+			//
+			if (ExportedObject.bHasLevelInstanceObject && (GIsEditor || bIsWorldPartitionWorldInGame))
+			{
+				continue;
+			}
+#endif
 			SortedExportedObjects.Add(&ExportedObject);
 		}
 
@@ -298,10 +338,13 @@ void ProcessTransactionEvent(const FConcertTransactionEventBase& InEvent, const 
 	// Phase 1
 	// --------------------------------------------------------------------------------------------------------------------
 	bool bObjectsDeleted = false;
+#if WITH_EDITOR
 	TArray<AActor*> ResurrectedActors;
+#endif
 	TArray<ConcertSyncClientUtil::FGetObjectResult, TInlineAllocator<32>> TransactionObjects;
 	{
 		TSet<const UObject*> NewlyCreatedObjects;
+		TSortedMap<const UConcertClientObjectFactory*, TArray<UObject*>> ObjectsPendingInitialization;
 
 		// Find or create each object in parent->child order
 		TransactionObjects.AddDefaulted(SortedExportedObjects.Num());
@@ -329,6 +372,12 @@ void ProcessTransactionEvent(const FConcertTransactionEventBase& InEvent, const 
 			{
 				if (TransactionObjectRef.NewlyCreated())
 				{
+					// If this object was created from a factory, then it may need further initialization once every object has been created
+					if (TransactionObjectRef.Factory)
+					{
+						ObjectsPendingInitialization.FindOrAdd(TransactionObjectRef.Factory).Add(TransactionObjectRef.Obj);
+					}
+
 					// If this is a new component then we need to apply its CreationMethod (if present) early, as it could affect the PreEdit behavior
 					if (UActorComponent* Component = Cast<UActorComponent>(TransactionObjectRef.Obj))
 					{
@@ -361,7 +410,11 @@ void ProcessTransactionEvent(const FConcertTransactionEventBase& InEvent, const 
 					ConcertSyncUtil::ResetObjectPropertiesToArchetypeValues(TransactionObjectRef.Obj, bIncludeEditorOnlyProperties);
 				}
 
-				if (!TransactionObjectRef.NewlyCreated() && !ObjectUpdate.ObjectData.bIsPendingKill && bWasPendingKill)
+#if WITH_EDITOR
+				// We do not need to handle the resurrection case outside the editor as it involves objects being partially active due to the transaction buffer, a feature exclusive to the editor.
+				// Remember: This case would happen if you undo the deletion of an actor... that does not happen in games!
+				const bool bWasResurrected = !TransactionObjectRef.NewlyCreated() && !ObjectUpdate.ObjectData.bIsPendingKill && bWasPendingKill;
+				if (bWasResurrected)
 				{
 					// If we're bringing this actor back to life, then make sure any SCS/UCS components exist in a clean state
 					// We have to do this as some of the actor components may have been GC'd when using "AllowEliminatingReferences(false)" (eg, within the transaction buffer)
@@ -387,7 +440,14 @@ void ProcessTransactionEvent(const FConcertTransactionEventBase& InEvent, const 
 						});
 					}
 				}
+#endif
 			}
+		}
+
+		// Run any deferred object factory initialization
+		for (const TTuple<const UConcertClientObjectFactory*, TArray<UObject*>>& ObjectsPendingInitializationPair : ObjectsPendingInitialization)
+		{
+			ObjectsPendingInitializationPair.Key->InitializeObjects(ObjectsPendingInitializationPair.Value);
 		}
 	}
 
@@ -572,13 +632,13 @@ void ProcessTransactionEvent(const FConcertTransactionEventBase& InEvent, const 
 	{
 		EditorTransactionNotification.PostUndo();
 	}
-#endif
-
+	
 	// Ensure that any actors we restored from the dead are added back to the actors array of their owner level
 	for (AActor* Actor : ResurrectedActors)
 	{
 		ConcertSyncClientUtil::AddActorToOwnerLevel(Actor);
 	}
+#endif
 
 	DeselectActorsAndActorComponents(DeletedActorsForSelectionUpdate, DeletedActorComponentForSelectionUpdate);
 
@@ -759,37 +819,14 @@ void FConcertClientTransactionBridge::HandleTransactionStateChanged(const FTrans
 	}
 }
 
-void FConcertClientTransactionBridge::HandleObjectTransacted(UObject* InObject, const FTransactionObjectEvent& InTransactionEvent)
+
+namespace ConcertClientTransactionBridgeUtil
 {
-	LLM_SCOPE_BYTAG(Concert_ConcertClientTransactionBridge);
-	SCOPED_CONCERT_TRACE(FConcertClientTransactionBridge_HandleObjectTransacted);
-
-	if (bIgnoreLocalTransactions)
+void LogTransactionEventDetails(UObject* InObject, const FTransactionObjectEvent& InTransactionEvent, ETransactionFilterResult FilterResult, bool bIsTracked)
+{
+	const TCHAR* ObjectEventString = TEXT("");
+	switch (InTransactionEvent.GetEventType())
 	{
-		return;
-	}
-
-	if (!bIncludeAnnotationObjectChanges && InTransactionEvent.GetObjectChangeCreatedBy() == ETransactionObjectChangeCreatedBy::TransactionAnnotation)
-	{
-		return;
-	}
-
-	if (!bIncludeEditorOnlyProperties && InObject->IsEditorOnly())
-	{
-		return;
-	}
-
-	UPackage* ChangedPackage = InObject->GetOutermost();
-	ETransactionFilterResult FilterResult = ConcertClientTransactionBridgeUtil::ApplyTransactionFilters(TransactionFilters, InObject, ChangedPackage);
-	FOngoingTransaction* TrackedTransaction = OngoingTransactions.Find(InTransactionEvent.GetOperationId());
-
-	// TODO: This needs to send both editor-only and non-editor-only payload data to the server, which will forward only the correct part to cooked and non-cooked clients
-
-
-	{
-		const TCHAR* ObjectEventString = TEXT("");
-		switch (InTransactionEvent.GetEventType())
-		{
 #define ENUM_TO_STRING(ENUM)						\
 		case ETransactionObjectEventType::ENUM:		\
 			ObjectEventString = TEXT(#ENUM);		\
@@ -800,24 +837,344 @@ void FConcertClientTransactionBridge::HandleObjectTransacted(UObject* InObject, 
 #undef ENUM_TO_STRING
 		default:
 			break;
+	}
+
+	UE_LOG(LogConcert, VeryVerbose,
+		   TEXT("%s Transaction %s (%s, %s):%s %s:%s (%s property changes, %s object changes)"),
+		   (bIsTracked ? TEXT("Tracked") : TEXT("Untracked")),
+		   *InTransactionEvent.GetTransactionId().ToString(),
+		   *InTransactionEvent.GetOperationId().ToString(),
+		   ObjectEventString,
+		   (FilterResult == ETransactionFilterResult::ExcludeObject ? TEXT(" FILTERED OBJECT: ") : TEXT("")),
+		   *InObject->GetClass()->GetName(),
+		   *InObject->GetPathName(),
+		   (InTransactionEvent.HasPropertyChanges() ? TEXT("has") : TEXT("no")),
+		   (InTransactionEvent.HasNonPropertyChanges() ? TEXT("has") : TEXT("no"))
+			);
+}
+
+UClass* GetModifiedClass(UObject* InObject)
+{
+	if (Cast<ALevelInstance>(InObject))
+	{
+		return AActor::StaticClass();
+	}
+	if (Cast<ULevelInstanceComponent>(InObject))
+	{
+		return ULevelInstanceComponent::StaticClass();
+	}
+	if (Cast<USceneComponent>(InObject))
+	{
+		return USceneComponent::StaticClass();
+	}
+	return nullptr;
+}
+
+ALevelInstance* GetLevelInstance(UObject* InObject)
+{
+	ALevelInstance* LevelInstance = Cast<ALevelInstance>(InObject);
+	if (!LevelInstance && InObject)
+	{
+		UObject* Owner = InObject->GetOuter();
+		LevelInstance = Cast<ALevelInstance>(Owner);
+	}
+
+	return LevelInstance;
+}
+
+void ApplyForAllRelevantObjects(UObject* InObject, TFunctionRef<void(UObject*)> InFunc, UClass* InClass = nullptr)
+{
+	if (ALevelInstance* LevelInstance = GetLevelInstance(InObject))
+	{
+		UClass* TheClass = InClass ? InClass : GetModifiedClass(InObject);
+
+		// We should always have a class at this point.
+		check(TheClass);
+		TSet<AActor*> Actors;
+		LevelInstance->EditorGetUnderlyingActors(Actors);
+		for (AActor* Actor : Actors)
+		{
+			UObject* ObjectToApply = Actor->FindComponentByClass(TheClass);
+			if (ObjectToApply)
+			{
+				InFunc(ObjectToApply);
+				ApplyForAllRelevantObjects(Actor, InFunc, TheClass);
+			}
+		}
+	}
+}
+
+void GetCanCreateOrRenameObject(UObject* InObject, bool& bOutCanCreateObject, bool& bOutCanRenameObject)
+{
+	if (const UActorComponent* Component = Cast<UActorComponent>(InObject))
+	{
+		bool bIsOwnedByChildActor = false;
+		if (const AActor* ComponentOwner = Component->GetOwner())
+		{
+			bIsOwnedByChildActor = ComponentOwner->IsChildActor();
 		}
 
-		UE_LOG(LogConcert, VeryVerbose,
-			TEXT("%s Transaction %s (%s, %s):%s %s:%s (%s property changes, %s object changes)"), 
-			(TrackedTransaction != nullptr ? TEXT("Tracked") : TEXT("Untracked")),
-			*InTransactionEvent.GetTransactionId().ToString(),
-			*InTransactionEvent.GetOperationId().ToString(),
-			ObjectEventString,
-			(FilterResult == ETransactionFilterResult::ExcludeObject ? TEXT(" FILTERED OBJECT: ") : TEXT("")),
-			*InObject->GetClass()->GetName(),
-			*InObject->GetPathName(), 
-			(InTransactionEvent.HasPropertyChanges() ? TEXT("has") : TEXT("no")), 
-			(InTransactionEvent.HasNonPropertyChanges() ? TEXT("has") : TEXT("no"))
-			);
+		// Components that are managed by a construction script cannot be created
+		bOutCanCreateObject = !bIsOwnedByChildActor && !Component->IsCreatedByConstructionScript();
+
+		// Components that are managed by a native or Blueprint class cannot be renamed, so we only allow "instance" components to be created or renamed
+		bOutCanRenameObject = !bIsOwnedByChildActor && Component->CreationMethod == EComponentCreationMethod::Instance;
+	}
+}
+
+struct FTransactedObjectState
+{
+	using FOngoingTransaction = FConcertClientTransactionBridge::FOngoingTransaction;
+
+	FName NewObjectPackageName;
+	FName NewObjectName;
+	FName NewObjectOuterPathName;
+	FName NewObjectExternalPackageName;
+
+	FWeakObjectPtr MainObjectPtr;
+	TArray<const FProperty*> ExportedProperties;
+	TSharedPtr<ITransactionObjectAnnotation> TransactionAnnotation;
+	bool bUseSerializedAnnotationData;
+
+	bool bIncludeNonPropertyObjectData = false;
+	bool bIncludeEditorOnlyProperties = false;
+
+    bool bCanCreateObject = true;
+	bool bCanRenameObject = true;
+
+	// Transaction event flags
+	bool bHasIdOrPendingKillChanges = false;
+	bool bHasPendingKillChange = false;
+	bool bHasNonPropertyChanges = false;
+	bool bIsSnapshot = false;
+
+	FTransactedObjectState() = delete;
+    FTransactedObjectState(UObject* InObject, const FTransactionObjectEvent& InTransactionEvent,
+						   bool bInIncludeNonPropertyObjectData,
+						   bool bInIncludeEditorOnlyProperties,
+						   bool bIncludeAnnotationObjectChanges)
+		: MainObjectPtr(InObject)
+    {
+		bIncludeNonPropertyObjectData =  bInIncludeNonPropertyObjectData;
+		bIncludeEditorOnlyProperties = bInIncludeEditorOnlyProperties;
+
+        ConcertClientTransactionBridgeUtil::GetCanCreateOrRenameObject(InObject, bCanCreateObject, bCanRenameObject);
+
+        if (bCanRenameObject)
+        {
+            if (InTransactionEvent.HasOuterChange() || InTransactionEvent.HasExternalPackageChange())
+            {
+                NewObjectPackageName = InObject->GetPackage()->GetFName();
+            }
+            if (InTransactionEvent.HasNameChange())
+            {
+                NewObjectName = InObject->GetFName();
+            }
+            if (InTransactionEvent.HasOuterChange() && InObject->GetOuter())
+            {
+                NewObjectOuterPathName = FName(*InObject->GetOuter()->GetPathName()) ;
+            }
+            if (InTransactionEvent.HasExternalPackageChange() && InObject->GetExternalPackage())
+            {
+                NewObjectExternalPackageName = InObject->GetExternalPackage()->GetFName();
+            }
+        }
+
+        ExportedProperties = ConcertSyncClientUtil::GetExportedProperties(InObject->GetClass(), InTransactionEvent.GetChangedProperties(), bIncludeEditorOnlyProperties);
+
+		bHasIdOrPendingKillChanges = InTransactionEvent.HasIdOrPendingKillChanges();
+		bHasPendingKillChange = InTransactionEvent.HasPendingKillChange();
+		bHasNonPropertyChanges = InTransactionEvent.HasNonPropertyChanges(/*SerializationOnly*/true);
+		bIsSnapshot = InTransactionEvent.GetEventType() == ETransactionObjectEventType::Snapshot;
+
+        TransactionAnnotation = InTransactionEvent.GetAnnotation();
+        bUseSerializedAnnotationData = !bIncludeAnnotationObjectChanges
+            || !TransactionAnnotation
+            || !TransactionAnnotation->SupportsAdditionalObjectChanges();
+    }
+
+	bool IsValid() const
+    {
+        const bool bObjectHasChangesToSend = bHasIdOrPendingKillChanges
+            || (bIncludeNonPropertyObjectData && bHasNonPropertyChanges)
+            || ExportedProperties.Num() > 0
+            || (TransactionAnnotation && bUseSerializedAnnotationData);
+        return bObjectHasChangesToSend;
+    }
+
+	void CaptureSnapshot(UObject* InObject, FConcertExportedObject* ObjectUpdatePtr)
+	{
+		if (TransactionAnnotation && bUseSerializedAnnotationData)
+		{
+			ObjectUpdatePtr->SerializedAnnotationData.Reset();
+			FConcertSyncObjectWriter AnnotationWriter(nullptr, InObject, ObjectUpdatePtr->SerializedAnnotationData, bIncludeEditorOnlyProperties, true);
+			TransactionAnnotation->Serialize(AnnotationWriter);
+		}
+
+		// Find or add an update for each property
+		for (const FProperty* ExportedProperty : ExportedProperties)
+		{
+			FConcertSerializedPropertyData* PropertyDataPtr = ObjectUpdatePtr->PropertyDatas.FindByPredicate([ExportedProperty](FConcertSerializedPropertyData& PropertyData)
+			{
+				return ExportedProperty->GetFName() == PropertyData.PropertyName;
+			});
+			if (!PropertyDataPtr)
+			{
+				PropertyDataPtr = &ObjectUpdatePtr->PropertyDatas.AddDefaulted_GetRef();
+				PropertyDataPtr->PropertyName = ExportedProperty->GetFName();
+			}
+
+			PropertyDataPtr->SerializedData.Reset();
+			ConcertSyncClientUtil::SerializeProperty(nullptr, InObject, ExportedProperty, bIncludeEditorOnlyProperties, PropertyDataPtr->SerializedData);
+		}
+	}
+
+	void CaptureFinalized(FConcertExportedObject& ObjectUpdate, FConcertLocalIdentifierTable& LocalIdentifierTable, const FConcertObjectId& ObjectId, UObject* InObject)
+	{
+		const bool bIsNewlyCreated = bHasPendingKillChange && ::IsValid(InObject);
+
+		ObjectUpdate.ObjectId = ObjectId;
+		ObjectUpdate.ObjectPathDepth = ConcertSyncClientUtil::GetObjectPathDepth(InObject);
+		ObjectUpdate.ObjectData.bAllowCreate = bIsNewlyCreated && bCanCreateObject;
+		ObjectUpdate.ObjectData.bResetExisting = bIsNewlyCreated;
+		ObjectUpdate.ObjectData.bIsPendingKill = !::IsValid(InObject);
+		ObjectUpdate.ObjectData.NewPackageName = NewObjectPackageName;
+		ObjectUpdate.ObjectData.NewName = NewObjectName;
+		ObjectUpdate.ObjectData.NewOuterPathName = NewObjectOuterPathName;
+		ObjectUpdate.ObjectData.NewExternalPackageName = NewObjectExternalPackageName;
+
+
+		if (TransactionAnnotation && bUseSerializedAnnotationData)
+		{
+			FConcertSyncObjectWriter AnnotationWriter(&LocalIdentifierTable, InObject, ObjectUpdate.SerializedAnnotationData, bIncludeEditorOnlyProperties, false);
+			TransactionAnnotation->Serialize(AnnotationWriter);
+		}
+
+		if (bIncludeNonPropertyObjectData && bHasNonPropertyChanges)
+		{
+			// The 'non-property changes' refers to custom data added by a deriver UObject before and/or after the standard serialized data. Since this is a custom
+			// data format, we don't know what changed, call the object to re-serialize this part, but still send the delta for the generic reflected properties (in RootPropertyNames).
+			ConcertSyncClientUtil::SerializeObject(&LocalIdentifierTable, InObject, &ExportedProperties, bIncludeEditorOnlyProperties, ObjectUpdate.ObjectData.SerializedData);
+
+			// Track which properties changed. Not used to apply the transaction on the receiving side, the object specific serialization function will be used for that, but
+			// to be able to display, in the transaction detail view, which 'properties' changed in the transaction as transaction data is otherwise opaque to UI.
+			for (const FProperty* ExportedProperty : ExportedProperties)
+			{
+				FConcertSerializedPropertyData& PropertyData = ObjectUpdate.PropertyDatas.AddDefaulted_GetRef();
+				PropertyData.PropertyName = ExportedProperty->GetFName();
+			}
+		}
+		else // Its possible to optimize the transaction payload, only sending a 'delta' update.
+		{
+			ConcertSyncClientUtil::SerializeProperties(&LocalIdentifierTable, InObject, ExportedProperties, bIncludeEditorOnlyProperties, ObjectUpdate.PropertyDatas);
+		}
+	}
+
+	void TrackPackageChanges(UPackage* ChangedPackage, FOngoingTransaction& OngoingTransaction, const FTransactionObjectEvent& InTransactionEvent)
+	{
+		// Track which packages were changed
+		OngoingTransaction.CommonData.ModifiedPackages.AddUnique(ChangedPackage->GetFName());
+
+		// if there was an outer change, track that outer package
+		if (InTransactionEvent.HasOuterChange())
+		{
+			FName OriginalOuterPackageName = *FPackageName::ObjectPathToPackageName(InTransactionEvent.GetOriginalObjectOuterPathName().ToString());
+			OngoingTransaction.CommonData.ModifiedPackages.AddUnique(OriginalOuterPackageName);
+		}
+
+		// if there was an package change, track that package
+		if (InTransactionEvent.HasExternalPackageChange())
+		{
+			FName OriginalPackageName = InTransactionEvent.GetOriginalObjectPackageName().IsNone() ? *FPackageName::ObjectPathToPackageName(InTransactionEvent.GetOriginalObjectOuterPathName().ToString()) : InTransactionEvent.GetOriginalObjectPackageName();
+			OngoingTransaction.CommonData.ModifiedPackages.AddUnique(OriginalPackageName);
+		}
+	}
+
+	bool HasDataToCapture() const
+	{
+		return (ExportedProperties.Num() > 0 || TransactionAnnotation.IsValid());
+	}
+
+	TArray<FConcertExportedObject> AddLevelSequenceObjectsForFinalized(FConcertLocalIdentifierTable& LocalIdentifierTable)
+	{
+		TArray<FConcertExportedObject> ExportedObjects;
+		if (MainObjectPtr.IsValid())
+		{
+			auto Capture = [&LocalIdentifierTable, &ExportedObjects, this](UObject* InObject)
+			{
+				FConcertExportedObject& ExportedObject = ExportedObjects.AddDefaulted_GetRef();
+				ExportedObject.bHasLevelInstanceObject = true;
+				FConcertObjectId NewId = FConcertObjectId(InObject);
+				CaptureFinalized(ExportedObject, LocalIdentifierTable, NewId, InObject);
+			};
+			ApplyForAllRelevantObjects(MainObjectPtr.Get(), Capture);
+		}
+		return ExportedObjects;
+	}
+};
+
+using FTransactedObjectStateMap = TMap<FConcertObjectId, TPimplPtr<FTransactedObjectState> >;
+
+void AppendLevelInstanceObjects(FConcertLocalIdentifierTable& LocalIdentifierTable, const FTransactedObjectStateMap& InObjectPtrs, TArray<FConcertExportedObject>& ExportedObjects)
+{
+	TArray<FConcertExportedObject> NewExportedObjects;
+	for (FConcertExportedObject& ExportedObject : ExportedObjects)
+	{
+		const TPimplPtr<ConcertClientTransactionBridgeUtil::FTransactedObjectState>* ObjectState = InObjectPtrs.Find(ExportedObject.ObjectId);
+		if (ObjectState && ObjectState->IsValid())
+		{
+			NewExportedObjects.Append(ObjectState->Get()->AddLevelSequenceObjectsForFinalized(LocalIdentifierTable));
+		}
+	}
+	ExportedObjects.Append(NewExportedObjects);
+}
+
+}
+
+bool FConcertClientTransactionBridge::CanHandleObjectTransacted(UObject* InObject, const FTransactionObjectEvent& InTransactionEvent) const
+{
+	if (bIgnoreLocalTransactions)
+	{
+		return false;
+	}
+
+	if (!bIncludeAnnotationObjectChanges && InTransactionEvent.GetObjectChangeCreatedBy() == ETransactionObjectChangeCreatedBy::TransactionAnnotation)
+	{
+		return false;
+	}
+
+	if (!bIncludeEditorOnlyProperties && InObject->IsEditorOnly())
+	{
+		return false;
+	}
+
+	return true;
+}
+
+void FConcertClientTransactionBridge::HandleObjectTransacted(UObject* InObject, const FTransactionObjectEvent& InTransactionEvent)
+{
+	LLM_SCOPE_BYTAG(Concert_ConcertClientTransactionBridge);
+	SCOPED_CONCERT_TRACE(FConcertClientTransactionBridge_HandleObjectTransacted);
+
+	if (!CanHandleObjectTransacted(InObject, InTransactionEvent))
+	{
+		return;
+	}
+
+	UPackage* ChangedPackage = InObject->GetOutermost();
+	ETransactionFilterResult FilterResult = ConcertClientTransactionBridgeUtil::ApplyTransactionFilters(TransactionFilters, InObject, ChangedPackage);
+	FOngoingTransaction* TrackedTransaction = OngoingTransactions.Find(InTransactionEvent.GetOperationId());
+
+	// TODO: This needs to send both editor-only and non-editor-only payload
+	// data to the server, which will forward only the correct part to cooked
+	// and non-cooked clients
+	{
+		ConcertClientTransactionBridgeUtil::LogTransactionEventDetails(InObject, InTransactionEvent, FilterResult, TrackedTransaction != nullptr);
 	}
 
 	if (TrackedTransaction == nullptr)
 	{
+		// No tracked transaction so nothing to handle.
 		return;
 	}
 
@@ -832,143 +1189,56 @@ void FConcertClientTransactionBridge::HandleObjectTransacted(UObject* InObject, 
 		return;
 	}
 
-	bool bCanCreateObject = true;
-	bool bCanRenameObject = true;
-	if (const UActorComponent* Component = Cast<UActorComponent>(InObject))
-	{
-		bool bIsOwnedByChildActor = false;
-		if (const AActor* ComponentOwner = Component->GetOwner())
-		{
-			bIsOwnedByChildActor = ComponentOwner->IsChildActor();
-		}
+	FOngoingTransaction::FTransactedObjectStatePtr TransactedObjectState = MakePimpl<ConcertClientTransactionBridgeUtil::FTransactedObjectState>(InObject, InTransactionEvent, bIncludeNonPropertyObjectData, bIncludeEditorOnlyProperties,  bIncludeAnnotationObjectChanges);
 
-		// Components that are managed by a construction script cannot be created
-		bCanCreateObject = !bIsOwnedByChildActor && !Component->IsCreatedByConstructionScript();
-
-		// Components that are managed by a native or Blueprint class cannot be renamed, so we only allow "instance" components to be created or renamed
-		bCanRenameObject = !bIsOwnedByChildActor && Component->CreationMethod == EComponentCreationMethod::Instance;
-	}
-
-	const FName NewObjectPackageName = (bCanRenameObject && (InTransactionEvent.HasOuterChange() || InTransactionEvent.HasExternalPackageChange())) ? InObject->GetPackage()->GetFName() : FName();
-	const FName NewObjectName = (bCanRenameObject && InTransactionEvent.HasNameChange()) ? InObject->GetFName() : FName();
-	const FName NewObjectOuterPathName = (bCanRenameObject && (InTransactionEvent.HasOuterChange() && InObject->GetOuter())) ? FName(*InObject->GetOuter()->GetPathName()) : FName();
-	const FName NewObjectExternalPackageName = (bCanRenameObject && (InTransactionEvent.HasExternalPackageChange() && InObject->GetExternalPackage())) ? InObject->GetExternalPackage()->GetFName() : FName();
-	const TArray<const FProperty*> ExportedProperties = ConcertSyncClientUtil::GetExportedProperties(InObject->GetClass(), InTransactionEvent.GetChangedProperties(), bIncludeEditorOnlyProperties);
-	TSharedPtr<ITransactionObjectAnnotation> TransactionAnnotation = InTransactionEvent.GetAnnotation();
-	const bool bUseSerializedAnnotationData = !bIncludeAnnotationObjectChanges || !TransactionAnnotation || !TransactionAnnotation->SupportsAdditionalObjectChanges();
-
-	const bool bObjectHasChangesToSend = InTransactionEvent.HasIdOrPendingKillChanges()
-		|| (bIncludeNonPropertyObjectData && InTransactionEvent.HasNonPropertyChanges(/*SerializationOnly*/true))
-		|| ExportedProperties.Num() > 0
-		|| (TransactionAnnotation && bUseSerializedAnnotationData);
-
-	if (!bObjectHasChangesToSend)
+	if (!TransactedObjectState->IsValid())
 	{
 		// This object has no changes to send
 		return;
 	}
 
-	// Track which packages were changed
-	OngoingTransaction.CommonData.ModifiedPackages.AddUnique(ChangedPackage->GetFName());
-
-	// if there was an outer change, track that outer package
-	if (InTransactionEvent.HasOuterChange())
-	{
-		FName OriginalOuterPackageName = *FPackageName::ObjectPathToPackageName(InTransactionEvent.GetOriginalObjectOuterPathName().ToString());
-		OngoingTransaction.CommonData.ModifiedPackages.AddUnique(OriginalOuterPackageName);
-	}
-
-	// if there was an package change, track that package
-	if (InTransactionEvent.HasExternalPackageChange())
-	{
-		FName OriginalPackageName = InTransactionEvent.GetOriginalObjectPackageName().IsNone() ? *FPackageName::ObjectPathToPackageName(InTransactionEvent.GetOriginalObjectOuterPathName().ToString()) : InTransactionEvent.GetOriginalObjectPackageName();
-		OngoingTransaction.CommonData.ModifiedPackages.AddUnique(OriginalPackageName);
-	}
-
+	TransactedObjectState->TrackPackageChanges(ChangedPackage, OngoingTransaction, InTransactionEvent);
 	// Add this object change to its pending transaction
 	if (InTransactionEvent.GetEventType() == ETransactionObjectEventType::Snapshot)
 	{
-		// Merge the snapshot property changes into pending snapshot list
-		if (OnLocalTransactionSnapshotDelegate.IsBound() && (ExportedProperties.Num() > 0 || TransactionAnnotation.IsValid()))
+		if (OnLocalTransactionSnapshotDelegate.IsBound() && TransactedObjectState->HasDataToCapture())
 		{
 			// Find or add an entry for this object
-			FConcertExportedObject* ObjectUpdatePtr = OngoingTransaction.SnapshotData.SnapshotObjectUpdates.FindByPredicate([&ObjectId](FConcertExportedObject& ObjectUpdate)
+			auto CaptureForSnapshot = [&TransactedObjectState, &OngoingTransaction, InObject, &ObjectId](UObject* NewObject)
 			{
-				return ConcertSyncClientUtil::ObjectIdsMatch(ObjectId, ObjectUpdate.ObjectId);
-			});
-			if (!ObjectUpdatePtr)
-			{
-				ObjectUpdatePtr = &OngoingTransaction.SnapshotData.SnapshotObjectUpdates.AddDefaulted_GetRef();
-				ObjectUpdatePtr->ObjectId = ObjectId;
-				ObjectUpdatePtr->ObjectPathDepth = ConcertSyncClientUtil::GetObjectPathDepth(InObject);
-				ObjectUpdatePtr->ObjectData.bIsPendingKill = !IsValid(InObject);
-			}
+				FConcertObjectId NewId = (NewObject == nullptr || NewObject == InObject) ? ObjectId : FConcertObjectId(NewObject);
+				FConcertExportedObject* ObjectUpdatePtr = OngoingTransaction.SnapshotData.SnapshotObjectUpdates.FindByPredicate([&NewId](FConcertExportedObject& ObjectUpdate)
+					{
+						return ConcertSyncClientUtil::ObjectIdsMatch(NewId, ObjectUpdate.ObjectId);
+					});
 
-			if (TransactionAnnotation && bUseSerializedAnnotationData)
-			{
-				ObjectUpdatePtr->SerializedAnnotationData.Reset();
-				FConcertSyncObjectWriter AnnotationWriter(nullptr, InObject, ObjectUpdatePtr->SerializedAnnotationData, bIncludeEditorOnlyProperties, true);
-				TransactionAnnotation->Serialize(AnnotationWriter);
-			}
-
-			// Find or add an update for each property
-			for (const FProperty* ExportedProperty : ExportedProperties)
-			{
-				FConcertSerializedPropertyData* PropertyDataPtr = ObjectUpdatePtr->PropertyDatas.FindByPredicate([ExportedProperty](FConcertSerializedPropertyData& PropertyData)
+				if (!ObjectUpdatePtr)
 				{
-					return ExportedProperty->GetFName() == PropertyData.PropertyName;
-				});
-				if (!PropertyDataPtr)
-				{
-					PropertyDataPtr = &ObjectUpdatePtr->PropertyDatas.AddDefaulted_GetRef();
-					PropertyDataPtr->PropertyName = ExportedProperty->GetFName();
+					ObjectUpdatePtr = &OngoingTransaction.SnapshotData.SnapshotObjectUpdates.AddDefaulted_GetRef();
+					ObjectUpdatePtr->ObjectId = NewId;
+					ObjectUpdatePtr->ObjectPathDepth = ConcertSyncClientUtil::GetObjectPathDepth(InObject);
+					ObjectUpdatePtr->ObjectData.bIsPendingKill = !IsValid(InObject);
+					ObjectUpdatePtr->bHasLevelInstanceObject = NewObject != InObject;
 				}
+				TransactedObjectState->CaptureSnapshot(NewObject, ObjectUpdatePtr);
+			};
 
-				PropertyDataPtr->SerializedData.Reset();
-				ConcertSyncClientUtil::SerializeProperty(nullptr, InObject, ExportedProperty, bIncludeEditorOnlyProperties, PropertyDataPtr->SerializedData);
-			}
+			CaptureForSnapshot(InObject);
+			// Now traverse the object to see if we need to add any additional objects to the snapshot.
+			//
+			ConcertClientTransactionBridgeUtil::ApplyForAllRelevantObjects(InObject, CaptureForSnapshot);
 		}
 	}
 	else if (OnLocalTransactionFinalizedDelegate.IsBound())
 	{
-		const bool bIsNewlyCreated = InTransactionEvent.HasPendingKillChange() && IsValid(InObject);
-
+		FConcertLocalIdentifierTable& LocalIdentifierTable = OngoingTransaction.FinalizedData.FinalizedLocalIdentifierTable;
 		FConcertExportedObject& ObjectUpdate = OngoingTransaction.FinalizedData.FinalizedObjectUpdates.AddDefaulted_GetRef();
-		ObjectUpdate.ObjectId = ObjectId;
-		ObjectUpdate.ObjectPathDepth = ConcertSyncClientUtil::GetObjectPathDepth(InObject);
-		ObjectUpdate.ObjectData.bAllowCreate = bIsNewlyCreated && bCanCreateObject;
-		ObjectUpdate.ObjectData.bResetExisting = bIsNewlyCreated;
-		ObjectUpdate.ObjectData.bIsPendingKill = !IsValid(InObject);
-		ObjectUpdate.ObjectData.NewPackageName = NewObjectPackageName;
-		ObjectUpdate.ObjectData.NewName = NewObjectName;
-		ObjectUpdate.ObjectData.NewOuterPathName = NewObjectOuterPathName;
-		ObjectUpdate.ObjectData.NewExternalPackageName = NewObjectExternalPackageName;
+		TransactedObjectState->CaptureFinalized(ObjectUpdate, LocalIdentifierTable, ObjectId, InObject);
 
-		if (TransactionAnnotation && bUseSerializedAnnotationData)
-		{
-			FConcertSyncObjectWriter AnnotationWriter(&OngoingTransaction.FinalizedData.FinalizedLocalIdentifierTable, InObject, ObjectUpdate.SerializedAnnotationData, bIncludeEditorOnlyProperties, false);
-			TransactionAnnotation->Serialize(AnnotationWriter);
-		}
-
-		if (bIncludeNonPropertyObjectData && InTransactionEvent.HasNonPropertyChanges(/*SerializationOnly*/true))
-		{
-			// The 'non-property changes' refers to custom data added by a deriver UObject before and/or after the standard serialized data. Since this is a custom
-			// data format, we don't know what changed, call the object to re-serialize this part, but still send the delta for the generic reflected properties (in RootPropertyNames).
-			ConcertSyncClientUtil::SerializeObject(&OngoingTransaction.FinalizedData.FinalizedLocalIdentifierTable, InObject, &ExportedProperties, bIncludeEditorOnlyProperties, ObjectUpdate.ObjectData.SerializedData);
-
-			// Track which properties changed. Not used to apply the transaction on the receiving side, the object specific serialization function will be used for that, but
-			// to be able to display, in the transaction detail view, which 'properties' changed in the transaction as transaction data is otherwise opaque to UI.
-			for (const FProperty* ExportedProperty : ExportedProperties)
-			{
-				FConcertSerializedPropertyData& PropertyData = ObjectUpdate.PropertyDatas.AddDefaulted_GetRef();
-				PropertyData.PropertyName = ExportedProperty->GetFName();
-			}
-		}
-		else // Its possible to optimize the transaction payload, only sending a 'delta' update.
-		{
-			// Only send properties that changed. The receiving side will 'patch' the object using the reflection system. The specific object serialization function will NOT be called.
-			ConcertSyncClientUtil::SerializeProperties(&OngoingTransaction.FinalizedData.FinalizedLocalIdentifierTable, InObject, ExportedProperties, bIncludeEditorOnlyProperties, ObjectUpdate.PropertyDatas);
-		}
+		// We don't scan for additional object to add to the level snapshot due to undo flow.  On undo, with level instances,
+		// we cannot access actor list.
+		//
+		OngoingTransaction.TransactedStatePtrs.FindOrAdd(ObjectId,MoveTemp(TransactedObjectState));
 	}
 }
 
@@ -1021,8 +1291,11 @@ void FConcertClientTransactionBridge::OnEndFrame()
 			continue;
 		}
 
+
 		if (OngoingTransactionPtr->bIsFinalized)
 		{
+			ConcertClientTransactionBridgeUtil::AppendLevelInstanceObjects(OngoingTransactionPtr->FinalizedData.FinalizedLocalIdentifierTable, OngoingTransactionPtr->TransactedStatePtrs, OngoingTransactionPtr->FinalizedData.FinalizedObjectUpdates);
+
 			OnLocalTransactionFinalizedDelegate.Broadcast(OngoingTransactionPtr->CommonData, OngoingTransactionPtr->FinalizedData);
 
 			OngoingTransactions.Remove(OngoingTransactionPtr->CommonData.OperationId);

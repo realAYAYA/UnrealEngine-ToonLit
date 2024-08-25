@@ -1,9 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+using System.IO;
 using EpicGames.Core;
 using ProtoBuf;
 using StackExchange.Redis;
-using System.IO;
 
 namespace EpicGames.Redis.Converters
 {

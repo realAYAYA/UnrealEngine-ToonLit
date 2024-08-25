@@ -63,6 +63,18 @@ namespace AutomationTool.Tasks
 		public string Tag;
 
 		/// <summary>
+		/// Set the target build stage to build (--target)
+		/// </summary>
+		[TaskParameter(Optional = true)]
+		public string Target;
+
+		/// <summary>
+		/// Custom output exporter. Requires BuildKit (--output)
+		/// </summary>
+		[TaskParameter(Optional = true)]
+		public string Output;
+
+		/// <summary>
 		/// Optional arguments
 		/// </summary>
 		[TaskParameter(Optional = true)]
@@ -143,6 +155,18 @@ namespace AutomationTool.Tasks
 				if (Parameters.Tag != null)
 				{
 					Arguments.Append($" -t {Parameters.Tag}");
+				}
+				if (Parameters.Target != null)
+				{
+					Arguments.Append($" --target {Parameters.Target}");
+				}
+				if (Parameters.Output != null)
+				{
+					if (!Parameters.UseBuildKit)
+					{
+						throw new AutomationException($"{nameof(Parameters.UseBuildKit)} must be enabled to use '{nameof(Parameters.Output)}' parameter");
+					}
+					Arguments.Append($" --output {Parameters.Output}");
 				}
 				if (Parameters.DockerFile != null)
 				{

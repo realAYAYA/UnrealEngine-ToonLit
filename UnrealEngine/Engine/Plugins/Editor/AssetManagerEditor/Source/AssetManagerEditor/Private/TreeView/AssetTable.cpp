@@ -27,7 +27,7 @@ const FName FAssetTableColumns::NameColumnId(TEXT("Name"));
 const FName FAssetTableColumns::PathColumnId(TEXT("Path"));
 const FName FAssetTableColumns::PrimaryTypeColumnId(TEXT("PrimaryType"));
 const FName FAssetTableColumns::PrimaryNameColumnId(TEXT("PrimaryName"));
-const FName FAssetTableColumns::StagedCompressedSizeColumnId(TEXT("StagedCompressedSize"));
+const FName FAssetTableColumns::StagedCompressedSizeRequiredInstallColumnId(TEXT("StagedCompressedSizeRequiredInstall"));
 const FName FAssetTableColumns::TotalSizeUniqueDependenciesColumnId(TEXT("TotalSizeUniqueDependencies"));
 const FName FAssetTableColumns::TotalSizeSharedDependenciesColumnId(TEXT("TotalSizeSharedDependencies"));
 const FName FAssetTableColumns::TotalSizeExternalDependenciesColumnId(TEXT("TotalSizeExternalDependencies"));
@@ -35,6 +35,8 @@ const FName FAssetTableColumns::TotalUsageCountColumnId(TEXT("TotalUsageCount"))
 const FName FAssetTableColumns::ChunksColumnId(TEXT("Chunks"));
 const FName FAssetTableColumns::NativeClassColumnId(TEXT("NativeClass"));
 const FName FAssetTableColumns::PluginNameColumnId(TEXT("PluginName"));
+const FName FAssetTableColumns::PluginInclusiveSizeColumnId(TEXT("PluginInclusiveSize"));
+const FName FAssetTableColumns::PluginTypeColumnId(TEXT("PluginType"));
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // FAssetTableStringValueGetterWithDependencyAggregationHandling
@@ -202,7 +204,7 @@ FAssetTable::FAssetTable()
 		Asset.PrimaryType = StoreStr(FString::Printf(TEXT("PT_%02d"), Id2 % 10));
 		Asset.PrimaryName = StoreStr(FString::Printf(TEXT("PN%d"), Id2));
 		Asset.TotalUsageCount = 10;
-		Asset.StagedCompressedSize = 1;
+		Asset.StagedCompressedSizeRequiredInstall = 1;
 		Asset.NativeClass = StoreStr(FString::Printf(TEXT("NativeClass%02d"), (Id * Id * Id) % 8));
 		Asset.PluginName = StoreStr(TEXT("MockGFP"));
 	}
@@ -621,6 +623,130 @@ void FAssetTable::AddDefaultColumns()
 
 		AddColumn(ColumnRef);
 	}
+
+	//////////////////////////////////////////////////
+	// Staged Compressed Size Column
+	{
+		TSharedRef<FTableColumn> ColumnRef = MakeShared<FTableColumn>(FAssetTableColumns::StagedCompressedSizeRequiredInstallColumnId);
+		FTableColumn& Column = *ColumnRef;
+
+		Column.SetIndex(ColumnIndex++);
+
+		Column.SetShortName(LOCTEXT("StagedCompressedSizeRequiredInstallColumnName", "Self Size"));
+		Column.SetTitleName(LOCTEXT("StagedCompressedSizeRequiredInstallColumnTitle", "Self Size (Compressed, Required Install)"));
+		Column.SetDescription(LOCTEXT("StagedCompressedSizeRequiredInstallColumnDesc", "Compressed size of required install iostore chunks for this asset's package. Only visible after staging."));
+
+		Column.SetFlags(ETableColumnFlags::ShouldBeVisible | ETableColumnFlags::CanBeHidden | ETableColumnFlags::CanBeFiltered | ETableColumnFlags::IsDynamic);
+
+		Column.SetHorizontalAlignment(HAlign_Right);
+		Column.SetInitialWidth(100.0f);
+
+		Column.SetDataType(ETableCellDataType::Int64);
+
+		class FStagedCompressedSizeValueGetter : public FTableCellValueGetter
+		{
+		public:
+			virtual const TOptional<FTableCellValue> GetValue(const FTableColumn& Column, const FBaseTreeNode& Node) const override
+			{
+				if (Node.Is<FPluginSimpleGroupNode>() && !Node.Is<FPluginDependenciesGroupNode>())
+				{
+					// This is node represents a single plugin (it might be the plugin itself or the plugin+deps node for that plugin)
+					const FPluginSimpleGroupNode& PluginNode = Node.As<FPluginSimpleGroupNode>();
+					TSharedPtr<FTable> TablePtr = PluginNode.GetParentTable().Pin();
+					const FAssetTable& AssetTable = static_cast<const FAssetTable&>(*TablePtr);
+					const FAssetTablePluginInfo& PluginInfo = AssetTable.GetPluginInfoByIndexChecked(PluginNode.GetPluginIndex());
+					return FTableCellValue(PluginInfo.GetSize());
+				}
+				else if (Node.Is<FAssetTreeNode>() && Node.As<FAssetTreeNode>().IsValidAsset())
+				{
+					if (Node.Is<FAssetDependenciesGroupTreeNode>())
+					{
+						return TOptional<FTableCellValue>();
+					}
+					const FAssetTreeNode& TreeNode = Node.As<FAssetTreeNode>();
+					const FAssetTableRow& Asset = TreeNode.GetAssetChecked();
+					return FTableCellValue(static_cast<int64>(Asset.GetStagedCompressedSizeRequiredInstall()));
+				}
+				else if (Node.IsGroup() && !Node.Is<FPluginDependenciesGroupNode>())
+				{
+					const FTableTreeNode& NodePtr = static_cast<const FTableTreeNode&>(Node);
+					if (NodePtr.HasAggregatedValue(Column.GetId()))
+					{
+						return NodePtr.GetAggregatedValue(Column.GetId());
+					}
+				}
+
+				return TOptional<FTableCellValue>();
+			}
+		};
+		TSharedRef<ITableCellValueGetter> Getter = MakeShared<FStagedCompressedSizeValueGetter>();
+		Column.SetValueGetter(Getter);
+
+		TSharedRef<ITableCellValueFormatter> Formatter = MakeShared<FInt64ValueFormatterAsMemory>();
+		Column.SetValueFormatter(Formatter);
+
+		TSharedRef<ITableCellValueSorter> Sorter = MakeShared<FSorterByInt64Value>(ColumnRef);
+		Column.SetValueSorter(Sorter);
+		Column.SetInitialSortMode(EColumnSortMode::Descending);
+
+		//TSharedRef<IFilterValueConverter> Converter = MakeShared<FMemoryFilterValueConverter>();
+		//Column.SetValueConverter(Converter);
+
+		Column.SetAggregation(ETableColumnAggregation::Sum);
+
+		AddColumn(ColumnRef);
+	}
+
+	//////////////////////////////////////////////////
+	// PluginInclusiveSize Column
+	{
+		TSharedRef<FTableColumn> ColumnRef = MakeShared<FTableColumn>(FAssetTableColumns::PluginInclusiveSizeColumnId);
+		FTableColumn& Column = *ColumnRef;
+
+		Column.SetIndex(ColumnIndex++);
+
+		Column.SetShortName(LOCTEXT("PluginInclusiveSizeColumnName", "Incl. Size Plugin"));
+		Column.SetTitleName(LOCTEXT("PluginInclusiveSizeColumnTitle", "Plugin Inclusive Size"));
+		Column.SetDescription(LOCTEXT("PluginInclusiveColumnDesc", "Inclusive size of this plugin and its dependencies"));
+
+		Column.SetFlags(ETableColumnFlags::ShouldBeVisible | ETableColumnFlags::CanBeHidden | ETableColumnFlags::CanBeFiltered);
+
+		Column.SetHorizontalAlignment(HAlign_Left);
+		Column.SetInitialWidth(50.0f);
+
+		Column.SetDataType(ETableCellDataType::Int64);
+
+		class FPluginInclusiveSizeValueGetter : public FTableCellValueGetter
+		{
+		public:
+			virtual const TOptional<FTableCellValue> GetValue(const FTableColumn& Column, const FBaseTreeNode& Node) const override
+			{
+				if (Node.Is<FPluginSimpleGroupNode>())
+				{
+					TSharedPtr<FTable> TablePtr = static_cast<const FPluginSimpleGroupNode&>(Node).GetParentTable().Pin();
+					const FAssetTable& AssetTable = static_cast<const FAssetTable&>(*TablePtr);
+					int32 PluginIndex = static_cast<const FPluginSimpleGroupNode&>(Node).GetPluginIndex();
+					return FTableCellValue(AssetTable.GetPluginInfoByIndex(PluginIndex).GetOrComputeTotalSizeInclusiveOfDependencies(AssetTable));
+				}
+
+				return TOptional<FTableCellValue>();
+			}
+		};
+		TSharedRef<ITableCellValueGetter> Getter = MakeShared<FPluginInclusiveSizeValueGetter>();
+		Column.SetValueGetter(Getter);
+
+		TSharedRef<ITableCellValueFormatter> Formatter = MakeShared<FInt64ValueFormatterAsMemory>();
+		Column.SetValueFormatter(Formatter);
+
+		TSharedRef<ITableCellValueSorter> Sorter = MakeShared<FSorterByInt64Value>(ColumnRef);
+		Column.SetValueSorter(Sorter);
+		Column.SetInitialSortMode(EColumnSortMode::Descending);
+
+		Column.SetAggregation(ETableColumnAggregation::None);
+
+		AddColumn(ColumnRef);
+	}
+
 	//////////////////////////////////////////////////
 	// Type Column
 	{
@@ -663,6 +789,7 @@ void FAssetTable::AddDefaultColumns()
 
 		AddColumn(ColumnRef);
 	}
+
 	//////////////////////////////////////////////////
 	// Name Column
 	{
@@ -759,7 +886,7 @@ void FAssetTable::AddDefaultColumns()
 		Column.SetTitleName(LOCTEXT("PrimaryTypeColumnTitle", "Primary Type"));
 		Column.SetDescription(LOCTEXT("PrimaryTypeColumnDesc", "Primary Asset Type of this asset, if set"));
 
-		Column.SetFlags(ETableColumnFlags::ShouldBeVisible | ETableColumnFlags::CanBeHidden | ETableColumnFlags::CanBeFiltered);
+		Column.SetFlags(ETableColumnFlags::CanBeHidden | ETableColumnFlags::CanBeFiltered);
 
 		Column.SetHorizontalAlignment(HAlign_Left);
 		Column.SetInitialWidth(200.0f);
@@ -801,7 +928,7 @@ void FAssetTable::AddDefaultColumns()
 		Column.SetTitleName(LOCTEXT("PrimaryNameColumnTitle", "Primary Name"));
 		Column.SetDescription(LOCTEXT("PrimaryNameColumnDesc", "Primary Asset Name of this asset, if set"));
 
-		Column.SetFlags(ETableColumnFlags::ShouldBeVisible | ETableColumnFlags::CanBeHidden | ETableColumnFlags::CanBeFiltered);
+		Column.SetFlags(ETableColumnFlags::CanBeHidden | ETableColumnFlags::CanBeFiltered);
 
 		Column.SetHorizontalAlignment(HAlign_Left);
 		Column.SetInitialWidth(200.0f);
@@ -831,69 +958,7 @@ void FAssetTable::AddDefaultColumns()
 
 		AddColumn(ColumnRef);
 	}
-	//////////////////////////////////////////////////
-	// Staged Compressed Size Column
-	{
-		TSharedRef<FTableColumn> ColumnRef = MakeShared<FTableColumn>(FAssetTableColumns::StagedCompressedSizeColumnId);
-		FTableColumn& Column = *ColumnRef;
-
-		Column.SetIndex(ColumnIndex++);
-
-		Column.SetShortName(LOCTEXT("StagedCompressedSizeColumnName", "Self Size"));
-		Column.SetTitleName(LOCTEXT("StagedCompressedSizeColumnTitle", "Self Size (Compressed)"));
-		Column.SetDescription(LOCTEXT("StagedCompressedSizeColumnDesc", "Compressed size of iostore chunks for this asset's package. Only visible after staging."));
-
-		Column.SetFlags(ETableColumnFlags::ShouldBeVisible | ETableColumnFlags::CanBeHidden | ETableColumnFlags::CanBeFiltered | ETableColumnFlags::IsDynamic);
-
-		Column.SetHorizontalAlignment(HAlign_Right);
-		Column.SetInitialWidth(100.0f);
-
-		Column.SetDataType(ETableCellDataType::Int64);
-
-		class FStagedCompressedSizeValueGetter : public FTableCellValueGetter
-		{
-		public:
-			virtual const TOptional<FTableCellValue> GetValue(const FTableColumn& Column, const FBaseTreeNode& Node) const override
-			{
-				if (Node.Is<FAssetTreeNode>() && Node.As<FAssetTreeNode>().IsValidAsset())
-				{
-					if (Node.Is<FAssetDependenciesGroupTreeNode>())
-					{
-						return TOptional<FTableCellValue>();
-					}
-					const FAssetTreeNode& TreeNode = Node.As<FAssetTreeNode>();
-					const FAssetTableRow& Asset = TreeNode.GetAssetChecked();
-					return FTableCellValue(static_cast<int64>(Asset.GetStagedCompressedSize()));
-				}
-				else if (Node.IsGroup())
-				{
-					const FTableTreeNode& NodePtr = static_cast<const FTableTreeNode&>(Node);
-					if (NodePtr.HasAggregatedValue(Column.GetId()))
-					{
-						return NodePtr.GetAggregatedValue(Column.GetId());
-					}
-				}
-
-				return TOptional<FTableCellValue>();
-			}
-		};
-		TSharedRef<ITableCellValueGetter> Getter = MakeShared<FStagedCompressedSizeValueGetter>();
-		Column.SetValueGetter(Getter);
-
-		TSharedRef<ITableCellValueFormatter> Formatter = MakeShared<FInt64ValueFormatterAsMemory>();
-		Column.SetValueFormatter(Formatter);
-
-		TSharedRef<ITableCellValueSorter> Sorter = MakeShared<FSorterByInt64Value>(ColumnRef);
-		Column.SetValueSorter(Sorter);
-		Column.SetInitialSortMode(EColumnSortMode::Descending);
-
-		//TSharedRef<IFilterValueConverter> Converter = MakeShared<FMemoryFilterValueConverter>();
-		//Column.SetValueConverter(Converter);
-
-		Column.SetAggregation(ETableColumnAggregation::Sum);
-
-		AddColumn(ColumnRef);
-	}
+	
 	//////////////////////////////////////////////////
 	// Total Size of Unique Dependencies
 	{
@@ -904,7 +969,7 @@ void FAssetTable::AddDefaultColumns()
 
 		Column.SetShortName(LOCTEXT("TotalSizeUniqueDependenciesColumnName", "Unique"));
 		Column.SetTitleName(LOCTEXT("TotalSizeUniqueDependenciesColumnTitle", "Total Unique Dependency Size"));
-		Column.SetDescription(LOCTEXT("TotalSizeUniqueDependenciesColumnIdDesc", "Sum of the staged compressed sizes of all dependencies of this asset, counted only once"));
+		Column.SetDescription(LOCTEXT("TotalSizeUniqueDependenciesColumnIdDesc", "Sum of the staged compressed sizes of all dependencies of this item, counted only once"));
 
 		Column.SetFlags(ETableColumnFlags::CanBeHidden | ETableColumnFlags::CanBeFiltered);
 
@@ -918,7 +983,16 @@ void FAssetTable::AddDefaultColumns()
 		public:
 			virtual const TOptional<FTableCellValue> GetValue(const FTableColumn& Column, const FBaseTreeNode& Node) const override
 			{
-				if (Node.IsGroup())
+				if (Node.Is<FPluginSimpleGroupNode>() && !Node.Is<FPluginDependenciesGroupNode>())
+				{
+					// This is node represents a single plugin (it might be the plugin itself or the plugin+deps node for that plugin)
+					const FPluginSimpleGroupNode& PluginNode = Node.As<FPluginSimpleGroupNode>();
+					TSharedPtr<FTable> TablePtr = PluginNode.GetParentTable().Pin();
+					const FAssetTable& AssetTable = static_cast<const FAssetTable&>(*TablePtr);
+					const FAssetTablePluginInfo& PluginInfo = AssetTable.GetPluginInfoByIndexChecked(PluginNode.GetPluginIndex());
+					return FTableCellValue(PluginInfo.GetOrComputeTotalSizeUniqueDependencies(static_cast<const FAssetTable&>(*TablePtr)));
+				}
+				else if (Node.IsGroup())
 				{
 					const FTableTreeNode& NodePtr = static_cast<const FTableTreeNode&>(Node);
 					if (NodePtr.GetRowId().HasValidIndex())
@@ -949,12 +1023,10 @@ void FAssetTable::AddDefaultColumns()
 		TSharedRef<ITableCellValueFormatter> Formatter = MakeShared<FInt64ValueFormatterAsMemory>();
 		Column.SetValueFormatter(Formatter);
 
-		TSharedRef<ITableCellValueSorter> Sorter = MakeShared<FSorterByInt64Value>(ColumnRef);
-		Column.SetValueSorter(Sorter);
-		Column.SetInitialSortMode(EColumnSortMode::Descending);
-
-		//TSharedRef<IFilterValueConverter> Converter = MakeShared<FMemoryFilterValueConverter>();
-		//Column.SetValueConverter(Converter);
+		// Disable sorting on this column for now as it's quite expensive
+		//TSharedRef<ITableCellValueSorter> Sorter = MakeShared<FSorterByInt64Value>(ColumnRef);
+		//Column.SetValueSorter(Sorter);
+		//Column.SetInitialSortMode(EColumnSortMode::Descending);
 
 		Column.SetAggregation(ETableColumnAggregation::None);
 
@@ -979,7 +1051,7 @@ void FAssetTable::AddDefaultColumns()
 
 		Column.SetDataType(ETableCellDataType::Int64);
 
-		class FTotalSizeUniqueDependenciesValueGetter : public FTableCellValueGetter
+		class FTotalSizeSharedDependenciesValueGetter : public FTableCellValueGetter
 		{
 		public:
 			virtual const TOptional<FTableCellValue> GetValue(const FTableColumn& Column, const FBaseTreeNode& Node) const override
@@ -1009,18 +1081,16 @@ void FAssetTable::AddDefaultColumns()
 				return TOptional<FTableCellValue>();
 			}
 		};
-		TSharedRef<ITableCellValueGetter> Getter = MakeShared<FTotalSizeUniqueDependenciesValueGetter>();
+		TSharedRef<ITableCellValueGetter> Getter = MakeShared<FTotalSizeSharedDependenciesValueGetter>();
 		Column.SetValueGetter(Getter);
 
 		TSharedRef<ITableCellValueFormatter> Formatter = MakeShared<FInt64ValueFormatterAsMemory>();
 		Column.SetValueFormatter(Formatter);
 
-		TSharedRef<ITableCellValueSorter> Sorter = MakeShared<FSorterByInt64Value>(ColumnRef);
-		Column.SetValueSorter(Sorter);
-		Column.SetInitialSortMode(EColumnSortMode::Descending);
-
-		//TSharedRef<IFilterValueConverter> Converter = MakeShared<FMemoryFilterValueConverter>();
-		//Column.SetValueConverter(Converter);
+		// Disable sorting on this column for now as it's quite expensive
+		//TSharedRef<ITableCellValueSorter> Sorter = MakeShared<FSorterByInt64Value>(ColumnRef);
+		//Column.SetValueSorter(Sorter);
+		//Column.SetInitialSortMode(EColumnSortMode::Descending);
 
 		Column.SetAggregation(ETableColumnAggregation::None);
 
@@ -1045,7 +1115,7 @@ void FAssetTable::AddDefaultColumns()
 
 		Column.SetDataType(ETableCellDataType::Int64);
 
-		class FTotalSizeUniqueDependenciesValueGetter : public FTableCellValueGetter
+		class FTotalSizeExternalDependenciesValueGetter : public FTableCellValueGetter
 		{
 		public:
 			virtual const TOptional<FTableCellValue> GetValue(const FTableColumn& Column, const FBaseTreeNode& Node) const override
@@ -1075,18 +1145,16 @@ void FAssetTable::AddDefaultColumns()
 				return TOptional<FTableCellValue>();
 			}
 		};
-		TSharedRef<ITableCellValueGetter> Getter = MakeShared<FTotalSizeUniqueDependenciesValueGetter>();
+		TSharedRef<ITableCellValueGetter> Getter = MakeShared<FTotalSizeExternalDependenciesValueGetter>();
 		Column.SetValueGetter(Getter);
 
 		TSharedRef<ITableCellValueFormatter> Formatter = MakeShared<FInt64ValueFormatterAsMemory>();
 		Column.SetValueFormatter(Formatter);
 
-		TSharedRef<ITableCellValueSorter> Sorter = MakeShared<FSorterByInt64Value>(ColumnRef);
-		Column.SetValueSorter(Sorter);
-		Column.SetInitialSortMode(EColumnSortMode::Descending);
-
-		//TSharedRef<IFilterValueConverter> Converter = MakeShared<FMemoryFilterValueConverter>();
-		//Column.SetValueConverter(Converter);
+		// Disable sorting on this column for now as it's quite expensive
+		//TSharedRef<ITableCellValueSorter> Sorter = MakeShared<FSorterByInt64Value>(ColumnRef);
+		//Column.SetValueSorter(Sorter);
+		//Column.SetInitialSortMode(EColumnSortMode::Descending);
 
 		Column.SetAggregation(ETableColumnAggregation::None);
 
@@ -1104,7 +1172,7 @@ void FAssetTable::AddDefaultColumns()
 		Column.SetTitleName(LOCTEXT("TotalUsageCountColumnTitle", "Total Usage Count"));
 		Column.SetDescription(LOCTEXT("TotalUsageCountColumnDesc", "Weighted count of Primary Assets that use this\nA higher usage means it's more likely to be in memory at runtime."));
 
-		Column.SetFlags(ETableColumnFlags::ShouldBeVisible | ETableColumnFlags::CanBeHidden | ETableColumnFlags::CanBeFiltered | ETableColumnFlags::IsDynamic);
+		Column.SetFlags(ETableColumnFlags::CanBeHidden | ETableColumnFlags::CanBeFiltered | ETableColumnFlags::IsDynamic);
 
 		Column.SetHorizontalAlignment(HAlign_Right);
 		Column.SetInitialWidth(100.0f);
@@ -1160,10 +1228,10 @@ void FAssetTable::AddDefaultColumns()
 		Column.SetTitleName(LOCTEXT("ChunksColumnTitle", "Chunks"));
 		Column.SetDescription(LOCTEXT("ChunksColumnDesc", "List of chunks this will be added to when cooked"));
 
-		Column.SetFlags(ETableColumnFlags::ShouldBeVisible | ETableColumnFlags::CanBeHidden | ETableColumnFlags::CanBeFiltered);
+		Column.SetFlags(ETableColumnFlags::CanBeHidden | ETableColumnFlags::CanBeFiltered);
 
 		Column.SetHorizontalAlignment(HAlign_Left);
-		Column.SetInitialWidth(200.0f);
+		Column.SetInitialWidth(100.0f);
 
 		Column.SetDataType(ETableCellDataType::CString);
 
@@ -1202,7 +1270,7 @@ void FAssetTable::AddDefaultColumns()
 		Column.SetTitleName(LOCTEXT("NativeClassColumnTitle", "Native Class"));
 		Column.SetDescription(LOCTEXT("NativeClassColumnDesc", "Native class of the asset"));
 
-		Column.SetFlags(ETableColumnFlags::ShouldBeVisible | ETableColumnFlags::CanBeHidden | ETableColumnFlags::CanBeFiltered);
+		Column.SetFlags(ETableColumnFlags::CanBeHidden | ETableColumnFlags::CanBeFiltered);
 
 		Column.SetHorizontalAlignment(HAlign_Left);
 		Column.SetInitialWidth(200.0f);
@@ -1274,7 +1342,168 @@ void FAssetTable::AddDefaultColumns()
 
 		AddColumn(ColumnRef);
 	}
+
 	//////////////////////////////////////////////////
+	// PluginType Column
+	{
+		TSharedRef<FTableColumn> ColumnRef = MakeShared<FTableColumn>(FAssetTableColumns::PluginTypeColumnId);
+		FTableColumn& Column = *ColumnRef;
+
+		Column.SetIndex(ColumnIndex++);
+
+		Column.SetShortName(LOCTEXT("PluginTypeColumnName", "Plugin Type"));
+		Column.SetTitleName(LOCTEXT("PluginTypeColumnTitle", "Plugin Type"));
+		Column.SetDescription(LOCTEXT("PluginTypeColumnDesc", "Plugin Type (e.g., Normal, Root, Shader Pseudoplugin, etc.)"));
+
+		Column.SetFlags(ETableColumnFlags::CanBeHidden | ETableColumnFlags::CanBeFiltered);
+
+		Column.SetHorizontalAlignment(HAlign_Left);
+		Column.SetInitialWidth(75.0f);
+
+		Column.SetDataType(ETableCellDataType::CString);
+
+		class FPluginTypeValueGetter : public FTableCellValueGetter
+		{
+		public:
+			virtual const TOptional<FTableCellValue> GetValue(const FTableColumn& Column, const FBaseTreeNode& Node) const override
+			{
+				if (Node.Is<FPluginSimpleGroupNode>())
+				{
+					TSharedPtr<FTable> TablePtr = static_cast<const FPluginSimpleGroupNode&>(Node).GetParentTable().Pin();
+					const FAssetTable& AssetTable = static_cast<const FAssetTable&>(*TablePtr);
+					int32 PluginIndex = static_cast<const FPluginSimpleGroupNode&>(Node).GetPluginIndex();
+					return FTableCellValue(AssetTable.GetPluginInfoByIndex(PluginIndex).GetPluginType());
+				}
+
+				return TOptional<FTableCellValue>();
+			}
+		};
+		TSharedRef<ITableCellValueGetter> Getter = MakeShared<FPluginTypeValueGetter>();
+		Column.SetValueGetter(Getter);
+
+		TSharedRef<ITableCellValueFormatter> Formatter = MakeShared<FCStringValueFormatterAsText>();
+		Column.SetValueFormatter(Formatter);
+
+		TSharedRef<ITableCellValueSorter> Sorter = MakeShared<FSorterByCStringValue>(ColumnRef);
+		Column.SetValueSorter(Sorter);
+		Column.SetInitialSortMode(EColumnSortMode::Descending);
+
+		Column.SetAggregation(ETableColumnAggregation::SameValue);
+
+		AddColumn(ColumnRef);
+	}
+
+	//////////////////////////////////////////////////
+	// Custom Columns
+	for (int32 CustomColumnIndex = 0; CustomColumnIndex < CustomColumns.Num(); CustomColumnIndex++)
+	{
+		const FCustomColumnDefinition& CustomColumn = CustomColumns[CustomColumnIndex];
+
+		TSharedRef<FTableColumn> ColumnRef = MakeShared<FTableColumn>(CustomColumn.ColumnId);
+		FTableColumn& Column = *ColumnRef;
+
+		Column.SetIndex(ColumnIndex++);
+
+		const FText NameAsText = FText::FromName(CustomColumn.ColumnId);
+		Column.SetShortName(NameAsText);
+		Column.SetTitleName(NameAsText);
+		Column.SetDescription(LOCTEXT("CustomColumnDesc", "Custom column data"));
+
+		Column.SetFlags(ETableColumnFlags::CanBeHidden | ETableColumnFlags::CanBeFiltered);
+
+		Column.SetHorizontalAlignment(HAlign_Left);
+		if (CustomColumn.Type == ECustomColumnDefinitionType::Boolean)
+		{
+			Column.SetInitialWidth(50.f);
+			Column.SetDataType(ETableCellDataType::Bool);
+			class FCustomColumnBoolValueGetter : public FTableCellValueGetter
+			{
+			public:
+
+				FCustomColumnBoolValueGetter(int32 InIndexWithinRowData) :
+					FTableCellValueGetter(),
+					IndexWithinRowData(InIndexWithinRowData) {}
+
+				virtual const TOptional<FTableCellValue> GetValue(const FTableColumn& Column, const FBaseTreeNode& Node) const override
+				{
+					if (Node.Is<FPluginSimpleGroupNode>() && !Node.Is<FPluginDependenciesGroupNode>())
+					{
+						// This node represents a single plugin (it might be the plugin itself or the plugin+deps node for that plugin)
+						const FPluginSimpleGroupNode& PluginNode = Node.As<FPluginSimpleGroupNode>();
+						TSharedPtr<FTable> TablePtr = PluginNode.GetParentTable().Pin();
+						const FAssetTable& AssetTable = static_cast<const FAssetTable&>(*TablePtr);
+						const FAssetTablePluginInfo& PluginInfo = AssetTable.GetPluginInfoByIndexChecked(PluginNode.GetPluginIndex());
+						if (const bool* Value = PluginInfo.TryGetDataByKey<bool>(IndexWithinRowData))
+						{
+							return FTableCellValue(*Value);
+						}
+					}
+
+					return TOptional<FTableCellValue>();
+				}
+
+			private:
+				int32 IndexWithinRowData;
+			};
+
+			TSharedRef<ITableCellValueGetter> Getter = MakeShared<FCustomColumnBoolValueGetter>(CustomColumnIndex);
+			Column.SetValueGetter(Getter);
+
+			TSharedRef<ITableCellValueFormatter> Formatter = MakeShared<FBoolValueFormatterAsTrueFalse>();
+			Column.SetValueFormatter(Formatter);
+
+			TSharedRef<ITableCellValueSorter> Sorter = MakeShared<FSorterByBoolValue>(ColumnRef);
+			Column.SetValueSorter(Sorter);
+		}
+		else
+		{
+			Column.SetInitialWidth(200.f);
+			Column.SetDataType(ETableCellDataType::CString);
+			class FCustomColumnStringValueGetter : public FTableCellValueGetter
+			{
+			public:
+
+				FCustomColumnStringValueGetter(int32 InIndexWithinRowData) :
+					FTableCellValueGetter(),
+					IndexWithinRowData(InIndexWithinRowData) {}
+
+				virtual const TOptional<FTableCellValue> GetValue(const FTableColumn& Column, const FBaseTreeNode& Node) const override
+				{
+					if (Node.Is<FPluginSimpleGroupNode>() && !Node.Is<FPluginDependenciesGroupNode>())
+					{
+						// This node represents a single plugin (it might be the plugin itself or the plugin+deps node for that plugin)
+						const FPluginSimpleGroupNode& PluginNode = Node.As<FPluginSimpleGroupNode>();
+						TSharedPtr<FTable> TablePtr = PluginNode.GetParentTable().Pin();
+						const FAssetTable& AssetTable = static_cast<const FAssetTable&>(*TablePtr);
+						const FAssetTablePluginInfo& PluginInfo = AssetTable.GetPluginInfoByIndexChecked(PluginNode.GetPluginIndex());
+						if (const TCHAR* const* Value = PluginInfo.TryGetDataByKey<const TCHAR*>(IndexWithinRowData))
+						{
+							return FTableCellValue(*Value);
+						}
+					}
+
+					return TOptional<FTableCellValue>();
+				}
+
+			private:
+				int32 IndexWithinRowData;
+			};
+
+			TSharedRef<ITableCellValueGetter> Getter = MakeShared<FCustomColumnStringValueGetter>(CustomColumnIndex);
+			Column.SetValueGetter(Getter);
+
+			TSharedRef<ITableCellValueFormatter> Formatter = MakeShared<FCStringValueFormatterAsText>();
+			Column.SetValueFormatter(Formatter);
+
+			TSharedRef<ITableCellValueSorter> Sorter = MakeShared<FSorterByCStringValue>(ColumnRef);
+			Column.SetValueSorter(Sorter);
+		}
+
+
+		Column.SetAggregation(ETableColumnAggregation::SameValue);
+
+		AddColumn(ColumnRef);
+	}
 }
 
 /*static*/TSet<int32> FAssetTableRow::GatherAllReachableNodes(const TArray<int32>& StartingNodes, const FAssetTable& OwningTable, const TSet<int32>& AdditionalNodesToStopAt, const TSet<const TCHAR*, TStringPointerSetKeyFuncs_DEPRECATED<const TCHAR*>>& RestrictToPlugins, TMap<int32, TArray<int32>>* OutRouteMap /*= nullptr*/)
@@ -1447,7 +1676,7 @@ void FAssetTable::AddDefaultColumns()
 
 	for (int32 Index : UniqueDependencies)
 	{
-		Result.UniqueDependenciesSize += OwningTable.GetAssetChecked(Index).GetStagedCompressedSize();
+		Result.UniqueDependenciesSize += OwningTable.GetAssetChecked(Index).GetStagedCompressedSizeRequiredInstall();
 	}
 	if (OutUniqueDependencies != nullptr)
 	{
@@ -1474,7 +1703,7 @@ void FAssetTable::AddDefaultColumns()
 			continue;
 		}
 
-		int64 DependencySize = OwningTable.GetAssetChecked(CurrentIndex).GetStagedCompressedSize();
+		int64 DependencySize = OwningTable.GetAssetChecked(CurrentIndex).GetStagedCompressedSizeRequiredInstall();
 		Result.SharedDependenciesSize += DependencySize;
 		if (OutSharedDependencies != nullptr)
 		{
@@ -1519,7 +1748,7 @@ void FAssetTable::AddDefaultColumns()
 			{
 				OutExternalDependencies->Add(Index);
 			}
-			TotalSizeExternalDependencies += Row.StagedCompressedSize;
+			TotalSizeExternalDependencies += Row.StagedCompressedSizeRequiredInstall;
 			NumDependenciesIncluded++;
 		}
 	}
@@ -1598,6 +1827,166 @@ int64 FAssetTableRow::GetOrComputeTotalSizeExternalDependencies(const FAssetTabl
 		TotalSizeExternalDependencies = ComputeTotalSizeExternalDependencies(OwningTable, TSet<int32>{ThisIndex});
 	}
 	return TotalSizeExternalDependencies;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+int64 FAssetTablePluginInfo::GetOrComputeTotalSizeInclusiveOfDependencies(const FAssetTable& OwningTable) const
+{
+	if (InclusiveSize == -1)
+	{
+		InclusiveSize = Size;
+
+		TArray<int32> DependencyStack = PluginDependencies;
+		TSet<int32> AllDependencies;
+
+		// Gather all the dependencies
+		while (DependencyStack.Num() > 0)
+		{
+			int32 CurrentIndex = DependencyStack.Pop();
+			if (AllDependencies.Contains(CurrentIndex))
+			{
+				continue;
+			}
+			AllDependencies.Add(CurrentIndex);
+			const FAssetTablePluginInfo& PluginInfo = OwningTable.GetPluginInfoByIndex(CurrentIndex);
+			InclusiveSize += PluginInfo.GetSize();
+			DependencyStack.Append(PluginInfo.GetDependencies());
+		}
+	}
+	return InclusiveSize;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+int64 FAssetTablePluginInfo::GetOrComputeTotalSizeUniqueDependencies(const FAssetTable& OwningTable) const
+{
+	if (UniqueDependenciesSize == -1)
+	{
+		ComputeDependencySizes(OwningTable);
+	}
+	return UniqueDependenciesSize;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+int64 FAssetTablePluginInfo::GetOrComputeTotalSizeSharedDependencies(const FAssetTable& OwningTable) const
+{
+	if (SharedDependenciesSize == -1)
+	{
+		ComputeDependencySizes(OwningTable);
+	}
+	return SharedDependenciesSize;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void FAssetTablePluginInfo::ComputeTotalSelfAndInclusiveSizes(const FAssetTable& OwningTable, const TSet<int32>& RootPlugins, int64& OutTotalSelfSize, int64& OutTotalInclusiveSize)
+{
+	TSet<int32> VisitedNodes;
+	TArray<int32> DependencyStack = RootPlugins.Array();
+	OutTotalSelfSize = 0;
+	OutTotalInclusiveSize = 0;
+
+	while (DependencyStack.Num() > 0)
+	{
+		int32 CurrentIndex = DependencyStack.Pop();
+
+		if (VisitedNodes.Contains(CurrentIndex))
+		{
+			continue;
+		}
+		VisitedNodes.Add(CurrentIndex);
+		
+		const FAssetTablePluginInfo& PluginInfo = OwningTable.GetPluginInfoByIndexChecked(CurrentIndex);
+		if (RootPlugins.Contains(CurrentIndex))
+		{
+			OutTotalSelfSize += PluginInfo.GetSize();
+		}
+		OutTotalInclusiveSize += PluginInfo.GetSize();
+		DependencyStack.Append(PluginInfo.GetDependencies());
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void FAssetTablePluginInfo::ComputeDependencySizes(const FAssetTable& OwningTable) const
+{
+	SharedDependenciesSize = 0;
+	UniqueDependenciesSize = 0;
+
+	// Plugins can't have circular dependencies, so our algorithm for exploring the dependencies is significantly simpler than for assets
+
+	const int32 RootIndex = OwningTable.GetIndexForPlugin(PluginName);
+
+	TArray<int32> DependencyStack = PluginDependencies;
+	TSet<int32> AllDependencies;
+
+	// Gather all the dependencies
+	while (DependencyStack.Num() > 0)
+	{
+		int32 CurrentIndex = DependencyStack.Pop();
+		AllDependencies.Add(CurrentIndex);
+		// We'll end up processing some nodes twice but the real output here is AllDependencies (the set) not DependencyStack so it's ok
+		DependencyStack.Append(OwningTable.GetPluginInfoByIndex(CurrentIndex).GetDependencies());
+	}
+
+	// Find the set of dependencies which are directly referenced by something outside this set of plugins
+	TSet<int32> SharedDependencies;
+	for (int32 DependencyIndex : AllDependencies)
+	{
+		const FAssetTablePluginInfo& CurrentPluginInfo = OwningTable.GetPluginInfoByIndex(DependencyIndex);
+		bool IsShared = false;
+		for (int32 ReferencerIndex : CurrentPluginInfo.GetReferencers())
+		{
+			bool ReferencerIsRoot = (ReferencerIndex == RootIndex);
+			bool ReferencerIsNotInDependencyTree = !AllDependencies.Contains(ReferencerIndex);
+			if (ReferencerIsNotInDependencyTree && !ReferencerIsRoot)
+			{
+				IsShared = true;
+				break;
+			}
+		}
+		if (IsShared)
+		{
+			SharedDependencies.Add(DependencyIndex);
+		}
+	}
+
+	// Add to the SharedDependencies list all transitive dependencies
+	TArray<int32> SharedDependencyStack = SharedDependencies.Array();
+	while (SharedDependencyStack.Num() > 0)
+	{
+		int32 CurrentIndex = SharedDependencyStack.Pop();
+		SharedDependencies.Add(CurrentIndex);
+		SharedDependencyStack.Append(OwningTable.GetPluginInfoByIndex(CurrentIndex).GetDependencies());
+	}
+
+	// UniqueDependencies are all the dependencies that aren't shared
+	TArray<int32> UniqueDependencies = AllDependencies.Array();
+	for (int32 SharedDependencyIndex : SharedDependencies)
+	{
+		UniqueDependencies.RemoveSwap(SharedDependencyIndex);
+	}
+	
+	ensure((UniqueDependencies.Num() + SharedDependencies.Num()) == AllDependencies.Num());
+
+	// Add up the sizes
+	for (int32 UniqueDependencyIndex : UniqueDependencies)
+	{
+		const FAssetTablePluginInfo& CurrentPluginInfo = OwningTable.GetPluginInfoByIndexChecked(UniqueDependencyIndex);
+		int64 PluginSize = CurrentPluginInfo.GetSize();
+		ensureMsgf(PluginSize >= 0, TEXT("Found plugin %s with uninitialized size."), CurrentPluginInfo.GetName());
+		UniqueDependenciesSize += PluginSize;
+	}
+
+	for (int32 SharedDependencyIndex : SharedDependencies)
+	{
+		const FAssetTablePluginInfo& CurrentPluginInfo = OwningTable.GetPluginInfoByIndexChecked(SharedDependencyIndex);
+		int64 PluginSize = CurrentPluginInfo.GetSize();
+		ensureMsgf(PluginSize >= 0, TEXT("Found plugin %s with uninitialized size."), CurrentPluginInfo.GetName());
+		SharedDependenciesSize += PluginSize;
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

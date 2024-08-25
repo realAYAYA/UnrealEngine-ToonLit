@@ -37,11 +37,6 @@ public:
 		return ClassOrScriptStruct ? NumberOfFunctions : 0;
 	}
 
-	int32 GetFieldIdNum() const
-	{
-		return ClassOrScriptStruct ? NumberOfFieldIds : 0;
-	}
-
 	FName GetPropertyName(TArrayView<FName> Names, int32 Index) const
 	{
 		check(Index < NumberOfProperties && Index >= 0);
@@ -56,13 +51,6 @@ public:
 		return Names[LibraryStartIndex + NumberOfProperties + Index];
 	}
 
-	FName GetFieldIdName(TArrayView<FName> Names, int32 Index) const
-	{
-		check(Index < NumberOfFieldIds && Index >= 0);
-		check(Names.IsValidIndex(LibraryStartIndex + NumberOfProperties + NumberOfFunctions + Index));
-		return Names[LibraryStartIndex + NumberOfProperties + NumberOfFunctions + Index];
-	}
-
 	const UStruct* GetStruct() const
 	{
 		return ClassOrScriptStruct;
@@ -73,9 +61,6 @@ public:
 
 	/** Find the UFunction from the Class.*/
 	UFunction* GetFunction(FName FunctionName) const;
-
-	/** Find the FFieldId from the Class.*/
-	UE::FieldNotification::FFieldId GetFieldId(FName FieldName) const;
 
 private:
 	UPROPERTY()
@@ -89,9 +74,6 @@ private:
 
 	UPROPERTY()
 	int16 NumberOfFunctions = 0;
-	
-	UPROPERTY()
-	int16 NumberOfFieldIds = 0;
 };
 
 
@@ -117,33 +99,6 @@ private:
 
 	UPROPERTY()
 	int16 Num = INDEX_NONE;
-
-#if WITH_EDITORONLY_DATA
-	UPROPERTY(meta = (IgnoreForMemberInitializationTest))
-	FGuid CompiledBindingLibraryId;
-#endif
-};
-
-
-/** Contains the FieldId index. */
-USTRUCT()
-struct FMVVMVCompiledFieldId
-{
-	GENERATED_BODY()
-
-	friend FMVVMCompiledBindingLibrary;
-	friend UE::MVVM::FCompiledBindingLibraryCompiler;
-
-	bool IsValid() const
-	{
-		return FieldIdIndex >= 0;
-	}
-
-private:
-	using IndexType = int16;
-
-	UPROPERTY()
-	int16 FieldIdIndex = INDEX_NONE;
 
 #if WITH_EDITORONLY_DATA
 	UPROPERTY(meta = (IgnoreForMemberInitializationTest))
@@ -199,9 +154,9 @@ struct FMVVMVCompiledBinding
 public:
 	bool IsValid() const
 	{
-		const bool bSourceValid = SourceFieldPath.IsValid() || IsComplexFunction();
+		const bool bSourceValid = SourceFieldPath.IsValid() || HasComplexConversionFunction() || IsComplexBinding();
 		const bool bDestinationValid = DestinationFieldPath.IsValid();
-		const bool bFunctionValid = ConversionFunctionFieldPath.IsValid() || !HasConversionFunction();
+		const bool bFunctionValid = ConversionFunctionFieldPath.IsValid() || (EType)Type == EType::None || IsComplexBinding();
 		return bSourceValid && bDestinationValid && bFunctionValid;
 	}
 
@@ -220,21 +175,44 @@ public:
 		return ConversionFunctionFieldPath;
 	}
 
-	bool HasConversionFunction() const
+	/**
+	 * A conversion function is needed to run the binding.
+	 * The binding runs in native.
+	 * It is on the form: Destination = ConversionFunction(Source)
+	 */
+	bool HasSimpleConversionFunction() const
 	{
-		return (Flags & (uint8)EFlags::HasConversionFunction) != 0;
+		return (EType)Type == EType::HasConversionFunction;
+	}
+	
+	/**
+	 * A conversion function is needed to run the binding.
+	 * The conversion function takes more than one input.
+	 * The binding doesn't requires the SourceFieldPath to execute.
+	 * The binding runs in native.
+	 * It is on the form Destination = ComplexConversionFunction()
+	 */
+	bool HasComplexConversionFunction() const
+	{
+		return (EType)Type == EType::HasComplexConversionFunction;
 	}
 
-	bool IsComplexFunction() const
+	/**
+	 * The binding runs in native.
+	 * It is on the form: Destination = Source or Destination = ConversionFunction(Source) or Destination = ComplexConversionFunction()
+	 */
+	bool IsRuntimeBinding() const
 	{
-		uint8 AllFunctionFlags = (uint8)EFlags::IsConversionFunctionComplex | (uint8)EFlags::HasConversionFunction;
-		return (Flags & AllFunctionFlags) == AllFunctionFlags;
+		return (EType)Type != EType::BindingComplex;
 	}
 
-	/** @return true if multiple field can trigger this binding. */
-	bool IsShared() const
+	/**
+	 * The binding runs with the BP virtual machine.
+	 * It is on the form: Destination()
+	 */
+	bool IsComplexBinding() const
 	{
-		return (Flags & (uint8)EFlags::IsShared) != 0;
+		return (EType)Type == EType::BindingComplex;
 	}
 
 private:
@@ -249,16 +227,16 @@ private:
 	UPROPERTY()
 	FMVVMVCompiledFieldPath ConversionFunctionFieldPath;
 
-	enum class EFlags : uint8
+	enum class EType : uint8
 	{
 		None = 0,
-		HasConversionFunction = 1 << 0,
-		IsConversionFunctionComplex = 1 << 1,
-		IsShared = 1 << 2,
+		HasConversionFunction = 1,
+		HasComplexConversionFunction = 2,
+		BindingComplex = 3,
 	};
 
 	UPROPERTY()
-	uint8 Flags = 0;
+	uint8 Type = (uint8)EType::None;
 
 #if WITH_EDITORONLY_DATA
 	UPROPERTY(meta = (IgnoreForMemberInitializationTest))
@@ -277,6 +255,9 @@ struct MODELVIEWVIEWMODEL_API FMVVMCompiledBindingLibrary
 
 public:
 	FMVVMCompiledBindingLibrary();
+#if WITH_EDITOR
+	FMVVMCompiledBindingLibrary(FGuid LibraryId);
+#endif
 
 public:
 	/** */
@@ -323,9 +304,6 @@ public:
 	 */
 	TValueOrError<UE::MVVM::FFieldContext, void> EvaluateFieldPath(UObject* ExecutionSource, const FMVVMVCompiledFieldPath& FieldPath) const;
 
-	/** Get the loaded FieldId. */
-	TValueOrError<UE::FieldNotification::FFieldId, void> GetFieldId(const FMVVMVCompiledFieldId& FieldId) const;
-
 	/** Return a readable version of the FieldPath. */
 	TValueOrError<FString, FString> FieldPathToString(FMVVMVCompiledFieldPath FieldPath, bool bUseDisplayName) const;
 
@@ -336,12 +314,21 @@ private:
 	TValueOrError<UE::MVVM::FMVVMFieldVariant, void> GetFinalFieldFromPathImpl(UE::MVVM::FObjectVariant CurrentContainer, const FMVVMVCompiledFieldPath& FieldPath) const;
 
 private:
+	struct FLoadedFunction
+	{
+		FLoadedFunction() = default;
+		MODELVIEWVIEWMODEL_API FLoadedFunction(const UFunction* Function);
+
+		TWeakObjectPtr<const UClass> ClassOwner;
+		FName FunctionName;
+		bool bIsFunctionVirtual = false;
+
+		UFunction* GetFunction() const;
+		UFunction* GetFunction(const UObject* CallingContext) const;
+	};
+
 	TArray<FProperty*> LoadedProperties;
-
-	UPROPERTY(Transient)
-	TArray<TObjectPtr<UFunction>> LoadedFunctions;
-
-	TArray<UE::FieldNotification::FFieldId> LoadedFieldIds;
+	TArray<FLoadedFunction> LoadedFunctions;
 
 	UPROPERTY()
 	TArray<FMVVMCompiledLoadedPropertyOrFunctionIndex> FieldPaths;

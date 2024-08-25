@@ -31,8 +31,8 @@ public:
 
 	static void ExtendSketalMeshToolMenu();
 
-	static UControlRigBlueprint* CreateNewControlRigAsset(const FString& InDesiredPackagePath);
-	static UControlRigBlueprint* CreateControlRigFromSkeletalMeshOrSkeleton(UObject* InSelectedObject);
+	static UControlRigBlueprint* CreateNewControlRigAsset(const FString& InDesiredPackagePath, const bool bModularRig);
+	static UControlRigBlueprint* CreateControlRigFromSkeletalMeshOrSkeleton(UObject* InSelectedObject, const bool bModularRig);
 
 	static USkeletalMesh* GetSkeletalMeshFromControlRigBlueprint(const FAssetData& InAsset);
 	static void PostSpawningSkeletalMeshActor(AActor* InSpawnedActor, UObject* InAsset);

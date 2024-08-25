@@ -81,7 +81,9 @@ struct dtTileCacheParams
 	dtReal walkableHeight;
 	dtReal walkableRadius;
 	dtReal walkableClimb;
+	dtReal maxVerticalMergeError; // UE
 	dtReal maxSimplificationError;
+	dtReal simplificationElevationRatio; // UE
 	int maxTiles;
 	int maxObstacles;
 //@UE BEGIN

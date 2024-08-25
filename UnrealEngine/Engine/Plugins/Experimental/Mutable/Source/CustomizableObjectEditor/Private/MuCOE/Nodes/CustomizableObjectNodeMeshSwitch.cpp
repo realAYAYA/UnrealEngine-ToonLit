@@ -7,34 +7,22 @@
 #define LOCTEXT_NAMESPACE "CustomizableObjectEditor"
 
 
-void UCustomizableObjectNodeMeshSwitch::Serialize(FArchive& Ar)
+void UCustomizableObjectNodeMeshSwitch::BackwardsCompatibleFixup()
 {
-	Super::Serialize(Ar);
+	Super::BackwardsCompatibleFixup();
 
-	Ar.UsingCustomVersion(FCustomizableObjectCustomVersion::GUID);
+	const int32 CustomizableObjectCustomVersion = GetLinkerCustomVersion(FCustomizableObjectCustomVersion::GUID);
 
-	if (Ar.CustomVer(FCustomizableObjectCustomVersion::GUID) < FCustomizableObjectCustomVersion::BugPinsSwitch)
+	if (CustomizableObjectCustomVersion < FCustomizableObjectCustomVersion::BugPinsSwitch)
 	{
 		OutputPinReference = FindPin(TEXT("Mesh"));	
 	}
 }
 
 
-FString UCustomizableObjectNodeMeshSwitch::GetOutputPinName() const
-{
-	return TEXT("Mesh");
-}
-
-
 FName UCustomizableObjectNodeMeshSwitch::GetCategory() const
 {
 	return UEdGraphSchema_CustomizableObject::PC_Mesh;
-}
-
-
-FString UCustomizableObjectNodeMeshSwitch::GetPinPrefix() const
-{
-	return TEXT("Mesh ");
 }
 
 

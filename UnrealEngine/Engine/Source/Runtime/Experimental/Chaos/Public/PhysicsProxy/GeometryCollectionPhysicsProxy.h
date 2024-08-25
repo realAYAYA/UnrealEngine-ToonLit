@@ -19,6 +19,7 @@
 #include "Chaos/Defines.h"
 #include "Chaos/GeometryParticlesfwd.h"
 
+
 namespace Chaos
 {
 	template <typename T> class TSerializablePtr;
@@ -27,6 +28,7 @@ namespace Chaos
 
 	struct FDirtyGeometryCollectionData;
 
+	class FPBDCollisionConstraints;
 	class FPBDRigidsEvolutionBase;
 }
 
@@ -222,22 +224,35 @@ public:
 	 * Pulls data out of the PhysToGameInterchange and updates \c GTDynamicCollection. 
 	 * Called from FPhysScene_ChaosInterface::SyncBodies(), NOT the solver.
 	 */
-	CHAOS_API bool PullFromPhysicsState(const Chaos::FDirtyGeometryCollectionData& BufferData, const int32 SolverSyncTimestamp, const Chaos::FDirtyGeometryCollectionData* NextPullData = nullptr, const Chaos::FRealSingle* Alpha= nullptr);
+	CHAOS_API bool PullFromPhysicsState(const Chaos::FDirtyGeometryCollectionData& BufferData, const int32 SolverSyncTimestamp, const Chaos::FDirtyGeometryCollectionData* NextPullData = nullptr, const Chaos::FRealSingle* Alpha = nullptr, const Chaos::FDirtyRigidParticleReplicationErrorData* Error = nullptr, const Chaos::FReal AsyncFixedTimeStep = 0);
 
 	bool IsDirty() { return false; }
 
-	static EPhysicsProxyType ConcreteType() { return EPhysicsProxyType::GeometryCollectionType; }
+	static constexpr EPhysicsProxyType ConcreteType() { return EPhysicsProxyType::GeometryCollectionType; }
 
 	CHAOS_API void SyncBeforeDestroy();
 	CHAOS_API void OnRemoveFromSolver(Chaos::FPBDRigidsSolver *RBDSolver);
 	CHAOS_API void OnRemoveFromScene();
+	CHAOS_API void OnUnregisteredFromSolver();
 
 	void SetCollisionParticlesPerObjectFraction(float CollisionParticlesPerObjectFractionIn) 
 	{CollisionParticlesPerObjectFraction = CollisionParticlesPerObjectFractionIn;}
 
+	UE_DEPRECATED(5.4, "Use GetSolverClusterHandle_Internal instead")
 	TArray<FClusterHandle*>& GetSolverClusterHandles() { return SolverClusterHandles; }
 
+	UE_DEPRECATED(5.4, "Use GetParticle_Internal instead")
 	TArray<FClusterHandle*>& GetSolverParticleHandles() { return SolverParticleHandles; }
+
+	FClusterHandle* GetSolverClusterHandle_Internal(int32 Index) const
+	{
+		const int32 ParticleIndex = FromTransformToParticleIndex[Index];
+		if (ParticleIndex != INDEX_NONE)
+		{
+			return SolverClusterHandles[ParticleIndex];
+		}
+		return nullptr;
+	}
 
 	const FGeometryCollectionResults* GetConsumerResultsGT() const 
 	{ return PhysToGameInterchange.PeekConsumerBuffer(); }
@@ -270,10 +285,32 @@ public:
 
 	// set the world transform ( this needs to be called on the game thread ) 
 	CHAOS_API void SetWorldTransform_External(const FTransform& WorldTransform);
+	CHAOS_API const FTransform& GetPreviousWorldTransform_External() const { return PreviousWorldTransform_External; }
+	CHAOS_API const FTransform& GetWorldTransform_External() { return WorldTransform_External; }
 
+	// todo(chaos): Remove this and move to a cook time approach of the SM data based on the GC property
+	// Set whether the GC should be using collision from the Static Mesh or the GC itself for game thread traces ( this needs to be called on the game thread )
+	CHAOS_API void SetUseStaticMeshCollisionForTraces_External(bool bInUseStaticMeshCollisionForTraces);
+
+	UE_DEPRECATED(5.4, "Use GetParticle_Internal instead")
 	const TArray<FClusterHandle*> GetParticles() const
 	{
 		return SolverParticleHandles;
+	}
+
+	const TArray<FClusterHandle*>GetUnorderedParticles_Internal() const
+	{
+		return SolverParticleHandles;
+	}
+
+	FClusterHandle* GetParticle_Internal(int32 Index) const
+	{
+		const int32 ParticleIndex = FromTransformToParticleIndex[Index];
+		if (ParticleIndex != INDEX_NONE)
+		{
+			return SolverParticleHandles[ParticleIndex];
+		}
+		return nullptr;
 	}
 
 	const FSimulationParameters& GetSimParameters() const
@@ -296,7 +333,13 @@ public:
 		return GameThreadCollection;
 	}
 
-	TManagedArray<TUniquePtr<FParticle>>& GetExternalParticles()
+	UE_DEPRECATED(5.4, "Use GetUnorderedParticles_External instead")
+	TArray<TUniquePtr<FParticle>>& GetExternalParticles()
+	{
+		return GTParticles;
+	}
+
+	TArray<TUniquePtr<FParticle>>& GetUnorderedParticles_External()
 	{
 		return GTParticles;
 	}
@@ -306,6 +349,12 @@ public:
 
 	CHAOS_API FParticleHandle* GetParticleByIndex_Internal(int32 Index);
 	CHAOS_API const FParticleHandle* GetParticleByIndex_Internal(int32 Index) const;
+
+	FParticle* GetInitialRootParticle_External() { return GetParticleByIndex_External(Parameters.InitialRootIndex); }
+	const FParticle* GetInitialRootParticle_External() const { return GetParticleByIndex_External(Parameters.InitialRootIndex); }
+
+	FParticleHandle* GetInitialRootParticle_Internal() { return GetParticleByIndex_Internal(Parameters.InitialRootIndex); }
+	const FParticleHandle* GetInitialRootParticle_Internal() const { return GetParticleByIndex_Internal(Parameters.InitialRootIndex); }
 
 	/**
 	*  * Get all the geometry collection particle handles based on the processing resolution
@@ -379,7 +428,7 @@ public:
 		{
 			return FGeometryCollectionItemIndex::CreateInternalClusterItemIndex(*InternalClusterUniqueIdx);
 		}
-		// regular particle that has a matchig transform index 
+		// regular particle that has a matching transform index 
 		if (const int32* TransformGroupIndex = GTParticlesToTransformGroupIndex.Find(GTPParticle))
 		{
 			return FGeometryCollectionItemIndex::CreateTransformItemIndex(*TransformGroupIndex);
@@ -446,6 +495,7 @@ public:
 
 	struct FParticleCollisionFilterData
 	{
+		int32 ParticleIndex = INDEX_NONE;
 		bool bIsValid = false;
 		bool bQueryEnabled = false;
 		bool bSimEnabled = false;
@@ -455,6 +505,14 @@ public:
 
 	CHAOS_API void UpdatePerParticleFilterData_External(const TArray<FParticleCollisionFilterData>& Data);
 	
+	CHAOS_API void SetDamageThresholds_External(const TArray<float>& DamageThresholds);
+	CHAOS_API void SetDamagePropagationData_External(bool bEnabled, float BreakDamagePropagationFactor, float ShockDamagePropagationFactor);
+	CHAOS_API void SetDamageModel_External(EDamageModelTypeEnum DamageModel);
+	CHAOS_API void SetUseMaterialDamageModifiers_External(bool bUseMaterialDamageModifiers);
+	CHAOS_API void SetMaterialOverrideMassScaleMultiplier_External(float InMultiplier);
+	CHAOS_API void SetGravityGroupIndex_External(int32 GravityGroupIndex);
+	CHAOS_API void SetOneWayInteractionLevel_External(int32 OneWayInteractionLevel);
+	CHAOS_API void SetPhysicsMaterial_External(const Chaos::FMaterialHandle& MaterialHandle);
 	/** 
 	 * Traverses the parents of TransformGroupIdx counting number of levels,
 	 * and sets levels array value for TransformGroupIdx and its parents if not yet initialized.
@@ -467,12 +525,34 @@ public:
 	{
 		PostPhysicsSyncCallback = Callback;
 	}
+
+	void SetPostParticlesCreatedCallback(TFunction<void()> Callback)
+	{
+		PostParticlesCreatedCallback = Callback;
+	}
 	
+	CHAOS_API FClusterHandle* GetInitialRootHandle_Internal() const;
+
 	CHAOS_API TArray<Chaos::FPhysicsObjectHandle> GetAllPhysicsObjects() const ;
 	CHAOS_API TArray<Chaos::FPhysicsObjectHandle> GetAllPhysicsObjectIncludingNulls() const;
 	CHAOS_API Chaos::FPhysicsObjectHandle GetPhysicsObjectByIndex(int32 Index) const;
-	int32 GetNumParticles() const { return NumParticles; }
+	CHAOS_API void RebaseAllGameThreadCollectionTransformsOnNewWorldTransform_External();
+
+	UE_DEPRECATED(5.4, "Use GetNumTransforms instead")
+	int32 GetNumParticles() const { return NumTransforms; }
+	int32 GetNumTransforms() const { return NumTransforms; }
+
+	// todo(chaos): Remove this and move to a cook time approach of the SM data based on the GC property
+	using FCreateTraceCollisionGeometryCallback = TFunction<void(const FTransform& InToLocal, TArray<Chaos::FImplicitObjectPtr>& OutGeoms, Chaos::FShapesArray& OutShapes)>;
+	void SetCreateTraceCollisionGeometryCallback(FCreateTraceCollisionGeometryCallback InCreateGeometryCallback) { CreateTraceCollisionGeometryCallback = InCreateGeometryCallback; }
+
+	CHAOS_API void CreateChildrenGeometry_Internal();
+
+	int32 GetFromParticleToTransformIndex(int32 Index) const { check(FromParticleToTransformIndex.IsValidIndex(Index));  return FromParticleToTransformIndex[Index]; }
+
 protected:
+
+	bool RebaseParticleGameThreadCollectionTransformOnNewWorldTransform_External(int32 ParticleIndex, const TManagedArray<FTransform>& MassToLocal, bool bIsComponentTransformScaled, const FTransform& ComponentScaleTransform);
 
 	CHAOS_API float ComputeMaterialBasedDamageThreshold_Internal(int32 TransformIndex) const;
 
@@ -491,7 +571,7 @@ protected:
 	/** adjust inertia to account for per component scale properties ( from material override and world transform scale ) */
 	CHAOS_API Chaos::FVec3f AdjustInertiaForScale(const Chaos::FVec3f& Inertia) const;
 
-	CHAOS_API Chaos::TPBDGeometryCollectionParticleHandle<Chaos::FReal, 3>* BuildNonClusters_Internal(const uint32 CollectionClusterIndex, Chaos::FPBDRigidsSolver* RigidsSolver, float Mass, Chaos::FVec3f Inertia);
+	CHAOS_API Chaos::TPBDGeometryCollectionParticleHandle<Chaos::FReal, 3>* BuildNonClusters_Internal(const uint32 CollectionClusterIndex, Chaos::FPBDRigidsSolver* RigidsSolver, float Mass, Chaos::FVec3f Inertia, const Chaos::FUniqueIdx* ExistingIndex);
 
 	/**
 	 * Build a physics thread cluster parent particle.
@@ -517,17 +597,40 @@ protected:
 	 */
 	static CHAOS_API int32 CalculateHierarchyLevel(const FGeometryDynamicCollection& DynamicCollection, int32 TransformIndex);
 
-	CHAOS_API int32 CalculateEffectiveParticles(const FGeometryDynamicCollection& DynamicCollection, int32 NumTransform, TBitArray<>& EffectiveParticles) const;
-
 	CHAOS_API void SetClusteredParticleKinematicTarget_Internal(Chaos::FPBDRigidClusteredParticleHandle* Handle, const FTransform& WorldTransform);
 
 	CHAOS_API void PrepareBufferData(Chaos::FDirtyGeometryCollectionData& BufferData, const FGeometryDynamicCollection& ThreadCollection,  Chaos::FReal SolverLastDt = 0.0);
 
-	CHAOS_API void CreateNonClusteredParticles(Chaos::FPBDRigidsSolver* RigidsSolver,	const FGeometryCollection& RestCollection, const FGeometryDynamicCollection& DynamicCollection, const TBitArray<>& EffectiveParticles);
+	CHAOS_API void CreateNonClusteredParticles(Chaos::FPBDRigidsSolver* RigidsSolver,	const FGeometryCollection& RestCollection, const FGeometryDynamicCollection& DynamicCollection);
 
 	CHAOS_API Chaos::FPBDRigidClusteredParticleHandle* FindClusteredParticleHandleByItemIndex_Internal(FGeometryCollectionItemIndex ItemIndex) const;
+
+	CHAOS_API void UpdateDamageThreshold_Internal();
+
+	/** Scale the cluster particles geometry (creates if necessary an additional TImplicitObjectScaled object into the implicits hierarchy) */
+	CHAOS_API void ScaleClusterGeometry_Internal(const FVector& WorldScale);
+
+	CHAOS_API void SetWorldTransform_Internal(const FTransform& WorldTransform);
+	CHAOS_API void SetFilterData_Internal(const FCollisionFilterData& NewSimFilter, const FCollisionFilterData& NewQueryFilter);
+	CHAOS_API void SetPerParticleFilterData_Internal(const TArray<FParticleCollisionFilterData>& PerParticleData);
+	CHAOS_API void SetDamagePropagationData_Internal(bool bEnabled, float BreakDamagePropagationFactor, float ShockDamagePropagationFactor);
+	CHAOS_API void SetDamageThresholds_Internal(const TArray<float>& DamageThresholds);
+	CHAOS_API void SetDamageModel_Internal(EDamageModelTypeEnum DamageModel);
+	CHAOS_API void SetUseMaterialDamageModifiers_Internal(bool bUseMaterialDamageModifiers);
+	CHAOS_API void SetMaterialOverrideMassScaleMultiplier_Internal(float InMultiplier);
+	CHAOS_API void SetGravityGroupIndex_Internal(int32 GravityGroupIndex);
+	CHAOS_API void SetOneWayInteractionLevel_Internal(int32 InOneWayInteractionLevel);
+	CHAOS_API void SetPhysicsMaterial_Internal(const Chaos::FMaterialHandle& MaterialHandle);
+
 private:
 
+	static TBitArray<> CalculateClustersToCreateFromChildren(const FGeometryDynamicCollection& DynamicCollection, int32 NumTransforms);
+	static int32 CalculateEffectiveParticles(const FGeometryDynamicCollection& DynamicCollection, int32 NumTransform, int32 MaxSimulatedLevel, bool bEnableClustering, const UObject* Owner, TBitArray<>& EffectiveParticles);
+
+	void CreateGTParticles(TManagedArray<Chaos::FImplicitObjectPtr>& Implicits, Chaos::FPBDRigidsEvolutionBase* Evolution, bool bInitializeRootOnly);
+	void CreateChildrenGeometry_External();
+	void SyncParticles_External();
+	
 	/**
 	 * Since geometry collections only buffer data that has changed, when PullFromPhysicsState is given both PrevData and NextData it must
 	 * examine *both* PrevData and NextData for data about a particle (since that particle's data coudl be in PrevData and not NextData).
@@ -554,26 +657,29 @@ private:
 	//
 	//  Proxy State Information
 	//
-	int32 NumParticles;
+	int32 NumTransforms;
 	int32 NumEffectiveParticles;
 	int32 BaseParticleIndex;
 	TArray<FParticleHandle*> SolverClusterID;
 	TArray<FClusterHandle*> SolverClusterHandles; // make a TArray of the base clase with type
 	TArray<FClusterHandle*> SolverParticleHandles;// make a TArray of base class and join with above
-	TSet<FClusterHandle*> SolverAnchors;
 	TMap<FParticleHandle*, int32> HandleToTransformGroupIndex;
 	TMap<int32, FClusterHandle*> UniqueIdxToInternalClusterHandle;
+	TArray<Chaos::FUniqueIdx> UniqueIdxs;
+	TArray<int32> FromParticleToTransformIndex;
+	TArray<int32> FromTransformToParticleIndex;
+	TBitArray<> EffectiveParticles;
 
 	//
 	// Buffer Results State Information
 	//
 	bool IsObjectDynamic; // Records current dynamic state
 	bool IsObjectLoading; // Indicate when loaded
-	bool IsObjectDeleting; // Indicatge when pending deletion
+	bool IsObjectDeleting; // Indicate when pending deletion
 
 	EReplicationMode ReplicationMode = EReplicationMode::Unknown;	
 
-	TManagedArray<TUniquePtr<FParticle>> GTParticles;
+	TArray<TUniquePtr<FParticle>> GTParticles;
 	TMap<FParticle*, int32> GTParticlesToTransformGroupIndex;
 	TMap<FParticle*, int32> GTParticlesToInternalClusterUniqueIdx;
 	TMap<int32, TArray<int32>> InternalClusterUniqueIdxToChildrenTransformIndices;
@@ -588,11 +694,14 @@ private:
 	TArray<FBox> ValidGeometryBoundingBoxes;
 	TArray<int32> ValidGeometryTransformIndices;
 
+	// todo(chaos): Remove this and move to a cook time approach of the SM data based on the GC property
+	FCreateTraceCollisionGeometryCallback CreateTraceCollisionGeometryCallback;
+	
 #ifdef TODO_REIMPLEMENT_RIGID_CACHING
 	TFunction<void(void)> ResetAnimationCacheCallback;
 	TFunction<void(const TArrayView<FTransform> &)> UpdateTransformsCallback;
 	TFunction<void(const int32 & CurrentFrame, const TManagedArray<int32> & RigidBodyID, const TManagedArray<int32>& Level, const TManagedArray<int32>& Parent, const TManagedArray<TSet<int32>>& Children, const TManagedArray<uint32>& SimulationType, const TManagedArray<uint32>& StatusFlags, const FParticlesType& Particles)> UpdateRestStateCallback;
-	TFunction<void(float SolverTime, const TManagedArray<int32> & RigidBodyID, const FParticlesType& Particles, const FCollisionConstraintsType& CollisionRule)> UpdateRecordedStateCallback;
+	TFunction<void(float SolverTime, const TManagedArray<int32> & RigidBodyID, const FParticlesType& Particles, const Chaos::FPBDCollisionConstraints& CollisionRule)> UpdateRecordedStateCallback;
 	TFunction<void(FRecordedTransformTrack& InTrack)> CommitRecordedStateCallback;
 
 	// Index of the first particles for this collection in the larger particle array
@@ -609,6 +718,7 @@ private:
 
 	// called after we sync the physics thread data ( called on the game thread )
 	TFunction<void()> PostPhysicsSyncCallback;
+	TFunction<void()> PostParticlesCreatedCallback;
 	
 	// Per object collision fraction.
 	float CollisionParticlesPerObjectFraction;
@@ -620,10 +730,13 @@ private:
 	FGeometryDynamicCollection PhysicsThreadCollection;
 	FGeometryDynamicCollection& GameThreadCollection;
 
-	// this data flows from Game thread to physics thread
-	FGeometryCollectioPerFrameData GameThreadPerFrameData;
-	bool bIsPhysicsThreadWorldTransformDirty;
-	bool bIsCollisionFilterDataDirty;
+	// todo : we should probably keep a simulation parameter copy on the game thread instead 
+	FTransform WorldTransform_External;
+	FTransform PreviousWorldTransform_External;
+	uint8 bIsGameThreadWorldTransformDirty : 1;
+
+	uint8 bHasBuiltGeometryOnPT : 1;
+	uint8 bHasBuiltGeometryOnGT : 1;
 
 	// Currently this is using triple buffers for game-physics and 
 	// physics-game thread communication, but not for any reason other than this 
@@ -636,7 +749,7 @@ private:
 	// paradigm, at least for this component of the handshake.
 	Chaos::FGuardedTripleBuffer<FGeometryCollectionResults> PhysToGameInterchange;
 
-	FProxyInterpolationBase InterpolationData;
+	FProxyInterpolationError InterpolationData;
 
 	// this is used as a unique ID when collecting data from runtime
 	FGuid CollectorGuid;

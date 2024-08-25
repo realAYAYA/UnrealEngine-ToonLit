@@ -148,7 +148,7 @@ void FTexturePageMap::UnmapPage(FVirtualTextureSystem* System, FVirtualTextureSp
 		if ((SortedAddIndexes[AddIndex] & 0xffffffff) == PageIndex)
 		{
 			bFoundInAddIndexes = true;
-			SortedAddIndexes.RemoveAtSwap(AddIndex, 1, false);
+			SortedAddIndexes.RemoveAtSwap(AddIndex, 1, EAllowShrinking::No);
 			break;
 		}
 	}
@@ -292,8 +292,8 @@ inline void FTexturePageMap::BuildSortedKeys()
 	Exchange(SortedAddresses, UnsortedAddresses);
 
 	uint32 NumUnsorted = UnsortedKeys.Num();
-	SortedKeys.SetNum(NumUnsorted + SortedAddIndexes.Num() - SortedSubIndexes.Num(), false);
-	SortedAddresses.SetNum(NumUnsorted + SortedAddIndexes.Num() - SortedSubIndexes.Num(), false);
+	SortedKeys.SetNum(NumUnsorted + SortedAddIndexes.Num() - SortedSubIndexes.Num(), EAllowShrinking::No);
+	SortedAddresses.SetNum(NumUnsorted + SortedAddIndexes.Num() - SortedSubIndexes.Num(), EAllowShrinking::No);
 
 	int32 SubI = 0;
 	int32 AddI = 0;
@@ -657,7 +657,7 @@ void FTexturePageMap::ExpandPageTableUpdateMasked(FVirtualTextureSystem* System,
 				// Fetch next update
 				if (Stack.Num())
 				{
-					Update = Stack.Pop(false);
+					Update = Stack.Pop(EAllowShrinking::No);
 				}
 				else if (InputIndex < LoopInput.Num())
 				{
@@ -679,7 +679,7 @@ void FTexturePageMap::ExpandPageTableUpdateMasked(FVirtualTextureSystem* System,
 			// Add remaining stack to output
 			while (Stack.Num())
 			{
-				LoopOutput.Add(Stack.Pop(false));
+				LoopOutput.Add(Stack.Pop(EAllowShrinking::No));
 			}
 			// Add remaining input to output
 			LoopOutput.Append(LoopInput.GetData() + InputIndex, LoopInput.Num() - InputIndex);

@@ -64,7 +64,7 @@
 #include "BufferVisualizationData.h"
 #include "NaniteVisualizationData.h"
 #include "LumenVisualizationData.h"
-#include "StrataVisualizationData.h"
+#include "SubstrateVisualizationData.h"
 #include "GroomVisualizationData.h"
 #include "VirtualShadowMapVisualizationData.h"
 #include "Framework/Notifications/NotificationManager.h"
@@ -80,7 +80,7 @@
 #include "BufferVisualizationMenuCommands.h"
 #include "NaniteVisualizationMenuCommands.h"
 #include "LumenVisualizationMenuCommands.h"
-#include "StrataVisualizationMenuCommands.h"
+#include "SubstrateVisualizationMenuCommands.h"
 #include "VirtualShadowMapVisualizationMenuCommands.h"
 #include "EditorLevelUtils.h"
 #include "Engine/LevelStreaming.h"
@@ -116,6 +116,87 @@ bool SLevelViewport::bInViewportMenuEnabled = false;
 namespace SLevelViewportPIEAnimation
 {
 	float const MouseControlLabelFadeout = 5.0f;
+}
+
+namespace UE::SLevelViewport::Internal
+{
+	bool SaveViewportInfo(UWorld* World, FLevelEditorViewportClient* LevelEditorViewportClient, ULevelEditorViewportSettings* LevelEditorViewportSettings)
+	{
+		if (!World || !LevelEditorViewportClient || !LevelEditorViewportSettings)
+		{
+			return false;
+		}
+
+		// there could potentially be more than one of the same viewport type.  This effectively takes the last one of a specific type
+		World->EditorViews[LevelEditorViewportClient->ViewportType] =
+			FLevelViewportInfo(
+				LevelEditorViewportClient->GetViewLocation(),
+				LevelEditorViewportClient->GetViewRotation(),
+				LevelEditorViewportClient->GetOrthoZoom());
+
+		LevelEditorViewportSettings->EditorViews.FindOrAdd(World).LevelViewportsInfo = World->EditorViews;
+		LevelEditorViewportSettings->SaveConfig();
+
+		return true;
+	}
+
+	bool LoadViewportInfo(UWorld* World, FLevelEditorViewportClient* LevelEditorViewportClient, ULevelEditorViewportSettings* LevelEditorViewportSettings)
+	{
+		if (!World || !LevelEditorViewportClient || !LevelEditorViewportSettings)
+		{
+			return false;
+		}
+
+		if (FLevelEditorViewporEditorViews* PerUserEditorViews = LevelEditorViewportSettings->EditorViews.Find(World))
+		{
+			World->EditorViews = PerUserEditorViews->LevelViewportsInfo;
+		}
+
+		LevelEditorViewportClient->ResetCamera();
+
+		bool bInitializedOrthoViewport = false;
+		for (int32 ViewportType = 0; ViewportType < LVT_MAX; ViewportType++)
+		{
+			float& CamOrthoZoom = World->EditorViews[ViewportType].CamOrthoZoom;
+			if (CamOrthoZoom < MIN_ORTHOZOOM || CamOrthoZoom > MAX_ORTHOZOOM)
+			{
+				CamOrthoZoom = DEFAULT_ORTHOZOOM;
+			}
+
+			if (ViewportType == LVT_Perspective || !bInitializedOrthoViewport)
+			{
+				LevelEditorViewportClient->SetInitialViewTransform(
+					static_cast<ELevelViewportType>(ViewportType),
+					World->EditorViews[ViewportType].CamPosition,
+					World->EditorViews[ViewportType].CamRotation,
+					World->EditorViews[ViewportType].CamOrthoZoom);
+
+				if (ViewportType != LVT_Perspective)
+				{
+					bInitializedOrthoViewport = true;
+				}
+			}
+		}
+
+		return true;
+	}
+
+	// Clears existing selection, then selects the specified actor 
+	void SelectActor(AActor* InActor)
+	{
+		check(InActor);
+
+		const FLevelEditorModule& LevelEditorModule = FModuleManager::LoadModuleChecked<FLevelEditorModule>(LevelEditorName);
+		FEditorModeTools& EditorModeManager = LevelEditorModule.GetFirstLevelEditor()->GetEditorModeManager();
+		
+		// Deselect any currently selected actors
+		EditorModeManager.SelectNone();
+		EditorModeManager.GetSelectedActors()->DeselectAll();
+		EditorModeManager.GetSelectedObjects()->DeselectAll();
+		EditorModeManager.GetSelectedActors()->Select(InActor, true);
+
+		EditorModeManager.ActorSelectionChangeNotify();
+	}
 }
 
 class FLevelViewportDropContextMenuImpl
@@ -163,6 +244,7 @@ SLevelViewport::~SLevelViewport()
 	if(UObjectInitialized())
 	{
 		GEngine->OnLevelActorDeleted().RemoveAll(this);
+		GEngine->OnEditorClose().RemoveAll( this );
 
 		GetMutableDefault<ULevelEditorViewportSettings>()->OnSettingChanged().RemoveAll(this);
 	}
@@ -262,6 +344,7 @@ void SLevelViewport::Construct(const FArguments& InArgs, const FAssetEditorViewp
 	LevelEditor.OnMapChanged().AddRaw( this, &SLevelViewport::OnMapChanged );
 
 	GEngine->OnLevelActorDeleted().AddRaw( this, &SLevelViewport::OnLevelActorsRemoved );
+	GEngine->OnEditorClose().AddRaw( this, &SLevelViewport::OnEditorClose );
 
 	FEditorDelegates::PostPIEStarted.AddSP(this, &SLevelViewport::TransitionToPIE);
 	FEditorDelegates::PrePIEEnded.AddSP(this, &SLevelViewport::TransitionFromPIE);
@@ -495,7 +578,7 @@ void SLevelViewport::ConstructLevelEditorViewportClient(FLevelEditorViewportInst
 	LevelViewportClient->CurrentBufferVisualizationMode = ViewportInstanceSettings.BufferVisualizationMode;
 	LevelViewportClient->CurrentNaniteVisualizationMode = ViewportInstanceSettings.NaniteVisualizationMode;
 	LevelViewportClient->CurrentLumenVisualizationMode = ViewportInstanceSettings.LumenVisualizationMode;
-	LevelViewportClient->CurrentStrataVisualizationMode = ViewportInstanceSettings.StrataVisualizationMode;
+	LevelViewportClient->CurrentSubstrateVisualizationMode = ViewportInstanceSettings.SubstrateVisualizationMode;
 	LevelViewportClient->CurrentGroomVisualizationMode = ViewportInstanceSettings.GroomVisualizationMode;
 	LevelViewportClient->CurrentVirtualShadowMapVisualizationMode = ViewportInstanceSettings.VirtualShadowMapVisualizationMode;
 	LevelViewportClient->CurrentRayTracingDebugVisualizationMode = ViewportInstanceSettings.RayTracingDebugVisualizationMode;
@@ -505,8 +588,8 @@ void SLevelViewport::ConstructLevelEditorViewportClient(FLevelEditorViewportInst
 	{
 		LevelViewportClient->SetViewLocation( EditorViewportDefs::DefaultPerspectiveViewLocation );
 		LevelViewportClient->SetViewRotation( EditorViewportDefs::DefaultPerspectiveViewRotation );
-		LevelViewportClient->SetAllowCinematicControl(true);
 	}
+	LevelViewportClient->SetAllowCinematicControl(ViewportInstanceSettings.bAllowCinematicControl);
 	LevelViewportClient->SetRealtime(ViewportInstanceSettings.bIsRealtime);
 	LevelViewportClient->SetShowStats(ViewportInstanceSettings.bShowOnScreenStats);
 	if (ViewportInstanceSettings.bShowFPS_DEPRECATED)
@@ -700,7 +783,7 @@ void SLevelViewport::OnDragLeave( const FDragDropEvent& DragDropEvent )
 {
 	if ( LevelViewportClient->HasDropPreviewActors() )
 	{
-		LevelViewportClient->DestroyDropPreviewActors();
+		LevelViewportClient->DestroyDropPreviewElements();
 	}
 
 	TSharedPtr<FDragDropOperation> Operation = DragDropEvent.GetOperation();
@@ -842,7 +925,7 @@ bool SLevelViewport::HandlePlaceDraggedObjects(const FGeometry& MyGeometry, cons
 {
 	bool bAllAssetWereLoaded = false;
 	bool bValidDrop = false;
-	UActorFactory* ActorFactory = nullptr;
+	TScriptInterface<IAssetFactoryInterface> AssetFactory = nullptr;
 
 	TSharedPtr< FDragDropOperation > Operation = DragDropEvent.GetOperation();
 	if (!Operation.IsValid())
@@ -888,7 +971,7 @@ bool SLevelViewport::HandlePlaceDraggedObjects(const FGeometry& MyGeometry, cons
 
 		TSharedPtr<FAssetDragDropOp> DragDropOp = StaticCastSharedPtr<FAssetDragDropOp>( Operation );
 
-		ActorFactory = DragDropOp->GetActorFactory();
+		AssetFactory = DragDropOp->GetAssetFactory();
 
 		bAllAssetWereLoaded = true;
 		for (const FAssetData& AssetData : DragDropOp->GetAssets())
@@ -968,15 +1051,21 @@ bool SLevelViewport::HandlePlaceDraggedObjects(const FGeometry& MyGeometry, cons
 		bool bDropSuccessful = false;
 
 		// Make sure the drop preview is destroyed
-		LevelViewportClient->DestroyDropPreviewActors();
+		LevelViewportClient->DestroyDropPreviewElements();
 
 		if( !bShowDropContextMenu || !bCreateDropPreview )
 		{
 			// Otherwise just attempt to drop the object(s)
-			TArray< AActor* > TemporaryActors;
+			FLevelEditorViewportClient::FDropObjectOptions DropOptions;
+			DropOptions.FactoryToUse = AssetFactory;
+			DropOptions.bOnlyDropOnTarget = false;
+			DropOptions.bCreateDropPreview = bCreateDropPreview;
 			// Only select actor on drop
-			const bool SelectActor = !bCreateDropPreview;
-			bDropSuccessful = LevelViewportClient->DropObjectsAtCoordinates(CachedOnDropLocalMousePos.X, CachedOnDropLocalMousePos.Y, DroppedObjects, TemporaryActors, false, bCreateDropPreview, SelectActor, ActorFactory);
+			DropOptions.bSelectOutput = !bCreateDropPreview;
+
+			TArray<FTypedElementHandle> Unused;
+			bDropSuccessful = LevelViewportClient->DropObjectsAtCoordinates(CachedOnDropLocalMousePos.X, CachedOnDropLocalMousePos.Y, 
+				DroppedObjects, Unused, DropOptions);
 		}
 		else if ( bAllAssetWereLoaded && DroppedObjects.Num() > 0 )
 		{
@@ -1206,58 +1295,22 @@ TSharedRef< SWidget > SLevelViewport::BuildViewportDragDropContextMenu()
 
 void SLevelViewport::OnMapChanged( UWorld* World, EMapChangeType MapChangeType )
 {
+	using namespace UE::SLevelViewport::Internal;
+
 	if( World && ( ( World == GetWorld() ) || ( World->EditorViews[LevelViewportClient->ViewportType].CamUpdated ) ) )
 	{
 		if( MapChangeType == EMapChangeType::LoadMap )
 		{
-			if (FLevelEditorViewporEditorViews* PerUserEditorViews = GetMutableDefault<ULevelEditorViewportSettings>()->EditorViews.Find(World))
-			{
-				World->EditorViews = PerUserEditorViews->LevelViewportsInfo;
-			}
-
-			if (World->EditorViews[LevelViewportClient->ViewportType].CamOrthoZoom == 0.0f)
-			{
-				World->EditorViews[LevelViewportClient->ViewportType].CamOrthoZoom = DEFAULT_ORTHOZOOM;
-			}
-	
 			ResetNewLevelViewFlags();
-			LevelViewportClient->ResetCamera();
-
-			bool bInitializedOrthoViewport = false;
-			for (int32 ViewportType = 0; ViewportType < LVT_MAX; ViewportType++)
-			{
-				if (ViewportType == LVT_Perspective || !bInitializedOrthoViewport)
-				{
-					LevelViewportClient->SetInitialViewTransform(
-						static_cast<ELevelViewportType>(ViewportType),
-						World->EditorViews[ViewportType].CamPosition,
-						World->EditorViews[ViewportType].CamRotation,
-						World->EditorViews[ViewportType].CamOrthoZoom);
-
-					if (ViewportType != LVT_Perspective)
-					{
-						bInitializedOrthoViewport = true;
-					}
-				}
-			}
+			LoadViewportInfo(World, LevelViewportClient.Get(), GetMutableDefault<ULevelEditorViewportSettings>());
 		}
 		else if( (MapChangeType == EMapChangeType::SaveMap) || (MapChangeType == EMapChangeType::TearDownWorld))
 		{
-			//@todo there could potentially be more than one of the same viewport type.  This effectively takes the last one of a specific type
-			World->EditorViews[LevelViewportClient->ViewportType] = 
-				FLevelViewportInfo( 
-					LevelViewportClient->GetViewLocation(),
-					LevelViewportClient->GetViewRotation(), 
-					LevelViewportClient->GetOrthoZoom() );
-
-			GetMutableDefault<ULevelEditorViewportSettings>()->EditorViews.FindOrAdd(World).LevelViewportsInfo = World->EditorViews;
-			GetMutableDefault<ULevelEditorViewportSettings>()->SaveConfig();
+			SaveViewportInfo(World, LevelViewportClient.Get(), GetMutableDefault<ULevelEditorViewportSettings>());
 		}
 		else if( MapChangeType == EMapChangeType::NewMap )
-		{		
-		
+		{
 			ResetNewLevelViewFlags();
-
 			LevelViewportClient->ResetViewForNewMap();
 		}
 		World->EditorViews[LevelViewportClient->ViewportType].CamUpdated = false;
@@ -1266,6 +1319,11 @@ void SLevelViewport::OnMapChanged( UWorld* World, EMapChangeType MapChangeType )
 
 		RedrawViewport(true);
 	}
+}
+
+void SLevelViewport::OnEditorClose()
+{
+	UE::SLevelViewport::Internal::SaveViewportInfo(GetWorld(), LevelViewportClient.Get(), GetMutableDefault<ULevelEditorViewportSettings>());
 }
 
 void SLevelViewport::OnLevelActorsRemoved(AActor* InActor)
@@ -1489,7 +1547,8 @@ void SLevelViewport::BindOptionCommands( FUICommandList& OutCommandList )
 	{
 		OutCommandList.MapAction( 
 			ViewportActions.JumpToBookmarkCommands[BookmarkIndex],
-			FExecuteAction::CreateSP( this, &SLevelViewport::OnJumpToBookmark, BookmarkIndex )
+			FExecuteAction::CreateSP( this, &SLevelViewport::OnJumpToBookmark, BookmarkIndex ),
+			FCanExecuteAction::CreateSP(this, &SLevelViewport::OnHasBookmarkSet, BookmarkIndex)
 			);
 
 		OutCommandList.MapAction( 
@@ -1532,6 +1591,12 @@ void SLevelViewport::BindViewCommands( FUICommandList& OutCommandList )
 		);
 
 	OutCommandList.MapAction(
+		ViewportActions.SelectPilotedActor,
+		FExecuteAction::CreateSP( this, &SLevelViewport::OnSelectLockedActor ),
+		FCanExecuteAction::CreateSP( this, &SLevelViewport::CanExecuteSelectLockedActor )
+		);
+
+	OutCommandList.MapAction(
 		ViewportActions.EjectActorPilot,
 		FExecuteAction::CreateSP( this, &SLevelViewport::OnActorUnlock ),
 		FCanExecuteAction::CreateSP( this, &SLevelViewport::CanExecuteActorUnlock )
@@ -1554,9 +1619,9 @@ void SLevelViewport::BindViewCommands( FUICommandList& OutCommandList )
 	FBufferVisualizationMenuCommands::Get().BindCommands(OutCommandList, Client);
 	FNaniteVisualizationMenuCommands::Get().BindCommands(OutCommandList, Client);
 	FLumenVisualizationMenuCommands::Get().BindCommands(OutCommandList, Client);
-	if (Strata::IsStrataEnabled())
+	if (Substrate::IsSubstrateEnabled())
 	{
-		FStrataVisualizationMenuCommands::Get().BindCommands(OutCommandList, Client);
+		FSubstrateVisualizationMenuCommands::Get().BindCommands(OutCommandList, Client);
 	}
 	if (IsGroomEnabled())
 	{
@@ -1951,13 +2016,8 @@ void SLevelViewport::OnCreateCameraActor(UClass* InClass)
 	pNewCamera->SetActorRotation( ViewportClient->GetViewRotation() );
 	pNewCamera->GetCameraComponent()->SetFieldOfView( ViewportClient->ViewFOV );
 
-	// Deselect any currently selected actors
-	GUnrealEd->SelectNone( false, true );
-	GEditor->GetSelectedActors()->DeselectAll();
-	GEditor->GetSelectedObjects()->DeselectAll();
-
-	// Select newly created Camera
-	GEditor->SelectActor( pNewCamera, true, true );
+	// Deselect any currently selected actors, then select newly created camera
+	UE::SLevelViewport::Internal::SelectActor(pNewCamera);
 
 	// Send notification about actors that may have changed
 	ULevel::LevelDirtiedEvent.Broadcast();
@@ -1988,7 +2048,17 @@ void SLevelViewport::ToggleGameView()
 	{
 		bool bGameViewEnable = !LevelViewportClient->IsInGameView();
 
+		// "Mode Widget" should not automatically be reactivated by selecting an actor after "Game View" is enabled
+		LevelViewportClient->bAlwaysShowModeWidgetAfterSelectionChanges = bGameViewEnable ? false : true;
+
 		LevelViewportClient->SetGameView(bGameViewEnable);
+
+		if (!bGameViewEnable)
+		{
+			// LevelViewportClient->bShowWidget is set to "false" when entering game mode
+			// Need to turn it back to "true" when exiting game mode
+			LevelViewportClient->ShowWidget(true);
+		}
 	}
 }
 
@@ -2263,13 +2333,14 @@ void SLevelViewport::SaveConfig(const FString& ConfigName) const
 		ViewportInstanceSettings.BufferVisualizationMode = LevelViewportClient->CurrentBufferVisualizationMode;
 		ViewportInstanceSettings.NaniteVisualizationMode = LevelViewportClient->CurrentNaniteVisualizationMode;
 		ViewportInstanceSettings.LumenVisualizationMode = LevelViewportClient->CurrentLumenVisualizationMode;
-		ViewportInstanceSettings.StrataVisualizationMode = LevelViewportClient->CurrentStrataVisualizationMode;
+		ViewportInstanceSettings.SubstrateVisualizationMode = LevelViewportClient->CurrentSubstrateVisualizationMode;
 		ViewportInstanceSettings.GroomVisualizationMode = LevelViewportClient->CurrentGroomVisualizationMode;
 		ViewportInstanceSettings.VirtualShadowMapVisualizationMode = LevelViewportClient->CurrentVirtualShadowMapVisualizationMode;
 		ViewportInstanceSettings.RayTracingDebugVisualizationMode = LevelViewportClient->CurrentRayTracingDebugVisualizationMode;
 		ViewportInstanceSettings.GPUSkinCacheVisualizationMode = LevelViewportClient->CurrentGPUSkinCacheVisualizationMode;
 		ViewportInstanceSettings.ExposureSettings = LevelViewportClient->ExposureSettings;
 		ViewportInstanceSettings.FOVAngle = LevelViewportClient->FOVAngle;
+		ViewportInstanceSettings.bAllowCinematicControl = LevelViewportClient->AllowsCinematicControl();
 	
 		LevelViewportClient->SaveRealtimeStateToConfig(ViewportInstanceSettings.bIsRealtime);
 	
@@ -2369,6 +2440,7 @@ FLevelEditorViewportInstanceSettings SLevelViewport::LoadLegacyConfigFromIni(con
 	GConfig->GetBool(*IniSection, *(InConfigKey + TEXT(".bWantStats")), ViewportInstanceSettings.bShowOnScreenStats, GEditorPerProjectIni);
 	GConfig->GetBool(*IniSection, *(InConfigKey + TEXT(".bWantFPS")), ViewportInstanceSettings.bShowFPS_DEPRECATED, GEditorPerProjectIni);
 	GConfig->GetFloat(*IniSection, *(InConfigKey + TEXT(".FOVAngle")), ViewportInstanceSettings.FOVAngle, GEditorPerProjectIni);
+	GConfig->GetBool(*IniSection, *(InConfigKey + TEXT(".bAllowCinematicControl")), ViewportInstanceSettings.bAllowCinematicControl, GEditorPerProjectIni);
 
 	return ViewportInstanceSettings;
 }
@@ -2382,6 +2454,11 @@ void SLevelViewport::OnSetBookmark( int32 BookmarkIndex )
 void SLevelViewport::OnJumpToBookmark( int32 BookmarkIndex )
 {
 	IBookmarkTypeTools::Get().JumpToBookmark( BookmarkIndex, TSharedPtr<struct FBookmarkBaseJumpToSettings>(), LevelViewportClient.Get() );
+}
+
+bool SLevelViewport::OnHasBookmarkSet(int32 BookmarkIndex)
+{
+	return IBookmarkTypeTools::Get().CheckBookmark(BookmarkIndex, LevelViewportClient.Get());
 }
 
 void SLevelViewport::OnClearBookmark(int32 BookmarkIndex)
@@ -2493,6 +2570,25 @@ bool SLevelViewport::CanFindSelectedInLevelScript() const
 {
 	AActor* Actor = GEditor->GetSelectedActors()->GetTop<AActor>();
 	return (Actor != nullptr);
+}
+
+void SLevelViewport::OnSelectLockedActor()
+{
+	if (AActor* LockedActor = LevelViewportClient->GetActiveActorLock().Get())
+	{
+		// Deselect any currently selected actors, then select the locked/piloted actor
+		UE::SLevelViewport::Internal::SelectActor(LockedActor);
+	}
+}
+
+bool SLevelViewport::CanExecuteSelectLockedActor() const
+{
+	if (const AActor* LockedActor = LevelViewportClient->GetActiveActorLock().Get())
+	{
+		return LockedActor->IsSelectable();
+	}
+
+	return false;
 }
 
 void SLevelViewport::OnActorUnlock()
@@ -2760,6 +2856,9 @@ void SLevelViewport::OnActorSelectionChanged(const TArray<UObject*>& NewSelectio
 		{
 			LevelViewportClient->EngineShowFlags.SetModeWidgets(true);
 		}
+
+		// In game mode, selecting any actor should make LevelViewportClient->bShowWidget be "true"
+		LevelViewportClient->ShowWidget(true);
 		LevelViewportClient->EngineShowFlags.SetSelection(true);
 		LevelViewportClient->EngineShowFlags.SetSelectionOutline(GetDefault<ULevelEditorViewportSettings>()->bUseSelectionOutline);
 	}
@@ -4026,6 +4125,8 @@ void SLevelViewport::StartPlayInEditorSession(UGameViewportClient* PlayClient, c
 	ActiveViewport->SetPlayInEditorIsSimulate(bInSimulateInEditor);
 	
 	ActiveViewport->OnPlayWorldViewportSwapped( *InactiveViewport );
+	
+	LevelViewportClient->AddRealtimeOverride(false, LOCTEXT("LevelViewport_RealTimeDisableOnPie", "Disable LevelViewport Realtime for PIE"));
 
 	TSharedPtr<SWindow> ParentWindow = FSlateApplication::Get().FindWidgetWindow(AsShared());
 	PlayClient->SetViewportOverlayWidget(ParentWindow, PIEViewportOverlayWidget.ToSharedRef());
@@ -4225,6 +4326,9 @@ void SLevelViewport::EndPlayInEditorSession()
 	FSlateApplication::Get().UnregisterGameViewport();
 
 	check( InactiveViewport.IsValid() );
+
+	const bool bCheckMissingOverride = false;
+	LevelViewportClient->RemoveRealtimeOverride(LOCTEXT("LevelViewport_RealTimeDisableOnPie", "Disable LevelViewport Realtime for PIE"), bCheckMissingOverride);
 
 	if( IsPlayInEditorViewportActive() )
 	{

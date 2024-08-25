@@ -28,6 +28,9 @@ struct FAndroidPlatformStackWalk : public FGenericPlatformStackWalk
 
 	static CORE_API void ProgramCounterToSymbolInfo(uint64 ProgramCounter, FProgramCounterSymbolInfo& out_SymbolInfo);
 	static CORE_API uint32 CaptureStackBackTrace(uint64* BackTrace, uint32 MaxDepth, void* Context = nullptr);
+	// Fast stack backtrace, only for tracing.
+	// Will NOT work from signal handlers, is NOT suitable for crashreporting. Will not see inline functions.
+	static CORE_API uint32 CaptureStackBackTraceViaFramePointerWalking(uint64* BackTrace, uint32 MaxDepth);
 	static CORE_API bool SymbolInfoToHumanReadableString(const FProgramCounterSymbolInfo& SymbolInfo, ANSICHAR* HumanReadableString, SIZE_T HumanReadableStringSize);
 
 	static CORE_API uint32 CaptureThreadStackBackTrace(uint64 ThreadId, uint64* BackTrace, uint32 MaxDepth, void* Context = nullptr);

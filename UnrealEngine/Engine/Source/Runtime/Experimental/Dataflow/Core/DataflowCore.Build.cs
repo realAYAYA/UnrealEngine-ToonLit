@@ -14,6 +14,7 @@ namespace UnrealBuildTool.Rules
 					"Chaos",
 					"DeveloperSettings",
 					"InputCore",
+					"ApplicationCore"
 				}
 			);
 		}

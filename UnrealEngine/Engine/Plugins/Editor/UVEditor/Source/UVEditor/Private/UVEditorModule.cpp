@@ -147,22 +147,29 @@ void FUVEditorModule::RegisterMenus()
 			// We are interested in the (unique) assets backing the actor, or else the actor
 			// itself if it is not asset backed (such as UDynamicMesh).
 			const AActor* Actor = static_cast<AActor*>(*It);
-			TArray<UObject*> ActorAssets;
-			Actor->GetReferencedContentObjects(ActorAssets);
 
-			if (ActorAssets.Num() > 0)
+			// We need to determine if there are components under this actor first,
+			// to ensure we generate Component based targets. Otherwise we can use
+			// the referenced content inside to generate more direct targets. This
+			// is important because otherwise we won't have access to component
+			// level data, such as transforms within the level editor, if we actually
+			// do want it for tools.
+
+			TInlineComponentArray<UActorComponent*> ActorComponents;
+			Actor->GetComponents(ActorComponents);
+
+			if (ActorComponents.Num() > 0)
 			{
+				Result.TargetObjects.Append(ActorComponents);
+			}
+			else
+			{
+				TArray<UObject*> ActorAssets;
+				Actor->GetReferencedContentObjects(ActorAssets);
 				for (UObject* Asset : ActorAssets)
 				{
 					Result.TargetObjects.AddUnique(Asset);
 				}
-			}
-			else
-			{
-				// Need to transform actors to components here because this is what our tool targets expect
-				TInlineComponentArray<UActorComponent*> ActorComponents;
-				Actor->GetComponents(ActorComponents);
-				Result.TargetObjects.Append(ActorComponents);
 			}
 		}
 

@@ -424,6 +424,7 @@ struct ast_type_qualifier
 			unsigned column_major : 1;
 			unsigned coherent : 1;
 			unsigned shared : 1;
+			unsigned precise : 1;
 
 			/** \name Layout qualifiers for GL_ARB_fragment_coord_conventions */
 			/*@{*/
@@ -779,6 +780,8 @@ public:
 
 	virtual ir_rvalue *hir(exec_list *instructions,
 	struct _mesa_glsl_parse_state *state);
+
+	void sortlabels();
 
 	/**
 	* A list of cases.

@@ -6,6 +6,7 @@
 #include "Analysis/MetasoundFrontendVertexAnalyzerForwardValue.h"
 #include "Components/AudioComponent.h"
 #include "DSP/Dsp.h"
+#include "DSP/MultithreadedPatching.h"
 #include "DSP/VolumeFader.h"
 #include "HAL/Platform.h"
 #include "MetasoundAssetBase.h"
@@ -42,8 +43,7 @@ namespace Metasound
 			{
 				check(InNum >= 0);
 
-				constexpr bool bAllowShrinking = false;
-				Data.SetNumZeroed(InNum, bAllowShrinking);
+				Data.SetNumZeroed(InNum, EAllowShrinking::No);
 
 				// Initialize to back of array to avoid initial
 				// value being behind when copying to initial array.
@@ -83,9 +83,9 @@ namespace Metasound
 
 		public:
 			FGraphConnectionManager() = default;
-			FGraphConnectionManager(const FMetasoundAssetBase& InAssetBase, const UAudioComponent& InAudioComponent, uint64 InTransmitterID, FSampleRate InSampleRate);
 			~FGraphConnectionManager() = default;
 
+			FGraphConnectionManager(const FMetasoundAssetBase& InAssetBase, const UAudioComponent& InAudioComponent, uint64 InTransmitterID, const FOperatorSettings& InOperatorSettings);
 			bool GetValue(const FGuid& InNodeID, FVertexName InOutputName, float& OutValue) const;
 			bool GetValue(const FGuid& InNodeID, FVertexName InOutputName, bool& OutValue) const;
 			bool GetValue(const FGuid& InNodeID, FVertexName InOutputName, int32& OutValue) const;
@@ -98,6 +98,9 @@ namespace Metasound
 			// Marks to track (if not yet tracked) & sets the window size of cached values.
 			// Retains existing values provided from update up to given size.
 			void TrackValue(const FGuid& InNodeID, FVertexName InOutputName, FName InAnalyzerName, int32 InWindowSize);
+
+			void TrackAudioPin(const FGuid& InNodeID, FVertexName InOutputName, FName InAnalyzerName, Audio::FPatchInput& InPatchInput);
+			void UntrackAudioPin(const FGuid& InNodeID, FVertexName InOutputName, FName InAnalyzerName);
 
 			void Update(float InDeltaTime);
 
@@ -115,24 +118,26 @@ namespace Metasound
 				using namespace Frontend;
 
 				const Frontend::FMetasoundGraphAnalyzerView* GraphView = GraphAnalyzerView.Get();
-				TArray<const FMetasoundAnalyzerView*> Views = GraphView->GetAnalyzerViewsForOutput(InNodeID, InOutputName, ForwardValueAnalyzerClass::GetAnalyzerName());
-				if (!Views.IsEmpty())
+				if (GraphView)
 				{
-					const FMetasoundAnalyzerView** View = Views.FindByPredicate([](const FMetasoundAnalyzerView* Candidate)
+					TArray<const FMetasoundAnalyzerView*> Views = GraphView->GetAnalyzerViewsForOutput(InNodeID, InOutputName, ForwardValueAnalyzerClass::GetAnalyzerName());
+					if (!Views.IsEmpty())
 					{
-						check(Candidate);
-						return Candidate->AnalyzerAddress.AnalyzerMemberName == ForwardValueAnalyzerClass::FOutputs::GetValue().Name;
-					});
+						const FMetasoundAnalyzerView** View = Views.FindByPredicate([](const FMetasoundAnalyzerView* Candidate)
+						{
+							check(Candidate);
+							return Candidate->AnalyzerAddress.AnalyzerMemberName == ForwardValueAnalyzerClass::FOutputs::GetValue().Name;
+						});
 
-					if (View)
-					{
-						check(*View);
-						const FAnalyzerAddress& Address = (*View)->AnalyzerAddress;
-						const FString AnalyzerKey = Address.ToString();
-						return AnalyzerKey;
+						if (View)
+						{
+							check(*View);
+							const FAnalyzerAddress& Address = (*View)->AnalyzerAddress;
+							const FString AnalyzerKey = Address.ToString();
+							return AnalyzerKey;
+						}
 					}
 				}
-
 				return { };
 			}
 
@@ -212,7 +217,10 @@ namespace Metasound
 				}
 			};
 
+			struct FAudioBufferKey : FWindowValueKey{};
+
 			TMap<FWindowValueKey, FFloatMovingWindow> WindowedValues;
+			TMap<FAudioBufferKey, TSharedRef<Audio::FPatchInput>> TrackedAudioPins;
 
 			TWeakObjectPtr<const UAudioComponent> AudioComponent;
 			TMap<FString, Audio::FVolumeFader> ConnectionFaders;

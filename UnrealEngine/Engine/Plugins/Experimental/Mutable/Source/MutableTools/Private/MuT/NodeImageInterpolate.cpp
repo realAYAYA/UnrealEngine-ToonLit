@@ -15,8 +15,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeImageInterpolate::Private::s_type =
-			NODE_TYPE( "ImageInterpolate", NodeImage::GetStaticType() );
+	FNodeType NodeImageInterpolate::Private::s_type =
+			FNodeType( "ImageInterpolate", NodeImage::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -24,55 +24,6 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 
 	MUTABLE_IMPLEMENT_NODE( NodeImageInterpolate, EType::Interpolate, Node, Node::EType::Image)
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	int NodeImageInterpolate::GetInputCount() const
-	{
-		return 1 + (int)m_pD->m_targets.Num();
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	Node* NodeImageInterpolate::GetInputNode( int i ) const
-	{
-		check( i>=0 && i<GetInputCount() );
-
-		Node* pResult = 0;
-
-		switch (i)
-		{
-		case 0:
-			pResult = m_pD->m_pFactor.get();
-			break;
-
-		default:
-			pResult = m_pD->m_targets[i-1].get();
-			break;
-		}
-
-		return pResult;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeImageInterpolate::SetInputNode( int i, NodePtr pNode )
-	{
-		check( i>=0 && i<GetInputCount() );
-
-		switch (i)
-		{
-		case 0:
-			m_pD->m_pFactor = dynamic_cast<NodeScalar*>(pNode.get());
-			break;
-
-		default:
-			m_pD->m_targets[i-1] = dynamic_cast<NodeImage*>(pNode.get());
-			break;
-		}
-	}
 
 
 	//---------------------------------------------------------------------------------------------

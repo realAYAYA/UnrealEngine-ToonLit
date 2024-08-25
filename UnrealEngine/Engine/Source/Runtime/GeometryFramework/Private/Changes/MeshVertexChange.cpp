@@ -46,6 +46,9 @@ FMeshVertexChangeBuilder::FMeshVertexChangeBuilder(EMeshVertexChangeComponents C
 	
 	bSaveOverlayNormals = ((Components & EMeshVertexChangeComponents::OverlayNormals) != EMeshVertexChangeComponents::None);
 	Change->bHaveOverlayNormals = bSaveOverlayNormals;
+
+	bSaveOverlayUVs = ((Components & EMeshVertexChangeComponents::OverylayUVs) != EMeshVertexChangeComponents::None);
+	Change->bHaveOverlayUVs = bSaveOverlayUVs;
 }
 
 void FMeshVertexChangeBuilder::UpdateVertex(int VertexID, const FVector3d& OldPosition, const FVector3d& NewPosition)
@@ -246,6 +249,86 @@ void FMeshVertexChangeBuilder::SaveOverlayNormals(const FDynamicMesh3* Mesh, con
 		{
 			FVector3f Normal = Overlay->GetElement(ElementID);
 			UpdateOverlayNormalFinal(ElementID, Normal);
+		}
+	}
+}
+
+void FMeshVertexChangeBuilder::UpdateOverlayUV(int ElementID, const FVector2f& OldUV, const FVector2f& NewUV)
+{
+	const int* FoundIndex = SavedUVElements.Find(ElementID);
+	if (FoundIndex == nullptr)
+	{
+		int NewIndex = Change->UVs.Num();
+		SavedUVElements.Add(ElementID, NewIndex);
+		Change->UVs.Add(ElementID);
+		Change->OldUVs.Add(OldUV);
+		Change->NewUVs.Add(NewUV);
+	}
+	else
+	{
+		Change->NewUVs[*FoundIndex] = NewUV;
+	}
+}
+
+void FMeshVertexChangeBuilder::UpdateOverlayUVFinal(int ElementID, const FVector2f& NewUV)
+{
+	check(SavedUVElements.Contains(ElementID));
+	const int* Index = SavedUVElements.Find(ElementID);
+	if (Index != nullptr)
+	{
+		Change->NewUVs[*Index] = NewUV;
+	}
+}
+
+void FMeshVertexChangeBuilder::SaveOverlayUVs(const FDynamicMesh3* Mesh, const TArray<int>& ElementIDs, bool bInitial)
+{
+	if (Mesh->HasAttributes() == false || Mesh->Attributes()->PrimaryUV() == nullptr)
+	{
+		return;
+	}
+	const FDynamicMeshUVOverlay* Overlay = Mesh->Attributes()->PrimaryUV();
+
+	int Num = ElementIDs.Num();
+	if (bInitial)
+	{
+		for (int k = 0; k < Num; ++k)
+		{
+			FVector2f UV = Overlay->GetElement(ElementIDs[k]);
+			UpdateOverlayUV(ElementIDs[k], UV, UV);
+		}
+	}
+	else
+	{
+		for (int k = 0; k < Num; ++k)
+		{
+			FVector2f UV = Overlay->GetElement(ElementIDs[k]);
+			UpdateOverlayUVFinal(ElementIDs[k], UV);
+		}
+	}
+}
+
+void FMeshVertexChangeBuilder::SaveOverlayUVs(const FDynamicMesh3* Mesh, const TSet<int>& ElementIDs, bool bInitial)
+{
+	if (Mesh->HasAttributes() == false || Mesh->Attributes()->PrimaryUV() == nullptr)
+	{
+		return;
+	}
+	const FDynamicMeshUVOverlay* Overlay = Mesh->Attributes()->PrimaryUV();
+
+	if (bInitial)
+	{
+		for (int ElementID : ElementIDs)
+		{
+			FVector2f UV = Overlay->GetElement(ElementID);
+			UpdateOverlayUV(ElementID, UV, UV);
+		}
+	}
+	else
+	{
+		for (int ElementID : ElementIDs)
+		{
+			FVector2f UV = Overlay->GetElement(ElementID);
+			UpdateOverlayUVFinal(ElementID, UV);
 		}
 	}
 }

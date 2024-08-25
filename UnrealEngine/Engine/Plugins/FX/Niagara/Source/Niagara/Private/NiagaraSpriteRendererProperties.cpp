@@ -54,7 +54,7 @@ FCookStatsManager::FAutoRegisterCallback NiagaraCutoutCookStats::RegisterCookSta
 UNiagaraSpriteRendererProperties::UNiagaraSpriteRendererProperties()
 	: Material(nullptr)
 	, MaterialUserParamBinding(FNiagaraTypeDefinition(UMaterialInterface::StaticClass()))
-	, bSubImageBlend(false)
+	, bSubImageBlend(true)
 	, bRemoveHMDRollInVR(false)
 	, bSortOnlyWhenTranslucent(true)
 #if WITH_EDITORONLY_DATA
@@ -131,7 +131,7 @@ void UNiagaraSpriteRendererProperties::GetUsedMaterials(const FNiagaraEmitterIns
 	OutMaterials.Add(MaterialInterface ? MaterialInterface : ToRawPtr(Material));
 }
 
-void UNiagaraSpriteRendererProperties::CollectPSOPrecacheData(FPSOPrecacheParamsList& OutParams)
+void UNiagaraSpriteRendererProperties::CollectPSOPrecacheData(const FNiagaraEmitterInstance* InEmitter, FPSOPrecacheParamsList& OutParams) const
 {
 	const FVertexFactoryType* VFType = GetVertexFactoryType();
 	UMaterialInterface* MaterialInterface = ToRawPtr(Material);
@@ -187,6 +187,7 @@ void UNiagaraSpriteRendererProperties::PostLoad()
 		MaterialParameterBindings_DEPRECATED.Empty();
 	}
 #endif
+	MaterialParameters.ConditionalPostLoad();
 }
 
 void UNiagaraSpriteRendererProperties::PostInitProperties()
@@ -213,15 +214,22 @@ void UNiagaraSpriteRendererProperties::Serialize(FStructuredArchive::FRecord Rec
 	const int32 NiagaraVersion = Ar.CustomVer(FNiagaraCustomVersion::GUID);
 	const int32 UE5MainVersion = Ar.CustomVer(FUE5MainStreamObjectVersion::GUID);
 
-	if (Ar.IsLoading() && (NiagaraVersion < FNiagaraCustomVersion::DisableSortingByDefault))
+	// Default Property Changes
+	if (Ar.IsLoading())
 	{
-		SortMode = ENiagaraSortMode::ViewDistance;
-	}
-
-	if (Ar.IsLoading() && (UE5MainVersion < FUE5MainStreamObjectVersion::NiagaraSpriteRendererFacingAlignmentAutoDefault))
-	{
-		Alignment = ENiagaraSpriteAlignment::Unaligned;
-		FacingMode = ENiagaraSpriteFacingMode::FaceCamera;
+		if (NiagaraVersion < FNiagaraCustomVersion::DisableSortingByDefault)
+		{
+			SortMode = ENiagaraSortMode::ViewDistance;
+		}
+		if (UE5MainVersion < FUE5MainStreamObjectVersion::NiagaraSpriteRendererFacingAlignmentAutoDefault)
+		{
+			Alignment = ENiagaraSpriteAlignment::Unaligned;
+			FacingMode = ENiagaraSpriteFacingMode::FaceCamera;
+		}
+		if (NiagaraVersion < FNiagaraCustomVersion::SubImageBlendEnabledByDefault)
+		{
+			bSubImageBlend = false;
+		}
 	}
 
 	// MIC will replace the main material during serialize
@@ -472,6 +480,7 @@ void UNiagaraSpriteRendererProperties::PostEditChangeProperty(struct FPropertyCh
 			PropertyName == TEXT("BoundingMode") ||
 			PropertyName == TEXT("OpacitySourceMode") ||
 			PropertyName == TEXT("AlphaThreshold") ||
+			MemberPropertyName == TEXT("SubImageSize") ||
 			(bUseMaterialCutoutTexture && PropertyName == TEXT("Material"));
 
 		if (bUpdateCutoutDDC)

@@ -22,7 +22,8 @@ struct FAxisConstraintDatas
 		const bool bHasSoftLimits,
 		const FReal SoftStiffness,
 		const FReal SoftDamping,
-		const FReal HardStiffness);
+		const FReal HardStiffness,
+		const bool bResetLambdas = true);
 
 	/** Initialize the max force ( force is modified for acceleration mode and converted to positional impulse limit) */
 	void SetMaxForce(
@@ -362,7 +363,8 @@ struct FAxisConstraintDatas
 		void InitPositionConstraints(
 			const FReal Dt,
 			const FPBDJointSolverSettings& SolverSettings,
-			const FPBDJointSettings& JointSettings);
+			const FPBDJointSettings& JointSettings,
+			const bool bResetLambdas);
 
 		void InitPositionDatasMass(
 			FAxisConstraintDatas& PositionDatas,
@@ -439,7 +441,8 @@ struct FAxisConstraintDatas
 		void InitRotationConstraints(
 			const FReal Dt,
 			const FPBDJointSolverSettings& SolverSettings,
-			const FPBDJointSettings& JointSettings);
+			const FPBDJointSettings& JointSettings,
+			const bool bResetLambdas);
 		
 		void CorrectAxisAngleConstraint(
 			const FPBDJointSettings& JointSettings,

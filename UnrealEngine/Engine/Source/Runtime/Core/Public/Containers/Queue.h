@@ -7,6 +7,8 @@
 #include "HAL/PlatformAtomics.h"
 #include "HAL/PlatformMisc.h"
 
+// WARNING: This queue is planned for deprecation in favor of TSpscQueue or TMpscQueue
+
 /**
  * Enumerates concurrent queue modes.
  */
@@ -117,7 +119,7 @@ public:
 
 		TNode* OldHead;
 
-		if (Mode == EQueueMode::Mpsc)
+		if constexpr (Mode == EQueueMode::Mpsc)
 		{
             OldHead = (TNode*)FPlatformAtomics::InterlockedExchangePtr((void**)&Head, NewNode);
 			TSAN_BEFORE(&OldHead->NextNode);
@@ -154,7 +156,7 @@ public:
 
 		TNode* OldHead;
 
-		if (Mode == EQueueMode::Mpsc)
+		if constexpr (Mode == EQueueMode::Mpsc)
 		{
             OldHead = (TNode*)FPlatformAtomics::InterlockedExchangePtr((void**)&Head, NewNode);
 			TSAN_BEFORE(&OldHead->NextNode);

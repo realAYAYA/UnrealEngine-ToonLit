@@ -11,7 +11,7 @@ extern TMap<TextToSpeechId, TWeakPtr<FTextToSpeechBase>> ActiveTextToSpeechMap;
 
 FFliteTextToSpeechSubmixListener::FFliteTextToSpeechSubmixListener(TextToSpeechId InOwningTTSId)
 	: OwningTTSId(InOwningTTSId)
-, Volume(1.0f)
+	, Volume(1.0f)
 	, bAllowPlayback(false)
 	, bMuted(false)
 {
@@ -25,6 +25,12 @@ FFliteTextToSpeechSubmixListener::FFliteTextToSpeechSubmixListener(TextToSpeechI
 FFliteTextToSpeechSubmixListener::~FFliteTextToSpeechSubmixListener()
 {
 	StopPlayback_GameThread();
+}
+
+const FString& FFliteTextToSpeechSubmixListener::GetListenerName() const
+{
+	static const FString ListenerName = TEXT("Flite Text-To-Speech Listener");
+	return ListenerName;
 }
 
 void FFliteTextToSpeechSubmixListener::OnNewSubmixBuffer(const USoundSubmix* OwningSubmix, float* AudioData, int32 NumSamples, int32 NumChannels, const int32 SampleRate, double AudioClock)

@@ -104,7 +104,7 @@ int32 FNiagaraUvQuadTree::FSubTree::Freeze(const FNiagaraUvQuadTree & QuadTree, 
 	if (bInternal)
 	{
 		FChildArray ChildOffsets;
-		for (int32 ChildIt = 0; ChildIt < ChildOffsets.Num(); ++ChildIt)
+		for (int32 ChildIt = 0; ChildIt < ChildOffsets.Num(); ++ChildIt) //-V621 //-V654
 		{
 			ChildOffsets[ChildIt] = QuadTree.ChildTrees[SubTreeIndices[ChildIt]].Freeze(QuadTree, Ar);
 		}
@@ -112,7 +112,7 @@ int32 FNiagaraUvQuadTree::FSubTree::Freeze(const FNiagaraUvQuadTree & QuadTree, 
 		const int64 EndOffset = Ar.Tell();
 		Ar.Seek(StartOffset);
 
-		for (int32 ChildIt = 0; ChildIt < ChildOffsets.Num(); ++ChildIt)
+		for (int32 ChildIt = 0; ChildIt < ChildOffsets.Num(); ++ChildIt) //-V621 //-V654
 		{
 			Ar << ChildOffsets[ChildIt];
 		}

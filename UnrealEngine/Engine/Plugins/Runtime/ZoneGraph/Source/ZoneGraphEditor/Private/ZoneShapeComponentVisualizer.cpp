@@ -14,15 +14,20 @@
 #include "Editor.h"
 #include "EditorViewportClient.h"
 #include "EditorViewportCommands.h"
+#include "LevelEditor.h"
 #include "LevelEditorActions.h"
 #include "ScopedTransaction.h"
 #include "ActorEditorUtils.h"
+#include "ZoneGraphQuery.h"
 #include "ZoneGraphSubsystem.h"
 #include "ZoneGraphSettings.h"
+#include "ZoneShapeActor.h"
 #include "ZoneShapeComponent.h"
 #include "ZoneShapeUtilities.h"
 #include "ZoneGraphRenderingUtilities.h"
 #include "BezierUtilities.h"
+#include "CanvasTypes.h"
+#include "SceneManagement.h"
 
 // Uncomment to draw additional rotation debug visualizations.
 // #define ZONEGRAPH_DEBUG_ROTATIONS
@@ -33,6 +38,7 @@ IMPLEMENT_HIT_PROXY(HZoneShapeSegmentProxy, HZoneShapeVisProxy);
 IMPLEMENT_HIT_PROXY(HZoneShapeControlPointProxy, HZoneShapeVisProxy);
 
 #define LOCTEXT_NAMESPACE "ZoneShapeComponentVisualizer"
+DEFINE_LOG_CATEGORY_STATIC(LogZoneShapeComponentVisualizer, Log, All)
 
 /** Define commands for the shape component visualizer */
 class FZoneShapeComponentVisualizerCommands : public TCommands<FZoneShapeComponentVisualizerCommands>
@@ -59,6 +65,10 @@ public:
 		UI_COMMAND(SetPointToAutoBezier, "Auto Bezier", "Set point to Auto Bezier type", EUserInterfaceActionType::RadioButton, FInputChord());
 		UI_COMMAND(SetPointToLaneSegment, "Lane Segment", "Set point to Lane Segment type", EUserInterfaceActionType::RadioButton, FInputChord());
 		UI_COMMAND(FocusViewportToSelection, "Focus Selected", "Moves the camera in front of the selection", EUserInterfaceActionType::Button, FInputChord(EKeys::F));
+		UI_COMMAND(BreakAtPointNewActors, "Break Into Shape Actors At Point(s)", "Break the shape into multiple shape actors at the currently selected points.", EUserInterfaceActionType::Button, FInputChord());
+		UI_COMMAND(BreakAtPointNewComponents, "Break Into Shape Components At Point(s)", "Break the shape into multiple shape components at the currently selected points.", EUserInterfaceActionType::Button, FInputChord());
+		UI_COMMAND(BreakAtSegmentNewActors, "Break Into Shape Actors Here", "Break the shape into multiple shape actors at the cursor location.", EUserInterfaceActionType::Button, FInputChord());
+		UI_COMMAND(BreakAtSegmentNewComponents, "Break Into Shape Components Here", "Break the shape into multiple shape components at the cursor location.", EUserInterfaceActionType::Button, FInputChord());
 	}
 
 public:
@@ -71,6 +81,10 @@ public:
 	TSharedPtr<FUICommandInfo> SetPointToAutoBezier;
 	TSharedPtr<FUICommandInfo> SetPointToLaneSegment;
 	TSharedPtr<FUICommandInfo> FocusViewportToSelection;
+	TSharedPtr<FUICommandInfo> BreakAtPointNewActors;
+	TSharedPtr<FUICommandInfo> BreakAtPointNewComponents;
+	TSharedPtr<FUICommandInfo> BreakAtSegmentNewActors;
+	TSharedPtr<FUICommandInfo> BreakAtSegmentNewComponents;
 };
 
 FZoneShapeComponentVisualizer::FZoneShapeComponentVisualizer()
@@ -141,6 +155,26 @@ void FZoneShapeComponentVisualizer::OnRegister()
 		Commands.FocusViewportToSelection,
 		FExecuteAction::CreateStatic(&FLevelEditorActionCallbacks::ExecuteExecCommand, FString(TEXT("CAMERA ALIGN ACTIVEVIEWPORTONLY")))
 	);
+
+	ShapeComponentVisualizerActions->MapAction(
+		Commands.BreakAtPointNewActors,
+		FExecuteAction::CreateSP(this, &FZoneShapeComponentVisualizer::OnBreakAtPointNewActors),
+		FCanExecuteAction::CreateSP(this, &FZoneShapeComponentVisualizer::CanBreakAtPoint));
+
+	ShapeComponentVisualizerActions->MapAction(
+		Commands.BreakAtPointNewComponents,
+		FExecuteAction::CreateSP(this, &FZoneShapeComponentVisualizer::OnBreakAtPointNewComponents),
+		FCanExecuteAction::CreateSP(this, &FZoneShapeComponentVisualizer::CanBreakAtPoint));
+
+	ShapeComponentVisualizerActions->MapAction(
+		Commands.BreakAtSegmentNewActors,
+		FExecuteAction::CreateSP(this, &FZoneShapeComponentVisualizer::OnBreakAtSegmentNewActors),
+		FCanExecuteAction::CreateSP(this, &FZoneShapeComponentVisualizer::CanBreakAtSegment));
+
+	ShapeComponentVisualizerActions->MapAction(
+		Commands.BreakAtSegmentNewComponents,
+		FExecuteAction::CreateSP(this, &FZoneShapeComponentVisualizer::OnBreakAtSegmentNewComponents),
+		FCanExecuteAction::CreateSP(this, &FZoneShapeComponentVisualizer::CanBreakAtSegment));
 
 	bool bAlign = false;
 	bool bUseLineTrace = false;
@@ -382,7 +416,68 @@ void FZoneShapeComponentVisualizer::DrawVisualization(const UActorComponent* Com
 #endif
 	}
 
+	// Draw auto connection range indicator
+	if (bIsActiveComponent && bIsAutoConnecting && ShapePoints.IsValidIndex(SelectedPointForConnecting))
+	{
+		// Draw a wire sphere
+		const FZoneShapePoint& DraggedPoint = ShapePoints[SelectedPointForConnecting];
+		FVector Center = ShapeComp->GetComponentTransform().TransformPosition(DraggedPoint.Position);
+		const FTransform Transform(FQuat::Identity, Center);
+		constexpr FColor IndicatorColor = FColor(255, 165, 0, 255);
+		const UZoneGraphSettings* ZoneGraphSettings = GetDefault<UZoneGraphSettings>();
+		check(ZoneGraphSettings);
+		const float Radius = ZoneGraphSettings->GetBuildSettings().DragEndpointAutoConnectRange;
+		DrawWireSphere(PDI, Transform, IndicatorColor, Radius, 12, SDPG_World, 0.0f, 0.001f, false);
+
+		// Tint the chevron of the candidate connectors
+		for (int32 i = 0; i < DestShapeConnectorInfos.Num(); i++)
+		{
+			const ZoneShapeConnectorRenderInfo& Info = DestShapeConnectorInfos[i];
+			const FVector WorldPosition = Info.Position;
+			const FVector WorldNormal = Info.Normal;
+			const FVector WorldUp = Info.Up;
+			const FVector WorldSide = FVector::CrossProduct(Info.Normal, Info.Up);
+
+			constexpr FColor GreenColor = FColor(0, 255, 0, 255);
+			constexpr FColor YellowColor = FColor(255, 255, 0, 255);
+			const FColor& ChevronColor = i == ClosestShapeConnectorInfoIndex ? GreenColor : YellowColor;
+			PDI->DrawLine(WorldPosition - WorldNormal * 20, WorldPosition - WorldSide * 20, ChevronColor, SDPG_World, 4, DepthBias, true);
+			PDI->DrawLine(WorldPosition - WorldNormal * 20, WorldPosition + WorldSide * 20, ChevronColor, SDPG_World, 4, DepthBias, true);
+		}
+	}
+
 	PDI->SetHitProxy(nullptr);
+}
+
+void FZoneShapeComponentVisualizer::DrawVisualizationHUD(const UActorComponent* Component, const FViewport* Viewport, const FSceneView* View, FCanvas* Canvas)
+{
+	const UZoneShapeComponent* ShapeComp = Cast<const UZoneShapeComponent>(Component);
+	{
+		if (ShapeComp == GetEditedComponent())
+		{
+			check(SelectionState)
+			int32 SelectedControlPoint = SelectionState->GetSelectedControlPoint();
+			int32 LastPointIndexSelected = SelectionState->GetLastPointIndexSelected();
+			if (SelectionState->GetSelectedPoints().Num() == 1 &&
+				(LastPointIndexSelected == 0 || LastPointIndexSelected == (ShapeComp->GetNumPoints() - 1)))
+			{
+				const FIntRect CanvasRect = Canvas->GetViewRect();
+
+				static const FText AutoConnectionHelp = LOCTEXT("ZoneShapeAutoConnectionMessage", "Auto Zone Shape Connection: Hold C and drag zone shape end point close to another shape connector to connect.");
+
+				auto DisplaySnapToActorHelpText = [&](const FText& SnapHelpText)
+				{
+					int32 XL;
+					int32 YL;
+					StringSize(GEngine->GetLargeFont(), XL, YL, *SnapHelpText.ToString());
+					const float DrawPositionX = FMath::FloorToFloat(CanvasRect.Min.X + (CanvasRect.Width() - XL) * 0.5f);
+					const float DrawPositionY = CanvasRect.Min.Y + 50.0f;
+					Canvas->DrawShadowedString(DrawPositionX, DrawPositionY, *SnapHelpText.ToString(), GEngine->GetLargeFont(), FLinearColor::Yellow);
+				};
+				DisplaySnapToActorHelpText(AutoConnectionHelp);
+			}
+		}
+	}
 }
 
 void FZoneShapeComponentVisualizer::ChangeSelectionState(int32 Index, bool bIsCtrlHeld) const
@@ -734,12 +829,102 @@ bool FZoneShapeComponentVisualizer::HandleInputDelta(FEditorViewportClient* View
 			return false;
 		}
 
+		int32 SelectedControlPoint = SelectionState->GetSelectedControlPoint();
+		int32 LastPointIndexSelected = SelectionState->GetLastPointIndexSelected();
 		if (SelectionState->GetSelectedControlPoint() != INDEX_NONE)
 		{
 			return TransformSelectedControlPoint(DeltaTranslate);
 		}
 		else if (SelectionState->GetSelectedPoints().Num() > 0)
 		{
+			if (!ViewportClient->IsAltPressed() &&
+				SelectionState->GetSelectedPoints().Num() == 1 &&
+				(LastPointIndexSelected == 0 || LastPointIndexSelected == (ShapeComp->GetNumPoints() - 1)))
+			{
+				// Cache the selected index
+				SelectedPointForConnecting = LastPointIndexSelected;
+				FZoneShapePoint DraggedPoint = ShapeComp->GetPoints()[SelectedPointForConnecting];
+				const FTransform& SourceTransform = ShapeComp->GetComponentTransform();
+				FVector DraggedPointWorldPosition = SourceTransform.TransformPosition(DraggedPoint.Position);
+
+				if (ViewportClient->Viewport->KeyState(EKeys::C))
+				{
+#if WITH_EDITOR
+					bIsAutoConnecting = true;
+
+					DestShapeConnectorInfos.Empty();
+					ClosestShapeConnectorInfoIndex = INDEX_NONE;
+
+					const FZoneShapeConnector* SourceConnector = ShapeComp->GetShapeConnectorByPointIndex(SelectedPointForConnecting);
+
+					UZoneGraphSubsystem* ZoneGraph = UWorld::GetSubsystem<UZoneGraphSubsystem>(ShapeComp->GetWorld());
+					if (SourceConnector && ZoneGraph)
+					{
+						const FVector SourceWorldPosition = SourceTransform.TransformPosition(SourceConnector->Position);
+
+						const UZoneGraphSettings* ZoneGraphSettings = GetDefault<UZoneGraphSettings>();
+						check(ZoneGraphSettings);
+
+						TArray<uint32> QueryResults;
+						const float AutoConnectRange = ZoneGraphSettings->GetBuildSettings().DragEndpointAutoConnectRange;
+						FBox Bounds = FBox::BuildAABB(DraggedPointWorldPosition, FVector(AutoConnectRange));
+						ZoneGraph->GetBuilder().QueryHashGrid(Bounds, QueryResults);
+						const TArray<FZoneGraphBuilderRegisteredComponent>& RegisteredShapeComponents = ZoneGraph->GetBuilder().GetRegisteredZoneShapeComponents();
+						double ShortestDistance = AutoConnectRange;
+						for (uint32 Index : QueryResults)
+						{
+							check(RegisteredShapeComponents.IsValidIndex(int32(Index)));
+							UZoneShapeComponent* DestShapeComp = RegisteredShapeComponents[Index].Component;
+							if (!DestShapeComp || ShapeComp->GetComponentLevel() != DestShapeComp->GetComponentLevel())
+							{
+								continue;
+							}
+
+							const FTransform& DestTransform = DestShapeComp->GetComponentTransform();
+							TConstArrayView<FZoneShapeConnector> DestConnectors = DestShapeComp->GetShapeConnectors();
+
+							for (int32 j = 0; j < DestConnectors.Num(); j++)
+							{
+								const FZoneShapeConnector& DestConnector = DestConnectors[j];
+								const FVector DestWorldPosition = DestTransform.TransformPosition(DestConnector.Position);
+								const FVector DestWorldNormal = DestTransform.TransformVector(DestConnector.Normal);
+
+								double Distance = FVector::Dist(SourceWorldPosition, DestWorldPosition);
+								if (SourceConnector == &DestConnector || SourceConnector->LaneProfile != DestConnector.LaneProfile)
+								{
+									continue;
+								}
+
+								// Check that the profile orientation matches before connecting.
+								if (const FZoneLaneProfile* LaneProfile = ZoneGraphSettings->GetLaneProfileByRef(SourceConnector->LaneProfile))
+								{
+									if (LaneProfile->IsSymmetrical() || SourceConnector->bReverseLaneProfile != DestConnector.bReverseLaneProfile)
+									{
+										if (Distance < AutoConnectRange)
+										{
+											const FVector WorldPosition = DestTransform.TransformPosition(DestConnector.Position);
+											const FVector WorldNormal = DestTransform.TransformVector(DestConnector.Normal);
+											const FVector WorldUp = DestTransform.TransformVector(DestConnector.Up);
+											DestShapeConnectorInfos.Add({ WorldPosition, WorldNormal, WorldUp });
+										}
+
+										if (ShortestDistance > Distance)
+										{
+											ShortestDistance = Distance;
+											ClosestShapeConnectorInfoIndex = DestShapeConnectorInfos.Num() - 1;
+
+											NearestPointWorldPosition = DestWorldPosition;
+											NearestPointWorldNormal = DestWorldNormal;
+										}
+									}
+								}
+							}
+						}
+					}
+#endif
+				}
+			}
+
 			if (ViewportClient->IsAltPressed())
 			{
 				if (ViewportClient->GetWidgetMode() == UE::Widget::WM_Translate && ViewportClient->GetCurrentWidgetAxis() != EAxisList::None)
@@ -898,7 +1083,12 @@ bool FZoneShapeComponentVisualizer::HandleInputKey(FEditorViewportClient* Viewpo
 	bool bHandled = false;
 
 	UZoneShapeComponent* ShapeComp = GetEditedShapeComponent();
-	if (ShapeComp != nullptr && IsAnySelectedPointIndexOutOfRange(*ShapeComp))
+	if (!ShapeComp)
+	{
+		return false;
+	}
+	
+	if (IsAnySelectedPointIndexOutOfRange(*ShapeComp))
 	{
 		// Something external has changed the number of shape points, meaning that the cached selected keys are no longer valid
 		EndEditing();
@@ -916,6 +1106,66 @@ bool FZoneShapeComponentVisualizer::HandleInputKey(FEditorViewportClient* Viewpo
 
 		bHasCachedRotation = false;
 		CachedRotation = FQuat::Identity;
+
+		if (bIsAutoConnecting && SelectedPointForConnecting >= 0 && SelectedPointForConnecting < ShapeComp->GetNumPoints())
+		{
+			const UZoneGraphSettings* ZoneGraphSettings = GetDefault<UZoneGraphSettings>();
+			check(ZoneGraphSettings);
+
+			const FZoneLaneProfile* LaneProfile = ZoneGraphSettings->GetLaneProfileByRef(ShapeComp->GetCommonLaneProfile());
+			check(LaneProfile);
+			float HalfLanesTotalWidth = LaneProfile->GetLanesTotalWidth() * 0.5;
+
+			FZoneShapePoint& DraggedPoint = ShapeComp->GetMutablePoints()[SelectedPointForConnecting];
+
+#if WITH_EDITOR
+			if (const FZoneShapeConnector* SourceConnector = ShapeComp->GetShapeConnectorByPointIndex(SelectedPointForConnecting))
+			{
+				const FTransform& SourceTransform = ShapeComp->GetComponentTransform();
+				const FVector SourceWorldNormal = SourceTransform.TransformVector(SourceConnector->Normal);
+
+				const FZoneGraphBuildSettings& BuildSettings = ZoneGraphSettings->GetBuildSettings();
+				static const float ConnectionSnapAngleCos = FMath::Cos(FMath::DegreesToRadians(BuildSettings.ConnectionSnapAngle));
+
+				if (ClosestShapeConnectorInfoIndex != INDEX_NONE)
+				{
+					// Snap point location
+					DraggedPoint.Position = SourceTransform.InverseTransformPosition(NearestPointWorldPosition);
+					FVector Normal = SourceTransform.InverseTransformVector(NearestPointWorldNormal);
+					const FRotator Rotation = FRotationMatrix::MakeFromX(SelectedPointForConnecting == 0 ? Normal : -Normal).Rotator();
+					DraggedPoint.Rotation = Rotation;
+
+					// If the zone shape is a spline and the point type is not Bezier, setting the point rotation doesn't work.
+					// An extra point is needed to align the connectors and make it connect.
+					if (ShapeComp->GetShapeType() == FZoneShapeType::Spline &&
+						DraggedPoint.Type != FZoneShapePointType::Bezier &&
+						FVector::DotProduct(SourceWorldNormal, -NearestPointWorldNormal) <= ConnectionSnapAngleCos)
+					{
+						// Add extra point
+						TArray<FZoneShapePoint>& Points = ShapeComp->GetMutablePoints();
+						FZoneShapePoint ExtraPoint = DraggedPoint;
+						ExtraPoint.Position += Normal * HalfLanesTotalWidth;
+						ExtraPoint.Rotation = Rotation;
+						Points.Insert(ExtraPoint, ShapeComp->GetNumPoints() - 1);
+					}
+
+					// Update shape
+					ShapeComp->UpdateShape();
+				}
+			}
+#endif
+		}
+
+		bIsAutoConnecting = false;
+		DestShapeConnectorInfos.Empty();
+		ClosestShapeConnectorInfoIndex = INDEX_NONE;
+	}
+
+	if (Key == EKeys::C && Event == IE_Released)
+	{
+		bIsAutoConnecting = false;
+		DestShapeConnectorInfos.Empty();
+		ClosestShapeConnectorInfoIndex = INDEX_NONE;
 	}
 
 	if (Key == EKeys::LeftMouseButton && Event == IE_Pressed)
@@ -932,6 +1182,43 @@ bool FZoneShapeComponentVisualizer::HandleInputKey(FEditorViewportClient* Viewpo
 
 	if (Event == IE_Pressed)
 	{
+		// Add a new point to the shape when you hold the V key and press left mouse button
+		if (ShapeComp && Key == EKeys::LeftMouseButton && Viewport->KeyState(EKeys::V))
+		{
+			// Get clicked position
+			UWorld* World = ViewportClient->GetWorld();
+			FSceneViewFamilyContext ViewFamily(FSceneViewFamilyContext::ConstructionValues(ViewportClient->Viewport, ViewportClient->GetScene(), ViewportClient->EngineShowFlags)
+				.SetRealtimeUpdate(ViewportClient->IsRealtime()));
+			FSceneView* View = ViewportClient->CalcSceneView(&ViewFamily);
+			int32 MouseX = ViewportClient->Viewport->GetMouseX();
+			int32 MouseY = ViewportClient->Viewport->GetMouseY();
+			FViewportCursorLocation MouseViewportRay(View, ViewportClient, MouseX, MouseY);
+			FVector MouseViewportRayDirection = MouseViewportRay.GetDirection();
+
+			FVector Start = MouseViewportRay.GetOrigin();
+			FVector End = Start + WORLD_MAX * MouseViewportRayDirection;
+			if (ViewportClient->IsOrtho())
+			{
+				Start -= WORLD_MAX * MouseViewportRayDirection;
+			}
+			FHitResult Hit;
+			FCollisionQueryParams QueryParams;
+			QueryParams.bTraceComplex = true;
+			if (World->LineTraceSingleByChannel(Hit, Start, End, ECollisionChannel::ECC_WorldStatic, QueryParams))
+			{
+				// Add a new point at the position
+				TArray<FZoneShapePoint>& Points = ShapeComp->GetMutablePoints();
+				FZoneShapePoint PointToAdd(ShapeComp->GetComponentTransform().InverseTransformPosition(Hit.Location));
+				Points.Add(PointToAdd);
+				ShapeComp->UpdateShape();
+			}
+			else
+			{
+				UE_LOG(LogZoneShapeComponentVisualizer, Warning, TEXT("No hit found on click."));
+			}
+			return true;
+		}
+
 		bHandled = ShapeComponentVisualizerActions->ProcessCommandBindings(Key, FSlateApplication::Get().GetModifierKeys(), false);
 	}
 
@@ -1557,6 +1844,181 @@ bool FZoneShapeComponentVisualizer::CanSelectAllPoints() const
 	return (ShapeComp != nullptr);
 }
 
+void FZoneShapeComponentVisualizer::OnBreakAtPointNewActors() const
+{
+	const FScopedTransaction Transaction(LOCTEXT("BreakAtPointNewActors", "Break Shape Into New Actors At Points"));
+	BreakAtPoint(true);
+}
+
+void FZoneShapeComponentVisualizer::OnBreakAtPointNewComponents() const
+{
+	const FScopedTransaction Transaction(LOCTEXT("BreakAtPointNewComponents", "Break Shape Into New Components At Points"));
+	BreakAtPoint(false);
+}
+
+void FZoneShapeComponentVisualizer::BreakAtPoint(bool bCreateNewActor) const
+{
+	UZoneShapeComponent* ShapeComp = GetEditedShapeComponent();
+	check(ShapeComp != nullptr);
+	check(SelectionState);
+	const TSet<int32>& SelectedPoints = SelectionState->GetSelectedPoints();
+	const int32 LastPointIndexSelected = SelectionState->GetLastPointIndexSelected();
+	check(LastPointIndexSelected != INDEX_NONE);
+	check(LastPointIndexSelected >= 0);
+	check(LastPointIndexSelected < ShapeComp->GetNumPoints());
+	check(SelectedPoints.Num() > 0);
+	check(SelectedPoints.Contains(LastPointIndexSelected));
+
+	ShapeComp->Modify();
+	if (AActor* Owner = ShapeComp->GetOwner())
+	{
+		Owner->Modify();
+	}
+
+	// Get a sorted list of all the selected indices, highest to lowest
+	TArray<int32> SelectedPointsSorted;
+	for (int32 SelectedIndex : SelectedPoints)
+	{
+		SelectedPointsSorted.Add(SelectedIndex);
+	}
+	SelectedPointsSorted.Sort([](int32 A, int32 B)
+		{ return A < B; });
+
+	// Create a new shape and then delete selected key from list, highest index first
+	FActorSpawnParameters SpawnParams;
+	TArray<FZoneShapePoint>& ShapePoints = ShapeComp->GetMutablePoints();
+	int32 EndIndex = ShapePoints.Num() - 1;
+	for (int32 i = SelectedPointsSorted.Num() - 1; i >= 0; i--)
+	{
+		if (ShapePoints.Num() <= 2)
+		{
+			// Keep at least 2 points
+			break;
+		}
+
+		const int32 SelectedIndex = SelectedPointsSorted[i];
+		if (SelectedIndex == (ShapePoints.Num() - 1) || SelectedIndex == 0)
+		{
+			continue;
+		}
+
+		// Create a new shape
+		UZoneShapeComponent* NewShapeComponent = nullptr;
+		AActor* ShapeOwner = ShapeComp->GetOwner();
+		if (bCreateNewActor)
+		{
+			AZoneShape* NewShapeActor = ShapeComp->GetWorld()->SpawnActor<AZoneShape>(AZoneShape::StaticClass(), ShapeComp->GetComponentTransform(), SpawnParams);
+			if (!NewShapeActor)
+			{
+				continue;
+			}
+			NewShapeComponent = NewShapeActor->GetComponentByClass<UZoneShapeComponent>();
+			NewShapeActor->Modify();
+		}
+		else
+		{
+			NewShapeComponent = NewObject<UZoneShapeComponent>(ShapeComp->GetOuter(), NAME_None, RF_Transactional);
+			if (!NewShapeComponent)
+			{
+				continue;
+			}
+			NewShapeComponent->SetWorldTransform(ShapeComp->GetComponentTransform());
+			ShapeOwner->AddInstanceComponent(NewShapeComponent);
+			NewShapeComponent->RegisterComponent();
+			NewShapeComponent->AttachToComponent(ShapeComp, FAttachmentTransformRules::KeepWorldTransform);
+			NewShapeComponent->Modify();
+		}
+
+		// Copy points
+		TArray<FZoneShapePoint>& NewShapePoints = NewShapeComponent->GetMutablePoints();
+		NewShapePoints.SetNum(EndIndex - SelectedIndex + 1);
+		int32 SrcIndex = SelectedIndex;
+		for (int32 Index = 0; Index < NewShapePoints.Num(); Index++, SrcIndex++)
+		{
+			NewShapePoints[Index] = ShapePoints[SrcIndex];
+		}
+		NewShapeComponent->UpdateShape();
+
+		if (i == 0 || (i == 1 && SelectedPointsSorted[0] == 0))
+		{
+			// Keep the last segment on the original shape component
+			ShapePoints.RemoveAt(EndIndex);
+			break;
+		}
+
+		// Delete all points after the selected one
+		for (int32 Index = EndIndex; Index > SelectedIndex; Index--)
+		{
+			if (Index <= 1)
+			{
+				// The zone shape needs at least two points
+				break;
+			}
+			ShapePoints.RemoveAt(Index);
+		}
+		EndIndex = SelectedIndex;
+	}
+
+	// Clear selection
+	ChangeSelectionState(INDEX_NONE, false);
+	SelectionState->SetSelectedSegmentIndex(INDEX_NONE);
+	SelectionState->SetSelectedControlPoint(INDEX_NONE);
+	SelectionState->SetSelectedControlPointType(FZoneShapeControlPointType::None);
+
+	ShapeComp->UpdateShape();
+	NotifyPropertyModified(ShapeComp, ShapePointsProperty);
+
+	GEditor->RedrawLevelEditingViewports(true);
+	FLevelEditorModule& LevelEditor = FModuleManager::LoadModuleChecked<FLevelEditorModule>("LevelEditor");
+	LevelEditor.BroadcastComponentsEdited();
+	LevelEditor.BroadcastRedrawViewports(false);
+}
+
+bool FZoneShapeComponentVisualizer::CanBreakAtPoint() const
+{
+	check(SelectionState);
+	const TSet<int32>& SelectedPoints = SelectionState->GetSelectedPoints();
+	const int32 LastPointIndexSelected = SelectionState->GetLastPointIndexSelected();
+	UZoneShapeComponent* ShapeComp = GetEditedShapeComponent();
+	return (ShapeComp != nullptr && SelectedPoints.Num() > 0 && LastPointIndexSelected != INDEX_NONE);
+}
+
+void FZoneShapeComponentVisualizer::OnBreakAtSegmentNewActors() const
+{
+	const FScopedTransaction Transaction(LOCTEXT("BreakAtSegmentNewActors", "Break Shape Into New Actors At The Cursor Location"));
+	BreakAtSegment(true);
+}
+
+void FZoneShapeComponentVisualizer::OnBreakAtSegmentNewComponents() const
+{
+	const FScopedTransaction Transaction(LOCTEXT("BreakAtSegmentNewComponents", "Break Shape Into New Components At The Cursor Location"));
+	BreakAtSegment(false);
+}
+
+void FZoneShapeComponentVisualizer::BreakAtSegment(bool bCreateNewActor) const
+{
+	UZoneShapeComponent* ShapeComp = GetEditedShapeComponent();
+	check(ShapeComp != nullptr);
+	const int32 SelectedSegmentIndex = SelectionState->GetSelectedSegmentIndex();
+	check(SelectionState);
+	check(SelectedSegmentIndex != INDEX_NONE);
+	check(SelectedSegmentIndex >= 0);
+	check(SelectedSegmentIndex < ShapeComp->GetNumSegments());
+	SelectionState->Modify();
+	int32 SegmentIndex = SelectionState->GetSelectedSegmentIndex();
+	SplitSegment(SegmentIndex, SelectionState->GetSelectedSegmentT());
+	const int NewPointIndex = SegmentIndex + 1;
+	ChangeSelectionState(NewPointIndex, false);
+	BreakAtPoint(bCreateNewActor);
+	SelectionState->SetSelectedSegmentPoint(FVector::ZeroVector);
+	SelectionState->SetSelectedSegmentIndex(INDEX_NONE);
+}
+
+bool FZoneShapeComponentVisualizer::CanBreakAtSegment() const
+{
+	return CanAddPointToSegment();
+}
+
 TSharedPtr<SWidget> FZoneShapeComponentVisualizer::GenerateContextMenu() const
 {
 	check(SelectionState);
@@ -1568,6 +2030,11 @@ TSharedPtr<SWidget> FZoneShapeComponentVisualizer::GenerateContextMenu() const
 		if (SelectionState->GetSelectedSegmentIndex() != INDEX_NONE)
 		{
 			MenuBuilder.AddMenuEntry(FZoneShapeComponentVisualizerCommands::Get().AddPoint);
+
+			MenuBuilder.AddSubMenu(
+				LOCTEXT("BreakAtPoint", "Break At Point"),
+				LOCTEXT("BreakAtPointTooltip", "Break the shape into pieces at the currently selected points."),
+				FNewMenuDelegate::CreateSP(this, &FZoneShapeComponentVisualizer::GenerateBreakAtSegmentSubMenu));
 		}
 		else if (SelectionState->GetLastPointIndexSelected() != INDEX_NONE)
 		{
@@ -1579,6 +2046,16 @@ TSharedPtr<SWidget> FZoneShapeComponentVisualizer::GenerateContextMenu() const
 				LOCTEXT("ShapePointType", "Point Type"),
 				LOCTEXT("ShapePointTypeTooltip", "Define the type of the point."),
 				FNewMenuDelegate::CreateSP(this, &FZoneShapeComponentVisualizer::GenerateShapePointTypeSubMenu));
+
+			MenuBuilder.AddSubMenu(
+				LOCTEXT("SplineSnapAlign", "Snap/Align"),
+				LOCTEXT("SplineSnapAlignTooltip", "Snap align options."),
+				FNewMenuDelegate::CreateSP(this, &FZoneShapeComponentVisualizer::GenerateSnapAlignSubMenu));
+
+			MenuBuilder.AddSubMenu(
+				LOCTEXT("BreakAtPoint", "Break At Point"),
+				LOCTEXT("BreakAtPointTooltip", "Break the shape into pieces at the currently selected points."),
+				FNewMenuDelegate::CreateSP(this, &FZoneShapeComponentVisualizer::GenerateBreakAtPointSubMenu));
 		}
 	}
 	MenuBuilder.EndSection();
@@ -1603,6 +2080,32 @@ void FZoneShapeComponentVisualizer::GenerateShapePointTypeSubMenu(FMenuBuilder& 
 	if (ShapeComp && ShapeComp->GetShapeType() == FZoneShapeType::Polygon)
 	{
 		MenuBuilder.AddMenuEntry(FZoneShapeComponentVisualizerCommands::Get().SetPointToLaneSegment);
+	}
+}
+
+void FZoneShapeComponentVisualizer::GenerateSnapAlignSubMenu(FMenuBuilder& MenuBuilder) const
+{
+	MenuBuilder.AddMenuEntry(FLevelEditorCommands::Get().SnapToFloor);
+	MenuBuilder.AddMenuEntry(FLevelEditorCommands::Get().AlignToFloor);
+}
+
+void FZoneShapeComponentVisualizer::GenerateBreakAtPointSubMenu(FMenuBuilder& MenuBuilder) const
+{
+	UZoneShapeComponent* ShapeComp = GetEditedShapeComponent();
+	if (ShapeComp && ShapeComp->GetShapeType() == FZoneShapeType::Spline)
+	{
+		MenuBuilder.AddMenuEntry(FZoneShapeComponentVisualizerCommands::Get().BreakAtPointNewActors);
+		MenuBuilder.AddMenuEntry(FZoneShapeComponentVisualizerCommands::Get().BreakAtPointNewComponents);
+	}
+}
+
+void FZoneShapeComponentVisualizer::GenerateBreakAtSegmentSubMenu(FMenuBuilder& MenuBuilder) const
+{
+	UZoneShapeComponent* ShapeComp = GetEditedShapeComponent();
+	if (ShapeComp && ShapeComp->GetShapeType() == FZoneShapeType::Spline)
+	{
+		MenuBuilder.AddMenuEntry(FZoneShapeComponentVisualizerCommands::Get().BreakAtSegmentNewActors);
+		MenuBuilder.AddMenuEntry(FZoneShapeComponentVisualizerCommands::Get().BreakAtSegmentNewComponents);
 	}
 }
 

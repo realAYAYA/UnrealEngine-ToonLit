@@ -20,9 +20,6 @@ class UTexture2DArray : public UTexture
 	FTexturePlatformData* PrivatePlatformData;
 
 public:
-	UE_DEPRECATED(5.1, "Use GetPlatformData() / SetPlatformData() accessors instead.")
-	TFieldPtrAccessor<FTexturePlatformData> PlatformData;
-
 	/** Set the derived data for this texture on this platform. */
 	ENGINE_API void SetPlatformData(FTexturePlatformData* PlatformData);
 	/** Get the derived data for this texture on this platform. */
@@ -51,6 +48,8 @@ public:
 	virtual ETextureClass GetTextureClass() const override { return ETextureClass::Array; }
 	virtual void Serialize(FArchive& Ar) override;
 	virtual void PostLoad() override;
+	virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 	virtual FString GetDesc() override;
 	virtual void GetResourceSizeEx(FResourceSizeEx& CumulativeResourceSize) override;
@@ -91,7 +90,7 @@ public:
 
 #if WITH_EDITORONLY_DATA
 	/** Add Textures*/
-	UPROPERTY(EditAnywhere, Category = Source2D, meta = (DisplayName = "Source Textures", EditCondition = bSourceGeneratedFromSourceTexturesArray, EditConditionHides, HideEditConditionToggle))
+	UPROPERTY(EditAnywhere, Category = Source2D, meta = (DisplayName = "Source Textures", EditCondition = bSourceGeneratedFromSourceTexturesArray, EditConditionHides, HideEditConditionToggle, RequiredAssetDataTags = "IsSourceValid=True"))
 	TArray<TObjectPtr<UTexture2D>> SourceTextures;
 
 	/** 
@@ -136,5 +135,6 @@ public:
 	virtual bool StreamOut(int32 NewMipCount) final override;
 	virtual bool StreamIn(int32 NewMipCount, bool bHighPrio) final override;
 	//~ End UStreamableRenderAsset Interface
+	int32 GetNumResidentMips() const;
 
 };

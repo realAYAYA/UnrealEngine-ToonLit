@@ -13,11 +13,7 @@ namespace mu
 	{
 	public:
 
-		MUTABLE_DEFINE_CONST_VISITABLE()
-
-	public:
-
-		static NODE_TYPE s_type;
+		static FNodeType s_type;
 
 		NodeColourArithmeticOperation::OPERATION m_operation;
 		NodeColourPtr m_pA;

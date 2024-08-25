@@ -7,6 +7,7 @@
 #include "ChaosStats.h"
 
 #if INTEL_ISPC
+#include "XPBDBendingConstraints.ispc.generated.h"
 #include "XPBDAnisotropicBendingConstraints.ispc.generated.h"
 #endif
 
@@ -14,7 +15,8 @@ DECLARE_CYCLE_STAT(TEXT("Chaos XPBD Anisotropic Bending Constraint"), STAT_XPBD_
 
 #if INTEL_ISPC && !UE_BUILD_SHIPPING
 static_assert(sizeof(ispc::FVector4f) == sizeof(Chaos::Softs::FPAndInvM), "sizeof(ispc::FVector4f) != sizeof(Chaos::Softs::FPAndInvM");
-static_assert(sizeof(ispc::FIntVector4) == sizeof(Chaos::TVec4<int32>), "sizeof(ispc::FIntVector4) != sizeof(Chaos::TVec4<int32>");
+static_assert(sizeof(ispc::FVector3f) == sizeof(Chaos::Softs::FSolverVec3), "sizeof(ispc::FVector3f) != sizeof(Chaos::Softs::FSolverVec3");
+static_assert(sizeof(ispc::FVector2f) == sizeof(Chaos::Softs::FSolverVec2), "sizeof(ispc::FVector2f) != sizeof(Chaos::Softs::FSolverVec2");
 #endif
 
 namespace Chaos::Softs {
@@ -22,65 +24,65 @@ namespace Chaos::Softs {
 // @todo(chaos): the parallel threshold (or decision to run parallel) should probably be owned by the solver and passed to the constraint container
 extern int32 Chaos_XPBDBending_ParallelConstraintCount;
 
-FXPBDAnisotropicBendingConstraints::FXPBDAnisotropicBendingConstraints(const FSolverParticles& InParticles,
-	int32 InParticleOffset,
-	int32 InParticleCount,
+static int32 Chaos_XPBDBending_ISPC_ParallelBatchSize = 1028;
+static int32 Chaos_XPBDBending_ISPC_MinNumParallelBatches = 1028;  // effectively disabled for now
+FAutoConsoleVariableRef CVarChaosXPBDBendingISPCParallelBatchSize(TEXT("p.Chaos.XPBDBending.ISPC.ParallelBatchSize"), Chaos_XPBDBending_ISPC_ParallelBatchSize, TEXT("Parallel batch size for ISPC XPBDBending constraints"));
+FAutoConsoleVariableRef CVarChaosXPBDBendingISPCMinNumParallelBatches(TEXT("p.Chaos.XPBDBending.ISPC.MinNumParallelBatches"), Chaos_XPBDBending_ISPC_MinNumParallelBatches, TEXT("Min number of batches to invoke parallelFor ISPC XPBDBending constraints"));
+
+FXPBDAnisotropicBendingConstraints::FXPBDAnisotropicBendingConstraints(const FSolverParticlesRange& InParticles,
 	const FTriangleMesh& TriangleMesh,
 	const TArray<TVec3<FVec2f>>& FaceVertexPatternPositions,
 	const TMap<FString, TConstArrayView<FRealSingle>>& WeightMaps,
-	const FCollectionPropertyConstFacade& PropertyCollection,
-	bool bTrimKinematicConstraints)
+	const FCollectionPropertyConstFacade& PropertyCollection)
 	: Base(
 		InParticles,
-		InParticleOffset,
-		InParticleCount,
 		TriangleMesh.GetUniqueAdjacentElements(),
-		WeightMaps.FindRef(GetXPBDAnisoBendingStiffnessWarpString(PropertyCollection, XPBDAnisoBendingStiffnessWarpName.ToString())),
-		WeightMaps.FindRef(GetXPBDAnisoBucklingStiffnessWarpString(PropertyCollection, XPBDAnisoBucklingStiffnessWarpName.ToString())),
+		TConstArrayView<FRealSingle>(), // We don't use base stiffness weight maps
+		TConstArrayView<FRealSingle>(), // We don't use base stiffness weight maps
 		GetRestAngleMapFromCollection(WeightMaps, PropertyCollection),
 		FSolverVec2(GetWeightedFloatXPBDAnisoBendingStiffnessWarp(PropertyCollection, MaxStiffness)),
 		(FSolverReal)GetXPBDAnisoBucklingRatio(PropertyCollection, 0.f),
 		FSolverVec2(GetWeightedFloatXPBDAnisoBucklingStiffnessWarp(PropertyCollection, MaxStiffness)),
 		GetRestAngleValueFromCollection(PropertyCollection),
 		(ERestAngleConstructionType)GetXPBDAnisoRestAngleType(PropertyCollection, (int32)ERestAngleConstructionType::Use3DRestAngles),
-		bTrimKinematicConstraints,
+		true /*bTrimKinematicConstraints*/,
 		MaxStiffness)
+	, StiffnessWarp(
+		FSolverVec2(GetWeightedFloatXPBDAnisoBendingStiffnessWarp(PropertyCollection, MaxStiffness)).ClampAxes(0, MaxStiffness),
+		WeightMaps.FindRef(GetXPBDAnisoBendingStiffnessWarpString(PropertyCollection, XPBDAnisoBendingStiffnessWarpName.ToString())),
+		TConstArrayView<TVec2<int32>>(ConstraintSharedEdges),
+		ParticleOffset,
+		ParticleCount)
 	, StiffnessWeft(
-		FSolverVec2(GetWeightedFloatXPBDAnisoBendingStiffnessWeft(PropertyCollection, MaxStiffness)),
+		FSolverVec2(GetWeightedFloatXPBDAnisoBendingStiffnessWeft(PropertyCollection, MaxStiffness)).ClampAxes(0, MaxStiffness),
 		WeightMaps.FindRef(GetXPBDAnisoBendingStiffnessWeftString(PropertyCollection, XPBDAnisoBendingStiffnessWeftName.ToString())),
 		TConstArrayView<TVec2<int32>>(ConstraintSharedEdges),
 		ParticleOffset,
-		ParticleCount,
-		FPBDStiffness::DefaultTableSize,
-		FPBDStiffness::DefaultParameterFitBase,
-		MaxStiffness)
+		ParticleCount)
 	, StiffnessBias(
-		FSolverVec2(GetWeightedFloatXPBDAnisoBendingStiffnessBias(PropertyCollection, MaxStiffness)),
+		FSolverVec2(GetWeightedFloatXPBDAnisoBendingStiffnessBias(PropertyCollection, MaxStiffness)).ClampAxes(0, MaxStiffness),
 		WeightMaps.FindRef(GetXPBDAnisoBendingStiffnessBiasString(PropertyCollection, XPBDAnisoBendingStiffnessBiasName.ToString())),
 		TConstArrayView<TVec2<int32>>(ConstraintSharedEdges),
 		ParticleOffset,
-		ParticleCount,
-		FPBDStiffness::DefaultTableSize,
-		FPBDStiffness::DefaultParameterFitBase,
-		MaxStiffness)
+		ParticleCount)
+	, BucklingStiffnessWarp(
+		FSolverVec2(GetWeightedFloatXPBDAnisoBucklingStiffnessWarp(PropertyCollection, MaxStiffness)).ClampAxes(0, MaxStiffness),
+		WeightMaps.FindRef(GetXPBDAnisoBucklingStiffnessWarpString(PropertyCollection, XPBDAnisoBucklingStiffnessWarpName.ToString())),
+		TConstArrayView<TVec2<int32>>(ConstraintSharedEdges),
+		ParticleOffset,
+		ParticleCount)
 	, BucklingStiffnessWeft(
-		FSolverVec2(GetWeightedFloatXPBDAnisoBucklingStiffnessWeft(PropertyCollection, MaxStiffness)),
+		FSolverVec2(GetWeightedFloatXPBDAnisoBucklingStiffnessWeft(PropertyCollection, MaxStiffness)).ClampAxes(0, MaxStiffness),
 		WeightMaps.FindRef(GetXPBDAnisoBucklingStiffnessWeftString(PropertyCollection, XPBDAnisoBucklingStiffnessWeftName.ToString())),
 		TConstArrayView<TVec2<int32>>(ConstraintSharedEdges),
 		ParticleOffset,
-		ParticleCount,
-		FPBDStiffness::DefaultTableSize,
-		FPBDStiffness::DefaultParameterFitBase,
-		MaxStiffness)
+		ParticleCount)
 	, BucklingStiffnessBias(
-		FSolverVec2(GetWeightedFloatXPBDAnisoBucklingStiffnessBias(PropertyCollection, MaxStiffness)),
+		FSolverVec2(GetWeightedFloatXPBDAnisoBucklingStiffnessBias(PropertyCollection, MaxStiffness)).ClampAxes(0, MaxStiffness),
 		WeightMaps.FindRef(GetXPBDAnisoBucklingStiffnessBiasString(PropertyCollection, XPBDAnisoBucklingStiffnessBiasName.ToString())),
 		TConstArrayView<TVec2<int32>>(ConstraintSharedEdges),
 		ParticleOffset,
-		ParticleCount,
-		FPBDStiffness::DefaultTableSize,
-		FPBDStiffness::DefaultParameterFitBase,
-		MaxStiffness)
+		ParticleCount)
 	, DampingRatio(
 		FSolverVec2(GetWeightedFloatXPBDAnisoBendingDamping(PropertyCollection, MinDamping)).ClampAxes(MinDamping, MaxDamping),
 		WeightMaps.FindRef(GetXPBDAnisoBendingDampingString(PropertyCollection, XPBDAnisoBendingDampingName.ToString())),
@@ -105,6 +107,88 @@ FXPBDAnisotropicBendingConstraints::FXPBDAnisotropicBendingConstraints(const FSo
 }
 
 FXPBDAnisotropicBendingConstraints::FXPBDAnisotropicBendingConstraints(const FSolverParticles& InParticles,
+	int32 InParticleOffset,
+	int32 InParticleCount,
+	const FTriangleMesh& TriangleMesh,
+	const TArray<TVec3<FVec2f>>& FaceVertexPatternPositions,
+	const TMap<FString, TConstArrayView<FRealSingle>>& WeightMaps,
+	const FCollectionPropertyConstFacade& PropertyCollection)
+	: Base(
+		InParticles,
+		InParticleOffset,
+		InParticleCount,
+		TriangleMesh.GetUniqueAdjacentElements(),
+		TConstArrayView<FRealSingle>(), // We don't use base stiffness weight maps
+		TConstArrayView<FRealSingle>(), // We don't use base stiffness weight maps
+		GetRestAngleMapFromCollection(WeightMaps, PropertyCollection),
+		FSolverVec2(GetWeightedFloatXPBDAnisoBendingStiffnessWarp(PropertyCollection, MaxStiffness)),
+		(FSolverReal)GetXPBDAnisoBucklingRatio(PropertyCollection, 0.f),
+		FSolverVec2(GetWeightedFloatXPBDAnisoBucklingStiffnessWarp(PropertyCollection, MaxStiffness)),
+		GetRestAngleValueFromCollection(PropertyCollection),
+		(ERestAngleConstructionType)GetXPBDAnisoRestAngleType(PropertyCollection, (int32)ERestAngleConstructionType::Use3DRestAngles),
+		true /*bTrimKinematicConstraints*/,
+		MaxStiffness)
+	, StiffnessWarp(
+		FSolverVec2(GetWeightedFloatXPBDAnisoBendingStiffnessWarp(PropertyCollection, MaxStiffness)).ClampAxes(0, MaxStiffness),
+		WeightMaps.FindRef(GetXPBDAnisoBendingStiffnessWarpString(PropertyCollection, XPBDAnisoBendingStiffnessWarpName.ToString())),
+		TConstArrayView<TVec2<int32>>(ConstraintSharedEdges),
+		ParticleOffset,
+		ParticleCount)
+	, StiffnessWeft(
+		FSolverVec2(GetWeightedFloatXPBDAnisoBendingStiffnessWeft(PropertyCollection, MaxStiffness)).ClampAxes(0, MaxStiffness),
+		WeightMaps.FindRef(GetXPBDAnisoBendingStiffnessWeftString(PropertyCollection, XPBDAnisoBendingStiffnessWeftName.ToString())),
+		TConstArrayView<TVec2<int32>>(ConstraintSharedEdges),
+		ParticleOffset,
+		ParticleCount)
+	, StiffnessBias(
+		FSolverVec2(GetWeightedFloatXPBDAnisoBendingStiffnessBias(PropertyCollection, MaxStiffness)).ClampAxes(0, MaxStiffness),
+		WeightMaps.FindRef(GetXPBDAnisoBendingStiffnessBiasString(PropertyCollection, XPBDAnisoBendingStiffnessBiasName.ToString())),
+		TConstArrayView<TVec2<int32>>(ConstraintSharedEdges),
+		ParticleOffset,
+		ParticleCount)
+	, BucklingStiffnessWarp(
+		FSolverVec2(GetWeightedFloatXPBDAnisoBucklingStiffnessWarp(PropertyCollection, MaxStiffness)).ClampAxes(0, MaxStiffness),
+		WeightMaps.FindRef(GetXPBDAnisoBucklingStiffnessWarpString(PropertyCollection, XPBDAnisoBucklingStiffnessWarpName.ToString())),
+		TConstArrayView<TVec2<int32>>(ConstraintSharedEdges),
+		ParticleOffset,
+		ParticleCount)
+	, BucklingStiffnessWeft(
+		FSolverVec2(GetWeightedFloatXPBDAnisoBucklingStiffnessWeft(PropertyCollection, MaxStiffness)).ClampAxes(0, MaxStiffness),
+		WeightMaps.FindRef(GetXPBDAnisoBucklingStiffnessWeftString(PropertyCollection, XPBDAnisoBucklingStiffnessWeftName.ToString())),
+		TConstArrayView<TVec2<int32>>(ConstraintSharedEdges),
+		ParticleOffset,
+		ParticleCount)
+	, BucklingStiffnessBias(
+		FSolverVec2(GetWeightedFloatXPBDAnisoBucklingStiffnessBias(PropertyCollection, MaxStiffness)).ClampAxes(0, MaxStiffness),
+		WeightMaps.FindRef(GetXPBDAnisoBucklingStiffnessBiasString(PropertyCollection, XPBDAnisoBucklingStiffnessBiasName.ToString())),
+		TConstArrayView<TVec2<int32>>(ConstraintSharedEdges),
+		ParticleOffset,
+		ParticleCount)
+	, DampingRatio(
+		FSolverVec2(GetWeightedFloatXPBDAnisoBendingDamping(PropertyCollection, MinDamping)).ClampAxes(MinDamping, MaxDamping),
+		WeightMaps.FindRef(GetXPBDAnisoBendingDampingString(PropertyCollection, XPBDAnisoBendingDampingName.ToString())),
+		TConstArrayView<TVec2<int32>>(ConstraintSharedEdges),
+		ParticleOffset,
+		ParticleCount)
+	, WarpWeftBiasBaseMultipliers(GenerateWarpWeftBiasBaseMultipliers(FaceVertexPatternPositions, TriangleMesh))
+	, XPBDAnisoBendingStiffnessWarpIndex(PropertyCollection)
+	, XPBDAnisoBendingStiffnessWeftIndex(PropertyCollection)
+	, XPBDAnisoBendingStiffnessBiasIndex(PropertyCollection)
+	, XPBDAnisoBendingDampingIndex(PropertyCollection)
+	, XPBDAnisoBucklingRatioIndex(PropertyCollection)
+	, XPBDAnisoBucklingStiffnessWarpIndex(PropertyCollection)
+	, XPBDAnisoBucklingStiffnessWeftIndex(PropertyCollection)
+	, XPBDAnisoBucklingStiffnessBiasIndex(PropertyCollection)
+	, XPBDAnisoFlatnessRatioIndex(PropertyCollection)
+	, XPBDAnisoRestAngleIndex(PropertyCollection)
+	, XPBDAnisoRestAngleTypeIndex(PropertyCollection)
+{
+	Lambdas.Init((FSolverReal)0., Constraints.Num());
+	LambdasDamping.Init((FSolverReal)0., Constraints.Num());
+	InitColor(InParticles);
+}
+
+FXPBDAnisotropicBendingConstraints::FXPBDAnisotropicBendingConstraints(const FSolverParticles& InParticles,
 	int32 ParticleOffset,
 	int32 ParticleCount,
 	const FTriangleMesh& TriangleMesh,
@@ -123,56 +207,55 @@ FXPBDAnisotropicBendingConstraints::FXPBDAnisotropicBendingConstraints(const FSo
 	const FSolverVec2& InBucklingStiffnessWarp,
 	const FSolverVec2& InBucklingStiffnessWeft,
 	const FSolverVec2& InBucklingStiffnessBias,
-	const FSolverVec2& InDampingRatio,
-	bool bTrimKinematicConstraints)
+	const FSolverVec2& InDampingRatio)
 	: Base(
 		InParticles,
 		ParticleOffset,
 		ParticleCount,
 		TriangleMesh.GetUniqueAdjacentElements(),
-		StiffnessWarpMultipliers,
-		BucklingStiffnessWarpMultipliers,
+		TConstArrayView<FRealSingle>(), // We don't use base stiffness weight maps
+		TConstArrayView<FRealSingle>(), // We don't use base stiffness weight maps
 		InStiffnessWarp,
 		InBucklingRatio,
 		InBucklingStiffnessWarp,
-		bTrimKinematicConstraints,
+		true /*bTrimKinematicConstraints*/,
 		MaxStiffness)
+	, StiffnessWarp(
+		InStiffnessWarp.ClampAxes(0, MaxStiffness),
+		StiffnessWarpMultipliers,
+		TConstArrayView<TVec2<int32>>(ConstraintSharedEdges),
+		ParticleOffset,
+		ParticleCount)
 	, StiffnessWeft(
-		InStiffnessWeft,
+		InStiffnessWeft.ClampAxes(0, MaxStiffness),
 		StiffnessWeftMultipliers,
 		TConstArrayView<TVec2<int32>>(ConstraintSharedEdges),
 		ParticleOffset,
-		ParticleCount,
-		FPBDStiffness::DefaultTableSize,
-		FPBDStiffness::DefaultParameterFitBase,
-		MaxStiffness)
+		ParticleCount)
 	, StiffnessBias(
-		InStiffnessBias,
+		InStiffnessBias.ClampAxes(0, MaxStiffness),
 		StiffnessBiasMultipliers,
 		TConstArrayView<TVec2<int32>>(ConstraintSharedEdges),
 		ParticleOffset,
-		ParticleCount,
-		FPBDStiffness::DefaultTableSize,
-		FPBDStiffness::DefaultParameterFitBase,
-		MaxStiffness)
+		ParticleCount)
+	, BucklingStiffnessWarp(
+		InBucklingStiffnessWarp.ClampAxes(0, MaxStiffness),
+		BucklingStiffnessWarpMultipliers,
+		TConstArrayView<TVec2<int32>>(ConstraintSharedEdges),
+		ParticleOffset,
+		ParticleCount)
 	, BucklingStiffnessWeft(
-		InBucklingStiffnessWeft,
+		InBucklingStiffnessWeft.ClampAxes(0, MaxStiffness),
 		BucklingStiffnessWeftMultipliers,
 		TConstArrayView<TVec2<int32>>(ConstraintSharedEdges),
 		ParticleOffset,
-		ParticleCount,
-		FPBDStiffness::DefaultTableSize,
-		FPBDStiffness::DefaultParameterFitBase,
-		MaxStiffness)
+		ParticleCount)
 	, BucklingStiffnessBias(
-		InBucklingStiffnessBias,
+		InBucklingStiffnessBias.ClampAxes(0, MaxStiffness),
 		BucklingStiffnessBiasMultipliers,
 		TConstArrayView<TVec2<int32>>(ConstraintSharedEdges),
 		ParticleOffset,
-		ParticleCount,
-		FPBDStiffness::DefaultTableSize,
-		FPBDStiffness::DefaultParameterFitBase,
-		MaxStiffness)
+		ParticleCount)
 	, DampingRatio(
 		InDampingRatio.ClampAxes((FSolverReal)0., (FSolverReal)1.),
 		DampingMultipliers,
@@ -193,6 +276,7 @@ FXPBDAnisotropicBendingConstraints::FXPBDAnisotropicBendingConstraints(const FSo
 	, XPBDAnisoRestAngleTypeIndex(ForceInit)
 {
 	Lambdas.Init((FSolverReal)0., Constraints.Num());
+	LambdasDamping.Init((FSolverReal)0., Constraints.Num());
 	InitColor(InParticles);
 }
 
@@ -252,14 +336,15 @@ TArray<FSolverVec3> FXPBDAnisotropicBendingConstraints::GenerateWarpWeftBiasBase
 	return WarpWeftBaseMultiplierResult;
 }
 
-void FXPBDAnisotropicBendingConstraints::InitColor(const FSolverParticles& InParticles)
+template<typename SolverParticlesOrRange>
+void FXPBDAnisotropicBendingConstraints::InitColor(const SolverParticlesOrRange& InParticles)
 {
 	// In dev builds we always color so we can tune the system without restarting. See Apply()
 #if UE_BUILD_SHIPPING || UE_BUILD_TEST
 	if (Constraints.Num() > Chaos_XPBDBending_ParallelConstraintCount)
 #endif
 	{
-		const TArray<TArray<int32>> ConstraintsPerColor = FGraphColoring::ComputeGraphColoring(Constraints, InParticles, ParticleOffset, ParticleOffset + ParticleCount);
+		const TArray<TArray<int32>> ConstraintsPerColor = FGraphColoring::ComputeGraphColoringParticlesOrRange(Constraints, InParticles, ParticleOffset, ParticleOffset + ParticleCount);
 
 		// Reorder constraints based on color so each array in ConstraintsPerColor contains contiguous elements.
 		TArray<TVec4<int32>> ReorderedConstraints; 
@@ -296,13 +381,27 @@ void FXPBDAnisotropicBendingConstraints::InitColor(const FSolverParticles& InPar
 		ConstraintSharedEdges = MoveTemp(ReorderedConstraintSharedEdges);
 		RestAngles = MoveTemp(ReorderedRestAngles);
 		WarpWeftBiasBaseMultipliers = MoveTemp(ReorderedWarpWeftBiasBaseMultipliers);
-		Stiffness.ReorderIndices(OrigToReorderedIndices);
+		StiffnessWarp.ReorderIndices(OrigToReorderedIndices);
 		StiffnessWeft.ReorderIndices(OrigToReorderedIndices);
 		StiffnessBias.ReorderIndices(OrigToReorderedIndices);
-		BucklingStiffness.ReorderIndices(OrigToReorderedIndices);
+		BucklingStiffnessWarp.ReorderIndices(OrigToReorderedIndices);
 		BucklingStiffnessWeft.ReorderIndices(OrigToReorderedIndices);
 		BucklingStiffnessBias.ReorderIndices(OrigToReorderedIndices);
 		DampingRatio.ReorderIndices(OrigToReorderedIndices);
+
+#if INTEL_ISPC
+		ConstraintsIndex1.SetNumUninitialized(Constraints.Num());
+		ConstraintsIndex2.SetNumUninitialized(Constraints.Num());
+		ConstraintsIndex3.SetNumUninitialized(Constraints.Num());
+		ConstraintsIndex4.SetNumUninitialized(Constraints.Num());
+		for (int32 ConstraintIndex = 0; ConstraintIndex < Constraints.Num(); ++ConstraintIndex)
+		{
+			ConstraintsIndex1[ConstraintIndex] = Constraints[ConstraintIndex][0];
+			ConstraintsIndex2[ConstraintIndex] = Constraints[ConstraintIndex][1];
+			ConstraintsIndex3[ConstraintIndex] = Constraints[ConstraintIndex][2];
+			ConstraintsIndex4[ConstraintIndex] = Constraints[ConstraintIndex][3];
+		}
+#endif
 	}
 }
 
@@ -312,65 +411,56 @@ void FXPBDAnisotropicBendingConstraints::SetProperties(
 {
 	if (IsXPBDAnisoBendingStiffnessWarpMutable(PropertyCollection))
 	{
-		const FSolverVec2 WeightedValue(GetWeightedFloatXPBDAnisoBendingStiffnessWarp(PropertyCollection));
+		const FSolverVec2 WeightedValue(GetWeightedFloatXPBDAnisoBendingStiffnessWarp(PropertyCollection).ClampAxes(0, MaxStiffness));
 		if (IsXPBDAnisoBendingStiffnessWarpStringDirty(PropertyCollection))
 		{
 			const FString& WeightMapName = GetXPBDAnisoBendingStiffnessWarpString(PropertyCollection);
-			Stiffness = FPBDStiffness(
+			StiffnessWarp = FPBDFlatWeightMap(
 				WeightedValue,
 				WeightMaps.FindRef(WeightMapName),
 				TConstArrayView<TVec2<int32>>(ConstraintSharedEdges),
 				ParticleOffset,
-				ParticleCount,
-				FPBDStiffness::DefaultTableSize,
-				FPBDStiffness::DefaultParameterFitBase,
-				MaxStiffness);
+				ParticleCount);
 		}
 		else
 		{
-			Stiffness.SetWeightedValue(WeightedValue, MaxStiffness);
+			StiffnessWarp.SetWeightedValue(WeightedValue);
 		}
 	}
 	if (IsXPBDAnisoBendingStiffnessWeftMutable(PropertyCollection))
 	{
-		const FSolverVec2 WeightedValue(GetWeightedFloatXPBDAnisoBendingStiffnessWeft(PropertyCollection));
+		const FSolverVec2 WeightedValue(GetWeightedFloatXPBDAnisoBendingStiffnessWeft(PropertyCollection).ClampAxes(0, MaxStiffness));
 		if (IsXPBDAnisoBendingStiffnessWeftStringDirty(PropertyCollection))
 		{
 			const FString& WeightMapName = GetXPBDAnisoBendingStiffnessWeftString(PropertyCollection);
-			StiffnessWeft = FPBDStiffness(
+			StiffnessWeft = FPBDFlatWeightMap(
 				WeightedValue,
 				WeightMaps.FindRef(WeightMapName),
 				TConstArrayView<TVec2<int32>>(ConstraintSharedEdges),
 				ParticleOffset,
-				ParticleCount,
-				FPBDStiffness::DefaultTableSize,
-				FPBDStiffness::DefaultParameterFitBase,
-				MaxStiffness);
+				ParticleCount);
 		}
 		else
 		{
-			StiffnessWeft.SetWeightedValue(WeightedValue, MaxStiffness);
+			StiffnessWeft.SetWeightedValue(WeightedValue);
 		}
 	}
 	if (IsXPBDAnisoBendingStiffnessBiasMutable(PropertyCollection))
 	{
-		const FSolverVec2 WeightedValue(GetWeightedFloatXPBDAnisoBendingStiffnessBias(PropertyCollection));
+		const FSolverVec2 WeightedValue(GetWeightedFloatXPBDAnisoBendingStiffnessBias(PropertyCollection).ClampAxes(0, MaxStiffness));
 		if (IsXPBDAnisoBendingStiffnessBiasStringDirty(PropertyCollection))
 		{
 			const FString& WeightMapName = GetXPBDAnisoBendingStiffnessBiasString(PropertyCollection);
-			StiffnessBias = FPBDStiffness(
+			StiffnessBias = FPBDFlatWeightMap(
 				WeightedValue,
 				WeightMaps.FindRef(WeightMapName),
 				TConstArrayView<TVec2<int32>>(ConstraintSharedEdges),
 				ParticleOffset,
-				ParticleCount,
-				FPBDStiffness::DefaultTableSize,
-				FPBDStiffness::DefaultParameterFitBase,
-				MaxStiffness);
+				ParticleCount);
 		}
 		else
 		{
-			StiffnessBias.SetWeightedValue(WeightedValue, MaxStiffness);
+			StiffnessBias.SetWeightedValue(WeightedValue);
 		}
 	}
 	if (IsXPBDAnisoBucklingRatioMutable(PropertyCollection))
@@ -379,65 +469,56 @@ void FXPBDAnisotropicBendingConstraints::SetProperties(
 	}
 	if (IsXPBDAnisoBucklingStiffnessWarpMutable(PropertyCollection))
 	{
-		const FSolverVec2 WeightedValue(GetWeightedFloatXPBDAnisoBucklingStiffnessWarp(PropertyCollection));
+		const FSolverVec2 WeightedValue(GetWeightedFloatXPBDAnisoBucklingStiffnessWarp(PropertyCollection).ClampAxes(0, MaxStiffness));
 		if (IsXPBDAnisoBucklingStiffnessWarpStringDirty(PropertyCollection))
 		{
 			const FString& WeightMapName = GetXPBDAnisoBucklingStiffnessWarpString(PropertyCollection);
-			BucklingStiffness = FPBDStiffness(
+			BucklingStiffnessWarp = FPBDFlatWeightMap(
 				WeightedValue,
 				WeightMaps.FindRef(WeightMapName),
 				TConstArrayView<TVec2<int32>>(ConstraintSharedEdges),
 				ParticleOffset,
-				ParticleCount,
-				FPBDStiffness::DefaultTableSize,
-				FPBDStiffness::DefaultParameterFitBase,
-				MaxStiffness);
+				ParticleCount);
 		}
 		else
 		{
-			BucklingStiffness.SetWeightedValue(WeightedValue, MaxStiffness);
+			BucklingStiffnessWarp.SetWeightedValue(WeightedValue);
 		}
 	}
 	if (IsXPBDAnisoBucklingStiffnessWeftMutable(PropertyCollection))
 	{
-		const FSolverVec2 WeightedValue(GetWeightedFloatXPBDAnisoBucklingStiffnessWeft(PropertyCollection));
+		const FSolverVec2 WeightedValue(GetWeightedFloatXPBDAnisoBucklingStiffnessWeft(PropertyCollection).ClampAxes(0, MaxStiffness));
 		if (IsXPBDAnisoBucklingStiffnessWeftStringDirty(PropertyCollection))
 		{
 			const FString& WeightMapName = GetXPBDAnisoBucklingStiffnessWeftString(PropertyCollection);
-			BucklingStiffnessWeft = FPBDStiffness(
+			BucklingStiffnessWeft = FPBDFlatWeightMap(
 				WeightedValue,
 				WeightMaps.FindRef(WeightMapName),
 				TConstArrayView<TVec2<int32>>(ConstraintSharedEdges),
 				ParticleOffset,
-				ParticleCount,
-				FPBDStiffness::DefaultTableSize,
-				FPBDStiffness::DefaultParameterFitBase,
-				MaxStiffness);
+				ParticleCount);
 		}
 		else
 		{
-			BucklingStiffnessWeft.SetWeightedValue(WeightedValue, MaxStiffness);
+			BucklingStiffnessWeft.SetWeightedValue(WeightedValue);
 		}
 	}
 	if (IsXPBDAnisoBucklingStiffnessBiasMutable(PropertyCollection))
 	{
-		const FSolverVec2 WeightedValue(GetWeightedFloatXPBDAnisoBucklingStiffnessBias(PropertyCollection));
+		const FSolverVec2 WeightedValue(GetWeightedFloatXPBDAnisoBucklingStiffnessBias(PropertyCollection).ClampAxes(0, MaxStiffness));
 		if (IsXPBDAnisoBucklingStiffnessBiasStringDirty(PropertyCollection))
 		{
 			const FString& WeightMapName = GetXPBDAnisoBucklingStiffnessBiasString(PropertyCollection);
-			BucklingStiffnessBias = FPBDStiffness(
+			BucklingStiffnessBias = FPBDFlatWeightMap(
 				WeightedValue,
 				WeightMaps.FindRef(WeightMapName),
 				TConstArrayView<TVec2<int32>>(ConstraintSharedEdges),
 				ParticleOffset,
-				ParticleCount,
-				FPBDStiffness::DefaultTableSize,
-				FPBDStiffness::DefaultParameterFitBase,
-				MaxStiffness);
+				ParticleCount);
 		}
 		else
 		{
-			BucklingStiffnessBias.SetWeightedValue(WeightedValue, MaxStiffness);
+			BucklingStiffnessBias.SetWeightedValue(WeightedValue);
 		}
 	}
 	if (IsXPBDAnisoBendingDampingMutable(PropertyCollection))
@@ -446,7 +527,7 @@ void FXPBDAnisotropicBendingConstraints::SetProperties(
 		if (IsXPBDAnisoBendingDampingStringDirty(PropertyCollection))
 		{
 			const FString& WeightMapName = GetXPBDAnisoBendingDampingString(PropertyCollection);
-			DampingRatio = FPBDWeightMap(
+			DampingRatio = FPBDFlatWeightMap(
 				WeightedValue,
 				WeightMaps.FindRef(WeightMapName),
 				TConstArrayView<TVec2<int32>>(ConstraintSharedEdges),
@@ -460,60 +541,126 @@ void FXPBDAnisotropicBendingConstraints::SetProperties(
 	}
 }
 
-void FXPBDAnisotropicBendingConstraints::ApplyHelper(FSolverParticles& Particles, const FSolverReal Dt, const int32 ConstraintIndex, const FSolverVec3& ExpStiffnessValues, 
+template<bool bDampingOnly, bool bElasticOnly, typename SolverParticlesOrRange>
+void FXPBDAnisotropicBendingConstraints::ApplyHelper(SolverParticlesOrRange& Particles, const FSolverReal Dt, const int32 ConstraintIndex, const FSolverVec3& ExpStiffnessValues,
 	const FSolverVec3& ExpBucklingStiffnessValues, const FSolverReal DampingRatioValue) const
 {
-	const TVec4<int32>& Constraint = Constraints[ConstraintIndex];
-	const int32 i1 = Constraint[0];
-	const int32 i2 = Constraint[1];
-	const int32 i3 = Constraint[2];
-	const int32 i4 = Constraint[3];
-	const FSolverVec3& WarpWeftBiasBaseMultiplier = WarpWeftBiasBaseMultipliers[ConstraintIndex];
+	const TVec4<int32>& Constraint = Constraints.GetData()[ConstraintIndex];
+	const int32 Index1 = Constraint[0];
+	const int32 Index2 = Constraint[1];
+	const int32 Index3 = Constraint[2];
+	const int32 Index4 = Constraint[3];
+	const FSolverVec3& WarpWeftBiasBaseMultiplier = WarpWeftBiasBaseMultipliers.GetData()[ConstraintIndex];
 
-	const FSolverReal BiphasicStiffnessValue = IsBuckled[ConstraintIndex] ?
-		WarpWeftBiasBaseMultiplier.Dot(ExpStiffnessValues) : WarpWeftBiasBaseMultiplier.Dot(ExpBucklingStiffnessValues);
+	const FSolverReal BiphasicStiffnessValue = IsBuckled.GetData()[ConstraintIndex] ?
+		WarpWeftBiasBaseMultiplier.Dot(ExpBucklingStiffnessValues): WarpWeftBiasBaseMultiplier.Dot(ExpStiffnessValues);
 
-	if (BiphasicStiffnessValue < MinStiffness || (Particles.InvM(i1) == (FSolverReal)0. && Particles.InvM(i2) == (FSolverReal)0. && Particles.InvM(i3) == (FSolverReal)0. && Particles.InvM(i4) == (FSolverReal)0.))
+	const FSolverReal InvM1 = Particles.GetPAndInvM().GetData()[Index1].InvM;
+	const FSolverReal InvM2 = Particles.GetPAndInvM().GetData()[Index2].InvM;
+	const FSolverReal InvM3 = Particles.GetPAndInvM().GetData()[Index3].InvM;
+	const FSolverReal InvM4 = Particles.GetPAndInvM().GetData()[Index4].InvM;
+
+	if (BiphasicStiffnessValue <= MinStiffness)
 	{
 		return;
 	}
+	const FSolverReal CombinedInvMass = InvM1 + InvM2 + InvM3 + InvM4;
+	check(CombinedInvMass > 0);
 
-	const FSolverReal CombinedInvMass = Particles.InvM(i1) + Particles.InvM(i2) + Particles.InvM(i3) + Particles.InvM(i4);
-	const FSolverReal Damping = (FSolverReal)2.f * DampingRatioValue * FMath::Sqrt(BiphasicStiffnessValue / CombinedInvMass);
+	FSolverReal ElasticTerm(0.f), DampingTerm(0.f), DenomScale(0.f);
+	const FSolverVec3 P1 = Particles.GetPAndInvM().GetData()[Index1].P;
+	const FSolverVec3 P2 = Particles.GetPAndInvM().GetData()[Index2].P;
+	const FSolverVec3 P3 = Particles.GetPAndInvM().GetData()[Index3].P;
+	const FSolverVec3 P4 = Particles.GetPAndInvM().GetData()[Index4].P;
 
-	const FSolverReal Angle = CalcAngle(Particles.P(i1), Particles.P(i2), Particles.P(i3), Particles.P(i4));
-	const TStaticArray<FSolverVec3, 4> Grads = Base::GetGradients(Particles, ConstraintIndex);
+	FSolverReal Angle(0.f);
+	const TStaticArray<FSolverVec3, 4> Grads = Base::CalcGradients(P1, P2, P3, P4, bDampingOnly ? nullptr : &Angle);
 
-	const FSolverVec3 V1TimesDt = Particles.P(i1) - Particles.X(i1);
-	const FSolverVec3 V2TimesDt = Particles.P(i2) - Particles.X(i2);
-	const FSolverVec3 V3TimesDt = Particles.P(i3) - Particles.X(i3);
-	const FSolverVec3 V4TimesDt = Particles.P(i4) - Particles.X(i4);
+	if constexpr (!bDampingOnly)
+	{
+		const FSolverReal AlphaInv = BiphasicStiffnessValue * Dt * Dt;
+		ElasticTerm = AlphaInv * (Angle - RestAngles.GetData()[ConstraintIndex]);
 
-	FSolverReal& Lambda = Lambdas[ConstraintIndex];
-	const FSolverReal Alpha = (FSolverReal)1.f / (BiphasicStiffnessValue * Dt * Dt);
-	const FSolverReal Gamma = Alpha * Damping * Dt;
+		DenomScale += AlphaInv;
+	}
+	if constexpr (!bElasticOnly)
+	{
+		const FSolverReal Damping = (FSolverReal)2.f * DampingRatioValue * FMath::Sqrt(BiphasicStiffnessValue / CombinedInvMass);
+		const FSolverReal BetaDt = Damping * Dt;
 
-	const FSolverReal DampingTerm = Gamma * (FSolverVec3::DotProduct(V1TimesDt, Grads[0]) + FSolverVec3::DotProduct(V2TimesDt, Grads[1]) + FSolverVec3::DotProduct(V3TimesDt, Grads[2]) + FSolverVec3::DotProduct(V4TimesDt, Grads[3]));
+		const FSolverVec3 V1TimesDt = P1 - Particles.XArray().GetData()[Index1];
+		const FSolverVec3 V2TimesDt = P2 - Particles.XArray().GetData()[Index2];
+		const FSolverVec3 V3TimesDt = P3 - Particles.XArray().GetData()[Index3];
+		const FSolverVec3 V4TimesDt = P4 - Particles.XArray().GetData()[Index4];
 
-	const FSolverReal Denom = ((FSolverReal)1.f + Gamma) * (Particles.InvM(i1) * Grads[0].SizeSquared() + Particles.InvM(i2) * Grads[1].SizeSquared() + Particles.InvM(i3) * Grads[2].SizeSquared() + Particles.InvM(i4) * Grads[3].SizeSquared()) + Alpha;
-	const FSolverReal DLambda = (Angle - RestAngles[ConstraintIndex] - Alpha * Lambda + DampingTerm) / Denom;
+		DampingTerm = BetaDt * (FSolverVec3::DotProduct(V1TimesDt, Grads[0]) + FSolverVec3::DotProduct(V2TimesDt, Grads[1]) + FSolverVec3::DotProduct(V3TimesDt, Grads[2]) + FSolverVec3::DotProduct(V4TimesDt, Grads[3]));
 
-	Particles.P(i1) -= DLambda * Particles.InvM(i1) * Grads[0];
-	Particles.P(i2) -= DLambda * Particles.InvM(i2) * Grads[1];
-	Particles.P(i3) -= DLambda * Particles.InvM(i3) * Grads[2];
-	Particles.P(i4) -= DLambda * Particles.InvM(i4) * Grads[3];
+		DenomScale += BetaDt;
+	}
+
+	FSolverReal& Lambda = bDampingOnly ? LambdasDamping.GetData()[ConstraintIndex] : Lambdas.GetData()[ConstraintIndex];
+
+	const FSolverReal Denom = (DenomScale) * (InvM1 * Grads[0].SizeSquared() + InvM2 * Grads[1].SizeSquared() + InvM3 * Grads[2].SizeSquared() + InvM4 * Grads[3].SizeSquared()) + (FSolverReal)1.;
+	const FSolverReal DLambda = (-ElasticTerm - DampingTerm - Lambda) / Denom;
+
+	Particles.GetPAndInvM().GetData()[Index1].P += DLambda * InvM1 * Grads[0];
+	Particles.GetPAndInvM().GetData()[Index2].P += DLambda * InvM2 * Grads[1];
+	Particles.GetPAndInvM().GetData()[Index3].P += DLambda * InvM3 * Grads[2];
+	Particles.GetPAndInvM().GetData()[Index4].P += DLambda * InvM4 * Grads[3];
 	Lambda += DLambda;
 }
 
-void FXPBDAnisotropicBendingConstraints::Apply(FSolverParticles& Particles, const FSolverReal Dt) const
+template<typename SolverParticlesOrRange>
+void FXPBDAnisotropicBendingConstraints::Init(const SolverParticlesOrRange& Particles)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(FXPBDAnisotropicBendingConstraints_Init);
+	Lambdas.Reset();
+	Lambdas.AddZeroed(Constraints.Num());
+	LambdasDamping.Reset();
+	LambdasDamping.AddZeroed(Constraints.Num());
+#if INTEL_ISPC
+	IsBuckled.SetNumUninitialized(Constraints.Num());
+	X1Array.SetNumUninitialized(Constraints.Num());
+	X2Array.SetNumUninitialized(Constraints.Num());
+	X3Array.SetNumUninitialized(Constraints.Num());
+	X4Array.SetNumUninitialized(Constraints.Num());
+	if (bRealTypeCompatibleWithISPC && bChaos_Bending_ISPC_Enabled && ConstraintsIndex1.Num() == Constraints.Num())
+	{
+		ispc::InitXPBDBendingConstraintsIsBuckled(
+			(const ispc::FVector3f*)Particles.XArray().GetData(),
+			ConstraintsIndex1.GetData(),
+			ConstraintsIndex2.GetData(),
+			ConstraintsIndex3.GetData(),
+			ConstraintsIndex4.GetData(),
+			RestAngles.GetData(),
+			IsBuckled.GetData(),
+			(ispc::FVector3f*)X1Array.GetData(),
+			(ispc::FVector3f*)X2Array.GetData(),
+			(ispc::FVector3f*)X3Array.GetData(),
+			(ispc::FVector3f*)X4Array.GetData(),
+			BucklingRatio,
+			Constraints.Num()
+		);
+	}
+	else
+#endif
+	{
+		FPBDBendingConstraintsBase::Init(Particles);
+	}
+}
+template CHAOS_API void FXPBDAnisotropicBendingConstraints::Init(const FSolverParticles& Particles);
+template CHAOS_API void FXPBDAnisotropicBendingConstraints::Init(const FSolverParticlesRange& Particles);
+
+template<typename SolverParticlesOrRange>
+void FXPBDAnisotropicBendingConstraints::Apply(SolverParticlesOrRange& Particles, const FSolverReal Dt) const
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FXPBDAnisotropicBendingConstraints_Apply);
 	SCOPE_CYCLE_COUNTER(STAT_XPBD_AnisoBending);
 
-	const bool StiffnessHasWeightMap = Stiffness.HasWeightMap();
+	const bool StiffnessHasWeightMap = StiffnessWarp.HasWeightMap();
 	const bool StiffnessWeftHasWeightMap = StiffnessWeft.HasWeightMap();
 	const bool StiffnessBiasHasWeightMap = StiffnessBias.HasWeightMap();
-	const bool BucklingStiffnessHasWeightMap = BucklingStiffness.HasWeightMap();
+	const bool BucklingStiffnessHasWeightMap = BucklingStiffnessWarp.HasWeightMap();
 	const bool BucklingStiffnessWeftHasWeightMap = BucklingStiffnessWeft.HasWeightMap();
 	const bool BucklingStiffnessBiasHasWeightMap = BucklingStiffnessBias.HasWeightMap();
 	const bool DampingHasWeightMap = DampingRatio.HasWeightMap();
@@ -521,123 +668,364 @@ void FXPBDAnisotropicBendingConstraints::Apply(FSolverParticles& Particles, cons
 	if (ConstraintsPerColorStartIndex.Num() > 0 && Constraints.Num() > Chaos_XPBDBending_ParallelConstraintCount)
 	{
 		const int32 ConstraintColorNum = ConstraintsPerColorStartIndex.Num() - 1;
-		if (!StiffnessHasWeightMap && !StiffnessWeftHasWeightMap && !StiffnessBiasHasWeightMap &&
-			!BucklingStiffnessHasWeightMap && !BucklingStiffnessWeftHasWeightMap && !BucklingStiffnessBiasHasWeightMap &&
-			!DampingHasWeightMap)
-		{
-			const FSolverVec3 ExpStiffnessValue((FSolverReal)StiffnessWeft, (FSolverReal)Stiffness, (FSolverReal)StiffnessBias);
-			const FSolverVec3 ExpBucklingValue((FSolverReal)BucklingStiffnessWeft, (FSolverReal)BucklingStiffness, (FSolverReal)BucklingStiffnessBias);
-			const FSolverReal DampingRatioValue = (FSolverReal)DampingRatio;
-
-			if (ExpStiffnessValue.Max() < MinStiffness && ExpBucklingValue.Max() < MinStiffness)
-			{
-				return;
-			}
-
 #if INTEL_ISPC
-			if (bRealTypeCompatibleWithISPC && bChaos_XPBDBending_ISPC_Enabled)
+		if (bRealTypeCompatibleWithISPC && bChaos_XPBDBending_ISPC_Enabled)
+		{
+			if (!StiffnessHasWeightMap && !StiffnessWeftHasWeightMap && !StiffnessBiasHasWeightMap &&
+				!BucklingStiffnessHasWeightMap && !BucklingStiffnessWeftHasWeightMap && !BucklingStiffnessBiasHasWeightMap &&
+				!DampingHasWeightMap)
 			{
+				const FSolverVec3 ExpStiffnessValue((FSolverReal)StiffnessWeft, (FSolverReal)StiffnessWarp, (FSolverReal)StiffnessBias);
+				const FSolverVec3 ExpBucklingValue((FSolverReal)BucklingStiffnessWeft, (FSolverReal)BucklingStiffnessWarp, (FSolverReal)BucklingStiffnessBias);
+				const FSolverReal DampingRatioValue = (FSolverReal)DampingRatio;
+
+				if (ExpStiffnessValue.Max() <= MinStiffness && ExpBucklingValue.Max() <= MinStiffness)
+				{
+					return;
+				}
+
 				if (DampingRatioValue > 0)
 				{
-					for (int32 ConstraintColorIndex = 0; ConstraintColorIndex < ConstraintColorNum; ++ConstraintColorIndex)
+					if (bChaos_XPBDBending_SplitLambdaDamping)
 					{
-						const int32 ColorStart = ConstraintsPerColorStartIndex[ConstraintColorIndex];
-						const int32 ColorSize = ConstraintsPerColorStartIndex[ConstraintColorIndex + 1] - ColorStart;
-						ispc::ApplyXPBDAnisotropicBendingConstraintsWithDamping(
-							(ispc::FVector4f*)Particles.GetPAndInvM().GetData(),
-							(const ispc::FVector3f*)Particles.X().GetData(),
-							(ispc::FIntVector4*)&Constraints.GetData()[ColorStart],
-							&RestAngles.GetData()[ColorStart],
-							&IsBuckled.GetData()[ColorStart],
-							(const ispc::FVector3f*)&WarpWeftBiasBaseMultipliers.GetData()[ColorStart],
-							&Lambdas.GetData()[ColorStart],
-							Dt,
-							MinStiffness,
-							reinterpret_cast<const ispc::FVector3f&>(ExpStiffnessValue),
-							reinterpret_cast<const ispc::FVector3f&>(ExpBucklingValue),
-							DampingRatioValue,
-							ColorSize);
+						for (int32 ConstraintColorIndex = 0; ConstraintColorIndex < ConstraintColorNum; ++ConstraintColorIndex)
+						{
+							const int32 ColorStart = ConstraintsPerColorStartIndex[ConstraintColorIndex];
+							const int32 ColorSize = ConstraintsPerColorStartIndex[ConstraintColorIndex + 1] - ColorStart;	
+							if (ColorSize >= Chaos_XPBDBending_ISPC_ParallelBatchSize * Chaos_XPBDBending_ISPC_MinNumParallelBatches)
+							{
+								const int32 NumBatches = FMath::DivideAndRoundUp(ColorSize, Chaos_XPBDBending_ISPC_ParallelBatchSize);
+								PhysicsParallelFor(NumBatches, [this, &Particles, ColorStart, ColorSize,
+									ParallelBatchSize = Chaos_XPBDBending_ISPC_ParallelBatchSize,
+									Dt, &ExpStiffnessValue, &ExpBucklingValue, DampingRatioValue](const int32 BatchIndex)
+								{
+									const int32 BatchStart = BatchIndex * ParallelBatchSize;
+									const int32 BatchEnd = FMath::Min((BatchIndex + 1) * ParallelBatchSize, ColorSize);
+									ispc::ApplyXPBDAnisotropicBendingDampingConstraints(
+										(ispc::FVector4f*)Particles.GetPAndInvM().GetData(),
+										(const ispc::FVector3f*)&X1Array.GetData()[ColorStart + BatchStart],
+										(const ispc::FVector3f*)&X2Array.GetData()[ColorStart + BatchStart],
+										(const ispc::FVector3f*)&X3Array.GetData()[ColorStart + BatchStart],
+										(const ispc::FVector3f*)&X4Array.GetData()[ColorStart + BatchStart],
+										&ConstraintsIndex1.GetData()[ColorStart + BatchStart],
+										&ConstraintsIndex2.GetData()[ColorStart + BatchStart],
+										&ConstraintsIndex3.GetData()[ColorStart + BatchStart],
+										&ConstraintsIndex4.GetData()[ColorStart + BatchStart],
+										&RestAngles.GetData()[ColorStart + BatchStart],
+										&IsBuckled.GetData()[ColorStart + BatchStart],
+										(const ispc::FVector3f*)&WarpWeftBiasBaseMultipliers.GetData()[ColorStart + BatchStart],
+										&LambdasDamping.GetData()[ColorStart + BatchStart],
+										Dt,
+										reinterpret_cast<const ispc::FVector3f&>(ExpStiffnessValue),
+										reinterpret_cast<const ispc::FVector3f&>(ExpBucklingValue),
+										DampingRatioValue,
+										BatchEnd - BatchStart);
+								});
+							}
+							else
+							{
+								ispc::ApplyXPBDAnisotropicBendingDampingConstraints(
+									(ispc::FVector4f*)Particles.GetPAndInvM().GetData(),
+									(const ispc::FVector3f*)&X1Array.GetData()[ColorStart],
+									(const ispc::FVector3f*)&X2Array.GetData()[ColorStart],
+									(const ispc::FVector3f*)&X3Array.GetData()[ColorStart],
+									(const ispc::FVector3f*)&X4Array.GetData()[ColorStart],
+									&ConstraintsIndex1.GetData()[ColorStart],
+									&ConstraintsIndex2.GetData()[ColorStart],
+									&ConstraintsIndex3.GetData()[ColorStart],
+									&ConstraintsIndex4.GetData()[ColorStart],
+									&RestAngles.GetData()[ColorStart],
+									&IsBuckled.GetData()[ColorStart],
+									(const ispc::FVector3f*)&WarpWeftBiasBaseMultipliers.GetData()[ColorStart],
+									&LambdasDamping.GetData()[ColorStart],
+									Dt,
+									reinterpret_cast<const ispc::FVector3f&>(ExpStiffnessValue),
+									reinterpret_cast<const ispc::FVector3f&>(ExpBucklingValue),
+									DampingRatioValue,
+									ColorSize);
+							}
+						}
+					}
+					else
+					{
+						for (int32 ConstraintColorIndex = 0; ConstraintColorIndex < ConstraintColorNum; ++ConstraintColorIndex)
+						{
+							const int32 ColorStart = ConstraintsPerColorStartIndex[ConstraintColorIndex];
+							const int32 ColorSize = ConstraintsPerColorStartIndex[ConstraintColorIndex + 1] - ColorStart;
+							if (ColorSize >= Chaos_XPBDBending_ISPC_ParallelBatchSize * Chaos_XPBDBending_ISPC_MinNumParallelBatches)
+							{
+								const int32 NumBatches = FMath::DivideAndRoundUp(ColorSize, Chaos_XPBDBending_ISPC_ParallelBatchSize);
+								PhysicsParallelFor(NumBatches, [this, &Particles, ColorStart, ColorSize,
+									ParallelBatchSize = Chaos_XPBDBending_ISPC_ParallelBatchSize,
+									Dt, &ExpStiffnessValue, &ExpBucklingValue, DampingRatioValue](const int32 BatchIndex)
+								{
+									const int32 BatchStart = BatchIndex * ParallelBatchSize;
+									const int32 BatchEnd = FMath::Min((BatchIndex + 1) * ParallelBatchSize, ColorSize);
+									ispc::ApplyXPBDAnisotropicBendingConstraintsWithDamping(
+										(ispc::FVector4f*)Particles.GetPAndInvM().GetData(),
+										(const ispc::FVector3f*)&X1Array.GetData()[ColorStart + BatchStart],
+										(const ispc::FVector3f*)&X2Array.GetData()[ColorStart + BatchStart],
+										(const ispc::FVector3f*)&X3Array.GetData()[ColorStart + BatchStart],
+										(const ispc::FVector3f*)&X4Array.GetData()[ColorStart + BatchStart],
+										&ConstraintsIndex1.GetData()[ColorStart + BatchStart],
+										&ConstraintsIndex2.GetData()[ColorStart + BatchStart],
+										&ConstraintsIndex3.GetData()[ColorStart + BatchStart],
+										&ConstraintsIndex4.GetData()[ColorStart + BatchStart],
+										&RestAngles.GetData()[ColorStart + BatchStart],
+										&IsBuckled.GetData()[ColorStart + BatchStart],
+										(const ispc::FVector3f*)&WarpWeftBiasBaseMultipliers.GetData()[ColorStart + BatchStart],
+										&Lambdas.GetData()[ColorStart + BatchStart],
+										Dt,
+										reinterpret_cast<const ispc::FVector3f&>(ExpStiffnessValue),
+										reinterpret_cast<const ispc::FVector3f&>(ExpBucklingValue),
+										DampingRatioValue,
+										BatchEnd - BatchStart);
+								});
+							}
+							else
+							{
+								ispc::ApplyXPBDAnisotropicBendingConstraintsWithDamping(
+									(ispc::FVector4f*)Particles.GetPAndInvM().GetData(),
+									(const ispc::FVector3f*)&X1Array.GetData()[ColorStart],
+									(const ispc::FVector3f*)&X2Array.GetData()[ColorStart],
+									(const ispc::FVector3f*)&X3Array.GetData()[ColorStart],
+									(const ispc::FVector3f*)&X4Array.GetData()[ColorStart],
+									&ConstraintsIndex1.GetData()[ColorStart],
+									&ConstraintsIndex2.GetData()[ColorStart],
+									&ConstraintsIndex3.GetData()[ColorStart],
+									&ConstraintsIndex4.GetData()[ColorStart],
+									&RestAngles.GetData()[ColorStart],
+									&IsBuckled.GetData()[ColorStart],
+									(const ispc::FVector3f*)&WarpWeftBiasBaseMultipliers.GetData()[ColorStart],
+									&Lambdas.GetData()[ColorStart],
+									Dt,
+									reinterpret_cast<const ispc::FVector3f&>(ExpStiffnessValue),
+									reinterpret_cast<const ispc::FVector3f&>(ExpBucklingValue),
+									DampingRatioValue,
+									ColorSize);
+							}
+						}
+						return;
 					}
 				}
-				else
-				{
-					for (int32 ConstraintColorIndex = 0; ConstraintColorIndex < ConstraintColorNum; ++ConstraintColorIndex)
-					{
-						const int32 ColorStart = ConstraintsPerColorStartIndex[ConstraintColorIndex];
-						const int32 ColorSize = ConstraintsPerColorStartIndex[ConstraintColorIndex + 1] - ColorStart;
-						ispc::ApplyXPBDAnisotropicBendingConstraints(
-							(ispc::FVector4f*)Particles.GetPAndInvM().GetData(),
-							(ispc::FIntVector4*)&Constraints.GetData()[ColorStart],
-							&RestAngles.GetData()[ColorStart],
-							&IsBuckled.GetData()[ColorStart],
-							(const ispc::FVector3f*)&WarpWeftBiasBaseMultipliers.GetData()[ColorStart],
-							&Lambdas.GetData()[ColorStart],
-							Dt,
-							MinStiffness,
-							reinterpret_cast<const ispc::FVector3f&>(ExpStiffnessValue),
-							reinterpret_cast<const ispc::FVector3f&>(ExpBucklingValue),
-							ColorSize);
-					}
-				}
-			}
-			else
-#endif
-			{
 				for (int32 ConstraintColorIndex = 0; ConstraintColorIndex < ConstraintColorNum; ++ConstraintColorIndex)
 				{
 					const int32 ColorStart = ConstraintsPerColorStartIndex[ConstraintColorIndex];
 					const int32 ColorSize = ConstraintsPerColorStartIndex[ConstraintColorIndex + 1] - ColorStart;
-					PhysicsParallelFor(ColorSize, [&](const int32 Index)
+					if (ColorSize >= Chaos_XPBDBending_ISPC_ParallelBatchSize * Chaos_XPBDBending_ISPC_MinNumParallelBatches)
 					{
-						const int32 ConstraintIndex = ColorStart + Index;
-						ApplyHelper(Particles, Dt, ConstraintIndex, ExpStiffnessValue, ExpBucklingValue, DampingRatioValue);
-					});
+						const int32 NumBatches = FMath::DivideAndRoundUp(ColorSize, Chaos_XPBDBending_ISPC_ParallelBatchSize);
+						PhysicsParallelFor(NumBatches, [this, &Particles, ColorStart, ColorSize,
+							ParallelBatchSize = Chaos_XPBDBending_ISPC_ParallelBatchSize,
+							Dt, &ExpStiffnessValue, &ExpBucklingValue](const int32 BatchIndex)
+						{
+							const int32 BatchStart = BatchIndex * ParallelBatchSize;
+							const int32 BatchEnd = FMath::Min((BatchIndex + 1) * ParallelBatchSize, ColorSize);
+							ispc::ApplyXPBDAnisotropicBendingConstraints(
+								(ispc::FVector4f*)Particles.GetPAndInvM().GetData(),
+								&ConstraintsIndex1.GetData()[ColorStart + BatchStart],
+								&ConstraintsIndex2.GetData()[ColorStart + BatchStart],
+								&ConstraintsIndex3.GetData()[ColorStart + BatchStart],
+								&ConstraintsIndex4.GetData()[ColorStart + BatchStart],
+								&RestAngles.GetData()[ColorStart + BatchStart],
+								&IsBuckled.GetData()[ColorStart + BatchStart],
+								(const ispc::FVector3f*)&WarpWeftBiasBaseMultipliers.GetData()[ColorStart + BatchStart],
+								&Lambdas.GetData()[ColorStart + BatchStart],
+								Dt,
+								reinterpret_cast<const ispc::FVector3f&>(ExpStiffnessValue),
+								reinterpret_cast<const ispc::FVector3f&>(ExpBucklingValue),
+								BatchEnd - BatchStart);
+						});
+					}
+					else
+					{
+						ispc::ApplyXPBDAnisotropicBendingConstraints(
+							(ispc::FVector4f*)Particles.GetPAndInvM().GetData(),
+							&ConstraintsIndex1.GetData()[ColorStart],
+							&ConstraintsIndex2.GetData()[ColorStart],
+							&ConstraintsIndex3.GetData()[ColorStart],
+							&ConstraintsIndex4.GetData()[ColorStart],
+							&RestAngles.GetData()[ColorStart],
+							&IsBuckled.GetData()[ColorStart],
+							(const ispc::FVector3f*)&WarpWeftBiasBaseMultipliers.GetData()[ColorStart],
+							&Lambdas.GetData()[ColorStart],
+							Dt,
+							reinterpret_cast<const ispc::FVector3f&>(ExpStiffnessValue),
+							reinterpret_cast<const ispc::FVector3f&>(ExpBucklingValue),
+							ColorSize);
+
+					}
+				}
+			}
+			else
+			{
+				// ISPC with maps
+				if (DampingHasWeightMap || (FSolverReal)DampingRatio > 0)
+				{
+					if (bChaos_XPBDBending_SplitLambdaDamping)
+					{
+						for (int32 ConstraintColorIndex = 0; ConstraintColorIndex < ConstraintColorNum; ++ConstraintColorIndex)
+						{
+							const int32 ColorStart = ConstraintsPerColorStartIndex[ConstraintColorIndex];
+							const int32 ColorSize = ConstraintsPerColorStartIndex[ConstraintColorIndex + 1] - ColorStart;
+							ispc::ApplyXPBDAnisotropicBendingDampingConstraintsWithMaps(
+								(ispc::FVector4f*)Particles.GetPAndInvM().GetData(),
+								(const ispc::FVector3f*)&X1Array.GetData()[ColorStart],
+								(const ispc::FVector3f*)&X2Array.GetData()[ColorStart],
+								(const ispc::FVector3f*)&X3Array.GetData()[ColorStart],
+								(const ispc::FVector3f*)&X4Array.GetData()[ColorStart],
+								&ConstraintsIndex1.GetData()[ColorStart],
+								&ConstraintsIndex2.GetData()[ColorStart],
+								&ConstraintsIndex3.GetData()[ColorStart],
+								&ConstraintsIndex4.GetData()[ColorStart],
+								&RestAngles.GetData()[ColorStart],
+								&IsBuckled.GetData()[ColorStart],
+								(const ispc::FVector3f*)&WarpWeftBiasBaseMultipliers.GetData()[ColorStart],
+								&LambdasDamping.GetData()[ColorStart],
+								Dt,
+								StiffnessHasWeightMap,
+								reinterpret_cast<const ispc::FVector2f&>(StiffnessWarp.GetOffsetRange()),
+								StiffnessHasWeightMap ? &StiffnessWarp.GetMapValues().GetData()[ColorStart] : nullptr,
+								StiffnessWeftHasWeightMap,
+								reinterpret_cast<const ispc::FVector2f&>(StiffnessWeft.GetOffsetRange()),
+								StiffnessWeftHasWeightMap ? &StiffnessWeft.GetMapValues().GetData()[ColorStart] : nullptr,
+								StiffnessBiasHasWeightMap,
+								reinterpret_cast<const ispc::FVector2f&>(StiffnessBias.GetOffsetRange()),
+								StiffnessBiasHasWeightMap ? &StiffnessBias.GetMapValues().GetData()[ColorStart] : nullptr,
+								BucklingStiffnessHasWeightMap,
+								reinterpret_cast<const ispc::FVector2f&>(BucklingStiffnessWarp.GetOffsetRange()),
+								BucklingStiffnessHasWeightMap ? &BucklingStiffnessWarp.GetMapValues().GetData()[ColorStart] : nullptr,
+								BucklingStiffnessWeftHasWeightMap,
+								reinterpret_cast<const ispc::FVector2f&>(BucklingStiffnessWeft.GetOffsetRange()),
+								BucklingStiffnessWeftHasWeightMap ? &BucklingStiffnessWeft.GetMapValues().GetData()[ColorStart] : nullptr,
+								BucklingStiffnessBiasHasWeightMap,
+								reinterpret_cast<const ispc::FVector2f&>(BucklingStiffnessBias.GetOffsetRange()),
+								BucklingStiffnessBiasHasWeightMap ? &BucklingStiffnessBias.GetMapValues().GetData()[ColorStart] : nullptr,
+								DampingHasWeightMap,
+								reinterpret_cast<const ispc::FVector2f&>(DampingRatio.GetOffsetRange()),
+								DampingHasWeightMap ? &DampingRatio.GetMapValues()[ColorStart] : nullptr,
+								ColorSize);
+						}
+					}
+					else
+					{
+						for (int32 ConstraintColorIndex = 0; ConstraintColorIndex < ConstraintColorNum; ++ConstraintColorIndex)
+						{
+							const int32 ColorStart = ConstraintsPerColorStartIndex[ConstraintColorIndex];
+							const int32 ColorSize = ConstraintsPerColorStartIndex[ConstraintColorIndex + 1] - ColorStart;
+							ispc::ApplyXPBDAnisotropicBendingConstraintsWithDampingAndMaps(
+								(ispc::FVector4f*)Particles.GetPAndInvM().GetData(),
+								(const ispc::FVector3f*)&X1Array.GetData()[ColorStart],
+								(const ispc::FVector3f*)&X2Array.GetData()[ColorStart],
+								(const ispc::FVector3f*)&X3Array.GetData()[ColorStart],
+								(const ispc::FVector3f*)&X4Array.GetData()[ColorStart],
+								&ConstraintsIndex1.GetData()[ColorStart],
+								&ConstraintsIndex2.GetData()[ColorStart],
+								&ConstraintsIndex3.GetData()[ColorStart],
+								&ConstraintsIndex4.GetData()[ColorStart],
+								&RestAngles.GetData()[ColorStart],
+								&IsBuckled.GetData()[ColorStart],
+								(const ispc::FVector3f*)&WarpWeftBiasBaseMultipliers.GetData()[ColorStart],
+								&Lambdas.GetData()[ColorStart],
+								Dt,
+								StiffnessHasWeightMap,
+								reinterpret_cast<const ispc::FVector2f&>(StiffnessWarp.GetOffsetRange()),
+								StiffnessHasWeightMap ? &StiffnessWarp.GetMapValues().GetData()[ColorStart] : nullptr,
+								StiffnessWeftHasWeightMap,
+								reinterpret_cast<const ispc::FVector2f&>(StiffnessWeft.GetOffsetRange()),
+								StiffnessWeftHasWeightMap ? &StiffnessWeft.GetMapValues().GetData()[ColorStart] : nullptr,
+								StiffnessBiasHasWeightMap,
+								reinterpret_cast<const ispc::FVector2f&>(StiffnessBias.GetOffsetRange()),
+								StiffnessBiasHasWeightMap ? &StiffnessBias.GetMapValues().GetData()[ColorStart] : nullptr,
+								BucklingStiffnessHasWeightMap,
+								reinterpret_cast<const ispc::FVector2f&>(BucklingStiffnessWarp.GetOffsetRange()),
+								BucklingStiffnessHasWeightMap ? &BucklingStiffnessWarp.GetMapValues().GetData()[ColorStart] : nullptr,
+								BucklingStiffnessWeftHasWeightMap,
+								reinterpret_cast<const ispc::FVector2f&>(BucklingStiffnessWeft.GetOffsetRange()),
+								BucklingStiffnessWeftHasWeightMap ? &BucklingStiffnessWeft.GetMapValues().GetData()[ColorStart] : nullptr,
+								BucklingStiffnessBiasHasWeightMap,
+								reinterpret_cast<const ispc::FVector2f&>(BucklingStiffnessBias.GetOffsetRange()),
+								BucklingStiffnessBiasHasWeightMap ? &BucklingStiffnessBias.GetMapValues().GetData()[ColorStart] : nullptr,
+								DampingHasWeightMap,
+								reinterpret_cast<const ispc::FVector2f&>(DampingRatio.GetOffsetRange()),
+								DampingHasWeightMap ? &DampingRatio.GetMapValues()[ColorStart] : nullptr,
+								ColorSize);
+						}
+						return;
+					}
+				}
+				for (int32 ConstraintColorIndex = 0; ConstraintColorIndex < ConstraintColorNum; ++ConstraintColorIndex)
+				{
+					const int32 ColorStart = ConstraintsPerColorStartIndex[ConstraintColorIndex];
+					const int32 ColorSize = ConstraintsPerColorStartIndex[ConstraintColorIndex + 1] - ColorStart;
+					ispc::ApplyXPBDAnisotropicBendingConstraintsWithMaps(
+						(ispc::FVector4f*)Particles.GetPAndInvM().GetData(),
+						&ConstraintsIndex1.GetData()[ColorStart],
+						&ConstraintsIndex2.GetData()[ColorStart],
+						&ConstraintsIndex3.GetData()[ColorStart],
+						&ConstraintsIndex4.GetData()[ColorStart],
+						&RestAngles.GetData()[ColorStart],
+						&IsBuckled.GetData()[ColorStart],
+						(const ispc::FVector3f*)&WarpWeftBiasBaseMultipliers.GetData()[ColorStart],
+						&Lambdas.GetData()[ColorStart],
+						Dt,
+						StiffnessHasWeightMap,
+						reinterpret_cast<const ispc::FVector2f&>(StiffnessWarp.GetOffsetRange()),
+						StiffnessHasWeightMap ? &StiffnessWarp.GetMapValues().GetData()[ColorStart] : nullptr,
+						StiffnessWeftHasWeightMap,
+						reinterpret_cast<const ispc::FVector2f&>(StiffnessWeft.GetOffsetRange()),
+						StiffnessWeftHasWeightMap ? &StiffnessWeft.GetMapValues().GetData()[ColorStart] : nullptr,
+						StiffnessBiasHasWeightMap,
+						reinterpret_cast<const ispc::FVector2f&>(StiffnessBias.GetOffsetRange()),
+						StiffnessBiasHasWeightMap ? &StiffnessBias.GetMapValues().GetData()[ColorStart] : nullptr,
+						BucklingStiffnessHasWeightMap,
+						reinterpret_cast<const ispc::FVector2f&>(BucklingStiffnessWarp.GetOffsetRange()),
+						BucklingStiffnessHasWeightMap ? &BucklingStiffnessWarp.GetMapValues().GetData()[ColorStart] : nullptr,
+						BucklingStiffnessWeftHasWeightMap,
+						reinterpret_cast<const ispc::FVector2f&>(BucklingStiffnessWeft.GetOffsetRange()),
+						BucklingStiffnessWeftHasWeightMap ? &BucklingStiffnessWeft.GetMapValues().GetData()[ColorStart] : nullptr,
+						BucklingStiffnessBiasHasWeightMap,
+						reinterpret_cast<const ispc::FVector2f&>(BucklingStiffnessBias.GetOffsetRange()),
+						BucklingStiffnessBiasHasWeightMap ? &BucklingStiffnessBias.GetMapValues().GetData()[ColorStart] : nullptr,
+						ColorSize);
 				}
 			}
 		}
-		else  // Has weight maps
+		else
+#endif
 		{
-#if INTEL_ISPC
-			if (bRealTypeCompatibleWithISPC && bChaos_XPBDBending_ISPC_Enabled)
+			// Parallel non-ispc
+			const FSolverReal StiffnessNoMap = (FSolverReal)StiffnessWarp;
+			const FSolverReal StiffnessWeftNoMap = (FSolverReal)StiffnessWeft;
+			const FSolverReal StiffnessBiasNoMap = (FSolverReal)StiffnessBias;
+			const FSolverReal BucklingStiffnessNoMap = (FSolverReal)BucklingStiffnessWarp;
+			const FSolverReal BucklingStiffnessWeftNoMap = (FSolverReal)BucklingStiffnessWeft;
+			const FSolverReal BucklingStiffnessBiasNoMap = (FSolverReal)BucklingStiffnessBias;
+			const FSolverReal DampingNoMap = (FSolverReal)DampingRatio;
+
+			if (DampingHasWeightMap || (FSolverReal)DampingRatio > 0)
 			{
-				if (DampingHasWeightMap || (FSolverReal)DampingRatio > 0)
+				if (bChaos_XPBDBending_SplitLambdaDamping)
 				{
 					for (int32 ConstraintColorIndex = 0; ConstraintColorIndex < ConstraintColorNum; ++ConstraintColorIndex)
 					{
 						const int32 ColorStart = ConstraintsPerColorStartIndex[ConstraintColorIndex];
 						const int32 ColorSize = ConstraintsPerColorStartIndex[ConstraintColorIndex + 1] - ColorStart;
-						ispc::ApplyXPBDAnisotropicBendingConstraintsWithDampingAndMaps(
-							(ispc::FVector4f*)Particles.GetPAndInvM().GetData(),
-							(const ispc::FVector3f*)Particles.X().GetData(),
-							(ispc::FIntVector4*)&Constraints.GetData()[ColorStart],
-							&RestAngles.GetData()[ColorStart],
-							&IsBuckled.GetData()[ColorStart],
-							(const ispc::FVector3f*)&WarpWeftBiasBaseMultipliers.GetData()[ColorStart],
-							&Lambdas.GetData()[ColorStart],
-							Dt,
-							MinStiffness,
-							StiffnessHasWeightMap,
-							StiffnessHasWeightMap ? &Stiffness.GetIndices().GetData()[ColorStart] : nullptr,
-							&Stiffness.GetTable().GetData()[0],
-							StiffnessWeftHasWeightMap,
-							StiffnessWeftHasWeightMap ? &StiffnessWeft.GetIndices().GetData()[ColorStart] : nullptr,
-							&StiffnessWeft.GetTable().GetData()[0],
-							StiffnessBiasHasWeightMap,
-							StiffnessBiasHasWeightMap ? &StiffnessBias.GetIndices().GetData()[ColorStart] : nullptr,
-							&StiffnessBias.GetTable().GetData()[0],
-							BucklingStiffnessHasWeightMap,
-							BucklingStiffnessHasWeightMap ? &BucklingStiffness.GetIndices().GetData()[ColorStart] : nullptr,
-							&BucklingStiffness.GetTable().GetData()[0],
-							BucklingStiffnessWeftHasWeightMap,
-							BucklingStiffnessWeftHasWeightMap ? &BucklingStiffnessWeft.GetIndices().GetData()[ColorStart] : nullptr,
-							&BucklingStiffnessWeft.GetTable().GetData()[0],
-							BucklingStiffnessBiasHasWeightMap,
-							BucklingStiffnessBiasHasWeightMap ? &BucklingStiffnessBias.GetIndices().GetData()[ColorStart] : nullptr,
-							&BucklingStiffnessBias.GetTable().GetData()[0],
-							DampingHasWeightMap,
-							DampingHasWeightMap ? &DampingRatio.GetIndices().GetData()[ColorStart] : nullptr,
-							&DampingRatio.GetTable().GetData()[0],
-							ColorSize);
+						PhysicsParallelFor(ColorSize, [&](const int32 Index)
+						{
+							const int32 ConstraintIndex = ColorStart + Index;
+							const FSolverReal ExpStiffnessValue = StiffnessHasWeightMap ? StiffnessWarp[ConstraintIndex] : StiffnessNoMap;
+							const FSolverReal ExpStiffnessWeftValue = StiffnessWeftHasWeightMap ? StiffnessWeft[ConstraintIndex] : StiffnessWeftNoMap;
+							const FSolverReal ExpStiffnessBiasValue = StiffnessBiasHasWeightMap ? StiffnessBias[ConstraintIndex] : StiffnessBiasNoMap;
+							const FSolverReal ExpBucklingValue = BucklingStiffnessHasWeightMap ? BucklingStiffnessWarp[ConstraintIndex] : BucklingStiffnessNoMap;
+							const FSolverReal ExpBucklingWeftValue = BucklingStiffnessWeftHasWeightMap ? BucklingStiffnessWeft[ConstraintIndex] : BucklingStiffnessWeftNoMap;
+							const FSolverReal ExpBucklingBiasValue = BucklingStiffnessBiasHasWeightMap ? BucklingStiffnessBias[ConstraintIndex] : BucklingStiffnessBiasNoMap;
+							const FSolverReal DampingRatioValue = DampingHasWeightMap ? DampingRatio[ConstraintIndex] : DampingNoMap;
+							constexpr bool bDampingOnly = true;
+							constexpr bool bElasticOnly = false;
+							ApplyHelper<bDampingOnly, bElasticOnly>(Particles, Dt, ConstraintIndex,
+								FSolverVec3(ExpStiffnessWeftValue, ExpStiffnessValue, ExpStiffnessBiasValue), FSolverVec3(ExpBucklingWeftValue, ExpBucklingValue, ExpBucklingBiasValue), DampingRatioValue);
+						});
 					}
 				}
 				else
@@ -646,47 +1034,25 @@ void FXPBDAnisotropicBendingConstraints::Apply(FSolverParticles& Particles, cons
 					{
 						const int32 ColorStart = ConstraintsPerColorStartIndex[ConstraintColorIndex];
 						const int32 ColorSize = ConstraintsPerColorStartIndex[ConstraintColorIndex + 1] - ColorStart;
-						ispc::ApplyXPBDAnisotropicBendingConstraintsWithMaps(
-							(ispc::FVector4f*)Particles.GetPAndInvM().GetData(),
-							(ispc::FIntVector4*)&Constraints.GetData()[ColorStart],
-							&RestAngles.GetData()[ColorStart],
-							&IsBuckled.GetData()[ColorStart],
-							(const ispc::FVector3f*)&WarpWeftBiasBaseMultipliers.GetData()[ColorStart],
-							&Lambdas.GetData()[ColorStart],
-							Dt,
-							MinStiffness,
-							StiffnessHasWeightMap,
-							StiffnessHasWeightMap ? &Stiffness.GetIndices().GetData()[ColorStart] : nullptr,
-							&Stiffness.GetTable().GetData()[0],
-							StiffnessWeftHasWeightMap,
-							StiffnessWeftHasWeightMap ? &StiffnessWeft.GetIndices().GetData()[ColorStart] : nullptr,
-							&StiffnessWeft.GetTable().GetData()[0],
-							StiffnessBiasHasWeightMap,
-							StiffnessBiasHasWeightMap ? &StiffnessBias.GetIndices().GetData()[ColorStart] : nullptr,
-							&StiffnessBias.GetTable().GetData()[0],
-							BucklingStiffnessHasWeightMap,
-							BucklingStiffnessHasWeightMap ? &BucklingStiffness.GetIndices().GetData()[ColorStart] : nullptr,
-							&BucklingStiffness.GetTable().GetData()[0],
-							BucklingStiffnessWeftHasWeightMap,
-							BucklingStiffnessWeftHasWeightMap ? &BucklingStiffnessWeft.GetIndices().GetData()[ColorStart] : nullptr,
-							&BucklingStiffnessWeft.GetTable().GetData()[0],
-							BucklingStiffnessBiasHasWeightMap,
-							BucklingStiffnessBiasHasWeightMap ? &BucklingStiffnessBias.GetIndices().GetData()[ColorStart] : nullptr,
-							&BucklingStiffnessBias.GetTable().GetData()[0],
-							ColorSize);
+						PhysicsParallelFor(ColorSize, [&](const int32 Index)
+						{
+							const int32 ConstraintIndex = ColorStart + Index;
+							const FSolverReal ExpStiffnessValue = StiffnessHasWeightMap ? StiffnessWarp[ConstraintIndex] : StiffnessNoMap;
+							const FSolverReal ExpStiffnessWeftValue = StiffnessWeftHasWeightMap ? StiffnessWeft[ConstraintIndex] : StiffnessWeftNoMap;
+							const FSolverReal ExpStiffnessBiasValue = StiffnessBiasHasWeightMap ? StiffnessBias[ConstraintIndex] : StiffnessBiasNoMap;
+							const FSolverReal ExpBucklingValue = BucklingStiffnessHasWeightMap ? BucklingStiffnessWarp[ConstraintIndex] : BucklingStiffnessNoMap;
+							const FSolverReal ExpBucklingWeftValue = BucklingStiffnessWeftHasWeightMap ? BucklingStiffnessWeft[ConstraintIndex] : BucklingStiffnessWeftNoMap;
+							const FSolverReal ExpBucklingBiasValue = BucklingStiffnessBiasHasWeightMap ? BucklingStiffnessBias[ConstraintIndex] : BucklingStiffnessBiasNoMap;
+							const FSolverReal DampingRatioValue = DampingHasWeightMap ? DampingRatio[ConstraintIndex] : DampingNoMap;
+							constexpr bool bDampingOnly = false;
+							constexpr bool bElasticOnly = false;
+							ApplyHelper<bDampingOnly, bElasticOnly>(Particles, Dt, ConstraintIndex,
+								FSolverVec3(ExpStiffnessWeftValue, ExpStiffnessValue, ExpStiffnessBiasValue), FSolverVec3(ExpBucklingWeftValue, ExpBucklingValue, ExpBucklingBiasValue), DampingRatioValue);
+						});
 					}
+					return;
 				}
-			}
-			else
-#endif
-			{
-				const FSolverReal StiffnessNoMap = (FSolverReal)Stiffness;
-				const FSolverReal StiffnessWeftNoMap = (FSolverReal)StiffnessWeft;
-				const FSolverReal StiffnessBiasNoMap = (FSolverReal)StiffnessBias;
-				const FSolverReal BucklingStiffnessNoMap = (FSolverReal)BucklingStiffness;
-				const FSolverReal BucklingStiffnessWeftNoMap = (FSolverReal)BucklingStiffnessWeft;
-				const FSolverReal BucklingStiffnessBiasNoMap = (FSolverReal)BucklingStiffnessBias;
-				const FSolverReal DampingNoMap = (FSolverReal)DampingRatio;
+
 				for (int32 ConstraintColorIndex = 0; ConstraintColorIndex < ConstraintColorNum; ++ConstraintColorIndex)
 				{
 					const int32 ColorStart = ConstraintsPerColorStartIndex[ConstraintColorIndex];
@@ -694,15 +1060,17 @@ void FXPBDAnisotropicBendingConstraints::Apply(FSolverParticles& Particles, cons
 					PhysicsParallelFor(ColorSize, [&](const int32 Index)
 					{
 						const int32 ConstraintIndex = ColorStart + Index;
-						const FSolverReal ExpStiffnessValue = StiffnessHasWeightMap ? Stiffness[ConstraintIndex] : StiffnessNoMap;
+						const FSolverReal ExpStiffnessValue = StiffnessHasWeightMap ? StiffnessWarp[ConstraintIndex] : StiffnessNoMap;
 						const FSolverReal ExpStiffnessWeftValue = StiffnessWeftHasWeightMap ? StiffnessWeft[ConstraintIndex] : StiffnessWeftNoMap;
 						const FSolverReal ExpStiffnessBiasValue = StiffnessBiasHasWeightMap ? StiffnessBias[ConstraintIndex] : StiffnessBiasNoMap;
-						const FSolverReal ExpBucklingValue = BucklingStiffnessHasWeightMap ? BucklingStiffness[ConstraintIndex] : BucklingStiffnessNoMap;
+						const FSolverReal ExpBucklingValue = BucklingStiffnessHasWeightMap ? BucklingStiffnessWarp[ConstraintIndex] : BucklingStiffnessNoMap;
 						const FSolverReal ExpBucklingWeftValue = BucklingStiffnessWeftHasWeightMap ? BucklingStiffnessWeft[ConstraintIndex] : BucklingStiffnessWeftNoMap;
 						const FSolverReal ExpBucklingBiasValue = BucklingStiffnessBiasHasWeightMap ? BucklingStiffnessBias[ConstraintIndex] : BucklingStiffnessBiasNoMap;
 						const FSolverReal DampingRatioValue = DampingHasWeightMap ? DampingRatio[ConstraintIndex] : DampingNoMap;
-						ApplyHelper(Particles, Dt, ConstraintIndex, FSolverVec3(ExpStiffnessWeftValue, ExpStiffnessValue, ExpStiffnessBiasValue),
-							FSolverVec3(ExpBucklingWeftValue, ExpBucklingValue, ExpBucklingBiasValue), DampingRatioValue);
+						constexpr bool bDampingOnly = false;
+						constexpr bool bElasticOnly = true;
+						ApplyHelper<bDampingOnly, bElasticOnly>(Particles, Dt, ConstraintIndex,
+							FSolverVec3(ExpStiffnessWeftValue, ExpStiffnessValue, ExpStiffnessBiasValue), FSolverVec3(ExpBucklingWeftValue, ExpBucklingValue, ExpBucklingBiasValue), DampingRatioValue);
 					});
 				}
 			}
@@ -710,47 +1078,214 @@ void FXPBDAnisotropicBendingConstraints::Apply(FSolverParticles& Particles, cons
 	}
 	else
 	{
-		if (!StiffnessHasWeightMap && !StiffnessWeftHasWeightMap && !StiffnessBiasHasWeightMap &&
-			!BucklingStiffnessHasWeightMap && !BucklingStiffnessWeftHasWeightMap && !BucklingStiffnessBiasHasWeightMap &&
-			!DampingHasWeightMap)
+		// Single-threaded
+		const FSolverReal StiffnessNoMap = (FSolverReal)Stiffness;
+		const FSolverReal StiffnessWeftNoMap = (FSolverReal)StiffnessWeft;
+		const FSolverReal StiffnessBiasNoMap = (FSolverReal)StiffnessBias;
+		const FSolverReal BucklingStiffnessNoMap = (FSolverReal)BucklingStiffness;
+		const FSolverReal BucklingStiffnessWeftNoMap = (FSolverReal)BucklingStiffnessWeft;
+		const FSolverReal BucklingStiffnessBiasNoMap = (FSolverReal)BucklingStiffnessBias;
+		const FSolverReal DampingNoMap = (FSolverReal)DampingRatio;
+		if (DampingHasWeightMap || (FSolverReal)DampingRatio > 0)
 		{
-			const FSolverVec3 ExpStiffnessValue((FSolverReal)StiffnessWeft, (FSolverReal)Stiffness, (FSolverReal)StiffnessBias);
-			const FSolverVec3 ExpBucklingValue((FSolverReal)BucklingStiffnessWeft, (FSolverReal)BucklingStiffness, (FSolverReal)BucklingStiffnessBias);
-			const FSolverReal DampingRatioValue = (FSolverReal)DampingRatio;
-
-			if (ExpStiffnessValue.Max() < MinStiffness && ExpBucklingValue.Max() < MinStiffness)
+			if (bChaos_XPBDBending_SplitLambdaDamping)
 			{
+				for (int32 ConstraintIndex = 0; ConstraintIndex < Constraints.Num(); ++ConstraintIndex)
+				{
+					const FSolverReal ExpStiffnessValue = StiffnessHasWeightMap ? StiffnessWarp[ConstraintIndex] : StiffnessNoMap;
+					const FSolverReal ExpStiffnessWeftValue = StiffnessWeftHasWeightMap ? StiffnessWeft[ConstraintIndex] : StiffnessWeftNoMap;
+					const FSolverReal ExpStiffnessBiasValue = StiffnessBiasHasWeightMap ? StiffnessBias[ConstraintIndex] : StiffnessBiasNoMap;
+					const FSolverReal ExpBucklingValue = BucklingStiffnessHasWeightMap ? BucklingStiffnessWarp[ConstraintIndex] : BucklingStiffnessNoMap;
+					const FSolverReal ExpBucklingWeftValue = BucklingStiffnessWeftHasWeightMap ? BucklingStiffnessWeft[ConstraintIndex] : BucklingStiffnessWeftNoMap;
+					const FSolverReal ExpBucklingBiasValue = BucklingStiffnessBiasHasWeightMap ? BucklingStiffnessBias[ConstraintIndex] : BucklingStiffnessBiasNoMap;
+					const FSolverReal DampingRatioValue = DampingHasWeightMap ? DampingRatio[ConstraintIndex] : DampingNoMap;
+					constexpr bool bDampingOnly = true;
+					constexpr bool bElasticOnly = false;
+					ApplyHelper<bDampingOnly, bElasticOnly>(Particles, Dt, ConstraintIndex,
+						FSolverVec3(ExpStiffnessWeftValue, ExpStiffnessValue, ExpStiffnessBiasValue), FSolverVec3(ExpBucklingWeftValue, ExpBucklingValue, ExpBucklingBiasValue), DampingRatioValue);
+				}
+			}
+			else
+			{
+				for (int32 ConstraintIndex = 0; ConstraintIndex < Constraints.Num(); ++ConstraintIndex)
+				{
+					const FSolverReal ExpStiffnessValue = StiffnessHasWeightMap ? StiffnessWarp[ConstraintIndex] : StiffnessNoMap;
+					const FSolverReal ExpStiffnessWeftValue = StiffnessWeftHasWeightMap ? StiffnessWeft[ConstraintIndex] : StiffnessWeftNoMap;
+					const FSolverReal ExpStiffnessBiasValue = StiffnessBiasHasWeightMap ? StiffnessBias[ConstraintIndex] : StiffnessBiasNoMap;
+					const FSolverReal ExpBucklingValue = BucklingStiffnessHasWeightMap ? BucklingStiffnessWarp[ConstraintIndex] : BucklingStiffnessNoMap;
+					const FSolverReal ExpBucklingWeftValue = BucklingStiffnessWeftHasWeightMap ? BucklingStiffnessWeft[ConstraintIndex] : BucklingStiffnessWeftNoMap;
+					const FSolverReal ExpBucklingBiasValue = BucklingStiffnessBiasHasWeightMap ? BucklingStiffnessBias[ConstraintIndex] : BucklingStiffnessBiasNoMap;
+					const FSolverReal DampingRatioValue = DampingHasWeightMap ? DampingRatio[ConstraintIndex] : DampingNoMap;
+					constexpr bool bDampingOnly = false;
+					constexpr bool bElasticOnly = false;
+					ApplyHelper<bDampingOnly, bElasticOnly>(Particles, Dt, ConstraintIndex,
+						FSolverVec3(ExpStiffnessWeftValue, ExpStiffnessValue, ExpStiffnessBiasValue), FSolverVec3(ExpBucklingWeftValue, ExpBucklingValue, ExpBucklingBiasValue), DampingRatioValue);
+				}
 				return;
 			}
-
-			for (int32 ConstraintIndex = 0; ConstraintIndex < Constraints.Num(); ++ConstraintIndex)
-			{
-				ApplyHelper(Particles, Dt, ConstraintIndex, ExpStiffnessValue, ExpBucklingValue, DampingRatioValue);
-			}
 		}
-		else
+
+		for (int32 ConstraintIndex = 0; ConstraintIndex < Constraints.Num(); ++ConstraintIndex)
 		{
-			const FSolverReal StiffnessNoMap = (FSolverReal)Stiffness;
-			const FSolverReal StiffnessWeftNoMap = (FSolverReal)StiffnessWeft;
-			const FSolverReal StiffnessBiasNoMap = (FSolverReal)StiffnessBias;
-			const FSolverReal BucklingStiffnessNoMap = (FSolverReal)BucklingStiffness;
-			const FSolverReal BucklingStiffnessWeftNoMap = (FSolverReal)BucklingStiffnessWeft;
-			const FSolverReal BucklingStiffnessBiasNoMap = (FSolverReal)BucklingStiffnessBias;
-			const FSolverReal DampingNoMap = (FSolverReal)DampingRatio;
-			for (int32 ConstraintIndex = 0; ConstraintIndex < Constraints.Num(); ++ConstraintIndex)
-			{
-				const FSolverReal ExpStiffnessValue = StiffnessHasWeightMap ? Stiffness[ConstraintIndex] : StiffnessNoMap;
-				const FSolverReal ExpStiffnessWeftValue = StiffnessWeftHasWeightMap ? StiffnessWeft[ConstraintIndex] : StiffnessWeftNoMap;
-				const FSolverReal ExpStiffnessBiasValue = StiffnessBiasHasWeightMap ? StiffnessBias[ConstraintIndex] : StiffnessBiasNoMap;
-				const FSolverReal ExpBucklingValue = BucklingStiffnessHasWeightMap ? BucklingStiffness[ConstraintIndex] : BucklingStiffnessNoMap;
-				const FSolverReal ExpBucklingWeftValue = BucklingStiffnessWeftHasWeightMap ? BucklingStiffnessWeft[ConstraintIndex] : BucklingStiffnessWeftNoMap;
-				const FSolverReal ExpBucklingBiasValue = BucklingStiffnessBiasHasWeightMap ? BucklingStiffnessBias[ConstraintIndex] : BucklingStiffnessBiasNoMap;
-				const FSolverReal DampingRatioValue = DampingHasWeightMap ? DampingRatio[ConstraintIndex] : DampingNoMap;
-				ApplyHelper(Particles, Dt, ConstraintIndex, FSolverVec3(ExpStiffnessWeftValue, ExpStiffnessValue, ExpStiffnessBiasValue),
-					FSolverVec3(ExpBucklingWeftValue, ExpBucklingValue, ExpBucklingBiasValue), DampingRatioValue);
-			}
+			const FSolverReal ExpStiffnessValue = StiffnessHasWeightMap ? StiffnessWarp[ConstraintIndex] : StiffnessNoMap;
+			const FSolverReal ExpStiffnessWeftValue = StiffnessWeftHasWeightMap ? StiffnessWeft[ConstraintIndex] : StiffnessWeftNoMap;
+			const FSolverReal ExpStiffnessBiasValue = StiffnessBiasHasWeightMap ? StiffnessBias[ConstraintIndex] : StiffnessBiasNoMap;
+			const FSolverReal ExpBucklingValue = BucklingStiffnessHasWeightMap ? BucklingStiffnessWarp[ConstraintIndex] : BucklingStiffnessNoMap;
+			const FSolverReal ExpBucklingWeftValue = BucklingStiffnessWeftHasWeightMap ? BucklingStiffnessWeft[ConstraintIndex] : BucklingStiffnessWeftNoMap;
+			const FSolverReal ExpBucklingBiasValue = BucklingStiffnessBiasHasWeightMap ? BucklingStiffnessBias[ConstraintIndex] : BucklingStiffnessBiasNoMap;
+			const FSolverReal DampingRatioValue = DampingHasWeightMap ? DampingRatio[ConstraintIndex] : DampingNoMap;
+			constexpr bool bDampingOnly = false;
+			constexpr bool bElasticOnly = true;
+			ApplyHelper<bDampingOnly, bElasticOnly>(Particles, Dt, ConstraintIndex,
+				FSolverVec3(ExpStiffnessWeftValue, ExpStiffnessValue, ExpStiffnessBiasValue), FSolverVec3(ExpBucklingWeftValue, ExpBucklingValue, ExpBucklingBiasValue), DampingRatioValue);
 		}
 	}
 }
+template CHAOS_API void FXPBDAnisotropicBendingConstraints::Apply(FSolverParticles& Particles, const FSolverReal Dt) const;
+template CHAOS_API void FXPBDAnisotropicBendingConstraints::Apply(FSolverParticlesRange& Particles, const FSolverReal Dt) const;
+
+void FXPBDAnisotropicBendingConstraints::ComputeGradTheta(const FSolverVec3& X0, const FSolverVec3& X1, const FSolverVec3& X2, const FSolverVec3& X3, const int32 Index, FSolverVec3& dThetadx, FSolverReal& Theta) 
+{
+	const FSolverVec3 E21 = X2 - X1;
+	const FSolverReal Norme = E21.Length();
+	const FSolverVec3 E10 = X1 - X0;
+	const FSolverVec3 E20 = X2 - X0;
+	const FSolverVec3 N0 = FSolverVec3::CrossProduct(E20, E10);
+	const FSolverReal SquaredNorm0 = N0.SquaredLength();
+
+	const FSolverVec3 E23 = X2 - X3;
+	const FSolverVec3 E13 = X1 - X3;
+	const FSolverVec3 N1 = FSolverVec3::CrossProduct(E13, E23); 
+	const FSolverReal SquaredNorm1 = N1.SquaredLength();
+
+	const FSolverVec3 N0CrossN1 = FSolverVec3::CrossProduct(N0, N1);
+	Theta = FMath::Atan2(FSolverVec3::DotProduct(N0CrossN1, E21) / Norme, N0.Dot(N1)); 
+
+	switch (Index)
+		{
+			case 0:
+				dThetadx = -(Norme / SquaredNorm0) * N0;
+				break;
+			case 1:
+				dThetadx = ((E20.Dot(E21)) / (Norme * SquaredNorm1)) * N1 + ((E23.Dot(E21)) / (Norme * SquaredNorm0)) * N0;
+				break;
+			case 2:
+				dThetadx = -((E10.Dot(E21)) / (Norme * SquaredNorm1)) * N1 - ((E13.Dot(E21)) / (Norme * SquaredNorm0)) * N0;
+				break;
+			case 3:
+				dThetadx = -(Norme / SquaredNorm1) * N1;
+				break;
+			default:
+				break;
+		}
+}
+
+void FXPBDAnisotropicBendingConstraints::AddAnisotropicBendingResidualAndHessian(const FSolverParticles& Particles, const int32 ConstraintIndex, const int32 ConstraintIndexLocal, const FSolverReal Dt, TVec3<FSolverReal>& ParticleResidual, Chaos::PMatrix<FSolverReal, 3, 3>& ParticleHessian)
+{
+	const FSolverVec3 ExpStiffnessValue((FSolverReal)StiffnessWeft, (FSolverReal)StiffnessWarp, (FSolverReal)StiffnessBias);
+	const FSolverVec3 ExpBucklingValue((FSolverReal)BucklingStiffnessWeft, (FSolverReal)BucklingStiffnessWarp, (FSolverReal)BucklingStiffnessBias);
+	const FSolverReal DampingRatioValue = (FSolverReal)DampingRatio;
+	const FSolverVec3& WarpWeftBiasBaseMultiplier = WarpWeftBiasBaseMultipliers[ConstraintIndex];
+
+	const TVec4<int32>& Constraint = Constraints[ConstraintIndex];
+	const int32 i1 = Constraint[0];
+	const int32 i2 = Constraint[1];
+	const int32 i3 = Constraint[2];
+	const int32 i4 = Constraint[3];
+	const FSolverVec3& P1 = Particles.P(Constraint[0]);
+	const FSolverVec3& P2 = Particles.P(Constraint[1]);
+	const FSolverVec3& P3 = Particles.P(Constraint[2]);
+	const FSolverVec3& P4 = Particles.P(Constraint[3]);
+
+
+	FSolverVec3 DThetaDx(0.f);
+	FSolverReal Theta = 0.f;
+
+	//TStaticArray<int32, 4> LocalIndexMap { 2, 1, 0, 3 };{ 2, 1, 0, 3 };
+	constexpr int32 LocalIndexMap[] = { 2, 1, 0, 3 };
+	const int32 ActualConstraintIndexLocal = LocalIndexMap[ConstraintIndexLocal];
+
+	ComputeGradTheta(P3, P2, P1, P4, ActualConstraintIndexLocal, DThetaDx, Theta);
+
+	const FSolverReal CAngle = Theta - RestAngles[ConstraintIndex];
+
+	const FSolverReal BiphasicStiffnessValue = IsBuckled[ConstraintIndex] ?
+		WarpWeftBiasBaseMultiplier.Dot(ExpBucklingValue) : WarpWeftBiasBaseMultiplier.Dot(ExpStiffnessValue);
+
+	ParticleResidual -= Dt * Dt * BiphasicStiffnessValue * CAngle * DThetaDx;
+
+	for (int32 Alpha = 0; Alpha < 3; Alpha++)
+	{
+		ParticleHessian.SetRow(Alpha, ParticleHessian.GetRow(Alpha) + Dt * Dt * BiphasicStiffnessValue * DThetaDx[Alpha] * DThetaDx);
+	}
+}
+
+
+void FXPBDAnisotropicBendingConstraints::AddInternalForceDifferential(const FSolverParticles& InParticles, const TArray<TVector<FSolverReal, 3>>& DeltaParticles, TArray<TVector<FSolverReal, 3>>& ndf)
+{
+	const FSolverVec3 ExpStiffnessValue((FSolverReal)StiffnessWeft, (FSolverReal)StiffnessWarp, (FSolverReal)StiffnessBias);
+	const FSolverVec3 ExpBucklingValue((FSolverReal)BucklingStiffnessWeft, (FSolverReal)BucklingStiffnessWarp, (FSolverReal)BucklingStiffnessBias);
+	const FSolverReal DampingRatioValue = (FSolverReal)DampingRatio;
+
+	int32 ParticleStart = 0;
+	int32 ParticleNum = InParticles.Size();
+	ensure(ndf.Num() == InParticles.Size());
+
+	const int32 ConstraintColorNum = ConstraintsPerColorStartIndex.Num() - 1;
+
+	for (int32 ConstraintColorIndex = 0; ConstraintColorIndex < ConstraintColorNum; ++ConstraintColorIndex)
+	{
+		const int32 ColorStart = ConstraintsPerColorStartIndex[ConstraintColorIndex];
+		const int32 ColorSize = ConstraintsPerColorStartIndex[ConstraintColorIndex + 1] - ColorStart;
+		PhysicsParallelFor(ColorSize, [&](const int32 Index)
+			{
+				const int32 ConstraintIndex = ColorStart + Index;
+				const TVec4<int32>& Constraint = Constraints[ConstraintIndex];
+				const int32 i1 = Constraint[0];
+				const int32 i2 = Constraint[1];
+				const int32 i3 = Constraint[2];
+				const int32 i4 = Constraint[3];
+
+				const FSolverVec3& P1 = InParticles.P(Constraint[0]);
+				const FSolverVec3& P2 = InParticles.P(Constraint[1]);
+				const FSolverVec3& P3 = InParticles.P(Constraint[2]);
+				const FSolverVec3& P4 = InParticles.P(Constraint[3]);
+				const FSolverVec3& WarpWeftBiasBaseMultiplier = WarpWeftBiasBaseMultipliers[ConstraintIndex];
+				FSolverReal Theta = 0.f;
+
+				TArray<FSolverVec3> Alldthetadx;
+				Alldthetadx.Init(FSolverVec3(0.f), 4);
+
+				constexpr int32 LocalIndexMap[] = { 2, 1, 0, 3 };
+				for (int32 i = 0; i < 4; i++)
+				{
+					int32 ActualConstraintIndexLocal = LocalIndexMap[i];
+					ComputeGradTheta(P3, P2, P1, P4, ActualConstraintIndexLocal, Alldthetadx[i], Theta);
+				}
+
+				const FSolverReal BiphasicStiffnessValue = IsBuckled[ConstraintIndex] ?
+					WarpWeftBiasBaseMultiplier.Dot(ExpBucklingValue) : WarpWeftBiasBaseMultiplier.Dot(ExpStiffnessValue);
+
+				FSolverReal DeltaC = 0.f;
+
+				for (int32 i = 0; i < 4; i++)
+				{
+					for (int32 j = 0; j < 3; j++)
+					{
+						DeltaC += Alldthetadx[i][j] * DeltaParticles[Constraint[i]][j];
+					}
+				}
+
+				for (int32 i = 0; i < 4; i++)
+				{
+					ndf[Constraint[i]] += BiphasicStiffnessValue * DeltaC * Alldthetadx[i];
+				}
+
+		});
+	}
+}
+
+
+
 
 }  // End namespace Chaos::Softs

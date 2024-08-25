@@ -161,6 +161,11 @@ namespace Chaos::Facades
 
 	TArray<int32> FCollectionHierarchyFacade::GetTransformArrayInDepthFirstOrder() const
 	{
+		return ComputeTransformIndicesInDepthFirstOrder();
+	}
+
+	TArray<int32> FCollectionHierarchyFacade::ComputeTransformIndicesInDepthFirstOrder() const
+	{
 		TArray<int32> OrderedTransforms;
 		if (ParentAttribute.IsValid() && ChildrenAttribute.IsValid())
 		{
@@ -222,5 +227,32 @@ namespace Chaos::Facades
 			}
 		}
 		return OrderedTransforms;
+	}
+
+	TArray<int32> FCollectionHierarchyFacade::ComputeTransformIndicesInBreadthFirstOrder() const
+	{
+		TArray<int32> BreadthFirstIndices;
+		if (ParentAttribute.IsValid() && ChildrenAttribute.IsValid())
+		{
+			const TManagedArray<int32>& Parent = ParentAttribute.Get();
+			const TManagedArray<TSet<int32>>& Children = ChildrenAttribute.Get();
+
+			// first add all the roots
+			BreadthFirstIndices = GetRootIndices();
+			BreadthFirstIndices.Reserve(Parent.Num());
+
+			for (int Index = 0; Index < BreadthFirstIndices.Num(); Index++)
+			{
+				const int32 TransformIndex = BreadthFirstIndices[Index];
+				if (Children[TransformIndex].Num())
+				{
+					for (const int32 ChildTransformIndex : Children[TransformIndex])
+					{
+						BreadthFirstIndices.Add(ChildTransformIndex);
+					}
+				}
+			}
+		}
+		return BreadthFirstIndices;
 	}
 }

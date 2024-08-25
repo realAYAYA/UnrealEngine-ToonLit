@@ -38,6 +38,9 @@ int32 SSegmentedTimelineView::PaintBlock(const FGeometry& AllottedGeometry, cons
 
 	if (TSharedPtr<FSegmentData> SegmentDataPtr = SegmentData.Get())
 	{
+		uint32 Index = 0;
+		const TOptional<TArray<FLinearColor>>& OverrideColors = SegmentDataPtr->AlternatingSegmentsColors;
+		const bool bOverrideColorsProvided = OverrideColors.IsSet() && OverrideColors.GetValue().Num() > 0;
 		for (const TRange<double>& SegmentRange : SegmentDataPtr->Segments)
 		{
 			double LowerBound = SegmentRange.HasLowerBound() ? SegmentRange.GetLowerBoundValue() : 0;
@@ -48,8 +51,8 @@ int32 SSegmentedTimelineView::PaintBlock(const FGeometry& AllottedGeometry, cons
 			FPaintGeometry BoxGeometry = AllottedGeometry.ToPaintGeometry(FVector2f(BoxMax - BoxMin, Size.Y - 2), FSlateLayoutTransform(FVector2f(BoxMin, 1.f)));
 
 			const FSlateBrush* Brush = FAppStyle::GetBrush("Sequencer.SectionArea.Background");
-
-			FSlateDrawElement::MakeBox(OutDrawElements, LayerId, BoxGeometry, Brush, ESlateDrawEffect::None, Color);
+			FSlateDrawElement::MakeBox(OutDrawElements, LayerId, BoxGeometry, Brush, ESlateDrawEffect::None, bOverrideColorsProvided ? OverrideColors.GetValue()[Index % OverrideColors->Num()] : Color);
+			++Index;
 		}
 		
 		++LayerId;

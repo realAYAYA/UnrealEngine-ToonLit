@@ -116,8 +116,12 @@ public:
 	virtual bool IsSelectedInEditor() const;
 	virtual bool ShouldDrawNodeAsControlPointOnly(int32& OutInputPinIndex, int32& OutOutputPinIndex) const override;
 	virtual void BeginDestroy() override;
+#if WITH_EDITOR
+	virtual void AddPinSearchMetaDataInfo(const UEdGraphPin* Pin, TArray<FSearchTagDataPair>& OutTaggedMetaData) const override;
+#endif
 
 	virtual bool IsDeprecated() const override;
+	bool IsOutDated() const;
 	virtual FEdGraphNodeDeprecationResponse GetDeprecationResponse(EEdGraphNodeDeprecationType DeprecationType) const override;
 
 	/** Set the cached dimensions of this node */
@@ -147,6 +151,9 @@ public:
 	/** Get the VM node name this node is wrapping */
 	FName GetModelNodeName() const;
 
+	/** Get the VM node path this node is wrapping */
+	const FString& GetModelNodePath() const;
+
 	URigVMPin* GetModelPinFromPinPath(const FString& InPinPath) const;
 
 	/** Add a new element to the aggregate node referred to by the property path */
@@ -169,6 +176,10 @@ public:
 	const FRigVMTemplate* GetTemplate() const;
 
 	void ClearErrorInfo();
+
+	void AddErrorInfo(const EMessageSeverity::Type& InSeverity, const FString& InMessage);
+
+	void SetErrorInfo(const EMessageSeverity::Type& InSeverity, const FString& InMessage);
 
 	URigVMPin* FindModelPinFromGraphPin(const UEdGraphPin* InGraphPin) const;
 	UEdGraphPin* FindGraphPinFromModelPin(const URigVMPin* InModelPin, bool bAsInput) const;
@@ -238,14 +249,18 @@ protected:
 
 	static FEdGraphPinType GetPinTypeForModelPin(const URigVMPin* InModelPin);
 
+	virtual void ConfigurePin(UEdGraphPin* EdGraphPin, const URigVMPin* ModelPin) const;
 private:
 
 	int32 GetNodeTopologyVersion() const { return NodeTopologyVersion; }
 	int32 NodeTopologyVersion;
 
-	static void ConfigurePin(UEdGraphPin* EdGraphPin, const URigVMPin* ModelPin);
 	TArray<URigVMPin*>& PinListForPin(const URigVMPin* InModelPin);
 
+#if WITH_EDITOR
+	void UpdateProfilingSettings();
+#endif
+	
 	FLinearColor CachedTitleColor;
 	FLinearColor CachedNodeColor;
 
@@ -267,8 +282,12 @@ private:
 	FNodePinExpansionChanged NodePinExpansionChanged;
 	FNodeBeginRemoval NodeBeginRemoval;
 
+	TSet<uint32> ErrorMessageHashes;
+
 	mutable const FRigVMTemplate* CachedTemplate;
 	mutable TOptional<bool> DrawAsCompactNodeCache;
+	mutable double MicroSeconds;
+	mutable TArray<double> MicroSecondsFrames;
 
 	friend class SRigVMGraphNode;
 	friend class FRigVMFunctionArgumentLayout;

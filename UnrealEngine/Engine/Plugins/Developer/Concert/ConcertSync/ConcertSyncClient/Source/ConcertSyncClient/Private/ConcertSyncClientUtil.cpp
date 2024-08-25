@@ -2,6 +2,7 @@
 
 #include "ConcertSyncClientUtil.h"
 #include "ConcertSyncArchives.h"
+#include "ConcertClientObjectFactory.h"
 #include "ConcertTransactionEvents.h"
 #include "ConcertLogGlobal.h"
 #include "ConcertSyncSettings.h"
@@ -124,26 +125,34 @@ void UpdatePendingKillState(UObject* InObj, const bool bIsPendingKill)
 
 	if (bIsPendingKill)
 	{
-		bool bMarkAsGarbage = true;
+		bool bDestructionHandled = false;
 
-		if (AActor* Actor = Cast<AActor>(InObj))
+		if (const UConcertClientObjectFactory* Factory = UConcertClientObjectFactory::FindFactoryForClass(InObj->GetClass()))
 		{
-			if (UWorld* ActorWorld = Actor->GetWorld())
+			bDestructionHandled = Factory->DestroyObject(InObj);
+		}
+
+		if (!bDestructionHandled)
+		{
+			if (AActor* Actor = Cast<AActor>(InObj))
 			{
+				if (UWorld* ActorWorld = Actor->GetWorld())
+				{
 #if WITH_EDITOR
-				if (GIsEditor)
-				{
-					bMarkAsGarbage = !ActorWorld->EditorDestroyActor(Actor, /*bShouldModifyLevel*/false);
-				}
-				else
+					if (GIsEditor)
+					{
+						bDestructionHandled = ActorWorld->EditorDestroyActor(Actor, /*bShouldModifyLevel*/false);
+					}
+					else
 #endif	// WITH_EDITOR
-				{
-					bMarkAsGarbage = !ActorWorld->DestroyActor(Actor, /*bNetForce*/false, /*bShouldModifyLevel*/false);
+					{
+						bDestructionHandled = ActorWorld->DestroyActor(Actor, /*bNetForce*/false, /*bShouldModifyLevel*/false);
+					}
 				}
 			}
 		}
 
-		if (bMarkAsGarbage)
+		if (!bDestructionHandled)
 		{
 			InObj->MarkAsGarbage();
 		}
@@ -206,8 +215,8 @@ FGetObjectResult GetObject(const FConcertObjectId& InObjectId, const FName InNew
 	const bool bIsOuterChange = !InNewOuterPath.IsNone();
 	const bool bIsPackageChange = !InNewPackageName.IsNone();
 
-	const FName ObjectOuterPathToFind = InObjectId.ObjectOuterPathName;
-	const FName ObjectOuterPathToCreate = bIsOuterChange ? InNewOuterPath : ObjectOuterPathToFind;
+	const FString ObjectOuterPathToFind = InObjectId.ObjectOuterPathName.ToString();
+	const FString ObjectOuterPathToCreate = bIsOuterChange ? InNewOuterPath.ToString() : ObjectOuterPathToFind;
 
 	const FName ObjectNameToFind = InObjectId.ObjectName;
 	const FName ObjectNameToCreate = bIsRename ? InNewName : ObjectNameToFind;
@@ -244,6 +253,13 @@ FGetObjectResult GetObject(const FConcertObjectId& InObjectId, const FName InNew
 		}
 	};
 
+	// We need the object class to find or create the object
+	UClass* ObjectClass = FindOrLoadClass(InObjectId.ObjectClassPathName);
+	if (!ObjectClass)
+	{
+		return FGetObjectResult();
+	}
+
 	// Find the outer for the existing object.
 	// Note that we use FSoftObjectPath::ResolveObject() here to ensure that if
 	// world partitioning is involved, we're able to resolve a non-partitioned
@@ -252,36 +268,27 @@ FGetObjectResult GetObject(const FConcertObjectId& InObjectId, const FName InNew
 	// TODO: If a case arises where we need to go the other direction and get
 	// an object with a non-partitioned path from a partitioned path, a
 	// different mechanism for that would be needed here.
-	if (UObject* ExistingObjectOuter = FSoftObjectPath(ObjectOuterPathToFind.ToString()).ResolveObject())
+	if (UObject* ExistingObjectOuter = FSoftObjectPath(ObjectOuterPathToFind).ResolveObject())
 	{
-		UClass* ObjectClass = FindOrLoadClass(InObjectId.ObjectClassPathName);
-		UObject* ExistingObject = nullptr;
-
-		// We need the object class to find or create the object
-		if (ObjectClass)
-		{
-			// Find the existing object
-			ExistingObject = StaticFindObject(ObjectClass, ExistingObjectOuter, *ObjectNameToFind.ToString(), /*bExactClass*/true);
-		}
-
+		UObject* ExistingObject = StaticFindObject(ObjectClass, ExistingObjectOuter, *ObjectNameToFind.ToString(), /*bExactClass*/true);
 		if (!ExistingObject)
 		{
 			// Find the existing object through the outer and potentially load if not loaded
 			if (ExistingObjectOuter->ResolveSubobject(*ObjectNameToFind.ToString(), ExistingObject, /*bLoadIfExists*/true))
 			{
-				ObjectClass = FindOrLoadClass(InObjectId.ObjectClassPathName);
-
-				if (!ObjectClass || (ExistingObject->GetClass() != ObjectClass))
+				// Test for null here because UWorldPartition::ResolveSubobject returns true if FWorldPartitionActorDesc exists even if object not in memory (FORT-647612)
+				if (ExistingObject)
 				{
-					ExistingObject = nullptr;
+					if (ExistingObject->GetClass() != ObjectClass)
+					{
+						ExistingObject = nullptr;
+					}
 				}
 			}
 		}
 		
 		if (ExistingObject)
 		{
-			check(ObjectClass);
-
 			EGetObjectResultFlags ResultFlags = EGetObjectResultFlags::None;
 
 			// Perform any renames or outer changes
@@ -291,7 +298,7 @@ FGetObjectResult GetObject(const FConcertObjectId& InObjectId, const FName InNew
 				if (bIsOuterChange)
 				{
 					//@todo FH: what if our new outer isn't loaded yet?
-					NewObjectOuter = StaticFindObject(UObject::StaticClass(), nullptr, *ObjectOuterPathToCreate.ToString());
+					NewObjectOuter = StaticFindObject(UObject::StaticClass(), nullptr, *ObjectOuterPathToCreate);
 				}
 
 				// Find the new object (in case something already created it)
@@ -320,30 +327,43 @@ FGetObjectResult GetObject(const FConcertObjectId& InObjectId, const FName InNew
 		}
 	}
 
+	const UConcertClientObjectFactory* Factory = UConcertClientObjectFactory::FindFactoryForClass(ObjectClass);
+
 	// Find the outer for the new object.
 	// As above, we use FSoftObjectPath::ResolveObject() here to account for
 	// the possibility of world partitioning.
-	if (UObject* NewObjectOuter = FSoftObjectPath(ObjectOuterPathToCreate.ToString()).ResolveObject())
+	UObject* NewObjectOuter = FSoftObjectPath(ObjectOuterPathToCreate).ResolveObject();
+	if (!NewObjectOuter && bAllowCreate && Factory)
 	{
-		// We need the object class to find or create the object
-		if (UClass* ObjectClass = FindOrLoadClass(InObjectId.ObjectClassPathName))
+		Factory->CreateOuter(NewObjectOuter, ObjectOuterPathToCreate);
+	}
+	if (NewObjectOuter)
+	{
+		// Find the new object (in case something already created it)
+		if (UObject* NewObject = StaticFindObject(ObjectClass, NewObjectOuter, *ObjectNameToCreate.ToString(), /*bExactClass*/true))
 		{
-			// Find the new object (in case something already created it)
-			if (UObject* NewObject = StaticFindObject(ObjectClass, NewObjectOuter, *ObjectNameToCreate.ToString(), /*bExactClass*/true))
+			// Update the object flags
+			NewObject->SetFlags((EObjectFlags)InObjectId.ObjectPersistentFlags);
+
+			// if we have any package assignment, do it here
+			AssignExternalPackage(NewObject);
+
+			return FGetObjectResult(NewObject);
+		}
+
+		if (bAllowCreate)
+		{
+			FGetObjectResult ObjectResult;
+			ObjectResult.Factory = Factory;
+
+			// Create the new object
+			bool bFactoryHandledCreation = false;
+			if (Factory)
 			{
-				// Update the object flags
-				NewObject->SetFlags((EObjectFlags)InObjectId.ObjectPersistentFlags);
-
-				// if we have any package assignment, do it here
-				AssignExternalPackage(NewObject);
-
-				return FGetObjectResult(NewObject);
+				bFactoryHandledCreation = Factory->CreateObject(ObjectResult.Obj, NewObjectOuter, ObjectClass, *ObjectNameToCreate.ToString(), (EObjectFlags)InObjectId.ObjectPersistentFlags);
 			}
-
-			if (bAllowCreate)
+			if (!bFactoryHandledCreation)
 			{
-				FGetObjectResult ObjectResult;
-				// Create the new object
 				if (ObjectClass->IsChildOf<AActor>())
 				{
 					// Actors should go through SpawnActor where possible
@@ -366,11 +386,11 @@ FGetObjectResult GetObject(const FConcertObjectId& InObjectId, const FName InNew
 								SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 								SpawnParams.bNoFail = true;
 								SpawnParams.ObjectFlags = (EObjectFlags)InObjectId.ObjectPersistentFlags;
-								ObjectResult = FGetObjectResult(OwnerWorld->SpawnActor<AActor>(ObjectClass, FVector::ZeroVector, FRotator::ZeroRotator, SpawnParams), EGetObjectResultFlags::NewlyCreated);
+								ObjectResult.Obj = OwnerWorld->SpawnActor<AActor>(ObjectClass, FVector::ZeroVector, FRotator::ZeroRotator, SpawnParams);
 							}
 							else
 							{
-								UE_LOG(LogConcert, Warning, TEXT("Actor '%s' already exists! Expected class: '%s'"), *ExistingObjectOfDifferentClass->GetFullName(), *ObjectClass->GetPathName()); 
+								UE_LOG(LogConcert, Warning, TEXT("Actor '%s' already exists! Expected class: '%s'"), *ExistingObjectOfDifferentClass->GetFullName(), *ObjectClass->GetPathName());
 								ensureMsgf(!ExistingObjectOfDifferentClass, TEXT("Actor '%s' already exists! Expected class: '%s'"), *ExistingObjectOfDifferentClass->GetFullName(), *ObjectClass->GetPathName());
 							}
 						}
@@ -386,19 +406,24 @@ FGetObjectResult GetObject(const FConcertObjectId& InObjectId, const FName InNew
 				}
 				else
 				{
-					ObjectResult = FGetObjectResult(NewObject<UObject>(NewObjectOuter, ObjectClass, *ObjectNameToCreate.ToString(), (EObjectFlags)InObjectId.ObjectPersistentFlags), EGetObjectResultFlags::NewlyCreated);
+					ObjectResult.Obj = NewObject<UObject>(NewObjectOuter, ObjectClass, *ObjectNameToCreate.ToString(), (EObjectFlags)InObjectId.ObjectPersistentFlags);
 
 					if (UActorComponent* NewComponent = Cast<UActorComponent>(ObjectResult.Obj))
 					{
 						NewComponent->RegisterComponent();
 					}
 				}
+			}
 				
+			if (ObjectResult.Obj)
+			{
 				// if we have any package assignment, do it here
 				AssignExternalPackage(ObjectResult.Obj);
 
-				return ObjectResult;
+				ObjectResult.Flags |= EGetObjectResultFlags::NewlyCreated;
 			}
+
+			return ObjectResult;
 		}
 	}
 
@@ -591,10 +616,13 @@ void HotReloadPackages(TArrayView<const FName> InPackageNames)
 			{
 				ExistingPackage->ClearPackageFlags(PKG_NewlyCreated);
 			}
-			ExistingPackages.Add(ExistingPackage);
 			if (ExistingPackage->ContainsMap())
 			{
 				bAddPersistentLevel = ShouldReloadPersistentLevel(ExistingPackage);
+			}
+			else
+			{
+				ExistingPackages.Add(ExistingPackage);
 			}
 		}
 	}
@@ -714,11 +742,14 @@ void PurgePackages(TArrayView<const FName> InPackageNames)
 UWorld* GetCurrentWorld()
 {
 	UWorld* CurrentWorld = nullptr;
+#if WITH_EDITOR
 	if (GIsEditor)
 	{
 		CurrentWorld = GEditor->GetEditorWorldContext().World();
 	}
-	else if (UGameEngine* GameEngine = Cast<UGameEngine>(GEngine))
+	else
+#endif
+	if (UGameEngine* GameEngine = Cast<UGameEngine>(GEngine))
 	{
 		CurrentWorld = GameEngine->GetGameWorld();
 	}
@@ -727,6 +758,7 @@ UWorld* GetCurrentWorld()
 
 ULevel* GetExternalPersistentWorld()
 {
+#if WITH_EDITOR
 	UWorld* CurrentWorld = ConcertSyncClientUtil::GetCurrentWorld();
 	if (CurrentWorld)
 	{
@@ -736,7 +768,19 @@ ULevel* GetExternalPersistentWorld()
 			return PersistentLevel;
 		}
 	}
+#endif
 	return nullptr;
+}
+bool IsWorldPartitionWorld()
+{
+#if WITH_EDITOR
+	UWorld* OwningWorld = GetCurrentWorld();
+	if (OwningWorld)
+	{
+		return OwningWorld->GetWorldPartition() != nullptr;
+	}
+#endif
+	return false;
 }
 
 void FillPackageInfo(UPackage* InPackage, UObject* InAsset, const EConcertPackageUpdateType InPackageUpdateType, FConcertPackageInfo& OutPackageInfo)

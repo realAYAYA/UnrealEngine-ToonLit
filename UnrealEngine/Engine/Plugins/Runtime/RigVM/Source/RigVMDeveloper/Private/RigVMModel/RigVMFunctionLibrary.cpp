@@ -96,13 +96,14 @@ TArray< FString > URigVMFunctionLibrary::GetReferencePathsForFunction(const FNam
 }
 
 void URigVMFunctionLibrary::ForEachReference(const FName& InFunctionName,
-	TFunction<void(URigVMFunctionReferenceNode*)> PerReferenceFunction) const
+	TFunction<void(URigVMFunctionReferenceNode*)> PerReferenceFunction,
+	bool bLoadIfNecessary) const
 {
 	if (URigVMLibraryNode* Function = FindFunction(InFunctionName))
 	{
 		if(const URigVMBuildData* BuildData = URigVMBuildData::Get())
 		{
-			BuildData->ForEachFunctionReference(Function->GetFunctionIdentifier(),PerReferenceFunction);
+			BuildData->ForEachFunctionReference(Function->GetFunctionIdentifier(),PerReferenceFunction, bLoadIfNecessary);
 		}
 	}
 }

@@ -35,7 +35,7 @@ FArchive& operator<<(FArchive& Ar, FParameterData& ParameterData)
 {
 	Ar.UsingCustomVersion(FDatasmithClothSerializationVersion::GUID);
 
-	static_assert(TVariantSize<decltype(ParameterData.Data)>::Value == 2, "Serialization code not synced with structure");
+	static_assert(TVariantSize_V<decltype(ParameterData.Data)> == 2, "Serialization code not synced with structure");
 	static_assert(decltype(ParameterData.Data)::IndexOfType<TArray<float>>() == 0, "Serialization relies on this specific order");
 	static_assert(decltype(ParameterData.Data)::IndexOfType<TArray<double>>() == 1, "Serialization relies on this specific order");
 

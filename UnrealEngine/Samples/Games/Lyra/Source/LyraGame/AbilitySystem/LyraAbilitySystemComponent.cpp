@@ -51,7 +51,11 @@ void ULyraAbilitySystemComponent::InitAbilityActorInfo(AActor* InOwnerActor, AAc
 		// Notify all abilities that a new pawn avatar has been set
 		for (const FGameplayAbilitySpec& AbilitySpec : ActivatableAbilities.Items)
 		{
-			ULyraGameplayAbility* LyraAbilityCDO = CastChecked<ULyraGameplayAbility>(AbilitySpec.Ability);
+			ULyraGameplayAbility* LyraAbilityCDO = Cast<ULyraGameplayAbility>(AbilitySpec.Ability);
+			if (!LyraAbilityCDO)
+			{
+				continue;
+			}
 
 			if (LyraAbilityCDO->GetInstancingPolicy() != EGameplayAbilityInstancingPolicy::NonInstanced)
 			{
@@ -92,8 +96,10 @@ void ULyraAbilitySystemComponent::TryActivateAbilitiesOnSpawn()
 	ABILITYLIST_SCOPE_LOCK();
 	for (const FGameplayAbilitySpec& AbilitySpec : ActivatableAbilities.Items)
 	{
-		const ULyraGameplayAbility* LyraAbilityCDO = CastChecked<ULyraGameplayAbility>(AbilitySpec.Ability);
-		LyraAbilityCDO->TryActivateAbilityOnSpawn(AbilityActorInfo.Get(), AbilitySpec);
+		if (const ULyraGameplayAbility* LyraAbilityCDO = Cast<ULyraGameplayAbility>(AbilitySpec.Ability))
+		{
+			LyraAbilityCDO->TryActivateAbilityOnSpawn(AbilityActorInfo.Get(), AbilitySpec);
+		}
 	}
 }
 
@@ -107,7 +113,12 @@ void ULyraAbilitySystemComponent::CancelAbilitiesByFunc(TShouldCancelAbilityFunc
 			continue;
 		}
 
-		ULyraGameplayAbility* LyraAbilityCDO = CastChecked<ULyraGameplayAbility>(AbilitySpec.Ability);
+		ULyraGameplayAbility* LyraAbilityCDO = Cast<ULyraGameplayAbility>(AbilitySpec.Ability);
+		if (!LyraAbilityCDO)
+		{
+			UE_LOG(LogLyraAbilitySystem, Error, TEXT("CancelAbilitiesByFunc: Non-LyraGameplayAbility %s was Granted to ASC. Skipping."), *AbilitySpec.Ability.GetName());
+			continue;
+		}
 
 		if (LyraAbilityCDO->GetInstancingPolicy() != EGameplayAbilityInstancingPolicy::NonInstanced)
 		{
@@ -232,9 +243,8 @@ void ULyraAbilitySystemComponent::ProcessAbilityInput(float DeltaTime, bool bGam
 		{
 			if (AbilitySpec->Ability && !AbilitySpec->IsActive())
 			{
-				const ULyraGameplayAbility* LyraAbilityCDO = CastChecked<ULyraGameplayAbility>(AbilitySpec->Ability);
-
-				if (LyraAbilityCDO->GetActivationPolicy() == ELyraAbilityActivationPolicy::WhileInputActive)
+				const ULyraGameplayAbility* LyraAbilityCDO = Cast<ULyraGameplayAbility>(AbilitySpec->Ability);
+				if (LyraAbilityCDO && LyraAbilityCDO->GetActivationPolicy() == ELyraAbilityActivationPolicy::WhileInputActive)
 				{
 					AbilitiesToActivate.AddUnique(AbilitySpec->Handle);
 				}
@@ -260,9 +270,9 @@ void ULyraAbilitySystemComponent::ProcessAbilityInput(float DeltaTime, bool bGam
 				}
 				else
 				{
-					const ULyraGameplayAbility* LyraAbilityCDO = CastChecked<ULyraGameplayAbility>(AbilitySpec->Ability);
+					const ULyraGameplayAbility* LyraAbilityCDO = Cast<ULyraGameplayAbility>(AbilitySpec->Ability);
 
-					if (LyraAbilityCDO->GetActivationPolicy() == ELyraAbilityActivationPolicy::OnInputTriggered)
+					if (LyraAbilityCDO && LyraAbilityCDO->GetActivationPolicy() == ELyraAbilityActivationPolicy::OnInputTriggered)
 					{
 						AbilitiesToActivate.AddUnique(AbilitySpec->Handle);
 					}
@@ -319,9 +329,10 @@ void ULyraAbilitySystemComponent::NotifyAbilityActivated(const FGameplayAbilityS
 {
 	Super::NotifyAbilityActivated(Handle, Ability);
 
-	ULyraGameplayAbility* LyraAbility = CastChecked<ULyraGameplayAbility>(Ability);
-
-	AddAbilityToActivationGroup(LyraAbility->GetActivationGroup(), LyraAbility);
+	if (ULyraGameplayAbility* LyraAbility = Cast<ULyraGameplayAbility>(Ability))
+	{
+		AddAbilityToActivationGroup(LyraAbility->GetActivationGroup(), LyraAbility);
+	}
 }
 
 void ULyraAbilitySystemComponent::NotifyAbilityFailed(const FGameplayAbilitySpecHandle Handle, UGameplayAbility* Ability, const FGameplayTagContainer& FailureReason)
@@ -344,9 +355,10 @@ void ULyraAbilitySystemComponent::NotifyAbilityEnded(FGameplayAbilitySpecHandle 
 {
 	Super::NotifyAbilityEnded(Handle, Ability, bWasCancelled);
 
-	ULyraGameplayAbility* LyraAbility = CastChecked<ULyraGameplayAbility>(Ability);
-
-	RemoveAbilityFromActivationGroup(LyraAbility->GetActivationGroup(), LyraAbility);
+	if (ULyraGameplayAbility* LyraAbility = Cast<ULyraGameplayAbility>(Ability))
+	{
+		RemoveAbilityFromActivationGroup(LyraAbility->GetActivationGroup(), LyraAbility);
+	}
 }
 
 void ULyraAbilitySystemComponent::ApplyAbilityBlockAndCancelTags(const FGameplayTagContainer& AbilityTags, UGameplayAbility* RequestingAbility, bool bEnableBlockTags, const FGameplayTagContainer& BlockTags, bool bExecuteCancelTags, const FGameplayTagContainer& CancelTags)

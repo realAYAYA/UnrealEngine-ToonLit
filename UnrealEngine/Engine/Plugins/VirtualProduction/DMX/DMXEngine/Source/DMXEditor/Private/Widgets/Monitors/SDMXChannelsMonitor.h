@@ -2,17 +2,15 @@
 
 #pragma once
 
+#include "Analytics/DMXEditorToolAnalyticsProvider.h"
 #include "DMXProtocolCommon.h"
-
-#include "CoreMinimal.h"
 #include "HAL/CriticalSection.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
 #include "Widgets/SCompoundWidget.h"
 
+class SCheckBox;
 class SDMXMonitorSourceSelector;
 class SDMXPortSelector;
-
-class SCheckBox;
 class SEditableTextBox;
 class SHorizontalBox;
 
@@ -49,7 +47,6 @@ private:
 	/** Saves settings of the monitor in config */
 	void SaveMonitorSettings() const;
 
-private:
 	/** Set the channel widgets to 0 */
 	void ZeroChannelValues();
 
@@ -65,7 +62,6 @@ private:
 	/** Called when the clear bButton was clicked */
 	FReply OnClearButtonClicked();
 
-private:
 	/** Horizontal box that contains the Source Selector and its Label */
 	TSharedPtr<SHorizontalBox> SourceSelectorBox;
 
@@ -81,7 +77,9 @@ private:
 	/** Text block to edit the Universe ID */
 	TSharedPtr<SEditableTextBox> UniverseIDEditableTextBox;
 
-private:
 	/** Universe ID value computed using Net, Subnet and Universe values */
 	int32 UniverseID;
+
+	/** The analytics provider for this tool */
+	UE::DMX::FDMXEditorToolAnalyticsProvider AnalyticsProvider;
 };

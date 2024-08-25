@@ -37,6 +37,7 @@ class FImgMediaSceneViewExtension final : public FSceneViewExtensionBase
 {
 public:
 	FImgMediaSceneViewExtension(const FAutoRegister& AutoReg);
+	~FImgMediaSceneViewExtension();
 
 	/**
 	 * Get the cached camera information array, updated on the game thread by BeginRenderViewFamily.
@@ -53,10 +54,13 @@ public:
 private:
 	/** Cache camera view information for the current frame. */
 	void CacheViewInfo(FSceneViewFamily& InViewFamily, const FSceneView& View);
+
+	/** Reset the view info cache. */
+	void ResetViewInfoCache();
 	
 	/** Array of info on each camera used for mipmap calculations. */
 	TArray<FImgMediaViewInfo> CachedViewInfos;
 
-	/** Last received FSceneViewFamily frame number. */
-	uint32 LastFrameNumber;
+	/** FCoreDelegates::OnBeginFrame delegate. */
+	FDelegateHandle OnBeginFrameDelegate;
 };

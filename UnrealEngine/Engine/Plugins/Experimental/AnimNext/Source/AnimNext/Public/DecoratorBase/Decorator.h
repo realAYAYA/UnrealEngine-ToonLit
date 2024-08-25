@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 
+#include "DecoratorBase/DecoratorBinding.h"
 #include "DecoratorBase/DecoratorHandle.h"			// Derived types are likely to refer to other decorators as children
 #include "DecoratorBase/DecoratorInstanceData.h"
 #include "DecoratorBase/DecoratorMode.h"
@@ -11,6 +12,9 @@
 #include "DecoratorBase/DecoratorSharedData.h"
 #include "DecoratorBase/DecoratorUID.h"
 #include "DecoratorBase/IDecoratorInterface.h"
+#include "DecoratorBase/LatentPropertyHandle.h"
+
+#include <type_traits>
 
 class FArchive;
 
@@ -19,64 +23,105 @@ class FArchive;
 #define DECLARE_ANIM_DECORATOR(DecoratorName, DecoratorNameHash, SuperDecoratorName) \
 	using DecoratorSuper = SuperDecoratorName; \
 	/* FDecorator impl */ \
-	static constexpr UE::AnimNext::FDecoratorUID DecoratorUID = UE::AnimNext::FDecoratorUID(TEXT(#DecoratorName), DecoratorNameHash); \
+	static constexpr UE::AnimNext::FDecoratorUID DecoratorUID = UE::AnimNext::FDecoratorUID(DecoratorNameHash, TEXT(#DecoratorName)); \
 	virtual UE::AnimNext::FDecoratorUID GetDecoratorUID() const override { return DecoratorUID; } \
+	virtual FString GetDecoratorName() const override { return TEXT(#DecoratorName); } \
 	static const UE::AnimNext::FDecoratorMemoryLayout DecoratorMemoryDescription; \
 	virtual UE::AnimNext::FDecoratorMemoryLayout GetDecoratorMemoryDescription() const override { return DecoratorMemoryDescription; } \
 	virtual UScriptStruct* GetDecoratorSharedDataStruct() const override { return FSharedData::StaticStruct(); } \
-	virtual void ConstructDecoratorInstance(UE::AnimNext::FExecutionContext& Context, UE::AnimNext::FWeakDecoratorPtr DecoratorPtr, const FAnimNextDecoratorSharedData& DecoratorDesc, UE::AnimNext::FDecoratorInstanceData& DecoratorInstance) const override; \
-	virtual void DestructDecoratorInstance(UE::AnimNext::FExecutionContext& Context, UE::AnimNext::FWeakDecoratorPtr DecoratorPtr, const FAnimNextDecoratorSharedData& DecoratorDesc, UE::AnimNext::FDecoratorInstanceData& DecoratorInstance) const override; \
+	virtual void ConstructDecoratorInstance(const UE::AnimNext::FExecutionContext& Context, const UE::AnimNext::FDecoratorBinding& Binding) const override; \
+	virtual void DestructDecoratorInstance(const UE::AnimNext::FExecutionContext& Context, const UE::AnimNext::FDecoratorBinding& Binding) const override; \
 	virtual const UE::AnimNext::IDecoratorInterface* GetDecoratorInterface(UE::AnimNext::FDecoratorInterfaceUID InterfaceUID) const override; \
-	static_assert(std::is_base_of<FAnimNextDecoratorSharedData, FSharedData>::value, TEXT("Decorator shared data must derive from FAnimNextDecoratorSharedData")); \
-	static_assert(std::is_base_of<FDecoratorInstanceData, FInstanceData>::value, TEXT("Decorator instance data must derive from FDecoratorInstanceData"));
+	virtual TConstArrayView<FDecoratorInterfaceUID> GetDecoratorInterfaces() const override; \
+	virtual uint32 GetNumLatentDecoratorProperties() const override { return -FSharedData::GetLatentPropertyIndex(~(size_t)0); } \
+	virtual FDecoratorLatentPropertyMemoryLayout GetLatentPropertyMemoryLayout(FName PropertyName, uint32 PropertyIndex) const override; \
+	static_assert(std::is_base_of<FAnimNextDecoratorSharedData, FSharedData>::value, "Decorator shared data must derive from FAnimNextDecoratorSharedData"); \
+	static_assert(std::is_base_of<FDecoratorInstanceData, FInstanceData>::value, "Decorator instance data must derive from FDecoratorInstanceData");
 
 #define DECLARE_ABSTRACT_ANIM_DECORATOR(DecoratorName, DecoratorNameHash, SuperDecoratorName) \
 	using DecoratorSuper = SuperDecoratorName; \
 	/* FDecorator impl */ \
-	static constexpr UE::AnimNext::FDecoratorUID DecoratorUID = UE::AnimNext::FDecoratorUID(TEXT(#DecoratorName), DecoratorNameHash); \
-	virtual UE::AnimNext::FDecoratorUID GetDecoratorUID() const override { return DecoratorUID; }
+	static constexpr UE::AnimNext::FDecoratorUID DecoratorUID = UE::AnimNext::FDecoratorUID(DecoratorNameHash, TEXT(#DecoratorName)); \
+	virtual UE::AnimNext::FDecoratorUID GetDecoratorUID() const override { return DecoratorUID; } \
+	virtual FString GetDecoratorName() const override { return TEXT(#DecoratorName); }
 
 // In the decorator cpp, these three macros implement the base functionality
 // 
 // Usage is as follow:
-// DEFINE_ANIM_DECORATOR_BEGIN(FSequencePlayerDecorator)
-//     DEFINE_ANIM_DECORATOR_IMPLEMENTS_INTERFACE(IEvaluate)
-//     DEFINE_ANIM_DECORATOR_IMPLEMENTS_INTERFACE(IUpdate)
-//     DEFINE_ANIM_DECORATOR_IMPLEMENTS_INTERFACE(ITimeline)
-// DEFINE_ANIM_DECORATOR_END(FSequencePlayerDecorator)
+// #define DECORATOR_INTERFACE_ENUMERATOR(GeneratorMacro) \
+//		GeneratorMacro(IHierarchy) \
+//		GeneratorMacro(IUpdate) \
+//
+// GENERATE_ANIM_DECORATOR_IMPLEMENTATION(FMyDecorator, DECORATOR_INTERFACE_ENUMERATOR)
+// #undef DECORATOR_INTERFACE_ENUMERATOR
 
-#define DEFINE_ANIM_DECORATOR_BEGIN(DecoratorName) \
+// Implements various parts of FDecorator
+#define ANIM_NEXT_IMPL_DEFINE_ANIM_DECORATOR(DecoratorName) \
 	const UE::AnimNext::FDecoratorMemoryLayout DecoratorName::DecoratorMemoryDescription = \
 		UE::AnimNext::FDecoratorMemoryLayout{ sizeof(DecoratorName), alignof(DecoratorName), sizeof(DecoratorName::FSharedData), alignof(DecoratorName::FSharedData), sizeof(DecoratorName::FInstanceData), alignof(DecoratorName::FInstanceData) }; \
-	void DecoratorName::ConstructDecoratorInstance(UE::AnimNext::FExecutionContext& Context, UE::AnimNext::FWeakDecoratorPtr DecoratorPtr, const FAnimNextDecoratorSharedData& DecoratorDesc, UE::AnimNext::FDecoratorInstanceData& DecoratorInstance) const \
+	FDecoratorLatentPropertyMemoryLayout DecoratorName::GetLatentPropertyMemoryLayout(FName PropertyName, uint32 PropertyIndex) const \
 	{ \
-		FInstanceData* Data = new(&static_cast<FInstanceData&>(DecoratorInstance)) FInstanceData(); \
-		Data->Construct(Context, DecoratorPtr, static_cast<const FSharedData&>(DecoratorDesc)); \
+		/* Thread safe cache initialization */ \
+		static TArray<FDecoratorLatentPropertyMemoryLayout> CachedLatentPropertyMemoryLayouts = [this](){ TArray<FDecoratorLatentPropertyMemoryLayout> Result; Result.SetNum(GetNumLatentDecoratorProperties()); return Result; }(); \
+		return GetLatentPropertyMemoryLayoutImpl(PropertyName, PropertyIndex, CachedLatentPropertyMemoryLayouts); \
 	} \
-	void DecoratorName::DestructDecoratorInstance(UE::AnimNext::FExecutionContext& Context, UE::AnimNext::FWeakDecoratorPtr DecoratorPtr, const FAnimNextDecoratorSharedData& DecoratorDesc, UE::AnimNext::FDecoratorInstanceData& DecoratorInstance) const \
+	void DecoratorName::ConstructDecoratorInstance(const UE::AnimNext::FExecutionContext& Context, const UE::AnimNext::FDecoratorBinding& Binding) const \
 	{ \
-		FInstanceData& Data = static_cast<FInstanceData&>(DecoratorInstance); \
-		Data.Destruct(Context, DecoratorPtr, DecoratorDesc); \
-		Data.~FInstanceData(); \
+		FInstanceData* Data = new(Binding.GetInstanceData<FInstanceData>()) FInstanceData(); \
+		Data->Construct(Context, Binding); \
 	} \
-	const UE::AnimNext::IDecoratorInterface* DecoratorName::GetDecoratorInterface(UE::AnimNext::FDecoratorInterfaceUID InterfaceUID_) const \
-	{
-
-#define DEFINE_ANIM_DECORATOR_END(DecoratorName) \
-		/* Forward to base implementation */ \
-		return DecoratorSuper::GetDecoratorInterface(InterfaceUID_); \
+	void DecoratorName::DestructDecoratorInstance(const UE::AnimNext::FExecutionContext& Context, const UE::AnimNext::FDecoratorBinding& Binding) const \
+	{ \
+		FInstanceData* Data = Binding.GetInstanceData<FInstanceData>(); \
+		Data->Destruct(Context, Binding); \
+		Data->~FInstanceData(); \
 	}
 
-#define DEFINE_ANIM_DECORATOR_IMPLEMENTS_INTERFACE(InterfaceName) \
-	if (InterfaceUID_ == InterfaceName::InterfaceUID) \
+// Helper that handles the GetDecoratorInterface() details for each interface specified by the generator macro
+#define ANIM_NEXT_IMPL_GET_INTERFACE_IMPL_FOR_INTERFACE(InterfaceName) \
+	if (InInterfaceUID == InterfaceName::InterfaceUID) \
 	{ \
 		return static_cast<const InterfaceName*>(this); \
 	}
 
+// Implements GetDecoratorInterface()
+#define ANIM_NEXT_IMPL_DEFINE_ANIM_DECORATOR_GET_INTERFACE(DecoratorName, InterfaceEnumeratorMacro) \
+	const UE::AnimNext::IDecoratorInterface* DecoratorName::GetDecoratorInterface(UE::AnimNext::FDecoratorInterfaceUID InInterfaceUID) const \
+	{ \
+		InterfaceEnumeratorMacro(ANIM_NEXT_IMPL_GET_INTERFACE_IMPL_FOR_INTERFACE) \
+		/* Forward to base implementation */ \
+		return DecoratorSuper::GetDecoratorInterface(InInterfaceUID); \
+	}
+
+// Helper that handles the GetDecoratorInterfaces() details for each interface specified by the generator macro
+#define ANIM_NEXT_IMPL_GET_INTERFACES_IMPL_FOR_INTERFACE(InterfaceName) InterfaceName::InterfaceUID,
+
+// Implements GetDecoratorInterfaces()
+#define ANIM_NEXT_IMPL_DEFINE_ANIM_DECORATOR_GET_INTERFACES(DecoratorName, InterfaceEnumeratorMacro) \
+	TConstArrayView<UE::AnimNext::FDecoratorInterfaceUID> DecoratorName::GetDecoratorInterfaces() const \
+	{ \
+		/* Thread safe cache initialization */ \
+		static TArray<UE::AnimNext::FDecoratorInterfaceUID> CachedInterfaceList = FDecorator::BuildDecoratorInterfaceList( \
+		DecoratorSuper::GetDecoratorInterfaces(), \
+		{ \
+			InterfaceEnumeratorMacro(ANIM_NEXT_IMPL_GET_INTERFACES_IMPL_FOR_INTERFACE) \
+		}); \
+		return CachedInterfaceList; \
+	}
+
+/**
+  * This macro defines the necessary boilerplate for implementing FDecorator. See above for usage example.
+  */
+#define GENERATE_ANIM_DECORATOR_IMPLEMENTATION(DecoratorName, InterfaceEnumeratorMacro) \
+	ANIM_NEXT_IMPL_DEFINE_ANIM_DECORATOR(DecoratorName) \
+	ANIM_NEXT_IMPL_DEFINE_ANIM_DECORATOR_GET_INTERFACE(DecoratorName, InterfaceEnumeratorMacro) \
+	ANIM_NEXT_IMPL_DEFINE_ANIM_DECORATOR_GET_INTERFACES(DecoratorName, InterfaceEnumeratorMacro)
+
 // Allows a decorator to auto-register and unregister within the current execution scope
+// The decorator must be found in the current scope without a namespace qualification
 #define AUTO_REGISTER_ANIM_DECORATOR(DecoratorName) \
 	UE::AnimNext::FDecoratorStaticInitHook DecoratorName##Hook( \
-		[](void* DestPtr, FDecoratorMemoryLayout& MemoryDesc) -> FDecorator* \
+		[](void* DestPtr, UE::AnimNext::FDecoratorMemoryLayout& MemoryDesc) -> UE::AnimNext::FDecorator* \
 		{ \
 			MemoryDesc = DecoratorName::DecoratorMemoryDescription; \
 			return DestPtr != nullptr ? new(DestPtr) DecoratorName() : nullptr; \
@@ -107,19 +152,33 @@ namespace UE::AnimNext
 		uint32 DecoratorSize = 0;
 
 		// The alignment in bytes of an instance of the decorator class which derives from FDecorator
-		uint32 DecoratorAlignment = 0;
+		uint32 DecoratorAlignment = 1;
 
-		// The size in bytes of the shared data for the decorator
+		// The size in bytes of the shared data for the decorator which derives from FAnimNextDecoratorSharedData
 		uint32 SharedDataSize = 0;
 
-		// The alignment in bytes of the shared data for the decorator
-		uint32 SharedDataAlignment = 0;
+		// The alignment in bytes of the shared data for the decorator which derives from FAnimNextDecoratorSharedData
+		uint32 SharedDataAlignment = 1;
 
-		// The size in bytes of the instance data for the decorator
+		// The size in bytes of the instance data for the decorator which derives from FDecoratorInstanceData
 		uint32 InstanceDataSize = 0;
 
-		// The alignment in bytes of the instance data for the decorator
-		uint32 InstanceDataAlignment = 0;
+		// The alignment in bytes of the instance data for the decorator which derives from FDecoratorInstanceData
+		uint32 InstanceDataAlignment = 1;
+	};
+
+	/**
+	 * FDecoratorLatentPropertyMemoryLayout
+	 *
+	 * Encapsulates size/alignment details for a latent property.
+	 */
+	struct FDecoratorLatentPropertyMemoryLayout
+	{
+		// The size in bytes of the latent property
+		uint32 Size = 0;
+
+		// The alignment in bytes of the latent property
+		uint32 Alignment = 1;
 	};
 
 	/**
@@ -152,21 +211,24 @@ namespace UE::AnimNext
 		// The globally unique UID for this decorator
 		// Derived types will have their own DecoratorUID member that hides/aliases/shadows this one
 		// @see DECLARE_ANIM_DECORATOR
-		static constexpr FDecoratorUID DecoratorUID = FDecoratorUID(TEXT("FDecorator"), 0x4fc735a2);
+		static constexpr FDecoratorUID DecoratorUID = FDecoratorUID(0x4fc735a2, TEXT("FDecorator"));
 
 		// Returns the globally unique UID for this decorator
 		virtual FDecoratorUID GetDecoratorUID() const { return DecoratorUID; };
 
+		// Returns the decorator name
+		virtual FString GetDecoratorName() const { return TEXT("FDecorator"); }
+
 		// Returns the memory requirements of the derived decorator instance
-		virtual FDecoratorMemoryLayout GetDecoratorMemoryDescription() const { return { sizeof(FDecorator), alignof(FDecorator) }; }
+		virtual FDecoratorMemoryLayout GetDecoratorMemoryDescription() const = 0;
 
 		// Returns the UScriptStruct associated with the shared data for the decorator
 		virtual UScriptStruct* GetDecoratorSharedDataStruct() const { return FSharedData::StaticStruct(); }
 
 		// Called when a new instance of the decorator is created or destroyed
 		// Derived types must override this and forward to the instance data constructor/destructor
-		virtual void ConstructDecoratorInstance(FExecutionContext& Context, FWeakDecoratorPtr DecoratorPtr, const FAnimNextDecoratorSharedData& DecoratorDesc, FDecoratorInstanceData& DecoratorInstance) const = 0;
-		virtual void DestructDecoratorInstance(FExecutionContext& Context, FWeakDecoratorPtr DecoratorPtr, const FAnimNextDecoratorSharedData& DecoratorDesc, FDecoratorInstanceData& DecoratorInstance) const = 0;
+		virtual void ConstructDecoratorInstance(const FExecutionContext& Context, const FDecoratorBinding& Binding) const = 0;
+		virtual void DestructDecoratorInstance(const FExecutionContext& Context, const FDecoratorBinding& Binding) const = 0;
 
 		// Returns the decorator mode.
 		virtual EDecoratorMode GetDecoratorMode() const = 0;
@@ -197,6 +259,15 @@ namespace UE::AnimNext
 			return nullptr;
 		}
 
+		// Returns a list of interfaces that this decorator supports
+		virtual TConstArrayView<FDecoratorInterfaceUID> GetDecoratorInterfaces() const { return TConstArrayView<FDecoratorInterfaceUID>(); }
+
+		// The number of latent property properties in the shared data of this decorator
+		virtual uint32 GetNumLatentDecoratorProperties() const { return 0; }
+
+		// Returns the memory layout of the specified latent property
+		virtual FDecoratorLatentPropertyMemoryLayout GetLatentPropertyMemoryLayout(FName PropertyName, uint32 PropertyIndex) const { return FDecoratorLatentPropertyMemoryLayout(); }
+
 		// Called to serialize decorator shared data
 		virtual void SerializeDecoratorSharedData(FArchive& Ar, FAnimNextDecoratorSharedData& SharedData) const;
 
@@ -205,8 +276,25 @@ namespace UE::AnimNext
 		// derived type using UE reflection.
 		// Decorators can override this function to control how editor only properties are coerced into the runtime shared data
 		// instance.
-		virtual void SaveDecoratorSharedData(FDecoratorWriter& Writer, const TMap<FString, FString>& Properties, FAnimNextDecoratorSharedData& OutSharedData) const;
+		virtual void SaveDecoratorSharedData(const TFunction<FString(FName PropertyName)>& GetDecoratorProperty, FAnimNextDecoratorSharedData& OutSharedData) const;
+
+		// Takes the editor properties as authored in the graph and returns the latent property metadata using UE reflection.
+		TArray<FLatentPropertyMetadata> GetLatentPropertyHandles(
+			bool bFilterEditorOnly,
+			const TFunction<uint16(FName PropertyName)>& GetDecoratorLatentPropertyIndex) const;
 #endif
+
+	protected:
+		// Implements GetLatentPropertyMemoryLayout() by allowing a map to be provided for caching purposes to speed up repeated queries
+		FDecoratorLatentPropertyMemoryLayout GetLatentPropertyMemoryLayoutImpl(
+			FName PropertyName,
+			uint32 PropertyIndex,
+			TArray<FDecoratorLatentPropertyMemoryLayout>& LatentPropertyMemoryLayouts) const;
+
+		// Builds a list of interfaces with the provided super interfaces and current interfaces as an initializer list
+		static TArray<FDecoratorInterfaceUID> BuildDecoratorInterfaceList(
+			const TConstArrayView<FDecoratorInterfaceUID>& SuperInterfaces,
+			std::initializer_list<FDecoratorInterfaceUID> InterfaceList);
 	};
 
 	// Base class for base decorators that are standalone
@@ -233,7 +321,7 @@ namespace UE::AnimNext
 	 */
 	struct ANIMNEXT_API FDecoratorStaticInitHook final
 	{
-		explicit FDecoratorStaticInitHook(DecoratorConstructorFunc DecoratorConstructor_);
+		explicit FDecoratorStaticInitHook(DecoratorConstructorFunc InDecoratorConstructor);
 		~FDecoratorStaticInitHook();
 
 	private:

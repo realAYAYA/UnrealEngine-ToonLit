@@ -24,6 +24,7 @@ class FViewport;
 class SSCSEditorViewport;
 class UStaticMeshComponent;
 struct FInputKeyEventArgs;
+struct FGizmoState;
 
 /**
  * An editor viewport client subclass for the SCS editor viewport.
@@ -53,6 +54,8 @@ public:
 	virtual bool InputWidgetDelta( FViewport* Viewport, EAxisList::Type CurrentAxis, FVector& Drag, FRotator& Rot, FVector& Scale ) override;
 	virtual void TrackingStarted( const struct FInputEventState& InInputState, bool bIsDragging, bool bNudge ) override;
 	virtual void TrackingStopped() override;
+	virtual bool BeginTransform(const FGizmoState& InState) override;
+	virtual bool EndTransform(const FGizmoState& InState) override;
 	virtual UE::Widget::EWidgetMode GetWidgetMode() const override;
 	virtual void SetWidgetMode( UE::Widget::EWidgetMode NewMode ) override;
 	virtual void SetWidgetCoordSystemSpace( ECoordSystem NewCoordSystem ) override;
@@ -167,4 +170,7 @@ private:
 
 	/** If true, the physics simulation gets ticked */
 	bool bIsSimulateEnabled;
+
+	bool HandleBeginTransform();
+	bool HandleEndTransform();
 };

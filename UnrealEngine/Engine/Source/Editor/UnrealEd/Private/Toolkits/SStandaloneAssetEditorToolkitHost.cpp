@@ -17,6 +17,7 @@
 #include "EditorModeManager.h"
 #include "EditorModes.h"
 #include "WidgetDrawerConfig.h"
+#include "Elements/Framework/TypedElementCommonActions.h"
 
 #define LOCTEXT_NAMESPACE "StandaloneAssetEditorToolkit"
 
@@ -34,6 +35,9 @@ void SStandaloneAssetEditorToolkitHost::Construct( const SStandaloneAssetEditorT
 	StatusBarName = FName(AppName, ++StatusBarIdGenerator);
 
 	MyTabManager = InTabManager;
+
+	CommonActions = NewObject<UTypedElementCommonActions>();
+	CommonActions->AddToRoot();
 }
 
 void SStandaloneAssetEditorToolkitHost::SetupInitialContent( const TSharedRef<FTabManager::FLayout>& DefaultLayout, const TSharedPtr<SDockTab>& InHostTab, const bool bCreateDefaultStandaloneMenu )
@@ -297,6 +301,8 @@ void SStandaloneAssetEditorToolkitHost::UnbindEditorCloseRequestFromHostTab()
 SStandaloneAssetEditorToolkitHost::~SStandaloneAssetEditorToolkitHost()
 {
 	ShutdownToolkitHost();
+	
+	CommonActions->RemoveFromRoot();
 }
 
 
@@ -384,7 +390,7 @@ UWorld* SStandaloneAssetEditorToolkitHost::GetWorld() const
 
 UTypedElementCommonActions* SStandaloneAssetEditorToolkitHost::GetCommonActions() const
 {
-	return nullptr;
+	return CommonActions.Get();
 }
 
 void SStandaloneAssetEditorToolkitHost::AddViewportOverlayWidget(TSharedRef<SWidget> InOverlaidWidget, TSharedPtr<IAssetViewport> InViewport)

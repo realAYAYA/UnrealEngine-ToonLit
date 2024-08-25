@@ -10,9 +10,9 @@
 
 namespace mu
 {
-	inline bool PointInBoundingBox(const vec3f& point, const FShape& selectionShape)
+	inline bool PointInBoundingBox(const FVector3f& point, const FShape& selectionShape)
 	{
-		vec3f v = point - selectionShape.position;
+		FVector3f v = point - selectionShape.position;
 
 		for (int i = 0; i < 3; ++i)
 		{
@@ -25,15 +25,15 @@ namespace mu
 		return true;
 	}
 
-	inline bool VertexIsInMaxRadius(const vec3f& vertex, const vec3f& origin, float vertexSelectionBoneMaxRadius)
+	inline bool VertexIsInMaxRadius(const FVector3f& vertex, const FVector3f& origin, float vertexSelectionBoneMaxRadius)
 	{
 		if (vertexSelectionBoneMaxRadius < 0.f)
 		{
 			return true;
 		}
 
-		vec3f radiusVec = vertex - origin;
-		float radius = dot(radiusVec, radiusVec);
+		FVector3f radiusVec = vertex - origin;
+		float radius = FVector3f::DotProduct(radiusVec, radiusVec);
 
 		return radius < vertexSelectionBoneMaxRadius* vertexSelectionBoneMaxRadius;
 	}
@@ -69,7 +69,7 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	//! Reference version
 	//---------------------------------------------------------------------------------------------
-	inline void MeshClipMorphPlane(Mesh* Result, const Mesh* pBase, const vec3f& origin, const vec3f& normal, float dist, float factor, float radius,
+	inline void MeshClipMorphPlane(Mesh* Result, const Mesh* pBase, const FVector3f& origin, const FVector3f& normal, float dist, float factor, float radius,
 		float radius2, float angle, const FShape& selectionShape, bool& bOutSuccess, const int32 BoneId = INDEX_NONE, float vertexSelectionBoneMaxRadius = -1.f)
 	{
 		bOutSuccess = true;
@@ -78,15 +78,15 @@ namespace mu
 		//float factor = 1.f;
 
 		// Generate vector perpendicular to normal for ellipse rotation reference base
-		vec3f aux_base(0.f, 1.f, 0.f);
+		FVector3f aux_base(0.f, 1.f, 0.f);
 
-		if (fabs(dot(normal, aux_base)) > 0.95f)		// fabs = absolute value
+		if (FMath::Abs(FVector3f::DotProduct(normal, aux_base)) > 0.95f)		// fabs = absolute value
 		{
-			aux_base = vec3f(0.f, 0.f, 1.f);
+			aux_base = FVector3f(0.f, 0.f, 1.f);
 		}
 		
-		vec3f origin_radius_vector = cross(normal, aux_base);		// PERPENDICULAR VECTOR TO THE PLANE normal and aux base
-		check(fabs(dot(normal, origin_radius_vector)) < 0.05f);
+		FVector3f origin_radius_vector = FVector3f::CrossProduct(normal, aux_base);		// PERPENDICULAR VECTOR TO THE PLANE normal and aux base
+		check(FMath::Abs(FVector3f::DotProduct(normal, origin_radius_vector)) < 0.05f);
 
         uint32 vcount = pBase->GetVertexBuffers().GetElementCount();
 
@@ -96,31 +96,41 @@ namespace mu
 			return;
 		}
 
-		TArray<bool> AffectedBones;
 		TArray<vertex_bone_info> vertex_info;
 
         Ptr<const Skeleton> BaseSkeleton = pBase->GetSkeleton();
 
+		TArray<bool> AffectedBoneMapIndices;
 		const int32 BaseBoneIndex = BaseSkeleton ? BaseSkeleton->FindBone(BoneId) : INDEX_NONE;
         if (BaseBoneIndex != INDEX_NONE)
 		{
-			AffectedBones.SetNum(BaseSkeleton->GetBoneCount());
-			AffectedBones[BaseBoneIndex] = true;
+			const TArray<uint16>& BoneMap = pBase->BoneMap;
+			AffectedBoneMapIndices.SetNum(BoneMap.Num());
 
-            for (int32 BoneIndex = 0; BoneIndex < BaseSkeleton->GetBoneCount(); ++BoneIndex)
+			const int32 BoneCount = BaseSkeleton->GetBoneCount();
+			TArray<bool> AffectedSkeletonBones;
+			AffectedSkeletonBones.SetNum(BoneCount);
+
+            for (int32 BoneIndex = 0; BoneIndex < BoneCount; ++BoneIndex)
 			{
-				int32 CurrentBoneIndex = BoneIndex;
-				while (CurrentBoneIndex >= 0)
+				const int32 ParentBoneIndex = BaseSkeleton->GetBoneParent(BoneIndex);
+				check(ParentBoneIndex < BoneIndex);
+				
+				const bool bIsBoneAffected = (AffectedSkeletonBones.IsValidIndex(ParentBoneIndex) && AffectedSkeletonBones[ParentBoneIndex])
+					|| BoneIndex == BaseBoneIndex;
+				
+				if (!bIsBoneAffected)
 				{
-                    if (BaseSkeleton->GetBoneId(CurrentBoneIndex) == BaseBoneIndex)
-					{
-						AffectedBones[BoneIndex] = true;
-						break;
-					}
-					else
-					{
-						CurrentBoneIndex = BaseSkeleton->GetBoneParent(CurrentBoneIndex);
-					}
+					continue;
+				}
+				
+				AffectedSkeletonBones[BoneIndex] = true;
+
+				const uint16 AffectedBoneId = BaseSkeleton->GetBoneId(BoneIndex);
+				const int32 AffectedBoneMapIndex = BoneMap.Find(AffectedBoneId);
+				if (AffectedBoneMapIndex != INDEX_NONE)
+				{
+					AffectedBoneMapIndices[AffectedBoneMapIndex] = true;
 				}
 			}
 
@@ -295,37 +305,46 @@ namespace mu
 				case MBS_POSITION:
                     for (uint32 v = 0; v < vcount; ++v)
 					{
-						vec3f vertex(0.0f, 0.0f, 0.0f);
+						FVector3f vertex(0.0f, 0.0f, 0.0f);
 						for (int i = 0; i < 3; ++i)
 						{
 							ConvertData(i, &vertex[0], MBF_FLOAT32, it.ptr(), it.GetFormat());
 						}
 
-						if (
-							(  BaseBoneIndex != INDEX_NONE && VertexIsAffectedByBone(v, AffectedBones, vertex_info) && VertexIsInMaxRadius(vertex, origin, vertexSelectionBoneMaxRadius))
-                            || (BaseBoneIndex == INDEX_NONE && selectionShape.type == (uint8_t)FShape::Type::None)
-                            || (selectionShape.type == (uint8_t)FShape::Type::AABox && PointInBoundingBox(vertex, selectionShape))
-							)
-						{
-							vec3f morph_plane_center = origin;					// MORPH PLANE POS relative to root of the selected bone
-							vec3f clip_plane_center = origin + normal * dist;	// CPLIPPING PLANE POS
-							vec3f aux_morph = vertex - morph_plane_center;		// MORPH PLANE --> CURRENT VERTEX
-							vec3f aux_clip = vertex - clip_plane_center;		// CLIPPING PLANE --> CURRENT VERTEX
+						const bool bIsVertexAffectedBone = 
+								BaseBoneIndex != INDEX_NONE &&
+								VertexIsInMaxRadius(vertex, origin, vertexSelectionBoneMaxRadius) &&
+								VertexIsAffectedByBone(v, AffectedBoneMapIndices, vertex_info);
+						
+						const bool bIsVertexAffectedNoShape = 
+								BaseBoneIndex == INDEX_NONE && 
+								selectionShape.type == (uint8_t)FShape::Type::None;
 
-							float dot_morph = dot(aux_morph, normal);			// ANGLE (MORPH PLANE TO VERTEX AND NORMAL)
-							float dot_cut = dot(aux_clip, normal);				// ANGLE (CLIPPING PLANE TO VERTEX AND NORMAL )
+						const bool bIsVertexAffectedBoundingBox = 
+								(selectionShape.type == (uint8_t)FShape::Type::AABox && 
+								PointInBoundingBox(vertex, selectionShape));
+
+						if (bIsVertexAffectedBone || bIsVertexAffectedNoShape || bIsVertexAffectedBoundingBox)
+						{
+							FVector3f morph_plane_center = origin;					// MORPH PLANE POS relative to root of the selected bone
+							FVector3f clip_plane_center = origin + normal * dist;	// CPLIPPING PLANE POS
+							FVector3f aux_morph = vertex - morph_plane_center;		// MORPH PLANE --> CURRENT VERTEX
+							FVector3f aux_clip = vertex - clip_plane_center;		// CLIPPING PLANE --> CURRENT VERTEX
+
+							float dot_morph = FVector3f::DotProduct(aux_morph, normal);			// ANGLE (MORPH PLANE TO VERTEX AND NORMAL)
+							float dot_cut = FVector3f::DotProduct(aux_clip, normal);				// ANGLE (CLIPPING PLANE TO VERTEX AND NORMAL )
 
 							if (dot_morph >= 0.f || dot_cut >= 0.f)				// CHECK IF CLIPPING OR MORPH SHOULD BE COMPUTED FOR V VERTEX
 							{
-								vec3f current_center = morph_plane_center + normal * dot_morph;	// PROJECTED POINT FROM THE MROPH PLANE (THE CLOSER THE DOT VALUE OF NORMAL AND VERTEX THE FURTHER IT GOES )
-								vec3f radius_vector = vertex - current_center;					// 	
-								float radius_vector_len = length(radius_vector);
-								vec3f radius_vector_unit = radius_vector_len != 0.f ? radius_vector / radius_vector_len : vec3f(0.f, 0.f, 0.f); // UNITARY VECTOR THAT GOES FROM THE POINT TO THE VERTEX
+								FVector3f current_center = morph_plane_center + normal * dot_morph;	// PROJECTED POINT FROM THE MROPH PLANE (THE CLOSER THE DOT VALUE OF NORMAL AND VERTEX THE FURTHER IT GOES )
+								FVector3f radius_vector = vertex - current_center;					// 	
+								float radius_vector_len = radius_vector.Length();
+								FVector3f radius_vector_unit = radius_vector_len != 0.f ? radius_vector / radius_vector_len : FVector3f(0.f, 0.f, 0.f); // UNITARY VECTOR THAT GOES FROM THE POINT TO THE VERTEX
 
-								float angle_from_origin = acosf(dot(radius_vector_unit, origin_radius_vector));
+								float angle_from_origin = acosf(FVector3f::DotProduct(radius_vector_unit, origin_radius_vector));
 
 								// Cross product between the perpendicular vector from radius vector and origin radius and the normal vector
-								if (dot(cross(radius_vector_unit, origin_radius_vector), normal) < 0)
+								if (FVector3f::DotProduct(FVector3f::CrossProduct(radius_vector_unit, origin_radius_vector), normal) < 0)
 								{
 									angle_from_origin = -angle_from_origin;
 								}
@@ -336,16 +355,16 @@ namespace mu
 								float term2 = radius * sinf(angle_from_origin);
 								float ellipse_radius_at_angle = radius * radius2 / sqrtf(term1 * term1 + term2 * term2);
 
-								vec3f vertex_proj_ellipse = current_center + radius_vector_unit * ellipse_radius_at_angle;
-								//vec3f vertex_proj_ellipse = current_center + radius_vector_unit * radius;
+								FVector3f vertex_proj_ellipse = current_center + radius_vector_unit * ellipse_radius_at_angle;
+								//FVector3f vertex_proj_ellipse = current_center + radius_vector_unit * radius;
 
-								float morph_alpha = dist != 0.f && dot_morph <= dist ? clamp(0.f, 1.f, powf(dot_morph / dist, factor)) : 1.f;
+								float morph_alpha = dist != 0.f && dot_morph <= dist ? FMath::Clamp(powf(dot_morph / dist, factor),0.f, 1.f) : 1.f;
 
 								vertex = vertex * (1.f - morph_alpha) + vertex_proj_ellipse * morph_alpha;
 
 								if (dot_cut >= 0.f)		// CHECK IF THE VERTEX SHOULD BE CLIPPED
 								{
-									vec3f vert_displ = normal * -dot_cut;
+									FVector3f vert_displ = normal * -dot_cut;
 									vertex = vertex + vert_displ;
 									RemovedVertices[v] = true;
 								}
@@ -370,12 +389,12 @@ namespace mu
 		// Now remove all the faces from the result mesh that have all vertices removed
 		UntypedMeshBufferIteratorConst itBase(Result->GetIndexBuffers(), MBS_VERTEXINDEX);
 		UntypedMeshBufferIterator itDest(Result->GetIndexBuffers(), MBS_VERTEXINDEX);
-		int aFaceCount = Result->GetFaceCount();
+		int32 aFaceCount = Result->GetFaceCount();
 
 		UntypedMeshBufferIteratorConst ito(Result->GetIndexBuffers(), MBS_VERTEXINDEX);
 		for (int f = 0; f < aFaceCount; ++f)
 		{
-            vec3<uint32> ov;
+            FUint32Vector3 ov;
 			ov[0] = ito.GetAsUINT32(); ++ito;
 			ov[1] = ito.GetAsUINT32(); ++ito;
 			ov[2] = ito.GetAsUINT32(); ++ito;
@@ -395,11 +414,11 @@ namespace mu
 			itBase += 3;
 		}
 
-		std::size_t removedIndices = itBase - itDest;
+		SIZE_T removedIndices = itBase - itDest;
 		check(removedIndices % 3 == 0);
 
-		Result->GetFaceBuffers().SetElementCount(aFaceCount - (int)removedIndices / 3);
-		Result->GetIndexBuffers().SetElementCount(aFaceCount * 3 - (int)removedIndices);
+		Result->GetFaceBuffers().SetElementCount(aFaceCount - (int32)removedIndices / 3);
+		Result->GetIndexBuffers().SetElementCount(aFaceCount * 3 - (int32)removedIndices);
 
 		// TODO: Should redo/reorder the face buffer before SetElementCount since some deleted faces could be left and some remaining faces deleted.
 
@@ -412,5 +431,4 @@ namespace mu
             Result->m_surfaces[0].m_indexCount -= (int32)removedIndices;
         }
 	}
-
 }

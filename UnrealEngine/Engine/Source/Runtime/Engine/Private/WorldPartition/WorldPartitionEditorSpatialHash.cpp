@@ -3,7 +3,7 @@
 #include "WorldPartition/WorldPartitionEditorSpatialHash.h"
 #include "HAL/IConsoleManager.h"
 #include "WorldPartition/WorldPartitionActorDesc.h"
-#include "WorldPartition/WorldPartitionActorDesc.h"
+#include "WorldPartition/WorldPartitionActorDescInstance.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(WorldPartitionEditorSpatialHash)
 
@@ -67,16 +67,16 @@ void UWorldPartitionEditorSpatialHash::Tick(float DeltaSeconds)
 		{
 			NewEditorBounds += Cell->Bounds;
 
-			for (const FWorldPartitionHandle& Actor : Cell->Actors)
+			for (const FWorldPartitionHandle& ActorHandle : Cell->Actors)
 			{
-				RuntimeBounds += Actor->GetEditorBounds();
+				RuntimeBounds += ActorHandle->GetLocalEditorBounds();
 			}
 		}
 
 		NonSpatialBounds.Init();
-		for (const FWorldPartitionHandle& Actor : AlwaysLoadedCell->Actors)
+		for (const FWorldPartitionHandle& ActorHandle : AlwaysLoadedCell->Actors)
 		{
-			NonSpatialBounds += Actor->GetEditorBounds();
+			NonSpatialBounds += ActorHandle->GetLocalEditorBounds();
 		}
 
 		const int32 OldLevel = GetLevelForBox(EditorBounds);
@@ -126,18 +126,19 @@ void UWorldPartitionEditorSpatialHash::HashActor(FWorldPartitionHandle& InActorH
 {
 	check(InActorHandle.IsValid());
 
-	const bool bConsiderActorSpatiallyLoaded = InActorHandle->GetIsSpatiallyLoaded();
-	const FBox ActorBounds = bConsiderActorSpatiallyLoaded ? InActorHandle->GetEditorBounds() : FBox(ForceInit);
+	const FWorldPartitionActorDescInstance* ActorDescInstance = *InActorHandle;
+	const bool bConsiderActorSpatiallyLoaded = ActorDescInstance->GetIsSpatiallyLoaded();
+	const FBox ActorBounds = bConsiderActorSpatiallyLoaded ? ActorDescInstance->GetLocalEditorBounds() : FBox(ForceInit);
 
 #if DO_CHECK
-	check(!HashedActors.Contains(InActorHandle->GetGuid()));
-	HashedActors.Add(InActorHandle->GetGuid(), ActorBounds);
+	check(!HashedActors.Contains(ActorDescInstance->GetGuid()));
+	HashedActors.Add(ActorDescInstance->GetGuid(), ActorBounds);
 #endif
 
 	if (!bConsiderActorSpatiallyLoaded)
 	{
 		AlwaysLoadedCell->Actors.Add(InActorHandle);
-		NonSpatialBounds += InActorHandle->GetEditorBounds();
+		NonSpatialBounds += ActorDescInstance->GetLocalEditorBounds();
 	}
 	else
 	{
@@ -230,7 +231,7 @@ void UWorldPartitionEditorSpatialHash::HashActor(FWorldPartitionHandle& InActorH
 			}
 		}
 
-		RuntimeBounds += InActorHandle->GetEditorBounds();
+		RuntimeBounds += ActorDescInstance->GetLocalEditorBounds();
 	}
 }
 
@@ -238,11 +239,12 @@ void UWorldPartitionEditorSpatialHash::UnhashActor(FWorldPartitionHandle& InActo
 {
 	check(InActorHandle.IsValid());
 
-	const bool bConsiderActorSpatiallyLoaded = InActorHandle->GetIsSpatiallyLoaded();
-	const FBox ActorBounds = bConsiderActorSpatiallyLoaded ? InActorHandle->GetEditorBounds() : FBox(ForceInit);
+	const FWorldPartitionActorDescInstance* ActorDescInstance = *InActorHandle;
+	const bool bConsiderActorSpatiallyLoaded = ActorDescInstance->GetIsSpatiallyLoaded();
+	const FBox ActorBounds = bConsiderActorSpatiallyLoaded ? ActorDescInstance->GetLocalEditorBounds() : FBox(ForceInit);
 
 #if DO_CHECK
-	const FBox OldActorBounds = HashedActors.FindAndRemoveChecked(InActorHandle->GetGuid());
+	const FBox OldActorBounds = HashedActors.FindAndRemoveChecked(ActorDescInstance->GetGuid());
 	check(ActorBounds == OldActorBounds);
 #endif
 
@@ -297,9 +299,9 @@ void UWorldPartitionEditorSpatialHash::UnhashActor(FWorldPartitionHandle& InActo
 	bBoundsDirty = true;
 }
 
-int32 UWorldPartitionEditorSpatialHash::ForEachIntersectingActor(const FBox& Box, TFunctionRef<void(FWorldPartitionActorDesc*)> InOperation, const FForEachIntersectingActorParams& Params)
+int32 UWorldPartitionEditorSpatialHash::ForEachIntersectingActor(const FBox& Box, TFunctionRef<void(FWorldPartitionActorDescInstance*)> InOperation, const FForEachIntersectingActorParams& Params)
 {
-	TSet<FWorldPartitionActorDesc*> IntersectedActorDescs;
+	TSet<FGuid> IntersectedActors;
 
 	const int MininumumLevel = Params.MinimumBox.IsSet() ? GetLevelForBox(*Params.MinimumBox) : 0;
 
@@ -307,18 +309,18 @@ int32 UWorldPartitionEditorSpatialHash::ForEachIntersectingActor(const FBox& Box
 	{
 		ForEachIntersectingCell(Box, [&](FCell* Cell)
 		{
-			for(FWorldPartitionHandle& ActorDesc: Cell->Actors)
+			for(FWorldPartitionHandle& ActorHandle: Cell->Actors)
 			{
-				if (ActorDesc.IsValid())
+				if (ActorHandle.IsValid())
 				{
 					bool bWasAlreadyInSet;
-					IntersectedActorDescs.Add(*ActorDesc, &bWasAlreadyInSet);
+					IntersectedActors.Add(ActorHandle->GetGuid(), &bWasAlreadyInSet);
 
 					if (!bWasAlreadyInSet)
 					{
-						if (Box.Intersect(ActorDesc->GetEditorBounds()))
+						if (Box.Intersect(ActorHandle->GetLocalEditorBounds()))
 						{
-							InOperation(*ActorDesc);
+							InOperation(*ActorHandle);
 						}
 					}
 				}
@@ -328,25 +330,25 @@ int32 UWorldPartitionEditorSpatialHash::ForEachIntersectingActor(const FBox& Box
 
 	if (Params.bIncludeNonSpatiallyLoadedActors)
 	{
-		for(FWorldPartitionHandle& ActorDesc: AlwaysLoadedCell->Actors)
+		for(FWorldPartitionHandle& ActorHandle : AlwaysLoadedCell->Actors)
 		{
-			if (ActorDesc.IsValid())
+			if (ActorHandle.IsValid())
 			{
-				if (Box.Intersect(ActorDesc->GetEditorBounds()))
+				if (Box.Intersect(ActorHandle->GetLocalEditorBounds()))
 				{
 					bool bWasAlreadyInSet;
-					IntersectedActorDescs.Add(*ActorDesc, &bWasAlreadyInSet);
+					IntersectedActors.Add(ActorHandle->GetGuid(), &bWasAlreadyInSet);
 				
 					if (!bWasAlreadyInSet)
 					{
-						InOperation(*ActorDesc);
+						InOperation(*ActorHandle);
 					}
 				}
 			}
 		}
 	}
 
-	return IntersectedActorDescs.Num();
+	return IntersectedActors.Num();
 }
 
 int32 UWorldPartitionEditorSpatialHash::ForEachIntersectingCellInner(const FBox& Box, const FCellCoord& CellCoord, TFunctionRef<void(FCell*)> InOperation, int32 MinimumLevel)

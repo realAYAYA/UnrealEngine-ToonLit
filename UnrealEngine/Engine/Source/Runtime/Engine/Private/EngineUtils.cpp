@@ -13,7 +13,6 @@
 #include "Misc/PackageName.h"
 #include "Misc/EngineVersion.h"
 #include "GameFramework/PlayerController.h"
-#include "GameFramework/LightWeightInstanceSubsystem.h"
 #include "GenericPlatform/ICursor.h"
 #include "Elements/Framework/EngineElementsLibrary.h"
 #include "Components/PrimitiveComponent.h"
@@ -69,9 +68,9 @@ bool HActor::AlwaysAllowsTranslucentPrimitives() const
 {
 #if WITH_EDITOR
 	return PrimComponent->bAlwaysAllowTranslucentSelect;
-#endif
-
+#else
 	return false;
+#endif
 }
 
 EMouseCursor::Type HTranslucentActor::GetMouseCursor()
@@ -87,10 +86,10 @@ bool HTranslucentActor::AlwaysAllowsTranslucentPrimitives() const
 #if !UE_BUILD_SHIPPING
 FContentComparisonHelper::FContentComparisonHelper()
 {
-	FConfigSection* RefTypes = GConfig->GetSectionPrivate(TEXT("ContentComparisonReferenceTypes"), false, true, GEngineIni);
+	const FConfigSection* RefTypes = GConfig->GetSection(TEXT("ContentComparisonReferenceTypes"), false, GEngineIni);
 	if (RefTypes != NULL)
 	{
-		for( FConfigSectionMap::TIterator It(*RefTypes); It; ++It )
+		for( FConfigSectionMap::TConstIterator It(*RefTypes); It; ++It )
 		{
 			const FString& RefType = It.Value().GetValue();
 			ReferenceClassesOfInterest.Add(RefType, true);
@@ -520,7 +519,7 @@ TArray<FSubLevelStatus> GetSubLevelsStatus( UWorld* World, bool SortByActorCount
 
 				if (Hit.HitObjectHandle.IsValid())
 				{
-					LevelPlayerIsIn = FLightWeightInstanceSubsystem::Get().GetLevel(Hit.HitObjectHandle);
+					LevelPlayerIsIn = Hit.HitObjectHandle.GetLevel();
 				}
 				else if (UPrimitiveComponent* HitComponent = Hit.Component.Get())
 				{
@@ -594,8 +593,9 @@ FStripDataFlags::FStripDataFlags( class FArchive& Ar, uint8 InClassFlags /*= 0*/
 		{
 			// When cooking GlobalStripFlags are automatically generated based on the current target
 			// platform's properties.
-			GlobalStripFlags |= Ar.CookingTarget()->HasEditorOnlyData() ? static_cast<uint8>(FStripDataFlags::EStrippedData::None) : static_cast<uint8>(FStripDataFlags::EStrippedData::Editor);
-			GlobalStripFlags |= !Ar.CookingTarget()->AllowAudioVisualData() ? static_cast<uint8>(FStripDataFlags::EStrippedData::Server) : static_cast<uint8>(FStripDataFlags::EStrippedData::None);
+			GlobalStripFlags |= Ar.CookingTarget()->HasEditorOnlyData() ? static_cast<uint8>(FStripDataFlags::EStrippedData::None) : static_cast<uint8>(FStripDataFlags::EStrippedData::EditorOnly);
+			GlobalStripFlags |= Ar.CookingTarget()->AllowAudioVisualData() ? static_cast<uint8>(FStripDataFlags::EStrippedData::None) : static_cast<uint8>(FStripDataFlags::EStrippedData::AudioVisual);
+			GlobalStripFlags |= Ar.CookingTarget()->SupportsFeature(ETargetPlatformFeatures::CanCookPackages) ? static_cast<uint8>(FStripDataFlags::EStrippedData::None) : static_cast<uint8>(FStripDataFlags::EStrippedData::NeededForCooking);
 			ClassStripFlags = InClassFlags;
 		}
 		Ar << GlobalStripFlags;
@@ -638,8 +638,9 @@ FStripDataFlags::FStripDataFlags(FStructuredArchive::FSlot Slot, uint8 InClassFl
 		{
 			// When cooking GlobalStripFlags are automatically generated based on the current target
 			// platform's properties.
-			GlobalStripFlags |= UnderlyingArchive.IsFilterEditorOnly() ? static_cast<uint8>(FStripDataFlags::EStrippedData::Editor) : static_cast<uint8>(FStripDataFlags::EStrippedData::None);
-			GlobalStripFlags |= !UnderlyingArchive.CookingTarget()->AllowAudioVisualData() ? static_cast<uint8>(FStripDataFlags::EStrippedData::Server) : static_cast<uint8>(FStripDataFlags::EStrippedData::None);
+			GlobalStripFlags |= UnderlyingArchive.IsFilterEditorOnly() ? static_cast<uint8>(FStripDataFlags::EStrippedData::EditorOnly) : static_cast<uint8>(FStripDataFlags::EStrippedData::None);
+			GlobalStripFlags |= !UnderlyingArchive.CookingTarget()->AllowAudioVisualData() ? static_cast<uint8>(FStripDataFlags::EStrippedData::AudioVisual) : static_cast<uint8>(FStripDataFlags::EStrippedData::None);
+			GlobalStripFlags |= UnderlyingArchive.CookingTarget()->SupportsFeature(ETargetPlatformFeatures::CanCookPackages) ? static_cast<uint8>(FStripDataFlags::EStrippedData::None) : static_cast<uint8>(FStripDataFlags::EStrippedData::NeededForCooking);
 			ClassStripFlags = InClassFlags;
 		}
 		Record << SA_VALUE(TEXT("GlobalStripFlags"), GlobalStripFlags);

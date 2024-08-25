@@ -28,7 +28,6 @@
 #include "Math/Transform.h"
 #include "Serialization/Archive.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SubclassOf.h"
 #include "UObject/BlueprintsObjectVersion.h" // for ComponentTemplateClassSupport
 #include "UObject/Class.h"

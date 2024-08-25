@@ -91,11 +91,15 @@ struct FPhysicsPredictionSettings
 {
 	GENERATED_BODY();
 
-	/** Enable networked physics prediction */
+	/** Enable networked physics prediction (experimental)
+	* Note: If an AActor::PhysicsReplicationMode is set to use Resimulation this will allow physics to cache history which is required by resimulation replication.
+	* Note: This can also affect how physics is solved even when not using resimulation. */
 	UPROPERTY(EditAnywhere, Category = "Replication")
 	bool bEnablePhysicsPrediction;
 
-	/** Enable physics resimulation */
+	/** Forces the PlayerController to sync inputs as used in Physics Prediction.
+	* Only enable this if actively using a custom solution that needs this enabled for resimulation.
+	* This is automatically enabled when using the recommended NetworkPhysicsComponent on a pawn to handle Rewind / Resimulation. */
 	UPROPERTY(EditAnywhere, Category = "Replication", meta = (editcondition = "bEnablePhysicsPrediction"))
 	bool bEnablePhysicsResimulation;
 
@@ -258,7 +262,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Physics")
 	int32 GetPhysicsHistoryCount() const
 	{
-		return FMath::CeilToInt(1.f / AsyncFixedTimeStepSize) * (PhysicsPrediction.MaxSupportedLatencyPrediction / 1000.f);
+		return FMath::Max<int32>(1, FMath::CeilToInt(0.001f * PhysicsPrediction.MaxSupportedLatencyPrediction / AsyncFixedTimeStepSize));
 	}
 
 	ENGINE_API virtual void PostInitProperties() override;

@@ -39,7 +39,7 @@ public:
 			Execute(COOK_STAT(&FDerivedDataCacheUsageStats::TimePut,) Requests, Owner,
 				[this, OnComplete = MoveTemp(OnComplete)](FCachePutResponse&& Response)
 				{
-					MemoryCache->Delete(Response.Key);
+					MemoryCache->Delete(Response.Key, Response.Name);
 					OnComplete(MoveTemp(Response));
 				}, &ICacheStore::Put);
 		}
@@ -68,7 +68,7 @@ public:
 			Execute(COOK_STAT(&FDerivedDataCacheUsageStats::TimePut,) Requests, Owner,
 				[this, OnComplete = MoveTemp(OnComplete)](FCachePutValueResponse&& Response)
 				{
-					MemoryCache->DeleteValue(Response.Key);
+					MemoryCache->DeleteValue(Response.Key, Response.Name);
 					OnComplete(MoveTemp(Response));
 				}, &ICacheStore::PutValue);
 		}

@@ -473,6 +473,43 @@ namespace UnrealBuildTool
 		}
 
 		/// <summary>
+		/// Gets the value for the given type. Can return a full struct hierarchy.
+		/// </summary>
+		/// <param name="SectionName">Section where the key is located</param>
+		/// <param name="KeyName">Key name</param>
+		/// <param name="Value">Value hierarchy associated with the specified key. All field names must exist</param>
+		/// <returns>True if the key exists and could be parsed</returns>
+		public bool TryGetValueGeneric<T>(string SectionName, string KeyName, [NotNullWhen(true)] out T? Value) where T : new()
+		{
+			if (TryGetValue(SectionName, KeyName, out string? Line ))
+			{
+				return ConfigValueParser.TryParseGeneric( Line, out Value);
+			}
+
+			Value = default(T);
+			return false;
+		}
+
+		/// <summary>
+		/// Gets the array of values for the given type. Can return a full struct hierarchy.
+		/// </summary>
+		/// <param name="SectionName">Section where the key is located</param>
+		/// <param name="KeyName">Key name</param>
+		/// <param name="Values">Array of values associated with the specified key. All field names must exist</param>
+		/// <returns>True if the key exists and could be parsed</returns>
+		public bool TryGetValuesGeneric<T>(string SectionName, string KeyName, [NotNullWhen(true)] out T[]? Values) where T : new()
+		{
+			if (TryGetValues(SectionName, KeyName, out IReadOnlyList<string>? Lines ))
+			{
+				return ConfigValueParser.TryParseArrayGeneric(Lines.ToArray(), out Values);
+			}
+
+			Values = null;
+			return false;
+		}
+
+
+		/// <summary>
 		/// Parse a string as a boolean value
 		/// </summary>
 		/// <param name="Text">The text to parse</param>

@@ -178,4 +178,7 @@ public:
 
 	/** Called when this item's label has changed */
 	virtual void OnLabelChanged() {}
+
+	/** Whether the item should be removed when the last child has been removed. */
+	virtual bool ShouldRemoveOnceLastChildRemoved() const { check(GetChildren().IsEmpty()); return Flags.bIsFilteredOut; }
 };

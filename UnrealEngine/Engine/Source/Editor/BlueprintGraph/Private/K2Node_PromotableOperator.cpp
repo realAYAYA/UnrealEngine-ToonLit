@@ -45,6 +45,12 @@
 
 #define LOCTEXT_NAMESPACE "PromotableOperatorNode"
 
+static TAutoConsoleVariable<bool> CVarAllowConversionOfComparisonOps(
+	TEXT("BP.bAllowConversionOfComparisonOps"),
+	true,
+	TEXT("If true, then allow the user to convert between comparison operators on the UK2Node_PromotableOperator"),
+	ECVF_Default);
+
 ///////////////////////////////////////////////////////////
 // Pin names for default construction
 
@@ -138,7 +144,39 @@ void UK2Node_PromotableOperator::GetNodeContextMenuActions(UToolMenu* Menu, UGra
 
 	static const FName PromotableOperatorNodeName = FName("PromotableOperator");
 	static const FText PromotableOperatorStr = LOCTEXT("PromotableOperatorNode", "Operator Node");
+	
+	if (CVarAllowConversionOfComparisonOps.GetValueOnAnyThread() && CanConvertComparisonOperatorNodeType(Context->Node))
+	{
+		static const FName ConvertComparisonOpName = FName("ConvertComparisonOp");
+		static const FText ConvertComparisonOpStr = LOCTEXT("ConvertComparisonOp", "Convert Operator");
+		
+		FToolMenuSection& Section = Menu->AddSection(ConvertComparisonOpName, ConvertComparisonOpStr);
+		for (const FName& PossibleConversionOpName : FTypePromotion::GetComparisonOpNames())
+		{
+			// Don't display our current operator type
+			if (PossibleConversionOpName == OperationName)
+			{
+				continue;
+			}
 
+			FFormatNamedArguments Args;
+			Args.Add(TEXT("NewOpName"), FTypePromotion::GetUserFacingOperatorName(PossibleConversionOpName));
+			Args.Add(TEXT("CurrentOpName"), FTypePromotion::GetUserFacingOperatorName(OperationName));
+
+			const FText PinConversionName = FText::Format(LOCTEXT("ConvertOpName_Tooltip", "Convert to {NewOpName}"), Args);
+
+			Section.AddMenuEntry(
+				FName(PinConversionName.ToString()),
+				PinConversionName,
+				FText::Format(LOCTEXT("ConvertOperator_ToType_Tooltip", "Convert this node operation from '{CurrentOpName}' to '{NewOpName}'"), Args),
+				FSlateIcon(),
+				FUIAction(
+					FExecuteAction::CreateStatic(&UK2Node_PromotableOperator::ConvertComparisonOperatorNode, const_cast<UEdGraphNode*>(Context->Node.Get()), PossibleConversionOpName)
+				)
+			);
+		}
+	}
+	
 	// Add the option to remove a pin via the context menu
 	if (CanRemovePin(Context->Pin))
 	{
@@ -244,7 +282,7 @@ void UK2Node_PromotableOperator::CreateConversionMenu(FToolMenuSection& Conversi
 		Args.Add(TEXT("NewPinType"), Schema->TypeToText(PinType));
 		Args.Add(TEXT("CurrentPinType"), Schema->TypeToText(OriginalContextType));
 
-		const FText PinConversionName = FText::Format(LOCTEXT("CallFunction_Tooltip", "To {NewPinType}"), Args);
+		const FText PinConversionName = FText::Format(LOCTEXT("Convert_Pin_To_Type_Tooltip", "To {NewPinType}"), Args);
 
 		ConversionSection.AddMenuEntry(
 			FName(PinConversionName.ToString()),
@@ -266,6 +304,80 @@ bool UK2Node_PromotableOperator::CanConvertPinType(const UEdGraphPin* Pin) const
 		!(Pin->Direction == EGPD_Output &&
 		FTypePromotion::IsComparisonFunc(GetTargetFunction())) &&
 		!IsTolerancePin(*Pin);
+}
+
+bool UK2Node_PromotableOperator::CanConvertComparisonOperatorNodeType(const UEdGraphNode* Node)
+{
+	if (!Node)
+	{
+		return false;
+	}
+	
+	if (const UK2Node_PromotableOperator* OpNode = Cast<UK2Node_PromotableOperator>(Node))
+	{
+		// Only allow conversions between simple comparison types. If we have a tolerance pin, don't allow conversion
+		// because not all operators for those types have a tolerance.
+		const UEdGraphPin* TolerancePin = OpNode->FindTolerancePin();
+		const bool bTolerancePinAcceptable = !TolerancePin || TolerancePin->bHidden;
+		
+		const UFunction* TargetFunc = OpNode->GetTargetFunction();
+		
+		// If the target function is null then it's a wildcard node and we can convert it
+		return (TargetFunc == nullptr || FTypePromotion::IsComparisonFunc(TargetFunc)) && bTolerancePinAcceptable;
+	}
+
+	return false;
+}
+
+void UK2Node_PromotableOperator::ConvertComparisonOperatorNode(UEdGraphNode* Node, const FName NewOpName)
+{
+	UK2Node_PromotableOperator* OpNode = Cast<UK2Node_PromotableOperator>(Node);
+	// You can only convert to comparison operators, nothing else, because then we can be sure the number of pins to consider will be correct
+	// when finding the best matching function. Other math ops may behave in undefined ways if we allowed it.
+	if (!OpNode || !FTypePromotion::IsComparisonOpName(NewOpName))
+	{
+		return;
+	}
+	
+	FFormatNamedArguments Args;
+	Args.Add(TEXT("NewOpName"), FText::FromName(NewOpName));
+	Args.Add(TEXT("CurrentOpName"), FText::FromName(OpNode->OperationName));
+
+	const FText PinConversionName = FText::Format(LOCTEXT("CallFunction_Tooltip", "Convert operator node from {CurrentOpName} to {NewOpName}"), Args);
+	
+	FScopedTransaction Transaction(LOCTEXT("PromotableOperatorComparisonOpConversion", "Convert operator node"));
+	OpNode->Modify();
+	
+	OpNode->OperationName = NewOpName;
+
+	TArray<UEdGraphPin*> PinsToConsider;
+	OpNode->GetPinsToConsider(PinsToConsider);
+
+	// In the case of this node having no pins to consider (it is a wildcard, with no default values or connections)
+	// we will just use the boolean output pin to ensure that we get a valid UFunction to use.
+	if (PinsToConsider.IsEmpty())
+	{
+		UEdGraphPin* OutPin = OpNode->GetOutputPin();
+		// Because we only allow this conversion to happen on comparison operators, we can be sure the output pin will be a 
+		// simple boolean output and that it is there
+		ensure(OutPin && OutPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Boolean);
+		PinsToConsider.Add(OutPin);		
+	}
+
+	// For nodes with connections we have to find the best function again that matches for them
+	if (const UFunction* BestMatchingFunc = FTypePromotion::FindBestMatchingFunc(OpNode->OperationName, PinsToConsider))
+	{
+		// Only allow this with comparison functions
+		ensure(FTypePromotion::IsComparisonFunc(BestMatchingFunc));
+		UE_LOG(LogBlueprint, Verbose, TEXT("Converting node '%s' from '%s' to '%s'..."), *GetNameSafe(OpNode), *OpNode->OperationName.ToString(), *NewOpName.ToString());
+		
+		OpNode->SetFromFunction(BestMatchingFunc);
+		OpNode->ReconstructNode();
+	}
+	else
+	{
+		UE_LOG(LogBlueprint, Error, TEXT("Failed to convert Convert node from '%s' to '%s'"), *OpNode->OperationName.ToString(), *NewOpName.ToString());
+	}
 }
 
 FText UK2Node_PromotableOperator::GetTooltipText() const

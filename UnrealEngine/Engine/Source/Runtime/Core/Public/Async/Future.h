@@ -169,7 +169,7 @@ public:
 	 * @return The result value.
 	 * @see EmplaceResult
 	 */
-	const InternalResultType& GetResult() const
+	const InternalResultType& GetResult() const UE_LIFETIMEBOUND
 	{
 		while (!IsComplete())
 		{
@@ -180,9 +180,20 @@ public:
 	}
 
 	/**
+	 * Gets the result (will block the calling thread until the result is available).
+	 *
+	 * @return The result value.
+	 * @see EmplaceResult
+	 */
+	InternalResultType& GetResult() UE_LIFETIMEBOUND
+	{
+		return const_cast<InternalResultType&>(AsConst(*this).GetResult());
+	}
+
+	/**
 	 * Sets the result and notifies any waiting threads.
 	 *
-	 * @param InResult The result to set.
+	 * @param Args The arguments to forward to the constructor of the result.
 	 * @see GetResult
 	 */
 	template<typename... ArgTypes>
@@ -277,7 +288,7 @@ protected:
 	typedef TSharedPtr<TFutureState<InternalResultType>, ESPMode::ThreadSafe> StateType;
 
 	/** Default constructor. */
-	TFutureBase() { }
+	TFutureBase() = default;
 
 	/**
 	 * Creates and initializes a new instance.
@@ -288,28 +299,20 @@ protected:
 		: State(InState)
 	{ }
 
-	/**
-	 * Protected move construction
-	 */
-	TFutureBase(TFutureBase&&) = default;
-
-	/**
-	 * Protected move assignment
-	 */
-	TFutureBase& operator=(TFutureBase&&) = default;
-
-	/**
-	 * Protected copy construction
-	 */
+	/** Protected copy constructor. */
 	TFutureBase(const TFutureBase&) = default;
 
-	/**
-	 * Protected copy assignment
-	 */
+	/** Protected copy assignment operator. */
 	TFutureBase& operator=(const TFutureBase&) = default;
 
+	/** Protected move constructor. */
+	TFutureBase(TFutureBase&&) = default;
+
+	/** Protected move assignment operator. */
+	TFutureBase& operator=(TFutureBase&&) = default;
+
 	/** Protected destructor. */
-	~TFutureBase() { }
+	~TFutureBase() = default;
 
 protected:
 
@@ -350,7 +353,7 @@ protected:
 
 	/**
 	 * Reset the future.
-	 *	Reseting a future removes any continuation from its shared state and invalidates it.
+	 *	Resetting a future removes any continuation from its shared state and invalidates it.
 	 *	Useful for discarding yet to be completed future cleanly.
 	 */
 	void Reset()
@@ -383,7 +386,7 @@ class TFuture
 public:
 
 	/** Default constructor. */
-	TFuture() { }
+	TFuture() = default;
 
 	/**
 	 * Creates and initializes a new instance.
@@ -394,29 +397,55 @@ public:
 		: BaseType(InState)
 	{ }
 
-	/**
-	 * Move constructor.
-	 */
+	/** Deleted copy constructor (futures cannot be copied). */
+	TFuture(const TFuture&) = delete;
+
+	/** Deleted copy assignment operator (futures cannot be copied). */
+	TFuture& operator=(const TFuture&) = delete;
+
+	/** Move constructor. */
 	TFuture(TFuture&&) = default;
 
-	/**
-	 * Move assignment operator.
-	 */
-	TFuture& operator=(TFuture&& Other) = default;
+	/** Move assignment operator. */
+	TFuture& operator=(TFuture&&) = default;
 
 	/** Destructor. */
-	~TFuture() { }
+	~TFuture() = default;
 
 public:
 
 	/**
-	 * Gets the future's result.
+	 * Gets the future's result by const reference.
 	 *
 	 * @return The result.
+	 * @note Not equivalent to std::future::get(). The future remains valid.
 	 */
-	ResultType Get() const
+	const ResultType& Get() const UE_LIFETIMEBOUND
 	{
 		return this->GetState()->GetResult();
+	}
+
+	/**
+	 * Gets the future's result by non-const reference.
+	 *
+	 * @return The result.
+	 * @note Not equivalent to std::future::get(). The future remains valid.
+	 */
+	ResultType& GetMutable() UE_LIFETIMEBOUND
+	{
+		return this->GetState()->GetResult();
+	}
+
+	/**
+	 * Consumes the future's result and invalidates the future.
+	 *
+	 * @return The result.
+	 * @note Equivalent to std::future::get(). Invalidates the future.
+	 */
+	ResultType Consume()
+	{
+		TFuture<ResultType> Local(MoveTemp(*this));
+		return MoveTemp(Local.GetState()->GetResult());
 	}
 
 	/**
@@ -446,14 +475,6 @@ public:
 	 * @see TFutureBase
 	 */
 	using BaseType::Reset;
-
-private:
-
-	/** Hidden copy constructor (futures cannot be copied). */
-	TFuture(const TFuture&);
-
-	/** Hidden copy assignment (futures cannot be copied). */
-	TFuture& operator=(const TFuture&);
 };
 
 
@@ -469,7 +490,7 @@ class TFuture<ResultType&>
 public:
 
 	/** Default constructor. */
-	TFuture() { }
+	TFuture() = default;
 
 	/**
 	 * Creates and initializes a new instance.
@@ -480,18 +501,20 @@ public:
 		: BaseType(InState)
 	{ }
 
-	/**
-	 * Move constructor.
-	 */
+	/** Deleted copy constructor (futures cannot be copied). */
+	TFuture(const TFuture&) = delete;
+
+	/** Deleted copy assignment operator (futures cannot be copied). */
+	TFuture& operator=(const TFuture&) = delete;
+
+	/** Move constructor. */
 	TFuture(TFuture&&) = default;
 
-	/**
-	 * Move assignment operator.
-	 */
-	TFuture& operator=(TFuture&& Other) = default;
+	/** Move assignment operator. */
+	TFuture& operator=(TFuture&&) = default;
 
 	/** Destructor. */
-	~TFuture() { }
+	~TFuture() = default;
 
 public:
 
@@ -499,10 +522,34 @@ public:
 	 * Gets the future's result.
 	 *
 	 * @return The result.
+	 * @note Not equivalent to std::future::get(). The future remains valid.
 	 */
 	ResultType& Get() const
 	{
 		return *this->GetState()->GetResult();
+	}
+
+	/**
+	 * Gets the future's result.
+	 *
+	 * @return The result.
+	 * @note Not equivalent to std::future::get(). The future remains valid.
+	 */
+	ResultType& GetMutable()
+	{
+		return this->GetState()->GetResult();
+	}
+
+	/**
+	 * Consumes the future's result and invalidates the future.
+	 *
+	 * @return The result.
+	 * @note Equivalent to std::future::get(). Invalidates the future.
+	 */
+	ResultType& Consume()
+	{
+		TFuture<ResultType&> Local(MoveTemp(*this));
+		return Local.GetState()->GetResult();
 	}
 
 	/**
@@ -532,14 +579,6 @@ public:
 	 * @see TFutureBase
 	 */
 	using BaseType::Reset;
-
-private:
-
-	/** Hidden copy constructor (futures cannot be copied). */
-	TFuture(const TFuture&);
-
-	/** Hidden copy assignment (futures cannot be copied). */
-	TFuture& operator=(const TFuture&);
 };
 
 
@@ -555,7 +594,7 @@ class TFuture<void>
 public:
 
 	/** Default constructor. */
-	TFuture() { }
+	TFuture() = default;
 
 	/**
 	 * Creates and initializes a new instance.
@@ -566,18 +605,20 @@ public:
 		: BaseType(InState)
 	{ }
 
-	/**
-	 * Move constructor.
-	 */
+	/** Deleted copy constructor (futures cannot be copied). */
+	TFuture(const TFuture&) = delete;
+
+	/** Deleted copy assignment operator (futures cannot be copied). */
+	TFuture& operator=(const TFuture&) = delete;
+
+	/** Move constructor. */
 	TFuture(TFuture&&) = default;
 
-	/**
-	 * Move assignment operator.
-	 */
-	TFuture& operator=(TFuture&& Other) = default;
+	/** Move assignment operator. */
+	TFuture& operator=(TFuture&&) = default;
 
 	/** Destructor. */
-	~TFuture() { }
+	~TFuture() = default;
 
 public:
 
@@ -585,10 +626,37 @@ public:
 	 * Gets the future's result.
 	 *
 	 * @return The result.
+	 * @note Not equivalent to std::future::get(). The future remains valid.
 	 */
 	void Get() const
 	{
+		// Wait for the dummy result to be available.
 		GetState()->GetResult();
+	}
+
+	/**
+	 * Gets the future's result.
+	 *
+	 * @return The result.
+	 * @note Not equivalent to std::future::get(). The future remains valid.
+	 */
+	void GetMutable()
+	{
+		// Wait for the dummy result to be available.
+		GetState()->GetResult();
+	}
+
+	/**
+	 * Consumes the future's result and invalidates the future.
+	 *
+	 * @return The result.
+	 * @note Equivalent to std::future::get(). Invalidates the future.
+	 */
+	void Consume()
+	{
+		TFuture<void> Local(MoveTemp(*this));
+		// Wait for the dummy result to be available.
+		Local.GetState()->GetResult();
 	}
 
 	/**
@@ -615,14 +683,6 @@ public:
 	 * @see TFutureBase
 	 */
 	using BaseType::Reset;
-
-private:
-
-	/** Hidden copy constructor (futures cannot be copied). */
-	TFuture(const TFuture&);
-
-	/** Hidden copy assignment (futures cannot be copied). */
-	TFuture& operator=(const TFuture&);
 };
 
 /* TSharedFuture
@@ -640,7 +700,7 @@ class TSharedFuture
 public:
 
 	/** Default constructor. */
-	TSharedFuture() { }
+	TSharedFuture() = default;
 
 	/**
 	 * Creates and initializes a new instance.
@@ -660,28 +720,20 @@ public:
 		: BaseType(MoveTemp(Future))
 	{ }
 
-	/**
-	 * Copy constructor.
-	 */
+	/** Copy constructor. */
 	TSharedFuture(const TSharedFuture&) = default;
 
-	/**
-	 * Copy assignment operator.
-	 */
-	TSharedFuture& operator=(const TSharedFuture& Other) = default;
+	/** Copy assignment operator. */
+	TSharedFuture& operator=(const TSharedFuture&) = default;
 
-	/**
-	 * Move constructor.
-	 */
+	/** Move constructor. */
 	TSharedFuture(TSharedFuture&&) = default;
 
-	/**
-	 * Move assignment operator.
-	 */
-	TSharedFuture& operator=(TSharedFuture&& Other) = default;
+	/** Move assignment operator. */
+	TSharedFuture& operator=(TSharedFuture&&) = default;
 
 	/** Destructor. */
-	~TSharedFuture() { }
+	~TSharedFuture() = default;
 
 public:
 
@@ -690,7 +742,7 @@ public:
 	 *
 	 * @return The result.
 	 */
-	ResultType Get() const
+	const ResultType& Get() const
 	{
 		return this->GetState()->GetResult();
 	}
@@ -709,7 +761,7 @@ class TSharedFuture<ResultType&>
 public:
 
 	/** Default constructor. */
-	TSharedFuture() { }
+	TSharedFuture() = default;
 
 	/**
 	 * Creates and initializes a new instance.
@@ -729,26 +781,20 @@ public:
 		: BaseType(MoveTemp(Future))
 	{ }
 
-	/**
-	 * Copy constructor.
-	 */
+	/** Copy constructor. */
 	TSharedFuture(const TSharedFuture&) = default;
 
 	/** Copy assignment operator. */
-	TSharedFuture& operator=(const TSharedFuture& Other) = default;
+	TSharedFuture& operator=(const TSharedFuture&) = default;
 
-	/**
-	 * Move constructor.
-	 */
+	/** Move constructor. */
 	TSharedFuture(TSharedFuture&&) = default;
 
-	/**
-	 * Move assignment operator.
-	 */
-	TSharedFuture& operator=(TSharedFuture&& Other) = default;
+	/** Move assignment operator. */
+	TSharedFuture& operator=(TSharedFuture&&) = default;
 
 	/** Destructor. */
-	~TSharedFuture() { }
+	~TSharedFuture() = default;
 
 public:
 
@@ -776,7 +822,7 @@ class TSharedFuture<void>
 public:
 
 	/** Default constructor. */
-	TSharedFuture() { }
+	TSharedFuture() = default;
 
 	/**
 	 * Creates and initializes a new instance from shared state.
@@ -796,28 +842,20 @@ public:
 		: BaseType(MoveTemp(Future))
 	{ }
 
-	/**
-	 * Copy constructor.
-	 */
+	/** Copy constructor. */
 	TSharedFuture(const TSharedFuture&) = default;
 
-	/**
-	 * Copy assignment operator.
-	 */
-	TSharedFuture& operator=(const TSharedFuture& Other) = default;
+	/** Copy assignment operator. */
+	TSharedFuture& operator=(const TSharedFuture&) = default;
 
-	/**
-	 * Move constructor.
-	 */
+	/** Move constructor. */
 	TSharedFuture(TSharedFuture&&) = default;
 
-	/**
-	 * Move assignment operator.
-	 */
-	TSharedFuture& operator=(TSharedFuture&& Other) = default;
+	/** Move assignment operator. */
+	TSharedFuture& operator=(TSharedFuture&&) = default;
 
 	/** Destructor. */
-	~TSharedFuture() { }
+	~TSharedFuture() = default;
 
 public:
 
@@ -1018,7 +1056,7 @@ public:
 	 * The result must be set only once. An assertion will
 	 * be triggered if this method is called a second time.
 	 *
-	 * @param Result The result value to set.
+	 * @param Args The arguments to forward to the constructor of the result.
 	 */
 	template<typename... ArgTypes>
 	void EmplaceValue(ArgTypes&&... Args)
@@ -1216,8 +1254,6 @@ public:
 	 *
 	 * The result must be set only once. An assertion will
 	 * be triggered if this method is called a second time.
-	 *
-	 * @param Result The result value to set.
 	 */
 	void EmplaceValue()
 	{
@@ -1275,11 +1311,11 @@ auto TFutureBase<InternalResultType>::Then(Func Continuation) //-> TFuture<declt
 // Next implementation
 template<typename InternalResultType>
 template<typename Func>
-auto TFutureBase<InternalResultType>::Next(Func Continuation) //-> TFuture<decltype(Continuation(Get()))>
+auto TFutureBase<InternalResultType>::Next(Func Continuation) //-> TFuture<decltype(Continuation(Consume()))>
 {
 	return this->Then([Continuation = MoveTemp(Continuation)](TFuture<InternalResultType> Self) mutable
 	{
-		return Continuation(Self.Get());
+		return Continuation(Self.Consume());
 	});
 }
 

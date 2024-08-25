@@ -9,8 +9,7 @@
 #include "Input/Reply.h"
 #include "Styling/SlateTypes.h"
 
-#include "ISourceControlProvider.h"
-#include "ISourceControlOperation.h"
+#include "PlasticSourceControlWorkspaceCreation.h"
 
 class SPlasticSourceControlSettings : public SCompoundWidget
 {
@@ -36,18 +35,17 @@ private:
 	FText GetPathToWorkspaceRoot() const;
 	FText GetUserName() const;
 
-	/** Delegate to initialize a new Plastic workspace and repository */
-	EVisibility CanInitializePlasticWorkspace() const;
-	bool IsReadyToInitializePlasticWorkspace() const;
+	/** Delegate to create a new Plastic workspace and repository */
+	EVisibility CanCreatePlasticWorkspace() const;
+	bool IsReadyToCreatePlasticWorkspace() const;
 	void OnWorkspaceNameCommited(const FText& InText, ETextCommit::Type InCommitType);
 	FText GetWorkspaceName() const;
-	FText WorkspaceName;
 	void OnRepositoryNameCommited(const FText& InText, ETextCommit::Type InCommitType);
 	FText GetRepositoryName() const;
-	FText RepositoryName;
 	void OnServerUrlCommited(const FText& InText, ETextCommit::Type InCommitType);
 	FText GetServerUrl() const;
-	FText ServerUrl;
+	bool CreatePartialWorkspace() const;
+	void OnCheckedCreatePartialWorkspace(ECheckBoxState NewCheckedState);
 	bool CanAutoCreateIgnoreFile() const;
 	void OnCheckedCreateIgnoreFile(ECheckBoxState NewCheckedState);
 	bool bAutoCreateIgnoreFile;
@@ -62,28 +60,13 @@ private:
 	ECheckBoxState IsEnableVerboseLogsChecked() const;
 
 	void OnCheckedInitialCommit(ECheckBoxState NewCheckedState);
-	bool bAutoInitialCommit;
 	void OnInitialCommitMessageCommited(const FText& InText, ETextCommit::Type InCommitType);
 	FText GetInitialCommitMessage() const;
-	FText InitialCommitMessage;
 
-	/** Launch initial asynchronous add and commit operations */
-	void LaunchMakeWorkspaceOperation();
-	void LaunchMarkForAddOperation();
-	void LaunchCheckInOperation();
+	FReply OnClickedCreatePlasticWorkspace();
 
-	/** Delegate called when a source control operation has completed */
-	void OnSourceControlOperationComplete(const FSourceControlOperationRef& InOperation, ECommandResult::Type InResult);
-
-	/** Asynchronous operation progress notifications */
-	TWeakPtr<class SNotificationItem> OperationInProgressNotification;
-
-	void DisplayInProgressNotification(const FText& InOperationInProgressString);
-	void RemoveInProgressNotification();
-	void DisplaySuccessNotification(const FName& InOperationName);
-	void DisplayFailureNotification(const FName& InOperationName);
-
-	FReply OnClickedInitializePlasticWorkspace();
+	// Parameters for the workspace creation
+	FPlasticSourceControlWorkspaceCreation::FParameters WorkspaceParams;
 
 	/** Delegate to add a Plastic ignore.conf file to an existing Plastic workspace */
 	EVisibility CanAddIgnoreFile() const;
@@ -91,6 +74,4 @@ private:
 
 	const FString GetIgnoreFileName() const;
 	bool CreateIgnoreFile() const;
-
-	TArray<FString> GetProjectFiles() const;
 };

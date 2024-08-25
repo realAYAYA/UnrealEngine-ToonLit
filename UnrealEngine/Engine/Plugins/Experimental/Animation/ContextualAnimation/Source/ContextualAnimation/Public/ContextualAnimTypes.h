@@ -17,6 +17,8 @@ class UAnimSequenceBase;
 class UContextualAnimSelectionCriterion;
 class UContextualAnimSceneAsset;
 class UContextualAnimSceneActorComponent;
+class UCharacterMovementComponent;
+class UMotionWarpingComponent;
 struct FAnimMontageInstance;
 
 namespace UE 
@@ -73,7 +75,7 @@ struct CONTEXTUALANIMATION_API FContextualAnimTrack
 	float AnimMaxStartTime = 0.f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Defaults")
-	bool bRequireFlyingMode = false;
+	TEnumAsByte<enum EMovementMode> MovementMode = EMovementMode::MOVE_Walking;
 
 	/** Whether the actor that should play this animation is optional */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Defaults")
@@ -218,6 +220,12 @@ struct FContextualAnimRoleDefinition
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Defaults")
 	bool bIsCharacter = false;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Defaults", meta = (EditCondition = "bIsCharacter", EditConditionHides))
+	float PreviewCapsuleHalfHeight = 88.f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Defaults", meta = (EditCondition = "bIsCharacter", EditConditionHides))
+	float PreviewCapsuleRadius = 34.f;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Defaults")
 	FTransform MeshToComponent = FTransform(FRotator(0.f, -90.f, 0.f));
 
@@ -340,6 +348,10 @@ struct CONTEXTUALANIMATION_API FContextualAnimSceneBindingContext
 
 	UContextualAnimSceneActorComponent* GetSceneActorComponent() const;
 
+	UCharacterMovementComponent* GetCharacterMovementComponent() const;
+
+	UMotionWarpingComponent* GetMotionWarpingComponent() const;
+
 	void SetExternalTransform(const FTransform& InTransform);
 
 	FTransform GetTransform() const;
@@ -370,6 +382,12 @@ private:
 	UPROPERTY(NotReplicated)
 	mutable TWeakObjectPtr<USkeletalMeshComponent> CachedSkeletalMesh = nullptr;
 
+	UPROPERTY(NotReplicated)
+	mutable TWeakObjectPtr<UCharacterMovementComponent> CachedMovementComp = nullptr;
+
+	UPROPERTY(NotReplicated)
+	mutable TWeakObjectPtr<UMotionWarpingComponent> CachedMotionWarpingComp = nullptr;
+
 	TOptional<FTransform> ExternalTransform;
 
 	TOptional<FVector> ExternalVelocity;
@@ -394,6 +412,8 @@ struct CONTEXTUALANIMATION_API FContextualAnimSceneBinding
 	FORCEINLINE UAnimInstance* GetAnimInstance() const { return Context.GetAnimInstance(); }
 	FORCEINLINE USkeletalMeshComponent* GetSkeletalMeshComponent() const { return Context.GetSkeletalMeshComponent(); }
 	FORCEINLINE UContextualAnimSceneActorComponent* GetSceneActorComponent() const { return Context.GetSceneActorComponent(); }
+	FORCEINLINE UCharacterMovementComponent* GetCharacterMovementComponent() const { return Context.GetCharacterMovementComponent(); }
+	FORCEINLINE UMotionWarpingComponent* GetMotionWarpingComponent() const { return Context.GetMotionWarpingComponent(); }
 	FORCEINLINE int32 GetAnimTrackIdx() const { return AnimTrackIdx; }
 	
 	void SetAnimTrack(const FContextualAnimTrack& InAnimTrack);
@@ -488,6 +508,8 @@ struct CONTEXTUALANIMATION_API FContextualAnimSceneBindings
 
 	int32 FindAnimSetForTransitionTo(int32 NewSectionIdx) const;
 	void TransitionTo(int32 NewSectionIdx, int32 NewAnimSetIdx);
+
+	bool RemoveActor(AActor& ActorRef);
 
 private:
 

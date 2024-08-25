@@ -45,7 +45,9 @@ private:
 	bool SaveHighlightInBackground(const FString& Filename, double MaxDurationSecs);
 	bool SaveHighlightInBackgroundImpl(const FString& Filename, double MaxDurationSecs);
 	bool InitialiseMp4Writer(const FString& Filename, bool bHasAudio);
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	bool GetSavingStart(const TArray<AVEncoder::FMediaPacket>& Samples, FTimespan MaxDuration, int& OutStartIndex, FTimespan& OutStartTime) const;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	// takes into account if we've been paused and shifts current time back to compensate paused state
 	// so all timestamps are continuous even over paused pieces
@@ -54,7 +56,9 @@ private:
 	//
 	// IGameplayMediaEncoderListener implementation
 	//
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	void OnMediaSample(const AVEncoder::FMediaPacket& Sample) override;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 private:
 	TAtomic<EState> State{ EState::Stopped };

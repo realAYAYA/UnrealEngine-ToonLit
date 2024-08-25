@@ -3,8 +3,7 @@
 #include "Apple/ApplePlatformHttp.h"
 #include "Http.h"
 #include "AppleHttpManager.h"
-#include "AppleHTTPNSUrlConnection.h"
-#include "AppleHTTPNSUrlSession.h"
+#include "AppleHttp.h"
 #include "Apple/CFRef.h"
 #include "Misc/Base64.h"
 #include "Misc/CommandLine.h"
@@ -223,25 +222,12 @@ void FApplePlatformHttp::Init()
 	FSslModule::Get();
 #endif
 
-	bool bUseNSUrlConnection = FParse::Param(FCommandLine::Get(), TEXT("UseNSUrlConnection"));
-	if (bUseNSUrlConnection)
-	{
-		UE_LOG(LogHttp, Warning, TEXT("UseNSUrlConnection command line argument is deprecated. It will be removed in UE 5.4"));
-	}
-	bUseNSUrlSession = !bUseNSUrlConnection;
-
-	if (bUseNSUrlSession)
-	{
-		InitWithNSUrlSession();
-	}
+	// Lazy init, call InitWithNSUrlSession when need to create request, so session config can be set before creating session
 }
 
 void FApplePlatformHttp::Shutdown()
 {
-	if (bUseNSUrlSession)
-	{
-		ShutdownWithNSUrlSession();
-	}
+	ShutdownWithNSUrlSession();
 }
 
 void FApplePlatformHttp::InitWithNSUrlSession()
@@ -250,6 +236,10 @@ void FApplePlatformHttp::InitWithNSUrlSession()
 
 	// Disable cache to mimic WinInet behavior
 	Config.requestCachePolicy = NSURLRequestReloadIgnoringLocalCacheData;
+
+	float HttpActivityTimeout = FHttpModule::Get().GetHttpActivityTimeout();
+	check(HttpActivityTimeout > 0);
+	Config.timeoutIntervalForRequest = HttpActivityTimeout;
 	
 #if WITH_SSL
 	// Load SSL module during HTTP module's StatupModule() to make sure module manager figures out the dependencies correctly
@@ -269,37 +259,23 @@ void FApplePlatformHttp::InitWithNSUrlSession()
 
 void FApplePlatformHttp::ShutdownWithNSUrlSession()
 {
-	[Session finishTasksAndInvalidate];
+	[Session invalidateAndCancel];
 	[Session release];
 	Session = nil;
 }
 
 FHttpManager* FApplePlatformHttp::CreatePlatformHttpManager()
 {
-	if(bUseNSUrlSession)
-	{
-		return new FAppleHttpManager();
-	}
-	else
-	{
-		// Event based http manager does not support FAppleHTTPNSURLConnection 
-		return nullptr;
-	}
+	return new FAppleHttpManager();
 }
 
 IHttpRequest* FApplePlatformHttp::ConstructRequest()
 {
-	if(bUseNSUrlSession)
+	if (Session == nil)
 	{
-		return new FAppleHttpNSUrlSessionRequest(Session);
+		InitWithNSUrlSession();
 	}
-	else
-	{
-		return new FAppleHttpNSUrlConnectionRequest();
-	}
+
+	return new FAppleHttpRequest(Session);
 }
 
-bool FApplePlatformHttp::UsesThreadedHttp()
-{
-	return bUseNSUrlSession;
-}

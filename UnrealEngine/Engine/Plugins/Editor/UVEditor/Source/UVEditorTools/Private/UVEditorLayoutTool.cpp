@@ -124,7 +124,7 @@ void UUVEditorLayoutTool::Setup()
 void UUVEditorLayoutTool::Shutdown(EToolShutdownType ShutdownType)
 {
 	Settings->SaveProperties(this);
-	for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+	for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 	{
 		Target->AppliedPreview->OnMeshUpdated.RemoveAll(this);
 	}
@@ -135,7 +135,7 @@ void UUVEditorLayoutTool::Shutdown(EToolShutdownType ShutdownType)
 		const FText TransactionName(LOCTEXT("LayoutTransactionName", "Layout Tool"));
 		ChangeAPI->BeginUndoTransaction(TransactionName);
 
-		for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+		for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 		{
 			// Set things up for undo. 
 			// TODO: It's not entirely clear whether it would be safe to use a FMeshVertexChange instead... It seems like
@@ -163,21 +163,21 @@ void UUVEditorLayoutTool::Shutdown(EToolShutdownType ShutdownType)
 	else
 	{
 		// Reset the inputs
-		for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+		for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 		{
 			Target->UpdatePreviewsFromCanonical();
 		}
 	}
 
 
-	for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+	for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 	{
 		Target->AppliedPreview->ClearOpFactory();
 	}
 
-	for (int32 TargetIndex = 0; TargetIndex < Targets.Num(); ++TargetIndex)
+	for (int32 FactoryIndex = 0; FactoryIndex < Factories.Num(); ++FactoryIndex)
 	{
-		Factories[TargetIndex] = nullptr;
+		Factories[FactoryIndex] = nullptr;
 	}
 
 	Settings = nullptr;
@@ -186,7 +186,7 @@ void UUVEditorLayoutTool::Shutdown(EToolShutdownType ShutdownType)
 
 void UUVEditorLayoutTool::OnTick(float DeltaTime)
 {
-	for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+	for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 	{
 		Target->AppliedPreview->Tick(DeltaTime);
 	}
@@ -196,7 +196,7 @@ void UUVEditorLayoutTool::OnTick(float DeltaTime)
 
 void UUVEditorLayoutTool::OnPropertyModified(UObject* PropertySet, FProperty* Property)
 {
-	for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+	for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 	{
 		Target->AppliedPreview->InvalidateResult();
 	}
@@ -204,11 +204,24 @@ void UUVEditorLayoutTool::OnPropertyModified(UObject* PropertySet, FProperty* Pr
 
 bool UUVEditorLayoutTool::CanAccept() const
 {
-	for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+	if (UVToolSelectionAPI->HaveSelections())
 	{
-		if (!Target->AppliedPreview->HaveValidResult())
+		for (FUVToolSelection Selection : UVToolSelectionAPI->GetSelections())
 		{
-			return false;
+			if (!Selection.Target->AppliedPreview->HaveValidResult())
+			{
+				return false;
+			}
+		}
+	}
+	else
+	{
+		for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
+		{
+			if (!Target->AppliedPreview->HaveValidResult())
+			{
+				return false;
+			}
 		}
 	}
 	return true;
@@ -233,7 +246,7 @@ void UUVEditorLayoutTool::RecordAnalytics()
 	if (CanAccept())
 	{
 		TArray<double> PerAssetValidResultComputeTimes;
-		for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+		for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 		{
 			// Note: This would log -1 if the result was invalid, but checking CanAccept above ensures results are valid
 			PerAssetValidResultComputeTimes.Add(Target->AppliedPreview->GetValidResultComputeTime());

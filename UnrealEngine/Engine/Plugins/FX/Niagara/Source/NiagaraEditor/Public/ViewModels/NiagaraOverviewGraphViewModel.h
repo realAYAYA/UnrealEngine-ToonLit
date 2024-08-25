@@ -53,7 +53,8 @@ public:
 	//~ FEditorUndoClient interface.
 	virtual void PostUndo(bool bSuccess) override;
 	virtual void PostRedo(bool bSuccess) override { PostUndo(bSuccess); }
-	
+
+	void UpdateOverviewGraphNodes();
 private:
 	void SetupCommands();
 

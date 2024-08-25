@@ -60,6 +60,11 @@ bool SVirtualWindow::SupportsKeyboardFocus() const
 	return bIsFocusable;
 }
 
+bool SVirtualWindow::Advanced_IsInvalidationRoot() const
+{
+	return bAllowFastUpdate;
+}
+
 FVector2D SVirtualWindow::ComputeDesiredSize(float LayoutScaleMultiplier) const
 {
 	return SCompoundWidget::ComputeDesiredSize(LayoutScaleMultiplier);

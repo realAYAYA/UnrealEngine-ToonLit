@@ -149,7 +149,7 @@ struct FRCPropertyDescription
 		//Write the type name
 		Type = ValueProperty->GetCPPType();
 
-		if (const FObjectProperty* ObjectProperty = CastField<FObjectPtrProperty>(ValueProperty))
+		if (const FObjectProperty* ObjectProperty = CastField<FObjectProperty>(ValueProperty))
 		{
 			if (UClass* Class = ObjectProperty->PropertyClass)
 			{
@@ -386,6 +386,7 @@ struct FRCControllerDescription
 		}
 
 		DisplayName = InController->DisplayName;
+		Description = InController->Description;
 		ID = InController->Id.ToString();
 		Path = InController->GetPathName();
 		Type = InController->GetProperty()->GetCPPType();
@@ -395,7 +396,11 @@ struct FRCControllerDescription
 	/** The label displayed in the remote control panel for this controller. */
 	UPROPERTY()
 	FName DisplayName;
-	
+
+	/** Controller description. */
+	UPROPERTY()
+	FText Description;
+
 	/** Unique identifier for the controller. */
 	UPROPERTY()
 	FString ID;

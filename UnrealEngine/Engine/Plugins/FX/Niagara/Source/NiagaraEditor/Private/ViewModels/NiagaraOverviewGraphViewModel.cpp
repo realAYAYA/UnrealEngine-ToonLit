@@ -62,6 +62,8 @@ void FNiagaraOverviewGraphViewModel::Initialize(TSharedRef<FNiagaraSystemViewMod
 
 	NodeSelection->OnSelectedObjectsChanged().AddSP(this, &FNiagaraOverviewGraphViewModel::GraphSelectionChanged);
 	InSystemViewModel->GetSelectionViewModel()->OnEntrySelectionChanged().AddSP(this, &FNiagaraOverviewGraphViewModel::SystemSelectionChanged);
+
+	UpdateOverviewGraphNodes();
 }
 
 FText FNiagaraOverviewGraphViewModel::GetDisplayName() const
@@ -119,6 +121,17 @@ const TSharedRef<FNiagaraSystemViewModel> FNiagaraOverviewGraphViewModel::GetSys
 	TSharedPtr<FNiagaraSystemViewModel> SystemViewModelPinned = SystemViewModel.Pin();
 	checkf(SystemViewModelPinned.IsValid(), TEXT("System view model destroyed before overview graph view model."));
 	return SystemViewModelPinned.ToSharedRef();
+}
+
+void FNiagaraOverviewGraphViewModel::UpdateOverviewGraphNodes()
+{
+	for(UEdGraphNode* Node : OverviewGraph->Nodes)
+	{
+		if(UNiagaraOverviewNode* OverviewNode = Cast<UNiagaraOverviewNode>(Node))
+		{
+			OverviewNode->UpdateStatus();
+		}
+	}
 }
 
 void FNiagaraOverviewGraphViewModel::SetupCommands()

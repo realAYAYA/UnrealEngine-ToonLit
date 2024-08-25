@@ -9,6 +9,7 @@
 #include "Modules/ModuleManager.h"
 #include "UObject/LinkerLoad.h"
 #include "UObject/ObjectRedirector.h"
+#include "GameFramework/ActorPrimitiveColorHandler.h"
 #include "GameFramework/PlayerController.h"
 #include "Engine/Engine.h"
 #include "Engine/LevelStreamingAlwaysLoaded.h"
@@ -130,6 +131,12 @@ bool ULevelStreaming::ShouldServerUseMakingVisibleTransactionRequest()
 
 bool ULevelStreaming::ShouldReuseUnloadedButStillAroundLevels(const ULevel* InLevel)
 {
+#if WITH_EDITOR
+	if (InLevel && InLevel->GetForceCantReuseUnloadedButStillAround())
+	{
+		return false;
+	}
+#endif
 	UWorld* OuterWorld = InLevel ? InLevel->GetTypedOuter<UWorld>() : nullptr;
 	if (OuterWorld && OuterWorld->IsGameWorld() && !LevelStreamingCVars::bShouldReuseUnloadedButStillAroundLevels)
 	{
@@ -144,7 +151,7 @@ int32 ULevelStreamingDynamic::UniqueLevelInstanceId = 0;
  * This helper function is defined here so that it can go into the 4.18.1 hotfix (for UE-51791),
  * even though it would make more logical sense to have this logic in a member function of UNetDriver.
  * We're getting away with this because UNetDriver::GuidCache is (unfortunately) public.
- *
+ * 
  * Renames any package entries in the GuidCache with a path matching UnPrefixedName to have a PIE prefix.
  * This is needed because a client may receive an export for a level package before it's loaded and
  * its name registered with FSoftObjectPath::AddPIEPackageName. In this case, the entry in the GuidCache
@@ -165,16 +172,16 @@ static void NetDriverRenameStreamingLevelPackageForPIE(const UWorld* World, FNam
 	for (FNamedNetDriver& Driver : WorldContext->ActiveNetDrivers)
 	{
 		if (Driver.NetDriver && Driver.NetDriver->GuidCache.IsValid())
-	{
-			for (TPair<FNetworkGUID, FNetGuidCacheObject>& GuidPair : Driver.NetDriver->GuidCache->ObjectLookup)
-	{
-		// Only look for packages, which will have a static GUID and an invalid OuterGUID.
-		const bool bIsPackage = GuidPair.Key.IsStatic() && !GuidPair.Value.OuterGUID.IsValid();
-		if (bIsPackage && GuidPair.Value.PathName == UnPrefixedPackageName)
 		{
-			GuidPair.Value.PathName = *UWorld::ConvertToPIEPackageName(GuidPair.Value.PathName.ToString(), WorldContext->PIEInstance);
-		}
-	}
+			for (TPair<FNetworkGUID, FNetGuidCacheObject>& GuidPair : Driver.NetDriver->GuidCache->ObjectLookup)
+			{
+				// Only look for packages, which will have a static GUID and an invalid OuterGUID.
+				const bool bIsPackage = GuidPair.Key.IsStatic() && !GuidPair.Value.OuterGUID.IsValid();
+				if (bIsPackage && GuidPair.Value.PathName == UnPrefixedPackageName)
+				{
+					GuidPair.Value.PathName = *UWorld::ConvertToPIEPackageName(GuidPair.Value.PathName.ToString(), WorldContext->PIEInstance);
+				}
+			}
 		}
 	}
 }
@@ -390,6 +397,23 @@ ULevelStreaming::ULevelStreaming(const FObjectInitializer& ObjectInitializer)
 	bSkipClientUseMakingInvisibleTransactionRequest = false;
 	bSkipClientUseMakingVisibleTransactionRequest = false;
 	bGarbageCollectionClusteringEnabled = true;
+
+#if ENABLE_ACTOR_PRIMITIVE_COLOR_HANDLER
+	if (HasAnyFlags(RF_ClassDefaultObject) && ExactCast<ULevelStreaming>(this))
+	{
+		FActorPrimitiveColorHandler::Get().RegisterPrimitiveColorHandler(TEXT("LevelColor"), LOCTEXT("LevelColor", "Level Color"), [](const UPrimitiveComponent* InPrimitiveComponent)
+		{
+			if (ULevel* Level = InPrimitiveComponent ? InPrimitiveComponent->GetComponentLevel() : nullptr)
+			{
+				if (ULevelStreaming* LevelStreaming = FLevelUtils::FindStreamingLevel(Level))
+				{
+					return LevelStreaming->LevelColor;
+				}
+			}
+			return FLinearColor::White;
+		});
+	}
+#endif
 }
 
 void ULevelStreaming::PostLoad()
@@ -1365,6 +1389,9 @@ void ULevelStreaming::PrepareLoadedLevel(ULevel* InLevel, UPackage* InLevelPacka
 	UWorld* LevelOwningWorld = InLevel->OwningWorld;
 
 	InLevel->bGarbageCollectionClusteringEnabled = bGarbageCollectionClusteringEnabled;
+#if WITH_EDITOR
+	InLevel->SetEditorPathOwner(EditorPathOwner.Get());
+#endif
 
 	if (ensure(LevelOwningWorld))
 	{
@@ -1425,6 +1452,40 @@ void ULevelStreaming::PrepareLoadedLevel(ULevel* InLevel, UPackage* InLevelPacka
 	}
 }
 
+bool ULevelStreaming::ValidateUniqueWorldAsset(UWorld* PersistentWorld)
+{
+	// Validate that the streaming level is unique, check for clash with currently loaded streaming levels
+	for (ULevelStreaming* OtherLevel : PersistentWorld->GetStreamingLevels())
+	{
+		if (OtherLevel == nullptr || OtherLevel == this)
+		{
+			continue;
+		}
+
+		const ELevelStreamingState OtherState = OtherLevel->CurrentState;
+		if (OtherState == ELevelStreamingState::FailedToLoad || OtherState == ELevelStreamingState::Removed || (OtherState == ELevelStreamingState::Unloaded && (OtherLevel->TargetState == ELevelStreamingTargetState::Unloaded || OtherLevel->TargetState == ELevelStreamingTargetState::UnloadedAndRemoved)))
+		{
+			// If the other level is neither loaded nor in the process of being loaded, we don't need to consider it
+			continue;
+		}
+
+		if (OtherLevel->WorldAsset == WorldAsset)
+		{
+			if (OtherLevel->GetIsRequestingUnloadAndRemoval())
+			{
+				return false; // Cannot load now, retry until the OtherLevel is done unloading
+			}
+			else
+			{
+				UE_LOG(LogLevelStreaming, Warning, TEXT("Streaming Level '%s' uses same destination for level ('%s') as '%s'. Level cannot be loaded again and this StreamingLevel will be flagged as failed to load."), *GetPathName(), *WorldAsset.GetLongPackageName(), *OtherLevel->GetPathName());
+				SetCurrentState(ELevelStreamingState::FailedToLoad);
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
 bool ULevelStreaming::RequestLevel(UWorld* PersistentWorld, bool bAllowLevelLoadRequests, EReqLevelBlock BlockPolicy)
 {
 	// Quit early in case load request already issued
@@ -1468,33 +1529,9 @@ bool ULevelStreaming::RequestLevel(UWorld* PersistentWorld, bool bAllowLevelLoad
 	}
 
 	// Validate that our new streaming level is unique, check for clash with currently loaded streaming levels
-	for (ULevelStreaming* OtherLevel : PersistentWorld->GetStreamingLevels())
+	if (!ValidateUniqueWorldAsset(PersistentWorld))
 	{
-		if (OtherLevel == nullptr || OtherLevel == this)
-		{
-			continue;
-		}
-
-		const ELevelStreamingState OtherState = OtherLevel->CurrentState;
-		if (OtherState == ELevelStreamingState::FailedToLoad || OtherState == ELevelStreamingState::Removed || (OtherState == ELevelStreamingState::Unloaded && (OtherLevel->TargetState == ELevelStreamingTargetState::Unloaded || OtherLevel->TargetState == ELevelStreamingTargetState::UnloadedAndRemoved)))
-		{
-			// If the other level isn't loaded or in the process of being loaded we don't need to consider it
-			continue;
-		}
-
-		if (OtherLevel->WorldAsset == WorldAsset)
-		{ 
-			if (OtherLevel->GetIsRequestingUnloadAndRemoval())
-			{
-				return false; // Cannot load new level now, retry until the OtherLevel is done unloading
-			}
-			else
-			{
-				UE_LOG(LogLevelStreaming, Warning, TEXT("Streaming Level '%s' uses same destination for level ('%s') as '%s'. Level cannot be loaded again and this StreamingLevel will be flagged as failed to load."), *GetPathName(), *WorldAsset.GetLongPackageName(), *OtherLevel->GetPathName());
-				SetCurrentState(ELevelStreamingState::FailedToLoad);
-				return false;
-			}
-		}
+		return false;
 	}
 
 	TRACE_LOADTIME_REQUEST_GROUP_SCOPE(TEXT("LevelStreaming - %s"), *GetPathName());
@@ -1583,7 +1620,7 @@ bool ULevelStreaming::RequestLevel(UWorld* PersistentWorld, bool bAllowLevelLoad
 				UE_LOG(LogLevelStreaming, Error, TEXT("World exists but PersistentLevel doesn't for %s, most likely caused by reference to world of unloaded level and GC setting reference to null while keeping world object"), *World->GetOutermost()->GetName());
 				UE_LOG(LogLevelStreaming, Error, TEXT("Most likely caused by reference to world of unloaded level and GC setting reference to null while keeping world object. Referenced by:"));
 
-				FReferenceChainSearch::FindAndPrintStaleReferencesToObject(World, UObjectBaseUtility::IsPendingKillEnabled() ? EPrintStaleReferencesOptions::Fatal : (EPrintStaleReferencesOptions::Error | EPrintStaleReferencesOptions::Ensure));
+				FReferenceChainSearch::FindAndPrintStaleReferencesToObject(World, UObjectBaseUtility::IsGarbageEliminationEnabled() ? EPrintStaleReferencesOptions::Fatal : (EPrintStaleReferencesOptions::Error | EPrintStaleReferencesOptions::Ensure));
 
 				return false;
 			}
@@ -1637,20 +1674,24 @@ bool ULevelStreaming::RequestLevel(UWorld* PersistentWorld, bool bAllowLevelLoad
 					NewPackage->SetFlags(RF_Transient);
 				}
 
-				// When loading an instanced package we need to build an instancing context in case non external actors part of the level are 
+				// When loading an instanced package we need to invoke an instancing context function in case non external actors part of the level are 
 				// pulling on external actors.
-				FString ExternalActorsPath = ULevel::GetExternalActorsPath(PackagePath.GetPackageName());
-				TArray<FString> ActorPackageNames = ULevel::GetOnDiskExternalActorPackages(ExternalActorsPath);
-								
-				InstancingContextPtr = &InstancingContext;
-				for (const FString& ActorPackageName : ActorPackageNames)
+				const FString ExternalActorsPathStr = ULevel::GetExternalActorsPath(PackagePath.GetPackageName());
+				const FString DesiredPackageNameStr = DesiredPackageName.ToString();
+
+				InstancingContext.AddPackageMappingFunc([ExternalActorsPathStr, DesiredPackageNameStr](FName Original)
 				{
-					const FString InstancedName = ULevel::GetExternalActorPackageInstanceName(DesiredPackageName.ToString(), ActorPackageName);
-					InstancingContext.AddPackageMapping(FName(*ActorPackageName), FName(*InstancedName));
-				}
+					const FString OriginalStr = Original.ToString();
+					if (OriginalStr.StartsWith(ExternalActorsPathStr))
+					{
+						return FName(*ULevel::GetExternalActorPackageInstanceName(DesiredPackageNameStr, OriginalStr));
+					}
+					return Original;
+				});
+
+				InstancingContextPtr = &InstancingContext;
 			}
 #endif
-
 			LoadPackageAsync(PackagePath, DesiredPackageName, FLoadPackageAsyncDelegate::CreateUObject(this, &ULevelStreaming::AsyncLevelLoadComplete), PackageFlags, PIEInstanceID, GetPriority(), InstancingContextPtr);
 
 			// streamingServer: server loads everything?
@@ -2023,13 +2064,13 @@ void ULevelStreaming::RenameForPIE(int32 PIEInstanceID, bool bKeepWorldAssetName
 	// Apply PIE prefix so this level references
 	if (!WorldAsset.IsNull())
 	{
+		FName NonPrefixedName = *UWorld::StripPIEPrefixFromPackageName(GetWorldAssetPackageName(), UWorld::BuildPIEPackagePrefix(PIEInstanceID));
+		NetDriverRenameStreamingLevelPackageForPIE(World, NonPrefixedName);
+		
 		// Store original name 
 		if (PackageNameToLoad == NAME_None)
 		{
-			FString NonPrefixedName = UWorld::StripPIEPrefixFromPackageName(
-				GetWorldAssetPackageName(), 
-				UWorld::BuildPIEPackagePrefix(PIEInstanceID));
-			PackageNameToLoad = FName(*NonPrefixedName);
+			PackageNameToLoad = NonPrefixedName;
 		}
 		FName PlayWorldStreamingPackageName = FName(*UWorld::ConvertToPIEPackageName(GetWorldAssetPackageName(), PIEInstanceID));
 		FSoftObjectPath::AddPIEPackageName(PlayWorldStreamingPackageName);
@@ -2041,8 +2082,6 @@ void ULevelStreaming::RenameForPIE(int32 PIEInstanceID, bool bKeepWorldAssetName
 		{
 			SetWorldAssetByPackageName(PlayWorldStreamingPackageName);
 		}
-
-		NetDriverRenameStreamingLevelPackageForPIE(World, PackageNameToLoad);
 	}
 	
 	// Rename LOD levels if any
@@ -2514,7 +2553,7 @@ ULevelStreamingDynamic* ULevelStreamingDynamic::LoadLevelInstance_Internal(const
 
 	if (ShortPackageName.StartsWith(Params.World->StreamingLevelsPrefix))
 	{
-		ShortPackageName.RightChopInline(Params.World->StreamingLevelsPrefix.Len(), false);
+		ShortPackageName.RightChopInline(Params.World->StreamingLevelsPrefix.Len(), EAllowShrinking::No);
 	}
 
 	// Remove PIE prefix if it's there before we actually load the level
@@ -2544,11 +2583,31 @@ ULevelStreamingDynamic* ULevelStreamingDynamic::LoadLevelInstance_Internal(const
 			ModifiedLevelPackageName = FName(*UWorld::ConvertToPIEPackageName(LevelPackageNameStr, PIEInstance));
 		}
 #endif
-		if (Params.World->GetStreamingLevels().ContainsByPredicate([&ModifiedLevelPackageName](ULevelStreaming* LS) { return LS && LS->GetWorldAssetPackageFName() == ModifiedLevelPackageName; }))
+		// Test if the streaming level already exists
+		if (ULevelStreaming* const* ExistingLevelStreaming = Params.World->GetStreamingLevels().FindByPredicate([&ModifiedLevelPackageName](ULevelStreaming* LS) { return LS && LS->GetWorldAssetPackageFName() == ModifiedLevelPackageName; }))
 		{
-			// The streaming level already exists, error and return.
-			UE_LOG(LogLevelStreaming, Error, TEXT("LoadLevelInstance called with a name that already exists, returning nullptr. LevelPackageName:%s"), *ModifiedLevelPackageName.ToString());
-			return nullptr;
+			// Allow reusing a streaming level only if :
+			// - Params.bAllowReuseExitingLevelStreaming is true
+			// - Params.World is a game world
+			// - Existing LevelStreaming has the same Class
+			// - Existing LevelStreaming has the same Level Transform
+			ULevelStreamingDynamic* StreamingLevel = Params.bAllowReuseExitingLevelStreaming && Params.World->IsGameWorld() ? Cast<ULevelStreamingDynamic>(*ExistingLevelStreaming) : nullptr;
+			if (StreamingLevel && 
+				StreamingLevel->GetClass() == LevelStreamingClass &&
+				StreamingLevel->LevelTransform.Equals(Params.LevelTransform))
+			{
+				bOutSuccess = true;
+				StreamingLevel->SetShouldBeLoaded(true);
+				StreamingLevel->SetShouldBeVisible(Params.bInitiallyVisible);
+				StreamingLevel->SetIsRequestingUnloadAndRemoval(false);
+				UE_LOG(LogLevelStreaming, Verbose, TEXT("LoadLevelInstance found existing StreamingLevel for LevelPackageName:%s"), *ModifiedLevelPackageName.ToString());
+				return StreamingLevel;
+			}
+			else
+			{
+				UE_LOG(LogLevelStreaming, Error, TEXT("LoadLevelInstance called with a name that already exists, returning nullptr. LevelPackageName:%s"), *ModifiedLevelPackageName.ToString());
+				return nullptr;
+			}
 		}
 	}
     
@@ -2574,7 +2633,9 @@ ULevelStreamingDynamic* ULevelStreamingDynamic::LoadLevelInstance_Internal(const
     StreamingLevel->LevelTransform = Params.LevelTransform;
 	// Map to Load
     StreamingLevel->PackageNameToLoad = FName(*OnDiskPackageName);
-          
+#if WITH_EDITOR
+	StreamingLevel->EditorPathOwner = Params.EditorPathOwner;
+#endif
     // Add the new level to world.
     Params.World->AddStreamingLevel(StreamingLevel);
       
@@ -2589,7 +2650,7 @@ FString ULevelStreamingDynamic::GetLevelInstancePackageName(const FLoadLevelInst
 
 	if (ShortPackageName.StartsWith(Params.World->StreamingLevelsPrefix))
 	{
-		ShortPackageName.RightChopInline(Params.World->StreamingLevelsPrefix.Len(), false);
+		ShortPackageName.RightChopInline(Params.World->StreamingLevelsPrefix.Len(), EAllowShrinking::No);
 	}
 
 	// Remove PIE prefix if it's there before we actually load the level

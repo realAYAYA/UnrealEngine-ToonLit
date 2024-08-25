@@ -9,6 +9,7 @@
 #include "EdGraph/EdGraphPin.h"
 #include "EdGraphSchema_K2.h"
 #include "Engine/Blueprint.h"
+#include "FindInBlueprints.h"
 #include "GraphEditorSettings.h"
 #include "HAL/Platform.h"
 #include "HAL/PlatformCrt.h"
@@ -51,6 +52,43 @@ void UK2Node_FunctionTerminator::Serialize(FArchive& Ar)
 FLinearColor UK2Node_FunctionTerminator::GetNodeTitleColor() const
 {
 	return GetDefault<UGraphEditorSettings>()->FunctionTerminatorNodeTitleColor;
+}
+
+FString UK2Node_FunctionTerminator::GetFindReferenceSearchString_Impl(EGetFindReferenceSearchStringFlags InFlags) const
+{
+	if (EnumHasAnyFlags(InFlags, EGetFindReferenceSearchStringFlags::UseSearchSyntax))
+	{
+		// Resolve the function
+		if (const UFunction* Function = FFunctionFromNodeHelper::FunctionFromNode(this))
+		{
+			// Attempt to construct an advanced search syntax query from the function
+			FString SearchTerm;
+			if (FindInBlueprintsHelpers::ConstructSearchTermFromFunction(Function, SearchTerm))
+			{
+				return SearchTerm;
+			}
+			else
+			{
+				// Fallback behavior: function was found but failed to construct a search term from it
+				// Just search for the function's friendly name
+				return UEdGraphSchema_K2::GetFriendlySignatureName(Function).ToString();
+			}
+		}
+	}
+	else
+	{
+		// When searching by name, return function native name in quotes.
+		// The quotes guarantee that the whole function name is used as single search term.
+		// This avoids function names with special characters being interpreted as operators.
+		if (const UFunction* Function = FFunctionFromNodeHelper::FunctionFromNode(this))
+		{
+			const FString NativeName = Function->GetName();
+			return FString::Printf(TEXT("\"%s\""), *NativeName);
+		}
+	}
+
+	// Fallback behavior: function was not resolved
+	return Super::GetFindReferenceSearchString_Impl(InFlags);
 }
 
 FName UK2Node_FunctionTerminator::CreateUniquePinName(FName InSourcePinName) const

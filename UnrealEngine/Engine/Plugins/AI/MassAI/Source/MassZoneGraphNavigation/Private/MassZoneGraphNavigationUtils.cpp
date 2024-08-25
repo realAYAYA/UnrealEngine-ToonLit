@@ -6,6 +6,7 @@
 #include "MassZoneGraphNavigationFragments.h"
 #include "ZoneGraphSubsystem.h"
 #include "VisualLogger/VisualLogger.h"
+#include "MassDebugger.h"
 
 namespace UE::MassNavigation
 {
@@ -28,7 +29,7 @@ namespace UE::MassNavigation
 		MoveTarget.DistanceToGoal = 0.0f;
 		MoveTarget.DesiredSpeed.Set(0.0f);
 
-		if (!ensureMsgf(MoveTarget.GetCurrentAction() == EMassMovementAction::Move, TEXT("Expecting action 'Move': Invalid action %s"), MoveTarget.GetCurrentAction()))
+		if (!ensureMsgf(MoveTarget.GetCurrentAction() == EMassMovementAction::Move, TEXT("Expecting action 'Move': Invalid action %u"), MoveTarget.GetCurrentAction()))
 		{
 			return false;
 		}
@@ -90,7 +91,7 @@ namespace UE::MassNavigation
 		MoveTarget.DistanceToGoal = 0.0f;
 		MoveTarget.DesiredSpeed.Set(0.0f);
 
-		if (!ensureMsgf(MoveTarget.GetCurrentAction() == EMassMovementAction::Stand, TEXT("Expecting action 'Stand': Invalid action %s"), MoveTarget.GetCurrentAction()))
+		if (!ensureMsgf(MoveTarget.GetCurrentAction() == EMassMovementAction::Stand, TEXT("Expecting action 'Stand': Invalid action %u"), MoveTarget.GetCurrentAction()))
 		{
 			return false;
 		}
@@ -114,7 +115,7 @@ namespace UE::MassNavigation
 		MoveTarget.DistanceToGoal = 0.0f;
 		MoveTarget.DesiredSpeed.Set(0.0f);
 
-		if (!ensureMsgf(MoveTarget.GetCurrentAction() == EMassMovementAction::Animate, TEXT("Expecting action 'Animate': Invalid action %s"), MoveTarget.GetCurrentAction()))
+		if (!ensureMsgf(MoveTarget.GetCurrentAction() == EMassMovementAction::Animate, TEXT("Expecting action 'Animate': Invalid action %u"), MoveTarget.GetCurrentAction()))
 		{
 			return false;
 		}

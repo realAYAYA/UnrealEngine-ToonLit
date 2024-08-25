@@ -48,19 +48,23 @@ public:
 
 	UCustomizableObjectPopulation();
 
-	/** Name of the customizable object population */
+	/** Name of the customizable object population. */
 	UPROPERTY(Category = "CustomizablePopulation", EditAnywhere, BlueprintReadOnly)
 	FString Name;
 
-	/** List of Pupulation classes that define this population */
+	/** List of Pupulation classes that define this population. */
 	UPROPERTY(Category = "CustomizablePopulation", EditAnywhere)
 	TArray<FClassWeightPair> ClassWeights;
-
-	// Returns the seed that was used to create instances in this call of the GeneratePopulation. Returns -1 if no generator was found.
+	
+	/** Create a number of instances of the target population.
+	 * @return the seed that was used to create instances in this call of the GeneratePopulation. Returns -1 if there in an error with the population asset.
+	 */
 	UFUNCTION(BlueprintPure, Category = "CustomizablePopulation")
 	int32 GeneratePopulation(TArray<UCustomizableObjectInstance*>& OutInstances, int32 NumInstancesToGenerate = 1) const;
 
-	// Returns false if no generator was found
+	/** Update the instances in the array with new parameter values for the target population.
+	* @return false if there was an error with the population asset.
+	*/
 	UFUNCTION(BlueprintPure, Category = "CustomizablePopulation")
 	bool RegeneratePopulation(int32 Seed, TArray<UCustomizableObjectInstance*>& OutInstances, int32 NumInstancesToGenerate = 1) const;
 	

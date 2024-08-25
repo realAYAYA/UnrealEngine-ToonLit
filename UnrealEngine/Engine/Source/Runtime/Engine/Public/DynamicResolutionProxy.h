@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "SceneView.h"
 #include "Engine/EngineTypes.h"
+#include "TemporalUpscaler.h"
 
 /** Render thread proxy that holds the heuristic for dynamic resolution. */
 class FDynamicResolutionHeuristicProxy
@@ -54,6 +55,9 @@ public:
 
 	/** Creates a default dynamic resolution state using this proxy that queries GPU timing from the RHI. */
 	static ENGINE_API TSharedPtr<class IDynamicResolutionState> CreateDefaultState();
+
+	/** Applies the minimum/maximum resolution fraction for a third-party temporal upscaler. */
+	ENGINE_API void SetTemporalUpscaler(const UE::Renderer::Private::ITemporalUpscaler* InTemporalUpscaler);
 
 private:
 	struct FrameHistoryEntry
@@ -114,6 +118,10 @@ private:
 
 	// Frame counter to allocate unique ID for CommitPreviousFrameGPUTimings_RenderThread().
 	uint64 FrameCounter;
+
+	// Minimum and maximum resolution fractions supported by the main view family's third-party temporal upscaler.
+	float TemporalUpscalerMinResolutionFraction;
+	float TemporalUpscalerMaxResolutionFraction;
 
 	inline const FrameHistoryEntry& GetPreviousFrameEntry(int32 BrowsingFrameId) const
 	{

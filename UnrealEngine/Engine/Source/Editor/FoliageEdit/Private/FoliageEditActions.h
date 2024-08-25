@@ -54,6 +54,9 @@ public:
 	TSharedPtr< FUICommandInfo > SetPaintSettings;
 	TSharedPtr< FUICommandInfo > SetClusterSettings;
 
+	/** FoliagePalette commands*/
+	TSharedPtr< FUICommandInfo > ReflectSelectionInPalette;
+
 	/** FoliageType commands */
 	TSharedPtr< FUICommandInfo > RemoveFoliageType;
 	TSharedPtr< FUICommandInfo > ShowFoliageTypeInCB;

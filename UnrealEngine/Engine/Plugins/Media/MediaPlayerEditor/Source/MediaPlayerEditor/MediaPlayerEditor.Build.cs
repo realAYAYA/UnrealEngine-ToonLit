@@ -51,10 +51,5 @@ public class MediaPlayerEditor : ModuleRules
 				"AssetTools",
 				"Media",
 			});
-
-
-		var EngineDir = Path.GetFullPath(Target.RelativeEnginePath);
-		PrivateIncludePaths.Add(Path.Combine(EngineDir, "Source", "Runtime", "Renderer", "Private"));
-
 	}
 }

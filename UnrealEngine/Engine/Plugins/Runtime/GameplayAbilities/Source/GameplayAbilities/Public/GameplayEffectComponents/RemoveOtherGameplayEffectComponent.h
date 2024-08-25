@@ -9,7 +9,7 @@
 struct FGameplayEffectRemovalInfo;
 
 /** Remove other Gameplay Effects based on certain conditions */
-UCLASS()
+UCLASS(DisplayName="Remove Other Effects")
 class GAMEPLAYABILITIES_API URemoveOtherGameplayEffectComponent : public UGameplayEffectComponent
 {
 	GENERATED_BODY()

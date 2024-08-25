@@ -42,7 +42,7 @@ public:
 	// IDisplayClusterGameManager
 	//////////////////////////////////////////////////////////////////////////////////////////////
 	virtual ADisplayClusterRootActor*     GetRootActor() const override;
-
+	virtual TArray<ADisplayClusterRootActor*> GetAllRootActorsFromWorld(UWorld* InWorld) override;
 	virtual UWorld* GetWorld() const override
 	{ return CurrentWorld; }
 

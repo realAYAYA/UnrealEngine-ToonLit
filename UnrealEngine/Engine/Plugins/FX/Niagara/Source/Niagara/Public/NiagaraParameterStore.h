@@ -256,7 +256,7 @@ public:
 	NIAGARA_API virtual ~FNiagaraParameterStore();
 	
 #if WITH_EDITORONLY_DATA
-	UPROPERTY()
+	UPROPERTY(Transient)
 	FString DebugName;
 
 	/** Guid data to remap rapid iteration parameters after a function input was renamed. */
@@ -467,12 +467,17 @@ public:
 	/** Returns a struct converter for the given variable, if the store contains the variable and it's a LWC type. */
 	NIAGARA_API FNiagaraLwcStructConverter GetStructConverter(const FNiagaraVariable& Parameter) const;
 
+	UE_DEPRECATED(5.4, "FindVariable has been replaced by FindVariableFromDataInterface.")
+	NIAGARA_API const FNiagaraVariableBase* FindVariable(const UNiagaraDataInterface* Interface) const { return FindVariableFromDataInterface(Interface); }
+
+	/** Returns the associated FNiagaraVariable for the passed data interface index if it exists in the store. Null if not.*/
+	NIAGARA_API const FNiagaraVariableBase* FindVariableFromDataInterfaceIndex(int32 DataInterfaceIndex) const;
 	/** Returns the associated FNiagaraVariable for the passed data interface if it exists in the store. Null if not.*/
-	NIAGARA_API const FNiagaraVariableBase* FindVariable(const UNiagaraDataInterface* Interface) const;
+	NIAGARA_API const FNiagaraVariableBase* FindVariableFromDataInterface(const UNiagaraDataInterface* Interface) const;
 
 	NIAGARA_API virtual const int32* FindParameterOffset(const FNiagaraVariableBase& Parameter, bool IgnoreType = false) const;
 
-	NIAGARA_API void PostLoad();
+	NIAGARA_API void PostLoad(UObject* InOwner);
 	NIAGARA_API void SortParameters();
 
 	/** Returns the UObject at the passed offset. */
@@ -716,7 +721,7 @@ FORCEINLINE_DEBUGGABLE void FNiagaraParameterStoreBinding::Empty(FNiagaraParamet
 	if (DestStore)
 	{
 		//UE_LOG(LogNiagara, Log, TEXT("Remove Src Binding: Src: 0x%p - Dst: 0x%p"), SrcStore, DestStore);
-		DestStore->GetSourceParameterStores().RemoveSingleSwap(SrcStore, false);
+		DestStore->GetSourceParameterStores().RemoveSingleSwap(SrcStore, EAllowShrinking::No);
 	}
 	DestStore = nullptr;
 	ParameterBindings.Reset();

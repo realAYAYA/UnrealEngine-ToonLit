@@ -16,12 +16,9 @@
 #include "MuT/ASTOpMeshClipMorphPlane.h"
 #include "MuT/ASTOpMeshRemoveMask.h"
 #include "MuT/ASTOpMeshMorph.h"
+#include "MuT/ASTOpMeshAddTags.h"
 #include "MuT/ASTOpSwitch.h"
 #include "MuT/StreamsPrivate.h"
-
-#include <memory>
-#include <utility>
-
 
 
 namespace mu
@@ -45,8 +42,9 @@ ASTOpMeshFormat::~ASTOpMeshFormat()
 
 bool ASTOpMeshFormat::IsEqual(const ASTOp& otherUntyped) const
 {
-    if (const ASTOpMeshFormat* other = dynamic_cast<const ASTOpMeshFormat*>(&otherUntyped) )
-    {
+	if (otherUntyped.GetOpType() == GetOpType())
+	{
+		const ASTOpMeshFormat* other = static_cast<const ASTOpMeshFormat*>(&otherUntyped);
         return Source==other->Source && Format==other->Format && Buffers==other->Buffers;
     }
     return false;
@@ -110,12 +108,11 @@ mu::Ptr<ASTOp> ASTOpMeshFormat::OptimiseSink(const FModelOptimizationOptions& op
 //---------------------------------------------------------------------------------------------
 //---------------------------------------------------------------------------------------------
 //---------------------------------------------------------------------------------------------
-mu::Ptr<ASTOp> Sink_MeshFormatAST::Apply(const ASTOp* root)
+mu::Ptr<ASTOp> Sink_MeshFormatAST::Apply(const ASTOpMeshFormat* root)
 {
-	m_root = dynamic_cast<const ASTOpMeshFormat*>(root);
-	check(m_root);
+	m_root = root;
 
-	OldToNew.Empty();
+	OldToNew.Reset();
 
 	m_initialSource = m_root->Source.child();
 	mu::Ptr<ASTOp> newSource = Visit(m_initialSource, m_root);
@@ -140,7 +137,7 @@ namespace
 		{
 		case OP_TYPE::ME_CONSTANT:
 		{
-			const ASTOpConstantResource* typed = dynamic_cast<const ASTOpConstantResource*>(at.get());
+			const ASTOpConstantResource* typed = static_cast<const ASTOpConstantResource*>(at.get());
 			res = static_cast<const Mesh*>(typed->GetValue().get());
 			break;
 		}
@@ -256,6 +253,14 @@ mu::Ptr<ASTOp> Sink_MeshFormatAST::Visit(const mu::Ptr<ASTOp>& at, const ASTOpMe
 		break;
 	}
 
+	case OP_TYPE::ME_ADDTAGS:
+	{
+		Ptr<ASTOpMeshAddTags> newOp = mu::Clone<ASTOpMeshAddTags>(at);
+		newOp->Source = Visit(newOp->Source.child(), currentFormatOp);
+		newAt = newOp;
+		break;
+	}
+
 	case OP_TYPE::ME_CLIPMORPHPLANE:
 	{
 		auto newOp = mu::Clone<ASTOpMeshClipMorphPlane>(at);
@@ -276,8 +281,8 @@ mu::Ptr<ASTOp> Sink_MeshFormatAST::Visit(const mu::Ptr<ASTOp>& at, const ASTOpMe
 		MeshPtrConst pTargetMorphFormat = MakeMorphTargetFormat(pTargetFormat);
 
 		mu::Ptr<ASTOpConstantResource> motaop = new ASTOpConstantResource();
-		motaop->type = OP_TYPE::ME_CONSTANT;
-		motaop->SetValue(pTargetMorphFormat, false /* useDiskCache */);
+		motaop->Type = OP_TYPE::ME_CONSTANT;
+		motaop->SetValue(pTargetMorphFormat, nullptr);
 		auto targetMorphFormatAt = motaop;
 
 		if (newOp->Target)
@@ -316,8 +321,8 @@ mu::Ptr<ASTOp> Sink_MeshFormatAST::Visit(const mu::Ptr<ASTOp>& at, const ASTOpMe
 		MeshPtrConst pTargetMorphFormat = MakeMorphTargetFormat(pTargetFormat);
 
 		mu::Ptr<ASTOpConstantResource> motaop = new ASTOpConstantResource();
-		motaop->type = OP_TYPE::ME_CONSTANT;
-		motaop->SetValue(pTargetMorphFormat, false /* useDiskCache */);
+		motaop->Type = OP_TYPE::ME_CONSTANT;
+		motaop->SetValue(pTargetMorphFormat, nullptr );
 		auto targetMorphFormatAt = motaop;
 
 		for (int t = 0; t < MUTABLE_OP_MAX_INTERPOLATE_COUNT - 1; ++t)

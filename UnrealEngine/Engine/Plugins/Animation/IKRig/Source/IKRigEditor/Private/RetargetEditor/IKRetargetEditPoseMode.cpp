@@ -164,6 +164,31 @@ bool FIKRetargetEditPoseMode::HandleClick(FEditorViewportClient* InViewportClien
 
 bool FIKRetargetEditPoseMode::StartTracking(FEditorViewportClient* InViewportClient, FViewport* InViewport)
 {
+	return HandleBeginTransform(InViewportClient);
+}
+
+bool FIKRetargetEditPoseMode::EndTracking(FEditorViewportClient* InViewportClient, FViewport* InViewport)
+{
+	return HandleEndTransform(InViewportClient);
+}
+
+bool FIKRetargetEditPoseMode::BeginTransform(const FGizmoState& InState)
+{
+	return HandleBeginTransform(Owner->GetFocusedViewportClient());
+}
+
+bool FIKRetargetEditPoseMode::EndTransform(const FGizmoState& InState)
+{
+	return HandleEndTransform(Owner->GetFocusedViewportClient());
+}
+
+bool FIKRetargetEditPoseMode::HandleBeginTransform(const FEditorViewportClient* InViewportClient)
+{
+	if (!InViewportClient)
+	{
+		return false;
+	}
+	
 	TrackingState = FIKRetargetTrackingState::None;
 
 	// not manipulating any widget axes, so stop tracking
@@ -211,8 +236,13 @@ bool FIKRetargetEditPoseMode::StartTracking(FEditorViewportClient* InViewportCli
 	return false;
 }
 
-bool FIKRetargetEditPoseMode::EndTracking(FEditorViewportClient* InViewportClient, FViewport* InViewport)
-{	
+bool FIKRetargetEditPoseMode::HandleEndTransform(FEditorViewportClient* InViewportClient)
+{
+	if (!InViewportClient)
+	{
+		return false;
+	}
+	
 	if (TrackingState == FIKRetargetTrackingState::None)
 	{
 		const bool bIsRootSelected = IsRootSelected();

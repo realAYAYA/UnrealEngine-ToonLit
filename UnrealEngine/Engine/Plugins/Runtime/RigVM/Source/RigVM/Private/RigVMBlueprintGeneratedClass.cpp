@@ -3,6 +3,7 @@
 #include "RigVMBlueprintGeneratedClass.h"
 #include "UObject/UE5MainStreamObjectVersion.h"
 #include "RigVMHost.h"
+#include "UObject/AssetRegistryTagsContext.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(RigVMBlueprintGeneratedClass)
 
@@ -23,12 +24,18 @@ uint8* URigVMBlueprintGeneratedClass::GetPersistentUberGraphFrame(UObject* Obj, 
 
 void URigVMBlueprintGeneratedClass::PostInitInstance(UObject* InObj, FObjectInstancingGraph* InstanceGraph)
 {
+	// Skip SKEL classes.
+	if (InObj->GetName().StartsWith(TEXT("SKEL_")) || InObj->GetName().StartsWith(TEXT("Default__SKEL_")))
+	{
+		return;
+	}
+
 	if (URigVMHost* Owner = Cast<URigVMHost>(InObj))
 	{
 		URigVMHost* CDO = nullptr;
 		if (!Owner->HasAnyFlags(RF_ClassDefaultObject))
 		{
-			CDO = Cast<URigVMHost>(GetDefaultObject());;
+			CDO = Cast<URigVMHost>(GetDefaultObject());
 		}
 		Owner->PostInitInstance(CDO);
 	}
@@ -66,7 +73,7 @@ void URigVMBlueprintGeneratedClass::Serialize(FArchive& Ar)
 		{
 			if (Ar.IsSaving() && CDO->VM)
 			{
-				VM->CopyFrom(CDO->VM);
+				VM->CopyDataForSerialization(CDO->VM);
 			}
 		}
 	}
@@ -79,7 +86,7 @@ void URigVMBlueprintGeneratedClass::Serialize(FArchive& Ar)
 		{
 			if (Ar.IsLoading())
 			{
-				CDO->VM->CopyFrom(VM);
+				CDO->VM->CopyDataForSerialization(VM);
 			}
 		}
 	}
@@ -87,3 +94,37 @@ void URigVMBlueprintGeneratedClass::Serialize(FArchive& Ar)
 	Ar << GraphFunctionStore;
 }
 
+void URigVMBlueprintGeneratedClass::PostLoad()
+{
+	Super::PostLoad();
+
+	GraphFunctionStore.PostLoad();
+}
+
+void URigVMBlueprintGeneratedClass::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
+{
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void URigVMBlueprintGeneratedClass::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	Super::GetAssetRegistryTags(Context);
+
+	const FArrayProperty* HeadersProperty = CastField<FArrayProperty>(FRigVMGraphFunctionHeaderArray::StaticStruct()->FindPropertyByName(TEXT("Headers")));
+	FRigVMGraphFunctionHeaderArray HeaderArray;
+	
+	for (const FRigVMGraphFunctionData& FunctionData : GraphFunctionStore.PublicFunctions)
+	{
+		if (FunctionData.CompilationData.IsValid())
+		{
+			HeaderArray.Headers.Add(FunctionData.Header);
+		}
+	}
+
+	FString HeadersString;
+	HeadersProperty->ExportText_Direct(HeadersString, &(HeaderArray.Headers), &(HeaderArray.Headers), nullptr, PPF_None, nullptr);
+
+	Context.AddTag(UObject::FAssetRegistryTag(TEXT("PublicGraphFunctions"), HeadersString, UObject::FAssetRegistryTag::TT_Hidden));
+}

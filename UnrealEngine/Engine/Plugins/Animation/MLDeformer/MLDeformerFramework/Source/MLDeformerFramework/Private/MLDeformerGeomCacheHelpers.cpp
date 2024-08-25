@@ -6,10 +6,12 @@
 #include "GeometryCache.h"
 #include "GeometryCacheMeshData.h"
 #include "GeometryCacheTrack.h"
+#include "SkeletalMeshAttributes.h"
 #include "Animation/AnimSequence.h"
 #include "Engine/SkeletalMesh.h"
 #include "Rendering/SkeletalMeshModel.h"
 #include "Rendering/SkeletalMeshLODModel.h"
+#include "Async/ParallelFor.h"
 
 #define LOCTEXT_NAMESPACE "MLDeformerGeomCacheHelpers"
 
@@ -44,10 +46,10 @@ namespace UE::MLDeformer
 				int32 NumSkelMeshes = 0;
 				if (InSkeletalMesh)
 				{
-					FSkeletalMeshModel* ImportedModel = InSkeletalMesh->GetImportedModel();
-					if (ImportedModel)
+					if (const FMeshDescription* MeshDescription = InSkeletalMesh->GetMeshDescription(0))
 					{
-						NumSkelMeshes = ImportedModel->LODModels[0].ImportedMeshInfos.Num();		
+						const FSkeletalMeshConstAttributes Attributes(*MeshDescription);
+						NumSkelMeshes = Attributes.GetNumSourceGeometryParts();
 					}
 				}
 
@@ -136,12 +138,24 @@ namespace UE::MLDeformer
 			return;
 		}
 
+		if (!SkelMesh->GetImportedModel()->LODModels.IsValidIndex(0))
+		{
+			return;
+		}
+
+		const FSkeletalMeshLODModel& LODModel = SkelMesh->GetImportedModel()->LODModels[0];
+
 		// If we haven't got any imported mesh infos then the asset needs to be reimported first.
 		// We show an error for this in the editor UI already.
-		FSkeletalMeshModel* ImportedModel = SkelMesh->GetImportedModel();
-		check(ImportedModel);
-		const TArray<FSkelMeshImportedMeshInfo>& SkelMeshInfos = ImportedModel->LODModels[0].ImportedMeshInfos;
-		if (SkelMeshInfos.IsEmpty())
+		const FMeshDescription* MeshDescription = SkelMesh->GetMeshDescription(0);
+		if (!MeshDescription || MeshDescription->IsEmpty())
+		{
+			return;
+		}
+
+		FSkeletalMeshConstAttributes MeshAttributes(*MeshDescription);
+
+		if (!MeshAttributes.HasSourceGeometryParts())
 		{
 			return;
 		}
@@ -155,19 +169,23 @@ namespace UE::MLDeformer
 
 		// For all meshes in the skeletal mesh.
 		const float SampleTime = 0.0f;
-		FString SkelMeshName;
 
-		const bool bIsSoloMesh = (GeomCache->Tracks.Num() == 1 && SkelMeshInfos.Num() == 1);	// Do we just have one mesh and one track?
+		const int32 NumSourceGeoParts = MeshAttributes.GetNumSourceGeometryParts();
+		const FSkeletalMeshAttributes::FSourceGeometryPartNameConstRef GeoPartNames = MeshAttributes.GetSourceGeometryPartNames();
+		const FSkeletalMeshAttributes::FSourceGeometryPartVertexOffsetAndCountConstRef GeoPartOffsetAndCounts = MeshAttributes.GetSourceGeometryPartVertexOffsetAndCounts();
+		
+
+		const bool bIsSoloMesh = (GeomCache->Tracks.Num() == 1 && NumSourceGeoParts == 1);	// Do we just have one mesh and one track?
 		for (int32 TrackIndex = 0; TrackIndex < GeomCache->Tracks.Num(); ++TrackIndex)
 		{
 			// Check if this is a candidate based on the mesh and track name.
 			UGeometryCacheTrack* Track = GeomCache->Tracks[TrackIndex];
 
 			bool bFoundMatch = false;
-			for (int32 SkelMeshIndex = 0; SkelMeshIndex < SkelMeshInfos.Num(); ++SkelMeshIndex)
+			for (int32 GeoPartIndex = 0; GeoPartIndex < NumSourceGeoParts; ++GeoPartIndex)
 			{
-				const FSkelMeshImportedMeshInfo& MeshInfo = SkelMeshInfos[SkelMeshIndex];
-				SkelMeshName = MeshInfo.Name.ToString();
+				const FSourceGeometryPartID GeoPartID(GeoPartIndex);
+				FString SkelMeshName = GeoPartNames[GeoPartID].ToString();
 
 				if (Track &&
 					(IsPotentialMatch(Track->GetName(), SkelMeshName) || bIsSoloMesh))
@@ -194,7 +212,9 @@ namespace UE::MLDeformer
 					NumGeomMeshVerts += 1;	// +1 Because we use indices, so a cube's max index is 7, while there are 8 vertices.
 
 					// Make sure the vertex counts match.
-					const int32 NumSkelMeshVerts = MeshInfo.NumVertices;
+					TArrayView<const int32> GeoPartInfo = GeoPartOffsetAndCounts.Get(GeoPartIndex);
+					const int32 StartImportedVertex = GeoPartInfo[0]; 
+					const int32 NumSkelMeshVerts = GeoPartInfo[1];
 					if (NumSkelMeshVerts != NumGeomMeshVerts)
 					{
 						continue;
@@ -206,24 +226,36 @@ namespace UE::MLDeformer
 					// Create a new mesh mapping entry.
 					OutMeshMappings.AddDefaulted();
 					UE::MLDeformer::FMLDeformerGeomCacheMeshMapping& Mapping = OutMeshMappings.Last();
-					Mapping.MeshIndex = SkelMeshIndex;
+					Mapping.MeshIndex = GeoPartIndex;
 					Mapping.TrackIndex = TrackIndex;
 					Mapping.SkelMeshToTrackVertexMap.AddUninitialized(NumSkelMeshVerts);
 					Mapping.ImportedVertexToRenderVertexMap.AddUninitialized(NumSkelMeshVerts);
 
 					// For all vertices (both skel mesh and geom cache mesh have the same number of verts here).
-					for (int32 VertexIndex = 0; VertexIndex < NumSkelMeshVerts; ++VertexIndex)
+					const int32 BatchSize = 100;
+					const int32 NumBatches = (NumSkelMeshVerts / BatchSize) + 1;
+					ParallelFor(NumBatches, [&](int32 BatchIndex)
 					{
-						// Find the first vertex with the same dcc vertex in the geom cache mesh.
-						// When there are multiple vertices with the same vertex number here, they are duplicates with different normals or uvs etc.
-						// However they all share the same vertex position, so we can just find the first hit, as we only need the position later on.
-						const int32 GeomCacheVertexIndex = GeomCacheMeshData.ImportedVertexNumbers.Find(VertexIndex);
-						Mapping.SkelMeshToTrackVertexMap[VertexIndex] = GeomCacheVertexIndex;
+						const int32 StartVertex = BatchIndex * BatchSize;
+						if (StartVertex >= NumSkelMeshVerts)
+						{
+							return;
+						}
 
-						// Map the source asset vertex number to a render vertex. This is the first duplicate of that vertex.
-						const int32 RenderVertexIndex = ImportedModel->LODModels[0].MeshToImportVertexMap.Find(MeshInfo.StartImportedVertex + VertexIndex);
-						Mapping.ImportedVertexToRenderVertexMap[VertexIndex] = RenderVertexIndex;
-					}
+						const int32 NumVertsInBatch = (StartVertex + BatchSize) < NumSkelMeshVerts ? BatchSize : FMath::Max(NumSkelMeshVerts - StartVertex, 0);
+						for (int32 VertexIndex = StartVertex; VertexIndex < StartVertex + NumVertsInBatch; ++VertexIndex)
+						{
+							// Find the first vertex with the same dcc vertex in the geom cache mesh.
+							// When there are multiple vertices with the same vertex number here, they are duplicates with different normals or uvs etc.
+							// However they all share the same vertex position, so we can just find the first hit, as we only need the position later on.
+							const int32 GeomCacheVertexIndex = GeomCacheMeshData.ImportedVertexNumbers.Find(VertexIndex);
+							Mapping.SkelMeshToTrackVertexMap[VertexIndex] = GeomCacheVertexIndex;
+
+							// Map the source asset vertex number to a render vertex. This is the first duplicate of that vertex.
+							const int32 RenderVertexIndex = LODModel.MeshToImportVertexMap.Find(StartImportedVertex + VertexIndex);
+							Mapping.ImportedVertexToRenderVertexMap[VertexIndex] = RenderVertexIndex;
+						}
+					});
 
 					// We found a match, no need to iterate over more Tracks.
 					bFoundMatch = true;
@@ -265,16 +297,16 @@ namespace UE::MLDeformer
 			return;
 		}
 
-		const FSkeletalMeshModel* ImportedModel = InSkelMesh->GetImportedModel();
-		if (!ensure(ImportedModel != nullptr))
+		const FMeshDescription* MeshDescription = InSkelMesh->GetMeshDescription(InLODIndex);
+		if (!ensure(MeshDescription))
 		{
 			return;
 		}
-	
-		const FSkeletalMeshLODModel& LODModel = ImportedModel->LODModels[InLODIndex];
-		const TArray<FSkelMeshImportedMeshInfo>& SkelMeshInfos = LODModel.ImportedMeshInfos;
 
-		const uint32 NumVertices = LODModel.MaxImportVertex + 1;
+		const FSkeletalMeshConstAttributes MeshAttributes(*MeshDescription);
+		const FSkeletalMeshAttributes::FSourceGeometryPartVertexOffsetAndCountConstRef GeoPartOffsetAndCounts = MeshAttributes.GetSourceGeometryPartVertexOffsetAndCounts();
+		
+		const uint32 NumVertices = MeshDescription->Vertices().Num();
 		OutPositions.Reset(NumVertices);
 		OutPositions.AddZeroed(NumVertices);
 
@@ -282,7 +314,10 @@ namespace UE::MLDeformer
 		for (int32 MeshMappingIndex = 0; MeshMappingIndex < InMeshMappings.Num(); ++MeshMappingIndex)
 		{
 			const UE::MLDeformer::FMLDeformerGeomCacheMeshMapping& MeshMapping = InMeshMappings[MeshMappingIndex];
-			const FSkelMeshImportedMeshInfo& MeshInfo = SkelMeshInfos[MeshMapping.MeshIndex];
+			TArrayView<const int32> GeoPartInfo = GeoPartOffsetAndCounts.Get(MeshMapping.MeshIndex);
+			const int32 StartImportedVertex = GeoPartInfo[0];
+			const int32 NumImportedVertices = GeoPartInfo[1];
+			
 			UGeometryCacheTrack* Track = InGeometryCache->Tracks[MeshMapping.TrackIndex];
 
 			FGeometryCacheMeshData GeomCacheMeshData;
@@ -291,9 +326,9 @@ namespace UE::MLDeformer
 				continue;
 			}
 
-			for (int32 VertexIndex = 0; VertexIndex < MeshInfo.NumVertices; ++VertexIndex)
+			for (int32 VertexIndex = 0; VertexIndex < NumImportedVertices; ++VertexIndex)
 			{
-				const int32 SkinnedVertexIndex = MeshInfo.StartImportedVertex + VertexIndex;
+				const int32 SkinnedVertexIndex = StartImportedVertex + VertexIndex;
 				const int32 GeomCacheVertexIndex = MeshMapping.SkelMeshToTrackVertexMap[VertexIndex];
 				if (GeomCacheVertexIndex != INDEX_NONE && GeomCacheMeshData.Positions.IsValidIndex(GeomCacheVertexIndex))
 				{
@@ -336,21 +371,35 @@ namespace UE::MLDeformer
 		return NumGeomCacheImportedVerts;
 	}
 
-	FText GetGeomCacheAnimSequenceErrorText(UGeometryCache* InGeomCache, UAnimSequence* InAnimSequence)
+	FText GetGeomCacheAnimSequenceErrorText(const UGeometryCache* InGeomCache, const UAnimSequence* InAnimSequence)
 	{
 		FText Result;
 
 		if (InAnimSequence && InGeomCache)
 		{
+			const int32 NumGeomCacheFrames = InGeomCache->GetEndFrame() - InGeomCache->GetStartFrame() + 1;
+			const int32 NumAnimSeqFrames = InAnimSequence->GetNumberOfSampledKeys();
 			const float AnimSeqDuration = InAnimSequence->GetPlayLength();
 			const float GeomCacheDuration = InGeomCache->CalculateDuration();
+
+			if (NumGeomCacheFrames != NumAnimSeqFrames)
+			{
+				Result = FText::Format(
+					LOCTEXT("AnimSeqNumFramesMismatch", "Anim sequence has {0} frames, while the geometry cache has {1} frames."),
+					FText::AsNumber(NumAnimSeqFrames),
+					FText::AsNumber(NumGeomCacheFrames));
+			}
+
 			if (FMath::Abs(AnimSeqDuration - GeomCacheDuration) > 0.001f)
 			{
 				FNumberFormattingOptions Options;
 				Options.SetUseGrouping(false);
-				Options.SetMaximumFractionalDigits(4);
+				Options.SetMaximumFractionalDigits(3);
+
 				Result = FText::Format(
-					LOCTEXT("AnimSeqNumFramesMismatch", "Anim sequence and Geometry Cache durations don't match!\n\nAnimSeq has a duration of {0} seconds, while GeomCache has a duration of {1} seconds.\n\nThis can produce incorrect results."),
+					LOCTEXT("AnimSeqDurationMismatch", "{0}{1}Anim sequence duration ({2} secs) doesn't match the geometry cache's duration ({3} secs)."),
+					Result,
+					!Result.IsEmpty() ? FText::FromString("\n\n") : FText::GetEmpty(),
 					FText::AsNumber(AnimSeqDuration, &Options),
 					FText::AsNumber(GeomCacheDuration, &Options));
 			}

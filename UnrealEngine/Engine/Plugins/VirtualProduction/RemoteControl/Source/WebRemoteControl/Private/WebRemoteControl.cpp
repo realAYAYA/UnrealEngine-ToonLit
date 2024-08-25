@@ -577,7 +577,7 @@ void FWebRemoteControlModule::SetExternalRemoteWebSocketLoggerConnection(TShared
 void FWebRemoteControlModule::StartRoute(const FRemoteControlRoute& Route)
 {
 	// The handler is wrapped in a lambda since HttpRouter::BindRoute only accepts TFunctions
-	ActiveRouteHandles.Add(GetTypeHash(Route), HttpRouter->BindRoute(Route.Path, Route.Verb, [this, Handler = Route.Handler](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete) { return Handler.Execute(Request, OnComplete); }));
+	ActiveRouteHandles.Add(GetTypeHash(Route), HttpRouter->BindRoute(Route.Path, Route.Verb, Route.Handler));
 }
 
 void FWebRemoteControlModule::RegisterRoutes()
@@ -587,14 +587,14 @@ void FWebRemoteControlModule::RegisterRoutes()
 		TEXT("Get information about different routes available on this API."),
 		FHttpPath(TEXT("/remote/info")),
 		EHttpServerRequestVerbs::VERB_GET,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandleInfoRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandleInfoRoute)
 		});
 
 	RegisterRoute({
 		TEXT("Allows cross-origin http requests to the API."),
 		FHttpPath(TEXT("/remote")),
 		EHttpServerRequestVerbs::VERB_OPTIONS,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandleOptionsRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandleOptionsRoute)
 		});
 
 	// Raw API
@@ -602,49 +602,49 @@ void FWebRemoteControlModule::RegisterRoutes()
 		TEXT("Allows batching multiple calls into one request."),
 		FHttpPath(TEXT("/remote/batch")),
 		EHttpServerRequestVerbs::VERB_PUT,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandleBatchRequest)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandleBatchRequest)
 		});
 
 	RegisterRoute({
 		TEXT("Call a function on a remote object."),
 		FHttpPath(TEXT("/remote/object/call")),
 		EHttpServerRequestVerbs::VERB_PUT,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandleObjectCallRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandleObjectCallRoute)
 		});
 
 	RegisterRoute({
 		TEXT("Read or write a property on a remote object."),
 		FHttpPath(TEXT("/remote/object/property")),
 		EHttpServerRequestVerbs::VERB_PUT,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandleObjectPropertyRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandleObjectPropertyRoute)
 		});
 
 	RegisterRoute({
 		TEXT("Append a new item to an array property on a remote object."),
 		FHttpPath(TEXT("/remote/object/property/append")),
 		EHttpServerRequestVerbs::VERB_PUT,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandleObjectPropertyAppendRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandleObjectPropertyAppendRoute)
 		});
 
 	RegisterRoute({
 		TEXT("Insert a new item into an array property on a remote object."),
 		FHttpPath(TEXT("/remote/object/property/insert")),
 		EHttpServerRequestVerbs::VERB_PUT,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandleObjectPropertyInsertRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandleObjectPropertyInsertRoute)
 		});
 
 	RegisterRoute({
 		TEXT("Remove an item from an array property on a remote object."),
 		FHttpPath(TEXT("/remote/object/property/remove")),
 		EHttpServerRequestVerbs::VERB_PUT,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandleObjectPropertyRemoveRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandleObjectPropertyRemoveRoute)
 		});
 
 	RegisterRoute({
 		TEXT("Describe an object."),
 		FHttpPath(TEXT("/remote/object/describe")),
 		EHttpServerRequestVerbs::VERB_PUT,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandleDescribeObjectRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandleDescribeObjectRoute)
 		});
 
 	// Passphrase Checking
@@ -652,7 +652,7 @@ void FWebRemoteControlModule::RegisterRoutes()
 		TEXT("Check whether or no the given Passphrase is correct"),
 		FHttpPath(TEXT("/remote/passphrase/")),
 		EHttpServerRequestVerbs::VERB_GET,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandlePassphraseRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandlePassphraseRoute)
 		});
 
 	// Preset API
@@ -660,77 +660,77 @@ void FWebRemoteControlModule::RegisterRoutes()
 		TEXT("Get a remote control preset's content."),
 		FHttpPath(TEXT("/remote/preset/:preset")),
 		EHttpServerRequestVerbs::VERB_GET,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandleGetPresetRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandleGetPresetRoute)
 		});
 
 	RegisterRoute({
 		TEXT("Get a list of available remote control presets."),
 		FHttpPath(TEXT("/remote/presets")),
 		EHttpServerRequestVerbs::VERB_GET,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandleGetPresetsRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandleGetPresetsRoute)
 		});
 
 	RegisterRoute({
 		TEXT("Call a function on a preset."),
 		FHttpPath(TEXT("/remote/preset/:preset/function/:functionname")),
 		EHttpServerRequestVerbs::VERB_PUT,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandlePresetCallFunctionRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandlePresetCallFunctionRoute)
 		});
 
 	RegisterRoute({
 		TEXT("Set a property on a preset."),
 		FHttpPath(TEXT("/remote/preset/:preset/property/:propertyname")),
 		EHttpServerRequestVerbs::VERB_PUT,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandlePresetSetPropertyRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandlePresetSetPropertyRoute)
 		});
 
 	RegisterRoute({
 		TEXT("Get a property on a preset."),
 		FHttpPath(TEXT("/remote/preset/:preset/property/:propertyname")),
 		EHttpServerRequestVerbs::VERB_GET,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandlePresetGetPropertyRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandlePresetGetPropertyRoute)
 		});
 
 	RegisterRoute({
 		TEXT("Expose a property on a preset."),
 		FHttpPath(TEXT("/remote/preset/:preset/expose/property")),
 		EHttpServerRequestVerbs::VERB_PUT,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandlePresetExposePropertyRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandlePresetExposePropertyRoute)
 		});
 
 	RegisterRoute({
 		TEXT("Unexpose a property on a preset."),
 		FHttpPath(TEXT("/remote/preset/:preset/unexpose/property/:property")),
 		EHttpServerRequestVerbs::VERB_PUT,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandlePresetUnexposePropertyRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandlePresetUnexposePropertyRoute)
 		});
 
 	RegisterRoute({
 		TEXT("Get an exposed actor's properties."),
 		FHttpPath(TEXT("/remote/preset/:preset/actor/:actor")),
 		EHttpServerRequestVerbs::VERB_GET,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandlePresetGetExposedActorPropertiesRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandlePresetGetExposedActorPropertiesRoute)
 		});
 
 	RegisterRoute({
 		TEXT("Get an exposed actor's property."),
 		FHttpPath(TEXT("/remote/preset/:preset/actor/:actor/property/:propertyname")),
 		EHttpServerRequestVerbs::VERB_GET,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandlePresetGetExposedActorPropertyRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandlePresetGetExposedActorPropertyRoute)
 		});
 
 	RegisterRoute({
 		TEXT("Set an exposed actor's property."),
 		FHttpPath(TEXT("/remote/preset/:preset/actor/:actor/property/:propertyname")),
 		EHttpServerRequestVerbs::VERB_PUT,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandlePresetSetExposedActorPropertyRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandlePresetSetExposedActorPropertyRoute)
 		});
 
 	RegisterRoute({
 		TEXT("Get a preset"),
 		FHttpPath(TEXT("/remote/preset/:preset")),
 		EHttpServerRequestVerbs::VERB_GET,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandleGetPresetRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandleGetPresetRoute)
 		});
 	
 	// Search
@@ -738,7 +738,7 @@ void FWebRemoteControlModule::RegisterRoutes()
 		TEXT("Search for assets"),
 		FHttpPath(TEXT("/remote/search/assets")),
 		EHttpServerRequestVerbs::VERB_PUT,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandleSearchAssetRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandleSearchAssetRoute)
 		});
 
 	// Metadata
@@ -746,70 +746,70 @@ void FWebRemoteControlModule::RegisterRoutes()
 		TEXT("Get a preset's metadata"),
 		FHttpPath(TEXT("/remote/preset/:preset/metadata")),
 		EHttpServerRequestVerbs::VERB_GET,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandleGetMetadataRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandleGetMetadataRoute)
 		});
 
 	RegisterRoute({
 		TEXT("Get/Set/Delete a preset metadata field"),
 		FHttpPath(TEXT("/remote/preset/:preset/metadata/:metadatafield")),
 		EHttpServerRequestVerbs::VERB_GET | EHttpServerRequestVerbs::VERB_PUT | EHttpServerRequestVerbs::VERB_DELETE,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandleMetadataFieldOperationsRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandleMetadataFieldOperationsRoute)
 		});
 
 	RegisterRoute({
 	    TEXT("Get/Set/Delete an exposed property's metadata field"),
 	    FHttpPath(TEXT("/remote/preset/:preset/property/:label/metadata/:key")),
 	    EHttpServerRequestVerbs::VERB_GET | EHttpServerRequestVerbs::VERB_PUT | EHttpServerRequestVerbs::VERB_DELETE,
-	    FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandleEntityMetadataOperationsRoute)
+	    FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandleEntityMetadataOperationsRoute)
     });
 
 	RegisterRoute({
         TEXT("Get/Set/Delete an exposed function's metadata field"),
 		FHttpPath(TEXT("/remote/preset/:preset/function/:label/metadata/:key")),
         EHttpServerRequestVerbs::VERB_GET | EHttpServerRequestVerbs::VERB_PUT | EHttpServerRequestVerbs::VERB_DELETE,
-        FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandleEntityMetadataOperationsRoute)
+        FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandleEntityMetadataOperationsRoute)
     });
 
 	RegisterRoute({
         TEXT("Get/Set/Delete an exposed property's metadata field"),
 		FHttpPath(TEXT("/remote/preset/:preset/actor/:label/metadata/:key")),
         EHttpServerRequestVerbs::VERB_GET | EHttpServerRequestVerbs::VERB_PUT | EHttpServerRequestVerbs::VERB_DELETE,
-        FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandleEntityMetadataOperationsRoute)
+        FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandleEntityMetadataOperationsRoute)
     });
 
 	RegisterRoute({
 		TEXT("Set an exposed property's label"),
 		FHttpPath(TEXT("/remote/preset/:preset/property/:label/label")),
 		EHttpServerRequestVerbs::VERB_PUT,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandleEntitySetLabelRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandleEntitySetLabelRoute)
 	});
 	
 	RegisterRoute({
 		TEXT("Set an exposed function's label"),
 		FHttpPath(TEXT("/remote/preset/:preset/function/:label/label")),
 		EHttpServerRequestVerbs::VERB_PUT,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandleEntitySetLabelRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandleEntitySetLabelRoute)
 	});
 	
 	RegisterRoute({
 		TEXT("Set an exposed actor's label"),
 		FHttpPath(TEXT("/remote/preset/:preset/actor/:label/label")),
 		EHttpServerRequestVerbs::VERB_PUT,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandleEntitySetLabelRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandleEntitySetLabelRoute)
 	});
 
 	RegisterRoute({
 		TEXT("Create a temporary preset which won't be visible in the editor or saved as an asset"),
 		FHttpPath(TEXT("/remote/preset/transient")),
 		EHttpServerRequestVerbs::VERB_PUT,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandleCreateTransientPresetRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandleCreateTransientPresetRoute)
 	});
 
 	RegisterRoute({
 		TEXT("Delete a transient preset"),
 		FHttpPath(TEXT("/remote/preset/transient/:preset")),
 		EHttpServerRequestVerbs::VERB_DELETE,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandleDeleteTransientPresetRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandleDeleteTransientPresetRoute)
 	});
 
 	// Remote Control Logic - Controllers
@@ -817,14 +817,14 @@ void FWebRemoteControlModule::RegisterRoutes()
 	TEXT("Set a controller value on a preset."),
 	FHttpPath(TEXT("/remote/preset/:preset/controller/:controller")),
 	EHttpServerRequestVerbs::VERB_PUT,
-	FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandlePresetSetControllerRoute)
+	FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandlePresetSetControllerRoute)
 		});
 
 	RegisterRoute({
 		TEXT("Get a controller value from a preset."),
 		FHttpPath(TEXT("/remote/preset/:preset/controller/:controller")),
 		EHttpServerRequestVerbs::VERB_GET,
-		FRequestHandlerDelegate::CreateRaw(this, &FWebRemoteControlModule::HandlePresetGetControllerRoute)
+		FHttpRequestHandler::CreateRaw(this, &FWebRemoteControlModule::HandlePresetGetControllerRoute)
 		});
 
 	//**************************************
@@ -1339,9 +1339,10 @@ bool FWebRemoteControlModule::HandlePresetSetPropertyRoute(const FHttpServerRequ
 		return true;
 	}
 
+	FString Error;
 	const bool bSuccess = WebRemoteControlInternalUtils::ModifyPropertyUsingPayload(
 		*RemoteControlProperty.Get(), SetPropertyRequest, SetPropertyRequest.TCHARBody, ActingClientId, *WebSocketHandler,
-		SetPropertyRequest.GenerateTransaction ? ERCAccess::WRITE_TRANSACTION_ACCESS : ERCAccess::WRITE_ACCESS);
+		SetPropertyRequest.GenerateTransaction ? ERCAccess::WRITE_TRANSACTION_ACCESS : ERCAccess::WRITE_ACCESS, &Error);
 
 	if (bSuccess)
 	{
@@ -1349,7 +1350,7 @@ bool FWebRemoteControlModule::HandlePresetSetPropertyRoute(const FHttpServerRequ
 	}
 	else
 	{
-		WebRemoteControlInternalUtils::CreateUTF8ErrorMessage(FString::Printf(TEXT("Error while trying to modify property %s."), *Args.FieldLabel), Response->Body);
+		WebRemoteControlInternalUtils::CreateUTF8ErrorMessage(FString::Printf(TEXT("Error while trying to modify property %s.\n%s"), *Args.FieldLabel, *Error), Response->Body);
 	}
 
 	OnComplete(MoveTemp(Response));
@@ -1431,8 +1432,9 @@ bool FWebRemoteControlModule::HandlePresetGetPropertyRoute(const FHttpServerRequ
 	FMemoryWriter Writer(WorkingBuffer);
 
 	FRCObjectReference ObjectRef;
+	FString Error;
 
-	bool bSuccess = IRemoteControlModule::Get().ResolveObjectProperty(ERCAccess::READ_ACCESS, RemoteControlProperty->GetBoundObjects()[0], RemoteControlProperty->FieldPathInfo.ToString(), ObjectRef);
+	bool bSuccess = IRemoteControlModule::Get().ResolveObjectProperty(ERCAccess::READ_ACCESS, RemoteControlProperty->GetBoundObjects()[0], RemoteControlProperty->FieldPathInfo.ToString(), ObjectRef, &Error);
 
 	if (bSuccess)
 	{
@@ -1445,7 +1447,7 @@ bool FWebRemoteControlModule::HandlePresetGetPropertyRoute(const FHttpServerRequ
 	}
 	else
 	{
-		WebRemoteControlInternalUtils::CreateUTF8ErrorMessage(FString::Printf(TEXT("Error while trying to read property %s."), *Args.FieldLabel), Response->Body);
+		WebRemoteControlInternalUtils::CreateUTF8ErrorMessage(FString::Printf(TEXT("Error while trying to read property %s.\n%s"), *Args.FieldLabel, *Error), Response->Body);
 	}
 
 	OnComplete(MoveTemp(Response));
@@ -1589,8 +1591,9 @@ bool FWebRemoteControlModule::HandlePresetGetExposedActorPropertyRoute(const FHt
 			FMemoryWriter Writer(WorkingBuffer);
 
 			FRCObjectReference ObjectRef;
+			FString Error;
 
-			if (IRemoteControlModule::Get().ResolveObjectProperty(ERCAccess::READ_ACCESS, Actor, FieldPath, ObjectRef))
+			if (IRemoteControlModule::Get().ResolveObjectProperty(ERCAccess::READ_ACCESS, Actor, FieldPath, ObjectRef, &Error))
 			{
 				FStructOnScope ActorPropertyOnScope = WebRemoteControlStructUtils::CreateActorPropertyOnScope(ObjectRef);
 				WebRemoteControlInternalUtils::SerializeStructOnScope(ActorPropertyOnScope, Writer);
@@ -1601,7 +1604,7 @@ bool FWebRemoteControlModule::HandlePresetGetExposedActorPropertyRoute(const FHt
 			else
 			{
 				Response->Code = EHttpServerResponseCodes::NotFound;
-				WebRemoteControlInternalUtils::CreateUTF8ErrorMessage(FString::Printf(TEXT("Error while trying to read property %s on actor %s."), *PropertyName, *ActorRCLabel), Response->Body);
+				WebRemoteControlInternalUtils::CreateUTF8ErrorMessage(FString::Printf(TEXT("Error while trying to read property %s on actor %s.\n%s"), *PropertyName, *ActorRCLabel, *Error), Response->Body);
 			}
 		}
 	}
@@ -1688,6 +1691,7 @@ bool FWebRemoteControlModule::HandlePresetSetExposedActorPropertyRoute(const FHt
 	}
 
 	bool bSuccess = true;
+	FString Error;
 	
 	if (TSharedPtr<FRemoteControlActor> RCActor = WebRemoteControl::GetRCEntity<FRemoteControlActor>(Preset, ActorRCLabel))
 	{
@@ -1695,7 +1699,7 @@ bool FWebRemoteControlModule::HandlePresetSetExposedActorPropertyRoute(const FHt
 		{
 			FRCObjectReference ObjectRef;
 			ERCAccess Access = SetPropertyRequest.GenerateTransaction ? ERCAccess::WRITE_TRANSACTION_ACCESS : ERCAccess::WRITE_ACCESS;
-			bSuccess &= IRemoteControlModule::Get().ResolveObjectProperty(Access, Actor, FieldPath, ObjectRef);
+			bSuccess &= IRemoteControlModule::Get().ResolveObjectProperty(Access, Actor, FieldPath, ObjectRef, &Error);
 
 			if (bSuccess && ObjectRef.Property.IsValid())
 			{
@@ -1741,7 +1745,7 @@ bool FWebRemoteControlModule::HandlePresetSetExposedActorPropertyRoute(const FHt
 	}
 	else
 	{
-		WebRemoteControlInternalUtils::CreateUTF8ErrorMessage(FString::Printf(TEXT("Error while trying to modify property %s on actor %s."), *PropertyName, *ActorRCLabel), Response->Body);
+		WebRemoteControlInternalUtils::CreateUTF8ErrorMessage(FString::Printf(TEXT("Error while trying to modify property %s on actor %s.\n%s"), *PropertyName, *ActorRCLabel, *Error), Response->Body);
 	}
 
 	OnComplete(MoveTemp(Response));

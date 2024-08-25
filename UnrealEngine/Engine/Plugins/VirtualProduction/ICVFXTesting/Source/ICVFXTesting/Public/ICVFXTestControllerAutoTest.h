@@ -17,6 +17,7 @@
 #include "LiveLinkPreset.h"
 #include "LiveLinkPresetTypes.h"
 #include "Roles/LiveLinkTransformRole.h"
+#include "Render/Viewport/IDisplayClusterViewportManager.h"
 
 #include "ICVFXTestControllerAutoTest.generated.h"
 
@@ -159,13 +160,20 @@ public:
 		constexpr bool bIncludeChildActors = false;
 		RootActor->GetComponents<UDisplayClusterICVFXCameraComponent>(CameraComponents, bIncludeChildActors);
 
+		UWorld* CurrentWorld = RootActor->GetWorld();
+
 		for (UDisplayClusterICVFXCameraComponent* CameraComponent : CameraComponents)
 		{
 			CameraComponent->CameraSettings.RenderSettings.AdvancedRenderSettings.GPUIndex = GetInnerGPUIndex();
 		}
 
-		const FString NodeId = IDisplayCluster::Get().GetClusterMgr()->GetNodeId();
-		RootActor->GetViewportManager()->UpdateConfiguration(EDisplayClusterRenderFrameMode::Mono, NodeId, RootActor, nullptr);
+		if (IDisplayClusterViewportManager* ViewportManager = RootActor->GetViewportManager())
+		{
+			const FString NodeId = IDisplayCluster::Get().GetClusterMgr()->GetNodeId();
+			const EDisplayClusterRenderFrameMode RenderMode = EDisplayClusterRenderFrameMode::Mono;
+
+			ViewportManager->GetConfiguration().UpdateConfigurationForClusterNode(RenderMode, CurrentWorld, NodeId);
+		}
 	}
 
 	void UpdateTestLocations()

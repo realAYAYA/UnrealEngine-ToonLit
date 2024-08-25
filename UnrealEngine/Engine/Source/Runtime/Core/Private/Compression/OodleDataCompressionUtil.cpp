@@ -42,7 +42,7 @@ namespace FOodleCompressedArray
 #endif
 
 		// Trim off the end working space Oodle needed to do the compress work.
-		OutCompressed.SetNum( IntCastChecked<int32>(CompressedSize + HeaderSizeNeeded) , false);
+		OutCompressed.SetNum( IntCastChecked<int32>(CompressedSize + HeaderSizeNeeded) , EAllowShrinking::No);
 		return true;
 	}
 	bool CORE_API CompressData64(TArray64<uint8>& OutCompressed, const void* InData, int64 InDataSize, FOodleDataCompression::ECompressor InCompressor, FOodleDataCompression::ECompressionLevel InLevel)
@@ -105,7 +105,7 @@ namespace FOodleCompressedArray
 		}
 
 		// Trim off the end working space Oodle needed to do the compress work.
-		OutCompressed.SetNum(CompressedSize + HeaderSizeNeeded, false);
+		OutCompressed.SetNum(CompressedSize + HeaderSizeNeeded, EAllowShrinking::No);
 		return true;
 	}
 

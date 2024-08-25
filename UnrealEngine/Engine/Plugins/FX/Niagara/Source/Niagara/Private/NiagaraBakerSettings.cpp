@@ -16,6 +16,7 @@
 UNiagaraBakerSettings::UNiagaraBakerSettings(const FObjectInitializer& Init)
 	: Super(Init)
 {
+	bLockToSimulationFrameRate = false;
 	bPreviewLooping = true;
 	bRenderComponentOnly = true;
 	Outputs.Add(Init.CreateDefaultSubobject<UNiagaraBakerOutputTexture2D>(this, "DefaultOutput"));

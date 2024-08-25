@@ -22,6 +22,7 @@ public:
 	virtual bool IsCompilerRelevant() const override { return false; }
 	virtual UEdGraphPin* GetPassThroughPin(const UEdGraphPin* FromPin) const override;
 	virtual bool ShouldDrawNodeAsControlPointOnly(int32& OutInputPinIndex, int32& OutOutputPinIndex) const override { OutInputPinIndex = 0;  OutOutputPinIndex = 1; return true; }
+	virtual TSharedPtr<SGraphNode> CreateVisualWidget() override;
 	// End of UEdGraphNode interface
 	
 	UEdGraphPin* GetInputPin() const

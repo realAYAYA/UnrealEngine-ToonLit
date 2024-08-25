@@ -7,7 +7,7 @@ MeshDrawCommands.h: Mesh draw commands.
 #pragma once
 
 #include "MeshPassProcessor.h"
-#include "TranslucencyPass.h"
+#include "TranslucentPassResource.h"
 #include "InstanceCulling/InstanceCullingContext.h"
 #include "InstanceCulling/InstanceCullingManager.h"
 #include "ScenePrivateBase.h"
@@ -81,6 +81,7 @@ public:
 	FMeshCommandOneFrameArray MeshDrawCommands;
 	FMeshCommandOneFrameArray MobileBasePassCSMMeshDrawCommands;
 	TArray<const FStaticMeshBatch*, SceneRenderingAllocator> DynamicMeshCommandBuildRequests;
+	TArray<EMeshDrawCommandCullingPayloadFlags, SceneRenderingAllocator> DynamicMeshCommandBuildFlags;
 	TArray<const FStaticMeshBatch*, SceneRenderingAllocator> MobileBasePassCSMDynamicMeshCommandBuildRequests;
 	FDynamicMeshDrawCommandStorage MeshDrawCommandStorage;
 	FGraphicsMinimalPipelineStateSet MinimalPipelineStatePassSet;
@@ -114,13 +115,6 @@ public:
 class FParallelMeshDrawCommandPass
 {
 public:
-	enum class EWaitThread
-	{
-		Render,
-		Task,
-		TaskAlreadyWaited,
-	};
-
 	FParallelMeshDrawCommandPass()
 		: bHasInstanceCullingDrawParameters(false)
 		, MaxNumDraws(0)
@@ -144,6 +138,7 @@ public:
 		const TArray<FMeshPassMask, SceneRenderingAllocator>* DynamicMeshElementsPassRelevance,
 		int32 NumDynamicMeshElements,
 		TArray<const FStaticMeshBatch*, SceneRenderingAllocator>& InOutDynamicMeshCommandBuildRequests,
+		TArray<EMeshDrawCommandCullingPayloadFlags, SceneRenderingAllocator> InOutDynamicMeshCommandBuildFlags,
 		int32 NumDynamicMeshCommandBuildRequestElements,
 		FMeshCommandOneFrameArray& InOutMeshDrawCommands,
 		FMeshPassProcessor* MobileBasePassCSMMeshPassProcessor = nullptr, // Required only for the mobile base pass.
@@ -162,14 +157,14 @@ public:
 	/**
 	 * Sync with setup task.
 	 */
-	void WaitForSetupTask();
+	void WaitForSetupTask() const;
 
 	/**
 	 * Dispatch visible mesh draw command draw task.
 	 */
 	void DispatchDraw(FParallelCommandListSet* ParallelCommandListSet, FRHICommandList& RHICmdList, const FInstanceCullingDrawParams* InstanceCullingDrawParams = nullptr) const;
 
-	void WaitForTasksAndEmpty(EWaitThread WaitThread = EWaitThread::Render);
+	void WaitForTasksAndEmpty();
 	void SetDumpInstancingStats(const FString& InPassName);
 	bool HasAnyDraw() const { return MaxNumDraws > 0; }
 
@@ -180,6 +175,13 @@ public:
 
 	FInstanceCullingContext* GetInstanceCullingContext() { return &TaskContext.InstanceCullingContext; }
 	const FGraphEventRef& GetTaskEvent() const { return TaskEventRef; }
+
+	// NOTE: It is only safe to access mesh draw commands after the setup task is complete (use WaitForSetupTask). 
+	// Only access the data late in the frame to allow as much time as possible for async tasks to complete.
+	const FMeshCommandOneFrameArray& GetMeshDrawCommands() const
+	{
+		return TaskContext.MeshDrawCommands;
+	}
 
 private:
 	FMeshDrawCommandPassSetupTaskContext TaskContext;
@@ -193,7 +195,7 @@ private:
 	int32 MaxNumDraws;
 
 	void DumpInstancingStats() const;
-	void WaitForMeshPassSetupTask(EWaitThread WaitThread = EWaitThread::Render) const;
+	void WaitForMeshPassSetupTask() const;
 };
 
 RENDERER_API extern void SortAndMergeDynamicPassMeshDrawCommands(

@@ -7,6 +7,7 @@
 #include "AssetRegistry/AssetData.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
+#include "IAssetTools.h"
 #include "CollisionQueryParams.h"
 #include "CollisionShape.h"
 #include "Components/ActorComponent.h"
@@ -407,6 +408,10 @@ void FEdModeFoliage::BindCommands()
 	{
 		return UISettings.GetPaintBucketToolSelected();
 	}));
+
+	UICommandList->MapAction(
+		Commands.ReflectSelectionInPalette,
+		FExecuteAction::CreateSP(this, &FEdModeFoliage::OnReflectSelectionInPalette));
 }
 
 bool FEdModeFoliage::CurrentToolUsesBrush() const
@@ -757,6 +762,11 @@ void FEdModeFoliage::OnSetPlace()
 	UISettings.SetPaintToolSelected(true);
 	UISettings.SetIsInSingleInstantiationMode(true);
 	HandleToolChanged();
+}
+
+void FEdModeFoliage::OnReflectSelectionInPalette()
+{
+	StaticCastSharedPtr<FFoliageEdModeToolkit>(Toolkit)->ReflectSelectionInPalette();
 }
 
 bool FEdModeFoliage::DisallowMouseDeltaTracking() const
@@ -1623,36 +1633,67 @@ void FEdModeFoliage::RemoveInstancesForBrush(UWorld* InWorld, const UFoliageType
 {
 	SCOPE_CYCLE_COUNTER(STAT_FoliageRemoveInstanceBrush);
 
-	auto RemovingInstances = [this, &BrushSphere, &DesiredInstanceCount, &Pressure](AInstancedFoliageActor* IFA, FFoliageInfo* FoliageInfo, const UFoliageType* FoliageType) {
-		TArray<int32> PotentialInstancesToRemove;
-		FoliageInfo->GetInstancesInsideSphere(BrushSphere, PotentialInstancesToRemove);
-		if (PotentialInstancesToRemove.Num() == 0)
-		{
-			return true;
-		}
+	struct FInstancesToRemove
+	{
+		FFoliageInfo* FoliageInfo;
+		TArray<int32> InstancesToRemove;
+	};
+	TArray<FInstancesToRemove> PotentialInstancesToRemove;
+	int32 PotentialInstancesToRemoveCount = 0;
 
-		int32 InstancesToRemove = FMath::RoundToInt((float)(PotentialInstancesToRemove.Num() - DesiredInstanceCount) * Pressure);
-		if (InstancesToRemove <= 0)
+	// Get Brush intersecting instances per FoliageInfo (per IFA)
+	ForEachFoliageInfo(InWorld, Settings, BrushSphere, [&BrushSphere, &PotentialInstancesToRemove, &PotentialInstancesToRemoveCount](AInstancedFoliageActor* IFA, FFoliageInfo* FoliageInfo, const UFoliageType* FoliageType)
+	{
+		TArray<int32> InstancesInsideSphere;
+		FoliageInfo->GetInstancesInsideSphere(BrushSphere, InstancesInsideSphere);
+		if (InstancesInsideSphere.Num() > 0)
 		{
-			return true;
+			PotentialInstancesToRemoveCount += InstancesInsideSphere.Num();
+			PotentialInstancesToRemove.Add({ FoliageInfo, MoveTemp(InstancesInsideSphere) });
 		}
+		return true;
+	});
 
-		int32 InstancesToKeep = PotentialInstancesToRemove.Num() - InstancesToRemove;
-		if (InstancesToKeep > 0)
+	// Calculate number of Instances to remove based on desired instance count
+	const int32 InstancesToRemoveCount = FMath::RoundToInt((float)(PotentialInstancesToRemoveCount - DesiredInstanceCount) * Pressure);
+	if (InstancesToRemoveCount <= 0)
+	{
+		return;
+	}
+
+	// Calculate InstancesToKeep
+	const int32 InstancesToKeepCount = PotentialInstancesToRemoveCount - InstancesToRemoveCount;
+	
+	// Remove InstancesToKeep from the PotentialInstancesToRemove randomly so that they don't get removed
+	for (int32 i = 0; i < InstancesToKeepCount; i++)
+	{
+		const int32 RemoveIndex = FMath::Rand() % PotentialInstancesToRemoveCount;
+		int32 StartIndex = 0;
+		
+		// Iterate through IFAs to find the RemoveIndex
+		for (auto& [FoliageInfo, InstancesToRemove] : PotentialInstancesToRemove)
 		{
-			// Remove InstancesToKeep random PotentialInstancesToRemove from the array to leave those PotentialInstancesToRemove behind, and delete all the rest
-			for (int32 i = 0; i < InstancesToKeep; i++)
+			const int32 LocalRemoveIndex = RemoveIndex - StartIndex;
+			if (InstancesToRemove.IsValidIndex(LocalRemoveIndex))
 			{
-				PotentialInstancesToRemove.RemoveAtSwap(FMath::Rand() % PotentialInstancesToRemove.Num(), 1, false);
+				InstancesToRemove.RemoveAtSwap(LocalRemoveIndex, 1, EAllowShrinking::No);
+				break;
 			}
+			StartIndex += InstancesToRemove.Num();
 		}
+		PotentialInstancesToRemoveCount--;
+	}
+	
+	FFoliagePaintingGeometryFilter GeometryFilterFunc(UISettings);
 
-		FFoliagePaintingGeometryFilter GeometryFilterFunc(UISettings);
+	// Filter PotentialInstancesToRemove
+	for (auto& [FoliageInfo, InstancesToRemove] : PotentialInstancesToRemove)
+	{
+		AInstancedFoliageActor* IFA = FoliageInfo->IFA;
 
-		// Filter PotentialInstancesToRemove
-		for (int32 Idx = 0; Idx < PotentialInstancesToRemove.Num(); Idx++)
+		for (int32 Idx = 0; Idx < InstancesToRemove.Num(); Idx++)
 		{
-			auto BaseId = FoliageInfo->Instances[PotentialInstancesToRemove[Idx]].BaseId;
+			auto BaseId = FoliageInfo->Instances[InstancesToRemove[Idx]].BaseId;
 			auto BasePtr = IFA->InstanceBaseCache.GetInstanceBasePtr(BaseId);
 			UPrimitiveComponent* Base = Cast<UPrimitiveComponent>(BasePtr.Get());
 
@@ -1660,23 +1701,20 @@ void FEdModeFoliage::RemoveInstancesForBrush(UWorld* InWorld, const UFoliageType
 			if (Base && !GeometryFilterFunc(Base))
 			{
 				// Instance should not be removed, so remove it from the removal list.
-				PotentialInstancesToRemove.RemoveAtSwap(Idx, 1, false);
+				InstancesToRemove.RemoveAtSwap(Idx, 1, EAllowShrinking::No);
 				Idx--;
 			}
 		}
 
-		// Remove PotentialInstancesToRemove to reduce it to desired count
-		if (PotentialInstancesToRemove.Num() > 0)
+		// Remove InstancesToRemove to reduce it to desired count
+		if (InstancesToRemove.Num() > 0)
 		{
-			CurrentFoliageTraceBrushAffectedIFAs.Add(IFA);
+			CurrentFoliageTraceBrushAffectedIFAs.Add(FoliageInfo->IFA);
 
-			FoliageInfo->RemoveInstances(PotentialInstancesToRemove, false);
+			FoliageInfo->RemoveInstances(InstancesToRemove, false);
 		}
-		return true;
-	};
-	ForEachFoliageInfo(InWorld, Settings, BrushSphere, RemovingInstances);
+	}
 }
-
 
 void FEdModeFoliage::SelectInstanceAtLocation(UWorld* InWorld, const UFoliageType* Settings, const FVector& Location, bool bSelect)
 {
@@ -2053,6 +2091,18 @@ void FEdModeFoliage::RemoveSelectedInstances(UWorld* InWorld)
 				if (FoliageInfo.SelectedIndices.Num() > 0)
 				{
 					TArray<int32> InstancesToDelete = FoliageInfo.SelectedIndices.Array();
+
+					// Make sure that any moving instances to be removed are added back to the hash.
+					if (bMoving)
+					{
+						TArray<int32> MovingInstancesToDelete = FoliageInfo.SelectedIndices.Intersect(FoliageInfo.MovingInstances).Array();
+
+						if (MovingInstancesToDelete.Num())
+						{
+							FoliageInfo.PostMoveInstances(MovingInstancesToDelete, /*bFinished*/true);
+						}
+					}
+
 					FoliageInfo.RemoveInstances(InstancesToDelete, true);
 
 					OnInstanceCountUpdated(FoliageType);
@@ -2913,7 +2963,7 @@ void FEdModeFoliage::ApplyPaintBucket_Add(AActor* Actor)
 						continue;
 					}
 
-					new(InstancesToPlace)FPotentialInstance(InstLocation, Triangle.WorldNormal, Component, 1.f);
+					InstancesToPlace.Emplace(FPotentialInstance(InstLocation, Triangle.WorldNormal, Component, 1.f));
 				}
 			}
 		}
@@ -2943,6 +2993,8 @@ void FEdModeFoliage::ApplyPaintBucket_Add(AActor* Actor)
 		//
 		OnInstanceCountUpdated(Settings);
 	}
+
+	CurrentFoliageTraceBrushAffectedIFAs.Empty();
 }
 
 bool FEdModeFoliage::GetStaticMeshVertexColorForHit(const UStaticMeshComponent* InStaticMeshComponent, int32 InTriangleIndex, const FVector& InHitLocation, FColor& OutVertexColor)
@@ -3055,6 +3107,17 @@ void FEdModeFoliage::SnapSelectedInstancesToGround(UWorld* InWorld)
 						bFoundSelection = true;
 					}
 
+					TArray<int32> MovingInstances = FoliageInfo.SelectedIndices.Intersect(FoliageInfo.MovingInstances).Array();
+					TArray<int32> NonMovingInstances = FoliageInfo.SelectedIndices.Difference(FoliageInfo.MovingInstances).Array();
+
+					// Call PostMove on already moving instances to add them back to the hash.
+					if (MovingInstances.Num())
+					{
+						check(bMoving);
+						FoliageInfo.PostMoveInstances(MovingInstances, /*bFinished=*/false);
+					}
+
+					// Call PreMove on all snapping instances.
 					FoliageInfo.PreMoveInstances(SelectedIndices);
 
 					for (int32 InstanceIndex : SelectedIndices)
@@ -3062,7 +3125,16 @@ void FEdModeFoliage::SnapSelectedInstancesToGround(UWorld* InWorld)
 						bMovedInstance |= SnapInstanceToGround(IFA, FoliageType, FoliageInfo, InstanceIndex);
 					}
 
-					FoliageInfo.PostMoveInstances(SelectedIndices);
+					if (MovingInstances.Num())
+					{
+						FoliageInfo.PostMoveInstances(MovingInstances, /*bFinished=*/false);
+						FoliageInfo.PreMoveInstances(MovingInstances);
+					}
+
+					if (NonMovingInstances.Num())
+					{
+						FoliageInfo.PostMoveInstances(NonMovingInstances, /*bFinished=*/true);
+					}
 				}
 				return true; // continue iteration
 			});
@@ -3180,8 +3252,7 @@ void FEdModeFoliage::PopulateFoliageMeshList()
 				continue;
 			}
 
-			//@todo_ow: have a better filter for cooked assets. For now: filter all of them out.
-			if (MeshPair.Key && MeshPair.Key->GetPackage()->HasAnyPackageFlags(PKG_Cooked))
+			if (!IAssetTools::Get().IsAssetVisible(FAssetData(MeshPair.Key)))
 			{
 				continue;
 			}
@@ -3325,6 +3396,12 @@ bool FEdModeFoliage::IsModifierButtonPressed(const FEditorViewportClient* Viewpo
 	return IsShiftDown(ViewportClient->Viewport);
 }
 
+void FEdModeFoliage::MoveSelectedFoliageToActorEditorContext()
+{
+	const FScopedTransaction Transaction(NSLOCTEXT("UnrealEd", "MoveSelectedFoliageToActorEditorContext", "Move Selected Foliage to Actor Editor Context"));
+	AInstancedFoliageActor::MoveSelectedInstancesToActorEditorContext(GetWorld());
+}
+
 bool FEdModeFoliage::CanMoveSelectedFoliageToLevel(ULevel* InTargetLevel) const
 {
 	UWorld* World = InTargetLevel->OwningWorld;
@@ -3428,7 +3505,7 @@ void FEdModeFoliage::MoveSelectedFoliageToLevel(ULevel* InTargetLevel)
 	}
 }
 
-UFoliageType* FEdModeFoliage::AddFoliageAsset(UObject* InAsset)
+UFoliageType* FEdModeFoliage::AddFoliageAsset(UObject* InAsset, bool bInPlaceholderAsset)
 {
 	UFoliageType* FoliageType = nullptr;
 
@@ -3452,7 +3529,7 @@ UFoliageType* FEdModeFoliage::AddFoliageAsset(UObject* InAsset)
 				// If the world is partitioned or the world has sublevels,
 				// require the user to save the new foliage as an asset.
 				// The user will then be able to paint over all cells/sub-level.
-				FoliageType = SaveFoliageTypeObject(FoliageType);
+				FoliageType = SaveFoliageTypeObject(FoliageType, bInPlaceholderAsset);
 			}
 
 			if (FoliageType != nullptr)
@@ -3586,9 +3663,9 @@ void FEdModeFoliage::ReplaceSettingsObject(UFoliageType* OldSettings, UFoliageTy
 	PopulateFoliageMeshList();
 }
 
-UFoliageType* FEdModeFoliage::SaveFoliageTypeObject(UFoliageType* InFoliageType)
+UFoliageType* FEdModeFoliage::SaveFoliageTypeObject(UFoliageType* InFoliageType, bool bInPlaceholderAsset)
 {
-	UFoliageType* TypeToSave = FFoliageEditUtility::SaveFoliageTypeObject(InFoliageType);
+	UFoliageType* TypeToSave = FFoliageEditUtility::SaveFoliageTypeObject(InFoliageType, bInPlaceholderAsset);
 
 	if (TypeToSave != nullptr && TypeToSave != InFoliageType)
 	{

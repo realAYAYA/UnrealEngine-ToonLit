@@ -412,12 +412,15 @@ FOpenGLUniformBuffer::FOpenGLUniformBuffer(const FRHIUniformBufferLayout* InLayo
 	: FRHIUniformBuffer(InLayout)
 	, Resource(0)
 	, Offset(0)
+	, RangeSize(0)
 	, PersistentlyMappedBuffer(nullptr)
 	, UniqueID(UniqueUniformBufferID())
 	, AllocatedSize(0)
 	, bStreamDraw(false)
+	, bOwnsResource(true)
 {
-	bIsEmulatedUniformBuffer = GUseEmulatedUniformBuffers && !InLayout->bNoEmulatedUniformBuffer;
+	bIsEmulatedUniformBuffer = GUseEmulatedUniformBuffers && !(InLayout->bNoEmulatedUniformBuffer || InLayout->bUniformView);
+	RangeSize = InLayout->ConstantBufferSize;
 }
 
 void FOpenGLUniformBuffer::SetGLUniformBufferParams(GLuint InResource, uint32 InOffset, uint8* InPersistentlyMappedBuffer, uint32 InAllocatedSize, FOpenGLEUniformBufferDataRef InEmulatedBuffer, bool bInStreamDraw)
@@ -428,15 +431,16 @@ void FOpenGLUniformBuffer::SetGLUniformBufferParams(GLuint InResource, uint32 In
 	EmulatedBufferData = InEmulatedBuffer;
 	AllocatedSize = InAllocatedSize;
 	bStreamDraw = bInStreamDraw;
+	bOwnsResource = true;
 
-	LLM(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Default, ((uint8*)this)+1, InAllocatedSize)); //+1 because ptr must be unique for LLM
+	LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelAlloc(ELLMTracker::Default, ((uint8*)this)+1, InAllocatedSize)); //+1 because ptr must be unique for LLM
 }
 
 FOpenGLUniformBuffer::~FOpenGLUniformBuffer()
 {
 	VERIFY_GL_SCOPE();
 
-	if (Resource != 0)
+	if (Resource != 0 && bOwnsResource)
 	{
 		if (IsPoolingEnabled())
 		{
@@ -475,7 +479,7 @@ FOpenGLUniformBuffer::~FOpenGLUniformBuffer()
 			Resource = 0; 
 		}
 
-		LLM(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Default, ((uint8*)this)+1)); //+1 because ptr must be unique for LLM
+		LLM_IF_ENABLED(FLowLevelMemTracker::Get().OnLowLevelFree(ELLMTracker::Default, ((uint8*)this)+1)); //+1 because ptr must be unique for LLM
 	}
 }
 
@@ -619,7 +623,53 @@ static FUniformBufferRHIRef CreateUniformBuffer(const void* Contents, const FRHI
 	NewUniformBuffer->SetLayoutTable(Contents, Validation);
 
 	return NewUniformBuffer;
-}	
+}
+
+static FOpenGLUniformBuffer* CreateUniformBufferView(FRHICommandListImmediate& RHICmdList, const FRHIUniformBufferLayout* Layout, const void* Contents)
+{
+	FOpenGLUniformBuffer* UniformBufferView = nullptr;
+	
+	if (Layout->bUniformView)
+	{
+		UniformBufferView = new FOpenGLUniformBuffer(Layout);
+		UniformBufferView->SetLayoutTable(Contents, EUniformBufferValidation::None);
+
+		FRHIShaderResourceView* UniformViewSRV = nullptr;
+		for (int32 Index = 0; Index < Layout->Resources.Num() && !UniformViewSRV; ++Index)
+		{
+			EUniformBufferBaseType ResourceBaseType = Layout->Resources[Index].MemberType;
+			if (ResourceBaseType == UBMT_SRV || 
+				ResourceBaseType == UBMT_RDG_BUFFER_SRV)
+			{
+				UniformViewSRV = (FRHIShaderResourceView*)GetShaderParameterResourceRHI(Contents, Layout->Resources[Index].MemberOffset, ResourceBaseType);
+			}
+		}
+		
+		check(UniformViewSRV);
+
+		RHICmdList.EnqueueLambda([UniformBufferView, UniformViewSRV](FRHICommandListImmediate&)
+		{
+			VERIFY_GL_SCOPE();
+			
+			FOpenGLBuffer* UBO = FOpenGLDynamicRHI::ResourceCast(UniformViewSRV->GetBuffer());
+			const FRHIViewDesc::FBufferSRV& SRVInfo = UniformViewSRV->GetDesc().Buffer.SRV;
+			
+			check(UBO->Resource);
+			check(UBO->GetSize() >= PLATFORM_MAX_UNIFORM_BUFFER_RANGE);
+
+			UniformBufferView->Resource = UBO->Resource;
+			UniformBufferView->AllocatedSize = UBO->GetSize();
+			UniformBufferView->bOwnsResource = false;
+			UniformBufferView->Offset = SRVInfo.OffsetInBytes;
+			UniformBufferView->RangeSize = PLATFORM_MAX_UNIFORM_BUFFER_RANGE;
+			UniformBufferView->PersistentlyMappedBuffer = nullptr;
+			UniformBufferView->EmulatedBufferData = nullptr;
+			UniformBufferView->bStreamDraw = false;
+		});
+	}
+	
+	return UniformBufferView;
+}
 
 FUniformBufferRHIRef FOpenGLDynamicRHI::RHICreateUniformBuffer(const void* Contents, const FRHIUniformBufferLayout* Layout, EUniformBufferUsage Usage, EUniformBufferValidation Validation)
 {
@@ -635,6 +685,13 @@ FUniformBufferRHIRef FOpenGLDynamicRHI::RHICreateUniformBuffer(const void* Conte
 	if (Contents && Validation == EUniformBufferValidation::ValidateResources)
 	{
 		ValidateShaderParameterResourcesRHI(Contents, *Layout);
+	}
+
+	// 
+	FOpenGLUniformBuffer* UniformBufferView = CreateUniformBufferView(RHICmdList, Layout, Contents);
+	if (UniformBufferView)
+	{
+		return UniformBufferView;
 	}
 
 	bool bUseEmulatedUBs = GUseEmulatedUniformBuffers && !Layout->bNoEmulatedUniformBuffer;

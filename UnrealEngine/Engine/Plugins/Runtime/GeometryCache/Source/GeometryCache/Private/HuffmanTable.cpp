@@ -158,7 +158,7 @@ static void GenerateHuffmanCodes(uint16* OutCodes, const uint8* CodeLengths, int
 	{
 		int32 CodeLength = CodeLengths[Symbol];
 		check(CodeLength <= HUFFMAN_MAX_CODE_LENGTH);
-		SymbolLists[CodeLength * HUFFMAN_MAX_CODES + SymbolLengthHistogram[CodeLength]++] = Symbol;
+		SymbolLists[CodeLength * HUFFMAN_MAX_CODES + SymbolLengthHistogram[CodeLength]++] = static_cast<int16>(Symbol);
 	}
 
 	// Assign code words to symbols
@@ -171,7 +171,7 @@ static void GenerateHuffmanCodes(uint16* OutCodes, const uint8* CodeLengths, int
 		{
 			int32 Symbol = SymbolLists[CodeLength * HUFFMAN_MAX_CODES + i];
 			check(CodeLengths[Symbol] == CodeLength);
-			OutCodes[Symbol] = ReverseBits(NextCodeWord++, CodeLength);	// Reverse bits to turn prefix codes into postfix codes
+			OutCodes[Symbol] = static_cast<uint16>(ReverseBits(NextCodeWord++, CodeLength));	// Reverse bits to turn prefix codes into postfix codes
 		}
 		NextCodeWord <<= 1;
 	}
@@ -286,7 +286,7 @@ void FHuffmanDecodeTable::Initialize(FHuffmanBitStreamReader &Stream)
 	// Read symbol code lengths
 	for (int32 Symbol = 0; Symbol < NumSymbols; Symbol++)
 	{
-		SymbolLengths[Symbol] = Stream.Read(HUFFMAN_MAX_CODE_LENGTH_BITS);
+		SymbolLengths[Symbol] = static_cast<uint8>(Stream.Read(HUFFMAN_MAX_CODE_LENGTH_BITS));
 	}
 
 	// Generate canonical huffman codes from code lengths
@@ -304,8 +304,8 @@ void FHuffmanDecodeTable::Initialize(FHuffmanBitStreamReader &Stream)
 			uint32 Step = 1u << Length;
 			
 			FTableEntry Entry;
-			Entry.Symbol = Symbol;
-			Entry.Length = Length;
+			Entry.Symbol = static_cast<int8>(Symbol);
+			Entry.Length = static_cast<int8>(Length);
 
 			// Put entry in at every position where the Length last bits are Code.
 			do

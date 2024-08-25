@@ -13,6 +13,7 @@
 #include "PrimitiveSceneProxy.h"
 #include "SceneUniformBuffer.h"
 #include "SceneRendering.h"
+#include "RayTracingInstanceCulling.h"
 
 BEGIN_SHADER_PARAMETER_STRUCT(FBuildInstanceBufferPassParams, )
 	SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer, InstanceBuffer)
@@ -48,11 +49,7 @@ void FRayTracingScene::Create(FRDGBuilder& GraphBuilder, const FViewInfo& View, 
 
 void FRayTracingScene::InitPreViewTranslation(const FViewMatrices& ViewMatrices)
 {
-	const FLargeWorldRenderPosition AbsoluteViewOrigin(ViewMatrices.GetViewOrigin());
-	const FVector ViewTileOffset = AbsoluteViewOrigin.GetTileOffset();
-
-	RelativePreViewTranslation = ViewMatrices.GetPreViewTranslation() + ViewTileOffset;
-	ViewTilePosition = AbsoluteViewOrigin.GetTile();
+	PreViewTranslation = FDFVector3(ViewMatrices.GetPreViewTranslation());
 }
 
 void FRayTracingScene::CreateWithInitializationData(FRDGBuilder& GraphBuilder, const FViewInfo& View, const FGPUScene* GPUScene, FRayTracingSceneWithGeometryInstances SceneWithGeometryInstances)
@@ -164,13 +161,27 @@ void FRayTracingScene::CreateWithInitializationData(FRDGBuilder& GraphBuilder, c
 		}
 	}
 
+	FRDGBufferUAVRef DebugInstanceGPUSceneIndexBufferUAV = nullptr;
+	if (bNeedsDebugInstanceGPUSceneIndexBuffer)
+	{
+		FRDGBufferDesc DebugInstanceGPUSceneIndexBufferDesc;
+		DebugInstanceGPUSceneIndexBufferDesc.Usage = EBufferUsageFlags::UnorderedAccess | EBufferUsageFlags::ShaderResource | EBufferUsageFlags::StructuredBuffer;
+		DebugInstanceGPUSceneIndexBufferDesc.BytesPerElement = sizeof(uint32);
+		DebugInstanceGPUSceneIndexBufferDesc.NumElements = FMath::Max(NumNativeInstances, 1u);
+
+		DebugInstanceGPUSceneIndexBuffer = GraphBuilder.CreateBuffer(DebugInstanceGPUSceneIndexBufferDesc, TEXT("FRayTracingScene::DebugInstanceGPUSceneIndexBuffer"));
+		DebugInstanceGPUSceneIndexBufferUAV = GraphBuilder.CreateUAV(DebugInstanceGPUSceneIndexBuffer);
+
+		AddClearUAVPass(GraphBuilder, DebugInstanceGPUSceneIndexBufferUAV, 0xFFFFFFFF);
+	}
+
 	if (NumNativeInstances > 0)
 	{
 		const uint32 InstanceUploadBytes = NumNativeInstances * sizeof(FRayTracingInstanceDescriptorInput);
 		const uint32 TransformUploadBytes = SceneWithGeometryInstances.NumNativeCPUInstances * 3 * sizeof(FVector4f);
 
 		FRayTracingInstanceDescriptorInput* InstanceUploadData = (FRayTracingInstanceDescriptorInput*)RHICmdList.LockBuffer(InstanceUploadBuffer, 0, InstanceUploadBytes, RLM_WriteOnly);
-		FVector4f* TransformUploadData = (FVector4f*)RHICmdList.LockBuffer(TransformUploadBuffer, 0, TransformUploadBytes, RLM_WriteOnly);
+		FVector4f* TransformUploadData = (TransformUploadBytes > 0) ? (FVector4f*)RHICmdList.LockBuffer(TransformUploadBuffer, 0, TransformUploadBytes, RLM_WriteOnly) : nullptr;
 
 		// Fill instance upload buffer on separate thread since results are only needed in RHI thread
 		FillInstanceUploadBufferTask = FFunctionGraphTask::CreateAndDispatchWhenReady(
@@ -205,21 +216,8 @@ void FRayTracingScene::CreateWithInitializationData(FRDGBuilder& GraphBuilder, c
 
 		FBuildInstanceBufferPassParams* PassParams = GraphBuilder.AllocParameters<FBuildInstanceBufferPassParams>();
 		PassParams->InstanceBuffer = GraphBuilder.CreateUAV(InstanceBuffer);
-		PassParams->DebugInstanceGPUSceneIndexBuffer = nullptr;
+		PassParams->DebugInstanceGPUSceneIndexBuffer = DebugInstanceGPUSceneIndexBufferUAV;
 		PassParams->Scene = View.GetSceneUniforms().GetBuffer(GraphBuilder);
-
-		if (bNeedsDebugInstanceGPUSceneIndexBuffer)
-		{
-			FRDGBufferDesc DebugInstanceGPUSceneIndexBufferDesc;
-			DebugInstanceGPUSceneIndexBufferDesc.Usage = EBufferUsageFlags::UnorderedAccess | EBufferUsageFlags::ShaderResource | EBufferUsageFlags::StructuredBuffer;
-			DebugInstanceGPUSceneIndexBufferDesc.BytesPerElement = sizeof(uint32);
-			DebugInstanceGPUSceneIndexBufferDesc.NumElements = NumNativeInstances;
-
-			DebugInstanceGPUSceneIndexBuffer = GraphBuilder.CreateBuffer(DebugInstanceGPUSceneIndexBufferDesc, TEXT("FRayTracingScene::DebugInstanceGPUSceneIndexBuffer"));
-			PassParams->DebugInstanceGPUSceneIndexBuffer = GraphBuilder.CreateUAV(DebugInstanceGPUSceneIndexBuffer);
-
-			AddClearUAVPass(GraphBuilder, PassParams->DebugInstanceGPUSceneIndexBuffer, 0xFFFFFFFF);
-		}
 
 		GraphBuilder.AddPass(
 			RDG_EVENT_NAME("BuildTLASInstanceBuffer"),
@@ -228,17 +226,21 @@ void FRayTracingScene::CreateWithInitializationData(FRDGBuilder& GraphBuilder, c
 			[PassParams,
 			this,
 			GPUScene,
-			ViewTilePosition = ViewTilePosition,
-			RelativePreViewTranslation = RelativePreViewTranslation,
+			PreViewTranslation = PreViewTranslation,
 			&SceneInitializer,
 			NumNativeGPUSceneInstances = SceneWithGeometryInstances.NumNativeGPUSceneInstances,
 			NumNativeCPUInstances = SceneWithGeometryInstances.NumNativeCPUInstances,
-			GPUInstances = MoveTemp(SceneWithGeometryInstances.GPUInstances)
+			GPUInstances = MoveTemp(SceneWithGeometryInstances.GPUInstances),
+			CullingParameters = View.RayTracingCullingParameters
 			](FRHICommandListImmediate& RHICmdList)
 			{
 				WaitForTasks();
 				RHICmdList.UnlockBuffer(InstanceUploadBuffer);
-				RHICmdList.UnlockBuffer(TransformUploadBuffer);
+
+				if (NumNativeCPUInstances > 0)
+				{
+					RHICmdList.UnlockBuffer(TransformUploadBuffer);
+				}
 
 				// Pull this out here, because command list playback (where the lambda is executed) doesn't update the GPU mask
 				FRHIGPUMask IterateGPUMasks = RHICmdList.GetGPUMask();
@@ -268,8 +270,7 @@ void FRayTracingScene::CreateWithInitializationData(FRDGBuilder& GraphBuilder, c
 				BuildRayTracingInstanceBuffer(
 					RHICmdList,
 					GPUScene,
-					ViewTilePosition,
-					FVector3f(RelativePreViewTranslation),
+					PreViewTranslation,
 					PassParams->InstanceBuffer->GetRHI(),
 					InstanceUploadSRV,
 					AccelerationStructureAddressesBuffer.SRV,
@@ -277,6 +278,7 @@ void FRayTracingScene::CreateWithInitializationData(FRDGBuilder& GraphBuilder, c
 					NumNativeGPUSceneInstances,
 					NumNativeCPUInstances,
 					GPUInstances,
+					CullingParameters.bUseInstanceCulling ? &CullingParameters : nullptr,
 					PassParams->DebugInstanceGPUSceneIndexBuffer ? PassParams->DebugInstanceGPUSceneIndexBuffer->GetRHI() : nullptr);
 			});
 	}
@@ -346,9 +348,47 @@ uint32 FRayTracingScene::AddInstance(FRayTracingGeometryInstance Instance, const
 		{
 			InstanceDebugData.ProxyHash = Proxy->GetTypeHash();
 		}
+
+		check(Instances.Num() == InstancesDebugData.Num());
 	}
 
 	return InstanceIndex;
+}
+
+uint32 FRayTracingScene::AddInstancesUninitialized(uint32 NumInstances)
+{
+	const uint32 OldNum = Instances.AddUninitialized(NumInstances);
+
+	if (bInstanceDebugDataEnabled)
+	{
+		InstancesDebugData.AddUninitialized(NumInstances);
+
+		check(Instances.Num() == InstancesDebugData.Num());
+	}
+
+	return OldNum;
+}
+
+void FRayTracingScene::SetInstance(uint32 InstanceIndex, FRayTracingGeometryInstance InInstance, const FPrimitiveSceneProxy* Proxy, bool bDynamic)
+{
+	FRHIRayTracingGeometry* GeometryRHI = InInstance.GeometryRHI;
+
+	FRayTracingGeometryInstance* Instance = &Instances[InstanceIndex];
+	new (Instance) FRayTracingGeometryInstance(MoveTemp(InInstance));
+
+	if (bInstanceDebugDataEnabled)
+	{
+		FRayTracingInstanceDebugData InstanceDebugData;
+		InstanceDebugData.Flags = bDynamic ? 1 : 0;
+		InstanceDebugData.GeometryAddress = uint64(GeometryRHI);
+
+		if (Proxy)
+		{
+			InstanceDebugData.ProxyHash = Proxy->GetTypeHash();
+		}
+
+		InstancesDebugData[InstanceIndex] = InstanceDebugData;
+	}
 }
 
 void FRayTracingScene::Reset(bool bInInstanceDebugDataEnabled)

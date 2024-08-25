@@ -12,6 +12,8 @@ class IPropertyRowGenerator;
 class SBox;
 class URCVirtualPropertySelfContainer;
 
+DECLARE_DELEGATE(FOnExitingEditMode)
+
 /*
 * ~ SRCVirtualPropertyWidget ~
 *
@@ -34,6 +36,8 @@ public:
 		}
 
 	SLATE_EVENT(FOnGenerateWidget, OnGenerateWidget)
+
+	SLATE_EVENT(FOnExitingEditMode, OnExitingEditMode)
 
 	SLATE_END_ARGS()
 
@@ -74,4 +78,8 @@ private:
 	TSharedPtr<IPropertyRowGenerator> PropertyRowGenerator;
 
 	/** Detail tree node used to create a generic value widget*/
-	TWeakPtr<IDetailTreeNode> DetailTreeNodeWeakPtr;};
+	TWeakPtr<IDetailTreeNode> DetailTreeNodeWeakPtr;
+
+	/** Delegate executed when exiting edit mode if bound */
+	FOnExitingEditMode OnExitingEditModeDelegate;
+};

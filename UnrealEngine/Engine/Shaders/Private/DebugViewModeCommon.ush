@@ -12,7 +12,7 @@
 struct FDebugVSToPS
 {
 	// TexCoords must first in order to be compatible with viewmode requiring using only SV_Position
-	float4 Position : SV_POSITION;
+	INVARIANT_OUTPUT float4 Position : SV_POSITION;
 	float4 VertexColor : TEXCOORD0;
 	float4 TexCoord01 : TEXCOORD1;
 	float4 TexCoord23 : TEXCOORD2;

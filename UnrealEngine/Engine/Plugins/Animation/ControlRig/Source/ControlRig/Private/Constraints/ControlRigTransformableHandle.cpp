@@ -5,15 +5,29 @@
 
 #include "Components/SkeletalMeshComponent.h"
 #include "ControlRig.h"
-#include "ControlRigObjectBinding.h"
+#include "ControlRigComponent.h"
 #include "IControlRigObjectBinding.h"
+#include "ControlRigObjectBinding.h"
+#include "TransformableHandleUtils.h"
 #include "Rigs/RigHierarchyElements.h"
-#include "Channels/MovieSceneChannelProxy.h"
 #include "Sequencer/MovieSceneControlRigParameterSection.h"
 #include "Sections/MovieScene3DTransformSection.h"
 #include "Sequencer/ControlRigSequencerHelpers.h"
+#include "UObject/Package.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ControlRigTransformableHandle)
+
+namespace ControlHandleLocals
+{
+	using RigGuard = TGuardValue_Bitfield_Cleanup<TFunction<void()>>;
+	
+	TSet<UControlRig*> NotifyingRigs;
+
+	bool IsRigNotifying(const UControlRig* InControlRig)
+	{
+		return InControlRig ? NotifyingRigs.Contains(InControlRig) : false;
+	}
+}
 
 /**
  * UTransformableControlHandle
@@ -30,15 +44,9 @@ void UTransformableControlHandle::PostLoad()
 	RegisterDelegates();
 }
 
-bool UTransformableControlHandle::IsValid() const
+bool UTransformableControlHandle::IsValid(const bool bDeepCheck) const
 {
 	if (!ControlRig.IsValid() || ControlName == NAME_None)
-	{
-		return false;
-	}
-
-	const USkeletalMeshComponent* SkeletalMeshComponent = GetSkeletalMesh();
-	if (!SkeletalMeshComponent)
 	{
 		return false;
 	}
@@ -48,34 +56,65 @@ bool UTransformableControlHandle::IsValid() const
 	{
 		return false;
 	}
+
+	if (bDeepCheck)
+	{
+		const USceneComponent* BoundComponent = GetBoundComponent();
+		if (!BoundComponent)
+		{
+			return false;
+		}
+	}
 	
 	return true;
 }
 
-void UTransformableControlHandle::TickForBaking()
+void UTransformableControlHandle::PreEvaluate(const bool bTick) const
 {
-	USkeletalMeshComponent* SkeletalMeshComponent = GetSkeletalMesh();
-	if (SkeletalMeshComponent)
+	if (!ControlRig.IsValid() || ControlRig->IsEvaluating())
 	{
-		const AActor* Parent = SkeletalMeshComponent->GetOwner();
-		while (Parent)
+		return;
+	}
+
+	if (ControlRig->IsAdditive())
+	{
+		if (ControlHandleLocals::IsRigNotifying(ControlRig.Get()))
 		{
-			TArray<USkeletalMeshComponent*> MeshComps;
-			Parent->GetComponents(MeshComps, true);
-
-			for (USkeletalMeshComponent* MeshComp : MeshComps)
-			{
-				MeshComp->TickAnimation(0.03f, false);
-				MeshComp->RefreshBoneTransforms();
-				MeshComp->RefreshFollowerComponents();
-				MeshComp->UpdateComponentToWorld();
-				MeshComp->FinalizeBoneTransform();
-				MeshComp->MarkRenderTransformDirty();
-				MeshComp->MarkRenderDynamicDataDirty();
-			}
-
-			Parent = Parent->GetAttachParentActor();
+			return;
 		}
+		
+		if (const USkeletalMeshComponent* SkeletalMeshComponent = GetSkeletalMesh())
+		{
+			if (!SkeletalMeshComponent->PoseTickedThisFrame())
+			{
+				return TickTarget();
+			}
+		}
+	}
+	
+	return bTick ? TickTarget() : ControlRig->Evaluate_AnyThread();
+}
+
+void UTransformableControlHandle::TickTarget() const
+{
+	if (!ControlRig.IsValid())
+	{
+		return;
+	}
+	
+	if (ControlRig->IsAdditive() && ControlHandleLocals::IsRigNotifying(ControlRig.Get()))
+	{
+		return;
+	}
+	
+	if (const USkeletalMeshComponent* SkeletalMeshComponent = GetSkeletalMesh())
+	{
+		return TransformableHandleUtils::TickDependantComponents(SkeletalMeshComponent);
+	}
+
+	if (UControlRigComponent* ControlRigComponent = GetControlRigComponent())
+	{
+		ControlRigComponent->Update();
 	}
 }
 
@@ -89,18 +128,21 @@ void UTransformableControlHandle::SetGlobalTransform(const FTransform& InGlobal)
 		return;
 	}
 
-	const USkeletalMeshComponent* SkeletalMeshComponent = GetSkeletalMesh();
-	if (!SkeletalMeshComponent)
+	const USceneComponent* BoundComponent = GetBoundComponent();
+	if (!BoundComponent)
 	{
 		return;
 	}
 	
 	const FRigElementKey& ControlKey = ControlElement->GetKey();
-	
-	const FTransform& ComponentTransform = SkeletalMeshComponent->GetComponentTransform();
-	//use this function so we don't set the preferred angles
-	ControlRig->SetControlGlobalTransform(ControlKey.Name, InGlobal.GetRelativeTransform(ComponentTransform), false/*bNotify*/, FRigControlModifiedContext(), false/*bSetupUndo*/, false /*bPrintPython*/, false/* bFixEulerFlips*/);
+	const FTransform& ComponentTransform = BoundComponent->GetComponentTransform();
 
+	static const FRigControlModifiedContext Context(EControlRigSetKey::Never);
+	static constexpr bool bNotify = false, bSetupUndo = false, bPrintPython = false, bFixEulerFlips = false;
+
+	//use this function so we don't set the preferred angles
+	ControlRig->SetControlGlobalTransform(ControlKey.Name, InGlobal.GetRelativeTransform(ComponentTransform),
+		bNotify, Context, bSetupUndo, bPrintPython, bFixEulerFlips);
 }
 
 void UTransformableControlHandle::SetLocalTransform(const FTransform& InLocal) const
@@ -128,8 +170,8 @@ FTransform UTransformableControlHandle::GetGlobalTransform() const
 		return FTransform::Identity;
 	}
 	
-	const USkeletalMeshComponent* SkeletalMeshComponent = GetSkeletalMesh();
-	if (!SkeletalMeshComponent)
+	const USceneComponent* BoundComponent = GetBoundComponent();
+	if (!BoundComponent)
 	{
 		return FTransform::Identity;
 	}
@@ -138,7 +180,7 @@ FTransform UTransformableControlHandle::GetGlobalTransform() const
 	const URigHierarchy* Hierarchy = ControlRig->GetHierarchy();
 	const int32 CtrlIndex = Hierarchy->GetIndex(ControlKey);
 
-	const FTransform& ComponentTransform = SkeletalMeshComponent->GetComponentTransform();
+	const FTransform& ComponentTransform = BoundComponent->GetComponentTransform();
 	return Hierarchy->GetGlobalTransform(CtrlIndex) * ComponentTransform;
 }
 
@@ -148,6 +190,11 @@ FTransform UTransformableControlHandle::GetLocalTransform() const
 	if (!ControlElement)
 	{
 		return FTransform::Identity;
+	}
+
+	if (ControlRig->IsAdditive())
+	{
+		return ControlRig->GetControlLocalTransform(ControlName);
 	}
 	
 	const FRigElementKey& ControlKey = ControlElement->GetKey();
@@ -159,13 +206,13 @@ FTransform UTransformableControlHandle::GetLocalTransform() const
 
 UObject* UTransformableControlHandle::GetPrerequisiteObject() const
 {
-	return GetSkeletalMesh(); 
+	return GetBoundComponent(); 
 }
 
 FTickFunction* UTransformableControlHandle::GetTickFunction() const
 {
-	USkeletalMeshComponent* SkelMeshComponent = GetSkeletalMesh();
-	return SkelMeshComponent ? &SkelMeshComponent->PrimaryComponentTick : nullptr;
+	USceneComponent* BoundComponent = GetBoundComponent();
+	return BoundComponent ? &BoundComponent->PrimaryComponentTick : nullptr;
 }
 
 uint32 UTransformableControlHandle::ComputeHash(const UControlRig* InControlRig, const FName& InControlName)
@@ -184,13 +231,28 @@ uint32 UTransformableControlHandle::GetHash() const
 
 TWeakObjectPtr<UObject> UTransformableControlHandle::GetTarget() const
 {
-	return GetSkeletalMesh();
+	return GetBoundComponent();
+}
+
+USceneComponent* UTransformableControlHandle::GetBoundComponent() const
+{
+	if (USkeletalMeshComponent* SkeletalMeshComponent = GetSkeletalMesh())
+	{
+		return SkeletalMeshComponent;	
+	}
+	return GetControlRigComponent();
 }
 
 USkeletalMeshComponent* UTransformableControlHandle::GetSkeletalMesh() const
 {
 	const TSharedPtr<IControlRigObjectBinding> ObjectBinding = ControlRig.IsValid() ? ControlRig->GetObjectBinding() : nullptr;
    	return ObjectBinding ? Cast<USkeletalMeshComponent>(ObjectBinding->GetBoundObject()) : nullptr;
+}
+
+UControlRigComponent* UTransformableControlHandle::GetControlRigComponent() const
+{
+	const TSharedPtr<IControlRigObjectBinding> ObjectBinding = ControlRig.IsValid() ? ControlRig->GetObjectBinding() : nullptr;
+	return ObjectBinding ? Cast<UControlRigComponent>(ObjectBinding->GetBoundObject()) : nullptr;
 }
 
 bool UTransformableControlHandle::HasDirectDependencyWith(const UTransformableHandle& InOther) const
@@ -202,9 +264,15 @@ bool UTransformableControlHandle::HasDirectDependencyWith(const UTransformableHa
 	}
 
 	// check whether the other handle is one of the skeletal mesh parent
-	if (const USkeletalMeshComponent* SkeletalMeshComponent = GetSkeletalMesh())
+	if (const USceneComponent* BoundComponent = GetBoundComponent())
 	{
-		for (const USceneComponent* Comp=SkeletalMeshComponent->GetAttachParent(); Comp!=nullptr; Comp=Comp->GetAttachParent() )
+		if (GetTypeHash(BoundComponent) == OtherHash)
+		{
+			// we cannot constrain the skeletal mesh component to one of ControlRig's controls
+			return true;
+		}
+		
+		for (const USceneComponent* Comp=BoundComponent->GetAttachParent(); Comp!=nullptr; Comp=Comp->GetAttachParent() )
 		{
 			const uint32 AttachParentHash = GetTypeHash(Comp);
 			if (AttachParentHash == OtherHash)
@@ -226,7 +294,7 @@ bool UTransformableControlHandle::HasDirectDependencyWith(const UTransformableHa
 	const FRigBaseElementParentArray AllParents = Hierarchy->GetParents(ControlElement, bRecursive);
 	const bool bIsParent = AllParents.ContainsByPredicate([this, OtherHash](const FRigBaseElement* Parent)
 	{
-		const uint32 ParentHash = ComputeHash(ControlRig.Get(), Parent->GetName());
+		const uint32 ParentHash = ComputeHash(ControlRig.Get(), Parent->GetFName());
 		return ParentHash == OtherHash;		
 	});
 
@@ -239,7 +307,7 @@ bool UTransformableControlHandle::HasDirectDependencyWith(const UTransformableHa
 	const TArray<FRigControlElement*> AllControls = Hierarchy->GetControls();
 	const int32 IndexOfPossibleParent = AllControls.IndexOfByPredicate([this, OtherHash](const FRigBaseElement* Parent)
 	{
-		const uint32 ChildHash = ComputeHash(ControlRig.Get(), Parent->GetName());
+		const uint32 ChildHash = ComputeHash(ControlRig.Get(), Parent->GetFName());
 		return ChildHash == OtherHash;
 	});
 
@@ -270,7 +338,7 @@ FTickPrerequisite UTransformableControlHandle::GetPrimaryPrerequisite() const
 {
 	if (FTickFunction* TickFunction = GetTickFunction())
 	{
-		return FTickPrerequisite( GetSkeletalMesh(), *TickFunction); 
+		return FTickPrerequisite( GetBoundComponent(), *TickFunction); 
 	}
 	
 	static const FTickPrerequisite DummyPrerex;
@@ -329,6 +397,12 @@ void UTransformableControlHandle::RegisterDelegates()
 		{
 			Hierarchy->OnModified().AddUObject(this, &UTransformableControlHandle::OnHierarchyModified);
 		}
+
+		// NOTE BINDER: this has to be done before binding UTransformableControlHandle::OnControlModified
+		if (!ControlRig->ControlModified().IsBoundToObject(&GetEvaluationBinding()))
+		{
+			ControlRig->ControlModified().AddRaw(&GetEvaluationBinding(), &FControlEvaluationGraphBinding::HandleControlModified);
+		}
 		
 		ControlRig->ControlModified().AddUObject(this, &UTransformableControlHandle::OnControlModified);
 		if (!ControlRig->ControlRigBound().IsBoundToObject(this))
@@ -368,7 +442,7 @@ void UTransformableControlHandle::OnHierarchyModified(
 			const FName OldName = Hierarchy->GetPreviousName(InElement->GetKey());
 			if (OldName == ControlName)
 			{
-				ControlName = InElement->GetName();
+				ControlName = InElement->GetFName();
 			}
 			break;
 		}
@@ -387,31 +461,56 @@ void UTransformableControlHandle::OnControlModified(
 		return;
 	}
 
+	if (bNotifying)
+	{
+		return;
+	}
+
 	if (!ControlRig.IsValid() || ControlName == NAME_None)
 	{
 		return;
 	}
 
-	if (OnHandleModified.IsBound() && (ControlRig == InControlRig))
+	if (HandleModified().IsBound() && (ControlRig == InControlRig))
 	{
 		const EHandleEvent Event = InContext.bConstraintUpdate ?
 			EHandleEvent::GlobalTransformUpdated : EHandleEvent::LocalTransformUpdated;
 
-		if (InControl->GetName() == ControlName)
-		{	// if that handle is wrapping InControl  
-			OnHandleModified.Broadcast(this, Event);
+		if (InControl->GetFName() == ControlName)
+		{	// if that handle is wrapping InControl
+			if (InContext.bConstraintUpdate)
+			{
+				GetEvaluationBinding().bPendingFlush = true;
+			}
+			
+			// guard from re-entrant notification
+			const ControlHandleLocals::RigGuard NotificationGuard([ControlRig = ControlRig.Get()]()
+			{
+				ControlHandleLocals::NotifyingRigs.Remove(ControlRig);
+			});
+			ControlHandleLocals::NotifyingRigs.Add(ControlRig.Get());
+			
+			Notify(Event);
 		}
 		else if (Event == EHandleEvent::GlobalTransformUpdated)
 		{
+			// the control being modified is not the one wrapped by this handle 
 			if (const FRigControlElement* Control = ControlRig->FindControl(ControlName))
-			{	// if that handle control's transform has been dirtied
-				const bool bIsTransformDirty =
-					Control->Pose.IsDirty(ERigTransformType::CurrentLocal) ||
-					Control->Pose.IsDirty(ERigTransformType::CurrentGlobal);
-				if (bIsTransformDirty)
+			{
+				if (InContext.bConstraintUpdate)
 				{
-					OnHandleModified.Broadcast(this, Event);
+					GetEvaluationBinding().bPendingFlush = true;
 				}
+
+				// guard from re-entrant notification 
+				const ControlHandleLocals::RigGuard NotificationGuard([ControlRig = ControlRig.Get()]()
+				{
+					ControlHandleLocals::NotifyingRigs.Remove(ControlRig);
+				});
+				ControlHandleLocals::NotifyingRigs.Add(ControlRig.Get());
+				
+				const bool bPreTick = !ControlRig->IsAdditive();
+				Notify(EHandleEvent::UpperDependencyUpdated, bPreTick);
 			}
 		}
 	}
@@ -449,10 +548,18 @@ void UTransformableControlHandle::OnObjectBoundToControlRig(UObject* InObject)
 	const UObject* CurrentObject = Binding ? Binding->GetBoundObject() : nullptr;
 	if (CurrentObject == InObject)
 	{
-		const UWorld* ThisWorld = GetWorld();
-		if (ThisWorld && InObject->GetWorld() == ThisWorld)
+		const UWorld* World = GetWorld();
+		if (!World)
 		{
-			OnHandleModified.Broadcast(this, EHandleEvent::ComponentUpdated);
+			if (const USceneComponent* BoundComponent = GetBoundComponent())
+			{
+				World = BoundComponent->GetWorld();
+			}
+		}
+		
+		if (World && InObject->GetWorld() == World)
+		{
+			Notify(EHandleEvent::ComponentUpdated);
 		}
 	}
 }
@@ -489,9 +596,19 @@ bool UTransformableControlHandle::AddTransformKeys(const TArray<FFrameNumber>& I
 
 		if (bLocal)
 		{
-			return InControlRig->SetControlLocalTransform(ControlName, InTransform, bNotify, InKeyframeContext, bUndo, bFixEuler);
+			InControlRig->SetControlLocalTransform(ControlName, InTransform, bNotify, InKeyframeContext, bUndo, bFixEuler);
+			if (InControlRig->IsAdditive())
+			{
+				InControlRig->Evaluate_AnyThread();
+			}
+			return;
 		}
+		
 		InControlRig->SetControlGlobalTransform(ControlName, InTransform, bNotify, InKeyframeContext, bUndo, bFixEuler);
+		if (InControlRig->IsAdditive())
+		{
+			InControlRig->Evaluate_AnyThread();
+		}
 	};
 
 	FRigControlModifiedContext KeyframeContext;
@@ -512,25 +629,18 @@ bool UTransformableControlHandle::AddTransformKeys(const TArray<FFrameNumber>& I
 //for control rig need to check to see if the control rig is different then we may need to update it based upon what we are now bound to
 void UTransformableControlHandle::ResolveBoundObjects(FMovieSceneSequenceID LocalSequenceID, IMovieScenePlayer& Player, UObject* SubObject)
 {
-	if (UControlRig* InControlRig = Cast<UControlRig>(SubObject))
+	if (const UControlRig* InControlRig = Cast<UControlRig>(SubObject))
 	{
 		if (ControlRig != InControlRig)
 		{
-			for (TWeakObjectPtr<> ParentObject : ConstraintBindingID.ResolveBoundObjects(LocalSequenceID, Player))
+			for (const TWeakObjectPtr<> ParentObject : ConstraintBindingID.ResolveBoundObjects(LocalSequenceID, Player))
 			{
-				USceneComponent* Component = nullptr;
-				if (AActor* Actor = Cast<AActor>(ParentObject.Get()))
+				const UObject* Bindable = FControlRigObjectBinding::GetBindableObject(ParentObject.Get());
+				if (InControlRig->GetObjectBinding() && InControlRig->GetObjectBinding()->GetBoundObject() == Bindable)
 				{
-					Component = Actor->GetRootComponent();
-				}
-				else if (USceneComponent* Comp = Cast<USceneComponent>(ParentObject.Get()))
-				{
-					Component = Comp;
-				}
-
-				if (InControlRig->GetObjectBinding() && InControlRig->GetObjectBinding()->GetBoundObject() == Component)
-				{
+					UnregisterDelegates();
 					ControlRig = InControlRig;
+					RegisterDelegates();
 				}
 				break; //just do one
 			}
@@ -554,15 +664,15 @@ FString UTransformableControlHandle::GetLabel() const
 
 FString UTransformableControlHandle::GetFullLabel() const
 {
-	const USkeletalMeshComponent* SkeletalMesh = GetSkeletalMesh();
-	if (!SkeletalMesh)
+	const USceneComponent* BoundComponent = GetBoundComponent();
+	if (!BoundComponent)
 	{
 		static const FString DummyLabel;
 		return DummyLabel;
 	}
 	
-	const AActor* Actor = SkeletalMesh->GetOwner();
-	const FString ControlRigLabel = Actor ? Actor->GetActorLabel() : SkeletalMesh->GetName();
+	const AActor* Actor = BoundComponent->GetOwner();
+	const FString ControlRigLabel = Actor ? Actor->GetActorLabel() : BoundComponent->GetName();
 	return FString::Printf(TEXT("%s/%s"), *ControlRigLabel, *ControlName.ToString() );
 }
 
@@ -572,19 +682,38 @@ void UTransformableControlHandle::OnObjectsReplaced(const TMap<UObject*, UObject
 	{
 		if (UControlRig* NewControlRig = Cast<UControlRig>(NewObject))
 		{
-			if (URigHierarchy* Hierarchy = ControlRig->GetHierarchy())
-			{
-				Hierarchy->OnModified().RemoveAll(this);
-			}
-			
+			UnregisterDelegates();
 			ControlRig = NewControlRig;
-			
-			if (URigHierarchy* Hierarchy = ControlRig->GetHierarchy())
-			{
-				Hierarchy->OnModified().AddUObject(this, &UTransformableControlHandle::OnHierarchyModified);
-			}
+			RegisterDelegates();
 		}
 	}
 }
 
 #endif
+
+FControlEvaluationGraphBinding& UTransformableControlHandle::GetEvaluationBinding()
+{
+	static FControlEvaluationGraphBinding EvaluationBinding;
+	return EvaluationBinding;
+}
+
+void FControlEvaluationGraphBinding::HandleControlModified(UControlRig* InControlRig, FRigControlElement* InControl, const FRigControlModifiedContext& InContext)
+{
+	if (!bPendingFlush || !InContext.bConstraintUpdate)
+	{
+		return;
+	}
+	
+	if (!InControlRig || !InControl)
+	{
+		return;
+	}
+
+	// flush all pending evaluations if any
+	if (UWorld* World = InControlRig->GetWorld())
+	{
+		const FConstraintsManagerController& Controller = FConstraintsManagerController::Get(World);
+		Controller.FlushEvaluationGraph();
+	}
+	bPendingFlush = false;
+}

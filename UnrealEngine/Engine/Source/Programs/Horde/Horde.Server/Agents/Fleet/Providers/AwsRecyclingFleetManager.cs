@@ -81,13 +81,13 @@ public class AwsBadHttpResponseException : AwsFleetManagerException
 /// </summary>
 public sealed class AwsRecyclingFleetManager : IFleetManager
 {
-	private static readonly Random s_random = new ();
-	
+	private static readonly Random s_random = new();
+
 	/// <summary>
 	/// Settings for fleet manager
 	/// </summary>
 	public AwsRecyclingFleetManagerSettings Settings { get; }
-	
+
 	private readonly IAmazonEC2 _ec2;
 	private readonly IAgentCollection _agentCollection;
 	private readonly Meter _meter;
@@ -120,7 +120,7 @@ public sealed class AwsRecyclingFleetManager : IFleetManager
 		span.SetAttribute("numAgents", agents.Count);
 		span.SetAttribute("count", requestedInstancesCount);
 
-		using IDisposable logScope = _logger.BeginScope(new Dictionary<string, object> { ["PoolId"] = pool.Id });
+		using IDisposable? logScope = _logger.BeginScope(new Dictionary<string, object> { ["PoolId"] = pool.Id });
 
 		await StopStuckPendingInstancesAsync(pool, cancellationToken);
 		Dictionary<string, List<Instance>> candidatesPerAz = await GetCandidateInstancesAsync(pool, cancellationToken);
@@ -129,7 +129,7 @@ public sealed class AwsRecyclingFleetManager : IFleetManager
 		Dictionary<string, List<Instance>> stoppedInstancesPerAz = GetInstancesToLaunch(candidatesPerAz, requestCountPerAz);
 		List<InstanceType>? instanceTypePriority = Settings.InstanceTypes?.Select(InstanceType.FindValue).ToList();
 		int instancesToStartCount = requestCountPerAz.Values.Sum(x => x);
-		
+
 		span.SetAttribute("InstancesToStartCount", instancesToStartCount);
 		span.SetAttribute("RequestedInstancesCount", requestedInstancesCount);
 		span.SetAttribute("CurrentAgentCount", agents.Count);
@@ -151,7 +151,7 @@ public sealed class AwsRecyclingFleetManager : IFleetManager
 			using (_logger.WithProperty("Az", az).BeginScope())
 			{
 				_logger.LogDebug("Trying to start {InstanceCount} instance(s)", instances.Count);
-				await StartInstancesWithRetriesAsync(instances, instanceTypePriority, cancellationToken);					
+				await StartInstancesWithRetriesAsync(instances, instanceTypePriority, cancellationToken);
 			}
 		}
 
@@ -163,7 +163,7 @@ public sealed class AwsRecyclingFleetManager : IFleetManager
 				0,
 				$"Starting {instancesToStartCount} instance(s) but not enough stopped instances to accommodate the full pool scale-out");
 		}
-		
+
 		return new ScaleResult(
 			FleetManagerOutcome.Success,
 			instancesToStartCount,
@@ -244,9 +244,12 @@ public sealed class AwsRecyclingFleetManager : IFleetManager
 		using TelemetrySpan span = _tracer.StartActiveSpan($"{nameof(AwsRecyclingFleetManager)}.{nameof(StartInstancesWithRetriesAsync)}");
 		span.SetAttribute("instances", String.Join(',', instanceIds));
 		span.SetAttribute("instanceTypePriority", instanceTypePriorityString);
-		
-		if (instances.Count == 0) return;
-		
+
+		if (instances.Count == 0)
+		{
+			return;
+		}
+
 		List<InstanceType?> instanceTypes = new();
 		if (instanceTypePriority == null || instanceTypePriority.Count == 0)
 		{
@@ -256,8 +259,8 @@ public sealed class AwsRecyclingFleetManager : IFleetManager
 		{
 			instanceTypes.AddRange(instanceTypePriority);
 		}
-		
-		using IDisposable logScope = _logger.BeginScope(new Dictionary<string, object>
+
+		using IDisposable? logScope = _logger.BeginScope(new Dictionary<string, object>
 		{
 			["InstanceIds"] = instanceIds,
 			["InstanceTypes"] = instanceTypes
@@ -274,19 +277,19 @@ public sealed class AwsRecyclingFleetManager : IFleetManager
 				await StartInstancesAsync(instances, instanceType, cancellationToken);
 				success = true;
 				KeyValuePair<string, object?> statusTag = KeyValuePair.Create("status", (object?)"success");
-				_ec2StartInstanceCounter.Add(1, new [] { instanceTypeTag, azTag, statusTag });
+				_ec2StartInstanceCounter.Add(1, new[] { instanceTypeTag, azTag, statusTag });
 				break;
 			}
 			catch (AwsInsufficientCapacityException)
 			{
 				KeyValuePair<string, object?> statusTag = KeyValuePair.Create("status", (object?)"errorCapacity");
-				_ec2StartInstanceCounter.Add(1, new [] { instanceTypeTag, azTag, statusTag });
+				_ec2StartInstanceCounter.Add(1, new[] { instanceTypeTag, azTag, statusTag });
 				_logger.LogInformation("Insufficient capacity for {InstanceType}", instanceType?.ToString());
 			}
 			catch (Exception)
 			{
 				KeyValuePair<string, object?> statusTag = KeyValuePair.Create("status", (object?)"error");
-				_ec2StartInstanceCounter.Add(1, new [] { instanceTypeTag, azTag, statusTag });
+				_ec2StartInstanceCounter.Add(1, new[] { instanceTypeTag, azTag, statusTag });
 				throw;
 			}
 		}
@@ -294,7 +297,7 @@ public sealed class AwsRecyclingFleetManager : IFleetManager
 		span.SetAttribute("success", success);
 		if (!success)
 		{
-			_logger.LogError("Unable to start instances. Insufficient capacity for all instance types tried");
+			_logger.LogInformation("Unable to start instances. Insufficient capacity for all instance types tried");
 		}
 	}
 
@@ -304,14 +307,17 @@ public sealed class AwsRecyclingFleetManager : IFleetManager
 		using TelemetrySpan span = _tracer.StartActiveSpan($"{nameof(AwsRecyclingFleetManager)}.{nameof(StartInstancesAsync)}");
 		span.SetAttribute("instances", String.Join(',', instanceIds));
 		span.SetAttribute("instanceType", instanceType);
-		
-		if (instances.Count == 0) return;
+
+		if (instances.Count == 0)
+		{
+			return;
+		}
 		if (instanceType != null)
 		{
 			await ChangeInstanceTypeAsync(instances, instanceType, cancellationToken);
 		}
 
-		StartInstancesRequest startRequest = new ();
+		StartInstancesRequest startRequest = new();
 		startRequest.InstanceIds.AddRange(instanceIds);
 
 		StartInstancesResponse startResponse;
@@ -337,7 +343,7 @@ public sealed class AwsRecyclingFleetManager : IFleetManager
 		{
 			throw new AwsBadHttpResponseException(startResponse.HttpStatusCode);
 		}
-		
+
 		foreach (InstanceStateChange instanceChange in startResponse.StartingInstances)
 		{
 			_logger.LogInformation("Instance {InstanceId} started ({PrevState} -> {CurrentState})", instanceChange.InstanceId, instanceChange.PreviousState.Name, instanceChange.CurrentState.Name);
@@ -364,13 +370,16 @@ public sealed class AwsRecyclingFleetManager : IFleetManager
 			using TelemetrySpan span = _tracer.StartActiveSpan($"{nameof(AwsRecyclingFleetManager)}.{nameof(ChangeInstanceTypeAsync)}");
 			span.SetAttribute("fromInstanceType", instance.InstanceType);
 			span.SetAttribute("toInstanceType", newInstanceType);
-			
-			if (instance.InstanceType == newInstanceType) { continue; }
 
-			ModifyInstanceAttributeRequest request = new () { InstanceId = instance.InstanceId, InstanceType = newInstanceType };
+			if (instance.InstanceType == newInstanceType)
+			{
+				continue;
+			}
+
+			ModifyInstanceAttributeRequest request = new() { InstanceId = instance.InstanceId, InstanceType = newInstanceType };
 			ModifyInstanceAttributeResponse response = await _ec2.ModifyInstanceAttributeAsync(request, cancellationToken);
 			span.SetAttribute("Response.StatusCode", (int)response.HttpStatusCode);
-			
+
 			if (IsResponseSuccessful(response))
 			{
 				_logger.LogInformation("Instance type for {InstanceId} modified ({PrevInstanceType} -> {CurrentInstanceType})", instance.InstanceId, instance.InstanceType, newInstanceType);
@@ -382,7 +391,7 @@ public sealed class AwsRecyclingFleetManager : IFleetManager
 			}
 		}
 	}
-	
+
 	/// <summary>
 	/// Stop instances that have been stuck in state pending for longer than X time
 	/// </summary>
@@ -391,10 +400,10 @@ public sealed class AwsRecyclingFleetManager : IFleetManager
 	private async Task StopStuckPendingInstancesAsync(IPool pool, CancellationToken cancellationToken)
 	{
 		TimeSpan pendingStateTimeout = TimeSpan.FromMinutes(5);
-		
+
 		using TelemetrySpan span = _tracer.StartActiveSpan($"{nameof(AwsRecyclingFleetManager)}.{nameof(StopStuckPendingInstancesAsync)}");
 		span.SetAttribute("poolId", pool.Id.ToString());
-		
+
 		// Find pending instances in the correct pool
 		DescribeInstancesRequest request = new()
 		{
@@ -422,7 +431,7 @@ public sealed class AwsRecyclingFleetManager : IFleetManager
 			span.SetAttribute("stopRes.numStoppingInstances", stopResponse.StoppingInstances.Count);
 		}
 	}
-	
+
 	/// <summary>
 	/// Get list of stopped instances from EC2 API that can be used scaling out a given pool
 	/// </summary>
@@ -433,7 +442,7 @@ public sealed class AwsRecyclingFleetManager : IFleetManager
 	{
 		using TelemetrySpan span = _tracer.StartActiveSpan($"{nameof(AwsRecyclingFleetManager)}.{nameof(GetCandidateInstancesAsync)}");
 		span.SetAttribute("poolId", pool.Id.ToString());
-		
+
 		// Find stopped instances in the correct pool
 		DescribeInstancesRequest request = new()
 		{
@@ -451,8 +460,8 @@ public sealed class AwsRecyclingFleetManager : IFleetManager
 		List<IGrouping<string, Instance>> azInstancePairs = response.Reservations
 			.SelectMany(x => x.Instances)
 			.GroupBy(x => x.Placement.AvailabilityZone).ToList();
-		
-		return azInstancePairs.ToDictionary(x => x.Key, y => y.ToList());;
+
+		return azInstancePairs.ToDictionary(x => x.Key, y => y.ToList());
 	}
 
 	/// <inheritdoc/>
@@ -463,7 +472,7 @@ public sealed class AwsRecyclingFleetManager : IFleetManager
 	}
 
 	/// <inheritdoc/>
-	public async Task<int> GetNumStoppedInstancesAsync(IPool pool, CancellationToken cancellationToken)
+	public async Task<int> GetNumStoppedInstancesAsync(IPoolConfig pool, CancellationToken cancellationToken)
 	{
 		// Find all instances in the pool
 		DescribeInstancesRequest describeRequest = new DescribeInstancesRequest();

@@ -20,7 +20,7 @@ public:
 	void Init(const FDataStreamManagerInitParams& InitParams);
 	void Deinit();
 
-	EWriteResult BeginWrite();
+	EWriteResult BeginWrite(const UDataStream::FBeginWriteParameters& Params);
 	UDataStream::EWriteResult WriteData(UE::Net::FNetSerializationContext& context, FDataStreamRecord const*& OutRecord);
 	void EndWrite();
 	void ReadData(UE::Net::FNetSerializationContext& context);
@@ -95,9 +95,9 @@ void UDataStreamManager::Deinit()
 	Impl->Deinit();
 }
 
-UDataStream::EWriteResult UDataStreamManager::BeginWrite()
+UDataStream::EWriteResult UDataStreamManager::BeginWrite(const UDataStream::FBeginWriteParameters& Params)
 {
-	return Impl->BeginWrite();
+	return Impl->BeginWrite(Params);
 }
 
 void UDataStreamManager::EndWrite()
@@ -191,7 +191,7 @@ void UDataStreamManager::FImpl::Deinit()
 	StreamSendStatus.Reset();
 }
 
-UDataStreamManager::EWriteResult UDataStreamManager::FImpl::BeginWrite()
+UDataStreamManager::EWriteResult UDataStreamManager::FImpl::BeginWrite(const UDataStream::FBeginWriteParameters& Params)
 {
 	const SIZE_T StreamCount = Streams.Num();
 	if (StreamCount == 0)
@@ -212,7 +212,7 @@ UDataStreamManager::EWriteResult UDataStreamManager::FImpl::BeginWrite()
 			continue;
 		}
 
-		const EWriteResult WriteResult = Stream->BeginWrite();
+		const EWriteResult WriteResult = Stream->BeginWrite(Params);
 		CombinedWriteResult = (CombinedWriteResult == EWriteResult::HasMoreData || WriteResult == EWriteResult::HasMoreData) ? EWriteResult::HasMoreData : WriteResult;
 	}
 
@@ -302,7 +302,16 @@ UDataStreamManager::EWriteResult UDataStreamManager::FImpl::WriteData(UE::Net::F
 		{
 			checkf(SubRecord == nullptr, TEXT("DataStream '%s' provided a record despite errors or returning NoData."), ToCStr(Stream->GetFName().GetPlainNameString()));
 			ManagerStream.DiscardSubstream(SubBitStream);
-			continue;
+
+			if (SubContext.HasError())
+			{
+				Context.SetError(SubContext.GetError(), false);
+				break;
+			}
+			else
+			{
+				continue;
+			}
 		}
 
 		DataStreamMask |= CurrentStreamMask;

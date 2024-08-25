@@ -12,7 +12,6 @@
 
 #include "IOpenXRExtensionPlugin.h"
 #include "OpenXRCore.h"
-#include "OpenXRHMD.h"
 
 /**
   * OpenXR ViveTracker
@@ -34,7 +33,7 @@ public:
 
 		FViveTracker(XrActionSet InActionSet, FOpenXRPath InRolePath, const char* InName);
 
-		void AddTrackedDevices(class FOpenXRHMD* HMD);
+		void AddTrackedDevices(class IOpenXRHMD* HMD);
 		void GetSuggestedBindings(TArray<XrActionSuggestedBinding>& OutSuggestedBindings);
 	};
 
@@ -48,7 +47,7 @@ public:
 		return FString(TEXT("OpenXRViveTracker"));
 	}
 	virtual bool GetRequiredExtensions(TArray<const ANSICHAR*>& OutExtensions) override;
-	virtual const void* OnGetSystem(XrInstance InInstance, const void* InNext) override;
+	virtual void PostCreateInstance(XrInstance InInstance) override;
 	virtual const void* OnCreateSession(XrInstance InInstance, XrSystemId InSystem, const void* InNext) override;
 	virtual void OnDestroySession(XrSession InSession) override;
 	virtual void AttachActionSets(TSet<XrActionSet>& OutActionSets) override;
@@ -90,13 +89,15 @@ private:
 
 	PFN_xrEnumerateViveTrackerPathsHTCX xrEnumerateViveTrackerPathsHTCX = nullptr;
 
-	class FOpenXRHMD* OpenXRHMD = nullptr;
+	class IXRTrackingSystem* XRTrackingSystem = nullptr;
+	class IOpenXRHMD* OpenXRHMD = nullptr;
 
 	TSharedPtr<FGenericApplicationMessageHandler> MessageHandler;
 	int32 DeviceIndex;
 
 	XrActionSet TrackerActionSet;
 	TMap<EControllerHand, FViveTracker> Trackers;
+	TArray<FViveTracker> UnassignedTrackers;
 
 	TMap<FName, EControllerHand> MotionSourceToEControllerHandMap;
 };

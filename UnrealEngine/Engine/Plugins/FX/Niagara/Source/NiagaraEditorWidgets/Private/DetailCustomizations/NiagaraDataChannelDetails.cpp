@@ -2,30 +2,26 @@
 
 #include "NiagaraDataChannelDetails.h"
 
-#include "IDetailChildrenBuilder.h"
 #include "DetailLayoutBuilder.h"
 #include "PropertyCustomizationHelpers.h"
+#include "ScopedTransaction.h"
 
 #include "Types/SlateEnums.h"
-#include "Widgets/SItemSelector.h"
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
 #include "Widgets/Input/SComboBox.h"
 #include "Widgets/Input/SEditableTextBox.h"
-#include "Widgets/Input/SSearchBox.h"
 #include "Widgets/Input/SComboButton.h"
+#include "Widgets/Input/SCheckBox.h"
 #include "SListViewSelectorDropdownMenu.h"
 
-#include "SNiagaraNamePropertySelector.h"
-#include "NiagaraDataChannel.h"
 #include "DataInterface/NiagaraDataInterfaceDataChannelRead.h"
 #include "NiagaraDataChannel.h"
-#include "NiagaraDataChannel_Global.h"
 #include "NiagaraDataChannel_Islands.h"
 
 #include "NiagaraSystem.h"
 #include "NiagaraEditorUtilities.h"
-#include "NiagaraEditorWidgetsStyle.h"
+#include "K2Node_WriteDataChannel.h"
 
 #include "NiagaraDataInterfaceDetails.h"
 
@@ -51,8 +47,6 @@ private:
 	void OnComboOpening();
 
 	void OnSelectionChanged(TSharedPtr<FNiagaraVariableBase> InNewSelection, ESelectInfo::Type);
-
-	TSharedRef<SWidget> MakeSelectionWidget(TSharedPtr<FNiagaraVariableBase> InItem);
 
 	TSharedRef<ITableRow> GenerateAddElementRow(TSharedPtr<FNiagaraVariableBase> Entry, const TSharedRef<STableViewBase>& OwnerTable) const;
 
@@ -255,7 +249,7 @@ void FNiagaraDataInterfaceDataChannelReadDetails::CustomizeDetails(IDetailLayout
 	CategoryBuilder.GetDefaultProperties(Properties, true, true);
 	for (const TSharedRef<IPropertyHandle>& PropertyHandle : Properties)
 	{
-		FProperty* Property = PropertyHandle->GetProperty();
+		PropertyHandle->GetProperty();
 		CategoryBuilder.AddProperty(PropertyHandle);		
 	}
 }
@@ -263,6 +257,81 @@ void FNiagaraDataInterfaceDataChannelReadDetails::CustomizeDetails(IDetailLayout
 TSharedRef<IDetailCustomization> FNiagaraDataInterfaceDataChannelReadDetails::MakeInstance()
 {
 	return MakeShared<FNiagaraDataInterfaceDataChannelReadDetails>();
+}
+
+void FNiagaraDataChannelBPNodeDetails::CustomizeDetails(IDetailLayoutBuilder& DetailBuilder)
+{
+	TArray<TWeakObjectPtr<UObject>> SelectedObjects;
+	DetailBuilder.GetObjectsBeingCustomized(SelectedObjects);
+	if (SelectedObjects.Num() != 1)
+	{
+		return;
+	}
+
+	UObject* Obj = SelectedObjects[0].Get();
+	UK2Node_DataChannelBase* Node = Cast<UK2Node_DataChannelBase>(Obj);
+	if(Node == nullptr || Node->GetDataChannel() == nullptr)
+	{
+		return;
+	}
+
+	UNiagaraDataChannel* DataChannel = Node->GetDataChannel();
+	IDetailCategoryBuilder& ChannelCategoryBuilder = DetailBuilder.EditCategory(TEXT("Data Channel"));
+	for (const FNiagaraDataChannelVariable& Var : DataChannel->GetVariables())
+	{
+		TWeakObjectPtr<UK2Node_DataChannelBase> NodePtr(Node);
+		FGuid VarGuid = Var.Version;
+		auto CheckStateChanged = [NodePtr, VarGuid](const ECheckBoxState NewState)
+		{
+			if (UK2Node_DataChannelBase* Node = NodePtr.Get())
+			{
+				FScopedTransaction Transaction(LOCTEXT("ChangeAttributeAccess", "Change data channel attribute access"));
+				Node->Modify();
+				if (NewState == ECheckBoxState::Checked)
+				{
+					Node->IgnoredVariables.Remove(VarGuid);
+					Node->ReconstructNode();
+				}
+				else if (NewState == ECheckBoxState::Unchecked)
+				{
+					Node->IgnoredVariables.Add(VarGuid);
+					Node->ReconstructNode();
+				}
+			}
+		};
+		auto SPCheckState = [NodePtr, VarGuid]()
+		{
+			if (UK2Node_DataChannelBase* Node = NodePtr.Get())
+			{
+				return Node->IgnoredVariables.Contains(VarGuid) ? ECheckBoxState::Unchecked : ECheckBoxState::Checked;
+			}
+			return ECheckBoxState::Undetermined;
+		};
+		
+		FDetailWidgetRow& Row = ChannelCategoryBuilder.AddCustomRow(FText::FromName(Var.GetName()));
+		Row.NameWidget
+		[
+			SNew(STextBlock)
+			.Text(FText::FromName(Var.GetName()))
+			.Font(IDetailLayoutBuilder::GetDetailFont())
+		];
+		Row.ValueWidget
+		[
+			SNew(SCheckBox)
+			.OnCheckStateChanged_Lambda(CheckStateChanged)
+			.IsChecked_Lambda(SPCheckState)
+			[
+				SNew(STextBlock)
+				.Text(LOCTEXT("AsPinText", "(As pin)"))
+				.Font(IDetailLayoutBuilder::GetDetailFont())
+			]
+		];
+	}
+}
+
+TSharedRef<IDetailCustomization> FNiagaraDataChannelBPNodeDetails::MakeInstance()
+{
+	return MakeShared<FNiagaraDataChannelBPNodeDetails>();
 }
 
 #undef LOCTEXT_NAMESPACE

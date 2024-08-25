@@ -79,7 +79,9 @@ void FOpenColorIOColorConversionSettingsCustomization::CustomizeChildren(TShared
 			{
 				StructBuilder.AddProperty(ChildHandle).IsEnabled(true).ShowPropertyButtons(false);
 
-				ChildHandle->SetOnPropertyValueChanged(FSimpleDelegate::CreateLambda([this]
+				const TSharedRef<IPropertyUtilities> PropertyUtilities = StructCustomizationUtils.GetPropertyUtilities().ToSharedRef();
+
+				ChildHandle->SetOnPropertyValueChanged(FSimpleDelegate::CreateLambda([this, PropertyUtilities]
 					{
 						if (FOpenColorIOColorConversionSettings* ColorSpaceConversion = GetConversionSettings())
 						{
@@ -88,6 +90,8 @@ void FOpenColorIOColorConversionSettingsCustomization::CustomizeChildren(TShared
 							TransformPicker[OCIO_Src]->SetConfiguration(ColorSpaceConversion->ConfigurationSource);
 							TransformPicker[OCIO_Dst]->SetConfiguration(ColorSpaceConversion->ConfigurationSource);
 						}
+
+						PropertyUtilities->ForceRefresh();
 					}));
 			}
 			else if (ChildHandle->GetProperty()->GetFName() == GET_MEMBER_NAME_CHECKED(FOpenColorIOColorConversionSettings, SourceColorSpace))
@@ -234,6 +238,31 @@ void FOpenColorIOColorConversionSettingsCustomization::CustomizeChildren(TShared
 					return false;
 				})
 			];
+		}
+
+		if (IsValid(ColorSpaceConversion->ConfigurationSource))
+		{
+			const TArray<UObject*> ConfigurationObjects = { ColorSpaceConversion->ConfigurationSource.Get() };
+			
+			IDetailPropertyRow* ContextRow = StructBuilder.AddExternalObjectProperty(ConfigurationObjects, GET_MEMBER_NAME_CHECKED(UOpenColorIOConfiguration, Context));
+			if (ContextRow)
+			{
+				ContextRow->DisplayName(LOCTEXT("BaseContext", "Base Context"));
+				ContextRow->IsEnabled(false);
+				ContextRow->Visibility(MakeAttributeLambda([this]()
+					{
+						if (FOpenColorIOColorConversionSettings* ColorSpaceConversion = GetConversionSettings())
+						{
+							if (IsValid(ColorSpaceConversion->ConfigurationSource) && !ColorSpaceConversion->ConfigurationSource->Context.IsEmpty())
+							{
+								return EVisibility::Visible;
+							}
+						}
+
+						return EVisibility::Hidden;
+					})
+				);
+			}
 		}
 	}
 

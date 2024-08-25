@@ -80,7 +80,10 @@ void UAnimSingleNodeInstance::SetAnimationAsset(class UAnimationAsset* NewAsset,
 		Proxy.ReinitializeSlotNodes();
 		if ( Montage->SlotAnimTracks.Num() > 0 )
 		{
-			Proxy.RegisterSlotNodeWithAnimInstance(Montage->SlotAnimTracks[0].SlotName);
+			for (const FSlotAnimationTrack& SlotAnimationTrack : Montage->SlotAnimTracks)
+			{
+				Proxy.RegisterSlotNodeWithAnimInstance(SlotAnimationTrack.SlotName);
+			}
 			Proxy.SetMontagePreviewSlot(Montage->SlotAnimTracks[0].SlotName);
 		}
 		RestartMontage( Montage );

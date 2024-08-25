@@ -33,7 +33,7 @@ public:
 	*   TransformGroup ("Transform")
 	*		Default Attributes :
 	*
-	*          FTransformArray Transform =  GetAttribute<FTransform>("Transform", TransformGroup)
+	*          FTransform3fArray Transform =  GetAttribute<FTransform3f>("Transform", TransformGroup)
 	*		   FInt32Array Level = GetAttribute<int32>("Level", TransformGroup) FIX
 	*		   FInt32Array Parent = GetAttribute<int32>("Parent", TransformGroup) FIX
 	*		   FInt32Array Children = GetAttribute<TSet<int32>>("Children", TransformGroup) FIX
@@ -51,8 +51,9 @@ public:
 	static CHAOS_API const FName ChildrenAttribute;
 	static CHAOS_API const FName ParticlesAttribute;
 	static CHAOS_API const FName LevelAttribute;
-
-
+	static CHAOS_API const FName ConvexGroup;
+	static CHAOS_API const FName ConvexHullAttribute;
+	
 	/** Schema */
 	static CHAOS_API void DefineTransformSchema(FManagedArrayCollection&);
 
@@ -108,7 +109,7 @@ public:
 	CHAOS_API virtual void Reset() override;
 
 	// Transform Group
-	TManagedArray<FTransform>   Transform;
+	TManagedArray<FTransform3f> Transform;
 	TManagedArray<FString>      BoneName;
 	TManagedArray<FLinearColor> BoneColor;
 	TManagedArray<int32>        Parent;

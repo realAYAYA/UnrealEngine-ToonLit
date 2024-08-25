@@ -12,7 +12,7 @@ namespace mu
 {
 	struct FProgram;
 	
-	class ASTOpMeshFormat : public ASTOp
+	class ASTOpMeshFormat final : public ASTOp
 	{
 	public:
 

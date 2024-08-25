@@ -3,8 +3,23 @@
 #include "ProxyTableFunctionLibrary.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "ChooserPropertyAccess.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/Package.h"
 #include "LookupProxy.h"
+
+FName UProxyAsset::TypeTagName = "ProxyType";
+
+void UProxyAsset::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	FString ResultTypeName;
+	if (Type)
+	{
+		ResultTypeName = Type.GetName();
+	}
+	Context.AddTag(FAssetRegistryTag(TypeTagName, ResultTypeName, FAssetRegistryTag::TT_Alphabetical));
+	
+	Super::GetAssetRegistryTags(Context);
+}
 
 #if WITH_EDITOR
 void UProxyAsset::PostEditUndo()
@@ -83,6 +98,14 @@ void UProxyAsset::PostLoad()
 		Guid.B = GetTypeHash(GetPackage()->GetPathName());
 	}
 
+	if (ProxyTable.IsValid())
+	{
+		// compile property access for Proxy Table fallback codepath
+		if (FChooserParameterProxyTableBase* ProxyReference = ProxyTable.GetMutablePtr<FChooserParameterProxyTableBase>())
+		{
+			ProxyReference->Compile(this, false);
+		}
+	}
 }
 
 void UProxyAsset::PostDuplicate(EDuplicateMode::Type DuplicateMode)
@@ -121,4 +144,21 @@ UObject* UProxyAsset::FindProxyObject(FChooserEvaluationContext& Context) const
 	}
 	
 	return nullptr;
+}
+
+FObjectChooserBase::EIteratorStatus UProxyAsset::FindProxyObjectMulti(FChooserEvaluationContext &Context, FObjectChooserBase::FObjectChooserIteratorCallback Callback) const
+{
+	if (ProxyTable.IsValid())
+	{
+		const UProxyTable* Table;
+		if (ProxyTable.Get<FChooserParameterProxyTableBase>().GetValue(Context, Table))
+		{
+			if(Table)
+			{
+				return Table->FindProxyObjectMulti(Guid, Context, Callback);
+			}
+		}
+	}
+	
+	return FObjectChooserBase::EIteratorStatus::Continue;
 }

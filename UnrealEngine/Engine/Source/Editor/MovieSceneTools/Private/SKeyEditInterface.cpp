@@ -16,6 +16,7 @@
 #include "Misc/FrameNumber.h"
 #include "Modules/ModuleManager.h"
 #include "IDetailCustomization.h"
+#include "MovieSceneToolsModule.h"
 
 SKeyEditInterface::~SKeyEditInterface()
 {
@@ -80,6 +81,8 @@ void SKeyEditInterface::Initialize()
 	StructureDetailsView->GetDetailsView()->RegisterInstancedCustomPropertyTypeLayout("MovieSceneObjectBindingID", FOnGetPropertyTypeCustomizationInstance::CreateSP(this, &SKeyEditInterface::CreateBindingIDCustomization));
 	StructureDetailsView->GetDetailsView()->RegisterInstancedCustomPropertyTypeLayout("MovieSceneEvent", FOnGetPropertyTypeCustomizationInstance::CreateSP(this, &SKeyEditInterface::CreateEventCustomization));
 	StructureDetailsView->GetDetailsView()->RegisterInstancedCustomPropertyTypeLayout("FrameNumber", FOnGetPropertyTypeCustomizationInstance::CreateSP(this, &SKeyEditInterface::CreateFrameNumberCustomization));
+
+	FMovieSceneToolsModule::Get().CustomizeKeyStructInstancedPropertyTypes(StructureDetailsView, WeakSection);
 
 	StructureDetailsView->SetStructureData(NewEditData.KeyStruct);
 	StructureDetailsView->GetOnFinishedChangingPropertiesDelegate().AddSP(this, &SKeyEditInterface::OnFinishedChangingProperties, NewEditData.KeyStruct);

@@ -94,7 +94,7 @@ public:
 		FVector2D WidgetSize;
 	
 		TRange<double> ViewInput;
-		float ViewInputRange;
+		double ViewInputRange;
 		float PixelsPerInput;
 	
 		FScrubRangeToScreen(TRange<double> InViewInput, const FVector2D& InWidgetSize )
@@ -102,21 +102,21 @@ public:
 			WidgetSize = InWidgetSize;
 	
 			ViewInput = InViewInput;
-			ViewInputRange = ViewInput.Size<float>();
-			PixelsPerInput = ViewInputRange > 0 ? ( WidgetSize.X / ViewInputRange ) : 0;
+			ViewInputRange = ViewInput.Size<double>();
+			PixelsPerInput = static_cast<float>(ViewInputRange > 0 ? (WidgetSize.X / ViewInputRange) : 0);
 		}
 	
 		/** Local Widget Space -> Curve Input domain. */
-		float LocalXToInput(float ScreenX) const
+		float LocalXToInput(const float ScreenX) const
 		{
-			float LocalX = ScreenX;
-			return (LocalX/PixelsPerInput) + ViewInput.GetLowerBoundValue();
+			const float LocalX = ScreenX;
+			return (LocalX/PixelsPerInput) + static_cast<float>(ViewInput.GetLowerBoundValue());
 		}
 	
 		/** Curve Input domain -> local Widget Space */
-		float InputToLocalX(float Input) const
+		float InputToLocalX(const float Input) const
 		{
-			return (Input - ViewInput.GetLowerBoundValue()) * PixelsPerInput;
+			return (Input - static_cast<float>(ViewInput.GetLowerBoundValue())) * PixelsPerInput;
 		}
 	};
 

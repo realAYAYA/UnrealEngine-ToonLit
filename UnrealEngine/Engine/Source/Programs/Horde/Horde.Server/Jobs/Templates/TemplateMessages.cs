@@ -1,15 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
 using System.Collections.Generic;
-using System.ComponentModel.DataAnnotations;
-using System.Reflection;
-using System.Text.Json.Serialization;
 using EpicGames.Core;
-using Horde.Server.Streams;
-using Horde.Common;
 using HordeCommon;
-using HordeCommon.Rpc.Tasks;
 
 namespace Horde.Server.Jobs.Templates
 {

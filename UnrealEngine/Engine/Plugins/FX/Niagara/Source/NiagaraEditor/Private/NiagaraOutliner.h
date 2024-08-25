@@ -146,7 +146,7 @@ public:
 
 	void Reset();
 	void UpdateData(const FNiagaraOutlinerData& NewData);
-	void UpdateSystemSimCache(const FNiagaraSystemSimCacheCaptureReply& Reply);
+	void UpdateSystemSimCache(FName CompName, TObjectPtr<UNiagaraSimCache> NewSimCache);
 
 	UNiagaraSimCache* FindSimCache(FName ComponentName);
 

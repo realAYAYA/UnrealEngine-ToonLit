@@ -120,6 +120,125 @@ void FGLTFJsonClearCoatExtension::WriteObject(IGLTFJsonWriter& Writer) const
 	}
 }
 
+void FGLTFJsonSpecularExtension::WriteObject(IGLTFJsonWriter& Writer) const
+{
+	if (!FMath::IsNearlyEqual(Factor, 1, Writer.DefaultTolerance))
+	{
+		Writer.Write(TEXT("specularFactor"), Factor);
+	}
+
+	if (Texture.Index != nullptr)
+	{
+		Writer.Write(TEXT("specularTexture"), Texture);
+	}
+}
+
+void FGLTFJsonIORExtension::WriteObject(IGLTFJsonWriter& Writer) const
+{
+	if (!FMath::IsNearlyEqual(Value, 1.5, Writer.DefaultTolerance))
+	{
+		Writer.Write(TEXT("ior"), Value);
+	}
+}
+
+void FGLTFJsonSheenExtension::WriteObject(IGLTFJsonWriter& Writer) const
+{
+	if (!ColorFactor.IsNearlyEqual(FGLTFJsonColor3::Black))
+	{
+		Writer.Write(TEXT("sheenColorFactor"), ColorFactor);
+	}
+
+	if (ColorTexture.Index != nullptr)
+	{
+		Writer.Write(TEXT("sheenColorTexture"), ColorTexture);
+	}
+
+	if (!FMath::IsNearlyEqual(RoughnessFactor, 0.f))
+	{
+		Writer.Write(TEXT("sheenRoughnessFactor"), RoughnessFactor);
+	}
+
+	if (RoughnessTexture.Index != nullptr)
+	{
+		Writer.Write(TEXT("sheenRoughnessTexture"), RoughnessTexture);
+	}
+}
+
+void FGLTFJsonTransmissionExtension::WriteObject(IGLTFJsonWriter& Writer) const
+{
+	if (!FMath::IsNearlyEqual(Factor, 0.f))
+	{
+		Writer.Write(TEXT("transmissionFactor"), Factor);
+	}
+
+	if (Texture.Index != nullptr)
+	{
+		Writer.Write(TEXT("transmissionTexture"), Texture);
+	}
+}
+
+void FGLTFJsonSpecularGlossinessExtension::WriteObject(IGLTFJsonWriter& Writer) const
+{
+	if (!DiffuseFactor.IsNearlyEqual(FGLTFJsonColor4::White))
+	{
+		Writer.Write(TEXT("diffuseFactor"), DiffuseFactor);
+	}
+
+	if (DiffuseTexture.Index != nullptr)
+	{
+		Writer.Write(TEXT("diffuseTexture"), DiffuseTexture);
+	}
+
+	if (!SpecularFactor.IsNearlyEqual(FGLTFJsonColor3::White))
+	{
+		Writer.Write(TEXT("specularFactor"), SpecularFactor);
+	}
+
+	if (!FMath::IsNearlyEqual(GlossinessFactor, 1.0f))
+	{
+		Writer.Write(TEXT("glossinessFactor"), GlossinessFactor);
+	}
+
+	if (SpecularGlossinessTexture.Index != nullptr)
+	{
+		Writer.Write(TEXT("specularGlossinessTexture"), SpecularGlossinessTexture);
+	}
+}
+
+void FGLTFJsonIridescenceExtension::WriteObject(IGLTFJsonWriter& Writer) const
+{
+	if (!FMath::IsNearlyEqual(IridescenceFactor, 0.f))
+	{
+		Writer.Write(TEXT("iridescenceFactor"), IridescenceFactor);
+	}
+
+	if (IridescenceTexture.Index != nullptr)
+	{
+		Writer.Write(TEXT("iridescenceTexture"), IridescenceTexture);
+	}
+
+	if (!FMath::IsNearlyEqual(IridescenceIOR, 1.3f))
+	{
+		Writer.Write(TEXT("iridescenceIor"), IridescenceIOR);
+	}
+
+
+	if (!FMath::IsNearlyEqual(IridescenceThicknessMinimum, 100.f))
+	{
+		Writer.Write(TEXT("iridescenceThicknessMinimum"), IridescenceThicknessMinimum);
+	}
+	
+	if (!FMath::IsNearlyEqual(IridescenceThicknessMaximum, 100.f))
+	{
+		Writer.Write(TEXT("iridescenceThicknessMaximum"), IridescenceThicknessMaximum);
+	}
+
+	if (IridescenceThicknessTexture.Index != nullptr)
+	{
+		Writer.Write(TEXT("iridescenceThicknessTexture"), IridescenceThicknessTexture);
+	}
+}
+
 void FGLTFJsonMaterial::WriteObject(IGLTFJsonWriter& Writer) const
 {
 	if (!Name.IsEmpty())
@@ -127,7 +246,8 @@ void FGLTFJsonMaterial::WriteObject(IGLTFJsonWriter& Writer) const
 		Writer.Write(TEXT("name"), Name);
 	}
 
-	if (ShadingModel != EGLTFJsonShadingModel::None)
+	if (ShadingModel != EGLTFJsonShadingModel::None &&
+		ShadingModel != EGLTFJsonShadingModel::SpecularGlossiness)
 	{
 		Writer.Write(TEXT("pbrMetallicRoughness"), PBRMetallicRoughness);
 	}
@@ -168,9 +288,37 @@ void FGLTFJsonMaterial::WriteObject(IGLTFJsonWriter& Writer) const
 	}
 
 	const bool HasEmissiveStrength = !FMath::IsNearlyEqual(EmissiveStrength, 1.0f, Writer.DefaultTolerance);
-	if (ShadingModel == EGLTFJsonShadingModel::Unlit || ShadingModel == EGLTFJsonShadingModel::ClearCoat || HasEmissiveStrength)
+	if (ShadingModel == EGLTFJsonShadingModel::Unlit ||
+		ShadingModel == EGLTFJsonShadingModel::ClearCoat ||
+		(ShadingModel == EGLTFJsonShadingModel::Transmission && Transmission.HasValue()) ||
+		(ShadingModel == EGLTFJsonShadingModel::SpecularGlossiness && PBRSpecularGlossiness.HasValue()) ||
+		HasEmissiveStrength || 
+		Specular.HasValue() || 
+		IOR.HasValue() ||
+		Sheen.HasValue() ||
+		Iridescence.HasValue())
 	{
 		Writer.StartExtensions();
+
+		if (ShadingModel != EGLTFJsonShadingModel::Unlit && ShadingModel != EGLTFJsonShadingModel::SpecularGlossiness && Specular.HasValue())
+		{
+			Writer.Write(EGLTFJsonExtension::KHR_MaterialsSpecular, Specular);
+		}
+
+		if (ShadingModel != EGLTFJsonShadingModel::Unlit && ShadingModel != EGLTFJsonShadingModel::SpecularGlossiness && IOR.HasValue())
+		{
+			Writer.Write(EGLTFJsonExtension::KHR_MaterialsIOR, IOR);
+		}
+
+		if (ShadingModel != EGLTFJsonShadingModel::Unlit && ShadingModel != EGLTFJsonShadingModel::SpecularGlossiness && Sheen.HasValue())
+		{
+			Writer.Write(EGLTFJsonExtension::KHR_MaterialsSheen, Sheen);
+		}
+
+		if (ShadingModel != EGLTFJsonShadingModel::Unlit && ShadingModel != EGLTFJsonShadingModel::SpecularGlossiness && Iridescence.HasValue())
+		{
+			Writer.Write(EGLTFJsonExtension::KHR_MaterialsIridescence, Iridescence);
+		}
 
 		if (ShadingModel == EGLTFJsonShadingModel::Unlit)
 		{
@@ -181,6 +329,14 @@ void FGLTFJsonMaterial::WriteObject(IGLTFJsonWriter& Writer) const
 		else if (ShadingModel == EGLTFJsonShadingModel::ClearCoat)
 		{
 			Writer.Write(EGLTFJsonExtension::KHR_MaterialsClearCoat, ClearCoat);
+		}
+		else if (ShadingModel == EGLTFJsonShadingModel::Transmission && Transmission.HasValue())
+		{
+			Writer.Write(EGLTFJsonExtension::KHR_MaterialsTransmission, Transmission);
+		}
+		else if (ShadingModel == EGLTFJsonShadingModel::SpecularGlossiness && PBRSpecularGlossiness.HasValue())
+		{
+			Writer.Write(EGLTFJsonExtension::KHR_MaterialsSpecularGlossiness, PBRSpecularGlossiness);
 		}
 
 		if (HasEmissiveStrength)

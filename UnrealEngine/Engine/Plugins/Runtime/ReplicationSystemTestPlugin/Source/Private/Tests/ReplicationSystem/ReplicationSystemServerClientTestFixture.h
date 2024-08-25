@@ -13,6 +13,7 @@
 #include "Iris/DataStream/DataStreamManager.h"
 #include "Iris/ReplicationSystem/NetTokenDataStream.h"
 #include "Iris/ReplicationSystem/ReplicationDataStream.h"
+#include "Iris/ReplicationSystem/ReplicationSystem.h"
 
 #include "Net/Core/Misc/ResizableCircularQueue.h"
 
@@ -94,7 +95,7 @@ public:
 	}
 
 	template<typename T>
-	T* CreateSubObject(FNetRefHandle OwnerHandle, FNetRefHandle InsertRelativeToSubObjectHandle = FNetRefHandle(), UReplicationBridge::ESubObjectInsertionOrder InsertionOrder = UReplicationBridge::ESubObjectInsertionOrder::None)
+	T* CreateSubObject(FNetRefHandle OwnerHandle, FNetRefHandle InsertRelativeToSubObjectHandle = FNetRefHandle::GetInvalid(), UReplicationBridge::ESubObjectInsertionOrder InsertionOrder = UReplicationBridge::ESubObjectInsertionOrder::None)
 	{
 		T* CreatedObject = NewObject<T>();
 		if (Cast<UReplicatedTestObject>(CreatedObject))
@@ -115,7 +116,7 @@ public:
 		return static_cast<T*>(ReplicationBridge->GetReplicatedObject(Handle));
 	}
 
-	UTestReplicatedIrisObject* CreateObject(const UObjectReplicationBridge::FCreateNetRefHandleParams& Params);
+	UTestReplicatedIrisObject* CreateObject(const UObjectReplicationBridge::FCreateNetRefHandleParams& Params, UTestReplicatedIrisObject::FComponents* ComponentsToCreate=nullptr);
 	UTestReplicatedIrisObject* CreateObject(uint32 NumComponents, uint32 NumIrisComponents);
 	UTestReplicatedIrisObject* CreateSubObject(FNetRefHandle Owner, uint32 NumComponents, uint32 NumIrisComponents);
 	UTestReplicatedIrisObject* CreateObject(const UTestReplicatedIrisObject::FComponents& Components);
@@ -128,6 +129,7 @@ public:
 	uint32 AddConnection();
 
 	// System Update
+	void PreSendUpdate(const UReplicationSystem::FSendUpdateParams& Params);
 	void PreSendUpdate();
 	void PostSendUpdate();
 
@@ -155,6 +157,7 @@ public:
 	UReplicationSystem* ReplicationSystem;
 	UReplicatedTestObjectBridge* ReplicationBridge;
 	TArray<TStrongObjectPtr<UObject>> CreatedObjects;
+	EReplicationSystemSendPass CurrentSendPass = EReplicationSystemSendPass::Invalid;
 
 private:
 	TArray<FConnectionInfo> Connections;
@@ -165,6 +168,9 @@ class FReplicationSystemTestClient : public FReplicationSystemTestNode
 {
 public:
 	FReplicationSystemTestClient(const TCHAR* Name);
+
+	// Tick and send packets to the server
+	bool UpdateAndSend(class FReplicationSystemTestServer* Server, bool bDeliver = true);
 
 	uint32 ConnectionIdOnServer;
 	uint32 LocalConnectionId;
@@ -185,7 +191,7 @@ public:
 	void DeliverTo(FReplicationSystemTestClient* Client, bool bDeliver);
 
 	// Tick and send packets to one or all clients
-	bool UpdateAndSend(const TArray<FReplicationSystemTestClient*>& Clients, bool bDeliver=true);
+	bool UpdateAndSend(const TArrayView<FReplicationSystemTestClient*const>& Clients, bool bDeliver=true);
 };
 
 class FReplicationSystemServerClientTestFixture : public FNetworkAutomationTestSuiteFixture

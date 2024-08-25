@@ -58,6 +58,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Genlock options")
 	FFrameRate FrameRate = FFrameRate(24,1);
 
+	/** Delay from alignment point at which we tick the engine, in milliseconds  */
+	UPROPERTY(EditAnywhere, Category = "Genlock options")
+	double AlignmentPointDelayMS = 0;
+
 	/** When enabled, will warn for skipped frames when engine is too slow */
 	UPROPERTY(EditAnywhere, Category = "Genlock options", meta = (DisplayName = "Display Dropped Frames Warning"), AdvancedDisplay)
 	bool bEnableOverrunDetection = true;

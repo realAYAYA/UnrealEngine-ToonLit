@@ -4,6 +4,7 @@
 
 #include "Algo/Sort.h"
 #include "ColorSpace/DMXPixelMappingColorSpace_RGBCMY.h"
+#include "Components/DMXPixelMappingComponentGeometryCache.h"
 #include "Components/DMXPixelMappingFixtureGroupComponent.h"
 #include "Components/DMXPixelMappingMatrixCellComponent.h"
 #include "DMXConversions.h"
@@ -17,14 +18,12 @@
 #include "Components/DMXPixelMappingMatrixCellComponent.h"
 #include "Components/DMXPixelMappingRendererComponent.h"
 #include "IO/DMXOutputPort.h"
+#include "IO/DMXTrace.h"
 #include "Library/DMXEntityFixturePatch.h"
 #include "Library/DMXLibrary.h"
 #include "Modulators/DMXModulator.h"
 #include "Templates/DMXPixelMappingComponentTemplate.h"
-
-#if WITH_EDITOR
-#include "DMXPixelMappingComponentWidget.h"
-#endif // WITH_EDITOR
+#include "UObject/Package.h"
 
 
 #define LOCTEXT_NAMESPACE "DMXPixelMappingMatrixComponent"
@@ -34,7 +33,8 @@ UDMXPixelMappingMatrixComponent::UDMXPixelMappingMatrixComponent()
 	ColorSpaceClass = UDMXPixelMappingColorSpace_RGBCMY::StaticClass();
 	ColorSpace = CreateDefaultSubobject<UDMXPixelMappingColorSpace_RGBCMY>("ColorSpace");
 
-	SetSize(FVector2D(32.f, 32.f));
+	SizeX = 32.f;
+	SizeY = 32.f;
 
 #if WITH_EDITORONLY_DATA
 	bExpanded = false;
@@ -97,6 +97,11 @@ void UDMXPixelMappingMatrixComponent::PostLoad()
 {
 	Super::PostLoad();
 
+	if (IsTemplate())
+	{
+		return;
+	}
+
 	// Add valid modulators to modulator classes, remove invalid modulators
 	for (int32 IndexModulator = 0; Modulators.IsValidIndex(IndexModulator); )
 	{
@@ -127,12 +132,14 @@ void UDMXPixelMappingMatrixComponent::PostInitProperties()
 {
 	Super::PostInitProperties();
 
-	if (!HasAnyFlags(RF_ClassDefaultObject | RF_ArchetypeObject))
+	if (IsTemplate())
 	{
-		// Listen to Fixture Type and Fixture Patch changes
-		UDMXEntityFixtureType::GetOnFixtureTypeChanged().AddUObject(this, &UDMXPixelMappingMatrixComponent::OnFixtureTypeChanged);
-		UDMXEntityFixturePatch::GetOnFixturePatchChanged().AddUObject(this, &UDMXPixelMappingMatrixComponent::OnFixturePatchChanged);
+		return;
 	}
+
+	// Listen to Fixture Type and Fixture Patch changes
+	UDMXEntityFixtureType::GetOnFixtureTypeChanged().AddUObject(this, &UDMXPixelMappingMatrixComponent::OnFixtureTypeChanged);
+	UDMXEntityFixturePatch::GetOnFixturePatchChanged().AddUObject(this, &UDMXPixelMappingMatrixComponent::OnFixturePatchChanged);
 }
 
 void UDMXPixelMappingMatrixComponent::LogInvalidProperties()
@@ -161,24 +168,6 @@ void UDMXPixelMappingMatrixComponent::LogInvalidProperties()
 }
 
 #if WITH_EDITOR
-void UDMXPixelMappingMatrixComponent::PreEditChange(FProperty* PropertyAboutToChange)
-{
-	Super::PreEditChange(PropertyAboutToChange);
-
-	if (PropertyAboutToChange)
-	{
-		const FName PropertyName = PropertyAboutToChange->GetFName();
-
-		if (PropertyName == UDMXPixelMappingOutputComponent::GetPositionXPropertyName() ||
-			PropertyName == UDMXPixelMappingOutputComponent::GetPositionYPropertyName())
-		{
-			PreEditChangePosition = GetPosition();
-		}
-	}
-}
-#endif // WITH_EDITOR
-
-#if WITH_EDITOR
 void UDMXPixelMappingMatrixComponent::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 {
 	// Note, property changes of fixture patch are listened for in tick
@@ -187,7 +176,6 @@ void UDMXPixelMappingMatrixComponent::PostEditChangeProperty(FPropertyChangedEve
 	Super::PostEditChangeProperty(PropertyChangedEvent);
 
 	const FName PropertyName = PropertyChangedEvent.GetPropertyName();
-
 	if (PropertyName == GET_MEMBER_NAME_CHECKED(UDMXPixelMappingMatrixComponent, ColorSpaceClass))
 	{
 		if (ensureAlwaysMsgf(ColorSpaceClass, TEXT("Color Space Class was set to nullptr. This is not supported.")))
@@ -195,34 +183,10 @@ void UDMXPixelMappingMatrixComponent::PostEditChangeProperty(FPropertyChangedEve
 			ColorSpace = NewObject<UDMXPixelMappingColorSpace>(this, ColorSpaceClass);
 		}
 	}
-	
-	if (PropertyName == UDMXPixelMappingOutputComponent::GetPositionXPropertyName() ||
-		PropertyName == UDMXPixelMappingOutputComponent::GetPositionYPropertyName())
-	{
-		constexpr bool bUpdateSizeRecursive = false;
-		ForEachChildOfClass<UDMXPixelMappingMatrixCellComponent>([this](UDMXPixelMappingMatrixCellComponent* ChildComponent)
-			{
-				FVector2D RelativePosition = ChildComponent->GetPosition() - PreEditChangePosition;
-				ChildComponent->SetPosition(GetPosition() + RelativePosition);
-
-			}, bUpdateSizeRecursive);
-
-		HandlePositionChanged();
-	}
-	
-	if (PropertyName == UDMXPixelMappingOutputComponent::GetSizeXPropertyName() ||
-		PropertyName == UDMXPixelMappingOutputComponent::GetSizeYPropertyName() ||
-		PropertyName == GET_MEMBER_NAME_CHECKED(UDMXPixelMappingMatrixComponent, CellSize))
-	{
-		HandleSizeChanged();
-
-		// Update size again from the new CellSize that results from handling size or matrix changes
-		const FVector2D NewSize(CellSize.X * CoordinateGrid.X, CellSize.Y * CoordinateGrid.Y);
-		SetSize(NewSize);
-	}
-
-	if (PropertyName == GET_MEMBER_NAME_CHECKED(UDMXPixelMappingMatrixComponent, FixturePatchRef) ||
+	else if (PropertyName == GET_MEMBER_NAME_CHECKED(UDMXPixelMappingMatrixComponent, FixturePatchRef) ||
 		PropertyName == GET_MEMBER_NAME_CHECKED(UDMXPixelMappingMatrixComponent, CoordinateGrid) ||
+		PropertyName == GET_MEMBER_NAME_CHECKED(UDMXPixelMappingMatrixComponent, bInvertCellsX) ||
+		PropertyName == GET_MEMBER_NAME_CHECKED(UDMXPixelMappingMatrixComponent, bInvertCellsY) ||
 		PropertyName == GET_MEMBER_NAME_CHECKED(FDMXEntityReference, DMXLibrary))
 	{
 		HandleMatrixChanged();
@@ -251,24 +215,19 @@ const FText UDMXPixelMappingMatrixComponent::GetPaletteCategory()
 
 bool UDMXPixelMappingMatrixComponent::IsOverParent() const
 {
-	// Needs be over the over the group
-	if (UDMXPixelMappingFixtureGroupComponent* ParentFixtureGroupComponent = Cast<UDMXPixelMappingFixtureGroupComponent>(GetParent()))
+	if (UDMXPixelMappingFixtureGroupComponent* Parent = Cast<UDMXPixelMappingFixtureGroupComponent>(GetParent()))
 	{
-		const float Left = GetPosition().X;
-		const float Top = GetPosition().Y;
-		const float Right = GetPosition().X + GetSize().X;
-		const float Bottom = GetPosition().Y + GetSize().Y;
-
-		const float ParentLeft = ParentFixtureGroupComponent->GetPosition().X;
-		const float ParentTop = ParentFixtureGroupComponent->GetPosition().Y;
-		const float ParentRight = ParentFixtureGroupComponent->GetPosition().X + ParentFixtureGroupComponent->GetSize().X;
-		const float ParentBottom = ParentFixtureGroupComponent->GetPosition().Y + ParentFixtureGroupComponent->GetSize().Y;
+		FVector2D A;
+		FVector2D B;
+		FVector2D C;
+		FVector2D D;
+		CachedGeometry.GetEdgesAbsolute(A, B, C, D);
 
 		return
-			Left > ParentLeft - .49f &&
-			Top > ParentTop - .49f &&
-			Right < ParentRight + .49f &&
-			Bottom < ParentBottom + .49f;
+			Parent->IsOverPosition(A) &&
+			Parent->IsOverPosition(B) &&
+			Parent->IsOverPosition(C) &&
+			Parent->IsOverPosition(D);
 	}
 
 	return false;
@@ -280,17 +239,21 @@ const FName& UDMXPixelMappingMatrixComponent::GetNamePrefix()
 	return NamePrefix;
 }
 
-void UDMXPixelMappingMatrixComponent::ResetDMX()
+void UDMXPixelMappingMatrixComponent::ResetDMX(EDMXPixelMappingResetDMXMode ResetMode)
 {
-	ForEachChild([&](UDMXPixelMappingBaseComponent* InComponent)
-	{
-		if (UDMXPixelMappingOutputComponent* Component = Cast<UDMXPixelMappingOutputComponent>(InComponent))
-		{
-			Component->ResetDMX();
-		}
-	}, false);
+	UDMXEntityFixturePatch* FixturePatch = FixturePatchRef.GetFixturePatch();
 
-	SendDMX();
+	if (FixturePatch)
+	{
+		if (ResetMode == EDMXPixelMappingResetDMXMode::SendZeroValues)
+		{
+			FixturePatch->SendZeroValues();
+		}
+		else if (ResetMode == EDMXPixelMappingResetDMXMode::SendDefaultValues)
+		{
+			FixturePatch->SendDefaultValues();
+		}
+	}
 }
 
 void UDMXPixelMappingMatrixComponent::SendDMX()
@@ -382,6 +345,8 @@ void UDMXPixelMappingMatrixComponent::SendDMX()
 		// Send DMX
 		if (UDMXLibrary* Library = FixturePatch->GetParentLibrary())
 		{
+			UE_DMX_SCOPED_TRACE_SENDDMX(GetOutermost()->GetFName());
+			UE_DMX_SCOPED_TRACE_SENDDMX(Library->GetFName());
 			for (const FDMXOutputPortSharedRef& OutputPort : Library->GetOutputPorts())
 			{
 				OutputPort->SendDMX(FixturePatch->GetUniverseID(), ChannelToValueMap);
@@ -418,30 +383,65 @@ FString UDMXPixelMappingMatrixComponent::GetUserName() const
 
 void UDMXPixelMappingMatrixComponent::SetPosition(const FVector2D& NewPosition)
 {
-	const FVector2D OldPosition = GetPosition();
+	PositionX = NewPosition.X;
+	PositionY = NewPosition.Y;
 
-	Super::SetPosition(NewPosition);
+	const FVector2D Translation = CachedGeometry.SetPositionAbsolute(NewPosition);
+	CachedGeometry.PropagonatePositionChangesToChildren(Translation);
 
-	constexpr bool bUpdateSizeRecursive = false;
-	ForEachChildOfClass<UDMXPixelMappingMatrixCellComponent>([&OldPosition, &NewPosition](UDMXPixelMappingMatrixCellComponent* ChildComponent)
-		{
-			FVector2D RelativePosition = ChildComponent->GetPosition() - OldPosition;
-			ChildComponent->SetPosition(NewPosition + RelativePosition);
+#if WITH_EDITOR
+	EditorPositionWithRotation = CachedGeometry.GetPositionRotatedAbsolute();
+#endif
 
-		}, bUpdateSizeRecursive);
+	InvalidatePixelMapRenderer();
+}
 
-	HandlePositionChanged();
+void UDMXPixelMappingMatrixComponent::SetPositionRotated(FVector2D NewRotatedPosition)
+{
+	const FVector2D Translation = CachedGeometry.SetPositionRotatedAbsolute(NewRotatedPosition);
+
+	PositionX = CachedGeometry.GetPositionAbsolute().X;
+	PositionY = CachedGeometry.GetPositionAbsolute().Y;
+
+	CachedGeometry.PropagonatePositionChangesToChildren(Translation);
+
+#if WITH_EDITOR
+	EditorPositionWithRotation = CachedGeometry.GetPositionRotatedAbsolute();
+#endif
+
+	InvalidatePixelMapRenderer();
 }
 
 void UDMXPixelMappingMatrixComponent::SetSize(const FVector2D& NewSize)
 {
-	const FVector2D OldSize = GetSize();
-	Super::SetSize(NewSize);
+	SizeX = NewSize.X;
+	SizeY = NewSize.Y;
 
-	if (OldSize != NewSize)
-	{
-		HandleSizeChanged();
-	}
+	FVector2D DeltaSize;
+	FVector2D DeltaPosition;
+	CachedGeometry.SetSizeAbsolute(NewSize, DeltaSize, DeltaPosition);
+
+	// Resizing rotated components moves their pivot, and by that their position without rotation.
+	// Adjust for this so the component keeps its rotated position.
+	SetPosition(CachedGeometry.GetPositionAbsolute());
+
+	CachedGeometry.PropagonateSizeChangesToChildren(DeltaSize, DeltaPosition);
+
+	InvalidatePixelMapRenderer();
+}
+
+void UDMXPixelMappingMatrixComponent::SetRotation(double NewRotation)
+{
+	Rotation = NewRotation;
+
+	const double DeltaRotation = CachedGeometry.SetRotationAbsolute(NewRotation);
+	CachedGeometry.PropagonateRotationChangesToChildren(DeltaRotation);
+
+#if WITH_EDITOR
+	EditorPositionWithRotation = CachedGeometry.GetPositionRotatedAbsolute();
+#endif
+
+	InvalidatePixelMapRenderer();
 }
 
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
@@ -452,56 +452,8 @@ void UDMXPixelMappingMatrixComponent::RenderWithInputAndSendDMX()
 }
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
-void UDMXPixelMappingMatrixComponent::HandlePositionChanged()
-{
-#if WITH_EDITOR
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	if (ComponentWidget_DEPRECATED.IsValid())
-	{
-		ComponentWidget_DEPRECATED->SetPosition(GetPosition());
-	}
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
-#endif
-}
-
-void UDMXPixelMappingMatrixComponent::HandleSizeChanged()
-{
-	CellSize = FVector2D::ZeroVector;
-	if (CoordinateGrid.X > 0 && CoordinateGrid.Y > 0)
-	{
-		CellSize = FVector2D(GetSize().X / CoordinateGrid.X, GetSize().Y / CoordinateGrid.Y);
-	}
-
-	constexpr bool bUpdateSizeRecursive = false;
-	ForEachChildOfClass<UDMXPixelMappingMatrixCellComponent>([this](UDMXPixelMappingMatrixCellComponent* ChildComponent)
-		{
-#if WITH_EDITOR
-			if (ChildComponent->IsLockInDesigner())
-			{
-				ChildComponent->SetSize(CellSize);
-				ChildComponent->SetPosition(GetPosition() + FVector2D(CellSize * ChildComponent->GetCellCoordinate()));
-			}
-#else
-			ChildComponent->SetSize(CellSize);
-			ChildComponent->SetPosition(GetPosition() + FVector2D(CellSize * ChildComponent->GetCellCoordinate()));
-#endif // WITH_EDITOR
-
-		}, bUpdateSizeRecursive);
-
-#if WITH_EDITOR
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	if (ComponentWidget_DEPRECATED.IsValid())
-	{
-		ComponentWidget_DEPRECATED->SetSize(GetSize());
-	}
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
-#endif
-}
-
 void UDMXPixelMappingMatrixComponent::HandleMatrixChanged()
 {
-	TGuardValue<bool>(bIsUpdatingChildren, true);
-
 	UDMXPixelMapping* PixelMapping = GetPixelMapping();
 	UDMXPixelMappingRootComponent* RootComponent = PixelMapping ? PixelMapping->GetRootComponent() : nullptr;
 	if (!RootComponent)
@@ -510,6 +462,8 @@ void UDMXPixelMappingMatrixComponent::HandleMatrixChanged()
 		return;
 	}
 
+	const double RestoreRotation = GetRotation();
+	SetRotation(0.0);
 	CoordinateGrid = 0;
 
 	// Remove all existing children and rebuild them anew
@@ -542,9 +496,38 @@ void UDMXPixelMappingMatrixComponent::HandleMatrixChanged()
 		}
 	}
 
-	HandleSizeChanged();
+	// Set child transform
+	CellSize = FVector2D::ZeroVector;
+	if (CoordinateGrid.X > 0 && CoordinateGrid.Y > 0)
+	{
+		CellSize = FVector2D(GetSize().X / CoordinateGrid.X, GetSize().Y / CoordinateGrid.Y);
+	}
 
+	auto InvertCellsIfRequiredLambda = [this](FIntPoint CellCoordinate)
+		{
+			CellCoordinate.X = bInvertCellsX ? FMath::Abs(CellCoordinate.X - CoordinateGrid.X) - 1 : CellCoordinate.X;
+			CellCoordinate.Y = bInvertCellsY ? FMath::Abs(CellCoordinate.Y - CoordinateGrid.Y) - 1 : CellCoordinate.Y;
+			return CellCoordinate;
+		};
+
+	constexpr bool bUpdateSizeRecursive = false;
+	ForEachChildOfClass<UDMXPixelMappingMatrixCellComponent>([this, &InvertCellsIfRequiredLambda](UDMXPixelMappingMatrixCellComponent* ChildComponent)
+		{
+			ChildComponent->SetRotation(GetRotation());
+			ChildComponent->SetSize(CellSize);
+
+			const FIntPoint CellCoordinate = InvertCellsIfRequiredLambda(ChildComponent->GetCellCoordinate());
+			ChildComponent->SetPosition(GetPosition() + FVector2D(CellSize * CellCoordinate));
+		},
+		bUpdateSizeRecursive);
+
+	SetRotation(RestoreRotation);
+
+	InvalidatePixelMapRenderer();
+
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	GetOnMatrixChanged().Broadcast(PixelMapping, this);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
 void UDMXPixelMappingMatrixComponent::QueueDownsample()

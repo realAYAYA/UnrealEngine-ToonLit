@@ -1,6 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using EpicGames.Core;
@@ -22,17 +21,17 @@ namespace UnrealBuildToolTests
 
 		private static ArtifactFile MakeInput1()
 		{
-			return new ArtifactFile(ArtifactDirectoryTree.Absolute, "Input1", IoHash.Compute(s_input1Data.Span));
+			return new ArtifactFile(ArtifactDirectoryTree.Absolute, new Utf8String("Input1"), IoHash.Compute(s_input1Data.Span));
 		}
 
 		private static ArtifactFile MakeInput2()
 		{
-			return new ArtifactFile(ArtifactDirectoryTree.Absolute, "Input2", IoHash.Compute(s_input2Data.Span));
+			return new ArtifactFile(ArtifactDirectoryTree.Absolute, new Utf8String("Input2"), IoHash.Compute(s_input2Data.Span));
 		}
 
 		private static ArtifactFile MakeOutput1()
 		{
-			return new ArtifactFile(ArtifactDirectoryTree.Absolute, "Output1", IoHash.Compute(s_output1Data.Span));
+			return new ArtifactFile(ArtifactDirectoryTree.Absolute, new Utf8String("Output1"), IoHash.Compute(s_output1Data.Span));
 		}
 
 		public static ArtifactAction MakeBundle1()
@@ -77,23 +76,7 @@ namespace UnrealBuildToolTests
 			ArtifactAction[] readBack2 = await cache.QueryArtifactActionsAsync(new IoHash[] { bundle1.Key }, cancellationToken);
 			Assert.AreEqual(2, readBack2.Length);
 
-			await cache.FlushChangesAsync(cancellationToken);
+			//await cache.FlushChangesAsync(cancellationToken);
 		}
-
-#if DISABLED
-		[TestMethod]
-		public void ArtifactBundleStorageTest2()
-		{
-			CancellationToken cancellationToken = default;
-
-			IArtifactCache cache = HordeStorageArtifactCache.CreateMemoryCache(NullLogger.Instance);
-
-			cache.WaitForReadyAsync().Wait(cancellationToken);
-
-			ArtifactBundle bundle1 = MakeBundle1();
-			ArtifactBundle[] readBack2 = cache.QueryArtifactBundles(new IoHash[] { bundle1.Key }, cancellationToken);
-			Assert.AreEqual(2, readBack2.Length);
-		}
-#endif
 	}
 }

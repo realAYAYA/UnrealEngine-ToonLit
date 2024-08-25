@@ -8,49 +8,26 @@
 #include "SceneRendering.h"
 #include "LightSceneInfo.h"
 #include "RayTracingDefinitions.h"
+#include "RayTracingTypes.h"
 #include "Containers/DynamicRHIResourceArray.h"
 
 #if RHI_RAYTRACING
 
 FRHIRayTracingShader* GetRayTracingLightingMissShader(const FGlobalShaderMap* ShaderMap);
 
-BEGIN_GLOBAL_SHADER_PARAMETER_STRUCT(FRaytracingLightDataPacked, RENDERER_API)
-	SHADER_PARAMETER(uint32, Count)
-	SHADER_PARAMETER(uint32, CellCount)
-	SHADER_PARAMETER(float, CellScale)
-	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint4>, LightDataBuffer)
-	SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>, LightIndices)
-	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint4>, LightCullingVolume)
+// This struct holds a light grid and list of raytracing lights for both building and rendering
+BEGIN_GLOBAL_SHADER_PARAMETER_STRUCT(FRayTracingLightGrid, )
+	SHADER_PARAMETER(uint32, SceneLightCount)
+	SHADER_PARAMETER(uint32, SceneInfiniteLightCount)
+	SHADER_PARAMETER(FVector3f, SceneLightsTranslatedBoundMin)
+	SHADER_PARAMETER(FVector3f, SceneLightsTranslatedBoundMax)
+	SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<FRTLightingData>, SceneLights)
+	SHADER_PARAMETER_RDG_TEXTURE(Texture2D<uint>, LightGrid)
+	SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>, LightGridData)
+	SHADER_PARAMETER(unsigned, LightGridResolution)
+	SHADER_PARAMETER(unsigned, LightGridMaxCount)
+	SHADER_PARAMETER(int, LightGridAxis)
 END_GLOBAL_SHADER_PARAMETER_STRUCT()
-
-// Must match struct definition in RayTacedLightingCommon.ush
-struct FRTLightingData
-{
-	int32 Type;
-	float IESAtlasIndex;
-	float RectLightAtlasMaxLevel;
-	uint32 LightMissShaderIndex;
-	
-	FVector3f TranslatedLightPosition;
-	float InvRadius;
-	FVector3f Direction;
-	float FalloffExponent;
-	FVector3f LightColor;
-	float SpecularScale;
-	FVector3f Tangent;
-	float SourceRadius;
-	float SpotAngles[2];
-	float SourceLength;
-	float SoftSourceRadius;
-	float DistanceFadeMAD[2];
-	float RectLightBarnCosAngle;
-	float RectLightBarnLength;
-	float RectLightAtlasUVOffset[2];
-	float RectLightAtlasUVScale[2];
-	// Align struct to 128 bytes to better match cache lines
-};
-
-static_assert(sizeof(FRTLightingData) == 128, "Unexpected FRTLightingData size.");
 
 using FRayTracingLightFunctionMap = TMap<const FLightSceneInfo*, int32>;
 
@@ -60,12 +37,12 @@ RDG_REGISTER_BLACKBOARD_STRUCT(FRayTracingLightFunctionMap)
 FRayTracingLightFunctionMap GatherLightFunctionLights(FScene* Scene, const FEngineShowFlags EngineShowFlags, ERHIFeatureLevel::Type InFeatureLevel);
 FRayTracingLightFunctionMap GatherLightFunctionLightsPathTracing(FScene* Scene, const FEngineShowFlags EngineShowFlags, ERHIFeatureLevel::Type InFeatureLevel);
 
-TRDGUniformBufferRef<FRaytracingLightDataPacked> CreateRayTracingLightData(
+TRDGUniformBufferRef<FRayTracingLightGrid> CreateRayTracingLightData(
 	FRDGBuilder& GraphBuilder,
 	const FScene* Scene,
 	const FSceneView& View,
 	FGlobalShaderMap* ShaderMap,
-	uint32& NumOfSkippedRayTracingLights);
+	bool bBuildLightGrid);
 
 void BindLightFunctionShaders(
 	FRHICommandList& RHICmdList,

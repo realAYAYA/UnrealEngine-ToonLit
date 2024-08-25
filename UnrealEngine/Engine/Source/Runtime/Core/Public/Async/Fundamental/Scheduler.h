@@ -2,7 +2,9 @@
 
 #pragma once 
 #include "Async/Fundamental/Task.h"
+#include "Async/Fundamental/TaskShared.h"
 #include "Async/Fundamental/TaskDelegate.h"
+#include "Async/Fundamental/WaitingQueue.h"
 #include "Containers/Array.h"
 #include "Containers/ArrayView.h"
 #include "Containers/ContainerAllocationPolicies.h"
@@ -30,15 +32,12 @@ namespace LowLevelTasks
 		DefaultPreference = LocalQueuePreference,
 	};
 
-	template<typename NodeType>
-	using TAlignedArray = TArray<NodeType, TAlignedHeapAllocator<alignof(NodeType)>>;
-
 	//implementation of a treiber stack
 	//(https://en.wikipedia.org/wiki/Treiber_stack)
 	template<typename NodeType>
 	class TEventStack
 	{
-		static constexpr uint32 EVENT_INDEX_NONE = -1;
+		static constexpr uint32 EVENT_INDEX_NONE = ~0u;
 
 		struct FTopNode
 		{
@@ -112,7 +111,7 @@ namespace LowLevelTasks
 	class FSchedulerTls
 	{
 	protected:
-		using FQueueRegistry	= TLocalQueueRegistry<>;
+		using FQueueRegistry	= Private::TLocalQueueRegistry<>;
 		using FLocalQueueType	= FQueueRegistry::TLocalQueue;
 
 		enum class EWorkerType
@@ -135,6 +134,7 @@ namespace LowLevelTasks
 		CORE_API static bool IsBusyWaiting();
 
 		// returns the AffinityIndex of the thread LocalQueue
+		UE_DEPRECATED(5.4, "This method will be removed.")
 		CORE_API static uint32 GetAffinityIndex();
 
 	protected:
@@ -162,11 +162,11 @@ namespace LowLevelTasks
 		CORE_API void StopWorkers(bool DrainGlobalQueue = true);
 		CORE_API void RestartWorkers(uint32 NumForegroundWorkers = 0, uint32 NumBackgroundWorkers = 0, FThread::EForkable IsForkable = FThread::NonForkable, EThreadPriority WorkerPriority = EThreadPriority::TPri_Normal, EThreadPriority BackgroundPriority = EThreadPriority::TPri_BelowNormal, uint64 InWorkerAffinity = 0, uint64 InBackgroundAffinity = 0);
 
-		//try to launch the task, the return value will specify if the task was in the ready state and has been launhced
-		inline bool TryLaunch(FTask& Task, EQueuePreference QueuePreference = EQueuePreference::DefaultPreference, bool bWakeUpWorker = true);	
+		//try to launch the task, the return value will specify if the task was in the ready state and has been launched
+		inline bool TryLaunch(FTask& Task, EQueuePreference QueuePreference = EQueuePreference::DefaultPreference, bool bWakeUpWorker = true);
 
-		//try to launch the task on a specific worker ID, the return value will specify if the task was in the ready state and has been launched
-		inline bool TryLaunchAffinity(FTask& Task, uint32 AffinityIndex);	
+		UE_DEPRECATED(5.4, "Use TryLaunch instead")
+		inline bool TryLaunchAffinity(FTask& Task, uint32 AffinityIndex);
 
 		//tries to do some work until the Task is completed
 		template<typename TaskType>
@@ -194,41 +194,35 @@ namespace LowLevelTasks
 		~FScheduler();
 
 	private: 
-		void ExecuteTask(FTask*& InOutTask);
-		TUniquePtr<FThread> CreateWorker(bool bPermitBackgroundWork = false, FThread::EForkable IsForkable = FThread::NonForkable, FSleepEvent* ExternalWorkerEvent = nullptr, FSchedulerTls::FLocalQueueType* ExternalWorkerLocalQueue = nullptr, EThreadPriority Priority = EThreadPriority::TPri_Normal, uint64 InAffinity = 0);
-		void WorkerMain(struct FSleepEvent* WorkerEvent, FSchedulerTls::FLocalQueueType* ExternalWorkerLocalQueue, uint32 WaitCycles, bool bPermitBackgroundWork);
+		[[nodiscard]] FTask* ExecuteTask(FTask* InTask);
+		TUniquePtr<FThread> CreateWorker(bool bPermitBackgroundWork = false, FThread::EForkable IsForkable = FThread::NonForkable, Private::FWaitEvent* ExternalWorkerEvent = nullptr, FSchedulerTls::FLocalQueueType* ExternalWorkerLocalQueue = nullptr, EThreadPriority Priority = EThreadPriority::TPri_Normal, uint64 InAffinity = 0);
+		void WorkerMain(Private::FWaitEvent* WorkerEvent, FSchedulerTls::FLocalQueueType* ExternalWorkerLocalQueue, uint32 WaitCycles, bool bPermitBackgroundWork);
 		CORE_API void LaunchInternal(FTask& Task, EQueuePreference QueuePreference, bool bWakeUpWorker);
 		CORE_API void BusyWaitInternal(const FConditional& Conditional, bool ForceAllowBackgroundWork);
-		FORCENOINLINE bool TrySleeping(FSleepEvent* WorkerEvent, bool bStopOutOfWorkScope, bool Drowsing, bool bBackgroundWorker);
 		inline bool WakeUpWorker(bool bBackgroundWorker);
 
-		template<typename QueueType, FTask* (QueueType::*DequeueFunction)(bool, bool), bool bIsBusyWaiting>
-		bool TryExecuteTaskFrom(QueueType* Queue, FSchedulerTls::FQueueRegistry::FOutOfWork& OutOfWork, bool bPermitBackgroundWork, bool bDisableThrottleStealing);
+		template<typename QueueType, FTask* (QueueType::*DequeueFunction)(bool), bool bIsBusyWaiting>
+		bool TryExecuteTaskFrom(Private::FWaitEvent* WaitEvent, QueueType* Queue, Private::FOutOfWork& OutOfWork, bool bPermitBackgroundWork);
 
 	private:
-		TEventStack<FSleepEvent> 						SleepEventStack[2] = { WorkerEvents , WorkerEvents };
-		FSchedulerTls::FQueueRegistry 					QueueRegistry;
-		FCriticalSection 								WorkerThreadsCS;
-		TArray<TUniquePtr<FThread>>						WorkerThreads;
-		TAlignedArray<FSchedulerTls::FLocalQueueType>	WorkerLocalQueues;
-		TAlignedArray<FSleepEvent>						WorkerEvents;
-		std::atomic_uint								ActiveWorkers { 0 };
-		std::atomic_uint								NextWorkerId { 0 };
-		uint64											WorkerAffinity = 0;
-		uint64											BackgroundAffinity = 0;
-		EThreadPriority									WorkerPriority = EThreadPriority::TPri_Normal;
-		EThreadPriority									BackgroundPriority = EThreadPriority::TPri_BelowNormal;
-		std::atomic_bool								TemporaryShutdown{ false };
+		Private::FWaitingQueue                         WaitingQueue[2] = { WorkerEvents, WorkerEvents };
+		FSchedulerTls::FQueueRegistry                  QueueRegistry;
+		FCriticalSection                               WorkerThreadsCS;
+		TArray<TUniquePtr<FThread>>                    WorkerThreads;
+		TAlignedArray<FSchedulerTls::FLocalQueueType>  WorkerLocalQueues;
+		TAlignedArray<Private::FWaitEvent>             WorkerEvents;
+		std::atomic_uint                               ActiveWorkers { 0 };
+		std::atomic_uint                               NextWorkerId { 0 };
+		uint64                                         WorkerAffinity = 0;
+		uint64                                         BackgroundAffinity = 0;
+		EThreadPriority                                WorkerPriority = EThreadPriority::TPri_Normal;
+		EThreadPriority                                BackgroundPriority = EThreadPriority::TPri_BelowNormal;
+		std::atomic_bool                               TemporaryShutdown{ false };
 	};
 
 	FORCEINLINE_DEBUGGABLE bool TryLaunch(FTask& Task, EQueuePreference QueuePreference = EQueuePreference::DefaultPreference, bool bWakeUpWorker = true)
 	{
 		return FScheduler::Get().TryLaunch(Task, QueuePreference, bWakeUpWorker);
-	}
-
-	FORCEINLINE_DEBUGGABLE bool TryLaunchAffinity(FTask& Task, uint32 AffinityIndex)
-	{
-		return FScheduler::Get().TryLaunchAffinity(Task, AffinityIndex);
 	}
 
 	FORCEINLINE_DEBUGGABLE void BusyWaitForTask(const FTask& Task, bool ForceAllowBackgroundWork = false)
@@ -248,7 +242,7 @@ namespace LowLevelTasks
 		FScheduler::Get().BusyWait<TaskType>(Tasks, ForceAllowBackgroundWork);
 	}
 
-   /******************
+	/******************
 	* IMPLEMENTATION *
 	******************/
 	inline bool FScheduler::TryLaunch(FTask& Task, EQueuePreference QueuePreference, bool bWakeUpWorker)
@@ -263,11 +257,8 @@ namespace LowLevelTasks
 
 	inline bool FScheduler::TryLaunchAffinity(FTask& Task, uint32 AffinityIndex)
 	{
-		if(Task.TryPrepareLaunch())
-		{
-			return QueueRegistry.EnqueueAffinity(&Task, AffinityIndex);
-		}
-		return false;
+		// Redirect until we remove the deprecated function.
+		return FScheduler::Get().TryLaunch(Task);
 	}
 
 	inline uint32 FScheduler::GetNumWorkers() const
@@ -318,58 +309,9 @@ namespace LowLevelTasks
 		}
 	}
 
-	inline bool FScheduler::TrySleeping(FSleepEvent* WorkerEvent, bool bStopOutOfWorkScope, bool bDrowsing, bool bBackgroundWorker)
-	{
-		ESleepState DrowsingState1 = ESleepState::Drowsing;
-		ESleepState DrowsingState2 = ESleepState::Drowsing;
-		ESleepState RunningState  = ESleepState::Running;
-		ESleepState AffinityState  = ESleepState::Affinity;
-
-		if(!bDrowsing && WorkerEvent->SleepState.compare_exchange_strong(DrowsingState1, ESleepState::Drowsing, std::memory_order_release)) //continue drowsing
-		{
-			verifySlow(bStopOutOfWorkScope);
-			bDrowsing = true; // Alternative State one: ((Running -> Drowsing) -> Drowsing)
-		}
-		else if(WorkerEvent->SleepState.compare_exchange_strong(DrowsingState2, ESleepState::Sleeping, std::memory_order_release))
-		{
-			verifySlow(!bStopOutOfWorkScope);
-			bDrowsing = false;
-			WorkerEvent->SleepEvent->Wait(); // State two: ((Running -> Drowsing) -> Sleeping)
-			checkf(WorkerEvent->SleepState.load(std::memory_order_relaxed) == ESleepState::Running, TEXT("Worker was supposed to be running or drowsing: %d"), WorkerEvent->SleepState.load(std::memory_order_relaxed));
-		}
-		else if(WorkerEvent->SleepState.compare_exchange_strong(AffinityState, ESleepState::Drowsing, std::memory_order_release)) //continue drowsing
-		{
-			bDrowsing = true; // Alternative State one: ((Running -> Drowsing) -> Drowsing)
-		}
-		else if(WorkerEvent->SleepState.compare_exchange_strong(RunningState, ESleepState::Drowsing, std::memory_order_release))
-		{
-			bDrowsing = true;
-			SleepEventStack[bBackgroundWorker].Push(WorkerEvent); // State one: (Running -> Drowsing)
-		}
-		else
-		{
-			checkf(false, TEXT("Worker was supposed to be running or drowsing: %d"), WorkerEvent->SleepState.load(std::memory_order_relaxed));
-		}
-
-		return bDrowsing;
-	}
-
 	inline bool FScheduler::WakeUpWorker(bool bBackgroundWorker)
 	{
-		while (FSleepEvent* WorkerEvent = SleepEventStack[bBackgroundWorker].Pop())
-		{
-			ESleepState SleepState = WorkerEvent->SleepState.exchange(ESleepState::Running, std::memory_order_acquire);
-			if (SleepState == ESleepState::Sleeping)
-			{
-				WorkerEvent->SleepEvent->Trigger(); 
-				return true; // Solving State two: (((Running -> Drowsing) -> Sleeping) -> Running)
-			}
-			else if (SleepState == ESleepState::Drowsing)
-			{
-				return true; // Solving State one: (Running -> Drowsing) -> Running  OR ((Running -> Drowsing) -> Drowsing) -> Running
-			} 
-		}
-		return false;
+		return WaitingQueue[bBackgroundWorker].Notify() != 0;
 	}
 
 	inline FScheduler& FScheduler::Get()

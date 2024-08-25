@@ -143,6 +143,8 @@ public:
 		FString DeviceName;
 		/** If True, a remote play session will attempt to update the flash/software on the target device if it's out of date */
 		bool bUpdateDeviceFlash = false;
+		/** If True, the launch device is a Simulator */
+		bool bIsSimulator = false;
 	};
 
 	/** Where should the session be launched? May be local or remote. */

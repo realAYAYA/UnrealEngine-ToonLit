@@ -202,7 +202,7 @@ void UInteractiveGizmoManager::DestroyAllGizmosByOwner(void* Owner)
 
 
 
-UInteractiveGizmo* UInteractiveGizmoManager::FindGizmoByInstanceIdentifier(const FString& Identifier)
+UInteractiveGizmo* UInteractiveGizmoManager::FindGizmoByInstanceIdentifier(const FString& Identifier) const
 {
 	for (int i = 0; i < ActiveGizmos.Num(); ++i)
 	{

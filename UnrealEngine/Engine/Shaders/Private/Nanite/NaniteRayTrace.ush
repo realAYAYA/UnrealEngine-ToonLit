@@ -165,8 +165,8 @@ bool NaniteClustersIntersection(
 
 bool NaniteIntersection(float3 Origin, float3 Direction, FInstanceSceneData InstanceData, FPrimitiveSceneData PrimitiveData, float CutError, float TMin, inout float RayTCurrent, out FNaniteIntersectionResult NaniteIntersectionResult)
 {
-	float4x4 LocalToTranslatedWorld = LWCHackToFloat(InstanceData.LocalToWorld);
-	float4x4 TranslatedWorldToLocal = LWCHackToFloat(InstanceData.WorldToLocal);
+	float4x4 LocalToTranslatedWorld = DFHackToFloat(InstanceData.LocalToWorld);
+	float4x4 TranslatedWorldToLocal = DFHackToFloat(InstanceData.WorldToLocal);
 
 #if LOCAL_SPACE_WITHOUT_MATRIX_MUL
 	const float3 InvScale = 0.5f / PrimitiveData.InstanceLocalBoundsExtent;

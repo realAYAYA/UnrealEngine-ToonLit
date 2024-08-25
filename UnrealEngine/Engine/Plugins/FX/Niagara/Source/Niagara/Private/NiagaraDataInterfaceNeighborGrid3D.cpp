@@ -68,9 +68,10 @@ UNiagaraDataInterfaceNeighborGrid3D::UNiagaraDataInterfaceNeighborGrid3D(FObject
 	Proxy.Reset(new FNiagaraDataInterfaceProxyNeighborGrid3D());	
 }
 
-void UNiagaraDataInterfaceNeighborGrid3D::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceNeighborGrid3D::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
-	Super::GetFunctions(OutFunctions);
+	Super::GetFunctionsInternal(OutFunctions);
 
 	{
 		FNiagaraFunctionSignature Sig;
@@ -193,9 +194,8 @@ void UNiagaraDataInterfaceNeighborGrid3D::GetFunctions(TArray<FNiagaraFunctionSi
 		Sig.bRequiresExecPin = true;
 		OutFunctions.Add(Sig);
 	}
-
-
 }
+#endif
 
 DEFINE_NDI_DIRECT_FUNC_BINDER(UNiagaraDataInterfaceNeighborGrid3D, SetNumCells);
 void UNiagaraDataInterfaceNeighborGrid3D::GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction &OutFunc)
@@ -284,18 +284,6 @@ bool UNiagaraDataInterfaceNeighborGrid3D::Equals(const UNiagaraDataInterface* Ot
 
 	return OtherTyped->MaxNeighborsPerCell == MaxNeighborsPerCell;
 }
-
-#if WITH_EDITOR
-bool UNiagaraDataInterfaceNeighborGrid3D::ShouldCompile(EShaderPlatform ShaderPlatform) const
-{
-	if (!RHISupportsVolumeTextureAtomics(ShaderPlatform))
-	{
-		return false;
-	}
-
-	return UNiagaraDataInterface::ShouldCompile(ShaderPlatform);
-}
-#endif
 
 #if WITH_EDITORONLY_DATA
 bool UNiagaraDataInterfaceNeighborGrid3D::AppendCompileHash(FNiagaraCompileHashVisitor* InVisitor) const
@@ -508,6 +496,11 @@ void UNiagaraDataInterfaceNeighborGrid3D::SetShaderParameters(const FNiagaraData
 
 bool UNiagaraDataInterfaceNeighborGrid3D::InitPerInstanceData(void* PerInstanceData, FNiagaraSystemInstance* SystemInstance)
 {
+	if (UE::PixelFormat::HasCapabilities(EPixelFormat::PF_R32_SINT, EPixelFormatCapabilities::TypedUAVLoad | EPixelFormatCapabilities::TypedUAVStore | EPixelFormatCapabilities::BufferAtomics) == false)
+	{
+		return false;
+	}
+
 	FNDINeighborGrid3DInstanceData_GT* InstanceData = new (PerInstanceData) FNDINeighborGrid3DInstanceData_GT();
 
 	FNiagaraDataInterfaceProxyNeighborGrid3D* RT_Proxy = GetProxyAs<FNiagaraDataInterfaceProxyNeighborGrid3D>();

@@ -5,9 +5,11 @@
 #include "NiagaraBakerOutputSimCache.h"
 #include "NiagaraBakerOutputTexture2D.h"
 #include "NiagaraBakerOutputVolumeTexture.h"
+#include "NiagaraBakerOutputSparseVolumeTexture.h"
 #include "NiagaraBakerRendererOutputSimCache.h"
 #include "NiagaraBakerRendererOutputTexture2D.h"
 #include "NiagaraBakerRendererOutputVolumeTexture.h"
+#include "NiagaraBakerRendererOutputSparseVolumeTexture.h"
 #include "Customizations/NiagaraBakerOutputCustomization.h"
 
 FNiagaraBakerOutputRegistry& FNiagaraBakerOutputRegistry::Get()
@@ -37,6 +39,13 @@ FNiagaraBakerOutputRegistry& FNiagaraBakerOutputRegistry::Get()
 			Entry.WeakClass				= UNiagaraBakerOutputVolumeTexture::StaticClass();
 			Entry.CreateRenderer		= []() -> FNiagaraBakerOutputRenderer* { return new FNiagaraBakerRendererOutputVolumeTexture(); };
 			Entry.CreateCustomization	= FOnGetDetailCustomizationInstance::CreateStatic(&FNiagaraBakerOutputVolumeTextureDetails::MakeInstance);
+		}
+		// Sparse Volume Texture
+		{
+			FRegistryEntry& Entry = Singleton->Registry.AddDefaulted_GetRef();
+			Entry.WeakClass = UNiagaraBakerOutputSparseVolumeTexture::StaticClass();
+			Entry.CreateRenderer = []() -> FNiagaraBakerOutputRenderer* { return new FNiagaraBakerRendererOutputSparseVolumeTexture(); };
+			Entry.CreateCustomization = FOnGetDetailCustomizationInstance::CreateStatic(&FNiagaraBakerOutputSparseVolumeTextureDetails::MakeInstance);
 		}
 	}
 	return *Singleton.Get();

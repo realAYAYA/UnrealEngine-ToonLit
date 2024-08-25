@@ -90,6 +90,32 @@ void FGameplayAbilityAuditRow::FillDataFromGameplayAbility(const UGameplayAbilit
 		AuditRow.CooldownGE = TheCooldownGE->GetClass()->GetFName();
 	}
 
+	// Gather all of the other GameplayTagContainer referenced Tags (will also include AssetTags).
+	FProperty* AbilityTagsProperty = UGameplayAbility::StaticClass()->FindPropertyByName(GET_MEMBER_NAME_CHECKED(UGameplayAbility, AbilityTags));
+	for (TPropertyValueIterator<FStructProperty> It(GameplayAbility.GetClass(), &GameplayAbility); It; ++It)
+	{
+		const bool bIsTagContainer = It.Key()->SameType(AbilityTagsProperty);
+		if (!bIsTagContainer)
+		{
+			continue;
+		}
+
+		if (const FGameplayTagContainer* TagContainer = reinterpret_cast<const FGameplayTagContainer*>(It.Value()))
+		{
+			for (const FGameplayTag& GameplayTag : *TagContainer)
+			{
+				AuditRow.ReferencedTags.Emplace(GameplayTag.GetTagName());
+			}
+		}
+	}
+
+	// Asset Tags should go in its own field because of its importance
+	for (const FGameplayTag& GameplayTag : GameplayAbility.AbilityTags)
+	{
+		AuditRow.AssetTags.Emplace(GameplayTag.GetTagName());
+	}
+
+	AuditRow.InstancingPolicy = GameplayAbility.GetInstancingPolicy();
 	AuditRow.NetExecutionPolicy = GameplayAbility.GetNetExecutionPolicy();
 	AuditRow.NetSecurityPolicy = GameplayAbility.GetNetSecurityPolicy();
 	AuditRow.ReplicationPolicy = GameplayAbility.GetReplicationPolicy();

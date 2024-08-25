@@ -168,6 +168,7 @@ struct RIGVM_API FRigVMStruct
 	virtual FName GetEventName() const { return NAME_None; }
 	virtual bool CanOnlyExistOnce() const { return false; }
 	virtual FString GetUnitLabel() const { return FString(); };
+	virtual FString GetUnitSubTitle() const { return FString(); };
 
 public:
 

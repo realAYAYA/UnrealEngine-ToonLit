@@ -5,50 +5,32 @@
 #include "Async/TaskGraphFwd.h"
 #include "MuCO/CustomizableObjectInstanceDescriptor.h"
 #include "Templates/SubclassOf.h"
+#include "Math/RandomStream.h"
 
 #include "CustomizableObjectInstance.generated.h"
 
-class FCustomizableObjectSystemPrivate;
+struct FMutableModelImageProperties;
+
+namespace mu
+{
+	class Image;
+}
+
+class UCustomizableObjectSystemPrivate;
 class USkeletalMesh;
 class AActor;
 class FProperty;
 class UAnimInstance;
-class UCustomizableInstancePrivateData; // This is used to hide Mutable SDK members in the public headers.
 class UCustomizableObject;
-class UCustomizableSkeletalComponent;
 class UTexture2D;
+class FUpdateContextPrivate;
+class UCustomizableObjectInstanceUsage;
+class UMaterialInterface;
 struct FFrame;
 struct FGameplayTagContainer;
 struct FPropertyChangedEvent;
-
-//! Order of the unreal vertex buffers when in mutable data
-#define MUTABLE_VERTEXBUFFER_POSITION	0
-#define MUTABLE_VERTEXBUFFER_TANGENT	1
-#define MUTABLE_VERTEXBUFFER_TEXCOORDS	2
-
-
-// Current state of a projector associated with a parameter.
-namespace EProjectorState
-{
-	typedef uint8 Type;
-	
-	const Type Hidden = 0;
-	const Type Translate = 1;
-	const Type Rotate = 2;
-	const Type Scale = 3;	
-	const Type Selected = 4;
-	const Type TypeChanged = 5;
-};
-
-
-/** FString with the possible errors from skeletal mesh update */
-namespace ESkeletalMeshState
-{
-	const FString Correct = "Correct";
-	const FString UpdateError = "Update error";
-	const FString PostUpdateError = "Post Update Error";
-	const FString AsyncUpdatePending = "Async update pending";
-};
+struct FTexturePlatformData;
+struct FMutableModelImageProperties;
 
 
 // Priority for the mutable update queue, Low is the normal distance-based priority, High is normally used for discards and Mid for LOD downgrades
@@ -68,11 +50,23 @@ enum class EUpdateRequired : uint8
 UENUM()
 enum class EUpdateResult : uint8
 {
-	Success, // There only exist one Success case. Any other new cases have to be errors.
+	Success, // Update finished without issues.
+	Warning, // Generic warning. Update finished but with warnings.
+	
 	Error, // Generic error.
 	ErrorOptimized, // The update was skipped since its result would have been the same as the current customization.
 	ErrorReplaced, // The update was replaced by a newer update request.
-	ErrorDiscarded // The update was not finished since due to the LOD management discarding the data.
+	ErrorDiscarded, // The update was not finished since due to the LOD management discarding the data.
+	Error16BitBoneIndex // The update finish unsuccessfully due to Instance not supporting 16 Bit Bone Indexing required by the Engine.
+};
+
+
+/** Indicates the status of the generated Skeletal Mesh. */
+enum class ESkeletalMeshStatus : uint8
+{
+	NotGenerated, // Set only when loading the Instance for the first time or after compiling. Any generation, successful or not, can not end up in this state.
+	Success, // Generated successfully.
+	Error // Generated with errors.
 };
 
 
@@ -89,7 +83,7 @@ struct FUpdateContext
 
 
 DECLARE_DYNAMIC_DELEGATE_OneParam(FInstanceUpdateDelegate, const FUpdateContext&, Result);
-
+DECLARE_MULTICAST_DELEGATE_OneParam(FInstanceUpdateNativeDelegate, const FUpdateContext&);
 
 /* When creating new delegates use the following conventions:
  *
@@ -99,18 +93,10 @@ DECLARE_DYNAMIC_DELEGATE_OneParam(FInstanceUpdateDelegate, const FUpdateContext&
  * - Native delegates names should end with "NativeDelegate".
  * - Dynamic delegates broadcast before native delegates. */
 
-/** Broadcast at the end of an Instance update request (e.g., before returning from UpdateSkeletalMeshAsync).
- * Notice that Mutable internally can also request an Instance update. */
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBeginUpdateDelegate, UCustomizableObjectInstance*, Instance);
-DECLARE_MULTICAST_DELEGATE_OneParam(FBeginUpdateNativeDelegate, UCustomizableObjectInstance*);
-
 /** Broadcast when an Instance update has completed.
  * Notice that Mutable internally can also start an Instance update. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FObjectInstanceUpdatedDelegate, UCustomizableObjectInstance*, Instance);
 DECLARE_MULTICAST_DELEGATE_OneParam(FObjectInstanceUpdatedNativeDelegate, UCustomizableObjectInstance*);
-
-DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FBeginDestroyDelegate, UCustomizableObjectInstance*, Instance);
-DECLARE_MULTICAST_DELEGATE_OneParam(FBeginDestroyNativeDelegate, UCustomizableObjectInstance*);
 
 DECLARE_DELEGATE_OneParam(FProjectorStateChangedDelegate, FString);
 
@@ -124,24 +110,16 @@ class CUSTOMIZABLEOBJECT_API UCustomizableObjectInstance : public UObject
 {
 	GENERATED_BODY()
 
-	friend UCustomizableInstancePrivateData;
+	// Friends
+	friend UCustomizableInstancePrivate;
 	friend FMutableUpdateCandidate;
 
 public:
 	UCustomizableObjectInstance();
-
-	FCustomizableObjectInstanceDescriptor& GetDescriptor();
-
+	
 	const FCustomizableObjectInstanceDescriptor& GetDescriptor() const;
 	
 	void SetDescriptor(const FCustomizableObjectInstanceDescriptor& InDescriptor);
-
-	/** Broadcast at the beginning of an Instance update. */
-	UPROPERTY(BlueprintAssignable, Category = CustomizableObjectInstance)
-	FBeginUpdateDelegate BeginUpdateDelegate;
-
-	/** Broadcast at the beginning of an Instance update. */
-	FBeginUpdateNativeDelegate BeginUpdateNativeDelegate;
 
 	/** Broadcast when the Customizable Object Instance is updated. */
 	UPROPERTY(Transient, BlueprintAssignable, Category = CustomizableObjectInstance)
@@ -150,41 +128,11 @@ public:
 	/** Broadcast when the Customizable Object Instance is updated. */
 	FObjectInstanceUpdatedNativeDelegate UpdatedNativeDelegate;
 
-	/** Broadcast when UObject::BeginDestroy is being called. */	
-	UPROPERTY(BlueprintAssignable, Category = CustomizableObjectInstance)
-	FBeginDestroyDelegate BeginDestroyDelegate;
-
-	/** Broadcast when UObject::BeginDestroy is being called. */
-	FBeginDestroyNativeDelegate BeginDestroyNativeDelegate;
-
-	TMap<FString, bool> ParamNameToExpandedMap; // Used to check whether a mutable param is expanded in the editor to show its child params
-
-	/** The generated skeletal meshes for this Instance, one for each component */
-	UPROPERTY(Transient, VisibleAnywhere, Category = CustomizableSkeletalMesh)
-	TArray< TObjectPtr<USkeletalMesh> > SkeletalMeshes;
-
-
-	// Will store status description of current skeletal mesh generation (for instance, "EmptyLOD0" or "EmptyMesh"
-	UPROPERTY()
-	FString SkeletalMeshStatus;
-
-#if WITH_EDITOR
-	// Will store the previous status description to avoid losing notifications with partial updates.
-	FString PreUpdateSkeletalMeshStatus;
-
-	/** During editor, always remember the duration of the last update in the mutable runtime, for profiling. */
-	int32 LastUpdateMutableRuntimeCycles = 0;
-#endif
-
-public:
-
 	// UObject interface.
 #if WITH_EDITOR
-	virtual void PreEditChange(FProperty* PropertyAboutToChange) override;
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 	virtual bool CanEditChange( const FProperty* InProperty ) const override;
 #endif //WITH_EDITOR
-
 	virtual void Serialize(FArchive& Ar) override;
 	virtual void PostLoad() override;
 	virtual void BeginDestroy() override;
@@ -192,194 +140,160 @@ public:
 	virtual FString GetDesc() override;
 	virtual bool IsEditorOnly() const override;
 
+	/** Set the CustomizableObject this instance will be generated from. 
+	  * It is usually not necessary to call this since instances are already generated from a CustomizableObject. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	void SetObject(UCustomizableObject* InObject);
 
-	//Get the current CustomizableObject 
+	/** Get the CustomizableObject that this is an instance of. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	UCustomizableObject* GetCustomizableObject() const;
 
-	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance, meta = (DeprecatedFunction, DeprecationMessage = "Parameter decorations have been removed. This method will be removed in future versions."))
-	bool GetBuildParameterDecorations() const;
-
-	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance, meta = (DeprecatedFunction, DeprecationMessage = "Parameter decorations have been removed. This method will be removed in future versions."))
-	void SetBuildParameterDecorations(bool Value);
-
+	/** Return true if the parameter relevancy will be updated when this instance is generated. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	bool GetBuildParameterRelevancy() const;
 
+	/** Set the flag that controls if parameter relevancy will be updated when this instance is generated. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	void SetBuildParameterRelevancy(bool Value);
 
-	int32 GetState() const;
-	void SetState(int32 InState);
-
+	/** Return the name of the current CustomizableObject state this is instance is set to. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	FString GetCurrentState() const;
 
+	/** Set the CustomizableObject state that this instance will be generated into. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	void SetCurrentState(const FString& StateName);
 
+	/** Get the skeletal mesh generated for this instance. 
+	  * If the object has multiple components, an index of the component can be specified. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	USkeletalMesh* GetSkeletalMesh(int32 ComponentIndex = 0) const;
 	
+	/** Return true if a skeletal mesh has been generated for any component of this instance. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	bool HasAnySkeletalMesh() const;
 
+	/** Get the array of parameters in the instance that are of type "bool". */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	TArray<FCustomizableObjectBoolParameterValue>& GetBoolParameters();
 
 	const TArray<FCustomizableObjectBoolParameterValue>& GetBoolParameters() const;
 
+	/** Get the array of parameters in the instance that are of type "integer". */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	TArray<FCustomizableObjectIntParameterValue>& GetIntParameters();
 
 	const TArray<FCustomizableObjectIntParameterValue>& GetIntParameters() const;
 
+	/** Get the array of parameters in the instance that are of type "float". */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	TArray<FCustomizableObjectFloatParameterValue>& GetFloatParameters();
 
 	const TArray<FCustomizableObjectFloatParameterValue>& GetFloatParameters() const;
 	
+	/** Get the array of parameters in the instance that are of type "texture". */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	TArray<FCustomizableObjectTextureParameterValue>& GetTextureParameters();
 
 	const TArray<FCustomizableObjectTextureParameterValue>& GetTextureParameters() const;
 
+	/** Get the array of parameters in the instance that are of type "vector". */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	TArray<FCustomizableObjectVectorParameterValue>& GetVectorParameters();
 
 	const TArray<FCustomizableObjectVectorParameterValue>& GetVectorParameters() const;
 
+	/** Get the array of parameters in the instance that are of type "projector". */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	TArray<FCustomizableObjectProjectorParameterValue>& GetProjectorParameters();
 	
 	const TArray<FCustomizableObjectProjectorParameterValue>& GetProjectorParameters() const;
 
-	/** See FCustomizableObjectInstanceDescriptor::HasAnyParameters. */
+	/** Return true if the instance has any parameters. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	bool HasAnyParameters() const;
 	
-	/** Set random values to the parameters. Useful for testing only. */
+	/** Set random values to the parameters. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	void SetRandomValues();
 
-	/**  Set random values to the parameters using a seed. Useful for testing only. */
-	void SetRandomValues(const int32 InRandomizationSeed);
+	/** Set random values to the parameters using a stream. */
+	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
+	void SetRandomValuesFromStream(const FRandomStream& InStream);
 
-	// Utilities to manage saving and loading parameters from profiles.
-	bool LoadParametersFromProfile(int32 ProfileIndex);
-	bool SaveParametersToProfile(int32 ProfileIndex);
-	bool MigrateProfileParametersToCurrentInstance(int32 ProfileIndex);
-	void SetSelectedParameterProfileDirty();
-	bool IsSelectedParameterProfileDirty() const;
-
-	/** Return true if the instance is not locked and if it's compiled */
+	/** Returns the AssetUserData that was gathered from all the constituent mesh parts during the last update. 
+	  * It requires that the CustomizableObject had the bEnableAssetUserDataMerge set to true during compilation. */
+	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
+	TSet<UAssetUserData*> GetMergedAssetUserData(int32 ComponentIndex) const;
+	
+	/** Return true if the instance is not locked and if it's compiled. */
 	bool CanUpdateInstance() const;
 
-	/** Update Skeletal Mesh asynchronously. */
+	/** Generate the instance with the current parameters and update all the components Skeletal Meshes asynchronously. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	void UpdateSkeletalMeshAsync(bool bIgnoreCloseDist = false, bool bForceHighPriority = false);
 		
-	/** Update Skeletal Mesh asynchronously. Callback will be called once the update finishes, even if it fails. */
+	/** Generate the instance with the current parameters and update all the components Skeletal Meshes asynchronously.
+	  * Callback will be called once the update finishes, even if it fails. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	void UpdateSkeletalMeshAsyncResult(FInstanceUpdateDelegate Callback, bool bIgnoreCloseDist = false, bool bForceHighPriority = false);
 
-private:
-	/** Perform all the checks required to see if the update should begin. */
-	EUpdateRequired IsUpdateRequired(bool bIsCloseDistTick, bool bOnlyUpdateIfNotGenerated, bool bIgnoreCloseDist) const;
+	void UpdateSkeletalMeshAsyncResult(FInstanceUpdateNativeDelegate Callback, bool bIgnoreCloseDist = false, bool bForceHighPriority = false);
 
-public:
-	/** Private API.
-	 *
-	 * Update Skeletal Mesh asynchronously. Immersive function.
-	 * Once the update reaches this function, the update has been considered started and must complete all the update flow.
-	 * Starting at this function, all Update code paths must end up in FinishUpdateGlobal!
-	 *
-	 * @param bIsCloseDistTick true if and only if called from the tick.
-	 */
-	void DoUpdateSkeletalMesh(bool bIsCloseDistTick, bool bOnlyUpdateIfNotGenerated, bool bIgnoreCloseDist, bool bForceHighPriority, const EUpdateRequired* OptionalUpdateRequired, FInstanceUpdateDelegate* UpdateCallback);
-
-	// Clones the instance creating a new identical transient instance.
+	/** Clones the instance creating a new identical transient instance. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	UCustomizableObjectInstance* Clone();
 
-	// Clones the instance creating a new identical static instance.
+	/** Clones the instance creating a new identical static instance with the given Outer. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	UCustomizableObjectInstance* CloneStatic(UObject* Outer);
 
-	// Copy parameters from input instance
+	/** Copy parameters from the given Instance. */
 	void CopyParametersFromInstance(UCustomizableObjectInstance* Instance);
 
 	/** Immediately destroy the Mutable Core Live Update Instance attached to this (if exists). */
 	void DestroyLiveUpdateInstance();
-	
-	// Releases all the mutable resources this instance holds, should only be called when it is not going to be used any more.
-	void ReleaseMutableResources(bool bCalledFromBeginDestroy);
 
-	/** Returns the priority an update issued by DoUpdateSkeletalMesh would get in the current instance configuration and state */
-	EQueuePriorityType GetUpdatePriority(bool bIsCloseDistTick, bool bOnlyUpdateIfNotGenerated, bool bIgnoreCloseDist, bool bForceHighPriority) const;
+	/** Return true if changing the parameter would affect the Instance given its current generation. */
+	bool IsParameterRelevant(int32 ParameterIndex) const;
 
-	// Returns de description texture (ex: color bar) for this parameter and DescIndex
-	// This will only be valid if bBuildParameterDecorations was set to true before the last update.
-	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance, meta = (DeprecatedFunction, DeprecationMessage = "Parameter decorations have been removed. This method will be removed in future versions."))
-	UTexture2D* GetParameterDescription(const FString& ParamName, int32 DescIndex);
-
-	//! 
-	bool IsParameterRelevant( int32 ParameterIndex ) const;
-
-	//! 
+	/** Return true if the given parameter has any effect in the current object state, and considering the current values of the other parameters. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	bool IsParameterRelevant(const FString& ParamName) const;
 
-	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance, 
-		meta = (DeprecatedFunction, DeprecationMessage = "Use the method with the same name located at the Customizable Object instead."))
-	bool IsParamMultidimensional(const FString& ParamName) const;
-	
+	/** For multidimensional parameters, return the number of dimensions that the given projector parameter supports. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	int32 GetProjectorValueRange(const FString& ParamName) const;
 
+	/** For multidimensional parameters, return the number of dimensions that the given int parameter supports. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	int32 GetIntValueRange(const FString& ParamName) const;
 
+	/** For multidimensional parameters, return the number of dimensions that the given float parameter supports. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	int32 GetFloatValueRange(const FString& ParamName) const;
 
+	/** For multidimensional parameters, return the number of dimensions that the given texture parameter supports. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	int32 GetTextureValueRange(const FString& ParamName) const;
-	
-	bool bShowOnlyRuntimeParameters = true;
-	bool bShowOnlyRelevantParameters = true;
 
-	/** Control the display of support widgets to edit projectors of this instance. */
-	void SetProjectorState( const FString& ParamName, int32 RangeIndex, EProjectorState::Type state );
-	void ResetProjectorStates();
-	EProjectorState::Type GetProjectorState(const FString& ParamName, int32 RangeIndex) const;
-	FProjectorStateChangedDelegate ProjectorStateChangedDelegate;
-
-	// DEPRECATED: Use the method in the CustomizableObject instead which takes an index among all parameters
-	// Returns how many possible options an int parameter has
-	//int32 GetIntParameterNumOptions(int32 IntParamIndex);
-
-	// DEPRECATED: Use the method in the CustomizableObject instead which takes an index among all parameters
-	// Gets the Name of the option at position K in the list of available options for the int parameter. Useful to enumerate the int parameter's possible options (Ex: "Hat1", "Hat2", "Cap", "Nothing")
-	//const FString& GetIntParameterAvailableOption(int32 IntParamIndex, int32 K);
-
+	/** Return the name of the option currently set in the given parameter. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	const FString& GetIntParameterSelectedOption(const FString& ParamName, int32 RangeIndex = -1) const;
 
-	// Sets the selected option of an int parameter by the option's name
+	/** Set the currently selected option value for the given parameter, by parameter index and option name. */
 	void SetIntParameterSelectedOption(int32 IntParamIndex, const FString& SelectedOption, int32 RangeIndex = -1);
 
-	// Sets the selected option of an int parameter, by the option's name
+	/** Set the currently selected option value for the given parameter, by parameter name and option name. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	void SetIntParameterSelectedOption(const FString& ParamName, const FString& SelectedOptionName, int32 RangeIndex = -1);
 
-	// Gets the value of a float parameter with name "FloatParamName"
+	/** Gets the value of a float parameter with name "FloatParamName". */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	float GetFloatParameterSelectedOption(const FString& FloatParamName, int32 RangeIndex = -1) const;
 
-	// Sets the float value "FloatValue" of a float parameter with index "FloatParamIndex"
+	/** Sets the float value "FloatValue" of a float parameter with index "FloatParamIndex". */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	void SetFloatParameterSelectedOption(const FString& FloatParamName, float FloatValue, int32 RangeIndex = -1);
 	
@@ -391,41 +305,54 @@ public:
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	void SetTextureParameterSelectedOption(const FString& TextureParamName, const FString& TextureValue, int32 RangeIndex = -1);
 
-	/** @deprecated Use SetTextureParameterSelectedOption instead. */
-	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
-	void SetTextureParameterSelectedOptionT(const FString& TextureParamName, UTexture2D* TextureValue, int32 RangeIndex = -1);
-	
-	// Gets the value of a color parameter with name "ColorParamName"
+	/** Gets the value of a color parameter with name "ColorParamName". */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	FLinearColor GetColorParameterSelectedOption(const FString& ColorParamName) const;
 
-	// Sets the color value "ColorValue" of a color parameter with index "ColorParamIndex"
+	/** Sets the color value "ColorValue" of a color parameter with index "ColorParamIndex". */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	void SetColorParameterSelectedOption(const FString& ColorParamName, const FLinearColor& ColorValue);
 
-	// Sets the bool value "BoolValue" of a bool parameter with name "BoolParamName"
+	/** Sets the bool value "BoolValue" of a bool parameter with name "BoolParamName". */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	bool GetBoolParameterSelectedOption(const FString& BoolParamName) const;
 
-	// Sets the bool value "BoolValue" of a bool parameter with name "BoolParamName"
+	/** Sets the bool value "BoolValue" of a bool parameter with name "BoolParamName". */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	void SetBoolParameterSelectedOption(const FString& BoolParamName, bool BoolValue);
 
-	// Sets the vector value "VectorValue" of a bool parameter with index "VectorParamIndex"
+	/** Sets the vector value "VectorValue" of a bool parameter with index "VectorParamIndex". */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	void SetVectorParameterSelectedOption(const FString& VectorParamName, const FLinearColor& VectorValue);
 
-	// Sets the projector values of a projector parameter with index "ProjectorParamIndex"
+	/** Sets the projector values of a projector parameter with index "ProjectorParamIndex". */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	void SetProjectorValue(const FString& ProjectorParamName,
 		const FVector& OutPos, const FVector& OutDirection, const FVector& OutUp, const FVector& OutScale,
 		float OutAngle,
 		int32 RangeIndex = -1);
 
-	/** Set only the projector position. */
-	void SetProjectorPosition(const FString& ProjectorParamName, const FVector3f& Pos, int32 RangeIndex = -1);
+	/** Set only the projector position keeping the rest of values. */
+	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
+	void SetProjectorPosition(const FString& ProjectorParamName, const FVector& Pos, int32 RangeIndex = -1);
+	
+	/** Set only the projector direction vector keeping the rest of values. */
+	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
+	void SetProjectorDirection(const FString& ProjectorParamName, const FVector& Direction, int32 RangeIndex = -1);
+	
+	/** Set only the projector up vector keeping the rest of values. */
+	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
+	void SetProjectorUp(const FString& ProjectorParamName, const FVector& Up, int32 RangeIndex = -1);
 
-	// Get the projector values of a projector parameter with index "ProjectorParamIndex"
+	/** Set only the projector scale keeping the rest of values. */
+	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
+	void SetProjectorScale(const FString& ProjectorParamName, const FVector& Scale, int32 RangeIndex = -1);
+
+	/** Set only the cylindrical projector angle keeping the rest of values. */
+	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
+	void SetProjectorAngle(const FString& ProjectorParamName, float Angle, int32 RangeIndex = -1);
+	
+	/** Get the projector values of a projector parameter with index "ProjectorParamIndex". */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	void GetProjectorValue(const FString& ProjectorParamName,
 		FVector& OutPos, FVector& OutDirection, FVector& OutUp, FVector& OutScale,
@@ -437,87 +364,87 @@ public:
 		float& Angle, ECustomizableObjectProjectorType& Type,
 		int32 RangeIndex = -1) const;
 
-	// Get the current projector position for the parameter with the given name
+	/** Get the current projector position for the parameter with the given name. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	FVector GetProjectorPosition(const FString & ParamName, int32 RangeIndex = -1) const;
 
-	// Get the current projector direction vector for the parameter with the given name
+	/** Get the current projector direction vector for the parameter with the given name. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	FVector GetProjectorDirection(const FString & ParamName, int32 RangeIndex = -1) const;
 
-	// Get the current projector up vector for the parameter with the given name
+	/** Get the current projector up vector for the parameter with the given name. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	FVector GetProjectorUp(const FString & ParamName, int32 RangeIndex = -1) const;
 
-	// Get the current projector scale for the parameter with the given name
+	/** Get the current projector scale for the parameter with the given name. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	FVector GetProjectorScale(const FString & ParamName, int32 RangeIndex = -1) const;
 
-	// Get the current cylindrical projector angle for the parameter with the given name
+	/** Get the current cylindrical projector angle for the parameter with the given name. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	float GetProjectorAngle(const FString& ParamName, int32 RangeIndex = -1) const;
 
-	// Get the current projector type for the parameter with the given name
+	/** Get the current projector type for the parameter with the given name. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	ECustomizableObjectProjectorType GetProjectorParameterType(const FString& ParamName, int32 RangeIndex = -1) const;
 
-	/** See FCustomizableObjectInstanceDescriptor::GetProjector. */
+	/** Get the current projector for the parameter with the given name. */
 	FCustomizableObjectProjector GetProjector(const FString& ParamName, int32 RangeIndex) const;
 	
-	// Finds in IntParameters a parameter with name ParamName, returns the index if found, -1 otherwise
+	/** Finds in IntParameters a parameter with name ParamName, returns the index if found, -1 otherwise. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	int32 FindIntParameterNameIndex(const FString& ParamName) const;
 
-	// Finds in FloatParameters a parameter with name ParamName, returns the index if found, -1 otherwise
+	/** Finds in FloatParameters a parameter with name ParamName, returns the index if found, -1 otherwise. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	int32 FindFloatParameterNameIndex(const FString& ParamName) const;
 
-	// Finds in BoolParameters a parameter with name ParamName, returns the index if found, -1 otherwise
+	/** Finds in BoolParameters a parameter with name ParamName, returns the index if found, -1 otherwise. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	int32 FindBoolParameterNameIndex(const FString& ParamName) const;
 
-	// Finds in VectorParameters a parameter with name ParamName, returns the index if found, -1 otherwise
+	/** Finds in VectorParameters a parameter with name ParamName, returns the index if found, -1 otherwise. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	int32 FindVectorParameterNameIndex(const FString& ParamName) const;
 
-	// Finds in ProjectorParameters a parameter with name ParamName, returns the index if found, -1 otherwise
+	/** Finds in ProjectorParameters a parameter with name ParamName, returns the index if found, -1 otherwise. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	int32 FindProjectorParameterNameIndex(const FString& ParamName) const;
 
-	// Increases the range of values of the integer with ParamName, returns the index of the new integer value, -1 otherwise.
-	// The added value is initialized with the first integer option and is the last one of the range.
+	/** Increases the range of values of the integer with ParamName and returns the index of the new integer value, -1 otherwise.
+	  * The added value is initialized with the first integer option and is the last one of the range. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	int32 AddValueToIntRange(const FString& ParamName);
 
-	// Increases the range of values of the float with ParamName, returns the index of the new float value, -1 otherwise.
-	// The added value is initialized with 0.5f and is the last one of the range.
+	/** Increases the range of values of the float with ParamName, returns the index of the new float value, -1 otherwise.
+	  * The added value is initialized with 0.5f and is the last one of the range. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	int32 AddValueToFloatRange(const FString& ParamName);
 
-	// Increases the range of values of the projector with ParamName, returns the index of the new projector value, -1 otherwise.
-	// The added value is initialized with the default projector as set up in the editor and is the last one of the range.
+	/** Increases the range of values of the projector with ParamName, returns the index of the new projector value, -1 otherwise.
+	  * The added value is initialized with the default projector as set up in the editor and is the last one of the range. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	int32 AddValueToProjectorRange(const FString& ParamName);
 
-	// Remove the last of the integer range of values from the parameter ParamName, returns the index of the last valid integer, -1 if no values left.
+	/** Remove the last of the integer range of values from the parameter ParamName, returns the index of the last valid integer, -1 if no values left. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	int32 RemoveValueFromIntRange(const FString& ParamName);
 
-	// Remove the RangeIndex element of the integer range of values from the parameter ParamName, returns the index of the last valid integer, -1 if no values left.
+	/** Remove the RangeIndex element of the integer range of values from the parameter ParamName, returns the index of the last valid integer, -1 if no values left. */
 	int32 RemoveValueFromIntRange(const FString& ParamName, int32 RangeIndex);
 
-	// Remove the last of the float range of values from the parameter ParamName, returns the index of the last valid float, -1 if no values left.
+	/** Remove the last of the float range of values from the parameter ParamName, returns the index of the last valid float, -1 if no values left. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	int32 RemoveValueFromFloatRange(const FString& ParamName);
 
-	// Remove the RangeIndex element of the float range of values from the parameter ParamName, returns the index of the last valid float, -1 if no values left.
+	/** Remove the RangeIndex element of the float range of values from the parameter ParamName, returns the index of the last valid float, -1 if no values left. */
 	int32 RemoveValueFromFloatRange(const FString& ParamName, int32 RangeIndex);
 
-	// Remove the last of the projector range of values from the parameter ParamName, returns the index of the last valid projector, -1 if no values left.
+	/** Remove the last of the projector range of values from the parameter ParamName, returns the index of the last valid projector, -1 if no values left. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	int32 RemoveValueFromProjectorRange(const FString& ParamName);
 
-	// Remove the RangeIndex element of the projector range of values from the parameter ParamName, returns the index of the last valid projector, -1 if no values left.
+	/** Remove the RangeIndex element of the projector range of values from the parameter ParamName, returns the index of the last valid projector, -1 if no values left. */
 	int32 RemoveValueFromProjectorRange(const FString& ParamName, int32 RangeIndex);
 
 	// ------------------------------------------------------------
@@ -525,9 +452,7 @@ public:
 	// ------------------------------------------------------------
 	
 	/** Given Multilayer Projector name, create a new Multilayer Projector Helper (if non-existent). See FMultilayerProjector.
-	 *
-	 * @return ture if successfully created (or was already created).
-	 */
+	  * @return true if successfully created (or was already created). */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	bool CreateMultiLayerProjector(const FName& ProjectorParamName);
 	
@@ -585,53 +510,48 @@ public:
 	
 	// ------------------------------------------------------------
 	
-	// Returns the animation BP for the parameter component and slot, gathered from all the meshes that compose this instance
+	/** Returns the animation BP for the parameter component and slot, gathered from all the meshes that compose this instance. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	TSubclassOf<UAnimInstance> GetAnimBP(int32 ComponentIndex, const FName& Slot) const;
 
+	/** Return the list of tags for this instance. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	const FGameplayTagContainer& GetAnimationGameplayTags() const;
 	
+	/** Execute a delegate for each animation instance involved in this customizable object instance. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	void ForEachAnimInstance(int32 ComponentIndex, FEachComponentAnimInstanceClassDelegate Delegate) const;
 
 	void ForEachAnimInstance(int32 ComponentIndex, FEachComponentAnimInstanceClassNativeDelegate Delegate) const;
 
+	/** Check if the given UAnimInstance class requires to be fixed up. */
 	bool AnimInstanceNeedsFixup(TSubclassOf<UAnimInstance> AnimInstance) const;
+
+	/** Fix the given UAnimInstance instance. */
 	void AnimInstanceFixup(UAnimInstance* AnimInstance) const;
 
 	/** See FCustomizableObjectInstanceDescriptor::SaveDescriptor. */
-	void SaveDescriptor(FArchive &CustomizableObjectDescriptor,bool bUseCompactDescriptor);
+	void SaveDescriptor(FArchive &CustomizableObjectDescriptor, bool bUseCompactDescriptor);
 
 	/** See FCustomizableObjectInstanceDescriptor::LoadDescriptor. */
 	void LoadDescriptor(FArchive &CustomizableObjectDescriptor);
 
-	// Enable physics asset replacement so that generated skeletal meshes have the merged physics assets of their skeletal mesh parts and reference mesh
+	/** Enable physics asset replacement so that generated skeletal meshes have the merged physics assets of their skeletal mesh parts and reference mesh. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	void SetReplacePhysicsAssets(bool bReplaceEnabled);
 
-	// Enables the reuse of all possible textures when the instance is updated without any changes in geometry or state (the first update after creation doesn't reuse any)
-	// It will only work if the textures aren't compressed, so set the instance to a Mutable state with texture compression disabled
-	// WARNING! If texture reuse is enabled, do NOT keep external references to the textures of the instance. The instance owns the textures.
+	/** Enables the reuse of all possible textures when the instance is updated without any changes in geometry or state (the first update after creation doesn't reuse any)
+	  * It will only work if the textures aren't compressed, so set the instance to a Mutable state with texture compression disabled
+	  * WARNING! If texture reuse is enabled, do NOT keep external references to the textures of the instance. The instance owns the textures. */
 	void SetReuseInstanceTextures(bool bTextureReuseEnabled);
 	
-	// If enabled, low-priority textures will generate resident mipmaps too.
+	/** If enabled, low-priority textures will generate resident mipmaps too. */
 	void SetForceGenerateResidentMips(bool bForceGenerateResidentMips);
 
-	// Adds/removes a texture channel coverage query to the instance update process. Every material updated by mutable with a channel named TextureName will be checked
-	// It only works properly when the Instance is in a state with texture compression disabled.
-	void AddQueryTextureCoverage(const FString& TextureName, const FString* MaskOutChannelName = nullptr);
-	void RemoveQueryTextureCoverage(const FString& TextureName);
-
-	// Returns the result of a texture coverage query previously registered with AddQueryTextureCoverage. The query is run during an update of the instance.
-	// It only works properly when the Instance is in a state with texture compression disabled.
-	float GetQueryResultTextureCoverage(const FString& TextureName);
-	float GetQueryResultTextureCoverageMasked(const FString& TextureName); // Same as the previous query but this time intersected with the mask texture
-
-	void AdditionalAssetsAsyncLoaded( FGraphEventRef CompletionEvent );
-
+	const TArray<TObjectPtr<UMaterialInterface>>* GetOverrideMaterials(int32 ComponentIndex) const;
+	
 	// The following methods should only be used in an LOD management class
-	void SetIsBeingUsedByComponentInPlay(bool bIsUsedByComponent );
+	void SetIsBeingUsedByComponentInPlay(bool bIsUsedByComponent);
 	bool GetIsBeingUsedByComponentInPlay() const;
 	void SetIsDiscardedBecauseOfTooManyInstances(bool bIsDiscarded);
 	bool GetIsDiscardedBecauseOfTooManyInstances() const;
@@ -639,127 +559,46 @@ public:
 	float GetMinSquareDistToPlayer() const;
 	void SetMinSquareDistToPlayer(float NewValue);
 
+	/** Return the number of components generated in this instance. */
 	UFUNCTION(BlueprintCallable, Category = CustomizableObjectInstance)
 	int32 GetNumComponents() const;
 
-
+	/** Return the min LOD that will be used in the next Instance update. */
 	int32 GetMinLODToLoad() const;
-	int32 GetMaxLODToLoad() const;
+
 	int32 GetNumLODsAvailable() const;
 
-	UE_DEPRECATED(5.2, "Use SetRequestedLODs instead.")
-	void SetMinMaxLODToLoad(FMutableInstanceUpdateMap& InOutRequestedUpdates, int32 NewMinLOD = 0, int32 NewMaxLOD = INT32_MAX, bool bLimitLODUpgrades = true);
-
-	/** Return the Min LOD this Instance is using (from the beginning of an update. If an update fails this value will be incorrect). */
+	/** Return the min LOD this Instance is using. */
 	int32 GetCurrentMinLOD() const;
 
-	/** Return the Max LOD this Instance is using (from the beginning of an update. If an update fails this value will be incorrect). */
-	int32 GetCurrentMaxLOD() const;
-
-	/** Save the Min and Max LOD that will be used for the update. */
-	void CommitMinMaxLOD();
-
 	/** Sets an array of LODs to generate per component. Mutable will generate those plus the currently generated LODs (if any).
-	 * Requires mutable.EnableOnlyGenerateRequestedLODs and CurrentInstanceLODManagement->IsOnlyGenerateRequestedLODLevelsEnabled() to be true.
-	 * @param InMinLOD - MinLOD to generate.
-	 * @param InMaxLOD - MaxLOD to generate.
-	 * @param InRequestedLODsPerComponent - Array with bitmasks of requested LODs per component with range from [0 .. CO->GetComponentCount()].
-	 * @param InOutRequestedUpdates - Map from Instance to Update data that stores a request for the Instance to be updated, which will be either processed or discarded by priority (to be rerequested the next tick) */
+	  * Requires mutable.EnableOnlyGenerateRequestedLODs and CurrentInstanceLODManagement->IsOnlyGenerateRequestedLODLevelsEnabled() to be true.
+	  * @param InMinLOD - MinLOD to generate.
+	  * @param InMaxLOD - MaxLOD to generate - DEPRECATED.
+	  * @param InRequestedLODsPerComponent - Array with bitmasks of requested LODs per component with range from [0 .. CO->GetComponentCount()].
+	  * @param InOutRequestedUpdates - Map from Instance to Update data that stores a request for the Instance to be updated, which will be either processed or discarded by priority (to be rerequested the next tick) */
 	void SetRequestedLODs(int32 InMinLOD, int32 InMaxLOD, const TArray<uint16>& InRequestedLODsPerComponent, FMutableInstanceUpdateMap& InOutRequestedUpdates);
 
 	const TArray<uint16>& GetRequestedLODsPerComponent() const;
 
-	/** Common end point of all updates. Even those which failed. */
-	void FinishUpdate(EUpdateResult UpdateResult, const FDescriptorRuntimeHash& UpdatedHash);
-	
-	/** Return the UCustomizableObjectInstance::Descriptor hash on the last update request. */
-	FDescriptorRuntimeHash GetDescriptorRuntimeHash() const;
-
-	/** Return the UCustomizableObjectInstance::Descriptor hash on the last successful update. */
-	FDescriptorRuntimeHash GetUpdateDescriptorRuntimeHash() const;
-
-	// --------------------------------------------------------------------
-
-	/** Flag to know if a property of this instance changed in the editor */
-	bool bEditorPropertyChanged = false;
-
-	UCustomizableInstancePrivateData* GetPrivate() const;
-
-	bool ProjectorUpdatedInViewport = false;
-
-	// TEMP VARIABLE to ease updating the gizmo in the editor after pasting a new projector's transform information
-	bool TempUpdateGizmoInViewport = false;
-
-	// TEMP VARIABLE to verify the projector parameter with transform modified by Paste Transform is set as selected
-	FString TempProjectorParameterName;
-
-	// TEMP VARIABLE to verify the projector parameter with transform modified by Paste Transform is set as selected
-	int32 TempProjectorParameterRangeIndex;
-
-	// TEMP VARIABLE to avoid the projector selection being reset after pasting transform
-	bool AvoidResetProjectorVisibilityForNonNode = false;
-
-	// TEMP VARIABLE to check the Min desired LODs for this instance
-	TWeakObjectPtr<UCustomizableSkeletalComponent> NearestToActor;
-	TWeakObjectPtr<const AActor> NearestToViewCenter;
-
-#if WITH_EDITOR
-	/** If there's a projector parameter pending to be hidden, name of that projector parameter */
-	FString LastSelectedProjectorParameter;
-
-	/** For the case of projector parameter in several layers (the name of the projector is the same and only the index will change */
-	FString LastSelectedProjectorParameterWithIndex;
-
-	/** Flag to ease detect a projector layer change event in FCustomizableObjectEditor::OnObjectModified */
-	bool ProjectorLayerChange = false;
-
-	/** Flag to avoid resetting projector state when editing the alpha value of a layer */
-	bool ProjectorAlphaChange = false;
-
-	/** Flag to unselect the projector */
-	bool UnselectProjector = false;
-
-	/** Profile index the instance parameters are in and if the profile needs to be refreshed */
-	int32 SelectedProfileIndex = INDEX_NONE;
-	bool bSelectedProfileDirty = false;
-
-	/** Tag required to avoid updating the wrong projector parameter range index once removed.
-	On a Group Projector Parameter, if a projector gizmo is removed while is selected, the projector is unselected and removed. The unselection will causes a late update
-	to that projector index, which is performed after the projector being removed. During the update, since the projector index has been removed, the update index is no
-	longer valid. This tag allows to check if the last removed index matches with the currently update index. In the case they match, the update does not occur.*/
-	FString RemovedProjectorParameterNameWithIndex;
-#endif 
+	UCustomizableInstancePrivate* GetPrivate() const;
 
 private:
 	UPROPERTY()
 	FCustomizableObjectInstanceDescriptor Descriptor;
 
-	UPROPERTY( Transient )
-	TObjectPtr<UCustomizableInstancePrivateData> PrivateData;
-	
-	/** Hash of the UCustomizableObjectInstance::Descriptor on the last update request. */
-	FDescriptorRuntimeHash UpdateDescriptorRuntimeHash;
-	
-	/** Hash of the UCustomizableObjectInstance::Descriptor on the last successful update. */
-	FDescriptorRuntimeHash DescriptorRuntimeHash;
-
-	/** LODs applied on the beginning of the last update. Represent the actual LODs the Instance is using (not strictly true since an update can fail). */
-	int32 CurrentMinLOD = -1;
-	int32 CurrentMaxLOD = -1;
-
-#if WITH_EDITORONLY_DATA
-	/** Textures used in the Texture Parameters. */
-	UPROPERTY(EditAnywhere, Category = TextureParameter)
-	TArray<TObjectPtr<UTexture2D>> TextureParameterDeclarations;
+	UPROPERTY()
+	TObjectPtr<UCustomizableInstancePrivate> PrivateData;
 
 public:
-	/** Preview Instance Properties search box filter. Saved here to avoid losing the text during UI refreshes. */
-	FText ParametersSearchFilter;
+#if WITH_EDITORONLY_DATA
+	/** Textures which can used as values in Texture Parameters. */
+	UPROPERTY(EditAnywhere, Category = TextureParameter)
+	TArray<TObjectPtr<UTexture2D>> TextureParameterDeclarations;
 #endif
 
-private:	
-	// Deprecated properties
-	
+private:
+	// Deprecated properties	
 	UPROPERTY()
 	TObjectPtr<UCustomizableObject> CustomizableObject_DEPRECATED;
 	
@@ -772,7 +611,7 @@ private:
 	UPROPERTY()
 	TArray<FCustomizableObjectFloatParameterValue> FloatParameters_DEPRECATED;
 
-	UPROPERTY()
+	UPROPERTY()																																						
 	TArray<FCustomizableObjectTextureParameterValue> TextureParameters_DEPRECATED;
 
 	UPROPERTY()
@@ -784,62 +623,9 @@ private:
    	UPROPERTY()
    	TMap<FName, FMultilayerProjector> MultilayerProjectors_DEPRECATED;
 
-	/** If this is set to true, when updating the instance an additional step will be performed to calculate the list of instance parameters that are relevant for the current parameter vaules. */
 	bool bBuildParameterRelevancy_DEPRECATED = false;
 };
 
-
-class FMutableUpdateCandidate
-{
-public:
-	// The Instance to possibly update
-	UCustomizableObjectInstance* CustomizableObjectInstance;
-	EQueuePriorityType Priority = EQueuePriorityType::Med;
-
-	// These are the LODs that would be applied if this candidate is chosen
-	int32 MinLOD = 0;
-	int32 MaxLOD = INT32_MAX;
-
-	/** Array of RequestedLODs per component to generate if this candidate is chosen */
-	TArray<uint16> RequestedLODLevels;
-
-	FMutableUpdateCandidate(UCustomizableObjectInstance* InCustomizableObjectInstance) : CustomizableObjectInstance(InCustomizableObjectInstance) {}
-
-	FMutableUpdateCandidate(const UCustomizableObjectInstance* InCustomizableObjectInstance, const int32 InMinLOD, const int32 InMaxLOD,
-		const TArray<uint16>& InRequestedLODLevels) :
-		CustomizableObjectInstance(const_cast<UCustomizableObjectInstance*>(InCustomizableObjectInstance)), MinLOD(InMinLOD), MaxLOD(InMaxLOD),
-		RequestedLODLevels(InRequestedLODLevels) {}
-
-	bool HasBeenIssued()
-	{
-		return bHasBeenIssued;
-	}
-
-	void Issue()
-	{
-		bHasBeenIssued = true;
-	}
-
-	void ApplyLODUpdateParamsToInstance()
-	{
-		CustomizableObjectInstance->Descriptor.MinLOD = MinLOD;
-		CustomizableObjectInstance->Descriptor.MaxLOD = MaxLOD;
-
-		CustomizableObjectInstance->Descriptor.RequestedLODLevels = RequestedLODLevels;
-
-		CustomizableObjectInstance->UpdateDescriptorRuntimeHash.UpdateMinMaxLOD(MinLOD, MaxLOD);
-		CustomizableObjectInstance->UpdateDescriptorRuntimeHash.UpdateRequestedLODs(CustomizableObjectInstance->Descriptor.RequestedLODLevels);
-	}
-
-private:
-	/** If true it means that DoUpdateSkeletalMesh has decided this update should be performed, if false it should be ignored. Just used for consistency checks */
-	bool bHasBeenIssued = false;
-};
-
-
-#if WITH_EDITOR
-CUSTOMIZABLEOBJECT_API void CopyTextureProperties(UTexture2D* Texture, const UTexture2D* SourceTexture);
-#endif	
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2
 #include "Async/TaskGraphInterfaces.h"

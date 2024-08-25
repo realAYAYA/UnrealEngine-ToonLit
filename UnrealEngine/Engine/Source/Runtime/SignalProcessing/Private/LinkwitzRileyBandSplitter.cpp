@@ -149,8 +149,8 @@ namespace Audio
 			return;
 		}
 
-		SharedAlignedBuffer.SetNumZeroed(NumSamples, false /* bAllowShrinking */);
-		BandAlignedBuffer.SetNumUninitialized(NumSamples, false /* bAllowShrinking */);
+		SharedAlignedBuffer.SetNumZeroed(NumSamples, EAllowShrinking::No);
+		BandAlignedBuffer.SetNumUninitialized(NumSamples, EAllowShrinking::No);
 
 		float* const SharedBufferPtr = SharedAlignedBuffer.GetData();
 		float* const BandBufferPtr = BandAlignedBuffer.GetData();

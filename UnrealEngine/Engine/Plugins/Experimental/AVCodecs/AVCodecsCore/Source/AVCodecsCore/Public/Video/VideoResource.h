@@ -6,6 +6,7 @@
 #include "AVResource.h"
 #include "AVUtility.h"
 #include "PixelFormat.h"
+#include "Containers/ResourceArray.h"
 
 enum class EVideoFormat : uint8
 {
@@ -62,6 +63,11 @@ public:
 	 * Height in pixels.
 	 */
 	uint32 Height;
+    
+    /**
+     * An implementation of the BulkData interface. Used for creating textures from existing data
+     */
+    FResourceBulkDataInterface* BulkData;
 
 	/**
 	 * If this is a descriptor stored in a different format than it really is
@@ -74,18 +80,19 @@ public:
 		: Format(Descriptor.Format)
 		, Width(Descriptor.Width)
 		, Height(Descriptor.Height)
+        , BulkData(Descriptor.BulkData)
 		, RawDescriptor(Descriptor.RawDescriptor ? new FVideoDescriptor(*Descriptor.RawDescriptor) : nullptr)
 	{
 
 	}
 
-	FVideoDescriptor(EVideoFormat Format, uint32 Width, uint32 Height)
-		: Format(Format), Width(Width), Height(Height), RawDescriptor(nullptr)
+	FVideoDescriptor(EVideoFormat Format, uint32 Width, uint32 Height, FResourceBulkDataInterface* BulkData = nullptr)
+		: Format(Format), Width(Width), Height(Height), BulkData(BulkData), RawDescriptor(nullptr)
 	{
 	}
 
-	FVideoDescriptor(EVideoFormat Format, uint32 Width, uint32 Height, const FVideoDescriptor& RawDescriptor)
-		: Format(Format), Width(Width), Height(Height), RawDescriptor(new FVideoDescriptor(RawDescriptor))
+	FVideoDescriptor(EVideoFormat Format, uint32 Width, uint32 Height, const FVideoDescriptor& RawDescriptor, FResourceBulkDataInterface* BulkData = nullptr)
+		: Format(Format), Width(Width), Height(Height), BulkData(BulkData), RawDescriptor(new FVideoDescriptor(RawDescriptor))
 	{
 
 	}

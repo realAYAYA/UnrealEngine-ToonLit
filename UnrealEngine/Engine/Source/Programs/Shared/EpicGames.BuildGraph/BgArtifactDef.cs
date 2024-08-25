@@ -15,9 +15,24 @@ namespace EpicGames.BuildGraph
 		public string Name { get; }
 
 		/// <summary>
+		/// Type of this artifact
+		/// </summary>
+		public string? Type { get; }
+
+		/// <summary>
+		/// Description for the artifact
+		/// </summary>
+		public string? Description { get; }
+
+		/// <summary>
+		/// Base path for files included in the artifact. Will be detected from the files specified if not set.
+		/// </summary>
+		public string? BasePath { get; }
+
+		/// <summary>
 		/// Tag to use for the artifact. Uses the artifact name by default.
 		/// </summary>
-		public string Tag { get; }
+		public string TagName { get; }
 
 		/// <summary>
 		/// Keys that can be used to find the artifact
@@ -25,16 +40,29 @@ namespace EpicGames.BuildGraph
 		public IReadOnlyList<string> Keys { get; }
 
 		/// <summary>
+		/// Metadata for the artifact
+		/// </summary>
+		public IReadOnlyList<string> Metadata { get; }
+
+		/// <summary>
 		/// Constructor
 		/// </summary>
 		/// <param name="name">Name of the artifact</param>
-		/// <param name="tag">Name of the tag producing this artifact</param>
+		/// <param name="type">Type of the artifact</param>
+		/// <param name="description">Description for the artifact</param>
+		/// <param name="basePath">Base path for files included in the artifact</param>
+		/// <param name="tagName">Name of the tag producing this artifact</param>
 		/// <param name="keys">Keys that can be used to find the artifact</param>
-		public BgArtifactDef(string name, string tag, IReadOnlyList<string> keys)
+		/// <param name="metadata">Metadata for the artifact</param>
+		public BgArtifactDef(string name, string? type, string? description, string? basePath, string tagName, IReadOnlyList<string> keys, IReadOnlyList<string> metadata)
 		{
 			Name = name;
-			Tag = tag;
+			Type = type;
+			Description = description;
+			BasePath = basePath;
+			TagName = tagName;
 			Keys = keys;
+			Metadata = metadata;
 		}
 
 		/// <summary>

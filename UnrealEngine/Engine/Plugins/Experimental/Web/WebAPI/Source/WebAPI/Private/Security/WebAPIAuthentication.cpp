@@ -115,11 +115,11 @@ bool FWebAPIOAuthSchemeHandler::HandleHttpResponse(EHttpResponseCodes::Type InRe
 				TSharedPtr<FJsonObject> JsonObject;
 				if(FJsonSerializer::Deserialize(JsonReader, JsonObject))
 				{
-					const int32 UnixTimeExpire = JsonObject->GetNumberField("expires_on");
+					const int32 UnixTimeExpire = JsonObject->GetNumberField(TEXT("expires_on"));
 
 					UE_LOG(LogWebAPI, Display, TEXT("Generate token Response success"));
-					AuthSettings->TokenType = JsonObject->GetStringField("token_type");
-					AuthSettings->AccessToken = JsonObject->GetStringField("access_token");
+					AuthSettings->TokenType = JsonObject->GetStringField(TEXT("token_type"));
+					AuthSettings->AccessToken = JsonObject->GetStringField(TEXT("access_token"));
 					AuthSettings->ExpiresOn =  FDateTime::FromUnixTimestamp(UnixTimeExpire);
 					AuthSettings->SaveConfig();
 					bSuccess = true;

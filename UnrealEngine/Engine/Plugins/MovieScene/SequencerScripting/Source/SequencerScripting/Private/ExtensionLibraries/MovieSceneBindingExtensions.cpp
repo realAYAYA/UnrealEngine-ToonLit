@@ -15,7 +15,7 @@ bool UMovieSceneBindingExtensions::IsValid(const FMovieSceneBindingProxy& InBind
 	UMovieScene* MovieScene = InBinding.Sequence ? InBinding.Sequence->GetMovieScene() : nullptr;
 	if (MovieScene && InBinding.BindingID.IsValid())
 	{
-		return Algo::FindBy(MovieScene->GetBindings(), InBinding.BindingID, &FMovieSceneBinding::GetObjectGuid) != nullptr;
+		return MovieScene->FindBinding(InBinding.BindingID) != nullptr;
 	}
 
 	return false;
@@ -97,8 +97,7 @@ int32 UMovieSceneBindingExtensions::GetSortingOrder(const FMovieSceneBindingProx
 	UMovieScene* MovieScene = InBinding.GetMovieScene();
 	if (MovieScene)
 	{
-		const FMovieSceneBinding* Binding = Algo::FindBy(MovieScene->GetBindings(), InBinding.BindingID, &FMovieSceneBinding::GetObjectGuid);
-		if (Binding)
+		if (const FMovieSceneBinding* Binding = MovieScene->FindBinding(InBinding.BindingID))
 		{
 			return Binding->GetSortingOrder();
 		}
@@ -131,8 +130,7 @@ TArray<UMovieSceneTrack*> UMovieSceneBindingExtensions::GetTracks(const FMovieSc
 	UMovieScene* MovieScene = InBinding.GetMovieScene();
 	if (MovieScene)
 	{
-		const FMovieSceneBinding* Binding = Algo::FindBy(MovieScene->GetBindings(), InBinding.BindingID, &FMovieSceneBinding::GetObjectGuid);
-		if (Binding)
+		if (const FMovieSceneBinding* Binding = MovieScene->FindBinding(InBinding.BindingID))
 		{
 			return Binding->GetTracks();
 		}
@@ -174,8 +172,7 @@ TArray<UMovieSceneTrack*> UMovieSceneBindingExtensions::FindTracksByType(const F
 
 	if (MovieScene)
 	{
-		const FMovieSceneBinding* Binding = Algo::FindBy(MovieScene->GetBindings(), InBinding.BindingID, &FMovieSceneBinding::GetObjectGuid);
-		if (Binding)
+		if (const FMovieSceneBinding* Binding = MovieScene->FindBinding(InBinding.BindingID))
 		{
 			bool bExactMatch = false;
 			return UMovieSceneSequenceExtensions::FilterTracks(Binding->GetTracks(), DesiredClass, bExactMatch);
@@ -191,8 +188,7 @@ TArray<UMovieSceneTrack*> UMovieSceneBindingExtensions::FindTracksByExactType(co
 
 	if (MovieScene)
 	{
-		const FMovieSceneBinding* Binding = Algo::FindBy(MovieScene->GetBindings(), InBinding.BindingID, &FMovieSceneBinding::GetObjectGuid);
-		if (Binding)
+		if (const FMovieSceneBinding* Binding = MovieScene->FindBinding(InBinding.BindingID))
 		{
 			bool bExactMatch = true;
 			return UMovieSceneSequenceExtensions::FilterTracks(Binding->GetTracks(), DesiredClass, bExactMatch);
@@ -208,7 +204,7 @@ UMovieSceneTrack* UMovieSceneBindingExtensions::AddTrack(const FMovieSceneBindin
 
 	if (MovieScene)
 	{
-		const bool bBindingExists = Algo::FindBy(MovieScene->GetBindings(), InBinding.BindingID, &FMovieSceneBinding::GetObjectGuid) != nullptr;
+		const bool bBindingExists = MovieScene->FindBinding(InBinding.BindingID) != nullptr;
 		if (bBindingExists)
 		{
 			UMovieSceneTrack* NewTrack = NewObject<UMovieSceneTrack>(MovieScene, DesiredClass, NAME_None, RF_Transactional);

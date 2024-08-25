@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
+#include "MeshDescription.h"
 
 #if WITH_EDITOR
 
@@ -12,6 +13,7 @@
 #include "Animation/MorphTarget.h"
 #include "Templates/DontCopy.h"
 
+struct FImportedSkinWeightProfileData;
 struct FMeshDescription;
 class FSkeletalMeshLODModel;
 
@@ -46,8 +48,8 @@ namespace SkeletalMeshImportData
 	struct FMeshInfo
 	{
 		FName Name;	// The name of the mesh.
-		int32 NumVertices;	// The number of imported (dcc) vertices that are part of this mesh. This is a value of 8 for a cube. So NOT the number of render vertices.
-		int32 StartImportedVertex;	// The first index of imported (dcc) vertices in the mesh. So this NOT an index into the render vertex buffer. In range of 0..7 for a cube.
+		int32 NumVertices = 0;	// The number of imported (dcc) vertices that are part of this mesh. This is a value of 8 for a cube. So NOT the number of render vertices.
+		int32 StartImportedVertex = 0;	// The first index of imported (dcc) vertices in the mesh. So this NOT an index into the render vertex buffer. In range of 0..7 for a cube.
 	};
 
 	struct FMeshWedge
@@ -338,9 +340,6 @@ public:
 	bool bHasVertexColors; // If true there are vertex colors in the imported file
 	bool bHasNormals; // If true there are normals in the imported file
 	bool bHasTangents; // If true there are tangents in the imported file
-	bool bUseT0AsRefPose; // If true, then the pose at time=0 will be used instead of the ref pose
-	bool bDiffPose; // If true, one of the bones has a different pose at time=0 vs the ref pose
-	bool bKeepSectionsSeparate; // If true, sections with matching materials are kept separate and will not get combined
 
 	// Morph targets imported(i.e. FBX) data. The name is the morph target name
 	TArray<FSkeletalMeshImportData> MorphTargets;
@@ -362,9 +361,6 @@ public:
 		, bHasVertexColors(false)
 		, bHasNormals(false)
 		, bHasTangents(false)
-		, bUseT0AsRefPose(false)
-		, bDiffPose(false)
-		, bKeepSectionsSeparate(false)
 	{
 
 	}
@@ -423,21 +419,43 @@ public:
 	 */
 	ENGINE_API void ComputeSmoothGroupFromNormals();
 
-	/**
-	 * Returns a mesh description from the import data
+	/*
+	 * Add morph target data from UMorphTarget in case there was none on the mesh itself.
 	 */
-	ENGINE_API bool GetMeshDescription(FMeshDescription &OutMeshDescription) const;
+	ENGINE_API void AddMorphTarget(FName InMorphTargetName, const FMorphTargetLODModel& InMorphTargetModel, const TArray<uint32>& InVertexMap);
+
+	/*
+	 * Add alternate skin profile from FImportedSkinWeightProfileData
+	 */
+	ENGINE_API void AddSkinWeightProfile(FName InProfileName, const FImportedSkinWeightProfileData& InProfileData, const TArray<int32>& InVertexMap, const TArray<FBoneIndexType>& InBoneIndexMap);
+	
+	
+	/**
+	 * Returns a mesh description from the import data. If logging on failures is required, pass in a pointer 
+	 * to the owning skeletal mesh. Otherwise, leave as a \c nullptr. 
+	 */
+	ENGINE_API bool GetMeshDescription(const USkeletalMesh* InSkeletalMesh, const FSkeletalMeshBuildSettings* InBuildSettings, FMeshDescription& OutMeshDescription) const;
 
 	/**
 	 * @note MeshDescription always contains color, normal and tangent data by default. Therefore, while iterating
-	 * over the vertices, we check if at least one normal/tangent vector is not a zero vector and the color is
-	 * not white, then we set the corresponding bHasNormals/bHasTangent/bHasVertexColors flags to true.
+	 * over the vertices, we check if at least one normal/tangent vector is not a zero vector and the vertex color is
+	 * not pure white, then we set the corresponding bHasNormals/bHasTangent/bHasVertexColors flags to true.
 	 */
-	static ENGINE_API FSkeletalMeshImportData CreateFromMeshDescription(const FMeshDescription &InMeshDescription);
+	static ENGINE_API FSkeletalMeshImportData CreateFromMeshDescription(const FMeshDescription& InMeshDescription);
 
 private:
-	ENGINE_API void CleanUpUnusedMaterials();
-	ENGINE_API void SplitVerticesBySmoothingGroups();
+	void CopySkinWeightsToMeshDescription(
+		const USkeletalMesh* InSkeletalMesh,
+		const FName InSkinWeightName,
+		const FSkeletalMeshImportData& InSkinWeightMesh,
+		const TArray<FVertexID>& InVertexIDMap,
+		FMeshDescription& OutMeshDescription
+		) const;
+
+	void CleanUpUnusedMaterials();
+	void SplitVerticesBySmoothingGroups();
+	
+	friend FArchive& operator<<(FArchive& Ar, FSkeletalMeshImportData& RawMesh);
 };
 
 /**

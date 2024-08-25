@@ -2,59 +2,74 @@
 
 import { observer } from 'mobx-react-lite';
 import { IColumn, List, Stack, Text } from '@fluentui/react';
-import { getFocusStyle, getTheme, mergeStyleSets } from '@fluentui/react/lib/Styling';
+import { getFocusStyle, mergeStyleSets } from '@fluentui/react/lib/Styling';
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { EventData, EventSeverity, GetLabelResponse } from '../backend/Api';
 import { JobDetails } from '../backend/JobDetails';
 import { JobEventHandler } from '../backend/JobEventHandler';
-import { hordeClasses } from '../styles/Styles';
 import { renderLine } from './LogRender';
 import { StepStatusIcon } from './StatusIcon';
+import { getHordeStyling } from '../styles/Styles';
+import { getHordeTheme } from '../styles/theme';
 
-const theme = getTheme();
 
-const styles = mergeStyleSets({
-   gutter: [
-      {
-         borderLeftStyle: 'solid',
-         borderLeftColor: "#EC4C47",
-         borderLeftWidth: 6,
-         padding: 0,
-         margin: 0,
-         paddingTop: 8,
-         paddingBottom: 8,
-         paddingRight: 8,
-         marginTop: 0,
-         marginBottom: 0
-      }
-   ],
-   gutterWarning: [
-      {
-         borderLeftStyle: 'solid',
-         borderLeftColor: "rgb(247, 209, 84)",
-         borderLeftWidth: 6,
-         padding: 0,
-         margin: 0,
-         paddingTop: 8,
-         paddingBottom: 8,
-         paddingRight: 8,
-         marginTop: 0,
-         marginBottom: 0
-      }
-   ],
-   itemCell: [
-      getFocusStyle(theme, { inset: -1 }),
-      {
-         selectors: {
-            '&:hover': { background: "rgb(243, 242, 241)" }
+let _styles: any;
+
+const getStyles = () => {
+
+   const theme = getHordeTheme();
+
+   const styles = _styles ?? mergeStyleSets({
+      gutter: [
+         {
+            borderLeftStyle: 'solid',
+            borderLeftColor: "#EC4C47",
+            borderLeftWidth: 6,
+            padding: 0,
+            margin: 0,
+            paddingTop: 8,
+            paddingBottom: 8,
+            paddingRight: 8,
+            marginTop: 0,
+            marginBottom: 0
          }
-      }
-   ],
+      ],
+      gutterWarning: [
+         {
+            borderLeftStyle: 'solid',
+            borderLeftColor: "rgb(247, 209, 84)",
+            borderLeftWidth: 6,
+            padding: 0,
+            margin: 0,
+            paddingTop: 8,
+            paddingBottom: 8,
+            paddingRight: 8,
+            marginTop: 0,
+            marginBottom: 0
+         }
+      ],
+      itemCell: [
+         getFocusStyle(theme, { inset: -1 }),
+         {
+            selectors: {
+               '&:hover': { background: theme.palette.neutralLight }
+            }
+         }
+      ],
 
-});
+   });
+
+   _styles = styles;
+
+   return styles;
+}
+
 
 export const ErrorPane: React.FC<{ jobDetails: JobDetails; stepId: string; showErrors: boolean; count?: number }> = ({ jobDetails, stepId, showErrors, count }) => {
+
+   const navigate = useNavigate();
+   const styles = getStyles();
 
    if (!stepId) {
       return (<div />);
@@ -99,15 +114,15 @@ export const ErrorPane: React.FC<{ jobDetails: JobDetails; stepId: string; showE
 
       const url = `/log/${item.logId}?lineindex=${item.lineIndex}`;
 
-      const lines = item.lines.filter(line => line.message?.trim().length).map(line => <Stack styles={{ root: { paddingLeft: 8, paddingRight: 8, lineBreak: "anywhere", whiteSpace: "pre-wrap", lineHeight: 18, fontSize: 10, fontFamily: "Horde Cousine Regular, monospace, monospace" } }}> <Link className="log-link" to={url}>{renderLine(line, undefined, {})}</Link></Stack>);
+      const lines = item.lines.filter(line => line.message?.trim().length).map(line => <Stack styles={{ root: { paddingLeft: 8, paddingRight: 8, lineBreak: "anywhere", whiteSpace: "pre-wrap", lineHeight: 18, fontSize: 10, fontFamily: "Horde Cousine Regular, monospace, monospace" } }}> <Link className="log-link" to={url}>{renderLine(navigate, line, undefined, {})}</Link></Stack>);
 
-      return ( <Stack className={styles.itemCell} styles={{ root: { padding: 8, marginRight: 8 } }}><Stack className={item.severity === EventSeverity.Warning ? styles.gutterWarning : styles.gutter} styles={{ root: { padding: 0, margin: 0 } }}>
-               <Stack styles={{ root: { paddingLeft: 14 } }}>
-                  {lines}
-               </Stack>
-            </Stack>
-            </Stack>
-         );
+      return (<Stack className={styles.itemCell} styles={{ root: { padding: 8, marginRight: 8 } }}><Stack className={item.severity === EventSeverity.Warning ? styles.gutterWarning : styles.gutter} styles={{ root: { padding: 0, margin: 0 } }}>
+         <Stack styles={{ root: { paddingLeft: 14 } }}>
+            {lines}
+         </Stack>
+      </Stack>
+      </Stack>
+      );
    };
 
    return (<Stack>
@@ -136,6 +151,9 @@ export const ErrorPane: React.FC<{ jobDetails: JobDetails; stepId: string; showE
 };
 
 export const JobEventListPanel: React.FC<{ jobDetails: JobDetails, stepIds: string[], eventHandler: JobEventHandler }> = ({ jobDetails, stepIds, eventHandler }) => {
+
+   const navigate = useNavigate();
+   const styles = getStyles();
 
    if (!stepIds.length) {
       return null;
@@ -190,7 +208,7 @@ export const JobEventListPanel: React.FC<{ jobDetails: JobDetails, stepIds: stri
 
       const url = `/log/${logId}?lineindex=${event.lineIndex}`;
 
-      const lines = event.lines.map(line => <Stack styles={{ root: { paddingLeft: 8, paddingRight: 8, lineBreak: "anywhere", whiteSpace: "pre-wrap", lineHeight: 18, fontSize: 10, fontFamily: "Horde Cousine Regular, monospace, monospace" } }}> {renderLine(line, undefined, {})}</Stack>);
+      const lines = event.lines.map(line => <Stack styles={{ root: { paddingLeft: 8, paddingRight: 8, lineBreak: "anywhere", whiteSpace: "pre-wrap", lineHeight: 18, fontSize: 10, fontFamily: "Horde Cousine Regular, monospace, monospace" } }}> {renderLine(navigate, line, undefined, {})}</Stack>);
       return (
          <Link className="log-link" to={url}>
             <Stack className={styles.itemCell} styles={{ root: { padding: 8, paddingLeft: 24, marginRight: 8 } }}><Stack className={event.severity === EventSeverity.Warning ? styles.gutterWarning : styles.gutter} styles={{ root: { padding: 0, margin: 0 } }}>
@@ -237,6 +255,8 @@ export const JobEventListPanel: React.FC<{ jobDetails: JobDetails, stepIds: stri
 
 
 export const JobEventPanel: React.FC<{ jobDetails: JobDetails, label?: GetLabelResponse, eventHandler: JobEventHandler }> = observer(({ jobDetails, label, eventHandler }) => {
+
+   const { hordeClasses } = getHordeStyling();
 
    eventHandler.set(jobDetails);
 

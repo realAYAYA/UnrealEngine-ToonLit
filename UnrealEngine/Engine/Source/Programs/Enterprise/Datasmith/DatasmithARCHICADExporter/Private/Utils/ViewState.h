@@ -44,7 +44,7 @@ class FViewState
 	bool CompareCamera(const FViewState& InOther) const;
 
 	FCutInfo					 CutInfo;
-	TArray< API_AttributeIndex > VisibleLayers;
+	TArray< GS::Int32 >			VisibleLayers;
 	API_3DProjectionInfo		 ProjSets;
 	GSErrCode					 ProjSetsError;
 };

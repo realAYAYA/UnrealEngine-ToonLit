@@ -1,11 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "DecoderInputFactory.h"
 #include "DSP/BufferVectorOperations.h"
 #include "DSP/ConvertDeinterleave.h"
 #include "DSP/MultichannelBuffer.h"
 #include "DSP/MultichannelLinearResampler.h"
-#include "IAudioCodec.h"
 #include "MetasoundBuildError.h"
 #include "MetasoundBuilderInterface.h"
 #include "MetasoundEngineNodesNames.h"
@@ -18,7 +16,7 @@
 #include "MetasoundTrigger.h"
 #include "MetasoundVertex.h"
 #include "MetasoundWave.h"
-#include "MetasoundWaveProxyReader.h"
+#include "Sound/SoundWaveProxyReader.h"
 
 #define LOCTEXT_NAMESPACE "MetasoundWaveNode"
 
@@ -60,6 +58,8 @@ namespace Metasound
 
 	namespace WavePlayerNodePrivate
 	{
+		constexpr int32 MaxNumFramesToInterpolateFrameRatio = 128;
+
 		int32 GetCuePointFrame(const FSoundWaveCuePoint& InPoint)
 		{
 			return InPoint.FramePosition;
@@ -68,9 +68,9 @@ namespace Metasound
 
 		/** FSourceBufferState tracks the current frame and loop indices held in 
 		 * a circular buffer. It describes how the content of a circular buffer
-		 * relates to the frame indices of an FWaveProxyReader 
+		 * relates to the frame indices of an FSoundWaveProxyReader 
 		 *
-		 * FSourceBufferState is tied to the implementation of the FWaveProxyReader
+		 * FSourceBufferState is tied to the implementation of the FSoundWaveProxyReader
 		 * and TCircularAudioBuffer<>, and thus does not serve much purpose outside
 		 * of this wave player node.
 		 *
@@ -114,7 +114,7 @@ namespace Metasound
 			 * @param ProxyReader - The wave proxy reader producing the audio.
 			 * @parma InSourceBuffer - The audio buffer holding a range of samples popped from the reader.
 			 */
-			FSourceBufferState(const FWaveProxyReader& ProxyReader, const Audio::FMultichannelCircularBuffer& InSourceBuffer)
+			FSourceBufferState(const FSoundWaveProxyReader& ProxyReader, const Audio::FMultichannelCircularBuffer& InSourceBuffer)
 			: FSourceBufferState(ProxyReader.GetFrameIndex(), Audio::GetMultichannelBufferNumFrames(InSourceBuffer), ProxyReader.IsLooping(), ProxyReader.GetLoopStartFrameIndex(), ProxyReader.GetLoopEndFrameIndex(), ProxyReader.GetNumFramesInWave())
 			{
 			}
@@ -158,7 +158,7 @@ namespace Metasound
 			}
 
 			/** Update loop frame indices. */
-			void SetLoopFrameIndices(const FWaveProxyReader& InProxyReader)
+			void SetLoopFrameIndices(const FSoundWaveProxyReader& InProxyReader)
 			{
 				SetLoopFrameIndices(InProxyReader.GetLoopStartFrameIndex(), InProxyReader.GetLoopEndFrameIndex());
 			}
@@ -309,6 +309,24 @@ namespace Metasound
 		FTimeReadRef LoopDuration;
 	};
 
+	// Maximum decode size in frames. 
+	static int32 MaxDecodeSizeInFrames = 1024;
+	FAutoConsoleVariableRef CVarMetaSoundWavePlayerMaxDecodeSizeInFrames(
+		TEXT("au.MetaSound.WavePlayer.MaxDecodeSizeInFrames"),
+		MaxDecodeSizeInFrames,
+		TEXT("Max size in frames used for decoding audio in the MetaSound wave player node.\n")
+		TEXT("Default: 1024"),
+		ECVF_Default);
+
+	// Block size for deinterleaving audio. 
+	static int32 DeinterleaveBlockSizeInFrames = 512;
+	FAutoConsoleVariableRef CVarMetaSoundWavePlayerDeinterleaveBlockSizeInFrames(
+		TEXT("au.MetaSound.WavePlayer.DeinterleaveBlockSizeInFrames"),
+		DeinterleaveBlockSizeInFrames,
+		TEXT("Block size in frames used for deinterleaving audio in the MetaSound wave player node.\n")
+		TEXT("Default: 512"),
+		ECVF_Default);
+
 	/** MetaSound operator for the wave player node. */
 	class FWavePlayerOperator : public TExecutableOperator<FWavePlayerOperator>
 	{	
@@ -316,10 +334,6 @@ namespace Metasound
 
 		// Maximum absolute pitch shift in octaves. 
 		static constexpr float MaxAbsPitchShiftInOctaves = 6.0f;
-		// Maximum decode size in frames. 
-		static constexpr int32 MaxDecodeSizeInFrames = 8192;
-		// Block size for deinterleaving audio. 
-		static constexpr int32 DeinterleaveBlockSizeInFrames = 512;
 
 		FWavePlayerOperator(const FWavePlayerOpArgs& InArgs)
 			: OperatorSettings(InArgs.Settings)
@@ -412,6 +426,8 @@ namespace Metasound
 
 		void Execute()
 		{
+			using namespace WavePlayerNodePrivate;
+
 			METASOUND_TRACE_CPUPROFILER_EVENT_SCOPE(Metasound::FWavePlayerOperator::Execute);
 
 			// Advance all triggers owned by this operator. 
@@ -432,7 +448,7 @@ namespace Metasound
 			// Update resampler with new frame ratio. 
 			if (Resampler.IsValid())
 			{
-				Resampler->SetFrameRatio(GetFrameRatio(), OperatorSettings.GetNumFramesPerBlock());
+				Resampler->SetFrameRatio(GetFrameRatio(), FMath::Min(OperatorSettings.GetNumFramesPerBlock(), MaxNumFramesToInterpolateFrameRatio));
 			}
 
 			// zero output buffers
@@ -472,7 +488,7 @@ namespace Metasound
 			SortedCuePoints.Reset();
 			for (Audio::TCircularAudioBuffer<float>& Buffer : SourceCircularBuffer)
 			{
-				Buffer.SetNum(0);
+				Buffer.Empty();
 			}
 
 			SourceState = WavePlayerNodePrivate::FSourceBufferState();
@@ -648,7 +664,8 @@ namespace Metasound
 
 		float GetFrameRatio() const
 		{
-			return GetSampleRateFrameRatio() * GetPitchShiftFrameRatio();
+			using namespace Audio;
+			return FMath::Clamp(GetSampleRateFrameRatio() * GetPitchShiftFrameRatio(), FMultichannelLinearResampler::MinFrameRatio, FMultichannelLinearResampler::MaxFrameRatio);
 		}
 
 		float GetMaxPitchShiftFrameRatio() const
@@ -701,14 +718,19 @@ namespace Metasound
 				Algo::SortBy(SortedCuePoints, WavePlayerNodePrivate::GetCuePointFrame);
 				
 				// Create the wave proxy reader.
-				FWaveProxyReader::FSettings WaveReaderSettings;
-				WaveReaderSettings.MaxDecodeSizeInFrames = MaxDecodeSizeInFrames;
+				FSoundWaveProxyReader::FSettings WaveReaderSettings;
+				WaveReaderSettings.MaxDecodeSizeInFrames = FMath::IsPowerOfTwo(MaxDecodeSizeInFrames) ? 
+					MaxDecodeSizeInFrames : FMath::RoundUpToPowerOfTwo(MaxDecodeSizeInFrames);
+
 				WaveReaderSettings.StartTimeInSeconds = StartTime->GetSeconds();
 				WaveReaderSettings.LoopStartTimeInSeconds = LoopStartTime->GetSeconds();
 				WaveReaderSettings.LoopDurationInSeconds = LoopDuration->GetSeconds(); 
 				WaveReaderSettings.bIsLooping = *bLoop;
 
-				WaveProxyReader = FWaveProxyReader::Create(WaveProxy.ToSharedRef(), WaveReaderSettings);
+				WaveProxyReader = FSoundWaveProxyReader::Create(WaveProxy.ToSharedRef(), WaveReaderSettings);
+
+				DeinterleaveBufferBlockSizeInFrames = FMath::IsPowerOfTwo(DeinterleaveBlockSizeInFrames) ? 
+					DeinterleaveBlockSizeInFrames : FMath::RoundUpToPowerOfTwo(DeinterleaveBlockSizeInFrames);
 
 				if (WaveProxyReader.IsValid())
 				{
@@ -718,7 +740,7 @@ namespace Metasound
 					if (WaveProxyNumChannels > 0)
 					{
 						// Create buffer for interleaved audio
-						int32 InterleavedBufferNumSamples = WaveProxyNumChannels * DeinterleaveBlockSizeInFrames;
+						int32 InterleavedBufferNumSamples = WaveProxyNumChannels * DeinterleaveBufferBlockSizeInFrames;
 						InterleavedBuffer.Reset(InterleavedBufferNumSamples);
 						InterleavedBuffer.AddUninitialized(InterleavedBufferNumSamples);
 
@@ -734,10 +756,10 @@ namespace Metasound
 						// better control.
 						ConvertDeinterleaveParams.MonoUpmixMethod = Audio::EChannelMapMonoUpmixMethod::FullVolume;
 						ConvertDeinterleave = Audio::IConvertDeinterleave::Create(ConvertDeinterleaveParams);
-						Audio::SetMultichannelBufferSize(NumDeinterleaveChannels, DeinterleaveBlockSizeInFrames, DeinterleavedBuffer);
+						Audio::SetMultichannelBufferSize(NumDeinterleaveChannels, DeinterleaveBufferBlockSizeInFrames, DeinterleavedBuffer);
 
 						// Initialize source buffer
-						int32 FrameCapacity = DeinterleaveBlockSizeInFrames + FMath::CeilToInt(GetMaxFrameRatio() * OperatorSettings.GetNumFramesPerBlock());
+						int32 FrameCapacity = DeinterleaveBufferBlockSizeInFrames + FMath::CeilToInt(GetMaxFrameRatio() * OperatorSettings.GetNumFramesPerBlock());
 						Audio::SetMultichannelCircularBufferCapacity(NumOutputChannels, FrameCapacity, SourceCircularBuffer);
 						SourceState = FSourceBufferState(*WaveProxyReader, SourceCircularBuffer);
 
@@ -773,6 +795,7 @@ namespace Metasound
 		 *
 		 * @param OutBuffer - Buffer to place generated audio.
 		 * @param OutSourceState - Source state for tracking state of OutBuffer.
+		 * Returns true if succesfully generated audio. 
 		 */
 		void GenerateSourceAudio(Audio::FMultichannelCircularBuffer& OutBuffer, WavePlayerNodePrivate::FSourceBufferState& OutSourceState)
 		{
@@ -781,17 +804,26 @@ namespace Metasound
 			if (bIsPlaying)
 			{
 				const int32 NumExistingFrames = Audio::GetMultichannelBufferNumFrames(OutBuffer);
-				const int32 NumSamplesToGenerate = DeinterleaveBlockSizeInFrames * WaveProxyReader->GetNumChannels();
+				const int32 NumSamplesToGenerate = DeinterleaveBufferBlockSizeInFrames * WaveProxyReader->GetNumChannels();
  				check(NumSamplesToGenerate == InterleavedBuffer.Num())
 
-				WaveProxyReader->PopAudio(InterleavedBuffer);
+				// if the wave proxy reader has failed, write out silence. 
+				if (WaveProxyReader->HasFailed())
+				{
+					FMemory::Memset(InterleavedBuffer.GetData(), 0, sizeof(float) * InterleavedBuffer.Num());
+				}
+				else
+				{
+					WaveProxyReader->PopAudio(InterleavedBuffer);
+				}
+
 				ConvertDeinterleave->ProcessAudio(InterleavedBuffer, DeinterleavedBuffer);
 
 				for (int32 ChannelIndex = 0; ChannelIndex < NumDeinterleaveChannels; ChannelIndex++)
 				{
 					OutBuffer[ChannelIndex].Push(DeinterleavedBuffer[ChannelIndex]);
 				}
-				OutSourceState.Append(DeinterleaveBlockSizeInFrames, *bLoop);
+				OutSourceState.Append(DeinterleaveBufferBlockSizeInFrames, *bLoop);
 			}
 			else
 			{
@@ -1022,7 +1054,7 @@ namespace Metasound
 		TArray<FAudioBufferWriteRef> OutputAudioBuffers;
 		TArray<FName> OutputAudioBufferVertexNames;
 
-		TUniquePtr<FWaveProxyReader> WaveProxyReader;
+		TUniquePtr<FSoundWaveProxyReader> WaveProxyReader;
 		TUniquePtr<Audio::IConvertDeinterleave> ConvertDeinterleave;
 		TUniquePtr<Audio::FMultichannelLinearResampler> Resampler;
 
@@ -1039,7 +1071,8 @@ namespace Metasound
 		int32 NumDeinterleaveChannels;
 		bool bOnNearlyDoneTriggeredForWave = false;
 		bool bIsPlaying = false;
-		
+		// Cached from cvar 
+		int32 DeinterleaveBufferBlockSizeInFrames;
 	};
 
 	class FWavePlayerOperatorFactory : public IOperatorFactory

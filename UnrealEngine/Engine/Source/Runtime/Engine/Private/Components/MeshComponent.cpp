@@ -11,6 +11,7 @@
 #include "Engine/World.h"
 #include "PSOPrecache.h"
 #include "UObject/UnrealType.h"
+#include "StaticMeshSceneProxyDesc.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MeshComponent)
 
@@ -49,6 +50,14 @@ UMaterialInterface* UMeshComponent::GetMaterial(int32 ElementIndex) const
 	return OutMaterial;
 }
 
+UMaterialInterface* UMeshComponent::GetMaterialByName(FName MaterialSlotName) const
+{
+	int32 MaterialIndex = GetMaterialIndex(MaterialSlotName);
+	if (MaterialIndex < 0)
+		return nullptr;
+	return GetMaterial(MaterialIndex);
+}
+
 void UMeshComponent::SetMaterial(int32 ElementIndex, UMaterialInterface* Material)
 {
 	if (ElementIndex >= 0)
@@ -76,8 +85,18 @@ void UMeshComponent::SetMaterial(int32 ElementIndex, UMaterialInterface* Materia
 				}
 			}	
 
+			if (UMaterialInterface* PreviousMaterial = OverrideMaterials[ElementIndex].Get())
+			{
+				PreviousMaterial->OnRemovedAsOverride(this);
+			}
+
 			// Set the material and invalidate things
 			OverrideMaterials[ElementIndex] = Material;
+
+			if (Material)
+			{
+				Material->OnAssignedAsOverride(this);
+			}
 
 			// Precache PSOs again
 			PrecachePSOs();
@@ -123,13 +142,14 @@ void UMeshComponent::SetMaterialByName(FName MaterialSlotName, UMaterialInterfac
 	SetMaterial(MaterialIndex, Material);
 }
 
-FMaterialRelevance UMeshComponent::GetMaterialRelevance(ERHIFeatureLevel::Type InFeatureLevel) const
+template<class T> 
+FMaterialRelevance GetMaterialRelevanceImp(const T& Component, ERHIFeatureLevel::Type InFeatureLevel)
 {
 	// Combine the material relevance for all materials.
 	FMaterialRelevance Result;
-	for(int32 ElementIndex = 0;ElementIndex < GetNumMaterials();ElementIndex++)
+	for(int32 ElementIndex = 0;ElementIndex < Component.GetNumMaterials();ElementIndex++)
 	{
-		UMaterialInterface const* MaterialInterface = GetMaterial(ElementIndex);
+		UMaterialInterface const* MaterialInterface = Component.GetMaterial(ElementIndex);
 		if(!MaterialInterface)
 		{
 			MaterialInterface = UMaterial::GetDefaultMaterial(MD_Surface);
@@ -137,13 +157,28 @@ FMaterialRelevance UMeshComponent::GetMaterialRelevance(ERHIFeatureLevel::Type I
 		Result |= MaterialInterface->GetRelevance_Concurrent(InFeatureLevel);
 	}
 
-	UMaterialInterface const* OverlayMaterialInterface = GetOverlayMaterial();
+	UMaterialInterface const* OverlayMaterialInterface = Component.GetOverlayMaterial();
 	if (OverlayMaterialInterface != nullptr)
 	{
 		Result |= OverlayMaterialInterface->GetRelevance_Concurrent(InFeatureLevel);
 	}
 
 	return Result;
+}
+
+FMaterialRelevance UMeshComponent::GetMaterialRelevance(ERHIFeatureLevel::Type InFeatureLevel) const
+{
+	return GetMaterialRelevanceImp(*this, InFeatureLevel);	
+}
+
+FMaterialRelevance FStaticMeshSceneProxyDesc::GetMaterialRelevance(ERHIFeatureLevel::Type InFeatureLevel) const
+{
+	if (bUseProvidedMaterialRelevance)
+	{
+		return MaterialRelevance; 
+	}
+
+	return GetMaterialRelevanceImp(*this, InFeatureLevel);	
 }
 
 int32 UMeshComponent::GetNumOverrideMaterials() const
@@ -168,13 +203,24 @@ void UMeshComponent::PostEditChangeChainProperty(FPropertyChangedChainEvent& Pro
 void UMeshComponent::CleanUpOverrideMaterials()
 {
 	bool bUpdated = false;
+	int32 NumMaterials = GetNumMaterials();
+	int32 NumOverrideMaterials = OverrideMaterials.Num();
 
 	// We have to remove material override Ids that are bigger then the material list
-	if (OverrideMaterials.Num() > GetNumMaterials())
+	if (NumOverrideMaterials > NumMaterials)
 	{
 		//Remove the override material id that are superior to the static mesh materials number
-		int32 RemoveCount = OverrideMaterials.Num() - GetNumMaterials();
-		OverrideMaterials.RemoveAt(GetNumMaterials(), RemoveCount);
+		int32 RemoveCount = NumOverrideMaterials - NumMaterials;
+
+		for (int32 MatIndex = NumMaterials; MatIndex < NumOverrideMaterials; MatIndex++)
+		{
+			if (UMaterialInterface* MatInterface = OverrideMaterials[MatIndex].Get())
+			{
+				MatInterface->OnRemovedAsOverride(this);
+			}
+		}
+
+		OverrideMaterials.RemoveAt(NumMaterials, RemoveCount);
 		bUpdated = true;
 	}
 
@@ -189,6 +235,14 @@ void UMeshComponent::EmptyOverrideMaterials()
 {
 	if (OverrideMaterials.Num())
 	{
+		for (int32 MatIndex = 0; MatIndex < OverrideMaterials.Num(); MatIndex++)
+		{
+			if (UMaterialInterface* MatInterface = OverrideMaterials[MatIndex].Get())
+			{
+				MatInterface->OnRemovedAsOverride(this);
+			}
+		}
+
 		OverrideMaterials.Reset();
 		MarkRenderStateDirty();
 	}
@@ -341,24 +395,6 @@ TArray<class UMaterialInterface*> UMeshComponent::GetMaterials() const
 	return OutMaterials;
 }
 
-int32 UMeshComponent::GetMaterialIndex(FName MaterialSlotName) const
-{
-	// This function should be overridden
-	return INDEX_NONE;
-}
-
-TArray<FName> UMeshComponent::GetMaterialSlotNames() const
-{
-	// This function should be overridden
-	return TArray<FName>();
-}
-
-bool UMeshComponent::IsMaterialSlotNameValid(FName MaterialSlotName) const
-{
-	// This function should be overridden
-	return false;
-}
-
 void UMeshComponent::SetScalarParameterValueOnMaterials(const FName ParameterName, const float ParameterValue)
 {
 	if (!bEnableMaterialParameterCaching)
@@ -463,6 +499,21 @@ void UMeshComponent::MarkCachedMaterialParameterNameIndicesDirty()
 {
 	// Flag the cached material parameter indices as dirty
 	bCachedMaterialParameterIndicesAreDirty = true;
+}
+
+void UMeshComponent::BeginDestroy()
+{
+	for (int32 MatIndex = 0; MatIndex < OverrideMaterials.Num(); MatIndex++)
+	{
+		if (UMaterialInterface* MatInterface = OverrideMaterials[MatIndex].Get())
+		{
+			MatInterface->OnRemovedAsOverride(this);
+		}
+
+		OverrideMaterials[MatIndex] = nullptr;
+	}
+
+	Super::BeginDestroy();
 }
 
 void UMeshComponent::CacheMaterialParameterNameIndices()

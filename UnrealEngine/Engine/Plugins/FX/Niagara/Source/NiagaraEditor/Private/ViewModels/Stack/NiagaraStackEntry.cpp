@@ -5,6 +5,7 @@
 #include "NiagaraEditorUtilities.h"
 #include "NiagaraEmitter.h"
 #include "ViewModels/Stack/NiagaraStackErrorItem.h"
+#include "ViewModels/Stack/NiagaraStackNote.h"
 #include "ViewModels/NiagaraSystemViewModel.h"
 #include "ViewModels/NiagaraEmitterViewModel.h"
 #include "NiagaraStackEditorData.h"
@@ -19,6 +20,7 @@
 class UNiagaraStackItemGroup;
 const FName UNiagaraStackEntry::FExecutionCategoryNames::System = TEXT("System");
 const FName UNiagaraStackEntry::FExecutionCategoryNames::Emitter = TEXT("Emitter");
+const FName UNiagaraStackEntry::FExecutionCategoryNames::StatelessEmitter = TEXT("StatelessEmitter");
 const FName UNiagaraStackEntry::FExecutionCategoryNames::Particle = TEXT("Particle");
 const FName UNiagaraStackEntry::FExecutionCategoryNames::Render = TEXT("Render");
 
@@ -28,6 +30,8 @@ const FName UNiagaraStackEntry::FExecutionSubcategoryNames::Update = TEXT("Updat
 const FName UNiagaraStackEntry::FExecutionSubcategoryNames::Event = TEXT("Event");
 const FName UNiagaraStackEntry::FExecutionSubcategoryNames::SimulationStage = TEXT("Simulation Stage");
 const FName UNiagaraStackEntry::FExecutionSubcategoryNames::Render = TEXT("Render");
+
+#define LOCTEXT_NAMESPACE "UNiagaraStackEntry"
 
 UNiagaraStackEntry::FStackIssueFix::FStackIssueFix() : Style(EStackIssueFixStyle::Fix)
 {
@@ -206,6 +210,12 @@ void UNiagaraStackEntry::Finalize()
 	}
 	Children.Empty();
 
+	if(StackNote)
+	{
+		StackNote->Finalize();
+		StackNote = nullptr;
+	}
+
 	for (UNiagaraStackEntry* ErrorChild : ErrorChildren)
 	{
 		ErrorChild->Finalize();
@@ -381,6 +391,11 @@ void UNiagaraStackEntry::GetFilteredChildren(TArray<UNiagaraStackEntry*>& OutFil
 
 		FilteredChildren.Empty();
 		FilteredChildren.Append(ErrorChildren);
+		if(StackNote != nullptr && StackNote->GetShouldShowInStack())
+		{
+			FilteredChildren.Add(StackNote);
+		}
+		
 		for (UNiagaraStackEntry* Child : Children)
 		{
 			bool bPassesFilter = true;
@@ -452,6 +467,11 @@ TSharedRef<FNiagaraSystemViewModel> UNiagaraStackEntry::GetSystemViewModel() con
 TSharedPtr<FNiagaraEmitterViewModel> UNiagaraStackEntry::GetEmitterViewModel() const
 {
 	return EmitterViewModel.Pin();
+}
+
+UNiagaraStackNote* UNiagaraStackEntry::GetStackNote()
+{
+	return StackNote;
 }
 
 UNiagaraStackEntry::FOnExpansionChanged& UNiagaraStackEntry::OnExpansionChanged()
@@ -597,11 +617,6 @@ void UNiagaraStackEntry::GetRecursiveUsages(bool& bRead, bool& bWrite) const
 	bWrite = GetCollectedUsageData().bHasReferencedParameterWrite;
 }
 
-int32 UNiagaraStackEntry::GetTotalNumberOfCustomNotes() const
-{
-	return GetCollectedIssueData().TotalNumberOfCustomNotes;
-}
-
 int32 UNiagaraStackEntry::GetTotalNumberOfInfoIssues() const
 {
 	return GetCollectedIssueData().TotalNumberOfInfoIssues;
@@ -706,7 +721,12 @@ void UNiagaraStackEntry::FinalizeInternal()
 void UNiagaraStackEntry::RefreshChildren()
 {
 	checkf(bIsFinalized == false, TEXT("Can not refresh children on an entry after it has been finalized."));
-	checkf(SystemViewModel.IsValid(), TEXT("Base stack entry not initialized."));
+	//-TODO:Stateless: Do we need stateless support here?
+	//checkf(SystemViewModel.IsValid(), TEXT("Base stack entry not initialized."));
+	if (SystemViewModel.IsValid() == false)
+	{
+		return;
+	}
 
 	for (UNiagaraStackEntry* Child : Children)
 	{
@@ -752,9 +772,9 @@ void UNiagaraStackEntry::RefreshChildren()
 		}
 	}
 
-	Children.Empty();
+	Children.Empty();	
 	Children.Append(NewChildren);
-
+	
 	for (UNiagaraStackEntry* Child : Children)
 	{
 		UNiagaraStackEntry* OuterOwner = Cast<UNiagaraStackEntry>(Child->GetOuter());
@@ -771,6 +791,27 @@ void UNiagaraStackEntry::RefreshChildren()
 		{
 			Child->SetOnRequestCanDrop(FOnRequestDrop::CreateUObject(this, &UNiagaraStackEntry::ChildRequestCanDrop));
 			Child->SetOnRequestDrop(FOnRequestDrop::CreateUObject(this, &UNiagaraStackEntry::ChildRequestDrop));
+		}
+	}
+
+	if(HasStackNoteData())
+	{		
+		if(StackNote == nullptr)
+		{
+			StackNote = NewObject<UNiagaraStackNote>(this);
+			StackNote->Initialize(CreateDefaultChildRequiredData(), GetStackEditorDataKey());
+			StackNote->OnNoteChanged().BindUObject(this, &UNiagaraStackEntry::SetStackNoteData);
+		}
+		
+		StackNote->RefreshChildren();
+	}
+	else
+	{
+		if(StackNote != nullptr)
+		{
+			StackNote->OnNoteChanged().Unbind();
+			StackNote->Finalize();
+			StackNote = nullptr;
 		}
 	}
 	
@@ -794,19 +835,23 @@ void UNiagaraStackEntry::RefreshChildren()
 		ErrorChild->OnIssueModified().AddUObject(this, &UNiagaraStackEntry::IssueModified);
 	}
 
-	const FText* NewAlternateName = StackEditorData->GetStackEntryDisplayName(StackEditorDataKey);
-	if (NewAlternateName != nullptr && NewAlternateName->IsEmptyOrWhitespace() == false)
+	//-TODO:Stateless: Do we need stateless support here?
+	if (StackEditorData)
 	{
-		if (AlternateDisplayName.IsSet() == false || NewAlternateName->IdenticalTo(AlternateDisplayName.GetValue()) == false)
+		const FText* NewAlternateName = StackEditorData->GetStackEntryDisplayName(StackEditorDataKey);
+		if (NewAlternateName != nullptr && NewAlternateName->IsEmptyOrWhitespace() == false)
 		{
-			AlternateDisplayName = *NewAlternateName;
+			if (AlternateDisplayName.IsSet() == false || NewAlternateName->IdenticalTo(AlternateDisplayName.GetValue()) == false)
+			{
+				AlternateDisplayName = *NewAlternateName;
+				AlternateDisplayNameChangedDelegate.Broadcast();
+			}
+		}
+		else if (AlternateDisplayName.IsSet())
+		{
+			AlternateDisplayName.Reset();
 			AlternateDisplayNameChangedDelegate.Broadcast();
 		}
-	}
-	else if(AlternateDisplayName.IsSet())
-	{
-		AlternateDisplayName.Reset();
-		AlternateDisplayNameChangedDelegate.Broadcast();
 	}
 
 	PostRefreshChildrenInternal();
@@ -906,7 +951,6 @@ const UNiagaraStackEntry::FCollectedIssueData& UNiagaraStackEntry::GetCollectedI
 			CachedCollectedIssueData->TotalNumberOfInfoIssues += ChildStackEntry->GetTotalNumberOfInfoIssues();
 			CachedCollectedIssueData->TotalNumberOfWarningIssues += ChildStackEntry->GetTotalNumberOfWarningIssues();
 			CachedCollectedIssueData->TotalNumberOfErrorIssues += ChildStackEntry->GetTotalNumberOfErrorIssues();
-			CachedCollectedIssueData->TotalNumberOfCustomNotes += ChildStackEntry->GetTotalNumberOfCustomNotes();
 			
 			if (ChildStackEntry->GetIssues().Num() > 0)
 			{
@@ -929,10 +973,6 @@ const UNiagaraStackEntry::FCollectedIssueData& UNiagaraStackEntry::GetCollectedI
 			else if (Issue.GetSeverity() == EStackIssueSeverity::Error)
 			{
 				CachedCollectedIssueData->TotalNumberOfErrorIssues++;
-			}
-			else if (Issue.GetSeverity() == EStackIssueSeverity::CustomNote)
-			{
-				CachedCollectedIssueData->TotalNumberOfCustomNotes++;
 			}
 		}
 	}
@@ -1100,6 +1140,42 @@ void UNiagaraStackEntry::OnRenamed(FText NewName)
 	}
 }
 
+bool UNiagaraStackEntry::HasStackNoteData() const
+{
+	return GetStackEditorData().HasStackNote(GetStackEditorDataKey());
+}
+
+FNiagaraStackNoteData UNiagaraStackEntry::GetStackNoteData() const
+{
+	return GetStackEditorData().GetStackNote(GetStackEditorDataKey()).Get(FNiagaraStackNoteData());
+}
+
+void UNiagaraStackEntry::SetStackNoteData(FNiagaraStackNoteData InStackNoteData)
+{
+	if(InStackNoteData.IsValid())
+	{
+		GetStackEditorData().AddOrReplaceStackNote(GetStackEditorDataKey(), InStackNoteData);
+	}
+	else
+	{
+		GetStackEditorData().DeleteStackNote(GetStackEditorDataKey());	
+	}
+	
+	RefreshChildren();
+}
+
+void UNiagaraStackEntry::DeleteStackNoteData()
+{
+	if(HasStackNoteData())
+	{
+		FScopedTransaction Transaction(LOCTEXT("DeleteStackNoteTransaction", "Deleted Stack Note"));
+		GetStackEditorData().Modify();
+		
+		GetStackEditorData().DeleteStackNote(GetStackEditorDataKey());
+		RefreshChildren();
+	}
+}
+
 FNiagaraHierarchyIdentity UNiagaraStackEntry::DetermineSummaryIdentity() const
 {
 	return FNiagaraHierarchyIdentity();
@@ -1192,3 +1268,4 @@ void UNiagaraStackSpacer::Initialize(FRequiredEntryData InRequiredEntryData, flo
 	ShouldShowInStack = InShouldShowInStack;
 }
 
+#undef LOCTEXT_NAMESPACE

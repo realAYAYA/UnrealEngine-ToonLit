@@ -5,16 +5,18 @@
 #include "HAL/Platform.h" // IWYU pragma: keep
 
 #ifndef UE_WITH_MVVM_DEBUGGING
-#define UE_WITH_MVVM_DEBUGGING !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
+#define UE_WITH_MVVM_DEBUGGING (!(UE_BUILD_SHIPPING || UE_BUILD_TEST)) || WITH_EDITOR
 #endif
 
 
 #if UE_WITH_MVVM_DEBUGGING
 
 #include "Bindings/MVVMCompiledBindingLibrary.h"
+#include "View/MVVMViewTypes.h"
 
 class UMVVMView;
 struct FMVVMViewClass_CompiledBinding;
+struct FMVVMViewSource;
 class UUserWidget;
 
 namespace UE::MVVM
@@ -23,7 +25,7 @@ namespace UE::MVVM
 class MODELVIEWVIEWMODEL_API FDebugging
 {
 public:
-	struct FView
+	struct MODELVIEWVIEWMODEL_API FView
 	{
 	public:
 		FView() = default;
@@ -65,37 +67,24 @@ public:
 	static void BroadcastViewBeginDestruction(const UMVVMView* View);
 
 public:
-	enum class ERegisterLibraryBindingResult : uint8
+	struct FViewSourceValueArgs
 	{
-		Success,
-		Failed_InvalidFieldId,
-		Failed_FieldIdNotFound,
-		Failed_InvalidSource,
-		Failed_InvalidSourceField,
-		Failed_Unknown,
+		FViewSourceValueArgs(const FMVVMViewClass_SourceKey& Class, const FMVVMView_SourceKey& View);
+		FMVVMViewClass_SourceKey ClassSource;
+		FMVVMView_SourceKey ViewSource;
 	};
 
-	struct FLibraryBindingRegisteredArgs
-	{
-		FLibraryBindingRegisteredArgs() = delete;
-		FLibraryBindingRegisteredArgs(const FMVVMViewClass_CompiledBinding& Binding, ERegisterLibraryBindingResult Result);
-		const FMVVMViewClass_CompiledBinding& Binding;
-		ERegisterLibraryBindingResult Result;
-	};
-
-	DECLARE_EVENT_TwoParams(FDebugging, FLibraryBindingRegistered, const FView&, const FLibraryBindingRegisteredArgs&);
-	/** Broadcast when a binding is registered to the view/viewmodel or failed to registered to the view/viewmodel. */
-	static FLibraryBindingRegistered OnLibraryBindingRegistered;
-	static void BroadcastLibraryBindingRegistered(const UMVVMView* View, const FLibraryBindingRegisteredArgs& Args);
-	static void BroadcastLibraryBindingRegistered(const UMVVMView* View, const FMVVMViewClass_CompiledBinding& Binding, ERegisterLibraryBindingResult Result);
+	DECLARE_EVENT_TwoParams(FDebugging, FViewSourceValueChanged, const FView&, const FViewSourceValueArgs&);
+	/** Broadcast when a source changes. */
+	static FViewSourceValueChanged OnViewSourceValueChanged;
+	static void BroadcastViewSourceValueChanged(const UMVVMView* View, const FMVVMViewClass_SourceKey ClassSourceKey, const FMVVMView_SourceKey ViewSourceKey);
 
 public:
 	struct FLibraryBindingExecutedArgs
 	{
-		FLibraryBindingExecutedArgs() = delete;
-		FLibraryBindingExecutedArgs(const FMVVMViewClass_CompiledBinding& Binding);
-		FLibraryBindingExecutedArgs(const FMVVMViewClass_CompiledBinding& Binding, FMVVMCompiledBindingLibrary::EExecutionFailingReason Result);
-		const FMVVMViewClass_CompiledBinding& Binding;
+		FLibraryBindingExecutedArgs(FMVVMViewClass_BindingKey Binding);
+		FLibraryBindingExecutedArgs(FMVVMViewClass_BindingKey Binding, FMVVMCompiledBindingLibrary::EExecutionFailingReason Result);
+		FMVVMViewClass_BindingKey Binding;
 		TOptional<FMVVMCompiledBindingLibrary::EExecutionFailingReason> FailingReason;
 	};
 
@@ -104,8 +93,8 @@ public:
 	/** Broadcast when a registered field is modified and a binding need to execute. */
 	static FLibraryBindingExecuted OnLibraryBindingExecuted;
 	static void BroadcastLibraryBindingExecuted(const UMVVMView* View, const FLibraryBindingExecutedArgs& Args);
-	static void BroadcastLibraryBindingExecuted(const UMVVMView* View, const FMVVMViewClass_CompiledBinding& Binding);
-	static void BroadcastLibraryBindingExecuted(const UMVVMView* View, const FMVVMViewClass_CompiledBinding& Binding, FMVVMCompiledBindingLibrary::EExecutionFailingReason Result);
+	static void BroadcastLibraryBindingExecuted(const UMVVMView* View, FMVVMViewClass_BindingKey Binding);
+	static void BroadcastLibraryBindingExecuted(const UMVVMView* View, FMVVMViewClass_BindingKey Binding, FMVVMCompiledBindingLibrary::EExecutionFailingReason Result);
 };
 } // UE::MVVM
 

@@ -10,6 +10,8 @@
 #include "MassSimulationSubsystem.h"
 #include "Logging/LogScopedVerbosityOverride.h"
 #include "ProfilingDebugging/CsvProfiler.h"
+#include "Engine/Level.h"
+
 
 CSV_DEFINE_CATEGORY(MassActors, true);
 
@@ -54,8 +56,27 @@ bool UMassActorSpawnerSubsystem::RemoveActorSpawnRequest(FMassActorSpawnRequestH
 	return true;
 }
 
+void UMassActorSpawnerSubsystem::ConditionalDestroyActor(UWorld& World, AActor& ActorToDestroy)
+{
+	UWorld* ActorsWorld = ActorToDestroy.GetWorld();
+
+	// we directly call DestroyActors only if they're tied to the current world.
+	// Otherwise we rely on engine mechanics to get rid of them.
+	if (ActorsWorld == &World)
+	{
+		World.DestroyActor(&ActorToDestroy);
+	}
+	else
+	{
+		ensureMsgf(ActorToDestroy.HasActorBegunPlay() == false, TEXT("Failed to destroy %s due to world mismatch, while the actor is still being valid (as indicated by HasActorBegunPlay() == true)")
+			, *ActorToDestroy.GetName());
+	}
+}
+
 void UMassActorSpawnerSubsystem::DestroyActor(AActor* Actor, bool bImmediate /*= false*/)
 {
+	check(Actor);
+
 	// We need to unregister immediately MassAgentComponent as it will become out of sync with mass
 	if (UMassAgentComponent* AgentComp = Actor->FindComponentByClass<UMassAgentComponent>())
 	{
@@ -67,10 +88,11 @@ void UMassActorSpawnerSubsystem::DestroyActor(AActor* Actor, bool bImmediate /*=
 	{
 		if (!ReleaseActorToPool(Actor))
 		{
+			// Couldn't release actor back to pool, so destroy it
 			UWorld* World = GetWorld();
 			check(World);
+			ConditionalDestroyActor(*World, *Actor);
 
-			World->DestroyActor(Actor);
 			--NumActorSpawned;
 		}
 	}
@@ -82,7 +104,7 @@ void UMassActorSpawnerSubsystem::DestroyActor(AActor* Actor, bool bImmediate /*=
 
 bool UMassActorSpawnerSubsystem::ReleaseActorToPool(AActor* Actor)
 {
-	if (!UE::MassActors::bUseActorPooling || !bActorPoolingEnabled)
+	if (!IsActorPoolingEnabled())
 	{
 		return false;
 	}
@@ -139,14 +161,29 @@ FMassActorSpawnRequestHandle UMassActorSpawnerSubsystem::RequestActorSpawnIntern
 	return SpawnRequestHandle;
 }
 
-FMassActorSpawnRequestHandle UMassActorSpawnerSubsystem::GetNextRequestToSpawn() const
+// @todo investigate whether storing requests in a sorted array would improve overall perf - if AllHandles was sorted we
+// wouldn't need to do any tests other than just checking if a thing is valid and not completed (i.e. pending or retry-pending).
+FMassActorSpawnRequestHandle UMassActorSpawnerSubsystem::GetNextRequestToSpawn(int32& InOutHandleIndex) const
 {
+	const TArray<FMassActorSpawnRequestHandle>& AllHandles = SpawnRequestHandleManager.GetHandles();
+	if (AllHandles.Num() == 0)
+	{
+		InOutHandleIndex = INDEX_NONE;
+		return FMassActorSpawnRequestHandle();
+	}
+
 	FMassActorSpawnRequestHandle BestSpawnRequestHandle;
 	float BestPriority = MAX_FLT;
 	bool bBestIsPending = false;
 	uint32 BestSerialNumber = MAX_uint32;
-	for (const FMassActorSpawnRequestHandle SpawnRequestHandle : SpawnRequestHandleManager.GetHandles())
+	int32 BestIndex = INDEX_NONE;
+		
+	int32 HandleIndex = InOutHandleIndex != INDEX_NONE ? ((InOutHandleIndex + 1) % AllHandles.Num()) : 0;
+	const int32 IterationsLimit = (InOutHandleIndex == INDEX_NONE) ? AllHandles.Num() : (AllHandles.Num() - 1);
+	
+	for (int32 IterationIndex = 0; IterationIndex < IterationsLimit; ++IterationIndex, HandleIndex = (HandleIndex + 1) % AllHandles.Num())
 	{
+		const FMassActorSpawnRequestHandle SpawnRequestHandle = AllHandles[HandleIndex];
 		if (!SpawnRequestHandle.IsValid())
 		{
 			continue;
@@ -162,6 +199,7 @@ FMassActorSpawnRequestHandle UMassActorSpawnerSubsystem::GetNextRequestToSpawn()
 				BestSerialNumber = SpawnRequest.SerialNumber;
 				BestPriority = SpawnRequest.Priority;
 				bBestIsPending = true;
+				BestIndex = HandleIndex;
 			}
 		}
 		else if (!bBestIsPending && SpawnRequest.SpawnStatus == ESpawnRequestStatus::RetryPending)
@@ -171,10 +209,12 @@ FMassActorSpawnRequestHandle UMassActorSpawnerSubsystem::GetNextRequestToSpawn()
 			{
 				BestSpawnRequestHandle = SpawnRequestHandle;
 				BestSerialNumber = SpawnRequest.SerialNumber;
+				BestIndex = HandleIndex;
 			}
 		}
 	}
 
+	InOutHandleIndex = BestIndex;
 	return BestSpawnRequestHandle;
 }
 
@@ -182,7 +222,7 @@ ESpawnRequestStatus UMassActorSpawnerSubsystem::SpawnOrRetrieveFromPool(FConstSt
 {
 	const FMassActorSpawnRequest& SpawnRequest = SpawnRequestView.Get<const FMassActorSpawnRequest>();
 
-	if (UE::MassActors::bUseActorPooling != 0 && bActorPoolingEnabled)
+	if (IsActorPoolingEnabled())
 	{
 		auto* Pool = PooledActors.Find(SpawnRequest.Template);
 
@@ -208,7 +248,8 @@ ESpawnRequestStatus UMassActorSpawnerSubsystem::SpawnOrRetrieveFromPool(FConstSt
 		}
 	}
 
-	ESpawnRequestStatus SpawnStatus = SpawnActor(SpawnRequestView, OutSpawnedActor);
+	FActorSpawnParameters ActorSpawnParameters;
+	ESpawnRequestStatus SpawnStatus = SpawnActor(SpawnRequestView, OutSpawnedActor, ActorSpawnParameters);
 
 	if (SpawnStatus == ESpawnRequestStatus::Succeeded)
 	{
@@ -231,7 +272,27 @@ ESpawnRequestStatus UMassActorSpawnerSubsystem::SpawnOrRetrieveFromPool(FConstSt
 	return SpawnStatus;
 }
 
- ESpawnRequestStatus UMassActorSpawnerSubsystem::SpawnActor(FConstStructView SpawnRequestView, TObjectPtr<AActor>& OutSpawnedActor) const
+TObjectPtr<AActor> UMassActorSpawnerSubsystem::FindActorByName(const FName ActorName, ULevel* OverrideLevel) const
+{
+	TObjectPtr<AActor> FoundActor;
+	check(GetWorld());
+	OverrideLevel = OverrideLevel ? OverrideLevel : GetWorld()->GetCurrentLevel();
+	
+	if (UObject* FoundObject = StaticFindObjectFast(nullptr, OverrideLevel, ActorName))
+	{
+		FoundActor = Cast<AActor>(FoundObject);
+		if (FoundObject)
+		{
+			if (IsValid(FoundActor) == false)
+			{
+				FoundActor->ClearGarbage();
+			}
+		}
+	}
+	return FoundActor;
+}
+
+ ESpawnRequestStatus UMassActorSpawnerSubsystem::SpawnActor(FConstStructView SpawnRequestView, TObjectPtr<AActor>& OutSpawnedActor, FActorSpawnParameters& InOutSpawnParameters) const
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(UMassActorSpawnerSubsystem::SpawnActor);
 
@@ -240,9 +301,23 @@ ESpawnRequestStatus UMassActorSpawnerSubsystem::SpawnOrRetrieveFromPool(FConstSt
 
 	const FMassActorSpawnRequest& SpawnRequest = SpawnRequestView.Get<const FMassActorSpawnRequest>();
 
-	FActorSpawnParameters SpawnParameters;
-	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-	OutSpawnedActor = World->SpawnActor<AActor>(SpawnRequest.Template, SpawnRequest.Transform, SpawnParameters);
+	if (SpawnRequest.Guid.IsValid())
+	{
+		// offsetting `D` by 1 since `0` has special meaning for FNames
+		InOutSpawnParameters.Name = FName(FString::Printf(TEXT("%s_%ud_%ud_%ud"), *SpawnRequest.Template->GetName(), SpawnRequest.Guid.A, SpawnRequest.Guid.B, SpawnRequest.Guid.C), SpawnRequest.Guid.D + 1);
+		//InOutSpawnParameters.OverrideLevel = InOutSpawnParameters.OverrideLevel ? OverrideLevel : World->GetCurrentLevel();
+
+		OutSpawnedActor = FindActorByName(InOutSpawnParameters.Name, InOutSpawnParameters.OverrideLevel ? InOutSpawnParameters.OverrideLevel : World->GetCurrentLevel());
+		if (OutSpawnedActor)
+		{
+			OutSpawnedActor->SetActorEnableCollision(true);
+			OutSpawnedActor->SetActorHiddenInGame(false);
+			return ESpawnRequestStatus::Succeeded;
+		}
+	}
+	
+	InOutSpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	OutSpawnedActor = World->SpawnActor<AActor>(SpawnRequest.Template, SpawnRequest.Transform, InOutSpawnParameters);
 
 	return IsValid(OutSpawnedActor) ? ESpawnRequestStatus::Succeeded : ESpawnRequestStatus::Failed;
 }
@@ -250,15 +325,21 @@ ESpawnRequestStatus UMassActorSpawnerSubsystem::SpawnOrRetrieveFromPool(FConstSt
 void UMassActorSpawnerSubsystem::ProcessPendingSpawningRequest(const double MaxTimeSlicePerTick)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(UMassActorSpawnerSubsystem::ProcessPendingSpawningRequest);
+
 	SpawnRequestHandleManager.ShrinkHandles();
 
 	const double TimeSliceEnd = FPlatformTime::Seconds() + MaxTimeSlicePerTick;
 
-	while (FPlatformTime::Seconds() < TimeSliceEnd)
+	const int32 IterationsLimit = SpawnRequestHandleManager.CalcNumUsedHandles();
+	int32 IterationsCount = 0;
+
+	while (FPlatformTime::Seconds() < TimeSliceEnd && IterationsCount++ < IterationsLimit)
 	{
-		FMassActorSpawnRequestHandle SpawnRequestHandle = GetNextRequestToSpawn();
-		if (!SpawnRequestHandle.IsValid() ||
-			!ensureMsgf(SpawnRequestHandleManager.IsValidHandle(SpawnRequestHandle), TEXT("GetNextRequestToSpawn returned an invalid handle, expecting an empty one or a valid one.")))
+		const FMassActorSpawnRequestHandle SpawnRequestHandle = GetNextRequestToSpawn(StartingHandleIndex);
+
+		// getting an invalid handle is fine - it indicates no more handles are there to be considered. 
+		if (!SpawnRequestHandle.IsValid() 
+			|| !SpawnRequestHandleManager.IsValidHandle(SpawnRequestHandle))
 		{
 			return;
 		}
@@ -272,42 +353,75 @@ void UMassActorSpawnerSubsystem::ProcessPendingSpawningRequest(const double MaxT
 			return;
 		}
 
-		// Do the spawning
-		SpawnRequest.SpawnStatus = ESpawnRequestStatus::Processing;
+		ESpawnRequestStatus Result = ProcessSpawnRequest(SpawnRequestHandle, SpawnRequestView, SpawnRequest);
+		ensureMsgf(Result != ESpawnRequestStatus::None, TEXT("Getting ESpawnRequestStatus::None as a result in this context is unexpected. Needs to be investigated."));
+	}
+}
 
-		// Call the pre spawn delegate on the spawn request
-		if (SpawnRequest.ActorPreSpawnDelegate.IsBound())
+ESpawnRequestStatus UMassActorSpawnerSubsystem::ProcessSpawnRequest(const FMassActorSpawnRequestHandle SpawnRequestHandle)
+{
+	if (!SpawnRequestHandle.IsValid()
+		|| !SpawnRequestHandleManager.IsValidHandle(SpawnRequestHandle))
+	{
+		return ESpawnRequestStatus::None;
+	}
+
+	FStructView SpawnRequestView = SpawnRequests[SpawnRequestHandle.GetIndex()];
+	FMassActorSpawnRequest& SpawnRequest = SpawnRequestView.Get<FMassActorSpawnRequest>();
+
+	return ProcessSpawnRequest(SpawnRequestHandle, SpawnRequestView, SpawnRequest);
+}
+
+ESpawnRequestStatus UMassActorSpawnerSubsystem::ProcessSpawnRequest(const FMassActorSpawnRequestHandle SpawnRequestHandle, FStructView SpawnRequestView, FMassActorSpawnRequest& SpawnRequest)
+{
+	if (!ensureMsgf(SpawnRequest.IsFinished() == false, TEXT("Finished spawn requests are not expected to be processed again. Bailing out.")))
+	{
+		// returning None rather than the actual SpawnRequest.SpawnStatus to indicate the issue has occurred. 
+		return ESpawnRequestStatus::None;
+	}
+
+	// Do the spawning
+	SpawnRequest.SpawnStatus = ESpawnRequestStatus::Processing;
+
+	// Call the pre spawn delegate on the spawn request
+	if (SpawnRequest.ActorPreSpawnDelegate.IsBound())
+	{
+		SpawnRequest.ActorPreSpawnDelegate.Execute(SpawnRequestHandle, SpawnRequestView);
+	}
+
+	SpawnRequest.SpawnStatus = SpawnOrRetrieveFromPool(SpawnRequestView, SpawnRequest.SpawnedActor);
+
+	if (SpawnRequest.IsFinished())
+	{
+		if (SpawnRequest.SpawnStatus == ESpawnRequestStatus::Succeeded && IsValid(SpawnRequest.SpawnedActor))
 		{
-			SpawnRequest.ActorPreSpawnDelegate.Execute(SpawnRequestHandle, SpawnRequestView);
+			if (UMassAgentComponent* AgentComp = SpawnRequest.SpawnedActor->FindComponentByClass<UMassAgentComponent>())
+			{
+				AgentComp->SetPuppetHandle(SpawnRequest.MassAgent);
+			}
 		}
 
-		SpawnRequest.SpawnStatus = SpawnOrRetrieveFromPool(SpawnRequestView, SpawnRequest.SpawnedActor);
+		EMassActorSpawnRequestAction PostAction = EMassActorSpawnRequestAction::Remove;
 
-		if (SpawnRequest.IsFinished())
+		// Call the post spawn delegate on the spawn request
+		if (SpawnRequest.ActorPostSpawnDelegate.IsBound())
 		{
-			if (SpawnRequest.SpawnStatus == ESpawnRequestStatus::Succeeded && IsValid(SpawnRequest.SpawnedActor))
-			{
-				if (UMassAgentComponent* AgentComp = SpawnRequest.SpawnedActor->FindComponentByClass<UMassAgentComponent>())
-				{
-					AgentComp->SetPuppetHandle(SpawnRequest.MassAgent);
-				}
-			}
+			PostAction = SpawnRequest.ActorPostSpawnDelegate.Execute(SpawnRequestHandle, SpawnRequestView);
+		}
 
-			EMassActorSpawnRequestAction PostAction = EMassActorSpawnRequestAction::Remove;
-
-			// Call the post spawn delegate on the spawn request
-			if (SpawnRequest.ActorPostSpawnDelegate.IsBound())
-			{
-				PostAction = SpawnRequest.ActorPostSpawnDelegate.Execute(SpawnRequestHandle, SpawnRequestView);
-			}
-
-			if (PostAction == EMassActorSpawnRequestAction::Remove)
-			{
-				// If notified, remove the spawning request
-				ensureMsgf(SpawnRequestHandleManager.RemoveHandle(SpawnRequestHandle), TEXT("When providing a delegate, the spawn request gets automatically removed, no need to remove it on your side"));
-			}
+		if (PostAction == EMassActorSpawnRequestAction::Remove)
+		{
+			// If notified, remove the spawning request
+			ensureMsgf(SpawnRequestHandleManager.RemoveHandle(SpawnRequestHandle), TEXT("When providing a delegate, the spawn request gets automatically removed, no need to remove it on your side"));
 		}
 	}
+	else
+	{
+		// lower priority
+		SpawnRequest.SpawnStatus = ESpawnRequestStatus::RetryPending;
+	}
+
+	return SpawnRequest.SpawnStatus;
 }
 
 void UMassActorSpawnerSubsystem::ProcessPendingDestruction(const double MaxTimeSlicePerTick)
@@ -327,11 +441,11 @@ void UMassActorSpawnerSubsystem::ProcessPendingDestruction(const double MaxTimeS
 		while ((DeactivatedActorsToDestroy.Num() || ActorsToDestroy.Num()) && 
 			   (HasToDestroyAllActorsOnServerSide || FPlatformTime::Seconds() <= TimeSliceEnd))
 		{
-			AActor* ActorToDestroy = DeactivatedActorsToDestroy.Num() ? DeactivatedActorsToDestroy.Pop(/*bAllowShrinking*/false) : ActorsToDestroy.Pop(/*bAllowShrinking*/false);
-			if (!ReleaseActorToPool(ActorToDestroy))
+			AActor* ActorToDestroy = DeactivatedActorsToDestroy.Num() ? DeactivatedActorsToDestroy.Pop(EAllowShrinking::No) : ActorsToDestroy.Pop(EAllowShrinking::No);
+			if (ActorToDestroy && !ReleaseActorToPool(ActorToDestroy))
 			{
 				// Couldn't release actor back to pool, so destroy it
-				World->DestroyActor(ActorToDestroy);
+				ConditionalDestroyActor(*World, *ActorToDestroy);
 				--NumActorSpawned;
 			}
 		}
@@ -430,6 +544,11 @@ void UMassActorSpawnerSubsystem::DisableActorPooling()
 
 }
 
+bool UMassActorSpawnerSubsystem::IsActorPoolingEnabled()
+{
+	return UE::MassActors::bUseActorPooling && bActorPoolingEnabled;
+}
+
 void UMassActorSpawnerSubsystem::ReleaseAllResources()
 {
 	if (UWorld* World = GetWorld())
@@ -439,7 +558,10 @@ void UMassActorSpawnerSubsystem::ReleaseAllResources()
 			auto& ActorArray = It.Value();
 			for (int i = 0; i < ActorArray.Num(); i++)
 			{
-				World->DestroyActor(ActorArray[i]);
+				if (ActorArray[i])
+				{
+					ConditionalDestroyActor(*World, *ActorArray[i]);
+				}
 			}
 			NumActorSpawned -= ActorArray.Num();
 		}
@@ -449,4 +571,13 @@ void UMassActorSpawnerSubsystem::ReleaseAllResources()
 	NumActorPooled = 0;
 	CSV_CUSTOM_STAT(MassActors, NumSpawned, NumActorSpawned, ECsvCustomStatOp::Accumulate);
 	CSV_CUSTOM_STAT(MassActors, NumPooled, NumActorPooled, ECsvCustomStatOp::Accumulate);
+}
+
+//-----------------------------------------------------------------------------
+// DEPRECATED
+//-----------------------------------------------------------------------------
+FMassActorSpawnRequestHandle UMassActorSpawnerSubsystem::GetNextRequestToSpawn() const
+{
+	int32 DummyIndex = 0;
+	return GetNextRequestToSpawn(DummyIndex);
 }

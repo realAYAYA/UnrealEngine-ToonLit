@@ -9,7 +9,7 @@
 
 #if IAS_WITH_LATENCY_INJECTOR
 
-namespace UE::IO::Private
+namespace UE::IO::IAS
 {
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -20,11 +20,10 @@ static int64 CycleBase;
 static int64 CycleFreq;
 static int32 MinMs;
 static int32 MaxMs;
-
-};
-
+static int32 FailPercent;
+static int32 FailState;
 ////////////////////////////////////////////////////////////////////////////////
-void FLatencyInjector::Initialize(const TCHAR* CommandLine)
+static void InitializeLatency(const TCHAR* CommandLine)
 {
 	// -Ias.AddLatencyMs=130   : add 130ms of latency
 	// -Ias.AddLatencyMs=40/90 : random latency between 40ms and 90ms
@@ -44,7 +43,40 @@ void FLatencyInjector::Initialize(const TCHAR* CommandLine)
 	});
 
 	for (; Values.Num() < 2; Values.Add(-1));
-	Set(Values[0], Values[1]);
+	FLatencyInjector::Set(Values[0], Values[1]);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+static void InitializeFailure(const TCHAR* CommandLine)
+{
+	// -Ias.ForceFailPercent=40  : 40% chance that a request will fail
+	// -Ias.ForceFailPercent=0   : invalid
+	// -Ias.ForceFailPercent=101 : invalid
+
+	FString Value;
+	if (!FParse::Value(CommandLine, TEXT("Ias.ForceFailPercent="), Value))
+	{
+		return;
+	}
+
+	int32 Percent = -1;
+	LexFromString(Percent, *Value);
+	if (Percent < 1 || Percent > 100)
+		return;
+
+	FLatencyInjector::SetFailureRate(Percent);
+}
+
+}; // namespace Injector
+
+
+
+////////////////////////////////////////////////////////////////////////////////
+void FLatencyInjector::Initialize(const TCHAR* CommandLine)
+{
+	using namespace Injector;
+	InitializeLatency(CommandLine);
+	InitializeFailure(CommandLine);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -70,14 +102,31 @@ void FLatencyInjector::Set(int32 MinMs, int32 MaxMs)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-void FLatencyInjector::Begin(EType, uint32& Param)
+void FLatencyInjector::SetFailureRate(int32 Percent)
 {
 	using namespace Injector;
+	FailPercent = Percent;
+	FailState = int32(FPlatformTime::Cycles64()) | 1;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+bool FLatencyInjector::Begin(EType, uint32& Param)
+{
+	using namespace Injector;
+
+	if (FailPercent)
+	{
+		FailState *= 0xac564b05;
+		if (int32 Value = ((FailState & 0xff) * 100) / 0xff; Value < FailPercent)
+		{
+			return false;
+		}
+	}
 
 	if (MaxMs <= 0 || MinMs < 0)
 	{
 		Param = 0;
-		return;
+		return true;
 	}
 
 	int64 Cycles = FPlatformTime::Cycles64();
@@ -98,6 +147,7 @@ void FLatencyInjector::Begin(EType, uint32& Param)
 	Bias /= 1000;
 
 	Param = uint32(Cycles + Bias - CycleBase);
+	return true;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -112,6 +162,6 @@ bool FLatencyInjector::HasExpired(uint32 Param)
 	return Cycles >= (int64(Param) + Injector::CycleBase);
 }
 
-} // namespace UE::IO::Private
+} // namespace UE::IO::IAS
 
 #endif // IAS_WITH_LATENCY_INJECTOR

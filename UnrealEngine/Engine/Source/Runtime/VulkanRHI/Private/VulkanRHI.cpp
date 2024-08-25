@@ -27,8 +27,10 @@
 #include "VulkanTransientResourceAllocator.h"
 #include "VulkanExtensions.h"
 #include "VulkanRayTracing.h"
-
-
+#include "VulkanChunkedPipelineCache.h"
+#if PLATFORM_ANDROID
+#include "Android/AndroidPlatformMisc.h"
+#endif
 
 // Use Vulkan Profiles to verify feature level support on startup
 void VulkanProfilePrint(const char* Msg)
@@ -97,6 +99,22 @@ static FAutoConsoleVariableRef CVarVulkanVariableRateShading(
 	TEXT("1 to allow use of variable rate shading if available (default)"),
 	ECVF_ReadOnly
 );
+
+static TAutoConsoleVariable<bool> CVarAllowVulkanPSOPrecache(
+	TEXT("r.Vulkan.AllowPSOPrecaching"),
+	false,
+	TEXT("true: if r.PSOPrecaching=1 Vulkan RHI will use precaching.\n")
+	TEXT("false: Vulkan RHI will disable precaching (even if r.PSOPrecaching=1). (default)"),
+	ECVF_RenderThreadSafe | ECVF_ReadOnly);
+
+// If precaching is active we should not need the file cache.
+// however, precaching and filecache are compatible with each other, there maybe some scenarios in which both could be used.
+static TAutoConsoleVariable<bool> CVarEnableVulkanPSOFileCacheWhenPrecachingActive(
+	TEXT("r.Vulkan.EnablePSOFileCacheWhenPrecachingActive"),
+	false,
+	TEXT("false: If precaching is available (r.PSOPrecaching=1, r.Vulkan.UseChunkedPSOCache=1) then disable the PSO filecache. (default)\n")
+	TEXT("true: Allow both PSO file cache and precaching."),
+	ECVF_RenderThreadSafe | ECVF_ReadOnly);
 
 bool GGPUCrashDebuggingEnabled = false;
 
@@ -364,11 +382,7 @@ bool FVulkanDynamicRHIModule::IsSupported(ERHIFeatureLevel::Type FeatureLevel)
 
 FDynamicRHI* FVulkanDynamicRHIModule::CreateRHI(ERHIFeatureLevel::Type InRequestedFeatureLevel)
 {
-	const bool bForceES3_1 = (FVulkanPlatform::RequiresMobileRenderer() ||
-		(InRequestedFeatureLevel == ERHIFeatureLevel::ES3_1) ||
-		FParse::Param(FCommandLine::Get(), TEXT("FeatureLevelES31")) || FParse::Param(FCommandLine::Get(), TEXT("FeatureLevelES3_1")));
-
-	GMaxRHIFeatureLevel = (!GIsEditor && bForceES3_1) ? ERHIFeatureLevel::ES3_1 : InRequestedFeatureLevel;
+	GMaxRHIFeatureLevel = FVulkanPlatform::GetFeatureLevel(InRequestedFeatureLevel);
 	checkf(GMaxRHIFeatureLevel != ERHIFeatureLevel::Num, TEXT("Invalid feature level requested!"));
 
 	EShaderPlatform ShaderPlatformForFeatureLevel[ERHIFeatureLevel::Num];
@@ -385,6 +399,18 @@ FDynamicRHI* FVulkanDynamicRHIModule::CreateRHI(ERHIFeatureLevel::Type InRequest
 		FinalRHI = new FValidationRHI(FinalRHI);
 	}
 #endif
+
+	for (int32 Index = 0; Index < ERHIFeatureLevel::Num; ++Index)
+	{
+		if (ShaderPlatformForFeatureLevel[Index] != SP_NumPlatforms)
+		{
+			check(GMaxTextureSamplers >= (int32)FDataDrivenShaderPlatformInfo::GetMaxSamplers(ShaderPlatformForFeatureLevel[Index]));
+			if (GMaxTextureSamplers < (int32)FDataDrivenShaderPlatformInfo::GetMaxSamplers(ShaderPlatformForFeatureLevel[Index]))
+			{
+				UE_LOG(LogVulkanRHI, Error, TEXT("Shader platform requires at least: %d samplers, device supports: %d."), FDataDrivenShaderPlatformInfo::GetMaxSamplers(ShaderPlatformForFeatureLevel[Index]), GMaxTextureSamplers);
+			}
+		}
+	}
 
 	return FinalRHI;
 }
@@ -487,8 +513,13 @@ FVulkanDynamicRHI::FVulkanDynamicRHI()
 	GRHITransitionPrivateData_AlignInBytes = alignof(FVulkanPipelineBarrier);
 	GConfig->GetInt(TEXT("TextureStreaming"), TEXT("PoolSizeVRAMPercentage"), GPoolSizeVRAMPercentage, GEngineIni);
 
-	// VulkanRHI does not yet support PSO precaching, we ensure it is disabled.
-	GRHISupportsPSOPrecaching = false;
+	GRHIGlobals.SupportsBarycentricsSemantic = true;
+
+	static const auto CVarPSOPrecaching = IConsoleManager::Get().FindConsoleVariable(TEXT("r.PSOPrecaching"));
+
+	GRHISupportsPSOPrecaching = FVulkanChunkedPipelineCacheManager::IsEnabled() && (CVarPSOPrecaching && CVarPSOPrecaching->GetInt() != 0) && CVarAllowVulkanPSOPrecache.GetValueOnAnyThread();
+	GRHISupportsPipelineFileCache = !GRHISupportsPSOPrecaching || CVarEnableVulkanPSOFileCacheWhenPrecachingActive.GetValueOnAnyThread();
+	UE_LOG(LogVulkanRHI, Log, TEXT("Vulkan PSO Precaching = %d, PipelineFileCache = %d"), GRHISupportsPSOPrecaching, GRHISupportsPipelineFileCache);
 
 	// Copy source requires its own image layout.
 	EnumRemoveFlags(GRHIMergeableAccessMask, ERHIAccess::CopySrc);
@@ -654,7 +685,11 @@ void FVulkanDynamicRHI::CreateInstance()
 	// Run a profile check to see if this device can support our raytacing requirements since it might change the required API version of the instance
 	if (FVulkanPlatform::SupportsProfileChecks() && GVulkanRayTracingCVar.GetValueOnAnyThread())
 	{
-		if (CheckVulkanProfile(GMaxRHIFeatureLevel, true))
+		static IConsoleVariable* RequireSM6CVar = IConsoleManager::Get().FindConsoleVariable(TEXT("r.RayTracing.RequireSM6"));
+		const bool bRequireSM6 = RequireSM6CVar && RequireSM6CVar->GetBool();
+		const bool bRayTracingAllowedOnCurrentShaderPlatform = (bRequireSM6 == false) || (GMaxRHIShaderPlatform == SP_VULKAN_SM6 || IsVulkanMobileSM5Platform(GMaxRHIShaderPlatform));
+
+		if (CheckVulkanProfile(GMaxRHIFeatureLevel, true) && bRayTracingAllowedOnCurrentShaderPlatform)
 		{
 			// Raytracing is supported, update the required API version
 			ApiVersion = GetVulkanApiVersionForFeatureLevel(GMaxRHIFeatureLevel, true);
@@ -663,7 +698,15 @@ void FVulkanDynamicRHI::CreateInstance()
 		{
 			// Raytracing is not supported, disable it completely instead of only loading parts of it
 			GVulkanRayTracingCVar->Set(0, ECVF_SetByCode);
-			UE_LOG(LogVulkanRHI, Display, TEXT("Vulkan RayTracing disabled because of failed profile check."));
+
+			if (!bRayTracingAllowedOnCurrentShaderPlatform)
+			{
+				UE_LOG(LogVulkanRHI, Display, TEXT("Vulkan RayTracing disabled because SM6 shader platform is required (r.RayTracing.RequireSM6=1)."));
+			}
+			else
+			{
+				UE_LOG(LogVulkanRHI, Display, TEXT("Vulkan RayTracing disabled because of failed profile check."));
+			}
 		}
 	}
 #endif // VULKAN_RHI_RAYTRACING
@@ -826,7 +869,14 @@ void FVulkanDynamicRHI::SelectDevice()
 	if (PLATFORM_ANDROID)
 	{
 		GRHIAdapterName.Append(TEXT(" Vulkan"));
-		GRHIAdapterInternalDriverVersion = FString::Printf(TEXT("%d.%d.%d"), VK_VERSION_MAJOR(Props.apiVersion), VK_VERSION_MINOR(Props.apiVersion), VK_VERSION_PATCH(Props.apiVersion));
+		// On Android GL version string often contains extra information such as an actual driver version on the device.
+#if PLATFORM_ANDROID
+		FString GLVersion = FAndroidMisc::GetGLVersion();
+#else
+		FString GLVersion = "";
+#endif
+		GRHIAdapterInternalDriverVersion = FString::Printf(TEXT("%d.%d.%d|%s"), VK_VERSION_MAJOR(Props.apiVersion), VK_VERSION_MINOR(Props.apiVersion), VK_VERSION_PATCH(Props.apiVersion), *GLVersion);
+		UE_LOG(LogVulkanRHI, Log, TEXT("API Version: %s"), *GRHIAdapterInternalDriverVersion);
 	}
 	else if (PLATFORM_WINDOWS)
 	{
@@ -890,9 +940,8 @@ void FVulkanDynamicRHI::InitInstance()
 		GSupportsRenderTargetFormat_PF_G8 = false;	// #todo-rco
 		GRHISupportsTextureStreaming = true;
 		GSupportsTimestampRenderQueries = FVulkanPlatform::SupportsTimestampRenderQueries();
-#if VULKAN_SUPPORTS_MULTIVIEW
 		GSupportsMobileMultiView = Device->GetOptionalExtensions().HasKHRMultiview ? true : false;
-#endif
+		GRHISupportsMSAAShaderResolve = Device->GetOptionalExtensions().HasQcomRenderPassShaderResolve ? true : false;
 #if VULKAN_RHI_RAYTRACING
 		GRHISupportsRayTracing = RHISupportsRayTracing(GMaxRHIShaderPlatform) && Device->GetOptionalExtensions().HasRaytracingExtensions();
 
@@ -942,12 +991,11 @@ void FVulkanDynamicRHI::InitInstance()
 		GMaxTextureArrayLayers = Props.limits.maxImageArrayLayers;
 		GRHISupportsBaseVertexIndex = true;
 		GSupportsSeparateRenderTargetBlendState = true;
+		GSupportsDualSrcBlending = Device->GetPhysicalDeviceFeatures().Core_1_0.dualSrcBlend == VK_TRUE;
 		GRHISupportsSeparateDepthStencilCopyAccess = Device->SupportsParallelRendering();
 		GRHIBindlessSupport = Device->SupportsBindless() ? RHIGetBindlessSupport(GMaxRHIShaderPlatform) : ERHIBindlessSupport::Unsupported;
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		GRHISupportsBindless = GRHIBindlessSupport != ERHIBindlessSupport::Unsupported;
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
-
+		GMaxTextureSamplers = Props.limits.maxPerStageDescriptorSamplers;
+		
 		GRHIMaxDispatchThreadGroupsPerDimension.X = FMath::Min<uint32>(Limits.maxComputeWorkGroupCount[0], 0x7fffffff);
 		GRHIMaxDispatchThreadGroupsPerDimension.Y = FMath::Min<uint32>(Limits.maxComputeWorkGroupCount[1], 0x7fffffff);
 		GRHIMaxDispatchThreadGroupsPerDimension.Z = FMath::Min<uint32>(Limits.maxComputeWorkGroupCount[2], 0x7fffffff);
@@ -960,7 +1008,7 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		// these are supported by all devices
 		GVulkanDevicePipelineStageBits = VK_PIPELINE_STAGE_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-		uint32 VulkanDeviceShaderStageBits = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
+		VkShaderStageFlags VulkanDeviceShaderStageBits = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT | VK_SHADER_STAGE_COMPUTE_BIT;
 
 		// optional shader stages
 		if (Device->GetPhysicalDeviceFeatures().Core_1_0.geometryShader)
@@ -968,12 +1016,14 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			GVulkanDevicePipelineStageBits |= VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT;
 			VulkanDeviceShaderStageBits |= VK_SHADER_STAGE_GEOMETRY_BIT;
 		}
+
+		const VkShaderStageFlags RequiredSubgroupShaderStageFlags = FVulkanPlatform::RequiredWaveOpsShaderStageFlags(VulkanDeviceShaderStageBits);
 		
 		// Check for wave ops support (only filled on platforms creating Vulkan 1.1 or greater instances)
 		const VkSubgroupFeatureFlags RequiredSubgroupFlags =	VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_VOTE_BIT | 
 																VK_SUBGROUP_FEATURE_ARITHMETIC_BIT | VK_SUBGROUP_FEATURE_BALLOT_BIT | 
 																VK_SUBGROUP_FEATURE_SHUFFLE_BIT;
-		GRHISupportsWaveOperations = VKHasAllFlags(Device->GetDeviceSubgroupProperties().supportedStages, VulkanDeviceShaderStageBits) &&
+		GRHISupportsWaveOperations = VKHasAllFlags(Device->GetDeviceSubgroupProperties().supportedStages, RequiredSubgroupShaderStageFlags) &&
 			VKHasAllFlags(Device->GetDeviceSubgroupProperties().supportedOperations, RequiredSubgroupFlags);
 
 		if (GRHISupportsWaveOperations)
@@ -988,7 +1038,7 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		}
 		else
 		{
-			const uint32 MissingStageFlags = (Device->GetDeviceSubgroupProperties().supportedStages & VulkanDeviceShaderStageBits) ^ VulkanDeviceShaderStageBits;
+			const uint32 MissingStageFlags = (Device->GetDeviceSubgroupProperties().supportedStages & RequiredSubgroupShaderStageFlags) ^ RequiredSubgroupShaderStageFlags;
 			const uint32 MissingOperationFlags = (Device->GetDeviceSubgroupProperties().supportedOperations & RequiredSubgroupFlags) ^ RequiredSubgroupFlags;
 			UE_LOG(LogVulkanRHI, Display, TEXT("Wave Operations have been DISABLED (missing stages=0x%x operations=0x%x)."), MissingStageFlags, MissingOperationFlags);
 		}
@@ -1151,7 +1201,8 @@ void FVulkanCommandListContext::RHIEndFrame()
 
 	GetGPUProfiler().EndFrame();
 
-	GetCommandBufferManager()->FreeUnusedCmdBuffers();
+	bool bTrimMemory = false;
+	GetCommandBufferManager()->FreeUnusedCmdBuffers(bTrimMemory);
 
 	Device->GetStagingManager().ProcessPendingFree(false, true);
 	Device->GetMemoryManager().ReleaseFreedPages(*this);
@@ -1173,7 +1224,6 @@ void FVulkanCommandListContext::RHIEndFrame()
 void FVulkanCommandListContext::RHIPushEvent(const TCHAR* Name, FColor Color)
 {
 #if VULKAN_ENABLE_DRAW_MARKERS
-#if 0//VULKAN_SUPPORTS_DEBUG_UTILS
 	if (auto CmdBeginLabel = Device->GetCmdBeginDebugLabel())
 	{
 		FTCHARToUTF8 Converter(Name);
@@ -1186,21 +1236,6 @@ void FVulkanCommandListContext::RHIPushEvent(const TCHAR* Name, FColor Color)
 		Label.color[2] = LColor.B;
 		Label.color[3] = LColor.A;
 		CmdBeginLabel(GetCommandBufferManager()->GetActiveCmdBuffer()->GetHandle(), &Label);
-	}
-	else
-#endif
-	if (auto CmdDbgMarkerBegin = Device->GetCmdDbgMarkerBegin())
-	{
-		FTCHARToUTF8 Converter(Name);
-		VkDebugMarkerMarkerInfoEXT Info;
-		ZeroVulkanStruct(Info, VK_STRUCTURE_TYPE_DEBUG_MARKER_MARKER_INFO_EXT);
-		Info.pMarkerName = Converter.Get();
-		FLinearColor LColor(Color);
-		Info.color[0] = LColor.R;
-		Info.color[1] = LColor.G;
-		Info.color[2] = LColor.B;
-		Info.color[3] = LColor.A;
-		CmdDbgMarkerBegin(GetCommandBufferManager()->GetActiveCmdBuffer()->GetHandle(), &Info);
 	}
 #endif
 
@@ -1225,16 +1260,9 @@ void FVulkanCommandListContext::RHIPushEvent(const TCHAR* Name, FColor Color)
 void FVulkanCommandListContext::RHIPopEvent()
 {
 #if VULKAN_ENABLE_DRAW_MARKERS
-#if 0//VULKAN_SUPPORTS_DEBUG_UTILS
 	if (auto CmdEndLabel = Device->GetCmdEndDebugLabel())
 	{
 		CmdEndLabel(GetCommandBufferManager()->GetActiveCmdBuffer()->GetHandle());
-	}
-	else
-#endif
-	if (auto CmdDbgMarkerEnd = Device->GetCmdDbgMarkerEnd())
-	{
-		CmdDbgMarkerEnd(GetCommandBufferManager()->GetActiveCmdBuffer()->GetHandle());
 	}
 #endif
 
@@ -1267,6 +1295,9 @@ bool FVulkanDynamicRHI::RHIGetAvailableResolutions(FScreenResolutionArray& Resol
 
 void FVulkanDynamicRHI::RHIFlushResources()
 {
+	FVulkanCommandListContextImmediate& ImmediateContext = GetDevice()->GetImmediateContext();
+	bool bTrimMemory = true;
+	ImmediateContext.GetCommandBufferManager()->FreeUnusedCmdBuffers(bTrimMemory);
 }
 
 void FVulkanDynamicRHI::RHIAcquireThreadOwnership()
@@ -1370,6 +1401,11 @@ void* FVulkanDynamicRHI::RHIGetVkDeviceProcAddr(const char* InName) const
 	return (void*)VulkanRHI::vkGetDeviceProcAddr(Device->GetInstanceHandle(), InName);
 }
 
+void* FVulkanDynamicRHI::RHIGetVkInstanceProcAddr(const char* InName) const
+{
+	return (void*)VulkanRHI::vkGetInstanceProcAddr(Instance, InName);
+}
+
 VkFormat FVulkanDynamicRHI::RHIGetSwapChainVkFormat(EPixelFormat InFormat) const
 {
 	// UE renders a gamma-corrected image so we need to use an sRGB format if available
@@ -1455,17 +1491,6 @@ FVulkanRHIImageViewInfo FVulkanDynamicRHI::RHIGetImageViewInfo(FRHITexture* InTe
 	Info.SubresourceRange.baseArrayLayer = 0;
 
 	return Info;
-}
-
-// todo-jn: deprecate
-VkImageLayout& FVulkanDynamicRHI::RHIFindOrAddLayoutRW(FRHITexture* InTexture, VkImageLayout LayoutIfNotFound)
-{
-	FVulkanTexture* VulkanTexture = ResourceCast(InTexture);
-	FVulkanCommandListContext& ImmediateContext = GetDevice()->GetImmediateContext();
-	FVulkanCmdBuffer* CmdBuffer = ImmediateContext.GetCommandBufferManager()->GetActiveCmdBuffer();
-	// Removing const to allow original functionality even when parallel rendering is enabled.
-	FVulkanImageLayout* VulkanImageLayout = const_cast<FVulkanImageLayout*>(CmdBuffer->GetLayoutManager().GetFullLayout(*VulkanTexture, true, LayoutIfNotFound));
-	return VulkanImageLayout->MainLayout;
 }
 
 void FVulkanDynamicRHI::RHISetImageLayout(VkImage Image, VkImageLayout OldLayout, VkImageLayout NewLayout, const VkImageSubresourceRange& SubresourceRange)
@@ -1649,7 +1674,7 @@ void FVulkanDescriptorSetsLayoutInfo::AddDescriptor(int32 DescriptorSetIndex, co
 
 	if (DescriptorSetIndex >= SetLayouts.Num())
 	{
-		SetLayouts.SetNum(DescriptorSetIndex + 1, false);
+		SetLayouts.SetNum(DescriptorSetIndex + 1, EAllowShrinking::No);
 	}
 
 	FSetLayout& DescSetLayout = SetLayouts[DescriptorSetIndex];
@@ -1687,7 +1712,7 @@ void FVulkanDescriptorSetsLayoutInfo::AddDescriptor(int32 DescriptorSetIndex, co
 	}
 }
 
-void FVulkanDescriptorSetsLayoutInfo::GenerateHash(const TArrayView<FRHISamplerState*>& InImmutableSamplers)
+void FVulkanDescriptorSetsLayoutInfo::GenerateHash(const TArrayView<FRHISamplerState*>& InImmutableSamplers, VkPipelineBindPoint InBindPoint)
 {
 	const int32 LayoutCount = SetLayouts.Num();
 	Hash = FCrc::MemCrc32(&TypesUsageID, sizeof(uint32), LayoutCount);
@@ -1712,6 +1737,12 @@ void FVulkanDescriptorSetsLayoutInfo::GenerateHash(const TArrayView<FRHISamplerS
 		TArray<uint16>& PackedUBBindingIndices = RemappingInfo.StageInfos[RemapingIndex].PackedUBBindingIndices;
 		Hash = FCrc::MemCrc32(PackedUBBindingIndices.GetData(), sizeof(uint16) * PackedUBBindingIndices.Num(), Hash);
 	}
+
+	// It would be better to store this when the object is created, but it's not available at that time, so we'll do it here.
+	BindPoint = InBindPoint;
+
+	// Include the bind point in the hash, because we can have graphics and compute PSOs with the same descriptor info, and we don't want them to collide.
+	Hash = FCrc::MemCrc32(&BindPoint, sizeof(BindPoint), Hash);
 }
 
 static FCriticalSection GTypesUsageCS;
@@ -2017,10 +2048,93 @@ IRHITransientResourceAllocator* FVulkanDynamicRHI::RHICreateTransientResourceAll
 	return nullptr;
 }
 
+uint32 FVulkanDynamicRHI::GetPrecachePSOHashVersion()
+{
+	static const uint32 PrecacheHashVersion = 2;
+	return PrecacheHashVersion;
+}
+
+// If you modify this function bump then GetPrecachePSOHashVersion, this will invalidate any previous uses of the hash.
+// i.e. pre-existing PSO caches must be rebuilt.
+uint64 FVulkanDynamicRHI::RHIComputeStatePrecachePSOHash(const FGraphicsPipelineStateInitializer& Initializer)
+{
+	struct FHashKey
+	{
+		uint32 VertexDeclaration;
+		uint32 VertexShader;
+		uint32 PixelShader;
+#if PLATFORM_SUPPORTS_GEOMETRY_SHADERS
+		uint32 GeometryShader;
+#endif // PLATFORM_SUPPORTS_GEOMETRY_SHADERS
+#if PLATFORM_SUPPORTS_MESH_SHADERS
+		uint32 MeshShader;
+#endif // PLATFORM_SUPPORTS_MESH_SHADERS
+		uint32 BlendState;
+		uint32 RasterizerState;
+		uint32 DepthStencilState;
+		uint32 ImmutableSamplerState;
+
+		uint32 MultiViewCount : 8;
+		uint32 DrawShadingRate : 8;
+		uint32 PrimitiveType : 8;
+		uint32 bDepthBounds : 1;
+		uint32 bHasFragmentDensityAttachment : 1;
+		uint32 Unused : 6;
+	} HashKey;
+
+	FMemory::Memzero(&HashKey, sizeof(FHashKey));
+
+	HashKey.VertexDeclaration = Initializer.BoundShaderState.VertexDeclarationRHI ? Initializer.BoundShaderState.VertexDeclarationRHI->GetPrecachePSOHash() : 0;
+	HashKey.VertexShader = Initializer.BoundShaderState.GetVertexShader() ? GetTypeHash(Initializer.BoundShaderState.GetVertexShader()->GetHash()) : 0;
+	HashKey.PixelShader = Initializer.BoundShaderState.GetPixelShader() ? GetTypeHash(Initializer.BoundShaderState.GetPixelShader()->GetHash()) : 0;
+#if PLATFORM_SUPPORTS_GEOMETRY_SHADERS
+	HashKey.GeometryShader = Initializer.BoundShaderState.GetGeometryShader() ? GetTypeHash(Initializer.BoundShaderState.GetGeometryShader()->GetHash()) : 0;
+#endif
+#if PLATFORM_SUPPORTS_MESH_SHADERS
+	HashKey.MeshShader = Initializer.BoundShaderState.GetMeshShader() ? GetTypeHash(Initializer.BoundShaderState.GetMeshShader()->GetHash()) : 0;
+#endif
+
+	FBlendStateInitializerRHI BlendStateInitializerRHI;
+	if (Initializer.BlendState && Initializer.BlendState->GetInitializer(BlendStateInitializerRHI))
+	{
+		HashKey.BlendState = GetTypeHash(BlendStateInitializerRHI);
+	}
+	FRasterizerStateInitializerRHI RasterizerStateInitializerRHI;
+	if (Initializer.RasterizerState && Initializer.RasterizerState->GetInitializer(RasterizerStateInitializerRHI))
+	{
+		HashKey.RasterizerState = GetTypeHash(RasterizerStateInitializerRHI);
+	}
+	FDepthStencilStateInitializerRHI DepthStencilStateInitializerRHI;
+	if (Initializer.DepthStencilState && Initializer.DepthStencilState->GetInitializer(DepthStencilStateInitializerRHI))
+	{
+		HashKey.DepthStencilState = GetTypeHash(DepthStencilStateInitializerRHI);
+	}
+
+	// Ignore immutable samplers for now
+	//HashKey.ImmutableSamplerState = GetTypeHash(ImmutableSamplerState);
+
+	HashKey.MultiViewCount = Initializer.MultiViewCount;
+	HashKey.DrawShadingRate = Initializer.ShadingRate;
+	HashKey.PrimitiveType = Initializer.PrimitiveType;
+	HashKey.bDepthBounds = Initializer.bDepthBounds;
+	HashKey.bHasFragmentDensityAttachment = Initializer.bHasFragmentDensityAttachment;
+
+	uint64 PrecachePSOHash = CityHash64((const char*)&HashKey, sizeof(FHashKey));
+
+	return PrecachePSOHash;
+}
+
+// If you modify this function bump then GetPrecachePSOHashVersion, this will invalidate any previous uses of the hash.
+// i.e. pre-existing PSO caches must be rebuilt.
 uint64 FVulkanDynamicRHI::RHIComputePrecachePSOHash(const FGraphicsPipelineStateInitializer& Initializer)
 {
+
 	// When compute precache PSO hash we assume a valid state precache PSO hash is already provided
-	checkf(Initializer.StatePrecachePSOHash != 0, TEXT("Initializer should have a valid state precache PSO hash set when computing the full initializer PSO hash"));
+	uint64 StatePrecachePSOHash = Initializer.StatePrecachePSOHash;
+	if (StatePrecachePSOHash == 0)
+	{
+		StatePrecachePSOHash = RHIComputeStatePrecachePSOHash(Initializer);
+	}
 
 	// All members which are not part of the state objects
 	struct FNonStateHashKey
@@ -2031,8 +2145,9 @@ uint64 FVulkanDynamicRHI::RHIComputePrecachePSOHash(const FGraphicsPipelineState
 		uint32							RenderTargetsEnabled;
 		FGraphicsPipelineStateInitializer::TRenderTargetFormats	RenderTargetFormats;
 		FGraphicsPipelineStateInitializer::TRenderTargetFlags RenderTargetFlags;
-		EPixelFormat					DepthStencilTargetFormat;
-		ETextureCreateFlags				DepthStencilTargetFlag;
+// AJB: temporarily disabling depth stencil properties as they do not appear to be required and it causes us to miss some permutations.
+//		EPixelFormat					DepthStencilTargetFormat;
+//		ETextureCreateFlags				DepthStencilTargetFlag;
 		uint16							NumSamples;
 		ESubpassHint					SubpassHint;
 		uint8							SubpassIndex;
@@ -2045,14 +2160,14 @@ uint64 FVulkanDynamicRHI::RHIComputePrecachePSOHash(const FGraphicsPipelineState
 
 	FMemory::Memzero(&HashKey, sizeof(FNonStateHashKey));
 
-	HashKey.StatePrecachePSOHash = Initializer.StatePrecachePSOHash;
+	HashKey.StatePrecachePSOHash = StatePrecachePSOHash;
 
 	HashKey.PrimitiveType = Initializer.PrimitiveType;
 	HashKey.RenderTargetsEnabled = Initializer.RenderTargetsEnabled;
 	HashKey.RenderTargetFormats = Initializer.RenderTargetFormats;
 	HashKey.RenderTargetFlags = Initializer.RenderTargetFlags;
-	HashKey.DepthStencilTargetFormat = Initializer.DepthStencilTargetFormat;
-	HashKey.DepthStencilTargetFlag = Initializer.DepthStencilTargetFlag;
+//	HashKey.DepthStencilTargetFormat = Initializer.DepthStencilTargetFormat;
+//	HashKey.DepthStencilTargetFlag = Initializer.DepthStencilTargetFlag;
 	HashKey.NumSamples = Initializer.NumSamples;
 	HashKey.SubpassHint = Initializer.SubpassHint;
 	HashKey.SubpassIndex = Initializer.SubpassIndex;
@@ -2061,14 +2176,14 @@ uint64 FVulkanDynamicRHI::RHIComputePrecachePSOHash(const FGraphicsPipelineState
 	HashKey.ShadingRate = Initializer.ShadingRate;
 	HashKey.bDepthBounds = Initializer.bDepthBounds;
 	HashKey.bHasFragmentDensityAttachment = Initializer.bHasFragmentDensityAttachment;
-	
+
 	// TODO: check if any RT flags actually affect PSO in VK
 	for (ETextureCreateFlags& Flags : HashKey.RenderTargetFlags)
 	{
 		Flags = Flags & FGraphicsPipelineStateInitializer::RelevantRenderTargetFlagMask;
 	}
-	HashKey.DepthStencilTargetFlag = (HashKey.DepthStencilTargetFlag & FGraphicsPipelineStateInitializer::RelevantDepthStencilFlagMask);
-		 
+// 	HashKey.DepthStencilTargetFlag = (HashKey.DepthStencilTargetFlag & FGraphicsPipelineStateInitializer::RelevantDepthStencilFlagMask);
+
 	return CityHash64((const char*)&HashKey, sizeof(FNonStateHashKey));
 }
 
@@ -2122,5 +2237,6 @@ bool FVulkanDynamicRHI::RHIMatchPrecachePSOInitializers(const FGraphicsPipelineS
 
 	return true;
 }
+
 
 #undef LOCTEXT_NAMESPACE

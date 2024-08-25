@@ -3,11 +3,12 @@
 #pragma once
 
 #include "ISceneOutlinerMode.h"
+#include "WorldPartition/WorldPartitionHandle.h"
 
 namespace SceneOutliner
 {
 	/** Functor which can be used to get weak actor pointers from a selection */
-	struct FWeakActorSelector
+	struct SCENEOUTLINER_API FWeakActorSelector
 	{
 		bool operator()(const TWeakPtr<ISceneOutlinerTreeItem>& Item, TWeakObjectPtr<AActor>& DataOut) const;
 	};
@@ -18,10 +19,15 @@ namespace SceneOutliner
 		bool operator()(const TWeakPtr<ISceneOutlinerTreeItem>& Item, AActor*& ActorPtrOut) const;
 	};
 
-	/** Functor which can be used to get actor descriptors from a selection  */
-	struct FActorDescSelector
+	struct UE_DEPRECATED(5.4, "Use FActorHandleSelector instead") FActorDescSelector
 	{
-		bool operator()(const TWeakPtr<ISceneOutlinerTreeItem>& Item, FWorldPartitionActorDesc*& ActorDescPtrOut) const;
+		bool operator()(const TWeakPtr<ISceneOutlinerTreeItem>&Item, FWorldPartitionActorDesc * &ActorDescPtrOut) const { return false; }
+	};
+
+	/** Functor which can be used to get actor descriptors from a selection  */
+	struct SCENEOUTLINER_API FActorHandleSelector
+	{
+		bool operator()(const TWeakPtr<ISceneOutlinerTreeItem>& Item, FWorldPartitionHandle& ActorHandleOut) const;
 	};
 }
 
@@ -70,13 +76,19 @@ public:
 
 	virtual int32 GetTypeSortPriority(const ISceneOutlinerTreeItem& Item) const override;
 
-	static bool IsActorDisplayable(const SSceneOutliner* SceneOutliner, const AActor* Actor);
+	static bool IsActorDisplayable(const SSceneOutliner* SceneOutliner, const AActor* Actor, bool bShowLevelInstanceContent = false);
 	static bool IsActorLevelDisplayable(ULevel* InLevel);
 
 	virtual FFolder::FRootObject GetRootObject() const override;
 	virtual FFolder::FRootObject GetPasteTargetRootObject() const override;
 
 	virtual bool CanInteract(const ISceneOutlinerTreeItem& Item) const override;
+	
+	virtual TSharedPtr<FDragDropOperation> CreateDragDropOperation(const FPointerEvent& MouseEvent, const TArray<FSceneOutlinerTreeItemPtr>& InTreeItems) const override;
+	virtual bool ParseDragDrop(FSceneOutlinerDragDropPayload& OutPayload, const FDragDropOperation& Operation) const override;
+	virtual FSceneOutlinerDragValidationInfo ValidateDrop(const ISceneOutlinerTreeItem& DropTarget, const FSceneOutlinerDragDropPayload& Payload) const override;
+	virtual void OnDrop(ISceneOutlinerTreeItem& DropTarget, const FSceneOutlinerDragDropPayload& Payload, const FSceneOutlinerDragValidationInfo& ValidationInfo) const override;
+
 
 private:
 	/** Called when the user selects a world in the world picker menu */
@@ -86,6 +98,8 @@ private:
 
 	void ChooseRepresentingWorld();
 	bool IsWorldChecked(TWeakObjectPtr<UWorld> World) const;
+	bool GetFolderNamesFromPayload(const FSceneOutlinerDragDropPayload& InPayload, TArray<FName>& OutFolders, FFolder::FRootObject& OutCommonRootObject) const;
+
 protected:
 	void SynchronizeActorSelection();
 	bool IsActorDisplayable(const AActor* InActor) const;
@@ -94,6 +108,8 @@ protected:
 	void SetAsMostRecentOutliner() const;
 
 	virtual TUniquePtr<ISceneOutlinerHierarchy> CreateHierarchy() override;
+	
+	FFolder GetWorldDefaultRootFolder() const;
 protected:
 	/** The world which we are currently representing */
 	TWeakObjectPtr<UWorld> RepresentingWorld;

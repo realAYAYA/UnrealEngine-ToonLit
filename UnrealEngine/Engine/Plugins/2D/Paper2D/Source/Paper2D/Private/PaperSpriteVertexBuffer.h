@@ -87,7 +87,7 @@ public:
 	FPaperSpriteVertexFactory(ERHIFeatureLevel::Type FeatureLevel);
 
 	/* Initializes this factory with a given vertex buffer. */
-	void Init(const FPaperSpriteVertexBuffer* VertexBuffer);
+	void Init(FRHICommandListBase& RHICmdList, const FPaperSpriteVertexBuffer* VertexBuffer);
 
 private:
 	/* Vertex buffer used to initialize this factory. */

@@ -23,7 +23,7 @@ if [ -e /etc/os-release ]; then
   # Ubuntu/Debian/Mint
   if [[ "$ID" == "ubuntu" ]] || [[ "$ID_LIKE" == "ubuntu" ]] || [[ "$ID" == "debian" ]] || [[ "$ID_LIKE" == "debian" ]] || [[ "$ID" == "tanglu" ]] || [[ "$ID_LIKE" == "tanglu" ]]; then
 
-    # Both mono and the compiler toolchain are now bundled.
+    # Both dotnet and the compiler toolchain are now bundled.
     # build-essential can still be useful for making sure the system has make
     DEPS="
       build-essential

@@ -355,18 +355,23 @@ void UMeshAttributePaintTool::OnUpdateDrag(const FRay& WorldRay)
 
 void UMeshAttributePaintTool::OnEndDrag(const FRay& Ray)
 {
+	// Capture brush stroke state prior to invoking Super::OnEndDrag
+	const bool bWasInBrushStroke = IsInBrushStroke();
+	
 	UDynamicMeshBrushTool::OnEndDrag(Ray);
 
 	bInRemoveStroke = bInSmoothStroke = false;
 	bStampPending = false;
 
-	// close change record
-	TUniquePtr<FMeshAttributePaintChange> Change = EndChange();
-	if (Change)
+	if (bWasInBrushStroke)
 	{
-		GetToolManager()->BeginUndoTransaction(LOCTEXT("AttributeValuesChange", "Paint"));
-		GetToolManager()->EmitObjectChange(this, MoveTemp(Change), LOCTEXT("AttributeValuesChange", "Paint"));
-		GetToolManager()->EndUndoTransaction();
+		// close change record
+		TUniquePtr<FMeshAttributePaintChange> Change = EndChange();
+		if (Change)
+		{
+			GetToolManager()->EmitObjectChange(this, MoveTemp(Change), LOCTEXT("AttributeValuesChange", "Paint"));
+			LongTransactions.Close(GetToolManager());
+		}
 	}
 }
 
@@ -656,11 +661,8 @@ void UMeshAttributePaintTool::ApplyStamp_FloodFill(const FBrushStampData& Stamp,
 		QueueTempBuffer.Reset();
 		DoneTempBuffer.Reset();
 		InputTriROI.Reset();
-		for (int32 tid : RemainingTriangles)
-		{
-			InputTriROI.Add(tid);		// stupid way to get first set element
-			break;
-		}
+		// get a single set element via an iterator
+		InputTriROI.Add(*RemainingTriangles.CreateConstIterator());
 		FMeshConnectedComponents::GrowToConnectedTriangles(CurrentMesh, InputTriROI, OutputTriROI, &QueueTempBuffer, &DoneTempBuffer);
 		for (int32 tid : OutputTriROI)
 		{
@@ -741,6 +743,8 @@ void UMeshAttributePaintTool::BeginChange()
 	}
 	ActiveChangeBuilder->BeginNewChange();
 	ActiveChangeBuilder->Change->CustomData = CurrentAttributeIndex;
+
+	LongTransactions.Open(LOCTEXT("AttributeValuesChange", "Paint"), GetToolManager());
 }
 
 
@@ -752,19 +756,22 @@ TUniquePtr<FMeshAttributePaintChange> UMeshAttributePaintTool::EndChange()
 	}
 
 	TUniquePtr<FMeshAttributePaintChange> Result = ActiveChangeBuilder->ExtractResult();
+	if (Result)
+	{
+		Result->ApplyFunction = [](UObject* Object, const int32& AttribIndex, const TArray<int32>& Indices, const TArray<float>& Values)
+		{
+			UMeshAttributePaintTool* Tool = CastChecked<UMeshAttributePaintTool>(Object);
+			Tool->ExternalUpdateValues(AttribIndex, Indices, Values);
+		};
+		Result->RevertFunction = [](UObject* Object, const int32& AttribIndex, const TArray<int32>& Indices, const TArray<float>& Values)
+		{
+			UMeshAttributePaintTool* Tool = CastChecked<UMeshAttributePaintTool>(Object);
+			Tool->ExternalUpdateValues(AttribIndex, Indices, Values);
+		};
+		return MoveTemp(Result);
+	}
 	
-	Result->ApplyFunction = [](UObject* Object, const int32& AttribIndex, const TArray<int32>& Indices, const TArray<float>& Values)
-	{
-		UMeshAttributePaintTool* Tool = CastChecked<UMeshAttributePaintTool>(Object);
-		Tool->ExternalUpdateValues(AttribIndex, Indices, Values);
-	};
-	Result->RevertFunction = [](UObject* Object, const int32& AttribIndex, const TArray<int32>& Indices, const TArray<float>& Values)
-	{
-		UMeshAttributePaintTool* Tool = CastChecked<UMeshAttributePaintTool>(Object);
-		Tool->ExternalUpdateValues(AttribIndex, Indices, Values);
-	};
-
-	return MoveTemp(Result);
+	return nullptr;
 }
 
 

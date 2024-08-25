@@ -24,8 +24,6 @@
 
 #define CONFIG_DEPTH_EDGE_DETECTION 1
 
-#define CONFIG_SUBPIXEL_DEPTH (DIM_SUBPIXEL_DEPTH)
-
 #define CONFIG_VELOCITY_EXTRAPOLATION 0
 
 
@@ -44,29 +42,23 @@ static const int2 kOffsets[4] = {
 float4x4 RotationalClipToPrevClip;
 float2 PrevOutputBufferUVMin;
 float2 PrevOutputBufferUVMax;
-float WorldDepthToDepthError;
 float VelocityExtrapolationMultiplier;
 float InvFlickeringMaxParralaxVelocity;
 uint bOutputIsMovingTexture;
-uint bIncludeDynamicDepthInSubpixelDetails;
-uint SubpixelDepthLifetime;
 
 Texture2D<float> SceneDepthTexture;
 Texture2D SceneVelocityTexture;
-Texture2D<uint> PrevScatteredSubpixelDepthTexture;
 
 RWTexture2D<float2> DilatedVelocityOutput;
-RWTexture2D<float> ClosestDepthOutput;
-globallycoherent RWTexture2D<uint> PrevUseCountOutput;
-globallycoherent RWTexture2D<uint> PrevClosestDepthOutput;
+RWTexture2D<float2> ClosestDepthOutput;
+globallycoherent RWTexture2DArray<uint> PrevAtomicOutput;
 RWTexture2DArray<uint> R8Output;
-RWTexture2D<uint> SubpixelDepthOutput;
 
 RWTexture2D<float3>	VelocityFlattenOutput;
 RWTexture2DArray<float4> VelocityTileArrayOutput;
 
 
-//------------------------------------------------------- ENTRY POINT
+//------------------------------------------------------- UTILITY
 
 uint PackDepthAndOffset(const int2 Offset, float DeviceZ)
 {
@@ -80,10 +72,90 @@ void UnpackDepthAndOffset(uint Packed, out int2 Offset, out float DeviceZ)
 	Offset.y = int((Packed >> 2) & 0x3) - 1;
 }
 
-float MaxDeviceZWithSubpixel(float RenderedDeviceZ, float SubpixelDeviceZ)
+
+//------------------------------------------------------- FUNCTION
+
+void ScatterClosestOccluder(bool bValidOutputPixel, float2 ScreenPos, float2 FinalScreenVelocity, float PrevClosestDeviceZ)
 {
-	return max(RenderedDeviceZ, SubpixelDeviceZ);
+	float2 PrevScreenPos = ScreenPos - FinalScreenVelocity.xy;
+	float2 PrevInputBufferUV = (InputInfo_ScreenPosToViewportScale * PrevScreenPos + InputInfo_ScreenPosToViewportBias) * InputInfo_ExtentInverse;
+
+	float2 PixelVelocity = FinalScreenVelocity.xy * 0.5 * InputInfo_ViewportSize;
+	uint EncodedHoleFillingVelocity = EncodeHoleFillingVelocity(PixelVelocity);
+
+	bool bValidHistoryCoord = bValidOutputPixel && all(and(PrevInputBufferUV > PrevOutputBufferUVMin, PrevInputBufferUV < PrevOutputBufferUVMax));
+
+	FBilinearSampleInfos BilinearInter = GetBilinearSampleLevelInfos(PrevInputBufferUV, InputInfo_Extent, InputInfo_ExtentInverse);
+	
+	#if CONFIG_SUPPORT_ORTHO_VIEW
+	BRANCH
+	if (IsOrthoProjection())
+	{
+		uint Depth = clamp(uint(round(PrevClosestDeviceZ * 8388607.0)), 0, 8388607) << 9;
+
+		uint PrevClosestDepth0 = Depth | ((EncodedHoleFillingVelocity >> 9u) & 0x1FFu);
+		uint PrevClosestDepth1 = Depth | ((EncodedHoleFillingVelocity >> 0u) & 0x1FFu);
+		
+		UNROLL_N(4)
+		for (uint i = 0; i < 4; i++)
+		{
+			float Weight = GetSampleWeight(BilinearInter, i);
+			uint2 PixelPos = GetSamplePixelCoord(BilinearInter, i);
+
+			uint FinalAdd = uint(round(Weight * PREV_USE_COUNT_QUANTIZATION));
+			
+			PixelPos.x = ((FinalAdd > 0) && bValidHistoryCoord) ? PixelPos.x : (~0);
+
+			#if COMPRESS_PREV_USE_COUNT
+				uint2 CompressedUseCountPixelPos;
+				uint Shift;
+				ComputeCompressedUseCountPixelCoordinates(PixelPos, /* out */ CompressedUseCountPixelPos, /* out */ Shift);
+
+				FinalAdd = FinalAdd << (8 * Shift);
+			#else
+				uint2 CompressedUseCountPixelPos = PixelPos;
+			#endif
+
+			InterlockedAdd(PrevAtomicOutput[tsr_ushort3(CompressedUseCountPixelPos, 0)], FinalAdd);
+
+			uint PreviousDepth0;
+			InterlockedMax(PrevAtomicOutput[tsr_ushort3(PixelPos, 1)], PrevClosestDepth0, /* out */ PreviousDepth0);
+
+			PixelPos.x = select(PreviousDepth0 < PrevClosestDepth0, PixelPos.x, ~0u);
+			InterlockedMax(PrevAtomicOutput[tsr_ushort3(PixelPos, 2)], PrevClosestDepth1);
+		}
+	}
+	else
+	#endif // CONFIG_SUPPORT_ORTHO_VIEW
+	{
+		uint PrevClosestDepth = (f32tof16(PrevClosestDeviceZ) << VELOCITY_HOLE_FILLING_BITS) | EncodedHoleFillingVelocity;
+			
+		UNROLL_N(4)
+		for (uint i = 0; i < 4; i++)
+		{
+			float Weight = GetSampleWeight(BilinearInter, i);
+			uint2 PixelPos = GetSamplePixelCoord(BilinearInter, i);
+
+			uint FinalAdd = uint(round(Weight * PREV_USE_COUNT_QUANTIZATION));
+			
+			PixelPos.x = ((FinalAdd > 0) && bValidHistoryCoord) ? PixelPos.x : (~0);
+
+			#if COMPRESS_PREV_USE_COUNT
+				uint2 CompressedUseCountPixelPos;
+				uint Shift;
+				ComputeCompressedUseCountPixelCoordinates(PixelPos, /* out */ CompressedUseCountPixelPos, /* out */ Shift);
+
+				FinalAdd = FinalAdd << (8 * Shift);
+			#else
+				uint2 CompressedUseCountPixelPos = PixelPos;
+			#endif
+
+			InterlockedAdd(PrevAtomicOutput[tsr_ushort3(CompressedUseCountPixelPos, 0)], FinalAdd);
+			InterlockedMax(PrevAtomicOutput[tsr_ushort3(PixelPos, 1)], PrevClosestDepth);
+		}
+	}
 }
+		
 
 //------------------------------------------------------- ENTRY POINT
 
@@ -110,14 +182,8 @@ void MainCS(
 
 	// Do all depth memory fetches.
 	float DeviceZ;
-	#if CONFIG_SUBPIXEL_DEPTH
-		uint PrevCompressedSubpixelDepth;
-	#endif
 	#if CONFIG_AA_CROSS_OPTIMISATION
 		float NeighborDeviceZArray[3];
-		#if CONFIG_SUBPIXEL_DEPTH
-			uint NeighborPrevCompressedSubpixelDepthArray[3];
-		#endif
 	#endif
 	ISOLATE
 	{
@@ -125,9 +191,6 @@ void MainCS(
 			int2 NeighborPixelPos = clamp(int2(InputPixelPos), InputPixelPosMin, InputPixelPosMax);
 				
 			DeviceZ = SceneDepthTexture[NeighborPixelPos];
-			#if CONFIG_SUBPIXEL_DEPTH
-				PrevCompressedSubpixelDepth = PrevScatteredSubpixelDepthTexture[NeighborPixelPos];
-			#endif
 		}
 		#if CONFIG_AA_CROSS_OPTIMISATION
 			UNROLL_N(3)
@@ -137,16 +200,9 @@ void MainCS(
 				NeighborPixelPos = clamp(NeighborPixelPos, InputPixelPosMin, InputPixelPosMax);
 
 				NeighborDeviceZArray[i] = SceneDepthTexture[NeighborPixelPos];
-				#if CONFIG_SUBPIXEL_DEPTH
-					NeighborPrevCompressedSubpixelDepthArray[i] = PrevScatteredSubpixelDepthTexture[NeighborPixelPos];
-				#endif
 			}
 		#endif
 	}
-
-	#if CONFIG_SUBPIXEL_DEPTH
-		float PrevScatteredDeviceZ = UncompressSubpixelDepth(PrevCompressedSubpixelDepth).DeviceZ;
-	#endif
 	
 	float ClosestDeviceZ = DeviceZ;
 	int2 VelocityPixelOffset = int2(0, 0);
@@ -167,19 +223,14 @@ void MainCS(
 		#endif
 
 
-		float CenterSubpixelDeviceZ = DeviceZ;
-		#if CONFIG_SUBPIXEL_DEPTH
-			CenterSubpixelDeviceZ = MaxDeviceZWithSubpixel(DeviceZ, PrevScatteredDeviceZ);
-		#endif
-
-		uint PackedDepthOffset = PackDepthAndOffset(/* Offset = */ int2(0, 0), CenterSubpixelDeviceZ);
+		uint PackedDepthOffset = PackDepthAndOffset(/* Offset = */ int2(0, 0), DeviceZ);
 
 		#if CONFIG_DEPTH_EDGE_DETECTION
 		float DeviceZError;
 		{
-			float Depth = ConvertFromDeviceZ(CenterSubpixelDeviceZ);
-			float ErrorCorrectedDeviceZ = ConvertToDeviceZ(Depth + Depth * WorldDepthToDepthError);
-			DeviceZError = abs(ErrorCorrectedDeviceZ - CenterSubpixelDeviceZ);
+			float Depth = ConvertFromDeviceZ(DeviceZ);
+			float ErrorCorrectedDeviceZ = ConvertToDeviceZ(GetDepthPixelRadiusForProjectionType(Depth) * 2.0f + Depth);
+			DeviceZError = abs(ErrorCorrectedDeviceZ - DeviceZ);
 		}
 		#endif
 
@@ -196,14 +247,6 @@ void MainCS(
 
 				float SampleDeviceZ0 = i == 3 ? WaveBroadcast(Horizontal, NeighborDeviceZArray[2]) : NeighborDeviceZArray[i];
 				float SampleDeviceZ1 = i == 3 ? WaveBroadcast(Vertical  , NeighborDeviceZArray[0]) : WaveBroadcast(CenterBroadcastArray[i], DeviceZ);
-				
-				#if CONFIG_SUBPIXEL_DEPTH
-					uint SamplePrevCompressedSubpixel0 = i == 3 ? WaveBroadcast(Horizontal, NeighborPrevCompressedSubpixelDepthArray[2]) : NeighborPrevCompressedSubpixelDepthArray[i];
-					uint SamplePrevCompressedSubpixel1 = i == 3 ? WaveBroadcast(Vertical  , NeighborPrevCompressedSubpixelDepthArray[0]) : WaveBroadcast(CenterBroadcastArray[i], PrevCompressedSubpixelDepth);
-					
-					float SampleSubpixelDeviceZ0 = UncompressSubpixelDepth(SamplePrevCompressedSubpixel0).DeviceZ;
-					float SampleSubpixelDeviceZ1 = UncompressSubpixelDepth(SamplePrevCompressedSubpixel1).DeviceZ;
-				#endif
 			#else // !CONFIG_AA_CROSS_OPTIMISATION
 				const int2 Offset = kOffsets[i];
 				
@@ -214,37 +257,24 @@ void MainCS(
 
 				float SampleDeviceZ0 = SceneDepthTexture[NeighborPixelPos0];
 				float SampleDeviceZ1 = SceneDepthTexture[NeighborPixelPos1];
-			
-				#if CONFIG_SUBPIXEL_DEPTH
-					float SampleSubpixelDeviceZ0 = UncompressSubpixelDepth(PrevScatteredSubpixelDepthTexture[NeighborPixelPos0]).DeviceZ;
-					float SampleSubpixelDeviceZ1 = UncompressSubpixelDepth(PrevScatteredSubpixelDepthTexture[NeighborPixelPos1]).DeviceZ;
-				#endif
 			#endif // !CONFIG_AA_CROSS_OPTIMISATION
-
-			#if CONFIG_SUBPIXEL_DEPTH
-				float CombinedSampleSubpixelDeviceZ0 = MaxDeviceZWithSubpixel(SampleDeviceZ0, SampleSubpixelDeviceZ0);
-				float CombinedSampleSubpixelDeviceZ1 = MaxDeviceZWithSubpixel(SampleDeviceZ1, SampleSubpixelDeviceZ1);
-			#else
-				float CombinedSampleSubpixelDeviceZ0 = SampleDeviceZ0;
-				float CombinedSampleSubpixelDeviceZ1 = SampleDeviceZ1;
-			#endif
 
 			#if CONFIG_DEPTH_EDGE_DETECTION
 			{
-				float DepthDiff = abs(CombinedSampleSubpixelDeviceZ1 - CombinedSampleSubpixelDeviceZ0);
-				float DepthVariation = (CombinedSampleSubpixelDeviceZ0 + CombinedSampleSubpixelDeviceZ1) * 0.5 - CenterSubpixelDeviceZ;
+				float DepthDiff = abs(SampleDeviceZ1 - SampleDeviceZ0);
+				float DepthVariation = (SampleDeviceZ0 + SampleDeviceZ1) * 0.5 - DeviceZ;
 
 				FLATTEN
 				if (DepthVariation > max(DepthDiff * 0.25, DeviceZError))
 				{
-					PackedDepthOffset = max(PackedDepthOffset, PackDepthAndOffset(+Offset, CombinedSampleSubpixelDeviceZ0));
-					PackedDepthOffset = max(PackedDepthOffset, PackDepthAndOffset(-Offset, CombinedSampleSubpixelDeviceZ1));
+					PackedDepthOffset = max(PackedDepthOffset, PackDepthAndOffset(+Offset, SampleDeviceZ0));
+					PackedDepthOffset = max(PackedDepthOffset, PackDepthAndOffset(-Offset, SampleDeviceZ1));
 				}
 			}
 			#else
 			{
-				PackedDepthOffset = max(PackedDepthOffset, PackDepthAndOffset(+Offset, CombinedSampleSubpixelDeviceZ0));
-				PackedDepthOffset = max(PackedDepthOffset, PackDepthAndOffset(-Offset, CombinedSampleSubpixelDeviceZ1));
+				PackedDepthOffset = max(PackedDepthOffset, PackDepthAndOffset(+Offset, SampleDeviceZ0));
+				PackedDepthOffset = max(PackedDepthOffset, PackDepthAndOffset(-Offset, SampleDeviceZ1));
 			}
 			#endif
 		}
@@ -258,6 +288,12 @@ void MainCS(
 
 	float4 CenterEncodedVelocity = SceneVelocityTexture[int2(InputBufferUV * InputInfo_Extent)];
 	bool bIsMovingPixel = CenterEncodedVelocity.x > 0.0;
+	
+	bool bHasPixelAnimation = false;
+	#if !VELOCITY_ENCODE_HAS_PIXEL_ANIMATION
+		// UE-198416: there is high mess arround VelocityEncodeDepth() to clean up
+		//#error TSR requires the bHasPixelAnimation encoded in the velocity buffer.
+	#endif
 
 	// Compute final screen vecocity.
 	#if CONFIG_VELOCITY_EXTRAPOLATION
@@ -271,11 +307,6 @@ void MainCS(
 
 		float ClosestDeviceZ1 = ClosestDeviceZ;
 		float ClosestDeviceZ2 = SceneDepthTexture[PixelCoord2];
-		#if CONFIG_SUBPIXEL_DEPTH
-			float ClosestSubpixelDeviceZ2 = UncompressSubpixelDepth(PrevScatteredSubpixelDepthTexture[PixelCoord2]).DeviceZ;
-			
-			ClosestDeviceZ2 = MaxDeviceZWithSubpixel(ClosestDeviceZ2, ClosestSubpixelDeviceZ2, SampleDeviceZError);
-		#endif
 
 		float4 EncodedVelocity1 = SceneVelocityTexture[PixelCoord1];
 		float4 EncodedVelocity2 = SceneVelocityTexture[PixelCoord2];
@@ -283,6 +314,10 @@ void MainCS(
 		float3 ScreenVelocity1 = ComputeStaticVelocity(ScreenPos, ClosestDeviceZ1);
 		float3 ScreenVelocity2 = ComputeStaticVelocity(ScreenPos, ClosestDeviceZ2);
 		
+		#if VELOCITY_ENCODE_HAS_PIXEL_ANIMATION
+			bHasPixelAnimation = DecodeHasPixelAnimationFromVelocityTexture(EncodedVelocity1);
+		#endif
+
 		#if CONFIG_USE_SCENE_VELOCITY
 		{
 			if (EncodedVelocity1.x > 0.0)
@@ -307,6 +342,10 @@ void MainCS(
 		FinalScreenVelocity = ComputeStaticVelocity(ScreenPos, ClosestDeviceZ);
 		
 		float4 EncodedVelocity = SceneVelocityTexture[uint2(InputBufferUV * InputInfo_Extent) + VelocityPixelOffset];
+
+		#if VELOCITY_ENCODE_HAS_PIXEL_ANIMATION
+			bHasPixelAnimation = DecodeHasPixelAnimationFromVelocityTexture(EncodedVelocity);
+		#endif
 
 		#if CONFIG_USE_SCENE_VELOCITY
 		{
@@ -335,33 +374,21 @@ void MainCS(
 			
 		tsr_half PixelParallaxVelocity = tsr_half(0.5) * length(tsr_half2(RotationalPrevScreen - PrevScreen) * tsr_half2(InputInfo_ViewportSize));
 			
-		float4 ClipPosition = float4(ScreenPos * (View.ViewToClip[3][3] < 1.0f ? Depth : 1.0f), Depth, 1);
-		float4 PrevClipPosition = float4(PrevScreenPos * (View.ViewToClip[3][3] < 1.0f ? PrevDepth : 1.0f), PrevDepth, 1);
+		float4 ClipPosition = float4(GetScreenPositionForProjectionType(ScreenPos,Depth), Depth, 1);
+		float4 PrevClipPosition = float4(GetScreenPositionForProjectionType(PrevScreenPos, PrevDepth), PrevDepth, 1);
 		
-		float3 PreViewTranslationOffset = LWCToFloat(LWCSubtract(PrimaryView.PreViewTranslation, PrimaryView.PrevPreViewTranslation));
+		float3 PreViewTranslationOffset = DFFastLocalSubtractDemote(PrimaryView.PreViewTranslation, PrimaryView.PrevPreViewTranslation);
 		float3 TranslatedWorldPosition = mul(ClipPosition, View.ScreenToTranslatedWorld).xyz;
 		float3 PrevTranslatedWorldPosition = mul(PrevClipPosition, View.PrevScreenToTranslatedWorld).xyz + PreViewTranslationOffset;
 		
-		float WorldDepthToPixelWorldRadius = 2.0 * GetTanHalfFieldOfView().x * View.ViewSizeAndInvSize.z;
-		float StaticWorldRadius = Depth * WorldDepthToPixelWorldRadius;
+		float StaticWorldRadius = GetDepthPixelRadiusForProjectionType(Depth) * 2.0f;
 
 		IsMovingMask = max(
 			tsr_half(saturate(length(TranslatedWorldPosition - PrevTranslatedWorldPosition) * rcp(StaticWorldRadius) - 1.0)),
 			saturate(PixelParallaxVelocity * tsr_half(InvFlickeringMaxParralaxVelocity) - tsr_half(0.5)));
-	}
 
-	#if CONFIG_SUBPIXEL_DEPTH
-	uint CompressedSubpixelDepth = PrevCompressedSubpixelDepth;
-	{
-		FTSRSubpixelDepth PrevSubpixelDepth = UncompressSubpixelDepth(PrevCompressedSubpixelDepth);
-
-		FLATTEN
-		if (DeviceZ > PrevSubpixelDepth.DeviceZ || (bIsMovingPixel && !bIncludeDynamicDepthInSubpixelDetails))
-		{
-			CompressedSubpixelDepth = 0;
-		}
+		IsMovingMask = select(bHasPixelAnimation, tsr_half(1.0), IsMovingMask);
 	}
-	#endif
 
 	// Do motion blur velocity flatten.
 	#if DIM_MOTION_BLUR_DIRECTIONS > 0
@@ -369,50 +396,11 @@ void MainCS(
 		float2 VelocityPolar;
 		ReduceVelocityFlattenTile(GroupThreadIndex, FinalScreenVelocity.xy, /* out */ VelocityPolarRange, /* out */ VelocityPolar);
 	#endif
+	
+	float PrevClosestDeviceZ = ClosestDeviceZ - FinalScreenVelocity.z;
 
 	{
 		bool bValidOutputPixel = all(InputPixelPos < InputInfo_ViewportMax);
-		
-		// Scatter parallax rejection
-		#if 1
-		{
-			float2 PrevScreenPos = ScreenPos - FinalScreenVelocity.xy;
-			float2 PrevInputBufferUV = (InputInfo_ScreenPosToViewportScale * PrevScreenPos + InputInfo_ScreenPosToViewportBias) * InputInfo_ExtentInverse;
-
-			float2 PixelVelocity = FinalScreenVelocity.xy * 0.5 * InputInfo_ViewportSize;
-			uint EncodedHoleFillingVelocity = EncodeHoleFillingVelocity(PixelVelocity);
-
-			uint PrevClosestDepth = (f32tof16(ClosestDeviceZ) << VELOCITY_HOLE_FILLING_BITS) | EncodedHoleFillingVelocity;
-			
-			bool bValidHistoryCoord = bValidOutputPixel && all(and(PrevInputBufferUV > PrevOutputBufferUVMin, PrevInputBufferUV < PrevOutputBufferUVMax));
-
-			FBilinearSampleInfos BilinearInter = GetBilinearSampleLevelInfos(PrevInputBufferUV, InputInfo_Extent, InputInfo_ExtentInverse);
-
-			UNROLL_N(4)
-			for (uint i = 0; i < 4; i++)
-			{
-				float Weight = GetSampleWeight(BilinearInter, i);
-				uint2 PixelPos = GetSamplePixelCoord(BilinearInter, i);
-
-				uint FinalAdd = uint(round(Weight * PREV_USE_COUNT_QUANTIZATION));
-			
-				PixelPos.x = ((FinalAdd > 0) && bValidHistoryCoord) ? PixelPos.x : (~0);
-
-				#if COMPRESS_PREV_USE_COUNT
-					uint2 CompressedUseCountPixelPos;
-					uint Shift;
-					ComputeCompressedUseCountPixelCoordinates(PixelPos, /* out */ CompressedUseCountPixelPos, /* out */ Shift);
-
-					FinalAdd = FinalAdd << (8 * Shift);
-				#else
-					uint2 CompressedUseCountPixelPos = PixelPos;
-				#endif
-
-				InterlockedAdd(PrevUseCountOutput[CompressedUseCountPixelPos], FinalAdd);
-				InterlockedMax(PrevClosestDepthOutput[PixelPos], PrevClosestDepth);
-			}
-		}
-		#endif
 		
 		float4 EncodedVelocity = SceneVelocityTexture[uint2(InputBufferUV * InputInfo_Extent)];
 		
@@ -420,12 +408,7 @@ void MainCS(
 
 		//DilatedVelocityOutput[OutputPixelPos] = EncodedVelocity.xy; //EncodeVelocityToTexture(float3(FinalScreenVelocity.xy, 0.0)).xy;
 		DilatedVelocityOutput[OutputPixelPos] = EncodeVelocityToTexture(float3(FinalScreenVelocity.xy, 0.0)).xy;
-		ClosestDepthOutput[OutputPixelPos] = ClosestDeviceZ;
-		#if CONFIG_SUBPIXEL_DEPTH
-		{
-			SubpixelDepthOutput[OutputPixelPos] = CompressedSubpixelDepth;
-		}
-		#endif
+		ClosestDepthOutput[OutputPixelPos] = float2(select(bHasPixelAnimation, -PrevClosestDeviceZ, PrevClosestDeviceZ), ClosestDeviceZ);
 
 		BRANCH
 		if (bOutputIsMovingTexture)
@@ -442,7 +425,10 @@ void MainCS(
 			StoreVelocityRange(VelocityTileArrayOutput, OutputTilePos, PolarToCartesian(VelocityPolarRange));
 		}
 		#endif
-
+		
+		// Scatter parallax rejection
+		ScatterClosestOccluder(bValidOutputPixel, ScreenPos, FinalScreenVelocity.xy, PrevClosestDeviceZ);
+		
 		#if DEBUG_OUTPUT && 0 // running out of UAVs
 		{
 			DebugOutput[tsr_short3(OutputPixelPos, 0)] = Debug;

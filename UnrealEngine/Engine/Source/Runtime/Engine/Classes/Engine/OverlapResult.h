@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Chaos/PhysicsObject.h"
 #include "Engine/ActorInstanceHandle.h"
 #include "OverlapResult.generated.h"
 
@@ -29,6 +30,9 @@ struct FOverlapResult
 
 	/** Utility to return the Component that was hit */
 	ENGINE_API UPrimitiveComponent* GetComponent() const;
+
+	/** PhysicsObjects hit by the query. Not exposed to blueprints for the time being */
+	Chaos::FPhysicsObjectHandle PhysicsObject;
 
 	/** Indicates if this hit was requesting a block - if false, was requesting a touch instead */
 	UPROPERTY()

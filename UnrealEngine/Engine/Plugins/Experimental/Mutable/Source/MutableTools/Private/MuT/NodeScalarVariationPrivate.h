@@ -15,23 +15,20 @@ namespace mu
     class NodeScalarVariation::Private : public Node::Private
     {
     public:
-        MUTABLE_DEFINE_CONST_VISITABLE()
 
-    public:
-
-        static NODE_TYPE s_type;
+        static FNodeType s_type;
 
         NodeScalarPtr m_defaultScalar;
 
-        struct VARIATION
+        struct FVariation
         {
             NodeScalarPtr m_scalar;
-            string m_tag;
+            FString m_tag;
 
             //!
             void Serialise( OutputArchive& arch ) const
             {
-                uint32_t ver = 1;
+                uint32 ver = 2;
                 arch << ver;
 
                 arch << m_tag;
@@ -40,21 +37,31 @@ namespace mu
 
             void Unserialise( InputArchive& arch )
             {
-                uint32_t ver = 0;
+                uint32 ver = 0;
                 arch >> ver;
-                check( ver == 1 );
+				check(ver >= 1 && ver <= 2);
 
-                arch >> m_tag;
-                arch >> m_scalar;
+				if (ver <= 1)
+				{
+					std::string Temp;
+					arch >> Temp;
+					m_tag = Temp.c_str();
+				}
+				else
+				{
+					arch >> m_tag;
+				}
+				
+				arch >> m_scalar;
             }
         };
 
-        TArray<VARIATION> m_variations;
+        TArray<FVariation> m_variations;
 
         //!
         void Serialise( OutputArchive& arch ) const
         {
-            uint32_t ver = 1;
+            uint32 ver = 1;
             arch << ver;
 
             arch << m_defaultScalar;
@@ -64,7 +71,7 @@ namespace mu
         //!
         void Unserialise( InputArchive& arch )
         {
-            uint32_t ver;
+            uint32 ver;
             arch >> ver;
 			check(ver == 1);
 

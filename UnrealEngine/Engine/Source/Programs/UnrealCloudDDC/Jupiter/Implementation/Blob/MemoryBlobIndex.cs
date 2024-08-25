@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
@@ -11,166 +12,258 @@ namespace Jupiter.Implementation.Blob;
 
 public class MemoryBlobIndex : IBlobIndex
 {
-    private class MemoryBlobInfo
-    {
-        public HashSet<string> Regions { get; init; } = new HashSet<string>();
-        public NamespaceId Namespace { get; init; }
-        public BlobIdentifier BlobIdentifier { get; init; } = null!;
-        public List<BaseBlobReference> References { get; init; } = new List<BaseBlobReference>();
-    }
+	private class MemoryBlobInfo
+	{
+		public HashSet<string> Regions { get; init; } = new HashSet<string>();
+		public NamespaceId Namespace { get; init; }
+		public BlobId BlobIdentifier { get; init; } = null!;
+		public List<BaseBlobReference> References { get; init; } = new List<BaseBlobReference>();
+	}
 
-    private readonly ConcurrentDictionary<NamespaceId, ConcurrentDictionary<BlobIdentifier, MemoryBlobInfo>> _index = new ();
-    private readonly IOptionsMonitor<JupiterSettings> _jupiterSettings;
+	private class MemoryBucketInfo
+	{
+		public List<(RefId, BlobId, long)> Entries { get; init; } = new List<(RefId, BlobId, long)>();
 
-    public MemoryBlobIndex(IOptionsMonitor<JupiterSettings> settings)
-    {
-        _jupiterSettings = settings;
-    }
+		public void AddEntry(RefId refId, BlobId blobId, long value)
+		{
+			int index = Entries.FindIndex(tuple => tuple.Item1.Equals(refId) && tuple.Item2.Equals(blobId));
+			if (index == -1)
+			{
+				// no previous value found, add this entry
+				Entries.Add((refId, blobId, value));
+			}
+			else
+			{
+				// replace existing value
+				Entries[index] = (refId, blobId, value);
+			}
+		}
 
-    private ConcurrentDictionary<BlobIdentifier, MemoryBlobInfo> GetNamespaceContainer(NamespaceId ns)
-    {
-        return _index.GetOrAdd(ns, id => new ConcurrentDictionary<BlobIdentifier, MemoryBlobInfo>());
-    }
+		public void RemoveEntriesForRef(RefId refId)
+		{
+			Entries.RemoveAll(tuple => tuple.Item1.Equals(refId));
+		}
+	}
 
-    public Task AddBlobToIndex(NamespaceId ns, BlobIdentifier id, string? region = null)
-    {
-        region ??= _jupiterSettings.CurrentValue.CurrentSite;
-        ConcurrentDictionary<BlobIdentifier, MemoryBlobInfo> index = GetNamespaceContainer(ns);
-        index[id] = NewBlobInfo(ns, id, region);
-        return Task.CompletedTask;
-    }
+	private readonly ConcurrentDictionary<NamespaceId, ConcurrentDictionary<BlobId, MemoryBlobInfo>> _index = new ();
+	private readonly ConcurrentDictionary<NamespaceId, ConcurrentDictionary<BucketId, MemoryBucketInfo>> _bucketIndex = new ();
+	private readonly IOptionsMonitor<JupiterSettings> _jupiterSettings;
 
-    private Task<MemoryBlobInfo?> GetBlobInfo(NamespaceId ns, BlobIdentifier id)
-    {
-        ConcurrentDictionary<BlobIdentifier, MemoryBlobInfo> index = GetNamespaceContainer(ns);
+	public MemoryBlobIndex(IOptionsMonitor<JupiterSettings> settings)
+	{
+		_jupiterSettings = settings;
+	}
 
-        if (!index.TryGetValue(id, out MemoryBlobInfo? blobInfo))
-        {
-            return Task.FromResult<MemoryBlobInfo?>(null);
-        }
+	private ConcurrentDictionary<BlobId, MemoryBlobInfo> GetNamespaceContainer(NamespaceId ns)
+	{
+		return _index.GetOrAdd(ns, id => new ConcurrentDictionary<BlobId, MemoryBlobInfo>());
+	}
 
-        return Task.FromResult<MemoryBlobInfo?>(blobInfo);
-    }
+	public Task AddBlobToIndexAsync(NamespaceId ns, BlobId id, string? region = null)
+	{
+		region ??= _jupiterSettings.CurrentValue.CurrentSite;
+		ConcurrentDictionary<BlobId, MemoryBlobInfo> index = GetNamespaceContainer(ns);
+		index[id] = NewBlobInfo(ns, id, region);
+		return Task.CompletedTask;
+	}
 
-    public Task RemoveBlobFromRegion(NamespaceId ns, BlobIdentifier id, string? region = null)
-    {
-        region ??= _jupiterSettings.CurrentValue.CurrentSite;
-        ConcurrentDictionary<BlobIdentifier, MemoryBlobInfo> index = GetNamespaceContainer(ns);
+	private Task<MemoryBlobInfo?> GetBlobInfo(NamespaceId ns, BlobId id)
+	{
+		ConcurrentDictionary<BlobId, MemoryBlobInfo> index = GetNamespaceContainer(ns);
 
-        index.AddOrUpdate(id, _ =>
-        {
-            MemoryBlobInfo info = NewBlobInfo(ns, id, region);
-            return info;
-        }, (_, info) =>
-        {
-            info.Regions.Remove(region);
-            return info;
-        });
-        return Task.CompletedTask;
-    }
+		if (!index.TryGetValue(id, out MemoryBlobInfo? blobInfo))
+		{
+			return Task.FromResult<MemoryBlobInfo?>(null);
+		}
 
-    public async Task<bool> BlobExistsInRegion(NamespaceId ns, BlobIdentifier blobIdentifier, string? region = null)
-    {
-        string expectedRegion = region ?? _jupiterSettings.CurrentValue.CurrentSite;
-        MemoryBlobInfo? blobInfo = await GetBlobInfo(ns, blobIdentifier);
-        return blobInfo?.Regions.Contains(expectedRegion) ?? false;
-    }
+		return Task.FromResult<MemoryBlobInfo?>(blobInfo);
+	}
 
-    public async IAsyncEnumerable<BaseBlobReference> GetBlobReferences(NamespaceId ns, BlobIdentifier id)
-    {
-        MemoryBlobInfo? blobInfo = await GetBlobInfo(ns, id);
+	public Task RemoveBlobFromRegionAsync(NamespaceId ns, BlobId id, string? region = null)
+	{
+		region ??= _jupiterSettings.CurrentValue.CurrentSite;
+		ConcurrentDictionary<BlobId, MemoryBlobInfo> index = GetNamespaceContainer(ns);
 
-        if (blobInfo != null)
-        {
-            foreach (BaseBlobReference reference in blobInfo.References)
-            {
-                yield return reference;
-            }
-        }
-    }
+		index.AddOrUpdate(id, _ =>
+		{
+			MemoryBlobInfo info = NewBlobInfo(ns, id, region);
+			return info;
+		}, (_, info) =>
+		{
+			info.Regions.Remove(region);
+			return info;
+		});
+		return Task.CompletedTask;
+	}
 
-    public Task AddRefToBlobs(NamespaceId ns, BucketId bucket, IoHashKey key, BlobIdentifier[] blobs)
-    {
-        foreach (BlobIdentifier id in blobs)
-        {
-            ConcurrentDictionary<BlobIdentifier, MemoryBlobInfo> index = GetNamespaceContainer(ns);
+	public async Task<bool> BlobExistsInRegionAsync(NamespaceId ns, BlobId blobIdentifier, string? region = null)
+	{
+		string expectedRegion = region ?? _jupiterSettings.CurrentValue.CurrentSite;
+		MemoryBlobInfo? blobInfo = await GetBlobInfo(ns, blobIdentifier);
+		return blobInfo?.Regions.Contains(expectedRegion) ?? false;
+	}
 
-            index.AddOrUpdate(id, _ =>
-            {
-                MemoryBlobInfo info = NewBlobInfo(ns, id, _jupiterSettings.CurrentValue.CurrentSite);
-                info.References!.Add(new RefBlobReference(bucket, key));
-                return info;
-            }, (_, info) =>
-            {
-                info.References!.Add(new RefBlobReference(bucket, key));
-                return info;
-            });
-        }
+	public async IAsyncEnumerable<BaseBlobReference> GetBlobReferencesAsync(NamespaceId ns, BlobId id)
+	{
+		MemoryBlobInfo? blobInfo = await GetBlobInfo(ns, id);
 
-        return Task.CompletedTask;
-    }
+		if (blobInfo != null)
+		{
+			foreach (BaseBlobReference reference in blobInfo.References)
+			{
+				yield return reference;
+			}
+		}
+	}
 
-    public async IAsyncEnumerable<(NamespaceId, BlobIdentifier)> GetAllBlobs()
-    {
-        await Task.CompletedTask;
+	public Task AddRefToBlobsAsync(NamespaceId ns, BucketId bucket, RefId key, BlobId[] blobs)
+	{
+		foreach (BlobId id in blobs)
+		{
+			ConcurrentDictionary<BlobId, MemoryBlobInfo> index = GetNamespaceContainer(ns);
 
-        foreach (KeyValuePair<NamespaceId, ConcurrentDictionary<BlobIdentifier, MemoryBlobInfo>> pair in _index)
-        {
-            foreach ((BlobIdentifier? _, MemoryBlobInfo? blobInfo) in pair.Value)
-            {
-                yield return (blobInfo.Namespace, blobInfo.BlobIdentifier);
-            }
-        }
-    }
+			index.AddOrUpdate(id, _ =>
+			{
+				MemoryBlobInfo info = NewBlobInfo(ns, id, _jupiterSettings.CurrentValue.CurrentSite);
+				info.References!.Add(new RefBlobReference(bucket, key));
+				return info;
+			}, (_, info) =>
+			{
+				info.References!.Add(new RefBlobReference(bucket, key));
+				return info;
+			});
+		}
 
-    public Task RemoveReferences(NamespaceId ns, BlobIdentifier id, List<BaseBlobReference> referencesToRemove)
-    {
-        ConcurrentDictionary<BlobIdentifier, MemoryBlobInfo> index = GetNamespaceContainer(ns);
+		return Task.CompletedTask;
+	}
 
-        if (index.TryGetValue(id, out MemoryBlobInfo? blobInfo))
-        {
-            foreach (BaseBlobReference r in referencesToRemove)
-            {
-                blobInfo.References.Remove(r);
-            }
-        }
+	public async IAsyncEnumerable<(NamespaceId, BlobId)> GetAllBlobsAsync()
+	{
+		await Task.CompletedTask;
 
-        return Task.CompletedTask;
-    }
+		foreach (KeyValuePair<NamespaceId, ConcurrentDictionary<BlobId, MemoryBlobInfo>> pair in _index)
+		{
+			foreach ((BlobId? _, MemoryBlobInfo? blobInfo) in pair.Value)
+			{
+				yield return (blobInfo.Namespace, blobInfo.BlobIdentifier);
+			}
+		}
+	}
 
-    public async Task<List<string>> GetBlobRegions(NamespaceId ns, BlobIdentifier blob)
-    {
-        MemoryBlobInfo? blobInfo = await GetBlobInfo(ns, blob);
+	public Task RemoveReferencesAsync(NamespaceId ns, BlobId id, List<BaseBlobReference>? referencesToRemove)
+	{
+		ConcurrentDictionary<BlobId, MemoryBlobInfo> index = GetNamespaceContainer(ns);
 
-        if (blobInfo != null)
-        {
-            return blobInfo.Regions.ToList();
-        }
+		if (index.TryGetValue(id, out MemoryBlobInfo? blobInfo))
+		{
+			if (referencesToRemove == null)
+			{
+				blobInfo.References.Clear();
+			}
+			else
+			{
+				foreach (BaseBlobReference r in referencesToRemove)
+				{
+					blobInfo.References.Remove(r);
+				}
+			}
+		}
 
-        throw new BlobNotFoundException(ns, blob);
-    }
+		return Task.CompletedTask;
+	}
 
-    public async Task AddBlobReferences(NamespaceId ns, BlobIdentifier sourceBlob, BlobIdentifier targetBlob)
-    {
-        MemoryBlobInfo? blobInfo = await GetBlobInfo(ns, sourceBlob);
+	public async Task<List<string>> GetBlobRegionsAsync(NamespaceId ns, BlobId blob)
+	{
+		MemoryBlobInfo? blobInfo = await GetBlobInfo(ns, blob);
 
-        if (blobInfo == null)
-        {
-            throw new BlobNotFoundException(ns, sourceBlob);
-        }
+		if (blobInfo != null)
+		{
+			return blobInfo.Regions.ToList();
+		}
 
-        blobInfo.References.Add(new BlobToBlobReference(targetBlob));
-    }
+		throw new BlobNotFoundException(ns, blob);
+	}
 
-    private static MemoryBlobInfo NewBlobInfo(NamespaceId ns, BlobIdentifier blob, string region)
-    {
-        MemoryBlobInfo info = new MemoryBlobInfo
-        {
-            Regions = new HashSet<string> { region },
-            Namespace = ns,
-            BlobIdentifier = blob,
-            References = new List<BaseBlobReference>()
-        };
-        return info;
-    }
+	public async Task AddBlobReferencesAsync(NamespaceId ns, BlobId sourceBlob, BlobId targetBlob)
+	{
+		MemoryBlobInfo? blobInfo = await GetBlobInfo(ns, sourceBlob);
+
+		if (blobInfo == null)
+		{
+			throw new BlobNotFoundException(ns, sourceBlob);
+		}
+
+		blobInfo.References.Add(new BlobToBlobReference(targetBlob));
+	}
+
+	public Task AddBlobToBucketListAsync(NamespaceId ns, BucketId bucket, RefId key, BlobId blobId, long blobSize)
+	{
+		ConcurrentDictionary<BucketId, MemoryBucketInfo> bucketDict = _bucketIndex.GetOrAdd(ns, id => new ConcurrentDictionary<BucketId, MemoryBucketInfo>());
+		MemoryBucketInfo bucketInfo = bucketDict.GetOrAdd(bucket, id => new MemoryBucketInfo());
+		bucketInfo.AddEntry(key, blobId, blobSize);
+
+		return Task.CompletedTask;
+	}
+
+	public Task RemoveBlobFromBucketListAsync(NamespaceId ns, BucketId bucket, RefId key, List<BlobId> blobIds)
+	{
+		if (_bucketIndex.TryGetValue(ns, out ConcurrentDictionary<BucketId, MemoryBucketInfo>? bucketDict))
+		{
+			if (bucketDict.TryGetValue(bucket, out MemoryBucketInfo? bucketInfo))
+			{
+				bucketInfo.RemoveEntriesForRef(key);
+			}
+		}
+
+		return Task.CompletedTask;
+	}
+
+	public Task<BucketStats> CalculateBucketStatisticsAsync(NamespaceId ns, BucketId bucket)
+	{
+		HashSet<RefId> foundRefs = new HashSet<RefId>();
+		int countOfBlobs = 0;
+		long totalBlobSize = 0;
+		long smallestBlobFound = 0;
+		long largestBlobFound = 0;
+
+		if (_bucketIndex.TryGetValue(ns, out ConcurrentDictionary<BucketId, MemoryBucketInfo>? bucketDict))
+		{
+			if (bucketDict.TryGetValue(bucket, out MemoryBucketInfo? bucketInfo))
+			{
+				foreach ((RefId refId, BlobId? blobId, long size) in bucketInfo.Entries)
+				{
+					foundRefs.Add(refId);
+					countOfBlobs++;
+					totalBlobSize += size;
+
+					smallestBlobFound = Math.Min(size, smallestBlobFound);
+					largestBlobFound = Math.Max(size, largestBlobFound);
+				}
+			}
+		}
+
+		return Task.FromResult(new BucketStats()
+		{
+			Namespace = ns,
+			Bucket = bucket,
+			CountOfRefs = foundRefs.Count,
+			CountOfBlobs = countOfBlobs,
+			SmallestBlobFound = smallestBlobFound,
+			LargestBlob = largestBlobFound,
+			TotalSize = totalBlobSize,
+			AvgSize = totalBlobSize / (double)countOfBlobs
+		});
+	}
+
+	private static MemoryBlobInfo NewBlobInfo(NamespaceId ns, BlobId blob, string region)
+	{
+		MemoryBlobInfo info = new MemoryBlobInfo
+		{
+			Regions = new HashSet<string> { region },
+			Namespace = ns,
+			BlobIdentifier = blob,
+			References = new List<BaseBlobReference>()
+		};
+		return info;
+	}
 }

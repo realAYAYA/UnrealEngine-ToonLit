@@ -9,16 +9,18 @@ using System.Net;
 using System.Security.Claims;
 using System.Threading;
 using System.Threading.Tasks;
-using Amazon.EC2.Model;
-using EpicGames.Core;
+using EpicGames.Horde.Agents;
+using EpicGames.Horde.Agents.Sessions;
+using EpicGames.Horde.Telemetry;
+using EpicGames.Horde.Tools;
 using Google.Protobuf;
+using Google.Protobuf.Reflection;
 using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using Horde.Server.Acls;
 using Horde.Server.Agents;
 using Horde.Server.Agents.Pools;
 using Horde.Server.Agents.Sessions;
-using Horde.Server.Agents.Software;
 using Horde.Server.Jobs;
 using Horde.Server.Tasks;
 using Horde.Server.Telemetry;
@@ -34,9 +36,9 @@ namespace Horde.Server.Server
 {
 	using RpcAgentCapabilities = HordeCommon.Rpc.Messages.AgentCapabilities;
 	using RpcDeviceCapabilities = HordeCommon.Rpc.Messages.DeviceCapabilities;
-	using RpcGetStreamResponse = HordeCommon.Rpc.GetStreamResponse;
 	using RpcGetJobResponse = HordeCommon.Rpc.GetJobResponse;
 	using RpcGetStepResponse = HordeCommon.Rpc.GetStepResponse;
+	using RpcGetStreamResponse = HordeCommon.Rpc.GetStreamResponse;
 	using RpcUpdateJobRequest = HordeCommon.Rpc.UpdateJobRequest;
 	using RpcUpdateStepRequest = HordeCommon.Rpc.UpdateStepRequest;
 
@@ -186,19 +188,19 @@ namespace Horde.Server.Server
 				}
 
 				// Get the new workspaces
-				List<AgentWorkspace> newWorkspaces = request.Workspaces.Select(x => new AgentWorkspace(x)).ToList();
+				List<AgentWorkspaceInfo> newWorkspaces = request.Workspaces.Select(x => new AgentWorkspaceInfo(x)).ToList();
 
 				// Get the set of workspaces that are currently required
-				HashSet<AgentWorkspace> conformWorkspaces = await _poolService.GetWorkspacesAsync(agent, DateTime.UtcNow, _globalConfig.Value);
+				HashSet<AgentWorkspaceInfo> conformWorkspaces = await _poolService.GetWorkspacesAsync(agent, DateTime.UtcNow, _globalConfig.Value, context.CancellationToken);
 				bool pendingConform = !conformWorkspaces.SetEquals(newWorkspaces) || (agent.RequestFullConform && !request.RemoveUntrackedFiles);
 
 				// Update the workspaces
-				if (await _agentService.TryUpdateWorkspacesAsync(agent, newWorkspaces, pendingConform))
+				if (await _agentService.TryUpdateWorkspacesAsync(agent, newWorkspaces, pendingConform, context.CancellationToken))
 				{
 					UpdateAgentWorkspacesResponse response = new UpdateAgentWorkspacesResponse();
 					if (pendingConform)
 					{
-						response.Retry = await _conformTaskSource.GetWorkspacesAsync(agent, response.PendingWorkspaces);
+						response.Retry = await _conformTaskSource.GetWorkspacesAsync(agent, response.PendingWorkspaces, context.CancellationToken);
 						response.RemoveUntrackedFiles = request.RemoveUntrackedFiles || agent.RequestFullConform;
 					}
 					return response;
@@ -256,26 +258,21 @@ namespace Horde.Server.Server
 		/// <returns>Information about the new agent</returns>
 		public override async Task<CreateAgentResponse> CreateAgent(CreateAgentRequest request, ServerCallContext context)
 		{
-			using IDisposable scope = _logger.BeginScope("CreateAgent({AgentId})", request.Name.ToString());
+			using IDisposable? scope = _logger.BeginScope("CreateAgent({AgentId})", request.Name.ToString());
 
 			if (!_globalConfig.Value.Authorize(AgentAclAction.CreateAgent, context.GetHttpContext().User))
 			{
 				throw new StructuredRpcException(StatusCode.PermissionDenied, "User is not authenticated to create new agents");
 			}
 
-			// TODO: Do not allow overwriting existing agents unless explicitly asked to. We may be reusing an IP or hostname, and we can't trust the agent is what it says it is.
-			IAgent? agent = await _agentService.GetAgentAsync(new AgentId(request.Name));
-			if (agent == null)
-			{
-				agent = await _agentService.CreateAgentAsync(request.Name, _globalConfig.Value.ServerSettings.EnableNewAgentsByDefault, null);
-			}
+			IAgent agent = await _agentService.CreateAgentAsync(new AgentId(request.Name), request.Ephemeral, "", context.CancellationToken);
 
 			List<AclClaimConfig> claims = new List<AclClaimConfig>();
 			claims.Add(new AclClaimConfig(HordeClaimTypes.Agent, agent.Id.ToString()));
 
 			CreateAgentResponse response = new CreateAgentResponse();
 			response.Id = agent.Id.ToString();
-			response.Token = await _aclService.IssueBearerTokenAsync(claims, null);
+			response.Token = await _aclService.IssueBearerTokenAsync(claims, null, context.CancellationToken);
 
 			return response;
 		}
@@ -294,7 +291,7 @@ namespace Horde.Server.Server
 			}
 
 			AgentId agentId = new AgentId(request.Id);
-			using IDisposable scope = _logger.BeginScope("CreateSession({AgentId})", agentId.ToString());
+			using IDisposable? scope = _logger.BeginScope("CreateSession({AgentId})", agentId.ToString());
 
 			GlobalConfig globalConfig = _globalConfig.Value;
 
@@ -307,7 +304,15 @@ namespace Horde.Server.Server
 					throw new StructuredRpcException(StatusCode.PermissionDenied, "User is not authenticated to create new agents");
 				}
 
-				agent = await _agentService.CreateAgentAsync(request.Id, true, null);
+				agent = await _agentService.CreateAgentAsync(agentId, false, "");
+			}
+
+			// Check the enrollment key in the user token matches
+			string enrollmentKey = context.GetHttpContext().User.FindFirstValue(HordeClaimTypes.AgentEnrollmentKey) ?? String.Empty;
+			if (!String.Equals(enrollmentKey, agent.EnrollmentKey, StringComparison.OrdinalIgnoreCase))
+			{
+				_logger.LogError("Enrollment key does not match for {AgentId} (was {OldKey}, now {NewKey})", agent.Id, agent.EnrollmentKey, enrollmentKey);
+				throw new StructuredRpcException(StatusCode.PermissionDenied, $"Enrollment key does not match for {agent.Id}");
 			}
 
 			// Make sure we're allowed to create sessions on this agent
@@ -321,7 +326,7 @@ namespace Horde.Server.Server
 			GetCapabilities(request.Capabilities, out List<string> properties, out Dictionary<string, int> resources);
 
 			// Create a new session
-			agent = await _agentService.CreateSessionAsync(agent, request.Status, properties, resources, request.Version);
+			agent = await _agentService.CreateSessionAsync(agent, (AgentStatus)request.Status, properties, resources, request.Version, context.CancellationToken);
 			if (agent == null)
 			{
 				throw new StructuredRpcException(StatusCode.NotFound, "Agent {AgentId} not found", agentId);
@@ -332,7 +337,7 @@ namespace Horde.Server.Server
 			response.AgentId = agent.Id.ToString();
 			response.SessionId = agent.SessionId.ToString();
 			response.ExpiryTime = Timestamp.FromDateTime(agent.SessionExpiresAt!.Value);
-			response.Token = await _agentService.IssueSessionTokenAsync(agent.Id, agent.SessionId!.Value);
+			response.Token = await _agentService.IssueSessionTokenAsync(agent.Id, agent.SessionId!.Value, context.CancellationToken);
 			return response;
 		}
 
@@ -350,7 +355,7 @@ namespace Horde.Server.Server
 			if (await nextRequestTask)
 			{
 				UpdateSessionRequest request = reader.Current;
-				using IDisposable scope = _logger.BeginScope("UpdateSession for agent {AgentId}, session {SessionId}", request.AgentId, request.SessionId);
+				using IDisposable? scope = _logger.BeginScope("UpdateSession for agent {AgentId}, session {SessionId}", request.AgentId, request.SessionId);
 
 				_logger.LogDebug("Updating session for {AgentId}", request.AgentId);
 				foreach (HordeCommon.Rpc.Messages.Lease lease in request.Leases)
@@ -364,17 +369,23 @@ namespace Horde.Server.Server
 				nextRequestTask = nextRequestTask.ContinueWith(task =>
 				{
 					cancellationSource.Cancel();
-					return task.IsCanceled? false : task.Result;
+					return task.IsCanceled ? false : task.Result;
 				}, TaskScheduler.Current);
 
 				// Get the current agent state
 				IAgent? agent = await _agentService.GetAgentAsync(new AgentId(request.AgentId));
 				if (agent != null)
 				{
+					SessionId sessionId = SessionId.Parse(request.SessionId);
+
 					// Check we're authorized to update it
-					if (!_agentService.AuthorizeSession(agent, context.GetHttpContext().User))
+					if (agent.SessionId != sessionId)
 					{
-						throw new StructuredRpcException(StatusCode.PermissionDenied, "Not authenticated for {AgentId}", request.AgentId);
+						throw new StructuredRpcException(StatusCode.PermissionDenied, "Agent {AgentId} has completed session {SessionId}; now executing session {NewSessionId}. Cannot update state.", request.AgentId, sessionId, agent.SessionId?.ToString() ?? "(None)");
+					}
+					if (!_agentService.AuthorizeSession(agent, context.GetHttpContext().User, out string authReason))
+					{
+						throw new StructuredRpcException(StatusCode.PermissionDenied, "Not authenticated for {AgentId}. Reason {Reason}", request.AgentId, authReason);
 					}
 
 					// Get the new capabilities of this agent
@@ -388,11 +399,16 @@ namespace Horde.Server.Server
 					// Update the session
 					try
 					{
-						agent = await _agentService.UpdateSessionWithWaitAsync(agent, SessionId.Parse(request.SessionId), request.Status, properties, resources, request.Leases, cancellationSource.Token);
+						agent = await _agentService.UpdateSessionWithWaitAsync(agent, sessionId, (AgentStatus)request.Status, properties, resources, request.Leases, cancellationSource.Token);
+					}
+					catch (OperationCanceledException)
+					{
+						// Ignore cancellation due to a message having been received
 					}
 					catch (Exception ex)
 					{
 						_logger.LogError(ex, "Swallowed exception while updating session for {AgentId}.", request.AgentId);
+						throw new StructuredRpcException(StatusCode.Internal, "Failed updating session. Reason: {Reason}", ex.Message);
 					}
 				}
 
@@ -408,6 +424,7 @@ namespace Horde.Server.Server
 					UpdateSessionResponse response = new UpdateSessionResponse();
 					response.Leases.Add(agent.Leases.Select(x => x.ToRpcMessage()));
 					response.ExpiryTime = (agent.SessionExpiresAt == null) ? new Timestamp() : Timestamp.FromDateTime(agent.SessionExpiresAt.Value);
+					response.Status = (RpcAgentStatus)agent.Status;
 					await writer.WriteAsync(response);
 				}
 
@@ -427,34 +444,34 @@ namespace Horde.Server.Server
 		}
 
 		/// <inheritdoc/>
-		public override Task<RpcGetStreamResponse> GetStream(GetStreamRequest request, ServerCallContext context) => _jobRpcCommon.GetStream(request, context);
+		public override Task<RpcGetStreamResponse> GetStream(GetStreamRequest request, ServerCallContext context) => _jobRpcCommon.GetStreamAsync(request, context);
 
 		/// <inheritdoc/>
-		public override Task<RpcGetJobResponse> GetJob(GetJobRequest request, ServerCallContext context) => _jobRpcCommon.GetJob(request, context);
+		public override Task<RpcGetJobResponse> GetJob(GetJobRequest request, ServerCallContext context) => _jobRpcCommon.GetJobAsync(request, context);
 
 		/// <inheritdoc/>
-		public override Task<Empty> UpdateJob(RpcUpdateJobRequest request, ServerCallContext context) => _jobRpcCommon.UpdateJob(request, context);
+		public override Task<Empty> UpdateJob(RpcUpdateJobRequest request, ServerCallContext context) => _jobRpcCommon.UpdateJobAsync(request, context);
 
 		/// <inheritdoc/>
-		public override Task<BeginBatchResponse> BeginBatch(BeginBatchRequest request, ServerCallContext context) => _jobRpcCommon.BeginBatch(request, context);
+		public override Task<BeginBatchResponse> BeginBatch(BeginBatchRequest request, ServerCallContext context) => _jobRpcCommon.BeginBatchAsync(request, context);
 
 		/// <inheritdoc/>
-		public override Task<Empty> FinishBatch(FinishBatchRequest request, ServerCallContext context) => _jobRpcCommon.FinishBatch(request, context);
+		public override Task<Empty> FinishBatch(FinishBatchRequest request, ServerCallContext context) => _jobRpcCommon.FinishBatchAsync(request, context);
 
 		/// <inheritdoc/>
-		public override Task<BeginStepResponse> BeginStep(BeginStepRequest request, ServerCallContext context) => _jobRpcCommon.BeginStep(request, context);
+		public override Task<BeginStepResponse> BeginStep(BeginStepRequest request, ServerCallContext context) => _jobRpcCommon.BeginStepAsync(request, context);
 
 		/// <inheritdoc/>
-		public override Task<Empty> UpdateStep(RpcUpdateStepRequest request, ServerCallContext context) => _jobRpcCommon.UpdateStep(request, context);
+		public override Task<Empty> UpdateStep(RpcUpdateStepRequest request, ServerCallContext context) => _jobRpcCommon.UpdateStepAsync(request, context);
 
 		/// <inheritdoc/>
-		public override Task<RpcGetStepResponse> GetStep(GetStepRequest request, ServerCallContext context) => _jobRpcCommon.GetStep(request, context);
+		public override Task<RpcGetStepResponse> GetStep(GetStepRequest request, ServerCallContext context) => _jobRpcCommon.GetStepAsync(request, context);
 
 		/// <inheritdoc/>
-		public override Task<UpdateGraphResponse> UpdateGraph(UpdateGraphRequest request, ServerCallContext context) => _jobRpcCommon.UpdateGraph(request, context);
+		public override Task<UpdateGraphResponse> UpdateGraph(UpdateGraphRequest request, ServerCallContext context) => _jobRpcCommon.UpdateGraphAsync(request, context);
 
 		/// <inheritdoc/>
-		public override Task<Empty> CreateEvents(CreateEventsRequest request, ServerCallContext context) => _jobRpcCommon.CreateEvents(request, context);
+		public override Task<Empty> CreateEvents(CreateEventsRequest request, ServerCallContext context) => _jobRpcCommon.CreateEventsAsync(request, context);
 
 		/// <summary>
 		/// Downloads a new agent archive
@@ -469,20 +486,16 @@ namespace Horde.Server.Server
 			ToolId toolId = new ToolId(request.Version.Substring(0, colonIdx));
 			string version = request.Version.Substring(colonIdx + 1);
 
-			ToolConfig? toolConfig;
-			if (!_globalConfig.Value.TryGetTool(toolId, out toolConfig))
-			{
-				throw new StructuredRpcException(StatusCode.NotFound, $"Missing tool {toolId}");
-			}
-			if (!toolConfig.Authorize(ToolAclAction.DownloadTool, context.GetHttpContext().User))
-			{
-				throw new StructuredRpcException(StatusCode.NotFound, "Access to software is forbidden");
-			}
-
 			ITool? tool = await _toolCollection.GetAsync(toolId, _globalConfig.Value);
 			if (tool == null)
 			{
 				throw new StructuredRpcException(StatusCode.NotFound, $"Missing tool {toolId}");
+			}
+
+			ToolConfig toolConfig = tool.Config;
+			if (!toolConfig.Public && !toolConfig.Authorize(ToolAclAction.DownloadTool, context.GetHttpContext().User))
+			{
+				throw new StructuredRpcException(StatusCode.PermissionDenied, $"User does not have DownloadTool entitlement for {toolId}");
 			}
 
 			IToolDeployment? deployment = tool.Deployments.LastOrDefault(x => x.Version.Equals(version, StringComparison.Ordinal));
@@ -491,10 +504,11 @@ namespace Horde.Server.Server
 				throw new StructuredRpcException(StatusCode.NotFound, $"Missing tool version {version}");
 			}
 
-			using Stream stream = await _toolCollection.GetDeploymentZipAsync(tool, deployment, context.CancellationToken);
+			await using Stream stream = await _toolCollection.GetDeploymentZipAsync(tool, deployment, context.CancellationToken);
 			using (IMemoryOwner<byte> buffer = MemoryPool<byte>.Shared.Rent(128 * 1024))
 			{
-				for(; ;)
+				long totalWritten = 0;
+				for (; ; )
 				{
 					int read = await stream.ReadAsync(buffer.Memory, context.CancellationToken);
 					if (read == 0)
@@ -505,7 +519,10 @@ namespace Horde.Server.Server
 					DownloadSoftwareResponse response = new DownloadSoftwareResponse();
 					response.Data = UnsafeByteOperations.UnsafeWrap(buffer.Memory.Slice(0, read));
 					await responseStream.WriteAsync(response);
+
+					totalWritten += response.Data.Length;
 				}
+				_logger.LogInformation("Agent software zip is {Size:n0} bytes", totalWritten);
 			}
 		}
 
@@ -515,32 +532,36 @@ namespace Horde.Server.Server
 		/// <param name="request">Request arguments</param>
 		/// <param name="context">Context for the RPC call</param>
 		/// <returns>An empty response</returns>
-		public override Task<Empty> SendTelemetryEvents(SendTelemetryEventsRequest request, ServerCallContext context)
+		public override async Task<Empty> SendTelemetryEvents(SendTelemetryEventsRequest request, ServerCallContext context)
 		{
-			foreach (WrappedTelemetryEvent e in request.Events)
+			ISession? session = null;
+
+			SessionId? sessionId = context.GetHttpContext().User.GetSessionClaim();
+			if (sessionId != null)
 			{
-				switch (e.EventCase)
-				{
-					case WrappedTelemetryEvent.EventOneofCase.AgentMetadata: _telemetrySink.SendEvent("Agent.Metadata", e.AgentMetadata); break;
-					case WrappedTelemetryEvent.EventOneofCase.Cpu: _telemetrySink.SendEvent("Agent.Cpu", e.Cpu); break;
-					case WrappedTelemetryEvent.EventOneofCase.Mem: _telemetrySink.SendEvent("Agent.Memory", e.Mem); break;
-					default: _logger.LogError("Unhandled wrapped telemetry type {Type}", e.EventCase.ToString()); break;
-				}
+				session = await _agentService.GetSessionAsync(sessionId.Value);
 			}
 
-			return Task.FromResult(new Empty());
+			TelemetryRecordMeta agentMeta = new TelemetryRecordMeta("HordeAgent", session?.Version ?? "(Unknown)", ServerApp.DeploymentEnvironment, sessionId?.ToString() ?? "(Unknown)");
+			foreach (WrappedTelemetryEvent wrappedEvent in request.Events)
+			{
+				OneofDescriptor oneofDescriptor = WrappedTelemetryEvent.Descriptor.Oneofs[0];
+				FieldDescriptor caseDescriptor = oneofDescriptor.Accessor.GetCaseFieldDescriptor(wrappedEvent);
+
+				object wrappedValue = caseDescriptor.Accessor.GetValue(wrappedEvent);
+				_telemetrySink.SendEvent(TelemetryStoreId.Default, agentMeta, wrappedValue);
+			}
+
+			return new Empty();
 		}
 
 		/// <inheritdoc/>
-		public override Task<Empty> WriteOutput(WriteOutputRequest request, ServerCallContext context) => _jobRpcCommon.WriteOutput(request, context);
+		public override Task<UploadArtifactResponse> UploadArtifact(IAsyncStreamReader<UploadArtifactRequest> reader, ServerCallContext context) => _jobRpcCommon.UploadArtifactAsync(reader, context);
 
 		/// <inheritdoc/>
-		public override Task<UploadArtifactResponse> UploadArtifact(IAsyncStreamReader<UploadArtifactRequest> reader, ServerCallContext context) => _jobRpcCommon.UploadArtifact(reader, context);
+		public override Task<UploadTestDataResponse> UploadTestData(IAsyncStreamReader<UploadTestDataRequest> reader, ServerCallContext context) => _jobRpcCommon.UploadTestDataAsync(reader, context);
 
 		/// <inheritdoc/>
-		public override Task<UploadTestDataResponse> UploadTestData(IAsyncStreamReader<UploadTestDataRequest> reader, ServerCallContext context) => _jobRpcCommon.UploadTestData(reader, context);
-
-		/// <inheritdoc/>
-		public override Task<CreateReportResponse> CreateReport(CreateReportRequest request, ServerCallContext context) => _jobRpcCommon.CreateReport(request, context);
+		public override Task<CreateReportResponse> CreateReport(CreateReportRequest request, ServerCallContext context) => _jobRpcCommon.CreateReportAsync(request, context);
 	}
 }

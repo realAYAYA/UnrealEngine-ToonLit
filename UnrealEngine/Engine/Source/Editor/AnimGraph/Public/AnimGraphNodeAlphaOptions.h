@@ -105,7 +105,7 @@ struct FAnimGraphNodeAlphaOptions
 					if (InAnimNode.AlphaInputType != EAnimAlphaInputType::Float)
 					{
 						Pin->BreakAllPinLinks();
-						InNode->PropertyBindings.Remove(Pin->PinName);
+						InNode->RemoveBindings(Pin->PinName);
 					}
 				}
 				else if (Pin->PinName == GET_MEMBER_NAME_STRING_CHECKED(AnimNodeType, bAlphaBoolEnabled))
@@ -113,7 +113,7 @@ struct FAnimGraphNodeAlphaOptions
 					if (InAnimNode.AlphaInputType != EAnimAlphaInputType::Bool)
 					{
 						Pin->BreakAllPinLinks();
-						InNode->PropertyBindings.Remove(Pin->PinName);
+						InNode->RemoveBindings(Pin->PinName);
 					}
 				}
 				else if (Pin->PinName == GET_MEMBER_NAME_STRING_CHECKED(AnimNodeType, AlphaCurveName))
@@ -121,7 +121,7 @@ struct FAnimGraphNodeAlphaOptions
 					if (InAnimNode.AlphaInputType != EAnimAlphaInputType::Curve)
 					{
 						Pin->BreakAllPinLinks();
-						InNode->PropertyBindings.Remove(Pin->PinName);
+						InNode->RemoveBindings(Pin->PinName);
 					}
 				}
 			}

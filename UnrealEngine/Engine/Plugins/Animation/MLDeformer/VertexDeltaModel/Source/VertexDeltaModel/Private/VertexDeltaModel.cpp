@@ -5,6 +5,7 @@
 #include "VertexDeltaModelInstance.h"
 #include "MLDeformerComponent.h"
 #include "MLDeformerAsset.h"
+#include "MLDeformerObjectVersion.h"
 #include "NNE.h"
 #include "NNEModelData.h"
 #include "NNERuntimeRDG.h"
@@ -12,6 +13,7 @@
 #include "Interfaces/IPluginManager.h"
 #include "Misc/Paths.h"
 #include "ShaderCore.h"
+#include "UObject/AssetRegistryTagsContext.h"
 
 #define LOCTEXT_NAMESPACE "VertexDeltaModel"
 
@@ -57,24 +59,29 @@ FString UVertexDeltaModel::GetDefaultDeformerGraphAssetPath() const
 	return FString(TEXT("/VertexDeltaModel/Deformers/DG_VertexDeltaModel.DG_VertexDeltaModel"));
 }
 
-void UVertexDeltaModel::PostLoad()
+bool UVertexDeltaModel::IsTrained() const
 {
-	Super::PostLoad();
+	return NNEModel.Get() != nullptr;
 }
 
-#if WITH_EDITOR
-	void UVertexDeltaModel::UpdateMemoryUsage()
-	{
-		Super::UpdateMemoryUsage();
+void UVertexDeltaModel::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
+{
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
 
-		if (NNEModel)
-		{
-				const uint64 NeuralNetSize = 0;
-				GPUMemUsageInBytes += NeuralNetSize;
-				MemUsageInBytes -= NeuralNetSize;
-				CookedMemUsageInBytes -= NeuralNetSize;
-		}
-	}
-#endif
+void UVertexDeltaModel::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	Super::GetAssetRegistryTags(Context);
+
+	#if WITH_EDITORONLY_DATA
+		Context.AddTag(FAssetRegistryTag("MLDeformer.VertexDeltaModel.NumHiddenLayers", FString::FromInt(NumHiddenLayers), FAssetRegistryTag::TT_Numerical));
+		Context.AddTag(FAssetRegistryTag("MLDeformer.VertexDeltaModel.NumNeuronsPerLayer", FString::FromInt(NumNeuronsPerLayer), FAssetRegistryTag::TT_Numerical));
+		Context.AddTag(FAssetRegistryTag("MLDeformer.VertexDeltaModel.NumIterations", FString::FromInt(NumIterations), FAssetRegistryTag::TT_Numerical));
+		Context.AddTag(FAssetRegistryTag("MLDeformer.VertexDeltaModel.BatchSize", FString::FromInt(BatchSize), FAssetRegistryTag::TT_Numerical));
+		Context.AddTag(FAssetRegistryTag("MLDeformer.VertexDeltaModel.LearningRate", FString::Printf(TEXT("%f"), LearningRate), FAssetRegistryTag::TT_Numerical));
+	#endif
+}
 
 #undef LOCTEXT_NAMESPACE

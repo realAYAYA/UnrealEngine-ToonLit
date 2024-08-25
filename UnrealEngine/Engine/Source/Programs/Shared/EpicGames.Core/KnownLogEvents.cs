@@ -36,6 +36,11 @@ namespace EpicGames.Core
 		public static EventId Compiler { get; } = new EventId(100);
 
 		/// <summary>
+		/// Compiler summary line (eg. 'XYZ failed to compile')
+		/// </summary>
+		public static EventId Compiler_Summary { get; } = new EventId(101);
+
+		/// <summary>
 		/// UHT compiler message
 		/// </summary>
 		public static EventId UHT { get; } = new EventId(110);
@@ -246,6 +251,11 @@ namespace EpicGames.Core
 		public static EventId Systemic_Horde_Compute { get; } = new EventId(732);
 
 		/// <summary>
+		/// HTTP error
+		/// </summary>
+		public static EventId Systemic_Horde_Http { get; } = new EventId(733);
+
+		/// <summary>
 		/// Harmless pdbutil error
 		/// </summary>
 		public static EventId Systemic_PdbUtil { get; } = new EventId(740);
@@ -307,6 +317,16 @@ namespace EpicGames.Core
 		public static EventId Systemic_MissingFileList { get; } = new EventId(767);
 
 		/// <summary>
+		/// Out of disk space
+		/// </summary>
+		public static EventId Systemic_OutOfDiskSpace { get; } = new EventId(768);
+
+		/// <summary>
+		/// Error moving files to cache
+		/// </summary>
+		public static EventId Systemic_ManagedWorkspace { get; } = new EventId(769);
+
+		/// <summary>
 		/// Maximum code for systemic events. Add new events in the 700-799 range.
 		/// </summary>
 		public static EventId Systemic_Max { get; } = new EventId(799);
@@ -320,6 +340,11 @@ namespace EpicGames.Core
 		/// Invalid preflight change
 		/// </summary>
 		public static EventId Horde_InvalidPreflight { get; } = new EventId(1001);
+
+		/// <summary>
+		/// Information about blobs being read
+		/// </summary>
+		public static EventId Horde_BlobRead { get; } = new EventId(1002);
 	}
 #pragma warning restore CA1707 // Identifiers should not contain underscores
 }

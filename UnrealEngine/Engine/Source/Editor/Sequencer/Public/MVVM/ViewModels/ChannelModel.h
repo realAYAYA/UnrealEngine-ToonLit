@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "Channels/MovieSceneChannelEditorData.h"
 #include "Channels/MovieSceneChannelOverrideContainer.h"
 #include "Containers/Array.h"
 #include "Containers/ArrayView.h"
@@ -128,6 +129,8 @@ public:
 	UE_SEQUENCER_DECLARE_CASTABLE(FChannelGroupModel, FViewModel, ITrackAreaExtension, IRecyclableExtension);
 
 	FChannelGroupModel(FName InChannelName, const FText& InDisplayText);
+	FChannelGroupModel(FName InChannelName, const FText& InDisplayText, const FText& InTooltipText);
+	FChannelGroupModel(FName InChannelName, const FText& InDisplayText, FGetMovieSceneTooltipText InGetTooltipTextDelegate);
 	~FChannelGroupModel();
 
 	/** Returns whether any of the channels within this group have any keyframes on them */
@@ -138,6 +141,9 @@ public:
 
 	/** Returns the label for this group */
 	FText GetDisplayText() const { return DisplayText; }
+
+	/** Returns the tooltip for this group */
+	FText GetTooltipText() const;
 
 	/** Gets all the channel models in this group */
 	TArrayView<const TWeakViewModelPtr<FChannelModel>> GetChannels() const;
@@ -179,6 +185,7 @@ public:
 
 	void CreateCurveModels(TArray<TUniquePtr<FCurveModel>>& OutCurveModels);
 	bool HasCurves() const;
+	TOptional<FString> GetUniquePathName() const;
 
 	void BuildChannelOverrideMenu(FMenuBuilder& MenuBuilder);
 
@@ -190,6 +197,7 @@ protected:
 	uint32 ChannelsSerialNumber;
 	FName ChannelName;
 	FText DisplayText;
+	FGetMovieSceneTooltipText GetTooltipTextDelegate;
 };
 
 
@@ -206,7 +214,7 @@ public:
 
 	UE_SEQUENCER_DECLARE_CASTABLE(FChannelGroupOutlinerModel, FChannelGroupModel, FOutlinerItemModelMixin, ICompoundOutlinerExtension, IDeletableExtension);
 
-	FChannelGroupOutlinerModel(FName InChannelName, const FText& InDisplayText);
+	FChannelGroupOutlinerModel(FName InChannelName, const FText& InDisplayText, FGetMovieSceneTooltipText InGetTooltipTextDelegate);
 	~FChannelGroupOutlinerModel();
 
 public:
@@ -218,7 +226,8 @@ public:
 	FOutlinerSizing GetOutlinerSizing() const override;
 	FText GetLabel() const override;
 	FSlateFontInfo GetLabelFont() const override;
-	TSharedRef<SWidget> CreateOutlinerView(const FCreateOutlinerViewParams& InParams) override;
+	FText GetLabelToolTipText() const override;
+	TSharedPtr<SWidget> CreateOutlinerViewForColumn(const FCreateOutlinerViewParams& InParams, const FName& InColumnName) override;
 
 	/*~ ICurveEditorTreeItem */
 	void CreateCurveModels(TArray<TUniquePtr<FCurveModel>>& OutCurveModels) override;
@@ -230,6 +239,7 @@ public:
 	/*~ ICurveEditorTreeItemExtension */
 	bool HasCurves() const override;
 	void BuildContextMenu(FMenuBuilder& MenuBuilder) override;
+	TOptional<FString> GetUniquePathName() const override;
 
 private:
 

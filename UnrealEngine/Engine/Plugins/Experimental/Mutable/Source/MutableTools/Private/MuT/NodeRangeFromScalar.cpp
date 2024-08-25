@@ -16,8 +16,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-    NODE_TYPE NodeRangeFromScalar::Private::s_type =
-            NODE_TYPE( "RangeFromScalar", NodeRange::GetStaticType() );
+    FNodeType NodeRangeFromScalar::Private::s_type =
+            FNodeType( "RangeFromScalar", NodeRange::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -25,43 +25,6 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 
     MUTABLE_IMPLEMENT_NODE( NodeRangeFromScalar, EType::FromScalar, Node, Node::EType::Range)
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-    int NodeRangeFromScalar::GetInputCount() const
-	{
-		return 1;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    Node* NodeRangeFromScalar::GetInputNode( int i ) const
-	{
-		check( i>=0 && i< GetInputCount());
-
-        Node* pResult = nullptr;
-
-		switch (i)
-		{
-        case 0: pResult = m_pD->m_pSize.get(); break;
-		}
-
-		return pResult;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    void NodeRangeFromScalar::SetInputNode( int i, NodePtr pNode )
-	{
-		check( i>=0 && i< GetInputCount());
-
-		switch (i)
-		{
-        case 0: m_pD->m_pSize = dynamic_cast<NodeScalar*>(pNode.get()); break;
-		}
-	}
 
 
 	//---------------------------------------------------------------------------------------------
@@ -81,23 +44,16 @@ namespace mu
 
 
 	//---------------------------------------------------------------------------------------------
-    const char* NodeRangeFromScalar::GetName() const
+    const FString& NodeRangeFromScalar::GetName() const
 	{
-        return m_pD->m_name.c_str();
+        return m_pD->m_name;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
-    void NodeRangeFromScalar::SetName( const char* strName )
+    void NodeRangeFromScalar::SetName( const FString& strName )
 	{
-        if (!strName)
-        {
-            m_pD->m_name.clear();
-        }
-        else
-        {
-            m_pD->m_name = strName;
-        }
+        m_pD->m_name = strName;
 	}
 
 }

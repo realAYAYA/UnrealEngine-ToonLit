@@ -12,9 +12,10 @@ bool FGameplayTagQueryTest_Empty::RunTest(const FString& Parameters)
 {
 	FGameplayTagContainer AllGameplayTags;
 	UGameplayTagsManager::Get().RequestAllGameplayTags(AllGameplayTags, true);
-	if ( !TestTrue(TEXT("GameplayTags are defined for this Project"), !AllGameplayTags.IsEmpty()) )
+	if ( AllGameplayTags.IsEmpty() )
 	{
-		return false;
+		AddInfo(TEXT("GameplayTags are not defined for this Project. Skipping test."));
+		return true;
 	}
 
 	FGameplayTag RandomTag = AllGameplayTags.First();

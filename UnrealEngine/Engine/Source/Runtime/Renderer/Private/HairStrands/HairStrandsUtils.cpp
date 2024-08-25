@@ -3,9 +3,9 @@
 #include "HairStrandsUtils.h"
 #include "LightSceneProxy.h"
 #include "ScenePrivate.h"
-#include "HairStrandsCluster.h"
 #include "Rendering/SkeletalMeshRenderData.h"
 #include "HairStrandsData.h"
+#include "SystemTextures.h"
 
 static float GHairR = 1;
 static float GHairTT = 1;
@@ -121,17 +121,32 @@ float GetDeepShadowRasterizationScale()
 }
 
 FMinHairRadiusAtDepth1 ComputeMinStrandRadiusAtDepth1(
-	const FIntPoint& Resolution,
+	const FIntPoint& InResolution,
 	const float FOV,
 	const uint32 SampleCount,
-	const float OverrideStrandHairRasterizationScale)
+	const float OverrideStrandHairRasterizationScale,
+	const float OrthoWidth)
 {
-	auto InternalMinRadiusAtDepth1 = [Resolution, FOV, SampleCount](float RasterizationScale)
+	FIntPoint Resolution = InResolution;
+	if (GIsHighResScreenshot)
+	{
+		Resolution.X = GScreenshotResolutionX;
+		Resolution.Y = GScreenshotResolutionY;
+	}
+
+	auto InternalMinRadiusAtDepth1 = [Resolution, FOV, SampleCount, OrthoWidth](float RasterizationScale)
 	{
 		const float DiameterToRadius = 0.5f;
-		const float SubPixelScale = SampleCountToSubPixelSize(SampleCount);
-		const float vFOV = FMath::DegreesToRadians(FOV);
-		const float StrandDiameterAtDepth1 = FMath::Tan(vFOV * 0.5f) / (0.5f * Resolution.Y) * SubPixelScale;
+		float StrandDiameterAtDepth1 = SampleCountToSubPixelSize(SampleCount); //SubPixelScale
+		if (OrthoWidth >= 1.0f)
+		{
+			StrandDiameterAtDepth1 *= FMath::Clamp(Resolution.X / OrthoWidth, 0.0f, 1.0f);
+		}
+		else
+		{
+			const float vFOV = FMath::DegreesToRadians(FOV);
+			StrandDiameterAtDepth1 *= FMath::Tan(vFOV * 0.5f) / (0.5f * Resolution.Y);
+		}
 		return DiameterToRadius * RasterizationScale * StrandDiameterAtDepth1;
 	};
 
@@ -192,7 +207,7 @@ void ComputeTranslatedWorldToLightClip(
 		FReversedZPerspectiveMatrix ProjMatrix(HalfFov, 1, 1, MinZ, MaxZ);
 		FLookAtMatrix TranslatedWorldToLight((FVector)TranslatedLightPosition, TranslatedSphereBound.Center, FVector(0, 0, 1));
 		OutTranslatedWorldToClipTransform = TranslatedWorldToLight * ProjMatrix;
-		OutMinStrandRadiusAtDepth1 = ComputeMinStrandRadiusAtDepth1(ShadowResolution, 2 * HalfFov, 1, StrandHairRasterizationScale);
+		OutMinStrandRadiusAtDepth1 = ComputeMinStrandRadiusAtDepth1(ShadowResolution, 2 * HalfFov, 1, StrandHairRasterizationScale); //Light propagation so use perspective not ortho
 	}
 	else if (LightType == LightType_Rect)
 	{
@@ -203,7 +218,7 @@ void ComputeTranslatedWorldToLightClip(
 		FReversedZPerspectiveMatrix ProjMatrix(HalfFov, 1, 1, MinZ, MaxZ);
 		FLookAtMatrix TranslatedWorldToLight((FVector)TranslatedLightPosition, TranslatedSphereBound.Center, FVector(0, 0, 1));
 		OutTranslatedWorldToClipTransform = TranslatedWorldToLight * ProjMatrix;
-		OutMinStrandRadiusAtDepth1 = ComputeMinStrandRadiusAtDepth1(ShadowResolution, 2 * HalfFov, 1, StrandHairRasterizationScale);
+		OutMinStrandRadiusAtDepth1 = ComputeMinStrandRadiusAtDepth1(ShadowResolution, 2 * HalfFov, 1, StrandHairRasterizationScale); //Light propagation so use perspective not ortho
 	}
 }
 
@@ -345,4 +360,201 @@ uint32 PackHairRenderInfoBits(
 	BitField |= bIsOrtho ? 0x1 : 0;
 	BitField |= bIsGPUDriven ? 0x2 : 0;
 	return BitField;
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
+
+class FHairResourceTransitionPass : public FGlobalShader
+{
+public:
+	static const int32 MaxBufferCount = 16;
+
+private:
+	DECLARE_GLOBAL_SHADER(FHairResourceTransitionPass);
+	SHADER_USE_PARAMETER_STRUCT(FHairResourceTransitionPass, FGlobalShader);
+
+	class FBufferType : SHADER_PERMUTATION_INT("PERMUTATION_BUFFER_TYPE", 5);
+	using FPermutationDomain = TShaderPermutationDomain<FBufferType>;
+
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+		SHADER_PARAMETER(uint32, DummyValue)
+		SHADER_PARAMETER_RDG_BUFFER_SRV_ARRAY(Buffer<uint>, VertexUIntBuffers, [MaxBufferCount])
+		SHADER_PARAMETER_RDG_BUFFER_SRV_ARRAY(Buffer<uint4>, VertexUInt4Buffers, [MaxBufferCount])
+		SHADER_PARAMETER_RDG_BUFFER_SRV_ARRAY(Buffer<float4>, VertexFloat4Buffers, [MaxBufferCount])
+		SHADER_PARAMETER_RDG_BUFFER_SRV_ARRAY(StructuredBuffer<float4>, StructuredBuffers, [MaxBufferCount])
+		SHADER_PARAMETER_RDG_BUFFER_SRV_ARRAY(ByteAddressBuffer, ByteAddressBuffers, [MaxBufferCount])
+		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint>, DummyOutput)
+	END_SHADER_PARAMETER_STRUCT()
+
+public:
+	// 0 : StructuredBuffer<float4>
+	// 1 : Buffer<uint>
+	// 2 : Buffer<uint4>
+	// 3 : Buffer<float4>
+	// 4 : ByteAdressBuffer
+	static const int32 PermutationCount = 5;
+	static int32 GetPermutationIndex(bool bStructured, bool bByteAddressBuffer, bool bInteger, int32 NumComponents)
+	{
+		if (bByteAddressBuffer)
+		{
+			return 4;
+		}
+		else if (bStructured)
+		{
+			return 0;
+		}
+		else if (bInteger)
+		{
+			return (NumComponents == 1) ? 1 : 2;
+		}
+		else
+		{
+			return 3;
+		}
+	}
+
+	static bool IsSupported(EShaderPlatform InPlatform)
+	{
+		return IsHairStrandsSupported(EHairStrandsShaderType::Strands, InPlatform);
+	}
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+	{
+		return IsSupported(Parameters.Platform);
+	}
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
+	{
+		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		OutEnvironment.SetDefine(TEXT("SHADER_RESOURCE_TRANSITION"), 1);
+	}
+};
+
+IMPLEMENT_GLOBAL_SHADER(FHairResourceTransitionPass, "/Engine/Private/HairStrands/HairStrandsMesh.usf", "MainCS", SF_Compute);
+
+void AddTransitionPass(
+	FRDGBuilder& GraphBuilder,
+	FGlobalShaderMap* ShaderMap,
+	EShaderPlatform InPlatform,
+	const TArray<FRDGBufferSRVRef>& Transitions)
+{
+	const int32 ResourceCount = Transitions.Num();
+	if (ResourceCount == 0 || !FHairResourceTransitionPass::IsSupported(InPlatform))
+	{
+		return;
+	}
+
+	FRDGBufferRef DummyOutput = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateStructuredDesc(4, 1), TEXT("DummyOutput"));
+	FRDGBufferUAVRef DummyOutputUAV = GraphBuilder.CreateUAV(DummyOutput, PF_R32_UINT, ERDGUnorderedAccessViewFlags::SkipBarrier);
+
+	TStaticArray<FRDGBufferSRVRef, FHairResourceTransitionPass::MaxBufferCount> SortedTransitions[FHairResourceTransitionPass::PermutationCount];
+
+	FRDGBufferSRVRef DummyInputs[FHairResourceTransitionPass::PermutationCount];
+	DummyInputs[0] = GraphBuilder.CreateSRV(GSystemTextures.GetDefaultStructuredBuffer(GraphBuilder, 16u));
+	DummyInputs[1] = GraphBuilder.CreateSRV(GSystemTextures.GetDefaultBuffer(GraphBuilder, 4u, 1u), PF_R32_UINT);
+	DummyInputs[2] = GraphBuilder.CreateSRV(GSystemTextures.GetDefaultBuffer(GraphBuilder, 16u, 1u), PF_R32G32B32A32_UINT);
+	DummyInputs[3] = GraphBuilder.CreateSRV(GSystemTextures.GetDefaultBuffer(GraphBuilder, 16u, 1u), PF_A32B32G32R32F);
+	DummyInputs[4] = GraphBuilder.CreateSRV(GSystemTextures.GetDefaultByteAddressBuffer(GraphBuilder, 4u));
+
+	int32 ArrayCounts[FHairResourceTransitionPass::PermutationCount];
+	ArrayCounts[0] = 0;
+	ArrayCounts[1] = 0;
+	ArrayCounts[2] = 0;
+	ArrayCounts[3] = 0;
+	ArrayCounts[4] = 0;
+
+	auto FlushArray = [&](int32 PermutationIndex, int32 TransitionCount)
+	{
+		FHairResourceTransitionPass::FParameters* PassParameters = GraphBuilder.AllocParameters<FHairResourceTransitionPass::FParameters>();
+		PassParameters->DummyValue = 0;
+		PassParameters->DummyOutput = DummyOutputUAV;
+
+		TShaderResourceParameterArray<FRDGBufferSRV*, FHairResourceTransitionPass::MaxBufferCount>* ParamArray = nullptr;
+		switch (PermutationIndex)
+		{
+		case 0: ParamArray = &PassParameters->StructuredBuffers; break;
+		case 1: ParamArray = &PassParameters->VertexUIntBuffers; break;
+		case 2: ParamArray = &PassParameters->VertexUInt4Buffers; break;
+		case 3: ParamArray = &PassParameters->VertexFloat4Buffers; break;
+		case 4: ParamArray = &PassParameters->ByteAddressBuffers; break;
+		default: checkNoEntry();
+		};
+
+		for (int32 ResourceIndex = 0; ResourceIndex < TransitionCount; ++ResourceIndex)
+		{
+			(*ParamArray)[ResourceIndex] = SortedTransitions[PermutationIndex][ResourceIndex];
+		}
+
+		for (int32 ResourceIndex = TransitionCount; ResourceIndex < FHairResourceTransitionPass::MaxBufferCount; ++ResourceIndex)
+		{
+			(*ParamArray)[ResourceIndex] = DummyInputs[PermutationIndex];
+		}
+
+		FHairResourceTransitionPass::FPermutationDomain PermutationVector;
+		PermutationVector.Set<FHairResourceTransitionPass::FBufferType>(PermutationIndex);
+		TShaderMapRef<FHairResourceTransitionPass> ComputeShader(ShaderMap, PermutationVector);
+
+		FComputeShaderUtils::AddPass(
+			GraphBuilder,
+			RDG_EVENT_NAME("HairStrands::ResourceTransitions(P=%d)", PermutationIndex),
+			ERDGPassFlags::Compute | ERDGPassFlags::NeverCull,
+			ComputeShader,
+			PassParameters,
+			FIntVector(1, 1, 1));
+
+		ArrayCounts[PermutationIndex] = 0;
+	};
+
+	// Sort the transitions into each of the arrays based on the shader permutation required to transition them
+	for (int32 TransitionIndex = 0; TransitionIndex < Transitions.Num(); ++TransitionIndex)
+	{
+		const bool bStructuredBuffer = EnumHasAnyFlags(Transitions[TransitionIndex]->Desc.Buffer->Desc.Usage, EBufferUsageFlags::StructuredBuffer);
+		const bool bByteAddressBuffer = EnumHasAnyFlags(Transitions[TransitionIndex]->Desc.Buffer->Desc.Usage, EBufferUsageFlags::ByteAddressBuffer);
+		const EPixelFormat PixelFormat = Transitions[TransitionIndex]->Desc.Format;
+		const bool bIsIntegerFormat = IsInteger(PixelFormat);
+		const int32 NumComponents = GPixelFormats[PixelFormat].NumComponents;
+
+		const int32 PermutationIndex = FHairResourceTransitionPass::GetPermutationIndex(bStructuredBuffer, bByteAddressBuffer, bIsIntegerFormat, NumComponents);
+
+		SortedTransitions[PermutationIndex][ArrayCounts[PermutationIndex]++] = Transitions[TransitionIndex];
+
+		if (ArrayCounts[PermutationIndex] >= FHairResourceTransitionPass::MaxBufferCount)
+		{
+			FlushArray(PermutationIndex, FHairResourceTransitionPass::MaxBufferCount);
+		}
+	}
+
+	for (int32 PermutationIndex = 0; PermutationIndex < FHairResourceTransitionPass::PermutationCount; ++PermutationIndex)
+	{
+		if (ArrayCounts[PermutationIndex] > 0)
+		{
+			FlushArray(PermutationIndex, ArrayCounts[PermutationIndex]);
+		}
+	}
+}
+
+FPointPerCurveDispatchInfo GetPointPerCurveDispatchInfo(uint32 InAssetMaxPointPerCurve, uint32 InAssetCurveCount, uint32 InGroupSize)
+{
+	FPointPerCurveDispatchInfo Out;
+	Out.SourcePoinPerCurve = InAssetMaxPointPerCurve;
+	Out.SourceCurveCount = InAssetCurveCount;
+	Out.GroupSize = InGroupSize;
+
+	// Compute the rounded point-per-curve count, based on the asset and the shader's requirement
+	Out.PointPerCurve = FMath::Clamp(uint32(FMath::Pow(2u, FMath::RoundFromZero(FMath::Log2(float(InAssetMaxPointPerCurve))))), 4u, Out.GroupSize);
+	check(FMath::IsPowerOfTwo(Out.PointPerCurve));
+
+	// Compute the number of curve per group
+	Out.CurvePerGroup = Out.GroupSize / Out.PointPerCurve;
+
+	// Compute dispatch count
+	const uint32 LinearGroupCount = FMath::DivideAndRoundUp(Out.SourceCurveCount, Out.CurvePerGroup);
+	Out.DispatchCount = FIntVector(LinearGroupCount, 1, 1);
+	if (Out.DispatchCount.X > 0xFFFFu)
+	{
+		Out.DispatchCount.X = 64;
+		Out.DispatchCount.Y = FMath::DivideAndRoundUp(LinearGroupCount, uint32(Out.DispatchCount.X));
+	}
+	check(Out.DispatchCount.X <= 0xFFFFu);
+	check(Out.DispatchCount.Y <= 0xFFFFu);
+
+	return Out;
 }

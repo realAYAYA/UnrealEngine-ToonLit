@@ -279,7 +279,7 @@ class TPlane final : public FImplicitObject
 		return ImplicitObjectType::Plane;
 	}
 
-	FReal GetRadius() const
+	virtual FReal GetRadius() const override
 	{
 		return 0.0f;
 	}

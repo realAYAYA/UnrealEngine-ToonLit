@@ -62,40 +62,37 @@ bool UProceduralFoliageTile::HandleOverlaps(FProceduralFoliageInstance* Instance
 FProceduralFoliageInstance* UProceduralFoliageTile::NewSeed(const FVector& Location, float Scale, const UFoliageType* Type, float InAge, bool bBlocker)
 {
 	const float InitRadius = Type->GetMaxRadius() * Scale;
+
+	FProceduralFoliageInstance* NewInst = new FProceduralFoliageInstance();
+	NewInst->Location = Location;
+
+	// make a new local random stream to avoid changes to instance randomness changing the position of all other procedural instances
+	FRandomStream LocalStream = RandomStream;
+	RandomStream.GetUnsignedInt(); // advance the parent stream by one
+
+	FRotator Rotation = {0,0,0};
+	Rotation.Yaw   = LocalStream.FRandRange(0, Type->RandomYaw ? 360 : 0);
+	Rotation.Pitch = LocalStream.FRandRange(0, Type->RandomPitchAngle);
+	NewInst->Rotation = FQuat(Rotation);
+	NewInst->Age = InAge;
+	NewInst->Type = Type;
+	NewInst->Normal = FVector(0, 0, 1);
+	NewInst->Scale = Scale;
+	NewInst->bBlocker = bBlocker;
+
+	// Don't add the seed if outside the quadtree TreeBox...
+	bool bSucceedsAgainstAABBCheck = Broadphase.TestAgainstAABB(NewInst);
+	if (bSucceedsAgainstAABBCheck)
 	{
-		FProceduralFoliageInstance* NewInst = new FProceduralFoliageInstance();
-		NewInst->Location = Location;
-
-		// make a new local random stream to avoid changes to instance randomness changing the position of all other procedural instances
-		FRandomStream LocalStream = RandomStream;
-		RandomStream.GetUnsignedInt(); // advance the parent stream by one
-
-		FRotator Rotation = {0,0,0};
-		Rotation.Yaw   = LocalStream.FRandRange(0, Type->RandomYaw ? 360 : 0);
-		Rotation.Pitch = LocalStream.FRandRange(0, Type->RandomPitchAngle);
-		NewInst->Rotation = FQuat(Rotation);
-		NewInst->Age = InAge;
-		NewInst->Type = Type;
-		NewInst->Normal = FVector(0, 0, 1);
-		NewInst->Scale = Scale;
-		NewInst->bBlocker = bBlocker;
-
-		// Don't add the seed if outside the quadtree TreeBox...
-		bool bSucceedsAgainstAABBCheck = Broadphase.TestAgainstAABB(NewInst);
-		if (bSucceedsAgainstAABBCheck)
-		{
-			// Add the seed if possible
-			Broadphase.Insert(NewInst);
-			const bool bSurvived = HandleOverlaps(NewInst);
-			return bSurvived ? NewInst : nullptr;
-		}
-		else
-		{
-			return nullptr;
-		}
+		// Add the seed if possible
+		Broadphase.Insert(NewInst);
+		const bool bSurvived = HandleOverlaps(NewInst);
+		return bSurvived ? NewInst : nullptr;
 	}
-
-	return nullptr;
+	else
+	{
+		return nullptr;
+	}
 }
 
 float GetSeedMinDistance(const FProceduralFoliageInstance* Instance, const float NewInstanceAge, const int32 SimulationStep)

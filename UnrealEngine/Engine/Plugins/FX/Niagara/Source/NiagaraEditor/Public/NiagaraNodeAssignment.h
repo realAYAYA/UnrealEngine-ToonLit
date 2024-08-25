@@ -48,7 +48,7 @@ public:
 	virtual bool AllowDynamicPins() const override { return true; }
 	NIAGARAEDITOR_API virtual bool RefreshFromExternalChanges() override;
 	NIAGARAEDITOR_API virtual void BuildParameterMapHistory(FNiagaraParameterMapHistoryBuilder& OutHistory, bool bRecursive = true, bool bFilterForCompilation = true) const override;
-	NIAGARAEDITOR_API virtual void GatherExternalDependencyData(ENiagaraScriptUsage InUsage, const FGuid& InUsageId, TArray<FNiagaraCompileHash>& InReferencedCompileHashes, TArray<FString>& InReferencedObjs) const override;
+	NIAGARAEDITOR_API virtual void GatherExternalDependencyData(ENiagaraScriptUsage InUsage, const FGuid& InUsageId, FNiagaraScriptHashCollector& HashCollector) const override;
 
 	NIAGARAEDITOR_API void AddParameter(FNiagaraVariable InVar, FString InDefaultValue);
 	NIAGARAEDITOR_API void RemoveParameter(const FNiagaraVariable& InVar);

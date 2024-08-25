@@ -2,12 +2,12 @@
 
 #pragma once
 
-#ifndef STRATA_ENABLED
-#error "This header should only be included when Strata is enabled."
+#ifndef SUBSTRATE_ENABLED
+#error "This header should only be included when Substrate is enabled."
 #endif
 
-#ifndef STRATA_SHEEN_QUALITY
-#define STRATA_SHEEN_QUALITY 0
+#ifndef SUBSTRATE_SHEEN_QUALITY
+#define SUBSTRATE_SHEEN_QUALITY 0
 #endif
 
 #include "PathTracingSubstrateCommon.ush"
@@ -47,13 +47,13 @@ struct FSubstrateSingleSlabData
 		F0 = Payload.SpecularColor;
 		F90 = Payload.SpecularEdgeColor * F0RGBToMicroOcclusion(F0);
 
-		FuzzRoughness = MakeRoughnessSafe(Payload.FuzzRoughness, STRATA_MIN_FUZZ_ROUGHNESS);
+		FuzzRoughness = MakeRoughnessSafe(Payload.FuzzRoughness, SUBSTRATE_MIN_FUZZ_ROUGHNESS);
 
 		const float NoV = saturate(V.z);
-		// STRATA_TODO: Add support for F82 model?
+		// SUBSTRATE_TODO: Add support for F82 model?
 		Spec0 = ComputeGGXSpecEnergyTermsRGB(Payload.RoughnessData.x, NoV, F0, F90);
 		Spec1 = ComputeGGXSpecEnergyTermsRGB(Payload.RoughnessData.y, NoV, F0, F90);
-		#if STRATA_SHEEN_QUALITY == 1
+		#if SUBSTRATE_SHEEN_QUALITY == 1
 		{
 			Fuzz.E = SheenLTC_DirectionalAlbedo(NoV, FuzzRoughness, View.SheenLTCTexture, View.SheenLTCSampler);
 			Fuzz.W = 1;
@@ -170,8 +170,8 @@ FMaterialSample Substrate_SampleMaterial(
 		SubstrateGlint(Payload, V, L, Data.Alpha0, GGXResult0.y /*Pdf*/, GGXResult0.x /*Weight*/);
 		
 		const float3 FTint = SubstrateSpecularTint(Payload, NoV, NoL, VoH, NoH);
-#if STRATA_FRESNEL_F82
-		// STRATA_TODO: Need to tune the logic for specular micro-occlusion ...
+#if SUBSTRATE_FRESNEL_F82
+		// SUBSTRATE_TODO: Need to tune the logic for specular micro-occlusion ...
 		const float3 F = Data.FuzzAttenuation * F_AdobeF82(Data.F0, Data.F90, VoH) * FTint;
 #else
 		const float3 F = Data.FuzzAttenuation * F_Schlick(Data.F0, Data.F90, VoH) * FTint;
@@ -188,7 +188,7 @@ FMaterialSample Substrate_SampleMaterial(
 	{
 		// Cloth Lobe
 		float3 ClothWeight = 0;
-		#if STRATA_SHEEN_QUALITY == 1
+		#if SUBSTRATE_SHEEN_QUALITY == 1
 		{
 			// Disney's Cloth Lobe
 			float FuzzDirectionalAlbedo = 1;
@@ -248,7 +248,7 @@ FMaterialEval Substrate_EvalMaterial(
 		float2 GGXResult0 = GGXEvalReflection(L, V, H, Data.Alpha0);
 		const float2 GGXResult1 = GGXEvalReflection(L, V, H, Data.Alpha1);
 		const float3 FTint = SubstrateSpecularTint(Payload, NoV, NoL, VoH, NoH);
-#if STRATA_FRESNEL_F82
+#if SUBSTRATE_FRESNEL_F82
 		const float3 F = Data.FuzzAttenuation * F_AdobeF82(Data.F0, Data.F90, VoH) * FTint;
 #else
 		const float3 F = Data.FuzzAttenuation * F_Schlick(Data.F0, Data.F90, VoH) * FTint;
@@ -261,7 +261,7 @@ FMaterialEval Substrate_EvalMaterial(
 	{
 		// Cloth Lobe
 		float3 ClothWeight = 0;
-		#if STRATA_SHEEN_QUALITY == 1
+		#if SUBSTRATE_SHEEN_QUALITY == 1
 		{
 			float FuzzDirectionalAlbedo = 1;
 			float3 FuzzSpecularPathValueNoL = Payload.FuzzColor * SheenLTC_Eval(V_World, L_World, N_World, NoV, Data.FuzzRoughness, View.SheenLTCTexture, View.SheenLTCSampler, FuzzDirectionalAlbedo);
@@ -314,10 +314,10 @@ struct FSubstrateClearCoatData
 		F0 = Payload.SpecularColor;
 		F90 = Payload.SpecularEdgeColor * F0RGBToMicroOcclusion(F0);
 
-		FuzzRoughness = MakeRoughnessSafe(Payload.FuzzRoughness, STRATA_MIN_FUZZ_ROUGHNESS);
+		FuzzRoughness = MakeRoughnessSafe(Payload.FuzzRoughness, SUBSTRATE_MIN_FUZZ_ROUGHNESS);
 
 		const float NoV = saturate(V.z);
-		// STRATA_TODO: Add support for F82 model?
+		// SUBSTRATE_TODO: Add support for F82 model?
 		BaseSpec = ComputeGGXSpecEnergyTermsRGB(Payload.RoughnessData.x, NoV, F0, F90);
 		CoatSpec = ComputeGGXSpecEnergyTermsA(Payload.RoughnessData.y, NoV, CLEAR_COAT_F0);
 		Fuzz = ComputeClothEnergyTermsA(FuzzRoughness, NoV);
@@ -430,8 +430,8 @@ FMaterialSample SubstrateClearCoat_SampleMaterial(
 	else if (bSampledSpecular)
 	{
 		const float3 FTint = SubstrateSpecularTint(Payload, NoV, NoL, VoH, NoH);
-#if STRATA_FRESNEL_F82
-		// STRATA_TODO: Need to tune the logic for specular micro-occlusion ...
+#if SUBSTRATE_FRESNEL_F82
+		// SUBSTRATE_TODO: Need to tune the logic for specular micro-occlusion ...
 		const float3 F = Data.FuzzAttenuation * F_AdobeF82(Data.F0, Data.F90, VoH) * FTint;
 #else
 		const float3 FBase = Data.FuzzAttenuation * F_Schlick(Data.F0, Data.F90, VoH) * FTint;
@@ -504,8 +504,8 @@ FMaterialEval SubstrateClearCoat_EvalMaterial(
 		const float CoatSpecPdf = CoatGGXResult.y;
 
 		const float3 FTint = SubstrateSpecularTint(Payload, NoV, NoL, VoH, NoH);
-#if STRATA_FRESNEL_F82
-		// STRATA_TODO: Need to tune the logic for specular micro-occlusion ...
+#if SUBSTRATE_FRESNEL_F82
+		// SUBSTRATE_TODO: Need to tune the logic for specular micro-occlusion ...
 		const float3 F = Data.FuzzAttenuation * F_AdobeF82(Data.F0, Data.F90, VoH) * FTint;
 #else
 		const float3 FBase = Data.FuzzAttenuation * F_Schlick(Data.F0, Data.F90, VoH) * FTint;

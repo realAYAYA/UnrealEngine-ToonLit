@@ -2,353 +2,303 @@
 
 #pragma once
 
-#include "LearningArray.h"
-#include "LearningAgentsDebug.h"
-
-#include "Templates/SharedPointer.h"
-#include "UObject/Object.h"
+#include "Kismet/BlueprintFunctionLibrary.h"
 
 #include "LearningAgentsRewards.generated.h"
 
-namespace UE::Learning
-{
-	struct FRewardObject;
-	struct FFloatReward;
-	struct FConditionalConstantReward;
-	struct FScalarVelocityReward;
-	struct FLocalDirectionalVelocityReward;
-	struct FPlanarPositionDifferencePenalty;
-	struct FPositionDifferencePenalty;
-	struct FPositionArraySimilarityReward;
-}
+class ULearningAgentsManagerListener;
+class USplineComponent;
 
-class ULearningAgentsTrainer;
-
-// For functions in this file, we are favoring having more verbose names such as "AddFloatReward" vs simply "Add" in 
-// order to keep it easy to find the correct function in blueprints.
-
-//------------------------------------------------------------------
-
-/**
- * Base class for all rewards/penalties. Rewards are used during reinforcement learning to encourage/discourage
- * certain behaviors from occurring.
- */
-UCLASS(Abstract, BlueprintType)
-class LEARNINGAGENTSTRAINING_API ULearningAgentsReward : public UObject
-{
-	GENERATED_BODY()
-
-public:
-
-	/** Reference to the Trainer this reward is associated with. */
-	UPROPERTY(VisibleAnywhere, Transient, Category = "LearningAgents")
-	TObjectPtr<ULearningAgentsTrainer> AgentTrainer;
-
-public:
-
-	/** Initialize the internal state for a given maximum number of agents */
-	void Init(const int32 MaxAgentNum);
-
-	/**
-	 * Called whenever agents are added to the associated ULearningAgentsTrainer object.
-	 * @param AgentIds Array of agent ids which have been added
-	 */
-	virtual void OnAgentsAdded(const TArray<int32>& AgentIds);
-
-	/**
-	 * Called whenever agents are removed from the associated ULearningAgentsTrainer object.
-	 * @param AgentIds Array of agent ids which have been removed
-	 */
-	virtual void OnAgentsRemoved(const TArray<int32>& AgentIds);
-
-	/**
-	 * Called whenever agents are reset on the associated ULearningAgentsTrainer object.
-	 * @param AgentIds Array of agent ids which have been reset
-	 */
-	virtual void OnAgentsReset(const TArray<int32>& AgentIds);
-
-	/** Get the number of times a reward has been set for the given agent id. */
-	uint64 GetAgentIteration(const int32 AgentId) const;
-
-public:
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Color used to draw this reward in the visual log */
-	FLinearColor VisualLogColor = FColor::Green;
-
-	/** Describes this reward to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const {}
-#endif
-
-protected:
-
-	/** Number of times this reward has been set for all agents */
-	TLearningArray<1, uint64, TInlineAllocator<32>> AgentIteration;
-};
-
-//------------------------------------------------------------------
-
-/** A simple float reward. Used as a catch-all for situations where a more type-specific reward does not exist yet. */
-UCLASS()
-class LEARNINGAGENTSTRAINING_API UFloatReward : public ULearningAgentsReward
+UCLASS(BlueprintType)
+class LEARNINGAGENTSTRAINING_API ULearningAgentsRewards : public UBlueprintFunctionLibrary
 {
 	GENERATED_BODY()
 
 public:
 
 	/**
-	 * Adds a new float reward to the given trainer. Call during ULearningAgentsTrainer::SetupRewards event.
-	 * @param InAgentTrainer The trainer to add this reward to.
-	 * @param Name The name of this new reward. Used for debugging.
-	 * @param Weight Multiplier for this reward when being summed up for the total reward.
-	 * @return The newly created reward.
+	 * Make a reward from a float value.
+	 *
+	 * @param RewardValue The float value used to create the reward.
+	 * @param RewardScale The scale of the reward. Use a negative scale to create a penalty.
+	 * @param Tag The tag for the reward. Used for debugging.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this reward. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this reward.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The resulting reward value.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InAgentTrainer"))
-	static UFloatReward* AddFloatReward(
-		ULearningAgentsTrainer* InAgentTrainer,
-		const FName Name = NAME_None,
-		const float Weight = 1.0f);
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2, DefaultToSelf = "VisualLoggerListener"))
+	static float MakeReward(
+		const float RewardValue, 
+		const float RewardScale = 1.0f, 
+		const FName Tag = TEXT("Reward"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Green);
 
 	/**
-	 * Sets the data for this reward. Call during ULearningAgentsTrainer::SetRewards event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Reward The value currently being rewarded.
+	 * Make a reward which is equal to RewardScale when bCondition is true, otherwise returns zero.
+	 *
+	 * @param bCondition The condition under which to create a reward.
+	 * @param RewardScale The scale of the reward. Use a negative scale to create a penalty.
+	 * @param Tag The tag for the reward. Used for debugging.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this reward. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this reward.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The resulting reward value.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetFloatReward(const int32 AgentId, const float Reward);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this reward to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FFloatReward> RewardObject;
-};
-
-//------------------------------------------------------------------
-
-/** A simple conditional reward that gives some constant reward value when a condition is true. */
-UCLASS()
-class LEARNINGAGENTSTRAINING_API UConditionalReward : public ULearningAgentsReward
-{
-	GENERATED_BODY()
-
-public:
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 2, DefaultToSelf = "VisualLoggerListener"))
+	static float MakeRewardOnCondition(
+		const bool bCondition, 
+		const float RewardScale = 1.0f,
+		const FName Tag = TEXT("ConditionReward"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Green);
 
 	/**
-	 * Adds a new conditional reward to the given trainer. Call during ULearningAgentsTrainer::SetupRewards event.
-	 * @param InAgentTrainer The trainer to add this reward to.
-	 * @param Name The name of this new reward. Used for debugging.
-	 * @param Value The amount of reward to give the agent when the provided condition is true.
-	 * @return The newly created reward.
+	 * Make a reward when the distance between two locations is below a threshold, otherwise returns zero.
+	 *
+	 * @param LocationA The first location.
+	 * @param LocationB The second location.
+	 * @param DistanceThreshold The distance threshold.
+	 * @param RewardScale The scale of the reward. Use a negative scale to create a penalty.
+	 * @param Tag The tag for the reward. Used for debugging.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this reward. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this reward.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The resulting reward value.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InAgentTrainer"))
-	static UConditionalReward* AddConditionalReward(
-		ULearningAgentsTrainer* InAgentTrainer,
-		const FName Name = NAME_None,
-		const float Value = 1.0f);
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 4, DefaultToSelf = "VisualLoggerListener"))
+	static float MakeRewardOnLocationDifferenceBelowThreshold(
+		const FVector LocationA, 
+		const FVector LocationB, 
+		const float DistanceThreshold = 100.0f, 
+		const float RewardScale = 1.0f,
+		const FName Tag = TEXT("LocationDifferenceBelowThresholdReward"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Green);
 
 	/**
-	 * Sets if the agent should receive a reward. Call during ULearningAgentsTrainer::SetRewards event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param bCondition If the agent should receive a reward this iteration.
+	 * Make a reward when the distance between two locations is above a threshold, otherwise returns zero.
+	 *
+	 * @param LocationA The first location.
+	 * @param LocationB The second location.
+	 * @param DistanceThreshold The distance threshold.
+	 * @param RewardScale The scale of the reward. Use a negative scale to create a penalty.
+	 * @param Tag The tag for the reward. Used for debugging.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this reward. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this reward.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The resulting reward value.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetConditionalReward(const int32 AgentId, const bool bCondition);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this reward to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FConditionalConstantReward> RewardObject;
-};
-
-//------------------------------------------------------------------
-
-/** A reward for maximizing speed. */
-UCLASS()
-class LEARNINGAGENTSTRAINING_API UScalarVelocityReward : public ULearningAgentsReward
-{
-	GENERATED_BODY()
-
-public:
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 4, DefaultToSelf = "VisualLoggerListener"))
+	static float MakeRewardOnLocationDifferenceAboveThreshold(
+		const FVector LocationA,
+		const FVector LocationB,
+		const float DistanceThreshold = 100.0f,
+		const float RewardScale = 1.0f,
+		const FName Tag = TEXT("LocationDifferenceAboveThresholdReward"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Green);
 
 	/**
-	 * Adds a new scalar velocity reward to the given trainer. Call during ULearningAgentsTrainer::SetupRewards event.
-	 * @param InAgentTrainer The trainer to add this reward to.
-	 * @param Name The name of this new reward. Used for debugging.
-	 * @param Weight Multiplier for this reward when being summed up for the total reward.
-	 * @param Scale Used to normalize the data for the reward.
-	 * @return The newly created reward.
+	 * Make a reward based on how similar two locations are.
+	 *
+	 * @param LocationA The first location.
+	 * @param LocationB The second location.
+	 * @param LocationScale The expected scale for the distance between locations.
+	 * @param RewardScale The scale of the reward. Use a negative scale to create a penalty.
+	 * @param Tag The tag for the reward. Used for debugging.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this reward. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this reward.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The resulting reward value.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InAgentTrainer"))
-	static UScalarVelocityReward* AddScalarVelocityReward(
-		ULearningAgentsTrainer* InAgentTrainer,
-		const FName Name = NAME_None,
-		const float Weight = 1.0f,
-		const float Scale = 200.0f);
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 4, DefaultToSelf = "VisualLoggerListener"))
+	static float MakeRewardFromLocationSimilarity(
+		const FVector LocationA, 
+		const FVector LocationB, 
+		const float LocationScale = 100.0f, 
+		const float RewardScale = 1.0f,
+		const FName Tag = TEXT("LocationSimilarityReward"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Green);
 
 	/**
-	 * Sets the data for this reward. Call during ULearningAgentsTrainer::SetRewards event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Velocity The current scalar velocity.
+	 * Make a reward based on how similar two rotations are.
+	 *
+	 * @param RotationA The first rotation.
+	 * @param RotationB The second rotation.
+	 * @param RewardScale The scale of the reward. Use a negative scale to create a penalty.
+	 * @param Tag The tag for the reward. Used for debugging.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this reward. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this reward.
+	 * @param VisualLoggerRotationLocationA A location for the visual logger to display the first rotation in the world.
+	 * @param VisualLoggerRotationLocationB A location for the visual logger to display the second rotation in the world.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The resulting reward value.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetScalarVelocityReward(const int32 AgentId, const float Velocity);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this reward to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FScalarVelocityReward> RewardObject;
-};
-
-//------------------------------------------------------------------
-
-/** A reward for maximizing velocity along a given local axis. */
-UCLASS()
-class LEARNINGAGENTSTRAINING_API ULocalDirectionalVelocityReward : public ULearningAgentsReward
-{
-	GENERATED_BODY()
-
-public:
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3, DefaultToSelf = "VisualLoggerListener"))
+	static float MakeRewardFromRotationSimilarity(
+		const FRotator RotationA, 
+		const FRotator RotationB, 
+		const float RewardScale = 1.0f,
+		const FName Tag = TEXT("RotationSimilarityReward"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerRotationLocationA = FVector::ZeroVector,
+		const FVector VisualLoggerRotationLocationB = FVector::ZeroVector,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Green);
 
 	/**
-	 * Adds a new directional velocity reward to the given trainer. Call during ULearningAgentsTrainer::SetupRewards event.
-	 * @param InAgentTrainer The trainer to add this reward to.
-	 * @param Name The name of this new reward. Used for debugging.
-	 * @param Weight Multiplier for this reward when being summed up for the total reward.
-	 * @param Scale Used to normalize the data for the reward.
-	 * @param Axis The local direction we want to maximize velocity in.
-	 * @return The newly created reward.
+	 * Make a reward based on how similar two rotations are represented as quaternions.
+	 *
+	 * @param RotationA The first rotation.
+	 * @param RotationB The second rotation.
+	 * @param RewardScale The scale of the reward. Use a negative scale to create a penalty.
+	 * @param Tag The tag for the reward. Used for debugging.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this reward. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this reward.
+	 * @param VisualLoggerRotationLocationA A location for the visual logger to display the first rotation in the world.
+	 * @param VisualLoggerRotationLocationB A location for the visual logger to display the second rotation in the world.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The resulting reward value.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InAgentTrainer"))
-	static ULocalDirectionalVelocityReward* AddLocalDirectionalVelocityReward(
-		ULearningAgentsTrainer* InAgentTrainer,
-		const FName Name = NAME_None,
-		const float Weight = 1.0f,
-		const float Scale = 200.0f,
-		const FVector Axis = FVector::ForwardVector);
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3, DefaultToSelf = "VisualLoggerListener"))
+	static float MakeRewardFromRotationSimilarityAsQuats(
+		const FQuat RotationA, 
+		const FQuat RotationB, 
+		const float RewardScale = 1.0f,
+		const FName Tag = TEXT("RotationSimilarityReward"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerRotationLocationA = FVector::ZeroVector,
+		const FVector VisualLoggerRotationLocationB = FVector::ZeroVector,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Green);
 
 	/**
-	 * Sets the data for this reward. Call during ULearningAgentsTrainer::SetRewards event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Velocity The current velocity.
-	 * @param RelativeRotation The frame of reference rotation.
+	 * Make a reward based on how similar two angles are. Angles should be given in degrees.
+	 *
+	 * @param AngleA The first angle.
+	 * @param AngleB The second angle.
+	 * @param RewardScale The scale of the reward. Use a negative scale to create a penalty.
+	 * @param Tag The tag for the reward. Used for debugging.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this reward. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this reward.
+	 * @param VisualLoggerAngleLocationA A location for the visual logger to display the first angle in the world.
+	 * @param VisualLoggerAngleLocationB A location for the visual logger to display the second angle in the world.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The resulting reward value.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetLocalDirectionalVelocityReward(
-		const int32 AgentId,
-		const FVector Velocity,
-		const FRotator RelativeRotation = FRotator::ZeroRotator);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this reward to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FLocalDirectionalVelocityReward> RewardObject;
-};
-
-//------------------------------------------------------------------
-
-/** A penalty for being far from a goal position in a plane. */
-UCLASS()
-class LEARNINGAGENTSTRAINING_API UPlanarPositionDifferencePenalty : public ULearningAgentsReward
-{
-	GENERATED_BODY()
-
-public:
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3, DefaultToSelf = "VisualLoggerListener"))
+	static float MakeRewardFromAngleSimilarity(
+		const float AngleA, 
+		const float AngleB, 
+		const float RewardScale = 1.0f,
+		const FName Tag = TEXT("AngleSimilarityReward"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerAngleLocationA = FVector::ZeroVector,
+		const FVector VisualLoggerAngleLocationB = FVector::ZeroVector,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Green);
 
 	/**
-	 * Adds a new planar difference penalty to the given trainer. The axis parameters define the plane.
-	 * Call during ULearningAgentsTrainer::SetupRewards event.
-	 * @param InAgentTrainer The trainer to add this penalty to.
-	 * @param Name The name of this new penalty. Used for debugging.
-	 * @param Weight Multiplier for this penalty when being summed up for the total reward.
-	 * @param Scale Used to normalize the data for the penalty.
-	 * @param Threshold Minimal distance to apply this penalty.
-	 * @param Axis0 The forward axis of the plane.
-	 * @param Axis1 The right axis of the plane.
-	 * @return The newly created reward.
+	 * Make a reward based on how similar two directions are.
+	 *
+	 * @param DirectionA The first direction.
+	 * @param DirectionB The second direction.
+	 * @param RewardScale The scale of the reward. Use a negative scale to create a penalty.
+	 * @param Tag The tag for the reward. Used for debugging.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this reward. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this reward.
+	 * @param VisualLoggerDirectionLocationA A location for the visual logger to display the first direction in the world.
+	 * @param VisualLoggerDirectionLocationB A location for the visual logger to display the second direction in the world.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerArrowLength The length of the arrow to display for the directions.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The resulting reward value.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InAgentTrainer"))
-	static UPlanarPositionDifferencePenalty* AddPlanarPositionDifferencePenalty(
-		ULearningAgentsTrainer* InAgentTrainer,
-		const FName Name = NAME_None,
-		const float Weight = 1.0f,
-		const float Scale = 100.0f,
-		const float Threshold = 0.0f,
-		const FVector Axis0 = FVector::ForwardVector,
-		const FVector Axis1 = FVector::RightVector);
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 3, DefaultToSelf = "VisualLoggerListener", DirectionA="1.0,0.0,0.0", DirectionB = "1.0,0.0,0.0"))
+	static float MakeRewardFromDirectionSimilarity(
+		const FVector DirectionA, 
+		const FVector DirectionB, 
+		const float RewardScale = 1.0f,
+		const FName Tag = TEXT("DirectionSimilarityReward"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerDirectionLocationA = FVector::ZeroVector,
+		const FVector VisualLoggerDirectionLocationB = FVector::ZeroVector,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const float VisualLoggerArrowLength = 100.0f,
+		const FLinearColor VisualLoggerColor = FLinearColor::Green);
 
 	/**
-	 * Sets the data for this penalty. Call during ULearningAgentsTrainer::SetRewards event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Position0 The current position.
-	 * @param Position1 The goal position.
+	 * Make a reward based on the velocity an object is moving along a spline.
+	 *
+	 * @param SplineComponent The spline.
+	 * @param Location The location of the object.
+	 * @param Velocity The velocity of the object.
+	 * @param VelocityScale The expected scale for the velocity.
+	 * @param RewardScale The scale of the reward. Use a negative scale to create a penalty.
+	 * @param FiniteDifferenceDelta The finite difference to use when computing the velocity along the spline.
+	 * @param Tag The tag for the reward. Used for debugging.
+	 * @param bVisualLoggerEnabled When true, debug data will be sent to the visual logger.
+	 * @param VisualLoggerListener The listener object which is making this reward. This must be set to use logging.
+	 * @param VisualLoggerAgentId The agent id associated with this reward.
+	 * @param VisualLoggerLocation A location for the visual logger information in the world.
+	 * @param VisualLoggerColor The color for the visual logger display.
+	 * @return The resulting reward value.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetPlanarPositionDifferencePenalty(const int32 AgentId, const FVector Position0, const FVector Position1);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this reward to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FPlanarPositionDifferencePenalty> RewardObject;
-};
-
-/** A reward for minimizing the distances of positions in the given arrays. */
-UCLASS()
-class LEARNINGAGENTSTRAINING_API UPositionArraySimilarityReward : public ULearningAgentsReward
-{
-	GENERATED_BODY()
-
-public:
-
-	/**
-	 * Adds a new position array similarity reward to the given trainer. Call during ULearningAgentsTrainer::SetupRewards event.
-	 * @param InAgentTrainer The trainer to add this reward to.
-	 * @param Name The name of this new reward. Used for debugging.
-	 * @param PositionNum The number of positions in the array.
-	 * @param Scale Used to normalize the data for the reward.
-	 * @param Weight Multiplier for this reward when being summed up for the total reward.
-	 * @return The newly created reward.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DefaultToSelf = "InAgentTrainer"))
-	static UPositionArraySimilarityReward* AddPositionArraySimilarityReward(
-		ULearningAgentsTrainer* InAgentTrainer,
-		const FName Name = NAME_None,
-		const int32 PositionNum = 0,
-		const float Scale = 100.0f,
-		const float Weight = 1.0f);
-
-	/**
-	 * Sets the data for this reward. Call during ULearningAgentsTrainer::SetRewards event.
-	 * @param AgentId The agent id this data corresponds to.
-	 * @param Positions0 The current positions.
-	 * @param Positions1 The goal positions.
-	 * @param RelativePosition0 The vector Positions0 will be offset from.
-	 * @param RelativePosition1 The vector Positions1 will be offset from.
-	 * @param RelativeRotation0 The frame of reference rotation for Positions0.
-	 * @param RelativeRotation1 The frame of reference rotation for Positions1.
-	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AgentId = "-1"))
-	void SetPositionArraySimilarityReward(
-		const int32 AgentId,
-		const TArray<FVector>& Positions0, 
-		const TArray<FVector>& Positions1, 
-		const FVector RelativePosition0 = FVector::ZeroVector,
-		const FVector RelativePosition1 = FVector::ZeroVector,
-		const FRotator RelativeRotation0 = FRotator::ZeroRotator,
-		const FRotator RelativeRotation1 = FRotator::ZeroRotator);
-
-#if UE_LEARNING_AGENTS_ENABLE_VISUAL_LOG
-	/** Describes this reward to the visual logger for debugging purposes. */
-	virtual void VisualLog(const UE::Learning::FIndexSet Instances) const override;
-#endif
-
-	TSharedPtr<UE::Learning::FPositionArraySimilarityReward> RewardObject;
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AdvancedDisplay = 6, DefaultToSelf = "VisualLoggerListener"))
+	static float MakeRewardFromVelocityAlongSpline(
+		const USplineComponent* SplineComponent, 
+		const FVector Location, 
+		const FVector Velocity, 
+		const float VelocityScale = 200.0f, 
+		const float RewardScale = 1.0f, 
+		const float FiniteDifferenceDelta = 10.0f,
+		const FName Tag = TEXT("VelocityAlongSplineReward"),
+		const bool bVisualLoggerEnabled = false,
+		ULearningAgentsManagerListener* VisualLoggerListener = nullptr,
+		const int32 VisualLoggerAgentId = -1,
+		const FVector VisualLoggerLocation = FVector::ZeroVector,
+		const FLinearColor VisualLoggerColor = FLinearColor::Green);
 };

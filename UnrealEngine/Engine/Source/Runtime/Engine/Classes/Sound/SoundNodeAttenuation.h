@@ -34,6 +34,7 @@ public:
 	//~ Begin USoundNode Interface. 
 	virtual void ParseNodes( class FAudioDevice* AudioDevice, const UPTRINT NodeWaveInstanceHash, FActiveSound& ActiveSound, const FSoundParseParameters& ParseParams, TArray<FWaveInstance*>& WaveInstances ) override;
 	virtual float GetMaxDistance() const override;
+	virtual bool HasAttenuationNode() const override { return true; }
 	//~ End USoundNode Interface. 
 
 	ENGINE_API const FSoundAttenuationSettings* GetAttenuationSettingsToApply() const;

@@ -51,6 +51,7 @@
 #include "PerPlatformPropertyCustomization.h"
 #include "Misc/ScopedSlowTask.h"
 #include "MeshCardRepresentation.h"
+#include "NaniteDefinitions.h"
 
 const uint32 MaxHullCount = 64;
 const uint32 MinHullCount = 1;
@@ -4357,16 +4358,18 @@ void FLevelOfDetailSettingsLayout::OnImportLOD(TSharedPtr<FString> NewValue, ESe
 		//This boolean prevent changing the value when the LOD is reimport
 		bool bImportCustomLOD = (LODIndex >= StaticMesh->GetNumSourceModels());
 
-		bool bResult = FbxMeshUtils::ImportMeshLODDialog(StaticMesh, LODIndex);
+		FbxMeshUtils::ImportMeshLODDialog(StaticMesh, LODIndex).Then([this, StaticMesh, bImportCustomLOD, LODIndex](TFuture<bool> FutureResult)
+			{
+				bool bResult = FutureResult.Get();
+				if (bImportCustomLOD && bResult && StaticMesh->IsSourceModelValid(LODIndex))
+				{
+					//Custom LOD should reduce base on them self when they get imported.
+					StaticMesh->GetSourceModel(LODIndex).ReductionSettings.BaseLODModel = LODIndex;
+				}
 
-		if (bImportCustomLOD && bResult && StaticMesh->IsSourceModelValid(LODIndex))
-		{
-			//Custom LOD should reduce base on them self when they get imported.
-			StaticMesh->GetSourceModel(LODIndex).ReductionSettings.BaseLODModel = LODIndex;
-		}
-		
-		StaticMesh->PostEditChange();
-		StaticMeshEditor.RefreshTool();
+				StaticMesh->PostEditChange();
+				StaticMeshEditor.RefreshTool();
+			});
 	}
 
 }
@@ -5221,28 +5224,45 @@ void FNaniteSettingsLayout::UpdateSettings(const FMeshNaniteSettings& InSettings
 	NaniteSettings = InSettings;
 }
 
-template< typename StructType, typename MemberType >
-IDetailPropertyRow& AddDefaultRow( IDetailCategoryBuilder& CategoryBuilder, StructType& Struct, MemberType (StructType::*MemberPointer), FName PropertyName )
+template< typename StructType, typename CopyFuncType >
+IDetailPropertyRow& AddDefaultRow( IDetailCategoryBuilder& CategoryBuilder, StructType& Struct, FName PropertyName, CopyFuncType CopyFunc )
 {
 	TSharedPtr< FStructOnScope > TempStruct = MakeShared< FStructOnScope >( StructType::StaticStruct() );
 	StructType::StaticStruct()->CopyScriptStruct( TempStruct->GetStructMemory(), &Struct, 1 );
 	IDetailPropertyRow* PropertyRow = CategoryBuilder.AddExternalStructureProperty( TempStruct, PropertyName );
 	PropertyRow->GetPropertyHandle()->SetOnPropertyValueChanged( FSimpleDelegate::CreateLambda(
-		[ &Struct, TempStruct, MemberPointer ] 
+		[ &Struct, TempStruct, CopyFunc ] 
 		{
 			StructType* TempStruct2 = (StructType*)TempStruct->GetStructMemory();
-			Struct.*MemberPointer = TempStruct2->*MemberPointer;
+			CopyFunc( Struct, *TempStruct2 );
 		}
 	));
 	PropertyRow->GetPropertyHandle()->SetOnChildPropertyValueChanged( FSimpleDelegate::CreateLambda(
-		[ &Struct, TempStruct, MemberPointer ] 
+		[ &Struct, TempStruct, CopyFunc ] 
 		{
 			StructType* TempStruct2 = (StructType*)TempStruct->GetStructMemory();
-			Struct.*MemberPointer = TempStruct2->*MemberPointer;
+			CopyFunc( Struct, *TempStruct2 );
 		}
 	));
 	return *PropertyRow;
 }
+
+template< typename StructType, typename MemberType >
+IDetailPropertyRow& AddDefaultRow( IDetailCategoryBuilder& CategoryBuilder, StructType& Struct, MemberType (StructType::*MemberPointer), FName PropertyName )
+{
+	return AddDefaultRow( CategoryBuilder, Struct, PropertyName,
+		[ MemberPointer ]( StructType& Dst, StructType& Src )
+		{
+			Dst.*MemberPointer = Src.*MemberPointer;
+		} );
+}
+
+#define NANITE_ADD_DEFAULT_ROW( PropertyName ) \
+	AddDefaultRow( NaniteSettingsCategory, NaniteSettings, GET_MEMBER_NAME_CHECKED( FMeshNaniteSettings, PropertyName ), \
+		[]( FMeshNaniteSettings& Dst, FMeshNaniteSettings& Src ) \
+		{ \
+			Dst.PropertyName = Src.PropertyName; \
+		} )
 
 void FNaniteSettingsLayout::AddToDetailsPanel(IDetailLayoutBuilder& DetailBuilder)
 {
@@ -5318,46 +5338,23 @@ void FNaniteSettingsLayout::AddToDetailsPanel(IDetailLayoutBuilder& DetailBuilde
 		];
 	}
 
-	{
-		TSharedPtr<SCheckBox> NanitePreserveAreaCheck;
-		NaniteSettingsCategory.AddCustomRow( LOCTEXT("PreserveArea", "Preserve Area") )
-		.RowTag("PreserveArea")
-		.NameContent()
-		[
-			SNew(STextBlock)
-			.Font(IDetailLayoutBuilder::GetDetailFont())
-			.Text(LOCTEXT("PreserveArea", "Preserve Area"))
-		]
-		.ValueContent()
-		[
-			SAssignNew(NanitePreserveAreaCheck, SCheckBox)
-			.IsChecked(this, &FNaniteSettingsLayout::IsPreserveAreaChecked)
-			.OnCheckStateChanged(this, &FNaniteSettingsLayout::OnPreserveAreaChanged)
-		];
-	}
+	TAttribute<bool> NaniteEnabledAttr = TAttribute<bool>::Create(TAttribute<bool>::FGetter::CreateLambda([NaniteEnabledCheck]() -> bool { return NaniteEnabledCheck->IsChecked(); }));
+	TAttribute<bool> NaniteEnabledAndNoHiResDataAttr = TAttribute<bool>::Create(TAttribute<bool>::FGetter::CreateLambda([this, NaniteEnabledCheck]() -> bool {return NaniteEnabledCheck->IsChecked() && IsHiResDataEmpty(); }));
 
-	{
-		TSharedPtr<SCheckBox> NaniteExplicitTangentsCheck;
-		NaniteSettingsCategory.AddCustomRow(LOCTEXT("Explicit Tangents", "Explicit Tangents"))
-		.NameContent()
-		[
-			SNew(STextBlock)
-			.Font(IDetailLayoutBuilder::GetDetailFont())
-			.Text(LOCTEXT("Explicit Tangents", "Explicit Tangents"))
-		]
-		.ValueContent()
-		.VAlign(VAlign_Center)
-		[
-			SAssignNew(NaniteExplicitTangentsCheck, SCheckBox)
-			.IsChecked(this, &FNaniteSettingsLayout::IsExplicitTangentsChecked)
-			.OnCheckStateChanged(this, &FNaniteSettingsLayout::OnExplicitTangentsChanged)
-		];
-	}
+	NANITE_ADD_DEFAULT_ROW( bPreserveArea )
+	.IsEnabled( NaniteEnabledAttr );
+
+	NANITE_ADD_DEFAULT_ROW( bExplicitTangents )
+	.IsEnabled( NaniteEnabledAttr );
+
+	NANITE_ADD_DEFAULT_ROW( bLerpUVs )
+	.IsEnabled( NaniteEnabledAttr );
 
 	{
 		TSharedPtr<STextComboBox> ComboBox;
 		NaniteSettingsCategory.AddCustomRow(LOCTEXT("PositionPrecision", "Position Precision"))
 		.RowTag("PositionPrecision")
+		.IsEnabled( NaniteEnabledAttr )
 		.NameContent()
 		[
 			SNew(STextBlock)
@@ -5379,6 +5376,7 @@ void FNaniteSettingsLayout::AddToDetailsPanel(IDetailLayoutBuilder& DetailBuilde
 	{
 		TSharedPtr<STextComboBox> ComboBox;
 		NaniteSettingsCategory.AddCustomRow(LOCTEXT("NormalPrecision", "Normal Precision"))
+		.IsEnabled( NaniteEnabledAttr )
 		.NameContent()
 		[
 			SNew(STextBlock)
@@ -5399,16 +5397,16 @@ void FNaniteSettingsLayout::AddToDetailsPanel(IDetailLayoutBuilder& DetailBuilde
 
 	{
 		TSharedPtr<STextComboBox> ComboBox;
-		FDetailWidgetRow& Row = NaniteSettingsCategory.AddCustomRow(LOCTEXT("TangentPrecision", "Tangent Precision"));
-		Row.NameContent()
-			[
-				SNew(STextBlock)
-				.Font(IDetailLayoutBuilder::GetDetailFont())
+		NaniteSettingsCategory.AddCustomRow(LOCTEXT("TangentPrecision", "Tangent Precision"))
+		.IsEnabled( NaniteEnabledAttr )
+		.NameContent()
+		[
+			SNew(STextBlock)
+			.Font(IDetailLayoutBuilder::GetDetailFont())
 			.Text(LOCTEXT("TangentPrecision", "Tangent Precision"))
 			.ToolTipText(LOCTEXT("TangentPrecisionTooltip", "Precision of vertex tangents."))
-			];
-		
-		Row.ValueContent()
+		]
+		.ValueContent()
 		.VAlign(VAlign_Center)
 		[
 			SAssignNew(ComboBox, STextComboBox)
@@ -5427,6 +5425,7 @@ void FNaniteSettingsLayout::AddToDetailsPanel(IDetailLayoutBuilder& DetailBuilde
 		TSharedPtr<STextComboBox> ComboBox;
 		NaniteSettingsCategory.AddCustomRow(LOCTEXT("MinimumResidency", "Minimum Residency"))
 		.RowTag("MinimumResidency")
+		.IsEnabled( NaniteEnabledAttr )
 		.NameContent()
 		[
 			SNew(STextBlock)
@@ -5447,7 +5446,7 @@ void FNaniteSettingsLayout::AddToDetailsPanel(IDetailLayoutBuilder& DetailBuilde
 	{
 		NaniteSettingsCategory.AddCustomRow( LOCTEXT("KeepTrianglePercent", "Keep Triangle Percent") )
 		.RowTag("KeepTrianglePercent")
-		.IsEnabled(TAttribute<bool>::Create(TAttribute<bool>::FGetter::CreateLambda([NaniteEnabledCheck]() -> bool {return NaniteEnabledCheck->IsChecked(); } )))
+		.IsEnabled( NaniteEnabledAttr )
 		.NameContent()
 		[
 			SNew(STextBlock)
@@ -5471,7 +5470,7 @@ void FNaniteSettingsLayout::AddToDetailsPanel(IDetailLayoutBuilder& DetailBuilde
 	{
 		NaniteSettingsCategory.AddCustomRow( LOCTEXT("TrimRelativeError", "Trim Relative Error") )
 		.RowTag("TrimRelativeError")
-		.IsEnabled(TAttribute<bool>::Create(TAttribute<bool>::FGetter::CreateLambda([NaniteEnabledCheck]() -> bool {return NaniteEnabledCheck->IsChecked(); } )))
+		.IsEnabled( NaniteEnabledAttr )
 		.NameContent()
 		[
 			SNew(STextBlock)
@@ -5490,13 +5489,13 @@ void FNaniteSettingsLayout::AddToDetailsPanel(IDetailLayoutBuilder& DetailBuilde
 		];
 	}
 
-	AddDefaultRow( NaniteSettingsCategory, NaniteSettings, &FMeshNaniteSettings::FallbackTarget, GET_MEMBER_NAME_CHECKED( FMeshNaniteSettings, FallbackTarget ) )
-	.IsEnabled(TAttribute<bool>::Create(TAttribute<bool>::FGetter::CreateLambda([this, NaniteEnabledCheck]() -> bool {return NaniteEnabledCheck->IsChecked() && IsHiResDataEmpty(); })));
+	NANITE_ADD_DEFAULT_ROW( FallbackTarget )
+	.IsEnabled( NaniteEnabledAndNoHiResDataAttr );
 
 	{
 		NaniteSettingsCategory.AddCustomRow( LOCTEXT("FallbackTrianglePercent", "Fallback Triangle Percent") )
 		.RowTag("FallbackTrianglePercent")
-		.IsEnabled(TAttribute<bool>::Create(TAttribute<bool>::FGetter::CreateLambda([this, NaniteEnabledCheck]() -> bool {return NaniteEnabledCheck->IsChecked() && IsHiResDataEmpty(); })))
+		.IsEnabled( NaniteEnabledAndNoHiResDataAttr )
 		.NameContent()
 		[
 			SNew(STextBlock)
@@ -5524,7 +5523,7 @@ void FNaniteSettingsLayout::AddToDetailsPanel(IDetailLayoutBuilder& DetailBuilde
 	{
 		NaniteSettingsCategory.AddCustomRow( LOCTEXT("FallbackRelativeError", "Fallback Relative Error") )
 		.RowTag("FallbackRelativeError")
-		.IsEnabled(TAttribute<bool>::Create(TAttribute<bool>::FGetter::CreateLambda([this, NaniteEnabledCheck]() -> bool {return NaniteEnabledCheck->IsChecked() && IsHiResDataEmpty(); } )))
+		.IsEnabled( NaniteEnabledAndNoHiResDataAttr )
 		.NameContent()
 		[
 			SNew(STextBlock)
@@ -5552,7 +5551,7 @@ void FNaniteSettingsLayout::AddToDetailsPanel(IDetailLayoutBuilder& DetailBuilde
 		FString FileFilterText = TEXT("Filmbox (*.fbx)|*.fbx|All files (*.*)|*.*");
 		NaniteSettingsCategory.AddCustomRow( LOCTEXT("NANITE_SourceImportFilename", "Source Import Filename") )
 		.RowTag("NANITE_SourceImportFilename")
-		.IsEnabled(TAttribute<bool>::Create(TAttribute<bool>::FGetter::CreateLambda([NaniteEnabledCheck]() -> bool {return NaniteEnabledCheck->IsChecked(); } )))
+		.IsEnabled( NaniteEnabledAttr )
 		.NameContent()
 		[
 			SNew(STextBlock)
@@ -5577,8 +5576,7 @@ void FNaniteSettingsLayout::AddToDetailsPanel(IDetailLayoutBuilder& DetailBuilde
 
 	{
 		NaniteSettingsCategory.AddCustomRow( LOCTEXT("DisplacementUVChannel", "Displacement UV Channel") )
-
-		.IsEnabled(TAttribute<bool>::Create(TAttribute<bool>::FGetter::CreateLambda([this, NaniteEnabledCheck]() -> bool {return NaniteEnabledCheck->IsChecked() && IsHiResDataEmpty(); })))
+		.IsEnabled( NaniteEnabledAttr )
 		.NameContent()
 		[
 			SNew(STextBlock)
@@ -5598,25 +5596,11 @@ void FNaniteSettingsLayout::AddToDetailsPanel(IDetailLayoutBuilder& DetailBuilde
 		];
 	}
 
-	{
-		TSharedPtr<FStructOnScope> TempNaniteSettings = MakeShared<FStructOnScope>(FMeshNaniteSettings::StaticStruct());
-		FMeshNaniteSettings::StaticStruct()->CopyScriptStruct(TempNaniteSettings->GetStructMemory(), &NaniteSettings, 1);
-		IDetailPropertyRow* MapsRow = NaniteSettingsCategory.AddExternalStructureProperty(TempNaniteSettings, GET_MEMBER_NAME_CHECKED(FMeshNaniteSettings, DisplacementMaps));
-		MapsRow->GetPropertyHandle()->SetOnPropertyValueChanged(FSimpleDelegate::CreateLambda(
-			[this, TempNaniteSettings] 
-			{
-				FMeshNaniteSettings* TempSettings = (FMeshNaniteSettings*)TempNaniteSettings->GetStructMemory();
-				NaniteSettings.DisplacementMaps = TempSettings->DisplacementMaps;
-			}
-		));
-		MapsRow->GetPropertyHandle()->SetOnChildPropertyValueChanged(FSimpleDelegate::CreateLambda(
-			[this, TempNaniteSettings] 
-			{
-				FMeshNaniteSettings* TempSettings = (FMeshNaniteSettings*)TempNaniteSettings->GetStructMemory();
-				NaniteSettings.DisplacementMaps = TempSettings->DisplacementMaps;
-			}
-		));
-	}
+	NANITE_ADD_DEFAULT_ROW( DisplacementMaps )
+	.IsEnabled( NaniteEnabledAttr );
+
+	NANITE_ADD_DEFAULT_ROW( MaxEdgeLengthFactor )
+	.IsEnabled( NaniteEnabledAttr );
 
 	//Nanite import button
 	{
@@ -5899,26 +5883,6 @@ ECheckBoxState FNaniteSettingsLayout::IsEnabledChecked() const
 void FNaniteSettingsLayout::OnEnabledChanged(ECheckBoxState NewState)
 {
 	NaniteSettings.bEnabled = NewState == ECheckBoxState::Checked ? true : false;
-}
-
-ECheckBoxState FNaniteSettingsLayout::IsPreserveAreaChecked() const
-{
-	return NaniteSettings.bPreserveArea ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
-}
-
-void FNaniteSettingsLayout::OnPreserveAreaChanged(ECheckBoxState NewState)
-{
-	NaniteSettings.bPreserveArea = NewState == ECheckBoxState::Checked ? true : false;
-}
-
-ECheckBoxState FNaniteSettingsLayout::IsExplicitTangentsChecked() const
-{
-	return NaniteSettings.bExplicitTangents ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
-}
-
-void FNaniteSettingsLayout::OnExplicitTangentsChanged(ECheckBoxState NewState)
-{
-	NaniteSettings.bExplicitTangents = NewState == ECheckBoxState::Checked ? true : false;
 }
 
 void FNaniteSettingsLayout::OnPositionPrecisionChanged(TSharedPtr<FString> NewValue, ESelectInfo::Type SelectInfo)

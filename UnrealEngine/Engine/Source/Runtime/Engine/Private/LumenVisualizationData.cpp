@@ -9,11 +9,13 @@
 static FLumenVisualizationData GLumenVisualizationData;
 
 // Must match appropriate values in r.Lumen.Visualize
-#define LUMEN_VISUALIZE_LUMEN_SCENE				1
-#define LUMEN_VISUALIZE_REFLECTION_VIEW			2
-#define LUMEN_VISUALIZE_SURFACE_CACHE			3
-#define LUMEN_VISUALIZE_OVERVIEW				4
-#define LUMEN_VISUALIZE_MODE_GEOMETRY_NORMALS	5
+#define LUMEN_VISUALIZE_OVERVIEW					1
+#define LUMEN_VISUALIZE_PERFORMANCE_OVERVIEW		2
+#define LUMEN_VISUALIZE_LUMEN_SCENE					3
+#define LUMEN_VISUALIZE_REFLECTION_VIEW				4
+#define LUMEN_VISUALIZE_SURFACE_CACHE				5
+#define LUMEN_VISUALIZE_MODE_GEOMETRY_NORMALS		6
+#define LUMEN_VISUALIZE_DEDICATED_REFLECTION_RAYS	7
 
 void FLumenVisualizationData::Initialize()
 {
@@ -25,6 +27,14 @@ void FLumenVisualizationData::Initialize()
 			LOCTEXT("OverviewDesc", "All Lumen view mode tiles overlayed on top"),
 			FModeType::Overview,
 			LUMEN_VISUALIZE_OVERVIEW,
+			true);
+
+		AddVisualizationMode(
+			TEXT("PerformanceOverview"),
+			LOCTEXT("PerformanceOverview", "Performance Overview"),
+			LOCTEXT("PerformanceOverviewDesc", "All Lumen performance view mode tiles overlayed on top"),
+			FModeType::Overview,
+			LUMEN_VISUALIZE_PERFORMANCE_OVERVIEW,
 			true);
 
 		AddVisualizationMode(
@@ -47,7 +57,9 @@ void FLumenVisualizationData::Initialize()
 			TEXT("ReflectionView"),
 			LOCTEXT("ReflectionView", "Reflection View"),
 			LOCTEXT("ReflectionViewDesc", "Visualizes Lumen scene representation with current reflection settings"),
-			FModeType::Standard, LUMEN_VISUALIZE_REFLECTION_VIEW, true);
+			FModeType::Standard,
+			LUMEN_VISUALIZE_REFLECTION_VIEW, 
+			true);
 
 		AddVisualizationMode(
 			TEXT("SurfaceCache"),
@@ -55,6 +67,14 @@ void FLumenVisualizationData::Initialize()
 			LOCTEXT("SurfaceCacheDesc", "Visualizes Lumen Surface Cache. Pink - missing surface cache coverage. Yellow - culled meshes."),
 			FModeType::Standard,
 			LUMEN_VISUALIZE_SURFACE_CACHE,
+			true);
+
+		AddVisualizationMode(
+			TEXT("DedicatedReflectionRays"),
+			LOCTEXT("DedicatedReflectionRays", "Dedicated Reflection Rays"),
+			LOCTEXT("DedicatedReflectionRaysDesc", "Visualizes pixels which require dedicated Lumen reflection rays (pass MaxRoughnessToTrace or MaxRoughnessToTraceForFoliage treshold). Green - foliage. Red - other."),
+			FModeType::Standard,
+			LUMEN_VISUALIZE_DEDICATED_REFLECTION_RAYS,
 			true);
 
 		ConfigureConsoleCommand();

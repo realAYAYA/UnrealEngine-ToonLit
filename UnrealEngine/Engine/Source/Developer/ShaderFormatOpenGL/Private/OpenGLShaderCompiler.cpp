@@ -8,20 +8,19 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "Serialization/MemoryWriter.h"
+#include "ShaderCompilerCommon.h"
+#include "ShaderCompilerDefinitions.h"
 #include "ShaderFormatOpenGL.h"
 #include "ShaderParameterParser.h"
+#include "ShaderPreprocessTypes.h"
 #include "SpirvReflectCommon.h"
 #include <algorithm>
 #include <regex>
 
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
-	#include "Windows/PreWindowsApi.h"
 	#include <objbase.h>
-	#include <assert.h>
 	#include <stdio.h>
-	#include "Windows/PostWindowsApi.h"
-	#include "Windows/MinWindows.h"
 #include "Windows/HideWindowsPlatformTypes.h"
 #endif
 #include "ShaderCore.h"
@@ -31,7 +30,6 @@
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
 	#include <GL/glcorearb.h>
-	#include <GL/glext.h>
 	#include <GL/wglext.h>
 #include "Windows/HideWindowsPlatformTypes.h"
 #elif PLATFORM_LINUX
@@ -61,7 +59,7 @@
 	#define GL_TESS_CONTROL_SHADER 0x8E88
 	#endif
 #endif
-	#include "OpenGLUtil.h"
+#include "OpenGLUtil.h"
 #include "OpenGLShaderResources.h"
 
 #ifndef DXC_SUPPORTED
@@ -79,10 +77,6 @@ DEFINE_LOG_CATEGORY_STATIC(LogOpenGLShaderCompiler, Log, All);
 
 #define VALIDATE_GLSL_WITH_DRIVER		0
 #define ENABLE_IMAGINATION_COMPILER		1
-static FORCEINLINE bool IsPCESPlatform(GLSLVersion Version)
-{
-	return (Version == GLSL_150_ES3_1);
-}
 
 /*------------------------------------------------------------------------------
 	Shader compiling.
@@ -550,48 +544,40 @@ static uint32 ParseNumber(const TCHAR* Str)
 	return Num;
 }
 
-
-static ANSICHAR TranslateFrequencyToCrossCompilerPrefix(int32 Frequency)
+enum class EPlatformType
 {
-	switch (Frequency)
-	{
-		case SF_Vertex: return 'v';
-		case SF_Pixel: return 'p';
-		case SF_Geometry: return 'g';
-		case SF_Compute: return 'c';
-	}
-	return '\0';
-}
+	Android,
+	IOS,
+	Web,
+	Desktop
+};
 
-static TCHAR* SetIndex(TCHAR* Str, int32 Offset, int32 Index)
+struct FDeviceCapabilities
 {
-	check(Index >= 0 && Index < 100);
+	EPlatformType TargetPlatform = EPlatformType::Android;
+};
 
-	Str += Offset;
-	if (Index >= 10)
-	{
-		*Str++ = '0' + (TCHAR)(Index / 10);
-	}
-	*Str++ = '0' + (TCHAR)(Index % 10);
-	*Str = '\0';
-	return Str;
-}
-
-
+static bool PlatformSupportsOfflineCompilationInternal(const GLSLVersion ShaderVersion);
+static void FillDeviceCapsOfflineCompilationInternal(struct FDeviceCapabilities& Capabilities, const GLSLVersion ShaderVersion);
+static bool MoveHashLines(FString& Destination, FString &Source);
+static TSharedPtr<ANSICHAR> PrepareCodeForOfflineCompilationInternal(const GLSLVersion ShaderVersion, EShaderFrequency Frequency, const ANSICHAR* InShaderSource);
+static void PlatformCompileOfflineInternal(const FShaderCompilerInput& Input, FShaderCompilerOutput& ShaderOutput, const ANSICHAR* ShaderSource, const GLSLVersion ShaderVersion);
+static void CompileOfflineInternal(const FShaderCompilerInput& Input, FShaderCompilerOutput& Output, const GLSLVersion ShaderVersion, const ANSICHAR* InShaderSource);
 
 /**
  * Construct the final microcode from the compiled and verified shader source.
  * @param ShaderOutput - Where to store the microcode and parameter map.
+ * @param ShaderInput - The input struct for the shader being compiled.
  * @param InShaderSource - GLSL source with input/output signature.
  * @param SourceLen - The length of the GLSL source code.
+ * @param Version - The GLSL version to target.
  */
-void FOpenGLFrontend::BuildShaderOutput(
+void BuildShaderOutputInternal(
 	FShaderCompilerOutput& ShaderOutput,
 	const FShaderCompilerInput& ShaderInput,
 	const ANSICHAR* InShaderSource,
 	int32 SourceLen,
-	GLSLVersion Version
-	)
+	GLSLVersion Version)
 {
 	const ANSICHAR* USFSource = InShaderSource;
 	CrossCompiler::FHlslccHeader CCHeader;
@@ -606,7 +592,6 @@ void FOpenGLFrontend::BuildShaderOutput(
 	}
 
 	FOpenGLCodeHeader Header = {0};
-	FShaderParameterMap& ParameterMap = ShaderOutput.ParameterMap;
 	EShaderFrequency Frequency = (EShaderFrequency)ShaderOutput.Target.Frequency;
 
 	TBitArray<> UsedUniformBufferSlots;
@@ -683,10 +668,6 @@ void FOpenGLFrontend::BuildShaderOutput(
 		}
 	}
 
-	// general purpose binding name
-	TCHAR BindingName[] = TEXT("XYZ\0\0\0\0\0\0\0\0");
-	BindingName[0] = TranslateFrequencyToCrossCompilerPrefix(Frequency);
-
 	TMap<FString, FString> BindingNameMap;
 
 	// Then 'normal' uniform buffers.
@@ -695,18 +676,7 @@ void FOpenGLFrontend::BuildShaderOutput(
 		uint16 UBIndex = UniformBlock.Index;
 
 		UsedUniformBufferSlots[UBIndex] = true;
-		
-		if (OutputTrueParameterNames())
-		{
-			// make the final name this will be in the shader
-			BindingName[1] = 'b';
-			SetIndex(BindingName, 2, UBIndex);
-			BindingNameMap.Add(BindingName, UniformBlock.Name);
-		}
-		else
-		{
-			HandleReflectedUniformBuffer(UniformBlock.Name, UBIndex, ShaderOutput);
-		}
+		HandleReflectedUniformBuffer(UniformBlock.Name, UBIndex, ShaderOutput);
 		Header.Bindings.NumUniformBuffers++;
 	}
 
@@ -752,18 +722,8 @@ void FOpenGLFrontend::BuildShaderOutput(
 	TMap<int, TMap<ANSICHAR, uint16> > PackedUniformBuffersSize;
 	for (auto& PackedUB : CCHeader.PackedUBs)
 	{
-		checkf(OutputTrueParameterNames() == false, TEXT("Unexpected Packed UBs used with a shader format that needs true parameter names - If this is hit, we need to figure out how to handle them"));
-
 		UsedUniformBufferSlots[PackedUB.Attribute.Index] = true;
-		if (OutputTrueParameterNames())
-		{
-			BindingName[1] = 'b';
-			// ???
-		}
-		else
-		{
-			HandleReflectedUniformBuffer(PackedUB.Attribute.Name, PackedUB.Attribute.Index, ShaderOutput);
-		}
+		HandleReflectedUniformBuffer(PackedUB.Attribute.Name, PackedUB.Attribute.Index, ShaderOutput);
 		Header.Bindings.NumUniformBuffers++;
 
 		// Nothing else...
@@ -841,7 +801,6 @@ void FOpenGLFrontend::BuildShaderOutput(
 	Header.Bindings.PackedUniformBuffers.Reserve(PackedUniformBuffersSize.Num());
 	for (auto Iterator = PackedUniformBuffersSize.CreateIterator(); Iterator; ++Iterator)
 	{
-		int BufferIndex = Iterator.Key();
 		auto& ArraySizes = Iterator.Value();
 		TArray<CrossCompiler::FPackedArrayInfo> InfoArray;
 		InfoArray.Reserve(ArraySizes.Num());
@@ -869,16 +828,7 @@ void FOpenGLFrontend::BuildShaderOutput(
 	// Then samplers.
 	for (auto& Sampler : CCHeader.Samplers)
 	{
-		if (OutputTrueParameterNames())
-		{
-			BindingName[1] = 's';
-			SetIndex(BindingName, 2, Sampler.Offset);
-			BindingNameMap.Add(BindingName, Sampler.Name);
-		}
-		else
-		{
-			HandleReflectedShaderResource(Sampler.Name, Sampler.Offset, Sampler.Count, ShaderOutput);
-		}
+		HandleReflectedShaderResource(Sampler.Name, Sampler.Offset, Sampler.Count, ShaderOutput);
 
 		Header.Bindings.NumSamplers = FMath::Max<uint8>(
 			Header.Bindings.NumSamplers,
@@ -887,32 +837,14 @@ void FOpenGLFrontend::BuildShaderOutput(
 
 		for (auto& SamplerState : Sampler.SamplerStates)
 		{
-			if (OutputTrueParameterNames())
-			{
-				// add an entry for the sampler parameter as well
-				BindingNameMap.Add(FString(BindingName) + TEXT("_samp"), SamplerState);
-			}
-			else
-			{
-				HandleReflectedShaderSampler(SamplerState, Sampler.Offset, Sampler.Count, ShaderOutput);
-			}
+			HandleReflectedShaderSampler(SamplerState, Sampler.Offset, Sampler.Count, ShaderOutput);
 		}
 	}
 
 	// Then UAVs (images in GLSL)
 	for (auto& UAV : CCHeader.UAVs)
 	{
-		if (OutputTrueParameterNames())
-		{
-			// make the final name this will be in the shader
-			BindingName[1] = 'i';
-			SetIndex(BindingName, 2, UAV.Offset);
-			BindingNameMap.Add(BindingName, UAV.Name);
-		}
-		else
-		{
-			HandleReflectedShaderUAV(UAV.Name, UAV.Offset, UAV.Count, ShaderOutput);
-		}
+		HandleReflectedShaderUAV(UAV.Name, UAV.Offset, UAV.Count, ShaderOutput);
 
 		Header.Bindings.NumUAVs = FMath::Max<uint8>(
 			Header.Bindings.NumSamplers,
@@ -921,9 +853,7 @@ void FOpenGLFrontend::BuildShaderOutput(
 	}
 
 	Header.ShaderName = CCHeader.Name;
-
-	// perform any post processing this frontend class may need to do
-	ShaderOutput.bSucceeded = PostProcessShaderSource(Version, Frequency, USFSource, SourceLen + 1 - (USFSource - InShaderSource), ParameterMap, BindingNameMap, ShaderOutput.Errors, ShaderInput);
+	ShaderOutput.bSucceeded = true;
 
 	// Build the SRT for this shader.
 	{
@@ -944,7 +874,7 @@ void FOpenGLFrontend::BuildShaderOutput(
 		BuildResourceTableTokenStream(GenericSRT.UnorderedAccessViewMap, GenericSRT.MaxBoundResourceTable, Header.Bindings.ShaderResourceTable.UnorderedAccessViewMap);
 	}
 
-	const int32 MaxSamplers = GetMaxSamplers(Version);
+	constexpr int32 MaxSamplers = 16;
 
 	if (Header.Bindings.NumSamplers > MaxSamplers)
 	{
@@ -960,19 +890,9 @@ void FOpenGLFrontend::BuildShaderOutput(
 		FMemoryWriter Ar(ShaderOutput.ShaderCode.GetWriteAccess(), true);
 		Ar << Header;
 
-		if (OptionalSerializeOutputAndReturnIfSerialized(Ar) == false)
-		{
-			Ar.Serialize((void*)USFSource, SourceLen + 1 - (USFSource - InShaderSource));
-			ShaderOutput.bSucceeded = true;
-		}
+		Ar.Serialize((void*)USFSource, SourceLen + 1 - (USFSource - InShaderSource));
 
-		// extract final source code as requested by the Material Editor
-		if (ShaderInput.ExtraSettings.bExtractShaderSource)
-		{
-			TArray<ANSICHAR> GlslCodeOriginal;
-			GlslCodeOriginal.Append(USFSource, FCStringAnsi::Strlen(USFSource) + 1);
-			ShaderOutput.OptionalFinalShaderSource = FString(GlslCodeOriginal.GetData());
-		}
+		ShaderOutput.ModifiedShaderSource = USFSource;
 
 		if (ShaderInput.Environment.CompilerFlags.Contains(CFLAG_ExtraShaderData))
 		{
@@ -982,7 +902,7 @@ void FOpenGLFrontend::BuildShaderOutput(
 		// if available, attempt run an offline compilation and extract statistics
 		if (ShaderInput.ExtraSettings.OfflineCompilerPath.Len() > 0)
 		{
-			CompileOffline(ShaderInput, ShaderOutput, Version, USFSource);
+			CompileOfflineInternal(ShaderInput, ShaderOutput, Version, USFSource);
 		}
 		else
 		{
@@ -993,7 +913,17 @@ void FOpenGLFrontend::BuildShaderOutput(
 	}
 }
 
-void FOpenGLFrontend::ConvertOpenGLVersionFromGLSLVersion(GLSLVersion InVersion, int& OutMajorVersion, int& OutMinorVersion)
+void FOpenGLFrontend::BuildShaderOutput(
+	FShaderCompilerOutput& ShaderOutput,
+	const FShaderCompilerInput& ShaderInput,
+	const ANSICHAR* InShaderSource,
+	int32 SourceLen,
+	GLSLVersion Version)
+{
+	BuildShaderOutputInternal(ShaderOutput, ShaderInput, InShaderSource, SourceLen, Version);
+}
+
+static void ConvertOpenGLVersionFromGLSLVersionInternal(GLSLVersion InVersion, int& OutMajorVersion, int& OutMinorVersion)
 {
 	switch(InVersion)
 	{
@@ -1014,13 +944,20 @@ void FOpenGLFrontend::ConvertOpenGLVersionFromGLSLVersion(GLSLVersion InVersion,
 	}
 }
 
+void FOpenGLFrontend::ConvertOpenGLVersionFromGLSLVersion(GLSLVersion InVersion, int& OutMajorVersion, int& OutMinorVersion)
+{
+	return ConvertOpenGLVersionFromGLSLVersionInternal(InVersion, OutMajorVersion, OutMinorVersion);
+}
+
 /**
  * Precompile a GLSL shader.
  * @param ShaderOutput - The precompiled shader.
  * @param ShaderInput - The shader input.
- * @param InPreprocessedShader - The preprocessed source code.
+ * @param ShaderSource - The preprocessed source code.
+ * @param Version - The GLSL language version to target.
+ * @param Frequency - The shader stage
  */
-void FOpenGLFrontend::PrecompileShader(FShaderCompilerOutput& ShaderOutput, const FShaderCompilerInput& ShaderInput, const ANSICHAR* ShaderSource, GLSLVersion Version, EHlslShaderFrequency Frequency)
+static void PrecompileShaderInternal(FShaderCompilerOutput& ShaderOutput, const FShaderCompilerInput& ShaderInput, const ANSICHAR* ShaderSource, GLSLVersion Version, EHlslShaderFrequency Frequency)
 {
 	check(ShaderInput.Target.Frequency < SF_NumFrequencies);
 
@@ -1040,7 +977,7 @@ void FOpenGLFrontend::PrecompileShader(FShaderCompilerOutput& ShaderOutput, cons
 	void* PrevContextPtr;
 	int MajorVersion = 0;
 	int MinorVersion = 0;
-	ConvertOpenGLVersionFromGLSLVersion(Version, MajorVersion, MinorVersion);
+	ConvertOpenGLVersionFromGLSLVersionInternal(Version, MajorVersion, MinorVersion);
 	PlatformInitOpenGL(ContextPtr, PrevContextPtr, MajorVersion, MinorVersion);
 
 	GLint SourceLen = FCStringAnsi::Strlen(ShaderSource);
@@ -1058,7 +995,7 @@ void FOpenGLFrontend::PrecompileShader(FShaderCompilerOutput& ShaderOutput, cons
 		if (CompileStatus == GL_TRUE)
 		{
 			ShaderOutput.Target = ShaderInput.Target;
-			BuildShaderOutput(
+			BuildShaderOutputInternal(
 				ShaderOutput,
 				ShaderInput,
 				ShaderSource,
@@ -1110,36 +1047,41 @@ void FOpenGLFrontend::PrecompileShader(FShaderCompilerOutput& ShaderOutput, cons
 	PlatformReleaseOpenGL(ContextPtr, PrevContextPtr);
 }
 
-void FOpenGLFrontend::SetupPerVersionCompilationEnvironment(GLSLVersion Version, FShaderCompilerDefinitions& AdditionalDefines, EHlslCompileTarget& HlslCompilerTarget)
+void FOpenGLFrontend::PrecompileShader(FShaderCompilerOutput& ShaderOutput, const FShaderCompilerInput& ShaderInput, const ANSICHAR* ShaderSource, GLSLVersion Version, EHlslShaderFrequency Frequency)
+{
+	PrecompileShaderInternal(ShaderOutput, ShaderInput, ShaderSource, Version, Frequency);
+}
+
+static EHlslCompileTarget GetCompileTarget(GLSLVersion Version)
 {
 	switch (Version)
 	{
 		case GLSL_ES3_1_ANDROID:
-			AdditionalDefines.SetDefine(TEXT("COMPILER_GLSL_ES3_1"), 1);
-			AdditionalDefines.SetDefine(TEXT("ES3_1_PROFILE"), 1);
-			HlslCompilerTarget = HCT_FeatureLevelES3_1;
-			break;
-
 		case GLSL_150_ES3_1:
-			AdditionalDefines.SetDefine(TEXT("COMPILER_GLSL"), 1);
-			AdditionalDefines.SetDefine(TEXT("ES3_1_PROFILE"), 1);
-			HlslCompilerTarget = HCT_FeatureLevelES3_1;
-			AdditionalDefines.SetDefine(TEXT("row_major"), TEXT(""));
-			break;
+			return HCT_FeatureLevelES3_1;
 
 		default:
-			check(0);
+			checkNoEntry();
 	}
-
-	AdditionalDefines.SetDefine(TEXT("OPENGL_PROFILE"), 1);
+	return HCT_InvalidTarget;
 }
+
+PRAGMA_DISABLE_DEPRECATION_WARNINGS		// FShaderCompilerDefinitions will be made internal in the future, marked deprecated until then
+
+void FOpenGLFrontend::SetupPerVersionCompilationEnvironment(GLSLVersion Version, FShaderCompilerDefinitions& AdditionalDefines, EHlslCompileTarget& HlslCompilerTarget)
+{
+	// this function is deprecated; SetupDefines is removed and all per-version defines are now set in ModifyShaderCompilerInput on the IShaderFormat implementation.
+	HlslCompilerTarget = GetCompileTarget(Version);
+}
+
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 uint32 FOpenGLFrontend::GetMaxSamplers(GLSLVersion Version)
 {
 	return 16;
 }
 
-uint32 FOpenGLFrontend::CalculateCrossCompilerFlags(GLSLVersion Version, const bool bFullPrecisionInPS, const FShaderCompilerFlags& CompilerFlags)
+static uint32 CalculateCrossCompilerFlagsInternal(GLSLVersion Version, const bool bFullPrecisionInPS, const FShaderCompilerFlags& CompilerFlags)
 {
 	uint32  CCFlags = HLSLCC_NoPreprocess | HLSLCC_PackUniforms | HLSLCC_DX11ClipSpace | HLSLCC_RetainSizes;
 
@@ -1164,9 +1106,20 @@ uint32 FOpenGLFrontend::CalculateCrossCompilerFlags(GLSLVersion Version, const b
 	return CCFlags;
 }
 
-FGlslCodeBackend* FOpenGLFrontend::CreateBackend(GLSLVersion Version, uint32 CCFlags, EHlslCompileTarget HlslCompilerTarget)
+uint32 FOpenGLFrontend::CalculateCrossCompilerFlags(GLSLVersion Version, const bool bFullPrecisionInPS, const FShaderCompilerFlags& CompilerFlags)
+{
+	return CalculateCrossCompilerFlagsInternal(Version, bFullPrecisionInPS, CompilerFlags);
+}
+
+FGlslCodeBackend* CreateBackendInternal(GLSLVersion Version, uint32 CCFlags, EHlslCompileTarget HlslCompilerTarget)
 {
 	return new FGlslCodeBackend(CCFlags, HlslCompilerTarget);
+}
+
+
+FGlslCodeBackend* FOpenGLFrontend::CreateBackend(GLSLVersion Version, uint32 CCFlags, EHlslCompileTarget HlslCompilerTarget)
+{
+	return CreateBackendInternal(Version, CCFlags, HlslCompilerTarget);
 }
 
 class FGlsl430LanguageSpec : public FGlslLanguageSpec
@@ -1178,9 +1131,14 @@ public:
 	virtual bool EmulateStructuredWithTypedBuffers() const override { return false; }
 };
 
-FGlslLanguageSpec* FOpenGLFrontend::CreateLanguageSpec(GLSLVersion Version, bool bDefaultPrecisionIsHalf)
+FGlslLanguageSpec* CreateLanguageSpecInternal(GLSLVersion Version, bool bDefaultPrecisionIsHalf)
 {
 	return new FGlslLanguageSpec(bDefaultPrecisionIsHalf);
+}
+
+FGlslLanguageSpec* FOpenGLFrontend::CreateLanguageSpec(GLSLVersion Version, bool bDefaultPrecisionIsHalf)
+{
+	return CreateLanguageSpecInternal(Version, bDefaultPrecisionIsHalf);
 }
 
 #if DXC_SUPPORTED
@@ -1210,10 +1168,6 @@ struct PackedUBMemberInfo
 
 void WritePackedUBHeader(CrossCompiler::FHlslccHeaderWriter& CCHeaderWriter, const TMap<uint32_t, TArray<PackedUBMemberInfo>>& UBMemberInfo, const TMap<uint32, std::string>& UBNames)
 {
-	bool bFirst = true;
-
-	bool bNeedsHeader = true;
-
 	for (const auto & Pair : UBNames)
 	{
 		FString Name(Pair.Value.c_str());
@@ -1273,7 +1227,6 @@ void WritePackedUBHeader(CrossCompiler::FHlslccHeaderWriter& CCHeaderWriter, con
 void GetSpvVarQualifier(const SpvReflectBlockVariable& Member, FString & Out)
 {
 	auto const type = *Member.type_description;
-	const uint32 MbrSize = Member.size / sizeof(float);
 
 	FString TypeQualifier;
 
@@ -1543,7 +1496,6 @@ void ParseReflectionData(const FShaderCompilerInput& ShaderInput, CrossCompiler:
 	uint32 TextureIndices = 0xffffffff;
 	uint32 UBOIndices = 0xffffffff;
 	uint32 SamplerIndices = 0xffffffff;
-	uint32_t PackedUBIndex = 0;
 
 	for (auto const& Binding : ReflectionBindings.TBufferUAVs)
 	{
@@ -2123,37 +2075,39 @@ static void ConvertToEmulatedUBs(std::string& GlslSource, const ReflectionData& 
 }
 
 const ANSICHAR* GlslFrameBufferExtensions =
-"\n\n#ifdef GL_ARM_shader_framebuffer_fetch_depth_stencil\n"
-"\t#extension GL_ARM_shader_framebuffer_fetch_depth_stencil : enable\n"
-"#elif defined(GL_EXT_shader_framebuffer_fetch)\n"
+"\n\n#ifdef UE_MRT_FRAMEBUFFER_FETCH\n"
 "\t#extension GL_EXT_shader_framebuffer_fetch : enable\n"
 "\t#define FBF_STORAGE_QUALIFIER inout\n"
+"#elif defined(GL_ARM_shader_framebuffer_fetch)\n"
+"\t#extension GL_ARM_shader_framebuffer_fetch : enable\n"
 "#endif\n"
-"#extension GL_EXT_texture_buffer : enable\n"
+"#ifdef GL_ARM_shader_framebuffer_fetch_depth_stencil\n"
+"\t#extension GL_ARM_shader_framebuffer_fetch_depth_stencil : enable\n"
+"#endif\n"
 "// end extensions";
 
 // GLSL framebuffer macro definitions. Used to patch GLSL output source.
 const ANSICHAR* GlslFrameBufferDefines =
-"\n\n#ifdef UE_EXT_shader_framebuffer_fetch\n"
-"#define _Globals_ARM_shader_framebuffer_fetch 0\n"
-"#define FRAME_BUFFERFETCH_STORAGE_QUALIFIER inout\n"
-"#define _Globals_gl_FragColor out_var_SV_Target0\n"
-"#define _Globals_gl_LastFragColorARM vec4(0.0, 0.0, 0.0, 0.0)\n"
-"#elif defined( GL_ARM_shader_framebuffer_fetch)\n"
-"#define _Globals_ARM_shader_framebuffer_fetch 1\n"
-"#define FRAME_BUFFERFETCH_STORAGE_QUALIFIER out\n"
-"#define _Globals_gl_FragColor vec4(0.0, 0.0, 0.0, 0.0)\n"
-"#define _Globals_gl_LastFragColorARM gl_LastFragDepthARM\n"
+"\n\n#ifdef UE_MRT_FRAMEBUFFER_FETCH\n"
+"\t#define _Globals_ARM_shader_framebuffer_fetch 0u\n"
+"\t#define FRAME_BUFFERFETCH_STORAGE_QUALIFIER inout\n"
+"\t#define _Globals_gl_FragColor out_var_SV_Target0\n"
+"\t#define _Globals_gl_LastFragColorARM vec4(0.0, 0.0, 0.0, 0.0)\n"
+"#elif defined(GL_ARM_shader_framebuffer_fetch)\n"
+"\t#define _Globals_ARM_shader_framebuffer_fetch 1u\n"
+"\t#define FRAME_BUFFERFETCH_STORAGE_QUALIFIER out\n"
+"\t#define _Globals_gl_FragColor vec4(0.0, 0.0, 0.0, 0.0)\n"
+"\t#define _Globals_gl_LastFragColorARM gl_LastFragColorARM\n"
 "#else\n"
-"#define FRAME_BUFFERFETCH_STORAGE_QUALIFIER out\n"
-"#define _Globals_ARM_shader_framebuffer_fetch 0\n"
-"#define _Globals_gl_FragColor vec4(0.0, 0.0, 0.0, 0.0)\n"
-"#define _Globals_gl_LastFragColorARM vec4(0.0, 0.0, 0.0, 0.0)\n"
+"\t#define FRAME_BUFFERFETCH_STORAGE_QUALIFIER out\n"
+"\t#define _Globals_ARM_shader_framebuffer_fetch 0u\n"
+"\t#define _Globals_gl_FragColor vec4(0.0, 0.0, 0.0, 0.0)\n"
+"\t#define _Globals_gl_LastFragColorARM vec4(0.0, 0.0, 0.0, 0.0)\n"
 "#endif\n"
 "#ifdef GL_ARM_shader_framebuffer_fetch_depth_stencil\n"
-"#define _Globals_ARM_shader_framebuffer_fetch_depth_stencil 1u\n"
+"\t#define _Globals_ARM_shader_framebuffer_fetch_depth_stencil 1u\n"
 "#else\n"
-"#define _Globals_ARM_shader_framebuffer_fetch_depth_stencil 0u\n"
+"\t#define _Globals_ARM_shader_framebuffer_fetch_depth_stencil 0u\n"
 "#endif\n";
 
 struct GLSLCompileParameters
@@ -2215,8 +2169,8 @@ bool GenerateGlslShader(std::string& OutString, GLSLCompileParameters& GLSLCompi
 	}
 
 	// Perform FBF replacements
+	if (GLSLCompileParams.Frequency == SF_Pixel)
 	{
-
 		size_t MainPos = OutString.find("#version 320 es");
 
 		// Fallback if the shader is 310 
@@ -2232,104 +2186,131 @@ bool GenerateGlslShader(std::string& OutString, GLSLCompileParameters& GLSLCompi
 
 		// Framebuffer Depth Fetch
 		{
-			std::string FBDFString = "_Globals.ARM_shader_framebuffer_fetch_depth_stencil";
-			std::string FBDFReplaceString = "1u";
-
 			std::string FBFString = "_Globals.ARM_shader_framebuffer_fetch";
 			std::string FBFReplaceString = "_Globals_ARM_shader_framebuffer_fetch";
 
-			bool UsesFramebufferDepthFetch = GLSLCompileParams.Frequency == SF_Pixel && OutString.find(FBDFString) != std::string::npos;
-			bool UsesFramebufferFetch = GLSLCompileParams.Frequency == SF_Pixel && OutString.find(FBFString) != std::string::npos;
+			bool UsesFramebufferFetch = OutString.find(FBFString) != std::string::npos;
 
-			if (UsesFramebufferDepthFetch || UsesFramebufferFetch)
+			if (UsesFramebufferFetch)
 			{
 				OutString.insert(MainPos, GlslFrameBufferDefines);
 				OutString.insert(MainPos, GlslFrameBufferExtensions);
 
-				size_t FramebufferDepthFetchPos = OutString.find(FBDFString);
+				std::string FBDFString = "_Globals.ARM_shader_framebuffer_fetch_depth_stencil";
+				std::string FBDFReplaceString = "1u";
 
-				OutString.erase(FramebufferDepthFetchPos, FBDFString.length());
-				OutString.insert(FramebufferDepthFetchPos, FBDFReplaceString);
-
-				std::string LastFragDepthARMString = "_Globals._RESERVED_IDENTIFIER_FIXUP_gl_LastFragDepthARM";
-				std::string LastFragDepthARMReplaceString = "GLFetchDepthBuffer()";
-
-				size_t LastFragDepthARMStringPos = OutString.find(LastFragDepthARMString);
-				
-				while (LastFragDepthARMStringPos != std::string::npos)
+				bool UsesFramebufferDepthFetch = OutString.find(FBDFString) != std::string::npos;
+				if (UsesFramebufferDepthFetch)
 				{
-					OutString.erase(LastFragDepthARMStringPos, LastFragDepthARMString.length());
-					OutString.insert(LastFragDepthARMStringPos, LastFragDepthARMReplaceString);
+					size_t FramebufferDepthFetchPos = OutString.find(FBDFString);
 
-					LastFragDepthARMStringPos = OutString.find(LastFragDepthARMString);
-				}
+					OutString.erase(FramebufferDepthFetchPos, FBDFString.length());
+					OutString.insert(FramebufferDepthFetchPos, FBDFReplaceString);
 
-				MainPos = OutString.find("void main()");
+					std::string LastFragDepthARMString = "_Globals._RESERVED_IDENTIFIER_FIXUP_gl_LastFragDepthARM";
+					std::string LastFragDepthARMReplaceString = "GLFetchDepthBuffer()";
 
-				// Add support for framebuffer fetch depth when ARM extension is not supported
-				if (MainPos != std::string::npos)
-				{
-					std::string DepthBufferIndex = bIsDeferred ? "4" : "1";
-					std::string DepthBufferOutVarString = "out_var_SV_Target" + DepthBufferIndex;
+					size_t LastFragDepthARMStringPos = OutString.find(LastFragDepthARMString);
 
-					// Insert function declaration to handle retrieving depth
-					OutString.insert(MainPos, "float GLFetchDepthBuffer()\n"
-						"{\n"
-						"\t#if defined(GL_ARM_shader_framebuffer_fetch_depth_stencil)\n"
-						"\treturn gl_LastFragDepthARM;\n"
-						"\t#elif defined(GL_EXT_shader_framebuffer_fetch)\n"
-						"\treturn " + DepthBufferOutVarString + ".x;\n"
-						"\t#else\n"
-						"\treturn 0.0f;\n"
-						"\t#endif\n"
-						"}\n");
-
-					
-					// If SceneDepthAux is not declared then declare it, otherwise modify so that we only enable it on devices that don't support
-					// GL_ARM_shader_framebuffer_fetch_depth_stencil and do support GL_EXT_shader_framebuffer_fetch
-					size_t DepthBufferOutVarPos = OutString.find(DepthBufferOutVarString + ";");
-
-					std::string DepthBufferDeclString = "layout(location = " + DepthBufferIndex + ") inout highp vec4 " + DepthBufferOutVarString + ";\n";
-					std::string DepthBufferOutString = "\n#if !defined(GL_ARM_shader_framebuffer_fetch_depth_stencil) && defined(GL_EXT_shader_framebuffer_fetch)\n" +
-														DepthBufferDeclString +
-														"#endif\n";
-
-					// If we cannot find a declararation of out_var_SV_Target(n) in the shader, insert one
-					if (DepthBufferOutVarPos == std::string::npos)
+					while (LastFragDepthARMStringPos != std::string::npos)
 					{
-						OutString.insert(MainPos, DepthBufferOutString);
-					}
-					else 
-					{
-						// If we have a declaration, replace with one that will be stripped if GL_ARM_shader_framebuffer_fetch_depth_stencil is enabled
-						size_t StringStartPos = OutString.rfind("layout", DepthBufferOutVarPos - 1);
-						size_t StringEndPos = OutString.find(";", StringStartPos);
+						OutString.erase(LastFragDepthARMStringPos, LastFragDepthARMString.length());
+						OutString.insert(LastFragDepthARMStringPos, LastFragDepthARMReplaceString);
 
-						OutString.erase(StringStartPos, (StringEndPos+1) - StringStartPos);
-						OutString.insert(StringStartPos, DepthBufferOutString);
+						LastFragDepthARMStringPos = OutString.find(LastFragDepthARMString);
 					}
 
-					// Make SceneDepthAux assignment conditional
-					// We only need to write the depth when we don't support GL_ARM_shader_framebuffer_fetch_depth_stencil
-					std::string DepthBufferAssignment = DepthBufferOutVarString + " =";
-					size_t DepthBufferAssignmentPos = OutString.find(DepthBufferAssignment);
+					MainPos = OutString.find("void main()");
 
-					if (DepthBufferAssignmentPos != std::string::npos)
+					// Add support for framebuffer fetch depth when ARM extension is not supported
+					if (MainPos != std::string::npos)
 					{
-						size_t LineEnd = OutString.find_first_of(";", DepthBufferAssignmentPos);
-						uint32_t AssignmentValueStart = DepthBufferAssignmentPos + DepthBufferAssignment.size();
-						std::string AssignmentValue = OutString.substr(AssignmentValueStart + 1, LineEnd - AssignmentValueStart);
+						std::string DepthBufferIndex = bIsDeferred ? "4" : "1";
+						std::string DepthBufferOutVarString = "out_var_SV_Target" + DepthBufferIndex;
 
-						if (LineEnd != std::string::npos)
+						// Insert function declaration to handle retrieving depth
+						OutString.insert(MainPos, "float GLFetchDepthBuffer()\n"
+							"{\n"
+							"\t#if defined(GL_ARM_shader_framebuffer_fetch_depth_stencil)\n"
+							"\treturn gl_LastFragDepthARM;\n"
+							"\t#elif defined(GL_EXT_shader_framebuffer_fetch)\n"
+							"\treturn " + DepthBufferOutVarString + ".x;\n"
+							"\t#else\n"
+							"\treturn 0.0f;\n"
+							"\t#endif\n"
+							"}\n");
+
+
+						// If SceneDepthAux is not declared then declare it, otherwise modify so that we only enable it on devices that don't support
+						// GL_ARM_shader_framebuffer_fetch_depth_stencil and do support GL_EXT_shader_framebuffer_fetch
+						size_t DepthBufferOutVarPos = OutString.find(DepthBufferOutVarString + ";");
+
+						std::string DepthBufferDeclString = "layout(location = " + DepthBufferIndex + ") inout highp vec4 " + DepthBufferOutVarString + ";\n";
+						std::string DepthBufferOutString = "\n#if !defined(GL_ARM_shader_framebuffer_fetch_depth_stencil) && defined(GL_EXT_shader_framebuffer_fetch)\n" +
+							DepthBufferDeclString +
+							"#endif\n";
+
+						// If we cannot find a declararation of out_var_SV_Target(n) in the shader, insert one
+						if (DepthBufferOutVarPos == std::string::npos)
 						{
-							OutString.erase(DepthBufferAssignmentPos, LineEnd + 1 - DepthBufferAssignmentPos);
-							OutString.insert(DepthBufferAssignmentPos, std::string("#if !defined(GL_ARM_shader_framebuffer_fetch_depth_stencil) && defined(GL_EXT_shader_framebuffer_fetch)\n") + DepthBufferAssignment + AssignmentValue + std::string("\n#endif\n"));
+							OutString.insert(MainPos, DepthBufferOutString);
+						}
+						else
+						{
+							// If we have a declaration, replace with one that will be stripped if GL_ARM_shader_framebuffer_fetch_depth_stencil is enabled
+							size_t StringStartPos = OutString.rfind("layout", DepthBufferOutVarPos - 1);
+							size_t StringEndPos = OutString.find(";", StringStartPos);
+
+							OutString.erase(StringStartPos, (StringEndPos + 1) - StringStartPos);
+							OutString.insert(StringStartPos, DepthBufferOutString);
+						}
+
+						// Make SceneDepthAux assignment conditional
+						// We only need to write the depth when we don't support GL_ARM_shader_framebuffer_fetch_depth_stencil
+						std::string DepthBufferAssignment = DepthBufferOutVarString + " =";
+						size_t DepthBufferAssignmentPos = OutString.find(DepthBufferAssignment);
+
+						if (DepthBufferAssignmentPos != std::string::npos)
+						{
+							size_t LineEnd = OutString.find_first_of(";", DepthBufferAssignmentPos);
+							uint32_t AssignmentValueStart = DepthBufferAssignmentPos + DepthBufferAssignment.size();
+							std::string AssignmentValue = OutString.substr(AssignmentValueStart + 1, LineEnd - AssignmentValueStart);
+
+							if (LineEnd != std::string::npos)
+							{
+								OutString.erase(DepthBufferAssignmentPos, LineEnd + 1 - DepthBufferAssignmentPos);
+								OutString.insert(DepthBufferAssignmentPos, std::string("#if !defined(GL_ARM_shader_framebuffer_fetch_depth_stencil) && defined(GL_EXT_shader_framebuffer_fetch)\n") + DepthBufferAssignment + AssignmentValue + std::string("\n#endif\n"));
+							}
 						}
 					}
+				} // UsesFramebufferDepthFetch
+			}
+
+			// check again, before it might have been a match for ARM_shader_framebuffer_fetch_depth_stencil
+			UsesFramebufferFetch = GLSLCompileParams.Frequency == SF_Pixel && OutString.find(FBFString) != std::string::npos;
+			if (UsesFramebufferFetch)
+			{
+				std::string ReservedIdentifierFixupString = "_RESERVED_IDENTIFIER_FIXUP_";
+				size_t ReservedIdentifierFixupStringPos = OutString.find(ReservedIdentifierFixupString);
+
+				while (ReservedIdentifierFixupStringPos != std::string::npos)
+				{
+					OutString.erase(ReservedIdentifierFixupStringPos, ReservedIdentifierFixupString.length());
+					ReservedIdentifierFixupStringPos = OutString.find(ReservedIdentifierFixupString);
+				}
+
+				std::string Target0String = "layout(location = 0) out ";
+				std::string Target0ReplaceString = "layout(location = 0) FRAME_BUFFERFETCH_STORAGE_QUALIFIER ";
+				size_t Target0StringPos = OutString.find(Target0String);
+				if (Target0StringPos != std::string::npos)
+				{
+					OutString.erase(Target0StringPos, Target0String.length());
+					OutString.insert(Target0StringPos, Target0ReplaceString);
 				}
 			}
 		}
 	}
+
 
 	// If we are rendering deferred, then we only need SceneDepthAux on devices that don't support framebuffer fetch depth
 	if (bIsDeferred)
@@ -2529,25 +2510,10 @@ bool GenerateGlslShader(std::string& OutString, GLSLCompileParameters& GLSLCompi
 			std::string NewUAVName = FrequencyPrefix + std::string("i") + std::to_string(UAVIndex);
 
 			// Find instances of UAVs
-			std::string RegexExpression = "(?:^|\\W|\\S)" + UAV + "(?:$|\\W)";
+			std::string RegexExpression = "\\b" + UAV + "\\b";
+			std::regex RegexExpressionPattern(RegexExpression);
 
-			std::cmatch RegexMatch;
-			std::vector<std::string> RegexMatches;
-
-			const char* TempString = OutString.c_str();
-			while (std::regex_search(TempString, RegexMatch, std::regex(RegexExpression)))
-			{
-				RegexMatches.push_back(RegexMatch.str());
-				TempString = RegexMatch.suffix().first;
-			}
-
-			for (const auto& Match : RegexMatches)
-			{
-				size_t MatchOffset = Match.find_first_of(UAV);
-				size_t MatchPos = OutString.find(Match);
-
-				OutString.replace(MatchPos + MatchOffset, UAV.size(), NewUAVName);
-			}
+			OutString = std::regex_replace(OutString, RegexExpressionPattern, NewUAVName);
 
 			UAVIndex++;
 		}
@@ -2840,7 +2806,9 @@ bool GenerateDeferredMobileShaders(std::string& GlslSource, GLSLCompileParameter
 		OutString += ESVersionString + "\n";
 		OutString += "#ifdef UE_MRT_FRAMEBUFFER_FETCH\n";
 
-		FShaderCompilerDefinitions CompileFlagsCopy = GLSLCompileParams.TargetDesc->CompileFlags;
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS		// FShaderCompilerDefinitions will be made internal in the future, marked deprecated until then
+
+		FShaderCompilerDefinitions CompileFlagsCopy = *GLSLCompileParams.TargetDesc->CompileFlags;
 
 		// Add defines for FBF in spirv-glsl
 		for (uint32_t i = 1; i < 4; ++i)
@@ -2849,7 +2817,7 @@ bool GenerateDeferredMobileShaders(std::string& GlslSource, GLSLCompileParameter
 			{
 				FString DefineKey = FString::Printf(TEXT("remap_ext_framebuffer_fetch%d"), i);
 				FString DefineValue = FString::Printf(TEXT("%d %d"), i + 1, i);
-				GLSLCompileParams.TargetDesc->CompileFlags.SetDefine(*DefineKey, *DefineValue);
+				GLSLCompileParams.TargetDesc->CompileFlags->SetDefine(*DefineKey, *DefineValue);
 			}
 		}
 
@@ -2865,7 +2833,9 @@ bool GenerateDeferredMobileShaders(std::string& GlslSource, GLSLCompileParameter
 			FBFSourceString.replace(VersionStringPos, ESVersionString.length(), "");
 		}
 
-		GLSLCompileParams.TargetDesc->CompileFlags = CompileFlagsCopy;
+		*GLSLCompileParams.TargetDesc->CompileFlags = CompileFlagsCopy;
+
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		OutString += FBFSourceString;
 
@@ -2920,7 +2890,9 @@ bool GenerateDeferredMobileShaders(std::string& GlslSource, GLSLCompileParameter
 					DefineValue = GBufferOutputNames[i];
 				}
 
-				GLSLCompileParams.TargetDesc->CompileFlags.SetDefine(*DefineKey, *DefineValue);
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS		// FShaderCompilerDefinitions will be made internal in the future, marked deprecated until then
+				GLSLCompileParams.TargetDesc->CompileFlags->SetDefine(*DefineKey, *DefineValue);
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			}
 		}
 
@@ -2975,16 +2947,14 @@ bool GenerateDeferredMobileShaders(std::string& GlslSource, GLSLCompileParameter
 static bool CompileToGlslWithShaderConductor(
 	const FShaderCompilerInput&	Input,
 	FShaderCompilerOutput&		Output,
-	const FString&				WorkingDirectory,
 	GLSLVersion					Version,
 	const EShaderFrequency		Frequency,
-	uint32						CCFlags,
 	const FString&				PreprocessedShader,
 	char*&						OutGlslShaderSource)
 {
 	CrossCompiler::FShaderConductorContext CompilerContext;
 
-	const bool bDumpDebugInfo = (Input.DumpDebugInfoPath != TEXT("") && IFileManager::Get().DirectoryExists(*Input.DumpDebugInfoPath));
+	const bool bDumpDebugInfo = Input.DumpDebugInfoEnabled();
 	const bool bRewriteHlslSource = true;
 
 	// Initialize compilation options for ShaderConductor
@@ -3037,13 +3007,13 @@ static bool CompileToGlslWithShaderConductor(
 		SourceData = HlslFrameBufferDeclarations + SourceData;
 	}
 	
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS		// FShaderCompilerDefinitions will be made internal in the future, marked deprecated until then
+
 	// Inject additional macro definitions to circumvent missing features: external textures
 	FShaderCompilerDefinitions AdditionalDefines;
 	AdditionalDefines.SetDefine(TEXT("TextureExternal"), TEXT("Texture2D"));
 
-	UE::ShaderCompilerCommon::FDebugShaderDataOptions DebugDataOptions;
-	DebugDataOptions.HlslCCFlags = CCFlags;
-	UE::ShaderCompilerCommon::DumpDebugShaderData(Input, PreprocessedShader, DebugDataOptions);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	uint32_t BlendFlags = GetDecalBlendFlags(Input);
 
@@ -3109,8 +3079,6 @@ static bool CompileToGlslWithShaderConductor(
 
 		ParseReflectionData(Input, CCHeaderWriter, ReflectData, SpirvData, Reflection, SPIRV_DummySamplerName, Frequency, bEmulatedUBs);
 		
-		const ANSICHAR* FrequencyPrefix = GetFrequencyPrefix(Frequency);
-		
 		// Step 2 : End of reflection
 		// 
 		// Overwrite updated SPIRV code
@@ -3124,7 +3092,9 @@ static bool CompileToGlslWithShaderConductor(
 
 		CrossCompiler::FShaderConductorTarget TargetDesc;
 
-		TargetDesc.CompileFlags.SetDefine(TEXT("relax_nan_checks"), 1);
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS		// FShaderCompilerDefinitions will be made internal in the future, marked deprecated until then
+
+		TargetDesc.CompileFlags->SetDefine(TEXT("relax_nan_checks"), 1);
 
 		switch (Version)
 		{
@@ -3139,9 +3109,9 @@ static bool CompileToGlslWithShaderConductor(
 		case GLSL_150_ES3_1:
 		case GLSL_ES3_1_ANDROID:
 		default:
-			TargetDesc.CompileFlags.SetDefine(TEXT("force_flattened_io_blocks"), 1);
-			TargetDesc.CompileFlags.SetDefine(TEXT("emit_uniform_buffer_as_plain_uniforms"), 1);
-			TargetDesc.CompileFlags.SetDefine(TEXT("pad_ubo_blocks"), 1);
+			TargetDesc.CompileFlags->SetDefine(TEXT("force_flattened_io_blocks"), 1);
+			TargetDesc.CompileFlags->SetDefine(TEXT("emit_uniform_buffer_as_plain_uniforms"), 1);
+			TargetDesc.CompileFlags->SetDefine(TEXT("pad_ubo_blocks"), 1);
 			// TODO: Currently disabled due to bug when assigning an array to temporary variable
 			//TargetDesc.CompileFlags.SetDefine(TEXT("force_temporary"), 1);
 
@@ -3149,43 +3119,35 @@ static bool CompileToGlslWithShaderConductor(
 			const bool bMultiView = Input.Environment.GetCompileArgument(TEXT("MOBILE_MULTI_VIEW"), false);
 			if (Frequency == SF_Vertex && bMultiView)
 			{
-				TargetDesc.CompileFlags.SetDefine(TEXT("ovr_multiview_view_count"), 2);
+				TargetDesc.CompileFlags->SetDefine(TEXT("ovr_multiview_view_count"), 2);
 			}
 
 			if (Version == GLSL_150_ES3_1)
 			{
-				TargetDesc.CompileFlags.SetDefine(TEXT("force_glsl_clipspace"), 1);
+				TargetDesc.CompileFlags->SetDefine(TEXT("force_glsl_clipspace"), 1);
 			}
 			TargetDesc.Language = CrossCompiler::EShaderConductorLanguage::Essl;
 			TargetDesc.Version = 320;
 			break;
 		}
 
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
 		TSet<FString> ExternalTextures;
 		int32 Pos = 0;
-#if !PLATFORM_MAC
-		TCHAR TextureExternalName[256];
-#else
-		ANSICHAR TextureExternalName[256];
-#endif
+		static constexpr FStringView TextExternal = TEXTVIEW("TextureExternal");
+		
 		do
 		{
-			Pos = PreprocessedShader.Find(TEXT("TextureExternal"), ESearchCase::CaseSensitive, ESearchDir::FromStart, Pos + 15);
+			Pos = PreprocessedShader.Find(TextExternal, ESearchCase::CaseSensitive, ESearchDir::FromStart, Pos + TextExternal.Len());
 			if (Pos != INDEX_NONE)
 			{
-#if PLATFORM_WINDOWS
-				if (swscanf_s(&PreprocessedShader[Pos], TEXT("TextureExternal %ls"), TextureExternalName, 256) == 1)
-#elif PLATFORM_MAC
-				if (sscanf(TCHAR_TO_ANSI(&PreprocessedShader[Pos]), "TextureExternal %s", TextureExternalName) == 1)
-#else // PLATFORM_LINUX
-				if (swscanf(TCHAR_TO_WCHAR(&PreprocessedShader[Pos]), L"TextureExternal %ls", TextureExternalName) == 1)
-#endif
+				FStringView TextureExternalName;
+
+				TextureExternalName = FindNextHLSLDefinitionOfType(FStringView(&PreprocessedShader[Pos]), FStringView(&PreprocessedShader[Pos+TextExternal.Len()]));
+				if (!TextureExternalName.IsEmpty())
 				{
-					FString Name = TextureExternalName;
-					if (Name.RemoveFromEnd(TEXT(";")))
-					{
-						ExternalTextures.Add(Name + TEXT("Sampler"));
-					}
+					ExternalTextures.Add(FString(TextureExternalName) + TEXT("Sampler"));	
 				}
 			}
 		}
@@ -3259,94 +3221,50 @@ static bool CompileToGlslWithShaderConductor(
 
 #endif // DXC_SUPPORTED
 
-
-static inline FString GetExtension(EHlslShaderFrequency Frequency, bool bAddDot = true)
+bool ShouldUseDXC(FShaderCompilerFlags Flags)
 {
-	const TCHAR* Name = nullptr;
-	switch (Frequency)
-	{
-	default:
-		check(0);
-		// fallthrough...
-
-	case HSF_PixelShader:		Name = TEXT(".frag"); break;
-	case HSF_VertexShader:		Name = TEXT(".vert"); break;
-	case HSF_ComputeShader:		Name = TEXT(".comp"); break;
-	case HSF_GeometryShader:	Name = TEXT(".geom"); break;
-	case HSF_HullShader:		Name = TEXT(".tesc"); break;
-	case HSF_DomainShader:		Name = TEXT(".tese"); break;
-	}
-
-	if (!bAddDot)
-	{
-		++Name;
-	}
-	return FString(Name);
+#if DXC_SUPPORTED
+	return Flags.Contains(CFLAG_ForceDXC);
+#else
+	return false;
+#endif
 }
 
 /**
  * Compile a shader for OpenGL on Windows.
  * @param Input - The input shader code and environment.
+ * @param PreprocessOutput - The output of the shader preprocessing phase (see above)
  * @param Output - Contains shader compilation results upon return.
+ * @param WorkingDirectory - (unused, part of IShaderFormat API)
+ * @param Version - Target GLSL version for this compilation
  */
-void FOpenGLFrontend::CompileShader(const FShaderCompilerInput& Input, FShaderCompilerOutput& Output, const FString& WorkingDirectory, GLSLVersion Version)
+void CompileOpenGLShader(const FShaderCompilerInput& Input, const FShaderPreprocessOutput& InPreprocessOutput, FShaderCompilerOutput& Output, const FString& WorkingDirectory, GLSLVersion Version)
 {
-	FString PreprocessedShader;
-	FShaderCompilerDefinitions AdditionalDefines;
-	EHlslCompileTarget HlslCompilerTarget = HCT_InvalidTarget;
-	ECompilerFlags PlatformFlowControl = CFLAG_AvoidFlowControl;
+	FString EntryPointName = Input.EntryPointName;
+	FString PreprocessedSource(InPreprocessOutput.GetSourceViewWide());
 
-	// set up compiler env based on version
-	SetupPerVersionCompilationEnvironment(Version, AdditionalDefines, HlslCompilerTarget);
-
-#if DXC_SUPPORTED
-	const bool bUseSC = Input.Environment.CompilerFlags.Contains(CFLAG_ForceDXC);
-#else
-	const bool bUseSC = false;
-#endif
-
-	AdditionalDefines.SetDefine(TEXT("COMPILER_HLSLCC"), bUseSC ? 2 : 1);
-
-	const bool bDumpDebugInfo = (Input.DumpDebugInfoPath != TEXT("") && IFileManager::Get().DirectoryExists(*Input.DumpDebugInfoPath));
-
-	if (Input.Environment.CompilerFlags.Contains(CFLAG_AvoidFlowControl) || PlatformFlowControl == CFLAG_AvoidFlowControl)
+	FShaderParameterParser::FPlatformConfiguration PlatformConfiguration;
+	FShaderParameterParser ShaderParameterParser(PlatformConfiguration);
+	if (!ShaderParameterParser.ParseAndModify(Input, Output.Errors, PreprocessedSource))
 	{
-		AdditionalDefines.SetDefine(TEXT("COMPILER_SUPPORTS_ATTRIBUTES"), (uint32)1);
-	}
-	else
-	{
-		AdditionalDefines.SetDefine(TEXT("COMPILER_SUPPORTS_ATTRIBUTES"), (uint32)0);
+		// The FShaderParameterParser will add any relevant errors.
+		return;
 	}
 
-	if (Input.Environment.FullPrecisionInPS)
+	if (ShaderParameterParser.DidModifyShader())
 	{
-		AdditionalDefines.SetDefine(TEXT("FORCE_FLOATS"), (uint32)1);
+		Output.ModifiedShaderSource = PreprocessedSource;
 	}
 
-	if (Input.bSkipPreprocessedCache)
-	{
-		if (!FFileHelper::LoadFileToString(PreprocessedShader, *Input.VirtualSourceFilePath))
-		{
-			return;
-		}
+	const EHlslCompileTarget HlslCompilerTarget = GetCompileTarget(Version);
 
-		// Remove const as we are on debug-only mode
-		CrossCompiler::CreateEnvironmentFromResourceTable(PreprocessedShader, (FShaderCompilerEnvironment&)Input.Environment);
-	}
-	else
-	{
-		if (!PreprocessShader(PreprocessedShader, Output, Input, AdditionalDefines))
-		{
-			// The preprocessing stage will add any relevant errors.
-			return;
-		}
-	}
+	const bool bUseSC = ShouldUseDXC(Input.Environment.CompilerFlags);
+	const bool bDumpDebugInfo = Input.DumpDebugInfoEnabled();
+	
+	char* GlslShaderSource = nullptr;
+	char* ErrorLog = nullptr;
 
-	char* GlslShaderSource = NULL;
-	char* ErrorLog = NULL;
-	const bool bIsSM5 = IsSM5(Version);
-
-	const EHlslShaderFrequency FrequencyTable[] =
+	constexpr EHlslShaderFrequency FrequencyTable[] =
 	{
 		HSF_VertexShader,
 		HSF_InvalidFrequency,
@@ -3357,8 +3275,7 @@ void FOpenGLFrontend::CompileShader(const FShaderCompilerInput& Input, FShaderCo
 	};
 	static_assert(SF_NumStandardFrequencies == UE_ARRAY_COUNT(FrequencyTable), "NumFrequencies changed. Please update tables.");
 
-	const EShaderFrequency Frequency = (EShaderFrequency)Input.Target.Frequency;
-
+	const EShaderFrequency Frequency = static_cast<EShaderFrequency>(Input.Target.Frequency);
 	const EHlslShaderFrequency HlslFrequency = FrequencyTable[Frequency];
 	if (HlslFrequency == HSF_InvalidFrequency)
 	{
@@ -3371,28 +3288,7 @@ void FOpenGLFrontend::CompileShader(const FShaderCompilerInput& Input, FShaderCo
 		return;
 	}
 
-	FShaderParameterParser ShaderParameterParser(Input.Environment.CompilerFlags);
-	if (!ShaderParameterParser.ParseAndModify(Input, Output.Errors, PreprocessedShader))
-	{
-		// The FShaderParameterParser will add any relevant errors.
-		return;
-	}
-
-	// This requires removing the HLSLCC_NoPreprocess flag later on!
-	RemoveUniformBuffersFromSource(Input.Environment, PreprocessedShader);
-
-	// Process TEXT macro.
-	TransformStringIntoCharacterArray(PreprocessedShader);
-
-	// Run the experimental shader minifier
-#if UE_OPENGL_SHADER_COMPILER_ALLOW_DEAD_CODE_REMOVAL
-	if (Input.Environment.CompilerFlags.Contains(CFLAG_RemoveDeadCode))
-	{
-		UE::ShaderCompilerCommon::RemoveDeadCode(PreprocessedShader, Input.EntryPointName, Output.Errors);
-	}
-#endif // UE_OPENGL_SHADER_COMPILER_ALLOW_DEAD_CODE_REMOVAL
-
-	uint32 CCFlags = CalculateCrossCompilerFlags(Version, Input.Environment.FullPrecisionInPS, Input.Environment.CompilerFlags);
+	uint32 CCFlags = CalculateCrossCompilerFlagsInternal(Version, Input.Environment.FullPrecisionInPS, Input.Environment.CompilerFlags);
 
 	// Required as we added the RemoveUniformBuffersFromSource() function (the cross-compiler won't be able to interpret comments w/o a preprocessor)
 	CCFlags &= ~HLSLCC_NoPreprocess;
@@ -3402,20 +3298,16 @@ void FOpenGLFrontend::CompileShader(const FShaderCompilerInput& Input, FShaderCo
 #if DXC_SUPPORTED
 	if (bUseSC)
 	{
-		bCompilationSucceeded = CompileToGlslWithShaderConductor(Input, Output, WorkingDirectory, Version, Frequency, CCFlags, PreprocessedShader, GlslShaderSource);
+		bCompilationSucceeded = CompileToGlslWithShaderConductor(Input, Output, Version, Frequency, PreprocessedSource, GlslShaderSource);
 	}
 	else
 #endif // DXC_SUPPORTED
 	{
-		UE::ShaderCompilerCommon::FDebugShaderDataOptions DebugDataOptions;
-		DebugDataOptions.HlslCCFlags = CCFlags;
-		UE::ShaderCompilerCommon::DumpDebugShaderData(Input, PreprocessedShader, DebugDataOptions);
-		
 		CCFlags |= HLSLCC_NoValidation;
-		FGlslCodeBackend* BackEnd = CreateBackend(Version, CCFlags, HlslCompilerTarget);
+		FGlslCodeBackend* BackEnd = CreateBackendInternal(Version, CCFlags, HlslCompilerTarget);
 
-		bool bDefaultPrecisionIsHalf = (CCFlags & HLSLCC_UseFullPrecisionInPS) == 0;
-		FGlslLanguageSpec* LanguageSpec = CreateLanguageSpec(Version, bDefaultPrecisionIsHalf);
+		const bool bDefaultPrecisionIsHalf = (CCFlags & HLSLCC_UseFullPrecisionInPS) == 0;
+		FGlslLanguageSpec* LanguageSpec = CreateLanguageSpecInternal(Version, bDefaultPrecisionIsHalf);
 
 		{
 			FScopeLock HlslCcLock(CrossCompiler::GetCrossCompilerLock());
@@ -3423,7 +3315,7 @@ void FOpenGLFrontend::CompileShader(const FShaderCompilerInput& Input, FShaderCo
 			if (CrossCompilerContext.Init(TCHAR_TO_ANSI(*Input.VirtualSourceFilePath), LanguageSpec))
 			{
 				bCompilationSucceeded = CrossCompilerContext.Run(
-					TCHAR_TO_ANSI(*PreprocessedShader),
+					TCHAR_TO_ANSI(*PreprocessedSource),
 					TCHAR_TO_ANSI(*Input.EntryPointName),
 					BackEnd,
 					&GlslShaderSource,
@@ -3441,27 +3333,27 @@ void FOpenGLFrontend::CompileShader(const FShaderCompilerInput& Input, FShaderCo
 		}
 	}
 
-	static const bool bDirectCompile = FParse::Param(FCommandLine::Get(), TEXT("directcompile"));
 	if (bCompilationSucceeded)
 	{
-		if (bDirectCompile)
+		// print resulting glsl to debug output if compiling from a debug dumped usf file
+		if (EnumHasAnyFlags(Input.DebugInfoFlags, EShaderDebugInfoFlags::CompileFromDebugUSF))
 		{
 			FPlatformMisc::LowLevelOutputDebugStringf(TEXT("%s\n"), ANSI_TO_TCHAR(GlslShaderSource));
 		}
 
 #if VALIDATE_GLSL_WITH_DRIVER
-		PrecompileShader(Output, Input, GlslShaderSource, Version, HlslFrequency);
+		PrecompileShaderInternal(Output, Input, GlslShaderSource, Version, HlslFrequency);
 #else // VALIDATE_GLSL_WITH_DRIVER
 		int32 SourceLen = FCStringAnsi::Strlen(GlslShaderSource); //-V595
 		Output.Target = Input.Target;
-		BuildShaderOutput(Output, Input, GlslShaderSource, SourceLen, Version);
+		BuildShaderOutputInternal(Output, Input, GlslShaderSource, SourceLen, Version);
 #endif // VALIDATE_GLSL_WITH_DRIVER
 
 		if (bDumpDebugInfo && GlslShaderSource != nullptr)
 		{
 			const TCHAR* ShaderFileExt = CrossCompiler::FShaderConductorContext::GetShaderFileExt(CrossCompiler::EShaderConductorLanguage::Essl, Frequency);
-			FString DumpedGlslFile = FString::Printf(TEXT("%s/Output.%s"), *Input.DumpDebugInfoPath, ShaderFileExt);
-			if (TUniquePtr<FArchive> FileWriter = TUniquePtr<FArchive>(IFileManager::Get().CreateFileWriter(*DumpedGlslFile)))
+			const FString DumpedGlslFile = FString::Printf(TEXT("%s/Output.%s"), *Input.DumpDebugInfoPath, ShaderFileExt);
+			if (const TUniquePtr<FArchive> FileWriter = TUniquePtr<FArchive>(IFileManager::Get().CreateFileWriter(*DumpedGlslFile)))
 			{
 				FileWriter->Serialize(GlslShaderSource, FCStringAnsi::Strlen(GlslShaderSource));
 				FileWriter->Close();
@@ -3470,9 +3362,9 @@ void FOpenGLFrontend::CompileShader(const FShaderCompilerInput& Input, FShaderCo
 	}
 	else if (!bUseSC)
 	{
-		const bool bUseAbsolutePaths = bDirectCompile;
+		const bool bUseAbsolutePaths = EnumHasAnyFlags(Input.DebugInfoFlags, EShaderDebugInfoFlags::CompileFromDebugUSF);
 
-		FString Tmp = ANSI_TO_TCHAR(ErrorLog);
+		const FString Tmp = ANSI_TO_TCHAR(ErrorLog);
 		TArray<FString> ErrorLines;
 		Tmp.ParseIntoArray(ErrorLines, TEXT("\n"), true);
 
@@ -3496,20 +3388,14 @@ void FOpenGLFrontend::CompileShader(const FShaderCompilerInput& Input, FShaderCo
 	//ShaderParameterParser.ValidateShaderParameterTypes(Input, Output);
 }
 
-enum class EPlatformType
+void FOpenGLFrontend::CompileShader(const FShaderCompilerInput& Input, FShaderCompilerOutput& Output, const FString& WorkingDirectory, GLSLVersion Version)
 {
-	Android,
-	IOS,
-	Web,
-	Desktop
-};
+	FShaderPreprocessOutput PreprocessOutput;
+	PreprocessShader(PreprocessOutput, Input, Input.Environment);
+	CompileOpenGLShader(Input, PreprocessOutput, Output, WorkingDirectory, Version);
+}
 
-struct FDeviceCapabilities
-{
-	EPlatformType TargetPlatform = EPlatformType::Android;
-};
-
-void FOpenGLFrontend::FillDeviceCapsOfflineCompilation(struct FDeviceCapabilities& Capabilities, const GLSLVersion ShaderVersion) const
+static void FillDeviceCapsOfflineCompilationInternal(struct FDeviceCapabilities& Capabilities, const GLSLVersion ShaderVersion)
 {
 	FMemory::Memzero(Capabilities);
 
@@ -3521,6 +3407,11 @@ void FOpenGLFrontend::FillDeviceCapsOfflineCompilation(struct FDeviceCapabilitie
 	{
 		Capabilities.TargetPlatform = EPlatformType::Desktop;
 	}
+}
+
+void FOpenGLFrontend::FillDeviceCapsOfflineCompilation(struct FDeviceCapabilities& Capabilities, const GLSLVersion ShaderVersion) const
+{
+	FillDeviceCapsOfflineCompilationInternal(Capabilities, ShaderVersion);
 }
 
 static bool MoveHashLines(FString& Destination, FString &Source)
@@ -3560,13 +3451,13 @@ static bool MoveHashLines(FString& Destination, FString &Source)
 	return bFound;
 }
 
-TSharedPtr<ANSICHAR> FOpenGLFrontend::PrepareCodeForOfflineCompilation(const GLSLVersion ShaderVersion, EShaderFrequency Frequency, const ANSICHAR* InShaderSource) const
+static TSharedPtr<ANSICHAR> PrepareCodeForOfflineCompilationInternal(const GLSLVersion ShaderVersion, EShaderFrequency Frequency, const ANSICHAR* InShaderSource)
 {
 	FString OriginalShaderSource(ANSI_TO_TCHAR(InShaderSource));
 	FString StrOutSource;
 
 	FDeviceCapabilities Capabilities;
-	FillDeviceCapsOfflineCompilation(Capabilities, ShaderVersion);
+	FillDeviceCapsOfflineCompilationInternal(Capabilities, ShaderVersion);
 
 	// Whether we need to emit mobile multi-view code or not.
 	const bool bEmitMobileMultiView = OriginalShaderSource.Find(TEXT("gl_ViewID_OVR")) != INDEX_NONE;
@@ -3574,7 +3465,6 @@ TSharedPtr<ANSICHAR> FOpenGLFrontend::PrepareCodeForOfflineCompilation(const GLS
 	// Whether we need to emit texture external code or not.
 	const bool bEmitTextureExternal = OriginalShaderSource.Find(TEXT("samplerExternalOES")) != INDEX_NONE;
 
-	bool bNeedsExtDrawInstancedDefine = false;
 	if (Capabilities.TargetPlatform == EPlatformType::Android || Capabilities.TargetPlatform == EPlatformType::Web)
 	{
 		const TCHAR *ES320Version = TEXT("#version 320 es");
@@ -3583,10 +3473,8 @@ TSharedPtr<ANSICHAR> FOpenGLFrontend::PrepareCodeForOfflineCompilation(const GLS
 		OriginalShaderSource.RemoveFromStart(ES320Version);
 	}
 
-	const GLenum TypeEnum = GLFrequencyTable[Frequency];
 	// The incoming glsl may have preprocessor code that is dependent on defines introduced via the engine.
 	// This is the place to insert such engine preprocessor defines, immediately after the glsl version declarati
-
 	if (bEmitMobileMultiView)
 	{
 		MoveHashLines(StrOutSource, OriginalShaderSource);
@@ -3641,43 +3529,49 @@ TSharedPtr<ANSICHAR> FOpenGLFrontend::PrepareCodeForOfflineCompilation(const GLS
 	return RetShaderSource;
 }
 
-bool FOpenGLFrontend::PlatformSupportsOfflineCompilation(const GLSLVersion ShaderVersion) const
+TSharedPtr<ANSICHAR> FOpenGLFrontend::PrepareCodeForOfflineCompilation(const GLSLVersion ShaderVersion, EShaderFrequency Frequency, const ANSICHAR* InShaderSource) const
 {
-	switch (ShaderVersion)
-	{
-		// desktop
-		case GLSL_150_ES3_1:
-		// switch
-		case GLSL_SWITCH:
-		case GLSL_SWITCH_FORWARD:
-			return false;
-		break;
-		case GLSL_ES3_1_ANDROID:
-			return true;
-		break;
-	}
-
-	return false;
+	return PrepareCodeForOfflineCompilationInternal(ShaderVersion, Frequency, InShaderSource);
 }
 
-void FOpenGLFrontend::CompileOffline(const FShaderCompilerInput& Input, FShaderCompilerOutput& Output, const GLSLVersion ShaderVersion, const ANSICHAR* InShaderSource)
+static bool PlatformSupportsOfflineCompilationInternal(const GLSLVersion ShaderVersion)
 {
-	const bool bSupportsOfflineCompilation = PlatformSupportsOfflineCompilation(ShaderVersion);
+	return ShaderVersion == GLSL_ES3_1_ANDROID;
+}
+
+bool FOpenGLFrontend::PlatformSupportsOfflineCompilation(const GLSLVersion ShaderVersion) const
+{
+	return PlatformSupportsOfflineCompilationInternal(ShaderVersion);
+}
+
+static void CompileOfflineInternal(const FShaderCompilerInput& Input, FShaderCompilerOutput& Output, const GLSLVersion ShaderVersion, const ANSICHAR* InShaderSource)
+{
+	const bool bSupportsOfflineCompilation = PlatformSupportsOfflineCompilationInternal(ShaderVersion);
 
 	if (!bSupportsOfflineCompilation)
 	{
 		return;
 	}
 
-	TSharedPtr<ANSICHAR> ShaderSource = PrepareCodeForOfflineCompilation(ShaderVersion, (EShaderFrequency)Input.Target.Frequency, InShaderSource);
+	TSharedPtr<ANSICHAR> ShaderSource = PrepareCodeForOfflineCompilationInternal(ShaderVersion, (EShaderFrequency)Input.Target.Frequency, InShaderSource);
 
-	PlatformCompileOffline(Input, Output, ShaderSource.Get(), ShaderVersion);
+	PlatformCompileOfflineInternal(Input, Output, ShaderSource.Get(), ShaderVersion);
 }
 
-void FOpenGLFrontend::PlatformCompileOffline(const FShaderCompilerInput& Input, FShaderCompilerOutput& ShaderOutput, const ANSICHAR* ShaderSource, const GLSLVersion ShaderVersion)
+void FOpenGLFrontend::CompileOffline(const FShaderCompilerInput& Input, FShaderCompilerOutput& Output, const GLSLVersion ShaderVersion, const ANSICHAR* InShaderSource)
+{
+	CompileOfflineInternal(Input, Output, ShaderVersion, InShaderSource);
+}
+
+static void PlatformCompileOfflineInternal(const FShaderCompilerInput& Input, FShaderCompilerOutput& ShaderOutput, const ANSICHAR* ShaderSource, const GLSLVersion ShaderVersion)
 {
 	if (ShaderVersion == GLSL_ES3_1_ANDROID)
 	{
 		CompileOfflineMali(Input, ShaderOutput, ShaderSource, FPlatformString::Strlen(ShaderSource), false);
 	}
+}
+
+void FOpenGLFrontend::PlatformCompileOffline(const FShaderCompilerInput& Input, FShaderCompilerOutput& ShaderOutput, const ANSICHAR* ShaderSource, const GLSLVersion ShaderVersion)
+{
+	PlatformCompileOfflineInternal(Input, ShaderOutput, ShaderSource, ShaderVersion);
 }

@@ -3,6 +3,7 @@
 #include "Camera/PlayerCameraManager.h"
 #include "GameFramework/Pawn.h"
 #include "Engine/Engine.h"
+#include "Engine/HitResult.h"
 #include "Engine/World.h"
 #include "Camera/CameraActor.h"
 #include "Engine/Canvas.h"
@@ -39,6 +40,10 @@ APlayerCameraManager::APlayerCameraManager(const FObjectInitializer& ObjectIniti
 	DefaultAspectRatio = 1.33333f;
 	bDefaultConstrainAspectRatio = false;
 	DefaultOrthoWidth = 512.0f;
+	bAutoCalculateOrthoPlanes = true;
+	AutoPlaneShift = 0.0f;
+	bUpdateOrthoPlanes = true;
+	bUseCameraHeightAsViewTarget = true;
 	SetHidden(true);
 	bReplicates = false;
 	FreeCamDistance = 256.0f;
@@ -276,20 +281,21 @@ void APlayerCameraManager::ApplyCameraModifiers(float DeltaTime, FMinimalViewInf
 	ClearCachedPPBlends();
 
 	// Loop through each camera modifier
-	for (int32 ModifierIdx = 0; ModifierIdx < ModifierList.Num(); ++ModifierIdx)
+	ForEachCameraModifier([DeltaTime, &InOutPOV](UCameraModifier* CameraModifier)
 	{
+		bool bContinue = true;
+
 		// Apply camera modification and output into DesiredCameraOffset/DesiredCameraRotation
-		if ((ModifierList[ModifierIdx] != NULL) && !ModifierList[ModifierIdx]->IsDisabled())
+		if ((CameraModifier != NULL) && !CameraModifier->IsDisabled())
 		{
 			// If ModifyCamera returns true, exit loop
 			// Allows high priority things to dictate if they are
 			// the last modifier to be applied
-			if (ModifierList[ModifierIdx]->ModifyCamera(DeltaTime, InOutPOV))
-			{
-				break;
-			}
+			bContinue = !CameraModifier->ModifyCamera(DeltaTime, InOutPOV);
 		}
-	}
+
+		return bContinue;
+	});
 }
 
 void APlayerCameraManager::AddCachedPPBlend(struct FPostProcessSettings& PPSettings, float BlendWeight, EViewTargetBlendOrder BlendOrder)
@@ -362,6 +368,10 @@ void APlayerCameraManager::UpdateViewTarget(FTViewTarget& OutVT, float DeltaTime
 	OutVT.POV.bConstrainAspectRatio = bDefaultConstrainAspectRatio;
 	OutVT.POV.ProjectionMode = bIsOrthographic ? ECameraProjectionMode::Orthographic : ECameraProjectionMode::Perspective;
 	OutVT.POV.PostProcessBlendWeight = 1.0f;
+	OutVT.POV.bAutoCalculateOrthoPlanes = bAutoCalculateOrthoPlanes;
+	OutVT.POV.AutoPlaneShift = AutoPlaneShift;
+	OutVT.POV.bUpdateOrthoPlanes = bUpdateOrthoPlanes;
+	OutVT.POV.bUseCameraHeightAsViewTarget = bUseCameraHeightAsViewTarget;
 
 	bool bDoNotApplyModifiers = false;
 
@@ -447,6 +457,10 @@ void APlayerCameraManager::UpdateViewTarget(FTViewTarget& OutVT, float DeltaTime
 
 	// Synchronize the actor with the view target results
 	SetActorLocationAndRotation(OutVT.POV.Location, OutVT.POV.Rotation, false);
+	if (bAutoCalculateOrthoPlanes && OutVT.Target)
+	{
+		OutVT.POV.SetCameraToViewTarget(OutVT.Target->GetActorLocation());
+	}
 
 	UpdateCameraLensEffects(OutVT);
 }
@@ -1234,19 +1248,21 @@ void APlayerCameraManager::RemoveCameraLensEffect(AEmitterCameraLensEffectBase* 
 
 UCameraShakeBase* APlayerCameraManager::StartCameraShake(TSubclassOf<UCameraShakeBase> ShakeClass, float Scale, ECameraShakePlaySpace PlaySpace, FRotator UserPlaySpaceRot)
 {
-	if (ShakeClass && CachedCameraShakeMod && (Scale > 0.0f) )
-	{
-		return CachedCameraShakeMod->AddCameraShake(ShakeClass, FAddCameraShakeParams(Scale, PlaySpace, UserPlaySpaceRot));
-	}
-
-	return nullptr;
+	FAddCameraShakeParams Params(Scale, PlaySpace, UserPlaySpaceRot);
+	return StartCameraShake(ShakeClass, Params);
 }
 
 UCameraShakeBase* APlayerCameraManager::StartCameraShakeFromSource(TSubclassOf<UCameraShakeBase> ShakeClass, UCameraShakeSourceComponent* SourceComponent, float Scale, ECameraShakePlaySpace PlaySpace, FRotator UserPlaySpaceRot)
 {
+	FAddCameraShakeParams Params(Scale, PlaySpace, UserPlaySpaceRot, SourceComponent);
+	return StartCameraShake(ShakeClass, Params);
+}
+
+UCameraShakeBase* APlayerCameraManager::StartCameraShake(TSubclassOf<UCameraShakeBase> ShakeClass, const FAddCameraShakeParams& Params)
+{
 	if (ShakeClass && CachedCameraShakeMod)
 	{
-		return CachedCameraShakeMod->AddCameraShake(ShakeClass, FAddCameraShakeParams(Scale, PlaySpace, UserPlaySpaceRot, SourceComponent));
+		return CachedCameraShakeMod->AddCameraShake(ShakeClass, Params);
 	}
 
 	return nullptr;
@@ -1380,6 +1396,21 @@ void APlayerCameraManager::SetManualCameraFade(float InFadeAmount, FLinearColor 
 	bAutoAnimateFade = false;
 	StopAudioFade();
 	FadeTimeRemaining = 0.0f;
+}
+
+void APlayerCameraManager::ForEachCameraModifier(TFunctionRef<bool(UCameraModifier*)> Fn)
+{
+	// Local copy the modifiers array in case it get when calling the lambda on each modifiers
+	TArray<TObjectPtr<UCameraModifier>> LocalModifierList = ModifierList;
+
+	// Loop through each camera modifier
+	for (int32 ModifierIdx = 0; ModifierIdx < LocalModifierList.Num(); ++ModifierIdx)
+	{
+		if (!Fn(LocalModifierList[ModifierIdx]))
+		{
+			return;
+		}
+	}
 }
 
 void APlayerCameraManager::SetCameraCachePOV(const FMinimalViewInfo& InPOV)

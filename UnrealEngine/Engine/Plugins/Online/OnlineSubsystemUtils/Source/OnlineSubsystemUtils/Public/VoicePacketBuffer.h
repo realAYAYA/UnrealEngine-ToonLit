@@ -5,6 +5,7 @@
 #include "Containers/Queue.h"
 #include "HAL/ThreadSafeBool.h"
 #include "Net/VoiceConfig.h"
+#include "DSP/FloatArrayMath.h"
 
 // Set this to 1 to enforce a critical section between FVoicePacketBuffer::PopAudio and FVoicePacketBuffer::SubmitPacket.
 #define SCOPELOCK_VOICE_PACKET_BUFFER 0
@@ -92,10 +93,7 @@ struct FSortedVoicePacketNode
 				SamplesLeft = BufferNumSamples;
 				//Convert to float.
 				int16* BufferPtr = (int16*)InBuffer;
-				for (int32 Index = 0; Index < BufferNumSamples; Index++)
-				{
-					AudioBuffer[Index] = ((float)BufferPtr[Index]) / 32767.0f;
-				}
+				Audio::ArrayPcm16ToFloat(MakeArrayView(BufferPtr, BufferNumSamples), MakeArrayView(AudioBuffer, BufferNumSamples));
 				break;
 			}
 

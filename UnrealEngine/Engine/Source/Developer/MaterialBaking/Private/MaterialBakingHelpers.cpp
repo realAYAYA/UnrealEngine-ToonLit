@@ -265,7 +265,7 @@ namespace FMaterialBakingHelpersImpl
 
 			// Find the next set of rows to process.
 			// This will be our current rows that haven't completed, plus any bordering rows that haven't been marked completed.
-			NextRowsLeft->SetNum(0, false);
+			NextRowsLeft->SetNum(0, EAllowShrinking::No);
 			{
 				int32 PreviousY = -1;
 				for (int32 RowIndex = 0; RowIndex < CurrentRowsLeft->Num(); ++RowIndex)

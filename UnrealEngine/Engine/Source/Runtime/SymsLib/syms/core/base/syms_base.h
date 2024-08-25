@@ -159,6 +159,7 @@ typedef SYMS_U32 SYMS_RegID;
 #define SYMS_Glue(a,b) SYMS_Glue_(a,b)
 
 #define syms_memzero_struct(s) syms_memset((s), 0, sizeof(*(s)))
+#define syms_memisnull_struct(s) syms_memisnull((s), sizeof(*(s)))
 
 #define SYMS_S8_MIN  0x80 // -128
 #define SYMS_S8_MAX  0x7f // +127
@@ -234,6 +235,16 @@ typedef struct SYMS_U64Array{
   SYMS_U64 count;
 } SYMS_U64Array;
 
+typedef struct SYMS_U32Array{
+  SYMS_U32 *u32;
+  SYMS_U64 count;
+} SYMS_U32Array;
+
+typedef struct SYMS_U16Array{
+  SYMS_U16 *u16;
+  SYMS_U64 count;
+} SYMS_U16Array;
+
 typedef struct SYMS_U64ArrayNode{
   struct SYMS_U64ArrayNode *next;
   SYMS_U64 *u64;
@@ -270,6 +281,17 @@ typedef struct SYMS_U64RangeArray{
   SYMS_U64Range *ranges;
   SYMS_U64 count;
 } SYMS_U64RangeArray;
+
+typedef struct SYMS_U64Node{
+  struct SYMS_U64Node *next;
+  SYMS_U64 u64;
+} SYMS_U64Node;
+
+typedef struct SYMS_U64List{
+  SYMS_U64Node *first;
+  SYMS_U64Node *last;
+  SYMS_U64 count;
+} SYMS_U64List;
 
 typedef struct SYMS_String8{
   SYMS_U8 *str;
@@ -502,6 +524,19 @@ SYMS_API void syms_u64_range_list_push(SYMS_Arena *arena, SYMS_U64RangeList *lis
 SYMS_API void syms_u64_range_list_concat(SYMS_U64RangeList *list, SYMS_U64RangeList *to_push);
 
 SYMS_API SYMS_U64RangeArray syms_u64_range_array_from_list(SYMS_Arena *arena, SYMS_U64RangeList *list);
+
+////////////////////////////////
+//~ nick: U64 List Functions
+
+SYMS_API void syms_u64_list_push_node(SYMS_U64Node *node, SYMS_U64List *list, SYMS_U64 v);
+SYMS_API void syms_u64_list_push(SYMS_Arena *arena, SYMS_U64List *list, SYMS_U64 v);
+SYMS_API void syms_u64_list_concat_in_place(SYMS_U64List *dst, SYMS_U64List *src);
+SYMS_API SYMS_U64Array syms_u64_array_from_list(SYMS_Arena *arena, SYMS_U64List *list);
+
+////////////////////////////////
+//~ allen: Array Functions
+
+SYMS_API SYMS_U64 syms_1based_checked_lookup_u64(SYMS_U64 *u64, SYMS_U64 count, SYMS_U64 n);
 
 ////////////////////////////////
 //~ rjf: Memory/Arena Functions

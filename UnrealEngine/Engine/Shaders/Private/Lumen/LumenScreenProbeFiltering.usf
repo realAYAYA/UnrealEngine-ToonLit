@@ -90,7 +90,7 @@ void ScreenProbeCompositeTracesWithScatterCS(
 						// Since the bilinear dithering weight is based on the exact direction of the ray sample, it also responds better to directional movements within a single texel.
 						float2 GatherTexelCoord = (RayTexelCoord + ProbeTexelCenter) * ScreenProbeGatherOctahedronResolution / MipSize - 0.5;
 						// Offset by half of the period of blue noise to minimize correlation
-						float2 Random = BlueNoiseVec2(ScreenTileCoord, RAY_DIRECTION_TEMPORAL_INDEX + BlueNoise.ModuloMasks.z / 2);
+						float2 Random = BlueNoiseVec2(ScreenTileCoord, ScreenProbeRayDirectionFrameIndex + BlueNoise.ModuloMasks.z / 2);
 						int2 QuantizedGatherTexelCoordInt = floor(GatherTexelCoord) + select(frac(GatherTexelCoord) < Random, int2(0, 0), int2(1, 1));
 						QuantizedGatherTexelCoord = OctahedralMapWrapBorder(QuantizedGatherTexelCoordInt + 1, ScreenProbeGatherOctahedronResolution + 2, 1);
 					}
@@ -226,7 +226,7 @@ void ScreenProbeTemporallyAccumulateTraceRadianceCS(
 
 						if (NeighborHistoryDepth > 0.0f)
 						{
-							float3 NeighborWorldPosition = HistoryScreenProbeTranslatedWorldPosition[NeighborHistoryScreenProbeCoord] - LWCHackToFloat(PrimaryView.PrevPreViewTranslation);
+							float3 NeighborWorldPosition = HistoryScreenProbeTranslatedWorldPosition[NeighborHistoryScreenProbeCoord] - DFHackToFloat(PrimaryView.PrevPreViewTranslation);
 
 							float PlaneDistance = abs(dot(float4(NeighborWorldPosition, -1), ScenePlane));
 							float RelativeDepthDifference = PlaneDistance / SceneDepth;
@@ -497,7 +497,7 @@ void ScreenProbeInjectLightSamplesCS(
 	}
 }
 
-#if WAVE_OPS
+#if WAVE_OP_WAVE_SIZE > 0
 float3 WaveActiveSumFloat3(float3 Vec)
 {
 	return float3(
@@ -524,12 +524,18 @@ float4 WaveActiveSumFloat4(float4 Vec)
 #endif
 
 #define NUM_LIGHTING_SH_COEFFICIENTS 9
-groupshared float SharedSHBasisFunctions[THREADGROUP_SIZE * THREADGROUP_SIZE][NUM_LIGHTING_SH_COEFFICIENTS];
-groupshared float SharedLightingRadiance[THREADGROUP_SIZE * THREADGROUP_SIZE][4];
-groupshared float SharedSums[NUM_LIGHTING_SH_COEFFICIENTS * 4];
 
-#if COMPILER_SUPPORTS_WAVE_SIZE && WAVE_OPS && THREADGROUP_SIZE == 8
-	WAVESIZE(64)
+#if WAVE_OP_WAVE_SIZE == 32
+	// Partial wave sums
+	groupshared FThreeBandSHVectorRGB SharedWaveSumRadianceSH[2];
+#elif WAVE_OP_WAVE_SIZE == 0
+	groupshared float SharedSHBasisFunctions[THREADGROUP_SIZE * THREADGROUP_SIZE][NUM_LIGHTING_SH_COEFFICIENTS];
+	groupshared float SharedLightingRadiance[THREADGROUP_SIZE * THREADGROUP_SIZE][4];
+	groupshared float SharedSums[NUM_LIGHTING_SH_COEFFICIENTS * 4];
+#endif
+
+#if COMPILER_SUPPORTS_WAVE_SIZE && WAVE_OP_WAVE_SIZE > 0 && THREADGROUP_SIZE == 8
+	WAVESIZE(WAVE_OP_WAVE_SIZE)
 #endif
 [numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
 void ScreenProbeConvertToIrradianceCS(
@@ -537,6 +543,15 @@ void ScreenProbeConvertToIrradianceCS(
 	uint3 DispatchThreadId : SV_DispatchThreadID,
 	uint3 GroupThreadId : SV_GroupThreadID)
 {
+	// Clear SharedWaveSumRadianceSH as depending on the ScreenProbeGatherOctahedronResolution sometimes only 1 wave may run
+	const uint LinearThreadIndex = GroupThreadId.y * THREADGROUP_SIZE + GroupThreadId.x;
+	#if WAVE_OP_WAVE_SIZE == 32
+	if (LinearThreadIndex < 2)
+	{
+		SharedWaveSumRadianceSH[LinearThreadIndex] = (FThreeBandSHVectorRGB)0;
+	}
+	#endif
+
 	uint2 ScreenProbeAtlasCoord = GroupId.xy;
 	uint ScreenProbeIndex = ScreenProbeAtlasCoord.y * ScreenProbeAtlasViewSize.x + ScreenProbeAtlasCoord.x;
 
@@ -563,10 +578,10 @@ void ScreenProbeConvertToIrradianceCS(
 				float3 Radiance = ScreenProbeRadiance.Load(int3(ReadIndex, 0)).xyz;
 
 				FThreeBandSHVector BasisFunction = SHBasisFunction3(WorldConeDirection);
-#if WAVE_OPS
+#if WAVE_OP_WAVE_SIZE > 0
 				FThreeBandSHVectorRGB LightingSH = MulSH3(BasisFunction, Radiance);
 
-				float InvNumSamples = 1.0f / WaveActiveCountBits(true);
+				float InvNumSamples = 1.0f / (ScreenProbeGatherOctahedronResolution * ScreenProbeGatherOctahedronResolution);
 
 				FThreeBandSHVectorRGB RadianceSH;
 				RadianceSH.R.V0 = WaveActiveSumFloat4(LightingSH.R.V0) * InvNumSamples;
@@ -580,6 +595,37 @@ void ScreenProbeConvertToIrradianceCS(
 				RadianceSH.R.V2 = WaveActiveSum(LightingSH.R.V2) * InvNumSamples;
 				RadianceSH.G.V2 = WaveActiveSum(LightingSH.G.V2) * InvNumSamples;
 				RadianceSH.B.V2 = WaveActiveSum(LightingSH.B.V2) * InvNumSamples;
+
+#if WAVE_OP_WAVE_SIZE == 32
+				// Sum across two waves
+				const uint WaveIndex = ThreadIndex < WAVE_OP_WAVE_SIZE ? 0 : 1;
+				const uint OtherWaveIndex = ThreadIndex < WAVE_OP_WAVE_SIZE ? 1 : 0;
+
+				if (WaveIsFirstLane())
+				{
+					SharedWaveSumRadianceSH[WaveIndex].R.V0 = RadianceSH.R.V0;
+					SharedWaveSumRadianceSH[WaveIndex].G.V0 = RadianceSH.G.V0;
+					SharedWaveSumRadianceSH[WaveIndex].B.V0 = RadianceSH.B.V0;
+					SharedWaveSumRadianceSH[WaveIndex].R.V1 = RadianceSH.R.V1;
+					SharedWaveSumRadianceSH[WaveIndex].G.V1 = RadianceSH.G.V1;
+					SharedWaveSumRadianceSH[WaveIndex].B.V1 = RadianceSH.B.V1;
+					SharedWaveSumRadianceSH[WaveIndex].R.V2 = RadianceSH.R.V2;
+					SharedWaveSumRadianceSH[WaveIndex].G.V2 = RadianceSH.G.V2;
+					SharedWaveSumRadianceSH[WaveIndex].B.V2 = RadianceSH.B.V2;
+				}
+
+				GroupMemoryBarrierWithGroupSync();
+
+				RadianceSH.R.V0 += SharedWaveSumRadianceSH[OtherWaveIndex].R.V0;
+				RadianceSH.G.V0 += SharedWaveSumRadianceSH[OtherWaveIndex].G.V0;
+				RadianceSH.B.V0 += SharedWaveSumRadianceSH[OtherWaveIndex].B.V0;
+				RadianceSH.R.V1 += SharedWaveSumRadianceSH[OtherWaveIndex].R.V1;
+				RadianceSH.G.V1 += SharedWaveSumRadianceSH[OtherWaveIndex].G.V1;
+				RadianceSH.B.V1 += SharedWaveSumRadianceSH[OtherWaveIndex].B.V1;
+				RadianceSH.R.V2 += SharedWaveSumRadianceSH[OtherWaveIndex].R.V2;
+				RadianceSH.G.V2 += SharedWaveSumRadianceSH[OtherWaveIndex].G.V2;
+				RadianceSH.B.V2 += SharedWaveSumRadianceSH[OtherWaveIndex].B.V2;
+#endif
 
 				#if PROBE_IRRADIANCE_FORMAT == PROBE_IRRADIANCE_FORMAT_SH3
 				{
@@ -662,7 +708,7 @@ void ScreenProbeConvertToIrradianceCS(
 #endif
 			}
 
-#if !WAVE_OPS
+#if WAVE_OP_WAVE_SIZE == 0
 			GroupMemoryBarrierWithGroupSync();
 
 			uint NumValuesToSum = ScreenProbeGatherOctahedronResolution * ScreenProbeGatherOctahedronResolution;

@@ -112,17 +112,23 @@ namespace UE::RivermaxCore::Private
 		TEXT("Optimization used to prefill every RTP headers with known data."),
 		ECVF_Default);
 
-
 	static TAutoConsoleVariable<bool> CVarRivermaxOutputForceSkip(
-		TEXT("Rivermax.Output.ForceSkip"), true,
+		TEXT("Rivermax.Output.ForceSkip"), false,
 		TEXT("Used to prevent enforced blank window when multiplier is used to prevent timing issues.")
 		TEXT("Only affects alignment point method."),
 		ECVF_Default);
 
 	static TAutoConsoleVariable<float> CVarRivermaxOutputFrameRateMultiplier(
-		TEXT("Rivermax.Output.FrameRateMultiplier"), 1.05,
+		TEXT("Rivermax.Output.FrameRateMultiplier"), 1.0,
 		TEXT("Multiplier applied to desired output frame rate in order to reduce time it takes to send out a frame and slowly correct misalignment that could happen."),
 		ECVF_Default);
+
+	static bool GbTriggerRandomTimingIssue = false;
+	FAutoConsoleVariableRef CVarTriggerRandomTimingIssue(
+		TEXT("Rivermax.Sync.TriggerRandomTimingIssue")
+		, UE::RivermaxCore::Private::GbTriggerRandomTimingIssue
+		, TEXT("Randomly triggers a timing issue to test self repair."), ECVF_Cheat);
+
 
 	bool FindPayloadSize(const FRivermaxOutputStreamOptions& InOptions, uint32 InBytesPerLine, const FVideoFormatInfo& FormatInfo, uint16& OutPayloadSize)
 	{
@@ -507,6 +513,10 @@ namespace UE::RivermaxCore::Private
 			UE_LOG(LogRivermax, Warning, TEXT("Can't create Rivermax Output Stream. Aligned horizontal resolution of %d doesn't align with pixel group coverage of %d."), Options.AlignedResolution.X, FormatInfo.PixelGroupCoverage);
 			return false;
 		}
+		
+		// Cache API entry point
+		CachedAPI = RivermaxModule->GetRivermaxManager()->GetApi();
+		checkSlow(CachedAPI);
 
 		if (!InitializeStreamMemoryConfig())
 		{
@@ -527,56 +537,84 @@ namespace UE::RivermaxCore::Private
 			{
 				// Initialize rivermax output stream with desired config
 				const uint32 NumberPacketsPerFrame = StreamMemory.PacketsPerFrame;
-				const uint32 MediaBlockIndex = 0;
-				rmax_stream_id NewId;
-				rmax_qos_attr QOSAttributes = { 0, 0 }; //todo
 
-				rmax_buffer_attr BufferAttributes;
-				FMemory::Memset(&BufferAttributes, 0, sizeof(BufferAttributes));
-				BufferAttributes.chunk_size_in_strides = StreamMemory.PacketsPerChunk;
-				BufferAttributes.data_stride_size = StreamMemory.PayloadSize; 
-				BufferAttributes.app_hdr_stride_size = StreamMemory.HeaderStrideSize;
-				BufferAttributes.mem_block_array = StreamMemory.MemoryBlocks.GetData();
-				BufferAttributes.mem_block_array_len = StreamMemory.MemoryBlocks.Num();
-				BufferAttributes.attr_flags = RMAX_OUT_BUFFER_ATTR_FLAG_NONE;
 
-				CachedAPI = RivermaxModule->GetRivermaxManager()->GetApi();
-				checkSlow(CachedAPI);
+				rmx_output_media_stream_params OutputStreamParameters;
+				CachedAPI->rmx_output_media_init(&OutputStreamParameters);
+				CachedAPI->rmx_output_media_set_sdp(&OutputStreamParameters, SDPDescription.GetData());
+				CachedAPI->rmx_output_media_assign_mem_blocks(&OutputStreamParameters, StreamMemory.MemoryBlocks.GetData(), StreamMemory.MemoryBlocks.Num());
+				
+				constexpr uint8 PCPAttribute = 0; //PCP attribute for QOS layer 2
+				CachedAPI->rmx_output_media_set_pcp(&OutputStreamParameters, PCPAttribute);
+				constexpr uint8 DSCP = 34; //For AES67, RTP Media streams' DSCP value is 34
+				CachedAPI->rmx_output_media_set_dscp(&OutputStreamParameters, DSCP);
+				constexpr uint8 ECN = 0; //Explicit congestion notification
+				CachedAPI->rmx_output_media_set_ecn(&OutputStreamParameters, ECN);
 
-				rmax_status_t Status = CachedAPI->rmax_out_create_stream(SDPDescription.GetData(), &BufferAttributes, &QOSAttributes, NumberPacketsPerFrame, MediaBlockIndex, &NewId);
-				if (Status == RMAX_OK)
+				// Sometimes, chunk count will have more packets than needed so last ones might be 0 sized. 
+				// Verify if new API work with the actual amount of packet with data or it needs the padded version 
+				CachedAPI->rmx_output_media_set_packets_per_frame(&OutputStreamParameters, StreamMemory.ChunksPerFrameField * StreamMemory.PacketsPerChunk);
+
+				CachedAPI->rmx_output_media_set_packets_per_chunk(&OutputStreamParameters, StreamMemory.PacketsPerChunk);
+				CachedAPI->rmx_output_media_set_stride_size(&OutputStreamParameters, StreamMemory.DataBlockID, StreamMemory.PayloadSize);
+				CachedAPI->rmx_output_media_set_stride_size(&OutputStreamParameters, StreamMemory.HeaderBlockID, StreamMemory.HeaderStrideSize);
+
+				rmx_stream_id NewId;
+				rmx_status Status = CachedAPI->rmx_output_media_create_stream(&OutputStreamParameters, &NewId);
+				if (Status == RMX_OK)
 				{
 					struct sockaddr_in SourceAddress;
-					struct sockaddr_in DestinationAddress;
 					FMemory::Memset(&SourceAddress, 0, sizeof(SourceAddress));
-					FMemory::Memset(&DestinationAddress, 0, sizeof(DestinationAddress));
-					Status = CachedAPI->rmax_out_query_address(NewId, MediaBlockIndex, &SourceAddress, &DestinationAddress);
-					if (Status == RMAX_OK)
+					
+					rmx_output_media_context MediaContext;
+					CachedAPI->rmx_output_media_init_context(&MediaContext, NewId);
+
+					constexpr size_t SDPMediaIndex = 0;
+					CachedAPI->rmx_output_media_set_context_block(&MediaContext, SDPMediaIndex);
+					Status = CachedAPI->rmx_output_media_get_local_address(&MediaContext,	reinterpret_cast<sockaddr*>(&SourceAddress));
+					if (Status == RMX_OK) 
 					{
-						StreamId = NewId;
+						struct sockaddr_in DestinationAddress;
+						FMemory::Memset(&DestinationAddress, 0, sizeof(DestinationAddress));
 
-						StreamData.FrameFieldTimeIntervalNs = 1E9 / Options.FrameRate.AsDecimal();
-						InitializeStreamTimingSettings();
+						Status = CachedAPI->rmx_output_media_get_remote_address(&MediaContext, reinterpret_cast<sockaddr*>(&DestinationAddress));
+						if (Status == RMX_OK)
+						{
+							StreamId = NewId;
 
-						TStringBuilder<512> StreamDescription;
-						StreamDescription.Appendf(TEXT("Output stream started sending on stream %s:%d using interface %s%s. ")
-							, *Options.StreamAddress
-							, Options.Port
-							, *Options.InterfaceAddress
-							, bUseGPUDirect ? TEXT(" using GPUDirect") : TEXT(""));
+							CachedAPI->rmx_output_media_init_chunk_handle(&StreamData.ChunkHandle, StreamId);
 
-						StreamDescription.Appendf(TEXT("Settings: Resolution = %dx%d, "), Options.AlignedResolution.X, Options.AlignedResolution.Y);
-						StreamDescription.Appendf(TEXT("FrameRate = %s, "), *Options.FrameRate.ToPrettyText().ToString());
-						StreamDescription.Appendf(TEXT("Pixel format = %s, "), LexToString(Options.PixelFormat));
-						StreamDescription.Appendf(TEXT("Alignment = %s, "), LexToString(Options.AlignmentMode));
-						StreamDescription.Appendf(TEXT("Framelocking = %s."), LexToString(Options.FrameLockingMode));
-						
-						UE_LOG(LogRivermax, Display, TEXT("%s"), *FString(StreamDescription));
+							StreamData.FrameFieldTimeIntervalNs = 1E9 / Options.FrameRate.AsDecimal();
+							InitializeStreamTimingSettings();
 
-						UE_LOG(LogRivermax, Verbose, TEXT("Created stream using SDP:\n%S"), SDPDescription.GetData());
+							TStringBuilder<512> StreamDescription;
+							StreamDescription.Appendf(TEXT("Output stream started sending on stream %s:%d using interface %s%s. ")
+								, *Options.StreamAddress
+								, Options.Port
+								, *Options.InterfaceAddress
+								, bUseGPUDirect ? TEXT(" using GPUDirect") : TEXT(""));
 
-						bIsActive = true;
-						RivermaxThread.Reset(FRunnableThread::Create(this, TEXT("Rmax OutputStream Thread"), 128 * 1024, TPri_TimeCritical, FPlatformAffinity::GetPoolThreadMask()));
+							StreamDescription.Appendf(TEXT("Settings: Resolution = %dx%d, "), Options.AlignedResolution.X, Options.AlignedResolution.Y);
+							StreamDescription.Appendf(TEXT("FrameRate = %s, "), *Options.FrameRate.ToPrettyText().ToString());
+							StreamDescription.Appendf(TEXT("Pixel format = %s, "), LexToString(Options.PixelFormat));
+							StreamDescription.Appendf(TEXT("Alignment = %s, "), LexToString(Options.AlignmentMode));
+							StreamDescription.Appendf(TEXT("Framelocking = %s."), LexToString(Options.FrameLockingMode));
+
+							UE_LOG(LogRivermax, Display, TEXT("%s"), *FString(StreamDescription));
+
+							UE_LOG(LogRivermax, Verbose, TEXT("Created stream using SDP:\n%S"), SDPDescription.GetData());
+
+							bIsActive = true;
+							RivermaxThread.Reset(FRunnableThread::Create(this, TEXT("Rmax OutputStream Thread"), 128 * 1024, TPri_TimeCritical, FPlatformAffinity::GetPoolThreadMask()));
+						}
+						else
+						{
+							UE_LOG(LogRivermax, Warning, TEXT("Failed querying destination address. Output Stream won't be created. Status: %d"), Status);
+						}
+					}
+					else
+					{
+						UE_LOG(LogRivermax, Warning, TEXT("Failed querying local address. Output Stream won't be created. Status: %d"), Status);
 					}
 				}
 				else
@@ -748,9 +786,9 @@ namespace UE::RivermaxCore::Private
 			{
 				TRACE_CPUPROFILER_EVENT_SCOPE(RmaxOut::WrappingUp);
 				if (CurrentFrame)
-				{
-					FrameManager->MarkAsSent(CurrentFrame);
-					CurrentFrame.Reset();
+				{	
+					constexpr bool bReleaseFrame = true;
+					CompleteCurrentFrame(bReleaseFrame);
 				}
 
 				// Make the next frame to send the current one and update its state
@@ -839,25 +877,60 @@ namespace UE::RivermaxCore::Private
 		FRTPHeaderPrefiller RTPFiller(*this);
 
 		StreamMemory.MemoryBlocks.SetNumZeroed(StreamMemory.MemoryBlockCount);
+		CachedAPI->rmx_output_media_init_mem_blocks(StreamMemory.MemoryBlocks.GetData(), StreamMemory.MemoryBlockCount);
 		for (uint32 BlockIndex = 0; BlockIndex < StreamMemory.MemoryBlockCount; ++BlockIndex)
 		{
-			rmax_mem_block& Block = StreamMemory.MemoryBlocks[BlockIndex];
-			Block.chunks_num = StreamMemory.ChunksPerMemoryBlock;
-			Block.app_hdr_size_arr = StreamMemory.HeaderSizes.GetData();
-			Block.data_size_arr = StreamMemory.PayloadSizes.GetData();
+			rmx_output_media_mem_block& Block = StreamMemory.MemoryBlocks[BlockIndex];
+			CachedAPI->rmx_output_media_set_chunk_count(&Block, StreamMemory.ChunksPerMemoryBlock);
+
+			// We have two sub block, header and data
+			constexpr uint8 SubBlockCount = 2;
+			CachedAPI->rmx_output_media_set_sub_block_count(&Block, SubBlockCount);
+
+			// Describe Header block
+			CachedAPI->rmx_output_media_set_packet_layout(&Block, StreamMemory.HeaderBlockID, StreamMemory.HeaderSizes.GetData());
+
+			// Describe Data block
+			CachedAPI->rmx_output_media_set_packet_layout(&Block, StreamMemory.DataBlockID, StreamMemory.PayloadSizes.GetData());
+
+			rmx_mem_multi_key_region* DataMemory;
+			DataMemory = CachedAPI->rmx_output_media_get_dup_sub_block(&Block, StreamMemory.DataBlockID);
+			if (DataMemory == nullptr)
+			{
+				UE_LOG(LogRivermax, Warning, TEXT("Faild to get payload memory block. Output stream won't be created."));
+				return false;
+			}
 
 			// If intermediate buffer is used, we setup rmax memblock to use that address. Otherwise, we map it to our actual frame's address
 			if (StreamMemory.bUseIntermediateBuffer)
 			{
-				Block.data_ptr = Allocator->GetFrameAddress(BlockIndex);
+				DataMemory->addr = Allocator->GetFrameAddress(BlockIndex);
 			}
 			else
 			{
-				Block.data_ptr = FrameManager->GetFrame(BlockIndex)->VideoBuffer;
+				DataMemory->addr = FrameManager->GetFrame(BlockIndex)->VideoBuffer;
+			}
+
+			DataMemory->length = StreamMemory.ChunksPerFrameField * StreamMemory.PacketsPerChunk * StreamMemory.PayloadSize;
+
+			constexpr rmx_mkey_id InvalidKey = ((rmx_mkey_id)(-1L));
+			DataMemory->mkey[0] = InvalidKey;
+			DataMemory->mkey[1] = InvalidKey;
+			
+			
+			rmx_mem_multi_key_region* HeaderMemory;
+			HeaderMemory = CachedAPI->rmx_output_media_get_dup_sub_block(&Block, StreamMemory.HeaderBlockID);
+			if (HeaderMemory == nullptr)
+			{
+				UE_LOG(LogRivermax, Warning, TEXT("Faild to get header memory block. Output stream won't be created."));
+				return false;
 			}
 
 			StreamMemory.RTPHeaders[BlockIndex].SetNumZeroed(RealPacketsPerFrame * StreamMemory.FramesFieldPerMemoryBlock);
-			Block.app_hdr_ptr = &StreamMemory.RTPHeaders[BlockIndex][0];
+			HeaderMemory->addr = &StreamMemory.RTPHeaders[BlockIndex][0];
+			HeaderMemory->length = StreamMemory.HeaderStrideSize;
+			HeaderMemory->mkey[0] = InvalidKey;
+			HeaderMemory->mkey[1] = InvalidKey;
 		}
 	
 		uint64 TotalSize = 0;
@@ -1030,20 +1103,20 @@ namespace UE::RivermaxCore::Private
 
 	void FRivermaxOutputStream::DestroyStream()
 	{
-		rmax_status_t Status = RivermaxModule->GetRivermaxManager()->GetApi()->rmax_out_cancel_unsent_chunks(StreamId);
-		if (Status != RMAX_OK)
+		rmx_status Status = CachedAPI->rmx_output_media_cancel_unsent_chunks(&StreamData.ChunkHandle);
+		if (Status != RMX_OK)
 		{
 			UE_LOG(LogRivermax, Warning, TEXT("Could not cancel unsent chunks when destroying output stream. Status: %d"), Status);
 		}
 
 		do 
 		{
-			Status = RivermaxModule->GetRivermaxManager()->GetApi()->rmax_out_destroy_stream(StreamId);
-			if (RMAX_ERR_BUSY == Status) 
+			Status = CachedAPI->rmx_output_media_destroy_stream(StreamId);
+			if (RMX_BUSY == Status) 
 			{
 				FPlatformProcess::SleepNoStats(Utils::SleepTimeSeconds);
 			}
-		} while (Status == RMAX_ERR_BUSY);
+		} while (Status == RMX_BUSY);
 	}
 
 	bool FRivermaxOutputStream::WaitForNextRound()
@@ -1163,11 +1236,13 @@ namespace UE::RivermaxCore::Private
 	void FRivermaxOutputStream::GetNextChunk()
 	{
 		bool bHasAddedTrace = false;
-		rmax_status_t Status;
+		rmx_status Status;
 		do
 		{
-			Status = CachedAPI->rmax_out_get_next_chunk(StreamId, &CurrentFrame->PayloadPtr, &CurrentFrame->HeaderPtr);
-			if (Status == RMAX_OK)
+			Status = CachedAPI->rmx_output_media_get_next_chunk(&StreamData.ChunkHandle);
+			CurrentFrame->PayloadPtr = rmx_output_media_get_chunk_strides(&StreamData.ChunkHandle, StreamMemory.DataBlockID);
+			CurrentFrame->HeaderPtr = rmx_output_media_get_chunk_strides(&StreamData.ChunkHandle, StreamMemory.HeaderBlockID);
+			if (Status == RMX_OK)
 			{
 				if (StreamData.bHasFrameFirstChunkBeenFetched == false)
 				{
@@ -1184,7 +1259,7 @@ namespace UE::RivermaxCore::Private
 
 				break;
 			}
-			else if (Status == RMAX_ERR_NO_FREE_CHUNK)
+			else if (Status == RMX_NO_FREE_CHUNK)
 			{
 				//We should not be here
 				if (!bHasAddedTrace)
@@ -1201,7 +1276,7 @@ namespace UE::RivermaxCore::Private
 				Listener->OnStreamError();
 				Stop();
 			}
-		} while (Status != RMAX_OK && bIsActive);
+		} while (Status != RMX_OK && bIsActive);
 	}
 
 	bool FRivermaxOutputStream::CopyFrameData(const TSharedPtr<FRivermaxOutputFrame>& SourceFrame, uint8* DestinationBase)
@@ -1271,16 +1346,16 @@ namespace UE::RivermaxCore::Private
 			{
 				BuildRTPHeader(StreamMemory.RTPHeaders[MemblockIndex][BaseHeaderIndex + PacketIndex]);
 				
+				CurrentFrame->BytesSent += StreamMemory.PayloadSizes[CurrentFrame->PacketCounter];
 				++StreamData.SequenceNumber;
 				++CurrentFrame->PacketCounter;
-				CurrentFrame->BytesSent += StreamMemory.PayloadSizes[CurrentFrame->PacketCounter];
 			}
 		}
 	}
 
 	void FRivermaxOutputStream::CommitNextChunks()
 	{
-		rmax_status_t Status;
+		rmx_status Status;
 		int32 ErrorCount = 0;
 		const uint64 CurrentTimeNanosec = RivermaxModule->GetRivermaxManager()->GetTime();
 		uint64 ScheduleTime = CurrentFrame->ChunkNumber == 0 ? StreamData.NextScheduleTimeNanosec : 0;
@@ -1288,7 +1363,6 @@ namespace UE::RivermaxCore::Private
 		do
 		{
 			//Only first chunk gets scheduled with a timestamp. Following chunks are queued after it using 0
-			const rmax_commit_flags_t CommitFlags{};
 			if (ScheduleTime != 0)
 			{
 				// If scheduling time is not far away enough, force it immediately otherwise rmax_commit will throw an error 
@@ -1300,19 +1374,19 @@ namespace UE::RivermaxCore::Private
 			}
 
 			checkSlow(CachedAPI);
-			Status = CachedAPI->rmax_out_commit(StreamId, ScheduleTime, CommitFlags);
+			Status = CachedAPI->rmx_output_media_commit_chunk(&StreamData.ChunkHandle, ScheduleTime);
 
-			if (Status == RMAX_OK)
+			if (Status == RMX_OK)
 			{
 				break;
 			}
-			else if (Status == RMAX_ERR_HW_SEND_QUEUE_FULL)
+			else if (Status == RMX_HW_SEND_QUEUE_IS_FULL)
 			{
 				Stats.CommitRetries++;
 				TRACE_CPUPROFILER_EVENT_SCOPE(CommitNextChunks::QUEUEFULL);
 				++ErrorCount;
 			}
-			else if (Status == RMAX_ERR_HW_COMPLETION_ISSUE)
+			else if (Status == RMX_HW_COMPLETION_ISSUE)
 			{
 				UE_LOG(LogRivermax, Error, TEXT("Completion issue while trying to commit next round of chunks."));
 				Listener->OnStreamError();
@@ -1325,7 +1399,7 @@ namespace UE::RivermaxCore::Private
 				Stop();
 			}
 
-		} while (Status != RMAX_OK && bIsActive);
+		} while (Status != RMX_OK && bIsActive);
 
 		if (bIsActive && CurrentFrame->ChunkNumber == 0 && CachedCVars.bShowOutputStats)
 		{
@@ -1414,7 +1488,8 @@ namespace UE::RivermaxCore::Private
 		// In frame creation alignment, we always release the last frame sent
 		if (CurrentFrame.IsValid())
 		{
-			FrameManager->MarkAsSent(CurrentFrame);
+			constexpr bool bReleaseFrame = true;
+			CompleteCurrentFrame(bReleaseFrame);
 		}
 
 		// Make the next frame to send the current one and update its state
@@ -1447,8 +1522,8 @@ namespace UE::RivermaxCore::Private
 		{
 			if (CurrentFrame)
 			{
-				FrameManager->MarkAsSent(CurrentFrame);
-				CurrentFrame.Reset();
+				constexpr bool bReleaseFrame = true;
+				CompleteCurrentFrame(bReleaseFrame);
 			}
 
 			// Make the next frame to send the current one and update its state
@@ -1461,6 +1536,10 @@ namespace UE::RivermaxCore::Private
 		}
 		else
 		{
+			// We finished sending a frame so complete it but don't release it as we will repeat it
+			constexpr bool bReleaseFrame = false;
+			CompleteCurrentFrame(bReleaseFrame);
+
 			// We will resend the last one so just reinitialize it to resend
 			InitializeNextFrame(CurrentFrame);
 			
@@ -1759,6 +1838,7 @@ namespace UE::RivermaxCore::Private
 		// Add Tro offset to next alignment point and configurable offset
 		StreamData.NextAlignmentPointNanosec = NextAlignmentNano;
 		StreamData.NextScheduleTimeNanosec = NextAlignmentNano + TransmitOffsetNanosec + CVarRivermaxScheduleOffset.GetValueOnAnyThread();
+		StreamData.LastAlignmentPointFrameNumber = StreamData.NextAlignmentPointFrameNumber;
 		StreamData.NextAlignmentPointFrameNumber = NextFrameNumber;
 
 		StreamData.bHasValidNextFrameNumber = bFoundValidTimings;
@@ -1850,8 +1930,6 @@ namespace UE::RivermaxCore::Private
 			return false;
 		}
 		}
-
-		return false;
 	}
 
 	bool FRivermaxOutputStream::IsChunkOnTime_FrameCreation() const
@@ -1918,14 +1996,14 @@ namespace UE::RivermaxCore::Private
 	void FRivermaxOutputStream::SkipChunks(uint64 ChunkCount)
 	{
 		bool bHasAddedTrace = false;
-		rmax_status_t Status;
+		rmx_status Status;
 		do
 		{
 			checkSlow(CachedAPI);
-			Status = CachedAPI->rmax_out_skip_chunks(StreamId, ChunkCount);
-			if (Status != RMAX_OK)
+			Status = CachedAPI->rmx_output_media_skip_chunks(&StreamData.ChunkHandle, ChunkCount);
+			if (Status != RMX_OK)
 			{
-				if (Status == RMAX_ERR_NO_FREE_CHUNK)
+				if (Status == RMX_NO_FREE_CHUNK)
 				{
 					// Wait until there are enough free chunk to be skipped
 					if (!bHasAddedTrace)
@@ -1943,7 +2021,7 @@ namespace UE::RivermaxCore::Private
 					Stop();
 				}
 			}
-		} while (Status != RMAX_OK && bIsActive);
+		} while (Status != RMX_OK && bIsActive);
 	}
 
 	void FRivermaxOutputStream::SendFrame()
@@ -1963,6 +2041,7 @@ namespace UE::RivermaxCore::Private
 		const uint32 MediaFrameNumber = Utils::TimestampToFrameNumber(CurrentFrame->MediaTimestamp, Options.FrameRate);
 		TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*FRivermaxTracingUtils::RmaxOutSendingFrameTraceEvents[MediaFrameNumber % 10]);
 		TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*FRivermaxTracingUtils::RmaxOutMediaCapturePipeTraceEvents[CurrentFrame->FrameIdentifier % 10]);
+		UE_LOG(LogRivermax, VeryVerbose, TEXT("RmaxRX Sending frame number %u with timestamp %u."), MediaFrameNumber, CurrentFrame->MediaTimestamp);
 
 		do
 		{
@@ -1991,6 +2070,19 @@ namespace UE::RivermaxCore::Private
 					// We skip an interval instead but it is quite drastic.
 					const bool bIsChunkOnTime = IsChunkOnTime();
 					CurrentFrame->bCaughtTimingIssue = !bIsChunkOnTime;
+
+					if (UE::RivermaxCore::Private::GbTriggerRandomTimingIssue)
+					{
+						FRandomStream RandomStream(FPlatformTime::Cycles64());
+						const bool bTriggerDesync = (RandomStream.FRandRange(0.0, 1.0) > 0.7) ? true : false;
+						if (bTriggerDesync)
+						{
+							TRACE_CPUPROFILER_EVENT_SCOPE(RmaxOut::ForceTimingIssue);
+							CurrentFrame->bCaughtTimingIssue = true;
+						}
+
+						UE::RivermaxCore::Private::GbTriggerRandomTimingIssue = false;
+					}
 				}
 
 				CommitNextChunks();
@@ -2031,5 +2123,29 @@ namespace UE::RivermaxCore::Private
 		}
 	}
 
+	void FRivermaxOutputStream::GetLastPresentedFrame(FPresentedFrameInfo& OutFrameInfo) const
+	{
+		FScopeLock Lock(&PresentedFrameCS);
+		OutFrameInfo = LastPresentedFrame;
+	}
+
+	void FRivermaxOutputStream::CompleteCurrentFrame(bool bReleaseFrame)
+	{
+		if (ensure(CurrentFrame))
+		{
+			{
+				FScopeLock Lock(&PresentedFrameCS);
+				LastPresentedFrame.RenderedFrameNumber = CurrentFrame->FrameIdentifier;
+				LastPresentedFrame.PresentedFrameBoundaryNumber = StreamData.LastAlignmentPointFrameNumber;
+			}
+			
+			// We don't release when there is no new frame, so we keep a hold on it to repeat it.
+			if (bReleaseFrame)
+			{
+				FrameManager->MarkAsSent(CurrentFrame);
+				CurrentFrame.Reset();
+			}
+		}
+	}
 }
 

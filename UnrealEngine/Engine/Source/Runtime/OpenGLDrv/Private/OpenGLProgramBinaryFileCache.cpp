@@ -234,6 +234,8 @@ FOpenGLProgramBinaryCache::FOpenGLProgramBinaryCache(const FString& InCachePathR
 	// Some devices report binary compatibility errors after minor OS updates even though the GL driver version has not changed.
 	const FString BuildNumber = FAndroidMisc::GetDeviceBuildNumber();
 	HashString.Append(BuildNumber);
+	
+	HashString.Append(AndroidEGL::GetInstance()->IsUsingRobustContext() ? TEXT("ROBUST") : TEXT("NRB"));
 
 	// Optional configrule variable for triggering a rebuild of the cache.
 	const FString* ConfigRulesGLProgramKey = FAndroidMisc::GetConfigRulesVariable(TEXT("OpenGLProgramCacheKey"));
@@ -343,13 +345,15 @@ void FOpenGLProgramBinaryCache::Initialize()
 
 
 	FString CacheFolderPathRoot;
+	FString OldCacheFolderPathRoot;
 #if PLATFORM_ANDROID && USE_ANDROID_FILE
 	// @todo Lumin: Use that GetPathForExternalWrite or something?
 	extern FString GExternalFilePath;
-	CacheFolderPathRoot = GExternalFilePath / TEXT("ProgramBinaryCache");
-
+	OldCacheFolderPathRoot = GExternalFilePath / TEXT("ProgramBinaryCache");
+	CacheFolderPathRoot = GExternalFilePath / TEXT("RHICache") / TEXT("ProgramBinaryCache");
 #else
-	CacheFolderPathRoot = FPaths::ProjectSavedDir() / TEXT("ProgramBinaryCache");
+	OldCacheFolderPathRoot = FPaths::ProjectSavedDir() / TEXT("ProgramBinaryCache");
+	CacheFolderPathRoot = FPaths::ProjectSavedDir() / TEXT("RHICache") / TEXT("ProgramBinaryCache");
 #endif
 
 	// Remove entire ProgramBinaryCache folder if -ClearOpenGLBinaryProgramCache is specified on command line
@@ -357,6 +361,17 @@ void FOpenGLProgramBinaryCache::Initialize()
 	{
 		UE_LOG(LogRHI, Log, TEXT("ClearOpenGLBinaryProgramCache specified, deleting binary program cache folder: %s"), *CacheFolderPathRoot);
 		FPlatformFileManager::Get().GetPlatformFile().DeleteDirectoryRecursively(*CacheFolderPathRoot);
+	}
+
+	if (FPlatformFileManager::Get().GetPlatformFile().DirectoryExists(*OldCacheFolderPathRoot))
+	{
+		UE_LOG(LogRHI, Log, TEXT("Moving program binary cache: %s -> %s"), *OldCacheFolderPathRoot, *CacheFolderPathRoot);
+		
+		// Note: have to copy and delete as TManagedStoragePlatformFile prevents moving of directories.
+		// FPlatformFileManager::Get().GetPlatformFile().MoveFile(*CacheFolderPathRoot, *OldCacheFolderPathRoot);
+
+		FPlatformFileManager::Get().GetPlatformFile().CopyDirectoryTree(*CacheFolderPathRoot, *OldCacheFolderPathRoot, false);
+		FPlatformFileManager::Get().GetPlatformFile().DeleteDirectoryRecursively(*OldCacheFolderPathRoot);
 	}
 
 	CachePtr = new FOpenGLProgramBinaryCache(CacheFolderPathRoot);
@@ -1041,14 +1056,7 @@ void FOpenGLProgramBinaryCache::CheckPendingGLProgramCreateRequests_internal()
 			It.RemoveCurrent();
 		}
 		float TimeTaken = (float)GMaxBinaryProgramLoadTimeMS - (TimeRemainingS * 1000.0f);
-		if (TimeRemainingS < 0.005f)
-		{
-			UE_LOG(LogRHI, Warning, TEXT("CheckPendingGLProgramCreateRequests : iter count = %d, time taken = %f ms (remaining %d)"), Count, TimeTaken, PendingGLContainerPrograms.Num());
-		}
-		else
-		{
-			UE_LOG(LogRHI, Verbose, TEXT("CheckPendingGLProgramCreateRequests : iter count = %d, time taken = %f ms (remaining %d)"), Count, TimeTaken, PendingGLContainerPrograms.Num());
-		}
+		UE_LOG(LogRHI, Verbose, TEXT("CheckPendingGLProgramCreateRequests : iter count = %d, time taken = %f ms (remaining %d)"), Count, TimeTaken, PendingGLContainerPrograms.Num());
 	}
 }
 

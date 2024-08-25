@@ -11,6 +11,7 @@
 #include "PhysicsEngine/SphereElem.h"
 #include "PhysicsEngine/SphylElem.h"
 #include "PhysicsEngine/TaperedCapsuleElem.h"
+#include "Async/Mutex.h"
 #include "AggregateGeom.generated.h"
 
 class FMaterialRenderProxy;
@@ -42,15 +43,13 @@ struct FKAggregateGeom
 	UPROPERTY(EditAnywhere, editfixedsize, Category = "Aggregate Geometry", meta = (DisplayName = "(Experimental) Skinned Level Sets"), Experimental)
 	TArray<FKSkinnedLevelSetElem> SkinnedLevelSetElems;
 
-	class FKConvexGeomRenderInfo* RenderInfo;
-
 	FKAggregateGeom()
-		: RenderInfo(NULL)
+		: RenderInfoPtr(nullptr)
 	{
 	}
 
 	FKAggregateGeom(const FKAggregateGeom& Other)
-		: RenderInfo(nullptr)
+		: RenderInfoPtr(nullptr)
 	{
 		CloneAgg(Other);
 	}
@@ -135,6 +134,94 @@ struct FKAggregateGeom
 		return nullptr;
 	}
 
+	const FKShapeElem* GetElementByName(const FName InName) const
+	{
+		if (const FKShapeElem* FoundSphereElem = GetElementByName<FKSphereElem>(MakeArrayView(SphereElems), InName))
+		{
+			return FoundSphereElem;
+		}
+		else if (const FKShapeElem* FoundBoxElem = GetElementByName<FKBoxElem>(MakeArrayView(BoxElems), InName))
+		{
+			return FoundBoxElem;
+		}
+		else if (const FKShapeElem* FoundSphylElem = GetElementByName<FKSphylElem>(MakeArrayView(SphylElems), InName))
+		{
+			return FoundSphylElem;
+		}
+		else if (const FKShapeElem* FoundConvexElem = GetElementByName<FKConvexElem>(MakeArrayView(ConvexElems), InName))
+		{
+			return FoundConvexElem;
+		}
+		else if (const FKShapeElem* FoundTaperedCapsuleElem = GetElementByName<FKTaperedCapsuleElem>(MakeArrayView(TaperedCapsuleElems), InName))
+		{
+			return FoundTaperedCapsuleElem;
+		}
+		else if (const FKShapeElem* FoundLevelSetElem = GetElementByName<FKLevelSetElem>(MakeArrayView(LevelSetElems), InName))
+		{
+			return FoundLevelSetElem;
+		}
+		else if (const FKShapeElem* FoundSkinnedLevelSetElem = GetElementByName<FKSkinnedLevelSetElem>(MakeArrayView(SkinnedLevelSetElems), InName))
+		{
+			return FoundSkinnedLevelSetElem;
+		}
+
+		return nullptr;
+	}
+
+	int32 GetElementIndexByName(const FName InName) const
+	{
+		int32 FoundIndex = GetElementIndexByName<FKSphereElem>(MakeArrayView(SphereElems), InName);
+		int32 StartIndex = 0;
+		if (FoundIndex != INDEX_NONE)
+		{
+			return FoundIndex + StartIndex;
+		}
+		StartIndex += SphereElems.Num();
+
+		FoundIndex = GetElementIndexByName<FKBoxElem>(MakeArrayView(BoxElems), InName);
+		if (FoundIndex != INDEX_NONE)
+		{
+			return FoundIndex + StartIndex;
+		}
+		StartIndex += BoxElems.Num();
+
+		FoundIndex = GetElementIndexByName<FKSphylElem>(MakeArrayView(SphylElems), InName);
+		if (FoundIndex != INDEX_NONE)
+		{
+			return FoundIndex + StartIndex;
+		}
+		StartIndex += SphylElems.Num();
+
+		FoundIndex = GetElementIndexByName<FKConvexElem>(MakeArrayView(ConvexElems), InName);
+		if (FoundIndex != INDEX_NONE)
+		{
+			return FoundIndex + StartIndex;
+		}
+		StartIndex += ConvexElems.Num();
+
+		FoundIndex = GetElementIndexByName<FKTaperedCapsuleElem>(MakeArrayView(TaperedCapsuleElems), InName);
+		if (FoundIndex != INDEX_NONE)
+		{
+			return FoundIndex + StartIndex;
+		}
+		StartIndex += TaperedCapsuleElems.Num();
+
+		FoundIndex = GetElementIndexByName<FKLevelSetElem>(MakeArrayView(LevelSetElems), InName);
+		if (FoundIndex != INDEX_NONE)
+		{
+			return FoundIndex + StartIndex;
+		}
+		StartIndex += LevelSetElems.Num();
+
+		FoundIndex = GetElementIndexByName<FKSkinnedLevelSetElem>(MakeArrayView(SkinnedLevelSetElems), InName);
+		if (FoundIndex != INDEX_NONE)
+		{
+			return FoundIndex + StartIndex;
+		}
+
+		return INDEX_NONE;
+	}
+
 	void EmptyElements()
 	{
 		BoxElems.Empty();
@@ -190,4 +277,30 @@ private:
 		LevelSetElems = Other.LevelSetElems;
 		SkinnedLevelSetElems = Other.SkinnedLevelSetElems;
 	}
+
+	template <class T>
+	const FKShapeElem* GetElementByName(TArrayView<const T> Elements, const FName InName) const
+	{
+		const FKShapeElem* FoundElem = Elements.FindByPredicate(
+			[InName](const T& Elem)
+			{
+				return InName == Elem.GetName();
+			});
+		return FoundElem;
+	}
+
+	template <class T>
+	int32 GetElementIndexByName(TArrayView<const T> Elements, const FName InName) const
+	{
+		int32 FoundIndex = Elements.IndexOfByPredicate(
+			[InName](const T& Elem)
+			{
+				return InName == Elem.GetName();
+			});
+		return FoundIndex;
+	}
+
+	// NOTE: RenderInfo is generated concurrently and lazily (hence being mutable)
+	mutable std::atomic<class FKConvexGeomRenderInfo*> RenderInfoPtr;
+	mutable UE::FMutex RenderInfoLock;
 };

@@ -508,7 +508,6 @@ void FFractureEditorModeToolkit::RequestModeUITabs()
 		{ 
 			return;
 		}
-		TSharedRef<FWorkspaceItem> MenuGroup = MenuModeCategoryPtr.ToSharedRef();
 		HierarchyTabInfo.OnSpawnTab = FOnSpawnTab::CreateSP(SharedThis(this), &FFractureEditorModeToolkit::CreateHierarchyTab);
 		HierarchyTabInfo.TabLabel = LOCTEXT("FractureHierarchy", "Fracture Hierarchy");
 		HierarchyTabInfo.TabTooltip = LOCTEXT("ModesToolboxTabTooltipText", "Open the  Modes tab, which contains the active editor mode's settings.");
@@ -1644,12 +1643,63 @@ FText FFractureEditorModeToolkit::GetActiveToolMessage() const
 	return LOCTEXT("FractureNoToolMessage", "Select geometry and use “New+” to create a new Geometry Collection to begin fracturing.  Choose one of the fracture tools to break apart the selected Geometry Collection.");
 }
 
+namespace UE::PrivateOutlinerCacheHelper
+{
+	void AddGeometryStatsForComponent(const UGeometryCollectionComponent* Component, int64& BoneCount, int64& VertexCount)
+	{
+		if (Component)
+		{
+			if (const UGeometryCollection* GeometryObject = Component->GetRestCollection())
+			{
+				if (const FGeometryCollection* Collection = GeometryObject->GetGeometryCollection().Get())
+				{
+					BoneCount += Collection->Transform.Num();
+					VertexCount += Collection->Vertex.Num();
+				}
+			}
+		}
+	}
+
+	void ComputeGeometryStats(const TArray<UGeometryCollectionComponent*>& InNewComponents, int64& BoneCount, int64& VertexCount)
+	{
+		BoneCount = VertexCount = 0;
+		for (const UGeometryCollectionComponent* Component : InNewComponents)
+		{
+			AddGeometryStatsForComponent(Component, BoneCount, VertexCount);
+		}
+	}
+
+	void ComputeGeometryStats(const TArray<TWeakObjectPtr<UGeometryCollectionComponent>>& InNewComponents, int64& BoneCount, int64& VertexCount)
+	{
+		BoneCount = VertexCount = 0;
+		for (const TWeakObjectPtr<UGeometryCollectionComponent> Component : InNewComponents)
+		{
+			AddGeometryStatsForComponent(Component.Get(), BoneCount, VertexCount);
+		}
+	}
+}
+
+bool FFractureEditorModeToolkit::IsCachedOutlinerGeometryStale(const TArray<TWeakObjectPtr<UGeometryCollectionComponent>>& SelectedComponents) const
+{
+	// Note we currently use quick-to-compute high level stats, compared vs cached versions, since this is run per tick; we could change this to more thoroughly walk the outliner data potentially
+	int64 NewBoneCount, NewVertexCount;
+	UE::PrivateOutlinerCacheHelper::ComputeGeometryStats(SelectedComponents, NewBoneCount, NewVertexCount);
+	return NewBoneCount != OutlinerCachedBoneCount || NewVertexCount != OutlinerCachedVertexCount;
+}
+
 void FFractureEditorModeToolkit::SetOutlinerComponents(const TArray<UGeometryCollectionComponent*>& InNewComponents)
 {
+	// Update cached stats (bone and vertex count) of the components in the outliner
+	UE::PrivateOutlinerCacheHelper::ComputeGeometryStats(InNewComponents, OutlinerCachedBoneCount, OutlinerCachedVertexCount);
+
 	TArray<UGeometryCollectionComponent*> ComponentsToEdit;
 	ComponentsToEdit.Reserve(InNewComponents.Num());
 	for (UGeometryCollectionComponent* Component : InNewComponents)
 	{
+		if (!Component)
+		{
+			continue;
+		}
 		FGeometryCollectionEdit RestCollection = Component->EditRestCollection(GeometryCollection::EEditUpdate::None);
 		UGeometryCollection* FracturedGeometryCollection = RestCollection.GetRestCollection();
 
@@ -1942,7 +1992,7 @@ void FFractureEditorModeToolkit::UpdateExplodedVectors(UGeometryCollectionCompon
 		check(OutGeometryCollection->HasAttribute("ExplodedVector", FGeometryCollection::TransformGroup));
 
 		TManagedArray<FVector3f>& ExplodedVectors = OutGeometryCollection->ModifyAttribute<FVector3f>("ExplodedVector", FGeometryCollection::TransformGroup);
-		const TManagedArray<FTransform>& Transform = OutGeometryCollection->GetAttribute<FTransform>("Transform", FGeometryCollection::TransformGroup);
+		const TManagedArray<FTransform3f>& Transform = OutGeometryCollection->GetAttribute<FTransform3f>("Transform", FGeometryCollection::TransformGroup);
 		const TManagedArray<int32>& TransformToGeometryIndex = OutGeometryCollection->GetAttribute<int32>("TransformToGeometryIndex", FGeometryCollection::TransformGroup);
 		const TManagedArray<FBox>& BoundingBox = OutGeometryCollection->GetAttribute<FBox>("BoundingBox", FGeometryCollection::GeometryGroup);
 

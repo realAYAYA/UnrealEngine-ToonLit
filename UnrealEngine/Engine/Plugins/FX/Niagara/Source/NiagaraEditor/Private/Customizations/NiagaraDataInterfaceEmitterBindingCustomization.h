@@ -4,12 +4,15 @@
 
 #include "CoreMinimal.h"
 #include "IPropertyTypeCustomization.h"
+#include "Input/Reply.h"
 #include "Layout/Visibility.h"
 #include "NiagaraDataInterfaceEmitterBinding.h"
 
 class FDetailWidgetRow;
 class IPropertyHandle;
 class UNiagaraSystem;
+
+class SSuggestionTextBox;
 
 class FNiagaraDataInterfaceEmitterBindingCustomization : public IPropertyTypeCustomization
 {
@@ -30,8 +33,16 @@ public:
 	void EmitterName_SetText(const FText& NewText, ETextCommit::Type CommitInfo);
 	void EmitterName_GetSuggestions(const FString& CurrText, TArray<FString>& OutSuggestions);
 
+	FNiagaraDataInterfaceEmitterBinding* GetEmitterBinding() const;
+	EVisibility IsResetToDefaultsVisible() const;
+	FReply OnResetToDefaultsClicked();
+
+	TWeakObjectPtr<UObject> OwnerObjectWeak;
 	TWeakObjectPtr<UNiagaraSystem> NiagaraSystemWeak;
+	TSharedPtr<IPropertyHandle> StructPropertyHandle;
 	TSharedPtr<IPropertyHandle> BindingModeHandle;
 	TSharedPtr<IPropertyHandle> EmitterNameHandle;
+
+	TSharedPtr<SSuggestionTextBox> EmitterTextBox;
 };
 

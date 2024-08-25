@@ -17,37 +17,47 @@ namespace UnrealBuildTool.Rules
 			PrivateDependencyModuleNames.AddRange(
 				new string[]
 				{
+					// Engine
 					"ApplicationCore",
-					"Concert",
-					"ConcertClient",
-					"ConcertClientSharedSlate",
-					"ConcertSharedSlate",
-					"ConcertSyncClient",
-					"ConcertSyncCore",
-					"ConcertTransport",
 					"ContentBrowser",
+					"Core",
 					"DesktopPlatform",
 					"EditorStyle",
+					"Engine",
 					"InputCore",
-					"Projects",
+					"JsonUtilities",
 					"MessageLog",
+					"Projects",
 					"Slate",
 					"SlateCore",
 					"SourceControl",
 					"ToolMenus",
-					"ToolWidgets"
+					"ToolWidgets",
+					
+					// Concert
+					"Concert",
+					"ConcertClient",
+					"ConcertClientSharedSlate",
+					"ConcertReplicationScripting",
+					"ConcertSharedSlate",
+					"ConcertSyncClient",
+					"ConcertSyncCore",
+					"ConcertTransport",
 				}
 			);
 
 			if (Target.bBuildEditor)
 			{
-				PrivateDependencyModuleNames.AddRange(
+				PrivateDependencyModuleNames.AddRange( 
 					new string[]
-					{
+					{ 
 						"EditorFramework",
-						"UnrealEd",
+						"MultiUserReplicationEditor",
+						"PropertyEditor",
+						"Settings",
 						"Sequencer",
 						"ToolMenus",
+						"UnrealEd",
 						"WorkspaceMenuStructure",
 					}
 				);

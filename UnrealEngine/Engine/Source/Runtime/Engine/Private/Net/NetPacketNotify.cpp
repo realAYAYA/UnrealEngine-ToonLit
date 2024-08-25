@@ -12,17 +12,39 @@ FNetPacketNotify::FNetPacketNotify()
 {
 }
 
-SIZE_T FNetPacketNotify::GetCurrentSequenceHistoryLength() const
+FNetPacketNotify::SequenceNumberT::DifferenceT FNetPacketNotify::GetCurrentSequenceHistoryLength() const
 {
 	if (InAckSeq >= InAckSeqAck)
 	{
-		return (SIZE_T)SequenceNumberT::Diff(InAckSeq, InAckSeqAck);
+		return FMath::Min(SequenceNumberT::Diff(InAckSeq, InAckSeqAck), (SequenceNumberT::DifferenceT)SequenceHistoryT::Size);
 	}
 	else
 	{
 		// Worst case send full history
-		return SequenceHistoryT::Size;
+		return (SequenceNumberT::DifferenceT)SequenceHistoryT::Size;
 	}
+}
+
+bool FNetPacketNotify::WillSequenceFitInSequenceHistory(SequenceNumberT Seq) const
+{
+	if (Seq >= InAckSeqAck)
+	{
+		return (SIZE_T)SequenceNumberT::Diff(Seq, InAckSeqAck) <= SequenceHistoryT::Size;
+	}
+
+	return false;
+}
+
+bool FNetPacketNotify::GetHasUnacknowledgedAcks() const
+{
+	for (SequenceNumberT::DifferenceT It = 0, EndIt = GetCurrentSequenceHistoryLength(); It < EndIt; ++It)
+	{
+		if (InSeqHistory.IsDelivered(It))
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 FNetPacketNotify::SequenceNumberT FNetPacketNotify::UpdateInAckSeqAck(SequenceNumberT::DifferenceT AckCount, SequenceNumberT AckedSeq)
@@ -40,6 +62,7 @@ FNetPacketNotify::SequenceNumberT FNetPacketNotify::UpdateInAckSeqAck(SequenceNu
 		// verify that we have a matching sequence number
 		if (AckData.OutSeq == AckedSeq)
 		{
+			UE_LOG_PACKET_NOTIFY(TEXT("FNetPacketNotify::UpdateInAckSeqAck - InAckSeqAck: %u"), AckData.InAckSeq.Get());
 			return AckData.InAckSeq;
 		}
 	}
@@ -58,6 +81,13 @@ void FNetPacketNotify::Init(SequenceNumberT InitialInSeq, SequenceNumberT Initia
 	InAckSeqAck = InitialInSeq;
 	OutSeq = InitialOutSeq;
 	OutAckSeq = SequenceNumberT(InitialOutSeq.Get() - 1);
+	WaitingForFlushSeqAck = OutAckSeq;
+}
+
+void FNetPacketNotify::SetWaitForSequenceHistoryFlush()
+{
+	UE_LOG_PACKET_NOTIFY_WARNING(TEXT("FNetPacketNotify::SetWaitForSequenceHistoryFlush - Wait for ack of next OutSeq: %u"), OutSeq.Get());
+	WaitingForFlushSeqAck = OutSeq;
 }
 
 void FNetPacketNotify::AckSeq(SequenceNumberT AckedSeq, bool IsAck)
@@ -70,11 +100,71 @@ void FNetPacketNotify::AckSeq(SequenceNumberT AckedSeq, bool IsAck)
 
 		const bool bReportAcked = InAckSeq == AckedSeq ? IsAck : false;
 
-		UE_LOG_PACKET_NOTIFY(TEXT("FNetPacketNotify::AckSeq - AckedSeq: %u, IsAck %u"), InAckSeq.Get(), bReportAcked ? 1u : 0u);
+		UE_LOG_PACKET_NOTIFY(TEXT("FNetPacketNotify::AckSeq - AckedSeq: %u, IsAck %u, AckHistorySize: %d"), InAckSeq.Get(), bReportAcked ? 1u : 0u, GetCurrentSequenceHistoryLength());
 
 		InSeqHistory.AddDeliveryStatus(bReportAcked);		
 	}
 }
+
+FNetPacketNotify::SequenceNumberT::DifferenceT FNetPacketNotify::InternalUpdate(const FNotificationHeader& NotificationData, SequenceNumberT::DifferenceT InSeqDelta)
+{
+	// We must check if we will overflow our outgoing ack-window, if we do and it contains processed data we must initiate a re-sync of ack-sequence history.
+	// This is done by ignoring any new packets until we are in sync again. 
+	// This would typically only occur in situations where we would have had huge packet loss or spikes on the receiving end.
+	if (!IsWaitingForSequenceHistoryFlush() && !WillSequenceFitInSequenceHistory(NotificationData.Seq))
+	{
+		if (GetHasUnacknowledgedAcks())
+		{
+			SetWaitForSequenceHistoryFlush();
+		}
+		else
+		{
+			// We can reset if we have no previous acks and can then safely synthesize nacks on the receiving end
+			const SequenceNumberT NewInAckSeqAck(NotificationData.Seq.Get() - 1);
+			UE_LOG_PACKET_NOTIFY_WARNING(TEXT("FNetPacketNotify::Reset SequenceHistory - New InSeqDelta: %u Old: %u"), NewInAckSeqAck.Get(), InAckSeqAck.Get());
+			InAckSeqAck = NewInAckSeqAck;
+		}
+	}
+
+	if (!IsWaitingForSequenceHistoryFlush())
+	{
+		// Just accept the incoming sequence, under normal circumstances NetConnection explicitly handles the acks.
+		InSeq = NotificationData.Seq;
+
+		return InSeqDelta;
+	}
+	else
+	{
+		// Until we have flushed the history we treat incoming packets as lost while still advancing ack window as far as we can.
+		SequenceNumberT NewInSeqToAck(NotificationData.Seq);
+
+		// Still waiting on flush, but we can fill up the history
+		if (!WillSequenceFitInSequenceHistory(NotificationData.Seq) && GetHasUnacknowledgedAcks())
+		{
+			// Mark everything we can as lost up until the end of the sequence history 
+			NewInSeqToAck = SequenceNumberT(InAckSeqAck.Get() + (MaxSequenceHistoryLength - GetCurrentSequenceHistoryLength()));
+		}
+
+		if (NewInSeqToAck >= InSeq)
+		{
+			const SequenceNumberT::DifferenceT AdjustedSequenceDelta = SequenceNumberT::Diff(NewInSeqToAck, InSeq);
+
+			InSeq = NewInSeqToAck;
+
+			// Nack driven from here
+			AckSeq(NewInSeqToAck, false);
+
+			UE_LOG_PACKET_NOTIFY(TEXT("FNetPacketNotify::Update - Waiting for sequence history flush - Rejected: %u Accepted: InSeq: %u Adjusted delta %d"), NotificationData.Seq.Get(), InSeq.Get(), AdjustedSequenceDelta);
+			
+			return AdjustedSequenceDelta;
+		}
+		else
+		{
+			UE_LOG_PACKET_NOTIFY(TEXT("FNetPacketNotify::Update - Waiting for sequence history flush - Rejected: %u Accepted: InSeq: %u"), NotificationData.Seq.Get(), InSeq.Get());
+			return 0;
+		}
+	}
+};
 
 namespace 
 {

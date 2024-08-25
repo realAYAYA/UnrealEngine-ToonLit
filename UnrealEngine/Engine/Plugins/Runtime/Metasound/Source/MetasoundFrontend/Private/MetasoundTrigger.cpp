@@ -62,7 +62,7 @@ namespace Metasound
 
 			if (NumToRemove)
 			{
-				TriggeredFrames.RemoveAt(0, NumToRemove, false /* bAllowShrinking */);
+				TriggeredFrames.RemoveAt(0, NumToRemove, EAllowShrinking::No);
 			}
 
 			const int32 Num = TriggeredFrames.Num();

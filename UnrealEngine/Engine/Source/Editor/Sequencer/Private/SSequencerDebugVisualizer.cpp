@@ -3,7 +3,6 @@
 #include "SSequencerDebugVisualizer.h"
 #include "MVVM/Selection/Selection.h"
 #include "MVVM/ViewModels/SequencerEditorViewModel.h"
-#include "CommonMovieSceneTools.h"
 #include "Styling/AppStyle.h"
 #include "Widgets/SToolTip.h"
 #include "Widgets/Layout/SBorder.h"

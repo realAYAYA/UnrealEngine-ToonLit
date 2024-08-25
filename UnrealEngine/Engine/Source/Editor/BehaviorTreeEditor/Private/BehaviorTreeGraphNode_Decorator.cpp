@@ -3,6 +3,7 @@
 #include "BehaviorTreeGraphNode_Decorator.h"
 
 #include "AIGraphTypes.h"
+#include "BehaviorTreeColors.h"
 #include "BehaviorTree/BTCompositeNode.h"
 #include "BehaviorTree/BTDecorator.h"
 #include "Containers/UnrealString.h"
@@ -21,6 +22,15 @@ UBehaviorTreeGraphNode_Decorator::UBehaviorTreeGraphNode_Decorator(const FObject
 void UBehaviorTreeGraphNode_Decorator::AllocateDefaultPins()
 {
 	//No Pins for decorators
+}
+
+FLinearColor UBehaviorTreeGraphNode_Decorator::GetBackgroundColor(bool bIsActiveForDebugger) const
+{
+	return bIsActiveForDebugger
+		? BehaviorTreeColors::Debugger::ActiveDecorator
+		: (bInjectedNode || bRootLevel)
+			? BehaviorTreeColors::NodeBody::InjectedSubNode
+			: BehaviorTreeColors::NodeBody::Decorator;
 }
 
 FText UBehaviorTreeGraphNode_Decorator::GetNodeTitle(ENodeTitleType::Type TitleType) const

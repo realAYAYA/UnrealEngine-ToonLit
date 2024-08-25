@@ -16,6 +16,14 @@ class RIGVMDEVELOPER_API URigVMClientHost : public UInterface
 	GENERATED_BODY()
 };
 
+enum class ERigVMLoadType : uint8
+{
+	PostLoad,
+	CheckUserDefinedStructs
+};
+
+DECLARE_DELEGATE_RetVal(URigVMGraph*, FRigVMGetFocusedGraph);
+
 // Interface that allows an object to host a rig VM client. Used by graph edting code to interact with the controller.
 class RIGVMDEVELOPER_API IRigVMClientHost
 {
@@ -35,8 +43,11 @@ public:
 	// Returns the rigvm function host
 	virtual const IRigVMGraphFunctionHost* GetRigVMGraphFunctionHost() const = 0;
 
-	// Returns the editor object corresponding with the supplied editor object
+	// Returns the editor object corresponding with the supplied RigVM graph
 	virtual UObject* GetEditorObjectForRigVMGraph(URigVMGraph* InVMGraph) const = 0;
+
+	// Returns the RigVM graph corresponding with the supplied editor object
+	virtual URigVMGraph* GetRigVMGraphForEditorObject(UObject* InObject) const = 0;
 
 	// Reacts to adding a graph
 	virtual void HandleRigVMGraphAdded(const FRigVMClient* InClient, const FString& InNodePathOrName) = 0;
@@ -50,6 +61,67 @@ public:
 	// Reacts to a request to configure a controller
 	virtual void HandleConfigureRigVMController(const FRigVMClient* InClient, URigVMController* InControllerToConfigure) = 0;
 
+	// Given a type name for a user-defined type, either struct or an enum, returns a pointer to the object definition
+	// or nullptr if the client host has no knowledge of such a type.
+	virtual UObject* ResolveUserDefinedTypeById(const FString& InTypeName) const;
+
+	// Recompiles the VM if not already being compiled
+	virtual void RecompileVM() = 0;
+
+	// Recompiles VM if flagged for recompiling is set
+	virtual void RecompileVMIfRequired() = 0;
+
+	// Flags VM requires recompile, and if auto recompile is enabled and no compile bracket is active, requests a recompilation
+	virtual void RequestAutoVMRecompilation() = 0;
+
+	// Sets flag for automatic recompile on model changes
+	virtual void SetAutoVMRecompile(bool bAutoRecompile) = 0;
+
+	// Returns current state of automatic recompile flag
+	virtual bool GetAutoVMRecompile() const = 0;
+
+	// Helper to increase recompile bracket on nested requests
+	virtual void IncrementVMRecompileBracket() = 0;
+
+	// Helper to decrease recompile bracket on nested requests. When value == 1, if autorecompile is enabled, it triggers a VM recompilation
+	virtual void DecrementVMRecompileBracket() = 0;
+
+	// Regenerates model pins if data has changed while the RigVM Graph is not opened (i.e. user defined struct is changed)
+	virtual void RefreshAllModels(ERigVMLoadType InLoadType) = 0;
+
+	virtual void OnRigVMRegistryChanged() = 0;
+
+	virtual void RequestRigVMInit() = 0;
+
+	virtual URigVMGraph* GetModel(const UEdGraph* InEdGraph = nullptr) const = 0;
+	virtual URigVMGraph* GetModel(const FString& InNodePath) const = 0;
+
+	virtual URigVMGraph* GetDefaultModel() const = 0;
+
+	virtual TArray<URigVMGraph*> GetAllModels() const = 0;
+
+	virtual URigVMFunctionLibrary* GetLocalFunctionLibrary() const = 0;
+
+	virtual URigVMGraph* AddModel(FString InName = TEXT("Rig Graph"), bool bSetupUndoRedo = true, bool bPrintPythonCommand = true) = 0;
+
+	virtual bool RemoveModel(FString InName = TEXT("Rig Graph"), bool bSetupUndoRedo = true, bool bPrintPythonCommand = true) = 0;
+
+
+	virtual FRigVMGetFocusedGraph& OnGetFocusedGraph() = 0;
+	virtual const FRigVMGetFocusedGraph& OnGetFocusedGraph() const = 0;
+
+	virtual URigVMGraph* GetFocusedModel() const = 0;
+
+	virtual URigVMController* GetController(const URigVMGraph* InGraph = nullptr) const = 0;
+
+	virtual URigVMController* GetControllerByName(const FString InGraphName = TEXT("")) const = 0;
+
+	virtual URigVMController* GetOrCreateController(URigVMGraph* InGraph = nullptr) = 0;
+
+	virtual URigVMController* GetController(const UEdGraph* InEdGraph) const = 0;
+	virtual URigVMController* GetOrCreateController(const UEdGraph* InGraph) = 0;
+
+	virtual TArray<FString> GeneratePythonCommands(const FString InNewBlueprintName)  = 0;
 };
 
 UINTERFACE()
@@ -86,16 +158,19 @@ public:
 	FRigVMClient()
 		: SchemaPtr(nullptr)
 		, SchemaClass(URigVMSchema::StaticClass())
+		, ControllerClass(URigVMController::StaticClass())
 		, FunctionLibrary(nullptr)
 		, ActionStack(nullptr)
 		, bSuspendNotifications(false)
 		, bIgnoreModelNotifications(false)
+		, bDefaultModelCanBeRemoved(false)
 		, OuterClientHost(nullptr)
 		, OuterClientPropertyName(NAME_None)
 	{
 	}
 
 	void SetSchemaClass(TSubclassOf<URigVMSchema> InSchemaClass);
+	void SetControllerClass(TSubclassOf<URigVMController> InControllerClass);
 	void SetOuterClientHost(UObject* InOuterClientHost, const FName& InOuterClientHostPropertyName);
 	void SetFromDeprecatedData(URigVMGraph* InDefaultGraph, URigVMFunctionLibrary* InFunctionLibrary);
 
@@ -104,7 +179,8 @@ public:
 	const URigVMSchema* GetSchema() const { return SchemaPtr; }
 	URigVMSchema* GetOrCreateSchema();
 	URigVMGraph* GetDefaultModel() const;
-	URigVMGraph* GetModel(int32 InIndex) const { return Models[InIndex]; }
+	URigVMGraph* GetModel(int32 InIndex) const { return Models.IsValidIndex(InIndex) ? Models[InIndex] : nullptr; }
+	URigVMGraph* GetModel(const UEdGraph* InEdGraph = nullptr) const;
 	URigVMGraph* GetModel(const FString& InNodePathOrName) const;
 	URigVMGraph* GetModel(const UObject* InEditorSideObject) const;
 	TArray<URigVMGraph*> GetAllModels(bool bIncludeFunctionLibrary, bool bRecursive) const;
@@ -117,15 +193,22 @@ public:
 	URigVMController* GetOrCreateController(const FString& InNodePathOrName);
 	URigVMController* GetOrCreateController(const URigVMGraph* InModel);
 	URigVMController* GetOrCreateController(const UObject* InEditorSideObject);
+	URigVMController* GetControllerByName(const FString InGraphName) const;
 	bool RemoveController(const URigVMGraph* InModel);
 	URigVMFunctionLibrary* GetFunctionLibrary() const { return FunctionLibrary; }
 	URigVMFunctionLibrary* GetOrCreateFunctionLibrary(bool bSetupUndoRedo, const FObjectInitializer* ObjectInitializer = nullptr, bool bCreateController = true);
 	TArray<FName> GetEntryNames() const;
 	UScriptStruct* GetExecuteContextStruct() const;
 	void SetExecuteContextStruct(UScriptStruct* InExecuteContextStruct);
-	
+
+	FRigVMGetFocusedGraph& OnGetFocusedGraph() { return OnGetFocusedGraphDelegate;}
+	const FRigVMGetFocusedGraph& OnGetFocusedGraph() const { return OnGetFocusedGraphDelegate; }
+	URigVMGraph* GetFocusedModel() const;
+
+	URigVMGraph* AddModel(const FString InName, bool bSetupUndoRedo, bool bPrintPythonCommand);
 	URigVMGraph* AddModel(const FName& InName, bool bSetupUndoRedo, const FObjectInitializer* ObjectInitializer = nullptr, bool bCreateController = true);
 	void AddModel(URigVMGraph* InModel, bool bCreateController);
+	bool RemoveModel(FString InName, bool bSetupUndoRedo, bool bPrintPythonCommand);
 	bool RemoveModel(const FString& InNodePathOrName, bool bSetupUndoRedo);
 	FName RenameModel(const FString& InNodePathOrName, const FName& InNewName, bool bSetupUndoRedo);
 	void PostTransacted(const FTransactionObjectEvent& TransactionEvent);
@@ -197,11 +280,16 @@ private:
 
 	void SetSchema(URigVMSchema* InSchema);
 
+	FRigVMGetFocusedGraph OnGetFocusedGraphDelegate;
+
 	UPROPERTY(transient)
 	TObjectPtr<URigVMSchema> SchemaPtr;
 
 	UPROPERTY(transient)
 	TSubclassOf<URigVMSchema> SchemaClass;
+
+	UPROPERTY(transient)
+	TSubclassOf<URigVMController> ControllerClass;
 
 	UPROPERTY()
 	TArray<TObjectPtr<URigVMGraph>> Models;
@@ -224,6 +312,7 @@ private:
 public:
 	bool bSuspendNotifications;
 	bool bIgnoreModelNotifications;
+	bool bDefaultModelCanBeRemoved;
 private:
 	TWeakObjectPtr<UObject> OuterClientHost;
 	FName OuterClientPropertyName;

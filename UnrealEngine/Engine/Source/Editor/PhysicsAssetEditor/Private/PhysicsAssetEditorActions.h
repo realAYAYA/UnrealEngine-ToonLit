@@ -66,6 +66,7 @@ public:
 	TSharedPtr<FUICommandInfo> HideKinematicBodies;
 	TSharedPtr<FUICommandInfo> RenderOnlySelectedConstraints;
 	TSharedPtr<FUICommandInfo> DrawConstraintsAsPoints;
+	TSharedPtr<FUICommandInfo> DrawViolatedLimits;
 	TSharedPtr<FUICommandInfo> ToggleMassProperties;
 	TSharedPtr<FUICommandInfo> DisableCollision;
 	TSharedPtr<FUICommandInfo> DisableCollisionAll;

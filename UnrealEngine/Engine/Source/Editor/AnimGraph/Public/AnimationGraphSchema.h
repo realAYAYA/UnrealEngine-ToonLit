@@ -48,38 +48,38 @@ class UAnimationGraphSchema : public UEdGraphSchema_K2
 	FName DefaultEvaluationHandlerName;
 
 	//~ Begin UEdGraphSchema Interface.
-	virtual FLinearColor GetPinTypeColor(const FEdGraphPinType& PinType) const override;
-	virtual EGraphType GetGraphType(const UEdGraph* TestEdGraph) const override;
-	virtual void CreateDefaultNodesForGraph(UEdGraph& Graph) const override;
-	virtual void HandleGraphBeingDeleted(UEdGraph& GraphBeingRemoved) const override;
-	virtual bool CreateAutomaticConversionNodeAndConnections(UEdGraphPin* PinA, UEdGraphPin* PinB) const override;
-	virtual void DroppedAssetsOnGraph(const TArray<FAssetData>& Assets, const FVector2D& GraphPosition, UEdGraph* Graph) const override;
-	virtual void DroppedAssetsOnNode(const TArray<FAssetData>& Assets, const FVector2D& GraphPosition, UEdGraphNode* Node) const override;
-	virtual void DroppedAssetsOnPin(const TArray<FAssetData>& Assets, const FVector2D& GraphPosition, UEdGraphPin* Pin) const override;
-	virtual void GetAssetsNodeHoverMessage(const TArray<FAssetData>& Assets, const UEdGraphNode* HoverNode, FString& OutTooltipText, bool& OutOkIcon) const override;
-	virtual void GetAssetsPinHoverMessage(const TArray<FAssetData>& Assets, const UEdGraphPin* HoverPin, FString& OutTooltipText, bool& OutOkIcon) const override;
-	virtual void GetAssetsGraphHoverMessage(const TArray<FAssetData>& Assets, const UEdGraph* HoverGraph, FString& OutTooltipText, bool& OutOkIcon) const override;
-	virtual void GetContextMenuActions(class UToolMenu* Menu, class UGraphNodeContextMenuContext* Context) const override;
-	virtual FText GetPinDisplayName(const UEdGraphPin* Pin) const override;
-	virtual bool CanDuplicateGraph(UEdGraph* InSourceGraph) const override;
-	virtual bool ShouldAlwaysPurgeOnModification() const override { return true; }
-	virtual bool TryCreateConnection(UEdGraphPin* A, UEdGraphPin* B) const override;
-	virtual void GetGraphDisplayInformation(const UEdGraph& Graph, /*out*/ FGraphDisplayInfo& DisplayInfo) const override;
-	virtual bool CanGraphBeDropped(TSharedPtr<FEdGraphSchemaAction> InAction) const override;
-	virtual FReply BeginGraphDragAction(TSharedPtr<FEdGraphSchemaAction> InAction, const FPointerEvent& MouseEvent = FPointerEvent()) const override;
+	ANIMGRAPH_API virtual FLinearColor GetPinTypeColor(const FEdGraphPinType& PinType) const override;
+	ANIMGRAPH_API virtual EGraphType GetGraphType(const UEdGraph* TestEdGraph) const override;
+	ANIMGRAPH_API virtual void CreateDefaultNodesForGraph(UEdGraph& Graph) const override;
+	ANIMGRAPH_API virtual void HandleGraphBeingDeleted(UEdGraph& GraphBeingRemoved) const override;
+	ANIMGRAPH_API virtual bool CreateAutomaticConversionNodeAndConnections(UEdGraphPin* PinA, UEdGraphPin* PinB) const override;
+	ANIMGRAPH_API virtual void DroppedAssetsOnGraph(const TArray<FAssetData>& Assets, const FVector2D& GraphPosition, UEdGraph* Graph) const override;
+	ANIMGRAPH_API virtual void DroppedAssetsOnNode(const TArray<FAssetData>& Assets, const FVector2D& GraphPosition, UEdGraphNode* Node) const override;
+	ANIMGRAPH_API virtual void DroppedAssetsOnPin(const TArray<FAssetData>& Assets, const FVector2D& GraphPosition, UEdGraphPin* Pin) const override;
+	ANIMGRAPH_API virtual void GetAssetsNodeHoverMessage(const TArray<FAssetData>& Assets, const UEdGraphNode* HoverNode, FString& OutTooltipText, bool& OutOkIcon) const override;
+	ANIMGRAPH_API virtual void GetAssetsPinHoverMessage(const TArray<FAssetData>& Assets, const UEdGraphPin* HoverPin, FString& OutTooltipText, bool& OutOkIcon) const override;
+	ANIMGRAPH_API virtual void GetAssetsGraphHoverMessage(const TArray<FAssetData>& Assets, const UEdGraph* HoverGraph, FString& OutTooltipText, bool& OutOkIcon) const override;
+	ANIMGRAPH_API virtual void GetContextMenuActions(class UToolMenu* Menu, class UGraphNodeContextMenuContext* Context) const override;
+	ANIMGRAPH_API virtual FText GetPinDisplayName(const UEdGraphPin* Pin) const override;
+	ANIMGRAPH_API virtual bool CanDuplicateGraph(UEdGraph* InSourceGraph) const override;
+	ANIMGRAPH_API virtual bool ShouldAlwaysPurgeOnModification() const override { return true; }
+	ANIMGRAPH_API virtual bool TryCreateConnection(UEdGraphPin* A, UEdGraphPin* B) const override;
+	ANIMGRAPH_API virtual void GetGraphDisplayInformation(const UEdGraph& Graph, /*out*/ FGraphDisplayInfo& DisplayInfo) const override;
+	ANIMGRAPH_API virtual bool CanGraphBeDropped(TSharedPtr<FEdGraphSchemaAction> InAction) const override;
+	ANIMGRAPH_API virtual FReply BeginGraphDragAction(TSharedPtr<FEdGraphSchemaAction> InAction, const FPointerEvent& MouseEvent = FPointerEvent()) const override;
 	//~ End UEdGraphSchema Interface.
 
 	//~ Begin UEdGraphSchema_K2 Interface
-	virtual const FPinConnectionResponse DetermineConnectionResponseOfCompatibleTypedPins(const UEdGraphPin* PinA, const UEdGraphPin* PinB, const UEdGraphPin* InputPin, const UEdGraphPin* OutputPin) const override;
+	ANIMGRAPH_API virtual const FPinConnectionResponse DetermineConnectionResponseOfCompatibleTypedPins(const UEdGraphPin* PinA, const UEdGraphPin* PinB, const UEdGraphPin* InputPin, const UEdGraphPin* OutputPin) const override;
 	UE_DEPRECATED(5.2, "Use the FSearchForAutocastFunctionResults variant.")
-	virtual bool SearchForAutocastFunction(const FEdGraphPinType& OutputPinType, const FEdGraphPinType& InputPinType, /*out*/ FName& TargetFunction, /*out*/ UClass*& FunctionOwner) const override;
-	virtual TOptional<FSearchForAutocastFunctionResults> SearchForAutocastFunction(const FEdGraphPinType& OutputPinType, const FEdGraphPinType& InputPinType) const;
-	virtual bool ArePinsCompatible(const UEdGraphPin* PinA, const UEdGraphPin* PinB, const UClass* CallingContext = NULL, bool bIgnoreArray = false) const override;
-	virtual bool DoesSupportCollapsedNodes() const override { return false; }
-	virtual bool DoesSupportEventDispatcher() const	override { return false; }
-	virtual bool DoesSupportAnimNotifyActions() const override;
-	virtual void CreateFunctionGraphTerminators(UEdGraph& Graph, UClass* Class) const override;
-	virtual bool CanShowDataTooltipForPin(const UEdGraphPin& Pin) const override;
+	ANIMGRAPH_API virtual bool SearchForAutocastFunction(const FEdGraphPinType& OutputPinType, const FEdGraphPinType& InputPinType, /*out*/ FName& TargetFunction, /*out*/ UClass*& FunctionOwner) const override;
+	ANIMGRAPH_API virtual TOptional<FSearchForAutocastFunctionResults> SearchForAutocastFunction(const FEdGraphPinType& OutputPinType, const FEdGraphPinType& InputPinType) const;
+	ANIMGRAPH_API virtual bool ArePinsCompatible(const UEdGraphPin* PinA, const UEdGraphPin* PinB, const UClass* CallingContext = NULL, bool bIgnoreArray = false) const override;
+	ANIMGRAPH_API virtual bool DoesSupportCollapsedNodes() const override { return false; }
+	ANIMGRAPH_API virtual bool DoesSupportEventDispatcher() const	override { return false; }
+	ANIMGRAPH_API virtual bool DoesSupportAnimNotifyActions() const override;
+	ANIMGRAPH_API virtual void CreateFunctionGraphTerminators(UEdGraph& Graph, UClass* Class) const override;
+	ANIMGRAPH_API virtual bool CanShowDataTooltipForPin(const UEdGraphPin& Pin) const override;
 	//~ End UEdGraphSchema_K2 Interface
 
 	/** Spawn the correct node in the Animation Graph using the given AnimationAsset at the supplied location */

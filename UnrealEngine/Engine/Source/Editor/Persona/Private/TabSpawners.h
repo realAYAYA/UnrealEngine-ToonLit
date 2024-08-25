@@ -271,9 +271,11 @@ public:
 private:
 	// Pointer to preview scene
 	TWeakPtr<IPersonaPreviewScene> PreviewScene;
+	TWeakPtr<FBlueprintEditor> BPEditor;
 
 public:
-	void Construct(const FArguments& InArgs, TSharedRef<IPersonaPreviewScene> InPreviewScene);
+
+	void Construct(const FArguments& InArgs, TSharedRef<IPersonaPreviewScene> InPreviewScene, TSharedRef<FBlueprintEditor> InBPEditor);
 
 	// SSingleObjectDetailsPanel interface
 	virtual UObject* GetObjectToObserve() const override;

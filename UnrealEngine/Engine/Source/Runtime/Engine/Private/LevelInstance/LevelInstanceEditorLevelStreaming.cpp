@@ -20,15 +20,8 @@
 #include "WorldPartition/WorldPartition.h"
 #endif
 
-#if WITH_EDITOR
-static FLevelInstanceID EditLevelInstanceID;
-#endif
-
 ULevelStreamingLevelInstanceEditor::ULevelStreamingLevelInstanceEditor(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
-#if WITH_EDITOR
-	, LevelInstanceID(EditLevelInstanceID)
-#endif
 {
 #if WITH_EDITOR
 	SetShouldBeVisibleInEditor(true);
@@ -86,12 +79,26 @@ ULevelStreamingLevelInstanceEditor* ULevelStreamingLevelInstanceEditor::Load(ILe
 		UPackageTools::UnloadPackages({ LevelPackage });
 	}
 
-	TGuardValue<FLevelInstanceID> GuardEditLevelInstanceID(EditLevelInstanceID, LevelInstance->GetLevelInstanceID());
 	ULevelStreamingLevelInstanceEditor* LevelStreaming = nullptr;
+
+	// Set LevelInstanceID early
+	auto OnLevelStreamingCreated = [LevelInstanceID = LevelInstance->GetLevelInstanceID()](ULevelStreaming* InLevelStreaming)
+	{
+		ULevelStreamingLevelInstanceEditor* LevelInstanceLevelStreaming = Cast<ULevelStreamingLevelInstanceEditor>(InLevelStreaming);
+		check(LevelInstanceLevelStreaming);
+		check(!LevelInstanceLevelStreaming->LevelInstanceID.IsValid());
+		LevelInstanceLevelStreaming->LevelInstanceID = LevelInstanceID;
+	};
+
 	// If Asset is null we can create a level here
 	if (LevelInstance->GetWorldAsset().IsNull())
 	{
-		LevelStreaming = Cast<ULevelStreamingLevelInstanceEditor>(EditorLevelUtils::CreateNewStreamingLevelForWorld(*CurrentWorld, ULevelStreamingLevelInstanceEditor::StaticClass(), TEXT(""), false, nullptr, true, TFunction<void(ULevel*)>(), LevelInstanceActor->GetTransform()));
+		EditorLevelUtils::FCreateNewStreamingLevelForWorldParams CreateNewStreamingLevelParams(ULevelStreamingLevelInstanceEditor::StaticClass(), TEXT(""));
+		CreateNewStreamingLevelParams.Transform = LevelInstanceActor->GetTransform();
+		CreateNewStreamingLevelParams.LevelStreamingCreatedCallback = OnLevelStreamingCreated;
+		CreateNewStreamingLevelParams.bCreateWorldPartition = CurrentWorld->IsPartitionedWorld();
+
+		LevelStreaming = LevelInstance->GetLevelInstanceSubsystem()->CreateNewStreamingLevelForWorld(*CurrentWorld, CreateNewStreamingLevelParams);
 		if (LevelStreaming)
 		{
 			LevelInstanceActor->Modify();
@@ -100,7 +107,11 @@ ULevelStreamingLevelInstanceEditor* ULevelStreamingLevelInstanceEditor::Load(ILe
 	}
 	else
 	{
-		LevelStreaming = Cast<ULevelStreamingLevelInstanceEditor>(EditorLevelUtils::AddLevelToWorld(CurrentWorld, *LevelInstance->GetWorldAssetPackage(), ULevelStreamingLevelInstanceEditor::StaticClass(), LevelInstanceActor->GetTransform()));
+		EditorLevelUtils::FAddLevelToWorldParams AddLevelToWorldParams(ULevelStreamingLevelInstanceEditor::StaticClass(), *LevelInstance->GetWorldAssetPackage());
+		AddLevelToWorldParams.Transform = LevelInstanceActor->GetTransform();
+		AddLevelToWorldParams.LevelStreamingCreatedCallback = OnLevelStreamingCreated;
+
+		LevelStreaming = Cast<ULevelStreamingLevelInstanceEditor>(EditorLevelUtils::AddLevelToWorld(CurrentWorld, AddLevelToWorldParams));
 	}
 		
 	if (LevelStreaming)
@@ -112,8 +123,6 @@ ULevelStreamingLevelInstanceEditor* ULevelStreamingLevelInstanceEditor::Load(ILe
 
 		if (ULevel* LoadedLevel = LevelStreaming->GetLoadedLevel())
 		{
-			LoadedLevel->OnLoadedActorAddedToLevelEvent.AddUObject(LevelStreaming, &ULevelStreamingLevelInstanceEditor::OnLoadedActorAddedToLevel);
-		
 			// Create special actor that will handle changing the pivot of this level
 			FLevelInstanceEditorPivotHelper::Create(LevelInstance, LevelStreaming);
 		}
@@ -130,22 +139,43 @@ void ULevelStreamingLevelInstanceEditor::Unload(ULevelStreamingLevelInstanceEdit
 	{
 		if (ULevel* LoadedLevel = LevelStreaming->GetLoadedLevel())
 		{
-			LoadedLevel->OnLoadedActorAddedToLevelEvent.RemoveAll(LevelStreaming);
+			LoadedLevel->OnLoadedActorAddedToLevelPreEvent.RemoveAll(LevelStreaming);
 			LevelInstanceSubsystem->RemoveLevelsFromWorld({ LoadedLevel });
 		}
 	}
 }
 
-void ULevelStreamingLevelInstanceEditor::OnLoadedActorAddedToLevel(AActor& InActor)
+void ULevelStreamingLevelInstanceEditor::OnLoadedActorsAddedToLevelPreEvent(const TArray<AActor*>& InActors)
 {
-	OnLevelActorAdded(&InActor);
+	for (AActor* Actor : InActors)
+	{
+		OnLevelActorAdded(Actor);
+	}
 }
 
 void ULevelStreamingLevelInstanceEditor::OnLevelActorAdded(AActor* InActor)
 {
 	if (InActor && InActor->GetLevel() == LoadedLevel)
 	{
-		InActor->PushLevelInstanceEditingStateToProxies(true);
+		const bool bIsEditing = true;
+		FSetActorIsInLevelInstance SetIsInLevelInstance(InActor, bIsEditing);
+		InActor->PushLevelInstanceEditingStateToProxies(bIsEditing);
+	}
+}
+
+void ULevelStreamingLevelInstanceEditor::OnPreInitializeContainerInstance(UActorDescContainerInstance::FInitializeParams& InInitParams, UActorDescContainerInstance* InContainerInstance)
+{
+	if (AActor* LevelInstanceActor = Cast<AActor>(GetLevelInstance()))
+	{
+		UWorldPartition* OwningWorldPartition = LevelInstanceActor->GetLevel()->GetWorldPartition();
+		// Add parenting info to init param
+		InInitParams.SetParent(OwningWorldPartition ? OwningWorldPartition->GetActorDescContainerInstance() : nullptr, LevelInstanceActor->GetActorGuid());
+	}
+	else
+	{
+		// When creating a new level instance the Level Instance actor doesn't exist yet
+		check(ParentContainerInstance && ParentContainerGuid.IsValid());
+		InInitParams.SetParent(ParentContainerInstance, ParentContainerGuid);
 	}
 }
 
@@ -157,9 +187,14 @@ void ULevelStreamingLevelInstanceEditor::OnLevelLoadedChanged(ULevel* InLevel)
 	{
 		check(InLevel == NewLoadedLevel);
 
+		OnLoadedActorsAddedToLevelPreEvent(NewLoadedLevel->Actors);
+		NewLoadedLevel->OnLoadedActorAddedToLevelPreEvent.AddUObject(this, &ULevelStreamingLevelInstanceEditor::OnLoadedActorsAddedToLevelPreEvent);
+
 		// Avoid prompts for Level Instance editing
 		NewLoadedLevel->bPromptWhenAddingToLevelBeforeCheckout = false;
 		NewLoadedLevel->bPromptWhenAddingToLevelOutsideBounds = false;
+
+		NewLoadedLevel->SetEditorPathOwner(Cast<AActor>(GetLevelInstance()));
 
 		check(!NewLoadedLevel->bAlreadyMovedActors);
 		if (AWorldSettings* WorldSettings = NewLoadedLevel->GetWorldSettings())
@@ -169,13 +204,12 @@ void ULevelStreamingLevelInstanceEditor::OnLevelLoadedChanged(ULevel* InLevel)
 
 		if (ULevelInstanceSubsystem* LevelInstanceSubsystem = GetWorld()->GetSubsystem<ULevelInstanceSubsystem>())
 		{
-#if WITH_EDITOR
 			if (UWorldPartition* OuterWorldPartition = NewLoadedLevel->GetWorldPartition())
 			{
 				check(!OuterWorldPartition->IsInitialized());
+				OuterWorldPartition->OnActorDescContainerInstancePreInitialize.BindUObject(this, &ULevelStreamingLevelInstanceEditor::OnPreInitializeContainerInstance);
 				OuterWorldPartition->bOverrideEnableStreamingInEditor = false;
 			}
-#endif
 
 			LevelInstanceSubsystem->RegisterLoadedLevelStreamingLevelInstanceEditor(this);
 		}

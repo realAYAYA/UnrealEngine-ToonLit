@@ -13,6 +13,7 @@
 #include "Abilities/GameplayAbilityTypes.h"
 #include "GameplayTaskOwnerInterface.h"
 #include "Abilities/GameplayAbilityTargetTypes.h"
+#include "Net/Core/PushModel/PushModelMacros.h"
 #include "GameplayAbility.generated.h"
 
 class UAbilitySystemComponent;
@@ -107,6 +108,7 @@ UCLASS(Blueprintable)
 class GAMEPLAYABILITIES_API UGameplayAbility : public UObject, public IGameplayTaskOwnerInterface
 {
 	GENERATED_UCLASS_BODY()
+	REPLICATED_BASE_CLASS(UGameplayAbility)
 
 	friend class UAbilitySystemComponent;
 	friend class UGameplayAbilitySet;
@@ -502,6 +504,13 @@ public:
 	virtual bool CallRemoteFunction(UFunction* Function, void* Parameters, FOutParmRec* OutParms, FFrame* Stack) override;
 	virtual bool IsSupportedForNetworking() const override;
 
+#if WITH_EDITOR
+	virtual EDataValidationResult IsDataValid(FDataValidationContext& Context) const override;
+#endif
+
+	/** Overridden to allow Blueprint replicated properties to work */
+	virtual void GetLifetimeReplicatedProps(TArray< class FLifetimeProperty >& OutLifetimeProps) const;
+
 #if UE_WITH_IRIS
 	/** Register all replication fragments */
 	virtual void RegisterReplicationFragments(UE::Net::FFragmentRegistrationContext& Context, UE::Net::EFragmentRegistrationFlags RegistrationFlags) override;
@@ -891,15 +900,16 @@ protected:
 	void DecrementListLock() const;
 
 public:
-	/** Setter for the bMarkPendingKillOnAbilityEnd */
-	void SetMarkPendingKillOnAbilityEnd(bool bInMarkPendingKillOnAbilityEnd) { bMarkPendingKillOnAbilityEnd = bInMarkPendingKillOnAbilityEnd; }
+	UE_DEPRECATED(5.4, "This is unsafe and unnecessary.  It is ignored.")
+	void SetMarkPendingKillOnAbilityEnd(bool bInMarkPendingKillOnAbilityEnd) {}
 
-	/** Is bMarkPendingKillOnAbilityEnd set */
-	bool IsMarkPendingKillOnAbilityEnd() const { return bMarkPendingKillOnAbilityEnd; }
+	UE_DEPRECATED(5.4, "This is unsafe and unnecessary.  It will always return false.")
+	bool IsMarkPendingKillOnAbilityEnd() const { return false; }
 
 protected:
 
 	/** Flag that is set by AbilitySystemComponent::OnRemoveAbility to indicate the ability needs to be cleaned up in AbilitySystemComponent::NotifyAbilityEnded */
-	UPROPERTY(BlueprintReadOnly, Category = Ability)
+	UE_DEPRECATED(5.4, "This is unsafe. Do not use.")
+	UPROPERTY(BlueprintReadOnly, Category = Ability, meta=(DeprecatedProperty, DeprecationMessage="This is unsafe. Do not use."))
 	bool bMarkPendingKillOnAbilityEnd;
 };

@@ -1,8 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Sections/MovieSceneCameraShakeSection.h"
-#include "Tracks/MovieSceneCameraShakeTrack.h"
 #include "UObject/SequencerObjectVersion.h"
+#include "MovieSceneTracksComponentTypes.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MovieSceneCameraShakeSection)
 
@@ -44,5 +44,27 @@ void UMovieSceneCameraShakeSection::PostLoad()
 	}
 
 	Super::PostLoad();
+}
+
+void UMovieSceneCameraShakeSection::ImportEntityImpl(UMovieSceneEntitySystemLinker* EntityLinker, const FEntityImportParams& Params, FImportedEntity* OutImportedEntity)
+{
+	using namespace UE::MovieScene;
+
+	if (!ShakeData.ShakeClass)
+	{
+		return;
+	}
+
+	const FBuiltInComponentTypes* BuiltInComponents = FBuiltInComponentTypes::Get();
+	const FMovieSceneTracksComponentTypes* TrackComponents = FMovieSceneTracksComponentTypes::Get();
+
+	const FGuid ObjectBindingID = Params.GetObjectBindingID();
+	FMovieSceneCameraShakeComponentData ComponentData(ShakeData, *this);
+
+	OutImportedEntity->AddBuilder(
+		FEntityBuilder()
+		.AddConditional(BuiltInComponents->GenericObjectBinding, ObjectBindingID, ObjectBindingID.IsValid())
+		.Add(TrackComponents->CameraShake, ComponentData)
+	);
 }
 

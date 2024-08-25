@@ -6,6 +6,7 @@
 #include "Misc/StringBuilder.h"
 #include "Serialization/MemoryReader.h"
 #include "Serialization/MemoryWriter.h"
+#include "Templates/Function.h"
 
 #include "Tests/TestHarnessAdapter.h"
 
@@ -1554,6 +1555,23 @@ TEST_CASE_NAMED(FBitArrayTestMisc, "System::Core::Containers::BitArray::Misc", "
 	Instance.TestReserve();
 	Instance.TestReset();
 	Instance.TestInitAndSetNumUninitialized();
+}
+
+TEST_CASE_NAMED(FBitArrayTestFor, "System::Core::Containers::BitArray::For", "[ApplicationContextMask][EngineFilter]")
+{
+	std::initializer_list<bool> Expected = {true, false, true, true, false, false};
+
+	TBitArray<> Bits;
+	for (bool bBit : Expected)
+	{
+		Bits.Add(bBit);
+	}
+
+	const bool* ExpectedIt = Expected.begin();
+	for (bool bActual : Bits)
+	{
+		CHECK(bActual == *ExpectedIt++);
+	}
 }
 
 TEST_CASE_NAMED(FBitArrayInvariantsTest, "System::Core::Containers::BitArray::Invariants", "[ApplicationContextMask][SmokeFilter]")

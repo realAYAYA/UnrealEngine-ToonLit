@@ -4,6 +4,7 @@
 #include "Engine/Texture2D.h"
 #include "Engine/World.h"
 #include "LandscapePatchUtil.h" // CopyTextureOnRenderThread
+#include "LandscapePatchLogging.h" 
 #include "RenderGraphBuilder.h"
 #include "TextureCompiler.h"
 #include "RenderingThread.h"
@@ -261,7 +262,7 @@ void ULandscapeWeightTextureBackedRenderTarget::CopyToInternalTexture()
 	{
 		Modify();
 		InternalTexture = CreateTexture(this);
-		// The sizing and format doesn't matter because the UpdateTexture2D call below will deal with it.
+		// The sizing and format doesn't matter because the UpdateTexture call below will deal with it.
 	}
 	else
 	{
@@ -271,8 +272,16 @@ void ULandscapeWeightTextureBackedRenderTarget::CopyToInternalTexture()
 		InternalTexture->Modify(false);
 	}
 
-	RenderTarget->UpdateTexture2D(InternalTexture, GetInternalTextureFormat());
-	InternalTexture->UpdateResource();
+	FText ErrorMessage;
+	if (RenderTarget->UpdateTexture(InternalTexture, CTF_Default, /*InAlphaOverride = */nullptr, /*InTextureChangingDelegate =*/ [](UTexture*){}, &ErrorMessage))
+	{
+		check(InternalTexture->Source.GetFormat() == GetInternalTextureFormat());
+		InternalTexture->UpdateResource();
+	}
+	else
+	{
+		UE_LOG(LogLandscapePatch, Error, TEXT("Couldn't copy render target to internal texture: %s"), *ErrorMessage.ToString());
+	}
 #endif // WITH_EDITOR
 }
 
@@ -413,12 +422,17 @@ void ULandscapeHeightTextureBackedRenderTarget::CopyToInternalTexture()
 			});
 	}
 
-	// TODO: The header for this requires the texture to be square power of 2, but it actually doesn't seem to
-	// be an enforced requirement. If that changes, we'll need our own ReadPixels followed by locking a mip
-	// and writing to it.
 	// This call does a flush for us, so the render target should be updated.
-	NativeEncodingRenderTarget->UpdateTexture2D(InternalTexture, GetInternalTextureFormat());
-	InternalTexture->UpdateResource();
+	FText ErrorMessage;
+	if (NativeEncodingRenderTarget->UpdateTexture(InternalTexture, CTF_Default, /*InAlphaOverride = */nullptr, /*InTextureChangingDelegate =*/ [](UTexture*) {}, &ErrorMessage))
+	{
+		check(InternalTexture->Source.GetFormat() == GetInternalTextureFormat());
+		InternalTexture->UpdateResource();
+	}
+	else
+	{
+		UE_LOG(LogLandscapePatch, Error, TEXT("Couldn't copy render target to internal texture: %s"), *ErrorMessage.ToString());
+	}
 #endif // WITH_EDITOR
 }
 

@@ -87,7 +87,7 @@ ADMXFixtureActor* UDMXFixtureComponent::GetParentFixtureActor()
 TArray<FLinearColor> UDMXFixtureComponent::GetTextureCenterColors(UTexture2D* Texture, int NumCells, bool bUpdateTextureResource)
 {
 	TArray<FLinearColor> PixelColorArray;
-	PixelColorArray.SetNumZeroed(NumCells, true);
+	PixelColorArray.SetNumZeroed(NumCells, EAllowShrinking::Yes);
 	if (Texture)
 	{
 		if (bUpdateTextureResource)

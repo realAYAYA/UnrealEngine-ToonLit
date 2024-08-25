@@ -285,7 +285,7 @@ namespace Agent
 			RemoteConnection Remote = RequestingConnection as RemoteConnection;
 			if( Remote == null )
 			{
-				Name = Environment.MachineName;
+				Name = System.Net.Dns.GetHostName();
 			}
 			else
 			{

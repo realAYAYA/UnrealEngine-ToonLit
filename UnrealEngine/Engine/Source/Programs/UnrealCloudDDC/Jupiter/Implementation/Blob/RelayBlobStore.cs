@@ -13,106 +13,112 @@ using Microsoft.Extensions.Options;
 
 namespace Jupiter.Implementation
 {
-    public class RelayBlobStore : RelayStore, IBlobStore
-    {
-        public RelayBlobStore(IOptionsMonitor<UpstreamRelaySettings> settings, IHttpClientFactory httpClientFactory, IServiceCredentials serviceCredentials) : base(settings, httpClientFactory, serviceCredentials)
-        {
-        }
+	public class RelayBlobStore : RelayStore, IBlobStore
+	{
+		public RelayBlobStore(IOptionsMonitor<UpstreamRelaySettings> settings, IHttpClientFactory httpClientFactory, IServiceCredentials serviceCredentials) : base(settings, httpClientFactory, serviceCredentials)
+		{
+		}
 
-        public Task<Uri?> GetObjectByRedirect(NamespaceId ns, BlobIdentifier identifier)
-        {
-            // not supported
-            return Task.FromResult<Uri?>(null);
-        }
+		public Task<Uri?> GetObjectByRedirectAsync(NamespaceId ns, BlobId identifier)
+		{
+			// not supported
+			return Task.FromResult<Uri?>(null);
+		}
 
-        public Task<Uri?> PutObjectWithRedirect(NamespaceId ns, BlobIdentifier identifier)
-        {
-            // TODO: It could be useful to support relaying the presigned url
-            // not supported
-            return Task.FromResult<Uri?>(null);
-        }
+		public Task<BlobMetadata> GetObjectMetadataAsync(NamespaceId ns, BlobId blobId)
+		{
+			// do not call into other instances to find metadata as we lack a endpoint for that
+			throw new BlobNotFoundException(ns, blobId);
+		}
 
-        public async Task<BlobIdentifier> PutObject(NamespaceId ns, byte[] blob, BlobIdentifier identifier)
-        {
-            using HttpRequestMessage putObjectRequest = await BuildHttpRequest(HttpMethod.Put, new Uri($"api/v1/blobs/{ns}/{identifier}", UriKind.Relative));
+		public Task<Uri?> PutObjectWithRedirectAsync(NamespaceId ns, BlobId identifier)
+		{
+			// TODO: It could be useful to support relaying the presigned url
+			// not supported
+			return Task.FromResult<Uri?>(null);
+		}
 
-            putObjectRequest.Content = new ByteArrayContent(blob);
-            putObjectRequest.Content.Headers.ContentType = new MediaTypeHeaderValue(MediaTypeNames.Application.Octet);
-            putObjectRequest.Content.Headers.Add(CommonHeaders.HashHeaderName, identifier.ToString());
+		public async Task<BlobId> PutObjectAsync(NamespaceId ns, byte[] blob, BlobId identifier)
+		{
+			using HttpRequestMessage putObjectRequest = await BuildHttpRequestAsync(HttpMethod.Put, new Uri($"api/v1/blobs/{ns}/{identifier}", UriKind.Relative));
 
-            HttpResponseMessage response = await HttpClient.SendAsync(putObjectRequest);
+			putObjectRequest.Content = new ByteArrayContent(blob);
+			putObjectRequest.Content.Headers.ContentType = new MediaTypeHeaderValue(MediaTypeNames.Application.Octet);
+			putObjectRequest.Content.Headers.Add(CommonHeaders.HashHeaderName, identifier.ToString());
 
-            response.EnsureSuccessStatusCode();
+			HttpResponseMessage response = await HttpClient.SendAsync(putObjectRequest);
 
-            return identifier;
-        }
+			response.EnsureSuccessStatusCode();
 
-        public Task<BlobIdentifier> PutObject(NamespaceId ns, ReadOnlyMemory<byte> blob, BlobIdentifier identifier)
-        {
-            return PutObject(ns, blob.ToArray(), identifier);
-        }
+			return identifier;
+		}
 
-        public async Task<BlobIdentifier> PutObject(NamespaceId ns, Stream content, BlobIdentifier identifier)
-        {
-            using HttpRequestMessage putObjectRequest = await BuildHttpRequest(HttpMethod.Put, new Uri($"api/v1/blobs/{ns}/{identifier}", UriKind.Relative));
-            putObjectRequest.Content = new StreamContent(content);
-            putObjectRequest.Content.Headers.ContentType = new MediaTypeHeaderValue(MediaTypeNames.Application.Octet);
-            putObjectRequest.Content.Headers.Add(CommonHeaders.HashHeaderName, identifier.ToString());
-            HttpResponseMessage response = await HttpClient.SendAsync(putObjectRequest);
+		public Task<BlobId> PutObjectAsync(NamespaceId ns, ReadOnlyMemory<byte> blob, BlobId identifier)
+		{
+			return PutObjectAsync(ns, blob.ToArray(), identifier);
+		}
 
-            response.EnsureSuccessStatusCode();
+		public async Task<BlobId> PutObjectAsync(NamespaceId ns, Stream content, BlobId identifier)
+		{
+			using HttpRequestMessage putObjectRequest = await BuildHttpRequestAsync(HttpMethod.Put, new Uri($"api/v1/blobs/{ns}/{identifier}", UriKind.Relative));
+			putObjectRequest.Content = new StreamContent(content);
+			putObjectRequest.Content.Headers.ContentType = new MediaTypeHeaderValue(MediaTypeNames.Application.Octet);
+			putObjectRequest.Content.Headers.Add(CommonHeaders.HashHeaderName, identifier.ToString());
+			HttpResponseMessage response = await HttpClient.SendAsync(putObjectRequest);
 
-            return identifier;
-        }
+			response.EnsureSuccessStatusCode();
 
-        public async Task<BlobContents> GetObject(NamespaceId ns, BlobIdentifier blob, LastAccessTrackingFlags flags, bool supportsRedirectUri = false)
-        {
-            using HttpRequestMessage getObjectRequest = await BuildHttpRequest(HttpMethod.Get, new Uri($"api/v1/blobs/{ns}/{blob}", UriKind.Relative));
-            getObjectRequest.Headers.Add("Accept", MediaTypeNames.Application.Octet);
-            HttpResponseMessage response = await HttpClient.SendAsync(getObjectRequest);
-            if (response.StatusCode == HttpStatusCode.NotFound)
-            {
-                throw new BlobNotFoundException(ns, blob);
-            }
+			return identifier;
+		}
 
-            response.EnsureSuccessStatusCode();
+		public async Task<BlobContents> GetObjectAsync(NamespaceId ns, BlobId blob, LastAccessTrackingFlags flags, bool supportsRedirectUri = false)
+		{
+			using HttpRequestMessage getObjectRequest = await BuildHttpRequestAsync(HttpMethod.Get, new Uri($"api/v1/blobs/{ns}/{blob}", UriKind.Relative));
+			getObjectRequest.Headers.Add("Accept", MediaTypeNames.Application.Octet);
+			HttpResponseMessage response = await HttpClient.SendAsync(getObjectRequest);
+			if (response.StatusCode == HttpStatusCode.NotFound)
+			{
+				throw new BlobNotFoundException(ns, blob);
+			}
 
-            long? contentLength = response.Content.Headers.ContentLength;
-            if (contentLength == null)
-            {
-                throw new Exception($"Content length missing in response from upstream blob store. This is not supported");
-            }
+			response.EnsureSuccessStatusCode();
 
-            return new BlobContents(await response.Content.ReadAsStreamAsync(), contentLength.Value);
-        }
+			long? contentLength = response.Content.Headers.ContentLength;
+			if (contentLength == null)
+			{
+				throw new Exception($"Content length missing in response from upstream blob store. This is not supported");
+			}
 
-        public async Task<bool> Exists(NamespaceId ns, BlobIdentifier blob, bool forceCheck)
-        {
-            using HttpRequestMessage headObjectRequest = await BuildHttpRequest(HttpMethod.Head, new Uri($"api/v1/blobs/{ns}/{blob}", UriKind.Relative));
-            HttpResponseMessage response = await HttpClient.SendAsync(headObjectRequest);
-            if (response.StatusCode == HttpStatusCode.NotFound)
-            {
-                return false;
-            }
+			return new BlobContents(await response.Content.ReadAsStreamAsync(), contentLength.Value);
+		}
 
-            response.EnsureSuccessStatusCode();
+		public async Task<bool> ExistsAsync(NamespaceId ns, BlobId blob, bool forceCheck)
+		{
+			using HttpRequestMessage headObjectRequest = await BuildHttpRequestAsync(HttpMethod.Head, new Uri($"api/v1/blobs/{ns}/{blob}", UriKind.Relative));
+			HttpResponseMessage response = await HttpClient.SendAsync(headObjectRequest);
+			if (response.StatusCode == HttpStatusCode.NotFound)
+			{
+				return false;
+			}
 
-            return true;
-        }
+			response.EnsureSuccessStatusCode();
 
-        public Task DeleteObject(NamespaceId ns, BlobIdentifier blob)
-        {
-            throw new NotImplementedException("DeleteObjects is not supported on the relay blob store");
-        }
+			return true;
+		}
 
-        public Task DeleteNamespace(NamespaceId ns)
-        {
-            throw new NotImplementedException("DeleteNamespace is not supported on the relay blob store");
-        }
+		public Task DeleteObjectAsync(NamespaceId ns, BlobId blob)
+		{
+			throw new NotImplementedException("DeleteObjects is not supported on the relay blob store");
+		}
 
-        public IAsyncEnumerable<(BlobIdentifier, DateTime)> ListObjects(NamespaceId ns)
-        {
-            throw new NotImplementedException("ListObjects is not supported on the relay blob store");
-        }
-    }
+		public Task DeleteNamespaceAsync(NamespaceId ns)
+		{
+			throw new NotImplementedException("DeleteNamespace is not supported on the relay blob store");
+		}
+
+		public IAsyncEnumerable<(BlobId, DateTime)> ListObjectsAsync(NamespaceId ns)
+		{
+			throw new NotImplementedException("ListObjects is not supported on the relay blob store");
+		}
+	}
 }

@@ -52,6 +52,23 @@ private:
 	GEOMETRYCORE_API void Init(int32 NumPoints, TFunctionRef<TVector<RealType>(int32)> GetPointFunc, TFunctionRef<bool(int32)> FilterFunc, RealType Epsilon = TMathUtil<RealType>::Epsilon);
 };
 
+template<typename RealType>
+struct TConvexHullSimplificationSettings
+{
+	/// Points will not be added to the hull if doing so would create an edge smaller than this distance tolerance.
+	/// If zero, no points will be skipped.
+	RealType DegenerateEdgeTolerance = (RealType)0;
+
+	/// If positive, hulls generated will only have at most this many points.
+	int32 MaxHullVertices = -1;
+
+	/// If positive, skip adding points that are closer than this threshold to the in-progress hull.
+	RealType SkipAtHullDistanceAbsolute = -TMathUtil<RealType>::MaxReal;
+	/// If positive, skip adding points that are closer than this threshold to the in-progress hull -- expressed as a fraction of the overall hull extent.
+	/// Note if both the Absolute and Fraction MinPlaneDistance thresholds are set, they will both apply (i.e., the larger of the two will be used)
+	RealType SkipAtHullDistanceAsFraction = -TMathUtil<RealType>::MaxReal;
+};
+
 /**
  * Calculate the Convex Hull of a 3D point set as a Triangle Mesh
  */
@@ -64,6 +81,12 @@ public:
 	/// If true, can call GetTriangleNeighbors() after Solve().
 	bool bSaveTriangleNeighbors = false;
 
+	// Settings controlling whether and how to generate a simpler hull
+	TConvexHullSimplificationSettings<RealType> SimplificationSettings;
+
+	// Helper to compute the a convex hull and return only its volume. If the hull cannot be constructed, a volume of 0 will be returned.
+	GEOMETRYCORE_API static double ComputeVolume(const TArrayView<const TVector<RealType>> Vertices);
+
 	/**
 	 * Generate convex hull as long as input is not degenerate
 	 * If input is degenerate, this will return false, and caller can call GetDimension()
@@ -71,10 +94,14 @@ public:
 	 *
 	 * @param NumPoints Number of points to consider
 	 * @param GetPointFunc Function providing array-style access into points
-	 * @param Filter Optional filter to include only a subset of the points in the output hull
+	 * @param FilterFunc Optional filter to include only a subset of the points in the output hull
 	 * @return true if hull was generated, false if points span < 2 dimensions
 	 */
-	GEOMETRYCORE_API bool Solve(int32 NumPoints, TFunctionRef<TVector<RealType>(int32)> GetPointFunc, TFunctionRef<bool(int32)> FilterFunc = [](int32 Idx) {return true;});
+	GEOMETRYCORE_API bool Solve(int32 NumPoints, TFunctionRef<TVector<RealType>(int32)> GetPointFunc, TFunctionRef<bool(int32)> FilterFunc);
+	GEOMETRYCORE_API bool Solve(int32 NumPoints, TFunctionRef<TVector<RealType>(int32)> GetPointFunc)
+	{
+		return Solve(NumPoints, GetPointFunc, [](int32 Idx) {return true;});
+	}
 
 	/**
 	 * Generate convex hull as long as input is not degenerate
@@ -136,12 +163,36 @@ public:
 	}
 
 	/**
-	 * Get faces of the convex hull as convex polygons
+	 * Get faces of the convex hull as convex polygons, merging faces that are exactly coplanar
 	 * @param PolygonFunc	Callback to be called for each polygon, with the array of vertex indices and the face normal
 	 * @param GetPointFunc	Function providing array-style access into points
-	 * TODO: Provide an optional Epsilon parameter to simplify the hull within some tolerance
 	 */
 	GEOMETRYCORE_API void GetFaces(TFunctionRef<void(TArray<int32>&, TVector<RealType>)> PolygonFunc, TFunctionRef<TVector<RealType>(int32)> GetPointFunc) const;
+
+	/**
+	 * Get faces of the convex hull as convex polygons, simplifying the hull by merging near-coplanar faces and only keeping vertices that are on the corner of at least three merged faces
+	 * 
+	 * @param PolygonFunc					Callback to be called for each polygon, with the array of vertex indices and the face normal
+	 * @param GetPointFunc					Function providing array-style access into points
+	 * @param FaceAngleToleranceInDegrees	The hull will be simplified by merging faces with less than this dihedral angle between them
+	 * @param PlaneDistanceTolerance		Faces will not merge unless all points on the face are within this distance of the combined (average) face plane
+	 */
+	GEOMETRYCORE_API void GetSimplifiedFaces(TFunctionRef<void(TArray<int32>&, TVector<RealType>)> PolygonFunc, TFunctionRef<TVector<RealType>(int32)> GetPointFunc,
+		RealType FaceAngleToleranceInDegrees = (RealType)1.0, RealType PlaneDistanceTolerance = (RealType)1.0) const;
+
+	// Polygon face array type: A nested array with inline allocator per face, optimizing for the case where most faces have less than 8 vertices
+	using FPolygonFace = TArray<int32, TInlineAllocator<8>>;
+	/**
+	 * Get faces of the convex hull as convex polygons, simplifying the hull by merging near-coplanar faces and only keeping vertices that are on the corner of at least three merged faces
+	 * 
+	 * @param OutPolygons					Polygons of the convex hull faces, as arrays of indices into the original points
+	 * @param GetPointFunc					Function providing array-style access into points
+	 * @param FaceAngleToleranceInDegrees	The hull will be simplified by merging faces with less than this dihedral angle between them
+	 * @param PlaneDistanceTolerance		Faces will not merge unless all points on the face are within this distance of the combined (average) face plane
+	 * @param OutPolygonNormals				Optional array of normals for each polygon
+	 */
+	GEOMETRYCORE_API void GetSimplifiedFaces(TArray<FPolygonFace>& OutPolygons, TFunctionRef<TVector<RealType>(int32)> GetPointFunc,
+		RealType FaceAngleToleranceInDegrees = (RealType)1.0, RealType PlaneDistanceTolerance = (RealType)1.0, TArray<TVector<RealType>>* OutPolygonNormals = nullptr) const;
 
 	/**
 	 * Only valid if bSaveTriangleNeighbors was true when Solve() was called

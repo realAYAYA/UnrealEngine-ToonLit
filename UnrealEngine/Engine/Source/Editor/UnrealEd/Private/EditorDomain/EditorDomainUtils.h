@@ -6,6 +6,7 @@
 #include "Containers/ArrayView.h"
 #include "Containers/Map.h"
 #include "Containers/Set.h"
+#include "Containers/StringView.h"
 #include "Containers/UnrealString.h"
 #include "DerivedDataCache.h"
 #include "EditorDomain/EditorDomain.h"
@@ -47,12 +48,12 @@ public:
 	/** EditorDomainEnabled allows everything and uses only a blocklist, so DomainUse by default is enabled. */
 	EDomainUse EditorDomainUse = EDomainUse::LoadEnabled | EDomainUse::SaveEnabled;
 
-	bool bNative = false;
+	bool bNative : 1 = false;
 	/** bTargetIterativeEnabled uses an allowlist (with a blocklist override), so defaults to false. */
-	bool bTargetIterativeEnabled = false;
+	bool bTargetIterativeEnabled : 1 = false;
 
-	bool bConstructed = false;
-	bool bConstructionComplete = false;
+	bool bConstructed : 1 = false;
+	bool bConstructionComplete : 1 = false;
 };
 
 /** Threadsafe cache of ClassName -> Digest data for calculating EditorDomain Digests */
@@ -115,8 +116,15 @@ FClassDigestMap& GetClassDigests();
 /** Initializes some global config-driven values used by the EditorDomain and TargetDomain. */
 void UtilsInitialize();
 
-/** Initializes global config-driven values that are only needed by the TargetDomain. */
-void UtilsTargetDomainInit();
+/** Initializes global config-driven values that are only needed by the cooker. */
+void UtilsCookInitialize();
+
+/**
+ * Utility function for stripping comment and white space from config line: "Key=Value    ; comment"
+ * This is not supported in general because general key/value might have a ; in them.
+ * Only usable for key/value known to disallow ; characters
+ */
+FStringView RemoveConfigComment(FStringView Line);
 
 #if ENABLE_COOK_STATS
 namespace CookStats

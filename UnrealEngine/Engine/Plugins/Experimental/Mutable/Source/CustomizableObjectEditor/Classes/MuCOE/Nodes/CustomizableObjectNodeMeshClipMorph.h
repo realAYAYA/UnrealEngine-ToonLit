@@ -3,6 +3,7 @@
 #pragma once
 
 #include "MuCOE/Nodes/CustomizableObjectNodeModifierBase.h"
+#include "MuT/NodeModifier.h"
 
 #include "CustomizableObjectNodeMeshClipMorph.generated.h"
 
@@ -25,6 +26,10 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = MeshToClipAndMorph)
 	TArray<FString> Tags;
+
+	/** Policy to use tags in case more than one is added. */
+	UPROPERTY(EditAnywhere, Category = MeshToClipAndMorph)
+	EMutableMultipleTagPolicy MultipleTagPolicy = EMutableMultipleTagPolicy::OnlyOneRequired;
 
 	UPROPERTY(EditAnywhere, Category = MeshToClipAndMorph)
 	uint32 ReferenceSkeletonIndex = 0;
@@ -58,7 +63,12 @@ public:
 
 	UPROPERTY()
 	FVector Normal;
-	
+
+private:
+	UPROPERTY()
+	bool bOldOffset_DEPRECATED;
+
+public:
 	UPROPERTY(EditAnywhere, Category = MeshClipParameters, meta = (DisplayName = "Max Effect Radius", ToolTip = "The maximum distance from the origin of the widget where vertices will be affected. If negative, there will be no limit."))
 	float MaxEffectRadius;
 

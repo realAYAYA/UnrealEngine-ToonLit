@@ -12,7 +12,7 @@
 class FSceneView;
 class FPrimitiveDrawInterface;
 
-UCLASS(Meta = (BlueprintSpawnableComponent), HideCategories = (Tags, Sockets, ComponentTick, ComponentReplication, Activation, Cooking, Events, AssetUserData, Collision), MinimalAPI)
+UCLASS(Meta = (BlueprintSpawnableComponent), HideCategories = (Tags, Sockets, ComponentTick, ComponentReplication, Activation, Cooking, Events, AssetUserData, Collision, Navigation), MinimalAPI)
 class UWorldPartitionStreamingSourceComponent : public UActorComponent, public IWorldPartitionStreamingSourceProvider
 {
 	GENERATED_UCLASS_BODY()
@@ -68,8 +68,8 @@ class UWorldPartitionStreamingSourceComponent : public UActorComponent, public I
 	FColor DebugColor;
 
 	/** Optional target HLODLayers affected by the streaming source. */
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Streaming")
-	TArray<TObjectPtr<const UHLODLayer>> TargetHLODLayers;
+	UPROPERTY(meta = (DeprecatedProperty, DeprecationMessage = "Use TargetGrids instead."))
+	TArray<TObjectPtr<const UHLODLayer>> TargetHLODLayers_DEPRECATED;
 
 	UPROPERTY(meta = (DeprecatedProperty, DeprecationMessage = "Use TargetHLODLayers instead."))
 	TObjectPtr<const UHLODLayer> TargetHLODLayer_DEPRECATED;
@@ -83,7 +83,7 @@ class UWorldPartitionStreamingSourceComponent : public UActorComponent, public I
 
 private:
 	/** Whether this component is enabled or not */
-	UPROPERTY(EditAnywhere, Category = "Streaming")
+	UPROPERTY(EditAnywhere, Interp, Category = "Streaming")
 	bool bStreamingSourceEnabled;
 
 	UPROPERTY(EditAnywhere, Category = "Streaming")

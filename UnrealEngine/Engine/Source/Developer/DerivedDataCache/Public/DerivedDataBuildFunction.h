@@ -7,6 +7,7 @@
 #include "DerivedDataSharedStringFwd.h"
 #include "Memory/MemoryFwd.h"
 
+class FCbField;
 class FCbObject;
 class FCompressedBuffer;
 
@@ -90,6 +91,13 @@ public:
 
 	/** Returns the input with the matching key, or a null buffer if not found. */
 	virtual FSharedBuffer FindInput(FUtf8StringView Key) const = 0;
+
+	/**
+	 * Adds metadata to the build output. Must have a unique non-empty alphanumeric key.
+	 *
+	 * Metadata is not required to be deterministic or based only on inputs.
+	 */
+	virtual void AddMeta(FUtf8StringView Key, const FCbField& Meta) = 0;
 
 	/** Adds a value to the build output. Must have a non-null buffer and a unique ID. */
 	virtual void AddValue(const FValueId& Id, const FValue& Value) = 0;

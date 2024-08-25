@@ -4,6 +4,7 @@
 #include "ScriptPluginLog.h"
 #include "HAL/FileManager.h"
 #include "Misc/FileHelper.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #if WITH_EDITOR
 #include "EditorFramework/AssetImportData.h"
 #include "Kismet2/BlueprintEditorUtils.h"
@@ -23,12 +24,19 @@ UScriptBlueprint::UScriptBlueprint(const FObjectInitializer& ObjectInitializer)
 #if WITH_EDITORONLY_DATA
 void UScriptBlueprint::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UScriptBlueprint::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
 	if (AssetImportData)
 	{
-		OutTags.Add( FAssetRegistryTag(SourceFileTagName(), AssetImportData->GetSourceData().ToJson(), FAssetRegistryTag::TT_Hidden) );
+		Context.AddTag( FAssetRegistryTag(SourceFileTagName(), AssetImportData->GetSourceData().ToJson(), FAssetRegistryTag::TT_Hidden) );
 	}
 
-	Super::GetAssetRegistryTags(OutTags);
+	Super::GetAssetRegistryTags(Context);
 }
 void UScriptBlueprint::PostLoad()
 {

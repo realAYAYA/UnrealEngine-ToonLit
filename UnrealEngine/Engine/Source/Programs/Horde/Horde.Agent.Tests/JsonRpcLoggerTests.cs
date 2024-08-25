@@ -1,25 +1,21 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System;
-using System.Buffers;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using EpicGames.Core;
-using EpicGames.Horde.Storage;
-using EpicGames.Horde.Storage.Backends;
+using EpicGames.Horde.Jobs;
 using EpicGames.Horde.Logs;
-using Horde.Agent.Parser;
+using EpicGames.Horde.Storage;
+using EpicGames.Horde.Storage.Bundles;
+using EpicGames.Horde.Storage.Bundles.V1;
 using Horde.Agent.Utility;
-using Horde.Common.Rpc;
-using HordeCommon;
-using HordeCommon.Rpc;
-using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-using System.Linq;
 
 namespace Horde.Agent.Tests
 {
@@ -30,7 +26,7 @@ namespace Horde.Agent.Tests
 		{
 			public List<LogEvent> _lines = new List<LogEvent>();
 
-			public IDisposable BeginScope<TState>(TState state) => null!;
+			public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null!;
 
 			public bool IsEnabled(LogLevel logLevel) => true;
 
@@ -71,9 +67,9 @@ namespace Horde.Agent.Tests
 		[TestMethod]
 		public void MultiLineFormatTest()
 		{
-			const string msg = @"{""level"":""Information"",""message"":""ignored"",""format"":""This\nis a\nmulti-{Line}-end\nlog message {Var1} {Var2}"",""properties"":{""Line"":""line\nsplit\nin\nfour"",""Var1"":123,""Var2"":{""$type"":""SourceFile"",""$text"":""D:\\build\\\u002B\u002BUE5\\Sync\\GenerateProjectFiles.bat"",""relativePath"":""GenerateProjectFiles.bat"",""depotPath"":""//UE5/Main/GenerateProjectFiles.bat@20392842""}}}";
+			const string Msg = @"{""level"":""Information"",""message"":""ignored"",""format"":""This\nis a\nmulti-{Line}-end\nlog message {Var1} {Var2}"",""properties"":{""Line"":""line\nsplit\nin\nfour"",""Var1"":123,""Var2"":{""$type"":""SourceFile"",""$text"":""D:\\build\\\u002B\u002BUE5\\Sync\\GenerateProjectFiles.bat"",""relativePath"":""GenerateProjectFiles.bat"",""depotPath"":""//UE5/Main/GenerateProjectFiles.bat@20392842""}}}";
 
-			string[] result = SplitMultiLineMessage(msg);
+			string[] result = SplitMultiLineMessage(Msg);
 			Assert.AreEqual(7, result.Length);
 			Assert.AreEqual(@"{""level"":""Information"",""message"":""This"",""format"":""This"",""properties"":{""Var1"":123,""Var2"":{""$type"":""SourceFile"",""$text"":""D:\\build\\\u002B\u002BUE5\\Sync\\GenerateProjectFiles.bat"",""relativePath"":""GenerateProjectFiles.bat"",""depotPath"":""//UE5/Main/GenerateProjectFiles.bat@20392842""}},""line"":0,""lineCount"":7}", result[0]);
 			Assert.AreEqual(@"{""level"":""Information"",""message"":""is a"",""format"":""is a"",""properties"":{""Var1"":123,""Var2"":{""$type"":""SourceFile"",""$text"":""D:\\build\\\u002B\u002BUE5\\Sync\\GenerateProjectFiles.bat"",""relativePath"":""GenerateProjectFiles.bat"",""depotPath"":""//UE5/Main/GenerateProjectFiles.bat@20392842""}},""line"":1,""lineCount"":7}", result[1]);
@@ -85,11 +81,32 @@ namespace Horde.Agent.Tests
 		}
 
 		[TestMethod]
+		public void InvalidCharactersText()
+		{
+			byte[] data = Encoding.UTF8.GetBytes(@"{""level"":""Information"",""message"":""test"",""format"":""GOOD\nBAD""}");
+			int idx = data.AsSpan().IndexOf(Encoding.UTF8.GetBytes("BAD"));
+			data[idx] = 0xef;
+			data[idx + 1] = 0xbb;
+
+			JsonRpcLogWriter writer = new JsonRpcLogWriter();
+			int count = writer.SanitizeAndWriteEvent(JsonLogEvent.Parse(data));
+			Assert.AreEqual(1, count);
+
+			string[] result = Encoding.UTF8.GetString(writer.CreatePacket().Item1.Span).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+			Assert.AreEqual(1, result.Length);
+
+			LogEvent logEvent = LogEvent.Read(Encoding.UTF8.GetBytes(result[0]));
+
+			const string ExpectedError = "Invalid json log event: {\"level\":\"Information\",\"message\":\"test\",\"format\":\"GOOD\\n\\xef\\xbbD\"}";
+			Assert.AreEqual(ExpectedError, logEvent.ToString());
+		}
+
+		[TestMethod]
 		public void MultiLineMessageTest()
 		{
-			const string msg = @"{""level"":""Information"",""message"":""This is \na multi-line string""}";
+			const string Msg = @"{""level"":""Information"",""message"":""This is \na multi-line string""}";
 
-			string[] result = SplitMultiLineMessage(msg);
+			string[] result = SplitMultiLineMessage(Msg);
 			Assert.AreEqual(2, result.Length);
 			Assert.AreEqual(result[0], @"{""level"":""Information"",""message"":""This is "",""line"":0,""lineCount"":2}");
 			Assert.AreEqual(result[1], @"{""level"":""Information"",""message"":""a multi-line string"",""line"":1,""lineCount"":2}");
@@ -98,78 +115,65 @@ namespace Horde.Agent.Tests
 		[TestMethod]
 		public void MultiLineDecoyTest()
 		{
-			const string msg = @"{""level"":""Information"",""message"":""This is \\\\not a multi-line format string""}";
+			const string Msg = @"{""level"":""Information"",""message"":""This is \\\\not a multi-line format string""}";
 
-			string[] result = SplitMultiLineMessage(msg);
+			string[] result = SplitMultiLineMessage(Msg);
 			Assert.AreEqual(1, result.Length);
-			Assert.AreEqual(result[0], msg);
+			Assert.AreEqual(result[0], Msg);
 		}
 
 		class FakeJsonRpcLoggerBackend : JsonRpcAndStorageLogSink
 		{
-			public BlobHandle? Target { get; private set; }
+			public IBlobRef? Target { get; private set; }
 
-			public FakeJsonRpcLoggerBackend(IRpcConnection connection, string logId, IJsonRpcLogSink inner, IStorageClient store, ILogger logger)
-				: base(connection, logId, inner, store, logger)
+			public FakeJsonRpcLoggerBackend(IRpcConnection connection, LogId logId, JobId? jobId, JobStepBatchId? batchId, JobStepId? stepId, IStorageClient store, ILogger logger)
+				: base(connection, logId, jobId, batchId, stepId, store, logger)
 			{
 			}
 
-			protected override Task UpdateLogAsync(BlobHandle target, int lineCount, bool complete, CancellationToken cancellationToken)
+			protected override Task UpdateLogAsync(IBlobRef target, int lineCount, bool complete, CancellationToken cancellationToken)
 			{
 				Target = target;
 				return Task.CompletedTask;
 			}
 
-			protected override async Task<int> UpdateLogTailAsync(int tailNext, ReadOnlyMemory<byte> tailData)
+			protected override async Task<int> UpdateLogTailAsync(int tailNext, ReadOnlyMemory<byte> tailData, CancellationToken cancellationToken)
 			{
-				await Task.Delay(TimeSpan.FromSeconds(2.0));
+				await Task.Delay(TimeSpan.FromSeconds(2.0), cancellationToken);
 				return -1;
 			}
 		}
 
-		class FakeLogSink : IJsonRpcLogSink
-		{
-			public ValueTask DisposeAsync() => new ValueTask();
-
-			public Task SetOutcomeAsync(JobStepOutcome outcome, CancellationToken cancellationToken) => Task.CompletedTask;
-
-			public Task WriteEventsAsync(List<CreateEventRequest> events, CancellationToken cancellationToken) => Task.CompletedTask;
-
-			public Task WriteOutputAsync(WriteOutputRequest request, CancellationToken cancellationToken) => Task.CompletedTask;
-		}
-
 		[TestMethod]
-		public async Task StorageLoggerTest()
+		public async Task StorageLoggerTestAsync()
 		{
-			using MemoryCache cache = new MemoryCache(new MemoryCacheOptions());
-			MemoryStorageClient store = new MemoryStorageClient();
+			await using BundleCache cache = new BundleCache();
+			using BundleStorageClient store = BundleStorageClient.CreateInMemory(NullLogger.Instance);
 
 			BundleReader reader = new BundleReader(store, cache, NullLogger.Instance);
-
-			await using FakeLogSink innerSink = new FakeLogSink();
 
 			const int Count = 20000;
 
 			LogNode file;
-			await using (FakeJsonRpcLoggerBackend sink = new FakeJsonRpcLoggerBackend(null!, "foo", innerSink, store, NullLogger.Instance))
+			await using (FakeJsonRpcLoggerBackend sink = new FakeJsonRpcLoggerBackend(null!, default, null, null, null, store, NullLogger.Instance))
 			{
-				await using (JsonRpcLogger logger = new JsonRpcLogger(sink, "foo", null, NullLogger.Instance))
+				await using (ServerLogger logger = new ServerLogger(sink, default, null, LogLevel.Information, NullLogger.Instance, NullLogger.Instance))
 				{
 					for (int idx = 0; idx < Count; idx++)
 					{
 						logger.LogInformation("Testing {Number}", idx);
 					}
 				}
-				file = await sink.Target!.ReadNodeAsync<LogNode>();
+				file = await sink.Target!.ReadBlobAsync<LogNode>();
 			}
 
 			// Check the index text
 			List<Utf8String> extractedIndexText = new List<Utf8String>();
 
-			LogIndexNode index = await file.IndexRef.ExpandAsync();
+			LogIndexNode index = await file.IndexRef.ReadBlobAsync();
 			foreach (LogChunkRef block in index.PlainTextChunkRefs)
 			{
-				LogChunkNode text = await block.ExpandAsync();
+				LogChunkNode text = await block.Target.ReadBlobAsync();
 				extractedIndexText.AddRange(text.Lines);
 			}
 
@@ -184,7 +188,7 @@ namespace Horde.Agent.Tests
 
 			foreach (LogChunkRef blockRef in file.TextChunkRefs)
 			{
-				LogChunkNode blockText = await blockRef.ExpandAsync();
+				LogChunkNode blockText = await blockRef.Target.ReadBlobAsync();
 				foreach (Utf8String line in blockText.Lines)
 				{
 					LogEvent logEvent = LogEvent.Read(line.Span);
@@ -204,18 +208,18 @@ namespace Horde.Agent.Tests
 		{
 			DateTime time = new DateTime(2023, 1, 1, 0, 0, 0, 0, DateTimeKind.Utc);
 
-			string LongLineA = String.Join("\n", Enumerable.Range(0, 5).Select(x => $"A{x}"));
-			string LongLineB = String.Join("\n", Enumerable.Range(0, 5).Select(x => $"B{x}"));
-			string LongLineC = String.Join("\n", Enumerable.Range(0, 5).Select(x => $"C{x}"));
+			string longLineA = String.Join("\n", Enumerable.Range(0, 5).Select(x => $"A{x}"));
+			string longLineB = String.Join("\n", Enumerable.Range(0, 5).Select(x => $"B{x}"));
+			string longLineC = String.Join("\n", Enumerable.Range(0, 5).Select(x => $"C{x}"));
 
 			Dictionary<string, object> properties = new Dictionary<string, object>
 			{
-				["LongLineA"] = LongLineA,
-				["LongLineB"] = LongLineB,
-				["LongLineC"] = LongLineC,
+				["LongLineA"] = longLineA,
+				["LongLineB"] = longLineB,
+				["LongLineC"] = longLineC,
 			};
 
-			LogEvent baseEvent = new LogEvent(time, LogLevel.Information, default, $"start {LongLineA} x {LongLineB} y\nz {LongLineC} end", "start {LongLineA} x {LongLineB} y\nz {LongLineC} end", properties, null);
+			LogEvent baseEvent = new LogEvent(time, LogLevel.Information, default, $"start {longLineA} x {longLineB} y\nz {longLineC} end", "start {LongLineA} x {LongLineB} y\nz {LongLineC} end", properties, null);
 
 			JsonRpcLogWriter writer = new JsonRpcLogWriter();
 			writer.SanitizeAndWriteEvent(new JsonLogEvent(baseEvent));
@@ -257,7 +261,7 @@ namespace Horde.Agent.Tests
 			writer.SanitizeAndWriteEvent(new JsonLogEvent(baseEvent));
 			writer.SanitizeAndWriteEvent(new JsonLogEvent(baseEvent));
 
-			for(int idx = 0; idx < 2; idx++)
+			for (int idx = 0; idx < 2; idx++)
 			{
 				string output = Encoding.UTF8.GetString(writer.CreatePacket().Item1.Span);
 				string expected = @"{""time"":""2023-01-01T00:00:00"",""level"":""Information"",""message"":""abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ""}" + "\n";

@@ -165,6 +165,15 @@ STableTreeView::~STableTreeView()
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+void STableTreeView::SetCurrentGroupings(TArray<TSharedPtr<FTreeNodeGrouping>>& InCurrentGroupings)
+{
+	PreChangeGroupings();
+	CurrentGroupings = InCurrentGroupings;
+	PostChangeGroupings();
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 void STableTreeView::InitCommandList()
 {
 	FTableTreeViewCommands::Register();
@@ -485,6 +494,13 @@ TSharedPtr<SWidget> STableTreeView::TreeView_GetMenuContent()
 	const bool bShouldCloseWindowAfterMenuSelection = true;
 	FMenuBuilder MenuBuilder(bShouldCloseWindowAfterMenuSelection, CommandList.ToSharedRef());
 
+	MenuBuilder.SetExtendersEnabled(true);
+
+	TSharedRef<FExtender> Extender = MakeShared<FExtender>();
+	MenuBuilder.PushExtender(Extender);
+
+	ExtendMenu(Extender);
+
 	// Selection menu
 	MenuBuilder.BeginSection("Selection", LOCTEXT("ContextMenu_Section_Selection", "Selection"));
 	{
@@ -542,8 +558,6 @@ TSharedPtr<SWidget> STableTreeView::TreeView_GetMenuContent()
 
 	MenuBuilder.EndSection();
 
-	ExtendMenu(MenuBuilder);
-
 	MenuBuilder.BeginSection("Misc", LOCTEXT("ContextMenu_Section_Misc", "Miscellaneous"));
 	{
 		MenuBuilder.AddMenuEntry
@@ -583,6 +597,10 @@ TSharedPtr<SWidget> STableTreeView::TreeView_GetMenuContent()
 		);
 	}
 	MenuBuilder.EndSection();
+
+	ExtendMenu(MenuBuilder);
+
+	MenuBuilder.PopExtender();
 
 	return MenuBuilder.MakeWidget();
 }
@@ -1131,7 +1149,7 @@ void STableTreeView::UpdateFilterContext(const FFilterConfigurator& InFilterConf
 {
 	for (const TSharedRef<FTableColumn>& Column : Table->GetColumns())
 	{
-		if (!Column->CanBeFiltered() || !InFilterConfigurator.IsKeyUsed(Column->GetIndex()))
+		if (!Column->CanBeFiltered() || !InFilterConfigurator.IsKeyUsed(Column->GetIndex()) || !Column->GetValue(InNode).IsSet())
 		{
 			continue;
 		}
@@ -1973,7 +1991,7 @@ void STableTreeView::PostChangeGroupings()
 	float HierarchyColumnWidth = DefaultHierarchyColumnWidth;
 	FString GroupingStr;
 
-	int32 GroupingDepth = 0;
+	float GroupingDepth = 0;
 	for (TSharedPtr<FTreeNodeGrouping>& GroupingPtr : CurrentGroupings)
 	{
 		const FName& ColumnId = GroupingPtr->GetColumnId();
@@ -1989,7 +2007,7 @@ void STableTreeView::PostChangeGroupings()
 					const SHeaderRow::FColumn& CurrentColumn = TreeViewHeaderRow->GetColumns()[ColumnIndex];
 					if (CurrentColumn.ColumnId == ColumnId)
 					{
-						const float Width = HierarchyMinWidth + GroupingDepth * HierarchyIndentation + CurrentColumn.GetWidth();
+						const float Width = HierarchyMinWidth + GroupingDepth + CurrentColumn.GetWidth();
 						if (Width > HierarchyColumnWidth)
 						{
 							HierarchyColumnWidth = Width;
@@ -2013,7 +2031,7 @@ void STableTreeView::PostChangeGroupings()
 			GroupingStr.Append(GroupingPtr->GetShortName().ToString());
 		}
 
-		++GroupingDepth;
+		GroupingDepth += HierarchyIndentation;
 	}
 
 	//////////////////////////////////////////////////
@@ -3498,7 +3516,7 @@ void STableTreeView::ContextMenu_CopyColumnToClipboard_Execute()
 		const TSharedPtr<FTableColumn> HoveredColumnPtr = Table->FindColumn(HoveredColumnId);
 		if (HoveredColumnPtr.IsValid())
 		{
-			FString Text = HoveredColumnPtr->GetValueAsText(*SelectedNode).ToString();
+			FString Text = HoveredColumnPtr->CopyValue(*SelectedNode).ToString();
 			FPlatformApplicationMisc::ClipboardCopy(*Text);
 		}
 	}
@@ -3528,7 +3546,7 @@ void STableTreeView::ContextMenu_CopyColumnTooltipToClipboard_Execute()
 		const TSharedPtr<FTableColumn> HoveredColumnPtr = Table->FindColumn(HoveredColumnId);
 		if (HoveredColumnPtr.IsValid())
 		{
-			FString Text = HoveredColumnPtr->GetValueAsTooltipText(*SelectedNode).ToString();
+			FString Text = HoveredColumnPtr->CopyTooltip(*SelectedNode).ToString();
 			FPlatformApplicationMisc::ClipboardCopy(*Text);
 		}
 	}
@@ -3662,7 +3680,7 @@ bool STableTreeView::ContextMenu_ExportToFile_CanExecute() const
 
 void STableTreeView::ContextMenu_ExportToFile_Execute(bool bInExportCollapsed, bool InExportLeafs)
 {
-	FString DefaultFile = TEXT("Table.tsv");
+	FString DefaultFile = TEXT("Table");
 	if (Table.IsValid() && !Table->GetDisplayName().IsEmpty())
 	{
 		DefaultFile = Table->GetDisplayName().ToString();
@@ -3786,7 +3804,14 @@ void STableTreeView::UpdateBannerText()
 	}
 	else if (Root->GetFilteredChildrenCount() == 0)
 	{
-		TreeViewBannerText = LOCTEXT("HierarchyFilteringZeroResults", "No tree node is matching the current text search.");
+		if (TextFilter->GetRawFilterText().IsEmpty())
+		{
+			TreeViewBannerText = LOCTEXT("TreeViewIsUpdating", "Tree view is updating. Please wait.");
+		}
+		else
+		{
+			TreeViewBannerText = LOCTEXT("HierarchyFilteringZeroResults", "No tree node is matching the current text search.");
+		}
 	}
 }
 

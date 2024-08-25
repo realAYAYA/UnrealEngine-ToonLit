@@ -22,8 +22,8 @@ namespace Chaos
 			SolverBody.SetQ(RigidParticle->QCom());
 			SolverBody.SetCoM(RigidParticle->CenterOfMass());
 			SolverBody.SetRoM(RigidParticle->RotationOfMass());
-			SolverBody.SetV(RigidParticle->V());
-			SolverBody.SetW(RigidParticle->W());
+			SolverBody.SetV(RigidParticle->GetV());
+			SolverBody.SetW(RigidParticle->GetW());
 			SolverBody.SetInvM(RigidParticle->InvM());
 			SolverBody.SetInvILocal(RigidParticle->ConditionedInvI());
 			// Note: SetInvILocal also calculates InvI for dynamic
@@ -31,26 +31,26 @@ namespace Chaos
 		else
 		{
 			// Static or kinematic particle
-			SolverBody.SetP(Particle->X());
-			SolverBody.SetQ(Particle->R());
+			SolverBody.SetP(Particle->GetX());
+			SolverBody.SetQ(Particle->GetR());
 			SolverBody.SetCoM(FVec3(0));
 			SolverBody.SetRoM(FRotation3::FromIdentity());
 			if (KinematicParticle != nullptr)
 			{
 				// Kinematic particle
-				SolverBody.SetX(KinematicParticle->X() - KinematicParticle->V() * Dt);
-				SolverBody.SetR(Particle->R());
-				if (!KinematicParticle->W().IsNearlyZero())
+				SolverBody.SetX(KinematicParticle->GetX() - KinematicParticle->GetV() * Dt);
+				SolverBody.SetR(Particle->GetR());
+				if (!KinematicParticle->GetW().IsNearlyZero())
 				{
-					SolverBody.SetR(FRotation3::IntegrateRotationWithAngularVelocity(KinematicParticle->R(), -KinematicParticle->W(), Dt));
+					SolverBody.SetR(FRotation3::IntegrateRotationWithAngularVelocity(KinematicParticle->GetR(), -KinematicParticle->GetW(), Dt));
 				}
-				SolverBody.SetV(KinematicParticle->V());
-				SolverBody.SetW(KinematicParticle->W());
+				SolverBody.SetV(KinematicParticle->GetV());
+				SolverBody.SetW(KinematicParticle->GetW());
 			}
 			else
 			{
-				SolverBody.SetX(Particle->X());
-				SolverBody.SetR(Particle->R());
+				SolverBody.SetX(Particle->GetX());
+				SolverBody.SetR(Particle->GetR());
 				SolverBody.SetV(FVec3(0));
 				SolverBody.SetW(FVec3(0));
 			}

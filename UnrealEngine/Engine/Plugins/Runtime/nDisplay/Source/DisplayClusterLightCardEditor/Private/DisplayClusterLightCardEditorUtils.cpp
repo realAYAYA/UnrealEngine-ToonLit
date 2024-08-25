@@ -28,7 +28,7 @@ TSet<UClass*> UE::DisplayClusterLightCardEditorUtils::GetAllStageActorClasses()
 	auto ShouldAddNativeClass = [] (const UClass* Class) -> bool
 	{
 		return Class->ImplementsInterface(UDisplayClusterStageActor::StaticClass()) && Class->IsNative() &&
-			!Class->HasAnyClassFlags(CLASS_Deprecated | CLASS_NewerVersionExists) &&
+			!Class->HasAnyClassFlags(CLASS_Deprecated | CLASS_NewerVersionExists | CLASS_Abstract) &&
 			!Class->GetName().StartsWith(TEXT("SKEL_")) && !Class->GetName().StartsWith(TEXT("REINST_"));
 	};
 

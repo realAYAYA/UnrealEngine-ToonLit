@@ -42,6 +42,9 @@ public:
 	virtual bool AddSourceFiles(const TArray<FString>& AbsoluteSourcePaths, const TArray<FString>& AvailableModules) override;
 	virtual bool SaveAllOpenDocuments() const override;
 	virtual void Tick(const float) override {}
+	virtual FName GetOpenIconName() const override;
+	virtual FName GetRefreshIconName() const override;
+	virtual FName GetStyleSet() const override;
 private:
 	void CachePathToUproject() const;
 	void CachePathToSln() const;

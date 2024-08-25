@@ -2,8 +2,8 @@
 
 #pragma once
 
-#include "LearningAgentsManagerComponent.h"
-#include "LearningAgentsCritic.h" // Included for FLearningAgentsCriticSettings()
+#include "LearningAgentsManagerListener.h"
+#include "LearningAgentsCompletions.h"
 
 #include "Templates/SharedPointer.h"
 #include "UObject/ObjectPtr.h"
@@ -13,45 +13,17 @@
 
 namespace UE::Learning
 {
-	struct FAnyCompletion;
-	struct FArrayMap;
 	struct FEpisodeBuffer;
 	struct FReplayBuffer;
 	struct FResetInstanceBuffer;
-	struct FRewardObject;
 	struct FSharedMemoryPPOTrainer;
-	struct FSumReward;
-	struct FCompletionObject;
-	enum class ECompletionMode : uint8;
 	enum class ETrainerDevice : uint8;
 }
 
 class ALearningAgentsManager;
 class ULearningAgentsInteractor;
-class ULearningAgentsCompletion;
-class ULearningAgentsReward;
 class ULearningAgentsPolicy;
 class ULearningAgentsCritic;
-
-/** Completion modes for episodes. */
-UENUM(BlueprintType, Category = "LearningAgents", meta = (ScriptName = "LearningAgentsCompletionEnum"))
-enum class ELearningAgentsCompletion : uint8
-{
-	/** Episode ended early but was still in progress. Critic will be used to estimate final return. */
-	Truncation	UMETA(DisplayName = "Truncation"),
-
-	/** Episode ended early and zero reward was expected for all future steps. */
-	Termination	UMETA(DisplayName = "Termination"),
-};
-
-namespace UE::Learning::Agents
-{
-	/** Get the learning agents completion from the UE::Learning completion. */
-	LEARNINGAGENTSTRAINING_API ELearningAgentsCompletion GetLearningAgentsCompletion(const ECompletionMode CompletionMode);
-
-	/** Get the UE::Learning completion from the learning agents completion. */
-	LEARNINGAGENTSTRAINING_API ECompletionMode GetCompletionMode(const ELearningAgentsCompletion Completion);
-}
 
 /** The configurable settings for a ULearningAgentsTrainer. */
 USTRUCT(BlueprintType, Category = "LearningAgents")
@@ -61,25 +33,32 @@ struct LEARNINGAGENTSTRAINING_API FLearningAgentsTrainerSettings
 
 public:
 
-	/** Completion type to use when the maximum number of steps for an episode is reached. */
-	UPROPERTY(EditAnywhere, Category = "LearningAgents")
-	ELearningAgentsCompletion MaxStepsCompletion = ELearningAgentsCompletion::Truncation;
-
-	/** Max number of steps to take while training before episode automatically completes. */
+	/**
+	 * Maximum number of steps recorded in an episode before it is added to the replay buffer. This can generally be left at the default value and 
+	 * does not have a large impact on training.
+	 */
 	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "1", UIMin = "1"))
-	int32 MaxStepNum = 300;
+	int32 MaxEpisodeStepNum = 512;
 
-	/** Maximum number of episodes to record before running a training iteration. */
+	/**
+	 * Maximum number of episodes to record before running a training iteration. An iteration of training will be run when either this or
+	 * MaximumRecordedEpisodesPerIteration is reached. Typical values for this should be around 1000. Setting this too small means there is not 
+	 * enough data each iteration for the system to train. Setting it too large means training will be very slow. 
+	 */
 	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "1", UIMin = "1"))
 	int32 MaximumRecordedEpisodesPerIteration = 1000;
 
-	/** Maximum number of steps to record before running a training iteration. */
+	/**
+	 * Maximum number of steps to record before running a training iteration. An iteration of training will be run when either this or
+	 * MaximumRecordedEpisodesPerIteration is reached. Typical values for this should be around 10000. Setting this too small means there is not
+	 * enough data each iteration for the system to train. Setting it too large means training will be very slow.
+	 */
 	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "1", UIMin = "1"))
 	int32 MaximumRecordedStepsPerIteration = 10000;
 
 	/** Time in seconds to wait for the training subprocess before timing out. */
 	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "0.0", UIMin = "0.0"))
-	float TrainerCommunicationTimeout = 20.0f;
+	float TrainerCommunicationTimeout = 10.0f;
 };
 
 /**
@@ -113,6 +92,10 @@ public:
 	UPROPERTY(EditAnywhere, Category = "LearningAgents")
 	bool bSetMaxPhysicsStepToFixedTimeStep = true;
 
+	/** If true, the MaxFPS console variable will be set to a negative number during training; Otherwise, it will not. */
+	UPROPERTY(EditAnywhere, Category = "LearningAgents")
+	bool bDisableMaxFPS = true;
+
 	/** If true, VSync will be disabled; Otherwise, it will not. Disabling VSync can speed up the game simulation. */
 	UPROPERTY(EditAnywhere, Category = "LearningAgents")
 	bool bDisableVSync = true;
@@ -120,6 +103,18 @@ public:
 	/** If true, the viewport rendering will be unlit; Otherwise, it will not. Disabling lighting can speed up the game simulation. */
 	UPROPERTY(EditAnywhere, Category = "LearningAgents")
 	bool bUseUnlitViewportRendering = false;
+
+#if WITH_EDITORONLY_DATA
+
+	/** If true, the Use Less CPU In The Background editor setting will be disabled. This prevents the editor from running slowly when minimized. */
+	UPROPERTY(EditAnywhere, Category = "LearningAgents")
+	bool bDisableUseLessCPUInTheBackground = true;
+
+	/** If true, Editor VSync will be disabled; Otherwise, it will not. Disabling Editor VSync can speed up the game simulation. */
+	UPROPERTY(EditAnywhere, Category = "LearningAgents")
+	bool bDisableEditorVSync = true;
+
+#endif
 };
 
 /** Enumeration of the training devices. */
@@ -148,44 +143,63 @@ struct LEARNINGAGENTSTRAINING_API FLearningAgentsTrainerTrainingSettings
 public:
 
 	/** The number of iterations to run before ending training. */
-	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "0", UIMin = "0"))
+	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "1", UIMin = "1"))
 	int32 NumberOfIterations = 1000000;
 
 	/** Learning rate of the policy network. Typical values are between 0.001 and 0.0001. */
-	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
+	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "1.0"))
 	float LearningRatePolicy = 0.0001f;
 
 	/**
 	 * Learning rate of the critic network. To avoid instability generally the critic should have a larger learning 
 	 * rate than the policy. Typically this can be set to 10x the rate of the policy.
 	 */
-	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
+	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "1.0"))
 	float LearningRateCritic = 0.001f;
 
-	/** Ratio by which to decay the learning rate every 1000 iterations. */
+	/** Amount by which to multiply the learning rate every 1000 iterations. */
 	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
-	float LearningRateDecay = 0.99f;
+	float LearningRateDecay = 1.0f;
 
 	/**
 	 * Amount of weight decay to apply to the network. Larger values encourage network weights to be smaller but too 
 	 * large a value can cause the network weights to collapse to all zeros.
 	 */
-	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
-	float WeightDecay = 0.001f;
+	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "1.0"))
+	float WeightDecay = 0.0001f;
 
 	/**
-	 * The initial scaling for the weights of the output layer of the neural network. Typically, you would use this to
-	 * scale down the initial actions as it can stabilize the training and speed up convergence.
+	 * Batch size to use for training the policy. Large batch sizes are much more computationally efficient when training on the GPU.
 	 */
-	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "0.0", ClampMax = "10.0", UIMin = "0.0", UIMax = "10.0"))
-	float InitialActionScale = 0.1f;
+	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "1", UIMin = "1", UIMax = "4096"))
+	int32 PolicyBatchSize = 1024;
 
 	/**
-	 * Batch size to use for training. Smaller values tend to produce better results at the cost of slowing down 
-	 * training. Large batch sizes are much more computationally efficient when training on the GPU.
+	 * Batch size to use for training the critic. Large batch sizes are much more computationally efficient when training on the GPU.
 	 */
-	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "0", ClampMax = "4096", UIMin = "0", UIMax = "4096"))
-	int32 BatchSize = 128;
+	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "1", UIMin = "1", UIMax = "4096"))
+	int32 CriticBatchSize = 4096;
+
+	/**
+	 * The number of consecutive steps of observations and actions over which to train the policy. Increasing this value 
+	 * will encourage the policy to use its memory effectively. Too large and training can become slow and unstable.
+	 */
+	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "1", UIMin = "1", UIMax = "128"))
+	int32 PolicyWindowSize = 16;
+
+	/**
+	 * Number of training iterations to perform per buffer of experience gathered. This should be large enough for
+	 * the critic and policy to be effectively updated, but too large and it will simply slow down training.
+	 */
+	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "1", UIMin = "1", UIMax = "1024"))
+	int32 IterationsPerGather = 32;
+
+	/**
+	 * Number of iterations of training to perform to warm - up the Critic. This helps speed up and stabilize training
+	 * at the beginning when the Critic may be producing predictions at the wrong order of magnitude.
+	 */
+	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "1", UIMin = "1", UIMax = "128"))
+	int32 CriticWarmupIterations = 8;
 
 	/**
 	 * Clipping ratio to apply to policy updates. Keeps the training "on-policy". Larger values may speed up training at 
@@ -196,36 +210,65 @@ public:
 	float EpsilonClip = 0.2f;
 
 	/**
-	 * Weight used to regularize actions. Larger values will encourage smaller actions but too large will cause actions 
-	 * to become always zero.
+	 * Weight used to regularize returns. Encourages the critic not to over or under estimate returns.
 	 */
-	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
+	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "1.0"))
+	float ReturnRegularizationWeight = 0.0001f;
+
+	/**
+	 * Weight used to regularize actions. Larger values will encourage exploration and smaller actions, but too large will cause 
+	 * noisy actions centered around zero.
+	 */
+	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "1.0"))
 	float ActionRegularizationWeight = 0.001f;
 
 	/**
 	 * Weighting used for the entropy bonus. Larger values encourage larger action noise and therefore greater 
 	 * exploration but can make actions very noisy.
 	 */
-	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
-	float EntropyWeight = 0.01f;
+	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "0.0", UIMin = "0.0", UIMax = "1.0"))
+	float ActionEntropyWeight = 0.0f;
 
 	/**
-	 * This is used in the Generalized Advantage Estimation as what is essentially an exponential smoothing/decay. 
-	 * Typical values should be between 0.9 and 1.0.
+	 * This is used in the Generalized Advantage Estimation, where larger values will tend to assign more credit to recent actions. Typical
+	 * values should be between 0.9 and 1.0.
 	 */
 	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (ClampMin = "0.0", ClampMax = "1.0", UIMin = "0.0", UIMax = "1.0"))
-	float GaeLambda = 0.9f;
-
-	/**
-	 * When true, very large or small advantages will be clipped. This has few downsides and helps with numerical 
-	 * stability.
-	 */
-	UPROPERTY(EditAnywhere, Category = "LearningAgents")
-	bool bClipAdvantages = true;
+	float GaeLambda = 0.95f;
 
 	/** When true, advantages are normalized. This tends to makes training more robust to adjustments of the scale of rewards. */
 	UPROPERTY(EditAnywhere, Category = "LearningAgents")
 	bool bAdvantageNormalization = true;
+
+	/**
+	 * The minimum advantage to allow. Setting this below zero will encourage the policy to move away from bad actions, 
+	 * but can introduce instability.
+	 */
+	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (UIMin = "-10.0", UIMax = "0.0"))
+	float MinimumAdvantage = 0.0f;
+
+	/**
+	 * The maximum advantage to allow. Making this smaller may increase training stability
+	 * at the cost of some training speed.
+	 */
+	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (UIMin = "0.0", UIMax = "10.0"))
+	float MaximumAdvantage = 10.0f;
+
+	/**
+	 * When true, gradient norm max clipping will be used on the policy, critic, encoder, and decoder. Set this as True if
+	 * training is unstable (and adjust GradNormMax) or leave as False if unused.
+	 */
+	UPROPERTY(EditAnywhere, Category = "LearningAgents")
+	bool bUseGradNormMaxClipping = false;
+
+	/**
+	 * The maximum gradient norm to clip updates to. Only used when bUseGradNormMaxClipping is set to true.
+	 * 
+	 * This needs to be carefully chosen based on the size of your gradients during training. Setting too low can make it
+	 * difficult to learn an optimal policy, and too high will have no impact.
+	 */
+	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (UIMin = "0.0", UIMax = "10.0"))
+	float GradNormMax = 0.5f;
 
 	/**
 	 * The number of steps to trim from the start of the episode, e.g. can be useful if some things are still getting
@@ -259,6 +302,10 @@ public:
 	/** If true, TensorBoard logs will be emitted to the intermediate directory. */
 	UPROPERTY(EditAnywhere, Category = "LearningAgents")
 	bool bUseTensorboard = false;
+
+	/** If true, snapshots of the trained networks will be emitted to the intermediate directory. */
+	UPROPERTY(EditAnywhere, Category = "LearningAgents")
+	bool bSaveSnapshots = false;
 };
 
 /** The path settings for the trainer. */
@@ -298,7 +345,11 @@ public:
 
 	/** The relative path to the Intermediate directory. Defaults to FPaths::ProjectIntermediateDir. */
 	UPROPERTY(EditAnywhere, Category = "LearningAgents", meta = (RelativePath))
-	FDirectoryPath IntermediateRelativePath;
+	FDirectoryPath EditorIntermediateRelativePath;
+
+	/** The relative path to the intermediate folder for non-editor builds. */
+	UPROPERTY(EditAnywhere, Category = "LearningAgents")
+	FString NonEditorIntermediateRelativePath;
 
 public:
 
@@ -310,21 +361,16 @@ public:
 };
 
 /**
- * The ULearningAgentsTrainer is the core class for reinforcement learning training. It has a few responsibilities:
- *   1) It keeps track of which agents are gathering training data.
- *   2) It defines how those agents' rewards, completions, and resets are implemented.
- *   3) It provides methods for orchestrating the training process.
+ * The ULearningAgentsTrainer is the core class for reinforcement learning training. It defines how agents rewards, completions, and resets are 
+ * implemented and provides methods for orchestrating the training process.
  *
- * To use this class, you need to implement the SetupRewards and SetupCompletions functions (as well as their
- * corresponding SetRewards and SetCompletions functions), which will define the rewards and penalties the agent
- * receives and what conditions cause an episode to end. Before you can begin training, you need to call SetupTrainer,
- * which will initialize the underlying data structures, and you need to call AddAgent for each agent you want to gather
- * training data from.
+ * To use this class, you need to implement the GatherAgentRewards and GatherAgentCompletions functions, which will define the rewards and penalties 
+ * the agent receives and what conditions cause an episode to end.
  *
  * @see ULearningAgentsInteractor to understand how observations and actions work.
  */
-UCLASS(Abstract, BlueprintType, Blueprintable)
-class LEARNINGAGENTSTRAINING_API ULearningAgentsTrainer : public ULearningAgentsManagerComponent
+UCLASS(Abstract, HideDropdown, BlueprintType, Blueprintable)
+class LEARNINGAGENTSTRAINING_API ULearningAgentsTrainer : public ULearningAgentsManagerListener
 {
 	GENERATED_BODY()
 
@@ -336,91 +382,120 @@ public:
 	ULearningAgentsTrainer(FVTableHelper& Helper);
 	virtual ~ULearningAgentsTrainer();
 
-	/** Will automatically call EndTraining if training is still in-progress when play is ending. */
-	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+	/** Will automatically call EndTraining if training is still in-progress when the object is destroyed. */
+	virtual void BeginDestroy() override;
 
 	/**
-	 * Initializes this object and runs the setup functions for rewards and completions.
-	 * @param InInteractor The agent interactor we are training with.
-	 * @param InPolicy The policy to be trained.
-	 * @param InCritic Optional - only needs to be provided if we want the critic to be accessible at runtime.
-	 * @param TrainerSettings The trainer settings to use.
+	 * Constructs the trainer and runs the setup functions for rewards and completions.
+	 * 
+	 * @param InManager			The agent manager we are using.
+	 * @param InInteractor		The agent interactor we are training with.
+	 * @param InPolicy			The policy to be trained.
+	 * @param InCritic			The critic to be trained.
+	 * @param Class				The trainer class
+	 * @param Name				The trainer name
+	 * @param TrainerSettings	The trainer settings to use.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents")
-	void SetupTrainer(
+	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (DeterminesOutputType = "Class", AutoCreateRefTerm = "TrainerSettings"))
+	static ULearningAgentsTrainer* MakeTrainer(
+		ULearningAgentsManager* InManager,
 		ULearningAgentsInteractor* InInteractor,
 		ULearningAgentsPolicy* InPolicy,
-		ULearningAgentsCritic* InCritic = nullptr,
+		ULearningAgentsCritic* InCritic,
+		TSubclassOf<ULearningAgentsTrainer> Class,
+		const FName Name = TEXT("Trainer"),
+		const FLearningAgentsTrainerSettings& TrainerSettings = FLearningAgentsTrainerSettings());
+
+	/**
+	 * Initializes the trainer and runs the setup functions for rewards and completions.
+	 * 
+	 * @param InManager The agent manager we are using.
+	 * @param InInteractor The agent interactor we are training with.
+	 * @param InPolicy The policy to be trained.
+	 * @param InCritic The critic to be trained.
+	 * @param TrainerSettings The trainer settings to use.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AutoCreateRefTerm = "TrainerSettings"))
+	void SetupTrainer(
+		ULearningAgentsManager* InManager,
+		ULearningAgentsInteractor* InInteractor,
+		ULearningAgentsPolicy* InPolicy,
+		ULearningAgentsCritic* InCritic,
 		const FLearningAgentsTrainerSettings& TrainerSettings = FLearningAgentsTrainerSettings());
 
 public: 
 
-	//~ Begin ULearningAgentsManagerComponent Interface
-	virtual void OnAgentsAdded(const TArray<int32>& AgentIds) override;
-	virtual void OnAgentsRemoved(const TArray<int32>& AgentIds) override;
-	virtual void OnAgentsReset(const TArray<int32>& AgentIds) override;
-	//~ End ULearningAgentsManagerComponent Interface
+	//~ Begin ULearningAgentsManagerListener Interface
+	virtual void OnAgentsAdded_Implementation(const TArray<int32>& AgentIds) override;
+	virtual void OnAgentsRemoved_Implementation(const TArray<int32>& AgentIds) override;
+	virtual void OnAgentsReset_Implementation(const TArray<int32>& AgentIds) override;
+	virtual void OnAgentsManagerTick_Implementation(const TArray<int32>& AgentIds, const float DeltaTime) override;
+	//~ End ULearningAgentsManagerListener Interface
 
 // ----- Rewards -----
 public:
-	
-	/**
-	 * During this event, all rewards/penalties should be added to this trainer.
-	 * @see LearningAgentsRewards.h for the list of available rewards/penalties.
-	 */
-	UFUNCTION(BlueprintNativeEvent, Category = "LearningAgents")
-	void SetupRewards();
 
 	/**
-	 * During this event, all rewards/penalties should be set for each agent.
-	 * @param AgentIds The list of agent ids to set rewards/penalties for.
-	 * @see LearningAgentsRewards.h for the list of available rewards/penalties.
-	 * @see GetAgent to get the agent corresponding to each id.
+	 * This callback should be overridden by the Trainer and gathers the reward value for the given agent.
+	 *
+	 * @param OutReward			Output reward for the given agent.
+	 * @param AgentId			Agent id to gather reward for.
 	 */
-	UFUNCTION(BlueprintNativeEvent, Category = "LearningAgents")
-	void SetRewards(const TArray<int32>& AgentIds);
+	UFUNCTION(BlueprintNativeEvent, Category = "LearningAgents", Meta = (ForceAsFunction))
+	void GatherAgentReward(float& OutReward, const int32 AgentId);
+
 
 	/**
-	 * Used by objects derived from ULearningAgentsReward to add themselves to this trainer during their creation.
-	 * You shouldn't need to call this directly.
+	 * This callback can be overridden by the Trainer and gathers all the reward values for the given set of agents. By default this will call 
+	 * GatherAgentReward on each agent.
+	 *
+	 * @param OutRewards		Output rewards for each agent in AgentIds
+	 * @param AgentIds			Agents to gather rewards for.
 	 */
-	void AddReward(TObjectPtr<ULearningAgentsReward> Object, const TSharedRef<UE::Learning::FRewardObject>& Reward);
+	UFUNCTION(BlueprintNativeEvent, Category = "LearningAgents", Meta = (ForceAsFunction))
+	void GatherAgentRewards(TArray<float>& OutRewards, const TArray<int32>& AgentIds);
 
 // ----- Completions ----- 
 public:
 
 	/**
-	 * During this event, all completions should be added to this trainer.
-	 * @see LearningAgentsCompletions.h for the list of available completions.
+	 * This callback should be overridden by the Trainer and gathers the completion for a given agent.
+	 *
+	 * @param OutCompletion		Output completion for the given agent.
+	 * @param AgentId			Agent id to gather completion for.
 	 */
-	UFUNCTION(BlueprintNativeEvent, Category = "LearningAgents")
-	void SetupCompletions();
+	UFUNCTION(BlueprintNativeEvent, Category = "LearningAgents", Meta = (ForceAsFunction))
+	void GatherAgentCompletion(ELearningAgentsCompletion& OutCompletion, const int32 AgentId);
 
 	/**
-	 * During this event, all completions should be set for each agent.
-	 * @param AgentIds The list of agent ids to set completions for.
-	 * @see LearningAgentsCompletions.h for the list of available completions.
-	 * @see GetAgent to get the agent corresponding to each id.
+	 * This callback can be overridden by the Trainer and gathers all the completions for the given set of agents. By default this will call 
+	 * GatherAgentCompletion on each agent.
+	 *
+	 * @param OutCompletions	Output completions for each agent in AgentIds
+	 * @param AgentIds			Agents to gather completions for.
 	 */
-	UFUNCTION(BlueprintNativeEvent, Category = "LearningAgents")
-	void SetCompletions(const TArray<int32>& AgentIds);
-
-	/**
-	 * Used by objects derived from ULearningAgentsCompletion to add themselves to this trainer during their creation.
-	 * You shouldn't need to call this directly.
-	 */
-	void AddCompletion(TObjectPtr<ULearningAgentsCompletion> Object, const TSharedRef<UE::Learning::FCompletionObject>& Completion);
+	UFUNCTION(BlueprintNativeEvent, Category = "LearningAgents", Meta = (ForceAsFunction))
+	void GatherAgentCompletions(TArray<ELearningAgentsCompletion>& OutCompletions, const TArray<int32>& AgentIds);
 
 // ----- Resets ----- 
 public:
 
 	/**
-	 * During this event, all episodes should be reset for each agent.
-	 * @param AgentIds The ids of the agents that need resetting.
-	 * @see GetAgent to get the agent corresponding to each id.
+	 * This callback should be overridden by the Trainer and resets the episode for the given agent.
+	 *
+	 * @param AgentId			The id of the agent that need resetting.
 	 */
-	UFUNCTION(BlueprintNativeEvent, Category = "LearningAgents")
-	void ResetEpisodes(const TArray<int32>& AgentIds);
+	UFUNCTION(BlueprintNativeEvent, Category = "LearningAgents", Meta = (ForceAsFunction))
+	void ResetAgentEpisode(const int32 AgentId);
+
+	/**
+	 * This callback can be overridden by the Trainer and resets all episodes for each agent in the given set. By default this will call 
+	 * ResetAgentEpisode on each agent.
+	 * 
+	 * @param AgentIds			The ids of the agents that need resetting.
+	 */
+	UFUNCTION(BlueprintNativeEvent, Category = "LearningAgents", Meta = (ForceAsFunction))
+	void ResetAgentEpisodes(const TArray<int32>& AgentIds);
 
 // ----- Training Process -----
 public:
@@ -431,22 +506,17 @@ public:
 
 	/**
 	 * Begins the training process with the provided settings.
-	 * @param TrainerTrainingSettings The settings for this training run.
-	 * @param TrainerGameSettings The settings that will affect the game's simulation.
-	 * @param TrainerPathSettings The path settings used by the trainer.
-	 * @param CriticSettings The settings for the critic (if we are using one).
-	 * @param bReinitializePolicyNetwork If true, reinitialize the policy. Set this to false if your policy is pre-trained, e.g. with imitation learning.
-	 * @param bReinitializeCriticNetwork If true, reinitialize the critic. Set this to false if your critic is pre-trained.
-	 * @param bResetAgentsOnBegin If true, reset all agents at the beginning of training.
+	 * 
+	 * @param TrainerTrainingSettings	The settings for this training run.
+	 * @param TrainerGameSettings		The settings that will affect the game's simulation.
+	 * @param TrainerPathSettings		The path settings used by the trainer.
+	 * @param bResetAgentsOnBegin		If true, reset all agents at the beginning of training.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents")
+	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AutoCreateRefTerm = "TrainerTrainingSettings,TrainerGameSettings,TrainerPathSettings"))
 	void BeginTraining(
 		const FLearningAgentsTrainerTrainingSettings& TrainerTrainingSettings = FLearningAgentsTrainerTrainingSettings(),
 		const FLearningAgentsTrainerGameSettings& TrainerGameSettings = FLearningAgentsTrainerGameSettings(),
 		const FLearningAgentsTrainerPathSettings& TrainerPathSettings = FLearningAgentsTrainerPathSettings(),
-		const FLearningAgentsCriticSettings& CriticSettings = FLearningAgentsCriticSettings(),
-		const bool bReinitializePolicyNetwork = true,
-		const bool bReinitializeCriticNetwork = true,
 		const bool bResetAgentsOnBegin = true);
 
 	/** Stops the training process. */
@@ -459,7 +529,7 @@ public:
 	 * the next state before evaluating the rewards.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "LearningAgents")
-	void EvaluateRewards();
+	void GatherRewards();
 
 	/**
 	 * Call this function when it is time to evaluate the completions for your agents. This should be done at the beginning
@@ -467,41 +537,52 @@ public:
 	 * the next state before evaluating the completions.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "LearningAgents")
-	void EvaluateCompletions();
+	void GatherCompletions();
 
 	/**
 	 * Call this function at the end of each step of your training loop. This takes the current observations/actions/
 	 * rewards and moves them into the episode experience buffer. All agents with full episode buffers or those which
 	 * have been signaled complete will be reset. If enough experience is gathered, it will be sent to the training 
 	 * process and an iteration of training will be run and the updated policy will be synced back.
+	 *
+	 * @param bResetAgentsOnUpdate				If true, reset all agents whenever an updated policy is received.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "LearningAgents")
-	void ProcessExperience();
+	void ProcessExperience(const bool bResetAgentsOnUpdate = true);
 
 	/**
 	 * Convenience function that runs a basic training loop. If training has not been started, it will start it, and 
-	 * then call RunInference. On each following call to this function, it will call EvaluateRewards, 
-	 * EvaluateCompletions, and ProcessExperience, followed by RunInference.
-	 * @param TrainerTrainingSettings The settings for this training run.
-	 * @param TrainerGameSettings The settings that will affect the game's simulation.
-	 * @param TrainerPathSettings The path settings used by the trainer.
-	 * @param CriticSettings The settings for the critic (if we are using one).
-	 * @param bReinitializePolicyNetwork If true, reinitialize the policy. Set this to false if your policy is pre-trained, e.g. with imitation learning.
-	 * @param bReinitializeCriticNetwork If true, reinitialize the critic. Set this to false if your critic is pre-trained.
-	 * @param bResetAgentsOnBegin If true, reset all agents at the beginning of training.
+	 * then call RunInference. On each following call to this function, it will call GatherRewards, 
+	 * GatherCompletions, and ProcessExperience, followed by RunInference.
+	 * 
+	 * @param TrainerTrainingSettings			The settings for this training run.
+	 * @param TrainerGameSettings				The settings that will affect the game's simulation.
+	 * @param TrainerPathSettings				The path settings used by the trainer.
+	 * @param bResetAgentsOnBegin				If true, reset all agents at the beginning of training.
+	 * @param bResetAgentsOnUpdate				If true, reset all agents whenever an updated policy is received.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "LearningAgents")
+	UFUNCTION(BlueprintCallable, Category = "LearningAgents", meta = (AutoCreateRefTerm = "TrainerTrainingSettings,TrainerGameSettings,TrainerPathSettings"))
 	void RunTraining(
 		const FLearningAgentsTrainerTrainingSettings& TrainerTrainingSettings = FLearningAgentsTrainerTrainingSettings(),
 		const FLearningAgentsTrainerGameSettings& TrainerGameSettings = FLearningAgentsTrainerGameSettings(),
 		const FLearningAgentsTrainerPathSettings& TrainerPathSettings = FLearningAgentsTrainerPathSettings(),
-		const FLearningAgentsCriticSettings& CriticSettings = FLearningAgentsCriticSettings(),
-		const bool bReinitializePolicyNetwork = true,
-		const bool bReinitializeCriticNetwork = true,
-		const bool bResetAgentsOnBegin = true);
+		const bool bResetAgentsOnBegin = true,
+		const bool bResetAgentsOnUpdate = true);
 
 	/**
-	 * Gets the current reward for an agent according to the critic. Should be called only after EvaluateRewards.
+	 * Returns true if GatherRewards has been called and the reward already set for the given agent.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AgentId = "-1"))
+	bool HasReward(const int32 AgentId) const;
+
+	/**
+	 * Returns true if GatherCompletions has been called and the completion already set for the given agent.
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AgentId = "-1"))
+	bool HasCompletion(const int32 AgentId) const;
+
+	/**
+	 * Gets the current reward for an agent. Should be called only after GatherRewards.
 	 *
 	 * @param AgentId	The AgentId to look-up the reward for
 	 * @returns			The reward
@@ -510,15 +591,31 @@ public:
 	float GetReward(const int32 AgentId) const;
 
 	/**
-	 * Gets if the agent will complete the episode or not according to the given set of completions. Should be called 
-	 * only after EvaluateCompletions.
+	 * Gets the current completion for an agent. Should be called only after GatherCompletions.
 	 *
-	 * @param AgentId		The AgentId to look-up the completion for
-	 * @param OutCompletion	The completion type if the agent will complete the episode
-	 * @returns				If the agent will complete the episode
+	 * @param AgentId	The AgentId to look-up the completion for
+	 * @returns			The completion type
 	 */
 	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AgentId = "-1"))
-	bool IsCompleted(const int32 AgentId, ELearningAgentsCompletion& OutCompletion) const;
+	ELearningAgentsCompletion GetCompletion(const int32 AgentId) const;
+
+	/**
+	 * Gets the current elapsed episode time for the given agent.
+	 *
+	 * @param AgentId	The AgentId to look-up the episode time for
+	 * @returns			The elapsed episode time
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AgentId = "-1"))
+	float GetEpisodeTime(const int32 AgentId) const;
+
+	/**
+	 * Gets the number of step recorded in an episode for the given agent.
+	 *
+	 * @param AgentId	The AgentId to look-up the number of recorded episode steps for
+	 * @returns			The number of recorded episode steps
+	 */
+	UFUNCTION(BlueprintPure, Category = "LearningAgents", meta = (AgentId = "-1"))
+	int32 GetEpisodeStepNum(const int32 AgentId) const;
 
 	/**
 	 * Returns true if the trainer has failed to communicate with the external training process. This can be used in
@@ -528,7 +625,7 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "LearningAgents")
 	bool HasTrainingFailed() const;
-	
+
 // ----- Private Data ----- 
 private:
 
@@ -555,53 +652,58 @@ private:
 	UPROPERTY(VisibleAnywhere, Transient, Category = "LearningAgents")
 	bool bHasTrainingFailed = false;
 
-	/** The list of current reward objects. */
-	UPROPERTY(VisibleAnywhere, Transient, Category = "LearningAgents")
-	TArray<TObjectPtr<ULearningAgentsReward>> RewardObjects;
+	/** Callback Reward Output */
+	TArray<float> RewardBuffer;
 
-	/** The list of current completion objects. */
-	UPROPERTY(VisibleAnywhere, Transient, Category = "LearningAgents")
-	TArray<TObjectPtr<ULearningAgentsCompletion>> CompletionObjects;
+	/** Callback Completion Output */
+	TArray<ELearningAgentsCompletion> CompletionBuffer;
 
-	TArray<TSharedRef<UE::Learning::FRewardObject>, TInlineAllocator<16>> RewardFeatures;
-	TArray<TSharedRef<UE::Learning::FCompletionObject>, TInlineAllocator<16>> CompletionFeatures;
+	/** Reward Buffer */
+	TLearningArray<1, float> Rewards;
+	
+	/** Agent Completions Buffer */
+	TLearningArray<1, UE::Learning::ECompletionMode> AgentCompletions;
 
-	TSharedPtr<UE::Learning::FSumReward> Rewards;
-	TSharedPtr<UE::Learning::FAnyCompletion> Completions;
+	/** Episode Completions Buffer */
+	TLearningArray<1, UE::Learning::ECompletionMode> EpisodeCompletions;
+
+	/** All Completions Buffer */
+	TLearningArray<1, UE::Learning::ECompletionMode> AllCompletions;
+
+	/** Agent episode times */
+	TLearningArray<1, float> EpisodeTimes;
 
 	TUniquePtr<UE::Learning::FEpisodeBuffer> EpisodeBuffer;
 	TUniquePtr<UE::Learning::FReplayBuffer> ReplayBuffer;
 	TUniquePtr<UE::Learning::FResetInstanceBuffer> ResetBuffer;
 	TUniquePtr<UE::Learning::FSharedMemoryPPOTrainer> Trainer;
 	
-	ELearningAgentsCompletion MaxStepsCompletion = ELearningAgentsCompletion::Truncation;
-
 	float TrainerTimeout = 10.0f;
 
 	void DoneTraining();
 
-// ----- Private Iteration Checks ----- 
-private:
-
 	/** Number of times rewards have been evaluated for all agents */
-	TLearningArray<1, uint64, TInlineAllocator<32>> RewardEvaluatedAgentIteration;
+	TLearningArray<1, uint64, TInlineAllocator<32>> RewardIteration;
 
 	/** Number of times completions have been evaluated for all agents */
-	TLearningArray<1, uint64, TInlineAllocator<32>> CompletionEvaluatedAgentIteration;
+	TLearningArray<1, uint64, TInlineAllocator<32>> CompletionIteration;
 
 	/** Temp buffers used to record the set of agents that are valid for training */
 	TArray<int32> ValidAgentIds;
 	TArray<int32> FinalValidAgentIds;
 	UE::Learning::FIndexSet ValidAgentSet;
 	UE::Learning::FIndexSet FinalValidAgentSet;
-	TBitArray<TInlineAllocator<32>> ValidAgentStatus;
 
 // ----- Private Recording of GameSettings ----- 
 private:
 
 	bool bFixedTimestepUsed = false;
 	float FixedTimeStepDeltaTime = -1.0f;
-	bool bVSyncEnabled = true;
 	float MaxPhysicsStep = -1.0f;
+	int32 MaxFPS = 120;
+	bool bVSyncEnabled = true;
 	int32 ViewModeIndex = -1;
+	
+	bool bUseLessCPUInTheBackground = true;
+	bool bEditorVSyncEnabled = true;
 };

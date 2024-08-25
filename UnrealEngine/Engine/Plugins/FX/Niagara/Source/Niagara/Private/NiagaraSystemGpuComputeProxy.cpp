@@ -15,7 +15,7 @@ FNiagaraSystemGpuComputeProxy::FNiagaraSystemGpuComputeProxy(FNiagaraSystemInsta
 	, SystemLWCTile(OwnerInstance->GetLWCTile())
 	, SystemInstanceID(OwnerInstance->GetId())
 {
-	bRequiresDistanceFieldData = OwnerInstance->RequiresDistanceFieldData();
+	bRequiresGlobalDistanceField = OwnerInstance->RequiresGlobalDistanceField();
 	bRequiresDepthBuffer = OwnerInstance->RequiresDepthBuffer();
 	bRequiresEarlyViewData = OwnerInstance->RequiresEarlyViewData();
 	bRequiresViewUniformBuffer = OwnerInstance->RequiresViewUniformBuffer();
@@ -31,7 +31,7 @@ FNiagaraSystemGpuComputeProxy::FNiagaraSystemGpuComputeProxy(FNiagaraSystemInsta
 	}
 
 	// Calculate Tick Stage
-	if (bRequiresDistanceFieldData || bRequiresDepthBuffer || bRequiresRayTracingScene)
+	if (bRequiresGlobalDistanceField || bRequiresDepthBuffer || bRequiresRayTracingScene)
 	{
 		ComputeTickStage = ENiagaraGpuComputeTickStage::PostOpaqueRender;
 	}
@@ -183,7 +183,7 @@ void FNiagaraSystemGpuComputeProxy::ReleaseTicks(FNiagaraGPUInstanceCountManager
 		FNiagaraGPUSystemTick& Tick = PendingTicks[iTick];
 		Tick.Destroy();
 	}
-	PendingTicks.RemoveAt(0, NumTicksToRelease, NumTicksToRelease == PendingTicks.Num());
+	PendingTicks.RemoveAt(0, NumTicksToRelease, (NumTicksToRelease == PendingTicks.Num()) ? EAllowShrinking::Yes : EAllowShrinking::No);
 
 	for (FNiagaraComputeExecutionContext* ComputeContext : ComputeContexts)
 	{

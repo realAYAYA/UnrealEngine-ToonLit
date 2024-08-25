@@ -18,7 +18,11 @@ namespace ChaosInterface
 	/**
 	 * Create the Chaos Geometry based on the geometry parameters.
 	 */
+	void ENGINE_API CreateGeometry(const FGeometryAddParams& InParams, TArray<Chaos::FImplicitObjectPtr>& OutGeoms, Chaos::FShapesArray& OutShapes);
+
+	UE_DEPRECATED(5.4, "Use CreateGeometry with FImplicitObjectPtr instead")
 	void ENGINE_API CreateGeometry(const FGeometryAddParams& InParams, TArray<TUniquePtr<Chaos::FImplicitObject>>& OutGeoms, Chaos::FShapesArray& OutShapes);
+
 
 	/**
 	 * Generate the mass properties for a set of shapes in the space of the shapes' owner. 

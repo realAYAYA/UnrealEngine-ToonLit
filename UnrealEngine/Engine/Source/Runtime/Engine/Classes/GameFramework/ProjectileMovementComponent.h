@@ -2,11 +2,15 @@
 
 #pragma once
 
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "CoreMinimal.h"
 #include "Engine/HitResult.h"
+#endif // UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
 #include "GameFramework/MovementComponent.h"
 #include "UObject/ObjectMacros.h"
 #include "ProjectileMovementComponent.generated.h"
+
+struct FHitResult;
 
 /**
  * ProjectileMovementComponent updates the position of another component during its tick.
@@ -134,6 +138,13 @@ protected:
 	int32 ThrottleInterpolationFramesSinceInterp;
 
 public:
+
+	/**
+	 * If true, uses FScopedMovementUpdate to avoid moving the UpdatedComponent more than once during a tick during simulation.
+	 * This also defers overlap updates and some impact events until after the simulation update completes, so it may delay important events and continue deflection, so use with caution.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, AdvancedDisplay, Category=ProjectileInterpolation)
+	uint8 bSimulationUseScopedMovement:1;
 
 	/**
 	 * If true, uses FScopedMovementUpdate to avoid moving the attached interpolated object's children more than once during a tick when it would both interpolate and move during projectile simulation.

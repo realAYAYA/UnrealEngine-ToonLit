@@ -3,6 +3,7 @@
 
 #include "Chaos/PBDSoftsEvolutionFwd.h"
 #include "Chaos/PBDSoftsSolverParticles.h"
+#include "Chaos/SoftsSolverParticlesRange.h"
 #include "Chaos/PBDStiffness.h"
 #include "Chaos/ParticleRule.h"
 #include "Containers/StaticArray.h"
@@ -19,6 +20,45 @@ public:
 		FlatnessRatio,
 		ExplicitRestAngles
 	};
+
+	FPBDBendingConstraintsBase(const FSolverParticlesRange& InParticles,
+		TArray<TVec4<int32>>&& InConstraints,
+		const TConstArrayView<FRealSingle>& StiffnessMultipliers,
+		const TConstArrayView<FRealSingle>& BucklingStiffnessMultipliers,
+		const TConstArrayView<FRealSingle>& RestAngleMap,
+		const FSolverVec2& InStiffness,
+		const FSolverReal InBucklingRatio,
+		const FSolverVec2& InBucklingStiffness,
+		const FSolverVec2& RestAngleValue,
+		ERestAngleConstructionType RestAngleConstructionType,
+		bool bTrimKinematicConstraints = false,
+		FSolverReal MaxStiffness = FPBDStiffness::DefaultPBDMaxStiffness)
+		: Constraints(bTrimKinematicConstraints ? TrimKinematicConstraints(InConstraints, InParticles) : MoveTemp(InConstraints))
+		, ConstraintSharedEdges(ExtractConstraintSharedEdges(Constraints))
+		, ParticleOffset(0)
+		, ParticleCount(InParticles.GetRangeSize())
+		, Stiffness(
+			InStiffness,
+			StiffnessMultipliers,
+			TConstArrayView<TVec2<int32>>(ConstraintSharedEdges),
+			ParticleOffset,
+			ParticleCount,
+			FPBDStiffness::DefaultTableSize,
+			FPBDStiffness::DefaultParameterFitBase,
+			MaxStiffness)
+		, BucklingRatio(FMath::Clamp(InBucklingRatio, (FSolverReal)0., (FSolverReal)1.))
+		, BucklingStiffness(
+			InBucklingStiffness,
+			BucklingStiffnessMultipliers,
+			TConstArrayView<TVec2<int32>>(ConstraintSharedEdges),
+			ParticleOffset,
+			ParticleCount,
+			FPBDStiffness::DefaultTableSize,
+			FPBDStiffness::DefaultParameterFitBase,
+			MaxStiffness)
+	{
+		CalculateRestAngles(InParticles, ParticleOffset, ParticleCount, RestAngleMap, RestAngleValue, RestAngleConstructionType);
+	}
 
 	FPBDBendingConstraintsBase(const FSolverParticles& InParticles,
 		int32 InParticleOffset,
@@ -111,7 +151,8 @@ public:
 	UE_DEPRECATED(5.1, "Use SetProperties instead.")
 	void SetStiffness(FSolverReal InStiffness) { SetProperties(FSolverVec2(InStiffness), 0.f, 1.f); }
 
-	TStaticArray<FSolverVec3, 4> GetGradients(const FSolverParticles& InParticles, const int32 i) const
+	template<typename SolverParticlesOrRange>
+	TStaticArray<FSolverVec3, 4> GetGradients(const SolverParticlesOrRange& InParticles, const int32 i) const
 	{
 		const TVec4<int32>& Constraint = Constraints[i];
 		const FSolverVec3& P1 = InParticles.P(Constraint[0]);
@@ -122,7 +163,8 @@ public:
 		return CalcGradients(P1, P2, P3, P4);
 	}
 
-	FSolverReal GetScalingFactor(const FSolverParticles& InParticles, const int32 i, const TStaticArray<FSolverVec3, 4>& Grads, const FSolverReal ExpStiffnessValue, const FSolverReal ExpBucklingValue) const
+	template<typename SolverParticlesOrRange>
+	FSolverReal GetScalingFactor(const SolverParticlesOrRange& InParticles, const int32 i, const TStaticArray<FSolverVec3, 4>& Grads, const FSolverReal ExpStiffnessValue, const FSolverReal ExpBucklingValue) const
 	{
 		const TVec4<int32>& Constraint = Constraints[i];
 		const int32 i1 = Constraint[0];
@@ -177,30 +219,14 @@ public:
 		return UE_PI - FMath::Abs(Angle) < BucklingRatio * (UE_PI - FMath::Abs(RestAngle));
 	}
 
-	void Init(const FSolverParticles& InParticles)
-	{
-		IsBuckled.SetNumUninitialized(Constraints.Num());
-		for (int32 ConstraintIndex = 0; ConstraintIndex < Constraints.Num(); ++ConstraintIndex)
-		{
-			const TVec4<int32>& Constraint = Constraints[ConstraintIndex];
-			const int32 i1 = Constraint[0];
-			const int32 i2 = Constraint[1];
-			const int32 i3 = Constraint[2];
-			const int32 i4 = Constraint[3];
-			const FSolverVec3& P1 = InParticles.X(i1);
-			const FSolverVec3& P2 = InParticles.X(i2);
-			const FSolverVec3& P3 = InParticles.X(i3);
-			const FSolverVec3& P4 = InParticles.X(i4);
-			const FSolverReal Angle = CalcAngle(P1, P2, P3, P4);
-			IsBuckled[ConstraintIndex] = AngleIsBuckled(Angle, RestAngles[ConstraintIndex]);
-		}
-	}
+	template<typename SolverParticlesOrRange>
+	CHAOS_API void Init(const SolverParticlesOrRange& InParticles);
 
 	const TArray<FSolverReal>& GetRestAngles() const { return RestAngles; }
 	const TArray<TVec4<int32>>& GetConstraints() const { return Constraints; }
 	const TArray<bool>& GetIsBuckled() const { return IsBuckled; }
 
-private:
+protected:
 	template<class TNum>
 	static TNum SafeDivide(const TNum& Numerator, const FSolverReal& Denominator)
 	{
@@ -209,7 +235,7 @@ private:
 		return TNum(0);
 	}
 	
-	static TStaticArray<FSolverVec3, 4> CalcGradients(const FSolverVec3& P1, const FSolverVec3& P2, const FSolverVec3& P3, const FSolverVec3& P4)
+	static TStaticArray<FSolverVec3, 4> CalcGradients(const FSolverVec3& P1, const FSolverVec3& P2, const FSolverVec3& P3, const FSolverVec3& P4, FSolverReal* OutAngle = nullptr)
 	{
 		TStaticArray<FSolverVec3, 4> Grads;
 		// Calculated using Phi = atan2(SinPhi, CosPhi)
@@ -241,10 +267,17 @@ private:
 		Grads[2] = -DPhiDP13 - DPhiDP23;
 		Grads[3] = -DPhiDP14 - DPhiDP24;
 
+		if (OutAngle)
+		{
+			*OutAngle = FMath::Atan2(SinPhi, CosPhi);
+		}
+
 		return Grads;
 	}
 
-	static TArray<TVec4<int32>> TrimKinematicConstraints(const TArray<TVec4<int32>>& InConstraints, const FSolverParticles& InParticles)
+private:
+	template<typename SolverParticlesOrRange>
+	static TArray<TVec4<int32>> TrimKinematicConstraints(const TArray<TVec4<int32>>& InConstraints, const SolverParticlesOrRange& InParticles)
 	{
 		TArray<TVec4<int32>> TrimmedConstraints;
 		TrimmedConstraints.Reserve(InConstraints.Num());
@@ -270,7 +303,8 @@ private:
 		return ExtractedEdges;
 	}
 
-	CHAOS_API void CalculateRestAngles(const FSolverParticles& InParticles,
+	template<typename SolverParticlesOrRange>
+	CHAOS_API void CalculateRestAngles(const SolverParticlesOrRange& InParticles,
 		int32 InParticleOffset,
 		int32 InParticleCount,
 		const TConstArrayView<FRealSingle>& RestAngleMap,
@@ -293,3 +327,12 @@ protected:
 };
 
 }  // End namespace Chaos::Softs
+
+// Support ISPC enable/disable in non-shipping builds
+#if !INTEL_ISPC
+const bool bChaos_Bending_ISPC_Enabled = false;
+#elif UE_BUILD_SHIPPING
+const bool bChaos_Bending_ISPC_Enabled = true;
+#else
+extern CHAOS_API bool bChaos_Bending_ISPC_Enabled;
+#endif

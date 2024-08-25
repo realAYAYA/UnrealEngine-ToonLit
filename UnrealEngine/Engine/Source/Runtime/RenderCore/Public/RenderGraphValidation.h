@@ -77,8 +77,11 @@ public:
 
 	RENDERCORE_API void ValidateUploadBuffer(FRDGBufferRef Buffer, const void* InitialData, uint64 InitialDataSize);
 	RENDERCORE_API void ValidateUploadBuffer(FRDGBufferRef Buffer, const void* InitialData, uint64 InitialDataSize, const FRDGBufferInitialDataFreeCallback& InitialDataFreeCallback);
+	RENDERCORE_API void ValidateUploadBuffer(FRDGBufferRef Buffer, const FRDGBufferInitialDataFillCallback& InitialDataFillCallback);
 	RENDERCORE_API void ValidateUploadBuffer(FRDGBufferRef Buffer, const FRDGBufferInitialDataCallback& InitialDataCallback, const FRDGBufferInitialDataSizeCallback& InitialDataSizeCallback);
 	RENDERCORE_API void ValidateUploadBuffer(FRDGBufferRef Buffer, const FRDGBufferInitialDataCallback& InitialDataCallback, const FRDGBufferInitialDataSizeCallback& InitialDataSizeCallback, const FRDGBufferInitialDataFreeCallback& InitialDataFreeCallback);
+
+	RENDERCORE_API void ValidateCommitBuffer(FRDGBufferRef Buffer, uint64 CommitSizeInBytes);
 
 	/** Validates a resource extraction operation. */
 	RENDERCORE_API void ValidateExtractTexture(FRDGTextureRef Texture, TRefCountPtr<IPooledRenderTarget>* OutTexturePtr);
@@ -164,8 +167,8 @@ public:
 private:
 	struct FResourceMap
 	{
-		TMap<FRDGTextureRef, TArray<FRHITransitionInfo>> Textures;
-		TMap<FRDGBufferRef, FRHITransitionInfo> Buffers;
+		TMap<FRDGTextureRef, TArray<FRDGTransitionInfo>> Textures;
+		TMap<FRDGBufferRef, FRDGTransitionInfo> Buffers;
 		TMap<FRDGViewableResource*, FRHITransientAliasingInfo> Aliases;
 	};
 

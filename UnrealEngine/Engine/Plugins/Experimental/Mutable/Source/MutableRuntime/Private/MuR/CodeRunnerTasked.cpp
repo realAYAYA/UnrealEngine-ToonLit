@@ -34,25 +34,17 @@
 #include "MuR/SerialisationPrivate.h"
 #include "MuR/Settings.h"
 #include "MuR/SystemPrivate.h"
+#include "MuR/MutableRuntimeModule.h"
 #include "Stats/Stats2.h"
 #include "Templates/RefCounting.h"
 #include "Templates/SharedPointer.h"
 #include "Templates/Tuple.h"
 #include "Trace/Detail/Channel.h"
 #include "ProfilingDebugging/CountersTrace.h"
+#include "Async/Fundamental/Scheduler.h"
 
 
 DECLARE_CYCLE_STAT(TEXT("MutableCoreTask"), STAT_MutableCoreTask, STATGROUP_Game);
-
-
-int32 CoreRunnerTaskPriority = 5;
-
-static FAutoConsoleVariableRef CVarCoreRunnerTaskPriority(
-	TEXT("mutable.CoreRunnerTaskPriority"),
-	CoreRunnerTaskPriority,
-	TEXT("0 AnyThread. 1 to 6, from hight to low priority."),
-	ECVF_Default);
-
 
 namespace mu
 {
@@ -137,8 +129,6 @@ namespace mu
 		    
 		{   0,   0,   0,   0 },	// CO_SAMPLEIMAGE
 		{   0,   0,   0,   0 },	// CO_SWIZZLE
-		{   0,   0,   0,   0 },	// CO_IMAGESIZE
-		{   0,   0,   0,   0 },	// CO_LAYOUTBLOCKTRANSFORM
 		{   0,   0,   0,   0 },	// CO_FROMSCALARS
 		{   0,   0,   0,   0 },	// CO_ARITHMETIC
 		    
@@ -150,7 +140,7 @@ namespace mu
 		{   0,   0,   0,   0 },	// IM_RESIZELIKE	(to be deprecated?)
 		{   0,   0,   0,   0 },	// IM_RESIZEREL		(special case)
 		{   0,  20,   0,   0 },	// IM_BLANKLAYOUT
-		{   0,   0, -20,   0 },	// IM_COMPOSE
+		{   0, -20, -20,   0 },	// IM_COMPOSE
 		{   0,   0, -20,   0 },	// IM_INTERPOLATE
 		{   0,   0,   0,   0 },	// IM_SATURATE
 		{   0,   0,   0,   0 },	// IM_LUMINANCE
@@ -175,25 +165,25 @@ namespace mu
 		{   0,   0,   0,   0 },	// ME_MERGE
 		{   0,   0, -20,   0 },	// ME_INTERPOLATE
 		{   0, -10,   0,   0 },	// ME_MASKCLIPMESH
+		{   0, -10,   0,   0 },	// ME_MASKCLIPUVMASK
 		{   0, -10,   0,   0 },	// ME_MASKDIFF
 		{   0,   0, -10,   0 },	// ME_REMOVEMASK
 		{   0,   0,   0,   0 },	// ME_FORMAT
 		{   0, -10,   0,   0 },	// ME_EXTRACTLAYOUTBLOCK
-		{   0, -10,   0,   0 },	// ME_EXTRACTFACEGROUP
 		{   0,   0,   0,   0 },	// ME_TRANSFORM
 		{   0, -10,   0,   0 },	// ME_CLIPMORPHPLANE
 		{   0, -10,   0,   0 },	// ME_CLIPWITHMESH
 		{   0,   0,   0,   0 },	// ME_SETSKELETON
 		{   0,   0,   0,   0 },	// ME_PROJECT
 		{   0,   0,   0,   0 },	// ME_APPLYPOSE
-		{   0,   0,   0,   0 },	// ME_REMAPINDICES
 		{   0,   0,   0,   0 },	// ME_GEOMETRYOPERATION
 		{   0, -20,   0,   0 },	// ME_BINDSHAPE
 		{   0, -10,   0,   0 },	// ME_APPLYSHAPE
 		{   0, -10,   0,   0 },	// ME_CLIPDEFORM
 		{   0, -10,   0,   0 },	// ME_MORPHRESHAPE
 		{   0,   0,   0,   0 },	// ME_OPTIMIZESKINNING
-		    
+		{	0,   0,	  0,   0 },	// ME_ADDTAGS
+
 		{   0,   0,   0,   0 },	// IN_ADDMESH
 		{   0,   0,   0,   0 },	// IN_ADDIMAGE
 		{   0,   0,   0,   0 },	// IN_ADDVECTOR
@@ -201,8 +191,9 @@ namespace mu
 		{   0,   0,   0,   0 },	// IN_ADDSTRING
 		{   0,   0,   0,   0 },	// IN_ADDSURFACE
 		{   0,   0,   0,   0 },	// IN_ADDCOMPONENT
-		{   0,   0,   0,   0 },	// IN_ADDLOD
-		    
+		{	0,   0,   0,   0 },	// IN_ADDLOD
+		{	0,   0,   0,   0 },	// IN_ADDEXTENSIONDATA
+
 		{   0,   0,   0,   0 },	// LA_PACK
 		{   0,   0,   0,   0 },	// LA_MERGE
 		{   0,  -1,   0,   0 },	// LA_REMOVEBLOCKS
@@ -263,45 +254,9 @@ namespace mu
 			}
 			else
 			{
-#ifdef MUTABLE_USE_NEW_TASKGRAPH
 				TaskToIssue->Event = UE::Tasks::Launch(TEXT("MutableCore_Task"),
 					[TaskToIssue]() { TaskToIssue->DoWork(); },
 					UE::Tasks::ETaskPriority::Inherit);
-#else
-
-				ENamedThreads::Type Priority;
-				switch (CoreRunnerTaskPriority)
-				{
-				default:
-				case 0:
-					Priority = ENamedThreads::AnyThread;
-					break;
-				case 1:
-					Priority = ENamedThreads::AnyHiPriThreadHiPriTask;
-					break;
-				case 2:
-					Priority = ENamedThreads::AnyHiPriThreadNormalTask;
-					break;
-				case 3:
-					Priority = ENamedThreads::AnyNormalThreadHiPriTask;
-					break;
-				case 4:
-					Priority = ENamedThreads::AnyNormalThreadNormalTask;
-					break;
-				case 5:
-					Priority = ENamedThreads::AnyBackgroundHiPriTask;
-					break;
-				case 6:
-					Priority = ENamedThreads::AnyBackgroundThreadNormalTask;
-					break;
-				}
-
-				TaskToIssue->Event = FFunctionGraphTask::CreateAndDispatchWhenReady(
-					[TaskToIssue]() { TaskToIssue->DoWork(); },
-					TStatId{},
-					nullptr,
-					Priority);
-#endif
 			}
 		}
 
@@ -309,21 +264,44 @@ namespace mu
 		IssuedTasks.Add(TaskToIssue);
 	}
 
+	UE::Tasks::FTask CodeRunner::StartRun(bool bForceInlineExecution)
+	{
+		check(RunnerCompletionEvent.IsCompleted());
 
-    //---------------------------------------------------------------------------------------------
-    void CodeRunner::Run()
-    {
 		bUnrecoverableError = false;
 
-		m_heapData.SetNum(0, false);
-		m_heapImageDesc.SetNum(0, false);
-
-		// Profiling data. TODO: make optional
+		m_heapData.SetNum(0, EAllowShrinking::No);
+		m_heapImageDesc.SetNum(0, EAllowShrinking::No);
+		
+		RunnerCompletionEvent = UE::Tasks::FTaskEvent(TEXT("CodeRunnerCompletionEvent"));
+		
 		bool bProfile = false;
-		uint32 NumRunOps = 0;
-		uint32 RunOpsPerType[size_t(OP_TYPE::COUNT)] = {};
+		
+		TUniquePtr<FProfileContext> ProfileContext = bProfile ? MakeUnique<FProfileContext>() : nullptr;
+		Run(MoveTemp(ProfileContext), bForceInlineExecution);
 
-        while( !OpenTasks.IsEmpty() || !ClosedTasks.IsEmpty() || !IssuedTasks.IsEmpty())
+		check(!bForceInlineExecution || RunnerCompletionEvent.IsCompleted());
+
+		return RunnerCompletionEvent;
+	}
+
+	void CodeRunner::AbortRun()
+	{
+		bUnrecoverableError = true;
+		RunnerCompletionEvent.Trigger();
+	}
+
+    void CodeRunner::Run(TUniquePtr<FProfileContext>&& ProfileContext, bool bForceInlineExecution)
+    {
+		MUTABLE_CPUPROFILER_SCOPE(CodeRunner_Run);
+
+		check(!RunnerCompletionEvent.IsCompleted());
+
+		// TODO: Move MaxAllowedTime somewhere else more accessible, maybe a cvar.
+		const FTimespan MaxAllowedTime = FTimespan::FromMilliseconds(2.0); 
+		const FTimespan TimeOut = FTimespan::FromSeconds(FPlatformTime::Seconds()) + MaxAllowedTime;
+
+        while(!OpenTasks.IsEmpty() || !ClosedTasks.IsEmpty() || !IssuedTasks.IsEmpty())
         {
 			UpdateTraces();
 			// Debug: log the amount of tasks that we'd be able to run concurrently:
@@ -344,12 +322,12 @@ namespace mu
 			//	UE_LOG(LogMutableCore, Log, TEXT("Tasks: %5d open, %5d issued, %5d closed, %d closed ready"), OpenTasks.Num(), IssuedTasks.Num(), ClosedTasks.Num(), ClosedReady);
 			//}
 
-			for (int Index = 0; Index < IssuedTasks.Num(); )
+			for (int32 Index = 0; Index < IssuedTasks.Num(); )
 			{
 				check(IssuedTasks[Index]);
 
-				bool WorkDone = IssuedTasks[Index]->IsComplete(this);
-				if (WorkDone)
+				bool bWorkDone = IssuedTasks[Index]->IsComplete(this);
+				if (bWorkDone)
 				{
 					const FScheduledOp& item = IssuedTasks[Index]->Op;
 					IssuedTasks[Index]->Complete(this);
@@ -362,7 +340,7 @@ namespace mu
 						ScheduledStagePerOp[item] = 0;
 					}
 
-					IssuedTasks.RemoveAt(Index,1,false); // with swap? changes order of execution.
+					IssuedTasks.RemoveAt(Index, 1, EAllowShrinking::No); // with swap? changes order of execution.
 				}
 				else
 				{
@@ -402,20 +380,20 @@ namespace mu
 				//	}
 
 				//	item = OpenTasks[BestOp];
-				//	OpenTasks.RemoveAtSwap(BestOp,1,false);
+				//	OpenTasks.RemoveAtSwap(BestOp,1,EAllowShrinking::No);
 				//	break;
 				//}
 
 				case EExecutionStrategy::None:
 				default:
 					// Just get one.
-					item = OpenTasks.Pop(false);
+					item = OpenTasks.Pop(EAllowShrinking::No);
 					break;
 
 				}
 
 				// Special processing in case it is an ImageDesc operation
-				if ( item.Type==FScheduledOp::EType::ImageDesc )
+				if (item.Type == FScheduledOp::EType::ImageDesc)
 				{
 					RunCodeImageDesc(item, m_pParams, m_pModel.Get(), m_lodMask);
 					continue;
@@ -438,8 +416,7 @@ namespace mu
 						LaunchIssuedTask(IssuedTask, bFailed);
 						if (bFailed)
 						{
-							bUnrecoverableError = true;
-							return;
+							return AbortRun();
 						}
 					}
 					else
@@ -460,10 +437,10 @@ namespace mu
 					}
 				}
 
-				if (bProfile)
+				if (ProfileContext)
 				{
-					++NumRunOps;
-					RunOpsPerType[size_t(m_pModel->GetPrivate()->m_program.GetOpType(item.At))]++;
+					++ProfileContext->NumRunOps;
+					++ProfileContext->RunOpsPerType[int32(m_pModel->GetPrivate()->m_program.GetOpType(item.At))];
 				}
 			}
 
@@ -472,20 +449,19 @@ namespace mu
 			// Look for tasks on hold and see if we can launch them
 			while (IssuedTasksOnHold.Num() && ShouldIssueTask())
 			{
-				TSharedPtr<FIssuedTask> TaskToIssue = IssuedTasksOnHold.Pop(false);
+				TSharedPtr<FIssuedTask> TaskToIssue = IssuedTasksOnHold.Pop(EAllowShrinking::No);
 
 				bool bFailed = false;
 				LaunchIssuedTask(TaskToIssue, bFailed);
 				if (bFailed)
 				{
-					bUnrecoverableError = true;
-					return;
+					return AbortRun();
 				}
 			}
 
 			// Look for a closed task with dependencies satisfied and move them to the open task list.
 			bool bSomeWasReady = false;
-			for (int Index = 0; Index<ClosedTasks.Num(); )
+			for (int32 Index = 0; Index < ClosedTasks.Num(); )
 			{
 				bool Ready = true;
 				for ( const FCacheAddress& Dep: ClosedTasks[Index].Deps )
@@ -504,7 +480,7 @@ namespace mu
 				{
 					bSomeWasReady = true;
 					FTask Task = ClosedTasks[Index];
-					ClosedTasks.RemoveAt(Index, 1, false); // with swap? would change order of execution.
+					ClosedTasks.RemoveAt(Index, 1, EAllowShrinking::No); // with swap? would change order of execution.
 					OpenTasks.Push(Task.Op);
 				}
 				else
@@ -521,7 +497,7 @@ namespace mu
 			if (bDeadLock)
 			{
 				// Log the task graph
-				for (int Index = 0; Index < ClosedTasks.Num(); ++Index)
+				for (int32 Index = 0; Index < ClosedTasks.Num(); ++Index)
 				{
 					FString TaskDesc = FString::Printf(TEXT("Closed task %d-%d-%d depends on : "), ClosedTasks[Index].Op.At, ClosedTasks[Index].Op.ExecutionIndex, ClosedTasks[Index].Op.Stage );
 					for (const FCacheAddress& Dep : ClosedTasks[Index].Deps)
@@ -537,61 +513,116 @@ namespace mu
 				check(false);
 
 				// This should never happen but if it does, abort the code execution.
-				return;
+				return AbortRun();
 			}
 
 			// If at this point there is no open op and we haven't finished, we need to wait for an issued op to complete.
 			if (OpenTasks.IsEmpty() && !IssuedTasks.IsEmpty())
 			{
-				MUTABLE_CPUPROFILER_SCOPE(CodeRunner_WaitIssued);
-
-				for (int32 IssuedIndex = 0; IssuedIndex<IssuedTasks.Num(); ++IssuedIndex)
+				if (!bForceInlineExecution)
 				{
-					if (IssuedTasks[IssuedIndex]->Event.IsValid())
+					TArray<UE::Tasks::FTask, TInlineAllocator<8>> IssuedTasksCompletionEvents;
+					IssuedTasksCompletionEvents.Reserve(IssuedTasks.Num());
+
+					for (TSharedPtr<FIssuedTask>& IssuedTask : IssuedTasks)
 					{
-#ifdef MUTABLE_USE_NEW_TASKGRAPH
-						IssuedTasks[IssuedIndex]->Event.Wait();
-#else
-						IssuedTasks[IssuedIndex]->Event->Wait();
-#endif
-						break;
+						if (IssuedTask->Event.IsValid())
+						{
+							IssuedTasksCompletionEvents.Add(IssuedTask->Event);
+						}
+					}
+
+					m_pSystem->WorkingMemoryManager.InvalidateRunnerThread();
+
+					UE::Tasks::Launch(TEXT("CodeRunnerFromIssuedTasksTask"),
+						[Runner = AsShared(), ProfileContext = MoveTemp(ProfileContext)]() mutable
+						{
+							Runner->m_pSystem->WorkingMemoryManager.ResetRunnerThread();
+
+							constexpr bool bForceInlineExecution = false;
+							Runner->Run(MoveTemp(ProfileContext), bForceInlineExecution);
+						},
+						UE::Tasks::Prerequisites(UE::Tasks::Any(IssuedTasksCompletionEvents)),
+						UE::Tasks::ETaskPriority::Inherit);
+					
+					return;
+				}	
+				else
+				{
+					MUTABLE_CPUPROFILER_SCOPE(CodeRunner_WaitIssued);
+					for (int32 IssuedIndex = 0; IssuedIndex < IssuedTasks.Num(); ++IssuedIndex)
+					{
+						if (IssuedTasks[IssuedIndex]->Event.IsValid())
+						{
+							if (CVarTaskGraphBusyWait->GetBool())
+							{
+								IssuedTasks[IssuedIndex]->Event.BusyWait();							
+							}
+							else
+							{
+								IssuedTasks[IssuedIndex]->Event.Wait();
+							}
+
+							break;
+						}
 					}
 				}
+			}
 
+			if (!bForceInlineExecution)
+			{
+				if (FTimespan::FromSeconds(FPlatformTime::Seconds()) > TimeOut)
+				{
+					m_pSystem->WorkingMemoryManager.InvalidateRunnerThread();
+
+					UE::Tasks::Launch(TEXT("CodeRunnerFromTimeoutTask"),
+						[Runner = AsShared(), ProfileContext = MoveTemp(ProfileContext)]() mutable
+						{
+							Runner->m_pSystem->WorkingMemoryManager.ResetRunnerThread();
+
+							constexpr bool bForceInlineExecution = false;
+							Runner->Run(MoveTemp(ProfileContext), bForceInlineExecution);
+						},
+						UE::Tasks::ETaskPriority::Inherit);
+					
+					return;
+				}
 			}
 		}
 
-		if (bProfile)
+		if (ProfileContext)
 		{
 			UE_LOG(LogMutableCore, Log, TEXT("Mutable Heap Bytes: %d"), m_heapData.Num()* m_heapData.GetTypeSize());
-			UE_LOG(LogMutableCore, Log, TEXT("Ran ops : %5d "), NumRunOps);
+			UE_LOG(LogMutableCore, Log, TEXT("Ran ops : %5d "), ProfileContext->NumRunOps);
 
-			constexpr int HistogramSize = 8;
+			constexpr int32 HistogramSize = 8;
 			int32 MostCommonOps[HistogramSize] = {};
-			for (size_t i=0; i<size_t(OP_TYPE::COUNT); ++i)
+			for (int32 OpIndex = 0; OpIndex < int32(OP_TYPE::COUNT); ++OpIndex)
 			{
-				for (int32 h=0; h<HistogramSize;++h)
+				for (int32 HistIndex = 0; HistIndex < HistogramSize; ++HistIndex)
 				{
-					if (RunOpsPerType[i] > RunOpsPerType[MostCommonOps[h]])
+					if (ProfileContext->RunOpsPerType[OpIndex] > ProfileContext->RunOpsPerType[MostCommonOps[HistIndex]])
 					{
 						// Displace others
-						int32 ElementsToMove = HistogramSize - h - 1;
+						int32 ElementsToMove = HistogramSize - HistIndex - 1;
 						if (ElementsToMove > 0)
 						{
-							FMemory::Memcpy(&MostCommonOps[h + 1], &MostCommonOps[h], sizeof(int32)* ElementsToMove);
+							FMemory::Memcpy(&MostCommonOps[HistIndex + 1], &MostCommonOps[HistIndex], sizeof(int32)*ElementsToMove);
 						}
 						// Set new value
-						MostCommonOps[h] = i;
+						MostCommonOps[HistIndex] = OpIndex;
 						break;
 					}
 				}
 			}
 
-			for (int h = 0; h < HistogramSize; ++h)
+			for (int32 HistIndex = 0; HistIndex < HistogramSize; ++HistIndex)
 			{
-				UE_LOG(LogMutableCore, Log, TEXT("    op %4d, %4d times."), MostCommonOps[h], RunOpsPerType[MostCommonOps[h]]);
+				UE_LOG(LogMutableCore, Log, TEXT("    op %4d, %4d times."), MostCommonOps[HistIndex], ProfileContext->RunOpsPerType[MostCommonOps[HistIndex]]);
 			}
 		}
+
+		RunnerCompletionEvent.Trigger();
     }
 
 	
@@ -601,7 +632,6 @@ namespace mu
 		check( m_heapImageDesc.Num()>0 );
 		OutDesc = m_heapImageDesc[0];
 	}
-
 
 	//---------------------------------------------------------------------------------------------
 	//---------------------------------------------------------------------------------------------
@@ -680,7 +710,8 @@ namespace mu
 			Base = Formatted;
 		}
 
-		if (Blended && InitialFormat != Blended->GetFormat() && !Args.flags)
+		bool bMustHaveSameFormat = !(Args.flags & (OP::ImageLayerArgs::F_BASE_RGB_FROM_ALPHA | OP::ImageLayerArgs::F_BLENDED_RGB_FROM_ALPHA));
+		if (Blended && InitialFormat != Blended->GetFormat() && bMustHaveSameFormat)
 		{
 			Ptr<Image> Formatted = Runner->CreateImage(Blended->GetSizeX(), Blended->GetSizeY(), Blended->GetLODCount(), Base->GetFormat(), EInitializationType::NotInitialized);
 			bool bSuccess = false;
@@ -700,7 +731,7 @@ namespace mu
 
 		}
 
-		if (Args.mask)
+		if (Mask)
 		{
 			if (Base->GetSize() != Mask->GetSize())
 			{
@@ -717,14 +748,16 @@ namespace mu
 			{
 				MUTABLE_CPUPROFILER_SCOPE(ImageLayer_EmergencyFix);
 
-				int32 levelCount = Base->GetLODCount();
-				Ptr<Image> Dest = Runner->CreateImage(Mask->GetSizeX(), Mask->GetSizeY(), levelCount, Mask->GetFormat(), EInitializationType::NotInitialized);
+				int32 StartLevel = Mask->GetLODCount() - 1;
+				int32 LevelCount = Base->GetLODCount();
 
-				FMipmapGenerationSettings settings{};
-				ImOp.ImageMipmap(ImageCompressionQuality, Dest.get(), Mask.get(), levelCount, settings);
+				Ptr<Image> MaskFix = Runner->CloneOrTakeOver(Mask);
+				MaskFix->DataStorage.SetNumLODs(LevelCount);
 
-				Runner->Release(Mask);
-				Mask = Dest;
+				FMipmapGenerationSettings Settings{};
+				ImOp.ImageMipmap(ImageCompressionQuality, MaskFix.get(), MaskFix.get(), StartLevel, LevelCount, Settings);
+
+				Mask = MaskFix;
 			}
 		}
 
@@ -751,7 +784,7 @@ namespace mu
 		if (!Mask 
 			&& 
 			// Flags have to match exactly for this optimize case. Other flags are not supported.
-			Args.flags== OP::ImageLayerArgs::F_USE_MASK_FROM_BLENDED
+			Args.flags == OP::ImageLayerArgs::F_USE_MASK_FROM_BLENDED
 			&&
 			Args.blendType == uint8(EBlendType::BT_BLEND)
 			&&
@@ -777,7 +810,7 @@ namespace mu
 		bool bUseBlendSourceFromBlendAlpha = (Args.flags & OP::ImageLayerArgs::F_BLENDED_RGB_FROM_ALPHA) != 0;
 		bool bUseMaskFromBlendAlpha = (Args.flags & OP::ImageLayerArgs::F_USE_MASK_FROM_BLENDED);
 
-		if (!bDone && Args.mask)
+		if (!bDone && Mask)
 		{
 			// Not implemented yet
 			check(!bUseBlendSourceFromBlendAlpha);
@@ -787,15 +820,15 @@ namespace mu
 			switch (EBlendType(Args.blendType))
 			{
 			case EBlendType::BT_NORMAL_COMBINE: ImageNormalCombine(Result.get(), Result.get(), Mask.get(), Blended.get(), bOnlyOneMip); break;
-			case EBlendType::BT_SOFTLIGHT: BufferLayer<SoftLightChannelMasked, SoftLightChannel, true>(Result->GetData(), Result.get(), Mask.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
-			case EBlendType::BT_HARDLIGHT: BufferLayer<HardLightChannelMasked, HardLightChannel, true>(Result->GetData(), Result.get(), Mask.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
-			case EBlendType::BT_BURN: BufferLayer<BurnChannelMasked, BurnChannel, true>(Result->GetData(), Result.get(), Mask.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
-			case EBlendType::BT_DODGE: BufferLayer<DodgeChannelMasked, DodgeChannel, true>(Result->GetData(), Result.get(), Mask.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
-			case EBlendType::BT_SCREEN: BufferLayer<ScreenChannelMasked, ScreenChannel, true>(Result->GetData(), Result.get(), Mask.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
-			case EBlendType::BT_OVERLAY: BufferLayer<OverlayChannelMasked, OverlayChannel, true>(Result->GetData(), Result.get(), Mask.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
-			case EBlendType::BT_LIGHTEN: BufferLayer<LightenChannelMasked, LightenChannel, true>(Result->GetData(), Result.get(), Mask.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
-			case EBlendType::BT_MULTIPLY: BufferLayer<MultiplyChannelMasked, MultiplyChannel, true>(Result->GetData(), Result.get(), Mask.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
-			case EBlendType::BT_BLEND: BufferLayer<BlendChannelMasked, BlendChannel, true>(Result->GetData(), Result.get(), Mask.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
+			case EBlendType::BT_SOFTLIGHT: BufferLayer<SoftLightChannelMasked, SoftLightChannel, true>(Result.get(), Result.get(), Mask.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
+			case EBlendType::BT_HARDLIGHT: BufferLayer<HardLightChannelMasked, HardLightChannel, true>(Result.get(), Result.get(), Mask.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
+			case EBlendType::BT_BURN: BufferLayer<BurnChannelMasked, BurnChannel, true>(Result.get(), Result.get(), Mask.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
+			case EBlendType::BT_DODGE: BufferLayer<DodgeChannelMasked, DodgeChannel, true>(Result.get(), Result.get(), Mask.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
+			case EBlendType::BT_SCREEN: BufferLayer<ScreenChannelMasked, ScreenChannel, true>(Result.get(), Result.get(), Mask.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
+			case EBlendType::BT_OVERLAY: BufferLayer<OverlayChannelMasked, OverlayChannel, true>(Result.get(), Result.get(), Mask.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
+			case EBlendType::BT_LIGHTEN: BufferLayer<LightenChannelMasked, LightenChannel, true>(Result.get(), Result.get(), Mask.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
+			case EBlendType::BT_MULTIPLY: BufferLayer<MultiplyChannelMasked, MultiplyChannel, true>(Result.get(), Result.get(), Mask.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
+			case EBlendType::BT_BLEND: BufferLayer<BlendChannelMasked, BlendChannel, true>(Result.get(), Result.get(), Mask.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
 			case EBlendType::BT_NONE: break;
 			default: check(false);
 			}
@@ -810,15 +843,15 @@ namespace mu
 			switch (EBlendType(Args.blendType))
 			{
 			case EBlendType::BT_NORMAL_COMBINE: check(false); break;
-			case EBlendType::BT_SOFTLIGHT: BufferLayerEmbeddedMask<SoftLightChannelMasked, SoftLightChannel, false>(Result->GetData(), Result.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
-			case EBlendType::BT_HARDLIGHT: BufferLayerEmbeddedMask<HardLightChannelMasked, HardLightChannel, false>(Result->GetData(), Result.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
-			case EBlendType::BT_BURN: BufferLayerEmbeddedMask<BurnChannelMasked, BurnChannel, false>(Result->GetData(), Result.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
-			case EBlendType::BT_DODGE: BufferLayerEmbeddedMask<DodgeChannelMasked, DodgeChannel, false>(Result->GetData(), Result.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
-			case EBlendType::BT_SCREEN: BufferLayerEmbeddedMask<ScreenChannelMasked, ScreenChannel, false>(Result->GetData(), Result.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
-			case EBlendType::BT_OVERLAY: BufferLayerEmbeddedMask<OverlayChannelMasked, OverlayChannel, false>(Result->GetData(), Result.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
-			case EBlendType::BT_LIGHTEN: BufferLayerEmbeddedMask<LightenChannelMasked, LightenChannel, false>(Result->GetData(), Result.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
-			case EBlendType::BT_MULTIPLY: BufferLayerEmbeddedMask<MultiplyChannelMasked, MultiplyChannel, false>(Result->GetData(), Result.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
-			case EBlendType::BT_BLEND: BufferLayerEmbeddedMask<BlendChannelMasked, BlendChannel, false>(Result->GetData(), Result.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
+			case EBlendType::BT_SOFTLIGHT: BufferLayerEmbeddedMask<SoftLightChannelMasked, SoftLightChannel, false>(Result.get(), Result.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
+			case EBlendType::BT_HARDLIGHT: BufferLayerEmbeddedMask<HardLightChannelMasked, HardLightChannel, false>(Result.get(), Result.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
+			case EBlendType::BT_BURN: BufferLayerEmbeddedMask<BurnChannelMasked, BurnChannel, false>(Result.get(), Result.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
+			case EBlendType::BT_DODGE: BufferLayerEmbeddedMask<DodgeChannelMasked, DodgeChannel, false>(Result.get(), Result.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
+			case EBlendType::BT_SCREEN: BufferLayerEmbeddedMask<ScreenChannelMasked, ScreenChannel, false>(Result.get(), Result.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
+			case EBlendType::BT_OVERLAY: BufferLayerEmbeddedMask<OverlayChannelMasked, OverlayChannel, false>(Result.get(), Result.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
+			case EBlendType::BT_LIGHTEN: BufferLayerEmbeddedMask<LightenChannelMasked, LightenChannel, false>(Result.get(), Result.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
+			case EBlendType::BT_MULTIPLY: BufferLayerEmbeddedMask<MultiplyChannelMasked, MultiplyChannel, false>(Result.get(), Result.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
+			case EBlendType::BT_BLEND: BufferLayerEmbeddedMask<BlendChannelMasked, BlendChannel, false>(Result.get(), Result.get(), Blended.get(), bApplyColorBlendToAlpha, bOnlyOneMip); break;
 			case EBlendType::BT_NONE: break;
 			default: check(false);
 			}
@@ -982,14 +1015,16 @@ namespace mu
 			if (Mask->GetLODCount() < Base->GetLODCount())
 			{
 				MUTABLE_CPUPROFILER_SCOPE(ImageResize_EmergencyFixMips);
-				int32 levelCount = Base->GetLODCount();
-				Ptr<Image> pDest = Runner->CreateImage(Mask->GetSizeX(), Mask->GetSizeY(), levelCount, Mask->GetFormat(), EInitializationType::NotInitialized);
+				int32 StartLevel = Mask->GetLODCount() - 1;
+				int32 LevelCount = Base->GetLODCount();
 
-				FMipmapGenerationSettings settings{};
-				ImOp.ImageMipmap(ImageCompressionQuality, pDest.get(), Mask.get(), levelCount, settings);
+				Ptr<Image> MaskFix = Runner->CloneOrTakeOver(Mask);
+				MaskFix->DataStorage.SetNumLODs(LevelCount);
 
-				Runner->Release(Mask);
-				Mask = pDest;
+				FMipmapGenerationSettings Settings{};
+				ImOp.ImageMipmap(ImageCompressionQuality, MaskFix.get(), MaskFix.get(), StartLevel, LevelCount, Settings);
+
+				Mask = MaskFix;
 			}
 		}
 
@@ -1019,15 +1054,15 @@ namespace mu
 				switch (EBlendType(Args.blendType))
 				{
 				case EBlendType::BT_NORMAL_COMBINE: ImageNormalCombine(Result.get(), Result.get(), Mask.get(), Color); break;
-				case EBlendType::BT_SOFTLIGHT: BufferLayerColour<SoftLightChannelMasked, SoftLightChannel>(Result->GetData(), Result.get(), Mask.get(), Color); break;
-				case EBlendType::BT_HARDLIGHT: BufferLayerColour<HardLightChannelMasked, HardLightChannel>(Result->GetData(), Result.get(), Mask.get(), Color); break;
-				case EBlendType::BT_BURN: BufferLayerColour<BurnChannelMasked, BurnChannel>(Result->GetData(), Result.get(), Mask.get(), Color); break;
-				case EBlendType::BT_DODGE: BufferLayerColour<DodgeChannelMasked, DodgeChannel>(Result->GetData(), Result.get(), Mask.get(), Color); break;
-				case EBlendType::BT_SCREEN: BufferLayerColour<ScreenChannelMasked, ScreenChannel>(Result->GetData(), Result.get(), Mask.get(), Color); break;
-				case EBlendType::BT_OVERLAY: BufferLayerColour<OverlayChannelMasked, OverlayChannel>(Result->GetData(), Result.get(), Mask.get(), Color); break;
-				case EBlendType::BT_LIGHTEN: BufferLayerColour<LightenChannelMasked, LightenChannel>(Result->GetData(), Result.get(), Mask.get(), Color); break;
-				case EBlendType::BT_MULTIPLY: BufferLayerColour<MultiplyChannelMasked, MultiplyChannel>(Result->GetData(), Result.get(), Mask.get(), Color); break;
-				case EBlendType::BT_BLEND: BufferLayerColour<BlendChannelMasked, BlendChannel>(Result->GetData(), Result.get(), Mask.get(), Color); break;
+				case EBlendType::BT_SOFTLIGHT: BufferLayerColour<SoftLightChannelMasked, SoftLightChannel>(Result.get(), Result.get(), Mask.get(), Color); break;
+				case EBlendType::BT_HARDLIGHT: BufferLayerColour<HardLightChannelMasked, HardLightChannel>(Result.get(), Result.get(), Mask.get(), Color); break;
+				case EBlendType::BT_BURN: BufferLayerColour<BurnChannelMasked, BurnChannel>(Result.get(), Result.get(), Mask.get(), Color); break;
+				case EBlendType::BT_DODGE: BufferLayerColour<DodgeChannelMasked, DodgeChannel>(Result.get(), Result.get(), Mask.get(), Color); break;
+				case EBlendType::BT_SCREEN: BufferLayerColour<ScreenChannelMasked, ScreenChannel>(Result.get(), Result.get(), Mask.get(), Color); break;
+				case EBlendType::BT_OVERLAY: BufferLayerColour<OverlayChannelMasked, OverlayChannel>(Result.get(), Result.get(), Mask.get(), Color); break;
+				case EBlendType::BT_LIGHTEN: BufferLayerColour<LightenChannelMasked, LightenChannel>(Result.get(), Result.get(), Mask.get(), Color); break;
+				case EBlendType::BT_MULTIPLY: BufferLayerColour<MultiplyChannelMasked, MultiplyChannel>(Result.get(), Result.get(), Mask.get(), Color); break;
+				case EBlendType::BT_BLEND: BufferLayerColour<BlendChannelMasked, BlendChannel>(Result.get(), Result.get(), Mask.get(), Color); break;
 				default: check(false);
 				}
 
@@ -1067,7 +1102,7 @@ namespace mu
 					case EBlendType::BT_BLEND: 
 					{
 						// In this case we know it is already an uncompressed image, and we won't need additional allocations;
-						FImageOperator ImOp = FImageOperator::GetDefault();
+						FImageOperator ImOp = FImageOperator::GetDefault(FImageOperator::FImagePixelFormatFunc());
 						ImOp.FillColor( Result.get(), Color); 
 						break;
 					}
@@ -1157,13 +1192,14 @@ namespace mu
 		EImageFormat TargetFormat = EImageFormat::IF_NONE;
 		Ptr<const Image> Base;
 		Ptr<Image> Result;
+		FImageOperator::FImagePixelFormatFunc ImagePixelFormatFunc;
 	};
 
 
 	bool FImagePixelFormatTask::Prepare(CodeRunner* Runner, bool& bOutFailed)
 	{
 		// This runs in the mutable Runner thread
-		MUTABLE_CPUPROFILER_SCOPE(FImageLayerColourTask_Prepare);
+		MUTABLE_CPUPROFILER_SCOPE(FImageLayerPixelFormatTask_Prepare);
 		bOutFailed = false;
 
 		ImageCompressionQuality = Runner->m_pSettings->ImageCompressionQuality;
@@ -1199,6 +1235,8 @@ namespace mu
 			return false;
 		}
 
+		ImagePixelFormatFunc = Runner->m_pSystem->ImagePixelFormatOverride;
+
 		// Create destination data
 		Result = Runner->CreateImage(Base->GetSizeX(), Base->GetSizeY(), Base->GetLODCount(), TargetFormat, EInitializationType::NotInitialized);
 		return true;
@@ -1211,23 +1249,9 @@ namespace mu
 		MUTABLE_CPUPROFILER_SCOPE(FImagePixelFormatTask);
 		
 		bool bSuccess = false;
-		FImageOperator ImOp = FImageOperator::GetDefault();
+		FImageOperator ImOp = FImageOperator::GetDefault(ImagePixelFormatFunc);
 		ImOp.ImagePixelFormat(bSuccess, ImageCompressionQuality, Result.get(), Base.get(), -1);
-
-		int32 OriginalDataSize = FMath::Max(Result->m_data.Num(), Base->m_data.Num());
-		int32 ExcessDataSize = OriginalDataSize * 4 + 4;
-		while (!bSuccess)
-		{
-			MUTABLE_CPUPROFILER_SCOPE(Recompression_OutOfSpace);
-
-			// Bad case, where the RLE compressed data requires more memory than the uncompressed data.
-			// We need to support it anyway for small mips or scaled images.
-			Result->m_data.SetNum(ExcessDataSize);
-			bSuccess = false;
-			ImOp.ImagePixelFormat(bSuccess,ImageCompressionQuality, Result.get(), Base.get(), -1);
-			ExcessDataSize *= 4;
-		}
-
+		check(bSuccess);
 	}
 
 
@@ -1243,10 +1267,6 @@ namespace mu
 		}
 	}
 
-
-	//---------------------------------------------------------------------------------------------
-	//---------------------------------------------------------------------------------------------
-	//---------------------------------------------------------------------------------------------
 	class FImageMipmapTask : public CodeRunner::FIssuedTask
 	{
 	public:
@@ -1260,18 +1280,20 @@ namespace mu
 		void Complete(CodeRunner*) override;
 
 	private:
-		int ImageCompressionQuality = 0;
+		int32 ImageCompressionQuality = 0;
+		int32 StartLevel = -1;
 		OP::ImageMipmapArgs Args;
 		Ptr<const Image> Base;
 		Ptr<Image> Result;
 		FImageOperator::FScratchImageMipmap Scratch;
+		FImageOperator::FImagePixelFormatFunc ImagePixelFormatFunc;
 	};
 
 
 	bool FImageMipmapTask::Prepare(CodeRunner* Runner, bool& bOutFailed)
 	{
 		// This runs in the mutable Runner thread
-		MUTABLE_CPUPROFILER_SCOPE(FImageLayerColourTask_Prepare);
+		MUTABLE_CPUPROFILER_SCOPE(FImageMipmapTask_Prepare);
 		bOutFailed = false;
 
 		ImageCompressionQuality = Runner->m_pSettings->ImageCompressionQuality;
@@ -1307,8 +1329,7 @@ namespace mu
 		}
 
 		// At least keep the levels we already have.
-		int StartLevel = Base->GetLODCount();
-		LevelCount = FMath::Max(StartLevel, LevelCount);
+		LevelCount = FMath::Max(Base->GetLODCount(), LevelCount);
 		
 		if (LevelCount == Base->GetLODCount())
 		{
@@ -1316,37 +1337,45 @@ namespace mu
 			return false;
 		}
 
-		// Create destination data
-		Result = Runner->CreateImage(Base->GetSizeX(), Base->GetSizeY(), LevelCount, Base->GetFormat(), EInitializationType::NotInitialized);
-		Result->m_flags = Base->m_flags;
+		StartLevel = Base->GetLODCount() - 1;
+		
+		Result = Runner->CloneOrTakeOver(Base);
+		Base = nullptr;
+
+		Result->DataStorage.SetNumLODs(LevelCount);
 
 		FImageOperator ImOp = MakeImageOperator(Runner);
-		ImOp.ImageMipmap_PrepareScratch( Result.get(), Base.get(), LevelCount, Scratch);
+		ImOp.ImageMipmap_PrepareScratch(Result.get(), StartLevel, LevelCount, Scratch);
+
+		ImagePixelFormatFunc = Runner->m_pSystem->ImagePixelFormatOverride;
 
 		return true;
 	}
 
 
-	//---------------------------------------------------------------------------------------------
 	void FImageMipmapTask::DoWork()
 	{
 		// This runs in a worker thread
 		MUTABLE_CPUPROFILER_SCOPE(FImageMipmapTask);
 
-		FImageOperator ImOp = FImageOperator::GetDefault();
-		FMipmapGenerationSettings settings{};
-		ImOp.ImageMipmap(Scratch, ImageCompressionQuality, Result.get(), Base.get(), Result->GetLODCount(), settings);
+		check(StartLevel >= 0);
+
+		FMipmapGenerationSettings Settings{};
+		FImageOperator ImOp = FImageOperator::GetDefault(ImagePixelFormatFunc);
+		ImOp.ImageMipmap(Scratch, ImageCompressionQuality, Result.get(), Result.get(), StartLevel, Result->GetLODCount(), Settings);
 	}
 
 
-	//---------------------------------------------------------------------------------------------
 	void FImageMipmapTask::Complete(CodeRunner* Runner)
 	{
 		FImageOperator ImOp = MakeImageOperator(Runner);
 		ImOp.ImageMipmap_ReleaseScratch(Scratch);
 
 		// This runs in the Runner thread
-		Runner->Release(Base);
+		if (Base)
+		{
+			Runner->Release(Base);
+		}
 
 		// If no shortcut was taken
 		if (Result)
@@ -1381,7 +1410,7 @@ namespace mu
 	bool FImageSwizzleTask::Prepare(CodeRunner* Runner, bool& bOutFailed)
 	{
 		// This runs in the mutable Runner thread
-		MUTABLE_CPUPROFILER_SCOPE(FImageLayerColourTask_Prepare);
+		MUTABLE_CPUPROFILER_SCOPE(FImageSwizzleTask_Prepare);
 		bOutFailed = false;
 
 		for (int i = 0; i < MUTABLE_OP_MAX_SWIZZLE_CHANNELS; ++i)
@@ -1410,6 +1439,26 @@ namespace mu
 
 		int32 ResultLODs = Sources[0]->GetLODCount();
 
+		// Be defensive: ensure formats are uncompressed
+		for (int i = 0; i < MUTABLE_OP_MAX_SWIZZLE_CHANNELS; ++i)
+		{
+			if (Sources[i] && Sources[i]->GetFormat()!=GetUncompressedFormat(Sources[i]->GetFormat()))
+			{
+				MUTABLE_CPUPROFILER_SCOPE(ImageFormat_ForSwizzle);
+
+				EImageFormat UncompressedFormat = GetUncompressedFormat(Sources[i]->GetFormat());
+				Ptr<Image> Formatted = Runner->CreateImage(Sources[i]->GetSizeX(), Sources[i]->GetSizeY(), 1, UncompressedFormat, EInitializationType::NotInitialized);
+				bool bSuccess = false;
+				int32 ImageCompressionQuality = 4; // TODO
+				ImOp.ImagePixelFormat(bSuccess, ImageCompressionQuality, Formatted.get(), Sources[i].get());
+				check(bSuccess); // Decompression cannot fail
+				Runner->Release(Sources[i]);
+				Sources[i] = Formatted;
+				ResultLODs = 1;
+			}
+		}
+
+
 		// Be defensive: ensure image sizes match.
 		for (int i = 1; i < MUTABLE_OP_MAX_SWIZZLE_CHANNELS; ++i)
 		{
@@ -1420,6 +1469,15 @@ namespace mu
 				ImOp.ImageResizeLinear(Resized.get(), 0, Sources[i].get());
 				Runner->Release(Sources[i]);
 				Sources[i] = Resized;
+				ResultLODs = 1;
+			}
+		}
+
+		// If any source has only 1 LOD, then the result has to have 1 LOD and the rest be regenerated later on
+		for (int32 SourceIndex = 0; SourceIndex < MUTABLE_OP_MAX_SWIZZLE_CHANNELS; ++SourceIndex)
+		{
+			if (Sources[SourceIndex] && Sources[SourceIndex]->GetLODCount() == 1)
+			{
 				ResultLODs = 1;
 			}
 		}
@@ -1516,8 +1574,8 @@ namespace mu
 		// This runs on a random worker thread
 		MUTABLE_CPUPROFILER_SCOPE(FImageSaturateTask);
 
-		constexpr bool bUseVectorIntrinsics = false;
-		ImageSaturateInPlace<bUseVectorIntrinsics>(Result.get(), Factor);
+		constexpr bool bUseVectorIntrinsics = true;
+		ImageSaturate<bUseVectorIntrinsics>(Result.get(), Factor);
 	}
 
 	//---------------------------------------------------------------------------------------------
@@ -1553,6 +1611,7 @@ namespace mu
 		OP::ImageResizeArgs Args;
 		Ptr<const Image> Base;
 		Ptr<Image> Result;
+		FImageOperator::FImagePixelFormatFunc ImagePixelFormatFunc;
 	};
 
 
@@ -1593,7 +1652,16 @@ namespace mu
 			Lods = Image::GetMipmapCount(destSize[0], destSize[1]);
 		}
 
+		if (Base->IsReference())
+		{
+			// We are trying to resize an external reference. This shouldn't happen, but be deffensive.
+			Runner->StoreImage(Op, Base);
+			return false;
+		}
+
 		Result = Runner->CreateImage( destSize[0], destSize[1], Lods, Base->GetFormat(), EInitializationType::NotInitialized );
+
+		ImagePixelFormatFunc = Runner->m_pSystem->ImagePixelFormatOverride;
 
 		return true;
 	}
@@ -1614,7 +1682,7 @@ namespace mu
 
 		// Warning: This will actually allocate temp memory that may exceed the budget.
 		// \TODO: Fix it.
-		FImageOperator ImOp = FImageOperator::GetDefault();
+		FImageOperator ImOp = FImageOperator::GetDefault(ImagePixelFormatFunc);
 		ImOp.ImageResizeLinear( Result.get(), ImageCompressionQuality, Base.get());
 
 		int32 LodCount = Result->GetLODCount();
@@ -1661,6 +1729,7 @@ namespace mu
 		Ptr<const Image> Base;
 		Ptr<Image> Result;
 		FImageSize DestSize;
+		FImageOperator::FImagePixelFormatFunc ImagePixelFormatFunc;
 	};
 
 
@@ -1703,6 +1772,8 @@ namespace mu
 
 		Result = Runner->CreateImage(DestSize[0], DestSize[1], Lods, Base->GetFormat(), EInitializationType::NotInitialized);
 
+		ImagePixelFormatFunc = Runner->m_pSystem->ImagePixelFormatOverride;
+
 		return true;
 	}
 
@@ -1713,7 +1784,7 @@ namespace mu
 		MUTABLE_CPUPROFILER_SCOPE(FImageResizeRelTask);
 
 		// \TODO: Track allocs
-		FImageOperator ImOp = FImageOperator::GetDefault();
+		FImageOperator ImOp = FImageOperator::GetDefault(ImagePixelFormatFunc);
 		ImOp.ImageResizeLinear(Result.get(), ImageCompressionQuality, Base.get());
 
 		int32 LodCount = Result->GetLODCount();
@@ -1762,7 +1833,7 @@ namespace mu
 	bool FImageInvertTask::Prepare(CodeRunner* Runner, bool& bOutFailed)
 	{
 		// This runs in the mutable Runner thread
-		MUTABLE_CPUPROFILER_SCOPE(FImageLayerTask_Prepare);
+		MUTABLE_CPUPROFILER_SCOPE(FImageInvertTask_Prepare);
 		bOutFailed = false;
 
 		Ptr<const Image> Source = Runner->LoadImage({ Args.base, Op.ExecutionIndex, Op.ExecutionOptions });
@@ -1778,7 +1849,7 @@ namespace mu
 		// This runs on a random worker thread
 		MUTABLE_CPUPROFILER_SCOPE(FImageInvertTask);
 
-		ImageInvertInPlace(Result.get());
+		ImageInvert(Result.get());
 	}
 
 
@@ -1815,13 +1886,14 @@ namespace mu
 		Ptr<const Image> Mask;
 		Ptr<Image> Result;
 		box< UE::Math::TIntVector2<uint16> > Rect;
+		FImageOperator::FImagePixelFormatFunc ImagePixelFormatFunc;
 	};
 
 
 	bool FImageComposeTask::Prepare(CodeRunner* Runner, bool& bOutFailed)
 	{
 		// This runs in the mutable Runner thread
-		MUTABLE_CPUPROFILER_SCOPE(FImageLayerTask_Prepare);
+		MUTABLE_CPUPROFILER_SCOPE(FImageComposeTask_Prepare);
 		bOutFailed = false;
 
 		ImageCompressionQuality = Runner->m_pSettings->ImageCompressionQuality;
@@ -1923,6 +1995,8 @@ namespace mu
 			}
 		}
 
+		ImagePixelFormatFunc = Runner->m_pSystem->ImagePixelFormatOverride;
+
 		return true;
 	}
 
@@ -1939,7 +2013,7 @@ namespace mu
 
 			// Compose without a mask
 			// \TODO: track allocs
-			FImageOperator ImOp = FImageOperator::GetDefault();
+			FImageOperator ImOp = FImageOperator::GetDefault(ImagePixelFormatFunc);
 			ImOp.ImageCompose(Result.get(), Block.get(), Rect);
 		}
 		else
@@ -2020,22 +2094,12 @@ namespace mu
 		RomLoadOp.m_streamBuffer.SetNumUninitialized(RomSize);
 		const int32 SizeAfter = RomLoadOp.m_streamBuffer.GetAllocatedSize();
 
-		EventType EventTyped =
-#ifdef MUTABLE_USE_NEW_TASKGRAPH
-			UE::Tasks::FTaskEvent(TEXT("FLoadMeshRomTask"));
-#else
-			FGraphEvent::CreateGraphEvent();		
-#endif
+	 	UE::Tasks::FTaskEvent ReadCompletionEvent = UE::Tasks::FTaskEvent(TEXT("FLoadMeshRomTask"));	
+		RomLoadOp.Event = ReadCompletionEvent;
 		
-		RomLoadOp.Event = EventTyped;
-		
-		TFunction<void(bool)> Callback = [EventTyped](bool bSuccess) mutable
+		TFunction<void(bool)> Callback = [ReadCompletionEvent](bool bSuccess) mutable
 		{
-#ifdef MUTABLE_USE_NEW_TASKGRAPH
-			EventTyped.Trigger();
-#else
-			EventTyped->DispatchSubsequents();
-#endif				
+			ReadCompletionEvent.Trigger();
 		};
 		
 		const uint32 RomId = Program.m_roms[RomIndex].Id;
@@ -2046,7 +2110,7 @@ namespace mu
 			return false;
 		}
 
-		Event = EventTyped; // Wait for read operation to end
+		Event = ReadCompletionEvent; // Wait for read operation to end
 		return false; // No worker thread work
 	}
 	
@@ -2070,16 +2134,17 @@ namespace mu
 			Runner->m_pSystem->StreamInterface->EndRead(RomLoadOp->m_streamID);									
 
 			const int32 ResIndex = Program.m_roms[RomIndex].ResourceIndex;
-			check(!Program.m_constantMeshes[ResIndex].Value)
+			check(!Program.ConstantMeshes[ResIndex].Value)
 			MUTABLE_CPUPROFILER_SCOPE(Unserialise);
 
-			InputMemoryStream stream(RomLoadOp->m_streamBuffer.GetData(), RomLoadOp->m_streamBuffer.Num());
-			InputArchive arch(&stream);
+			InputMemoryStream Stream(RomLoadOp->m_streamBuffer.GetData(), RomLoadOp->m_streamBuffer.Num());
+			InputArchive Arch(&Stream);
 
-			check(!Program.m_constantMeshes[ResIndex].Value);
-			Ptr<Mesh> Value = Mesh::StaticUnserialise(arch);
-			Program.m_constantMeshes[ResIndex].Value = Value;
-			check(Program.m_constantMeshes[ResIndex].Value);
+			check(!Program.ConstantMeshes[ResIndex].Value);
+			Ptr<Mesh> Value = Mesh::StaticUnserialise(Arch);
+			Program.SetMeshRomValue(RomIndex, Value);
+
+			check(Program.ConstantMeshes[ResIndex].Value);
 
 			Runner->RomLoadOps.Remove(*RomLoadOp);
 		}
@@ -2194,11 +2259,7 @@ namespace mu
 
 		FWorkingMemoryManager::FModelCacheEntry* ModelCache = Runner->m_pSystem->WorkingMemoryManager.FindModelCache(Runner->m_pModel.Get());
 
-#ifdef MUTABLE_USE_NEW_TASKGRAPH
 		TArray<UE::Tasks::FTask> ReadCompleteEvents;
-#else
-		FGraphEventArray ReadCompleteEvents;
-#endif
 
 		ReadCompleteEvents.Reserve(LODIndexCount); 
 
@@ -2207,13 +2268,13 @@ namespace mu
 			const int32 CurrentIndexIndex = LODIndexIndex + LODIndex;
 			const int32 CurrentIndex = program.m_constantImageLODIndices[CurrentIndexIndex];
 
-			if (program.m_constantImageLODs[CurrentIndex].Key<0)
+			if (program.ConstantImageLODs[CurrentIndex].Key < 0)
 			{
 				// This data is always resident.
 				continue;
 			}
 
-			int32 RomIndex = program.m_constantImageLODs[CurrentIndex].Key;
+			int32 RomIndex = program.ConstantImageLODs[CurrentIndex].Key;
 			check(RomIndex < program.m_roms.Num());
 
 			++ModelCache->PendingOpsPerRom[RomIndex];
@@ -2251,23 +2312,13 @@ namespace mu
 			RomLoadOp.m_streamBuffer.SetNumUninitialized(RomSize);
 			const int32 SizeAfter = RomLoadOp.m_streamBuffer.GetAllocatedSize();
 
-			EventType EventTyped = 
-#ifdef MUTABLE_USE_NEW_TASKGRAPH
-				UE::Tasks::FTaskEvent(TEXT("FLoadImageRomsTaskRom"));
-#else
-				FGraphEvent::CreateGraphEvent();
-#endif
+			UE::Tasks::FTaskEvent ReadCompletionEvent(TEXT("FLoadImageRomsTaskRom"));
+			ReadCompleteEvents.Add(ReadCompletionEvent);
+			RomLoadOp.Event = ReadCompletionEvent;
 
-			RomLoadOp.Event = EventTyped;
-			ReadCompleteEvents.Add(EventTyped);
-
-			TFunction<void(bool)> Callback = [EventTyped](bool bSuccess) mutable // Mutable due Trigger not being const
+			TFunction<void(bool)> Callback = [ReadCompletionEvent](bool bSuccess) mutable // Mutable due Trigger not being const
 			{
-#ifdef MUTABLE_USE_NEW_TASKGRAPH
-				EventTyped.Trigger();
-#else
-				EventTyped->DispatchSubsequents();
-#endif				
+				ReadCompletionEvent.Trigger();
 			};
 			
 			const uint32 RomId = program.m_roms[RomIndex].Id;
@@ -2280,19 +2331,11 @@ namespace mu
 		}
 
 		// Wait for all read operations to end
-#ifdef MUTABLE_USE_NEW_TASKGRAPH
-		UE::Tasks::FTaskEvent EventTyped(TEXT("FLoadImageRomsTask"));
-		EventTyped.AddPrerequisites(ReadCompleteEvents);
-		EventTyped.Trigger();
-		Event = EventTyped;
-#else
-		Event = FGraphEvent::CreateGraphEvent();
-		for (const FGraphEventRef& ReadCompleteEvent : ReadCompleteEvents)
-		{
-			Event->DontCompleteUntil(ReadCompleteEvent);
-		}
-		Event->DispatchSubsequents();
-#endif
+		UE::Tasks::FTaskEvent GatherReadsCompletionEvent(TEXT("FLoadImageRomsTask"));
+		GatherReadsCompletionEvent.AddPrerequisites(ReadCompleteEvents);
+		GatherReadsCompletionEvent.Trigger();
+
+		Event = GatherReadsCompletionEvent;
 			
 		return false; // No worker thread work
 	}
@@ -2309,7 +2352,7 @@ namespace mu
 			return;
 		}
 
-		FProgram& program = Runner->m_pModel->GetPrivate()->m_program;
+		FProgram& Program = Runner->m_pModel->GetPrivate()->m_program;
 		
 		FWorkingMemoryManager::FModelCacheEntry* ModelCache = Runner->m_pSystem->WorkingMemoryManager.FindModelCache(Runner->m_pModel.Get());
 
@@ -2322,16 +2365,17 @@ namespace mu
 
 				MUTABLE_CPUPROFILER_SCOPE(Unserialise);
 
-				InputMemoryStream stream(RomLoadOp->m_streamBuffer.GetData(), RomLoadOp->m_streamBuffer.Num());
-				InputArchive arch(&stream);
+				InputMemoryStream Stream(RomLoadOp->m_streamBuffer.GetData(), RomLoadOp->m_streamBuffer.Num());
+				InputArchive Arch(&Stream);
 
-				const int32 ResIndex = program.m_roms[RomIndex].ResourceIndex;
+				const int32 ResIndex = Program.m_roms[RomIndex].ResourceIndex;
 
 				// TODO: Try to reuse buffer from PooledImages.
-				check(!program.m_constantImageLODs[ResIndex].Value);
-				Ptr<Image> Value = Image::StaticUnserialise(arch);
-				program.m_constantImageLODs[ResIndex].Value = Value;
-				check(program.m_constantImageLODs[ResIndex].Value);
+				check(!Program.ConstantImageLODs[ResIndex].Value);
+				Ptr<Image> Value = Image::StaticUnserialise(Arch);
+
+				Program.SetImageRomValue(RomIndex, Value);
+				check(Program.ConstantImageLODs[ResIndex].Value);
 				
 				Runner->RomLoadOps.Remove(*RomLoadOp);
 			}
@@ -2343,16 +2387,16 @@ namespace mu
 		for (int32 LODIndex = 0; LODIndex < LODIndexCount; ++LODIndex)
 		{
 			int32 CurrentIndexIndex = LODIndexIndex + LODIndex;
-			int32 CurrentIndex = program.m_constantImageLODIndices[CurrentIndexIndex];
+			int32 CurrentIndex = Program.m_constantImageLODIndices[CurrentIndexIndex];
 
-			if (program.m_constantImageLODs[CurrentIndex].Key < 0)
+			if (Program.ConstantImageLODs[CurrentIndex].Key < 0)
 			{
 				// This data is always resident.
 				continue;
 			}
 
-			int32 RomIndex = program.m_constantImageLODs[CurrentIndex].Key;
-			check(RomIndex < program.m_roms.Num());
+			int32 RomIndex = Program.ConstantImageLODs[CurrentIndex].Key;
+			check(RomIndex < Program.m_roms.Num());
 
 			Runner->m_pSystem->WorkingMemoryManager.MarkRomUsed(RomIndex, Runner->m_pModel);
 			--ModelCache->PendingOpsPerRom[RomIndex];
@@ -2365,13 +2409,13 @@ namespace mu
 	}
 
 
-	//---------------------------------------------------------------------------------------------
-	//---------------------------------------------------------------------------------------------
-	//---------------------------------------------------------------------------------------------
+	/** This task is used to load an image parameter (by its FName) or an image reference (from its ID).
+	*/
 	class FImageExternalLoadTask : public CodeRunner::FIssuedTask
 	{
 	public:
-		FImageExternalLoadTask(const FScheduledOp& InItem, uint8 InMipmapsToSkip, FName InId);
+
+		FImageExternalLoadTask(const FScheduledOp& InItem, uint8 InMipmapsToSkip, CodeRunner::FExternalImageId InId);
 
 		// FIssuedTask interface
 		virtual bool Prepare(CodeRunner*, bool& bOutFailed) override;
@@ -2379,7 +2423,7 @@ namespace mu
 		
 	private:
 		uint8 MipmapsToSkip;
-		FName Id;
+		CodeRunner::FExternalImageId Id;
 
 		Ptr<Image> Result;
 		
@@ -2387,15 +2431,14 @@ namespace mu
 	};
 
 
-	//---------------------------------------------------------------------------------------------
-	FImageExternalLoadTask::FImageExternalLoadTask(const FScheduledOp& InOp,  uint8 InMipmapsToSkip, FName InId)
+	FImageExternalLoadTask::FImageExternalLoadTask(const FScheduledOp& InOp, uint8 InMipmapsToSkip, CodeRunner::FExternalImageId InId)
 		: FIssuedTask(InOp)
 	{
 		MipmapsToSkip = InMipmapsToSkip;
 		Id = InId;
 	}
 
-	//---------------------------------------------------------------------------------------------
+
 	bool FImageExternalLoadTask::Prepare(CodeRunner* Runner, bool& bOutFailed)
 	{
 		// This runs in the mutable Runner thread
@@ -2419,7 +2462,7 @@ namespace mu
 		return false;
 	}
 
-	//---------------------------------------------------------------------------------------------
+
 	void FImageExternalLoadTask::Complete(CodeRunner* Runner)
 	{
 		if (ExternalCleanUpFunc)
@@ -2429,7 +2472,6 @@ namespace mu
 
 		Runner->StoreImage(Op, Result);
 	}	
-
 	
 	//---------------------------------------------------------------------------------------------
 	//---------------------------------------------------------------------------------------------
@@ -2447,8 +2489,8 @@ namespace mu
 		case OP_TYPE::ME_CONSTANT:
 		{
 			OP::MeshConstantArgs args = program.GetOpArgs<OP::MeshConstantArgs>(item.At);
-			int32 RomIndex = program.m_constantMeshes[args.value].Key;
-			if (RomIndex >= 0 && !program.m_constantMeshes[args.value].Value )
+			int32 RomIndex = program.ConstantMeshes[args.value].Key;
+			if (RomIndex >= 0 && !program.ConstantMeshes[args.value].Value)
 			{
 				Issued = MakeShared<FLoadMeshRomTask>(item, RomIndex);
 			}
@@ -2496,7 +2538,7 @@ namespace mu
 			//for (int32 i=0; i<LODIndexCount; ++i)
 			//{
 			//	uint32 LODIndex = program.m_constantImageLODIndices[LODIndexIndex+i];
-			//	if ( !program.m_constantImageLODs[LODIndex].Value )
+			//	if ( !program.ConstantImageLODs[LODIndex].Value )
 			//	{
 			//		bAnyMissing = true;
 			//		break;
@@ -2531,11 +2573,32 @@ namespace mu
 
 			const uint8 MipmapsToSkip = item.ExecutionOptions + static_cast<uint8>(ImageLOD);
 
-			Issued = MakeShared<FImageExternalLoadTask>(item, MipmapsToSkip, Id);
+			CodeRunner::FExternalImageId FullId;
+			FullId.ParameterId = Id;
+			Issued = MakeShared<FImageExternalLoadTask>(item, MipmapsToSkip, FullId);
 
 			break;
 		}
-			
+
+		case OP_TYPE::IM_REFERENCE:
+		{
+			OP::ResourceReferenceArgs Args = m_pModel->GetPrivate()->m_program.GetOpArgs<OP::ResourceReferenceArgs>(item.At);
+
+			// We only convert references to images if indicated in the operation.
+			if (Args.ForceLoad)
+			{
+				check(item.Stage==0);
+
+				const uint8 MipmapsToSkip = item.ExecutionOptions + static_cast<uint8>(ImageLOD);
+
+				FExternalImageId FullId;
+				FullId.ReferenceImageId = Args.ID;
+				Issued = MakeShared<FImageExternalLoadTask>(item, MipmapsToSkip, FullId);
+			}
+
+			break;
+		}
+
 		case OP_TYPE::IM_PIXELFORMAT:
 		{
 			if (item.Stage == 1)
@@ -2631,7 +2694,8 @@ namespace mu
 
 		case OP_TYPE::IM_COMPOSE:
 		{
-			if (item.Stage == 2)
+			if ((ExecutionStrategy == EExecutionStrategy::MinimizeMemory && item.Stage == 3) ||
+				(ExecutionStrategy != EExecutionStrategy::MinimizeMemory && item.Stage == 2))
 			{
 				OP::ImageComposeArgs Args = program.GetOpArgs<OP::ImageComposeArgs>(item.At);
 				Ptr<const Layout> ComposeLayout = static_cast<const Layout*>( m_heapData[item.CustomState].Resource.get());

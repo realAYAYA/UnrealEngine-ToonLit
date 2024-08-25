@@ -39,8 +39,9 @@ FSkeletonEditorMode::FSkeletonEditorMode(TSharedRef<FWorkflowCentricApplication>
 	TabFactories.RegisterFactory(PersonaModule.CreateAssetDetailsTabFactory(InHostingApp, FOnGetAsset::CreateSP(&SkeletonEditor.Get(), &FSkeletonEditor::HandleGetAsset), FOnDetailsCreated()));
 	TabFactories.RegisterFactory(PersonaModule.CreateAnimationAssetBrowserTabFactory(InHostingApp, SkeletonEditor->GetPersonaToolkit(), FOnOpenNewAsset::CreateSP(&SkeletonEditor.Get(), &FSkeletonEditor::HandleOpenNewAsset), FOnAnimationSequenceBrowserCreated::CreateSP(&SkeletonEditor.Get(), &FSkeletonEditor::HandleAnimationSequenceBrowserCreated), true));
 	TabFactories.RegisterFactory(PersonaModule.CreateAnimAssetFindReplaceTabFactory(InHostingApp, FAnimAssetFindReplaceConfig()));
+	TabFactories.RegisterFactory(PersonaModule.CreateCurveViewerTabFactory(InHostingApp, InSkeletonTree->GetEditableSkeleton(), SkeletonEditor->GetPersonaToolkit()->GetPreviewScene(), OnObjectsSelected));
 
-	TabLayout = FTabManager::NewLayout("Standalone_SkeletonEditor_Layout_v1.4")
+	TabLayout = FTabManager::NewLayout("Standalone_SkeletonEditor_Layout_v1.5")
 		->AddArea
 		(
 			FTabManager::NewPrimaryArea()
@@ -89,6 +90,7 @@ FSkeletonEditorMode::FSkeletonEditorMode(TSharedRef<FWorkflowCentricApplication>
 						->SetSizeCoefficient(0.5f)
 						->SetHideTabWell(false)
 						->AddTab(SkeletonEditorTabs::DetailsTab, ETabState::OpenedTab)
+						->AddTab(SkeletonEditorTabs::CurveDebuggerTab, ETabState::ClosedTab)
 						->AddTab(SkeletonEditorTabs::AdvancedPreviewTab, ETabState::OpenedTab)
 						->SetForegroundTab(SkeletonEditorTabs::DetailsTab)
 					)

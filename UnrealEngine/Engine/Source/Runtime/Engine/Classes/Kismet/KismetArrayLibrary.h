@@ -15,6 +15,13 @@
 
 class AActor;
 
+UENUM(BlueprintType)
+enum class EArraySortOrder : uint8
+{
+	Ascending,
+	Descending
+};
+
 UCLASS(meta=(BlueprintThreadSafe), MinimalAPI)
 class UKismetArrayLibrary : public UBlueprintFunctionLibrary
 {
@@ -226,7 +233,7 @@ class UKismetArrayLibrary : public UBlueprintFunctionLibrary
 	 *@param	FilterClass		The Actor sub-class type that acts as the filter, only objects derived from it will be returned.
 	 *@return	An array containing only those objects which are derived from the class specified.
 	*/
-	UFUNCTION(BlueprintCallable, meta=(DisplayName = "Filter Array"), Category="Utilities|Array")
+	UFUNCTION(BlueprintCallable, meta=(DisplayName = "Filter Array", DeterminesOutputType = "FilterClass", DynamicOutputParam = "FilteredArray"), Category = "Utilities|Array")
 	static ENGINE_API void FilterArray(const TArray<AActor*>& TargetArray, TSubclassOf<class AActor> FilterClass, TArray<AActor*>& FilteredArray);
 
 	/** 
@@ -265,6 +272,67 @@ class UKismetArrayLibrary : public UBlueprintFunctionLibrary
 	 */
 	UFUNCTION(BlueprintPure, CustomThunk, meta=(DisplayName = "Random Array Item from Stream", ArrayParm = "TargetArray", ArrayTypeDependentParams = "OutItem"), Category="Utilities|Array")
 	static ENGINE_API void Array_RandomFromStream(const TArray<int32>& TargetArray, UPARAM(Ref) FRandomStream& RandomStream, int32& OutItem, int32& OutIndex);
+
+	/**
+	 * Sorts an array of strings alphabetically.
+	 *
+	 * @param	TargetArray		The array to sort.
+	 * @param	bStableSort		If a stable sort should be used. This preserves the order of identical elements, but is slower.
+	 * @param	SortOrder		If the array should be sorted in ascending or descending order.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Utilities|Array|Sort", meta = (AdvancedDisplay = "bStableSort,SortOrder"))
+	static ENGINE_API void SortStringArray(UPARAM(Ref) TArray<FString>& TargetArray, bool bStableSort = false, EArraySortOrder SortOrder = EArraySortOrder::Ascending);
+
+	/**
+	 * Sorts an array of FNames.
+	 *
+	 * @param	TargetArray		The array to sort.
+	 * @param	bStableSort		If a stable sort should be used. This preserves the order of identical elements, but is slower.
+	 * @param	bLexicalSort	If the names should be sorted based on the string value of the name rather than the comparison index. This is slower when enabled.
+	 * @param	SortOrder		If the array should be sorted in ascending or descending order.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Utilities|Array|Sort", meta = (AdvancedDisplay = "bStableSort,bLexicalSort,SortOrder"))
+	static ENGINE_API void SortNameArray(UPARAM(Ref) TArray<FName>& TargetArray, bool bStableSort = false, bool bLexicalSort = true, EArraySortOrder SortOrder = EArraySortOrder::Ascending);
+
+	/**
+	 * Sorts an array of bytes.
+	 *
+	 * @param	TargetArray		The array to sort.
+	 * @param	bStableSort		If a stable sort should be used. This preserves the order of identical elements, but is slower.
+	 * @param	SortOrder		If the array should be sorted in ascending or descending order.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Utilities|Array|Sort", meta = (AdvancedDisplay = "bStableSort,SortOrder"))
+	static ENGINE_API void SortByteArray(UPARAM(Ref) TArray<uint8>& TargetArray, bool bStableSort = false, EArraySortOrder SortOrder = EArraySortOrder::Ascending);
+
+	/**
+	 * Sorts an array of integers.
+	 *
+	 * @param	TargetArray		The array to sort.
+	 * @param	bStableSort		If a stable sort should be used. This preserves the order of identical elements, but is slower.
+	 * @param	SortOrder		If the array should be sorted in ascending or descending order.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Utilities|Array|Sort", meta = (DisplayName = "Sort Integer Array", AdvancedDisplay = "bStableSort,SortOrder"))
+	static ENGINE_API void SortIntArray(UPARAM(Ref) TArray<int32>& TargetArray, bool bStableSort = false, EArraySortOrder SortOrder = EArraySortOrder::Ascending);
+
+	/**
+	 * Sorts an array of 64-bit integers.
+	 *
+	 * @param	TargetArray		The array to sort.
+	 * @param	bStableSort		If a stable sort should be used. This preserves the order of identical elements, but is slower.
+	 * @param	SortOrder		If the array should be sorted in ascending or descending order.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Utilities|Array|Sort", meta = (DisplayName = "Sort Integer64 Array", AdvancedDisplay = "bStableSort,SortOrder"))
+	static ENGINE_API void SortInt64Array(UPARAM(Ref) TArray<int64>& TargetArray, bool bStableSort = false, EArraySortOrder SortOrder = EArraySortOrder::Ascending);
+
+	/**
+	 * Sorts an array of doubles.
+	 *
+	 * @param	TargetArray		The array to sort.
+	 * @param	bStableSort		If a stable sort should be used. This preserves the order of identical elements, but is slower.
+	 * @param	SortOrder		If the array should be sorted in ascending or descending order.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Utilities|Array|Sort", meta = (AdvancedDisplay = "bStableSort,SortOrder"))
+	static ENGINE_API void SortFloatArray(UPARAM(Ref) TArray<double>& TargetArray, bool bStableSort = false, EArraySortOrder SortOrder = EArraySortOrder::Ascending);
 
 	// Native functions that will be called by the below custom thunk layers, which read off the property address, and call the appropriate native handler
 	static ENGINE_API int32 GenericArray_Add(void* TargetArray, const FArrayProperty* ArrayProp, const void* NewItem);

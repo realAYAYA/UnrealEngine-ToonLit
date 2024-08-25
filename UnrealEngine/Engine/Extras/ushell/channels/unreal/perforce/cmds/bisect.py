@@ -1,6 +1,7 @@
 # Copyright Epic Games, Inc. All Rights Reserved.
 
 import os
+import sys
 import p4utils
 import unrealcmd
 from peafour import P4
@@ -100,7 +101,10 @@ class Bisect(unrealcmd.Cmd):
         if self.args.dryrun:
             return _user_choice()
 
-        ret = sp.run(self._script).returncode
+        cmd = self._script
+        if self._script[0].endswith(".py"):
+            cmd = (sys.executable, *cmd)
+        ret = sp.run(cmd).returncode
         if ret == 80: return "b"
         if ret ==  0: return "g"
         if ret == 90: return "f"
@@ -272,7 +276,6 @@ def _test_bisectomatron():
             print(" ", line.decode(), sep="")
             print()
             print(b.get_good(), b.get_bad())
-            breakpoint()
 
     for i in range(50000):
         print(i, end="\r")

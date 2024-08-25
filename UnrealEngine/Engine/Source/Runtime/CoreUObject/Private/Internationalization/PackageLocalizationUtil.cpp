@@ -23,7 +23,7 @@ bool FPackageLocalizationUtil::ConvertLocalizedToSource(const FString& InLocaliz
 			}
 
 			OutSource = InLocalized;
-			OutSource.RemoveAt(L10NStart, L10NEnd - L10NStart, false);
+			OutSource.RemoveAt(L10NStart, L10NEnd - L10NStart, EAllowShrinking::No);
 			return true;
 		}
 	}

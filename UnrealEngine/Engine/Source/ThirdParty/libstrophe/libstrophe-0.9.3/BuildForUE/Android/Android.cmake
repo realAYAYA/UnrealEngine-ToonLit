@@ -1,4 +1,4 @@
-include($ENV{UE4_PHYSX_ROOT_DIR}/Externals/CMakeModules/Android/android.toolchain.cmake)
+include($ENV{UE4_ENGINE_ROOT_DIR}/Engine/Source/ThirdParty/CMake/PlatformScripts/Android/Android.cmake)
 
 set(SOCKET_IMPL "../src/sock.c" CACHE TYPE INTERNAL FORCE)
 set(DISABLE_TLS 0 CACHE TYPE INTERNAL FORCE)

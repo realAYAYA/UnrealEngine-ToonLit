@@ -90,7 +90,11 @@ public:
 
 	TARGETPLATFORM_API virtual bool UsesRayTracing() const override;
 
+	TARGETPLATFORM_API virtual uint32 GetSupportedHardwareMask() const override;
+
 	TARGETPLATFORM_API virtual EOfflineBVHMode GetStaticMeshOfflineBVHMode() const override;
+
+	TARGETPLATFORM_API virtual bool GetStaticMeshOfflineBVHCompression() const override;
 
 	TARGETPLATFORM_API virtual bool ForcesSimpleSkyDiffuse() const override;
 
@@ -99,6 +103,8 @@ public:
 	TARGETPLATFORM_API virtual int32 GetHeightFogModeForOpaque() const override;
 
 	TARGETPLATFORM_API virtual bool UsesMobileAmbientOcclusion() const override;
+
+	TARGETPLATFORM_API virtual bool UsesMobileDBuffer() const override;
 
 	TARGETPLATFORM_API virtual bool UsesASTCHDR() const override;
 
@@ -468,6 +474,9 @@ public:
 		case ETargetPlatformFeatures::Packaging:
 			return false;
 
+		case ETargetPlatformFeatures::CanCookPackages:
+			return false;
+
 		case ETargetPlatformFeatures::TextureStreaming:
 			return TPlatformProperties::SupportsTextureStreaming();
 		case ETargetPlatformFeatures::MeshLODStreaming:
@@ -604,3 +613,371 @@ protected:
 };
 
 
+// Redirect everything to TPS or TPC
+class FTargetPlatformMerged final
+	: public ITargetPlatform
+{
+public:
+	FTargetPlatformMerged(ITargetPlatformSettings* InTargetPlatformSettings, ITargetPlatformControls* InTargetPlatformControls)
+		: TargetPlatformSettings(InTargetPlatformSettings)
+		, TargetPlatformControls(InTargetPlatformControls)
+	{
+
+	}
+	virtual bool AddDevice(const FString& DeviceName, bool bDefault) override 
+	{ 
+		return TargetPlatformControls->AddDevice(DeviceName, bDefault); 
+	}
+	virtual bool AddDevice(const FString& DeviceId, const FString& DeviceUserFriendlyName, const FString& Username, const FString& Password, bool bDefault) override 
+	{ 
+		return TargetPlatformControls->AddDevice(DeviceId, DeviceUserFriendlyName, Username, Password, bDefault); 
+	}
+	virtual FString PlatformName() const override 
+	{
+		return TargetPlatformControls->PlatformName();
+	}
+	virtual FText DisplayName() const override 
+	{
+		return TargetPlatformControls->DisplayName();
+	}
+	virtual int32 CheckRequirements(bool bProjectHasCode, EBuildConfiguration Configuration, bool bRequiresAssetNativization, FString& OutTutorialPath, FString& OutDocumentationPath, FText& CustomizedLogMessage) const override 
+	{
+		return TargetPlatformControls->CheckRequirements(bProjectHasCode, Configuration, bRequiresAssetNativization, OutTutorialPath, OutDocumentationPath, CustomizedLogMessage);
+	}
+	virtual bool RequiresTempTarget(bool bProjectHasCode, EBuildConfiguration Configuration, bool bRequiresAssetNativization, FText& OutReason) const override 
+	{
+		return TargetPlatformControls->RequiresTempTarget(bProjectHasCode, Configuration, bRequiresAssetNativization, OutReason);
+	}
+	virtual const PlatformInfo::FTargetPlatformInfo& GetTargetPlatformInfo() const override 
+	{
+		return TargetPlatformControls->GetTargetPlatformInfo();
+	}
+	virtual const FDataDrivenPlatformInfo& GetPlatformInfo() const override 
+	{
+		return TargetPlatformControls->GetPlatformInfo();
+	}
+	virtual FConfigCacheIni* GetConfigSystem() const override 
+	{
+		return TargetPlatformSettings->GetConfigSystem();
+	}
+	virtual FString IniPlatformName() const override 
+	{
+		return TargetPlatformSettings->IniPlatformName();
+	}
+	virtual FString CookingDeviceProfileName() const override 
+	{
+		return TargetPlatformControls->CookingDeviceProfileName();
+	}
+	virtual void EnableDeviceCheck(bool OnOff) override 
+	{
+		TargetPlatformControls->EnableDeviceCheck(OnOff);
+	}
+	virtual void GetAllDevices(TArray<ITargetDevicePtr>& OutDevices) const override 
+	{
+		TargetPlatformControls->GetAllDevices(OutDevices);
+	}
+	virtual FName GetZlibReplacementFormat() const override 
+	{
+		return TargetPlatformControls->GetZlibReplacementFormat();
+	}
+	virtual int64 GetMemoryMappingAlignment() const override 
+	{
+		return TargetPlatformControls->GetMemoryMappingAlignment();
+	}
+	virtual bool GenerateStreamingInstallManifest(const TMultiMap<FString, int32>& PakchunkMap, const TSet<int32>& PakchunkIndicesInUse) const override 
+	{
+		return TargetPlatformControls->GenerateStreamingInstallManifest(PakchunkMap, PakchunkIndicesInUse);
+	}
+	virtual ITargetDevicePtr GetDefaultDevice() const override 
+	{
+		return TargetPlatformControls->GetDefaultDevice();
+	}
+	virtual ITargetDevicePtr GetDevice(const FTargetDeviceId& DeviceId) override 
+	{
+		return TargetPlatformControls->GetDevice(DeviceId);
+	}
+	virtual bool HasEditorOnlyData() const override 
+	{
+		return TargetPlatformControls->HasEditorOnlyData();
+	}
+	virtual bool AllowsEditorObjects() const override 
+	{
+		return TargetPlatformControls->AllowsEditorObjects();
+	}
+	virtual bool AllowsDevelopmentObjects() const override 
+	{
+		return TargetPlatformControls->AllowsDevelopmentObjects();
+	}
+	virtual bool IsClientOnly() const override 
+	{
+		return TargetPlatformControls->IsClientOnly();
+	}
+	virtual bool IsLittleEndian() const override 
+	{
+		return TargetPlatformControls->IsLittleEndian();
+	}
+	virtual bool IsRunningPlatform() const override 
+	{
+		return TargetPlatformControls->IsRunningPlatform();
+	}
+	virtual bool IsServerOnly() const override 
+	{
+		return TargetPlatformControls->IsServerOnly();
+	}
+	virtual bool IsEnabledForPlugin(const IPlugin& Plugin) const override 
+	{
+		return TargetPlatformControls->IsEnabledForPlugin(Plugin);
+	}
+	virtual bool CanSupportRemoteShaderCompile() const override 
+	{
+		return TargetPlatformControls->CanSupportRemoteShaderCompile();
+	}
+	virtual void GetShaderCompilerDependencies(TArray<FString>& OutDependencies) const override 
+	{
+		TargetPlatformControls->GetShaderCompilerDependencies(OutDependencies);
+	}
+	virtual bool IsSdkInstalled(bool bProjectHasCode, FString& OutDocumentationPath) const override 
+	{
+		return TargetPlatformControls->IsSdkInstalled(bProjectHasCode, OutDocumentationPath);
+	}
+	virtual bool RequiresCookedData() const override 
+	{
+		return TargetPlatformControls->RequiresCookedData();
+	}
+	virtual bool RequiresOriginalReleaseVersionForPatch() const override 
+	{
+		return TargetPlatformControls->RequiresOriginalReleaseVersionForPatch();
+	}
+	virtual bool HasSecurePackageFormat() const override 
+	{
+		return TargetPlatformControls->HasSecurePackageFormat();
+	}
+	virtual EPlatformAuthentication RequiresUserCredentials() const override 
+	{
+		return TargetPlatformControls->RequiresUserCredentials();
+	}
+	virtual bool SupportsAutoSDK() const override 
+	{
+		return TargetPlatformControls->SupportsAutoSDK();
+	}
+	virtual bool SupportsBuildTarget(EBuildTargetType TargetType) const override 
+	{
+		return TargetPlatformControls->SupportsBuildTarget(TargetType);
+	}
+	virtual EBuildTargetType GetRuntimePlatformType() const override 
+	{
+		return TargetPlatformControls->GetRuntimePlatformType();
+	}
+	virtual bool SupportsFeature(ETargetPlatformFeatures Feature) const override 
+	{
+		return TargetPlatformSettings->SupportsFeature(Feature);
+	}
+	virtual bool SupportsValueForType(FName SupportedType, FName RequiredSupportedValue) const override 
+	{
+		return TargetPlatformSettings->SupportsValueForType(SupportedType, RequiredSupportedValue);
+	}
+	virtual bool UsesForwardShading() const override 
+	{
+		return TargetPlatformSettings->UsesForwardShading();
+	}
+	virtual bool UsesDBuffer() const override 
+	{
+		return TargetPlatformSettings->UsesDBuffer();
+	}
+	virtual bool UsesBasePassVelocity() const override 
+	{
+		return TargetPlatformSettings->UsesBasePassVelocity();
+	}
+	virtual bool UsesSelectiveBasePassOutputs() const override 
+	{
+		return TargetPlatformSettings->UsesSelectiveBasePassOutputs();
+	}
+	virtual bool UsesDistanceFields() const override 
+	{
+		return TargetPlatformSettings->UsesDistanceFields();
+	}
+	virtual bool UsesRayTracing() const override 
+	{
+		return TargetPlatformSettings->UsesRayTracing();
+	}
+	virtual uint32 GetSupportedHardwareMask() const override
+	{
+		return TargetPlatformSettings->GetSupportedHardwareMask();
+	}
+	virtual EOfflineBVHMode GetStaticMeshOfflineBVHMode() const override 
+	{
+		return TargetPlatformSettings->GetStaticMeshOfflineBVHMode();
+	}
+	virtual bool GetStaticMeshOfflineBVHCompression() const override 
+	{
+		return TargetPlatformSettings->GetStaticMeshOfflineBVHCompression();
+	}
+	virtual bool ForcesSimpleSkyDiffuse() const override 
+	{
+		return TargetPlatformSettings->ForcesSimpleSkyDiffuse();
+	}
+	virtual bool VelocityEncodeDepth() const override 
+	{
+		return TargetPlatformSettings->VelocityEncodeDepth();
+	}
+	virtual float GetDownSampleMeshDistanceFieldDivider() const override 
+	{
+		return TargetPlatformSettings->GetDownSampleMeshDistanceFieldDivider();
+	}
+	virtual int32 GetHeightFogModeForOpaque() const override 
+	{
+		return TargetPlatformSettings->GetHeightFogModeForOpaque();
+	}
+	virtual bool UsesMobileAmbientOcclusion() const override 
+	{
+		return TargetPlatformSettings->UsesMobileAmbientOcclusion();
+	}
+	virtual bool UsesMobileDBuffer() const override 
+	{
+		return TargetPlatformSettings->UsesMobileDBuffer();
+	}
+	virtual bool UsesASTCHDR() const override 
+	{
+		return TargetPlatformSettings->UsesASTCHDR();
+	}
+	virtual void GetAllPossibleShaderFormats(TArray<FName>& OutFormats) const override 
+	{
+		TargetPlatformSettings->GetAllPossibleShaderFormats(OutFormats);
+	}
+	virtual void GetAllTargetedShaderFormats(TArray<FName>& OutFormats) const override 
+	{
+		TargetPlatformSettings->GetAllTargetedShaderFormats(OutFormats);
+	}
+	virtual void GetRayTracingShaderFormats(TArray<FName>& OutFormats) const override 
+	{
+		TargetPlatformSettings->GetRayTracingShaderFormats(OutFormats);
+	}
+	virtual void GetPlatformSpecificProjectAnalytics(TArray<struct FAnalyticsEventAttribute>& AnalyticsParamArray) const override 
+	{
+		TargetPlatformControls->GetPlatformSpecificProjectAnalytics(AnalyticsParamArray);
+	}
+#if WITH_ENGINE
+	virtual FName GetPhysicsFormat(class UBodySetup* Body) const override 
+	{
+		return TargetPlatformControls->GetPhysicsFormat(Body);
+	}
+	virtual void GetReflectionCaptureFormats(TArray<FName>& OutFormats) const override 
+	{
+		TargetPlatformSettings->GetReflectionCaptureFormats(OutFormats);
+	}
+	virtual void GetShaderFormatModuleHints(TArray<FName>& OutModuleNames) const override 
+	{
+		TargetPlatformControls->GetShaderFormatModuleHints(OutModuleNames);
+	}
+	virtual void GetTextureFormats(const class UTexture* Texture, TArray< TArray<FName> >& OutFormats) const override 
+	{
+		TargetPlatformControls->GetTextureFormats(Texture, OutFormats);
+	}
+	virtual void GetAllTextureFormats(TArray<FName>& OutFormats) const override 
+	{
+		TargetPlatformControls->GetAllTextureFormats(OutFormats);
+	}
+
+	virtual void GetTextureFormatModuleHints(TArray<FName>& OutModuleNames) const override 
+	{
+		TargetPlatformControls->GetTextureFormatModuleHints(OutModuleNames);
+	}
+	virtual FName FinalizeVirtualTextureLayerFormat(FName Format) const override 
+	{
+		return TargetPlatformControls->FinalizeVirtualTextureLayerFormat(Format);
+	}
+	virtual bool SupportsLQCompressionTextureFormat() const override 
+	{
+		return TargetPlatformControls->SupportsLQCompressionTextureFormat();
+	}
+	virtual FName GetWaveFormat(const class USoundWave* Wave) const override 
+	{
+		return TargetPlatformControls->GetWaveFormat(Wave);
+	}
+	virtual void GetAllWaveFormats(TArray<FName>& OutFormats) const override 
+	{
+		TargetPlatformControls->GetAllWaveFormats(OutFormats);
+	}
+	virtual void GetWaveFormatModuleHints(TArray<FName>& OutModuleNames) const override 
+	{
+		TargetPlatformControls->GetWaveFormatModuleHints(OutModuleNames);
+	}
+	virtual bool AllowAudioVisualData() const override 
+	{
+		return TargetPlatformControls->AllowAudioVisualData();
+	}
+	virtual bool AllowObject(const class UObject* Object) const override 
+	{
+		return TargetPlatformControls->AllowObject(Object);
+	}
+	virtual const class UTextureLODSettings& GetTextureLODSettings() const override 
+	{
+		return TargetPlatformSettings->GetTextureLODSettings();
+	}
+	virtual void RegisterTextureLODSettings(const class UTextureLODSettings* InTextureLODSettings) override 
+	{
+		TargetPlatformSettings->RegisterTextureLODSettings(InTextureLODSettings);
+	}
+	virtual const class FStaticMeshLODSettings& GetStaticMeshLODSettings() const override 
+	{
+		return TargetPlatformSettings->GetStaticMeshLODSettings();
+	}
+	virtual FName GetMeshBuilderModuleName() const override 
+	{
+		return TargetPlatformControls->GetMeshBuilderModuleName();
+	}
+#endif
+	virtual bool PackageBuild(const FString& InPackgeDirectory) override 
+	{
+		return TargetPlatformControls->PackageBuild(InPackgeDirectory);
+	}
+	virtual bool SupportsVariants() const override 
+	{
+		return TargetPlatformControls->SupportsVariants();
+	}
+	virtual float GetVariantPriority() const override 
+	{
+		return TargetPlatformControls->SupportsVariants();
+	}
+	virtual bool SendLowerCaseFilePaths() const override 
+	{
+		return TargetPlatformControls->SupportsVariants();
+	}
+	virtual void GetBuildProjectSettingKeys(FString& OutSection, TArray<FString>& InBoolKeys, TArray<FString>& InIntKeys, TArray<FString>& InStringKeys) const override 
+	{
+		TargetPlatformControls->GetBuildProjectSettingKeys(OutSection, InBoolKeys, InIntKeys, InStringKeys);
+	}
+	virtual int32 GetPlatformOrdinal() const override 
+	{
+		return TargetPlatformControls->GetPlatformOrdinal();
+	}
+	virtual TSharedPtr<IDeviceManagerCustomPlatformWidgetCreator> GetCustomWidgetCreator() const override 
+	{
+		return TargetPlatformControls->GetCustomWidgetCreator();
+	}
+	virtual bool ShouldExpandTo32Bit(const uint16* Indices, const int32 NumIndices) const override 
+	{
+		return TargetPlatformControls->ShouldExpandTo32Bit(Indices, NumIndices);
+	}
+	virtual bool CopyFileToTarget(const FString& DeviceId, const FString& HostFilename, const FString& TargetFilename, const TMap<FString, FString>& CustomPlatformData) override 
+	{
+		return TargetPlatformControls->CopyFileToTarget(DeviceId, HostFilename, TargetFilename, CustomPlatformData);
+	}
+	virtual void GetExtraPackagesToCook(TArray<FName>& PackageNames) const override
+	{
+		TargetPlatformControls->GetExtraPackagesToCook(PackageNames);
+	}
+	virtual bool InitializeHostPlatform() override 
+	{
+		return TargetPlatformControls->InitializeHostPlatform();
+	}
+
+public:
+
+	/** Virtual destructor. */
+	virtual ~FTargetPlatformMerged() {}
+
+private:
+	ITargetPlatformSettings* TargetPlatformSettings;
+	ITargetPlatformControls* TargetPlatformControls;
+};

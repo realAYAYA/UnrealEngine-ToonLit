@@ -37,6 +37,9 @@ namespace InstallBundleUtil
 
 	INSTALLBUNDLEMANAGER_API const FString& GetInstallBundleSectionPrefix();
 
+	// returns true if the given BundleName exists in the InstallBundle.ini config
+	INSTALLBUNDLEMANAGER_API bool HasInstallBundleInConfig(const FString& BundleName);
+
 	// Returns true
 	INSTALLBUNDLEMANAGER_API bool AllInstallBundlePredicate(const FConfigFile& InstallBundleConfig, const FString& Section);
 

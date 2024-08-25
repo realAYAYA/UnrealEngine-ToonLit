@@ -4,12 +4,13 @@
 #include "AsioIoable.h"
 #include "AsioSocket.h"
 #include "CborPayload.h"
-#include "StoreService.h"
 #include "Recorder.h"
 #include "Store.h"
 #include "StoreCborServer.h"
-#include "TraceRelay.h"
+#include "StoreService.h"
 #include "StoreSettings.h"
+#include "TraceRelay.h"
+#include "Version.h"
 
 ////////////////////////////////////////////////////////////////////////////////
 class FStoreCborPeer
@@ -26,6 +27,7 @@ protected:
 	void					OnSessionCount();
 	void					OnSessionInfo();
 	void					OnStatus();
+	void					OnVersion();
 	void					OnTraceCount();
 	void					OnTraceInfo();
 	void					OnTraceRead();
@@ -153,6 +155,8 @@ void FStoreCborPeer::OnStatus()
 	const FStoreSettings* Settings = Parent.GetSettings();
 	TPayloadBuilder<> Builder(EStatusCode::Success);
 	Builder.AddInteger("recorder_port", Settings->RecorderPort);
+	Builder.AddInteger("store_port", Settings->StorePort);
+	Builder.AddInteger("sponsored", Settings->Sponsored);
 	Builder.AddInteger("change_serial", Store.GetChangeSerial());
 	Builder.AddInteger("settings_serial", Settings->GetChangeSerial());
 	Builder.AddString("store_dir", Settings->StoreDir.string().c_str());
@@ -162,6 +166,21 @@ void FStoreCborPeer::OnStatus()
 		AdditionalWatchDirs.Add(Path.string());
 	}
 	Builder.AddStringArray("watch_dirs", AdditionalWatchDirs);
+	SendResponse(Builder.Done());
+}
+
+///////////////////////////////////////////////////////////////////////////////
+void FStoreCborPeer::OnVersion()
+{
+	TPayloadBuilder<> Builder(EStatusCode::Success);
+	Builder.AddInteger("major", TS_VERSION_PROTOCOL);
+	Builder.AddInteger("minor", TS_VERSION_MINOR);
+#if TS_USING(TS_BUILD_DEBUG)
+	const char* Configuration = "Debug";
+#else
+	const char* Configuration = "Release";
+#endif
+	Builder.AddString("configuration", Configuration);
 	SendResponse(Builder.Done());
 }
 
@@ -278,6 +297,7 @@ void FStoreCborPeer::OnPayload()
 		{ QuickStoreHash("v1/session/count"),	&FStoreCborPeer::OnSessionCount },
 		{ QuickStoreHash("v1/session/info"),	&FStoreCborPeer::OnSessionInfo },
 		{ QuickStoreHash("v1/status"),			&FStoreCborPeer::OnStatus },
+		{ QuickStoreHash("v1/version"),			&FStoreCborPeer::OnVersion },
 		{ QuickStoreHash("v1/trace/count"),		&FStoreCborPeer::OnTraceCount },
 		{ QuickStoreHash("v1/trace/info"),		&FStoreCborPeer::OnTraceInfo },
 		{ QuickStoreHash("v1/trace/read"),		&FStoreCborPeer::OnTraceRead },

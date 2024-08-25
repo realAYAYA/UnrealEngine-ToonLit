@@ -78,9 +78,9 @@ void FDragTool_Measure::Render(const FSceneView* View, FCanvas* Canvas)
 
 	if (View != nullptr && Canvas != nullptr && Length >= 1.f)
 	{
-		const FLinearColor SelectionColor = GetDefault<UEditorStyleSettings>()->SelectionColor;
+		const FLinearColor ToolColor = GetDefault<UEditorStyleSettings>()->ViewportToolOverlayColor;
 		FCanvasLineItem LineItem( PixelStart, PixelEnd );
-		LineItem.SetColor( SelectionColor );
+		LineItem.SetColor( ToolColor );
 		Canvas->DrawItem( LineItem );
 
 		const FVector2D PixelMid = FVector2D(PixelStart + ((PixelEnd - PixelStart) / 2));
@@ -113,7 +113,7 @@ void FDragTool_Measure::Render(const FSceneView* View, FCanvas* Canvas)
 		const FText LengthStr = FText::AsNumber( Length / Divisor, &Options );
 
 
-		FCanvasTextItem TextItem( FVector2D( FMath::FloorToFloat(PixelMid.X), FMath::FloorToFloat(PixelMid.Y) ), LengthStr, GEngine->GetSmallFont(), SelectionColor );
+		FCanvasTextItem TextItem( FVector2D( FMath::FloorToFloat(PixelMid.X), FMath::FloorToFloat(PixelMid.Y) ), LengthStr, GEngine->GetSmallFont(), ToolColor );
 		TextItem.bCentreX = true;
 		Canvas->DrawItem( TextItem );
 	}

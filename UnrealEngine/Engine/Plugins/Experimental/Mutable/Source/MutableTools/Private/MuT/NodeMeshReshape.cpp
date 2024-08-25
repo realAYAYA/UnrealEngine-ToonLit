@@ -17,60 +17,15 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeMeshReshape::Private::s_type =
-			NODE_TYPE( "MeshReshape", NodeMesh::GetStaticType() );
+	FNodeType NodeMeshReshape::Private::s_type =
+			FNodeType("MeshReshape", NodeMesh::GetStaticType());
 
 
 	//---------------------------------------------------------------------------------------------
 	//!
 	//---------------------------------------------------------------------------------------------
 
-	MUTABLE_IMPLEMENT_NODE( NodeMeshReshape, EType::Reshape, Node, Node::EType::Mesh)
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	int NodeMeshReshape::GetInputCount() const
-	{
-		return 3;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	Node* NodeMeshReshape::GetInputNode( int i ) const
-	{
-		check( i>=0 && i<GetInputCount() );
-
-		Node* pResult = nullptr;
-
-		switch (i)
-		{
-		case 0: pResult = m_pD->m_pBaseMesh.get(); break;
-		case 1: pResult = m_pD->m_pBaseShape.get(); break;
-		case 2: pResult = m_pD->m_pTargetShape.get(); break;
-		default:
-			break;
-		}
-
-		return pResult;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	void NodeMeshReshape::SetInputNode( int i, NodePtr pNode )
-	{
-		check( i>=0 && i<GetInputCount() );
-
-		switch (i)
-		{
-		case 0: m_pD->m_pBaseMesh = dynamic_cast<NodeMesh*>(pNode.get()); break;
-		case 1: m_pD->m_pBaseShape = dynamic_cast<NodeMesh*>(pNode.get()); break;
-		case 2: m_pD->m_pTargetShape = dynamic_cast<NodeMesh*>(pNode.get()); break;
-		default:
-			break;
-		}
-	}
+	MUTABLE_IMPLEMENT_NODE(NodeMeshReshape, EType::Reshape, Node, Node::EType::Mesh)
 
 
 	//---------------------------------------------------------------------------------------------
@@ -78,54 +33,61 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	const Ptr<NodeMesh>& NodeMeshReshape::GetBaseMesh() const
 	{
-		return m_pD->m_pBaseMesh;
+		return m_pD->BaseMesh;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
 	void NodeMeshReshape::SetBaseMesh(const Ptr<NodeMesh>& pNode)
 	{
-		m_pD->m_pBaseMesh = pNode;
+		m_pD->BaseMesh = pNode;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
 	const Ptr<NodeMesh>& NodeMeshReshape::GetBaseShape() const
 	{
-		return m_pD->m_pBaseShape;
+		return m_pD->BaseShape;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
 	void NodeMeshReshape::SetBaseShape(const Ptr<NodeMesh>& pNode)
 	{
-		m_pD->m_pBaseShape = pNode;
+		m_pD->BaseShape = pNode;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
 	const Ptr<NodeMesh>& NodeMeshReshape::GetTargetShape() const
 	{
-		return m_pD->m_pTargetShape;
+		return m_pD->TargetShape;
 	}
 
 
 	//---------------------------------------------------------------------------------------------
 	void NodeMeshReshape::SetTargetShape(const Ptr<NodeMesh>& pNode)
 	{
-		m_pD->m_pTargetShape = pNode;
+		m_pD->TargetShape = pNode;
 	}
 
 	//---------------------------------------------------------------------------------------------
 	void NodeMeshReshape::SetReshapeVertices(bool bEnable)
 	{
-		m_pD->m_reshapeVertices = bEnable;
+		m_pD->bReshapeVertices = bEnable;
 	}
+
+	//---------------------------------------------------------------------------------------------
+	void NodeMeshReshape::SetApplyLaplacian(bool bEnable)
+	{
+		m_pD->bApplyLaplacian = bEnable;
+	}
+
 
 	//---------------------------------------------------------------------------------------------
 	void NodeMeshReshape::SetReshapeSkeleton(bool bEnable)
 	{
-		m_pD->m_reshapeSkeleton = bEnable;
+		m_pD->bReshapeSkeleton = bEnable;
 	}
 	
 
@@ -152,25 +114,22 @@ namespace mu
 
 	void NodeMeshReshape::SetReshapePhysicsVolumes(bool bEnable)
 	{
-		m_pD->m_reshapePhysicsVolumes = bEnable;
+		m_pD->bReshapePhysicsVolumes = bEnable;
 	}
 	
 	//---------------------------------------------------------------------------------------------
-	Ptr<NodeLayout> NodeMeshReshape::Private::GetLayout( int index ) const
+	Ptr<NodeLayout> NodeMeshReshape::Private::GetLayout(int32 Index) const
 	{
 		NodeLayoutPtr pResult;
 
-		if (m_pBaseMesh)
+		if (BaseMesh)
 		{
-			NodeMesh::Private* pPrivate =
-					dynamic_cast<NodeMesh::Private*>(m_pBaseMesh->GetBasePrivate() );
-
-			pResult = pPrivate->GetLayout( index );
+			NodeMesh::Private* pPrivate = static_cast<NodeMesh::Private*>(BaseMesh->GetBasePrivate() );
+			pResult = pPrivate->GetLayout(Index);
 		}
 
 		return pResult;
 	}
-
 
 }
 

@@ -8,7 +8,7 @@
 #include "RigVMFunctions/RigVMFunctionDefines.h"
 #include "RigVMMathLibrary.generated.h"
 
-UENUM()
+UENUM(meta = (RigVMTypeAllowed))
 enum class ERigVMAnimEasingType : uint8
 {
 	Linear,
@@ -98,7 +98,7 @@ struct RIGVM_API FRigVMMirrorSettings
 	FVector MirrorVector(const FVector& InVector) const;
 };
 
-UENUM()
+UENUM(meta = (RigVMTypeAllowed))
 enum class ERigVMSimPointIntegrateType : uint8
 {
 	Verlet,

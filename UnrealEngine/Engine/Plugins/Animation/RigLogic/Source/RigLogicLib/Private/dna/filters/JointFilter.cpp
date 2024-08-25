@@ -21,6 +21,7 @@ void JointFilter::configure(std::uint16_t jointCount, UnorderedSet<std::uint16_t
     option = option_;
     passingIndices = std::move(allowedJointIndices);
     // Fill the structure that maps indices prior to deletion to indices after deletion
+    remappedIndices.clear();
     remap(jointCount, passingIndices, remappedIndices);
 }
 

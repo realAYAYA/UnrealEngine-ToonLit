@@ -11,6 +11,7 @@
 #include "DerivedDataRequestOwner.h"
 #include "DerivedDataValue.h"
 #include "Hash/Blake3.h"
+#include "Misc/AsciiSet.h"
 #include "Misc/StringBuilder.h"
 #include "UObject/NameTypes.h"
 
@@ -99,6 +100,14 @@ FSharedBuffer FBuildJobContext::FindInput(FUtf8StringView Key) const
 		}
 	}
 	return FSharedBuffer();
+}
+
+void FBuildJobContext::AddMeta(FUtf8StringView Key, const FCbField& Meta)
+{
+	constexpr FAsciiSet Valid("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789");
+	checkf(!Key.IsEmpty() && FAsciiSet::HasOnly(Key, Valid),
+		TEXT("Key '%s' for metadata must be alphanumeric and non-empty."), *WriteToString<32>(Key));
+	OutputBuilder.AddMeta(Key, Meta);
 }
 
 void FBuildJobContext::AddValue(const FValueId& Id, const FValue& Value)

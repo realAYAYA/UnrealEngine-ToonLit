@@ -184,7 +184,7 @@ static void CopyReductionSettings(
 
 
 static bool AddLODFromMeshDescription(
-	const FMeshDescription& InMeshDescription,
+	FMeshDescription&& InMeshDescription,
 	USkeletalMesh* InSkeletalMesh,
 	IMeshUtilities& InMeshUtilities
 	)
@@ -196,10 +196,13 @@ static bool AddLODFromMeshDescription(
 	{
 		return false;
 	}
-	
-	FSkeletalMeshLODModel& SkeletalMeshModel = ImportedModels->LODModels.Last(); 
-	
+
 	FSkeletalMeshImportData SkeletalMeshImportGeometry = FSkeletalMeshImportData::CreateFromMeshDescription(InMeshDescription);
+
+	InSkeletalMesh->CreateMeshDescription(LODIndex, MoveTemp(InMeshDescription));
+	InSkeletalMesh->CommitMeshDescription(LODIndex);
+	
+	FSkeletalMeshLODModel& SkeletalMeshModel = ImportedModels->LODModels.Last();
 
 	// We need at least one set of texture coordinates. Always.
 	SkeletalMeshModel.NumTexCoords = FMath::Max<uint32>(1, SkeletalMeshImportGeometry.NumTexCoords);
@@ -225,9 +228,6 @@ static bool AddLODFromMeshDescription(
 		}
 		return false;
 	}
-	
-	InSkeletalMesh->SaveLODImportedData(LODIndex, SkeletalMeshImportGeometry);
-	InSkeletalMesh->SetLODImportedDataVersions(LODIndex, ESkeletalMeshGeoImportVersions::LatestVersion, ESkeletalMeshSkinningImportVersions::LatestVersion);
 	
 	return true;
 }
@@ -271,7 +271,7 @@ static bool AddLODFromStaticMeshSourceModel(
 			SkinWeights.Set(VertexID, RootBinding);
 		}
 
-		if (!AddLODFromMeshDescription(SkeletalMeshGeometry, InSkeletalMesh, InMeshUtilities))
+		if (!AddLODFromMeshDescription(MoveTemp(SkeletalMeshGeometry), InSkeletalMesh, InMeshUtilities))
 		{
 			return false;
 		}
@@ -491,11 +491,16 @@ bool FStaticToSkeletalMeshConverter::InitializeSkeletalMeshFromMeshDescriptions(
 		{
 			// Add default LOD build settings.
 			FSkeletalMeshLODInfo& SkeletalLODInfo = InSkeletalMesh->AddLODInfo();
+			SkeletalLODInfo.ReductionSettings.NumOfTrianglesPercentage = 1.0f;
+			SkeletalLODInfo.ReductionSettings.NumOfVertPercentage = 1.0f;
+			SkeletalLODInfo.ReductionSettings.MaxDeviationPercentage = 0.0f;
+			SkeletalLODInfo.LODHysteresis = 0.02f;
 
 			SkeletalLODInfo.BuildSettings.bRecomputeNormals = bInRecomputeNormals;
 			SkeletalLODInfo.BuildSettings.bRecomputeTangents = bInRecomputeTangents;
 
-			if (!AddLODFromMeshDescription(*MeshDescription, InSkeletalMesh, MeshUtilities))
+			FMeshDescription ClonedDescription(*MeshDescription);
+			if (!AddLODFromMeshDescription(MoveTemp(ClonedDescription), InSkeletalMesh, MeshUtilities))
 			{
 				// If we didn't get a model for LOD index 0, we don't have a mesh. Bail out.
 				if (bFirstSourceModel)

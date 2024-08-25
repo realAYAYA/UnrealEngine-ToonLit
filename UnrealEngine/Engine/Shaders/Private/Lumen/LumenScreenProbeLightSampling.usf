@@ -95,23 +95,23 @@ void ScreenProbeGenerateLightSamplesCS(
 			const uint EyeIndex = 0;
 			const uint GridIndex = ComputeLightGridCellIndex(uint2(ScreenProbeScreenPosition), SceneDepth);
 			const FCulledLightsGridData CulledLightGridData = GetCulledLightsGrid(GridIndex, EyeIndex);
-			const uint NumLocalLights = min(CulledLightGridData.NumLocalLights, GetNumLocalLights(EyeIndex));
+			const uint NumLightsInGridCell = min(CulledLightGridData.NumLights, GetMaxLightsPerCell(EyeIndex));
 
-			uint LumenLightStartIndex = NumLocalLights;
+			uint LumenLightStartIndex = NumLightsInGridCell;
 
 			//@todo - start at the supported index
-			for (uint GridLightIndex = 0; GridLightIndex < NumLocalLights; GridLightIndex++)
+			for (uint GridLightIndex = 0; GridLightIndex < NumLightsInGridCell; GridLightIndex++)
 			{
 				const FLocalLightData LocalLight = GetLocalLightData(CulledLightGridData.DataStartIndex + GridLightIndex, EyeIndex);
 
-				if (LocalLight.bLumenLightSupported)
+				if (LocalLight.bManyLightsSupported)
 				{
 					LumenLightStartIndex = GridLightIndex;
 					break;
 				}
 			}
 
-			const uint NumLumenLights = NumLocalLights - LumenLightStartIndex;
+			const uint NumLumenLights = NumLightsInGridCell - LumenLightStartIndex;
 			const uint NumLightSamples = ScreenProbeLightSampleResolutionXY * ScreenProbeLightSampleResolutionXY;
 			const bool bSelectSequentialLights = NumLumenLights <= NumLightSamples;
 
@@ -130,7 +130,7 @@ void ScreenProbeGenerateLightSamplesCS(
 				else
 				{
 					//@todo - ReSTIR or at least proportional to light power
-					float Random = BlueNoiseScalar(LightSampleBufferCoord, RAY_DIRECTION_TEMPORAL_INDEX * NumLightSamples + LightSampleIndex);
+					float Random = BlueNoiseScalar(LightSampleBufferCoord, ScreenProbeRayDirectionFrameIndex * NumLightSamples + LightSampleIndex);
 					LightIndex = LumenLightStartIndex + min((uint)(Random * NumLumenLights), NumLumenLights - 1);
 					PDF = (float)NumLightSamples / (float)NumLumenLights;
 				}
@@ -141,7 +141,7 @@ void ScreenProbeGenerateLightSamplesCS(
 				float TraceDistance = 0;
 				float3 Lighting = 0;
 
-				if (LightIndex < NumLocalLights)
+				if (LightIndex < NumLightsInGridCell)
 				{
 					const FLocalLightData LocalLight = GetLocalLightData(CulledLightGridData.DataStartIndex + LightIndex, EyeIndex);
 
@@ -193,7 +193,7 @@ void ScreenProbeGenerateLightSamplesCS(
 							float3 Unused;
 							float Unused2;
 
-							float2 RandSample = BlueNoiseVec2(LightSampleBufferCoord, RAY_DIRECTION_TEMPORAL_INDEX);
+							float2 RandSample = BlueNoiseVec2(LightSampleBufferCoord, ScreenProbeRayDirectionFrameIndex);
 
 							bool bValid = GenerateShadowRay(
 								LightParameters,

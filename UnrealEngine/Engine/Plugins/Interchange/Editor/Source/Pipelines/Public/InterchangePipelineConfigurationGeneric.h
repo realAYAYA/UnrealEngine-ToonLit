@@ -6,6 +6,7 @@
 
 #include "InterchangePipelineConfigurationGeneric.generated.h"
 
+class UInterchangeBaseNodeContainer;
 class UInterchangeSourceData;
 
 UCLASS(BlueprintType, editinlinenew, Experimental)
@@ -19,13 +20,20 @@ protected:
 
 	virtual EInterchangePipelineConfigurationDialogResult ShowPipelineConfigurationDialog(TArray<FInterchangeStackInfo>& PipelineStacks
 		, TArray<UInterchangePipelineBase*>& OutPipelines
-		, TWeakObjectPtr<UInterchangeSourceData> SourceData) override;
+		, TWeakObjectPtr<UInterchangeSourceData> SourceData
+		, TWeakObjectPtr <UInterchangeTranslatorBase> Translator
+		, TWeakObjectPtr<UInterchangeBaseNodeContainer> BaseNodeContainer) override;
 	virtual EInterchangePipelineConfigurationDialogResult ShowScenePipelineConfigurationDialog(TArray<FInterchangeStackInfo>& PipelineStacks
 		, TArray<UInterchangePipelineBase*>& OutPipelines
-		, TWeakObjectPtr<UInterchangeSourceData> SourceData) override;
+		, TWeakObjectPtr<UInterchangeSourceData> SourceData
+		, TWeakObjectPtr <UInterchangeTranslatorBase> Translator
+		, TWeakObjectPtr<UInterchangeBaseNodeContainer> BaseNodeContainer) override;
 	virtual EInterchangePipelineConfigurationDialogResult ShowReimportPipelineConfigurationDialog(TArray<FInterchangeStackInfo>& PipelineStacks
 		, TArray<UInterchangePipelineBase*>& OutPipelines
-		, TWeakObjectPtr<UInterchangeSourceData> SourceData) override;
+		, TWeakObjectPtr<UInterchangeSourceData> SourceData
+		, TWeakObjectPtr <UInterchangeTranslatorBase> Translator
+		, TWeakObjectPtr<UInterchangeBaseNodeContainer> BaseNodeContainer
+		, TWeakObjectPtr <UObject> ReimportAsset) override;
 };
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2

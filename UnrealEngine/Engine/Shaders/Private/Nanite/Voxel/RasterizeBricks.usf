@@ -122,7 +122,7 @@ void DrawBricksPS(
 	out float4 OutColor		: SV_Target0
 	)
 {
-	FRay Ray = GetViewRay( SvPosition );
+	FRay Ray = GetViewRay( SvPosition.xy );
 
 #if 0
 	OutColor = 0.1;

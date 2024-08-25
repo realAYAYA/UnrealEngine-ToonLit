@@ -8,6 +8,8 @@
   <Property Name="HeadlessChaosTarget" Value="HeadlessChaos" />
   <Property Name="HeadlessChaosBinariesRelative" Value="Engine\Binaries" />
   <Property Name="HeadlessChaosReportType" Value="console" />
+  <Property Name="HeadlessChaosGauntletArgs" Value="" />
+  <Property Name="HeadlessChaosExtraArgs" />
   <Property Name="HeadlessChaosInitialExtraArgs" />
   <Property Name="HeadlessChaosHasAfterSteps" Value="False" />
   <Property Name="HeadlessChaosUsesCatch2" Value="False" />
@@ -33,5 +35,16 @@
   <Property Name="AndroidHeadlessChaosRunSupported" Value="False" />
   <Property Name="LinuxHeadlessChaosRunSupported" Value="True" />
   <Property Name="LinuxArm64HeadlessChaosRunSupported" Value="True" />
-  <Property Name="TVOSHeadlessChaosRunSupported" Value="True" />
+  <Property Name="TVOSHeadlessChaosRunSupported" Value="False" />
+  <Property Name="VisionOSHeadlessChaosTags" Value="" />
+  <Property Name="VisionOSHeadlessChaosExtraCompilationArgs" Value="" />
+  <Property Name="VisionOSHeadlessChaosRunSupported" Value="False" />
+  <Property Name="Win64HeadlessChaosRunContainerized" Value="False" />
+  <Property Name="MacHeadlessChaosRunContainerized" Value="False" />
+  <Property Name="IOSHeadlessChaosRunContainerized" Value="False" />
+  <Property Name="AndroidHeadlessChaosRunContainerized" Value="False" />
+  <Property Name="LinuxHeadlessChaosRunContainerized" Value="False" />
+  <Property Name="LinuxArm64HeadlessChaosRunContainerized" Value="False" />
+  <Property Name="TVOSHeadlessChaosRunContainerized" Value="False" />
+  <Property Name="VisionOSHeadlessChaosRunContainerized" Value="False" />
 </BuildGraph>

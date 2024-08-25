@@ -15,13 +15,8 @@ namespace
 }
 
 FPIEFixupSerializer::FPIEFixupSerializer(UObject* InRoot, int32 InPIEInstanceID)
-	: SoftObjectPathFixupFunction(DefaultSoftObjectPathFixupFunction)
-	, Root(InRoot)
-	, PIEInstanceID(InPIEInstanceID)
+	: FPIEFixupSerializer(InRoot, InPIEInstanceID, DefaultSoftObjectPathFixupFunction)
 {
-	this->ArShouldSkipBulkData = true;
-	this->ArIsObjectReferenceCollector = true;
-	this->ArIsModifyingWeakAndStrongReferences = true;
 }
 
 FPIEFixupSerializer::FPIEFixupSerializer(UObject* InRoot, int32 InPIEInstanceID, TFunctionRef<void(int32, FSoftObjectPath&)> InSoftObjectPathFixupFunction)
@@ -32,6 +27,9 @@ FPIEFixupSerializer::FPIEFixupSerializer(UObject* InRoot, int32 InPIEInstanceID,
 	this->ArShouldSkipBulkData = true;
 	this->ArIsObjectReferenceCollector = true;
 	this->ArIsModifyingWeakAndStrongReferences = true;
+
+	// Don't trigger serialization of compilable assets
+	SetShouldSkipCompilingAssets(true);
 }
 
 bool FPIEFixupSerializer::ShouldSkipProperty(const FProperty* InProperty) const
@@ -48,8 +46,8 @@ FArchive& FPIEFixupSerializer::operator<<(UObject*& Object)
 #if WITH_EDITOR
 		if (UPackage* ExternalPackage = Object->GetExternalPackage())
 		{
-			check(Object->IsPackageExternal());
-			check(ExternalPackage->HasAnyPackageFlags(PKG_PlayInEditor));
+			checkf(Object->IsPackageExternal(), TEXT("Expected an external package. Package: '%s'. Object: '%s'."), *ExternalPackage->GetFullName(), *Object->GetFullName());
+			checkf(ExternalPackage->HasAnyPackageFlags(PKG_PlayInEditor), TEXT("Package missing the PKG_PlayInEditor flag. Package: '%s'. Object: '%s'."), *ExternalPackage->GetFullName(), *Object->GetFullName());
 			ExternalPackage->SetPIEInstanceID(PIEInstanceID);
 		}
 #endif

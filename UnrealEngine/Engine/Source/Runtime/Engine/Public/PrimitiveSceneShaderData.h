@@ -12,6 +12,8 @@
 #include "PrimitiveUniformShaderParameters.h"
 #endif
 
+class FPrimitiveSceneProxy;
+
 struct FPrimitiveSceneShaderData
 {
 	static const uint32 DataStrideInFloat4s = PRIMITIVE_SCENE_DATA_STRIDE;
@@ -30,7 +32,16 @@ struct FPrimitiveSceneShaderData
 		Setup(PrimitiveUniformShaderParameters);
 	}
 
-	ENGINE_API FPrimitiveSceneShaderData(const class FPrimitiveSceneProxy* RESTRICT Proxy);
+	ENGINE_API FPrimitiveSceneShaderData(const FPrimitiveSceneProxy* RESTRICT Proxy);
+
+	/**
+	 * Directly construct the data from the proxy into an output array, removing the need to construct an intermediate.
+	 */
+	ENGINE_API static void BuildDataFromProxy(const FPrimitiveSceneProxy* RESTRICT Proxy, FVector4f* RESTRICT OutData);
+
+	/**
+	 */
+	ENGINE_API static void Setup(const FPrimitiveUniformShaderParameters& PrimitiveUniformShaderParameters, FVector4f* RESTRICT OutData);
 
 	ENGINE_API void Setup(const FPrimitiveUniformShaderParameters& PrimitiveUniformShaderParameters);
 };

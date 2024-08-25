@@ -368,6 +368,7 @@ class UAnimBlueprintGeneratedClass : public UBlueprintGeneratedClass, public IAn
 	friend class FAnimBlueprintCompilerContext;
 	friend class FAnimBlueprintGeneratedClassCompiledData;
 	friend class FKismetDebugUtilities;
+	friend class UAnimBlueprintExtension_Base;
 
 	// List of state machines present in this blueprint class
 	UPROPERTY()

@@ -9,11 +9,13 @@ class FGLTFDelayedTexture2DTask : public FGLTFDelayedTask
 {
 public:
 
-	FGLTFDelayedTexture2DTask(FGLTFConvertBuilder& Builder, const UTexture2D* Texture2D, bool bToSRGB, FGLTFJsonTexture* JsonTexture)
+	FGLTFDelayedTexture2DTask(FGLTFConvertBuilder& Builder, const UTexture2D* Texture2D, bool bToSRGB, FGLTFJsonTexture* JsonTexture, TextureAddress InTextureAddressX, TextureAddress InTextureAddressY)
 		: FGLTFDelayedTask(EGLTFTaskPriority::Texture)
 		, Builder(Builder)
 		, Texture2D(Texture2D)
 		, bToSRGB(bToSRGB)
+		, TextureAddressX(InTextureAddressX)
+		, TextureAddressY(InTextureAddressY)
 		, JsonTexture(JsonTexture)
 	{
 	}
@@ -27,6 +29,8 @@ private:
 	FGLTFConvertBuilder& Builder;
 	const UTexture2D* Texture2D;
 	bool bToSRGB;
+	TextureAddress TextureAddressX;
+	TextureAddress TextureAddressY;
 	FGLTFJsonTexture* JsonTexture;
 };
 

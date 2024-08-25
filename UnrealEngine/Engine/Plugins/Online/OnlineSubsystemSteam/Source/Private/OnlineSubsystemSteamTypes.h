@@ -16,7 +16,7 @@ namespace ESteamSession
 		None,
 		/** Session managed as a lobby on backend */
 		LobbySession,
-		/** Session managed by master server publishing */
+		/** Session managed by the server list */
 		AdvertisedSessionHost,
 		/** Session client of a game server session */
 		AdvertisedSessionClient,

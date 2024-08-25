@@ -12,10 +12,13 @@
 #include "Engine/Texture2D.h"
 #include "DeviceProfiles/DeviceProfile.h"
 #include "DeviceProfiles/DeviceProfileManager.h"
+#include "EngineLogs.h"
 #include "GenerateMips.h"
 #include "RenderGraphUtils.h"
 #include "UObject/Package.h"
 #include "UObject/UnrealType.h"
+#include "ProfilingDebugging/AssetMetadataTrace.h"
+
 #if WITH_EDITOR
 #include "Components/SceneCaptureComponent2D.h"
 #include "TextureCompiler.h"
@@ -40,10 +43,45 @@ UTextureRenderTarget2D::UTextureRenderTarget2D(const FObjectInitializer& ObjectI
 	NumMips = 0;
 	ClearColor = FLinearColor(0.0f, 0.0f, 0.0f, 1.0f);
 	OverrideFormat = PF_Unknown;
-	bForceLinearGamma = true;
+	bForceLinearGamma = true; // <<-- if you set RTF_RGBA8_SRGB, this is turned off
+	bNoFastClear = false;
 	MipsSamplerFilter = Filter;
 	MipsAddressU = TA_Clamp;
 	MipsAddressV = TA_Clamp;
+
+	// note UTextureRenderTarget::UTextureRenderTarget set SRGB = true
+	// later SRGB may be set = IsSRGB();
+
+	// see also UTextureRenderTarget::TargetGamma
+}
+
+EPixelFormat UTextureRenderTarget2D::GetFormat() const
+{
+	if (OverrideFormat == PF_Unknown)
+	{
+		return GetPixelFormatFromRenderTargetFormat(RenderTargetFormat);
+	}
+	else
+	{
+		return OverrideFormat;
+	}
+}
+
+bool UTextureRenderTarget2D::IsSRGB() const
+{
+	// in theory you'd like the "bool SRGB" variable to == this, but it does not
+
+	// ?? note: UTextureRenderTarget::TargetGamma is ignored here
+	// ?? note: GetDisplayGamma forces linear for some float formats, but this doesn't
+
+	if (OverrideFormat == PF_Unknown)
+	{
+		return RenderTargetFormat == RTF_RGBA8_SRGB;
+	}
+	else
+	{
+		return !bForceLinearGamma;
+	}
 }
 
 FTextureResource* UTextureRenderTarget2D::CreateResource()
@@ -123,6 +161,10 @@ void UTextureRenderTarget2D::InitCustomFormat( uint32 InSizeX, uint32 InSizeY, E
 void UTextureRenderTarget2D::InitAutoFormat(uint32 InSizeX, uint32 InSizeY)
 {
 	check(InSizeX > 0 && InSizeY > 0);
+
+	// ?? missing ?
+	//OverrideFormat = PF_Unknown;
+	//bForceLinearGamma = true;
 
 	// set required size
 	SizeX = InSizeX;
@@ -315,97 +357,78 @@ FString UTextureRenderTarget2D::GetDesc()
 	return FString::Printf( TEXT("Render to Texture %dx%d[%s]"), SizeX, SizeY, GPixelFormats[GetFormat()].Name );
 }
 
-UTexture2D* UTextureRenderTarget2D::ConstructTexture2D(UObject* Outer, const FString& NewTexName, EObjectFlags InObjectFlags, uint32 Flags, TArray<uint8>* AlphaOverride)
+ETextureRenderTargetSampleCount UTextureRenderTarget2D::GetSampleCount() const
+{
+	// Note: MSAA is currently only supported in UCanvasRenderTarget2D
+	return ETextureRenderTargetSampleCount::RTSC_1;
+}
+
+UTexture2D* UTextureRenderTarget2D::ConstructTexture2D(UObject* InOuter, const FString& InNewTextureName, EObjectFlags InObjectFlags, uint32 InFlags, TArray<uint8>* InAlphaOverride)
 {
 	UTexture2D* Result = nullptr;
 
 #if WITH_EDITOR
-	// Check render target size is valid.
-	const bool bIsValidSize = (SizeX != 0 && SizeY != 0);
-
-	// The render to texture resource will be needed to read its surface contents
-	FRenderTarget* RenderTarget = GameThread_GetRenderTargetResource();
-
-	const ETextureSourceFormat TextureFormat = GetTextureFormatForConversionToTexture2D();
-
-	// exit if source is not compatible.
-	if (bIsValidSize == false || RenderTarget == nullptr || TextureFormat == TSF_Invalid)
-	{
-		return Result;
+	FText ErrorMessage;
+	Result = Cast<UTexture2D>(ConstructTexture(InOuter, InNewTextureName, InObjectFlags, static_cast<EConstructTextureFlags>(InFlags), InAlphaOverride, &ErrorMessage));
+	if (Result == nullptr)
+	{ 
+		UE_LOG(LogTexture, Error, TEXT("Couldn't construct texture : %s"), *ErrorMessage.ToString());
 	}
-
-	// Create the 2d texture
-	Result = NewObject<UTexture2D>(Outer, FName(*NewTexName), InObjectFlags);
-	
-	UpdateTexture2D(Result, TextureFormat, Flags, AlphaOverride);
-
-	// if render target gamma used was 1.0 then disable SRGB for the static texture
-	// note: UTextureRenderTarget2D also has an explicit SRGB flag in the UTexture parent class
-	//	  these are NOT correctly kept in sync
-	//		I see SRGB = 1 but Gamma = 1.0
-	//	 see also IsSRGB() which is yet another query that has different ideas
-	//	furthermore, float formats do not support anything but Linear gamma
-	float Gamma = RenderTarget->GetDisplayGamma();
-	if (FMath::Abs(Gamma - 1.0f) < UE_KINDA_SMALL_NUMBER)
-	{
-		Flags &= ~CTF_SRGB;
-	}
-
-	Result->SRGB = (Flags & CTF_SRGB) != 0;
-
-	Result->MipGenSettings = TMGS_FromTextureGroup;
-
-	if ((Flags & CTF_AllowMips) == 0)
-	{
-		Result->MipGenSettings = TMGS_NoMipmaps;
-	}
-
-	if (Flags & CTF_Compress)
-	{
-		// Set compression options.
-		Result->DeferCompression = (Flags & CTF_DeferCompression) ? true : false;
-	}
-	else
-	{
-		// Disable compression
-		Result->CompressionNone = true;
-		Result->DeferCompression = false;
-	}
-
-	if ((Flags & CTF_SkipPostEdit) != 0)
-	{
-		Result->PostEditChange();
-	}
-#endif
+#endif // WITH_EDITOR
 
 	return Result;
 }
 
+
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 ETextureSourceFormat UTextureRenderTarget2D::GetTextureFormatForConversionToTexture2D() const
 {
-	const EPixelFormat PixelFormat = GetFormat();
-	ETextureSourceFormat TextureFormat = TSF_Invalid;
-	switch (PixelFormat)
+	ETextureSourceFormat TextureSourceFormat = TSF_Invalid;
+	EPixelFormat PixelFormat = PF_Unknown;
+	if (!CanConvertToTexture(TextureSourceFormat, PixelFormat, /*OutErrorMessage = */nullptr))
 	{
-	case PF_B8G8R8A8:
-		TextureFormat = TSF_BGRA8;
-		break;
-	case PF_FloatRGBA:
-		TextureFormat = TSF_RGBA16F;
-		break;
-	case PF_G8:
-		TextureFormat = TSF_G8;
-		break;
-	default:
-	{
-		FText InvalidFormatMessage = NSLOCTEXT("TextureRenderTarget2D", "UnsupportedFormatRenderTarget2DWarning", "Unsupported format when creating Texture2D from TextureRenderTarget2D. Supported formats are B8G8R8A8, FloatRGBA and G8.");
-		FMessageDialog::Open(EAppMsgType::Ok, InvalidFormatMessage);
-	}
+		return TSF_Invalid;
 	}
 
-	return TextureFormat;
+	return TextureSourceFormat;
+}
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+TSubclassOf<UTexture> UTextureRenderTarget2D::GetTextureUClass() const
+{
+	return UTexture2D::StaticClass();
 }
 
+bool UTextureRenderTarget2D::CanConvertToTexture(ETextureSourceFormat& OutTextureSourceFormat, EPixelFormat& OutPixelFormat, FText* OutErrorMessage) const
+{
+	const EPixelFormat LocalFormat = GetFormat();
+
+	// empty array means all formats supported
+	const ETextureSourceFormat TextureSourceFormat = ValidateTextureFormatForConversionToTextureInternal(LocalFormat, { }, OutErrorMessage);
+	if (TextureSourceFormat == TSF_Invalid)
+	{
+		return false;
+	}
+
+	if ((SizeX <= 0) || (SizeY <= 0))
+	{
+		if (OutErrorMessage != nullptr)
+		{
+			*OutErrorMessage = FText::Format(NSLOCTEXT("TextureRenderTarget2D", "InvalidSizeForConversionToTexture", "Invalid size ({0},{1}) for converting {2} to {3}"),
+				FText::AsNumber(SizeX),
+				FText::AsNumber(SizeY),
+				FText::FromString(GetClass()->GetName()),
+				FText::FromString(GetTextureUClass()->GetName()));
+		}
+		return false;
+	}
+
+	OutPixelFormat = LocalFormat;
+	OutTextureSourceFormat = TextureSourceFormat;
+	return true;
+}
+
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 void UTextureRenderTarget2D::UpdateTexture2D(UTexture2D* InTexture2D, ETextureSourceFormat InTextureFormat, uint32 Flags, TArray<uint8>* AlphaOverride)
 {
 	UpdateTexture2D(InTexture2D, InTextureFormat, Flags, AlphaOverride, FTextureChangingDelegate());
@@ -414,146 +437,17 @@ void UTextureRenderTarget2D::UpdateTexture2D(UTexture2D* InTexture2D, ETextureSo
 void UTextureRenderTarget2D::UpdateTexture2D(UTexture2D* InTexture2D, ETextureSourceFormat InTextureFormat, uint32 Flags, TArray<uint8>* AlphaOverride, FTextureChangingDelegate TextureChangingDelegate)
 {
 #if WITH_EDITOR
-	const EPixelFormat PixelFormat = GetFormat();
-	TextureCompressionSettings CompressionSettingsForTexture = PixelFormat == EPixelFormat::PF_FloatRGBA ? TC_HDR : TC_Default;
-
-	const int32 NbSlices = 1;
-	const int32 NbMips = 1;
-
-	bool bTextureChanging = false;
-	
-	bTextureChanging |= InTexture2D->Source.GetSizeX() != SizeX;
-	bTextureChanging |= InTexture2D->Source.GetSizeY() != SizeY;
-	bTextureChanging |= InTexture2D->Source.GetNumSlices() != NbSlices;
-	bTextureChanging |= InTexture2D->Source.GetNumMips() != NbMips;
-	bTextureChanging |= InTexture2D->Source.GetFormat() != InTextureFormat;
-	bTextureChanging |= InTexture2D->CompressionSettings != CompressionSettingsForTexture;
-	
-	uint32 OldDataHash = 0;
-
-	// Hashing the content is only really useful if none of the other texture settings have changed.
-	const bool bHashContent = !bTextureChanging;
-	if (bHashContent)
+	// Simply forward the internal delegate to the external one (the only difference being the specialized type of the texture) :
+	auto OnTextureChangingDelegate = [TextureChangingDelegate](UTexture* InTexture) { TextureChangingDelegate.ExecuteIfBound(CastChecked<UTexture2D>(InTexture)); };
+	FText ErrorMessage;
+	bool bSuccess = UpdateTexture(InTexture2D, static_cast<EConstructTextureFlags>(Flags), AlphaOverride, OnTextureChangingDelegate, &ErrorMessage);
+	if (!bSuccess)
 	{
-		const uint8* OldData = InTexture2D->Source.LockMipReadOnly(0);
-		const int32 OldDataSize = InTexture2D->Source.CalcMipSize(0);
-		OldDataHash = FCrc::MemCrc32(OldData, OldDataSize);
-		InTexture2D->Source.UnlockMip(0);
+		UE_LOG(LogTexture, Error, TEXT("Cannot update texture : %s"), *ErrorMessage.ToString());
 	}
-
-	// Temp storage that will be used for the texture init.
-	TArray<uint8> NewDataGrayscale;
-	TArray<FColor> NewDataColor;
-	TArray<FFloat16Color> NewDataFloat16Color;
-
-	const uint8* NewData = nullptr;
-	int32 NewDataSize = 0;
-
-	// read the 2d surface
-	FRenderTarget* RenderTarget = GameThread_GetRenderTargetResource();
-	if (InTextureFormat == TSF_BGRA8)
-	{
-		RenderTarget->ReadPixels(NewDataColor);
-		check(NewDataColor.Num() == SizeX * SizeY);
-
-		// override the alpha if desired
-		if (AlphaOverride)
-		{
-			check(NewDataColor.Num() == AlphaOverride->Num());
-			for (int32 Pixel = 0; Pixel < NewDataColor.Num(); Pixel++)
-			{
-				NewDataColor[Pixel].A = (*AlphaOverride)[Pixel];
-			}
-		}
-		else if (Flags & CTF_RemapAlphaAsMasked)
-		{
-			// if the target was rendered with a masked texture, then the depth will probably have been written instead of 0/255 for the
-			// alpha, and the depth when unwritten will be 255, so remap 255 to 0 (masked out area) and anything else as 255 (written to area)
-			for (int32 Pixel = 0; Pixel < NewDataColor.Num(); Pixel++)
-			{
-				NewDataColor[Pixel].A = (NewDataColor[Pixel].A == 255) ? 0 : 255;
-			}
-		}
-		else if (Flags & CTF_ForceOpaque)
-		{
-			for (int32 Pixel = 0; Pixel < NewDataColor.Num(); Pixel++)
-			{
-				NewDataColor[Pixel].A = 255;
-			}
-		}
-
-		NewData = (uint8*)NewDataColor.GetData();
-		NewDataSize = NewDataColor.Num() * NewDataColor.GetTypeSize();
-	}
-	else if (InTextureFormat == TSF_RGBA16F)
-	{
-		RenderTarget->ReadFloat16Pixels(NewDataFloat16Color);
-		check(NewDataFloat16Color.Num() == SizeX * SizeY);
-
-		// override the alpha if desired
-		if (AlphaOverride)
-		{
-			check(NewDataFloat16Color.Num() == AlphaOverride->Num());
-			for (int32 Pixel = 0; Pixel < NewDataFloat16Color.Num(); Pixel++)
-			{
-				NewDataFloat16Color[Pixel].A = ((float)(*AlphaOverride)[Pixel]) / 255.0f;
-			}
-		}
-		else if (Flags & CTF_RemapAlphaAsMasked)
-		{
-			// if the target was rendered with a masked texture, then the depth will probably have been written instead of 0/255 for the
-			// alpha, and the depth when unwritten will be 255, so remap 255 to 0 (masked out area) and anything else as 1 (written to area)
-			for (int32 Pixel = 0; Pixel < NewDataFloat16Color.Num(); Pixel++)
-			{
-				NewDataFloat16Color[Pixel].A = (NewDataFloat16Color[Pixel].A == 255) ? 0.0f : 1.0f;
-			}
-		}
-		else if (Flags & CTF_ForceOpaque)
-		{
-			for (int32 Pixel = 0; Pixel < NewDataFloat16Color.Num(); Pixel++)
-			{
-				NewDataFloat16Color[Pixel].A = 1.0f;
-			}
-		}
-
-		NewData = (uint8*)NewDataFloat16Color.GetData();
-		NewDataSize = NewDataFloat16Color.Num() * NewDataFloat16Color.GetTypeSize();
-	}
-	else if (InTextureFormat == TSF_G8)
-	{
-		RenderTarget->ReadPixels(NewDataColor);
-		check(NewDataColor.Num() == SizeX * SizeY);
-		NewDataGrayscale.SetNumUninitialized(NewDataColor.Num());
-
-		for (int32 Pixel = 0; Pixel < NewDataColor.Num(); Pixel++)
-		{
-			NewDataGrayscale[Pixel] = NewDataColor[Pixel].R;
-		}
-
-		NewData = (uint8*)NewDataGrayscale.GetData();
-		NewDataSize = NewDataGrayscale.Num() * NewDataGrayscale.GetTypeSize();
-	}
-
-
-	if (bHashContent)
-	{
-		uint32 NewDataHash = FCrc::MemCrc32(NewData, NewDataSize);
-		bTextureChanging = OldDataHash != NewDataHash;
-	}
-
-	if (bTextureChanging)
-	{
-		TextureChangingDelegate.ExecuteIfBound(InTexture2D);
-
-		// Ensure the texture is not being compiled
-		FTextureCompilingManager::Get().FinishCompilation({InTexture2D});
-
-		// init to the same size as the 2d texture
-		InTexture2D->Source.Init(SizeX, SizeY, NbSlices, NbMips, InTextureFormat, NewData);
-		InTexture2D->CompressionSettings = CompressionSettingsForTexture;
-	}
-#endif
+#endif // WITH_EDITOR
 }
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 /*-----------------------------------------------------------------------------
 	FTextureRenderTarget2DResource
@@ -566,7 +460,7 @@ FTextureRenderTarget2DResource::FTextureRenderTarget2DResource(const class UText
 	,	TargetSizeX(Owner->SizeX)
 	,	TargetSizeY(Owner->SizeY)
 {
-	
+	// note: Resource has a bSRGB field which is not set or checked in the RenderTarget code
 }
 
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
@@ -614,6 +508,11 @@ ETextureCreateFlags FTextureRenderTarget2DResource::GetCreateFlags()
 		TexCreateFlags |= ETextureCreateFlags::UAV;
 	}
 
+	if (Owner->bNoFastClear)
+	{
+		TexCreateFlags |= ETextureCreateFlags::NoFastClear;
+	}
+
 	return TexCreateFlags | ETextureCreateFlags::RenderTargetable | ETextureCreateFlags::ShaderResource;
 }
 
@@ -624,7 +523,8 @@ ETextureCreateFlags FTextureRenderTarget2DResource::GetCreateFlags()
  */
 void FTextureRenderTarget2DResource::InitRHI(FRHICommandListBase& RHICmdList)
 {
-	LLM_SCOPED_TAG_WITH_OBJECT_IN_SET(Owner->GetOutermost(), ELLMTagSet::Assets);
+	LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH(Owner->GetPackage(), ELLMTagSet::Assets);
+	UE_TRACE_METADATA_SCOPE_ASSET_FNAME(NAME_None, NAME_None, Owner->GetPackage()->GetFName());
 
 	if( TargetSizeX > 0 && TargetSizeY > 0 )
 	{
@@ -632,12 +532,14 @@ void FTextureRenderTarget2DResource::InitRHI(FRHICommandListBase& RHICmdList)
 
 		FString ResourceName = Owner->GetName();
 		ETextureCreateFlags TexCreateFlags = GetCreateFlags();
+		const int32 NumSamples = GetNumFromRenderTargetSampleCount(Owner->GetSampleCount());
 
 		FRHITextureCreateDesc Desc =
 			FRHITextureCreateDesc::Create2D(*ResourceName)
 			.SetExtent(Owner->SizeX, Owner->SizeY)
 			.SetFormat(Format)
 			.SetNumMips(Owner->GetNumMips())
+			.SetNumSamples(NumSamples)
 			.SetFlags(TexCreateFlags)
 			.SetInitialState(ERHIAccess::SRVMask)
 			.SetClearValue(FClearValueBinding(ClearColor))
@@ -646,7 +548,18 @@ void FTextureRenderTarget2DResource::InitRHI(FRHICommandListBase& RHICmdList)
 
 		TextureRHI = RenderTargetTextureRHI = RHICreateTexture(Desc);
 
-		if (Owner->bNeedsTwoCopies)
+		if (NumSamples > 1)
+		{
+			ETextureCreateFlags ResolveTexCreateFlags = TexCreateFlags;
+			EnumRemoveFlags(ResolveTexCreateFlags, ETextureCreateFlags::RenderTargetable);
+			EnumAddFlags(ResolveTexCreateFlags, ETextureCreateFlags::ShaderResource | ETextureCreateFlags::ResolveTargetable);
+
+			Desc.SetFlags(ResolveTexCreateFlags);
+			Desc.SetNumSamples(1);
+
+			TextureRHI = RHICreateTexture(Desc);
+		}
+		else if (Owner->bNeedsTwoCopies)
 		{
 			Desc.SetFlags(TexCreateFlags | ETextureCreateFlags::ShaderResource);
 
@@ -708,7 +621,8 @@ void FTextureRenderTarget2DResource::ReleaseRHI()
  */
 void FTextureRenderTarget2DResource::UpdateDeferredResource( FRHICommandListImmediate& RHICmdList, bool bClearRenderTarget/*=true*/ )
 {
-	LLM_SCOPED_TAG_WITH_OBJECT_IN_SET(Owner->GetOutermost(), ELLMTagSet::Assets);
+	LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH(Owner->GetPackage(), ELLMTagSet::Assets);
+	UE_TRACE_METADATA_SCOPE_ASSET_FNAME(NAME_None, NAME_None, Owner->GetPackage()->GetFName());
 
 	SCOPED_DRAW_EVENT(RHICmdList, GPUResourceUpdate)
 	RemoveFromDeferredUpdateList();
@@ -786,15 +700,27 @@ FIntPoint FTextureRenderTarget2DResource::GetSizeXY() const
 *
 * @return display gamma expected for rendering to this render target 
 */
-float FTextureRenderTarget2DResource::GetDisplayGamma() const
+float UTextureRenderTarget2D::GetDisplayGamma() const
 {
-	if (Owner->TargetGamma > UE_KINDA_SMALL_NUMBER * 10.0f)
+	// if TargetGamma is set (not zero), it overrides everything else
+	if (TargetGamma > UE_KINDA_SMALL_NUMBER * 10.0f)
 	{
-		return Owner->TargetGamma;
+		return TargetGamma;
 	}
-	if (Format == PF_FloatRGB || Format == PF_FloatRGBA || Owner->bForceLinearGamma )
+
+	// ?? special casing just two of the float PixelFormats to force 1.0 gamma here is inconsistent
+	//		(there are lots of other float formats)
+	// ignores Owner->IsSRGB() ? it's similar but not quite the same
+	EPixelFormat Format = GetFormat();
+	if (Format == PF_FloatRGB || Format == PF_FloatRGBA || bForceLinearGamma )
 	{
 		return 1.0f;
 	}
-	return FTextureRenderTargetResource::GetDisplayGamma();
+
+	return UTextureRenderTarget::GetDefaultDisplayGamma(); // hard-coded 2.2 , actually means SRGB
+}
+
+float FTextureRenderTarget2DResource::GetDisplayGamma() const
+{
+	return Owner->GetDisplayGamma();
 }

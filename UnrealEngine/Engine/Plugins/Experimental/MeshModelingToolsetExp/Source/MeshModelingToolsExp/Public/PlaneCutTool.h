@@ -183,4 +183,6 @@ protected:
 	void InvalidatePreviews();
 
 	void GenerateAsset(const TArray<FDynamicMeshOpResult>& Results);
+
+	void UpdateVisibility();
 };

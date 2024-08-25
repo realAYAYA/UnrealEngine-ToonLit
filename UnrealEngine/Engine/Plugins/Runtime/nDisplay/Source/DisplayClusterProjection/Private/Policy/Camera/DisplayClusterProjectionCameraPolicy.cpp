@@ -8,7 +8,6 @@
 #include "Game/IDisplayClusterGameManager.h"
 
 #include "Engine/World.h"
-#include "GameFramework/PlayerController.h"
 #include "Camera/CameraComponent.h"
 #include "CineCameraComponent.h"
 #include "ComposurePostMoves.h"
@@ -16,19 +15,42 @@
 #include "Render/Viewport/IDisplayClusterViewport.h"
 #include "Render/Viewport/IDisplayClusterViewportManager.h"
 
+#include "DisplayClusterRootActor.h"
 
+
+//////////////////////////////////////////////////////////////////////////////////////////////
+// FDisplayClusterProjectionPolicy
+//////////////////////////////////////////////////////////////////////////////////////////////
 FDisplayClusterProjectionCameraPolicy::FDisplayClusterProjectionCameraPolicy(const FString& ProjectionPolicyId, const FDisplayClusterConfigurationProjection* InConfigurationProjectionPolicy)
 	: FDisplayClusterProjectionPolicyBase(ProjectionPolicyId, InConfigurationProjectionPolicy)
 {
 }
 
-//////////////////////////////////////////////////////////////////////////////////////////////
-// IDisplayClusterProjectionPolicy
-//////////////////////////////////////////////////////////////////////////////////////////////
 const FString& FDisplayClusterProjectionCameraPolicy::GetType() const
 {
 	static const FString Type(DisplayClusterProjectionStrings::projection::Camera);
 	return Type;
+}
+
+void FDisplayClusterProjectionCameraPolicy::UpdatePostProcessSettings(IDisplayClusterViewport* InViewport)
+{
+	// Override viewport PP from camera, except ICVFX inner camera
+	// because the ICVFX InCamera postprocess is overridden separately in FDisplayClusterViewportConfigurationHelpers_Postprocess::UpdateCameraPostProcessSettings();
+	// The ICVFX camera postprocess is more detailed and is defined in the FDisplayClusterConfigurationICVFX_CameraSettings structure.
+	if (InViewport && !EnumHasAnyFlags(InViewport->GetRenderSettingsICVFX().RuntimeFlags, EDisplayClusterViewportRuntimeICVFXFlags::InCamera))
+	{
+		float DeltaTime = 0.0f;
+		if (ADisplayClusterRootActor* SceneRootActor = InViewport->GetConfiguration().GetRootActor(EDisplayClusterRootActorType::Scene))
+		{
+			DeltaTime = SceneRootActor->GetWorldDeltaSeconds();
+		}
+
+		FMinimalViewInfo ViewInfo;
+		if (ImplSetupProjectionViewPoint(InViewport, DeltaTime, ViewInfo) && ViewInfo.PostProcessBlendWeight > 0.0f)
+		{
+			InViewport->GetViewport_CustomPostProcessSettings().AddCustomPostProcess(IDisplayClusterViewport_CustomPostProcessSettings::ERenderPass::Override, ViewInfo.PostProcessSettings, ViewInfo.PostProcessBlendWeight, true);
+		}
+	}
 }
 
 bool FDisplayClusterProjectionCameraPolicy::HandleStartScene(IDisplayClusterViewport* InViewport)
@@ -45,73 +67,59 @@ void FDisplayClusterProjectionCameraPolicy::HandleEndScene(IDisplayClusterViewpo
 	CameraRef.ResetSceneComponent();
 }
 
-APlayerCameraManager* const GetCurPlayerCameraManager(IDisplayClusterViewport* InViewport)
+void FDisplayClusterProjectionCameraPolicy::SetupProjectionViewPoint(IDisplayClusterViewport* InViewport, const float InDeltaTime, FMinimalViewInfo& InOutViewInfo, float* OutCustomNearClippingPlane)
 {
-	if (InViewport)
+	// Get camera position
+	ImplSetupProjectionViewPoint(InViewport, InDeltaTime, InOutViewInfo, OutCustomNearClippingPlane);
+
+	// Saving camera parameters
+	CameraFOVDegrees = InOutViewInfo.FOV;
+	CameraAspectRatio = InOutViewInfo.AspectRatio;
+}
+
+UCameraComponent* FDisplayClusterProjectionCameraPolicy::GetCameraComponent() const
+{
+	if (USceneComponent* SceneComponent = CameraRef.GetOrFindSceneComponent())
 	{
-		if (UWorld* World = InViewport->GetCurrentWorld())
-		{
-			if (APlayerController* const CurPlayerController = World->GetFirstPlayerController())
-			{
-				return CurPlayerController->PlayerCameraManager;
-			}
-		}
+		return Cast<UCameraComponent>(SceneComponent);
 	}
 
 	return nullptr;
-}
-
-UCameraComponent* FDisplayClusterProjectionCameraPolicy::GetCameraComponent()
-{
-	USceneComponent* SceneComponent = CameraRef.GetOrFindSceneComponent();
-	if (SceneComponent)
-	{
-		UCameraComponent* CameraComponent = Cast<UCameraComponent>(SceneComponent);
-		if (CameraComponent)
-		{
-			return CameraComponent;
-		}
-	}
-	
-	return  nullptr;
 }
 
 bool FDisplayClusterProjectionCameraPolicy::CalculateView(IDisplayClusterViewport* InViewport, const uint32 InContextNum, FVector& InOutViewLocation, FRotator& InOutViewRotation, const FVector& ViewOffset, const float WorldToMeters, const float NCP, const float FCP)
 {
 	check(IsInGameThread());
 
-	// The camera position has already been determined from the GetViewPoint() function
+	// Camera location already defined from SetupProjectionViewPoint()
 
-	// Save Z values
+	// Saving clipping planes
 	ZNear = NCP;
-	ZFar  = FCP;
-
-	if (CustomNearClippingPlane >= 0)
-	{
-		ZNear = CustomNearClippingPlane;
-		ZFar = (NCP == FCP) ? CustomNearClippingPlane : FCP;
-	}
+	ZFar = FCP;
 
 	return true;
 }
 
-bool FDisplayClusterProjectionCameraPolicy::ImplGetProjectionMatrix(const float InCameraFOV, const float InCameraAspectRatio, IDisplayClusterViewport* InViewport, const uint32 InContextNum, FMatrix& OutPrjMatrix)
+
+bool FDisplayClusterProjectionCameraPolicy::GetProjectionMatrix(IDisplayClusterViewport* InViewport, const uint32 InContextNum, FMatrix& OutPrjMatrix)
 {
+	check(IsInGameThread());
+
 	// The horizontal field of view (in degrees)
-	const float ScaledCameraFOV = InCameraFOV * CameraSettings.FOVMultiplier;
+	const float ScaledCameraFOVDegrees = CameraFOVDegrees * CameraSettings.FOVMultiplier;
 
 	// Clamp camera fov to valid range [1.f, 178.f]
-	const float ClampedCameraFOV = FMath::Clamp(ScaledCameraFOV, 1.f, 178.f);
-	if (ClampedCameraFOV != ScaledCameraFOV && !IsEditorOperationMode(InViewport))
+	const float ClampedCameraFOVDegrees = FMath::Clamp(ScaledCameraFOVDegrees, 1.f, 178.f);
+	if (ClampedCameraFOVDegrees != ScaledCameraFOVDegrees && !IsEditorOperationMode(InViewport))
 	{
-		UE_LOG(LogDisplayClusterProjectionCamera, Warning, TEXT("CameraFOV clamped: '%f' -> '%f'. (FieldOfView='%f', FOVMultiplier='%f'"), ScaledCameraFOV, ClampedCameraFOV, InCameraFOV, CameraSettings.FOVMultiplier);
+		UE_LOG(LogDisplayClusterProjectionCamera, Warning, TEXT("CameraFOV clamped: '%f' -> '%f'. (FieldOfView='%f', FOVMultiplier='%f'"), ScaledCameraFOVDegrees, ClampedCameraFOVDegrees, CameraFOVDegrees, CameraSettings.FOVMultiplier);
 	}
 
 	if (InViewport)
 	{
 		// Support inner camera custom frustum
-		const float HalfFOVH = ZNear * FMath::Tan(FMath::DegreesToRadians(0.5 * ClampedCameraFOV));
-		const float HalfFOVV = HalfFOVH / InCameraAspectRatio;
+		const float HalfFOVH = ZNear * FMath::Tan(FMath::DegreesToRadians(0.5 * ClampedCameraFOVDegrees));
+		const float HalfFOVV = HalfFOVH / CameraAspectRatio;
 
 		InViewport->CalculateProjectionMatrix(InContextNum, -HalfFOVH, HalfFOVH, HalfFOVV, -HalfFOVV, ZNear, ZFar, false);
 		OutPrjMatrix = InViewport->GetContexts()[InContextNum].ProjectionMatrix;
@@ -119,75 +127,18 @@ bool FDisplayClusterProjectionCameraPolicy::ImplGetProjectionMatrix(const float 
 	else
 	{
 		FComposurePostMoveSettings ComposureSettings;
-		OutPrjMatrix = ComposureSettings.GetProjectionMatrix(ClampedCameraFOV, InCameraAspectRatio);
+		OutPrjMatrix = ComposureSettings.GetProjectionMatrix(ClampedCameraFOVDegrees, CameraAspectRatio);
 	}
 
-	return true;
-}
-
-bool FDisplayClusterProjectionCameraPolicy::GetProjectionMatrix(IDisplayClusterViewport* InViewport, const uint32 InContextNum, FMatrix& OutPrjMatrix)
-{
-	check(IsInGameThread());
-
-	if (UCameraComponent* CameraComponent = GetCameraComponent())
+	if (!CameraSettings.OffCenterProjectionOffset.IsZero())
 	{
-		return ImplGetProjectionMatrix(CameraComponent->FieldOfView, CameraComponent->AspectRatio, InViewport, InContextNum, OutPrjMatrix);
+		const float Left = -1.0f + CameraSettings.OffCenterProjectionOffset.X;
+		const float Right = Left + 2.0f;
+		const float Bottom = -1.0f + CameraSettings.OffCenterProjectionOffset.Y;
+		const float Top = Bottom + 2.0f;
+		OutPrjMatrix.M[2][0] = (Left + Right) / (Left - Right);
+		OutPrjMatrix.M[2][1] = (Bottom + Top) / (Bottom - Top);
 	}
-	else
-	{
-		APlayerCameraManager* const CurPlayerCameraManager = GetCurPlayerCameraManager(InViewport);
-		if (CurPlayerCameraManager)
-		{
-			return ImplGetProjectionMatrix(CurPlayerCameraManager->GetFOVAngle(), CurPlayerCameraManager->DefaultAspectRatio, InViewport, InContextNum, OutPrjMatrix);
-		}
-	}
-
-	return false;
-}
-
-bool FDisplayClusterProjectionCameraPolicy::GetViewPoint(IDisplayClusterViewport* InViewport, FRotator& InOutViewRotation, FVector& InOutViewLocation)
-{
-	InOutViewLocation = FVector::ZeroVector;
-	InOutViewRotation = FRotator::ZeroRotator;
-
-	CustomNearClippingPlane = -1;
-
-	// Use assigned camera
-	if (UCameraComponent* CameraComponent = GetCameraComponent())
-	{
-		if (UCineCameraComponent* CineCameraComponent = Cast<UCineCameraComponent>(CameraComponent))
-		{
-			if (CineCameraComponent->bOverride_CustomNearClippingPlane)
-			{
-				CustomNearClippingPlane = CineCameraComponent->CustomNearClippingPlane;
-			}
-		}
-
-		InOutViewLocation = CameraComponent->GetComponentLocation();
-		InOutViewRotation = CameraComponent->GetComponentRotation();
-	}
-	// Otherwise default UE camera is used
-	else
-	{
-		APlayerCameraManager* const CurPlayerCameraManager = GetCurPlayerCameraManager(InViewport);
-		if (CurPlayerCameraManager)
-		{
-			InOutViewLocation = CurPlayerCameraManager->GetCameraLocation();
-			InOutViewRotation = CurPlayerCameraManager->GetCameraRotation();
-		}
-	}
-
-	// Fix camera lens deffects (prototype)
-	InOutViewLocation += CameraSettings.FrustumOffset;
-	InOutViewRotation += CameraSettings.FrustumRotation;
-
-	return true;
-}
-
-bool FDisplayClusterProjectionCameraPolicy::GetStereoEyeOffsetDistance(IDisplayClusterViewport* InViewport, const uint32 InContextNum, float& InOutStereoEyeOffsetDistance)
-{
-	// Stereo is not supported by this policy
-	InOutStereoEyeOffsetDistance = 0.f;
 
 	return true;
 }
@@ -195,6 +146,33 @@ bool FDisplayClusterProjectionCameraPolicy::GetStereoEyeOffsetDistance(IDisplayC
 //////////////////////////////////////////////////////////////////////////////////////////////
 // FDisplayClusterProjectionCameraPolicy
 //////////////////////////////////////////////////////////////////////////////////////////////
+bool FDisplayClusterProjectionCameraPolicy::ImplSetupProjectionViewPoint(IDisplayClusterViewport* InViewport, const float InDeltaTime, FMinimalViewInfo& InOutViewInfo, float* OutCustomNearClippingPlane) const
+{
+	if (OutCustomNearClippingPlane)
+	{
+		*OutCustomNearClippingPlane = -1;
+	}
+
+	bool bResult = false;
+	if (UCameraComponent* CameraComponent = GetCameraComponent())
+	{
+		// Use assigned camera component
+		// Store CustomNearClippingPlane locally, and then use that value for the projection matrix
+		bResult = IDisplayClusterViewport::GetCameraComponentView(CameraComponent, InDeltaTime, CameraSettings.bUseCameraPostprocess, InOutViewInfo, OutCustomNearClippingPlane);
+	}
+	else if (UWorld* CurrentWorld = InViewport ? InViewport->GetConfiguration().GetCurrentWorld() : nullptr)
+	{
+		// Get active player camera
+		bResult = IDisplayClusterViewport::GetPlayerCameraView(CurrentWorld, CameraSettings.bUseCameraPostprocess, InOutViewInfo);
+	}
+
+	// Fix camera lens deffects (prototype)
+	InOutViewInfo.Location += CameraSettings.FrustumOffset;
+	InOutViewInfo.Rotation += CameraSettings.FrustumRotation;
+
+	return bResult;
+}
+
 void FDisplayClusterProjectionCameraPolicy::SetCamera(UCameraComponent* NewCamera, const FDisplayClusterProjectionCameraPolicySettings& InCameraSettings)
 {
 	if(CameraSettings.bCameraOverrideDefaults && InCameraSettings.bCameraOverrideDefaults == false)

@@ -16,7 +16,22 @@
 #include "WorldPartition/HLOD/HLODActor.h"
 #include "WorldPartition/HLOD/HLODLayer.h"
 #include "WorldPartition/HLOD/HLODSourceActorsFromCell.h"
+#include "WorldPartition/WorldPartitionActorDescInstance.h"
 
+FHLODActorDesc::FHLODActorDesc()
+	: EditorBounds(ForceInit)
+{}
+
+int64 FHLODActorDesc::GetStat(FName InStatName) const
+{
+	if (InStatName == FWorldPartitionHLODStats::MemoryDiskSizeBytes)
+	{
+		FString PackageFileName = GetActorPackage().ToString();
+		FPackageName::TryConvertLongPackageNameToFilename(GetActorPackage().ToString(), PackageFileName, FPackageName::GetAssetPackageExtension());
+		return IFileManager::Get().FileSize(*PackageFileName);
+	}
+	return HLODStats.FindRef(InStatName);
+}
 
 void FHLODActorDesc::Init(const AActor* InActor)
 {
@@ -29,14 +44,14 @@ void FHLODActorDesc::Init(const AActor* InActor)
 
 	if (HLODCellSourceActors && WorldPartition)
 	{
-		for (const FHLODSubActor& SubActor : HLODCellSourceActors->GetActors())
+		for (const FWorldPartitionRuntimeCellObjectMapping& SubActor : HLODCellSourceActors->GetActors())
 		{
 			if (SubActor.ContainerID.IsMainContainer())
 			{
-				const FWorldPartitionActorDesc* SubActorDesc = WorldPartition->GetActorDesc(SubActor.ActorGuid);
-				if (SubActorDesc && SubActorDesc->GetActorNativeClass()->IsChildOf<AWorldPartitionHLOD>())
+				const FWorldPartitionActorDescInstance* SubActorDescInstance = WorldPartition->GetActorDescInstance(SubActor.ActorInstanceGuid);
+				if (SubActorDescInstance && SubActorDescInstance->GetActorNativeClass()->IsChildOf<AWorldPartitionHLOD>())
 				{
-					ChildHLODActors.Add(SubActor.ActorGuid);
+					ChildHLODActors.Add(SubActor.ActorInstanceGuid);
 				}
 			}
 		}
@@ -44,14 +59,14 @@ void FHLODActorDesc::Init(const AActor* InActor)
 
 	if (HLODSourceActors)
 	{
-		SourceHLODLayerName = NAME_None;
-		if (const UHLODLayer* SourceHLODLayer = HLODSourceActors->GetHLODLayer())
-		{
-			SourceHLODLayerName = SourceHLODLayer->GetFName();
-		}
+		SourceHLODLayer = FTopLevelAssetPath(HLODSourceActors->GetHLODLayer());
 	}
 	
 	HLODStats = HLODActor->GetStats();
+
+	FVector Origin, Extent;
+	HLODActor->GetActorBounds(false, Origin, Extent);
+	EditorBounds = FBox::BuildAABB(Origin, Extent);
 }
 
 struct FHLODSubActorDescDeprecated
@@ -130,14 +145,27 @@ void FHLODActorDesc::Serialize(FArchive& Ar)
 				Ar << SourceCellName;
 			}
 
-			Ar << SourceHLODLayerName;
-			Ar << HLODStats;
-
-			// Update package size stat on load
-			if (Ar.IsLoading())
+			if (Ar.CustomVer(FFortniteMainBranchObjectVersion::GUID) < FFortniteMainBranchObjectVersion::WorldPartitionHLODActorDescSerializeSourceHLODLayer)
 			{
-				HLODStats.Add(FWorldPartitionHLODStats::MemoryDiskSizeBytes, GetPackageSize());
+				FString SourceHLODLayerName;
+				Ar << SourceHLODLayerName;
 			}
+
+			Ar << HLODStats;
+		}
+
+		if (Ar.CustomVer(FFortniteMainBranchObjectVersion::GUID) >= FFortniteMainBranchObjectVersion::WorldPartitionHLODActorDescSerializeSourceHLODLayer)
+		{
+			Ar << SourceHLODLayer;
+		}
+		
+		if (Ar.CustomVer(FFortniteMainBranchObjectVersion::GUID) >= FFortniteMainBranchObjectVersion::WorldPartitionHLODActorDescSerializeEditorBounds)
+		{
+			Ar << EditorBounds;
+		}
+		else
+		{
+			EditorBounds = GetRuntimeBounds();
 		}
 	}
 }
@@ -147,30 +175,17 @@ bool FHLODActorDesc::Equals(const FWorldPartitionActorDesc* Other) const
 	if (FWorldPartitionActorDesc::Equals(Other))
 	{
 		const FHLODActorDesc& HLODActorDesc = *(FHLODActorDesc*)Other;
-		return SourceHLODLayerName == HLODActorDesc.SourceHLODLayerName &&
-			   HLODStats.OrderIndependentCompareEqual(HLODActorDesc.GetStats()) &&
-			   CompareUnsortedArrays(ChildHLODActors, HLODActorDesc.ChildHLODActors);
+		return SourceHLODLayer == HLODActorDesc.SourceHLODLayer &&
+			   HLODStats.OrderIndependentCompareEqual(HLODActorDesc.HLODStats) &&
+			   CompareUnsortedArrays(ChildHLODActors, HLODActorDesc.ChildHLODActors) &&
+			   EditorBounds == HLODActorDesc.EditorBounds;
 	}
 	return false;
 }
 
-static int64 GetPackageSize(const FString& InPackageFileName)
+bool FHLODActorDesc::IsRuntimeRelevant(const FWorldPartitionActorDescInstance* InActorDescInstance) const
 {
-	const int64 PackageSize = IFileManager::Get().FileSize(*InPackageFileName);
-	return PackageSize;
-}
-
-int64 FHLODActorDesc::GetPackageSize() const
-{
-	FString PackageFileName = GetActorPackage().ToString();
-	FPackageName::TryConvertLongPackageNameToFilename(GetActorPackage().ToString(), PackageFileName, FPackageName::GetAssetPackageExtension());
-	return ::GetPackageSize(PackageFileName);
-}
-
-int64 FHLODActorDesc::GetPackageSize(const AWorldPartitionHLOD* InHLODActor)
-{
-	const FString PackageFileName = InHLODActor->GetPackage()->GetLoadedPath().GetLocalFullPath();
-	return ::GetPackageSize(PackageFileName);
+	return !InActorDescInstance->GetForceNonSpatiallyLoaded();
 }
 
 #endif

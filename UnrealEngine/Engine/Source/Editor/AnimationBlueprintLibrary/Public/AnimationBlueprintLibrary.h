@@ -84,7 +84,7 @@ public:
 
 	/** Retrieves the Names of the individual float curves for the given Animation Sequence */
 	UFUNCTION(BlueprintPure, Category = "AnimationBlueprintLibrary|Animation")
-	static void GetAnimationCurveNames(const UAnimSequence* AnimationSequence, ERawCurveTrackTypes CurveType, TArray<FName>& CurveNames);
+	static void GetAnimationCurveNames(const UAnimSequenceBase* AnimationSequenceBase, ERawCurveTrackTypes CurveType, TArray<FName>& CurveNames);
 
 	/** Retrieves the Raw Translation Animation Data for the given Animation Track Name and Animation Sequence */
 	UE_DEPRECATED(5.2, "GetRawTrackPositionData has been deprecated, use AnimationModel interface instead")
@@ -313,47 +313,47 @@ public:
 
 	/** Adds an Animation Curve by Type and Name to the given Animation Sequence */
 	UFUNCTION(BlueprintCallable, Category = "AnimationBlueprintLibrary|Curves")
-	static void AddCurve(UAnimSequence* AnimationSequence, FName CurveName, ERawCurveTrackTypes CurveType = ERawCurveTrackTypes::RCT_Float, bool bMetaDataCurve = false);
+	static void AddCurve(UAnimSequenceBase* AnimationSequenceBase, FName CurveName, ERawCurveTrackTypes CurveType = ERawCurveTrackTypes::RCT_Float, bool bMetaDataCurve = false);
 
 	/** Removes an Animation Curve by Name from the given Animation Sequence (Raw Animation Curves [Names] may not be removed from the Skeleton) */
 	UFUNCTION(BlueprintCallable, Category = "AnimationBlueprintLibrary|Curves")
-	static void RemoveCurve(UAnimSequence* AnimationSequence, FName CurveName, bool bRemoveNameFromSkeleton = false);
+	static void RemoveCurve(UAnimSequenceBase* AnimationSequenceBase, FName CurveName, bool bRemoveNameFromSkeleton = false);
 
 	/** Removes all Animation Curve Data from the given Animation Sequence (Raw Animation Curves [Names] may not be removed from the Skeleton) */
 	UFUNCTION(BlueprintCallable, Category = "AnimationBlueprintLibrary|Curves")
-	static void RemoveAllCurveData(UAnimSequence* AnimationSequence);
+	static void RemoveAllCurveData(UAnimSequenceBase* AnimationSequenceBase);
 
 	/** Adds a Transformation Key to the specified Animation Curve inside of the given Animation Sequence */
 	UFUNCTION(BlueprintCallable, Category = "AnimationBlueprintLibrary|Curves")
-	static void AddTransformationCurveKey(UAnimSequence* AnimationSequence, FName CurveName, const float Time, const FTransform& Transform);
+	static void AddTransformationCurveKey(UAnimSequenceBase* AnimationSequenceBase, FName CurveName, const float Time, const FTransform& Transform);
 
 	/** Adds a multiple of Transformation Keys to the specified Animation Curve inside of the given Animation Sequence */
 	UFUNCTION(BlueprintCallable, Category = "AnimationBlueprintLibrary|Curves")
-	static void AddTransformationCurveKeys(UAnimSequence* AnimationSequence, FName CurveName, const TArray<float>& Times, const TArray<FTransform>& Transforms);
+	static void AddTransformationCurveKeys(UAnimSequenceBase* AnimationSequenceBase, FName CurveName, const TArray<float>& Times, const TArray<FTransform>& Transforms);
 
 	/** Adds a Float Key to the specified Animation Curve inside of the given Animation Sequence */
 	UFUNCTION(BlueprintCallable, Category = "AnimationBlueprintLibrary|Curves")
-	static void AddFloatCurveKey(UAnimSequence* AnimationSequence, FName CurveName, const float Time, const float Value);
+	static void AddFloatCurveKey(UAnimSequenceBase* AnimationSequenceBase, FName CurveName, const float Time, const float Value);
 
 	/** Adds a multiple of Float Keys to the specified Animation Curve inside of the given Animation Sequence */
 	UFUNCTION(BlueprintCallable, Category = "AnimationBlueprintLibrary|Curves")
-	static void AddFloatCurveKeys(UAnimSequence* AnimationSequence, FName CurveName, const TArray<float>& Times, const TArray<float>& Values);
+	static void AddFloatCurveKeys(UAnimSequenceBase* AnimationSequenceBase, FName CurveName, const TArray<float>& Times, const TArray<float>& Values);
 
 	/** Adds a Vector Key to the specified Animation Curve inside of the given Animation Sequence */
 	UFUNCTION(BlueprintCallable, Category = "AnimationBlueprintLibrary|Curves")
-	static void AddVectorCurveKey(UAnimSequence* AnimationSequence, FName CurveName, const float Time, const FVector Vector);
+	static void AddVectorCurveKey(UAnimSequenceBase* AnimationSequenceBase, FName CurveName, const float Time, const FVector Vector);
 
 	/** Adds a multiple of Vector Keys to the specified Animation Curve inside of the given Animation Sequence */
 	UFUNCTION(BlueprintCallable, Category = "AnimationBlueprintLibrary|Curves")
-	static void AddVectorCurveKeys(UAnimSequence* AnimationSequence, FName CurveName, const TArray<float>& Times, const TArray<FVector>& Vectors);
+	static void AddVectorCurveKeys(UAnimSequenceBase* AnimationSequenceBase, FName CurveName, const TArray<float>& Times, const TArray<FVector>& Vectors);
 
 	// Curve helper functions
 	template <typename DataType, typename CurveClass, ERawCurveTrackTypes CurveType>
-	static void AddCurveKeysInternal(UAnimSequence* AnimationSequence, FName CurveName, const TArray<float>& Times, const TArray<DataType>& KeyData);
+	static void AddCurveKeysInternal(UAnimSequenceBase* AnimationSequenceBase, FName CurveName, const TArray<float>& Times, const TArray<DataType>& KeyData);
 
 	// Returns true if successfully added, false if it was already existing
-	static bool AddCurveInternal(UAnimSequence* AnimationSequence, FName CurveName, int32 CurveFlags, ERawCurveTrackTypes SupportedCurveType);
-	static bool RemoveCurveInternal(UAnimSequence* AnimationSequence, FName CurveName, ERawCurveTrackTypes SupportedCurveType);
+	static bool AddCurveInternal(UAnimSequenceBase* AnimationSequenceBase, FName CurveName, int32 CurveFlags, ERawCurveTrackTypes SupportedCurveType);
+	static bool RemoveCurveInternal(UAnimSequenceBase* AnimationSequenceBase, FName CurveName, ERawCurveTrackTypes SupportedCurveType);
 
 	/** Checks whether or not the given Bone Name exist on the Skeleton referenced by the given Animation Sequence */
 	UFUNCTION(BlueprintCallable, Category = "AnimationBlueprintLibrary|Skeleton")
@@ -366,18 +366,22 @@ public:
 
 	/** Retrieves, a multiple of, Float Key(s) from the specified Animation Curve inside of the given Animation Sequence */
 	UFUNCTION(BlueprintCallable, Category = "AnimationBlueprintLibrary|Curves")
-	static void GetFloatKeys(UAnimSequence* AnimationSequence, FName CurveName, TArray<float>& Times, TArray<float>& Values);
+	static void GetFloatKeys(UAnimSequenceBase* AnimationSequenceBase, FName CurveName, TArray<float>& Times, TArray<float>& Values);
 
 	/** Retrieves, a multiple of, Vector Key(s) from the specified Animation Curve inside of the given Animation Sequence */
 	UFUNCTION(BlueprintCallable, Category = "AnimationBlueprintLibrary|Curves")
-	static void GetVectorKeys(UAnimSequence* AnimationSequence, FName CurveName, TArray<float>& Times, TArray<FVector>& Values);
+	static void GetVectorKeys(UAnimSequenceBase* AnimationSequenceBase, FName CurveName, TArray<float>& Times, TArray<FVector>& Values);
 
 	/** Retrieves, a multiple of, Transformation Key(s) from the specified Animation Curve inside of the given Animation Sequence */
 	UFUNCTION(BlueprintCallable, Category = "AnimationBlueprintLibrary|Curves")
-	static void GetTransformationKeys(UAnimSequence* AnimationSequence, FName CurveName, TArray<float>& Times, TArray<FTransform>& Values);
+	static void GetTransformationKeys(UAnimSequenceBase* AnimationSequenceBase, FName CurveName, TArray<float>& Times, TArray<FTransform>& Values);
 
+	/** Retrieves an evaluated float value for a given time from the specified Animation Curve inside of the given Animation Sequence */
+	UFUNCTION(BlueprintCallable, Category = "AnimationBlueprintLibrary|Curves")
+	static float GetFloatValueAtTime(UAnimSequenceBase* AnimationSequenceBase, FName CurveName, float Time);
+	
 	template <typename DataType, typename CurveClass, ERawCurveTrackTypes CurveType>
-	static void GetCurveKeysInternal(UAnimSequence* AnimationSequence, FName CurveName, TArray<float>& Times, TArray<DataType>& KeyData);
+	static void GetCurveKeysInternal(UAnimSequenceBase* AnimationSequenceBase, FName CurveName, TArray<float>& Times, TArray<DataType>& KeyData);
 
 	/** Ensures that any curve names that do not exist on the NewSkeleton are added to it, in which case the SmartName on the actual curve itself will also be updated */
 	UFUNCTION(BlueprintCallable, Category = "AnimationBlueprintLibrary|Curves", meta=(DeprecatedFunction, DeprecationMessage="It is no longer necessary to copy curve names to the skeleton. If metadata is required to be updated, please use the metadata setting APIs."))
@@ -408,7 +412,7 @@ public:
 
 	/** Checks whether or not the given Curve Name exist on the Skeleton referenced by the given Animation Sequence */
 	UFUNCTION(BlueprintCallable, Category = "AnimationBlueprintLibrary|Curves")
-	static bool DoesCurveExist(UAnimSequence* AnimationSequence, FName CurveName, ERawCurveTrackTypes CurveType);
+	static bool DoesCurveExist(UAnimSequenceBase* AnimationSequenceBase, FName CurveName, ERawCurveTrackTypes CurveType);
 
 	UE_DEPRECATED(5.3, "This function is no longer used.")
 	static bool DoesSmartNameExist(UAnimSequence* AnimationSequence, FName Name) { return false; }
@@ -427,7 +431,7 @@ public:
 	UE_DEPRECATED(5.3, "This function is no longer used.")
 	static FName RetrieveContainerNameForCurve(const UAnimSequence* AnimationSequence, FName CurveName) { return NAME_None; }
 	
-	static ERawCurveTrackTypes RetrieveCurveTypeForCurve(const UAnimSequence* AnimationSequence, FName CurveName);
+	static ERawCurveTrackTypes RetrieveCurveTypeForCurve(const UAnimSequenceBase* AnimationSequenceBase, FName CurveName);
 
 	// MetaData
 

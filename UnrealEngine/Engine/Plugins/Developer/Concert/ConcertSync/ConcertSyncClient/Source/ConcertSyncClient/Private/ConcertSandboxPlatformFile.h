@@ -38,7 +38,7 @@ public:
 		FString ResolvedSandboxPath = InNonSandboxPath + TEXT("/");
 		checkf(ResolvedSandboxPath.StartsWith(InRootNonSandboxPath), TEXT("Path '%s' was not under the root '%s'!"), *InNonSandboxPath, *InRootNonSandboxPath);
 		ResolvedSandboxPath.ReplaceInline(*InRootNonSandboxPath, *InRootSandboxPath);
-		ResolvedSandboxPath.RemoveAt(ResolvedSandboxPath.Len() - 1, 1, false);
+		ResolvedSandboxPath.RemoveAt(ResolvedSandboxPath.Len() - 1, 1, EAllowShrinking::No);
 		return FConcertSandboxPlatformFilePath(MoveTemp(InNonSandboxPath), MoveTemp(ResolvedSandboxPath));
 	}
 
@@ -55,7 +55,7 @@ public:
 		FString ResolvedNonSandboxPath = InSandboxPath + TEXT("/");
 		checkf(ResolvedNonSandboxPath.StartsWith(InRootSandboxPath), TEXT("Path '%s' was not under the root '%s'!"), *InRootSandboxPath, *InRootSandboxPath);
 		ResolvedNonSandboxPath.ReplaceInline(*InRootSandboxPath, *InRootNonSandboxPath);
-		ResolvedNonSandboxPath.RemoveAt(ResolvedNonSandboxPath.Len() - 1, 1, false);
+		ResolvedNonSandboxPath.RemoveAt(ResolvedNonSandboxPath.Len() - 1, 1, EAllowShrinking::No);
 		return FConcertSandboxPlatformFilePath(MoveTemp(ResolvedNonSandboxPath), MoveTemp(InSandboxPath));
 	}
 
@@ -228,10 +228,10 @@ private:
 	void OnContentPathDismounted(const FString& InAssetPath, const FString& InFilesystemPath);
 
 	/** Register a mount path from a source content path */
-	void RegisterContentMountPath(const FString& InContentPath);
+	void RegisterContentMountPath(const FString& InAssetPath, const FString& InFilesystemPath);
 
 	/** Unregister a mount path from a source content path */
-	void UnregisterContentMountPath(const FString& InContentPath);
+	void UnregisterContentMountPath(const FString& InAssetPath, const FString& InFilesystemPath);
 
 	/** Resolve the given path to its sandbox path (if any) */
 	FConcertSandboxPlatformFilePath ToSandboxPath(FString InFilename, const bool bEvenIfDisabled = false) const;

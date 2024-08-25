@@ -14,7 +14,9 @@
 #include "EditorModeManager.h"
 #include "EditorModes.h"
 
+#include "Algo/Transform.h"
 #include "WorldPartition/WorldPartition.h"
+#include "WorldPartition/WorldPartitionHelpers.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Misc/MessageDialog.h"
 
@@ -85,23 +87,17 @@ namespace LandscapeEditorUtils
 
 	}
 
-	void SaveLandscapeProxies(TArrayView<ALandscapeProxy*> Proxies, UWorldPartition* WorldPartition)
+	void SaveLandscapeProxies(TArrayView<ALandscapeProxy*> Proxies)
 	{
-		// Save the Proxies a side effect of this is storing all the Saved Actors in the WP DirtyActors list
+		// Save the proxies
 		{
 			TRACE_CPUPROFILER_EVENT_SCOPE(SaveCreatedActors);
 			LandscapeEditorUtils::SaveObjects(Proxies);
 		}
-		
-		// Hold References to the Proxies we're going to save, this prevents WorldPartition Pinning these Actors on Tick
-		TArray< FWorldPartitionReference> References;
-		for (ALandscapeProxy* Proxy : Proxies)
-		{
-			References.Add(FWorldPartitionReference(WorldPartition, Proxy->GetActorGuid()));
-		}
 
-		// Clear the Dirty Actors in WP
-		WorldPartition->Tick(0.0f);
+		// Grab references to proxies so they get unloaded after this function returns
+		TArray<FWorldPartitionReference> ProxyReferences;
+		Algo::Transform(Proxies, ProxyReferences, [](ALandscapeProxy* Proxy) { return FWorldPartitionReference(FWorldPartitionHelpers::GetWorldPartition(Proxy), Proxy->GetActorGuid()); });
 	}
 }
 

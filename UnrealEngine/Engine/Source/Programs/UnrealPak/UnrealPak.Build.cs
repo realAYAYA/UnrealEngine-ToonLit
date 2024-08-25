@@ -8,16 +8,17 @@ public class UnrealPak : ModuleRules
 	{
 		PublicIncludePathModuleNames.Add("Launch");
 
-		PrivateDependencyModuleNames.AddRange(new string[] { 
+		PrivateDependencyModuleNames.AddRange(new string[] {
+			"ApplicationCore",
+			"AssetRegistry",
 			"Core", 
-			"CoreUObject", 
-			"AssetRegistry", 
-			"PakFile", 
-			"Json", 
+			"CoreUObject",
+			"Json",
+			"PakFile",
+			"PakFileUtilities",
 			"Projects", 
-			"PakFileUtilities", 
 			"RSA", 
-			"ApplicationCore" 
+			"TargetPlatform",
 		});
 
 		if (Target.bBuildWithEditorOnlyData)

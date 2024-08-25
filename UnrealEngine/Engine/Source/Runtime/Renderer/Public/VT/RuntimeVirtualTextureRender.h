@@ -72,8 +72,8 @@ namespace RuntimeVirtualTexture
 		bool bClearTextures;
 		/** Set to true for thumbnail rendering. */
 		bool bIsThumbnails;
-		/** Debug visualization to render with. */
-		ERuntimeVirtualTextureDebugType DebugType;
+		/** Fixed BaseColor to apply. Uses alpha channel to blend with material output. */
+		FLinearColor FixedColor;
 
 		/** Physical texture targets to render to. */
 		FRenderPageTarget Targets[RuntimeVirtualTexture::MaxTextureLayers];

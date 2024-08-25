@@ -73,11 +73,11 @@ AutoRTFM::ETransactionResult FakeVM(const FOpcode* Opcodes, const int Length, in
 					FAIL("Unhandled opcode kind!");
 					break;
 				case EOpcodeType::StartTransaction:
-					AutoRTFM::StartTransaction();
+					AutoRTFM::ForTheRuntime::StartTransaction();
 					RecoveryOpcodeStack.push_back(Opcodes[i].Value);
 					break;
 				case EOpcodeType::CommitTransaction:
-					REQUIRE(AutoRTFM::ETransactionResult::Committed == AutoRTFM::CommitTransaction());
+					REQUIRE(AutoRTFM::ETransactionResult::Committed == AutoRTFM::ForTheRuntime::CommitTransaction());
 					RecoveryOpcodeStack.pop_back();
 					break;
 				case EOpcodeType::Call:
@@ -99,7 +99,7 @@ AutoRTFM::ETransactionResult FakeVM(const FOpcode* Opcodes, const int Length, in
 						}
 
 						// We've handled the bad transaction status here, so clear it out!
-						AutoRTFM::ClearTransactionStatus();
+						AutoRTFM::ForTheRuntime::ClearTransactionStatus();
 
 						// -1 just cause the loop will i++!
 						i = RecoveryOpcodeStack.back() - 1;
@@ -110,7 +110,7 @@ AutoRTFM::ETransactionResult FakeVM(const FOpcode* Opcodes, const int Length, in
 				case EOpcodeType::WriteToValue:
 				{
 					const int Arg = Value - Opcodes[i].Value;
-					AutoRTFM::WriteMemory(&Value, &Arg);
+					AutoRTFM::ForTheRuntime::WriteMemory(&Value, &Arg);
 					break;
 				}
 				}

@@ -10,6 +10,8 @@
 class FIoBuffer;
 struct FIoHash;
 
+using FIoBlockHash = uint32;
+
 /** I/O chunk encryption method. */
 enum class EIoEncryptionMethod : uint8
 {
@@ -33,6 +35,7 @@ struct FIoChunkDecodingParams
 	uint64 RawOffset = 0;
 	uint64 EncodedOffset = 0;
 	TConstArrayView<uint32> EncodedBlockSize;
+	TConstArrayView<FIoBlockHash> BlockHash;
 };
 
 /**
@@ -77,5 +80,5 @@ public:
 	static CORE_API TIoStatusOr<FIoOffsetAndLength> GetChunkRange(uint64 TotalRawSize, uint32 RawBlockSize, TConstArrayView<uint32> EncodedBlockSize, uint64 RawOffset, uint64 RawSize);
 	static CORE_API TIoStatusOr<FIoOffsetAndLength> GetChunkRange(const FIoChunkDecodingParams& Params, uint64 RawSize);
 	static CORE_API uint64 GetTotalEncodedSize(TConstArrayView<uint32> EncodedBlockSize);
-	static CORE_API FIoStatus HashBlocks(const FHeader& Header, FMemoryView EncodedData, TArray<FIoHash>& OutHashes);
+	static CORE_API FIoBlockHash HashBlock(FMemoryView Block);
 };

@@ -7,6 +7,8 @@
 #include "Math/Vector2D.h"
 #include "RenderResource.h"
 #include "RHIImmutableSamplerState.h"
+#include "Async/Mutex.h"
+#include "Tasks/Task.h"
 
 enum class EMaterialParameterType : uint8;
 
@@ -23,6 +25,7 @@ class URuntimeVirtualTexture;
 class USparseVolumeTexture;
 class USubsurfaceProfile;
 class USpecularProfile;
+class UNeuralProfile;
 class UTexture;
 
 struct FMaterialParameterValue;
@@ -72,10 +75,8 @@ private:
 #endif
 };
 
-/** Defines a scope to update deferred uniform expression caches using an async task to fill uniform buffers. The scope
- *  attempts to launch async updates immediately, but further async updates can launch within the scope. Only one async
- *  task is launched at a time though. The async task is synced when the scope destructs. The scope enqueues render commands
- *  so it can be used on the game or render threads.
+/** Defines a scope to update deferred uniform expression caches using an async task to fill uniform buffers. If expression
+ *  caches are updated within the scope, an async task may be launched. Otherwise the update is synchronous.
  */
 class FUniformExpressionCacheAsyncUpdateScope
 {
@@ -106,22 +107,22 @@ public:
 	/** Destructor. */
 	ENGINE_API virtual ~FMaterialRenderProxy();
 
-	UE_DEPRECATED(5.1, "EvaluateUniformExpressions with a command list is deprecated.")
-	void EvaluateUniformExpressions(FUniformExpressionCache& OutUniformExpressionCache, const FMaterialRenderContext& Context, class FRHIComputeCommandList*) const
-	{
-		EvaluateUniformExpressions(OutUniformExpressionCache, Context);
-	}
-
 	/**
 	 * Evaluates uniform expressions and stores them in OutUniformExpressionCache.
 	 * @param OutUniformExpressionCache - The uniform expression cache to build.
 	 * @param MaterialRenderContext - The context for which to cache expressions.
 	 */
+	ENGINE_API void EvaluateUniformExpressions(FRHICommandListBase& RHICmdList, FUniformExpressionCache& OutUniformExpressionCache, const FMaterialRenderContext& Context, FUniformExpressionCacheAsyncUpdater* Updater = nullptr) const;
+
+	UE_DEPRECATED(5.4, "EvaluateUniformExpressions requires an RHI command list.")
 	ENGINE_API void EvaluateUniformExpressions(FUniformExpressionCache& OutUniformExpressionCache, const FMaterialRenderContext& Context, FUniformExpressionCacheAsyncUpdater* Updater = nullptr) const;
 
 	/**
 	 * Caches uniform expressions for efficient runtime evaluation.
 	 */
+	ENGINE_API void CacheUniformExpressions(FRHICommandListBase& RHICmdList, bool bRecreateUniformBuffer);
+
+	UE_DEPRECATED(5.4, "CacheUniformExpressions now requires a command list.")
 	ENGINE_API void CacheUniformExpressions(bool bRecreateUniformBuffer);
 
 	/** Cancels an in-flight cache operation. */
@@ -141,7 +142,7 @@ public:
 	ENGINE_API void InvalidateUniformExpressionCache(bool bRecreateUniformBuffer);
 
 	ENGINE_API void UpdateUniformExpressionCacheIfNeeded(ERHIFeatureLevel::Type InFeatureLevel) const;
-
+	ENGINE_API void UpdateUniformExpressionCacheIfNeeded(FRHICommandListBase& RHICmdList, ERHIFeatureLevel::Type InFeatureLevel) const;
 
 	/** Returns the FMaterial, without using a fallback if the FMaterial doesn't have a valid shader map. Can return NULL. */
 	virtual const FMaterial* GetMaterialNoFallback(ERHIFeatureLevel::Type InFeatureLevel) const = 0;
@@ -213,7 +214,12 @@ public:
 	const USpecularProfile* GetSpecularProfileRT(uint32 Index) const { check(Index<uint32(SpecularProfilesRT.Num())); return SpecularProfilesRT[Index]; }
 	const uint32 NumSpecularProfileRT() const { return SpecularProfilesRT.Num(); }
 
+	// Neural profiles
+	void SetNeuralProfileRT(const UNeuralProfile* Ptr) { NeuralProfileRT = Ptr; }
+	const UNeuralProfile* GetNeuralProfileRT() const { return NeuralProfileRT; }
+
 	static ENGINE_API void UpdateDeferredCachedUniformExpressions();
+	static ENGINE_API void UpdateDeferredCachedUniformExpressions(FRHICommandListBase& RHICmdList, UE::Tasks::FTask* TaskIfAsync = nullptr);
 
 	static ENGINE_API bool HasDeferredUniformExpressionCacheRequests();
 
@@ -223,7 +229,7 @@ public:
 
 private:
 	ENGINE_API IAllocatedVirtualTexture* GetPreallocatedVTStack(const FMaterialRenderContext& Context, const FUniformExpressionSet& UniformExpressionSet, const FMaterialVirtualTextureStack& VTStack) const;
-	ENGINE_API IAllocatedVirtualTexture* AllocateVTStack(const FMaterialRenderContext& Context, const FUniformExpressionSet& UniformExpressionSet, const FMaterialVirtualTextureStack& VTStack) const;
+	ENGINE_API IAllocatedVirtualTexture* AllocateVTStack(FRHICommandListBase& RHICmdList, const FMaterialRenderContext& Context, const FUniformExpressionSet& UniformExpressionSet, const FMaterialVirtualTextureStack& VTStack) const;
 
 	virtual void StartCacheUniformExpressions() const {}
 	virtual void FinishCacheUniformExpressions() const {}
@@ -231,6 +237,7 @@ private:
 	/** 0 if not set, game thread pointer, do not dereference, only for comparison */
 	const USubsurfaceProfile* SubsurfaceProfileRT;
 	TArray<const USpecularProfile*> SpecularProfilesRT;
+	const UNeuralProfile* NeuralProfileRT;
 	FString MaterialName;
 
 	/** Incremented each time UniformExpressionCache is modified */
@@ -242,6 +249,9 @@ private:
 	mutable uint8 ReleaseResourceFlag : 1;
 	/** If any VT producer destroyed callbacks have been registered */
 	mutable uint8 HasVirtualTextureCallbacks : 1;
+
+	/** Mutex for locking uniform expression invalidation / evaluation for this material. */
+	mutable UE::FMutex Mutex;
 
 #if WITH_EDITOR
 	/**
@@ -257,6 +267,7 @@ private:
 #endif
 
 	static ENGINE_API TSet<FMaterialRenderProxy*> DeferredUniformExpressionCacheRequests;
+	static ENGINE_API UE::FMutex DeferredUniformExpressionCacheRequestsMutex;
 };
 
 /**

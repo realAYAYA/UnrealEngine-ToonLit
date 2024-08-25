@@ -201,9 +201,6 @@ public:
 
 	/** Returns the currently active InputDeviceScope. This is only valid to call on the game thread and may return null */
 	static APPLICATIONCORE_API const FInputDeviceScope* GetCurrent();
-
-private:
-	static APPLICATIONCORE_API TArray<FInputDeviceScope*> ScopeStack;
 };
 
 PRAGMA_DISABLE_DEPRECATION_WARNINGS

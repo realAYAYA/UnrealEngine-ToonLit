@@ -25,7 +25,8 @@
 #include "Materials/MaterialExpression.h"
 #include "Materials/MaterialExpressionBreakMaterialAttributes.h"
 #include "Materials/MaterialExpressionMakeMaterialAttributes.h"
-#include "Materials/MaterialExpressionStrata.h"
+#include "Materials/MaterialExpressionMaterialFunctionCall.h"
+#include "Materials/MaterialExpressionSubstrate.h"
 #include "Materials/MaterialFunction.h"
 #include "Math/Color.h"
 #include "Math/IntPoint.h"
@@ -61,7 +62,7 @@
 #include "Widgets/SOverlay.h"
 #include "Widgets/SViewport.h"
 #include "Widgets/Text/STextBlock.h"
-#include "Rendering/StrataMaterialShared.h"
+#include "Rendering/SubstrateMaterialShared.h"
 #include "SGraphSubstrateMaterial.h"
 #include "MaterialShared.h"
 
@@ -263,7 +264,7 @@ void FPreviewElement::UpdateExpressionPreview(UMaterialGraphNode* MaterialNode)
 	);
 }
 
-void FPreviewElement::DrawRenderThread(FRHICommandListImmediate& RHICmdList, const void* InWindowBackBuffer)
+void FPreviewElement::Draw_RenderThread(FRHICommandListImmediate& RHICmdList, const void* InWindowBackBuffer, const FSlateCustomDrawParams& Params)
 {
 	if(ExpressionPreview)
 	{
@@ -351,7 +352,7 @@ void SGraphNodeMaterialBase::CreatePinWidgets()
 			}
 
 			// Override pin color for Substrate node
-			if (Strata::IsStrataEnabled())
+			if (Substrate::IsSubstrateEnabled())
 			{
 				FSubstrateWidget::GetPinColor(NewPin, MaterialNode);
 			}
@@ -483,32 +484,57 @@ void SGraphNodeMaterialBase::CreateBelowPinControls(TSharedPtr<SVerticalBox> Mai
 	}
 
 	// Preview of Substrate nodes topology
-	if (Strata::IsStrataEnabled() && MaterialNode && MaterialNode->MaterialExpression->IsA(UMaterialExpressionStrataBSDF::StaticClass()))
+	if (Substrate::IsSubstrateEnabled() && MaterialNode)
 	{
-		if (const UMaterialExpressionStrataBSDF* StrataExpression = (const UMaterialExpressionStrataBSDF*)MaterialNode->MaterialExpression)
-		{		
-			if (UMaterial* MaterialForStats = StrataExpression->Material)
+		TArray<FGuid> Guids;
+		if (MaterialNode->MaterialExpression->IsA(UMaterialExpressionSubstrateBSDF::StaticClass()))
+		{
+			const UMaterialExpression* SubstrateExpression = (const UMaterialExpression*)MaterialNode->MaterialExpression;
+			Guids.Add(SubstrateExpression->MaterialExpressionGuid);
+		}
+		else if (MaterialNode->MaterialExpression->IsA(UMaterialExpressionMaterialFunctionCall::StaticClass()))
+		{
+			UMaterialExpressionMaterialFunctionCall* FunctionCall = (UMaterialExpressionMaterialFunctionCall*)MaterialNode->MaterialExpression;
+			const uint32 OutputCount = FunctionCall->FunctionOutputs.Num();
+			for (uint32 OutputIndex = 0; OutputIndex < OutputCount; ++OutputIndex)
 			{
-				if (const FMaterialResource* MaterialResource = MaterialForStats->GetMaterialResource(GMaxRHIFeatureLevel))
+				if (FunctionCall->IsResultSubstrateMaterial(OutputIndex))
 				{
-					if (FMaterialShaderMap* ShaderMap = MaterialResource->GetGameThreadShaderMap())
-					{
-						const FStrataMaterialCompilationOutput& CompilationOutput = ShaderMap->GetStrataMaterialCompilationOutput();
-						MainBox->AddSlot()
-						.Padding(Settings->GetNonPinNodeBodyPadding())
-						.AutoHeight()
-						[
-							SNew(SHorizontalBox)
-							+SHorizontalBox::Slot()
-							.VAlign(VAlign_Center)
-							.HAlign(HAlign_Center)
-							[							
-								FSubstrateWidget::ProcessOperator(CompilationOutput, StrataExpression->MaterialExpressionGuid)
-							]
-						];
-					}
+					FSubstrateMaterialInfo SubstrateMaterialInfo(true/*bGatherGuids*/);
+					FunctionCall->GatherSubstrateMaterialInfo(SubstrateMaterialInfo, OutputIndex);
+					Guids = SubstrateMaterialInfo.GetGuids();
+					break;
 				}
+			}
+		}
+
+		if (Guids.Num() > 0)
+		{
+			if (const UMaterialExpression* SubstrateExpression = (const UMaterialExpression*)MaterialNode->MaterialExpression)
+			{		
+				if (UMaterial* MaterialForStats = SubstrateExpression->Material)
+				{
+					if (const FMaterialResource* MaterialResource = MaterialForStats->GetMaterialResource(GMaxRHIFeatureLevel))
+					{
+						if (FMaterialShaderMap* ShaderMap = MaterialResource->GetGameThreadShaderMap())
+						{
+							const FSubstrateMaterialCompilationOutput& CompilationOutput = ShaderMap->GetSubstrateMaterialCompilationOutput();
+							MainBox->AddSlot()
+							.Padding(Settings->GetNonPinNodeBodyPadding())
+							.AutoHeight()
+							[
+								SNew(SHorizontalBox)
+								+SHorizontalBox::Slot()
+								.VAlign(VAlign_Center)
+								.HAlign(HAlign_Center)
+								[							
+									FSubstrateWidget::ProcessOperator(CompilationOutput, Guids)
+								]
+							];
+						}
+					}
 	
+				}
 			}
 		}
 	}
@@ -599,6 +625,8 @@ TSharedRef<SWidget> SGraphNodeMaterialBase::CreatePreviewWidget()
 		return SNew(SBox)
 			.WidthOverride(ExpressionPreviewSize)
 			.HeightOverride(ExpressionPreviewSize)
+			.MaxAspectRatio(1.0f)
+			.MaxDesiredHeight(ExpressionPreviewSize)
 			.Visibility(ExpressionPreviewVisibility())
 			[
 				SNew(SBorder)

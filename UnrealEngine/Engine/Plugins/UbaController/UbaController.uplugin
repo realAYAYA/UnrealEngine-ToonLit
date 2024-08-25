@@ -1,0 +1,30 @@
+{
+	"FileVersion" : 1,
+	"Version" : 1,
+	"VersionName" : "0.1",
+	"FriendlyName" : "UBA Controller",
+	"Description" : "Adds support for shader compiling distribution using UnrealBuildAccelerator (UBA)",
+	"Category" : "Build Distribution",
+	"CreatedBy" : "Epic Games, Inc.",
+	"CreatedByURL" : "https://epicgames.com",
+	"DocsURL" : "",
+	"MarketplaceURL" : "",
+	"SupportURL" : "",
+	"IsExperimentalVersion": true,
+	"EnabledByDefault" : false,
+	"CanContainContent" : false,
+	"IsBetaVersion" : false,
+	"Installed" : false,
+
+	"Modules" :
+	[
+		{
+			"Name" : "UbaController",
+			"Type" : "Editor",
+			"LoadingPhase" : "EarliestPossible",
+			"PlatformAllowList": ["Win64"]
+		}
+	],
+
+	"SupportedTargetPlatforms": ["Win64"]
+}

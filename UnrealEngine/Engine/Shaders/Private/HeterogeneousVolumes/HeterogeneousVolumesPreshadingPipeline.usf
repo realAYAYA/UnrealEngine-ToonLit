@@ -68,6 +68,7 @@ int MipLevel;
 
 // Output
 RWTexture2D<float4> RWLightingTexture;
+RWTexture2D<float4> RWVelocityTexture;
 
 int3 TextureResolution;
 Texture3D InputTexture;
@@ -253,24 +254,25 @@ void GenerateRayMarchingTiles(
 	float FarDepth = 1.0 - Epsilon;
 #endif // HAS_INVERTED_Z_BUFFER
 
-	float4x4 WorldToLocal = GetWorldToLocal();
-	float3 W_000 = LWCHackToFloat(SvPositionToWorld(float4(Viewport.xw, NearDepth, 1)));
-	float3 W_100 = LWCHackToFloat(SvPositionToWorld(float4(Viewport.zw, NearDepth, 1)));
-	float3 W_010 = LWCHackToFloat(SvPositionToWorld(float4(Viewport.xy, NearDepth, 1)));
-	float3 W_110 = LWCHackToFloat(SvPositionToWorld(float4(Viewport.zy, NearDepth, 1)));
-	float3 W_001 = LWCHackToFloat(SvPositionToWorld(float4(Viewport.xw, FarDepth, 1)));
-	float3 W_101 = LWCHackToFloat(SvPositionToWorld(float4(Viewport.zw, FarDepth, 1)));
-	float3 W_011 = LWCHackToFloat(SvPositionToWorld(float4(Viewport.xy, FarDepth, 1)));
-	float3 W_111 = LWCHackToFloat(SvPositionToWorld(float4(Viewport.zy, FarDepth, 1)));
+	FDFInverseMatrix WorldToLocal = DFPromoteInverse(GetWorldToLocal()); // LWC_TODO
+	float4x4 TranslatedWorldToLocal = DFFastToTranslatedWorld(WorldToLocal, PrimaryView.PreViewTranslation);
+	float3 W_000 = SvPositionToTranslatedWorld(float4(Viewport.xw, NearDepth, 1));
+	float3 W_100 = SvPositionToTranslatedWorld(float4(Viewport.zw, NearDepth, 1));
+	float3 W_010 = SvPositionToTranslatedWorld(float4(Viewport.xy, NearDepth, 1));
+	float3 W_110 = SvPositionToTranslatedWorld(float4(Viewport.zy, NearDepth, 1));
+	float3 W_001 = SvPositionToTranslatedWorld(float4(Viewport.xw, FarDepth, 1));
+	float3 W_101 = SvPositionToTranslatedWorld(float4(Viewport.zw, FarDepth, 1));
+	float3 W_011 = SvPositionToTranslatedWorld(float4(Viewport.xy, FarDepth, 1));
+	float3 W_111 = SvPositionToTranslatedWorld(float4(Viewport.zy, FarDepth, 1));
 
-	float3 L_000 = mul(float4(W_000, 1), WorldToLocal).xyz;
-	float3 L_100 = mul(float4(W_100, 1), WorldToLocal).xyz;
-	float3 L_010 = mul(float4(W_010, 1), WorldToLocal).xyz;
-	float3 L_110 = mul(float4(W_110, 1), WorldToLocal).xyz;
-	float3 L_001 = mul(float4(W_001, 1), WorldToLocal).xyz;
-	float3 L_101 = mul(float4(W_101, 1), WorldToLocal).xyz;
-	float3 L_011 = mul(float4(W_011, 1), WorldToLocal).xyz;
-	float3 L_111 = mul(float4(W_111, 1), WorldToLocal).xyz;
+	float3 L_000 = mul(float4(W_000, 1), TranslatedWorldToLocal).xyz;
+	float3 L_100 = mul(float4(W_100, 1), TranslatedWorldToLocal).xyz;
+	float3 L_010 = mul(float4(W_010, 1), TranslatedWorldToLocal).xyz;
+	float3 L_110 = mul(float4(W_110, 1), TranslatedWorldToLocal).xyz;
+	float3 L_001 = mul(float4(W_001, 1), TranslatedWorldToLocal).xyz;
+	float3 L_101 = mul(float4(W_101, 1), TranslatedWorldToLocal).xyz;
+	float3 L_011 = mul(float4(W_011, 1), TranslatedWorldToLocal).xyz;
+	float3 L_111 = mul(float4(W_111, 1), TranslatedWorldToLocal).xyz;
 
 	float4 Planes[5] = {
 		// Front
@@ -474,7 +476,7 @@ void RenderLightingCacheWithPreshadingCS(
 	if (LightType != LIGHT_TYPE_DIRECTIONAL)
 	{
 		// Note: this function also permutes ToLight and L
-		float3 TranslatedWorldPosition = LWCHackToFloat(LWCAdd(WorldRayOrigin, PrimaryView.PreViewTranslation));
+		float3 TranslatedWorldPosition = DFFastToTranslatedWorld(WorldRayOrigin, PrimaryView.PreViewTranslation);
 		GetLocalLightAttenuation(TranslatedWorldPosition, LightData, ToLight, L);
 	
 		if (LightData.bRectLight)
@@ -516,6 +518,7 @@ void RenderSingleScatteringWithPreshadingCS(
 
 	float3 Radiance = 0.0;
 	float3 Transmittance = 1.0 - RWLightingTexture[PixelCoord].a;
+	float PrevOpacity = Luminance(1.0 - Transmittance);
 
 	// Create screen ray
 	if (any(PixelCoord.xy >= View.ViewSizeAndInvSize.xy))
@@ -538,8 +541,8 @@ void RenderSingleScatteringWithPreshadingCS(
 
 	// Intersect ray with bounding volume
 	// TODO: LWC integration..
-	float3 WorldRayOrigin = LWCHackToFloat(LWCSubtract(View.TranslatedWorldCameraOrigin, PrimaryView.PreViewTranslation));
-	float3 WorldRayEnd = LWCHackToFloat(SvPositionToWorld(float4(PixelCoord + View.TemporalAAJitter.xy, DeviceZ, 1)));
+	float3 WorldRayOrigin = DFHackToFloat(DFFastSubtract(View.TranslatedWorldCameraOrigin, PrimaryView.PreViewTranslation));
+	float3 WorldRayEnd = DFHackToFloat(SvPositionToWorld(float4(PixelCoord + View.TemporalAAJitter.xy, DeviceZ, 1)));
 	float3 WorldRayDirection = WorldRayEnd - WorldRayOrigin;
 	float WorldRayLength = length(WorldRayDirection);
 	WorldRayDirection /= WorldRayLength;
@@ -561,6 +564,7 @@ void RenderSingleScatteringWithPreshadingCS(
 		return;
 	}
 
+	float WorldHitTMin = WorldRayLength;
 #if DIM_SPARSE_VOXEL_TRACING
 	float RayTMax = HitT.y;
 
@@ -598,14 +602,17 @@ void RenderSingleScatteringWithPreshadingCS(
 		const FDeferredLightData LightData = InitDeferredLightFromUniforms(LightType, VolumetricScatteringIntensity);
 		uint StepCount = CalcStepCount(RayMarchingContext);
 
+		float ScatterHitT = HitT.y;
 		RayMarchSingleScattering(
 			RayMarchingContext,
 			LightData,
 			LightType,
 			StepCount,
+			ScatterHitT,
 			Radiance,
 			Transmittance
 		);
+		WorldHitTMin = min(WorldHitTMin, ScatterHitT * RayMarchingContext.LocalToWorldScale);
 
 #if DIM_SPARSE_VOXEL_TRACING
 	#if DIM_VOXEL_CULLING
@@ -620,10 +627,22 @@ void RenderSingleScatteringWithPreshadingCS(
 #endif // DIM_SPARSE_VOXEL_TRACING
 	}
 
-	// Output..
-	float3 Opacity = bApplyEmissionAndTransmittance ? 1.0 - Transmittance : 0.0;
-	RWLightingTexture[PixelCoord].rgb += Radiance * View.PreExposure;
-	RWLightingTexture[PixelCoord].a = Luminance(Opacity);
+	// Radiance
+	float Opacity = bApplyEmissionAndTransmittance ? Luminance(1.0 - Transmittance) : 0.0;
+	RWLightingTexture[PixelCoord] = float4(RWLightingTexture[PixelCoord].rgb + (Radiance * View.PreExposure), Opacity);
+
+#if DIM_WRITE_VELOCITY
+	bool bWriteVelocity =
+		(WorldHitTMin < WorldRayLength) &&
+		(PrevOpacity < 0.5) &&
+		(Opacity > 0.5);
+
+	if (bWriteVelocity)
+	{
+		float3 Velocity = Calculate3DVelocityAtWorldPos(WorldRayOrigin, WorldRayDirection, WorldHitTMin);
+		RWVelocityTexture[PixelCoord] = EncodeVelocityToTexture(Velocity);
+	}
+#endif // DIM_WRITE_VELOCITY
 
 #if DIM_DEBUG
 	//if (!all(DispatchThreadId))

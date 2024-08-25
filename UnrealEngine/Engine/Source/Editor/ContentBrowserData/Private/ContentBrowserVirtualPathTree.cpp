@@ -47,7 +47,7 @@ bool FContentBrowserVirtualPathTree::CachePath(FName Path, FName InternalPath, T
 	// Paths are cached without their trailing slash, so if the given path has a trailing slash, test it again now as it may already be cached
 	if (PathStr[PathStr.Len() - 1] == '/')
 	{
-		PathStr.RemoveAt(PathStr.Len() - 1, 1, /*bAllowShrinking*/false);
+		PathStr.RemoveAt(PathStr.Len() - 1, 1, EAllowShrinking::No);
 		Path = *PathStr;
 
 		if (ParentPathToChildPaths.Contains(Path))
@@ -140,7 +140,7 @@ bool FContentBrowserVirtualPathTree::RemovePath(FName Path, TFunctionRef<void(FN
 		FString PathStr = Path.ToString();
 		if (PathStr[PathStr.Len() - 1] == '/')
 		{
-			PathStr.RemoveAt(PathStr.Len() - 1, 1, /*bAllowShrinking*/false);
+			PathStr.RemoveAt(PathStr.Len() - 1, 1, EAllowShrinking::No);
 			Path = *PathStr;
 
 			if (!ParentPathToChildPaths.Contains(Path))
@@ -208,7 +208,7 @@ bool FContentBrowserVirtualPathTree::PathExists(FName Path, bool& bIsFullyVirtua
 		FString PathStr = Path.ToString();
 		if (PathStr[PathStr.Len() - 1] == '/')
 		{
-			PathStr.RemoveAt(PathStr.Len() - 1, 1, /*bAllowShrinking*/false);
+			PathStr.RemoveAt(PathStr.Len() - 1, 1, EAllowShrinking::No);
 			Path = *PathStr;
 
 			ChildPathsPtr = ParentPathToChildPaths.Find(Path);
@@ -267,7 +267,7 @@ bool FContentBrowserVirtualPathTree::EnumerateSubPaths(FName BasePath, TFunction
 		FString BasePathStr = BasePath.ToString();
 		if (BasePathStr[BasePathStr.Len() - 1] == '/')
 		{
-			BasePathStr.RemoveAt(BasePathStr.Len() - 1, 1, /*bAllowShrinking*/false);
+			BasePathStr.RemoveAt(BasePathStr.Len() - 1, 1, EAllowShrinking::No);
 			BasePath = *BasePathStr;
 
 			ChildPathsPtr = ParentPathToChildPaths.Find(BasePath);

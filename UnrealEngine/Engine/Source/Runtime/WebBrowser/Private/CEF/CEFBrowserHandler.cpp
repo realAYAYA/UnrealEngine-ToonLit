@@ -426,7 +426,7 @@ CefResourceRequestHandler::ReturnValue FCEFBrowserHandler::OnBeforeResourceLoad(
 	}
 
 	// Current thread is IO thread. We need to invoke BrowserWindow->GetResourceContent on the UI (aka Game) thread:
-	CefPostTask(TID_UI, new FCEFBrowserClosureTask(this, [=]()
+	CefPostTask(TID_UI, new FCEFBrowserClosureTask(this, [=, this]()
 	{
 		const FString LanguageHeaderText(TEXT("Accept-Language"));
 		const FString LocaleCode = FWebBrowserSingleton::GetCurrentLocaleCode();
@@ -518,7 +518,7 @@ void FCEFBrowserHandler::OnResourceLoadComplete(
 	LOG_CEF_LOAD("FCEFBrowserHandler::OnResourceLoadComplete");
 
 	// Current thread is IO thread. We need to invoke our delegates on the UI (aka Game) thread:
-	CefPostTask(TID_UI, new FCEFBrowserClosureTask(this, [=]()
+	CefPostTask(TID_UI, new FCEFBrowserClosureTask(this, [=, this]()
 	{
 		auto resType = Request->GetResourceType();
 		const FString URL = WCHAR_TO_TCHAR(Request->GetURL().ToWString().c_str());
@@ -542,7 +542,7 @@ void FCEFBrowserHandler::OnResourceRedirect(CefRefPtr<CefBrowser> browser,
 {
 	LOG_CEF_LOAD("FCEFBrowserHandler::OnResourceRedirect");
 	// Current thread is IO thread. We need to invoke our delegates on the UI (aka Game) thread:
-	CefPostTask(TID_UI, new FCEFBrowserClosureTask(this, [=]()
+	CefPostTask(TID_UI, new FCEFBrowserClosureTask(this, [=, this]()
 	{
 		// this load is effectively done, clear the request from our map
 		MainFrameLoadTypes.Remove(WCHAR_TO_TCHAR(Request->GetURL().ToWString().c_str()));

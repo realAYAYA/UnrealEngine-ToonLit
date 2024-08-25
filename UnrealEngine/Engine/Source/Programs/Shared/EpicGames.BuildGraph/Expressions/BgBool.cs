@@ -1,8 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System;
-using System.Collections.Generic;
-using System.Linq;
 
 namespace EpicGames.BuildGraph.Expressions
 {
@@ -130,7 +128,7 @@ namespace EpicGames.BuildGraph.Expressions
 			Value = value;
 		}
 
-		public override void Write(BgBytecodeWriter writer) => writer.WriteOpcode(Value? BgOpcode.BoolTrue : BgOpcode.BoolFalse);
+		public override void Write(BgBytecodeWriter writer) => writer.WriteOpcode(Value ? BgOpcode.BoolTrue : BgOpcode.BoolFalse);
 	}
 
 	class BgBoolWrappedExpr : BgBool
@@ -221,15 +219,15 @@ namespace EpicGames.BuildGraph.Expressions
 		{
 			BgObject<BgBoolOptionDef> option = BgObject<BgBoolOptionDef>.Empty;
 			option = option.Set(x => x.Name, Name);
-			if (!(Label is null))
+			if (Label is not null)
 			{
 				option = option.Set(x => x.Label, Label);
 			}
-			if (!(Description is null))
+			if (Description is not null)
 			{
 				option = option.Set(x => x.Description, Description);
 			}
-			if (!(DefaultValue is null))
+			if (DefaultValue is not null)
 			{
 				option = option.Set(x => x.DefaultValue, DefaultValue);
 			}

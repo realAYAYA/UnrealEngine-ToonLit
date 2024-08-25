@@ -13,37 +13,14 @@
 // FRigBaseElement
 ////////////////////////////////////////////////////////////////////////////////
 
-FRigBaseElement::FRigBaseElement(const FRigBaseElement& InOther)
-{
-	*this = InOther;
-}
-
-FRigBaseElement& FRigBaseElement::operator=(const FRigBaseElement& InOther)
-{
-	Key = InOther.Key;
-	NameString = InOther.NameString;
-	Index = InOther.Index;
-	SubIndex = InOther.SubIndex;
-	bSelected = InOther.bSelected;
-	CreatedAtInstructionIndex = InOther.CreatedAtInstructionIndex;
-	TopologyVersion = InOther.TopologyVersion;
-	CachedChildren.Reset();
-	OwnedInstances = 1;
-
-	RemoveAllMetadata();
-	for(const FRigBaseMetadata* InOtherMd : InOther.Metadata)
-	{
-		FRigBaseMetadata* Md = SetupValidMetadata(InOtherMd->Name, InOtherMd->Type);
-		check(Md);
-		Md->SetValueData(InOtherMd->GetValueData(), InOtherMd->GetValueSize());
-	}
-
-	return *this;
-}
+const FRigBaseElement::EElementIndex FRigBaseElement::ElementTypeIndex = BaseElement;
 
 FRigBaseElement::~FRigBaseElement()
 {
-	RemoveAllMetadata();
+	if (Owner)
+	{
+		Owner->RemoveAllMetadataForElement(this);
+	}
 }
 
 UScriptStruct* FRigBaseElement::GetElementStruct() const
@@ -74,57 +51,48 @@ UScriptStruct* FRigBaseElement::GetElementStruct() const
 		{
 			return FRigRigidBodyElement::StaticStruct();
 		}
+		case ERigElementType::Connector:
+		{
+			return FRigConnectorElement::StaticStruct();
+		}
+		case ERigElementType::Socket:
+		{
+			return FRigSocketElement::StaticStruct();
+		}
 		default:
 		{
-				break;
+			break;
 		}
 	}
 	return FRigBaseElement::StaticStruct();
 }
 
-void FRigBaseElement::Serialize(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase)
+void FRigBaseElement::Serialize(FArchive& Ar, ESerializationPhase SerializationPhase)
 {
 	Ar.UsingCustomVersion(FControlRigObjectVersion::GUID);
 
-	if (Ar.IsSaving() || Ar.IsObjectReferenceCollector() || Ar.IsCountingMemory())
+	if (Ar.IsLoading())
 	{
-		Save(Ar, Hierarchy, SerializationPhase);
-	}
-	else if (Ar.IsLoading())
-	{
-		Load(Ar, Hierarchy, SerializationPhase);
+		Load(Ar, SerializationPhase);
 	}
 	else
 	{
-		// remove due to FPIEFixupSerializer hitting this checkNoEntry();
+		Save(Ar, SerializationPhase);
 	}
 }
 
-void FRigBaseElement::Save(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase)
+void FRigBaseElement::Save(FArchive& Ar, ESerializationPhase SerializationPhase)
 {
 	if(SerializationPhase == ESerializationPhase::StaticData)
 	{
 		Ar << Key;
-
-		static const UEnum* MetadataTypeEnum = StaticEnum<ERigMetadataType>();
-
-		int32 MetadataNum = Metadata.Num();
-		Ar << MetadataNum;
-
-		for(FRigBaseMetadata* Md : Metadata)
-		{
-			FName MetadataName = Md->GetName();
-			FName MetadataTypeName = MetadataTypeEnum->GetNameByValue((int64)Md->GetType());
-
-			Ar << MetadataName;
-			Ar << MetadataTypeName;
-			Md->Serialize(Ar, false);
-		}
 	}
 }
 
-void FRigBaseElement::Load(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase)
+void FRigBaseElement::Load(FArchive& Ar, ESerializationPhase SerializationPhase)
 {
+	checkf(Owner != nullptr, TEXT("Loading should not happen on a rig element without an owner"));
+	
 	if(SerializationPhase == ESerializationPhase::StaticData)
 	{
 		FRigElementKey LoadedKey;
@@ -134,11 +102,11 @@ void FRigBaseElement::Load(FArchive& Ar, URigHierarchy* Hierarchy, ESerializatio
 		ensure(LoadedKey.Type == Key.Type);
 		Key = LoadedKey;
 
-		NameString = Key.Name.ToString();
+		ChildCacheIndex = INDEX_NONE;
+		CachedNameString.Reset();
 
-		RemoveAllMetadata();
-		
-		if (Ar.CustomVer(FControlRigObjectVersion::GUID) >= FControlRigObjectVersion::HierarchyElementMetadata)
+		if (Ar.CustomVer(FControlRigObjectVersion::GUID) >= FControlRigObjectVersion::HierarchyElementMetadata &&
+			Ar.CustomVer(FControlRigObjectVersion::GUID) < FControlRigObjectVersion::RigHierarchyStoresElementMetadata)
 		{
 			static const UEnum* MetadataTypeEnum = StaticEnum<ERigMetadataType>();
 
@@ -147,144 +115,107 @@ void FRigBaseElement::Load(FArchive& Ar, URigHierarchy* Hierarchy, ESerializatio
 
 			for(int32 MetadataIndex = 0; MetadataIndex < MetadataNum; MetadataIndex++)
 			{
-				FName MetadataName(NAME_None);
-				FName MetadataTypeName(NAME_None);
+				FName MetadataName;
+				FName MetadataTypeName;
 				Ar << MetadataName;
 				Ar << MetadataTypeName;
-				
-				const ERigMetadataType MetadataType = (ERigMetadataType)MetadataTypeEnum->GetValueByName(MetadataTypeName);
-				FRigBaseMetadata* Md = FRigBaseMetadata::MakeMetadata(this, MetadataName, MetadataType);
-				Md->Serialize(Ar, true);
-				Metadata.Add(Md);
-			}
 
-			for(int32 MetadataIndex = 0; MetadataIndex < Metadata.Num(); MetadataIndex++)
-			{
-				MetadataNameToIndex.Add(Metadata[MetadataIndex]->GetName(), MetadataIndex);
-			}
+				const ERigMetadataType MetadataType = static_cast<ERigMetadataType>(MetadataTypeEnum->GetValueByName(MetadataTypeName));
 
-			for(int32 MetadataIndex = 0; MetadataIndex < Metadata.Num(); MetadataIndex++)
-			{
-				NotifyMetadataChanged(Metadata[MetadataIndex]->GetName());
+				FRigBaseMetadata* Md = Owner->GetMetadataForElement(this, MetadataName, MetadataType, false);
+				Md->Serialize(Ar);
 			}
 		}
 	}
 }
 
-bool FRigBaseElement::RemoveMetadata(const FName& InName)
+
+FRigBaseMetadata* FRigBaseElement::GetMetadata(const FName& InName, ERigMetadataType InType)
 {
-	if(const int32* MetadataIndexPtr = MetadataNameToIndex.Find(InName))
+	if (!Owner)
 	{
-		const int32 MetadataIndex = *MetadataIndexPtr;
-		FRigBaseMetadata::DestroyMetadata(&Metadata[MetadataIndex]);
-		MetadataNameToIndex.Remove(InName);
-		Metadata.RemoveAt(MetadataIndex);
-		for(TPair<FName, int32>& Pair : MetadataNameToIndex)
+		return nullptr;
+	}
+	return Owner->FindMetadataForElement(this, InName, InType);
+}
+
+
+const FRigBaseMetadata* FRigBaseElement::GetMetadata(const FName& InName, ERigMetadataType InType) const
+{
+	if (Owner == nullptr)
+	{
+		return nullptr;
+	}
+	return Owner->FindMetadataForElement(this, InName, InType);
+}
+
+
+bool FRigBaseElement::SetMetadata(const FName& InName, ERigMetadataType InType, const void* InData, int32 InSize)
+{
+	if (Owner)
+	{
+		constexpr bool bNotify = true;
+		if (FRigBaseMetadata* Metadata = Owner->GetMetadataForElement(this, InName, InType, bNotify))
 		{
-			if(Pair.Value > MetadataIndex)
-			{
-				Pair.Value--;
-			}
+			Metadata->SetValueData(InData, InSize);
+			return true;
 		}
-		NotifyMetadataChanged(InName);
-		return true;
 	}
 	return false;
-}
-
-bool FRigBaseElement::RemoveAllMetadata()
-{
-	if(!Metadata.IsEmpty())
-	{
-		TArray<FName> Names;
-		Names.Reserve(Metadata.Num());
-		for(FRigBaseMetadata* Md : Metadata)
-		{
-			Names.Add(Md->GetName());
-			FRigBaseMetadata::DestroyMetadata(&Md);
-		}
-		Metadata.Reset();
-		MetadataNameToIndex.Reset();
-		for(const FName& Name: Names)
-		{
-			NotifyMetadataChanged(Name);
-		}
-		return true;
-	}
-	return false;
-}
-
-void FRigBaseElement::CopyFrom(URigHierarchy* InHierarchy, FRigBaseElement* InOther, URigHierarchy* InOtherHierarchy)
-{
-	// remember all previous names
-	TArray<FName> RemainingNames;
-	Algo::Transform(Metadata, RemainingNames, [](const FRigBaseMetadata* Md) -> FName
-	{
-		return Md->GetName();
-	});
-
-	// copy over all metadata. this also takes care of potential type changes
-	for(const FRigBaseMetadata* InOtherMd : InOther->Metadata)
-	{
-		FRigBaseMetadata* Md = SetupValidMetadata(InOtherMd->Name, InOtherMd->Type);
-		check(Md);
-		Md->SetValueData(InOtherMd->GetValueData(), InOtherMd->GetValueSize());
-		RemainingNames.Remove(InOtherMd->Name);
-	}
-
-	// remove all remaining metadata
-	for(const FName& NameToRemove : RemainingNames)
-	{
-		RemoveMetadata(NameToRemove);
-	}
-
-	// rebuild the name map
-	MetadataNameToIndex.Reset();
-	for(int32 MetadataIndex = 0; MetadataIndex < Metadata.Num(); MetadataIndex++)
-	{
-		MetadataNameToIndex.Add(Metadata[MetadataIndex]->GetName(), MetadataIndex);
-	}
 }
 
 FRigBaseMetadata* FRigBaseElement::SetupValidMetadata(const FName& InName, ERigMetadataType InType)
 {
-	if(const int32* MetadataIndexPtr = MetadataNameToIndex.Find(InName))
+	if (Owner == nullptr)
 	{
-		const int32 MetadataIndex = *MetadataIndexPtr;
-		if(Metadata[MetadataIndex]->GetType() == InType)
-		{
-			return Metadata[MetadataIndex];
-		}
-
-		FRigBaseMetadata::DestroyMetadata(&Metadata[MetadataIndex]);
-		Metadata[MetadataIndex] = FRigBaseMetadata::MakeMetadata(this, InName, InType);
-		NotifyMetadataChanged(InName);
-		return Metadata[MetadataIndex];
+		return nullptr;
 	}
-
-	FRigBaseMetadata* Md = FRigBaseMetadata::MakeMetadata(this, InName, InType);
-	const int32 MetadataIndex = Metadata.Add(Md);
-	MetadataNameToIndex.Add(InName, MetadataIndex);
-	NotifyMetadataChanged(InName);
-	return Md;
+	constexpr bool bNotify = true;
+	return Owner->GetMetadataForElement(this, InName, InType, bNotify);
 }
 
-void FRigBaseElement::NotifyMetadataChanged(const FName& InName)
+
+bool FRigBaseElement::RemoveMetadata(const FName& InName)
 {
-	MetadataVersion++;
-	if(MetadataChangedDelegate.IsBound())
+	if (Owner == nullptr)
 	{
-		MetadataChangedDelegate.Execute(GetKey(), InName);
+		return false;
 	}
+	return Owner->RemoveMetadataForElement(this, InName);
+}
+
+bool FRigBaseElement::RemoveAllMetadata()
+{
+	if (Owner == nullptr)
+	{
+		return false;
+	}
+	return Owner->RemoveAllMetadataForElement(this);
 }
 
 void FRigBaseElement::NotifyMetadataTagChanged(const FName& InTag, bool bAdded)
 {
-	if(MetadataTagChangedDelegate.IsBound())
+	if (Owner)
 	{
-		MetadataTagChangedDelegate.Execute(GetKey(), InTag, bAdded);
+		Owner->OnMetadataTagChanged(Key, InTag, bAdded);
 	}
 }
+
+
+void FRigBaseElement::InitializeFrom(const FRigBaseElement* InOther)
+{
+	Key = InOther->Key;
+	Index = InOther->Index;
+	SubIndex = InOther->SubIndex;
+	CreatedAtInstructionIndex = InOther->CreatedAtInstructionIndex;
+	bSelected = false;
+}
+
+
+void FRigBaseElement::CopyFrom(const FRigBaseElement* InOther)
+{
+}
+
 
 ////////////////////////////////////////////////////////////////////////////////
 // FRigComputedTransform
@@ -477,9 +408,11 @@ FRigBaseElement* FRigElementHandle::Get()
 // FRigTransformElement
 ////////////////////////////////////////////////////////////////////////////////
 
-void FRigTransformElement::Save(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase)
+const FRigBaseElement::EElementIndex FRigTransformElement::ElementTypeIndex = TransformElement;
+
+void FRigTransformElement::Save(FArchive& Ar, ESerializationPhase SerializationPhase)
 {
-	Super::Save(Ar, Hierarchy, SerializationPhase);
+	Super::Save(Ar, SerializationPhase);
 
 	if(SerializationPhase == ESerializationPhase::StaticData)
 	{
@@ -487,9 +420,9 @@ void FRigTransformElement::Save(FArchive& Ar, URigHierarchy* Hierarchy, ESeriali
 	}
 }
 
-void FRigTransformElement::Load(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase)
+void FRigTransformElement::Load(FArchive& Ar, ESerializationPhase SerializationPhase)
 {
-	Super::Load(Ar, Hierarchy, SerializationPhase);
+	Super::Load(Ar, SerializationPhase);
 
 	if(SerializationPhase == ESerializationPhase::StaticData)
 	{
@@ -514,10 +447,9 @@ void FRigTransformElement::CopyPose(FRigBaseElement* InOther, bool bCurrent, boo
 	}
 }
 
-void FRigTransformElement::CopyFrom(URigHierarchy* InHierarchy, FRigBaseElement* InOther,
-	URigHierarchy* InOtherHierarchy)
+void FRigTransformElement::CopyFrom(const FRigBaseElement* InOther)
 {
-	Super::CopyFrom(InHierarchy, InOther, InOtherHierarchy);
+	Super::CopyFrom(InOther);
 	
 	const FRigTransformElement* SourceTransform = CastChecked<FRigTransformElement>(InOther);
 	Pose = SourceTransform->Pose;
@@ -528,7 +460,7 @@ void FRigTransformElement::CopyFrom(URigHierarchy* InHierarchy, FRigBaseElement*
 	for(int32 ElementToDirtyIndex = 0; ElementToDirtyIndex < SourceTransform->ElementsToDirty.Num(); ElementToDirtyIndex++)
 	{
 		const FElementToDirty& Source = SourceTransform->ElementsToDirty[ElementToDirtyIndex];
-		FRigTransformElement* TargetTransform = CastChecked<FRigTransformElement>(InHierarchy->Get(Source.Element->Index));
+		FRigTransformElement* TargetTransform = CastChecked<FRigTransformElement>(Owner->Get(Source.Element->Index));
 		const FElementToDirty Target(TargetTransform, Source.HierarchyDistance);
 		ElementsToDirty.Add(Target);
 		check(ElementsToDirty[ElementToDirtyIndex].Element->GetKey() == Source.Element->GetKey());
@@ -539,9 +471,11 @@ void FRigTransformElement::CopyFrom(URigHierarchy* InHierarchy, FRigBaseElement*
 // FRigSingleParentElement
 ////////////////////////////////////////////////////////////////////////////////
 
-void FRigSingleParentElement::Save(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase)
+const FRigBaseElement::EElementIndex FRigSingleParentElement::ElementTypeIndex = SingleParentElement;
+
+void FRigSingleParentElement::Save(FArchive& Ar, ESerializationPhase SerializationPhase)
 {
-	Super::Save(Ar, Hierarchy, SerializationPhase);
+	Super::Save(Ar, SerializationPhase);
 
 	if(SerializationPhase == ESerializationPhase::InterElementData)
 	{
@@ -554,9 +488,9 @@ void FRigSingleParentElement::Save(FArchive& Ar, URigHierarchy* Hierarchy, ESeri
 	}
 }
 
-void FRigSingleParentElement::Load(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase)
+void FRigSingleParentElement::Load(FArchive& Ar, ESerializationPhase SerializationPhase)
 {
-	Super::Load(Ar, Hierarchy, SerializationPhase);
+	Super::Load(Ar, SerializationPhase);
 
 	if(SerializationPhase == ESerializationPhase::InterElementData)
 	{
@@ -565,20 +499,19 @@ void FRigSingleParentElement::Load(FArchive& Ar, URigHierarchy* Hierarchy, ESeri
 
 		if(ParentKey.IsValid())
 		{
-			ParentElement = Hierarchy->FindChecked<FRigTransformElement>(ParentKey);
+			ParentElement = Owner->FindChecked<FRigTransformElement>(ParentKey);
 		}
 	}
 }
 
-void FRigSingleParentElement::CopyFrom(URigHierarchy* InHierarchy, FRigBaseElement* InOther,
-	URigHierarchy* InOtherHierarchy)
+void FRigSingleParentElement::CopyFrom(const FRigBaseElement* InOther)
 {
-	Super::CopyFrom(InHierarchy, InOther, InOtherHierarchy);
+	Super::CopyFrom(InOther);
 
 	const FRigSingleParentElement* Source = CastChecked<FRigSingleParentElement>(InOther); 
 	if(Source->ParentElement)
 	{
-		ParentElement = CastChecked<FRigTransformElement>(InHierarchy->Get(Source->ParentElement->Index));
+		ParentElement = CastChecked<FRigTransformElement>(Owner->Get(Source->ParentElement->GetIndex()));
 		check(ParentElement->GetKey() == Source->ParentElement->GetKey());
 	}
 	else
@@ -591,9 +524,11 @@ void FRigSingleParentElement::CopyFrom(URigHierarchy* InHierarchy, FRigBaseEleme
 // FRigMultiParentElement
 ////////////////////////////////////////////////////////////////////////////////
 
-void FRigMultiParentElement::Save(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase)
+const FRigBaseElement::EElementIndex FRigMultiParentElement::ElementTypeIndex = MultiParentElement;
+
+void FRigMultiParentElement::Save(FArchive& Ar, ESerializationPhase SerializationPhase)
 {
-	Super::Save(Ar, Hierarchy, SerializationPhase);
+	Super::Save(Ar, SerializationPhase);
 
 	if(SerializationPhase == ESerializationPhase::StaticData)
 	{
@@ -617,9 +552,9 @@ void FRigMultiParentElement::Save(FArchive& Ar, URigHierarchy* Hierarchy, ESeria
 	}
 }
 
-void FRigMultiParentElement::Load(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase)
+void FRigMultiParentElement::Load(FArchive& Ar, ESerializationPhase SerializationPhase)
 {
-	Super::Load(Ar, Hierarchy, SerializationPhase);
+	Super::Load(Ar, SerializationPhase);
 
 	if(SerializationPhase == ESerializationPhase::StaticData)
 	{
@@ -642,7 +577,7 @@ void FRigMultiParentElement::Load(FArchive& Ar, URigHierarchy* Hierarchy, ESeria
 			Ar << ParentKey;
 			ensure(ParentKey.IsValid());
 
-			ParentConstraints[ParentIndex].ParentElement = Hierarchy->FindChecked<FRigTransformElement>(ParentKey);
+			ParentConstraints[ParentIndex].ParentElement = Owner->FindChecked<FRigTransformElement>(ParentKey);
 			ParentConstraints[ParentIndex].bCacheIsDirty = true;
 
 			if (Ar.CustomVer(FControlRigObjectVersion::GUID) >= FControlRigObjectVersion::RigHierarchyMultiParentConstraints)
@@ -666,10 +601,9 @@ void FRigMultiParentElement::Load(FArchive& Ar, URigHierarchy* Hierarchy, ESeria
 	}
 }
 
-void FRigMultiParentElement::CopyFrom(URigHierarchy* InHierarchy, FRigBaseElement* InOther,
-                                      URigHierarchy* InOtherHierarchy)
+void FRigMultiParentElement::CopyFrom(const FRigBaseElement* InOther)
 {
-	Super::CopyFrom(InHierarchy, InOther, InOtherHierarchy);
+	Super::CopyFrom(InOther);
 	
 	const FRigMultiParentElement* Source = CastChecked<FRigMultiParentElement>(InOther);
 	ParentConstraints.Reset();
@@ -681,7 +615,7 @@ void FRigMultiParentElement::CopyFrom(URigHierarchy* InHierarchy, FRigBaseElemen
 	{
 		FRigElementParentConstraint ParentConstraint = Source->ParentConstraints[ParentIndex];
 		const FRigTransformElement* SourceParentElement = ParentConstraint.ParentElement;
-		ParentConstraint.ParentElement = CastChecked<FRigTransformElement>(InHierarchy->Get(SourceParentElement->Index));
+		ParentConstraint.ParentElement = CastChecked<FRigTransformElement>(Owner->Get(SourceParentElement->GetIndex()));
 		ParentConstraints.Add(ParentConstraint);
 		check(ParentConstraints[ParentIndex].ParentElement->GetKey() == SourceParentElement->GetKey());
 		IndexLookup.Add(ParentConstraint.ParentElement->GetKey(), ParentIndex);
@@ -742,9 +676,11 @@ void FRigMultiParentElement::CopyPose(FRigBaseElement* InOther, bool bCurrent, b
 static_assert(sizeof(FRigBoneElement) <= 736, "FRigBoneElement was optimized to fit into 736 bytes bin of MallocBinned3");
 #endif
 
-void FRigBoneElement::Save(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase)
+const FRigBaseElement::EElementIndex FRigBoneElement::ElementTypeIndex = BoneElement;
+
+void FRigBoneElement::Save(FArchive& Ar, ESerializationPhase SerializationPhase)
 {
-	Super::Save(Ar, Hierarchy, SerializationPhase);
+	Super::Save(Ar, SerializationPhase);
 
 	if(SerializationPhase == ESerializationPhase::StaticData)
 	{
@@ -754,9 +690,9 @@ void FRigBoneElement::Save(FArchive& Ar, URigHierarchy* Hierarchy, ESerializatio
 	}
 }
 
-void FRigBoneElement::Load(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase)
+void FRigBoneElement::Load(FArchive& Ar, ESerializationPhase SerializationPhase)
 {
-	Super::Load(Ar, Hierarchy, SerializationPhase);
+	Super::Load(Ar, SerializationPhase);
 
 	if(SerializationPhase == ESerializationPhase::StaticData)
 	{
@@ -767,13 +703,19 @@ void FRigBoneElement::Load(FArchive& Ar, URigHierarchy* Hierarchy, ESerializatio
 	}
 }
 
-void FRigBoneElement::CopyFrom(URigHierarchy* InHierarchy, FRigBaseElement* InOther, URigHierarchy* InOtherHierarchy)
+void FRigBoneElement::CopyFrom(const FRigBaseElement* InOther)
 {
-	Super::CopyFrom(InHierarchy, InOther, InOtherHierarchy);
+	Super::CopyFrom(InOther);
 	
 	const FRigBoneElement* Source = CastChecked<FRigBoneElement>(InOther);
 	BoneType = Source->BoneType;
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// FRigNullElement
+////////////////////////////////////////////////////////////////////////////////
+
+const FRigBaseElement::EElementIndex FRigNullElement::ElementTypeIndex = NullElement;
 
 ////////////////////////////////////////////////////////////////////////////////
 // FRigControlSettings
@@ -823,6 +765,11 @@ void FRigControlSettings::Save(FArchive& Ar)
 	if(ControlEnum)
 	{
 		ControlEnumPathName = ControlEnum->GetPathName();
+		if (Ar.IsObjectReferenceCollector())
+		{
+			FSoftObjectPath DeclareControlEnumToCooker(ControlEnumPathName);
+			Ar << DeclareControlEnumToCooker;
+		}
 	}
 
 	Ar << AnimationTypeName;
@@ -994,6 +941,7 @@ void FRigControlSettings::Load(FArchive& Ar)
 		bGroupWithParentControl = IsAnimatable() && (
 			ControlType == ERigControlType::Bool ||
 			ControlType == ERigControlType::Float ||
+			ControlType == ERigControlType::ScaleFloat ||
 			ControlType == ERigControlType::Integer ||
 			ControlType == ERigControlType::Vector2D
 		);
@@ -1062,10 +1010,6 @@ uint32 GetTypeHash(const FRigControlSettings& Settings)
 	return Hash;
 }
 
-////////////////////////////////////////////////////////////////////////////////
-// FRigControlElement
-////////////////////////////////////////////////////////////////////////////////
-
 bool FRigControlSettings::operator==(const FRigControlSettings& InOther) const
 {
 	if(AnimationType != InOther.AnimationType)
@@ -1112,7 +1056,7 @@ bool FRigControlSettings::operator==(const FRigControlSettings& InOther) const
 	{
 		return false;
 	}
-	if( ControlEnum != InOther. ControlEnum)
+	if(ControlEnum != InOther.ControlEnum)
 	{
 		return false;
 	}
@@ -1178,6 +1122,12 @@ void FRigControlSettings::SetupLimitArrayForType(bool bLimitTranslation, bool bL
 			LimitEnabled[0].Set(bLimitTranslation);
 			break;
 		}
+		case ERigControlType::ScaleFloat:
+		{
+			LimitEnabled.SetNum(1);
+			LimitEnabled[0].Set(bLimitScale);
+			break;
+		}
 		case ERigControlType::Vector2D:
 		{
 			LimitEnabled.SetNum(2);
@@ -1227,9 +1177,15 @@ void FRigControlSettings::SetupLimitArrayForType(bool bLimitTranslation, bool bL
 	}
 }
 
-void FRigControlElement::Save(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase)
+////////////////////////////////////////////////////////////////////////////////
+// FRigControlElement
+////////////////////////////////////////////////////////////////////////////////
+
+const FRigBaseElement::EElementIndex FRigControlElement::ElementTypeIndex = ControlElement;
+
+void FRigControlElement::Save(FArchive& Ar, ESerializationPhase SerializationPhase)
 {
-	Super::Save(Ar, Hierarchy, SerializationPhase);
+	Super::Save(Ar, SerializationPhase);
 
 	if(SerializationPhase == ESerializationPhase::StaticData)
 	{
@@ -1240,9 +1196,9 @@ void FRigControlElement::Save(FArchive& Ar, URigHierarchy* Hierarchy, ESerializa
 	}
 }
 
-void FRigControlElement::Load(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase)
+void FRigControlElement::Load(FArchive& Ar, ESerializationPhase SerializationPhase)
 {
-	Super::Load(Ar, Hierarchy, SerializationPhase);
+	Super::Load(Ar, SerializationPhase);
 
 	if(SerializationPhase == ESerializationPhase::StaticData)
 	{
@@ -1262,9 +1218,9 @@ void FRigControlElement::Load(FArchive& Ar, URigHierarchy* Hierarchy, ESerializa
 	}
 }
 
-void FRigControlElement::CopyFrom(URigHierarchy* InHierarchy, FRigBaseElement* InOther, URigHierarchy* InOtherHierarchy)
+void FRigControlElement::CopyFrom(const FRigBaseElement* InOther)
 {
-	Super::CopyFrom(InHierarchy, InOther, InOtherHierarchy);
+	Super::CopyFrom(InOther);
 	
 	const FRigControlElement* Source = CastChecked<FRigControlElement>(InOther);
 	Settings = Source->Settings;
@@ -1298,9 +1254,11 @@ void FRigControlElement::CopyPose(FRigBaseElement* InOther, bool bCurrent, bool 
 // FRigCurveElement
 ////////////////////////////////////////////////////////////////////////////////
 
-void FRigCurveElement::Save(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase)
+const FRigBaseElement::EElementIndex FRigCurveElement::ElementTypeIndex = CurveElement;
+
+void FRigCurveElement::Save(FArchive& Ar, ESerializationPhase SerializationPhase)
 {
-	Super::Save(Ar, Hierarchy, SerializationPhase);
+	Super::Save(Ar, SerializationPhase);
 
 	if(SerializationPhase == ESerializationPhase::StaticData)
 	{
@@ -1309,9 +1267,9 @@ void FRigCurveElement::Save(FArchive& Ar, URigHierarchy* Hierarchy, ESerializati
 	}
 }
 
-void FRigCurveElement::Load(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase)
+void FRigCurveElement::Load(FArchive& Ar, ESerializationPhase SerializationPhase)
 {
-	Super::Load(Ar, Hierarchy, SerializationPhase);
+	Super::Load(Ar, SerializationPhase);
 
 	if(SerializationPhase == ESerializationPhase::StaticData)
 	{
@@ -1338,9 +1296,9 @@ void FRigCurveElement::CopyPose(FRigBaseElement* InOther, bool bCurrent, bool bI
 	}
 }
 
-void FRigCurveElement::CopyFrom(URigHierarchy* InHierarchy, FRigBaseElement* InOther, URigHierarchy* InOtherHierarchy)
+void FRigCurveElement::CopyFrom(const FRigBaseElement* InOther)
 {
-	Super::CopyFrom(InHierarchy, InOther, InOtherHierarchy);
+	Super::CopyFrom(InOther);
 	
 	if(const FRigCurveElement* Other = CastChecked<FRigCurveElement>(InOther))
 	{
@@ -1372,9 +1330,11 @@ void FRigRigidBodySettings::Load(FArchive& Ar)
 // FRigRigidBodyElement
 ////////////////////////////////////////////////////////////////////////////////
 
-void FRigRigidBodyElement::Save(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase)
+const FRigBaseElement::EElementIndex FRigRigidBodyElement::ElementTypeIndex = RigidBodyElement;
+
+void FRigRigidBodyElement::Save(FArchive& Ar, ESerializationPhase SerializationPhase)
 {
-	Super::Save(Ar, Hierarchy, SerializationPhase);
+	Super::Save(Ar, SerializationPhase);
 
 	if(SerializationPhase == ESerializationPhase::StaticData)
 	{
@@ -1382,9 +1342,9 @@ void FRigRigidBodyElement::Save(FArchive& Ar, URigHierarchy* Hierarchy, ESeriali
 	}
 }
 
-void FRigRigidBodyElement::Load(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase)
+void FRigRigidBodyElement::Load(FArchive& Ar, ESerializationPhase SerializationPhase)
 {
-	Super::Load(Ar, Hierarchy, SerializationPhase);
+	Super::Load(Ar, SerializationPhase);
 
 	if(SerializationPhase == ESerializationPhase::StaticData)
 	{
@@ -1392,10 +1352,9 @@ void FRigRigidBodyElement::Load(FArchive& Ar, URigHierarchy* Hierarchy, ESeriali
 	}
 }
 
-void FRigRigidBodyElement::CopyFrom(URigHierarchy* InHierarchy, FRigBaseElement* InOther,
-	URigHierarchy* InOtherHierarchy)
+void FRigRigidBodyElement::CopyFrom(const FRigBaseElement* InOther)
 {
-	Super::CopyFrom(InHierarchy, InOther, InOtherHierarchy);
+	Super::CopyFrom(InOther);
 	
 	const FRigRigidBodyElement* Source = CastChecked<FRigRigidBodyElement>(InOther);
 	Settings = Source->Settings;
@@ -1405,19 +1364,21 @@ void FRigRigidBodyElement::CopyFrom(URigHierarchy* InHierarchy, FRigBaseElement*
 // FRigReferenceElement
 ////////////////////////////////////////////////////////////////////////////////
 
-void FRigReferenceElement::Save(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase)
+const FRigBaseElement::EElementIndex FRigReferenceElement::ElementTypeIndex = ReferenceElement;
+
+void FRigReferenceElement::Save(FArchive& Ar, ESerializationPhase SerializationPhase)
 {
-	Super::Save(Ar, Hierarchy, SerializationPhase);
+	Super::Save(Ar, SerializationPhase);
 }
 
-void FRigReferenceElement::Load(FArchive& Ar, URigHierarchy* Hierarchy, ESerializationPhase SerializationPhase)
+void FRigReferenceElement::Load(FArchive& Ar, ESerializationPhase SerializationPhase)
 {
-	Super::Load(Ar, Hierarchy, SerializationPhase);
+	Super::Load(Ar, SerializationPhase);
 }
 
-void FRigReferenceElement::CopyFrom(URigHierarchy* InHierarchy, FRigBaseElement* InOther, URigHierarchy* InOtherHierarchy)
+void FRigReferenceElement::CopyFrom(const FRigBaseElement* InOther)
 {
-	Super::CopyFrom(InHierarchy, InOther, InOtherHierarchy);
+	Super::CopyFrom(InOther);
 	
 	const FRigReferenceElement* Source = CastChecked<FRigReferenceElement>(InOther);
 	GetWorldTransformDelegate = Source->GetWorldTransformDelegate;
@@ -1443,4 +1404,242 @@ void FRigReferenceElement::CopyPose(FRigBaseElement* InOther, bool bCurrent, boo
 			GetWorldTransformDelegate = Other->GetWorldTransformDelegate;
 		}
 	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// FRigConnectorSettings
+////////////////////////////////////////////////////////////////////////////////
+
+FRigConnectorSettings::FRigConnectorSettings()
+	: Type(EConnectorType::Primary)
+	, bOptional(false)
+{
+}
+
+FRigConnectorSettings FRigConnectorSettings::DefaultSettings()
+{
+	FRigConnectorSettings Settings;
+	Settings.AddRule(FRigTypeConnectionRule(ERigElementType::Socket));
+	return Settings;
+}
+
+void FRigConnectorSettings::Save(FArchive& Ar)
+{
+	Ar.UsingCustomVersion(FControlRigObjectVersion::GUID);
+
+	Ar << Description;
+
+	if (Ar.CustomVer(FControlRigObjectVersion::GUID) >= FControlRigObjectVersion::ConnectorsWithType)
+	{
+		Ar << Type;
+		Ar << bOptional;
+	}
+
+	int32 NumRules = Rules.Num();
+	Ar << NumRules;
+	for(int32 Index = 0; Index < NumRules; Index++)
+	{
+
+		Rules[Index].Save(Ar);
+	}
+}
+
+void FRigConnectorSettings::Load(FArchive& Ar)
+{
+	Ar.UsingCustomVersion(FControlRigObjectVersion::GUID);
+
+	Ar << Description;
+
+	if (Ar.CustomVer(FControlRigObjectVersion::GUID) >= FControlRigObjectVersion::ConnectorsWithType)
+	{
+		Ar << Type;
+		Ar << bOptional;
+	}
+
+	int32 NumRules = 0;
+	Ar << NumRules;
+	Rules.SetNumZeroed(NumRules);
+	for(int32 Index = 0; Index < NumRules; Index++)
+	{
+		Rules[Index].Load(Ar);
+	}
+}
+
+bool FRigConnectorSettings::operator==(const FRigConnectorSettings& InOther) const
+{
+	if(!Description.Equals(InOther.Description, ESearchCase::CaseSensitive))
+	{
+		return false;
+	}
+	if(Type != InOther.Type)
+	{
+		return false;
+	}
+	if(bOptional != InOther.bOptional)
+	{
+		return false;
+	}
+	if(Rules.Num() != InOther.Rules.Num())
+	{
+		return false;
+	}
+	for(int32 Index = 0; Index < Rules.Num(); Index++)
+	{
+		if(Rules[Index] != InOther.Rules[Index])
+		{
+			return false;
+		}
+	}
+	return true;
+}
+
+uint32 FRigConnectorSettings::GetRulesHash() const
+{
+	uint32 Hash = GetTypeHash(Rules.Num());
+	for(const FRigConnectionRuleStash& Rule : Rules)
+	{
+		Hash = HashCombine(Hash, GetTypeHash(Rule));
+	}
+	return Hash;
+}
+
+uint32 GetTypeHash(const FRigConnectorSettings& Settings)
+{
+	uint32 Hash = HashCombine(GetTypeHash(Settings.Type), Settings.GetRulesHash());
+	Hash = HashCombine(Hash, GetTypeHash(Settings.bOptional));
+	return Hash;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// FRigConnectorElement
+////////////////////////////////////////////////////////////////////////////////
+
+const FRigBaseElement::EElementIndex FRigConnectorElement::ElementTypeIndex = ConnectorElement;
+
+void FRigConnectorElement::Save(FArchive& Ar, ESerializationPhase SerializationPhase)
+{
+	Super::Save(Ar, SerializationPhase);
+
+	if(SerializationPhase == ESerializationPhase::StaticData)
+	{
+		Settings.Save(Ar);
+	}
+}
+
+void FRigConnectorElement::Load(FArchive& Ar, ESerializationPhase SerializationPhase)
+{
+	Super::Load(Ar, SerializationPhase);
+
+	if(SerializationPhase == ESerializationPhase::StaticData)
+	{
+		Settings.Load(Ar);
+	}
+}
+
+FRigConnectorState FRigConnectorElement::GetConnectorState(const URigHierarchy* InHierarchy) const
+{
+	FRigConnectorState State;
+	State.Name = Key.Name;
+	State.ResolvedTarget = InHierarchy->GetResolvedTarget(Key);
+	State.Settings = Settings;
+	return State;
+}
+
+void FRigConnectorElement::CopyFrom(const FRigBaseElement* InOther)
+{
+	Super::CopyFrom(InOther);
+	
+	const FRigConnectorElement* Source = CastChecked<FRigConnectorElement>(InOther);
+	Settings = Source->Settings;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// FRigSocketElement
+////////////////////////////////////////////////////////////////////////////////
+
+FRigSocketState::FRigSocketState()
+: Name(NAME_None)
+, InitialLocalTransform(FTransform::Identity)
+, Color(FRigSocketElement::SocketDefaultColor)
+{
+}
+
+const FRigBaseElement::EElementIndex FRigSocketElement::ElementTypeIndex = SocketElement;
+const FName FRigSocketElement::ColorMetaName = TEXT("SocketColor");
+const FName FRigSocketElement::DescriptionMetaName = TEXT("SocketDescription");
+const FName FRigSocketElement::DesiredParentMetaName = TEXT("SocketDesiredParent");
+const FLinearColor FRigSocketElement::SocketDefaultColor = FLinearColor::White;
+
+void FRigSocketElement::Save(FArchive& Ar, ESerializationPhase SerializationPhase)
+{
+	Super::Save(Ar, SerializationPhase);
+}
+
+void FRigSocketElement::Load(FArchive& Ar, ESerializationPhase SerializationPhase)
+{
+	Super::Load(Ar, SerializationPhase);
+}
+
+FRigSocketState FRigSocketElement::GetSocketState(const URigHierarchy* InHierarchy) const
+{
+	FRigSocketState State;
+	State.Name = GetFName();
+	State.Parent = InHierarchy->GetRigElementKeyMetadata(GetKey(), DesiredParentMetaName, FRigElementKey());
+	if(!State.Parent.IsValid())
+	{
+		State.Parent = InHierarchy->GetFirstParent(GetKey());
+	}
+	State.InitialLocalTransform = InHierarchy->GetInitialLocalTransform(GetIndex());
+	State.Color = GetColor(InHierarchy);
+	State.Description = GetDescription(InHierarchy);
+	return State;
+}
+
+FLinearColor FRigSocketElement::GetColor(const URigHierarchy* InHierarchy) const
+{
+	return InHierarchy->GetLinearColorMetadata(GetKey(), ColorMetaName, SocketDefaultColor);
+}
+
+void FRigSocketElement::SetColor(const FLinearColor& InColor, URigHierarchy* InHierarchy, bool bNotify)
+{
+	if(InHierarchy->GetLinearColorMetadata(GetKey(), ColorMetaName, SocketDefaultColor).Equals(InColor))
+	{
+		return;
+	}
+	InHierarchy->SetLinearColorMetadata(GetKey(), ColorMetaName, InColor);
+	InHierarchy->PropagateMetadata(GetKey(), ColorMetaName, bNotify);
+	if(bNotify)
+	{
+		InHierarchy->Notify(ERigHierarchyNotification::SocketColorChanged, this);
+	}
+}
+
+FString FRigSocketElement::GetDescription(const URigHierarchy* InHierarchy) const
+{
+	const FName Description = InHierarchy->GetNameMetadata(GetKey(), DescriptionMetaName, NAME_None);
+	if(Description.IsNone())
+	{
+		return FString();
+	}
+	return Description.ToString();
+}
+
+void FRigSocketElement::SetDescription(const FString& InDescription, URigHierarchy* InHierarchy, bool bNotify)
+{
+	const FName Description = InDescription.IsEmpty() ? FName(NAME_None) : *InDescription;
+	if(InHierarchy->GetNameMetadata(GetKey(), DescriptionMetaName, NAME_None).IsEqual(Description, ENameCase::CaseSensitive))
+	{
+		return;
+	}
+	InHierarchy->SetNameMetadata(GetKey(), DescriptionMetaName, *InDescription);
+	InHierarchy->PropagateMetadata(this, DescriptionMetaName, bNotify);
+	if(bNotify)
+	{
+		InHierarchy->Notify(ERigHierarchyNotification::SocketDescriptionChanged, this);
+	}
+}
+
+void FRigSocketElement::CopyFrom(const FRigBaseElement* InOther)
+{
+	Super::CopyFrom(InOther);
 }

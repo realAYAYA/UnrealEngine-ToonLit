@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #include "ChooserFunctionLibrary.h"
+#include "Blueprint/BlueprintExceptionInfo.h"
 #include "Chooser.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ChooserFunctionLibrary)
@@ -12,10 +13,7 @@ UChooserFunctionLibrary::UChooserFunctionLibrary(const FObjectInitializer& Objec
 static FObjectChooserBase::EIteratorStatus StaticEvaluateChooser(const UObject* ContextObject, const UChooserTable* Chooser, FObjectChooserBase::FObjectChooserIteratorCallback Callback)
 {
 	// Fallback single context object version
-	FChooserEvaluationContext Context;
-	Context.Params.AddDefaulted();
-	Context.Params.Last().InitializeAs(FChooserEvaluationInputObject::StaticStruct());
-	Context.Params.Last().GetMutable<FChooserEvaluationInputObject>().Object = const_cast<UObject*>(ContextObject);
+	FChooserEvaluationContext Context(const_cast<UObject*>(ContextObject));
 	return UChooserTable::EvaluateChooser(Context, Chooser, Callback);
 }
 
@@ -37,9 +35,7 @@ UObject* UChooserFunctionLibrary::EvaluateChooser(const UObject* ContextObject, 
 
 void UChooserFunctionLibrary::AddChooserObjectInput(FChooserEvaluationContext& Context, UObject* Object)
 {
-	Context.Params.AddDefaulted();
-	Context.Params.Last().InitializeAs(FChooserEvaluationInputObject::StaticStruct());
-	Context.Params.Last().GetMutable<FChooserEvaluationInputObject>().Object = Object;
+	Context.AddObjectParam(Object);
 }
 
 void UChooserFunctionLibrary::AddChooserStructInput(FChooserEvaluationContext& Inputs, int32 Value)
@@ -57,7 +53,7 @@ DEFINE_FUNCTION(UChooserFunctionLibrary::execAddChooserStructInput)
 	
 	Stack.StepCompiledIn<FStructProperty>(nullptr);
 	const FStructProperty* ValueProp = CastField<FStructProperty>(Stack.MostRecentProperty);
-	const void* ValuePtr = Stack.MostRecentPropertyAddress;
+	uint8* ValuePtr = Stack.MostRecentPropertyAddress;
 	P_FINISH;
 	
 	if (!ValueProp || !ValuePtr)
@@ -72,8 +68,7 @@ DEFINE_FUNCTION(UChooserFunctionLibrary::execAddChooserStructInput)
 	else
 	{
 		P_NATIVE_BEGIN;
-		ChooserContext.Params.AddDefaulted();
-		ChooserContext.Params.Last().InitializeAs(ValueProp->Struct, static_cast<const uint8*>(ValuePtr));
+		ChooserContext.Params.Add(FStructView(ValueProp->Struct, ValuePtr));
 		P_NATIVE_END;
 	}
 }

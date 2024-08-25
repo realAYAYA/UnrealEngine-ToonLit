@@ -48,7 +48,7 @@ void FGeometryCacheThumbnailScene::GetViewMatrixParameters(const float InFOVDegr
 
 	const float HalfFOVRadians = FMath::DegreesToRadians<float>(InFOVDegrees) * 0.5f;
 	// Add extra size to view slightly outside of the sphere to compensate for perspective
-	const float HalfMeshSize = PreviewActor->GetGeometryCacheComponent()->Bounds.SphereRadius * 1.15;
+	const float HalfMeshSize = static_cast<float>(PreviewActor->GetGeometryCacheComponent()->Bounds.SphereRadius * 1.15);
 	const float BoundsZOffset = GetBoundsZOffset(PreviewActor->GetGeometryCacheComponent()->Bounds);
 	const float TargetDistance = HalfMeshSize / FMath::Tan(HalfFOVRadians);
 

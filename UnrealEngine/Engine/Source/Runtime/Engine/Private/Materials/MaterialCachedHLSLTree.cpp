@@ -8,7 +8,11 @@
 #include "Materials/Material.h"
 #include "Materials/MaterialAttributeDefinitionMap.h"
 #include "Materials/MaterialExpressionCustomOutput.h"
+#include "Materials/MaterialExpressionMaterialAttributeLayers.h"
+#include "Materials/MaterialExpressionMaterialFunctionCall.h"
 #include "MaterialHLSLGenerator.h"
+#include "MaterialHLSLTree.h"
+#include "HLSLTree/HLSLTreeEmit.h"
 
 DECLARE_STATS_GROUP(TEXT("Material Memory"), STATGROUP_MaterialMemory, STATCAT_Advanced);
 DECLARE_MEMORY_STAT(TEXT("Material HLSLTree Memory"), STAT_MaterialMemory_HLSLTree, STATGROUP_MaterialMemory);
@@ -54,15 +58,48 @@ static UE::Shader::EValueType GetShaderType(EMaterialValueType MaterialType)
 
 bool FMaterialCachedHLSLTree::GenerateTree(UMaterial* Material, const FMaterialLayersFunctions* LayerOverrides, UMaterialExpression* PreviewExpression)
 {
-	const EMaterialShadingModel DefaultShadingModel = Material->GetShadingModels().GetFirstShadingModel();
-
 	for (UMaterialExpression* Expression : Material->GetExpressions())
 	{
-		UMaterialExpressionCustomOutput* CustomOutput = Cast<UMaterialExpressionCustomOutput>(Expression);
-		// We don't want anything with HasCustomSourceOutput() here (VertexInterpolators)
-		if (CustomOutput && !CustomOutput->HasCustomSourceOutput())
+		if (UMaterialExpressionCustomOutput* CustomOutput = Cast<UMaterialExpressionCustomOutput>(Expression))
 		{
-			MaterialCustomOutputs.Add(CustomOutput);
+			if (!CustomOutput->HasCustomSourceOutput())
+			{
+				// We don't want anything with HasCustomSourceOutput() here (VertexInterpolators)
+				MaterialCustomOutputs.Add(CustomOutput);
+			}
+		}
+		else if (UMaterialExpressionMaterialFunctionCall* FunctionCall = Cast<UMaterialExpressionMaterialFunctionCall>(Expression))
+		{
+			// TODO: avoid updating the same function call multiple times
+			FunctionCall->UpdateFromFunctionResource();
+		}
+		else if (UMaterialExpressionMaterialAttributeLayers* LayersExpression = Cast<UMaterialExpressionMaterialAttributeLayers>(Expression))
+		{
+			const FMaterialLayersFunctions& MaterialLayers = LayerOverrides ? *LayerOverrides : LayersExpression->DefaultLayers;
+
+			for (int32 LayerIndex = 0; LayerIndex < MaterialLayers.Layers.Num(); ++LayerIndex)
+			{
+				UMaterialFunctionInterface* LayerFunction = MaterialLayers.Layers[LayerIndex];
+
+				if (LayerFunction && MaterialLayers.EditorOnly.LayerStates[LayerIndex])
+				{
+					LayerFunction->UpdateFromFunctionResource();
+				}
+			}
+
+			for (int32 BlendIndex = 0; BlendIndex < MaterialLayers.Blends.Num(); ++BlendIndex)
+			{
+				UMaterialFunctionInterface* BlendFunction = MaterialLayers.Blends[BlendIndex];
+				const int32 LayerIndex = BlendIndex + 1;
+
+				if (BlendFunction
+					&& MaterialLayers.Layers.IsValidIndex(LayerIndex)
+					&& MaterialLayers.Layers[LayerIndex]
+					&& MaterialLayers.EditorOnly.LayerStates[LayerIndex])
+				{
+					BlendFunction->UpdateFromFunctionResource();
+				}
+			}
 		}
 	}
 
@@ -80,21 +117,21 @@ bool FMaterialCachedHLSLTree::GenerateTree(UMaterial* Material, const FMaterialL
 		{
 			MaterialAttributeFields.Emplace(PropertyName, ValueType);
 
-			if (PropertyType == MCT_ShadingModel)
-			{
-				check(ValueType == UE::Shader::EValueType::Int1);
-				MaterialAttributesDefaultValue.Component.Add((int32)DefaultShadingModel);
-			}
-			else
-			{
-				const UE::Shader::FValue DefaultValue = UE::Shader::Cast(FMaterialAttributeDefinitionMap::GetDefaultValue(AttributeID), ValueType);
-				MaterialAttributesDefaultValue.Component.Append(DefaultValue.Component);
-			}
+			const UE::Shader::FValue DefaultValue = UE::Shader::Cast(FMaterialAttributeDefinitionMap::GetDefaultValue(AttributeID), ValueType);
+			MaterialAttributesDefaultValue.Component.Append(DefaultValue.Component);
 		}
 	}
 
-	TArray<TStringBuilder<256>, TInlineAllocator<4>> CustomOutputNames;
-	CustomOutputNames.Reserve(MaterialCustomOutputs.Num());
+	// Make sure this array won't resize because TStringBuilder holds pointers to its inline storage
+	TArray<TStringBuilder<64>> CustomOutputNames;
+	int32 TotalNumOutputs = 0;
+
+	for (UMaterialExpressionCustomOutput* CustomOutput : MaterialCustomOutputs)
+	{
+		TotalNumOutputs += CustomOutput->GetNumOutputs();
+	}
+	CustomOutputNames.Empty(TotalNumOutputs);
+
 	for (UMaterialExpressionCustomOutput* CustomOutput : MaterialCustomOutputs)
 	{
 		const int32 NumOutputs = CustomOutput->GetNumOutputs();
@@ -139,8 +176,12 @@ bool FMaterialCachedHLSLTree::GenerateTree(UMaterial* Material, const FMaterialL
 	return bResult;
 }
 
-void FMaterialCachedHLSLTree::SetRequestedFields(EShaderFrequency ShaderFrequency, UE::HLSLTree::FRequestedType& OutRequestedType) const
+void FMaterialCachedHLSLTree::SetRequestedFields(const UE::HLSLTree::FEmitContext& Context, UE::HLSLTree::FRequestedType& OutRequestedType) const
 {
+	using namespace UE::HLSLTree;
+
+	const EShaderFrequency ShaderFrequency = Context.ShaderFrequency;
+
 	for (UMaterialExpressionCustomOutput* CustomOutput : MaterialCustomOutputs)
 	{
 		if (CustomOutput->GetShaderFrequency() != ShaderFrequency)
@@ -161,11 +202,31 @@ void FMaterialCachedHLSLTree::SetRequestedFields(EShaderFrequency ShaderFrequenc
 		}
 	}
 
+	int32 NumCustomUVs = 0;
+	if (ShaderFrequency == SF_Vertex)
+	{
+		const Material::FEmitData& EmitData = Context.FindData<Material::FEmitData>();
+		for (int32 TexCoordIndex = Material::MaxNumTexCoords - 1; TexCoordIndex >= 0; --TexCoordIndex)
+		{
+			if (EmitData.IsExternalInputUsed(SF_Pixel, Material::MakeInputTexCoord(TexCoordIndex)))
+			{
+				NumCustomUVs = TexCoordIndex + 1;
+				break;
+			}
+		}
+	}
+
 	const TArray<FGuid>& OrderedVisibleAttributes = FMaterialAttributeDefinitionMap::GetOrderedVisibleAttributeList();
 	for (const FGuid& AttributeID : OrderedVisibleAttributes)
 	{
 		if (FMaterialAttributeDefinitionMap::GetShaderFrequency(AttributeID) == ShaderFrequency)
 		{
+			const EMaterialProperty Property = FMaterialAttributeDefinitionMap::GetProperty(AttributeID);
+			if (Property >= MP_CustomizedUVs0 && Property <= MP_CustomizedUVs7 && Property - MP_CustomizedUVs0 >= NumCustomUVs)
+			{
+				continue;
+			}
+
 			const FString& FieldName = FMaterialAttributeDefinitionMap::GetAttributeName(AttributeID);
 			const UE::Shader::FStructField* Field = MaterialAttributesType->FindFieldByName(*FieldName);
 			if (Field)
@@ -197,14 +258,39 @@ void FMaterialCachedHLSLTree::EmitSharedCode(FStringBuilderBase& OutCode) const
 		{
 			const EValueType ValueType = CustomOutput->GetCustomOutputType(OutputIndex);
 			const FValueTypeDescription ValueTypeDesc = GetValueTypeDescription(ValueType);
+			const bool bIsLWC = ValueTypeDesc.ComponentType == EValueComponentType::Double;
 
 			OutCode.Appendf(TEXT("#define HAVE_%s%d 1\n"), *OutputName, OutputIndex);
 
-			OutCode.Appendf(TEXT("%s %s%d(FMaterial%sParameters Parameters) { return Parameters.MaterialAttributes.%s%d; }\n"),
+			OutCode.Appendf(TEXT("%s %s%d%s(FMaterial%sParameters Parameters) { return Parameters.MaterialAttributes.%s%d; }\n"),
 				ValueTypeDesc.Name,
 				*OutputName, OutputIndex,
+				bIsLWC ? TEXT("_LWC") : TEXT(""),
 				ShaderFrequency == SF_Pixel ? TEXT("Pixel") : TEXT("Vertex"),
 				*OutputName, OutputIndex);
+
+			if (bIsLWC)
+			{
+				// Add a wrapper with no suffix to return a non-LWC type
+				const EValueType NonLWCType = MakeValueType(EValueComponentType::Float, ValueTypeDesc.NumComponents);
+				const FValueTypeDescription NonLWCTypeDesc = GetValueTypeDescription(NonLWCType);
+				OutCode.Appendf(TEXT("%s %s%d(FMaterial%sParameters Parameters) { return LWCToFloat(%s%d_LWC(Parameters)); }\n"),
+					NonLWCTypeDesc.Name,
+					*OutputName, OutputIndex,
+					ShaderFrequency == SF_Vertex ? TEXT("Vertex") : TEXT("Pixel"),
+					*OutputName, OutputIndex);
+			}
+			else
+			{
+				// Add a wrapper with LWC suffix to return a LWC type
+				const EValueType LWCType = MakeValueType(EValueComponentType::Double, ValueTypeDesc.NumComponents);
+				const FValueTypeDescription LWCTypeDesc = GetValueTypeDescription(LWCType);
+				OutCode.Appendf(TEXT("%s %s%d_LWC(FMaterial%sParameters Parameters) { return LWCPromote(%s%d(Parameters)); }\n"),
+					LWCTypeDesc.Name,
+					*OutputName, OutputIndex,
+					ShaderFrequency == SF_Vertex ? TEXT("Vertex") : TEXT("Pixel"),
+					*OutputName, OutputIndex);
+			}
 		}
 		OutCode.Append(TEXT("\n"));
 	}

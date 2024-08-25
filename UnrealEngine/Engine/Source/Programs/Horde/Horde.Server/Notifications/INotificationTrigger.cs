@@ -1,8 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System.Collections.Generic;
-using Horde.Server.Users;
-using Horde.Server.Utilities;
+using EpicGames.Horde.Users;
 using MongoDB.Bson;
 
 namespace Horde.Server.Notifications

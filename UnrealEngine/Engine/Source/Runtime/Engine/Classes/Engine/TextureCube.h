@@ -6,7 +6,6 @@
 #include "CoreMinimal.h"
 #include "UObject/ObjectMacros.h"
 #include "Engine/Texture.h"
-#include "Misc/FieldAccessor.h"
 #include "TextureCube.generated.h"
 
 class FTextureResource;
@@ -20,11 +19,6 @@ class UTextureCube : public UTexture
 	FTexturePlatformData* PrivatePlatformData;
 
 public:
-#if WITH_TEXTURE_PLATFORMDATA_DEPRECATIONS
-	UE_DEPRECATED(5.0, "Use GetPlatformData() / SetPlatformData() accessors instead.")
-	TFieldPtrAccessor<FTexturePlatformData> PlatformData;
-#endif
-
 	/** Set the derived data for this texture on this platform. */
 	ENGINE_API void SetPlatformData(FTexturePlatformData* PlatformData);
 	/** Get the derived data for this texture on this platform. */
@@ -44,6 +38,8 @@ public:
 	//~ Begin UObject Interface.
 	ENGINE_API virtual void Serialize(FArchive& Ar) override;
 	ENGINE_API virtual void PostLoad() override;
+	ENGINE_API virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	ENGINE_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 	ENGINE_API virtual FString GetDesc() override;
 	ENGINE_API virtual void GetResourceSizeEx(FResourceSizeEx& CumulativeResourceSize) override;

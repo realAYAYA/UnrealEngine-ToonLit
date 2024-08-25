@@ -56,6 +56,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Properties")
 	float LineHeightPercentage;
 
+	/** Whether to leave extra space below the last line due to line height */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Properties")
+	bool ApplyLineHeightToBottomLine;
+
 	UFUNCTION(BlueprintCallable, Category = "Common Text Style|Getters")
 	void GetFont(FSlateFontInfo& OutFont) const;
 
@@ -67,6 +71,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Common Text Style|Getters")
 	float GetLineHeightPercentage() const;
+
+	UFUNCTION(BlueprintCallable, Category = "Common Text Style|Getters")
+	bool GetApplyLineHeightToBottomLine() const;
 
 	UFUNCTION(BlueprintCallable, Category = "Common Text Style|Getters")
 	void GetShadowOffset(FVector2D& OutShadowOffset) const;
@@ -108,6 +115,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Properties")
 	float FadeOutDelay;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Properties")
+	EWidgetClipping Clipping = EWidgetClipping::OnDemand;
 };
 
 /**
@@ -131,6 +141,9 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Common Text")
 	void SetLineHeightPercentage(float InLineHeightPercentage);
+
+	UFUNCTION(BlueprintCallable, Category = "Common Text")
+	void SetApplyLineHeightToBottomLine(bool InApplyLineHeightToBottomLine);
 
 	UFUNCTION(BlueprintCallable, Category = "Common Text")
 	void SetStyle(TSubclassOf<UCommonTextStyle> InStyle);

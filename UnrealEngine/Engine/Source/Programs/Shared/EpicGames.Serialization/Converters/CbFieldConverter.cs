@@ -1,13 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
-
 namespace EpicGames.Serialization.Converters
 {
 	/// <summary>
 	/// Converter for raw CbField types
 	/// </summary>
-	class CbFieldConverter : CbConverterBase<CbField>
+	class CbFieldConverter : CbConverter<CbField>
 	{
 		/// <inheritdoc/>
 		public override CbField Read(CbField field)
@@ -22,7 +20,7 @@ namespace EpicGames.Serialization.Converters
 		}
 
 		/// <inheritdoc/>
-		public override void WriteNamed(CbWriter writer, Utf8String name, CbField value)
+		public override void WriteNamed(CbWriter writer, CbFieldName name, CbField value)
 		{
 			writer.WriteField(name, value);
 		}
@@ -31,7 +29,7 @@ namespace EpicGames.Serialization.Converters
 	/// <summary>
 	/// Converter for raw CbObject types
 	/// </summary>
-	class CbObjectConverter : CbConverterBase<CbObject>
+	class CbObjectConverter : CbConverter<CbObject>
 	{
 		/// <inheritdoc/>
 		public override CbObject Read(CbField field)
@@ -46,7 +44,7 @@ namespace EpicGames.Serialization.Converters
 		}
 
 		/// <inheritdoc/>
-		public override void WriteNamed(CbWriter writer, Utf8String name, CbObject obj)
+		public override void WriteNamed(CbWriter writer, CbFieldName name, CbObject obj)
 		{
 			writer.WriteField(name, obj.AsField());
 		}

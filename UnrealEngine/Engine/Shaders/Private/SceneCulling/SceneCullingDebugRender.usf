@@ -1,0 +1,26 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../Common.ush"
+#include "../ComputeShaderUtils.ush"
+#include "../Visualization.ush"
+#include "../ShaderPrint.ush"
+
+#include "SceneCulling.ush"
+
+StructuredBuffer<uint> ValidCellsMask;
+
+[numthreads(NUM_THREADS_PER_GROUP, 1, 1)]
+void DebugRender(uint3 GroupId : SV_GroupID, uint GroupThreadIndex : SV_GroupIndex)
+{
+	const uint CellId = GetUnWrappedDispatchThreadId(GroupId, GroupThreadIndex, NUM_THREADS_PER_GROUP);
+
+	if (CellId < MaxCells && (ValidCellsMask[CellId / 32] & (1u << (CellId % 32))) != 0u)
+	{
+		FCellHeader CellHeader = GetCellHeader(CellId);
+		FSceneHiearchyCellData CellData = GetSceneHiearchyCellData(CellId);
+
+		float3 Offset = DFDemote(CellData.BlockData.WorldPos);
+		float4 CellColor = float4(IntToColor(CellId >> NumCellsPerBlockLog2), 1.0f);
+		AddAABBWS(CellData.LocalBoundsCenter.xyz + Offset - CellData.LocalBoundsExtent.xyz, CellData.LocalBoundsCenter.xyz + Offset + CellData.LocalBoundsExtent.xyz, CellColor);
+	}
+}

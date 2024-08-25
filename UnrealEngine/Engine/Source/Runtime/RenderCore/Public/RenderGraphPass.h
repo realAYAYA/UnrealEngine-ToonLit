@@ -67,6 +67,21 @@ enum class ERDGBarrierLocation : uint8
 	Epilogue
 };
 
+struct FRDGTransitionInfo
+{
+	FRDGTransitionInfo() = default;
+
+	ERHIAccess AccessBefore;
+	ERHIAccess AccessAfter;
+	uint16 Handle;
+	ERDGViewableResourceType Type;
+	EResourceTransitionFlags Flags;
+	uint32 ArraySlice : 16;
+	uint32 MipIndex   : 8;
+	uint32 PlaneSlice : 2;
+	uint32 bReservedCommit : 1;
+};
+
 struct FRDGBarrierBatchEndId
 {
 	FRDGBarrierBatchEndId() = default;
@@ -95,7 +110,7 @@ public:
 	RENDERCORE_API FRDGBarrierBatchBegin(ERHIPipeline PipelinesToBegin, ERHIPipeline PipelinesToEnd, const TCHAR* DebugName, FRDGPass* DebugPass);
 	RENDERCORE_API FRDGBarrierBatchBegin(ERHIPipeline PipelinesToBegin, ERHIPipeline PipelinesToEnd, const TCHAR* DebugName, FRDGPassesByPipeline DebugPasses);
 
-	RENDERCORE_API void AddTransition(FRDGViewableResource* Resource, const FRHITransitionInfo& Info);
+	RENDERCORE_API void AddTransition(FRDGViewableResource* Resource, FRDGTransitionInfo Info);
 
 	RENDERCORE_API void AddAlias(FRDGViewableResource* Resource, const FRHITransientAliasingInfo& Info);
 
@@ -105,7 +120,7 @@ public:
 		bTransitionNeeded = true;
 	}
 
-	RENDERCORE_API void CreateTransition();
+	RENDERCORE_API void CreateTransition(TConstArrayView<FRHITransitionInfo> TransitionsRHI);
 
 	RENDERCORE_API void Submit(FRHIComputeCommandList& RHICmdList, ERHIPipeline Pipeline);
 	RENDERCORE_API void Submit(FRHIComputeCommandList& RHICmdList, ERHIPipeline Pipeline, FRDGTransitionQueue& TransitionsToBegin);
@@ -113,6 +128,7 @@ public:
 	void Reserve(uint32 TransitionCount)
 	{
 		Transitions.Reserve(TransitionCount);
+		Aliases.Reserve(TransitionCount);
 	}
 
 	bool IsTransitionNeeded() const
@@ -122,7 +138,7 @@ public:
 
 private:
 	const FRHITransition* Transition = nullptr;
-	TArray<FRHITransitionInfo, FRDGArrayAllocator> Transitions;
+	TArray<FRDGTransitionInfo, FRDGArrayAllocator> Transitions;
 	TArray<FRHITransientAliasingInfo, FRDGArrayAllocator> Aliases;
 	ERHITransitionCreateFlags TransitionFlags = ERHITransitionCreateFlags::NoFence;
 	ERHIPipeline PipelinesToBegin;
@@ -141,6 +157,7 @@ private:
 
 	friend class FRDGBarrierBatchEnd;
 	friend class FRDGBarrierValidation;
+	friend class FRDGBuilder;
 };
 
 using FRDGTransitionCreateQueue = TArray<FRDGBarrierBatchBegin*, FRDGArrayAllocator>;
@@ -281,11 +298,6 @@ public:
 	bool IsSentinel() const
 	{
 		return bSentinel;
-	}
-
-	const FRDGPassHandleArray& GetProducers() const
-	{
-		return Producers;
 	}
 
 	/** Returns the graphics pass responsible for forking the async interval this pass is in. */
@@ -432,8 +444,8 @@ protected:
 	FRDGPassHandle EpilogueBarrierPass;
 
 	/** Lists of producer passes and the full list of cross-pipeline consumer passes. */
-	FRDGPassHandleArray CrossPipelineConsumers;
-	FRDGPassHandleArray Producers;
+	TArray<FRDGPassHandle, FRDGArrayAllocator> CrossPipelineConsumers;
+	TArray<FRDGPass*, FRDGArrayAllocator> Producers;
 
 	struct FTextureState
 	{
@@ -443,15 +455,13 @@ protected:
 			: Texture(InTexture)
 		{
 			const uint32 SubresourceCount = Texture->GetSubresourceCount();
-			State.Reserve(SubresourceCount);
 			State.SetNum(SubresourceCount);
-			MergeState.Reserve(SubresourceCount);
 			MergeState.SetNum(SubresourceCount);
 		}
 
 		FRDGTextureRef Texture = nullptr;
 		FRDGTextureSubresourceState State;
-		FRDGTextureSubresourceStateIndirect MergeState;
+		FRDGTextureSubresourceState MergeState;
 		uint16 ReferenceCount = 0;
 	};
 
@@ -644,7 +654,7 @@ class FRDGSentinelPass final
 {
 public:
 	FRDGSentinelPass(FRDGEventName&& Name, ERDGPassFlags InPassFlagsToAdd = ERDGPassFlags::None)
-		: FRDGPass(MoveTemp(Name), FRDGParameterStruct(&EmptyShaderParameters, FEmptyShaderParameters::FTypeInfo::GetStructMetadata()), ERDGPassFlags::NeverCull | InPassFlagsToAdd)
+		: FRDGPass(MoveTemp(Name), FRDGParameterStruct(&EmptyShaderParameters, FEmptyShaderParameters::FTypeInfo::GetStructMetadata()), ERDGPassFlags::NeverCull | InPassFlagsToAdd) //-V1050
 	{
 		bSentinel = 1;
 	}

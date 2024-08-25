@@ -27,12 +27,12 @@ uint VertexFactoryGetInstanceIdLoadIndex(FVertexFactoryIntermediates Intermediat
 	return GetSceneDataIntermediates(Intermediates).InstanceIdLoadIndex;
 }
 
-FLWCMatrix VertexFactoryGetLocalToWorld(FVertexFactoryIntermediates Intermediates)
+FDFMatrix VertexFactoryGetLocalToWorld(FVertexFactoryIntermediates Intermediates)
 {
 	return GetSceneDataIntermediates(Intermediates).InstanceData.LocalToWorld;
 }
 
-FLWCInverseMatrix VertexFactoryGetWorldToLocal(FVertexFactoryIntermediates Intermediates)
+FDFInverseMatrix VertexFactoryGetWorldToLocal(FVertexFactoryIntermediates Intermediates)
 {
 	return GetSceneDataIntermediates(Intermediates).InstanceData.WorldToLocal;
 }

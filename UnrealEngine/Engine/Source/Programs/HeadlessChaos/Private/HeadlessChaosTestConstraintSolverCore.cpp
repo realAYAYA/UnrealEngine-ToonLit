@@ -77,7 +77,7 @@ namespace ChaosTest
 
 
 		Collision.SetSolverBodies(&Bodies[0], &Bodies[1]);
-		Collision.SetFriction(0, 0, 0);
+		Collision.SetFriction(0, 0, 0, 0);
 		Collision.SetNumManifoldPoints(1);
 		Collision.InitContact(0, FVec3(0,0,Radius), FVec3(0,0,-Radius), FVec3(0,0,1));
 		Collision.InitMaterial(0, 0, false, 0);

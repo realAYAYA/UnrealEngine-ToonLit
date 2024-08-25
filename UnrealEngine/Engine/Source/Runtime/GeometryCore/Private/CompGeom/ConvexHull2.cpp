@@ -84,7 +84,7 @@ bool TConvexHull2<RealType>::SolveSimplePolygon(int32 N, TFunctionRef<TVector2<R
 			while (Hull.Num() > 1)
 			{
 				CurPt = PrevPt;
-				CurIdx = Hull.Pop(false);
+				CurIdx = Hull.Pop(EAllowShrinking::No);
 				int32 PrevIdx = Hull.Last();
 				PrevPt = GetPointFunc(PrevIdx);
 				

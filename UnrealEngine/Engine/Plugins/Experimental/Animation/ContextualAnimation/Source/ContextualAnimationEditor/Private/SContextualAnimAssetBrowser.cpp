@@ -6,6 +6,7 @@
 #include "Animation/AnimSequence.h"
 #include "Animation/AnimMontage.h"
 #include "Widgets/SBoxPanel.h"
+#include "UObject/AssetRegistryTagsContext.h"
 
 void SContextualAnimAssetBrowser::Construct(const FArguments& InArgs)
 {
@@ -29,11 +30,12 @@ void SContextualAnimAssetBrowser::Construct(const FArguments& InArgs)
 	AssetPickerConfig.bShowTypeInColumnView = false;
 
 	// hide all asset registry columns by default (we only really want the name and path)
-	TArray<UObject::FAssetRegistryTag> AssetRegistryTags;
-	UAnimSequence::StaticClass()->GetDefaultObject()->GetAssetRegistryTags(AssetRegistryTags);
-	for (UObject::FAssetRegistryTag& AssetRegistryTag : AssetRegistryTags)
+	UObject* AnimSequenceDefaultObject = UAnimSequence::StaticClass()->GetDefaultObject();
+	FAssetRegistryTagsContextData TagsContext(AnimSequenceDefaultObject, EAssetRegistryTagsCaller::Uncategorized);
+	AnimSequenceDefaultObject->GetAssetRegistryTags(TagsContext);
+	for (const TPair<FName, UObject::FAssetRegistryTag>& TagPair : TagsContext.Tags)
 	{
-		AssetPickerConfig.HiddenColumnNames.Add(AssetRegistryTag.Name.ToString());
+		AssetPickerConfig.HiddenColumnNames.Add(TagPair.Key.ToString());
 	}
 
 	// Also hide the type column by default (but allow users to enable it, so don't use bShowTypeInColumnView)

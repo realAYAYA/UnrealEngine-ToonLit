@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
 
@@ -30,35 +30,32 @@ public:
 	/** Constructs this widget with InArgs */
 	void Construct(const FArguments& InArgs, const TSharedRef<SRemoteControlPanel>& InPanel);
 
-	/** Shutdown panel */
-	static void Shutdown();
-
 	/** Whether the Behaviour list widget currently has focus. Used for Delete Item UI command */
 	bool IsListFocused() const;
 
-	/** Delete Item UI command implementation for this panel */
-	virtual void DeleteSelectedPanelItem() override;
+	/** Delete Items UI command implementation for this panel */
+	virtual void DeleteSelectedPanelItems() override;
 
-	/** "Duplicate Item" UI command implementation for Behaviour panel*/
-	virtual void DuplicateSelectedPanelItem() override;
+	/** "Duplicate Items" UI command implementation for Behaviour panel*/
+	virtual void DuplicateSelectedPanelItems() override;
 
-	/** "Copy Item" UI command implementation for Behaviour panel*/
-	virtual void CopySelectedPanelItem() override;
+	/** "Copy Items" UI command implementation for Behaviour panel*/
+	virtual void CopySelectedPanelItems() override;
 
-	/** "Paste Item" UI command implementation for Behaviour panel*/
-	virtual void PasteItemFromClipboard() override;
+	/** "Paste Items" UI command implementation for Behaviour panel*/
+	virtual void PasteItemsFromClipboard() override;
 
-	/** Whether a given clipboard item can be successfully pasted into this panel */
-	virtual bool CanPasteClipboardItem(UObject* InLogicClipboardItem) override;
+	/** Whether a given clipboard items can be successfully pasted into this panel */
+	virtual bool CanPasteClipboardItems(const TArrayView<const TObjectPtr<UObject>> InLogicClipboardItems) const override;
 
 	/** Provides an item suffix for the Paste context menu to provide users with useful context on the nature of the item being pasted */
 	virtual FText GetPasteItemMenuEntrySuffix() override;
 
-	/** Returns the UI item currently selected by the user (if any)*/
-	virtual TSharedPtr<FRCLogicModeBase> GetSelectedLogicItem() override;
+	/** Returns the UI items currently selected by the user (if any). To be implemented per child panel */
+	virtual TArray<TSharedPtr<FRCLogicModeBase>> GetSelectedLogicItems() const override;
 
 	/** Returns the parent Controller associated with this behaviour*/
-	URCController* GetParentController();
+	URCController* GetParentController() const;
 
 protected:
 
@@ -69,6 +66,9 @@ protected:
 	virtual FReply RequestDeleteAllItems() override;
 
 private:
+	/** Get a Helper widget for behavior details. */
+	static TSharedRef<SBox> CreateNoneSelectedWidget();
+
 	/** Duplicates a given Behaviour object*/
 	void DuplicateBehaviour(URCBehaviour* InBehaviour);
 	
@@ -87,11 +87,13 @@ private:
 	/** Handles click event for Add Behaviour button*/
 	void OnAddBehaviourClicked(UClass* InClass);
 
+	/** Check if the controller can add the behaviour requested */
+	bool CanExecuteAddBehaviour(UClass* InClass, URCController* InController) const;
+
 	/** Handles click event for "Empty" button; clears all Behaviours from the panel*/
 	FReply OnClickEmptyButton();
 
 private:
-
 	/** The parent Controller that this Behaviour panel is associated with */
 	TWeakPtr<FRCControllerModel> SelectedControllerItemWeakPtr = nullptr;
 	
@@ -101,9 +103,6 @@ private:
 	/** Widget representing List of Behaviours */
 	TSharedPtr<class SRCBehaviourPanelList> BehaviourPanelList;
 
-	/** Helper widget for behavior details. */
-	static TSharedPtr<SBox> NoneSelectedWidget;
-
 	/** Panel Style reference. */
-	const FRCPanelStyle* RCPanelStyle;
+	const FRCPanelStyle* RCPanelStyle = nullptr;
 };

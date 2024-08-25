@@ -347,7 +347,7 @@ namespace Chaos
 
 			// Calculate the ray start/end and extents for the spatial acceleration sweep
 			// (the sweep through the spatial acceleration requires a ray centered on the bounds)
-			const FAABB3 TransformedParticleBounds = SweptParticle->Geometry()->CalculateTransformedBounds(FRigidTransform3(StartPos, Rot));
+			const FAABB3 TransformedParticleBounds = SweptParticle->GetGeometry()->CalculateTransformedBounds(FRigidTransform3(StartPos, Rot));
 			const FVec3 BoundsExtents = FReal(0.5) * TransformedParticleBounds.Extents();
 			const FVec3 BoundsStartPos = TransformedParticleBounds.Center();
 

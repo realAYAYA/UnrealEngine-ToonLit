@@ -55,6 +55,17 @@ void FWorldPartitionDestructibleHLODState::Initialize(UWorldPartitionDestructibl
 	{
 		VisibilityBuffer.SetNumUninitialized(FMath::RoundUpToPowerOfTwo(NumDestructibleActors));
 		FMemory::Memset(VisibilityBuffer.GetData(), FWorldPartitionDestructibleHLODDamagedActorState::MAX_HEALTH, VisibilityBuffer.Num());
+
+		// In case replication occured before this initialization, process all entries in the DamagedActors array
+		if (!DamagedActors.IsEmpty())
+		{
+			for (int32 DamagedActorIndex = 0; DamagedActorIndex < DamagedActors.Num(); ++DamagedActorIndex)
+			{
+				ApplyDamagedActorState(DamagedActorIndex);
+			}
+
+			OwnerComponent->OnDestructionStateUpdated();
+		}
 	}
 }
 
@@ -119,36 +130,43 @@ void FWorldPartitionDestructibleHLODState::PostReplicatedAdd(const TArrayView<in
 
 void FWorldPartitionDestructibleHLODState::PostReplicatedChange(const TArrayView<int32>& ChangedIndices, int32 FinalSize)
 {
-	check(IsClient());
+	check(!IsServer());
 
-	for (int32 ChangedIndex : ChangedIndices)
+	// Component may still be null if replication occurs before the component BeginPlay() is called, 
+	// in which case FWorldPartitionDestructibleHLODState::Initialize() will not have been called.
+	// DamagedActors will be process directly in Initialize() if that's the case
+	if (OwnerComponent)
 	{
-		if (DamagedActors.IsValidIndex(ChangedIndex))
-		{
-			const FWorldPartitionDestructibleHLODDamagedActorState& DamagedActorState = DamagedActors[ChangedIndex];
-			if (VisibilityBuffer.IsValidIndex(DamagedActorState.ActorIndex))
-			{
-				VisibilityBuffer[DamagedActorState.ActorIndex] = DamagedActorState.ActorHealth;
-			}
-			else
-			{
-				// !! This should never occur !!
-				// Investigating FORT-546969, where default constructed (invalid) DamagedActors seems to be found in the replicated fast array
-				// We're never adding invalid entries in the DamagedActors array, see SetActorHealth() above
+		for (int32 ChangedIndex : ChangedIndices)
+		{			
+			ApplyDamagedActorState(ChangedIndex);
+		}
 
-				UE_LOG(LogHLODDestruction, Error, TEXT("Invalid ActorIndex %d found in DamagedActors array at index %d"), DamagedActorState.ActorIndex, ChangedIndex);
-			}
+		OwnerComponent->OnDestructionStateUpdated();
+	}
+}
+
+void FWorldPartitionDestructibleHLODState::ApplyDamagedActorState(int32 DamagedActorIndex)
+{
+	if (DamagedActors.IsValidIndex(DamagedActorIndex))
+	{
+		const FWorldPartitionDestructibleHLODDamagedActorState& DamagedActorState = DamagedActors[DamagedActorIndex];
+		if (VisibilityBuffer.IsValidIndex(DamagedActorState.ActorIndex))
+		{
+			VisibilityBuffer[DamagedActorState.ActorIndex] = DamagedActorState.ActorHealth;
 		}
 		else
 		{
-			UE_LOG(LogHLODDestruction, Error, TEXT("Invalid damaged actor index %d (num = %d)"), ChangedIndex, DamagedActors.Num());
+			// !! This should never occur !!
+			// Investigating FORT-546969, where default constructed (invalid) DamagedActors seems to be found in the replicated fast array
+			// We're never adding invalid entries in the DamagedActors array, see SetActorHealth() above
+
+			UE_LOG(LogHLODDestruction, Error, TEXT("Invalid ActorIndex %d found in DamagedActors array at index %d"), DamagedActorState.ActorIndex, DamagedActorIndex);
 		}
 	}
-
-	// Should never occur, added ensure to track FORT-627036
-	if (ensure(OwnerComponent))
+	else
 	{
-		OwnerComponent->OnDestructionStateUpdated();
+		UE_LOG(LogHLODDestruction, Error, TEXT("Invalid damaged actor index %d (num = %d)"), DamagedActorIndex, DamagedActors.Num());
 	}
 }
 

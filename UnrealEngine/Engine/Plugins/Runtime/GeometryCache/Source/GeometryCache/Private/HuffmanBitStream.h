@@ -252,7 +252,7 @@ public:
 	*/
 	FORCEINLINE int32 GetNumBytes()
 	{
-		return NumBytes;
+		return static_cast<int32>(NumBytes);
 	}
 private:
 	const uint8* Bytes;

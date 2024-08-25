@@ -5,6 +5,7 @@
 #include "VideoEncoderSingleLayerVPX.h"
 #include "Settings.h"
 #include "PixelStreamingPrivate.h"
+#include "PixelStreamingCoderUtils.h"
 #include "Utils.h"
 #include "Stats.h"
 #include "PixelStreamingDelegates.h"
@@ -22,7 +23,7 @@ namespace UE::PixelStreaming
 
 	// the list of each individual codec we have encoder support for (order of this array is preference order after selected codec)
 	const TArray<EPixelStreamingCodec>
-		SupportedEncoderCodecList{ EPixelStreamingCodec::VP8, EPixelStreamingCodec::VP9, EPixelStreamingCodec::H264, EPixelStreamingCodec::H265 };
+		SupportedEncoderCodecList{ EPixelStreamingCodec::VP8, EPixelStreamingCodec::VP9, EPixelStreamingCodec::H264, EPixelStreamingCodec::AV1 };
 
 	// mapping of codec to a list of video formats
 	// done this way so we can order the list of formats based on selected codec in GetSupportedFormats
@@ -36,9 +37,17 @@ namespace UE::PixelStreaming
 
 		Codecs[EPixelStreamingCodec::VP8].push_back(webrtc::SdpVideoFormat(cricket::kVp8CodecName));
 		Codecs[EPixelStreamingCodec::VP9].push_back(webrtc::SdpVideoFormat(cricket::kVp9CodecName));
-		Codecs[EPixelStreamingCodec::H264].push_back(UE::PixelStreaming::CreateH264Format(webrtc::H264Profile::kProfileConstrainedBaseline, webrtc::H264Level::kLevel3_1));
-		Codecs[EPixelStreamingCodec::H264].push_back(UE::PixelStreaming::CreateH264Format(webrtc::H264Profile::kProfileBaseline, webrtc::H264Level::kLevel3_1));
-		Codecs[EPixelStreamingCodec::H265].push_back(webrtc::SdpVideoFormat(cricket::kH265CodecName));
+
+		if(IsEncoderSupported<FVideoEncoderConfigH264>())
+		{
+			Codecs[EPixelStreamingCodec::H264].push_back(UE::PixelStreaming::CreateH264Format(webrtc::H264Profile::kProfileConstrainedBaseline, webrtc::H264Level::kLevel3_1));
+			Codecs[EPixelStreamingCodec::H264].push_back(UE::PixelStreaming::CreateH264Format(webrtc::H264Profile::kProfileBaseline, webrtc::H264Level::kLevel3_1));
+		}
+
+		if(IsEncoderSupported<FVideoEncoderConfigAV1>())
+		{
+			Codecs[EPixelStreamingCodec::AV1].push_back(webrtc::SdpVideoFormat(cricket::kAv1CodecName));
+		}
 
 		return Codecs;
 	}
@@ -59,7 +68,8 @@ namespace UE::PixelStreaming
 		static std::vector<webrtc::SdpVideoFormat> SupportedFormats;
 
 		EPixelStreamingCodec SelectedCodec = UE::PixelStreaming::Settings::GetSelectedCodec();
-		if ((SelectedCodec == EPixelStreamingCodec::H264 || SelectedCodec == EPixelStreamingCodec::H265) && IsRHIDeviceNVIDIA())
+#if PLATFORM_WINDOWS || PLATFORM_LINUX
+		if ((SelectedCodec == EPixelStreamingCodec::H264 || SelectedCodec == EPixelStreamingCodec::AV1) && IsRHIDeviceNVIDIA())
 		{
 			// NOTE (william.belcher): This check will return false if all the encoding sessions are in use, even if the user intends
 			// to stream share.
@@ -67,11 +77,12 @@ namespace UE::PixelStreaming
 			int32 MaxCVarAllowedSessions = Settings::CVarPixelStreamingEncoderMaxSessions.GetValueOnAnyThread();
 			bool bCanCreateHardwareEncoder = true;
 
-			if(MaxCVarAllowedSessions != -1 && NumEncoderSessions != -1) {
+			if (MaxCVarAllowedSessions != -1 && NumEncoderSessions != -1)
+			{
 				// If our CVar is set and we receive a valid session count
 				bCanCreateHardwareEncoder &= NumEncoderSessions < MaxCVarAllowedSessions;
-			} 
-			else if(MaxCVarAllowedSessions == -1)
+			}
+			else if (MaxCVarAllowedSessions == -1)
 			{
 				// If we receive a valid session count and our cvar isn't set
 				bCanCreateHardwareEncoder &= NvmlEncoder::IsEncoderSessionAvailable(0); // TODO we should probably actually figure out the GPU index rather than assume 0
@@ -93,9 +104,10 @@ namespace UE::PixelStreaming
 				SelectedCodec = EPixelStreamingCodec::VP8;
 				UE_LOG(LogPixelStreaming, Warning, TEXT("No more HW encoders available. Falling back to software encoding"));
 				CodecMap.Remove(EPixelStreamingCodec::H264);
-				CodecMap.Remove(EPixelStreamingCodec::H265);
+				CodecMap.Remove(EPixelStreamingCodec::AV1);
 			}
 		}
+#endif // PLATFORM_WINDOWS || PLATFORM_LINUX
 
 		// If we are not negotiating codecs simply return just the one codec that is selected in UE
 		if (!Settings::CVarPixelStreamingWebRTCNegotiateCodecs.GetValueOnAnyThread())
@@ -177,11 +189,11 @@ namespace UE::PixelStreaming
 			FStats::Get()->StoreApplicationStat(FStatData(FName(TEXT("Video Codec - VP9")), 1, 0));
 			return std::make_unique<FVideoEncoderSingleLayerVPX>(9);
 		}
-		else if (absl::EqualsIgnoreCase(format.name, cricket::kH265CodecName))
+		else if (absl::EqualsIgnoreCase(format.name, cricket::kAv1CodecName))
 		{
-			FStats::Get()->StoreApplicationStat(FStatData(FName(TEXT("Video Codec - H265")), 1, 0));
+			FStats::Get()->StoreApplicationStat(FStatData(FName(TEXT("Video Codec - AV1")), 1, 0));
 			FScopeLock Lock(&ActiveEncodersGuard);
-			auto VideoEncoder = std::make_unique<FVideoEncoderSingleLayerHardware>(*this, EPixelStreamingCodec::H265);
+			auto VideoEncoder = std::make_unique<FVideoEncoderSingleLayerHardware>(*this, EPixelStreamingCodec::AV1);
 			ActiveEncoders.Add(VideoEncoder.get());
 			return VideoEncoder;
 		}
@@ -201,7 +213,7 @@ namespace UE::PixelStreaming
 		// Lock as we send encoded image to each encoder.
 		FScopeLock Lock(&ActiveEncodersGuard);
 
-		if (codec_specific_info->codecType == webrtc::kVideoCodecH264 || codec_specific_info->codecType == webrtc::kVideoCodecH265)
+		if (codec_specific_info->codecType == webrtc::kVideoCodecH264 || codec_specific_info->codecType == webrtc::kVideoCodecAV1)
 		{
 			// Go through each encoder and send our encoded image to its callback
 			for (FVideoEncoderSingleLayerHardware* Encoder : ActiveEncoders)
@@ -216,19 +228,20 @@ namespace UE::PixelStreaming
 		// Lock during deleting an encoder
 		FScopeLock Lock(&ActiveEncodersGuard);
 		ActiveEncoders.Remove(Encoder);
+
+		FreeUnusedEncoders();
 	}
 
 	void FVideoEncoderFactorySingleLayer::FreeUnusedEncoders()
 	{
 		// first clear unused encoders.
 		TArray<uint32> DeleteStreamIds;
-		for (auto&& [EncoderStreamId, EncoderPtr] : HardwareEncoders)
-		{
+		HardwareEncoders.Apply([&DeleteStreamIds](uint32 EncoderStreamId, TSharedPtr<FVideoEncoderHardware>& EncoderPtr) {
 			if (EncoderPtr.IsUnique())
 			{
 				DeleteStreamIds.Add(EncoderStreamId);
 			}
-		}
+		});
 		for (uint32 DeleteStreamId : DeleteStreamIds)
 		{
 			HardwareEncoders.Remove(DeleteStreamId);

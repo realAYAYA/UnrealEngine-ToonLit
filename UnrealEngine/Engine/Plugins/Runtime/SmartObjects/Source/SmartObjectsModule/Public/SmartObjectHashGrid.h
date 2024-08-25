@@ -27,7 +27,7 @@ class SMARTOBJECTSMODULE_API USmartObjectHashGrid : public USmartObjectSpacePart
 	GENERATED_BODY()
 
 protected:
-	virtual FInstancedStruct Add(const FSmartObjectHandle Handle, const FBox& Bounds) override;
+	virtual void Add(const FSmartObjectHandle Handle, const FBox& Bounds, FInstancedStruct& OutHandle) override;
 	virtual void Remove(const FSmartObjectHandle Handle, FStructView EntryData) override;
 	virtual void Find(const FBox& QueryBox, TArray<FSmartObjectHandle>& OutResults) override;
 

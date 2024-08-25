@@ -313,7 +313,7 @@ namespace BuildPatchServices
 			}
 			for (const FGuid& ChunkToCheck : ChunksToCheck)
 			{
-				FString FinalChunkPartFilename = FBuildPatchUtils::GetDataFilename(Manifest, CloudDirectory, ChunkToCheck);
+				FString FinalChunkPartFilename = CloudDirectory / FBuildPatchUtils::GetDataFilename(Manifest, ChunkToCheck);
 				IFileManager& FileManager = IFileManager::Get();
 				TUniquePtr<FArchive> FinalChunkPartFile(FileManager.CreateFileReader(*FinalChunkPartFilename));
 				if (FinalChunkPartFile.IsValid())

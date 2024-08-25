@@ -88,6 +88,7 @@ private:
 	void OnUnsavedAssetChanged(const FString& Filepath);
 
 	FReply OnFilesDragged(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent);
+	FReply OnUnsavedAssetsDragged(const FGeometry& InGeometry, const FPointerEvent& InMouseEvent);
 
 	void RequestChangelistsRefresh();
 	void RequestFileStatusRefresh(const IChangelistTreeItem& Changelist);

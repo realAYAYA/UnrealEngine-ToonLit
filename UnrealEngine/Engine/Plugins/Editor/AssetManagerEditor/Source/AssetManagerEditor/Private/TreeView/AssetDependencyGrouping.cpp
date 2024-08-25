@@ -4,6 +4,7 @@
 #include "AssetTreeNode.h"
 #include "AssetTable.h"
 #include "Insights/Common/AsyncOperationProgress.h"
+#include "Insights/Common/Log.h"
 
 #define LOCTEXT_NAMESPACE "FAssetDependencyGrouping"
 
@@ -16,9 +17,9 @@ INSIGHTS_IMPLEMENT_RTTI(FPluginDependencyGrouping)
 
 FAssetDependencyGrouping::FAssetDependencyGrouping()
 	: FTreeNodeGrouping(
-		LOCTEXT("Grouping_ByDependency_ShortName", "Dependency"),
-		LOCTEXT("Grouping_ByDependency_TitleName", "By Dependency"),
-		LOCTEXT("Grouping_ByDependency_Desc", "Group assets based on their dependency."),
+		LOCTEXT("Grouping_ByAssetDependency_ShortName", "Asset Dependency"),
+		LOCTEXT("Grouping_ByAssetDependency_TitleName", "By Asset Dependency"),
+		LOCTEXT("Grouping_ByAssetDependency_Desc", "Group assets based on their dependency."),
 		TEXT("Icons.Group.TreeItem"),
 		nullptr)
 {
@@ -55,10 +56,6 @@ void FAssetDependencyGrouping::GroupNodes(const TArray<UE::Insights::FTableTreeN
 		}
 
 		// For each (visible) asset, we will create the following hierarchy:
-
-		// If the asset does not have dependencies, the asset node is added directly (no group node is created).
-		// |
-		// +-- [asset:{AssetName}]
 
 		// By default, the "Dependencies" node is collapsed.
 		// |
@@ -154,6 +151,41 @@ void FPluginDependencyGrouping::GroupNodes(const TArray<UE::Insights::FTableTree
 
 	TMap<int32, FPluginSimpleGroupNode*> PluginIndexToGroupNodeMap;
 
+
+	// If we have any root plugins then we'll want to ensure we always show those and we divide root from non-root
+	// However, a typical UE project may not make use of this concept so if there are no designated root plugins
+	// according to the loaded ucookmeta then only show plugins that actually have assets according to the incoming node list
+	TSharedPtr<FAssetTreeNode> RootPlugins = MakeShared<FAssetTreeNode>(FName("Root Plugins"), AssetTable);
+	TSharedPtr<FAssetTreeNode> NonRootPlugins = MakeShared<FAssetTreeNode>(FName("Non-Root Plugins"), AssetTable);
+
+	bool bFoundAnyRootPlugins = false;
+	for (int32 PluginIndex = 0; PluginIndex < AssetTable->GetNumPlugins(); PluginIndex++)
+	{
+		const FAssetTablePluginInfo& PluginInfo = AssetTable->GetPluginInfoByIndex(PluginIndex);
+
+		if (PluginInfo.IsRootPlugin())
+		{
+			FName PluginAndDependenciesGroupName = AssetTable->GetNameForPlugin(PluginIndex);
+			TSharedPtr<FPluginAndDependenciesGroupNode> PluginAndDependenciesGroup = MakeShared<FPluginAndDependenciesGroupNode>(PluginAndDependenciesGroupName, AssetTable, PluginIndex);
+			PluginAndDependenciesGroup->SetAuthorGrouping(this);
+			FPluginSimpleGroupNode* PluginGroup = PluginAndDependenciesGroup->CreateChildren().Get();
+			PluginIndexToGroupNodeMap.Add(PluginIndex, PluginGroup);
+			RootPlugins->AddChildAndSetParent(PluginAndDependenciesGroup);
+			bFoundAnyRootPlugins = true;
+		}
+	}
+
+	if (bFoundAnyRootPlugins)
+	{
+		ParentGroup.AddChildAndSetParent(RootPlugins);
+		ParentGroup.AddChildAndSetParent(NonRootPlugins);
+	}
+	else
+	{
+		RootPlugins.Reset();
+		NonRootPlugins.Reset();
+	}
+
 	for (FTableTreeNodePtr NodePtr : Nodes)
 	{
 		if (InAsyncOperationProgress.ShouldCancelAsyncOp())
@@ -166,66 +198,6 @@ void FPluginDependencyGrouping::GroupNodes(const TArray<UE::Insights::FTableTree
 			ParentGroup.AddChildAndSetParent(NodePtr);
 			continue;
 		}
-
-		// For each (visible) asset, we will create the following hierarchy:
-
-		// If the plugin does not have dependencies, a simple group will be created.
-		// |
-		// +-- [group:{PluginName}] (self) // FPluginSimpleGroupNode
-		// |   |
-		// |   +-- [asset:{AssetName1}]
-		// |   |
-		// |   +-- [asset:{AssetName2}]
-		// |   |
-		// |   ...
-
-		// By default, the "Plugin Dependencies" node is collapsed.
-		// |
-		// +-- [group:{PluginName}] (self + dependencies) // FPluginAndDependenciesGroupNode
-		// |   |
-		// |   +-- [group:Plugin Dependencies] (double click to expand) // FPluginDependenciesGroupNode, lazy
-		// |   |
-		// |   +-- [group:{PluginName}] (self) // FPluginSimpleGroupNode
-		// |       |
-		// |       +-- [asset:{AssetName1}]
-		// |       |
-		// |       +-- [asset:{AssetName2}]
-		// |       |
-		// |       ...
-
-		// When the "Plugin Dependencies" node is expanded, it will be populated with actual plugin dependencies.
-		// |
-		// +-- [group:{PluginName}] (self + dependencies) // FPluginAndDependenciesGroupNode
-		// |   |
-		// |   +-- [group:Plugin Dependencies] // FPluginDependenciesGroupNode expanded
-		// |   |   |
-		// |   |   +-- [group:{DependentPlugin1}] (self + dependencies) // FPluginAndDependenciesGroupNode
-		// |   |   |   |
-		// |   |   |   +-- [group:Plugin Dependencies] (double click to expand) // FPluginDependenciesGroupNode, lazy
-		// |   |   |   |
-		// |   |   |   +-- [group:{DependentPlugin1}] (self) // FPluginSimpleGroupNode
-		// |   |   |       |
-		// |   |   |       +-- [asset:{Asset1a}]
-		// |   |   |       |
-		// |   |   |       +-- [asset:{Asset1b}]
-		// |   |   |       ...
-		// |   |   |
-		// |   |   +-- [group:{DependentPlugin2}] (self, no further dependencies) // FPluginSimpleGroupNode
-		// |   |   |   |
-		// |   |   |   +-- [asset:{Asset2a}]
-		// |   |   |   |
-		// |   |   |   +-- [asset:{Asset2b}]
-		// |   |   |   ...
-		// |   |   |
-		// |   |   ...
-		// |   |
-		// |   +-- [group:{PluginName}] (self) // FPluginSimpleGroupNode
-		// |       |
-		// |       +-- [asset:{Asset1a}]
-		// |       |
-		// |       +-- [asset:{Asset1b}]
-		// |       |
-		// |       ...
 
 		FAssetTreeNode& AssetNode = NodePtr->As<FAssetTreeNode>();
 		const FAssetTableRow& Asset = AssetNode.GetAssetChecked();
@@ -240,25 +212,30 @@ void FPluginDependencyGrouping::GroupNodes(const TArray<UE::Insights::FTableTree
 			// Plugin group node (simple or with dependencies) was already created. Just add the current asset to it.
 			PluginGroup->AddChildAndSetParent(NodePtr);
 		}
-		else if (PluginInfo.PluginDependencies.Num() > 0)
+		else
 		{
-			// Create the Plugin Self+Dependencies group node and add the current asset to the Self group.
+			// Create the Plugin group node (with "Assets" and "Dependencies" sub-groups)
+			// and add the current asset to the "Assets" sub-group.
 			FName PluginAndDependenciesGroupName = AssetTable->GetNameForPlugin(PluginIndex);
 			TSharedPtr<FPluginAndDependenciesGroupNode> PluginAndDependenciesGroup = MakeShared<FPluginAndDependenciesGroupNode>(PluginAndDependenciesGroupName, AssetTable, PluginIndex);
-			ParentGroup.AddChildAndSetParent(PluginAndDependenciesGroup);
+			PluginAndDependenciesGroup->SetAuthorGrouping(this);
 			PluginGroup = PluginAndDependenciesGroup->CreateChildren().Get();
 			PluginGroup->AddChildAndSetParent(NodePtr);
 			PluginIndexToGroupNodeMap.Add(PluginIndex, PluginGroup);
-		}
-		else
-		{
-			// Create a simple Plugin group node and add the current asset to it.
-			FName PluginGroupName = AssetTable->GetNameForPlugin(PluginIndex);
-			TSharedPtr<FPluginSimpleGroupNode> PluginGroupPtr = MakeShared<FPluginSimpleGroupNode>(PluginGroupName, AssetTable, PluginIndex);
-			ParentGroup.AddChildAndSetParent(PluginGroupPtr);
-			PluginGroup = PluginGroupPtr.Get();
-			PluginGroup->AddChildAndSetParent(NodePtr);
-			PluginIndexToGroupNodeMap.Add(PluginIndex, PluginGroup);
+
+			// A root plugin never has assets (by definition), so don't
+			if (NonRootPlugins.IsValid())
+			{
+				if (PluginInfo.IsRootPlugin())
+				{
+					UE_LOG(LogInsights, Error, TEXT("Plugin %s contains assets but is marked as a root plugin."), PluginName);
+				}
+				NonRootPlugins->AddChildAndSetParent(PluginAndDependenciesGroup);
+			}
+			else
+			{
+				ParentGroup.AddChildAndSetParent(PluginAndDependenciesGroup);
+			}
 		}
 	}
 }

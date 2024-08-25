@@ -91,7 +91,7 @@ namespace Agent
 				Manager.SetCurrentDirectoryByProcessID( LocalNewOwner.ProcessID );
 
 				// Update the visualizer
-				AgentApplication.UpdateMachineState( Environment.MachineName, -1, EProgressionState.InstigatorConnected );
+				AgentApplication.UpdateMachineState(System.Net.Dns.GetHostName(), -1, EProgressionState.InstigatorConnected );
 			}
 
 			// Add to the Agent-wide list of active jobs
@@ -443,7 +443,7 @@ namespace Agent
 						string SqlCommandString = "EXEC dbo.AddJob_v1";
 						SqlCommandString += String.Format( " @Duration='{0}',", ( StopTime - StartTime ).TotalSeconds );
 						SqlCommandString += String.Format( " @UserName='{0}',", Environment.UserName.ToUpperInvariant() );
-						SqlCommandString += String.Format( " @MachineName='{0}',", Environment.MachineName.ToUpperInvariant() );
+						SqlCommandString += String.Format( " @MachineName='{0}',", System.Net.Dns.GetHostName().ToUpperInvariant() );
 						SqlCommandString += String.Format( " @GroupName='{0}',", AgentApplication.Options.AgentGroupName );
 						SqlCommandString += String.Format( " @JobGUID='{0}',", JobGuid.ToString() );
 						SqlCommandString += String.Format( " @Instigator='{0}',", OwnerIsInstigator );
@@ -999,7 +999,7 @@ namespace Agent
 						string WorkerAgentIPAddress = LastSuccessfulJobRecord.WorkerAgentIPAddresses[i];
 
 						// Don't try to connect to self and only if this name is allowed
-						if( ( WorkerAgentName != Environment.MachineName ) &&
+						if( ( WorkerAgentName != System.Net.Dns.GetHostName()) &&
 							( Manager.AgentNamePassesAllowedAgentsFilter( WorkerAgentName ) ) )
 						{
 							// Make sure we can open the connection and get a valid remote connection back
@@ -1139,7 +1139,7 @@ namespace Agent
 						if( OwnerIsInstigator )
 						{
 							// Send the total task count to the visualizer if this agent is the Instigator
-							AgentApplication.UpdateMachineState( Environment.MachineName, ( Int32 )TaskCount, EProgressionState.TaskTotal );
+							AgentApplication.UpdateMachineState(System.Net.Dns.GetHostName(), ( Int32 )TaskCount, EProgressionState.TaskTotal );
 						}
 
 						// If we have more than N pending tasks, the job owner is the instigator,
@@ -1260,7 +1260,7 @@ namespace Agent
 					if( OwnerIsInstigator )
 					{
 						// Inform the visualizer that we've disconnected
-						AgentApplication.UpdateMachineState( Environment.MachineName, -1, EProgressionState.InstigatorDisconnected );
+						AgentApplication.UpdateMachineState(System.Net.Dns.GetHostName(), -1, EProgressionState.InstigatorDisconnected );
 
 						// If the job was a success, record the state for determinisitc replay
 						if( CurrentSuccessState == JobSuccessState.AGENT_JOB_SUCCESS )
@@ -1712,7 +1712,7 @@ namespace Agent
 						}
 						else
 						{
-							Manager.Log( EVerbosityLevel.Informative, ELogColour.Red, "[UpdateTaskState]: Task Rejected locally by " + Environment.MachineName + ", counted as failure");
+							Manager.Log( EVerbosityLevel.Informative, ELogColour.Red, "[UpdateTaskState]: Task Rejected locally by " + System.Net.Dns.GetHostName() + ", counted as failure");
 							UpdateTaskStateAsFailure( RunningTask );
 						}
 						break;
@@ -1726,7 +1726,7 @@ namespace Agent
 						}
 						else
 						{
-							Manager.Log( EVerbosityLevel.Informative, ELogColour.Red, "[UpdateTaskState]: Task Killed locally by " + Environment.MachineName + ", counted as failure" );
+							Manager.Log( EVerbosityLevel.Informative, ELogColour.Red, "[UpdateTaskState]: Task Killed locally by " + System.Net.Dns.GetHostName() + ", counted as failure" );
 							UpdateTaskStateAsFailure( RunningTask );
 						}
 						break;
@@ -1738,7 +1738,7 @@ namespace Agent
 						}
 						else
 						{
-							Manager.Log( EVerbosityLevel.Informative, ELogColour.Red, "[UpdateTaskState]: Task Failed on " + Environment.MachineName );
+							Manager.Log( EVerbosityLevel.Informative, ELogColour.Red, "[UpdateTaskState]: Task Failed on " + System.Net.Dns.GetHostName());
 						}
 						Manager.Log( EVerbosityLevel.Informative, ELogColour.Red, "[UpdateTaskState]: Task Failed: " + RunningTask.Specification.Parameters );
 						UpdateTaskStateAsFailure( RunningTask );
@@ -1783,8 +1783,8 @@ namespace Agent
 				// Update the visualizer if this agent is the Instigator
 				if( OwnerIsInstigator )
 				{
-					AgentApplication.UpdateMachineState( Environment.MachineName, RetiredTasks.Count, EProgressionState.TasksCompleted );
-					AgentApplication.UpdateMachineState( Environment.MachineName, RunningTasks.Count, EProgressionState.TasksInProgress );
+					AgentApplication.UpdateMachineState(System.Net.Dns.GetHostName(), RetiredTasks.Count, EProgressionState.TasksCompleted );
+					AgentApplication.UpdateMachineState(System.Net.Dns.GetHostName(), RunningTasks.Count, EProgressionState.TasksInProgress );
 				}
 			}
 		}

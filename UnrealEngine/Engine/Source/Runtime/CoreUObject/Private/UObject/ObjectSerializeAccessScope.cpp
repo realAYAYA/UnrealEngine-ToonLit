@@ -41,7 +41,7 @@ namespace UE::CoreUObject::Private
 		{
 			if (bEnabled)
 			{
-				FObjectHandleReadFunc Func = [this](TArrayView<const UObject* const> ReadObject)
+				FObjectHandleReadFunc Func = [this](const TArrayView<const UObject* const>& ReadObject)
 				{
 					FLocalData& Data = GetThreadLocalData();
 					if (!IsEnableSerializeAccessWarnings() || (Data.CurrentScope == nullptr || Data.CurrentScope->bSuspended))

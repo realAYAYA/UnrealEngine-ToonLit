@@ -58,17 +58,14 @@ public:
 
 	virtual void ApplyReplicatedState(UE::Net::FReplicationStateApplyContext& Context) const override
 	{
-		// Get the wrapped FastArraySerializer and array
-		FTestFastArrayReplicationState_FastArrayWithExtraProperty* DstArraySerializer = this->GetFastArraySerializerFromOwner();
-
-		// Intentionally not const as we allow the src state to be modified
-		FTestFastArrayReplicationState_FastArrayWithExtraProperty* SrcArraySerializer = this->GetFastArraySerializerFromApplyContext(Context);
-
-		// Apply additional state
-		DstArraySerializer->ExtraInt = SrcArraySerializer->ExtraInt;
-
+		using namespace UE::Net;
+		using namespace UE::Net::Private;
+		
 		// Forward to fast array serializer
 		SuperT::ApplyReplicatedState(Context);
+
+		// Must explicitly deal with extra properties here, but there is a utility function to do it for us!
+		SuperT::ApplyReplicatedStateForExtraProperties(Context);
 	}
 
 	virtual bool PollReplicatedState(UE::Net::EReplicationFragmentPollFlags PollOption) override
@@ -807,8 +804,8 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestPostReplicate
 	FastArrayEditor.Add(Item);
 
 	// Make sure that references are not replicated to client
-	Server->ReplicationSystem->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectA->NetRefHandle);
-	Server->ReplicationSystem->AddToGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectB->NetRefHandle);
+	Server->ReplicationSystem->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectA->NetRefHandle);
+	Server->ReplicationSystem->AddToGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectB->NetRefHandle);
 	
 	// Replicate
 	Server->PreSendUpdate();
@@ -837,7 +834,7 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestPostReplicate
 	ClientFastArray.bPostReplicatedReceiveWasHitWithUnresolvedReferences = false;
 
 	// Enable replication for ServerReferenceObjectA
-	Server->ReplicationSystem->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectA->NetRefHandle);
+	Server->ReplicationSystem->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectA->NetRefHandle);
 
 	// Replicate
 	Server->PreSendUpdate();
@@ -856,7 +853,7 @@ UE_NET_TEST_FIXTURE(FReplicationSystemServerClientTestFixture, TestPostReplicate
 	ClientFastArray.bPostReplicatedReceiveWasHitWithUnresolvedReferences = false;
 
 	// Enable replication for ServerReferenceObjectB 
-	Server->ReplicationSystem->RemoveFromGroup(NotReplicatedNetObjectGroupHandle, ServerReferencedObjectB->NetRefHandle);
+	Server->ReplicationSystem->RemoveFromGroup(Server->GetReplicationSystem()->GetNotReplicatedNetObjectGroup(), ServerReferencedObjectB->NetRefHandle);
 
 	// Replicate
 	Server->PreSendUpdate();

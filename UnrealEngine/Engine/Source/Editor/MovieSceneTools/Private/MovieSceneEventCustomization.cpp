@@ -51,11 +51,11 @@ void FMovieSceneEventCustomization::GetPayloadVariables(UObject* EditObject, voi
 	const FMovieSceneEvent* EntryPoint = static_cast<FMovieSceneEvent*>(RawData);
 	for (const TPair<FName, FMovieSceneEventPayloadVariable>& Pair : EntryPoint->PayloadVariables)
 	{
-		OutPayloadVariables.Add(Pair.Key, Pair.Value.Value);
+		OutPayloadVariables.Add(Pair.Key, FMovieSceneDirectorBlueprintVariableValue{ Pair.Value.ObjectValue, Pair.Value.Value });
 	}
 }
 
-bool FMovieSceneEventCustomization::SetPayloadVariable(UObject* EditObject, void* RawData, FName FieldName, const FString& NewVariableValue)
+bool FMovieSceneEventCustomization::SetPayloadVariable(UObject* EditObject, void* RawData, FName FieldName, const FMovieSceneDirectorBlueprintVariableValue& NewVariableValue)
 {
 	UMovieSceneEventSectionBase* EventSection = Cast<UMovieSceneEventSectionBase>(EditObject);
 	FMovieSceneEvent* EntryPoint = static_cast<FMovieSceneEvent*>(RawData);
@@ -72,7 +72,8 @@ bool FMovieSceneEventCustomization::SetPayloadVariable(UObject* EditObject, void
 		PayloadVariable = &EntryPoint->PayloadVariables.Add(FieldName);
 	}
 
-	PayloadVariable->Value = NewVariableValue;
+	PayloadVariable->Value = NewVariableValue.Value;
+	PayloadVariable->ObjectValue = NewVariableValue.ObjectValue;
 	return true;
 }
 

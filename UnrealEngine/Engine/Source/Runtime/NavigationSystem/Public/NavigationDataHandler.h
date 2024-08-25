@@ -5,6 +5,7 @@
 #include "NavigationDirtyAreasController.h"
 
 struct FNavigationDirtyElement;
+class UNavArea;
 
 struct FNavigationDataHandler
 {
@@ -30,7 +31,7 @@ struct FNavigationDataHandler
 	NAVIGATIONSYSTEM_API bool UnregisterNavOctreeElement(UObject& ElementOwner, INavRelevantInterface& ElementInterface, int32 UpdateFlags);
 	NAVIGATIONSYSTEM_API void UpdateNavOctreeElement(UObject& ElementOwner, INavRelevantInterface& ElementInterface, int32 UpdateFlags);
 	NAVIGATIONSYSTEM_API void UpdateNavOctreeParentChain(UObject& ElementOwner, bool bSkipElementOwnerUpdate = false);
-	NAVIGATIONSYSTEM_API bool UpdateNavOctreeElementBounds(UActorComponent& Comp, const FBox& NewBounds, const FBox& DirtyArea);	
+	NAVIGATIONSYSTEM_API bool UpdateNavOctreeElementBounds(UObject& Object, const FBox& NewBounds, const TConstArrayView<FBox> DirtyAreas);
 	NAVIGATIONSYSTEM_API void FindElementsInNavOctree(const FBox& QueryBox, const FNavigationOctreeFilter& Filter, TArray<FNavigationOctreeElement>& Elements);
 	NAVIGATIONSYSTEM_API bool ReplaceAreaInOctreeData(const UObject& Object, TSubclassOf<UNavArea> OldArea, TSubclassOf<UNavArea> NewArea, bool bReplaceChildClasses);
 	NAVIGATIONSYSTEM_API void AddLevelCollisionToOctree(ULevel& Level);
@@ -38,4 +39,7 @@ struct FNavigationDataHandler
 	NAVIGATIONSYSTEM_API void UpdateActorAndComponentsInNavOctree(AActor& Actor);
 	NAVIGATIONSYSTEM_API void ProcessPendingOctreeUpdates();
 	NAVIGATIONSYSTEM_API void DemandLazyDataGathering(FNavigationRelevantData& ElementData);
+	
+	UE_DEPRECATED(5.4, "Use the overloaded version taking a list of areas as parameter instead.")
+	NAVIGATIONSYSTEM_API bool UpdateNavOctreeElementBounds(UObject& Object, const FBox& NewBounds, const FBox& DirtyArea);
 };

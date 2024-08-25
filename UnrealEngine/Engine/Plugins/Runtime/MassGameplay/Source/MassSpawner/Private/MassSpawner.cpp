@@ -459,7 +459,7 @@ void AMassSpawner::SpawnGeneratedEntities(TConstArrayView<FMassEntitySpawnDataGe
 
 	for (const FMassEntitySpawnDataGeneratorResult& Result : Results)
 	{
-		for (const TSubclassOf<UMassProcessor> ProcessorClass : Result.PostSpawnProcessors)
+		for (const TSubclassOf<UMassProcessor>& ProcessorClass : Result.PostSpawnProcessors)
 		{
 			if (AddedProcessors.Contains(ProcessorClass) == false)
 			{
@@ -515,7 +515,7 @@ void AMassSpawner::DoDespawning(TConstArrayView<FMassEntityHandle> EntitiesToIgn
 		FSpawnedEntities* EntitiesToKeep = nullptr;
 		for (const FMassEntityHandle& EntityToIgnore : EntitiesToIgnore)
 		{
-			if (SpawnedEntities.Entities.RemoveSingleSwap(EntityToIgnore, /*bAllowShrinking*/false))
+			if (SpawnedEntities.Entities.RemoveSingleSwap(EntityToIgnore, EAllowShrinking::No))
 			{
 				if (!EntitiesToKeep)
 				{
@@ -550,7 +550,7 @@ bool AMassSpawner::DespawnEntity(const FMassEntityHandle Entity)
 		if (Index != INDEX_NONE)
 		{
 			SpawnerSystem->DestroyEntities(MakeArrayView(&Entity, 1));
-			SpawnedEntities.Entities.RemoveAtSwap(Index, 1, /*bAllowShrinking=*/false);
+			SpawnedEntities.Entities.RemoveAtSwap(Index, 1, EAllowShrinking::No);
 			return true;
 		}
 	}

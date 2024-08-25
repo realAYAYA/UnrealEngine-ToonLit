@@ -28,7 +28,7 @@ public:
 	 * Create a new platform. Loads configuration from ini.
 	 * @return a new platform, or null on failure
 	 */
-	IEOSPlatformHandlePtr CreatePlatform();
+	IEOSPlatformHandlePtr CreatePlatform(FName InstanceName);
 	/**
 	 * Get the default platform.
 	 * The default platform is created on startup and can be used by the default instance of online services EOS.

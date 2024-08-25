@@ -129,6 +129,25 @@ FEOSArtifactSettings ParseArtifactSettingsFromConfigString(const FString& RawLin
 	return Result;
 }
 
+FEOSSettings::FEOSSettings()
+	: SteamTokenType(TEXT("Session"))
+	, RTCBackgroundMode(EOS_ERTCBackgroundMode::EOS_RTCBM_KeepRoomsAlive)
+	, TickBudgetInMilliseconds(0)
+	, TitleStorageReadChunkLength(0)
+	, bEnableOverlay(false)
+	, bEnableSocialOverlay(false)
+	, bEnableEditorOverlay(false)
+	, bPreferPersistentAuth(false)
+	, bUseEAS(false)
+	, bUseEOSConnect(false)
+	, bUseEOSSessions(false)
+	, bMirrorStatsToEOS(false)
+	, bMirrorAchievementsToEOS(false)
+	, bMirrorPresenceToEAS(false)
+{
+
+}
+
 FEOSSettings UEOSSettings::GetSettings()
 {
 	if (UObjectInitialized())
@@ -154,12 +173,20 @@ const FEOSSettings& UEOSSettings::ManualGetSettings()
 
 		GConfig->GetString(INI_SECTION, TEXT("CacheDir"), CachedSettings->CacheDir, GEngineIni);
 		GConfig->GetString(INI_SECTION, TEXT("DefaultArtifactName"), CachedSettings->DefaultArtifactName, GEngineIni);
+		GConfig->GetString(INI_SECTION, TEXT("SteamTokenType"), CachedSettings->SteamTokenType, GEngineIni);
+		CachedSettings->RTCBackgroundMode = EOS_ERTCBackgroundMode::EOS_RTCBM_KeepRoomsAlive;
+		FString RTCBackgroundModeStr;
+		GConfig->GetString(INI_SECTION, TEXT("RTCBackgroundMode"), RTCBackgroundModeStr, GEngineIni);
+		if (!RTCBackgroundModeStr.IsEmpty())
+		{
+			LexFromString(CachedSettings->RTCBackgroundMode, *RTCBackgroundModeStr);
+		}
 		GConfig->GetInt(INI_SECTION, TEXT("TickBudgetInMilliseconds"), CachedSettings->TickBudgetInMilliseconds, GEngineIni);
 		GConfig->GetInt(INI_SECTION, TEXT("TitleStorageReadChunkLength"), CachedSettings->TitleStorageReadChunkLength, GEngineIni);
 		GConfig->GetBool(INI_SECTION, TEXT("bEnableOverlay"), CachedSettings->bEnableOverlay, GEngineIni);
 		GConfig->GetBool(INI_SECTION, TEXT("bEnableSocialOverlay"), CachedSettings->bEnableSocialOverlay, GEngineIni);
 		GConfig->GetBool(INI_SECTION, TEXT("bEnableEditorOverlay"), CachedSettings->bEnableEditorOverlay, GEngineIni);
-		GConfig->GetBool(INI_SECTION, TEXT("bShouldEnforceBeingLaunchedByEGS"), CachedSettings->bShouldEnforceBeingLaunchedByEGS, GEngineIni);
+		GConfig->GetBool(INI_SECTION, TEXT("bPreferPersistentAuth"), CachedSettings->bPreferPersistentAuth, GEngineIni);
 		GConfig->GetBool(INI_SECTION, TEXT("bUseEAS"), CachedSettings->bUseEAS, GEngineIni);
 		GConfig->GetBool(INI_SECTION, TEXT("bUseEOSConnect"), CachedSettings->bUseEOSConnect, GEngineIni);
 		GConfig->GetBool(INI_SECTION, TEXT("bUseEOSSessions"), CachedSettings->bUseEOSSessions, GEngineIni);
@@ -180,12 +207,18 @@ FEOSSettings UEOSSettings::ToNative() const
 
 	Native.CacheDir = CacheDir;
 	Native.DefaultArtifactName = DefaultArtifactName;
+	Native.SteamTokenType = SteamTokenType;
+	Native.RTCBackgroundMode = EOS_ERTCBackgroundMode::EOS_RTCBM_KeepRoomsAlive;
+	if (!RTCBackgroundMode.IsEmpty())
+	{
+		LexFromString(Native.RTCBackgroundMode, *RTCBackgroundMode);
+	}
 	Native.TickBudgetInMilliseconds = TickBudgetInMilliseconds;
 	Native.TitleStorageReadChunkLength = TitleStorageReadChunkLength;
 	Native.bEnableOverlay = bEnableOverlay;
 	Native.bEnableSocialOverlay = bEnableSocialOverlay;
 	Native.bEnableEditorOverlay = bEnableEditorOverlay;
-	Native.bShouldEnforceBeingLaunchedByEGS = bShouldEnforceBeingLaunchedByEGS;
+	Native.bPreferPersistentAuth = bPreferPersistentAuth;
 	Native.bUseEAS = bUseEAS;
 	Native.bUseEOSConnect = bUseEOSConnect;
 	Native.bUseEOSSessions = bUseEOSSessions;
@@ -208,9 +241,13 @@ bool UEOSSettings::GetSelectedArtifactSettings(FEOSArtifactSettings& OutSettings
 	// Prefer -EOSArtifactNameOverride over previous.
 	FParse::Value(FCommandLine::Get(), TEXT("EOSArtifactNameOverride="), ArtifactName);
 
-	// Get the sandbox id, which only comes in via EGS. If present, grab the settings where both match.
 	FString SandboxId;
-	if (FParse::Value(FCommandLine::Get(), TEXT("EpicSandboxId="), SandboxId))
+	// Get the -epicsandboxid argument. This generally comes from EGS.
+	bool bHasSandboxId = FParse::Value(FCommandLine::Get(), TEXT("EpicSandboxId="), SandboxId);
+	// Prefer -EpicSandboxIdOverride over previous.
+	bHasSandboxId |= FParse::Value(FCommandLine::Get(), TEXT("EpicSandboxIdOverride="), SandboxId);
+	// If present, grab the settings where both match
+	if (bHasSandboxId)
 	{
 		if (GetArtifactSettings(ArtifactName, SandboxId, OutSettings))
 		{

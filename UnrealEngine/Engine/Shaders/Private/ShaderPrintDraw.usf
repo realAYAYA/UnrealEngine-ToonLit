@@ -1,3 +1,5 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
 /*=============================================================================
 	ShaderPrintDraw.usf:
 	Shaders to gather contents of the debug value buffer, convert it to 
@@ -6,18 +8,18 @@
 
 #include "Common.ush"	
 #include "MiniFontCommon.ush"
-#include "ShaderPrintCommon.ush"
+#include "ShaderPrint.ush"
 
 uint2 ViewportResolution;
 uint FrameIndex;
 uint FrameThreshold;
 
-StructuredBuffer<uint> ValuesBuffer;
-StructuredBuffer<uint> SymbolsBuffer;
+Buffer<uint> ValuesBuffer;
+Buffer<uint> SymbolsBuffer;
 
-RWStructuredBuffer<uint> RWValuesBuffer;
-RWStructuredBuffer<uint> RWSymbolsBuffer;
-RWStructuredBuffer<uint> RWStateBuffer;
+RWBuffer<uint> RWValuesBuffer;
+RWBuffer<uint> RWSymbolsBuffer;
+RWBuffer<uint> RWStateBuffer;
 
 RWBuffer<uint> RWIndirectDispatchArgsBuffer;
 RWBuffer<uint> RWIndirectDrawArgsBuffer;
@@ -42,7 +44,7 @@ void ClearCounterCS()
 [numthreads(1, 1, 1)]
 void BuildIndirectDispatchArgsCS()
 {
-	uint ValueCount = min(ShaderPrintData.MaxValueCount, ValuesBuffer[SHADER_PRINT_COUNTER_OFFSET_SYMBOL]);
+	uint ValueCount = min(ShaderPrintData.MaxCharacterCount, ValuesBuffer[SHADER_PRINT_COUNTER_OFFSET_SYMBOL]);
 	WriteDispatchIndirectArgs(RWIndirectDispatchArgsBuffer, 0, (ValueCount + 63)/64, 1, 1);
 	ClearCounters(RWSymbolsBuffer);
 }
@@ -200,7 +202,7 @@ void AddHexSymbols(inout float2 ScreenPos, uint Value, in float3 Color)
 [numthreads(64, 1, 1)]
 void BuildSymbolBufferCS(uint3 DispatchThreadId : SV_DispatchThreadID)
 {
-	uint ValueCount = min(ShaderPrintData.MaxValueCount, ValuesBuffer[SHADER_PRINT_COUNTER_OFFSET_SYMBOL]);
+	uint ValueCount = min(ShaderPrintData.MaxCharacterCount, ValuesBuffer[SHADER_PRINT_COUNTER_OFFSET_SYMBOL]);
 	if (DispatchThreadId.x >= ValueCount)
 	{
 		return;
@@ -361,7 +363,7 @@ void DrawSymbolsPS(
 
 // --------------------------------------------------------------------------
 // Zoomed output
-
+#if SHADER_ZOOM
 Texture2D<float4> InTexture;
 RWTexture2D<float4> OutTexture;
 
@@ -412,3 +414,123 @@ void DrawZoomCS(int2 DispatchThreadId : SV_DispatchThreadID)
 		}
 	}
 }
+#endif // SHADER_ZOOM
+
+// --------------------------------------------------------------------------
+// Upload parameters
+#if SHADER_UPLOAD
+
+// Copy ShaderPrintData uniform parameter within UEDiagnosticBuffer
+[numthreads(1, 1, 1)]
+void UploadCS(int2 DispatchThreadId : SV_DispatchThreadID)
+{	
+#if SHADER_PRINT_USE_DIAGNOSTIC_BUFFER
+	if (any(DispatchThreadId != 0))
+	{
+		return;
+	}
+
+	FShaderPrintConfig In;
+	In.Resolution = ShaderPrintData.Resolution;
+	In.CursorCoord = ShaderPrintData.CursorCoord;
+	In.TranslatedWorldOffset = ShaderPrintData.TranslatedWorldOffset;
+	In.FontSize = ShaderPrintData.FontSize;
+	In.FontSpacing = ShaderPrintData.FontSpacing;
+	In.MaxCharacterCount = ShaderPrintData.MaxCharacterCount;
+	In.MaxSymbolCount = ShaderPrintData.MaxSymbolCount;
+	In.MaxStateCount = ShaderPrintData.MaxStateCount;
+	In.MaxLineCount = ShaderPrintData.MaxLineCount;
+	In.MaxTriangleCount = ShaderPrintData.MaxTriangleCount;
+	PackShaderPrintConfig(In);
+
+	// Clear counters
+	FShaderPrintContext Ctx; // Dummy context
+	SHADER_PRINT_RWENTRYBUFFER(Ctx, SHADER_PRINT_COUNTER_OFFSET_LINE) = 0;
+	SHADER_PRINT_RWENTRYBUFFER(Ctx, SHADER_PRINT_COUNTER_OFFSET_TRIANGLE) = 0;
+	SHADER_PRINT_RWENTRYBUFFER(Ctx, SHADER_PRINT_COUNTER_OFFSET_SYMBOL) = 0;
+	SHADER_PRINT_RWENTRYBUFFER(Ctx, SHADER_PRINT_COUNTER_OFFSET_FREE) = 0;
+
+#endif
+}
+#endif //SHADER_UPLOAD
+
+// --------------------------------------------------------------------------
+// Copy data prior to draw
+#if SHADER_COPY
+
+#define TYPE_LINE 0
+#define TYPE_TRIANGLE 1
+#define TYPE_SYMBOL 2
+
+#if SHADER_PRINT_USE_DIAGNOSTIC_BUFFER
+void CopyDataType(FShaderPrintConfig Config, uint Type)
+{
+	uint CounterOffset = 0;
+	uint DataTypeSizeInUint = 0;
+	uint DataOffset0 = 0;
+
+	if (Type == TYPE_SYMBOL)
+	{
+		CounterOffset = SHADER_PRINT_COUNTER_OFFSET_SYMBOL;
+		DataTypeSizeInUint = SHADER_PRINT_UINT_COUNT_SYMBOL;
+		DataOffset0 = GetSymbolOffset(0);
+	}
+	else if (Type == TYPE_LINE)
+	{
+		CounterOffset = SHADER_PRINT_COUNTER_OFFSET_LINE; 		
+		DataTypeSizeInUint = SHADER_PRINT_UINT_COUNT_LINE;
+		DataOffset0 = GetPrimitiveLineOffset(0, Config.MaxCharacterCount);
+	}
+	else if (Type == TYPE_TRIANGLE)
+	{
+		CounterOffset = SHADER_PRINT_COUNTER_OFFSET_TRIANGLE;	
+		DataTypeSizeInUint = SHADER_PRINT_UINT_COUNT_TRIANGLE;
+		DataOffset0 = GetPrimitiveTriangleOffset(0, Config.MaxCharacterCount, Config.MaxLineCount);	
+	}
+	else
+	{
+		return;
+	}
+
+	FShaderPrintContext Ctx; // Dummy context
+	const uint SrcCount = SHADER_PRINT_RWENTRYBUFFER(Ctx, CounterOffset);
+	const uint DstCount = RWValuesBuffer[CounterOffset];
+
+	// Compute the offset of the first item:
+	// * For the src buffer (i.e. diagonistoc buffer), it is the offset to the first element
+	// * For the dst buffer (i.e. shader print rdg buffer), it is the offset to the last element 
+	//   which was happens through explicit binding
+	const uint SrcOffsetInUint = DataOffset0 + SHADER_PRINT_DIAGNOSTIC_BUFFER_ENTRY_OFFSET;
+	const uint DstOffsetInUint = DataOffset0 + DstCount * DataTypeSizeInUint;
+
+	// Copy data + counter
+	// TODO: make it parallel
+	const uint CountInUint = SrcCount * DataTypeSizeInUint;
+	for (uint It = 0; It < CountInUint; ++It)
+	{
+		const uint SrcIndex = SrcOffsetInUint + It;
+		const uint DstIndex = DstOffsetInUint + It;
+		RWValuesBuffer[DstIndex] = UEDiagnosticBuffer[SrcIndex];
+	}
+	RWValuesBuffer[CounterOffset] = SrcCount + DstCount;
+}
+#endif
+
+// Copy/merge data from UEDiagnosticBuffer into ShaderPrint RDG buffer for display
+[numthreads(1, 1, 1)]
+void CopyCS(int2 DispatchThreadId : SV_DispatchThreadID)
+{	
+#if SHADER_PRINT_USE_DIAGNOSTIC_BUFFER
+	if (any(DispatchThreadId != 0))
+	{
+		return;
+	}
+
+	FShaderPrintConfig Config = UnpackShaderPrintConfig();
+
+	CopyDataType(Config, TYPE_LINE);
+	CopyDataType(Config, TYPE_TRIANGLE);
+	CopyDataType(Config, TYPE_SYMBOL);
+#endif
+}
+#endif // SHADER_COPY

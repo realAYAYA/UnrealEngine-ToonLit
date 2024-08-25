@@ -3,31 +3,39 @@
 //#define ENABLE_PUBLIC_DEBUG_CONTROLLER
 #define ENABLE_SECURE_DEBUG_CONTROLLER
 
-
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Reflection;
 using System.Text;
-using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Web;
 using EpicGames.Core;
-using Horde.Server.Acls;
+using EpicGames.Horde.Agents.Leases;
+using EpicGames.Horde.Compute;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Logs;
+using Google.Protobuf;
+using Horde.Common.Rpc;
+using Horde.Server.Agents.Relay;
 using Horde.Server.Configuration;
 using Horde.Server.Jobs;
 using Horde.Server.Jobs.Graphs;
-using Horde.Server.Jobs.Templates;
 using Horde.Server.Logs;
 using Horde.Server.Projects;
+using Horde.Server.Streams;
 using Horde.Server.Utilities;
+using HordeCommon.Rpc.Tasks;
 using JetBrains.Profiler.SelfApi;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using MongoDB.Bson;
 using MongoDB.Driver;
 
 namespace Horde.Server.Server
@@ -243,32 +251,40 @@ namespace Horde.Server.Server
 	/// </summary>
 	[ApiController]
 	[Authorize]
+	[Tags("Debug")]
 	public class SecureDebugController : HordeControllerBase
 	{
-		private static readonly Random s_random = new ();
-		
+		private static readonly Random s_random = new();
+
 		private readonly MongoService _mongoService;
 		private readonly ConfigService _configService;
+		private readonly AgentRelayService _agentRelayService;
+		private readonly JobService _jobService;
 		private readonly JobTaskSource _jobTaskSource;
 		private readonly IGraphCollection _graphCollection;
 		private readonly ILogFileCollection _logFileCollection;
-		private readonly IOptions<ServerSettings> _settings;
 		private readonly IOptionsSnapshot<GlobalConfig> _globalConfig;
 		private readonly ILogger<SecureDebugController> _logger;
 
 		/// <summary>
 		/// Constructor
 		/// </summary>
-		public SecureDebugController(MongoService mongoService, ConfigService configService, JobTaskSource jobTaskSource,
+		public SecureDebugController(
+			MongoService mongoService,
+			ConfigService configService,
+			AgentRelayService agentRelayService,
+			JobService jobService,
+			JobTaskSource jobTaskSource,
 			IGraphCollection graphCollection,
-			ILogFileCollection logFileCollection, IOptions<ServerSettings> settings, IOptionsSnapshot<GlobalConfig> globalConfig, ILogger<SecureDebugController> logger)
+			ILogFileCollection logFileCollection, IOptionsSnapshot<GlobalConfig> globalConfig, ILogger<SecureDebugController> logger)
 		{
 			_mongoService = mongoService;
 			_configService = configService;
+			_jobService = jobService;
+			_agentRelayService = agentRelayService;
 			_jobTaskSource = jobTaskSource;
 			_graphCollection = graphCollection;
 			_logFileCollection = logFileCollection;
-			_settings = settings;
 			_globalConfig = globalConfig;
 			_logger = logger;
 		}
@@ -316,10 +332,25 @@ namespace Horde.Server.Server
 		}
 
 		/// <summary>
+		/// Converts all legacy pools into config entries
+		/// </summary>
+		[HttpGet]
+		[Route("/api/v1/debug/aclscopes")]
+		public ActionResult<object> GetAclScopes()
+		{
+			if (!_globalConfig.Value.Authorize(ServerAclAction.Debug, User))
+			{
+				return Forbid(ServerAclAction.Debug);
+			}
+
+			return new { scopes = _globalConfig.Value.AclScopes.Keys.ToList() };
+		}
+
+		/// <summary>
 		/// Returns the fully parsed config object.
 		/// </summary>
 		[HttpGet]
-		[Route("/api/v1/server/debug/appsettings")]
+		[Route("/api/v1/debug/appsettings")]
 		public ActionResult<object> GetAppSettings()
 		{
 			if (!_globalConfig.Value.Authorize(ServerAclAction.Debug, User))
@@ -334,7 +365,7 @@ namespace Horde.Server.Server
 		/// Returns the fully parsed config object.
 		/// </summary>
 		[HttpGet]
-		[Route("/api/v1/server/debug/config")]
+		[Route("/api/v1/debug/config")]
 		public ActionResult<object> GetConfig()
 		{
 			if (!_globalConfig.Value.Authorize(ServerAclAction.Debug, User))
@@ -352,6 +383,64 @@ namespace Horde.Server.Server
 			}
 
 			return config;
+		}
+
+		/// <summary>
+		/// Get the network ID for a given IP address
+		/// </summary>
+		[HttpGet]
+		[Route("/api/v1/debug/network-id")]
+		public ActionResult<object> GetNetworkId([FromQuery] string? ipAddress = null)
+		{
+			if (!_globalConfig.Value.Authorize(ServerAclAction.Debug, User))
+			{
+				return Forbid(ServerAclAction.Debug);
+			}
+
+			if (ipAddress == null || !IPAddress.TryParse(ipAddress, out IPAddress? ip))
+			{
+				return BadRequest("Unable to read or convert query parameter 'ipAddress'");
+			}
+
+			_globalConfig.Value.TryGetNetworkConfig(ip, out NetworkConfig? networkConfig);
+			return networkConfig == null ? StatusCode(StatusCodes.Status500InternalServerError, "Unable to find a network config for the IP") : Ok(networkConfig);
+		}
+
+		/// <summary>
+		/// Add a port mapping for agent relay
+		/// </summary>
+		[HttpGet]
+		[Route("/api/v1/debug/relay/add-port")]
+		public async Task<ActionResult<object>> AddPortMappingAsync([FromQuery] string? clientIpStr = null, [FromQuery] string? agentIpStr = null, [FromQuery] int? agentPort = null)
+		{
+			if (!_globalConfig.Value.Authorize(ServerAclAction.Debug, User))
+			{
+				return Forbid(ServerAclAction.Debug);
+			}
+
+			if (clientIpStr == null || !IPAddress.TryParse(clientIpStr, out IPAddress? clientIp))
+			{
+				return BadRequest("Unable to read or convert query parameter 'clientIp'");
+			}
+
+			if (agentIpStr == null || !IPAddress.TryParse(agentIpStr, out IPAddress? agentIp))
+			{
+				return BadRequest("Unable to read or convert query parameter 'agentIp'");
+			}
+
+			if (agentPort == null)
+			{
+				return BadRequest("Bad query parameter 'agentPort'");
+			}
+
+			string bogusLeaseId = ObjectId.GenerateNewId().ToString();
+			List<Port> ports = new()
+			{
+				new Port { RelayPort = -1, AgentPort = agentPort.Value, Protocol = PortProtocol.Tcp }
+			};
+
+			PortMapping portMapping = await _agentRelayService.AddPortMappingAsync(new ClusterId("default"), LeaseId.Parse(bogusLeaseId), clientIp, agentIp, ports);
+			return JsonFormatter.Default.Format(portMapping);
 		}
 
 		/// <summary>
@@ -377,7 +466,7 @@ namespace Horde.Server.Server
 				const string Chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 				return new string(Enumerable.Repeat(Chars, length).Select(s => s[s_random.Next(s.Length)]).ToArray());
 			}
-			
+
 			if (!Enum.TryParse(logLevel, out LogLevel logLevelInternal))
 			{
 				logLevelInternal = LogLevel.Information;
@@ -392,7 +481,7 @@ namespace Horde.Server.Server
 				exception = new Exception("Exception from /api/v1/debug/generate-log-msg " + RandomString(exceptionMessageLen));
 			}
 
-			Dictionary<string, object> args = new ();
+			Dictionary<string, object> args = new();
 			if (argCount > 0)
 			{
 				for (int i = 0; i < argCount; i++)
@@ -401,13 +490,13 @@ namespace Horde.Server.Server
 				}
 			}
 
-			using IDisposable logScope = _logger.BeginScope(args);
-			
+			using IDisposable? logScope = _logger.BeginScope(args);
+
 			// Ignore warning as we explicitly want to build this message manually
 #pragma warning disable CA2254 // Template should be a static expression
 			_logger.Log(logLevelInternal, exception, message);
 #pragma warning restore CA2254
-			
+
 			return Ok($"Log message generated logLevel={logLevelInternal} messageLen={messageLen} exceptionMessageLen={exceptionMessageLen} argCount={argCount} argLen={argLen}");
 		}
 
@@ -472,6 +561,86 @@ namespace Horde.Server.Server
 		}
 
 		/// <summary>
+		/// Display a table listing each template with what job options are enabled
+		/// </summary>
+		/// <returns>Async task</returns>
+		[HttpGet]
+		[Route("/api/v1/debug/job-options")]
+		public ActionResult GetJobOptions([FromQuery] string? format = "html")
+		{
+			if (!_globalConfig.Value.Authorize(ServerAclAction.Debug, User))
+			{
+				return Forbid(ServerAclAction.Debug);
+			}
+
+			List<PropertyInfo> joProps = typeof(JobOptions).GetProperties(BindingFlags.Public | BindingFlags.Instance).OrderBy(x => x.Name).ToList();
+
+			if (format == "csv")
+			{
+				return GetJobOptionsAsCsv(joProps);
+			}
+
+			StringBuilder sb = new();
+
+			sb.AppendLine("<style>");
+			sb.AppendLine("body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; }");
+			sb.AppendLine("table { border-collapse: collapse; width: 100%; font-size: 12px; }");
+			sb.AppendLine("th, td { border: 1px solid black; text-align: left; padding: 8px; }");
+			sb.AppendLine("th { background-color: #f2f2f2; }");
+			sb.AppendLine("</style>");
+
+			sb.AppendLine("<h1>Job options enabled by stream + template</h1>");
+			sb.AppendLine("<table>");
+			sb.AppendLine("<thead><tr>");
+			sb.Append("<th>Stream</th>");
+			sb.Append("<th>Template</th>");
+			foreach (PropertyInfo prop in joProps)
+			{
+				sb.Append($"<th>{prop.Name}</th>");
+			}
+			sb.AppendLine("</tr></thead>");
+
+			foreach (StreamConfig sc in _globalConfig.Value.Streams)
+			{
+				foreach (TemplateRefConfig tpl in sc.Templates)
+				{
+					sb.AppendLine("<tr>");
+					sb.Append($"<td>{sc.Id}</td>");
+					sb.Append($"<td>{tpl.Id}</td>");
+					foreach (PropertyInfo prop in joProps)
+					{
+						sb.Append($"<td>{prop.GetValue(tpl.JobOptions)}</td>");
+					}
+					sb.AppendLine("</tr>");
+				}
+			}
+
+			sb.AppendLine("</table>");
+			return new ContentResult { ContentType = "text/html", StatusCode = (int)HttpStatusCode.OK, Content = sb.ToString() };
+		}
+
+		private ActionResult GetJobOptionsAsCsv(List<PropertyInfo> jobOptionsProps)
+		{
+			StringBuilder sb = new();
+
+			List<string> headers = new() { "Stream", "Template" };
+			headers.AddRange(jobOptionsProps.Select(prop => prop.Name));
+			sb.AppendLine(String.Join('\t', headers));
+
+			foreach (StreamConfig sc in _globalConfig.Value.Streams)
+			{
+				foreach (TemplateRefConfig tpl in sc.Templates)
+				{
+					List<string> row = new() { sc.Id.ToString(), tpl.Id.ToString() };
+					row.AddRange(jobOptionsProps.Select(prop => prop.GetValue(tpl.JobOptions)?.ToString() ?? ""));
+					sb.AppendLine(String.Join('\t', row));
+				}
+			}
+
+			return new ContentResult { ContentType = "text/csv", StatusCode = (int)HttpStatusCode.OK, Content = sb.ToString() };
+		}
+
+		/// <summary>
 		/// Populate the database with test data
 		/// </summary>
 		/// <returns>Async task</returns>
@@ -488,14 +657,14 @@ namespace Horde.Server.Server
 			List<Dictionary<string, object>> documents = await collection.Find(filter ?? "{}").Skip(index).Limit(count).ToListAsync();
 			return documents;
 		}
-		
+
 		/// <summary>
 		/// Starts the profiler session
 		/// </summary>
 		/// <returns>Text message</returns>
 		[HttpGet]
 		[Route("/api/v1/debug/profiler/start")]
-		public async Task<ActionResult> StartProfiler()
+		public async Task<ActionResult> StartProfilerAsync()
 		{
 			if (!_globalConfig.Value.Authorize(ServerAclAction.Debug, User))
 			{
@@ -510,14 +679,14 @@ namespace Horde.Server.Server
 				Directory.CreateDirectory(snapshotDir);
 			}
 
-			DotTrace.Config config = new ();
+			DotTrace.Config config = new();
 			config.SaveToDir(snapshotDir);
 			DotTrace.Attach(config);
 			DotTrace.StartCollectingData();
-			
+
 			return new ContentResult { ContentType = "text/plain", StatusCode = (int)HttpStatusCode.OK, Content = "Profiling session started. Using dir " + snapshotDir };
 		}
-		
+
 		/// <summary>
 		/// Stops the profiler session
 		/// </summary>
@@ -535,7 +704,7 @@ namespace Horde.Server.Server
 			DotTrace.Detach();
 			return new ContentResult { ContentType = "text/plain", StatusCode = (int)HttpStatusCode.OK, Content = "Profiling session stopped" };
 		}
-		
+
 		/// <summary>
 		/// Downloads the captured profiling snapshots
 		/// </summary>
@@ -554,7 +723,7 @@ namespace Horde.Server.Server
 			{
 				return NotFound("The generated snapshot .zip file was not found");
 			}
-			
+
 			return PhysicalFile(snapshotZipFile, "application/zip", Path.GetFileName(snapshotZipFile));
 		}
 
@@ -574,6 +743,32 @@ namespace Horde.Server.Server
 			int numberArg = 42;
 			string stringArg = "hello";
 			throw new Exception($"Message: numberArg:{numberArg}, stringArg:{stringArg}");
+		}
+
+		/// <summary>
+		/// Forces an update of a job's batches to debug issues such as updating dependencies
+		/// </summary>
+		/// <returns></returns>
+		[HttpGet]
+		[Route("/api/v1/debug/batchupdate/{JobId}/{BatchId}")]
+		public async Task<ActionResult> DebugBatchUpdateAsync(string jobId, string batchId)
+		{
+			if (!_globalConfig.Value.Authorize(ServerAclAction.Debug, User))
+			{
+				return Forbid(ServerAclAction.Debug);
+			}
+
+			IJob? job = await _jobService.GetJobAsync(JobId.Parse(jobId));
+
+			if (job == null)
+			{
+				return NotFound();
+			}
+
+			await _jobService.TryUpdateBatchAsync(job, JobStepBatchId.Parse(batchId), newError: JobStepBatchError.None);
+
+			return Ok();
+
 		}
 	}
 }

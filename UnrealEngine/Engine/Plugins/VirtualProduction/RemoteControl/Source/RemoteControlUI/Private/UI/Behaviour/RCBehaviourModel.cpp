@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "RCBehaviourModel.h"
 
@@ -26,14 +26,36 @@ FRCBehaviourModel::FRCBehaviourModel(URCBehaviour* InBehaviour
 
 	if (BehaviourWeakPtr.IsValid())
 	{
-		const FText BehaviorDisplayName = BehaviourWeakPtr->GetDisplayName().ToUpper();
+		const FText BehaviourDisplayName = BehaviourWeakPtr->GetDisplayName();
 		
 		SAssignNew(BehaviourTitleText, STextBlock)
-			.Text(BehaviorDisplayName)
+			.Text(BehaviourDisplayName)
 			.TextStyle(&RCPanelStyle->HeaderTextStyle);
 
 		RefreshIsBehaviourEnabled(BehaviourWeakPtr->bIsEnabled);
 	}
+}
+
+URCAction* FRCBehaviourModel::AddAction()
+{
+	URCAction* NewAction = nullptr;
+	if (URCBehaviour* Behaviour = BehaviourWeakPtr.Get())
+	{
+		NewAction = Behaviour->AddAction();
+		OnActionAdded(NewAction);
+	}
+	return NewAction;
+}
+
+URCAction* FRCBehaviourModel::AddAction(FName InFieldId)
+{
+	URCAction* NewAction = nullptr;
+	if (URCBehaviour* Behaviour = BehaviourWeakPtr.Get())
+	{
+		NewAction = Behaviour->AddAction(InFieldId);
+		OnActionAdded(NewAction);
+	}
+	return NewAction;
 }
 
 URCAction* FRCBehaviourModel::AddAction(const TSharedRef<const FRemoteControlField> InRemoteControlField)
@@ -67,6 +89,11 @@ TSharedRef<SWidget> FRCBehaviourModel::GetWidget() const
 		[
 			BehaviourTitleText.ToSharedRef()
 		];
+}
+
+bool FRCBehaviourModel::HasBehaviourDetailsWidget()
+{
+	return false;
 }
 
 TSharedRef<SWidget> FRCBehaviourModel::GetBehaviourDetailsWidget()

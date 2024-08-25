@@ -22,22 +22,68 @@ FSubobjectData::FSubobjectData()
 	// be generated if we are given an object.
 }
 
-FSubobjectData::FSubobjectData(UObject* ContextObject, const FSubobjectDataHandle& InParentHandle)
+FSubobjectData::FSubobjectData(UObject* ContextObject, const FSubobjectDataHandle& InParentHandle, const bool bInIsInheritedSCS)
 	: WeakObjectPtr(ContextObject)
 	, ParentObjectHandle(InParentHandle)
 	, SCSNodePtr(nullptr)
 {
-	AttemptToSetSCSNode();
-}
+	// Check for a BP added CAC
+	if (USCS_Node* SCS = Cast<USCS_Node>(ContextObject))
+	{
+		if (SCS->ComponentTemplate->IsA<UChildActorComponent>())
+		{
+			bIsChildActor = true;
+		}
+	}
+	else if (ContextObject && ContextObject->IsA<UChildActorComponent>())
+	{
+		bIsChildActor = true;
+	}
 
-FSubobjectData::~FSubobjectData()
-{
-	ChildrenHandles.Empty();
-	WeakObjectPtr = nullptr;
+	if (UActorComponent* Component = Cast<UActorComponent>(ContextObject))
+	{
+		// Create an inherited subobject data
+		if (bInIsInheritedSCS || Component->CreationMethod != EComponentCreationMethod::Instance)
+		{
+			bIsInheritedSubobject = true;
+		}
+	}
+	else if (USCS_Node* SCS = Cast<USCS_Node>(ContextObject))
+	{
+		if (UActorComponent* Comp = SCS->ComponentTemplate)
+		{
+			bIsInheritedSubobject = (Comp->CreationMethod != EComponentCreationMethod::Instance);
+		}
+	}
+
+	bIsInheritedSCS = bInIsInheritedSCS && bIsInheritedSubobject;
+
+	AttemptToSetSCSNode();
 }
 
 bool FSubobjectData::CanEdit() const
 {
+	if (bIsInheritedSubobject)
+	{
+		if (IsComponent())
+		{
+			if (IsInstancedInheritedComponent())
+			{
+				const UActorComponent* Template = GetComponentTemplate();
+				return (Template ? Template->IsEditableWhenInherited() : false);
+			}
+			else if (!IsNativeComponent())
+			{
+				USCS_Node* SCS_Node = GetSCSNode();
+				return (SCS_Node != nullptr);
+			}
+			else if (const UActorComponent* ComponentTemplate = GetComponentTemplate())
+			{
+				return FComponentEditorUtils::GetPropertyForEditableNativeComponent(ComponentTemplate) != nullptr;
+			}
+		}
+	}
+
 	// Actors are editable by default
 	if(const AActor* ActorContext = GetObject<AActor>())
 	{
@@ -57,6 +103,16 @@ bool FSubobjectData::CanEdit() const
 
 bool FSubobjectData::CanDelete() const
 {
+	if (bIsInheritedSubobject)
+	{
+		if (IsInheritedComponent() || (IsDefaultSceneRoot() && SceneRootHasDefaultName()) || (GetSCSNode() != nullptr && IsInstancedInheritedComponent()) || IsChildActorSubtreeObject())
+		{
+			return false;
+		}
+
+		return true;
+	}
+
 	// Components can be deleted if they are not inherited
 	if (const UActorComponent* ComponentTemplate = GetComponentTemplate())
 	{
@@ -415,6 +471,13 @@ FText FSubobjectData::GetDisplayNameContextModifiers(bool bShowNativeComponentNa
 
 FText FSubobjectData::GetDisplayName() const
 {
+	if (bIsChildActor)
+	{
+		if (const UChildActorComponent* CAC = GetChildActorComponent())
+		{
+			return CAC->GetClass()->GetDisplayNameText();
+		}
+	}
 	if (const AActor* DefaultActor = GetObject<AActor>())
 	{
 		FString Name;
@@ -783,6 +846,13 @@ FText FSubobjectData::GetIntroducedInToolTipText() const
 
 FText FSubobjectData::GetActorDisplayText() const
 {
+	if (bIsChildActor)
+	{
+		if (const AActor* ChildActor = GetObject<AActor>())
+		{
+			return ChildActor->GetClass()->GetDisplayNameText();
+		}
+	}
 	if (const AActor* DefaultActor = GetObject<AActor>())
 	{
 		FString Name;
@@ -943,7 +1013,7 @@ bool FSubobjectData::IsComponent() const
 
 bool FSubobjectData::IsChildActor() const
 {
-	return false;
+	return bIsChildActor;
 }
 
 bool FSubobjectData::IsChildActorSubtreeObject() const
@@ -1078,7 +1148,12 @@ USCS_Node* FSubobjectData::GetSCSNode(bool bEvenIfPendingKill) const
 
 bool FSubobjectData::IsInheritedSCSNode() const
 {
-	return false;
+	return bIsInheritedSCS;
+}
+
+const UChildActorComponent* FSubobjectData::GetChildActorComponent(bool bEvenIfPendingKill) const
+{
+	return GetObject<UChildActorComponent>(bEvenIfPendingKill);
 }
 
 #undef LOCTEXT_NAMESPACE

@@ -114,6 +114,7 @@ ACharacter::ACharacter(const FObjectInitializer& ObjectInitializer)
 	}
 
 	BaseRotationOffset = FQuat::Identity;
+	ReplicatedGravityDirection = UCharacterMovementComponent::DefaultGravityDirection;
 }
 
 void ACharacter::PostInitializeComponents()
@@ -1387,9 +1388,11 @@ bool ACharacter::CanUseRootMotionRepMove(const FSimulatedRootMotionReplicatedMov
 	if( GetWorld()->TimeSince(RootMotionRepMove.Time) <= 0.5f )
 	{
 		// Make sure montage being played matched between client and server.
-		if( RootMotionRepMove.RootMotion.AnimMontage && (RootMotionRepMove.RootMotion.AnimMontage == ClientMontageInstance.Montage) )
+		UAnimSequenceBase* ClientAnimation = ClientMontageInstance.Montage && ClientMontageInstance.Montage->IsDynamicMontage() ? ClientMontageInstance.Montage->GetFirstAnimReference() : ClientMontageInstance.Montage;
+		if (RootMotionRepMove.RootMotion.Animation && RootMotionRepMove.RootMotion.Animation == ClientAnimation)
 		{
-			UAnimMontage * AnimMontage = ClientMontageInstance.Montage;
+			UAnimMontage* AnimMontage = ClientMontageInstance.Montage;
+
 			const float ServerPosition = RootMotionRepMove.RootMotion.Position;
 			const float ClientPosition = ClientMontageInstance.GetPosition();
 			const float DeltaPosition = (ClientPosition - ServerPosition);
@@ -1529,12 +1532,12 @@ void ACharacter::PreReplication( IRepChangedPropertyTracker & ChangedPropertyTra
 		RepRootMotion.MovementBaseBoneName = BasedMovement.BoneName;
 		if (RootMotionMontageInstance)
 		{
-			RepRootMotion.AnimMontage		= RootMotionMontageInstance->Montage;
+			RepRootMotion.Animation = RootMotionMontageInstance->Montage->IsDynamicMontage() ? RootMotionMontageInstance->Montage->GetFirstAnimReference() : RootMotionMontageInstance->Montage;
 			RepRootMotion.Position			= RootMotionMontageInstance->GetPosition();
 		}
 		else
 		{
-			RepRootMotion.AnimMontage = nullptr;
+			RepRootMotion.Animation = nullptr;
 		}
 
 		RepRootMotion.AuthoritativeRootMotion = CharacterMovement->CurrentRootMotion;
@@ -1545,9 +1548,12 @@ void ACharacter::PreReplication( IRepChangedPropertyTracker & ChangedPropertyTra
 	}
 	else
 	{
+		const bool bWasRootMotionPreviouslyActive = RepRootMotion.bIsActive;
 		RepRootMotion.Clear();
 
-		DOREPLIFETIME_ACTIVE_OVERRIDE_FAST( ACharacter, RepRootMotion, false );
+		// Replicate RepRootMotion one last time when root motion ends, so that clients see the change.
+		// Then deactivate subsequent property comparisons and replication updates until root motion starts again.
+		DOREPLIFETIME_ACTIVE_OVERRIDE_FAST( ACharacter, RepRootMotion, bWasRootMotionPreviouslyActive );
 	}
 
 	bProxyIsJumpForceApplied = (JumpForceTimeRemaining > 0.0f);
@@ -1910,3 +1916,7 @@ void ACharacter::ApplyAsyncOutput(const FCharacterAsyncOutput& Output)
 	}
 }
 
+UAnimMontage* FRepRootMotionMontage::GetAnimMontage() const
+{
+	return Cast<UAnimMontage>(Animation);
+}

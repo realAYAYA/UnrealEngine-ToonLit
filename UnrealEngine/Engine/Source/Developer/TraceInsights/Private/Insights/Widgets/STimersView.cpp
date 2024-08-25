@@ -116,6 +116,30 @@ public:
 			"Opens the source file of the selected timer in the registered IDE.",
 			EUserInterfaceActionType::Button,
 			FInputChord());
+
+		UI_COMMAND(Command_FindMaxInstance,
+			"Maximum Duration Instance",
+			"Navigates to and selects the timing event instance with the maximum duration, for the selected timer.",
+			EUserInterfaceActionType::Button,
+			FInputChord());
+
+		UI_COMMAND(Command_FindMinInstance,
+			"Minimum Duration Instance",
+			"Navigates to and selects the timing event instance with the minimum duration, for the selected timer.",
+			EUserInterfaceActionType::Button,
+			FInputChord());
+
+		UI_COMMAND(Command_FindMaxInstanceInSelection,
+			"Maximum Duration Instance in Selection",
+			"Navigates to and selects the timing event instance with the maximum duration, for the selected timer, in the selected time range.",
+			EUserInterfaceActionType::Button,
+			FInputChord());
+
+		UI_COMMAND(Command_FindMinInstanceInSelection,
+			"Minimum Duration Instance in Selection",
+			"Navigates to and selects the timing event instance with the minimum duration, for the selected timer, in the selected time range.",
+			EUserInterfaceActionType::Button,
+			FInputChord());
 	}
 	UE_ENABLE_OPTIMIZATION_SHIP
 
@@ -126,6 +150,11 @@ public:
 	TSharedPtr<FUICommandInfo> Command_ExportThreads;
 	TSharedPtr<FUICommandInfo> Command_ExportTimers;
 	TSharedPtr<FUICommandInfo> Command_OpenSource;
+
+	TSharedPtr<FUICommandInfo> Command_FindMaxInstance;
+	TSharedPtr<FUICommandInfo> Command_FindMinInstance;
+	TSharedPtr<FUICommandInfo> Command_FindMaxInstanceInSelection;
+	TSharedPtr<FUICommandInfo> Command_FindMinInstanceInSelection;
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -178,6 +207,10 @@ void STimersView::InitCommandList()
 	CommandList->MapAction(FTimersViewCommands::Get().Command_ExportThreads, FExecuteAction::CreateSP(this, &STimersView::ContextMenu_ExportThreads_Execute), FCanExecuteAction::CreateSP(this, &STimersView::ContextMenu_ExportThreads_CanExecute));
 	CommandList->MapAction(FTimersViewCommands::Get().Command_ExportTimers, FExecuteAction::CreateSP(this, &STimersView::ContextMenu_ExportTimers_Execute), FCanExecuteAction::CreateSP(this, &STimersView::ContextMenu_ExportTimers_CanExecute));
 	CommandList->MapAction(FTimersViewCommands::Get().Command_OpenSource, FExecuteAction::CreateSP(this, &STimersView::ContextMenu_OpenSource_Execute), FCanExecuteAction::CreateSP(this, &STimersView::ContextMenu_OpenSource_CanExecute));
+	CommandList->MapAction(FTimersViewCommands::Get().Command_FindMaxInstance, FExecuteAction::CreateSP(this, &STimersView::ContextMenu_FindInstance_Execute, true), FCanExecuteAction::CreateSP(this, &STimersView::ContextMenu_FindInstance_CanExecute));
+	CommandList->MapAction(FTimersViewCommands::Get().Command_FindMinInstance, FExecuteAction::CreateSP(this, &STimersView::ContextMenu_FindInstance_Execute, false), FCanExecuteAction::CreateSP(this, &STimersView::ContextMenu_FindInstance_CanExecute));
+	CommandList->MapAction(FTimersViewCommands::Get().Command_FindMaxInstanceInSelection, FExecuteAction::CreateSP(this, &STimersView::ContextMenu_FindInstanceInSelection_Execute, true), FCanExecuteAction::CreateSP(this, &STimersView::ContextMenu_FindInstanceInSelection_CanExecute));
+	CommandList->MapAction(FTimersViewCommands::Get().Command_FindMinInstanceInSelection, FExecuteAction::CreateSP(this, &STimersView::ContextMenu_FindInstanceInSelection_Execute, false), FCanExecuteAction::CreateSP(this, &STimersView::ContextMenu_FindInstanceInSelection_CanExecute));
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -555,6 +588,15 @@ TSharedPtr<SWidget> STimersView::TreeView_GetMenuContent()
 			FSlateIcon(FAppStyle::Get().GetStyleSetName(), "Icons.AddGraphSeries")
 		);
 
+		MenuBuilder.AddSubMenu
+		(
+			LOCTEXT("ContextMenu_FindInstance_SubMenu", "Find Instance"),
+			LOCTEXT("ContextMenu_PlotInstance_SubMenu_Desc", "Find the instance of this timer with the minimum or maximum duration."),
+			FNewMenuDelegate::CreateSP(this, &STimersView::TreeView_FindMenu),
+			false,
+			FSlateIcon(FAppStyle::Get().GetStyleSetName(), "Icons.FindInstance")
+		);
+
 		// Open Source in IDE
 		{
 			ISourceCodeAccessModule& SourceCodeAccessModule = FModuleManager::LoadModuleChecked<ISourceCodeAccessModule>("SourceCodeAccess");
@@ -568,18 +610,38 @@ TSharedPtr<SWidget> STimersView::TreeView_GetMenuContent()
 				bIsValidSource = SelectedNode->GetSourceFileAndLine(File, Line);
 			}
 
-			FText ItemLabel = FText::Format(LOCTEXT("ContextMenu_OpenSource", "Open Source in {0}"), SourceCodeAccessor.GetNameText());
-
+			FText ItemLabel;
 			FText ItemToolTip;
-			if (bIsValidSource)
+
+			if (SourceCodeAccessor.CanAccessSourceCode())
 			{
-				ItemToolTip = FText::Format(LOCTEXT("ContextMenu_OpenSource_Desc1", "Opens the source file of the selected timer in {0}.\n{1} ({2})"),
-					SourceCodeAccessor.GetNameText(), FText::FromString(File), FText::AsNumber(Line, &FNumberFormattingOptions::DefaultNoGrouping()));
+				ItemLabel = FText::Format(LOCTEXT("ContextMenu_OpenSource", "Open Source in {0}"), SourceCodeAccessor.GetNameText());
+				if (bIsValidSource)
+				{
+					ItemToolTip = FText::Format(LOCTEXT("ContextMenu_OpenSource_Desc1", "Opens the source file of the selected timer in {0}.\n{1} ({2})"),
+						SourceCodeAccessor.GetNameText(),
+						FText::FromString(File),
+						FText::AsNumber(Line, &FNumberFormattingOptions::DefaultNoGrouping()));
+				}
+				else
+				{
+					ItemToolTip = FText::Format(LOCTEXT("ContextMenu_OpenSource_Desc2", "Opens the source file of the selected timer in {0}."),
+						SourceCodeAccessor.GetNameText());
+				}
 			}
 			else
 			{
-				ItemToolTip = FText::Format(LOCTEXT("ContextMenu_OpenSource_Desc2", "Opens the source file of the selected timer in {0}."),
-					SourceCodeAccessor.GetNameText());
+				ItemLabel = LOCTEXT("ContextMenu_OpenSourceNA", "Open Source");
+				if (bIsValidSource)
+				{
+					ItemToolTip = FText::Format(LOCTEXT("ContextMenu_OpenSourceNA_Desc1", "{0} ({1})\nSource Code Accessor is not available."),
+						FText::FromString(File),
+						FText::AsNumber(Line, &FNumberFormattingOptions::DefaultNoGrouping()));
+				}
+				else
+				{
+					ItemToolTip = LOCTEXT("ContextMenu_OpenSourceNA_Desc2", "Source Code Accessor is not available.");
+				}
 			}
 
 			MenuBuilder.AddMenuEntry(
@@ -587,8 +649,7 @@ TSharedPtr<SWidget> STimersView::TreeView_GetMenuContent()
 				NAME_None,
 				ItemLabel,
 				ItemToolTip,
-				FSlateIcon(FAppStyle::GetAppStyleSetName(), SourceCodeAccessor.GetOpenIconName())
-			);
+				FSlateIcon(SourceCodeAccessor.GetStyleSet(), SourceCodeAccessor.GetOpenIconName()));
 		}
 	}
 	MenuBuilder.EndSection();
@@ -779,11 +840,18 @@ void STimersView::TreeView_BuildPlotTimerMenu(FMenuBuilder& MenuBuilder)
 	const int32 NumSelectedNodes = SelectedNodes.Num();
 	FTimerNodePtr SelectedNode = NumSelectedNodes ? SelectedNodes[0] : nullptr;
 
-	auto CanExecute = [NumSelectedNodes, SelectedNode]()
+	auto CanExecuteAddToGraphTrack = [NumSelectedNodes, SelectedNode]()
 	{
 		TSharedPtr<STimingProfilerWindow> Wnd = FTimingProfilerManager::Get()->GetProfilerWindow();
 		TSharedPtr<STimingView> TimingView = Wnd.IsValid() ? Wnd->GetTimingView() : nullptr;
 		return TimingView.IsValid() && NumSelectedNodes == 1 && SelectedNode.IsValid() && SelectedNode->GetType() != ETimerNodeType::Group;
+	};
+
+	auto CanExecuteAddToFramesTrack = [NumSelectedNodes, SelectedNode]()
+	{
+		TSharedPtr<STimingProfilerWindow> Wnd = FTimingProfilerManager::Get()->GetProfilerWindow();
+		TSharedPtr<SFrameTrack> FrameTrack = Wnd.IsValid() ? Wnd->GetFrameView() : nullptr;
+		return FrameTrack.IsValid() && NumSelectedNodes == 1 && SelectedNode.IsValid() && SelectedNode->GetType() != ETimerNodeType::Group;
 	};
 
 	MenuBuilder.BeginSection("Instance", LOCTEXT("Plot_Series_Instance_Section", "Instance"));
@@ -791,12 +859,12 @@ void STimersView::TreeView_BuildPlotTimerMenu(FMenuBuilder& MenuBuilder)
 	// Add/remove series to/from graph track
 	{
 		FUIAction Action_ToggleTimerInGraphTrack;
-		Action_ToggleTimerInGraphTrack.CanExecuteAction = FCanExecuteAction::CreateLambda(CanExecute);
+		Action_ToggleTimerInGraphTrack.CanExecuteAction = FCanExecuteAction::CreateLambda(CanExecuteAddToGraphTrack);
 		Action_ToggleTimerInGraphTrack.ExecuteAction = FExecuteAction::CreateSP(this, &STimersView::ToggleTimingViewMainGraphEventSeries, SelectedNode);
 
 		if (SelectedNode.IsValid() &&
 			SelectedNode->GetType() != ETimerNodeType::Group &&
-			IsSeriesInTimingViewMainGraph(SelectedNode))
+			IsInstanceSeriesInTimingViewMainGraph(SelectedNode))
 		{
 			MenuBuilder.AddMenuEntry
 			(
@@ -823,13 +891,13 @@ void STimersView::TreeView_BuildPlotTimerMenu(FMenuBuilder& MenuBuilder)
 	}
 
 	MenuBuilder.EndSection();
-	
+
 	MenuBuilder.BeginSection("Game Frame", LOCTEXT("Plot_Series_GameFrame_Section", "Game Frame"));
 
 	// Add/remove game frame stats series to/from graph track
 	{
 		FUIAction Action_ToggleFrameStatsTimerInGraphTrack;
-		Action_ToggleFrameStatsTimerInGraphTrack.CanExecuteAction = FCanExecuteAction::CreateLambda(CanExecute);
+		Action_ToggleFrameStatsTimerInGraphTrack.CanExecuteAction = FCanExecuteAction::CreateLambda(CanExecuteAddToGraphTrack);
 		Action_ToggleFrameStatsTimerInGraphTrack.ExecuteAction = FExecuteAction::CreateSP(this, &STimersView::ToggleTimingViewMainGraphEventFrameStatsSeries, SelectedNode, ETraceFrameType::TraceFrameType_Game);
 
 		if (SelectedNode.IsValid() &&
@@ -863,7 +931,7 @@ void STimersView::TreeView_BuildPlotTimerMenu(FMenuBuilder& MenuBuilder)
 	// Add/remove game frame stats series to/from frame track
 	{
 		FUIAction Action_ToggleFrameStatsTimerInFrameTrack;
-		Action_ToggleFrameStatsTimerInFrameTrack.CanExecuteAction = FCanExecuteAction::CreateLambda(CanExecute);
+		Action_ToggleFrameStatsTimerInFrameTrack.CanExecuteAction = FCanExecuteAction::CreateLambda(CanExecuteAddToFramesTrack);
 		Action_ToggleFrameStatsTimerInFrameTrack.ExecuteAction = FExecuteAction::CreateSP(this, &STimersView::ToggleFrameTrackSeries, SelectedNode, ETraceFrameType::TraceFrameType_Game);
 
 		if (SelectedNode.IsValid() &&
@@ -901,7 +969,7 @@ void STimersView::TreeView_BuildPlotTimerMenu(FMenuBuilder& MenuBuilder)
 	// Add/remove rendering frame stats series to/from graph track
 	{
 		FUIAction Action_ToggleFrameStatsTimerInGraphTrack;
-		Action_ToggleFrameStatsTimerInGraphTrack.CanExecuteAction = FCanExecuteAction::CreateLambda(CanExecute);
+		Action_ToggleFrameStatsTimerInGraphTrack.CanExecuteAction = FCanExecuteAction::CreateLambda(CanExecuteAddToGraphTrack);
 		Action_ToggleFrameStatsTimerInGraphTrack.ExecuteAction = FExecuteAction::CreateSP(this, &STimersView::ToggleTimingViewMainGraphEventFrameStatsSeries, SelectedNode, ETraceFrameType::TraceFrameType_Rendering);
 
 		if (SelectedNode.IsValid() &&
@@ -935,7 +1003,7 @@ void STimersView::TreeView_BuildPlotTimerMenu(FMenuBuilder& MenuBuilder)
 	// Add/remove rendering frame stats series to/from frame track
 	{
 		FUIAction Action_ToggleFrameStatsTimerInFrameTrack;
-		Action_ToggleFrameStatsTimerInFrameTrack.CanExecuteAction = FCanExecuteAction::CreateLambda(CanExecute);
+		Action_ToggleFrameStatsTimerInFrameTrack.CanExecuteAction = FCanExecuteAction::CreateLambda(CanExecuteAddToFramesTrack);
 		Action_ToggleFrameStatsTimerInFrameTrack.ExecuteAction = FExecuteAction::CreateSP(this, &STimersView::ToggleFrameTrackSeries, SelectedNode, ETraceFrameType::TraceFrameType_Rendering);
 
 		if (SelectedNode.IsValid() &&
@@ -967,6 +1035,49 @@ void STimersView::TreeView_BuildPlotTimerMenu(FMenuBuilder& MenuBuilder)
 	}
 
 	MenuBuilder.EndSection();
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void STimersView::TreeView_FindMenu(FMenuBuilder& MenuBuilder)
+{
+	MenuBuilder.AddMenuEntry
+	(
+		FTimersViewCommands::Get().Command_FindMaxInstance,
+		NAME_None,
+		TAttribute<FText>(),
+		TAttribute<FText>(),
+		FSlateIcon(FAppStyle::Get().GetStyleSetName(), "Icons.FindMaxInstance")
+	);
+
+	MenuBuilder.AddMenuEntry
+	(
+		FTimersViewCommands::Get().Command_FindMinInstance,
+		NAME_None,
+		TAttribute<FText>(),
+		TAttribute<FText>(),
+		FSlateIcon(FAppStyle::Get().GetStyleSetName(), "Icons.FindMinInstance")
+	);
+
+	MenuBuilder.AddMenuSeparator();
+
+	MenuBuilder.AddMenuEntry
+	(
+		FTimersViewCommands::Get().Command_FindMaxInstanceInSelection,
+		NAME_None,
+		TAttribute<FText>(),
+		TAttribute<FText>(),
+		FSlateIcon(FAppStyle::Get().GetStyleSetName(), "Icons.FindMaxInstance")
+	);
+
+	MenuBuilder.AddMenuEntry
+	(
+		FTimersViewCommands::Get().Command_FindMinInstanceInSelection,
+		NAME_None,
+		TAttribute<FText>(),
+		TAttribute<FText>(),
+		FSlateIcon(FAppStyle::Get().GetStyleSetName(), "Icons.FindMinInstance")
+	);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1392,12 +1503,29 @@ void STimersView::TreeView_OnSelectionChanged(FTimerNodePtr SelectedItem, ESelec
 {
 	if (SelectInfo != ESelectInfo::Direct)
 	{
-		TArray<FTimerNodePtr> SelectedItems = TreeView->GetSelectedItems();
-		if (SelectedItems.Num() == 1 && SelectedItems[0]->GetType() != ETimerNodeType::Group)
+		FTimerNodePtr SelectedNode = GetSingleSelectedTimerNode();
+		if (SelectedNode.IsValid() && SelectedNode->GetType() != ETimerNodeType::Group)
 		{
-			FTimingProfilerManager::Get()->SetSelectedTimer(SelectedItems[0]->GetTimerId());
+			FTimingProfilerManager::Get()->SetSelectedTimer(SelectedNode->GetTimerId());
 		}
 	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+FTimerNodePtr STimersView::GetSingleSelectedTimerNode() const
+{
+	if (TreeView->GetNumItemsSelected() != 1)
+	{
+		return nullptr;
+	}
+	const TArray<FTimerNodePtr> SelectedNodes = TreeView->GetSelectedItems();
+	const int32 NumSelectedNodes = SelectedNodes.Num();
+	if (NumSelectedNodes == 1)
+	{
+		return SelectedNodes[0];
+	}
+	return nullptr;
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -1429,25 +1557,7 @@ void STimersView::TreeView_OnMouseButtonDoubleClick(FTimerNodePtr NodePtr)
 		}
 		else
 		{
-			switch (ModeFrameType)
-			{
-				case ETraceFrameType::TraceFrameType_Count:
-				{
-					// Instance graph
-					ToggleTimingViewMainGraphEventSeries(NodePtr);
-					break;
-				}
-				case ETraceFrameType::TraceFrameType_Game:
-				case ETraceFrameType::TraceFrameType_Rendering:
-				{
-					ToggleTimingViewMainGraphEventFrameStatsSeries(NodePtr, ModeFrameType);
-					break;
-				}
-				default:
-				{
-					ensure(0);
-				}
-			}
+			ToggleTimingViewMainGraphEventSeries(NodePtr);
 		}
 	}
 }
@@ -1847,7 +1957,7 @@ FText STimersView::Mode_GetTooltipText(ETraceFrameType InFrameType) const
 
 	return FText();
 }
- 
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Sorting
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -2334,14 +2444,38 @@ void STimersView::RebuildTree(bool bResync)
 			check(TimerCount > PreviousNodeCount);
 			TimerNodes.Reserve(TimerCount);
 
+			TSharedPtr<FTimingGraphTrack> GraphTrack = GetTimingViewMainGraphTrack();
+			TSharedPtr<SFrameTrack> FrameTrack = GetFrameTrack();
+
 			// Add nodes only for new timers.
 			for (uint32 TimerIndex = PreviousNodeCount; TimerIndex < TimerCount; ++TimerIndex)
 			{
 				const TraceServices::FTimingProfilerTimer& Timer = *(TimerReader->GetTimer(TimerIndex));
 				ensure(Timer.Id == TimerIndex);
 				const ETimerNodeType Type = Timer.IsGpuTimer ? ETimerNodeType::GpuScope : ETimerNodeType::CpuScope;
-				FTimerNodePtr TimerNodePtr = MakeShared<FTimerNode>(Timer.Id, Timer.Name, Type);
+				FTimerNodePtr TimerNodePtr = MakeShared<FTimerNode>(Timer.Id, Timer.Name, Type, false);
 				TimerNodePtr->SetDefaultSortOrder(TimerIndex + 1);
+
+				if (GraphTrack.IsValid())
+				{
+					uint32 NumSeries = GraphTrack->GetNumSeriesForTimer(Timer.Id);
+					while (NumSeries > 0)
+					{
+						TimerNodePtr->OnAddedToGraph();
+						--NumSeries;
+					}
+				}
+
+				if (FrameTrack.IsValid())
+				{
+					uint32 NumSeries = FrameTrack->GetNumSeriesForTimer(Timer.Id);
+					while (NumSeries > 0)
+					{
+						TimerNodePtr->OnAddedToGraph();
+						--NumSeries;
+					}
+				}
+
 				TimerNodes.Add(TimerNodePtr);
 			}
 			ensure(TimerNodes.Num() == TimerCount);
@@ -2523,7 +2657,32 @@ TSharedPtr<SFrameTrack> STimersView::GetFrameTrack() const
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void STimersView::ToggleGraphSeries(TSharedRef<FTimingGraphTrack> GraphTrack, FTimerNodeRef NodePtr) const
+void STimersView::ToggleTimingViewMainGraphEventSeries(FTimerNodePtr TimerNode) const
+{
+	switch (ModeFrameType)
+	{
+	case ETraceFrameType::TraceFrameType_Count:
+	{
+		// Instance graph
+		ToggleTimingViewMainGraphEventInstanceSeries(TimerNode);
+		break;
+	}
+	case ETraceFrameType::TraceFrameType_Game:
+	case ETraceFrameType::TraceFrameType_Rendering:
+	{
+		ToggleTimingViewMainGraphEventFrameStatsSeries(TimerNode, ModeFrameType);
+		break;
+	}
+	default:
+	{
+		ensure(0);
+	}
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void STimersView::ToggleGraphInstanceSeries(TSharedRef<FTimingGraphTrack> GraphTrack, FTimerNodeRef NodePtr) const
 {
 	const uint32 TimerId = NodePtr->GetTimerId();
 	TSharedPtr<FTimingGraphSeries> Series = GraphTrack->GetTimerSeries(TimerId);
@@ -2545,7 +2704,7 @@ void STimersView::ToggleGraphSeries(TSharedRef<FTimingGraphTrack> GraphTrack, FT
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-bool STimersView::IsSeriesInTimingViewMainGraph(FTimerNodePtr TimerNode) const
+bool STimersView::IsInstanceSeriesInTimingViewMainGraph(FTimerNodePtr TimerNode) const
 {
 	TSharedPtr<FTimingGraphTrack> GraphTrack = GetTimingViewMainGraphTrack();
 
@@ -2562,12 +2721,12 @@ bool STimersView::IsSeriesInTimingViewMainGraph(FTimerNodePtr TimerNode) const
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-void STimersView::ToggleTimingViewMainGraphEventSeries(FTimerNodePtr TimerNode) const
+void STimersView::ToggleTimingViewMainGraphEventInstanceSeries(FTimerNodePtr TimerNode) const
 {
 	TSharedPtr<FTimingGraphTrack> GraphTrack = GetTimingViewMainGraphTrack();
 	if (GraphTrack.IsValid())
 	{
-		ToggleGraphSeries(GraphTrack.ToSharedRef(), TimerNode.ToSharedRef());
+		ToggleGraphInstanceSeries(GraphTrack.ToSharedRef(), TimerNode.ToSharedRef());
 	}
 }
 
@@ -2688,15 +2847,16 @@ void STimersView::ContextMenu_CopyToClipboard_Execute()
 		return;
 	}
 
-	TArray<Insights::FBaseTreeNodePtr> SelectedNodes;
-	for (FTimerNodePtr TimerPtr : TreeView->GetSelectedItems())
-	{
-		SelectedNodes.Add(TimerPtr);
-	}
-
-	if (SelectedNodes.Num() == 0)
+	const TArray<FTimerNodePtr> SelectedTimerNodes = TreeView->GetSelectedItems();
+	if (SelectedTimerNodes.Num() == 0)
 	{
 		return;
+	}
+
+	TArray<Insights::FBaseTreeNodePtr> SelectedNodes;
+	for (FTimerNodePtr TimerPtr : SelectedTimerNodes)
+	{
+		SelectedNodes.Add(TimerPtr);
 	}
 
 	FString ClipboardText;
@@ -2731,19 +2891,20 @@ void STimersView::ContextMenu_Export_Execute()
 		return;
 	}
 
-	TArray<Insights::FBaseTreeNodePtr> SelectedNodes;
-	for (FTimerNodePtr TimerPtr : TreeView->GetSelectedItems())
-	{
-		SelectedNodes.Add(TimerPtr);
-	}
-
-	if (SelectedNodes.Num() == 0)
+	const TArray<FTimerNodePtr> SelectedTimerNodes = TreeView->GetSelectedItems();
+	if (SelectedTimerNodes.Num() == 0)
 	{
 		return;
 	}
 
+	TArray<Insights::FBaseTreeNodePtr> SelectedNodes;
+	for (FTimerNodePtr TimerPtr : SelectedTimerNodes)
+	{
+		SelectedNodes.Add(TimerPtr);
+	}
+
 	const FString DialogTitle = LOCTEXT("Export_Title", "Export Aggregated Timer Stats").ToString();
-	const FString DefaultFile = TEXT("TimerStats.tsv");
+	const FString DefaultFile = TEXT("TimerStats");
 	FString Filename;
 	if (!OpenSaveTextFileDialog(DialogTitle, DefaultFile, Filename))
 	{
@@ -2892,7 +3053,7 @@ void STimersView::ContextMenu_ExportTimingEventsSelection_Execute() const
 	}
 
 	const FString DialogTitle = LOCTEXT("ExportTimingEventsSelection_Title", "Export Timing Events (Selection)").ToString();
-	const FString DefaultFile = TEXT("TimingEvents.tsv");
+	const FString DefaultFile = TEXT("TimingEvents");
 	FString Filename;
 	if (!OpenSaveTextFileDialog(DialogTitle, DefaultFile, Filename))
 	{
@@ -3014,7 +3175,7 @@ void STimersView::ContextMenu_ExportTimingEvents_Execute() const
 	}
 
 	const FString DialogTitle = LOCTEXT("ExportTimingEvents_Title", "Export Timing Events (All)").ToString();
-	const FString DefaultFile = TEXT("TimingEvents.tsv");
+	const FString DefaultFile = TEXT("TimingEvents");
 	FString Filename;
 	if (!OpenSaveTextFileDialog(DialogTitle, DefaultFile, Filename))
 	{
@@ -3043,7 +3204,7 @@ void STimersView::ContextMenu_ExportThreads_Execute() const
 	}
 
 	const FString DialogTitle = LOCTEXT("ExportThreads_Title", "Export Threads").ToString();
-	const FString DefaultFile = TEXT("Threads.tsv");
+	const FString DefaultFile = TEXT("Threads");
 	FString Filename;
 	if (!OpenSaveTextFileDialog(DialogTitle, DefaultFile, Filename))
 	{
@@ -3072,7 +3233,7 @@ void STimersView::ContextMenu_ExportTimers_Execute() const
 	}
 
 	const FString DialogTitle = LOCTEXT("ExportTimers_Title", "Export Timers").ToString();
-	const FString DefaultFile = TEXT("Timers.tsv");
+	const FString DefaultFile = TEXT("Timers");
 	FString Filename;
 	if (!OpenSaveTextFileDialog(DialogTitle, DefaultFile, Filename))
 	{
@@ -3137,55 +3298,131 @@ IFileHandle* STimersView::OpenExportFile(const TCHAR* InFilename) const
 
 bool STimersView::ContextMenu_OpenSource_CanExecute() const
 {
-	const TArray<FTimerNodePtr> SelectedNodes = TreeView->GetSelectedItems();
-	const int32 NumSelectedNodes = SelectedNodes.Num();
-	if (NumSelectedNodes == 1)
+	ISourceCodeAccessModule& SourceCodeAccessModule = FModuleManager::LoadModuleChecked<ISourceCodeAccessModule>("SourceCodeAccess");
+	ISourceCodeAccessor& SourceCodeAccessor = SourceCodeAccessModule.GetAccessor();
+
+	if (!SourceCodeAccessor.CanAccessSourceCode())
 	{
-		FTimerNodePtr SelectedNode = SelectedNodes[0];
-		if (SelectedNode.IsValid() && SelectedNode->GetType() != ETimerNodeType::Group)
-		{
-			FString File;
-			uint32 Line = 0;
-			return SelectedNode->GetSourceFileAndLine(File, Line);
-		}
+		return false;
 	}
-	return false;
+
+	FTimerNodePtr SelectedNode = GetSingleSelectedTimerNode();
+	if (!SelectedNode.IsValid())
+	{
+		return false;
+	}
+
+	FString File;
+	uint32 Line = 0;
+	return SelectedNode->GetSourceFileAndLine(File, Line);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void STimersView::ContextMenu_OpenSource_Execute() const
 {
-	const TArray<FTimerNodePtr> SelectedNodes = TreeView->GetSelectedItems();
-	const int32 NumSelectedNodes = SelectedNodes.Num();
-	if (NumSelectedNodes == 1)
+	FTimerNodePtr SelectedNode = GetSingleSelectedTimerNode();
+	if (SelectedNode.IsValid())
 	{
-		OpenSourceFileInIDE(SelectedNodes[0]);
+		OpenSourceFileInIDE(SelectedNode);
 	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+bool STimersView::ContextMenu_FindInstance_CanExecute() const
+{
+	FTimerNodePtr SelectedNode = GetSingleSelectedTimerNode();
+	return SelectedNode.IsValid() && SelectedNode->GetType() != ETimerNodeType::Group;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void STimersView::ContextMenu_FindInstance_Execute(bool bFindMax) const
+{
+	FTimerNodePtr SelectedNode = GetSingleSelectedTimerNode();
+	if (!SelectedNode.IsValid())
+	{
+		return;
+	}
+
+	TSharedPtr<STimingProfilerWindow> Wnd = FTimingProfilerManager::Get()->GetProfilerWindow();
+	TSharedPtr<STimingView> TimingView = Wnd.IsValid() ? Wnd->GetTimingView() : nullptr;
+	if (!TimingView.IsValid())
+	{
+		return;
+	}
+
+	ESelectEventType Type = bFindMax ? ESelectEventType::Max : ESelectEventType::Min;
+	TimingView->SelectEventInstance(SelectedNode->GetTimerId(), Type, false);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+bool STimersView::ContextMenu_FindInstanceInSelection_CanExecute() const
+{
+	FTimerNodePtr SelectedNode = GetSingleSelectedTimerNode();
+	if (!SelectedNode.IsValid() || SelectedNode->GetType() == ETimerNodeType::Group)
+	{
+		return false;
+	}
+
+	TSharedPtr<STimingProfilerWindow> Wnd = FTimingProfilerManager::Get()->GetProfilerWindow();
+	TSharedPtr<STimingView> TimingView = Wnd.IsValid() ? Wnd->GetTimingView() : nullptr;
+	if (TimingView.IsValid())
+	{
+		return TimingView->GetSelectionEndTime() > TimingView->GetSelectionStartTime();
+	}
+
+	return false;
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void STimersView::ContextMenu_FindInstanceInSelection_Execute(bool bFindMax) const
+{
+	FTimerNodePtr SelectedNode = GetSingleSelectedTimerNode();
+	if (!SelectedNode.IsValid() || SelectedNode->GetType() == ETimerNodeType::Group)
+	{
+		return;
+	}
+
+	TSharedPtr<STimingProfilerWindow> Wnd = FTimingProfilerManager::Get()->GetProfilerWindow();
+	TSharedPtr<STimingView> TimingView = Wnd.IsValid() ? Wnd->GetTimingView() : nullptr;
+	if (!TimingView.IsValid())
+	{
+		return;
+	}
+
+	ESelectEventType Type = bFindMax ? ESelectEventType::Max : ESelectEventType::Min;
+	TimingView->SelectEventInstance(SelectedNode->GetTimerId(), Type, true);
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void STimersView::OpenSourceFileInIDE(FTimerNodePtr InNode) const
 {
-	if (InNode.IsValid() && InNode->GetType() != ETimerNodeType::Group)
+	if (!InNode.IsValid() || InNode->GetType() == ETimerNodeType::Group)
 	{
-		FString File;
-		uint32 Line = 0;
-		bool bIsValidSource = InNode->GetSourceFileAndLine(File, Line);
-		if (bIsValidSource)
-		{
-			ISourceCodeAccessModule& SourceCodeAccessModule = FModuleManager::LoadModuleChecked<ISourceCodeAccessModule>("SourceCodeAccess");
-			if (FPaths::FileExists(File))
-			{
-				ISourceCodeAccessor& SourceCodeAccessor = SourceCodeAccessModule.GetAccessor();
-				SourceCodeAccessor.OpenFileAtLine(File, Line);
-			}
-			else
-			{
-				SourceCodeAccessModule.OnOpenFileFailed().Broadcast(File);
-			}
-		}
+		return;
+	}
+
+	FString File;
+	uint32 Line = 0;
+	if (!InNode->GetSourceFileAndLine(File, Line))
+	{
+		return;
+	}
+
+	ISourceCodeAccessModule& SourceCodeAccessModule = FModuleManager::LoadModuleChecked<ISourceCodeAccessModule>("SourceCodeAccess");
+	if (FPaths::FileExists(File))
+	{
+		ISourceCodeAccessor& SourceCodeAccessor = SourceCodeAccessModule.GetAccessor();
+		SourceCodeAccessor.OpenFileAtLine(File, Line);
+	}
+	else
+	{
+		SourceCodeAccessModule.OnOpenFileFailed().Broadcast(File);
 	}
 }
 
@@ -3316,6 +3553,18 @@ void STimersView::LoadSettings()
 	bFilterOutZeroCountTimers = !Settings.GetTimersViewShowZeroCountTimers();
 
 	LoadVisibleColumnsSettings();
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void STimersView::OnTimingViewTrackListChanged()
+{
+	if (!Aggregator->IsEmptyTimeInterval())
+	{
+		Aggregator->Cancel();
+		Aggregator->SetFrameType(ModeFrameType);
+		Aggregator->Start();
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

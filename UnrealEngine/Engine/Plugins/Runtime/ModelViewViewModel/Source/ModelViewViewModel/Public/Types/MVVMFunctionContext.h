@@ -28,12 +28,12 @@ namespace UE::MVVM
 		}
 
 	public:
-		UE_NODISCARD ObjectType GetObject() const
+		[[nodiscard]] ObjectType GetObject() const
 		{
 			return ObjectPtr;
 		}
 
-		UE_NODISCARD FunctionType GetFunction() const
+		[[nodiscard]] FunctionType GetFunction() const
 		{
 			return FunctionPtr;
 		}

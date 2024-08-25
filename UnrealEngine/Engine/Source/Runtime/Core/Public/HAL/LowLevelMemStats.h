@@ -64,7 +64,10 @@
 #define LLM_SCOPED_SINGLE_STAT_TAG(Stat) DECLARE_LLM_MEMORY_STAT(TEXT(#Stat), Stat, STATGROUP_LLMFULL); LLM_SCOPED_TAG_WITH_STAT(Stat, ELLMTracker::Default);
 #define LLM_SCOPED_SINGLE_STAT_TAG_IN_SET(Stat, Set) DECLARE_LLM_MEMORY_STAT(TEXT(#Stat), Stat, STATGROUP_LLMFULL); LLM_SCOPED_TAG_WITH_STAT_IN_SET(Stat, Set, ELLMTracker::Default);
 #define LLM_SCOPED_PAUSE_TRACKING_WITH_STAT_AND_AMOUNT(Stat, Amount, Tracker) FLLMPauseScope SCOPE_NAME(GET_STATFNAME(Stat), true /* bIsStatTag */, Amount, Tracker, ELLMAllocType::None);
-#define LLM_SCOPED_TAG_WITH_OBJECT_IN_SET(Object, Set) FLLMScope SCOPE_NAME(FLowLevelMemTracker::Get().IsTagSetActive(Set) ? Object->GetOutermost()->GetFName() : NAME_None, (Set == ELLMTagSet::None) /* bIsStatTag */, Set, ELLMTracker::Default);
+#define LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH(Object, Set) LLM_SCOPE_DYNAMIC(FName(*Object->GetPathName()), \
+					ELLMTracker::Default, Set, FLLMDynamicTagConstructorStatString(Object->GetPathName()))
+#define LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH_FNAME(ObjectPath, Set) LLM_SCOPE_DYNAMIC(ObjectPath, \
+					ELLMTracker::Default, Set, FLLMDynamicTagConstructorStatString(ObjectPath.ToString()))
 
 // special stat pushing to update threads after each asset when tracking assets
 // Currently this is unused, but we may use it for optimizations later
@@ -85,8 +88,11 @@
 #define LLM_SCOPED_SINGLE_STAT_TAG(...)
 #define LLM_SCOPED_SINGLE_STAT_TAG_IN_SET(...)
 #define LLM_SCOPED_PAUSE_TRACKING_WITH_STAT_AND_AMOUNT(...)
-#define LLM_SCOPED_TAG_WITH_OBJECT_IN_SET(...)
+#define LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH(...)
+#define LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH_FNAME(...)
 #define LLM_PUSH_STATS_FOR_ASSET_TAGS()
 #endif
+
+#define LLM_SCOPED_TAG_WITH_OBJECT_IN_SET(Object, Set) UE_DEPRECATED_MACRO(5.3, "Use LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH instead") LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH(Object, Set);
 
 

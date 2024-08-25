@@ -24,8 +24,6 @@ rem find ".cs" files to only lines that match those names - excludes lines that 
 md ..\Intermediate\Build >nul 2>nul
 
 dir /s ^
- Programs\Shared\EpicGames.Box\*.cs ^
- Programs\Shared\EpicGames.Box\*.csproj ^
  Programs\Shared\EpicGames.Build\*.cs ^
  Programs\Shared\EpicGames.Build\*.csproj ^
  Programs\Shared\EpicGames.Core\*.cs ^
@@ -40,31 +38,46 @@ dir /s ^
  Programs\Shared\EpicGames.OIDC\*.csproj ^
  Programs\Shared\EpicGames.Serialization\*.cs ^
  Programs\Shared\EpicGames.Serialization\*.csproj ^
+ Programs\Shared\EpicGames.UBA\*.cs ^
+ Programs\Shared\EpicGames.UBA\*.csproj ^
  Programs\Shared\EpicGames.UHT\*.cs ^
  Programs\Shared\EpicGames.UHT\*.csproj ^
  Programs\UnrealBuildTool\*.cs ^
  Programs\UnrealBuildTool\*.csproj ^
  | %FIND% ".cs" > ..\Intermediate\Build\UnrealBuildToolFiles.txt
 
+if exist ..\Binaries\Win64\UnrealBuildAccelerator (
+	dir /s ^
+	 ..\Binaries\Win64\UnrealBuildAccelerator\*.dll ^
+	 | %FIND% ".dll" >> ..\Intermediate\Build\UnrealBuildToolFiles.txt
+	dir /s ^
+	 ..\Binaries\Win64\UnrealBuildAccelerator\*.exe ^
+	 | %FIND% ".exe" >> ..\Intermediate\Build\UnrealBuildToolFiles.txt
+) 2>nul
+
 if not exist ..\Platforms goto NoPlatforms
 for /d %%D in (..\Platforms\*) do (
-	if exist %%D\Source\Programs\UnrealBuildTool (
-		dir /s ^
-		 %%D\Source\Programs\UnrealBuildTool\*.cs ^
-		 %%D\Source\Programs\UnrealBuildTool\*.csproj ^
-		 | %FIND% ".cs" >> ..\Intermediate\Build\UnrealBuildToolFiles.txt
-	) 2>nul
+	for %%F in (Shared UnrealBuildTool) do (
+		if exist %%D\Source\Programs\%%F (
+			dir /s ^
+			%%D\Source\Programs\%%F\*.cs ^
+			%%D\Source\Programs\%%F\*.csproj ^
+			| %FIND% ".cs" >> ..\Intermediate\Build\UnrealBuildToolFiles.txt
+		) 2>nul
+	)
 )
 :NoPlatforms
 
 if not exist ..\Restricted goto NoRestricted
 for /d %%D in (..\Restricted\*) do (
-	if exist %%D\Source\Programs\UnrealBuildTool (
-		dir /s ^
-		 %%D\Source\Programs\UnrealBuildTool\*.cs ^
-		 %%D\Source\Programs\UnrealBuildTool\*.csproj ^
-		 | %FIND% ".cs" >> ..\Intermediate\Build\UnrealBuildToolFiles.txt
-	) 2>nul
+	for %%F in (Shared UnrealBuildTool) do (
+		if exist %%D\Source\Programs\%%F (
+			dir /s ^
+			%%D\Source\Programs\%%F\*.cs ^
+			%%D\Source\Programs\%%F\*.csproj ^
+			| %FIND% ".cs" >> ..\Intermediate\Build\UnrealBuildToolFiles.txt
+		) 2>nul
+	)
 )
 :NoRestricted
 

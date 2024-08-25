@@ -15,6 +15,33 @@ public:
 	static bool IsEnabled(const FCollectionPropertyConstFacade& PropertyCollection)
 	{
 		return IsBendingElementStiffnessEnabled(PropertyCollection, false);
+	}	
+	
+	FPBDBendingConstraints(const FSolverParticlesRange& InParticles,
+		TArray<TVec4<int32>>&& InConstraints,
+		const TMap<FString, TConstArrayView<FRealSingle>>& WeightMaps,
+		const FCollectionPropertyConstFacade& PropertyCollection,
+		bool bTrimKinematicConstraints = false)
+		: Base(
+			InParticles,
+			MoveTemp(InConstraints),
+			WeightMaps.FindRef(GetBendingElementStiffnessString(PropertyCollection, BendingElementStiffnessName.ToString())),
+			WeightMaps.FindRef(GetBucklingStiffnessString(PropertyCollection, BucklingStiffnessName.ToString())),
+			GetRestAngleMapFromCollection(WeightMaps, PropertyCollection),
+			FSolverVec2(GetWeightedFloatBendingElementStiffness(PropertyCollection, 1.f)),
+			(FSolverReal)GetBucklingRatio(PropertyCollection, 0.f),  // BucklingRatio is clamped in base class
+			FSolverVec2(GetWeightedFloatBucklingStiffness(PropertyCollection, 1.f)),
+			GetRestAngleValueFromCollection(PropertyCollection),
+			(ERestAngleConstructionType)GetRestAngleType(PropertyCollection, (int32)ERestAngleConstructionType::Use3DRestAngles),
+			bTrimKinematicConstraints)
+		, BendingElementStiffnessIndex(PropertyCollection)
+		, BucklingRatioIndex(PropertyCollection)
+		, BucklingStiffnessIndex(PropertyCollection)
+		, FlatnessRatioIndex(PropertyCollection)
+		, RestAngleIndex(PropertyCollection)
+		, RestAngleTypeIndex(PropertyCollection)
+	{
+		InitColor(InParticles);
 	}
 
 	FPBDBendingConstraints(const FSolverParticles& InParticles,
@@ -132,13 +159,16 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		SetProperties(PropertyCollection, TMap<FString, TConstArrayView<FRealSingle>>());
 	}
 
-	CHAOS_API void Apply(FSolverParticles& InParticles, const FSolverReal Dt) const;
+	template<typename SolverParticlesOrRange>
+	CHAOS_API void Apply(SolverParticlesOrRange& InParticles, const FSolverReal Dt) const;
 
 	const TArray<int32>& GetConstraintsPerColorStartIndex() const { return ConstraintsPerColorStartIndex; }
 
 private:
-	CHAOS_API void InitColor(const FSolverParticles& InParticles);
-	CHAOS_API void ApplyHelper(FSolverParticles& InParticles, const FSolverReal Dt, const int32 ConstraintIndex, const FSolverReal ExpStiffnessValue, const FSolverReal ExpBucklingValue) const;
+	template<typename SolverParticlesOrRange>
+	CHAOS_API void InitColor(const SolverParticlesOrRange& InParticles);
+	template<typename SolverParticlesOrRange>
+	void ApplyHelper(SolverParticlesOrRange& InParticles, const FSolverReal Dt, const int32 ConstraintIndex, const FSolverReal ExpStiffnessValue, const FSolverReal ExpBucklingValue) const;
 
 	TConstArrayView<FRealSingle> GetRestAngleMapFromCollection(
 		const TMap<FString, TConstArrayView<FRealSingle>>& WeightMaps,
@@ -192,12 +222,3 @@ private:
 };
 
 }  // End namespace Chaos::Softs
-
-// Support ISPC enable/disable in non-shipping builds
-#if !INTEL_ISPC
-const bool bChaos_Bending_ISPC_Enabled = false;
-#elif UE_BUILD_SHIPPING
-const bool bChaos_Bending_ISPC_Enabled = true;
-#else
-extern CHAOS_API bool bChaos_Bending_ISPC_Enabled;
-#endif

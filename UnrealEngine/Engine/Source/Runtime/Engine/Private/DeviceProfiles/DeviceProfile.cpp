@@ -390,12 +390,16 @@ void UDeviceProfile::ExpandDeviceProfileCVars()
 	// VisitPlatformCVarsForEmulation can't access Scalability.h, so make sure it doesn't change away from 3, or if it does, to fix up the hardcoded number
 	static_assert(Scalability::DefaultQualityLevel == 3, "If this trips, update this and IConsoleManager::VisitPlatformCVarsForEmulation with the new value!");
 
-	TMap<FString, FString> CVarsToAdd;
-	TMap<FString, FString> PreviewCVars;
 	IConsoleManager::VisitPlatformCVarsForEmulation(*DeviceType, GetName(),
 		[this](const FString& CVarName, const FString& CVarValue, EConsoleVariableFlags SetByAndPreview)
 		{
-			AllExpandedCVars.Add(CVarName, CVarValue);
+			// don't add scalabiliy groups to the expanded, but do add them to the preview set (this is to maintain same 
+			// functionality for GetAllExpandedCVars(), but allow to see what Preview will set the SGs to in the SetByPreview mode)
+			if (!CVarName.StartsWith(TEXT("sg.")))
+			{
+				AllExpandedCVars.Add(CVarName, CVarValue);
+			}
+
 			if (SetByAndPreview & EConsoleVariableFlags::ECVF_Preview)
 			{
 				AllPreviewCVars.Add(CVarName, CVarValue);

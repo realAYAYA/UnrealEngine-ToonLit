@@ -20,6 +20,22 @@ class UOptimusNodePin;
 struct FOptimusPinTraversalContext
 {
 	TArray<const IOptimusNodePinRouter*, TInlineAllocator<4>> ReferenceNesting;
+
+	bool operator==(FOptimusPinTraversalContext const& RHS) const
+	{
+		return ReferenceNesting == RHS.ReferenceNesting;
+	}
+	
+	friend uint32 GetTypeHash(const FOptimusPinTraversalContext& InContext)
+	{
+		uint32 Hash = GetTypeHash(InContext.ReferenceNesting.Num());
+		
+		for (const IOptimusNodePinRouter* Referencer : InContext.ReferenceNesting)
+		{
+			Hash = HashCombineFast(Hash, GetTypeHash(Referencer));
+		}
+		return Hash;
+	}
 };
 
 /** A utility struct for when traversing the graph through routed nodes. */
@@ -30,8 +46,16 @@ struct FOptimusRoutedNode
 
 	bool operator==(FOptimusRoutedNode const& RHS) const
 	{
-		return Node == RHS.Node;
+		return Node == RHS.Node && TraversalContext == RHS.TraversalContext;
 	}
+
+	friend uint32 GetTypeHash(const FOptimusRoutedNode& InRoutedNode)
+	{
+		uint32 Hash = GetTypeHash(InRoutedNode.Node);
+		
+		Hash = HashCombineFast(Hash, GetTypeHash(InRoutedNode.TraversalContext));
+		return Hash;
+	}	
 };
 
 struct FOptimusRoutedConstNode
@@ -41,8 +65,16 @@ struct FOptimusRoutedConstNode
 
 	bool operator==(FOptimusRoutedConstNode const& RHS) const
 	{
-		return Node == RHS.Node;
+		return Node == RHS.Node && TraversalContext == RHS.TraversalContext;
 	}
+
+	friend uint32 GetTypeHash(const FOptimusRoutedConstNode& InRoutedNode)
+	{
+		uint32 Hash = GetTypeHash(InRoutedNode.Node);
+		
+		Hash = HashCombineFast(Hash, GetTypeHash(InRoutedNode.TraversalContext));
+		return Hash;
+	}	
 };
 
 
@@ -58,8 +90,16 @@ struct FOptimusRoutedNodePin
 	
 	bool operator==(FOptimusRoutedNodePin const& RHS) const
 	{
-		return NodePin == RHS.NodePin;
+		return NodePin == RHS.NodePin && TraversalContext == RHS.TraversalContext;
 	}
+
+	friend uint32 GetTypeHash(const FOptimusRoutedNodePin& InRoutedNodePin)
+	{
+		uint32 Hash = GetTypeHash(InRoutedNodePin.NodePin);
+		
+		Hash = HashCombineFast(Hash, GetTypeHash(InRoutedNodePin.TraversalContext));
+		return Hash;
+	}		
 };
 
 struct FOptimusRoutedConstNodePin
@@ -69,8 +109,16 @@ struct FOptimusRoutedConstNodePin
 	
 	bool operator==(FOptimusRoutedConstNodePin const& RHS) const
 	{
-		return NodePin == RHS.NodePin;
+		return NodePin == RHS.NodePin && TraversalContext == RHS.TraversalContext;
 	}
+	
+	friend uint32 GetTypeHash(const FOptimusRoutedConstNodePin& InRoutedNodePin)
+	{
+		uint32 Hash = GetTypeHash(InRoutedNodePin.NodePin);
+		
+		Hash = HashCombineFast(Hash, GetTypeHash(InRoutedNodePin.TraversalContext));
+		return Hash;
+	}		
 };
 
 

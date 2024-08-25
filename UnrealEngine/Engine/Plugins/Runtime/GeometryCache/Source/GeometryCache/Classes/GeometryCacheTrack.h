@@ -123,6 +123,15 @@ class GEOMETRYCACHE_API UGeometryCacheTrack : public UObject
 	 */
 	virtual bool GetMeshDataAtTime(float Time, FGeometryCacheMeshData& OutMeshData) { return false; }
 
+	/**
+	 * Get the mesh data for the specified sample index
+	 *
+	 * @param SampleIndex - The sample index to get the mesh data for
+	 * @param OutMeshData - Will contain the mesh data that was retrieved, if successful
+	 * @return True if the mesh data could be retrieved
+	 */
+	virtual bool GetMeshDataAtSampleIndex(int32 SampleIndex, FGeometryCacheMeshData& OutMeshData) { return false; }
+
 	/** Return the hash of the mesh data of the track */
 	virtual uint64 GetHash() const { return 0; }
 

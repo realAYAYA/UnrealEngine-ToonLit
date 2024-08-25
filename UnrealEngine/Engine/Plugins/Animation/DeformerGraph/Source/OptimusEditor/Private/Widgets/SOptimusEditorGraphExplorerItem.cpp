@@ -200,13 +200,14 @@ void SOptimusEditorGraphExplorerItem::Construct(
 			SNew(SHorizontalBox)
 			+ SHorizontalBox::Slot()
 			.AutoWidth()
+			.VAlign(VAlign_Center)
 			[
 				CreateIconWidget(InCreateData, bIsReadOnlyCreate)
 			]
 			+ SHorizontalBox::Slot()
 			.FillWidth(1.f)
 			.VAlign(VAlign_Center)
-			.Padding(/* horizontal */ 3.0f, /* vertical */ 0.0f)
+			.Padding(/* horizontal */ 3.0f, /* vertical */ 3.0f)
 			[
 				CreateTextSlotWidget(InCreateData, bIsReadOnlyCreate)
 			]		

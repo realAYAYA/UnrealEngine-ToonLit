@@ -4,6 +4,7 @@
 #include "Param/ParamType.h"
 #include "Param/ParamTypeHandle.h"
 #include "Templates/SubclassOf.h"
+#include "Graph/AnimNext_LODPose.h"
 
 namespace UE::AnimNext
 {
@@ -314,6 +315,22 @@ void FParamHelpers::Copy(const FParamTypeHandle& InTypeHandle, TConstArrayView<u
 	case FParamTypeHandle::EParamType::Transform:
 		SimpleCopy(sizeof(FTransform), alignof(FTransform));
 		break;
+	case FParamTypeHandle::EParamType::Object:
+	case FParamTypeHandle::EParamType::CharacterMovementComponent:
+	case FParamTypeHandle::EParamType::AnimNextMeshComponent:
+	case FParamTypeHandle::EParamType::AnimSequence:
+		SimpleCopy(sizeof(UObject*), alignof(UObject*));
+		break;
+	case FParamTypeHandle::EParamType::AnimNextGraphLODPose:
+		SimpleCopy(sizeof(FAnimNextGraphLODPose), alignof(FAnimNextGraphLODPose));
+		break;
+	case FParamTypeHandle::EParamType::AnimNextGraphReferencePose:
+		{
+			const FAnimNextGraphReferencePose* SourceRefPose = reinterpret_cast<const FAnimNextGraphReferencePose*>(InSourceMemory.GetData());
+			FAnimNextGraphReferencePose* TargetSourceRefPose = reinterpret_cast<FAnimNextGraphReferencePose*>(InTargetMemory.GetData());
+			*TargetSourceRefPose = *SourceRefPose;
+		}
+		break;
 	case FParamTypeHandle::EParamType::Custom:
 		{
 			FAnimNextParamType Type = InTypeHandle.GetType();
@@ -498,6 +515,17 @@ void FParamHelpers::Destroy(const FParamTypeHandle& InTypeHandle, TArrayView<uin
 	case FParamTypeHandle::EParamType::Vector4:
 	case FParamTypeHandle::EParamType::Quat:
 	case FParamTypeHandle::EParamType::Transform:
+	case FParamTypeHandle::EParamType::Object:
+	case FParamTypeHandle::EParamType::CharacterMovementComponent:
+	case FParamTypeHandle::EParamType::AnimNextMeshComponent:
+	case FParamTypeHandle::EParamType::AnimSequence:
+	case FParamTypeHandle::EParamType::AnimNextGraphLODPose:
+		break;
+	case FParamTypeHandle::EParamType::AnimNextGraphReferencePose:
+		{
+			FAnimNextGraphReferencePose* RefPose = reinterpret_cast<FAnimNextGraphReferencePose*>(InMemory.GetData());
+			RefPose->~FAnimNextGraphReferencePose();
+		}
 		break;
 	case FParamTypeHandle::EParamType::Custom:
 		{

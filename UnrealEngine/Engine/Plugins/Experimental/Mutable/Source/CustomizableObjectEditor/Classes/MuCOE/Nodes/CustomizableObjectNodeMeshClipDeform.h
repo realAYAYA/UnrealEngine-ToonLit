@@ -3,6 +3,7 @@
 #pragma once
 
 #include "MuCOE/Nodes/CustomizableObjectNodeModifierBase.h"
+#include "MuT/NodeModifier.h"
 
 #include "CustomizableObjectNodeMeshClipDeform.generated.h"
 
@@ -27,6 +28,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = MeshClipDeform)
 	TArray<FString> Tags;
 	
+	/** Policy to use tags in case more than one is added. */
+	UPROPERTY(EditAnywhere, Category = MeshClipDeform)
+	EMutableMultipleTagPolicy MultipleTagPolicy = EMutableMultipleTagPolicy::OnlyOneRequired;
+
 	UPROPERTY(EditAnywhere, Category = MeshClipDeform)
 	EShapeBindingMethod BindingMethod;
 	

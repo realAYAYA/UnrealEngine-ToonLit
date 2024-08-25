@@ -9,6 +9,8 @@
 #include "SocketSubsystem.h"
 #include "OnlineError.h"
 
+#define USER_ATTR_NULL_LOGINCOUNT TEXT("null:logincount")
+
 bool FUserOnlineAccountNull::GetAuthAttribute(const FString& AttrName, FString& OutAttrValue) const
 {
 	const FString* FoundAttr = AdditionalAuthData.Find(AttrName);
@@ -125,6 +127,13 @@ bool FOnlineIdentityNull::LoginInternal(int32 LocalUserNum, const FOnlineAccount
 		{
 			UserAccountPtr = UserAccounts.FindChecked(UserId->ToSharedRef());
 		}
+
+		// Increment the login count
+		FString LoginCountString = TEXT("0");
+		UserAccountPtr->GetUserAttribute(USER_ATTR_NULL_LOGINCOUNT, LoginCountString);
+		int32 LoginCount = FCString::Atoi(*LoginCountString) + 1;
+		LoginCountString = FString::Printf(TEXT("%d"), LoginCount);
+		UserAccountPtr->SetUserAttribute(USER_ATTR_NULL_LOGINCOUNT, LoginCountString);
 	}
 
 	if (!ErrorStr.IsEmpty())
@@ -273,6 +282,16 @@ ELoginStatus::Type FOnlineIdentityNull::GetLoginStatus(const FUniqueNetId& UserI
 		{
 			return ELoginStatus::UsingLocalProfile;
 		}
+		else if (FOnlineSubsystemNull::bOnlineRequiresSecondLogin)
+		{
+			FString LoginCountString = TEXT("0");
+			UserAccount->GetUserAttribute(USER_ATTR_NULL_LOGINCOUNT, LoginCountString);
+			int32 LoginCount = FCString::Atoi(*LoginCountString);
+			if (LoginCount < 2)
+			{
+				return ELoginStatus::UsingLocalProfile;
+			}
+		}
 		return ELoginStatus::LoggedIn;
 	}
 	return ELoginStatus::NotLoggedIn;
@@ -332,7 +351,7 @@ FOnlineIdentityNull::~FOnlineIdentityNull()
 {
 }
 
-void FOnlineIdentityNull::GetUserPrivilege(const FUniqueNetId& UserId, EUserPrivileges::Type Privilege, const FOnGetUserPrivilegeCompleteDelegate& Delegate)
+void FOnlineIdentityNull::GetUserPrivilege(const FUniqueNetId& UserId, EUserPrivileges::Type Privilege, const FOnGetUserPrivilegeCompleteDelegate& Delegate, EShowPrivilegeResolveUI ShowResolveUI)
 {
 	if (FOnlineSubsystemNull::bForceOfflineMode && Privilege == EUserPrivileges::CanPlayOnline)
 	{

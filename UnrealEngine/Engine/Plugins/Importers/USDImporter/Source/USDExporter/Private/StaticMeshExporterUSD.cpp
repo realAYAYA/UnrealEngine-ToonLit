@@ -12,8 +12,8 @@
 #include "USDExporterModule.h"
 #include "USDGeomMeshConversion.h"
 #include "USDLog.h"
-#include "USDMemory.h"
 #include "USDOptionsWindow.h"
+#include "USDPrimConversion.h"
 #include "USDTypesConversion.h"
 #include "USDUnrealAssetInfo.h"
 
@@ -23,7 +23,6 @@
 #include "UsdWrappers/UsdStage.h"
 
 #include "AssetExportTask.h"
-#include "CoreMinimal.h"
 #include "Engine/StaticMesh.h"
 
 namespace UE::StaticMeshExporterUSD::Private
@@ -37,7 +36,7 @@ namespace UE::StaticMeshExporterUSD::Private
 		const FString& Extension
 	)
 	{
-		if ( !Asset || !FEngineAnalytics::IsAvailable() )
+		if (!Asset || !FEngineAnalytics::IsAvailable())
 		{
 			return;
 		}
@@ -45,21 +44,43 @@ namespace UE::StaticMeshExporterUSD::Private
 		FString ClassName = Asset->GetClass()->GetName();
 
 		TArray<FAnalyticsEventAttribute> EventAttributes;
-		EventAttributes.Emplace( TEXT( "AssetType" ), ClassName );
+		EventAttributes.Emplace(TEXT("AssetType"), ClassName);
 
-		if ( Options )
+		if (Options)
 		{
-			UsdUtils::AddAnalyticsAttributes( *Options, EventAttributes );
+			UsdUtils::AddAnalyticsAttributes(*Options, EventAttributes);
 		}
 
 		IUsdClassesModule::SendAnalytics(
-			MoveTemp( EventAttributes ),
-			FString::Printf( TEXT( "Export.%s" ), *ClassName ),
+			MoveTemp(EventAttributes),
+			FString::Printf(TEXT("Export.%s"), *ClassName),
 			bAutomated,
 			ElapsedSeconds,
 			NumberOfFrames,
 			Extension
 		);
+	}
+
+	void HashStaticMesh(const UStaticMesh* StaticMesh, FSHA1& InOutHashToUpdate)
+	{
+		if (const FStaticMeshRenderData* RenderData = StaticMesh->GetRenderData())
+		{
+			const FString& DDCKey = RenderData->DerivedDataKey;
+			InOutHashToUpdate.UpdateWithString(*DDCKey, DDCKey.Len());
+		}
+
+		for (const FStaticMaterial& StaticMaterial : StaticMesh->GetStaticMaterials())
+		{
+			FString MaterialPath = TEXT("None");
+			if (StaticMaterial.MaterialInterface)
+			{
+				MaterialPath = StaticMaterial.MaterialInterface->GetPathName();
+			}
+			InOutHashToUpdate.UpdateWithString(*MaterialPath, MaterialPath.Len());
+
+			// Note that we could hash the material slot name here too, but we don't because we always
+			// just write out the slots with UsdGeomSubsets named "Section0", "Section1", ..., "SectionN" anyway
+		}
 	}
 }
 
@@ -75,53 +96,46 @@ bool UStaticMeshExporterUsd::IsUsdAvailable()
 UStaticMeshExporterUsd::UStaticMeshExporterUsd()
 {
 #if USE_USD_SDK
-	for ( const FString& Extension : UnrealUSDWrapper::GetNativeFileFormats() )
-	{
-		// USDZ is not supported for writing for now
-		if ( Extension.Equals( TEXT( "usdz" ) ) )
-		{
-			continue;
-		}
-
-		FormatExtension.Add( Extension );
-		FormatDescription.Add( TEXT( "Universal Scene Description file" ) );
-	}
+	UnrealUSDWrapper::AddUsdExportFileFormatDescriptions(FormatExtension, FormatDescription);
 	SupportedClass = UStaticMesh::StaticClass();
 	bText = false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 }
 
-bool UStaticMeshExporterUsd::ExportBinary( UObject* Object, const TCHAR* Type, FArchive& Ar, FFeedbackContext* Warn, int32 FileIndex, uint32 PortFlags )
+bool UStaticMeshExporterUsd::ExportBinary(UObject* Object, const TCHAR* Type, FArchive& Ar, FFeedbackContext* Warn, int32 FileIndex, uint32 PortFlags)
 {
 #if USE_USD_SDK
-	UStaticMesh* StaticMesh = CastChecked< UStaticMesh >( Object );
-	if ( !StaticMesh )
+	UStaticMesh* StaticMesh = CastChecked<UStaticMesh>(Object);
+	if (!StaticMesh)
 	{
 		return false;
 	}
 
 	UStaticMeshExporterUSDOptions* Options = nullptr;
-	if ( ExportTask )
+	if (ExportTask)
 	{
-		Options = Cast<UStaticMeshExporterUSDOptions>( ExportTask->Options );
+		Options = Cast<UStaticMeshExporterUSDOptions>(ExportTask->Options);
 	}
-	if ( !Options )
+	if (!Options)
 	{
 		Options = GetMutableDefault<UStaticMeshExporterUSDOptions>();
 
 		// Prompt with an options dialog if we can
-		if ( Options && ( !ExportTask || !ExportTask->bAutomated ) )
+		if (Options && (!ExportTask || !ExportTask->bAutomated))
 		{
-			Options->MeshAssetOptions.MaterialBakingOptions.TexturesDir.Path = FPaths::Combine( FPaths::GetPath( UExporter::CurrentFilename ), TEXT( "Textures" ) );
+			Options->MeshAssetOptions.MaterialBakingOptions.TexturesDir.Path = FPaths::Combine(
+				FPaths::GetPath(UExporter::CurrentFilename),
+				TEXT("Textures")
+			);
 
-			const bool bContinue = SUsdOptionsWindow::ShowExportOptions( *Options );
-			if ( !bContinue )
+			const bool bContinue = SUsdOptionsWindow::ShowExportOptions(*Options);
+			if (!bContinue)
 			{
 				return false;
 			}
 		}
 	}
-	if ( !Options )
+	if (!Options)
 	{
 		return false;
 	}
@@ -138,55 +152,52 @@ bool UStaticMeshExporterUsd::ExportBinary( UObject* Object, const TCHAR* Type, F
 	// "C:/MyFolder/file_payload.usda" and create an "asset" file "C:/MyFolder/file.usda" that uses it
 	// as a payload, pointing at the default prim
 	FString PayloadFilename = UExporter::CurrentFilename;
-	if ( Options->MeshAssetOptions.bUsePayload )
+	if (Options->MeshAssetOptions.bUsePayload)
 	{
 		FString PathPart;
 		FString FilenamePart;
 		FString ExtensionPart;
-		FPaths::Split( PayloadFilename, PathPart, FilenamePart, ExtensionPart );
+		FPaths::Split(PayloadFilename, PathPart, FilenamePart, ExtensionPart);
 
-		if ( FormatExtension.Contains( Options->MeshAssetOptions.PayloadFormat ) )
+		if (FormatExtension.Contains(Options->MeshAssetOptions.PayloadFormat))
 		{
 			ExtensionPart = Options->MeshAssetOptions.PayloadFormat;
 		}
 
-		PayloadFilename = FPaths::Combine( PathPart, FilenamePart + TEXT( "_payload." ) + ExtensionPart );
+		PayloadFilename = FPaths::Combine(PathPart, FilenamePart + TEXT("_payload.") + ExtensionPart);
 	}
 
-	if ( !IUsdExporterModule::CanExportToLayer( UExporter::CurrentFilename ) ||
-		( Options->MeshAssetOptions.bUsePayload && !IUsdExporterModule::CanExportToLayer( PayloadFilename ) ) )
+	if (!IUsdExporterModule::CanExportToLayer(UExporter::CurrentFilename)
+		|| (Options->MeshAssetOptions.bUsePayload && !IUsdExporterModule::CanExportToLayer(PayloadFilename)))
 	{
 		return false;
 	}
 
-	// Get a simple GUID hash/identifier of our mesh
-	FString DDCKeyHash;
-	if ( FStaticMeshRenderData* RenderData = StaticMesh->GetRenderData() )
-	{
-		const FString& DDCKey = RenderData->DerivedDataKey;
-		FSHA1 SHA1;
-		SHA1.UpdateWithString( *DDCKey, DDCKey.Len() );
-		UsdUtils::HashForStaticMeshExport( *Options, SHA1 );
-		SHA1.Final();
-		FSHAHash Hash;
-		SHA1.GetHash( &Hash.Hash[ 0 ] );
-		DDCKeyHash = Hash.ToString();
-	}
+	// Get a simple GUID hash/identifier of our mesh and options
+	FSHA1 SHA1;
+	UE::StaticMeshExporterUSD::Private::HashStaticMesh(StaticMesh, SHA1);
+	UsdUtils::HashForStaticMeshExport(*Options, SHA1);
+	SHA1.Final();
+	FSHAHash Hash;
+	SHA1.GetHash(&Hash.Hash[0]);
+	FString CurrentHashString = Hash.ToString();
 
 	// Check if we already have exported what we plan on exporting anyway
-	if ( FPaths::FileExists( UExporter::CurrentFilename ) && FPaths::FileExists( PayloadFilename ) )
+	if (FPaths::FileExists(UExporter::CurrentFilename) && FPaths::FileExists(PayloadFilename))
 	{
-		if( !ExportTask->bReplaceIdentical )
+		if (!ExportTask->bReplaceIdentical)
 		{
-			UE_LOG( LogUsd, Log,
-				TEXT( "Skipping export of asset '%s' as the target file '%s' already exists." ),
+			UE_LOG(
+				LogUsd,
+				Log,
+				TEXT("Skipping export of asset '%s' as the target file '%s' already exists."),
 				*Object->GetPathName(),
 				*UExporter::CurrentFilename
 			);
 			return false;
 		}
 		// If we don't want to re-export this asset we need to check if its the same version
-		else if ( !Options->bReExportIdenticalAssets )
+		else if (!Options->bReExportIdenticalAssets)
 		{
 			bool bSkipMeshExport = false;
 
@@ -194,21 +205,22 @@ bool UStaticMeshExporterUsd::ExportBinary( UObject* Object, const TCHAR* Type, F
 			// we have to overwrite its files due to e.g. missing payload or anything like that
 			const bool bUseStageCache = false;
 			const EUsdInitialLoadSet InitialLoadSet = EUsdInitialLoadSet::LoadNone;
-			if ( UE::FUsdStage TempStage = UnrealUSDWrapper::OpenStage( *UExporter::CurrentFilename, InitialLoadSet, bUseStageCache ) )
+			if (UE::FUsdStage TempStage = UnrealUSDWrapper::OpenStage(*UExporter::CurrentFilename, InitialLoadSet, bUseStageCache))
 			{
-				if ( UE::FUsdPrim DefaultPrim = TempStage.GetDefaultPrim() )
+				if (UE::FUsdPrim DefaultPrim = TempStage.GetDefaultPrim())
 				{
-					FUsdUnrealAssetInfo Info =	UsdUtils::GetPrimAssetInfo(	DefaultPrim );
+					FUsdUnrealAssetInfo Info = UsdUtils::GetPrimAssetInfo(DefaultPrim);
 
-					const bool bVersionMatches = !Info.Version.IsEmpty() && Info.Version == DDCKeyHash;
+					const bool bVersionMatches = !Info.Version.IsEmpty() && Info.Version == CurrentHashString;
 
-					const bool bAssetTypeMatches = !Info.UnrealAssetType.IsEmpty()
-						&& Info.UnrealAssetType == StaticMesh->GetClass()->GetName();
+					const bool bAssetTypeMatches = !Info.UnrealAssetType.IsEmpty() && Info.UnrealAssetType == StaticMesh->GetClass()->GetName();
 
-					if ( bVersionMatches && bAssetTypeMatches )
+					if (bVersionMatches && bAssetTypeMatches)
 					{
-						UE_LOG( LogUsd, Log,
-							TEXT( "Skipping export of asset '%s' as the target file '%s' already contains up-to-date exported data." ),
+						UE_LOG(
+							LogUsd,
+							Log,
+							TEXT("Skipping export of asset '%s' as the target file '%s' already contains up-to-date exported data."),
 							*StaticMesh->GetPathName(),
 							*UExporter::CurrentFilename
 						);
@@ -218,21 +230,22 @@ bool UStaticMeshExporterUsd::ExportBinary( UObject* Object, const TCHAR* Type, F
 				}
 			}
 
-			if ( bSkipMeshExport )
+			if (bSkipMeshExport)
 			{
 				// Even if we're not going to export the mesh, we may still need to re-bake materials
-				if ( Options->MeshAssetOptions.bBakeMaterials )
+				if (Options->MeshAssetOptions.bBakeMaterials)
 				{
 					TSet<UMaterialInterface*> MaterialsToBake;
-					for ( const FStaticMaterial& StaticMaterial : StaticMesh->GetStaticMaterials() )
+					for (const FStaticMaterial& StaticMaterial : StaticMesh->GetStaticMaterials())
 					{
-						MaterialsToBake.Add( StaticMaterial.MaterialInterface );
+						MaterialsToBake.Add(StaticMaterial.MaterialInterface);
 					}
 
 					const bool bIsAssetLayer = true;
 					UMaterialExporterUsd::ExportMaterialsForStage(
 						MaterialsToBake.Array(),
 						Options->MeshAssetOptions.MaterialBakingOptions,
+						Options->MetadataOptions,
 						UExporter::CurrentFilename,
 						bIsAssetLayer,
 						Options->MeshAssetOptions.bUsePayload,
@@ -250,43 +263,43 @@ bool UStaticMeshExporterUsd::ExportBinary( UObject* Object, const TCHAR* Type, F
 	double StartTime = FPlatformTime::Cycles64();
 
 	// UsdStage is the payload stage when exporting with payloads, or just the single stage otherwise
-	UE::FUsdStage UsdStage = UnrealUSDWrapper::NewStage( *PayloadFilename );
-	if ( !UsdStage )
+	UE::FUsdStage UsdStage = UnrealUSDWrapper::NewStage(*PayloadFilename);
+	if (!UsdStage)
 	{
 		return false;
 	}
 
-	UsdUtils::SetUsdStageMetersPerUnit( UsdStage, Options->StageOptions.MetersPerUnit );
-	UsdUtils::SetUsdStageUpAxis( UsdStage, Options->StageOptions.UpAxis );
+	UsdUtils::SetUsdStageMetersPerUnit(UsdStage, Options->StageOptions.MetersPerUnit);
+	UsdUtils::SetUsdStageUpAxis(UsdStage, Options->StageOptions.UpAxis);
 
-	FString RootPrimPath = ( TEXT( "/" ) + UsdUtils::SanitizeUsdIdentifier( *StaticMesh->GetName() ) );
+	FString RootPrimPath = (TEXT("/") + UsdUtils::SanitizeUsdIdentifier(*StaticMesh->GetName()));
 
-	UE::FUsdPrim RootPrim = UsdStage.DefinePrim( UE::FSdfPath( *RootPrimPath ) );
-	if ( !RootPrim )
+	UE::FUsdPrim RootPrim = UsdStage.DefinePrim(UE::FSdfPath(*RootPrimPath));
+	if (!RootPrim)
 	{
 		return false;
 	}
 
-	UsdStage.SetDefaultPrim( RootPrim );
+	UsdStage.SetDefaultPrim(RootPrim);
 
 	// Asset stage always the stage where we write the material assignments
 	UE::FUsdStage AssetStage;
 
 	// Using payload: Convert mesh data through the asset stage (that references the payload) so that we can
 	// author mesh data on the payload layer and material data on the asset layer
-	if ( Options->MeshAssetOptions.bUsePayload )
+	if (Options->MeshAssetOptions.bUsePayload)
 	{
-		AssetStage = UnrealUSDWrapper::NewStage( *UExporter::CurrentFilename );
-		if ( AssetStage )
+		AssetStage = UnrealUSDWrapper::NewStage(*UExporter::CurrentFilename);
+		if (AssetStage)
 		{
-			UsdUtils::SetUsdStageMetersPerUnit( AssetStage, Options->StageOptions.MetersPerUnit );
-			UsdUtils::SetUsdStageUpAxis( AssetStage, Options->StageOptions.UpAxis );
+			UsdUtils::SetUsdStageMetersPerUnit(AssetStage, Options->StageOptions.MetersPerUnit);
+			UsdUtils::SetUsdStageUpAxis(AssetStage, Options->StageOptions.UpAxis);
 
-			if ( UE::FUsdPrim AssetRootPrim = AssetStage.DefinePrim( UE::FSdfPath( *RootPrimPath ) ) )
+			if (UE::FUsdPrim AssetRootPrim = AssetStage.DefinePrim(UE::FSdfPath(*RootPrimPath)))
 			{
-				AssetStage.SetDefaultPrim( AssetRootPrim );
+				AssetStage.SetDefaultPrim(AssetRootPrim);
 
-				UsdUtils::AddPayload( AssetRootPrim, *PayloadFilename );
+				UsdUtils::AddPayload(AssetRootPrim, *PayloadFilename);
 			}
 		}
 	}
@@ -296,36 +309,59 @@ bool UStaticMeshExporterUsd::ExportBinary( UObject* Object, const TCHAR* Type, F
 		AssetStage = UsdStage;
 	}
 
-	UnrealToUsd::ConvertStaticMesh( StaticMesh, RootPrim, UsdUtils::GetDefaultTimeCode(), &AssetStage, Options->MeshAssetOptions.LowestMeshLOD, Options->MeshAssetOptions.HighestMeshLOD );
+	UnrealToUsd::ConvertStaticMesh(
+		StaticMesh,
+		RootPrim,
+		UsdUtils::GetDefaultTimeCode(),
+		&AssetStage,
+		Options->MeshAssetOptions.LowestMeshLOD,
+		Options->MeshAssetOptions.HighestMeshLOD
+	);
 
-	// Write asset info now that we finished exporting
-	if( UE::FUsdPrim AssetDefaultPrim = AssetStage.GetDefaultPrim() )
+	if (UE::FUsdPrim AssetDefaultPrim = AssetStage.GetDefaultPrim())
 	{
-		FUsdUnrealAssetInfo Info;
-		Info.Name = StaticMesh->GetName();
-		Info.Identifier = UExporter::CurrentFilename;
-		Info.Version = DDCKeyHash;
-		Info.UnrealContentPath = StaticMesh->GetPathName();
-		Info.UnrealAssetType = StaticMesh->GetClass()->GetName();
-		Info.UnrealExportTime = FDateTime::Now().ToString();
-		Info.UnrealEngineVersion = FEngineVersion::Current().ToString();
+		if (Options->MetadataOptions.bExportAssetInfo)
+		{
+			FUsdUnrealAssetInfo Info;
+			Info.Name = StaticMesh->GetName();
+			Info.Identifier = UExporter::CurrentFilename;
+			Info.Version = CurrentHashString;
+			Info.UnrealContentPath = StaticMesh->GetPathName();
+			Info.UnrealAssetType = StaticMesh->GetClass()->GetName();
+			Info.UnrealExportTime = FDateTime::Now().ToString();
+			Info.UnrealEngineVersion = FEngineVersion::Current().ToString();
 
-		UsdUtils::SetPrimAssetInfo( AssetDefaultPrim, Info );
+			UsdUtils::SetPrimAssetInfo(AssetDefaultPrim, Info);
+		}
+
+		if (Options->MetadataOptions.bExportAssetMetadata)
+		{
+			if (UUsdAssetUserData* UserData = UsdUtils::GetAssetUserData(StaticMesh))
+			{
+				UnrealToUsd::ConvertMetadata(
+					UserData,
+					AssetDefaultPrim,
+					Options->MetadataOptions.BlockedPrefixFilters,
+					Options->MetadataOptions.bInvertFilters
+				);
+			}
+		}
 	}
 
 	// Bake materials and replace unrealMaterials with references to the baked files.
-	if ( Options->MeshAssetOptions.bBakeMaterials )
+	if (Options->MeshAssetOptions.bBakeMaterials)
 	{
 		TSet<UMaterialInterface*> MaterialsToBake;
-		for ( const FStaticMaterial& StaticMaterial : StaticMesh->GetStaticMaterials() )
+		for (const FStaticMaterial& StaticMaterial : StaticMesh->GetStaticMaterials())
 		{
-			MaterialsToBake.Add( StaticMaterial.MaterialInterface );
+			MaterialsToBake.Add(StaticMaterial.MaterialInterface);
 		}
 
 		const bool bIsAssetLayer = true;
 		UMaterialExporterUsd::ExportMaterialsForStage(
 			MaterialsToBake.Array(),
 			Options->MeshAssetOptions.MaterialBakingOptions,
+			Options->MetadataOptions,
 			AssetStage.GetRootLayer().GetRealPath(),
 			bIsAssetLayer,
 			Options->MeshAssetOptions.bUsePayload,
@@ -336,7 +372,7 @@ bool UStaticMeshExporterUsd::ExportBinary( UObject* Object, const TCHAR* Type, F
 	}
 
 	UsdStage.GetRootLayer().Save();
-	if ( AssetStage && UsdStage != AssetStage )
+	if (AssetStage && UsdStage != AssetStage)
 	{
 		AssetStage.GetRootLayer().Save();
 	}
@@ -344,15 +380,15 @@ bool UStaticMeshExporterUsd::ExportBinary( UObject* Object, const TCHAR* Type, F
 	// Analytics
 	{
 		bool bAutomated = ExportTask ? ExportTask->bAutomated : false;
-		double ElapsedSeconds = FPlatformTime::ToSeconds64( FPlatformTime::Cycles64() - StartTime );
-		FString Extension = FPaths::GetExtension( UExporter::CurrentFilename );
+		double ElapsedSeconds = FPlatformTime::ToSeconds64(FPlatformTime::Cycles64() - StartTime);
+		FString Extension = FPaths::GetExtension(UExporter::CurrentFilename);
 
 		UE::StaticMeshExporterUSD::Private::SendAnalytics(
 			Object,
 			Options,
 			bAutomated,
 			ElapsedSeconds,
-			UsdUtils::GetUsdStageNumFrames( AssetStage ),
+			UsdUtils::GetUsdStageNumFrames(AssetStage),
 			Extension
 		);
 	}
@@ -360,5 +396,5 @@ bool UStaticMeshExporterUsd::ExportBinary( UObject* Object, const TCHAR* Type, F
 	return true;
 #else
 	return false;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 }

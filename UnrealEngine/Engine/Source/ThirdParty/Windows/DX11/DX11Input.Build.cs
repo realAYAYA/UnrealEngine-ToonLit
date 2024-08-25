@@ -12,7 +12,7 @@ public class DX11Input : ModuleRules
 		string LibDir = null;
 		if (Target.Platform == UnrealTargetPlatform.Win64)
 		{
-			LibDir = DirectX.GetLibDir(Target);
+			LibDir = Target.WindowsPlatform.DirectXLibDir;
 		}
 
 		PublicAdditionalLibraries.AddRange(

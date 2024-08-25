@@ -147,6 +147,13 @@ void SRigCurveContainer::Construct(const FArguments& InArgs, TSharedRef<FControl
 	ControlRigBlueprint->Hierarchy->OnModified().AddRaw(this, &SRigCurveContainer::OnHierarchyModified);
 	ControlRigBlueprint->OnRefreshEditor().AddRaw(this, &SRigCurveContainer::HandleRefreshEditorFromBlueprint);
 
+	UEditorEngine* Editor = Cast<UEditorEngine>(GEngine);
+	if (Editor != nullptr)
+	{
+		Editor->RegisterForUndo(this);
+	}
+
+
 	// Register and bind all our menu commands
 	FCurveContainerCommands::Register();
 	BindCommands();
@@ -392,7 +399,7 @@ void SRigCurveContainer::CreateRigCurveList( const FString& SearchText )
 		// Iterate through all curves..
 		Hierarchy->ForEach<FRigCurveElement>([this](FRigCurveElement* CurveElement) -> bool
 		{
-			const FString CurveString = CurveElement->GetName().ToString();
+			const FString CurveString = CurveElement->GetName();
 			
 			// See if we pass the search filter
             if (!FilterText.IsEmpty() && !CurveString.Contains(*FilterText.ToString()))
@@ -400,7 +407,7 @@ void SRigCurveContainer::CreateRigCurveList( const FString& SearchText )
                 return true;
             }
 
-            TSharedRef<FDisplayedRigCurveInfo> NewItem = FDisplayedRigCurveInfo::Make(CurveElement->GetName());
+            TSharedRef<FDisplayedRigCurveInfo> NewItem = FDisplayedRigCurveInfo::Make(CurveElement->GetFName());
             RigCurveList.Add(NewItem);
 
 			return true;
@@ -452,6 +459,22 @@ void SRigCurveContainer::OnNameCommitted(const FText& InNewName, ETextCommit::Ty
 				Controller->RenameElement(FRigElementKey(OldName, ERigElementType::Curve), NewName, true, true);
 			}
 		}
+	}
+}
+
+void SRigCurveContainer::PostUndo(bool bSuccess)
+{
+	if (bSuccess)
+	{
+		RefreshCurveList();
+	}
+}
+
+void SRigCurveContainer::PostRedo(bool bSuccess)
+{
+	if (bSuccess)
+	{
+		RefreshCurveList();
 	}
 }
 
@@ -601,7 +624,7 @@ void SRigCurveContainer::OnHierarchyModified(ERigHierarchyNotification InNotif, 
 				const bool bSelected = InNotif == ERigHierarchyNotification::ElementSelected;
 				for(const FDisplayedRigCurveInfoPtr& Item : RigCurveList)
 				{
-					if (Item->CurveName == InElement->GetName())
+					if (Item->CurveName == InElement->GetFName())
 					{
 						RigCurveListView->SetItemSelection(Item, bSelected);
 						break;

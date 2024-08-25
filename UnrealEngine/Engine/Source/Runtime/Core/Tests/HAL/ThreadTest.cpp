@@ -6,6 +6,7 @@
 
 #if WITH_TESTS
 
+#include "HAL/PlatformProcess.h"
 #include "HAL/Thread.h"
 #include "HAL/ThreadSafeBool.h"
 #include "HAL/ThreadSafeCounter.h"

@@ -9,21 +9,19 @@
 #include "Chaos/Transform.h"
 #include "Chaos/Utilities.h"	// For ScaleInertia - pull that into mass utils
 #include "ChaosArchive.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/EnableIf.h"
 #include "Math/NumericLimits.h"
 #include "ChaosCheck.h"
 
 namespace Chaos
 {
-
 struct FMTDInfo;
 
 class FImplicitObjectInstanced : public FImplicitObject
 {
 public:
 	FImplicitObjectInstanced(int32 Flags, EImplicitObjectType InType)
-        : FImplicitObject(Flags, InType | ImplicitObjectType::IsInstanced)
+		: FImplicitObject(Flags, InType | ImplicitObjectType::IsInstanced)
 		, OuterMargin(0)
 	{
 	}
@@ -39,11 +37,11 @@ public:
 		return 1.0f;
 	}
 
-	
+
 protected:
 	FReal OuterMargin;
 };
-	
+
 template <typename TConcrete>
 class TImplicitObjectInstanced final : public FImplicitObjectInstanced
 {
@@ -52,7 +50,7 @@ public:
 	using TType = T;
 	static constexpr int d = TConcrete::D;
 	static constexpr int D = d;
-	using ObjectType = TSharedPtr<TConcrete,ESPMode::ThreadSafe>;
+	using ObjectType = TRefCountPtr<TConcrete>;
 
 	using FImplicitObject::GetTypeName;
 
@@ -91,15 +89,10 @@ public:
 	{
 		ensureMsgf((IsScaled(MObject->GetType()) == false), TEXT("Scaled objects should not contain each other."));
 		ensureMsgf((IsInstanced(MObject->GetType()) == false), TEXT("Scaled objects should not contain instances."));
-		this->bIsConvex = Other.MObject->IsConvex();
-		this->bDoCollide = Other.MObject->GetDoCollide();
+		this->bIsConvex = MObject->IsConvex();
+		this->bDoCollide = MObject->GetDoCollide();
 		this->OuterMargin = Other.OuterMargin;
 		SetMargin(Other.GetMargin());
-	}
-
-	virtual FImplicitObject* Duplicate() const override
-	{
-		return new TImplicitObjectInstanced<TConcrete>(this->MObject, this->OuterMargin);
 	}
 
 	static constexpr EImplicitObjectType StaticType()
@@ -111,13 +104,13 @@ public:
 	{
 		return MakeSerializable(MObject);
 	}
-	
+
 	const TConcrete* GetInstancedObject() const
 	{
-		return MObject.Get();
+		return MObject.GetReference();
 	}
 
-	FReal GetRadius() const
+	virtual FReal GetRadius() const override
 	{
 		return MObject->GetRadius();
 	}
@@ -203,12 +196,12 @@ public:
 		return MObject->GetNestedType();
 	}
 
-	virtual TUniquePtr<FImplicitObject> Copy() const override
+	virtual Chaos::FImplicitObjectPtr CopyGeometry() const override
 	{
-		return TUniquePtr<FImplicitObject>(CopyHelper(this));
+		return Chaos::FImplicitObjectPtr(CopyHelper(this));
 	}
 
-	virtual TUniquePtr<FImplicitObject> CopyWithScale(const FVec3& Scale) const override;
+	virtual Chaos::FImplicitObjectPtr CopyGeometryWithScale(const FVec3& Scale) const override;
 
 	virtual FString ToString() const override
 	{
@@ -227,6 +220,32 @@ public:
 			check(StaticType() == Obj.GetType());
 		}
 		return static_cast<const TImplicitObjectInstanced<TConcrete>&>(Obj);
+	}
+	
+	static const TImplicitObjectInstanced<TConcrete>* AsInstanced(const FImplicitObject& Obj)
+	{
+		if constexpr (std::is_same_v<TConcrete, FImplicitObject>)
+		{
+			//can cast any scaled to ImplicitObject base
+			return IsInstanced(Obj.GetType()) ? static_cast<const TImplicitObjectInstanced<TConcrete>*>(&Obj) : nullptr;
+		}
+		else
+		{
+			return StaticType() == Obj.GetType() ? static_cast<const TImplicitObjectInstanced<TConcrete>*>(&Obj) : nullptr;
+		}
+	}
+
+	static TImplicitObjectInstanced<TConcrete>* AsInstanced(FImplicitObject& Obj)
+	{
+		if constexpr (std::is_same_v<TConcrete, FImplicitObject>)
+		{
+			//can cast any scaled to ImplicitObject base
+			return IsInstanced(Obj.GetType()) ? static_cast<TImplicitObjectInstanced<TConcrete>*>(&Obj) : nullptr;
+		}
+		else
+		{
+			return StaticType() == Obj.GetType() ? static_cast<TImplicitObjectInstanced<TConcrete>*>(&Obj) : nullptr;
+		}
 	}
 
 	/** This is a low level function and assumes the internal object has a SweepGeom function. Should not be called directly. See GeometryQueries.h : SweepQuery */
@@ -402,7 +421,7 @@ public:
 	{
 		return MInvScale;
 	}
-	
+
 	virtual const FAABB3 BoundingBox() const override
 	{
 		return MLocalBoundingBox;
@@ -424,98 +443,68 @@ public:
 	static constexpr int d = TConcrete::D;
 	static constexpr int D = d;
 
-	using ObjectType = typename TChooseClass<bInstanced, TSerializablePtr<TConcrete>, TUniquePtr<TConcrete>>::Result;
+	using ObjectType = TRefCountPtr<TConcrete>;
 	using FImplicitObject::GetTypeName;
+	
+	using ObjectTypeDeprecated = std::conditional_t<bInstanced, TSerializablePtr<TConcrete>, TUniquePtr<TConcrete>>;
 
-	// If Object is instanced and requires ref counting must set SharedPtrForRefCount to ensure geometry remains valid, otherwise use null.
-	TImplicitObjectScaled(ObjectType Object, const TSharedPtr<TConcrete, ESPMode::ThreadSafe>& SharedPtrForRefCount, const FVec3& Scale, FReal InMargin = 0)
+	UE_DEPRECATED(5.4, "Constructor no longer used anymore")
+	TImplicitObjectScaled(ObjectTypeDeprecated Object, const TSharedPtr<TConcrete, ESPMode::ThreadSafe>& SharedPtrForRefCount, const FVec3& Scale, FReal InMargin = 0)
 	    : FImplicitObjectScaled(EImplicitObject::HasBoundingBox, Object->GetType())
-	    , MObject(MoveTemp(Object))
-		, MSharedPtrForRefCount(SharedPtrForRefCount)
 	{
-		ensureMsgf((IsScaled(MObject->GetType()) == false), TEXT("Scaled objects should not contain each other."));
-		ensureMsgf((IsInstanced(MObject->GetType()) == false), TEXT("Scaled objects should not contain instances."));
-		switch (MObject->GetType())
-		{
-		case ImplicitObjectType::Transformed:
-		case ImplicitObjectType::Union:
-			check(false);	//scale is only supported for concrete types like sphere, capsule, convex, levelset, etc... Nothing that contains other objects
-		default:
-			break;
-		}
-		this->bIsConvex = MObject->IsConvex();
-		this->bDoCollide = MObject->GetDoCollide();
-		this->OuterMargin = InMargin;
-		SetScale(Scale);
+		check(false);
 	}
-
+	
+	UE_DEPRECATED(5.4, "Constructor no longer used anymore")
 	TImplicitObjectScaled(TSharedPtr<TConcrete, ESPMode::ThreadSafe> Object, const FVec3& Scale, FReal InMargin = 0)
-	    : FImplicitObjectScaled(EImplicitObject::HasBoundingBox, Object->GetType())
-	    , MObject(MakeSerializable<TConcrete, ESPMode::ThreadSafe>(Object))
-		, MSharedPtrForRefCount(Object)
+    	    : FImplicitObjectScaled(EImplicitObject::HasBoundingBox, Object->GetType)
 	{
-		ensureMsgf((IsScaled(MObject->GetType()) == false), TEXT("Scaled objects should not contain each other."));
-		ensureMsgf((IsInstanced(MObject->GetType()) == false), TEXT("Scaled objects should not contain instances."));
-		switch (MObject->GetType())
-		{
-		case ImplicitObjectType::Transformed:
-		case ImplicitObjectType::Union:
-			check(false);	//scale is only supported for concrete types like sphere, capsule, convex, levelset, etc... Nothing that contains other objects
-		default:
-			break;
-		}
-		this->bIsConvex = MObject->IsConvex();
-		this->bDoCollide = MObject->GetDoCollide();
-		this->OuterMargin = InMargin;
-		SetScale(Scale);
+		check(false);
 	}
 
-	// If Object is instanced and requires ref counting must set SharedPtrForRefCount to ensure geometry remains valid, otherwise use null.
-	TImplicitObjectScaled(ObjectType Object, TUniquePtr<Chaos::FImplicitObject> &&ObjectOwner, const TSharedPtr<TConcrete, ESPMode::ThreadSafe>& SharedPtrForRefCount, const FVec3& Scale, FReal InMargin = 0)
-	    : FImplicitObjectScaled(EImplicitObject::HasBoundingBox, Object->GetType())
-	    , MObject(Object)
-		, MSharedPtrForRefCount(SharedPtrForRefCount)
+	UE_DEPRECATED(5.4, "Constructor no longer used anymore")
+	TImplicitObjectScaled(ObjectTypeDeprecated Object, TUniquePtr<Chaos::FImplicitObject> &&ObjectOwner, const TSharedPtr<TConcrete, ESPMode::ThreadSafe>& SharedPtrForRefCount, const FVec3& Scale, FReal InMargin = 0)
+		: FImplicitObjectScaled(EImplicitObject::HasBoundingBox, Object->GetType())
 	{
-		ensureMsgf((IsScaled(MObject->GetType(true)) == false), TEXT("Scaled objects should not contain each other."));
-		ensureMsgf((IsInstanced(MObject->GetType(true)) == false), TEXT("Scaled objects should not contain instances."));
-		this->bIsConvex = Object->IsConvex();
-		this->bDoCollide = MObject->GetDoCollide();
-		this->OuterMargin = InMargin;
-		SetScale(Scale);
+		check(false);
+	}
+	
+	TImplicitObjectScaled(ObjectType Object, const FVec3& Scale, FReal InMargin = 0)
+		: FImplicitObjectScaled(EImplicitObject::HasBoundingBox, Object->GetType())
+		, MObject(Object)
+	{
+		InitScaledImplicit(Scale, InMargin);
+	}
+	
+	TImplicitObjectScaled(TConcrete* Object, const FVec3& Scale, FReal InMargin = 0)
+		: FImplicitObjectScaled(EImplicitObject::HasBoundingBox, Object->GetType())
+		, MObject(Object)
+	{
+		// Transient if raw pointer not already stored in a ref counted one
+		if(Object && (Object->GetRefCount() == 1))
+		{
+			Object->MakePersistent();
+		}
+		InitScaledImplicit(Scale, InMargin);
 	}
 
 	TImplicitObjectScaled(const TImplicitObjectScaled<TConcrete, bInstanced>& Other) = delete;
 	TImplicitObjectScaled(TImplicitObjectScaled<TConcrete, bInstanced>&& Other)
-	    : FImplicitObjectScaled(EImplicitObject::HasBoundingBox, Other.MObject->GetType() | ImplicitObjectType::IsScaled)
-	    , MObject(MoveTemp(Other.MObject))
-		, MSharedPtrForRefCount(MoveTemp(Other.MSharedPtrForRefCount))
+		: FImplicitObjectScaled(EImplicitObject::HasBoundingBox, Other.MObject->GetType() | ImplicitObjectType::IsScaled)
+		, MObject(MoveTemp(Other.MObject))
 	{
 		ensureMsgf((IsScaled(MObject->GetType()) == false), TEXT("Scaled objects should not contain each other."));
 		ensureMsgf((IsInstanced(MObject->GetType()) == false), TEXT("Scaled objects should not contain instances."));
-		this->bIsConvex = Other.MObject->IsConvex();
-		this->bDoCollide = Other.MObject->GetDoCollide();
+		this->bIsConvex = MObject->IsConvex();
+		this->bDoCollide = MObject->GetDoCollide();
 		this->OuterMargin = Other.OuterMargin;
 		this->MScale = Other.MScale;
-        this->MInvScale = Other.MInvScale;
-        this->OuterMargin = Other.OuterMargin;
-        this->MLocalBoundingBox = Other.MLocalBoundingBox;
-        SetMargin(Other.GetMargin());
+		this->MInvScale = Other.MInvScale;
+		this->OuterMargin = Other.OuterMargin;
+		this->MLocalBoundingBox = Other.MLocalBoundingBox;
+		SetMargin(Other.GetMargin());
 	}
-	~TImplicitObjectScaled() {}
-
-	virtual FImplicitObject* Duplicate() const override
-	{
-		if (MSharedPtrForRefCount)
-		{
-			check(bInstanced == true);
-			return new TImplicitObjectScaled<TConcrete, true>(this->MSharedPtrForRefCount, this->MScale, this->OuterMargin);
-		}
-		else
-		{
-			check(false);	//duplicate only supported instanced scaled objects
-			return nullptr;
-		}
-	}
+	~TImplicitObjectScaled(){}
 
 	static constexpr EImplicitObjectType StaticType()
 	{
@@ -583,7 +572,7 @@ public:
 
 	const TConcrete* GetUnscaledObject() const
 	{
-		return MObject.Get();
+		return MObject.GetReference();
 	}
 
 	virtual EImplicitObjectType GetNestedType() const override
@@ -591,11 +580,11 @@ public:
 		return MObject->GetNestedType();
 	}
 
-	FReal GetRadius() const
+	virtual FReal GetRadius() const override
 	{
 		return (MObject->GetRadius() > 0.0f) ? Margin : 0.0f;
 	}
-	
+
 	virtual FReal PhiWithNormal(const FVec3& X, FVec3& Normal) const override
 	{
 		return MObject->PhiWithNormalScaled(X, MScale, Normal);
@@ -615,7 +604,7 @@ public:
 			const FReal LengthScaleInv = FReal(1) / LengthScale;
 			const FReal UnscaledLength = Length * LengthScale;
 			const FVec3 UnscaledDir = UnscaledDirDenorm * LengthScaleInv;
-			
+		
 			FVec3 UnscaledPosition;
 			FVec3 UnscaledNormal;
 			FReal UnscaledTime;
@@ -640,7 +629,7 @@ public:
 				}
 			}
 		}
-			
+		
 		return false;
 	}
 
@@ -665,7 +654,7 @@ public:
 			T UnscaledTime;
 
 			TRigidTransform<T, d> BToATMNoScale(BToATM.GetLocation() * MInvScale, BToATM.GetRotation());
-			
+		
 			if (MObject->SweepGeom(B, BToATMNoScale, UnscaledDir, UnscaledLength, UnscaledTime, UnscaledPosition, UnscaledNormal, OutFaceIndex, OutFaceNormal, Thickness, bComputeMTD, MScale))
 			{
 				const T NewTime = LengthScaleInv * UnscaledTime;
@@ -778,7 +767,7 @@ public:
 	{
 		return MObject->FindVertexPlanes(VertexIndex, OutVertexPlanes, MaxVertexPlanes);
 	}
-	
+
 	// Get up to the 3  plane indices that belong to a vertex
 	// Returns the number of planes found.
 	int32 GetVertexPlanes3(int32 VertexIndex, int32& PlaneIndex0, int32& PlaneIndex1, int32& PlaneIndex2) const
@@ -861,7 +850,7 @@ public:
 		const FVec3 LocalOriginalNormalDenorm = OriginalNormal * MScale;
 		const FReal NormalLengthScale = LocalOriginalNormalDenorm.Size();
 		const FVec3 LocalOriginalNormal
-			= ensure(NormalLengthScale > UE_SMALL_NUMBER)
+			= CHAOS_ENSURE(NormalLengthScale > UE_SMALL_NUMBER)
 			? LocalOriginalNormalDenorm / NormalLengthScale
 			: FVec3(0, 0, 1);
 
@@ -985,9 +974,9 @@ public:
 
 	const ObjectType Object() const { return MObject; }
 
-	// Only should be retrieved for copy purposes. Do not modify or access.
-	TSharedPtr<TConcrete, ESPMode::ThreadSafe> GetSharedObject() const { return MSharedPtrForRefCount; }
-	
+	UE_DEPRECATED(5.4, "Please use Object instead")
+	TSharedPtr<TConcrete, ESPMode::ThreadSafe> GetSharedObject() const { check(false); return nullptr; }
+
 	virtual void Serialize(FChaosArchive& Ar) override
 	{
 		FChaosArchiveScopedMemory ScopedMemory(Ar, GetTypeName(), false);
@@ -1011,18 +1000,17 @@ public:
 	{
 		return MObject->GetMaterialIndex(HintIndex);
 	}
-
-
-	virtual TUniquePtr<FImplicitObject> Copy() const override
+	
+	virtual Chaos::FImplicitObjectPtr CopyGeometry() const override
 	{
-		return TUniquePtr<FImplicitObject>(CopyHelper(this));
+		return Chaos::FImplicitObjectPtr(CopyHelper(this));
 	}
 
-	virtual TUniquePtr<FImplicitObject> CopyWithScale(const FVec3& Scale) const override
+	virtual Chaos::FImplicitObjectPtr CopyGeometryWithScale(const FVec3& Scale) const override
 	{
 		TImplicitObjectScaled<TConcrete, bInstanced>* Obj = CopyHelper(this);
-		Obj->SetScale(Scale);
-		return TUniquePtr<FImplicitObject>(Obj);
+		Obj->SetScale(Obj->GetScale() * Scale);
+		return Chaos::FImplicitObjectPtr(Obj);
 	}
 
 	virtual FString ToString() const override
@@ -1032,7 +1020,6 @@ public:
 
 private:
 	ObjectType MObject;
-	TSharedPtr<TConcrete, ESPMode::ThreadSafe> MSharedPtrForRefCount; // Temporary solution to force ref counting on trianglemesh from body setup.
 
 	//needed for serialization
 	TImplicitObjectScaled()
@@ -1042,15 +1029,33 @@ private:
 
 	static TImplicitObjectScaled<TConcrete, true>* CopyHelper(const TImplicitObjectScaled<TConcrete, true>* Obj)
 	{
-		return new TImplicitObjectScaled<TConcrete, true>(Obj->MObject, Obj->MSharedPtrForRefCount, Obj->MScale, Obj->OuterMargin);
+		return new TImplicitObjectScaled<TConcrete, true>(Obj->MObject, Obj->MScale, Obj->OuterMargin);
 	}
 
 	static TImplicitObjectScaled<TConcrete, false>* CopyHelper(const TImplicitObjectScaled<TConcrete, false>* Obj)
 	{
-		TUniquePtr<FImplicitObject> DuplicatedShape = Obj->MObject->Copy();
-		
+		Chaos::FImplicitObjectPtr DuplicatedShape = Obj->MObject->CopyGeometry();
+	
 		// We know the actual type of the underlying object pointer so we can cast it to the required type to make a copy of this implicit
-		return new TImplicitObjectScaled<TConcrete, false>(reinterpret_cast<TUniquePtr<TConcrete>&&>(DuplicatedShape), Obj->MSharedPtrForRefCount, Obj->MScale, Obj->OuterMargin);
+		return new TImplicitObjectScaled<TConcrete, false>(reinterpret_cast<TRefCountPtr<TConcrete>&&>(DuplicatedShape), Obj->MScale, Obj->OuterMargin);
+	}
+
+	void InitScaledImplicit(const FVec3& Scale, FReal InMargin = 0)
+	{
+		ensureMsgf((IsScaled(MObject->GetType()) == false), TEXT("Scaled objects should not contain each other."));
+		ensureMsgf((IsInstanced(MObject->GetType()) == false), TEXT("Scaled objects should not contain instances."));
+		switch (MObject->GetType())
+		{
+		case ImplicitObjectType::Transformed:
+		case ImplicitObjectType::Union:
+			check(false);	//scale is only supported for concrete types like sphere, capsule, convex, levelset, etc... Nothing that contains other objects
+		default:
+			break;
+		}
+		this->bIsConvex = MObject->IsConvex();
+		this->bDoCollide = MObject->GetDoCollide();
+		this->OuterMargin = InMargin;
+		SetScale(Scale);
 	}
 
 	void UpdateBounds()
@@ -1065,21 +1070,14 @@ private:
 	template <typename QueryGeomType>
 	static auto MakeScaledHelper(const QueryGeomType& B, const TVector<T,d>& InvScale )
 	{
-		// TODO: Fixup code using this and remove it.
-
-		TUniquePtr<QueryGeomType> HackBPtr(const_cast<QueryGeomType*>(&B));	//todo: hack, need scaled object to accept raw ptr similar to transformed implicit
-
-		TSharedPtr<QueryGeomType, ESPMode::ThreadSafe> SharedPtrForRefCount(nullptr); // This scaled is temporary, use fake shared ptr.
-		TImplicitObjectScaled<QueryGeomType> ScaledB(MakeSerializable(HackBPtr), SharedPtrForRefCount, InvScale);
-		(void)HackBPtr.Release();
-		return ScaledB;
+		return TImplicitObjectScaled<QueryGeomType,true>(const_cast<QueryGeomType*>(&B), InvScale);
 	}
 
 	template <typename QueryGeomType>
 	static auto MakeScaledHelper(const TImplicitObjectScaled<QueryGeomType>& B, const TVector<T,d>& InvScale)
 	{
 		//if scaled of scaled just collapse into one scaled
-		TImplicitObjectScaled<QueryGeomType> ScaledB(B.Object(), B.GetSharedObject(), InvScale * B.GetScale());
+		TImplicitObjectScaled<QueryGeomType> ScaledB(B.Object(), InvScale * B.GetScale());
 		return ScaledB;
 	}
 
@@ -1092,10 +1090,31 @@ template <typename T, int d>
 using TImplicitObjectScaledGeneric = TImplicitObjectScaled<FImplicitObject>;
 
 template<typename TConcrete>
-TUniquePtr<FImplicitObject> TImplicitObjectInstanced<TConcrete>::CopyWithScale(const FVec3& Scale) const
+Chaos::FImplicitObjectPtr TImplicitObjectInstanced<TConcrete>::CopyGeometryWithScale(const FVec3& Scale) const
 {
-	return TUniquePtr<FImplicitObject>(new TImplicitObjectScaled<TConcrete, true>(MObject, Scale, 0.0));
+	return Chaos::FImplicitObjectPtr(new TImplicitObjectScaled<TConcrete, true>(MObject, Scale, 0.0));
 }
+
+template<>
+struct TImplicitTypeInfo<FImplicitObjectInstanced>
+{
+	// Is InType derived from FImplicitObjectInstanced
+	static bool IsBaseOf(const EImplicitObjectType InType)
+	{
+		return !!(InType & ImplicitObjectType::IsInstanced);
+	}
+};
+
+template<>
+struct TImplicitTypeInfo<FImplicitObjectScaled>
+{
+	// Is InType derived from FImplicitObjectScaled
+	static bool IsBaseOf(const EImplicitObjectType InType)
+	{
+		return !!(InType & ImplicitObjectType::IsScaled);
+	}
+};
+
 
 /**
  * @brief Remove the Instanced or Scaled wrapper from an ImplicitObject of a known inner type and extract the instance properties
@@ -1128,5 +1147,7 @@ const T* UnwrapImplicit(const FImplicitObject& Implicit, FVec3& OutScale, FReal 
 		return nullptr;
 	}
 }
-
 }
+
+		
+

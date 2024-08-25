@@ -79,7 +79,10 @@ void SMediaPlayerEditorMedia::OpenMediaAsset(UObject* Asset)
 
 	if (MediaSource != nullptr)
 	{
-		if (!MediaPlayer->OpenSource(MediaSource))
+		FMediaPlayerOptions Options;
+		Options.SetAllAsOptional();
+		Options.InternalCustomOptions.Emplace(MediaPlayerOptionValues::Environment(), MediaPlayerOptionValues::Environment_Preview());
+		if (!MediaPlayer->OpenSourceWithOptions(MediaSource, Options))
 		{
 			ShowMediaOpenFailedMessage();
 		}

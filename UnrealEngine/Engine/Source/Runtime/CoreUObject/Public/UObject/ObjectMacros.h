@@ -219,8 +219,8 @@ enum EClassFlags
 	CLASS_CollapseCategories  = 0x00002000u,
 	/** Class is an interface **/
 	CLASS_Interface           = 0x00004000u,
-	/**  Do not export a constructor for this class, assuming it is in the cpptext **/
-	CLASS_CustomConstructor UE_DEPRECATED(5.1, "CLASS_CustomConstructor should no longer be used. It is no longer being set by engine code.") = 0x00008000u,
+	/**  Config for this class is overridden in platform inis, reload when previewing platforms **/
+	CLASS_PerPlatformConfig   = 0x00008000u,
 	/** all properties and functions in this class are const and should be exported as const */
 	CLASS_Const			      = 0x00010000u,
 
@@ -266,7 +266,7 @@ ENUM_CLASS_FLAGS(EClassFlags);
 
 /** Flags to inherit from base class */
 #define CLASS_Inherit ((EClassFlags)(CLASS_Transient | CLASS_Optional | CLASS_DefaultConfig | CLASS_Config | CLASS_PerObjectConfig | CLASS_ConfigDoNotCheckDefaults | CLASS_NotPlaceable \
-						| CLASS_Const | CLASS_HasInstancedReference | CLASS_Deprecated | CLASS_DefaultToInstanced | CLASS_GlobalUserConfig | CLASS_ProjectUserConfig | CLASS_NeedsDeferredDependencyLoading))
+						| CLASS_Const | CLASS_HasInstancedReference | CLASS_Deprecated | CLASS_DefaultToInstanced | CLASS_GlobalUserConfig | CLASS_ProjectUserConfig | CLASS_PerPlatformConfig | CLASS_NeedsDeferredDependencyLoading))
 
 /** These flags will be cleared by the compiler when the class is parsed during script compilation */
 #define CLASS_RecompilerClear ((EClassFlags)(CLASS_Inherit | CLASS_Abstract | CLASS_Native | CLASS_Intrinsic | CLASS_TokenStreamAssembled))
@@ -283,12 +283,14 @@ ENUM_CLASS_FLAGS(EClassFlags);
 	CLASS_DefaultConfig | \
 	CLASS_GlobalUserConfig | \
 	CLASS_ProjectUserConfig | \
+	CLASS_PerPlatformConfig | \
 	CLASS_Config | \
 	CLASS_Transient | \
 	CLASS_Optional | \
 	CLASS_Native | \
 	CLASS_NotPlaceable | \
 	CLASS_PerObjectConfig | \
+	CLASS_PerPlatformConfig | \
 	CLASS_ConfigDoNotCheckDefaults | \
 	CLASS_EditInlineNew | \
 	CLASS_CollapseCategories | \
@@ -371,10 +373,10 @@ enum EClassCastFlags : uint64
 	CASTCLASS_FMulticastInlineDelegateProperty	= 0x0004000000000000,
 	CASTCLASS_FMulticastSparseDelegateProperty	= 0x0008000000000000,
 	CASTCLASS_FFieldPathProperty			= 0x0010000000000000,
-	CASTCLASS_FObjectPtrProperty			= 0x0020000000000000,
-	CASTCLASS_FClassPtrProperty				= 0x0040000000000000,
 	CASTCLASS_FLargeWorldCoordinatesRealProperty = 0x0080000000000000,
 	CASTCLASS_FOptionalProperty				= 0x0100000000000000,
+	CASTCLASS_FVerseValueProperty			= 0x0200000000000000,
+	CASTCLASS_UVerseVMClass					= 0x0400000000000000,
 };
 
 #define CASTCLASS_AllFlags ((EClassCastFlags)0xFFFFFFFFFFFFFFFF)
@@ -450,6 +452,9 @@ enum EPropertyFlags : uint64
 	CPF_NativeAccessSpecifierProtected	= 0x0020000000000000,	///< Protected native access specifier
 	CPF_NativeAccessSpecifierPrivate	= 0x0040000000000000,	///< Private native access specifier
 	CPF_SkipSerialization				= 0x0080000000000000,	///< Property shouldn't be serialized, can still be exported to text
+	CPF_TObjectPtr						= 0x0100000000000000,	///< Property is a TObjectPtr<T> instead of a USomething*. Need to differentiate between TObjectclassOf and TObjectPtr
+	CPF_ExperimentalOverridableLogic	= 0x0200000000000000,	///< ****Experimental*** Property will use different logic to serialize knowing what changes are done against its default use the overridable information provided by the overridable manager on the object
+	CPF_ExperimentalAlwaysOverriden		= 0x0400000000000000,	///< ****Experimental*** Property should never inherit from the parent when using overridable serialization
 };
 
 /** All Native Access Specifier flags */
@@ -459,10 +464,11 @@ enum EPropertyFlags : uint64
 #define CPF_ParmFlags				(CPF_Parm | CPF_OutParm | CPF_ReturnParm | CPF_RequiredParm | CPF_ReferenceParm | CPF_ConstParm )
 
 /** Flags that are propagated to properties inside containers */
-#define CPF_PropagateToArrayInner	(CPF_ExportObject | CPF_PersistentInstance | CPF_InstancedReference | CPF_ContainsInstancedReference | CPF_Config | CPF_EditConst | CPF_Deprecated | CPF_EditorOnly | CPF_AutoWeak | CPF_UObjectWrapper )
-#define CPF_PropagateToMapValue		(CPF_ExportObject | CPF_PersistentInstance | CPF_InstancedReference | CPF_ContainsInstancedReference | CPF_Config | CPF_EditConst | CPF_Deprecated | CPF_EditorOnly | CPF_AutoWeak | CPF_UObjectWrapper | CPF_Edit )
-#define CPF_PropagateToMapKey		(CPF_ExportObject | CPF_PersistentInstance | CPF_InstancedReference | CPF_ContainsInstancedReference | CPF_Config | CPF_EditConst | CPF_Deprecated | CPF_EditorOnly | CPF_AutoWeak | CPF_UObjectWrapper | CPF_Edit )
-#define CPF_PropagateToSetElement	(CPF_ExportObject | CPF_PersistentInstance | CPF_InstancedReference | CPF_ContainsInstancedReference | CPF_Config | CPF_EditConst | CPF_Deprecated | CPF_EditorOnly | CPF_AutoWeak | CPF_UObjectWrapper | CPF_Edit )
+#define CPF_PropagateToArrayInner    (CPF_ExportObject | CPF_PersistentInstance | CPF_InstancedReference | CPF_ContainsInstancedReference | CPF_Config | CPF_EditConst | CPF_Deprecated | CPF_EditorOnly | CPF_AutoWeak | CPF_UObjectWrapper )
+#define CPF_PropagateToOptionalInner (CPF_ExportObject | CPF_PersistentInstance | CPF_InstancedReference | CPF_ContainsInstancedReference | CPF_Config | CPF_EditConst | CPF_Deprecated | CPF_EditorOnly | CPF_AutoWeak | CPF_UObjectWrapper | CPF_Edit )
+#define CPF_PropagateToMapValue      (CPF_ExportObject | CPF_PersistentInstance | CPF_InstancedReference | CPF_ContainsInstancedReference | CPF_Config | CPF_EditConst | CPF_Deprecated | CPF_EditorOnly | CPF_AutoWeak | CPF_UObjectWrapper | CPF_Edit )
+#define CPF_PropagateToMapKey        (CPF_ExportObject | CPF_PersistentInstance | CPF_InstancedReference | CPF_ContainsInstancedReference | CPF_Config | CPF_EditConst | CPF_Deprecated | CPF_EditorOnly | CPF_AutoWeak | CPF_UObjectWrapper | CPF_Edit )
+#define CPF_PropagateToSetElement    (CPF_ExportObject | CPF_PersistentInstance | CPF_InstancedReference | CPF_ContainsInstancedReference | CPF_Config | CPF_EditConst | CPF_Deprecated | CPF_EditorOnly | CPF_AutoWeak | CPF_UObjectWrapper | CPF_Edit )
 
 /** The flags that should never be set on interface properties */
 #define CPF_InterfaceClearMask		(CPF_ExportObject|CPF_InstancedReference|CPF_ContainsInstancedReference)
@@ -473,6 +479,7 @@ enum EPropertyFlags : uint64
 /** All the properties that should never be loaded or saved */
 #define CPF_ComputedFlags			(CPF_IsPlainOldData | CPF_NoDestructor | CPF_ZeroConstructor | CPF_HasGetValueTypeHash)
 
+#define CPF_TObjectPtrWrapper 		(CPF_UObjectWrapper | CPF_TObjectPtr)
 /** Mask of all property flags */
 #define CPF_AllFlags				((EPropertyFlags)0xFFFFFFFFFFFFFFFF)
 
@@ -517,6 +524,7 @@ COREUOBJECT_API const TCHAR* LexToString(EPropertyObjectReferenceType Type);
 
 /**
  * Flags describing an object instance
+ * When modifying this enum, update the LexToString implementation! 
  */
 enum EObjectFlags
 {
@@ -530,8 +538,8 @@ enum EObjectFlags
 	RF_Standalone				=0x00000002,	///< Keep object around for editing even if unreferenced.
 	RF_MarkAsNative				=0x00000004,	///< Object (UField) will be marked as native on construction (DO NOT USE THIS FLAG in HasAnyFlags() etc)
 	RF_Transactional			=0x00000008,	///< Object is transactional.
-	RF_ClassDefaultObject		=0x00000010,	///< This object is its class's default object
-	RF_ArchetypeObject			=0x00000020,	///< This object is a template for another object - treat like a class default object
+	RF_ClassDefaultObject		=0x00000010,	///< This object is used as the default template for all instances of a class. One object is created for each class
+	RF_ArchetypeObject			=0x00000020,	///< This object can be used as a template for instancing objects. This is set on all types of object templates
 	RF_Transient				=0x00000040,	///< Don't save object.
 
 	// This group of flags is primarily concerned with garbage collection.
@@ -550,33 +558,31 @@ enum EObjectFlags
 
 	// Misc. Flags
 	RF_BeingRegenerated			=0x00020000,	///< Flagged on UObjects that are used to create UClasses (e.g. Blueprints) while they are regenerating their UClass on load (See FLinkerLoad::CreateExport()), as well as UClass objects in the midst of being created
-	RF_DefaultSubObject			=0x00040000,	///< Flagged on subobjects that are defaults
+	RF_DefaultSubObject			=0x00040000,	///< Flagged on subobject templates that were created in a class constructor, and all instances created from those templates
 	RF_WasLoaded				=0x00080000,	///< Flagged on UObjects that were loaded
 	RF_TextExportTransient		=0x00100000,	///< Do not export object to text form (e.g. copy/paste). Generally used for sub-objects that can be regenerated from data in their parent object.
 	RF_LoadCompleted			=0x00200000,	///< Object has been completely serialized by linkerload at least once. DO NOT USE THIS FLAG, It should be replaced with RF_WasLoaded.
-	RF_InheritableComponentTemplate = 0x00400000, ///< Archetype of the object can be in its super class
+	RF_InheritableComponentTemplate = 0x00400000, ///< Flagged on subobject templates stored inside a class instead of the class default object, they are instanced after default subobjects
 	RF_DuplicateTransient		=0x00800000,	///< Object should not be included in any type of duplication (copy/paste, binary duplication, etc.)
 	RF_StrongRefOnFrame			=0x01000000,	///< References to this object from persistent function frame are handled as strong ones.
 	RF_NonPIEDuplicateTransient	=0x02000000,	///< Object should not be included for duplication unless it's being duplicated for a PIE session
-	RF_Dynamic UE_DEPRECATED(5.0, "RF_Dynamic should no longer be used. It is no longer being set by engine code.") =0x04000000,	///< Field Only. Dynamic field - doesn't get constructed during static initialization, can be constructed multiple times  // @todo: BP2CPP_remove
+	// RF_Dynamic				=0x04000000,	///< Was removed along with bp nativization
 	RF_WillBeLoaded				=0x08000000,	///< This object was constructed during load and will be loaded shortly
 	RF_HasExternalPackage		=0x10000000,	///< This object has an external package assigned and should look it up when getting the outermost package
+	RF_HasPlaceholderType		=0x20000000,	///< This object was instanced from a placeholder type (e.g. on load). References to it are serialized but externally resolve to NULL from a logical point of view (for type safety).
 
-	// RF_Garbage and RF_PendingKill are mirrored in EInternalObjectFlags because checking the internal flags is much faster for the Garbage Collector
+	// RF_MirroredGarbage is mirrored in EInternalObjectFlags::Garbage because checking the internal flags is much faster for the Garbage Collector
 	// while checking the object flags is much faster outside of it where the Object pointer is already available and most likely cached.
-	// RF_PendingKill is mirrored in EInternalObjectFlags because checking the internal flags is much faster for the Garbage Collector
-	// while checking the object flags is much faster outside of it where the Object pointer is already available and most likely cached.
-
-	RF_PendingKill UE_DEPRECATED(5.0, "RF_PendingKill should not be used directly. Make sure references to objects are released using one of the existing engine callbacks or use weak object pointers.") = 0x20000000,	///< Objects that are pending destruction (invalid for gameplay but valid objects). This flag is mirrored in EInternalObjectFlags as PendingKill for performance
-	RF_Garbage UE_DEPRECATED(5.0, "RF_Garbage should not be used directly. Use MarkAsGarbage and ClearGarbage instead.") =0x40000000,	///< Garbage from logical point of view and should not be referenced. This flag is mirrored in EInternalObjectFlags as Garbage for performance
+	RF_MirroredGarbage			=0x40000000,	///< Garbage from logical point of view and should not be referenced. This flag is mirrored in EInternalObjectFlags as Garbage for performance
 	RF_AllocatedInSharedPage	=0x80000000,	///< Allocated from a ref-counted page shared with other UObjects
 };
 
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-inline constexpr EObjectFlags RF_InternalPendingKill = RF_PendingKill;
-inline constexpr EObjectFlags RF_InternalGarbage = RF_Garbage;
-inline constexpr EObjectFlags RF_InternalMirroredFlags = (EObjectFlags)(RF_PendingKill | RF_Garbage);
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
+UE_DEPRECATED(5.4, "RF_InternalPendingKill should no longer be used. Use IsValid(Object) instead.")
+inline constexpr EObjectFlags RF_InternalPendingKill = RF_MirroredGarbage;
+UE_DEPRECATED(5.4, "RF_InternalGarbage should no longer be used. Use IsValid(Object) instead.")
+inline constexpr EObjectFlags RF_InternalGarbage = RF_MirroredGarbage;
+UE_DEPRECATED(5.4, "RF_InternalMirroredFlags should no longer be used. Use IsValid(Object) instead.")
+inline constexpr EObjectFlags RF_InternalMirroredFlags = RF_MirroredGarbage;
 
 /** Mask for all object flags */
 #define RF_AllFlags				(EObjectFlags)0xffffffff	///< All flags, used mainly for error checking
@@ -589,6 +595,8 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 ENUM_CLASS_FLAGS(EObjectFlags);
 
+COREUOBJECT_API FString LexToString(EObjectFlags Flags);
+
 /** 
  * Objects flags for internal use (GC, low level UObject code)
  *
@@ -599,6 +607,11 @@ enum class EInternalObjectFlags : int32
 {
 	None = 0,
 
+	ReachabilityFlag0 = 1 << 0, ///< One of the flags used by Garbage Collector to determine UObject's reachability state
+	ReachabilityFlag1 = 1 << 1, ///< One of the flags used by Garbage Collector to determine UObject's reachability state
+	ReachabilityFlag2 = 1 << 2, ///< One of the flags used by Garbage Collector to determine UObject's reachability state
+
+	MaybeUnreachable UE_DEPRECATED(5.4, "MaybeUnreachable flag should no longer be used. Use FUObjectItem::IsMaybeUnreachable() or UE::GC::GMaybeUnreachableObjectFlag flag instead.") = 1 << 19, ///< Flag set on all non-root objects at the beginning of Reachability Analysis
 	LoaderImport = 1 << 20, ///< Object is ready to be imported by another package during loading
 	Garbage = 1 << 21, ///< Garbage from logical point of view and should not be referenced. This flag is mirrored in EObjectFlags as RF_Garbage for performance
 	ReachableInCluster = 1 << 23, ///< External reference to object in cluster exists
@@ -606,20 +619,29 @@ enum class EInternalObjectFlags : int32
 	Native = 1 << 25, ///< Native (UClass only). 
 	Async = 1 << 26, ///< Object exists only on a different thread than the game thread.
 	AsyncLoading = 1 << 27, ///< Object is being asynchronously loaded.
-	Unreachable = 1 << 28, ///< Object is not reachable on the object graph.
-	PendingKill UE_DEPRECATED(5.0, "PendingKill flag should no longer be used. Use Garbage flag instead.") = 1 << 29, ///< Objects that are pending destruction (invalid for gameplay but valid objects). This flag is mirrored in EObjectFlags as RF_PendingKill for performance
+	Unreachable UE_DEPRECATED(5.4, "Unreachable flag should no longer be used. Use UObjectBaseUtility::IsUnreachable() or UE::GC::GUnreachableObjectFlag flag instead.") = 1 << 28, ///< Object is not reachable on the object graph.
+	// Unused = 1 << 29,
 	RootSet = 1 << 30, ///< Object will not be garbage collected, even if unreferenced.
 	PendingConstruction = 1 << 31, ///< Object didn't have its class constructor called yet (only the UObjectBase one to initialize its most basic members)
 
-	GarbageCollectionKeepFlags = Native | Async | AsyncLoading | LoaderImport,
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	MirroredFlags = Garbage | PendingKill, /// Flags mirrored in EObjectFlags
+	// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+	// DO NOT ADD new compound flags to EInternalObjectFlags. The below flags are deprecated so that one day we can remove them.
+	// !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+
+	GarbageCollectionKeepFlags UE_DEPRECATED(5.4, "GarbageCollectionKeepFlags should no longer be used. Use EInternalObjectFlags_GarbageCollectionKeepFlags instead.") = Native | Async | AsyncLoading | LoaderImport,
+	MirroredFlags UE_DEPRECATED(5.4, "MirroredFlags should no longer be used. Use Garbage instead.") = Garbage,
 
 	//~ Make sure this is up to date!
-	AllFlags = LoaderImport | Garbage | ReachableInCluster | ClusterRoot | Native | Async | AsyncLoading | Unreachable | PendingKill | RootSet | PendingConstruction
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	AllFlags UE_DEPRECATED(5.4, "AllFlags should no longer be used. Use EInternalObjectFlags_AllFlags instead.") = ReachabilityFlag0 | ReachabilityFlag1 | MaybeUnreachable | LoaderImport | Garbage | ReachableInCluster | ClusterRoot | Native | Async | AsyncLoading | Unreachable | RootSet | PendingConstruction
 	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 };
 ENUM_CLASS_FLAGS(EInternalObjectFlags);
+
+//~ Make sure these macros are up to date!
+#define EInternalObjectFlags_GarbageCollectionKeepFlags (EInternalObjectFlags::Native | EInternalObjectFlags::Async | EInternalObjectFlags::AsyncLoading | EInternalObjectFlags::LoaderImport)
+#define EInternalObjectFlags_AllFlags (EInternalObjectFlags::ReachabilityFlag0 | EInternalObjectFlags::ReachabilityFlag1 | EInternalObjectFlags::ReachabilityFlag2 | EInternalObjectFlags::LoaderImport | EInternalObjectFlags::Garbage | EInternalObjectFlags::ReachableInCluster | EInternalObjectFlags::ClusterRoot | EInternalObjectFlags::Native | EInternalObjectFlags::Async | EInternalObjectFlags::AsyncLoading | EInternalObjectFlags::RootSet | EInternalObjectFlags::PendingConstruction | (EInternalObjectFlags)(1 << 19 /*MaybeUnreachable*/) | (EInternalObjectFlags)(1 << 28 /*Unreachable*/))
+#define EInternalObjectFlags_RootFlags (EInternalObjectFlags::RootSet | EInternalObjectFlags_GarbageCollectionKeepFlags)
 
 /**
  * Flags describing a UEnum 
@@ -1331,6 +1353,9 @@ namespace UM
 		/// [PropertyMetadata] Deprecated.
 		FixedIncrement,
 
+		/// [PropertyMetaData] Force the specified sibling Editor PropertyNode to refresh itself when this property changes.  Useful to trigger an Editor refresh of an unrelated Property when this one is modified in PostEditChangeProperty or similar.
+		ForceRebuildProperty,
+
 		/// [PropertyMetadata] Used by asset properties. Indicates that the asset pickers should always show engine content
 		ForceShowEngineContent,
 
@@ -1457,7 +1482,8 @@ namespace UM
 		/// [PropertyMetadata] Causes FString and FName properties to have a limited set of options generated dynamically, e.g. meta=(GetOptions="FuncName"). Supports external static function references via "Module.Class.Function" syntax.
 		///
 		/// UFUNCTION()
-		/// TArray<FString> FuncName() const; // Always return string array even if FName property.
+		/// static TArray<FName> FuncName() const; // If the field wants an FName value
+		/// static TArray<FString> FuncName() const; // If the field wants an FString value
 		GetOptions,
 
 		/// [PropertyMetadata] The property can be exposed as a data pin, but is hidden by default.
@@ -1466,8 +1492,32 @@ namespace UM
 		/// [PropertyMetadata] Used for enum properties to define the subset of valid values as a comma-separated string; values outside of this subset are not made available.
 		ValidEnumValues,
 
-	    /// [PropertyMetadata] Used for enum properties to define the subset of invalid values as a comma-separated string; values within this subset are not made available.
-        InvalidEnumValues,
+		/// [PropertyMetadata] Used for enum properties to define the subset of invalid values as a comma-separated string; values within this subset are not made available.
+		InvalidEnumValues,
+
+		/// [PropertyMetadata] Used for enum properties to define the subset of restricted values through a UFunction, e.g. meta=(GetRestrictedEnumValues="FuncName"). 
+		///
+		/// UFUNCTION()
+		/// TArray<FString> FuncName() const;
+		GetRestrictedEnumValues,
+		
+		/// [PropertyMetadata] Causes assets to be filtered through a UFunction, e.g. meta=(GetAssetFilter="FuncName"). The UFunction should return true to exclude the asset.
+		///
+		/// UFUNCTION()
+		/// bool FuncName(const FAssetData& AssetData) const;
+		GetAssetFilter,
+		
+		/// [PropertyMetadata] Get allowed classes through a UFunction, e.g. meta=(GetAllowedClasses="FuncName").
+		///
+		/// UFUNCTION()
+		/// TArray<UClass*> FuncName() const;
+		GetAllowedClasses,
+		
+		/// [PropertyMetadata] Get disallowed classes through a UFunction, e.g. meta=(GetDisallowedClasses="FuncName").
+		///
+		/// UFUNCTION()
+		/// TArray<UClass*> FuncName() const;
+		GetDisallowedClasses
 	};
 
 	// Metadata usable in UPROPERTY for customizing the behavior of Persona and UMG
@@ -1881,16 +1931,17 @@ public: \
 
 #define UOBJECT_CPPCLASS_STATICFUNCTIONS_ALLCONFIGS(TClass) \
 	FUObjectCppClassStaticFunctions::AddReferencedObjectsType(&TClass::AddReferencedObjects)
-	/* UObjectCppClassStaticFunctions: Extend this macro with the address of your new static function, if it applies to all configs. */ \
-	/* Order must match the order in the FUObjectCppClassStaticFunctions constructor. */ \
+	/* UObjectCppClassStaticFunctions: Extend this macro with the address of your new static function, if it applies to all configs. */
+	/* Order must match the order in the FUObjectCppClassStaticFunctions constructor. */
 
 #if WITH_EDITORONLY_DATA
 	#define UOBJECT_CPPCLASS_STATICFUNCTIONS_WITHEDITORONLYDATA(TClass) \
 		, FUObjectCppClassStaticFunctions::DeclareCustomVersionsType(&TClass::DeclareCustomVersions) \
 		, FUObjectCppClassStaticFunctions::AppendToClassSchemaType(&TClass::AppendToClassSchema) \
 		, FUObjectCppClassStaticFunctions::DeclareConstructClassesType(&TClass::DeclareConstructClasses)
-		/* UObjectCppClassStaticFunctions: Extend this macro with the address of your new static function, if it is editor-only. */ \
-		/* Order must match the order in the FUObjectCppClassStaticFunctions constructor. */ \
+		/* UObjectCppClassStaticFunctions: Extend this macro with the address of your new static function, if it is editor-only. */
+		/* Order must match the order in the FUObjectCppClassStaticFunctions constructor. */
+
 #else
 	#define UOBJECT_CPPCLASS_STATICFUNCTIONS_WITHEDITORONLYDATA(TClass)
 #endif
@@ -2083,7 +2134,7 @@ private:
 typedef uint32 ERenameFlags;
 
 /** Default rename behavior */
-#define REN_None				(0x0000)
+#define REN_None					(0x0000)
 /** Rename won't call ResetLoaders or flush async loading. You should pass this if you are renaming a deep subobject and do not need to reset loading for the outer package */
 #define REN_ForceNoResetLoaders		(0x0001) 
 /** Just test to make sure that the rename is guaranteed to succeed if an non test rename immediately follows */
@@ -2098,6 +2149,8 @@ typedef uint32 ERenameFlags;
 #define REN_ForceGlobalUnique		(0x0040) 
 /** Prevent renaming of any child generated classes and CDO's in blueprints */
 #define REN_SkipGeneratedClasses	(0x0080) 
+/** Prevents renaming from unregistering/registering all components */
+#define REN_SkipComponentRegWork	(0x0100) 
 
 /*-----------------------------------------------------------------------------
 	Misc.

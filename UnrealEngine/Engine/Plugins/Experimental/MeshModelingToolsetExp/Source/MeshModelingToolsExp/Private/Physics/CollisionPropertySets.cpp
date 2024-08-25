@@ -18,9 +18,11 @@ void UCollisionGeometryVisualizationProperties::Initialize(UInteractiveTool* Too
 	WatchProperty(Color, [this](FColor NewValue) { bVisualizationDirty = true; });
 	WatchProperty(bRandomColors, [this](bool bNewValue) { bVisualizationDirty = true; });
 	WatchProperty(bShowHidden, [this](bool bNewValue) { bVisualizationDirty = true; });
+	WatchProperty(bShowSolid, [this](bool bNewValue) { bVisualizationDirty = true; });
 
 	LineMaterial = ToolSetupUtil::GetDefaultLineComponentMaterial(Tool->GetToolManager(), true);
 	LineMaterialShowingHidden = ToolSetupUtil::GetDefaultLineComponentMaterial(Tool->GetToolManager(), false);
+	TriangleMaterial = ToolSetupUtil::GetVertexColorMaterial(Tool->GetToolManager(), false);
 }
 
 FColor UCollisionGeometryVisualizationProperties::GetLineSetColor(int32 LineSetIndex) const

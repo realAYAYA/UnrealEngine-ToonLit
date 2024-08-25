@@ -8,12 +8,16 @@ THIRD_PARTY_INCLUDES_START
 #pragma warning(disable: 4458)
 #include "p4/clientapi.h"
 #include "p4/strtable.h"
+#include "p4/stdhdrs.h"
 #include "p4/datetime.h"
 #include "p4/i18napi.h"
 #include "p4/charset.h"
 #include "p4/md5.h"
+#include "p4/p4libs.h"
+#include "p4/signaler.h"
 #include "ThirdParty/gzip.h"
 #pragma warning(pop)
+#include <signal.h>
 #include <assert.h>
 THIRD_PARTY_INCLUDES_END
 
@@ -131,6 +135,15 @@ public:
 
 	void Flush()
 	{
+		// Writing an empty buffer indicates to the owning process that we need more data, so avoid that during a normal flush.
+		if (Length > 0)
+		{
+			FlushOrExpandBuffer();
+		}
+	}
+
+	void FlushOrExpandBuffer()
+	{
 		FReadBuffer ReadBuffer;
 		ReadBuffer.Data = Data;
 		ReadBuffer.Length = Length;
@@ -150,7 +163,7 @@ public:
 	{
 		while (!TryOutputError(err))
 		{
-			Flush();
+			FlushOrExpandBuffer();
 		}
 	}
 
@@ -158,7 +171,7 @@ public:
 	{
 		while (!TryOutputError(Err))
 		{
-			Flush();
+			FlushOrExpandBuffer();
 		}
 	}
 
@@ -224,7 +237,7 @@ public:
 	{
 		while (!TryOutputIo(FileId, Command, Payload, PayloadLen))
 		{
-			Flush();
+			FlushOrExpandBuffer();
 		}
 	}
 
@@ -261,7 +274,7 @@ public:
 	{
 		while (!TryOutputInfo(InLevel, InData))
 		{
-			Flush();
+			FlushOrExpandBuffer();
 		}
 	}
 
@@ -306,7 +319,7 @@ public:
 	{
 		while (!TryWriteRecord(VarList))
 		{
-			Flush();
+			FlushOrExpandBuffer();
 		}
 		if (++Count > MaxCount)
 		{
@@ -472,11 +485,13 @@ public:
 	virtual void	SetAttribute(FileSysAttr, Error*) override { };
 
 	virtual bool	HasOnlyPerm(FilePerm perms) override { return false; }
-	virtual int	GetFd() override { return -1; }
+	virtual FD_PTR	GetFd() override { return FD_ERR; }
 	virtual int     GetOwner() override { return 0; }
 	virtual offL_t	GetSize() override { return 0; }
 	virtual void	Seek(offL_t offset, Error*) override { assert(false); }
 	virtual offL_t	Tell() override { assert(false); return 0; }
+
+	virtual int StatAccessTime() override { assert(false); return 0; }
 
 	virtual void	MakeLocalTemp(char* file) override { assert(false); }
 	virtual void	SetDeleteOnClose() override { }
@@ -697,8 +712,21 @@ public:
 	}
 };
 
+struct FClientGlobalInit
+{
+	FClientGlobalInit()
+	{
+		Error e;
+		P4Libraries::Initialize(P4LIBRARIES_INIT_ALL, &e);
+		signal(SIGINT, SIG_DFL); // unset the default set by global signaler in C++ so it does not exit 
+		signaler.Disable(); // disable the global signaler memory tracking at runtime
+	}
+};
+
 extern "C" NATIVE_API FClient* Client_Create(const FSettings* Settings, FWriteBuffer* WriteBuffer, FOnBufferReadyFn* OnBufferReady)
 {
+	static FClientGlobalInit GlobalInit;
+
 	FClient* Client = new FClient(WriteBuffer, OnBufferReady);
 
 	if (Settings != nullptr)

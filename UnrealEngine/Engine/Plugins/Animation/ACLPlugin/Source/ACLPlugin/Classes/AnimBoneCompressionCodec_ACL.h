@@ -4,14 +4,10 @@
 // Copyright 2018 Nicholas Frechette. All Rights Reserved.
 
 #include "CoreMinimal.h"
+#include "PerPlatformProperties.h"
 #include "UObject/ObjectMacros.h"
 #include "AnimBoneCompressionCodec_ACLBase.h"
-#include "PerPlatformProperties.h"
 #include "AnimBoneCompressionCodec_ACL.generated.h"
-
-// @third party code - Epic Games Begin
-class ITargetPlatform;
-// @third party code - Epic Games End
 
 /** Uses the open source Animation Compression Library with default settings suitable for general purpose animations. */
 UCLASS(MinimalAPI, config = Engine, meta = (DisplayName = "Anim Compress ACL"))
@@ -24,20 +20,25 @@ class UAnimBoneCompressionCodec_ACL : public UAnimBoneCompressionCodec_ACLBase
 	UPROPERTY(EditAnywhere, Category = "ACL Options")
 	TArray<TObjectPtr<class USkeletalMesh>> OptimizationTargets;
 
+	/** The minimum proportion of keyframes that should be stripped. */
+	UPROPERTY(EditAnywhere, Category = "ACL Destructive Options", meta = (ClampMin = "0", ClampMax = "1"))
+	FPerPlatformFloat KeyframeStrippingProportion;
+
+	/** The error threshold below which to strip keyframes. If a keyframe can be reconstructed with an error below the threshold, it is stripped. */
+	UPROPERTY(EditAnywhere, Category = "ACL Destructive Options", meta = (ClampMin = "0"))
+	FPerPlatformFloat KeyframeStrippingThreshold;
+
 	//////////////////////////////////////////////////////////////////////////
 	// UAnimBoneCompressionCodec implementation
-// @third party code - Epic Games Begin
 	virtual void PopulateDDCKey(const UE::Anim::Compression::FAnimDDCKeyArgs& KeyArgs, FArchive& Ar) override;
-// @third party code - Epic Games End
 
 	// UAnimBoneCompressionCodec_ACLBase implementation
-// @third party code - Epic Games Begin
-	virtual void GetCompressionSettings(acl::compression_settings& OutSettings, const ITargetPlatform* TargetPlatform) const override;
-// @third party code - Epic Games End
+	virtual void GetCompressionSettings(const class ITargetPlatform* TargetPlatform, acl::compression_settings& OutSettings) const override;
 	virtual TArray<class USkeletalMesh*> GetOptimizationTargets() const override { return OptimizationTargets; }
 #endif
 
 	// UAnimBoneCompressionCodec implementation
 	virtual void DecompressPose(FAnimSequenceDecompressionContext& DecompContext, const BoneTrackArray& RotationPairs, const BoneTrackArray& TranslationPairs, const BoneTrackArray& ScalePairs, TArrayView<FTransform>& OutAtoms) const override;
+	virtual void DecompressPose(FAnimSequenceDecompressionContext& DecompContext, const UE::Anim::FAnimPoseDecompressionData& DecompressionData) const override;
 	virtual void DecompressBone(FAnimSequenceDecompressionContext& DecompContext, int32 TrackIndex, FTransform& OutAtom) const override;
 };

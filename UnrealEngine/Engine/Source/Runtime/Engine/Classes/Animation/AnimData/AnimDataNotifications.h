@@ -60,6 +60,9 @@ enum class EAnimDataModelNotifyType : uint8
 	/** Indicates a curve its color has changed. Type of payload: FCurveChangedPayload */
 	CurveColorChanged,
 
+	/** Indicates a curve has been removed. Type of payload: FCurveChangedPayload */
+	CurveCommentChanged,
+
 	/** Indicates a new attribute has been added. Type of payload: FAttributeAddedPayload */
 	AttributeAdded,
 	
@@ -74,6 +77,9 @@ enum class EAnimDataModelNotifyType : uint8
 
 	/** Indicates all data stored on the model has been reset. Type of payload: FEmptyPayload */
 	Reset,
+
+	/** Indicates that the skeleton changed. Type of payload: FEmptyPayload */
+	SkeletonChanged,
 
 	Invalid // The max for this enum (used for guarding)
 };

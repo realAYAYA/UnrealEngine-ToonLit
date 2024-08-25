@@ -119,7 +119,7 @@ bool FUVToolSelection::IsAllSelected(const FDynamicMesh3& Mesh) const
 	return AreElementsPresentInMesh(Mesh);
 }
 
-FAxisAlignedBox3d FUVToolSelection::ToBoundingBox(const FDynamicMesh3& Mesh) const
+FAxisAlignedBox3d FUVToolSelection::ToBoundingBox(const FDynamicMesh3& Mesh, const FTransform3d Transform) const
 {
 	FAxisAlignedBox3d BoundingBox;
 
@@ -130,7 +130,7 @@ FAxisAlignedBox3d FUVToolSelection::ToBoundingBox(const FDynamicMesh3& Mesh) con
 		{
 			if (Mesh.IsVertex(Vid))
 			{
-				BoundingBox.Contain(Mesh.GetVertexRef(Vid));
+				BoundingBox.Contain(Transform.TransformPosition(Mesh.GetVertexRef(Vid)));
 			}
 		}
 		break;
@@ -139,8 +139,8 @@ FAxisAlignedBox3d FUVToolSelection::ToBoundingBox(const FDynamicMesh3& Mesh) con
 		{
 			if (Mesh.IsEdge(Eid))
 			{
-				BoundingBox.Contain(Mesh.GetVertexRef(Mesh.GetEdgeRef(Eid).Vert.A));
-				BoundingBox.Contain(Mesh.GetVertexRef(Mesh.GetEdgeRef(Eid).Vert.B));
+				BoundingBox.Contain(Transform.TransformPosition(Mesh.GetVertexRef(Mesh.GetEdgeRef(Eid).Vert.A)));
+				BoundingBox.Contain(Transform.TransformPosition(Mesh.GetVertexRef(Mesh.GetEdgeRef(Eid).Vert.B)));
 			}
 		}
 		break;
@@ -149,9 +149,9 @@ FAxisAlignedBox3d FUVToolSelection::ToBoundingBox(const FDynamicMesh3& Mesh) con
 		{
 			if (Mesh.IsTriangle(Tid))
 			{
-				BoundingBox.Contain(Mesh.GetVertexRef(Mesh.GetTriangleRef(Tid).A));
-				BoundingBox.Contain(Mesh.GetVertexRef(Mesh.GetTriangleRef(Tid).B));
-				BoundingBox.Contain(Mesh.GetVertexRef(Mesh.GetTriangleRef(Tid).C));
+				BoundingBox.Contain(Transform.TransformPosition(Mesh.GetVertexRef(Mesh.GetTriangleRef(Tid).A)));
+				BoundingBox.Contain(Transform.TransformPosition(Mesh.GetVertexRef(Mesh.GetTriangleRef(Tid).B)));
+				BoundingBox.Contain(Transform.TransformPosition(Mesh.GetVertexRef(Mesh.GetTriangleRef(Tid).C)));
 			}
 		}
 		break;

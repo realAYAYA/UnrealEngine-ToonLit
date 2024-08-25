@@ -50,9 +50,49 @@ const UE::Shader::FStructType* FMaterialHLSLGenerator::GetMaterialAttributesType
 	return CachedTree.GetMaterialAttributesType();
 }
 
-const UE::Shader::FValue& FMaterialHLSLGenerator::GetMaterialAttributesDefaultValue() const
+const UE::HLSLTree::FExpression* FMaterialHLSLGenerator::GetMaterialAttributesDefaultExpression() const
 {
-	return CachedTree.GetMaterialAttributesDefaultValue();
+	using namespace UE::HLSLTree;
+
+	FTree& Tree = GetTree();
+	const UE::Shader::FStructType* StructType = GetMaterialAttributesType();
+	const FExpression* OutExpression = Tree.NewConstant(CachedTree.GetMaterialAttributesDefaultValue());
+
+	// Some default values are unknown at tree generation time
+	{
+		const UE::Shader::FStructField* ShadingModelField = StructType->FindFieldByName(*FMaterialAttributeDefinitionMap::GetAttributeName(MP_ShadingModel));
+		const FExpression* ShadingModelExpression = Tree.NewExpression<Material::FExpressionDefaultShadingModel>();
+		OutExpression = Tree.NewExpression<FExpressionSetStructField>(StructType, ShadingModelField, OutExpression, ShadingModelExpression);
+	}
+
+	{
+		const UE::Shader::FStructField* SubsurfaceColorField = StructType->FindFieldByName(*FMaterialAttributeDefinitionMap::GetAttributeName(MP_SubsurfaceColor));
+		const FExpression* SubsurfaceColorExpression = Tree.NewExpression<Material::FExpressionDefaultSubsurfaceColor>();
+		OutExpression = Tree.NewExpression<FExpressionSetStructField>(StructType, SubsurfaceColorField, OutExpression, SubsurfaceColorExpression);
+	}
+
+	// Some material attribute defaults aren't compile time constants
+	if (ensure(TargetMaterial) && !TargetMaterial->bTangentSpaceNormal)
+	{
+		const UE::Shader::FStructField* NormalField = StructType->FindFieldByName(*FMaterialAttributeDefinitionMap::GetAttributeName(MP_Normal));
+		const UE::Shader::FStructField* TangentField = StructType->FindFieldByName(*FMaterialAttributeDefinitionMap::GetAttributeName(MP_Tangent));
+
+		const FExpression* NormalExpression = Tree.NewExpression<Material::FExpressionExternalInput>(Material::EExternalInput::WorldVertexNormal);
+		const FExpression* TangentExpression = Tree.NewExpression<Material::FExpressionExternalInput>(Material::EExternalInput::WorldVertexTangent);
+
+		OutExpression = Tree.NewExpression<FExpressionSetStructField>(StructType, NormalField, OutExpression, NormalExpression);
+		OutExpression = Tree.NewExpression<FExpressionSetStructField>(StructType, TangentField, OutExpression, TangentExpression);
+	}
+
+	for (int32 CustomUVProperty = MP_CustomizedUVs0; CustomUVProperty <= MP_CustomizedUVs7; ++CustomUVProperty)
+	{
+		const UE::Shader::FStructField* CustomUVField = StructType->FindFieldByName(*FMaterialAttributeDefinitionMap::GetAttributeName((EMaterialProperty)CustomUVProperty));
+		const Material::EExternalInput TexCoordInput = Material::EExternalInput((uint8)Material::EExternalInput::TexCoord0 + uint8(CustomUVProperty - MP_CustomizedUVs0));
+		const FExpression* TexCoordExpression = Tree.NewExpression<Material::FExpressionExternalInput>(TexCoordInput);
+		OutExpression = Tree.NewExpression<FExpressionSetStructField>(StructType, CustomUVField, OutExpression, TexCoordExpression);
+	}
+
+	return OutExpression;
 }
 
 UMaterialExpression* FMaterialHLSLGenerator::GetCurrentExpression() const
@@ -137,27 +177,25 @@ static const UE::HLSLTree::FExpression* CompileMaterialInput(FMaterialHLSLGenera
 	using namespace UE::HLSLTree;
 
 	const FExpression* Expression = nullptr;
-	if (Material->IsPropertyActive(InputProperty))
+	// Not checking Material->IsPropertyActive here because the tree is shared with material instances
+	FMaterialInputDescription InputDescription;
+	if (Material->GetExpressionInputDescription(InputProperty, InputDescription))
 	{
-		FMaterialInputDescription InputDescription;
-		if (Material->GetExpressionInputDescription(InputProperty, InputDescription))
+		UE::Shader::FValue DefaultValue = UE::Shader::Cast(FMaterialAttributeDefinitionMap::GetDefaultValue(InputProperty), InputDescription.Type);
+		if (InputDescription.bUseConstant)
 		{
-			UE::Shader::FValue DefaultValue = UE::Shader::Cast(FMaterialAttributeDefinitionMap::GetDefaultValue(InputProperty), InputDescription.Type);
-			if (InputDescription.bUseConstant)
+			if (InputDescription.ConstantValue != DefaultValue)
 			{
-				if (InputDescription.ConstantValue != DefaultValue)
-				{
-					Expression = Generator.NewConstant(InputDescription.ConstantValue);
-				}
+				Expression = Generator.NewConstant(InputDescription.ConstantValue);
 			}
-			else
+		}
+		else
+		{
+			check(InputDescription.Input);
+			Expression = InputDescription.Input->TryAcquireHLSLExpression(Generator, Scope, (int32)InputProperty);
+			if (Expression)
 			{
-				check(InputDescription.Input);
-				Expression = InputDescription.Input->TryAcquireHLSLExpression(Generator, Scope, (int32)InputProperty);
-				if (Expression)
-				{
-					Expression = Generator.GetTree().NewExpression<FExpressionDefaultValue>(Expression, DefaultValue);
-				}
+				Expression = Generator.GetTree().NewExpression<FExpressionDefaultValue>(Expression, DefaultValue);
 			}
 		}
 	}
@@ -182,6 +220,7 @@ bool FMaterialHLSLGenerator::GenerateResult(UE::HLSLTree::FScope& Scope)
 		{
 			UMaterialExpressionFunctionOutput* ExpressionOutput = FunctionEntry->FunctionOutputs[OutputIndex];
 			//FOwnerScope TreeOwnerScope(GetTree(), ExpressionOutput);
+			FScopedGenerateFunctionOutput GenerateOutputScope(FunctionEntry, OutputIndex);
 			HLSLFunction->OutputExpressions.Add(ExpressionOutput->A.TryAcquireHLSLExpression(*this, Scope, 0));
 		}
 		FunctionEntry->bGeneratedResult = true;
@@ -202,6 +241,8 @@ bool FMaterialHLSLGenerator::GenerateResult(UE::HLSLTree::FScope& Scope)
 			FOwnerScope TreeOwnerScope(GetTree(), TargetMaterial);
 
 			const FStructField* PrevWPOField = CachedTree.GetMaterialAttributesType()->FindFieldByName(TEXT("PrevWorldPositionOffset"));
+			const FStructField* ShadingModelField = CachedTree.GetMaterialAttributesType()->FindFieldByName(*FMaterialAttributeDefinitionMap::GetAttributeName(MP_ShadingModel));
+
 			if (TargetMaterial->bUseMaterialAttributes)
 			{
 				FMaterialInputDescription InputDescription;
@@ -212,15 +253,23 @@ bool FMaterialHLSLGenerator::GenerateResult(UE::HLSLTree::FScope& Scope)
 
 					if (AttributesExpression)
 					{
-						AttributesExpression = GetTree().NewExpression<FExpressionDefaultValue>(AttributesExpression, CachedTree.GetMaterialAttributesDefaultValue());
+						// Special handling for ShadingModel to fallback to first material shading model if per pixel SM is not allowed
+						{
+							const FExpression* FallbackExpression = GetTree().NewExpression<Material::FExpressionDefaultShadingModel>();
+							FallbackExpression = GetTree().NewExpression<FExpressionSetStructField>(CachedTree.GetMaterialAttributesType(), ShadingModelField, AttributesExpression, FallbackExpression);
+							const FExpression* ShadingModelExpressions[] = { AttributesExpression, FallbackExpression };
+							AttributesExpression = GetTree().NewExpression<Material::FExpressionFinalShadingModelSwitch>(ShadingModelExpressions);
+						}
+
+						const FExpression* PrevAttributesExpression = GetTree().NewExpression<FExpressionDefaultValue>(AttributesExpression, CachedTree.GetMaterialAttributesDefaultValue());
 
 						const FString& WPOName = FMaterialAttributeDefinitionMap::GetAttributeName(MP_WorldPositionOffset);
 						const FStructField* WPOField = CachedTree.GetMaterialAttributesType()->FindFieldByName(*WPOName);
 
-						FRequestedType PrevRequestedType(CachedTree.GetMaterialAttributesType());
+						FRequestedType PrevRequestedType(CachedTree.GetMaterialAttributesType(), false);
 						PrevRequestedType.SetFieldRequested(WPOField);
 
-						const FExpression* PrevAttributesExpression = GetTree().GetPreviousFrame(AttributesExpression, PrevRequestedType);
+						PrevAttributesExpression = GetTree().GetPreviousFrame(PrevAttributesExpression, PrevRequestedType);
 						ensure(PrevAttributesExpression);
 						const FExpression* PrevWPOExpression = GetTree().NewExpression<FExpressionGetStructField>(CachedTree.GetMaterialAttributesType(), WPOField, PrevAttributesExpression);
 						AttributesExpression = GetTree().NewExpression<FExpressionSetStructField>(CachedTree.GetMaterialAttributesType(), PrevWPOField, AttributesExpression, PrevWPOExpression);
@@ -229,10 +278,15 @@ bool FMaterialHLSLGenerator::GenerateResult(UE::HLSLTree::FScope& Scope)
 			}
 			else
 			{
-				AttributesExpression = GetTree().NewExpression<FExpressionConstant>(CachedTree.GetMaterialAttributesDefaultValue());
+				AttributesExpression = GetMaterialAttributesDefaultExpression();
 				for (int32 PropertyIndex = 0; PropertyIndex < MP_MAX; ++PropertyIndex)
 				{
 					const EMaterialProperty Property = (EMaterialProperty)PropertyIndex;
+
+					if (Property == MP_CustomOutput)
+					{
+						continue;
+					}
 
 					// We're only interesting in attributes that map to valid fields
 					const UE::Shader::FStructField* AttributeField = CachedTree.GetMaterialAttributesType()->FindFieldByName(*FMaterialAttributeDefinitionMap::GetAttributeName(Property));
@@ -241,16 +295,26 @@ bool FMaterialHLSLGenerator::GenerateResult(UE::HLSLTree::FScope& Scope)
 						const FExpression* InputExpression = CompileMaterialInput(*this, Scope, Property, TargetMaterial);
 						if (InputExpression)
 						{
+							if (Property == MP_ShadingModel)
+							{
+								// Special handling for ShadingModel to fallback to first material shading model if per pixel SM is not allowed
+								const FExpression* FallbackExpression = GetTree().NewExpression<Material::FExpressionDefaultShadingModel>();
+								const FExpression* ShadingModelExpressions[] = { InputExpression, FallbackExpression };
+								InputExpression = GetTree().NewExpression<Material::FExpressionFinalShadingModelSwitch>(ShadingModelExpressions);
+							}
+
 							AttributesExpression = GetTree().NewExpression<FExpressionSetStructField>(
 								CachedTree.GetMaterialAttributesType(),
 								AttributeField,
 								AttributesExpression,
-								InputExpression);
+								InputExpression,
+								Property);
+
 							if (Property == MP_WorldPositionOffset)
 							{
 								const FExpression* PrevWPOExpression = GetTree().GetPreviousFrame(InputExpression, EValueType::Float3);
 								ensure(PrevWPOExpression);
-								AttributesExpression = GetTree().NewExpression<FExpressionSetStructField>(CachedTree.GetMaterialAttributesType(), PrevWPOField, AttributesExpression, PrevWPOExpression);
+								AttributesExpression = GetTree().NewExpression<FExpressionSetStructField>(CachedTree.GetMaterialAttributesType(), PrevWPOField, AttributesExpression, PrevWPOExpression, Property);
 							}
 						}
 					}
@@ -284,7 +348,7 @@ bool FMaterialHLSLGenerator::GenerateResult(UE::HLSLTree::FScope& Scope)
 				PreviewExpressionResult = AcquireExpression(Scope, INDEX_NONE, PreviewExpression, OutputIndex, FSwizzleParameters());
 			}
 
-			const FExpression* ExpressionEmissive = PreviewExpressionResult;
+			const FExpression* ExpressionEmissive = GetTree().GetPreview(PreviewExpressionResult);
 			if (ExpressionEmissive)
 			{
 				const FString& EmissiveColorName = FMaterialAttributeDefinitionMap::GetAttributeName(MP_EmissiveColor);
@@ -293,7 +357,7 @@ bool FMaterialHLSLGenerator::GenerateResult(UE::HLSLTree::FScope& Scope)
 				// Get back into gamma corrected space, as DrawTile does not do this adjustment.
 				ExpressionEmissive = GetTree().NewPowClamped(ExpressionEmissive, NewConstant(1.f / 2.2f));
 
-				AttributesExpression = GetTree().NewExpression<FExpressionConstant>(CachedTree.GetMaterialAttributesDefaultValue());
+				AttributesExpression = GetMaterialAttributesDefaultExpression();
 				AttributesExpression = GetTree().NewExpression<FExpressionSetStructField>(CachedTree.GetMaterialAttributesType(), EmissiveColorField, AttributesExpression, ExpressionEmissive);
 			}
 		}
@@ -421,6 +485,19 @@ const UE::HLSLTree::FExpression* FMaterialHLSLGenerator::NewDefaultInputExternal
 	return Expression;
 }
 
+const UE::HLSLTree::FExpression* FMaterialHLSLGenerator::NewDefaultInputExpression(int32 InputIndex, const UE::HLSLTree::FExpression* Expression)
+{
+	using namespace UE::HLSLTree;
+
+	UObject* InputOwner = GetTree().GetCurrentOwner();
+	if (InputOwner && InputIndex != INDEX_NONE)
+	{
+		const FMaterialConnectionKey Key{ InputOwner, nullptr, InputIndex, INDEX_NONE };
+		CachedTree.ConnectionMap.Add(Key, Expression);
+	}
+	return Expression;
+}
+
 const UE::HLSLTree::FExpression* FMaterialHLSLGenerator::AcquireExpression(UE::HLSLTree::FScope& Scope,
 	int32 InputIndex,
 	UMaterialExpression* MaterialExpression,
@@ -450,8 +527,15 @@ const UE::HLSLTree::FExpression* FMaterialHLSLGenerator::AcquireExpression(UE::H
 
 			for (int32 FunctionInputIndex = 0; FunctionInputIndex < FunctionCall->ConnectedInputs.Num(); ++FunctionInputIndex)
 			{
-				const FExpression* InputExpression = FunctionCall->ConnectedInputs[FunctionInputIndex];
-				Hasher.AppendData(&InputExpression, sizeof(InputExpression));
+				const FConnectedInput& ConnectedInput = FunctionCall->ConnectedInputs[FunctionInputIndex];
+				if (ConnectedInput.Input)
+				{
+					Hasher.AppendData(&ConnectedInput.Input, sizeof(ConnectedInput.Input)); //-V568
+				}
+				else
+				{
+					Hasher.AppendData(&ConnectedInput.Expression, sizeof(ConnectedInput.Expression)); //-V568
+				}
 			}
 		}
 
@@ -459,6 +543,7 @@ const UE::HLSLTree::FExpression* FMaterialHLSLGenerator::AcquireExpression(UE::H
 		const FExpression** Found = GeneratedExpressionMap.Find(KeyHash);
 		Expression = Found ? *Found : nullptr;
 
+		check(MaterialExpression);
 		if (!Expression && MaterialExpression->GenerateHLSLExpression(*this, Scope, OutputIndex, Expression))
 		{
 			GeneratedExpressionMap.Add(KeyHash, Expression);
@@ -482,7 +567,13 @@ const UE::HLSLTree::FExpression* FMaterialHLSLGenerator::AcquireExpression(UE::H
 	else
 	{
 		check(!Expression);
-		Expression = GetTree().NewExpression<UE::HLSLTree::FExpressionError>(AcquireError());
+		FStringView CurrentError = AcquireError();
+		if (!CurrentError.IsEmpty())
+		{
+			// if we have an error, generate an error expression
+			// if not, continue to return nullptr so caller can default missing inputs
+			Expression = GetTree().NewExpression<UE::HLSLTree::FExpressionError>(CurrentError);
+		}
 	}
 
 	return Expression;
@@ -491,17 +582,28 @@ const UE::HLSLTree::FExpression* FMaterialHLSLGenerator::AcquireExpression(UE::H
 const UE::HLSLTree::FExpression* FMaterialHLSLGenerator::AcquireFunctionInputExpression(UE::HLSLTree::FScope& Scope, const UMaterialExpressionFunctionInput* MaterialExpression)
 {
 	using namespace UE::HLSLTree;
-	const FFunctionCallEntry* FunctionEntry = FunctionCallStack.Last();
+	
+	// Need to pop because we are going out of the function when processing expressions connected to the inputs
+	FFunctionCallEntry* FunctionEntry = FunctionCallStack.Pop(EAllowShrinking::No);
 	const FExpression* InputExpression = nullptr;
 	int32 InputIndex = INDEX_NONE;
+
 	if (FunctionEntry->MaterialFunction)
 	{
 		for (int32 Index = 0; Index < FunctionEntry->FunctionInputs.Num(); ++Index)
 		{
 			if (FunctionEntry->FunctionInputs[Index] == MaterialExpression)
 			{
-				InputIndex = Index;;
-				InputExpression = FunctionEntry->ConnectedInputs[Index];
+				InputIndex = Index;
+				FConnectedInput& ConnectedInput = FunctionEntry->ConnectedInputs[Index];
+				// Use GetTracedInput to detect invalid reroute node and attempt to use preview as input if allowed
+				if (!ConnectedInput.Expression && ConnectedInput.Input && ConnectedInput.Input->GetTracedInput().Expression)
+				{
+					// Not using GetTracedInput here because we want the HLSL expression for the reroute node instead of
+					// the expression of the redirected node
+					ConnectedInput.Expression = ConnectedInput.Input->TryAcquireHLSLExpression(*this, *ConnectedInput.Scope);
+				}
+				InputExpression = ConnectedInput.Expression;
 				break;
 			}
 		}
@@ -513,6 +615,8 @@ const UE::HLSLTree::FExpression* FMaterialHLSLGenerator::AcquireFunctionInputExp
 			return nullptr;
 		}
 	}
+
+	FunctionCallStack.Push(FunctionEntry);
 
 	if (!InputExpression && (MaterialExpression->bUsePreviewValueAsDefault || !FunctionEntry->MaterialFunction))
 	{
@@ -528,7 +632,7 @@ const UE::HLSLTree::FExpression* FMaterialHLSLGenerator::AcquireFunctionInputExp
 			case FunctionInput_Vector2: DefaultValue = FVector2f(PreviewValue.X, PreviewValue.Y); break;
 			case FunctionInput_Vector3: DefaultValue = FVector3f(PreviewValue.X, PreviewValue.Y, PreviewValue.Z); break;
 			case FunctionInput_Vector4: DefaultValue = PreviewValue; break;
-			case FunctionInput_MaterialAttributes: DefaultValue = CachedTree.GetMaterialAttributesDefaultValue(); break;
+			case FunctionInput_MaterialAttributes: InputExpression = GetMaterialAttributesDefaultExpression(); break;
 			case FunctionInput_Texture2D:
 			case FunctionInput_TextureCube:
 			case FunctionInput_Texture2DArray:
@@ -543,7 +647,10 @@ const UE::HLSLTree::FExpression* FMaterialHLSLGenerator::AcquireFunctionInputExp
 				return nullptr;
 			}
 
-			InputExpression = NewConstant(DefaultValue);
+			if (!InputExpression)
+			{
+				InputExpression = NewConstant(DefaultValue);
+			}
 		}
 	}
 
@@ -579,7 +686,7 @@ bool FMaterialHLSLGenerator::GenerateStatements(UE::HLSLTree::FScope& Scope, UMa
 				return Error(TEXT("Bad control flow"));
 			}
 
-			ScopeToUse = JoinedScopeStack.Pop(false);
+			ScopeToUse = JoinedScopeStack.Pop(EAllowShrinking::No);
 			for (int32 i = 0; i < Entry.NumInputs; ++i)
 			{
 				ScopeToUse->AddPreviousScope(*Entry.PreviousScope[i]);
@@ -604,6 +711,7 @@ const UE::HLSLTree::FExpression* FMaterialHLSLGenerator::GenerateMaterialParamet
 {
 	using namespace UE::Shader;
 
+	const FMaterialParameterInfo& ParameterInfo = GetParameterInfo(InParameterName);
 	FMaterialParameterMetadata ParameterMeta(InParameterMeta);
 	FMaterialParameterMetadata OverrideParameterMeta;
 	if (GetParameterOverrideValueForCurrentFunction(InParameterMeta.Value.Type, InParameterName, OverrideParameterMeta))
@@ -615,14 +723,14 @@ const UE::HLSLTree::FExpression* FMaterialHLSLGenerator::GenerateMaterialParamet
 		ParameterMeta.ScalarCurve = OverrideParameterMeta.ScalarCurve;
 	}
 
-	return GetTree().NewExpression<UE::HLSLTree::Material::FExpressionParameter>(GetParameterInfo(InParameterName), ParameterMeta, InSamplerType, InExternalTextureGuid);
+	return GetTree().NewExpression<UE::HLSLTree::Material::FExpressionParameter>(ParameterInfo, ParameterMeta, InSamplerType, InExternalTextureGuid);
 }
 
 const UE::HLSLTree::FExpression* FMaterialHLSLGenerator::GenerateFunctionCall(UE::HLSLTree::FScope& Scope,
 	UMaterialFunctionInterface* MaterialFunction,
 	EMaterialParameterAssociation InParameterAssociation,
 	int32 InParameterIndex,
-	TArrayView<const UE::HLSLTree::FExpression*> ConnectedInputs,
+	TArrayView<FConnectedInput> ConnectedInputs,
 	int32 OutputIndex)
 {
 	using namespace UE::HLSLTree;
@@ -672,13 +780,28 @@ const UE::HLSLTree::FExpression* FMaterialHLSLGenerator::GenerateFunctionCall(UE
 		{
 			// FunctionInputs are the inputs from the UMaterialFunction object
 			const FFunctionExpressionInput& FunctionInput = FunctionInputs[InputIndex];
+			LocalFunctionInputs.Add(FunctionInput.ExpressionInput);
 
 			// ConnectedInputs are the inputs from the UMaterialFunctionCall object
 			// We want to connect the UMaterialExpressionFunctionInput from the UMaterialFunction to whatever UMaterialExpression is passed to the UMaterialFunctionCall
-			const FExpression* ConnectedInput = ConnectedInputs[InputIndex];
+			const FConnectedInput& ConnectedInput = ConnectedInputs[InputIndex];
+			if (ConnectedInput.Input)
+			{
+				Hasher.Update(&ConnectedInput.Input, sizeof(ConnectedInput.Input)); //-V568
+			}
+			else
+			{
+				Hasher.Update(&ConnectedInput.Expression, sizeof(ConnectedInput.Expression)); //-V568
+			}
+		}
 
-			LocalFunctionInputs.Add(FunctionInput.ExpressionInput);
-			Hasher.Update((uint8*)&ConnectedInput, sizeof(ConnectedInput));
+		// Hash the callstack too in case this function call is inside a material function.
+		// In that case, the addresses of FExpressionInputs won't change even if the owner
+		// MF is called at different places with different inputs
+		for (int32 Index = FunctionCallStack.Num() - 1; Index >= 0; --Index)
+		{
+			const FFunctionCallEntry* CallstackEntry = FunctionCallStack[Index];
+			Hasher.Update(&CallstackEntry, sizeof(CallstackEntry));
 		}
 		Hash = Hasher.Finalize();
 	}
@@ -714,11 +837,34 @@ const UE::HLSLTree::FExpression* FMaterialHLSLGenerator::GenerateFunctionCall(UE
 			check(FunctionCall->bGeneratedResult);
 		}
 	}
+	else if (FunctionCall->IsGeneratingOutput(OutputIndex))
+	{
+		FString CallstackStr;
+		for (int32 Index = FunctionCallStack.Num() - 1; Index >= 0; --Index)
+		{
+			const FFunctionCallEntry* Entry = FunctionCallStack[Index];
+			if (Entry && Entry->MaterialFunction)
+			{
+				CallstackStr.Appendf(TEXT("%s%s"), CallstackStr.Len() > 0 ? TEXT("<<") : TEXT(""), *Entry->MaterialFunction->GetName());
+			}
+		}
+		if (TargetMaterial)
+		{
+			CallstackStr.Appendf(TEXT("%s%s"), CallstackStr.Len() > 0 ? TEXT("<<") : TEXT(""), *TargetMaterial->GetName());
+		}
+
+		return NewErrorExpressionf(
+			TEXT("Circle found in material graph. MaterialFunction: %s, output %d. Callstack: %s"),
+			*MaterialFunction->GetName(),
+			OutputIndex,
+			*CallstackStr);
+	}
 
 	const FExpression* Result = nullptr;
 	FunctionCallStack.Add(FunctionCall);
 	if (bInlineFunction)
 	{
+		FScopedGenerateFunctionOutput GenerateOutputScope(FunctionCall, OutputIndex);
 		Result = ExpressionOutput->A.AcquireHLSLExpression(*this, Scope);
 	}
 	else
@@ -869,24 +1015,6 @@ int32 FMaterialHLSLGenerator::FindOrAddCustomExpressionOutputStructId(TArrayView
 		CustomExpressionOutputStructIdMap.Add(KeyHash, NewId);
 		return NewId;
 	}
-}
-
-int32 FMaterialHLSLGenerator::FindOrAddParameterCollection(UMaterialParameterCollection* ParameterCollection)
-{
-	int32 CollectionIndex = CachedTree.ParameterCollections.Find(ParameterCollection);
-
-	if (CollectionIndex == INDEX_NONE)
-	{
-		if (CachedTree.ParameterCollections.Num() >= MaxNumParameterCollectionsPerMaterial)
-		{
-			return Error(TEXT("Material references too many MaterialParameterCollections!  A material may only reference 2 different collections."));
-		}
-
-		CachedTree.ParameterCollections.Add(ParameterCollection);
-		CollectionIndex = CachedTree.ParameterCollections.Num() - 1;
-	}
-
-	return CollectionIndex;
 }
 
 #endif // WITH_EDITOR

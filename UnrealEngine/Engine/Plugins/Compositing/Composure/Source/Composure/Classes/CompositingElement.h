@@ -106,8 +106,11 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Composure|Input")
 	ESceneCameraLinkType CameraSource = ESceneCameraLinkType::Unused;
 
-	UPROPERTY(EditInstanceOnly, Category = "Composure|Input")
-	TLazyObjectPtr<ACameraActor> TargetCameraActor;
+	UPROPERTY()	
+	TLazyObjectPtr<ACameraActor> TargetCameraActor_DEPRECATED;
+
+	UPROPERTY(EditInstanceOnly, Category = "Composure|Input", DisplayName = "Target Camera Actor")
+	TWeakObjectPtr<ACameraActor> TargetCameraActorPtr;
 
 	/*********************************/
 	// Outputs

@@ -125,7 +125,7 @@ public:
  * Mesh Smoothing Tool
  */
 UCLASS()
-class MESHMODELINGTOOLSEXP_API USmoothMeshTool : public UBaseMeshProcessingTool
+class MESHMODELINGTOOLSEXP_API USmoothMeshTool : public UBaseMeshProcessingTool, public IInteractiveToolManageGeometrySelectionAPI
 {
 	GENERATED_BODY()
 
@@ -142,6 +142,12 @@ public:
 
 	virtual FText GetToolMessageString() const override;
 	virtual FText GetAcceptTransactionName() const override;
+
+	// IInteractiveToolManageGeometrySelectionAPI -- this tool won't update external geometry selection or change selection-relevant mesh IDs
+	virtual bool IsInputSelectionValidOnOutput() override
+	{
+		return true;
+	}
 
 protected:
 	UPROPERTY()

@@ -3,7 +3,7 @@
 	"Version": 1,
 	"VersionName": "1.0",
 	"FriendlyName": "Interchange Framework",
-	"Description": "Interchange framework plugin implement all engine importers and exporters.",
+	"Description": "The Interchange Framework plugin offers a customizable import and export system, with an extensible set of pipelines for handling common file types.",
 	"Category": "Importers",
 	"CreatedBy": "Epic Games, Inc.",
 	"CreatedByURL": "https://epicgames.com",
@@ -58,6 +58,11 @@
 		},
 		{
 			"Name": "InterchangeDispatcher",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "InterchangeCommon",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"
 		},

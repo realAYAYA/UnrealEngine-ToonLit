@@ -6,7 +6,7 @@
 
 //////////////////////////////////////////////////////////////////////////
 
-void FNiagaraPooledRWBuffer::Initialize(FRDGBuilder& GraphBuilder, const TCHAR* ResourceName, EPixelFormat InPixelFormat, const FRDGBufferDesc& BufferDesc)
+void FNiagaraPooledRWBuffer::InitializeInternal(FRDGBuilder& GraphBuilder, const TCHAR* ResourceName, EPixelFormat InPixelFormat, const FRDGBufferDesc& BufferDesc)
 {
 	Release();
 
@@ -20,11 +20,11 @@ void FNiagaraPooledRWBuffer::Initialize(FRDGBuilder& GraphBuilder, const TCHAR* 
 #endif
 }
 
-void FNiagaraPooledRWBuffer::Initialize(FRDGBuilder& GraphBuilder, const TCHAR* ResourceName, EPixelFormat InPixelFormat, const uint32 BytesPerElemenet, const uint32 NumElements, EBufferUsageFlags UsageFlags)
+void FNiagaraPooledRWBuffer::InitializeInternal(FRDGBuilder& GraphBuilder, const TCHAR* ResourceName, EPixelFormat InPixelFormat, const uint32 BytesPerElemenet, const uint32 NumElements, EBufferUsageFlags UsageFlags)
 {
 	FRDGBufferDesc BufferDesc = FRDGBufferDesc::CreateBufferDesc(BytesPerElemenet, NumElements);
 	BufferDesc.Usage |= UsageFlags;
-	Initialize(GraphBuilder, ResourceName, InPixelFormat, BufferDesc);
+	InitializeInternal(GraphBuilder, ResourceName, InPixelFormat, BufferDesc);
 }
 
 void FNiagaraPooledRWBuffer::Release()
@@ -89,7 +89,7 @@ void FNiagaraPooledRWBuffer::EndGraphUsage()
 
 //////////////////////////////////////////////////////////////////////////
 
-void FNiagaraPooledRWTexture::Initialize(FRDGBuilder& GraphBuilder, const TCHAR* ResourceName, const FRDGTextureDesc& TextureDesc)
+void FNiagaraPooledRWTexture::InitializeInternal(FRDGBuilder& GraphBuilder, const TCHAR* ResourceName, const FRDGTextureDesc& TextureDesc)
 {
 	Release();
 

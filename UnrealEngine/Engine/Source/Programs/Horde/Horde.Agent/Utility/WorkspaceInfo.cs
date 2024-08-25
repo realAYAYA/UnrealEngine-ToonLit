@@ -1,12 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
-using System.Collections.Generic;
 using System.Collections.Specialized;
-using System.Linq;
+using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading;
-using System.Threading.Tasks;
 using System.Web;
 using EpicGames.Core;
 using EpicGames.Perforce;
@@ -19,7 +16,7 @@ namespace Horde.Agent.Utility
 	/// <summary>
 	/// Stores information about a managed Perforce workspace
 	/// </summary>
-	class WorkspaceInfo
+	public sealed class WorkspaceInfo : IDisposable
 	{
 		/// <summary>
 		/// The perforce connection
@@ -115,21 +112,28 @@ namespace Horde.Agent.Utility
 			Repository = repository;
 		}
 
+		/// <inheritdoc/>
+		public void Dispose()
+		{
+			PerforceClient.Dispose();
+		}
+
 		/// <summary>
 		/// Creates a new managed workspace
 		/// </summary>
 		/// <param name="workspace">The workspace definition</param>
 		/// <param name="rootDir">Root directory for storing the workspace</param>
-		/// <param name="useHaveTable">Use the client's have table when syncing</param>
+		/// <param name="options">Extra options for ManagedWorkspace</param>
 		/// <param name="logger">Logger output</param>
 		/// <param name="cancellationToken">Cancellation token</param>
 		/// <returns>New workspace info</returns>
-		public static async Task<WorkspaceInfo> SetupWorkspaceAsync(AgentWorkspace workspace, DirectoryReference rootDir, bool useHaveTable, ILogger logger, CancellationToken cancellationToken)
+		public static async Task<WorkspaceInfo> SetupWorkspaceAsync(AgentWorkspace workspace, DirectoryReference rootDir, ManagedWorkspaceOptions options, ILogger logger, CancellationToken cancellationToken)
 		{
 			// Fill in the default credentials iff they are not set
-			string? serverAndPort = String.IsNullOrEmpty(workspace.ServerAndPort)? null : workspace.ServerAndPort;
-			string? userName = String.IsNullOrEmpty(workspace.UserName)? null : workspace.UserName;
-			string? password = String.IsNullOrEmpty(workspace.Password)? null : workspace.Password;
+			string? serverAndPort = String.IsNullOrEmpty(workspace.ServerAndPort) ? null : workspace.ServerAndPort;
+			string? userName = String.IsNullOrEmpty(workspace.UserName) ? null : workspace.UserName;
+			string? password = String.IsNullOrEmpty(workspace.Password) ? null : workspace.Password;
+			string? ticket = String.IsNullOrEmpty(workspace.Ticket) ? null : workspace.Ticket;
 
 			if (serverAndPort == null)
 			{
@@ -143,11 +147,24 @@ namespace Horde.Agent.Utility
 				logger.LogInformation("Using locally configured and logged in Perforce user: '{UserName}'", userName);
 			}
 
+			if (options.PreferNativeClient)
+			{
+				logger.LogInformation("Using native P4 client for {ServerAndPort}", serverAndPort);
+			}
+			else
+			{
+				logger.LogInformation("Using command-line P4 client for {ServerAndPort}", serverAndPort);
+			}
+
 			// Create the connection
-			IPerforceConnection perforce = await PerforceConnection.CreateAsync(new PerforceSettings(serverAndPort, userName) { PreferNativeClient = false }, logger);
+			using IPerforceConnection perforce = await PerforceConnection.CreateAsync(new PerforceSettings(serverAndPort, userName) { PreferNativeClient = options.PreferNativeClient, Password = ticket }, logger);
 			if (userName != null)
 			{
-				if (password != null)
+				if (ticket != null)
+				{
+					Environment.SetEnvironmentVariable("P4PASSWD", ticket);
+				}
+				else if (password != null)
 				{
 					await perforce.LoginAsync(password, cancellationToken);
 				}
@@ -156,7 +173,7 @@ namespace Horde.Agent.Utility
 					logger.LogInformation("Using locally logged in session for {UserName}", userName);
 				}
 			}
-			return await SetupWorkspaceAsync(perforce, workspace.Stream, workspace.Identifier, workspace.View, !workspace.Incremental, rootDir, useHaveTable, logger, cancellationToken);
+			return await SetupWorkspaceAsync(perforce, workspace.Stream, workspace.Identifier, workspace.View, !workspace.Incremental, rootDir, options, logger, cancellationToken);
 		}
 
 		/// <summary>
@@ -168,22 +185,22 @@ namespace Horde.Agent.Utility
 		/// <param name="view">View for this workspace</param>
 		/// <param name="removeUntrackedFiles">Whether untracked files should be removed when cleaning this workspace</param>
 		/// <param name="rootDir">Root directory for storing the workspace</param>
-		/// <param name="useHaveTable">Use the client's have table when syncing</param>
+		/// <param name="options">Extra options for ManagedWorkspace</param>
 		/// <param name="logger">Logger output</param>
 		/// <param name="cancellationToken">Cancellation token</param>
 		/// <returns>New workspace info</returns>
-		public static async Task<WorkspaceInfo> SetupWorkspaceAsync(IPerforceConnection perforce, string streamName, string identifier, IList<string> view, bool removeUntrackedFiles, DirectoryReference rootDir, bool useHaveTable, ILogger logger, CancellationToken cancellationToken)
+		public static async Task<WorkspaceInfo> SetupWorkspaceAsync(IPerforceConnection perforce, string streamName, string identifier, IList<string> view, bool removeUntrackedFiles, DirectoryReference rootDir, ManagedWorkspaceOptions options, ILogger logger, CancellationToken cancellationToken)
 		{
 			// Get the host name, and fill in any missing metadata about the connection
 			InfoRecord info = await perforce.GetInfoAsync(InfoOptions.ShortOutput, cancellationToken);
 
 			string? hostName = info.ClientHost;
-			if(hostName == null)
+			if (hostName == null)
 			{
 				throw new Exception("Unable to determine Perforce host name");
 			}
-			
-			if (!useHaveTable)
+
+			if (!options.UseHaveTable)
 			{
 				logger.LogInformation("Skipping use of have table");
 			}
@@ -196,7 +213,7 @@ namespace Horde.Agent.Utility
 
 			// if running on an edge server, append the server id to the client name
 			string edgeSuffix = String.Empty;
-			if(info.Services != null && info.ServerId != null)
+			if (info.Services != null && info.ServerId != null)
 			{
 				string[] services = info.Services.Split(' ', StringSplitOptions.RemoveEmptyEntries);
 				if (services.Any(x => x.Equals("edge-server", StringComparison.OrdinalIgnoreCase)))
@@ -210,29 +227,36 @@ namespace Horde.Agent.Utility
 
 			// Create the client Perforce connection
 			IPerforceConnection perforceClient = await perforce.WithClientAsync(clientName);
-
-			// Get the view for this stream
-			StreamRecord stream = await perforceClient.GetStreamAsync(streamName, true, cancellationToken);
-			PerforceViewMap streamView = PerforceViewMap.Parse(stream.View);
-
-			// get the workspace names
-			DirectoryReference metadataDir = DirectoryReference.Combine(rootDir, identifier);
-			DirectoryReference workspaceDir = DirectoryReference.Combine(metadataDir, "Sync");
-
-			// Create the repository
-			ManagedWorkspace newRepository = await ManagedWorkspace.LoadOrCreateAsync(hostName, metadataDir, true, useHaveTable, logger, cancellationToken);
-			if (removeUntrackedFiles)
+			try
 			{
-				await newRepository.DeleteClientAsync(perforceClient, cancellationToken);
+				// Get the view for this stream
+				StreamRecord stream = await perforceClient.GetStreamAsync(streamName, true, cancellationToken);
+				PerforceViewMap streamView = PerforceViewMap.Parse(stream.View);
+
+				// get the workspace names
+				DirectoryReference metadataDir = DirectoryReference.Combine(rootDir, identifier);
+				DirectoryReference workspaceDir = DirectoryReference.Combine(metadataDir, "Sync");
+
+				// Create the repository
+				ManagedWorkspace newRepository = await ManagedWorkspace.LoadOrCreateAsync(hostName, metadataDir, true, options, logger, cancellationToken);
+				if (removeUntrackedFiles)
+				{
+					await newRepository.DeleteClientAsync(perforceClient, cancellationToken);
+				}
+				await newRepository.SetupAsync(perforceClient, streamName, cancellationToken);
+
+				// Revert any open files
+				await newRepository.RevertAsync(perforceClient, cancellationToken);
+
+				// Create the workspace info
+				logger.LogInformation("Syncing {ClientName} to {BaseDir} from {Server}, using stream {Stream} and view:{View}", clientName, workspaceDir, info.ServerAddress, streamName, String.Join("", view.Select(x => $"\n  {x}")));
+				return new WorkspaceInfo(perforceClient, hostName, streamName, streamView, metadataDir, workspaceDir, view, removeUntrackedFiles, newRepository);
 			}
-			await newRepository.SetupAsync(perforceClient, streamName, cancellationToken);
-
-			// Revert any open files
-			await newRepository.RevertAsync(perforceClient, cancellationToken);
-
-			// Create the workspace info
-			logger.LogInformation("Syncing {ClientName} to {BaseDir} from {Server}, using stream {Stream} and view:{View}", clientName, workspaceDir, info.ServerAddress, streamName, String.Join("", view.Select(x => $"\n  {x}")));
-			return new WorkspaceInfo(perforceClient, hostName, streamName, streamView, metadataDir, workspaceDir, view, removeUntrackedFiles, newRepository);
+			catch
+			{
+				perforceClient.Dispose();
+				throw;
+			}
 		}
 
 		/// <summary>
@@ -245,7 +269,7 @@ namespace Horde.Agent.Utility
 			const string NameKey = "name";
 			const string ManagedWorkspaceValue = "managedWorkspace";
 			const string UseHaveTableKey = "useHaveTable";
-			
+
 			if (String.IsNullOrEmpty(method))
 			{
 				return true;
@@ -254,7 +278,7 @@ namespace Horde.Agent.Utility
 			NameValueCollection nameValues = HttpUtility.ParseQueryString(method);
 			string? name = nameValues[NameKey];
 			string? useHaveTable = nameValues[UseHaveTableKey];
-			
+
 			if (name != null && name.Equals(ManagedWorkspaceValue, StringComparison.OrdinalIgnoreCase))
 			{
 				if (useHaveTable != null && useHaveTable.Equals("false", StringComparison.OrdinalIgnoreCase))
@@ -265,7 +289,57 @@ namespace Horde.Agent.Utility
 
 			return true;
 		}
-		
+
+		/// <summary>
+		/// Create ManagedWorkspace options from a URL-encoded query string.
+		/// </summary>
+		/// <param name="workspace">Workspace settings</param>
+		/// <returns></returns>
+		public static ManagedWorkspaceOptions GetMwOptions(AgentWorkspace workspace)
+		{
+			const string NameKey = "name";
+			const string ManagedWorkspaceValue = "managedWorkspace";
+			const string NumParallelSyncThreadsKey = "numParallelSyncThreads";
+			const string MaxFileConcurrencyKey = "maxFileConcurrency";
+			const string MinScratchSpaceKey = "minScratchSpace";
+			const string UseHaveTableKey = "useHaveTable";
+			const string PreferNativeClientKey = "preferNativeClient";
+
+			ManagedWorkspaceOptions options = new ManagedWorkspaceOptions();
+			options = options with { Partitioned = workspace.Partitioned };
+
+			string? method = workspace.Method;
+			if (!String.IsNullOrEmpty(method))
+			{
+				NameValueCollection nameValues = HttpUtility.ParseQueryString(method);
+				if (String.Equals(nameValues[NameKey], ManagedWorkspaceValue, StringComparison.OrdinalIgnoreCase))
+				{
+					if (Int32.TryParse(nameValues[NumParallelSyncThreadsKey], out int v))
+					{
+						options = options with { NumParallelSyncThreads = v };
+					}
+					if (Int32.TryParse(nameValues[MaxFileConcurrencyKey], out v))
+					{
+						options = options with { MaxFileConcurrency = v };
+					}
+					if (Int32.TryParse(nameValues[MinScratchSpaceKey], out v))
+					{
+						options = options with { MinScratchSpace = v };
+					}
+					if (String.Equals(nameValues[UseHaveTableKey], "false", StringComparison.OrdinalIgnoreCase))
+					{
+						options = options with { UseHaveTable = false };
+					}
+					if (String.Equals(nameValues[PreferNativeClientKey], "true", StringComparison.OrdinalIgnoreCase) && RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+					{
+						options = options with { PreferNativeClient = true };
+					}
+				}
+			}
+
+			return options;
+		}
+
 		/// <summary>
 		/// Gets the latest change in the stream
 		/// </summary>
@@ -291,21 +365,24 @@ namespace Horde.Agent.Utility
 		/// Removes the given cache file if it's invalid, and updates the metadata to reflect the version about to be synced
 		/// </summary>
 		/// <param name="cacheFile">Path to the cache file</param>
+		/// <returns>Async task</returns>
+		public static void RemoveLocalCacheMarker(FileReference cacheFile)
+		{
+			FileReference.Delete(cacheFile);
+			FileReference.Delete(cacheFile.ChangeExtension(".txt"));
+		}
+
+		/// <summary>
+		/// Removes the given cache file if it's invalid, and updates the metadata to reflect the version about to be synced
+		/// </summary>
+		/// <param name="cacheFile">Path to the cache file</param>
 		/// <param name="change">The current change being built</param>
 		/// <param name="preflightChange">The preflight changelist number</param>
-		/// <returns>Async task</returns>
-		public static async Task UpdateLocalCacheMarker(FileReference cacheFile, int change, int preflightChange)
+		/// <returns>True if cache file was replaced. That is if changelist or stream view is different from what is already synced</returns>
+		public async Task<bool> UpdateLocalCacheMarkerAsync(FileReference cacheFile, int change, int preflightChange)
 		{
 			// Create the new cache file descriptor
-			string newDescriptor;
-			if(preflightChange <= 0)
-			{
-				newDescriptor = $"CL {change}";
-			}
-			else
-			{
-				newDescriptor = $"CL {preflightChange} with base CL {change}";
-			}
+			string newDescriptor = GetCacheMarkerDescriptor(change, preflightChange);
 
 			// Remove the cache file if the current descriptor doesn't match
 			FileReference descriptorFile = cacheFile.ChangeExtension(".txt");
@@ -314,9 +391,9 @@ namespace Horde.Agent.Utility
 				if (FileReference.Exists(descriptorFile))
 				{
 					string oldDescriptor = await FileReference.ReadAllTextAsync(descriptorFile);
-					if (oldDescriptor == newDescriptor)
+					if (oldDescriptor.Equals(newDescriptor, StringComparison.Ordinal))
 					{
-						return;
+						return false;
 					}
 					else
 					{
@@ -328,6 +405,34 @@ namespace Horde.Agent.Utility
 
 			// Write the new descriptor file
 			await FileReference.WriteAllTextAsync(descriptorFile, newDescriptor);
+			return true;
+		}
+
+		string GetCacheMarkerDescriptor(int change, int preflightChange)
+		{
+			StringBuilder descriptor = new StringBuilder();
+			if (preflightChange <= 0)
+			{
+				descriptor.AppendLine($"CL {change}");
+			}
+			else
+			{
+				descriptor.AppendLine($"CL {preflightChange} with base CL {change}");
+			}
+
+			descriptor.AppendLine();
+			foreach (PerforceViewMapEntry streamViewEntry in StreamView.Entries)
+			{
+				descriptor.AppendLine($"StreamView: {streamViewEntry}");
+			}
+
+			descriptor.AppendLine();
+			foreach (string viewLine in View)
+			{
+				descriptor.AppendLine($"View: {viewLine}");
+			}
+
+			return descriptor.ToString();
 		}
 
 		/// <summary>
@@ -357,7 +462,7 @@ namespace Horde.Agent.Utility
 		/// </summary>
 		/// <param name="change">Change number to unshelve</param>
 		/// <param name="cancellationToken">Cancellation token</param>
-		public async Task UnshelveAsync(int change, CancellationToken cancellationToken)
+		async Task UnshelveAsync(int change, CancellationToken cancellationToken)
 		{
 			if (change > 0)
 			{
@@ -381,7 +486,7 @@ namespace Horde.Agent.Utility
 		public static async Task RevertAllChangesAsync(IPerforceConnection perforce, ILogger logger, CancellationToken cancellationToken)
 		{
 			// Make sure the client name is set
-			if(perforce.Settings.ClientName == null)
+			if (perforce.Settings.ClientName == null)
 			{
 				throw new ArgumentException("RevertAllChangesAsync() requires PerforceConnection with client");
 			}

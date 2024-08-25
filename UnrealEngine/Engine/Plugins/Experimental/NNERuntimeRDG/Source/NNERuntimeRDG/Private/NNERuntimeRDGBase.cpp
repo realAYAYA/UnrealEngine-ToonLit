@@ -2,9 +2,8 @@
 
 #include "NNERuntimeRDGBase.h"
 
+#include "Helper/NNERuntimeRDGLogHelper.h"
 #include "NNERuntimeFormat.h"
-#include "NNEUtilsLogHelper.h"
-#include "NNEUtilsModelOptimizer.h"
 #include "RenderGraphBuilder.h"
 #include "RenderGraphUtils.h"
 #include "RHIGPUReadback.h"
@@ -59,7 +58,7 @@ bool FInputValidator::Validate(TConstArrayView<ENNETensorDataType> InputTypes)
 		check(TemplateIdx < TemplateTypes.Num());
 		if (INDEX_NONE == TemplateTypes[TemplateIdx].Find(InputTypes[Idx]))
 		{
-			FString TargetType = NNEUtils::Internal::GetTensorDataTypeName(InputTypes[Idx]);
+			FString TargetType = LogHelper::GetTensorDataTypeName(InputTypes[Idx]);
 			UE_LOG(LogNNE, Warning, TEXT("Input at index '%d' (from template T%d) is of type '%s' witch is not supported for that input."), Idx, TemplateIdx, *TargetType);
 			bAreInputValid = false;
 		}
@@ -94,15 +93,23 @@ void FInputValidator::AddRequired(int32 TemplateIdx)
 //
 void FAttributeValidator::AddOptional(const FString& Name, ENNEAttributeDataType Type)
 {
-	checkf(nullptr == OptionalAttributes.FindByPredicate([Name](const FEntry& Other) { return Other.Name == Name; }), TEXT("Attribute name should be unique"));
-	checkf(nullptr == RequiredAttributes.FindByPredicate([Name](const FEntry& Other) { return Other.Name == Name; }), TEXT("Attribute name should be unique"));
+#if DO_CHECK
+	const bool bIsFoundInOptional = (nullptr != OptionalAttributes.FindByPredicate([Name](const FEntry& Other) { return Other.Name == Name; }));
+	const bool bIsFoundInRequired = (nullptr != RequiredAttributes.FindByPredicate([Name](const FEntry& Other) { return Other.Name == Name; }));
+	checkf(!bIsFoundInOptional, TEXT("Attribute name should be unique"));
+	checkf(!bIsFoundInRequired, TEXT("Attribute name should be unique"));
+#endif
 	OptionalAttributes.Emplace(Name, Type);
 }
 
 void FAttributeValidator::AddRequired(const FString& Name, ENNEAttributeDataType Type)
 {
-	checkf(nullptr == OptionalAttributes.FindByPredicate([Name](const FEntry& Other) { return Other.Name == Name; }), TEXT("Attribute name should be unique"));
-	checkf(nullptr == RequiredAttributes.FindByPredicate([Name](const FEntry& Other) { return Other.Name == Name; }), TEXT("Attribute name should be unique"));
+#if DO_CHECK
+	const bool bIsFoundInOptional = (nullptr != OptionalAttributes.FindByPredicate([Name](const FEntry& Other) { return Other.Name == Name; }));
+	const bool bIsFoundInRequired = (nullptr != RequiredAttributes.FindByPredicate([Name](const FEntry& Other) { return Other.Name == Name; }));
+	checkf(!bIsFoundInOptional, TEXT("Attribute name should be unique"));
+	checkf(!bIsFoundInRequired, TEXT("Attribute name should be unique"));
+#endif
 	RequiredAttributes.Emplace(Name, Type);
 }
 

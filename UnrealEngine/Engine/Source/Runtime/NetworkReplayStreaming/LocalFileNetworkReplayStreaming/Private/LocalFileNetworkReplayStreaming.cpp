@@ -2965,7 +2965,7 @@ bool FLocalFileNetworkReplayStreamer::CleanUpOldReplays(const FString& DemoPath,
 			((TotalDiskFreeSpace < MinFreeSpace) || (SortedAutoReplays.Num() >= MaxDemos)))
 		{
 			// find and delete the oldest replay
-			const FAutoReplayInfo OldestReplay = SortedAutoReplays.Pop(false);
+			const FAutoReplayInfo OldestReplay = SortedAutoReplays.Pop(EAllowShrinking::No);
 
 			// Try deleting the replay
 			if (!ensureMsgf(FileManager.Delete(*OldestReplay.Path, /*bRequireExists=*/ true, /*bEvenIfReadOnly=*/ true), TEXT("FLocalFileNetworkReplayStreamer::CleanUpOldReplays: Failed to delete old replay %s"), *OldestReplay.Path))
@@ -3011,7 +3011,7 @@ bool FLocalFileNetworkReplayStreamer::CleanUpOldReplays(const FString& DemoPath,
 		while (SortedAdditionalAutoReplays.Num() && (TotalDiskFreeSpace < MinFreeSpace))
 		{
 			// find and delete the oldest replay
-			const FAutoReplayInfo OldestReplay = SortedAdditionalAutoReplays.Pop(false);
+			const FAutoReplayInfo OldestReplay = SortedAdditionalAutoReplays.Pop(EAllowShrinking::No);
 
 			// Try deleting the replay
 			if (!ensureMsgf(FileManager.Delete(*OldestReplay.Path, /*bRequireExists=*/ true, /*bEvenIfReadOnly=*/ true), TEXT("FLocalFileNetworkReplayStreamer::CleanUpOldReplays: Failed to delete old replay %s"), *OldestReplay.Path))
@@ -3505,7 +3505,7 @@ void FLocalFileNetworkReplayStreamer::ConditionallyLoadNextChunk()
 							if (StreamAr.Tell() >= TrimBytes)
 							{
 								// don't realloc, we're about to append anyway
-								StreamAr.Buffer.RemoveAt(0, TrimBytes, false);
+								StreamAr.Buffer.RemoveAt(0, TrimBytes, EAllowShrinking::No);
 								StreamAr.Seek(StreamAr.Tell() - TrimBytes);
 
 								StreamTimeRange.Min = CurrentReplayInfo.DataChunks[MinChunkIndex].Time1;
@@ -3666,13 +3666,13 @@ void FGenericQueuedLocalFileRequest::IssueRequest()
 
 void FGenericQueuedLocalFileRequest::FinishRequest()
 {
-	if (CompletionCallback)
-	{
-		CompletionCallback();
-	}
-
 	if (!bCancelled && Streamer.IsValid())
 	{
+		if (CompletionCallback)
+		{
+			CompletionCallback();
+		}
+
 		Streamer->OnFileRequestComplete(AsShared());
 	}
 }

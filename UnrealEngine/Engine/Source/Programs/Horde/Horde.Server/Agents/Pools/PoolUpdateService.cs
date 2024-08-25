@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using EpicGames.Horde.Agents.Pools;
 using Horde.Server.Server;
 using Horde.Server.Streams;
 using HordeCommon;
@@ -18,7 +19,7 @@ namespace Horde.Server.Agents.Pools
 	/// <summary>
 	/// Periodically updates pool documents to contain the correct workspaces
 	/// </summary>
-	public sealed class PoolUpdateService : IHostedService, IDisposable
+	public sealed class PoolUpdateService : IHostedService, IAsyncDisposable
 	{
 		readonly IAgentCollection _agents;
 		readonly IPoolCollection _pools;
@@ -56,26 +57,26 @@ namespace Horde.Server.Agents.Pools
 		{
 			await _updatePoolsTicker.StopAsync();
 			await _shutdownDisabledAgentsTicker.StopAsync();
-		} 
+		}
 
 		/// <inheritdoc/>
-		public void Dispose()
+		public async ValueTask DisposeAsync()
 		{
-			_updatePoolsTicker.Dispose();
-			_shutdownDisabledAgentsTicker.Dispose();
+			await _updatePoolsTicker.DisposeAsync();
+			await _shutdownDisabledAgentsTicker.DisposeAsync();
 		}
 
 		/// <summary>
 		/// Shutdown agents that have been disabled for longer than the configured grace period
 		/// </summary>
-		/// <param name="stoppingToken">Cancellation token for the async task</param>
+		/// <param name="cancellationToken">Cancellation token for the async task</param>
 		/// <returns>Async task</returns>
-		internal async ValueTask ShutdownDisabledAgentsAsync(CancellationToken stoppingToken)
+		internal async ValueTask ShutdownDisabledAgentsAsync(CancellationToken cancellationToken)
 		{
 			using TelemetrySpan span = _tracer.StartActiveSpan($"{nameof(PoolUpdateService)}.{nameof(ShutdownDisabledAgentsAsync)}");
 
-			List<IPool> pools = await _pools.GetAsync();
-			IEnumerable<IAgent> disabledAgents = await _agents.FindAsync(enabled: false);
+			IReadOnlyList<IPoolConfig> pools = await _pools.GetConfigsAsync(cancellationToken);
+			IEnumerable<IAgent> disabledAgents = await _agents.FindAsync(enabled: false, cancellationToken: cancellationToken);
 			disabledAgents = disabledAgents.Where(x => IsAgentAutoScaled(x, pools));
 
 			int c = 0;
@@ -83,7 +84,7 @@ namespace Horde.Server.Agents.Pools
 			{
 				if (HasGracePeriodExpired(agent, pools, _globalConfig.CurrentValue.AgentShutdownIfDisabledGracePeriod))
 				{
-					await _agents.TryUpdateSettingsAsync(agent, requestShutdown: true);
+					await _agents.TryUpdateSettingsAsync(agent, requestShutdown: true, cancellationToken: cancellationToken);
 					_logger.LogInformation("Shutting down agent {AgentId} as it has been disabled for longer than grace period", agent.Id.ToString());
 					c++;
 				}
@@ -91,8 +92,8 @@ namespace Horde.Server.Agents.Pools
 
 			span.SetAttribute("numShutdown", c);
 		}
-		
-		private bool HasGracePeriodExpired(IAgent agent, List<IPool> pools, TimeSpan globalGracePeriod)
+
+		private bool HasGracePeriodExpired(IAgent agent, IReadOnlyList<IPoolConfig> pools, TimeSpan globalGracePeriod)
 		{
 			if (agent.LastStatusChange == null)
 			{
@@ -104,34 +105,34 @@ namespace Horde.Server.Agents.Pools
 			return _clock.UtcNow > expirationTime;
 		}
 
-		private static TimeSpan? GetGracePeriod(IAgent agent, List<IPool> pools)
+		private static TimeSpan? GetGracePeriod(IAgent agent, IReadOnlyList<IPoolConfig> pools)
 		{
 			IEnumerable<PoolId> poolIds = agent.ExplicitPools.Concat(agent.DynamicPools);
-			IPool? pool = pools.FirstOrDefault(x => poolIds.Contains(x.Id) && x.ShutdownIfDisabledGracePeriod != null);
+			IPoolConfig? pool = pools.FirstOrDefault(x => poolIds.Contains(x.Id) && x.ShutdownIfDisabledGracePeriod != null);
 			return pool?.ShutdownIfDisabledGracePeriod;
 		}
-		
-		private static bool IsAgentAutoScaled(IAgent agent, List<IPool> pools)
+
+		private static bool IsAgentAutoScaled(IAgent agent, IReadOnlyList<IPoolConfig> pools)
 		{
 			IEnumerable<PoolId> poolIds = agent.ExplicitPools.Concat(agent.DynamicPools);
-			return pools.Find(x => poolIds.Contains(x.Id) && x.EnableAutoscaling) != null;
+			return pools.Any(x => poolIds.Contains(x.Id) && x.EnableAutoscaling);
 		}
-		
+
 		/// <summary>
 		/// Execute the background task
 		/// </summary>
-		/// <param name="stoppingToken">Cancellation token for the async task</param>
+		/// <param name="cancellationToken">Cancellation token for the async task</param>
 		/// <returns>Async task</returns>
-		async ValueTask UpdatePoolsAsync(CancellationToken stoppingToken)
+		async ValueTask UpdatePoolsAsync(CancellationToken cancellationToken)
 		{
 			using TelemetrySpan span = _tracer.StartActiveSpan($"{nameof(PoolUpdateService)}.{nameof(UpdatePoolsAsync)}");
-			
+
 			// Capture the start time for this operation. We use this to attempt to sequence updates to agents, and prevent overriding another server's updates.
 			DateTime startTime = DateTime.UtcNow;
 
 			// Update the list
 			bool retryUpdate = true;
-			while (retryUpdate && !stoppingToken.IsCancellationRequested)
+			while (retryUpdate && !cancellationToken.IsCancellationRequested)
 			{
 				_logger.LogDebug("Updating pool->workspace map");
 
@@ -139,11 +140,11 @@ namespace Horde.Server.Agents.Pools
 				retryUpdate = false;
 
 				// Capture the list of pools at the start of this update
-				List<IPool> currentPools = await _pools.GetAsync();
+				IReadOnlyList<IPoolConfig> currentPools = await _pools.GetConfigsAsync(cancellationToken);
 
 				// Lookup table of pool id to workspaces
 				Dictionary<PoolId, AutoSdkConfig> poolToAutoSdkView = new Dictionary<PoolId, AutoSdkConfig>();
-				Dictionary<PoolId, List<AgentWorkspace>> poolToAgentWorkspaces = new Dictionary<PoolId, List<AgentWorkspace>>();
+				Dictionary<PoolId, List<AgentWorkspaceInfo>> poolToAgentWorkspaces = new Dictionary<PoolId, List<AgentWorkspaceInfo>>();
 
 				// Capture the current config state
 				GlobalConfig globalConfig = _globalConfig.CurrentValue;
@@ -154,15 +155,15 @@ namespace Horde.Server.Agents.Pools
 					foreach (KeyValuePair<string, AgentConfig> agentTypePair in streamConfig.AgentTypes)
 					{
 						// Create the new agent workspace
-						if (streamConfig.TryGetAgentWorkspace(agentTypePair.Value, out AgentWorkspace? agentWorkspace, out AutoSdkConfig? autoSdkConfig))
+						if (streamConfig.TryGetAgentWorkspace(agentTypePair.Value, out AgentWorkspaceInfo? agentWorkspace, out AutoSdkConfig? autoSdkConfig))
 						{
 							AgentConfig agentType = agentTypePair.Value;
 
 							// Find or add a list of workspaces for this pool
-							List<AgentWorkspace>? agentWorkspaces;
+							List<AgentWorkspaceInfo>? agentWorkspaces;
 							if (!poolToAgentWorkspaces.TryGetValue(agentType.Pool, out agentWorkspaces))
 							{
-								agentWorkspaces = new List<AgentWorkspace>();
+								agentWorkspaces = new List<AgentWorkspaceInfo>();
 								poolToAgentWorkspaces.Add(agentType.Pool, agentWorkspaces);
 							}
 
@@ -182,13 +183,13 @@ namespace Horde.Server.Agents.Pools
 				}
 
 				// Update the list of workspaces for each pool
-				foreach (IPool currentPool in currentPools)
+				foreach (IPoolConfig currentPool in currentPools)
 				{
 					// Get the new list of workspaces for this pool
-					List<AgentWorkspace>? newWorkspaces;
+					List<AgentWorkspaceInfo>? newWorkspaces;
 					if (!poolToAgentWorkspaces.TryGetValue(currentPool.Id, out newWorkspaces))
 					{
-						newWorkspaces = new List<AgentWorkspace>();
+						newWorkspaces = new List<AgentWorkspaceInfo>();
 					}
 
 					// Get the autosdk view
@@ -199,21 +200,18 @@ namespace Horde.Server.Agents.Pools
 					}
 
 					// Update the pools document
-					if (!AgentWorkspace.SetEquals(currentPool.Workspaces, newWorkspaces) || currentPool.Workspaces.Count != newWorkspaces.Count || !AutoSdkConfig.Equals(currentPool.AutoSdkConfig, newAutoSdkConfig))
+					if (!AgentWorkspaceInfo.SetEquals(currentPool.Workspaces, newWorkspaces) || currentPool.Workspaces.Count != newWorkspaces.Count || !AutoSdkConfig.Equals(currentPool.AutoSdkConfig, newAutoSdkConfig))
 					{
 						_logger.LogInformation("New workspaces for pool {Pool}:{Workspaces}", currentPool.Id, String.Join("", newWorkspaces.Select(x => $"\n  Identifier=\"{x.Identifier}\", Stream={x.Stream}")));
 
 						if (newAutoSdkConfig != null)
 						{
-							_logger.LogInformation("New autosdk view for pool {Pool}:{View}", currentPool.Id, String.Join("", newAutoSdkConfig.View.Select(x => $"\n  {x}"))); 
+							_logger.LogInformation("New autosdk view for pool {Pool}:{View}", currentPool.Id, String.Join("", newAutoSdkConfig.View.Select(x => $"\n  {x}")));
 						}
 
-						IPool? result = await _pools.TryUpdateAsync(currentPool, new UpdatePoolOptions { Workspaces = newWorkspaces, AutoSdkConfig = newAutoSdkConfig });
-						if (result == null)
-						{
-							_logger.LogInformation("Pool modified; will retry");
-							retryUpdate = true;
-						}
+#pragma warning disable CS0618 // Type or member is obsolete
+						await _pools.UpdateConfigAsync(currentPool.Id, new UpdatePoolConfigOptions { Workspaces = newWorkspaces, AutoSdkConfig = newAutoSdkConfig }, cancellationToken);
+#pragma warning restore CS0618 // Type or member is obsolete
 					}
 				}
 			}

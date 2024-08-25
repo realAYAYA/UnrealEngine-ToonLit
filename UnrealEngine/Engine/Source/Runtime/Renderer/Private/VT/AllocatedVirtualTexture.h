@@ -18,6 +18,7 @@ class FAllocatedVirtualTexture final : public IAllocatedVirtualTexture
 {
 public:
 	FAllocatedVirtualTexture(
+		FRHICommandListBase& RHICmdList,
 		FVirtualTextureSystem* InSystem,
 		uint32 InFrame,
 		const FAllocatedVTDescription& InDesc,
@@ -65,7 +66,7 @@ public:
 private:
 	uint32 CalculatePersistentHash(FAllocatedVTDescription const& InDesc, FVirtualTextureProducer* const* InProducers) const;
 	uint32 AddUniqueProducer(FVirtualTextureProducerHandle const& InHandle, const FVirtualTextureProducer* InProducer);
-	uint32 AddUniquePhysicalSpace(FVirtualTexturePhysicalSpace* InPhysicalSpace, uint32 InUniqueProducerIndex, uint32 InProducerPhysicalSpaceIndex);
+	uint32 AddUniquePhysicalSpace(FRHICommandListBase& RHICmdList, FVirtualTexturePhysicalSpace* InPhysicalSpace, uint32 InUniqueProducerIndex, uint32 InProducerPhysicalSpaceIndex);
 
 	uint32 FrameAllocated;
 	uint32 PersistentHash;

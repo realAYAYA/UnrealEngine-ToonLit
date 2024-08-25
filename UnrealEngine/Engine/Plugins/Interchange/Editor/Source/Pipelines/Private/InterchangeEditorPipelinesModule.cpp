@@ -167,6 +167,7 @@ void FInterchangeEditorPipelinesModule::RegisterPropertySectionMappings()
 	{
 		TSharedRef<FPropertySection> Section = RegisterPropertySection(PropertyModule, "InterchangeGenericAssetsPipeline", "General", LOCTEXT("General", "General"));
 		Section->AddCategory("Common");
+		Section->AddCategory("Conflicts");
 	}
 
 	// Materials

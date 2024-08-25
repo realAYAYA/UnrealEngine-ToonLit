@@ -8,9 +8,9 @@ namespace Horde.Server.Tests
 	/// Put into a separate file to avoid accidental commit of credentials.
 	/// </summary>
 	public static class DebugSettings
-    {
-	    public static readonly string DbUsername = "username-not-set";
-	    public static readonly string DbPassword = "password-not-set";
-	    public static readonly string DbHostname = "";
-    }
+	{
+		public static readonly string DbUsername = "username-not-set";
+		public static readonly string DbPassword = "password-not-set";
+		public static readonly string DbHostname = "";
+	}
 }

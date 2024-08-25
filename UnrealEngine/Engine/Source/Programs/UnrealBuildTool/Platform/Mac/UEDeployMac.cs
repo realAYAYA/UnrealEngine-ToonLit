@@ -19,7 +19,7 @@ namespace UnrealBuildTool
 			return base.PrepTargetForDeployment(Receipt);
 		}
 
-		public static bool GeneratePList(string ProjectDirectory, bool bIsUnrealGame, string GameName, string ProjectName, string InEngineDir, string ExeName)
+		public static bool GeneratePList(string ProjectDirectory, bool bIsUnrealGame, string GameName, string ProjectName, string InEngineDir, string ExeName, TargetType TargetType)
 		{
 			string IntermediateDirectory = (bIsUnrealGame ? InEngineDir : ProjectDirectory) + "/Intermediate/Mac";
 			string DestPListFile = IntermediateDirectory + "/" + ExeName + "-Info.plist";
@@ -57,7 +57,7 @@ namespace UnrealBuildTool
 			PListData = PListData.Replace("${EXECUTABLE_NAME}", ExeName).
 				Replace("${APP_NAME}", FinalBundleID).
 				Replace("${ICON_NAME}", GameName).
-				Replace("${MACOSX_DEPLOYMENT_TARGET}", MacToolChain.Settings.MinMacOSVersion).
+				Replace("${MACOSX_DEPLOYMENT_TARGET}", MacToolChain.Settings.MinMacDeploymentVersion(TargetType)).
 				Replace("${BUNDLE_VERSION}", BundleVersion);
 
 			if (!Directory.Exists(IntermediateDirectory))

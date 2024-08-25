@@ -34,16 +34,15 @@ struct FGeometry;
 
 #define LOCTEXT_NAMESPACE "SClothPaintTab"
 
-SClothPaintTab::SClothPaintTab() 
-	: bModeApplied(false), bPaintModeEnabled(false)
+SClothPaintTab::SClothPaintTab() : bModeApplied(false)
 {	
 }
 
 SClothPaintTab::~SClothPaintTab()
 {
-	if(ISkeletalMeshEditor* SkeletalMeshEditor = static_cast<ISkeletalMeshEditor*>(HostingApp.Pin().Get()))
+	if(const ISkeletalMeshEditor* Editor = static_cast<ISkeletalMeshEditor*>(HostingApp.Pin().Get()))
 	{
-		SkeletalMeshEditor->GetEditorModeManager().ActivateDefaultMode();
+		Editor->GetEditorModeManager().ActivateDefaultMode();
 	}
 }
 
@@ -83,9 +82,8 @@ void SClothPaintTab::Construct(const FArguments& InArgs)
 		SAssignNew(ContentBox, SScrollBox)
 	];
 
-	ISkeletalMeshEditor* SkeletalMeshEditor = static_cast<ISkeletalMeshEditor*>(HostingApp.Pin().Get());
-
-	if(SkeletalMeshEditor)
+	
+	if(ISkeletalMeshEditor* SkeletalMeshEditor = GetSkeletalMeshEditor())
 	{
 		IPersonaToolkit& Persona = SkeletalMeshEditor->GetPersonaToolkit().Get();
 
@@ -107,81 +105,61 @@ void SClothPaintTab::Tick(const FGeometry& AllottedGeometry, const double InCurr
 	SCompoundWidget::Tick(AllottedGeometry, InCurrentTime, InDeltaTime);
 }
 
-void SClothPaintTab::TogglePaintMode()
+void SClothPaintTab::EnterPaintMode()
 {
-	bPaintModeEnabled = !bPaintModeEnabled;
-	UpdatePaintTools();
-}
-
-bool SClothPaintTab::IsPaintModeActive() const
-{
-	return bPaintModeEnabled;
-}
-
-void SClothPaintTab::UpdatePaintTools()
-{
-	if(!HostingApp.IsValid())
+	const ISkeletalMeshEditor* SkeletalMeshEditor = GetSkeletalMeshEditor();
+	if (!SkeletalMeshEditor)
 	{
-		// If we have no valid host, we can't do anything with our editor below, so don't perform a
-		// state update on the tool mode.
 		return;
 	}
-
-	if (bPaintModeEnabled)
+	FClothingPaintEditMode* PaintMode = (FClothingPaintEditMode*)SkeletalMeshEditor->GetEditorModeManager().GetActiveMode(PaintModeID);
+	if (!PaintMode)
 	{
-		ISkeletalMeshEditor* SkeletalMeshEditor = static_cast<ISkeletalMeshEditor*>(HostingApp.Pin().Get());
-		SkeletalMeshEditor->GetEditorModeManager().ActivateMode(PaintModeID, true);
+		return;
+	}
+	
+	FClothPainter* ClothPainter = static_cast<FClothPainter*>(PaintMode->GetMeshPainter());
+	check(ClothPainter);
 
-		FClothingPaintEditMode* PaintMode = (FClothingPaintEditMode*)SkeletalMeshEditor->GetEditorModeManager().GetActiveMode(PaintModeID);
-		if (PaintMode)
+	ClothPainter->Reset();
+	ModeWidget = StaticCastSharedPtr<SClothPaintWidget>(ClothPainter->GetWidget());
+	
+	ContentBox->AddSlot()
+	[
+		ModeWidget->AsShared()
+	];
+
+	if(SelectorWidget.IsValid())
+	{
+		TWeakObjectPtr<UClothingAssetCommon> WeakAsset = SelectorWidget->GetSelectedAsset();
+
+		if(WeakAsset.Get())
 		{
-			FClothPainter* ClothPainter = static_cast<FClothPainter*>(PaintMode->GetMeshPainter());
-			check(ClothPainter);
-
-			ClothPainter->Reset();
-			ModeWidget = StaticCastSharedPtr<SClothPaintWidget>(ClothPainter->GetWidget());
-			PaintMode->SetPersonaToolKit(SkeletalMeshEditor->GetPersonaToolkit());
-
-			ContentBox->AddSlot()
-			[
-				ModeWidget->AsShared()
-			];
-
-			if(SelectorWidget.IsValid())
-			{
-				TWeakObjectPtr<UClothingAssetCommon> WeakAsset = SelectorWidget->GetSelectedAsset();
-
-				if(WeakAsset.Get())
-				{
-					ClothPainter->OnAssetSelectionChanged(WeakAsset.Get(), SelectorWidget->GetSelectedLod(), SelectorWidget->GetSelectedMask());
-				}
-			}
+			ClothPainter->OnAssetSelectionChanged(WeakAsset.Get(), SelectorWidget->GetSelectedLod(), SelectorWidget->GetSelectedMask());
 		}
 	}
-	else
-	{
-		ContentBox->RemoveSlot(ModeWidget->AsShared());
-		ISkeletalMeshEditor* SkeletalMeshEditor = static_cast<ISkeletalMeshEditor*>(HostingApp.Pin().Get());
-		SkeletalMeshEditor->GetEditorModeManager().ActivateDefaultMode();
-		ModeWidget = nullptr;
-	}
+}
+
+void SClothPaintTab::ExitPaintMode()
+{
+	ContentBox->RemoveSlot(ModeWidget->AsShared());
+	ModeWidget = nullptr;
 }
 
 void SClothPaintTab::OnAssetSelectionChanged(TWeakObjectPtr<UClothingAssetCommon> InAssetPtr, int32 InLodIndex, int32 InMaskIndex)
 {
-	if(bPaintModeEnabled)
+	const ISkeletalMeshEditor* SkeletalMeshEditor = GetSkeletalMeshEditor();
+	if (!SkeletalMeshEditor)
 	{
-		ISkeletalMeshEditor* SkeletalMeshEditor = static_cast<ISkeletalMeshEditor*>(HostingApp.Pin().Get());
+		return;
+	}
 
-		FClothingPaintEditMode* PaintMode = (FClothingPaintEditMode*)SkeletalMeshEditor->GetEditorModeManager().GetActiveMode(PaintModeID);
-		if(PaintMode)
+	FClothingPaintEditMode* PaintMode = (FClothingPaintEditMode*)SkeletalMeshEditor->GetEditorModeManager().GetActiveMode(PaintModeID);
+	if(PaintMode)
+	{
+		if(FClothPainter* ClothPainter = static_cast<FClothPainter*>(PaintMode->GetMeshPainter()))
 		{
-			FClothPainter* ClothPainter = static_cast<FClothPainter*>(PaintMode->GetMeshPainter());
-
-			if(ClothPainter)
-			{
-				ClothPainter->OnAssetSelectionChanged(InAssetPtr.Get(), InLodIndex, InMaskIndex);
-			}
+			ClothPainter->OnAssetSelectionChanged(InAssetPtr.Get(), InLodIndex, InMaskIndex);
 		}
 	}
 

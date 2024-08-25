@@ -5,6 +5,7 @@
 =============================================================================*/
 
 #include "Common.ush"
+#include "ParticleSimulationCommon.ush"
 
 /*-----------------------------------------------------------------------------
 	Shared declarations and functions.
@@ -38,7 +39,7 @@ struct FVertexInput
 	/** The simulation attributes for the particle. */
 	float4 SimulationAttributes : ATTRIBUTE3;
 	/** The offset in to the texture to store the particle. */
-	float2 ParticleIndex		: ATTRIBUTE4;
+	float3 ParticleIndex	: ATTRIBUTE4;
 	/** The texture coordinate of the corner of the sprite being rendered. */
 	float2 TexCoord				: ATTRIBUTE5;
 };
@@ -49,7 +50,7 @@ void VertexMain(
 	out float4 OutPosition : SV_POSITION
 	)
 {
-	float2 ParticleCoord = Input.TexCoord.xy * ParticleInjection.PixelScale.xy + Input.ParticleIndex.xy;
+	float2 ParticleCoord = Input.TexCoord.xy * ParticleInjection.TexCoordScale.xy + Input.ParticleIndex.xy * ParticleInjection.TilePageScale.xy + GetTilePageOffset(Input.ParticleIndex.z, ParticleInjection.TilePageScale, true);
 	OutPosition = float4(
 		ParticleCoord.xy * float2(2.0f,-2.0f) + float2(-1.0f,1.0f),
 		0,

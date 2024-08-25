@@ -3,11 +3,21 @@
 #include "Graph/MovieGraphConfig.h"
 
 #include "Algo/Transform.h"
+#include "CineCameraComponent.h"
+#include "Graph/MovieGraphBlueprintLibrary.h"
 #include "Graph/MovieGraphEdge.h"
+#include "Graph/MovieGraphPipeline.h"
 #include "Graph/Nodes/MovieGraphInputNode.h"
 #include "Graph/Nodes/MovieGraphOutputNode.h"
+#include "Graph/Nodes/MovieGraphGlobalOutputSettingNode.h"
+#include "Graph/Nodes/MovieGraphRemoveRenderSettingNode.h"
+#include "Graph/Nodes/MovieGraphRenderLayerNode.h"
+#include "Graph/Nodes/MovieGraphSubgraphNode.h"
 #include "Graph/Nodes/MovieGraphVariableNode.h"
+#include "Graph/Nodes/MovieGraphSelectNode.h"
+#include "Graph/MovieGraphUtils.h"
 #include "MovieGraphUtils.h"
+#include "MoviePipelineQueue.h"
 #include "MovieRenderPipelineCoreModule.h"
 
 #define LOCTEXT_NAMESPACE "MovieGraphConfig"
@@ -54,6 +64,16 @@ bool UMovieGraphMember::CanRename(const FText& InNewName, FText& OutError) const
 	return true;
 }
 
+bool UMovieGraphVariable::IsGlobal() const
+{
+	return IsA<UMovieGraphGlobalVariable>();
+}
+
+bool UMovieGraphVariable::IsDeletable() const
+{
+	return true;
+}
+
 bool UMovieGraphVariable::CanRename(const FText& InNewName, FText& OutError) const
 {
 	if (!Super::CanRename(InNewName, OutError))
@@ -76,11 +96,13 @@ bool UMovieGraphVariable::CanRename(const FText& InNewName, FText& OutError) con
 
 bool UMovieGraphVariable::SetMemberName(const FString& InNewName)
 {
+	bool bSuccess = Super::SetMemberName(InNewName);
+
 #if WITH_EDITOR
 	OnMovieGraphVariableChangedDelegate.Broadcast(this);
 #endif
 	
-	return Super::SetMemberName(InNewName);
+	return bSuccess;
 }
 
 #if WITH_EDITOR
@@ -91,6 +113,81 @@ void UMovieGraphVariable::PostEditChangeProperty(FPropertyChangedEvent& Property
 	OnMovieGraphVariableChangedDelegate.Broadcast(this);
 }
 #endif // WITH_EDITOR
+
+UMovieGraphGlobalVariable::UMovieGraphGlobalVariable()
+{
+	bIsEditable = false;
+}
+
+bool UMovieGraphGlobalVariable::IsDeletable() const
+{
+	return false;
+}
+
+bool UMovieGraphGlobalVariable::CanRename(const FText& InNewName, FText& OutError) const
+{
+	return false;
+}
+
+UMovieGraphGlobalVariable_ShotName::UMovieGraphGlobalVariable_ShotName()
+{
+	Name = FString(TEXT("shot_name"));
+	SetValueType(EMovieGraphValueType::String);
+}
+
+UMovieGraphGlobalVariable_SequenceName::UMovieGraphGlobalVariable_SequenceName()
+{
+	Name = FString(TEXT("seq_name"));
+	SetValueType(EMovieGraphValueType::String);
+}
+
+UMovieGraphGlobalVariable_FrameNumber::UMovieGraphGlobalVariable_FrameNumber()
+{
+	Name = FString(TEXT("frame_num"));
+	SetValueType(EMovieGraphValueType::Int32);
+}
+
+UMovieGraphGlobalVariable_CameraName::UMovieGraphGlobalVariable_CameraName()
+{
+	Name = FString(TEXT("camera_name"));
+	SetValueType(EMovieGraphValueType::String);
+}
+
+void UMovieGraphGlobalVariable_ShotName::UpdateValue(const FMovieGraphTraversalContext* InTraversalContext, const UMovieGraphPipeline* InPipeline)
+{
+	const TArray<TObjectPtr<UMoviePipelineExecutorShot>>& ShotList = InPipeline->GetActiveShotList();
+	
+	if (ShotList.IsValidIndex(InTraversalContext->ShotIndex))
+	{
+		if (const TObjectPtr<UMoviePipelineExecutorShot>& Shot = ShotList[InTraversalContext->ShotIndex])
+		{
+			SetValueString(Shot->OuterName);
+		}
+	}
+}
+
+void UMovieGraphGlobalVariable_SequenceName::UpdateValue(const FMovieGraphTraversalContext* InTraversalContext, const UMovieGraphPipeline* InPipeline)
+{
+	SetValueString(InTraversalContext->Job->Sequence.GetAssetName());
+}
+
+void UMovieGraphGlobalVariable_FrameNumber::UpdateValue(const FMovieGraphTraversalContext* InTraversalContext, const UMovieGraphPipeline* InPipeline)
+{
+	SetValueInt32(InTraversalContext->Time.ShotFrameNumber.Value);
+}
+
+void UMovieGraphGlobalVariable_CameraName::UpdateValue(const FMovieGraphTraversalContext* InTraversalContext, const UMovieGraphPipeline* InPipeline)
+{
+	const TArray<TObjectPtr<UMoviePipelineExecutorShot>>& ShotList = InPipeline->GetActiveShotList();
+	
+	if (ShotList.IsValidIndex(InTraversalContext->ShotIndex))
+	{
+		if (const TObjectPtr<UMoviePipelineExecutorShot>& Shot = ShotList[InTraversalContext->ShotIndex])
+		{
+			SetValueString(Shot->InnerName);
+		}
+	}
+}
 
 bool UMovieGraphInput::IsDeletable() const
 {
@@ -119,11 +216,12 @@ bool UMovieGraphInput::CanRename(const FText& InNewName, FText& OutError) const
 
 bool UMovieGraphInput::SetMemberName(const FString& InNewName)
 {
+	bool bSuccess = Super::SetMemberName(InNewName);
+
 #if WITH_EDITOR
 	OnMovieGraphInputChangedDelegate.Broadcast(this);
 #endif
-	
-	return Super::SetMemberName(InNewName);
+	return bSuccess;
 }
 
 #if WITH_EDITOR
@@ -162,11 +260,13 @@ bool UMovieGraphOutput::CanRename(const FText& InNewName, FText& OutError) const
 
 bool UMovieGraphOutput::SetMemberName(const FString& InNewName)
 {
+	bool bSuccess = Super::SetMemberName(InNewName);
+
 #if WITH_EDITOR
 	OnMovieGraphOutputChangedDelegate.Broadcast(this);
 #endif
 	
-	return Super::SetMemberName(InNewName);
+	return bSuccess;
 }
 
 #if WITH_EDITOR
@@ -177,12 +277,6 @@ void UMovieGraphOutput::PostEditChangeProperty(FPropertyChangedEvent& PropertyCh
 	OnMovieGraphOutputChangedDelegate.Broadcast(this);
 }
 #endif // WITH_EDITOR
-
-FName UMovieGraphConfig::GlobalVariable_ShotName = "shot_name";
-FName UMovieGraphConfig::GlobalVariable_SequenceName = "seq_name";
-FName UMovieGraphConfig::GlobalVariable_FrameNumber = "frame_num";
-FName UMovieGraphConfig::GlobalVariable_CameraName = "camera_name";
-FName UMovieGraphConfig::GlobalVariable_RenderLayerName = "render_layer_name";
 
 UMovieGraphConfig::UMovieGraphConfig()
 {
@@ -200,7 +294,7 @@ UMovieGraphConfig::UMovieGraphConfig()
 
 		// Offset the default output node so it doesn't overlap the default input node
 #if WITH_EDITOR
-		constexpr int32 OutputNodeOffset = 300;
+		constexpr int32 OutputNodeOffset = 900;
 		OutputNode->SetNodePosX(OutputNodeOffset);
 #endif
 	}
@@ -226,32 +320,40 @@ void UMovieGraphConfig::PostLoad()
 				OnGraphVariablesChangedDelegate.Broadcast();
 			});
 		}
+
+		// Remove all null nodes
+		AllNodes.RemoveAll(
+			[](UMovieGraphNode* Node)
+			{
+				if (!Node)
+				{
+					UE_LOG(LogMovieRenderPipeline, Warning, TEXT("Encountered invalid source node (nullptr) when building Movie Pipeline Editor graph, skipping creating an editor graph node for the invalid source node."))
+					return true;
+				}
+				return false;
+			});
 #endif
 	}
 }
 
-UMovieGraphVariable* UMovieGraphConfig::AddGlobalVariable(const FName& InName, EMovieGraphValueType ValueType)
+template<typename T>
+T* UMovieGraphConfig::AddGlobalVariable()
 {
 	// Don't add duplicate global variables
-	const bool VariableExists = Variables.ContainsByPredicate([&InName](const TObjectPtr<UMovieGraphVariable>& Variable)
+	const bool VariableExists = GlobalVariables.ContainsByPredicate([](const TObjectPtr<UMovieGraphVariable>& Variable)
 	{
-		return Variable && (Variable->GetMemberName() == InName);
+		return Variable && (Variable->GetClass() == T::StaticClass());
 	});
 
 	if (VariableExists)
 	{
+		// Don't log here; graphs will typically try to add all available global variables on start-up, even if they
+		// already exist in the current graph
 		return nullptr;
 	}
-	
-	if (UMovieGraphVariable* NewVariable = AddVariable(InName))
-	{
-		NewVariable->bIsGlobal = true;
-		NewVariable->bIsEditable = false;
-		NewVariable->SetValueType(ValueType);
-		return NewVariable;
-	}
 
-	return nullptr;
+	// Pass an empty name to AddMember() since globals set their name upon construction
+	return AddMember<T>(GlobalVariables, FName());
 }
 
 void UMovieGraphConfig::AddDefaultMembers()
@@ -288,41 +390,50 @@ void UMovieGraphConfig::AddDefaultMembers()
 		OutputNode->UpdatePins();
 	}
 
-	static const TMap<FName, EMovieGraphValueType> GlobalVariableNamesAndTypes =
-	{
-		{GlobalVariable_ShotName, EMovieGraphValueType::String},
-		{GlobalVariable_SequenceName, EMovieGraphValueType::String},
-		{GlobalVariable_FrameNumber, EMovieGraphValueType::Int32},
-		{GlobalVariable_CameraName, EMovieGraphValueType::String},
-		{GlobalVariable_RenderLayerName, EMovieGraphValueType::String}
-	};
-
-	// Add all of the global variables that should be available in the graph
-	for (const TTuple<FName, EMovieGraphValueType>& GlobalVariableInfo : GlobalVariableNamesAndTypes)
-	{
-		AddGlobalVariable(GlobalVariableInfo.Key, GlobalVariableInfo.Value);
-	}
+	AddGlobalVariable<UMovieGraphGlobalVariable_CameraName>();
+	AddGlobalVariable<UMovieGraphGlobalVariable_FrameNumber>();
+	AddGlobalVariable<UMovieGraphGlobalVariable_SequenceName>();
+	AddGlobalVariable<UMovieGraphGlobalVariable_ShotName>();
 }
 
 bool UMovieGraphConfig::AddLabeledEdge(UMovieGraphNode* FromNode, const FName& FromPinLabel, UMovieGraphNode* ToNode, const FName& ToPinLabel)
 {
 	if (!FromNode || !ToNode)
 	{
-		UE_LOG(LogMovieRenderPipeline, Error, TEXT("AddLabeledEdge: Invalid Edge Nodes"));
+		FFrame::KismetExecutionMessage(
+			*FString::Printf(
+				TEXT("%hs: Invalid Edge Nodes"), __FUNCTION__),
+				ELogVerbosity::Error);
 		return false;
 	}
+	
 
 	UMovieGraphPin* FromPin = FromNode->GetOutputPin(FromPinLabel);
 	if (!FromPin)
 	{
-		UE_LOG(LogMovieRenderPipeline, Error, TEXT("AddLabeledEdge: FromNode: %s does not have a pin with the label: %s"), *FromNode->GetName(), *FromPinLabel.ToString());
+		FFrame::KismetExecutionMessage(
+			*FString::Printf(
+				TEXT("%hs: FromNode: %s does not have a pin with the label: %s"), __FUNCTION__, *FromNode->GetName(), *FromPinLabel.ToString()),
+				ELogVerbosity::Error);
 		return false;
 	}
 
 	UMovieGraphPin* ToPin = ToNode->GetInputPin(ToPinLabel);
 	if (!ToPin)
 	{
-		UE_LOG(LogMovieRenderPipeline, Error, TEXT("AddLabeledEdge: ToNode: %s does not have a pin with the label: %s"), *ToNode->GetName(), *ToPinLabel.ToString());
+		FFrame::KismetExecutionMessage(
+			*FString::Printf(
+				TEXT("%hs: ToNode: %s does not have a pin with the label: %s"), __FUNCTION__, *ToNode->GetName(), *ToPinLabel.ToString()),
+				ELogVerbosity::Error);
+		return false;
+	}
+
+	if (!FromPin->CanCreateConnection(ToPin))
+	{
+		FFrame::KismetExecutionMessage(
+			*FString::Printf(
+				TEXT("%hs: FromNode %s's pin %s cannot be connected to ToNode %s's pin %s "), __FUNCTION__, *FromNode->GetName(), *FromPinLabel.ToString(), *ToNode->GetName(), *ToPinLabel.ToString()),
+				ELogVerbosity::Error);
 		return false;
 	}
 
@@ -347,25 +458,32 @@ bool UMovieGraphConfig::AddLabeledEdge(UMovieGraphNode* FromNode, const FName& F
 	return bConnectionBrokeOtherEdges;
 }
 
-bool UMovieGraphConfig::RemoveEdge(UMovieGraphNode* FromNode, const FName& FromPinLabel, UMovieGraphNode* ToNode, const FName& ToPinLabel)
+bool UMovieGraphConfig::RemoveLabeledEdge(UMovieGraphNode* FromNode, const FName& FromPinLabel, UMovieGraphNode* ToNode, const FName& ToPinLabel)
 {
 	if (!FromNode || !ToNode)
 	{
-		UE_LOG(LogMovieRenderPipeline, Error, TEXT("RemoveEdge: Invalid Edge Nodes"));
+		FFrame::KismetExecutionMessage(
+			*FString::Printf(TEXT("%hs: Invalid Edge Nodes"), __FUNCTION__), ELogVerbosity::Error);
 		return false;
 	}
 
 	UMovieGraphPin* FromPin = FromNode->GetOutputPin(FromPinLabel);
 	if (!FromPin)
 	{
-		UE_LOG(LogMovieRenderPipeline, Error, TEXT("RemoveEdge: FromNode: %s does not have a pin with the label: %s"), *FromNode->GetName(), *FromPinLabel.ToString());
+		FFrame::KismetExecutionMessage(
+			*FString::Printf(
+				TEXT("%hs: FromNode: %s does not have a pin with the label: %s"), __FUNCTION__, *FromNode->GetName(), *FromPinLabel.ToString()),
+				ELogVerbosity::Error);
 		return false;
 	}
 
 	UMovieGraphPin* ToPin = ToNode->GetInputPin(ToPinLabel);
 	if (!ToPin)
 	{
-		UE_LOG(LogMovieRenderPipeline, Error, TEXT("RemoveEdge: ToNode: %s does not have a pin with the label: %s"), *ToNode->GetName(), *ToPinLabel.ToString());
+		FFrame::KismetExecutionMessage(
+			*FString::Printf(
+				TEXT("%hs: ToNode: %s does not have a pin with the label: %s"), __FUNCTION__, *ToNode->GetName(), *ToPinLabel.ToString()),
+				ELogVerbosity::Error);
 		return false;
 	}
 
@@ -384,7 +502,8 @@ bool UMovieGraphConfig::RemoveAllInboundEdges(UMovieGraphNode* InNode)
 {
 	if (!InNode)
 	{
-		UE_LOG(LogMovieRenderPipeline, Error, TEXT("RemoveAllInboundEdges: Invalid Edge Nodes"));
+		FFrame::KismetExecutionMessage(
+			*FString::Printf(TEXT("%hs: Invalid Edge Nodes"), __FUNCTION__ ), ELogVerbosity::Error);
 		return false;
 	}
 
@@ -407,7 +526,8 @@ bool UMovieGraphConfig::RemoveAllOutboundEdges(UMovieGraphNode* InNode)
 {
 	if (!InNode)
 	{
-		UE_LOG(LogMovieRenderPipeline, Error, TEXT("RemoveAllOutboundEdges: Invalid Edge Nodes"));
+		FFrame::KismetExecutionMessage(
+			*FString::Printf(TEXT("%hs: Invalid Edge Nodes"), __FUNCTION__), ELogVerbosity::Error);
 		return false;
 	}
 
@@ -430,7 +550,10 @@ bool UMovieGraphConfig::RemoveInboundEdges(UMovieGraphNode* InNode, const FName&
 {
 	if (!InNode)
 	{
-		UE_LOG(LogMovieRenderPipeline, Error, TEXT("RemoveInboundEdges: Invalid Edge Nodes"));
+		FFrame::KismetExecutionMessage(
+			*FString::Printf(
+				TEXT("%hs: Invalid Edge Nodes"), __FUNCTION__),
+				ELogVerbosity::Error);
 		return false;
 	}
 
@@ -453,7 +576,10 @@ bool UMovieGraphConfig::RemoveOutboundEdges(UMovieGraphNode* InNode, const FName
 {
 	if (!InNode)
 	{
-		UE_LOG(LogMovieRenderPipeline, Error, TEXT("RemoveOutboundEdges: Invalid Edge Nodes"));
+		FFrame::KismetExecutionMessage(
+			*FString::Printf(
+				TEXT("%hs: Invalid Edge Nodes"), __FUNCTION__),
+				ELogVerbosity::Error);
 		return false;
 	}
 
@@ -476,6 +602,19 @@ void UMovieGraphConfig::AddNode(UMovieGraphNode* InNode)
 {
 	if (!InNode)
 	{
+		FFrame::KismetExecutionMessage(
+			*FString::Printf(
+				TEXT("%hs: No node was specified for add."), __FUNCTION__),
+				ELogVerbosity::Error);
+		return;
+	}
+
+	if (!InNode->CanBeAddedByUser())
+	{
+		FFrame::KismetExecutionMessage(
+			*FString::Printf(
+				TEXT("%hs:Cannot add node of type %s."), __FUNCTION__, *InNode->GetClass()->GetName()),
+				ELogVerbosity::Error);
 		return;
 	}
 
@@ -503,9 +642,14 @@ bool UMovieGraphConfig::RemoveNode(UMovieGraphNode* InNode)
 {
 	if (!InNode)
 	{
-		UE_LOG(LogMovieRenderPipeline, Error, TEXT("RemoveNode: Invalid Node"));
+		FFrame::KismetExecutionMessage(
+			*FString::Printf(
+				TEXT("%hs: Could not remove invalid InNode"), __FUNCTION__),
+				ELogVerbosity::Error);
 		return false;
 	}
+
+	Modify();
 
 	RemoveAllInboundEdges(InNode);
 	RemoveAllOutboundEdges(InNode);
@@ -519,13 +663,13 @@ bool UMovieGraphConfig::RemoveNode(UMovieGraphNode* InNode)
 	return AllNodes.RemoveSingle(InNode) == 1;
 }
 
-template<typename T>
-T* UMovieGraphConfig::AddMember(TArray<TObjectPtr<T>>& InMemberArray, const FName& InBaseName)
+template<typename RetType, typename ArrType>
+RetType* UMovieGraphConfig::AddMember(TArray<TObjectPtr<ArrType>>& InMemberArray, const FName& InBaseName)
 {
-	static_assert(std::is_base_of_v<UMovieGraphMember, T>, "T is not derived from UMovieGraphMember");
+	static_assert(std::is_base_of_v<UMovieGraphMember, RetType>, "RetType is not derived from UMovieGraphMember");
 	
-	using namespace UE::MoviePipeline::RenderGraph;
-
+	Modify();
+	
 	// TODO: This can be replaced with just CreateDefaultSubobject() when AddDefaultMembers() isn't called from PostLoad()
 	//
 	// This method will be called in two cases: 1) when default members are being added to a new graph when it is being
@@ -533,13 +677,16 @@ T* UMovieGraphConfig::AddMember(TArray<TObjectPtr<T>>& InMemberArray, const FNam
 	// when the constructor is running, RF_NeedInitialization will be set. CreateDefaultSubobject() needs to be called
 	// in this scenario instead of NewObject().
 	const bool bIsNewObject = HasAnyFlags(RF_NeedInitialization);
-	T* NewMember = bIsNewObject
-		? CreateDefaultSubobject<T>(MakeUniqueObjectName(this, T::StaticClass()))
-		: NewObject<T>(this, NAME_None);
+	RetType* NewMember = bIsNewObject
+		? CreateDefaultSubobject<RetType>(MakeUniqueObjectName(this, RetType::StaticClass()))
+		: NewObject<RetType>(this, NAME_None);
 	
 	if (!NewMember)
 	{
-		UE_LOG(LogMovieRenderPipeline, Warning, TEXT("Unable to create new member object in the graph."));
+		FFrame::KismetExecutionMessage(
+			*FString::Printf(
+				TEXT("%hs: Unable to create new member object in the graph."), __FUNCTION__),
+				ELogVerbosity::Error);
 		return nullptr;
 	}
 
@@ -547,10 +694,13 @@ T* UMovieGraphConfig::AddMember(TArray<TObjectPtr<T>>& InMemberArray, const FNam
 	NewMember->SetFlags(RF_Transactional);
 	NewMember->SetGuid(FGuid::NewGuid());
 
-	// Generate and set a unique name
-	TArray<FString> ExistingMemberNames;
-	Algo::Transform(InMemberArray, ExistingMemberNames, [](const T* Member) { return Member->GetMemberName(); });
-	NewMember->SetMemberName(GetUniqueName(ExistingMemberNames, InBaseName.ToString()));
+	// Generate and set a unique name. Globals set their name at construction time, so no need to set their name.
+	if (!NewMember->template IsA<UMovieGraphGlobalVariable>())
+	{
+		TArray<FString> ExistingMemberNames;
+		Algo::Transform(InMemberArray, ExistingMemberNames, [](const ArrType* Member) { return Member->GetMemberName(); });
+		NewMember->SetMemberName(UE::MovieGraph::GetUniqueName(ExistingMemberNames, InBaseName.ToString()));
+	}
 
 	return NewMember;
 }
@@ -559,7 +709,7 @@ UMovieGraphVariable* UMovieGraphConfig::AddVariable(const FName InCustomBaseName
 {
 	static const FText VariableBaseName = LOCTEXT("VariableBaseName", "Variable");
 	
-	UMovieGraphVariable* NewVariable = AddMember(
+	UMovieGraphVariable* NewVariable = AddMember<UMovieGraphVariable>(
 		Variables, !InCustomBaseName.IsNone() ? InCustomBaseName : FName(*VariableBaseName.ToString()));
 
 	if (NewVariable)
@@ -584,7 +734,7 @@ UMovieGraphInput* UMovieGraphConfig::AddInput()
 {
 	static const FText InputBaseName = LOCTEXT("InputBaseName", "Input");
 
-	UMovieGraphInput* NewInput = AddMember(Inputs, FName(*InputBaseName.ToString()));
+	UMovieGraphInput* NewInput = AddMember<UMovieGraphInput>(Inputs, FName(*InputBaseName.ToString()));
 	InputNode->UpdatePins();
 	
 #if WITH_EDITOR
@@ -598,7 +748,7 @@ UMovieGraphOutput* UMovieGraphConfig::AddOutput()
 {
 	static const FText OutputBaseName = LOCTEXT("OutputBaseName", "Output");
 	
-	UMovieGraphOutput* NewOutput = AddMember(Outputs, FName(*OutputBaseName.ToString()));
+	UMovieGraphOutput* NewOutput = AddMember<UMovieGraphOutput>(Outputs, FName(*OutputBaseName.ToString()));
 	OutputNode->UpdatePins();
 
 #if WITH_EDITOR
@@ -610,7 +760,8 @@ UMovieGraphOutput* UMovieGraphConfig::AddOutput()
 
 UMovieGraphVariable* UMovieGraphConfig::GetVariableByGuid(const FGuid& InGuid) const
 {
-	for (const TObjectPtr<UMovieGraphVariable> Variable : Variables)
+	constexpr bool bIncludeGlobal = true;
+	for (UMovieGraphVariable* Variable : GetVariables(bIncludeGlobal))
 	{
 		if (Variable->GetGuid() == InGuid)
 		{
@@ -623,12 +774,27 @@ UMovieGraphVariable* UMovieGraphConfig::GetVariableByGuid(const FGuid& InGuid) c
 
 TArray<UMovieGraphVariable*> UMovieGraphConfig::GetVariables(const bool bIncludeGlobal) const
 {
-	if (bIncludeGlobal)
+	if (!bIncludeGlobal)
 	{
 		return Variables;
 	}
 
-	return Variables.FilterByPredicate([](const UMovieGraphVariable* Var) { return Var && !Var->IsGlobal(); });
+	TArray<UMovieGraphVariable*> AllVariables = Variables;
+	AllVariables.Append(GlobalVariables);
+
+	return AllVariables;
+}
+
+void UMovieGraphConfig::UpdateGlobalVariableValues(const UMovieGraphPipeline* InPipeline)
+{
+	// Note: Although UpdateValue could get the traversal context from the pipeline itself, we fetch it once here
+	// to prevent re-creating the context constantly.
+	const FMovieGraphTraversalContext TraversalContext = InPipeline->GetCurrentTraversalContext();
+	
+	for (const TObjectPtr<UMovieGraphGlobalVariable>& GlobalVariable : GlobalVariables)
+	{
+		GlobalVariable->UpdateValue(&TraversalContext, InPipeline);
+	}
 }
 
 TArray<UMovieGraphInput*> UMovieGraphConfig::GetInputs() const
@@ -650,7 +816,10 @@ bool UMovieGraphConfig::DeleteMember(UMovieGraphMember* MemberToDelete)
 
 	if (!MemberToDelete->IsDeletable())
 	{
-		UE_LOG(LogMovieRenderPipeline, Error, TEXT("DeleteMember: The member '%s' cannot be deleted because it is flagged as non-deletable."), *MemberToDelete->GetMemberName());
+		FFrame::KismetExecutionMessage(
+			*FString::Printf(
+				TEXT("%hs: The member '%s' cannot be deleted because it is flagged as non-deletable."), __FUNCTION__, *MemberToDelete->GetMemberName()),
+				ELogVerbosity::Error);
 		return false;
 	}
 
@@ -678,6 +847,8 @@ bool UMovieGraphConfig::DeleteVariableMember(UMovieGraphVariable* VariableMember
 	{
 		return false;
 	}
+
+	Modify();
 	
 	// Find all accessor nodes using this graph variable
 	TArray<TObjectPtr<UMovieGraphNode>> NodesToRemove =
@@ -731,6 +902,8 @@ bool UMovieGraphConfig::DeleteInputMember(UMovieGraphInput* InputMemberToDelete)
 {
 	if (InputMemberToDelete)
 	{
+		Modify();
+		
 		Inputs.RemoveSingle(InputMemberToDelete);
 		RemoveOutboundEdges(InputNode, FName(InputMemberToDelete->GetMemberName()));
 
@@ -747,6 +920,8 @@ bool UMovieGraphConfig::DeleteOutputMember(UMovieGraphOutput* OutputMemberToDele
 {
 	if (OutputMemberToDelete)
 	{
+		Modify();
+		
 		Outputs.RemoveSingle(OutputMemberToDelete);
 		RemoveInboundEdges(OutputNode, FName(OutputMemberToDelete->GetMemberName()));
 
@@ -797,48 +972,183 @@ void UMovieGraphConfig::VisitDownstreamNodes(UMovieGraphNode* FromNode, const FV
 	VisitDownstreamNodes_Recursive(FromNode, VisitCallback, VisitedNodes);
 }
 
-TArray<FString> UMovieGraphConfig::GetDownstreamBranchNames(UMovieGraphNode* FromNode, const UMovieGraphPin* FromPin) const
+TArray<FString> UMovieGraphConfig::GetDownstreamBranchNames(UMovieGraphNode* FromNode, const UMovieGraphPin* FromPin, const bool bStopAtSubgraph) const
 {
 	TArray<FString> BranchNames;
 
 	// FromNode itself might be the Outputs node, so check before visiting the downstream nodes
 	if (FromNode->IsA<UMovieGraphOutputNode>() && FromPin)
 	{
-		BranchNames.Add(FromPin->Properties.Label.ToString());
+		BranchNames.AddUnique(FromPin->Properties.Label.ToString());
 	}
 
 	VisitDownstreamNodes(FromNode, FVisitNodesCallback::CreateLambda(
-		[&BranchNames](UMovieGraphNode* VisitedNode, const UMovieGraphPin* VisitedPin)
+		[&BranchNames, bStopAtSubgraph](const UMovieGraphNode* VisitedNode, const UMovieGraphPin* VisitedPin)
 		{
+			if (VisitedNode->IsA<UMovieGraphSubgraphNode>() && VisitedPin)
+			{
+				BranchNames.AddUnique(VisitedPin->Properties.Label.ToString());
+
+				if (bStopAtSubgraph)
+				{
+					return false;	// Stop traversing nodes
+				}
+			}
+			
 			if (VisitedNode->IsA<UMovieGraphOutputNode>() && VisitedPin)
 			{
-				BranchNames.Add(VisitedPin->Properties.Label.ToString());
+				BranchNames.AddUnique(VisitedPin->Properties.Label.ToString());
 			}
+
+			return true;
 		}));
 
 	return BranchNames;
 }
 
-TArray<FString> UMovieGraphConfig::GetUpstreamBranchNames(UMovieGraphNode* FromNode, const UMovieGraphPin* FromPin) const
+TArray<FString> UMovieGraphConfig::GetUpstreamBranchNames(UMovieGraphNode* FromNode, const UMovieGraphPin* FromPin, const bool bStopAtSubgraph) const
 {
 	TArray<FString> BranchNames;
 
 	// FromNode itself might be the Inputs node, so check before visiting the upstream nodes
 	if (FromNode->IsA<UMovieGraphInputNode>() && FromPin)
 	{
-		BranchNames.Add(FromPin->Properties.Label.ToString());
+		BranchNames.AddUnique(FromPin->Properties.Label.ToString());
 	}
 
 	VisitUpstreamNodes(FromNode, FVisitNodesCallback::CreateLambda(
-		[&BranchNames](UMovieGraphNode* VisitedNode, const UMovieGraphPin* VisitedPin)
+		[&BranchNames, bStopAtSubgraph](const UMovieGraphNode* VisitedNode, const UMovieGraphPin* VisitedPin)
 		{
+			if (VisitedNode->IsA<UMovieGraphSubgraphNode>() && VisitedPin)
+			{
+				BranchNames.AddUnique(VisitedPin->Properties.Label.ToString());
+
+				if (bStopAtSubgraph)
+				{
+					return false;	// Stop traversing nodes
+				}
+			}
+			
 			if (VisitedNode->IsA<UMovieGraphInputNode>() && VisitedPin)
 			{
-				BranchNames.Add(VisitedPin->Properties.Label.ToString());
+				BranchNames.AddUnique(VisitedPin->Properties.Label.ToString());
 			}
+
+			return true;
 		}));
 
 	return BranchNames;
+}
+
+void UMovieGraphConfig::GetAllContainedSubgraphs(TSet<UMovieGraphConfig*>& OutSubgraphs) const
+{
+	for (const TObjectPtr<UMovieGraphNode>& Node : GetNodes())
+	{
+		if (!Node)
+		{
+			continue;
+		}
+		
+		if (const UMovieGraphSubgraphNode* SubgraphNode = Cast<UMovieGraphSubgraphNode>(Node))
+		{
+			UMovieGraphConfig* SubgraphConfig = SubgraphNode->GetSubgraphAsset();
+
+			if (!SubgraphConfig) // A subgraph may not have been assigned yet
+			{
+				continue;
+			}
+			
+			// Don't recurse into this graph if it was already added (to prevent infinite recursion)
+			if (!OutSubgraphs.Contains(SubgraphConfig))
+			{
+				OutSubgraphs.Add(SubgraphConfig);
+				SubgraphConfig->GetAllContainedSubgraphs(OutSubgraphs);
+			}
+		}
+	}
+}
+
+void UMovieGraphConfig::RecurseUpGlobalsBranchToFindOutputDirectory(const UMovieGraphNode* InNode, FString& OutOutputDirectory, TArray<const UMovieGraphConfig*>& VisitedGraphStack) const
+{
+	// If there's no Node, no upstream pin or no downstream pin for whatever reason,
+	// there is no way to continue so we early out
+	if (!InNode) { return; }
+
+	// Only globals can connect to globals linearly, so we only need to look at the first connected input
+	// The only exception being subgraph nodes which will need to be separately evaluated
+	const UMovieGraphPin* DownstreamGlobalsPin = InNode->GetFirstConnectedInputPin();
+	if (!DownstreamGlobalsPin) { return; }
+
+	const UMovieGraphPin* UpstreamGlobalsPin = DownstreamGlobalsPin->GetFirstConnectedPin();
+	if (!UpstreamGlobalsPin) { return; }
+
+	UMovieGraphNode* ConnectedNode = UpstreamGlobalsPin->Node;
+
+	VisitedGraphStack.Push(this);
+
+	// Overrides can be set within Subgraphs
+	if (const UMovieGraphSubgraphNode* SubgraphNode = Cast<UMovieGraphSubgraphNode>(ConnectedNode))
+	{
+		const UMovieGraphConfig* SubgraphConfig = SubgraphNode->GetSubgraphAsset();
+
+		// Stop recursing if circular references are found
+		if (VisitedGraphStack.Contains(SubgraphConfig))
+		{
+			return;
+		}
+		
+		if (SubgraphConfig && OutOutputDirectory.IsEmpty())
+		{
+			const UMovieGraphPin* SubgraphGlobalsPin =
+				SubgraphConfig->GetOutputNode()->GetInputPin(UMovieGraphNode::GlobalsPinName);
+
+			if (SubgraphGlobalsPin && SubgraphGlobalsPin->IsConnected())
+			{
+				SubgraphConfig->RecurseUpGlobalsBranchToFindOutputDirectory(SubgraphGlobalsPin->Node, OutOutputDirectory, VisitedGraphStack);
+			}
+		}
+
+		VisitedGraphStack.Pop();
+	}
+	else if (const UMovieGraphGlobalOutputSettingNode* SettingsNode = Cast<UMovieGraphGlobalOutputSettingNode>(InNode))
+	{
+		if (OutOutputDirectory.IsEmpty() && SettingsNode->bOverride_OutputDirectory)
+		{
+			OutOutputDirectory = SettingsNode->OutputDirectory.Path;
+		}
+	}
+
+	// Keep looking upstream if we haven't found any overrides
+	if (OutOutputDirectory.IsEmpty())
+	{
+		RecurseUpGlobalsBranchToFindOutputDirectory(UpstreamGlobalsPin->Node, OutOutputDirectory, VisitedGraphStack);
+	}
+};
+
+void UMovieGraphConfig::GetOutputDirectory(FString& OutOutputDirectory) const
+{
+	check (OutputNode);
+
+	// Clear out input strings
+	OutOutputDirectory = FString();
+
+	// We only traverse up the globals branch in order to find the output directory and file name format
+	const UMovieGraphPin* GlobalsPin = OutputNode->GetInputPin(UMovieGraphNode::GlobalsPinName);
+
+	if (GlobalsPin && GlobalsPin->IsConnected())
+	{
+		TArray<const UMovieGraphConfig*> VisitedGraphStack;
+		RecurseUpGlobalsBranchToFindOutputDirectory(OutputNode, OutOutputDirectory, VisitedGraphStack);
+
+		if (OutOutputDirectory.IsEmpty())
+		{
+			// If we didn't find any overrides, use the CDO values
+			UMovieGraphGlobalOutputSettingNode* CDO = Cast<UMovieGraphGlobalOutputSettingNode>(UMovieGraphGlobalOutputSettingNode::StaticClass()->ClassDefaultObject);
+			check(CDO);
+			
+			OutOutputDirectory = CDO->OutputDirectory.Path;
+		}
+	}
 }
 
 void UMovieGraphConfig::InitializeFlattenedNode(UMovieGraphNode* InNode)
@@ -862,7 +1172,7 @@ void UMovieGraphConfig::InitializeFlattenedNode(UMovieGraphNode* InNode)
 	InNode->UpdateDynamicProperties();
 }
 
-void UMovieGraphConfig::CopyOverriddenProperties(UMovieGraphNode* FromNode, UMovieGraphNode* ToNode, const FMovieGraphTraversalContext* InContext)
+void UMovieGraphConfig::CopyOverriddenProperties(UMovieGraphNode* FromNode, UMovieGraphNode* ToNode, const FMovieGraphEvaluationContext& InEvaluationContext)
 {
 	if (!ensure(FromNode && ToNode))
 	{
@@ -911,10 +1221,13 @@ void UMovieGraphConfig::CopyOverriddenProperties(UMovieGraphNode* FromNode, UMov
 		}
 
 		// If our destination node already has this property marked as overridden, then some other node in the graph has
-		// taken priority and set the value to something, so we don't want to override it.
+		// taken priority and set the value to something, so we don't want to override it. The exception to this is
+		// an object implementing IMovieGraphTraversableObject -- they determine when/how property values are updated.
+		const FObjectProperty* ObjectProperty = CastField<FObjectProperty>(DestNodeProperty);
+		const bool bIsMergeableObject = ObjectProperty && ObjectProperty->PropertyClass->ImplementsInterface(UMovieGraphTraversableObject::StaticClass());
 		const bool bAlreadyOverriddenOnDestNode = bIsDynamic
 			? ToNode->IsDynamicPropertyOverridden(PropertyName)
-			: EditConditionProperty->GetPropertyValue_InContainer(ToNode);
+			: EditConditionProperty->GetPropertyValue_InContainer(ToNode) && !bIsMergeableObject;
 		if (bAlreadyOverriddenOnDestNode)
 		{
 			continue;
@@ -923,14 +1236,58 @@ void UMovieGraphConfig::CopyOverriddenProperties(UMovieGraphNode* FromNode, UMov
 		// If this property (dynamic or not) has been exposed, attempt to get its value via the connection to it (if any)
 		if (bIsExposed)
 		{
-			if (const UMovieGraphPin* InputPin = FromNode->GetInputPin(PropertyName))
+			if (UMovieGraphPin* InputPin = FromNode->GetInputPin(PropertyName))
 			{
-				const UMovieGraphPin* ConnectedPin = InputPin->GetFirstConnectedPin();
-				if (ConnectedPin && (ConnectedPin->Properties.Type == InputPin->Properties.Type) && ConnectedPin->Node)
+				TArray<UMovieGraphPin*> ConnectionPath;
+				
+				// Iterate up the connection chain and find all pins which might have a value that can be resolved.
+				FMovieGraphEvaluationContext ValueConnectionContext;
+				ValueConnectionContext.PinBeingFollowed = InputPin;
+				ValueConnectionContext.SubgraphStack = InEvaluationContext.SubgraphStack;
+				TArray<UMovieGraphPin*> ConnectedValuePins = InputPin->Node->EvaluatePinsToFollow(ValueConnectionContext);
+				while (!ConnectedValuePins.IsEmpty())
 				{
-					// There was a valid connection to the input pin; resolve the value from the connected output and set the
-					// value on this property
-					const FString ResolvedValue = ConnectedPin->Node->GetResolvedValueForOutputPin(ConnectedPin->Properties.Label, InContext);
+					UMovieGraphPin* ConnectedValuePin = ConnectedValuePins[0];
+					if (!ensureMsgf(ConnectedValuePin, TEXT("Found an invalid pin on node '%s'."), *InputPin->Node->GetName()))
+					{
+						// Can't continue following the connection chain if an invalid pin was found
+						break;
+					}
+					
+					if (ConnectionPath.Contains(ConnectedValuePin))
+					{
+						// Recursive connection found
+						UE_LOG(LogMovieRenderPipeline, Warning, TEXT("Found a cycle when following the data connection on pin '%s' for node '%s'. Value will not be resolved."),
+							*ConnectedValuePin->Properties.Label.ToString(), *FromNode->GetName());
+						break;
+					}
+
+					// For the connected value to be used, the type must match and the node the value is originating from must be enabled
+					if ((ConnectedValuePin->Properties.Type == InputPin->Properties.Type) && ConnectedValuePin->Node && !ConnectedValuePin->Node->IsDisabled())
+					{
+						ConnectionPath.Add(ConnectedValuePin);
+					}
+
+					ValueConnectionContext.PinBeingFollowed = ConnectedValuePin;
+					ConnectedValuePins = ConnectedValuePin->Node->EvaluatePinsToFollow(ValueConnectionContext);
+				}
+
+				// Work backwards and use the most upstream value that can be resolved. The most upstream values wins. For example, if a node has an
+				// exposed pin, that pin is connected to a subgraph's input, and that input is then connected to a variable node in the parent graph.
+				// The variable node's value should be used if it can be resolved, not the subgraph's input value.
+				bool bFoundResolvedValue = false;
+				for (int32 Index = ConnectionPath.Num() - 1; Index >= 0; --Index)
+				{
+					const UMovieGraphPin* ConnectedPin = ConnectionPath[Index];
+					
+					const FString ResolvedValue = ConnectedPin->Node->GetResolvedValueForOutputPin(ConnectedPin->Properties.Label, &InEvaluationContext.UserContext);
+					if (ResolvedValue.IsEmpty())
+					{
+						continue;
+					}
+
+					bFoundResolvedValue = true;
+					
 					if (bIsDynamic)
 					{
 						ToNode->SetDynamicPropertyValue(PropertyName, ResolvedValue);
@@ -942,7 +1299,13 @@ void UMovieGraphConfig::CopyOverriddenProperties(UMovieGraphNode* FromNode, UMov
 						EditConditionProperty->SetPropertyValue_InContainer(ToNode, true);
 					}
 
-					// The property value was set via a connected pin; move on to the next property
+					// Resolved a value for this pin; stop iterating over the connection chain
+					break;
+				}
+				
+				// The property value was set via a connected pin; move on to the next property
+				if (bFoundResolvedValue)
+				{
 					continue;
 				}
 			}
@@ -969,6 +1332,24 @@ void UMovieGraphConfig::CopyOverriddenProperties(UMovieGraphNode* FromNode, UMov
 			EditConditionProperty->SetPropertyValue_InContainer(ToNode, true);
 		}
 
+		// Before using the normal property copying procedure, check to see if this property is an IMovieGraphTraversableObject.
+		// These objects define a particular way they should have their properties merged.
+		if (bIsMergeableObject)
+		{
+			const IMovieGraphTraversableObject* SourceTraversableObject = Cast<IMovieGraphTraversableObject>(
+				ObjectProperty->GetObjectPropertyValue(ObjectProperty->ContainerPtrToValuePtr<void>(FromNode)));
+			IMovieGraphTraversableObject* DestTraversableObject = Cast<IMovieGraphTraversableObject>(
+				ObjectProperty->GetObjectPropertyValue(ObjectProperty->ContainerPtrToValuePtr<void>(ToNode)));
+			
+			if (DestTraversableObject && SourceTraversableObject)
+			{
+				DestTraversableObject->Merge(SourceTraversableObject);
+
+				// Property has been copied via Merge(), don't run the normal copy procedure
+				continue;
+			}
+		}
+
 		// Now we need to copy the value from the source to the destination
 		if (bIsDynamic)
 		{
@@ -985,34 +1366,70 @@ void UMovieGraphConfig::CopyOverriddenProperties(UMovieGraphNode* FromNode, UMov
 	}
 }
 
-void UMovieGraphConfig::CreateFlattenedGraph_Recursive(UMovieGraphEvaluatedConfig* InOwningConfig, FMovieGraphEvaluatedBranchConfig& OutBranchConfig,
+bool UMovieGraphConfig::CreateFlattenedGraph_Recursive(UMovieGraphEvaluatedConfig* InOwningConfig, FMovieGraphEvaluatedBranchConfig& OutBranchConfig,
 	FMovieGraphEvaluationContext& InEvaluationContext, UMovieGraphPin* InPinToFollow)
 {
 	if (!InPinToFollow)
 	{
-		return;
+		InEvaluationContext.TraversalError = LOCTEXT("TraversalError_InvalidPin", "Found an invalid pin during graph traversal.");
+		return false;
 	}
 
 	UMovieGraphNode* Node = InPinToFollow->Node;
 	if (!Node)
 	{
-		return;
+		InEvaluationContext.TraversalError = LOCTEXT("TraversalError_InvalidNode", "Found an invalid node during graph traversal.");
+		return false;
 	}
 
 	// We only follow execution pins during traversal.
 	if (!ensureMsgf(InPinToFollow->Properties.bIsBranch, TEXT("Only Branch pins should be contained by InPinToFollow!")))
 	{
-		return;
+		InEvaluationContext.TraversalError = LOCTEXT("TraversalError_NonBranchPin", "Attempting to follow a non-branch pin during graph traversal.");
+		return false;
 	}
 
 	InEvaluationContext.PinBeingFollowed = InPinToFollow;
 
-	// Check to see if our flattened evaluation graph already has a copy of this node.
-	InEvaluationContext.VisitedNodes.Add(Node);
-	const bool bShouldIncludeNode = Node->IsA<UMovieGraphSettingNode>();
+	// Add this node to the set of visited nodes so it can be checked for cycles later. Get the graph from GetTypedOuter() rather than "this" because
+	// this method will be called recursively, potentially on pins within subgraphs.
+	const UMovieGraphConfig* OwningGraph = InPinToFollow->GetTypedOuter<UMovieGraphConfig>();
+	ensure(OwningGraph);
+	TSet<TObjectPtr<UMovieGraphNode>>& VisitedNodeSet = InEvaluationContext.VisitedNodesByOwningGraph.FindOrAdd(OwningGraph).VisitedNodes;
+	VisitedNodeSet.Add(Node);
+	
+	const bool bShouldIncludeNode =
+		Node->IsA<UMovieGraphSettingNode>() &&
+		!Node->IsDisabled() &&
+		!InEvaluationContext.NodeTypesToRemoveStack.Contains(Node->GetClass());
 
-	if(bShouldIncludeNode)
+	if (bShouldIncludeNode)
 	{
+#if WITH_EDITOR
+		// Normally we copy properties if we find a matching bOverride_ property. Unfortunately this creates a somewhat common
+		// scenario where you've created a bOverride_ property but typo'd the real property name, so the real property doesn't
+		// actually get updated, but we don't produce a warning (as it's valid to have properties with no matching bOverride_).
+		// So to avoid this we have this editor ensure to prompt you when we find a bOverride_ property with no matching "real" property.
+		for (TFieldIterator<FProperty> PropertyIterator(Node->GetClass()); PropertyIterator; ++PropertyIterator)
+		{
+			// If we're looking at an override property... 
+			if (PropertyIterator->GetName().StartsWith(TEXT("bOverride_")))
+			{
+				const FString RealPropertyName = PropertyIterator->GetName().RightChop(10); // Chop off bOverride_ to get the name of the property we're searching for.
+				bool bFoundProperty = false;
+				for (TFieldIterator<FProperty> InnerPropertyIterator(Node->GetClass()); InnerPropertyIterator; ++InnerPropertyIterator)
+				{
+					if (InnerPropertyIterator->GetName() == RealPropertyName)
+					{
+						bFoundProperty = true;
+						break;
+					}
+				}
+
+				ensureAlwaysMsgf(bFoundProperty, TEXT("Found override property named %s, but could not find real property named %s"), *PropertyIterator->GetName(), *RealPropertyName);
+			}
+		}
+#endif
 		const UMovieGraphSettingNode* NodeAsSetting = CastChecked<UMovieGraphSettingNode>(Node);
 		const FString& NodeInstanceName = NodeAsSetting->GetNodeInstanceName();
 		
@@ -1030,37 +1447,88 @@ void UMovieGraphConfig::CreateFlattenedGraph_Recursive(UMovieGraphEvaluatedConfi
 
 		// Now do a property-copy from this node onto our flattened one. We don't use the generic property
 		// copy routines in the engine because we have special handling (we want to check if the property
-		// is actually marked for override, and also skip if this has already been overridden.
+		// is actually marked for override, and also skip if this has already been overridden).
+		CopyOverriddenProperties(Node, ExistingNode, InEvaluationContext);
+	}
 
-		// ToDo: Handle "Disable" ndoes that can disable upstream types of nodes, etc. Push disable types into
-		// the currently evaluating context
-		CopyOverriddenProperties(Node, ExistingNode, &InEvaluationContext.UserContext);
+	// If this is a special "removal" node, keep track of the type that should be removed. Since this method is recursive,
+	// a stack is used to keep track of the types. The graph is iterated starting from the Outputs node, so all matching
+	// nodes that are *upstream* of the removal node will be removed.
+	const UMovieGraphRemoveRenderSettingNode* RemovalNode = Cast<UMovieGraphRemoveRenderSettingNode>(Node);
+	const bool bIsARemovalNode = RemovalNode && !Node->IsDisabled() && (RemovalNode->NodeType.Get() != nullptr);
+	if (bIsARemovalNode)
+	{
+		InEvaluationContext.NodeTypesToRemoveStack.Push(RemovalNode->NodeType);
 	}
 	
 	// Now that we've potentially resolved the values on this node, continue to travel up-stream along any execution pins,
 	// potentially following re-route nodes, sub-graph nodes, through branches, etc.
 	TArray<UMovieGraphPin*> NewPinsToFollow = Node->EvaluatePinsToFollow(InEvaluationContext);
+
+	// Immediately stop traversal if a circular subgraph reference was found. This is done after EvaluatePinsToFollow() because
+	// subgraph nodes will set bCircularGraphReferenceFound in EvaluatePinsToFollow().
+	if (InEvaluationContext.bCircularGraphReferenceFound)
+	{
+		// Generate a string illustrating the problematic subgraph stack
+		FString GraphCycleTraversalPath;
+		for (const TObjectPtr<const UMovieGraphSubgraphNode>& SubgraphNode : InEvaluationContext.SubgraphStack)
+		{
+			if (const UMovieGraphConfig* SubgraphAsset = SubgraphNode->GetSubgraphAsset())
+			{
+				GraphCycleTraversalPath += FString::Printf(TEXT("\n%s -> "), *SubgraphAsset->GetName());
+			}
+		}
+
+		InEvaluationContext.TraversalError = FText::Format(
+			LOCTEXT("TraversalError_CircularGraphReference", "Circular subgraph reference found during traversal.{0}"), FText::FromString(GraphCycleTraversalPath));
+		
+		return false;
+	}
 	
-	for(UMovieGraphPin* Pin : NewPinsToFollow)
+	for (UMovieGraphPin* Pin : NewPinsToFollow)
 	{
 		for (UMovieGraphEdge* Edge : Pin->Edges)
 		{
-			if (UMovieGraphPin* OtherPin = Edge->GetOtherPin(Pin))
+			UMovieGraphPin* OtherPin = Edge->GetOtherPin(Pin);
+			if (!OtherPin)
 			{
-				UMovieGraphNode* OtherNode = OtherPin->Node;
+				continue;
+			}
+			
+			UMovieGraphNode* OtherNode = OtherPin->Node;
 
-				if (InEvaluationContext.VisitedNodes.Contains(OtherNode))
+			// Detect cycles within node connections
+			if (VisitedNodeSet.Contains(OtherNode))
+			{
+				// Generate a string illustrating the problematic node connections
+				FString NodeCycleTraversalPath;
+				for (const TObjectPtr<UMovieGraphNode>& VisitedNode : VisitedNodeSet)
 				{
-					// ToDo: This won't work long term if you have two different branches visiting the same node
-					// also we need to reset this every time we go start from the root.
-					UE_LOG(LogMovieRenderPipeline, Error, TEXT("Circular graph?"));
-					continue;
+					NodeCycleTraversalPath += FString::Printf(TEXT("\n%s -> "), *VisitedNode->GetName());
 				}
+				
+				InEvaluationContext.TraversalError = FText::Format(
+					LOCTEXT("TraversalError_CircularNodeReference", "Node connection cycle found during traversal.{0}"), FText::FromString(NodeCycleTraversalPath));
+				
+				return false;
+			}
 
-				CreateFlattenedGraph_Recursive(InOwningConfig, OutBranchConfig, InEvaluationContext, OtherPin);
+			// If no cycle detected, continue following the pin
+			const bool bSuccess = CreateFlattenedGraph_Recursive(InOwningConfig, OutBranchConfig, InEvaluationContext, OtherPin);
+			if (!bSuccess)
+			{
+				return false;
 			}
 		}
 	}
+
+	// Done with this removal node now; pop it off the stack so it doesn't affect other branches
+	if (bIsARemovalNode)
+	{
+		InEvaluationContext.NodeTypesToRemoveStack.Pop();
+	}
+
+	return true;
 }
 
 void UMovieGraphConfig::VisitUpstreamNodes_Recursive(UMovieGraphNode* FromNode,	const FVisitNodesCallback& VisitCallback, TSet<UMovieGraphNode*>& VisitedNodes) const
@@ -1084,8 +1552,16 @@ void UMovieGraphConfig::VisitUpstreamNodes_Recursive(UMovieGraphNode* FromNode,	
 		{
 			if (ConnectedPin->Properties.bIsBranch)
 			{
-				VisitCallback.ExecuteIfBound(ConnectedPin->Node, ConnectedPin);
-				VisitUpstreamNodes_Recursive(ConnectedPin->Node, VisitCallback, VisitedNodes);
+				bool bContinueVisiting = true;
+				if (VisitCallback.IsBound())
+				{
+					bContinueVisiting = VisitCallback.Execute(ConnectedPin->Node, ConnectedPin);
+				}
+
+				if (bContinueVisiting)
+				{
+					VisitUpstreamNodes_Recursive(ConnectedPin->Node, VisitCallback, VisitedNodes);
+				}
 			}
 		}
 	}
@@ -1112,17 +1588,27 @@ void UMovieGraphConfig::VisitDownstreamNodes_Recursive(UMovieGraphNode* FromNode
 		{
 			if (ConnectedPin->Properties.bIsBranch)
 			{
-				VisitCallback.ExecuteIfBound(ConnectedPin->Node, ConnectedPin);
-				VisitDownstreamNodes_Recursive(ConnectedPin->Node, VisitCallback, VisitedNodes);
+				bool bContinueVisiting = true;
+				if (VisitCallback.IsBound())
+				{
+					bContinueVisiting = VisitCallback.Execute(ConnectedPin->Node, ConnectedPin);
+				}
+
+				if (bContinueVisiting)
+				{
+					VisitDownstreamNodes_Recursive(ConnectedPin->Node, VisitCallback, VisitedNodes);
+				}
 			}
 		}
 	}
 }
 
-UMovieGraphEvaluatedConfig* UMovieGraphConfig::CreateFlattenedGraph(const FMovieGraphTraversalContext& InContext)
+UMovieGraphEvaluatedConfig* UMovieGraphConfig::CreateFlattenedGraph(const FMovieGraphTraversalContext& InContext, FString& OutError)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(MRQ_CreateFlattenedGraph);
 	LLM_SCOPE_BYNAME(TEXT("MovieGraph/CreateFlattenedGraph"));
+
+	OutError.Empty();
 
 	UMovieGraphEvaluatedConfig* NewContext = NewObject<UMovieGraphEvaluatedConfig>(this);
 
@@ -1154,7 +1640,13 @@ UMovieGraphEvaluatedConfig* UMovieGraphConfig::CreateFlattenedGraph(const FMovie
 				UMovieGraphPin* OtherPin = Edge->GetOtherPin(InputPin);
 				if (OtherPin)
 				{
-					CreateFlattenedGraph_Recursive(NewContext, /*InOut*/ BranchConfig, StackContext, OtherPin);
+					const bool bTraversalSuccessful = CreateFlattenedGraph_Recursive(NewContext, /*InOut*/ BranchConfig, StackContext, OtherPin);
+					if (!bTraversalSuccessful)
+					{
+						UE_LOG(LogMovieRenderPipeline, Error, TEXT("%s"), *StackContext.TraversalError.ToString());
+						OutError = StackContext.TraversalError.ToString();
+						return nullptr;
+					}
 				}
 			}
 
@@ -1172,21 +1664,25 @@ UMovieGraphEvaluatedConfig* UMovieGraphConfig::CreateFlattenedGraph(const FMovie
 					UMovieGraphPin* OtherPin = Edge->GetOtherPin(GlobalsPin);
 					if (OtherPin)
 					{
-						CreateFlattenedGraph_Recursive(NewContext, /*InOut*/ BranchConfig, GlobalStackContext, OtherPin);
+						const bool bTraversalSuccessful = CreateFlattenedGraph_Recursive(NewContext, /*InOut*/ BranchConfig, GlobalStackContext, OtherPin);
+						if (!bTraversalSuccessful)
+						{
+							UE_LOG(LogMovieRenderPipeline, Error, TEXT("%s"), *StackContext.TraversalError.ToString());
+							OutError = StackContext.TraversalError.ToString();
+                            return nullptr;
+						}
 					}
 				}
 			}
 		}		
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("Traversed Graph:"));
+	bool bHasRenderLayerNode = false;
+
 	for (const TPair<FName, FMovieGraphEvaluatedBranchConfig>& Pair : NewContext->BranchConfigMapping)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("\t Branch: %s"), *Pair.Key.ToString());
-
 		for (UMovieGraphNode* Node : Pair.Value.GetNodes())
 		{
-			UE_LOG(LogTemp, Warning, TEXT("\t\t %s Class:"), *Node->GetClass()->GetName());
 			for (TFieldIterator<FProperty> PropertyIterator(Node->GetClass()); PropertyIterator; ++PropertyIterator)
 			{
 				FProperty* CheckProperty = *PropertyIterator;
@@ -1195,15 +1691,19 @@ UMovieGraphEvaluatedConfig* UMovieGraphConfig::CreateFlattenedGraph(const FMovie
 				{
 					FString ExportText;
 					CheckProperty->ExportText_InContainer(0, ExportText, Node, Node, Node, 0);
-					UE_LOG(LogTemp, Warning, TEXT("\t\t\t %s : %s"), *CheckProperty->GetName(), *ExportText);
 				}
 			}
+			
+			bHasRenderLayerNode |= Node->IsA<UMovieGraphRenderLayerNode>();
 		}
+	}
 
+	if (!bHasRenderLayerNode)
+	{
+		// NOTE: While this doesn't cover all cases, we ensure the presence of at least one render layer node.
+		UE_CALL_ONCE([] { UE_LOG(LogMovieRenderPipeline, Error, TEXT("For render jobs to succeed, one or more render layer node(s) must be present.")); });
 	}
 
 	return NewContext;
 }
-
-
 #undef LOCTEXT_NAMESPACE

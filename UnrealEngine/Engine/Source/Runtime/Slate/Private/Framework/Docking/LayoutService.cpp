@@ -56,14 +56,14 @@ static bool GetConfigSection(TArray<FString>& Result, const FString& Filename, b
 	return true;
 }
 
-static FConfigSection* GetConfigSectionPrivate(const bool Force, const bool Const, const FString& Filename, bool bAllowFallback = true)
+static const FConfigSection* GetConfigSectionPrivate(const bool Force, const FString& Filename, bool bAllowFallback = true)
 {
-	FConfigSection* FoundSection = GConfig->GetSectionPrivate(GetEditorLayoutsSectionName(), /*Force*/false, /*Const*/true, Filename);
+	const FConfigSection* FoundSection = GConfig->GetSection(GetEditorLayoutsSectionName(), /*Force*/false, Filename);
 	if (FoundSection)
 	{
 		if (bAllowFallback && GetEditorLayoutsSectionName() != DefaultEditorLayoutsSectionName)
 		{
-			FoundSection = GConfig->GetSectionPrivate(DefaultEditorLayoutsSectionName, /*Force*/false, /*Const*/true, Filename);
+			FoundSection = GConfig->GetSection(DefaultEditorLayoutsSectionName, /*Force*/false, Filename);
 		}
 	}
 	return FoundSection;
@@ -271,7 +271,7 @@ TSharedRef<FTabManager::FLayout> FLayoutSaveRestore::LoadFromConfigPrivate(const
 	else if (bInRemoveOlderLayoutVersions)
 	{
 		// If File and Section exist
-		if (FConfigSection* ConfigSection = GetConfigSectionPrivate(/*Force*/false, /*Const*/true, InConfigFileName))
+		if (const FConfigSection* ConfigSection = GetConfigSectionPrivate(/*Force*/false, InConfigFileName))
 		{
 			// If Key does not exist (i.e., Section does but not contain that Key)
 			if (!ConfigSection->Find(*LayoutNameString))

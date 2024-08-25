@@ -16,6 +16,8 @@ bool UAzureSpatialAnchorsLibrary::CreateSession()
 		return false;
 	}
 
+	UE_LOG(LogAzureSpatialAnchors, Warning, TEXT("Azure Spatial Anchors (ASA) will be retired by microsoft on 20 November 2024."));
+
 	return IASA->CreateSession();
 }
 

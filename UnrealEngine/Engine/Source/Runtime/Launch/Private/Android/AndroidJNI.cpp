@@ -74,7 +74,16 @@ if (Id == 0) \
 void FJavaWrapper::FindClassesAndMethods(JNIEnv* Env)
 {
 	auto bIsOptional = false;
-	GGameActivityClassID = GameActivityClassID = FindClassGlobalRef(Env, "com/epicgames/unreal/GameActivity", bIsOptional);
+	FString classPath = ANDROID_GAMEACTIVITY_CLASSPATH;
+	FString classPathBase = ANDROID_GAMEACTIVITY_BASE_CLASSPATH;
+	STANDALONE_DEBUG_LOGf(LogAndroid, TEXT("[JNI] - FindClassesAndMethods called for: %s"), *classPath);
+	jclass foundGameActivityClassID = FindClassGlobalRef(Env, TCHAR_TO_ANSI(*classPath), bIsOptional);
+	if (!foundGameActivityClassID)
+	{
+		STANDALONE_DEBUG_LOGf(LogAndroid, TEXT("[JNI] - FindClassesAndMethods FAILED to find GameActivity ClassID for: %s"), *classPath);
+		return;
+	}
+	GGameActivityClassID = GameActivityClassID = foundGameActivityClassID;
 	AndroidThunkJava_ShowConsoleWindow = FindMethod(Env, GameActivityClassID, "AndroidThunkJava_ShowConsoleWindow", "(Ljava/lang/String;)V", bIsOptional);
     AndroidThunkJava_ShowVirtualKeyboardInputDialog = FindMethod(Env, GameActivityClassID, "AndroidThunkJava_ShowVirtualKeyboardInputDialog", "(ILjava/lang/String;Ljava/lang/String;)V", bIsOptional);
     AndroidThunkJava_HideVirtualKeyboardInputDialog = FindMethod(Env, GameActivityClassID, "AndroidThunkJava_HideVirtualKeyboardInputDialog", "()V", bIsOptional);
@@ -198,7 +207,6 @@ void FJavaWrapper::FindGooglePlayMethods(JNIEnv* Env)
 	// @todo split GooglePlay
 	//	GoogleServicesClassID = FindClass(Env, "com/epicgames/unreal/GoogleServices", bIsOptional);
 	GoogleServicesClassID = GameActivityClassID;
-	AndroidThunkJava_ResetAchievements = FindMethod(Env, GoogleServicesClassID, "AndroidThunkJava_ResetAchievements", "()V", bIsOptional);
 	AndroidThunkJava_ShowAdBanner = FindMethod(Env, GoogleServicesClassID, "AndroidThunkJava_ShowAdBanner", "(Ljava/lang/String;Z)V", bIsOptional);
 	AndroidThunkJava_HideAdBanner = FindMethod(Env, GoogleServicesClassID, "AndroidThunkJava_HideAdBanner", "()V", bIsOptional);
 	AndroidThunkJava_CloseAdBanner = FindMethod(Env, GoogleServicesClassID, "AndroidThunkJava_CloseAdBanner", "()V", bIsOptional);
@@ -207,8 +215,6 @@ void FJavaWrapper::FindGooglePlayMethods(JNIEnv* Env)
 	AndroidThunkJava_IsInterstitialAdRequested = FindMethod(Env, GoogleServicesClassID, "AndroidThunkJava_IsInterstitialAdRequested", "()Z", bIsOptional);
 	AndroidThunkJava_ShowInterstitialAd = FindMethod(Env, GoogleServicesClassID, "AndroidThunkJava_ShowInterstitialAd", "()V", bIsOptional);
 	AndroidThunkJava_GetAdvertisingId = FindMethod(Env, GoogleServicesClassID, "AndroidThunkJava_GetAdvertisingId", "()Ljava/lang/String;", bIsOptional);
-	AndroidThunkJava_GoogleClientConnect = FindMethod(Env, GoogleServicesClassID, "AndroidThunkJava_GoogleClientConnect", "()V", bIsOptional);
-	AndroidThunkJava_GoogleClientDisconnect = FindMethod(Env, GoogleServicesClassID, "AndroidThunkJava_GoogleClientDisconnect", "()V", bIsOptional);
 }
 void FJavaWrapper::FindGooglePlayBillingMethods(JNIEnv* Env)
 {
@@ -373,6 +379,109 @@ bool FJavaWrapper::CallBooleanMethod(JNIEnv* Env, jobject Object, jmethodID Meth
 	return (bool)Return;
 }
 
+void FJavaWrapper::CallStaticVoidMethod(JNIEnv* Env, jclass Clazz, jmethodID Method, ...)
+{
+	if (Method == NULL || Clazz == NULL)
+	{
+		return;
+	}
+
+	va_list Args;
+	va_start(Args, Method);
+	Env->CallStaticVoidMethodV(Clazz, Method, Args);
+	va_end(Args);
+}
+
+jobject FJavaWrapper::CallStaticObjectMethod(JNIEnv* Env, jclass Clazz, jmethodID Method, ...)
+{
+	if (Method == NULL || Clazz == NULL)
+	{
+		return nullptr;
+	}
+
+	va_list Args;
+	va_start(Args, Method);
+	jobject Return = Env->CallStaticObjectMethodV(Clazz, Method, Args);
+	va_end(Args);
+
+	return Return;
+}
+
+int32 FJavaWrapper::CallStaticIntMethod(JNIEnv* Env, jclass Clazz, jmethodID Method, ...)
+{
+	if (Method == NULL || Clazz == NULL)
+	{
+		return 0;
+	}
+
+	va_list Args;
+	va_start(Args, Method);
+	jint Return = Env->CallStaticIntMethod(Clazz, Method, Args);
+	va_end(Args);
+
+	return (int32)Return;
+}
+
+int64 FJavaWrapper::CallStaticLongMethod(JNIEnv* Env, jclass Clazz, jmethodID Method, ...)
+{
+	if (Method == NULL || Clazz == NULL)
+	{
+		return 0;
+	}
+
+	va_list Args;
+	va_start(Args, Method);
+	jlong Return = Env->CallStaticLongMethod(Clazz, Method, Args);
+	va_end(Args);
+
+	return (int64)Return;
+}
+
+float FJavaWrapper::CallStaticFloatMethod(JNIEnv* Env, jclass Clazz, jmethodID Method, ...)
+{
+	if (Method == NULL || Clazz == NULL)
+	{
+		return 0.f;
+	}
+
+	va_list Args;
+	va_start(Args, Method);
+	jfloat Return = Env->CallStaticFloatMethod(Clazz, Method, Args);
+	va_end(Args);
+
+	return (float)Return;
+}
+
+double FJavaWrapper::CallStaticDoubleMethod(JNIEnv* Env, jclass Clazz, jmethodID Method, ...)
+{
+	if (Method == NULL || Clazz == NULL)
+	{
+		return 0.;
+	}
+
+	va_list Args;
+	va_start(Args, Method);
+	jdouble Return = Env->CallStaticDoubleMethod(Clazz, Method, Args);
+	va_end(Args);
+
+	return (double)Return;
+}
+
+bool FJavaWrapper::CallStaticBooleanMethod(JNIEnv* Env, jclass Clazz, jmethodID Method, ...)
+{
+	if (Method == NULL || Clazz == NULL)
+	{
+		return false;
+	}
+
+	va_list Args;
+	va_start(Args, Method);
+	jboolean Return = Env->CallStaticBooleanMethod(Clazz, Method, Args);
+	va_end(Args);
+
+	return (bool)Return;
+}
+
 //Declare all the static members of the class defs 
 jclass FJavaWrapper::GameActivityClassID;
 jobject FJavaWrapper::GameActivityThis;
@@ -443,7 +552,6 @@ jfieldID FJavaWrapper::InputDeviceInfo_FeedbackMotorCount;
 
 jclass FJavaWrapper::GoogleServicesClassID;
 jobject FJavaWrapper::GoogleServicesThis;
-jmethodID FJavaWrapper::AndroidThunkJava_ResetAchievements;
 jmethodID FJavaWrapper::AndroidThunkJava_ShowAdBanner;
 jmethodID FJavaWrapper::AndroidThunkJava_HideAdBanner;
 jmethodID FJavaWrapper::AndroidThunkJava_CloseAdBanner;
@@ -452,8 +560,6 @@ jmethodID FJavaWrapper::AndroidThunkJava_IsInterstitialAdAvailable;
 jmethodID FJavaWrapper::AndroidThunkJava_IsInterstitialAdRequested;
 jmethodID FJavaWrapper::AndroidThunkJava_ShowInterstitialAd;
 jmethodID FJavaWrapper::AndroidThunkJava_GetAdvertisingId;
-jmethodID FJavaWrapper::AndroidThunkJava_GoogleClientConnect;
-jmethodID FJavaWrapper::AndroidThunkJava_GoogleClientDisconnect;
 
 jclass FJavaWrapper::JavaStringClass;
 jmethodID FJavaWrapper::AndroidThunkJava_IapSetupService;
@@ -1124,14 +1230,6 @@ void AndroidThunkCpp_LaunchURL(const FString& URL)
 	}
 }
 
-void AndroidThunkCpp_ResetAchievements()
-{
-	if (JNIEnv* Env = FAndroidApplication::GetJavaEnv())
-	{
-		FJavaWrapper::CallVoidMethod(Env, FJavaWrapper::GoogleServicesThis, FJavaWrapper::AndroidThunkJava_ResetAchievements);
-	}
-}
-
 void AndroidThunkCpp_ShowAdBanner(const FString& AdUnitID, bool bShowOnBottomOfScreen)
 {
 	if (JNIEnv* Env = FAndroidApplication::GetJavaEnv())
@@ -1267,22 +1365,6 @@ bool AndroidThunkCpp_SendBroadcast(const FString& PackageName, const FString& Ex
 	return result;
 }
 
-void AndroidThunkCpp_GoogleClientConnect()
-{
-	if (JNIEnv* Env = FAndroidApplication::GetJavaEnv())
-	{
-		FJavaWrapper::CallVoidMethod(Env, FJavaWrapper::GoogleServicesThis, FJavaWrapper::AndroidThunkJava_GoogleClientConnect);
-	}
-}
-
-void AndroidThunkCpp_GoogleClientDisconnect()
-{
-	if (JNIEnv* Env = FAndroidApplication::GetJavaEnv())
-	{
-		FJavaWrapper::CallVoidMethod(Env, FJavaWrapper::GoogleServicesThis, FJavaWrapper::AndroidThunkJava_GoogleClientDisconnect);
-	}
-}
-
 namespace
 {
 	jobject GJavaAssetManager = NULL;
@@ -1297,6 +1379,11 @@ jobject AndroidJNI_GetJavaAssetManager()
 		{
 			auto local = NewScopedJavaObject(Env, FJavaWrapper::CallObjectMethod(Env, FJavaWrapper::GameActivityThis, FJavaWrapper::AndroidThunkJava_GetAssetManager));
 			GJavaAssetManager = (jobject)Env->NewGlobalRef(*local);
+			checkf(GJavaAssetManager != nullptr, TEXT("Failed get GJavaAssetManager!"));
+		}
+		else
+		{
+			checkf(FAndroidApplication::GetJavaEnv() != nullptr, TEXT("Failed get FAndroidApplication::GetJavaEnv() "));
 		}
 	}
 	return GJavaAssetManager;
@@ -1353,7 +1440,7 @@ int32 AndroidThunkCpp_GetCellularPreference()
 	int32 value = 0;
 	if (JNIEnv* Env = FAndroidApplication::GetJavaEnv())
 	{
-		FJavaWrapper::CallIntMethod(Env, FJavaWrapper::GameActivityThis, FJavaWrapper::AndroidThunkJava_GetCellularPreference);
+		value = FJavaWrapper::CallIntMethod(Env, FJavaWrapper::GameActivityThis, FJavaWrapper::AndroidThunkJava_GetCellularPreference);
 	}
 	return value;
 }
@@ -1707,6 +1794,13 @@ JNI_METHOD void Java_com_epicgames_unreal_GameActivity_nativeSetObbFilePaths(JNI
 //This function is declared in the Java-defined class, GameActivity.java: "public native void nativeSetGlobalActivity();"
 JNI_METHOD void Java_com_epicgames_unreal_GameActivity_nativeSetGlobalActivity(JNIEnv* jenv, jobject thiz, jboolean bUseExternalFilesDir, jboolean bPublicLogFiles, jstring internalFilePath, jstring externalFilePath, jboolean bOBBinAPK, jstring APKFilename /*, jobject googleServices*/)
 {
+	STANDALONE_DEBUG_LOG(TEXT("nativeSetGlobalActivity(unreal): Entering unreal nativeSetGlobalActivity, GameActivityThis=%p\n"), FJavaWrapper::GameActivityThis);
+	if (FJavaWrapper::GameActivityThis != nullptr)
+	{
+		STANDALONE_DEBUG_LOG(TEXT("nativeSetGlobalActivity(unreal): Error GameActivityThis is already set GameActivityThis=%p\n"), FJavaWrapper::GameActivityThis);
+		//jenv->DeleteGlobalRef(FJavaWrapper::GameActivityThis);
+		GGameActivityThis = FJavaWrapper::GameActivityThis = nullptr;
+	}
 	if (!FJavaWrapper::GameActivityThis)
 	{
 		GGameActivityThis = FJavaWrapper::GameActivityThis = jenv->NewGlobalRef(thiz);
@@ -1715,6 +1809,7 @@ JNI_METHOD void Java_com_epicgames_unreal_GameActivity_nativeSetGlobalActivity(J
 			FPlatformMisc::LowLevelOutputDebugString(TEXT("Error setting the global GameActivity activity"));
 			check(false);
 		}
+		STANDALONE_DEBUG_LOG(TEXT("nativeSetGlobalActivity(unreal): jenv=%p, set GameActivityThis=%p, bUseExternalFilesDir=%d, bOBBinAPK=%d\n"), jenv, FJavaWrapper::GameActivityThis, bUseExternalFilesDir, bOBBinAPK);
 
 		// This call is only to set the correct GameActivityThis
 		FAndroidApplication::InitializeJavaEnv(GJavaVM, JNI_CURRENT_VERSION, FJavaWrapper::GameActivityThis);
@@ -1740,11 +1835,11 @@ JNI_METHOD void Java_com_epicgames_unreal_GameActivity_nativeSetGlobalActivity(J
 #else
 			GFilePathBase = GExternalFilePath;
 #endif
-			FPlatformMisc::LowLevelOutputDebugStringf(TEXT("GFilePathBase Path override to'%s'\n"), *GFilePathBase);
+			FPlatformMisc::LowLevelOutputDebugStringf(TEXT("nativeSetGlobalActivity(unreal): GFilePathBase Path override to'%s'\n"), *GFilePathBase);
 		}
 
-		FPlatformMisc::LowLevelOutputDebugStringf(TEXT("InternalFilePath found as '%s'\n"), *GInternalFilePath);
-		FPlatformMisc::LowLevelOutputDebugStringf(TEXT("ExternalFilePath found as '%s'\n"), *GExternalFilePath);
+		FPlatformMisc::LowLevelOutputDebugStringf(TEXT("nativeSetGlobalActivity(unreal): InternalFilePath found as '%s'\n"), *GInternalFilePath);
+		FPlatformMisc::LowLevelOutputDebugStringf(TEXT("nativeSetGlobalActivity(unreal): ExternalFilePath found as '%s'\n"), *GExternalFilePath);
 	}
 }
 
@@ -2078,6 +2173,56 @@ JNI_METHOD void Java_com_epicgames_unreal_NativeCalls_UELogVerbose(JNIEnv* jenv,
 #endif
 	jenv->ReleaseStringUTFChars(InString, chars);
 }
+#if USE_ANDROID_STANDALONE
+JNI_METHOD void Java_com_epicgames_makeaar_GameActivityForMakeAAR_nativeSetGlobalActivity(JNIEnv* jenv, jobject thiz, jboolean bUseExternalFilesDir, jboolean bPublicLogFiles, jstring internalFilePath, jstring externalFilePath, jboolean bOBBinAPK, jstring APKFilename /*, jobject googleServices*/)
+{
+	STANDALONE_DEBUG_LOG(TEXT("nativeSetGlobalActivity: Entering makeaar nativeSetGlobalActivity, GameActivityThis=%p\n"), FJavaWrapper::GameActivityThis);
+	if (FJavaWrapper::GameActivityThis != nullptr)
+	{
+		STANDALONE_DEBUG_LOG(TEXT("nativeSetGlobalActivity(makeaar): Error GameActivityThis is already set GameActivityThis=%p\n"), FJavaWrapper::GameActivityThis);
+		//jenv->DeleteGlobalRef(FJavaWrapper::GameActivityThis);
+		GGameActivityThis = FJavaWrapper::GameActivityThis = nullptr;
+	}
+	if (!FJavaWrapper::GameActivityThis)
+	{
+		GGameActivityThis = FJavaWrapper::GameActivityThis = jenv->NewGlobalRef(thiz);
+		if (!FJavaWrapper::GameActivityThis)
+		{
+			FPlatformMisc::LowLevelOutputDebugString(TEXT("Error setting the global GameActivity activity"));
+			check(false);
+		}
+		STANDALONE_DEBUG_LOG(TEXT("nativeSetGlobalActivity(makeaar): jenv=%p, set GameActivityThis=%p, bUseExternalFilesDir=%d, bOBBinAPK=%d\n"), jenv, FJavaWrapper::GameActivityThis, bUseExternalFilesDir, bOBBinAPK);
+		// This call is only to set the correct GameActivityThis
+		FAndroidApplication::InitializeJavaEnv(GJavaVM, JNI_CURRENT_VERSION, FJavaWrapper::GameActivityThis);
+		// Rescan methods since we are switching to the makeaar version of GameActivity
+		FJavaWrapper::FindClassesAndMethods(jenv);
+		// @todo split GooglePlay, this needs to be passed in to this function
+		FJavaWrapper::GoogleServicesThis = FJavaWrapper::GameActivityThis;
+		// FJavaWrapper::GoogleServicesThis = jenv->NewGlobalRef(googleServices);
+		// Next we check to see if the OBB file is in the APK
+		//jmethodID isOBBInAPKMethod = jenv->GetStaticMethodID(FJavaWrapper::GameActivityClassID, "isOBBInAPK", "()Z");
+		//GOBBinAPK = (bool)jenv->CallStaticBooleanMethod(FJavaWrapper::GameActivityClassID, isOBBInAPKMethod, nullptr);
+		GOBBinAPK = bOBBinAPK;
+		GAPKFilename = FJavaHelper::FStringFromParam(jenv, APKFilename);
+		GInternalFilePath = FJavaHelper::FStringFromParam(jenv, internalFilePath);
+		GExternalFilePath = FJavaHelper::FStringFromParam(jenv, externalFilePath);
+		if (bUseExternalFilesDir)
+		{
+#if UE_BUILD_SHIPPING
+			GFilePathBase = GInternalFilePath;
+			GOverrideAndroidLogDir = bPublicLogFiles;
+#else
+			GFilePathBase = GExternalFilePath;
+#endif
+			FPlatformMisc::LowLevelOutputDebugStringf(TEXT("nativeSetGlobalActivity(makeaar): GFilePathBase Path override to'%s'\n"), *GFilePathBase);
+		}
+		FPlatformMisc::LowLevelOutputDebugStringf(TEXT("nativeSetGlobalActivity(makeaar): InternalFilePath found as '%s'\n"), *GInternalFilePath);
+		FPlatformMisc::LowLevelOutputDebugStringf(TEXT("nativeSetGlobalActivity(makeaar): ExternalFilePath found as '%s'\n"), *GExternalFilePath);
+	}
+	// DO NOT CALL, we have already handled logic above...
+	// Java_com_epicgames_unreal_GameActivity_nativeSetGlobalActivity(jenv, thiz, bUseExternalFilesDir, bPublicLogFiles, internalFilePath, externalFilePath, bOBBinAPK, APKFilename);
+}
+#endif // USE_ANDROID_STANDALONE
 
 void FJavaWrapper::SetupEmbeddedCommunication(JNIEnv* Env)
 {

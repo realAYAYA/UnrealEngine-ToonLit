@@ -5,6 +5,7 @@
 #include "Editor.h"
 #include "EditorModeManager.h"
 #include "EditorViewportClient.h"
+#include "EditorGizmos/EditorTransformGizmoUtil.h"
 #include "Math/Matrix.h"
 #include "Math/Quat.h"
 #include "Math/Vector.h"
@@ -14,21 +15,20 @@
 
 FTransform UEditorTransformProxy::GetTransform() const
 {
-	if (FEditorViewportClient* ViewportClient = GLevelEditorModeTools().GetFocusedViewportClient())
+	if (const FEditorViewportClient* ViewportClient = GetViewportClient())
 	{
-		FVector Location = ViewportClient->GetWidgetLocation();
-		FMatrix RotMatrix = ViewportClient->GetWidgetCoordSystem();
-		return FTransform(FQuat(RotMatrix), Location, FVector::OneVector);
+		const FQuat Rotation(ViewportClient->GetWidgetCoordSystem());
+		const FVector Location = ViewportClient->GetWidgetLocation();
+		const FVector Scale(WeakContext->GetModeTools()->GetWidgetScale());
+		return FTransform(Rotation, Location, Scale);
 	}
-	else
-	{
-		return FTransform::Identity;
-	}
+	
+	return FTransform::Identity;
 }
 
 void UEditorTransformProxy::InputTranslateDelta(const FVector& InDeltaTranslate, EAxisList::Type InAxisList)
 {
-	if (FEditorViewportClient* ViewportClient = GLevelEditorModeTools().GetFocusedViewportClient())
+	if (FEditorViewportClient* ViewportClient = GetViewportClient())
 	{
 		FVector Translate = InDeltaTranslate;
 		FRotator Rot = FRotator::ZeroRotator;
@@ -43,7 +43,7 @@ void UEditorTransformProxy::InputTranslateDelta(const FVector& InDeltaTranslate,
 
 void UEditorTransformProxy::InputScaleDelta(const FVector& InDeltaScale, EAxisList::Type InAxisList)
 {
-	if (FEditorViewportClient* ViewportClient = GLevelEditorModeTools().GetFocusedViewportClient())
+	if (FEditorViewportClient* ViewportClient = GetViewportClient())
 	{
 		FVector Translate = FVector::ZeroVector;
 		FRotator Rot = FRotator::ZeroRotator;
@@ -58,7 +58,7 @@ void UEditorTransformProxy::InputScaleDelta(const FVector& InDeltaScale, EAxisLi
 
 void UEditorTransformProxy::InputRotateDelta(const FRotator& InDeltaRotate, EAxisList::Type InAxisList)
 {
-	if (FEditorViewportClient* ViewportClient = GLevelEditorModeTools().GetFocusedViewportClient())
+	if (FEditorViewportClient* ViewportClient = GetViewportClient())
 	{
 		FVector Translate = FVector::ZeroVector;
 		FRotator Rot = InDeltaRotate;
@@ -68,6 +68,30 @@ void UEditorTransformProxy::InputRotateDelta(const FRotator& InDeltaRotate, EAxi
 		ViewportClient->SetCurrentWidgetAxis(InAxisList);
 		ViewportClient->InputWidgetDelta(ViewportClient->Viewport, InAxisList, Translate, Rot, Scale);
 		ViewportClient->SetCurrentWidgetAxis(EAxisList::None);
+	}
+}
+
+UEditorTransformProxy* UEditorTransformProxy::CreateNew(const UEditorTransformGizmoContextObject* InContext)
+{
+	UEditorTransformProxy* NewProxy = NewObject<UEditorTransformProxy>();
+	NewProxy->WeakContext = InContext;
+	return NewProxy;
+}
+
+FEditorViewportClient* UEditorTransformProxy::GetViewportClient() const
+{
+	if (WeakContext.IsValid() && WeakContext->GetModeTools())
+	{
+		return WeakContext->GetModeTools()->GetFocusedViewportClient();	
+	}
+	return GLevelEditorModeTools().GetFocusedViewportClient();
+}
+
+void UEditorTransformProxy::SetCurrentAxis(const EAxisList::Type InAxisList) const
+{
+	if (FEditorViewportClient* ViewportClient = GetViewportClient())
+	{
+		ViewportClient->SetCurrentWidgetAxis(InAxisList);
 	}
 }
 

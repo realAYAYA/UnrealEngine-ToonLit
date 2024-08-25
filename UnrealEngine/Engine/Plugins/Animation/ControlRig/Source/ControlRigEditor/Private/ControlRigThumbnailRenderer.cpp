@@ -5,10 +5,13 @@
 #include "Engine/StaticMesh.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/SkeletalMesh.h"
+#include "Engine/Texture2D.h"
+#include "TextureResource.h"
 #include "Animation/SkeletalMeshActor.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "ControlRig.h"
+#include "CanvasTypes.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ControlRigThumbnailRenderer)
 
@@ -22,6 +25,11 @@ bool UControlRigThumbnailRenderer::CanVisualizeAsset(UObject* Object)
 {
 	if (UControlRigBlueprint* InRigBlueprint = Cast<UControlRigBlueprint>(Object))
 	{
+		if(InRigBlueprint->GetRigModuleIcon())
+		{
+			return true;
+		}
+		
 		USkeletalMesh* SkeletalMesh = InRigBlueprint->PreviewSkeletalMesh.Get();
 		int32 MissingMeshCount = 0;
 
@@ -55,6 +63,12 @@ void UControlRigThumbnailRenderer::Draw(UObject* Object, int32 X, int32 Y, uint3
 
 	if (UControlRigBlueprint* InRigBlueprint = Cast<UControlRigBlueprint>(Object))
 	{
+		if(UTexture2D* ModuleIcon = InRigBlueprint->GetRigModuleIcon())
+		{
+			Canvas->DrawTile(X, Y, Width, Height, 0, 0, 1, 1, FLinearColor::White, ModuleIcon->GetResource(), 1.f);
+			return;
+		}
+		
 		UObject* ObjectToDraw = InRigBlueprint->PreviewSkeletalMesh.Get();
 		if(ObjectToDraw == nullptr)
 		{
@@ -81,6 +95,11 @@ void UControlRigThumbnailRenderer::AddAdditionalPreviewSceneContent(UObject* Obj
 	TSharedRef<FSkeletalMeshThumbnailScene> ThumbnailScene = ThumbnailSceneCache.EnsureThumbnailScene(Object);
 	if (ThumbnailScene->GetPreviewActor() && RigBlueprint && !RigBlueprint->ShapeLibraries.IsEmpty() && RigBlueprint->GeneratedClass)
 	{
+		if(RigBlueprint->GetRigModuleIcon())
+		{
+			return;
+		}
+
 		UControlRig* ControlRig = nullptr;
 
 		// reuse the current control rig if possible
@@ -112,6 +131,7 @@ void UControlRigThumbnailRenderer::AddAdditionalPreviewSceneContent(UObject* Obj
 				switch (ControlElement->Settings.ControlType)
 				{
 					case ERigControlType::Float:
+					case ERigControlType::ScaleFloat:
 					case ERigControlType::Integer:
 					case ERigControlType::Vector2D:
 					case ERigControlType::Position:
@@ -157,7 +177,7 @@ void UControlRigThumbnailRenderer::AddAdditionalPreviewSceneContent(UObject* Obj
 								MeshComponent->SetMaterial(i, MaterialInstance);
 							}
 
-							ShapeActors.Add(ControlElement->GetName(), ShapeActor);
+							ShapeActors.Add(ControlElement->GetFName(), ShapeActor);
 
 							ShapeActor->GetStaticMeshComponent()->SetStaticMesh(StaticMesh);
 							ShapeActor->SetActorTransform(ShapeDef->Transform * ShapeGlobalTransform);

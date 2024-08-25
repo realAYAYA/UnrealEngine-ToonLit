@@ -40,7 +40,7 @@ public:
 	UPROPERTY(EditAnywhere, Category = SelectionFilter)
 	bool bSelectFaces = true;
 
-	/** When true, will select edge loops. Edge loops are paths along a string of valence-4 vertices. */
+	/** When true, will select edge loops. Edge loops are either paths through vertices with 4 edges, or boundaries of holes. */
 	UPROPERTY(EditAnywhere, Category = SelectionFilter)
 	bool bSelectEdgeLoops = false;
 
@@ -101,6 +101,17 @@ protected:
 	TWeakObjectPtr<UMeshTopologySelectionMechanic> Mechanic;
 };
 
+/*
+ * Selection update type when the marquee rectangle has changed.
+ */
+
+UENUM()
+enum class EMarqueeSelectionUpdateType
+{
+	OnDrag,
+	OnTickAndRelease,
+	OnRelease
+};
 
 
 /**
@@ -134,6 +145,8 @@ public:
 	virtual void Render(IToolsContextRenderAPI* RenderAPI) override;
 	virtual void DrawHUD(FCanvas* Canvas, IToolsContextRenderAPI* RenderAPI);
 
+	virtual void Tick(float DeltaTime) override;
+
 	/**
 	 * Removes the mechanic's own click/hover handlers, which means that the parent tool
 	 * will need to call UpdateSelection(), UpdateHighlight(), ClearHighlight(), and 
@@ -149,6 +162,11 @@ public:
 	 * Enable/disable the mechanic without permanently removing behaviors or shutting it down.
 	 */
 	void SetIsEnabled(bool bOn);
+
+	/**
+	 * Sets how/when the selection updates are handled.
+	 */
+	void SetMarqueeSelectionUpdateType(EMarqueeSelectionUpdateType InType);
 
 	/**
 	 * Sets the base priority so that tools can make sure that their own behaviors are higher
@@ -255,6 +273,10 @@ public:
 
 	void InvertSelection();
 	void SelectAll();
+
+	void GrowSelection();
+	void ShrinkSelection();
+	void FloodSelection();
 
 	/** 
 	 * @return true if the current selection is non-empty 
@@ -383,6 +405,16 @@ protected:
 	UPROPERTY()
 	TObjectPtr<URectangleMarqueeMechanic> MarqueeMechanic;
 
+	/**
+	 * Selection update type (default is OnDrag) as it may not need to be triggered for every rectangle change
+	 * This can drastically improve the responsiveness of the UI for meshes high density meshes.
+	 * - OnDrag: calls HandleRectangleChanged when dragging
+	 * - OnTick: stores a PendingSelection function when dragging and calls it when ticking and on release (if any)
+	 * - OnRelease: stores a PendingSelection function when dragging and calls it on release (if any)
+	 */
+	UPROPERTY()
+	EMarqueeSelectionUpdateType MarqueeSelectionUpdateType = EMarqueeSelectionUpdateType::OnDrag;
+	
 	FInputCapturePriority BasePriority = FInputCapturePriority(FInputCapturePriority::DEFAULT_TOOL_PRIORITY);
 
 	// When bSelectEdgeLoops is true, this function is tested to see if we should select edge loops,
@@ -399,6 +431,12 @@ protected:
 	TFunction<bool(void)> ShouldRemoveFromSelectionFunc = [this]() {return bCtrlToggle; };;
 
 	FTransform3d TargetTransform;
+
+	/** Pending selection function to be called if the selection is deferred to tick/release */
+	TFunction<void()> PendingSelectionFunction;
+
+	/** Calls actual selection using the input marquee rectangle. **/
+	void HandleRectangleChanged(const FCameraRectangle& InRectangle);
 
 	/**
 	 * Get the topology selector settings to use given the current selection settings.

@@ -1,6 +1,5 @@
 ﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
-
 #include "GameplayInteractionContext.h"
 #include "GameplayInteractionSmartObjectBehaviorDefinition.h"
 #include "Engine/World.h"
@@ -76,7 +75,7 @@ bool FGameplayInteractionContext::Activate(const UGameplayInteractionSmartObject
 	}
 
 	// Start State Tree
-	StateTreeContext.Start();
+	StateTreeContext.Start(&StateTreeReference.GetParameters());
 	
 	return true;
 }
@@ -188,7 +187,7 @@ bool FGameplayInteractionContext::ValidateSchema(const FStateTreeExecutionContex
 	return true;
 }
 
-bool FGameplayInteractionContext::SetContextRequirements(FStateTreeExecutionContext& StateTreeContext) const
+bool FGameplayInteractionContext::SetContextRequirements(FStateTreeExecutionContext& StateTreeContext)
 {
 	if (!StateTreeContext.IsValid())
 	{
@@ -199,50 +198,41 @@ bool FGameplayInteractionContext::SetContextRequirements(FStateTreeExecutionCont
 	{
 		return false;
 	}
-	const FStateTreeReference& StateTreeReference = Definition->StateTreeReference;
-	StateTreeContext.SetParameters(StateTreeReference.GetParameters());
-
-	for (const FStateTreeExternalDataDesc& ItemDesc : StateTreeContext.GetContextDataDescs())
-	{
-		if (ItemDesc.Name == UE::GameplayInteraction::Names::ContextActor)
-		{
-			StateTreeContext.SetExternalData(ItemDesc.Handle, FStateTreeDataView(ContextActor));
-		}
-		else if (ItemDesc.Name == UE::GameplayInteraction::Names::SmartObjectActor)
-		{
-			StateTreeContext.SetExternalData(ItemDesc.Handle, FStateTreeDataView(SmartObjectActor));
-		}
-		else if (ItemDesc.Name == UE::GameplayInteraction::Names::SmartObjectClaimedHandle)
-        {
-            StateTreeContext.SetExternalData(ItemDesc.Handle, FStateTreeDataView(FSmartObjectClaimHandle::StaticStruct(), (uint8*)&ClaimedHandle));
-        }
-		else if (ItemDesc.Name == UE::GameplayInteraction::Names::SlotEntranceHandle)
-		{
-			StateTreeContext.SetExternalData(ItemDesc.Handle, FStateTreeDataView(FSmartObjectSlotEntranceHandle::StaticStruct(), (uint8*)&SlotEntranceHandle));
-		}
-		else if (ItemDesc.Name == UE::GameplayInteraction::Names::AbortContext)
-		{
-			StateTreeContext.SetExternalData(ItemDesc.Handle, FStateTreeDataView(FGameplayInteractionAbortContext::StaticStruct(), (uint8*)&AbortContext));
-		}
-	}
+	
+	StateTreeContext.SetContextDataByName(UE::GameplayInteraction::Names::ContextActor, FStateTreeDataView(ContextActor));
+	StateTreeContext.SetContextDataByName(UE::GameplayInteraction::Names::SmartObjectActor, FStateTreeDataView(SmartObjectActor));
+    StateTreeContext.SetContextDataByName(UE::GameplayInteraction::Names::SmartObjectClaimedHandle, FStateTreeDataView(FStructView::Make(ClaimedHandle)));
+	StateTreeContext.SetContextDataByName(UE::GameplayInteraction::Names::SlotEntranceHandle, FStateTreeDataView(FStructView::Make(SlotEntranceHandle)));
+	StateTreeContext.SetContextDataByName(UE::GameplayInteraction::Names::AbortContext, FStateTreeDataView(FStructView::Make(AbortContext)));
 
 	checkf(ContextActor != nullptr, TEXT("Should never reach this point with an invalid ContextActor since it is required to get a valid StateTreeContext."));
 	const UWorld* World = ContextActor->GetWorld();
-	for (const FStateTreeExternalDataDesc& ItemDesc : StateTreeContext.GetExternalDataDescs())
-	{
-		if (ItemDesc.Struct != nullptr)
+	
+	StateTreeContext.SetCollectExternalDataCallback(FOnCollectStateTreeExternalData::CreateLambda(
+		[World, ContextActor = ContextActor]
+		(const FStateTreeExecutionContext& Context, const UStateTree* StateTree, TArrayView<const FStateTreeExternalDataDesc> ExternalDescs, TArrayView<FStateTreeDataView> OutDataViews)
 		{
-			if (World != nullptr && ItemDesc.Struct->IsChildOf(UWorldSubsystem::StaticClass()))
+			check(ExternalDescs.Num() == OutDataViews.Num());
+			for (int32 Index = 0; Index < ExternalDescs.Num(); Index++)
 			{
-				UWorldSubsystem* Subsystem = World->GetSubsystemBase(Cast<UClass>(const_cast<UStruct*>(ToRawPtr(ItemDesc.Struct))));
-				StateTreeContext.SetExternalData(ItemDesc.Handle, FStateTreeDataView(Subsystem));
+				const FStateTreeExternalDataDesc& Desc = ExternalDescs[Index];
+				if (Desc.Struct != nullptr)
+				{
+					if (World != nullptr && Desc.Struct->IsChildOf(UWorldSubsystem::StaticClass()))
+					{
+						UWorldSubsystem* Subsystem = World->GetSubsystemBase(Cast<UClass>(const_cast<UStruct*>(ToRawPtr(Desc.Struct))));
+						OutDataViews[Index] = FStateTreeDataView(Subsystem);
+					}
+					else if (Desc.Struct->IsChildOf(AActor::StaticClass()))
+					{
+						OutDataViews[Index] = FStateTreeDataView(ContextActor);
+					}
+				}
 			}
-			else if (ItemDesc.Struct->IsChildOf(AActor::StaticClass()))
-			{
-				StateTreeContext.SetExternalData(ItemDesc.Handle, FStateTreeDataView(ContextActor));
-			}
-		}
-	}
+				
+			return true;
+		})
+	);
 
-	return StateTreeContext.AreExternalDataViewsValid();
+	return StateTreeContext.AreContextDataViewsValid();
 }

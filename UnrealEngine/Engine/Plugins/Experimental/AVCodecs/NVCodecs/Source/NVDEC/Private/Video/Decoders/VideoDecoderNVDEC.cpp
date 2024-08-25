@@ -7,6 +7,24 @@
 #include "NV12_to_BGRA8.cuh"
 #include "P010_to_ABGR10.cuh"
 
+namespace Internal 
+{
+    int HandleVideoSequenceCallback(void* UserData, CUVIDEOFORMAT* VideoFormat)
+	{
+		return static_cast<FVideoDecoderNVDEC*>(UserData)->HandleVideoSequence(VideoFormat);
+	}
+
+	int HandlePictureDCodecallback(void *UserData, CUVIDPICPARAMS *PicParams)
+	{
+		return static_cast<FVideoDecoderNVDEC*>(UserData)->HandlePictureDecode(PicParams);
+	}
+
+	int HandlePictureDisplayCallback(void *UserData, CUVIDPARSERDISPINFO *DispInfo)
+	{
+		return static_cast<FVideoDecoderNVDEC*>(UserData)->HandlePictureDisplay(DispInfo);
+	}
+}
+
 FVideoDecoderNVDEC::~FVideoDecoderNVDEC()
 {
 	Close();
@@ -25,6 +43,27 @@ FAVResult FVideoDecoderNVDEC::Open(TSharedRef<FAVDevice> const& NewDevice, TShar
 
 	bIsOpen = true;
 
+	CUVIDPARSERPARAMS VideoParserParameters = {};
+	FVideoDecoderConfigNVDEC const& PendingConfig = GetPendingConfig();
+    VideoParserParameters.CodecType = PendingConfig.CodecType;
+    VideoParserParameters.ulMaxNumDecodeSurfaces = 1;
+	// TODO (william.belcher): bLowLatency ? 0 : 1;
+    VideoParserParameters.ulMaxDisplayDelay = 0;
+    VideoParserParameters.pUserData = this;
+    VideoParserParameters.pfnSequenceCallback = Internal::HandleVideoSequenceCallback;
+    VideoParserParameters.pfnDecodePicture = Internal::HandlePictureDCodecallback;
+    VideoParserParameters.pfnDisplayPicture = Internal::HandlePictureDisplayCallback;
+
+	if (FAPI::Get<FNVDEC>().cuvidCreateVideoParser(&Parser, &VideoParserParameters) != CUDA_SUCCESS)
+	{
+		return FAVResult(EAVResult::ErrorCreating, TEXT("Failed to create parser"), TEXT("NVDEC"));
+	}
+
+	if (FAPI::Get<FNVDEC>().cuvidCtxLockCreate(&CtxLock, GetDevice()->GetContext<FVideoContextCUDA>()->Raw) != CUDA_SUCCESS)
+	{
+		return FAVResult(EAVResult::ErrorCreating, TEXT("Failed to context lock decoder"), TEXT("NVDEC"));
+	}
+
 	return EAVResult::Success;
 }
 
@@ -37,10 +76,34 @@ void FVideoDecoderNVDEC::Close()
 		CUresult const Result = FAPI::Get<FNVDEC>().cuvidDestroyDecoder(Decoder);
 		if (Result != CUDA_SUCCESS)
 		{
-			FAVResult::Log(EAVResult::ErrorDestroying, TEXT("Failed to destroy NVENC encoder"), TEXT("NVDEC"), Result);
+			FAVResult::Log(EAVResult::ErrorDestroying, TEXT("Failed to destroy NVDEC decoder"), TEXT("NVDEC"), Result);
 		}
 
 		Decoder = nullptr;
+	}
+
+	if (Parser != nullptr)
+	{
+		FCUDAContextScope const ContextGuard(GetDevice()->GetContext<FVideoContextCUDA>()->Raw);
+
+		CUresult const Result = FAPI::Get<FNVDEC>().cuvidDestroyVideoParser(Parser);
+		if (Result != CUDA_SUCCESS)
+		{
+			FAVResult::Log(EAVResult::ErrorDestroying, TEXT("Failed to destroy NVDEC parser"), TEXT("NVDEC"), Result);
+		}
+	}
+
+	// We should only run this block if we've ever opened the decoder before
+	// Basically just prevents this block from being run by the call to Close() in Open()
+	if (IsOpen())
+	{
+		FCUDAContextScope const ContextGuard(GetDevice()->GetContext<FVideoContextCUDA>()->Raw);
+
+		CUresult const Result = FAPI::Get<FNVDEC>().cuvidCtxLockDestroy(CtxLock);
+		if (Result != CUDA_SUCCESS)
+		{
+			FAVResult::Log(EAVResult::ErrorDestroying, TEXT("Failed to destroy NVDEC context lock"), TEXT("NVDEC"), Result);
+		}
 	}
 
 	bIsOpen = false;
@@ -60,43 +123,57 @@ FAVResult FVideoDecoderNVDEC::ApplyConfig()
 		{
 			if (IsInitialized())
 			{
-				/*
-				TODO(Andrew) Can be reconfigured? See https://docs.nvidia.com/video-technologies/video-codec-sdk/nvenc-video-encoder-api-prog-guide/#reconfigure-api
-				if (AppliedConfig.maxEncodeWidth == PendingConfig.maxEncodeWidth
-					&& AppliedConfig.maxEncodeHeight == PendingConfig.maxEncodeHeight
-					&& AppliedConfig.enablePTD == PendingConfig.enablePTD
-					&& AppliedConfig.enableEncodeAsync == PendingConfig.enableEncodeAsync
-					&& AppliedConfig.encodeConfig->gopLength == PendingConfig.encodeConfig->gopLength
-					&& AppliedConfig.encodeConfig->frameIntervalP == PendingConfig.encodeConfig->frameIntervalP
-					&& AppliedConfig.encodeConfig->encodeCodecConfig.h264Config.idrPeriod == PendingConfig.encodeConfig->encodeCodecConfig.h264Config.idrPeriod)
+				// If any of these change, we need to re-initialization the decoder
+				if (AppliedConfig.OutputFormat == PendingConfig.OutputFormat 
+					&& AppliedConfig.ChromaFormat == PendingConfig.ChromaFormat)
 				{
-					NV_ENC_STRUCT(NV_ENC_RECONFIGURE_PARAMS, ReconfigureParams);
-					FMemory::Memcpy(&ReconfigureParams.reInitEncodeParams, &PendingConfig, sizeof(NV_ENC_INITIALIZE_PARAMS));
-					ReconfigureParams.forceIDR = AppliedConfig.encodeWidth != PendingConfig.encodeWidth || AppliedConfig.encodeHeight != PendingConfig.encodeHeight;
+					bool bResChange = AppliedConfig.ulWidth != PendingConfig.ulWidth || AppliedConfig.ulHeight != PendingConfig.ulHeight;
 
-					NVENCSTATUS const Result = FAPI::Get<FNVENC_Context>().nvEncReconfigureEncoder(Encoder, &ReconfigureParams);
-					if (Result != NV_ENC_SUCCESS)
+					if(bResChange)
 					{
-						return FAVResult(EAVResult::Error, FString::Printf(TEXT("Failed to update NVENC encoder configuration: %s"), *FAPI::Get<FNVENC_Context>().GetErrorString(Encoder, Result)));
+						CUVIDRECONFIGUREDECODERINFO ReconfigParams = { 0 };
+
+						ReconfigParams.ulWidth = PendingConfig.ulWidth;
+   						ReconfigParams.ulHeight = PendingConfig.ulHeight;
+
+    					ReconfigParams.display_area.bottom = PendingConfig.display_area.bottom;
+    					ReconfigParams.display_area.top = PendingConfig.display_area.top;
+    					ReconfigParams.display_area.left = PendingConfig.display_area.left;
+    					ReconfigParams.display_area.right = PendingConfig.display_area.right;
+    					ReconfigParams.ulTargetWidth = PendingConfig.ulWidth;
+    					ReconfigParams.ulTargetHeight = PendingConfig.ulHeight;
+						ReconfigParams.ulNumDecodeSurfaces = PendingConfig.ulNumDecodeSurfaces;
+
+						FCUDAContextScope const ContextGuard(GetDevice()->GetContext<FVideoContextCUDA>()->Raw);
+						CUresult const Result = FAPI::Get<FNVDEC>().cuvidReconfigureDecoder(Decoder, &ReconfigParams);
+						if (Result != CUDA_SUCCESS)
+						{
+							Close();
+							return FAVResult(EAVResult::Error, TEXT("Failed to reconfigure decoder"), TEXT("NVDEC"), Result);
+						}
 					}
 				}
 				else
 				{
-					// TODO: Destroy and recreate with original session
-					unimplemented();
+					FCUDAContextScope const ContextGuard(GetDevice()->GetContext<FVideoContextCUDA>()->Raw);
+					CUresult const Result = FAPI::Get<FNVDEC>().cuvidDestroyDecoder(Decoder);
+					if (Result != CUDA_SUCCESS)
+					{
+						Close();
+						return FAVResult(EAVResult::ErrorDestroying, TEXT("Failed to destroy NVDEC decoder"), TEXT("NVDEC"), Result);
+					}
+
+					Decoder = nullptr;
 				}
-				*/
 			}
 
 			if (!IsInitialized())
 			{
 				FCUDAContextScope const ContextGuard(GetDevice()->GetContext<FVideoContextCUDA>()->Raw);
-
 				CUresult const Result = FAPI::Get<FNVDEC>().cuvidCreateDecoder(&Decoder, &const_cast<FVideoDecoderConfigNVDEC&>(PendingConfig));
 				if (Result != CUDA_SUCCESS)
 				{
 					Close();
-
 					return FAVResult(EAVResult::ErrorCreating, TEXT("Failed to create decoder"), TEXT("NVDEC"), Result);
 				}
 			}
@@ -117,7 +194,7 @@ bool FVideoDecoderNVDEC::GetCapability(CUVIDDECODECAPS& CapsToQuery) const
 		CUresult const Result = FAPI::Get<FNVDEC>().cuvidGetDecoderCaps(&CapsToQuery);
 		if (Result != CUDA_SUCCESS)
 		{
-			FAVResult::Log(EAVResult::Warning, TEXT("Failed to query for NVENC capability"), TEXT("NVDEC"), Result);
+			FAVResult::Log(EAVResult::Warning, TEXT("Failed to query for NVDEC capability"), TEXT("NVDEC"), Result);
 
 			return false;
 		}
@@ -135,50 +212,23 @@ FAVResult FVideoDecoderNVDEC::SendPacket(FVideoPacket const& Packet)
 		return FAVResult(EAVResult::ErrorInvalidState, TEXT("Decoder not open"), TEXT("NVDEC"));
 	}
 
-	FVideoDecoderConfigNVDEC& PendingConfig = EditPendingConfig();
-
-	TArray<FVideoDecoderConfigNVDEC::FParsedPicture> Pictures;
-
-	FAVResult Result = PendingConfig.Parse(GetInstance().ToSharedRef(), Packet, Pictures);
-	if (Result.IsNotSuccess())
+	CUVIDSOURCEDATAPACKET CUPacket = {0};
+    CUPacket.payload = Packet.DataPtr.Get();
+    CUPacket.payload_size = Packet.DataSize;
+    CUPacket.flags = CUVID_PKT_TIMESTAMP;
+	// TODO (william.belcher): Adding this flag assumes that each Packet contains a full frame, but is required
+	// to prevent the parser from adding a 1 frame delay
+	CUPacket.flags |= CUVID_PKT_ENDOFPICTURE;
+    CUPacket.timestamp = 0;
+    if (!Packet.DataPtr.Get() || Packet.DataSize == 0) 
 	{
-		return Result;
-	}
+        CUPacket.flags |= CUVID_PKT_ENDOFSTREAM;
+    }
 
-	if (Pictures.Num() == 0)
+    CUresult const CUResult = FAPI::Get<FNVDEC>().cuvidParseVideoData(Parser, &CUPacket);
+	if (CUResult != CUDA_SUCCESS)
 	{
-		return EAVResult::PendingInput;
-	}
-
-	for (auto& Picture : Pictures)
-	{
-		if (FramesCount + 1 >= static_cast<int64>(Picture.DecodeCreateInfo.ulNumDecodeSurfaces))
-		{
-			return FAVResult(EAVResult::PendingOutput, TEXT("Decode buffer full"), TEXT("NVDEC"));
-		}
-
-		CUVIDPROCPARAMS MapParams = {};
-
-		FMemory::Memcpy(&static_cast<CUVIDDECODECREATEINFO&>(PendingConfig), &Picture.DecodeCreateInfo, sizeof(CUVIDDECODECREATEINFO));
-
-		Result = ApplyConfig();
-		if (Result.IsNotSuccess())
-		{
-			return Result;
-		}
-
-		CUresult const CUResult = FAPI::Get<FNVDEC>().cuvidDecodePicture(Decoder, &Picture);
-		if (CUResult != CUDA_SUCCESS)
-		{
-			return FAVResult(EAVResult::Error, TEXT("Failed to decode frame"), TEXT("NVDEC"), CUResult);
-		}
-
-		MapParams.progressive_frame = PendingConfig.DeinterlaceMode;
-		MapParams.second_field = Picture.second_field;
-		MapParams.top_field_first = Picture.bottom_field_flag != 0;
-
-		Frames.Enqueue({ Picture.CurrPicIdx, AppliedConfig.ulTargetWidth, AppliedConfig.ulTargetHeight, GetAppliedConfig().OutputFormat, MapParams });
-		++FramesCount;
+		return FAVResult(EAVResult::Error, TEXT("Failed to parse video data"), TEXT("NVDEC"), CUResult);
 	}
 
 	return EAVResult::Success;
@@ -194,7 +244,7 @@ FAVResult FVideoDecoderNVDEC::ReceiveFrame(TResolvableVideoResource<FVideoResour
 			FCUDAContextScope const ContextGuard(GetDevice()->GetContext<FVideoContextCUDA>()->Raw);
 
 			CUresult Result = CUDA_SUCCESS;
-			CUVIDGETDECODESTATUS DecodeStatus = {};
+			CUVIDGETDECODESTATUS DecodeStatus = { };
 
 			do
 			{
@@ -218,7 +268,7 @@ FAVResult FVideoDecoderNVDEC::ReceiveFrame(TResolvableVideoResource<FVideoResour
 			{
 				FAVResult::Log(EAVResult::Warning, TEXT("Error when decoding frame"), TEXT("NVDEC"), DecodeStatus.decodeStatus);
 			}
-			
+
 			// Map the decoder output buffer
 			CUdeviceptr MapSurface = 0;
 			uint32 MapPitch = 0;
@@ -230,62 +280,6 @@ FAVResult FVideoDecoderNVDEC::ReceiveFrame(TResolvableVideoResource<FVideoResour
 			}
 
 			FVideoDescriptor ResourceDescriptor = {};
-
-#if 0 // Old path with automatic conversion
-			TFunction<CUresult(CUdeviceptr, CUarray, uint32, uint32, uint32)> ConversionFunction;
-
-			// TODO (aidan) handle conversion to non-RGB textures
-			switch (Frame.SurfaceFormat)
-			{
-			case cudaVideoSurfaceFormat_NV12:
-				ResourceDescriptor = FVideoDescriptor(EVideoFormat::BGRA, Frame.Width, Frame.Height);
-				ConversionFunction = NV12_to_BGRA8;
-				break;
-			case cudaVideoSurfaceFormat_P016:
-				ResourceDescriptor = FVideoDescriptor(EVideoFormat::ABGR10, Frame.Width, Frame.Height);
-				ConversionFunction = P010_to_ABGR10; // TODO
-				break;
-			/*case cudaVideoSurfaceFormat_YUV444:
-				ResourceDescriptor = FVideoDescriptor(EVideoFormat::YUV444, Frame.Width, Frame.Height);
-				break;
-			case cudaVideoSurfaceFormat_YUV444_16Bit:
-				ResourceDescriptor = FVideoDescriptor(EVideoFormat::YUV444_16, Frame.Width, Frame.Height);*/
-			default:
-				return FAVResult(EAVResult::ErrorUnsupported, FString::Printf(TEXT("Currently do not support the recieved OutputFormat (%d)"), Frame.SurfaceFormat));
-			}
-
-			if (!InOutResource.Resolve(GetDevice(), ResourceDescriptor))
-			{
-				return FAVResult(EAVResult::ErrorResolving, TEXT("Failed to resolve frame resource"), TEXT("NVDEC"));
-			}
-
-			InOutResource->Lock();
-
-			Result = ConversionFunction(MapSurface, InOutResource->GetRaw(), InOutResource->GetWidth(), InOutResource->GetHeight(), MapPitch);
-
-			InOutResource->Unlock();
-
-			if (Result != CUDA_SUCCESS)
-			{
-				return FAVResult(EAVResult::Error, TEXT("Failed to run CUDA kernal on decoded frame"), TEXT("NVDEC"), Result);
-			}
-
-			// START DEBUG
-
-#if DEBUG_DUMP_TO_DISK
-
-			TArray64<uint8> OutData;
-
-			InOutResource->ReadData(OutData);
-
-			FString SaveName = FString::Printf(TEXT("%s/DumpOutput/image%05d.%s"), *FPaths::ProjectSavedDir(), Frame.SurfaceIndex, Frame.SurfaceFormat == cudaVideoSurfaceFormat_NV12 ? TEXT("nv12") : TEXT("p016"));
-
-			FFileHelper::SaveArrayToFile(OutData, *SaveName);
-
-#endif
-
-			// END DEBUG
-#else // new code path just returns in the format that the decoder outputs and is up to the user to transform it
 			switch (Frame.SurfaceFormat)
 			{
 				case cudaVideoSurfaceFormat_NV12:
@@ -318,10 +312,7 @@ FAVResult FVideoDecoderNVDEC::ReceiveFrame(TResolvableVideoResource<FVideoResour
 			if (Result != CUDA_SUCCESS)
 			{
 				return FAVResult(EAVResult::ErrorUnmapping, TEXT("Failed to unmap decoded frame"), TEXT("NVDEC"), Result);
-			}
-			
-
-#endif // end else !0		
+			}	
 
 			return EAVResult::Success;
 		}
@@ -330,4 +321,88 @@ FAVResult FVideoDecoderNVDEC::ReceiveFrame(TResolvableVideoResource<FVideoResour
 	}
 
 	return FAVResult(EAVResult::ErrorInvalidState, TEXT("Decoder not open"), TEXT("NVDEC"));
+}
+
+int FVideoDecoderNVDEC::HandleVideoSequence(CUVIDEOFORMAT *VideoFormat)
+{
+	int NumDecodeSurfaces = VideoFormat->min_num_decode_surfaces;
+
+	CUVIDDECODECAPS DecodeCaps;
+	memset(&DecodeCaps, 0, sizeof(DecodeCaps));
+
+	DecodeCaps.eCodecType = VideoFormat->codec;
+	DecodeCaps.eChromaFormat = VideoFormat->chroma_format;
+	DecodeCaps.nBitDepthMinus8 = VideoFormat->bit_depth_luma_minus8;
+
+	if (!GetCapability(DecodeCaps))
+	{
+		FAVResult::Log(EAVResult::ErrorUnsupported, TEXT("Codec not supported on this GPU"), TEXT("NVDEC"));
+		return NumDecodeSurfaces;
+	}
+
+	if ((VideoFormat->coded_width > DecodeCaps.nMaxWidth) || (VideoFormat->coded_height > DecodeCaps.nMaxHeight))
+	{
+		FAVResult::Log(EAVResult::ErrorUnsupported, FString::Printf(TEXT("Resolution: %dx%d\nMax Supported Resolution: %dx%d\n Resolution not supported on this GPU"), VideoFormat->coded_width, VideoFormat->coded_height, DecodeCaps.nMaxWidth, DecodeCaps.nMaxHeight), TEXT("NVDEC"));
+		return NumDecodeSurfaces;
+	}
+
+	if ((VideoFormat->coded_width >> 4) * (VideoFormat->coded_height >> 4) > DecodeCaps.nMaxMBCount)
+	{
+		FAVResult::Log(EAVResult::ErrorUnsupported, FString::Printf(TEXT("MBCount: %d\nMax Supported mbcnt: %d\n MBCount not supported on this GPU"), (VideoFormat->coded_width >> 4) * (VideoFormat->coded_height >> 4), DecodeCaps.nMaxMBCount), TEXT("NVDEC"));
+		return NumDecodeSurfaces;
+	}
+
+	FVideoDecoderConfigNVDEC& PendingConfig = EditPendingConfig();
+	PendingConfig.CodecType = VideoFormat->codec;
+	PendingConfig.ChromaFormat = VideoFormat->chroma_format;
+    PendingConfig.OutputFormat = VideoFormat->bit_depth_luma_minus8 ? cudaVideoSurfaceFormat_P016 : cudaVideoSurfaceFormat_NV12;
+    PendingConfig.bitDepthMinus8 = VideoFormat->bit_depth_luma_minus8;
+    PendingConfig.DeinterlaceMode = cudaVideoDeinterlaceMode_Weave;
+    PendingConfig.ulNumOutputSurfaces = 2;
+    // With PreferCUVID, JPEG is still decoded by CUDA while video is decoded by NVDEC hardware
+    PendingConfig.ulCreationFlags = cudaVideoCreate_PreferCUVID;
+    PendingConfig.ulNumDecodeSurfaces = NumDecodeSurfaces;
+    PendingConfig.vidLock = CtxLock;
+    PendingConfig.ulWidth = VideoFormat->coded_width;
+    PendingConfig.ulHeight = VideoFormat->coded_height;
+    PendingConfig.ulMaxWidth = VideoFormat->coded_width;
+    PendingConfig.ulMaxHeight = VideoFormat->coded_height;
+
+	// TODO (william.belcher): Add support for cropping and resizing
+	PendingConfig.ulTargetWidth = VideoFormat->coded_width;
+    PendingConfig.ulTargetHeight = VideoFormat->coded_height;
+
+	FAVResult Result = ApplyConfig();
+	if (Result.IsNotSuccess())
+	{
+		FAVResult::Log(EAVResult::Error, TEXT("Failed to apply decoder config"), TEXT("NVDEC"), Result);
+	}
+
+	return NumDecodeSurfaces;
+}
+
+int FVideoDecoderNVDEC::HandlePictureDecode(CUVIDPICPARAMS *PicParams)
+{
+	CUresult const Result = FAPI::Get<FNVDEC>().cuvidDecodePicture(Decoder, PicParams);
+	if (Result != CUDA_SUCCESS)
+	{
+		FAVResult::Log(EAVResult::Error, TEXT("Failed to decode frame"), TEXT("NVDEC"), Result);
+		return 0;
+	}
+	return 1;
+}
+
+int FVideoDecoderNVDEC::HandlePictureDisplay(CUVIDPARSERDISPINFO *DispInfo)
+{
+	CUVIDPROCPARAMS VideoProcessingParameters = {};
+    VideoProcessingParameters.progressive_frame = DispInfo->progressive_frame;
+    VideoProcessingParameters.second_field = DispInfo->repeat_first_field + 1;
+    VideoProcessingParameters.top_field_first = DispInfo->top_field_first;
+    VideoProcessingParameters.unpaired_field = DispInfo->repeat_first_field < 0;
+    VideoProcessingParameters.output_stream = 0;
+
+	Frames.Enqueue({ DispInfo->picture_index, AppliedConfig.ulTargetWidth, AppliedConfig.ulTargetHeight, GetAppliedConfig().OutputFormat, VideoProcessingParameters });
+	++FramesCount;
+
+	return 0;
 }

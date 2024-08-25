@@ -73,6 +73,7 @@ namespace Metasound
 					FTransactionReaderHandle NewReaderHandle = CurrentReaderHandle;
 					CurrentReaderHandle++;
 					ReaderPositions.Add(NewReaderHandle, Position);
+					return NewReaderHandle;
 				}
 			}
 

@@ -50,6 +50,11 @@ void FPropertyDetailsUtilities::RequestRefresh()
 	DetailsView.RefreshTree();
 }
 
+void FPropertyDetailsUtilities::RequestForceRefresh()
+{
+	DetailsView.RequestForceRefresh();
+}
+
 TSharedPtr<class FAssetThumbnailPool> FPropertyDetailsUtilities::GetThumbnailPool() const
 {
 	return DetailsView.GetThumbnailPool();

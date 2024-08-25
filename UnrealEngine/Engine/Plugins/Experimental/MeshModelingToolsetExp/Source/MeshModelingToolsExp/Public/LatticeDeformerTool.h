@@ -127,7 +127,7 @@ public:
 
 /** Deform a mesh using a regular hexahedral lattice */
 UCLASS()
-class MESHMODELINGTOOLSEXP_API ULatticeDeformerTool : public USingleSelectionMeshEditingTool
+class MESHMODELINGTOOLSEXP_API ULatticeDeformerTool : public USingleSelectionMeshEditingTool, public IInteractiveToolManageGeometrySelectionAPI
 {
 	GENERATED_BODY()
 
@@ -148,6 +148,12 @@ public:
 	virtual void Render(IToolsContextRenderAPI* RenderAPI) override;
 
 	UE::Geometry::FVector3i GetLatticeResolution() const;
+
+	// IInteractiveToolManageGeometrySelectionAPI -- this tool won't update external geometry selection or change selection-relevant mesh IDs
+	virtual bool IsInputSelectionValidOnOutput() override
+	{
+		return true;
+	}
 
 protected:
 

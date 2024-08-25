@@ -106,9 +106,13 @@ private:
 		DetailsView = InDetailsView;
 	}
 
-	void RestoreLastEditedState();
+	void RestoreEditedObjectState();
+
+	void SaveEditedObjectState();
 
 	TSharedPtr<SDockTab> OpenDocument(const UObject* InForObject, FDocumentTracker::EOpenDocumentCause InCause);
+
+	void HandleSaveGraphState(UEdGraph* InGraph, FVector2D InViewOffset, float InZoomAmount);
 
 	// The asset we are editing
 	UAnimNextParameterBlock* ParameterBlock = nullptr;

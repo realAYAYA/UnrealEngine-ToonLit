@@ -8,6 +8,7 @@
 #include "Controller/RCCustomControllerUtilities.h"
 #include "Engine/Texture2D.h"
 #include "IRemoteControlPropertyHandle.h"
+#include "PropertyBag.h"
 #include "RCVirtualProperty.h"
 #include "RemoteControlField.h"
 
@@ -71,12 +72,25 @@ bool URCBehaviourBind::CanHaveActionForField(const TSharedPtr<FRemoteControlFiel
 		return false; // already exists!
 	}
 
+	// Only property type will be allowed so we check before to avoid a cast
+	if (InRemoteControlField->FieldType != EExposedFieldType::Property)
+	{
+		return false;
+	}
+
 	// Advanced checks (by Controller type and Target type)
-	if (TSharedPtr<FRemoteControlProperty> RemoteControlEntityAsProperty = StaticCastSharedPtr<FRemoteControlProperty>(InRemoteControlField))
+	if (const TSharedPtr<FRemoteControlProperty> RCProperty = StaticCastSharedPtr<FRemoteControlProperty>(InRemoteControlField))
 	{
 		if (URCController* Controller = ControllerWeakPtr.Get())
 		{
-			return URCBehaviourBind::CanHaveActionForField(Controller, RemoteControlEntityAsProperty.ToSharedRef(), bAllowNumericInputAsStrings);
+			if (URCBehaviourBind::CanHaveActionForField(Controller, RCProperty.ToSharedRef(), bAllowNumericInputAsStrings))
+			{
+				if (const FProperty* Property = RCProperty->GetProperty())
+				{
+					const FPropertyBagPropertyDesc PropertyBagDesc = FPropertyBagPropertyDesc(Property->GetFName(), Property);
+					return RCProperty->IsEditable() && PropertyBagDesc.ValueType != EPropertyBagPropertyType::None;
+				}
+			}
 		}
 	}
 
@@ -110,6 +124,33 @@ static bool EvaluateBindCompatibility(const TMap<FFieldClass*, TArray<FFieldClas
 	return false;
 }
 
+static bool EvaluateBindCompatibility(const TMap<FFieldClass*, TArray<UScriptStruct*>>& InBindingsMap, const FFieldClass* InControllerPropertyClass, const FProperty* InRemoteControlProperty)
+{
+	TArray<FFieldClass*> Keys;
+	InBindingsMap.GenerateKeyArray(Keys);
+
+	if (const FStructProperty* RCFieldStructProperty = CastField<FStructProperty>(InRemoteControlProperty))
+	{
+		for (const FFieldClass* PropertyType : Keys)
+		{
+			if (InControllerPropertyClass->IsChildOf(PropertyType))
+			{
+				if (const TArray<UScriptStruct*>* SupportedBindings = InBindingsMap.Find(PropertyType))
+				{
+					for (const UScriptStruct* SupportedBinding : *SupportedBindings)
+					{
+						if (RCFieldStructProperty->Struct && RCFieldStructProperty->Struct->IsChildOf(SupportedBinding))
+						{
+							return true;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return false;
+}
 
 static bool EvaluateCustomControllerBindCompatibility(const URCController* InController,  const FFieldClass* InControllerPropertyClass, const FFieldClass* InRemoteControlPropertyClass, const FProperty* InRemoteControlProperty)
 {
@@ -195,6 +236,14 @@ bool URCBehaviourBind::CanHaveActionForField(URCController* Controller, TSharedR
 		{ FNumericProperty::StaticClass(),  /* --> */   { FStrProperty::StaticClass(),     FTextProperty::StaticClass(),  FNameProperty::StaticClass() } }
 	};
 
+	// Indirect Binding (via numeric conversion)
+	//
+	const static TMap<FFieldClass*, TArray<UScriptStruct*>> SupportedNumericConversionsStructMap =
+	{
+		/* Controller Type */                           /* Supported Remote Control Property Types */
+		{ FNumericProperty::StaticClass(),  /* --> */   { TBaseStructure<FVector>::Get(), TBaseStructure<FVector2D>::Get(), TBaseStructure<FRotator>::Get(), } }
+	};
+
 	// Indirect Binding (for Structs)
 	//
 	const static TMap<UScriptStruct*, TArray<UScriptStruct*>> SupportedStructConversions =
@@ -216,6 +265,11 @@ bool URCBehaviourBind::CanHaveActionForField(URCController* Controller, TSharedR
 	}
 	// Indirect Binding (related types)
 	else if (EvaluateBindCompatibility(SupportedIndirectBindsMap, ControllerPropertyClass, RemoteControlPropertyClass))
+	{
+		return true;
+	}
+	// Indirect Binding (Numeric to struct)
+	else if (EvaluateBindCompatibility(SupportedNumericConversionsStructMap, ControllerPropertyClass, RemoteControlProperty))
 	{
 		return true;
 	}
@@ -420,6 +474,12 @@ bool URCBehaviourBind::CopyPropertyValueToController(URCController* InController
 			FVector VectorValue;
 			PropertyHandle->GetValue(VectorValue);
 			InController->SetValueVector(VectorValue);
+		}
+		if (ControllerAsStructProperty->Struct == TBaseStructure<FVector2D>::Get())
+		{
+			FVector2D Vector2DValue;
+			PropertyHandle->GetValue(Vector2DValue);
+			InController->SetValueVector2D(Vector2DValue);
 		}
 		else if (ControllerAsStructProperty->Struct == TBaseStructure<FRotator>::Get())
 		{

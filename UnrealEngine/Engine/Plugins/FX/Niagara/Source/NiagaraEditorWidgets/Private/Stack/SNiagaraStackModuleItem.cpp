@@ -40,19 +40,6 @@ bool SNiagaraStackModuleItem::bLibraryOnly = true;
 void SNiagaraStackModuleItem::Construct(const FArguments& InArgs, UNiagaraStackModuleItem& InModuleItem, UNiagaraStackViewModel* InStackViewModel)
 {
 	ModuleItem = &InModuleItem;
-
-	ModuleItem->OnNoteModeSet().BindLambda([this](bool bEnabled)
-	{
-		if(bEnabled)
-		{
-			FSlateApplication::Get().SetKeyboardFocus(ShortDescriptionTextBox);
-		}
-		else
-		{
-			ShortDescriptionTextBox->SetText(FText::GetEmpty());
-			DescriptionTextBox->SetText(FText::GetEmpty());
-		}
-	});
 	SNiagaraStackItem::Construct(SNiagaraStackItem::FArguments(), InModuleItem, InStackViewModel);
 }
 
@@ -188,142 +175,7 @@ FSlateColor SNiagaraStackModuleItem::GetVersionSelectorColor() const
 }
 
 TSharedRef<SWidget> SNiagaraStackModuleItem::AddContainerForRowWidgets(TSharedRef<SWidget> RowWidgets)
-{
-	ShortDescriptionTextBox = SNew(SMultiLineEditableTextBox).AutoWrapText(true);
-	DescriptionTextBox = SNew(SMultiLineEditableTextBox).AutoWrapText(true);
-
-	auto OkPressed = [&]() -> FReply
-	{
-		FText Text = DescriptionTextBox->GetText();
-		if(!Text.IsEmpty())
-		{
-			FScopedTransaction Transaction(LOCTEXT("NoteAdded", "Note Added"));
-			ModuleItem->GetModuleNode().Modify();
-			
-			FNiagaraStackMessage StackMessage(DescriptionTextBox->GetText(), ShortDescriptionTextBox->GetText(), ENiagaraMessageSeverity::CustomNote, false);
-			ModuleItem->GetModuleNode().AddCustomNote(StackMessage);
-		}
-		
-		ModuleItem->SetNoteMode(false);
-		return FReply::Handled();
-	};
-
-	auto CancelPressed = [&]() -> FReply
-	{
-		ModuleItem->SetNoteMode(false);
-		return FReply::Handled();
-	};
-	
-	TSharedPtr<SVerticalBox> AddNoteWidget = SNew(SVerticalBox).Visibility_Lambda([&]()
-	{
-		return ModuleItem->GetNoteMode() ? EVisibility::Visible : EVisibility::Collapsed;
-	})
-	+ SVerticalBox::Slot()
-	.AutoHeight()
-	.HAlign(HAlign_Fill)
-	.VAlign(VAlign_Center)
-	.Padding(5.f)
-	[
-		SNew(SVerticalBox)
-		+ SVerticalBox::Slot()
-		.AutoHeight()
-		.HAlign(HAlign_Left)
-		.VAlign(VAlign_Center)
-		.Padding(5.f)
-		[
-			SNew(SHorizontalBox)
-			+ SHorizontalBox::Slot()
-			.AutoWidth()
-			.VAlign(VAlign_Center)
-			.Padding(0.f, 0.f, 3.f, 0.f)
-			[
-				SNew(SImage)
-				.Image(FNiagaraEditorStyle::Get().GetBrush("NiagaraEditor.Message.CustomNote"))
-			]
-			+ SHorizontalBox::Slot()
-			.AutoWidth()
-			.VAlign(VAlign_Center)
-			[
-				SNew(STextBlock)
-				.Text(LOCTEXT("MessageTitleLabel", "Title"))
-			]
-		]
-		+ SVerticalBox::Slot()
-		.AutoHeight()
-		.HAlign(HAlign_Fill)
-		.VAlign(VAlign_Center)
-		[
-			SNew(SBox)
-			.WidthOverride(300.f)
-			[
-				ShortDescriptionTextBox.ToSharedRef()
-			]
-		]
-	]
-	+ SVerticalBox::Slot()
-	.AutoHeight()
-	.HAlign(HAlign_Fill)
-	.VAlign(VAlign_Center)
-	.Padding(5.f)
-	[
-		SNew(SVerticalBox)
-		+ SVerticalBox::Slot()
-		.AutoHeight()
-		.HAlign(HAlign_Left)
-		.VAlign(VAlign_Center)
-		.Padding(5.f)
-		[
-			SNew(STextBlock)
-			.Text(LOCTEXT("MessageTextLabel", "Message"))
-		]
-		+ SVerticalBox::Slot()
-		.AutoHeight()
-		.HAlign(HAlign_Fill)
-		.VAlign(VAlign_Center)
-		[
-			SNew(SBox)
-			.WidthOverride(300.f)
-			.HeightOverride(125.f)
-			[
-				DescriptionTextBox.ToSharedRef()
-			]
-		]
-	]
-	+ SVerticalBox::Slot()
-	.AutoHeight()
-	.HAlign(HAlign_Right)
-	.VAlign(VAlign_Bottom)
-	.Padding(3.f, 5.f)
-	[
-		SNew(SHorizontalBox)
-		+ SHorizontalBox::Slot()
-		.AutoWidth()
-		.HAlign(HAlign_Center)
-		.VAlign(VAlign_Bottom)
-		.Padding(5.f)
-		[
-			SNew(SButton)
-			.Text(LOCTEXT("CreateNote_Yes", "Add Note"))
-			.ButtonStyle(FAppStyle::Get(), "FlatButton.Success")
-			.IsEnabled_Lambda([&]()
-			{
-				return !DescriptionTextBox->GetText().IsEmpty();
-			})
-			.OnClicked_Lambda(OkPressed)
-		]
-		+ SHorizontalBox::Slot()
-		.AutoWidth()
-		.HAlign(HAlign_Center)
-		.VAlign(VAlign_Bottom)
-		.Padding(5.f)
-		[
-			SNew(SButton)
-			.ButtonStyle(FAppStyle::Get(), "FlatButton.Dark")
-			.Text(LOCTEXT("CreateNote_No", "Cancel"))
-			.OnClicked_Lambda(CancelPressed)
-		]
-	];
-
+{	
 	return SNew(SDropTarget)
 	.OnAllowDrop(this, &SNiagaraStackModuleItem::OnModuleItemAllowDrop)
 	.OnDropped(this, &SNiagaraStackModuleItem::OnModuleItemDrop)
@@ -331,22 +183,7 @@ TSharedRef<SWidget> SNiagaraStackModuleItem::AddContainerForRowWidgets(TSharedRe
 	.VerticalImage(FNiagaraEditorWidgetsStyle::Get().GetBrush("NiagaraEditor.Stack.DropTarget.BorderVertical"))
 	.Content()
 	[
-		SNew(SVerticalBox)
-		+ SVerticalBox::Slot()
-		.AutoHeight()
-		[
-			RowWidgets
-		]
-		+ SVerticalBox::Slot()
-		.AutoHeight()
-		[
-			SNew(SBorder)
-			.BorderImage(FAppStyle::GetBrush("WhiteBrush"))
-			.BorderBackgroundColor(FNiagaraEditorWidgetsStyle::Get().GetColor("NiagaraEditor.Stack.Item.CustomNoteBackgroundColor"))
-			[
-				AddNoteWidget.ToSharedRef()
-			]
-		]
+		RowWidgets
 	];
 }
 

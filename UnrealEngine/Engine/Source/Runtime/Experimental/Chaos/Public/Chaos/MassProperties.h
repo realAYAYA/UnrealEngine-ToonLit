@@ -113,6 +113,12 @@ namespace Chaos
 		return Density / (T)1000;
 	}
 
+	template<typename T>
+	T KgCm3ToGCm3(T Density)
+	{
+		return Density * (T)1000;
+	}
+
 	template <typename T, int d>
 	using TMassProperties UE_DEPRECATED(4.27, "Deprecated. this class is to be deleted, use FMassProperties instead") = FMassProperties;
 }

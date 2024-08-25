@@ -375,8 +375,7 @@ void FStaticLightingManager::UpdateBuildLighting()
 				else
 				{
 					// BeginLightmassProcess returns false if there are errors or no precomputed lighting is allowed. Handle both cases.
-					static const auto AllowStaticLightingVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-					const bool bAllowStaticLighting = (!AllowStaticLightingVar || AllowStaticLightingVar->GetValueOnGameThread() != 0);
+					const bool bAllowStaticLighting = IsStaticLightingAllowed();
 					const bool bForceNoPrecomputedLighting = GWorld->GetWorldSettings()->bForceNoPrecomputedLighting || !bAllowStaticLighting;
 
 					if (bForceNoPrecomputedLighting)
@@ -400,8 +399,7 @@ void FStaticLightingManager::UpdateBuildLighting()
 
 void FStaticLightingManager::FailLightingBuild( FText ErrorText)
 {
-	static const auto AllowStaticLightingVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-	const bool bAllowStaticLighting = (!AllowStaticLightingVar || AllowStaticLightingVar->GetValueOnGameThread() != 0);
+	const bool bAllowStaticLighting = IsStaticLightingAllowed();
 	const bool bForceNoPrecomputedLighting = GWorld->GetWorldSettings()->bForceNoPrecomputedLighting || !bAllowStaticLighting;
 
 	FStaticLightingManager::Get()->ClearCurrentNotification();
@@ -647,9 +645,8 @@ bool FStaticLightingSystem::BeginLightmassProcess()
 			FSuppressableWarningDialog WarnAboutSkippedLevels( Info );
 			WarnAboutSkippedLevels.ShowModal();
 		}
-	
-		static const auto AllowStaticLightingVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-		const bool bAllowStaticLighting = (!AllowStaticLightingVar || AllowStaticLightingVar->GetValueOnGameThread() != 0);
+
+		const bool bAllowStaticLighting = IsStaticLightingAllowed();
 		bForceNoPrecomputedLighting = World->GetWorldSettings()->bForceNoPrecomputedLighting || !bAllowStaticLighting;
 		GConfig->GetFloat( TEXT("TextureStreaming"), TEXT("MaxLightmapRadius"), GMaxLightmapRadius, GEngineIni );
 		GConfig->GetBool( TEXT("TextureStreaming"), TEXT("AllowStreamingLightmaps"), GAllowStreamingLightmaps, GEngineIni );

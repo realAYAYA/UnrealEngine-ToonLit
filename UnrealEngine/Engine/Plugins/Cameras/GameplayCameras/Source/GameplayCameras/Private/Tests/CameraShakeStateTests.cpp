@@ -99,4 +99,35 @@ bool FCameraShakeStateScrub::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FCameraShakeStateDurationOverride, 
+		"System.Engine.Cameras.ShakeStateDurationOverride", 
+		EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FCameraShakeStateDurationOverride::RunTest(const FString& Parameters)
+{
+	FCameraShakeInfo Info;
+	Info.Duration = 1.f;
+	Info.BlendIn = 0.2f;
+	Info.BlendOut = 0.2f;
+
+	FCameraShakeState State;
+	State.Start(Info, 0.5f);
+
+	UTEST_EQUAL("Update 1", State.Update(0.1f), 0.5f);
+	UTEST_TRUE("Update 1", State.IsPlaying());
+
+	UTEST_EQUAL("Update 2", State.Update(0.1f), 1.f);
+	UTEST_TRUE("Update 2", State.IsPlaying());
+
+	UTEST_EQUAL("Update 3", State.Update(0.1f), 1.f);
+	UTEST_TRUE("Update 3", State.IsPlaying());
+
+	UTEST_EQUAL("Update 4", State.Update(0.1f), 0.5f);
+	UTEST_TRUE("Update 4", State.IsPlaying());
+
+	UTEST_EQUAL("Update 5", State.Update(0.1f), 0.0f);
+	UTEST_FALSE("Update 5", State.IsPlaying());
+
+	return true;
+}
+
 #undef LOCTEXT_NAMESPACE

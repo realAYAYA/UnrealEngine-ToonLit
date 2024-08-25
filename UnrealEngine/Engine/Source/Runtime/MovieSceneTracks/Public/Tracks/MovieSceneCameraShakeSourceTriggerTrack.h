@@ -2,11 +2,9 @@
 
 #pragma once
 
-#include "Compilation/IMovieSceneTrackTemplateProducer.h"
 #include "Containers/Array.h"
 #include "CoreMinimal.h"
 #include "CoreTypes.h"
-#include "Evaluation/MovieSceneEvalTemplate.h"
 #include "Internationalization/Text.h"
 #include "MovieSceneSection.h"
 #include "MovieSceneTrack.h"
@@ -23,7 +21,6 @@ struct FMovieSceneEvaluationTrack;
 UCLASS(MinimalAPI)
 class UMovieSceneCameraShakeSourceTriggerTrack
 	: public UMovieSceneTrack
-	, public IMovieSceneTrackTemplateProducer
 {
 public:
 
@@ -41,9 +38,6 @@ public:
 	MOVIESCENETRACKS_API virtual void RemoveAllAnimationData() override;
 	MOVIESCENETRACKS_API virtual bool IsEmpty() const override;
 	MOVIESCENETRACKS_API virtual const TArray<UMovieSceneSection*>& GetAllSections() const override;
-	MOVIESCENETRACKS_API virtual void PostCompile(FMovieSceneEvaluationTrack& Track, const FMovieSceneTrackCompilerArgs& Args) const override;
-
-	MOVIESCENETRACKS_API virtual FMovieSceneEvalTemplatePtr CreateTemplateForSection(const UMovieSceneSection& InSection) const override;
 
 #if WITH_EDITORONLY_DATA
 	MOVIESCENETRACKS_API virtual FText GetDisplayName() const override;

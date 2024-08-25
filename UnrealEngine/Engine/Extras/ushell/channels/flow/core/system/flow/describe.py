@@ -49,32 +49,14 @@ class Command(object):
         self._py_class = cmd_class
 
 #-------------------------------------------------------------------------------
-class Extension(object):
-    def __init__(self):
-        self._name = None
-        self._mount = None
-        self._py_path = None
-        self._py_class = None
-
-    def mount(self, extendable, name):
-        self._extendable = extendable
-        self._name = name
-
-    def source(self, script_path, ext_class):
-        self._py_path = script_path
-        self._py_class = ext_class
-
-#-------------------------------------------------------------------------------
 class Channel(object):
     def __init__(self):
         self._parent = ""
         self._pips = []
-        self._extendables = []
         self._version = None
 
     def parent(self, parent):   self._parent = parent
     def version(self, version): self._version = version
-    def extendable(self, name): self._extendables.append(name)
 
     def _pip_deprecated_(self, name):
         # Please do not use! Pips come with security and licensing headaches so

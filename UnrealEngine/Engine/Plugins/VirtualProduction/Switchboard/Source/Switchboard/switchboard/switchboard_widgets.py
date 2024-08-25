@@ -4,7 +4,7 @@ import socket
 import time
 from typing import Optional
 
-from PySide2 import QtCore, QtGui, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from switchboard.switchboard_logging import LOGGER
 

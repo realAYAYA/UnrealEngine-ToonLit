@@ -7,8 +7,15 @@
 #include "Containers/ObservableArray.h"
 #include "Widgets/Views/STableViewBase.h"
 
- namespace UE::Slate::ItemsSource
- {
+namespace UE::Slate::ItemsSource
+{
+template<typename ArgType>
+struct ForwardedSlateItemsSourceArgument
+{
+	const TArray<ArgType>* ArrayPointer;
+	::UE::Slate::Containers::TObservableArray<ArgType>* ObservableArrayPointer;
+	TSharedPtr<::UE::Slate::Containers::TObservableArray<ArgType>> SharedObservableArray;
+};
 
 #define SLATE_ITEMS_SOURCE_ARGUMENT( ArgType, ArgName ) \
 	private: \
@@ -46,7 +53,19 @@
 			_##ArgName##_SharedObservableArray = InArg; \
 			return static_cast<WidgetArgsType*>(this)->Me(); \
 		} \
-		TUniquePtr<::UE::Slate::ItemsSource::IItemsSource<ArgType>> Make##ArgName (TSharedRef<STableViewBase> InWidget) const \
+		WidgetArgsType& ArgName(::UE::Slate::ItemsSource::ForwardedSlateItemsSourceArgument<ArgType> InArg) \
+		{ \
+			_Reset##ArgName(); \
+			_##ArgName##_ArrayPointer = InArg.ArrayPointer; \
+			_##ArgName##_ObservableArrayPointer = InArg.ObservableArrayPointer; \
+			_##ArgName##_SharedObservableArray = InArg.SharedObservableArray; \
+			return static_cast<WidgetArgsType*>(this)->Me(); \
+		} \
+		::UE::Slate::ItemsSource::ForwardedSlateItemsSourceArgument<ArgType> Get##ArgName() const \
+		{ \
+			return {_##ArgName##_ArrayPointer, _##ArgName##_ObservableArrayPointer, _##ArgName##_SharedObservableArray}; \
+		} \
+		TUniquePtr<::UE::Slate::ItemsSource::IItemsSource<ArgType>> Make##ArgName(TSharedRef<STableViewBase> InWidget) const \
 		{ \
 			if (_##ArgName##_ArrayPointer) \
 			{ \

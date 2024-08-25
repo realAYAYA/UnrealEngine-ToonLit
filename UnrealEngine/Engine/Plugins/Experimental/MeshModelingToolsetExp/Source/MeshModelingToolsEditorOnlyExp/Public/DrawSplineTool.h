@@ -9,6 +9,7 @@
 #include "InteractiveToolBuilder.h"
 #include "InteractiveToolChange.h"
 #include "ToolContextInterfaces.h" // FViewCameraState
+#include "TransactionUtil.h"
 
 #include "DrawSplineTool.generated.h"
 
@@ -29,6 +30,15 @@ enum class EDrawSplineDrawMode : uint8
 	ClickAutoTangent,
 	// Drag to place multiple points, with spacing controlled by Min Point Spacing
 	FreeDraw,
+};
+
+UENUM()
+enum class ESplineOffsetMethod : uint8
+{
+	// Spline points will be offset along the normal direction of the clicked surface
+	HitNormal,
+	// Spline points will be offset along a manually-chosen direction
+	Custom
 };
 
 UENUM()
@@ -114,6 +124,18 @@ public:
 		EditCondition = "DrawMode == EDrawSplineDrawMode::FreeDraw", EditConditionHides))
 	double MinPointSpacing = 200;
 
+	/** How far to offset spline points from the clicked surface, along the surface normal */
+	UPROPERTY(EditAnywhere, Category = Spline, meta = (UIMin = 0, UIMax = 100))
+	double ClickOffset = 0;
+
+	/** How to choose the direction to offset points from the clicked surface */
+	UPROPERTY(EditAnywhere, Category = Spline, meta = (EditCondition = "ClickOffset > 0", EditConditionHides))
+	ESplineOffsetMethod OffsetMethod = ESplineOffsetMethod::HitNormal;
+
+	/** Manually-specified click offset direction. Note: Will be normalized. If it is a zero vector, a default Up vector will be used instead. */
+	UPROPERTY(EditAnywhere, Category = Spline, meta = (EditCondition = "ClickOffset > 0 && OffsetMethod == ESplineOffsetMethod::Custom", EditConditionHides))
+	FVector OffsetDirection = FVector::UpVector;
+
 	/**
 	 * When nonzero, allows a visualization of the rotation of the spline. Can be controlled
 	 * in the detail panel after creation via "Scale Visualization Width" property.
@@ -137,12 +159,15 @@ public:
 		EditCondition = "OutputMode != EDrawSplineOutputMode::EmptyActor"))
 	bool bPreviewUsingActorCopy = true;
 
-	UPROPERTY(EditAnywhere, Category = RaycastTargets, meta = (DisplayName = "World"))
+	/** Whether to place spline points on the surface of objects in the world */
+	UPROPERTY(EditAnywhere, Category = RaycastTargets, meta = (DisplayName = "World Objects"))
 	bool bHitWorld = true;
 
+	/** Whether to place spline points on a custom, user-adjustable plane */
 	UPROPERTY(EditAnywhere, Category = RaycastTargets, meta = (DisplayName = "Custom Plane"))
 	bool bHitCustomPlane = false;
 
+	/** Whether to place spline points on a plane through the origin aligned with the Z axis in perspective views, or facing the camera in othographic views */
 	UPROPERTY(EditAnywhere, Category = RaycastTargets, meta = (DisplayName = "Ground Planes"))
 	bool bHitGroundPlanes = true;
 
@@ -244,6 +269,9 @@ protected:
 	bool bNeedToRerunConstructionScript = false;
 
 	FViewCameraState CameraState;
+
+private:
+	UE::TransactionUtil::FLongTransactionTracker LongTransactions;
 
 public:
 	// Helper class for making undo/redo transactions, to avoid friending all the variations.

@@ -17,6 +17,7 @@
 #include "ISceneOutlinerMode.h"
 #include "IDocumentation.h"
 #include "FolderTreeItem.h"
+#include "Editor.h"
 
 #define LOCTEXT_NAMESPACE "SceneOutliner_WorldTreeItem"
 
@@ -224,6 +225,9 @@ void FWorldTreeItem::GenerateContextMenu(UToolMenu* Menu, SSceneOutliner& Outlin
 	// Create Folder menu entry
 	FSceneOutlinerMenuHelper::AddMenuEntryCreateFolder(Section, Outliner);
 
+	const FSlateIcon FindInContentBrowserIcon(FAppStyle::GetAppStyleSetName(), "SystemWideCommands.FindInContentBrowser");
+	Section.AddMenuEntry("BrowseToWorld", LOCTEXT("BrowseToWorld", "Browse to Asset"), FText(), FindInContentBrowserIcon, FUIAction(FExecuteAction::CreateSP(this, &FWorldTreeItem::BrowseToAsset), FCanExecuteAction::CreateSP(this, &FWorldTreeItem::CanBrowseToAsset)));
+	
 	// Open world settings menu entry
 	const FSlateIcon WorldSettingsIcon(FAppStyle::GetAppStyleSetName(), "LevelEditor.WorldProperties.Tab");
 	Section.AddMenuEntry("OpenWorldSettings", LOCTEXT("OpenWorldSettings", "World Settings"), FText(), WorldSettingsIcon, FExecuteAction::CreateSP(this, &FWorldTreeItem::OpenWorldSettings));
@@ -243,6 +247,24 @@ void FWorldTreeItem::OpenWorldSettings() const
 {
 	FLevelEditorModule& LevelEditorModule = FModuleManager::GetModuleChecked<FLevelEditorModule>( TEXT("LevelEditor") );
 	LevelEditorModule.GetLevelEditorTabManager()->TryInvokeTab(FName("WorldSettingsTab"));	
+}
+
+void FWorldTreeItem::BrowseToAsset() const
+{
+	if (CanBrowseToAsset())
+	{
+		GEditor->SyncBrowserToObject(World.Get());
+	}
+}
+
+bool FWorldTreeItem::CanBrowseToAsset() const
+{
+	if (UWorld* WorldPtr = World.Get())
+	{
+		return !WorldPtr->GetPackage()->HasAnyPackageFlags(PKG_PlayInEditor | PKG_NewlyCreated);
+	}
+
+	return false;
 }
 
 #undef LOCTEXT_NAMESPACE

@@ -8,7 +8,6 @@
 
 #include "Shader.h"
 
-struct FCachedUniformBufferDeclaration;
 struct FNiagaraShaderScriptParametersMetadata;
 struct FShaderTarget;
 struct FSharedShaderCompilerEnvironment;
@@ -24,7 +23,9 @@ struct FSharedShaderCompilerEnvironment;
 		);
 
 class FNiagaraShaderScript;
+class FShaderCommonCompileJob;
 class FShaderCompileJob;
+struct FSimulationStageMetaData;
 class FUniformExpressionSet;
 
 
@@ -66,18 +67,14 @@ public:
 
 	struct CompiledShaderInitializerType : FShaderCompiledShaderInitializerType
 	{
-		const FString DebugDescription;
-
 		CompiledShaderInitializerType(
 			const FShaderType* InType,
 			const FParameters* InParameters,
 			int32 InPermutationId,
 			const FShaderCompilerOutput& CompilerOutput,
-			const FSHAHash& InNiagaraShaderMapHash,
-			const FString& InDebugDescription
+			const FSHAHash& InNiagaraShaderMapHash
 		)
 			: FShaderCompiledShaderInitializerType(InType, InParameters, InPermutationId, CompilerOutput, InNiagaraShaderMapHash, nullptr, nullptr)
-			, DebugDescription(InDebugDescription)
 		{
 		}
 	};
@@ -127,9 +124,22 @@ public:
 			const FNiagaraShaderScript* Script,
 			FSharedShaderCompilerEnvironment* CompilationEnvironment,
 			EShaderPlatform Platform,
-			TArray<TRefCountPtr<class FShaderCommonCompileJob>>& NewJobs,
+			TArray<TRefCountPtr<FShaderCommonCompileJob>>& NewJobs,
 			FShaderTarget Target
 		);
+
+	void BeginCompileShaderFromSource(
+		FStringView FriendlyName,
+		uint32 ShaderMapId,
+		int32 PermutationId,
+		TSharedRef<FNiagaraShaderScriptParametersMetadata> ShaderParameters,
+		FSharedShaderCompilerEnvironment* CompilationEnvironment,
+		FStringView ScriptSource,
+		EShaderPlatform Platform,
+		const FSimulationStageMetaData& SimStageMetaData,
+		FShaderTarget Target,
+		TArray<TRefCountPtr<FShaderCommonCompileJob>>& NewJobs
+	) const;
 
 	/**
 	 * Either creates a new instance of this type or returns an equivalent existing shader.
@@ -138,8 +148,7 @@ public:
 	 */
 	FShader* FinishCompileShader(
 		const FSHAHash& NiagaraShaderMapHash,
-		const FShaderCompileJob& CurrentJob,
-		const FString& InDebugDescription
+		const FShaderCompileJob& CurrentJob
 		) const;
 #endif // WITH_EDITOR
 
@@ -157,16 +166,6 @@ public:
 #if WITH_EDITOR
 	/** Adds include statements for uniform buffers that this shader type references, and builds a prefix for the shader file with the include statements. */
 	void AddUniformBufferIncludesToEnvironment(FShaderCompilerEnvironment& OutEnvironment, EShaderPlatform Platform) const;
-
-	UE_DEPRECATED(5.2, "AddReferencedUniformBufferIncludes has moved to AddUniformBufferIncludesToEnvironment and no longer takes a prefix argument.")
-	inline void AddReferencedUniformBufferIncludes(FShaderCompilerEnvironment& OutEnvironment, FString& OutSourceFilePrefix, EShaderPlatform Platform) const
-	{
-		AddUniformBufferIncludesToEnvironment(OutEnvironment, Platform);
-	}
-
-	UE_DEPRECATED(5.2, "CacheUniformBufferIncludes should no longer be used.")
-	inline void CacheUniformBufferIncludes(TMap<const TCHAR*, FCachedUniformBufferDeclaration, FDefaultSetAllocator, TStringPointerMapKeyFuncs_DEPRECATED<const TCHAR*, FCachedUniformBufferDeclaration>>& Cache, EShaderPlatform Platform) const;
-
 protected:
 
 	/**

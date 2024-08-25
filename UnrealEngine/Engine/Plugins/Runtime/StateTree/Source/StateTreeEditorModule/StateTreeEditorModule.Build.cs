@@ -47,7 +47,9 @@ namespace UnrealBuildTool.Rules
 				"ToolWidgets",
 				"ApplicationCore",
 				"DeveloperSettings",
-				"RewindDebuggerInterface"
+				"RewindDebuggerInterface",
+				"DetailCustomizations",
+				"AppFramework"
 			}
 			);
 
@@ -55,10 +57,6 @@ namespace UnrealBuildTool.Rules
 				"MessageLog",
 			});
 
-			PrivateIncludePaths.AddRange(new string[] {
-				System.IO.Path.Combine(GetModuleDirectory("PropertyEditor"), "Private"),
-			});
-		
 			if (Target.Platform == UnrealTargetPlatform.Win64)
 			{
 				PublicDefinitions.Add("WITH_STATETREE_DEBUGGER=1");

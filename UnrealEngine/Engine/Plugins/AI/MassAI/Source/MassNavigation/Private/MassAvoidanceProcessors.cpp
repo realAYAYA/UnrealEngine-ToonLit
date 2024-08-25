@@ -15,6 +15,8 @@
 #include "MassNavigationFragments.h"
 #include "MassNavigationUtils.h"
 #include "Engine/World.h"
+#include "MassDebugger.h"
+
 
 #define UNSAFE_FOR_MT 1
 
@@ -349,7 +351,7 @@ UMassMovingAvoidanceProcessor::UMassMovingAvoidanceProcessor()
 	: EntityQuery(*this) 
 {
 	bAutoRegisterWithProcessingPhases = true;
-	ExecutionFlags = (int32)EProcessorExecutionFlags::All;
+	ExecutionFlags = (int32)EProcessorExecutionFlags::AllNetModes;
 	ExecutionOrder.ExecuteInGroup = UE::Mass::ProcessorGroupNames::Avoidance;
 	ExecutionOrder.ExecuteAfter.Add(UE::Mass::ProcessorGroupNames::LOD);
 }
@@ -1014,7 +1016,7 @@ UMassStandingAvoidanceProcessor::UMassStandingAvoidanceProcessor()
 
 {
 	bAutoRegisterWithProcessingPhases = true;
-	ExecutionFlags = (int32)EProcessorExecutionFlags::All;
+	ExecutionFlags = (int32)EProcessorExecutionFlags::AllNetModes;
 	ExecutionOrder.ExecuteInGroup = UE::Mass::ProcessorGroupNames::Avoidance;
 	ExecutionOrder.ExecuteAfter.Add(TEXT("MassMovingAvoidanceProcessor"));
 }

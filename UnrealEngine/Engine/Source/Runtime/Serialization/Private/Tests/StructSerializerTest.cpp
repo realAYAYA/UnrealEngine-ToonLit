@@ -486,7 +486,9 @@ namespace StructSerializerTest
 				FStructSerializer::SerializeElement(&TestStruct, Property, INDEX_NONE, SerializerBackend, Policies);
 
 				FStructSerializerTestStruct TestStruct2(NoInit);
-				TestStruct2.Sets.IntSet = { -1, -2, -3 };
+				TestStruct2.Sets.IntSet = { -1, -2, -3, -4, -5 };
+				TestStruct2.Sets.IntSet.Remove(-1);
+				TestStruct2.Sets.IntSet.Remove(-2);
 				TestStruct2.Sets.NameSet = { TEXT("Pre1"), TEXT("Pre2") , TEXT("Pre3") };
 				TestStruct2.Sets.StrSet = { TEXT("Pre4"), TEXT("Pre5") , TEXT("Pre6"), TEXT("Pre7") };
 				TestStruct2.Sets.StructSet = { FStructSerializerBuiltinTestStruct(NoInit) };
@@ -494,7 +496,7 @@ namespace StructSerializerTest
 
 				ValidateSets(Test, TestStruct.Sets, TestStruct2.Sets);
 			}
-			
+
 			//TArray<uint8> element
 			{
 				TArray<uint8> Buffer;

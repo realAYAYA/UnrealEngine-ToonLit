@@ -84,36 +84,26 @@ public:
 		return EAVResult::Success;
 	}
 
-	// Versions of TAnd and TOr that work with std::is_same return values, this is incompatible with TEMPLATE_REQUIRES
-	// so we need to still use this construct for now until std::is_same_v is better supported
-	template<typename A, typename B>
-	struct TIsSameHack
-	{
-		enum { Value = std::is_same_v<A, B>	};
-	};
-
 	/**
 	 * Transform one configuration type into another. Naive implementation is provided that uses the assignment operator, but it can be explicitly specialized.
 	 *
-	 * @tparam TOutput Config type to convert to.
-	 * @tparam TInput Config type to convert from.
+	 * @tparam OutputType Config type to convert to.
+	 * @tparam InputType Config type to convert from.
 	 * @param OutConfig The config to write to.
 	 * @param InConfig The config to read from.
 	 * @return Result of the operation, @see FAVResult.
 	 */
-	template <typename TOutput, typename TInput, TEMPLATE_REQUIRES(TOr<TIsSameHack<TInput, TOutput>, TNot<TIsDerivedFrom<TOutput, TInput>>>::Value)>
-	static FAVResult TransformConfig(TOutput& OutConfig, TInput const& InConfig)
+	template <typename OutputType, typename InputType>
+	static FAVResult TransformConfig(OutputType& OutConfig, InputType const& InConfig)
 	{
-		OutConfig = InConfig;
-
-		return EAVResult::Success;
-	}
-
-	// Alternate path for upcasting.
-	template <typename TOutput, typename TInput, TEMPLATE_REQUIRES(TAnd<TNot<TIsSameHack<TInput, TOutput>>, TIsDerivedFrom<TOutput, TInput>>::Value)>
-	static FAVResult TransformConfig(TOutput& OutConfig, TInput const& InConfig)
-	{
-		static_cast<TInput&>(OutConfig) = InConfig;
+		if constexpr (std::is_same_v<InputType, OutputType> || !std::is_base_of_v<InputType, OutputType>)
+		{
+			OutConfig = InConfig;
+		}
+		else
+		{
+			static_cast<InputType&>(OutConfig) = InConfig;
+		}
 
 		return EAVResult::Success;
 	}

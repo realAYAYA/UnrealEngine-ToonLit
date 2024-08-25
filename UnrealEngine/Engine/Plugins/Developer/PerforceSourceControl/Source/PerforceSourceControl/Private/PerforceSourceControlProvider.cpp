@@ -3,6 +3,7 @@
 #include "PerforceSourceControlProvider.h"
 
 #include "Algo/Transform.h"
+#include "HAL/IConsoleManager.h"
 #include "HAL/PlatformProcess.h"
 #include "ISourceControlLabel.h"
 #include "ISourceControlModule.h"
@@ -19,7 +20,6 @@
 #include "ScopedSourceControlProgress.h"
 #include "SourceControlHelpers.h"
 #include "SourceControlOperations.h"
-#include "Widgets/DeclarativeSyntaxSupport.h"
 
 static FName ProviderName("Perforce");
 
@@ -83,7 +83,17 @@ FPerforceSourceControlProvider::FPerforceSourceControlProvider(const FStringView
 
 void FPerforceSourceControlProvider::Init(bool bForceConnection)
 {
-	ParseCommandLineSettings(bForceConnection);
+	const EInitFlags Flags = bForceConnection ? EInitFlags::AttemptConnection : EInitFlags::None;
+
+	ParseCommandLineSettings(Flags);
+}
+
+ISourceControlProvider::FInitResult FPerforceSourceControlProvider::Init(EInitFlags Flags)
+{
+	FInitResult Result = ParseCommandLineSettings(Flags);
+	Result.bIsAvailable = IsAvailable();
+
+	return Result;
 }
 
 void FPerforceSourceControlProvider::Close()
@@ -170,6 +180,17 @@ TMap<ISourceControlProvider::EStatus, FString> FPerforceSourceControlProvider::G
 	Result.Add(EStatus::Port, Settings.GetPort());
 	Result.Add(EStatus::User, Settings.GetUserName());
 	Result.Add(EStatus::Client, Settings.GetWorkspace());
+
+	if (!Settings.GetWorkspace().IsEmpty())
+	{
+		FScopedPerforceConnection ScopedConnection(EConcurrency::Synchronous, *const_cast<FPerforceSourceControlProvider*>(this));
+		if (ScopedConnection.IsValid())
+		{
+			FPerforceConnection& Connection = ScopedConnection.GetConnection();
+			Result.Add(EStatus::WorkspacePath, Connection.ClientRoot);
+		}
+	}
+
 	return Result;
 }
 
@@ -205,8 +226,10 @@ bool FPerforceSourceControlProvider::EstablishPersistentConnection()
 	return bIsValidConnection;
 }
 
-void FPerforceSourceControlProvider::ParseCommandLineSettings(bool bForceConnection)
+ISourceControlProvider::FInitResult FPerforceSourceControlProvider::ParseCommandLineSettings(EInitFlags InitFlags)
 {
+	ISourceControlProvider::FInitResult Result;
+
 	FPerforceSourceControlSettings& P4Settings = AccessSettings();
 
 	// First we take a copy of the existing settings
@@ -216,7 +239,7 @@ void FPerforceSourceControlProvider::ParseCommandLineSettings(bool bForceConnect
 	FString HostOverrideName = P4Settings.GetHostOverride();
 	FString Changelist = P4Settings.GetChangelistNumber();
 
-	EConnectionOptions Options = EConnectionOptions::None;
+	EConnectionOptions ConnectionOptions = EConnectionOptions::None;
 
 	// Then we see if any of these settings are overridden by the initial settings
 	// Note that as long as one setting is overridden, we will reset all non-overridden 
@@ -234,7 +257,7 @@ void FPerforceSourceControlProvider::ParseCommandLineSettings(bool bForceConnect
 		// so don't need to automatically find a workspace when ensuring the connection.
 		if (InitialSettings.IsOverridden(TEXT("P4Client")))
 		{
-			Options |= EConnectionOptions::WorkspaceOptional;
+			ConnectionOptions |= EConnectionOptions::WorkspaceOptional;
 		}
 
 		P4Settings.SetPort(PortName);
@@ -244,29 +267,50 @@ void FPerforceSourceControlProvider::ParseCommandLineSettings(bool bForceConnect
 		P4Settings.SetChangelistNumber(Changelist);
 	}
 
-	if (bForceConnection)
+	if (EnumHasAnyFlags(InitFlags, EInitFlags::AttemptConnection))
 	{
 		bLoginError = false;
+
 		FPerforceConnectionInfo ConnectionInfo = P4Settings.GetConnectionInfo();
-		if(FPerforceConnection::EnsureValidConnection(PortName, UserName, ClientSpecName, ConnectionInfo, *this, Options))
+		FPerforceConnectionInfo OutputSettings;
+
+		if (EnumHasAnyFlags(InitFlags, EInitFlags::SupressErrorLogging))
 		{
-			P4Settings.SetPort(PortName);
-			P4Settings.SetUserName(UserName);
-			P4Settings.SetWorkspace(ClientSpecName);
-			P4Settings.SetHostOverride(HostOverrideName);
+			ConnectionOptions |= EConnectionOptions::SupressErrorLogging;
+		}
+
+		if(FPerforceConnection::EnsureValidConnection(ConnectionInfo, *this, ConnectionOptions, OutputSettings, Result.Errors))
+		{
+			// The connection was a success so we should store the values used by the successful connection
+			P4Settings.SetPort(OutputSettings.Port);
+			P4Settings.SetUserName(OutputSettings.UserName);
+			P4Settings.SetWorkspace(OutputSettings.Workspace);
+
 			bServerAvailable = true;
+		}
+
+		// Fill in FInitResult::ConnectionSettings with the actual settings that were used
+
+		if (!OutputSettings.Port.IsEmpty())
+		{
+			Result.ConnectionSettings.Add(ISourceControlProvider::EStatus::Port, OutputSettings.Port);
+		}
+
+		if (!OutputSettings.UserName.IsEmpty())
+		{
+			Result.ConnectionSettings.Add(ISourceControlProvider::EStatus::User, OutputSettings.UserName);
+		}
+
+		if (!OutputSettings.Workspace.IsEmpty())
+		{
+			Result.ConnectionSettings.Add(ISourceControlProvider::EStatus::Client, OutputSettings.Workspace);
 		}
 	}
 
 	//Save off settings so this doesn't happen every time
 	SaveConnectionSettings();
-}
 
-void FPerforceSourceControlProvider::GetWorkspaceList(const FPerforceConnectionInfo& InConnectionInfo, TArray<FString>& OutWorkspaceList, TArray<FText>& OutErrorMessages)
-{
-	//attempt to ask perforce for a list of client specs that belong to this user
-	FPerforceConnection Connection(InConnectionInfo, *this);
-	Connection.GetWorkspaceList(InConnectionInfo, FOnIsCancelled(), OutWorkspaceList, OutErrorMessages);
+	return Result;
 }
 
 const FString& FPerforceSourceControlProvider::GetTicket() const
@@ -686,21 +730,20 @@ TArray< TSharedRef<ISourceControlLabel> > FPerforceSourceControlProvider::GetLab
 		FPerforceConnection& Connection = ScopedConnection.GetConnection();
 		FP4RecordSet Records;
 		TArray<FString> Parameters;
-		TArray<FText> ErrorMessages;
+		FSourceControlResultInfo ResultInfo;
 		Parameters.Add(TEXT("-E"));
 		Parameters.Add(InMatchingSpec);
 		bool bConnectionDropped = false;
-		if(Connection.RunCommand(TEXT("labels"), Parameters, Records, ErrorMessages, FOnIsCancelled(), bConnectionDropped))
+		if(Connection.RunCommand(TEXT("labels"), Parameters, Records, ResultInfo, FOnIsCancelled(), bConnectionDropped))
 		{
 			// const_cast to avoid changing the ISourceControlProvider API as it is hard to deprecate without causing derived types to give compiler errors.
 			ParseGetLabelsResults(*const_cast<FPerforceSourceControlProvider*>(this), Records, Labels);
 		}
 		else
 		{
-			// output errors if any
-			for (int32 ErrorIndex = 0; ErrorIndex < ErrorMessages.Num(); ++ErrorIndex)
+			for (const FText& ErrorMsg : ResultInfo.ErrorMessages)
 			{
-				FMessageLog("SourceControl").Warning(FText::Format(LOCTEXT("GetLabelsErrorFormat", "GetLabels Warning: {0}"), ErrorMessages[ErrorIndex]));
+				FMessageLog("SourceControl").Warning(FText::Format(LOCTEXT("GetLabelsErrorFormat", "GetLabels Warning: {0}"), ErrorMsg));
 			}
 		}
 	}
@@ -829,14 +872,17 @@ ECommandResult::Type FPerforceSourceControlProvider::SwitchWorkspace(FStringView
 
 	if (!NewWorkspaceName.IsEmpty())
 	{
-		FString PortName = P4Settings.GetPort();
-		FString UserName = P4Settings.GetUserName();
-		
-		if (FPerforceConnection::EnsureValidConnection(PortName, UserName, WorkspaceName, P4Settings.GetConnectionInfo(), *this, EConnectionOptions::WorkspaceOptional))
+		FPerforceConnectionInfo NewWorkspaceSettings = P4Settings.GetConnectionInfo();
+		NewWorkspaceSettings.Workspace = WorkspaceName;
+
+		ISourceControlProvider::FInitResult Results;
+
+		FPerforceConnectionInfo OutputSettings;
+		if (FPerforceConnection::EnsureValidConnection(NewWorkspaceSettings, *this, EConnectionOptions::WorkspaceOptional, OutputSettings, Results.Errors))
 		{
-			P4Settings.SetPort(PortName);
-			P4Settings.SetUserName(UserName);
-			P4Settings.SetWorkspace(WorkspaceName);
+			P4Settings.SetPort(OutputSettings.Port);
+			P4Settings.SetUserName(OutputSettings.UserName);
+			P4Settings.SetWorkspace(OutputSettings.Workspace);
 
 			bServerAvailable = true;
 
@@ -1001,7 +1047,7 @@ bool FPerforceSourceControlProvider::QueryStateBranchConfig(const FString& Confi
 		FPerforceConnection& Connection = ScopedConnection.GetConnection();
 		FP4RecordSet Records;
 		TArray<FString> Parameters;
-		TArray<FText> ErrorMessages;
+		FSourceControlResultInfo ResultInfo;
 		Parameters.Add(TEXT("-o"));
 		Parameters.Add(*ConfigDest);
 		Parameters.Add(*ConfigSrc);
@@ -1009,7 +1055,7 @@ bool FPerforceSourceControlProvider::QueryStateBranchConfig(const FString& Confi
 		FText GeneralErrorMessage = LOCTEXT("StatusBranchConfigGeneralFailure", "Unable to retrieve status branch configuration from depot");
 
 		bool bConnectionDropped = false;
-		if (Connection.RunCommand(TEXT("print"), Parameters, Records, ErrorMessages, FOnIsCancelled(), bConnectionDropped))
+		if (Connection.RunCommand(TEXT("print"), Parameters, Records, ResultInfo, FOnIsCancelled(), bConnectionDropped))
 		{
 			if (Records.Num() < 1 || Records[0][TEXT("depotFile")] != ConfigSrc)
 			{
@@ -1021,10 +1067,9 @@ bool FPerforceSourceControlProvider::QueryStateBranchConfig(const FString& Confi
 		{
 			FMessageLog("SourceControl").Error(GeneralErrorMessage);
 
-			// output specific errors if any
-			for (int32 ErrorIndex = 0; ErrorIndex < ErrorMessages.Num(); ++ErrorIndex)
+			for (const FText& ErrorMsg : ResultInfo.ErrorMessages)
 			{
-				FMessageLog("SourceControl").Error(ErrorMessages[ErrorIndex]);
+				FMessageLog("SourceControl").Error(ErrorMsg);
 			}
 
 			return false;

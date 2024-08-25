@@ -59,15 +59,8 @@ namespace mu
 		//-----------------------------------------------------------------------------------------
 		// Node Interface
 		//-----------------------------------------------------------------------------------------
-
-        
-
-        const NODE_TYPE* GetType() const override;
-		static const NODE_TYPE* GetStaticType();
-
-        virtual int GetInputCount() const override;
-        virtual Node* GetInputNode( int i ) const override;
-        void SetInputNode( int i, NodePtr pNode ) override;
+        const FNodeType* GetType() const override;
+		static const FNodeType* GetStaticType();
 
 		//-----------------------------------------------------------------------------------------
 		// Own Interface
@@ -85,13 +78,7 @@ namespace mu
         //! - the surface will be affected by modifier nodes with the same tag
         //! - the tag will be enabled when the surface is added to an object, and it can activate
         //! variations for any surface.
-        void AddTag(const char* tagName);
-
-        //! Get the number of tags added to the Surface.
-        int GetTagCount() const;
-
-        //! Get a tag string from an index (0 to GetTagCount-1)
-        const char* GetTag( int ) const;
+        void AddTag(const FString& tagName);
 
         //! \}
 

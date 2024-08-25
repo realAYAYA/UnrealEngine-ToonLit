@@ -51,7 +51,7 @@ protected:
 	FNiagaraSimCacheCapture SimCacheCapture;
 	TWeakObjectPtr<UNiagaraSimCache> CapturedCache = nullptr;
 
-	UNiagaraComponent* TargetComponent = nullptr;
+	TWeakObjectPtr<UNiagaraComponent> WeakTargetComponent;
 	int32 NumFrames = 1;
 	bool bIsCaptureActive = false;
 	TSharedPtr<FNiagaraSimCacheViewModel> SimCacheViewModel;

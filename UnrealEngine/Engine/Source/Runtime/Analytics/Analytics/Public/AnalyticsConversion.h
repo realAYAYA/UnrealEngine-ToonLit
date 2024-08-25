@@ -8,11 +8,7 @@
 
 /** Lexical conversion. Allow any type that we have a Lex for. Can't use universal references here because it then eats all non-perfect matches for the array and TMap conversions below, which we want to use a custom, analytics specific implementation for. */
 template <typename T>
-#if PLATFORM_COMPILER_HAS_DECLTYPE_AUTO
 inline decltype(auto) AnalyticsConversionToString(const T& Value)
-#else
-inline auto AnalyticsConversionToString(const T& Value) -> decltype(LexToString(Value)) 
-#endif
 {
 	return LexToString(Value);
 }
@@ -79,7 +75,7 @@ FString AnalyticsConversionToString(const TArray<T, AllocatorType>& ValueArray)
 		Result += TEXT(",");
 	}
 	// Remove the trailing comma (LeftChop will ensure an empty container won't crash here).
-	Result.LeftChopInline(1, false);
+	Result.LeftChopInline(1, EAllowShrinking::No);
 	return Result;
 }
 
@@ -97,7 +93,7 @@ FString AnalyticsConversionToString(const TMap<KeyType, ValueType, Allocator, Ke
 		Result += TEXT(",");
 	}
 	// Remove the trailing comma (LeftChop will ensure an empty container won't crash here).
-	Result.LeftChopInline(1, false);
+	Result.LeftChopInline(1, EAllowShrinking::No);
 	return Result;
 }
 
@@ -105,11 +101,7 @@ FString AnalyticsConversionToString(const TMap<KeyType, ValueType, Allocator, Ke
 namespace AnalyticsConversion
 {
 	template <typename T>
-#if PLATFORM_COMPILER_HAS_DECLTYPE_AUTO
 	inline decltype(auto) ToString(T&& Value)
-#else
-	inline auto ToString(T&& Value) -> decltype(AnalyticsConversionToString(Forward<T>(Value))) 
-#endif
 	{
 		return AnalyticsConversionToString(Forward<T>(Value));
 	}

@@ -156,6 +156,17 @@ void FLightPrimitiveInteraction::Destroy(FLightPrimitiveInteraction* LightPrimit
 
 extern bool ShouldCreateObjectShadowForStationaryLight(const FLightSceneInfo* LightSceneInfo, const FPrimitiveSceneProxy* PrimitiveSceneProxy, bool bInteractionShadowMapped);
 
+static bool MobileRequiresStaticMeshUpdateOnLocalLightChange(const FStaticShaderPlatform Platform)
+{
+	extern bool MobileLocalLightsUseSinglePermutation();
+	
+	if (!IsMobileDeferredShadingEnabled(Platform))
+	{
+		return MobileForwardEnableLocalLights(Platform) && !MobileLocalLightsUseSinglePermutation();
+	}
+	return false;
+}
+
 FLightPrimitiveInteraction::FLightPrimitiveInteraction(
 	FLightSceneInfo* InLightSceneInfo,
 	FPrimitiveSceneInfo* InPrimitiveSceneInfo,
@@ -250,7 +261,8 @@ FLightPrimitiveInteraction::FLightPrimitiveInteraction(
 			{
 				bMobileDynamicLocalLight = true;
 				PrimitiveSceneInfo->NumMobileDynamicLocalLights++;
-				if (PrimitiveSceneInfo->NumMobileDynamicLocalLights == 1)
+				if (PrimitiveSceneInfo->NumMobileDynamicLocalLights == 1 && 
+					MobileRequiresStaticMeshUpdateOnLocalLightChange(PrimitiveSceneInfo->Scene->GetShaderPlatform()))
 				{
 					// Update static meshes to choose the shader permutation with local lights.
 					PrimitiveSceneInfo->RequestStaticMeshUpdate();
@@ -322,7 +334,8 @@ FLightPrimitiveInteraction::~FLightPrimitiveInteraction()
 	if (bMobileDynamicLocalLight)
 	{
 		PrimitiveSceneInfo->NumMobileDynamicLocalLights--;
-		if (PrimitiveSceneInfo->NumMobileDynamicLocalLights == 0)
+		if (PrimitiveSceneInfo->NumMobileDynamicLocalLights == 0 &&
+			MobileRequiresStaticMeshUpdateOnLocalLightChange(PrimitiveSceneInfo->Scene->GetShaderPlatform()))
 		{
 			// Update static meshes to choose the shader permutation without local lights.
 			PrimitiveSceneInfo->RequestStaticMeshUpdate();
@@ -405,6 +418,8 @@ FExponentialHeightFogSceneInfo::FExponentialHeightFogSceneInfo(const UExponentia
 	VolumetricFogDistance = FMath::Max(InComponent->VolumetricFogStartDistance + InComponent->VolumetricFogDistance, 0.0f);
 	VolumetricFogStaticLightingScatteringIntensity = FMath::Max(InComponent->VolumetricFogStaticLightingScatteringIntensity, 0.0f);
 	bOverrideLightColorsWithFogInscatteringColors = InComponent->bOverrideLightColorsWithFogInscatteringColors;
+	bHoldout = InComponent->bHoldout;
+	bRenderInMainPass = InComponent->bRenderInMainPass;
 
 	VolumetricFogStartDistance = InComponent->VolumetricFogStartDistance;
 	VolumetricFogNearFadeInDistance = InComponent->VolumetricFogNearFadeInDistance;

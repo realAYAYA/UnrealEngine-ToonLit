@@ -239,7 +239,8 @@ FLinearColor FColorSpace::MakeFromColorTemperature(float Temp) const
 	FVector3d XYZ = FVector3d(1.0 / y * x, 1.0, 1.0 / y * z);
 	FVector4d RGB = XYZToRgb.TransformVector(XYZ);
 
-	return FLinearColor((float)RGB.X, (float)RGB.Y, (float)RGB.Z);
+	// The XYZ to RGB transform can result in negative values, so we need to clamp here.
+	return FLinearColor(FMath::Max(0.0f, (float)RGB.X), FMath::Max(0.0f, (float)RGB.Y), FMath::Max(0.0f, (float)RGB.Z));
 }
 
 float FColorSpace::GetLuminance(const FLinearColor& Color) const
@@ -301,6 +302,13 @@ FMatrix44d FColorSpaceTransform::CalcChromaticAdaptionMatrix(FVector3d SourceXYZ
 	return XyzToRgb * ScaleMat * RgbToXyz;
 }
 
+FColorSpaceTransform FColorSpaceTransform::GetSRGBToWorkingColorSpace()
+{
+	static FColorSpaceTransform CachedTransform = FColorSpaceTransform(FColorSpace(EColorSpace::sRGB), FColorSpace::GetWorking());
+	
+	return CachedTransform;
+}
+
 static FMatrix44d CalcColorSpaceTransformMatrix(const FColorSpace& Src, const FColorSpace& Dst, EChromaticAdaptationMethod Method)
 {
 	if (Method == UE::Color::EChromaticAdaptationMethod::None)
@@ -333,9 +341,9 @@ FColorSpaceTransform::FColorSpaceTransform(FMatrix44d Matrix)
 FLinearColor FColorSpaceTransform::Apply(const FLinearColor& Color) const
 {
 	FLinearColor Result;
-	VectorRegister4Float VecP = VectorLoadAligned((const FVector4f*)&Color);
+	VectorRegister4Float VecP = VectorLoad(&Color.R);
 	VectorRegister4Float VecR = VectorTransformVector(VecP, this);
-	VectorStoreAligned(VecR, (FVector4f*)&Result);
+	VectorStore(VecR, &Result.R);
 	return Result;
 }
 

@@ -8,6 +8,7 @@
 #include "Widgets/Images/SImage.h"
 #include "GraphEditorSettings.h"
 #include "SPropertyAccessChainWidget.h"
+#include "ScopedTransaction.h"
 
 #define LOCTEXT_NAMESPACE "OutputBoolColumnEditor"
 
@@ -18,7 +19,7 @@ TSharedRef<SWidget> CreateOutputFloatColumnWidget(UChooserTable* Chooser, FChoos
 {
 	FOutputFloatColumn* OutputFloatColumn = static_cast<FOutputFloatColumn*>(Column);
 
-	if (Row < 0)
+    if (Row == ColumnWidget_SpecialIndex_Header)
 	{
 		// create column header widget
 		TSharedPtr<SWidget> InputValueWidget = nullptr;
@@ -60,6 +61,20 @@ TSharedRef<SWidget> CreateOutputFloatColumnWidget(UChooserTable* Chooser, FChoos
 
 		return ColumnHeaderWidget;
 	}
+	if (Row == ColumnWidget_SpecialIndex_Fallback)
+    {
+		return SNew(SNumericEntryBox<double>)
+        		.Value_Lambda([OutputFloatColumn]()
+        		{
+        			return OutputFloatColumn->FallbackValue;
+        		})
+        		.OnValueCommitted_Lambda([Chooser, OutputFloatColumn](double NewValue, ETextCommit::Type CommitType)
+        		{
+					const FScopedTransaction Transaction(LOCTEXT("Edit Min Value", "Edit Min Value"));
+					Chooser->Modify(true);
+					OutputFloatColumn->FallbackValue = NewValue;
+        		});	
+    }
 
 	// create cell widget
 	return SNew(SNumericEntryBox<double>)

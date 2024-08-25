@@ -4,6 +4,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
+import 'package:logging/logging.dart';
 import 'package:provider/provider.dart';
 
 import '../utilities/constants.dart';
@@ -16,6 +17,8 @@ import 'settings/recent_actor_settings.dart';
 import 'settings/selected_actor_settings.dart';
 import 'unreal_actor_manager.dart';
 import 'unreal_types.dart';
+
+final _log = Logger('UnrealActorCreator');
 
 /// How long to wait before forgetting about an actor creation request (meaning even if the actor is created, we won't
 /// select it in the app).
@@ -237,7 +240,7 @@ class UnrealActorCreator {
       if (settings.name != null) 'ActorName': settings.name,
       if (settings.template != null) 'TemplatePath': settings.template?.path,
       'ActorClass': className,
-      'RequestId': _startActorCreationRequest(callback: settings.callback),
+      'RequestId': _startActorCreationRequest(callback: settings.callback, position: position),
       'OverridePosition': position != null,
       if (position != null) 'Position': offsetToJson(position),
     };
@@ -263,11 +266,14 @@ class UnrealActorCreator {
   }
 
   /// Create an ID for an actor creation request and start a timer for it.
-  int _startActorCreationRequest({void Function()? callback}) {
+  /// When the engine confirms that the actor has been created, [callback] will be called.
+  /// If [position] is provided and the API version requires it, we will attempt to move the actor to that position
+  /// after its creation.
+  int _startActorCreationRequest({void Function()? callback, Offset? position}) {
     final int requestId = _lastRequestId;
     ++_lastRequestId;
 
-    _pendingRequests[requestId] = _PendingCreationRequest(callback: callback);
+    _pendingRequests[requestId] = _PendingCreationRequest(callback: callback, position: position);
     return requestId;
   }
 
@@ -279,8 +285,8 @@ class UnrealActorCreator {
       return;
     }
 
+    final List<dynamic>? actorPaths = message['ActorPaths'];
     if (pendingRequest.bSelectOnComplete) {
-      final List<dynamic>? actorPaths = message['ActorPaths'];
       if (actorPaths != null) {
         // We got a list of actors, so drop the current selection and select those ones
         _selectedActorSettings.deselectAllActors();
@@ -294,6 +300,21 @@ class UnrealActorCreator {
       }
     }
 
+    // On older versions of the engine, a bug causes the initial actor position to be incorrect in some cases, so send
+    // a quick drag request to fix it if possible.
+    if (_connectionManager.apiVersion?.bIsNewActorOverridePositionAccurate != true &&
+        pendingRequest.position != null &&
+        actorPaths != null &&
+        actorPaths.length == 1 &&
+        actorPaths.first is String) {
+      if (_previewRenderManager.bIsDraggingActors) {
+        _log.info('Could not fix position for new actor ${actorPaths[0]} because a drag was in progress');
+      } else {
+        _previewRenderManager.beginActorDrag(actors: [actorPaths.first] /*, primaryActor: actorPaths.first*/);
+        _previewRenderManager.endActorDrag(pendingRequest.position!);
+      }
+    }
+
     pendingRequest.callback?.call();
     pendingRequest.dispose();
   }
@@ -301,12 +322,15 @@ class UnrealActorCreator {
 
 /// Data about a request to create actors pending a response from the engine.
 class _PendingCreationRequest {
-  _PendingCreationRequest({this.callback}) {
+  _PendingCreationRequest({this.callback, this.position}) {
     _autoSelectTimeoutTimer = Timer(_creationRequestTimeout, _onAutoSelectTimedOut);
   }
 
   /// Callback function for when the request completes.
   final void Function()? callback;
+
+  /// The actor's desired position.
+  final Offset? position;
 
   /// Timer that fires when the request took too long to automatically select the new actors.
   late final Timer _autoSelectTimeoutTimer;

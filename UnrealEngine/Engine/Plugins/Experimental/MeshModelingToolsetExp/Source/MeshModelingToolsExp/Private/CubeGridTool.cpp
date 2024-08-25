@@ -8,15 +8,19 @@
 #include "BaseGizmos/GizmoMath.h"
 #include "BaseGizmos/TransformGizmoUtil.h"
 #include "BaseGizmos/TransformProxy.h"
+#include "CanvasTypes.h"
 #include "CompositionOps/CubeGridBooleanOp.h"
 #include "Distance/DistLine3Ray3.h"
 #include "Drawing/PreviewGeometryActor.h"
 #include "Drawing/LineSetComponent.h"
+#include "DynamicMeshEditor.h"
 #include "DynamicMesh/DynamicMeshChangeTracker.h"
 #include "DynamicMesh/MeshTransforms.h"
 #include "DynamicMeshToMeshDescription.h"
+#include "Engine/Engine.h"  // GEngine->GetSmallFont()
 #include "InteractiveToolChange.h"
 #include "InteractiveToolManager.h"
+#include "Input/Reply.h"
 #include "InputState.h"
 #include "Mechanics/DragAlignmentMechanic.h"
 #include "MeshOpPreviewHelpers.h" //UMeshOpPreviewWithBackgroundCompute
@@ -26,8 +30,10 @@
 #include "ModelingToolTargetUtil.h"
 #include "Properties/MeshMaterialProperties.h"
 #include "PropertySets/CreateMeshObjectTypeProperties.h"
+#include "SceneView.h"
 #include "Selection/ToolSelectionUtil.h"
 #include "ToolContextInterfaces.h"
+#include "ToolHostCustomizationAPI.h"
 #include "ToolTargetManager.h"
 #include "ToolTargets/ToolTarget.h"
 #include "TargetInterfaces/MaterialProvider.h"
@@ -54,7 +60,11 @@ namespace CubeGridToolLocals
 		"Refer to side panel for shortcuts.");
 
 	FText CornerModeMessage = LOCTEXT("CubeGridCornerModeDescription", "Toggle corner selection for push/pulling by clicking or dragging. "
-		"Press Enter or click \"Done\" in the side panel to accept the result.");
+		"Press Enter or click \"Done\" to accept the result.");
+
+	FText CreatingAssetMessage = LOCTEXT("CreatingNewAssetLabel", "Creating new asset.");
+
+	FText EditingAssetMessage = LOCTEXT("EditingExistingAssetLabel", "Editing existing asset.");
 
 	const FText SelectionChangeTransactionName = LOCTEXT("SelectionChangeTransaction", "Cube Grid Selection Change");
 	const FText ModeChangeTransactionName = LOCTEXT("ModeChangeTransaction", "Cube Grid Mode Change");
@@ -116,6 +126,33 @@ namespace CubeGridToolLocals
 
 	protected:
 		TUniquePtr<UE::Geometry::FDynamicMeshChange> MeshChange;
+	};
+
+	class FCubeGridMeshTransformChange : public FToolCommandChange
+	{
+	public:
+		FCubeGridMeshTransformChange(const FTransform& BeforeIn, const FTransform& AfterIn)
+			: Before(BeforeIn)
+			, After(AfterIn)
+		{};
+
+		virtual void Apply(UObject* Object) override
+		{
+			Cast<UCubeGridTool>(Object)->SetCurrentMeshTransform(After);
+		}
+		virtual void Revert(UObject* Object) override
+		{
+			Cast<UCubeGridTool>(Object)->SetCurrentMeshTransform(Before);
+		}
+
+		virtual FString ToString() const override
+		{
+			return TEXT("CubeGridToolLocals::FCubeGridMeshTransformChange");
+		}
+
+	protected:
+		FTransform Before;
+		FTransform After;
 	};
 
 	/** Undoes selection changes */
@@ -270,21 +307,64 @@ namespace CubeGridToolLocals
 	class FCubeGridChangesMadeChange : public FToolCommandChange
 	{
 	public:
-		FCubeGridChangesMadeChange() {};
+		FCubeGridChangesMadeChange(bool bNowMadeIn = true) 
+			: bNowMade(bNowMadeIn) {};
 
 		virtual void Apply(UObject* Object) override
 		{
-			Cast<UCubeGridTool>(Object)->SetChangesMade(true);
+			Cast<UCubeGridTool>(Object)->SetChangesMade(bNowMade);
 		}
 		virtual void Revert(UObject* Object) override
 		{
-			Cast<UCubeGridTool>(Object)->SetChangesMade(false);
+			Cast<UCubeGridTool>(Object)->SetChangesMade(!bNowMade);
 		}
 
 		virtual FString ToString() const override
 		{
 			return TEXT("CubeGridToolLocals::FCubeGridChangesMadeChange");
 		}
+
+	protected:
+		bool bNowMade = true;
+	};
+
+	/** Deals with the tool target portion of an "Accept and Start New" change. The actual
+	  asset update and current mesh updates should happen alongside this change.*/
+	class FCubeGridTargetResetChange : public FToolCommandChange
+	{
+	public:
+		FCubeGridTargetResetChange(UToolTarget* ToolTargetIn)
+			: ToolTarget(ToolTargetIn)
+		{};
+
+		virtual void Apply(UObject* Object) override
+		{
+			UCubeGridTool* Tool = Cast<UCubeGridTool>(Object);
+			if (ToolTarget.IsValid())
+			{
+				UE::ToolTarget::SetSourceObjectVisible(ToolTarget.Get(), true);
+			}
+			Tool->SetTarget(nullptr);
+			Tool->GetToolManager()->DisplayMessage(CreatingAssetMessage, EToolMessageLevel::UserWarning);
+		}
+		virtual void Revert(UObject* Object) override
+		{
+			UCubeGridTool* Tool = Cast<UCubeGridTool>(Object);
+			Tool->SetTarget(ToolTarget.Get());
+			Tool->GetToolManager()->DisplayMessage(EditingAssetMessage, EToolMessageLevel::UserWarning);
+			if (ToolTarget.IsValid())
+			{
+				UE::ToolTarget::SetSourceObjectVisible(ToolTarget.Get(), false);
+			}
+		}
+
+		virtual FString ToString() const override
+		{
+			return TEXT("CubeGridToolLocals::FCubeGridAcceptAndStartNewChange");
+		}
+
+	protected:
+		TWeakObjectPtr<UToolTarget> ToolTarget;
 	};
 	
 	// Attach a frame to the box such that Z points along the given direction.
@@ -480,6 +560,86 @@ namespace CubeGridToolLocals
 		DrawParallelInteriorLines(Dim2, Dim1);
 	}
 
+
+	void DisplayLengthsOfEveryNonzeroBoxSide(const FAxisAlignedBox3d& Box, const FTransform& BoxTransform, 
+		FCanvas& Canvas, const FSceneView& SceneView)
+	{
+		if (Box.IsEmpty())
+		{
+			return;
+		}
+
+		FVector3d LocalDimensions = Box.Max - Box.Min;
+
+		if (LocalDimensions.IsZero())
+		{
+			return;
+		}
+
+		FVector3d LocalCenter = Box.Center();
+		double DPIScale = Canvas.GetDPIScale();
+		UFont* UseFont = GEngine->GetSmallFont();
+
+		for (int MeasuredDim = 0; MeasuredDim < 3; ++MeasuredDim)
+		{
+			if (LocalDimensions[MeasuredDim] == 0)
+			{
+				// Flat on this side
+				continue;
+			}
+
+			double Length = FMath::Abs(LocalDimensions[MeasuredDim] * BoxTransform.GetScale3D()[MeasuredDim]);
+			FString String;
+			if (FMath::Abs(Length - FMath::RoundToDouble(Length)) < KINDA_SMALL_NUMBER)
+			{
+				String = FString::Printf(TEXT("%.0f"), Length);
+			}
+			else
+			{
+				// Two decimal places if we don't have a round number
+				String = FString::Printf(TEXT("%.2f"), Length);
+			}
+
+			// Iterate in a square across the other two dimensions
+			int OtherDim1 = MeasuredDim == 0 ? 1 : 0;
+			int OtherDim2 = MeasuredDim == 2 ? 1 : 2;
+			for (int i = 0; i < 2; ++i)
+			{
+				if (i == 1 && LocalDimensions[OtherDim1] == 0)
+				{
+					break;
+				}
+
+				for (int j = 0; j < 2; ++j)
+				{
+					if (j == 1 && LocalDimensions[OtherDim2] == 0)
+					{
+						break;
+					}
+
+					FVector3d LocalWriteLocation = Box.Min;
+					LocalWriteLocation[MeasuredDim] = LocalCenter[MeasuredDim];
+					if (i == 1)
+					{
+						LocalWriteLocation[OtherDim1] = Box.Max[OtherDim1];
+					}
+					if (j == 1)
+					{
+						LocalWriteLocation[OtherDim2] = Box.Max[OtherDim2];
+					}
+
+					FVector3d WorldPosition = BoxTransform.TransformPosition(LocalWriteLocation);
+					FVector2D PixelPosition;
+					SceneView.WorldToPixel(WorldPosition, PixelPosition);
+					Canvas.DrawShadowedString(PixelPosition.X / DPIScale, PixelPosition.Y / DPIScale, *String, 
+						UseFont, FLinearColor::White);
+				}
+			}
+			
+		}
+
+	}
+
 	/** Given a world hit, get a hit face. */
 	void ConvertToFaceHit(const FCubeGrid& CubeGrid, ECubeGridToolFaceSelectionMode SelectionMode, 
 		 const FRay& WorldRay, double HitT, const FVector3d& Normal, FCubeGrid::FCubeFace& FaceOut,
@@ -613,6 +773,7 @@ void UCubeGridTool::InvalidatePreview(bool bUpdateCornerLineSet)
 		if (bPreviewMayDiffer)
 		{
 			Preview->PreviewMesh->UpdatePreview(CurrentMesh.Get());
+			Preview->PreviewMesh->SetTransform(CurrentMeshTransform);
 			bPreviewMayDiffer = false;
 		}
 		return;
@@ -771,11 +932,6 @@ void UCubeGridTool::Setup()
 	UInteractiveTool::Setup();
 
 	GetToolManager()->DisplayMessage(PushPullModeMessage, EToolMessageLevel::UserNotification);
-
-	DuringActivityActions = NewObject<UCubeGridDuringActivityActions>(this);
-	DuringActivityActions->Initialize(this);
-	AddToolPropertySource(DuringActivityActions);
-	SetToolPropertySourceEnabled(DuringActivityActions, false);
 
 	ToolActions = NewObject<UCubeGridToolActions>(this);
 	ToolActions->Initialize(this);
@@ -1052,12 +1208,12 @@ void UCubeGridTool::Setup()
 
 	if (Target)
 	{
-		GetToolManager()->DisplayMessage(LOCTEXT("EditingExistingAssetLabel", "Editing existing asset."), 
+		GetToolManager()->DisplayMessage(EditingAssetMessage,
 			EToolMessageLevel::UserWarning);
 	}
 	else
 	{
-		GetToolManager()->DisplayMessage(LOCTEXT("CreatingNewAssetLabel", "Creating new asset."),
+		GetToolManager()->DisplayMessage(CreatingAssetMessage,
 			EToolMessageLevel::UserWarning);
 	}
 }
@@ -1094,7 +1250,7 @@ void UCubeGridTool::Shutdown(EToolShutdownType ShutdownType)
 
 	if (Target)
 	{
-		Cast<IPrimitiveComponentBackedTarget>(Target)->SetOwnerVisibility(true);
+		UE::ToolTarget::SetSourceObjectVisible(Target.Get(), true);
 	}
 
 	// CubeGrid might get used for long stretches at a time, and an accidental Esc hit could result in a fair
@@ -1117,54 +1273,7 @@ void UCubeGridTool::Shutdown(EToolShutdownType ShutdownType)
 
 	if (ShutdownType == EToolShutdownType::Accept && bChangesMade)
 	{
-		bool bCreatingNewAsset = !Target && CurrentMesh->TriangleCount() > 0;
-		if (Target)
-		{
-			if (Target->IsValid())
-			{
-				GetToolManager()->BeginUndoTransaction(LOCTEXT("CubeGridToolEditTransactionName", "Cube Grid Edit"));
-				FComponentMaterialSet OutputMaterialSet;
-				OutputMaterialSet.Materials = CurrentMeshMaterials;
-
-				UE::ToolTarget::CommitDynamicMeshUpdate(Target, *CurrentMesh, true,
-					FConversionToMeshDescriptionOptions(), &OutputMaterialSet);
-				GetToolManager()->EndUndoTransaction();
-			}
-			else if (!Target->IsValid() && CurrentMesh->TriangleCount() > 0)
-			{
-				EAppReturnType::Type Ret = FMessageDialog::Open(EAppMsgType::YesNo,
-					LOCTEXT("RecreateAssetQuestion", "The underlying asset that this tool was "
-						"operating on seems to no longer be valid (it was likely forcibly removed). "
-						"Would you like to recreate a new asset from the tool's current working "
-						"mesh? Selecting \"No\" or closing this window will discard the tool's "
-						"current work."), 
-					LOCTEXT("RecreateAssetTitle", "Recreate Mesh Asset?"));
-				if (Ret == EAppReturnType::Yes)
-				{
-					bCreatingNewAsset = true;
-				}
-			}
-		}
-
-		if (bCreatingNewAsset)
-		{
-			GetToolManager()->BeginUndoTransaction(LOCTEXT("CubeGridToolCreateTransactionName", "Cube Grid Create New"));
-
-			FCreateMeshObjectParams NewMeshObjectParams;
-			NewMeshObjectParams.TargetWorld = TargetWorld;
-			NewMeshObjectParams.Transform = (FTransform)CurrentMeshTransform;
-			NewMeshObjectParams.BaseName = TEXT("CubeGridToolOutput");
-			NewMeshObjectParams.Materials = CurrentMeshMaterials;
-			NewMeshObjectParams.SetMesh(CurrentMesh.Get());
-			OutputTypeProperties->ConfigureCreateMeshObjectParams(NewMeshObjectParams);
-			FCreateMeshObjectResult Result = UE::Modeling::CreateMeshObject(GetToolManager(), MoveTemp(NewMeshObjectParams));
-			if (Result.IsOK() && Result.NewActor != nullptr)
-			{
-				ToolSelectionUtil::SetNewActorSelection(GetToolManager(), Result.NewActor);
-			}
-
-			GetToolManager()->EndUndoTransaction();
-		}
+		OutputCurrentResults(/*bSetSelection =*/ true);
 	}
 
 	Preview->OnOpCompleted.RemoveAll(this);
@@ -1179,6 +1288,149 @@ void UCubeGridTool::Shutdown(EToolShutdownType ShutdownType)
 	GridGizmoAlignmentMechanic->Shutdown();
 
 	GetToolManager()->GetPairedGizmoManager()->DestroyAllGizmosByOwner(this);
+
+	// Probably unnecessary by this point, but just in case.
+	ClearViewportButtonCustomization();
+}
+
+// Applies the tool's results to the target or outputs the mesh. Meant to be called during shutdown
+// or when doing "Accept and Start New"
+void UCubeGridTool::OutputCurrentResults(bool bSetSelection)
+{
+	if (CurrentMesh->TriangleCount() <= 0)
+	{
+		if (Target && Target->IsValid())
+		{
+			EAppReturnType::Type Ret = FMessageDialog::Open(EAppMsgType::YesNo,
+				LOCTEXT("DestroyComponentQuestion", "The tool has entirely cut away the source mesh, which is not permitted. "
+					"Do you actually want to delete the mesh component? Note that the actor will remain. Choosing No will leave "
+					"the component unchanged instead."),
+				LOCTEXT("DestroyComponentTitle", "Delete mesh components?"));
+			if (Ret == EAppReturnType::No || Ret == EAppReturnType::Cancel)
+			{
+				return;
+			}
+
+			UPrimitiveComponent* Component = UE::ToolTarget::GetTargetComponent(Target);
+			if (ensure(Component))
+			{
+				GetToolManager()->BeginUndoTransaction(LOCTEXT("DestroyComponentTransaction", "Delete Mesh Component"));
+				UE::ToolTarget::GetTargetComponent(Target)->DestroyComponent();
+				GetToolManager()->EndUndoTransaction();
+			}
+		}
+
+		return;
+	}
+
+	bool bCreatingNewAsset = !Target && CurrentMesh->TriangleCount() > 0;
+	if (Target)
+	{
+		if (Target->IsValid())
+		{
+			GetToolManager()->BeginUndoTransaction(LOCTEXT("CubeGridToolEditTransactionName", "Cube Grid Edit"));
+			FComponentMaterialSet OutputMaterialSet;
+			OutputMaterialSet.Materials = CurrentMeshMaterials;
+
+			UE::ToolTarget::CommitDynamicMeshUpdate(Target, *CurrentMesh, true,
+				FConversionToMeshDescriptionOptions(), &OutputMaterialSet);
+			GetToolManager()->EndUndoTransaction();
+			return;
+		}
+		else if (!Target->IsValid() && CurrentMesh->TriangleCount() > 0)
+		{
+			EAppReturnType::Type Ret = FMessageDialog::Open(EAppMsgType::YesNo,
+				LOCTEXT("RecreateAssetQuestion", "The underlying asset that this tool was "
+					"operating on seems to no longer be valid (it was likely forcibly removed). "
+					"Would you like to recreate a new asset from the tool's current working "
+					"mesh? Selecting \"No\" or closing this window will discard the tool's "
+					"current work."),
+				LOCTEXT("RecreateAssetTitle", "Recreate Mesh Asset?"));
+			if (Ret == EAppReturnType::Yes)
+			{
+				bCreatingNewAsset = true;
+			}
+		}
+	}
+
+	if (bCreatingNewAsset)
+	{
+		GetToolManager()->BeginUndoTransaction(LOCTEXT("CubeGridToolCreateTransactionName", "Cube Grid Create New"));
+
+		FCreateMeshObjectParams NewMeshObjectParams;
+		NewMeshObjectParams.TargetWorld = TargetWorld;
+		NewMeshObjectParams.Transform = (FTransform)CurrentMeshTransform;
+		NewMeshObjectParams.BaseName = TEXT("CubeGridToolOutput");
+		NewMeshObjectParams.Materials = CurrentMeshMaterials;
+		NewMeshObjectParams.SetMesh(CurrentMesh.Get());
+		OutputTypeProperties->ConfigureCreateMeshObjectParams(NewMeshObjectParams);
+		FCreateMeshObjectResult Result = UE::Modeling::CreateMeshObject(GetToolManager(), MoveTemp(NewMeshObjectParams));
+		if (Result.IsOK() && Result.NewActor != nullptr && bSetSelection)
+		{
+			ToolSelectionUtil::SetNewActorSelection(GetToolManager(), Result.NewActor);
+		}
+
+		GetToolManager()->EndUndoTransaction();
+	}
+}
+
+void UCubeGridTool::AcceptToolAndStartNew()
+{
+	using namespace CubeGridToolLocals;
+
+	if (Mode == EMode::Corner)
+	{
+		ApplyCornerMode(true);
+	}
+
+	if (!bChangesMade)
+	{
+		return;
+	}
+
+	FText TransactionText = LOCTEXT("AcceptAndStartNewTransaction", "Cube Grid Accept and Start New");
+	GetToolManager()->BeginUndoTransaction(TransactionText);
+
+	OutputCurrentResults(/*bSetSelection =*/ false);
+
+	GetToolManager()->EmitObjectChange(this, MakeUnique<FCubeGridChangesMadeChange>(false), TransactionText);
+
+	if (Target)
+	{
+		UE::ToolTarget::SetSourceObjectVisible(Target.Get(), true);
+		GetToolManager()->EmitObjectChange(this, MakeUnique<FCubeGridTargetResetChange>(Target), TransactionText);
+	}
+
+	// Clear out the current mesh
+	if (CurrentMesh->TriangleCount() > 0)
+	{
+		// TODO: There are probably better ways to do this than a dynamic mesh change tracker. For
+		// instance we could have a change that keeps a weak pointer to the mesh and keep a shared
+		// pointer in the tool, so that the mesh is thrown away once the tool exits (and the change
+		// is expired). Though we might need to be a bit more careful with retargeting the spatial, etc.
+		// For now, we do this easy approach.
+		TArray<int32> AllTids;
+		for (int32 Tid : CurrentMesh->TriangleIndicesItr())
+		{
+			AllTids.Add(Tid);
+		}
+		FDynamicMeshChangeTracker ChangeTracker(CurrentMesh.Get());
+		ChangeTracker.BeginChange();
+		ChangeTracker.SaveTriangles(AllTids, true /*bSaveVertices*/);
+		FDynamicMeshEditor Editor(CurrentMesh.Get());
+		Editor.RemoveTriangles(AllTids, true);
+		GetToolManager()->EmitObjectChange(this, MakeUnique<FCubeGridToolMeshChange>(ChangeTracker.EndChange()), TransactionText);
+	}
+
+	// Clear out any other structures/state
+	MeshSpatial->Build();
+	UpdateComputeInputs();
+	bWaitingToApplyPreview = false;
+	CurrentExtrudeAmount = 0;
+	Preview->CancelCompute();
+	Preview->PreviewMesh->UpdatePreview(CurrentMesh.Get());
+
+	GetToolManager()->EndUndoTransaction();
 }
 
 void UCubeGridTool::OnTick(float DeltaTime)
@@ -1236,6 +1488,9 @@ void UCubeGridTool::ApplyPreview()
 		// The transform might have changed if we added to an empty mesh
 		if (!FTransform(CurrentMeshTransform).Equals(Preview->PreviewMesh->GetTransform()))
 		{
+			GetToolManager()->EmitObjectChange(this, MakeUnique<FCubeGridMeshTransformChange>(
+				CurrentMeshTransform, Preview->PreviewMesh->GetTransform()), TransactionText);
+
 			CurrentMeshTransform = Preview->PreviewMesh->GetTransform();
 			GridGizmoAlignmentMechanic->InitializeDeformedMeshRayCast([this]() { return MeshSpatial.Get(); }, 
 				CurrentMeshTransform, nullptr);
@@ -1306,6 +1561,21 @@ void UCubeGridTool::Render(IToolsContextRenderAPI* RenderAPI)
 	}
 
 	GridGizmoAlignmentMechanic->Render(RenderAPI);
+}
+
+void UCubeGridTool::DrawHUD(FCanvas* Canvas, IToolsContextRenderAPI* RenderAPI)
+{
+	using namespace CubeGridToolLocals;
+
+	if (bHaveSelection && Canvas && CubeGrid 
+		&& Settings && Settings->bShowSelectionMeasurements)
+	{
+		if (const FSceneView* SceneView = RenderAPI->GetSceneView())
+		{
+			DisplayLengthsOfEveryNonzeroBoxSide(Selection.Box, CubeGrid->GetFrame().ToFTransform(), 
+				*Canvas, *SceneView);
+		}
+	}
 }
 
 void UCubeGridTool::OnPropertyModified(UObject* PropertySet, FProperty* Property)
@@ -2171,7 +2441,7 @@ void UCubeGridTool::SetGridPowerClamped(int32 GridPower)
 				}
 				else
 				{
-					// For FiveAndTen, we multiply  by 2 half the time and by 5 the second half, rounding up for 2's.
+					// For FiveAndTen, we multiply by 2 half the time and by 5 the second half, rounding up for 2's.
 					uint8 FloorHalfGridPower = GridPower / 2;
 					uint32 TwoMultiplier = static_cast<uint32>(1) << (GridPower - FloorHalfGridPower);
 					return TwoMultiplier * FMath::Pow(5.0, static_cast<double>(FloorHalfGridPower));
@@ -2205,14 +2475,6 @@ void UCubeGridTool::SetGridPowerClamped(int32 GridPower)
 // Action support
 
 void UCubeGridToolActions::PostAction(ECubeGridToolAction Action)
-{
-	if (ParentTool.IsValid())
-	{
-		ParentTool->RequestAction(Action);
-	}
-}
-
-void UCubeGridDuringActivityActions::PostAction(ECubeGridToolAction Action)
 {
 	if (ParentTool.IsValid())
 	{
@@ -2261,19 +2523,6 @@ void UCubeGridTool::ApplyAction(ECubeGridToolAction ActionType)
 	//case ECubeGridToolAction::FitGrid:
 	//	StartFitGrid();
 	//	break;
-	case ECubeGridToolAction::Done:
-		if (Mode == EMode::Corner)
-		{
-			ApplyCornerMode();
-		}
-		else if (Mode == EMode::FitGrid)
-		{
-			//CancelFitGrid();
-		}
-		break;
-	case ECubeGridToolAction::Cancel:
-		RevertToDefaultMode();
-		break;
 	case ECubeGridToolAction::ResetFromActor:
 		if (ToolActions->GridSourceActor)
 		{
@@ -2281,6 +2530,9 @@ void UCubeGridTool::ApplyAction(ECubeGridToolAction ActionType)
 			TransformToUse.SetScale3D(FVector::OneVector);
 			UpdateGridGizmo(TransformToUse);
 		}
+		break;
+	case ECubeGridToolAction::AcceptAndStartNew:
+		AcceptToolAndStartNew();
 		break;
 	}
 }
@@ -2443,7 +2695,38 @@ void UCubeGridTool::StartCornerMode()
 	Mode = EMode::Corner;
 
 	SetToolPropertySourceEnabled(ToolActions, false);
-	SetToolPropertySourceEnabled(DuringActivityActions, true);
+	// Customize the tool accept/cancel buttons to the current activity.
+	if (IToolHostCustomizationAPI* ButtonCustomizer = IToolHostCustomizationAPI::Find(GetToolManager()).GetInterface())
+	{
+		IToolHostCustomizationAPI::FAcceptCancelButtonOverrideParams Params;
+		Params.Label = LOCTEXT("CornerModeActivityLabel","Corner Mode");
+		Params.OverrideAcceptButtonText = LOCTEXT("DoneButton", "Done");
+		Params.OverrideAcceptButtonTooltip = LOCTEXT("DoneButtonTooltip", "Apply the current change and exit corner mode.");
+		Params.OverrideCancelButtonText = LOCTEXT("CancelButton", "Cancel");
+		Params.OverrideCancelButtonTooltip = LOCTEXT("CancelButtonTooltip", "Cancel the current change and exit corner mode.");
+		Params.CanAccept = [this]() { return true; };
+		Params.OnAcceptCancelTriggered = [this](bool bAccept)
+		{
+			if (bAccept)
+			{
+				if (Mode == EMode::Corner)
+				{
+					ApplyCornerMode();
+				}
+				else if (Mode == EMode::FitGrid)
+				{
+					//AcceptFitGrid();
+				}
+			}
+			else
+			{
+				RevertToDefaultMode();
+			}
+			return FReply::Handled();
+		};
+
+		ButtonCustomizer->RequestAcceptCancelButtonOverride(Params);
+	}
 
 	Settings->bInCornerMode = true;
 	NotifyOfPropertyChangeByTool(Settings);
@@ -2491,7 +2774,7 @@ void UCubeGridTool::ApplyCornerMode(bool bDontWaitForTick)
 	Mode = EMode::PushPull;
 	GetToolManager()->DisplayMessage(PushPullModeMessage, EToolMessageLevel::UserNotification);
 	SetToolPropertySourceEnabled(ToolActions, true);
-	SetToolPropertySourceEnabled(DuringActivityActions, false);
+	ClearViewportButtonCustomization();
 
 	Settings->bInCornerMode = false;
 	NotifyOfPropertyChangeByTool(Settings);
@@ -2508,7 +2791,7 @@ void UCubeGridTool::CancelCornerMode()
 	Mode = EMode::PushPull;
 	GetToolManager()->DisplayMessage(PushPullModeMessage, EToolMessageLevel::UserNotification);
 	SetToolPropertySourceEnabled(ToolActions, true);
-	SetToolPropertySourceEnabled(DuringActivityActions, false);
+	ClearViewportButtonCustomization();
 
 	CurrentExtrudeAmount = 0;
 	InvalidatePreview();
@@ -2551,9 +2834,23 @@ void UCubeGridTool::RevertToDefaultMode()
 	}
 }
 
+void UCubeGridTool::ClearViewportButtonCustomization()
+{
+	if (IToolHostCustomizationAPI* ButtonCustomizer = IToolHostCustomizationAPI::Find(GetToolManager()).GetInterface())
+	{
+		ButtonCustomizer->ClearButtonOverrides();
+	}
+}
+
 void UCubeGridTool::SetChangesMade(bool bChangesMadeIn)
 {
 	bChangesMade = bChangesMadeIn;
+}
+
+void UCubeGridTool::SetCurrentMeshTransform(const FTransform& TransformIn)
+{
+	CurrentMeshTransform = TransformIn;
+	InvalidatePreview();
 }
 
 // For use by Undo/Redo during corner mode

@@ -17,7 +17,7 @@
 float CalculateDistanceBasedHeightfieldBias(float SurfaceBias, float3 WorldPosition, float3 WorldCameraOrigin)
 {
 		float DistanceBasedHeightfieldBias = SurfaceBias;
-		float WorldPositionDistanceToCamera = length(WorldPosition - WorldCameraOrigin);
+		float WorldPositionDistanceToCamera = GetDistanceToCameraFromViewVector(WorldPosition - WorldCameraOrigin);
 		DistanceBasedHeightfieldBias = SurfaceBias * WorldPositionDistanceToCamera;
 
 		return clamp(DistanceBasedHeightfieldBias, 0.01, 100.0);

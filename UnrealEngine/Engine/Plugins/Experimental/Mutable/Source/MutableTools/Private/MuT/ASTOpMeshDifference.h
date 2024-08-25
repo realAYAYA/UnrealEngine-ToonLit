@@ -13,7 +13,7 @@ namespace mu
 	struct FProgram;
 
 	/** Calculate the difference between two meshes (usually to calculate a morph delta). */
-	class ASTOpMeshDifference : public ASTOp
+	class ASTOpMeshDifference final : public ASTOp
 	{
 	public:
 

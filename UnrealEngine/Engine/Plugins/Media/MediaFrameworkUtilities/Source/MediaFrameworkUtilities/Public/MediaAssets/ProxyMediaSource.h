@@ -84,6 +84,7 @@ public:
 	virtual int64 GetMediaOption(const FName& Key, int64 DefaultValue) const override;
 	virtual FString GetMediaOption(const FName& Key, const FString& DefaultValue) const override;
 	virtual FText GetMediaOption(const FName& Key, const FText& DefaultValue) const override;
+	virtual TSharedPtr<IMediaOptions::FDataContainer, ESPMode::ThreadSafe> GetMediaOption(const FName& Key, const TSharedPtr<FDataContainer, ESPMode::ThreadSafe>& DefaultValue) const override;
 	virtual bool HasMediaOption(const FName& Key) const override;
 
 private:

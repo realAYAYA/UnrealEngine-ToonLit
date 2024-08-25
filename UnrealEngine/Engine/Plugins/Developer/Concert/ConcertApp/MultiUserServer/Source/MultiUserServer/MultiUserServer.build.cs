@@ -19,6 +19,7 @@ namespace UnrealBuildTool.Rules
 					"ConcertSharedSlate",
 					"ConcertSyncCore",
 					"ConcertTransport",
+					"EngineSettings",
 					"InputCore",
 					"Messaging",
 					"OutputLog",

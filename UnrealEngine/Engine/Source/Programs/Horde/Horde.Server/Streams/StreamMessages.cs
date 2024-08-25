@@ -4,18 +4,17 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using EpicGames.Core;
-using Horde.Server.Acls;
-using Horde.Server.Jobs.Templates;
-using Horde.Server.Jobs.Schedules;
-using Horde.Server.Users;
-using Horde.Server.Utilities;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Jobs.Templates;
+using EpicGames.Horde.Projects;
+using EpicGames.Horde.Streams;
+using EpicGames.Horde.Users;
 using Horde.Server.Issues;
+using Horde.Server.Jobs.Schedules;
+using Horde.Server.Jobs.Templates;
 using Horde.Server.Perforce;
 using Horde.Server.Projects;
-using Horde.Server.Jobs;
-using Microsoft.AspNetCore.DataProtection;
-using System.Linq;
-using EpicGames.Horde.Api;
+using Horde.Server.Users;
 
 namespace Horde.Server.Streams
 {
@@ -233,7 +232,7 @@ namespace Horde.Server.Streams
 		public string? NotificationChannel { get; set; }
 
 		/// <summary>
-		/// Notification channel filter for this template. Can be Success|Failure|Warnings
+		/// Notification channel filter for this template. Can be a combination of "Success", "Failure" and "Warnings" separated by pipe characters.
 		/// </summary>
 		public string? NotificationChannelFilter { get; set; }
 
@@ -327,7 +326,7 @@ namespace Horde.Server.Streams
 		public string? NotificationChannel { get; set; }
 
 		/// <summary>
-		/// Notification channel filter for this template. Can be Success|Failure|Warnings
+		/// Notification channel filter for this template. Can be a combination of "Success", "Failure" and "Warnings" separated by pipe characters.
 		/// </summary>
 		public string? NotificationChannelFilter { get; set; }
 
@@ -568,7 +567,7 @@ namespace Horde.Server.Streams
 		{
 			Number = commit.Number;
 			Author = author.Name;
-			AuthorInfo = new GetThinUserInfoResponse(author);
+			AuthorInfo = author.ToThinApiResponse();
 			Description = commit.Description;
 
 			if (tags != null)

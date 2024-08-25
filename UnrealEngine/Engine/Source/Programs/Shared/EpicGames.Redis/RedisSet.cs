@@ -1,10 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using StackExchange.Redis;
 using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Threading.Tasks;
+using StackExchange.Redis;
 
 namespace EpicGames.Redis
 {

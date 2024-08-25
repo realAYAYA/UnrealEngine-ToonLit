@@ -167,51 +167,41 @@ void FScopeCycleCounterUObject::StartObjectTrace(const UObjectBaseUtility* Objec
 
 
 // Console variable so that GarbageCollectorSettings work in the editor but we don't want to use it in runtime as we can't support changing its value from console
-int32 GPendingKillEnabled = 1;
-static FAutoConsoleVariableRef CVarPendingKillEnabled(
-	TEXT("gc.PendingKillEnabled"),
-	GPendingKillEnabled,
-	TEXT("If true, objects marked as PendingKill will be automatically nulled and destroyed by Garbage Collector."),
+int32 GGarbageEliminationEnabled = 1;
+static FAutoConsoleVariableRef CVarGarbageEliminationEnabled(
+	TEXT("gc.GarbageEliminationEnabled"),
+	GGarbageEliminationEnabled,
+	TEXT("If true, objects marked as Garbage will be automatically nulled and destroyed by Garbage Collector."),
 	ECVF_Default
 );
-bool UObjectBaseUtility::bPendingKillDisabled = !GPendingKillEnabled;
+bool UObjectBaseUtility::bGarbageEliminationEnabled = !!GGarbageEliminationEnabled;
 
-void InitNoPendingKill()
+void InitGarbageElimination()
 {
-#if !UE_BUILD_SHIPPING
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	{
-		UObjectBaseUtility::bPendingKillDisabled = false;
-		check(UObjectBaseUtility::FixGarbageOrPendingKillInternalObjectFlags(EInternalObjectFlags::None) == EInternalObjectFlags::None);
-		check(UObjectBaseUtility::FixGarbageOrPendingKillInternalObjectFlags(EInternalObjectFlags::PendingKill) == EInternalObjectFlags::PendingKill);
-		check(UObjectBaseUtility::FixGarbageOrPendingKillInternalObjectFlags(EInternalObjectFlags::Garbage) == EInternalObjectFlags::PendingKill);
-		check(UObjectBaseUtility::FixGarbageOrPendingKillInternalObjectFlags(EInternalObjectFlags::PendingKill | EInternalObjectFlags::Garbage) == EInternalObjectFlags::PendingKill);
-		check(UObjectBaseUtility::FixGarbageOrPendingKillInternalObjectFlags(EInternalObjectFlags::RootSet | EInternalObjectFlags::PendingKill) == (EInternalObjectFlags::RootSet | EInternalObjectFlags::PendingKill));
-		check(UObjectBaseUtility::FixGarbageOrPendingKillInternalObjectFlags(EInternalObjectFlags::RootSet | EInternalObjectFlags::Garbage) == (EInternalObjectFlags::RootSet | EInternalObjectFlags::PendingKill));
-		UObjectBaseUtility::bPendingKillDisabled = true;
-		check(UObjectBaseUtility::FixGarbageOrPendingKillInternalObjectFlags(EInternalObjectFlags::None) == EInternalObjectFlags::None);
-		check(UObjectBaseUtility::FixGarbageOrPendingKillInternalObjectFlags(EInternalObjectFlags::PendingKill) == EInternalObjectFlags::Garbage);
-		check(UObjectBaseUtility::FixGarbageOrPendingKillInternalObjectFlags(EInternalObjectFlags::Garbage) == EInternalObjectFlags::Garbage);
-		check(UObjectBaseUtility::FixGarbageOrPendingKillInternalObjectFlags(EInternalObjectFlags::PendingKill | EInternalObjectFlags::Garbage) == EInternalObjectFlags::Garbage);
-		check(UObjectBaseUtility::FixGarbageOrPendingKillInternalObjectFlags(EInternalObjectFlags::RootSet | EInternalObjectFlags::PendingKill) == (EInternalObjectFlags::RootSet | EInternalObjectFlags::Garbage));
-		check(UObjectBaseUtility::FixGarbageOrPendingKillInternalObjectFlags(EInternalObjectFlags::RootSet | EInternalObjectFlags::Garbage) == (EInternalObjectFlags::RootSet | EInternalObjectFlags::Garbage));
-	}
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
-#endif // !UE_BUILD_SHIPPING
-
 	check(GConfig);
-	bool bPendingKillEnabled = false;
-	GConfig->GetBool(TEXT("/Script/Engine.GarbageCollectionSettings"), TEXT("gc.PendingKillEnabled"), bPendingKillEnabled, GEngineIni);
-	// Allow command-line overrides for easy testing without unique builds.
-	if (FParse::Param(FCommandLine::Get(), TEXT("DisablePendingKill")))
+	bool bGarbageEliminationEnabled = true;
+	if (GConfig->GetBool(TEXT("/Script/Engine.GarbageCollectionSettings"), TEXT("gc.PendingKillEnabled"), bGarbageEliminationEnabled, GEngineIni))
 	{
-		bPendingKillEnabled = false;
+		// The old gc.PendingKillEnabled will always take precedence over gc.GarbageEliminationEnabled because the new setting is always present in BaseEngine.ini
+		// so until the project-level setting is renamed we assume the upgrade hasn't happened yet and the old setting should be used
+		UE_LOG(LogObj, Warning, TEXT("Deprecated ini setting [/Script/Engine.GarbageCollectionSettings] gc.PendingKillEnabled=%s found. Please rename it to gc.GarbageEliminationEnabled"),
+			bGarbageEliminationEnabled ? TEXT("true") : TEXT("false"));
 	}
-	else if (FParse::Param(FCommandLine::Get(), TEXT("EnablePendingKill")))
+	else
 	{
-		bPendingKillEnabled = true;
+		GConfig->GetBool(TEXT("/Script/Engine.GarbageCollectionSettings"), TEXT("gc.GarbageEliminationEnabled"), bGarbageEliminationEnabled, GEngineIni);
+	}
+
+	// Allow command-line overrides for easy testing without unique builds.
+	if (FParse::Param(FCommandLine::Get(), TEXT("DisablePendingKill")) || FParse::Param(FCommandLine::Get(), TEXT("DisableGarbageElimination")))
+	{
+		bGarbageEliminationEnabled = false;
+	}
+	else if (FParse::Param(FCommandLine::Get(), TEXT("EnablePendingKill")) || FParse::Param(FCommandLine::Get(), TEXT("EnableGarbageElimination")))
+	{
+		bGarbageEliminationEnabled = true;
 	}
 	// Try to sync even though we're not gonna use the console var
-	UObjectBaseUtility::bPendingKillDisabled = !bPendingKillEnabled;
-	GPendingKillEnabled = bPendingKillEnabled;
+	UObjectBaseUtility::bGarbageEliminationEnabled = bGarbageEliminationEnabled;
+	GGarbageEliminationEnabled = bGarbageEliminationEnabled;
 }

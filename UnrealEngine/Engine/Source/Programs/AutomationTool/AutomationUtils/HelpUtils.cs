@@ -247,6 +247,15 @@ namespace AutomationTool
 				}
 			}
 		}
+
+		/// <summary>
+		/// This string/character separates the flag from the value; ex. -foo=bar
+		/// </summary>
+		public string ParamKeyValueDelimiter
+		{
+			get;
+			set;
+		} = "=";
 	}
 
 /// <summary>

@@ -170,6 +170,12 @@ bool FXCodeSourceCodeAccessor::DoesSolutionExist() const
 // ColumnNumber is not supported
 bool FXCodeSourceCodeAccessor::OpenFileAtLine(const FString& FullPath, int32 LineNumber, int32 ColumnNumber)
 {
+    if (!FPaths::FileExists(FullPath))
+    {
+        UE_LOG(LogXcodeAccessor, Warning, TEXT("FXCodeSourceCodeAccessor::OpenFileAtLine failed to open non-existent file: %s"), *FullPath);
+        return false;
+    }
+    
     // We use xed to open a file at specified line number through Xcode, it also reuses your currently opened workspace if file exists in project
     int32 ReturnCode = 0;
     FString Errors;

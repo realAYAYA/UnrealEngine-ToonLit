@@ -329,7 +329,7 @@ struct TMovieSceneChannelData : FMovieSceneChannelData
 			// We have to remove the key and re-add it in the right place
 			// This could probably be done better by just shuffling up/down the items that need to move, without ever changing the size of the array
 			ValueType OldValue = (*Values)[KeyIndex];
-			Values->RemoveAt(KeyIndex, 1, false);
+			Values->RemoveAt(KeyIndex, 1, EAllowShrinking::No);
 			Values->Insert(OldValue, NewIndex);
 		}
 		return NewIndex;
@@ -362,8 +362,8 @@ struct TMovieSceneChannelData : FMovieSceneChannelData
 			Items.Add(FKeyAddOrDeleteEventItem(KeyIndex, Time));
 			OwningChannel->OnKeyDeletedEvent().Broadcast(OwningChannel, Items);
 		}
-		Times->RemoveAt(KeyIndex, 1, false);
-		Values->RemoveAt(KeyIndex, 1, false);
+		Times->RemoveAt(KeyIndex, 1, EAllowShrinking::No);
+		Values->RemoveAt(KeyIndex, 1, EAllowShrinking::No);
 
 		if (KeyHandles)
 		{

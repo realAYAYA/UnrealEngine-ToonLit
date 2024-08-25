@@ -105,13 +105,6 @@ void FWorkerRequestsRemote::OnRemoveSessionPlatform(const ITargetPlatform* Targe
 	ExternalRequests.OnRemoveSessionPlatform(TargetPlatform);
 }
 
-void FWorkerRequestsRemote::ReportAccessedIniSettings(UCookOnTheFlyServer& COTFS, const FConfigFile& Config)
-{
-	FIniSettingContainer AccessedIniStrings;
-	COTFS.ProcessAccessedIniSettings(&Config, COTFS.AccessedIniStrings);
-	// MPCOOKTODO: Not yet implemented
-}
-
 void FWorkerRequestsRemote::ReportDemoteToIdle(UE::Cook::FPackageData& PackageData, ESuppressCookReason Reason)
 {
 	CookWorkerClient.ReportDemoteToIdle(PackageData, Reason);

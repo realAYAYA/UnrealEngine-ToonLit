@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Stack/SNiagaraStackTableRow.h"
+
+#include "NiagaraEditorStyle.h"
 #include "NiagaraEditorWidgetsStyle.h"
 #include "Styling/AppStyle.h"
 #include "ViewModels/Stack/NiagaraStackViewModel.h"
@@ -23,7 +25,10 @@
 #include "Styling/StyleColors.h"
 #include "ScopedTransaction.h"
 #include "NiagaraEmitterEditorData.h"
+#include "SNiagaraStackNote.h"
 #include "ViewModels/HierarchyEditor/NiagaraSummaryViewViewModel.h"
+#include "ViewModels/Stack/NiagaraStackClipboardUtilities.h"
+#include "ViewModels/Stack/NiagaraStackNote.h"
 #include "ViewModels/Stack/NiagaraStackPropertyRow.h"
 #include "ViewModels/Stack/NiagaraStackRendererItem.h"
 #include "ViewModels/Stack/NiagaraStackSimulationStageGroup.h"
@@ -187,7 +192,7 @@ void SNiagaraStackTableRow::SetNameAndValueContent(TSharedRef<SWidget> InNameWid
 	[
 		InNameWidget
 	];
-
+	
 	TSharedPtr<SWidget> ChildContent;
 	if (InValueWidget.IsValid())
 	{
@@ -200,12 +205,25 @@ void SNiagaraStackTableRow::SetNameAndValueContent(TSharedRef<SWidget> InNameWid
 		.Value(NameColumnWidth)
 		.OnSlotResized(SSplitter::FOnSlotResized::CreateSP(this, &SNiagaraStackTableRow::OnNameColumnWidthChanged))
 		[
-			SNew(SBox)
-			.Padding(FMargin(ContentPadding.Left, 0, 5, 0))
-			.MinDesiredWidth(NameMinWidth.IsSet() ? NameMinWidth.GetValue() : FOptionalSize())
-			.MaxDesiredWidth(NameMaxWidth.IsSet() ? NameMaxWidth.GetValue() : FOptionalSize())
+			SNew(SHorizontalBox)
+			+ SHorizontalBox::Slot()
 			[
-				NameContent
+				SNew(SBox)
+				.Padding(FMargin(ContentPadding.Left, 0, 5, 0))
+				.MinDesiredWidth(NameMinWidth.IsSet() ? NameMinWidth.GetValue() : FOptionalSize())
+				.MaxDesiredWidth(NameMaxWidth.IsSet() ? NameMaxWidth.GetValue() : FOptionalSize())
+				[
+					NameContent
+				]
+			]
+			+ SHorizontalBox::Slot()
+			.AutoWidth()
+			.Padding(2.f)
+			.HAlign(HAlign_Center)
+			.VAlign(VAlign_Center)
+			[
+				SNew(SNiagaraStackInlineNote, StackEntry)
+				.Visibility(this, &SNiagaraStackTableRow::GetInlineNoteVisibility)
 			]
 		]
 
@@ -227,12 +245,25 @@ void SNiagaraStackTableRow::SetNameAndValueContent(TSharedRef<SWidget> InNameWid
 	}
 	else
 	{
-		ChildContent = SNew(SBox)
-		.Padding(FMargin(ContentPadding.Left, 0, ContentPadding.Right, 0))
-		.MinDesiredWidth(NameMinWidth.IsSet() ? NameMinWidth.GetValue() : FOptionalSize())
-		.MaxDesiredWidth(NameMaxWidth.IsSet() ? NameMaxWidth.GetValue() : FOptionalSize())
+		ChildContent = SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot()
 		[
-			NameContent
+			SNew(SBox)
+			.Padding(FMargin(ContentPadding.Left, 0, ContentPadding.Right, 0))
+			.MinDesiredWidth(NameMinWidth.IsSet() ? NameMinWidth.GetValue() : FOptionalSize())
+			.MaxDesiredWidth(NameMaxWidth.IsSet() ? NameMaxWidth.GetValue() : FOptionalSize())
+			[
+				NameContent
+			]
+		]
+		+ SHorizontalBox::Slot()
+		.AutoWidth()
+		.Padding(2.f)
+		.HAlign(HAlign_Center)
+		.VAlign(VAlign_Center)
+		[
+			SNew(SNiagaraStackInlineNote, StackEntry)
+			.Visibility(this, &SNiagaraStackTableRow::GetInlineNoteVisibility)
 		];
 	}
 
@@ -389,6 +420,58 @@ FReply SNiagaraStackTableRow::OnMouseButtonUp(const FGeometry& MyGeometry, const
 			LOCTEXT("CollapseAllItemsToolTip", "Collapse all items under this header."),
 			FSlateIcon(),
 			FUIAction(FExecuteAction::CreateSP(this, &SNiagaraStackTableRow::CollapseChildren)));
+
+		if(StackEntry->SupportsStackNotes())
+		{
+			if(StackEntry->HasStackNoteData() == false)
+			{
+				MenuBuilder.AddMenuEntry(
+				LOCTEXT("AddNote", "Add Note"),
+				LOCTEXT("AddNoteTooltip", "Add a note to this row"),
+				FSlateIcon(FNiagaraEditorStyle::Get().GetStyleSetName(), "NiagaraEditor.Message.CustomNote"),
+				FUIAction(FExecuteAction::CreateSP(this, &SNiagaraStackTableRow::AddStackNote))
+				);
+			}
+			else
+			{				
+				MenuBuilder.AddMenuEntry(
+				LOCTEXT("ToggleInlineNote", "Toggle Inline Note Display"),
+				LOCTEXT("ToggleInlineNoteTooltip", "Toggle the inline display for this row's note.\nAn inlined note will show up in the row itself, saving on space"),
+				FSlateIcon(FNiagaraEditorStyle::Get().GetStyleSetName(), "NiagaraEditor.Message.CustomNote"),
+				FUIAction(FExecuteAction::CreateSP(this, &SNiagaraStackTableRow::ToggleStackNoteInlineDisplay))
+				);
+
+				MenuBuilder.AddMenuEntry(
+				LOCTEXT("CopyNote", "Copy Note"),
+			LOCTEXT("CopyNoteTooltip", "Copy the note of this row"),
+				FSlateIcon(FAppStyle::GetAppStyleSetName(), "GenericCommands.Copy"),
+				FUIAction(FExecuteAction::CreateSP(this, &SNiagaraStackTableRow::CopyStackNote))
+				);
+			}
+			
+			if(const UNiagaraClipboardContent* ClipboardContent = FNiagaraEditorModule::Get().GetClipboard().GetClipboardContent())
+			{
+				if(ClipboardContent->StackNote.IsValid())
+				{
+					MenuBuilder.AddMenuEntry(
+				LOCTEXT("PasteNote", "Paste Note"),
+				LOCTEXT("TPasteNoteTooltip", "Paste the note copied in the clipboard"),
+					FSlateIcon(FAppStyle::GetAppStyleSetName(), "GenericCommands.Paste"),
+					FUIAction(FExecuteAction::CreateSP(this, &SNiagaraStackTableRow::PasteStackNote))
+					);
+				}
+			}
+
+			if(StackEntry->HasStackNoteData())
+			{
+				MenuBuilder.AddMenuEntry(
+				LOCTEXT("DeleteNote", "Delete Note"),
+				LOCTEXT("DeleteNoteTooltip", "Delete this row's note"),
+				FSlateIcon(FAppStyle::GetAppStyleSetName(), "GenericCommands.Delete"),
+				FUIAction(FExecuteAction::CreateSP(this, &SNiagaraStackTableRow::DeleteStackNote))
+				);
+			}
+		}
 		MenuBuilder.EndSection();
 
 		if(StackEntry->GetEmitterViewModel().IsValid() && StackEntry->GetEmitterViewModel())
@@ -465,6 +548,68 @@ void SNiagaraStackTableRow::ExpandChildren()
 	SetExpansionStateRecursive(StackEntry, bIsExpanded);
 }
 
+void SNiagaraStackTableRow::AddStackNote() const
+{
+	if(StackEntry->HasStackNoteData() == false)
+	{
+		FScopedTransaction Transaction(LOCTEXT("NewStackNoteAdded", "Added Stack Note"));
+		StackEntry->GetStackEditorData().Modify();
+		
+		FNiagaraStackNoteData NewStackNote;
+		NewStackNote.MessageHeader = LOCTEXT("DefaultStackNoteHeader", "Title");
+		NewStackNote.Message = LOCTEXT("DefaultStackNoteMessage", "Text");
+
+		StackEntry->GetStackEditorData().AddOrReplaceStackNote(StackEntry->GetStackEditorDataKey(), NewStackNote);
+		StackEntry->RefreshChildren();
+		
+		if(UNiagaraStackNote* Note = StackEntry->GetStackNote())
+		{
+			Note->SetIsRenamePending(true);
+		}
+	}
+}
+
+void SNiagaraStackTableRow::DeleteStackNote() const
+{
+	if(StackEntry->HasStackNoteData())
+	{
+		StackEntry->DeleteStackNoteData();
+	}
+}
+
+void SNiagaraStackTableRow::ToggleStackNoteInlineDisplay() const
+{
+	if(StackEntry->GetStackNote() != nullptr)
+	{
+		StackEntry->GetStackNote()->ToggleInlineDisplay();
+	}
+}
+
+void SNiagaraStackTableRow::CopyStackNote() const
+{
+	FNiagaraStackClipboardUtilities::CopyNote(StackEntry);
+}
+
+void SNiagaraStackTableRow::PasteStackNote() const
+{
+	if(const UNiagaraClipboardContent* ClipboardContent = FNiagaraEditorModule::Get().GetClipboard().GetClipboardContent())
+	{
+		if(ClipboardContent->StackNote.IsValid())
+		{
+			FScopedTransaction Transaction(LOCTEXT("PasteNoteTransaction", "Note pasted"));
+			StackEntry->GetStackEditorData().Modify();
+			
+			StackEntry->SetStackNoteData(ClipboardContent->StackNote);
+
+			// if the note we pasted is not inlined, we expand the stack entry in order to show the note
+			if(StackEntry->GetStackNoteData().bInlineNote == false)
+			{
+				StackEntry->SetIsExpanded(true);
+			}
+		}
+	}
+}
+
 EVisibility SNiagaraStackTableRow::GetRowVisibility() const
 {
 	return StackEntry->GetShouldShowInStack()
@@ -493,6 +638,16 @@ EVisibility SNiagaraStackTableRow::GetExpanderVisibility() const
 	{
 		return EVisibility::Collapsed;
 	}
+}
+
+EVisibility SNiagaraStackTableRow::GetInlineNoteVisibility() const
+{
+	if(StackEntry->GetStackNote() == nullptr || StackEntry->GetStackNote()->GetShouldShowInStack())
+	{
+		return EVisibility::Collapsed;
+	}
+		
+	return StackEntry->GetStackNote()->GetTargetStackNoteData().GetValue().bInlineNote == true ? EVisibility::Visible : EVisibility::Collapsed;
 }
 
 FReply SNiagaraStackTableRow::ExpandButtonClicked()

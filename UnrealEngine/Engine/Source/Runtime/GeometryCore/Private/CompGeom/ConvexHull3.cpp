@@ -7,7 +7,9 @@
 
 #include "CompGeom/ConvexHull3.h"
 #include "CompGeom/ExactPredicates.h"
+#include "VertexConnectedComponents.h" // for FSizedDisjointSet
 
+#include "Algo/RemoveIf.h"
 #include "Async/ParallelFor.h"
 
 namespace UE
@@ -180,9 +182,31 @@ struct FHullConnectivity
 		TArray<int32> Indices;
 		int32 MaxIdx = -1; // Note: an index into the source point array, not into the above Indices array
 		// Max value of the Orient3D predicate, indicating the farthest point outside; values less than zero are inside the hull so not considered
-		double MaxValue = 0;
+		double MaxValue = -FMathd::MaxReal;
+		FPlane3d Plane;
 
-		void AddPt(int32 Idx, double Value)
+		void SetPlane(const TVector<RealType> TriPts[3])
+		{
+			Plane = FPlane3d(FVector3d(TriPts[0]), FVector3d(TriPts[1]), FVector3d(TriPts[2]));
+		}
+
+		double GetPlaneDistance(const TVector<RealType>& Pt)
+		{
+			return Plane.DistanceTo((FVector3d)Pt);
+		}
+
+		void AddPt(int32 Idx, const TVector<RealType>& Pt)
+		{
+			double Value = GetPlaneDistance(Pt);
+			if (Value > MaxValue)
+			{
+				MaxValue = Value;
+				MaxIdx = Idx;
+			}
+			Indices.Add(Idx);
+		}
+
+		void AddPtByValue(int32 Idx, double Value)
 		{
 			if (Value > MaxValue)
 			{
@@ -190,6 +214,38 @@ struct FHullConnectivity
 				MaxIdx = Idx;
 			}
 			Indices.Add(Idx);
+		}
+
+		// Remove a point from the visible point set; if it was the tracked MaxValue point, find a new MaxValue point
+		void RemovePt(int32 SourcePointIdx, TFunctionRef<TVector<RealType>(int32)> GetPointFunc)
+		{
+			if (MaxIdx == SourcePointIdx)
+			{
+				MaxValue = -FMathd::MaxReal;
+				MaxIdx = -1;
+				for (int32 SubIdx = 0; SubIdx < Indices.Num(); ++SubIdx)
+				{
+					int32 PointIdx = Indices[SubIdx];
+					if (PointIdx == SourcePointIdx)
+					{
+						Indices.RemoveAtSwap(SubIdx, 1, EAllowShrinking::No);
+						SubIdx--;
+					}
+					else
+					{
+						double Value = GetPlaneDistance(GetPointFunc(PointIdx));
+						if (Value > MaxValue)
+						{
+							MaxValue = Value;
+							MaxIdx = PointIdx;
+						}
+					}
+				}
+			}
+			else
+			{
+				Indices.RemoveSingleSwap(SourcePointIdx, EAllowShrinking::No);
+			}
 		}
 
 		int32 Num()
@@ -206,13 +262,19 @@ struct FHullConnectivity
 		{
 			Indices.Reset();
 			MaxIdx = -1;
-			MaxValue = 0;
+			MaxValue = -FMathd::MaxReal;
 		}
 	};
 
 	TArray<FIndex3i> TriNeighbors;
 	TArray<FVisiblePoints> VisiblePoints;
 	TSet<int32> TrisWithPoints;
+	
+	TArray<uint16> PointMemberships; // Used for tracking set membership for point indices
+	uint16 MembershipNumber = 0;
+
+	// If positive, this threshold additionally filters which points are considered 'visible' as only points at least this far from the plane
+	double VisibleDistanceThreshold = -FMathd::MaxReal;
 
 	/**
 	 * Fully build neighbor connectivity; only on the initial tet, 
@@ -243,13 +305,12 @@ struct FHullConnectivity
 	}
 
 	/**
-	 * @param ValueOut The volume of the tetrahedron formed by TriPts and Pt
 	 * @return true if Pt is on the 'positive' side of the triangle
 	 */
-	bool IsVisible(const TVector<RealType> TriPts[3], const TVector<RealType>& Pt, double& ValueOut)
+	bool IsVisible(const TVector<RealType> TriPts[3], const TVector<RealType>& Pt)
 	{
-		ValueOut = ExactPredicates::Orient3<RealType>(TriPts[0], TriPts[1], TriPts[2], Pt);
-		return ValueOut > 0;
+		double PredicateValue = ExactPredicates::Orient3<RealType>(TriPts[0], TriPts[1], TriPts[2], Pt);
+		return PredicateValue > 0;
 	}
 
 	/**
@@ -271,24 +332,27 @@ struct FHullConnectivity
 
 		TVector<RealType> TriPts[3];
 		TVector<RealType> Pt;
-		for (int32 PtIdx = 0; PtIdx < NumPoints; PtIdx++)
+		for (int32 TriIdx = 0; TriIdx < Triangles.Num(); TriIdx++)
 		{
-			if (!FilterFunc(PtIdx))
+			SetTriPts(Triangles[TriIdx], GetPointFunc, TriPts);
+			VisiblePoints[TriIdx].SetPlane(TriPts);
+
+			for (int32 PtIdx = 0; PtIdx < NumPoints; PtIdx++)
 			{
-				continue;
-			}
-			Pt = GetPointFunc(PtIdx);
-			for (int32 TriIdx = 0; TriIdx < Triangles.Num(); TriIdx++)
-			{
-				SetTriPts(Triangles[TriIdx], GetPointFunc, TriPts);
-				double Value;
-				if (IsVisible(TriPts, Pt, Value))
+				if (!FilterFunc(PtIdx))
+				{
+					continue;
+				}
+				Pt = GetPointFunc(PtIdx);
+				double Distance = VisiblePoints[TriIdx].GetPlaneDistance(Pt);
+				bool bDistanceOk = VisibleDistanceThreshold < 0 || Distance > VisibleDistanceThreshold;
+				if (bDistanceOk && IsVisible(TriPts, Pt))
 				{
 					if (!VisiblePoints[TriIdx].Num())
 					{
 						TrisWithPoints.Add(TriIdx);
 					}
-					VisiblePoints[TriIdx].AddPt(PtIdx, Value);
+					VisiblePoints[TriIdx].AddPtByValue(PtIdx, Distance);
 				}
 			}
 		}
@@ -433,28 +497,63 @@ struct FHullConnectivity
 			{
 				TrisWithPoints.Remove(TriIdx);
 			}
-			Triangles.SetNum(LastIdx, false);
-			TriNeighbors.SetNum(LastIdx, false);
-			VisiblePoints.SetNum(LastIdx, false);
+			Triangles.SetNum(LastIdx, EAllowShrinking::No);
+			TriNeighbors.SetNum(LastIdx, EAllowShrinking::No);
+			VisiblePoints.SetNum(LastIdx, EAllowShrinking::No);
 		}
 	}
 
 	/**
+	 * @param bChooseBestPoint	Whether to choose the point with the highest value, rather than the first found point
 	 * @return A triangle index and visible-from-that-triangle point index that can be added to the hull next
 	 */
-	FIndex2i ChooseVisiblePoint()
+	FIndex2i ChooseVisiblePoint(bool bChooseBestPoint)
 	{
 		FIndex2i FoundTriPointPair(-1, -1);
-		for (int32 TriIdx : TrisWithPoints)
+		if (bChooseBestPoint)
 		{
-			ensure(VisiblePoints[TriIdx].Num() > 0);
+			// Note: If MaxHullVertices is large enough, it could make sense to use a priority queue to efficiently track the triangles with farthest points.
+			// Though if MaxHullVertices is small, this simple linear pass will be faster.
+			// TODO: Try using FIndexPriorityQueue to track the faces with the best visible points, for the large vertex count case.
+			// (Note the priority queue would need the max triangle index; this should be (2*FMath::Min(NumPoints, MaxHullVertices)-4))
+			double BestValue = -1;
+			for (int32 TriIdx : TrisWithPoints)
+			{
+				checkSlow(VisiblePoints[TriIdx].Num() > 0);
 
-			FoundTriPointPair[0] = TriIdx;
-			// choose the "max point" -- the point with the largest volume when it makes a tetrahedron w/ the triangle
-			FoundTriPointPair[1] = VisiblePoints[TriIdx].MaxPt();
-			break;
+				if (VisiblePoints[TriIdx].MaxValue > BestValue)
+				{
+					FoundTriPointPair[0] = TriIdx;
+					FoundTriPointPair[1] = VisiblePoints[TriIdx].MaxPt();
+					BestValue = VisiblePoints[TriIdx].MaxValue;
+				}
+			}
+		}
+		else
+		{
+			if (const auto TriIdxItr = TrisWithPoints.CreateConstIterator())
+			{
+				int32 TriIdx = *TriIdxItr;
+				checkSlow(VisiblePoints[TriIdx].Num() > 0);
+
+				FoundTriPointPair[0] = TriIdx;
+				// choose the "max point" -- the point with the largest volume when it makes a tetrahedron w/ the triangle
+				FoundTriPointPair[1] = VisiblePoints[TriIdx].MaxPt();
+			}
 		}
 		return FoundTriPointPair;
+	}
+
+	/**
+	 * @param TriPointPair		A tri point pair, as returned from ChooseVisiblePoint, that should be removed from consideration
+	 */
+	void RemoveVisiblePoint(FIndex2i TriPointPair, TFunctionRef<TVector<RealType>(int32)> GetPointFunc)
+	{
+		VisiblePoints[TriPointPair.A].RemovePt(TriPointPair.B, GetPointFunc);
+		if (VisiblePoints[TriPointPair.A].Indices.IsEmpty())
+		{
+			TrisWithPoints.Remove(TriPointPair.A);
+		}
 	}
 
 	/**
@@ -473,6 +572,16 @@ struct FHullConnectivity
 		int32 ConnectedTri;
 	};
 
+	inline void ClearVisiblePointsData(int32 TriIdx, TArray<int32>& NewlyUnclaimed)
+	{
+		if (VisiblePoints[TriIdx].Num() > 0)
+		{
+			TrisWithPoints.Remove(TriIdx);
+			NewlyUnclaimed.Append(VisiblePoints[TriIdx].Indices);
+			VisiblePoints[TriIdx].Reset();
+		}
+	}
+
 	/**
 	 * Recursive traversal strategy that starts from a 'visible' triangle and walks to the connected set of all visible triangles, s.t. it visits the boundary in order
 	 * See explanation here: http://algolist.ru/maths/geom/convhull/qhull3d.php
@@ -487,31 +596,27 @@ struct FHullConnectivity
 	 * @param CrossedEdgeFirstVertex The first vertex of the edge that was 'crossed over' to traverse to this TriIdx, or -1 for the initial call
 	 * @return false if triangle is beyond horizon (so we don't need to search through it / remove it), true otherwise
 	 */
-	bool HorizonHelper(const TArray<FIndex3i>& Triangles, TFunctionRef<TVector<RealType>(int32)> GetPointFunc, const TVector<RealType>& Pt, TArray<int32>& NewlyUnclaimed, TSet<int32>& ToDelete, TArray<FNewTriangle>& ToAdd, int32 TriIdx, int32 CrossedEdgeFirstVertex)
+	bool HorizonHelper(const TArray<FIndex3i>& Triangles, TFunctionRef<TVector<RealType>(int32)> GetPointFunc, const TVector<RealType>& Pt, TArray<int32>& NewlyUnclaimed, TSet<int32>& ToDelete, TArray<FNewTriangle>& ToAdd, int32 TriIdx, int32 CrossedEdgeFirstVertex, bool bCouldSkipPoint = false)
 	{
 		// if it's not the first triangle, crossed edge should be set and we should check if the triangle is visible / actually needs to be replaced
 		if (CrossedEdgeFirstVertex != -1)
 		{
 			TVector<RealType> TriPts[3];
 			SetTriPts(Triangles[TriIdx], GetPointFunc, TriPts);
-			double UnusedValue;
-			if (!IsVisible(TriPts, Pt, UnusedValue))
+			if (!IsVisible(TriPts, Pt))
 			{
 				return false;
 			}
 		}
 
 		// track the triangle as needing deletion; for simplicity wait until after traversal to actually delete
-		ToDelete.Add(TriIdx); // TODO: could we delete as we go rather than keep this set?  seems tricky
-
-		// clean out the visible points right away
-		if (VisiblePoints[TriIdx].Num() > 0)
-		{
-			TrisWithPoints.Remove(TriIdx);
-			NewlyUnclaimed.Append(VisiblePoints[TriIdx].Indices);
-			VisiblePoints[TriIdx].Reset();
-		}
+		ToDelete.Add(TriIdx); // TODO: could we delete as we go rather than keep this set?  seems tricky (also, could not do so if 'bCouldSkipPoint == true')
 		
+		// if we know we can't ultimately skip adding this point, clean out the visible points right away; otherwise this must be done after
+		if (!bCouldSkipPoint)
+		{
+			ClearVisiblePointsData(TriIdx, NewlyUnclaimed);
+		}
 
 		FIndex3i Tri = Triangles[TriIdx];
 		int32 FirstOff = 0, OffMax = 3; // Cross all three edges for first triangle
@@ -539,8 +644,9 @@ struct FHullConnectivity
 		return true;
 	}
 
-	void UpdateHullWithNewPoint(TArray<FIndex3i>& Triangles, TFunctionRef<TVector<RealType>(int32)> GetPointFunc, int32 StartTriIdx, int32 PtIdx)
+	bool UpdateHullWithNewPoint(TArray<FIndex3i>& Triangles, int32 NumPoints, TFunctionRef<TVector<RealType>(int32)> GetPointFunc, int32 StartTriIdx, int32 PtIdx, RealType DegenerateEdgeToleranceSq = (RealType)0)
 	{
+		// Note: Commented-out ValidateConnectivity calls are very slow, but useful for debugging if the algorithm produces an invalid result
 		//ValidateConnectivity(Triangles);
 
 		TVector<RealType> Pt = GetPointFunc(PtIdx);
@@ -549,12 +655,61 @@ struct FHullConnectivity
 		TArray<int32> NewlyUnclaimed;
 		TSet<int32> ToDelete;
 		TArray<FNewTriangle> ToAdd;
-		HorizonHelper(Triangles, GetPointFunc, Pt, NewlyUnclaimed, ToDelete, ToAdd, StartTriIdx, -1);
+		bool bCouldSkipPoint = DegenerateEdgeToleranceSq > (RealType)0;
+		HorizonHelper(Triangles, GetPointFunc, Pt, NewlyUnclaimed, ToDelete, ToAdd, StartTriIdx, -1, bCouldSkipPoint);
+
+		// Optionally skip points if they are almost on top of an existing point on the current hull, as specified by the Degenerate Edge Tolerance (squared)
+		if (bCouldSkipPoint)
+		{
+			for (const FNewTriangle& NewTri : ToAdd)
+			{
+				RealType DistSq = TVector<RealType>::DistSquared(Pt, GetPointFunc(NewTri.EdgeVertices.A));
+				if (DistSq < DegenerateEdgeToleranceSq)
+				{
+					return false;
+				}
+			}
+
+			// Once we know the point will not be skipped, clear out the visible point data for all the tris that will be deleted
+			for (int32 TriIdx : ToDelete)
+			{
+				ClearVisiblePointsData(TriIdx, NewlyUnclaimed);
+			}
+		}
 
 		// Connect up all the horizon triangles
 		int32 NewTriStart = Triangles.Num();
 		int32 NumAdd = ToAdd.Num();
 		TVector<RealType> TriPts[3];
+
+		// Remove duplicates from the unclaimed list (unless the list is small)
+		if (NewlyUnclaimed.Num() > 10)
+		{
+			// Use  PointMemberships to track if we've already seen the point
+			if (PointMemberships.Num() != NumPoints || MembershipNumber == MAX_uint16)
+			{
+				MembershipNumber = 1;
+				PointMemberships.Reset();
+				PointMemberships.SetNumZeroed(NumPoints);
+			}
+			else
+			{
+				MembershipNumber++;
+			}
+			for (int32 Idx = 0; Idx < NewlyUnclaimed.Num(); ++Idx)
+			{
+				int32 UnclaimedIdx = NewlyUnclaimed[Idx];
+				if (PointMemberships[UnclaimedIdx] == MembershipNumber)
+				{
+					NewlyUnclaimed.RemoveAtSwap(Idx, 1, EAllowShrinking::No);
+				}
+				else
+				{
+					PointMemberships[UnclaimedIdx] = MembershipNumber;
+				}
+			}
+		}
+
 		for (int32 AddIdx = 0; AddIdx < NumAdd; AddIdx++)
 		{
 			const FNewTriangle& TriData = ToAdd[AddIdx];
@@ -567,19 +722,40 @@ struct FHullConnectivity
 			UpdateNeighbor(Triangles, AcrossTriIdx, TriData.EdgeVertices.B, NewTriIdx);
 			FVisiblePoints& Visible = VisiblePoints.Emplace_GetRef();
 			SetTriPts(Triangles[NewTriIdx], GetPointFunc, TriPts);
+			Visible.SetPlane(TriPts);
 			// claim any claim-able points
-			for (int32 UnclaimedIdx = 0; UnclaimedIdx < NewlyUnclaimed.Num(); UnclaimedIdx++)
+			if (VisibleDistanceThreshold > 0) // If using VisibleDistanceThreshold, compute PlaneDist first so we can use it to threshold
 			{
-				int32 UnPtIdx = NewlyUnclaimed[UnclaimedIdx];
-				double Value;
-				if (IsVisible(TriPts, GetPointFunc(UnPtIdx), Value))
+				for (int32 UnclaimedIdx = 0; UnclaimedIdx < NewlyUnclaimed.Num(); UnclaimedIdx++)
 				{
-					Visible.AddPt(UnPtIdx, Value);
-					NewlyUnclaimed.RemoveAtSwap(UnclaimedIdx, 1, false);
-					UnclaimedIdx--;
-					continue;
+					int32 UnPtIdx = NewlyUnclaimed[UnclaimedIdx];
+					TVector<RealType> UnPt = GetPointFunc(UnPtIdx);
+					double PlaneDist = Visible.GetPlaneDistance(UnPt);
+					if (PlaneDist > VisibleDistanceThreshold && IsVisible(TriPts, UnPt))
+					{
+						Visible.AddPtByValue(UnPtIdx, PlaneDist);
+						NewlyUnclaimed.RemoveAtSwap(UnclaimedIdx, 1, EAllowShrinking::No);
+						UnclaimedIdx--;
+						continue;
+					}
 				}
 			}
+			else // otherwise skip the comparison and only compute PlaneDist when adding the point
+			{
+				for (int32 UnclaimedIdx = 0; UnclaimedIdx < NewlyUnclaimed.Num(); UnclaimedIdx++)
+				{
+					int32 UnPtIdx = NewlyUnclaimed[UnclaimedIdx];
+					TVector<RealType> UnPt = GetPointFunc(UnPtIdx);
+					if (IsVisible(TriPts, UnPt))
+					{
+						Visible.AddPt(UnPtIdx, UnPt);
+						NewlyUnclaimed.RemoveAtSwap(UnclaimedIdx, 1, EAllowShrinking::No);
+						UnclaimedIdx--;
+						continue;
+					}
+				}
+			}
+
 			if (Visible.Num() > 0)
 			{
 				TrisWithPoints.Add(NewTriIdx);
@@ -593,9 +769,36 @@ struct FHullConnectivity
 		DeleteTriangles(Triangles, ToDelete);
 
 		//ValidateConnectivity(Triangles);
+
+		return true;
 	}
 };
 
+
+template<class RealType>
+double TConvexHull3<RealType>::ComputeVolume(const TArrayView<const TVector<RealType>> Points)
+{
+	TConvexHull3<RealType> Hull;
+	bool bSuccess = Hull.Solve(Points.Num(), [&Points](int32 Idx) { return Points[Idx]; });
+	if (!bSuccess)
+	{
+		return 0.0;
+	}
+	const TArray<FIndex3i>& Tris = Hull.GetTriangles();
+	double Volume = 0.0;
+	for (FIndex3i Tri : Tris)
+	{
+		FVector3d V0 = (FVector3d)Points[Tri.A], V1 = (FVector3d)Points[Tri.B], V2 = (FVector3d)Points[Tri.C];
+		FVector3d V1mV0 = V1 - V0;
+		FVector3d V2mV0 = V2 - V0;
+		FVector3d N = V2mV0.Cross(V1mV0);
+		double tmp0 = V0.X + V1.X;
+		double f1x = tmp0 + V2.X;
+		Volume += N.X * f1x;
+	}
+
+	return Volume / 6.0;
+}
 
 
 template<class RealType>
@@ -634,23 +837,42 @@ bool TConvexHull3<RealType>::Solve(int32 NumPoints, TFunctionRef<TVector<RealTyp
 	Hull.Add(FIndex3i(InitialTet.Extreme[0], InitialTet.Extreme[2], InitialTet.Extreme[1]));
 
 	NumHullPoints = 4;
+	bool bHasPointBudget = SimplificationSettings.MaxHullVertices > 0;
+	int32 UseMaxHullVertices = SimplificationSettings.MaxHullVertices;
+	if (!bHasPointBudget)
+	{
+		UseMaxHullVertices = NumPoints;
+	}
+
+	RealType DegenerateEdgeToleranceSq = SimplificationSettings.DegenerateEdgeTolerance * SimplificationSettings.DegenerateEdgeTolerance;
 
 	FHullConnectivity<RealType> Connectivity;
+	double UseSkipAtHullDistance = SimplificationSettings.SkipAtHullDistanceAbsolute;
+	if (SimplificationSettings.SkipAtHullDistanceAsFraction > 0)
+	{
+		double Extent = (GetPointFunc(InitialTet.Extreme[0]) - GetPointFunc(InitialTet.Extreme[1])).Length();
+		UseSkipAtHullDistance = FMathd::Max(UseSkipAtHullDistance, Extent * SimplificationSettings.SkipAtHullDistanceAsFraction);
+	}
+	Connectivity.VisibleDistanceThreshold = UseSkipAtHullDistance;
 	Connectivity.BuildNeighbors(Hull);
 	Connectivity.InitVisibility(Hull, NumPoints, GetPointFunc, FilterFunc);
-	while (true)
+	while (NumHullPoints < UseMaxHullVertices)
 	{
 		if (Progress && (NumHullPoints % 100) == 0 && Progress->Cancelled())
 		{
 			return false;
 		}
-		FIndex2i Visible = Connectivity.ChooseVisiblePoint();
+		FIndex2i Visible = Connectivity.ChooseVisiblePoint(bHasPointBudget);
 		if (Visible.A == -1)
 		{
 			break;
 		}
 		NumHullPoints++;
-		Connectivity.UpdateHullWithNewPoint(Hull, GetPointFunc, Visible.A, Visible.B);
+		bool bAdded = Connectivity.UpdateHullWithNewPoint(Hull, NumPoints, GetPointFunc, Visible.A, Visible.B, DegenerateEdgeToleranceSq);
+		if (!bAdded)
+		{
+			Connectivity.RemoveVisiblePoint(Visible, GetPointFunc);
+		}
 	}
 
 	if (bSaveTriangleNeighbors)
@@ -701,7 +923,7 @@ void TConvexHull3<RealType>::GetFaces(TFunctionRef<void(TArray<int32>&, TVector<
 		ToProcess.Add(NbrInds[2]);
 		while (ToProcess.Num() > 0)
 		{
-			int32 NbrTriIdx = ToProcess.Pop(false);
+			int32 NbrTriIdx = ToProcess.Pop(EAllowShrinking::No);
 			if (GroupIDs[NbrTriIdx] >= 0 || GroupIDs[NbrTriIdx] < -CurGroupID - 1)
 			{
 				continue;
@@ -753,6 +975,492 @@ void TConvexHull3<RealType>::GetFaces(TFunctionRef<void(TArray<int32>&, TVector<
 	}
 }
 
+template<class RealType>
+void TConvexHull3<RealType>::GetSimplifiedFaces(TFunctionRef<void(TArray<int32>&, TVector<RealType>)> PolygonFunc, TFunctionRef<TVector<RealType>(int32)> GetPointFunc,
+	RealType FaceAngleTolerance, RealType PlaneDistanceTolerance) const
+{
+	if (!ensureMsgf(bSaveTriangleNeighbors && HullNeighbors.Num() == Hull.Num(), TEXT("To extract faces, set bSaveTriangleNeighbors = true before calling Solve()")))
+	{
+		return;
+	}
+
+	TArray<FPolygonFace> Polygons;
+	TArray<TVector<RealType>> Normals;
+	GetSimplifiedFaces(Polygons, GetPointFunc, FaceAngleTolerance, PlaneDistanceTolerance, &Normals);
+	TArray<int32> PolygonVertices;
+	for (int32 Idx = 0; Idx < Polygons.Num(); ++Idx)
+	{
+		const FPolygonFace& Face = Polygons[Idx];
+		PolygonVertices.Reset(Face.Num());
+		PolygonVertices.Append(Face);
+		PolygonFunc(PolygonVertices, Normals[Idx]);
+	}
+}
+
+template<class RealType>
+void TConvexHull3<RealType>::GetSimplifiedFaces(TArray<FPolygonFace>& OutPolygons, TFunctionRef<TVector<RealType>(int32)> GetPointFunc,
+	RealType FaceAngleToleranceInDegrees, RealType PlaneDistanceTolerance, TArray<TVector<RealType>>* OutPolygonNormals) const
+{
+	if (!ensureMsgf(bSaveTriangleNeighbors && HullNeighbors.Num() == Hull.Num(), TEXT("To extract faces, set bSaveTriangleNeighbors = true before calling Solve()")))
+	{
+		return;
+	}
+
+	OutPolygons.Reset();
+	if (OutPolygonNormals)
+	{
+		OutPolygonNormals->Reset();
+	}
+
+	FaceAngleToleranceInDegrees = FMath::Min(FaceAngleToleranceInDegrees, 60); // Angle Tolerance should be a small value; if a very large angle tolerance is allowed, it could create a degenerate (flat or zero vertex) hull
+	const double FaceMergeThreshold = 1 - FMath::Cos(FMath::DegreesToRadians(FaceAngleToleranceInDegrees));
+
+	int32 NumTris = Hull.Num();
+	FSizedDisjointSet PlaneGroups;
+	PlaneGroups.Init(NumTris);
+	TArray<FVector3d> PlaneNormals; PlaneNormals.SetNumUninitialized(NumTris);
+	TArray<double> PlaneAreas; PlaneAreas.SetNumUninitialized(NumTris);
+	TArray<FVector3d> PlaneOrigins; PlaneOrigins.SetNumUninitialized(NumTris);
+	// Map of plane group ID -> vertex indices, only for faces that have been merged at least once (otherwise, we can use the triangle indices)
+	using FPlaneVertArray = TArray<int32, TInlineAllocator<16>>;
+	TMap<int32, FPlaneVertArray> PlaneGroupToVerticesMap;
+	int32 MaxVertexNum = 0;
+	for (int32 TriIdx = 0; TriIdx < NumTris; ++TriIdx)
+	{
+		const FIndex3i& Tri = Hull[TriIdx];
+		MaxVertexNum = FMath::Max(MaxVertexNum, 1 + FMath::Max(Tri.A, FMath::Max(Tri.B, Tri.C)));
+		FVector3d TriPosns[3]{ (FVector3d)GetPointFunc(Tri.A), (FVector3d)GetPointFunc(Tri.B), (FVector3d)GetPointFunc(Tri.C) };
+		double Area = 0;
+		FVector3d FaceNormal = VectorUtil::NormalArea(TriPosns[0], TriPosns[1], TriPosns[2], Area);
+		PlaneNormals[TriIdx] = FaceNormal;
+		PlaneAreas[TriIdx] = Area;
+		PlaneOrigins[TriIdx] = (TriPosns[0] + TriPosns[1] + TriPosns[2]) * (1.0/3.0);
+	}
+
+	struct FEdgeWeight
+	{
+		FEdgeWeight() = default;
+		FEdgeWeight(FIndex2i TriPair, FIndex2i VertPair, double Weight) : TriPair(TriPair), VertPair(VertPair), Weight(Weight) {}
+		FIndex2i TriPair;
+		FIndex2i VertPair;
+		double Weight;
+	};
+
+	constexpr double AreaThreshold = UE_DOUBLE_SMALL_NUMBER;
+	auto GetMergeWeight = [&PlaneGroups, &PlaneAreas, &PlaneNormals, &GetPointFunc, AreaThreshold](FIndex2i PlanePair, FIndex2i VertexPair, bool bHasGroups) -> double
+	{
+		if (bHasGroups)
+		{
+			PlanePair[0] = PlaneGroups.Find(PlanePair[0]);
+			PlanePair[1] = PlaneGroups.Find(PlanePair[1]);
+			if (PlanePair[0] == PlanePair[1])
+			{
+				// return a value higher than the max possible angle threshold if the plane groups are already merged
+				constexpr float CannotMergeValue = 4;
+				return CannotMergeValue;
+			}
+		}
+		// Planes with small area can be merged into any neighbor, because we don't trust their plane normal
+		int32 TooSmallAreas = int32(PlaneAreas[PlanePair[0]] < AreaThreshold) + int32(PlaneAreas[PlanePair[1]] < AreaThreshold);
+		if (TooSmallAreas == 1)
+		{
+			// favor merging too-small-area faces to the neighboring valid-area face with the longest shared edge
+			FVector3d V0 = (FVector3d)GetPointFunc(VertexPair.A);
+			FVector3d V1 = (FVector3d)GetPointFunc(VertexPair.B);
+			double EdgeLenSq = FVector3d::DistSquared(V0, V1);
+			return -EdgeLenSq;
+		}
+		else if (TooSmallAreas == 2)
+		{
+			// if both areas are too small, still allow a low-cost merge, but favor the above single-small-area merges
+			return 0;
+		}
+		double NormalAlignment = 1 - PlaneNormals[PlanePair[0]].Dot(PlaneNormals[PlanePair[1]]);
+		return NormalAlignment;
+	};
+
+	TArray<FEdgeWeight> EdgeWeights;
+	for (int32 TriIdx = 0; TriIdx < NumTris; ++TriIdx)
+	{
+		const FIndex3i& NbrInds = HullNeighbors[TriIdx];
+		const FIndex3i& Tri = Hull[TriIdx];
+		for (int32 PrevIdx = 2, SubIdx = 0; SubIdx < 3; PrevIdx = SubIdx++)
+		{
+			if (TriIdx < NbrInds[PrevIdx])
+			{
+				FIndex2i FacePair(TriIdx, NbrInds[PrevIdx]);
+				FIndex2i VertPair(PrevIdx, SubIdx);
+				double Weight = GetMergeWeight(FacePair, VertPair, false);
+				if (Weight < FaceMergeThreshold)
+				{
+					EdgeWeights.Emplace(FacePair, VertPair, Weight);
+				}
+			}
+		}
+	}
+	
+	// Consider merging across edges with lower edge weights first
+	EdgeWeights.Sort([&](const FEdgeWeight& A, const FEdgeWeight& B)
+		{
+			return A.Weight < B.Weight;
+		});
+	for (const FEdgeWeight& EdgeWeight : EdgeWeights)
+	{
+		// re-evaluate the edge weight with the current planes
+		double MergeWeight = GetMergeWeight(EdgeWeight.TriPair, EdgeWeight.VertPair, true);
+		if (MergeWeight < FaceMergeThreshold)
+		{
+			int32 Groups[2]{ PlaneGroups.Find(EdgeWeight.TriPair.A), PlaneGroups.Find(EdgeWeight.TriPair.B) };
+			int32 GroupSizes[2]{ PlaneGroups.GetSize(Groups[0]), PlaneGroups.GetSize(Groups[1]) };
+			double Areas[2]{ PlaneAreas[Groups[0]], PlaneAreas[Groups[1]] };
+			double AreaSum = Areas[0] + Areas[1];
+			FVector3d Centroid;
+			if (AreaSum > UE_DOUBLE_KINDA_SMALL_NUMBER)
+			{
+				Centroid = (PlaneOrigins[Groups[0]] * (Areas[0]/AreaSum) + PlaneOrigins[Groups[1]] * (Areas[1]/AreaSum));
+			}
+			else
+			{
+				Centroid = (PlaneOrigins[Groups[0]] + PlaneOrigins[Groups[1]]) * .5;
+			}
+
+			FVector3d Normal = PlaneNormals[Groups[0]] * Areas[0] + PlaneNormals[Groups[1]] * Areas[1];
+			Normal.Normalize();
+
+			// Test that the points on each plane are close enough to the merged plane
+			bool bPointsCloseEnoughToPlane = true;
+
+			auto TestPoint = [&bPointsCloseEnoughToPlane, &GetPointFunc, Centroid, Normal, PlaneDistanceTolerance](int32 PointIdx) -> bool
+			{
+				FVector3d PointPos = (FVector3d)GetPointFunc(PointIdx);
+				if (FMath::Abs((PointPos - Centroid).Dot(Normal)) > PlaneDistanceTolerance)
+				{
+					bPointsCloseEnoughToPlane = false;
+					return false;
+				}
+				return true;
+			};
+
+			for (int32 GroupSubIdx = 0; GroupSubIdx < 2 && bPointsCloseEnoughToPlane; ++GroupSubIdx)
+			{
+				int32 GroupIdx = Groups[GroupSubIdx];
+				if (GroupSizes[GroupSubIdx] == 1)
+				{
+					FIndex3i Tri = Hull[GroupIdx];
+					for (int32 Idx = 0; Idx < 3; ++Idx)
+					{
+						if (!TestPoint(Tri[Idx]))
+						{
+							break;
+						}
+					}
+				}
+				else
+				{
+					for (int32 PointIdx : PlaneGroupToVerticesMap[GroupIdx])
+					{
+						if (!TestPoint(PointIdx))
+						{
+							break;
+						}
+					}
+				}
+			}
+			if (!bPointsCloseEnoughToPlane)
+			{
+				continue;
+			}
+
+			PlaneGroups.Union(Groups[0], Groups[1]);
+			int32 NewParent = PlaneGroups.Find(Groups[0]);
+			int32 OldGroupIdx = Groups[0] == NewParent ? 1 : 0;
+			int32 OldGroup = Groups[OldGroupIdx];
+			PlaneNormals[NewParent] = Normal;
+			PlaneOrigins[NewParent] = Centroid;
+			PlaneAreas[NewParent] = Areas[0] + Areas[1];
+
+			// Update the PlaneGroupToVerticesMap structures, removing the old group if needed, creating the new group if needed, and adding the appropriate vertices
+			if (GroupSizes[1 - OldGroupIdx] <= 1)
+			{
+				FIndex3i Tri = Hull[Groups[1 - OldGroupIdx]];
+				FPlaneVertArray& NewGroupVerts = PlaneGroupToVerticesMap.Emplace(NewParent);
+				NewGroupVerts.Add(Tri.A);
+				NewGroupVerts.Add(Tri.B);
+				NewGroupVerts.Add(Tri.C);
+			}
+			if (GroupSizes[OldGroupIdx] > 1)
+			{
+				const FPlaneVertArray OldGroupVerts = PlaneGroupToVerticesMap.FindAndRemoveChecked(OldGroup);
+				FPlaneVertArray& NewGroupVerts = PlaneGroupToVerticesMap[NewParent];
+				NewGroupVerts.Reserve(NewGroupVerts.Num() + OldGroupVerts.Num() - 2);
+				for (int32 VIdx : OldGroupVerts)
+				{
+					if (!EdgeWeight.VertPair.Contains(VIdx))
+					{
+						NewGroupVerts.Add(VIdx);
+					}
+				}
+			}
+			else
+			{
+				checkSlow(!PlaneGroupToVerticesMap.Contains(OldGroup));
+				FPlaneVertArray& NewGroupVerts = PlaneGroupToVerticesMap[NewParent];
+				FIndex3i Tri = Hull[Groups[OldGroupIdx]];
+				for (int32 SubIdx = 0; SubIdx < 3; ++SubIdx)
+				{
+					int32 VIdx = Tri[SubIdx];
+					if (!EdgeWeight.VertPair.Contains(VIdx))
+					{
+						NewGroupVerts.Add(VIdx);
+					}
+				}
+			}
+		}
+	}
+
+	// Track which vertices are attached to at least 3 groups
+	TArray<FIndex3i> VertPlaneGroups;
+	VertPlaneGroups.Init(FIndex3i::Invalid(), MaxVertexNum);
+	for (int32 TriIdx = 0; TriIdx < Hull.Num(); ++TriIdx)
+	{
+		int32 Group = PlaneGroups.Find(TriIdx);
+		FIndex3i Tri = Hull[TriIdx];
+		for (int32 SubIdx = 0; SubIdx < 3; ++SubIdx)
+		{
+			int32 VIdx = Tri[SubIdx];
+			for (int32 GroupNbrIdx = 0; GroupNbrIdx < 3; ++GroupNbrIdx)
+			{
+				if (VertPlaneGroups[VIdx][GroupNbrIdx] == -1)
+				{
+					VertPlaneGroups[VIdx][GroupNbrIdx] = Group;
+					break;
+				}
+				else if (VertPlaneGroups[VIdx][GroupNbrIdx] == Group)
+				{
+					break;
+				}
+			}
+		}
+	}
+
+	auto VertexTouchesAtLeastThreeGroups = [&VertPlaneGroups](int32 VertIdx)
+	{
+		return VertPlaneGroups[VertIdx][2] != -1;
+	};
+
+	TArray<int32> CurFaceVertIDs;
+	bool bHasDeletedFaces = false;
+	// Track the mapping from polygons back to groups, only if not using OutPolygonNormals, to recover the polygon normals for convexity tests
+	TArray<int32> PolygonToGroup;
+	for (int32 TriIdx = 0; TriIdx < Hull.Num(); ++TriIdx)
+	{
+		int32 GroupIdx = PlaneGroups.Find(TriIdx);
+		if (GroupIdx != TriIdx)
+		{
+			continue;
+		}
+		int32 GroupSize = PlaneGroups.GetSize(TriIdx);
+		if (GroupSize == 1)
+		{
+			FIndex3i Tri = Hull[TriIdx];
+			if (VertexTouchesAtLeastThreeGroups(Tri.A) &&
+				VertexTouchesAtLeastThreeGroups(Tri.B) &&
+				VertexTouchesAtLeastThreeGroups(Tri.C))
+			{
+				FPolygonFace& Face = OutPolygons.Emplace_GetRef();
+				Face.Add(Tri.A);
+				Face.Add(Tri.B);
+				Face.Add(Tri.C);
+				if (OutPolygonNormals)
+				{
+					OutPolygonNormals->Add((TVector<RealType>)PlaneNormals[GroupIdx]);
+				}
+				else
+				{
+					PolygonToGroup.Add(GroupIdx);
+				}
+			}
+			else
+			{
+				bHasDeletedFaces = true;
+			}
+
+			continue;
+		}
+
+		CurFaceVertIDs.Reset();
+		WalkBorder(Hull, HullNeighbors, [&](int32 Idx) { return PlaneGroups.Find(Idx) == GroupIdx; }, TriIdx, CurFaceVertIDs);
+		int32 NumKept = Algo::StableRemoveIf(CurFaceVertIDs, [&](int32 VertIdx) { return !VertexTouchesAtLeastThreeGroups(VertIdx); });
+
+		if (NumKept < 3)
+		{
+			bHasDeletedFaces = true;
+			continue;
+		}
+
+		CurFaceVertIDs.SetNum(NumKept, EAllowShrinking::No);
+
+		FPolygonFace& Face = OutPolygons.Emplace_GetRef();
+		Face.Append(CurFaceVertIDs);
+		if (OutPolygonNormals)
+		{
+			OutPolygonNormals->Add((TVector<RealType>)PlaneNormals[GroupIdx]);
+		}
+		else
+		{
+			PolygonToGroup.Add(GroupIdx);
+		}
+	}
+
+	// If we deleted faces in the initial pass, keep doing passes to identify vertices that touch fewer than 3 polygons & deleting them + deleting polygons w/ < 3 remaining vertices,
+	// until we either stop deleting polygons or we have too few polygons to form a solid volume
+	while (bHasDeletedFaces && OutPolygons.Num() > 3)
+	{
+		bHasDeletedFaces = false; // reset for the next pass
+
+		// recompute vert plane groups using the output polygons
+		VertPlaneGroups.Init(FIndex3i::Invalid(), MaxVertexNum);
+		for (int32 PolyIdx = 0; PolyIdx < OutPolygons.Num(); ++PolyIdx)
+		{
+			FPolygonFace& Face = OutPolygons[PolyIdx];
+			for (int32 SubIdx = 0; SubIdx < Face.Num(); ++SubIdx)
+			{
+				int32 VIdx = Face[SubIdx];
+				for (int32 GroupNbrIdx = 0; GroupNbrIdx < 3; ++GroupNbrIdx)
+				{
+					if (VertPlaneGroups[VIdx][GroupNbrIdx] == -1)
+					{
+						VertPlaneGroups[VIdx][GroupNbrIdx] = PolyIdx;
+						break;
+					}
+					else if (VertPlaneGroups[VIdx][GroupNbrIdx] == PolyIdx)
+					{
+						break;
+					}
+				}
+			}
+		}
+
+
+		for (int32 PolyIdx = 0; PolyIdx < OutPolygons.Num(); ++PolyIdx)
+		{
+			FPolygonFace& Face = OutPolygons[PolyIdx];
+			int32 NumKept = Algo::StableRemoveIf(Face, [&](int32 VertIdx) { return !VertexTouchesAtLeastThreeGroups(VertIdx); });
+			if (NumKept != Face.Num())
+			{
+				if (NumKept > 2)
+				{
+					Face.SetNum(NumKept);
+				}
+				else
+				{
+					OutPolygons.RemoveAtSwap(PolyIdx, 1, EAllowShrinking::No);
+					if (OutPolygonNormals)
+					{
+						OutPolygonNormals->RemoveAtSwap(PolyIdx, 1, EAllowShrinking::No);
+					}
+					else
+					{
+						PolygonToGroup.RemoveAtSwap(PolyIdx, 1, EAllowShrinking::No);
+					}
+					bHasDeletedFaces = true;
+					PolyIdx--;
+				}
+			}
+		}
+	}
+
+	// Validate convex-enough winding vs the plane normal, and trigger a fallback if this fails
+	bool bFacesAreConvex = true;
+	for (int32 PolyIdx = 0; PolyIdx < OutPolygons.Num() && bFacesAreConvex; ++PolyIdx)
+	{
+
+		FVector3d PlaneNormal;
+		if (OutPolygonNormals)
+		{
+			PlaneNormal = (FVector3d)(*OutPolygonNormals)[PolyIdx];
+		}
+		else
+		{
+			PlaneNormal = PlaneNormals[PolygonToGroup[PolyIdx]];
+		}
+
+		// Iterate over each polygon face corner ABC, testing direction the AB edge turns vs the BC edge (from the PoV of the plane normal)
+		const FPolygonFace& Polygon = OutPolygons[PolyIdx];
+		int32 PolygonVertNum = Polygon.Num();
+		int32 VertIdxA = PolygonVertNum - 2, VertIdxB = PolygonVertNum - 1, VertIdxC = 0;
+		FVector3d PtA = (FVector3d)GetPointFunc(Polygon[VertIdxA]);
+		FVector3d PtB = (FVector3d)GetPointFunc(Polygon[VertIdxB]);
+		FVector3d EdgeAB = PtB - PtA;
+		bool bABIsNormalized = EdgeAB.Normalize();
+		for (; VertIdxC < PolygonVertNum && bFacesAreConvex; VertIdxA = VertIdxB, VertIdxB = VertIdxC++)
+		{
+			FVector3d PtC = (FVector3d)GetPointFunc(Polygon[VertIdxC]);
+			FVector3d EdgeBC = PtC - PtB;
+			bool bBCIsNormalized = EdgeBC.Normalize();
+			if (bABIsNormalized && bBCIsNormalized)
+			{
+				FVector3d EdgeABPerp = EdgeAB.Cross(PlaneNormal);
+				if (EdgeBC.Dot(EdgeABPerp) < -UE_DOUBLE_KINDA_SMALL_NUMBER)
+				{
+					bFacesAreConvex = false;
+					break;
+				}
+			}
+
+			PtA = PtB;
+			PtB = PtC;
+			EdgeAB = EdgeBC;
+			bABIsNormalized = bBCIsNormalized;
+		}
+	}
+
+
+	// If the algorithm has failed to create convex faces, or failed to create at least a tetrahedron, e.g. due to unfortunate face merges, fall back to a more exact hull
+	// Note: This should be a rare case, and it still uses the reduced vertex set of the 'vertex touches at least 3 groups' criteria,
+	// so should still give a simpler hull than calling GetFaces() directly would have.
+	if (!bFacesAreConvex || OutPolygons.Num() < 4)
+	{
+		OutPolygons.Reset();
+		if (OutPolygonNormals)
+		{
+			OutPolygonNormals->Reset();
+		}
+		TConvexHull3<RealType> FallbackHull;
+		FallbackHull.bSaveTriangleNeighbors = true;
+		// Note: We do not need the FallbackHull to use the original simplification settings, because the filter will guarantee we only use a subset of on-hull vertices in this pass
+
+		bool bFallbackSolveSuccess = FallbackHull.Solve(MaxVertexNum, GetPointFunc, VertexTouchesAtLeastThreeGroups);
+		if (bFallbackSolveSuccess)
+		{
+			FallbackHull.GetFaces([&](TArray<int32>& FaceIndices, TVector<RealType> Normal)
+			{
+				FPolygonFace& Face = OutPolygons.Emplace_GetRef();
+				Face.Append(FaceIndices);
+				if (OutPolygonNormals)
+				{
+					OutPolygonNormals->Add(Normal);
+				}
+			}, GetPointFunc);
+		}
+		else
+		{
+			// If we failed to solve for a new hull using just the group-corner vertices, then use the initial hull faces without simplification
+			// This could happen if the faces of the convex hull were all too small in area, so all faces were merged, leaving no vertices for the FallbackHull to find
+			GetFaces([&](TArray<int32>& FaceIndices, TVector<RealType> Normal)
+			{
+				FPolygonFace& Face = OutPolygons.Emplace_GetRef();
+				Face.Append(FaceIndices);
+				if (OutPolygonNormals)
+				{
+					OutPolygonNormals->Add(Normal);
+				}
+			}, GetPointFunc);
+		}
+
+	}
+}
+
 template<typename RealType>
 void TConvexHull3<RealType>::WalkBorder(const TArray<FIndex3i>& Triangles, const TArray<FIndex3i>& TriangleNeighbors, TFunctionRef<bool(int32)> InGroupFunc, int32 StartIdx, TArray<int32>& OutBorderVertexIndices)
 {
@@ -784,7 +1492,7 @@ void TConvexHull3<RealType>::WalkBorder(const TArray<FIndex3i>& Triangles, const
 
 	while (VisitStack.Num())
 	{
-		FVisit Visit = VisitStack.Pop(false);
+		FVisit Visit = VisitStack.Pop(EAllowShrinking::No);
 		if (!InGroupFunc(Visit.Tri))
 		{
 			OutBorderVertexIndices.Add(Triangles[Visit.Tri][Visit.Edge]);

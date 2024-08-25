@@ -93,6 +93,15 @@ void UpdateAIGraphNodeErrorMessage(UAIGraphNode& Node)
 	if (Node.NodeInstance)
 	{
 		Node.ErrorMessage = FGraphNodeClassHelper::GetDeprecationMessage(Node.NodeInstance->GetClass());
+
+		// Only check for node-specific errors if the node is not deprecated
+		if (Node.ErrorMessage.IsEmpty())
+		{
+			Node.UpdateErrorMessage();
+
+			// For node-specific validation we don't want to spam the log with errors
+			return;
+		}
 	}
 	else
 	{
@@ -141,7 +150,9 @@ void UAIGraph::Serialize(FArchive& Ar)
 	// Overridden to flags up errors in the behavior tree while cooking.
 	Super::Serialize(Ar);
 
-	if (Ar.IsSaving() || Ar.IsCooking())
+	// Execute UpdateDeprecatedClasses only when saving to persistent storage,
+	// otherwise node instances might not be fully created (i.e. transaction buffer while loading the asset).
+	if ((Ar.IsSaving() && Ar.IsPersistent()) || Ar.IsCooking())
 	{
 		// Logging of errors happens in UpdateDeprecatedClasses
 		UpdateDeprecatedClasses();

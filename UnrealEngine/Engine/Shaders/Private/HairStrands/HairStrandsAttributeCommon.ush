@@ -64,15 +64,15 @@ uint2 InternalGetHairStrandsAttributes64(uint Index, uint AttributeOffsetInBytes
 	return OutPacked;
 }
 
-uint InternalGetHairStrandsAttributesPerCurve(uint HairControlPointId, uint AttributeOffsetInBytes, uint AttributeStrideInBytes, ByteAddressBuffer InAttributeBuffer, Buffer<uint> InPointToCurveBuffer, uint InIndexToChunkDivAsShift, uint InChunkElementCount, uint InChunkStrideInBytes)
+uint InternalGetHairStrandsAttributesPerCurve(uint HairControlPointId, uint AttributeOffsetInBytes, uint AttributeStrideInBytes, ByteAddressBuffer InAttributeBuffer, ByteAddressBuffer InPointToCurveBuffer, uint InIndexToChunkDivAsShift, uint InChunkElementCount, uint InChunkStrideInBytes)
 {
-	const uint CurveIndex = InPointToCurveBuffer[HairControlPointId];
+	const uint CurveIndex = ReadHairPointToCurveIndex(InPointToCurveBuffer, HairControlPointId);
 	return InternalGetHairStrandsAttributes(CurveIndex, AttributeOffsetInBytes, AttributeStrideInBytes, InAttributeBuffer, InIndexToChunkDivAsShift, InChunkElementCount, InChunkStrideInBytes);
 }
 
-uint2 InternalGetHairStrandsAttributesPerCurve64(uint HairControlPointId, uint AttributeOffsetInBytes, uint AttributeStrideInBytes, ByteAddressBuffer InAttributeBuffer, Buffer<uint> InPointToCurveBuffer, uint InIndexToChunkDivAsShift, uint InChunkElementCount, uint InChunkStrideInBytes)
+uint2 InternalGetHairStrandsAttributesPerCurve64(uint HairControlPointId, uint AttributeOffsetInBytes, uint AttributeStrideInBytes, ByteAddressBuffer InAttributeBuffer, ByteAddressBuffer InPointToCurveBuffer, uint InIndexToChunkDivAsShift, uint InChunkElementCount, uint InChunkStrideInBytes)
 {
-	const uint CurveIndex = InPointToCurveBuffer[HairControlPointId];
+	const uint CurveIndex = ReadHairPointToCurveIndex(InPointToCurveBuffer, HairControlPointId);
 	return InternalGetHairStrandsAttributes64(CurveIndex, AttributeOffsetInBytes, AttributeStrideInBytes, InAttributeBuffer, InIndexToChunkDivAsShift, InChunkElementCount, InChunkStrideInBytes);
 }
 
@@ -81,14 +81,14 @@ uint InternalGetHairStrandsAttributesPerVertex(uint HairControlPointId, uint Att
 	return InternalGetHairStrandsAttributes(HairControlPointId, AttributeOffsetInBytes, AttributeStrideInBytes, InAttributeBuffer, InIndexToChunkDivAsShift, InChunkElementCount, InChunkStrideInBytes);
 }
 
-float InternalGetHairStrandsCoordU(Buffer<uint4> InPositionBuffer, uint VertexId, float InRadius, float InRootScale, float InTipScale)
+float InternalGetHairStrandsCoordU(ByteAddressBuffer InPositionBuffer, uint InPointIndex, float InRadius, float InRootScale, float InTipScale)
 {
-	return UnpackHairControlPoint(InPositionBuffer[VertexId], float3(0, 0, 0), InRadius, InRootScale, InTipScale).UCoord;
+	return ReadHairControlPoint(InPositionBuffer, InPointIndex, float3(0, 0, 0), InRadius, InRootScale, InTipScale).UCoord;
 }
 
-float InternalGetHairStrandsWorldRadius(Buffer<uint4> InPositionBuffer, uint VertexId, float InRadius, float InRootScale, float InTipScale)
+float InternalGetHairStrandsWorldRadius(ByteAddressBuffer InPositionBuffer, uint InPointIndex, float InRadius, float InRootScale, float InTipScale)
 {
-	return UnpackHairControlPoint(InPositionBuffer[VertexId], float3(0, 0, 0), InRadius, InRootScale, InTipScale).WorldRadius;
+	return ReadHairControlPoint(InPositionBuffer, InPointIndex, float3(0, 0, 0), InRadius, InRootScale, InTipScale).WorldRadius;
 }
 
 bool IsAttributeValid(uint InOffset)
@@ -102,6 +102,12 @@ bool IsAttributeValid(uint InOffset)
 #include "/Engine/Private/HairStrands/HairStrandsVertexFactoryCommon.ush"
 
 #if HAIR_STRAND_MESH_FACTORY
-#define HAIR_STRANDS_ATTRIBUTE_ACCESSORS(Name) HairStrandsVF_##Name
+	#if HAIR_STRANDS_PARAMETERS == 1
+		// Global constants access
+		#define HAIR_STRANDS_ATTRIBUTE_ACCESSORS(Name) HairStrandsVF_##Name
+	#else
+		// Uniform Buffer access
+		#define HAIR_STRANDS_ATTRIBUTE_ACCESSORS(Name) HairStrandsVF.##Name
+	#endif
 #include "/Engine/Private/HairStrands/HairStrandsAttributeTemplate.ush"
 #endif

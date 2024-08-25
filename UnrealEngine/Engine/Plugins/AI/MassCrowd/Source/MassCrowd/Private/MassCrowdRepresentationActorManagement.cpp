@@ -28,7 +28,7 @@ void UMassCrowdRepresentationActorManagement::SetActorEnabled(const EMassActorEn
 			ComponentStack.Append(AttachedChildren);
 			while (ComponentStack.Num() > 0)
 			{
-				USceneComponent* const CurrentComp = ComponentStack.Pop(/*bAllowShrinking=*/false);
+				USceneComponent* const CurrentComp = ComponentStack.Pop(EAllowShrinking::No);
 				if (CurrentComp)
 				{
 					ComponentStack.Append(CurrentComp->GetAttachChildren());
@@ -65,7 +65,7 @@ void UMassCrowdRepresentationActorManagement::SetActorEnabled(const EMassActorEn
 }
 
 AActor* UMassCrowdRepresentationActorManagement::GetOrSpawnActor(UMassRepresentationSubsystem& RepresentationSubsystem
-	, FMassEntityManager& EntityManager, const FMassEntityHandle MassAgent, FMassActorFragment& ActorInfo, const FTransform& Transform
+	, FMassEntityManager& EntityManager, const FMassEntityHandle MassAgent, const FTransform& Transform
 	, const int16 TemplateActorIndex, FMassActorSpawnRequestHandle& SpawnRequestHandle, const float Priority) const
 {
 	FTransform RootTransform = Transform;
@@ -78,7 +78,7 @@ AActor* UMassCrowdRepresentationActorManagement::GetOrSpawnActor(UMassRepresenta
 		}
 	}
 
-	return Super::GetOrSpawnActor(RepresentationSubsystem, EntityManager, MassAgent, ActorInfo, RootTransform, TemplateActorIndex, SpawnRequestHandle, Priority);
+	return Super::GetOrSpawnActor(RepresentationSubsystem, EntityManager, MassAgent, RootTransform, TemplateActorIndex, SpawnRequestHandle, Priority);
 }
 
 void UMassCrowdRepresentationActorManagement::TeleportActor(const FTransform& Transform, AActor& Actor, FMassCommandBuffer& CommandBuffer) const

@@ -18,12 +18,10 @@ namespace UE
 		private:
 			UInterchangeManager* InterchangeManager;
 			TWeakPtr<FImportAsyncHelper, ESPMode::ThreadSafe> WeakAsyncHelper;
-			FString PackageBasePath;
 		public:
-			FTaskParsing(UInterchangeManager* InInterchangeManager, const FString& InPackageBasePath, TWeakPtr<FImportAsyncHelper, ESPMode::ThreadSafe> InAsyncHelper)
+			FTaskParsing(UInterchangeManager* InInterchangeManager, TWeakPtr<FImportAsyncHelper, ESPMode::ThreadSafe> InAsyncHelper)
 				: InterchangeManager(InInterchangeManager)
 				, WeakAsyncHelper(InAsyncHelper)
-				, PackageBasePath(InPackageBasePath)
 			{
 				check(InterchangeManager);
 			}

@@ -102,7 +102,7 @@ void AddVisualizeNanitePass(FRDGBuilder& GraphBuilder, const FViewInfo& View, FS
 				const int32 TileY = TileIndex / MaxTilesX;
 
 				FScreenPassTextureViewport OutputViewport(OutputTarget);
-				OutputViewport.Rect.Min = FIntPoint(TileX * TileWidth, TileY * TileHeight);
+				OutputViewport.Rect.Min = UnscaledViewRect.Min + FIntPoint(TileX * TileWidth, TileY * TileHeight);
 				OutputViewport.Rect.Max = OutputViewport.Rect.Min + FIntPoint(TileWidth, TileHeight);
 
 				const FLinearColor SelectionColor = FLinearColor::Transparent;
@@ -114,7 +114,9 @@ void AddVisualizeNanitePass(FRDGBuilder& GraphBuilder, const FViewInfo& View, FS
 				PassParameters->InputSampler = BilinearClampSampler;
 				PassParameters->SelectionColor = SelectionColor;
 
-				const FScreenPassTextureViewport InputViewport(Visualization.ModeOutput);
+				FScreenPassTexture InputTexture(Visualization.ModeOutput);
+				InputTexture.ViewRect = View.ViewRect;
+				const FScreenPassTextureViewport InputViewport(InputTexture);
 
 				TShaderMapRef<FScreenPassVS> VertexShader(View.ShaderMap);
 				TShaderMapRef<FVisualizeNanitePS> PixelShader(View.ShaderMap);

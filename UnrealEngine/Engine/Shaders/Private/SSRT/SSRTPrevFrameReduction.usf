@@ -67,7 +67,7 @@ float3 ComputeTranslatedWorldPosition(float2 ScreenPosition, float WorldDepth, b
 
 	if (bIsPrevFrame)
 	{
-		float3 PreViewTranslationOffset = LWCToFloat(LWCSubtract(PrimaryView.PreViewTranslation, PrimaryView.PrevPreViewTranslation));
+		float3 PreViewTranslationOffset = DFFastLocalSubtractDemote(PrimaryView.PreViewTranslation, PrimaryView.PrevPreViewTranslation);
 		return mul(ClipPosition, View.PrevScreenToTranslatedWorld).xyz + PreViewTranslationOffset;
 	}
 	
@@ -104,9 +104,7 @@ void MainCS(
 				WorldDepth = ConvertFromDeviceZ(HZBDeviceZ);
 			}
 
-			float WorldDepthToPixelWorldRadius = GetTanHalfFieldOfView().x * View.ViewSizeAndInvSize.z * 100;
-
-			float WorldBluringRadius = WorldDepthToPixelWorldRadius * WorldDepth;
+			float WorldBluringRadius = GetDepthPixelRadiusForProjectionType(WorldDepth) * 100.0f;
 			float InvSquareWorldBluringRadius = rcp(WorldBluringRadius * WorldBluringRadius);
 
 			PrevColor = 0.0;
@@ -167,9 +165,7 @@ void MainCS(
 
 			float NoV = dot(View.TranslatedWorldCameraOrigin - normalize(RefWorldPosition), GetGBufferDataFromSceneTextures(SceneBufferUV).WorldNormal);
 				
-			float WorldDepthToPixelWorldRadius = GetTanHalfFieldOfView().x * View.ViewSizeAndInvSize.z * 100; // / max(NoV, 0.01);
-
-			float WorldBluringRadius = WorldDepthToPixelWorldRadius * WorldDepth;
+			float WorldBluringRadius = GetDepthPixelRadiusForProjectionType(WorldDepth) * 100.0f;
 			float InvSquareWorldBluringRadius = rcp(WorldBluringRadius * WorldBluringRadius);
 
 			//PrevColor = 0.0;
@@ -288,9 +284,7 @@ void MainCS(
 					}
 				}
 
-				float WorldDepthToPixelWorldRadius = GetTanHalfFieldOfView().x * View.ViewSizeAndInvSize.z * 100;
-
-				float WorldBluringRadius = WorldDepthToPixelWorldRadius * FurthestDepth;
+				float WorldBluringRadius = GetDepthPixelRadiusForProjectionType(FurthestDepth) * 100.0f;
 				float InvSquareWorldBluringRadius = rcp(WorldBluringRadius * WorldBluringRadius);
 
 				#endif

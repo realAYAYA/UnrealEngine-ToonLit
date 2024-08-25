@@ -118,7 +118,9 @@ class AUDIOSYNESTHESIA_API ULoudnessNRT : public UAudioSynesthesiaNRT
 		virtual FText GetAssetActionName() const override;
 
 		virtual UClass* GetSupportedClass() const override;
-#endif
+
+		virtual bool ShouldEventTriggerAnalysis(FPropertyChangedEvent& PropertyChangeEvent) override;
+#endif // WITH_EDITOR
 
 	protected:
 

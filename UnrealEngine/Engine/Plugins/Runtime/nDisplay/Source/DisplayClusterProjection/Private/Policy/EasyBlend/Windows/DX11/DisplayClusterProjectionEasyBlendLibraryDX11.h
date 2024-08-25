@@ -3,49 +3,56 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "ID3D11DynamicRHI.h"
+#include "Policy/EasyBlend/Windows/DX11/DisplayClusterProjectionEasyBlendLibraryDX11Types.h"
 
-THIRD_PARTY_INCLUDES_START
-#include "EasyBlendSDKDXVer.h"
-#include "EasyBlendSDKDXErrors.h"
-#include "EasyBlendSDKFrustum.h"
-#include "EasyBlendSDKDXStructs.h"
-THIRD_PARTY_INCLUDES_END
+#define DeclareEasyBlendFunc(DLLFunc) EasyBlend1##DLLFunc##Proc EasyBlend1##DLLFunc = nullptr;
 
-
-struct EasyBlendSDKDX_Mesh;
-
-struct DisplayClusterProjectionEasyBlendLibraryDX11
+/**
+* Implement access to EasyBlend DX11 DLL functions
+* The basic idea is to load the DLL dynamically without using LIB files
+*
+* The DLL function is described in the file ./ThirdParty/EasyBlend/Include/EasyBlendSDKDXApi.h
+*/
+class FDisplayClusterProjectionEasyBlendLibraryDX11
 {
-	static bool Initialize();
-	static void Release();
+public:
+	FDisplayClusterProjectionEasyBlendLibraryDX11();
+	~FDisplayClusterProjectionEasyBlendLibraryDX11();
 
-	typedef EasyBlendSDKDXError(__stdcall *EasyBlendInitializeProc)(const char* szFileName, EasyBlendSDKDX_Mesh* msm);
-	static EasyBlendInitializeProc EasyBlendInitializeFunc;
-	
-	typedef EasyBlendSDKDXError(__stdcall *EasyBlendUninitializeProc)(EasyBlendSDKDX_Mesh* msm);
-	static EasyBlendUninitializeProc EasyBlendUninitializeFunc;
-	
-	typedef EasyBlendSDKDXError(__stdcall *EasyBlendInitDeviceObjectsProc)(EasyBlendSDKDX_Mesh* msm, ID3D1XDevice* pDevice, ID3D1XDeviceContext* pDeviceContext /* can be null in DX10 */, IDXGISwapChain* pSwapChain);
-	static EasyBlendInitDeviceObjectsProc EasyBlendInitDeviceObjectsFunc;
-	
-	typedef EasyBlendSDKDXError(__stdcall *EasyBlendDXRenderProc)(EasyBlendSDKDX_Mesh* msm, ID3D1XDevice* id3d, ID3D1XDeviceContext* pDeviceContext /* can be null in DX10 */, IDXGISwapChain* iswapChain, bool doPresent);
-	static EasyBlendDXRenderProc EasyBlendDXRenderFunc;
-	
-	typedef EasyBlendSDKDXError(__stdcall *EasyBlendSetEyepointProc)(EasyBlendSDKDX_Mesh* msm, const double& eyeX, const double& eyeY, const double& eyeZ);
-	static EasyBlendSetEyepointProc EasyBlendSetEyepointFunc;
+	/** Return EaxyBlend DX11 library api. */
+	static TSharedRef<FDisplayClusterProjectionEasyBlendLibraryDX11, ESPMode::ThreadSafe>& Get();
 
-	typedef EasyBlendSDKDXError(__stdcall *EasyBlendSDK_GetHeadingPitchRollProc)(double& rdDegreesHeading, double& rdDegreesPitch, double& rdDegreesRoll, EasyBlendSDKDX_Mesh* msm);
-	static EasyBlendSDK_GetHeadingPitchRollProc EasyBlendSDK_GetHeadingPitchRollFunc;
-	
-	typedef EasyBlendSDKDXError(__stdcall *EasyBlendSetInputTexture2DProc)(EasyBlendSDKDX_Mesh* msm, ID3D1XTexture2D* texture);
-	static EasyBlendSetInputTexture2DProc EasyBlendSetInputTexture2DFunc;
-	
-	typedef EasyBlendSDKDXError(__stdcall *EasyBlendSetOutputTexture2DProc)(EasyBlendSDKDX_Mesh* msm, ID3D1XTexture2D* texture);
-	static EasyBlendSetOutputTexture2DProc EasyBlendSetOutputTexture2DFunc;
+	/** If the DLL is loaded correctly, this function returns true. */
+	inline bool IsInitialized() const
+	{
+		return bInitialized;
+	}
+
+public:
+	DeclareEasyBlendFunc(Initialize);
+	DeclareEasyBlendFunc(Uninitialize);
+
+	DeclareEasyBlendFunc(InitDeviceObjects);
+
+	DeclareEasyBlendFunc(SetEyepoint);
+	DeclareEasyBlendFunc(SDK_GetHeadingPitchRoll);
+
+	DeclareEasyBlendFunc(DXRender);
+	DeclareEasyBlendFunc(SetInputTexture2D);
+	DeclareEasyBlendFunc(SetOutputTexture2D);
 
 private:
-	static void* DllHandle;
-	static FCriticalSection CritSec;
-	static bool bInitializeOnce;
+	/** Imprort all functionf from VIOSO DLL. Return true on success. */
+	bool InitializeDLL();
+	void ReleaseDLL();
+
+private:
+
+	// Initializetion state
+	bool bInitialized = false;
+
+	// Saved handle to VIOSO DLL
+	void* EasyBlend_DLL_Handler = nullptr;
 };
+
+#undef DeclareEasyBlendFunc

@@ -1382,7 +1382,7 @@ namespace DatasmithRuntime
 			{
 				if (Referencers[Index].ElementId == ReferencerId)
 				{
-					Referencers.RemoveAt(Index, 1, false);
+					Referencers.RemoveAt(Index, 1, EAllowShrinking::No);
 					return;
 				}
 			}

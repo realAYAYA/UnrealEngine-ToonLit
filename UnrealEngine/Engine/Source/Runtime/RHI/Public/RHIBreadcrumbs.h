@@ -37,7 +37,7 @@ struct TRHIBreadcrumbState
 	void PopBreadcrumb()
 	{
 		check(!NameOffsets.IsEmpty());
-		NameBuffer.SetNum(NameOffsets.Last(), false);
+		NameBuffer.SetNum(NameOffsets.Last(), EAllowShrinking::No);
 		NameOffsets.Pop();
 	}
 

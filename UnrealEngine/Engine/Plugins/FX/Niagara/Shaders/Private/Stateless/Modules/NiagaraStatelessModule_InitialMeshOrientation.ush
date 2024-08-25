@@ -1,0 +1,21 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../NiagaraStatelessCommon.ush"
+
+float3	InitialMeshOrientation_Rotation;
+float3	InitialMeshOrientation_RandomRangeScale;
+
+struct FStatelessModule_InitialMeshOrientation
+{
+};
+
+void InitialMeshOrientation_Initialize(inout FStatelessModule_InitialMeshOrientation ModuleData, inout FStatelessParticle Particle)
+{
+	const float3 InitialRotation = InitialMeshOrientation_Rotation + (RandomFloat3(Particle) * InitialMeshOrientation_RandomRangeScale);
+	Particle.MeshOrientation			= RotatorToQuat(InitialRotation);
+	Particle.PreviousMeshOrientation	= Particle.MeshOrientation;
+}
+	
+void InitialMeshOrientation_Simulate(in FStatelessModule_InitialMeshOrientation ModuleData, inout FStatelessParticle Particle)
+{
+}

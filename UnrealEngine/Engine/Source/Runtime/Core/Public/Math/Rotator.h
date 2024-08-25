@@ -233,6 +233,20 @@ public:
 	bool Equals( const TRotator<T>& R, T Tolerance = UE_KINDA_SMALL_NUMBER ) const;
 
 	/**
+	 * Checks whether two rotators have the same orientation within the specified tolerance, without requiring similar angles or wound multiples of 360.
+	 * Unlike Equals(), it can compare Rotators that represent the same final orientation, but get there via different intermediate rotations.
+	 * i.e. If we compare two rotators with different angles, but same orientation like so:
+	 * A = TRotator(0, 45, 0)
+	 * B = TRotator(180, 135, 180)
+	 * Then A.EqualsOrientation(B) would be TRUE while A.Equals(B) would be FALSE
+	 *
+	 * @param R The other rotator.
+	 * @param Tolerance Error Tolerance.
+	 * @return true if two rotators are equal, within specified tolerance, otherwise false.
+	 */
+	bool EqualsOrientation( const TRotator<T>& R, T Tolerance = UE_KINDA_SMALL_NUMBER ) const;
+
+	/**
 	 * Adds to each component of the rotator.
 	 *
 	 * @param DeltaPitch Change in pitch. (+/-)
@@ -624,6 +638,12 @@ FORCEINLINE bool TRotator<T>::Equals(const TRotator<T>& R, T Tolerance) const
 		&& (FMath::Abs(NormalizeAxis(Yaw - R.Yaw)) <= Tolerance) 
 		&& (FMath::Abs(NormalizeAxis(Roll - R.Roll)) <= Tolerance);
 #endif
+}
+
+template <typename T>
+bool TRotator<T>::EqualsOrientation(const TRotator<T>& R, T Tolerance) const
+{
+	return Quaternion().AngularDistance(R.Quaternion()) <= Tolerance;
 }
 
 template<typename T>

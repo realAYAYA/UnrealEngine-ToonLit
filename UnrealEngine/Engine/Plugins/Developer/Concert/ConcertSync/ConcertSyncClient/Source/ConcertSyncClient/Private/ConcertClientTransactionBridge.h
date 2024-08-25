@@ -6,6 +6,11 @@
 #include "Misc/ITransaction.h"
 #include "ConcertSyncArchives.h"
 
+namespace ConcertClientTransactionBridgeUtil
+{
+	struct FTransactedObjectState;
+}
+
 class FConcertClientTransactionBridge : public IConcertClientTransactionBridge
 {
 public:
@@ -32,6 +37,9 @@ private:
 	/** Called to handle a transaction state change */
 	void HandleTransactionStateChanged(const FTransactionContext& InTransactionContext, const ETransactionStateEventType InTransactionState);
 
+	/** Confirms that we can handle the transaction event. */
+	bool CanHandleObjectTransacted(UObject *InObject, const FTransactionObjectEvent& InTransactionEvent) const;
+
 	/** Called to handle an object being transacted */
 	void HandleObjectTransacted(UObject* InObject, const FTransactionObjectEvent& InTransactionEvent);
 
@@ -54,9 +62,15 @@ private:
 		FConcertClientLocalTransactionCommonData CommonData;
 		FConcertClientLocalTransactionSnapshotData SnapshotData;
 		FConcertClientLocalTransactionFinalizedData FinalizedData;
+
+		using FTransactedObjectStatePtr = TPimplPtr<ConcertClientTransactionBridgeUtil::FTransactedObjectState>;
+		TMap<FConcertObjectId, FTransactedObjectStatePtr> TransactedStatePtrs;
+
 		bool bIsFinalized = false;
 		bool bHasNotifiedSnapshot = false;
 	};
+
+	friend struct ConcertClientTransactionBridgeUtil::FTransactedObjectState;
 
 	/** Array of transaction IDs in the order they should be notified (maps to OngoingTransactions, although canceled transactions may be missing from the map) */
 	TArray<FGuid> OngoingTransactionsOrder;

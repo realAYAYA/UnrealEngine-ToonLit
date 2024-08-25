@@ -6,6 +6,7 @@
 #include "Async/Fundamental/Scheduler.h"
 #include "HAL/LowLevelMemTracker.h"
 #include "HAL/PlatformProcess.h"
+#include "Misc/Fork.h"
 #include "Misc/ScopeLock.h"
 #include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "Trace/Trace.h"
@@ -72,8 +73,10 @@ void FReserveScheduler::StartWorkers(uint32 NumWorkers, FThread::EForkable IsFor
 
 	WorkerPriority = GTaskGraphUseDynamicPrioritization ? LowLevelTasks::FScheduler::Get().GetWorkerPriority() : WorkerPriority;
 
+	const bool bSupportsMultithreading = FPlatformProcess::SupportsMultithreading() || FForkProcessHelper::IsForkedMultithreadInstance();
+
 	uint32 OldActiveWorkers = ActiveWorkers.load(std::memory_order_relaxed);
-	if(OldActiveWorkers == 0 && FPlatformProcess::SupportsMultithreading() && ActiveWorkers.compare_exchange_strong(OldActiveWorkers, NumWorkers, std::memory_order_relaxed))
+	if(OldActiveWorkers == 0 && bSupportsMultithreading && ActiveWorkers.compare_exchange_strong(OldActiveWorkers, NumWorkers, std::memory_order_relaxed))
 	{
 		LLM_SCOPE_BYNAME(TEXT("EngineMisc/WorkerThreads"));
 
@@ -81,12 +84,12 @@ void FReserveScheduler::StartWorkers(uint32 NumWorkers, FThread::EForkable IsFor
 		check(!WorkerThreads.Num());
 		check(NextWorkerId == 0);
 
-		ReserveEvents.Reserve(NumWorkers);
+		ReserveEvents.AddDefaulted(NumWorkers);
+		WorkerThreads.Reserve(NumWorkers);
 		UE::Trace::ThreadGroupBegin(TEXT("Reserve Workers"));
 		for (uint32 WorkerId = 0; WorkerId < NumWorkers; ++WorkerId)
 		{
-			ReserveEvents.Emplace();
-			WorkerThreads.Add(CreateWorker(IsForkable, &ReserveEvents.Last(), WorkerPriority));
+			WorkerThreads.Add(CreateWorker(IsForkable, &ReserveEvents[WorkerId], WorkerPriority));
 		}
 		UE::Trace::ThreadGroupEnd();
 	}

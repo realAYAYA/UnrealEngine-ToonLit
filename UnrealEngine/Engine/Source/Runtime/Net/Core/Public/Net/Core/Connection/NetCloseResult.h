@@ -330,6 +330,8 @@ enum class ENetCloseResult : uint32
 	/** Field payload serialization failed */
 	FieldPayloadFail,
 
+	/** Replication Channel Count was exceeded and channel creation failed */
+	ReplicationChannelCountMaxedOut,
 
 	/** Beacon Error result types */
 
@@ -369,6 +371,14 @@ enum class ENetCloseResult : uint32
 	/** Join failure, unexpected control message */
 	BeaconSpawnUnexpectedError,
 
+	
+	/** Iris Error result types */
+
+	/** Protocol mismatch in Iris preventing a critical object instantiation */
+	IrisProtocolMismatch,
+
+	/** When a specific handle caused a reading error */
+	IrisNetRefHandleError,
 
 	/** Fault Handler Error result types */
 

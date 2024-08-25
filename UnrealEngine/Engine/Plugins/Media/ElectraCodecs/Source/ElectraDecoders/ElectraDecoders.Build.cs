@@ -13,7 +13,7 @@ namespace UnrealBuildTool.Rules
 				return Target.Platform.IsInGroup(UnrealPlatformGroup.Windows)
 					|| Target.Platform.IsInGroup(UnrealPlatformGroup.Android)
 					|| Target.IsInPlatformGroup(UnrealPlatformGroup.Unix)
-					|| Target.Platform == UnrealTargetPlatform.IOS || Target.Platform == UnrealTargetPlatform.TVOS || Target.Platform == UnrealTargetPlatform.Mac;
+					|| Target.IsInPlatformGroup(UnrealPlatformGroup.Apple);
 			}
 		}
 
@@ -27,7 +27,8 @@ namespace UnrealBuildTool.Rules
 
 			PrivateDependencyModuleNames.AddRange(
 				new string[] {
-					"Core"
+					"Core",
+					"SignalProcessing"
 				});
 
 			PublicIncludePathModuleNames.AddRange(
@@ -43,6 +44,7 @@ namespace UnrealBuildTool.Rules
 			if (Target.Platform.IsInGroup(UnrealPlatformGroup.Windows))
 			{
 				PublicDependencyModuleNames.Add("DirectX");
+				AddEngineThirdPartyPrivateStaticDependencies(Target, "DX12");
 
 				PrivateDefinitions.Add("_CRT_SECURE_NO_WARNINGS=1");
 
@@ -57,7 +59,7 @@ namespace UnrealBuildTool.Rules
 				if (Target.Platform.IsInGroup(UnrealPlatformGroup.Windows) && Target.WindowsPlatform.Architecture != UnrealArch.Arm64)
 				{
 					PublicAdditionalLibraries.AddRange(new string[] {
-						DirectX.GetLibDir(Target) + "dxerr.lib",
+						Path.Combine(Target.WindowsPlatform.DirectXLibDir, "dxerr.lib"),
 					});
 				}
 
@@ -91,7 +93,7 @@ namespace UnrealBuildTool.Rules
 
 				AddEngineThirdPartyPrivateStaticDependencies(Target, "libav");
 			}
-			else if (Target.Platform == UnrealTargetPlatform.IOS || Target.Platform == UnrealTargetPlatform.TVOS || Target.Platform == UnrealTargetPlatform.Mac)
+			else if (Target.IsInPlatformGroup(UnrealPlatformGroup.Apple))
 			{
 				PublicFrameworks.AddRange(
 				new string[] {

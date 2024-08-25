@@ -9,10 +9,13 @@
 #include "Interfaces/IPluginManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "Misc/SecureHash.h"
+#include "NNE.h"
 #include "NNEModelData.h"
 #include "NNERuntimeFormat.h"
 #include "NNERuntimeRDGBase.h"
-#include "NNEUtilsModelOptimizer.h"
+#ifdef NNE_UTILITIES_AVAILABLE
+#include "NNEUtilitiesModelOptimizer.h"
+#endif // NNE_UTILITIES_AVAILABLE
 
 #ifdef NNE_USE_DIRECTML
 
@@ -28,7 +31,7 @@ namespace UE::NNERuntimeRDG::Private::Dml
 bool FRuntimeDmlStartup()
 {
 	bool bIsD3D12RHI = GDynamicRHI && GDynamicRHI->GetInterfaceType() == ERHIInterfaceType::D3D12;		
-	bool bLoadDirectML = true;
+	bool bLoadDirectML = bIsD3D12RHI;
 
 	if (IsRunningCommandlet() && !IsAllowCommandletRendering())
 	{
@@ -77,7 +80,20 @@ bool FRuntimeDmlStartup()
 				checkf(false, TEXT("%s"), *ErrorMessage);
 			}
 
-			FPlatformProcess::GetDllHandle(*DirectMLDLLPaths[Idx]);
+			void* DllHandle = FPlatformProcess::GetDllHandle(*DirectMLDLLPaths[Idx]);
+			if (!DllHandle)
+			{
+				const FString ErrorMessage = FString::Format(TEXT("DLL file could not be loaded from \"{0}\"."),
+					{ IFileManager::Get().ConvertToAbsolutePathForExternalAppForRead(*DirectMLDLLPaths[Idx]) });
+				UE_LOG(LogNNE, Warning, TEXT("NNERuntimeRDGDml:%s"), *ErrorMessage);
+				checkf(false, TEXT("%s"), *ErrorMessage);
+			}
+			else
+			{
+				const FString SuccessMessage = FString::Format(TEXT("DLL file loaded from \"{0}\"."),
+					{ IFileManager::Get().ConvertToAbsolutePathForExternalAppForRead(*DirectMLDLLPaths[Idx]) });
+				UE_LOG(LogNNE, Display, TEXT("NNERuntimeRDGDml:%s"), *SuccessMessage);
+			}
 		}
 
 #if defined(DIRECTML_PATH)
@@ -96,19 +112,26 @@ bool FRuntimeDmlStartup()
 
 using namespace UE::NNERuntimeRDG::Private::Dml;
 
-bool UNNERuntimeRDGDmlImpl::CanCreateModelData(FString FileType, TConstArrayView<uint8> FileData, FGuid FileId, const ITargetPlatform* TargetPlatform) const
+UNNERuntimeRDGDmlImpl::ECanCreateModelDataStatus UNNERuntimeRDGDmlImpl::CanCreateModelData(const FString& FileType, TConstArrayView<uint8> FileData, const TMap<FString, TConstArrayView<uint8>>& AdditionalFileData, const FGuid& FileId, const ITargetPlatform* TargetPlatform) const
 {
-	return FileType.Compare("onnx", ESearchCase::IgnoreCase) == 0;
+#ifdef NNE_UTILITIES_AVAILABLE
+	return FileType.Compare("onnx", ESearchCase::IgnoreCase) == 0 ? ECanCreateModelDataStatus::Ok : ECanCreateModelDataStatus::FailFileIdNotSupported;
+#else
+	UE_LOG(LogNNE, Display, TEXT("NNEUtilities is not available on this platform"));
+	return ECanCreateModelDataStatus::Fail;
+#endif
 }
 
-TArray<uint8> UNNERuntimeRDGDmlImpl::CreateModelData(FString FileType, TConstArrayView<uint8> FileData, FGuid FileId, const ITargetPlatform* TargetPlatform)
+TSharedPtr<UE::NNE::FSharedModelData> UNNERuntimeRDGDmlImpl::CreateModelData(const FString& FileType, TConstArrayView<uint8> FileData, const TMap<FString, TConstArrayView<uint8>>& AdditionalFileData, const FGuid& FileId, const ITargetPlatform* TargetPlatform)
 {
-	if (!CanCreateModelData(FileType, FileData, FileId, TargetPlatform))
+	if (CanCreateModelData(FileType, FileData, AdditionalFileData, FileId, TargetPlatform) != ECanCreateModelDataStatus::Ok)
 	{
+		UE_LOG(LogNNE, Warning, TEXT("UNNERuntimeRDGDml cannot create the model data with id %s (Filetype: %s)"), *FileId.ToString(EGuidFormats::Digits).ToLower(), *FileType);
 		return {};
 	}
 
-	TUniquePtr<UE::NNE::Internal::IModelOptimizer> Optimizer = UE::NNEUtils::Internal::CreateONNXToNNEModelOptimizer();
+#ifdef NNE_UTILITIES_AVAILABLE
+	TUniquePtr<UE::NNE::Internal::IModelOptimizer> Optimizer = UE::NNEUtilities::Internal::CreateONNXToNNEModelOptimizer();
 #ifdef NNE_USE_DIRECTML
 	Optimizer->AddValidator(MakeShared<FModelValidatorDml>());
 #endif
@@ -132,40 +155,59 @@ TArray<uint8> UNNERuntimeRDGDmlImpl::CreateModelData(FString FileType, TConstArr
 	Writer << Guid;
 	Writer << Version;
 	Writer.Serialize(OutputModel.Data.GetData(), OutputModel.Data.Num());
-	return Result;
+
+	return MakeShared<UE::NNE::FSharedModelData>(MakeSharedBufferFromArray(MoveTemp(Result)), 0);
+#else //NNE_UTILITIES_AVAILABLE
+	return {};
+#endif //NNE_UTILITIES_AVAILABLE
 };
 
-FString UNNERuntimeRDGDmlImpl::GetModelDataIdentifier(FString FileType, TConstArrayView<uint8> FileData, FGuid FileId, const ITargetPlatform* TargetPlatform)
+FString UNNERuntimeRDGDmlImpl::GetModelDataIdentifier(const FString& FileType, TConstArrayView<uint8> FileData, const TMap<FString, TConstArrayView<uint8>>& AdditionalFileData, const FGuid& FileId, const ITargetPlatform* TargetPlatform) const
 {
 	return FileId.ToString(EGuidFormats::Digits) + "-" + FModelInfo::Get()->GetGuid().ToString(EGuidFormats::Digits) + "-" + FString::FromInt(FModelInfo::Get()->GetVersion());
 }
 
-bool UNNERuntimeRDGDmlImpl::CanCreateModelRDG(TObjectPtr<UNNEModelData> ModelData) const
+UNNERuntimeRDGDmlImpl::ECanCreateModelRDGStatus UNNERuntimeRDGDmlImpl::CanCreateModelRDG(const TObjectPtr<UNNEModelData> ModelData) const
 {
 #ifdef NNE_USE_DIRECTML
-	TConstArrayView<uint8> Data = ModelData->GetModelData(GetRuntimeName());
+	if (bRegisterOnlyOperators)
+	{
+		return ECanCreateModelRDGStatus::Fail;
+	}
+
+	TSharedPtr<UE::NNE::FSharedModelData> SharedData = ModelData->GetModelData(GetRuntimeName());
+
+	if (!SharedData.IsValid())
+	{
+		return ECanCreateModelRDGStatus::Fail;
+	}
+
+	TConstArrayView<uint8> Data = SharedData->GetView();
 
 	if (Data.Num() <= FModelInfo::Get()->GetGuidSize() + FModelInfo::Get()->GetVersionSize())
 	{
-		return false;
+		return ECanCreateModelRDGStatus::Fail;
 	}
 
 	bool bResult = FModelInfo::Get()->ValidateGuidAndVersion(Data.GetData(), Data.GetData() + FModelInfo::Get()->GetGuidSize());
-	return bResult;
+
+	return bResult ? ECanCreateModelRDGStatus::Ok : ECanCreateModelRDGStatus::Fail;
 #else
-	return false;
+	return ECanCreateModelRDGStatus::Fail;
 #endif
 };
 
-TUniquePtr<UE::NNE::IModelRDG> UNNERuntimeRDGDmlImpl::CreateModel(TObjectPtr<UNNEModelData> ModelData)
+TSharedPtr<UE::NNE::IModelRDG> UNNERuntimeRDGDmlImpl::CreateModelRDG(const TObjectPtr<UNNEModelData> ModelData)
 {
 #ifdef NNE_USE_DIRECTML
-	if (!CanCreateModelRDG(ModelData))
+	if (CanCreateModelRDG(ModelData) != ECanCreateModelRDGStatus::Ok)
 	{
-		return TUniquePtr<UE::NNE::IModelRDG>();
+		UE_LOG(LogNNE, Warning, TEXT("UNNERuntimeRDGDml cannot create a model from the model data with id %s"), *ModelData->GetFileId().ToString(EGuidFormats::Digits));
+		return TSharedPtr<UE::NNE::IModelRDG>();
 	}
 
-	TConstArrayView<uint8> Data = ModelData->GetModelData(GetRuntimeName());
+	TSharedPtr<UE::NNE::FSharedModelData> Data = ModelData->GetModelData(GetRuntimeName());
+	check(Data.IsValid());
 	FModel* Model = new FModel(Data, Ctx);
 
 	if (FEngineAnalytics::IsAvailable())
@@ -173,14 +215,14 @@ TUniquePtr<UE::NNE::IModelRDG> UNNERuntimeRDGDmlImpl::CreateModel(TObjectPtr<UNN
 		TArray<FAnalyticsEventAttribute> Attributes = MakeAnalyticsEventAttributeArray(
 			TEXT("PlatformName"), UGameplayStatics::GetPlatformName(),
 			TEXT("HashedRuntimeName"), FMD5::HashAnsiString(*GetRuntimeName()),
-			TEXT("ModelDataSize"), Data.Num()
+			TEXT("ModelDataSize"), Data->GetView().Num()
 		);
 		FEngineAnalytics::GetProvider().RecordEvent(TEXT("NeuralNetworkEngine.CreateModel"), Attributes);
 	}
 
-	return TUniquePtr<UE::NNE::IModelRDG>(Model);
+	return TSharedPtr<UE::NNE::IModelRDG>(Model);
 #else
-	return TUniquePtr<UE::NNE::IModelRDG>();
+	return TSharedPtr<UE::NNE::IModelRDG>();
 #endif
 }
 
@@ -195,13 +237,15 @@ UNNERuntimeRDGDmlImpl::~UNNERuntimeRDGDmlImpl()
 #endif
 }
 
-bool UNNERuntimeRDGDmlImpl::Init(bool bRegisterOnlyOperators)
+bool UNNERuntimeRDGDmlImpl::Init(bool bInRegisterOnlyOperators)
 {
+	bRegisterOnlyOperators = bInRegisterOnlyOperators;
+
 #ifdef NNE_USE_DIRECTML
 	
 	if (bRegisterOnlyOperators)
 	{
-		UE_LOG(LogNNE, Display, TEXT("Registering only operators"));
+		UE_LOG(LogNNE, Display, TEXT("RDGDml:Registering only operators"));
 		return true;
 	}
 

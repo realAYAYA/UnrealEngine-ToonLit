@@ -5,6 +5,7 @@
 #include "HAL/PlatformTime.h"
 #include "HAL/PlatformProcess.h"
 #include "HAL/RunnableThread.h"
+#include "HttpManager.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/CommandLine.h"
 #include "Misc/Fork.h"
@@ -23,6 +24,23 @@ DECLARE_CYCLE_STAT(TEXT("IsThreadedRequestComplete"), STAT_HTTPThread_IsThreaded
 DECLARE_CYCLE_STAT(TEXT("CompleteThreadedRequest"), STAT_HTTPThread_CompleteThreadedRequest, STATGROUP_HTTPThread);
 DECLARE_CYCLE_STAT(TEXT("ActiveSleep"), STAT_HTTPThread_ActiveSleep, STATGROUP_HTTPThread);
 DECLARE_CYCLE_STAT(TEXT("IdleSleep"), STAT_HTTPThread_IdleSleep, STATGROUP_HTTPThread);
+
+class FHttpTaskTimerHandleFTSTicker : public IHttpTaskTimerHandle
+{
+public:
+	FHttpTaskTimerHandleFTSTicker(FTSTicker::FDelegateHandle InHandle)
+		: Handle(InHandle)
+	{
+	}
+
+	virtual void RemoveTaskFrom(FHttpThreadBase* HttpThreadBase) 
+	{ 
+		HttpThreadBase->RemoveTimerHandle(Handle);
+	}
+
+private:
+	FTSTicker::FDelegateHandle Handle;
+};
 
 // FHttpThread
 
@@ -88,7 +106,6 @@ void FHttpThreadBase::CancelRequest(IHttpThreadedRequest* Request)
 
 void FHttpThreadBase::GetCompletedRequests(TArray<IHttpThreadedRequest*>& OutCompletedRequests)
 {
-	check(IsInGameThread());
 	IHttpThreadedRequest* Request = nullptr;
 	while (CompletedThreadedRequests.Dequeue(Request))
 	{
@@ -110,13 +127,10 @@ uint32 FHttpThreadBase::Run()
 
 void FHttpThreadBase::Tick()
 {
-	// Run HttpThread tasks
-	TFunction<void()> Task = nullptr;
-	while (HttpThreadQueue.Dequeue(Task))
-	{
-		check(Task);
-		Task();
-	}
+	const double AppTime = FPlatformTime::Seconds();
+	const double ElapsedTime = AppTime - LastTime;
+	LastTime = AppTime;
+	HttpThreadTick(ElapsedTime);
 }
 
 bool FHttpThreadBase::NeedsSingleThreadTick() const
@@ -127,7 +141,14 @@ bool FHttpThreadBase::NeedsSingleThreadTick() const
 void FHttpThreadBase::UpdateConfigs()
 {
 	int32 LocalRunningThreadedRequestLimit = -1;
-	if (GConfig->GetInt(TEXT("HTTP.HttpThread"), TEXT("RunningThreadedRequestLimit"), LocalRunningThreadedRequestLimit, GEngineIni))
+	const bool bFoundLocalRunningThreadedRequestLimit =
+	(
+#if WITH_EDITOR
+		GConfig->GetInt(TEXT("HTTP.HttpThread"), TEXT("RunningThreadedRequestLimitEditor"), LocalRunningThreadedRequestLimit, GEditorIni) ||
+#endif
+		GConfig->GetInt(TEXT("HTTP.HttpThread"), TEXT("RunningThreadedRequestLimit"), LocalRunningThreadedRequestLimit, GEngineIni)
+	);
+	if (bFoundLocalRunningThreadedRequestLimit)
 	{
 		if (LocalRunningThreadedRequestLimit < 1)
 		{
@@ -140,17 +161,8 @@ void FHttpThreadBase::UpdateConfigs()
 	}
 }
 
-void FHttpThreadBase::AddHttpThreadTask(TFunction<void()>&& Task)
-{
-	if (Task)
-	{
-		HttpThreadQueue.Enqueue(MoveTemp(Task));
-	}
-}
-
 void FHttpThreadBase::HttpThreadTick(float DeltaSeconds)
 {
-	// empty
 }
 
 bool FHttpThreadBase::StartThreadedRequest(IHttpThreadedRequest* Request)
@@ -178,10 +190,8 @@ void FHttpThreadBase::Exit()
 	// empty
 }
 
-void FHttpThreadBase::Process(TArray<IHttpThreadedRequest*>& RequestsToCancel, TArray<IHttpThreadedRequest*>& RequestsToComplete)
+void FHttpThreadBase::ConsumeCanceledRequestsAndNewRequests(TArray<IHttpThreadedRequest*>& RequestsToCancel, TArray<IHttpThreadedRequest*>& RequestsToComplete)
 {
-	SCOPE_CYCLE_COUNTER(STAT_HTTPThread_Process);
-
 	// cache all cancelled and new requests
 	{
 		IHttpThreadedRequest* Request = nullptr;
@@ -214,20 +224,10 @@ void FHttpThreadBase::Process(TArray<IHttpThreadedRequest*>& RequestsToCancel, T
 			UE_LOG(LogHttp, Warning, TEXT("Unable to find request (%p) in HttpThread"), Request);
 		}
 	}
+}
 
-	const double AppTime = FPlatformTime::Seconds();
-	const double ElapsedTime = AppTime - LastTime;
-	LastTime = AppTime;
-
-	// Tick any running requests
-	// as long as they properly finish in HttpThreadTick below they are unaffected by a possibly large ElapsedTime above
-	for (IHttpThreadedRequest* Request : RunningThreadedRequests)
-	{
-		SCOPE_CYCLE_COUNTER(STAT_HTTPThread_TickThreadedRequest);
-
-		Request->TickThreadedRequest(ElapsedTime);
-	}
-
+void FHttpThreadBase::StartRequestsWaitingInQueue(TArray<IHttpThreadedRequest*>& RequestsToComplete)
+{
 	// We'll start rate limited requests until we hit the limit
 	// Tick new requests separately from existing RunningThreadedRequests so they get a chance 
 	// to send unaffected by possibly large ElapsedTime above
@@ -262,6 +262,27 @@ void FHttpThreadBase::Process(TArray<IHttpThreadedRequest*>& RequestsToCancel, T
 		}
 	}
 
+	if (!RateLimitedThreadedRequests.IsEmpty())
+	{
+		FHttpModule::Get().GetHttpManager().RecordStatRequestsInQueue(RateLimitedThreadedRequests.Num());
+	}
+}
+
+void FHttpThreadBase::MoveCompletingRequestsToCompletedRequests(TArray<IHttpThreadedRequest*>& RequestsToComplete)
+{
+	const double AppTime = FPlatformTime::Seconds();
+	const double ElapsedTime = AppTime - LastTime;
+	LastTime = AppTime;
+
+	// Tick any running requests
+	// as long as they properly finish in HttpThreadTick below they are unaffected by a possibly large ElapsedTime above
+	for (IHttpThreadedRequest* Request : RunningThreadedRequests)
+	{
+		SCOPE_CYCLE_COUNTER(STAT_HTTPThread_TickThreadedRequest);
+
+		Request->TickThreadedRequest(ElapsedTime);
+	}
+
 	{
 		SCOPE_CYCLE_COUNTER(STAT_HTTPThread_HttpThreadTick);
 
@@ -285,7 +306,10 @@ void FHttpThreadBase::Process(TArray<IHttpThreadedRequest*>& RequestsToCancel, T
 			UE_LOG(LogHttp, Verbose, TEXT("Threaded request (%p) completed. Running threaded requests (%d)"), Request, RunningThreadedRequests.Num());
 		}
 	}
+}
 
+void FHttpThreadBase::FinishRequestsFromHttpThreadWithCallbacks(TArray<IHttpThreadedRequest*>& RequestsToComplete)
+{
 	if (RequestsToComplete.Num() > 0)
 	{
 		for (IHttpThreadedRequest* Request : RequestsToComplete)
@@ -297,12 +321,26 @@ void FHttpThreadBase::Process(TArray<IHttpThreadedRequest*>& RequestsToCancel, T
 			if (Request->GetDelegateThreadPolicy() == EHttpRequestDelegateThreadPolicy::CompleteOnHttpThread)
 			{
 				Request->FinishRequest();
+				FHttpModule::Get().GetHttpManager().BroadcastHttpRequestCompleted(Request->AsShared());
 			}
 
 			CompletedThreadedRequests.Enqueue(Request);
 		}
 		RequestsToComplete.Reset();
 	}
+}
+
+void FHttpThreadBase::Process(TArray<IHttpThreadedRequest*>& RequestsToCancel, TArray<IHttpThreadedRequest*>& RequestsToComplete)
+{
+	SCOPE_CYCLE_COUNTER(STAT_HTTPThread_Process);
+
+	ConsumeCanceledRequestsAndNewRequests(RequestsToCancel, RequestsToComplete);
+
+	MoveCompletingRequestsToCompletedRequests(RequestsToComplete);
+
+	StartRequestsWaitingInQueue(RequestsToComplete);
+
+	FinishRequestsFromHttpThreadWithCallbacks(RequestsToComplete);
 }
 
 FLegacyHttpThread::FLegacyHttpThread()
@@ -358,12 +396,38 @@ void FLegacyHttpThread::Tick()
 	}
 }
 
+TSharedPtr<IHttpTaskTimerHandle> FLegacyHttpThread::AddHttpThreadTask(TFunction<void()>&& Task, float InDelay)
+{
+	return MakeShared<FHttpTaskTimerHandleFTSTicker>(Ticker.AddTicker(FTickerDelegate::CreateLambda([this, Task=MoveTemp(Task)](float) {
+		Task();
+		return false;
+	}), InDelay));
+}
+
+void FLegacyHttpThread::RemoveTimerHandle(FTSTicker::FDelegateHandle DelegateHandle)
+{
+	Ticker.RemoveTicker(DelegateHandle);
+}
+
+void FLegacyHttpThread::RemoveTimerHandle(UE::EventLoop::FTimerHandle EventLoopTimerHandle)
+{
+	checkNoEntry();
+}
+
+void FLegacyHttpThread::HttpThreadTick(float DeltaSeconds)
+{
+	FHttpThreadBase::HttpThreadTick(DeltaSeconds);
+
+	Ticker.Tick(DeltaSeconds);
+}
+
 bool FLegacyHttpThread::Init()
 {
 	ExitRequest.Set(false);
 	return FHttpThreadBase::Init();
 }
 
+UE_DISABLE_OPTIMIZATION_SHIP
 uint32 FLegacyHttpThread::Run()
 {
 	// Arrays declared outside of loop to re-use memory
@@ -392,6 +456,16 @@ uint32 FLegacyHttpThread::Run()
 				{
 					SCOPE_CYCLE_COUNTER(STAT_HTTPThread_ActiveSleep);
 					double InnerLoopTime = InnerLoopEnd - InnerLoopBegin;
+
+					// On Windows when optimization enabled, seems InnerLoopEnd can get a value without adding the 
+					// const value 16777216.0 from FWindowsPlatformTime::Seoncds(), it could be caused by https://github.com/openssl/openssl/issues/21522
+					// Until we upgrade to new openssl to confirm the fix, keep this along with PRAGMA_DISABLE_OPTIMIZATION
+					// as an additional step to be safe
+					if (InnerLoopTime < 0.0)
+					{
+						InnerLoopTime = 0.0;
+					}
+
 					double InnerSleep = FMath::Max(HttpThreadActiveFrameTimeInSeconds - InnerLoopTime, HttpThreadActiveMinimumSleepTimeInSeconds);
 					FPlatformProcess::SleepNoStats(InnerSleep);
 				}
@@ -412,6 +486,7 @@ uint32 FLegacyHttpThread::Run()
 	}
 	return 0;
 }
+UE_ENABLE_OPTIMIZATION_SHIP
 
 void FLegacyHttpThread::Stop()
 {

@@ -17,8 +17,7 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-    NODE_TYPE NodeScalarCurve::Private::s_type =
-            NODE_TYPE( "Curve", NodeScalarCurve::GetStaticType() );
+    FNodeType NodeScalarCurve::Private::s_type = FNodeType( "Curve", NodeScalar::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -26,35 +25,6 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 
     MUTABLE_IMPLEMENT_NODE( NodeScalarCurve, EType::Curve, Node, Node::EType::Scalar)
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-    int NodeScalarCurve::GetInputCount() const
-	{
-		return 1;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    Node* NodeScalarCurve::GetInputNode( int i ) const
-	{
-		check( i >=0 && i < GetInputCount() );
-        (void)i;
-
-		return m_pD->m_input_scalar.get();
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    void NodeScalarCurve::SetInputNode( int i, NodePtr pNode )
-	{
-		check( i >=0 && i < GetInputCount());
-        (void)i;
-
-		m_pD->m_input_scalar = dynamic_cast<NodeScalar*>(pNode.get());
-	}
 
 
 	//---------------------------------------------------------------------------------------------

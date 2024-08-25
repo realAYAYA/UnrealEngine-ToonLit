@@ -96,26 +96,25 @@ namespace Metasound
 			return Metadata;
 		}
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, TArray<TUniquePtr<IOperatorBuildError>>& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
 			using namespace WaveTable;
+			
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 
-			const FInputVertexInterface& InputInterface = InParams.Node.GetVertexInterface().GetInputInterface();
-			const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
-
-			FWaveTableReadRef InWaveTableReadRef = InputCollection.GetDataReadReferenceOrConstruct<FWaveTable>("WaveTable");
-			FTriggerReadRef InPlayReadRef = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<FTrigger>(InputInterface, "Play", InParams.OperatorSettings);
-			FTriggerReadRef InStopReadRef = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<FTrigger>(InputInterface, "Stop", InParams.OperatorSettings);
-			FTriggerReadRef InPauseReadRef = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<FTrigger>(InputInterface, "Pause", InParams.OperatorSettings);
-			FTimeReadRef InDurationReadRef = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<FTime>(InputInterface, "Duration", InParams.OperatorSettings);
-			FEnumWaveTableEnvelopeModeReadRef InModeReadRef = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<FEnumWaveTableEnvelopeMode>( InputInterface, "Mode", InParams.OperatorSettings);
-			FEnumWaveTableInterpModeReadRef InInterpReadRef = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<FEnumWaveTableInterpolationMode>(InputInterface, "Interpolation", InParams.OperatorSettings);
+			FWaveTableReadRef InWaveTableReadRef = InputData.GetOrConstructDataReadReference<FWaveTable>("WaveTable");
+			FTriggerReadRef InPlayReadRef = InputData.GetOrCreateDefaultDataReadReference<FTrigger>("Play", InParams.OperatorSettings);
+			FTriggerReadRef InStopReadRef = InputData.GetOrCreateDefaultDataReadReference<FTrigger>("Stop", InParams.OperatorSettings);
+			FTriggerReadRef InPauseReadRef = InputData.GetOrCreateDefaultDataReadReference<FTrigger>("Pause", InParams.OperatorSettings);
+			FTimeReadRef InDurationReadRef = InputData.GetOrCreateDefaultDataReadReference<FTime>("Duration", InParams.OperatorSettings);
+			FEnumWaveTableEnvelopeModeReadRef InModeReadRef = InputData.GetOrCreateDefaultDataReadReference<FEnumWaveTableEnvelopeMode>("Mode", InParams.OperatorSettings);
+			FEnumWaveTableInterpModeReadRef InInterpReadRef = InputData.GetOrCreateDefaultDataReadReference<FEnumWaveTableInterpolationMode>("Interpolation", InParams.OperatorSettings);
 
 			return MakeUnique<FMetasoundWaveTableEnvelopeNodeOperator>(InParams, InWaveTableReadRef, InPlayReadRef, InStopReadRef, InPauseReadRef, InDurationReadRef, InModeReadRef, InInterpReadRef);
 		}
 
 		FMetasoundWaveTableEnvelopeNodeOperator(
-			const FCreateOperatorParams& InParams,
+			const FBuildOperatorParams& InParams,
 			const FWaveTableReadRef& InWaveTableReadRef,
 			const FTriggerReadRef& InPlayReadRef,
 			const FTriggerReadRef& InStopReadRef,

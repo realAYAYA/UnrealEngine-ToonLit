@@ -89,11 +89,14 @@ void FISMComponentDescriptorBase::InitFrom(const UStaticMeshComponent* Template,
 	OverriddenLightMapRes = Template->OverriddenLightMapRes;
 	CustomDepthStencilValue = Template->CustomDepthStencilValue;
 	bCastShadow = Template->CastShadow;
+	bEmissiveLightSource = Template->bEmissiveLightSource;
 	bCastStaticShadow = Template->bCastStaticShadow;
 	bCastDynamicShadow = Template->bCastDynamicShadow;
 	bCastContactShadow = Template->bCastContactShadow;
 	bCastShadowAsTwoSided = Template->bCastShadowAsTwoSided;
+	bCastHiddenShadow = Template->bCastHiddenShadow;
 	bAffectDynamicIndirectLighting = Template->bAffectDynamicIndirectLighting;
+	bAffectDynamicIndirectLightingWhileHidden = Template->bAffectIndirectLightingWhileHidden;
 	bAffectDistanceFieldLighting = Template->bAffectDistanceFieldLighting;
 	bReceivesDecals = Template->bReceivesDecals;
 	bOverrideLightMapRes = Template->bOverrideLightMapRes;
@@ -112,6 +115,9 @@ void FISMComponentDescriptorBase::InitFrom(const UStaticMeshComponent* Template,
 	bReverseCulling = Template->bReverseCulling != bIsLocalToWorldDeterminantNegative;
 	bUseDefaultCollision = Template->bUseDefaultCollision;
 	bGenerateOverlapEvents = Template->GetGenerateOverlapEvents();
+	bOverrideNavigationExport = Template->bOverrideNavigationExport;
+	bForceNavigationObstacle = Template->bForceNavigationObstacle;
+	bFillCollisionUnderneathForNavmesh = Template->bFillCollisionUnderneathForNavmesh;
 
 #if WITH_EDITORONLY_DATA
 	HLODBatchingPolicy = Template->HLODBatchingPolicy;
@@ -123,6 +129,7 @@ void FISMComponentDescriptorBase::InitFrom(const UStaticMeshComponent* Template,
 	{
 		InstanceStartCullDistance = ISMTemplate->InstanceStartCullDistance;
 		InstanceEndCullDistance = ISMTemplate->InstanceEndCullDistance;
+		bUseGpuLodSelection = ISMTemplate->bUseGpuLodSelection;
 
 		// HISM Specific
 		if (const UHierarchicalInstancedStaticMeshComponent* HISMTemplate = Cast<UHierarchicalInstancedStaticMeshComponent>(Template))
@@ -158,6 +165,14 @@ void FSoftISMComponentDescriptor::InitFrom(const UStaticMeshComponent* Template,
 	Super::InitFrom(Template, bInitBodyInstance);
 }
 
+void FISMComponentDescriptorBase::PostLoadFixup(UObject* Loader)
+{
+	check(Loader);
+
+	// Necessary to update the collision Response Container from the array
+	BodyInstance.FixupData(Loader);
+}
+
 bool FISMComponentDescriptorBase::operator!=(const FISMComponentDescriptorBase& Other) const
 {
 	return !(*this == Other);
@@ -191,11 +206,14 @@ bool FISMComponentDescriptorBase::operator==(const FISMComponentDescriptorBase& 
 	OverriddenLightMapRes == Other.OverriddenLightMapRes &&
 	CustomDepthStencilValue == Other.CustomDepthStencilValue &&
 	bCastShadow == Other.bCastShadow &&
+	bEmissiveLightSource == Other.bEmissiveLightSource &&
 	bCastStaticShadow == Other.bCastStaticShadow &&
 	bCastDynamicShadow == Other.bCastDynamicShadow &&
 	bCastContactShadow == Other.bCastContactShadow &&
 	bCastShadowAsTwoSided == Other.bCastShadowAsTwoSided &&
+	bCastHiddenShadow == Other.bCastHiddenShadow &&
 	bAffectDynamicIndirectLighting == Other.bAffectDynamicIndirectLighting &&
+	bAffectDynamicIndirectLightingWhileHidden == Other.bAffectDynamicIndirectLightingWhileHidden &&
 	bAffectDistanceFieldLighting == Other.bAffectDistanceFieldLighting &&
 	bReceivesDecals == Other.bReceivesDecals &&
 	bOverrideLightMapRes == Other.bOverrideLightMapRes &&
@@ -208,8 +226,12 @@ bool FISMComponentDescriptorBase::operator==(const FISMComponentDescriptorBase& 
 	bVisibleInRayTracing == Other.bVisibleInRayTracing &&
 	bEvaluateWorldPositionOffset == Other.bEvaluateWorldPositionOffset &&
 	bReverseCulling == Other.bReverseCulling &&
+	bUseGpuLodSelection == Other.bUseGpuLodSelection &&
 	bUseDefaultCollision == Other.bUseDefaultCollision &&
 	bGenerateOverlapEvents == Other.bGenerateOverlapEvents &&
+	bOverrideNavigationExport == Other.bOverrideNavigationExport &&
+	bForceNavigationObstacle == Other.bForceNavigationObstacle &&
+	bFillCollisionUnderneathForNavmesh == Other.bFillCollisionUnderneathForNavmesh &&
 	WorldPositionOffsetDisableDistance == Other.WorldPositionOffsetDisableDistance &&
 	ShadowCacheInvalidationBehavior == Other.ShadowCacheInvalidationBehavior &&
 	DetailMode == Other.DetailMode &&
@@ -244,12 +266,27 @@ bool FSoftISMComponentDescriptor::operator==(const FSoftISMComponentDescriptor& 
 		Super::operator==(Other);
 }
 
-uint32 FISMComponentDescriptor::ComputeHash() const
+uint32 FISMComponentDescriptorBase::ComputeHash() const
 {
 	FArchiveCrc32 CrcArchive;
 
 	Hash = 0; // we don't want the hash to impact the calculation
 	CrcArchive << *this;
+	Hash = CrcArchive.GetCrc();
+
+	return Hash;
+}
+
+uint32 FISMComponentDescriptor::ComputeHash() const
+{
+	Super::ComputeHash();
+
+	FISMComponentDescriptor& MutableSelf = *const_cast<FISMComponentDescriptor*>(this);
+	FArchiveCrc32 CrcArchive(Hash);
+	CrcArchive << MutableSelf.StaticMesh;
+	CrcArchive << MutableSelf.OverrideMaterials;
+	CrcArchive << MutableSelf.OverlayMaterial;
+	CrcArchive << MutableSelf.RuntimeVirtualTextures;
 	Hash = CrcArchive.GetCrc();
 
 	return Hash;
@@ -257,28 +294,23 @@ uint32 FISMComponentDescriptor::ComputeHash() const
 
 uint32 FSoftISMComponentDescriptor::ComputeHash() const
 {
-	FArchiveCrc32 CrcArchive;
+	Super::ComputeHash();
 
-	Hash = 0; // we don't want the hash to impact the calculation
-	CrcArchive << *this;
+	FSoftISMComponentDescriptor& MutableSelf = *const_cast<FSoftISMComponentDescriptor*>(this);
+	FArchiveCrc32 CrcArchive(Hash);
+	CrcArchive << MutableSelf.StaticMesh;
+	CrcArchive << MutableSelf.OverrideMaterials;
+	CrcArchive << MutableSelf.OverlayMaterial;
+	CrcArchive << MutableSelf.RuntimeVirtualTextures;
 	Hash = CrcArchive.GetCrc();
 
 	return Hash;
 }
 
-UInstancedStaticMeshComponent* FISMComponentDescriptor::CreateComponent(UObject* Outer, FName Name, EObjectFlags ObjectFlags) const
+UInstancedStaticMeshComponent* FISMComponentDescriptorBase::CreateComponent(UObject* Outer, FName Name, EObjectFlags ObjectFlags) const
 {
 	UInstancedStaticMeshComponent* ISMComponent = NewObject<UInstancedStaticMeshComponent>(Outer, ComponentClass, Name, ObjectFlags);
 	
-	InitComponent(ISMComponent);
-
-	return ISMComponent;
-}
-
-UInstancedStaticMeshComponent* FSoftISMComponentDescriptor::CreateComponent(UObject* Outer, FName Name, EObjectFlags ObjectFlags) const
-{
-	UInstancedStaticMeshComponent* ISMComponent = NewObject<UInstancedStaticMeshComponent>(Outer, ComponentClass, Name, ObjectFlags);
-
 	InitComponent(ISMComponent);
 
 	return ISMComponent;
@@ -302,11 +334,14 @@ void FISMComponentDescriptorBase::InitComponent(UInstancedStaticMeshComponent* I
 	ISMComponent->OverriddenLightMapRes = OverriddenLightMapRes;
 	ISMComponent->CustomDepthStencilValue = CustomDepthStencilValue;
 	ISMComponent->CastShadow = bCastShadow;
+	ISMComponent->bEmissiveLightSource = bEmissiveLightSource;
 	ISMComponent->bCastStaticShadow = bCastStaticShadow;
 	ISMComponent->bCastDynamicShadow = bCastDynamicShadow;
 	ISMComponent->bCastContactShadow = bCastContactShadow;
 	ISMComponent->bCastShadowAsTwoSided = bCastShadowAsTwoSided;
+	ISMComponent->bCastHiddenShadow = bCastHiddenShadow;
 	ISMComponent->bAffectDynamicIndirectLighting = bAffectDynamicIndirectLighting;
+	ISMComponent->bAffectIndirectLightingWhileHidden = bAffectDynamicIndirectLightingWhileHidden;
 	ISMComponent->bAffectDistanceFieldLighting = bAffectDistanceFieldLighting;
 	ISMComponent->bReceivesDecals = bReceivesDecals;
 	ISMComponent->bOverrideLightMapRes = bOverrideLightMapRes;
@@ -318,8 +353,12 @@ void FISMComponentDescriptorBase::InitComponent(UInstancedStaticMeshComponent* I
 	ISMComponent->bVisibleInRayTracing = bVisibleInRayTracing;
 	ISMComponent->bEvaluateWorldPositionOffset = bEvaluateWorldPositionOffset;
 	ISMComponent->bReverseCulling = bReverseCulling;
+	ISMComponent->bUseGpuLodSelection = bUseGpuLodSelection;
 	ISMComponent->bUseDefaultCollision = bUseDefaultCollision;
 	ISMComponent->SetGenerateOverlapEvents(bGenerateOverlapEvents);
+	ISMComponent->bOverrideNavigationExport = bOverrideNavigationExport;
+	ISMComponent->bForceNavigationObstacle = bForceNavigationObstacle;
+	ISMComponent->bFillCollisionUnderneathForNavmesh = bFillCollisionUnderneathForNavmesh;
 	ISMComponent->WorldPositionOffsetDisableDistance = WorldPositionOffsetDisableDistance;
 	ISMComponent->ShadowCacheInvalidationBehavior = ShadowCacheInvalidationBehavior;
 	ISMComponent->DetailMode = DetailMode;

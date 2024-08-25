@@ -1,11 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
 using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Windows.Forms;
 using System.Windows.Forms.VisualStyles;
+using EpicGames.Core;
 
 namespace UnrealGameSync
 {
@@ -39,7 +39,7 @@ namespace UnrealGameSync
 
 		private void ModifyBuildStepsWindow_Load(object sender, EventArgs e)
 		{
-			foreach(BuildStep task in _steps)
+			foreach (BuildStep task in _steps)
 			{
 				AddTask(task);
 			}
@@ -62,7 +62,7 @@ namespace UnrealGameSync
 			newStep.EstimatedDuration = 1;
 
 			using BuildStepWindow newStepWindow = new BuildStepWindow(newStep, _targetNames, _baseDirectory, _variables);
-			if(newStepWindow.ShowDialog() == DialogResult.OK)
+			if (newStepWindow.ShowDialog() == DialogResult.OK)
 			{
 				AddTask(newStep);
 			}
@@ -70,7 +70,7 @@ namespace UnrealGameSync
 
 		private void EditStepButton_Click(object sender, EventArgs e)
 		{
-			foreach(ListViewItem? item in BuildStepList.SelectedItems)
+			foreach (ListViewItem? item in BuildStepList.SelectedItems)
 			{
 				if (item != null)
 				{
@@ -84,7 +84,7 @@ namespace UnrealGameSync
 
 		private void RemoveStepButton_Click(object sender, EventArgs e)
 		{
-			foreach(ListViewItem? item in BuildStepList.SelectedItems)
+			foreach (ListViewItem? item in BuildStepList.SelectedItems)
 			{
 				if (item != null)
 				{
@@ -100,7 +100,7 @@ namespace UnrealGameSync
 		private void CloseButton_Click(object sender, EventArgs e)
 		{
 			_steps.Clear();
-			foreach(ListViewItem? item in BuildStepList.Items)
+			foreach (ListViewItem? item in BuildStepList.Items)
 			{
 				if (item != null)
 				{
@@ -112,7 +112,7 @@ namespace UnrealGameSync
 
 		private void UpdateEnabledButtons()
 		{
-			int selectedIndex = (BuildStepList.SelectedIndices.Count > 0)? BuildStepList.SelectedIndices[0] : -1;
+			int selectedIndex = (BuildStepList.SelectedIndices.Count > 0) ? BuildStepList.SelectedIndices[0] : -1;
 
 			bool hasSelection = (selectedIndex != -1);
 			EditStepButton.Enabled = hasSelection;
@@ -134,7 +134,7 @@ namespace UnrealGameSync
 
 		private void BuildStepList_DrawSubItem(object sender, DrawListViewSubItemEventArgs e)
 		{
-			if(e.ColumnIndex == 0 || e.Item == null)
+			if (e.ColumnIndex == 0 || e.Item == null)
 			{
 				e.DrawDefault = true;
 			}
@@ -143,7 +143,7 @@ namespace UnrealGameSync
 				BuildStep task = (BuildStep)e.Item.Tag;
 
 				bool enabled;
-				if(e.ColumnIndex == 1)
+				if (e.ColumnIndex == 1)
 				{
 					enabled = task.NormalSync;
 				}
@@ -153,18 +153,18 @@ namespace UnrealGameSync
 				}
 
 				bool selected = BuildStepList.SelectedItems.Contains(e.Item);
-				e.Graphics.FillRectangle(selected? SystemBrushes.Highlight : SystemBrushes.Window, e.Bounds);
+				e.Graphics.FillRectangle(selected ? SystemBrushes.Highlight : SystemBrushes.Window, e.Bounds);
 
 				CheckBoxState state;
-				if(enabled)
+				if (enabled)
 				{
-					state = (_mouseDownSubItem == e.SubItem)? CheckBoxState.CheckedPressed : CheckBoxState.CheckedNormal;
+					state = (_mouseDownSubItem == e.SubItem) ? CheckBoxState.CheckedPressed : CheckBoxState.CheckedNormal;
 				}
 				else
 				{
-					state = (_mouseDownSubItem == e.SubItem)? CheckBoxState.UncheckedPressed : CheckBoxState.UncheckedNormal;
+					state = (_mouseDownSubItem == e.SubItem) ? CheckBoxState.UncheckedPressed : CheckBoxState.UncheckedNormal;
 				}
-				
+
 				Size size = CheckBoxRenderer.GetGlyphSize(e.Graphics, state);
 				CheckBoxRenderer.DrawCheckBox(e.Graphics, new Point(e.Bounds.Left + (e.Bounds.Width - size.Width) / 2, e.Bounds.Top + (e.Bounds.Height - size.Height) / 2), state);
 			}
@@ -174,7 +174,7 @@ namespace UnrealGameSync
 		{
 			ListViewHitTestInfo hitTest = BuildStepList.HitTest(e.X, e.Y);
 			_mouseDownSubItem = hitTest.SubItem;
-			if(_mouseDownSubItem != null)
+			if (_mouseDownSubItem != null)
 			{
 				BuildStepList.Invalidate(_mouseDownSubItem.Bounds, true);
 			}
@@ -183,13 +183,13 @@ namespace UnrealGameSync
 		private void BuildStepList_MouseUp(object sender, MouseEventArgs e)
 		{
 			ListViewHitTestInfo hitTest = BuildStepList.HitTest(e.X, e.Y);
-			if(hitTest.Item != null && hitTest.SubItem != null)
+			if (hitTest.Item != null && hitTest.SubItem != null)
 			{
 				int columnIndex = hitTest.Item.SubItems.IndexOf(hitTest.SubItem);
-				if(columnIndex >= 1 && columnIndex <= 3)
+				if (columnIndex >= 1 && columnIndex <= 3)
 				{
 					BuildStep task = (BuildStep)hitTest.Item.Tag;
-					if(columnIndex == 1)
+					if (columnIndex == 1)
 					{
 						task.NormalSync ^= true;
 					}
@@ -200,7 +200,7 @@ namespace UnrealGameSync
 					BuildStepList.Invalidate(hitTest.SubItem.Bounds);
 				}
 			}
-			if(_mouseDownSubItem != null)
+			if (_mouseDownSubItem != null)
 			{
 				BuildStepList.Invalidate(_mouseDownSubItem.Bounds);
 				_mouseDownSubItem = null;
@@ -210,7 +210,7 @@ namespace UnrealGameSync
 		private void MoveUp_Click(object sender, EventArgs e)
 		{
 			BuildStepList.BeginUpdate();
-			foreach(ListViewItem? item in BuildStepList.SelectedItems)
+			foreach (ListViewItem? item in BuildStepList.SelectedItems)
 			{
 				if (item != null)
 				{
@@ -230,7 +230,7 @@ namespace UnrealGameSync
 		private void MoveDown_Click(object sender, EventArgs e)
 		{
 			BuildStepList.BeginUpdate();
-			foreach(ListViewItem? item in BuildStepList.SelectedItems)
+			foreach (ListViewItem? item in BuildStepList.SelectedItems)
 			{
 				if (item != null)
 				{
@@ -250,7 +250,7 @@ namespace UnrealGameSync
 		private void ModifyBuildStepsWindow_FormClosed(object sender, FormClosedEventArgs e)
 		{
 			_steps.Clear();
-			foreach(ListViewItem? item in BuildStepList.Items)
+			foreach (ListViewItem? item in BuildStepList.Items)
 			{
 				if (item != null)
 				{

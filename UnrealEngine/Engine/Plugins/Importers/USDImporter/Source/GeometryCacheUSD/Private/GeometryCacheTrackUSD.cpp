@@ -15,19 +15,22 @@ static bool GDisableGeoCacheTracks = false;
 static FAutoConsoleVariableRef CVarDisableGeoCacheTracks(
 	TEXT("USD.DisableGeoCacheTracks"),
 	GDisableGeoCacheTracks,
-	TEXT("Set to true to disable geometry cache tracks in Sequencer and drive them by the Time property instead. The stage must be reloaded after changing this value."));
+	TEXT("Set to true to disable geometry cache tracks in Sequencer and drive them by the Time property instead. The stage must be reloaded after "
+		 "changing this value.")
+);
 
 UGeometryCacheTrackUsd::UGeometryCacheTrackUsd()
 	: FramesPerSecond(24.0)
 	, StartFrameIndex(0)
 	, EndFrameIndex(0)
-{}
+{
+}
 
 void UGeometryCacheTrackUsd::BeginDestroy()
 {
 	UnloadUsdStage();
 
-	IGeometryCacheStreamer::Get().UnregisterTrack(this);
+	UnregisterStream();
 	UsdStream.Reset();
 
 	Super::BeginDestroy();
@@ -37,30 +40,21 @@ void UGeometryCacheTrackUsd::GetResourceSizeEx(FResourceSizeEx& CumulativeResour
 {
 	Super::GetResourceSizeEx(CumulativeResourceSize);
 
+	// Include only memory usage for data that is part of the track itself
+	// Stream data should only be relevant for the streamer, not the asset cache
+
 	// This is an additional copy that lives on the track
 	MeshData.GetResourceSizeEx(CumulativeResourceSize);
-
-	if (FGeometryCacheUsdStream* UsdStreamPtr = UsdStream.Get())
-	{
-		const FGeometryCacheStreamStats& Stats = UsdStreamPtr->GetStreamStats();
-
-		int32 NumFramesFullyLoaded = Stats.NumCachedFrames;
-		float TotalMemoryForLoadedFramesMB = Stats.MemoryUsed;
-		float MemoryPerFrameMB = TotalMemoryForLoadedFramesMB / NumFramesFullyLoaded;
-
-		// Also account for frames we're going to prefetch
-		uint32 NumRemainingFrames = UsdStreamPtr->GetNumFramesNeeded();
-		float TotalMemoryMB = TotalMemoryForLoadedFramesMB + NumRemainingFrames * MemoryPerFrameMB;
-
-		// Using 1048576 instead of 1000000 for megabyte as that's what's used by FGeometryCacheStreamBase memory stats
-		double TotalMemoryBytes = TotalMemoryMB * 1048576;
-		CumulativeResourceSize.AddDedicatedSystemMemoryBytes(static_cast<SIZE_T>(TotalMemoryBytes + 0.5));
-	}
 
 	CumulativeResourceSize.AddDedicatedSystemMemoryBytes(SampleInfos.GetAllocatedSize());
 }
 
-const bool UGeometryCacheTrackUsd::UpdateMeshData(const float Time, const bool bLooping, int32& InOutMeshSampleIndex, FGeometryCacheMeshData*& OutMeshData)
+const bool UGeometryCacheTrackUsd::UpdateMeshData(
+	const float Time,
+	const bool bLooping,
+	int32& InOutMeshSampleIndex,
+	FGeometryCacheMeshData*& OutMeshData
+)
 {
 	const int32 SampleIndex = FindSampleIndexFromTime(Time, bLooping);
 
@@ -78,11 +72,17 @@ const bool UGeometryCacheTrackUsd::UpdateMeshData(const float Time, const bool b
 	return false;
 }
 
-const bool UGeometryCacheTrackUsd::UpdateBoundsData(const float Time, const bool bLooping, const bool bIsPlayingBackward, int32& InOutBoundsSampleIndex, FBox& OutBounds)
+const bool UGeometryCacheTrackUsd::UpdateBoundsData(
+	const float Time,
+	const bool bLooping,
+	const bool bIsPlayingBackward,
+	int32& InOutBoundsSampleIndex,
+	FBox& OutBounds
+)
 {
 	const int32 SampleIndex = FindSampleIndexFromTime(Time, bLooping);
 
-	const FGeometryCacheTrackSampleInfo& SampledInfo = GetSampleInfo(Time, bLooping);
+	const FGeometryCacheTrackSampleInfo& SampledInfo = GetSampleInfo(SampleIndex);
 	if (InOutBoundsSampleIndex != SampleIndex)
 	{
 		OutBounds = SampledInfo.BoundingBox;
@@ -131,6 +131,17 @@ void UGeometryCacheTrackUsd::GetFractionalFrameIndexFromTime(const float Time, c
 
 const FGeometryCacheTrackSampleInfo& UGeometryCacheTrackUsd::GetSampleInfo(float Time, bool bLooping)
 {
+	const int32 SampleIndex = FindSampleIndexFromTime(Time, bLooping);
+	return GetSampleInfo(SampleIndex);
+}
+
+const FGeometryCacheTrackSampleInfo& UGeometryCacheTrackUsd::GetSampleInfo(int32 SampleIndex)
+{
+	if (SampleIndex < 0)
+	{
+		return FGeometryCacheTrackSampleInfo::EmptySampleInfo;
+	}
+
 	if (SampleInfos.Num() == 0)
 	{
 		if (Duration > 0.f)
@@ -145,7 +156,6 @@ const FGeometryCacheTrackSampleInfo& UGeometryCacheTrackUsd::GetSampleInfo(float
 	}
 
 	// The sample info index must start from 0, while the sample index is between the range of the animation
-	const int32 SampleIndex = FindSampleIndexFromTime(Time, bLooping);
 	const int32 SampleInfoIndex = SampleIndex - StartFrameIndex;
 
 	FGeometryCacheTrackSampleInfo& CurrentSampleInfo = SampleInfos[SampleInfoIndex];
@@ -155,6 +165,7 @@ const FGeometryCacheTrackSampleInfo& UGeometryCacheTrackUsd::GetSampleInfo(float
 		FGeometryCacheMeshData TempMeshData;
 		if (GetMeshData(SampleIndex, TempMeshData))
 		{
+			float Time = GetTimeFromSampleIndex(SampleIndex);
 			CurrentSampleInfo = FGeometryCacheTrackSampleInfo(
 				Time,
 				(FBox)TempMeshData.BoundingBox,
@@ -178,6 +189,11 @@ bool UGeometryCacheTrackUsd::GetMeshDataAtTime(float Time, FGeometryCacheMeshDat
 {
 	const bool bLooping = true;
 	const int32 SampleIndex = FindSampleIndexFromTime(Time, bLooping);
+	return GetMeshData(SampleIndex, OutMeshData);
+}
+
+bool UGeometryCacheTrackUsd::GetMeshDataAtSampleIndex(int32 SampleIndex, FGeometryCacheMeshData& OutMeshData)
+{
 	return GetMeshData(SampleIndex, OutMeshData);
 }
 
@@ -206,7 +222,13 @@ bool UGeometryCacheTrackUsd::LoadUsdStage()
 	}
 	else if (!StageRootLayerPath.IsEmpty())
 	{
-		UE_LOG(LogUsd, Warning, TEXT("UGeometryCacheTrackUsd is reopening the stage '%s' to stream in frames for the geometry cache generated for prim '%s'"), *StageRootLayerPath, *PrimPath);
+		UE_LOG(
+			LogUsd,
+			Warning,
+			TEXT("UGeometryCacheTrackUsd is reopening the stage '%s' to stream in frames for the geometry cache generated for prim '%s'"),
+			*StageRootLayerPath,
+			*PrimPath
+		);
 
 		// Reopen the stage. If our weak pointer is no longer valid then nothing cared about keeping that
 		// stage alive anyway, so it's likely not a problem if we start reading frames from the reopened stage
@@ -259,15 +281,13 @@ void UGeometryCacheTrackUsd::Initialize(
 	Duration = NumFrames / FramesPerSecond;
 
 	UsdStream.Reset(new FGeometryCacheUsdStream(this, InReadFunc));
-	IGeometryCacheStreamer::Get().RegisterTrack(this, UsdStream.Get());
-	UsdStream->Prefetch(StartFrameIndex);
 }
 
 void UGeometryCacheTrackUsd::Initialize(
 	const UE::FUsdStage& InStage,
 	const FString& InPrimPath,
 	const FName& InRenderContext,
-	const TMap< FString, TMap< FString, int32 > >& InMaterialToPrimvarToUVIndex,
+	const TMap<FString, TMap<FString, int32>>& InMaterialToPrimvarToUVIndex,
 	int32 InStartFrameIndex,
 	int32 InEndFrameIndex,
 	FReadUsdMeshFunction InReadFunc
@@ -283,4 +303,19 @@ void UGeometryCacheTrackUsd::UpdateTime(float Time, bool bLooping)
 		int32 FrameIndex = FindSampleIndexFromTime(Time, bLooping);
 		UsdStream->UpdateCurrentFrameIndex(FrameIndex);
 	}
+}
+
+void UGeometryCacheTrackUsd::RegisterStream()
+{
+	const bool bNeedPrefetch = !IGeometryCacheStreamer::Get().IsTrackRegistered(this);
+	IGeometryCacheStreamer::Get().RegisterTrack(this, UsdStream.Get());
+	if (bNeedPrefetch)
+	{
+		UsdStream->Prefetch(StartFrameIndex);
+	}
+}
+
+void UGeometryCacheTrackUsd::UnregisterStream()
+{
+	IGeometryCacheStreamer::Get().UnregisterTrack(this);
 }

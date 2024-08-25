@@ -83,7 +83,15 @@ class FHazardPointerCollection
 		static constexpr uintptr_t FreeHazardEntry = ~uintptr_t(0);
 
 		std::atomic<uintptr_t> Hazard{ FreeHazardEntry };
+#ifdef _MSC_VER
+	// UE_DEPRECATED - this is a workaround for https://developercommunity.visualstudio.com/t/VS-2022-1790-Preview-10-__builtin_arr/10519788 and should be removed after
+	//                 after 17.9 is no longer supported.
+	public:
 		FHazardRecord() = default;
+	private:
+#else
+		FHazardRecord() = default;
+#endif
 
 		inline void* GetHazard() const
 		{
@@ -91,7 +99,7 @@ class FHazardPointerCollection
 		}
 
 		//assign hazard pointer once acquired
-		UE_NODISCARD inline void* SetHazard(void* InHazard)
+		[[nodiscard]] inline void* SetHazard(void* InHazard)
 		{
 			Hazard.store(reinterpret_cast<uintptr_t>(InHazard), std::memory_order_release);
 			std::atomic_thread_fence(std::memory_order_seq_cst);
@@ -151,7 +159,7 @@ class FHazardPointerCollection
 	TArray<FTlsData*> AllTlsVariables;
 	TArray<FHazardRecordChunk*> HazardRecordBlocks;
 
-	uint32 CollectablesTlsSlot = 0;
+	uint32 CollectablesTlsSlot = FPlatformTLS::InvalidTlsSlot;
 	std::atomic_uint TotalNumHazardRecords{ HazardChunkSize };
 
 	void Collect(TArray<HazardPointer_Impl::FHazardDeleter>& Collectables);

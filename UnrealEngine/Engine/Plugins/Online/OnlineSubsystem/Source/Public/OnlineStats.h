@@ -143,6 +143,8 @@ public:
 		PlayerId(InPlayerId)
 	{
 	}
+
+	FString ToLogString() const;
 };
 
 /**
@@ -212,6 +214,8 @@ public:
 
 		return NULL;
 	}
+
+	FString ToLogString() const;
 };
 
 typedef TSharedRef<FOnlineLeaderboardRead, ESPMode::ThreadSafe> FOnlineLeaderboardReadRef;

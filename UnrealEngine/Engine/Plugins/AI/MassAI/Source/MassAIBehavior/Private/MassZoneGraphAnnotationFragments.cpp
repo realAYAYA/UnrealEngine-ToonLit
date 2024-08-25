@@ -4,6 +4,8 @@
 #include "MassEntityManager.h"
 #include "MassExecutionContext.h"
 #include "MassSimulationLOD.h"
+#include "MassDebugger.h"
+
 
 namespace UE::Mass::ZoneGraphAnnotations
 {

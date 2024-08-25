@@ -1,0 +1,40 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../NiagaraStatelessCommon.ush"
+
+uint	DynamicMaterialParameters_ChannelMask;
+uint3	DynamicMaterialParameters_Parameter0X;
+uint3	DynamicMaterialParameters_Parameter0Y;
+uint3	DynamicMaterialParameters_Parameter0Z;
+uint3	DynamicMaterialParameters_Parameter0W;
+
+struct FStatelessModule_DynamicMaterialParameters
+{
+	FStatelessDistributionFloat	Parameter0XDistribution;
+	FStatelessDistributionFloat	Parameter0YDistribution;
+	FStatelessDistributionFloat	Parameter0ZDistribution;
+	FStatelessDistributionFloat	Parameter0WDistribution;
+};
+
+void DynamicMaterialParameters_Initialize(inout FStatelessModule_DynamicMaterialParameters ModuleData, inout FStatelessParticle Particle)
+{
+	if ((DynamicMaterialParameters_ChannelMask & 0xf) != 0)
+	{
+		ModuleData.Parameter0XDistribution.Init(Particle, DynamicMaterialParameters_Parameter0X);
+		ModuleData.Parameter0YDistribution.Init(Particle, DynamicMaterialParameters_Parameter0Y);
+		ModuleData.Parameter0ZDistribution.Init(Particle, DynamicMaterialParameters_Parameter0Z);
+		ModuleData.Parameter0WDistribution.Init(Particle, DynamicMaterialParameters_Parameter0W);
+	}
+}
+	
+void DynamicMaterialParameters_Simulate(in FStatelessModule_DynamicMaterialParameters ModuleData, inout FStatelessParticle Particle)
+{
+	Particle.DynamicMaterialParameter0 = 0.0f;
+	if ((DynamicMaterialParameters_ChannelMask & 0xf) != 0)
+	{
+		Particle.DynamicMaterialParameter0.x = (DynamicMaterialParameters_ChannelMask & 0x1) != 0 ? ModuleData.Parameter0XDistribution.GetValue(Particle.NormalizedAge) : 0.0f;
+		Particle.DynamicMaterialParameter0.y = (DynamicMaterialParameters_ChannelMask & 0x2) != 0 ? ModuleData.Parameter0YDistribution.GetValue(Particle.NormalizedAge) : 0.0f;
+		Particle.DynamicMaterialParameter0.z = (DynamicMaterialParameters_ChannelMask & 0x4) != 0 ? ModuleData.Parameter0ZDistribution.GetValue(Particle.NormalizedAge) : 0.0f;
+		Particle.DynamicMaterialParameter0.w = (DynamicMaterialParameters_ChannelMask & 0x8) != 0 ? ModuleData.Parameter0WDistribution.GetValue(Particle.NormalizedAge) : 0.0f;
+	}
+}

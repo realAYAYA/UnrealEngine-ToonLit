@@ -21,4 +21,9 @@ namespace DisplayClusterViewportStrings
 		static constexpr const TCHAR* uv_lightcard = TEXT("uv_lightcard");
 		
 	}
+
+	namespace tile
+	{
+		static constexpr const TCHAR* prefix = TEXT("tile");
+	}
 };

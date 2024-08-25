@@ -100,12 +100,12 @@ void SetupPS(
 	)
 {
 	float DoFToScreenScale = 4;
-
+	ResolvedView = ResolveView();
 	// Manually compute UV and ScreenSpacePos from SvPosition to avoid south east shiting of the pixel in bottom right corner
 	// caused by the DestRect.Size() + 1 viewport size done for odd view rect resolution.
 	float2 ViewportUV = min(SvPositionToViewportUV(SvPosition * DoFToScreenScale), 1 - View.ViewSizeAndInvSize.zw * 0.5);
 	float2 UV = ViewportUVToBufferUV(ViewportUV) - ((0.5f - View.TemporalAAParams.zw) * BufferSizeAndInvSize.zw);
-	float2 ScreenSpacePos = DoFToScreenScale * float2(ViewportUV.x, 1 - ViewportUV.y) - 1;
+	float2 ScreenSpacePos = DoFToScreenScale * (float2(ViewportUV.x, 1 - ViewportUV.y) - 0.5);
 
 	float2 Offset = 0.5f * BufferSizeAndInvSize.zw;
 
@@ -125,7 +125,7 @@ void SetupPS(
 	// and put into MRT0 or MRT1
 	
 	// can be optimized, needed to not blur the skybox
-	float3 ScreenVector = normalize(mul(float3(ScreenSpacePos, 1), LWCToFloat3x3(PrimaryView.ScreenToWorld)).xyz);
+	float3 ScreenVector = normalize(mul(float3(ScreenSpacePos, 1), DFToFloat3x3(PrimaryView.ScreenToWorld)).xyz);
 	float SkyWithoutHorizonMask = saturate(ScreenVector.z * 3.0f);
 
 	// 0:see though..1:Near blurred

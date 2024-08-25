@@ -26,7 +26,7 @@ struct FCachedPoseThreadContext : TThreadSingleton<FCachedPoseThreadContext>
 	struct FCachedPoseScopeInternal
 	{
 		// Map of nodes to cached poses
-		TMap<const FAnimNode_SaveCachedPose*, FCachedPose, TInlineSetAllocator<16>> CachedPoses;
+		TMap<const FAnimNode_SaveCachedPose*, FCachedPose, TInlineSetAllocator<32>> CachedPoses;
 	};
 
 	/** Adds a cached pose */

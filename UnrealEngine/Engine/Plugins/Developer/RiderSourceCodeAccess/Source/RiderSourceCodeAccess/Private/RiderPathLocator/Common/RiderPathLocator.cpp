@@ -33,9 +33,14 @@ FString ExtractPathFromSettingsJson(const FString& ToolboxPath)
 	return {};
 }
 
+bool FRiderPathLocator::DirectoryExistsAndNonEmpty(const FString& Path)
+{
+	return !Path.IsEmpty() && FPaths::DirectoryExists(Path);
+}
+
 TArray<FInstallInfo> FRiderPathLocator::GetInstallInfosFromToolbox(const FString& ToolboxPath, const FString& Pattern)
 {
-	if(!FPaths::DirectoryExists(ToolboxPath)) return {};
+	if(!DirectoryExistsAndNonEmpty(ToolboxPath)) return {};
 	
 	const FString InstallLocationPath = ExtractPathFromSettingsJson(ToolboxPath);
 	TArray<FInstallInfo> Result{};
@@ -75,10 +80,10 @@ FVersion FRiderPathLocator::GetLastBuildVersion(const FString& HistoryJsonPath)
 	if(!HistoryField->Last()->TryGetObject(LastItemObject)) return {};
 
 	const TSharedPtr<FJsonObject>* ItemObject;
-	if(!LastItemObject->Get()->TryGetObjectField("item", ItemObject)) return {};
+	if(!LastItemObject->Get()->TryGetObjectField(TEXT("item"), ItemObject)) return {};
 
 	FString Build;
-	if(!ItemObject->Get()->TryGetStringField("build", Build)) return {};
+	if(!ItemObject->Get()->TryGetStringField(TEXT("build"), Build)) return {};
 
 	return FVersion(Build);
 }
@@ -87,7 +92,7 @@ FString FRiderPathLocator::GetHistoryJsonPath(const FString& RiderPath)
 {
 	FString Directory = FPaths::ConvertRelativePathToFull(FPaths::Combine(RiderPath, ".."));
 	int8_t SafeCheck = 10;
-	while(FPaths::DirectoryExists(Directory) && SafeCheck-- > 0)
+	while(DirectoryExistsAndNonEmpty(Directory) && SafeCheck-- > 0)
 	{
 		FString HistoryPath = FPaths::Combine(Directory, ".history.json");
 		if(FPaths::FileExists(HistoryPath)) return HistoryPath;
@@ -99,7 +104,7 @@ FString FRiderPathLocator::GetHistoryJsonPath(const FString& RiderPath)
 
 TArray<FInstallInfo> FRiderPathLocator::GetInstallInfos(const FString& ToolboxRiderRootPath, const FString& Pattern, FInstallInfo::EInstallType InstallType)
 {
-	if(ToolboxRiderRootPath.IsEmpty() || !FPaths::DirectoryExists(ToolboxRiderRootPath)) return {};
+	if(!DirectoryExistsAndNonEmpty(ToolboxRiderRootPath)) return {};
 	
 	TArray<FInstallInfo> RiderInstallInfos;
 	TArray<FString> RiderPaths;

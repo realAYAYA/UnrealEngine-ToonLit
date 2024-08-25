@@ -344,6 +344,16 @@ struct FMovieSceneSequenceHierarchy
 		return Tree.Data;
 	}
 
+	EMovieSceneServerClientMask GetAccumulatedNetworkMask() const
+	{
+		return AccumulatedNetworkMask;
+	}
+
+	void AccumulateNetworkMask(EMovieSceneServerClientMask Mask)
+	{
+		AccumulatedNetworkMask &= Mask;
+	}
+
 #if !NO_LOGGING
 	void LogHierarchy() const;
 	void LogSubSequenceTree() const;
@@ -365,4 +375,13 @@ private:
 	/** Structural information describing the structure of the sequence */
 	UPROPERTY()
 	TMap<FMovieSceneSequenceID, FMovieSceneSequenceHierarchyNode> Hierarchy;
+
+	/** Holds the accumulated network mask from all included sub-sections. 
+	* If client or server-only subsections are found and included based on the gather params network mask, other bits will be excluded.
+	* If the gather param network mask excludes client or server-only sub-sections, these will be skipped, and so not accumulated.
+	* If no client or server-only subsections are found and included, the mask will be All.
+	* If both client and server-only subsections are found and included, the mask will be None as each would exclude the other.
+	*/
+	UPROPERTY()
+	EMovieSceneServerClientMask AccumulatedNetworkMask = EMovieSceneServerClientMask::All;
 };

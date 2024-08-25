@@ -7,23 +7,10 @@
 #include "HAL/PlatformAffinity.h"
 #include "Misc/App.h"
 
-#ifndef WITH_XMA2
-#define WITH_XMA2 0
-#endif
-
 #ifndef HAS_COMPRESSED_AUDIO_INFO_CLASS
 #define HAS_COMPRESSED_AUDIO_INFO_CLASS 0
 #endif
 
-#if WITH_XMA2
-#include "XMAAudioInfo.h"
-#endif  //#if WITH_XMA2
-#if WITH_BINK_AUDIO
-#include "BinkAudioInfo.h"
-#endif // WITH_BINK_AUDIO
-#include "OpusAudioInfo.h"
-#include "VorbisAudioInfo.h"
-#include "ADPCMAudioInfo.h"
 #include "Interfaces/IAudioFormat.h"
 #include "AudioDevice.h"
 
@@ -127,14 +114,6 @@ namespace Audio
 			return false;
 		}
 
-#if WITH_XMA2
-		//Initialize our XMA2 decoder context
-		XMA2_INFO_CALL(FXMAAudioInfo::Initialize());
-#endif //#if WITH_XMA2
-
-		// Load ogg and vorbis dlls if they haven't been loaded yet
-		LoadVorbisLibraries();
-
 		bIsInitialized = true;
 
 		TickDelta = FApp::GetDeltaTime();
@@ -148,10 +127,6 @@ namespace Audio
 		{
 			return false;
 		}
-
-#if WITH_XMA2
-		XMA2_INFO_CALL(FXMAAudioInfo::Shutdown());
-#endif
 
 		bIsInitialized = false;
 
@@ -308,63 +283,6 @@ namespace Audio
 		}
 	}
 
-#if WITH_XMA2
-	static FName NAME_XMA(TEXT("XMA"));
-#endif
-
-	FName FMixerPlatformNonRealtime::GetRuntimeFormat(const USoundWave* InSoundWave) const
-	{
-		FName RuntimeFormat = Audio::ToName(InSoundWave->GetSoundAssetCompressionType());
-
-		if (RuntimeFormat == Audio::NAME_PLATFORM_SPECIFIC)
-		{
-#if WITH_XMA2 && USE_XMA2_FOR_STREAMING
-			if (InSoundWave->NumChannels <= 2)
-			{
-				return Audio::NAME_XMA;
-			}
-#endif // WITH_XMA2 && USE_XMA2_FOR_STREAMING
-
-#if USE_VORBIS_FOR_STREAMING
-			return Audio::NAME_OGG;
-#else
-			return Audio::NAME_OPUS;
-#endif // USE_VORBIS_FOR_STREAMING
-		}
-
-		return RuntimeFormat;
-	}
-
-	ICompressedAudioInfo* FMixerPlatformNonRealtime::CreateCompressedAudioInfo(const FName& InRuntimeFormat) const
-	{
-		// Need to create a platform-specific codec
-#if WITH_XMA2 && USE_XMA2_FOR_STREAMING
-		if (InRuntimeFormat == NAME_XMA)
-		{
-			return XMA2_INFO_NEW();
-		}
-#endif // WITH_XMA2 && USE_XMA2_FOR_STREAMING			
-#if USE_VORBIS_FOR_STREAMING
-		if (InRuntimeFormat == Audio::NAME_OGG)
-		{
-			return new FVorbisAudioInfo();
-		}
-#else // USE_VORBIS_FOR_STREAMING
-		if (InRuntimeFormat == Audio::NAME_OPUS)
-		{
-			return new FOpusAudioInfo();
-		}
-#endif // #if USE_VORBIS_FOR_STREAMING
-#if WITH_BINK_AUDIO
-		if (InRuntimeFormat == Audio::NAME_BINKA)
-		{
-			return new FBinkAudioInfo();
-		}
-#endif
-
-		return Audio::CreateSoundAssetDecoder(InRuntimeFormat);
-	}
-
 	FString FMixerPlatformNonRealtime::GetDefaultDeviceName()
 	{
 		//GConfig->GetString(TEXT("/Script/WindowsTargetPlatform.WindowsTargetSettings"), TEXT("AudioDevice"), WindowsAudioDeviceName, GEngineIni);
@@ -378,10 +296,6 @@ namespace Audio
 
 	void FMixerPlatformNonRealtime::OnHardwareUpdate()
 	{
-#if WITH_XMA2
-		XMA2_INFO_CALL(FXMAAudioInfo::Tick());
-#endif //WITH_XMA2
-
 		if (RenderEveryTickCvar)
 		{
 			RenderAudio(TickDelta);

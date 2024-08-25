@@ -3,6 +3,7 @@
 #pragma once
 
 #include "ViewModels/Stack/NiagaraStackItem.h"
+#include "ViewModels/Stack/NiagaraStackObjectShared.h"
 #include "NiagaraStackPropertyRow.generated.h"
 
 class IDetailTreeNode;
@@ -14,9 +15,20 @@ class UNiagaraStackPropertyRow : public UNiagaraStackItemContent
 	GENERATED_BODY()
 		
 public:
-	NIAGARAEDITOR_API void Initialize(FRequiredEntryData InRequiredEntryData, TSharedRef<IDetailTreeNode> InDetailTreeNode, bool bInIsTopLevelProperty, FString InOwnerStackItemEditorDataKey, FString InOwnerStackEditorDataKey, UNiagaraNode* InOwningNiagaraNode);
+	NIAGARAEDITOR_API void Initialize(
+		FRequiredEntryData InRequiredEntryData,
+		TSharedRef<IDetailTreeNode> InDetailTreeNode,
+		bool bInIsTopLevelProperty,
+		bool bInHideTopLevelCategories,
+		FString InOwnerStackItemEditorDataKey,
+		FString InOwnerStackEditorDataKey,
+		UNiagaraNode* InOwningNiagaraNode);
 	
+	NIAGARAEDITOR_API void SetOnFilterDetailNodes(FNiagaraStackObjectShared::FOnFilterDetailNodes InOnFilterDetailNodes) { OnFilterDetailNodes = InOnFilterDetailNodes; }
+
 	NIAGARAEDITOR_API virtual EStackRowStyle GetStackRowStyle() const override;
+
+	NIAGARAEDITOR_API virtual bool GetShouldShowInStack() const override;
 
 	NIAGARAEDITOR_API TSharedRef<IDetailTreeNode> GetDetailTreeNode() const;
 
@@ -26,6 +38,8 @@ public:
 
 	NIAGARAEDITOR_API virtual bool IsExpandedByDefault() const override;
 
+	virtual bool SupportsStackNotes() override { return true; }
+	
 	NIAGARAEDITOR_API virtual bool CanDrag() const override;
 
 	void SetOwnerGuid(TOptional<FGuid> InGuid) { OwnerGuid = InGuid; }
@@ -57,4 +71,8 @@ private:
 
 	bool bCannotEditInThisContext;
 	bool bIsTopLevelProperty;
+	bool bHideTopLevelCategories;
+	bool bIsHiddenCategory;
+
+	FNiagaraStackObjectShared::FOnFilterDetailNodes OnFilterDetailNodes;
 };

@@ -5,6 +5,7 @@
 #include "Misc/MessageDialog.h"
 #include "Misc/FeedbackContext.h"
 #include "Modules/ModuleManager.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/UObjectHash.h"
 #include "UObject/UObjectIterator.h"
 #include "AssetRegistry/AssetData.h"
@@ -135,7 +136,6 @@ FEditableSkeleton::FEditableSkeleton(USkeleton* InSkeleton)
 	: Skeleton(InSkeleton)
 {
 	Skeleton->SetFlags(RF_Transactional);
-	Skeleton->CollectAnimationNotifies();
 }
 
 const USkeleton& FEditableSkeleton::GetSkeleton() const
@@ -175,6 +175,20 @@ void FEditableSkeleton::RemoveBlendProfile(UBlendProfile* InBlendProfile)
 		Skeleton->BlendProfiles.Remove(InBlendProfile);
 		InBlendProfile->MarkAsGarbage();
 	}
+}
+
+UBlendProfile* FEditableSkeleton::RenameBlendProfile(const FName& InBlendProfileName, const FName& InNewBlendProfileName)
+{
+	FScopedTransaction Transaction(LOCTEXT("RenameBlendProfile", "Rename Blend Profile"));
+
+	UBlendProfile* Profile = Skeleton->RenameBlendProfile(InBlendProfileName, InNewBlendProfileName);
+	
+	if (Profile == nullptr)
+	{
+		Transaction.Cancel();
+	}
+
+	return Profile;
 }
 
 void FEditableSkeleton::SetBlendProfileScale(const FName& InBlendProfileName, const FName& InBoneName, float InNewScale, bool bInRecurse)
@@ -295,14 +309,10 @@ void FEditableSkeleton::GetAssetsContainingCurves(const FName& InContainerName, 
 				// using the selected name. We only load what we have to here.
 				UObject* Asset = Data.GetAsset();
 				check(Asset);
-				TArray<UObject::FAssetRegistryTag> Tags;
-				Asset->GetAssetRegistryTags(Tags);
+				FAssetRegistryTagsContextData TagsContext(Asset, EAssetRegistryTagsCaller::Uncategorized);
+				Asset->GetAssetRegistryTags(TagsContext);
 
-				UObject::FAssetRegistryTag* CurveTag = Tags.FindByPredicate([](const UObject::FAssetRegistryTag& InTag)
-				{
-					return InTag.Name == USkeleton::CurveNameTag;
-				});
-				
+				UObject::FAssetRegistryTag* CurveTag = TagsContext.Tags.Find(USkeleton::CurveNameTag);
 				if (CurveTag)
 				{
 					CurveData = CurveTag->Value;
@@ -328,7 +338,7 @@ void FEditableSkeleton::GetAssetsContainingCurves(const FName& InContainerName, 
 
 		if (!bAssetContainsRemovableCurves)
 		{
-			OutAssets.RemoveAtSwap(Idx,1,false);
+			OutAssets.RemoveAtSwap(Idx,1,EAllowShrinking::No);
 		}
 	}
 
@@ -919,7 +929,9 @@ int32 FEditableSkeleton::DeleteAnimNotifies(const TArray<FName>& InNotifyNames, 
 		}
 	}
 
-	FBlueprintActionDatabase::Get().RefreshAssetActions(Skeleton);
+	FBlueprintActionDatabase& ActionDatabase = FBlueprintActionDatabase::Get();
+	ActionDatabase.ClearAssetActions(UAnimBlueprint::StaticClass());
+	ActionDatabase.RefreshClassActions(UAnimBlueprint::StaticClass());
 	OnNotifiesChanged.Broadcast();
 
 	return NumAnimationsModified;
@@ -968,7 +980,9 @@ void FEditableSkeleton::AddNotify(FName NewName)
 	Skeleton->Modify();
 	Skeleton->AddNewAnimationNotify(NewName);
 
-	FBlueprintActionDatabase::Get().RefreshAssetActions(Skeleton);
+	FBlueprintActionDatabase& ActionDatabase = FBlueprintActionDatabase::Get();
+	ActionDatabase.ClearAssetActions(UAnimBlueprint::StaticClass());
+	ActionDatabase.RefreshClassActions(UAnimBlueprint::StaticClass());
 	OnNotifiesChanged.Broadcast();
 }
 
@@ -1028,7 +1042,9 @@ int32 FEditableSkeleton::RenameNotify(const FName NewName, const FName OldName, 
 			}
 		}
 
-		FBlueprintActionDatabase::Get().RefreshAssetActions(Skeleton);
+		FBlueprintActionDatabase& ActionDatabase = FBlueprintActionDatabase::Get();
+		ActionDatabase.ClearAssetActions(UAnimBlueprint::StaticClass());
+		ActionDatabase.RefreshClassActions(UAnimBlueprint::StaticClass());
 		OnNotifiesChanged.Broadcast();
 	}
 
@@ -1403,36 +1419,6 @@ void FEditableSkeleton::RemoveCompatibleSkeleton(const USkeleton* InCompatibleSk
 	// Inform asset families
 	FPersonaModule& PersonaModule = FModuleManager::LoadModuleChecked<FPersonaModule>("Persona");
 	PersonaModule.BroadcastAssetFamilyChange();
-}
-
-void FEditableSkeleton::RefreshRigConfig()
-{
-	Skeleton->RefreshRigConfig();
-}
-
-void FEditableSkeleton::SetRigConfig(URig* InRig)
-{
-	const FScopedTransaction Transaction(LOCTEXT("RigAssetChanged", "Select Rig"));
-	Skeleton->Modify();
-	Skeleton->SetRigConfig(InRig);
-}
-
-void FEditableSkeleton::SetRigBoneMapping(const FName& InNodeName, const FName& InBoneName)
-{
-	const FScopedTransaction Transaction(LOCTEXT("BoneMappingChanged", "Change Bone Mapping"));
-	Skeleton->Modify();
-	Skeleton->SetRigBoneMapping(InNodeName, InBoneName);
-}
-
-void FEditableSkeleton::SetRigBoneMappings(const TMap<FName, FName>& InMappings)
-{
-	const FScopedTransaction Transaction(LOCTEXT("BoneMappingsChanged", "Change Bone Mappings"));
-	Skeleton->Modify();
-
-	for (const TPair<FName, FName>& Mapping : InMappings)
-	{
-		Skeleton->SetRigBoneMapping(Mapping.Key, Mapping.Value);
-	}
 }
 
 void FEditableSkeleton::RemoveUnusedBones()

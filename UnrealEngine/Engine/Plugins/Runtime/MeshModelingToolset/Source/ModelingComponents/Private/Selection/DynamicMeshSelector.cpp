@@ -573,6 +573,18 @@ void FBaseDynamicMeshSelector::GetSelectionFrame(const FGeometrySelection& Selec
 	}
 }
 
+void FBaseDynamicMeshSelector::GetTargetFrame(const FGeometrySelection& Selection, FFrame3d& SelectionFrame)
+{
+	SelectionFrame.Transform(GetLocalToWorldTransform());
+	TQuaternion<double> TargetRotation = SelectionFrame.Rotation;
+
+	// Places gizmo at the selection's accumulated origin
+	GetSelectionFrame(Selection, SelectionFrame, true);
+
+	// Uses object rotation instead of accumulated normals from selection
+	SelectionFrame.Rotation = TargetRotation;
+}
+
 void FBaseDynamicMeshSelector::AccumulateSelectionBounds(const FGeometrySelection& Selection, FGeometrySelectionBounds& BoundsInOut, bool bTransformToWorld)
 {
 	FTransform UseTransform = (bTransformToWorld) ? GetLocalToWorldTransform() : FTransform::Identity;
@@ -626,6 +638,22 @@ void FBaseDynamicMeshSelector::AccumulateSelectionElements(const FGeometrySelect
 		Selection.TopologyType == EGeometryTopologyType::Polygroup ? GetGroupTopology() : nullptr,
 		ApplyTransform,
 		bMapFacesToEdges);
+}
+
+void FBaseDynamicMeshSelector::AccumulateElementsFromPredicate(FGeometrySelectionElements& Elements, bool bTransformToWorld, bool bIsForPreview, bool bUseGroupTopology, TFunctionRef<bool(EGeometryElementType, FGeoSelectionID)> Predicate)
+{
+	auto AccumulateElementsOfTypeFromPredicate = [this, &Elements, &Predicate, bTransformToWorld, bIsForPreview, bUseGroupTopology](EGeometryElementType ElementType)
+	{
+		FGeometrySelection Selection;
+		Selection.ElementType = ElementType;
+		Selection.TopologyType = bUseGroupTopology ? EGeometryTopologyType::Polygroup : EGeometryTopologyType::Triangle;
+		InitializeSelectionFromPredicate(Selection, [&Predicate, ElementType](FGeoSelectionID InID){ return Predicate(ElementType, InID); });
+		AccumulateSelectionElements(Selection, Elements, bTransformToWorld, bIsForPreview);
+	};
+
+	AccumulateElementsOfTypeFromPredicate(EGeometryElementType::Vertex);
+	AccumulateElementsOfTypeFromPredicate(EGeometryElementType::Edge);
+	AccumulateElementsOfTypeFromPredicate(EGeometryElementType::Face);
 }
 
 

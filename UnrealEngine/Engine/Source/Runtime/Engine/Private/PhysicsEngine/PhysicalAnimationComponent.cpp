@@ -418,8 +418,8 @@ void UPhysicalAnimationComponent::UpdatePhysicsEngineImp()
 							FPhysicsInterface::CreateActor(Params, KineActor);
 							
 							// Chaos requires our particles have geometry.
-							auto Sphere = MakeUnique<Chaos::FImplicitSphere3>(FVector(0,0,0), 0);
-							KineActor->GetGameThreadAPI().SetGeometry(MoveTemp(Sphere));
+							auto Sphere = MakeImplicitObjectPtr<Chaos::FImplicitSphere3>(FVector(0,0,0), 0);
+							KineActor->GetGameThreadAPI().SetGeometry(Sphere);
 
 							KineActor->GetGameThreadAPI().SetUserData(nullptr);
 

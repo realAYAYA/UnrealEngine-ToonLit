@@ -207,6 +207,33 @@ struct TOrientedBox3
 		return ClampedBeyond.SquaredLength();
 	}
 
+	/**
+	 * Find signed distance to box surface
+	 * @param Point input point
+	 * @return Signed distance from point to box surface; negative if point is inside box
+	 */
+	RealType SignedDistance(TVector<RealType> Point) const
+	{
+		TVector<RealType> Local = Frame.ToFramePoint(Point);
+		TVector<RealType> VsExtents = Local.GetAbs() - Extents;
+		RealType MaxComponent = VsExtents.GetMax();
+		if (MaxComponent < 0) // Inside the box on every dimension
+		{
+			// The least-inside dimension gives the distance to the box surface
+			return MaxComponent;
+		}
+		else // Outside the box along at least one dimension
+		{
+			// clamp negative (inside) to zero
+			TVector<RealType> ClampedBeyond(
+				FMath::Max((RealType)0, VsExtents.X),
+				FMath::Max((RealType)0, VsExtents.Y),
+				FMath::Max((RealType)0, VsExtents.Z)
+			);
+			return ClampedBeyond.Length();
+		}
+	}
+
 	 /**
 	  * Find closest point on box
 	  * @param Point input point

@@ -5,9 +5,12 @@ using System.ComponentModel.DataAnnotations;
 using System.Diagnostics;
 using System.Security.Claims;
 using System.Text.Json.Serialization;
+using EpicGames.Horde.Acls;
+using EpicGames.Horde.Storage;
+using EpicGames.Horde.Tools;
 using Horde.Server.Acls;
 using Horde.Server.Server;
-using Horde.Server.Utilities;
+using Horde.Server.Storage;
 
 namespace Horde.Server.Tools
 {
@@ -41,14 +44,34 @@ namespace Horde.Server.Tools
 		public string Description { get; set; }
 
 		/// <summary>
+		/// Category for the tool. Will cause the tool to be shown in a different tab in the dashboard.
+		/// </summary>
+		public string? Category { get; set; }
+
+		/// <summary>
 		/// Whether this tool should be exposed for download on a public endpoint without authentication
 		/// </summary>
 		public bool Public { get; set; }
 
 		/// <summary>
+		/// Whether to show this tool for download in the UGS tools menu
+		/// </summary>
+		public bool ShowInUgs { get; set; }
+
+		/// <summary>
+		/// Whether to show this tool for download in the dashboard
+		/// </summary>
+		public bool ShowInDashboard { get; set; } = true;
+
+		/// <summary>
+		/// Default namespace for new deployments of this tool
+		/// </summary>
+		public NamespaceId NamespaceId { get; set; } = Namespace.Tools;
+
+		/// <summary>
 		/// Permissions for the tool
 		/// </summary>
-		public AclConfig? Acl { get; set; }
+		public AclConfig Acl { get; set; } = new AclConfig();
 
 		/// <summary>
 		/// Default constructor for serialization
@@ -76,17 +99,12 @@ namespace Horde.Server.Tools
 		public void PostLoad(GlobalConfig globalConfig)
 		{
 			GlobalConfig = globalConfig;
+			Acl.PostLoad(globalConfig.Acl, $"tool:{Id}");
 		}
 
-		/// <summary>
-		/// Authorizes a user to perform a given action
-		/// </summary>
-		/// <param name="action">The action being performed</param>
-		/// <param name="user">The principal to validate</param>
+		/// <inheritdoc cref="AclConfig.Authorize(AclAction, ClaimsPrincipal)"/>
 		public bool Authorize(AclAction action, ClaimsPrincipal user)
-		{
-			return Acl?.Authorize(action, user) ?? GlobalConfig.Authorize(action, user);
-		}
+			=> Acl.Authorize(action, user);
 	}
 
 	/// <summary>

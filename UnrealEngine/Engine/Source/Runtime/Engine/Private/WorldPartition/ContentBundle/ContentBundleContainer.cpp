@@ -35,7 +35,7 @@ UWorld* FContentBundleContainer::GetInjectedWorld() const
 void FContentBundleContainer::Initialize()
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FContentBundleContainer::Initialize);
-	UE_LOG(LogContentBundle, Log, TEXT("%s Creating new contrainer."), *ContentBundle::Log::MakeDebugInfoString(*this));
+	UE_LOG(LogContentBundle, Log, TEXT("%s Creating new container."), *ContentBundle::Log::MakeDebugInfoString(*this));
 
 #if WITH_EDITOR
 	if (UseEditorContentBundle())
@@ -57,6 +57,7 @@ void FContentBundleContainer::Initialize()
 		UWorldPartition* WorldPartition = GetInjectedWorld()->GetWorldPartition();
 		WorldPartition->OnPreGenerateStreaming.AddRaw(this, &FContentBundleContainer::OnPreGenerateStreaming);
 		WorldPartition->OnBeginCook.AddRaw(this, &FContentBundleContainer::OnBeginCook);
+		WorldPartition->OnEndCook.AddRaw(this, &FContentBundleContainer::OnEndCook);
 	}
 #endif
 }
@@ -75,6 +76,7 @@ void FContentBundleContainer::Deinitialize()
 			UWorldPartition* WorldPartition = GetInjectedWorld()->GetWorldPartition();
 			WorldPartition->OnPreGenerateStreaming.RemoveAll(this);
 			WorldPartition->OnBeginCook.RemoveAll(this);
+			WorldPartition->OnEndCook.RemoveAll(this);
 		}
 #endif
 	}
@@ -156,8 +158,7 @@ TArray<TSharedPtr<FContentBundleEditor>>& FContentBundleContainer::GetEditorCont
 
 bool FContentBundleContainer::UseEditorContentBundle() const
 {
-	bool bIsEditorEditWorld = !GetInjectedWorld()->IsGameWorld() && GetInjectedWorld()->IsEditorWorld();
-	return bIsEditorEditWorld || IsRunningCookCommandlet();
+	return !GetInjectedWorld()->IsGameWorld() || IsRunningCookCommandlet();
 }
 
 #endif
@@ -437,4 +438,11 @@ void FContentBundleContainer::OnBeginCook(IWorldPartitionCookPackageContext& Coo
 	}
 }
 
+void FContentBundleContainer::OnEndCook(IWorldPartitionCookPackageContext& CookContext)
+{
+	for (TSharedPtr<FContentBundleEditor>& ContentBundle : GetEditorContentBundles())
+	{
+		ContentBundle->OnEndCook(CookContext);
+	}
+}
 #endif

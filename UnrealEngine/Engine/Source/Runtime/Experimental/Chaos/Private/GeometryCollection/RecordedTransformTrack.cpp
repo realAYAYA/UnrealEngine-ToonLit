@@ -63,8 +63,8 @@ FRecordedTransformTrack FRecordedTransformTrack::ProcessRawRecordedData(const FR
 				if (CurrFrame.DisabledFlags[ParticleIndex] || CurrFrame.Transforms[ParticleIndex].Equals(PrevFrame.Transforms[ParticleIndex]))
 				{
 					++NumRemovedParticles;
-					CurrFrame.Transforms.RemoveAt(ParticleIndex, 1, false);
-					CurrFrame.TransformIndices.RemoveAt(ParticleIndex, 1, false);
+					CurrFrame.Transforms.RemoveAt(ParticleIndex, 1, EAllowShrinking::No);
+					CurrFrame.TransformIndices.RemoveAt(ParticleIndex, 1, EAllowShrinking::No);
 				}
 			}
 

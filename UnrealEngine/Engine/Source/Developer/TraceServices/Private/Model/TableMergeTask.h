@@ -107,10 +107,10 @@ void FTableMergeTask::FillResultUsing(IUntypedTableReader& SourceTableReader) co
 				Row.SetValue(DestIndex, SourceTableReader.GetValueInt(SourceIndex) * Multiplier);
 				break;
 			case TableColumnType_Float:
-				Row.SetValue(DestIndex, SourceTableReader.GetValueFloat(SourceIndex) * Multiplier);
+				Row.SetValue(DestIndex, SourceTableReader.GetValueFloat(SourceIndex) * (float)Multiplier);
 				break;
 			case TableColumnType_Double:
-				Row.SetValue(DestIndex, SourceTableReader.GetValueDouble(SourceIndex) * Multiplier);
+				Row.SetValue(DestIndex, SourceTableReader.GetValueDouble(SourceIndex) * (double)Multiplier);
 				break;
 			case TableColumnType_CString:
 				Row.SetValue(DestIndex, TableC->GetStringStore().Store(SourceTableReader.GetValueCString(SourceIndex)));

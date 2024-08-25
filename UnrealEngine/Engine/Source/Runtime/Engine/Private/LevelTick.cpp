@@ -24,6 +24,7 @@
 #include "Camera/CameraPhotography.h"
 #include "UObject/Stack.h"
 #include "PhysicsEngine/CollisionAnalyzerCapture.h"
+#include "Rendering/RenderCommandPipes.h"
 
 #if !UE_SERVER
 #include "IMediaModule.h"
@@ -958,13 +959,11 @@ struct FSendAllEndOfFrameUpdates
 		if (InScene != nullptr)
 		{
 			GPUSkinCache = InScene->GetGPUSkinCache();
-			InScene->GetComputeTaskWorkers(ComputeTaskWorkers);
 			FeatureLevel = InScene->GetFeatureLevel();
 		}
 	}
 	
 	FGPUSkinCache* GPUSkinCache = nullptr;
-	TArray<IComputeTaskWorker*> ComputeTaskWorkers;
 	ERHIFeatureLevel::Type FeatureLevel = ERHIFeatureLevel::Num;
 
 #if WANTS_DRAW_MESH_EVENTS
@@ -975,44 +974,29 @@ struct FSendAllEndOfFrameUpdates
 void BeginSendEndOfFrameUpdatesDrawEvent(FSendAllEndOfFrameUpdates& SendAllEndOfFrameUpdates)
 {
 	BEGIN_DRAW_EVENTF_GAMETHREAD(SendAllEndOfFrameUpdates, SendAllEndOfFrameUpdates.DrawEvent, TEXT("SendAllEndOfFrameUpdates"));
-	
-	ENQUEUE_RENDER_COMMAND(BeginDrawEventCommand)(
-		[GPUSkinCache = SendAllEndOfFrameUpdates.GPUSkinCache](FRHICommandListImmediate& RHICmdList)
+
+	ENQUEUE_RENDER_COMMAND(BeginDrawEventCommand)(UE::RenderCommandPipe::SkeletalMesh,
+		[GPUSkinCache = SendAllEndOfFrameUpdates.GPUSkinCache]
+	{
+		if (GPUSkinCache != nullptr)
 		{
-			if (GPUSkinCache != nullptr)
-			{
-				GPUSkinCache->BeginBatchDispatch(RHICmdList);
-			}
-		});
+			GPUSkinCache->BeginBatchDispatch();
+		}
+	});
 }
 
 DECLARE_GPU_STAT(EndOfFrameUpdates);
 DECLARE_GPU_STAT(GPUSkinCacheRayTracingGeometry);
 void EndSendEndOfFrameUpdatesDrawEvent(FSendAllEndOfFrameUpdates& SendAllEndOfFrameUpdates)
 {
-	ENQUEUE_RENDER_COMMAND(EndDrawEventCommand)(
-		[GPUSkinCache = SendAllEndOfFrameUpdates.GPUSkinCache, ComputeTaskWorkers = SendAllEndOfFrameUpdates.ComputeTaskWorkers, FeatureLevel = SendAllEndOfFrameUpdates.FeatureLevel](FRHICommandListImmediate& RHICmdList)
+	ENQUEUE_RENDER_COMMAND(EndDrawEventCommand)(UE::RenderCommandPipe::SkeletalMesh,
+		[GPUSkinCache = SendAllEndOfFrameUpdates.GPUSkinCache]
+	{
+		if (GPUSkinCache != nullptr)
 		{
-			SCOPED_GPU_STAT(RHICmdList, EndOfFrameUpdates);
-			TRACE_CPUPROFILER_EVENT_SCOPE(EndSendEndOfFrameUpdatesDrawEvent_RT);
-
-			if (GPUSkinCache != nullptr)
-			{
-				// Once all the individual components have received their DoDeferredRenderUpdates_Concurrent()
-				// allow the GPU Skin Cache system to update.
-				GPUSkinCache->EndBatchDispatch(RHICmdList);
-			}
-
-			for (IComputeTaskWorker* ComputeTaskWorker : ComputeTaskWorkers)
-			{
-				if (ComputeTaskWorker->HasWork(ComputeTaskExecutionGroup::EndOfFrameUpdate))
-				{
-					FRDGBuilder GraphBuilder(RHICmdList, RDG_EVENT_NAME("ComputeTaskWorker"));
-					ComputeTaskWorker->SubmitWork(GraphBuilder, ComputeTaskExecutionGroup::EndOfFrameUpdate, FeatureLevel);
-					GraphBuilder.Execute();
-				}
-			}
-		});
+			GPUSkinCache->EndBatchDispatch();
+		}
+	});
 
 	STOP_DRAW_EVENT_GAMETHREAD(SendAllEndOfFrameUpdates.DrawEvent);
 }
@@ -1822,14 +1806,14 @@ void UWorld::CleanupActors()
 				}
 				else if (NumActorsToRemove > 0)
 				{
-					Level->Actors.RemoveAt(ActorIndex+1, NumActorsToRemove, false);
+					Level->Actors.RemoveAt(ActorIndex+1, NumActorsToRemove, EAllowShrinking::No);
 					NumActorsToRemove = 0;
 				}
 			}
 			if (NumActorsToRemove > 0)
 			{
 				// If our FirstDynamicIndex (and any immediately following it) were null it won't get caught in the loop, so do a cleanup pass here
-				Level->Actors.RemoveAt(FirstDynamicIndex, NumActorsToRemove, false);
+				Level->Actors.RemoveAt(FirstDynamicIndex, NumActorsToRemove, EAllowShrinking::No);
 			}
 		}
 	}

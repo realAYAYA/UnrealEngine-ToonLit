@@ -91,6 +91,13 @@ void FDataflowSelection::XOR(const FDataflowSelection& Other, FDataflowSelection
 	Result.SelectionArray = TBitArray<>::BitwiseXOR(SelectionArray, Other.SelectionArray, EBitwiseOperatorFlags::MaxSize);
 }
 
+void FDataflowSelection::Subtract(const FDataflowSelection& Other, FDataflowSelection& Result) const
+{
+	TBitArray<> InvSelectionArray = Other.SelectionArray;
+	InvSelectionArray.BitwiseNOT();
+	Result.SelectionArray = TBitArray<>::BitwiseAND(SelectionArray, InvSelectionArray, EBitwiseOperatorFlags::MaxSize);
+}
+
 int32 FDataflowSelection::NumSelected() const
 {
 	return SelectionArray.CountSetBits(0, SelectionArray.Num());

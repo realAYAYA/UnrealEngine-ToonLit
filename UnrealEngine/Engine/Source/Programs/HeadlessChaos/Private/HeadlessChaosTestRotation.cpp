@@ -55,28 +55,29 @@ namespace ChaosTest {
 		{
 			AppendAnalyticBox(Particles, Dims);
 
-			Particles.R(ParticleIndex) = FRotation3::FromAxisAngle(RandAxis(), FMath::RandRange(-PI, PI)).GetNormalized();
-			Particles.Q(ParticleIndex) = Particles.R(ParticleIndex);
-			Particles.V(ParticleIndex) = FVec3::ZeroVector;
-			Particles.W(ParticleIndex) = AngularVelocities[ParticleIndex];
-			Particles.PreV(ParticleIndex) = Particles.V(ParticleIndex);
-			Particles.PreW(ParticleIndex) = Particles.W(ParticleIndex);
+			// Particles.SetR(ParticleIndex, FRotation3::FromAxisAngle(RandAxis(), FMath::RandRange(-PI, PI)).GetNormalized());
+			Particles.SetR(ParticleIndex, FRotation3::FromAxisAngle(RandAxis(), FMath::RandRange(-PI, PI)).GetNormalized());
+			Particles.SetQ(ParticleIndex, Particles.GetR(ParticleIndex));
+			Particles.SetV(ParticleIndex, FVec3::ZeroVector);
+			Particles.SetW(ParticleIndex, AngularVelocities[ParticleIndex]);
+			Particles.SetPreV(ParticleIndex, Particles.GetV(ParticleIndex));
+			Particles.SetPreW(ParticleIndex, Particles.GetW(ParticleIndex));
 			Particles.CenterOfMass(ParticleIndex) = FVec3(0);
 			Particles.RotationOfMass(ParticleIndex) = FRotation3::FromIdentity();
 		}
 
 		for (int32 ParticleIndex = 0; ParticleIndex < (int32)Particles.Size(); ++ParticleIndex)
 		{
-			FRotation3 R0 = Particles.Q(ParticleIndex);
+			FRotation3 R0 = Particles.GetQ(ParticleIndex);
 
 			StepRule.Apply(Particles, Dt, ParticleIndex);
 
-			FRotation3 R1 = Particles.Q(ParticleIndex);
-			FVec3 AngularVelocity = Particles.W(ParticleIndex);
+			FRotation3 R1 = Particles.GetQ(ParticleIndex);
+			FVec3 AngularVelocity = Particles.GetW(ParticleIndex);
 
 			FVec3 CalculatedAngularVelocity1 = FRotation3::CalculateAngularVelocity1(R0, R1, Dt);
 
-			// Veryify that we calculated the same angular velocity that was used to integrate the rotation
+			// Verify that we calculated the same angular velocity that was used to integrate the rotation
 			const FReal ExpectedAccuracy = AngularVelocity.Size() * (FReal)0.01;
 			FVec3 Error = CalculatedAngularVelocity1 - AngularVelocity;
 			EXPECT_NEAR(Error[0], (FReal)0, ExpectedAccuracy);
@@ -155,26 +156,26 @@ namespace ChaosTest {
 
 			AppendAnalyticBox(Particles, Dims);
 
-			Particles.X(ParticleIndex) = FVec3::ZeroVector;
-			Particles.P(ParticleIndex) = FVec3::ZeroVector;
-			Particles.R(ParticleIndex) = InitialRotations[ParticleIndex];
-			Particles.Q(ParticleIndex) = FinalRotations[ParticleIndex];
-			Particles.V(ParticleIndex) = FVec3::ZeroVector;
-			Particles.W(ParticleIndex) = FVec3::ZeroVector;
-			Particles.PreV(ParticleIndex) = Particles.V(ParticleIndex);
-			Particles.PreW(ParticleIndex) = Particles.W(ParticleIndex);
+			Particles.SetX(ParticleIndex, FVec3::ZeroVector);
+			Particles.SetP(ParticleIndex, FVec3::ZeroVector);
+			Particles.SetR(ParticleIndex, InitialRotations[ParticleIndex]);
+			Particles.SetQ(ParticleIndex, FinalRotations[ParticleIndex]);
+			Particles.SetV(ParticleIndex, FVec3::ZeroVector);
+			Particles.SetW(ParticleIndex, FVec3::ZeroVector);
+			Particles.SetPreV(ParticleIndex, Particles.GetV(ParticleIndex));
+			Particles.SetPreW(ParticleIndex, Particles.GetW(ParticleIndex));
 			Particles.CenterOfMass(ParticleIndex) = FVec3(0);
 			Particles.RotationOfMass(ParticleIndex) = FRotation3::FromIdentity();
 		}
 
 		for (int32 ParticleIndex = 0; ParticleIndex < (int32)Particles.Size(); ++ParticleIndex)
 		{
-			FRotation3 R0 = Particles.R(ParticleIndex);
-			FRotation3 R1 = Particles.Q(ParticleIndex);
+			FRotation3 R0 = Particles.GetR(ParticleIndex);
+			FRotation3 R1 = Particles.GetQ(ParticleIndex);
 
 			UpdateRule.Apply(Particles, Dt, ParticleIndex);
 
-			FVec3 ExpectedAngVel = Particles.W(ParticleIndex);
+			FVec3 ExpectedAngVel = Particles.GetW(ParticleIndex);
 			FVec3 CalculatedAngVel1 = FRotation3::CalculateAngularVelocity1(R0, R1, Dt);
 
 			EXPECT_NEAR(ExpectedAngVel.X, CalculatedAngVel1.X, KINDA_SMALL_NUMBER);

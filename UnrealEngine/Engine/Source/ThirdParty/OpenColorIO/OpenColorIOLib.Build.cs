@@ -5,6 +5,14 @@ using UnrealBuildTool;
 
 public class OpenColorIOLib : ModuleRules
 {
+	private string ProjectBinariesDir
+	{
+		get
+		{
+			return "$(TargetOutputDir)";
+		}
+	}
+
 	public OpenColorIOLib(ReadOnlyTargetRules Target) : base(Target)
 	{
 		Type = ModuleType.External;
@@ -12,19 +20,23 @@ public class OpenColorIOLib : ModuleRules
 		bool bIsPlatformAdded = false;
 
 		string PlatformDir = Target.Platform.ToString();
-		string BinaryDir = "$(EngineDir)/Binaries/ThirdParty/OpenColorIO";
-		string DeployDir = Path.Combine(ModuleDirectory, "Deploy/OpenColorIO-2.2.0");
+		string EngineDir = Path.GetFullPath(Target.RelativeEnginePath);
+		string BinaryDir = Path.Combine(EngineDir, "Binaries", "ThirdParty", "OpenColorIO");
+		string DeployDir = Path.Combine(ModuleDirectory, "Deploy", "OpenColorIO");
 
 		PublicSystemIncludePaths.Add(Path.Combine(DeployDir, "include"));
 
-		if (Target.IsInPlatformGroup(UnrealPlatformGroup.Windows))
+		if (Target.Platform == UnrealTargetPlatform.Win64)
 		{
 			string Arch = Target.Architecture.WindowsLibDir;
-			string DLLName = "OpenColorIO_2_2.dll";
+			string DLLName = "OpenColorIO_2_3.dll";
 			string LibDirectory = Path.Combine(BinaryDir, PlatformDir, Arch);
 
 			PublicAdditionalLibraries.Add(Path.Combine(DeployDir, "lib", PlatformDir, Arch, "OpenColorIO.lib"));
-			RuntimeDependencies.Add(Path.Combine("$(TargetOutputDir)", DLLName), Path.Combine(LibDirectory, DLLName));
+			RuntimeDependencies.Add(
+				Path.Combine(ProjectBinariesDir, DLLName),
+				Path.Combine(LibDirectory, DLLName)
+			);
 
 			bIsPlatformAdded = true;
 		}
@@ -35,18 +47,27 @@ public class OpenColorIOLib : ModuleRules
 			string LibDirectory = Path.Combine(BinaryDir, "Unix", Arch);
 
 			PublicAdditionalLibraries.Add(Path.Combine(LibDirectory, SOName));
-			RuntimeDependencies.Add(Path.Combine(LibDirectory, SOName));
-			RuntimeDependencies.Add(Path.Combine(LibDirectory, "libOpenColorIO.so.2.2"));
+			RuntimeDependencies.Add(
+				Path.Combine(ProjectBinariesDir, SOName),
+				Path.Combine(LibDirectory, SOName)
+			);
+			//@todo: Test removing the following dependencies on linux - should not be needed?
+			RuntimeDependencies.Add(
+				Path.Combine(ProjectBinariesDir, "libOpenColorIO.so.2.3"),
+				Path.Combine(LibDirectory, "libOpenColorIO.so.2.3")
+			);
 
 			bIsPlatformAdded = true;
 		}
 		else if (Target.Platform == UnrealTargetPlatform.Mac)
 		{
 			string LibDirectory = Path.Combine(BinaryDir, PlatformDir);
-			string DylibName = "libOpenColorIO.2.2.dylib";
+			string DylibName = "libOpenColorIO.2.3.dylib";
 
 			PublicAdditionalLibraries.Add(Path.Combine(LibDirectory, DylibName));
-			RuntimeDependencies.Add(Path.Combine(LibDirectory, DylibName));
+			RuntimeDependencies.Add(
+				Path.Combine(LibDirectory, DylibName)
+			);
 
 			bIsPlatformAdded = true;
 		}

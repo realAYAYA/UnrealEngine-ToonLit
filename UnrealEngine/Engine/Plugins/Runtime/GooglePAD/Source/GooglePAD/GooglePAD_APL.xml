@@ -165,6 +165,9 @@ android {
 			proguardFile "proguard/app_update.pgcfg"
 			proguardFile "proguard/asset_delivery.pgcfg"
 			proguardFile "proguard/app_update.pgcfg"
+			proguardFile "proguard/gms_task.pgcfg"
+			proguardFile "proguard/integrity.pgcfg"
+			proguardFile "proguard/proguard.pgcfg"
 			proguardFile "proguard/review.pgcfg"
 			proguardFile "proguard/split_install.pgcfg"
 		}

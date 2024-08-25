@@ -1,0 +1,12 @@
+{
+	"MainVersion": "r25b",
+	"MinVersion": "r25b",
+	"MaxVersion": "r26c",
+
+	"AutoSDKDirectory": "-26",
+
+	"platforms": "android-33",
+	"build-tools": "33.0.1",
+	"cmake": "3.22.1",
+	"ndk": "25.1.8937393",
+}

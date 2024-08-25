@@ -377,7 +377,8 @@ bool UNiagaraDataInterfaceSceneCapture2D::Equals(const UNiagaraDataInterface* In
 		Other->AutoMoveOffsetRotation == AutoMoveOffsetRotation;
 }
 
-void UNiagaraDataInterfaceSceneCapture2D::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceSceneCapture2D::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	using namespace NDISceneCapture2DLocal;
 
@@ -502,6 +503,7 @@ void UNiagaraDataInterfaceSceneCapture2D::GetFunctions(TArray<FNiagaraFunctionSi
 		Sig.SetDescription(LOCTEXT("TextureDeprojectDepthDesc", "Deproject the depth sample from the texture into world space."));
 	}
 }
+#endif
 
 void UNiagaraDataInterfaceSceneCapture2D::GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction &OutFunc)
 {

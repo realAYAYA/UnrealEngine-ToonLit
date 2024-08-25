@@ -89,6 +89,9 @@ public:
 	/** Simplification of config as string */
 	SLATE_API virtual FString ToString() const;
 
+	/** Returns whether the analog event is beyond the navigation thresholds set in this config. */
+	bool IsAnalogEventBeyondNavigationThreshold(const FAnalogInputEvent& InAnalogEvent) const;
+
 public:
 	/** Should the Tab key perform next and previous style navigation. */
 	bool bTabNavigation;
@@ -96,6 +99,8 @@ public:
 	bool bKeyNavigation;
 	/** Should we respect the analog stick for navigation. */
 	bool bAnalogNavigation;
+	/** Should we ignore modifier keys when checking for navigation actions. If false, only unmodified keys will be processed. */
+	bool bIgnoreModifiersForNavigationActions;
 
 	/**  */
 	float AnalogNavigationHorizontalThreshold;
@@ -109,6 +114,9 @@ public:
 
 	/** Digital key navigation rules. */
 	TMap<FKey, EUINavigation> KeyEventRules;
+
+	/** Digital key action rules. */
+	TMap<FKey, EUINavigationAction> KeyActionRules;
 
 protected:
 	/**

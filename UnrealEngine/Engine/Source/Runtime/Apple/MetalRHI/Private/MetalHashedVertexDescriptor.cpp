@@ -16,12 +16,11 @@
 
 FMetalHashedVertexDescriptor::FMetalHashedVertexDescriptor()
 	: VertexDescHash(0)
-	, VertexDesc(nil)
 {
 	// void
 }
 
-FMetalHashedVertexDescriptor::FMetalHashedVertexDescriptor(mtlpp::VertexDescriptor Desc, uint32 Hash)
+FMetalHashedVertexDescriptor::FMetalHashedVertexDescriptor(MTLVertexDescriptorPtr Desc, uint32 Hash)
 	: VertexDescHash(Hash)
 	, VertexDesc(Desc)
 {
@@ -30,7 +29,6 @@ FMetalHashedVertexDescriptor::FMetalHashedVertexDescriptor(mtlpp::VertexDescript
 
 FMetalHashedVertexDescriptor::FMetalHashedVertexDescriptor(FMetalHashedVertexDescriptor const& Other)
 	: VertexDescHash(0)
-	, VertexDesc(nil)
 {
 	operator=(Other);
 }
@@ -59,39 +57,39 @@ bool FMetalHashedVertexDescriptor::operator==(FMetalHashedVertexDescriptor const
 		if (VertexDescHash == Other.VertexDescHash)
 		{
 			bEqual = true;
-			if (VertexDesc.GetPtr() != Other.VertexDesc.GetPtr())
+			if (VertexDesc != Other.VertexDesc)
 			{
-				ns::Array<mtlpp::VertexBufferLayoutDescriptor> Layouts = VertexDesc.GetLayouts();
-				ns::Array<mtlpp::VertexAttributeDescriptor> Attributes = VertexDesc.GetAttributes();
+                MTL::VertexBufferLayoutDescriptorArray* Layouts = VertexDesc->layouts();
+				MTL::VertexAttributeDescriptorArray* Attributes = VertexDesc->attributes();
 
-				ns::Array<mtlpp::VertexBufferLayoutDescriptor> OtherLayouts = Other.VertexDesc.GetLayouts();
-				ns::Array<mtlpp::VertexAttributeDescriptor> OtherAttributes = Other.VertexDesc.GetAttributes();
+				MTL::VertexBufferLayoutDescriptorArray* OtherLayouts = Other.VertexDesc->layouts();
+				MTL::VertexAttributeDescriptorArray* OtherAttributes = Other.VertexDesc->attributes();
 				check(Layouts && Attributes && OtherLayouts && OtherAttributes);
 
 				for (uint32 i = 0; bEqual && i < MaxVertexElementCount; i++)
 				{
-					mtlpp::VertexBufferLayoutDescriptor LayoutDesc = Layouts[(NSUInteger)i];
-					mtlpp::VertexBufferLayoutDescriptor OtherLayoutDesc = OtherLayouts[(NSUInteger)i];
+					MTL::VertexBufferLayoutDescriptor* LayoutDesc = Layouts->object(i);
+                    MTL::VertexBufferLayoutDescriptor* OtherLayoutDesc = OtherLayouts->object(i);
 
-					bEqual &= ((LayoutDesc != nil) == (OtherLayoutDesc != nil));
+					bEqual &= ((LayoutDesc != nullptr) == (OtherLayoutDesc != nullptr));
 
 					if (LayoutDesc && OtherLayoutDesc)
 					{
-						bEqual &= (LayoutDesc.GetStride() == OtherLayoutDesc.GetStride());
-						bEqual &= (LayoutDesc.GetStepFunction() == OtherLayoutDesc.GetStepFunction());
-						bEqual &= (LayoutDesc.GetStepRate() == OtherLayoutDesc.GetStepRate());
+						bEqual &= (LayoutDesc->stride() == OtherLayoutDesc->stride());
+						bEqual &= (LayoutDesc->stepFunction() == OtherLayoutDesc->stepFunction());
+						bEqual &= (LayoutDesc->stepRate() == OtherLayoutDesc->stepRate());
 					}
 
-					mtlpp::VertexAttributeDescriptor AttrDesc = Attributes[(NSUInteger)i];
-					mtlpp::VertexAttributeDescriptor OtherAttrDesc = OtherAttributes[(NSUInteger)i];
+					MTL::VertexAttributeDescriptor* AttrDesc = Attributes->object(i);
+                    MTL::VertexAttributeDescriptor* OtherAttrDesc = OtherAttributes->object(i);
 
-					bEqual &= ((AttrDesc != nil) == (OtherAttrDesc != nil));
+					bEqual &= ((AttrDesc != nullptr) == (OtherAttrDesc != nullptr));
 
 					if (AttrDesc && OtherAttrDesc)
 					{
-						bEqual &= (AttrDesc.GetFormat() == OtherAttrDesc.GetFormat());
-						bEqual &= (AttrDesc.GetOffset() == OtherAttrDesc.GetOffset());
-						bEqual &= (AttrDesc.GetBufferIndex() == OtherAttrDesc.GetBufferIndex());
+						bEqual &= (AttrDesc->format() == OtherAttrDesc->format());
+						bEqual &= (AttrDesc->offset() == OtherAttrDesc->offset());
+						bEqual &= (AttrDesc->bufferIndex() == OtherAttrDesc->bufferIndex());
 					}
 				}
 			}

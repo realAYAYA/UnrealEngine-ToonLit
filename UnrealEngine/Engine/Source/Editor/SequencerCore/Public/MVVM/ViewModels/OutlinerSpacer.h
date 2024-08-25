@@ -48,7 +48,6 @@ public:
 	bool HasBackground() const override;
 	FName GetIdentifier() const override;
 	FOutlinerSizing GetOutlinerSizing() const override;
-	TSharedRef<SWidget> CreateOutlinerView(const FCreateOutlinerViewParams& InParams) override;
 	TSharedPtr<SWidget> CreateContextMenuWidget(const FCreateOutlinerContextMenuWidgetParams& InParams) override;
 
 	/*~ ISortableExtension */

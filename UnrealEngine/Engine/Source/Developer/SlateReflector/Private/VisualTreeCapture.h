@@ -19,10 +19,10 @@ enum class EElementType : uint8;
 class FVisualEntry
 {
 public:
-	FVector2D TopLeft;
-	FVector2D TopRight;
-	FVector2D BottomLeft;
-	FVector2D BottomRight;
+	FVector2f TopLeft;
+	FVector2f TopRight;
+	FVector2f BottomLeft;
+	FVector2f BottomRight;
 
 	int32 LayerId;
 	int32 ClippingIndex;
@@ -36,13 +36,13 @@ public:
 
 	void Resolve(const FSlateWindowElementList& ElementList);
 
-	bool IsPointInside(const FVector2D& Point) const;
+	bool IsPointInside(const FVector2f& Point) const;
 };
 
 class FVisualTreeSnapshot : public TSharedFromThis<FVisualTreeSnapshot>
 {
 public:
-	TSharedPtr<const SWidget> Pick(FVector2D Point);
+	TSharedPtr<const SWidget> Pick(FVector2f Point);
 	
 public:
 	TArray<FVisualEntry> Entries;

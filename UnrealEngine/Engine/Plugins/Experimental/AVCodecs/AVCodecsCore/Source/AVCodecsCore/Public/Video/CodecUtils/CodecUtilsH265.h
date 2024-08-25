@@ -150,11 +150,15 @@ namespace UE::AVCodecCore::H265
 		HighThroughput444_10 = HighThroughput,
 		HighThroughput444_14 = HighThroughput,
 		HighThroughput444_16Intra = HighThroughput,
+        MultiViewMain = 6,
+        ScalableMain = 7,
+        ThreeDimensionalMain = 8,
 		ScreenContentCoding = 9,
 		ScreenExtendedMain = ScreenContentCoding,
 		ScreenExtendedMain10 = ScreenContentCoding,
 		ScreenExtendedMain444 = ScreenContentCoding,
 		ScreenExtendedMain444_10 = ScreenContentCoding,
+        ScalableRangeExtensions = 10,
 		HighThroughputScreenContentCoding = 11,
 		ScreenExtendedHighThroughput444 = HighThroughputScreenContentCoding,
 		ScreenExtendedHighThroughput444_10 = HighThroughputScreenContentCoding,
@@ -295,48 +299,41 @@ namespace UE::AVCodecCore::H265
 		return OutBuf - OutBase;
 	}
 
-	struct FNaluH265 : public FNalu
+	struct FNaluH265
 	{
-		uint64 StartIdx = 0, Size = 0;
-		uint8 StartCodeSize = 3;
-		U<6, ENaluType> nal_unit_type = ENaluType::UNSPECIFIED;
-		U<6> nuh_layer_id = 0;
-		U<3> nuh_temporal_id_plus1 = 0;
-		const uint8* EBSP = nullptr;
-
-		bool IsSlice()
-		{
-			return	nal_unit_type == ENaluType::TRAIL_N ||
-					nal_unit_type == ENaluType::TRAIL_R ||
-					nal_unit_type == ENaluType::TSA_N ||
-					nal_unit_type == ENaluType::TSA_R ||
-					nal_unit_type == ENaluType::STSA_N ||
-					nal_unit_type == ENaluType::STSA_R ||
-					nal_unit_type == ENaluType::RADL_N ||
-					nal_unit_type == ENaluType::RADL_R ||
-					nal_unit_type == ENaluType::RASL_N ||
-					nal_unit_type == ENaluType::RASL_R ||
-					nal_unit_type == ENaluType::BLA_W_LP ||
-					nal_unit_type == ENaluType::BLA_W_RADL ||
-					nal_unit_type == ENaluType::BLA_N_LP ||
-					nal_unit_type == ENaluType::IDR_W_RADL ||
-					nal_unit_type == ENaluType::IDR_N_LP ||
-					nal_unit_type == ENaluType::CRA_NUT;
-			;
-		}
+		uint64 Start, Size;
+		uint8 StartCodeSize;
+        ENaluType Type;
+		uint8 NuhLayerId;
+        uint8 NuhTemporalIdPlus1;
+        const uint8* Data;
 	};
 
-	FAVResult FindNALUs(FVideoPacket const& InPacket, TArray<FNaluH265>& FoundNalus);
+	AVCODECSCORE_API FAVResult FindNALUs(FVideoPacket const& InPacket, TArray<FNaluH265>& FoundNalus);
 
 	struct profile_tier_level_t : public FBitstreamSegment
 	{
 		U<2> general_profile_space;
 		U<1> general_tier_flag;
 		U<5, EH265ProfileIDC> general_profile_idc;
-		U<32> general_profile_compatibility_flag;
+        TArray<U<1>> general_profile_compatibility_flag;
 		U<1> general_progressive_source_flag;
 		U<1> general_interlaced_source_flag;
-		EH265ConstraintFlag general_constraint_flags = EH265ConstraintFlag::None;
+        U<1> general_non_packed_constraint_flag;
+        U<1> general_frame_only_constraint_flag;
+
+
+        U<1> general_max_12bit_constraint_flag;
+        U<1> general_max_10bit_constraint_flag;
+        U<1> general_max_8bit_constraint_flag;
+        U<1> general_max_422chroma_constraint_flag;
+        U<1> general_max_420chroma_constraint_flag;
+        U<1> general_max_monochrome_constraint_flag;
+        U<1> general_intra_constraint_flag;
+        U<1> general_one_picture_only_constraint_flag;
+        U<1> general_lower_bit_rate_constraint_flag;
+        U<1> general_max_14bit_constraint_flag;
+
 		U<1> general_inbld_flag = 0;
 		U<8, EH265LevelIDC> general_level_idc;
 
@@ -350,15 +347,28 @@ namespace UE::AVCodecCore::H265
 			U<5, EH265ProfileIDC> sub_layer_profile_idc;
 			U<1> sub_layer_progressive_source_flag;
 			U<1> sub_layer_interlaced_source_flag;
-			U<32> sub_layer_profile_compatibility_flag;
-			EH265ConstraintFlag sub_layer_constraint_flags = EH265ConstraintFlag::None;
+            TArray<U<1>> sub_layer_profile_compatibility_flag;
+            U<1> sub_layer_non_packed_constraint_flag;
+            U<1> sub_layer_frame_only_constraint_flag;
+
+            U<1> sub_layer_max_12bit_constraint_flag;
+            U<1> sub_layer_max_10bit_constraint_flag;
+            U<1> sub_layer_max_8bit_constraint_flag;
+            U<1> sub_layer_max_422chroma_constraint_flag;
+            U<1> sub_layer_max_420chroma_constraint_flag;
+            U<1> sub_layer_max_monochrome_constraint_flag;
+            U<1> sub_layer_intra_constraint_flag;
+            U<1> sub_layer_one_picture_only_constraint_flag;
+            U<1> sub_layer_lower_bit_rate_constraint_flag;
+            U<1> sub_layer_max_14bit_constraint_flag;
+
 			U<1> sub_layer_inbld_flag;
 			U<8, EH265LevelIDC> sub_layer_level_idc;
 		};
 
 		TArray<sub_layer_t> sub_layers;
 
-		inline void Parse(const uint8& profilePresentFlag, uint8 maxNumSubLayersMinus1, FBitstreamReader& Bitstream);
+        inline void Parse(uint8 const& profilePresentFlag, uint8 maxNumSubLayersMinus1, FBitstreamReader& Bitstream);
 	};
 
 	struct hrd_parameters_t : public FBitstreamSegment
@@ -396,15 +406,15 @@ namespace UE::AVCodecCore::H265
 
 			TArray<sub_layer_hrd_parameters_t> sub_layer_hrd_parameters;
 
-			inline void Parse(uint8 const& in_sub_pic_hrd_params_present_flag, uint8 const& CpbCnt, FBitstreamReader& Bitstream);
-		};
+            inline void Parse(uint8 const& in_sub_pic_hrd_params_present_flag, uint8 const& CpbCnt, FBitstreamReader& Bitstream);
+        };
 
 		TArray<sub_layer_t> sub_layers;
 
-		inline void Parse(uint8 const& commonInfPresentFlag, uint8 const& maxNumSubLayersMinus1, FBitstreamReader& Bitstream);
-	};
+        inline void Parse(uint8 const& commonInfPresentFlag, uint8 const& maxNumSubLayersMinus1, FBitstreamReader& Bitstream);
+    };
 
-	struct FNaluVPS : public FNaluH265
+	struct VPS_t : public FNalu
 	{
 		U<4> vps_video_parameter_set_id;
 		U<1> vps_base_layer_internal_flag;
@@ -416,34 +426,31 @@ namespace UE::AVCodecCore::H265
 		profile_tier_level_t profile_tier_level;
 
 		U<1> vps_sub_layer_ordering_info_present_flag;
-		TArray<UE> vps_max_dec_pic_buffering_minus1 = {};
-		TArray<UE> vps_max_num_reorder_pics = {};
-		TArray<UE> vps_max_latency_increase_plus1 = {};
+		TArray<UE> vps_max_dec_pic_buffering_minus1;
+		TArray<UE> vps_max_num_reorder_pics;
+		TArray<UE> vps_max_latency_increase_plus1;
 		U<6> vps_max_layer_id;
 		UE vps_num_layer_sets_minus1;
-		TArray<TArray<U<1>>> layer_id_included_flag = {};
+		TArray<TArray<U<1>>> layer_id_included_flag;
 		U<1> vps_timing_info_present_flag;
 		U<32> vps_num_units_in_tick;
 		U<32> vps_time_scale;
 		U<1> vps_poc_proportional_to_timing_flag;
 		UE vps_num_ticks_poc_diff_one_minus1;
 		UE vps_num_hrd_parameters;
-		TArray<UE> hrd_layer_set_idx = {};
-		TArray<U<1>> cprms_present_flag = {};
-		TArray<hrd_parameters_t> HrdParameters = {};
+		TArray<UE> hrd_layer_set_idx;
+		TArray<U<1>> cprms_present_flag;
+		TArray<hrd_parameters_t> hrd_parameters;
 		U<1> vps_extension_flag;
 
 		// Stream State Members
 		// TODO (aidan) perhaps this should be moved elsewhere
 		mutable uint32 prevPicOrderCntLsb = 0;
 		mutable uint32 prevPicOrderCntMsb = 0;
-
-		FNaluVPS() = delete;
-		FNaluVPS(FNaluH265 const& InNaluH265)
-			: FNaluH265(InNaluH265) {}
-
-		FAVResult Parse();
 	};
+
+    FAVResult ParseVPS(FBitstreamReader& Bitstream, FNaluH265 const& InNaluInfo, TMap<uint32, VPS_t>& OutMapVPS);
+
 	
 	template <uint32 Tlog2blkSize, uint32 TscanIdx>
 	struct TScanOrder
@@ -556,7 +563,7 @@ public:
 		uint8 ScalingList0[6][16];
 		uint8 ScalingList1to3[3][6][64];
 
-		inline void Parse(FBitstreamReader& Bitstream);
+        inline void Parse(FBitstreamReader& Bitstream);
 	};
 
 	struct FH265ChromaInfo
@@ -611,15 +618,15 @@ public:
 		UE delta_idx_minus1 = 0;
 		U<1> delta_rps_sign;
 		UE abs_delta_rps_minus1;
-		TArray<U<1>> used_by_curr_pic_flags = {};
-		TArray<U<1>> use_delta_flags = {};
+		U<1>* used_by_curr_pic_flags;
+		U<1>* use_delta_flags;
 
 		UE num_negative_pics = 0;
 		UE num_positive_pics = 0;
-		TArray<UE> delta_poc_s0_minus1s = {};
-		TArray<U<1>> used_by_curr_pic_s0_flags = {};
-		TArray<UE> delta_poc_s1_minus1s = {};
-		TArray<U<1>> used_by_curr_pic_s1_flags = {};
+		UE* delta_poc_s0_minus1s;
+		U<1>* used_by_curr_pic_s0_flags;
+		UE* delta_poc_s1_minus1s;
+		U<1>* used_by_curr_pic_s1_flags;
 
 		// Derived Values (specification usage order)
 		uint8 NumPositivePics = 0;
@@ -630,19 +637,11 @@ public:
 		TStaticArray<uint8, 16> UsedByCurrPicS0;
 		TStaticArray<uint8, 16> UsedByCurrPicS1;
 
-		inline void Parse(uint8 const& stRpsIdx, TArray<short_term_ref_pic_set_t> const& short_term_ref_pic_sets, FBitstreamReader& Bitstream);
+        inline void Parse(uint8 const& stRpsIdx, TArray<short_term_ref_pic_set_t> const& short_term_ref_pic_sets, FBitstreamReader& Bitstream);
 		inline void CalculateValues(uint8 const& stRpsIdx, TArray<short_term_ref_pic_set_t>& st_ref_pic_set);
 	};
 
-	struct long_term_ref_pics_t : FBitstreamSegment
-	{
-		U<> lt_ref_pic_poc_lsb_sps;
-		U<1> used_by_curr_pic_lt_sps_flag;
-
-		inline void Parse(const uint8& log2_max_pic_order_cnt_lsb_minus4, FBitstreamReader& Bitstream);
-	};
-
-	struct FNaluSPS : public FNaluH265
+	struct SPS_t : public FNalu
 	{
 		U<4> sps_video_parameter_set_id;
 		U<3> sps_max_sub_layers_minus1;
@@ -650,7 +649,7 @@ public:
 		profile_tier_level_t profile_tier_level;
 		UE sps_seq_parameter_set_id;
 		UE chroma_format_idc;
-		U<1> separate_colour_plane_flag = 0;
+		U<1> separate_colour_plane_flag;
 		UE ChromaArrayType;
 		UE pic_width_in_luma_samples;
 		UE pic_height_in_luma_samples;
@@ -658,10 +657,10 @@ public:
 
 		struct conf_win_t : public FBitstreamSegment
 		{
-			UE left_offset = 0;
-			UE right_offset = 0;
-			UE top_offset = 0;
-			UE bottom_offset = 0;
+			UE left_offset;
+			UE right_offset;
+			UE top_offset;
+			UE bottom_offset;
 		} conf_win;
 
 		UE bit_depth_luma_minus8;
@@ -705,7 +704,8 @@ public:
 
 		U<1> long_term_ref_pics_present_flag;
 		UE num_long_term_ref_pics_sps;
-		TArray<long_term_ref_pics_t> long_term_ref_pics_sps;
+        TArray<U<>> lt_ref_pic_poc_lsb_sps = {};
+        TArray<U<1>> used_by_curr_pic_lt_sps_flag;
 
 		U<1> sps_temporal_mvp_enabled_flag;
 		U<1> strong_intra_smoothing_enabled_flag;
@@ -763,7 +763,7 @@ public:
 			UE log2_max_mv_length_horizontal;
 			UE log2_max_mv_length_vertical;
 
-			inline void Parse(FBitstreamReader& Bitstream);
+            inline void Parse(FBitstreamReader& Bitstream, uint8 const& sps_max_sub_layers_minus1);
 		} vui_parameters;
 
 		U<1> sps_extension_present_flag;
@@ -786,21 +786,19 @@ public:
 			U<1> persistent_rice_adaptation_enabled_flag;
 			U<1> cabac_bypass_alignment_enabled_flag;
 
-			inline void Parse(FBitstreamReader& Bitstream);
+            inline void Parse(FBitstreamReader& Bitstream);
 		} sps_range_extension;
 
 		struct sps_multilayer_extension_t : public FBitstreamSegment
 		{
 			// TODO (aidan)
-
-			inline void Parse(FBitstreamReader& Bitstream) { unimplemented(); }
+            inline void Parse(FBitstreamReader& Bitstream) { unimplemented(); }
 		} sps_multilayer_extension;
 
 		struct sps_3d_extension_t : public FBitstreamSegment
 		{
 			// TODO (aidan)
-
-			inline void Parse(FBitstreamReader& Bitstream) { unimplemented(); }
+            inline void Parse(FBitstreamReader& Bitstream) { unimplemented(); }
 		} sps_3d_extension;
 
 		struct sps_scc_extension_t : public FBitstreamSegment
@@ -811,24 +809,21 @@ public:
 			UE delta_palette_max_predictor_size;
 			U<1> sps_palette_predictor_initializers_present_flag;
 			UE sps_num_palette_predictor_initializers_minus1;
-			TArray<TArray<U<>>> sps_palette_predictor_initializers;
+            TArray<TArray<U<>>> sps_palette_predictor_initializers = {};
 			U<2> motion_vector_resolution_control_idc;
 			U<1> intra_boundary_filtering_disabled_flag;
 
-			inline void Parse(uint32 const& in_chroma_format_idc, uint32 const& in_bit_depth_chroma_minus8, FBitstreamReader& Bitstream);
+            inline void Parse(uint32 const& in_chroma_format_idc, uint32 const& in_bit_depth_chroma_minus8, FBitstreamReader& Bitstream);
 		} sps_scc_extension;
 
 		// Members derived from bitstream
 		uint32 MaxDpbSize;
-
-		FNaluSPS() = delete;
-		FNaluSPS(FNaluH265 const& InNaluH265)
-			: FNaluH265(InNaluH265) {}
-
-		FAVResult Parse();
 	};
 
-	struct FNaluPPS : public FNaluH265
+    FAVResult ParseSPS(FBitstreamReader& Bitstream, FNaluH265 const& InNaluInfo, TMap<uint32, VPS_t> const& InMapVPS, TMap<uint32, SPS_t>& OutMapSPS);
+
+
+	struct PPS_t : public FNalu
 	{
 		UE pps_pic_parameter_set_id;
 		UE pps_seq_parameter_set_id;
@@ -843,7 +838,7 @@ public:
 		U<1> constrained_intra_pred_flag;
 		U<1> transform_skip_enabled_flag;
 		U<1> cu_qp_delta_enabled_flag;
-		UE diff_cu_qp_delta_depth = 0;
+		UE diff_cu_qp_delta_depth;
 		SE pps_cb_qp_offset;
 		SE pps_cr_qp_offset;
 		U<1> pps_slice_chroma_qp_offsets_present_flag;
@@ -888,21 +883,17 @@ public:
 			UE log2_sao_offset_scale_luma;
 			UE log2_sao_offset_scale_chroma;
 
-			inline void Parse(uint8 const& in_transform_skip_enabled_flag, FBitstreamReader& Bitstream);
+            inline void Parse(uint8 const& in_transform_skip_enabled_flag, FBitstreamReader& Bitstream);
 		} pps_range_extension;
 
 		struct pps_multilayer_extension_t
 		{
-			// TODO (aidan)
-
-			inline void Parse(FBitstreamReader& Bitstream) { /*unimplemented();*/ }
+            inline void Parse(FBitstreamReader& Bitstream) { /*unimplemented();*/ }
 		} pps_multilayer_extension;
 
 		struct pps_3d_extension_t
 		{
-			// TODO (aidan)
-
-			inline void Parse(FBitstreamReader& Bitstream) { /*unimplemented();*/ }
+            inline void Parse(FBitstreamReader& Bitstream) { /*unimplemented();*/ }
 		} pps_3d_extension;
 
 		struct pps_scc_extension_t
@@ -918,17 +909,13 @@ public:
 			U<1> monochrome_palette_flag;
 			UE luma_bit_depth_entry_minus8;
 			UE chroma_bit_depth_entry_minus8;
-			TArray<TArray<U<>>> pps_palette_predictor_initializer;
+            TArray<TArray<U<>>> pps_palette_predictor_initializer = {};
 
-			inline void Parse(FBitstreamReader& Bitstream);
+            inline void Parse(FBitstreamReader& Bitstream);
 		} pps_scc_extension;
-
-		FNaluPPS() = delete;
-		FNaluPPS(FNaluH265 const& InNaluH265)
-			: FNaluH265(InNaluH265) {}
-
-		FAVResult Parse();
 	};
+
+    FAVResult ParsePPS(FBitstreamReader& Bitstream, FNaluH265 const& InNaluInfo, TMap<uint32, VPS_t> const& InMapVPS, TMap<uint32, SPS_t> const& InMapSPS, TMap<uint32, PPS_t>& OutMapPPS);
 
 	enum class EH265SliceType : uint8
 	{
@@ -937,15 +924,15 @@ public:
 		I = 2
 	};
 
-	struct FNaluSlice : public FNaluH265
+	struct Slice_t : public FNalu
 	{
 		// Members read from bitstream
 		U<1> first_slice_segment_in_pic_flag;
 		U<1> no_output_of_prior_pics_flag;
 		UE slice_pic_parameter_set_id;
 
-		U<1> dependent_slice_segment_flag;
-		U<> slice_segment_address;
+		U<1> dependent_slice_segment_flag = 0;
+		U<> slice_segment_address = 0;
 		UnsignedExpGolomb<EH265SliceType> slice_type;
 		U<1> pic_output_flag = 1;
 		U<2> colour_plane_id;
@@ -953,39 +940,38 @@ public:
 		U<1> short_term_ref_pic_set_sps_flag;
 		short_term_ref_pic_set_t short_term_ref_pic_set;
 		U<> short_term_ref_pic_set_idx = 0;
-		UE num_long_term_sps;
+		UE num_long_term_sps = 0;
 		UE num_long_term_pics = 0;
-		TArray<U<>> lt_idx_sps;
-		TArray<U<>> poc_lsb_lt;
-		TArray<U<1>> used_by_curr_pic_lt_flag;
-		TArray<U<1>> delta_poc_msb_present_flag;
-		TArray<UE> delta_poc_msb_cycle_lt;
+        U<>* lt_idx_sps = nullptr;
+        U<>* poc_lsb_lt = nullptr;
+		U<1>* used_by_curr_pic_lt_flag = nullptr;
+	    U<1>* delta_poc_msb_present_flag = nullptr;
+		UE* delta_poc_msb_cycle_lt = nullptr;
 		U<1> slice_temporal_mvp_enabled_flag = 0;
 
 		U<1> slice_sao_luma_flag = 0;
 		U<1> slice_sao_chroma_flag = 0;
 
 		U<1> num_ref_idx_active_override_flag;
-		UE num_ref_idx_l0_active_minus1;
-		UE num_ref_idx_l1_active_minus1;
+		UE num_ref_idx_l0_active_minus1 = 0;
+		UE num_ref_idx_l1_active_minus1 = 0;
 		struct ref_pic_list_modification_t
 		{
 			U<1> ref_pic_list_modification_flag_l0 = 0;
-			TArray<U<>> list_entry_l0;
+            U<>* list_entry_l0 = nullptr;
 			U<1> ref_pic_list_modification_flag_l1 = 0;
-			TArray<U<>> list_entry_l1;
+            U<>* list_entry_l1 = nullptr;
 
-			inline void Parse(uint8 const& in_num_ref_idx_l0_active_minus1, uint8 const& in_num_ref_idx_l1_active_minus1, uint32 const& InNumPicTotalCurr, EH265SliceType const& SliceType, FBitstreamReader& BitStream);
-
+            inline void Parse(uint8 const& in_num_ref_idx_l0_active_minus1, uint8 const& in_num_ref_idx_l1_active_minus1, uint32 const& InNumPicTotalCurr, EH265SliceType const& SliceType, FBitstreamReader& BitStream);
 		} ref_pic_list_modification;
-		U<1> mvd_l1_zero_flag;
-		U<1> cabac_init_flag;
+		U<1> mvd_l1_zero_flag = 0;
+		U<1> cabac_init_flag = 0;
 		U<1> collocated_from_l0_flag = 1;
 		UE collocated_ref_idx = 0;
 		struct pred_weight_table_t
 		{
 			UE luma_log2_weight_denom;
-			SE delta_chroma_log2_weight_denom;
+			SE delta_chroma_log2_weight_denom = 0;
 
 			TStaticArray<U<1>, 15> luma_weight_l0_flag;
 			TStaticArray<U<1>, 15> chroma_weight_l0_flag;
@@ -1001,8 +987,8 @@ public:
 			TStaticArray<TStaticArray<SE, 2>, 15> delta_chroma_weight_l1;
 			TStaticArray<TStaticArray<SE, 2>, 15> delta_chroma_offset_l1;
 
-			inline void Parse(const uint8& ChromaArrayType, FNaluSlice const& CurrentSlice, FBitstreamReader& BitStream);
-		} pred_weight_table;
+            inline void Parse(const uint8& ChromaArrayType, FNaluH265 const& InNaluInfo, Slice_t const& CurrentSlice, FBitstreamReader& BitStream);
+        } pred_weight_table;
 
 		UE five_minus_max_num_merge_cand;
 		U<1> use_integer_mv_flag;
@@ -1012,9 +998,9 @@ public:
 		SE slice_cb_qp_offset = 0;
 		SE slice_cr_qp_offset = 0;
 
-		SE slice_act_y_qp_offset = 0;
-		SE slice_act_cb_qp_offset = 0;
-		SE slice_act_cr_qp_offset = 0;
+		SE slice_act_y_qp_offset;
+		SE slice_act_cb_qp_offset;
+		SE slice_act_cr_qp_offset;
 
 		U<1> cu_chroma_qp_offset_enabled_flag = 0;
 
@@ -1028,37 +1014,23 @@ public:
 
 		UE num_entry_point_offsets = 0;
 		UE offset_len_minus1;
-		TArray<U<>> entry_point_offset_minus1;
+        U<>* entry_point_offset_minus1;
 
-		UE slice_segment_header_extension_length;
-		TArray<U<8>> slice_segment_header_extension_data_byte;
-
-		// Members derived from bitstream
-		TWeakPtr<FNaluPPS> CurrentPPS;
-		TWeakPtr<FNaluSPS> CurrentSPS;
-		TWeakPtr<FNaluVPS> CurrentVPS;
+		UE slice_segment_header_extension_length = 0;
+		U<8>* slice_segment_header_extension_data_byte;
 
 		uint32 CurrPicIdx = 0;
 		uint32 CurrPicOrderCntVal = 0;
 		uint32 CurrRpsIdx = 0;
-		uint32 NumBitsForShortTermRPSInSlice = 0; // Something for NVDEC
-		
-		FNaluSlice() = delete;
-		FNaluSlice(FNaluH265 const& InNaluH265)
-			: FNaluH265(InNaluH265) {}
-
-		FAVResult Parse(FVideoDecoderConfigH265* InConfig);
-		bool IsIDR() { return  nal_unit_type == ENaluType::IDR_N_LP || nal_unit_type == ENaluType::IDR_W_RADL; };
 	};
 
-	struct FNaluSEI : public FNaluH265
+    FAVResult ParseSliceHeader(FBitstreamReader& Bitstream, FNaluH265 const& InNaluInfo, TMap<uint32, VPS_t> const& InMapVPS, TMap<uint32, SPS_t> const& InMapSPS, TMap<uint32, PPS_t> const& InMapPPS, Slice_t& OutSlice);
+
+
+	struct SEI_t : public FNalu
 	{
-
-		FNaluSEI() = delete;
-		FNaluSEI(FNaluH265 const& InNaluH265)
-			: FNaluH265(InNaluH265) {}
-
-		FAVResult Parse();
 	};
+
+    FAVResult ParseSEI(FBitstreamReader& Bitstream, FNaluH265 const& InNaluInfo, SEI_t& OutSEI);
 
 } // namespace UE::AVCodecCore::H265

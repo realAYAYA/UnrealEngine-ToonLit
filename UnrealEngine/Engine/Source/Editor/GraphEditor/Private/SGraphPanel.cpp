@@ -620,7 +620,12 @@ int32 SGraphPanel::OnPaint( const FPaintArgs& Args, const FGeometry& AllottedGeo
 			}
 
 			// Update the spline hover state
-			const_cast<SGraphPanel*>(this)->OnSplineHoverStateChanged(OverlapData);
+			if (const_cast<SGraphPanel*>(this)->OnSplineHoverStateChanged(OverlapData))
+			{
+				
+				// if hover state changed, we update the tooltip text based on the connection drawing policy
+				const_cast<SGraphPanel*>(this)->SetToolTip(ConnectionDrawingPolicy->GetConnectionToolTip(*this, OverlapData));
+			}
 		}
 
 		delete ConnectionDrawingPolicy;
@@ -666,7 +671,7 @@ int32 SGraphPanel::OnPaint( const FPaintArgs& Args, const FGeometry& AllottedGeo
 	return MaxLayerId;
 }
 
-void SGraphPanel::OnSplineHoverStateChanged(const FGraphSplineOverlapResult& NewSplineHoverState)
+bool SGraphPanel::OnSplineHoverStateChanged(const FGraphSplineOverlapResult& NewSplineHoverState)
 {
 	TSharedPtr<SGraphPin> OldPin1Widget;
 	TSharedPtr<SGraphPin> OldPin2Widget;
@@ -684,11 +689,15 @@ void SGraphPanel::OnSplineHoverStateChanged(const FGraphSplineOverlapResult& New
 	if (OldPin1Widget.IsValid() && OldPin1Widget != NewPin1Widget && OldPin1Widget != NewPin2Widget)
 	{
 		OldPin1Widget->OnMouseLeave(LastPointerEvent);
+		// reset connection tooltip if hover outside spline
+		SetToolTipText(FText());
 	}
 
 	if (OldPin2Widget.IsValid() && OldPin2Widget != NewPin1Widget && OldPin2Widget != NewPin2Widget)
 	{
 		OldPin2Widget->OnMouseLeave(LastPointerEvent);
+		// reset connection tooltip if hover outside spline
+		SetToolTipText(FText());
 	}
 
 	// Handle enter hovering on the pins
@@ -711,6 +720,7 @@ void SGraphPanel::OnSplineHoverStateChanged(const FGraphSplineOverlapResult& New
 		//@TODO: Source this parameter from the graph rendering settings once it is there (see code in ApplyHoverDeemphasis)
 		TimeWhenMouseEnteredPin -= 0.75f;
 	}
+	return bChangedHover;
 }
 
 bool SGraphPanel::SupportsKeyboardFocus() const
@@ -739,16 +749,6 @@ void SGraphPanel::OnArrangeChildren( const FGeometry& AllottedGeometry, FArrange
 	}
 
 	ArrangedChildren.Append(MyArrangedChildren);
-}
-
-TSharedPtr<IToolTip> SGraphPanel::GetToolTip()
-{
-	if (SGraphPin* BestPinFromHoveredSpline = GetBestPinFromHoveredSpline())
-	{
-		return BestPinFromHoveredSpline->GetToolTip();
-	}
-
-	return SNodePanel::GetToolTip();
 }
 
 void SGraphPanel::UpdateSelectedNodesPositions(FVector2D PositionIncrement)
@@ -836,7 +836,7 @@ FReply SGraphPanel::OnKeyDown( const FGeometry& MyGeometry, const FKeyEvent& InK
 			int32 NumSpawnedNodes = NodeCountAfter - NodeCountBefore;
 			if (NumSpawnedNodes > 0)
 			{
-				TArrayView<UEdGraphNode*> SpawnedNodes = MakeArrayView(&GraphObj->Nodes[NodeCountBefore], NumSpawnedNodes);
+				TArrayView<UEdGraphNode* const> SpawnedNodes = MakeArrayView(&GraphObj->Nodes[NodeCountBefore], NumSpawnedNodes);
 
 				// Try to auto-wire the newly spawned node
 				// Note: Usually the auto-wiring is handled by a schema action or something like FBlueprintMenuActionItemImpl::AutowireSpawnedNodes,
@@ -1423,9 +1423,9 @@ UEdGraphPin* SGraphPanel::GetPinUnderMouse(const FGeometry& MyGeometry, const FP
 	return PinUnderCursor;
 }
 
-void SGraphPanel::AdjustNewlySpawnedNodePositions(TArrayView<UEdGraphNode*> SpawnedNodes, TArrayView<UEdGraphPin*> DraggedFromPins, FVector2D AnchorPosition)
+void SGraphPanel::AdjustNewlySpawnedNodePositions(TArrayView<UEdGraphNode* const> SpawnedNodes, TArrayView<UEdGraphPin*> DraggedFromPins, FVector2D AnchorPosition)
 {
-	static auto FindFirstLinkedAutoWiredPin = [](TArrayView<UEdGraphNode*> SpawnedNodes, TArrayView<UEdGraphPin*> DraggedFromPins) -> UEdGraphPin*
+	static auto FindFirstLinkedAutoWiredPin = [](TArrayView<UEdGraphNode* const> SpawnedNodes, TArrayView<UEdGraphPin*> DraggedFromPins) -> UEdGraphPin*
 	{
 		for (UEdGraphPin* DraggedPin : DraggedFromPins)
 		{
@@ -1447,7 +1447,7 @@ void SGraphPanel::AdjustNewlySpawnedNodePositions(TArrayView<UEdGraphNode*> Spaw
 	}
 }
 
-void SGraphPanel::MoveNodesToAnchorPinAtGraphPosition(TArrayView<UEdGraphNode*> NodesToMove, FGraphPinHandle PinToAnchor, FVector2D DesiredPinGraphPosition)
+void SGraphPanel::MoveNodesToAnchorPinAtGraphPosition(TArrayView<UEdGraphNode* const> NodesToMove, FGraphPinHandle PinToAnchor, FVector2D DesiredPinGraphPosition)
 {
 	struct FAnchorUtils
 	{
@@ -1469,7 +1469,7 @@ void SGraphPanel::MoveNodesToAnchorPinAtGraphPosition(TArrayView<UEdGraphNode*> 
 			return EActiveTimerReturnType::Stop;
 		}
 
-		static void AlignPinToPosition(TSharedRef<SGraphPanel> Panel, FGraphPinHandle DragFromPinHandle, FVector2D DesiredPinImageCenterGraph, TArrayView<UEdGraphNode*> SpawnedNodes)
+		static void AlignPinToPosition(TSharedRef<SGraphPanel> Panel, FGraphPinHandle DragFromPinHandle, FVector2D DesiredPinImageCenterGraph, TArrayView<UEdGraphNode* const> SpawnedNodes)
 		{
 			TSharedPtr<SGraphPin> DragFromPinWidget = DragFromPinHandle.FindInGraphPanel(*Panel);
 			if (!DragFromPinWidget.IsValid())
@@ -1941,6 +1941,8 @@ private:
 
 void SGraphPanel::StraightenConnections()
 {
+	bool bHasAlignedNodes = false;
+	
 	FConnectionAligner Aligner;
 	for (auto& It : SelectionManager.SelectedNodes)
 	{
@@ -1974,7 +1976,54 @@ void SGraphPanel::StraightenConnections()
 					
 					if (PinWidget.IsValid() && LinkedPinWidget.IsValid())
 					{
+						bHasAlignedNodes = true;
 						Aligner.DefineConnection(SourceNode, PinWidget, DestNode, LinkedPinWidget);
+					}
+				}
+			}
+		}
+	}
+	
+	// If we aren't aligning selected nodes, try to align a hovered Single Pin (non-knot) connected nodes.
+	if (!bHasAlignedNodes && CurrentHoveredPins.Num() > 0)
+	{
+		UEdGraphPin* SourcePin = nullptr;
+		for (const FEdGraphPinReference& CurrentHoverPin : CurrentHoveredPins)
+		{
+			int32 InputPinIndex = INDEX_NONE;
+			int32 OutputPinIndex = INDEX_NONE;
+			UEdGraphNode* InKnot = CurrentHoverPin.Get()->GetOwningNodeUnchecked();
+			bool bIsKnot = (InKnot != nullptr && InKnot->ShouldDrawNodeAsControlPointOnly(InputPinIndex, OutputPinIndex) == true &&
+				InputPinIndex >= 0 && OutputPinIndex >= 0);
+	
+			//only use the actual node pins and not knot pins
+			if (!bIsKnot)
+			{
+				SourcePin = CurrentHoverPin.Get();
+			}
+		}
+
+		if (SourcePin)
+		{
+			UEdGraphNode* SourceNode = SourcePin->GetOwningNode();
+			if (SourceNode)
+			{
+				UEdGraphPin* DestPin = (SourcePin->LinkedTo.Num() == 1) ? SourcePin->LinkedTo[0] : nullptr;
+				UEdGraphNode* DestNode = DestPin ? DestPin->GetOwningNode() : nullptr;
+				if (DestPin && DestNode)
+				{
+					TSharedRef<SNode>* SrcNodePtr = NodeToWidgetLookup.Find(SourceNode);
+					TSharedRef<SNode>* DstNodePtr = NodeToWidgetLookup.Find(DestNode);
+
+					if (SrcNodePtr && DstNodePtr)
+					{
+						TSharedPtr<SGraphPin> PinWidget = StaticCastSharedRef<SGraphNode>(*SrcNodePtr)->FindWidgetForPin(SourcePin);
+						TSharedPtr<SGraphPin> LinkedPinWidget = StaticCastSharedRef<SGraphNode>(*DstNodePtr)->FindWidgetForPin(DestPin);
+			
+						if (PinWidget.IsValid() && LinkedPinWidget.IsValid())
+						{
+							Aligner.DefineConnection(SourceNode, PinWidget, DestNode, LinkedPinWidget);
+						}
 					}
 				}
 			}
@@ -2086,6 +2135,26 @@ void SGraphPanel::AddNode(UEdGraphNode* Node, AddNodeBehavior Behavior)
 		NewNode->PlaySpawnEffect();
 		NewNode->RequestRenameOnSpawn();
 	}
+
+	// Note: We delay the creation of widgets for new nodes by a frame in `OnGraphChanged()`, using a Slate timer per node that later
+	// calls into this method. Slate timers are executed from within the Paint event, but before the actual OnPaint is called. This means we've
+	// just inserted the new node widget after this panel has already pre-passed the existing node widgets, and because it's now a child of the panel
+	// it'll also be painted this frame, despite not having been pre-passed (meaning it'll be stuck with a desired size of zero).
+	// Because the new node widget(s) get painted with zero size, pin connection wires are then be drawn based on the layout of these zero-sized node(s),
+	// resulting in a pretty obvious one-frame flash whenever you insert new nodes. It's particularly visible when using undo/redo,
+	// since a lot of nodes can be inserted at once. To avoid this flash of 'painting without pre-pass', we'll just manually pre-pass
+	// the new widget here so that when we go to paint it after this function returns it'll at least have some sizing information when we arrange it in our OnPaint().
+	// This is safe since graph widgets don't rely on any outer layout information for their metrics, and we don't size ourselves based on node widgets either.
+	// We also need to take a bit of care to pass through the same layout scale multiplier as Prepass_ChildLoop() would have so that the zoom level
+	// scale is used, otherwise you'd still get a single frame of jitter while the graph is zoomed out.
+	const int32 ChildIndex = Children.Num() - 1;
+	const float SelfLayoutScaleMultiplier = PrepassLayoutScaleMultiplier.Get(1.f);
+	const float ChildLayoutScaleMultiplier = bHasRelativeLayoutScale
+		? SelfLayoutScaleMultiplier * GetRelativeLayoutScale(ChildIndex, SelfLayoutScaleMultiplier)
+		: SelfLayoutScaleMultiplier;
+
+	NewNode->MarkPrepassAsDirty();
+	NewNode->SlatePrepass(ChildLayoutScaleMultiplier);
 }
 
 void SGraphPanel::RemoveNode(const UEdGraphNode* Node)
@@ -2161,17 +2230,17 @@ void SGraphPanel::Update()
 			}
 		}
 
-		// find the last selection action, and execute it
-		for (int32 ActionIndex = UserActions.Num() - 1; ActionIndex >= 0; --ActionIndex)
+		// check the last selection action, and execute it
+		if (!UserSelectedNodes.IsEmpty())
 		{
-			if (UserActions[ActionIndex].Action & GRAPHACTION_SelectNode)
+			DeferredSelectionTargetObjects.Empty();
+			for (TWeakObjectPtr<UEdGraphNode>& NodePtr : UserSelectedNodes)
 			{
-				DeferredSelectionTargetObjects.Empty();
-				for (const UEdGraphNode* Node : UserActions[ActionIndex].Nodes)
+				if (NodePtr.IsValid())
 				{
+					UEdGraphNode* Node = NodePtr.Get();
 					DeferredSelectionTargetObjects.Add(Node);
 				}
-				break;
 			}
 		}
 	}
@@ -2181,8 +2250,8 @@ void SGraphPanel::Update()
 	}
 
 	// Clean out set of added nodes
-	UserAddedNodes.Empty();
-	UserActions.Empty();
+	UserAddedNodes.Reset();
+	UserSelectedNodes.Reset();
 
 	// Invoke any delegate methods
 	OnUpdateGraphPanel.ExecuteIfBound();
@@ -2299,28 +2368,55 @@ void SGraphPanel::OnEndPIE( const bool bIsSimulating )
 
 void SGraphPanel::OnGraphChanged(const FEdGraphEditAction& EditAction)
 {
-	const bool bWillPurge = GraphObj->GetSchema()->ShouldAlwaysPurgeOnModification();
-	if (bWillPurge)
+	const bool bShouldPurge = GraphObj->GetSchema()->ShouldAlwaysPurgeOnModification();
+	if (bShouldPurge || EditAction.Action == GRAPHACTION_Default)
 	{
+		if (!bVisualUpdatePending)
+		{
+			PurgeVisualRepresentation();
+
+			const auto RefreshPanelDelegateWrapper = [](double, float, TWeakPtr<SGraphPanel> WeakParent) -> EActiveTimerReturnType
+			{
+				TSharedPtr<SGraphPanel> Parent = WeakParent.Pin();
+				if (Parent.IsValid())
+				{
+					Parent->Update();
+				}
+				return EActiveTimerReturnType::Stop;
+			};
+
+			// Trigger the refresh
+			RegisterActiveTimer(0.f, FWidgetActiveTimerDelegate::CreateLambda(RefreshPanelDelegateWrapper, StaticCastWeakPtr<SGraphPanel>(AsWeak())));
+		}
+
 		if ((EditAction.Graph == GraphObj) &&
 			(EditAction.Nodes.Num() > 0) &&
 			EditAction.bUserInvoked)
 		{
-			int32 ActionIndex = UserActions.Num();
 			if (EditAction.Action & GRAPHACTION_AddNode)
 			{
+				UserAddedNodes.Append(EditAction.Nodes);
+			}
+			if (EditAction.Action & GRAPHACTION_SelectNode)
+			{
+				UserSelectedNodes.Reset();
 				for (const UEdGraphNode* Node : EditAction.Nodes)
 				{
-					UserAddedNodes.Add(Node, ActionIndex);
+					TWeakObjectPtr<UEdGraphNode> NodePtr = MakeWeakObjectPtr(const_cast<UEdGraphNode*>(Node));
+					UserSelectedNodes.Add(NodePtr);
 				}
 			}
-			UserActions.Add(EditAction);
 		}
 	}
 	else if ((EditAction.Graph == GraphObj) && (EditAction.Nodes.Num() > 0) )
 	{
+		// Ensure that any new non-default action(s) get handled here
+		constexpr int32 HandledActionsMask = (GRAPHACTION_AddNode | GRAPHACTION_EditNode | GRAPHACTION_SelectNode | GRAPHACTION_RemoveNode);
+		ensureMsgf((EditAction.Action & ~HandledActionsMask) == 0, TEXT("Unhandled actions: %08x"), EditAction.Action & ~HandledActionsMask);
+
 		// Remove action handled immediately by SGraphPanel::OnGraphChanged
 		const bool bWasAddAction = (EditAction.Action & GRAPHACTION_AddNode) != 0;
+		const bool bWasEditAction = (EditAction.Action & GRAPHACTION_EditNode) != 0;
 		const bool bWasSelectAction = (EditAction.Action & GRAPHACTION_SelectNode) != 0;
 		const bool bWasRemoveAction = (EditAction.Action & GRAPHACTION_RemoveNode) != 0;
 
@@ -2334,55 +2430,18 @@ void SGraphPanel::OnGraphChanged(const FEdGraphEditAction& EditAction)
 		// that the timer system requires (and we don't leverage):
 		if (bWasRemoveAction)
 		{
-			const auto RemoveNodeDelegateWrapper = [](double, float, SGraphPanel* Parent, TWeakObjectPtr<UEdGraphNode> NodePtr) -> EActiveTimerReturnType
+			const auto RemoveNodesDelegateWrapper = [](double, float, TWeakPtr<SGraphPanel> WeakParent, TSet< TWeakObjectPtr<UEdGraphNode> > NodePtrs) -> EActiveTimerReturnType
 			{
-				if (NodePtr.IsValid())
+				TSharedPtr<SGraphPanel> Parent = WeakParent.Pin();
+				if (Parent.IsValid())
 				{
-					UEdGraphNode* Node = NodePtr.Get();
-					Parent->RemoveNode(Node);
-				}
-				return EActiveTimerReturnType::Stop;
-			};
-
-			for (const UEdGraphNode* Node : EditAction.Nodes)
-			{
-				TWeakObjectPtr<UEdGraphNode> NodePtr = MakeWeakObjectPtr(const_cast<UEdGraphNode*>(Node));
-				RegisterActiveTimer(0.f, FWidgetActiveTimerDelegate::CreateStatic(RemoveNodeDelegateWrapper, this, NodePtr));
-			}
-		}
-		if (bWasAddAction)
-		{
-			const auto AddNodeDelegateWrapper = [](double, float, SGraphPanel* Parent, TWeakObjectPtr<UEdGraphNode> NodePtr, bool bForceUserAdded) -> EActiveTimerReturnType
-			{
-				if (NodePtr.IsValid())
-				{
-					UEdGraphNode* Node = NodePtr.Get();
-					if(IsValid(Node))
+					for (TWeakObjectPtr<UEdGraphNode>& NodePtr : NodePtrs)
 					{
-						Parent->RemoveNode(Node);
-						Parent->AddNode(Node, bForceUserAdded ? WasUserAdded : NotUserAdded);
-					}
-				}
-				return EActiveTimerReturnType::Stop;
-			};
-
-			for (const UEdGraphNode* Node : EditAction.Nodes)
-			{
-				TWeakObjectPtr<UEdGraphNode> NodePtr = MakeWeakObjectPtr(const_cast<UEdGraphNode*>(Node));
-				RegisterActiveTimer(0.f, FWidgetActiveTimerDelegate::CreateStatic(AddNodeDelegateWrapper, this, NodePtr, EditAction.bUserInvoked));
-			}
-		}
-		if (bWasSelectAction)
-		{
-			const auto SelectNodeDelegateWrapper = [](double, float, SGraphPanel* Parent, TSet< TWeakObjectPtr<UEdGraphNode> > NodePtrs) -> EActiveTimerReturnType
-			{
-				Parent->DeferredSelectionTargetObjects.Empty();
-				for (TWeakObjectPtr<UEdGraphNode>& NodePtr : NodePtrs)
-				{
-					if (NodePtr.IsValid())
-					{
-						UEdGraphNode* Node = NodePtr.Get();
-						Parent->DeferredSelectionTargetObjects.Add(Node);
+						if (NodePtr.IsValid())
+						{
+							UEdGraphNode* Node = NodePtr.Get();
+							Parent->RemoveNode(Node);
+						}
 					}
 				}
 				return EActiveTimerReturnType::Stop;
@@ -2395,7 +2454,96 @@ void SGraphPanel::OnGraphChanged(const FEdGraphEditAction& EditAction)
 				NodePtrSet.Add(NodePtr);
 			}
 
-			RegisterActiveTimer(0.f, FWidgetActiveTimerDelegate::CreateStatic(SelectNodeDelegateWrapper, this, NodePtrSet));
+			RegisterActiveTimer(0.f, FWidgetActiveTimerDelegate::CreateLambda(RemoveNodesDelegateWrapper, StaticCastWeakPtr<SGraphPanel>(AsWeak()), NodePtrSet));
+		}
+		if (bWasAddAction)
+		{
+			const auto AddNodesDelegateWrapper = [](double, float, TWeakPtr<SGraphPanel> WeakParent, TSet< TWeakObjectPtr<UEdGraphNode> > NodePtrs, bool bForceUserAdded) -> EActiveTimerReturnType
+			{
+				TSharedPtr<SGraphPanel> Parent = WeakParent.Pin();
+				if (Parent.IsValid())
+				{
+					for (TWeakObjectPtr<UEdGraphNode>& NodePtr : NodePtrs)
+					{
+						if (NodePtr.IsValid())
+						{
+							UEdGraphNode* Node = NodePtr.Get();
+							if (IsValid(Node))
+							{
+								if (Parent->bVisualUpdatePending)
+								{
+									if (bForceUserAdded)
+									{
+										Parent->UserAddedNodes.Add(Node);
+									}
+								}
+								else
+								{
+									Parent->RemoveNode(Node);
+									Parent->AddNode(Node, bForceUserAdded ? WasUserAdded : NotUserAdded);
+								}
+							}
+						}
+					}
+				}
+				return EActiveTimerReturnType::Stop;
+			};
+
+			TSet< TWeakObjectPtr<UEdGraphNode> > NodePtrSet;
+			for (const UEdGraphNode* Node : EditAction.Nodes)
+			{
+				TWeakObjectPtr<UEdGraphNode> NodePtr = MakeWeakObjectPtr(const_cast<UEdGraphNode*>(Node));
+				NodePtrSet.Add(NodePtr);
+			}
+
+			RegisterActiveTimer(0.f, FWidgetActiveTimerDelegate::CreateLambda(AddNodesDelegateWrapper, StaticCastWeakPtr<SGraphPanel>(AsWeak()), NodePtrSet, EditAction.bUserInvoked));
+		}
+		if (bWasSelectAction)
+		{
+			const auto SelectNodeDelegateWrapper = [](double, float, TWeakPtr<SGraphPanel> WeakParent, TSet< TWeakObjectPtr<UEdGraphNode> > NodePtrs, bool bForceUserAdded) -> EActiveTimerReturnType
+			{
+				TSharedPtr<SGraphPanel> Parent = WeakParent.Pin();
+				if (Parent.IsValid())
+				{
+					if (Parent->bVisualUpdatePending)
+					{
+						if (bForceUserAdded)
+						{
+							Parent->UserSelectedNodes = NodePtrs;
+						}
+					}
+					else
+					{
+						Parent->DeferredSelectionTargetObjects.Empty();
+						for (TWeakObjectPtr<UEdGraphNode>& NodePtr : NodePtrs)
+						{
+							if (NodePtr.IsValid())
+							{
+								UEdGraphNode* Node = NodePtr.Get();
+								Parent->DeferredSelectionTargetObjects.Add(Node);
+							}
+						}
+					}
+				}
+				
+				return EActiveTimerReturnType::Stop;
+			};
+
+			TSet< TWeakObjectPtr<UEdGraphNode> > NodePtrSet;
+			for (const UEdGraphNode* Node : EditAction.Nodes)
+			{
+				TWeakObjectPtr<UEdGraphNode> NodePtr = MakeWeakObjectPtr(const_cast<UEdGraphNode*>(Node));
+				NodePtrSet.Add(NodePtr);
+			}
+
+			RegisterActiveTimer(0.f, FWidgetActiveTimerDelegate::CreateLambda(SelectNodeDelegateWrapper, StaticCastWeakPtr<SGraphPanel>(AsWeak()), NodePtrSet, EditAction.bUserInvoked));
+		}
+		if (bWasEditAction)
+		{
+			for (const UEdGraphNode* Node : EditAction.Nodes)
+			{
+				RefreshNode(const_cast<UEdGraphNode&>(*Node));
+			}
 		}
 	}
 }

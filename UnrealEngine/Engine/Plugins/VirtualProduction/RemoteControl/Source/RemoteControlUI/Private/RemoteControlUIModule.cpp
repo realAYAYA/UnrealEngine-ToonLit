@@ -5,6 +5,7 @@
 #include "AssetEditor/RemoteControlPresetEditorToolkit.h"
 #include "AssetTools/RemoteControlPresetActions.h"
 #include "AssetToolsModule.h"
+#include "Behaviour/Builtin/Path/RCSetAssetByPathBehaviour.h"
 #include "Commands/RemoteControlCommands.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -39,6 +40,7 @@
 #include "UI/Controller/CustomControllers/SCustomTextureControllerWidget.h"
 #include "UI/Customizations/FPassphraseCustomization.h"
 #include "UI/Customizations/NetworkAddressCustomization.h"
+#include "UI/Customizations/RCAssetPathElementCustomization.h"
 #include "UI/Customizations/RemoteControlEntityCustomization.h"
 #include "UI/RemoteControlExposeMenuStyle.h"
 #include "UI/RemoteControlPanelStyle.h"
@@ -274,10 +276,6 @@ void FRemoteControlUIModule::ShutdownModule()
 	UnbindRemoteControlCommands();
 	FRemoteControlPanelStyle::Shutdown();
 	FRemoteControlExposeMenuStyle::Shutdown();
-	SRemoteControlPanel::Shutdown();
-	SRCActionPanel::Shutdown();
-	SRCBehaviourPanel::Shutdown();
-	SRCBehaviourConditional::Shutdown();
 }
 
 FDelegateHandle FRemoteControlUIModule::AddPropertyFilter(FOnDisplayExposeIcon OnDisplayExposeIcon)
@@ -313,31 +311,23 @@ TSharedRef<SRemoteControlPanel> FRemoteControlUIModule::CreateRemoteControlPanel
 
 	TSharedRef<SRemoteControlPanel> PanelRef = SNew(SRemoteControlPanel, Preset, ToolkitHost)
 		.OnLiveModeChange_Lambda(
-			[this](TSharedPtr<SRemoteControlPanel> Panel, bool bLiveMode)
+			[this](TSharedPtr<SRemoteControlPanel> InPanel, bool bInLiveMode)
 			{
-				URemoteControlPreset* Preset = Panel->GetPreset();
-
-				if (!IsValid(Preset) || Preset->IsEmbeddedPreset() == false)
+				// Activating the live mode on a panel sets it as the active panel
+				if (bInLiveMode)
 				{
-					// Activating the live mode on a panel sets it as the active panel
-					if (bLiveMode)
+					if (const TSharedPtr<SRemoteControlPanel> ActivePanel = WeakActivePanel.Pin())
 					{
-						if (TSharedPtr<SRemoteControlPanel> ActivePanel = WeakActivePanel.Pin())
+						if (ActivePanel != InPanel)
 						{
-							if (ActivePanel != Panel)
-							{
-								ActivePanel->SetLiveMode(true);
-							}
+							ActivePanel->SetLiveMode(true);
 						}
-						WeakActivePanel = MoveTemp(Panel);
 					}
+					WeakActivePanel = MoveTemp(InPanel);
 				}
 			});
 
-	if (Preset->IsEmbeddedPreset() == false)
-	{
-		WeakActivePanel = PanelRef;
-	}
+	WeakActivePanel = PanelRef;
 
 	RegisteredRemoteControlPanels.Add(TWeakPtr<SRemoteControlPanel>(PanelRef));
 
@@ -483,6 +473,7 @@ void FRemoteControlUIModule::UnbindRemoteControlCommands()
 		ActionList.UnmapAction(Commands.CopyItem);
 		ActionList.UnmapAction(Commands.PasteItem);
 		ActionList.UnmapAction(Commands.DuplicateItem);
+		ActionList.UnmapAction(Commands.UpdateValue);
 	}
 
 	FRemoteControlCommands::Unregister();
@@ -920,6 +911,7 @@ void FRemoteControlUIModule::RegisterStructCustomizations()
 		PropertyEditorModule.RegisterCustomClassLayout(Name, FOnGetDetailCustomizationInstance::CreateStatic(&FRemoteControlEntityCustomization::MakeInstance));
 	}
 
+	PropertyEditorModule.RegisterCustomPropertyTypeLayout(FRCAssetPathElement::StaticStruct()->GetFName(), FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FRCAssetPathElementCustomization::MakeInstance));
 	PropertyEditorModule.RegisterCustomPropertyTypeLayout(FRCNetworkAddress::StaticStruct()->GetFName(), FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FNetworkAddressCustomization::MakeInstance));
 	PropertyEditorModule.RegisterCustomPropertyTypeLayout(FRCPassphrase::StaticStruct()->GetFName(), FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FPassphraseCustomization::MakeInstance));
 }
@@ -936,6 +928,7 @@ void FRemoteControlUIModule::UnregisterStructCustomizations()
 
 	if (UObjectInitialized())
 	{
+		PropertyEditorModule.UnregisterCustomPropertyTypeLayout(FRCAssetPathElement::StaticStruct()->GetFName());
 		PropertyEditorModule.UnregisterCustomPropertyTypeLayout(FRCNetworkAddress::StaticStruct()->GetFName());
 		PropertyEditorModule.UnregisterCustomPropertyTypeLayout(FRCPassphrase::StaticStruct()->GetFName());
 	}
@@ -1014,13 +1007,13 @@ void FRemoteControlUIModule::SelectObjects(const TArray<UObject*>& Objects) cons
 	}
 }
 
-TSharedPtr<SWidget> FRemoteControlUIModule::CreateCustomControllerWidget(URCVirtualPropertyBase* InController) const
+TSharedPtr<SWidget> FRemoteControlUIModule::CreateCustomControllerWidget(URCVirtualPropertyBase* InController, TSharedPtr<IPropertyHandle> InOriginalPropertyHandle) const
 {
 	TSharedPtr<SWidget> CustomControllerWidget;
 	const FString& CustomName = UE::RCCustomControllers::GetCustomControllerTypeName(InController);
 	if (CustomName == UE::RCCustomControllers::CustomTextureControllerName)
 	{
-		CustomControllerWidget = SNew(SCustomTextureControllerWidget, InController);
+		CustomControllerWidget = SNew(SCustomTextureControllerWidget, InOriginalPropertyHandle);
 	}
 
 	return CustomControllerWidget;
@@ -1036,22 +1029,24 @@ void FRemoteControlUIModule::RegisterWidgetFactories()
 
 FText FRemoteControlUIModule::GetExposePropertyButtonTooltip(const FRCExposesPropertyArgs InPropertyArgs) const
 {
-	if (URemoteControlPreset* Preset = GetActivePreset())
+	if (const TSharedPtr<SRemoteControlPanel> Panel = GetPanelForProperty(InPropertyArgs))
 	{
-		const FText PresetName = FText::FromString(Preset->GetName());
-		if (GetPropertyExposeStatus(InPropertyArgs) == EPropertyExposeStatus::Exposed)
+		if (const URemoteControlPreset* Preset = Panel->GetPreset())
 		{
-			return FText::Format(LOCTEXT("ExposePropertyToolTip", "Unexpose this property from RemoteControl Preset '{0}'."), PresetName);
-		}
-		else
-		{
-			return FText::Format(LOCTEXT("UnexposePropertyToolTip", "Expose this property in RemoteControl Preset '{0}'."), PresetName);
+			const FText PresetName = FText::FromString(Preset->GetName());
+			if (GetPropertyExposeStatus(InPropertyArgs) == EPropertyExposeStatus::Exposed)
+			{
+				return FText::Format(LOCTEXT("ExposePropertyToolTip", "Unexpose this property from RemoteControl Preset '{0}'."), PresetName);
+			}
+			else
+			{
+				return FText::Format(LOCTEXT("UnexposePropertyToolTip", "Expose this property in RemoteControl Preset '{0}'."), PresetName);
+			}
 		}
 	}
 
 	return LOCTEXT("InvalidExposePropertyTooltip", "Invalid Preset");
 }
-
 
 FText FRemoteControlUIModule::GetExposePropertyButtonText(const FRCExposesPropertyArgs InPropertyArgs) const
 {
@@ -1220,6 +1215,11 @@ void FRemoteControlUIModule::RefreshPanels()
 	if (TSharedPtr<SRemoteControlPanel> Panel = GetPanelForObject(nullptr))
 	{
 		Panel->Refresh();
+		// Propagate that the PropertyId updated during the Undo/Redo to update the action as well.
+		if (Panel->GetPreset() && Panel->GetPreset()->GetPropertyIdRegistry())
+		{
+			Panel->GetPreset()->GetPropertyIdRegistry()->OnPropertyIdUpdated().Broadcast();
+		}
 	}
 }
 

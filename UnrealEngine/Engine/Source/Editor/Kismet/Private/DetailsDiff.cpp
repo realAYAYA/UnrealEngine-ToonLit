@@ -3,10 +3,14 @@
 #include "DetailsDiff.h"
 
 #include "BlueprintDetailsCustomization.h"
+#include "BlueprintEditorLibrary.h"
+#include "DetailCategoryBuilder.h"
+#include "DetailLayoutBuilder.h"
 #include "Algo/Copy.h"
 #include "Algo/Transform.h"
 #include "Containers/Set.h"
 #include "DetailsViewArgs.h"
+#include "DetailWidgetRow.h"
 #include "HAL/PlatformCrt.h"
 #include "IDetailsView.h"
 #include "Misc/AssertionMacros.h"
@@ -16,9 +20,14 @@
 #include "PropertyPath.h"
 #include "UObject/WeakObjectPtrTemplates.h"
 #include "Engine/MemberReference.h"
+#include "Kismet2/BlueprintEditorUtils.h"
 #include "Widgets/Layout/LinkableScrollBar.h"
+#include "Widgets/Input/SComboButton.h"
+#include "Engine/BlueprintGeneratedClass.h"
 
 class UObject;
+
+#define LOCTEXT_NAMESPACE "DetailsDif"
 
 FDetailsDiff::FDetailsDiff(const UObject* InObject, FOnDisplayedPropertiesChanged InOnDisplayedPropertiesChanged, bool bScrollbarOnLeft )
 	: OnDisplayedPropertiesChanged( InOnDisplayedPropertiesChanged )
@@ -29,6 +38,108 @@ FDetailsDiff::FDetailsDiff(const UObject* InObject, FOnDisplayedPropertiesChange
 	DetailsView->SetOnDisplayedPropertiesChanged( ::FOnDisplayedPropertiesChanged::CreateRaw(this, &FDetailsDiff::HandlePropertiesChanged) );
 	DisplayedProperties = DetailsView->GetPropertiesInOrderDisplayed();
 }
+
+class DOBPDetailsCustomization : public IDetailCustomization
+{
+public:
+	DOBPDetailsCustomization(UBlueprint* InBlueprint) : Blueprint(InBlueprint)
+	{}
+	
+	static TSharedRef<IDetailCustomization> Make(UBlueprint* Blueprint)
+	{
+		return MakeShared<DOBPDetailsCustomization>(Blueprint);
+	}
+	
+	virtual void CustomizeDetails(IDetailLayoutBuilder& DetailLayout) override
+	{
+		if (!Blueprint.IsValid())
+		{
+			return;
+		}
+		
+		IDetailCategoryBuilder& Category = DetailLayout.EditCategory("ClassOptions", LOCTEXT("ClassOptions", "Class Options"));
+
+		// put the ClassOptions first
+		Category.SetSortOrder(0);
+		
+		// ParentClass is a hidden property so we have to add it to the property map manually to use it
+		const TSharedPtr<IPropertyHandle> ParentClassProperty = DetailLayout.AddObjectPropertyData({Blueprint.Get()}, TEXT("ParentClass"));
+
+		Category.AddCustomRow( LOCTEXT("ClassOptions", "Class Options") )
+		.NameContent()
+		[
+			SNew(STextBlock)
+			.Text(LOCTEXT("BlueprintDetails_ParentClass", "Parent Class"))
+			.Font(IDetailLayoutBuilder::GetDetailFont())
+		]
+		.ValueContent()
+		[
+			SNew(SHorizontalBox)
+			+SHorizontalBox::Slot()
+			.FillWidth(1.0f)
+			[
+				SAssignNew(ParentClassComboButton, SComboButton)
+				.IsEnabled(this, &DOBPDetailsCustomization::CanReparent)
+				.OnGetMenuContent(this, &DOBPDetailsCustomization::GetParentClassMenuContent)
+				.ButtonContent()
+				[
+					SNew(STextBlock)
+					.Text(this, &DOBPDetailsCustomization::GetParentClassName)
+					.Font(IDetailLayoutBuilder::GetDetailFont())
+				]
+			]
+		]
+		.PropertyHandleList({ParentClassProperty});
+	}
+
+	bool CanReparent() const
+	{
+		// Don't show the reparent option if it's an Interface or we're not in editing mode
+		return Blueprint.IsValid() && !FBlueprintEditorUtils::IsInterfaceBlueprint(Blueprint.Get()) && (BPTYPE_FunctionLibrary != Blueprint->BlueprintType);
+	}
+	
+	TSharedRef<SWidget> GetParentClassMenuContent() const
+	{
+		if (!Blueprint.IsValid())
+		{
+			return SNew(SBox);
+		}
+		
+		TArray<UBlueprint*> Blueprints;
+		Blueprints.Add(Blueprint.Get());
+		const TSharedRef<SWidget> ClassPicker = FBlueprintEditorUtils::ConstructBlueprintParentClassPicker(Blueprints, FOnClassPicked::CreateSP(this, &DOBPDetailsCustomization::OnClassPicked));
+
+		// Achieving fixed width by nesting items within a fixed width box.
+		return SNew(SBox)
+			.WidthOverride(350.0f)
+			[
+				SNew(SVerticalBox)
+				+SVerticalBox::Slot()
+				.MaxHeight(400.0f)
+				.AutoHeight()
+				[
+					ClassPicker
+				]
+			];
+	}
+	
+	FText GetParentClassName() const
+	{
+		const UClass* ParentClass = Blueprint.IsValid() ? Blueprint->ParentClass : nullptr;
+		return ParentClass ? ParentClass->GetDisplayNameText() : FText::FromName(NAME_None);
+	}
+
+	void OnClassPicked(UClass* PickedClass) const
+	{
+		ParentClassComboButton->SetIsOpen(false);
+		UBlueprintEditorLibrary::ReparentBlueprint(Blueprint.Get(), PickedClass);
+	}
+private:
+	TWeakObjectPtr<UBlueprint> Blueprint;
+
+	/** Combo button used to choose a parent class */
+	TSharedPtr<SComboButton> ParentClassComboButton;
+};
 
 TSharedRef<IDetailsView> FDetailsDiff::CreateDetailsView(const UObject* InObject, TSharedPtr<SScrollBar> ExternalScrollbar, bool bScrollbarOnLeft)
 {
@@ -49,6 +160,19 @@ TSharedRef<IDetailsView> FDetailsDiff::CreateDetailsView(const UObject* InObject
 			const_cast<UBlueprint *>(Cast<UBlueprint>(InObject))
 		);
 		DetailsView->RegisterInstancedCustomPropertyLayout(UBlueprint::StaticClass(), LayoutOptionDetails);
+	}
+	// if InObject is a BP-CDO, add a "Parent Class" Combo button
+	if (InObject && Cast<UObject>(InObject->GetClass())->IsA<UBlueprintGeneratedClass>() )
+	{
+		UBlueprintGeneratedClass* Class = Cast<UBlueprintGeneratedClass>(InObject->GetClass());
+		if (Class->GetDefaultObject() == InObject)
+		{
+			const FOnGetDetailCustomizationInstance LayoutOptionDetails = FOnGetDetailCustomizationInstance::CreateStatic(
+				&DOBPDetailsCustomization::Make,
+				Cast<UBlueprint>(Class->ClassGeneratedBy)
+			);
+			DetailsView->RegisterInstancedCustomPropertyLayout(Class, LayoutOptionDetails);
+		}
 	}
 	// Forcing all advanced properties to be displayed for now, the logic to show changes made to advance properties
 	// conditionally is fragile and low priority for now:
@@ -257,3 +381,5 @@ void FDetailsDiff::LinkScrolling(FDetailsDiff& LeftPanel, FDetailsDiff& RightPan
 {
 	SLinkableScrollBar::LinkScrollBars(LeftPanel.ScrollBar.ToSharedRef(), RightPanel.ScrollBar.ToSharedRef(), ScrollRate);
 }
+
+#undef LOCTEXT_NAMESPACE

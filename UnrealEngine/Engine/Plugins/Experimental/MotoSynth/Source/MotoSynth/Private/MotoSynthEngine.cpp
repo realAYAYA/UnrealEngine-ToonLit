@@ -241,7 +241,7 @@ void FMotoSynthEngine::SpawnGrain(int32& StartingIndex, const MotoSynthDataPtr& 
 {
 	if (FreeGrains.Num() && CurrentRPM > 0.0f && SynthData)
 	{
-		int32 GrainIndex = FreeGrains.Pop(false);
+		int32 GrainIndex = FreeGrains.Pop(EAllowShrinking::No);
 		ActiveGrains.Push(GrainIndex);
 
 		FMotoSynthGrainRuntime& NewGrain = GrainPool[GrainIndex];
@@ -455,7 +455,7 @@ void FMotoSynthEngine::GenerateGranularEngine(float* OutAudio, int32 NumSamples)
 
 				if (Grain.IsDone())
 				{
-					ActiveGrains.RemoveAtSwap(ActiveGrainIndex, 1, false);
+					ActiveGrains.RemoveAtSwap(ActiveGrainIndex, 1, EAllowShrinking::No);
 					FreeGrains.Push(GrainIndex);
 				}
 			}

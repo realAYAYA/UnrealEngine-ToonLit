@@ -14,8 +14,9 @@
 #include UE_INLINE_GENERATED_CPP_BY_NAME(CanvasRenderTarget2D)
 
 UCanvasRenderTarget2D::UCanvasRenderTarget2D( const FObjectInitializer& ObjectInitializer )
-	: Super(ObjectInitializer),
-	  World( nullptr )
+	: Super(ObjectInitializer)
+	, World( nullptr )
+	, SampleCount(ETextureRenderTargetSampleCount::RTSC_1)
 {
 	bNeedsTwoCopies = false;
 	bShouldClearRenderTargetOnReceiveUpdate = true;
@@ -25,6 +26,11 @@ UCanvasRenderTarget2D::UCanvasRenderTarget2D( const FObjectInitializer& ObjectIn
 
 void UCanvasRenderTarget2D::UpdateResource()
 {
+	if (SampleCount != ETextureRenderTargetSampleCount::RTSC_1)
+	{
+		bCanCreateUAV = false;
+	}
+
 	// Call parent implementation
 	Super::UpdateResource();
 
@@ -55,6 +61,56 @@ void UCanvasRenderTarget2D::FastUpdateResource()
 		RepaintCanvas();
 	}
 }
+
+ETextureRenderTargetSampleCount UCanvasRenderTarget2D::GetSampleCount() const
+{
+	return SampleCount;
+}
+
+void UCanvasRenderTarget2D::SetSampleCount(ETextureRenderTargetSampleCount InSampleCount)
+{
+	if (SampleCount != InSampleCount)
+	{
+		SampleCount = InSampleCount;
+
+		OnSampleCountChanged();
+	}
+}
+
+#if WITH_EDITOR
+bool UCanvasRenderTarget2D::CanEditChange(const FProperty* InProperty) const
+{
+	if (!Super::CanEditChange(InProperty))
+	{
+		return false;
+	}
+
+	const FName& Name = InProperty->GetFName();
+
+	if (Name == GET_MEMBER_NAME_CHECKED(ThisClass, SampleCount))
+	{
+		return !bAutoGenerateMips;
+	}
+	else if (Name == GET_MEMBER_NAME_CHECKED(ThisClass, bAutoGenerateMips))
+	{
+		return SampleCount == ETextureRenderTargetSampleCount::RTSC_1;
+	}
+
+	return true;
+}
+
+void UCanvasRenderTarget2D::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	const FName PropertyName = (PropertyChangedEvent.Property != nullptr) ? PropertyChangedEvent.Property->GetFName() : NAME_None;
+
+	if (PropertyName == GET_MEMBER_NAME_CHECKED(ThisClass, SampleCount))
+	{
+		OnSampleCountChanged();
+	}
+
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+}
+#endif
 
 void UCanvasRenderTarget2D::RepaintCanvas()
 {
@@ -111,6 +167,18 @@ void UCanvasRenderTarget2D::RepaintCanvas()
 	}
 
 	UpdateResourceImmediate(false);
+}
+
+void UCanvasRenderTarget2D::OnSampleCountChanged()
+{
+	// UAVs are not supported for sample counts higher than one.
+	bCanCreateUAV = (SampleCount == ETextureRenderTargetSampleCount::RTSC_1);
+
+	if (bAutoGenerateMips && SampleCount != ETextureRenderTargetSampleCount::RTSC_1)
+	{
+		UE_LOG(LogTexture, Warning, TEXT("Auto-generate mips is not supported with sample counts above 1, disabling."));
+		bAutoGenerateMips = false;
+	}
 }
 
 UCanvasRenderTarget2D* UCanvasRenderTarget2D::CreateCanvasRenderTarget2D(UObject* WorldContextObject, TSubclassOf<UCanvasRenderTarget2D> CanvasRenderTarget2DClass, int32 Width, int32 Height)

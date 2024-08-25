@@ -274,7 +274,10 @@ namespace Turnkey.Commands
 
 			if (bCook)
 			{
-				AddIfTrue("bUseZenStore", "-zenstore");
+				if (GetBool("bUseIoStore"))
+				{
+					AddIfTrue("bUseZenStore", "-zenstore");
+				}
 				AddIfTrue("bSkipEditorContent", "-SkipCookingEditorContent");
 			}
 			

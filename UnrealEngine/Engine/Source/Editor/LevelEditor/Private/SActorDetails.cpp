@@ -280,7 +280,7 @@ void SActorDetails::Construct(const FArguments& InArgs, UTypedElementSelectionSe
 	ComponentsBox->SetContent(SubobjectEditor.ToSharedRef());
 
 	TSharedRef<SWidget> SubobjectEditorButtonBox = SubobjectEditor->GetToolButtonsBox().ToSharedRef();
-	SubobjectEditorButtonBox->SetVisibility(MakeAttributeSP(this, &SActorDetails::GetComponentEditorVisibility));
+	SubobjectEditorButtonBox->SetVisibility(MakeAttributeSP(this, &SActorDetails::GetComponentEditorButtonsVisibility));
 
 
 	TFunction<TArray<TTypedElement<ITypedElementDetailsInterface>>()> GetDetailsHandles = [this]()
@@ -617,9 +617,14 @@ FString SActorDetails::GetReferencerName() const
 	return TEXT("SActorDetails");
 }
 
-void SActorDetails::SetActorDetailsRootCustomization(TSharedPtr<FDetailsViewObjectFilter> ActorDetailsObjectFilter, TSharedPtr<IDetailRootObjectCustomization> ActorDetailsRootCustomization)
+	void SActorDetails::SetActorDetailsRootCustomization(TSharedPtr<FDetailsViewObjectFilter> InActorDetailsObjectFilter, TSharedPtr<IDetailRootObjectCustomization> ActorDetailsRootCustomization)
 {
-	DetailsView->SetObjectFilter(ActorDetailsObjectFilter);
+	if (InActorDetailsObjectFilter.IsValid())
+	{
+		DisplayManager = InActorDetailsObjectFilter->GetDisplayManager();
+	}
+	
+	DetailsView->SetObjectFilter(InActorDetailsObjectFilter);
 	DetailsView->SetRootObjectCustomizationInstance(ActorDetailsRootCustomization);
 	DetailsView->ForceRefresh();
 }
@@ -879,6 +884,14 @@ void SActorDetails::OnNativeComponentWarningHyperlinkClicked(const FSlateHyperli
 }
 
 EVisibility SActorDetails::GetComponentEditorVisibility() const
+{
+	// see if we need to hide the editor due to the current object display 
+	const bool bHideEditorFromDetailsView = (DisplayManager.IsValid() &&
+							                 DisplayManager->ShouldHideComponentEditor() );
+	return GetActorContext() && !bHideEditorFromDetailsView  ? EVisibility::Visible : EVisibility::Collapsed;
+}
+
+EVisibility SActorDetails::GetComponentEditorButtonsVisibility() const
 {
 	return GetActorContext() ? EVisibility::Visible : EVisibility::Collapsed;
 }

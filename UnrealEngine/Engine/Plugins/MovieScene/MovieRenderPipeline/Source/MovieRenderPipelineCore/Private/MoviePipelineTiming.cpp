@@ -7,6 +7,7 @@
 #include "MoviePipelineOutputBase.h"
 #include "CoreGlobals.h"
 #include "Containers/Array.h"
+#include "Misc/ScopeExit.h"
 #include "MovieRenderPipelineCoreModule.h"
 #include "MovieScene.h"
 #include "LevelSequence.h"
@@ -78,6 +79,16 @@ void UMoviePipeline::ProcessOutstandingFutures()
 
 void UMoviePipeline::TickProducingFrames()
 {
+	ON_SCOPE_EXIT
+	{
+		FMoviePipelineLightweightTickInfo TickInfo;
+		TickInfo.bIsActive = true;
+		TickInfo.TemporalSampleCount = CachedOutputState.TemporalSampleCount;
+		TickInfo.TemporalSampleIndex = CachedOutputState.TemporalSampleIndex;
+		TickInfo.SequenceFPS = GetPipelinePrimaryConfig()->GetEffectiveFrameRate(TargetSequence).AsDecimal();
+		FMovieRenderPipelineCoreModule::SetTickInfo(TickInfo);
+	};
+
 	// The callback for this function does not get registered until Initialization has been called, which sets
 	// the state to Render. If it's not, we have a initialization order/flow issue!
 	check(PipelineState == EMovieRenderPipelineState::ProducingFrames);

@@ -7,6 +7,7 @@
 #include "Widgets/Layout/SSpacer.h"
 
 #include "RewindDebugger.h"
+#include "RewindDebuggerStyle.h"
 #include "SSimpleTimeSlider.h"
 
 #define LOCTEXT_NAMESPACE "SAnimationInsights"
@@ -19,17 +20,55 @@ class SRewindDebuggerTimelineTableRow : public STableRow<TSharedPtr<RewindDebugg
 	SLATE_BEGIN_ARGS(SRewindDebuggerTimelineTableRow) {}
 	SLATE_END_ARGS()
 	
-	void Construct(const SRewindDebuggerTimelineTableRow::FArguments& InArgs, const TSharedRef<STableViewBase>& InOwnerTableView)
+	void Construct(const FArguments& InArgs, const TSharedRef<STableViewBase>& InOwnerTableView)
 	{
 		STableRow<TSharedPtr<RewindDebugger::FRewindDebuggerTrack>>::Construct( STableRow<TSharedPtr<RewindDebugger::FRewindDebuggerTrack>>::FArguments(), InOwnerTableView);
-
+		Style =  &FRewindDebuggerStyle::Get().GetWidgetStyle<FTableRowStyle>("RewindDebugger.TableRow");
+	
 		SetExpanderArrowVisibility(EVisibility::Collapsed);
+
+		SetHover(TAttribute<bool>::CreateLambda([this]()
+		{
+			if (auto TableView = OwnerTablePtr.Pin())
+			{
+				if (const TSharedPtr<RewindDebugger::FRewindDebuggerTrack>* Track = GetItemForThis(TableView.ToSharedRef()))
+				{
+					return (*Track)->GetIsHovered();
+				}
+			}
+			return false;
+		}));
 	}
 
 	virtual int32 GetIndentLevel() const override
 	{
 		// don't indent timeline tracks
 		return 0;
+	}
+	
+	virtual void OnMouseEnter(const FGeometry& MyGeometry, const FPointerEvent& MouseEvent) override
+	{
+		if (auto TableView = OwnerTablePtr.Pin())
+		{
+			if (const TSharedPtr<RewindDebugger::FRewindDebuggerTrack>* Track = GetItemForThis(TableView.ToSharedRef()))
+			{
+				(*Track)->SetIsTrackHovered(true);
+			}
+		}
+		STableRow<TSharedPtr<RewindDebugger::FRewindDebuggerTrack>>::OnMouseEnter(MyGeometry, MouseEvent);
+	}
+	
+	virtual void OnMouseLeave(const FPointerEvent& MouseEvent) override
+	{
+		STableRow<TSharedPtr<RewindDebugger::FRewindDebuggerTrack>>::OnMouseLeave(MouseEvent);
+
+		if (auto TableView = OwnerTablePtr.Pin())
+		{
+			if (const TSharedPtr<RewindDebugger::FRewindDebuggerTrack>* Track = GetItemForThis(TableView.ToSharedRef()))
+			{
+				(*Track)->SetIsTrackHovered(false);
+			}
+		}
 	}
 };
 

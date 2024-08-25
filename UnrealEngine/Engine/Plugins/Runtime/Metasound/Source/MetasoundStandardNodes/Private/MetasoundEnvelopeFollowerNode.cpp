@@ -28,6 +28,7 @@ namespace Metasound
 {
 	namespace EnvelopeFollowerVertexNames
 	{
+		METASOUND_PARAM(InParamEnable, "Enable", "Enable the envelope follower.")
 		METASOUND_PARAM(InParamAudioInput, "In", "Audio input.")
 		METASOUND_PARAM(InParamAttackTime, "Attack Time", "The attack time of the envelope follower.")
 		METASOUND_PARAM(InParamReleaseTime,"Release Time" , "The release time of the envelope follower.")
@@ -42,9 +43,10 @@ namespace Metasound
 
 		static const FNodeClassMetadata& GetNodeInfo();
 		static const FVertexInterface& GetVertexInterface();
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors);
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults);
 
-		FEnvelopeFollowerOperator(const FCreateOperatorParams& InOperatorSettings,
+		FEnvelopeFollowerOperator(const FBuildOperatorParams& InOperatorSettings,
+			const FBoolReadRef& InEnable,
 			const FAudioBufferReadRef& InAudioInput,
 			const FTimeReadRef& InAttackTime,
 			const FTimeReadRef& InReleaseTime,
@@ -58,6 +60,10 @@ namespace Metasound
 		void Execute();
 
 	private:
+		// Whether the enveloper follower is enabled
+		FBoolReadRef EnableInput;
+		bool OutputNeedsResetOnDisable = true;
+		
 		// The input audio buffer
 		FAudioBufferReadRef AudioInput;
 
@@ -82,12 +88,14 @@ namespace Metasound
 		EEnvelopePeakMode PrevFollowMode = EEnvelopePeakMode::Peak;
 	};
 
-	FEnvelopeFollowerOperator::FEnvelopeFollowerOperator(const FCreateOperatorParams& InParams,
+	FEnvelopeFollowerOperator::FEnvelopeFollowerOperator(const FBuildOperatorParams& InParams,
+		const FBoolReadRef& InEnable,
 		const FAudioBufferReadRef& InAudioInput,
 		const FTimeReadRef& InAttackTime,
 		const FTimeReadRef& InReleaseTime,
 		const FEnvelopePeakModeReadRef& InEnvelopeMode)
-		: AudioInput(InAudioInput)
+		: EnableInput(InEnable)
+		, AudioInput(InAudioInput)
 		, AttackTimeInput(InAttackTime)
 		, ReleaseTimeInput(InReleaseTime)
 		, FollowModeInput(InEnvelopeMode)
@@ -101,6 +109,7 @@ namespace Metasound
 	{
 		using namespace EnvelopeFollowerVertexNames;
 
+		InOutVertexData.BindReadVertex(METASOUND_GET_PARAM_NAME(InParamEnable), EnableInput);
 		InOutVertexData.BindReadVertex(METASOUND_GET_PARAM_NAME(InParamAudioInput), AudioInput);
 		InOutVertexData.BindReadVertex(METASOUND_GET_PARAM_NAME(InParamAttackTime), AttackTimeInput);
 		InOutVertexData.BindReadVertex(METASOUND_GET_PARAM_NAME(InParamReleaseTime), ReleaseTimeInput);
@@ -133,6 +142,8 @@ namespace Metasound
 
 	void FEnvelopeFollowerOperator::Reset(const IOperator::FResetParams& InParams)
 	{
+		OutputNeedsResetOnDisable = true;
+		
 		PrevAttackTime = FMath::Max(FTime::ToMilliseconds(*AttackTimeInput), 0.0);
 		PrevReleaseTime = FMath::Max(FTime::ToMilliseconds(*ReleaseTimeInput), 0.0);
 
@@ -150,6 +161,21 @@ namespace Metasound
 
 	void FEnvelopeFollowerOperator::Execute()
 	{
+		// Skip rendering if disabled
+		if (!*EnableInput)
+		{
+			if (OutputNeedsResetOnDisable)
+			{
+				EnvelopeAudioOutput->Zero();
+				*EnvelopeFloatOutput = 0;
+				OutputNeedsResetOnDisable = false;
+			}
+			
+			return;
+		}
+
+		OutputNeedsResetOnDisable = true;
+		
 		// Check for any input changes
 		double CurrentAttackTime = FMath::Max(FTime::ToMilliseconds(*AttackTimeInput), 0.0);
 		if (!FMath::IsNearlyEqual(CurrentAttackTime, PrevAttackTime))
@@ -201,6 +227,7 @@ namespace Metasound
 
 		static const FVertexInterface Interface(
 			FInputVertexInterface(
+				TInputDataVertex<bool>(METASOUND_GET_PARAM_NAME_AND_METADATA(InParamEnable), true),
 				TInputDataVertex<FAudioBuffer>(METASOUND_GET_PARAM_NAME_AND_METADATA(InParamAudioInput)),
 				TInputDataVertex<FTime>(METASOUND_GET_PARAM_NAME_AND_METADATA(InParamAttackTime), 0.01f),
 				TInputDataVertex<FTime>(METASOUND_GET_PARAM_NAME_AND_METADATA(InParamReleaseTime), 0.1f),
@@ -238,20 +265,19 @@ namespace Metasound
 		return Info;
 	}
 
-	TUniquePtr<IOperator> FEnvelopeFollowerOperator::CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+	TUniquePtr<IOperator> FEnvelopeFollowerOperator::CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 	{
 		using namespace EnvelopeFollowerVertexNames;
 
-		const FEnvelopeFollowerNode& EnvelopeFollowerNode = static_cast<const FEnvelopeFollowerNode&>(InParams.Node);
-		const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
-		const FInputVertexInterface& InputInterface = GetVertexInterface().GetInputInterface();
+		const FInputVertexInterfaceData& InputData = InParams.InputData;
 
-		FAudioBufferReadRef AudioIn = InputCollection.GetDataReadReferenceOrConstruct<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InParamAudioInput), InParams.OperatorSettings);
-		FTimeReadRef AttackTime = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<FTime>(InputInterface, METASOUND_GET_PARAM_NAME(InParamAttackTime), InParams.OperatorSettings);
-		FTimeReadRef ReleaseTime = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<FTime>(InputInterface, METASOUND_GET_PARAM_NAME(InParamReleaseTime), InParams.OperatorSettings);
-		FEnvelopePeakModeReadRef EnvelopeModeIn = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<FEnumEnvelopePeakMode>(InputInterface, METASOUND_GET_PARAM_NAME(InParamFollowMode), InParams.OperatorSettings);
+		FBoolReadRef EnableIn = InputData.GetOrCreateDefaultDataReadReference<bool>(METASOUND_GET_PARAM_NAME(InParamEnable), InParams.OperatorSettings);
+		FAudioBufferReadRef AudioIn = InputData.GetOrConstructDataReadReference<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InParamAudioInput), InParams.OperatorSettings);
+		FTimeReadRef AttackTime = InputData.GetOrCreateDefaultDataReadReference<FTime>(METASOUND_GET_PARAM_NAME(InParamAttackTime), InParams.OperatorSettings);
+		FTimeReadRef ReleaseTime = InputData.GetOrCreateDefaultDataReadReference<FTime>(METASOUND_GET_PARAM_NAME(InParamReleaseTime), InParams.OperatorSettings);
+		FEnvelopePeakModeReadRef EnvelopeModeIn = InputData.GetOrCreateDefaultDataReadReference<FEnumEnvelopePeakMode>(METASOUND_GET_PARAM_NAME(InParamFollowMode), InParams.OperatorSettings);
 
-		return MakeUnique<FEnvelopeFollowerOperator>(InParams, AudioIn, AttackTime, ReleaseTime, EnvelopeModeIn);
+		return MakeUnique<FEnvelopeFollowerOperator>(InParams, EnableIn, AudioIn, AttackTime, ReleaseTime, EnvelopeModeIn);
 	}
 
 	FEnvelopeFollowerNode::FEnvelopeFollowerNode(const FNodeInitData& InitData)

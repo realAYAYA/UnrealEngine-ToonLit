@@ -6,9 +6,11 @@ using System.IdentityModel.Tokens.Jwt;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
-using System.Net.Mime;
 using System.Security.Claims;
+using System.Threading;
 using System.Threading.Tasks;
+using EpicGames.Core;
+using EpicGames.Horde.Jobs;
 using Horde.Server.Acls;
 using Horde.Server.Artifacts;
 using Horde.Server.Jobs.Graphs;
@@ -28,6 +30,7 @@ namespace Horde.Server.Jobs.Artifacts
 	/// Controller for the /api/artifacts endpoint
 	/// </summary>
 	[ApiController]
+	[Obsolete("Use /api/v2/artifacts instead")]
 	[Route("[controller]")]
 	public class ArtifactsControllerV1 : ControllerBase
 	{
@@ -55,14 +58,15 @@ namespace Horde.Server.Jobs.Artifacts
 		/// <param name="jobId">BatchId</param>
 		/// <param name="stepId">StepId</param>
 		/// <param name="file">The file contents</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Http result code</returns>
 		[HttpPost]
 		[Authorize]
 		[Route("/api/v1/artifacts")]
-		public async Task<ActionResult<CreateJobArtifactResponse>> CreateArtifact([FromQuery] JobId jobId, [FromQuery]string? stepId, IFormFile file)
+		public async Task<ActionResult<CreateJobArtifactResponseV1>> CreateArtifactAsync([FromQuery] JobId jobId, [FromQuery] JobStepId? stepId, IFormFile file, CancellationToken cancellationToken)
 		{
-			IJob? job = await _jobService.GetJobAsync(jobId);
-			if(job == null)
+			IJob? job = await _jobService.GetJobAsync(jobId, cancellationToken);
+			if (job == null)
 			{
 				return NotFound(jobId);
 			}
@@ -78,24 +82,24 @@ namespace Horde.Server.Jobs.Artifacts
 			}
 
 			IJobStep? step = null;
-			if(stepId != null)
+			if (stepId != null)
 			{
-				foreach(IJobStepBatch batch in job.Batches)
+				foreach (IJobStepBatch batch in job.Batches)
 				{
-					if(batch.TryGetStep(stepId.ToSubResourceId(), out step))
+					if (batch.TryGetStep(stepId.Value, out step))
 					{
 						break;
 					}
 				}
-				if(step == null)
+				if (step == null)
 				{
 					// if the step doesn't exist in any of the batches, not found
 					return NotFound();
 				}
 			}
 
-			IArtifactV1 newArtifact = await _artifactCollection.CreateArtifactAsync(job.Id, step?.Id, file.FileName, file.ContentType ?? "horde-mime/unknown", file.OpenReadStream());
-			return new CreateJobArtifactResponse(newArtifact.Id.ToString());
+			IArtifactV1 newArtifact = await _artifactCollection.CreateArtifactAsync(job.Id, step?.Id, file.FileName, file.ContentType ?? "horde-mime/unknown", file.OpenReadStream(), cancellationToken);
+			return new CreateJobArtifactResponseV1(newArtifact.Id.ToString());
 		}
 
 		/// <summary>
@@ -103,23 +107,24 @@ namespace Horde.Server.Jobs.Artifacts
 		/// </summary>
 		/// <param name="artifactId">JobId</param>
 		/// <param name="file">The file contents</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Http result code</returns>
 		[HttpPut]
 		[Authorize]
 		[Route("/api/v1/artifacts/{artifactId}")]
-		public async Task<ActionResult<CreateJobArtifactResponse>> UpdateArtifact(string artifactId, IFormFile file)
+		public async Task<ActionResult<CreateJobArtifactResponseV1>> UpdateArtifactAsync(string artifactId, IFormFile file, CancellationToken cancellationToken)
 		{
-			IArtifactV1? artifact = await _artifactCollection.GetArtifactAsync(ObjectId.Parse(artifactId));
+			IArtifactV1? artifact = await _artifactCollection.GetArtifactAsync(ObjectId.Parse(artifactId), cancellationToken);
 			if (artifact == null)
 			{
 				return NotFound();
 			}
-			if (!await _jobService.AuthorizeAsync(artifact.JobId, ArtifactAclAction.UploadArtifact, User, _globalConfig.Value))
+			if (!await _jobService.AuthorizeAsync(artifact.JobId, ArtifactAclAction.UploadArtifact, User, _globalConfig.Value, cancellationToken))
 			{
 				return Forbid();
 			}
 
-			await _artifactCollection.UpdateArtifactAsync(artifact, file.ContentType ?? "horde-mime/unknown", file.OpenReadStream());
+			await _artifactCollection.UpdateArtifactAsync(artifact, file.ContentType ?? "horde-mime/unknown", file.OpenReadStream(), cancellationToken);
 			return Ok();
 		}
 
@@ -130,22 +135,23 @@ namespace Horde.Server.Jobs.Artifacts
 		/// <param name="stepId">Optional StepId to filter by</param>
 		/// <param name="code">Whether to generate a direct download code</param>
 		/// <param name="filter">Filter for the properties to return</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Information about all the artifacts</returns>
 		[HttpGet]
 		[Authorize]
 		[Route("/api/v1/artifacts")]
-		[ProducesResponseType(typeof(List<GetJobArtifactResponse>), 200)]
-		public async Task<ActionResult<List<object>>> GetArtifacts([FromQuery] JobId jobId, [FromQuery] string? stepId = null, [FromQuery] bool code = false, [FromQuery] PropertyFilter? filter = null)
+		[ProducesResponseType(typeof(List<GetJobArtifactResponseV1>), 200)]
+		public async Task<ActionResult<List<object>>> GetArtifactsAsync([FromQuery] JobId jobId, [FromQuery] JobStepId? stepId = null, [FromQuery] bool code = false, [FromQuery] PropertyFilter? filter = null, CancellationToken cancellationToken = default)
 		{
-			if (!await _jobService.AuthorizeAsync(jobId, ArtifactAclAction.DownloadArtifact, User, _globalConfig.Value))
+			if (!await _jobService.AuthorizeAsync(jobId, ArtifactAclAction.DownloadArtifact, User, _globalConfig.Value, cancellationToken))
 			{
 				return Forbid();
 			}
 
-			string? downloadCode = code ? (string?)await GetDirectDownloadCodeForJobAsync(jobId) : null;
+			string? downloadCode = code ? (string?)await GetDirectDownloadCodeForJobAsync(jobId, cancellationToken) : null;
 
-			List<IArtifactV1> artifacts = await _artifactCollection.GetArtifactsAsync(jobId, stepId?.ToSubResourceId(), null);
-			return artifacts.ConvertAll(x => new GetJobArtifactResponse(x, downloadCode).ApplyFilter(filter));
+			IReadOnlyList<IArtifactV1> artifacts = await _artifactCollection.GetArtifactsAsync(jobId, stepId, null, cancellationToken);
+			return artifacts.ConvertAll(x => new GetJobArtifactResponseV1(x, downloadCode).ApplyFilter(filter));
 		}
 
 		/// <summary>
@@ -162,11 +168,12 @@ namespace Horde.Server.Jobs.Artifacts
 		/// Get a download code for the artifacts of a job
 		/// </summary>
 		/// <param name="jobId">The job id</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>The download code</returns>
-		async ValueTask<string> GetDirectDownloadCodeForJobAsync(JobId jobId)
+		async ValueTask<string> GetDirectDownloadCodeForJobAsync(JobId jobId, CancellationToken cancellationToken)
 		{
 			Claim downloadClaim = GetDirectDownloadClaim(jobId);
-			return await _aclService.IssueBearerTokenAsync(new[] { downloadClaim }, TimeSpan.FromHours(4.0));
+			return await _aclService.IssueBearerTokenAsync(new[] { downloadClaim }, TimeSpan.FromHours(4.0), cancellationToken);
 		}
 
 		/// <summary>
@@ -175,77 +182,84 @@ namespace Horde.Server.Jobs.Artifacts
 		/// <param name="artifactId">Id of the artifact to get information about</param>
 		/// <param name="code">Whether to generate a direct download code</param>
 		/// <param name="filter">Filter for the properties to return</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Information about the requested project</returns>
 		[HttpGet]
 		[Authorize]
 		[Route("/api/v1/artifacts/{artifactId}")]
-		[ProducesResponseType(typeof(GetJobArtifactResponse), 200)]
-		public async Task<ActionResult<object>> GetArtifact(string artifactId, bool code = false, [FromQuery] PropertyFilter? filter = null)
+		[ProducesResponseType(typeof(GetJobArtifactResponseV1), 200)]
+		public async Task<ActionResult<object>> GetArtifactAsync(string artifactId, bool code = false, [FromQuery] PropertyFilter? filter = null, CancellationToken cancellationToken = default)
 		{
-			IArtifactV1? artifact = await _artifactCollection.GetArtifactAsync(ObjectId.Parse(artifactId));
+			IArtifactV1? artifact = await _artifactCollection.GetArtifactAsync(ObjectId.Parse(artifactId), cancellationToken);
 			if (artifact == null)
 			{
 				return NotFound();
 			}
-			if (!await _jobService.AuthorizeAsync(artifact.JobId, ArtifactAclAction.DownloadArtifact, User, _globalConfig.Value))
+			if (!await _jobService.AuthorizeAsync(artifact.JobId, ArtifactAclAction.DownloadArtifact, User, _globalConfig.Value, cancellationToken))
 			{
 				return Forbid();
 			}
 
-			string? downloadCode = code? (string?)await GetDirectDownloadCodeForJobAsync(artifact.JobId) : null;
-			return new GetJobArtifactResponse(artifact, downloadCode).ApplyFilter(filter);
+			string? downloadCode = code ? (string?)await GetDirectDownloadCodeForJobAsync(artifact.JobId, cancellationToken) : null;
+			return new GetJobArtifactResponseV1(artifact, downloadCode).ApplyFilter(filter);
 		}
 
 		/// <summary>
 		/// Retrieve raw data for an artifact
 		/// </summary>
 		/// <param name="artifactId">Id of the artifact to get information about</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Raw artifact data</returns>
 		[HttpGet]
 		[Authorize]
 		[Route("/api/v1/artifacts/{artifactId}/data")]
-		public async Task<ActionResult> GetArtifactData(string artifactId)
+		public async Task<ActionResult> GetArtifactDataAsync(string artifactId, CancellationToken cancellationToken)
 		{
-			IArtifactV1? artifact = await _artifactCollection.GetArtifactAsync(ObjectId.Parse(artifactId));
+			// Catch case clients are sending an undefined artifact id
+			if (artifactId == "undefined")
+			{
+				return NotFound();
+			}
+
+			IArtifactV1? artifact = await _artifactCollection.GetArtifactAsync(ObjectId.Parse(artifactId), cancellationToken);
 			if (artifact == null)
 			{
 				return NotFound();
 			}
-			if (!await _jobService.AuthorizeAsync(artifact.JobId, ArtifactAclAction.DownloadArtifact, User, _globalConfig.Value))
+			if (!await _jobService.AuthorizeAsync(artifact.JobId, ArtifactAclAction.DownloadArtifact, User, _globalConfig.Value, cancellationToken))
 			{
 				return Forbid();
 			}
 
 			// Fun, filestream result automatically closes the stream!
-			return new FileStreamResult(await _artifactCollection.OpenArtifactReadStreamAsync(artifact), artifact.MimeType);
+			return new FileStreamResult(await _artifactCollection.OpenArtifactReadStreamAsync(artifact, cancellationToken), artifact.MimeType);
 		}
-		
+
 		/// <summary>
 		/// Retrieve raw data for an artifact by filename
 		/// </summary>
 		/// <param name="jobId">Unique id for the job</param>
 		/// <param name="stepId">Unique id for the step</param>
 		/// <param name="filename">Filename of artifact from step</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Raw artifact data</returns>
 		[HttpGet]
 		[Route("/api/v1/jobs/{jobId}/steps/{stepId}/artifacts/{filename}/data")]
-		public async Task<ActionResult<object>> GetArtifactDataByFilename(JobId jobId, string stepId, string filename)
+		public async Task<ActionResult<object>> GetArtifactDataByFilenameAsync(JobId jobId, JobStepId stepId, string filename, CancellationToken cancellationToken)
 		{
-			SubResourceId stepIdValue = stepId.ToSubResourceId();
-
-			if (!await _jobService.AuthorizeAsync(jobId, ArtifactAclAction.DownloadArtifact, User, _globalConfig.Value))
+			if (!await _jobService.AuthorizeAsync(jobId, ArtifactAclAction.DownloadArtifact, User, _globalConfig.Value, cancellationToken))
 			{
 				return Forbid();
 			}
-			
-			List<IArtifactV1> artifacts = await _artifactCollection.GetArtifactsAsync(jobId, stepIdValue, filename);
+
+			IReadOnlyList<IArtifactV1> artifacts = await _artifactCollection.GetArtifactsAsync(jobId, stepId, filename, cancellationToken);
 			if (artifacts.Count == 0)
 			{
 				return NotFound();
 			}
 
 			IArtifactV1 artifact = artifacts[0];
-			return new FileStreamResult(await _artifactCollection.OpenArtifactReadStreamAsync(artifact), artifact.MimeType);
+			return new FileStreamResult(await _artifactCollection.OpenArtifactReadStreamAsync(artifact, cancellationToken), artifact.MimeType);
 		}
 
 		/// <summary>
@@ -253,13 +267,14 @@ namespace Horde.Server.Jobs.Artifacts
 		/// </summary>
 		/// <param name="artifactId">Id of the artifact to get information about</param>
 		/// <param name="code">The authorization code for this resource</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Raw artifact data</returns>
 		[HttpGet]
 		[AllowAnonymous]
 		[Route("/api/v1/artifacts/{artifactId}/download")]
-		public async Task<ActionResult> DownloadArtifact(string artifactId, [FromQuery] string code)
+		public async Task<ActionResult> DownloadArtifactAsync(string artifactId, [FromQuery] string code, CancellationToken cancellationToken)
 		{
-			IGlobals globals = await _globalsService.GetAsync();
+			IGlobals globals = await _globalsService.GetAsync(cancellationToken);
 
 			TokenValidationParameters parameters = new TokenValidationParameters();
 			parameters.ValidateAudience = false;
@@ -271,39 +286,40 @@ namespace Horde.Server.Jobs.Artifacts
 			parameters.IssuerSigningKey = globals.JwtSigningKey;
 
 			JwtSecurityTokenHandler handler = new JwtSecurityTokenHandler();
-			ClaimsPrincipal principal = handler.ValidateToken(code, parameters, out _);
+			TokenValidationResult tokenResult = await handler.ValidateTokenAsync(code, parameters);
 
-			IArtifactV1? artifact = await _artifactCollection.GetArtifactAsync(ObjectId.Parse(artifactId));
+			IArtifactV1? artifact = await _artifactCollection.GetArtifactAsync(ObjectId.Parse(artifactId), cancellationToken);
 			if (artifact == null)
 			{
 				return NotFound();
 			}
 
 			Claim directDownloadClaim = GetDirectDownloadClaim(artifact.JobId);
-			if (!principal.HasClaim(directDownloadClaim.Type, directDownloadClaim.Value))
+			if (!tokenResult.ClaimsIdentity.HasClaim(directDownloadClaim.Type, directDownloadClaim.Value))
 			{
 				return Forbid();
 			}
 
-			return new InlineFileStreamResult(await _artifactCollection.OpenArtifactReadStreamAsync(artifact), artifact.MimeType, Path.GetFileName(artifact.Name));
+			return new InlineFileStreamResult(await _artifactCollection.OpenArtifactReadStreamAsync(artifact, cancellationToken), artifact.MimeType, Path.GetFileName(artifact.Name));
 		}
 
 		/// <summary>
 		/// Returns a zip archive of many artifacts
 		/// </summary>
 		/// <param name="artifactZipRequest">Artifact request params</param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Zip of many artifacts</returns>
 		[HttpPost]
 		[Authorize]
 		[Route("/api/v1/artifacts/zip")]
-		public async Task<ActionResult> ZipArtifacts(GetJobArtifactZipRequest artifactZipRequest)
+		public async Task<ActionResult> ZipArtifactsAsync(GetJobArtifactZipRequestV1 artifactZipRequest, CancellationToken cancellationToken)
 		{
 			if (artifactZipRequest.JobId == null)
 			{
 				return BadRequest("Must specify a JobId");
 			}
 
-			IJob? job = await _jobService.GetJobAsync(JobId.Parse(artifactZipRequest.JobId!));
+			IJob? job = await _jobService.GetJobAsync(artifactZipRequest.JobId.Value, cancellationToken);
 			if (job == null)
 			{
 				return NotFound();
@@ -313,33 +329,34 @@ namespace Horde.Server.Jobs.Artifacts
 				return Forbid();
 			}
 
-			List<IArtifactV1> artifacts = await _artifactCollection.GetArtifactsAsync(job.Id, artifactZipRequest.StepId?.ToSubResourceId(), null);
+			IReadOnlyList<IArtifactV1> artifacts = await _artifactCollection.GetArtifactsAsync(job.Id, artifactZipRequest.StepId, null, cancellationToken);
 
 			Dictionary<ObjectId, IArtifactV1> idToArtifact = artifacts.ToDictionary(x => x.Id, x => x);
 
-			List<IArtifactV1> zipArtifacts;
+			IReadOnlyList<IArtifactV1> zipArtifacts;
 			if (artifactZipRequest.ArtifactIds == null)
 			{
 				zipArtifacts = artifacts;
 			}
 			else
 			{
-				zipArtifacts = new List<IArtifactV1>();
+				List<IArtifactV1> filteredZipArtifacts = new List<IArtifactV1>();
 				foreach (string artifactId in artifactZipRequest.ArtifactIds)
 				{
 					IArtifactV1? artifact;
 					if (idToArtifact.TryGetValue(ObjectId.Parse(artifactId), out artifact))
 					{
-						zipArtifacts.Add(artifact);
+						filteredZipArtifacts.Add(artifact);
 					}
 					else
 					{
 						return NotFound();
 					}
 				}
+				zipArtifacts = filteredZipArtifacts;
 			}
 
-			IGraph graph = await _jobService.GetGraphAsync(job);
+			IGraph graph = await _jobService.GetGraphAsync(job, cancellationToken);
 
 			return new CustomFileCallbackResult("Artifacts.zip", "application/octet-stream", false, async (outputStream, context) =>
 			{
@@ -351,7 +368,7 @@ namespace Horde.Server.Jobs.Artifacts
 					{
 						foreach (IArtifactV1 artifact in zipArtifacts)
 						{
-							await using (System.IO.Stream artifactStream = await _artifactCollection.OpenArtifactReadStreamAsync(artifact))
+							await using (System.IO.Stream artifactStream = await _artifactCollection.OpenArtifactReadStreamAsync(artifact, cancellationToken))
 							{
 								// tack on the step name into the directory if it exists
 								string stepName = String.Empty;

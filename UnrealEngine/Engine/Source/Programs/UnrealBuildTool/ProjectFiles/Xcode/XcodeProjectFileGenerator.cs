@@ -28,6 +28,7 @@ namespace UnrealBuildTool
 		/// </summary>
 		protected override bool bMakeProjectPerTarget => true;
 		protected override bool bAllowContentOnlyProjects => true;
+		protected override bool bAllowMultiModuleReference => true;
 
 		public DirectoryReference? XCWorkspace;
 
@@ -448,17 +449,12 @@ namespace UnrealBuildTool
 			else
 			{
 				// add platforms that have synced platform support
-				if (InstalledPlatformInfo.IsValidPlatform(UnrealTargetPlatform.Mac, EProjectType.Code))
+				foreach (UnrealTargetPlatform ApplePlatform in UEBuildPlatform.GetPlatformsInGroup(UnrealPlatformGroup.Apple))
 				{
-					XcodePlatforms.Add(UnrealTargetPlatform.Mac);
-				}
-				if (InstalledPlatformInfo.IsValidPlatform(UnrealTargetPlatform.IOS, EProjectType.Code))
-				{
-					XcodePlatforms.Add(UnrealTargetPlatform.IOS);
-				}
-				if (InstalledPlatformInfo.IsValidPlatform(UnrealTargetPlatform.TVOS, EProjectType.Code))
-				{
-					XcodePlatforms.Add(UnrealTargetPlatform.TVOS);
+					if (InstalledPlatformInfo.IsValidPlatform(ApplePlatform, EProjectType.Code) && UEBuildPlatform.TryGetBuildPlatform(ApplePlatform, out _))
+					{
+						XcodePlatforms.Add(ApplePlatform);
+					}
 				}
 			}
 
@@ -501,7 +497,12 @@ namespace UnrealBuildTool
 		protected override void AddAdditionalNativeTargetInformation(PlatformProjectGeneratorCollection PlatformProjectGenerators, List<Tuple<ProjectFile, ProjectTarget>> Targets, ILogger Logger)
 		{
 			DateTime MainStart = DateTime.UtcNow;
-			Parallel.ForEach(Targets, TargetPair =>
+
+			ParallelOptions Options = new ParallelOptions
+			{
+				//MaxDegreeOfParallelism=1,
+			};
+			Parallel.ForEach(Targets, Options, TargetPair =>
 			{
 				// don't bother if we aren't interested in this target
 				if (SingleTargetName != null && !TargetPair.Item2.Name.Equals(SingleTargetName, StringComparison.InvariantCultureIgnoreCase))
@@ -586,9 +587,9 @@ namespace UnrealBuildTool
 							}
 						}
 					}
-					catch (Exception)
+					catch (Exception Ex)
 					{
-
+						Logger.LogDebug("Failed to build target {Target} for {Platform}. Skipping it for GettingNativeInfo. Exception:\n{Exception}", TargetProjectFile.ProjectFilePath.GetFileNameWithoutAnyExtensions(), Platform, Ex.Message);
 					}
 
 					Logger.LogDebug("GettingNativeInfo [{Project} / {Platform}] {TimeMs}ms", TargetProjectFile.ProjectFilePath.GetFileNameWithoutAnyExtensions(), Platform, (DateTime.UtcNow - Start).TotalMilliseconds);

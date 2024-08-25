@@ -39,6 +39,8 @@ public:
 	AIMODULE_API virtual FString GetStaticDescription() const override;
 	
 	virtual uint16 GetInstanceMemorySize() const override { return sizeof(FBTFocusMemory); }
+	AIMODULE_API virtual void InitializeMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryInit::Type InitType) const override;
+	AIMODULE_API virtual void CleanupMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryClear::Type CleanupType) const override;
 
 protected:
 

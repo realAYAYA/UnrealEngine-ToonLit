@@ -12,6 +12,7 @@
 #include "Framework/Notifications/NotificationManager.h"
 #include "RetargetEditor/IKRetargetAnimInstance.h"
 #include "RetargetEditor/IKRetargetEditorController.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/SavePackage.h"
 #include "Widgets/Input/SComboBox.h"
 #include "Widgets/Notifications/SNotificationList.h"
@@ -29,7 +30,7 @@ void FIKRetargetPoseExporter::HandleImportFromPoseAsset()
 {
 	FIKRetargetEditorController* ControllerPtr = Controller.Pin().Get();
 	
-	ControllerPtr->SetRetargeterMode(ERetargeterOutputMode::ShowRetargetPose);
+	ControllerPtr->SetRetargeterMode(ERetargeterOutputMode::EditRetargetPose);
 	
 	RetargetPoseToImport = nullptr;
 	PosesInSelectedAsset.Empty();
@@ -40,10 +41,35 @@ void FIKRetargetPoseExporter::HandleImportFromPoseAsset()
 
 	// the asset picker will only show pose assets
 	FAssetPickerConfig AssetPickerConfig;
+	AssetPickerConfig.SelectionMode = ESelectionMode::Single;
 	AssetPickerConfig.Filter.ClassPaths.Add(UPoseAsset::StaticClass()->GetClassPathName());
 	AssetPickerConfig.Filter.bRecursiveClasses = true;
-	AssetPickerConfig.OnAssetSelected = FOnAssetSelected::CreateSP(this, &FIKRetargetPoseExporter::OnRetargetPoseSelected);
-	AssetPickerConfig.InitialAssetViewType = EAssetViewType::Tile;
+	AssetPickerConfig.OnShouldFilterAsset = FOnShouldFilterAsset::CreateSP(this, &FIKRetargetPoseExporter::OnShouldFilterPoseToImport);
+	AssetPickerConfig.OnAssetSelected = FOnAssetSelected::CreateSP(this, &FIKRetargetPoseExporter::OnPoseAssetSelected);
+	AssetPickerConfig.InitialAssetViewType = EAssetViewType::Column;
+	AssetPickerConfig.bAddFilterUI = true;
+	AssetPickerConfig.bShowPathInColumnView = true;
+	AssetPickerConfig.bShowTypeInColumnView = true;
+	AssetPickerConfig.DefaultFilterMenuExpansion = EAssetTypeCategories::Animation;
+	AssetPickerConfig.bAllowNullSelection = false;
+
+	// hide all asset registry columns by default (we only really want the name and path)
+	UObject* PoseAssetDefaultObject = UPoseAsset::StaticClass()->GetDefaultObject();
+	FAssetRegistryTagsContextData TagsContext(PoseAssetDefaultObject, EAssetRegistryTagsCaller::Uncategorized);
+	PoseAssetDefaultObject->GetAssetRegistryTags(TagsContext);
+	const FName ColumnToKeep = FName("Number of Frames");
+	for (const TPair<FName, UObject::FAssetRegistryTag>& TagPair : TagsContext.Tags)
+	{
+		if (TagPair.Key != ColumnToKeep)
+		{
+			AssetPickerConfig.HiddenColumnNames.Add(TagPair.Key.ToString());
+		}
+	}
+
+	// also hide the type column by default (but allow users to enable it, so don't use bShowTypeInColumnView)
+	AssetPickerConfig.HiddenColumnNames.Add(TEXT("Class"));
+	AssetPickerConfig.HiddenColumnNames.Add(TEXT("HasVirtualizedData"));
+	AssetPickerConfig.HiddenColumnNames.Add(TEXT("Disk Size"));
 
 	ImportPoseWindow = SNew(SWindow)
 	.Title(LOCTEXT("ImportRetargetPose_Label", "Import Retarget Pose"))
@@ -73,6 +99,7 @@ void FIKRetargetPoseExporter::HandleImportFromPoseAsset()
 					.OptionsSource(&PosesInSelectedAsset)
 					.OnGenerateWidget(this, &FIKRetargetPoseExporter::OnGeneratePoseComboWidget)
 					.OnSelectionChanged(this, &FIKRetargetPoseExporter::OnSelectPoseFromPoseAsset)
+					.OnComboBoxOpening(this, &FIKRetargetPoseExporter::RefreshPoseList)
 					[
 						SNew(STextBlock).Text_Lambda([this]()
 						{
@@ -130,23 +157,11 @@ void FIKRetargetPoseExporter::HandleImportFromPoseAsset()
 	ImportPoseWindow.Reset();
 }
 
-void FIKRetargetPoseExporter::OnRetargetPoseSelected(const FAssetData& SelectedAsset)
+void FIKRetargetPoseExporter::OnPoseAssetSelected(const FAssetData& SelectedAsset)
 {
 	RetargetPoseToImport = SelectedAsset.ToSoftObjectPath();
 
-	// get all poses in the selected asset
-	PosesInSelectedAsset.Empty();
-	const TObjectPtr<UPoseAsset> PoseAsset = Cast<UPoseAsset>(RetargetPoseToImport.TryLoad());
-	if (!PoseAsset)
-	{
-		return;
-	}
-
-	// store pose names in list used by combobox
-	for (const FName& PoseName : PoseAsset->GetPoseFNames())
-	{
-		PosesInSelectedAsset.Add(MakeShared<FName>(PoseName));
-	}
+	RefreshPoseList();
 
 	// set the selected pose to the first pose in the asset (or null if empty)
 	if (PosesInSelectedAsset.IsEmpty())
@@ -169,6 +184,23 @@ void FIKRetargetPoseExporter::OnSelectPoseFromPoseAsset(TSharedPtr<FName> Item, 
 	if (Item.IsValid())
 	{
 		SelectedPose = Item;
+	}
+}
+
+void FIKRetargetPoseExporter::RefreshPoseList()
+{
+	// get all poses in the selected asset
+	PosesInSelectedAsset.Empty();
+	const TObjectPtr<UPoseAsset> PoseAsset = Cast<UPoseAsset>(RetargetPoseToImport.TryLoad());
+	if (!PoseAsset)
+	{
+		return;
+	}
+
+	// store pose names in list used by combobox
+	for (const FName& PoseName : PoseAsset->GetPoseFNames())
+	{
+		PosesInSelectedAsset.Add(MakeShared<FName>(PoseName));
 	}
 }
 
@@ -282,11 +314,29 @@ FReply FIKRetargetPoseExporter::ImportPoseAsset() const
 	return FReply::Unhandled();
 }
 
+bool FIKRetargetPoseExporter::OnShouldFilterPoseToImport(const FAssetData& AssetData) const
+{
+	// is this a pose asset
+	if (!AssetData.IsInstanceOf(UPoseAsset::StaticClass()))
+	{
+		return true;
+	}
+
+	// get currently edited skeleton
+	const USkeleton* DesiredSkeleton = Controller.Pin()->GetSkeleton(Controller.Pin()->GetSourceOrTarget());
+	if (!DesiredSkeleton)
+	{
+		return true;
+	}
+
+	return !DesiredSkeleton->IsCompatibleForEditor(AssetData);
+}
+
 void FIKRetargetPoseExporter::HandleImportFromSequenceAsset()
 {
 	FIKRetargetEditorController* ControllerPtr = Controller.Pin().Get();
 	
-	ControllerPtr->SetRetargeterMode(ERetargeterOutputMode::ShowRetargetPose);
+	ControllerPtr->SetRetargeterMode(ERetargeterOutputMode::EditRetargetPose);
 	
 	SequenceToImportAsPose = nullptr;
 
@@ -300,6 +350,7 @@ void FIKRetargetPoseExporter::HandleImportFromSequenceAsset()
 
 	// the asset picker will only show animation sequences compatible with the preview mesh
 	FAssetPickerConfig AssetPickerConfig;
+	AssetPickerConfig.SelectionMode = ESelectionMode::Single;
 	AssetPickerConfig.Filter.ClassPaths.Add(UAnimSequence::StaticClass()->GetClassPathName());
 	AssetPickerConfig.InitialAssetViewType = EAssetViewType::Column;
 	AssetPickerConfig.bAddFilterUI = true;
@@ -311,21 +362,22 @@ void FIKRetargetPoseExporter::HandleImportFromSequenceAsset()
 	AssetPickerConfig.bAllowNullSelection = false;
 
 	// hide all asset registry columns by default (we only really want the name and path)
-	TArray<UObject::FAssetRegistryTag> AssetRegistryTags;
-	UAnimSequence::StaticClass()->GetDefaultObject()->GetAssetRegistryTags(AssetRegistryTags);
+	UObject* AnimSequenceDefaultObject = UAnimSequence::StaticClass()->GetDefaultObject();
+	FAssetRegistryTagsContextData TagsContext(AnimSequenceDefaultObject, EAssetRegistryTagsCaller::Uncategorized);
+	AnimSequenceDefaultObject->GetAssetRegistryTags(TagsContext);
 	FName ColumnToKeep = FName("Number of Frames");
-	for(UObject::FAssetRegistryTag& AssetRegistryTag : AssetRegistryTags)
+	for (const TPair<FName, UObject::FAssetRegistryTag>& TagPair : TagsContext.Tags)
 	{
-		if (AssetRegistryTag.Name != ColumnToKeep)
+		if (TagPair.Key != ColumnToKeep)
 		{
-			AssetPickerConfig.HiddenColumnNames.Add(AssetRegistryTag.Name.ToString());
+			AssetPickerConfig.HiddenColumnNames.Add(TagPair.Key.ToString());
 		}
 	}
 
 	// also hide the type column by default (but allow users to enable it, so don't use bShowTypeInColumnView)
 	AssetPickerConfig.HiddenColumnNames.Add(TEXT("Class"));
 	AssetPickerConfig.HiddenColumnNames.Add(TEXT("HasVirtualizedData"));
-	AssetPickerConfig.HiddenColumnNames.Add(TEXT("DiskSize"));
+	AssetPickerConfig.HiddenColumnNames.Add(TEXT("Disk Size"));
 
 	// create pop-up window for user to select animation sequence asset to import as a retarget pose]
 	ImportPoseFromSequenceWindow = SNew(SWindow)
@@ -421,7 +473,7 @@ void FIKRetargetPoseExporter::HandleImportFromSequenceAsset()
 					.TextStyle( FAppStyle::Get(), "DialogButtonText" )
 					.HAlign(HAlign_Center)
 					.VAlign(VAlign_Center)
-					.Text(LOCTEXT("ImportAsRetargetPoseButtonLabel", "Import As Retarget Pose"))
+					.Text(LOCTEXT("ImportAsRetargetPoseButtonLabel", "Import New Retarget Pose"))
 					.OnClicked(this, &FIKRetargetPoseExporter::OnImportPoseFromSequence)
 				]
 				
@@ -451,8 +503,8 @@ void FIKRetargetPoseExporter::HandleImportFromSequenceAsset()
 
 bool FIKRetargetPoseExporter::OnShouldFilterSequenceToImport(const FAssetData& AssetData) const
 {
-	// is this an animation asset?
-	if (!AssetData.IsInstanceOf(UAnimationAsset::StaticClass()))
+	// is this an animation sequence?
+	if (!AssetData.IsInstanceOf(UAnimSequence::StaticClass()))
 	{
 		return true;
 	}
@@ -589,7 +641,7 @@ void FIKRetargetPoseExporter::HandleExportPoseAsset()
 
 	// get mesh to export pose
 	const ERetargetSourceOrTarget SourceOrTarget = ControllerPtr->GetSourceOrTarget();
-	const USkeletalMesh* Mesh = ControllerPtr->GetSkeletalMesh(SourceOrTarget);
+	USkeletalMesh* Mesh = ControllerPtr->GetSkeletalMesh(SourceOrTarget);
 	UDebugSkelMeshComponent* MeshComponent = ControllerPtr->GetSkeletalMeshComponent(SourceOrTarget);
 	if (!(Mesh && MeshComponent))
 	{
@@ -625,6 +677,7 @@ void FIKRetargetPoseExporter::HandleExportPoseAsset()
 
 	// fill new pose asset with current pose
 	NewPoseAsset->SetSkeleton(const_cast<USkeleton*>(Mesh->GetSkeleton()));
+	NewPoseAsset->SetPreviewMesh(Mesh);
 	const FName NewPoseName = NewPoseAsset->AddPoseWithUniqueName(MeshComponent);
 
 	// mark asset dirty 

@@ -37,6 +37,10 @@
 		{
 			"Name": "nDisplayModularFeatures",
 			"Enabled": true
+		},
+		{
+			"Name": "DiscoveryBeaconReceiver",
+			"Enabled": true
 		}
 	]
 }

@@ -143,6 +143,32 @@ void UBasicReplicationGraph::RouteRemoveNetworkActorToNodes(const FNewReplicated
 	}
 }
 
+void UBasicReplicationGraph::RouteRenameNetworkActorToNodes(const FRenamedReplicatedActorInfo& ActorInfo)
+{
+#if WITH_GAMEPLAY_DEBUGGER
+	if (ActorInfo.NewActorInfo.Actor->IsA(AGameplayDebuggerCategoryReplicator::StaticClass()))
+	{
+		return;
+	}
+#endif
+
+	if (ActorInfo.NewActorInfo.Actor->bAlwaysRelevant)
+	{
+		AlwaysRelevantNode->NotifyActorRenamed(ActorInfo);
+	}
+	else if (ActorInfo.NewActorInfo.Actor->bOnlyRelevantToOwner)
+	{
+		if (UReplicationGraphNode* Node = ActorInfo.NewActorInfo.Actor->GetNetConnection() ? GetAlwaysRelevantNodeForConnection(ActorInfo.NewActorInfo.Actor->GetNetConnection()) : nullptr)
+		{
+			Node->NotifyActorRenamed(ActorInfo);
+		}
+	}
+	else
+	{
+		GridNode->RenameActor_Dormancy(ActorInfo);
+	}
+}
+
 UReplicationGraphNode_AlwaysRelevant_ForConnection* UBasicReplicationGraph::GetAlwaysRelevantNodeForConnection(UNetConnection* Connection)
 {
 	UReplicationGraphNode_AlwaysRelevant_ForConnection* Node = nullptr;
@@ -197,7 +223,7 @@ int32 UBasicReplicationGraph::ServerReplicateActors(float DeltaSeconds)
 
 		if (bRemove)
 		{
-			ActorsWithoutNetConnection.RemoveAtSwap(idx, 1, false);
+			ActorsWithoutNetConnection.RemoveAtSwap(idx, 1, EAllowShrinking::No);
 		}
 	}
 

@@ -145,7 +145,7 @@ TArray<AActor*> FDisplayClusterLightCardEditor::FindAllManagedActors() const
 			RootActorLightCardActors.Append(reinterpret_cast<TSet<ADisplayClusterLightCardActor*>&>(ChromakeyCardActors));
 		}
 		
-		for (TObjectPtr<ADisplayClusterLightCardActor> LightCardActor : RootActorLightCardActors)
+		for (ADisplayClusterLightCardActor* LightCardActor : RootActorLightCardActors)
 		{
 			ManagedActors.Add(LightCardActor);
 		}
@@ -271,7 +271,7 @@ AActor* FDisplayClusterLightCardEditor::SpawnActor(const UDisplayClusterLightCar
 	return SpawnActor(nullptr, NAME_None, InTemplate, InLevel, bIsPreview);
 }
 
-void FDisplayClusterLightCardEditor::AddNewLightCard()
+ADisplayClusterLightCardActor* FDisplayClusterLightCardEditor::AddNewLightCard()
 {
 	check(ActiveRootActor.IsValid());
 
@@ -294,7 +294,11 @@ void FDisplayClusterLightCardEditor::AddNewLightCard()
 		
 		AddRecentlyPlacedItem(MoveTemp(RecentlyPlacedItem));
 		SelectActors({NewLightCard});
+
+		return NewLightCard;
 	}
+
+	return nullptr;
 }
 
 void FDisplayClusterLightCardEditor::AddExistingLightCard()
@@ -405,7 +409,7 @@ void FDisplayClusterLightCardEditor::AddExistingLightCard()
 	SelectedActorPtr.Reset();
 }
 
-void FDisplayClusterLightCardEditor::AddNewFlag()
+ADisplayClusterLightCardActor* FDisplayClusterLightCardEditor::AddNewFlag()
 {
 	check(ActiveRootActor.IsValid());
 
@@ -432,10 +436,13 @@ void FDisplayClusterLightCardEditor::AddNewFlag()
 		
 		AddRecentlyPlacedItem(MoveTemp(RecentlyPlacedItem));
 		SelectActors({NewLightCard});
+		return NewLightCard;
 	}
+
+	return nullptr;
 }
 
-void FDisplayClusterLightCardEditor::AddNewDynamic(UClass* InClass)
+AActor* FDisplayClusterLightCardEditor::AddNewDynamic(UClass* InClass)
 {
 	check(ActiveRootActor.IsValid());
 
@@ -451,7 +458,10 @@ void FDisplayClusterLightCardEditor::AddNewDynamic(UClass* InClass)
 		
 		AddRecentlyPlacedItem(MoveTemp(RecentlyPlacedItem));
 		SelectActors({NewActor});
+		return NewActor;
 	}
+
+	return nullptr;
 }
 
 void FDisplayClusterLightCardEditor::AddLightCardsToActor(const TArray<ADisplayClusterLightCardActor*>& LightCards)
@@ -580,14 +590,14 @@ bool FDisplayClusterLightCardEditor::CanCopySelectedActors() const
 	return SelectedActors.Num() > 0;
 }
 
-void FDisplayClusterLightCardEditor::PasteActors()
+TArray<AActor*> FDisplayClusterLightCardEditor::PasteActors()
 {
 	if (DoOutlinerFoldersNeedEditorDelegates() && LightCardOutliner->CanPasteSelectedFolder())
 	{
 		// We still must fire the delegates in case folders are selected
 		FEditorDelegates::OnEditPasteActorsBegin.Broadcast();
 		FEditorDelegates::OnEditPasteActorsEnd.Broadcast();
-		return;
+		return {};
 	}
 
 	UWorld* EditorWorld = GEditor->GetEditorWorldContext().World();
@@ -618,6 +628,8 @@ void FDisplayClusterLightCardEditor::PasteActors()
 
 	AddLightCardsToActor(PastedLightCards);
 	SelectActors(PastedActors);
+
+	return PastedActors;
 }
 
 bool FDisplayClusterLightCardEditor::CanPasteActors() const
@@ -1147,8 +1159,11 @@ TSharedRef<SWidget> FDisplayClusterLightCardEditor::GeneratePlaceActorsMenu()
 			FText Label = Class->GetDisplayNameText();
 			FSlateIcon StageActorIcon = FSlateIconFinder::FindIconForClass(Class);
 			MenuBuilder.AddMenuEntry(Label, LOCTEXT("AddStageActorHeader", "Add a stage actor to the scene"), StageActorIcon,
-				FUIAction(FExecuteAction::CreateSP(this, &FDisplayClusterLightCardEditor::AddNewDynamic, Class),
-					FCanExecuteAction::CreateSP(this, &FDisplayClusterLightCardEditor::CanAddNewActor, Class)));
+				FUIAction(FExecuteAction::CreateSPLambda(this, [this, Class]()
+				{
+					AddNewDynamic(Class);
+				}),
+				FCanExecuteAction::CreateSP(this, &FDisplayClusterLightCardEditor::CanAddNewActor, Class)));
 		}
 
 		if (CanAddNewActor())
@@ -1541,12 +1556,18 @@ void FDisplayClusterLightCardEditor::BindCommands()
 
 	CommandList->MapAction(
 		FDisplayClusterLightCardEditorCommands::Get().AddNewLightCard,
-		FExecuteAction::CreateSP(this, &FDisplayClusterLightCardEditor::AddNewLightCard),
+		FExecuteAction::CreateSPLambda(this, [this]()
+		{
+			AddNewLightCard();
+		}),
 		FCanExecuteAction::CreateSP(this, &FDisplayClusterLightCardEditor::CanAddNewActor));
 
 	CommandList->MapAction(
 		FDisplayClusterLightCardEditorCommands::Get().AddNewFlag,
-		FExecuteAction::CreateSP(this, &FDisplayClusterLightCardEditor::AddNewFlag),
+		FExecuteAction::CreateSPLambda(this, [this]()
+		{
+			AddNewFlag();
+		}),
 		FCanExecuteAction::CreateSP(this, &FDisplayClusterLightCardEditor::CanAddNewActor));
 	
 	CommandList->MapAction(
@@ -1571,7 +1592,10 @@ void FDisplayClusterLightCardEditor::BindCommands()
 
 	CommandList->MapAction(
 		FGenericCommands::Get().Paste,
-		FExecuteAction::CreateSP(this, &FDisplayClusterLightCardEditor::PasteActors),
+		FExecuteAction::CreateSPLambda(this, [this]()
+		{
+			PasteActors();
+		}),
 		FCanExecuteAction::CreateSP(this, &FDisplayClusterLightCardEditor::CanPasteActors));
 
 	CommandList->MapAction(

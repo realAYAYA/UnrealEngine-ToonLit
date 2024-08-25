@@ -6,11 +6,19 @@
 #include "HAL/IConsoleManager.h"
 #include "Misc/CoreDelegates.h"
 #include "Misc/FileHelper.h"
+#include "Tasks/Pipe.h"
 
-#define UE_HOTFIX_FOR_NEXT_BOOT_FILENAME TEXT("HotfixForNextBoot.ini")
+#if PLATFORM_WRITES_ARE_SLOW
+#include "Async/Async.h"
+#include "Misc/QueuedThreadPool.h"
+#endif
+
+#define UE_HOTFIX_FOR_NEXT_BOOT_FILENAME TEXT("HotfixForNextBoot.txt")
 
 namespace UE::ConfigUtilities
 {
+
+UE::Tasks::FPipe AsyncTaskPipe( TEXT("SaveHotfixForNextBootPipe") );
 
 const TCHAR* ConvertValueFromHumanFriendlyValue( const TCHAR* Value )
 {
@@ -40,6 +48,7 @@ void LoadCVarsFromFileForNextBoot(TMap<FString, FString>& OutCVars)
 {
 	if (!FPaths::HasProjectPersistentDownloadDir())
 	{
+		UE_LOG(LogConfig, Log, TEXT("No project persistent download dir available for boot hotfix"));
 		return;
 	}
 
@@ -49,16 +58,26 @@ void LoadCVarsFromFileForNextBoot(TMap<FString, FString>& OutCVars)
 
 	if (!FileManager.FileExists(*FullPath))
 	{
+		UE_LOG(LogConfig, Log, TEXT("No local boot hotfix file found at: [%s]"), *FullPath);
 		return;
 	}
 
 	FString Content;
-	FFileHelper::LoadFileToString(Content, *FullPath);
+	if (!FFileHelper::LoadFileToString(Content, *FullPath))
+	{
+		UE_LOG(LogConfig, Error, TEXT("Failed to load local boot hotfix file: [%s]"), *FullPath);
+		return;
+	}
 
 	// Delete it so that we don't worry about it when write.
 	// Also if for some reason the switch don't work well when boot even before getting latest hotfix, 
 	// the next boot will likely succeed by default like before without this file
-	FileManager.Delete(*FullPath);
+	if (!FileManager.Delete(*FullPath, true/*RequireExists*/))
+	{
+		UE_LOG(LogConfig, Error, TEXT("Failed to delete local boot hotfix file [%s]"), *FullPath);
+	}
+
+	UE_LOG(LogConfig, Log, TEXT("Local boot hotfix file [%s] loaded and deleted"), *FullPath);
 
 	TArray<FString> Lines;
 	Content.ParseIntoArrayLines(Lines);
@@ -80,24 +99,54 @@ void SaveCVarForNextBoot(const TCHAR* Key, const TCHAR* Value)
 #if !UE_SERVER
 	if (!FPaths::HasProjectPersistentDownloadDir())
 	{
+		UE_LOG(LogConfig, Log, TEXT("No persistent download dir, ignoring CVar %s hotfix for next boot"), Key);
 		return;
 	}
 
-	TMap<FString, FString> CVarsToSave;
+	FString StrKey(Key);
+	FString StrValue(Value);
 
-	// Read from file, in case there are more than one cvar hotfix event in same run
-	LoadCVarsFromFileForNextBoot(CVarsToSave);
+#if PLATFORM_WRITES_ARE_SLOW
+	AsyncPool(*GIOThreadPool, [StrKey, StrValue] {
+		TMap<FString, FString> CVarsToSave;
 
-	CVarsToSave.FindOrAdd(Key) = Value;
+		// Read from file, in case there are more than one cvar hotfix event in same run
+		LoadCVarsFromFileForNextBoot(CVarsToSave);
 
-	FString ContentToSave;
-	for (const TPair<FString, FString>& CVarPair : CVarsToSave)
-	{
-		ContentToSave.Append(FString::Format(TEXT("{0}={1}\r\n"), { CVarPair.Key, CVarPair.Value }));
-	}
+		CVarsToSave.FindOrAdd(StrKey) = StrValue;
 
-	const FString FullPath = FPaths::ProjectPersistentDownloadDir() / UE_HOTFIX_FOR_NEXT_BOOT_FILENAME;
-	FFileHelper::SaveStringToFile(ContentToSave, *FullPath);
+		FString ContentToSave;
+		for (const TPair<FString, FString>& CVarPair : CVarsToSave)
+		{
+			ContentToSave.Append(FString::Format(TEXT("{0}={1}\r\n"), { CVarPair.Key, CVarPair.Value }));
+		}
+
+		const FString FullPath = FPaths::ProjectPersistentDownloadDir() / UE_HOTFIX_FOR_NEXT_BOOT_FILENAME;
+		FFileHelper::SaveStringToFile(ContentToSave, *FullPath);
+
+		UE_LOG(LogConfig, Log, TEXT("Local boot hotfix file [%s] saved with hotfixed CVar: %s=%s"), *FullPath, *StrKey, *StrValue);
+		});
+#else
+	AsyncTaskPipe.Launch(UE_SOURCE_LOCATION, [StrKey, StrValue] {
+		TMap<FString, FString> CVarsToSave;
+
+		// Read from file, in case there are more than one cvar hotfix event in same run
+		LoadCVarsFromFileForNextBoot(CVarsToSave);
+
+		CVarsToSave.FindOrAdd(StrKey) = StrValue;
+
+		FString ContentToSave;
+		for (const TPair<FString, FString>& CVarPair : CVarsToSave)
+		{
+			ContentToSave.Append(FString::Format(TEXT("{0}={1}\r\n"), { CVarPair.Key, CVarPair.Value }));
+		}
+
+		const FString FullPath = FPaths::ProjectPersistentDownloadDir() / UE_HOTFIX_FOR_NEXT_BOOT_FILENAME;
+		FFileHelper::SaveStringToFile(ContentToSave, *FullPath);
+
+		UE_LOG(LogConfig, Log, TEXT("Local boot hotfix file [%s] saved with hotfixed CVar: %s=%s"), *FullPath, *StrKey, *StrValue);
+	}, LowLevelTasks::ETaskPriority::BackgroundLow);
+#endif // PLATFORM_WRITES_ARE_SLOW
 #endif // !UE_SERVER
 }
 
@@ -110,7 +159,7 @@ void ApplyCVarsFromBootHotfix()
 	for (const TPair<FString, FString>& CVarPair : CVarsToApply)
 	{
 		IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(*CVarPair.Key); 
-		if (CVar)
+		if (CVar && CVar->TestFlags(ECVF_SaveForNextBoot))
 		{
 			CVar->Set(*CVarPair.Value, ECVF_SetByHotfix);
 		}
@@ -125,7 +174,9 @@ void OnSetCVarFromIniEntry(const TCHAR *IniFile, const TCHAR *Key, const TCHAR* 
 
 	Value = ConvertValueFromHumanFriendlyValue(Value);
 
-	IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(Key); 
+	// we don't need to track cvar misses here (a lot will be not found early on in editor builds)
+	bool bTrackFrequentCalls = false;
+	IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(Key, bTrackFrequentCalls);
 
 	if(CVar)
 	{
@@ -200,6 +251,7 @@ void OnSetCVarFromIniEntry(const TCHAR *IniFile, const TCHAR *Key, const TCHAR* 
 
 		if (CVar->TestFlags(ECVF_SaveForNextBoot) && (SetBy == ECVF_SetByHotfix))
 		{
+			UE_LOG(LogConfig, Log, TEXT("Saving %s for boot hotfix"), Key);
 			SaveCVarForNextBoot(Key, Value);
 		}
 	}
@@ -222,7 +274,7 @@ void ApplyCVarSettingsFromIni(const TCHAR* InSectionName, const TCHAR* InIniFile
 
 	UE_LOG(LogConfig,Log,TEXT("Applying CVar settings from Section [%s] File [%s]"),InSectionName,InIniFilename);
 
-	if(FConfigSection* Section = GConfig->GetSectionPrivate(InSectionName, false, true, InIniFilename))
+	if(const FConfigSection* Section = GConfig->GetSection(InSectionName, false, InIniFilename))
 	{
 		for(FConfigSectionMap::TConstIterator It(*Section); It; ++It)
 		{
@@ -236,7 +288,7 @@ void ApplyCVarSettingsFromIni(const TCHAR* InSectionName, const TCHAR* InIniFile
 
 void ForEachCVarInSectionFromIni(const TCHAR* InSectionName, const TCHAR* InIniFilename, TFunction<void(IConsoleVariable* CVar, const FString& KeyString, const FString& ValueString)> InEvaluationFunction)
 {
-	if (FConfigSection* Section = GConfig->GetSectionPrivate(InSectionName, false, true, InIniFilename))
+	if (const FConfigSection* Section = GConfig->GetSection(InSectionName, false, InIniFilename))
 	{
 		for (FConfigSectionMap::TConstIterator It(*Section); It; ++It)
 		{
@@ -301,7 +353,7 @@ public:
 			const FString& SectionName = IniHistory.SectionName;
 			const FString& IniFilename = IniHistory.FileName;
 			const uint32& SetBy = IniHistory.SetBy;
-			if (FConfigSection* Section = GConfig->GetSectionPrivate(*SectionName, false, true, *IniFilename))
+			if (const FConfigSection* Section = GConfig->GetSection(*SectionName, false, *IniFilename))
 			{
 				for (FConfigSectionMap::TConstIterator It(*Section); It; ++It)
 				{

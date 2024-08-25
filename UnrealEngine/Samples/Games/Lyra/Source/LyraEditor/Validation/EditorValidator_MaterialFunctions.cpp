@@ -19,12 +19,12 @@ UEditorValidator_MaterialFunctions::UEditorValidator_MaterialFunctions()
 {
 }
 
-bool UEditorValidator_MaterialFunctions::CanValidateAsset_Implementation(UObject* InAsset) const
+bool UEditorValidator_MaterialFunctions::CanValidateAsset_Implementation(const FAssetData& InAssetData, UObject* InAsset, FDataValidationContext& InContext) const
 {
-	return Super::CanValidateAsset_Implementation(InAsset) && (InAsset ? InAsset->IsA(UMaterialFunction::StaticClass()) : false);
+	return (InAsset ? InAsset->IsA(UMaterialFunction::StaticClass()) : false);
 }
 
-EDataValidationResult UEditorValidator_MaterialFunctions::ValidateLoadedAsset_Implementation(UObject* InAsset, TArray<FText>& ValidationErrors)
+EDataValidationResult UEditorValidator_MaterialFunctions::ValidateLoadedAsset_Implementation(const FAssetData& InAssetData, UObject* InAsset, FDataValidationContext& Context)
 {
 	UMaterialFunction* MaterialFunction = Cast<UMaterialFunction>(InAsset);
 	check(MaterialFunction);
@@ -85,7 +85,7 @@ EDataValidationResult UEditorValidator_MaterialFunctions::ValidateLoadedAsset_Im
 						{
 							for (const FString& WarningOrError : WarningsAndErrors)
 							{
-								AssetFails(InAsset, FText::FromString(WarningOrError), ValidationErrors);
+								AssetFails(InAsset, FText::FromString(WarningOrError));
 							}
 						}
 						break;

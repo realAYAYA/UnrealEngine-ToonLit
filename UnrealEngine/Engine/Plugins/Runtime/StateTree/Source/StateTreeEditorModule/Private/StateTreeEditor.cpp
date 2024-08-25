@@ -255,7 +255,8 @@ void FStateTreeEditor::InitEditor( const EToolkitMode::Type Mode, const TSharedP
 
 	UE::StateTree::Delegates::OnIdentifierChanged.AddSP(this, &FStateTreeEditor::OnIdentifierChanged);
 	UE::StateTree::Delegates::OnSchemaChanged.AddSP(this, &FStateTreeEditor::OnSchemaChanged);
-	UE::StateTree::Delegates::OnParametersChanged.AddSP(this, &FStateTreeEditor::OnParametersChanged);
+	UE::StateTree::Delegates::OnParametersChanged.AddSP(this, &FStateTreeEditor::OnRefreshDetailsView);
+	UE::StateTree::Delegates::OnGlobalDataChanged.AddSP(this, &FStateTreeEditor::OnRefreshDetailsView);
 	UE::StateTree::Delegates::OnStateParametersChanged.AddSP(this, &FStateTreeEditor::OnStateParametersChanged);
 }
 
@@ -501,7 +502,7 @@ void FStateTreeEditor::OnSchemaChanged(const UStateTree& InStateTree)
 	}
 }
 
-void FStateTreeEditor::OnParametersChanged(const UStateTree& InStateTree)
+void FStateTreeEditor::OnRefreshDetailsView(const UStateTree& InStateTree)
 {
 	if (StateTree == &InStateTree)
 	{
@@ -603,6 +604,8 @@ namespace UE::StateTree::Editor::Internal
 			return;
 		}
 
+		TreeData->Modify();
+
 		// Make sure all state links are valid and update the names if needed.
 
 		// Create ID to state name map.
@@ -617,6 +620,7 @@ namespace UE::StateTree::Editor::Internal
 		// Fix changed names.
 		TreeData->VisitHierarchy([&IDToName](UStateTreeState& State, UStateTreeState* /*ParentState*/)
 		{
+			State.Modify();
 			if (State.Type == EStateTreeStateType::Linked)
 			{
 				FixChangedStateLinkName(State.LinkedSubtree, IDToName);
@@ -639,6 +643,7 @@ namespace UE::StateTree::Editor::Internal
 			return;
 		}
 
+		TreeData->Modify();
 		TreeData->ReparentStates();
 	}
 
@@ -656,6 +661,8 @@ namespace UE::StateTree::Editor::Internal
 			return;
 		}
 
+		TreeData->Modify();
+		
 		// Clear evaluators if not allowed.
 		if (Schema->AllowEvaluators() == false && TreeData->Evaluators.Num() > 0)
 		{
@@ -666,6 +673,8 @@ namespace UE::StateTree::Editor::Internal
 
 		TreeData->VisitHierarchy([&StateTree, Schema](UStateTreeState& State, UStateTreeState* /*ParentState*/)
 		{
+			State.Modify();
+
 			// Clear enter conditions if not allowed.
 			if (Schema->AllowEnterConditions() == false && State.EnterConditions.Num() > 0)
 			{
@@ -711,6 +720,7 @@ namespace UE::StateTree::Editor::Internal
 
 		TMap<FGuid, const FStateTreeDataView> AllStructValues;
 		TreeData->GetAllStructValues(AllStructValues);
+		TreeData->Modify();
 		TreeData->GetPropertyEditorBindings()->RemoveUnusedBindings(AllStructValues);
 	}
 
@@ -722,10 +732,14 @@ namespace UE::StateTree::Editor::Internal
 			return;
 		}
 
+		TreeData->Modify();
+
 		TreeData->VisitHierarchy([](UStateTreeState& State, UStateTreeState* /*ParentState*/)
 		{
-			if (State.Type == EStateTreeStateType::Linked)
+			if (State.Type == EStateTreeStateType::Linked
+				|| State.Type == EStateTreeStateType::LinkedAsset)
 			{
+				State.Modify();
 				State.UpdateParametersFromLinkedSubtree();
 			}
 			return EStateTreeVisitor::Continue;

@@ -73,7 +73,9 @@ void FIMFSampleWrapper::SetDuration(FTimespan Duration)
 
 bool FIMFSampleWrapper::IsVideoKeyFrame() const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	return MediaType == EPacketType::Video && MFGetAttributeUINT32(Sample, MFSampleExtension_CleanPoint, 0) != 0;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
 int FIMFSampleWrapper::GetBufferCount() const
@@ -83,9 +85,13 @@ int FIMFSampleWrapper::GetBufferCount() const
 	return BufferCount;
 }
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 FIMFSampleWrapper FIMFSampleWrapper::Clone() const
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FIMFSampleWrapper Res{ MediaType };
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	if (!Sample)
 	{
 		return Res;

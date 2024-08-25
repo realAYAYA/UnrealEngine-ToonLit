@@ -1,12 +1,23 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Elements/Interfaces/TypedElementDataStorageUiInterface.h"
+
+#include "Elements/Columns/TypedElementMiscColumns.h"
 #include "Elements/Framework/TypedElementColumnUtils.h"
 #include "Elements/Columns/TypedElementSlateWidgetColumns.h"
+#include "Elements/Framework/TypedElementDataStorageWidget.h"
 
 FTypedElementWidgetConstructor::FTypedElementWidgetConstructor(const UScriptStruct* InTypeInfo)
 	: TypeInfo(InTypeInfo)
 {
+}
+
+bool FTypedElementWidgetConstructor::Initialize(const TypedElementDataStorage::FMetaDataView& InArguments,
+	TArray<TWeakObjectPtr<const UScriptStruct>> InMatchedColumnTypes, const TypedElementDataStorage::FQueryConditions& InQueryConditions)
+{
+	MatchedColumnTypes = MoveTemp(InMatchedColumnTypes);
+	QueryConditions = &InQueryConditions;
+	return true;
 }
 
 const UScriptStruct* FTypedElementWidgetConstructor::GetTypeInfo() const
@@ -14,44 +25,84 @@ const UScriptStruct* FTypedElementWidgetConstructor::GetTypeInfo() const
 	return TypeInfo;
 }
 
+const TArray<TWeakObjectPtr<const UScriptStruct>>& FTypedElementWidgetConstructor::GetMatchedColumns() const
+{
+	return MatchedColumnTypes;
+}
+
+const TypedElementDataStorage::FQueryConditions* FTypedElementWidgetConstructor::GetQueryConditions() const
+{
+	return QueryConditions;
+}
+
 TConstArrayView<const UScriptStruct*> FTypedElementWidgetConstructor::GetAdditionalColumnsList() const
 {
 	return {};
 }
 
-bool FTypedElementWidgetConstructor::CanBeReused() const
+TSharedPtr<SWidget> FTypedElementWidgetConstructor::ConstructFinalWidget(
+	TypedElementRowHandle Row,
+	ITypedElementDataStorageInterface* DataStorage,
+	ITypedElementDataStorageUiInterface* DataStorageUi,
+	const TypedElementDataStorage::FMetaDataView& Arguments)
 {
-	return false;
+	// Add the additional columns to the UI row
+	TSharedPtr<SWidget> Widget = SNullWidget::NullWidget;
+	DataStorage->AddColumns(Row, GetAdditionalColumnsList());
+	
+	if (const FTypedElementRowReferenceColumn* RowReference = DataStorage->GetColumn<FTypedElementRowReferenceColumn>(Row))
+	{
+		// If the original row matches this widgets query conditions currently, create the actual internal widget
+		if (DataStorage->HasRowBeenAssigned(RowReference->Row) &&
+			GetQueryConditions() &&
+			DataStorage->MatchesColumns(RowReference->Row, *GetQueryConditions()))
+		{
+			Widget = Construct(Row, DataStorage, DataStorageUi, Arguments);
+		}
+	}
+	// If we don't have an original row, simply construct the widget
+	else
+	{
+		Widget = Construct(Row, DataStorage, DataStorageUi, Arguments);
+	}
+
+	// Create a container widget to hold the content (even if it doesn't exist yet)
+	TSharedPtr<STedsWidget> ContainerWidget = SNew(STedsWidget)
+	.UiRowHandle(Row)
+	.ConstructorTypeInfo(TypeInfo)
+	[
+		Widget.ToSharedRef()
+	];
+	
+	DataStorage->GetColumn<FTypedElementSlateWidgetReferenceColumn>(Row)->TedsWidget = ContainerWidget;
+	return ContainerWidget;
 }
+
 
 TSharedPtr<SWidget> FTypedElementWidgetConstructor::Construct(
 	TypedElementRowHandle Row,
 	ITypedElementDataStorageInterface* DataStorage,
 	ITypedElementDataStorageUiInterface* DataStorageUi,
-	TConstArrayView<TypedElement::ColumnUtils::Argument> Arguments)
+	const TypedElementDataStorage::FMetaDataView& Arguments)
 {
-	if (ApplyArguments(Arguments))
+	TSharedPtr<SWidget> Widget = CreateWidget(Arguments);
+	if (Widget)
 	{
-		TSharedPtr<SWidget> Widget = CreateWidget();
-		if (Widget)
+		DataStorage->GetColumn<FTypedElementSlateWidgetReferenceColumn>(Row)->Widget = Widget;
+		if (SetColumns(DataStorage, Row))
 		{
-			DataStorage->GetColumn<FTypedElementSlateWidgetReferenceColumn>(Row)->Widget = Widget;
-			if (SetColumns(DataStorage, Row))
+			if (FinalizeWidget(DataStorage, DataStorageUi, Row, Widget))
 			{
-				if (FinalizeWidget(DataStorage, DataStorageUi, Row, Widget))
-				{
-					return Widget;
-				}
+				return Widget;
 			}
 		}
 	}
 	return nullptr;
 }
 
-bool FTypedElementWidgetConstructor::ApplyArguments(TConstArrayView<TypedElement::ColumnUtils::Argument> Arguments)
+TSharedPtr<SWidget> FTypedElementWidgetConstructor::CreateWidget(const TypedElementDataStorage::FMetaDataView& Arguments)
 {
-	SetColumnValues(*this, Arguments);
-	return true;
+	return nullptr;
 }
 
 bool FTypedElementWidgetConstructor::SetColumns(ITypedElementDataStorageInterface* DataStorage, TypedElementRowHandle Row)

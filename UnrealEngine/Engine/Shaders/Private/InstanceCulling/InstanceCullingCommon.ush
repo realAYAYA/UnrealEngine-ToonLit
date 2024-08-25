@@ -17,6 +17,8 @@ struct FDrawCommandDesc
 	bool bMaterialUsesWorldPositionOffset;
 	bool bMaterialAlwaysEvaluatesWorldPositionOffset;
 	uint MeshLODIndex;
+	float MinScreenSize;
+	float MaxScreenSize;
 };
 
 FDrawCommandDesc UnpackDrawCommandDesc(uint PackedData)
@@ -25,6 +27,8 @@ FDrawCommandDesc UnpackDrawCommandDesc(uint PackedData)
 	Desc.bMaterialUsesWorldPositionOffset = (PackedData & 1U) != 0;
 	Desc.bMaterialAlwaysEvaluatesWorldPositionOffset = ((PackedData >> 1U) & 1U) != 0;
 	Desc.MeshLODIndex = (PackedData >> 2U) & 0xFU;
+	Desc.MinScreenSize = (float)((PackedData >> 6U) & 0xFFFU) / (float)(1 << 9);
+	Desc.MaxScreenSize = (float)((PackedData >> 18U) & 0xFFFU) / (float)(1 << 9);
 	return Desc;
 }
 

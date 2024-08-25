@@ -60,47 +60,71 @@ DEFINE_LOG_CATEGORY(LogEditorDomain);
  * for usage by any system that needs PackageDigests, with or without FEditorDomain.
  * If the EditorDomain is enabled, also sets PackageResourceManager to use the EditorDomain as the IPackageResourceManager
  */
-class FEditorDomainRegisterAsPackageResourceManager
+class FEditorDomainConstructor
 {
 public:
-	FEditorDomainRegisterAsPackageResourceManager()
+	FEditorDomainConstructor()
 	{
 		IPackageResourceManager::GetSetPackageResourceManagerDelegate().BindStatic(SetPackageResourceManager);
+		IPackageResourceManager::GetOnClearPackageResourceManagerDelegate().AddStatic(OnClearPackageResourceManager);
+	}
+
+	static void ConditionalConstruct()
+	{
+		ConditionalConstruct(IsEditorDomainEnabled());
+	}
+
+	static void ConditionalConstruct(EEditorDomainEnabled Enabled)
+	{
+		check(FEditorDomain::SingletonEditorDomain == nullptr);
+		if ((uint32)Enabled >= (uint32)EEditorDomainEnabled::Utilities)
+		{
+			UE::EditorDomain::UtilsInitialize();
+			FEditorDomain::SingletonEditorDomain = new FEditorDomain(Enabled);
+			UE::EditorDomain::IPackageDigestCache::Set(FEditorDomain::SingletonEditorDomain);
+		}
+		else
+		{
+			UE::EditorDomain::IPackageDigestCache::SetDefault();
+		}
 	}
 
 	static IPackageResourceManager* SetPackageResourceManager()
 	{
-		using namespace UE::EditorDomain;
+		EEditorDomainEnabled Enabled = IsEditorDomainEnabled();
+		ConditionalConstruct(Enabled);
 
-		bool bEditorDomainEnabled = IsEditorDomainEnabled();
 		if (GIsEditor)
 		{
-			UE_LOG(LogEditorDomain, Display, TEXT("EditorDomain is %s"), bEditorDomainEnabled ? TEXT("Enabled") : TEXT("Disabled"));
+			UE_LOG(LogEditorDomain, Display, TEXT("EditorDomain is %s"),
+				(uint32)Enabled >= (uint32)EEditorDomainEnabled::PackageResourceManager ? TEXT("Enabled") : TEXT("Disabled"));
 		}
-		UtilsInitialize();
-		if (bEditorDomainEnabled)
+		if ((uint32)Enabled >= (uint32)EEditorDomainEnabled::PackageResourceManager)
 		{
-			UE::TargetDomain::UtilsInitialize(bEditorDomainEnabled);
-			// Set values for config settings EditorDomain depends on
+			check(FEditorDomain::SingletonEditorDomain); // Should have been constructed by ConditionalConstruct
+			// Set values for config settings EditorDomain read/writes depends on
 			GAllowUnversionedContentInEditor = 1;
-
-			// Create the editor domain, register it as the IPackageDigestCache, and return it as the package resource manager
-			check(FEditorDomain::RegisteredEditorDomain == nullptr);
-			FEditorDomain::RegisteredEditorDomain = new FEditorDomain();
-			IPackageDigestCache::Set(FEditorDomain::RegisteredEditorDomain);
-			return FEditorDomain::RegisteredEditorDomain;
+			return FEditorDomain::SingletonEditorDomain;
 		}
 		else
 		{
-			IPackageDigestCache::SetDefault();
 			return nullptr;
 		}
 	}
+
+	static void OnClearPackageResourceManager()
+	{
+		// SetPackageResourceManager may have already deleted the singleton, but in the case
+		// where we don't register, we need to delete it ourselves.
+		delete FEditorDomain::SingletonEditorDomain;
+		// Destructor already sets it to null, but set it to null again to confirm and to avoid C6001: Using uninitialized memory 
+		FEditorDomain::SingletonEditorDomain = nullptr;
+	}
 } GRegisterAsPackageResourceManager;
 
-FEditorDomain* FEditorDomain::RegisteredEditorDomain = nullptr;
+FEditorDomain* FEditorDomain::SingletonEditorDomain = nullptr;
 
-FEditorDomain::FEditorDomain()
+FEditorDomain::FEditorDomain(EEditorDomainEnabled EnableLevel)
 {
 	Locks = TRefCountPtr<FLocks>(new FLocks(*this));
 	Workspace.Reset(MakePackageResourceManagerFile());
@@ -116,19 +140,31 @@ FEditorDomain::FEditorDomain()
 	// without needing to call ScanPathsSynchronous
 	AssetRegistry->SearchAllAssets(false /* bSynchronousSearch */);
 
-	bEditorDomainReadEnabled = !FParse::Param(FCommandLine::Get(), TEXT("noeditordomainread"))
-	 && !FParse::Param(FCommandLine::Get(), TEXT("testeditordomaindeterminism"));
-
-	ELoadingPhase::Type CurrentPhase = IPluginManager::Get().GetLastCompletedLoadingPhase();
-	if (CurrentPhase == ELoadingPhase::None || CurrentPhase < ELoadingPhase::PostEngineInit)
+	if (EnableLevel >= EEditorDomainEnabled::PackageResourceManager)
 	{
-		FCoreDelegates::OnPostEngineInit.AddRaw(this, &FEditorDomain::OnPostEngineInit);
+		bEditorDomainReadEnabled = !FParse::Param(FCommandLine::Get(), TEXT("noeditordomainread"))
+			&& !FParse::Param(FCommandLine::Get(), TEXT("testeditordomaindeterminism"));
+		bEditorDomainWriteEnabled = !FParse::Param(FCommandLine::Get(), TEXT("noeditordomainwrite"));
 	}
 	else
 	{
-		OnPostEngineInit();
+		bEditorDomainReadEnabled = false;
+		bEditorDomainWriteEnabled = false;
 	}
-	FCoreUObjectDelegates::OnEndLoadPackage.AddRaw(this, &FEditorDomain::OnEndLoadPackage);
+
+	if (bEditorDomainWriteEnabled)
+	{
+		ELoadingPhase::Type CurrentPhase = IPluginManager::Get().GetLastCompletedLoadingPhase();
+		if (CurrentPhase == ELoadingPhase::None || CurrentPhase < ELoadingPhase::PostEngineInit)
+		{
+			FCoreDelegates::OnPostEngineInit.AddRaw(this, &FEditorDomain::OnPostEngineInit);
+		}
+		else
+		{
+			OnPostEngineInit();
+		}
+		FCoreUObjectDelegates::OnEndLoadPackage.AddRaw(this, &FEditorDomain::OnEndLoadPackage);
+	}
 	UPackage::PackageSavedWithContextEvent.AddRaw(this, &FEditorDomain::OnPackageSavedWithContext);
 	AssetRegistry->OnAssetUpdatedOnDisk().AddRaw(this, &FEditorDomain::OnAssetUpdatedOnDisk);
 }
@@ -153,9 +189,9 @@ FEditorDomain::~FEditorDomain()
 	AssetRegistry = nullptr;
 	Workspace.Reset();
 
-	if (RegisteredEditorDomain == this)
+	if (SingletonEditorDomain == this)
 	{
-		RegisteredEditorDomain = nullptr;
+		SingletonEditorDomain = nullptr;
 	}
 	if (UE::EditorDomain::IPackageDigestCache::Get() == this)
 	{
@@ -165,7 +201,7 @@ FEditorDomain::~FEditorDomain()
 
 FEditorDomain* FEditorDomain::Get()
 {
-	return RegisteredEditorDomain;
+	return SingletonEditorDomain;
 }
 
 bool FEditorDomain::SupportsLocalOnlyPaths()
@@ -196,8 +232,6 @@ bool FEditorDomain::TryFindOrAddPackageSource(FScopeLock& ScopeLock, bool& bOutR
 	// Called within &Locks->Lock, ScopeLock is locked on that Lock
 	using namespace UE::EditorDomain;
 
-	// EDITOR_DOMAIN_TODO: Need to delete entries from PackageSources when the assetregistry reports the package is
-	// resaved on disk.
 	TRefCountPtr<FPackageSource>* PackageSourcePtr = PackageSources.Find(PackageName);
 	if (PackageSourcePtr && *PackageSourcePtr)
 	{
@@ -245,9 +279,12 @@ bool FEditorDomain::TryFindOrAddPackageSource(FScopeLock& ScopeLock, bool& bOutR
 		}
 		return false;
 	default:
-		UE_LOG(LogEditorDomain, Warning,
-			TEXT("Could not load package %s from EditorDomain; it will be loaded from the WorkspaceDomain: %s"),
-			*WriteToString<256>(PackageName), *PackageDigest.GetStatusString());
+		if (bEditorDomainReadEnabled)
+		{
+			UE_LOG(LogEditorDomain, Warning,
+				TEXT("Could not load package %s from EditorDomain; it will be loaded from the WorkspaceDomain: %s"),
+				*WriteToString<256>(PackageName), *PackageDigest.GetStatusString());
+		}
 		PackageSource = new FPackageSource();
 		PackageSource->Source = EPackageSource::Workspace;
 		PackageSource->Digest = MoveTemp(PackageDigest);
@@ -610,7 +647,7 @@ void FEditorDomain::Tick(float DeltaTime)
 
 void FEditorDomain::OnEndLoadPackage(const FEndLoadPackageContext& Context)
 {
-	if (bExternalSave)
+	if (bExternalSave || !bEditorDomainWriteEnabled)
 	{
 		return;
 	}
@@ -640,7 +677,7 @@ void FEditorDomain::OnPostEngineInit()
 	{
 		FScopeLock ScopeLock(&Locks->Lock);
 		bHasPassedPostEngineInit = true;
-		if (bExternalSave)
+		if (bExternalSave || !bEditorDomainWriteEnabled)
 		{
 			return;
 		}

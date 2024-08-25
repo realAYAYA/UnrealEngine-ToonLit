@@ -28,13 +28,12 @@ namespace ChaosTest
 
 			FTriangleMeshImplicitObject::ParticlesType Particles;
 			Particles.AddParticles(6);
-			Particles.X(0) = FVec3(1, 1, 1);
-			Particles.X(1) = FVec3(5, 1, 1);
-			Particles.X(2) = FVec3(1, 5, 1);
-
-			Particles.X(3) = FVec3(1, 1, 1);
-			Particles.X(4) = FVec3(1, 5, 1);
-			Particles.X(5) = FVec3(1, 1, -5);
+			Particles.SetX(0, FVec3(1, 1, 1));
+			Particles.SetX(1, FVec3(5, 1, 1));
+			Particles.SetX(2, FVec3(1, 5, 1));
+			Particles.SetX(3, FVec3(1, 1, 1));
+			Particles.SetX(4, FVec3(1, 5, 1));
+			Particles.SetX(5, FVec3(1, 1, -5));
 
 			TArray<TVec3<int32>> Indices;
 			Indices.Emplace(0, 1, 2);
@@ -75,24 +74,24 @@ namespace ChaosTest
 			FTriangleMeshImplicitObject::ParticlesType Particles;
 			Particles.AddParticles(12);
 			// in z-y plane
-			Particles.X(0) = FVec3(0, 0, 0);
-			Particles.X(1) = FVec3(0, 1, 0);
-			Particles.X(2) = FVec3(0, 0, 1);
+			Particles.SetX(0, FVec3(0, 0, 0));
+			Particles.SetX(1, FVec3(0, 1, 0));
+			Particles.SetX(2, FVec3(0, 0, 1));
 
 			// In x-z plane
-			Particles.X(3) = FVec3(0, 0, 0);
-			Particles.X(4) = FVec3(1, 0, 0);
-			Particles.X(5) = FVec3(0, 0, 1);
+			Particles.SetX(3, FVec3(0, 0, 0));
+			Particles.SetX(4, FVec3(1, 0, 0));
+			Particles.SetX(5, FVec3(0, 0, 1));
 
 			// In x-y plane
-			Particles.X(6) = FVec3(0, 0, 0);
-			Particles.X(7) = FVec3(1, 0, 0);
-			Particles.X(8) = FVec3(0, 1, 0);
+			Particles.SetX(6, FVec3(0, 0, 0));
+			Particles.SetX(7, FVec3(1, 0, 0));
+			Particles.SetX(8, FVec3(0, 1, 0));
 
 			// One 45 degree slanted triangle
-			Particles.X(9) = FVec3(1, 0, 0);
-			Particles.X(10) = FVec3(1, 1, 0);
-			Particles.X(11) = FVec3(0, 0, 1);
+			Particles.SetX(9, FVec3(1, 0, 0));
+			Particles.SetX(10,  FVec3(1, 1, 0));
+			Particles.SetX(11,  FVec3(0, 0, 1));
 
 			TArray<TVec3<int32>> Indices;
 			Indices.Emplace(0, 1, 2);
@@ -100,12 +99,12 @@ namespace ChaosTest
 			Indices.Emplace(6, 7, 8);
 			Indices.Emplace(9, 10, 11);
 			TArray<uint16> DummyMaterials;
-			TUniquePtr<FTriangleMeshImplicitObject> Tri = MakeUnique<FTriangleMeshImplicitObject>(MoveTemp(Particles), MoveTemp(Indices), MoveTemp(DummyMaterials));
+			FImplicitObjectPtr Tri( new FTriangleMeshImplicitObject(MoveTemp(Particles), MoveTemp(Indices), MoveTemp(DummyMaterials)));
 
 			// Using typical non uniform scale values
 			//const FVec3 Scale(10, 1, 0.1);
 			const FVec3 Scale(10, 1, 0.1);
-			TImplicitObjectScaledGeneric<FReal, 3> ScaledTri(MakeSerializable(Tri), nullptr, Scale);
+			TImplicitObjectScaledGeneric<FReal, 3> ScaledTri(Tri, Scale);
 
 			FVec3 OpposeSlantedFace = (FVec3(-1, 0, -1)/Scale).GetSafeNormal(); // Note we are transforming a normal here.
 			EXPECT_NEAR(FVec3::DotProduct(OpposeSlantedFace, FVec3(Scale.Z, 0, Scale.X).GetSafeNormal()), -1.0f, KINDA_SMALL_NUMBER); // Check if OpposeSlantedFace opposes the slanted plane
@@ -124,7 +123,7 @@ namespace ChaosTest
 
 			// Now check mirroring cases:
 			FVec3 MirrorScale(1, -1, 1);
-			TImplicitObjectScaledGeneric<FReal, 3> MirTri(MakeSerializable(Tri), nullptr, MirrorScale);
+			TImplicitObjectScaledGeneric<FReal, 3> MirTri(Tri, MirrorScale);
 			EXPECT_EQ(MirTri.FindMostOpposingFace(FVec3(0, 0, 0), FVec3(0,0,-1), INDEX_NONE, 100.0), 2);
 
 			// Note: Switching to FindMostOpposingFaceScaled version instead of using wrapper class
@@ -148,24 +147,23 @@ namespace ChaosTest
 			FTriangleMeshImplicitObject::ParticlesType Particles;
 			Particles.AddParticles(6);
 			// in z-y plane
-			Particles.X(0) = FVec3(0, 0, 0);
-			Particles.X(1) = FVec3(0, 100, 0);
-			Particles.X(2) = FVec3(0, 0, 100);
+			Particles.SetX(0, FVec3(0, 0, 0));
+			Particles.SetX(1, FVec3(0, 100, 0));
+			Particles.SetX(2, FVec3(0, 0, 100));
 
 			// In x-z plane
-			Particles.X(3) = FVec3(0, 0, 0);
-			Particles.X(4) = FVec3(100, 0, 0);
-			Particles.X(5) = FVec3(0, 0, 100);
-
+			Particles.SetX(3, FVec3(0, 0, 0));
+			Particles.SetX(4, FVec3(100, 0, 0));
+			Particles.SetX(5, FVec3(0, 0, 100));
 
 			TArray<TVec3<int32>> Indices;
 			Indices.Emplace(0, 1, 2);
 			Indices.Emplace(3, 4, 5);
 			TArray<uint16> DummyMaterials;
-			TUniquePtr<FTriangleMeshImplicitObject> Tri = MakeUnique<FTriangleMeshImplicitObject>(MoveTemp(Particles), MoveTemp(Indices), MoveTemp(DummyMaterials));
+			FImplicitObjectPtr Tri( new FTriangleMeshImplicitObject(MoveTemp(Particles), MoveTemp(Indices), MoveTemp(DummyMaterials)));
 
 			const FVec3 Scale(10, 1, 1);
-			TImplicitObjectScaledGeneric<FReal, 3> ScaledTri(MakeSerializable(Tri), nullptr, Scale);
+			TImplicitObjectScaledGeneric<FReal, 3> ScaledTri(Tri, Scale);
 
 			// Make sure we find the correct face when at 200 units away from origin on x-axes. The scaling will ensure that the point is on the face. using 1 unit search distance
 			EXPECT_EQ(ScaledTri.FindMostOpposingFace(FVec3(200, 0, 0), FVec3(0,1,0), INDEX_NONE, 1.0f), 1);
@@ -248,11 +246,11 @@ namespace ChaosTest
 		Particles[4] = { 0, 1, 1 };
 		Particles[5] = { -1, -1, -1 };
 
-		TUniquePtr<FImplicitObject> Convex = MakeUnique<FConvex>(MoveTemp(Particles), 0.0f);
+		Chaos::FImplicitObjectPtr Convex(new FConvex(MoveTemp(Particles), 0.0f));
 
 		//identity scale
 		{
-			TImplicitObjectScaledGeneric<FReal, 3> Scaled(MakeSerializable(Convex), nullptr, FVec3(1, 1, 1));
+			TImplicitObjectScaledGeneric<FReal, 3> Scaled(Convex, FVec3(1, 1, 1));
 
 			//simple into the triangle
 			bool bHit = Scaled.Raycast(FVec3(0.5, 0, 2), FVec3(0, 0, -1), 3, 0, Time, Position, Normal, FaceIndex);
@@ -288,7 +286,7 @@ namespace ChaosTest
 
 		//non-uniform scale
 		{
-			TImplicitObjectScaledGeneric<FReal, 3> Scaled(MakeSerializable(Convex), nullptr, FVec3(2, 1, 1));
+			TImplicitObjectScaledGeneric<FReal, 3> Scaled(Convex, FVec3(2, 1, 1));
 
 			//simple into the triangle
 			bool bHit = Scaled.Raycast(FVec3(0.5, 0, 2), FVec3(0, 0, -1), 3, 0, Time, Position, Normal, FaceIndex);

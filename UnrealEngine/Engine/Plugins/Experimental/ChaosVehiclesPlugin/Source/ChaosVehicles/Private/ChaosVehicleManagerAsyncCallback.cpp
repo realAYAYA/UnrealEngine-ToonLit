@@ -163,7 +163,7 @@ void FChaosVehicleAsyncInput::ApplyDeferredForces(Chaos::FRigidBodyHandle_Intern
 
 bool FNetworkVehicleInputs::NetSerialize(FArchive& Ar, class UPackageMap* Map, bool& bOutSuccess)
 {
-	FNetworkPhysicsDatas::SerializeFrames(Ar);
+	FNetworkPhysicsData::SerializeFrames(Ar);
 
 	Ar << VehicleInputs.SteeringInput;
 	Ar << VehicleInputs.ThrottleInput;
@@ -181,7 +181,7 @@ bool FNetworkVehicleInputs::NetSerialize(FArchive& Ar, class UPackageMap* Map, b
 	return bOutSuccess;
 }
 
-void FNetworkVehicleInputs::ApplyDatas(UActorComponent* NetworkComponent) const
+void FNetworkVehicleInputs::ApplyData(UActorComponent* NetworkComponent) const
 {
 	if (UChaosVehicleSimulation* VehicleSimulation = Cast<UChaosVehicleMovementComponent>(NetworkComponent)->VehicleSimulationPT.Get())
 	{
@@ -207,15 +207,15 @@ void FNetworkVehicleInputs::ApplyDatas(UActorComponent* NetworkComponent) const
 			}
 		}
 
-		if (NetworkComponent->GetWorld()->IsNetMode(NM_ListenServer))
+		if (NetworkComponent->GetWorld()->IsNetMode(NM_ListenServer) || NetworkComponent->GetWorld()->IsNetMode(NM_DedicatedServer))
 		{
-			UE_LOG(LogTemp, Log, TEXT("SERVER | PT | ApplyDatas | Report replicated inputs at frame %d %d: Throttle = %f Brake = %f Roll = %f Pitch = %f Yaw = %f Steering = %f Handbrake = %f Gear = %d | VehicleInputs size = %d | ControlInputs size = %d | NetworkInputs = %d"),
+			UE_LOG(LogTemp, Log, TEXT("SERVER | PT | ApplyData | Report replicated inputs at frame %d %d: Throttle = %f Brake = %f Roll = %f Pitch = %f Yaw = %f Steering = %f Handbrake = %f Gear = %d | VehicleInputs size = %d | ControlInputs size = %d | NetworkInputs = %d"),
 				LocalFrame, SolverFrame, VehicleInputs.ThrottleInput, VehicleInputs.BrakeInput, VehicleInputs.RollInput, VehicleInputs.PitchInput,
 				VehicleInputs.YawInput, VehicleInputs.SteeringInput, VehicleInputs.HandbrakeInput, TransmissionTargetGear, sizeof(FVehicleInputs) * 8, sizeof(FControlInputs) * 8, sizeof(FNetworkVehicleInputs) * 8);
 		}
 		else
 		{
-			UE_LOG(LogTemp, Log, TEXT("CLIENT | PT | ApplyDatas | Report replicated inputs at frame %d %d: Throttle = %f Brake = %f Roll = %f Pitch = %f Yaw = %f Steering = %f Handbrake = %f Gear = %d"),
+			UE_LOG(LogTemp, Log, TEXT("CLIENT | PT | ApplyData | Report replicated inputs at frame %d %d: Throttle = %f Brake = %f Roll = %f Pitch = %f Yaw = %f Steering = %f Handbrake = %f Gear = %d"),
 				LocalFrame, SolverFrame, VehicleInputs.ThrottleInput, VehicleInputs.BrakeInput, VehicleInputs.RollInput, VehicleInputs.PitchInput,
 				VehicleInputs.YawInput, VehicleInputs.SteeringInput, VehicleInputs.HandbrakeInput, TransmissionTargetGear);
 		}
@@ -223,7 +223,7 @@ void FNetworkVehicleInputs::ApplyDatas(UActorComponent* NetworkComponent) const
 	}
 }
 
-void FNetworkVehicleInputs::BuildDatas(const UActorComponent* NetworkComponent)
+void FNetworkVehicleInputs::BuildData(const UActorComponent* NetworkComponent)
 {
 	if (NetworkComponent)
 	{
@@ -242,15 +242,15 @@ void FNetworkVehicleInputs::BuildDatas(const UActorComponent* NetworkComponent)
 				}
 			}
 #if DEBUG_NETWORK_PHYSICS
-			if(NetworkComponent->GetWorld()->IsNetMode(NM_ListenServer))
+			if(NetworkComponent->GetWorld()->IsNetMode(NM_ListenServer) || NetworkComponent->GetWorld()->IsNetMode(NM_DedicatedServer))
 			{
-				UE_LOG(LogTemp, Log, TEXT("SERVER | PT | BuildDatas | Extract local inputs at frame %d : Throttle = %f Brake = %f Roll = %f Pitch = %f Yaw = %f Steering = %f Handbrake = %f Gear = %d"),
+				UE_LOG(LogTemp, Log, TEXT("SERVER | PT | BuildData | Extract local inputs at frame %d : Throttle = %f Brake = %f Roll = %f Pitch = %f Yaw = %f Steering = %f Handbrake = %f Gear = %d"),
 					LocalFrame, VehicleInputs.ThrottleInput, VehicleInputs.BrakeInput, VehicleInputs.RollInput, VehicleInputs.PitchInput,
 					VehicleInputs.YawInput, VehicleInputs.SteeringInput, VehicleInputs.HandbrakeInput, TransmissionTargetGear);
 			}
 			else
 			{
-				UE_LOG(LogTemp, Log, TEXT("CLIENT | PT | BuildDatas | Extract local inputs at frame %d : Throttle = %f Brake = %f Roll = %f Pitch = %f Yaw = %f Steering = %f Handbrake = %f Gear = %d"),
+				UE_LOG(LogTemp, Log, TEXT("CLIENT | PT | BuildData | Extract local inputs at frame %d : Throttle = %f Brake = %f Roll = %f Pitch = %f Yaw = %f Steering = %f Handbrake = %f Gear = %d"),
 					LocalFrame, VehicleInputs.ThrottleInput, VehicleInputs.BrakeInput, VehicleInputs.RollInput, VehicleInputs.PitchInput,
 					VehicleInputs.YawInput, VehicleInputs.SteeringInput, VehicleInputs.HandbrakeInput, TransmissionTargetGear);
 			}
@@ -259,31 +259,54 @@ void FNetworkVehicleInputs::BuildDatas(const UActorComponent* NetworkComponent)
 	}
 }
 
-void FNetworkVehicleInputs::InterpolateDatas(const FNetworkVehicleInputs& MinDatas, const FNetworkVehicleInputs& MaxDatas)
+void FNetworkVehicleInputs::InterpolateData(const FNetworkPhysicsData& MinData, const FNetworkPhysicsData& MaxData)
 {
-	const float LerpFactor = (LocalFrame - MinDatas.LocalFrame) / (MaxDatas.LocalFrame - MinDatas.LocalFrame);
+	const FNetworkVehicleInputs& MinInput = static_cast<const FNetworkVehicleInputs&>(MinData);
+	const FNetworkVehicleInputs& MaxInput = static_cast<const FNetworkVehicleInputs&>(MaxData);
 
-	TransmissionChangeTime = FMath::Lerp(MinDatas.TransmissionChangeTime, MaxDatas.TransmissionChangeTime, LerpFactor);
-	TransmissionCurrentGear = LerpFactor < 0.5 ? MinDatas.TransmissionCurrentGear : MaxDatas.TransmissionCurrentGear;
-	TransmissionTargetGear = LerpFactor < 0.5 ? MinDatas.TransmissionTargetGear : MaxDatas.TransmissionTargetGear;
+	const float LerpFactor = MaxInput.LocalFrame == LocalFrame 
+	? 1.0f / (MaxInput.LocalFrame - MinInput.LocalFrame + 1) // Merge from min into max
+	: (LocalFrame - MinInput.LocalFrame) / (MaxInput.LocalFrame - MinInput.LocalFrame); // Interpolate from min to max
 
-	VehicleInputs.BrakeInput = FMath::Lerp(MinDatas.VehicleInputs.BrakeInput, MaxDatas.VehicleInputs.BrakeInput, LerpFactor);
-	VehicleInputs.HandbrakeInput = FMath::Lerp(MinDatas.VehicleInputs.HandbrakeInput, MaxDatas.VehicleInputs.HandbrakeInput, LerpFactor);
-	VehicleInputs.PitchInput = FMath::Lerp(MinDatas.VehicleInputs.PitchInput, MaxDatas.VehicleInputs.PitchInput, LerpFactor);
-	VehicleInputs.RollInput = FMath::Lerp(MinDatas.VehicleInputs.RollInput, MaxDatas.VehicleInputs.RollInput, LerpFactor);
-	VehicleInputs.ThrottleInput = FMath::Lerp(MinDatas.VehicleInputs.ThrottleInput, MaxDatas.VehicleInputs.ThrottleInput, LerpFactor);
-	VehicleInputs.SteeringInput = FMath::Lerp(MinDatas.VehicleInputs.SteeringInput, MaxDatas.VehicleInputs.SteeringInput, LerpFactor);
-	VehicleInputs.YawInput = FMath::Lerp(MinDatas.VehicleInputs.YawInput, MaxDatas.VehicleInputs.YawInput, LerpFactor);
+	TransmissionChangeTime = FMath::Lerp(MinInput.TransmissionChangeTime, MaxInput.TransmissionChangeTime, LerpFactor);
+	TransmissionCurrentGear = LerpFactor < 0.5 ? MinInput.TransmissionCurrentGear : MaxInput.TransmissionCurrentGear;
+	TransmissionTargetGear = LerpFactor < 0.5 ? MinInput.TransmissionTargetGear : MaxInput.TransmissionTargetGear;
 
-	VehicleInputs.ParkingEnabled = LerpFactor < 0.5 ? MinDatas.VehicleInputs.ParkingEnabled : MaxDatas.VehicleInputs.ParkingEnabled;
-	VehicleInputs.GearDownInput = LerpFactor < 0.5 ? MinDatas.VehicleInputs.GearDownInput : MaxDatas.VehicleInputs.GearDownInput;
-	VehicleInputs.GearUpInput = LerpFactor < 0.5 ? MinDatas.VehicleInputs.GearUpInput : MaxDatas.VehicleInputs.GearUpInput;
-	VehicleInputs.TransmissionType = LerpFactor < 0.5 ? MinDatas.VehicleInputs.TransmissionType : MaxDatas.VehicleInputs.TransmissionType;
+	VehicleInputs.BrakeInput = FMath::Lerp(MinInput.VehicleInputs.BrakeInput, MaxInput.VehicleInputs.BrakeInput, LerpFactor);
+	VehicleInputs.HandbrakeInput = FMath::Lerp(MinInput.VehicleInputs.HandbrakeInput, MaxInput.VehicleInputs.HandbrakeInput, LerpFactor);
+	VehicleInputs.PitchInput = FMath::Lerp(MinInput.VehicleInputs.PitchInput, MaxInput.VehicleInputs.PitchInput, LerpFactor);
+	VehicleInputs.RollInput = FMath::Lerp(MinInput.VehicleInputs.RollInput, MaxInput.VehicleInputs.RollInput, LerpFactor);
+	VehicleInputs.ThrottleInput = FMath::Lerp(MinInput.VehicleInputs.ThrottleInput, MaxInput.VehicleInputs.ThrottleInput, LerpFactor);
+	VehicleInputs.SteeringInput = FMath::Lerp(MinInput.VehicleInputs.SteeringInput, MaxInput.VehicleInputs.SteeringInput, LerpFactor);
+	VehicleInputs.YawInput = FMath::Lerp(MinInput.VehicleInputs.YawInput, MaxInput.VehicleInputs.YawInput, LerpFactor);
+
+	VehicleInputs.ParkingEnabled = LerpFactor < 0.5 ? MinInput.VehicleInputs.ParkingEnabled : MaxInput.VehicleInputs.ParkingEnabled;
+	VehicleInputs.GearDownInput = LerpFactor < 0.5 ? MinInput.VehicleInputs.GearDownInput : MaxInput.VehicleInputs.GearDownInput;
+	VehicleInputs.GearUpInput = LerpFactor < 0.5 ? MinInput.VehicleInputs.GearUpInput : MaxInput.VehicleInputs.GearUpInput;
+	VehicleInputs.TransmissionType = LerpFactor < 0.5 ? MinInput.VehicleInputs.TransmissionType : MaxInput.VehicleInputs.TransmissionType;
+}
+
+void FNetworkVehicleInputs::MergeData(const FNetworkPhysicsData& FromData)
+{
+	// Perform merge through InterpolateData
+	InterpolateData(FromData, *this);
+}
+
+void FNetworkVehicleInputs::DecayData(float DecayAmount)
+{
+	// Local adjustment to DecayAmount for vehicle implementation
+	DecayAmount = FMath::Min(DecayAmount * 2, 1.0f);
+
+	// Apply decay on steering inputs
+	VehicleInputs.PitchInput = FMath::Lerp(VehicleInputs.PitchInput, 0.0f, DecayAmount);
+	VehicleInputs.RollInput = FMath::Lerp(VehicleInputs.RollInput, 0.0f, DecayAmount);
+	VehicleInputs.SteeringInput = FMath::Lerp(VehicleInputs.SteeringInput, 0.0f, DecayAmount);
+	VehicleInputs.YawInput = FMath::Lerp(VehicleInputs.YawInput, 0.0f, DecayAmount);
 }
 
 bool FNetworkVehicleStates::NetSerialize(FArchive& Ar, class UPackageMap* Map, bool& bOutSuccess)
 {
-	FNetworkPhysicsDatas::SerializeFrames(Ar);
+	FNetworkPhysicsData::SerializeFrames(Ar);
 
 	Ar << StateLastVelocity;
 	Ar << EngineOmega;
@@ -322,7 +345,7 @@ bool FNetworkVehicleStates::NetSerialize(FArchive& Ar, class UPackageMap* Map, b
 	return true;
 }
 
-void FNetworkVehicleStates::ApplyDatas(UActorComponent* NetworkComponent) const
+void FNetworkVehicleStates::ApplyData(UActorComponent* NetworkComponent) const
 {
 	if (UChaosVehicleSimulation* VehicleSimulation = Cast<UChaosVehicleMovementComponent>(NetworkComponent)->VehicleSimulationPT.Get())
 	{
@@ -333,14 +356,14 @@ void FNetworkVehicleStates::ApplyDatas(UActorComponent* NetworkComponent) const
 			Vehicle->GetEngine().SetEngineOmega(EngineOmega);
 
 #if DEBUG_NETWORK_PHYSICS
-			if (NetworkComponent->GetWorld()->IsNetMode(NM_ListenServer))
+			if (NetworkComponent->GetWorld()->IsNetMode(NM_ListenServer) || NetworkComponent->GetWorld()->IsNetMode(NM_DedicatedServer))
 			{
-				UE_LOG(LogTemp, Log, TEXT("SERVER | PT | ApplyDatas | Report replicated states at frame %d %d : Omega = %f"),
+				UE_LOG(LogTemp, Log, TEXT("SERVER | PT | ApplyData | Report replicated states at frame %d %d : Omega = %f"),
 					LocalFrame, ServerFrame, EngineOmega);
 			}
 			else
 			{
-				UE_LOG(LogTemp, Log, TEXT("CLIENT | PT | ApplyDatas| Report replicated states at frame %d %d : Omega = %f"),
+				UE_LOG(LogTemp, Log, TEXT("CLIENT | PT | ApplyData| Report replicated states at frame %d %d : Omega = %f"),
 					LocalFrame, ServerFrame, EngineOmega);
 			}
 #endif
@@ -367,7 +390,7 @@ void FNetworkVehicleStates::ApplyDatas(UActorComponent* NetworkComponent) const
 	}
 }
 
-void FNetworkVehicleStates::BuildDatas(const UActorComponent* NetworkComponent)
+void FNetworkVehicleStates::BuildData(const UActorComponent* NetworkComponent)
 {
 	if (NetworkComponent)
 	{
@@ -378,14 +401,14 @@ void FNetworkVehicleStates::BuildDatas(const UActorComponent* NetworkComponent)
 			{
 				EngineOmega = Vehicle->GetEngine().GetEngineOmega();
 #if DEBUG_NETWORK_PHYSICS
-				if (NetworkComponent->GetWorld()->IsNetMode(NM_ListenServer))
+				if (NetworkComponent->GetWorld()->IsNetMode(NM_ListenServer) || NetworkComponent->GetWorld()->IsNetMode(NM_DedicatedServer))
 				{
-					UE_LOG(LogTemp, Log, TEXT("SERVER | PT | BuildDatas | Extract local states at frame %d %d : Omega = %f"),
+					UE_LOG(LogTemp, Log, TEXT("SERVER | PT | BuildData | Extract local states at frame %d %d : Omega = %f"),
 						LocalFrame, ServerFrame, EngineOmega);
 				}
 				else
 				{
-					UE_LOG(LogTemp, Log, TEXT("CLIENT | PT | BuildDatas| Extract local states at frame %d %d : Omega = %f"),
+					UE_LOG(LogTemp, Log, TEXT("CLIENT | PT | BuildData| Extract local states at frame %d %d : Omega = %f"),
 						LocalFrame, ServerFrame, EngineOmega);
 				}
 #endif
@@ -428,40 +451,43 @@ void FNetworkVehicleStates::BuildDatas(const UActorComponent* NetworkComponent)
 		}
 	}
 }
-void FNetworkVehicleStates::InterpolateDatas(const FNetworkVehicleStates& MinDatas, const FNetworkVehicleStates& MaxDatas)
+void FNetworkVehicleStates::InterpolateData(const FNetworkPhysicsData& MinData, const FNetworkPhysicsData& MaxData)
 {
-	const float LerpFactor = (LocalFrame - MinDatas.LocalFrame) / (MaxDatas.LocalFrame - MinDatas.LocalFrame);
+	const FNetworkVehicleStates& MinState = static_cast<const FNetworkVehicleStates&>(MinData);
+	const FNetworkVehicleStates& MaxState = static_cast<const FNetworkVehicleStates&>(MaxData);
 
-	StateLastVelocity = FMath::Lerp(MinDatas.StateLastVelocity, MaxDatas.StateLastVelocity, LerpFactor);
-	EngineOmega = FMath::Lerp(MinDatas.EngineOmega, MaxDatas.EngineOmega, LerpFactor);
+	const float LerpFactor = (LocalFrame - MinState.LocalFrame) / (MaxState.LocalFrame - MinState.LocalFrame);
 
-	int32 NumWheels = FMath::Min(MinDatas.WheelsOmega.Num(), MaxDatas.WheelsOmega.Num());
+	StateLastVelocity = FMath::Lerp(MinState.StateLastVelocity, MaxState.StateLastVelocity, LerpFactor);
+	EngineOmega = FMath::Lerp(MinState.EngineOmega, MaxState.EngineOmega, LerpFactor);
 
-	WheelsOmega.SetNum(NumWheels, false);
-	WheelsAngularPosition.SetNum(NumWheels, false);
+	int32 NumWheels = FMath::Min(MinState.WheelsOmega.Num(), MaxState.WheelsOmega.Num());
 
-	SuspensionLastDisplacement.SetNum(NumWheels, false);
-	SuspensionLastSpringLength.SetNum(NumWheels, false);
-	SuspensionAveragedCount.SetNum(NumWheels, false);
-	SuspensionAveragedNum.SetNum(NumWheels, false);
+	WheelsOmega.SetNum(NumWheels, EAllowShrinking::No);
+	WheelsAngularPosition.SetNum(NumWheels, EAllowShrinking::No);
+
+	SuspensionLastDisplacement.SetNum(NumWheels, EAllowShrinking::No);
+	SuspensionLastSpringLength.SetNum(NumWheels, EAllowShrinking::No);
+	SuspensionAveragedCount.SetNum(NumWheels, EAllowShrinking::No);
+	SuspensionAveragedNum.SetNum(NumWheels, EAllowShrinking::No);
 
 	int32 NumLength = 0;
 	for (int32 WheelIdx = 0; WheelIdx < NumWheels; ++WheelIdx)
 	{
-		WheelsOmega[WheelIdx] = FMath::Lerp(MinDatas.WheelsOmega[WheelIdx], MaxDatas.WheelsOmega[WheelIdx], LerpFactor);
-		WheelsAngularPosition[WheelIdx] = FMath::Lerp(MinDatas.WheelsAngularPosition[WheelIdx], MaxDatas.WheelsAngularPosition[WheelIdx], LerpFactor);
+		WheelsOmega[WheelIdx] = FMath::Lerp(MinState.WheelsOmega[WheelIdx], MaxState.WheelsOmega[WheelIdx], LerpFactor);
+		WheelsAngularPosition[WheelIdx] = FMath::Lerp(MinState.WheelsAngularPosition[WheelIdx], MaxState.WheelsAngularPosition[WheelIdx], LerpFactor);
 
-		SuspensionLastDisplacement[WheelIdx] = FMath::Lerp(MinDatas.SuspensionLastDisplacement[WheelIdx], MaxDatas.SuspensionLastDisplacement[WheelIdx], LerpFactor);
-		SuspensionLastSpringLength[WheelIdx] = FMath::Lerp(MinDatas.SuspensionLastSpringLength[WheelIdx], MaxDatas.SuspensionLastSpringLength[WheelIdx], LerpFactor);
-		SuspensionAveragedCount[WheelIdx] = FMath::Min( MinDatas.SuspensionAveragedCount[WheelIdx], MaxDatas.SuspensionAveragedCount[WheelIdx]);
-		SuspensionAveragedNum[WheelIdx] = FMath::Min(MinDatas.SuspensionAveragedNum[WheelIdx], MaxDatas.SuspensionAveragedNum[WheelIdx]);
+		SuspensionLastDisplacement[WheelIdx] = FMath::Lerp(MinState.SuspensionLastDisplacement[WheelIdx], MaxState.SuspensionLastDisplacement[WheelIdx], LerpFactor);
+		SuspensionLastSpringLength[WheelIdx] = FMath::Lerp(MinState.SuspensionLastSpringLength[WheelIdx], MaxState.SuspensionLastSpringLength[WheelIdx], LerpFactor);
+		SuspensionAveragedCount[WheelIdx] = FMath::Min(MinState.SuspensionAveragedCount[WheelIdx], MaxState.SuspensionAveragedCount[WheelIdx]);
+		SuspensionAveragedNum[WheelIdx] = FMath::Min(MinState.SuspensionAveragedNum[WheelIdx], MaxState.SuspensionAveragedNum[WheelIdx]);
 
 		NumLength += SuspensionAveragedNum[WheelIdx];
 	}
-	SuspensionAveragedLength.SetNum(NumLength, false);
+	SuspensionAveragedLength.SetNum(NumLength, EAllowShrinking::No);
 	for (int32 LengthIdx = 0; LengthIdx < NumLength; ++LengthIdx)
 	{
-		SuspensionAveragedLength[LengthIdx] = FMath::Lerp(MinDatas.SuspensionAveragedLength[LengthIdx], MaxDatas.SuspensionAveragedLength[LengthIdx], LerpFactor);
+		SuspensionAveragedLength[LengthIdx] = FMath::Lerp(MinState.SuspensionAveragedLength[LengthIdx], MaxState.SuspensionAveragedLength[LengthIdx], LerpFactor);
 	}
 }
 

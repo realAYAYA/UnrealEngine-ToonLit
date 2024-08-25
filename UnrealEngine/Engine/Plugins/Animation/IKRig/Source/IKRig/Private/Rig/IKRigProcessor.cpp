@@ -145,9 +145,9 @@ void UIKRigProcessor::Initialize(
 		}
 
 		// create duplicate solver instance with unique name
-		FString Name = IKRigSolver->GetName() + "_SolverInstance_";
-		Name.AppendInt(SolverIndex++);
-		UIKRigSolver* Solver = DuplicateObject(IKRigSolver, this, FName(*Name));
+		const FName BaseName = FName(*(IKRigSolver->GetName() + "_SolverInstance_"));
+		const FName UniqueName = MakeUniqueObjectName(this, IKRigSolver->GetClass(), BaseName, EUniqueObjectNameOptions::GloballyUnique);
+		UIKRigSolver* Solver = DuplicateObject(IKRigSolver, this, UniqueName);
 
 		// remove excluded goals from the solver
 		for (const FName& ExcludedGoal : ExcludedGoals)

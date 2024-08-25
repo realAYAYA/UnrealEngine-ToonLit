@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Globalization;
 using System.Reflection;
+using System.Text.Json.Nodes;
 
 namespace Horde.Server.Utilities
 {
@@ -28,7 +29,7 @@ namespace Horde.Server.Utilities
 		public static PropertyFilter Parse(string? fields)
 		{
 			PropertyFilter rootFilter = new PropertyFilter();
-			if(fields != null)
+			if (fields != null)
 			{
 				foreach (string field in fields.Split(','))
 				{
@@ -151,6 +152,26 @@ namespace Horde.Server.Utilities
 										newResponse[key] = filter.ApplyTo(value);
 									}
 								}
+							}
+						}
+					}
+				}
+				else if (response is JsonObject jsonObject)
+				{
+					// Iterate the keys in this object
+					foreach ((string name, JsonNode? node) in jsonObject)
+					{
+						PropertyFilter? filter;
+						if (_nameToFilter.TryGetValue(name, out filter))
+						{
+							string key = ConvertPascalToCamelCase(name);
+							if (filter == null)
+							{
+								newResponse[key] = node;
+							}
+							else if (node != null)
+							{
+								newResponse[key] = filter.ApplyTo(node);
 							}
 						}
 					}

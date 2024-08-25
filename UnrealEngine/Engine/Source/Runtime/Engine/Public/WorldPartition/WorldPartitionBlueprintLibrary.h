@@ -9,6 +9,7 @@
 #include "WorldPartitionBlueprintLibrary.generated.h"
 
 class FWorldPartitionActorDesc;
+class FWorldPartitionActorDescInstance;
 class UWorldPartition;
 class UDataLayerManager;
 
@@ -24,7 +25,7 @@ struct FActorDesc
 	FActorDesc();
 
 #if WITH_EDITOR
-	FActorDesc(const FWorldPartitionActorDesc& InActorDesc, const FTransform& InTransform);
+	FActorDesc(const FWorldPartitionActorDescInstance& InActorDesc);
 #endif
 
 	/** The actor GUID of this descriptor. */
@@ -90,10 +91,10 @@ class UWorldPartitionBlueprintLibrary : public UBlueprintFunctionLibrary
 	static FDelegateHandle OnWorldPartitionUninitializedHandle;
 
 	static bool GetActorDescs(const UWorldPartition* WorldPartition, TArray<FActorDesc>& OutActorDescs);
-	static bool GetActorDescs(const UActorDescContainer* InContainer, const FTransform& InTransform, TArray<FActorDesc>& OutActorDescs);
+	static bool GetActorDescs(const UActorDescContainerInstance* InContainer, TArray<FActorDesc>& OutActorDescs);
 	static bool GetIntersectingActorDescs(UWorldPartition* WorldPartition, const FBox& InBox, TArray<FActorDesc>& OutActorDescs);
-	static bool GetIntersectingActorDescs(const UActorDescContainer* InContainer, const FBox& InBox, const FTransform& InTransform, TArray<FActorDesc>& OutActorDescs);
-	static bool HandleIntersectingActorDesc(const FWorldPartitionActorDesc* ActorDesc, const FBox& InBox, const FTransform& InTransform, TArray<FActorDesc>& OutActorDescs);
+	static bool GetIntersectingActorDescs(const UActorDescContainerInstance* InContainerInstance, const FBox& InBox, TArray<FActorDesc>& OutActorDescs);
+	static bool HandleIntersectingActorDesc(const FWorldPartitionActorDescInstance* ActorDescInstance, const FBox& InBox, TArray<FActorDesc>& OutActorDescs);
 #endif
 
 public:
@@ -101,53 +102,61 @@ public:
 	 * Gets the editor world bounds, which includes all actor descriptors.
 	 * @return The editor world bounds.
 	 */
-	UFUNCTION(BlueprintCallable, Category="World Partition")
+	UFUNCTION(BlueprintCallable, Category="World Partition", meta=(DevelopmentOnly))
 	static FBox GetEditorWorldBounds();
 
 	/**
 	 * Gets the runtime world bounds, which only includes actor descriptors that aren't editor only.
 	 * @return The runtime world bounds.
 	 */
-	UFUNCTION(BlueprintCallable, Category="World Partition")
+	UFUNCTION(BlueprintCallable, Category="World Partition", meta=(DevelopmentOnly))
 	static FBox GetRuntimeWorldBounds();
 
 	/**
 	 * Load actors
 	 */
-	UFUNCTION(BlueprintCallable, Category="World Partition")
+	UFUNCTION(BlueprintCallable, Category="World Partition", meta=(DevelopmentOnly))
 	static void LoadActors(const TArray<FGuid>& InActorsToLoad);
 
 	/**
 	 * Unload actors
 	 */
-	UFUNCTION(BlueprintCallable, Category="World Partition")
+	UFUNCTION(BlueprintCallable, Category="World Partition", meta=(DevelopmentOnly))
 	static void UnloadActors(const TArray<FGuid>& InActorsToUnload);
 
 	/**
 	 * Pin actors
 	 */
-	UFUNCTION(BlueprintCallable, Category="World Partition")
+	UFUNCTION(BlueprintCallable, Category="World Partition", meta=(DevelopmentOnly))
 	static void PinActors(const TArray<FGuid>& InActorsToPin);
 
 	/**
 	 * Unpin actors
 	 */
-	UFUNCTION(BlueprintCallable, Category="World Partition")
+	UFUNCTION(BlueprintCallable, Category="World Partition", meta=(DevelopmentOnly))
 	static void UnpinActors(const TArray<FGuid>& InActorsToUnpin);
 
 	/**
 	 * Gets all the actor descriptors into the provided array, recursing into actor containers.
 	 * @return True if the operation was successful.
 	 */
-	UFUNCTION(BlueprintCallable, Category="World Partition")
+	UFUNCTION(BlueprintCallable, Category="World Partition", meta=(DevelopmentOnly))
 	static bool GetActorDescs(TArray<FActorDesc>& OutActorDescs);
 
 	/**
 	 * Gets all the actor descriptors intersecting the provided box into the provided array, recursing into actor containers.
 	 * @return True if the operation was successful.
 	 */
-	UFUNCTION(BlueprintCallable, Category="World Partition")
+	UFUNCTION(BlueprintCallable, Category="World Partition", meta=(DevelopmentOnly))
 	static bool GetIntersectingActorDescs(const FBox& InBox, TArray<FActorDesc>& OutActorDescs);
+
+	/**
+	 * Gets all the actor descriptors from the provided actor pointers, which represents descriptors on disk, e.g. will not 
+	 * reflect properties of unsaved actors.
+	 * @return True if the operation was successful.
+	 */
+	UFUNCTION(BlueprintCallable, Category="World Partition", meta=(DevelopmentOnly))
+	static bool GetActorDescsForActors(const TArray<AActor*>& InActors, TArray<FActorDesc>& OutActorDescs);
 
 	/**
 	 * Returns the Data Layer Manager for this object.

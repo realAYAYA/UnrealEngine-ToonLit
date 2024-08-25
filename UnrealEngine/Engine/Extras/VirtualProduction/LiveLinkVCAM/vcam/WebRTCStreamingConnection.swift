@@ -17,9 +17,8 @@ class WebRTCStreamingConnection : StreamingConnection {
     private var signalClient: SignalingClient?
     private var touchControls: TouchControls?
     private var keyboardControls: KeyboardControls?
-    private var webRTCView : WebRTCView?
-    private var webRTCStatsView : WebRTCStatsView?
-    private var rtcVideoTrack : RTCVideoTrack?
+    private weak var webRTCView : WebRTCView?
+    private weak var rtcVideoTrack : RTCVideoTrack?
     
     private var signalingConnected = false
     private var hasRemoteSdp = false
@@ -44,7 +43,10 @@ class WebRTCStreamingConnection : StreamingConnection {
             self._url?.absoluteString ?? ""
         }
         set {
-            self._url = URL(string: "ws://\(newValue):80")
+            let host : String
+            let port : UInt16?
+            (host, port) = NetUtility.hostAndPortFromAddress(newValue)
+            self._url = URL(string: "ws://\(host):\(port ?? 80)")
         }
     }
     
@@ -63,6 +65,8 @@ class WebRTCStreamingConnection : StreamingConnection {
     override var renderView: UIView? {
         didSet {
             if let rv = renderView {
+                
+                // Attach webrtc video view to render view
                 let rtcView = WebRTCView(frame: CGRect(x: 0, y: 0, width: rv.frame.size.width, height: rv.frame.size.height))
                 rv.addSubview(rtcView)
                 rtcView.delegate = self
@@ -70,20 +74,16 @@ class WebRTCStreamingConnection : StreamingConnection {
                 self.webRTCView = rtcView
                 self.attachVideoTrack()
                 
-                // Attach stats view here
-                let rtcStatsView = WebRTCStatsView(frame: CGRect(x: 0, y: 0, width: rv.frame.size.width, height: rv.frame.size.height));
+                // Attach stats view to renderview
+                let rtcStatsView = WebRTCStatsView(frame: CGRect(x: 0, y: 0, width: rv.frame.size.width, height: rv.frame.size.height))
+                self.setupWebRTCStats(statsView: rtcStatsView)
                 rv.addSubview(rtcStatsView)
                 NSLayoutConstraint.activate([
                     rtcStatsView.topAnchor.constraint(equalTo: rv.topAnchor),
                     rtcStatsView.leadingAnchor.constraint(equalTo: rv.leadingAnchor),
                     rtcStatsView.trailingAnchor.constraint(equalTo: rv.trailingAnchor),
                     rtcStatsView.bottomAnchor.constraint(equalTo: rv.bottomAnchor)
-                ]);
-                // start with stats hidden
-                rtcStatsView.isHidden = true
-                self.webRTCStatsView = rtcStatsView;
-                self.webRTCStats = WebRTCStats(statsView: rtcStatsView)
-                
+                ])
             }
         }
     }
@@ -96,7 +96,19 @@ class WebRTCStreamingConnection : StreamingConnection {
         self.webRTCClient?.delegate = self
         
         self.stats = StreamingConnectionStats()
-
+    }
+    
+    deinit {
+        Log.info("WebRTCStreamingConnection destructed")
+        webRTCClient = nil
+    }
+    
+    func setupWebRTCStats(statsView: WebRTCStatsView) {
+        // Create stats object that drives the stats view
+        statsView.isHidden = true
+        self.webRTCStats = WebRTCStats(statsView: statsView)
+        
+        // Start a timer to update the stats
         _statsTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true, block: { timer in
             
             if let webRTC = self.webRTCClient {
@@ -113,15 +125,14 @@ class WebRTCStreamingConnection : StreamingConnection {
         })
     }
     
-    deinit {
-        
-        Log.info("Destroyed WebRTCStreamingConnection")
-
-        webRTCClient = nil
-    }
-    
     override func showStats(_ shouldShow : Bool) {
-        self.webRTCStatsView?.isHidden = shouldShow == false
+        if let rv = self.renderView {
+            for subview in rv.subviews {
+                if let rtcStatsView = subview as? WebRTCStatsView {
+                    rtcStatsView.isHidden = !shouldShow
+                }
+            }
+        }
     }
 
     override func shutdown() {
@@ -172,10 +183,27 @@ class WebRTCStreamingConnection : StreamingConnection {
         hasRemoteSdp = false
         remoteCandidateCount = 0
         localCandidateCount = 0
+        
+        // stop the WebRTC client
+        self.webRTCClient?.close()
+        
+        // remove the video track from the webrtc view
+        self.detachVideoTrack()
+        
+        // Clear the stats timer
+        self._statsTimer?.invalidate()
+        
+        // Remove WebRTC view/WebRTC stats view from the render view on shutdown
+        if let rv = self.renderView {
+            for subview in rv.subviews {
+                subview.removeFromSuperview()
+            }
+        }
     }
     
     override func sendTransform(_ transform: simd_float4x4, atTime time: Double) {
-    
+        self.webRTCStats?.processARKitEvent()
+        
         guard let client = webRTCClient else { return }
     
         
@@ -341,6 +369,12 @@ class WebRTCStreamingConnection : StreamingConnection {
             view.attachTouchDelegate(delegate: self.touchControls!)
         }
     }
+    
+    func detachVideoTrack() {
+        if let view = self.webRTCView, let track = self.rtcVideoTrack {
+            view.removeVideoTrack(track: track)
+        }
+    }
 }
 
 extension WebRTCStreamingConnection : WebRTCViewDelegate {
@@ -463,13 +497,33 @@ extension WebRTCStreamingConnection: SignalClientDelegate {
         if self.webRTCClient!.hasPeerConnnection() {
             Log.info("Sending answer sdp")
             self.webRTCClient!.answer { (localSdp) in
-                Log.info(localSdp.sdp)
+                
+                let mungedSDP : RTCSessionDescription = self.addSessionIDToSDP(localSdp)
+                Log.info(mungedSDP.sdp)
                 self.hasLocalSdp = true
-                signalClient.send(sdp: localSdp)
+                signalClient.send(sdp: mungedSDP)
             }
         } else {
             Log.debug("WebRTC peer connection not setup yet - cannot handle sending answer.")
         }
+    }
+    
+    func addSessionIDToSDP(_ inSDP: RTCSessionDescription) -> RTCSessionDescription {
+        // Munge the o= line of the SDP to add a unique identifier for LiveLink app
+        var sdpStr : String = inSDP.sdp
+        
+        let releaseVersionNumber: String? = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
+        let buildVersionNumber: String? = Bundle.main.infoDictionary?["CFBundleVersion"] as? String
+        
+        if let relNum = releaseVersionNumber, let buildNum = buildVersionNumber {
+            // Make a string that is like: s=LiveLink/1.3.2(130)
+            let replacementStr : String = "s=LiveLink/\(relNum)/(\(buildNum))"
+            
+            // Replace on the "s=-" which is session id line in the SDP
+            sdpStr = sdpStr.replacingOccurrences(of: "s=-", with: replacementStr)
+        }
+        
+        return RTCSessionDescription(type: inSDP.type, sdp: sdpStr)
     }
 }
 
@@ -552,9 +606,16 @@ extension WebRTCStreamingConnection: WebRTCClientDelegate {
                         }
                     }
                 case .QualityControlOwnership:
-                    fallthrough
+                    // Log quality control ownership (are we the controller or not?)
+                    let isQualityController : Bool = (data[1] == 1) ? true : false
+                    Log.info("VCam is quality controller: \(isQualityController ? "true" : "false")")
+                    if !isQualityController {
+                        self.webRTCClient?.sendRequestQualityControl()
+                        self.webRTCClient?.sendRequestKeyFrame()
+                    }
                 case .Response:
-                    fallthrough
+                    let numResponses : String? = String(data: data.dropFirst(), encoding: .utf16LittleEndian)
+                    self.webRTCStats?.processARKitResponse(numResponses: UInt16(numResponses ?? "") ?? 0)
                 case .FreezeFrame:
                     fallthrough
                 case .UnfreezeFrame:
@@ -562,6 +623,8 @@ extension WebRTCStreamingConnection: WebRTCClientDelegate {
                 case .LatencyTest:
                     fallthrough
                 case .InitialSettings:
+                    // Do nothing with initial settings, but use it to send device resolution as this is a convenient time as we are guaranteed datachannel is working
+                    self.webRTCClient?.sendDeviceResolution()
                     fallthrough
                 case .FileExtension:
                     fallthrough

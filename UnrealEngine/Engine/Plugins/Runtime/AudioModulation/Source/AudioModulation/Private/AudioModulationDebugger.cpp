@@ -379,7 +379,7 @@ namespace AudioModulation
 			{
 				const U& Item = IdItemPair.Value;
 				const bool Filtered = !FilterString.IsEmpty()
-					&& !Item.GetName().Contains(FilterString);
+					&& !Item.GetName().ToString().Contains(FilterString);
 				if (!Filtered)
 				{
 					FilteredArray.Add(&Item);
@@ -427,7 +427,7 @@ namespace AudioModulation
 			DebugInfo.Id = Proxy->GetId();
 			DebugInfo.GeneratorValue = Proxy->GetGeneratorValue();
 			DebugInfo.MixValue = Proxy->GetMixValue();
-			DebugInfo.Name = Proxy->GetName();
+			DebugInfo.Name = Proxy->GetName().ToString();
 			DebugInfo.RefCount = Proxy->GetRefCount();
 			DebugInfo.Value = Proxy->GetValue();
 			RefreshedFilteredBuses.Add(DebugInfo);
@@ -440,7 +440,7 @@ namespace AudioModulation
 		for (const FModulatorBusMixProxy* Proxy : FilteredMixProxies)
 		{
 			FControlBusMixDebugInfo DebugInfo;
-			DebugInfo.Name = Proxy->GetName();
+			DebugInfo.Name = Proxy->GetName().ToString();
 			DebugInfo.RefCount = Proxy->GetRefCount();
 			for (const TPair<FBusId, FModulatorBusMixStageProxy>& Stage : Proxy->Stages)
 			{

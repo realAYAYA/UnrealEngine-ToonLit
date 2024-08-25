@@ -33,7 +33,7 @@ public:
 	FPropertyUtilitiesTreeView( SPropertyTreeViewImpl& InView )
 		: View( InView )
 	{
-		EditConditionParser = MakeShareable(new FEditConditionParser());
+		EditConditionParser = MakeShared<FEditConditionParser>();
 	}
 
 	virtual class FNotifyHook* GetNotifyHook() const override
@@ -69,6 +69,12 @@ public:
 	virtual void RequestRefresh() override
 	{
 		View.RequestRefresh();
+	}
+
+	virtual void RequestForceRefresh() override
+	{
+		// RequestRefresh is already a deferred ForceRefresh
+		RequestRefresh();
 	}
 
 	virtual bool IsPropertyEditingEnabled() const override
@@ -154,9 +160,9 @@ void SPropertyTreeViewImpl::Construct(const FArguments& InArgs)
 	bFavoritesEnabled = bFavoritesEnabled && bFavoritesAllowed;
 
 	// Create the root property now
-	RootPropertyNode = MakeShareable( new FObjectPropertyNode );
+	RootPropertyNode = MakeShared<FObjectPropertyNode>();
 
-	PropertySettings = MakeShareable( new FPropertyUtilitiesTreeView(*this) );
+	PropertySettings = MakeShared<FPropertyUtilitiesTreeView>(*this);
 
 	ConstructPropertyTree();
 	
@@ -200,7 +206,7 @@ void SPropertyTreeViewImpl::ConstructPropertyTree()
 			SNew( SHorizontalBox )
 			+ SHorizontalBox::Slot()
 			.HAlign( HAlign_Fill )
-			.FillWidth(1)
+			.FillWidth(1.0f)
 			.Padding(0,0,3,0)
 			[
 				SAssignNew( FilterTextBox, SSearchBox )
@@ -215,7 +221,7 @@ void SPropertyTreeViewImpl::ConstructPropertyTree()
 				SNew( SButton )
 				.Visibility( bFavoritesAllowed ? EVisibility::Visible : EVisibility::Collapsed )
 				.OnClicked( this, &SPropertyTreeViewImpl::OnToggleFavoritesClicked )
-				.ContentPadding(1)
+				.ContentPadding(1.0f)
 				.ButtonStyle( FAppStyle::Get(), "NoBorder" )
 				[
 					SNew( SImage )
@@ -230,7 +236,7 @@ void SPropertyTreeViewImpl::ConstructPropertyTree()
 				SNew( SButton )
 				.Visibility( bLockable ? EVisibility::Visible : EVisibility::Collapsed )
 				.OnClicked( this, &SPropertyTreeViewImpl::OnLockButtonClicked )
-				.ContentPadding(1)
+				.ContentPadding(1.0f)
 				.ButtonStyle( FAppStyle::Get(), "NoBorder" )
 				[
 					SNew( SImage )
@@ -265,7 +271,7 @@ void SPropertyTreeViewImpl::ConstructPropertyTree()
 		]
 		+SVerticalBox::Slot()
 			.VAlign( VAlign_Fill )
-			.FillHeight(1)
+			.FillHeight(1.0f)
 			.Padding( 0.0f, PaddingAfterFilter, 0.0f, 0.0f )
 		[
 			SAssignNew( PropertyTree, SPropertyTree )
@@ -282,7 +288,7 @@ void SPropertyTreeViewImpl::ConstructPropertyTree()
 					.FillWidth(InitialNameColumnWidth)
 					[
 						SNew(SBorder)
-						.Padding(3)
+						.Padding(3.0f)
 						.BorderImage( FAppStyle::GetBrush("NoBorder") )
 						[
 							SNew(STextBlock)
@@ -293,7 +299,7 @@ void SPropertyTreeViewImpl::ConstructPropertyTree()
 					.FillWidth(1.0f)
 					[
 						SNew(SBorder)
-						.Padding(3)
+						.Padding(3.0f)
 						.BorderImage( FAppStyle::GetBrush("NoBorder") )
 						[
 							SNew(STextBlock)

@@ -10,6 +10,56 @@ using EpicGames.UHT.Utils;
 
 namespace EpicGames.UHT.Exporters.CodeGen
 {
+	internal struct UhtCodeBlockComment : IDisposable
+	{
+		private readonly StringBuilder _builder;
+		private readonly UhtType? _primaryType = null;
+		private readonly UhtType? _secondaryType = null;
+		private readonly string? _text = null;
+
+		public UhtCodeBlockComment(StringBuilder builder, string text)
+		{
+			_builder = builder;
+			_text = text;
+			builder.Append("\r\n// Begin");
+			AppendText();
+			_builder.Append("\r\n");
+		}
+
+		public UhtCodeBlockComment(StringBuilder builder, UhtType primaryType, UhtType? secondaryType = null)
+		{
+			_builder = builder;
+			_primaryType = primaryType;
+			_secondaryType = secondaryType;
+			builder.Append("\r\n// Begin");
+			AppendText();
+			_builder.Append("\r\n");
+		}
+
+		public void Dispose()
+		{
+			_builder.Append("// End");
+			AppendText();
+			_builder.Append("\r\n");
+		}
+
+		private void AppendText()
+		{
+			if (!String.IsNullOrEmpty(_text))
+			{
+				_builder.Append(' ').Append(_text);
+			}
+			if (_primaryType != null)
+			{
+				_builder.Append(' ').Append(_primaryType.EngineType).Append(' ').Append(_primaryType.SourceName);
+			}
+			if (_secondaryType != null)
+			{
+				_builder.Append(' ').Append(_secondaryType.EngineType).Append(' ').Append(_secondaryType.SourceName);
+			}
+		}
+	}
+
 	internal class UhtHeaderCodeGeneratorCppFile : UhtHeaderCodeGenerator
 	{
 
@@ -136,190 +186,144 @@ namespace EpicGames.UHT.Exporters.CodeGen
 				if (HeaderFile.References.CrossModule.References.Count > 0)
 				{
 					ReadOnlyMemory<string> sorted = HeaderFile.References.CrossModule.GetSortedReferences(
-						(int objectIndex, bool registered) => GetCrossReference(objectIndex, registered));
-					builder.Append("// Cross Module References\r\n");
+						(int objectIndex, bool registered) => GetExternalDecl(objectIndex, registered));
+					using UhtCodeBlockComment blockComment = new(builder, "Cross Module References");
 					foreach (string crossReference in sorted.Span)
 					{
-						builder.Append(crossReference);
+						builder.Append(crossReference.AsSpan().TrimStart());
 					}
-					builder.Append("// End Cross Module References\r\n");
 				}
 
 				int generatedBodyStart = builder.Length;
 
-				bool hasRegisteredEnums = false;
-				bool hasRegisteredScriptStructs = false;
-				bool hasRegisteredClasses = false;
-				bool allEnumsEditorOnly = true;
+				UhtUsedDefineScopes<UhtEnum> enums = new();
+				UhtUsedDefineScopes<UhtScriptStruct> scriptStructs = new();
+				UhtUsedDefineScopes<UhtClass> classes = new();
 				foreach (UhtField field in HeaderFile.References.ExportTypes)
 				{
 					if (field is UhtEnum enumObj)
 					{
+						using UhtCodeBlockComment blockComment = new(builder, field);
 						AppendEnum(builder, enumObj);
-						hasRegisteredEnums = true;
-						allEnumsEditorOnly &= enumObj.IsEditorOnly;
+						enums.Add(enumObj);
 					}
 					else if (field is UhtScriptStruct scriptStruct)
 					{
+						using UhtCodeBlockComment blockComment = new(builder, field);
 						AppendScriptStruct(builder, scriptStruct);
 						if (scriptStruct.ScriptStructFlags.HasAnyFlags(EStructFlags.Native))
 						{
-							hasRegisteredScriptStructs = true;
+							scriptStructs.Add(scriptStruct);
 						}
 					}
 					else if (field is UhtFunction function)
 					{
+						using UhtCodeBlockComment blockComment = new(builder, field);
 						AppendDelegate(builder, function);
 					}
 					else if (field is UhtClass classObj)
 					{
 						if (!classObj.ClassFlags.HasAnyFlags(EClassFlags.Intrinsic))
 						{
-							AppendClass(builder, classObj);
-							hasRegisteredClasses = true;
+							// Collect the functions to be exported
+							UhtUsedDefineScopes<UhtFunction> functions = new(classObj.Functions);
+							functions.Instances.Sort((x, y) => StringComparerUE.OrdinalIgnoreCase.Compare(x.EngineName, y.EngineName));
+
+							// Output any functions
+							foreach (UhtFunction classFunction in functions.Instances)
+							{
+								AppendClassFunction(builder, classObj, classFunction);
+							}
+
+							using UhtCodeBlockComment blockComment = new(builder, field);
+							AppendClass(builder, classObj, functions);
+							classes.Add(classObj);
 						}
 					}
 				}
 
-				if (hasRegisteredEnums || hasRegisteredScriptStructs || hasRegisteredClasses)
+				if (!enums.IsEmpty || !scriptStructs.IsEmpty || !classes.IsEmpty)
 				{
 					string name = $"Z_CompiledInDeferFile_{headerInfo.FileId}";
 					string staticsName = $"{name}_Statics";
 
-					builder.Append("\tstruct ").Append(staticsName).Append("\r\n");
-					builder.Append("\t{\r\n");
-
-					if (hasRegisteredEnums)
-					{
-						if (allEnumsEditorOnly)
-						{
-							builder.Append("#if WITH_EDITORONLY_DATA\r\n");
-						}
-						builder.Append("\t\tstatic const FEnumRegisterCompiledInInfo EnumInfo[];\r\n");
-						if (allEnumsEditorOnly)
-						{
-							builder.Append("#endif\r\n");
-						}
-					}
-					if (hasRegisteredScriptStructs)
-					{
-						builder.Append("\t\tstatic const FStructRegisterCompiledInInfo ScriptStructInfo[];\r\n");
-					}
-					if (hasRegisteredClasses)
-					{
-						builder.Append("\t\tstatic const FClassRegisterCompiledInInfo ClassInfo[];\r\n");
-					}
-
-					builder.Append("\t};\r\n");
-
 					uint combinedHash = UInt32.MaxValue;
 
-					if (hasRegisteredEnums)
-					{
-						if (allEnumsEditorOnly)
-						{
-							builder.Append("#if WITH_EDITORONLY_DATA\r\n");
-						}
-						builder.Append("\tconst FEnumRegisterCompiledInInfo ").Append(staticsName).Append("::EnumInfo[] = {\r\n");
-						foreach (UhtObject obj in HeaderFile.References.ExportTypes)
-						{
-							if (obj is UhtEnum enumObj)
-							{
-								if (!allEnumsEditorOnly && enumObj.IsEditorOnly)
-								{
-									builder.Append("#if WITH_EDITORONLY_DATA\r\n");
-								}
-								uint hash = ObjectInfos[enumObj.ObjectTypeIndex].Hash;
-								builder
-									.Append("\t\t{ ")
-									.Append(enumObj.SourceName)
-									.Append("_StaticEnum, TEXT(\"")
-									.Append(enumObj.EngineName)
-									.Append("\"), &Z_Registration_Info_UEnum_")
-									.Append(enumObj.EngineName)
-									.Append($", CONSTRUCT_RELOAD_VERSION_INFO(FEnumReloadVersionInfo, {hash}U) }},\r\n");
-								if (!allEnumsEditorOnly && enumObj.IsEditorOnly)
-								{
-									builder.Append("#endif\r\n");
-								}
-								combinedHash = HashCombine(combinedHash, hash);
-							}
-						}
-						builder.Append("\t};\r\n");
-						if (allEnumsEditorOnly)
-						{
-							builder.Append("#endif\r\n");
-						}
-					}
+					using UhtCodeBlockComment blockComment = new(builder, "Registration");
+					builder.Append("struct ").Append(staticsName).Append("\r\n");
+					builder.Append("{\r\n");
 
-					if (hasRegisteredScriptStructs)
-					{
-						builder.Append("\tconst FStructRegisterCompiledInInfo ").Append(staticsName).Append("::ScriptStructInfo[] = {\r\n");
-						foreach (UhtObject obj in HeaderFile.References.ExportTypes)
+					builder.AppendInstances(enums, UhtDefineScopeNames.Standard, 
+						builder => builder.Append("\tstatic constexpr FEnumRegisterCompiledInInfo EnumInfo[] = {\r\n"),
+						(builder, enumObj) =>
 						{
-							if (obj is UhtScriptStruct scriptStruct)
-							{
-								if (scriptStruct.ScriptStructFlags.HasAnyFlags(EStructFlags.Native))
-								{
-									uint hash = ObjectInfos[scriptStruct.ObjectTypeIndex].Hash;
-									builder
-										.Append("\t\t{ ")
-										.Append(scriptStruct.SourceName)
-										.Append("::StaticStruct, Z_Construct_UScriptStruct_")
-										.Append(scriptStruct.SourceName)
-										.Append("_Statics::NewStructOps, TEXT(\"")
-										.Append(scriptStruct.EngineName)
-										.Append("\"), &Z_Registration_Info_UScriptStruct_")
-										.Append(scriptStruct.EngineName)
-										.Append(", CONSTRUCT_RELOAD_VERSION_INFO(FStructReloadVersionInfo, sizeof(")
-										.Append(scriptStruct.SourceName)
-										.Append($"), {hash}U) }},\r\n");
-									combinedHash = HashCombine(combinedHash, hash);
-								}
-							}
-						}
-						builder.Append("\t};\r\n");
-					}
+							uint hash = ObjectInfos[enumObj.ObjectTypeIndex].Hash;
+							builder
+								.Append("\t\t{ ")
+								.Append(enumObj.SourceName)
+								.Append("_StaticEnum, TEXT(\"")
+								.Append(enumObj.EngineName)
+								.Append("\"), &Z_Registration_Info_UEnum_")
+								.Append(enumObj.EngineName)
+								.Append($", CONSTRUCT_RELOAD_VERSION_INFO(FEnumReloadVersionInfo, {hash}U) }},\r\n");
+							combinedHash = HashCombine(combinedHash, hash);
+						},
+						builder => builder.Append("\t};\r\n"));
 
-					if (hasRegisteredClasses)
-					{
-						builder.Append("\tconst FClassRegisterCompiledInInfo ").Append(staticsName).Append("::ClassInfo[] = {\r\n");
-						foreach (UhtObject obj in HeaderFile.References.ExportTypes)
+					builder.AppendInstances(scriptStructs, UhtDefineScopeNames.Standard,
+						builder => builder.Append("\tstatic constexpr FStructRegisterCompiledInInfo ScriptStructInfo[] = {\r\n"),
+						(builder, scriptStruct) =>
 						{
-							if (obj is UhtClass classObj)
-							{
-								if (!classObj.ClassFlags.HasAnyFlags(EClassFlags.Intrinsic))
-								{
-									uint hash = ObjectInfos[classObj.ObjectTypeIndex].Hash;
-									builder
-										.Append("\t\t{ Z_Construct_UClass_")
-										.Append(classObj.SourceName)
-										.Append(", ")
-										.Append(classObj.SourceName)
-										.Append("::StaticClass, TEXT(\"")
-										.Append(classObj.SourceName)
-										.Append("\"), &Z_Registration_Info_UClass_")
-										.Append(classObj.SourceName)
-										.Append(", CONSTRUCT_RELOAD_VERSION_INFO(FClassReloadVersionInfo, sizeof(")
-										.Append(classObj.SourceName)
-										.Append($"), {hash}U) }},\r\n");
-									combinedHash = HashCombine(combinedHash, hash);
-								}
-							}
-						}
-						builder.Append("\t};\r\n");
-					}
+							uint hash = ObjectInfos[scriptStruct.ObjectTypeIndex].Hash;
+							builder
+								.Append("\t\t{ ")
+								.Append(scriptStruct.SourceName)
+								.Append("::StaticStruct, Z_Construct_UScriptStruct_")
+								.Append(scriptStruct.SourceName)
+								.Append("_Statics::NewStructOps, TEXT(\"")
+								.Append(scriptStruct.EngineName)
+								.Append("\"), &Z_Registration_Info_UScriptStruct_")
+								.Append(scriptStruct.EngineName)
+								.Append(", CONSTRUCT_RELOAD_VERSION_INFO(FStructReloadVersionInfo, sizeof(")
+								.Append(scriptStruct.SourceName)
+								.Append($"), {hash}U) }},\r\n");
+							combinedHash = HashCombine(combinedHash, hash);
+						},
+						builder => builder.Append("\t};\r\n"));
+
+					builder.AppendInstances(classes, UhtDefineScopeNames.Standard,
+						builder => builder.Append("\tstatic constexpr FClassRegisterCompiledInInfo ClassInfo[] = {\r\n"),
+						(builder, classObj) =>
+						{
+							uint hash = ObjectInfos[classObj.ObjectTypeIndex].Hash;
+							builder
+								.Append("\t\t{ Z_Construct_UClass_")
+								.Append(classObj.SourceName)
+								.Append(", ")
+								.Append(classObj.SourceName)
+								.Append("::StaticClass, TEXT(\"")
+								.Append(classObj.SourceName)
+								.Append("\"), &Z_Registration_Info_UClass_")
+								.Append(classObj.SourceName)
+								.Append(", CONSTRUCT_RELOAD_VERSION_INFO(FClassReloadVersionInfo, sizeof(")
+								.Append(classObj.SourceName)
+								.Append($"), {hash}U) }},\r\n");
+							combinedHash = HashCombine(combinedHash, hash);
+						},
+						builder => builder.Append("\t};\r\n"));
+
+					builder.Append("};\r\n");
 
 					builder
-						.Append("\tstatic FRegisterCompiledInInfo ")
+						.Append("static FRegisterCompiledInInfo ")
 						.Append(name)
 						.Append($"_{combinedHash}(TEXT(\"")
 						.Append(Package.EngineName)
 						.Append("\"),\r\n");
 
-					builder.Append("\t\t").AppendArray(!hasRegisteredClasses, false, staticsName, "ClassInfo").Append(",\r\n");
-					builder.Append("\t\t").AppendArray(!hasRegisteredScriptStructs, false, staticsName, "ScriptStructInfo").Append(",\r\n");
-					builder.Append("\t\t").AppendArray(!hasRegisteredEnums, allEnumsEditorOnly, staticsName, "EnumInfo").Append(");\r\n");
+					builder.AppendArrayPtrAndCountLine(classes, UhtDefineScopeNames.Standard, staticsName, "ClassInfo", 1, ",\r\n");
+					builder.AppendArrayPtrAndCountLine(scriptStructs, UhtDefineScopeNames.Standard, staticsName, "ScriptStructInfo", 1, ",\r\n");
+					builder.AppendArrayPtrAndCountLine(enums, UhtDefineScopeNames.Standard, staticsName, "EnumInfo", 1, ");\r\n");
 				}
 
 				if (Session.IncludeDebugOutput)
@@ -402,7 +406,7 @@ namespace EpicGames.UHT.Exporters.CodeGen
 				enumDisplayNameFn = "nullptr";
 			}
 
-			using (UhtMacroBlockEmitter macroBlockEmitter = new(builder, "WITH_EDITORONLY_DATA", enumObj.IsEditorOnly))
+			using (UhtMacroBlockEmitter macroBlockEmitter = new(builder, UhtDefineScopeNames.Standard, enumObj.DefineScope))
 			{
 
 				// If we don't have a zero 0 then we emit a static assert to verify we have one
@@ -411,7 +415,7 @@ namespace EpicGames.UHT.Exporters.CodeGen
 					bool hasUnparsedValue = enumObj.EnumValues.Exists(x => x.Value == -1);
 					if (hasUnparsedValue)
 					{
-						builder.Append("\tstatic_assert(");
+						builder.Append("static_assert(");
 						bool doneFirst = false;
 						foreach (UhtEnumValue value in enumObj.EnumValues)
 						{
@@ -429,75 +433,75 @@ namespace EpicGames.UHT.Exporters.CodeGen
 					}
 				}
 
-				builder.Append("\tstatic FEnumRegistrationInfo ").Append(registrationName).Append(";\r\n");
-				builder.Append("\tstatic UEnum* ").Append(enumObj.SourceName).Append("_StaticEnum()\r\n");
-				builder.Append("\t{\r\n");
+				builder.Append("static FEnumRegistrationInfo ").Append(registrationName).Append(";\r\n");
+				builder.Append("static UEnum* ").Append(enumObj.SourceName).Append("_StaticEnum()\r\n");
+				builder.Append("{\r\n");
 
-				builder.Append("\t\tif (!").Append(registrationName).Append(".OuterSingleton)\r\n");
-				builder.Append("\t\t{\r\n");
-				builder.Append("\t\t\t").Append(registrationName).Append(".OuterSingleton = GetStaticEnum(").Append(singletonName).Append(", (UObject*)")
+				builder.Append("\tif (!").Append(registrationName).Append(".OuterSingleton)\r\n");
+				builder.Append("\t{\r\n");
+				builder.Append("\t\t").Append(registrationName).Append(".OuterSingleton = GetStaticEnum(").Append(singletonName).Append(", (UObject*)")
 					.Append(PackageSingletonName).Append("(), TEXT(\"").Append(enumObj.SourceName).Append("\"));\r\n");
-				builder.Append("\t\t}\r\n");
-				builder.Append("\t\treturn ").Append(registrationName).Append(".OuterSingleton;\r\n");
-
 				builder.Append("\t}\r\n");
+				builder.Append("\treturn ").Append(registrationName).Append(".OuterSingleton;\r\n");
 
-				builder.Append("\ttemplate<> ").Append(PackageApi).Append("UEnum* StaticEnum<").Append(enumObj.CppType).Append(">()\r\n");
-				builder.Append("\t{\r\n");
-				builder.Append("\t\treturn ").Append(enumObj.SourceName).Append("_StaticEnum();\r\n");
-				builder.Append("\t}\r\n");
+				builder.Append("}\r\n");
+
+				builder.Append("template<> ").Append(PackageApi).Append("UEnum* StaticEnum<").Append(enumObj.CppType).Append(">()\r\n");
+				builder.Append("{\r\n");
+				builder.Append("\treturn ").Append(enumObj.SourceName).Append("_StaticEnum();\r\n");
+				builder.Append("}\r\n");
 
 				// Everything from this point on will be part of the definition hash
 				int hashCodeBlockStart = builder.Length;
 
 				// Statics declaration
-				builder.Append("\tstruct ").Append(staticsName).Append("\r\n");
-				builder.Append("\t{\r\n");
-				builder.Append("\t\tstatic const UECodeGen_Private::FEnumeratorParam Enumerators[];\r\n");
-				builder.AppendMetaDataDecl(enumObj, MetaDataParamsName, 2);
-				builder.Append("\t\tstatic const UECodeGen_Private::FEnumParams EnumParams;\r\n");
-				builder.Append("\t};\r\n");
-
-				// Enumerators
-				builder.Append("\tconst UECodeGen_Private::FEnumeratorParam ").Append(staticsName).Append("::Enumerators[] = {\r\n");
-				int enumIndex = 0;
-				foreach (UhtEnumValue value in enumObj.EnumValues)
 				{
-					if (!enumObj.MetaData.TryGetValue("OverrideName", enumIndex, out string? keyName))
+					builder.Append("struct ").Append(staticsName).Append("\r\n");
+					builder.Append("{\r\n");
+					builder.AppendMetaDataDecl(enumObj, null, null, MetaDataParamsName, 1);
+
+					// Enumerators
+					builder.Append("\tstatic constexpr UECodeGen_Private::FEnumeratorParam Enumerators[] = {\r\n");
+					int enumIndex = 0;
+					foreach (UhtEnumValue value in enumObj.EnumValues)
 					{
-						keyName = value.Name.ToString();
+						if (!enumObj.MetaData.TryGetValue("OverrideName", enumIndex, out string? keyName))
+						{
+							keyName = value.Name.ToString();
+						}
+						builder.Append("\t\t{ ").AppendUTF8LiteralString(keyName).Append(", (int64)").Append(value.Name).Append(" },\r\n");
+						++enumIndex;
 					}
-					builder.Append("\t\t{ ").AppendUTF8LiteralString(keyName).Append(", (int64)").Append(value.Name).Append(" },\r\n");
-					++enumIndex;
+					builder.Append("\t};\r\n");
+					builder.Append("\tstatic const UECodeGen_Private::FEnumParams EnumParams;\r\n");
+					builder.Append("};\r\n");
 				}
-				builder.Append("\t};\r\n");
 
-				// Meta data
-				builder.AppendMetaDataDef(enumObj, staticsName, MetaDataParamsName, 1);
-
-				// Singleton parameters
-				builder.Append("\tconst UECodeGen_Private::FEnumParams ").Append(staticsName).Append("::EnumParams = {\r\n");
-				builder.Append("\t\t(UObject*(*)())").Append(PackageSingletonName).Append(",\r\n");
-				builder.Append("\t\t").Append(enumDisplayNameFn).Append(",\r\n");
-				builder.Append("\t\t").AppendUTF8LiteralString(enumObj.SourceName).Append(",\r\n");
-				builder.Append("\t\t").AppendUTF8LiteralString(enumObj.CppType).Append(",\r\n");
-				builder.Append("\t\t").Append(staticsName).Append("::Enumerators,\r\n");
-				builder.Append("\t\t").Append(ObjectFlags).Append(",\r\n");
-				builder.Append("\t\tUE_ARRAY_COUNT(").Append(staticsName).Append("::Enumerators),\r\n");
-				builder.Append("\t\t").Append(enumObj.EnumFlags.HasAnyFlags(EEnumFlags.Flags) ? "EEnumFlags::Flags" : "EEnumFlags::None").Append(",\r\n");
-				builder.Append("\t\t(uint8)UEnum::ECppForm::").Append(enumObj.CppForm.ToString()).Append(",\r\n");
-				builder.Append("\t\t").AppendMetaDataParams(enumObj, staticsName, MetaDataParamsName).Append("\r\n");
-				builder.Append("\t};\r\n");
+				// Statics definition
+				{
+					builder.Append("const UECodeGen_Private::FEnumParams ").Append(staticsName).Append("::EnumParams = {\r\n");
+					builder.Append("\t(UObject*(*)())").Append(PackageSingletonName).Append(",\r\n");
+					builder.Append('\t').Append(enumDisplayNameFn).Append(",\r\n");
+					builder.Append('\t').AppendUTF8LiteralString(enumObj.SourceName).Append(",\r\n");
+					builder.Append('\t').AppendUTF8LiteralString(enumObj.CppType).Append(",\r\n");
+					builder.Append('\t').Append(staticsName).Append("::Enumerators,\r\n");
+					builder.Append('\t').Append(ObjectFlags).Append(",\r\n");
+					builder.Append("\tUE_ARRAY_COUNT(").Append(staticsName).Append("::Enumerators),\r\n");
+					builder.Append('\t').Append(enumObj.EnumFlags.HasAnyFlags(EEnumFlags.Flags) ? "EEnumFlags::Flags" : "EEnumFlags::None").Append(",\r\n");
+					builder.Append("\t(uint8)UEnum::ECppForm::").Append(enumObj.CppForm.ToString()).Append(",\r\n");
+					builder.Append('\t').AppendMetaDataParams(enumObj, staticsName, MetaDataParamsName).Append("\r\n");
+					builder.Append("};\r\n");
+				}
 
 				// Registration singleton
-				builder.Append("\tUEnum* ").Append(singletonName).Append("()\r\n");
+				builder.Append("UEnum* ").Append(singletonName).Append("()\r\n");
+				builder.Append("{\r\n");
+				builder.Append("\tif (!").Append(registrationName).Append(".InnerSingleton)\r\n");
 				builder.Append("\t{\r\n");
-				builder.Append("\t\tif (!").Append(registrationName).Append(".InnerSingleton)\r\n");
-				builder.Append("\t\t{\r\n");
-				builder.Append("\t\t\tUECodeGen_Private::ConstructUEnum(").Append(registrationName).Append(".InnerSingleton, ").Append(staticsName).Append("::EnumParams);\r\n");
-				builder.Append("\t\t}\r\n");
-				builder.Append("\t\treturn ").Append(registrationName).Append(".InnerSingleton;\r\n");
+				builder.Append("\t\tUECodeGen_Private::ConstructUEnum(").Append(registrationName).Append(".InnerSingleton, ").Append(staticsName).Append("::EnumParams);\r\n");
 				builder.Append("\t}\r\n");
+				builder.Append("\treturn ").Append(registrationName).Append(".InnerSingleton;\r\n");
+				builder.Append("}\r\n");
 
 				{
 					using UhtRentedPoolBuffer<char> borrowBuffer = builder.RentPoolBuffer(hashCodeBlockStart, builder.Length - hashCodeBlockStart);
@@ -520,7 +524,6 @@ namespace EpicGames.UHT.Exporters.CodeGen
 				// Inject static assert to verify that we do not add vtable
 				if (scriptStruct.SuperScriptStruct != null)
 				{
-					builder.Append("\r\n");
 					builder.Append("static_assert(std::is_polymorphic<")
 						.Append(scriptStruct.SourceName)
 						.Append(">() == std::is_polymorphic<")
@@ -530,11 +533,10 @@ namespace EpicGames.UHT.Exporters.CodeGen
 						.Append(" cannot be polymorphic unless super ")
 						.Append(scriptStruct.SuperScriptStruct.SourceName)
 						.Append(" is polymorphic\");\r\n");
-					builder.Append("\r\n");
 				}
 
 				// Outer singleton
-				builder.Append("\tstatic FStructRegistrationInfo ").Append(registrationName).Append(";\r\n");
+				builder.Append("static FStructRegistrationInfo ").Append(registrationName).Append(";\r\n");
 				builder.Append("class UScriptStruct* ").Append(scriptStruct.SourceName).Append("::StaticStruct()\r\n");
 				builder.Append("{\r\n");
 				builder.Append("\tif (!").Append(registrationName).Append(".OuterSingleton)\r\n");
@@ -635,9 +637,9 @@ namespace EpicGames.UHT.Exporters.CodeGen
 					// The preprocessor conditional is written here instead of in FastArraySerializerImplementation.h
 					// since it may evaluate differently in different modules, triggering warnings in IncludeTool.
 					builder.Append("#if defined(UE_NET_HAS_IRIS_FASTARRAY_BINDING) && UE_NET_HAS_IRIS_FASTARRAY_BINDING\r\n");
-					builder.Append("\tUE_NET_IMPLEMENT_FASTARRAY(").Append(scriptStruct.SourceName).Append(");\r\n");
+					builder.Append("UE_NET_IMPLEMENT_FASTARRAY(").Append(scriptStruct.SourceName).Append(");\r\n");
 					builder.Append("#else\r\n");
-					builder.Append("\tUE_NET_IMPLEMENT_FASTARRAY_STUB(").Append(scriptStruct.SourceName).Append(");\r\n");
+					builder.Append("UE_NET_IMPLEMENT_FASTARRAY_STUB(").Append(scriptStruct.SourceName).Append(");\r\n");
 					builder.Append("#endif\r\n");
 				}
 			}
@@ -645,74 +647,70 @@ namespace EpicGames.UHT.Exporters.CodeGen
 			// Everything from this point on will be part of the definition hash
 			int hashCodeBlockStart = builder.Length;
 
+			// Collect the properties
+			PropertyMemberContextImpl context = new(CodeGenerator, scriptStruct, scriptStruct.SourceName, staticsName);
+			UhtUsedDefineScopes<UhtProperty> properties = new(scriptStruct.Properties);
+
 			// Declare the statics structure
 			{
-				builder.Append("\tstruct ").Append(staticsName).Append("\r\n");
-				builder.Append("\t{\r\n");
+				builder.Append("struct ").Append(staticsName).Append("\r\n");
+				builder.Append("{\r\n");
 
 				foreach (UhtScriptStruct noExportStruct in noExportStructs)
 				{
-					AppendMirrorsForNoexportStruct(builder, noExportStruct, 2);
-					builder.Append("\t\tstatic_assert(sizeof(").Append(noExportStruct.SourceName).Append(") < MAX_uint16);\r\n");
-					builder.Append("\t\tstatic_assert(alignof(").Append(noExportStruct.SourceName).Append(") < MAX_uint8);\r\n");
+					AppendMirrorsForNoexportStruct(builder, noExportStruct, 1);
+					builder.Append("\tstatic_assert(sizeof(").Append(noExportStruct.SourceName).Append(") < MAX_uint16);\r\n");
+					builder.Append("\tstatic_assert(alignof(").Append(noExportStruct.SourceName).Append(") < MAX_uint8);\r\n");
 				}
 
 				// Meta data
-				builder.AppendMetaDataDecl(scriptStruct, MetaDataParamsName, 2);
+				builder.AppendMetaDataDecl(scriptStruct, context, properties, MetaDataParamsName, 1);
+
+				// Properties
+				AppendPropertiesDecl(builder, context, properties, 1);
 
 				// New struct ops
 				if (scriptStruct.ScriptStructFlags.HasAnyFlags(EStructFlags.Native))
 				{
-					builder.Append("\t\tstatic void* NewStructOps();\r\n");
-				}
-
-				AppendPropertiesDecl(builder, scriptStruct, scriptStruct.SourceName, staticsName, 2);
-
-				builder.Append("\t\tstatic const UECodeGen_Private::FStructParams ReturnStructParams;\r\n");
-				builder.Append("\t};\r\n");
-			}
-
-			// Populate the elements of the static structure
-			{
-				builder.AppendMetaDataDef(scriptStruct, staticsName, MetaDataParamsName, 1);
-
-				if (scriptStruct.ScriptStructFlags.HasAnyFlags(EStructFlags.Native))
-				{
-					builder.Append("\tvoid* ").Append(staticsName).Append("::NewStructOps()\r\n");
+					builder.Append("\tstatic void* NewStructOps()\r\n");
 					builder.Append("\t{\r\n");
 					builder.Append("\t\treturn (UScriptStruct::ICppStructOps*)new UScriptStruct::TCppStructOps<").Append(scriptStruct.SourceName).Append(">();\r\n");
 					builder.Append("\t}\r\n");
 				}
+				builder.Append("\tstatic const UECodeGen_Private::FStructParams StructParams;\r\n");
+				builder.Append("};\r\n");
+			}
 
-				AppendPropertiesDefs(builder, scriptStruct, scriptStruct.SourceName, staticsName, 1);
+			// Populate the elements of the static structure
+			{
+				AppendPropertiesDefs(builder, context, properties, 0);
 
-				builder.Append("\tconst UECodeGen_Private::FStructParams ").Append(staticsName).Append("::ReturnStructParams = {\r\n");
-				builder.Append("\t\t(UObject* (*)())").Append(PackageSingletonName).Append(",\r\n");
-				builder.Append("\t\t").Append(GetSingletonName(scriptStruct.SuperScriptStruct, true)).Append(",\r\n");
+				builder.Append("const UECodeGen_Private::FStructParams ").Append(staticsName).Append("::StructParams = {\r\n");
+				builder.Append("\t(UObject* (*)())").Append(PackageSingletonName).Append(",\r\n");
+				builder.Append('\t').Append(GetSingletonName(scriptStruct.SuperScriptStruct, true)).Append(",\r\n");
 				if (scriptStruct.ScriptStructFlags.HasAnyFlags(EStructFlags.Native))
 				{
-					builder.Append("\t\t&NewStructOps,\r\n");
+					builder.Append("\t&NewStructOps,\r\n");
 				}
 				else
 				{
-					builder.Append("\t\tnullptr,\r\n");
+					builder.Append("\tnullptr,\r\n");
 				}
-				builder.Append("\t\t").AppendUTF8LiteralString(scriptStruct.EngineName).Append(",\r\n");
-				builder.AppendPropertiesParams(scriptStruct, staticsName, 2, "\r\n");
-				builder.Append("\t\tsizeof(").Append(scriptStruct.SourceName).Append("),\r\n");
-				builder.Append("\t\talignof(").Append(scriptStruct.SourceName).Append("),\r\n");
-				builder.Append("\t\tRF_Public|RF_Transient|RF_MarkAsNative,\r\n");
-				builder.Append($"\t\tEStructFlags(0x{(uint)(scriptStruct.ScriptStructFlags & ~EStructFlags.ComputedFlags):X8}),\r\n");
-				builder.Append("\t\t").AppendMetaDataParams(scriptStruct, staticsName, MetaDataParamsName).Append("\r\n");
-				builder.Append("\t};\r\n");
-
-				builder.AppendPropertiesParamsCountStaticAssert(scriptStruct, staticsName);
+				builder.Append('\t').AppendUTF8LiteralString(scriptStruct.EngineName).Append(",\r\n");
+				builder.AppendArrayPtrLine(properties, UhtDefineScopeNames.Standard, staticsName, "PropPointers", 1, ",\r\n");
+				builder.AppendArrayCountLine(properties, UhtDefineScopeNames.Standard, staticsName, "PropPointers", 1, ",\r\n");
+				builder.Append("\tsizeof(").Append(scriptStruct.SourceName).Append("),\r\n");
+				builder.Append("\talignof(").Append(scriptStruct.SourceName).Append("),\r\n");
+				builder.Append("\tRF_Public|RF_Transient|RF_MarkAsNative,\r\n");
+				builder.Append($"\tEStructFlags(0x{(uint)(scriptStruct.ScriptStructFlags & ~EStructFlags.ComputedFlags):X8}),\r\n");
+				builder.Append('\t').AppendMetaDataParams(scriptStruct, staticsName, MetaDataParamsName).Append("\r\n");
+				builder.Append("};\r\n");
 			}
 
 			// Generate the registration function
 			{
-				builder.Append("\tUScriptStruct* ").Append(singletonName).Append("()\r\n");
-				builder.Append("\t{\r\n");
+				builder.Append("UScriptStruct* ").Append(singletonName).Append("()\r\n");
+				builder.Append("{\r\n");
 				string innerSingletonName;
 				if (scriptStruct.ScriptStructFlags.HasAnyFlags(EStructFlags.Native))
 				{
@@ -720,15 +718,15 @@ namespace EpicGames.UHT.Exporters.CodeGen
 				}
 				else
 				{
-					builder.Append("\t\tstatic UScriptStruct* ReturnStruct = nullptr;\r\n");
+					builder.Append("\tstatic UScriptStruct* ReturnStruct = nullptr;\r\n");
 					innerSingletonName = "ReturnStruct";
 				}
-				builder.Append("\t\tif (!").Append(innerSingletonName).Append(")\r\n");
-				builder.Append("\t\t{\r\n");
-				builder.Append("\t\t\tUECodeGen_Private::ConstructUScriptStruct(").Append(innerSingletonName).Append(", ").Append(staticsName).Append("::ReturnStructParams);\r\n");
-				builder.Append("\t\t}\r\n");
-				builder.Append("\t\treturn ").Append(innerSingletonName).Append(";\r\n");
+				builder.Append("\tif (!").Append(innerSingletonName).Append(")\r\n");
+				builder.Append("\t{\r\n");
+				builder.Append("\t\tUECodeGen_Private::ConstructUScriptStruct(").Append(innerSingletonName).Append(", ").Append(staticsName).Append("::StructParams);\r\n");
 				builder.Append("\t}\r\n");
+				builder.Append("\treturn ").Append(innerSingletonName).Append(";\r\n");
+				builder.Append("}\r\n");
 			}
 
 			using (UhtRentedPoolBuffer<char> borrowBuffer = builder.RentPoolBuffer(hashCodeBlockStart, builder.Length - hashCodeBlockStart))
@@ -754,8 +752,6 @@ namespace EpicGames.UHT.Exporters.CodeGen
 						continue;
 					}
 					
-					builder.Append("\r\n");
-
 					builder
 						.Append(methodInfo.ReturnType)
 						.Append(' ')
@@ -782,7 +778,7 @@ namespace EpicGames.UHT.Exporters.CodeGen
 					builder
 						.Append(methodInfo.Name)
 						.Append("(TemporaryExecuteContext);\r\n")
-						.Append("}\r\n\r\n");
+						.Append("}\r\n");
 
 					builder
 						.Append(methodInfo.ReturnType)
@@ -796,31 +792,23 @@ namespace EpicGames.UHT.Exporters.CodeGen
 						.Append("& InExecuteContext)\r\n");
 					builder.Append("{\r\n");
 
-					bool wroteLine = false;
 					foreach (UhtRigVMParameter parameter in scriptStruct.RigVMStructInfo.Members)
 					{
 						if (!parameter.RequiresCast())
 						{
 							continue;
 						}
-						wroteLine = true;
 						builder.Append('\t').Append(parameter.CastType).Append(' ').Append(parameter.CastName).Append('(').Append(parameter.Name).Append(");\r\n");
-					}
-					if (wroteLine)
-					{
-						//COMPATIBILITY-TODO - Remove the tab
-						builder.Append("\t\r\n");
 					}
 					
 					foreach (UhtRigVMMethodInfo predicateInfo in scriptStruct.RigVMStructInfo.Methods)
 					{
 						if (predicateInfo.IsPredicate)
 						{
-							builder.Append("\t").Append(predicateInfo.Name).Append("Struct ").Append(predicateInfo.Name).Append("Predicate; \r\n");
+							builder.Append('\t').Append(predicateInfo.Name).Append("Struct ").Append(predicateInfo.Name).Append("Predicate; \r\n");
 						}
 					}
 
-					//COMPATIBILITY-TODO - Replace spaces with \t
 					builder.Append('\t').Append(methodInfo.ReturnPrefix()).Append("Static").Append(methodInfo.Name).Append("(\r\n");
 					builder.Append("\t\tInExecuteContext");
 					builder.AppendParameterNames(scriptStruct.RigVMStructInfo.Members, true, ",\r\n\t\t", true);
@@ -837,7 +825,6 @@ namespace EpicGames.UHT.Exporters.CodeGen
 					builder.Append("\t);\r\n");
 					builder.Append("}\r\n");
 				}
-				builder.Append("\r\n");
 			}
 			return builder;
 		}
@@ -851,7 +838,7 @@ namespace EpicGames.UHT.Exporters.CodeGen
 			string exportFunctionName = GetDelegateFunctionExportName(function);
 			string extraParameter = GetDelegateFunctionExtraParameter(function);
 
-			AppendNativeFunctionHeader(builder, function, UhtPropertyTextType.EventFunctionArgOrRetVal, false, exportFunctionName, extraParameter, UhtFunctionExportFlags.None, "\r\n");
+			AppendNativeFunctionHeader(builder, function, UhtPropertyTextType.EventFunctionArgOrRetVal, false, exportFunctionName, extraParameter, UhtFunctionExportFlags.None, 0, "\r\n");
 			AppendEventFunctionPrologue(builder, function, strippedFunctionName, tabs, "\r\n", true);
 			builder
 				.Append('\t')
@@ -871,7 +858,7 @@ namespace EpicGames.UHT.Exporters.CodeGen
 			const string MetaDataParamsName = "Function_MetaDataParams";
 			string singletonName = GetSingletonName(function, true);
 			string staticsName = singletonName + "_Statics";
-			bool paramsInStatic = isNoExport || !function.FunctionFlags.HasAnyFlags(EFunctionFlags.Event);
+			bool paramsInStatic = isNoExport || !IsCallbackFunction(function);
 			bool isNet = function.FunctionFlags.HasAnyFlags(EFunctionFlags.NetRequest | EFunctionFlags.NetResponse);
 
 			string strippedFunctionName = function.StrippedFunctionName;
@@ -880,105 +867,107 @@ namespace EpicGames.UHT.Exporters.CodeGen
 			// Everything from this point on will be part of the definition hash
 			int hashCodeBlockStart = builder.Length;
 
-			builder.AppendBeginEditorOnlyGuard(function.FunctionFlags.HasAnyFlags(EFunctionFlags.EditorOnly));
-
-			// Statics declaration
+			// Note: This is fairly agressive 
+			using (UhtMacroBlockEmitter blockEmitter = new(builder, UhtDefineScopeNames.WithEditor, function.DefineScope))
 			{
-				builder.Append("\tstruct ").Append(staticsName).Append("\r\n");
-				builder.Append("\t{\r\n");
 
-				if (paramsInStatic)
+				// Collect the properties
+				PropertyMemberContextImpl context = new(CodeGenerator, function, eventParameters, staticsName);
+				UhtUsedDefineScopes<UhtProperty> properties = new(function.Properties);
+
+				// Statics declaration
 				{
-					List<UhtScriptStruct> noExportStructs = FindNoExportStructs(function);
-					foreach (UhtScriptStruct noExportStruct in noExportStructs)
-					{
-						AppendMirrorsForNoexportStruct(builder, noExportStruct, 2);
-					}
-					AppendEventParameter(builder, function, strippedFunctionName, UhtPropertyTextType.EventParameterFunctionMember, false, 2, "\r\n");
-				}
-
-				AppendPropertiesDecl(builder, function, eventParameters, staticsName, 2);
-
-				builder.AppendMetaDataDecl(function, MetaDataParamsName, 2);
-
-				builder.Append("\t\tstatic const UECodeGen_Private::FFunctionParams FuncParams;\r\n");
-
-				builder.Append("\t};\r\n");
-			}
-
-			// Statics definition
-			{
-				AppendPropertiesDefs(builder, function, eventParameters, staticsName, 1);
-
-				builder.AppendMetaDataDef(function, staticsName, MetaDataParamsName, 1);
-
-				builder
-					.Append("\tconst UECodeGen_Private::FFunctionParams ")
-					.Append(staticsName).Append("::FuncParams = { ")
-					.Append("(UObject*(*)())").Append(GetFunctionOuterFunc(function)).Append(", ")
-					.Append(GetSingletonName(function.SuperFunction, true)).Append(", ")
-					.AppendUTF8LiteralString(function.EngineName).Append(", ")
-					.AppendUTF8LiteralString(function.FunctionType == UhtFunctionType.SparseDelegate, function.SparseOwningClassName).Append(", ")
-					.AppendUTF8LiteralString(function.FunctionType == UhtFunctionType.SparseDelegate, function.SparseDelegateName).Append(", ");
-
-				builder.AppendPropertiesParams(function, staticsName, 0, " ");
-
-				string sizeOfStatic = "";
-				if (function.Children.Count > 0)
-				{
-					UhtFunction tempFunction = function;
-					while (tempFunction.SuperFunction != null)
-					{
-						tempFunction = tempFunction.SuperFunction;
-					}
+					builder.Append("struct ").Append(staticsName).Append("\r\n");
+					builder.Append("{\r\n");
 
 					if (paramsInStatic)
 					{
-						sizeOfStatic = "sizeof(" + staticsName + "::" + GetEventStructParametersName(tempFunction.Outer, tempFunction.StrippedFunctionName) + ")";
+						List<UhtScriptStruct> noExportStructs = FindNoExportStructs(function);
+						foreach (UhtScriptStruct noExportStruct in noExportStructs)
+						{
+							AppendMirrorsForNoexportStruct(builder, noExportStruct, 1);
+						}
+						AppendEventParameter(builder, function, strippedFunctionName, UhtPropertyTextType.EventParameterFunctionMember, false, 1, "\r\n");
+					}
+
+					builder.AppendMetaDataDecl(function, context, properties, MetaDataParamsName, 1);
+
+					AppendPropertiesDecl(builder, context, properties, 1);
+
+					builder.Append("\tstatic const UECodeGen_Private::FFunctionParams FuncParams;\r\n");
+
+					builder.Append("};\r\n");
+				}
+
+				// Statics definition
+				{
+					AppendPropertiesDefs(builder, context, properties, 0);
+
+					builder
+						.Append("const UECodeGen_Private::FFunctionParams ")
+						.Append(staticsName).Append("::FuncParams = { ")
+						.Append("(UObject*(*)())").Append(GetFunctionOuterFunc(function)).Append(", ")
+						.Append(GetSingletonName(function.SuperFunction, true)).Append(", ")
+						.AppendUTF8LiteralString(function.EngineName).Append(", ")
+						.AppendUTF8LiteralString(function.FunctionType == UhtFunctionType.SparseDelegate, function.SparseOwningClassName).Append(", ")
+						.AppendUTF8LiteralString(function.FunctionType == UhtFunctionType.SparseDelegate, function.SparseDelegateName).Append(", ");
+
+					builder.AppendArrayPtrLine(properties, UhtDefineScopeNames.Standard, staticsName, "PropPointers", 0, ", ");
+					builder.AppendArrayCountLine(properties, UhtDefineScopeNames.Standard, staticsName, "PropPointers", 0, ", ");
+
+					string sizeOfStatic = "";
+					if (function.Children.Count > 0)
+					{
+						UhtFunction tempFunction = function;
+						while (tempFunction.SuperFunction != null)
+						{
+							tempFunction = tempFunction.SuperFunction;
+						}
+
+						if (paramsInStatic)
+						{
+							sizeOfStatic = "sizeof(" + staticsName + "::" + GetEventStructParametersName(tempFunction.Outer, tempFunction.StrippedFunctionName) + ")";
+						}
+						else
+						{
+							sizeOfStatic = "sizeof(" + GetEventStructParametersName(tempFunction.Outer, tempFunction.StrippedFunctionName) + ")";
+						}
+
+						builder.Append(sizeOfStatic);
 					}
 					else
 					{
-						sizeOfStatic = "sizeof(" + GetEventStructParametersName(tempFunction.Outer, tempFunction.StrippedFunctionName) + ")";
+						builder.Append('0');
 					}
+					builder.Append(", ");
 
-					builder.Append(sizeOfStatic);
+					builder
+						.Append("RF_Public|RF_Transient|RF_MarkAsNative, ")
+						.Append($"(EFunctionFlags)0x{(uint)function.FunctionFlags:X8}, ")
+						.Append(isNet ? function.RPCId : 0).Append(", ")
+						.Append(isNet ? function.RPCResponseId : 0).Append(", ")
+						.AppendMetaDataParams(function, staticsName, MetaDataParamsName)
+						.Append(" };\r\n");
+
+					if (!String.IsNullOrEmpty(sizeOfStatic))
+					{
+						builder.Append("static_assert(").Append(sizeOfStatic).Append(" < MAX_uint16);\r\n");
+					}
 				}
-				else
+
+				// Registration function
 				{
-					builder.Append('0');
-				}
-				builder.Append(", ");
-
-				builder
-					.Append("RF_Public|RF_Transient|RF_MarkAsNative, ")
-					.Append($"(EFunctionFlags)0x{(uint)function.FunctionFlags:X8}, ")
-					.Append(isNet ? function.RPCId : 0).Append(", ")
-					.Append(isNet ? function.RPCResponseId : 0).Append(", ")
-					.AppendMetaDataParams(function, staticsName, MetaDataParamsName)
-					.Append(" };\r\n");
-
-				builder.AppendPropertiesParamsCountStaticAssert(function, staticsName);
-
-				if (!String.IsNullOrEmpty(sizeOfStatic))
-				{
-					builder.Append("\tstatic_assert(").Append(sizeOfStatic).Append(" < MAX_uint16);\r\n");
+					builder.Append("UFunction* ").Append(singletonName).Append("()\r\n");
+					builder.Append("{\r\n");
+					builder.Append("\tstatic UFunction* ReturnFunction = nullptr;\r\n");
+					builder.Append("\tif (!ReturnFunction)\r\n");
+					builder.Append("\t{\r\n");
+					builder.Append("\t\tUECodeGen_Private::ConstructUFunction(&ReturnFunction, ").Append(staticsName).Append("::FuncParams);\r\n");
+					builder.Append("\t}\r\n");
+					builder.Append("\treturn ReturnFunction;\r\n");
+					builder.Append("}\r\n");
 				}
 			}
-
-			// Registration function
-			{
-				builder.Append("\tUFunction* ").Append(singletonName).Append("()\r\n");
-				builder.Append("\t{\r\n");
-				builder.Append("\t\tstatic UFunction* ReturnFunction = nullptr;\r\n");
-				builder.Append("\t\tif (!ReturnFunction)\r\n");
-				builder.Append("\t\t{\r\n");
-				builder.Append("\t\t\tUECodeGen_Private::ConstructUFunction(&ReturnFunction, ").Append(staticsName).Append("::FuncParams);\r\n");
-				builder.Append("\t\t}\r\n");
-				builder.Append("\t\treturn ReturnFunction;\r\n");
-				builder.Append("\t}\r\n");
-			}
-
-			builder.AppendEndEditorOnlyGuard(function.FunctionFlags.HasAnyFlags(EFunctionFlags.EditorOnly));
 
 			using (UhtRentedPoolBuffer<char> borrowBuffer = builder.RentPoolBuffer(hashCodeBlockStart, builder.Length - hashCodeBlockStart))
 			{
@@ -1023,117 +1012,231 @@ namespace EpicGames.UHT.Exporters.CodeGen
 
 		private static StringBuilder AppendExportProperties(StringBuilder builder, UhtScriptStruct scriptStruct, int tabs)
 		{
-			using (UhtMacroBlockEmitter emitter = new(builder, "WITH_EDITORONLY_DATA"))
+			using (UhtMacroBlockEmitter emitter = new(builder, UhtDefineScopeNames.Standard, UhtDefineScope.None))
 			{
 				foreach (UhtProperty property in scriptStruct.Properties)
 				{
-					emitter.Set(property.IsEditorOnlyProperty);
+					emitter.Set(property.DefineScope);
 					builder.AppendTabs(tabs).AppendFullDecl(property, UhtPropertyTextType.ExportMember, false).Append(";\r\n");
 				}
 			}
 			return builder;
 		}
 
-		private StringBuilder AppendPropertiesDecl(StringBuilder builder, UhtStruct structObj, string structSourceName, string staticsName, int tabs)
+		private static StringBuilder AppendPropertiesDecl(StringBuilder builder, IUhtPropertyMemberContext context, UhtUsedDefineScopes<UhtProperty> properties, int tabs)
 		{
-			if (!structObj.Children.Any(x => x is UhtProperty))
+			if (properties.IsEmpty)
 			{
 				return builder;
 			}
+			builder.AppendInstances(properties, UhtDefineScopeNames.Standard,
+				builder => { },
+				(builder, property) => builder.AppendMemberDecl(property, context, property.EngineName, "", tabs),
+				builder => builder.AppendTabs(tabs).Append("static const UECodeGen_Private::FPropertyParamsBase* const PropPointers[];\r\n"));
+			return builder;
+		}
 
-			PropertyMemberContextImpl context = new(CodeGenerator, structObj, structSourceName, staticsName);
-
-			using (UhtMacroBlockEmitter emitter = new(builder, "WITH_EDITORONLY_DATA"))
+		private static StringBuilder AppendPropertiesDefs(StringBuilder builder, IUhtPropertyMemberContext context, UhtUsedDefineScopes<UhtProperty> properties, int tabs)
+		{
+			if (properties.IsEmpty)
 			{
-				bool hasAllEditorOnlyDataProperties = true;
-				foreach (UhtType type in structObj.Children)
+				return builder;
+			}
+			builder.AppendInstances(properties, UhtDefineScopeNames.Standard,
+				(builder, property) => builder.AppendMemberDef(property, context, property.EngineName, "", null, tabs));
+
+			builder.AppendInstances(properties, UhtDefineScopeNames.Standard,
+				builder => builder.AppendTabs(tabs).Append("const UECodeGen_Private::FPropertyParamsBase* const ").Append(context.StaticsName).Append("::PropPointers[] = {\r\n"),
+				(builder, property) => builder.AppendMemberPtr(property, context, property.EngineName, "", tabs + 1),
+				builder =>
 				{
-					if (type is UhtProperty property)
+					builder.AppendTabs(tabs).Append("};\r\n");
+					builder.AppendTabs(tabs).Append("static_assert(UE_ARRAY_COUNT(").Append(context.StaticsName).Append("::PropPointers) < 2048);\r\n");
+				});
+			return builder;
+		}
+
+		private StringBuilder AppendClassFunction(StringBuilder builder, UhtClass classObj, UhtFunction function)
+		{
+			bool isNotDelegate = !function.FunctionFlags.HasAnyFlags(EFunctionFlags.Delegate);
+			bool isRpc = IsRpcFunction(function) && ShouldExportFunction(function);
+			bool isCallback = IsCallbackFunction(function);
+			if (isNotDelegate || isRpc || isCallback)
+			{
+				using UhtCodeBlockComment blockCommand = new(builder, classObj, function);
+				if (isCallback)
+				{
+					AppendEventParameter(builder, function, function.StrippedFunctionName, UhtPropertyTextType.EventParameterMember, true, 0, "\r\n");
+					AppendClassFunctionCallback(builder, classObj, function);
+					if (classObj.ClassFlags.HasAnyFlags(EClassFlags.Interface))
 					{
-						emitter.Set(property.IsEditorOnlyProperty);
-						hasAllEditorOnlyDataProperties &= property.IsEditorOnlyProperty;
-						builder.AppendMemberDecl(property, context, property.EngineName, "", tabs);
+						AppendInterfaceCallFunction(builder, classObj, function);
 					}
 				}
-
-				// This will force it off if the last one was editor only but we has some that weren't
-				emitter.Set(hasAllEditorOnlyDataProperties);
-
-				builder.AppendTabs(tabs).Append("static const UECodeGen_Private::FPropertyParamsBase* const PropPointers[];\r\n");
-
-				foreach (UhtType type in structObj.Children)
+				if (!function.FunctionFlags.HasAnyFlags(EFunctionFlags.Delegate))
 				{
-					if (type is UhtProperty property)
-					{
-						emitter.Set(property.IsEditorOnlyProperty);
-					}
+					AppendFunction(builder, function, classObj.ClassExportFlags.HasAnyFlags(UhtClassExportFlags.NoExport));
 				}
-				emitter.Set(hasAllEditorOnlyDataProperties);
+				if (isRpc)
+				{
+					using UhtMacroBlockEmitter blockEmitter = new(builder, UhtDefineScopeNames.WithEditor, function.DefineScope);
+					builder.Append("DEFINE_FUNCTION(").AppendClassSourceNameOrInterfaceName(classObj).Append("::").Append(function.UnMarshalAndCallName).Append(")\r\n");
+					builder.Append("{\r\n");
+					AppendFunctionThunk(builder, function);
+					builder.Append("}\r\n");
+				}
 			}
 			return builder;
 		}
 
-		private StringBuilder AppendPropertiesDefs(StringBuilder builder, UhtStruct structObj, string structSourceName, string staticsName, int tabs)
+		private StringBuilder AppendClassFunctionCallback(StringBuilder builder, UhtClass classObj, UhtFunction function)
 		{
-			if (!structObj.Children.Any(x => x is UhtProperty))
+			// Net response functions don't go into the VM
+			if (classObj.ClassExportFlags.HasAnyFlags(UhtClassExportFlags.NoExport) || function.FunctionFlags.HasAnyFlags(EFunctionFlags.NetResponse))
 			{
 				return builder;
+
 			}
 
-			PropertyMemberContextImpl context = new(CodeGenerator, structObj, structSourceName, staticsName);
+			bool isInterfaceClass = classObj.ClassFlags.HasAnyFlags(EClassFlags.Interface);
+			using UhtMacroBlockEmitter blockEmitter = new(builder, UhtDefineScopeNames.WithEditor, function.DefineScope);
 
-			using (UhtMacroBlockEmitter emitter = new(builder, "WITH_EDITORONLY_DATA"))
+			if (!isInterfaceClass)
 			{
-				bool hasAllEditorOnlyDataProperties = true;
-				foreach (UhtType type in structObj.Children)
+				builder.Append("static FName NAME_").Append(classObj.SourceName).Append('_').Append(function.EngineName).Append(" = FName(TEXT(\"").Append(function.EngineName).Append("\"));\r\n");
+			}
+
+			AppendNativeFunctionHeader(builder, function, UhtPropertyTextType.EventFunctionArgOrRetVal, false, null, null, UhtFunctionExportFlags.None, 0, "\r\n");
+
+			if (isInterfaceClass)
+			{
+				builder.Append("{\r\n");
+
+				// assert if this is ever called directly
+				builder
+					.Append("\tcheck(0 && \"Do not directly call Event functions in Interfaces. Call Execute_")
+					.Append(function.EngineName)
+					.Append(" instead.\");\r\n");
+
+				// satisfy compiler if it's expecting a return value
+				if (function.ReturnProperty != null)
 				{
-					if (type is UhtProperty property)
-					{
-						emitter.Set(property.IsEditorOnlyProperty);
-						hasAllEditorOnlyDataProperties &= property.IsEditorOnlyProperty;
-						builder.AppendMemberDef(property, context, property.EngineName, "", null, tabs);
-					}
+					string eventParmStructName = GetEventStructParametersName(classObj, function.EngineName);
+					builder.Append('\t').Append(eventParmStructName).Append(" Parms;\r\n");
+					builder.Append("\treturn Parms.ReturnValue;\r\n");
 				}
+				builder.Append("}\r\n");
+			}
+			else
+			{
+				AppendEventFunctionPrologue(builder, function, function.EngineName, 0, "\r\n", false);
 
-				// This will force it off if the last one was editor only but we has some that weren't
-				emitter.Set(hasAllEditorOnlyDataProperties);
-
-				builder.AppendTabs(tabs).Append("const UECodeGen_Private::FPropertyParamsBase* const ").Append(staticsName).Append("::PropPointers[] = {\r\n");
-				foreach (UhtType type in structObj.Children)
+				// Cast away const just in case, because ProcessEvent isn't const
+				builder.Append('\t');
+				if (function.FunctionFlags.HasAnyFlags(EFunctionFlags.Const))
 				{
-					if (type is UhtProperty property)
-					{
-						emitter.Set(property.IsEditorOnlyProperty);
-						builder.AppendMemberPtr(property, context, property.EngineName, "", tabs + 1);
-					}
+					builder.Append("const_cast<").Append(classObj.SourceName).Append("*>(this)->");
 				}
+				builder
+					.Append("ProcessEvent(FindFunctionChecked(")
+					.Append("NAME_")
+					.Append(classObj.SourceName)
+					.Append('_')
+					.Append(function.EngineName)
+					.Append("),")
+					.Append(function.Children.Count > 0 ? "&Parms" : "NULL")
+					.Append(");\r\n");
 
-				// This will force it off if the last one was editor only but we has some that weren't
-				emitter.Set(hasAllEditorOnlyDataProperties);
-
-				builder.AppendTabs(tabs).Append("};\r\n");
+				AppendEventFunctionEpilogue(builder, function, 0, "\r\n");
 			}
 			return builder;
 		}
 
-		private StringBuilder AppendClass(StringBuilder builder, UhtClass classObj)
+		private StringBuilder AppendInterfaceCallFunction(StringBuilder builder, UhtClass classObj, UhtFunction function)
 		{
-			// Collect the functions in reversed order
-			List<UhtFunction> reversedFunctions = new(classObj.Functions.Where(x => IsRpcFunction(x) && ShouldExportFunction(x)));
-			reversedFunctions.Reverse();
-
-			// Check to see if we have any RPC functions for the editor
-			bool hasEditorRpc = reversedFunctions.Any(x => x.FunctionFlags.HasAnyFlags(EFunctionFlags.EditorOnly));
-
-			// Output the RPC methods
-			AppendRpcFunctions(builder, classObj, reversedFunctions, false);
-			if (hasEditorRpc)
+			builder.Append("static FName NAME_").Append(function.Outer?.SourceName).Append('_').Append(function.SourceName).Append(" = FName(TEXT(\"").Append(function.EngineName).Append("\"));\r\n");
+			string extraParameter = function.FunctionFlags.HasAnyFlags(EFunctionFlags.Const) ? "const UObject* O" : "UObject* O";
+			AppendNativeFunctionHeader(builder, function, UhtPropertyTextType.InterfaceFunctionArgOrRetVal, false, null, extraParameter, UhtFunctionExportFlags.None, 0, "\r\n");
+			builder.Append("{\r\n");
+			builder.Append("\tcheck(O != NULL);\r\n");
+			builder.Append("\tcheck(O->GetClass()->ImplementsInterface(").Append(classObj.SourceName).Append("::StaticClass()));\r\n");
+			if (function.Children.Count > 0)
 			{
-				builder.AppendBeginEditorOnlyGuard();
-				AppendRpcFunctions(builder, classObj, reversedFunctions, true);
-				builder.AppendEndEditorOnlyGuard();
+				builder.Append('\t').Append(GetEventStructParametersName(classObj, function.StrippedFunctionName)).Append(" Parms;\r\n");
 			}
-			
+			builder.Append("\tUFunction* const Func = O->FindFunction(NAME_").Append(function.Outer?.SourceName).Append('_').Append(function.SourceName).Append(");\r\n");
+			builder.Append("\tif (Func)\r\n");
+			builder.Append("\t{\r\n");
+			foreach (UhtType parameter in function.ParameterProperties.Span)
+			{
+				if (parameter is UhtProperty property)
+				{
+					builder.Append("\t\tParms.").Append(property.SourceName).Append('=').Append(property.SourceName).Append(";\r\n");
+				}
+			}
+			builder
+				.Append("\t\t")
+				.Append(function.FunctionFlags.HasAnyFlags(EFunctionFlags.Const) ? "const_cast<UObject*>(O)" : "O")
+				.Append("->ProcessEvent(Func, ")
+				.Append(function.Children.Count > 0 ? "&Parms" : "NULL")
+				.Append(");\r\n");
+			foreach (UhtType parameter in function.ParameterProperties.Span)
+			{
+				if (parameter is UhtProperty property)
+				{
+					if (property.PropertyFlags.HasExactFlags(EPropertyFlags.OutParm | EPropertyFlags.ConstParm, EPropertyFlags.OutParm))
+					{
+						builder.Append("\t\t").Append(property.SourceName).Append("=Parms.").Append(property.SourceName).Append(";\r\n");
+					}
+				}
+			}
+			builder.Append("\t}\r\n");
+
+			// else clause to call back into native if it's a BlueprintNativeEvent
+			if (function.FunctionFlags.HasAnyFlags(EFunctionFlags.Native))
+			{
+				builder
+					.Append("\telse if (auto I = (")
+					.Append(function.FunctionFlags.HasAnyFlags(EFunctionFlags.Const) ? "const I" : "I")
+					.Append(classObj.EngineName)
+					.Append("*)(O->GetNativeInterfaceAddress(U")
+					.Append(classObj.EngineName)
+					.Append("::StaticClass())))\r\n");
+				builder.Append("\t{\r\n");
+				builder.Append("\t\t");
+				if (function.HasReturnProperty)
+				{
+					builder.Append("Parms.ReturnValue = ");
+				}
+				builder.Append("I->").Append(function.SourceName).Append("_Implementation(");
+
+				bool first = true;
+				foreach (UhtType parameter in function.ParameterProperties.Span)
+				{
+					if (parameter is UhtProperty property)
+					{
+						if (!first)
+						{
+							builder.Append(',');
+						}
+						first = false;
+						builder.Append(property.SourceName);
+					}
+				}
+				builder.Append(");\r\n");
+				builder.Append("\t}\r\n");
+			}
+
+			if (function.HasReturnProperty)
+			{
+				builder.Append("\treturn Parms.ReturnValue;\r\n");
+			}
+			builder.Append("}\r\n");
+			return builder;
+		}
+
+		private StringBuilder AppendClass(StringBuilder builder, UhtClass classObj, UhtUsedDefineScopes<UhtFunction> functions)
+		{
 			// Add the auto getters/setters
 			AppendAutoGettersSetters(builder, classObj);
 
@@ -1143,25 +1246,12 @@ namespace EpicGames.UHT.Exporters.CodeGen
 			// Add sparse accessors
 			AppendSparseAccessors(builder, classObj);
 
-			// Collect the callback function and sort by name to make the order stable
-			List<UhtFunction> callbackFunctions = new(classObj.Functions.Where(x => x.FunctionFlags.HasAnyFlags(EFunctionFlags.Event) && x.SuperFunction == null));
-			callbackFunctions.Sort((x, y) => StringComparerUE.OrdinalIgnoreCase.Compare(x.EngineName, y.EngineName));
-
-			// Generate the callback parameter structures
-			AppendCallbackParametersDecls(builder, callbackFunctions);
-
-			// VM -> C++ proxies (events and delegates).
-			if (!classObj.ClassExportFlags.HasAnyFlags(UhtClassExportFlags.NoExport))
-			{
-				AppendCallbackFunctions(builder, classObj, callbackFunctions);
-			}
-
 			if (!classObj.ClassExportFlags.HasAnyFlags(UhtClassExportFlags.NoExport))
 			{
 				AppendNatives(builder, classObj);
 			}
 
-			AppendNativeGeneratedInitCode(builder, classObj);
+			AppendNativeGeneratedInitCode(builder, classObj, functions);
 
 			if (!classObj.ClassExportFlags.HasAnyFlags(UhtClassExportFlags.HasConstructor))
 			{
@@ -1170,11 +1260,11 @@ namespace EpicGames.UHT.Exporters.CodeGen
 					switch (GetConstructorType(classObj))
 					{
 						case ConstructorType.ObjectInitializer:
-							builder.Append('\t').Append(classObj.SourceName).Append("::").Append(classObj.SourceName).Append("(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer) {}\r\n");
+							builder.Append(classObj.SourceName).Append("::").Append(classObj.SourceName).Append("(const FObjectInitializer& ObjectInitializer) : Super(ObjectInitializer) {}\r\n");
 							break;
 
 						case ConstructorType.Default:
-							builder.Append('\t').Append(classObj.SourceName).Append("::").Append(classObj.SourceName).Append("() {}\r\n");
+							builder.Append(classObj.SourceName).Append("::").Append(classObj.SourceName).Append("() {}\r\n");
 							break;
 					}
 				}
@@ -1182,12 +1272,12 @@ namespace EpicGames.UHT.Exporters.CodeGen
 
 			if (!classObj.ClassExportFlags.HasAnyFlags(UhtClassExportFlags.HasCustomVTableHelperConstructor))
 			{
-				builder.Append("\tDEFINE_VTABLE_PTR_HELPER_CTOR(").Append(classObj.SourceName).Append(");\r\n");
+				builder.Append("DEFINE_VTABLE_PTR_HELPER_CTOR(").Append(classObj.SourceName).Append(");\r\n");
 			}
 
 			if (!classObj.ClassExportFlags.HasAnyFlags(UhtClassExportFlags.HasDestructor))
 			{
-				builder.Append('\t').Append(classObj.SourceName).Append("::~").Append(classObj.SourceName).Append("() {}\r\n");
+				builder.Append(classObj.SourceName).Append("::~").Append(classObj.SourceName).Append("() {}\r\n");
 			}
 
 			AppendFieldNotify(builder, classObj);
@@ -1197,11 +1287,6 @@ namespace EpicGames.UHT.Exporters.CodeGen
 			{
 				AppendSerializer(builder, classObj, UhtSerializerArchiveType.Archive, "IMPLEMENT_FARCHIVE_SERIALIZER");
 				AppendSerializer(builder, classObj, UhtSerializerArchiveType.StructuredArchiveRecord, "IMPLEMENT_FSTRUCTUREDARCHIVE_SERIALIZER");
-			}
-
-			if (classObj.ClassFlags.HasAnyFlags(EClassFlags.Interface))
-			{
-				AppendInterfaceCallFunctions(builder, classObj, callbackFunctions);
 			}
 			return builder;
 		}
@@ -1213,208 +1298,170 @@ namespace EpicGames.UHT.Exporters.CodeGen
 				return builder;
 			}
 
-			// Scan the children to see what we have
-			GetFieldNotifyStats(classObj, out bool hasProperties, out bool hasFunctions, out bool hasEditorFields, out bool allEditorFields);
-
-			if (allEditorFields)
-			{
-				builder.Append("#if WITH_EDITORONLY_DATA\r\n");
-			}
+			UhtUsedDefineScopes<UhtType> notifyTypes = GetFieldNotifyTypes(classObj);
 
 			//UE_FIELD_NOTIFICATION_DECLARE_FIELD
-			AppendFieldNotify(builder, classObj, hasProperties, hasFunctions, hasEditorFields, allEditorFields, true, true,
-				(StringBuilder builder, UhtClass classObj, string name) =>
+			builder.AppendInstances(notifyTypes, UhtDefineScopeNames.Standard,
+				(builder, notifyType) =>
 				{
-					builder.Append($"\tUE_FIELD_NOTIFICATION_IMPLEMENT_FIELD({classObj.SourceName}, {name})\r\n");
+					builder.Append($"\tUE_FIELD_NOTIFICATION_IMPLEMENT_FIELD({classObj.SourceName}, {GetNotifyTypeName(notifyType)})\r\n");
 				});
 
 			//UE_FIELD_NOTIFICATION_DECLARE_ENUM_FIELD
-			builder.Append($"\tUE_FIELD_NOTIFICATION_IMPLEMENTATION_BEGIN({classObj.SourceName})\r\n");
-			AppendFieldNotify(builder, classObj, hasProperties, hasFunctions, hasEditorFields, allEditorFields, true, true,
-				(StringBuilder builder, UhtClass classObj, string name) =>
+			builder.AppendInstances(notifyTypes, UhtDefineScopeNames.Standard,
+				builder => builder.Append($"\tUE_FIELD_NOTIFICATION_IMPLEMENTATION_BEGIN({classObj.SourceName})\r\n"),
+				(builder, notifyType) =>
 				{
-					builder.Append($"\tUE_FIELD_NOTIFICATION_IMPLEMENT_ENUM_FIELD({classObj.SourceName}, {name})\r\n");
-				});
-			builder.Append($"\tUE_FIELD_NOTIFICATION_IMPLEMENTATION_END({classObj.SourceName});\r\n");
+					builder.Append($"\tUE_FIELD_NOTIFICATION_IMPLEMENT_ENUM_FIELD({classObj.SourceName}, {GetNotifyTypeName(notifyType)})\r\n");
+				}, 
+				builder => builder.Append($"\tUE_FIELD_NOTIFICATION_IMPLEMENTATION_END({classObj.SourceName});\r\n"));
 
-			if (allEditorFields)
-			{
-				builder.Append("#endif // WITH_EDITORONLY_DATA\r\n");
-			}
 			return builder;
 		}
 
 		private static StringBuilder AppendAutoGettersSetters(StringBuilder builder, UhtClass classObj)
 		{
-			if (!NeedAutoGetterSetterCodeGen(classObj))
+			UhtUsedDefineScopes<UhtProperty> autoGetterSetterProperties = GetAutoGetterSetterProperties(classObj);
+			if (autoGetterSetterProperties.IsEmpty)
 			{
 				return builder;
 			}
-			
-			// Scan the children to see what we have
-			GetAutoGetterSetterStats(classObj, out bool hasProperties, out bool hasEditorFields, out bool allEditorFields);
-			
-			// If we only have editor fields or no editor fields, then we only emit one block
-			if (hasEditorFields)
-			{
-				builder.Append("#if WITH_EDITORONLY_DATA\r\n");
-				AppendAutoGettersSetters(builder, classObj, hasProperties, hasEditorFields, allEditorFields, true);
-				builder.Append("#else //WITH_EDITORONLY_DATA\r\n");
-				AppendAutoGettersSetters(builder, classObj, hasProperties, hasEditorFields, allEditorFields, false);
-				builder.Append("#endif // WITH_EDITORONLY_DATA\r\n");
-			}
-			else
-			{
-				AppendAutoGettersSetters(builder, classObj, hasProperties, hasEditorFields, allEditorFields, false);
-			}
-			return builder;
+
+			return builder.AppendInstances(autoGetterSetterProperties, UhtDefineScopeNames.Standard,
+				(builder, property) =>
+				{
+					if (property.PropertyExportFlags.HasAnyFlags(UhtPropertyExportFlags.GetterSpecifiedAuto))
+					{
+						string getterCallText = property.Getter ?? "Get" + property.SourceName;
+						builder.AppendPropertyText(property, UhtPropertyTextType.GetterRetVal).Append(classObj.SourceName).Append("::").Append(getterCallText).Append("() const\r\n");
+						builder.Append("{\r\n");
+						builder.Append("\treturn ").Append(property.SourceName).Append(";\r\n");
+						builder.Append("}\r\n");
+					}
+					if (property.PropertyExportFlags.HasAnyFlags(UhtPropertyExportFlags.SetterSpecifiedAuto))
+					{
+						string setterCallText = property.Setter ?? "Set" + property.SourceName;
+						builder.Append("void ").Append(classObj.SourceName).Append("::").Append(setterCallText).Append('(').AppendPropertyText(property, UhtPropertyTextType.SetterParameterArgType).Append("InValue").Append(")\r\n");
+						builder.Append("{\r\n");
+						// @todo: setter defn
+						builder.Append("}\r\n");
+					}
+				});
 		}
 		
-		private static StringBuilder AppendAutoGettersSetters(StringBuilder builder, UhtClass classObj,
-			bool hasProperties, bool hasEditorFields, bool allEditorFields,
-			bool includeEditorOnlyFields)
-		{
-			AppendAutoGettersSetters(builder, classObj, UhtPropertyExportFlags.GetterSpecifiedAuto, hasProperties, hasEditorFields, allEditorFields,
-				includeEditorOnlyFields, false, (StringBuilder parentBuilder, UhtClass classObj, UhtProperty property) =>
-				{
-					using BorrowStringBuilder borrower = new(StringBuilderCache.Small);
-					StringBuilder propertyStringBuilder = borrower.StringBuilder;
-					propertyStringBuilder.AppendPropertyText(property, UhtPropertyTextType.GetterRetVal);
-					string getterRetText = propertyStringBuilder.ToString();
-					string getterCallText = property.Getter ?? "Get" + property.SourceName;
-					parentBuilder.Append('\t').Append(getterRetText).Append(classObj.SourceName).Append("::").Append(getterCallText).Append("() const\r\n");
-					parentBuilder.Append("\t{\r\n");
-					parentBuilder.Append('\t', 2).Append("return ").Append(property.SourceName).Append(";\r\n");
-					parentBuilder.Append("\t}\r\n");
-				});
-			
-			AppendAutoGettersSetters(builder, classObj, UhtPropertyExportFlags.SetterSpecifiedAuto, hasProperties, hasEditorFields, allEditorFields,
-				includeEditorOnlyFields, false, (StringBuilder parentBuilder, UhtClass classObj, UhtProperty property) =>
-				{
-					using BorrowStringBuilder borrower = new(StringBuilderCache.Small);
-					StringBuilder propertyStringBuilder = borrower.StringBuilder;
-					propertyStringBuilder.AppendPropertyText(property, UhtPropertyTextType.SetterParameterArgType);
-					string setterArgText = propertyStringBuilder + "InValue";
-					string setterCallText = property.Setter ?? "Set" + property.SourceName;
-					parentBuilder.Append("\tvoid ").Append(classObj.SourceName).Append("::").Append(setterCallText).Append('(').Append(setterArgText).Append(")\r\n");
-					parentBuilder.Append("\t{\r\n");
-					
-					// @todo: setter defn
-					
-					parentBuilder.Append("\t}\r\n");
-					
-					
-				});
-
-			return builder;
-		}
-
 		private static StringBuilder AppendPropertyAccessors(StringBuilder builder, UhtClass classObj)
 		{
 			foreach (UhtType type in classObj.Children)
 			{
 				if (type is UhtProperty property)
 				{
-					bool editorOnlyProperty = property.IsEditorOnlyProperty;
 					if (property.PropertyExportFlags.HasAnyFlags(UhtPropertyExportFlags.GetterFound))
 					{
-						builder.Append("\tvoid ").Append(classObj.SourceName).Append("::").AppendPropertyGetterWrapperName(property).Append("(const void* Object, void* OutValue)\r\n");
-						builder.Append("\t{\r\n");
-						if (editorOnlyProperty)
+						builder.Append("void ").Append(classObj.SourceName).Append("::").AppendPropertyGetterWrapperName(property).Append("(const void* Object, void* OutValue)\r\n");
+						builder.Append("{\r\n");
+						using (UhtMacroBlockEmitter blockEmitter = new(builder, UhtDefineScopeNames.Standard, property.DefineScope))
 						{
-							builder.Append("\t#if WITH_EDITORONLY_DATA\r\n");
+							builder.Append("\tconst ").Append(classObj.SourceName).Append("* Obj = (const ").Append(classObj.SourceName).Append("*)Object;\r\n");
+							if (property.IsStaticArray)
+							{
+								builder
+									.Append('\t')
+									.AppendPropertyText(property, UhtPropertyTextType.GetterSetterArg)
+									.Append("* Source = (")
+									.AppendPropertyText(property, UhtPropertyTextType.GetterSetterArg)
+									.Append("*)Obj->")
+									.Append(property.Getter!)
+									.Append("();\r\n");
+								builder
+									.Append('\t')
+									.AppendPropertyText(property, UhtPropertyTextType.GetterSetterArg)
+									.Append("* Result = (")
+									.AppendPropertyText(property, UhtPropertyTextType.GetterSetterArg)
+									.Append("*)OutValue;\r\n");
+								builder
+									.Append("\tCopyAssignItems(Result, Source, ")
+									.Append(property.ArrayDimensions)
+									.Append(");\r\n");
+							}
+							else if (property is UhtByteProperty byteProperty && byteProperty.Enum != null)
+							{
+								// If someone passed in a TEnumAsByte instead of the actual enum value, the cast in the else clause would cause an issue.
+								// Since this is known to be a TEnumAsByte, we just fetch the first byte.  *HOWEVER* on MSB machines where 
+								// the actual enum value is passed in this will fail and return zero if the native size of the enum > 1 byte.
+								builder
+									.Append('\t')
+									.Append("uint8")
+									.Append("& Result = *(")
+									.Append("uint8")
+									.Append("*)OutValue;\r\n");
+								builder
+									.Append("\tResult = (")
+									.Append("uint8")
+									.Append(")Obj->")
+									.Append(property.Getter!)
+									.Append("();\r\n");
+							}
+							else
+							{
+								builder
+									.Append('\t')
+									.AppendPropertyText(property, UhtPropertyTextType.GetterSetterArg)
+									.Append("& Result = *(")
+									.AppendPropertyText(property, UhtPropertyTextType.GetterSetterArg)
+									.Append("*)OutValue;\r\n");
+								builder
+									.Append("\tResult = (")
+									.AppendPropertyText(property, UhtPropertyTextType.GetterSetterArg)
+									.Append(")Obj->")
+									.Append(property.Getter!)
+									.Append("();\r\n");
+							}
 						}
-						builder.Append("\t\tconst ").Append(classObj.SourceName).Append("* Obj = (const ").Append(classObj.SourceName).Append("*)Object;\r\n");
-						if (property.IsStaticArray)
-						{
-							builder
-								.Append("\t\t")
-								.AppendPropertyText(property, UhtPropertyTextType.GetterSetterArg)
-								.Append("* Source = (")
-								.AppendPropertyText(property, UhtPropertyTextType.GetterSetterArg)
-								.Append("*)Obj->")
-								.Append(property.Getter!)
-								.Append("();\r\n");
-							builder
-								.Append("\t\t")
-								.AppendPropertyText(property, UhtPropertyTextType.GetterSetterArg)
-								.Append("* Result = (")
-								.AppendPropertyText(property, UhtPropertyTextType.GetterSetterArg)
-								.Append("*)OutValue;\r\n");
-							builder
-								.Append("\t\tCopyAssignItems(Result, Source, ")
-								.Append(property.ArrayDimensions)
-								.Append(");\r\n");
-						}
-						else
-						{
-							builder
-								.Append("\t\t")
-								.AppendPropertyText(property, UhtPropertyTextType.GetterSetterArg)
-								.Append("& Result = *(")
-								.AppendPropertyText(property, UhtPropertyTextType.GetterSetterArg)
-								.Append("*)OutValue;\r\n");
-							builder
-								.Append("\t\tResult = (")
-								.AppendPropertyText(property, UhtPropertyTextType.GetterSetterArg)
-								.Append(")Obj->")
-								.Append(property.Getter!)
-								.Append("();\r\n");
-						}
-						if (editorOnlyProperty)
-						{
-							builder.Append("\t#endif // WITH_EDITORONLY_DATA\r\n");
-						}
-						builder.Append("\t}\r\n");
+						builder.Append("}\r\n");
 					}
 					if (property.PropertyExportFlags.HasAnyFlags(UhtPropertyExportFlags.SetterFound))
 					{
-						builder.Append("\tvoid ").Append(classObj.SourceName).Append("::").AppendPropertySetterWrapperName(property).Append("(void* Object, const void* InValue)\r\n");
-						builder.Append("\t{\r\n");
-						if (editorOnlyProperty)
+						builder.Append("void ").Append(classObj.SourceName).Append("::").AppendPropertySetterWrapperName(property).Append("(void* Object, const void* InValue)\r\n");
+						builder.Append("{\r\n");
+						using (UhtMacroBlockEmitter blockEmitter = new(builder, UhtDefineScopeNames.Standard, property.DefineScope))
 						{
-							builder.Append("\t#if WITH_EDITORONLY_DATA\r\n");
-						}
-						builder.Append("\t\t").Append(classObj.SourceName).Append("* Obj = (").Append(classObj.SourceName).Append("*)Object;\r\n");
-						if (property.IsStaticArray)
-						{
+							builder.Append('\t').Append(classObj.SourceName).Append("* Obj = (").Append(classObj.SourceName).Append("*)Object;\r\n");
+							if (property.IsStaticArray)
+							{
+								builder
+									.Append('\t')
+									.AppendPropertyText(property, UhtPropertyTextType.GetterSetterArg)
+									.Append("* Value = (")
+									.AppendPropertyText(property, UhtPropertyTextType.GetterSetterArg)
+									.Append("*)InValue;\r\n");
+							}
+							else if (property is UhtByteProperty byteProperty && byteProperty.Enum != null)
+							{
+								// If someone passed in a TEnumAsByte instead of the actual enum value, the cast in the else clause would cause an issue.
+								// Since this is known to be a TEnumAsByte, we just fetch the first byte.  *HOWEVER* on MSB machines where 
+								// the actual enum value is passed in this will fail and return zero if the native size of the enum > 1 byte.
+								builder
+									.Append('\t')
+									.AppendPropertyText(property, UhtPropertyTextType.GetterSetterArg)
+									.Append(" Value = (")
+									.AppendPropertyText(property, UhtPropertyTextType.GetterSetterArg)
+									.Append(")*(uint8*)InValue;\r\n");
+							}
+							else
+							{
+								builder
+									.Append('\t')
+									.AppendPropertyText(property, UhtPropertyTextType.GetterSetterArg)
+									.Append("& Value = *(")
+									.AppendPropertyText(property, UhtPropertyTextType.GetterSetterArg)
+									.Append("*)InValue;\r\n");
+							}
 							builder
-								.Append("\t\t")
-								.AppendPropertyText(property, UhtPropertyTextType.GetterSetterArg)
-								.Append("* Value = (")
-								.AppendPropertyText(property, UhtPropertyTextType.GetterSetterArg)
-								.Append("*)InValue;\r\n");
+								.Append("\tObj->")
+								.Append(property.Setter!)
+								.Append("(Value);\r\n");
 						}
-						else if (property is UhtByteProperty byteProperty && byteProperty.Enum != null)
-						{
-							// If someone passed in a TEnumAsByte instead of the actual enum value, the cast in the else clause would cause an issue.
-							// Since this is known to be a TEnumAsByte, we just fetch the first byte.  *HOWEVER* on MSB machines where 
-							// the actual enum value is passed in this will fail and return zero if the native size of the enum > 1 byte.
-							builder
-								.Append("\t\t")
-								.AppendPropertyText(property, UhtPropertyTextType.GetterSetterArg)
-								.Append(" Value = (")
-								.AppendPropertyText(property, UhtPropertyTextType.GetterSetterArg)
-								.Append(")*(uint8*)InValue;\r\n");
-						}
-						else
-						{
-							builder
-								.Append("\t\t")
-								.AppendPropertyText(property, UhtPropertyTextType.GetterSetterArg)
-								.Append("& Value = *(")
-								.AppendPropertyText(property, UhtPropertyTextType.GetterSetterArg)
-								.Append("*)InValue;\r\n");
-						}
-						builder
-							.Append("\t\tObj->")
-							.Append(property.Setter!)
-							.Append("(Value);\r\n");
-						if (editorOnlyProperty)
-						{
-							builder.Append("\t#endif // WITH_EDITORONLY_DATA\r\n");
-						}
-						builder.Append("\t}\r\n");
+						builder.Append("}\r\n");
 					}
 				}
 			}
@@ -1428,105 +1475,19 @@ namespace EpicGames.UHT.Exporters.CodeGen
 				string sparseDataType = sparseScriptStruct.EngineName;
 
 				builder.Append('F').Append(sparseDataType).Append("* ").Append(classObj.SourceName).Append("::Get").Append(sparseDataType).Append("() const \r\n");
-				builder.Append("{ \r\n");
-				builder.Append("\treturn static_cast<F").Append(sparseDataType).Append("*>(GetClass()->GetOrCreateSparseClassData()); \r\n");
-				builder.Append("} \r\n");
+				builder.Append("{\r\n");
+				builder.Append("\treturn static_cast<F").Append(sparseDataType).Append("*>(GetClass()->GetOrCreateSparseClassData());\r\n");
+				builder.Append("}\r\n");
 
-				builder.Append("const F").Append(sparseDataType).Append("* ").Append(classObj.SourceName).Append("::Get").Append(sparseDataType).Append("(EGetSparseClassDataMethod GetMethod) const \r\n");
-				builder.Append("{ \r\n");
-				builder.Append("\treturn static_cast<const F").Append(sparseDataType).Append("*>(GetClass()->GetSparseClassData(GetMethod)); \r\n");
-				builder.Append("} \r\n");
+				builder.Append("const F").Append(sparseDataType).Append("* ").Append(classObj.SourceName).Append("::Get").Append(sparseDataType).Append("(EGetSparseClassDataMethod GetMethod) const\r\n");
+				builder.Append("{\r\n");
+				builder.Append("\treturn static_cast<const F").Append(sparseDataType).Append("*>(GetClass()->GetSparseClassData(GetMethod));\r\n");
+				builder.Append("}\r\n");
 
 				builder.Append("UScriptStruct* ").Append(classObj.SourceName).Append("::StaticGet").Append(sparseDataType).Append("ScriptStruct()\r\n");
-				builder.Append("{ \r\n");
-				builder.Append("\treturn F").Append(sparseDataType).Append("::StaticStruct(); \r\n");
-				builder.Append("} \r\n");
-			}
-			return builder;
-		}
-
-		private StringBuilder AppendInterfaceCallFunctions(StringBuilder builder, UhtClass classObj, List<UhtFunction> callbackFunctions)
-		{
-			foreach (UhtFunction function in callbackFunctions)
-			{
-				builder.Append("\tstatic FName NAME_").Append(function.Outer?.SourceName).Append('_').Append(function.SourceName).Append(" = FName(TEXT(\"").Append(function.EngineName).Append("\"));\r\n");
-				string extraParameter = function.FunctionFlags.HasAnyFlags(EFunctionFlags.Const) ? "const UObject* O" : "UObject* O";
-				AppendNativeFunctionHeader(builder, function, UhtPropertyTextType.InterfaceFunctionArgOrRetVal, false, null, extraParameter, 0, "\r\n");
-				builder.Append("\t{\r\n");
-				builder.Append("\t\tcheck(O != NULL);\r\n");
-				builder.Append("\t\tcheck(O->GetClass()->ImplementsInterface(").Append(classObj.SourceName).Append("::StaticClass()));\r\n");
-				if (function.Children.Count > 0)
-				{
-					builder.Append("\t\t").Append(GetEventStructParametersName(classObj, function.StrippedFunctionName)).Append(" Parms;\r\n");
-				}
-				builder.Append("\t\tUFunction* const Func = O->FindFunction(NAME_").Append(function.Outer?.SourceName).Append('_').Append(function.SourceName).Append(");\r\n");
-				builder.Append("\t\tif (Func)\r\n");
-				builder.Append("\t\t{\r\n");
-				foreach (UhtType parameter in function.ParameterProperties.Span)
-				{
-					if (parameter is UhtProperty property)
-					{
-						builder.Append("\t\t\tParms.").Append(property.SourceName).Append('=').Append(property.SourceName).Append(";\r\n");
-					}
-				}
-				builder
-					.Append("\t\t\t")
-					.Append(function.FunctionFlags.HasAnyFlags(EFunctionFlags.Const) ? "const_cast<UObject*>(O)" : "O")
-					.Append("->ProcessEvent(Func, ")
-					.Append(function.Children.Count > 0 ? "&Parms" : "NULL")
-					.Append(");\r\n");
-				foreach (UhtType parameter in function.ParameterProperties.Span)
-				{
-					if (parameter is UhtProperty property)
-					{
-						if (property.PropertyFlags.HasExactFlags(EPropertyFlags.OutParm | EPropertyFlags.ConstParm, EPropertyFlags.OutParm))
-						{
-							builder.Append("\t\t\t").Append(property.SourceName).Append("=Parms.").Append(property.SourceName).Append(";\r\n");
-						}
-					}
-				}
-				builder.Append("\t\t}\r\n");
-
-				// else clause to call back into native if it's a BlueprintNativeEvent
-				if (function.FunctionFlags.HasAnyFlags(EFunctionFlags.Native))
-				{
-					builder
-						.Append("\t\telse if (auto I = (")
-						.Append(function.FunctionFlags.HasAnyFlags(EFunctionFlags.Const) ? "const I" : "I")
-						.Append(classObj.EngineName)
-						.Append("*)(O->GetNativeInterfaceAddress(U")
-						.Append(classObj.EngineName)
-						.Append("::StaticClass())))\r\n");
-					builder.Append("\t\t{\r\n");
-					builder.Append("\t\t\t");
-					if (function.HasReturnProperty)
-					{
-						builder.Append("Parms.ReturnValue = ");
-					}
-					builder.Append("I->").Append(function.SourceName).Append("_Implementation(");
-
-					bool first = true;
-					foreach (UhtType parameter in function.ParameterProperties.Span)
-					{
-						if (parameter is UhtProperty property)
-						{
-							if (!first)
-							{
-								builder.Append(',');
-							}
-							first = false;
-							builder.Append(property.SourceName);
-						}
-					}
-					builder.Append(");\r\n");
-					builder.Append("\t\t}\r\n");
-				}
-
-				if (function.HasReturnProperty)
-				{
-					builder.Append("\t\treturn Parms.ReturnValue;\r\n");
-				}
-				builder.Append("\t}\r\n");
+				builder.Append("{\r\n");
+				builder.Append("\treturn F").Append(sparseDataType).Append("::StaticStruct();\r\n");
+				builder.Append("}\r\n");
 			}
 			return builder;
 		}
@@ -1535,20 +1496,13 @@ namespace EpicGames.UHT.Exporters.CodeGen
 		{
 			if (!classObj.SerializerArchiveType.HasAnyFlags(serializerType))
 			{
-				if (classObj.EnclosingDefine.Length > 0)
-				{
-					builder.Append("#if ").Append(classObj.EnclosingDefine).Append("\r\n");
-				}
-				builder.Append('\t').Append(macroText).Append('(').Append(classObj.SourceName).Append(")\r\n");
-				if (classObj.EnclosingDefine.Length > 0)
-				{
-					builder.Append("#endif\r\n");
-				}
+				builder.AppendScoped(UhtDefineScopeNames.Standard, classObj.SerializerDefineScope,
+					builder => builder.Append(macroText).Append('(').Append(classObj.SourceName).Append(")\r\n"));
 			}
 			return builder;
 		}
 
-		private StringBuilder AppendNativeGeneratedInitCode(StringBuilder builder, UhtClass classObj)
+		private StringBuilder AppendNativeGeneratedInitCode(StringBuilder builder, UhtClass classObj, UhtUsedDefineScopes<UhtFunction> functions)
 		{
 			const string MetaDataParamsName = "Class_MetaDataParams";
 			string singletonName = GetSingletonName(classObj, true);
@@ -1560,91 +1514,42 @@ namespace EpicGames.UHT.Exporters.CodeGen
 
 			bool hasInterfaces = classObj.Bases.Any(x => x is UhtClass baseClass && baseClass.ClassFlags.HasAnyFlags(EClassFlags.Interface));
 
-			// Collect the functions to be exported
-			bool allEditorOnlyFunctions = true;
-			List<UhtFunction> sortedFunctions = new();
-			foreach (UhtFunction function in classObj.Functions)
-			{
-				if (!function.FunctionFlags.HasAnyFlags(EFunctionFlags.Delegate))
-				{
-					allEditorOnlyFunctions &= function.FunctionFlags.HasAnyFlags(EFunctionFlags.EditorOnly);
-				}
-				sortedFunctions.Add(function);
-			}
-			sortedFunctions.Sort((x, y) => StringComparerUE.OrdinalIgnoreCase.Compare(x.EngineName, y.EngineName));
-
-			// Output any function
-			foreach (UhtFunction function in sortedFunctions)
-			{
-				if (!function.FunctionFlags.HasAnyFlags(EFunctionFlags.Delegate))
-				{
-					AppendFunction(builder, function, classObj.ClassExportFlags.HasAnyFlags(UhtClassExportFlags.NoExport));
-				}
-			}
-
-			builder.Append("\tIMPLEMENT_CLASS_NO_AUTO_REGISTRATION(").Append(classObj.SourceName).Append(");\r\n");
+			builder.Append("IMPLEMENT_CLASS_NO_AUTO_REGISTRATION(").Append(classObj.SourceName).Append(");\r\n");
 
 			// Everything from this point on will be part of the definition hash
 			int hashCodeBlockStart = builder.Length;
 
 			// simple ::StaticClass wrapper to avoid header, link and DLL hell
 			{
-				builder.Append("\tUClass* ").Append(GetSingletonName(classObj, false)).Append("()\r\n");
-				builder.Append("\t{\r\n");
-				builder.Append("\t\treturn ").Append(classObj.SourceName).Append("::StaticClass();\r\n");
-				builder.Append("\t}\r\n");
+				builder.Append("UClass* ").Append(GetSingletonName(classObj, false)).Append("()\r\n");
+				builder.Append("{\r\n");
+				builder.Append("\treturn ").Append(classObj.SourceName).Append("::StaticClass();\r\n");
+				builder.Append("}\r\n");
 			}
+
+			// Collect the properties
+			UhtUsedDefineScopes<UhtProperty> properties = new(classObj.Properties);
 
 			// Declare the statics object
 			{
-				builder.Append("\tstruct ").Append(staticsName).Append("\r\n");
-				builder.Append("\t{\r\n");
-				builder.Append("\t\tstatic UObject* (*const DependentSingletons[])();\r\n");
+				builder.Append("struct ").Append(staticsName).Append("\r\n");
+				builder.Append("{\r\n");
 
-				if (sortedFunctions.Count != 0)
-				{
-					builder.AppendBeginEditorOnlyGuard(allEditorOnlyFunctions);
-					builder.Append("\t\tstatic const FClassFunctionLinkInfo FuncInfo[];\r\n");
-					builder.AppendEndEditorOnlyGuard(allEditorOnlyFunctions);
-				}
+				builder.AppendMetaDataDecl(classObj, context, properties, MetaDataParamsName, 1);
 
-				builder.AppendMetaDataDecl(classObj, MetaDataParamsName, 2);
+				AppendPropertiesDecl(builder, context, properties, 1);
 
-				AppendPropertiesDecl(builder, classObj, classObj.SourceName, staticsName, 2);
+				builder.Append("\tstatic UObject* (*const DependentSingletons[])();\r\n");
 
-				if (hasInterfaces)
-				{
-					builder.Append("\t\tstatic const UECodeGen_Private::FImplementedInterfaceParams InterfaceParams[];\r\n");
-				}
-
-				builder.Append("\t\tstatic const FCppClassTypeInfoStatic StaticCppClassTypeInfo;\r\n");
-
-				builder.Append("\t\tstatic const UECodeGen_Private::FClassParams ClassParams;\r\n");
-
-				builder.Append("\t};\r\n");
-			}
-
-			// Define the statics object
-			{
-				builder.Append("\tUObject* (*const ").Append(staticsName).Append("::DependentSingletons[])() = {\r\n");
-				if (classObj.SuperClass != null && classObj.SuperClass != classObj)
-				{
-					builder.Append("\t\t(UObject* (*)())").Append(GetSingletonName(classObj.SuperClass, true)).Append(",\r\n");
-				}
-				builder.Append("\t\t(UObject* (*)())").Append(GetSingletonName(Package, true)).Append(",\r\n");
-				builder.Append("\t};\r\n");
-
-				builder.Append("\tstatic_assert(UE_ARRAY_COUNT(").Append(staticsName).Append("::DependentSingletons) < 16);\r\n");
-
-				if (sortedFunctions.Count > 0)
-				{
-					builder.AppendBeginEditorOnlyGuard(allEditorOnlyFunctions);
-					builder.Append("\tconst FClassFunctionLinkInfo ").Append(staticsName).Append("::FuncInfo[] = {\r\n");
-
-					foreach (UhtFunction function in sortedFunctions)
+				//builder.AppendIfInstances(functions, UhtDefineScopeNames.WithEditor, builder => builder.Append("\t\tstatic const FClassFunctionLinkInfo FuncInfo[];\r\n"));
+				// Functions
+				builder.AppendInstances(functions, UhtDefineScopeNames.WithEditor,
+					builder =>
 					{
-						bool isEditorOnlyFunction = function.FunctionFlags.HasAnyFlags(EFunctionFlags.EditorOnly);
-						builder.AppendBeginEditorOnlyGuard(isEditorOnlyFunction);
+						builder.Append("\tstatic constexpr FClassFunctionLinkInfo ").Append("FuncInfo[] = {\r\n");
+					},
+					(builder, function) =>
+					{
 						builder
 							.Append("\t\t{ &")
 							.Append(GetSingletonName(function, true))
@@ -1653,21 +1558,53 @@ namespace EpicGames.UHT.Exporters.CodeGen
 							.Append(" },")
 							.AppendObjectHash(classObj, context, function)
 							.Append("\r\n");
-						builder.AppendEndEditorOnlyGuard(isEditorOnlyFunction);
-					}
+					},
+					builder =>
+					{
+						builder.Append("\t};\r\n");
+						builder.Append("\tstatic_assert(UE_ARRAY_COUNT(").Append("FuncInfo) < 2048);\r\n");
+					});
 
-					builder.Append("\t};\r\n");
-					builder.Append("\tstatic_assert(UE_ARRAY_COUNT(").Append(staticsName).Append("::FuncInfo) < 2048);\r\n");
-					builder.AppendEndEditorOnlyGuard(allEditorOnlyFunctions);
-				}
-
-				builder.AppendMetaDataDef(classObj, staticsName, MetaDataParamsName, 1);
-
-				AppendPropertiesDefs(builder, classObj, classObj.SourceName, staticsName, 1);
 
 				if (hasInterfaces)
 				{
-					builder.Append("\t\tconst UECodeGen_Private::FImplementedInterfaceParams ").Append(staticsName).Append("::InterfaceParams[] = {\r\n");
+					builder.Append("\tstatic const UECodeGen_Private::FImplementedInterfaceParams InterfaceParams[];\r\n");
+				}
+
+				builder.Append("\tstatic constexpr FCppClassTypeInfoStatic StaticCppClassTypeInfo = {\r\n");
+				if (classObj.ClassFlags.HasAnyFlags(EClassFlags.Interface))
+				{
+					builder.Append("\t\tTCppClassTypeTraits<I").Append(classObj.EngineName).Append(">::IsAbstract,\r\n");
+				}
+				else
+				{
+					builder.Append("\t\tTCppClassTypeTraits<").Append(classObj.SourceName).Append(">::IsAbstract,\r\n");
+				}
+				builder.Append("\t};\r\n");
+
+				builder.Append("\tstatic const UECodeGen_Private::FClassParams ClassParams;\r\n");
+
+				builder.Append("};\r\n");
+			}
+
+			// Define the statics object
+			{
+				AppendPropertiesDefs(builder, context, properties, 0);
+
+				// Dependent singletons
+				builder.Append("UObject* (*const ").Append(staticsName).Append("::DependentSingletons[])() = {\r\n");
+				if (classObj.SuperClass != null && classObj.SuperClass != classObj)
+				{
+					builder.Append("\t(UObject* (*)())").Append(GetSingletonName(classObj.SuperClass, true)).Append(",\r\n");
+				}
+				builder.Append("\t(UObject* (*)())").Append(GetSingletonName(Package, true)).Append(",\r\n");
+				builder.Append("};\r\n");
+				builder.Append("static_assert(UE_ARRAY_COUNT(").Append(staticsName).Append("::DependentSingletons) < 16);\r\n");
+
+				// Implemented interfaces
+				if (hasInterfaces)
+				{
+					builder.Append("const UECodeGen_Private::FImplementedInterfaceParams ").Append(staticsName).Append("::InterfaceParams[] = {\r\n");
 
 					foreach (UhtStruct structObj in classObj.Bases)
 					{
@@ -1676,7 +1613,7 @@ namespace EpicGames.UHT.Exporters.CodeGen
 							if (baseClass.ClassFlags.HasAnyFlags(EClassFlags.Interface))
 							{
 								builder
-									.Append("\t\t\t{ ")
+									.Append("\t{ ")
 									.Append(GetSingletonName(baseClass.AlternateObject, false))
 									.Append(", (int32)VTABLE_OFFSET(")
 									.Append(classObj.SourceName)
@@ -1689,89 +1626,52 @@ namespace EpicGames.UHT.Exporters.CodeGen
 						}
 					}
 
-					builder.Append("\t\t};\r\n");
-
-					builder.Append("\tstatic_assert(UE_ARRAY_COUNT(").Append(staticsName).Append("::InterfaceParams) < 64);\r\n");
+					builder.Append("};\r\n");
 				}
 
-				builder.Append("\tconst FCppClassTypeInfoStatic ").Append(staticsName).Append("::StaticCppClassTypeInfo = {\r\n");
-				if (classObj.ClassFlags.HasAnyFlags(EClassFlags.Interface))
-				{
-					builder.Append("\t\tTCppClassTypeTraits<I").Append(classObj.EngineName).Append(">::IsAbstract,\r\n");
-				}
-				else
-				{
-					builder.Append("\t\tTCppClassTypeTraits<").Append(classObj.SourceName).Append(">::IsAbstract,\r\n");
-				}
-				builder.Append("\t};\r\n");
-
+				// Class parameters
 				EClassFlags classFlags = classObj.ClassFlags & EClassFlags.SaveInCompiledInClasses;
-
-				builder.Append("\tconst UECodeGen_Private::FClassParams ").Append(staticsName).Append("::ClassParams = {\r\n");
-				builder.Append("\t\t&").Append(classObj.SourceName).Append("::StaticClass,\r\n");
+				builder.Append("const UECodeGen_Private::FClassParams ").Append(staticsName).Append("::ClassParams = {\r\n");
+				builder.Append("\t&").Append(classObj.SourceName).Append("::StaticClass,\r\n");
 				if (classObj.Config.Length > 0)
 				{
-					builder.Append("\t\t").AppendUTF8LiteralString(classObj.Config).Append(",\r\n");
+					builder.Append('\t').AppendUTF8LiteralString(classObj.Config).Append(",\r\n");
 				}
 				else
 				{
-					builder.Append("\t\tnullptr,\r\n");
+					builder.Append("\tnullptr,\r\n");
 				}
-				builder.Append("\t\t&StaticCppClassTypeInfo,\r\n");
-				builder.Append("\t\tDependentSingletons,\r\n");
-				if (sortedFunctions.Count == 0)
-				{
-					builder.Append("\t\tnullptr,\r\n");
-				}
-				else if (allEditorOnlyFunctions)
-				{
-					builder.Append("\t\tIF_WITH_EDITOR(FuncInfo, nullptr),\r\n");
-				}
-				else
-				{
-					builder.Append("\t\tFuncInfo,\r\n");
-				}
-				builder.AppendPropertiesParamsList(classObj, staticsName, 2, "\r\n");
-				builder.Append("\t\t").Append(hasInterfaces ? "InterfaceParams" : "nullptr").Append(",\r\n");
-				builder.Append("\t\tUE_ARRAY_COUNT(DependentSingletons),\r\n");
-				if (sortedFunctions.Count == 0)
-				{
-					builder.Append("\t\t0,\r\n");
-				}
-				else if (allEditorOnlyFunctions)
-				{
-					builder.Append("\t\tIF_WITH_EDITOR(UE_ARRAY_COUNT(FuncInfo), 0),\r\n");
-				}
-				else
-				{
-					builder.Append("\t\tUE_ARRAY_COUNT(FuncInfo),\r\n");
-				}
-				builder.AppendPropertiesParamsCount(classObj, staticsName, 2, "\r\n");
-				builder.Append("\t\t").Append(hasInterfaces ? "UE_ARRAY_COUNT(InterfaceParams)" : "0").Append(",\r\n");
-				builder.Append($"\t\t0x{(uint)classFlags:X8}u,\r\n");
-				builder.Append("\t\t").AppendMetaDataParams(classObj, staticsName, MetaDataParamsName).Append("\r\n");
-				builder.Append("\t};\r\n");
-
-				builder.AppendPropertiesParamsCountStaticAssert(classObj, staticsName);
+				builder.Append("\t&StaticCppClassTypeInfo,\r\n");
+				builder.Append("\tDependentSingletons,\r\n");
+				builder.AppendArrayPtrLine(functions, UhtDefineScopeNames.WithEditor, null, "FuncInfo", 1, ",\r\n");
+				builder.AppendArrayPtrLine(properties, UhtDefineScopeNames.Standard, staticsName, "PropPointers", 1, ",\r\n");
+				builder.Append('\t').Append(hasInterfaces ? "InterfaceParams" : "nullptr").Append(",\r\n");
+				builder.Append("\tUE_ARRAY_COUNT(DependentSingletons),\r\n");
+				builder.AppendArrayCountLine(functions, UhtDefineScopeNames.WithEditor, null, "FuncInfo", 1, ",\r\n");
+				builder.AppendArrayCountLine(properties, UhtDefineScopeNames.Standard, staticsName, "PropPointers", 1, ",\r\n");
+				builder.Append('\t').Append(hasInterfaces ? "UE_ARRAY_COUNT(InterfaceParams)" : "0").Append(",\r\n");
+				builder.Append($"\t0x{(uint)classFlags:X8}u,\r\n");
+				builder.Append('\t').AppendMetaDataParams(classObj, staticsName, MetaDataParamsName).Append("\r\n");
+				builder.Append("};\r\n");
 			}
 
 			// Class registration
 			{
-				builder.Append("\tUClass* ").Append(singletonName).Append("()\r\n");
+				builder.Append("UClass* ").Append(singletonName).Append("()\r\n");
+				builder.Append("{\r\n");
+				builder.Append("\tif (!").Append(registrationName).Append(".OuterSingleton)\r\n");
 				builder.Append("\t{\r\n");
-				builder.Append("\t\tif (!").Append(registrationName).Append(".OuterSingleton)\r\n");
-				builder.Append("\t\t{\r\n");
-				builder.Append("\t\t\tUECodeGen_Private::ConstructUClass(").Append(registrationName).Append(".OuterSingleton, ").Append(staticsName).Append("::ClassParams);\r\n");
+				builder.Append("\t\tUECodeGen_Private::ConstructUClass(").Append(registrationName).Append(".OuterSingleton, ").Append(staticsName).Append("::ClassParams);\r\n");
 				if (sparseDataTypes != null)
 				{
 					foreach (string sparseClass in sparseDataTypes)
 					{
-						builder.Append("\t\t\t").Append(registrationName).Append(".OuterSingleton->SetSparseClassDataStruct(").Append(classObj.SourceName).Append("::StaticGet").Append(sparseClass).Append("ScriptStruct());\r\n");
+						builder.Append("\t\t").Append(registrationName).Append(".OuterSingleton->SetSparseClassDataStruct(").Append(classObj.SourceName).Append("::StaticGet").Append(sparseClass).Append("ScriptStruct());\r\n");
 					}
 				}
-				builder.Append("\t\t}\r\n");
-				builder.Append("\t\treturn ").Append(registrationName).Append(".OuterSingleton;\r\n");
 				builder.Append("\t}\r\n");
+				builder.Append("\treturn ").Append(registrationName).Append(".OuterSingleton;\r\n");
+				builder.Append("}\r\n");
 			}
 
 			// At this point, we can compute the hash... HOWEVER, in the old UHT extra data is appended to the hash block that isn't emitted to the actual output
@@ -1813,9 +1713,9 @@ namespace EpicGames.UHT.Exporters.CodeGen
 
 				if (classObj.ClassExportFlags.HasAnyFlags(UhtClassExportFlags.NoExport))
 				{
-					builder.Append("\t/* friend declarations for pasting into noexport class ").Append(classObj.SourceName).Append("\r\n");
-					builder.Append("\tfriend struct ").Append(staticsName).Append(";\r\n");
-					builder.Append("\t*/\r\n");
+					builder.Append("/* friend declarations for pasting into noexport class ").Append(classObj.SourceName).Append("\r\n");
+					builder.Append("friend struct ").Append(staticsName).Append(";\r\n");
+					builder.Append("*/\r\n");
 				}
 
 				if (Session.IncludeDebugOutput)
@@ -1833,78 +1733,65 @@ namespace EpicGames.UHT.Exporters.CodeGen
 				}
 			}
 
-			builder.Append("\ttemplate<> ").Append(PackageApi).Append("UClass* StaticClass<").Append(classObj.SourceName).Append(">()\r\n");
-			builder.Append("\t{\r\n");
-			builder.Append("\t\treturn ").Append(classObj.SourceName).Append("::StaticClass();\r\n");
-			builder.Append("\t}\r\n");
+			builder.Append("template<> ").Append(PackageApi).Append("UClass* StaticClass<").Append(classObj.SourceName).Append(">()\r\n");
+			builder.Append("{\r\n");
+			builder.Append("\treturn ").Append(classObj.SourceName).Append("::StaticClass();\r\n");
+			builder.Append("}\r\n");
 
 			if (classObj.ClassExportFlags.HasAnyFlags(UhtClassExportFlags.SelfHasReplicatedProperties))
 			{
-				builder.Append("\r\n");
-				builder.Append("\tvoid ").Append(classObj.SourceName).Append("::ValidateGeneratedRepEnums(const TArray<struct FRepRecord>& ClassReps) const\r\n");
-				builder.Append("\t{\r\n");
+				builder.Append("void ").Append(classObj.SourceName).Append("::ValidateGeneratedRepEnums(const TArray<struct FRepRecord>& ClassReps) const\r\n");
+				builder.Append("{\r\n");
 
 				foreach (UhtProperty property in classObj.Properties)
 				{
 					if (property.PropertyFlags.HasAnyFlags(EPropertyFlags.Net))
 					{
-						builder.Append("\t\tstatic const FName Name_").Append(property.SourceName).Append("(TEXT(\"").Append(property.SourceName).Append("\"));\r\n");
+						builder.Append("\tstatic const FName Name_").Append(property.SourceName).Append("(TEXT(\"").Append(property.SourceName).Append("\"));\r\n");
 					}
 				}
-				builder.Append("\r\n");
-				builder.Append("\t\tconst bool bIsValid = true");
+				builder.Append("\tconst bool bIsValid = true");
 				foreach (UhtProperty property in classObj.Properties)
 				{
 					if (property.PropertyFlags.HasAnyFlags(EPropertyFlags.Net))
 					{
 						if (!property.IsStaticArray)
 						{
-							builder.Append("\r\n\t\t\t&& Name_").Append(property.SourceName).Append(" == ClassReps[(int32)ENetFields_Private::").Append(property.SourceName).Append("].Property->GetFName()");
+							builder.Append("\r\n\t\t&& Name_").Append(property.SourceName).Append(" == ClassReps[(int32)ENetFields_Private::").Append(property.SourceName).Append("].Property->GetFName()");
 						}
 						else
 						{
-							builder.Append("\r\n\t\t\t&& Name_").Append(property.SourceName).Append(" == ClassReps[(int32)ENetFields_Private::").Append(property.SourceName).Append("_STATIC_ARRAY].Property->GetFName()");
+							builder.Append("\r\n\t\t&& Name_").Append(property.SourceName).Append(" == ClassReps[(int32)ENetFields_Private::").Append(property.SourceName).Append("_STATIC_ARRAY].Property->GetFName()");
 						}
 					}
 				}
 				builder.Append(";\r\n");
-				builder.Append("\r\n");
-				builder.Append("\t\tcheckf(bIsValid, TEXT(\"UHT Generated Rep Indices do not match runtime populated Rep Indices for properties in ").Append(classObj.SourceName).Append("\"));\r\n");
-				builder.Append("\t}\r\n");
+				builder.Append("\tcheckf(bIsValid, TEXT(\"UHT Generated Rep Indices do not match runtime populated Rep Indices for properties in ").Append(classObj.SourceName).Append("\"));\r\n");
+				builder.Append("}\r\n");
 			}
 			return builder;
 		}
 
 		private static StringBuilder AppendNatives(StringBuilder builder, UhtClass classObj)
 		{
-			builder.Append("\tvoid ").Append(classObj.SourceName).Append("::StaticRegisterNatives").Append(classObj.SourceName).Append("()\r\n");
-			builder.Append("\t{\r\n");
+			builder.Append("void ").Append(classObj.SourceName).Append("::StaticRegisterNatives").Append(classObj.SourceName).Append("()\r\n");
+			builder.Append("{\r\n");
 
-			bool allEditorOnly = true;
+			UhtUsedDefineScopes<UhtFunction> functions = new(classObj.Functions.Where(x => x.FunctionFlags.HasExactFlags(EFunctionFlags.Native | EFunctionFlags.NetRequest, EFunctionFlags.Native)));
+			functions.Instances.Sort((x, y) => StringComparerUE.OrdinalIgnoreCase.Compare(x.EngineName, y.EngineName));
 
-			List<UhtFunction> sortedFunctions = new();
-			foreach (UhtFunction function in classObj.Functions)
-			{
-				if (function.FunctionFlags.HasExactFlags(EFunctionFlags.Native | EFunctionFlags.NetRequest, EFunctionFlags.Native))
-				{
-					sortedFunctions.Add(function);
-					allEditorOnly &= function.FunctionFlags.HasAnyFlags(EFunctionFlags.EditorOnly);
-				}
-			}
-			sortedFunctions.Sort((x, y) => StringComparerUE.OrdinalIgnoreCase.Compare(x.EngineName, y.EngineName));
-
-			if (sortedFunctions.Count != 0)
+			if (!functions.IsEmpty)
 			{
 				{
-					using UhtMacroBlockEmitter blockEmitter = new(builder, "WITH_EDITOR", allEditorOnly);
-					builder.Append("\t\tUClass* Class = ").Append(classObj.SourceName).Append("::StaticClass();\r\n");
-					builder.Append("\t\tstatic const FNameNativePtrPair Funcs[] = {\r\n");
+					using UhtMacroBlockEmitter blockEmitter = new(builder, UhtDefineScopeNames.WithEditor, functions.SoleScope);
+					builder.Append("\tUClass* Class = ").Append(classObj.SourceName).Append("::StaticClass();\r\n");
+					builder.Append("\tstatic const FNameNativePtrPair Funcs[] = {\r\n");
 
-					foreach (UhtFunction function in sortedFunctions)
+					foreach (UhtFunction function in functions.Instances)
 					{
-						blockEmitter.Set(function.FunctionFlags.HasAnyFlags(EFunctionFlags.EditorOnly));
+						blockEmitter.Set(function.DefineScope);
 						builder
-							.Append("\t\t\t{ ")
+							.Append("\t\t{ ")
 							.AppendUTF8LiteralString(function.EngineName)
 							.Append(", &")
 							.AppendClassSourceNameOrInterfaceName(classObj)
@@ -1914,109 +1801,14 @@ namespace EpicGames.UHT.Exporters.CodeGen
 					}
 
 					// This will close the block if we have one that isn't editor only
-					blockEmitter.Set(allEditorOnly);
+					blockEmitter.Set(functions.SoleScope);
 
-					builder.Append("\t\t};\r\n");
-					builder.Append("\t\tFNativeFunctionRegistrar::RegisterFunctions(Class, Funcs, UE_ARRAY_COUNT(Funcs));\r\n");
+					builder.Append("\t};\r\n");
+					builder.Append("\tFNativeFunctionRegistrar::RegisterFunctions(Class, Funcs, UE_ARRAY_COUNT(Funcs));\r\n");
 				}
 			}
 
-			builder.Append("\t}\r\n");
-			return builder;
-		}
-
-		private static StringBuilder AppendCallbackParametersDecls(StringBuilder builder, List<UhtFunction> callbackFunctions)
-		{
-			foreach (UhtFunction function in callbackFunctions)
-			{
-				AppendEventParameter(builder, function, function.StrippedFunctionName, UhtPropertyTextType.EventParameterMember, true, 1, "\r\n");
-			}
-			return builder;
-		}
-
-		private StringBuilder AppendCallbackFunctions(StringBuilder builder, UhtClass classObj, List<UhtFunction> callbackFunctions)
-		{
-			if (callbackFunctions.Count > 0)
-			{
-				bool isInterfaceClass = classObj.ClassFlags.HasAnyFlags(EClassFlags.Interface);
-				{
-					using UhtMacroBlockEmitter blockEmitter = new(builder, "WITH_EDITOR");
-					foreach (UhtFunction function in callbackFunctions)
-					{
-						// Net response functions don't go into the VM
-						if (function.FunctionFlags.HasAnyFlags(EFunctionFlags.NetResponse))
-						{
-							continue;
-						}
-
-						blockEmitter.Set(function.FunctionFlags.HasAnyFlags(EFunctionFlags.EditorOnly));
-
-						if (!isInterfaceClass)
-						{
-							builder.Append("\tstatic FName NAME_").Append(classObj.SourceName).Append('_').Append(function.EngineName).Append(" = FName(TEXT(\"").Append(function.EngineName).Append("\"));\r\n");
-						}
-
-						AppendNativeFunctionHeader(builder, function, UhtPropertyTextType.EventFunctionArgOrRetVal, false, null, null, UhtFunctionExportFlags.None, "\r\n");
-
-						if (isInterfaceClass)
-						{
-							builder.Append("\t{\r\n");
-
-							// assert if this is ever called directly
-							builder
-								.Append("\t\tcheck(0 && \"Do not directly call Event functions in Interfaces. Call Execute_")
-								.Append(function.EngineName)
-								.Append(" instead.\");\r\n");
-
-							// satisfy compiler if it's expecting a return value
-							if (function.ReturnProperty != null)
-							{
-								string eventParmStructName = GetEventStructParametersName(classObj, function.EngineName);
-								builder.Append("\t\t").Append(eventParmStructName).Append(" Parms;\r\n");
-								builder.Append("\t\treturn Parms.ReturnValue;\r\n");
-							}
-							builder.Append("\t}\r\n");
-						}
-						else
-						{
-							AppendEventFunctionPrologue(builder, function, function.EngineName, 1, "\r\n", false);
-
-							// Cast away const just in case, because ProcessEvent isn't const
-							builder.Append("\t\t");
-							if (function.FunctionFlags.HasAnyFlags(EFunctionFlags.Const))
-							{
-								builder.Append("const_cast<").Append(classObj.SourceName).Append("*>(this)->");
-							}
-							builder
-								.Append("ProcessEvent(FindFunctionChecked(")
-								.Append("NAME_")
-								.Append(classObj.SourceName)
-								.Append('_')
-								.Append(function.EngineName)
-								.Append("),")
-								.Append(function.Children.Count > 0 ? "&Parms" : "NULL")
-								.Append(");\r\n");
-
-							AppendEventFunctionEpilogue(builder, function, 1, "\r\n");
-						}
-					}
-				}
-			}
-			return builder;
-		}
-
-		private static StringBuilder AppendRpcFunctions(StringBuilder builder, UhtClass classObj, List<UhtFunction> reversedFunctions, bool editorOnly)
-		{
-			foreach (UhtFunction function in reversedFunctions)
-			{
-				if (function.FunctionFlags.HasAnyFlags(EFunctionFlags.EditorOnly) == editorOnly)
-				{
-					builder.Append("\tDEFINE_FUNCTION(").AppendClassSourceNameOrInterfaceName(classObj).Append("::").Append(function.UnMarshalAndCallName).Append(")\r\n");
-					builder.Append("\t{\r\n");
-					AppendFunctionThunk(builder, function);
-					builder.Append("\t}\r\n");
-				}
-			}
+			builder.Append("}\r\n");
 			return builder;
 		}
 
@@ -2027,25 +1819,25 @@ namespace EpicGames.UHT.Exporters.CodeGen
 			{
 				if (parameter is UhtProperty property)
 				{
-					builder.Append("\t\t").AppendFunctionThunkParameterGet(property).Append(";\r\n");
+					builder.Append('\t').AppendFunctionThunkParameterGet(property).Append(";\r\n");
 				}
 			}
 
-			builder.Append("\t\tP_FINISH;\r\n");
-			builder.Append("\t\tP_NATIVE_BEGIN;\r\n");
+			builder.Append("\tP_FINISH;\r\n");
+			builder.Append("\tP_NATIVE_BEGIN;\r\n");
 
 			// Call the validate function if there is one
 			if (!function.FunctionExportFlags.HasAnyFlags(UhtFunctionExportFlags.CppStatic) && function.FunctionFlags.HasAnyFlags(EFunctionFlags.NetValidate))
 			{
-				builder.Append("\t\tif (!P_THIS->").Append(function.CppValidationImplName).Append('(').AppendFunctionThunkParameterNames(function).Append("))\r\n");
-				builder.Append("\t\t{\r\n");
-				builder.Append("\t\t\tRPC_ValidateFailed(TEXT(\"").Append(function.CppValidationImplName).Append("\"));\r\n");
-				builder.Append("\t\t\treturn;\r\n");   // If we got here, the validation function check failed
-				builder.Append("\t\t}\r\n");
+				builder.Append("\tif (!P_THIS->").Append(function.CppValidationImplName).Append('(').AppendFunctionThunkParameterNames(function).Append("))\r\n");
+				builder.Append("\t{\r\n");
+				builder.Append("\t\tRPC_ValidateFailed(TEXT(\"").Append(function.CppValidationImplName).Append("\"));\r\n");
+				builder.Append("\t\treturn;\r\n");   // If we got here, the validation function check failed
+				builder.Append("\t}\r\n");
 			}
 
 			// Write out the return value
-			builder.Append("\t\t");
+			builder.Append('\t');
 			UhtProperty? returnProperty = function.ReturnProperty;
 			if (returnProperty != null)
 			{
@@ -2061,7 +1853,7 @@ namespace EpicGames.UHT.Exporters.CodeGen
 			{
 				builder.Append("P_THIS->").Append(function.CppImplName).Append('(').AppendFunctionThunkParameterNames(function).Append(");\r\n");
 			}
-			builder.Append("\t\tP_NATIVE_END;\r\n");
+			builder.Append("\tP_NATIVE_END;\r\n");
 			return builder;
 		}
 
@@ -2161,140 +1953,26 @@ namespace EpicGames.UHT.Exporters.CodeGen
 			{
 				if (parameter is UhtProperty property)
 				{
-					if (!first)
+					if (first)
+					{
+						first = false;
+					}
+					else
 					{
 						builder.Append(',');
 					}
+
+					bool needsGCBarrier = property.NeedsGCBarrierWhenPassedToFunction(function);
+					if (needsGCBarrier)
+					{
+						builder.Append("P_ARG_GC_BARRIER(");
+					}
 					builder.AppendFunctionThunkParameterArg(property);
-					first = false;
+					if (needsGCBarrier)
+					{
+						builder.Append(')');
+					}
 				}
-			}
-			return builder;
-		}
-
-		/// <summary>
-		/// Append the parameter list and count as arguments to a structure constructor
-		/// </summary>
-		/// <param name="builder">Destination builder</param>
-		/// <param name="structObj">Structure in question</param>
-		/// <param name="staticsName">Name of the statics section for this structure</param>
-		/// <param name="tabs">Number of tabs to precede the line</param>
-		/// <param name="endl">String used to terminate a line</param>
-		/// <returns>Destination builder</returns>
-		public static StringBuilder AppendPropertiesParams(this StringBuilder builder, UhtStruct structObj, string staticsName, int tabs, string endl)
-		{
-			return builder.AppendPropertiesParamsList(structObj, staticsName, tabs, endl).AppendPropertiesParamsCount(structObj, staticsName, tabs, endl);
-		}
-
-		/// <summary>
-		/// Append the parameter list as an argument to a structure constructor
-		/// </summary>
-		/// <param name="builder">Destination builder</param>
-		/// <param name="structObj">Structure in question</param>
-		/// <param name="staticsName">Name of the statics section for this structure</param>
-		/// <param name="tabs">Number of tabs to precede the line</param>
-		/// <param name="endl">String used to terminate a line</param>
-		/// <returns>Destination builder</returns>
-		public static StringBuilder AppendPropertiesParamsList(this StringBuilder builder, UhtStruct structObj, string staticsName, int tabs, string endl)
-		{
-			if (!structObj.Children.Any(x => x is UhtProperty))
-			{
-				builder.AppendTabs(tabs).Append("nullptr,").Append(endl);
-			}
-			else if (structObj.Properties.Any(x => !x.IsEditorOnlyProperty))
-			{
-				builder.AppendTabs(tabs).Append(staticsName).Append("::PropPointers,").Append(endl);
-			}
-			else
-			{
-				builder.AppendTabs(tabs).Append("IF_WITH_EDITORONLY_DATA(").Append(staticsName).Append("::PropPointers, nullptr),").Append(endl);
-			}
-			return builder;
-		}
-
-		/// <summary>
-		/// Append the parameter count as an argument to a structure constructor
-		/// </summary>
-		/// <param name="builder">Destination builder</param>
-		/// <param name="structObj">Structure in question</param>
-		/// <param name="staticsName">Name of the statics section for this structure</param>
-		/// <param name="tabs">Number of tabs to precede the line</param>
-		/// <param name="endl">String used to terminate a line</param>
-		/// <returns>Destination builder</returns>
-		public static StringBuilder AppendPropertiesParamsCount(this StringBuilder builder, UhtStruct structObj, string staticsName, int tabs, string endl)
-		{
-			if (!structObj.Children.Any(x => x is UhtProperty))
-			{
-				builder.AppendTabs(tabs).Append("0,").Append(endl);
-			}
-			else if (structObj.Properties.Any(x => !x.IsEditorOnlyProperty))
-			{
-				builder.AppendTabs(tabs).Append("UE_ARRAY_COUNT(").Append(staticsName).Append("::PropPointers),").Append(endl);
-			}
-			else
-			{
-				builder.AppendTabs(tabs).Append("IF_WITH_EDITORONLY_DATA(UE_ARRAY_COUNT(").Append(staticsName).Append("::PropPointers), 0),").Append(endl);
-			}
-			return builder;
-		}
-
-		/// <summary>
-		/// Append static_assert to check that properties params count fit within struct
-		/// </summary>
-		/// <param name="builder">Destination builder</param>
-		/// <param name="structObj">Structure in question</param>
-		/// <param name="staticsName">Name of the statics section for this structure</param>
-		/// <returns>Destination builder</returns>
-		public static StringBuilder AppendPropertiesParamsCountStaticAssert(this StringBuilder builder, UhtStruct structObj, string staticsName)
-		{
-			if (!structObj.Children.Any(x => x is UhtProperty))
-			{
-				// do nothing here
-			}
-			else if (structObj.Properties.Any(x => !x.IsEditorOnlyProperty))
-			{
-				builder.Append("\tstatic_assert(UE_ARRAY_COUNT(").Append(staticsName).Append("::PropPointers) < 2048);\r\n");
-			}
-			else
-			{
-				builder.Append("#if WITH_EDITORONLY_DATA\r\n")
-					   .Append("\tstatic_assert(UE_ARRAY_COUNT(").Append(staticsName).Append("::PropPointers) < 2048);\r\n")
-					   .Append("#endif\r\n");
-			}
-			return builder;
-		}
-
-		/// <summary>
-		/// Append the given array list and count as arguments to a structure constructor
-		/// </summary>
-		/// <param name="builder">Destination builder</param>
-		/// <param name="isEmpty">If true, the array list is empty</param>
-		/// <param name="allEditorOnlyData">If true, the array is all editor only data</param>
-		/// <param name="staticsName">Name of the statics section</param>
-		/// <param name="arrayName">The name of the arrray</param>
-		/// <returns>Destination builder</returns>
-		public static StringBuilder AppendArray(this StringBuilder builder, bool isEmpty, bool allEditorOnlyData, string staticsName, string arrayName)
-		{
-			if (isEmpty)
-			{
-				builder.Append("nullptr, 0");
-			}
-			else if (allEditorOnlyData)
-			{
-				builder
-					.Append("IF_WITH_EDITORONLY_DATA(")
-					.Append(staticsName).Append("::").Append(arrayName)
-					.Append(", nullptr), IF_WITH_EDITORONLY_DATA(UE_ARRAY_COUNT(")
-					.Append(staticsName).Append("::").Append(arrayName)
-					.Append("), 0)");
-			}
-			else
-			{
-				builder
-					.Append(staticsName).Append("::").Append(arrayName)
-					.Append(", UE_ARRAY_COUNT(")
-					.Append(staticsName).Append("::").Append(arrayName)
-					.Append(')');
 			}
 			return builder;
 		}

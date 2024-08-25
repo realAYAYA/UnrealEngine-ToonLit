@@ -7,7 +7,7 @@
 
 struct FResourceSizeEx;
 
-class FGerstnerWaterWaveViewExtension;
+class FWaterViewExtension;
 
 /** UGerstnerWaterWaveSubsystem manages all UGerstnerWaterWaves objects, regardless of which world they belong to (it's a UEngineSubsystem) */
 UCLASS()
@@ -22,8 +22,8 @@ public:
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
 	virtual void Deinitialize() override;
 
-	void Register(FGerstnerWaterWaveViewExtension* InViewExtension);
-	void Unregister(FGerstnerWaterWaveViewExtension* InViewExtension);
+	void Register(FWaterViewExtension* ViewExtension);
+	void Unregister(FWaterViewExtension* ViewExtension);
 
 	void RebuildGPUData() { bRebuildGPUData = true; }
 
@@ -35,7 +35,7 @@ private:
 	void BeginFrameCallback();
 
 private:
-	TArray<FGerstnerWaterWaveViewExtension*> GerstnerWaterWaveViewExtensions;
+	TArray<FWaterViewExtension*> WaterViewExtensions;
 	bool bRebuildGPUData = true;
 };
 

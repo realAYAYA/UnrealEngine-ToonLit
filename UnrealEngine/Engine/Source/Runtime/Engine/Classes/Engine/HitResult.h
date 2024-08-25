@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Chaos/PhysicsObject.h"
 #include "Engine/NetSerialization.h"
 #include "Engine/ActorInstanceHandle.h"
 #include "HitResult.generated.h"
@@ -90,7 +91,7 @@ struct FHitResult
 	float PenetrationDepth;
 
 	/** If the hit result is from a collision this will have extra info about the item that hit the second item. */
-	UPROPERTY()
+	UPROPERTY(NotReplicated)
 	int32 MyItem;
 
 	/** Extra data about item that was hit (hit primitive specific). */
@@ -129,12 +130,16 @@ struct FHitResult
 	UPROPERTY()
 	TWeakObjectPtr<UPrimitiveComponent> Component;
 
+
+	/** PhysicsObjects hit by the query. Not exposed to blueprints for the time being */
+	Chaos::FPhysicsObjectHandle PhysicsObject;
+
 	/** Name of bone we hit (for skeletal meshes). */
 	UPROPERTY()
 	FName BoneName;
 
 	/** Name of the _my_ bone which took part in hit event (in case of two skeletal meshes colliding). */
-	UPROPERTY()
+	UPROPERTY(NotReplicated)
 	FName MyBoneName;
 
 

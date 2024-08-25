@@ -10,6 +10,7 @@
 #include "Layout/Visibility.h"
 #include "NiagaraDebuggerCommon.h"
 #include "Widgets/SCompoundWidget.h"
+#include "UObject/StructOnScope.h"
 
 #include "NiagaraOutlinerCustomization.generated.h"
 

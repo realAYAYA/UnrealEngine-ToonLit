@@ -88,6 +88,10 @@ public:
 	/** Sets whether or not this emitter is isolated. May affect other emitters in the system. */
 	NIAGARAEDITOR_API void SetIsIsolated(bool InIsIsolated);
 
+	NIAGARAEDITOR_API void ToggleIsIsolated();
+
+	NIAGARAEDITOR_API void RequestCaptureThumbnail();
+	
 	/** Gets the check state for the is enabled check box. */
 	NIAGARAEDITOR_API ECheckBoxState GetIsEnabledCheckState() const;
 
@@ -111,6 +115,8 @@ public:
 
 	/** Sets whether or not this emitter handle has a rename pending. */
 	NIAGARAEDITOR_API void SetIsRenamePending(bool bInIsRenamePending);
+
+	void RequestEmitterSelection(bool bClearSelection);
 
 	/** Gets a multicast delegate which is called any time a property on the handle changes. */
 	FOnPropertyChanged& OnPropertyChanged();

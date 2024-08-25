@@ -117,6 +117,7 @@ enum class ECrashContextType
 	Hang,
 	OutOfMemory,
 	AbnormalShutdown,
+	VerseRuntimeError,
 
 	Max
 };
@@ -139,8 +140,11 @@ enum class EUnattendedStatus : uint8
 	Unattended
 };
 
+CORE_API const TCHAR* AttendedStatusToString(const EUnattendedStatus Status);
+
 #define CR_MAX_ERROR_MESSAGE_CHARS 2048
 #define CR_MAX_DIRECTORY_CHARS 256
+#define CR_MAX_SYMBOL_CHARS 128
 #define CR_MAX_STACK_FRAMES 256
 #define CR_MAX_THREAD_NAME_CHARS 64
 #define CR_MAX_THREADS 512
@@ -161,6 +165,7 @@ struct FSessionContext
 	bool 					bIsUERelease;
 	bool					bIsOOM;
 	bool					bIsExitRequested;
+	bool					bIsStuck;
 	uint32					ProcessId;
 	int32 					LanguageLCID;
 	int32 					NumberOfCores;
@@ -168,6 +173,7 @@ struct FSessionContext
 	int32 					SecondsSinceStart;
 	int32 					CrashDumpMode;
 	int32					CrashTrigger;
+	uint32					StuckThreadId;
 	int32					OOMAllocationAlignment;
 	uint64					OOMAllocationSize;
 	TCHAR 					EngineVersion[CR_MAX_GENERIC_FIELD_CHARS];
@@ -183,7 +189,7 @@ struct FSessionContext
 	TCHAR 					RootDir[CR_MAX_DIRECTORY_CHARS];
 	TCHAR 					EpicAccountId[CR_MAX_GENERIC_FIELD_CHARS];
 	TCHAR 					LoginIdStr[CR_MAX_GENERIC_FIELD_CHARS];
-	TCHAR					SymbolsLabel[CR_MAX_GENERIC_FIELD_CHARS];
+	TCHAR					SymbolsLabel[CR_MAX_SYMBOL_CHARS];
 	TCHAR 					OsVersion[CR_MAX_GENERIC_FIELD_CHARS];
 	TCHAR 					OsSubVersion[CR_MAX_GENERIC_FIELD_CHARS];
 	TCHAR 					CPUVendor[CR_MAX_GENERIC_FIELD_CHARS];
@@ -199,8 +205,9 @@ struct FSessionContext
 	TCHAR 					GameStateName[CR_MAX_GENERIC_FIELD_CHARS];
 	TCHAR 					CrashConfigFilePath[CR_MAX_DIRECTORY_CHARS];
 	TCHAR					AttendedStatus[CR_MAX_GENERIC_FIELD_CHARS];
-	char					PlatformName[CR_MAX_GENERIC_FIELD_CHARS];
-	char					PlatformNameIni[CR_MAX_GENERIC_FIELD_CHARS];
+	TCHAR					PlatformName[CR_MAX_GENERIC_FIELD_CHARS];
+	TCHAR					PlatformNameIni[CR_MAX_GENERIC_FIELD_CHARS];
+	TCHAR					AnticheatProvider[CR_MAX_GENERIC_FIELD_CHARS];
 	FPlatformMemoryStats	MemoryStats;
 };
 
@@ -282,6 +289,36 @@ DECLARE_MULTICAST_DELEGATE_TwoParams(FEngineDataSetDelegate, const FString&, con
 DECLARE_MULTICAST_DELEGATE(FGameDataResetDelegate);
 DECLARE_MULTICAST_DELEGATE_TwoParams(FGameDataSetDelegate, const FString&, const FString&);
 
+struct FThreadCallStack
+{
+	TConstArrayView<uint64> StackFrames;
+	const TCHAR* ThreadName;
+	uint32 ThreadId;
+};
+
+/** GPU breadcrumbs. */
+enum class EBreadcrumbState : uint8
+{
+	NotStarted = 0,
+	Active = 1,
+	Finished = 2,
+	Overflow = 3,
+	Invalid = 4,
+};
+const TCHAR* const EBreadcrumbStateStrings[] = { TEXT("Not started"), TEXT("Active"), TEXT("Finished"), TEXT("Overflow"), TEXT("Invalid") };
+
+struct FBreadcrumbNode
+{
+	EBreadcrumbState State = EBreadcrumbState::Invalid;
+	FString Name;
+	TArray<FBreadcrumbNode> Children;
+
+	const TCHAR* const GetStateString() const
+	{
+		return EBreadcrumbStateStrings[static_cast<uint32>(FMath::Min(State, EBreadcrumbState::Invalid))];
+	}
+};
+
 /**
  *	Contains a runtime crash's properties that are common for all platforms.
  *	This may change in the future.
@@ -305,9 +342,33 @@ public:
 	CORE_API static const TCHAR* const PlatformPropertiesTag;
 	CORE_API static const TCHAR* const EngineDataTag;
 	CORE_API static const TCHAR* const GameDataTag;
+	CORE_API static const TCHAR* const GameNameTag;
 	CORE_API static const TCHAR* const EnabledPluginsTag;
 	CORE_API static const TCHAR* const UEMinidumpName;
 	CORE_API static const TCHAR* const NewLineTag;
+	CORE_API static const TCHAR* const CrashVersionTag;
+	CORE_API static const TCHAR* const ExecutionGuidTag;
+	CORE_API static const TCHAR* const CrashGuidTag;
+	CORE_API static const TCHAR* const IsEnsureTag;
+	CORE_API static const TCHAR* const IsStallTag;
+	CORE_API static const TCHAR* const IsAssertTag;
+	CORE_API static const TCHAR* const CrashTypeTag;
+	CORE_API static const TCHAR* const ErrorMessageTag;
+	CORE_API static const TCHAR* const CrashReporterMessageTag;
+	CORE_API static const TCHAR* const AttendedStatusTag;
+	CORE_API static const TCHAR* const SecondsSinceStartTag;
+	CORE_API static const TCHAR* const BuildVersionTag;
+	CORE_API static const TCHAR* const CallStackTag;
+	CORE_API static const TCHAR* const PortableCallStackTag;
+	CORE_API static const TCHAR* const PortableCallStackHashTag;
+	CORE_API static const TCHAR* const IsRequestingExitTag;
+	CORE_API static const TCHAR* const LogFilePathTag;
+	CORE_API static const TCHAR* const ProcessIdTag;
+	CORE_API static const TCHAR* const IsInternalBuildTag;
+	CORE_API static const TCHAR* const IsPerforceBuildTag;
+	CORE_API static const TCHAR* const IsWithDebugInfoTag;
+	CORE_API static const TCHAR* const IsSourceDistributionTag;
+
 	static constexpr inline int32 CrashGUIDLength = 128;
 
 	CORE_API static const TCHAR* const CrashTypeCrash;
@@ -318,6 +379,7 @@ public:
 	CORE_API static const TCHAR* const CrashTypeHang;
 	CORE_API static const TCHAR* const CrashTypeAbnormalShutdown;
 	CORE_API static const TCHAR* const CrashTypeOutOfMemory;
+	CORE_API static const TCHAR* const CrashTypeVerseRuntimeError;
 
 	CORE_API static const TCHAR* const EngineModeExUnknown;
 	CORE_API static const TCHAR* const EngineModeExDirty;
@@ -331,6 +393,12 @@ public:
 
 	/** Initialized crash context, using a crash context (e.g. shared from another process). */
 	CORE_API static void InitializeFromContext(const FSessionContext& Context, const TCHAR* EnabledPlugins, const TCHAR* EngineData, const TCHAR* GameData);
+
+	/** Get the current cached session context */
+	CORE_API static const FSessionContext& GetCachedSessionContext();
+
+	/** Gets the current standardized game name for use in a Crash Reporter report. */
+	CORE_API static FString GetGameName();
 
 	/**
 	 * @return true, if the generic crash context has been initialized.
@@ -430,6 +498,12 @@ public:
 		AddCrashPropertyInternal(CommonBuffer, PropertyName, Value);
 	}
 
+	template <typename Type>
+	static void AddCrashProperty(FString& Buffer, const TCHAR* PropertyName, const Type& Value)
+	{
+		AddCrashPropertyInternal(Buffer, PropertyName, Value);
+	}
+
 	/** Escapes and appends specified text to XML string */
 	CORE_API static void AppendEscapedXMLString(FString& OutBuffer, FStringView Text );
 	CORE_API static void AppendEscapedXMLString(FStringBuilderBase& OutBuffer, FStringView Text);
@@ -465,6 +539,18 @@ public:
 
 	/** Updates (or adds if not already present) arbitrary engine data to the crash context (will remove the key if passed an empty string) */
 	CORE_API static void SetEngineData(const FString& Key, const FString& Value);
+
+	/** Updates (or adds if not already present) GPU breadcrumb data for a given GPU queue. */
+	CORE_API static void SetGPUBreadcrumbs(const FString& GPUQueueName, const TArray<FBreadcrumbNode>& Breadcrumbs);
+
+	/** Sets a named source for the GPU breadcrumbs, mainly used to identify which system produced them. */
+	CORE_API static void SetGPUBreadcrumbsSource(const FString& GPUBreadcrumbsSource);
+
+	/** Gets the named source for the GPU breadcrumbs. */
+	CORE_API static const FString& GetGPUBreadcrumbsSource();
+
+	/** Clears all the GPU breadcrumb data. */
+	CORE_API static void ResetGPUBreadcrumbsData();
 
 	/** Accessor for engine data change callback delegate */
 	static FEngineDataSetDelegate& OnEngineDataSetDelegate() { return OnEngineDataSet; }
@@ -503,6 +589,17 @@ public:
 	  * exception and use in crash reporting. 
 	  */
 	CORE_API static void SetMemoryStats(const FPlatformMemoryStats& MemoryStats);
+
+	/** Sets the Anticheat client provider. */
+	CORE_API static void SetAnticheatProvider(const FString& AnticheatProvider);
+
+	/** Sets a flag that one of the threads is stuck.
+	 *  This is meant to be bound to the ThreadHeartBeat::OnThreadStuck delegate. Not all platforms register to save this flag. */
+	CORE_API static void OnThreadStuck(uint32 ThreadId);
+
+	/** Clears the stuck flag.
+	 *  This is meant to be bound to the ThreadHeartBeat::OnThreadUnstuck delegate. Not all platforms register to save this flag. */
+	CORE_API static void OnThreadUnstuck(uint32 ThreadId);
 
 	/** Attempts to create the output report directory. */
 	CORE_API static bool CreateCrashReportDirectory(const TCHAR* CrashGUIDRoot, int32 CrashIndex, FString& OutCrashDirectoryAbsolute);
@@ -563,6 +660,7 @@ public:
 	CORE_API virtual void GetModules(TArray<FStackWalkModuleInfo>& OutModules) const;
 	
 	/** Adds a portable callstack for a thread */
+	CORE_API virtual void AddPortableThreadCallStacks(TConstArrayView<FThreadCallStack> Threads);
 	CORE_API virtual void AddPortableThreadCallStack(uint32 ThreadId, const TCHAR* ThreadName, const uint64* StackFrames, int32 NumStackFrames);
 
 	/** Allows platform implementations to copy files to report directory. */
@@ -583,6 +681,9 @@ public:
 	{
 		switch (Type)
 		{
+		// Verse runtime errors only halt the Verse runtime itself; they do not result in a crash.
+		// Certain runtime errors may be recoverable from in the future.
+		case ECrashContextType::VerseRuntimeError: [[fallthrough]];
 		case ECrashContextType::Ensure:
 			return true;
 		case ECrashContextType::Stall:
@@ -636,7 +737,7 @@ private:
 	static void SerializeUserSettings(FString& Buffer);
 
 	/** Writes a common property to the buffer. */
-	static void AddCrashPropertyInternal(FString& Buffer, FStringView PropertyName, FStringView PropertyValue);
+	CORE_API static void AddCrashPropertyInternal(FString& Buffer, FStringView PropertyName, FStringView PropertyValue);
 
 	/** Writes a common property to the buffer. */
 	template <typename Type>
@@ -654,18 +755,24 @@ private:
 	/** Produces a hash based on the offsets of the portable callstack and adds it to the xml */
 	void AddPortableCallStackHash() const;
 
+	/** Add GPU breadcrumbs information to the crash report xml */
+	void AddGPUBreadcrumbs() const;
+
 	/** Add module/pdb information to the crash report xml */
 	void AddModules() const;
 
+public:  // Allows this helper functionality to be present for clients to write their own types of crash reports.
 	/** Writes header information to the buffer. */
-	static void AddHeader(FString& Buffer);
+	CORE_API static void AddHeader(FString& Buffer);
 
 	/** Writes footer to the buffer. */
-	static void AddFooter(FString& Buffer);
+	CORE_API static void AddFooter(FString& Buffer);
 
-	static void BeginSection(FString& Buffer, const TCHAR* SectionName);
-	static void EndSection(FString& Buffer, const TCHAR* SectionName);
+	CORE_API static void BeginSection(FString& Buffer, const TCHAR* SectionName);
+	CORE_API static void EndSection(FString& Buffer, const TCHAR* SectionName);
+	CORE_API static void AddSection(FString& Buffer, const TCHAR* SectionName, const FString& SectionContent);
 
+private:
 	/** Called once when GConfig is initialized. Opportunity to cache values from config. */
 	static void InitializeFromConfig();
 

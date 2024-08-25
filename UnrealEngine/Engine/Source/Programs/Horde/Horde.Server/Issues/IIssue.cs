@@ -3,34 +3,13 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Horde.Server.Streams;
-using Horde.Server.Users;
-using Horde.Server.Utilities;
+using EpicGames.Horde.Issues;
+using EpicGames.Horde.Streams;
+using EpicGames.Horde.Users;
 using MongoDB.Bson;
 
 namespace Horde.Server.Issues
 {
-	/// <summary>
-	/// The severity of an issue
-	/// </summary>
-	public enum IssueSeverity
-	{
-		/// <summary>
-		/// Unspecified severity
-		/// </summary>
-		Unspecified,
-
-		/// <summary>
-		/// This error represents a warning
-		/// </summary>
-		Warning,
-
-		/// <summary>
-		/// This issue represents an error
-		/// </summary>
-		Error,
-	}
-
 	/// <summary>
 	/// Stores information about a build health issue
 	/// </summary>
@@ -131,10 +110,10 @@ namespace Horde.Server.Issues
 		/// </summary>
 		public int? FixChange { get; }
 
-//		/// <summary>
-//		/// The first stream that encountered the error. The fix will be considered failed if an error after FixChange occurs in this stream. 
-//		/// </summary>
-//		public StreamId? OriginStreamId { get; }
+		//		/// <summary>
+		//		/// The first stream that encountered the error. The fix will be considered failed if an error after FixChange occurs in this stream. 
+		//		/// </summary>
+		//		public StreamId? OriginStreamId { get; }
 
 		/// <summary>
 		/// List of streams affected by this issue
@@ -175,7 +154,6 @@ namespace Horde.Server.Issues
 		/// The workflow thread url created for this issue
 		/// </summary>
 		public Uri? WorkflowThreadUrl { get; set; }
-
 	}
 
 	/// <summary>
@@ -272,7 +250,7 @@ namespace Horde.Server.Issues
 				foreach (IIssueSpan span in spans)
 				{
 					IIssueStream? stream = issue.Streams.FirstOrDefault(x => x.StreamId == span.StreamId);
-					if(stream != null && (stream.ContainsFix ?? false) && span.LastFailure.Change >= issue.FixChange.Value)
+					if (stream != null && (stream.ContainsFix ?? false) && span.LastFailure.Change >= issue.FixChange.Value)
 					{
 						fixFailedStep = span.LastFailure;
 						break;

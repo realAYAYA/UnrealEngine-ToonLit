@@ -126,33 +126,42 @@ void TIrisFastArrayEditor<FastArrayType>::MarkItemDirty(FastArrayItemType& Item)
 	}
 
 	const FastArrayItemArrayType& Array = FastArray.GetItemArray();
-	const int32 Index = (&Item - Array.GetData());
-	if (Array.IsValidIndex(Index))
+	const uint64 Index64 = &Item - Array.GetData();
+	if (ensure((IntFitsIn<int32, uint64>(Index64))))
 	{
-		// If this is a new element make sure it is at the end, otherwise we must dirty array
-		if ((Item.ReplicationID == INDEX_NONE) && (Index != (Array.Num() - 1)))
+		const int32 Index = static_cast<int32>(Index64);
+		if (Array.IsValidIndex(Index))
 		{
-			// Must mark all items that might have been shifted dirty, including the new one, this is to mimic behavior of current FastArraySerializer
-			for (FastArrayItemType& ArrayItem : MakeArrayView(&Item, Array.Num() - Index))
+			// If this is a new element make sure it is at the end, otherwise we must dirty array
+			if ((Item.ReplicationID == INDEX_NONE) && (Index != (Array.Num() - 1)))
 			{
-				const bool bIsWritingOnClient = false;
-				if (!FastArray.template ShouldWriteFastArrayItem<FastArrayItemType, FastArrayType>(ArrayItem, bIsWritingOnClient))
+				// Must mark all items that might have been shifted dirty, including the new one, this is to mimic behavior of current FastArraySerializer
+				for (FastArrayItemType& ArrayItem : MakeArrayView(&Item, Array.Num() - Index))
 				{
-					if (ArrayItem.ReplicationID == INDEX_NONE)
+					const bool bIsWritingOnClient = false;
+					if (!FastArray.template ShouldWriteFastArrayItem<FastArrayItemType, FastArrayType>(ArrayItem, bIsWritingOnClient))
 					{
-						FastArray.MarkItemDirty(ArrayItem);						
+						if (ArrayItem.ReplicationID == INDEX_NONE)
+						{
+							FastArray.MarkItemDirty(ArrayItem);
+						}
+
+						const uint64 ItemIndex64 = &ArrayItem - Array.GetData();
+						if (ensure((IntFitsIn<int32, uint64>(ItemIndex64))))
+						{
+							// Mark item dirty in changemask
+							FIrisFastArraySerializerPrivateAccessor::MarkArrayItemDirty(FastArray, static_cast<int32>(ItemIndex64));
+						}
 					}
-					// Mark item dirty in changemask
-					FIrisFastArraySerializerPrivateAccessor::MarkArrayItemDirty(FastArray, (&ArrayItem - Array.GetData()));
 				}
 			}
-		}
-		else
-		{
-			// This is in order to execute old logic
-			FastArray.MarkItemDirty(Item);
-			// Mark item dirty in changemask
-			FIrisFastArraySerializerPrivateAccessor::MarkArrayItemDirty(FastArray, Index);
+			else
+			{
+				// This is in order to execute old logic
+				FastArray.MarkItemDirty(Item);
+				// Mark item dirty in changemask
+				FIrisFastArraySerializerPrivateAccessor::MarkArrayItemDirty(FastArray, Index);
+			}
 		}
 	}
 };

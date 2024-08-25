@@ -9,70 +9,8 @@
 #include "CoreMinimal.h"
 #include "RHI.h"
 THIRD_PARTY_INCLUDES_START
-#include "mtlpp.hpp"
+#include "MetalInclude.h"
 THIRD_PARTY_INCLUDES_END
-
-class FMetalSampler : public mtlpp::SamplerState
-{
-public:
-	FMetalSampler(ns::Ownership retain = ns::Ownership::Retain) : mtlpp::SamplerState(nullptr, nullptr, retain) { }
-	FMetalSampler(ns::Protocol<id<MTLSamplerState>>::type handle, ns::Ownership retain = ns::Ownership::Retain)
-	: mtlpp::SamplerState(handle, nullptr, retain) {}
-	
-	FMetalSampler(mtlpp::SamplerState&& rhs)
-	: mtlpp::SamplerState((mtlpp::SamplerState&&)rhs)
-	{
-		
-	}
-	
-	FMetalSampler(const FMetalSampler& rhs)
-	: mtlpp::SamplerState(rhs)
-	{
-		
-	}
-	
-	FMetalSampler(const SamplerState& rhs)
-	: mtlpp::SamplerState(rhs)
-	{
-		
-	}
-	
-	FMetalSampler(FMetalSampler&& rhs)
-	: mtlpp::SamplerState((mtlpp::SamplerState&&)rhs)
-	{
-		
-	}
-	
-	FMetalSampler& operator=(const FMetalSampler& rhs)
-	{
-		if (this != &rhs)
-		{
-			mtlpp::SamplerState::operator=(rhs);
-		}
-		return *this;
-	}
-	
-	FMetalSampler& operator=(FMetalSampler&& rhs)
-	{
-		mtlpp::SamplerState::operator=((mtlpp::SamplerState&&)rhs);
-		return *this;
-	}
-	
-	inline bool operator==(FMetalSampler const& rhs) const
-	{
-		return GetPtr() == rhs.GetPtr();
-	}
-	
-	inline bool operator!=(FMetalSampler const& rhs) const
-	{
-		return GetPtr() != rhs.GetPtr();
-	}
-	
-	friend uint32 GetTypeHash(FMetalSampler const& Hash)
-	{
-		return GetTypeHash(Hash.GetPtr());
-	}
-};
 
 class FMetalSamplerState : public FRHISamplerState
 {
@@ -81,12 +19,18 @@ public:
 	/** 
 	 * Constructor/destructor
 	 */
-	FMetalSamplerState(mtlpp::Device Device, const FSamplerStateInitializerRHI& Initializer);
+	FMetalSamplerState(class FMetalDeviceContext* Context, const FSamplerStateInitializerRHI& Initializer);
 	~FMetalSamplerState();
 
-	FMetalSampler State;
+	MTL::SamplerState* State;
 #if !PLATFORM_MAC
-	FMetalSampler NoAnisoState;
+    MTL::SamplerState* NoAnisoState;
+#endif
+#if PLATFORM_SUPPORTS_BINDLESS_RENDERING
+    FRHIDescriptorHandle BindlessHandle;
+
+    // TODO: Do we need to support NoAnisoState too? (or is it some leftover we don't care about anymore?)
+    virtual FRHIDescriptorHandle GetBindlessHandle() const override final { return BindlessHandle; }
 #endif
 };
 
@@ -112,13 +56,13 @@ public:
 	/**
 	 * Constructor/destructor
 	 */
-	FMetalDepthStencilState(mtlpp::Device Device, const FDepthStencilStateInitializerRHI& Initializer);
+	FMetalDepthStencilState(MTL::Device* Device, const FDepthStencilStateInitializerRHI& Initializer);
 	~FMetalDepthStencilState();
 	
 	virtual bool GetInitializer(FDepthStencilStateInitializerRHI& Init) override final;
 	
 	FDepthStencilStateInitializerRHI Initializer;
-	mtlpp::DepthStencilState State;
+	MTL::DepthStencilState* State;
 	bool bIsDepthWriteEnabled;
 	bool bIsStencilWriteEnabled;
 };
@@ -137,7 +81,7 @@ public:
 
 	struct FBlendPerMRT
 	{
-		mtlpp::RenderPipelineColorAttachmentDescriptor BlendState;
+		MTL::RenderPipelineColorAttachmentDescriptor* BlendState;
 		uint8 BlendStateKey;
 	};
 	FBlendPerMRT RenderTargetStates[MaxSimultaneousRenderTargets];

@@ -29,11 +29,15 @@ namespace DisplayClusterConfigurationStrings
 		static constexpr const TCHAR* ChromaKeyCategory            = TEXT("Chromakey");
 		static constexpr const TCHAR* LightcardCategory            = TEXT("Light Cards");
 		static constexpr const TCHAR* OCIOCategory                 = TEXT("OCIO");
+		static constexpr const TCHAR* MediaCategory                = TEXT("Media");
+		static constexpr const TCHAR* TileCategory                 = TEXT("Tile Rendering");
 		static constexpr const TCHAR* OverrideCategory             = TEXT("Texture Replacement");
 		static constexpr const TCHAR* ViewportsCategory            = TEXT("Viewports");
-		static constexpr const TCHAR* ICVFXCategory                = TEXT("In Camera VFX");
+		static constexpr const TCHAR* ICVFXCategory                = TEXT("Inner Frustum");
+		static constexpr const TCHAR* ICVFXCameraCategory          = TEXT("ICVFX Camera");
 		static constexpr const TCHAR* ConfigurationCategory        = TEXT("Configuration");
 		static constexpr const TCHAR* PreviewCategory              = TEXT("Editor Preview");
+		static constexpr const TCHAR* PreviewInGameCategory        = TEXT("Preview In Game");
 		static constexpr const TCHAR* AdvancedCategory             = TEXT("Advanced");
 		static constexpr const TCHAR* TextureShareCategory         = TEXT("Texture Share");
 	}
@@ -83,9 +87,13 @@ namespace DisplayClusterConfigurationStrings
 				static constexpr const TCHAR* Ethernet          = TEXT("ethernet");
 				static constexpr const TCHAR* EthernetBarrier   = TEXT("ethernet_barrier");
 
+				// NVIDIA Swap Barrier (old)
 				static constexpr const TCHAR* Nvidia            = TEXT("nvidia");
 				static constexpr const TCHAR* NvidiaSwapBarrier = TEXT("swap_barrier");
 				static constexpr const TCHAR* NvidiaSwapGroup   = TEXT("swap_group");
+
+				// NVIDIA Present Barrier (new)
+				static constexpr const TCHAR* NvidiaPresentBarrier = TEXT("nvidia_pb");
 
 				// Always use 'none' for headless rendering
 				static constexpr const TCHAR* HeadlessRenderingSyncPolicy = None;

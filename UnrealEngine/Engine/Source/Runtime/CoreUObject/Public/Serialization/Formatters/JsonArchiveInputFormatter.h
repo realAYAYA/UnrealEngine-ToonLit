@@ -31,7 +31,13 @@ struct FWeakObjectPtr;
 class FJsonArchiveInputFormatter final : public FStructuredArchiveFormatter
 {
 public:
-	COREUOBJECT_API FJsonArchiveInputFormatter(FArchive& InInner, TFunction<UObject* (const FPackageIndex)> InResolveObject = nullptr);
+	// Noncopyable
+	FJsonArchiveInputFormatter(FJsonArchiveInputFormatter&&) = delete;
+	FJsonArchiveInputFormatter(const FJsonArchiveInputFormatter&) = delete;
+	FJsonArchiveInputFormatter& operator=(FJsonArchiveInputFormatter&&) = delete;
+	FJsonArchiveInputFormatter& operator=(const FJsonArchiveInputFormatter&) = delete;
+
+	COREUOBJECT_API explicit FJsonArchiveInputFormatter(FArchive& InInner, TFunction<UObject* (const FPackageIndex)> InResolveObject = nullptr);
 	COREUOBJECT_API virtual ~FJsonArchiveInputFormatter();
 
 	COREUOBJECT_API virtual FArchive& GetUnderlyingArchive() override;

@@ -3,6 +3,7 @@
 #ifdef NNE_USE_DIRECTML
 
 #include "NNEDmlOperator.h"
+#include "NNEDmlOperatorUtils.h"
 #include "Misc/EnumerateRange.h"
 #include "Algo/Copy.h"
 #include "Algo/ForEach.h"
@@ -12,20 +13,39 @@
 namespace UE::NNERuntimeRDG::Private::Dml
 {
 
+namespace Util
+{
+
 /**
- * Slice
- */
+* Implement std::iota() replacement for TArray
+*/
+template<typename ArrayT, class ValueT>
+void Iota(ArrayT& Array, ValueT Value)
+{
+	auto First = Array.begin();
+	auto Last = Array.end();
+
+	for (auto It = First; It != Last; ++It)
+	{
+		(*It) = Value;
+		++Value;
+	}
+}
+
+} // Util
+
 class FOperatorDmlSlice : public FOperatorDml
 {	
 	template<typename DataType>
-	void ComputeOffsetsSizesStrides(
-		TArrayView<const NNE::Internal::FTensor> InputTensors,
+	static void ComputeOffsetsSizesStrides(
+		TArrayView<const NNE::Internal::FTensorRef> InputTensors,
 		Util::FSmallUIntArray& OutOffsets, 
 		Util::FSmallUIntArray& OutSizes, 
-		Util::FSmallIntArray& OutStrides)
+		Util::FSmallIntArray& OutStrides,
+		Util::FSmallUIntArray& OutputShape)
 	{
-		TConstArrayView<DataType> Starts =  InputTensors[1].GetPreparedData<DataType>();
-		TConstArrayView<DataType> Ends = InputTensors[2].GetPreparedData<DataType>();
+		TConstArrayView<DataType> Starts =  InputTensors[1]->GetPreparedData<DataType>();
+		TConstArrayView<DataType> Ends = InputTensors[2]->GetPreparedData<DataType>();
 		check(Starts.Num() == Ends.Num());
 
 		Util::FSmallArray<DataType> Axes;
@@ -33,35 +53,35 @@ class FOperatorDmlSlice : public FOperatorDml
 
 		if (InputTensors.Num() >= 4)
 		{
-			auto NormalizeAxes = [NumDims = (DataType) InputTensors[0].GetShape().Rank()] (DataType& Axis)
+			auto NormalizeAxes = [NumDims = (DataType) InputTensors[0]->GetShape().Rank()] (DataType& Axis)
 			{
 				if(Axis < 0)
 				{
 					Axis += NumDims;
 				}
 			};
-			Axes = InputTensors[3].GetPreparedData<DataType>();
+			Axes = InputTensors[3]->GetPreparedData<DataType>();
 			check(Axes.Num() == Starts.Num());
 			Algo::ForEach(Axes, NormalizeAxes);
 		}
 		else
 		{
 			Axes.SetNumUninitialized(Starts.Num());
-			std::iota(Axes.begin(), Axes.end(), 0);
+			Util::Iota(Axes, 0);
 		}
 
 		if (InputTensors.Num() >= 5)
 		{
-			Steps = InputTensors[4].GetPreparedData<DataType>();
+			Steps = InputTensors[4]->GetPreparedData<DataType>();
 			check(Steps.Num() == Axes.Num());
 		}
 		else
 		{
-			Steps.Init((DataType)1, Axes.Num());
+			Steps.Init((DataType) 1, Axes.Num());
 		}
 
-		Util::FSmallUIntArray OutputShape;
-		Algo::Copy(InputTensors[0].GetShape().GetData(), OutputShape);
+		OutputShape.Reset();
+		Algo::Copy(InputTensors[0]->GetShape().GetData(), OutputShape);
 		OutSizes = OutputShape;
 		OutOffsets.SetNumZeroed(OutputShape.Num());
 
@@ -74,15 +94,16 @@ class FOperatorDmlSlice : public FOperatorDml
 			DataType End = Ends[Idx];
 			
 			DataType DimIndex = Axes[Idx];
-			check(DimIndex < (DataType) InputTensors[0].GetShape().Rank());
+			check(DimIndex < (DataType) InputTensors[0]->GetShape().Rank());
 			DataType Stride = Steps[Idx];
 			check(Stride != 0);
 
-			uint32 Dim = InputTensors[0].GetShape().GetData()[DimIndex];
+			uint32 Dim = InputTensors[0]->GetShape().GetData()[DimIndex];
 			if (Start < 0 && Start > TNumericLimits<DataType>::Min())
 			{
 				Start += (DataType) Dim;
 			}
+			
 			if (End < 0 && Start > TNumericLimits<DataType>::Min())
 			{
 				End += (DataType) Dim;
@@ -90,7 +111,7 @@ class FOperatorDmlSlice : public FOperatorDml
 
 			if (Stride < 0)
             {
-                std::swap(Start, End);
+                Swap(Start, End);
                 Start += (Start < TNumericLimits<DataType>::Max()) ? 1 : 0;
                 End += (End < TNumericLimits<DataType>::Max()) ? 1 : 0;
             }
@@ -107,6 +128,15 @@ class FOperatorDmlSlice : public FOperatorDml
 		}
 	}
 
+	mutable Util::FSmallUIntArray	OutputShape;
+	mutable Util::FSmallUIntArray	Offsets, Sizes;
+	mutable Util::FSmallIntArray	Strides;
+
+	ENNETensorDataType InputIndexDataType;
+
+	static constexpr uint32 MinAllowedInputTensors = 3, MaxAllowedInputTensors = 5, NumAllowedOutputTensors = 1;
+	static constexpr int32 	MinTensorRank = 0, MaxTensorRank = GMaxTensorRank;
+
 public:
 
 	static FOperatorDml* Create()
@@ -116,72 +146,133 @@ public:
 
 	static bool Validate(const NNE::FAttributeMap& AttributeMap, TConstArrayView<ENNETensorDataType> InputTypes, TConstArrayView<NNE::FSymbolicTensorShape> InputShapes)
 	{
-		//TODO
-		return true;
-	}
+		const FString OpName = TEXT("Slice");
 
-	//
-	//
-	//
-	virtual bool Initialize(IDMLDevice* Device, TArrayView<const NNE::Internal::FTensor> InputTensors, TArrayView<const NNE::Internal::FTensor> OutputTensors, const NNE::FAttributeMap& Attributes) override
-	{
-		check(InputTensors.Num() >= 3);
-		check(InputTensors.Num() <= 5);
-		check(OutputTensors.Num() == 1);
-
-		ENNETensorDataType InputIndexDataType = ENNETensorDataType::None;
-
-		for(int Idx = 1; Idx < InputTensors.Num(); Idx++)
+		if (InputShapes.Num() < MinAllowedInputTensors || InputShapes.Num() > MaxAllowedInputTensors)
 		{
-			check(InputTensors[Idx].GetShape().Rank() == 1);
+			UE_LOG(LogNNE, Warning, TEXT("DML %s: invalid number of input tensors. %d provided, it should be in [%d, %d]."), 
+										*OpName, InputShapes.Num(), MinAllowedInputTensors, MaxAllowedInputTensors);
+			return false;
+		}
+		
+		if (!CheckGenericTensor(OpName, InputTypes[0], InputShapes[0], 
+			{ 	ENNETensorDataType::Double, ENNETensorDataType::Float, ENNETensorDataType::Half, 
+				ENNETensorDataType::Int64, ENNETensorDataType::Int32, ENNETensorDataType::Int16,
+				ENNETensorDataType::Int8, ENNETensorDataType::UInt64, ENNETensorDataType::UInt32, 
+				ENNETensorDataType::UInt16, ENNETensorDataType::UInt8
+			},
+			MinTensorRank, MaxTensorRank
+		  	))
+		{
+			return false;
+		}
+		
+		ENNETensorDataType IndexDataTypeToCheck = ENNETensorDataType::None;
+
+		for (int Idx = 1; Idx < InputShapes.Num(); Idx++)
+		{
+			if (!CheckGenericTensor1D(OpName, InputTypes[Idx], InputShapes[Idx], 
+				{ 	ENNETensorDataType::Int64, ENNETensorDataType::Int32
+				}
+				))
+			{
+				return false;
+			}
+			
 			if (Idx == 1)
 			{
-				InputIndexDataType = InputTensors[Idx].GetDataType();
-				check( InputIndexDataType == ENNETensorDataType::Int32 
-			   		|| InputIndexDataType == ENNETensorDataType::Int64);
+				IndexDataTypeToCheck = InputTypes[Idx];
 			}
 			else
 			{
-				check(InputTensors[Idx].GetDataType() == InputIndexDataType);
+				if (InputTypes[Idx] != IndexDataTypeToCheck)
+				{
+					UE_LOG(LogNNE, Warning, TEXT("DML %s: data type of tensor at position %d differs from data type of 'starts' tensor."), 
+										*OpName, Idx);
+					return false;
+				}
 			}
-			check(InputTensors[Idx].HasPreparedData());
+
+		}
+
+		return true;
+	}
+
+	virtual bool Initialize(TConstArrayView<NNE::FTensorDesc> Inputs, TConstArrayView<NNE::FTensorDesc> Outputs, const NNE::FAttributeMap& Attributes) override
+	{
+		check(Inputs.Num() >= MinAllowedInputTensors);
+		check(Inputs.Num() <= MaxAllowedInputTensors);
+		check(Outputs.Num() == NumAllowedOutputTensors);
+
+		InputIndexDataType = ENNETensorDataType::None;
+
+		for (int Idx = 1; Idx < Inputs.Num(); Idx++)
+		{
+			check(Inputs[Idx].GetShape().Rank() == 1);
+			
+			if (Idx == 1)
+			{
+				InputIndexDataType = Inputs[Idx].GetDataType();
+				if (InputIndexDataType != ENNETensorDataType::Int32 && InputIndexDataType != ENNETensorDataType::Int64)
+				{
+					UE_LOG(LogNNE, Error, TEXT("Failed to initialize Slice input tensor at index 1, data type needs to be Int32 or Int64"));
+					return false;
+				}
+			}
+			else
+			{
+				if (Inputs[Idx].GetDataType() != InputIndexDataType)
+				{
+					UE_LOG(LogNNE, Error, TEXT("Failed to initialize Slice input tensor at index %d, data type needs to same as at index 1"), Idx);
+					return false;
+				}
+			}
+
 			ConstantCPUInputs.Add(Idx);
 		}
 
-		// Initialize Input tensor desc
+		return true;
+	}
+
+	virtual int PrepareOutputs(TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TArrayView<NNE::Internal::FTensorRef> OutputTensors) override
+	{
+		switch (InputIndexDataType)
+		{
+			case ENNETensorDataType::Int32:
+				ComputeOffsetsSizesStrides<int32>(InputTensors, Offsets, Sizes, Strides, OutputShape);
+				break;
+
+			case ENNETensorDataType::Int64:
+				ComputeOffsetsSizesStrides<int64>(InputTensors, Offsets, Sizes, Strides, OutputShape);
+				break;
+		}
+
+		OutputTensors[0]->SetShape(NNE::FTensorShape::Make(OutputShape));
+
+		return 0;
+	}
+
+	virtual bool Create(IDMLDevice* Device, TConstArrayView<NNE::Internal::FTensorRef> InputTensors, TConstArrayView<NNE::Internal::FTensorRef> OutputTensors) override
+	{
         FTensorDescDml DmlInputTensorDesc;
         
 		if (!DmlInputTensorDesc
-				.SetFromTensor(InputTensors[0])
+				.SetFromTensor(*InputTensors[0])
 				.Validate())
         {
             UE_LOG(LogNNE, Error, TEXT("Failed to initialize Slice input for DML inference"));
             return false;
         }
 
-		// Initialize Output tensor desc
         FTensorDescDml DmlOutputTensorDesc;
         
 		if (!DmlOutputTensorDesc
-				.SetFromTensor(OutputTensors[0])
+				.SetFromTensor(*OutputTensors[0])
 				.Validate())
         {
             UE_LOG(LogNNE, Error, TEXT("Failed to initialize Slice Output for DML inference"));
             return false;
         }
-
-		Util::FSmallUIntArray Offsets, Sizes;
-		Util::FSmallIntArray Strides;
-
-		switch(InputIndexDataType)
-		{
-		case ENNETensorDataType::Int32:
-			ComputeOffsetsSizesStrides<int32>(InputTensors, Offsets, Sizes, Strides);
-			break;
-		case ENNETensorDataType::Int64:
-			ComputeOffsetsSizesStrides<int64>(InputTensors, Offsets, Sizes, Strides);
-			break;
-		}
 
 		DML_SLICE1_OPERATOR_DESC DmlSliceOpDesc{};
 		
@@ -198,7 +289,9 @@ public:
 };
 
 // Register Slice operator on Module startup
-NNE_DML_REGISTER_OP(Slice)
+NNE_DML_REGISTER_OP_VERSION(Slice, 10)
+NNE_DML_REGISTER_OP_VERSION(Slice, 11)
+NNE_DML_REGISTER_OP_VERSION(Slice, 13)
 
 } // namespace UE::NNERuntimeRDG::Private::Dml
 

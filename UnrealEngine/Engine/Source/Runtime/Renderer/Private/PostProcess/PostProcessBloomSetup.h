@@ -26,7 +26,7 @@ FScreenPassTexture AddGaussianBloomPasses(FRDGBuilder& GraphBuilder, const FView
 struct FBloomSetupInputs
 {
 	// [Required]: The intermediate scene color being processed.
-	FScreenPassTexture SceneColor;
+	FScreenPassTextureSlice SceneColor;
 
 	// [Required]: The scene eye adaptation buffer.
 	FRDGBufferRef EyeAdaptationBuffer = nullptr;

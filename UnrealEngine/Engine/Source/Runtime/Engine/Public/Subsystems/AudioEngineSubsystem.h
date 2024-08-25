@@ -56,6 +56,9 @@ public:
 	 */
 	virtual void Update() {}
 
+	/** Returns the owning audio device Id */
+	ENGINE_API virtual Audio::FDeviceId GetAudioDeviceId() const final;
+
 	/** Returns the owning audio device handle */
 	ENGINE_API virtual FAudioDeviceHandle GetAudioDeviceHandle() const final;
 

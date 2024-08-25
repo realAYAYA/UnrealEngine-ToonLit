@@ -7,7 +7,6 @@
 #include "USDStageImporter.h"
 #include "USDStageImportOptionsCustomization.h"
 
-#include "Misc/Paths.h"
 #include "Modules/ModuleManager.h"
 #include "PropertyEditorModule.h"
 #include "Templates/UniquePtr.h"
@@ -22,19 +21,22 @@ public:
 #if USE_USD_SDK
 		LLM_SCOPE_BYTAG(Usd);
 
-		IUnrealUSDWrapperModule& UnrealUSDWrapperModule = FModuleManager::Get().LoadModuleChecked< IUnrealUSDWrapperModule >(TEXT("UnrealUSDWrapper"));
+		FModuleManager::Get().LoadModuleChecked<IUnrealUSDWrapperModule>(TEXT("UnrealUSDWrapper"));
 
-		FPropertyEditorModule& PropertyModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>( TEXT( "PropertyEditor" ) );
-		PropertyModule.RegisterCustomClassLayout( TEXT( "UsdStageImportOptions" ), FOnGetDetailCustomizationInstance::CreateStatic( &FUsdStageImportOptionsCustomization::MakeInstance ) );
+		FPropertyEditorModule& PropertyModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>(TEXT("PropertyEditor"));
+		PropertyModule.RegisterCustomClassLayout(
+			TEXT("UsdStageImportOptions"),
+			FOnGetDetailCustomizationInstance::CreateStatic(&FUsdStageImportOptionsCustomization::MakeInstance)
+		);
 
 		USDStageImporter = MakeUnique<UUsdStageImporter>();
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 	}
 
 	virtual void ShutdownModule() override
 	{
-		FPropertyEditorModule& PropertyModule = FModuleManager::LoadModuleChecked< FPropertyEditorModule >( TEXT( "PropertyEditor" ) );
-		PropertyModule.UnregisterCustomClassLayout( TEXT( "UsdStageImportOptions" ) );
+		FPropertyEditorModule& PropertyModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>(TEXT("PropertyEditor"));
+		PropertyModule.UnregisterCustomClassLayout(TEXT("UsdStageImportOptions"));
 
 		USDStageImporter.Reset();
 	}

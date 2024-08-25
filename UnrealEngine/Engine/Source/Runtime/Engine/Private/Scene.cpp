@@ -3,7 +3,7 @@
 #include "Engine/Scene.h"
 #include "Engine/EngineTypes.h"
 #include "HAL/IConsoleManager.h"
-#include "SceneUtils.h"
+#include "RenderUtils.h"
 #include "UObject/RenderingObjectVersion.h"
 #include "UObject/ReleaseObjectVersion.h"
 #include "UObject/UE5ReleaseStreamObjectVersion.h"
@@ -566,15 +566,13 @@ FPostProcessSettings::FPostProcessSettings()
 	LumenSceneLightingUpdateSpeed = 1;
 	LumenFinalGatherQuality = 1;
 	LumenFinalGatherLightingUpdateSpeed = 1;
+	LumenFinalGatherScreenTraces = 1;
 	LumenMaxTraceDistance = 20000.0f;
 	LumenDiffuseColorBoost = 1.0f;
 	LumenSkylightLeaking = 0.0f;
 	LumenFullSkylightLeakingDistance = 1000.0f;
 
 	ColorGradingIntensity = 1.0f;
-	RayTracingGIType = ERayTracingGlobalIlluminationType::Disabled;
-	RayTracingGIMaxBounces = 1;
-	RayTracingGISamplesPerPixel = 4;
 
 	DepthOfFieldFocalDistance = 0; // Intentionally invalid to disable DOF by default.
 	DepthOfFieldFstop = 4.0f; 
@@ -584,6 +582,7 @@ FPostProcessSettings::FPostProcessSettings()
 	DepthOfFieldSqueezeFactor = 1.0f;
 	DepthOfFieldDepthBlurAmount = 1.0f;
 	DepthOfFieldDepthBlurRadius = 0.0f;
+	DepthOfFieldUseHairDepth = 0;
 	DepthOfFieldFocalRegion = 0.0f;
 	DepthOfFieldNearTransitionRegion = 300.0f;
 	DepthOfFieldFarTransitionRegion = 500.0f;
@@ -609,19 +608,20 @@ FPostProcessSettings::FPostProcessSettings()
 	MotionBlurPerObjectSize = 0.f;
 	ScreenPercentage_DEPRECATED = 100.0f;
 	ReflectionsType_DEPRECATED = EReflectionsType::RayTracing;
+
 	ReflectionMethod = EReflectionMethod::Lumen;
 	LumenReflectionQuality = 1;
 	LumenRayLightingMode = ELumenRayLightingModeOverride::Default;
+	LumenReflectionsScreenTraces = 1;
 	LumenFrontLayerTranslucencyReflections = false;
+	LumenMaxRoughnessToTraceReflections = 0.4f;
 	LumenMaxReflectionBounces = 1;
+
+	LumenMaxRefractionBounces = 0;
+
 	ScreenSpaceReflectionIntensity = 100.0f;
 	ScreenSpaceReflectionQuality = 50.0f;
 	ScreenSpaceReflectionMaxRoughness = 0.6f;
-	RayTracingReflectionsMaxRoughness = 0.6f;
-	RayTracingReflectionsMaxBounces = 1;
-	RayTracingReflectionsSamplesPerPixel = 1;
-	RayTracingReflectionsShadows = EReflectedAndRefractedRayTracedShadows::Hard_shadows;
-	RayTracingReflectionsTranslucency = 0;
 
 	TranslucencyType = ETranslucencyType::Raster;
 	RayTracingTranslucencyMaxRoughness = 0.6f;
@@ -633,12 +633,12 @@ FPostProcessSettings::FPostProcessSettings()
 	PathTracingMaxBounces = 32;
 	PathTracingSamplesPerPixel = 2048;
 	PathTracingMaxPathExposure = 30.0f;
+	PathTracingEnableEmissiveMaterials = 1;
 	PathTracingEnableReferenceDOF = 0;
 	PathTracingEnableReferenceAtmosphere = 0;
 	PathTracingEnableDenoiser = 1;
 
 	PathTracingIncludeEmissive = 1;
-	PathTracingIncludeIndirectEmissive = 1;
 	PathTracingIncludeDiffuse = 1;
 	PathTracingIncludeIndirectDiffuse = 1;
 	PathTracingIncludeSpecular = 1;
@@ -898,12 +898,6 @@ void FPostProcessSettings::PostSerialize(const FArchive& Ar)
 
 		if (Ar.CustomVer(FUE5ReleaseStreamObjectVersion::GUID) < FUE5ReleaseStreamObjectVersion::ReflectionMethodEnum)
 		{
-			if (bOverride_RayTracingGI && RayTracingGIType != ERayTracingGlobalIlluminationType::Disabled)
-			{
-				bOverride_DynamicGlobalIlluminationMethod = true;
-				DynamicGlobalIlluminationMethod = EDynamicGlobalIlluminationMethod::RayTraced;
-			}
-
 			if (bOverride_ReflectionsType_DEPRECATED)
 			{
 				bOverride_ReflectionMethod = true;
@@ -911,10 +905,6 @@ void FPostProcessSettings::PostSerialize(const FArchive& Ar)
 				if (ReflectionsType_DEPRECATED == EReflectionsType::ScreenSpace)
 				{
 					ReflectionMethod = EReflectionMethod::ScreenSpace;
-				}
-				else if (ReflectionsType_DEPRECATED == EReflectionsType::RayTracing)
-				{
-					ReflectionMethod = EReflectionMethod::RayTraced;
 				}
 			}
 		}

@@ -30,7 +30,8 @@
  *  RDG_EVENT_SCOPE(GraphBuilder, "MyProcessing %sx%s", ViewRect.Width(), ViewRect.Height());
  */
 #if RDG_EVENTS == RDG_EVENTS_STRING_REF || RDG_EVENTS == RDG_EVENTS_STRING_COPY
-	#define RDG_EVENT_NAME(Format, ...) FRDGEventName(TEXT(Format), ##__VA_ARGS__)
+	// Skip expensive string formatting for the relatively common case of no varargs.  We detect this by stringizing the varargs and checking if the string is non-empty (more than just a null terminator).
+	#define RDG_EVENT_NAME(Format, ...) (sizeof(#__VA_ARGS__ "") > 1 ? FRDGEventName(TEXT(Format), ##__VA_ARGS__) : FRDGEventName(1, TEXT(Format)))
 	#define RDG_EVENT_SCOPE(GraphBuilder, Format, ...) FRDGEventScopeGuard PREPROCESSOR_JOIN(__RDG_ScopeRef_,__LINE__) ((GraphBuilder), RDG_EVENT_NAME(Format, ##__VA_ARGS__))
 	#define RDG_EVENT_SCOPE_CONDITIONAL(GraphBuilder, Condition, Format, ...) FRDGEventScopeGuard PREPROCESSOR_JOIN(__RDG_ScopeRef_,__LINE__) ((GraphBuilder), RDG_EVENT_NAME(Format, ##__VA_ARGS__), Condition)
 
@@ -215,9 +216,7 @@ class TRDGScopeStack final
 public:
 	using ScopeType = typename ScopeOpType::ScopeType;
 
-	TRDGScopeStack(FRDGAllocator& InAllocator)
-		: Allocator(InAllocator)
-	{}
+	TRDGScopeStack() = default;
 
 	~TRDGScopeStack()
 	{
@@ -231,7 +230,7 @@ public:
 	template <typename... TScopeConstructArgs>
 	inline void BeginScope(TScopeConstructArgs&&... ScopeConstructArgs)
 	{
-		auto Scope = Allocator.AllocNoDestruct<ScopeType>(CurrentScope, Forward<TScopeConstructArgs>(ScopeConstructArgs)...);
+		auto Scope = FRDGAllocator::GetTLS().AllocNoDestruct<ScopeType>(CurrentScope, Forward<TScopeConstructArgs>(ScopeConstructArgs)...);
 		Scopes.Add(Scope);
 		CurrentScope = Scope;
 	}
@@ -269,7 +268,6 @@ public:
 	}
 
 private:
-	FRDGAllocator& Allocator;
 
 	/** The top of the scope stack during setup. */
 	const ScopeType* CurrentScope = nullptr;
@@ -323,9 +321,7 @@ private:
 class FRDGTimingScopeStack final
 {
 public:
-	FRDGTimingScopeStack(FRDGAllocator& Allocator)
-		: ScopeStack(Allocator)
-	{}
+	FRDGTimingScopeStack() = default;
 
 	inline void BeginScope(const DynamicRenderScaling::FBudget& Budget)
 	{
@@ -391,7 +387,9 @@ class FRDGEventName final
 public:
 	FRDGEventName() = default;
 
+	// Constructors require a string that matches the RDG builder lifetime, as copies are not made in all configurations.
 	RENDERCORE_API explicit FRDGEventName(const TCHAR* EventFormat, ...);
+	FRDGEventName(int32 NonVariadic, const TCHAR* EventName);
 
 	FRDGEventName(const FRDGEventName& Other);
 	FRDGEventName(FRDGEventName&& Other);
@@ -490,9 +488,8 @@ public:
 class FRDGEventScopeStack final
 {
 public:
-	FRDGEventScopeStack(FRDGAllocator& Allocator)
-		: ScopeStack(Allocator)
-		, bRDGEvents(GetEmitRDGEvents())
+	FRDGEventScopeStack()
+		: bRDGEvents(GetEmitRDGEvents())
 	{}
 
 	inline void BeginScope(FRDGEventName&& EventName, FRHIGPUMask GPUMask, ERDGEventScopeFlags Flags)
@@ -642,10 +639,9 @@ public:
 class FRDGGPUStatScopeStack final
 {
 public:
-	FRDGGPUStatScopeStack(FRDGAllocator& Allocator)
-		: ScopeStack(Allocator)
+	FRDGGPUStatScopeStack()
 #if HAS_GPU_STATS
-		, bGPUStats(AreGPUStatsEnabled())
+		: bGPUStats(AreGPUStatsEnabled())
 #endif
 	{}
 
@@ -750,13 +746,7 @@ struct FRDGGPUScopeOpArrays
 /** The complete set of scope stack implementations. */
 struct FRDGGPUScopeStacks
 {
-	FRDGGPUScopeStacks(FRDGAllocator& Allocator)
-		: Timing(Allocator)
-#if RDG_GPU_DEBUG_SCOPES
-		, Event(Allocator)
-		, Stat(Allocator)
-#endif
-	{}
+	FRDGGPUScopeStacks() = default;
 
 	inline void ReserveOps(int32 PassCount)
 	{
@@ -805,9 +795,7 @@ struct FRDGGPUScopeStacks
 
 struct FRDGGPUScopeStacksByPipeline
 {
-	FRDGGPUScopeStacksByPipeline(FRDGAllocator& Allocator)
-		: Graphics(Allocator)
-		, AsyncCompute(Allocator)
+	FRDGGPUScopeStacksByPipeline()
 	{
 		IsTimingIsEnabled.SetAll(false);
 	}
@@ -836,15 +824,21 @@ struct FRDGGPUScopeStacksByPipeline
 #if RDG_GPU_DEBUG_SCOPES
 	inline void BeginEventScope(FRDGEventName&& ScopeName, FRHIGPUMask GPUMask, ERDGEventScopeFlags Flags)
 	{
-		FRDGEventName ScopeNameCopy = ScopeName;
-		Graphics.Event.BeginScope(MoveTemp(ScopeNameCopy), GPUMask, Flags);
-		AsyncCompute.Event.BeginScope(MoveTemp(ScopeName), GPUMask, Flags);
+		if (!bFinalEventScopeActive)
+		{
+			FRDGEventName ScopeNameCopy = ScopeName;
+			Graphics.Event.BeginScope(MoveTemp(ScopeNameCopy), GPUMask, Flags);
+			AsyncCompute.Event.BeginScope(MoveTemp(ScopeName), GPUMask, Flags);
+		}
 	}
 
 	inline void EndEventScope()
 	{
-		Graphics.Event.EndScope();
-		AsyncCompute.Event.EndScope();
+		if (!bFinalEventScopeActive)
+		{
+			Graphics.Event.EndScope();
+			AsyncCompute.Event.EndScope();
+		}
 	}
 
 	inline void BeginStatScope(const FName& Name, const FName& StatName, const TCHAR* Description, FDrawCallCategoryName& Category)
@@ -879,6 +873,7 @@ struct FRDGGPUScopeStacksByPipeline
 
 	FRDGGPUScopeStacks Graphics;
 	FRDGGPUScopeStacks AsyncCompute;
+	bool bFinalEventScopeActive = false;
 
 private:
 	DynamicRenderScaling::TMap<bool> IsTimingIsEnabled;
@@ -922,9 +917,7 @@ public:
 class FRDGCSVStatScopeStack final
 {
 public:
-	FRDGCSVStatScopeStack(FRDGAllocator& Allocator)
-		: ScopeStack(Allocator)
-	{}
+	FRDGCSVStatScopeStack() = default;
 
 	void BeginScope(const char* StatName)
 	{
@@ -1018,9 +1011,7 @@ struct FRDGCPUScopeOpArrays
 
 struct FRDGCPUScopeStacks
 {
-	FRDGCPUScopeStacks(FRDGAllocator& Allocator)
-		: CSV(Allocator)
-	{}
+	FRDGCPUScopeStacks() = default;
 
 	inline void ReserveOps()
 	{

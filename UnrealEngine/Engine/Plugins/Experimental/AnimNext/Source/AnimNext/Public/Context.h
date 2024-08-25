@@ -20,10 +20,6 @@ struct ANIMNEXT_API FContext
 public:
 	FContext();
 	explicit FContext(float InDeltaTime);
-	FContext(const FContext& Other) = delete;
-	FContext& operator=(const FContext&) = delete;
-	FContext(FContext&& Other) = delete;
-	FContext& operator=(FContext&& Other) = delete;
 
 	// Access the parameter stack, cached on construction
 	FParamStack& GetMutableParamStack() const { return Stack; }
@@ -32,6 +28,9 @@ public:
 	float GetDeltaTime() const { return DeltaTime; }
 
 private:
+	FContext(const FContext& Other) = delete;
+	FContext& operator=(const FContext&) = delete;
+
 	FParamStack& Stack;
 	float DeltaTime = 0.0f;
 };

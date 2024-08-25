@@ -72,10 +72,10 @@ struct FNativeClassHierarchyNodeKey
 struct FNativeClassHierarchyNode
 {
 	/** Helper function to make a folder node entry */
-	static TSharedRef<FNativeClassHierarchyNode> MakeFolderEntry(FName InEntryName, FString InEntryPath);
+	static TSharedRef<FNativeClassHierarchyNode> MakeFolderEntry(FName InEntryName, FString InEntryPath, TOptional<EPluginLoadedFrom> LoadedFrom);
 
 	/** Helper function to make a class node entry */
-	static TSharedRef<FNativeClassHierarchyNode> MakeClassEntry(UClass* InClass, FName InClassModuleName, FString InClassModuleRelativePath, FString InEntryPath);
+	static TSharedRef<FNativeClassHierarchyNode> MakeClassEntry(UClass* InClass, FName InClassModuleName, FString InClassModuleRelativePath, FString InEntryPath, TOptional<EPluginLoadedFrom> LoadedFrom);
 
 	void AddChild(TSharedRef<FNativeClassHierarchyNode> ChildEntry);
 
@@ -101,7 +101,7 @@ struct FNativeClassHierarchyNode
 	TMap<FNativeClassHierarchyNodeKey, TSharedPtr<FNativeClassHierarchyNode>> Children;
 
 	/** Which type of plugin this data was originally loaded from (if loaded from a plugin)*/
-	EPluginLoadedFrom LoadedFrom;
+	TOptional<EPluginLoadedFrom> LoadedFrom;
 };
 
 /**
@@ -244,14 +244,6 @@ public:
 	bool GetClassPath(const UClass* InClass, FString& OutClassPath, FNativeClassHierarchyGetClassPathCache& InCache, const bool bIncludeClassName = true) const;
 
 	/**
-	 * This will add a transient folder into the hierarchy
-	 * The folder will be lost unless a class is added to it before the hierarchy is next re-populated
-	 *
-	 * @param InClassPath - The location of the new folder (in class path form - eg) "/Classes_Game/MyGame/MyAwesomeCode")
-	 */
-	void AddFolder(const FString& InClassPath);
-
-	/**
 	 * Test if root node passes given rules
 	 */
 	bool RootNodePassesFilter(const FName InRootName, const TSharedPtr<const FNativeClassHierarchyNode>& InRootNode, const bool bIncludeEngineClasses, const bool bIncludePluginClasses) const;
@@ -384,7 +376,7 @@ private:
 	 * 
 	 * @return The name of the root path to use, eg "/Classes_Game"
 	 */
-	static FName GetClassPathRootForModule(const FName& InModuleName, const TSet<FName>& InGameModules, EPluginLoadedFrom& OutWhereLoadedFrom);
+	static FName GetClassPathRootForModule(const FName& InModuleName, const TSet<FName>& InGameModules, TOptional<EPluginLoadedFrom>& OutWhereLoadedFrom);
 
 	/**
 	 * Calculate the list of modules that belong to the "/Classes_Game" root

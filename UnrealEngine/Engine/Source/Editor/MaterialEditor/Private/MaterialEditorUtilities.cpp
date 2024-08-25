@@ -132,6 +132,15 @@ void FMaterialEditorUtilities::UpdateMaterialAfterGraphChange(const class UEdGra
 	}
 }
 
+void FMaterialEditorUtilities::MarkMaterialDirty(const class UEdGraph* Graph)
+{
+	TSharedPtr<class IMaterialEditor> MaterialEditor = GetIMaterialEditorForObject(Graph);
+	if (MaterialEditor.IsValid())
+	{
+		MaterialEditor->MarkMaterialDirty();
+	}
+}
+
 void FMaterialEditorUtilities::UpdateDetailView(const class UEdGraph* Graph)
 {
 	TSharedPtr<class IMaterialEditor> MaterialEditor = GetIMaterialEditorForObject(Graph);
@@ -606,7 +615,7 @@ void FMaterialEditorUtilities::GetVisibleMaterialParametersFromExpression(
 
 		const FFunctionExpressionInput* MatchingInput = FindInputById(FunctionInputExpression, FunctionState->FunctionCall->FunctionInputs);
 		check(MatchingInput);
-
+		
 		GetVisibleMaterialParametersFromExpression(FMaterialExpressionKey(MatchingInput->Input.Expression, MatchingInput->Input.OutputIndex), MaterialInstance, VisibleExpressions, FunctionStack);
 
 		FunctionStack.Push(FunctionState);
@@ -621,11 +630,10 @@ void FMaterialEditorUtilities::GetVisibleMaterialParametersFromExpression(
 		}
 		else
 		{
-			TArrayView<FExpressionInput*> ExpressionInputs = MaterialExpressionKey.Expression->GetInputsView();
-			for (int32 ExpressionInputIndex = 0; ExpressionInputIndex < ExpressionInputs.Num(); ExpressionInputIndex++)
+			// Retrieve the expression input and then start parsing its children
+			for (int32 i = 0; i < MaterialExpressionKey.Expression->GetInputsView().Num(); i++)
 			{
-				//retrieve the expression input and then start parsing its children
-				FExpressionInput* Input = ExpressionInputs[ExpressionInputIndex];
+				FExpressionInput* Input = MaterialExpressionKey.Expression->GetInputsView()[i];
 				GetVisibleMaterialParametersFromExpression(FMaterialExpressionKey(Input->Expression, Input->OutputIndex), MaterialInstance, VisibleExpressions, FunctionStack);
 			}
 

@@ -20,6 +20,7 @@
 #include "CommonRenderResources.h"
 #include "ScreenPass.h"
 #include "RectLightTexture.h"
+#include "DataDrivenShaderPlatformInfo.h"
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Possible improvements:
@@ -50,12 +51,6 @@ static TAutoConsoleVariable<int32> CVarRectLighForceUpdate(
 	0,
 	TEXT("Force rect. light atlas update very frame."),
 	ECVF_RenderThreadSafe);
-
-static TAutoConsoleVariable<int32> CVarRectLighTranslucent(
-	TEXT("r.RectLightAtlas.Translucent"),
-	0,
-	TEXT("Enable rect light support for translucent surfaces. When enabled, it will add an extrat sampler to the pixel shader (limited to 16 on dx11 based system)"),
-	ECVF_ReadOnly | ECVF_RenderThreadSafe);
 
 static TAutoConsoleVariable<int32> CVarRectLighFilterQuality(
 	TEXT("r.RectLightAtlas.FilterQuality"),
@@ -217,9 +212,11 @@ bool CanContain(const FAtlasRect& Outside, const FAtlasRect& Inside)
 
 static FIntPoint ToMIP(const FIntPoint& InMip, uint32 MipIndex)
 {
+	const int32 Div = 1 << MipIndex;
+
 	FIntPoint Out;
-	Out.X = InMip.X >> MipIndex;
-	Out.Y = InMip.Y >> MipIndex;
+	Out.X = FMath::DivideAndRoundUp(InMip.X,Div);
+	Out.Y = FMath::DivideAndRoundUp(InMip.Y,Div);
 	return Out;
 }
 
@@ -303,6 +300,8 @@ public:
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 	{
 		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		ShaderPrint::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+
 		OutEnvironment.SetDefine(TEXT("SHADER_DEBUG"), 1);
 	}
 };
@@ -1190,7 +1189,7 @@ static bool FitAlignedSlot(FAtlasLayout& Layout, FAtlasSlot& Slot)
 							{
 								while (H.Line.Origin.Y >= VisibilityStack.Last().Y)
 								{
-									VisibilityStack.Pop(false);
+									VisibilityStack.Pop(EAllowShrinking::No);
 								}
 
 								// Sanity 
@@ -1215,7 +1214,7 @@ static bool FitAlignedSlot(FAtlasLayout& Layout, FAtlasSlot& Slot)
 							{
 								while (H.Line.Origin.Y >= VisibilityStack.Last().Y)
 								{
-									VisibilityStack.Pop(false);
+									VisibilityStack.Pop(EAllowShrinking::No);
 								}
 
 								// Sanity 
@@ -1342,8 +1341,8 @@ static void PackAtlas(
 	if (bNeedRefit)
 	{
 		CopySlots.Reserve(ValidSlots.Num());
-		CopySlots.SetNum(0, false);
-		NewSlots.SetNum(0, false);
+		CopySlots.SetNum(0, EAllowShrinking::No);
+		NewSlots.SetNum(0, EAllowShrinking::No);
 		
 		FIntPoint CurrentAtlasResolution = Layout.AtlasResolution;
 		int32 CurrentSourceTextureMIPBias = 0; // When a refit is done, restart with a MIP bias of 0, to ensure we use the full potential space of the atlas
@@ -1403,8 +1402,8 @@ static void PackAtlas(
 					}
 				}
 
-				CopySlots.SetNum(0, false);
-				NewSlots.SetNum(0, false);
+				CopySlots.SetNum(0, EAllowShrinking::No);
+				NewSlots.SetNum(0, EAllowShrinking::No);
 			}
 			else
 			{

@@ -26,8 +26,10 @@ public class Core : ModuleRules
 			}
 		}
 
+		PrivateDependencyModuleNames.Add("AtomicQueue");
 		PrivateDependencyModuleNames.Add("BLAKE3");
 		PrivateDependencyModuleNames.Add("OodleDataCompression");
+		PrivateDependencyModuleNames.Add("xxhash");
 
 		PublicDependencyModuleNames.Add("TraceLog");
 
@@ -40,12 +42,16 @@ public class Core : ModuleRules
 
 		if (Target.bBuildEditor == true)
 		{
-			DynamicallyLoadedModuleNames.Add("SourceCodeAccess");
-
 			PrivateIncludePathModuleNames.Add("DirectoryWatcher");
 			DynamicallyLoadedModuleNames.Add("DirectoryWatcher");
 		}
 
+		if (Target.Platform == UnrealTargetPlatform.Win64)
+		{
+			PrivateDefinitions.Add("PLATFORM_BUILDS_LIBPAS=1");
+			PrivateDependencyModuleNames.Add("libpas");
+		}
+			
 		if (Target.Platform.IsInGroup(UnrealPlatformGroup.Windows))
 		{
 			AddEngineThirdPartyPrivateStaticDependencies(Target,
@@ -63,10 +69,10 @@ public class Core : ModuleRules
 			// We do not want the static analyzer to run on thirdparty code
 			if (Target.StaticAnalyzer == StaticAnalyzer.None) 
 			{
-				PublicSystemIncludePaths.Add(Path.Combine(Target.UEThirdPartySourceDirectory, "mimalloc/include"));
+				PrivateDependencyModuleNames.Add("mimalloc");
 				PrivateDefinitions.Add("PLATFORM_BUILDS_MIMALLOC=1");
 			}
-
+			
 			if (Target.WindowsPlatform.bUseBundledDbgHelp)
 			{
 				PublicDelayLoadDLLs.Add("DBGHELP.DLL");
@@ -96,9 +102,9 @@ public class Core : ModuleRules
 				"zlib",
 				"PLCrashReporter"
 				);
-			PublicFrameworks.AddRange(new string[] { "Cocoa", "Carbon", "IOKit", "Security" });
+			PublicFrameworks.AddRange(new string[] { "Cocoa", "Carbon", "IOKit", "Security", "UniformTypeIdentifiers" });
 
-			PublicSystemIncludePaths.Add(Path.Combine(Target.UEThirdPartySourceDirectory, "mimalloc/include"));
+			PrivateDependencyModuleNames.Add("mimalloc");
 			PrivateDefinitions.Add("PLATFORM_BUILDS_MIMALLOC=1");
 
 			if (Target.bBuildEditor == true)
@@ -107,7 +113,7 @@ public class Core : ModuleRules
 				PublicAdditionalLibraries.Add(XcodeRoot + "/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk/System/Library/PrivateFrameworks/MultitouchSupport.framework/Versions/Current/MultitouchSupport.tbd");
 			}
 		}
-		else if (Target.Platform == UnrealTargetPlatform.IOS || Target.Platform == UnrealTargetPlatform.TVOS)
+		else if (Target.IsInPlatformGroup(UnrealPlatformGroup.IOS))
 		{
 			AddEngineThirdPartyPrivateStaticDependencies(Target,
 				"zlib"
@@ -119,6 +125,10 @@ public class Core : ModuleRules
 				AddEngineThirdPartyPrivateStaticDependencies(Target,
 					"PLCrashReporter"
 					);
+			}
+			if (Target.Platform == UnrealTargetPlatform.VisionOS)
+			{
+				PublicFrameworks.Add("CoreMotion");
 			}
 
 			PrivateIncludePathModuleNames.Add("ApplicationCore");
@@ -139,6 +149,18 @@ public class Core : ModuleRules
 				"zlib",
 				"libunwind"
 				);
+
+			if (Target.Configuration != UnrealTargetConfiguration.Shipping && Target.Type != TargetType.Program)
+			{
+				PublicDefinitions.Add("UE_MEMORY_TRACE_AVAILABLE=1");
+				PublicDefinitions.Add("UE_MEMORY_TAGS_TRACE_ENABLED=1");
+				PublicDefinitions.Add("UE_CALLSTACK_TRACE_ENABLED=1");
+				PrivateDefinitions.Add("UE_CALLSTACK_TRACE_ANDROID_USE_STACK_FRAMES_WALKING=1");
+
+				// Support for memory tracing libc.so malloc
+				PrivateIncludePaths.Add(Path.Combine(EngineDirectory, "Build", "Android", "Prebuilt", "ScudoMemoryTrace"));
+				PrivateDefinitions.Add("UE_MEMORY_TRACE_ANDROID_ENABLE_SCUDO_TRACING_SUPPORT=1");
+			}
 		}
 		else if (Target.IsInPlatformGroup(UnrealPlatformGroup.Unix))
 		{
@@ -150,7 +172,7 @@ public class Core : ModuleRules
 			// Core uses dlopen()
 			PublicSystemLibraries.Add("dl");
 
-			PublicSystemIncludePaths.Add(Path.Combine(Target.UEThirdPartySourceDirectory, "mimalloc/include"));
+			PrivateDependencyModuleNames.Add("mimalloc");
 			PrivateDefinitions.Add("PLATFORM_BUILDS_MIMALLOC=1");
 
 			if (Target.Configuration != UnrealTargetConfiguration.Shipping && Target.Type != TargetType.Program)
@@ -208,7 +230,7 @@ public class Core : ModuleRules
 		// Superluminal instrumentation support, if one has it installed
 		if (Target.Platform.IsInGroup(UnrealPlatformGroup.Windows))
 		{
-			string SuperluminalInstallDir = Microsoft.Win32.Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Superluminal\Performance", "InstallDir", null) as string;
+			string SuperluminalInstallDir = OperatingSystem.IsWindows() ? Microsoft.Win32.Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Superluminal\Performance", "InstallDir", null) as string : null;
 			if (String.IsNullOrEmpty(SuperluminalInstallDir))
 			{
 				SuperluminalInstallDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Superluminal/Performance");
@@ -229,12 +251,12 @@ public class Core : ModuleRules
 				{
 					PublicAdditionalLibraries.Add(Path.Combine(SuperluminalLibDir, "PerformanceAPI_MD.lib"));
 				}
-				PublicDefinitions.Add("WITH_SUPERLUMINAL_PROFILER=1");					  
-				PublicSystemIncludePaths.Add(Path.Combine(SuperluminalApiDir, "include/"));
+				PrivateDefinitions.Add("WITH_SUPERLUMINAL_PROFILER=1");
+				PrivateIncludePaths.Add(Path.Combine(SuperluminalApiDir, "include/"));
 			}
 			else
 			{
-				PublicDefinitions.Add("WITH_SUPERLUMINAL_PROFILER=0");
+				PrivateDefinitions.Add("WITH_SUPERLUMINAL_PROFILER=0");
 			}
 		}
 
@@ -272,8 +294,8 @@ public class Core : ModuleRules
 			PublicDefinitions.Add("WITH_DIRECTXMATH=0");
 		}
 
-		if ((Target.Platform == UnrealTargetPlatform.Mac) || (Target.Platform == UnrealTargetPlatform.IOS) || (Target.Platform == UnrealTargetPlatform.TVOS) 
-			|| (Target.Platform == UnrealTargetPlatform.Android))
+		if (Target.IsInPlatformGroup(UnrealPlatformGroup.Apple) ||
+			Target.Platform == UnrealTargetPlatform.Android)
 		{
 			PublicDefinitions.Add("IS_RUNNING_GAMETHREAD_ON_EXTERNAL_THREAD=1");
 		}

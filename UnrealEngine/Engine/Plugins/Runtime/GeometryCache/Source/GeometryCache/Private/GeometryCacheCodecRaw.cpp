@@ -51,7 +51,7 @@ void UGeometryCacheCodecRaw::CodeFrame(const FGeometryCacheCodecEncodeArguments 
 	// Finish up any previous chunks
 	if (EncoderData.CurrentChunkId >= 0)
 	{
-		(*EncoderData.AppendChunksTo)[EncoderData.CurrentChunkId].LastFrame = GetEncoderFrameNumer() - 1;
+		(*EncoderData.AppendChunksTo)[EncoderData.CurrentChunkId].LastFrame = static_cast<float>(GetEncoderFrameNumer() - 1);
 	}
 
 	// Create a new chunk for this coded frame
@@ -69,8 +69,8 @@ void UGeometryCacheCodecRaw::CodeFrame(const FGeometryCacheCodecEncodeArguments 
 
 	// Update other fields, note that for the last time start == end this is valid
 	// as any time past end will use the last frame no matter what the interval
-	NewChunk->FirstFrame = GetEncoderFrameNumer();
-	NewChunk->LastFrame = GetEncoderFrameNumer();
+	NewChunk->FirstFrame = static_cast<float>(GetEncoderFrameNumer());
+	NewChunk->LastFrame = static_cast<float>(GetEncoderFrameNumer());
 }
 #endif
 
@@ -79,7 +79,7 @@ DECLARE_CYCLE_STAT(TEXT("Deserialize Mesh"), STAT_DeserializeMesh, STATGROUP_Geo
 bool FGeometryCacheCodecRenderStateRaw::DecodeSingleFrame(FGeometryCacheCodecDecodeArguments &Args)
 {
 	// We have a chunk per frame so chunk id's are just frame id's
-	check(Args.Chunks[Args.FrameIdentifier].FirstFrame == Args.FrameIdentifier);
+	check(Args.Chunks[Args.FrameIdentifier].FirstFrame == static_cast<float>(Args.FrameIdentifier));
 
 	uint32 DataSize = 0;
 	const uint8 *data = IGeometryCacheStreamingManager::Get().MapChunk(Args.Track.GetTrack(), Args.FrameIdentifier, &DataSize);

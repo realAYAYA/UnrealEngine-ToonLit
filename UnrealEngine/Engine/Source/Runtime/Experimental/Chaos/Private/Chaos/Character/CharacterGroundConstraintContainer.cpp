@@ -7,6 +7,15 @@
 
 namespace Chaos
 {
+	namespace CVars
+	{
+		float Chaos_CharacterGroundConstraint_InputMovementThreshold = 0.1f;
+		FAutoConsoleVariableRef CVarChaos_CharacterGroundConstraint_InputMovementThreshold(TEXT("p.Chaos.CharacterGroundConstraint.InputMovementThreshold"), Chaos_CharacterGroundConstraint_InputMovementThreshold, TEXT("Minimum per frame input movement distance in cm."));
+		
+		float Chaos_CharacterGroundConstraint_ExternalMovementThreshold = 2.0f;
+		FAutoConsoleVariableRef CVarChaos_CharacterGroundConstraint_ExternalMovementThreshold(TEXT("p.Chaos.CharacterGroundConstraint.ExternalMovementThreshold"), Chaos_CharacterGroundConstraint_ExternalMovementThreshold, TEXT("If distance moved is less than this then retain current movement target relative to ground."));
+	}
+	
 	FCharacterGroundConstraintContainer::FCharacterGroundConstraintContainer()
 		: Base(FCharacterGroundConstraintHandle::StaticType())
 		, ConstraintPool(16, 0)
@@ -132,6 +141,7 @@ namespace Chaos
 	{
 		for (TGeometryParticleHandle<FReal, 3>*RemovedParticle : RemovedParticles)
 		{
+			TArray<FCharacterGroundConstraintHandle*> ConstraintsWithRemovedGroundBody;
 			for (FConstraintHandle* ConstraintHandle : RemovedParticle->ParticleConstraints())
 			{
 				if (FCharacterGroundConstraintHandle* Constraint = ConstraintHandle->As<FCharacterGroundConstraintHandle>())
@@ -147,13 +157,61 @@ namespace Chaos
 						}
 						else if (Constraint->GroundParticle == RemovedParticle)
 						{
-							Constraint->GroundParticle = nullptr;
+							ConstraintsWithRemovedGroundBody.Add(Constraint);
 						}
 					}
 					else
 					{
 						Constraint->SetEnabled(false);
 					}
+				}
+			}
+
+			for (FCharacterGroundConstraintHandle* Constraint : ConstraintsWithRemovedGroundBody)
+			{
+				Constraint->SetGroundParticle(nullptr);
+			}
+		}
+	}
+
+	void FCharacterGroundConstraintContainer::OnDisableParticle(FGeometryParticleHandle* DisabledParticle)
+	{
+		// Only disable the constraint if it's the character particle being disabled.
+		// If the ground particle is disabled set it to null. This will remove the constraint
+		// from the disabled particle's constraint list, so if the ground particle is re-enabled
+		// it won't automatically be set as the ground particle in the constraint
+		for (FCharacterGroundConstraintHandle* Constraint : GetConstraints())
+		{
+			if (Constraint->IsValid())
+			{
+				if (Constraint->GetCharacterParticle() == DisabledParticle)
+				{
+					if (Constraint->IsEnabled())
+					{
+						Constraint->SetEnabled(false);
+					}
+				}
+				else if (Constraint->GetGroundParticle() == DisabledParticle)
+				{
+					Constraint->SetGroundParticle(nullptr);
+				}
+			}
+			else
+			{
+				Constraint->SetEnabled(false);
+			}
+		}
+	}
+
+	void FCharacterGroundConstraintContainer::OnEnableParticle(FGeometryParticleHandle* EnabledParticle)
+	{
+		for (FConstraintHandle* ConstraintHandle : EnabledParticle->ParticleConstraints())
+		{
+			if (FCharacterGroundConstraintHandle* Constraint = ConstraintHandle->As<FCharacterGroundConstraintHandle>())
+			{
+				if ((Constraint->GetCharacterParticle() == EnabledParticle) && !Constraint->IsEnabled())
+				{
+					Constraint->SetEnabled(true);
 				}
 			}
 		}

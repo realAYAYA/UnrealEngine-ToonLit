@@ -84,20 +84,30 @@ public:
 	{
 	}
 
-	virtual FIntPoint GetAtlasSize(const bool InIsGrayscale) const override
+	virtual FIntPoint GetAtlasSize(ESlateFontAtlasContentType InContentType) const override
 	{
-		return InIsGrayscale
-			? FIntPoint(GrayscaleTextureSize, GrayscaleTextureSize)
-			: FIntPoint(ColorTextureSize, ColorTextureSize);
+		switch (InContentType)
+		{
+			case ESlateFontAtlasContentType::Alpha:
+				return FIntPoint(GrayscaleTextureSize, GrayscaleTextureSize);
+			case ESlateFontAtlasContentType::Color:
+				return FIntPoint(ColorTextureSize, ColorTextureSize);
+			case ESlateFontAtlasContentType::Msdf:
+				return FIntPoint(SdfTextureSize, SdfTextureSize);
+			default:
+				checkNoEntry();
+				// Default to Color
+				return FIntPoint(ColorTextureSize, ColorTextureSize);
+		}
 	}
 
-	virtual TSharedRef<FSlateFontAtlas> CreateFontAtlas(const bool InIsGrayscale) const override
+	virtual TSharedRef<FSlateFontAtlas> CreateFontAtlas(ESlateFontAtlasContentType InContentType) const override
 	{
-		const FIntPoint AtlasSize = GetAtlasSize(InIsGrayscale);
-		return MakeShareable(new FSlateFontAtlasD3D(AtlasSize.X, AtlasSize.Y, InIsGrayscale));
+		const FIntPoint AtlasSize = GetAtlasSize(InContentType);
+		return MakeShareable(new FSlateFontAtlasD3D(AtlasSize.X, AtlasSize.Y, InContentType));
 	}
 
-	virtual TSharedPtr<ISlateFontTexture> CreateNonAtlasedTexture(const uint32 InWidth, const uint32 InHeight, const bool InIsGrayscale, const TArray<uint8>& InRawData) const override
+	virtual TSharedPtr<ISlateFontTexture> CreateNonAtlasedTexture(const uint32 InWidth, const uint32 InHeight, ESlateFontAtlasContentType InContentType, const TArray<uint8>& InRawData) const override
 	{
 		return nullptr;
 	}
@@ -107,6 +117,7 @@ private:
 	/** Size of each font texture, width and height */
 	static const uint32 GrayscaleTextureSize = 1024;
 	static const uint32 ColorTextureSize = 512;
+	static const uint32 SdfTextureSize = 1024;
 };
 
 TSharedRef<FSlateFontServices> CreateD3DFontServices()

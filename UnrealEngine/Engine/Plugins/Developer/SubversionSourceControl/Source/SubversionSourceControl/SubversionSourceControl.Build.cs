@@ -7,14 +7,14 @@ public class SubversionSourceControl : ModuleRules
 {
 	public SubversionSourceControl(ReadOnlyTargetRules Target) : base(Target)
 	{
-        PrivateDependencyModuleNames.AddRange(
-            new string[] {
+		PrivateDependencyModuleNames.AddRange(
+			 new string[] {
 				"Core",
 				"Slate",
 				"SlateCore",
 				"SourceControl",
 				"XmlParser",
-		    }
+			}
 		);
 
 		if (Target.Platform == UnrealTargetPlatform.Win64 || Target.Platform == UnrealTargetPlatform.Mac)
@@ -25,5 +25,7 @@ public class SubversionSourceControl : ModuleRules
 				RuntimeDependencies.Add(FilePath);
 			}
 		}
+
+		UnsafeTypeCastWarningLevel = WarningLevel.Error;
 	}
 }

@@ -2,7 +2,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -15,6 +17,7 @@ namespace EpicGames.Core
 	/// Representation of an absolute file path. Allows fast hashing and comparisons.
 	/// </summary>
 	[Serializable]
+	[TypeConverter(typeof(FileReferenceTypeConverter))]
 	public class FileReference : FileSystemReference, IEquatable<FileReference>, IComparable<FileReference>
 	{
 		/// <summary>
@@ -35,7 +38,7 @@ namespace EpicGames.Core
 		public FileReference(string inPath)
 			: base(Path.GetFullPath(inPath))
 		{
-			if(FullName[^1] == '\\' || FullName[^1] == '/')
+			if (FullName[^1] == '\\' || FullName[^1] == '/')
 			{
 				throw new ArgumentException("File names may not be terminated by a path separator character");
 			}
@@ -67,35 +70,19 @@ namespace EpicGames.Core
 		/// <param name="fileName">FileName for the string</param>
 		/// <returns>Returns a FileReference representing the given string, or null.</returns>
 		[return: NotNullIfNotNull("fileName")]
-		public static FileReference? FromString(string? fileName)
-		{
-			if(String.IsNullOrEmpty(fileName))
-			{
-				return null;
-			}
-			else
-			{
-				return new FileReference(fileName);
-			}
-		}
+		public static FileReference? FromString(string? fileName) => String.IsNullOrEmpty(fileName) ? null : new FileReference(fileName);
 
 		/// <summary>
 		/// Gets the file name without path information
 		/// </summary>
 		/// <returns>A string containing the file name</returns>
-		public string GetFileName()
-		{
-			return Path.GetFileName(FullName);
-		}
+		public string GetFileName() => Path.GetFileName(FullName);
 
 		/// <summary>
 		/// Gets the file name without path information or an extension
 		/// </summary>
 		/// <returns>A string containing the file name without an extension</returns>
-		public string GetFileNameWithoutExtension()
-		{
-			return Path.GetFileNameWithoutExtension(FullName);
-		}
+		public string GetFileNameWithoutExtension() => Path.GetFileNameWithoutExtension(FullName);
 
 		/// <summary>
 		/// Gets the file name without path or any extensions
@@ -120,21 +107,14 @@ namespace EpicGames.Core
 		/// Gets the extension for this filename
 		/// </summary>
 		/// <returns>A string containing the extension of this filename</returns>
-		public string GetExtension()
-		{
-			return Path.GetExtension(FullName);
-		}
+		public string GetExtension() => Path.GetExtension(FullName);
 
 		/// <summary>
 		/// Change the file's extension to something else
 		/// </summary>
 		/// <param name="extension">The new extension</param>
 		/// <returns>A FileReference with the same path and name, but with the new extension</returns>
-		public FileReference ChangeExtension(string? extension)
-		{
-			string newFullName = Path.ChangeExtension(FullName, extension);
-			return new FileReference(newFullName, Sanitize.None);
-		}
+		public FileReference ChangeExtension(string? extension) => new FileReference(Path.ChangeExtension(FullName, extension), Sanitize.None);
 
 		/// <summary>
 		/// Gets the directory containing this file
@@ -168,11 +148,7 @@ namespace EpicGames.Core
 		/// <param name="baseDirectory">The base directory</param>
 		/// <param name="fragments">Fragments to combine with the base directory</param>
 		/// <returns>The new file name</returns>
-		public static FileReference Combine(DirectoryReference baseDirectory, params string[] fragments)
-		{
-			string fullName = FileSystemReference.CombineStrings(baseDirectory, fragments);
-			return new FileReference(fullName, Sanitize.None);
-		}
+		public static FileReference Combine(DirectoryReference baseDirectory, params string[] fragments) => new FileReference(CombineStrings(baseDirectory, fragments), Sanitize.None);
 
 		/// <summary>
 		/// Append a string to the end of a filename
@@ -180,10 +156,7 @@ namespace EpicGames.Core
 		/// <param name="a">The base file reference</param>
 		/// <param name="b">Suffix to be appended</param>
 		/// <returns>The new file reference</returns>
-		public static FileReference operator +(FileReference a, string b)
-		{
-			return new FileReference(a.FullName + b, Sanitize.None);
-		}
+		public static FileReference operator +(FileReference a, string b) => new FileReference(a.FullName + b, Sanitize.None);
 
 		/// <summary>
 		/// Compares two filesystem object names for equality. Uses the canonical name representation, not the display name representation.
@@ -213,10 +186,7 @@ namespace EpicGames.Core
 		/// <param name="a">First object to compare.</param>
 		/// <param name="b">Second object to compare.</param>
 		/// <returns>False if the names represent the same object, true otherwise</returns>
-		public static bool operator !=(FileReference? a, FileReference? b)
-		{
-			return !(a == b);
-		}
+		public static bool operator !=(FileReference? a, FileReference? b) => !(a == b);
 
 		/// <summary>
 		/// Compares against another object for equality.
@@ -230,34 +200,28 @@ namespace EpicGames.Core
 		/// </summary>
 		/// <param name="obj">other instance to compare.</param>
 		/// <returns>True if the names represent the same object, false otherwise</returns>
-		public bool Equals(FileReference? obj)
-		{
-			return obj == this;
-		}
+		public bool Equals(FileReference? obj) => obj == this;
 
 		/// <summary>
 		/// Returns a hash code for this object
 		/// </summary>
 		/// <returns></returns>
-		public override int GetHashCode()
-		{
-			return Comparer.GetHashCode(FullName);
-		}
+		public override int GetHashCode() => Comparer.GetHashCode(FullName);
 
 		/// <inheritdoc/>
 		public int CompareTo(FileReference? other) => Comparer.Compare(FullName, other?.FullName);
 
 		/// <inheritdoc/>
-		public static bool operator <(FileReference left, FileReference right) => ReferenceEquals(left, null) ? !ReferenceEquals(right, null) : left.CompareTo(right) < 0;
+		public static bool operator <(FileReference left, FileReference right) => left is null ? right is not null : left.CompareTo(right) < 0;
 
 		/// <inheritdoc/>
-		public static bool operator <=(FileReference left, FileReference right) => ReferenceEquals(left, null) || left.CompareTo(right) <= 0;
+		public static bool operator <=(FileReference left, FileReference right) => left is null || left.CompareTo(right) <= 0;
 
 		/// <inheritdoc/>
-		public static bool operator >(FileReference left, FileReference right) => !ReferenceEquals(left, null) && left.CompareTo(right) > 0;
+		public static bool operator >(FileReference left, FileReference right) => left is not null && left.CompareTo(right) > 0;
 
 		/// <inheritdoc/>
-		public static bool operator >=(FileReference left, FileReference right) => ReferenceEquals(left, null) ? ReferenceEquals(right, null) : left.CompareTo(right) >= 0;
+		public static bool operator >=(FileReference left, FileReference right) => left is null ? right is null : left.CompareTo(right) >= 0;
 
 		/// <summary>
 		/// Helper function to create a remote file reference. Unlike normal FileReference objects, these aren't converted to a full path in the local filesystem, but are
@@ -265,10 +229,7 @@ namespace EpicGames.Core
 		/// </summary>
 		/// <param name="absolutePath">The absolute path in the remote file system</param>
 		/// <returns>New file reference</returns>
-		public static FileReference MakeRemote(string absolutePath)
-		{
-			return new FileReference(absolutePath, Sanitize.None);
-		}
+		public static FileReference MakeRemote(string absolutePath) => new FileReference(absolutePath, Sanitize.None);
 
 		/// <summary>
 		/// Makes a file location writeable; 
@@ -276,10 +237,10 @@ namespace EpicGames.Core
 		/// <param name="location">Location of the file</param>
 		public static void MakeWriteable(FileReference location)
 		{
-			if(Exists(location))
+			if (Exists(location))
 			{
 				FileAttributes attributes = GetAttributes(location);
-				if((attributes & FileAttributes.ReadOnly) != 0)
+				if ((attributes & FileAttributes.ReadOnly) != 0)
 				{
 					SetAttributes(location, attributes & ~FileAttributes.ReadOnly);
 				}
@@ -291,19 +252,13 @@ namespace EpicGames.Core
 		/// </summary>
 		/// <param name="location">The path to find the correct case for</param>
 		/// <returns>Location of the file with the correct case</returns>
-		public static FileReference FindCorrectCase(FileReference location)
-		{
-			return new FileReference(FileUtils.FindCorrectCase(location.ToFileInfo()));
-		}
+		public static FileReference FindCorrectCase(FileReference location) => new FileReference(FileUtils.FindCorrectCase(location.ToFileInfo()));
 
 		/// <summary>
 		/// Constructs a FileInfo object from this reference
 		/// </summary>
 		/// <returns>New FileInfo object</returns>
-		public FileInfo ToFileInfo()
-		{
-			return new FileInfo(FullName);
-		}
+		public FileInfo ToFileInfo() => new FileInfo(FullName);
 
 		#region System.IO.File methods
 
@@ -312,10 +267,7 @@ namespace EpicGames.Core
 		/// </summary>
 		/// <param name="sourceLocation">Location of the source file</param>
 		/// <param name="targetLocation">Location of the target file</param>
-		public static void Copy(FileReference sourceLocation, FileReference targetLocation)
-		{
-			File.Copy(sourceLocation.FullName, targetLocation.FullName);
-		}
+		public static void Copy(FileReference sourceLocation, FileReference targetLocation) => File.Copy(sourceLocation.FullName, targetLocation.FullName);
 
 		/// <summary>
 		/// Copies a file from one location to another
@@ -323,67 +275,46 @@ namespace EpicGames.Core
 		/// <param name="sourceLocation">Location of the source file</param>
 		/// <param name="targetLocation">Location of the target file</param>
 		/// <param name="bOverwrite">Whether to overwrite the file in the target location</param>
-		public static void Copy(FileReference sourceLocation, FileReference targetLocation, bool bOverwrite)
-		{
-			File.Copy(sourceLocation.FullName, targetLocation.FullName, bOverwrite);
-		}
+		public static void Copy(FileReference sourceLocation, FileReference targetLocation, bool bOverwrite) => File.Copy(sourceLocation.FullName, targetLocation.FullName, bOverwrite);
 
 		/// <summary>
 		/// Deletes this file
 		/// </summary>
-		public static void Delete(FileReference location)
-		{
-			File.Delete(location.FullName);
-		}
+		public static void Delete(FileReference location) => File.Delete(location.FullName);
 
 		/// <summary>
 		/// Determines whether the given filename exists
 		/// </summary>
 		/// <returns>True if it exists, false otherwise</returns>
-		public static bool Exists(FileReference location)
-		{
-			return File.Exists(location.FullName);
-		}
+		public static bool Exists(FileReference location) => File.Exists(location.FullName);
 
 		/// <summary>
 		/// Gets the attributes for a file
 		/// </summary>
 		/// <param name="location">Location of the file</param>
 		/// <returns>Attributes for the file</returns>
-		public static FileAttributes GetAttributes(FileReference location)
-		{
-			return File.GetAttributes(location.FullName);
-		}
+		public static FileAttributes GetAttributes(FileReference location) => File.GetAttributes(location.FullName);
 
 		/// <summary>
 		/// Gets the time that the file was last written to
 		/// </summary>
 		/// <param name="location">Location of the file</param>
 		/// <returns>Last write time, in local time</returns>
-		public static DateTime GetLastWriteTime(FileReference location)
-		{
-			return File.GetLastWriteTime(location.FullName);
-		}
+		public static DateTime GetLastWriteTime(FileReference location) => File.GetLastWriteTime(location.FullName);
 
 		/// <summary>
 		/// Gets the time that the file was last written to
 		/// </summary>
 		/// <param name="location">Location of the file</param>
 		/// <returns>Last write time, in UTC time</returns>
-		public static DateTime GetLastWriteTimeUtc(FileReference location)
-		{
-			return File.GetLastWriteTimeUtc(location.FullName);
-		}
+		public static DateTime GetLastWriteTimeUtc(FileReference location) => File.GetLastWriteTimeUtc(location.FullName);
 
 		/// <summary>
 		/// Moves a file from one location to another
 		/// </summary>
 		/// <param name="sourceLocation">Location of the source file</param>
 		/// <param name="targetLocation">Location of the target file</param>
-		public static void Move(FileReference sourceLocation, FileReference targetLocation)
-		{
-			File.Move(sourceLocation.FullName, targetLocation.FullName);
-		}
+		public static void Move(FileReference sourceLocation, FileReference targetLocation) => File.Move(sourceLocation.FullName, targetLocation.FullName);
 
 		/// <summary>
 		/// Moves a file from one location to another
@@ -391,10 +322,7 @@ namespace EpicGames.Core
 		/// <param name="sourceLocation">Location of the source file</param>
 		/// <param name="targetLocation">Location of the target file</param>
 		/// <param name="overwrite">Whether to overwrite the file in the target location</param>
-		public static void Move(FileReference sourceLocation, FileReference targetLocation, bool overwrite)
-		{
-			File.Move(sourceLocation.FullName, targetLocation.FullName, overwrite);
-		}
+		public static void Move(FileReference sourceLocation, FileReference targetLocation, bool overwrite) => File.Move(sourceLocation.FullName, targetLocation.FullName, overwrite);
 
 		/// <summary>
 		/// Opens a FileStream on the specified path with read/write access
@@ -402,10 +330,7 @@ namespace EpicGames.Core
 		/// <param name="location">Location of the file</param>
 		/// <param name="mode">Mode to use when opening the file</param>
 		/// <returns>New filestream for the given file</returns>
-		public static FileStream Open(FileReference location, FileMode mode)
-		{
-			return File.Open(location.FullName, mode);
-		}
+		public static FileStream Open(FileReference location, FileMode mode) => File.Open(location.FullName, mode);
 
 		/// <summary>
 		/// Opens a FileStream on the specified path
@@ -414,10 +339,7 @@ namespace EpicGames.Core
 		/// <param name="mode">Mode to use when opening the file</param>
 		/// <param name="access">Sharing mode for the new file</param>
 		/// <returns>New filestream for the given file</returns>
-		public static FileStream Open(FileReference location, FileMode mode, FileAccess access)
-		{
-			return File.Open(location.FullName, mode, access);
-		}
+		public static FileStream Open(FileReference location, FileMode mode, FileAccess access) => File.Open(location.FullName, mode, access);
 
 		/// <summary>
 		/// Opens a FileStream on the specified path
@@ -427,20 +349,14 @@ namespace EpicGames.Core
 		/// <param name="access">Access mode for the new file</param>
 		/// <param name="share">Sharing mode for the open file</param>
 		/// <returns>New filestream for the given file</returns>
-		public static FileStream Open(FileReference location, FileMode mode, FileAccess access, FileShare share)
-		{
-			return File.Open(location.FullName, mode, access, share);
-		}
+		public static FileStream Open(FileReference location, FileMode mode, FileAccess access, FileShare share) => File.Open(location.FullName, mode, access, share);
 
 		/// <summary>
 		/// Reads the contents of a file
 		/// </summary>
 		/// <param name="location">Location of the file</param>
 		/// <returns>Byte array containing the contents of the file</returns>
-		public static byte[] ReadAllBytes(FileReference location)
-		{
-			return File.ReadAllBytes(location.FullName);
-		}
+		public static byte[] ReadAllBytes(FileReference location) => File.ReadAllBytes(location.FullName);
 
 		/// <summary>
 		/// Reads the contents of a file
@@ -448,10 +364,7 @@ namespace EpicGames.Core
 		/// <param name="location">Location of the file</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Byte array containing the contents of the file</returns>
-		public static Task<byte[]> ReadAllBytesAsync(FileReference location, CancellationToken cancellationToken = default)
-		{
-			return File.ReadAllBytesAsync(location.FullName, cancellationToken);
-		}
+		public static Task<byte[]> ReadAllBytesAsync(FileReference location, CancellationToken cancellationToken = default) => File.ReadAllBytesAsync(location.FullName, cancellationToken);
 
 		/// <summary>
 		/// Reads the contents of a file
@@ -464,20 +377,19 @@ namespace EpicGames.Core
 			{
 				using (StreamReader sr = new StreamReader(fs, Encoding.UTF8, true))
 				{
-
 					// Try to read the whole file into a buffer created by hand.  This avoids a LOT of memory allocations which in turn reduces the
 					// GC stress on the system.  Removing the StreamReader would be nice in the future.
-					long RawFileLength = fs.Length;
-					char[] InitialBuffer = new char[RawFileLength];
-					int ReadLength = sr.Read(InitialBuffer, 0, (int)RawFileLength);
+					long rawFileLength = fs.Length;
+					char[] initialBuffer = new char[rawFileLength];
+					int readLength = sr.Read(initialBuffer, 0, (int)rawFileLength);
 					if (sr.EndOfStream)
 					{
-						return new String(InitialBuffer, 0, ReadLength);
+						return new string(initialBuffer, 0, readLength);
 					}
 					else
 					{
-						string Remaining = sr.ReadToEnd();
-						return String.Concat(new ReadOnlySpan<char>(InitialBuffer, 0, ReadLength), Remaining);
+						string remaining = sr.ReadToEnd();
+						return String.Concat(new ReadOnlySpan<char>(initialBuffer, 0, readLength), remaining);
 					}
 				}
 			}
@@ -489,10 +401,7 @@ namespace EpicGames.Core
 		/// <param name="location">Location of the file</param>
 		/// <param name="encoding">Encoding of the file</param>
 		/// <returns>Contents of the file as a single string</returns>
-		public static string ReadAllText(FileReference location, Encoding encoding)
-		{
-			return File.ReadAllText(location.FullName, encoding);
-		}
+		public static string ReadAllText(FileReference location, Encoding encoding) => File.ReadAllText(location.FullName, encoding);
 
 		/// <summary>
 		/// Reads the contents of a file
@@ -500,10 +409,7 @@ namespace EpicGames.Core
 		/// <param name="location">Location of the file</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Contents of the file as a single string</returns>
-		public static Task<string> ReadAllTextAsync(FileReference location, CancellationToken cancellationToken = default)
-		{
-			return File.ReadAllTextAsync(location.FullName, cancellationToken);
-		}
+		public static Task<string> ReadAllTextAsync(FileReference location, CancellationToken cancellationToken = default) => File.ReadAllTextAsync(location.FullName, cancellationToken);
 
 		/// <summary>
 		/// Reads the contents of a file
@@ -512,20 +418,14 @@ namespace EpicGames.Core
 		/// <param name="encoding">Encoding of the file</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>Contents of the file as a single string</returns>
-		public static Task<string> ReadAllTextAsync(FileReference location, Encoding encoding, CancellationToken cancellationToken = default)
-		{
-			return File.ReadAllTextAsync(location.FullName, encoding, cancellationToken);
-		}
+		public static Task<string> ReadAllTextAsync(FileReference location, Encoding encoding, CancellationToken cancellationToken = default) => File.ReadAllTextAsync(location.FullName, encoding, cancellationToken);
 
 		/// <summary>
 		/// Reads the contents of a file
 		/// </summary>
 		/// <param name="location">Location of the file</param>
 		/// <returns>String array containing the contents of the file</returns>
-		public static string[] ReadAllLines(FileReference location)
-		{
-			return File.ReadAllLines(location.FullName);
-		}
+		public static string[] ReadAllLines(FileReference location) => File.ReadAllLines(location.FullName);
 
 		/// <summary>
 		/// Reads the contents of a file
@@ -533,10 +433,7 @@ namespace EpicGames.Core
 		/// <param name="location">Location of the file</param>
 		/// <param name="encoding">The encoding to use when parsing the file</param>
 		/// <returns>String array containing the contents of the file</returns>
-		public static string[] ReadAllLines(FileReference location, Encoding encoding)
-		{
-			return File.ReadAllLines(location.FullName, encoding);
-		}
+		public static string[] ReadAllLines(FileReference location, Encoding encoding) => File.ReadAllLines(location.FullName, encoding);
 
 		/// <summary>
 		/// Reads the contents of a file
@@ -544,10 +441,7 @@ namespace EpicGames.Core
 		/// <param name="location">Location of the file</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>String array containing the contents of the file</returns>
-		public static Task<string[]> ReadAllLinesAsync(FileReference location, CancellationToken cancellationToken = default)
-		{
-			return File.ReadAllLinesAsync(location.FullName, cancellationToken);
-		}
+		public static Task<string[]> ReadAllLinesAsync(FileReference location, CancellationToken cancellationToken = default) => File.ReadAllLinesAsync(location.FullName, cancellationToken);
 
 		/// <summary>
 		/// Reads the contents of a file
@@ -556,70 +450,49 @@ namespace EpicGames.Core
 		/// <param name="encoding">The encoding to use when parsing the file</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>String array containing the contents of the file</returns>
-		public static Task<string[]> ReadAllLinesAsync(FileReference location, Encoding encoding, CancellationToken cancellationToken = default)
-		{
-			return File.ReadAllLinesAsync(location.FullName, encoding, cancellationToken);
-		}
+		public static Task<string[]> ReadAllLinesAsync(FileReference location, Encoding encoding, CancellationToken cancellationToken = default) => File.ReadAllLinesAsync(location.FullName, encoding, cancellationToken);
 
 		/// <summary>
 		/// Sets the attributes for a file
 		/// </summary>
 		/// <param name="location">Location of the file</param>
 		/// <param name="attributes">New attributes for the file</param>
-		public static void SetAttributes(FileReference location, FileAttributes attributes)
-		{
-			File.SetAttributes(location.FullName, attributes);
-		}
+		public static void SetAttributes(FileReference location, FileAttributes attributes) => File.SetAttributes(location.FullName, attributes);
 
 		/// <summary>
 		/// Sets the time that the file was last written to
 		/// </summary>
 		/// <param name="location">Location of the file</param>
 		/// <param name="lastWriteTime">Last write time, in local time</param>
-		public static void SetLastWriteTime(FileReference location, DateTime lastWriteTime)
-		{
-			File.SetLastWriteTime(location.FullName, lastWriteTime);
-		}
+		public static void SetLastWriteTime(FileReference location, DateTime lastWriteTime) => File.SetLastWriteTime(location.FullName, lastWriteTime);
 
 		/// <summary>
 		/// Sets the time that the file was last written to
 		/// </summary>
 		/// <param name="location">Location of the file</param>
 		/// <param name="lastWriteTimeUtc">Last write time, in UTC time</param>
-		public static void SetLastWriteTimeUtc(FileReference location, DateTime lastWriteTimeUtc)
-		{
-			File.SetLastWriteTimeUtc(location.FullName, lastWriteTimeUtc);
-		}
+		public static void SetLastWriteTimeUtc(FileReference location, DateTime lastWriteTimeUtc) => File.SetLastWriteTimeUtc(location.FullName, lastWriteTimeUtc);
 
 		/// <summary>
 		/// Sets the time that the file was last accessed.
 		/// </summary>
 		/// <param name="location">Location of the file.</param>
 		/// <param name="lastWriteTime">Last access time, in local time.</param>
-		public static void SetLastAccessTime(FileReference location, DateTime lastWriteTime)
-		{
-			File.SetLastWriteTime(location.FullName, lastWriteTime);
-		}
+		public static void SetLastAccessTime(FileReference location, DateTime lastWriteTime) => File.SetLastWriteTime(location.FullName, lastWriteTime);
 
 		/// <summary>
 		/// Sets the time that the file was last accessed.
 		/// </summary>
 		/// <param name="location">Location of the file.</param>
 		/// <param name="lastWriteTimeUtc">Last access time, in UTC time.</param>
-		public static void SetLastAccessTimeUtc(FileReference location, DateTime lastWriteTimeUtc)
-		{
-			File.SetLastWriteTimeUtc(location.FullName, lastWriteTimeUtc);
-		}
+		public static void SetLastAccessTimeUtc(FileReference location, DateTime lastWriteTimeUtc) => File.SetLastWriteTimeUtc(location.FullName, lastWriteTimeUtc);
 
 		/// <summary>
 		/// Writes the contents of a file
 		/// </summary>
 		/// <param name="location">Location of the file</param>
 		/// <param name="contents">Contents of the file</param>
-		public static void WriteAllBytes(FileReference location, byte[] contents)
-		{
-			File.WriteAllBytes(location.FullName, contents);
-		}
+		public static void WriteAllBytes(FileReference location, byte[] contents) => File.WriteAllBytes(location.FullName, contents);
 
 		/// <summary>
 		/// Writes the contents of a file
@@ -627,10 +500,7 @@ namespace EpicGames.Core
 		/// <param name="location">Location of the file</param>
 		/// <param name="contents">Contents of the file</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
-		public static Task WriteAllBytesAsync(FileReference location, byte[] contents, CancellationToken cancellationToken = default)
-		{
-			return File.WriteAllBytesAsync(location.FullName, contents, cancellationToken);
-		}
+		public static Task WriteAllBytesAsync(FileReference location, byte[] contents, CancellationToken cancellationToken = default) => File.WriteAllBytesAsync(location.FullName, contents, cancellationToken);
 
 		/// <summary>
 		/// Writes the data to the given file, if it's different from what's there already.
@@ -640,10 +510,10 @@ namespace EpicGames.Core
 		/// <param name="contents">Contents of the file</param>
 		public static bool WriteAllBytesIfDifferent(FileReference location, byte[] contents)
 		{
-			if(FileReference.Exists(location))
+			if (FileReference.Exists(location))
 			{
 				byte[] currentContents = FileReference.ReadAllBytes(location);
-				if(contents.AsSpan().SequenceEqual(currentContents))
+				if (contents.AsSpan().SequenceEqual(currentContents))
 				{
 					return false;
 				}
@@ -660,7 +530,7 @@ namespace EpicGames.Core
 		/// <param name="contents">Contents of the file</param>
 		public static bool WriteAllTextIfDifferent(FileReference location, string contents)
 		{
-			if(FileReference.Exists(location))
+			if (FileReference.Exists(location))
 			{
 				string currentContents = FileReference.ReadAllText(location);
 				if (String.Equals(contents, currentContents, StringComparison.Ordinal))
@@ -677,10 +547,7 @@ namespace EpicGames.Core
 		/// </summary>
 		/// <param name="location">Location of the file</param>
 		/// <param name="contents">Contents of the file</param>
-		public static void WriteAllLines(FileReference location, IEnumerable<string> contents)
-		{
-			File.WriteAllLines(location.FullName, contents);
-		}
+		public static void WriteAllLines(FileReference location, IEnumerable<string> contents) => File.WriteAllLines(location.FullName, contents);
 
 		/// <summary>
 		/// Writes the contents of a file
@@ -688,20 +555,14 @@ namespace EpicGames.Core
 		/// <param name="location">Location of the file</param>
 		/// <param name="contents">Contents of the file</param>
 		/// <param name="encoding">The encoding to use when parsing the file</param>
-		public static void WriteAllLines(FileReference location, IEnumerable<string> contents, Encoding encoding)
-		{
-			File.WriteAllLines(location.FullName, contents, encoding);
-		}
+		public static void WriteAllLines(FileReference location, IEnumerable<string> contents, Encoding encoding) => File.WriteAllLines(location.FullName, contents, encoding);
 
 		/// <summary>
 		/// Writes the contents of a file
 		/// </summary>
 		/// <param name="location">Location of the file</param>
 		/// <param name="contents">Contents of the file</param>
-		public static void WriteAllLines(FileReference location, string[] contents)
-		{
-			File.WriteAllLines(location.FullName, contents);
-		}
+		public static void WriteAllLines(FileReference location, string[] contents) => File.WriteAllLines(location.FullName, contents);
 
 		/// <summary>
 		/// Writes the contents of a file
@@ -709,10 +570,7 @@ namespace EpicGames.Core
 		/// <param name="location">Location of the file</param>
 		/// <param name="contents">Contents of the file</param>
 		/// <param name="encoding">The encoding to use when parsing the file</param>
-		public static void WriteAllLines(FileReference location, string[] contents, Encoding encoding)
-		{
-			File.WriteAllLines(location.FullName, contents, encoding);
-		}
+		public static void WriteAllLines(FileReference location, string[] contents, Encoding encoding) => File.WriteAllLines(location.FullName, contents, encoding);
 
 		/// <summary>
 		/// Writes the contents of a file
@@ -720,10 +578,7 @@ namespace EpicGames.Core
 		/// <param name="location">Location of the file</param>
 		/// <param name="contents">Contents of the file</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
-		public static Task WriteAllLinesAsync(FileReference location, IEnumerable<string> contents, CancellationToken cancellationToken = default)
-		{
-			return File.WriteAllLinesAsync(location.FullName, contents, cancellationToken);
-		}
+		public static Task WriteAllLinesAsync(FileReference location, IEnumerable<string> contents, CancellationToken cancellationToken = default) => File.WriteAllLinesAsync(location.FullName, contents, cancellationToken);
 
 		/// <summary>
 		/// Writes the contents of a file
@@ -732,10 +587,7 @@ namespace EpicGames.Core
 		/// <param name="contents">Contents of the file</param>
 		/// <param name="encoding">The encoding to use when parsing the file</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
-		public static Task WriteAllLinesAsync(FileReference location, IEnumerable<string> contents, Encoding encoding, CancellationToken cancellationToken = default)
-		{
-			return File.WriteAllLinesAsync(location.FullName, contents, encoding, cancellationToken);
-		}
+		public static Task WriteAllLinesAsync(FileReference location, IEnumerable<string> contents, Encoding encoding, CancellationToken cancellationToken = default) => File.WriteAllLinesAsync(location.FullName, contents, encoding, cancellationToken);
 
 		/// <summary>
 		/// Writes the contents of a file
@@ -743,10 +595,7 @@ namespace EpicGames.Core
 		/// <param name="location">Location of the file</param>
 		/// <param name="contents">Contents of the file</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
-		public static Task WriteAllLinesAsync(FileReference location, string[] contents, CancellationToken cancellationToken = default)
-		{
-			return File.WriteAllLinesAsync(location.FullName, contents, cancellationToken);
-		}
+		public static Task WriteAllLinesAsync(FileReference location, string[] contents, CancellationToken cancellationToken = default) => File.WriteAllLinesAsync(location.FullName, contents, cancellationToken);
 
 		/// <summary>
 		/// Writes the contents of a file
@@ -755,20 +604,14 @@ namespace EpicGames.Core
 		/// <param name="contents">Contents of the file</param>
 		/// <param name="encoding">The encoding to use when parsing the file</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
-		public static Task WriteAllLinesAsync(FileReference location, string[] contents, Encoding encoding, CancellationToken cancellationToken = default)
-		{
-			return File.WriteAllLinesAsync(location.FullName, contents, encoding, cancellationToken);
-		}
+		public static Task WriteAllLinesAsync(FileReference location, string[] contents, Encoding encoding, CancellationToken cancellationToken = default) => File.WriteAllLinesAsync(location.FullName, contents, encoding, cancellationToken);
 
 		/// <summary>
 		/// Writes the contents of a file
 		/// </summary>
 		/// <param name="location">Location of the file</param>
 		/// <param name="contents">Contents of the file</param>
-		public static void WriteAllText(FileReference location, string contents)
-		{
-			File.WriteAllText(location.FullName, contents);
-		}
+		public static void WriteAllText(FileReference location, string contents) => File.WriteAllText(location.FullName, contents);
 
 		/// <summary>
 		/// Writes the contents of a file
@@ -776,20 +619,14 @@ namespace EpicGames.Core
 		/// <param name="location">Location of the file</param>
 		/// <param name="contents">Contents of the file</param>
 		/// <param name="encoding">The encoding to use when parsing the file</param>
-		public static void WriteAllText(FileReference location, string contents, Encoding encoding)
-		{
-			File.WriteAllText(location.FullName, contents, encoding);
-		}
+		public static void WriteAllText(FileReference location, string contents, Encoding encoding) => File.WriteAllText(location.FullName, contents, encoding);
 
 		/// <summary>
 		/// Writes the contents of a file
 		/// </summary>
 		/// <param name="location">Location of the file</param>
 		/// <param name="contents">Contents of the file</param>
-		public static Task WriteAllTextAsync(FileReference location, string contents)
-		{
-			return File.WriteAllTextAsync(location.FullName, contents);
-		}
+		public static Task WriteAllTextAsync(FileReference location, string contents) => File.WriteAllTextAsync(location.FullName, contents);
 
 		/// <summary>
 		/// Writes the contents of a file
@@ -797,30 +634,21 @@ namespace EpicGames.Core
 		/// <param name="location">Location of the file</param>
 		/// <param name="contents">Contents of the file</param>
 		/// <param name="encoding">The encoding to use when parsing the file</param>
-		public static Task WriteAllTextAsync(FileReference location, string contents, Encoding encoding)
-		{
-			return File.WriteAllTextAsync(location.FullName, contents, encoding);
-		}
+		public static Task WriteAllTextAsync(FileReference location, string contents, Encoding encoding) => File.WriteAllTextAsync(location.FullName, contents, encoding);
 
 		/// <summary>
 		/// Appends the contents to a file
 		/// </summary>
 		/// <param name="location">Location of the file</param>
 		/// <param name="contents">Contents to append to the file</param>
-		public static void AppendAllLines(FileReference location, IEnumerable<string> contents)
-		{
-			File.AppendAllLines(location.FullName, contents);
-		}
+		public static void AppendAllLines(FileReference location, IEnumerable<string> contents) => File.AppendAllLines(location.FullName, contents);
 
 		/// <summary>
 		/// Appends the contents to a file
 		/// </summary>
 		/// <param name="location">Location of the file</param>
 		/// <param name="contents">Contents to append to the file</param>
-		public static Task AppendAllLinesAsync(FileReference location, IEnumerable<string> contents)
-		{
-			return File.AppendAllLinesAsync(location.FullName, contents);
-		}
+		public static Task AppendAllLinesAsync(FileReference location, IEnumerable<string> contents) => File.AppendAllLinesAsync(location.FullName, contents);
 
 		/// <summary>
 		/// Appends the contents to a file
@@ -828,10 +656,7 @@ namespace EpicGames.Core
 		/// <param name="location">Location of the file</param>
 		/// <param name="contents">Contents to append to the file</param>
 		/// <param name="encoding">The encoding to use when parsing the file</param>
-		public static void AppendAllLines(FileReference location, IEnumerable<string> contents, Encoding encoding)
-		{
-			File.AppendAllLines(location.FullName, contents, encoding);
-		}
+		public static void AppendAllLines(FileReference location, IEnumerable<string> contents, Encoding encoding) => File.AppendAllLines(location.FullName, contents, encoding);
 
 		/// <summary>
 		/// Appends the contents to a file
@@ -839,30 +664,21 @@ namespace EpicGames.Core
 		/// <param name="location">Location of the file</param>
 		/// <param name="contents">Contents to append to the file</param>
 		/// <param name="encoding">The encoding to use when parsing the file</param>
-		public static Task AppendAllLinesAsync(FileReference location, IEnumerable<string> contents, Encoding encoding)
-		{
-			return File.AppendAllLinesAsync(location.FullName, contents, encoding);
-		}
+		public static Task AppendAllLinesAsync(FileReference location, IEnumerable<string> contents, Encoding encoding) => File.AppendAllLinesAsync(location.FullName, contents, encoding);
 
 		/// <summary>
 		/// Appends the contents to a file
 		/// </summary>
 		/// <param name="location">Location of the file</param>
 		/// <param name="contents">Contents to append to the file</param>
-		public static void AppendAllLines(FileReference location, string[] contents)
-		{
-			File.AppendAllLines(location.FullName, contents);
-		}
+		public static void AppendAllLines(FileReference location, string[] contents) => File.AppendAllLines(location.FullName, contents);
 
 		/// <summary>
 		/// Appends the contents to a file
 		/// </summary>
 		/// <param name="location">Location of the file</param>
 		/// <param name="contents">Contents to append to the file</param>
-		public static Task AppendAllLinesAsync(FileReference location, string[] contents)
-		{
-			return File.AppendAllLinesAsync(location.FullName, contents);
-		}
+		public static Task AppendAllLinesAsync(FileReference location, string[] contents) => File.AppendAllLinesAsync(location.FullName, contents);
 
 		/// <summary>
 		/// Appends the contents to a file
@@ -870,10 +686,7 @@ namespace EpicGames.Core
 		/// <param name="location">Location of the file</param>
 		/// <param name="contents">Contents to append to the file</param>
 		/// <param name="encoding">The encoding to use when parsing the file</param>
-		public static void AppendAllLines(FileReference location, string[] contents, Encoding encoding)
-		{
-			File.AppendAllLines(location.FullName, contents, encoding);
-		}
+		public static void AppendAllLines(FileReference location, string[] contents, Encoding encoding) => File.AppendAllLines(location.FullName, contents, encoding);
 
 		/// <summary>
 		/// Appends the contents to a file
@@ -881,30 +694,21 @@ namespace EpicGames.Core
 		/// <param name="location">Location of the file</param>
 		/// <param name="contents">Contents to append to the file</param>
 		/// <param name="encoding">The encoding to use when parsing the file</param>
-		public static Task AppendAllLinesAsync(FileReference location, string[] contents, Encoding encoding)
-		{
-			return File.AppendAllLinesAsync(location.FullName, contents, encoding);
-		}
+		public static Task AppendAllLinesAsync(FileReference location, string[] contents, Encoding encoding) => File.AppendAllLinesAsync(location.FullName, contents, encoding);
 
 		/// <summary>
 		/// Appends the contents to a file
 		/// </summary>
 		/// <param name="location">Location of the file</param>
 		/// <param name="contents">Contents to append to the file</param>
-		public static void AppendAllText(FileReference location, string contents)
-		{
-			File.AppendAllText(location.FullName, contents);
-		}
+		public static void AppendAllText(FileReference location, string contents) => File.AppendAllText(location.FullName, contents);
 
 		/// <summary>
 		/// Appends the contents to a file
 		/// </summary>
 		/// <param name="location">Location of the file</param>
 		/// <param name="contents">Contents to append to the file</param>
-		public static Task AppendAllTextAsync(FileReference location, string contents)
-		{
-			return File.AppendAllTextAsync(location.FullName, contents);
-		}
+		public static Task AppendAllTextAsync(FileReference location, string contents) => File.AppendAllTextAsync(location.FullName, contents);
 
 		/// <summary>
 		/// Appends the contents to a file
@@ -912,10 +716,7 @@ namespace EpicGames.Core
 		/// <param name="location">Location of the file</param>
 		/// <param name="contents">Contents to append to the file</param>
 		/// <param name="encoding">The encoding to use when parsing the file</param>
-		public static void AppendAllText(FileReference location, string contents, Encoding encoding)
-		{
-			File.AppendAllText(location.FullName, contents, encoding);
-		}
+		public static void AppendAllText(FileReference location, string contents, Encoding encoding) => File.AppendAllText(location.FullName, contents, encoding);
 
 		/// <summary>
 		/// Appends the contents to a file
@@ -923,12 +724,47 @@ namespace EpicGames.Core
 		/// <param name="location">Location of the file</param>
 		/// <param name="contents">Contents to append to the file</param>
 		/// <param name="encoding">The encoding to use when parsing the file</param>
-		public static Task AppendAllTextAsync(FileReference location, string contents, Encoding encoding)
-		{
-			return File.AppendAllTextAsync(location.FullName, contents, encoding);
-		}
+		public static Task AppendAllTextAsync(FileReference location, string contents, Encoding encoding) => File.AppendAllTextAsync(location.FullName, contents, encoding);
 
 		#endregion
+	}
+
+	/// <summary>
+	/// Type converter to/from strings
+	/// </summary>
+	class FileReferenceTypeConverter : TypeConverter
+	{
+		/// <inheritdoc/>
+		public override bool CanConvertFrom(ITypeDescriptorContext? context, Type sourceType)
+		{
+			return sourceType == typeof(string) || base.CanConvertFrom(context, sourceType);
+		}
+
+		/// <inheritdoc/>
+		public override object? ConvertFrom(ITypeDescriptorContext? context, CultureInfo? culture, object value)
+		{
+			if (value is string stringValue)
+			{
+				return new FileReference(stringValue);
+			}
+			return base.ConvertFrom(context, culture, value);
+		}
+
+		/// <inheritdoc/>
+		public override bool CanConvertTo(ITypeDescriptorContext? context, Type? destinationType)
+		{
+			return destinationType == typeof(string) || base.CanConvertTo(context, destinationType);
+		}
+
+		/// <inheritdoc/>
+		public override object? ConvertTo(ITypeDescriptorContext? context, CultureInfo? culture, object? value, Type destinationType)
+		{
+			if (destinationType == typeof(string))
+			{
+				return value?.ToString();
+			}
+			return base.ConvertTo(context, culture, value, destinationType);
+		}
 	}
 
 	/// <summary>
@@ -941,10 +777,7 @@ namespace EpicGames.Core
 		/// </summary>
 		/// <param name="writer">Binary writer to write to</param>
 		/// <param name="file">The file reference to write</param>
-		public static void Write(this BinaryWriter writer, FileReference file)
-		{
-			writer.Write((file == null) ? String.Empty : file.FullName);
-		}
+		public static void Write(this BinaryWriter writer, FileReference file) => writer.Write((file == null) ? String.Empty : file.FullName);
 
 		/// <summary>
 		/// Serializes a file reference, using a lookup table to avoid serializing the same name more than once.
@@ -976,10 +809,7 @@ namespace EpicGames.Core
 		/// </summary>
 		/// <param name="reader">Binary reader to read from</param>
 		/// <returns>New FileReference object</returns>
-		public static FileReference ReadFileReference(this BinaryReader reader)
-		{
-			return BinaryArchiveReader.NotNull(ReadFileReferenceOrNull(reader));
-		}
+		public static FileReference ReadFileReference(this BinaryReader reader) => BinaryArchiveReader.NotNull(ReadFileReferenceOrNull(reader));
 
 		/// <summary>
 		/// Manually deserialize a file reference from a binary stream.
@@ -998,10 +828,7 @@ namespace EpicGames.Core
 		/// <param name="reader">The source to read from</param>
 		/// <param name="uniqueFiles">List of previously read file references. The index into this array is used in place of subsequent ocurrences of the file.</param>
 		/// <returns>The file reference that was read</returns>
-		public static FileReference ReadFileReference(this BinaryReader reader, List<FileReference> uniqueFiles)
-		{
-			return BinaryArchiveReader.NotNull(ReadFileReferenceOrNull(reader, uniqueFiles));
-		}
+		public static FileReference ReadFileReference(this BinaryReader reader, List<FileReference> uniqueFiles) => BinaryArchiveReader.NotNull(ReadFileReferenceOrNull(reader, uniqueFiles));
 
 		/// <summary>
 		/// Deserializes a file reference, using a lookup table to avoid writing the same name more than once.
@@ -1035,7 +862,7 @@ namespace EpicGames.Core
 		/// <param name="file">The file reference to write</param>
 		public static void WriteFileReference(this BinaryArchiveWriter writer, FileReference? file)
 		{
-			if(file == null)
+			if (file == null)
 			{
 				writer.WriteString(null);
 			}
@@ -1050,10 +877,7 @@ namespace EpicGames.Core
 		/// </summary>
 		/// <param name="reader">Reader to serialize data from</param>
 		/// <returns>New file reference instance</returns>
-		public static FileReference ReadFileReference(this BinaryArchiveReader reader)
-		{
-			return BinaryArchiveReader.NotNull(ReadFileReferenceOrNull(reader));
-		}
+		public static FileReference ReadFileReference(this BinaryArchiveReader reader) => BinaryArchiveReader.NotNull(ReadFileReferenceOrNull(reader));
 
 		/// <summary>
 		/// Reads a FileReference from a binary archive
@@ -1063,14 +887,7 @@ namespace EpicGames.Core
 		public static FileReference? ReadFileReferenceOrNull(this BinaryArchiveReader reader)
 		{
 			string? fullName = reader.ReadString();
-			if(fullName == null)
-			{
-				return null;
-			}
-			else
-			{
-				return new FileReference(fullName, FileReference.Sanitize.None);
-			}
+			return fullName == null ? null : new FileReference(fullName, FileReference.Sanitize.None);
 		}
 	}
 }

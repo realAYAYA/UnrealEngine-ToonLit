@@ -2,7 +2,6 @@
 
 #include "Abilities/GameplayAbilityTargetActor_SingleLineTrace.h"
 #include "DrawDebugHelpers.h"
-#include "GameFramework/LightWeightInstanceSubsystem.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(GameplayAbilityTargetActor_SingleLineTrace)
 
@@ -44,7 +43,9 @@ FHitResult AGameplayAbilityTargetActor_SingleLineTrace::PerformTrace(AActor* InS
 	if (AGameplayAbilityWorldReticle* LocalReticleActor = ReticleActor.Get())
 	{
 		const bool bHitActor = (ReturnHitResult.bBlockingHit && (ReturnHitResult.HitObjectHandle.IsValid()));
-		const FVector ReticleLocation = (bHitActor && LocalReticleActor->bSnapToTargetedActor) ? FLightWeightInstanceSubsystem::Get().GetLocation(ReturnHitResult.HitObjectHandle) : ReturnHitResult.Location;
+		const FVector ReticleLocation = (bHitActor && LocalReticleActor->bSnapToTargetedActor) 
+			? ReturnHitResult.HitObjectHandle.GetLocation()
+			: ReturnHitResult.Location;
 
 		LocalReticleActor->SetActorLocation(ReticleLocation);
 		LocalReticleActor->SetIsTargetAnActor(bHitActor);

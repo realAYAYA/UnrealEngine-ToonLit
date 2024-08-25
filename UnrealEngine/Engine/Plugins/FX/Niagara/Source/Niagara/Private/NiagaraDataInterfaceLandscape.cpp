@@ -40,6 +40,7 @@ namespace NiagaraDataInterfaceLandscape
 		InitialVersion = 0,
 		SupportVirtualTextures = 1,
 		LWCPosition = 2,
+		MoreLWCPosition = 3,
 
 		VersionPlusOne,
 		LatestVersion = VersionPlusOne - 1
@@ -48,7 +49,7 @@ namespace NiagaraDataInterfaceLandscape
 	static const TCHAR* TemplateShaderFile = TEXT("/Plugin/FX/Niagara/Private/NiagaraDataInterfaceLandscape.ush");
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FShaderParameters,)
-		SHADER_PARAMETER_TEXTURE(Texture2D,			BaseColorVirtualTexture)
+		SHADER_PARAMETER_SRV(Texture2D,				BaseColorVirtualTexture)
 		SHADER_PARAMETER_TEXTURE(Texture2D<uint4>,	BaseColorVirtualTexturePageTable)
 		SHADER_PARAMETER_SAMPLER(SamplerState,		BaseColorVirtualTextureSampler)
 		SHADER_PARAMETER(FVector3f,					BaseColorVirtualTextureLWCTile)
@@ -58,7 +59,7 @@ namespace NiagaraDataInterfaceLandscape
 		SHADER_PARAMETER(FUintVector4,				BaseColorVirtualTexturePackedUniform0)
 		SHADER_PARAMETER(FUintVector4,				BaseColorVirtualTexturePackedUniform1)
 		SHADER_PARAMETER(FUintVector4,				BaseColorVirtualTextureUniforms)
-		SHADER_PARAMETER_TEXTURE(Texture2D,			HeightVirtualTexture)
+		SHADER_PARAMETER_SRV(Texture2D,				HeightVirtualTexture)
 		SHADER_PARAMETER_TEXTURE(Texture2D<uint4>,	HeightVirtualTexturePageTable)
 		SHADER_PARAMETER_SAMPLER(SamplerState,		HeightVirtualTextureSampler)
 		SHADER_PARAMETER(FVector3f,					HeightVirtualTextureLWCTile)
@@ -67,8 +68,8 @@ namespace NiagaraDataInterfaceLandscape
 		SHADER_PARAMETER(FUintVector4,				HeightVirtualTexturePackedUniform0)
 		SHADER_PARAMETER(FUintVector4,				HeightVirtualTexturePackedUniform1)
 		SHADER_PARAMETER(FUintVector4,				HeightVirtualTextureUniforms)
-		SHADER_PARAMETER_TEXTURE(Texture2D,			NormalVirtualTexture0)
-		SHADER_PARAMETER_TEXTURE(Texture2D,			NormalVirtualTexture1)
+		SHADER_PARAMETER_SRV(Texture2D,				NormalVirtualTexture0)
+		SHADER_PARAMETER_SRV(Texture2D,				NormalVirtualTexture1)
 		SHADER_PARAMETER_TEXTURE(Texture2D<uint4>,	NormalVirtualTexturePageTable)
 		SHADER_PARAMETER_SAMPLER(SamplerState,		NormalVirtualTexture0Sampler)
 		SHADER_PARAMETER_SAMPLER(SamplerState,		NormalVirtualTexture1Sampler)
@@ -87,7 +88,8 @@ namespace NiagaraDataInterfaceLandscape
 		SHADER_PARAMETER(FMatrix44f,				CachedHeightTextureWorldToUvTransform)
 		SHADER_PARAMETER(FMatrix44f,				CachedHeightTextureUvToWorldTransform)
 		SHADER_PARAMETER(FVector4f,					CachedHeightTextureUvScaleBias)
-		SHADER_PARAMETER(FVector2f,					CachedHeightTextureGridSize)
+		SHADER_PARAMETER(FVector2f,					CachedHeightTextureWorldGridSize)
+		SHADER_PARAMETER(FIntPoint,					CachedHeightTextureDimension)
 		SHADER_PARAMETER_SAMPLER(SamplerState,		PointClampedSampler)
 		SHADER_PARAMETER_TEXTURE(Texture2D<uint>,	CachedPhysMatTexture)
 		SHADER_PARAMETER(FIntPoint,					CachedPhysMatTextureDimension)
@@ -254,7 +256,7 @@ struct FNDILandscapeData_GameToRenderThread
 	FMatrix CachedHeightTextureWorldToUvTransform = FMatrix::Identity;
 	FMatrix CachedHeightTextureUvToWorldTransform = FMatrix::Identity;
 	FVector4 CachedHeightTextureUvScaleBias = FVector4::Zero();
-	FVector2D CachedHeightTextureGridSize = FVector2D(1.0f, 1.0f);
+	FVector2D CachedHeightTextureWorldGridSize = FVector2D(1.0f, 1.0f);
 
 	bool BaseColorVirtualTextureSRGB = false;
 };
@@ -274,16 +276,16 @@ struct FNDILandscapeData_RenderThread
 	{
 		bool IsValid() const
 		{
-			return TextureRef.IsValid();
+			return TextureSRV.IsValid();
 		}
 
 		void Reset()
 		{
-			TextureRef = nullptr;
+			TextureSRV = nullptr;
 			TextureUniforms = FUintVector4(0, 0, 0, 0);
 		}
 
-		void Update(const URuntimeVirtualTexture* VirtualTexture, uint32 LayerIndex)
+		void Update(const URuntimeVirtualTexture* VirtualTexture, uint32 LayerIndex, bool bSRGB)
 		{
 			Reset();
 
@@ -291,16 +293,16 @@ struct FNDILandscapeData_RenderThread
 			{
 				if (IAllocatedVirtualTexture* AllocatedTexture = VirtualTexture->GetAllocatedVirtualTexture())
 				{
-					if (FRHITexture* PhysicalTexture = AllocatedTexture->GetPhysicalTexture(LayerIndex))
+					if (FRHIShaderResourceView* PhysicalTextureSRV = AllocatedTexture->GetPhysicalTextureSRV(LayerIndex, bSRGB))
 					{
-						TextureRef = PhysicalTexture;
+						TextureSRV = PhysicalTextureSRV;
 						AllocatedTexture->GetPackedUniform(&TextureUniforms, LayerIndex);
 					}
 				}
 			}
 		}
 
-		FTextureRHIRef TextureRef;
+		FShaderResourceViewRHIRef TextureSRV;
 		FUintVector4 TextureUniforms = FUintVector4(0, 0, 0, 0);
 	};
 
@@ -331,24 +333,21 @@ struct FNDILandscapeData_RenderThread
 			{
 				if (IAllocatedVirtualTexture* AllocatedTexture = VirtualTexture->GetAllocatedVirtualTexture())
 				{
-					if (FRHITexture* PageTable = AllocatedTexture->GetPageTableTexture(PageTableIndex))
+					PageTableRef = AllocatedTexture->GetPageTableTexture(PageTableIndex);
+					if (PageTableRef.IsValid())
 					{
-						if (FRHITextureReference* TextureReference = PageTable->GetTextureReference())
+						AllocatedTexture->GetPackedPageTableUniform(PageTableUniforms);
+
+						if (bIncludeWorldToUv)
 						{
-							PageTableRef = TextureReference->GetReferencedTexture();
-							AllocatedTexture->GetPackedPageTableUniform(PageTableUniforms);
+							WorldToUvParameters[0] = VirtualTexture->GetUniformParameter(ERuntimeVirtualTextureShaderUniform_WorldToUVTransform0);
+							WorldToUvParameters[1] = VirtualTexture->GetUniformParameter(ERuntimeVirtualTextureShaderUniform_WorldToUVTransform1);
+							WorldToUvParameters[2] = VirtualTexture->GetUniformParameter(ERuntimeVirtualTextureShaderUniform_WorldToUVTransform2);
+						}
 
-							if (bIncludeWorldToUv)
-							{
-								WorldToUvParameters[0] = VirtualTexture->GetUniformParameter(ERuntimeVirtualTextureShaderUniform_WorldToUVTransform0);
-								WorldToUvParameters[1] = VirtualTexture->GetUniformParameter(ERuntimeVirtualTextureShaderUniform_WorldToUVTransform1);
-								WorldToUvParameters[2] = VirtualTexture->GetUniformParameter(ERuntimeVirtualTextureShaderUniform_WorldToUVTransform2);
-							}
-
-							if (bIncludeHeightUnpack)
-							{
-								WorldToUvParameters[3] = VirtualTexture->GetUniformParameter(ERuntimeVirtualTextureShaderUniform_WorldHeightUnpack);
-							}
+						if (bIncludeHeightUnpack)
+						{
+							WorldToUvParameters[3] = VirtualTexture->GetUniformParameter(ERuntimeVirtualTextureShaderUniform_WorldHeightUnpack);
 						}
 					}
 				}
@@ -381,7 +380,7 @@ struct FNDILandscapeData_RenderThread
 			return false;
 		}
 
-		ShaderParameters->BaseColorVirtualTexture = BaseColorVirtualLayer.TextureRef;
+		ShaderParameters->BaseColorVirtualTexture = BaseColorVirtualLayer.TextureSRV;
 		ShaderParameters->BaseColorVirtualTexturePageTable = BaseColorVirtualPage.PageTableRef;
 
 		FLargeWorldRenderPosition BaseColorVirtualTextureOrigin(BaseColorVirtualPage.WorldToUvParameters[0]);
@@ -405,7 +404,7 @@ struct FNDILandscapeData_RenderThread
 	{
 		const FUintVector4 DummyUint4(ForceInitToZero);
 
-		ShaderParameters->BaseColorVirtualTexture = GBlackTexture->TextureRHI;
+		ShaderParameters->BaseColorVirtualTexture = GBlackTextureWithSRV->ShaderResourceViewRHI;
 		ShaderParameters->BaseColorVirtualTexturePageTable = GBlackUintTexture->TextureRHI;
 		ShaderParameters->BaseColorVirtualTextureWorldToUvTransform = FMatrix44f::Identity;
 		ShaderParameters->BaseColorVirtualTextureSRGB = 0;
@@ -422,7 +421,7 @@ struct FNDILandscapeData_RenderThread
 			return false;
 		}
 
-		ShaderParameters->HeightVirtualTexture = HeightVirtualLayer.TextureRef;
+		ShaderParameters->HeightVirtualTexture = HeightVirtualLayer.TextureSRV;
 		ShaderParameters->HeightVirtualTexturePageTable = HeightVirtualPage.PageTableRef;
 
 		FLargeWorldRenderPosition HeightVirtualTextureOrigin(HeightVirtualPage.WorldToUvParameters[0]);
@@ -446,7 +445,7 @@ struct FNDILandscapeData_RenderThread
 	{
 		const FUintVector4 DummyUint4(ForceInitToZero);
 
-		ShaderParameters->HeightVirtualTexture = GBlackTexture->TextureRHI;
+		ShaderParameters->HeightVirtualTexture = GBlackTextureWithSRV->ShaderResourceViewRHI;
 		ShaderParameters->HeightVirtualTexturePageTable = GBlackUintTexture->TextureRHI;
 		ShaderParameters->HeightVirtualTextureWorldToUvTransform = FMatrix44f::Identity;
 		ShaderParameters->HeightVirtualTextureEnabled = 0;
@@ -462,8 +461,8 @@ struct FNDILandscapeData_RenderThread
 			return false;
 		}
 
-		ShaderParameters->NormalVirtualTexture0 = NormalVirtualLayer0.TextureRef;
-		ShaderParameters->NormalVirtualTexture1 = NormalVirtualLayer1.TextureRef;
+		ShaderParameters->NormalVirtualTexture0 = NormalVirtualLayer0.TextureSRV;
+		ShaderParameters->NormalVirtualTexture1 = NormalVirtualLayer1.TextureSRV;
 		ShaderParameters->NormalVirtualTexturePageTable = NormalVirtualPage.PageTableRef;
 
 		FLargeWorldRenderPosition NormalVirtualTextureOrigin(NormalVirtualPage.WorldToUvParameters[0]);
@@ -489,8 +488,8 @@ struct FNDILandscapeData_RenderThread
 	{
 		const FUintVector4 DummyUint4(ForceInitToZero);
 
-		ShaderParameters->NormalVirtualTexture0 =  GBlackTexture->TextureRHI;
-		ShaderParameters->NormalVirtualTexture1 = GBlackTexture->TextureRHI;
+		ShaderParameters->NormalVirtualTexture0 = GBlackTextureWithSRV->ShaderResourceViewRHI;
+		ShaderParameters->NormalVirtualTexture1 = GBlackTextureWithSRV->ShaderResourceViewRHI;
 		ShaderParameters->NormalVirtualTexturePageTable = GBlackUintTexture->TextureRHI;
 		ShaderParameters->NormalVirtualTextureWorldToUvTransform = FMatrix44f::Identity;
 		ShaderParameters->NormalVirtualTextureEnabled = 0;
@@ -510,34 +509,37 @@ struct FNDILandscapeData_RenderThread
 
 			if (HeightTexture || PhysMatTexture)
 			{
+				const FIntPoint TextureDimensions(LandscapeData.TextureResources->GetDimensions());
+
 				ShaderParameters->CachedHeightTextureLWCTile = LandscapeData.CachedHeightTextureLWCTile;
 				ShaderParameters->CachedHeightTextureWorldToUvTransform = (FMatrix44f)LandscapeData.CachedHeightTextureWorldToUvTransform;
 				ShaderParameters->CachedHeightTextureUvToWorldTransform = (FMatrix44f)LandscapeData.CachedHeightTextureUvToWorldTransform;
 				ShaderParameters->CachedHeightTextureUvScaleBias = (FVector4f)LandscapeData.CachedHeightTextureUvScaleBias;
-				ShaderParameters->CachedHeightTextureGridSize = (FVector2f)LandscapeData.CachedHeightTextureGridSize;
+				ShaderParameters->CachedHeightTextureWorldGridSize = (FVector2f)LandscapeData.CachedHeightTextureWorldGridSize;
 
 				if (HeightTexture)
 				{
 					ShaderParameters->CachedHeightTexture = HeightTexture;
 					ShaderParameters->CachedHeightTextureEnabled = 1;
+					ShaderParameters->CachedHeightTextureDimension = TextureDimensions;
 				}
 				else
 				{
 					ShaderParameters->CachedHeightTexture = GBlackTexture->TextureRHI;
 					ShaderParameters->CachedHeightTextureEnabled = 0;
+					ShaderParameters->CachedHeightTextureDimension = FIntPoint(ForceInitToZero);
 				}
 
 				if (PhysMatTexture)
 				{
-					const FIntPoint PhysMatDimensions(LandscapeData.TextureResources->GetDimensions());
 					ShaderParameters->CachedPhysMatTexture = PhysMatTexture;
-					ShaderParameters->CachedPhysMatTextureDimension = PhysMatDimensions;
+					ShaderParameters->CachedPhysMatTextureDimension = TextureDimensions;
 				}
 				else
 				{
 					const FIntPoint PhysMatDimensions(ForceInitToZero);
 					ShaderParameters->CachedPhysMatTexture = GBlackUintTexture->TextureRHI;
-					ShaderParameters->CachedPhysMatTextureDimension = PhysMatDimensions;
+					ShaderParameters->CachedPhysMatTextureDimension = FIntPoint(ForceInitToZero);
 				}
 
 				return true;
@@ -556,7 +558,7 @@ struct FNDILandscapeData_RenderThread
 		ShaderParameters->CachedHeightTextureWorldToUvTransform = FMatrix44f::Identity;
 		ShaderParameters->CachedHeightTextureUvToWorldTransform = FMatrix44f::Identity;
 		ShaderParameters->CachedHeightTextureUvScaleBias = DummyVector4;
-		ShaderParameters->CachedHeightTextureGridSize = FVector2f::ZeroVector;
+		ShaderParameters->CachedHeightTextureWorldGridSize = FVector2f::ZeroVector;
 		ShaderParameters->CachedHeightTextureEnabled = 0;
 
 		ShaderParameters->CachedPhysMatTexture = GBlackUintTexture->TextureRHI;
@@ -595,6 +597,7 @@ struct FNiagaraDataInterfaceProxyLandscape : public FNiagaraDataInterfaceProxy
 	void UpdateProxy_RT(
 		FNiagaraSystemInstanceID ID,
 		const URuntimeVirtualTexture* BaseColorVirtualTexture,
+		bool bBaseColorTextureSRGB,
 		const URuntimeVirtualTexture* HeightVirtualTexture,
 		const URuntimeVirtualTexture* NormalVirtualTexture,
 		ERuntimeVirtualTextureMaterialType NormalVirtualTextureMode)
@@ -604,12 +607,12 @@ struct FNiagaraDataInterfaceProxyLandscape : public FNiagaraDataInterfaceProxy
 			// todo - need to figure out a way to confirm that this is in fact the best/only option for the page/layer indices
 			constexpr uint32 BaseColorVirtualTextureLayerIndex = 0;
 			constexpr uint32 BaseColorVirtualTexturePageIndex = 0;
-			Proxy_RT->BaseColorVirtualLayer.Update(BaseColorVirtualTexture, BaseColorVirtualTextureLayerIndex);
+			Proxy_RT->BaseColorVirtualLayer.Update(BaseColorVirtualTexture, BaseColorVirtualTextureLayerIndex, bBaseColorTextureSRGB);
 			Proxy_RT->BaseColorVirtualPage.Update(BaseColorVirtualTexture, BaseColorVirtualTexturePageIndex, true /*bIncludeWorldToUv*/, false /*bIncludeHeightUnpack*/);
 
 			constexpr uint32 HeightVirtualTextureLayerIndex = 0;
 			constexpr uint32 HeightVirtualTexturePageIndex = 0;
-			Proxy_RT->HeightVirtualLayer.Update(HeightVirtualTexture, HeightVirtualTextureLayerIndex);
+			Proxy_RT->HeightVirtualLayer.Update(HeightVirtualTexture, HeightVirtualTextureLayerIndex, false /* bSRGB */);
 			Proxy_RT->HeightVirtualPage.Update(HeightVirtualTexture, HeightVirtualTexturePageIndex, true /*bIncludeWorldToUv*/, true /*bIncludeHeightUnpack*/);
 
 			constexpr uint32 NormalVirtualTexturePageIndex = 0;
@@ -618,20 +621,20 @@ struct FNiagaraDataInterfaceProxyLandscape : public FNiagaraDataInterfaceProxy
 			switch (NormalVirtualTextureMode)
 			{
 			case ERuntimeVirtualTextureMaterialType::BaseColor_Normal_Roughness:
-				Proxy_RT->NormalVirtualLayer0.Update(NormalVirtualTexture, 0);
-				Proxy_RT->NormalVirtualLayer1.Update(NormalVirtualTexture, 1);
+				Proxy_RT->NormalVirtualLayer0.Update(NormalVirtualTexture, 0, false /* bSRGB */);
+				Proxy_RT->NormalVirtualLayer1.Update(NormalVirtualTexture, 1, false /* bSRGB */);
 				Proxy_RT->NormalUnpackMode = FNDILandscapeData_RenderThread::ENormalUnpackType::B5G6R5;
 				break;
 			case ERuntimeVirtualTextureMaterialType::BaseColor_Normal_Specular:
-				Proxy_RT->NormalVirtualLayer0.Update(NormalVirtualTexture, 0);
-				Proxy_RT->NormalVirtualLayer1.Update(NormalVirtualTexture, 1);
+				Proxy_RT->NormalVirtualLayer0.Update(NormalVirtualTexture, 0, false /* bSRGB */);
+				Proxy_RT->NormalVirtualLayer1.Update(NormalVirtualTexture, 1, false /* bSRGB */);
 				Proxy_RT->NormalUnpackMode = FNDILandscapeData_RenderThread::ENormalUnpackType::BC3BC3;
 				break;
 
 			case ERuntimeVirtualTextureMaterialType::BaseColor_Normal_Specular_YCoCg:
 			case ERuntimeVirtualTextureMaterialType::BaseColor_Normal_Specular_Mask_YCoCg:
-				Proxy_RT->NormalVirtualLayer0.Update(NormalVirtualTexture, 1);
-				Proxy_RT->NormalVirtualLayer1.Update(NormalVirtualTexture, 2);
+				Proxy_RT->NormalVirtualLayer0.Update(NormalVirtualTexture, 1, false /* bSRGB */);
+				Proxy_RT->NormalVirtualLayer1.Update(NormalVirtualTexture, 2, false /* bSRGB */);
 				Proxy_RT->NormalUnpackMode = FNDILandscapeData_RenderThread::ENormalUnpackType::BC5BC1;
 				break;
 
@@ -976,7 +979,7 @@ void FNDI_Landscape_GeneratedData::Tick(ETickingGroup TickGroup, float DeltaSeco
 
 		while (LandscapeToRemove.Num())
 		{
-			const int32 LandscapeIt = LandscapeToRemove.Pop(false);
+			const int32 LandscapeIt = LandscapeToRemove.Pop(EAllowShrinking::No);
 
 			TSharedPtr<FNDI_Landscape_SharedResource> Landscape = LandscapeData[LandscapeIt];
 			LandscapeData.RemoveAtSwap(LandscapeIt);
@@ -1046,8 +1049,8 @@ FNDI_Landscape_SharedResourceHandle FNDI_Landscape_GeneratedData::GetLandscapeDa
 	SystemBoundsInLandscape.Max = SystemBoundsInLandscape.Max.ComponentMin(MaxIntValue);
 
 	const FIntRect SystemRect = FIntRect(
-		FIntPoint(int32(SystemBoundsInLandscape.Min.X), int32(SystemBoundsInLandscape.Min.Y)),
-		FIntPoint(int32(SystemBoundsInLandscape.Max.X), int32(SystemBoundsInLandscape.Max.Y)));
+		FIntPoint(FMath::FloorToInt(SystemBoundsInLandscape.Min.X), FMath::FloorToInt(SystemBoundsInLandscape.Min.Y)),
+		FIntPoint(FMath::CeilToInt(SystemBoundsInLandscape.Max.X), FMath::CeilToInt(SystemBoundsInLandscape.Max.Y)));
 
 	// for obnoxiously large system bounds we need to guard against potential overflow on the number of cells
 	const int32 MaxSystemWidth = FMath::Clamp<int32>(SystemRect.Max.X - SystemRect.Min.X, 0, MaxLandscapeRegionCount);
@@ -1159,6 +1162,7 @@ bool UNiagaraDataInterfaceLandscape::CopyToInternal(UNiagaraDataInterface* Desti
 	DestinationLandscape->SourceLandscape = SourceLandscape;	
 	DestinationLandscape->SourceMode = SourceMode;
 	DestinationLandscape->PhysicalMaterials = PhysicalMaterials;
+	DestinationLandscape->bVirtualTexturesSupported = bVirtualTexturesSupported;
 
 	return true;
 }
@@ -1172,10 +1176,250 @@ bool UNiagaraDataInterfaceLandscape::Equals(const UNiagaraDataInterface* Other) 
 	const UNiagaraDataInterfaceLandscape* OtherLandscape = CastChecked<const UNiagaraDataInterfaceLandscape>(Other);
 	return OtherLandscape->SourceLandscape == SourceLandscape
 		&& OtherLandscape->SourceMode == SourceMode
-		&& OtherLandscape->PhysicalMaterials == PhysicalMaterials;
+		&& OtherLandscape->PhysicalMaterials == PhysicalMaterials
+		&& OtherLandscape->bVirtualTexturesSupported == bVirtualTexturesSupported;
 }
 
-void UNiagaraDataInterfaceLandscape::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+UObject* UNiagaraDataInterfaceLandscape::SimCacheBeginWrite(UObject* SimCache, FNiagaraSystemInstance* NiagaraSystemInstance, const void* OptionalPerInstanceData, FNiagaraSimCacheFeedbackContext& FeedbackContext) const
+{
+	return NewObject<UNDILandscapeSimCacheData>(SimCache);
+}
+
+bool UNiagaraDataInterfaceLandscape::SimCacheWriteFrame(UObject* StorageObject, int FrameIndex, FNiagaraSystemInstance* SystemInstance, const void* PerInstanceData, FNiagaraSimCacheFeedbackContext& FeedbackContext) const
+{
+	if (UNDILandscapeSimCacheData* SimCacheData = Cast<UNDILandscapeSimCacheData>(StorageObject))
+	{
+		SimCacheData->HeightFieldTextures.SetNum(1 + FrameIndex);
+
+		const FNDILandscapeData_GameThread& SourceData = *reinterpret_cast<const FNDILandscapeData_GameThread*>(PerInstanceData);
+
+		if (SourceData.SharedResourceHandle)
+		{
+			const FNDI_Landscape_SharedResource& SourceResource = SourceData.SharedResourceHandle.ReadResource();
+			if (const FRHITexture* HeightTexture = SourceResource.LandscapeTextures->GetHeightTexture())
+			{
+				UTexture2D* FrameTexture = NewObject<UTexture2D>(SimCacheData);
+
+				// copy texture
+
+				SimCacheData->HeightFieldTextures[FrameIndex] = FrameTexture;
+			}
+		}
+	}
+
+	return true;
+}
+
+bool UNiagaraDataInterfaceLandscape::SimCacheReadFrame(UObject* StorageObject, int FrameA, int FrameB, float Interp, FNiagaraSystemInstance* SystemInstance, void* OptionalPerInstanceData)
+{
+	return true;
+	#if 0
+	FRenderTargetVolumeRWInstanceData_GameThread* InstanceData_GT = reinterpret_cast<FRenderTargetVolumeRWInstanceData_GameThread*>(OptionalPerInstanceData);
+
+	if (const* UTexture2D HeightFieldTexture = Cast<UTexture2D>(StorageObject))
+	{
+		
+	}
+
+	return true;
+	#endif
+	#if 0
+	else if (Cast<UAnimatedSparseVolumeTexture>(StorageObject))
+	{
+		UAnimatedSparseVolumeTexture* SVT = Cast<UAnimatedSparseVolumeTexture>(StorageObject);
+
+		const int32 MipLevel = 0;
+		const bool bBlocking = true;
+		USparseVolumeTextureFrame* SVTFrame = USparseVolumeTextureFrame::GetFrameAndIssueStreamingRequest(SVT, FMath::RoundToInt(FrameA + Interp), MipLevel, bBlocking);
+
+		// The streaming manager normally ticks in FDeferredShadingSceneRenderer::Render(), but the SVT->DenseTexture conversion compute shader happens in a render command before that.
+		// At execution time of that command, the streamer hasn't had the chance to do any streaming yet, so we force another tick here.
+		// Assuming blocking requests are used, this guarantees that the requested frame is fully streamed in (if there is memory available).
+		UE::SVT::GetStreamingManager().Update_GameThread();
+
+		FIntVector VolumeResolution = SVT->GetVolumeResolution();
+
+		InstanceData_GT->Size = VolumeResolution;
+		InstanceData_GT->Format = SVT->GetFormat(0);
+		InstanceData_GT->Filter = TextureFilter::TF_Default;
+
+		PerInstanceTick(InstanceData_GT, SystemInstance, 0.0f);
+		PerInstanceTickPostSimulate(InstanceData_GT, SystemInstance, 0.0f);
+
+		FNiagaraDataInterfaceProxyRenderTargetVolumeProxy* RT_Proxy = GetProxyAs<FNiagaraDataInterfaceProxyRenderTargetVolumeProxy>();
+
+
+		// Execute compute shader
+		ENQUEUE_RENDER_COMMAND(NDIRenderTargetVolumeUpdate)
+			(
+				[RT_Proxy, RT_InstanceID = SystemInstance->GetId(), RT_Format = InstanceData_GT->Format,
+				RT_VolumeResolution = VolumeResolution, RT_SVTRenderResources = SVTFrame ? SVTFrame->GetTextureRenderResources() : nullptr,
+				FeatureLevel = SystemInstance->GetFeatureLevel()](FRHICommandListImmediate& RHICmdList)
+				{
+					if (RT_SVTRenderResources == nullptr)
+					{
+						return;
+					}
+
+		FUintVector4 CurrentPackedUniforms0 = FUintVector4();
+		FUintVector4 CurrentPackedUniforms1 = FUintVector4();
+		RT_SVTRenderResources->GetPackedUniforms(CurrentPackedUniforms0, CurrentPackedUniforms1);
+
+		if (FRenderTargetVolumeRWInstanceData_RenderThread* InstanceData_RT = RT_Proxy->SystemInstancesToProxyData_RT.Find(RT_InstanceID))
+		{
+			FRDGBuilder GraphBuilder(RHICmdList);
+
+			FIntVector ThreadGroupSize = FNiagaraShader::GetDefaultThreadGroupSize(ENiagaraGpuDispatchType::ThreeD);
+
+			TShaderMapRef<FNiagaraCopySVTToDenseBufferCS> ComputeShader(GetGlobalShaderMap(FeatureLevel));
+
+			const FIntVector NumThreadGroups(
+				FMath::DivideAndRoundUp(RT_VolumeResolution.X, ThreadGroupSize.X),
+				FMath::DivideAndRoundUp(RT_VolumeResolution.Y, ThreadGroupSize.Y),
+				FMath::DivideAndRoundUp(RT_VolumeResolution.Z, ThreadGroupSize.Z)
+			);
+
+			FNiagaraCopySVTToDenseBufferCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FNiagaraCopySVTToDenseBufferCS::FParameters>();
+
+			if (InstanceData_RT->RenderTarget.IsValid() && InstanceData_RT->TransientRDGTexture == nullptr)
+			{
+				InstanceData_RT->TransientRDGTexture = GraphBuilder.RegisterExternalTexture(InstanceData_RT->RenderTarget);
+				InstanceData_RT->TransientRDGUAV = GraphBuilder.CreateUAV(InstanceData_RT->TransientRDGTexture);
+
+				// #todo(dmp): needed?							
+				//Context.GetRDGExternalAccessQueue().Add(InstanceData_RT->TransientRDGTexture);
+			}
+
+			if (InstanceData_RT->RenderTarget.IsValid() && InstanceData_RT->TransientRDGUAV != nullptr)
+			{
+				PassParameters->DestinationBuffer = InstanceData_RT->TransientRDGUAV;
+			}
+			else
+			{
+				PassParameters->DestinationBuffer = GraphBuilder.CreateUAV(GraphBuilder.CreateTexture(
+					FRDGTextureDesc::Create3D(FIntVector(1, 1, 1), RT_Format, FClearValueBinding::Black, ETextureCreateFlags::ShaderResource | ETextureCreateFlags::UAV),
+					TEXT("NiagaraEmptyTextureUAV::Texture3D")
+				),
+					ERDGUnorderedAccessViewFlags::SkipBarrier
+				);
+			}
+
+			FRHITexture* PageTableTexture = RT_SVTRenderResources->GetPageTableTexture();
+			FRHITexture* TextureA = RT_SVTRenderResources->GetPhysicalTileDataATexture();
+
+			PassParameters->TileDataTextureSampler = TStaticSamplerState<SF_Point, AM_Clamp, AM_Clamp, AM_Clamp>::GetRHI();
+			PassParameters->SparseVolumeTexturePageTable = PageTableTexture ? PageTableTexture : GBlackUintVolumeTexture->TextureRHI.GetReference();
+			PassParameters->SparseVolumeTextureA = TextureA ? TextureA : GBlackVolumeTexture->TextureRHI.GetReference();
+
+			PassParameters->PackedSVTUniforms0 = CurrentPackedUniforms0;
+			PassParameters->PackedSVTUniforms1 = CurrentPackedUniforms1;
+
+			PassParameters->TextureSize = RT_VolumeResolution;
+			PassParameters->MipLevel = 0;
+
+			GraphBuilder.AddPass(
+				// Friendly name of the pass for profilers using printf semantics.
+				RDG_EVENT_NAME("Copy SVT to Volume RT"),
+				// Parameters provided to RDG.
+				PassParameters,
+				// Issues compute commands.
+				ERDGPassFlags::Compute,
+				// This is deferred until Execute. May execute in parallel with other passes.
+				[PassParameters, ComputeShader, NumThreadGroups](FRHIComputeCommandList& RHICmdList)
+				{
+					FComputeShaderUtils::Dispatch(RHICmdList, ComputeShader, *PassParameters, NumThreadGroups);
+				});
+
+			// Execute the graph.
+			GraphBuilder.Execute();
+
+			InstanceData_RT->TransientRDGTexture = nullptr;
+			InstanceData_RT->TransientRDGSRV = nullptr;
+			InstanceData_RT->TransientRDGUAV = nullptr;
+		}
+				});
+	}
+	else
+	{
+		UNDIRenderTargetVolumeSimCacheData* SimCacheData = CastChecked<UNDIRenderTargetVolumeSimCacheData>(StorageObject);
+
+		const int FrameIndex = Interp >= 0.5f ? FrameB : FrameA;
+		if (!SimCacheData->Frames.IsValidIndex(FrameIndex))
+		{
+			return false;
+		}
+
+		FNDIRenderTargetVolumeSimCacheFrame* CacheFrame = &SimCacheData->Frames[FrameIndex];
+
+		InstanceData_GT->Size = CacheFrame->Size;
+		InstanceData_GT->Format = CacheFrame->Format;
+		InstanceData_GT->Filter = TextureFilter::TF_Default;
+
+		PerInstanceTick(InstanceData_GT, SystemInstance, 0.0f);
+		PerInstanceTickPostSimulate(InstanceData_GT, SystemInstance, 0.0f);
+
+		if (InstanceData_GT->TargetTexture && CacheFrame->GetPixelData() != nullptr)
+		{
+			FNiagaraDataInterfaceProxyRenderTargetVolumeProxy* RT_Proxy = GetProxyAs<FNiagaraDataInterfaceProxyRenderTargetVolumeProxy>();
+			FTextureRenderTargetResource* RT_TargetTexture = InstanceData_GT->TargetTexture->GameThread_GetRenderTargetResource();
+			ENQUEUE_RENDER_COMMAND(NDIRenderTargetVolumeUpdate)
+				(
+					[RT_Proxy, RT_InstanceID = SystemInstance->GetId(), RT_TargetTexture, RT_CacheFrame = CacheFrame, RT_CompressionType = SimCacheData->CompressionType, RT_Format = InstanceData_GT->Format](FRHICommandListImmediate& RHICmdList)
+					{
+						if (FRenderTargetVolumeRWInstanceData_RenderThread* InstanceData_RT = RT_Proxy->SystemInstancesToProxyData_RT.Find(RT_InstanceID))
+						{
+							FUpdateTextureRegion3D UpdateRegion(FIntVector::ZeroValue, FIntVector::ZeroValue, InstanceData_RT->Size);
+
+							FUpdateTexture3DData UpdateTexture = RHICmdList.BeginUpdateTexture3D(InstanceData_RT->RenderTarget->GetRHI(), 0, UpdateRegion);
+
+							uint32 BlockBytes = GPixelFormats[RT_Format].BlockBytes;
+
+							const int32 SrcRowPitch = InstanceData_RT->Size.X * BlockBytes;
+							const int32 SrcDepthPitch = InstanceData_RT->Size.Y * SrcRowPitch;
+							if (UpdateTexture.RowPitch == SrcRowPitch && UpdateTexture.DepthPitch == SrcDepthPitch)
+							{
+								if (RT_CacheFrame->CompressedSize > 0)
+								{
+									FCompression::UncompressMemory(RT_CompressionType, UpdateTexture.Data, UpdateTexture.DataSizeBytes, RT_CacheFrame->GetPixelData(), RT_CacheFrame->CompressedSize);
+								}
+								else
+								{
+									FMemory::Memcpy(UpdateTexture.Data, RT_CacheFrame->GetPixelData(), InstanceData_RT->Size.X * InstanceData_RT->Size.Y * sizeof(FFloat16Color));
+								}
+							}
+							else
+							{
+								TArray<uint8> Decompressed;
+								if (RT_CacheFrame->CompressedSize > 0)
+								{
+									Decompressed.AddUninitialized(BlockBytes * InstanceData_RT->Size.X * InstanceData_RT->Size.Y * InstanceData_RT->Size.Z);
+									FCompression::UncompressMemory(RT_CompressionType, Decompressed.GetData(), Decompressed.Num(), RT_CacheFrame->GetPixelData(), RT_CacheFrame->CompressedSize);
+								}
+
+								const uint8* SrcData = Decompressed.Num() > 0 ? Decompressed.GetData() : RT_CacheFrame->GetPixelData();
+								for (int32 z = 0; z < InstanceData_RT->Size.Z; ++z)
+								{
+									uint8* DstData = UpdateTexture.Data + (z * UpdateTexture.DepthPitch);
+									for (int32 y = 0; y < InstanceData_RT->Size.Y; ++y)
+									{
+										FMemory::Memcpy(DstData, SrcData, SrcRowPitch);
+										SrcData += SrcRowPitch;
+										DstData += UpdateTexture.RowPitch;
+									}
+								}
+							}
+							RHICmdList.EndUpdateTexture3D(UpdateTexture);
+						}
+					}
+			);
+		}
+	}
+	return true;
+	#endif
+}
+
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceLandscape::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	{
 		FNiagaraFunctionSignature Sig;
@@ -1185,7 +1429,7 @@ void UNiagaraDataInterfaceLandscape::GetFunctions(TArray<FNiagaraFunctionSignatu
 		Sig.bRequiresContext = false;
 		Sig.bSupportsCPU = false;
 		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("Landscape")));
-		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("WorldPos")));
+		Sig.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetPositionDef(), TEXT("WorldPos")));
 		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetVec3Def(), TEXT("Color")));
 		Sig.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetBoolDef(), TEXT("IsValid")));
 
@@ -1237,22 +1481,19 @@ void UNiagaraDataInterfaceLandscape::GetFunctions(TArray<FNiagaraFunctionSignatu
 		OutFunctions.Add(Sig);
 	}
 
-#if WITH_EDITORONLY_DATA
 	for (FNiagaraFunctionSignature& Sig : OutFunctions)
 	{
 		Sig.FunctionVersion = NiagaraDataInterfaceLandscape::LatestVersion;
 	}
-#endif
 }
 
-#if WITH_EDITORONLY_DATA
 bool UNiagaraDataInterfaceLandscape::UpgradeFunctionCall(FNiagaraFunctionSignature& FunctionSignature)
 {
 	// always upgrade to the latest version
 	if (FunctionSignature.FunctionVersion < NiagaraDataInterfaceLandscape::LatestVersion)
 	{
 		TArray<FNiagaraFunctionSignature> AllFunctions;
-		GetFunctions(AllFunctions);
+		GetFunctionsInternal(AllFunctions);
 		for (const FNiagaraFunctionSignature& Sig : AllFunctions)
 		{
 			if (FunctionSignature.Name == Sig.Name)
@@ -1282,7 +1523,7 @@ void UNiagaraDataInterfaceLandscape::ProvidePerInstanceDataForRenderThread(void*
 		TargetData->CachedHeightTextureLWCTile = SourceResource.LandscapeLWCTile;
 		TargetData->CachedHeightTextureWorldToUvTransform = SourceResource.WorldToActorTransform;
 		TargetData->CachedHeightTextureUvToWorldTransform = SourceResource.ActorToWorldTransform;
-		TargetData->CachedHeightTextureGridSize = SourceResource.TextureWorldGridSize;
+		TargetData->CachedHeightTextureWorldGridSize = SourceResource.TextureWorldGridSize;
 	}
 
 	TargetData->BaseColorVirtualTextureSRGB = SourceData.BaseColorVirtualTextureSRGB;
@@ -1392,7 +1633,6 @@ void UNiagaraDataInterfaceLandscape::SetShaderParameters(const FNiagaraDataInter
 bool UNiagaraDataInterfaceLandscape::InitPerInstanceData(void* PerInstanceData, FNiagaraSystemInstance* SystemInstance)
 {
 	FNDILandscapeData_GameThread* InstanceData = new(PerInstanceData) FNDILandscapeData_GameThread();
-	ApplyLandscape(*SystemInstance, *InstanceData);
 
 	bool SystemRequiresHeightsCpu = false;
 	bool SystemRequiresHeightsGpu = false;
@@ -1414,6 +1654,8 @@ bool UNiagaraDataInterfaceLandscape::InitPerInstanceData(void* PerInstanceData, 
 	InstanceData->SystemRequiresHeightsGpu = SystemRequiresHeightsGpu;
 	InstanceData->SystemRequiresNormalsGpu = SystemRequiresNormalsGpu;
 	InstanceData->RequiresPhysMatCacheGpu = SystemRequiresPhysMatGpu;
+
+	ApplyLandscape(*SystemInstance, *InstanceData);
 
 	FNiagaraDataInterfaceProxyLandscape* RT_Proxy = GetProxyAs<FNiagaraDataInterfaceProxyLandscape>();
 	ENQUEUE_RENDER_COMMAND(FNiagaraDICreateProxy) (
@@ -1490,12 +1732,13 @@ bool UNiagaraDataInterfaceLandscape::PerInstanceTick(void* PerInstanceData, FNia
 		ENQUEUE_RENDER_COMMAND(FNiagaraDIUpdateProxy) (
 			[RT_Proxy,
 			BaseColorVirtualTexture,
+			bBaseColorTextureSRGB = InstanceData->BaseColorVirtualTextureSRGB,
 			HeightVirtualTexture,
 			NormalVirtualTexture,
 			NormalVirtualTextureMode = InstanceData->NormalVirtualTextureMode,
 			InstanceID = SystemInstance->GetId()](FRHICommandListImmediate& CmdList)
 		{
-			RT_Proxy->UpdateProxy_RT(InstanceID, BaseColorVirtualTexture, HeightVirtualTexture, NormalVirtualTexture, NormalVirtualTextureMode);
+			RT_Proxy->UpdateProxy_RT(InstanceID, BaseColorVirtualTexture, bBaseColorTextureSRGB, HeightVirtualTexture, NormalVirtualTexture, NormalVirtualTextureMode);
 		});
 	}
 
@@ -1527,7 +1770,7 @@ void UNiagaraDataInterfaceLandscape::ApplyLandscape(const FNiagaraSystemInstance
 	InstanceData.NormalVirtualTextureIndex = INDEX_NONE;
 
 	// only worry about virtual textures if our current platform supports them
-	if (UseVirtualTexturing(SystemInstance.GetFeatureLevel()))
+	if (bVirtualTexturesSupported && UseVirtualTexturing(GetFeatureLevelShaderPlatform(SystemInstance.GetFeatureLevel())))
 	{
 		const int32 RuntimeVirtualTextureCount = InstanceData.Landscape->RuntimeVirtualTextures.Num();
 		for (int32 TextureIt = 0; TextureIt < RuntimeVirtualTextureCount; ++TextureIt)

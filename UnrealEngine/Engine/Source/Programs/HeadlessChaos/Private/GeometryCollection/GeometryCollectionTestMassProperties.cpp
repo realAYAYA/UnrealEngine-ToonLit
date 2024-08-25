@@ -23,19 +23,19 @@ namespace GeometryCollectionTest
 
 		Chaos::FParticles Vertices;
 		Vertices.AddParticles(8);
-		Vertices.X(0) = FVec3(-1, 1, -1);
-		Vertices.X(1) = FVec3(1, 1, -1);
-		Vertices.X(2) = FVec3(1, -1, -1);
-		Vertices.X(3) = FVec3(-1, -1, -1);
-		Vertices.X(4) = FVec3(-1, 1, 1);
-		Vertices.X(5) = FVec3(1, 1, 1);
-		Vertices.X(6) = FVec3(1, -1, 1);
-		Vertices.X(7) = FVec3(-1, -1, 1);
+		Vertices.SetX(0, FVec3(-1, 1, -1));
+		Vertices.SetX(1, FVec3(1, 1, -1));
+		Vertices.SetX(2, FVec3(1, -1, -1));
+		Vertices.SetX(3, FVec3(-1, -1, -1));
+		Vertices.SetX(4, FVec3(-1, 1, 1));
+		Vertices.SetX(5, FVec3(1, 1, 1));
+		Vertices.SetX(6, FVec3(1, -1, 1));
+		Vertices.SetX(7, FVec3(-1, -1, 1));
 
 		// @todo(chaos):  breaking : this trips an ensure in the test, why?
 		for (int i = 0; i < 8; i++) {
-			Vertices.X(i) *= FVector(1, 2, 3);
-			Vertices.X(i) += FVector(1, 2, 3);
+			Vertices.SetX(i, Vertices.GetX(i) * FVector(1, 2, 3));
+			Vertices.SetX(i, Vertices.GetX(i) + FVector(1, 2, 3));
 		}
 
 		TArray<Chaos::TVec3<int32>> Faces;
@@ -63,7 +63,7 @@ namespace GeometryCollectionTest
 
 			for (int32 Idx = 0; Idx < 8; ++Idx)
 			{
-				Vertices.X(Idx) -= MassProperties.CenterOfMass;
+				Vertices.SetX(Idx, Vertices.GetX(Idx) - MassProperties.CenterOfMass);
 			}
 
 			check(MassProperties.Mass > 0);
@@ -134,7 +134,7 @@ namespace GeometryCollectionTest
 		MassSpaceParticles.AddParticles(Vertex.Num());
 		for (int32 Idx = 0; Idx < Vertex.Num(); ++Idx)
 		{
-			MassSpaceParticles.X(Idx) = Transform[BoneMap[Idx]].TransformPosition(FVector(Vertex[Idx]));
+			MassSpaceParticles.SetX(Idx, Transform[BoneMap[Idx]].TransformPosition(FVector(Vertex[Idx])));
 		}
 
 		CalculateVolumeAndCenterOfMass(MassSpaceParticles, TriMesh->GetElements(), MassProperties.Volume, MassProperties.CenterOfMass);
@@ -146,7 +146,7 @@ namespace GeometryCollectionTest
 
 		for (int32 Idx = 0; Idx < Vertex.Num(); ++Idx)
 		{
-			MassSpaceParticles.X(Idx) -= MassProperties.CenterOfMass;
+			MassSpaceParticles.SetX(Idx, MassSpaceParticles.GetX(Idx) - MassProperties.CenterOfMass);
 		}
 
 		FReal Density = 1.0;
@@ -207,7 +207,7 @@ namespace GeometryCollectionTest
 		MassSpaceParticles.AddParticles(Vertex.Num());
 		for (int32 Idx = 0; Idx < Vertex.Num(); ++Idx)
 		{
-			MassSpaceParticles.X(Idx) = Transform[BoneMap[Idx]].TransformPosition(FVector(Vertex[Idx]));
+			MassSpaceParticles.SetX(Idx, Transform[BoneMap[Idx]].TransformPosition(FVector(Vertex[Idx])));
 		}
 
 		CalculateVolumeAndCenterOfMass(MassSpaceParticles, TriMesh->GetElements(), MassProperties.Volume, MassProperties.CenterOfMass);
@@ -226,7 +226,7 @@ namespace GeometryCollectionTest
 
 		for (int32 Idx = 0; Idx < Vertex.Num(); ++Idx)
 		{
-			MassSpaceParticles.X(Idx) -= MassProperties.CenterOfMass;
+			MassSpaceParticles.SetX(Idx, MassSpaceParticles.GetX(Idx) - MassProperties.CenterOfMass);
 		}
 
 		FReal Density = 0.01;
@@ -289,7 +289,7 @@ namespace GeometryCollectionTest
 		MassSpaceParticles.AddParticles(Vertex.Num());
 		for (int32 Idx = 0; Idx < Vertex.Num(); ++Idx)
 		{
-			MassSpaceParticles.X(Idx) = Transform[BoneMap[Idx]].TransformPosition(FVector(Vertex[Idx]));
+			MassSpaceParticles.SetX(Idx, Transform[BoneMap[Idx]].TransformPosition(FVector(Vertex[Idx])));
 		}
 
 		CalculateVolumeAndCenterOfMass(MassSpaceParticles, TriMesh->GetElements(), MassProperties.Volume, MassProperties.CenterOfMass);
@@ -301,7 +301,7 @@ namespace GeometryCollectionTest
 
 		for (int32 Idx = 0; Idx < Vertex.Num(); ++Idx)
 		{
-			MassSpaceParticles.X(Idx) -= MassProperties.CenterOfMass;
+			MassSpaceParticles.SetX(Idx, MassSpaceParticles.GetX(Idx) - MassProperties.CenterOfMass);
 		}
 
 		FReal Density = 0.01;
@@ -371,8 +371,8 @@ namespace GeometryCollectionTest
 		for (int32 Idx = 0; Idx < Vertex.Num(); ++Idx)
 		{
 			FVector VertexPoint = FVector(Vertex[Idx]);
-			MassSpaceParticles.X(Idx) = Transform[BoneMap[Idx]].TransformPosition(FVector(Vertex[Idx]));
-			FVector MassSpacePoint = FVector(MassSpaceParticles.X(Idx)[0], MassSpaceParticles.X(Idx)[1], MassSpaceParticles.X(Idx)[2]);
+			MassSpaceParticles.SetX(Idx, Transform[BoneMap[Idx]].TransformPosition(FVector(Vertex[Idx])));
+			FVector MassSpacePoint = FVector(MassSpaceParticles.GetX(Idx)[0], MassSpaceParticles.GetX(Idx)[1], MassSpaceParticles.GetX(Idx)[2]);
 			SomeVec.Add(MassSpacePoint);
 		}
 
@@ -385,7 +385,7 @@ namespace GeometryCollectionTest
 
 		for (int32 Idx = 0; Idx < Vertex.Num(); ++Idx)
 		{
-			MassSpaceParticles.X(Idx) -= MassProperties.CenterOfMass;
+			MassSpaceParticles.SetX(Idx, MassSpaceParticles.GetX(Idx) - MassProperties.CenterOfMass);
 		}
 
 		FReal Density = 0.01;

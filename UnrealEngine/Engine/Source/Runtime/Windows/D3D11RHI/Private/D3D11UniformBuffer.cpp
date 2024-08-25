@@ -187,7 +187,7 @@ FUniformBufferRHIRef FD3D11DynamicRHI::RHICreateUniformBuffer(const void* Conten
 		SCOPE_CYCLE_COUNTER(STAT_D3D11UpdateUniformBufferTime);
 
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		if (IsPoolingEnabled() && (IsInRenderingThread() || IsInRHIThread()) && !UE::Tasks::Private::IsThreadRetractingTask())
+		if (IsPoolingEnabled() && (IsInActualRenderingThread() || IsInRHIThread()) && !UE::Tasks::Private::IsThreadRetractingTask())
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		{
 			const bool bAllocatedFromPool = true;

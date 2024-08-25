@@ -165,7 +165,7 @@ namespace Audio
 			ENGINE_API void Init(FDeviceId InDeviceId, FName InParameterName, bool bInIsBuffered = false, bool bInValueNormalized = false);
 
 			/** returns whether or not destination references an active modulator */
-			ENGINE_API bool IsActive();
+			ENGINE_API bool IsActive() const;
 
 			/* Updates internal value (or buffer if set to bIsBuffered) to current modulated result using the provided value as the base carrier value to modulate.
 			 * Returns true if value was updated.
@@ -179,40 +179,50 @@ namespace Audio
 			ENGINE_API void UpdateModulators(const TSet<TObjectPtr<USoundModulatorBase>>& InModulators);
 			ENGINE_API void UpdateModulators(const TSet<USoundModulatorBase*>& InModulators);
 			ENGINE_API void UpdateModulators(const TSet<const USoundModulatorBase*>& InModulators);
-	
+
 	private:
 			ENGINE_API void UpdateModulatorsInternal(TArray<TUniquePtr<Audio::IModulatorSettings>>&& ProxySettings);
 
-			ENGINE_API void ResetHandles();
+			struct FModulationDestinationData
+			{
+				FDeviceId DeviceId = INDEX_NONE;
 
-			FDeviceId DeviceId = INDEX_NONE;
+				float ValueTarget = 1.0f;
 
-			float ValueTarget = 1.0f;
+				bool bIsBuffered = false;
+				bool bValueNormalized = false;
+				bool bHasProcessed = false;
 
-			bool bIsBuffered = false;
-			bool bValueNormalized = false;
-			bool bHasProcessed = false;
+				FAlignedFloatBuffer OutputBuffer;
 
-			FAlignedFloatBuffer OutputBuffer;
+				TSet<FModulatorHandle> Handles;
 
-			TSet<FModulatorHandle> Handles;
+				FModulationParameter Parameter;
 
-			FModulationParameter Parameter;
+				mutable FCriticalSection HandleCritSection;
 
-			mutable FCriticalSection HandleCritSection;
+				FModulationDestinationData& operator=(const FModulationDestinationData& InDestInfo);
+				FModulationDestinationData& operator=(FModulationDestinationData&& InDestInfo);
+				const FDeviceId& GetDeviceId() const;
+				const FModulationParameter& GetParameter() const;
+				void SetHandles(TSet<FModulatorHandle>&& Handles);
+				void ResetHandles();
+			};
+
+			TSharedRef<FModulationDestinationData> DestinationData{ MakeShared<FModulationDestinationData>() };
 
 		public:
 			/** Returns buffer of interpolated modulation values. If not set to "IsBuffered" when initialized, returns an empty array. */
 			FORCEINLINE const FAlignedFloatBuffer& GetBuffer() const
 			{
-				return OutputBuffer;
+				return DestinationData->OutputBuffer;
 			}
 
 			/** Returns whether or not the destination has requested to 
 			  * process the control or not. */
 			FORCEINLINE bool GetHasProcessed() const
 			{
-				return bHasProcessed;
+				return DestinationData->bHasProcessed;
 			}
 
 			/** Returns sample value last reported by modulator. Returns value in unit space, unless
@@ -220,7 +230,7 @@ namespace Audio
 			 */
 			FORCEINLINE float GetValue() const
 			{
-				return ValueTarget;
+				return DestinationData->ValueTarget;
 			}
 	};
 } // namespace Audio

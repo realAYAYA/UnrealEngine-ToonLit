@@ -455,7 +455,7 @@ void SMergeGraphView::Construct(const FArguments InArgs
 			int32 PeriodIndex = INDEX_NONE;
 			if (DisplayString.FindLastChar('.', PeriodIndex))
 			{
-				DisplayString.MidInline(PeriodIndex + 1, MAX_int32, false);
+				DisplayString.MidInline(PeriodIndex + 1, MAX_int32, EAllowShrinking::No);
 			}
 
 			return SNew(SHorizontalBox)

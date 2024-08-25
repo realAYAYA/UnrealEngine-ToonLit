@@ -2,9 +2,10 @@
 
 #pragma once
 
+#include "EOSShared.h" // IWYU pragma: keep
 #include "Logging/LogMacros.h"
 
-#if WITH_EOS_RTC
+#if WITH_EOSVOICECHAT
 
 DECLARE_LOG_CATEGORY_EXTERN(LogEOSVoiceChat, Log, All);
 
@@ -18,4 +19,4 @@ DECLARE_LOG_CATEGORY_EXTERN(LogEOSVoiceChat, Log, All);
 	UE_CLOG(Condition, LogEOSVoiceChat, EOSVoiceChatLogLevel, TEXT("[%p] ") EOSVoiceChatFormatStr, (void*)this, ##__VA_ARGS__); \
 }
 
-#endif // WITH_EOS_RTC
+#endif // WITH_EOSVOICECHAT

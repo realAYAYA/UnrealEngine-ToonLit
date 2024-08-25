@@ -614,6 +614,11 @@ private:
 		};
 		FTaskID TaskID = InScheduler->CreateForkedAllocationTask(TaskParams, SharedTask, InFunction, PrelockComponentData, Filter, ReadDependencies, WriteDependencies);
 
+		if (!TaskID && TaskParams.bForcePrePostTask)
+		{
+			TaskID = InScheduler->AddNullTask();
+		}
+
 		if (TaskID)
 		{
 			FTaskID PreTask  = SchedulePreTask(InScheduler, TaskParams, SharedTask, (TaskImpl*)0);
@@ -1499,6 +1504,12 @@ private:
 		};
 
 		FTaskID TaskID = InScheduler->CreateForkedAllocationTask(TaskParams, SharedTask, InFunction, PrelockComponentData, Filter, ReadDependencies, WriteDependencies);
+
+		if (!TaskID && TaskParams.bForcePrePostTask)
+		{
+			TaskID = InScheduler->AddNullTask();
+		}
+
 		if (TaskID)
 		{
 			FTaskID PreTask  = SchedulePreTask(InScheduler, TaskParams, SharedTask, (TaskImpl*)0);

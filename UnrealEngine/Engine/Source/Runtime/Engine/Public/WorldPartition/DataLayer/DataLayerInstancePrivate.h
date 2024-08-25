@@ -13,31 +13,38 @@ class UDataLayerInstancePrivate : public UDataLayerInstance
 
 public:
 #if WITH_EDITOR
-	static ENGINE_API FName MakeName();
+	ENGINE_API static FName MakeName();
 	ENGINE_API void OnCreated();
 
-	ENGINE_API virtual bool CanEditChange(const FProperty* InProperty) const;
-	ENGINE_API virtual bool IsLocked() const override;
-	ENGINE_API virtual bool IsReadOnly() const override;
-		
+	//~ Begin UObject Interface
+	ENGINE_API virtual bool CanEditChange(const FProperty* InProperty) const override;
+	//~ End UObject Interface
+
+	//~ Begin UDataLayerInstance Interface
+	ENGINE_API virtual bool IsReadOnly(FText* OutReason = nullptr) const override;
 	virtual bool SupportsActorFilters() const override { return GetAsset()->SupportsActorFilters(); }
 	virtual bool IsIncludedInActorFilterDefault() const override { return bIsIncludedInActorFilterDefault; }
 	virtual bool CanEditDataLayerShortName() const override { return true; }
+	virtual bool CanAddActor(AActor* InActor, FText* OutReason = nullptr) const override;
+	//~ End UDataLayerInstance Interface
 #endif
 
+	//~ Begin UDataLayerInstance Interface
 	virtual const UDataLayerAsset* GetAsset() const override { return DataLayerAsset; }
-
 	virtual EDataLayerType GetType() const override { return DataLayerAsset->GetType(); }
 	virtual bool IsRuntime() const override { return DataLayerAsset->IsRuntime(); }
 	virtual FColor GetDebugColor() const override { return DataLayerAsset->GetDebugColor(); }
-
 	virtual FString GetDataLayerShortName() const override { return ShortName; }
 	virtual FString GetDataLayerFullName() const override { return DataLayerAsset->GetPathName(); }
+	//~ End UDataLayerInstance Interface
+
 protected:
 #if WITH_EDITOR
+	//~ Begin UDataLayerInstance Interface
 	ENGINE_API virtual bool PerformAddActor(AActor* InActor) const override;
 	ENGINE_API virtual bool PerformRemoveActor(AActor* InActor) const override;
 	virtual void PerformSetDataLayerShortName(const FString& InNewShortName) override { ShortName = InNewShortName; }
+	//~ End UDataLayerInstance Interface
 #endif
 
 private:

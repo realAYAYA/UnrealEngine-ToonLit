@@ -144,7 +144,7 @@ void UAnimGraphNode_ApplyMeshSpaceAdditive::PostEditChangeProperty(struct FPrope
 			FScopedTransaction Transaction(LOCTEXT("ChangeAlphaInputType", "Change Alpha Input Type"));
 			Modify();
 			PinToBreakLinksTo->BreakAllPinLinks();
-			PropertyBindings.Remove(PinToBreakLinksTo->PinName);
+			RemoveBindings(PinToBreakLinksTo->PinName);
 			ReconstructNode();
 
 			FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(GetBlueprint());

@@ -50,7 +50,7 @@ public:
  * Some user data to assign to a slot definition
  */
 USTRUCT(meta=(Hidden))
-struct FSmartObjectSlotTestDefinitionData: public FSmartObjectSlotDefinitionData
+struct FSmartObjectSlotTestDefinitionData: public FSmartObjectDefinitionData
 {
 	GENERATED_BODY()
 

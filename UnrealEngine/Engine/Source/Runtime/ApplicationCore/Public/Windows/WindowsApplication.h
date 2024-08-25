@@ -8,7 +8,6 @@
 #include "HAL/IConsoleManager.h"
 #include "GenericPlatform/GenericApplication.h"
 #include "GenericPlatform/IInputInterface.h"
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 	#include <Ole2.h>
 	#include <oleidl.h>
@@ -480,8 +479,6 @@ private:
 	TArray<IWindowsMessageHandler*> MessageHandlers;
 
 	TArray<TSharedRef<FWindowsWindow>> Windows;
-
-	TSharedRef<class XInputInterface> XInput;
 
 	/** List of input devices implemented in external modules. */
 	TArray<TSharedPtr<class IInputDevice>> ExternalInputDevices;

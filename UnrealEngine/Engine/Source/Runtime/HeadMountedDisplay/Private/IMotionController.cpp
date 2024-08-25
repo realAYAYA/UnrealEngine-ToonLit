@@ -6,6 +6,7 @@
 FName IMotionController::LeftHandSourceId(TEXT("Left"));
 FName IMotionController::RightHandSourceId(TEXT("Right"));
 FName IMotionController::HMDSourceId(TEXT("HMD"));
+FName IMotionController::HeadSourceId(TEXT("Head"));
 
 bool IMotionController::GetHandEnumForSourceName(const FName Source, EControllerHand& OutHand)
 {
@@ -57,6 +58,7 @@ bool IMotionController::GetHandEnumForSourceName(const FName Source, EController
 		MotionSourceToEControllerHandMap.Add(TEXT("RightGrip"), EControllerHand::Right);
 		MotionSourceToEControllerHandMap.Add(TEXT("LeftAim"), EControllerHand::Left);
 		MotionSourceToEControllerHandMap.Add(TEXT("RightAim"), EControllerHand::Right);
+		MotionSourceToEControllerHandMap.Add(IMotionController::HeadSourceId, EControllerHand::HMD);
 	}
 
 	EControllerHand* FoundEnum = MotionSourceToEControllerHandMap.Find(Source);

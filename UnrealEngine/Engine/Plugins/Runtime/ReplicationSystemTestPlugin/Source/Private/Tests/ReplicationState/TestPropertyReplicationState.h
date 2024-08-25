@@ -4,6 +4,7 @@
 
 #include "NetworkAutomationTest.h"
 #include "UObject/ObjectMacros.h"
+#include "Tests/ReplicationSystem/ReplicatedTestObject.h"
 #include "TestPropertyReplicationState.generated.h"
 
 UCLASS()
@@ -118,4 +119,28 @@ public:
 
 	UPROPERTY(Replicated)
 	FTestPropertyReplicationState_StructWithArrayOfNotFullyReplicatedStruct StructWithArrayOfNotFullyReplicatedStruct;
+};
+
+UCLASS()
+class UTestPropertyReplicationState_TestClassWithTArray : public UReplicatedTestObject
+{
+	GENERATED_BODY()
+
+public:
+	UTestPropertyReplicationState_TestClassWithTArray() : UReplicatedTestObject() {}
+
+	UPROPERTY(ReplicatedUsing=OnRep_ReferencedObjects)
+	TArray<UObject*> ReferencedObjects;
+
+	UPROPERTY(Replicated)
+	uint32 ForceReplication = 0;
+
+	bool bOnRepWasCalled = false;
+
+protected:
+	virtual void RegisterReplicationFragments(UE::Net::FFragmentRegistrationContext& Context, UE::Net::EFragmentRegistrationFlags RegistrationFlags) override;
+
+	UFUNCTION()
+	void OnRep_ReferencedObjects();
+
 };

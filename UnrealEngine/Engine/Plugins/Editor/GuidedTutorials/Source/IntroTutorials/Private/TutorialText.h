@@ -148,8 +148,6 @@ struct FTextStyleAndName
 				}
 			}
 		}
-
-		return NAME_None;
 	}
 
 	FTextBlockStyle CreateTextBlockStyle() const

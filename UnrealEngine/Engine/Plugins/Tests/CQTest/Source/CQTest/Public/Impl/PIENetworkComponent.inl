@@ -173,6 +173,7 @@ template<typename NetworkDataType>
 inline FNetworkComponentBuilder<NetworkDataType>& FNetworkComponentBuilder<NetworkDataType>::WithPacketSimulationSettings(FPacketSimulationSettings* InPacketSimulationSettings)
 {
 	PacketSimulationSettings = InPacketSimulationSettings;
+	return *this;
 }
 
 template <typename NetworkDataType>

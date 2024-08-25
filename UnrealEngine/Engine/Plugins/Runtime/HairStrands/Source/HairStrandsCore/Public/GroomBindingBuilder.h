@@ -9,16 +9,37 @@
 #include "HairStrandsInterface.h"
 #include "HairStrandsMeshProjection.h"
 #include "HairStrandsDatas.h"
+#include "GroomBindingAsset.h"
 
-struct FHairStrandsRestRootResource;
+class ITargetPlatform;
 
 struct HAIRSTRANDSCORE_API FGroomBindingBuilder
 {
+	struct FInput
+	{
+		EGroomBindingMeshType BindingType = EGroomBindingMeshType::SkeletalMesh;
+		int32 NumInterpolationPoints = 0;
+		int32 MatchingSection = 0;
+		bool bHasValidTarget = false;
+		UGroomAsset* GroomAsset = nullptr;
+		USkeletalMesh* SourceSkeletalMesh = nullptr;
+		USkeletalMesh* TargetSkeletalMesh = nullptr;
+		UGeometryCache* SourceGeometryCache;
+		UGeometryCache* TargetGeometryCache;
+	};
+
 	static FString GetVersion();
 
 	// Build binding asset data
+	UE_DEPRECATED(5.4, "Please do not access this funciton; but rather call BindingAsset->CacheDerivedDatas()")
 	static bool BuildBinding(class UGroomBindingAsset* BindingAsset, bool bInitResource);
+
+	// Build binding asset data
+	UE_DEPRECATED(5.4, "Please do not access this funciton; but rather call BindingAsset->CacheDerivedDatas()")
 	static bool BuildBinding(class UGroomBindingAsset* BindingAsset, uint32 InGroupIndex);
+
+	// Build binding asset data
+	static bool BuildBinding(const FInput& In, uint32 InGroupIndex, const ITargetPlatform* TargetPlatform, UGroomBindingAsset::FHairGroupPlatformData& Out);
 
 	// Extract root data from bulk data
 	static void GetRootData(FHairStrandsRootData& Out, const FHairStrandsRootBulkData& In);

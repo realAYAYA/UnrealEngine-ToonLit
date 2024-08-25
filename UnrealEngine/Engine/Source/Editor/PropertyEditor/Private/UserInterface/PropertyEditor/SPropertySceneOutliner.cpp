@@ -27,13 +27,13 @@ void SPropertySceneOutliner::Construct( const FArguments& InArgs )
 			.OnGetMenuContent( this, &SPropertySceneOutliner::OnGenerateSceneOutliner )
 		]
 		+ SVerticalBox::Slot()
-		.FillHeight(1)
+		.FillHeight(1.0f)
 		[
 			SNew( SButton )
 			.ButtonStyle( FAppStyle::Get(), "HoverHintOnly" )
 			.OnClicked( this, &SPropertySceneOutliner::OnClicked )
 			.ToolTipText(LOCTEXT("PickButtonLabel", "Pick Actor"))
-			.ContentPadding(0)
+			.ContentPadding(0.0f)
 			.ForegroundColor( FSlateColor::UseForeground() )
 			.IsFocusable(false)
 			[ 
@@ -60,8 +60,8 @@ TSharedRef<SWidget> SPropertySceneOutliner::OnGenerateSceneOutliner()
 
 	TSharedRef<SWidget> MenuContent = 
 		SNew(SBox)
-		.HeightOverride(300)
-		.WidthOverride(300)
+		.HeightOverride(300.0f)
+		.WidthOverride(300.0f)
 		[
 			SNew( SBorder )
 			.BorderImage( FAppStyle::GetBrush("Menu.Background") )

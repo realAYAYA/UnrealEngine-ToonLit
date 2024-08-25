@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #pragma once
 
@@ -32,7 +32,7 @@ public:
 	URemoteControlPreset* GetPreset() const;
 
 	/** Returns the Remote Control Preset object associated with us*/
-	TSharedPtr< SRemoteControlPanel> GetRemoteControlPanel() const;
+	TSharedPtr<SRemoteControlPanel> GetRemoteControlPanel() const;
 
 protected:
 	/** The parent Remote Control Panel widget*/

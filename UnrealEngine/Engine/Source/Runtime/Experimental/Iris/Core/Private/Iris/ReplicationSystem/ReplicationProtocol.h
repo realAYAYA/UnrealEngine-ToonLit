@@ -99,6 +99,9 @@ struct FReplicationProtocol
 	FReplicationProtocolIdentifier ProtocolIdentifier;
 	const FNetDebugName* DebugName;
 
+	// TypeStatsIndex assigned to this protocol
+	int32 TypeStatsIndex;
+
 	// TODO: Cache parts of the descriptors in the protocol to avoid having to pull in the descriptor itself for operations iterating over the protocol
 
 	// Selected traits from the ReplicationStateDescriptors that might be handy to cache in the protocol.

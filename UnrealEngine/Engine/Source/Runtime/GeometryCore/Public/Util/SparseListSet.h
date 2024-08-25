@@ -184,6 +184,33 @@ public:
 		}
 	}
 
+	/**
+	 * Call ApplyFunc on each element of the list at ListIndex, until ApplyFunc returns false
+	 * @return true if all elements were processed and ApplyFunc never returned false
+	 */
+	template<typename FuncType>
+	bool EnumerateEarlyOut(int32 ListIndex, FuncType ApplyFunc) const
+	{
+		checkSlow(IsAllocated(ListIndex));
+		const FList& List = Lists[ListIndex];
+		if (List.CurBlock != nullptr)
+		{
+			int32 N = List.Blocks.Num();
+			for (int32 BlockIndex = 0; BlockIndex < N; ++BlockIndex)
+			{
+				const ElementType* Elements = List.Blocks[BlockIndex];
+				const ElementType* EndElement = (BlockIndex == N - 1) ? (Elements + List.CurIndex) : (Elements + BlockSize);
+				while (Elements != EndElement)
+				{
+					if (!ApplyFunc(*Elements++))
+					{
+						return false;
+					}
+				}
+			}
+		}
+		return true;
+	}
 
 
 

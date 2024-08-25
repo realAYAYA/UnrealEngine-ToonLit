@@ -10,6 +10,10 @@
 class FArchive;
 class FStructuredArchiveSlot;
 
+#ifndef WITH_PACKAGEID_NAME_MAP
+#define WITH_PACKAGEID_NAME_MAP WITH_EDITOR
+#endif
+
 class FPackageId
 {
 	static constexpr uint64 InvalidId = 0;
@@ -66,4 +70,8 @@ public:
 	CORE_API friend FArchive& operator<<(FArchive& Ar, FPackageId& Value);
 
 	CORE_API friend void operator<<(FStructuredArchiveSlot Slot, FPackageId& Value);
+
+#if WITH_PACKAGEID_NAME_MAP
+	CORE_API FName GetName() const;
+#endif
 };

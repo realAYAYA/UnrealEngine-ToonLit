@@ -46,20 +46,33 @@ public:
 	}
 
 	/** Sets the contents of the uniform buffer. */
-	void SetContents(const TBufferStruct& NewContents)
+	void SetContents(FRHICommandListBase& RHICmdList, const TBufferStruct& NewContents)
 	{
 		SetContentsNoUpdate(NewContents);
-		UpdateRHI(FRenderResource::GetCommandList());
+		UpdateRHI(RHICmdList);
 	}
+
+	UE_DEPRECATED(5.4, "SetContents requires a command list.")
+	void SetContents(const TBufferStruct& NewContents)
+	{
+		SetContents(FRenderResource::GetImmediateCommandList(), NewContents);
+	}
+
 	/** Sets the contents of the uniform buffer to all zeros. */
-	void SetContentsToZero()
+	void SetContentsToZero(FRHICommandListBase& RHICmdList)
 	{
 		if (!Contents)
 		{
 			Contents = (uint8*)FMemory::Malloc(sizeof(TBufferStruct), SHADER_PARAMETER_STRUCT_ALIGNMENT);
 		}
 		FMemory::Memzero(Contents, sizeof(TBufferStruct));
-		UpdateRHI(FRenderResource::GetCommandList());
+		UpdateRHI(RHICmdList);
+	}
+
+	UE_DEPRECATED(5.4, "SetContentsToZero requires a command list.")
+	void SetContentsToZero()
+	{
+		SetContentsToZero(FRenderResource::GetImmediateCommandList());
 	}
 
 	const uint8* GetContents() const 
@@ -70,7 +83,6 @@ public:
 	// FRenderResource interface.
 	virtual void InitRHI(FRHICommandListBase& RHICmdList) override
 	{
-		check(IsInRenderingThread());
 		UniformBufferRHI.SafeRelease();
 		if (Contents)
 		{
@@ -104,7 +116,6 @@ protected:
 	/** Sets the contents of the uniform buffer. Used within calls to InitRHI */
 	void SetContentsNoUpdate(const TBufferStruct& NewContents)
 	{
-		check(IsInRenderingThread());
 		if (!Contents)
 		{
 			Contents = (uint8*)FMemory::Malloc(sizeof(TBufferStruct), SHADER_PARAMETER_STRUCT_ALIGNMENT);
@@ -130,6 +141,6 @@ void BeginSetUniformBufferContents(
 	ENQUEUE_RENDER_COMMAND(SetUniformBufferContents)(
 		[UniformBufferPtr, Struct](FRHICommandListImmediate& RHICmdList)
 		{
-			UniformBufferPtr->SetContents(Struct);
+			UniformBufferPtr->SetContents(RHICmdList, Struct);
 		});
 }

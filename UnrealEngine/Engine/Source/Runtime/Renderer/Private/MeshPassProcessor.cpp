@@ -20,6 +20,7 @@
 #include "RenderCore.h"
 #include "UnrealEngine.h"
 #include "SceneUniformBuffer.h"
+#include "MeshDrawCommandStats.h"
 
 FRWLock FGraphicsMinimalPipelineStateId::PersistentIdTableLock;
 FGraphicsMinimalPipelineStateId::PersistentTableType FGraphicsMinimalPipelineStateId::PersistentIdTable;
@@ -120,7 +121,7 @@ private:
 inline void SetTextureParameter(FRHIBatchedShaderParameters& BatchedParameters, const FShaderResourceParameterInfo& Parameter, FRHITexture* TextureRHI)
 {
 #if PLATFORM_SUPPORTS_BINDLESS_RENDERING
-	if (Parameter.Type == EShaderParameterType::BindlessResourceIndex)
+	if (Parameter.Type == EShaderParameterType::BindlessSRV)
 	{
 		check(Parameter.BufferIndex == 0);
 		BatchedParameters.SetBindlessTexture(Parameter.BaseIndex, TextureRHI);
@@ -135,7 +136,7 @@ inline void SetTextureParameter(FRHIBatchedShaderParameters& BatchedParameters, 
 inline void SetSrvParameter(FRHIBatchedShaderParameters& BatchedParameters, const FShaderResourceParameterInfo& Parameter, FRHIShaderResourceView* SrvRHI)
 {
 #if PLATFORM_SUPPORTS_BINDLESS_RENDERING
-	if (Parameter.Type == EShaderParameterType::BindlessResourceIndex)
+	if (Parameter.Type == EShaderParameterType::BindlessSRV)
 	{
 		check(Parameter.BufferIndex == 0);
 		BatchedParameters.SetBindlessResourceView(Parameter.BaseIndex, SrvRHI);
@@ -150,7 +151,7 @@ inline void SetSrvParameter(FRHIBatchedShaderParameters& BatchedParameters, cons
 inline void SetSamplerParameter(FRHIBatchedShaderParameters& BatchedParameters, const FShaderResourceParameterInfo& Parameter, FRHISamplerState* SamplerStateRHI)
 {
 #if PLATFORM_SUPPORTS_BINDLESS_RENDERING
-	if (Parameter.Type == EShaderParameterType::BindlessSamplerIndex)
+	if (Parameter.Type == EShaderParameterType::BindlessSampler)
 	{
 		BatchedParameters.SetBindlessSampler(Parameter.BaseIndex, SamplerStateRHI);
 	}
@@ -623,7 +624,7 @@ FMeshDrawShaderBindings::~FMeshDrawShaderBindings()
 	Release();
 }
 
-void FMeshDrawShaderBindings::Initialize(FMeshProcessorShaders Shaders)
+void FMeshDrawShaderBindings::Initialize(const FMeshProcessorShaders& Shaders)
 {
 	const int32 NumShaderFrequencies = 
 		(Shaders.VertexShader.IsValid() ? 1 : 0) +
@@ -681,6 +682,31 @@ void FMeshDrawShaderBindings::Initialize(FMeshProcessorShaders Shaders)
 		ShaderFrequencyBits |= (1 << Frequency);
 	}
 #endif
+
+	checkSlow(ShaderLayouts.Num() == NumShaderFrequencies);
+
+	if (ShaderBindingDataSize > 0)
+	{
+		AllocateZeroed(ShaderBindingDataSize);
+	}
+}
+
+void FMeshDrawShaderBindings::Initialize(const TShaderRef<FShader>& Shader)
+{
+	const int32 NumShaderFrequencies = (Shader.IsValid() ? 1 : 0);
+
+	ShaderLayouts.Empty(NumShaderFrequencies);
+	int32 ShaderBindingDataSize = 0;
+
+	if (Shader.IsValid())
+	{
+		ShaderLayouts.Add(FMeshDrawShaderBindingsLayout(Shader));
+		ShaderBindingDataSize += ShaderLayouts.Last().GetDataSizeBytes();
+
+		const EShaderFrequency Frequency = Shader->GetFrequency();
+		check(ShaderFrequencyBits < (1 << Frequency));
+		ShaderFrequencyBits |= (1 << Frequency);
+	}
 
 	checkSlow(ShaderLayouts.Num() == NumShaderFrequencies);
 
@@ -956,15 +982,20 @@ void FRayTracingMeshCommand::SetRayTracingShaderBindingsForHitGroup(
 	}
 }
 
+void FRayTracingMeshCommand::SetShader(const TShaderRef<FShader>& Shader)
+{
+	check(Shader.IsValid());
+	MaterialShaderIndex = Shader.GetRayTracingHitGroupLibraryIndex();
+	MaterialShader = Shader.GetRayTracingShader();
+	ViewUniformBufferParameter = Shader->GetUniformBufferParameter<FViewUniformShaderParameters>();
+	SceneUniformBufferParameter = Shader->GetUniformBufferParameter<FSceneUniformParameters>();
+	NaniteUniformBufferParameter = Shader->GetUniformBufferParameter<FNaniteRayTracingUniformParameters>();
+	ShaderBindings.Initialize(Shader);
+}
+
 void FRayTracingMeshCommand::SetShaders(const FMeshProcessorShaders& Shaders)
 {
-	check(Shaders.RayTracingShader.IsValid())
-	MaterialShaderIndex = Shaders.RayTracingShader.GetRayTracingHitGroupLibraryIndex();
-	MaterialShader = Shaders.RayTracingShader.GetRayTracingShader();
-	ViewUniformBufferParameter = Shaders.RayTracingShader->GetUniformBufferParameter<FViewUniformShaderParameters>();
-	SceneUniformBufferParameter = Shaders.RayTracingShader->GetUniformBufferParameter<FSceneUniformParameters>();
-	NaniteUniformBufferParameter = Shaders.RayTracingShader->GetUniformBufferParameter<FNaniteRayTracingUniformParameters>();
-	ShaderBindings.Initialize(Shaders);
+	SetShader(Shaders.RayTracingShader);
 }
 
 bool FRayTracingMeshCommand::IsUsingNaniteRayTracing() const
@@ -1010,10 +1041,7 @@ void FRayTracingShaderCommand::SetShader(const TShaderRef<FShader>& InShader)
 	SceneUniformBufferParameter = InShader->GetUniformBufferParameter<FSceneUniformParameters>();
 	NaniteUniformBufferParameter = InShader->GetUniformBufferParameter<FNaniteRayTracingUniformParameters>();
 
-	FMeshProcessorShaders Shaders;
-	Shaders.RayTracingShader = InShader;
-
-	ShaderBindings.Initialize(Shaders);
+	ShaderBindings.Initialize(InShader);
 }
 #endif // RHI_RAYTRACING
 
@@ -1032,7 +1060,7 @@ void FMeshDrawCommand::SetDrawParametersAndFinalize(
 	NumInstances = BatchElement.NumInstances;
 
 	// If the mesh batch has a valid dynamic index buffer, use it instead
-	if (BatchElement.DynamicIndexBuffer.IsValid())
+	if (BatchElement.DynamicIndexBuffer.IsValid() &&  BatchElement.DynamicIndexBuffer.IndexBuffer->IsInitialized())
 	{
 		check(!BatchElement.DynamicIndexBuffer.IndexBuffer || (BatchElement.DynamicIndexBuffer.IndexBuffer && BatchElement.DynamicIndexBuffer.IndexBuffer->IsInitialized() && BatchElement.DynamicIndexBuffer.IndexBuffer->IndexBufferRHI));
 		IndexBuffer = BatchElement.DynamicIndexBuffer.IndexBuffer ? BatchElement.DynamicIndexBuffer.IndexBuffer->IndexBufferRHI.GetReference() : nullptr;
@@ -1330,8 +1358,7 @@ static EPSOPrecacheResult RetrieveAndCachePSOPrecacheResult(
 bool FMeshDrawCommand::SubmitDrawBegin(
 	const FMeshDrawCommand& RESTRICT MeshDrawCommand, 
 	const FGraphicsMinimalPipelineStateSet& GraphicsMinimalPipelineStateSet,
-	FRHIBuffer* ScenePrimitiveIdsBuffer,
-	int32 PrimitiveIdOffset,
+	const FMeshDrawCommandSceneArgs& SceneArgs,
 	uint32 InstanceFactor,
 	FRHICommandList& RHICmdList,
 	FMeshDrawCommandStateCache& RESTRICT StateCache,
@@ -1353,11 +1380,10 @@ bool FMeshDrawCommand::SubmitDrawBegin(
 
 #if PSO_PRECACHING_VALIDATE
 #if MESH_DRAW_COMMAND_DEBUG_DATA
-		PSOCollectorStats::GetFullPSOPrecacheStatsCollector().CheckStateInCache(GraphicsPSOInit, PSOCollectorStats::GetPSOPrecacheHash, PSOPrecacheResult,
-			MeshDrawCommand.DebugData.MeshPassType, MeshDrawCommand.DebugData.VertexFactoryType);
+		PSOCollectorStats::CheckFullPipelineStateInCache(GraphicsPSOInit, PSOPrecacheResult, MeshDrawCommand.DebugData.MaterialRenderProxy,
+			MeshDrawCommand.DebugData.VertexFactoryType, MeshDrawCommand.DebugData.PrimitiveSceneProxyIfNotUsingStateBuckets, MeshDrawCommand.DebugData.PSOCollectorIndex);		
 #else
-		PSOCollectorStats::GetFullPSOPrecacheStatsCollector().CheckStateInCache(GraphicsPSOInit, PSOCollectorStats::GetPSOPrecacheHash, PSOPrecacheResult,
-			EMeshPass::Num, nullptr);
+		PSOCollectorStats::CheckFullPipelineStateInCache(GraphicsPSOInit, PSOPrecacheResult, nullptr, nullptr, nullptr, INDEX_NONE);
 #endif // MESH_DRAW_COMMAND_DEBUG_DATA
 #endif // PSO_PRECACHING_VALIDATE
 
@@ -1380,13 +1406,16 @@ bool FMeshDrawCommand::SubmitDrawBegin(
 		StateCache.StencilRef = MeshDrawCommand.StencilRef;
 	}
 
+	// Platforms that use global UB binding don't need to set PrimitiveIdStream
+	const int8 PrimitiveIdStreamIndex = (IsUniformBufferStaticSlotValid(SceneArgs.BatchedPrimitiveSlot) ? -1 : MeshDrawCommand.PrimitiveIdStreamIndex);
+
 	for (int32 VertexBindingIndex = 0; VertexBindingIndex < MeshDrawCommand.VertexStreams.Num(); VertexBindingIndex++)
 	{
 		const FVertexInputStream& Stream = MeshDrawCommand.VertexStreams[VertexBindingIndex];
 
-		if (MeshDrawCommand.PrimitiveIdStreamIndex != -1 && Stream.StreamIndex == MeshDrawCommand.PrimitiveIdStreamIndex)
+		if (PrimitiveIdStreamIndex != -1 && Stream.StreamIndex == PrimitiveIdStreamIndex)
 		{
-			RHICmdList.SetStreamSource(Stream.StreamIndex, ScenePrimitiveIdsBuffer, PrimitiveIdOffset);
+			RHICmdList.SetStreamSource(Stream.StreamIndex, SceneArgs.PrimitiveIdsBuffer, SceneArgs.PrimitiveIdOffset);
 			StateCache.VertexStreams[Stream.StreamIndex] = Stream;
 		}
 		else if (StateCache.VertexStreams[Stream.StreamIndex] != Stream)
@@ -1401,11 +1430,14 @@ bool FMeshDrawCommand::SubmitDrawBegin(
 	return true;
 }
 
-void FMeshDrawCommand::SubmitDrawEnd(const FMeshDrawCommand& MeshDrawCommand, uint32 InstanceFactor, FRHICommandList& RHICmdList,
-	FRHIBuffer* IndirectArgsOverrideBuffer,
-	uint32 IndirectArgsOverrideByteOffset)
+void FMeshDrawCommand::SubmitDrawEnd(const FMeshDrawCommand& MeshDrawCommand, const FMeshDrawCommandSceneArgs& SceneArgs, uint32 InstanceFactor, FRHICommandList& RHICmdList)
 {
-	const bool bDoOverrideArgs = IndirectArgsOverrideBuffer != nullptr && MeshDrawCommand.PrimitiveIdStreamIndex >= 0;
+	const bool bDoOverrideArgs = SceneArgs.IndirectArgsBuffer != nullptr && MeshDrawCommand.PrimitiveIdStreamIndex >= 0;
+
+	if (IsUniformBufferStaticSlotValid(SceneArgs.BatchedPrimitiveSlot))
+	{
+		RHICmdList.SetUniformBufferDynamicOffset(SceneArgs.BatchedPrimitiveSlot, SceneArgs.PrimitiveIdOffset);
+	}
 
 	if (MeshDrawCommand.IndexBuffer)
 	{
@@ -1425,8 +1457,8 @@ void FMeshDrawCommand::SubmitDrawEnd(const FMeshDrawCommand& MeshDrawCommand, ui
 		{
 			RHICmdList.DrawIndexedPrimitiveIndirect(
 				MeshDrawCommand.IndexBuffer,
-				bDoOverrideArgs ? IndirectArgsOverrideBuffer : MeshDrawCommand.IndirectArgs.Buffer,
-				bDoOverrideArgs ? IndirectArgsOverrideByteOffset : MeshDrawCommand.IndirectArgs.Offset
+				bDoOverrideArgs ? SceneArgs.IndirectArgsBuffer : MeshDrawCommand.IndirectArgs.Buffer,
+				bDoOverrideArgs ? SceneArgs.IndirectArgsByteOffset : MeshDrawCommand.IndirectArgs.Offset
 			);
 		}
 	}
@@ -1442,8 +1474,8 @@ void FMeshDrawCommand::SubmitDrawEnd(const FMeshDrawCommand& MeshDrawCommand, ui
 		else
 		{
 			RHICmdList.DrawPrimitiveIndirect(
-				bDoOverrideArgs ? IndirectArgsOverrideBuffer : MeshDrawCommand.IndirectArgs.Buffer,
-				bDoOverrideArgs ? IndirectArgsOverrideByteOffset : MeshDrawCommand.IndirectArgs.Offset
+				bDoOverrideArgs ? SceneArgs.IndirectArgsBuffer : MeshDrawCommand.IndirectArgs.Buffer,
+				bDoOverrideArgs ? SceneArgs.IndirectArgsByteOffset : MeshDrawCommand.IndirectArgs.Offset
 			);
 		}
 	}
@@ -1452,8 +1484,7 @@ void FMeshDrawCommand::SubmitDrawEnd(const FMeshDrawCommand& MeshDrawCommand, ui
 bool FMeshDrawCommand::SubmitDrawIndirectBegin(
 	const FMeshDrawCommand& RESTRICT MeshDrawCommand,
 	const FGraphicsMinimalPipelineStateSet& GraphicsMinimalPipelineStateSet,
-	FRHIBuffer* ScenePrimitiveIdsBuffer,
-	int32 PrimitiveIdOffset,
+	const FMeshDrawCommandSceneArgs& SceneArgs,
 	uint32 InstanceFactor,
 	FRHICommandList& RHICmdList,
 	FMeshDrawCommandStateCache& RESTRICT StateCache,
@@ -1462,8 +1493,7 @@ bool FMeshDrawCommand::SubmitDrawIndirectBegin(
 	return SubmitDrawBegin(
 		MeshDrawCommand,
 		GraphicsMinimalPipelineStateSet,
-		ScenePrimitiveIdsBuffer,
-		PrimitiveIdOffset,
+		SceneArgs,
 		InstanceFactor,
 		RHICmdList,
 		StateCache,
@@ -1473,10 +1503,9 @@ bool FMeshDrawCommand::SubmitDrawIndirectBegin(
 
 void FMeshDrawCommand::SubmitDrawIndirectEnd(
 	const FMeshDrawCommand& MeshDrawCommand,
+	const FMeshDrawCommandSceneArgs& SceneArgs,
 	uint32 InstanceFactor,
-	FRHICommandList& RHICmdList,
-	FRHIBuffer* IndirectArgsOverrideBuffer,
-	uint32 IndirectArgsOverrideByteOffset)
+	FRHICommandList& RHICmdList)
 {
 	FRHIBuffer* IndirectArgsBuffer = nullptr;
 	uint32		IndirectArgsOffset = 0;
@@ -1487,10 +1516,15 @@ void FMeshDrawCommand::SubmitDrawIndirectEnd(
 		IndirectArgsOffset = MeshDrawCommand.IndirectArgs.Offset;
 	}
 
-	if (IndirectArgsOverrideBuffer != nullptr)
+	if (SceneArgs.IndirectArgsBuffer != nullptr)
 	{
-		IndirectArgsBuffer = IndirectArgsOverrideBuffer;
-		IndirectArgsOffset = IndirectArgsOverrideByteOffset;
+		IndirectArgsBuffer = SceneArgs.IndirectArgsBuffer;
+		IndirectArgsOffset = SceneArgs.IndirectArgsByteOffset;
+	}
+	
+	if (IsUniformBufferStaticSlotValid(SceneArgs.BatchedPrimitiveSlot))
+	{
+		RHICmdList.SetUniformBufferDynamicOffset(SceneArgs.BatchedPrimitiveSlot, SceneArgs.PrimitiveIdOffset);
 	}
 
 	if (IndirectArgsBuffer != nullptr)
@@ -1539,13 +1573,10 @@ void FMeshDrawCommand::SubmitDrawIndirectEnd(
 void FMeshDrawCommand::SubmitDraw(
 	const FMeshDrawCommand& RESTRICT MeshDrawCommand,
 	const FGraphicsMinimalPipelineStateSet& GraphicsMinimalPipelineStateSet,
-	FRHIBuffer* ScenePrimitiveIdsBuffer,
-	int32 PrimitiveIdOffset,
+	const FMeshDrawCommandSceneArgs& SceneArgs,
 	uint32 InstanceFactor,
 	FRHICommandList& RHICmdList,
-	FMeshDrawCommandStateCache& RESTRICT StateCache,
-	FRHIBuffer* IndirectArgsOverrideBuffer,
-	uint32 IndirectArgsOverrideByteOffset)
+	FMeshDrawCommandStateCache& RESTRICT StateCache)
 {
 #if MESH_DRAW_COMMAND_DEBUG_DATA && RHI_WANT_BREADCRUMB_EVENTS
 	if (MeshDrawCommand.DebugData.ResourceName.IsValid())
@@ -1563,9 +1594,9 @@ void FMeshDrawCommand::SubmitDraw(
 	FMeshDrawEvent MeshEvent(MeshDrawCommand, InstanceFactor, RHICmdList);
 #endif
 	bool bAllowSkipDrawCommand = true;
-	if (SubmitDrawBegin(MeshDrawCommand, GraphicsMinimalPipelineStateSet, ScenePrimitiveIdsBuffer, PrimitiveIdOffset, InstanceFactor, RHICmdList, StateCache, bAllowSkipDrawCommand))
+	if (SubmitDrawBegin(MeshDrawCommand, GraphicsMinimalPipelineStateSet, SceneArgs, InstanceFactor, RHICmdList, StateCache, bAllowSkipDrawCommand))
 	{
-		SubmitDrawEnd(MeshDrawCommand, InstanceFactor, RHICmdList, IndirectArgsOverrideBuffer, IndirectArgsOverrideByteOffset);
+		SubmitDrawEnd(MeshDrawCommand, SceneArgs, InstanceFactor, RHICmdList);
 	}
 }
 
@@ -1626,7 +1657,7 @@ uint64 FMeshDrawCommand::GetPipelineStateSortingKey(const FGraphicsPipelineRende
 		FGraphicsPipelineStateInitializer GraphicsPSOInit = CachedPipelineId.GetPipelineState(PipelineStateSet).AsGraphicsPipelineStateInitializer();
 		ApplyTargetsInfo(GraphicsPSOInit, RenderTargetsInfo);
 
-		const FGraphicsPipelineState* PipelineState = PipelineStateCache::FindGraphicsPipelineState(GraphicsPSOInit);
+		const FGraphicsPipelineState* PipelineState = PipelineStateCache::FindGraphicsPipelineState(GraphicsPSOInit, false /* bVerifyUse */);
 		if (PipelineState)
 		{
 			const uint64 StateSortKey = PipelineStateCache::RetrieveGraphicsPipelineStateSortKey(PipelineState);
@@ -1641,7 +1672,7 @@ uint64 FMeshDrawCommand::GetPipelineStateSortingKey(const FGraphicsPipelineRende
 }
 
 #if MESH_DRAW_COMMAND_DEBUG_DATA
-void FMeshDrawCommand::SetDebugData(const FPrimitiveSceneProxy* PrimitiveSceneProxy, const FMaterial* Material, const FMaterialRenderProxy* MaterialRenderProxy, const FMeshProcessorShaders& UntypedShaders, const FVertexFactory* VertexFactory, uint32 MeshPassType)
+void FMeshDrawCommand::SetDebugData(const FPrimitiveSceneProxy* PrimitiveSceneProxy, const FMaterial* Material, const FMaterialRenderProxy* MaterialRenderProxy, const FMeshProcessorShaders& UntypedShaders, const FVertexFactory* VertexFactory, const FMeshBatch& MeshBatch, int32 PSOCollectorIndex)
 {
 	DebugData.PrimitiveSceneProxyIfNotUsingStateBuckets = PrimitiveSceneProxy;
 	DebugData.MaterialRenderProxy = MaterialRenderProxy;
@@ -1649,31 +1680,50 @@ void FMeshDrawCommand::SetDebugData(const FPrimitiveSceneProxy* PrimitiveScenePr
 	DebugData.PixelShader = UntypedShaders.PixelShader;
 	DebugData.VertexFactory = VertexFactory;
 	DebugData.VertexFactoryType = VertexFactory->GetType();
-	DebugData.MeshPassType = MeshPassType;
+	DebugData.LODIndex = MeshBatch.LODIndex;
+	DebugData.SegmentIndex = MeshBatch.SegmentIndex;
+	DebugData.PSOCollectorIndex = PSOCollectorIndex;
 	DebugData.ResourceName =  PrimitiveSceneProxy ? PrimitiveSceneProxy->GetResourceName() : FName();
-	DebugData.MaterialName = Material->GetAssetName();
+	DebugData.MaterialName = MaterialRenderProxy->GetMaterialName();
 }
 #endif
 
+#if MESH_DRAW_COMMAND_STATS
+void FMeshDrawCommand::SetStatsData(const FPrimitiveSceneProxy* PrimitiveSceneProxy)
+{
+	StatsData.CategoryName = PrimitiveSceneProxy ? PrimitiveSceneProxy->GetMeshDrawCommandStatsCategory() : FName();
+}
+
+void FMeshDrawCommand::GetStatsData(FVisibleMeshDrawCommandStatsData& OutVisibleStatsData) const
+{
+	OutVisibleStatsData.StatsData = StatsData;
+	OutVisibleStatsData.PrimitiveCount = NumPrimitives;
+#if MESH_DRAW_COMMAND_DEBUG_DATA
+	OutVisibleStatsData.LODIndex = DebugData.LODIndex;
+	OutVisibleStatsData.SegmentIndex = DebugData.SegmentIndex;
+	OutVisibleStatsData.ResourceName = DebugData.ResourceName;
+	OutVisibleStatsData.MaterialName = DebugData.MaterialName;
+#endif
+}
+#endif // MESH_DRAW_COMMAND_STATS
+
 void SubmitMeshDrawCommands(
 	const FMeshCommandOneFrameArray& VisibleMeshDrawCommands,
-	const FGraphicsMinimalPipelineStateSet& GraphicsMinimalPipelineStateSet, 
-	FRHIBuffer* PrimitiveIdsBuffer,
+	const FGraphicsMinimalPipelineStateSet& GraphicsMinimalPipelineStateSet,
+	const FMeshDrawCommandSceneArgs& SceneArgs,
 	uint32 PrimitiveIdBufferStride,
-	int32 BasePrimitiveIdsOffset,
 	bool bDynamicInstancing,
 	uint32 InstanceFactor,
 	FRHICommandList& RHICmdList)
 {
-	SubmitMeshDrawCommandsRange(VisibleMeshDrawCommands, GraphicsMinimalPipelineStateSet, PrimitiveIdsBuffer, PrimitiveIdBufferStride, BasePrimitiveIdsOffset, bDynamicInstancing, 0, VisibleMeshDrawCommands.Num(), InstanceFactor, RHICmdList);
+	SubmitMeshDrawCommandsRange(VisibleMeshDrawCommands, GraphicsMinimalPipelineStateSet, SceneArgs, PrimitiveIdBufferStride, bDynamicInstancing, 0, VisibleMeshDrawCommands.Num(), InstanceFactor, RHICmdList);
 }
 
 void SubmitMeshDrawCommandsRange(
 	const FMeshCommandOneFrameArray& VisibleMeshDrawCommands,
 	const FGraphicsMinimalPipelineStateSet& GraphicsMinimalPipelineStateSet,
-	FRHIBuffer* PrimitiveIdsBuffer,
+	const FMeshDrawCommandSceneArgs& InSceneArgs,
 	uint32 PrimitiveIdBufferStride,
-	int32 BasePrimitiveIdsOffset,
 	bool bDynamicInstancing,
 	int32 StartIndex,
 	int32 NumMeshDrawCommands,
@@ -1684,9 +1734,11 @@ void SubmitMeshDrawCommandsRange(
 	//               we don't support dynamic instancing for this path since we require one primitive per draw command
 	//               This is because the stride on the instance data buffer is set to 0 so only the first will ever be fetched.
 	checkSlow(!bDynamicInstancing);
-	bDynamicInstancing = false;
+	bDynamicInstancing = false; //-V763
 
 	FMeshDrawCommandStateCache StateCache;
+	FMeshDrawCommandSceneArgs LocalSceneArgs = InSceneArgs;
+	
 	INC_DWORD_STAT_BY(STAT_MeshDrawCalls, NumMeshDrawCommands);
 
 	for (int32 DrawCommandIndex = StartIndex; DrawCommandIndex < StartIndex + NumMeshDrawCommands; DrawCommandIndex++)
@@ -1694,9 +1746,9 @@ void SubmitMeshDrawCommandsRange(
 		SCOPED_CONDITIONAL_DRAW_EVENTF(RHICmdList, MeshEvent, GEmitMeshDrawEvent != 0, TEXT("Mesh Draw"));
 
 		const FVisibleMeshDrawCommand& VisibleMeshDrawCommand = VisibleMeshDrawCommands[DrawCommandIndex];
-		const int32 PrimitiveIdBufferOffset = BasePrimitiveIdsOffset + (bDynamicInstancing ? VisibleMeshDrawCommand.PrimitiveIdBufferOffset : DrawCommandIndex) * PrimitiveIdBufferStride;
+		LocalSceneArgs.PrimitiveIdOffset = InSceneArgs.PrimitiveIdOffset + (bDynamicInstancing ? VisibleMeshDrawCommand.PrimitiveIdBufferOffset : DrawCommandIndex) * PrimitiveIdBufferStride;
 		checkSlow(!bDynamicInstancing || VisibleMeshDrawCommand.PrimitiveIdBufferOffset >= 0);
-		FMeshDrawCommand::SubmitDraw(*VisibleMeshDrawCommand.MeshDrawCommand, GraphicsMinimalPipelineStateSet, PrimitiveIdsBuffer, PrimitiveIdBufferOffset, InstanceFactor, RHICmdList, StateCache);
+		FMeshDrawCommand::SubmitDraw(*VisibleMeshDrawCommand.MeshDrawCommand, GraphicsMinimalPipelineStateSet, LocalSceneArgs, InstanceFactor, RHICmdList, StateCache);
 	}
 }
 
@@ -1736,6 +1788,8 @@ void ApplyViewOverridesToMeshDrawCommands(const FSceneView& View, FMeshCommandOn
 				VisibleMeshDrawCommand.MeshCullMode,
 				VisibleMeshDrawCommand.Flags,
 				VisibleMeshDrawCommand.SortKey,
+				VisibleMeshDrawCommand.CullingPayload,
+				VisibleMeshDrawCommand.CullingPayloadFlags,
 				VisibleMeshDrawCommand.RunArray,
 				VisibleMeshDrawCommand.NumRuns);
 
@@ -1746,6 +1800,36 @@ void ApplyViewOverridesToMeshDrawCommands(const FSceneView& View, FMeshCommandOn
 		Swap(VisibleMeshDrawCommands, ViewOverriddenMeshCommands);
 	}
 }
+
+class FDynamicBatchedPrimitiveLayout : public FRenderResource
+{
+public:
+	void InitRHI(FRHICommandListBase& RHICmdList) override 
+	{
+		// This Layout fully replicates BatchedPrimitive UB
+		// we replace RDG_SRV with a regular SRV to be able to update UB inside RDG passes
+		static FName BatchedPrimitiveSlotName = "BatchedPrimitive";
+		FRHIUniformBufferLayoutInitializer Initialzer(TEXT("DynamicBatchedPrimitive"), 16u);
+		Initialzer.bUniformView = true;
+		Initialzer.Resources.Add({0, UBMT_RDG_BUFFER_SRV});
+		Initialzer.StaticSlot = FUniformBufferStaticSlotRegistry::Get().FindSlotByName(BatchedPrimitiveSlotName);
+		Initialzer.BindingFlags = EUniformBufferBindingFlags::StaticAndShader;
+		Initialzer.ComputeHash();
+		// set view source to a regular SRV after hash computation, to make sure hash matches BatchedPrimitive layout
+		Initialzer.Resources[0].MemberType = UBMT_SRV;
+
+		LayoutRHI = RHICreateUniformBufferLayout(Initialzer);
+	}
+
+	void ReleaseRHI() override 
+	{
+		LayoutRHI = nullptr;
+	}
+
+	FUniformBufferLayoutRHIRef LayoutRHI;
+};
+
+TGlobalResource<FDynamicBatchedPrimitiveLayout> GDynamicBatchedPrimitiveLayout;
 
 void DrawDynamicMeshPassPrivate(
 	const FSceneView& View,
@@ -1762,18 +1846,34 @@ void DrawDynamicMeshPassPrivate(
 		//               we don't support dynamic instancing for this path since we require one primitive per draw command
 		//               This is because the stride on the instance data buffer is set to 0 so only the first will ever be fetched.
 		const bool bDynamicInstancing = false;
-
-		FRHIBuffer* PrimitiveIdVertexBuffer = nullptr;
-		const uint32 PrimitiveIdBufferStride = FInstanceCullingContext::GetInstanceIdBufferStride(View.GetFeatureLevel());
-
+		const ERHIFeatureLevel::Type FeatureLevel = View.GetFeatureLevel();
+		const bool bUseGPUScene = UseGPUScene(GMaxRHIShaderPlatform, FeatureLevel);
+		
+		FMeshDrawCommandSceneArgs SceneArgs;
+		if (bUseGPUScene)
+		{
+			SceneArgs.BatchedPrimitiveSlot = FInstanceCullingContext::GetUniformBufferViewStaticSlot(View.GetShaderPlatform());
+		}
+	
+		const uint32 PrimitiveIdBufferStride = FInstanceCullingContext::GetInstanceIdBufferStride(View.GetShaderPlatform());
+		
 		ApplyViewOverridesToMeshDrawCommands(View, VisibleMeshDrawCommands, DynamicMeshDrawCommandStorage, GraphicsMinimalPipelineStateSet, InNeedsShaderInitialisation);
 
 		check(View.bIsViewInfo);
 		const FViewInfo* ViewInfo = static_cast<const FViewInfo*>(&View);
 
-		SortAndMergeDynamicPassMeshDrawCommands(View, RHICmdList, VisibleMeshDrawCommands, DynamicMeshDrawCommandStorage, PrimitiveIdVertexBuffer, InstanceFactor, &ViewInfo->DynamicPrimitiveCollector);
+		SortAndMergeDynamicPassMeshDrawCommands(View, RHICmdList, VisibleMeshDrawCommands, DynamicMeshDrawCommandStorage, SceneArgs.PrimitiveIdsBuffer, InstanceFactor, &ViewInfo->DynamicPrimitiveCollector);
 
-		SubmitMeshDrawCommandsRange(VisibleMeshDrawCommands, GraphicsMinimalPipelineStateSet, PrimitiveIdVertexBuffer, PrimitiveIdBufferStride, 0, bDynamicInstancing, 0, VisibleMeshDrawCommands.Num(), InstanceFactor, RHICmdList);
+		if (IsUniformBufferStaticSlotValid(SceneArgs.BatchedPrimitiveSlot))
+		{
+			FShaderResourceViewRHIRef BatchedPrimitiveSRV = RHICmdList.CreateShaderResourceView(SceneArgs.PrimitiveIdsBuffer);
+			SceneArgs.PrimitiveIdsBuffer = nullptr;
+			FRHIShaderResourceView* SRV = BatchedPrimitiveSRV.GetReference();
+			FUniformBufferRHIRef UBRef = RHICreateUniformBuffer(&SRV, GDynamicBatchedPrimitiveLayout.LayoutRHI, UniformBuffer_SingleFrame, EUniformBufferValidation::None);
+			RHICmdList.SetStaticUniformBuffer(SceneArgs.BatchedPrimitiveSlot, UBRef);
+		}
+
+		SubmitMeshDrawCommandsRange(VisibleMeshDrawCommands, GraphicsMinimalPipelineStateSet, SceneArgs, PrimitiveIdBufferStride, bDynamicInstancing, 0, VisibleMeshDrawCommands.Num(), InstanceFactor, RHICmdList);
 	}
 }
 
@@ -1787,8 +1887,19 @@ FMeshDrawCommandSortKey CalculateMeshStaticSortKey(const FMeshMaterialShader* Ve
 	return SortKey;
 }
 
-FMeshPassProcessor::FMeshPassProcessor(EMeshPass::Type InMeshPassType, const FScene* InScene, ERHIFeatureLevel::Type InFeatureLevel, const FSceneView* InViewIfDynamicMeshCommand, FMeshPassDrawListContext* InDrawListContext)
-	: MeshPassType(InMeshPassType)
+FMeshPassProcessor::FMeshPassProcessor(EMeshPass::Type InMeshPassType, const FScene* InScene, ERHIFeatureLevel::Type InFeatureLevel, const FSceneView* InViewIfDynamicMeshCommand, FMeshPassDrawListContext* InDrawListContext) 
+	: IPSOCollector(FPassProcessorManager::GetPSOCollectorIndex(GetFeatureLevelShadingPath(InFeatureLevel), InMeshPassType))
+	, MeshPassType(InMeshPassType)
+	, Scene(InScene)
+	, FeatureLevel(InFeatureLevel)
+	, ViewIfDynamicMeshCommand(InViewIfDynamicMeshCommand)
+	, DrawListContext(InDrawListContext)
+{	
+}
+
+FMeshPassProcessor::FMeshPassProcessor(const TCHAR* InMeshPassName, const FScene* InScene, ERHIFeatureLevel::Type InFeatureLevel, const FSceneView* InViewIfDynamicMeshCommand, FMeshPassDrawListContext* InDrawListContext)
+	: IPSOCollector(FPSOCollectorCreateManager::GetIndex(GetFeatureLevelShadingPath(InFeatureLevel), InMeshPassName))
+	, MeshPassType(EMeshPass::Num)
 	, Scene(InScene)
 	, FeatureLevel(InFeatureLevel)
 	, ViewIfDynamicMeshCommand(InViewIfDynamicMeshCommand)
@@ -1839,7 +1950,7 @@ FMeshDrawCommandPrimitiveIdInfo FMeshPassProcessor::GetDrawCommandPrimitiveId(
 	const FPrimitiveSceneInfo* RESTRICT PrimitiveSceneInfo,
 	const FMeshBatchElement& BatchElement) const
 {
-	FMeshDrawCommandPrimitiveIdInfo PrimitiveIdInfo = FMeshDrawCommandPrimitiveIdInfo(0, -1);
+	FMeshDrawCommandPrimitiveIdInfo PrimitiveIdInfo = FMeshDrawCommandPrimitiveIdInfo(0, FPersistentPrimitiveIndex { 0 }, -1);
 
 	if (UseGPUScene(GMaxRHIShaderPlatform, FeatureLevel))
 	{
@@ -1847,7 +1958,7 @@ FMeshDrawCommandPrimitiveIdInfo FMeshPassProcessor::GetDrawCommandPrimitiveId(
 		{
 			ensureMsgf(BatchElement.PrimitiveUniformBufferResource == nullptr, TEXT("PrimitiveUniformBufferResource should not be setup when PrimitiveIdMode == PrimID_FromPrimitiveSceneInfo"));
 			check(PrimitiveSceneInfo);
-			PrimitiveIdInfo.DrawPrimitiveId = PrimitiveSceneInfo->GetIndex();
+			PrimitiveIdInfo.DrawPrimitiveId = PrimitiveSceneInfo->GetPersistentIndex().Index;
 			PrimitiveIdInfo.InstanceSceneDataOffset = PrimitiveSceneInfo->GetInstanceSceneDataOffset();
 			PrimitiveIdInfo.bIsDynamicPrimitive = 0U;
 		}
@@ -1899,7 +2010,6 @@ bool FMeshPassProcessor::ShouldSkipMeshDrawCommand(const FMeshBatch& RESTRICT Me
 FCachedPassMeshDrawListContext::FCachedPassMeshDrawListContext(FScene& InScene)
 	: Scene(InScene)
 	, bUseGPUScene(UseGPUScene(GMaxRHIShaderPlatform, GMaxRHIFeatureLevel))
-	, bUseStateBucketsAuxData(InScene.GetShadingPath() == EShadingPath::Mobile)
 {
 }
 
@@ -1957,6 +2067,7 @@ void FCachedPassMeshDrawListContext::FinalizeCommandCommon(
 
 	CommandInfo = FCachedMeshDrawCommandInfo(CurrMeshPass);
 	CommandInfo.SortKey = SortKey;
+	CommandInfo.CullingPayload = CreateCullingPayload(MeshBatch, MeshBatch.Elements[BatchElementIndex]);
 	CommandInfo.MeshFillMode = MeshFillMode;
 	CommandInfo.MeshCullMode = MeshCullMode;
 	CommandInfo.Flags = Flags;
@@ -2038,13 +2149,6 @@ void FCachedPassMeshDrawListContextImmediate::FinalizeCommand(
 		}
 
 		CommandInfo.StateBucketId = SetId.GetIndex();
-
-		if (bUseStateBucketsAuxData)
-		{
-			// grow MDC AuxData array in sync with MDC StateBuckets
-			Scene.CachedStateBucketsAuxData[CurrMeshPass].SetNum(BucketMap.GetMaxIndex() + 1, false);
-			Scene.CachedStateBucketsAuxData[CurrMeshPass][CommandInfo.StateBucketId] = FStateBucketAuxData(MeshBatch);
-		}
 	}
 	else
 	{
@@ -2090,11 +2194,6 @@ void FCachedPassMeshDrawListContextDeferred::FinalizeCommand(
 		DeferredCommandHashes.Add(FStateBucketMap::ComputeHash(MeshDrawCommand));
 
 		CommandInfo.StateBucketId = Index;
-
-		if (bUseStateBucketsAuxData)
-		{
-			DeferredStateBucketsAuxData.Add(FStateBucketAuxData(MeshBatch));
-		}
 	}
 	else
 	{
@@ -2125,13 +2224,6 @@ void FCachedPassMeshDrawListContextDeferred::DeferredFinalizeMeshDrawCommands(co
 				DrawCount.Num++;
 
 				CmdInfo.StateBucketId = SetId.GetIndex();
-
-				if (bUseStateBucketsAuxData)
-				{
-					// grow MDC AuxData array in sync with MDC StateBuckets
-					Scene.CachedStateBucketsAuxData[CmdInfo.MeshPass].SetNum(BucketMap.GetMaxIndex() + 1, false);
-					Scene.CachedStateBucketsAuxData[CmdInfo.MeshPass][CmdInfo.StateBucketId] = DeferredStateBucketsAuxData[DeferredIndex];
-				}
 			}
 		}
 	}
@@ -2156,12 +2248,12 @@ void FCachedPassMeshDrawListContextDeferred::DeferredFinalizeMeshDrawCommands(co
 
 	DeferredCommands.Reset();
 	DeferredCommandHashes.Reset();
-	DeferredStateBucketsAuxData.Reset();
 }
 
 PassProcessorCreateFunction FPassProcessorManager::JumpTable[(int32)EShadingPath::Num][EMeshPass::Num] = {};
 DeprecatedPassProcessorCreateFunction FPassProcessorManager::DeprecatedJumpTable[(int32)EShadingPath::Num][EMeshPass::Num] = {};
 EMeshPassFlags FPassProcessorManager::Flags[(int32)EShadingPath::Num][EMeshPass::Num] = {};
+int32 FPassProcessorManager::PSOCollectorIndex[(int32)EShadingPath::Num][EMeshPass::Num] = {};
 
 static_assert(EMeshPass::Num <= FPSOCollectorCreateManager::MaxPSOCollectorCount);
 
@@ -2247,7 +2339,7 @@ void SetupGBufferRenderTargetInfo(const FSceneTexturesConfig& SceneTexturesConfi
 	if (bSetupDepthStencil)
 	{
 		SetupDepthStencilInfo(PF_DepthStencil, SceneTexturesConfig.DepthCreateFlags, ERenderTargetLoadAction::ELoad,
-			ERenderTargetLoadAction::ELoad, FExclusiveDepthStencil::DepthWrite_StencilWrite, RenderTargetsInfo);
+			ERenderTargetLoadAction::ELoad, FExclusiveDepthStencil::DepthRead_StencilWrite, RenderTargetsInfo);
 	}
 }
 
@@ -2276,6 +2368,7 @@ FGraphicsMinimalPipelineStateInitializer PSOCollectorStats::PatchMinimalPipeline
 	//PatchedInitializer.UniqueEntry = false;
 
 	// Recompute the hash when disabling certain states for checks.
+	// PatchedInitializer.StatePrecachePSOHash = 0;
 	PatchedInitializer.ComputeStatePrecachePSOHash();
 
 	return PatchedInitializer;
@@ -2284,6 +2377,46 @@ FGraphicsMinimalPipelineStateInitializer PSOCollectorStats::PatchMinimalPipeline
 uint64 PSOCollectorStats::GetPSOPrecacheHash(const FGraphicsMinimalPipelineStateInitializer& GraphicsPSOInitializer)
 {
 	return GraphicsPSOInitializer.StatePrecachePSOHash;
+}
+
+void PSOCollectorStats::CheckShaderOnlyStateInCache(
+	const FGraphicsMinimalPipelineStateInitializer& Initializer,
+	const FMaterial& Material,
+	const FVertexFactoryType* VFType,
+	const FPrimitiveSceneProxy* PrimitiveSceneProxy,
+	int32 PSOCollectorIndex)
+{
+	FGraphicsMinimalPipelineStateInitializer ShadersOnlyInitializer = GetShadersOnlyInitializer(Initializer);
+	EPSOPrecacheResult Result = PSOCollectorStats::GetShadersOnlyPSOPrecacheStatsCollector().CheckStateInCacheByHash(ShadersOnlyInitializer.StatePrecachePSOHash, EPSOPrecacheResult::Unknown, PSOCollectorIndex, VFType);
+
+	if (IsFullPrecachingValidationEnabled() && Result != EPSOPrecacheResult::Unknown && Result != EPSOPrecacheResult::Complete)
+	{
+		FGraphicsPipelineStateInitializer GraphicsPSOInitializer = ShadersOnlyInitializer.AsGraphicsPipelineStateInitializer();
+		LogPSOMissInfo(GraphicsPSOInitializer, EPSOPrecacheMissType::ShadersOnly, Result, &Material, VFType, PrimitiveSceneProxy, PSOCollectorIndex, ShadersOnlyInitializer.StatePrecachePSOHash);
+	}
+}
+
+void PSOCollectorStats::CheckMinimalPipelineStateInCache(
+	const FGraphicsMinimalPipelineStateInitializer& Initializer, 
+	const FMaterial& Material, 
+	const FVertexFactoryType* VFType, 
+	const FPrimitiveSceneProxy* PrimitiveSceneProxy,
+	int32 PSOCollectorIndex)
+{
+	FGraphicsMinimalPipelineStateInitializer PatchedMinimalInitializer = PSOCollectorStats::PatchMinimalPipelineStateToCheck(Initializer);
+	EPSOPrecacheResult Result = PSOCollectorStats::GetMinimalPSOPrecacheStatsCollector().CheckStateInCacheByHash(PatchedMinimalInitializer.StatePrecachePSOHash, EPSOPrecacheResult::Unknown, PSOCollectorIndex, VFType);
+
+	if (IsFullPrecachingValidationEnabled() && Result != EPSOPrecacheResult::Unknown && Result != EPSOPrecacheResult::Complete)
+	{
+		FGraphicsMinimalPipelineStateInitializer ShadersOnlyInitializer = GetShadersOnlyInitializer(Initializer);
+		bool bShaderOnlyPrecached = PSOCollectorStats::GetShadersOnlyPSOPrecacheStatsCollector().IsPrecached(ShadersOnlyInitializer.StatePrecachePSOHash);
+		if (bShaderOnlyPrecached)
+		{
+			check(Result == EPSOPrecacheResult::Missed);
+			FGraphicsPipelineStateInitializer GraphicsPSOInitializer = PatchedMinimalInitializer.AsGraphicsPipelineStateInitializer();
+			LogPSOMissInfo(GraphicsPSOInitializer, EPSOPrecacheMissType::MinimalPSOState, Result, &Material, VFType, PrimitiveSceneProxy, PSOCollectorIndex, ShadersOnlyInitializer.StatePrecachePSOHash);
+		}
+	}
 }
 
 #endif // PSO_PRECACHING_VALIDATE

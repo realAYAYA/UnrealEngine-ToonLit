@@ -30,4 +30,8 @@ public:
 
 	UPROPERTY(config, EditAnywhere, Category=General)
 	TArray<FDirectoryPath> IgnoredPaths;
+	
+	/** Disable put/fetch operations with the DDC, without changing storage location */
+	UPROPERTY(config, EditAnywhere, Category=General)
+	bool bDisableDDC;
 };

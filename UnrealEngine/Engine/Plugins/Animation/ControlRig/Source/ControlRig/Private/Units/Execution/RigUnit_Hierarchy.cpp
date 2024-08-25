@@ -22,7 +22,7 @@ FRigUnit_HierarchyGetParent_Execute()
 
 		if(CachedChild.UpdateCache(Child, ExecuteContext.Hierarchy))
 		{
-			Parent = ExecuteContext.Hierarchy->GetFirstParent(Child);
+			Parent = ExecuteContext.Hierarchy->GetFirstParent(CachedChild.GetResolvedKey());
 			if(Parent.IsValid())
 			{
 				CachedParent.UpdateCache(Parent, ExecuteContext.Hierarchy);
@@ -57,7 +57,7 @@ FRigUnit_HierarchyGetParentsItemArray_Execute()
 		if(CachedChild.UpdateCache(Child, ExecuteContext.Hierarchy))
 		{
 			TArray<FRigElementKey> Keys;
-			FRigElementKey Parent = Child;
+			FRigElementKey Parent = CachedChild.GetResolvedKey();
 			do
 			{
 				if(bIncludeChild || Parent != Child)
@@ -89,15 +89,16 @@ FRigUnit_HierarchyGetChildren_Execute()
 
 		if(CachedParent.UpdateCache(Parent, ExecuteContext.Hierarchy))
 		{
+			const FRigElementKey ResolvedParent = CachedParent.GetResolvedKey();
+
 			TArray<FRigElementKey> Keys;
 
 			if(bIncludeParent)
 			{
-				Keys.Add(Parent);
+				Keys.Add(ResolvedParent);
 			}
 
-			
-			Keys.Append(ExecuteContext.Hierarchy->GetChildren(Parent, bRecursive));
+			Keys.Append(ExecuteContext.Hierarchy->GetChildren(ResolvedParent, bRecursive));
 
 			CachedChildren = FRigElementKeyCollection(Keys);
 		}
@@ -141,7 +142,7 @@ FRigUnit_HierarchyGetSiblingsItemArray_Execute()
 		{
 			TArray<FRigElementKey> Keys;
 
-			FRigElementKey Parent = ExecuteContext.Hierarchy->GetFirstParent(Item);
+			FRigElementKey Parent = ExecuteContext.Hierarchy->GetFirstParent(CachedItem.GetResolvedKey());
 			if(Parent.IsValid())
 			{
 				TArray<FRigElementKey> Children = ExecuteContext.Hierarchy->GetChildren(Parent, false);
@@ -164,6 +165,76 @@ FRigUnit_HierarchyGetSiblingsItemArray_Execute()
 	}
 
 	Siblings = CachedSiblings.Keys;
+}
+
+FRigUnit_HierarchyGetChainItemArray_Execute()
+{
+	DECLARE_SCOPE_HIERARCHICAL_COUNTER_RIGUNIT()
+
+	if(!CachedStart.IsIdentical(Start, ExecuteContext.Hierarchy) ||
+		!CachedEnd.IsIdentical(End, ExecuteContext.Hierarchy))
+	{
+		CachedChain.Reset();
+
+		if(CachedStart.UpdateCache(Start, ExecuteContext.Hierarchy) &&
+			CachedEnd.UpdateCache(End, ExecuteContext.Hierarchy))
+		{
+			TArray<FRigElementKey> Keys;
+
+			const FRigTransformElement* StartElement = Cast<FRigTransformElement>(CachedStart.GetElement());
+			if(StartElement && (StartElement->GetType() == ERigElementType::Socket))
+			{
+				StartElement = Cast<FRigTransformElement>(ExecuteContext.Hierarchy->GetFirstParent(StartElement));
+			}
+			const FRigTransformElement* EndElement = Cast<FRigTransformElement>(CachedEnd.GetElement());
+			if(EndElement && (EndElement->GetType() == ERigElementType::Socket))
+			{
+				EndElement = Cast<FRigTransformElement>(ExecuteContext.Hierarchy->GetFirstParent(EndElement));
+			}
+			
+			if(StartElement == nullptr || EndElement == nullptr)
+			{
+				Keys.Reset();
+			}
+			else
+			{
+				if(bIncludeEnd)
+				{
+					Keys.Add(EndElement->GetKey());
+				}
+
+				const FRigTransformElement* Parent = Cast<FRigTransformElement>(ExecuteContext.Hierarchy->GetFirstParent(EndElement));
+				while(Parent && Parent != StartElement)
+				{
+					Keys.Add(Parent->GetKey());
+					Parent = Cast<FRigTransformElement>(ExecuteContext.Hierarchy->GetFirstParent(Parent));
+				}
+
+				if(Parent != StartElement)
+				{
+					Keys.Reset();
+#if WITH_EDITOR
+					ExecuteContext.Report(EMessageSeverity::Info, ExecuteContext.GetFunctionName(), ExecuteContext.GetInstructionIndex(), TEXT("Start and End are not part of the same chain."));
+#endif
+				}
+				else if(bIncludeStart)
+				{
+					Keys.Add(StartElement->GetKey());
+				}
+
+				CachedChain = FRigElementKeyCollection(Keys);
+
+				// we are collecting the chain in reverse order (from tail to head)
+				// so we'll reverse it again if we are expecting the chain to be in order parent to child.
+				if(!bReverse)
+				{
+					CachedChain = FRigElementKeyCollection::MakeReversed(CachedChain);
+				}
+			}
+		}
+	}
+
+	Chain = CachedChain.Keys;
 }
 
 FRigUnit_HierarchyGetPose_Execute()

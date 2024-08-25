@@ -321,8 +321,8 @@ void FRigVMEdGraphConnectionDrawingPolicy::DetermineWiringStyle(UEdGraphPin* Out
 					{
 						if (const URigVM* VM = Host->GetVM())
 						{
-							if (VM->WasInstructionVisitedDuringLastRun(Host->GetExtendedExecuteContext(), OutputInstructionIndex) &&
-								VM->WasInstructionVisitedDuringLastRun(Host->GetExtendedExecuteContext(), InputInstructionIndex))
+							if (VM->WasInstructionVisitedDuringLastRun(Host->GetRigVMExtendedExecuteContext(), OutputInstructionIndex) &&
+								VM->WasInstructionVisitedDuringLastRun(Host->GetRigVMExtendedExecuteContext(), InputInstructionIndex))
 							{
 								bVisited = true;
 							}

@@ -32,8 +32,8 @@ public:
 	static bool SendMessage(EStageMessageFlags Flags, Args&&... args)
 	{
 #if ENABLE_STAGEMONITOR_LOGGING
-		MessageType TempObj = MessageType(Forward<Args>(MoveTempIfPossible(args))...);
-		return SendMessage(Forward<MessageType>(TempObj), Flags);
+		MessageType TempObj(Forward<Args>(args)...);
+		return SendMessage(MoveTempIfPossible(TempObj), Flags);
 #endif
 
 		return false;
@@ -56,9 +56,9 @@ public:
 	{
 #if ENABLE_STAGEMONITOR_LOGGING
 		return SendMessage(Forward<MessageType>(Message), Flags);
-#endif
-
+#else
 		return false;
+#endif
 	}
 
 private:

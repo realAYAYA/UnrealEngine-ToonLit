@@ -3,4 +3,3 @@
 #include "DisplayClusterShadersLog.h"
 
 DEFINE_LOG_CATEGORY(LogDisplayClusterShaders);
-DEFINE_LOG_CATEGORY(LogDisplayClusterWarpBlend);

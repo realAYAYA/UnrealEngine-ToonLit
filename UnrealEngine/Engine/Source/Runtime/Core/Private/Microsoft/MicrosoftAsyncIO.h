@@ -322,6 +322,7 @@ public:
 			}
 		}
 	}
+
 	virtual void CancelImpl() override
 	{
 		// no cancel support

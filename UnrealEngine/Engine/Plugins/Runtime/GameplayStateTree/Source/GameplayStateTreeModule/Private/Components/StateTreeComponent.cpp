@@ -58,100 +58,15 @@ void UStateTreeComponent::UninitializeComponent()
 {
 }
 
+bool UStateTreeComponent::CollectExternalData(const FStateTreeExecutionContext& Context, const UStateTree* StateTree, TArrayView<const FStateTreeExternalDataDesc> ExternalDataDescs, TArrayView<FStateTreeDataView> OutDataViews) const
+{
+	return UStateTreeComponentSchema::CollectExternalData(Context, StateTree, ExternalDataDescs, OutDataViews);
+}
+
 bool UStateTreeComponent::SetContextRequirements(FStateTreeExecutionContext& Context, bool bLogErrors)
 {
-	if (!Context.IsValid())
-	{
-		return false;
-	}
-
-	const UWorld* World = GetWorld();
-	if (World == nullptr)
-	{
-		return false;
-	}
-
-	for (const FStateTreeExternalDataDesc& ItemDesc : Context.GetExternalDataDescs())
-	{
-		if (ItemDesc.Struct != nullptr)
-		{
-			if (ItemDesc.Struct->IsChildOf(UWorldSubsystem::StaticClass()))
-			{
-				UWorldSubsystem* Subsystem = World->GetSubsystemBase(Cast<UClass>(const_cast<UStruct*>(ToRawPtr(ItemDesc.Struct))));
-				Context.SetExternalData(ItemDesc.Handle, FStateTreeDataView(Subsystem));
-			}
-			else if (ItemDesc.Struct->IsChildOf(UActorComponent::StaticClass()))
-			{
-				UActorComponent* Component = GetOwner()->FindComponentByClass(Cast<UClass>(const_cast<UStruct*>(ToRawPtr(ItemDesc.Struct))));
-				Context.SetExternalData(ItemDesc.Handle, FStateTreeDataView(Component));
-			}
-			else if (ItemDesc.Struct->IsChildOf(APawn::StaticClass()))
-			{
-				APawn* OwnerPawn = (AIOwner != nullptr) ? AIOwner->GetPawn() : Cast<APawn>(GetOwner());
-				Context.SetExternalData(ItemDesc.Handle, FStateTreeDataView(OwnerPawn));
-			}
-			else if (ItemDesc.Struct->IsChildOf(AAIController::StaticClass()))
-			{
-				AAIController* OwnerController = (AIOwner != nullptr) ? AIOwner.Get() : Cast<AAIController>(GetOwner());
-				Context.SetExternalData(ItemDesc.Handle, FStateTreeDataView(OwnerController));
-			}
-			else if (ItemDesc.Struct->IsChildOf(AActor::StaticClass()))
-			{
-				AActor* OwnerActor = (AIOwner != nullptr) ? AIOwner->GetPawn() : GetOwner();
-				Context.SetExternalData(ItemDesc.Handle, FStateTreeDataView(OwnerActor));
-			}
-		}
-	}
-
-	// Make sure the actor matches one required.
-	AActor* ContextActor = nullptr;
-	const UStateTreeComponentSchema* Schema = Cast<UStateTreeComponentSchema>(Context.GetStateTree()->GetSchema());
-	if (Schema)
-	{
-		if (AAIController* OwnerController = (AIOwner != nullptr) ? AIOwner.Get() : Cast<AAIController>(GetOwner()))
-		{
-			if (OwnerController && OwnerController->IsA(Schema->GetContextActorClass()))
-			{
-				ContextActor = OwnerController;
-			}
-		}
-		if (ContextActor == nullptr)
-		{
-			if (AActor* OwnerActor = (AIOwner != nullptr) ? AIOwner->GetPawn() : GetOwner())
-			{
-				if (OwnerActor && OwnerActor->IsA(Schema->GetContextActorClass()))
-				{
-					ContextActor = OwnerActor;
-				}
-			}
-		}
-		if (ContextActor == nullptr && bLogErrors)
-		{
-			STATETREE_LOG(Error, TEXT("%s: Could not find context actor of type %s. StateTree will not update."), ANSI_TO_TCHAR(__FUNCTION__), *GetNameSafe(Schema->GetContextActorClass()));
-		}
-	}
-	else if (bLogErrors)
-	{
-		STATETREE_LOG(Error, TEXT("%s: Expected StateTree asset to contain StateTreeComponentSchema. StateTree will not update."), ANSI_TO_TCHAR(__FUNCTION__));
-	}
-	
-	const FName ActorName(TEXT("Actor"));
-	for (const FStateTreeExternalDataDesc& ItemDesc : Context.GetContextDataDescs())
-	{
-		if (ItemDesc.Name == ActorName)
-		{
-			Context.SetExternalData(ItemDesc.Handle, FStateTreeDataView(ContextActor));
-		}
-	}
-
-	bool bResult = Context.AreExternalDataViewsValid();
-
-	if (!bResult && bLogErrors)
-	{
-		STATETREE_LOG(Error, TEXT("%s: Missing external data requirements. StateTree will not update."), ANSI_TO_TCHAR(__FUNCTION__));
-	}
-	
-	return bResult;
+	Context.SetCollectExternalDataCallback(FOnCollectStateTreeExternalData::CreateUObject(this, &UStateTreeComponent::CollectExternalData));
+	return UStateTreeComponentSchema::SetContextRequirements(*this, Context);
 }
 
 void UStateTreeComponent::BeginPlay()
@@ -189,7 +104,6 @@ void UStateTreeComponent::TickComponent(float DeltaTime, enum ELevelTick TickTyp
 	FStateTreeExecutionContext Context(*GetOwner(), *StateTreeRef.GetStateTree(), InstanceData);
 	if (SetContextRequirements(Context))
 	{
-		Context.SetParameters(StateTreeRef.GetParameters());
 		const EStateTreeRunStatus PreviousRunStatus = Context.GetStateTreeRunStatus();
 		const EStateTreeRunStatus CurrentRunStatus = Context.Tick(DeltaTime);
 
@@ -213,9 +127,8 @@ void UStateTreeComponent::StartLogic()
 	FStateTreeExecutionContext Context(*GetOwner(), *StateTreeRef.GetStateTree(), InstanceData);
 	if (SetContextRequirements(Context))
 	{
-		Context.SetParameters(StateTreeRef.GetParameters());
 		const EStateTreeRunStatus PreviousRunStatus = Context.GetStateTreeRunStatus();
-		const EStateTreeRunStatus CurrentRunStatus = Context.Start();
+		const EStateTreeRunStatus CurrentRunStatus = Context.Start(&StateTreeRef.GetParameters());
 		bIsRunning = true;
 		
 		if (CurrentRunStatus != PreviousRunStatus)
@@ -238,9 +151,8 @@ void UStateTreeComponent::RestartLogic()
 	FStateTreeExecutionContext Context(*GetOwner(), *StateTreeRef.GetStateTree(), InstanceData);
 	if (SetContextRequirements(Context))
 	{
-		Context.SetParameters(StateTreeRef.GetParameters());
 		const EStateTreeRunStatus PreviousRunStatus = Context.GetStateTreeRunStatus();
-		const EStateTreeRunStatus CurrentRunStatus = Context.Start();
+		const EStateTreeRunStatus CurrentRunStatus = Context.Start(&StateTreeRef.GetParameters());
 		bIsRunning = true;
 		
 		if (CurrentRunStatus != PreviousRunStatus)
@@ -268,7 +180,6 @@ void UStateTreeComponent::StopLogic(const FString& Reason)
 	FStateTreeExecutionContext Context(*GetOwner(), *StateTreeRef.GetStateTree(), InstanceData);
 	if (SetContextRequirements(Context))
 	{
-		Context.SetParameters(StateTreeRef.GetParameters());
 		const EStateTreeRunStatus PreviousRunStatus = Context.GetStateTreeRunStatus();
 		const EStateTreeRunStatus CurrentRunStatus = Context.Stop();
 		bIsRunning = false;
@@ -381,6 +292,11 @@ void UStateTreeComponent::OnGameplayTaskInitialized(UGameplayTask& Task)
 	}
 }
 
+TSubclassOf<UStateTreeSchema> UStateTreeComponent::GetSchema() const
+{
+	return UStateTreeComponentSchema::StaticClass();
+}
+
 void UStateTreeComponent::SetStartLogicAutomatically(const bool bInStartLogicAutomatically)
 {
 	bStartLogicAutomatically = bInStartLogicAutomatically;
@@ -421,8 +337,12 @@ EStateTreeRunStatus UStateTreeComponent::GetStateTreeRunStatus() const
 #if WITH_GAMEPLAY_DEBUGGER
 FString UStateTreeComponent::GetDebugInfoString() const
 {
-	FStateTreeExecutionContext Context(*GetOwner(), *StateTreeRef.GetStateTree(), const_cast<FStateTreeInstanceData&>(InstanceData));
-	return Context.GetDebugInfoString();
+	if (!StateTreeRef.IsValid())
+	{
+		return FString("No StateTree to run.");
+	}
+
+	return FStateTreeExecutionContext(*GetOwner(), *StateTreeRef.GetStateTree(), const_cast<FStateTreeInstanceData&>(InstanceData)).GetDebugInfoString();
 }
 #endif // WITH_GAMEPLAY_DEBUGGER
 

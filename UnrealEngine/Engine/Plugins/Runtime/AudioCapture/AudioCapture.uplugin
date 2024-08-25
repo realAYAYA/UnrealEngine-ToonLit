@@ -13,19 +13,22 @@
 	"EnabledByDefault" : true,
 	"CanContainContent" : false,
 	"IsBetaVersion" : false,
-	"Installed" : false,
+	"Installed": false,
+	"SupportedPrograms": ["LiveLinkHub"],
 	"Modules" :
 	[
 		{
 			"Name" : "AudioCapture",
-			"Type" : "Runtime",
+			"Type": "Runtime",
+			"ProgramAllowList": ["LiveLinkHub"],
 			"LoadingPhase": "Default"
  		},
 		{
-			"Name" : "AudioCaptureEditor",
-			"Type" : "Editor",
+			"Name": "AudioCaptureEditor",
+			"Type": "Editor",
+			"ProgramAllowList": [ "LiveLinkHub" ],
 			"LoadingPhase": "PostEngineInit",
- 			"PlatformAllowList" : [ "Win64" ]
+			"PlatformAllowList": [ "Win64" ]
 		}
 	]
 }

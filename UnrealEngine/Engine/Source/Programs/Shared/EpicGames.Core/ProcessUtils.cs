@@ -2,10 +2,10 @@
 
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.Diagnostics;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using System.Text;
 using System.Threading;
 using Microsoft.Extensions.Logging;
@@ -41,6 +41,21 @@ namespace EpicGames.Core
 		[DllImport("kernel32.dll")]
 		static extern uint WaitForMultipleObjects(int nCount, IntPtr[] lpHandles, bool bWaitAll, uint dwMilliseconds);
 
+		[StructLayout(LayoutKind.Sequential)]
+		struct ProcessBasicInformation
+		{
+			// These members must match PROCESS_BASIC_INFORMATION
+			public IntPtr _exitStatus;
+			public IntPtr _pebBaseAddress;
+			public IntPtr _affinityMask;
+			public IntPtr _basePriority;
+			public IntPtr _uniqueProcessId;
+			public IntPtr _inheritedFromUniqueProcessId;
+		}
+
+		[DllImport("ntdll.dll")]
+		private static extern int NtQueryInformationProcess(IntPtr processHandle, int processInformationClass, ref ProcessBasicInformation processInformation, int processInformationLength, out int returnLength);
+
 		/// <summary>
 		/// Attempts to terminate all processes matching a predicate
 		/// </summary>
@@ -67,6 +82,7 @@ namespace EpicGames.Core
 		/// <param name="logger">Logging device</param>
 		/// <param name="cancellationToken">Cancellation token to abort the search</param>
 		/// <returns>True if the process succeeded</returns>
+		[SupportedOSPlatform("windows")]
 		static bool TerminateProcessesWin32(Predicate<FileReference> predicate, ILogger logger, CancellationToken cancellationToken)
 		{
 			Dictionary<int, int> processToCount = new Dictionary<int, int>();
@@ -237,6 +253,68 @@ namespace EpicGames.Core
 				{
 					return result;
 				}
+			}
+		}
+
+		/// <summary>
+		/// Gets the parent process of a specified process
+		/// </summary>
+		/// <param name="process">The process</param>
+		/// <returns>The parent process if running, otherwise null</returns>
+		public static Process? GetParentProcess(Process process)
+		{
+			if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+			{
+				return GetParentProcessWin32(process);
+			}
+			else
+			{
+				throw new PlatformNotSupportedException();
+			}
+		}
+
+		[SupportedOSPlatform("windows")]
+		static Process? GetParentProcessWin32(Process process)
+		{
+			try
+			{
+				ProcessBasicInformation pbi = new ProcessBasicInformation();
+				if (NtQueryInformationProcess(process.Handle, 0, ref pbi, Marshal.SizeOf(pbi), out _) == 0)
+				{
+					return Process.GetProcessById(pbi._inheritedFromUniqueProcessId.ToInt32());
+				}
+			}
+			catch (Exception)
+			{
+			}
+			return null;
+		}
+
+		/// <summary>
+		/// Gets all ancestor processes of a specified windows process
+		/// </summary>
+		/// <param name="process">The process</param>
+		/// <returns>IEnumerable containing the parent processes</returns>
+		public static IEnumerable<Process> GetAncestorProcesses(Process process)
+		{
+			if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+			{
+				return GetAncestorProcessesWin32(process);
+			}
+			else
+			{
+				throw new PlatformNotSupportedException();
+			}
+		}
+
+		[SupportedOSPlatform("windows")]
+		static IEnumerable<Process> GetAncestorProcessesWin32(Process process)
+		{
+			Process? parentProcess = GetParentProcess(process);
+			while (parentProcess != null)
+			{
+				yield return parentProcess;
+				parentProcess = GetParentProcess(parentProcess);
 			}
 		}
 	}

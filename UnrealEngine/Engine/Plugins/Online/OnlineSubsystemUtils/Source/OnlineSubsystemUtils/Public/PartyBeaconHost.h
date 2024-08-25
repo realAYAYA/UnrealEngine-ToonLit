@@ -243,6 +243,15 @@ class ONLINESUBSYSTEMUTILS_API APartyBeaconHost : public AOnlineBeaconHostObject
 	virtual bool GetPlayerValidation(const FUniqueNetId& PlayerId, FString& OutValidation) const;
 
 	/**
+	 * Get the session timeout value to use for the target player
+	 *
+	 * @param PlayerId unique id of player to find session timeout for
+	 *
+	 * @return The value to sue as the session timeout
+	 */
+	virtual float GetSessionTimeoutSecs(const FUniqueNetIdRepl& PlayerId) const;
+
+	/**
 	 * Get the party leader for a given unique id
 	 *
 	 * @param InPartyMemberId valid party member of some reservation looking for its leader

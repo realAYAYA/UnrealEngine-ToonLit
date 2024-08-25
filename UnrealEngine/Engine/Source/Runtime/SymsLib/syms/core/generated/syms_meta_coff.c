@@ -66,6 +66,7 @@ case SYMS_CoffRelocTypeX86_UNKNOWN6: result = 0; break;
 case SYMS_CoffRelocTypeX86_UNKNOWN7: result = 0; break;
 case SYMS_CoffRelocTypeX86_UNKNOWN8: result = 0; break;
 case SYMS_CoffRelocTypeX86_UNKNOWN9: result = 0; break;
+case SYMS_CoffRelocTypeX86_REL32: result = 4; break;
 }
 return(result);
 }

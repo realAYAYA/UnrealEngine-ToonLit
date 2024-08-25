@@ -154,7 +154,7 @@ namespace ChaosTest {
 
 		Test.Create();
 
-		FReal Z = Test.SOAs.GetDynamicParticles().X(0)[2];
+		FReal Z = Test.SOAs.GetDynamicParticles().GetX(0)[2];
 		EXPECT_TRUE(FMath::IsNearlyEqual(Z, (FReal)50.));
 
 		// Run the sim
@@ -166,7 +166,7 @@ namespace ChaosTest {
 			//FVector Pos = Test.SOAs.GetDynamicParticles().X(0);
 			//std::cout << Pos.X << "," << Pos.Y << "," << Pos.Z << std::endl;
 		}
-		FReal ZPost = Test.SOAs.GetDynamicParticles().X(0)[2];
+		FReal ZPost = Test.SOAs.GetDynamicParticles().GetX(0)[2];
 
 		// Nothing should have reset
 		EXPECT_TRUE(FMath::IsNearlyEqual(Z, ZPost, (FReal)5.));
@@ -207,7 +207,7 @@ namespace ChaosTest {
 
 		Test.Create();
 
-		FReal Z = Test.SOAs.GetDynamicParticles().X(0)[2];
+		FReal Z = Test.SOAs.GetDynamicParticles().GetX(0)[2];
 		EXPECT_TRUE(FMath::IsNearlyEqual(Z, (FReal)50.));
 
 		// Run the sim
@@ -220,7 +220,7 @@ namespace ChaosTest {
 			//FVector Pos = Test.SOAs.GetDynamicParticles().X(0);
 			//std::cout << Pos.X << "," << Pos.Y << "," << Pos.Z << std::endl;
 		}
-		FReal ZPost = Test.SOAs.GetDynamicParticles().X(0)[2];
+		FReal ZPost = Test.SOAs.GetDynamicParticles().GetX(0)[2];
 
 		// The linear spring should have reset. 
 		EXPECT_TRUE(ZPost < Z - PlasticityLimit);

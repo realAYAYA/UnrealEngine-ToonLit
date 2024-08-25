@@ -15,7 +15,7 @@ namespace AVEncoder
 {
 	struct FVideoDecoderInfo;
 
-	class FVideoDecoderFactory
+	class UE_DEPRECATED(5.4, "AVEncoder has been deprecated. Please use the AVCodecs plugin family instead.") FVideoDecoderFactory
 	{
 	public:
 		static AVENCODER_API FVideoDecoderFactory& Get();
@@ -24,6 +24,7 @@ namespace AVEncoder
 		// --- decoder registry
 
 		// the callback type used to create a registered decoder
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		using CreateDecoderCallback = TFunction<FVideoDecoder*()>;
 
 		// register a decoder so that it can be iterated and created
@@ -36,6 +37,7 @@ namespace AVEncoder
 		// --- decoder creation
 		// create a decoder instance. If not nullptr it must be destroyed through invoking its Shutdown() method!
 		AVENCODER_API FVideoDecoder* Create(uint32 InID, const FVideoDecoder::FInit& InInit);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	private:
 		AVENCODER_API FVideoDecoderFactory();
@@ -48,8 +50,11 @@ namespace AVEncoder
 		static AVENCODER_API FThreadSafeCounter		NextID;
 		static AVENCODER_API bool						bDebugDontRegisterDefaultCodecs;
 
-		TArray<FVideoDecoderInfo>		AvailableDecoders;
 		TArray<CreateDecoderCallback>	CreateDecoders;
+
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
+		TArray<FVideoDecoderInfo>		AvailableDecoders;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	};
 
 } /* namespace AVEncoder */

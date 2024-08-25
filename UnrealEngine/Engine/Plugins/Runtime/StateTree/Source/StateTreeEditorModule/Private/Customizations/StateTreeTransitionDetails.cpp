@@ -95,9 +95,14 @@ void FStateTreeTransitionDetails::CustomizeChildren(TSharedRef<class IPropertyHa
 	check(ConditionsProperty);
 	check(IDProperty);
 
-	auto IsTickOrEventTransition = [this]()
+	TWeakPtr<FStateTreeTransitionDetails> WeakSelf = SharedThis(this);
+	auto IsTickOrEventTransition = [WeakSelf]()
 	{
-		return !EnumHasAnyFlags(GetTrigger(), EStateTreeTransitionTrigger::OnStateCompleted) ? EVisibility::Visible : EVisibility::Collapsed;
+		if (const TSharedPtr<FStateTreeTransitionDetails> Self = WeakSelf.Pin())
+		{
+			return !EnumHasAnyFlags(Self->GetTrigger(), EStateTreeTransitionTrigger::OnStateCompleted) ? EVisibility::Visible : EVisibility::Collapsed;
+		}
+		return EVisibility::Collapsed;
 	};
 
 	if (UE::StateTree::Editor::GbDisplayItemIds)
@@ -110,9 +115,13 @@ void FStateTreeTransitionDetails::CustomizeChildren(TSharedRef<class IPropertyHa
 
 	// Show event only when the trigger is set to Event. 
 	StructBuilder.AddProperty(EventTagProperty.ToSharedRef())
-		.Visibility(TAttribute<EVisibility>::Create(TAttribute<EVisibility>::FGetter::CreateLambda([this]()
+		.Visibility(TAttribute<EVisibility>::Create(TAttribute<EVisibility>::FGetter::CreateLambda([WeakSelf]()
 		{
-			return (GetTrigger() == EStateTreeTransitionTrigger::OnEvent) ? EVisibility::Visible : EVisibility::Collapsed;
+			if (const TSharedPtr<FStateTreeTransitionDetails> Self = WeakSelf.Pin())
+			{
+				return (Self->GetTrigger() == EStateTreeTransitionTrigger::OnEvent) ? EVisibility::Visible : EVisibility::Collapsed;
+			}
+			return EVisibility::Collapsed;
 		})));
 
 	// State
@@ -220,6 +229,9 @@ FText FStateTreeTransitionDetails::GetDescription() const
 			break;
 		case EStateTreeTransitionType::NextState:
 			TargetText = LOCTEXT("TransitionNextState", "Next State");
+			break;
+		case EStateTreeTransitionType::NextSelectableState:
+			TargetText = LOCTEXT("TransitionNextSelectableState", "Next Selectable State");
 			break;
 		case EStateTreeTransitionType::GotoState:
 			{

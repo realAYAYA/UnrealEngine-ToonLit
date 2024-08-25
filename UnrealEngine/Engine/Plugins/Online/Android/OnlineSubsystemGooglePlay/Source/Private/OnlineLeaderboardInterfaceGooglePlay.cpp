@@ -1,13 +1,29 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "OnlineLeaderboardInterfaceGooglePlay.h"
+#include "Algo/NoneOf.h"
+#include "AndroidRuntimeSettings.h"
+#include "OnlineAchievementGooglePlayCommon.h"
 #include "OnlineAsyncTaskGooglePlayReadLeaderboard.h"
-#include "UObject/Class.h"
+#include "OnlineAsyncTaskGooglePlayFlushLeaderboards.h"
 #include "OnlineSubsystemGooglePlay.h"
 
-THIRD_PARTY_INCLUDES_START
-#include "gpg/leaderboard_manager.h"
-THIRD_PARTY_INCLUDES_END
+namespace LeaderboardsGooglePlayDetail
+{
+	static TOptional<FString> GetGooglePlayLeaderboardId(const UAndroidRuntimeSettings* Settings, const FString& LeaderboardName)
+	{
+		for(const auto& Mapping : Settings->LeaderboardMap)
+		{
+			if(Mapping.Name == LeaderboardName)
+			{
+				return Mapping.LeaderboardID;
+			}
+		}
+
+		UE_LOG_ONLINE_LEADERBOARD(Warning, TEXT( "GetGooglePlayLeaderboardId: No mapping for leaderboard %s"), *LeaderboardName );
+		return NullOpt;
+	}
+}
 
 FOnlineLeaderboardsGooglePlay::FOnlineLeaderboardsGooglePlay(FOnlineSubsystemGooglePlay* InSubsystem)
 	: Subsystem(InSubsystem)
@@ -15,26 +31,34 @@ FOnlineLeaderboardsGooglePlay::FOnlineLeaderboardsGooglePlay(FOnlineSubsystemGoo
 	check(Subsystem);
 }
 
+bool FOnlineLeaderboardsGooglePlay::IsLocalPlayer(const FUniqueNetId& PlayerId) const
+{
+	if (!PlayerId.IsValid())
+	{
+		return false;
+	}
+	FOnlineIdentityGooglePlayPtr IdentityInt = Subsystem->GetIdentityGooglePlay();
+	FUniqueNetIdPtr LocalPlayerNetId = IdentityInt->GetUniquePlayerId(0);
+	return LocalPlayerNetId? *LocalPlayerNetId == PlayerId : false;
+}
+
 bool FOnlineLeaderboardsGooglePlay::ReadLeaderboards(const TArray< FUniqueNetIdRef >& Players, FOnlineLeaderboardReadRef& ReadObject)
 {
-	ReadObject->Rows.Empty();
-
-	if (Subsystem->GetGameServices() == nullptr)
+	if (Algo::NoneOf(Players, [this](const FUniqueNetIdRef& PlayerId) { return IsLocalPlayer(*PlayerId); }))
 	{
-		ReadObject->ReadState = EOnlineAsyncTaskState::Failed;
-		Subsystem->GetLeaderboardsInterface()->TriggerOnLeaderboardReadCompleteDelegates(false);
+		UE_LOG_ONLINE_LEADERBOARD(Warning, TEXT("ReadLeaderboards failed because was called using non local players or local player is not logged in"));
 		return false;
 	}
 
-	ReadObject->ReadState = EOnlineAsyncTaskState::InProgress;
+	ReadObject->Rows.Empty();
 
-	auto ReadTask = new FOnlineAsyncTaskGooglePlayReadLeaderboard(
-		Subsystem,
-		ReadObject,
-		GetLeaderboardID(ReadObject->LeaderboardName.ToString()));
-	Subsystem->QueueAsyncTask(ReadTask);
-
-	return true;
+	auto Settings = GetDefault<UAndroidRuntimeSettings>();
+	if(TOptional<FString> PlatformLeaderboardId = LeaderboardsGooglePlayDetail::GetGooglePlayLeaderboardId(Settings, ReadObject->LeaderboardName.ToString()))
+	{
+		Subsystem->QueueAsyncTask(new FOnlineAsyncTaskGooglePlayReadLeaderboard( Subsystem, ReadObject, *PlatformLeaderboardId));
+		return true;
+	}
+	return false;
 }
 
 bool FOnlineLeaderboardsGooglePlay::ReadLeaderboardsForFriends(int32 LocalUserNum, FOnlineLeaderboardReadRef& ReadObject)
@@ -51,52 +75,56 @@ void FOnlineLeaderboardsGooglePlay::FreeStats(FOnlineLeaderboardRead& ReadObject
 
 bool FOnlineLeaderboardsGooglePlay::WriteLeaderboards(const FName& SessionName, const FUniqueNetId& Player, FOnlineLeaderboardWrite& WriteObject)
 {
-	UE_LOG_ONLINE_LEADERBOARD(Display, TEXT("WriteLeaderboards"));
+	if (!IsLocalPlayer(Player))
+	{
+		UE_LOG_ONLINE_LEADERBOARD(Warning, TEXT("WriteLeaderboards failed because was called using non local player or local player is not logged in"));
+		return false;
+	}
 
 	bool bWroteAnyLeaderboard = false;
+	auto Settings = GetDefault<UAndroidRuntimeSettings>();
 
 	for(int32 LeaderboardIdx = 0; LeaderboardIdx < WriteObject.LeaderboardNames.Num(); ++LeaderboardIdx)
 	{
 		FString LeaderboardName = WriteObject.LeaderboardNames[LeaderboardIdx].ToString();
-		if(LeaderboardName.Equals(TEXT("TestLeaderboard")))
-		{
-			LeaderboardName = TEXT("leaderboard_00"); //hack to work around leaderboard name mismatch between test module and the format that java call expects
-		}
 		UE_LOG_ONLINE_LEADERBOARD(Display, TEXT("Going through stats for leaderboard :  %s "), *LeaderboardName);
 		
-		for(FStatPropertyArray::TConstIterator It(WriteObject.Properties); It; ++It)
+		for(auto &[Key, Stat]: WriteObject.Properties)
 		{
-			const FVariantData& Stat = It.Value();
-			uint64 Score;
-
-			UE_LOG_ONLINE_LEADERBOARD(Display, TEXT("Here's a stat"));
-
-			//Google leaderboard stats are always a long/int64
-			if(Stat.GetType() == EOnlineKeyValuePairDataType::Int64)
+			TOptional<FString> GooglePlayLeaderboardId = LeaderboardsGooglePlayDetail::GetGooglePlayLeaderboardId(Settings, LeaderboardName);
+			if (!GooglePlayLeaderboardId)
 			{
-				Stat.GetValue(Score);
-				
-				FOnlinePendingLeaderboardWrite* UnreportedScore = new (UnreportedScores) FOnlinePendingLeaderboardWrite();
-				UnreportedScore->LeaderboardName = LeaderboardName;
-				UnreportedScore->Score = Score;
-				UE_LOG_ONLINE_LEADERBOARD(Display, TEXT("FOnlineLeaderboardsGooglePlay::WriteLeaderboards() Int64 value Score: %d"), Score);
-
-				bWroteAnyLeaderboard = true;
+				continue;
 			}
-			else if (Stat.GetType() == EOnlineKeyValuePairDataType::Int32)
+
+			int64 Score = 0;
+
+			switch(Stat.GetType())
 			{
-				// cast from 32 to 64
-				int32 Score32 = 0;
-				Stat.GetValue(Score32);
-				Score = static_cast<uint64>(Score32);
-
-				FOnlinePendingLeaderboardWrite* UnreportedScore = new (UnreportedScores) FOnlinePendingLeaderboardWrite();
-				UnreportedScore->LeaderboardName = LeaderboardName;
-				UnreportedScore->Score = Score;
-				UE_LOG_ONLINE_LEADERBOARD(Display, TEXT("FOnlineLeaderboardsGooglePlay::WriteLeaderboards() Int32 value Score: %d "), Score);
-
-				bWroteAnyLeaderboard = true;
+				case EOnlineKeyValuePairDataType::Int64:
+				{
+					Stat.GetValue(Score);
+					break;
+				}
+				case EOnlineKeyValuePairDataType::Int32:
+				{
+					// cast from 32 to 64
+					int32 Score32 = 0;
+					Stat.GetValue(Score32);
+					Score = Score32;
+					break;
+				}
+				default:
+				{
+					UE_LOG_ONLINE_LEADERBOARD(Warning, TEXT("Unsupported stat type %s"), *LexToString(Stat.GetType()));
+					continue;
+				}
 			}
+			UE_LOG_ONLINE_LEADERBOARD(Display, TEXT("FOnlineLeaderboardsGooglePlay::WriteLeaderboards() %s value Score: %s"), *LexToString(Stat.GetType()), *Stat.ToString());
+			FGooglePlayLeaderboardScore& UnreportedScore = UnreportedScores.Emplace_GetRef();
+			UnreportedScore.GooglePlayLeaderboardId = MoveTemp(*GooglePlayLeaderboardId);
+			UnreportedScore.Score = Score;
+			bWroteAnyLeaderboard = true;
 		}
 	}
 	
@@ -106,32 +134,8 @@ bool FOnlineLeaderboardsGooglePlay::WriteLeaderboards(const FName& SessionName, 
 
 bool FOnlineLeaderboardsGooglePlay::FlushLeaderboards(const FName& SessionName)
 {
-	UE_LOG_ONLINE_LEADERBOARD(Display, TEXT("flush leaderboards session name :%s"), *SessionName.ToString());
-
-	if (Subsystem->GetGameServices() == nullptr)
-	{
-		Subsystem->GetLeaderboardsInterface()->TriggerOnLeaderboardFlushCompleteDelegates(SessionName, false);
-		return false;
-	}
-
-	bool Success = true;
-
-	for(int32 Index = 0; Index < UnreportedScores.Num(); ++Index)
-	{
-		UE_LOG_ONLINE_LEADERBOARD(Display, TEXT("Submitting an unreported score to %s. Value: %d "), *UnreportedScores[Index].LeaderboardName);
-
-		const FString GoogleId = GetLeaderboardID(UnreportedScores[Index].LeaderboardName);
-
-		auto ConvertedId = FOnlineSubsystemGooglePlay::ConvertFStringToStdString(GoogleId);
-		Subsystem->GetGameServices()->Leaderboards().SubmitScore(
-			ConvertedId,
-			UnreportedScores[Index].Score);
-	}
-
+	Subsystem->QueueAsyncTask(new FOnlineAsyncTaskGooglePlayFlushLeaderboards( Subsystem, SessionName, MoveTemp(UnreportedScores)));
 	UnreportedScores.Empty();
-
-	TriggerOnLeaderboardFlushCompleteDelegates(SessionName, Success);
-
 	return true;
 }
 
@@ -150,19 +154,4 @@ bool FOnlineLeaderboardsGooglePlay::WriteOnlinePlayerRatings(const FName& Sessio
 {
 	//iOS doesn't support this, and there is no Google Play functionality for this either
 	return false;
-}
-
-FString FOnlineLeaderboardsGooglePlay::GetLeaderboardID(const FString& LeaderboardName)
-{
-	auto DefaultSettings = GetDefault<UAndroidRuntimeSettings>();
-	for(const auto& Mapping : DefaultSettings->LeaderboardMap)
-	{
-		if(Mapping.Name.Equals(LeaderboardName))
-		{
-			return Mapping.LeaderboardID;
-		}
-	}
-
-	UE_LOG_ONLINE_LEADERBOARD(Warning, TEXT( "GetLeaderboardID: No mapping for leaderboard %s"), *LeaderboardName );
-	return LeaderboardName;
 }

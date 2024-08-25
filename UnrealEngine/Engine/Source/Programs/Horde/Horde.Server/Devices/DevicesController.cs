@@ -4,13 +4,12 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Tasks;
-using EpicGames.Horde.Api;
-using Horde.Server.Acls;
-using Horde.Server.Projects;
+using EpicGames.Horde.Devices;
+using EpicGames.Horde.Jobs;
 using Horde.Server.Server;
 using Horde.Server.Users;
-using Horde.Server.Utilities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
@@ -27,7 +26,7 @@ namespace Horde.Server.Devices
 	{
 		readonly IUserCollection _userCollection;
 		readonly DeviceService _deviceService;
-		readonly IOptionsSnapshot<GlobalConfig> _globalConfig;
+		readonly IOptionsMonitor<GlobalConfig> _globalConfig;
 
 		/// <summary>
 		///  Logger for controller
@@ -37,7 +36,7 @@ namespace Horde.Server.Devices
 		/// <summary>
 		/// Constructor
 		/// </summary>
-		public DevicesController(IUserCollection userCollection, DeviceService deviceService, IOptionsSnapshot<GlobalConfig> globalConfig, ILogger<DevicesController> logger)
+		public DevicesController(IUserCollection userCollection, DeviceService deviceService, IOptionsMonitor<GlobalConfig> globalConfig, ILogger<DevicesController> logger)
 		{
 			_userCollection = userCollection;
 			_deviceService = deviceService;
@@ -53,29 +52,29 @@ namespace Horde.Server.Devices
 		[HttpPost]
 		[Authorize]
 		[Route("/api/v2/devices")]
-		public async Task<ActionResult<CreateDeviceResponse>> CreateDeviceAsync([FromBody] CreateDeviceRequest deviceRequest)
+		public async Task<ActionResult<CreateDeviceResponse>> CreateDeviceAsync([FromBody] CreateDeviceRequest deviceRequest, CancellationToken cancellationToken = default)
 		{
-			DevicePoolAuthorization? poolAuth = await _deviceService.GetUserPoolAuthorizationAsync(new DevicePoolId(deviceRequest.PoolId!), User, _globalConfig.Value);
+			DevicePoolAuthorization? poolAuth = _deviceService.GetUserPoolAuthorization(new DevicePoolId(deviceRequest.PoolId!), User, _globalConfig.CurrentValue);
 
 			if (poolAuth == null || !poolAuth.Write)
 			{
 				return Forbid();
 			}
 
-			IUser? internalUser = await _userCollection.GetUserAsync(User);
+			IUser? internalUser = await _userCollection.GetUserAsync(User, cancellationToken);
 			if (internalUser == null)
 			{
 				return NotFound();
 			}
 
-			IDevicePlatform? platform = await _deviceService.GetPlatformAsync(new DevicePlatformId(deviceRequest.PlatformId!));
+			IDevicePlatform? platform = _deviceService.GetPlatform(new DevicePlatformId(deviceRequest.PlatformId!));
 
 			if (platform == null)
 			{
 				return BadRequest($"Bad platform id {deviceRequest.PlatformId} on request");
 			}
 
-			IDevicePool? pool = await _deviceService.GetPoolAsync(new DevicePoolId(deviceRequest.PoolId!));
+			IDevicePool? pool = _deviceService.GetPool(new DevicePoolId(deviceRequest.PoolId!));
 
 			if (pool == null)
 			{
@@ -116,7 +115,7 @@ namespace Horde.Server.Devices
 		[ProducesResponseType(typeof(List<GetDeviceResponse>), 200)]
 		public async Task<ActionResult<List<object>>> GetDevicesAsync()
 		{
-			List<DevicePoolAuthorization> poolAuth = await _deviceService.GetUserPoolAuthorizationsAsync(User, _globalConfig.Value);
+			List<DevicePoolAuthorization> poolAuth = _deviceService.GetUserPoolAuthorizations(User, _globalConfig.CurrentValue);
 
 			List<IDevice> devices = await _deviceService.GetDevicesAsync();
 
@@ -134,7 +133,7 @@ namespace Horde.Server.Devices
 				DateTime? checkoutExpiration = null;
 				if (device.CheckOutTime != null)
 				{
-					checkoutExpiration = device.CheckOutTime.Value.AddDays(_deviceService.sharedDeviceCheckoutDays);
+					checkoutExpiration = device.CheckOutTime.Value.AddDays(_deviceService.SharedDeviceCheckoutDays);
 				}
 
 				responses.Add(new GetDeviceResponse(device.Id.ToString(), device.PlatformId.ToString(), device.PoolId.ToString(), device.Name, device.Enabled, device.Address, device.ModelId?.ToString(), device.ModifiedByUser, device.Notes, device.ProblemTimeUtc, device.MaintenanceTimeUtc, device.Utilization, device.CheckedOutByUser, device.CheckOutTime, checkoutExpiration));
@@ -162,7 +161,7 @@ namespace Horde.Server.Devices
 				return BadRequest($"Unable to find device with id {deviceId}");
 			}
 
-			DevicePoolAuthorization? poolAuth = await _deviceService.GetUserPoolAuthorizationAsync(device.PoolId, User, _globalConfig.Value);
+			DevicePoolAuthorization? poolAuth = _deviceService.GetUserPoolAuthorization(device.PoolId, User, _globalConfig.CurrentValue);
 
 			if (poolAuth == null || !poolAuth.Write)
 			{
@@ -172,7 +171,7 @@ namespace Horde.Server.Devices
 			DateTime? checkoutExpiration = null;
 			if (device.CheckOutTime != null)
 			{
-				checkoutExpiration = device.CheckOutTime.Value.AddDays(_deviceService.sharedDeviceCheckoutDays);
+				checkoutExpiration = device.CheckOutTime.Value.AddDays(_deviceService.SharedDeviceCheckoutDays);
 			}
 
 			return new GetDeviceResponse(device.Id.ToString(), device.PlatformId.ToString(), device.PoolId.ToString(), device.Name, device.Enabled, device.Address, device.ModelId?.ToString(), device.ModifiedByUser?.ToString(), device.Notes, device.ProblemTimeUtc, device.MaintenanceTimeUtc, device.Utilization, device.CheckedOutByUser, device.CheckOutTime, checkoutExpiration);
@@ -185,9 +184,9 @@ namespace Horde.Server.Devices
 		[Authorize]
 		[Route("/api/v2/devices/{deviceId}")]
 		[ProducesResponseType(typeof(List<GetDeviceResponse>), 200)]
-		public async Task<ActionResult> UpdateDeviceAsync(string deviceId, [FromBody] UpdateDeviceRequest update)
+		public async Task<ActionResult> UpdateDeviceAsync(string deviceId, [FromBody] UpdateDeviceRequest update, CancellationToken cancellationToken = default)
 		{
-			IUser? internalUser = await _userCollection.GetUserAsync(User);
+			IUser? internalUser = await _userCollection.GetUserAsync(User, cancellationToken);
 			if (internalUser == null)
 			{
 				return NotFound();
@@ -202,14 +201,14 @@ namespace Horde.Server.Devices
 				return BadRequest($"Device with id ${deviceId} does not exist");
 			}
 
-			DevicePoolAuthorization? poolAuth = await _deviceService.GetUserPoolAuthorizationAsync(device.PoolId, User, _globalConfig.Value);
+			DevicePoolAuthorization? poolAuth = _deviceService.GetUserPoolAuthorization(device.PoolId, User, _globalConfig.CurrentValue);
 
 			if (poolAuth == null || !poolAuth.Write)
 			{
 				return Forbid();
 			}
 
-			IDevicePlatform? platform = await _deviceService.GetPlatformAsync(device.PlatformId);
+			IDevicePlatform? platform = _deviceService.GetPlatform(device.PlatformId);
 
 			if (platform == null)
 			{
@@ -250,10 +249,10 @@ namespace Horde.Server.Devices
 		[Authorize]
 		[Route("/api/v2/devices/{deviceId}/checkout")]
 		[ProducesResponseType(typeof(List<GetDeviceResponse>), 200)]
-		public async Task<ActionResult> CheckoutDeviceAsync(string deviceId, [FromBody] CheckoutDeviceRequest request)
+		public async Task<ActionResult> CheckoutDeviceAsync(string deviceId, [FromBody] CheckoutDeviceRequest request, CancellationToken cancellationToken)
 		{
 
-			IUser? internalUser = await _userCollection.GetUserAsync(User);
+			IUser? internalUser = await _userCollection.GetUserAsync(User, cancellationToken);
 			if (internalUser == null)
 			{
 				return NotFound();
@@ -268,7 +267,7 @@ namespace Horde.Server.Devices
 				return BadRequest($"Device with id ${deviceId} does not exist");
 			}
 
-			DevicePoolAuthorization? poolAuth = await _deviceService.GetUserPoolAuthorizationAsync(device.PoolId, User, _globalConfig.Value);
+			DevicePoolAuthorization? poolAuth = _deviceService.GetUserPoolAuthorization(device.PoolId, User, _globalConfig.CurrentValue);
 
 			if (poolAuth == null || !poolAuth.Write)
 			{
@@ -301,7 +300,7 @@ namespace Horde.Server.Devices
 		[Route("/api/v2/devices/{deviceId}")]
 		public async Task<ActionResult> DeleteDeviceAsync(string deviceId)
 		{
-			if (!DeviceService.Authorize(DeviceAclAction.DeviceWrite, User, _globalConfig.Value))
+			if (!DeviceService.Authorize(DeviceAclAction.DeviceWrite, User, _globalConfig.CurrentValue))
 			{
 				return Forbid();
 			}
@@ -314,7 +313,7 @@ namespace Horde.Server.Devices
 				return NotFound();
 			}
 
-			DevicePoolAuthorization? poolAuth = await _deviceService.GetUserPoolAuthorizationAsync(device.PoolId, User, _globalConfig.Value);
+			DevicePoolAuthorization? poolAuth = _deviceService.GetUserPoolAuthorization(device.PoolId, User, _globalConfig.CurrentValue);
 
 			if (poolAuth == null || !poolAuth.Write)
 			{
@@ -328,63 +327,20 @@ namespace Horde.Server.Devices
 		// PLATFORMS
 
 		/// <summary>
-		/// Create a new device platform
-		/// </summary>
-		[HttpPost]
-		[Authorize]
-		[Route("/api/v2/devices/platforms")]
-		public async Task<ActionResult<CreateDevicePlatformResponse>> CreatePlatformAsync([FromBody] CreateDevicePlatformRequest request)
-		{
-			if (!DeviceService.Authorize(DeviceAclAction.DeviceWrite, User, _globalConfig.Value))
-			{
-				return Forbid();
-			}
-
-			string name = request.Name.Trim();
-
-			IDevicePlatform? platform = await _deviceService.TryCreatePlatformAsync(DevicePlatformId.Sanitize(name), name);
-
-			if (platform == null)
-			{
-				return BadRequest($"Unable to create platform for {name}");
-			}
-
-			return new CreateDevicePlatformResponse(platform.Id.ToString());
-		}
-
-		/// <summary>
-		/// Update a device platform
-		/// </summary>
-		[HttpPut]
-		[Authorize]
-		[Route("/api/v2/devices/platforms/{platformId}")]
-		public async Task<ActionResult<CreateDevicePlatformResponse>> UpdatePlatformAsync(string platformId, [FromBody] UpdateDevicePlatformRequest request)
-		{
-			if (!DeviceService.Authorize(DeviceAclAction.DeviceWrite, User, _globalConfig.Value))
-			{
-				return Forbid();
-			}
-
-			await _deviceService.UpdatePlatformAsync(new DevicePlatformId(platformId), request.ModelIds);
-
-			return Ok();
-		}
-
-		/// <summary>
 		/// Get a list of supported device platforms
 		/// </summary>
 		[HttpGet]
 		[Authorize]
 		[Route("/api/v2/devices/platforms")]
 		[ProducesResponseType(typeof(List<GetDevicePlatformResponse>), 200)]
-		public async Task<ActionResult<List<object>>> GetDevicePlatformsAsync()
+		public ActionResult<List<object>> GetDevicePlatforms()
 		{
-			if (!DeviceService.Authorize(DeviceAclAction.DeviceRead, User, _globalConfig.Value))
+			if (!DeviceService.Authorize(DeviceAclAction.DeviceRead, User, _globalConfig.CurrentValue))
 			{
 				return Forbid();
 			}
 
-			List<IDevicePlatform> platforms = await _deviceService.GetPlatformsAsync();
+			List<IDevicePlatform> platforms = _deviceService.GetPlatforms();
 
 			List<object> responses = new List<object>();
 
@@ -400,70 +356,17 @@ namespace Horde.Server.Devices
 		// POOLS
 
 		/// <summary>
-		/// Create a new device pool
-		/// </summary>
-		[HttpPost]
-		[Authorize]
-		[Route("/api/v2/devices/pools")]
-		public async Task<ActionResult<CreateDevicePoolResponse>> CreatePoolAsync([FromBody] CreateDevicePoolRequest request)
-		{
-			if (!DeviceService.Authorize(DeviceAclAction.DeviceWrite, User, _globalConfig.Value))
-			{
-				return Forbid();
-			}
-
-			string name = request.Name.Trim();
-
-			IDevicePool? pool = await _deviceService.TryCreatePoolAsync(DevicePoolId.Sanitize(name), name, request.PoolType, request.ProjectIds?.Select(x => new ProjectId(x)).ToList());
-
-			if (pool == null)
-			{
-				return BadRequest($"Unable to create pool for {request.Name}");
-			}
-
-			return new CreateDevicePoolResponse(pool.Id.ToString());
-
-		}
-
-		/// <summary>
-		/// Update a device pool
-		/// </summary>
-		[HttpPut]
-		[Authorize]
-		[Route("/api/v2/devices/pools")]
-		public async Task<ActionResult> UpdatePoolAsync([FromBody] UpdateDevicePoolRequest request)
-		{
-			DevicePoolAuthorization? poolAuth = await _deviceService.GetUserPoolAuthorizationAsync(new DevicePoolId(request.Id), User, _globalConfig.Value);
-
-			if (poolAuth == null || !poolAuth.Write)
-			{
-				return Forbid();
-			}
-
-			List<ProjectId>? projectIds = null;
-
-			if (request.ProjectIds != null)
-			{
-				projectIds = request.ProjectIds.Select(x => new ProjectId(x)).ToList();
-			}
-
-			await _deviceService.UpdatePoolAsync(new DevicePoolId(request.Id), projectIds);
-
-			return Ok();
-		}
-
-		/// <summary>
 		/// Get a list of existing device pools
 		/// </summary>
 		[HttpGet]
 		[Authorize]
 		[Route("/api/v2/devices/pools")]
 		[ProducesResponseType(typeof(List<GetDevicePoolResponse>), 200)]
-		public async Task<ActionResult<List<object>>> GetDevicePoolsAsync()
+		public ActionResult<List<object>> GetDevicePools()
 		{
-			List<DevicePoolAuthorization> poolAuth = await _deviceService.GetUserPoolAuthorizationsAsync(User, _globalConfig.Value);
+			List<DevicePoolAuthorization> poolAuth = _deviceService.GetUserPoolAuthorizations(User, _globalConfig.CurrentValue);
 
-			List<IDevicePool> pools = await _deviceService.GetPoolsAsync();
+			List<IDevicePool> pools = _deviceService.GetPools();
 
 			List<object> responses = new List<object>();
 
@@ -489,13 +392,13 @@ namespace Horde.Server.Devices
 		[Authorize]
 		[Route("/api/v2/devices/pools/telemetry")]
 		[ProducesResponseType(typeof(List<GetDevicePoolTelemetryResponse>), 200)]
-		public async Task<ActionResult<List<GetDevicePoolTelemetryResponse>>> GetDevicePoolTelemetry(
+		public async Task<ActionResult<List<GetDevicePoolTelemetryResponse>>> GetDevicePoolTelemetryAsync(
 			[FromQuery] DateTimeOffset? minCreateTime = null,
 			[FromQuery] DateTimeOffset? maxCreateTime = null,
 			[FromQuery] int index = 0,
 			[FromQuery] int count = 1024)
 		{
-			if (!DeviceService.Authorize(DeviceAclAction.DeviceRead, User, _globalConfig.Value))
+			if (!DeviceService.Authorize(DeviceAclAction.DeviceRead, User, _globalConfig.CurrentValue))
 			{
 				return Forbid();
 			}
@@ -508,12 +411,12 @@ namespace Horde.Server.Devices
 			List<IDevicePoolTelemetry> telemetryData = await _deviceService.GetDevicePoolTelemetryAsync(minCreateTime, maxCreateTime, index, count);
 
 			List<GetDevicePoolTelemetryResponse> response = new List<GetDevicePoolTelemetryResponse>();
-						
+
 			foreach (IDevicePoolTelemetry t in telemetryData)
 			{
 				Dictionary<string, List<GetDevicePlatformTelemetryResponse>> poolData = new Dictionary<string, List<GetDevicePlatformTelemetryResponse>>();
 
-				foreach ( KeyValuePair<DevicePoolId, IReadOnlyList<IDevicePlatformTelemetry>> pool in t.Pools)
+				foreach (KeyValuePair<DevicePoolId, IReadOnlyList<IDevicePlatformTelemetry>> pool in t.Pools)
 				{
 					List<GetDevicePlatformTelemetryResponse> platformTelemetry = new List<GetDevicePlatformTelemetryResponse>();
 
@@ -527,7 +430,7 @@ namespace Horde.Server.Devices
 				}
 
 				response.Add(new GetDevicePoolTelemetryResponse(t.CreateTimeUtc, poolData));
-			}		
+			}
 
 			return response;
 		}
@@ -541,15 +444,15 @@ namespace Horde.Server.Devices
 		[Authorize]
 		[Route("/api/v2/devices/reservations")]
 		[ProducesResponseType(typeof(CreateDeviceReservationResponse), 200)]
-		public async Task<ActionResult<CreateDeviceReservationResponse>> CreateDeviceReservation([FromBody] CreateDeviceReservationRequest request)
+		public async Task<ActionResult<CreateDeviceReservationResponse>> CreateDeviceReservationAsync([FromBody] CreateDeviceReservationRequest request)
 		{
-			if (!DeviceService.Authorize(DeviceAclAction.DeviceWrite, User, _globalConfig.Value))
+			if (!DeviceService.Authorize(DeviceAclAction.DeviceWrite, User, _globalConfig.CurrentValue))
 			{
 				return Forbid();
 			}
 
-			List<IDevicePool> pools = await _deviceService.GetPoolsAsync();
-			List<IDevicePlatform> platforms = await _deviceService.GetPlatformsAsync();
+			List<IDevicePool> pools = _deviceService.GetPools();
+			List<IDevicePlatform> platforms = _deviceService.GetPlatforms();
 
 			DevicePoolId poolIdValue = new DevicePoolId(request.PoolId);
 			IDevicePool? pool = pools.FirstOrDefault(x => x.Id == poolIdValue);
@@ -595,11 +498,11 @@ namespace Horde.Server.Devices
 				requestedDevices.Add(new DeviceRequestData(platformIdValue, platformIdValue.ToString(), deviceRequest.IncludeModels, deviceRequest.ExcludeModels));
 			}
 
-			IDeviceReservation? reservation = await _deviceService.TryCreateReservationAsync(poolIdValue, requestedDevices);
+			(IDeviceReservation? reservation, string? errorMessage, bool installRequired) = await _deviceService.TryCreateReservationAsync(poolIdValue, requestedDevices);
 
 			if (reservation == null)
 			{
-				return Conflict("Unable to allocated devices for reservation");
+				return Conflict(String.IsNullOrEmpty(errorMessage) ? "Unable to allocated devices for reservation" : errorMessage);
 			}
 
 			List<IDevice> devices = await _deviceService.GetDevicesAsync(reservation.Devices);
@@ -623,9 +526,9 @@ namespace Horde.Server.Devices
 		[Authorize]
 		[Route("/api/v2/devices/reservations")]
 		[ProducesResponseType(typeof(List<GetDeviceReservationResponse>), 200)]
-		public async Task<ActionResult<List<GetDeviceReservationResponse>>> GetDeviceReservations()
+		public async Task<ActionResult<List<GetDeviceReservationResponse>>> GetDeviceReservationsAsync()
 		{
-			if (!DeviceService.Authorize(DeviceAclAction.DeviceRead, User, _globalConfig.Value))
+			if (!DeviceService.Authorize(DeviceAclAction.DeviceRead, User, _globalConfig.CurrentValue))
 			{
 				return Forbid();
 			}
@@ -667,16 +570,16 @@ namespace Horde.Server.Devices
 		[Route("/api/v2/devices/reservations/{reservationId}")]
 		public async Task<ActionResult> UpdateReservationAsync(string reservationId)
 		{
-			if (!DeviceService.Authorize(DeviceAclAction.DeviceWrite, User, _globalConfig.Value))
+			if (!DeviceService.Authorize(DeviceAclAction.DeviceWrite, User, _globalConfig.CurrentValue))
 			{
 				return Forbid();
 			}
 
 			ObjectId reservationIdValue = new ObjectId(reservationId);
 
-			bool updated = await _deviceService.TryUpdateReservationAsync(reservationIdValue);
+			IDeviceReservation? reservation = await _deviceService.TryUpdateReservationAsync(reservationIdValue);
 
-			if (!updated)
+			if (reservation == null)
 			{
 				return BadRequest("Failed to update reservation");
 			}
@@ -692,19 +595,14 @@ namespace Horde.Server.Devices
 		[Route("/api/v2/devices/reservations/{reservationId}")]
 		public async Task<ActionResult> DeleteReservationAsync(string reservationId)
 		{
-			if (!DeviceService.Authorize(DeviceAclAction.DeviceWrite, User, _globalConfig.Value))
+			if (!DeviceService.Authorize(DeviceAclAction.DeviceWrite, User, _globalConfig.CurrentValue))
 			{
 				return Forbid();
 			}
 
 			ObjectId reservationIdValue = new ObjectId(reservationId);
 
-			bool deleted = await _deviceService.DeleteReservationAsync(reservationIdValue);
-
-			if (!deleted)
-			{
-				return BadRequest("Failed to delete reservation");
-			}
+			await _deviceService.DeleteReservationAsync(reservationIdValue);
 
 			return Ok();
 		}
@@ -718,7 +616,7 @@ namespace Horde.Server.Devices
 		[Authorize]
 		[Route("/api/v2/devices/telemetry")]
 		[ProducesResponseType(typeof(List<GetDeviceTelemetryResponse>), 200)]
-		public async Task<ActionResult<List<GetDeviceTelemetryResponse>>> GetDeviceTelemetry(
+		public async Task<ActionResult<List<GetDeviceTelemetryResponse>>> GetDeviceTelemetryAsync(
 			[FromQuery(Name = "Id")] string[]? deviceIds = null,
 			[FromQuery] string? poolId = null,
 			[FromQuery] string? platformId = null,
@@ -727,7 +625,7 @@ namespace Horde.Server.Devices
 			[FromQuery] int index = 0,
 			[FromQuery] int count = 1024)
 		{
-			if (!DeviceService.Authorize(DeviceAclAction.DeviceRead, User, _globalConfig.Value))
+			if (!DeviceService.Authorize(DeviceAclAction.DeviceRead, User, _globalConfig.CurrentValue))
 			{
 				return Forbid();
 			}
@@ -741,7 +639,7 @@ namespace Horde.Server.Devices
 
 			if (deviceIds != null && deviceIds.Length > 0)
 			{
-				foreach(string deviceId in deviceIds)
+				foreach (string deviceId in deviceIds)
 				{
 					deviceIdValues.Add(new DeviceId(deviceId));
 				}
@@ -758,7 +656,7 @@ namespace Horde.Server.Devices
 			{
 				return response;
 			}
-			
+
 			List<IDeviceTelemetry> telemetryData = await _deviceService.GetDeviceTelemetryAsync(devices.Select(x => x.Id).ToArray(), minCreateTime, maxCreateTime, index, count);
 
 			Dictionary<string, List<GetTelemetryInfoResponse>> results = new Dictionary<string, List<GetTelemetryInfoResponse>>();
@@ -776,7 +674,7 @@ namespace Horde.Server.Devices
 				info.Add(new GetTelemetryInfoResponse(t));
 			}
 
-			foreach(KeyValuePair<string, List<GetTelemetryInfoResponse >> result in results)
+			foreach (KeyValuePair<string, List<GetTelemetryInfoResponse>> result in results)
 			{
 				GetDeviceTelemetryResponse deviceTelemetry = new GetDeviceTelemetryResponse(result.Key, result.Value);
 				response.Add(deviceTelemetry);
@@ -804,8 +702,10 @@ namespace Horde.Server.Devices
 		public async Task<ActionResult<GetLegacyReservationResponse>> CreateDeviceReservationV1Async([FromBody] LegacyCreateReservationRequest request)
 		{
 
-			List<IDevicePool> pools = await _deviceService.GetPoolsAsync();
-			List<IDevicePlatform> platforms = await _deviceService.GetPlatformsAsync();
+			List<IDevicePool> pools = _deviceService.GetPools();
+			List<IDevicePlatform> platforms = _deviceService.GetPlatforms();
+
+			_logger.LogInformation("Device reservation Pools:{Pools} Platforms:{Platforms}", String.Join(';', pools.Select(p => p.Name)), String.Join(';', platforms.Select(p => p.Name)));
 
 			string? poolId = request.PoolId;
 
@@ -835,8 +735,7 @@ namespace Horde.Server.Devices
 			if (pool == null)
 			{
 				_logger.LogError("Unknown pool {PoolId} {Details}", poolId, details);
-				string message = $"Unknown pool {poolId} " + details;
-				return BadRequest(message);
+				return BadRequest($"Unknown pool {poolId} " + details);
 			}
 
 			List<DeviceRequestData> requestedDevices = new List<DeviceRequestData>();
@@ -858,19 +757,11 @@ namespace Horde.Server.Devices
 					constraint = tokens[1];
 				}
 
-				DevicePlatformMapV1 mapV1 = await _deviceService.GetPlatformMapV1();
-
 				DevicePlatformId platformId = DevicePlatformId.Sanitize(platformName);
 
-				IDevicePlatform? platform = platforms.FirstOrDefault(x => x.Id == platformId);
+				_logger.LogInformation("Device reservation platform {PlatformId}", platformId.ToString());
 
-				if (platform == null)
-				{
-					if (mapV1.PlatformMap.TryGetValue(platformName, out platformId))
-					{
-						platform = platforms.FirstOrDefault(x => x.Id == platformId);
-					}
-				}
+				IDevicePlatform? platform = platforms.FirstOrDefault(x => x.Id == platformId || (x.LegacyNames != null && x.LegacyNames.Contains(platformName)));
 
 				if (platform == null)
 				{
@@ -890,18 +781,16 @@ namespace Horde.Server.Devices
 
 					if (constraint == "High")
 					{
-						string? model = null;
-						if (mapV1.PerfSpecHighMap.TryGetValue(platformId, out model))
+						if (!String.IsNullOrEmpty(platform.LegacyPerfSpecHighModel))
 						{
-							includeModels.Add(model);
+							includeModels.Add(platform.LegacyPerfSpecHighModel);
 						}
 					}
 					else if (constraint == "Minimum" || constraint == "Recommended")
 					{
-						string? model = null;
-						if (mapV1.PerfSpecHighMap.TryGetValue(platformId, out model))
+						if (!String.IsNullOrEmpty(platform.LegacyPerfSpecHighModel))
 						{
-							excludeModels.Add(model);
+							excludeModels.Add(platform.LegacyPerfSpecHighModel);
 						}
 					}
 				}
@@ -911,7 +800,10 @@ namespace Horde.Server.Devices
 
 					if (requestedModels.Length > 0)
 					{
-						List<string>? models = platform.Models?.Where(x => requestedModels.Contains(x, StringComparer.OrdinalIgnoreCase)).ToList();
+						List<string> platformModels = new List<string>(platform.Models ?? new List<string>());
+						platformModels.Add("Base");
+
+						List<string> models = platformModels.Where(x => requestedModels.Contains(x, StringComparer.OrdinalIgnoreCase)).ToList();
 
 						if (models == null || models.Count == 0)
 						{
@@ -922,14 +814,19 @@ namespace Horde.Server.Devices
 					}
 				}
 
-				requestedDevices.Add(new DeviceRequestData(platformId, platformName, includeModels, excludeModels));
+				requestedDevices.Add(new DeviceRequestData(platform.Id, platformName, includeModels, excludeModels));
 			}
 
-			IDeviceReservation? reservation = await _deviceService.TryCreateReservationAsync(poolIdValue, requestedDevices, request.Hostname, request.ReservationDetails, request.JobId, request.StepId);
+			(IDeviceReservation? reservation, string? errorMessage, bool installRequired) = await _deviceService.TryCreateReservationAsync(poolIdValue, requestedDevices, request.Hostname, request.ReservationDetails, request.JobId == null ? null : JobId.Parse(request.JobId), request.StepId == null ? null : JobStepId.Parse(request.StepId));
 
 			if (reservation == null)
 			{
-				return Conflict("Unable to allocated devices for reservation");
+				if (!String.IsNullOrWhiteSpace(errorMessage))
+				{
+					_logger.LogWarning("Device reservation failed: {ErrorMessage}", errorMessage);
+				}
+
+				return Conflict(String.IsNullOrEmpty(errorMessage) ? "Unable to allocated devices for reservation" : errorMessage);
 			}
 
 			List<IDevice> devices = await _deviceService.GetDevicesAsync(reservation.Devices);
@@ -947,6 +844,7 @@ namespace Horde.Server.Devices
 			response.StepId = reservation.StepId;
 			response.JobName = reservation.JobName;
 			response.StepName = reservation.StepName;
+			response.InstallRequired = reservation.ReservedStepIds != null && reservation.ReservedStepIds.Count > 0 ? installRequired : null;
 
 			return new JsonResult(response, new JsonSerializerOptions() { PropertyNamingPolicy = null });
 
@@ -968,9 +866,9 @@ namespace Horde.Server.Devices
 				return BadRequest();
 			}
 
-			bool updated = await _deviceService.TryUpdateReservationAsync(reservation.Id);
+			IDeviceReservation? updated = await _deviceService.TryUpdateReservationAsync(reservation.Id);
 
-			if (!updated)
+			if (updated == null)
 			{
 				_logger.LogError("Unable to find reservation for reservation {ReservationId}", reservation.Id);
 				return BadRequest();
@@ -1003,12 +901,7 @@ namespace Horde.Server.Devices
 				return BadRequest($"Unable to find reservation for guid {reservationGuid}");
 			}
 
-			bool deleted = await _deviceService.DeleteReservationAsync(reservation.Id);
-
-			if (!deleted)
-			{
-				return BadRequest("Failed to delete reservation");
-			}
+			await _deviceService.DeleteReservationAsync(reservation.Id);
 
 			return Ok();
 		}
@@ -1028,7 +921,14 @@ namespace Horde.Server.Devices
 				return BadRequest($"Unknown device {deviceName}");
 			}
 
-			IDeviceReservation? reservation = await _deviceService.TryGetDeviceReservation(device.Id);
+			IDevicePlatform? platform = _deviceService.GetPlatform(device.PlatformId);
+
+			if (platform == null)
+			{
+				return BadRequest($"Unknown device platform {deviceName} {device.PlatformId}");
+			}
+
+			IDeviceReservation? reservation = await _deviceService.TryGetDeviceReservationAsync(device.Id);
 
 			string? platformName = null;
 
@@ -1043,11 +943,9 @@ namespace Horde.Server.Devices
 				}
 			}
 
-			DevicePlatformMapV1 mapV1 = await _deviceService.GetPlatformMapV1();
-
 			if (String.IsNullOrEmpty(platformName))
-			{				
-				_logger.LogError("Unable to map platform for {DeviceName} : {PlatformId} from reservation", deviceName, device.PlatformId);			
+			{
+				_logger.LogError("Unable to map platform for {DeviceName} : {PlatformId} from reservation", deviceName, device.PlatformId);
 				return BadRequest($"Unable to get platform for {deviceName} from reservation : {device.PlatformId}");
 			}
 
@@ -1066,10 +964,9 @@ namespace Horde.Server.Devices
 
 			if (device.ModelId != null)
 			{
-				string? model;
-				if (mapV1.PerfSpecHighMap.TryGetValue(device.PlatformId, out model))
+				if (!String.IsNullOrEmpty(platform.LegacyPerfSpecHighModel))
 				{
-					if (model == device.ModelId)
+					if (platform.LegacyPerfSpecHighModel == device.ModelId)
 					{
 						response.PerfSpec = "High";
 					}
@@ -1095,32 +992,7 @@ namespace Horde.Server.Devices
 
 			await _deviceService.UpdateDeviceAsync(device.Id, newProblem: true);
 
-			string message = $"Device problem, {device.Name} : {device.PoolId.ToString().ToUpperInvariant()}";
-
-			IDeviceReservation? reservation = await _deviceService.TryGetDeviceReservation(device.Id);
-
-			string? jobId = null;
-			string? stepId = null;
-			if (reservation != null)
-			{
-				jobId = !String.IsNullOrEmpty(reservation.JobId) ? reservation.JobId : null;
-				stepId = !String.IsNullOrEmpty(reservation.StepId) ? reservation.StepId : null;
-
-				if ((jobId == null || stepId == null))
-				{
-					if (!String.IsNullOrEmpty(reservation.ReservationDetails))
-					{
-						message += $" - {reservation.ReservationDetails}";
-					}
-					else
-					{
-						message += $" - Host {reservation.Hostname}";
-					}
-				}
-			}			
-
 			return Ok();
-
 		}
 	}
 }

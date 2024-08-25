@@ -23,6 +23,7 @@ namespace Metasound
 	/* Mid-Side Encoder */
 	namespace CompressorVertexNames
 	{
+		METASOUND_PARAM(InputIsBypassed, "Bypass", "When true no audio is processed, the input is copied to the output, and the envelope output is zero.");
 		METASOUND_PARAM(InputAudio, "Audio", "Incoming audio signal to compress.");
 		METASOUND_PARAM(InputRatio, "Ratio", "Amount of gain reduction. 1 = no reduction, higher = more reduction.");
 		METASOUND_PARAM(InputThreshold, "Threshold dB", "Amplitude threshold (dB) above which gain will be reduced.");
@@ -46,6 +47,7 @@ namespace Metasound
 	public:
 
 		FCompressorOperator(const FOperatorSettings& InSettings,
+			const FBoolReadRef& bInIsBypassed,
 			const FAudioBufferReadRef& InAudio,
 			const FFloatReadRef& InRatio,
 			const FFloatReadRef& InThresholdDb,
@@ -59,7 +61,8 @@ namespace Metasound
 			const FBoolReadRef& bInIsAnalog,
 			const FBoolReadRef& bInIsUpwards,
 			const FFloatReadRef& InWetDryMix)
-			: AudioInput(InAudio)
+			: bIsBypassedInput(bInIsBypassed)
+			, AudioInput(InAudio)
 			, RatioInput(InRatio)
 			, ThresholdDbInput(InThresholdDb)
 			, AttackTimeInput(InAttackTime)
@@ -75,15 +78,21 @@ namespace Metasound
 			, EnvelopeOutput(FAudioBufferWriteRef::CreateNew(InSettings))
 			, InputDelay(FMath::CeilToInt(InSettings.GetSampleRate() * Compressor.GetMaxLookaheadMsec() / 1000.f) + 1, InSettings.GetSampleRate() * 10.0f / 1000.0f)
 			, DelayedInputSignal(InSettings.GetNumFramesPerBlock())
+			, bEnvelopeOutputIsZero(false)
 			, bUseSidechain(bInUseSidechain)
 			, MsToSamples(InSettings.GetSampleRate() / 1000.0f)
 			, PrevAttackTime(FMath::Max(FTime::ToMilliseconds(*InAttackTime), 0.0))
 			, PrevReleaseTime(FMath::Max(FTime::ToMilliseconds(*InReleaseTime), 0.0))
 			, PrevLookaheadTime(FMath::Max(FTime::ToMilliseconds(*InLookaheadTime), 0.0))
+			, PrevKneeInput(*KneeInput)
+			, PrevPeakMode(*EnvelopeModeInput)
+			, bPrevIsUpwardsInput(*bIsUpwardsInput)
+			, PrevClampedRatio(GetClampedRatio())
+			, PrevThreshold(*ThresholdDbInput)
 		{
 			Compressor.Init(InSettings.GetSampleRate(), 1);
 			Compressor.SetKeyNumChannels(1);
-			Compressor.SetRatio(FMath::Max(*InRatio, 1.0f));
+			Compressor.SetRatio(GetClampedRatio());
 			Compressor.SetThreshold(*ThresholdDbInput);
 			Compressor.SetAttackTime(PrevAttackTime);
 			Compressor.SetReleaseTime(PrevReleaseTime);
@@ -112,7 +121,6 @@ namespace Metasound
 				Compressor.SetPeakMode(Audio::EPeakMode::Peak);
 				break;
 			}
-
 		}
 
 		static const FNodeClassMetadata& GetNodeInfo()
@@ -149,6 +157,7 @@ namespace Metasound
 
 			static const FVertexInterface Interface(
 				FInputVertexInterface(
+					TInputDataVertex<bool>(METASOUND_GET_PARAM_NAME_AND_METADATA(InputIsBypassed), false),
 					TInputDataVertex<FAudioBuffer>(METASOUND_GET_PARAM_NAME_AND_METADATA(InputAudio)),
 					TInputDataVertex<float>(METASOUND_GET_PARAM_NAME_AND_METADATA(InputRatio), 1.5f),
 					TInputDataVertex<float>(METASOUND_GET_PARAM_NAME_AND_METADATA(InputThreshold), -6.0f),
@@ -175,6 +184,7 @@ namespace Metasound
 		{
 			using namespace CompressorVertexNames;
 
+			InOutVertexData.BindReadVertex(METASOUND_GET_PARAM_NAME(InputIsBypassed), bIsBypassedInput);
 			InOutVertexData.BindReadVertex(METASOUND_GET_PARAM_NAME(InputAudio), AudioInput);
 			InOutVertexData.BindReadVertex(METASOUND_GET_PARAM_NAME(InputRatio), RatioInput);
 			InOutVertexData.BindReadVertex(METASOUND_GET_PARAM_NAME(InputThreshold), ThresholdDbInput);
@@ -213,28 +223,29 @@ namespace Metasound
 			return {};
 		}
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
 			using namespace CompressorVertexNames;
-			const FDataReferenceCollection& Inputs = InParams.InputDataReferences;
-			const FInputVertexInterface& InputInterface = DeclareVertexInterface().GetInputInterface();
+			
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 
-			FAudioBufferReadRef AudioIn = Inputs.GetDataReadReferenceOrConstruct<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputAudio), InParams.OperatorSettings);
-			FFloatReadRef RatioIn = Inputs.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputRatio), InParams.OperatorSettings);
-			FFloatReadRef ThresholdDbIn = Inputs.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputThreshold), InParams.OperatorSettings);
-			FTimeReadRef AttackTimeIn = Inputs.GetDataReadReferenceOrConstructWithVertexDefault<FTime>(InputInterface, METASOUND_GET_PARAM_NAME(InputAttackTime), InParams.OperatorSettings);
-			FTimeReadRef ReleaseTimeIn = Inputs.GetDataReadReferenceOrConstructWithVertexDefault<FTime>(InputInterface, METASOUND_GET_PARAM_NAME(InputReleaseTime), InParams.OperatorSettings);
-			FTimeReadRef LookaheadTimeIn = Inputs.GetDataReadReferenceOrConstructWithVertexDefault<FTime>(InputInterface, METASOUND_GET_PARAM_NAME(InputLookaheadTime), InParams.OperatorSettings);
-			FFloatReadRef KneeIn = Inputs.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputKnee), InParams.OperatorSettings);
-			FAudioBufferReadRef SidechainIn = Inputs.GetDataReadReferenceOrConstruct<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputSidechain), InParams.OperatorSettings);
-			FEnvelopePeakModeReadRef EnvelopeModeIn = Inputs.GetDataReadReferenceOrConstructWithVertexDefault<FEnumEnvelopePeakMode>(InputInterface, METASOUND_GET_PARAM_NAME(InputEnvelopeMode), InParams.OperatorSettings);
-			FBoolReadRef bIsAnalogIn = Inputs.GetDataReadReferenceOrConstructWithVertexDefault<bool>(InputInterface, METASOUND_GET_PARAM_NAME(InputIsAnalog), InParams.OperatorSettings);
-			FBoolReadRef bIsUpwardsIn = Inputs.GetDataReadReferenceOrConstructWithVertexDefault<bool>(InputInterface, METASOUND_GET_PARAM_NAME(InputIsUpwards), InParams.OperatorSettings);
-			FFloatReadRef WetDryMixIn = Inputs.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InputWetDryMix), InParams.OperatorSettings);
+			FBoolReadRef bIsBypassedIn = InputData.GetOrCreateDefaultDataReadReference<bool>(METASOUND_GET_PARAM_NAME(InputIsBypassed), InParams.OperatorSettings);
+			FAudioBufferReadRef AudioIn = InputData.GetOrConstructDataReadReference<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputAudio), InParams.OperatorSettings);
+			FFloatReadRef RatioIn = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputRatio), InParams.OperatorSettings);
+			FFloatReadRef ThresholdDbIn = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputThreshold), InParams.OperatorSettings);
+			FTimeReadRef AttackTimeIn = InputData.GetOrCreateDefaultDataReadReference<FTime>(METASOUND_GET_PARAM_NAME(InputAttackTime), InParams.OperatorSettings);
+			FTimeReadRef ReleaseTimeIn = InputData.GetOrCreateDefaultDataReadReference<FTime>(METASOUND_GET_PARAM_NAME(InputReleaseTime), InParams.OperatorSettings);
+			FTimeReadRef LookaheadTimeIn = InputData.GetOrCreateDefaultDataReadReference<FTime>(METASOUND_GET_PARAM_NAME(InputLookaheadTime), InParams.OperatorSettings);
+			FFloatReadRef KneeIn = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputKnee), InParams.OperatorSettings);
+			FAudioBufferReadRef SidechainIn = InputData.GetOrConstructDataReadReference<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputSidechain), InParams.OperatorSettings);
+			FEnvelopePeakModeReadRef EnvelopeModeIn = InputData.GetOrCreateDefaultDataReadReference<FEnumEnvelopePeakMode>(METASOUND_GET_PARAM_NAME(InputEnvelopeMode), InParams.OperatorSettings);
+			FBoolReadRef bIsAnalogIn = InputData.GetOrCreateDefaultDataReadReference<bool>(METASOUND_GET_PARAM_NAME(InputIsAnalog), InParams.OperatorSettings);
+			FBoolReadRef bIsUpwardsIn = InputData.GetOrCreateDefaultDataReadReference<bool>(METASOUND_GET_PARAM_NAME(InputIsUpwards), InParams.OperatorSettings);
+			FFloatReadRef WetDryMixIn = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InputWetDryMix), InParams.OperatorSettings);
 
-			bool bIsSidechainConnected = Inputs.ContainsDataReadReference<FAudioBuffer>(METASOUND_GET_PARAM_NAME(InputSidechain));
+			bool bIsSidechainConnected = InputData.IsVertexBound(METASOUND_GET_PARAM_NAME(InputSidechain));
 
-			return MakeUnique<FCompressorOperator>(InParams.OperatorSettings, AudioIn, RatioIn, ThresholdDbIn, AttackTimeIn, ReleaseTimeIn, LookaheadTimeIn, KneeIn, bIsSidechainConnected, SidechainIn, EnvelopeModeIn, bIsAnalogIn, bIsUpwardsIn, WetDryMixIn);
+			return MakeUnique<FCompressorOperator>(InParams.OperatorSettings, bIsBypassedIn, AudioIn, RatioIn, ThresholdDbIn, AttackTimeIn, ReleaseTimeIn, LookaheadTimeIn, KneeIn, bIsSidechainConnected, SidechainIn, EnvelopeModeIn, bIsAnalogIn, bIsUpwardsIn, WetDryMixIn);
 		}
 
 		void Reset(const IOperator::FResetParams& InParams)
@@ -242,6 +253,7 @@ namespace Metasound
 			// Flush audio buffers
 			AudioOutput->Zero();
 			EnvelopeOutput->Zero();
+			bEnvelopeOutputIsZero = true;
 			InputDelay.Reset();
 			DelayedInputSignal.Zero();
 
@@ -253,12 +265,15 @@ namespace Metasound
 			// Initialize compressor
 			Compressor.Init(InParams.OperatorSettings.GetSampleRate(), 1);
 			Compressor.SetKeyNumChannels(1);
-			Compressor.SetRatio(FMath::Max(*RatioInput, 1.0f));
+			PrevClampedRatio = GetClampedRatio();
+			Compressor.SetRatio(PrevClampedRatio);
 			Compressor.SetThreshold(*ThresholdDbInput);
+			PrevThreshold = *ThresholdDbInput;
 			Compressor.SetAttackTime(PrevAttackTime);
 			Compressor.SetReleaseTime(PrevReleaseTime);
 			Compressor.SetLookaheadMsec(PrevLookaheadTime);
 			Compressor.SetKneeBandwidth(*KneeInput);
+			PrevKneeInput = *KneeInput;
 
 			if (*bIsUpwardsInput)
 			{
@@ -268,6 +283,7 @@ namespace Metasound
 			{
 				Compressor.SetProcessingMode(Audio::EDynamicsProcessingMode::Compressor);
 			}
+			bPrevIsUpwardsInput = *bIsUpwardsInput;
 
 			switch (*EnvelopeModeInput)
 			{
@@ -282,15 +298,36 @@ namespace Metasound
 				Compressor.SetPeakMode(Audio::EPeakMode::Peak);
 				break;
 			}
+			PrevPeakMode = *EnvelopeModeInput;
 		}
 
 		void Execute()
 		{
+			if (*bIsBypassedInput)
+			{
+				FMemory::Memcpy(AudioOutput->GetData(), AudioInput->GetData(), AudioInput->Num() * sizeof(float));
+				if (!bEnvelopeOutputIsZero)
+				{
+					EnvelopeOutput->Zero();
+					bEnvelopeOutputIsZero = true;
+				}
+				return;
+			}
+
 			/* Update parameters */
 			
 			// For a compressor, ratio values should be 1 or greater
-			Compressor.SetRatio(FMath::Max(*RatioInput, 1.0f));
-			Compressor.SetThreshold(*ThresholdDbInput);
+			float UpdatedClampedRatio = GetClampedRatio();
+			if (PrevClampedRatio != UpdatedClampedRatio)
+			{
+				Compressor.SetRatio(UpdatedClampedRatio);
+				PrevClampedRatio = UpdatedClampedRatio;
+			}
+			if (PrevThreshold != *ThresholdDbInput)
+			{
+				Compressor.SetThreshold(*ThresholdDbInput);
+				PrevThreshold = *ThresholdDbInput;
+			}
 
 			// Attack time cannot be negative
 			float CurrAttack = FMath::Max(FTime::ToMilliseconds(*AttackTimeInput), 0.0f);
@@ -316,44 +353,56 @@ namespace Metasound
 			}
 			InputDelay.SetDelayLengthSamples(CurrLookahead * MsToSamples);
 
-			Compressor.SetKneeBandwidth(*KneeInput);
-
-			if (*bIsUpwardsInput)
+			if (*KneeInput != PrevKneeInput)
 			{
-				Compressor.SetProcessingMode(Audio::EDynamicsProcessingMode::UpwardsCompressor);
+				Compressor.SetKneeBandwidth(*KneeInput);
+				PrevKneeInput = *KneeInput;
 			}
-			else
+
+			if (*bIsUpwardsInput != bPrevIsUpwardsInput)
 			{
-				Compressor.SetProcessingMode(Audio::EDynamicsProcessingMode::Compressor);
+				if (*bIsUpwardsInput)
+				{
+					Compressor.SetProcessingMode(Audio::EDynamicsProcessingMode::UpwardsCompressor);
+				}
+				else
+				{
+					Compressor.SetProcessingMode(Audio::EDynamicsProcessingMode::Compressor);
+				}
+				bPrevIsUpwardsInput = *bIsUpwardsInput;
 			}
-				
-			switch (*EnvelopeModeInput)
+
+			if (*EnvelopeModeInput != PrevPeakMode)
 			{
-			default:
-			case EEnvelopePeakMode::MeanSquared:
-				Compressor.SetPeakMode(Audio::EPeakMode::MeanSquared);
-				break;
+				switch (*EnvelopeModeInput)
+				{
+				default:
+				case EEnvelopePeakMode::MeanSquared:
+					Compressor.SetPeakMode(Audio::EPeakMode::MeanSquared);
+					break;
 
-			case EEnvelopePeakMode::RootMeanSquared:
-				Compressor.SetPeakMode(Audio::EPeakMode::RootMeanSquared);
-				break;
+				case EEnvelopePeakMode::RootMeanSquared:
+					Compressor.SetPeakMode(Audio::EPeakMode::RootMeanSquared);
+					break;
 
-			case EEnvelopePeakMode::Peak:
-				Compressor.SetPeakMode(Audio::EPeakMode::Peak);
-				break;
+				case EEnvelopePeakMode::Peak:
+					Compressor.SetPeakMode(Audio::EPeakMode::Peak);
+					break;
+				}
+				PrevPeakMode = *EnvelopeModeInput;
 			}
 
 			// Apply lookahead delay to dry signal
-			InputDelay.ProcessAudio(*AudioInput, DelayedInputSignal);
+			InputDelay.ProcessAudio(*AudioInput, TArrayView<float>(DelayedInputSignal));
 
-			if (bUseSidechain)
-			{
-				Compressor.ProcessAudio(AudioInput->GetData(), AudioInput->Num(), AudioOutput->GetData(), SidechainInput->GetData(), EnvelopeOutput->GetData());
-			}
-			else
-			{
-				Compressor.ProcessAudio(AudioInput->GetData(), AudioInput->Num(), AudioOutput->GetData(), nullptr, EnvelopeOutput->GetData());
-			}
+			const float* InSamples = AudioInput->GetData();
+			float* OutSamples      = AudioOutput->GetData();
+			const float* InKey     = SidechainInput->GetData();
+			float* OutEnvelope     = EnvelopeOutput->GetData();
+
+			Compressor.ProcessAudio(&InSamples, AudioInput->Num(), &OutSamples, bUseSidechain ? &InKey : nullptr, &OutEnvelope);
+
+			bEnvelopeOutputIsZero = false;
 
 			// Calculate Wet/Dry mix
 			float NewWetDryMix = FMath::Clamp(*WetDryMixInput, 0.0f, 1.0f);
@@ -364,8 +413,14 @@ namespace Metasound
 			
 		}
 
+		float GetClampedRatio() const
+		{
+			return FMath::Max(*RatioInput, 1.0f);
+		}
+
 	private:
 		// Audio input and output
+		FBoolReadRef bIsBypassedInput;
 		FAudioBufferReadRef AudioInput;
 		FFloatReadRef RatioInput;
 		FFloatReadRef ThresholdDbInput;
@@ -390,16 +445,27 @@ namespace Metasound
 		Audio::FIntegerDelay InputDelay;
 		FAudioBuffer DelayedInputSignal;
 
+		// When bypassed this prevents continual re-zeroing of envelope buffer.
+		bool bEnvelopeOutputIsZero;
+
 		// Whether or not to use sidechain input (is false if no input pin is connected to sidechain input)
 		bool bUseSidechain;
 
 		// Conversion from milliseconds to samples
 		float MsToSamples;
 
-		// Cached variables
+		// Cached variables to minimize updating the underlying
+		// DynamicsProcessor when there are no changes. It DOES NOT
+		// "early out" if it is told about "new" settngs that actually
+		// match its existing settings. 
 		float PrevAttackTime;
 		float PrevReleaseTime;
 		float PrevLookaheadTime;
+		float PrevKneeInput;
+		EEnvelopePeakMode PrevPeakMode;
+		bool bPrevIsUpwardsInput;
+		float PrevClampedRatio;
+		float PrevThreshold;
 	};
 
 	// Node Class

@@ -24,7 +24,6 @@
 #include "ObjectEditorUtils.h"
 #include "Settings/EditorStyleSettings.h"
 #include "Templates/Casts.h"
-#include "Templates/ChooseClass.h"
 #include "Textures/SlateIcon.h"
 #include "UObject/Class.h"
 #include "UObject/NameTypes.h"

@@ -24,9 +24,10 @@ public:
 	TArray<TObjectPtr<UWaterBodyStaticMeshComponent>> BuildWaterBodyStaticMesh(UWaterBodyComponent* WaterBodyComponent, const FWaterBodyStaticMeshSettings& Settings, const TArray<TObjectPtr<UWaterBodyStaticMeshComponent>>& ReusableComponents) const;
 
 	/** 
-	 * Builds and assigns static meshes for the WaterBody Info mesh and Dilated Mesh directly to the components passed.
+	 * Builds and assigns static meshes for the WaterBody Info mesh and Dilated Mesh directly to the components passed. Setting bMakeWaterInfoMeshConservativeRasterCompatible to true stores positions of the previous and next vertex within each triangle in three UV channels
+	 * of the water info mesh. Such a setup is needed when using conservative rasterization to create the GPU water quadtree. This effectively makes every vertex unique, increasing the number of vertices in the buffer and making the index buffer useless.
 	 */
-	void BuildWaterInfoMeshes(UWaterBodyComponent* WaterBodyComponent, UWaterBodyInfoMeshComponent* WaterBodyInfoMesh, UWaterBodyInfoMeshComponent* WaterBodyDilatedMesh) const;
+	void BuildWaterInfoMeshes(UWaterBodyComponent* WaterBodyComponent, UWaterBodyInfoMeshComponent* WaterBodyInfoMesh, UWaterBodyInfoMeshComponent* WaterBodyDilatedMesh, bool bMakeWaterInfoMeshConservativeRasterCompatible) const;
 
 	/**
 	 * Builds a mesh description out of the water body geometry.
@@ -34,11 +35,11 @@ public:
 	FMeshDescription BuildMeshDescription(const UWaterBodyComponent* WaterBodyComponent) const;
 private:
 	/** Helper function to retrieve the dynamic mesh representations of a water body component with all the vertex attributes initialized. Optionally does the same for the DilatedMesh if the parameter is non-null */
-	void GetDynamicMesh(const UWaterBodyComponent* WaterBodyComponent, UE::Geometry::FDynamicMesh3& Mesh, UE::Geometry::FDynamicMesh3* DilateMesh = nullptr) const;
+	void GetDynamicMesh(const UWaterBodyComponent* WaterBodyComponent, UE::Geometry::FDynamicMesh3& Mesh, UE::Geometry::FDynamicMesh3* DilateMesh = nullptr, bool bMakeWaterInfoMeshConservativeRasterCompatible = false) const;
 	
 	FMeshDescription ConvertDynamicMeshToMeshDescription(const UE::Geometry::FDynamicMesh3& Mesh) const;
 
-	void UpdateStaticMesh(UStaticMesh* Mesh, const FMeshDescription& MeshDescription) const;
+	void UpdateStaticMesh(UStaticMesh* Mesh, const FMeshDescription& MeshDescription, bool bIsConservativeRasterMesh) const;
 
 	UStaticMesh* CreateUStaticMesh(UObject* Outer, FName MeshName) const;
 };

@@ -1,7 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Modules/ModuleManager.h"
+
+#if WITH_EDITOR
+#include "AssetCompilingManager.h"
 #include "NaniteDisplacedMeshCompiler.h"
+#endif
 
 #define LOCTEXT_NAMESPACE "NaniteDisplacedMesh"
 

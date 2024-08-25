@@ -1,12 +1,11 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "StateTreeIndexTypes.h"
 
 bool FStateTreeIndex16::SerializeFromMismatchedTag(const FPropertyTag& Tag, FStructuredArchive::FSlot Slot)
 {
 	// Support loading from Index8.
-	if (Tag.Type == NAME_StructProperty
-		&& Tag.StructName == FStateTreeIndex8::StaticStruct()->GetFName())
+	if (Tag.GetType().IsStruct(FStateTreeIndex8::StaticStruct()->GetFName()))
 	{
 		FStateTreeIndex8 OldValue;
 		FStateTreeIndex8::StaticStruct()->SerializeItem(Slot, &OldValue, nullptr);
@@ -29,8 +28,7 @@ bool FStateTreeIndex16::SerializeFromMismatchedTag(const FPropertyTag& Tag, FStr
 bool FStateTreeIndex8::SerializeFromMismatchedTag(const FPropertyTag& Tag, FStructuredArchive::FSlot Slot)
 {
 	// Support loading from Index16.
-	if (Tag.Type == NAME_StructProperty
-		&& Tag.StructName == FStateTreeIndex16::StaticStruct()->GetFName())
+	if (Tag.GetType().IsStruct(FStateTreeIndex16::StaticStruct()->GetFName()))
 	{
 		FStateTreeIndex16 OldValue;
 		FStateTreeIndex16::StaticStruct()->SerializeItem(Slot, &OldValue, nullptr);

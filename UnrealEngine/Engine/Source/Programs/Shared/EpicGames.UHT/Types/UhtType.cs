@@ -524,6 +524,82 @@ namespace EpicGames.UHT.Types
 	}
 
 	/// <summary>
+	/// #define scope where the type was defined.  This only includes macros such as WITH_EDITOR, WITH_EDITORONLY_DATA, and WITH_VERSE_VM.
+	/// Not all types support the given options.
+	/// </summary>
+	[Flags]
+	public enum UhtDefineScope
+	{
+
+		/// <summary>
+		/// The scope is invalid.  Used during code generation.
+		/// </summary>
+		Invalid = -1,
+
+		/// <summary>
+		/// Exists outside of a define scope
+		/// </summary>
+		None = 0,
+
+		/// <summary>
+		/// Exists inside of a WITH_EDITORONLY_DATA block
+		/// </summary>
+		EditorOnlyData = 1 << 0,
+
+		/// <summary>
+		/// Exists inside of a WITH_VERSE_VM block
+		/// </summary>
+		VerseVM = 1 << 1,
+
+		/// <summary>
+		/// Number of unique scope combinations
+		/// </summary>
+		ScopeCount = 1 << 2,
+	}
+
+	/// <summary>
+	/// Helper methods for testing flags.  These methods perform better than the generic HasFlag which hits
+	/// the GC and stalls.
+	/// </summary>
+	public static class UhtDefineScopeExtensions
+	{
+
+		/// <summary>
+		/// Test to see if any of the specified flags are set
+		/// </summary>
+		/// <param name="inFlags">Current flags</param>
+		/// <param name="testFlags">Flags to test for</param>
+		/// <returns>True if any of the flags are set</returns>
+		public static bool HasAnyFlags(this UhtDefineScope inFlags, UhtDefineScope testFlags)
+		{
+			return (inFlags & testFlags) != 0;
+		}
+
+		/// <summary>
+		/// Test to see if all of the specified flags are set
+		/// </summary>
+		/// <param name="inFlags">Current flags</param>
+		/// <param name="testFlags">Flags to test for</param>
+		/// <returns>True if all the flags are set</returns>
+		public static bool HasAllFlags(this UhtDefineScope inFlags, UhtDefineScope testFlags)
+		{
+			return (inFlags & testFlags) == testFlags;
+		}
+
+		/// <summary>
+		/// Test to see if a specific set of flags have a specific value.
+		/// </summary>
+		/// <param name="inFlags">Current flags</param>
+		/// <param name="testFlags">Flags to test for</param>
+		/// <param name="matchFlags">Expected value of the tested flags</param>
+		/// <returns>True if the given flags have a specific value.</returns>
+		public static bool HasExactFlags(this UhtDefineScope inFlags, UhtDefineScope testFlags, UhtDefineScope matchFlags)
+		{
+			return (inFlags & testFlags) == matchFlags;
+		}
+	}
+
+	/// <summary>
 	/// Access specifier for type
 	/// </summary>
 	public enum UhtAccessSpecifier
@@ -732,6 +808,12 @@ namespace EpicGames.UHT.Types
 		public int LineNumber { get; set; }
 
 		/// <summary>
+		/// #define scope where the type was defined
+		/// </summary>
+		[JsonConverter(typeof(JsonStringEnumConverter))]
+		public UhtDefineScope DefineScope { get; set; } = UhtDefineScope.None;
+
+		/// <summary>
 		/// Return a combination of the engine type name followed by the path name of the type
 		/// </summary>
 		[JsonIgnore]
@@ -813,7 +895,7 @@ namespace EpicGames.UHT.Types
 		#endregion
 
 		/// <summary>
-		/// Construct the base type information.  This constructor is used exclusively by UHTPackage which is at 
+		/// Construct the base type information.  This constructor is used exclusively by UhtPackage which is at 
 		/// the root of all type hierarchies.
 		/// </summary>
 		/// <param name="session"></param>

@@ -11,10 +11,11 @@ class FStoreService
 {
 public:
 							~FStoreService() = default;
-	static FStoreService*	Create(FStoreSettings* Desc);
+	static FStoreService*	Create(FStoreSettings* Desc, struct FInstanceInfo* InstanceInfo);
 	void					operator delete (void* Addr);
 	uint32					GetPort() const;
 	uint32					GetRecorderPort() const;
+	bool					ShutdownIfNoConnections();
 
 private:
 							FStoreService() = default;

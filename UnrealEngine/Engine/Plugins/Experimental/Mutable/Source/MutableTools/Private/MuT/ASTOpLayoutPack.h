@@ -12,7 +12,7 @@ namespace mu
 {
 	struct FProgram;
 	
-	class ASTOpLayoutPack : public ASTOp
+	class ASTOpLayoutPack final : public ASTOp
 	{
 	public:
 

@@ -105,6 +105,8 @@ public:
 
 		UVLightCard.Reset();
 		LightCard.Reset();
+
+		LightCardGamma = 2.2;
 	}
 
 	// Implement copy ref and arrays
@@ -119,6 +121,7 @@ public:
 		UVLightCard = InParameters.UVLightCard;
 		LightCard   = InParameters.LightCard;
 		LightCardMode = InParameters.LightCardMode;
+		LightCardGamma = InParameters.LightCardGamma;
 	}
 
 	inline void SortCamerasRenderOrder()
@@ -155,12 +158,13 @@ public:
 			return OverlapChromakeyMarkerTextureRHI.IsValid();
 		}
 
-		inline void SetViewProjection(const FDisplayClusterShaderParametersICVFX_CameraViewProjection& InLocalSpaceViewProjection)
+		inline void SetViewProjection(const FDisplayClusterShaderParametersICVFX_CameraViewProjection& InCameraViewProjection, const FTransform& InOrigin2WorldTransform)
 		{
-			// Support icvfx stereo - update context from camera for each eye
-			ViewProjection.ViewRotation = Local2WorldTransform.InverseTransformRotation(InLocalSpaceViewProjection.ViewRotation.Quaternion()).Rotator();
-			ViewProjection.ViewLocation = Local2WorldTransform.InverseTransformPosition(InLocalSpaceViewProjection.ViewLocation);
-			ViewProjection.PrjMatrix = InLocalSpaceViewProjection.PrjMatrix;
+			// Transforming the camera view from "world" space to "origin" space.
+			// The "origin" is the local space for the warp geometry.
+			ViewProjection.ViewRotation = InOrigin2WorldTransform.InverseTransformRotation(InCameraViewProjection.ViewRotation.Quaternion()).Rotator();
+			ViewProjection.ViewLocation = InOrigin2WorldTransform.InverseTransformPosition(InCameraViewProjection.ViewLocation);
+			ViewProjection.PrjMatrix = InCameraViewProjection.PrjMatrix;
 		}
 
 		/**
@@ -203,8 +207,6 @@ public:
 			InnerCameraBorderThickness  = InCameraSettings.InnerCameraBorderThickness;
 			InnerCameraFrameAspectRatio = InCameraSettings.InnerCameraFrameAspectRatio;
 
-			Local2WorldTransform = InCameraSettings.Local2WorldTransform;
-
 			ViewProjection = InCameraSettings.ViewProjection;
 
 			ChromakeySource = InCameraSettings.ChromakeySource;
@@ -233,8 +235,6 @@ public:
 		FLinearColor InnerCameraBorderColor = FLinearColor::Black;
 		float InnerCameraBorderThickness = 0.1f;
 		float InnerCameraFrameAspectRatio = 1.0f;
-
-		FTransform Local2WorldTransform;
 
 		// Camera view projection data
 		FDisplayClusterShaderParametersICVFX_CameraViewProjection ViewProjection;
@@ -332,4 +332,7 @@ public:
 	FDisplayClusterShaderParametersICVFX_ViewportResource    UVLightCard;
 	FDisplayClusterShaderParametersICVFX_ViewportResource    LightCard;
 	EDisplayClusterShaderParametersICVFX_LightCardRenderMode LightCardMode = EDisplayClusterShaderParametersICVFX_LightCardRenderMode::Under;
+
+	// The gamma that the light card renders have been encoded with, used to linearize during final composite
+	float LightCardGamma = 2.2;
 };

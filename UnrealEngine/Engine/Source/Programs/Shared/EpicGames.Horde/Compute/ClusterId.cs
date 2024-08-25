@@ -1,18 +1,19 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
-using EpicGames.Serialization;
 using System;
 using System.ComponentModel;
 using System.Globalization;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using EpicGames.Core;
+using EpicGames.Serialization;
 
 namespace EpicGames.Horde.Compute
 {
 	/// <summary>
 	/// Identifier for a compute cluster
 	/// </summary>
+	[LogValueType]
 	[JsonSchemaString]
 	[CbConverter(typeof(ClusterIdCbConverter))]
 	[JsonConverter(typeof(ClusterIdJsonConverter))]
@@ -55,7 +56,7 @@ namespace EpicGames.Horde.Compute
 	/// <summary>
 	/// Compact binary converter for ClusterId
 	/// </summary>
-	sealed class ClusterIdCbConverter : CbConverterBase<ClusterId>
+	sealed class ClusterIdCbConverter : CbConverter<ClusterId>
 	{
 		/// <inheritdoc/>
 		public override ClusterId Read(CbField field) => new ClusterId(field.AsString());
@@ -64,7 +65,7 @@ namespace EpicGames.Horde.Compute
 		public override void Write(CbWriter writer, ClusterId value) => writer.WriteStringValue(value.ToString());
 
 		/// <inheritdoc/>
-		public override void WriteNamed(CbWriter writer, Utf8String name, ClusterId value) => writer.WriteString(name, value.ToString());
+		public override void WriteNamed(CbWriter writer, CbFieldName name, ClusterId value) => writer.WriteString(name, value.ToString());
 	}
 
 	/// <summary>

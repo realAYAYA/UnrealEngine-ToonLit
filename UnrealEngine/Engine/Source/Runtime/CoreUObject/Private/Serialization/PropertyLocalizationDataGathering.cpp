@@ -10,6 +10,7 @@
 #include "UObject/TextProperty.h"
 #include "UObject/PropertyPortFlags.h"
 #include "UObject/PropertyOptional.h"
+#include "UObject/SparseClassDataUtils.h"
 #include "HAL/UnrealMemory.h"
 #include "Internationalization/TextNamespaceUtil.h"
 #include "Internationalization/TextPackageNamespaceUtil.h"
@@ -227,7 +228,11 @@ void FPropertyLocalizationDataGatherer::GatherLocalizationDataFromObject(const U
 	// Also gather from the sparse data on UClass types.
 	if (const UClass* Class = Cast<UClass>(Object))
 	{
-		if (Class->OverridesSparseClassDataArchetype())
+		const auto FilterTransientProperties = [](const FProperty* P)
+			{
+				return !P->HasAnyPropertyFlags(CPF_Transient);
+			};
+		if (UE::Reflection::DoesSparseClassDataOverrideArchetype(Class, FilterTransientProperties))
 		{
 			const UScriptStruct* SparseDataStruct = Class->GetSparseClassDataStruct();
 			const void* SparseData = const_cast<UClass*>(Class)->GetOrCreateSparseClassData();
@@ -443,15 +448,9 @@ void FPropertyLocalizationDataGatherer::GatherLocalizationDataFromChildTextPrope
 
 			// Iterate over all elements of the map.
 			FScriptMapHelper ScriptMapHelper(MapProperty, ElementValueAddress);
-			const int32 ElementCount = ScriptMapHelper.Num();
-			for(int32 j = 0, ElementIndex = 0; ElementIndex < ElementCount; ++j)
+			for (FScriptMapHelper::FIterator It(ScriptMapHelper); It; ++It)
 			{
-				if (!ScriptMapHelper.IsValidIndex(j))
-				{
-					continue;
-				}
-
-				const uint8* MapPairPtr = ScriptMapHelper.GetPairPtr(j);
+				const uint8* MapPairPtr = ScriptMapHelper.GetPairPtr(It);
 
 				if (bGatherMapKey)
 				{
@@ -460,7 +459,7 @@ void FPropertyLocalizationDataGatherer::GatherLocalizationDataFromChildTextPrope
 						PathToInnerElement.Reserve(PathToElement.Len() + 20); // +20 for some slack for the number, braces, and description
 						PathToInnerElement += PathToElement;
 						PathToInnerElement += TEXT('(');
-						PathToInnerElement.AppendInt(ElementIndex);
+						PathToInnerElement.AppendInt(It.GetLogicalIndex());
 						PathToInnerElement += TEXT(" - Key)");
 					}
 
@@ -475,15 +474,13 @@ void FPropertyLocalizationDataGatherer::GatherLocalizationDataFromChildTextPrope
 						PathToInnerElement.Reserve(PathToElement.Len() + 20); // +20 for some slack for the number, braces, and description
 						PathToInnerElement += PathToElement;
 						PathToInnerElement += TEXT('(');
-						PathToInnerElement.AppendInt(ElementIndex);
+						PathToInnerElement.AppendInt(It.GetLogicalIndex());
 						PathToInnerElement += TEXT(" - Value)");
 					}
 
 					const uint8* MapValuePtr = MapPairPtr + MapProperty->MapLayout.ValueOffset;
 					GatherLocalizationDataFromChildTextProperties(PathToInnerElement, MapProperty->ValueProp, MapValuePtr, nullptr, ElementChildPropertyGatherTextFlags);
 				}
-
-				++ElementIndex;
 			}
 		}
 		// Property is a set property.
@@ -491,26 +488,19 @@ void FPropertyLocalizationDataGatherer::GatherLocalizationDataFromChildTextPrope
 		{
 			// Iterate over all elements of the Set.
 			FScriptSetHelper ScriptSetHelper(SetProperty, ElementValueAddress);
-			const int32 ElementCount = ScriptSetHelper.Num();
-			for(int32 j = 0, ElementIndex = 0; ElementIndex < ElementCount; ++j)
+			for (FScriptSetHelper::FIterator It(ScriptSetHelper); It; ++It)
 			{
-				if (!ScriptSetHelper.IsValidIndex(j))
-				{
-					continue;
-				}
-
 				FString PathToInnerElement;
 				{
 					PathToInnerElement.Reserve(PathToElement.Len() + 10); // +10 for some slack for the number and braces
 					PathToInnerElement += PathToElement;
 					PathToInnerElement += TEXT('(');
-					PathToInnerElement.AppendInt(ElementIndex);
+					PathToInnerElement.AppendInt(It.GetLogicalIndex());
 					PathToInnerElement += TEXT(')');
 				}
 
-				const uint8* ElementPtr = ScriptSetHelper.GetElementPtr(j);
+				const uint8* ElementPtr = ScriptSetHelper.GetElementPtr(It);
 				GatherLocalizationDataFromChildTextProperties(PathToInnerElement, SetProperty->ElementProp, ElementPtr, nullptr, ElementChildPropertyGatherTextFlags);
-				++ElementIndex;
 			}
 		}
 		// Property is a struct property.
@@ -527,9 +517,9 @@ void FPropertyLocalizationDataGatherer::GatherLocalizationDataFromChildTextPrope
 			// if the object is a FObjectPtr it might not be resolved
 			// if unresolved there is no need to resolve it as IsObjectValidForGather would return false anyways
 			const UObject* InnerObject = nullptr;
-			if (auto ObjectPropertyPtr = CastField<FObjectPtrProperty>(ObjectProperty))
+			if (auto ObjectPropertyPtr = CastField<FObjectProperty>(ObjectProperty))
 			{
-				const FObjectPtr& ObjectPtr = ObjectPropertyPtr->GetObjectPropertyValueAsPtr(ElementValueAddress);
+				const TObjectPtr<UObject>& ObjectPtr = ObjectPropertyPtr->GetPropertyValue(ElementValueAddress);
 				if (ObjectPtr.IsResolved())
 				{
 					InnerObject = ObjectPtr.Get();

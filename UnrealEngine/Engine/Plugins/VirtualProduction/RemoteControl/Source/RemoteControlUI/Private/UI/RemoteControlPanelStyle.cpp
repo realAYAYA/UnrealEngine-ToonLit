@@ -192,6 +192,11 @@ void FRemoteControlPanelStyle::SetupPanelStyles(TSharedRef<FSlateStyleSet> InSty
 	SwitchButtonStyle.SetCheckBoxType(ESlateCheckBoxType::ToggleButton);
 	SwitchButtonStyle.SetPadding(FMargin(4.f, 2.f));
 
+	FCheckBoxStyle AssetPathToggleButtonStyle = AppStyle.GetWidgetStyle<FCheckBoxStyle>("ToggleButtonCheckbox");
+	AssetPathToggleButtonStyle.SetCheckBoxType(ESlateCheckBoxType::ToggleButton);
+	AssetPathToggleButtonStyle.SetUncheckedImage(BOX_BRUSH("Common/RoundedSelection_16x", 4.0f / 16.0f, FStyleColors::Background));
+
+	StyleSet->Set("RemoteControlPathBehaviour.AssetCheckBox", AssetPathToggleButtonStyle);
 	// Text Styles
 	const FStyleFonts& StyleFonts = FStyleFonts::Get();
 

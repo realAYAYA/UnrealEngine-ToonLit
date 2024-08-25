@@ -513,11 +513,13 @@ inline bool GameThread_GetParameterValue(const TArray<ParameterType>& Parameters
 }
 
 template <typename ParameterType, typename OverridenParametersType>
-inline void GameThread_ApplyParameterOverrides(const TArray<ParameterType>& Parameters,
+inline void GameThread_ApplyParameterOverrides(
+	const TArray<ParameterType>& Parameters,
 	TArrayView<const int32> LayerIndexRemap,
 	bool bSetOverride,
 	OverridenParametersType& OverridenParameters, // TSet<FMaterialParameterInfo, ...>
-	TMap<FMaterialParameterInfo, FMaterialParameterMetadata>& OutParameters)
+	TMap<FMaterialParameterInfo, FMaterialParameterMetadata>& OutParameters,
+	bool bAddIfNotFound = false)
 {
 	for (int32 ParameterIndex = 0; ParameterIndex < Parameters.Num(); ParameterIndex++)
 	{
@@ -531,7 +533,7 @@ inline void GameThread_ApplyParameterOverrides(const TArray<ParameterType>& Para
 				OverridenParameters.Add(ParameterInfo, &bPreviouslyOverriden);
 				if (!bPreviouslyOverriden)
 				{
-					FMaterialParameterMetadata* Result = OutParameters.Find(ParameterInfo);
+					FMaterialParameterMetadata* Result = bAddIfNotFound ? &OutParameters.FindOrAdd(ParameterInfo) : OutParameters.Find(ParameterInfo);
 					if (Result)
 					{
 						Parameter->GetValue(*Result);
@@ -546,4 +548,22 @@ inline void GameThread_ApplyParameterOverrides(const TArray<ParameterType>& Para
 			}
 		}
 	}
+}
+
+template<typename TArrayType>
+inline void RemapLayersForParent(TArrayType& LayerIndexRemap, int32 NumParentLayers, TArrayView<const int32> ParentLayerIndexRemap)
+{
+	TArrayType NewLayerIndexRemap;
+	NewLayerIndexRemap.Init(INDEX_NONE, NumParentLayers);
+
+	check(LayerIndexRemap.Num() == ParentLayerIndexRemap.Num());
+	for (int32 i = 0; i < ParentLayerIndexRemap.Num(); ++i)
+	{
+		const int32 ParentLayerIndex = ParentLayerIndexRemap[i];
+		if (ParentLayerIndex != INDEX_NONE)
+		{
+			NewLayerIndexRemap[ParentLayerIndex] = LayerIndexRemap[i];
+		}
+	}
+	LayerIndexRemap = MoveTemp(NewLayerIndexRemap);
 }

@@ -28,21 +28,24 @@ void FMassLODBaseLogic::CacheViewerInformation(TConstArrayView<FViewerInfo> View
 			ViewerLOD.Location = Viewer.Location;
 			ViewerLOD.Direction = Viewer.Rotation.Vector();
 
-			const float HalfHorizontalFOVAngle = Viewer.FOV * 0.5f;
-			const float HalfVerticalFOVAngle = FMath::RadiansToDegrees(FMath::Atan(FMath::Tan(FMath::DegreesToRadians(HalfHorizontalFOVAngle)) * Viewer.AspectRatio));
+			if (bBuildFrustumData)
+			{
+				const float HalfHorizontalFOVAngle = Viewer.FOV * 0.5f;
+				const float HalfVerticalFOVAngle = FMath::RadiansToDegrees(FMath::Atan(FMath::Tan(FMath::DegreesToRadians(HalfHorizontalFOVAngle)) * Viewer.AspectRatio));
 
-			const FVector RightPlaneNormal = Viewer.Rotation.RotateVector(FRotator(0.0f, HalfHorizontalFOVAngle, 0.0f).RotateVector(FVector::RightVector));
-			const FVector LeftPlaneNormal = Viewer.Rotation.RotateVector(FRotator(0.0f, -HalfHorizontalFOVAngle, 0.0f).RotateVector(FVector::LeftVector));
-			const FVector TopPlaneNormal = Viewer.Rotation.RotateVector(FRotator(HalfVerticalFOVAngle, 0.0f, 0.0f).RotateVector(FVector::UpVector));
-			const FVector BottomPlaneNormal = Viewer.Rotation.RotateVector(FRotator(-HalfVerticalFOVAngle, 0.0f, 0.0f).RotateVector(FVector::DownVector));
-			
-			TArray<FPlane, TInlineAllocator<6>> Planes;
-			Planes.Emplace(ViewerLOD.Location, RightPlaneNormal);
-			Planes.Emplace(ViewerLOD.Location, LeftPlaneNormal);
-			Planes.Emplace(ViewerLOD.Location, TopPlaneNormal);
-			Planes.Emplace(ViewerLOD.Location, BottomPlaneNormal);
+				const FVector RightPlaneNormal = Viewer.Rotation.RotateVector(FRotator(0.0f, HalfHorizontalFOVAngle, 0.0f).RotateVector(FVector::RightVector));
+				const FVector LeftPlaneNormal = Viewer.Rotation.RotateVector(FRotator(0.0f, -HalfHorizontalFOVAngle, 0.0f).RotateVector(FVector::LeftVector));
+				const FVector TopPlaneNormal = Viewer.Rotation.RotateVector(FRotator(HalfVerticalFOVAngle, 0.0f, 0.0f).RotateVector(FVector::UpVector));
+				const FVector BottomPlaneNormal = Viewer.Rotation.RotateVector(FRotator(-HalfVerticalFOVAngle, 0.0f, 0.0f).RotateVector(FVector::DownVector));
 
-			ViewerLOD.Frustum = FConvexVolume(Planes);
+				TArray<FPlane, TInlineAllocator<6>> Planes;
+				Planes.Emplace(ViewerLOD.Location, RightPlaneNormal);
+				Planes.Emplace(ViewerLOD.Location, LeftPlaneNormal);
+				Planes.Emplace(ViewerLOD.Location, TopPlaneNormal);
+				Planes.Emplace(ViewerLOD.Location, BottomPlaneNormal);
+
+				ViewerLOD.Frustum = FConvexVolume(Planes);
+			}
 		}
 	}
 }

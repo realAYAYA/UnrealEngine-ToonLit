@@ -61,6 +61,20 @@ struct FMassCombinedLODLogic : public FLODDefaultLogic
 	};
 };
 
+/** Simplest version of RepresentationLODLogic strictly based on Distance to Viewer
+ *	Compared to FMassRepresentationLODLogic, we:
+ *	* Do not care about doing the Visibility Logic
+ *	* For now we will keep the Significance computation as it could allow for finer grained control later on
+*/
+struct FMassDistanceLODLogic : public FLODDefaultLogic
+{
+	enum
+	{
+		bCalculateLODSignificance = true,
+		bLocalViewersOnly = true,
+	};
+};
+
 /**
  * TMassLODCollector outputs
  *
@@ -146,6 +160,10 @@ struct FViewerLODInfo
  */
 struct MASSLOD_API FMassLODBaseLogic
 {
+	FMassLODBaseLogic(bool bShouldBuildFrustumData)
+		: bBuildFrustumData(bShouldBuildFrustumData)
+	{}
+
 protected:
 	void CacheViewerInformation(TConstArrayView<FViewerInfo> ViewerInfos);
 
@@ -170,4 +188,11 @@ protected:
 	DECLARE_CONDITIONAL_MEMBER_ARRAY_ACCESSORS(Condition, EMassVisibility, PrevVisibilityPerViewer);
 
 	TArray<FViewerLODInfo> Viewers;
+
+private:
+	/** 
+	 * Setting to false will prevent costly FViewerLODInfo.Frustum creation. Makes sense only if that data is not required.
+	 * Note that this property is not expected to be changed at runtime.
+	 */
+	bool bBuildFrustumData = true;
 };

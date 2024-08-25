@@ -15,6 +15,7 @@
 	#include <sys/inotify.h>
 #elif PLATFORM_MAC
 	#include "Misc/Paths.h"
+	#include "Mac/CocoaThread.h"
 #endif
 
 namespace UE {
@@ -60,7 +61,6 @@ public:
 		if (bIsRunning)
 		{
 			FSEventStreamStop(EventStream);
-			FSEventStreamUnscheduleFromRunLoop(EventStream, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
 			FSEventStreamInvalidate(EventStream);
 			FSEventStreamRelease(EventStream);
 			bIsRunning = false;
@@ -91,7 +91,9 @@ void MacCallback(ConstFSEventStreamRef StreamRef,
 	check(DirWatcherPtr);
 	check(DirWatcherPtr->EventStream == StreamRef);
 
-	DirWatcherPtr->ProcessChanges(EventCount, EventPaths, EventFlags);
+	GameThreadCall(^{
+		DirWatcherPtr->ProcessChanges(EventCount, EventPaths, EventFlags);
+	});
 }
 
 void FAsioStore::FDirWatcher::async_wait(HandlerType InHandler)
@@ -126,7 +128,7 @@ void FAsioStore::FDirWatcher::async_wait(HandlerType InHandler)
 		kFSEventStreamCreateFlagUseCFTypes | kFSEventStreamCreateFlagNoDefer
 	);
 
-	FSEventStreamScheduleWithRunLoop(EventStream, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
+	FSEventStreamSetDispatchQueue(EventStream, dispatch_get_main_queue());
 	FSEventStreamStart(EventStream);
 	bIsRunning = true;
 

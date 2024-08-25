@@ -1,5 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+#include "Interfaces/ITurnkeySupportModule.h"
+
+#if UE_WITH_TURNKEY_SUPPORT
+
 #include "Containers/Array.h"
 #include "Containers/UnrealString.h"
 #include "HAL/Platform.h"
@@ -58,3 +62,4 @@ FString ConvertToDDPIDeviceId(const FString& DeviceId)
 	return FString::Printf(TEXT("%s@%s"), *ConvertToDDPIPlatform(PlatformAndDevice[0]), *PlatformAndDevice[1]);
 }
 
+#endif // UE_WITH_TURNKEY_SUPPORT

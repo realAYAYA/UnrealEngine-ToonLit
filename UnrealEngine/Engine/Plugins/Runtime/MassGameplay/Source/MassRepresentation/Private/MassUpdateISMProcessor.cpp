@@ -28,7 +28,7 @@ void UMassUpdateISMProcessor::ConfigureQueries()
 	EntityQuery.SetChunkFilter(&FMassVisualizationChunkFragment::AreAnyEntitiesVisibleInChunk);
 	EntityQuery.AddSharedRequirement<FMassRepresentationSubsystemSharedFragment>(EMassFragmentAccess::ReadWrite);
 
-	// ignore entitites configured to have their representation static (@todo maybe just check if there's not movement fragment?)
+	// ignore entities configured to have their representation static (@todo maybe just check if there's not movement fragment?)
 	EntityQuery.AddTagRequirement<FMassStaticRepresentationTag>(EMassFragmentPresence::None);
 }
 
@@ -53,7 +53,7 @@ void UMassUpdateISMProcessor::Execute(FMassEntityManager& EntityManager, FMassEx
 
 			if (Representation.CurrentRepresentation == EMassRepresentationType::StaticMeshInstance)
 			{
-				UpdateISMTransform(GetTypeHash(Context.GetEntity(EntityIdx)), ISMInfo[Representation.StaticMeshDescIndex], TransformFragment.GetTransform(), Representation.PrevTransform, RepresentationLOD.LODSignificance, Representation.PrevLODSignificance);
+				UpdateISMTransform(Context.GetEntity(EntityIdx), ISMInfo[Representation.StaticMeshDescHandle.ToIndex()], TransformFragment.GetTransform(), Representation.PrevTransform, RepresentationLOD.LODSignificance, Representation.PrevLODSignificance);
 			}
 			Representation.PrevTransform = TransformFragment.GetTransform();
 			Representation.PrevLODSignificance = RepresentationLOD.LODSignificance;
@@ -61,7 +61,7 @@ void UMassUpdateISMProcessor::Execute(FMassEntityManager& EntityManager, FMassEx
 	});
 }
 
-void UMassUpdateISMProcessor::UpdateISMTransform(int32 EntityId, FMassInstancedStaticMeshInfo& ISMInfo, const FTransform& Transform, const FTransform& PrevTransform, const float LODSignificance, const float PrevLODSignificance/* = -1.0f*/)
+void UMassUpdateISMProcessor::UpdateISMTransform(FMassEntityHandle EntityHandle, FMassInstancedStaticMeshInfo& ISMInfo, const FTransform& Transform, const FTransform& PrevTransform, const float LODSignificance, const float PrevLODSignificance/* = -1.0f*/)
 {
 	if (ISMInfo.ShouldUseTransformOffset())
 	{
@@ -69,10 +69,10 @@ void UMassUpdateISMProcessor::UpdateISMTransform(int32 EntityId, FMassInstancedS
 		const FTransform SMTransform = TransformOffset * Transform;
 		const FTransform SMPrevTransform = TransformOffset * PrevTransform;
 
-		ISMInfo.AddBatchedTransform(EntityId, SMTransform, SMPrevTransform, LODSignificance, PrevLODSignificance);
+		ISMInfo.AddBatchedTransform(EntityHandle, SMTransform, SMPrevTransform, LODSignificance, PrevLODSignificance);
 	}
 	else
 	{
-		ISMInfo.AddBatchedTransform(EntityId, Transform, PrevTransform, LODSignificance, PrevLODSignificance);
+		ISMInfo.AddBatchedTransform(EntityHandle, Transform, PrevTransform, LODSignificance, PrevLODSignificance);
 	}
 }

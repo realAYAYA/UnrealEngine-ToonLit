@@ -143,21 +143,15 @@ FORCEINLINE_DEBUGGABLE bool FPropertyValueIterator::NextValue(EPropertyValueIter
 				if ((KeyFlags | ValueFlags) != EPropertyValueFlags::None)
 				{
 					FScriptMapHelper Helper(MapProperty, PropertyValue);
-					const int32 Num = Helper.Num();
-					for (int32 DynamicIndex = 0; DynamicIndex < Num; ++DynamicIndex)
+					for (FScriptMapHelper::FIterator It(Helper); It; ++It)
 					{
-						if (Helper.IsValidIndex(DynamicIndex))
+						if (KeyFlags != EPropertyValueFlags::None)
 						{
-							if (KeyFlags != EPropertyValueFlags::None)
-							{
-								NewEntry.ValueArray.Emplace(
-									BasePairType(KeyProperty, Helper.GetKeyPtr(DynamicIndex)), KeyFlags);
-							}
-							if (ValueFlags != EPropertyValueFlags::None)
-							{
-								NewEntry.ValueArray.Emplace(
-									BasePairType(ValueProperty, Helper.GetValuePtr(DynamicIndex)), ValueFlags);
-							}
+							NewEntry.ValueArray.Emplace(BasePairType(KeyProperty, Helper.GetKeyPtr(It)), KeyFlags);
+						}
+						if (ValueFlags != EPropertyValueFlags::None)
+						{
+							NewEntry.ValueArray.Emplace(BasePairType(ValueProperty, Helper.GetValuePtr(It)), ValueFlags);
 						}
 					}
 				}
@@ -170,14 +164,9 @@ FORCEINLINE_DEBUGGABLE bool FPropertyValueIterator::NextValue(EPropertyValueIter
 				if (InnerFlags != EPropertyValueFlags::None)
 				{
 					FScriptSetHelper Helper(SetProperty, PropertyValue);
-					const int32 Num = Helper.Num();
-					for (int32 DynamicIndex = 0; DynamicIndex < Num; ++DynamicIndex)
+					for (FScriptSetHelper::FIterator It(Helper); It; ++It)
 					{
-						if (Helper.IsValidIndex(DynamicIndex))
-						{
-							NewEntry.ValueArray.Emplace(
-								BasePairType(InnerProperty, Helper.GetElementPtr(DynamicIndex)), InnerFlags);
-						}
+						NewEntry.ValueArray.Emplace(BasePairType(InnerProperty, Helper.GetElementPtr(It)), InnerFlags);
 					}
 				}
 			}

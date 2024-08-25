@@ -50,6 +50,8 @@
 #include "VolumetricCloudRendering.h"
 #include "RenderCore.h"
 #include "StaticMeshBatch.h"
+#include "LightFunctionAtlas.h"
+#include "HeterogeneousVolumes/HeterogeneousVolumes.h"
 
 class FMaterial;
 
@@ -313,11 +315,10 @@ public:
 		const FPrimitiveSceneProxy* PrimitiveSceneProxy,
 		const FMaterialRenderProxy& MaterialRenderProxy,
 		const FMaterial& Material,
-		const FMeshPassProcessorRenderState& DrawRenderState,
 		const FTranslucencyDepthShaderElementData& ShaderElementData,
 		FMeshDrawSingleShaderBindings& ShaderBindings) const
 	{
-		FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, DrawRenderState, ShaderElementData, ShaderBindings);
+		FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, ShaderElementData, ShaderBindings);
 
 		ShaderBindings.Add(TranslucentShadowStartOffset, ShaderElementData.TranslucentShadowStartOffset);
 	}
@@ -336,7 +337,7 @@ public:
 	{
 		FTranslucencyShadowDepthPS::ModifyCompilationEnvironment(Parameters, OutEnvironment);
 		OutEnvironment.SetDefine(TEXT("PERSPECTIVE_CORRECT_DEPTH"), (uint32)(ShaderMode == TranslucencyShadowDepth_PerspectiveCorrect ? 1 : 0));
-		OutEnvironment.SetDefine(TEXT("STRATA_INLINE_SHADING"), 1);
+		OutEnvironment.SetDefine(TEXT("SUBSTRATE_INLINE_SHADING"), 1);
 	}
 
 	TTranslucencyShadowDepthPS() = default;
@@ -671,6 +672,7 @@ class FTranslucentLightingInjectPS : public FMaterialShader
 		SHADER_PARAMETER_STRUCT_INCLUDE(FVolumeShadowingShaderParameters, VolumeShadowingParameters)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FVirtualShadowMapSamplingParameters, VirtualShadowMapSamplingParameters)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FLightCloudTransmittanceParameters, LightCloudTransmittanceParameters)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FAdaptiveVolumetricShadowMapUniformBufferParameters, AVSM)
 		SHADER_PARAMETER(FMatrix44f, LightFunctionTranslatedWorldToLight)
 		SHADER_PARAMETER(FVector4f, LightFunctionParameters)
 		SHADER_PARAMETER(float, SpotlightMask)
@@ -684,12 +686,14 @@ class FTranslucentLightingInjectPS : public FMaterialShader
 	class FDynamicallyShadowed	: SHADER_PERMUTATION_BOOL("DYNAMICALLY_SHADOWED");
 	class FLightFunction		: SHADER_PERMUTATION_BOOL("APPLY_LIGHT_FUNCTION");
 	class FVirtualShadowMap		: SHADER_PERMUTATION_BOOL("VIRTUAL_SHADOW_MAP");
+	class FAdaptiveVolumetricShadowMap : SHADER_PERMUTATION_BOOL("ADAPTIVE_VOLUMETRIC_SHADOW_MAP");
 
 	using FPermutationDomain = TShaderPermutationDomain<
 		FRadialAttenuation,
 		FDynamicallyShadowed,
 		FLightFunction,
-		FVirtualShadowMap >;
+		FVirtualShadowMap,
+		FAdaptiveVolumetricShadowMap >;
 
 public:
 
@@ -710,6 +714,11 @@ public:
 		FPermutationDomain PermutationVector(Parameters.PermutationId);
 
 		if (!DoesPlatformSupportVirtualShadowMaps(Parameters.Platform) && PermutationVector.Get<FVirtualShadowMap>() != 0)
+		{
+			return false;
+		}
+
+		if (!DoesPlatformSupportHeterogeneousVolumes(Parameters.Platform) && PermutationVector.Get<FAdaptiveVolumetricShadowMap>() != 0)
 		{
 			return false;
 		}
@@ -1098,6 +1107,7 @@ void InjectTranslucencyLightingVolume(
 	INC_DWORD_STAT_BY(STAT_NumLightsInjectedIntoTranslucency, LightInjectionData.Num());
 
 	const FVolumetricCloudShadowAOParameters CloudShadowAOParameters = GetCloudShadowAOParameters(GraphBuilder, View, Scene->GetVolumetricCloudSceneInfo());
+	const bool bUseLightFunctionAtlas = View.LightFunctionAtlasViewData.UsesLightFunctionAtlas(LightFunctionAtlas::ELightFunctionAtlasSystem::DeferredLighting);
 
 	FRDGTextureRef TransmittanceLutTexture = GetSkyTransmittanceLutTexture(GraphBuilder, Scene, View);
 
@@ -1116,7 +1126,8 @@ void InjectTranslucencyLightingVolume(
 			const FVisibleLightInfo& VisibleLightInfo = Renderer.VisibleLightInfos[LightSceneInfo->Id];
 			const bool bInverseSquared = LightSceneInfo->Proxy->IsInverseSquared();
 			const bool bDirectionalLight = LightSceneInfo->Proxy->GetLightType() == LightType_Directional;
-			const bool bUseVSM = Renderer.VirtualShadowMapArray.IsAllocated();
+			bool bUseVSM = Renderer.VirtualShadowMapArray.IsAllocated();
+			const bool bUseAdaptiveVolumetricShadowMap = LightSceneInfo->Proxy->CastsVolumetricShadow() && ShouldRenderHeterogeneousVolumes(Scene) && ShouldHeterogeneousVolumesCastShadows();
 
 			const FVolumeBounds VolumeBounds = CalculateLightVolumeBounds(LightSceneInfo->Proxy->GetBoundingSphere(), View, VolumeCascadeIndex, bDirectionalLight);
 			if (VolumeBounds.IsValid())
@@ -1142,15 +1153,20 @@ void InjectTranslucencyLightingVolume(
 				PassParameters->PS.ViewUniformBuffer = View.ViewUniformBuffer;
 
 				FDeferredLightUniformStruct* DeferredLightStruct = GraphBuilder.AllocParameters<FDeferredLightUniformStruct>();
-				*DeferredLightStruct = GetDeferredLightParameters(View, *LightSceneInfo, ELightShaderParameterFlags::RectAsSpotLight);
+				*DeferredLightStruct = GetDeferredLightParameters(View, *LightSceneInfo, bUseLightFunctionAtlas, ELightShaderParameterFlags::RectAsSpotLight);
 				PassParameters->PS.DeferredLight = GraphBuilder.CreateUniformBuffer(DeferredLightStruct);
 
 				GetVolumeShadowingShaderParameters(GraphBuilder, View, LightSceneInfo, InjectionData.ProjectedShadowInfo, PassParameters->PS.VolumeShadowingParameters);
 
-				int32 VirtualShadowMapId = bUseVSM ? Renderer.VisibleLightInfos[LightSceneInfo->Id].GetVirtualShadowMapId(&View) : INDEX_NONE;
+				const int32 VirtualShadowMapId = bUseVSM ? Renderer.VisibleLightInfos[LightSceneInfo->Id].GetVirtualShadowMapId(&View) : INDEX_NONE;
+				
+				// Switch it back off if there's no ID to avoid the FVirtualShadowMap permutation if we don't need it
+				bUseVSM = (VirtualShadowMapId != INDEX_NONE);
+
 				PassParameters->PS.VirtualShadowMapId = VirtualShadowMapId;
 				PassParameters->PS.LightFunctionParameters = FLightFunctionSharedParameters::GetLightFunctionSharedParameters(LightSceneInfo, 1.0f);
 				PassParameters->PS.VolumeCascadeIndex = VolumeCascadeIndex;
+				PassParameters->PS.AVSM = HeterogeneousVolumes::GetAdaptiveVolumetricShadowMapUniformBuffer(GraphBuilder, View.ViewState, LightSceneInfo);
 
 				bool bIsSpotlight = LightSceneInfo->Proxy->GetLightType() == LightType_Spot;
 				PassParameters->PS.SpotlightMask = bIsSpotlight ? 1.0f : 0.0f; //@todo - needs to be a permutation to reduce shadow filtering work
@@ -1178,7 +1194,7 @@ void InjectTranslucencyLightingVolume(
 						InjectionData.bApplyLightFunction ? TEXT(",LightFunction") : TEXT("")),
 					PassParameters,
 					ERDGPassFlags::Raster,
-					[PassParameters, VertexShader, GeometryShader, &View, &Renderer, &InjectionData, LightSceneInfo, bDirectionalLight, bUseVSM, VolumeBounds, VolumeCascadeIndex](FRHICommandList& RHICmdList)
+					[PassParameters, VertexShader, GeometryShader, &View, &Renderer, &InjectionData, LightSceneInfo, bDirectionalLight, bUseVSM, VolumeBounds, VolumeCascadeIndex, bUseAdaptiveVolumetricShadowMap](FRHICommandList& RHICmdList)
 				{
 					FGraphicsPipelineStateInitializer GraphicsPSOInit;
 					RHICmdList.ApplyCachedRenderTargets(GraphicsPSOInit);
@@ -1212,6 +1228,7 @@ void InjectTranslucencyLightingVolume(
 					PermutationVector.Set< FTranslucentLightingInjectPS::FDynamicallyShadowed >( InjectionData.ProjectedShadowInfo != nullptr );
 					PermutationVector.Set< FTranslucentLightingInjectPS::FLightFunction >( InjectionData.bApplyLightFunction );
 					PermutationVector.Set< FTranslucentLightingInjectPS::FVirtualShadowMap >( bUseVSM );
+					PermutationVector.Set< FTranslucentLightingInjectPS::FAdaptiveVolumetricShadowMap >(bUseAdaptiveVolumetricShadowMap);
 
 					auto PixelShader = MaterialShaderMap->GetShader< FTranslucentLightingInjectPS >( PermutationVector );
 	

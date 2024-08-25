@@ -39,7 +39,7 @@ namespace EpicGames.UHT.Types
 		public UhtArrayProperty(UhtPropertySettings propertySettings, UhtProperty value) : base(propertySettings, value)
 		{
 			// If the creation of the value property set more flags, then copy those flags to ourselves
-			PropertyFlags |= ValueProperty.PropertyFlags & EPropertyFlags.UObjectWrapper;
+			PropertyFlags |= ValueProperty.PropertyFlags & (EPropertyFlags.UObjectWrapper | EPropertyFlags.TObjectPtr);
 
 			if (ValueProperty.MetaData.ContainsKey(UhtNames.NativeConst))
 			{
@@ -131,6 +131,13 @@ namespace EpicGames.UHT.Types
 					break;
 			}
 			return builder;
+		}
+
+		/// <inheritdoc/>
+		public override StringBuilder AppendMetaDataDecl(StringBuilder builder, IUhtPropertyMemberContext context, string name, string nameSuffix, int tabs)
+		{
+			builder.AppendMetaDataDecl(ValueProperty, context, name, GetNameSuffix(nameSuffix, "_Inner"), tabs);
+			return base.AppendMetaDataDecl(builder, context, name, nameSuffix, tabs);
 		}
 
 		/// <inheritdoc/>

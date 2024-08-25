@@ -21,7 +21,7 @@ namespace UnrealGameSync
 
 		public void Start()
 		{
-			if(_backgroundThread == null)
+			if (_backgroundThread == null)
 			{
 				_backgroundThread = new Thread(x => ThreadProc());
 				_backgroundThread.IsBackground = true;
@@ -31,7 +31,7 @@ namespace UnrealGameSync
 
 		public void Stop()
 		{
-			if(_backgroundThread != null)
+			if (_backgroundThread != null)
 			{
 				_quitEventHandle.Set();
 
@@ -50,10 +50,10 @@ namespace UnrealGameSync
 
 		void ThreadProc()
 		{
-			for(;;)
+			for (; ; )
 			{
-				int index = EventWaitHandle.WaitAny(new WaitHandle[]{ _activateEventHandle, _quitEventHandle }, Timeout.Infinite);
-				if(index == 0)
+				int index = EventWaitHandle.WaitAny(new WaitHandle[] { _activateEventHandle, _quitEventHandle }, Timeout.Infinite);
+				if (index == 0)
 				{
 					OnActivate?.Invoke();
 				}

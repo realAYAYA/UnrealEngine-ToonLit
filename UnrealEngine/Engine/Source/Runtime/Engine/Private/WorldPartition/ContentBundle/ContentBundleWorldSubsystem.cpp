@@ -33,7 +33,14 @@ void UContentBundleManager::Initialize()
 		PIEDuplicateHelper->Initialize();
 	}
 #endif
-
+	// Any world can be converted to a world partition world before the content bundle manager has been initialized.
+	if (UWorldPartition* WorldPartition = GetWorld()->GetWorldPartition())
+	{
+		if (WorldPartition->IsInitialized())
+		{
+			OnWorldPartitionInitialized(WorldPartition);
+		}
+	}
 	GetWorld()->OnWorldPartitionInitialized().AddUObject(this, &UContentBundleManager::OnWorldPartitionInitialized);
 	GetWorld()->OnWorldPartitionUninitialized().AddUObject(this, &UContentBundleManager::OnWorldPartitionUninitialized);
 }

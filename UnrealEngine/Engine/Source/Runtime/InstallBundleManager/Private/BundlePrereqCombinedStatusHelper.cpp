@@ -23,7 +23,8 @@ const TCHAR* LexToString(FInstallBundleCombinedProgressTracker::ECombinedBundleS
 	return Strings[InstallBundleUtil::CastToUnderlying(Status)];
 }
 
-FInstallBundleCombinedProgressTracker::FInstallBundleCombinedProgressTracker(bool bAutoTick /*= true*/)
+FInstallBundleCombinedProgressTracker::FInstallBundleCombinedProgressTracker(bool bAutoTick /*= true*/, TUniqueFunction<void(const FCombinedProgress&)> InOnTick /*= nullptr*/)
+	: OnTick(MoveTemp(InOnTick))
 {
 	SetupDelegates(bAutoTick);
 }
@@ -322,6 +323,11 @@ bool FInstallBundleCombinedProgressTracker::Tick(float dt)
 	UpdateBundleCache();
 	UpdateCombinedStatus();
 	
+	if (OnTick)
+	{
+		OnTick(CurrentCombinedProgress);
+	}
+
 	//just always keep ticking
 	return true;
 }

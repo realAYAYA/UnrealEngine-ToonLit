@@ -223,6 +223,7 @@ bool IMeshPaintEdMode::InputKey( FEditorViewportClient* InViewportClient, FViewp
 		{
 			bHandled = true;
 			MeshPainter->FinishPainting();
+			InViewportClient->bLockFlightCamera = false;
 		}
 		else if( !MeshPainter->IsPainting() && bUserWantsPaint && !InViewportClient->IsMovingCamera())
 		{	

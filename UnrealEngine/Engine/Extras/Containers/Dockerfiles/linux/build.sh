@@ -51,7 +51,7 @@ fi
 
 # Assemble the common arguments to pass to the `docker buildx build` command
 args=(
-	--build-arg 'BASEIMAGE=nvidia/opengl:1.0-glvnd-devel-ubuntu18.04'
+	--build-arg 'BASEIMAGE=nvidia/opengl:1.2-glvnd-devel-ubuntu22.04'
 	--build-arg "GIT_REPO=${GIT_REPO}"
 	--build-arg "GIT_BRANCH=${GIT_BRANCH}"
 	--build-arg "CHANGELIST=${CHANGELIST_OVERRIDE}"

@@ -1,11 +1,13 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "BoneControllers/AnimNode_LegIK.h"
+
 #include "Components/SkeletalMeshComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/Engine.h"
 #include "EngineGlobals.h"
 #include "Animation/AnimInstanceProxy.h"
+#include "SoftIK.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AnimNode_LegIK)
 
@@ -29,6 +31,8 @@ FAnimNode_LegIK::FAnimNode_LegIK()
 {
 	ReachPrecision = 0.01f;
 	MaxIterations = 12;
+	SoftPercentLength = 1.0f;
+	SoftAlpha = 1.0f;
 }
 
 void FAnimNode_LegIK::GatherDebugData(FNodeDebugData& DebugData)
@@ -217,7 +221,7 @@ void FIKChain::InitializeFromLegData(FAnimLegIKData& InLegData, FAnimInstancePro
 		Links.Init(FIKChainLink(), InLegData.NumBones);
 	}
 	
-	MaximumReach = 0.0;
+	TotalChainLength = 0.0;
 
 	check(InLegData.NumBones > 1);
 	for (int32 Index = 0; Index < InLegData.NumBones - 1; Index++)
@@ -230,7 +234,7 @@ void FIKChain::InitializeFromLegData(FAnimLegIKData& InLegData, FAnimInstancePro
 		Link.Location = BoneLocation;
 		Link.Length = BoneLength;
 
-		MaximumReach += BoneLength;
+		TotalChainLength += BoneLength;
 	}
 
 	// Add root bone last
@@ -260,7 +264,12 @@ void FIKChain::InitializeFromLegData(FAnimLegIKData& InLegData, FAnimInstancePro
 
 TAutoConsoleVariable<int32> CVarAnimLegIKTwoBone(TEXT("a.AnimNode.LegIK.EnableTwoBone"), 1, TEXT("Enable Two Bone Code Path."));
 
-void FIKChain::ReachTarget(const FVector& InTargetLocation, double InReachPrecision, int32 InMaxIterations)
+void FIKChain::ReachTarget(
+	const FVector& InTargetLocation,
+	double InReachPrecision,
+	int32 InMaxIterations,
+	float SoftPercentLength,
+	float SoftAlpha)
 {
 	if (!bInitialized)
 	{
@@ -269,8 +278,18 @@ void FIKChain::ReachTarget(const FVector& InTargetLocation, double InReachPrecis
 
 	const FVector RootLocation = Links.Last().Location;
 
+	// Optionally soften the target location to prevent knee popping
+	FVector FinalTargetLocation = InTargetLocation;
+	const bool bUsingSoftIK = SoftPercentLength < 1.0f && SoftAlpha > 0.f;
+	if (bUsingSoftIK)
+	{
+		AnimationCore::SoftenIKEffectorPosition(RootLocation, TotalChainLength, SoftPercentLength, SoftAlpha, FinalTargetLocation);
+	}
+
 	// If we can't reach, we just go in a straight line towards the target,
-	if ((NumLinks <= 2) || (FVector::DistSquared(RootLocation, InTargetLocation) >= FMath::Square(GetMaximumReach())))
+	const bool bTargetIsReachable = FVector::DistSquared(RootLocation, InTargetLocation) < FMath::Square(GetMaximumReach());
+	const bool bHasTwoOrFewerLinks = NumLinks <= 2;
+	if (bHasTwoOrFewerLinks || (!bTargetIsReachable && !bUsingSoftIK))
 	{
 		const FVector Direction = (InTargetLocation - RootLocation).GetSafeNormal();
 		OrientAllLinksToDirection(Direction);
@@ -278,12 +297,12 @@ void FIKChain::ReachTarget(const FVector& InTargetLocation, double InReachPrecis
 	// Two Bones, we can figure out solution instantly
 	else if (NumLinks == 3 && (CVarAnimLegIKTwoBone.GetValueOnAnyThread() == 1))
 	{
-		SolveTwoBoneIK(InTargetLocation);
+		SolveTwoBoneIK(FinalTargetLocation);
 	}
 	// Do iterative approach based on FABRIK
 	else
 	{
-		SolveFABRIK(InTargetLocation, InReachPrecision, InMaxIterations);
+		SolveFABRIK(FinalTargetLocation, InReachPrecision, InMaxIterations);
 	}
 }
 
@@ -394,9 +413,11 @@ bool FAnimNode_LegIK::DoLegReachIK(FAnimLegIKData& InLegData)
 	// The solver is needed if:
 	//	- Our FK foot is not at the IK goal.
 	//	- We're applying a rotation limit.
+	//  - We're using Soft IK (even if foot is at goal, it may be bent by the soft IK if limb is fully extended)
+	const bool bUsingSoftIK = SoftPercentLength < 1.0f && SoftAlpha > 0.f;
 	const bool bFootAtGoal = FootFKLocation.Equals(FootIKLocation, ReachPrecision);
 	const bool bUsingRotationLimit = InLegData.LegDefPtr->bEnableRotationLimit;
-	const bool bNeedsSolver = !bFootAtGoal || bUsingRotationLimit;
+	const bool bNeedsSolver = !bFootAtGoal || bUsingRotationLimit || bUsingSoftIK;
 	if (!bNeedsSolver && !bHasTwistOffset)
 	{
 		return false;
@@ -408,7 +429,7 @@ bool FAnimNode_LegIK::DoLegReachIK(FAnimLegIKData& InLegData)
 	if (bNeedsSolver)
 	{
 		const int32 MaxIterationsOverride = CVarAnimLegIKMaxIterations.GetValueOnAnyThread() > 0 ? CVarAnimLegIKMaxIterations.GetValueOnAnyThread() : MaxIterations;
-		IKChain.ReachTarget(FootIKLocation, ReachPrecision, MaxIterationsOverride);
+		IKChain.ReachTarget(FootIKLocation, ReachPrecision, MaxIterationsOverride, SoftPercentLength, SoftAlpha);
 	}
 
 	if (bHasTwistOffset)

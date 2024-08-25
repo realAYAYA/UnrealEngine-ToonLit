@@ -42,6 +42,11 @@ public:
 	virtual void RecordCurrencyPurchase(const FString& GameCurrencyType, int GameCurrencyAmount, const FString& RealCurrencyType, float RealMoneyCost, const FString& PaymentProvider) override;
 	virtual void RecordCurrencyGiven(const FString& GameCurrencyType, int GameCurrencyAmount) override;
 
+	virtual void SetDefaultEventAttributes(TArray<FAnalyticsEventAttribute>&& Attributes)  override;
+	virtual TArray<FAnalyticsEventAttribute> GetDefaultEventAttributesSafe() const override;
+	virtual int32 GetDefaultEventAttributeCount() const  override;
+	virtual FAnalyticsEventAttribute GetDefaultEventAttribute(int AttributeIndex) const  override;
+
 	virtual ~FAnalyticsProviderMulticast();
 
 	bool HasValidProviders() const { return Providers.Num() > 0; }
@@ -61,6 +66,7 @@ public:
 private:
 	TArray<TSharedPtr<IAnalyticsProvider> > Providers;
 	TArray<FString> ProviderModules;
+	TArray<FAnalyticsEventAttribute> DefaultEventAttributes;
 };
 
 TSharedPtr<IAnalyticsProvider> FAnalyticsProviderMulticast::Provider;
@@ -320,5 +326,30 @@ void FAnalyticsProviderMulticast::RecordProgress(const FString& ProgressType, co
 	{
 		CurrentProvider->RecordProgress(ProgressType, ProgressHierarchy, EventAttrs);
 	}
+}
+
+void FAnalyticsProviderMulticast::SetDefaultEventAttributes(TArray<FAnalyticsEventAttribute>&& Attributes)
+{
+	DefaultEventAttributes = Attributes;
+
+	for (auto CurrentProvider : Providers)
+	{
+		CurrentProvider->SetDefaultEventAttributes(CopyTemp(DefaultEventAttributes));
+	}
+}
+
+TArray<FAnalyticsEventAttribute> FAnalyticsProviderMulticast::GetDefaultEventAttributesSafe() const
+{
+	return DefaultEventAttributes;
+}
+
+int32 FAnalyticsProviderMulticast::GetDefaultEventAttributeCount() const
+{
+	return DefaultEventAttributes.Num();
+}
+
+FAnalyticsEventAttribute FAnalyticsProviderMulticast::GetDefaultEventAttribute(int AttributeIndex) const
+{
+	return DefaultEventAttributes[AttributeIndex];
 }
 

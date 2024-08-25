@@ -16,7 +16,7 @@
 UMassCharacterMovementToMassTranslator::UMassCharacterMovementToMassTranslator()
 	: EntityQuery(*this)
 {
-	ExecutionFlags = (int32)EProcessorExecutionFlags::All;
+	ExecutionFlags = (int32)EProcessorExecutionFlags::AllNetModes;
 	ExecutionOrder.ExecuteInGroup = UE::Mass::ProcessorGroupNames::SyncWorldToMass;
 	RequiredTags.Add<FMassCharacterMovementCopyToMassTag>();
 }
@@ -57,7 +57,7 @@ void UMassCharacterMovementToMassTranslator::Execute(FMassEntityManager& EntityM
 UMassCharacterMovementToActorTranslator::UMassCharacterMovementToActorTranslator()
 	: EntityQuery(*this)
 {
-	ExecutionFlags = (int32)EProcessorExecutionFlags::All;
+	ExecutionFlags = (int32)EProcessorExecutionFlags::AllNetModes;
 	ExecutionOrder.ExecuteInGroup = UE::Mass::ProcessorGroupNames::UpdateWorldFromMass;
 	ExecutionOrder.ExecuteAfter.Add(UE::Mass::ProcessorGroupNames::Movement);
 	RequiredTags.Add<FMassCharacterMovementCopyToActorTag>();
@@ -95,7 +95,7 @@ void UMassCharacterMovementToActorTranslator::Execute(FMassEntityManager& Entity
 UMassCharacterOrientationToMassTranslator::UMassCharacterOrientationToMassTranslator()
 	: EntityQuery(*this)
 {
-	ExecutionFlags = (int32)EProcessorExecutionFlags::All;
+	ExecutionFlags = (int32)EProcessorExecutionFlags::AllNetModes;
 	ExecutionOrder.ExecuteInGroup = UE::Mass::ProcessorGroupNames::SyncWorldToMass;
 	RequiredTags.Add<FMassCharacterOrientationCopyToMassTag>();
 }
@@ -135,7 +135,7 @@ void UMassCharacterOrientationToMassTranslator::Execute(FMassEntityManager& Enti
 UMassCharacterOrientationToActorTranslator::UMassCharacterOrientationToActorTranslator()
 	: EntityQuery(*this)
 {
-	ExecutionFlags = (int32)EProcessorExecutionFlags::All;
+	ExecutionFlags = (int32)EProcessorExecutionFlags::AllNetModes;
 	ExecutionOrder.ExecuteInGroup = UE::Mass::ProcessorGroupNames::UpdateWorldFromMass;
 	ExecutionOrder.ExecuteAfter.Add(UE::Mass::ProcessorGroupNames::Movement);
 	RequiredTags.Add<FMassCharacterOrientationCopyToActorTag>();

@@ -102,7 +102,9 @@ void FGLTFMaterialProxyFactory::SetProxyParameters(UMaterialInstanceConstant* Pr
 	SetProxyParameter(ProxyMaterial, FGLTFProxyMaterialInfo::BaseColor, JsonMaterial.PBRMetallicRoughness.BaseColorTexture);
 	SetProxyParameter(ProxyMaterial, FGLTFProxyMaterialInfo::BaseColorFactor, JsonMaterial.PBRMetallicRoughness.BaseColorFactor);
 
-	if (JsonMaterial.ShadingModel == EGLTFJsonShadingModel::Default || JsonMaterial.ShadingModel == EGLTFJsonShadingModel::ClearCoat)
+	if (JsonMaterial.ShadingModel != EGLTFJsonShadingModel::None && 
+		JsonMaterial.ShadingModel != EGLTFJsonShadingModel::Unlit &&
+		(int)JsonMaterial.ShadingModel < (int)EGLTFJsonShadingModel::NumShadingModels)
 	{
 		SetProxyParameter(ProxyMaterial, FGLTFProxyMaterialInfo::Emissive, JsonMaterial.EmissiveTexture);
 		SetProxyParameter(ProxyMaterial, FGLTFProxyMaterialInfo::EmissiveFactor, JsonMaterial.EmissiveFactor);
@@ -118,6 +120,11 @@ void FGLTFMaterialProxyFactory::SetProxyParameters(UMaterialInstanceConstant* Pr
 		SetProxyParameter(ProxyMaterial, FGLTFProxyMaterialInfo::Occlusion, JsonMaterial.OcclusionTexture);
 		SetProxyParameter(ProxyMaterial, FGLTFProxyMaterialInfo::OcclusionStrength, JsonMaterial.OcclusionTexture.Strength);
 
+		SetProxyParameter(ProxyMaterial, FGLTFProxyMaterialInfo::SpecularFactor, JsonMaterial.Specular.Factor);
+		SetProxyParameter(ProxyMaterial, FGLTFProxyMaterialInfo::SpecularTexture, JsonMaterial.Specular.Texture);
+
+		SetProxyParameter(ProxyMaterial, FGLTFProxyMaterialInfo::IOR, JsonMaterial.IOR.Value);
+
 		if (JsonMaterial.ShadingModel == EGLTFJsonShadingModel::ClearCoat)
 		{
 			SetProxyParameter(ProxyMaterial, FGLTFProxyMaterialInfo::ClearCoat, JsonMaterial.ClearCoat.ClearCoatTexture);
@@ -128,6 +135,18 @@ void FGLTFMaterialProxyFactory::SetProxyParameters(UMaterialInstanceConstant* Pr
 
 			SetProxyParameter(ProxyMaterial, FGLTFProxyMaterialInfo::ClearCoatNormal, JsonMaterial.ClearCoat.ClearCoatNormalTexture);
 			SetProxyParameter(ProxyMaterial, FGLTFProxyMaterialInfo::ClearCoatNormalScale, JsonMaterial.ClearCoat.ClearCoatNormalTexture.Scale);
+		}
+		else if (JsonMaterial.ShadingModel == EGLTFJsonShadingModel::Sheen)
+		{
+			SetProxyParameter(ProxyMaterial, FGLTFProxyMaterialInfo::SheenColorFactor, JsonMaterial.Sheen.ColorFactor);
+			SetProxyParameter(ProxyMaterial, FGLTFProxyMaterialInfo::SheenColorTexture, JsonMaterial.Sheen.ColorTexture);
+			SetProxyParameter(ProxyMaterial, FGLTFProxyMaterialInfo::SheenRoughnessFactor, JsonMaterial.Sheen.RoughnessFactor);
+			SetProxyParameter(ProxyMaterial, FGLTFProxyMaterialInfo::SheenRoughnessTexture, JsonMaterial.Sheen.RoughnessTexture);
+		}
+		else if (JsonMaterial.ShadingModel == EGLTFJsonShadingModel::Transmission)
+		{
+			SetProxyParameter(ProxyMaterial, FGLTFProxyMaterialInfo::TransmissionFactor, JsonMaterial.Transmission.Factor);
+			SetProxyParameter(ProxyMaterial, FGLTFProxyMaterialInfo::TransmissionTexture, JsonMaterial.Transmission.Texture);
 		}
 	}
 }
@@ -245,12 +264,12 @@ TUniquePtr<IGLTFTexture2DConverter> FGLTFMaterialProxyFactory::CreateTextureConv
 
 	protected:
 
-		virtual void Sanitize(const UTexture2D*& Texture2D, bool& bToSRGB) override
+		virtual void Sanitize(const UTexture2D*& Texture2D, bool& bToSRGB, TextureAddress& WrapS, TextureAddress& WrapT) override
 		{
 			bToSRGB = false; // ignore
 		}
 
-		virtual FGLTFJsonTexture* Convert(const UTexture2D* Texture2D, bool bToSRGB) override
+		virtual FGLTFJsonTexture* Convert(const UTexture2D* Texture2D, bool bToSRGB, TextureAddress WrapS, TextureAddress WrapT) override
 		{
 			FGLTFJsonTexture* Texture = Factory.Builder.AddTexture();
 			Factory.Textures.Add(Texture, const_cast<UTexture2D*>(Texture2D));
@@ -320,6 +339,7 @@ UGLTFExportOptions* FGLTFMaterialProxyFactory::CreateExportOptions(const UGLTFPr
 	ExportOptions->ResetToDefault();
 	ExportOptions->bExportProxyMaterials = false;
 	ExportOptions->BakeMaterialInputs = ProxyOptions->bBakeMaterialInputs ? EGLTFMaterialBakeMode::Simple : EGLTFMaterialBakeMode::Disabled;
+	ExportOptions->bExportThinTranslucentMaterials = ProxyOptions->bUseThinTranslucentShadingModel;
 	ExportOptions->DefaultMaterialBakeSize = ProxyOptions->DefaultMaterialBakeSize;
 	ExportOptions->DefaultMaterialBakeFilter = ProxyOptions->DefaultMaterialBakeFilter;
 	ExportOptions->DefaultMaterialBakeTiling = ProxyOptions->DefaultMaterialBakeTiling;

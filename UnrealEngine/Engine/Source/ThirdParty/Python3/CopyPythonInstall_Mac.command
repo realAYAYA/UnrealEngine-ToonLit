@@ -5,9 +5,9 @@
 # --------------------------------------------------------------------------------
 # To distribute Python with UE5 on Mac, it must built locally and the produced binaries install names must
 # be updated to support relocation (so that the libraries are found whereever the user installs UE. We also
-# need to build universal binaries (Intel x64 and ARM M1) and support various version of MacOS. That scripts
-# is meant to help for that. Note that the binaries you downloaod from Python.org are not relocatable and the
-# the binaries are signed, so we cannot fix that with install_name_tool because it breaks the signature. We
+# need to build universal binaries (Intel x64 and ARM M1) and support various version of MacOS. This script
+# is meant to help with that. Note that the binaries you downloaod from Python.org are not relocatable and the
+# the binaries are signed, so we cannot fix that with install_name_tool because it breaks the signature.
 # We really need to build that stuff.
 #
 # --------------------------------------------------------------------------------
@@ -15,34 +15,46 @@
 # --------------------------------------------------------------------------------
 #    - Download the desired Python version from https://www.python.org/ftp/python/
 #    - Download xz (liblzma) from https://tukaani.org/xz/
-#    - Unpack the downloaded packages somewhere. ex: $HOME/Build/
-#    - Copy OpenSSL from Engine/Source/ThirdParty/OpenSSL into $HOME/Deploy
-#    - Copy zlib from Engine/Source/ThirdParty/zlib into $HOME/Deploy
+#    - Unpack the downloaded packages somewhere. ex: $VolumeRoot/Build/
+#    - Copy OpenSSL from Engine/Source/ThirdParty/OpenSSL into $VolumeRoot/Deploy
+#    - Copy zlib from Engine/Source/ThirdParty/zlib into $VolumeRoot/Deploy
 #    - Build lzma for x64 architecture.
-#       cd $HOME/Build/xz-5.2.5
-#		./configure --prefix=$HOME/Deploy/xz-5.2.5 --disable-xz --disable-lzma-links --disable-scripts --disable-doc CFLAGS="-isysroot `xcrun --sdk macosx --show-sdk-path` -mmacosx-version-min=10.15 -gdwarf-2 -arch x86_64" CPPFLAGS="-mmacosx-version-min=10.15 -gdwarf-2 -arch x86_64" LDFLAGS="-mmacosx-version-min=10.15 -arch x86_64"
+#       cd $VolumeRoot/Build/xz-5.4.6
+#		./configure --prefix=$VolumeRoot/Deploy/xz-5.4.6 --disable-xz --disable-lzma-links --disable-scripts --disable-doc CFLAGS="-isysroot `xcrun --sdk macosx --show-sdk-path` -mmacosx-version-min=11.0 -gdwarf-2 -arch x86_64" CPPFLAGS="-mmacosx-version-min=11.0 -gdwarf-2 -arch x86_64" LDFLAGS="-mmacosx-version-min=11.0 -arch x86_64"
 #       make -j28
 #       make install
-#       mv $HOME/Deploy/xz-5.2.5/lib $HOME/Deploy/xz-5.2.5/lib_x64
+#       mv $VolumeRoot/Deploy/xz-5.4.6/lib $VolumeRoot/Deploy/xz-5.4.6/lib_x64
 #    - Build lzma for ARM architecture
 #       make clean
-#		./configure --prefix=$HOME/Deploy/xz-5.2.5 --host=aarch64-apple-darwin --disable-xz --disable-lzma-links --disable-scripts --disable-doc CFLAGS="-isysroot `xcrun --sdk macosx --show-sdk-path` -mmacosx-version-min=10.15 -gdwarf-2 -arch arm64" CPPFLAGS="-mmacosx-version-min=10.15 -gdwarf-2 -arch arm64" LDFLAGS="-mmacosx-version-min=10.15 -arch arm64"
+#		./configure --prefix=$VolumeRoot/Deploy/xz-5.4.6 --host=aarch64-apple-darwin --disable-xz --disable-lzma-links --disable-scripts --disable-doc CFLAGS="-isysroot `xcrun --sdk macosx --show-sdk-path` -mmacosx-version-min=11.0 -gdwarf-2 -arch arm64" CPPFLAGS="-mmacosx-version-min=11.0 -gdwarf-2 -arch arm64" LDFLAGS="-mmacosx-version-min=11.0 -arch arm64"
 #       make -j28
 #       make install
-#       mv $HOME/Deploy/xz-5.2.5/lib $HOME/Deploy/xz-5.2.5/lib_arm
+#       mv $VolumeRoot/Deploy/xz-5.4.6/lib $VolumeRoot/Deploy/xz-5.4.6/lib_arm
 #    - Smash lzma x64 and ARM libraries together
-#        mkdir $HOME/Deploy/xz-5.2.5/lib
-#        lipo -create $HOME/Deploy/xz-5.2.5/lib_x64/liblzma.a $HOME/Deploy/xz-5.2.5/lib_arm/liblzma.a -output $HOME/Deploy/xz-5.2.5/lib/liblzma.a
+#        mkdir $VolumeRoot/Deploy/xz-5.4.6/lib
+#        lipo -create $VolumeRoot/Deploy/xz-5.4.6/lib_x64/liblzma.a $VolumeRoot/Deploy/xz-5.4.6/lib_arm/liblzma.a -output $VolumeRoot/Deploy/xz-5.4.6/lib/liblzma.a
 #    - Export the variables to make it easy (adjust the versions)
-#        export SSL_HOME=$HOME/Deploy/OpenSSL/1.1.1k
-#        export ZLIB_HOME=$HOME/Deploy/zlib/v1.2.8
-#        export LZMA_HOME=$HOME/Deploy/xz-5.2.5
-#    - Go to the source directory '$HOME/Build/python-3.9.7' and run the configure command (might need some fixes)
-#        ./configure --prefix=$HOME/Deploy/Python3.9.7 --enable-shared --enable-universalsdk=`xcrun --sdk macosx --show-sdk-path` --with-universal-archs=universal2 --enable-optimizations --with-openssl="$SSL_HOME" CFLAGS="-isysroot `xcrun --sdk macosx --show-sdk-path` -mmacosx-version-min=10.15 -gdwarf-2 -I$ZLIB_HOME/include -I$LZMA_HOME/include" CPPFLAGS="-mmacosx-version-min=10.15 -gdwarf-2 -I$ZLIB_HOME/include -I$LZMA_HOME/include" LDFLAGS="$ZLIB_HOME/lib/libz.a $LZMA_HOME/lib/liblzma.a -mmacosx-version-min=10.15"
+#        export SSL_HOME=$VolumeRoot/Deploy/OpenSSL/1.1.1t/openssl
+#        export ZLIB_HOME=$VolumeRoot/Deploy/zlib/1.3
+#        export LZMA_HOME=$VolumeRoot/Deploy/xz-5.4.6
+#    - Go to the source directory '$VolumeRoot/Build/python-3.11.8' and run the configure command (might need some fixes if you updated any of the relative paths)
+#        ./configure --prefix=$VolumeRoot/Deploy/Python3.11.8 --enable-shared --enable-universalsdk=`xcrun --sdk macosx --show-sdk-path` --with-universal-archs=universal2 --enable-optimizations CFLAGS="-isysroot `xcrun --sdk macosx --show-sdk-path` -mmacosx-version-min=11.0 -gdwarf-2 -I$ZLIB_HOME/include -I$LZMA_HOME/include" CPPFLAGS="-mmacosx-version-min=11.0 -gdwarf-2 -I$ZLIB_HOME/include -I$LZMA_HOME/include" LDFLAGS="$ZLIB_HOME/lib/Mac/Release/libz.a $LZMA_HOME/lib/liblzma.a -mmacosx-version-min=11.0" --with-openssl=$SSL_HOME
 #        make -j28
 #        make install
 #    - Adjust the variables below according to your setup.
 #    - Run this scripts. It copies the binaries and fix their install name.
+#
+#	To statically link OpenSSL, add the following to Modules/Setup.local in the python source location after running ./configure, but before make
+#OPENSSL_INCLUDES=-I$(SSL_HOME)/include
+#OPENSSL_LDFLAGS=-L$(SSL_HOME)/lib
+# _ssl _ssl.c $(OPENSSL_INCLUDES) $(OPENSSL_LDFLAGS) \
+#     -lssl -Wl,-hidden-lssl \
+#     -lcrypto -Wl,-hidden-lcrypto
+# _hashlib _hashopenssl.c $(OPENSSL_INCLUDES) $(OPENSSL_LDFLAGS) \
+#     -lcrypto -Wl,-hidden-lcrypto
+
+
+
 #
 # --------------------------------------------------------------------------------
 # Install names
@@ -80,7 +92,7 @@
 # the install name ids relative to the executable.
 #
 # The libpython3.9.dylib is loaded by UnrealEditor through a plugin. The UnrealEditor rpaths ensure we finds the plugin library
-# first, then the plugin libraries refers to libpython3.9.dylib properly.
+# first, then the plugin libraries refers to libpython3.11.dylib properly.
 #
 # The python core stuff is in libpython3.9.dylib, but several libraries are loaded 'on demand' when the intepreter encounter an import
 # statement. Those dependencies are not visible by looking at libpython3.9.dylib. We need to be careful to ensure the module libraies
@@ -109,35 +121,35 @@
 #         for good reason, like the test_zipfile64 that use large amount of disk.
 #
 # Run the entire test suite from the binary install dir:
-#    cd $HOME/Deploy/Python3.9.7/bin
-#    ./python3.9 -m test
+#    cd $VolumeRoot/Deploy/Python3.11.8/bin
+#    ./python3.11 -m test
 #
 # To run a specific test:
-#    ./python3.9 -m test test_venv
+#    ./python3.11 -m test test_venv
 #
 # To run a specific test with verbose:
-#    ./python3.9 -m test -v test_venv
+#    ./python3.11 -m test -v test_venv
 #
 # To run a specific tests that was disabled becaue the resource wasn't enabled:
 # See https://docs.python.org/3/library/test.html for more options.
-#    ./python3.9 -m test -uall -v test_socketserver
+#    ./python3.11 -m test -uall -v test_socketserver
 #
 # --------------------------------------------------------------------------------
 # Testing (after running this script)
 # --------------------------------------------------------------------------------
 #
 #   - Ensure the produced binaries are universal (Intel/Apple Sillicon ARM)
-#     - Run: lipo -archs Engine/Binaries/ThirdParty/Python3/Mac/lib/libpython3.9.dylib
+#     - Run: lipo -archs Engine/Binaries/ThirdParty/Python3/Mac/lib/libpython3.11.dylib
 #   - Check for dependencies.
-#     - $:> cd Engine/Binaries/ThridParty/Python3/Mac/lib/python3.9/lib-dynload
+#     - $:> cd Engine/Binaries/ThridParty/Python3/Mac/lib/python3.11/lib-dynload
 #     - $:> otool -L *.so'
 #     - Check the libraries dependencies for: 
 #       - No dependencies are in /opt/usr/local -> Those are MacPort/Homebrew that user will likely not have.
-#   - Delete the $HOME/Deploy/Python3.9.7 -> This will ensure UE distribution doesn't have lib dependencies there.
-#   - Run the binary we plan to distribute as:  Engine/Binaries/ThirdParty/Python3/Mac/bin/python3.9 --version
+#   - Delete the $VolumeRoot/Deploy/Python3.11.8 -> This will ensure UE distribution doesn't have lib dependencies there.
+#   - Run the binary we plan to distribute as:  Engine/Binaries/ThirdParty/Python3/Mac/bin/python3.11 --version
 #   - Run the unit tests distributed with python:
-#     - $:> cd Engine/Binaries/ThirdParty/Python3/Mac/lib/python3.9/test
-#     - $:> ../../../bin/python3.9 -m unittest discover
+#     - $:> cd Engine/Binaries/ThirdParty/Python3/Mac/lib/python3.11/test
+#     - $:> ../../../bin/python3.11 -m unittest discover
 #   - Launch UE5 EngineTest project
 #     - Go to menu Tools -> Test Automation
 #     - Search for python to discover all tests
@@ -160,9 +172,9 @@
 python_src_dest_dir="`dirname \"$0\"`/Mac"
 python_bin_dest_dir="`dirname \"$0\"`/../../../Binaries/ThirdParty/Python3/Mac"
 python_bin_lib_dest_dir="$python_bin_dest_dir"/lib
-python_src_dir="$HOME/Deploy/Python3.9.7"
-python_exe_name=python3.9
-python_lib_name=libpython3.9.dylib
+python_src_dir="$VolumeRoot/Deploy/Python3.11.8"
+python_exe_name=python3.11
+python_lib_name=libpython3.11.dylib
 
 
 if [ -d "$python_src_dir" ]
@@ -178,7 +190,7 @@ then
 	install_name_tool -change "$python_src_dir"/lib/$python_lib_name @rpath/$python_lib_name "$python_src_dir"/bin/$python_exe_name
 
 	echo "Fixing $python_lib_name install name id"
-	install_name_tool -id @rpath/libpython3.9.dylib "$python_src_dir"/lib/libpython3.9.dylib
+	install_name_tool -id @rpath/$python_lib_name "$python_src_dir"/lib/$python_lib_name
 
 	#
 	# Deleting exiting destination folders from UE tree.
@@ -204,12 +216,12 @@ then
 	mkdir -p "$python_bin_dest_dir"/bin
 	mkdir -p "$python_bin_lib_dest_dir"
 
-	cp -R "$python_src_dir"/include/python3.9/* "$python_src_dest_dir"/include
+	cp -R "$python_src_dir"/include/python3.11/* "$python_src_dest_dir"/include
 	cp -R "$python_src_dir"/bin/* "$python_bin_dest_dir"/bin
 	cp -R "$python_src_dir"/lib/* "$python_bin_lib_dest_dir"
 
-	cp -R "$python_src_dir"/lib/libpython3.9.dylib "$python_bin_dest_dir"
-	chmod 755 "$python_bin_dest_dir"/libpython3.9.dylib
+	cp -R "$python_src_dir"/lib/$python_lib_name "$python_bin_dest_dir"
+	chmod 755 "$python_bin_dest_dir"/$python_lib_name
 
 	#
 	# Copy TPS file back.
@@ -322,8 +334,8 @@ then
 		install_name_tool -id "@rpath/libcrypto.1.0.0.dylib" "$python_bin_dest_dir"/libcrypto.1.0.0.dylib
 		
 		# finally:
-		install_name_tool -change "$openssl_lib_dir/libssl.1.0.0.dylib" "@executable_path/../libssl.1.0.0.dylib" "$python_bin_dest_dir"/lib/python3.9/lib-dynload/_hashlib.so
-		install_name_tool -change "$openssl_lib_dir/libcrypto.1.0.0.dylib" "@executable_path/../libcrypto.1.0.0.dylib" "$python_bin_dest_dir"/lib/python3.9/lib-dynload/_hashlib.so
+		install_name_tool -change "$openssl_lib_dir/libssl.1.0.0.dylib" "@executable_path/../libssl.1.0.0.dylib" "$python_bin_dest_dir"/lib/python3.11/lib-dynload/_hashlib.so
+		install_name_tool -change "$openssl_lib_dir/libcrypto.1.0.0.dylib" "@executable_path/../libcrypto.1.0.0.dylib" "$python_bin_dest_dir"/lib/python3.11/lib-dynload/_hashlib.so
 	}
 	# disabling this - again, for future reference
 	#copy_openssl_libs

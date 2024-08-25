@@ -138,52 +138,8 @@ bool FGeometryCollectionSelectRigidBodyEdMode::MouseMove(FEditorViewportClient* 
 
 bool FGeometryCollectionSelectRigidBodyEdMode::HandleClick(FEditorViewportClient* /*InViewportClient*/, HHitProxy* HitProxy, const FViewportClick& /*Click*/)
 {
-#if GEOMETRYCOLLECTION_EDITOR_SELECTION
-	if (HitProxy && HitProxy->IsA(HGeometryCollection::StaticGetType()))
-	{
-		const HGeometryCollection* const HitGeometryCollection = static_cast<const HGeometryCollection*>(HitProxy);
-		const UGeometryCollectionComponent* const GeometryCollectionComponent = HitGeometryCollection->Component;
-		if (GeometryCollectionComponent)
-		{
-			// Retrieve the transform index
-			int32 TransformIndex = HitGeometryCollection->BoneIndex;
-
-			// Get to the parent transform if the hit transform is still attached to its parent
-			const TManagedArray<int32>& ParentArray = GeometryCollectionComponent->GetParentArray();
-			while (ParentArray[TransformIndex] != FGeometryCollectionBoneNode::InvalidBone)
-			{
-				TransformIndex = ParentArray[TransformIndex];
-			}
-			/*
-			// Retrieve the rigid body id
-			//const TManagedArray<int32>& RigidBodyIdArray = GeometryCollectionComponent->GetRigidBodyIdArray();
-			const TManagedArray<FGuid>& RigidBodyIdArray = GeometryCollectionComponent->GetRigidBodyGuidArray();
-			//const int32 RigidBodyId = (TransformIndex != INDEX_NONE && ensure(TransformIndex < RigidBodyIdArray.Num())) ? RigidBodyIdArray[TransformIndex]: INDEX_NONE;
-			const FGuid& RigidBodyId = (TransformIndex != INDEX_NONE && ensure(TransformIndex < RigidBodyIdArray.Num())) ? RigidBodyIdArray[TransformIndex] : FGuid();
-
-			// Update the rigid body id property
-			//if (RigidBodyId != INDEX_NONE)
-			if (RigidBodyId.IsValid())
-			{
-				UE_LOG(LogGeometryCollectionSelectRigidBodyEdMode, Verbose, TEXT("Hit GeometryCollectionActor %s at rigid body %s."), *GeometryCollectionComponent->GetOwner()->GetName(), *RigidBodyId.ToString());
-
-				if (const TSharedPtr<IPropertyHandle> PropertyHandleIdPin = PropertyHandleId.Pin())
-				{
-					PropertyHandleIdPin->SetValue(RigidBodyId.ToString());
-				}
-				if (const TSharedPtr<IPropertyHandle> PropertyHandleSolverPin = PropertyHandleSolver.Pin())
-				{
-					PropertyHandleSolverPin->SetValue(GeometryCollectionComponent->ChaosSolverActor);
-				}
-			}
-			*/
-		}
-	}
-#endif // #if GEOMETRYCOLLECTION_EDITOR_SELECTION
-
 	// Deactivate editor mode
 	DeactivateMode();
-
 	return true;
 }
 

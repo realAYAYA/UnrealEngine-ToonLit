@@ -252,7 +252,7 @@ struct TSparseBitSet
 			uint32 BucketIndex = FMath::CountBits(BucketHash & (HashBit-1));
 
 			const uint32 ThisBitIndex = (BitIndex-BucketSize*Hash);
-			const BucketType ThisBitMask = BucketType(1u) << ThisBitIndex;
+			const BucketType ThisBitMask = static_cast<BucketType>(BucketType(1u) << ThisBitIndex);
 
 			BucketType ThisBucket = Buckets.Get(BucketIndex);
 			if (ThisBucket & ThisBitMask)

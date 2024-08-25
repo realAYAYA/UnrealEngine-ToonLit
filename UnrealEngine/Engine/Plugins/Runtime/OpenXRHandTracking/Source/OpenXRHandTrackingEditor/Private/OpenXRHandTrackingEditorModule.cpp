@@ -59,5 +59,5 @@ private:
 #undef LOCTEXT_NAMESPACE
 
 
-IMPLEMENT_MODULE(FOpenXRHandTrackingEditorModule, OpenXRHandTrackingEditorModule);
+IMPLEMENT_MODULE(FOpenXRHandTrackingEditorModule, OpenXRHandTrackingEditor);
 

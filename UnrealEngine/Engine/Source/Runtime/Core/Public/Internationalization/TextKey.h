@@ -5,8 +5,13 @@
 #include "CoreTypes.h"
 #include "Templates/TypeHash.h"
 #include "Containers/StringConv.h"
+#include "Containers/StringView.h"
 #include "Containers/UnrealString.h"
 #include "Serialization/StructuredArchive.h"
+
+#ifndef UE_TEXTKEY_STORE_EMBEDDED_HASH
+	#define UE_TEXTKEY_STORE_EMBEDDED_HASH (1)
+#endif
 
 namespace TextKeyUtil
 {
@@ -50,6 +55,16 @@ namespace TextKeyUtil
 	{
 		return HashString(*InStr, InStr.Len(), InBaseHash);
 	}
+
+	/** Utility to produce a hash for a string (as used by FTextKey) */
+	FORCEINLINE uint32 HashString(FStringView InStr)
+	{
+		return HashString(InStr.GetData(), InStr.Len());
+	}
+	FORCEINLINE uint32 HashString(FStringView InStr, const uint32 InBaseHash)
+	{
+		return HashString(InStr.GetData(), InStr.Len(), InBaseHash);
+	}
 }
 
 /**
@@ -60,9 +75,17 @@ class FTextKey
 {
 public:
 	CORE_API FTextKey();
-	CORE_API FTextKey(const TCHAR* InStr);
-	CORE_API FTextKey(const FString& InStr);
-	CORE_API FTextKey(FString&& InStr);
+	CORE_API FTextKey(FStringView InStr);
+	
+	FTextKey(const TCHAR* InStr)
+		: FTextKey(FStringView(InStr))
+	{
+	}
+
+	FTextKey(const FString& InStr)
+		: FTextKey(FStringView(InStr))
+	{
+	}
 
 	/** Get the underlying chars buffer this text key represents */
 	FORCEINLINE const TCHAR* GetChars() const
@@ -85,7 +108,11 @@ public:
 	/** Get the hash of this text key */
 	friend FORCEINLINE uint32 GetTypeHash(const FTextKey& A)
 	{
+#if UE_TEXTKEY_STORE_EMBEDDED_HASH
 		return A.StrHash;
+#else
+		return TextKeyUtil::HashString(A.StrPtr);
+#endif
 	}
 
 	/** Serialize this text key as if it were an FString */
@@ -122,15 +149,24 @@ public:
 	static CORE_API void TearDown();
 
 private:
-	/** Pointer to the string buffer we reference from the internal table */
+	/** Pointer to the null-terminated string buffer we reference */
 	const TCHAR* StrPtr;
 
+#if UE_TEXTKEY_STORE_EMBEDDED_HASH
 	/** Hash of this text key */
 	uint32 StrHash;
+#endif
 
-	FTextKey(const TCHAR* Str, uint32 Hash) : StrPtr(Str), StrHash(Hash) {}
+	FTextKey(const TCHAR* Str, uint32 Hash)
+		: StrPtr(Str)
+#if UE_TEXTKEY_STORE_EMBEDDED_HASH
+		, StrHash(Hash)
+#endif
+	{
+	}
 
 	friend class FTextId;
+	friend class FTextKeyState;
 };
 
 /**
@@ -145,23 +181,29 @@ public:
 	}
 
 	FTextId(const FTextKey& InNamespace, const FTextKey& InKey)
-		: NamespaceStr(InNamespace.StrPtr)
-		, KeyStr(InKey.StrPtr)
-		, NamespaceHash(InNamespace.StrHash)
-		, KeyHash(InKey.StrHash)
 	{
+		SetNamespace(InNamespace);
+		SetKey(InKey);
 	}
 
 	/** Get the namespace component of this text identity */
 	FORCEINLINE FTextKey GetNamespace() const
 	{
+#if UE_TEXTKEY_STORE_EMBEDDED_HASH
 		return FTextKey(NamespaceStr, NamespaceHash);
+#else
+		return FTextKey(NamespaceStr, 0);
+#endif
 	}
 
 	/** Get the key component of this text identity */
 	FORCEINLINE FTextKey GetKey() const
 	{
+#if UE_TEXTKEY_STORE_EMBEDDED_HASH
 		return FTextKey(KeyStr, KeyHash);
+#else
+		return FTextKey(KeyStr, 0);
+#endif
 	}
 
 	/** Compare for equality */
@@ -179,94 +221,89 @@ public:
 	/** Get the hash of this text identity */
 	friend FORCEINLINE uint32 GetTypeHash(const FTextId& A)
 	{
+#if UE_TEXTKEY_STORE_EMBEDDED_HASH
 		return HashCombine(A.NamespaceHash, A.KeyHash);
+#else
+		return HashCombine(TextKeyUtil::HashString(A.NamespaceStr), TextKeyUtil::HashString(A.KeyStr));
+#endif
 	}
 
 	/** Serialize this text identity as if it were FStrings */
 	void SerializeAsString(FArchive& Ar)
 	{
-		FTextKey Namespace = FTextKey(NamespaceStr, NamespaceHash);
+		FTextKey Namespace = GetNamespace();
 		Namespace.SerializeAsString(Ar);
-		NamespaceStr = Namespace.StrPtr;
-		NamespaceHash = Namespace.StrHash;
+		SetNamespace(Namespace);
 
-		FTextKey Key = FTextKey(KeyStr, KeyHash);
+		FTextKey Key = GetKey();
 		Key.SerializeAsString(Ar);
-		KeyStr = Key.StrPtr;
-		KeyHash = Key.StrHash;
+		SetKey(Key);
 	}
 
 	/** Serialize this text identity including its hash values (this method is sensitive to hashing algorithm changes, so only use it for generated files that can be rebuilt from another source) */
 	void SerializeWithHash(FArchive& Ar)
 	{
-		FTextKey Namespace = FTextKey(NamespaceStr, NamespaceHash);
+		FTextKey Namespace = GetNamespace();
 		Namespace.SerializeWithHash(Ar);
-		NamespaceStr = Namespace.StrPtr;
-		NamespaceHash = Namespace.StrHash;
+		SetNamespace(Namespace);
 
-		FTextKey Key = FTextKey(KeyStr, KeyHash);
+		FTextKey Key = GetKey();
 		Key.SerializeWithHash(Ar);
-		KeyStr = Key.StrPtr;
-		KeyHash = Key.StrHash;
+		SetKey(Key);
 	}
 
 	/** Serialize this text identity including its hash values, discarding the hash on load (to upgrade from an older hashing algorithm) */
 	void SerializeDiscardHash(FArchive& Ar)
 	{
-		FTextKey Namespace = FTextKey(NamespaceStr, NamespaceHash);
+		FTextKey Namespace = GetNamespace();
 		Namespace.SerializeDiscardHash(Ar);
-		NamespaceStr = Namespace.StrPtr;
-		NamespaceHash = Namespace.StrHash;
+		SetNamespace(Namespace);
 
-		FTextKey Key = FTextKey(KeyStr, KeyHash);
+		FTextKey Key = GetKey();
 		Key.SerializeDiscardHash(Ar);
-		KeyStr = Key.StrPtr;
-		KeyHash = Key.StrHash;
+		SetKey(Key);
 	}
 
 	/** Serialize this text identity as if it were FStrings */
 	void SerializeAsString(FStructuredArchiveSlot Slot)
 	{
 		FStructuredArchiveRecord Record = Slot.EnterRecord();
-		FTextKey Namespace = FTextKey(NamespaceStr, NamespaceHash);
-		Namespace.SerializeAsString(Record.EnterField(TEXT("Namespace")));
-		NamespaceStr = Namespace.StrPtr;
-		NamespaceHash = Namespace.StrHash;
 
-		FTextKey Key = FTextKey(KeyStr, KeyHash);
+		FTextKey Namespace = GetNamespace();
+		Namespace.SerializeAsString(Record.EnterField(TEXT("Namespace")));
+		SetNamespace(Namespace);
+
+		FTextKey Key = GetKey();
 		Key.SerializeAsString(Record.EnterField(TEXT("Key")));
-		KeyStr = Key.StrPtr;
-		KeyHash = Key.StrHash;
+		SetKey(Key);
 	}
 
 	/** Serialize this text identity including its hash values (this method is sensitive to hashing algorithm changes, so only use it for generated files that can be rebuilt from another source) */
 	void SerializeWithHash(FStructuredArchiveSlot Slot)
 	{
 		FStructuredArchiveRecord Record = Slot.EnterRecord();
-		FTextKey Namespace = FTextKey(NamespaceStr, NamespaceHash);
-		Namespace.SerializeWithHash(Record.EnterField(TEXT("Namespace")));
-		NamespaceStr = Namespace.StrPtr;
-		NamespaceHash = Namespace.StrHash;
 
-		FTextKey Key = FTextKey(KeyStr, KeyHash);
+		FTextKey Namespace = GetNamespace();
+		Namespace.SerializeWithHash(Record.EnterField(TEXT("Namespace")));
+		SetNamespace(Namespace);
+
+		FTextKey Key = GetKey();
 		Key.SerializeWithHash(Record.EnterField(TEXT("Key")));
-		KeyStr = Key.StrPtr;
-		KeyHash = Key.StrHash;
+		SetKey(Key);
 	}
 
 	/** Serialize this text identity including its hash values, discarding the hash on load (to upgrade from an older hashing algorithm) */
 	void SerializeDiscardHash(FStructuredArchiveSlot Slot)
 	{
 		FStructuredArchiveRecord Record = Slot.EnterRecord();
-		FTextKey Namespace = FTextKey(NamespaceStr, NamespaceHash);
-		Namespace.SerializeDiscardHash(Record.EnterField(TEXT("Namespace")));
-		NamespaceStr = Namespace.StrPtr;
-		NamespaceHash = Namespace.StrHash;
 
-		FTextKey Key = FTextKey(KeyStr, KeyHash);
+		FTextKey Namespace = GetNamespace();
+		Namespace.SerializeDiscardHash(Record.EnterField(TEXT("Namespace")));
+		SetNamespace(Namespace);
+
+		FTextKey Key = GetKey();
 		Key.SerializeDiscardHash(Record.EnterField(TEXT("Key")));
-		KeyStr = Key.StrPtr;
-		KeyHash = Key.StrHash;
+		SetKey(Key);
 	}
 
 	/** Is this text identity empty? */
@@ -279,12 +316,32 @@ public:
 	FORCEINLINE void Reset()
 	{
 		NamespaceStr = KeyStr = TEXT("");
+#if UE_TEXTKEY_STORE_EMBEDDED_HASH
 		NamespaceHash = KeyHash = 0;
+#endif
 	}
 
 private:
+	void SetNamespace(const FTextKey& InNamespace)
+	{
+		NamespaceStr = InNamespace.StrPtr;
+#if UE_TEXTKEY_STORE_EMBEDDED_HASH
+		NamespaceHash = InNamespace.StrHash;
+#endif
+	}
+
+	void SetKey(const FTextKey& InKey)
+	{
+		KeyStr = InKey.StrPtr;
+#if UE_TEXTKEY_STORE_EMBEDDED_HASH
+		KeyHash = InKey.StrHash;
+#endif
+	}
+
 	const TCHAR* NamespaceStr;
 	const TCHAR* KeyStr;
+#if UE_TEXTKEY_STORE_EMBEDDED_HASH
 	uint32 NamespaceHash;
 	uint32 KeyHash;
+#endif
 };

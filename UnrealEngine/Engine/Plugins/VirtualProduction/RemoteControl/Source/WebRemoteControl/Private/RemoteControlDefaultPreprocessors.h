@@ -83,7 +83,7 @@ namespace UE::WebRemoteControl
 	/** Utility function to wrap a preprocessor handler to a http request handler than the HttpRouter can take. */
 	FHttpRequestHandler MakeHttpRequestHandler(FRCPreprocessorHandler Handler)
 	{
-		return [WrappedHandler = MoveTemp(Handler)](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
+		return FHttpRequestHandler::CreateLambda([WrappedHandler = MoveTemp(Handler)](const FHttpServerRequest& Request, const FHttpResultCallback& OnComplete)
 		{
 			FPreprocessorResult Result = WrappedHandler(Request);
 			if (Result.Result == EPreprocessorResult::RequestPassthrough)
@@ -95,7 +95,7 @@ namespace UE::WebRemoteControl
 				OnComplete(MoveTemp(Result.OptionalResponse));
 				return true; // Request handled.
 			}
-		};
+		});
 	}
 
 #if WITH_EDITOR

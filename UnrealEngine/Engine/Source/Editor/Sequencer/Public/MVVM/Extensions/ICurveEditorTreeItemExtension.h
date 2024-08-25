@@ -31,6 +31,9 @@ public:
 	/** Whether this view-model has any curves and needs to have a curve editor item created */
 	virtual bool HasCurves() const = 0;
 
+	/** Get optional unique path name */
+	virtual TOptional<FString> GetUniquePathName() const = 0;
+
 	/** Gets the curve editor ID for this view-model */
 	virtual FCurveEditorTreeItemID GetCurveEditorItemID() const = 0;
 

@@ -328,7 +328,7 @@ namespace CrossCompiler
 		{
 			if (IsConstant())
 			{
-				checkf(Identifier, TEXT("Null identifier, literaltype %d"), (int32)LiteralType);
+				checkf(Identifier!=nullptr, TEXT("Null identifier, literaltype %d"), (int32)LiteralType);
 				OutValue = (int32)FCString::Atoi(Identifier);
 				return true;
 			}
@@ -564,9 +564,13 @@ namespace CrossCompiler
 		FFunction::FFunction(FLinearAllocator* InAllocator, const FSourceInfo& InInfo) :
 			FNode(InAllocator, InInfo),
 			ReturnType(nullptr),
+			ScopeIdentifier(nullptr),
 			Identifier(nullptr),
 			ReturnSemantic(nullptr),
-			Parameters(InAllocator)
+			Parameters(InAllocator),
+			bIsDefinition(false),
+			bIsOperator(false),
+			bIsStatic(false)
 		{
 		}
 
@@ -574,8 +578,20 @@ namespace CrossCompiler
 		{
 			WriteAttributes(Writer);
 			Writer << TEXT("\n");
+			if (bIsStatic)
+			{
+				Writer << TEXT("static ");
+			}
 			ReturnType->Write(Writer);
 			Writer << (TCHAR)' ';
+			if (ScopeIdentifier)
+			{
+				Writer << ScopeIdentifier << TEXT("::");
+			}
+			if (bIsOperator)
+			{
+				Writer << TEXT("operator");
+			}
 			Writer << Identifier;
 			Writer << (TCHAR)'(';
 			bool bFirst = true;
@@ -1458,7 +1474,8 @@ namespace CrossCompiler
 			FNode(InAllocator, InInfo),
 			Name(nullptr),
 			ParentName(nullptr),
-			Members(InAllocator)
+			Members(InAllocator),
+			bForwardDeclaration(false)
 		{
 		}
 
@@ -1471,18 +1488,25 @@ namespace CrossCompiler
 				Writer << TEXT(" : ");
 				Writer << ParentName;
 			}
-			Writer << (TCHAR)'\n';
-			Writer.DoIndent();
-			Writer << TEXT("{\n");
-
-			for (auto* Member : Members)
+			if (bForwardDeclaration)
 			{
-				FASTWriterIncrementScope Scope(Writer);
-				Member->Write(Writer);
+				Writer << TEXT(";\n");
 			}
+			else
+			{
+				Writer << TEXT('\n');
+				Writer.DoIndent();
+				Writer << TEXT("{\n");
 
-			Writer.DoIndent();
-			Writer << TEXT("}");
+				for (auto* Member : Members)
+				{
+					FASTWriterIncrementScope Scope(Writer);
+					Member->Write(Writer);
+				}
+
+				Writer.DoIndent();
+				Writer << TEXT("}");
+			}
 		}
 
 		FStructSpecifier::~FStructSpecifier()

@@ -72,11 +72,10 @@ public:
 		const FPrimitiveSceneProxy* PrimitiveSceneProxy,
 		const FMaterialRenderProxy& MaterialRenderProxy,
 		const FMaterial& Material,
-		const FMeshPassProcessorRenderState& DrawRenderState,
 		const FMeshMaterialShaderElementData& ShaderElementData,
 		FMeshDrawSingleShaderBindings& ShaderBindings)
 	{
-		FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, DrawRenderState, ShaderElementData, ShaderBindings);
+		FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, ShaderElementData, ShaderBindings);
 
 #if WITH_EDITOR
 		const FColorVertexBuffer* HitProxyIdBuffer = PrimitiveSceneProxy ? PrimitiveSceneProxy->GetCustomHitProxyIdBuffer() : nullptr;
@@ -138,11 +137,10 @@ public:
 		const FPrimitiveSceneProxy* PrimitiveSceneProxy,
 		const FMaterialRenderProxy& MaterialRenderProxy,
 		const FMaterial& Material,
-		const FMeshPassProcessorRenderState& DrawRenderState,
 		const FHitProxyShaderElementData& ShaderElementData,
 		FMeshDrawSingleShaderBindings& ShaderBindings) const
 	{
-		FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, DrawRenderState, ShaderElementData, ShaderBindings);
+		FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, ShaderElementData, ShaderBindings);
 
 		FHitProxyId hitProxyId = ShaderElementData.BatchHitProxyId;
 
@@ -181,7 +179,7 @@ void InitHitProxyRender(FRDGBuilder& GraphBuilder, FSceneRenderer* SceneRenderer
 	auto FeatureLevel = ViewFamily.Scene->GetFeatureLevel();
 
 	// Ensure VirtualTexture resources are allocated
-	if (UseVirtualTexturing(FeatureLevel))
+	if (UseVirtualTexturing(ViewFamily.Scene->GetShaderPlatform()))
 	{
 		FVirtualTextureUpdateSettings Settings;
 		Settings.EnablePageRequests(false);
@@ -549,8 +547,6 @@ static void DoRenderHitProxies(
 				false,
 				1.0f
 			);
-
-			RHICmdList.EndScene();
 		});
 	}
 }
@@ -558,11 +554,11 @@ static void DoRenderHitProxies(
 
 void FMobileSceneRenderer::RenderHitProxies(FRDGBuilder& GraphBuilder)
 {
-	IVisibilityTaskData* VisibilityTaskData = UpdateScene(GraphBuilder, FGlobalDynamicBuffers(DynamicIndexBuffer, DynamicVertexBuffer, DynamicReadBuffer));
+	IVisibilityTaskData* VisibilityTaskData = OnRenderBegin(GraphBuilder);
 
 	GPU_MESSAGE_SCOPE(GraphBuilder);
 
-	FGPUSceneScopeBeginEndHelper GPUSceneScopeBeginEndHelper(Scene->GPUScene, GPUSceneDynamicContext, Scene);
+	FGPUSceneScopeBeginEndHelper GPUSceneScopeBeginEndHelper(GraphBuilder, Scene->GPUScene, GPUSceneDynamicContext);
 
 #if WITH_EDITOR
 	FSceneTexturesConfig& SceneTexturesConfig = GetActiveSceneTexturesConfig();
@@ -576,13 +572,11 @@ void FMobileSceneRenderer::RenderHitProxies(FRDGBuilder& GraphBuilder)
 
 	// Find the visible primitives.
 	InitViews(GraphBuilder, SceneTexturesConfig, InstanceCullingManager, nullptr, InitViewTaskDatas);
+	
+	GetSceneExtensionsRenderers().UpdateSceneUniformBuffer(GraphBuilder, GetSceneUniforms());
 
+	GetSceneExtensionsRenderers().PreRender(GraphBuilder);
 	GEngine->GetPreRenderDelegateEx().Broadcast(GraphBuilder);
-
-	// Global dynamic buffers need to be committed before rendering.
-	DynamicIndexBuffer.Commit();
-	DynamicVertexBuffer.Commit();
-	DynamicReadBuffer.Commit(GraphBuilder.RHICmdList);
 
 	InstanceCullingManager.FlushRegisteredViews(GraphBuilder);
 
@@ -590,7 +584,11 @@ void FMobileSceneRenderer::RenderHitProxies(FRDGBuilder& GraphBuilder)
 	::DoRenderHitProxies(GraphBuilder, this, HitProxyTexture, HitProxyDepthTexture, NaniteRasterResults, InstanceCullingManager);
 
 	GEngine->GetPostRenderDelegateEx().Broadcast(GraphBuilder);
+	GetSceneExtensionsRenderers().PostRender(GraphBuilder);
+
 #endif
+
+	OnRenderFinish(GraphBuilder, nullptr);
 }
 
 void FDeferredShadingSceneRenderer::RenderHitProxies(FRDGBuilder& GraphBuilder)
@@ -599,11 +597,11 @@ void FDeferredShadingSceneRenderer::RenderHitProxies(FRDGBuilder& GraphBuilder)
 
 	CommitFinalPipelineState();
 
-	IVisibilityTaskData* VisibilityTaskData = UpdateScene(GraphBuilder, FGlobalDynamicBuffers(DynamicIndexBufferForInitViews, DynamicVertexBufferForInitViews, DynamicReadBufferForInitViews));
+	IVisibilityTaskData* VisibilityTaskData = OnRenderBegin(GraphBuilder);
 
 	GPU_MESSAGE_SCOPE(GraphBuilder);
 
-	FGPUSceneScopeBeginEndHelper GPUSceneScopeBeginEndHelper(Scene->GPUScene, GPUSceneDynamicContext, Scene);
+	FGPUSceneScopeBeginEndHelper GPUSceneScopeBeginEndHelper(GraphBuilder, Scene->GPUScene, GPUSceneDynamicContext);
 
 
 #if WITH_EDITOR
@@ -621,7 +619,7 @@ void FDeferredShadingSceneRenderer::RenderHitProxies(FRDGBuilder& GraphBuilder)
 	FLumenSceneFrameTemporaries LumenFrameTemporaries;
 	FInitViewTaskDatas InitViewTaskDatas(VisibilityTaskData);
 	FRDGExternalAccessQueue ExternalAccessQueue;
-	BeginInitViews(GraphBuilder, SceneTexturesConfig, FExclusiveDepthStencil::DepthWrite_StencilWrite, InstanceCullingManager, nullptr, InitViewTaskDatas);
+	BeginInitViews(GraphBuilder, SceneTexturesConfig, InstanceCullingManager, ExternalAccessQueue, InitViewTaskDatas);
 
 	extern TSet<IPersistentViewUniformBufferExtension*> PersistentViewUniformBufferExtensions;
 
@@ -638,14 +636,17 @@ void FDeferredShadingSceneRenderer::RenderHitProxies(FRDGBuilder& GraphBuilder)
 
 	ShaderPrint::BeginViews(GraphBuilder, Views);
 
-	Scene->GPUScene.Update(GraphBuilder, GetSceneUniforms(), *Scene, ExternalAccessQueue);
+	InitViewTaskDatas.VisibilityTaskData->FinishGatherDynamicMeshElements(FExclusiveDepthStencil::DepthWrite_StencilWrite, InstanceCullingManager, nullptr);
 
 	for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ViewIndex++)
 	{
-		Scene->GPUScene.UploadDynamicPrimitiveShaderDataForView(GraphBuilder, *Scene, Views[ViewIndex], ExternalAccessQueue);
+		Scene->GPUScene.UploadDynamicPrimitiveShaderDataForView(GraphBuilder, Views[ViewIndex]);
 	}
 
-	EndInitViews(GraphBuilder, LumenFrameTemporaries, InstanceCullingManager, ExternalAccessQueue, InitViewTaskDatas);
+
+	EndInitViews(GraphBuilder, LumenFrameTemporaries, InstanceCullingManager, InitViewTaskDatas);
+
+	GetSceneExtensionsRenderers().UpdateSceneUniformBuffer(GraphBuilder, GetSceneUniforms());
 
 	ExternalAccessQueue.Submit(GraphBuilder);
 
@@ -658,14 +659,11 @@ void FDeferredShadingSceneRenderer::RenderHitProxies(FRDGBuilder& GraphBuilder)
 		Nanite::GStreamingManager.EndAsyncUpdate(GraphBuilder);
 	}
 
+	GetSceneExtensionsRenderers().PreRender(GraphBuilder);
 	GEngine->GetPreRenderDelegateEx().Broadcast(GraphBuilder);
 
-	// Global dynamic buffers need to be committed before rendering.
-	DynamicIndexBufferForInitViews.Commit();
-	DynamicVertexBufferForInitViews.Commit();
-	DynamicReadBufferForInitViews.Commit(GraphBuilder.RHICmdList);
-
 	// Notify the FX system that the scene is about to be rendered.
+	// TODO: These should probably be moved to scene extensions
 	if (FXSystem && Views.IsValidIndex(0))
 	{
 		FGPUSortManager* GPUSortManager = FXSystem->GetGPUSortManager();
@@ -695,7 +693,7 @@ void FDeferredShadingSceneRenderer::RenderHitProxies(FRDGBuilder& GraphBuilder)
 
 		FIntRect HitProxyTextureRect(0, 0, HitProxyTextureSize.X, HitProxyTextureSize.Y);
 
-		Nanite::FRasterContext RasterContext = Nanite::InitRasterContext(GraphBuilder, SharedContext, ViewFamily, HitProxyTextureSize, HitProxyTextureRect, false);
+		Nanite::FRasterContext RasterContext = Nanite::InitRasterContext(GraphBuilder, SharedContext, ViewFamily, HitProxyTextureSize, HitProxyTextureRect);
 
 		Nanite::FConfiguration CullingConfig = {0};
 
@@ -719,7 +717,7 @@ void FDeferredShadingSceneRenderer::RenderHitProxies(FRDGBuilder& GraphBuilder)
 			Nanite::FPackedView PackedView = Nanite::CreatePackedViewFromViewInfo(View, HitProxyTextureSize, NANITE_VIEW_FLAG_HZBTEST | NANITE_VIEW_FLAG_NEAR_CLIP);
 			NaniteRenderer->DrawGeometry(
 				Scene->NaniteRasterPipelines[ENaniteMeshPass::BasePass],
-				NaniteRasterResults[ViewIndex].VisibilityResults,
+				NaniteRasterResults[ViewIndex].VisibilityQuery,
 				*Nanite::FPackedViewArray::Create(GraphBuilder, PackedView)
 			);
 			NaniteRenderer->ExtractResults( NaniteRasterResults[ViewIndex] );
@@ -736,9 +734,12 @@ void FDeferredShadingSceneRenderer::RenderHitProxies(FRDGBuilder& GraphBuilder)
 	ShaderPrint::EndViews(Views);
 
 	GEngine->GetPostRenderDelegateEx().Broadcast(GraphBuilder);
+	GetSceneExtensionsRenderers().PostRender(GraphBuilder);
 
 	AddDispatchToRHIThreadPass(GraphBuilder);
 #endif
+
+	OnRenderFinish(GraphBuilder, nullptr);
 }
 
 #if WITH_EDITOR

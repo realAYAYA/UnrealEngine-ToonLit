@@ -16,7 +16,8 @@ public:
 	virtual bool IsEditorOnly() const final { return true; }
 
 #if WITH_EDITOR
-	virtual bool IsDataLayerTypeSupported(TSubclassOf<UDataLayerInstance> DataLayerType) const final { return false; }
+	virtual bool ActorTypeSupportsDataLayer() const final { return false; }
+	virtual bool ActorTypeSupportsExternalDataLayer() const final { return false; }
 	virtual bool CanChangeIsSpatiallyLoadedFlag() const { return false; }
 #endif
 };

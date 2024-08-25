@@ -1,0 +1,247 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">x64</Platform>
+    <AssemblyInfo Condition=" '$(AssemblyInfo)' == ''">..\Properties\DefaultAssemblyInfo.cs</AssemblyInfo>
+    <Platform_OS Condition=" '$(Platform_OS)' == '' ">Win64</Platform_OS>
+    <!--If the evironment variable is not define, try to find the Rhino files on build machines-->
+    <ProductVersion>8.0.30703</ProductVersion>
+    <SchemaVersion>2.0</SchemaVersion>
+    <ProjectGuid>{D1FDC795-B334-4933-B680-088119CDC6BB}</ProjectGuid>
+    <OutputType>Library</OutputType>
+    <AppDesignerFolder>Properties</AppDesignerFolder>
+    <RootNamespace>DatasmithRhino</RootNamespace>
+    <AssemblyName Condition="'$(Configuration)' == 'Debug'">DatasmithRhino8-Debug</AssemblyName>
+    <AssemblyName Condition="'$(Configuration)' == 'Shipping' OR '$(Configuration)' == 'Release'">DatasmithRhino8-Shipping</AssemblyName>
+    <AssemblyName Condition="'$(Configuration)' != 'Debug' AND '$(Configuration)' != 'Shipping' AND '$(Configuration)' != 'Release'">DatasmithRhino8</AssemblyName>
+    <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
+    <FileAlignment>512</FileAlignment>
+    <IsWebBootstrapper>false</IsWebBootstrapper>
+    <NuGetPackageImportStamp>
+    </NuGetPackageImportStamp>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|x64'">
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>..\..\..\..\..\..\Binaries\$(Platform_OS)\Rhino\8</OutputPath>
+    <DefineConstants>DEBUG;TRACE;RHINO_VERSION_8</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <CodeAnalysisIgnoreBuiltInRules>false</CodeAnalysisIgnoreBuiltInRules>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Development|x64'">
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>..\..\..\..\..\..\Binaries\$(Platform_OS)\Rhino\8</OutputPath>
+    <DefineConstants>TRACE;RHINO_VERSION_8</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|x64'">
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>..\..\..\..\..\..\Binaries\$(Platform_OS)\Rhino\8</OutputPath>
+    <DefineConstants>TRACE;RHINO_VERSION_8</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Platform_OS)' == 'Win64'">
+    <DefineConstants>$(DefineConstants);WIN64_OS</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Platform_OS)' == 'Mac'">
+    <DefineConstants>$(DefineConstants);MAC_OS</DefineConstants>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(DATASMITHRHINO_EXPERIMENTAL)' == 'TRUE'">
+    <DefineConstants>$(DefineConstants);DATASMITHRHINO_EXPERIMENTAL</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="Microsoft.CSharp" />
+    <Reference Include="RhinoCommon">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>$(RHINO8_PATH)\rhinocommon.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Eto">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>$(RHINO8_PATH)\Eto.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Rhino.UI">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>$(RHINO8_PATH)\Rhino.UI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup Condition="'$(Platform_OS)' == 'Mac'">
+    <Reference Include="RhinoMac">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>$(RHINO8_PATH)\RhinoMac.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="DatasmithRhino8.cs" />
+    <Compile Include="$(AssemblyInfo)">
+      <Link>Properties\AssemblyInfo.cs</Link>
+    </Compile>
+    <!-- DatasmithCSharpFacade API, possibly change that. -->
+    <Compile Include="..\..\..\..\..\..\Binaries\$(Platform_OS)\DatasmithFacadeCSharp\Public\*.cs">
+      <Link>DatasmithSwigFacade\%(Filename)%(Extension)</Link>
+    </Compile>
+  </ItemGroup>
+  <ItemGroup Condition="'$(Platform_OS)' == 'Win64'">
+    <Compile Include="..\Private\**\*.cs">
+      <Link>DatasmithRhinoExporter\%(RecursiveDir)%(Filename)%(Extension)</Link>
+    </Compile>
+  </ItemGroup>
+  <!-- TODO Remove this explicit definition once .net uses msbuild on Mac -->
+  <ItemGroup Condition="'$(Platform_OS)' == 'Mac'">
+    <Compile Include="..\Private\Commands\*.cs">
+      <Link>DatasmithRhinoExporter\Commands\%(Filename)%(Extension)</Link>
+    </Compile>
+    <Compile Include="..\Private\DirectLink\*.cs">
+      <Link>DatasmithRhinoExporter\DirectLink\%(Filename)%(Extension)</Link>
+    </Compile>
+    <Compile Include="..\Private\ElementExporters\*.cs">
+      <Link>DatasmithRhinoExporter\ElementExporters\%(Filename)%(Extension)</Link>
+    </Compile>
+    <Compile Include="..\Private\ExportContext\*.cs">
+      <Link>DatasmithRhinoExporter\ExportContext\%(Filename)%(Extension)</Link>
+    </Compile>
+    <Compile Include="..\Private\Utils\*.cs">
+      <Link>DatasmithRhinoExporter\Utils\%(Filename)%(Extension)</Link>
+    </Compile>
+    <Compile Include="..\Private\*.cs">
+      <Link>DatasmithRhinoExporter\%(Filename)%(Extension)</Link>
+    </Compile>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\SharedResources\Localization\Resources.Designer.cs">
+      <Link>Properties\Localization\Resources.Designer.cs</Link>
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+      <DependentUpon>Resources.resx</DependentUpon>
+    </Compile>
+    <Compile Include="..\SharedResources\Localization\Resources.de.Designer.cs">
+      <Link>Properties\Localization\Resources.Designer.cs</Link>
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+      <DependentUpon>Resources.de.resx</DependentUpon>
+    </Compile>
+    <Compile Include="..\SharedResources\Localization\Resources.es.Designer.cs">
+      <Link>Properties\Localization\Resources.Designer.cs</Link>
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+      <DependentUpon>Resources.es.resx</DependentUpon>
+    </Compile>
+    <Compile Include="..\SharedResources\Localization\Resources.fr.Designer.cs">
+      <Link>Properties\Localization\Resources.Designer.cs</Link>
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+      <DependentUpon>Resources.fr.resx</DependentUpon>
+    </Compile>
+    <Compile Include="..\SharedResources\Localization\Resources.ja.Designer.cs">
+      <Link>Properties\Localization\Resources.Designer.cs</Link>
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+      <DependentUpon>Resources.ja.resx</DependentUpon>
+    </Compile>
+    <Compile Include="..\SharedResources\Localization\Resources.ko.Designer.cs">
+      <Link>Properties\Localization\Resources.Designer.cs</Link>
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+      <DependentUpon>Resources.ko.resx</DependentUpon>
+    </Compile>
+    <Compile Include="..\SharedResources\Localization\Resources.pt.Designer.cs">
+      <Link>Properties\Localization\Resources.Designer.cs</Link>
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+      <DependentUpon>Resources.pt.resx</DependentUpon>
+    </Compile>
+    <Compile Include="..\SharedResources\Localization\Resources.zh.Designer.cs">
+      <Link>Properties\Localization\Resources.Designer.cs</Link>
+      <AutoGen>True</AutoGen>
+      <DesignTime>True</DesignTime>
+      <DependentUpon>Resources.zh.resx</DependentUpon>
+    </Compile>
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="..\SharedResources\UnrealEngine.ico" />
+    <EmbeddedResource Include="..\SharedResources\Localization\Resources.resx">
+      <Link>Properties\Localization\Resources.resx</Link>
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>Resources.Designer.cs</LastGenOutput>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\SharedResources\Localization\Resources.de.resx">
+      <Link>Properties\Localization\Resources.de-DE.resx</Link>
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>Resources.de.Designer.cs</LastGenOutput>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\SharedResources\Localization\Resources.es.resx">
+      <Link>Properties\Localization\Resources.es-ES.resx</Link>
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>Resources.es.Designer.cs</LastGenOutput>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\SharedResources\Localization\Resources.fr.resx">
+      <Link>Properties\Localization\Resources.fr-FR.resx</Link>
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>Resources.fr.Designer.cs</LastGenOutput>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\SharedResources\Localization\Resources.ja.resx">
+      <Link>Properties\Localization\Resources.ja-JP.resx</Link>
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>Resources.ja.Designer.cs</LastGenOutput>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\SharedResources\Localization\Resources.ko.resx">
+      <Link>Properties\Localization\Resources.ko-KR.resx</Link>
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>Resources.ko.Designer.cs</LastGenOutput>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\SharedResources\Localization\Resources.pt.resx">
+      <Link>Properties\Localization\Resources.pt-BR.resx</Link>
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>Resources.pt.Designer.cs</LastGenOutput>
+    </EmbeddedResource>
+    <EmbeddedResource Include="..\SharedResources\Localization\Resources.zh.resx">
+      <Link>Properties\Localization\Resources.zh-CN.resx</Link>
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>Resources.zh.Designer.cs</LastGenOutput>
+    </EmbeddedResource>
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
+       Other similar extension points exist, see Microsoft.Common.targets.
+  <Target Name="BeforeBuild">
+  </Target>
+  <Target Name="AfterBuild">
+  </Target>
+  -->
+  <PropertyGroup Condition="'$(Platform_OS)' == 'Win64'">
+    <PostBuildEvent>
+		Copy "$(TargetPath)" "$(TargetDir)$(TargetName).rhp"
+		Copy "$(MSBuildProjectDirectory)\..\SharedResources\DatasmithRhino.rui" "$(TargetDir)$(TargetName).rui"
+    </PostBuildEvent>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Platform_OS)' == 'Mac'">
+    <PostBuildEvent>
+    sh "$(ProjectDir)../Installer/CreateMacPackages.sh" $(TargetName) 8
+    </PostBuildEvent>
+  </PropertyGroup>
+  <PropertyGroup>
+    <FallbackCulture>en-US</FallbackCulture>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug' And '$(Platform_OS)' == 'Win64'">
+    <StartProgram>$(RHINO8_PATH)\Rhino.exe</StartProgram>
+    <StartArguments>
+    </StartArguments>
+    <StartAction>Program</StartAction>
+  </PropertyGroup>
+</Project>

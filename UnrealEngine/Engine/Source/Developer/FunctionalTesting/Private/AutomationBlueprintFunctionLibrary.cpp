@@ -225,7 +225,7 @@ public:
 			//InViewFamily.EngineShowFlags.SetEyeAdaptation(false);
 			//InViewFamily.EngineShowFlags.SetTonemapper(false);
 		}
-		}
+	}
 
 	virtual void BeginRenderViewFamily(FSceneViewFamily& InViewFamily) {}
 	virtual void PreRenderViewFamily_RenderThread(FRDGBuilder& GraphBuilder, FSceneViewFamily& InViewFamily) {}
@@ -275,18 +275,16 @@ void FAutomationTestScreenshotEnvSetup::Setup(UWorld* InWorld, FAutomationScreen
 		ContactShadows.Set(0);
 		EyeAdaptationQuality.Set(0);
 		TonemapperGamma.Set(2.2f);
-		//TonemapperSharpen.Set(0);
 	}
 	else if (InOutOptions.bDisableTonemapping)
 	{
 		EyeAdaptationQuality.Set(0);
 		TonemapperGamma.Set(2.2f);
-		//TonemapperSharpen.Set(0);
 	}
 
 	// Forces ScreenPercentage=100
 	{
-		// Completly disable dynamic resolution
+		// Completely disable dynamic resolution
 		{
 			DynamicResTestScreenPercentage.Set(0);
 			DynamicResOperationMode.Set(0);
@@ -467,7 +465,7 @@ public:
 
 			bool bAttemptToCompareShot = FAutomationTestFramework::Get().OnScreenshotCaptured().ExecuteIfBound(InImageData, Data);
 
-			UE_LOG(AutomationFunctionLibrary, Log, TEXT("Screenshot captured as %s"), *Data.ScreenshotName);
+			UE_LOG(AutomationFunctionLibrary, Log, TEXT("Screenshot captured as %s"), *Data.ScreenshotPath);
 
 			if (GIsAutomationTesting)
 			{
@@ -493,7 +491,7 @@ public:
 
 		if (FAutomationTestBase* CurrentTest = FAutomationTestFramework::Get().GetCurrentTest())
 		{
-			CurrentTest->AddEvent(CompareResults.ToAutomationEvent(ScreenShotName));
+			CurrentTest->AddEvent(CompareResults.ToAutomationEvent());
 		}
 
 		DeleteSelfNextFrame();
@@ -575,7 +573,7 @@ public:
 
 		bool bAttemptToCompareShot = FAutomationTestFramework::Get().OnScreenshotCaptured().ExecuteIfBound(InImageData, Data);
 
-		UE_LOG(AutomationFunctionLibrary, Log, TEXT("Screenshot captured as %s"), *Data.ScreenshotName);
+		UE_LOG(AutomationFunctionLibrary, Log, TEXT("Screenshot captured as %s"), *Data.ScreenshotPath);
 
 		FAutomationTestFramework::Get().OnScreenshotCompared.AddRaw(this, &FAutomationHighResScreenshotGrabber::OnComparisonComplete);
 	}
@@ -586,7 +584,7 @@ public:
 
 		if (FAutomationTestBase* CurrentTest = FAutomationTestFramework::Get().GetCurrentTest())
 		{
-			CurrentTest->AddEvent(CompareResults.ToAutomationEvent(ScreenShotName));
+			CurrentTest->AddEvent(CompareResults.ToAutomationEvent());
 		}
 
 		delete this;
@@ -615,7 +613,9 @@ private:
 class FScreenshotTakenState : public FAutomationTaskStatusBase
 {
 public:
-	FScreenshotTakenState()
+	FScreenshotTakenState(bool InNeedGameViewToggle = true, bool InNeedCameraChange = true)
+		: NeedGameViewToggle(InNeedGameViewToggle)
+		, NeedCameraChange(InNeedCameraChange)
 	{
 		if (GIsAutomationTesting)
 		{
@@ -664,20 +664,38 @@ public:
 		{
 			FLevelEditorModule& LevelEditor = FModuleManager::GetModuleChecked<FLevelEditorModule>("LevelEditor");
 			SLevelViewport* LevelViewport = LevelEditor.GetFirstActiveLevelViewport().Get();
-			if (LevelViewport->IsInGameView() && LevelViewport->CanToggleGameView())
+			if (LevelViewport)
 			{
-				LevelViewport->ToggleGameView();
-			}
-			FLevelEditorViewportClient& LevelViewportClient = LevelViewport->GetLevelViewportClient();
-			if (LevelViewportClient.IsAnyActorLocked())
-			{
-				LevelViewportClient.SetActorLock(nullptr);
-				LevelViewportClient.bDisableInput = false;
-				LevelViewportClient.bEnableFading = true;
+				if (NeedGameViewToggle)
+				{
+					if (LevelViewport->IsInGameView() && LevelViewport->CanToggleGameView())
+					{
+						LevelViewport->ToggleGameView();
+					}
+					else
+					{
+						UE_LOG(AutomationFunctionLibrary, Verbose, TEXT("Expected to be able to toggle off the Game View mode after the screenshot was taken, but the Viewport was already no longer in that mode or it is not a Perspective."));
+					}
+				}
+				if (NeedCameraChange)
+				{
+					FLevelEditorViewportClient& LevelViewportClient = LevelViewport->GetLevelViewportClient();
+					if (LevelViewportClient.IsAnyActorLocked())
+					{
+						LevelViewportClient.SetActorLock(nullptr);
+						LevelViewportClient.bDisableInput = false;
+						LevelViewportClient.bEnableFading = true;
+					}
+				}
 			}
 		}
 #endif
 	};
+
+private:
+	bool NeedGameViewToggle;
+	bool NeedCameraChange;
+
 };
 
 UAutomationBlueprintFunctionLibrary::UAutomationBlueprintFunctionLibrary(const class FObjectInitializer& Initializer)
@@ -762,9 +780,9 @@ FIntPoint UAutomationBlueprintFunctionLibrary::GetAutomationScreenshotSize(const
 FAutomationScreenshotData UAutomationBlueprintFunctionLibrary::BuildScreenshotData(const FString& MapOrContext, const FString& ScreenShotName, int32 Width, int32 Height)
 {
 	FString TestName = TEXT("");
-	if (FFunctionalTestBase::IsFunctionalTestRunning())
+	if (FAutomationTestFramework::Get().GetCurrentTest()) 
 	{
-		TestName = FFunctionalTestBase::GetRunningTestName();
+		TestName = FAutomationTestFramework::Get().GetCurrentTest()->GetTestFullName();
 	}
 
 #if WITH_AUTOMATION_TESTS
@@ -792,10 +810,16 @@ bool UAutomationBlueprintFunctionLibrary::TakeAutomationScreenshotInternal(UObje
 	return true; //-V773
 }
 
-void UAutomationBlueprintFunctionLibrary::TakeAutomationScreenshot(UObject* WorldContextObject, FLatentActionInfo LatentInfo, const FString& ScreenShotName, const FString& Notes, const FAutomationScreenshotOptions& Options)
+void UAutomationBlueprintFunctionLibrary::TakeAutomationScreenshot(UObject* WorldContextObject, FLatentActionInfo LatentInfo, const FString& InScreenShotName, const FString& Notes, const FAutomationScreenshotOptions& Options)
 {
 	if ( GIsAutomationTesting )
 	{
+		FString ScreenShotName = InScreenShotName;
+		if ( ScreenShotName.IsEmpty() )
+		{
+			ScreenShotName = TEXT("Undefined");
+			UE_LOG(AutomationFunctionLibrary, Warning, TEXT("Screenshot name is empty. Default name will be used."));
+		}
 		if ( UWorld* World = GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::LogAndReturnNull) )
 		{
 			FLatentActionManager& LatentActionManager = World->GetLatentActionManager();
@@ -1200,7 +1224,7 @@ void UAutomationBlueprintFunctionLibrary::AutomationWaitForLoading(UObject* Worl
 	}
 }
 
-UAutomationEditorTask* UAutomationBlueprintFunctionLibrary::TakeHighResScreenshot(int32 ResX, int32 ResY, FString Filename, ACameraActor* Camera, bool bMaskEnabled, bool bCaptureHDR, EComparisonTolerance ComparisonTolerance, FString ComparisonNotes, float Delay)
+UAutomationEditorTask* UAutomationBlueprintFunctionLibrary::TakeHighResScreenshot(int32 ResX, int32 ResY, FString Filename, ACameraActor* Camera, bool bMaskEnabled, bool bCaptureHDR, EComparisonTolerance ComparisonTolerance, FString ComparisonNotes, float Delay, bool bForceGameView)
 {
 	UAutomationEditorTask* Task = NewObject<UAutomationEditorTask>();
 	FGCObjectScopeGuard TaskGuard(Task);
@@ -1212,13 +1236,15 @@ UAutomationEditorTask* UAutomationBlueprintFunctionLibrary::TakeHighResScreensho
 		{
 			FLevelEditorModule& LevelEditor = FModuleManager::GetModuleChecked<FLevelEditorModule>("LevelEditor");
 			SLevelViewport* LevelViewport = LevelEditor.GetFirstActiveLevelViewport().Get();
-			if (!LevelViewport->IsInGameView() && LevelViewport->CanToggleGameView())
+			bool bNeedGameViewToggle = bForceGameView && !LevelViewport->IsInGameView();
+			if (bNeedGameViewToggle && LevelViewport->CanToggleGameView())
 			{
 				LevelViewport->ToggleGameView();
 			}
 
 			// Move Viewport to Camera
-			if (Camera)
+			bool bNeedCameraChange = Camera != nullptr;
+			if (bNeedCameraChange)
 			{
 				FLevelEditorViewportClient& LevelViewportClient = LevelViewport->GetLevelViewportClient();
 				// We set the actor lock (pilot mode) and force the viewport to match the camera now.
@@ -1231,7 +1257,7 @@ UAutomationEditorTask* UAutomationBlueprintFunctionLibrary::TakeHighResScreensho
 
 			FinishLoadingBeforeScreenshot();
 
-			Task->BindTask(MakeUnique<FScreenshotTakenState>());
+			Task->BindTask(MakeUnique<FScreenshotTakenState>(bNeedGameViewToggle, bNeedCameraChange));
 
 			// Delay taking the screenshot by a few frames
 			FTSTicker::GetCoreTicker().AddTicker(TEXT("ScreenshotDelay"), Delay, [LevelViewport, ComparisonTolerance, ComparisonNotes, Filename, ResX, ResY, bMaskEnabled, bCaptureHDR](float) {
@@ -1385,11 +1411,35 @@ FAutomationScreenshotOptions UAutomationBlueprintFunctionLibrary::GetDefaultScre
 	return Options;
 }
 
-void UAutomationBlueprintFunctionLibrary::AddExpectedLogError(FString ExpectedPatternString, int32 Occurrences, bool ExactMatch)
+void UAutomationBlueprintFunctionLibrary::AddExpectedLogError(FString ExpectedPatternString, int32 Occurrences, bool ExactMatch, bool IsRegex)
 {
 	if (FAutomationTestBase* CurrentTest = FAutomationTestFramework::Get().GetCurrentTest())
 	{
-		CurrentTest->AddExpectedError(ExpectedPatternString, ExactMatch? EAutomationExpectedErrorFlags::Exact:EAutomationExpectedErrorFlags::Contains, Occurrences);
+		CurrentTest->AddExpectedError(ExpectedPatternString, ExactMatch? EAutomationExpectedErrorFlags::Exact:EAutomationExpectedErrorFlags::Contains, Occurrences, IsRegex);
+	}
+}
+
+void UAutomationBlueprintFunctionLibrary::AddExpectedPlainLogError(FString ExpectedString, int32 Occurrences, bool ExactMatch)
+{
+	if (FAutomationTestBase* CurrentTest = FAutomationTestFramework::Get().GetCurrentTest())
+	{
+		CurrentTest->AddExpectedErrorPlain(ExpectedString, ExactMatch ? EAutomationExpectedErrorFlags::Exact : EAutomationExpectedErrorFlags::Contains, Occurrences);
+	}
+}
+
+void UAutomationBlueprintFunctionLibrary::AddExpectedLogMessage(FString ExpectedPatternString, int32 Occurrences, bool ExactMatch, bool IsRegex)
+{
+	if (FAutomationTestBase* CurrentTest = FAutomationTestFramework::Get().GetCurrentTest())
+	{
+		CurrentTest->AddExpectedMessage(ExpectedPatternString, ExactMatch ? EAutomationExpectedErrorFlags::Exact : EAutomationExpectedErrorFlags::Contains, Occurrences, IsRegex);
+	}
+}
+
+void UAutomationBlueprintFunctionLibrary::AddExpectedPlainLogMessage(FString ExpectedString, int32 Occurrences, bool ExactMatch)
+{
+	if (FAutomationTestBase* CurrentTest = FAutomationTestFramework::Get().GetCurrentTest())
+	{
+		CurrentTest->AddExpectedMessagePlain(ExpectedString, ExactMatch ? EAutomationExpectedErrorFlags::Exact : EAutomationExpectedErrorFlags::Contains, Occurrences);
 	}
 }
 
@@ -1454,6 +1504,30 @@ void UAutomationBlueprintFunctionLibrary::SetEditorViewportVisualizeBuffer( FNam
 		}
 	}
 #endif
+}
+
+void UAutomationBlueprintFunctionLibrary::AddTestInfo(const FString& InLogItem)
+{
+	if (FAutomationTestBase* CurrentTest = FAutomationTestFramework::Get().GetCurrentTest())
+	{
+		CurrentTest->AddInfo(InLogItem);
+	}
+}
+
+void UAutomationBlueprintFunctionLibrary::AddTestWarning(const FString& InLogItem)
+{
+	if (FAutomationTestBase* CurrentTest = FAutomationTestFramework::Get().GetCurrentTest())
+	{
+		CurrentTest->AddWarning(InLogItem);
+	}
+}
+
+void UAutomationBlueprintFunctionLibrary::AddTestError(const FString& InLogItem)
+{
+	if (FAutomationTestBase* CurrentTest = FAutomationTestFramework::Get().GetCurrentTest())
+	{
+		CurrentTest->AddError(InLogItem);
+	}
 }
 
 #undef LOCTEXT_NAMESPACE

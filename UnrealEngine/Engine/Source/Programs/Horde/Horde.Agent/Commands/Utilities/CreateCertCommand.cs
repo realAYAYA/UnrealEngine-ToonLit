@@ -1,10 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System.IO;
-using System.Reflection;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.RegularExpressions;
-using System.Threading.Tasks;
 using EpicGames.Core;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -14,7 +11,7 @@ namespace Horde.Agent.Commands.Certs
 	/// <summary>
 	/// Creates a certificate that can be used for server/agent SSL connections
 	/// </summary>
-	[Command("createcert", "Creates a self-signed certificate that can be used for server/agent gRPC connections")]
+	[Command("createcert", "Creates a self-signed certificate that can be used for server/agent gRPC connections", Advertise = false)]
 	class CreateCertCommand : Command
 	{
 		[CommandLine("-Server=")]
@@ -34,7 +31,7 @@ namespace Horde.Agent.Commands.Certs
 		/// </summary>
 		/// <param name="logger"></param>
 		/// <returns>Async task</returns>
-		public override Task<int> ExecuteAsync(ILogger logger)
+		public override async Task<int> ExecuteAsync(ILogger logger)
 		{
 			if (DnsName == null)
 			{
@@ -47,7 +44,7 @@ namespace Horde.Agent.Commands.Certs
 				AgentSettings settings = new AgentSettings();
 				config.GetSection("Horde").Bind(settings);
 
-				if(Server != null)
+				if (Server != null)
 				{
 					settings.Server = Server;
 				}
@@ -59,11 +56,11 @@ namespace Horde.Agent.Commands.Certs
 
 			if (PrivateCertFile == null)
 			{
-				FileReference solutionFile = FileReference.Combine(new FileReference(Assembly.GetExecutingAssembly().Location).Directory, "..", "..", "..", "..", "Horde.sln");
+				FileReference solutionFile = FileReference.Combine(new DirectoryReference(AppContext.BaseDirectory), "..", "..", "..", "..", "Horde.sln");
 				if (!FileReference.Exists(solutionFile))
 				{
 					logger.LogError("The -PrivateCertFile=... arguments must be specified when running outside the default build directory");
-					return Task.FromResult(1);
+					return 1;
 				}
 				PrivateCertFile = FileReference.Combine(solutionFile.Directory, "HordeServer", "Certs", $"ServerToAgent-{Environment}.pfx").FullName;
 			}
@@ -73,13 +70,13 @@ namespace Horde.Agent.Commands.Certs
 			byte[] privateCertData = CertificateUtils.CreateSelfSignedCert(DnsName, "Horde Server");
 
 			logger.LogInformation("Writing private cert: {PrivateCert}", new FileReference(PrivateCertFile).FullName);
-			File.WriteAllBytes(PrivateCertFile, privateCertData);
+			await File.WriteAllBytesAsync(PrivateCertFile, privateCertData);
 
 			using X509Certificate2 certificate = new X509Certificate2(privateCertData);
 			logger.LogInformation("Certificate thumbprint is {Thumbprint}", certificate.Thumbprint);
 			logger.LogInformation("Add this thumbprint to list of trusted servers in appsettings.json to trust this server.");
 
-			return Task.FromResult(0);
+			return 0;
 		}
 	}
 }

@@ -48,8 +48,7 @@ class FWaterTileVS : public FGlobalShader
 	DECLARE_GLOBAL_SHADER(FWaterTileVS);
 	SHADER_USE_PARAMETER_STRUCT(FWaterTileVS, FGlobalShader);
 
-	class ETileEncoding : SHADER_PERMUTATION_INT("PERMUTATION_TILE_ENCODING", 2); // 16 bits or 12 bits tile coord encoding
-	using FPermutationDomain = TShaderPermutationDomain<ETileEncoding>;
+	using FPermutationDomain = TShaderPermutationDomain<>;
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, ViewUniformBuffer)

@@ -47,6 +47,16 @@ void FGLTFTextureUtilities::FullyLoad(const UTexture* InTexture)
 	Texture->WaitForStreaming();
 }
 
+bool FGLTFTextureUtilities::Is2D(const UTexture* Texture)
+{
+	return Texture->IsA<UTexture2D>() || Texture->IsA<UTextureRenderTarget2D>();
+}
+
+bool FGLTFTextureUtilities::IsCubemap(const UTexture* Texture)
+{
+	return Texture->IsA<UTextureCube>() || Texture->IsA<UTextureRenderTargetCube>();
+}
+
 bool FGLTFTextureUtilities::IsHDR(const UTexture* Texture)
 {
 	switch (Texture->CompressionSettings)
@@ -58,11 +68,6 @@ bool FGLTFTextureUtilities::IsHDR(const UTexture* Texture)
 		default:
 			return false;
 	}
-}
-
-bool FGLTFTextureUtilities::IsCubemap(const UTexture* Texture)
-{
-	return Texture->IsA<UTextureCube>() || Texture->IsA<UTextureRenderTargetCube>();
 }
 
 TextureFilter FGLTFTextureUtilities::GetDefaultFilter(TextureGroup LODGroup)
@@ -93,8 +98,8 @@ int32 FGLTFTextureUtilities::GetMipBias(const UTexture* Texture)
 
 FIntPoint FGLTFTextureUtilities::GetInGameSize(const UTexture* Texture)
 {
-	const int32 Width = static_cast<int32>(Texture->GetSurfaceWidth());
-	const int32 Height = static_cast<int32>(Texture->GetSurfaceHeight());
+	const int32 Width = FMath::CeilToInt(Texture->GetSurfaceWidth());
+	const int32 Height = FMath::CeilToInt(Texture->GetSurfaceHeight());
 
 	const int32 MipBias = GetMipBias(Texture);
 

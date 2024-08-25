@@ -17,8 +17,13 @@
 #include "Stats/StatsTrace.h"
 #include "TextureCompiler.h"
 #include "TextureResource.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/Package.h"
 #include "UObject/StrongObjectPtr.h"
+
+#if WITH_EDITOR
+#include "AsyncCompilationHelpers.h"
+#endif
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(TextureCubeArray)
 
@@ -358,9 +363,6 @@ static UTextureCubeArray* GetDefaultTextureCubeArray(const UTextureCubeArray* Te
 UTextureCubeArray::UTextureCubeArray(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 	, PrivatePlatformData(nullptr)
-	, PlatformData(
-		[this]()-> FTexturePlatformData* { return GetPlatformData(); },
-		[this](FTexturePlatformData* InPlatformData) { SetPlatformData(InPlatformData); })
 {
 #if WITH_EDITORONLY_DATA
 	SRGB = true;
@@ -376,6 +378,11 @@ FTexturePlatformData** UTextureCubeArray::GetRunningPlatformData()
 
 void UTextureCubeArray::SetPlatformData(FTexturePlatformData* InPlatformData)
 {
+	if (PrivatePlatformData)
+	{
+		ReleaseResource();
+		delete PrivatePlatformData;
+	}
 	PrivatePlatformData = InPlatformData;
 }
 
@@ -434,6 +441,13 @@ FTextureResource* UTextureCubeArray::CreateResource()
 	{
 		return new FTextureCubeArrayResource(this);
 	}
+#if WITH_EDITORONLY_DATA
+	else if (!SourceTextures.Num())
+	{
+		// empty arrays don't have built mips
+		return nullptr;
+	}
+#endif
 	else if (GetNumMips() == 0)
 	{
 		UE_LOG(LogTexture, Warning, TEXT("%s contains no miplevels! Please delete."), *GetFullName());
@@ -791,6 +805,13 @@ void UTextureCubeArray::PostLoad()
 
 void UTextureCubeArray::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UTextureCubeArray::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
 #if WITH_EDITOR
 	int32 SizeX = Source.GetSizeX();
 	int32 SizeY = Source.GetSizeY();
@@ -801,10 +822,10 @@ void UTextureCubeArray::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags)
 	int32 ArraySize = 0;
 #endif
 	const FString Dimensions = FString::Printf(TEXT("%dx%d*%d"), SizeX, SizeY, ArraySize);
-	OutTags.Add(FAssetRegistryTag("Dimensions", Dimensions, FAssetRegistryTag::TT_Dimensional));
-	OutTags.Add(FAssetRegistryTag("Format", GPixelFormats[GetPixelFormat()].Name, FAssetRegistryTag::TT_Alphabetical));
+	Context.AddTag(FAssetRegistryTag("Dimensions", Dimensions, FAssetRegistryTag::TT_Dimensional));
+	Context.AddTag(FAssetRegistryTag("Format", GPixelFormats[GetPixelFormat()].Name, FAssetRegistryTag::TT_Alphabetical));
 
-	Super::GetAssetRegistryTags(OutTags);
+	Super::GetAssetRegistryTags(Context);
 }
 
 FString UTextureCubeArray::GetDesc()

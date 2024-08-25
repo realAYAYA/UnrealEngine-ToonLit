@@ -156,7 +156,7 @@ struct FRootForest
 			{
 				return Root.FirstChild == RootFirstChild;
 			},
-			false );
+			EAllowShrinking::No);
 	}
 
 	template< typename FFuncType >
@@ -230,7 +230,7 @@ public:
 			NodeCost = SmallestCost;
 			NodeIndex = Candidates[ SmallestIndex ].Value;
 
-			Candidates.RemoveAtSwap( SmallestIndex, 1, false );
+			Candidates.RemoveAtSwap( SmallestIndex, 1, EAllowShrinking::No);
 		}
 
 		return true;
@@ -1037,7 +1037,7 @@ void FDynamicBVH< MaxChildren, FRootPolicy, FDirtyPolicy, FCostMetric >::ForAll(
 				if( Stack.Num() == 0 )
 					break;
 
-				NodeIndex = Stack.Pop( false );
+				NodeIndex = Stack.Pop( EAllowShrinking::No );
 			}
 		} );
 }
@@ -1080,7 +1080,7 @@ void FDynamicBVH< MaxChildren, FRootPolicy, FDirtyPolicy, FCostMetric >::ForAll(
 				if( Stack.Num() == 0 )
 					break;
 
-				NodeIndex = Stack.Pop( false );
+				NodeIndex = Stack.Pop( EAllowShrinking::No );
 			}
 		} );
 }
@@ -1298,7 +1298,7 @@ void FDynamicBVH< MaxChildren, FRootPolicy, FDirtyPolicy, FCostMetric >::Build( 
 			ParentIndex	= Stack.Last().ParentIndex;
 			Range		= Stack.Last().Range;
 
-			Stack.Pop( false );
+			Stack.Pop( EAllowShrinking::No );
 		}
 		else
 		{

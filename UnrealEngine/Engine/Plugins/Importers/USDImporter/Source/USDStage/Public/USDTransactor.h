@@ -3,10 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Misc/ITransaction.h"
 #include "UObject/WeakObjectPtr.h"
-
-#include "UsdWrappers/VtValue.h"
 
 #include "USDTransactor.generated.h"
 
@@ -45,22 +42,22 @@ class USDSTAGE_API UUsdTransactor : public UObject
 public:
 	// Boilerplate for Pimpl usage with UObject
 	UUsdTransactor();
-	UUsdTransactor( FVTableHelper& Helper );
+	UUsdTransactor(FVTableHelper& Helper);
 	~UUsdTransactor();
 
-	void Initialize( AUsdStageActor* InStageActor );
-	void Update( const UsdUtils::FObjectChangesByPath& NewInfoChanges, const UsdUtils::FObjectChangesByPath& NewResyncChanges );
+	void Initialize(AUsdStageActor* InStageActor);
+	void Update(const UsdUtils::FObjectChangesByPath& NewInfoChanges, const UsdUtils::FObjectChangesByPath& NewResyncChanges);
 
 	// Begin UObject interface
-	virtual void Serialize( FArchive& Ar ) override;
+	virtual void Serialize(FArchive& Ar) override;
 #if WITH_EDITOR
 	virtual void PreEditUndo();
 	virtual void PostEditUndo();
-#endif // WITH_EDITOR
-	//~ End UObject interface
+#endif	  // WITH_EDITOR
+		  //~ End UObject interface
 
 private:
 	TWeakObjectPtr<AUsdStageActor> StageActor;
 
-	TUniquePtr< UsdUtils::FUsdTransactorImpl > Impl;
+	TUniquePtr<UsdUtils::FUsdTransactorImpl> Impl;
 };

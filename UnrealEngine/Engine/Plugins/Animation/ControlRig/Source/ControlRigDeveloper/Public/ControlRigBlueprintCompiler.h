@@ -21,5 +21,6 @@ public:
 	}
 
 	// FKismetCompilerContext interface
+	virtual void SpawnNewClass(const FString& NewClassName) override;
 	virtual void CopyTermDefaultsToDefaultObject(UObject* DefaultObject) override;
 };

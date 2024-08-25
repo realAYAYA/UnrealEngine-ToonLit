@@ -343,7 +343,7 @@ FSphericalGaussian ComputeRoughnessLobe(FSSDSampleSceneInfos RefSceneMetadata)
 		float3 V = float3(1, 0, 0); // TODO(Denoiser).
 	#else
 		float3 N = RefSceneMetadata.WorldNormal;
-		float3 V = normalize(View.TranslatedWorldCameraOrigin - GetTranslatedWorldPosition(RefSceneMetadata));
+		float3 V = -GetCameraVectorFromTranslatedWorldPosition(GetTranslatedWorldPosition(RefSceneMetadata));
 	#endif
 
 	float Roughness = RefSceneMetadata.Roughness;
@@ -354,7 +354,7 @@ FSphericalGaussian ComputeRoughnessLobe(FSSDSampleSceneInfos RefSceneMetadata)
 /** Compute the factor to apply to inifinity bluring radius based on the sample's hit distance. */
 float ComputeBluringOutOfFocusOfNormalizedSample(FSSDSignalFrequency SampleFrequency, FSSDSampleSceneInfos SceneMetadata)
 {
-	float DistanceCameraToPixel = length(View.TranslatedWorldCameraOrigin - GetTranslatedWorldPosition(SceneMetadata));
+	float DistanceCameraToPixel = GetDistanceToCameraFromViewVector(View.TranslatedWorldCameraOrigin - GetTranslatedWorldPosition(SceneMetadata));
 
 	return ComputeDenoisingCoc(DistanceCameraToPixel, SampleFrequency.ClosestHitDistance);
 }
@@ -367,7 +367,7 @@ void ProjectSpecularLobeToScreenSpace(
 	out float InifinityMinorViewportRadius)
 {
 	float3 N = GetWorldNormal(SceneMetadata);
-	float3 V = normalize(View.TranslatedWorldCameraOrigin - GetTranslatedWorldPosition(SceneMetadata));
+	float3 V = -GetCameraVectorFromTranslatedWorldPosition(GetTranslatedWorldPosition(SceneMetadata));
 
 	// Project reflection axis onto screen.
 	{
@@ -473,7 +473,7 @@ float ComputeBilateralWeight(
 	else if ((BilateralSettings & 0xF) == 2)
 	{
 		// TODO(Denoiser): save 2 VGPR by using SceneDepth instead of RefSceneMetadata.TranslatedWorldPosition (not sure it can work in math yet).
-		// float2 ClipPosition = ScreenPosition * (View.ViewToClip[3][3] < 1.0f ? WorldDepth : 1.0f);
+		// float2 ClipPosition = GetScreenPositionForProjectionType(ScreenPosition, WorldDepth);
 		// Infos.TranslatedWorldPosition = mul(float4(ClipPosition, WorldDepth, 1), ScreenToTranslatedWorld).xyz;
 
 		float DistFromRefPlane = abs(dot(RefNormal, NeighborToRefVector));

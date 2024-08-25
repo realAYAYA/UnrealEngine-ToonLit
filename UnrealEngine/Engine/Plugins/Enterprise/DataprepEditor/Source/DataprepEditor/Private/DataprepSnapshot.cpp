@@ -295,6 +295,27 @@ namespace DataprepSnapshotUtil
 				SubObjectDependencyGraph[SubObject].Append(Analyzer.DependentObjects);
 			}
 
+			bool bCyclingDependency = true;
+			for (auto& Entry : SubObjectDependencyGraph)
+			{
+				if (Entry.Value.Num() == 0)
+				{
+					bCyclingDependency = false;
+					break;
+				}
+			}
+
+			if (bCyclingDependency)
+			{
+				for (auto& Entry : SubObjectDependencyGraph)
+				{
+					if (Entry.Value.Num() == 1)
+					{
+						Entry.Value.Empty();
+					}
+				}
+			}
+
 			// Sort array of sub-objects: first objects do not depend on ones below
 			int32 Count = SubObjectsArray.Num();
 			SubObjectsArray.Empty(Count);

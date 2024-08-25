@@ -173,7 +173,6 @@ static void Writer_ControlRecv()
 		int32 Recvd = IoRead(GControlSocket, Head, ReadSize);
 		if (Recvd <= 0)
 		{
-			UE_TRACE_ERRORMESSAGE_F(ReadError, GetLastErrorCode(), "While reading remote command. Read returned %d", Recvd);
 			IoClose(GControlSocket);
 			GControlSocket = 0;
 			GControlState = EControlState::Listening;

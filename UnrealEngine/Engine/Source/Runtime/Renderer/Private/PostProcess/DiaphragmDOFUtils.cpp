@@ -24,7 +24,8 @@ TAutoConsoleVariable<float> CVarMaxBackgroundRadius(
 
 } // namespace
 
-float DiaphragmDOF::ComputeFocalLengthFromFov(const FSceneView& View)
+// TODO: delete.
+float ComputeFocalLengthFromFov(const FSceneView& View)
 {
 	// Convert FOV to focal length,
 	// 
@@ -44,6 +45,7 @@ float DiaphragmDOF::ComputeFocalLengthFromFov(const FSceneView& View)
 
 // Convert f-stop and focal distance into projected size in half resolution pixels.
 // Setup depth based blur.
+// TODO: This logic does not account for the Squeeze factor in the same way as the logic below. See JIRA UE-203727
 FVector4f DiaphragmDOF::CircleDofHalfCoc(const FViewInfo& View)
 {
 	static const auto CVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.DepthOfFieldQuality"));
@@ -53,7 +55,7 @@ FVector4f DiaphragmDOF::CircleDofHalfCoc(const FViewInfo& View)
 
 	if(bDepthOfField)
 	{
-		float FocalLengthInMM = DiaphragmDOF::ComputeFocalLengthFromFov(View);
+		float FocalLengthInMM = ComputeFocalLengthFromFov(View); // TODO for Material.
 	 
 		// Convert focal distance in world position to mm (from cm to mm)
 		float FocalDistanceInMM = View.FinalPostProcessSettings.DepthOfFieldFocalDistance * 10.0f;
@@ -99,15 +101,34 @@ FVector4f DiaphragmDOF::CircleDofHalfCoc(const FViewInfo& View)
 
 void DiaphragmDOF::FPhysicalCocModel::Compile(const FViewInfo& View)
 {
-	// Fetches DOF settings.
+	// Fetches lens and filmback settings settings.
 	{
+		const float MMToUU = 0.1f;
+
 		FocusDistance = View.FinalPostProcessSettings.DepthOfFieldFocalDistance;
+		FStops = View.FinalPostProcessSettings.DepthOfFieldFstop;
 		Squeeze = FMath::Clamp(View.FinalPostProcessSettings.DepthOfFieldSqueezeFactor, 1.0f, 2.0f);
 
+		RenderingAspectRatio = float(View.UnscaledViewRect.Width()) / float(View.UnscaledViewRect.Height());
+		const float HorizontalHalfFOV = FMath::Atan(1.0f / View.ViewMatrices.GetProjectionMatrix().M[0][0]);
+		const float VerticalHalfFOV = FMath::Atan(1.0f / View.ViewMatrices.GetProjectionMatrix().M[1][1]);
+
+		// If the focal length isn't set, compute based of the sensor height and vertical FOV.
+		const float SensorAspectRatio = RenderingAspectRatio / Squeeze;
+		SensorWidth  = View.FinalPostProcessSettings.DepthOfFieldSensorWidth * MMToUU;
+		SensorHeight = SensorWidth / SensorAspectRatio;
+		VerticalFocalLength = 0.5f * SensorHeight * (1.0f / FMath::Tan(VerticalHalfFOV));
+	}
+
+	// Fetch the max bluring radius
+	{
 		// -because foreground Coc are negative.
 		MinForegroundCocRadius = -CVarMaxForegroundRadius.GetValueOnRenderThread();
 		MaxBackgroundCocRadius = CVarMaxBackgroundRadius.GetValueOnRenderThread();
+	}
 
+	// Fetch the depth blur.
+	{
 		MaxDepthBlurRadius = View.FinalPostProcessSettings.DepthOfFieldDepthBlurRadius / 1920.0f;
 
 		// Circle DOF was actually computing in this depth blur radius in half res.
@@ -117,40 +138,66 @@ void DiaphragmDOF::FPhysicalCocModel::Compile(const FViewInfo& View)
 	}
 
 	// Compile coc model equation.
-	if (View.FinalPostProcessSettings.DepthOfFieldFstop > 0.f && View.FinalPostProcessSettings.DepthOfFieldFocalDistance > 0.f)
+	if (FStops > 0.f && FocusDistance > 0.f)
 	{
-
-		float FocalLengthInMM = DiaphragmDOF::ComputeFocalLengthFromFov(View);
-
-		// Convert focal distance in world position to mm (from cm to mm)
-		float FocalDistanceInMM = View.FinalPostProcessSettings.DepthOfFieldFocalDistance * 10.0f;
-
-		// Convert mm to pixels.
-		float const SensorWidthInMM = View.FinalPostProcessSettings.DepthOfFieldSensorWidth;
-
 		// Convert f-stop, focal length, and focal distance to
-		// projected circle of confusion size at infinity in mm.
+		// projected circle of confusion size of infinity on the sensor in unreal unit.
 		//
 		// coc = f * f / (n * (d - f))
 		// where,
 		//   f = focal length
 		//   d = focal distance
 		//   n = fstop (where n is the "n" in "f/n")
-		float DiameterInMM = FMath::Square(FocalLengthInMM) / (View.FinalPostProcessSettings.DepthOfFieldFstop * (FocalDistanceInMM - FocalLengthInMM));
+		float VerticalDiameter = FMath::Square(VerticalFocalLength) / (FStops * (FocusDistance - VerticalFocalLength));
 
-		// Convert diameter in mm to resolution less radius on the filmback.
-		InfinityBackgroundCocRadius = DiameterInMM * 0.5f / SensorWidthInMM;
+		// Convert vertical diameter in unreal unit to radius on the filmback in vertical ViewportUV unit in uncropped viewport.
+		float UncroppedVerticalInfinityBackgroundCocRadius = VerticalDiameter * 0.5f / SensorHeight;
+
+		const float DesqueezedAspectRatio = SensorWidth / SensorHeight * Squeeze;
+		float VerticalInfinityBackgroundCocRadius = UncroppedVerticalInfinityBackgroundCocRadius * FMath::Max(RenderingAspectRatio / DesqueezedAspectRatio, 1.0);
+
+		// Convert diameter from vertical ViewportUV unit to horizontal ViewportUV unit.
+		InfinityBackgroundCocRadius = VerticalInfinityBackgroundCocRadius / RenderingAspectRatio;
+
+		if (View.InFocusDistance > 0)
+		{
+			// For now, the dynamic CoC offset only handles cases where the in-focus radius is positive (the in-focus distance is further than the focal point)
+			// so clamp the in focus radius to always be positive
+			InFocusRadius = FMath::Max(InfinityBackgroundCocRadius * (1 - FocusDistance / View.InFocusDistance), 0.0f);
+			bEnableDynamicOffset = View.bEnableDynamicCocOffset;
+			DynamicRadiusOffsetLUT = View.bEnableDynamicCocOffset ? View.DynamicCocOffsetLUT : nullptr;
+		}
+		else
+		{
+			InFocusRadius = 0.0;
+			bEnableDynamicOffset = false;
+			DynamicRadiusOffsetLUT = nullptr;
+		}
 	}
 	else
 	{
 		InfinityBackgroundCocRadius = 0.0f;
 		MinForegroundCocRadius = 0.0;
+		InFocusRadius = 0.0;
+		bEnableDynamicOffset = false;
+		DynamicRadiusOffsetLUT = nullptr;
 	}
+}
+
+FVector2f DiaphragmDOF::FPhysicalCocModel::GetLensRadius() const
+{
+	// Size of the vertical aperture in unreal unit.
+	float ApertureDiameter = VerticalFocalLength / FStops;
+
+	float VerticalLensRadius = 0.5f * ApertureDiameter;
+	float HorizontalLensRadius = VerticalLensRadius / Squeeze;
+	return FVector2f(HorizontalLensRadius, VerticalLensRadius);
 }
 
 float DiaphragmDOF::FPhysicalCocModel::DepthToResCocRadius(float SceneDepth, float HorizontalResolution) const
 {
-	float CocRadius = ((SceneDepth - FocusDistance) / SceneDepth) * InfinityBackgroundCocRadius;
+	float InitialCocRadius = ((SceneDepth - FocusDistance) / SceneDepth) * InfinityBackgroundCocRadius;
+	float CocRadius = InitialCocRadius + GetCocOffset(InitialCocRadius);
 
 	// Depth blur based.
 	float DepthBlurAbsRadius = (1.0 - FMath::Exp2(-SceneDepth * DepthBlurExponent)) * MaxDepthBlurRadius;
@@ -162,6 +209,19 @@ float DiaphragmDOF::FPhysicalCocModel::DepthToResCocRadius(float SceneDepth, flo
 		ReturnCoc = -ReturnCoc;
 	}
 	return HorizontalResolution * FMath::Clamp(ReturnCoc, MinForegroundCocRadius, MaxBackgroundCocRadius);
+}
+
+float DiaphragmDOF::FPhysicalCocModel::GetCocOffset(float CocRadius) const
+{
+	float DynamicOffset = 0.0;
+	if (bEnableDynamicOffset)
+	{
+		const float B = 0.467743 + 7.89656 * pow(InFocusRadius, -1.89051);
+		const float V = -(2.57186 + 0.142159 * InFocusRadius);
+		DynamicOffset = -InFocusRadius * (1 - pow(1 + exp(B * (InFocusRadius - CocRadius)), V));
+	}
+
+	return DynamicOffset;
 }
 
 void DiaphragmDOF::FBokehModel::Compile(const FViewInfo& View)

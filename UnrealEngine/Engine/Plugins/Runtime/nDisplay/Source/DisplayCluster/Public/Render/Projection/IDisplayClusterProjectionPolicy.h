@@ -10,8 +10,9 @@ class IDisplayClusterViewportProxy;
 class IDisplayClusterWarpBlend;
 class IDisplayClusterWarpPolicy;
 class UMeshComponent;
+class USceneComponent;
 struct FDisplayClusterConfigurationProjection;
-
+struct FMinimalViewInfo;
 
 /**
  * nDisplay projection policy
@@ -35,7 +36,7 @@ public:
 	/**
 	* Return projection policy type
 	*/
-	UE_DEPRECATED(5.1, "This function has beend deprecated. Please use 'GetType'.")
+	UE_DEPRECATED(5.1, "This function has been deprecated. Please use 'GetType'.")
 	virtual const FString GetTypeId() const
 	{
 		return GetType();
@@ -45,6 +46,16 @@ public:
 	* Return projection policy configuration
 	*/
 	virtual const TMap<FString, FString>& GetParameters() const = 0;
+
+	/**
+	 * Return Origin point component used by this viewport
+	 * This component is used to convert from the local DCRA space to the local projection policy space,
+	 * which contains the calibrated geometry data used for the warp.
+	 */
+	virtual USceneComponent* const GetOriginComponent() const
+	{
+		return nullptr;
+	}
 
 	/**
 	* Send projection policy game thread data to render thread proxy
@@ -69,6 +80,23 @@ public:
 	* @param InViewport - a owner viewport
 	*/
 	virtual void HandleEndScene(IDisplayClusterViewport* InViewport)
+	{ }
+
+	/**
+	 * Called before FDisplayClusterViewport::UpdateFrameContexts()
+	 * From this function, the policy can override any viewport settings (custom overscan, etc).
+	 * 
+	 * @param InViewport - a owner viewport
+	 */
+	virtual void BeginUpdateFrameContexts(IDisplayClusterViewport* InViewport) const
+	{ }
+
+	/**
+	 * Called after FDisplayClusterViewport::UpdateFrameContexts()
+	 * 
+	 * @param InViewport - a owner viewport
+	 */
+	virtual void EndUpdateFrameContexts(IDisplayClusterViewport* InViewport) const
 	{ }
 
 	/**
@@ -112,8 +140,11 @@ public:
 		return false;
 	}
 
-	// This policy can support ICVFX rendering
-	virtual bool ShouldSupportICVFX() const
+	/** Returns true if this policy supports ICVFX rendering
+	 * 
+	 * @param InViewport - a owner viewport
+	 */
+	virtual bool ShouldSupportICVFX(IDisplayClusterViewport* InViewport) const
 	{
 		return false;
 	}
@@ -134,35 +165,26 @@ public:
 	*/
 	virtual bool IsConfigurationChanged(const struct FDisplayClusterConfigurationProjection* InConfigurationProjectionPolicy) const = 0;
 
-	/** Get viewpoint for this projection policy
+	/** Override view from this projection policy
 	 *
-	 * @param OutViewRotation - viewpoint rotation
-	 * @param OutViewLocation - viewpoint location
-	 *
-	 * @return - true, if the viewpoint values have changed
+	 * @param InViewport                 - a owner viewport
+	 * @param InDeltaTime                - delta time in current frame
+	 * @param InOutViewInfo              - ViewInfo data
+	 * @param OutCustomNearClippingPlane - Custom NCP, or a value less than zero if not defined.
 	 */
-	virtual bool GetViewPoint(IDisplayClusterViewport* InViewport, FRotator& InOutViewRotation, FVector& InOutViewLocation)
-	{
-		return false;
-	}
-
-	/** Projection policy can override PP */
-	virtual void OverridePostProcessSettings(IDisplayClusterViewport* InViewport)
+	virtual void SetupProjectionViewPoint(IDisplayClusterViewport* InViewport, const float InDeltaTime, FMinimalViewInfo& InOutViewInfo, float* OutCustomNearClippingPlane = nullptr)
 	{ }
 
-	 /** Get the distance from the eye to the viewpoint location
-	 *
-	 * @param InContextNum - eye context of this viewport
-	 * @param OutStereoEyeOffsetDistance - new eye distance
-	 *
-	 * @return - true, if the offset distance of the stereo eye has changed
-	 */
-	virtual bool GetStereoEyeOffsetDistance(IDisplayClusterViewport* InViewport, const uint32 InContextNum, float& InOutStereoEyeOffsetDistance)
-	{
-		return false;
-	}
+	/** Projection policy can override PP
+	* 
+	* @param InViewport - a owner viewport
+	*/
+	virtual void UpdatePostProcessSettings(IDisplayClusterViewport* InViewport)
+	{ }
 
-	/**
+	/** Calculate view projection data
+	* 
+	* @param InViewport        - a owner viewport
 	* @param ViewIdx           - Index of view that is being processed for this viewport
 	* @param InOutViewLocation - (in/out) View location with ViewOffset (i.e. left eye pre-computed location)
 	* @param InOutViewRotation - (in/out) View rotation
@@ -175,7 +197,9 @@ public:
 	*/
 	virtual bool CalculateView(IDisplayClusterViewport* InViewport, const uint32 InContextNum, FVector& InOutViewLocation, FRotator& InOutViewRotation, const FVector& ViewOffset, const float WorldToMeters, const float NCP, const float FCP) = 0;
 
-	/**
+	/** Gets projection matrix
+	* 
+	* @param InViewport   - a owner viewport
 	* @param ViewIdx      - Index of view that is being processed for this viewport
 	* @param OutPrjMatrix - (out) projection matrix
 	*
@@ -191,6 +215,33 @@ public:
 	virtual bool IsWarpBlendSupported()
 	{
 		return false;
+	}
+
+	/**
+	* This function can override the size of the RenderTarget texture for the viewport.
+	*
+	* @param InViewport          - viewport to override RTT size.
+	* @param OutRenderTargetSize - (out) the desired RTT size.
+	*
+	* @return is true if the RTT size should be overridden.
+	*/
+	virtual bool GetCustomRenderTargetSize(const IDisplayClusterViewport* InViewport, FIntPoint& OutRenderTargetSize) const
+	{
+		return false;
+	}
+
+	/**
+	* This function controls the RTT size multipliers - if false is returned, all modifiers should be ignored.
+	* Here is the list of ignored modifiers:
+	*    RenderTargetAdaptRatio, RenderTargetRatio,
+	*    ClusterRenderTargetRatioMult,
+	*    ClusterICVFXOuterViewportRenderTargetRatioMult, ClusterICVFXInnerViewportRenderTargetRatioMult
+	* 
+	* @param InViewport - the DC viewport.
+	*/
+	virtual bool ShouldUseAnySizeScaleForRenderTarget(const IDisplayClusterViewport* InViewport) const
+	{
+		return true;
 	}
 
 	/**
@@ -249,19 +300,37 @@ public:
 		return false;
 	}
 
-#if WITH_EDITOR
+	/**
+	* Override copying 'InternalRenderTargetResource' to 'InputShaderResource'.
+	* The same behavior as for function bellow  is expected:
+	*     ResolveResources_RenderThread(RHICmdList, InSourceViewportProxy, InSrcResourceType, InDstResourceType);
+	*
+	* @param InViewportProxy       - This ViewportProxy will get the result
+	* @param InSourceViewportProxy - This ViewportProxy will provide the input resource
+	* 
+	* @return - true, if copying is overridden.
+	*/
+	virtual bool ResolveInternalRenderTargetResource_RenderThread(FRHICommandListImmediate& RHICmdList, const IDisplayClusterViewportProxy* InViewportProxy, const IDisplayClusterViewportProxy* InSourceViewportProxy)
+	{
+		return false;
+	}
+
 	/**
 	* Ask projection policy instance if it has any mesh based preview
 	*
+	* @param InViewport - a owner viewport
 	* @return - True if mesh based preview is available
 	*/
-	virtual bool HasPreviewMesh()
+	virtual bool HasPreviewMesh(IDisplayClusterViewport* InViewport)
 	{
 		return false;
 	}
 
 	/**
 	* Build preview mesh
+	* This MeshComponent cannot be moved freely.
+	* This MeshComponent is attached to the geometry from the real world via Origin.
+	* When the screen geometry in the real world changes position, the position of this component must also be changed.
 	*
 	* @param InViewport - Projection specific parameters.
 	* @param bOutIsRootActorComponent - return true, if used custom root actor component. return false, if created unique temporary component
@@ -270,5 +339,68 @@ public:
 	{
 		return nullptr;
 	}
-#endif
+
+	/**
+	 * Return Origin point component used by preview mesh
+	 * 
+	 * @param InViewport - a owner viewport
+	 */
+	virtual USceneComponent* const GetPreviewMeshOriginComponent(IDisplayClusterViewport* InViewport) const
+	{
+		return nullptr;
+	}
+
+	/**
+	* Ask projection policy instance if it has any Editable mesh based preview
+	* 
+	* @param InViewport - a owner viewport
+	* @return - True if mesh based preview is available
+	*/
+	virtual bool HasPreviewEditableMesh(IDisplayClusterViewport* InViewport)
+	{
+		return false;
+	}
+
+	/**
+	* Build preview Editable mesh
+	* This MeshComponent is a copy of the preview mesh and can be moved freely with the UI visualization.
+	*
+	* @param InViewport - a owner viewport
+	*/
+	virtual UMeshComponent* GetOrCreatePreviewEditableMeshComponent(IDisplayClusterViewport* InViewport)
+	{
+		return nullptr;
+	}
+
+	/**
+	 * Return Origin point component used by preview Editable mesh
+	 * 
+	 * @param InViewport - a owner viewport
+	 */
+	virtual USceneComponent* const GetPreviewEditableMeshOriginComponent(IDisplayClusterViewport* InViewport) const
+	{
+		return nullptr;
+	}
+
+	//////////// UE_DEPRECATED 5.3 ////////////
+
+	// This policy can support ICVFX rendering
+	UE_DEPRECATED(5.3, "This function has been deprecated. Please use 'ShouldSupportICVFX(IDisplayClusterViewport*)'.")
+		virtual bool ShouldSupportICVFX() const
+	{
+		return false;
+	}
+
+	//////////// UE_DEPRECATED 5.4 ////////////
+
+	/**
+	* Ask projection policy instance if it has any mesh based preview
+	*
+	* @return - True if mesh based preview is available
+	*/
+	UE_DEPRECATED(5.4, "This function has been deprecated. Please use 'HasPreviewMesh(IDisplayClusterViewport*)'.")
+	virtual bool HasPreviewMesh()
+	{
+		return false;
+	}
 };

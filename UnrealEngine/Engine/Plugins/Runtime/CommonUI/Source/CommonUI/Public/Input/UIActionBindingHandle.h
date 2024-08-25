@@ -7,13 +7,17 @@
 #include "UIActionBindingHandle.generated.h"
 
 enum class EMouseCaptureMode : uint8;
+enum class EMouseLockMode : uint8;
 struct FScriptContainerElement;
 
 class UWidget;
 enum class ECommonInputMode : uint8;
 
+USTRUCT(BlueprintType, DisplayName = "UI Action Binding Handle")
 struct COMMONUI_API FUIActionBindingHandle
 {
+	GENERATED_BODY()
+
 public:
 	bool IsValid() const;
 	void Unregister();
@@ -27,6 +31,11 @@ public:
 
 	/** Should not be called often as broadcasts UCommonUIActionRouterBase::OnBoundActionsUpdated event */
 	void SetDisplayName(const FText& DisplayName);
+
+	bool GetDisplayInActionBar() const;
+
+	/** Should not be called often as broadcasts UCommonUIActionRouterBase::OnBoundActionsUpdated event */
+	void SetDisplayInActionBar(const bool bDisplayInActionBar);
 
 	const UWidget* GetBoundWidget() const;
 
@@ -84,19 +93,20 @@ struct COMMONUI_API FUIInputConfig
 
 	ECommonInputMode GetInputMode() const { return InputMode; }
 	EMouseCaptureMode GetMouseCaptureMode() const { return MouseCaptureMode; }
+	EMouseLockMode GetMouseLockMode() const { return MouseLockMode; }
 	bool HideCursorDuringViewportCapture() const { return bHideCursorDuringViewportCapture; }
 
 	FUIInputConfig();
-	FUIInputConfig(ECommonInputMode InInputMode, EMouseCaptureMode InMouseCaptureMode, bool bInHideCursorDuringViewportCapture = true)
-		: InputMode(InInputMode)
-		, MouseCaptureMode(InMouseCaptureMode)
-		, bHideCursorDuringViewportCapture(bInHideCursorDuringViewportCapture)
-	{}
+	FUIInputConfig(ECommonInputMode InInputMode, EMouseCaptureMode InMouseCaptureMode, bool bInHideCursorDuringViewportCapture = true);
+	FUIInputConfig(ECommonInputMode InInputMode, EMouseCaptureMode InMouseCaptureMode, EMouseLockMode InMouseLockMode, bool bInHideCursorDuringViewportCapture = true);
 
 	bool operator==(const FUIInputConfig& Other) const
 	{
-		return InputMode == Other.InputMode
+		return bIgnoreMoveInput == Other.bIgnoreMoveInput
+			&& bIgnoreLookInput == Other.bIgnoreLookInput
+			&& InputMode == Other.InputMode
 			&& MouseCaptureMode == Other.MouseCaptureMode
+			&& MouseLockMode == Other.MouseLockMode
 			&& bHideCursorDuringViewportCapture == Other.bHideCursorDuringViewportCapture;
 	}
 
@@ -122,6 +132,10 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = InputConfig)
 	EMouseCaptureMode MouseCaptureMode;
+
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = InputConfig)
+	EMouseLockMode MouseLockMode;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = InputConfig)
 	bool bHideCursorDuringViewportCapture = true;

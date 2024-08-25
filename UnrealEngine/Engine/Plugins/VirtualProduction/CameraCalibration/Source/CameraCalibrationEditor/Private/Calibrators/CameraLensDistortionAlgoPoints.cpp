@@ -7,6 +7,7 @@
 #include "CalibrationPointComponent.h"
 #include "Camera/CameraActor.h"
 #include "CameraCalibrationEditorLog.h"
+#include "CameraCalibrationSolver.h"
 #include "Dom/JsonObject.h"
 #include "Editor.h"
 #include "Input/Events.h"
@@ -14,6 +15,7 @@
 #include "Math/Vector.h"
 #include "Misc/MessageDialog.h"
 #include "Models/SphericalLensModel.h"
+#include "OpenCVHelper.h"
 #include "UI/SFilterableActorPicker.h"
 #include "UI/CameraCalibrationWidgetHelpers.h"
 #include "UObject/UObjectIterator.h"
@@ -21,16 +23,6 @@
 #include "Widgets/Input/SNumericEntryBox.h"
 #include "Widgets/Views/SListView.h"
 
-#if WITH_OPENCV
-
-#include "OpenCVHelper.h"
-#include <vector>
-
-#include "PreOpenCVHeaders.h"
-#include "opencv2/calib3d.hpp"
-#include "PostOpenCVHeaders.h"
-
-#endif
 
 #define LOCTEXT_NAMESPACE "CameraLensDistortionAlgoPoints"
 
@@ -264,6 +256,10 @@ bool UCameraLensDistortionAlgoPoints::OnViewportClicked(const FGeometry& MyGeome
 		return true;
 	}
 
+	// Store the 2D point in pixel coordinates
+	const FIntPoint ImageSize = StepsController->GetCompRenderResolution();
+	LastCalibratorPoint.Point2d = LastCalibratorPoint.Point2d * ImageSize;
+
 	// Export the latest session data
 	ExportSessionData();
 
@@ -364,7 +360,6 @@ bool UCameraLensDistortionAlgoPoints::GetLensDistortion(
 	double& OutError,
 	FText& OutErrorMessage)
 {
-#if WITH_OPENCV
 	if (!LensDistortionTool.IsValid())
 	{
 		OutErrorMessage = LOCTEXT("InvalidTool", "Invalid Tool");
@@ -387,38 +382,35 @@ bool UCameraLensDistortionAlgoPoints::GetLensDistortion(
 		return false;
 	}
 
-	const FIntPoint ImageSize = StepsController->GetCompRenderResolution();
+	TArray<FObjectPoints> Samples3d;
+	TArray<FImagePoints> Samples2d;
+	Samples3d.Reserve(CalibrationRows.Num());
+	Samples2d.Reserve(CalibrationRows.Num());
 
-	// Gather 3D points and 2D points from each group of rows
-	std::vector<std::vector<cv::Point3f>> Samples3d;
-	std::vector<std::vector<cv::Point2f>> Samples2d;
+	TArray<FTransform> CameraPoses;
 
 	uint32 NextPatternIndex = 0;
 	for (int32 RowIndex = 0; RowIndex < CalibrationRows.Num(); ++RowIndex)
 	{
-		std::vector<cv::Point3f> Points3d;
-		std::vector<cv::Point2f> Points2d;
-
+		FObjectPoints Points3d;
+		FImagePoints Points2d;
 		while (RowIndex < CalibrationRows.Num() && CalibrationRows[RowIndex]->PatternIndex == NextPatternIndex)
 		{
 			const TSharedPtr<FLensDistortionPointsRowData>& Row = CalibrationRows[RowIndex];
 
-			Points3d.push_back(cv::Point3f(
-				Row->CalibratorPointData.Point3d.X,
-				Row->CalibratorPointData.Point3d.Y,
-				Row->CalibratorPointData.Point3d.Z));
+			Points3d.Points.Add(Row->CalibratorPointData.Point3d);
 
-			Points2d.push_back(cv::Point2f(
-				Row->CalibratorPointData.Point2d.X,
-				Row->CalibratorPointData.Point2d.Y));
+			const FVector2f& Point2d = Row->CalibratorPointData.Point2d;
+			Points2d.Points.Add(FVector2D(Point2d.X, Point2d.Y));
 
 			++RowIndex;
 		}
 
-		if (Points3d.size() > 0)
+		if (Points3d.Points.Num() > 0)
 		{
-			Samples3d.push_back(Points3d);
-			Samples2d.push_back(Points2d);
+			Samples3d.Add(Points3d);
+			Samples2d.Add(Points2d);
+			CameraPoses.Add(FTransform::Identity);
 		}
 
 		--RowIndex;
@@ -426,17 +418,17 @@ bool UCameraLensDistortionAlgoPoints::GetLensDistortion(
 	}
 
 	// Validate that there are at least 4 patterns
-	if (Samples3d.size() < 4)
+	if (Samples3d.Num() < 4)
 	{
 		OutErrorMessage = LOCTEXT("NotEnoughSamples", "At least 4 calibration patterns are required");
 		return false;
 	}
 
 	// Validate that each pattern has the same number of points
-	const int32 NumPointsInPattern = Samples3d[0].size();
-	for (int32 PatternIndex = 1; PatternIndex < Samples3d.size(); ++PatternIndex)
+	const int32 NumPointsInPattern = Samples3d[0].Points.Num();
+	for (int32 PatternIndex = 1; PatternIndex < Samples3d.Num(); ++PatternIndex)
 	{
-		if (Samples3d[PatternIndex].size() != NumPointsInPattern)
+		if (Samples3d[PatternIndex].Points.Num() != NumPointsInPattern)
 		{
 			OutErrorMessage = LOCTEXT("DifferentNumPointsInPattern", "Every calibration pattern must have the same number of points");
 			return false;
@@ -444,7 +436,7 @@ bool UCameraLensDistortionAlgoPoints::GetLensDistortion(
 	}
 
 	// Because the calibration pattern is not coplanar, OpenCV requires an initial intrinsics guess
-	if (FMath::IsNearlyEqual(CurrentFocalLengthMM, 0.0f) || CurrentFocalLengthMM < 0.0f)
+	if (FMath::IsNearlyEqual(FocalLengthEstimate, 0.0) || FocalLengthEstimate < 0.0)
 	{
 		OutErrorMessage = LOCTEXT("InvalidFocalLengthMsg", "The current focal length (in mm) must be set to a "
 			"valid value in order to seed the calibration algorithm with a best guess as to the camera intrinsics (Fx/Fy)");
@@ -452,92 +444,69 @@ bool UCameraLensDistortionAlgoPoints::GetLensDistortion(
 	}
 
 	// Validate sensor dimensions
-	constexpr float MinimumSize = 1.0f; // Limit sensor dimension to 1mm
-	if (LensFile->LensInfo.SensorDimensions.X < MinimumSize || LensFile->LensInfo.SensorDimensions.Y < MinimumSize)
+	const FIntPoint ImageSize = LensFile->CameraFeedInfo.GetDimensions();
+
+	const float PixelAspect = LensFile->LensInfo.SqueezeFactor;
+
+	if (FMath::IsNearlyZero(PixelAspect))
 	{
-		OutErrorMessage = LOCTEXT("InvalidSensorDimensions", "Invalid sensor dimensions. Can't have dimensions smaller than 1mm");
+		OutErrorMessage = LOCTEXT("PixelAspectNearlyZero", "The pixel aspect in the Lens Information is zero, which is invalid.");
 		return false;
 	}
 
-	const float Fx = CurrentFocalLengthMM / LensFile->LensInfo.SensorDimensions.X;
-	const float Fy = CurrentFocalLengthMM / LensFile->LensInfo.SensorDimensions.Y;
+	const float PhysicalSensorWidth = StepsController->GetLensFileEvaluationInputs().Filmback.SensorWidth;
+	const float DesqueezeSensorWidth = PhysicalSensorWidth * PixelAspect;
 
-	cv::Mat CameraMatrix = cv::Mat::eye(3, 3, CV_64F);
+	if (FMath::IsNearlyZero(DesqueezeSensorWidth))
+	{
+		OutErrorMessage = LOCTEXT("SensorWidthNearlyZero", "The sensor width of the CineCamera is zero, which is invalid.");
+		return false;
+	}
 
-	CameraMatrix.at<double>(0, 0) = Fx * ImageSize.X; // Fx
-	CameraMatrix.at<double>(1, 1) = Fy * ImageSize.Y; // Fy
-	CameraMatrix.at<double>(0, 2) = 0.5 * ImageSize.X; // Cx
-	CameraMatrix.at<double>(1, 2) = 0.5 * ImageSize.Y; // Cy
+	const double Fx = (FocalLengthEstimate / DesqueezeSensorWidth) * ImageSize.X;
 
-	cv::Mat DistortionCoefficients;
+	// When operating on a desqueezed image, we expect our pixel aspect to be square, so horizontal and vertical field of view are assumed to be equal (i.e. Fx == Fy)
+	FVector2D FocalLength = FVector2D(Fx, Fx);
+	FVector2D ImageCenter = FVector2D((ImageSize.X - 1) * 0.5, (ImageSize.Y - 1) * 0.5);
 
-	std::vector<cv::Mat> Rvecs;
-	std::vector<cv::Mat> Tvecs;
+	ECalibrationFlags SolverFlags = ECalibrationFlags::None;
+	EnumAddFlags(SolverFlags, ECalibrationFlags::UseIntrinsicGuess);
 
- 	std::vector<double> IntrinsicsDeviations;
- 	std::vector<double> ExtrinsicsDeviations;
- 	std::vector<double> ViewErrors;
+	UClass* SolverClass = LensDistortionTool->GetSolverClass();
+	ULensDistortionSolver* Solver = NewObject<ULensDistortionSolver>(this, SolverClass);
 
-	OutError = cv::calibrateCamera(
+	FDistortionCalibrationResult Result = Solver->Solve(
 		Samples3d,
 		Samples2d,
-		cv::Size(ImageSize.X, ImageSize.Y),
-		CameraMatrix,
-		DistortionCoefficients,
-		Rvecs,
-		Tvecs,
-		IntrinsicsDeviations,
-		ExtrinsicsDeviations,
-		ViewErrors,
-		cv::CALIB_USE_INTRINSIC_GUESS
+		ImageSize,
+		FocalLength,
+		ImageCenter,
+		CameraPoses,
+		LensFile->LensInfo.LensModel,
+		PixelAspect,
+		SolverFlags
 	);
 
-	check(DistortionCoefficients.total() == 5);
-	check((CameraMatrix.rows == 3) && (CameraMatrix.cols == 3));
+	if (!Result.ErrorMessage.IsEmpty())
+	{
+		OutErrorMessage = Result.ErrorMessage;
+		return false;
+	}
 
 	const TSharedPtr<FLensDistortionPointsRowData>& FirstRow = CalibrationRows[0];
+
+	OutLensModel = LensFile->LensInfo.LensModel;
+	OutDistortionInfo.Parameters = Result.Parameters.Parameters;
+
+	OutFocalLengthInfo.FxFy = FVector2D(Result.FocalLength.FxFy / ImageSize);
+
+	OutImageCenterInfo.PrincipalPoint = FVector2D(Result.ImageCenter.PrincipalPoint / ImageSize);
 
 	// FZ inputs to LUT
 	OutFocus = FirstRow->CameraData.InputFocus;
 	OutZoom = FirstRow->CameraData.InputZoom;
 
-	// FocalLengthInfo
-	OutFocalLengthInfo.FxFy = FVector2D(
-		float(CameraMatrix.at<double>(0, 0) / ImageSize.X),
-		float(CameraMatrix.at<double>(1, 1) / ImageSize.Y)
-	);
-
-	// DistortionInfo
-	{
-		FSphericalDistortionParameters SphericalParameters;
-
-		SphericalParameters.K1 = DistortionCoefficients.at<double>(0);
-		SphericalParameters.K2 = DistortionCoefficients.at<double>(1);
-		SphericalParameters.P1 = DistortionCoefficients.at<double>(2);
-		SphericalParameters.P2 = DistortionCoefficients.at<double>(3);
-		SphericalParameters.K3 = DistortionCoefficients.at<double>(4);
-
-		USphericalLensModel::StaticClass()->GetDefaultObject<ULensModel>()->ToArray(
-			SphericalParameters,
-			OutDistortionInfo.Parameters
-		);
-	}
-
-	// ImageCenterInfo
-	OutImageCenterInfo.PrincipalPoint = FVector2D(
-		float(CameraMatrix.at<double>(0, 2) / ImageSize.X),
-		float(CameraMatrix.at<double>(1, 2) / ImageSize.Y)
-	);
-
-	// Lens Model
-	OutLensModel = USphericalLensModel::StaticClass();
-
 	return true;
-
-#else
-	OutErrorMessage = LOCTEXT("OpenCVRequired", "OpenCV is required");
-	return false;
-#endif //WITH_OPENCV
 }
 
 void UCameraLensDistortionAlgoPoints::OnDistortionSavedToLens()
@@ -848,18 +817,18 @@ TSharedRef<SWidget> UCameraLensDistortionAlgoPoints::BuildCurrentCalibratorPoint
 
 TSharedRef<SWidget> UCameraLensDistortionAlgoPoints::BuildCurrentFocalLengthWidget()
 {
-	return SNew(SNumericEntryBox<float>)
-		.Value_Lambda([&]() { return CurrentFocalLengthMM; })
-		.ToolTipText(LOCTEXT("CurrenFocalLength", "Current Focal Length (in mm)"))
-		.OnValueChanged_Lambda([&](float InValue)
+	return SNew(SNumericEntryBox<double>)
+		.Value_Lambda([&]() { return FocalLengthEstimate; })
+		.ToolTipText(LOCTEXT("CurrentFocalLength", "Current Focal Length (mm)"))
+		.OnValueChanged_Lambda([&](double InValue)
 		{
 			if (InValue < 1.0f)
 			{
 				InValue = 1.0f;
 			}
-			CurrentFocalLengthMM = InValue;
+			FocalLengthEstimate = InValue;
 		})
-		.OnValueCommitted_Lambda([&](float InValue, ETextCommit::Type CommitType)
+		.OnValueCommitted_Lambda([&](double InValue, ETextCommit::Type CommitType)
 		{
 			// Re-export the session data to update the new focal length value
 			ExportSessionData();
@@ -959,7 +928,7 @@ void UCameraLensDistortionAlgoPoints::ExportSessionData()
 		// Add all data to a json object that is needed to run this algorithm that is NOT part of a specific row
 		TSharedPtr<FJsonObject> JsonSessionData = MakeShared<FJsonObject>();
 
-		JsonSessionData->SetNumberField(LensDistortionPointsExportFields::CurrentFocalLength, CurrentFocalLengthMM);
+		JsonSessionData->SetNumberField(LensDistortionPointsExportFields::CurrentFocalLength, FocalLengthEstimate);
 		JsonSessionData->SetNumberField(LensDistortionPointsExportFields::Version, DATASET_VERSION);
 
 		// Export the session data to a .json file
@@ -993,7 +962,7 @@ void UCameraLensDistortionAlgoPoints::PreImportCalibrationData()
 void UCameraLensDistortionAlgoPoints::ImportSessionData(const TSharedRef<FJsonObject>& SessionDataObject)
 {
 	using namespace UE::CameraCalibration::Private;
-	SessionDataObject->TryGetNumberField(LensDistortionPointsExportFields::CurrentFocalLength, CurrentFocalLengthMM);
+	SessionDataObject->TryGetNumberField(LensDistortionPointsExportFields::CurrentFocalLength, FocalLengthEstimate);
 }
 
 int32 UCameraLensDistortionAlgoPoints::ImportCalibrationRow(const TSharedRef<FJsonObject>& CalibrationRowObject, const FImage& RowImage)

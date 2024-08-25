@@ -26,6 +26,7 @@ void SPropertyMenuActorPicker::Construct( const FArguments& InArgs )
 {
 	CurrentActor = InArgs._InitialActor;
 	bAllowClear = InArgs._AllowClear;
+	bAllowPickingLevelInstanceContent = InArgs._AllowPickingLevelInstanceContent;
 	ActorFilter = InArgs._ActorFilter;
 	OnSet = InArgs._OnSet;
 	OnClose = InArgs._OnClose;
@@ -93,10 +94,10 @@ void SPropertyMenuActorPicker::Construct( const FArguments& InArgs )
 		
 		MenuContent =
 			SNew(SBox)
-			.WidthOverride(PropertyEditorAssetConstants::SceneOutlinerWindowSize.X)
-			.HeightOverride(PropertyEditorAssetConstants::SceneOutlinerWindowSize.Y)
+			.WidthOverride(static_cast<float>(PropertyEditorAssetConstants::SceneOutlinerWindowSize.X))
+			.HeightOverride(static_cast<float>(PropertyEditorAssetConstants::SceneOutlinerWindowSize.Y))
 			[
-				SceneOutlinerModule.CreateActorPicker(InitOptions, FOnActorPicked::CreateSP(this, &SPropertyMenuActorPicker::OnActorSelected))
+				SceneOutlinerModule.CreateActorPicker(InitOptions, FOnActorPicked::CreateSP(this, &SPropertyMenuActorPicker::OnActorSelected), nullptr, !bAllowPickingLevelInstanceContent)
 			];
 
 		MenuBuilder.AddWidget(MenuContent.ToSharedRef(), FText::GetEmpty(), true);
@@ -164,7 +165,7 @@ bool SPropertyMenuActorPicker::CanPaste()
 	if( ClipboardText.Split( TEXT("'"), &Class, &PossibleObjectPath, ESearchCase::CaseSensitive) )
 	{
 		// Remove the last item
-		PossibleObjectPath.LeftChopInline( 1, false );
+		PossibleObjectPath.LeftChopInline( 1, EAllowShrinking::No );
 	}
 
 	bool bCanPaste = false;

@@ -3,12 +3,12 @@
 #if WITH_STATETREE_DEBUGGER
 
 #include "Debugger/StateTreeTrace.h"
-#include "Algo/Removeif.h"
 #include "Debugger/StateTreeDebugger.h"
 #include "Exporters/Exporter.h"
 #include "ObjectTrace.h"
 #include "Serialization/BufferArchive.h"
 #include "StateTree.h"
+#include "StateTreeDelegates.h"
 #include "StateTreeExecutionTypes.h"
 #include "UObject/Package.h"
 #include "Trace/Trace.inl"
@@ -23,24 +23,37 @@ UE_TRACE_EVENT_BEGIN(StateTreeDebugger, WorldTimestampEvent)
 	UE_TRACE_EVENT_FIELD(double, WorldTime)
 UE_TRACE_EVENT_END()
 
-UE_TRACE_EVENT_BEGIN(StateTreeDebugger, InstanceEvent)
+UE_TRACE_EVENT_BEGIN(StateTreeDebugger, AssetDebugIdEvent)
 	UE_TRACE_EVENT_FIELD(uint64, Cycle)
 	UE_TRACE_EVENT_FIELD(UE::Trace::WideString, TreeName)
 	UE_TRACE_EVENT_FIELD(UE::Trace::WideString, TreePath)
 	UE_TRACE_EVENT_FIELD(uint32, CompiledDataHash)
+	UE_TRACE_EVENT_FIELD(uint16, AssetDebugId)
+UE_TRACE_EVENT_END()
+
+UE_TRACE_EVENT_BEGIN(StateTreeDebugger, InstanceEvent)
+	UE_TRACE_EVENT_FIELD(uint64, Cycle)
 	UE_TRACE_EVENT_FIELD(uint32, InstanceId)
 	UE_TRACE_EVENT_FIELD(uint32, InstanceSerial)
 	UE_TRACE_EVENT_FIELD(UE::Trace::WideString, InstanceName)
-	UE_TRACE_EVENT_FIELD(uint8, EventType)
+	UE_TRACE_EVENT_FIELD(std::underlying_type_t<EStateTreeTraceEventType>, EventType)
+	UE_TRACE_EVENT_FIELD(uint16, AssetDebugId)
+UE_TRACE_EVENT_END()
+
+UE_TRACE_EVENT_BEGIN(StateTreeDebugger, InstanceFrameEvent)
+	UE_TRACE_EVENT_FIELD(uint64, Cycle)
+	UE_TRACE_EVENT_FIELD(uint32, InstanceId)
+	UE_TRACE_EVENT_FIELD(uint32, InstanceSerial)
+	UE_TRACE_EVENT_FIELD(uint16, AssetDebugId)
 UE_TRACE_EVENT_END()
 
 UE_TRACE_EVENT_BEGIN(StateTreeDebugger, PhaseEvent)
 	UE_TRACE_EVENT_FIELD(uint64, Cycle)
 	UE_TRACE_EVENT_FIELD(uint32, InstanceId)
 	UE_TRACE_EVENT_FIELD(uint32, InstanceSerial)
-	UE_TRACE_EVENT_FIELD(uint16, Phase)
+	UE_TRACE_EVENT_FIELD(std::underlying_type_t<EStateTreeUpdatePhase>, Phase)
 	UE_TRACE_EVENT_FIELD(uint16, StateIndex)
-	UE_TRACE_EVENT_FIELD(uint8, EventType)
+	UE_TRACE_EVENT_FIELD(std::underlying_type_t<EStateTreeTraceEventType>, EventType)
 UE_TRACE_EVENT_END()
 
 UE_TRACE_EVENT_BEGIN(StateTreeDebugger, LogEvent)
@@ -55,8 +68,7 @@ UE_TRACE_EVENT_BEGIN(StateTreeDebugger, StateEvent)
 	UE_TRACE_EVENT_FIELD(uint32, InstanceId)
 	UE_TRACE_EVENT_FIELD(uint32, InstanceSerial)
 	UE_TRACE_EVENT_FIELD(uint16, StateIndex)
-	UE_TRACE_EVENT_FIELD(uint8, EventType)
-	UE_TRACE_EVENT_FIELD(uint8, SelectionBehavior)
+	UE_TRACE_EVENT_FIELD(std::underlying_type_t<EStateTreeTraceEventType>, EventType)
 UE_TRACE_EVENT_END()
 
 UE_TRACE_EVENT_BEGIN(StateTreeDebugger, TaskEvent)
@@ -65,7 +77,7 @@ UE_TRACE_EVENT_BEGIN(StateTreeDebugger, TaskEvent)
 	UE_TRACE_EVENT_FIELD(uint32, InstanceSerial)
 	UE_TRACE_EVENT_FIELD(uint16, NodeIndex)
 	UE_TRACE_EVENT_FIELD(uint8[], DataView)
-	UE_TRACE_EVENT_FIELD(uint8, EventType)
+	UE_TRACE_EVENT_FIELD(std::underlying_type_t<EStateTreeTraceEventType>, EventType)
 	UE_TRACE_EVENT_FIELD(uint8, Status)
 UE_TRACE_EVENT_END()
 
@@ -75,7 +87,7 @@ UE_TRACE_EVENT_BEGIN(StateTreeDebugger, EvaluatorEvent)
 	UE_TRACE_EVENT_FIELD(uint32, InstanceSerial)
 	UE_TRACE_EVENT_FIELD(uint16, NodeIndex)
 	UE_TRACE_EVENT_FIELD(uint8[], DataView)
-	UE_TRACE_EVENT_FIELD(uint8, EventType)
+	UE_TRACE_EVENT_FIELD(std::underlying_type_t<EStateTreeTraceEventType>, EventType)
 UE_TRACE_EVENT_END()
 
 UE_TRACE_EVENT_BEGIN(StateTreeDebugger, TransitionEvent)
@@ -86,7 +98,7 @@ UE_TRACE_EVENT_BEGIN(StateTreeDebugger, TransitionEvent)
 	UE_TRACE_EVENT_FIELD(uint16, TransitionIndex)
 	UE_TRACE_EVENT_FIELD(uint16, TargetStateIndex)
 	UE_TRACE_EVENT_FIELD(uint8, Priority)
-	UE_TRACE_EVENT_FIELD(uint8, EventType)
+	UE_TRACE_EVENT_FIELD(std::underlying_type_t<EStateTreeTraceEventType>, EventType)
 UE_TRACE_EVENT_END()
 
 UE_TRACE_EVENT_BEGIN(StateTreeDebugger, ConditionEvent)
@@ -95,7 +107,7 @@ UE_TRACE_EVENT_BEGIN(StateTreeDebugger, ConditionEvent)
 	UE_TRACE_EVENT_FIELD(uint32, InstanceSerial)
 	UE_TRACE_EVENT_FIELD(uint16, NodeIndex)
 	UE_TRACE_EVENT_FIELD(uint8[], DataView)
-	UE_TRACE_EVENT_FIELD(uint8, EventType)
+	UE_TRACE_EVENT_FIELD(std::underlying_type_t<EStateTreeTraceEventType>, EventType)
 UE_TRACE_EVENT_END()
 
 UE_TRACE_EVENT_BEGIN(StateTreeDebugger, ActiveStatesEvent)
@@ -103,18 +115,14 @@ UE_TRACE_EVENT_BEGIN(StateTreeDebugger, ActiveStatesEvent)
 	UE_TRACE_EVENT_FIELD(uint32, InstanceId)
 	UE_TRACE_EVENT_FIELD(uint32, InstanceSerial)
 	UE_TRACE_EVENT_FIELD(uint16[], ActiveStates)
+	UE_TRACE_EVENT_FIELD(uint16[], AssetDebugIds)
 UE_TRACE_EVENT_END()
 
 namespace UE::StateTreeTrace
 {
 
 FDelegateHandle GOnWorldTickStartDelegateHandle;
-
-#if WITH_EDITOR
-FDelegateHandle GOnPIEStartDelegateHandle;
-#endif // WITH_EDITOR
-
-double GRecordingWorldTime = -1;
+FDelegateHandle GTracingStateChangedDelegateHandle;
 
 /** Struct to keep track if a given phase was traced or not. */
 struct FPhaseTraceStatusPair
@@ -138,63 +146,120 @@ struct FPhaseStack
 };
 
 /**
- * Struct to hold data for active states events until we are ready to trace the events (i.e. traces are active and channel is enabled).
+ * Struct to hold data for asset debug id events until we are ready to trace the events (i.e. traces are active and channel is enabled).
  */
-struct FInstanceEventBufferedData
+struct FAssetDebugIdEventBufferedData
 {
-	FInstanceEventBufferedData() = default;
-	explicit FInstanceEventBufferedData(
-		const double RecordingWorldTime,
-		const UStateTree& StateTree,
-		const FStateTreeInstanceDebugId InstanceId,
-		const FString& InstanceName,
-		const EStateTreeTraceEventType EventType)	
-		: InstanceName(InstanceName)
-		, WeakStateTree(&StateTree)
-		, InstanceId(InstanceId)
-		, LifetimeRecordingWorldTime(RecordingWorldTime)
-		, EventType(EventType)
+	FAssetDebugIdEventBufferedData() = default;
+	explicit FAssetDebugIdEventBufferedData(const UStateTree* StateTree, const FStateTreeIndex16 AssetDebugId) : WeakStateTree(StateTree), AssetDebugId(AssetDebugId)
 	{
 	}
 
 	void Trace() const
 	{
-		if (!ensureMsgf(UE_TRACE_CHANNELEXPR_IS_ENABLED(StateTreeDebugChannel), TEXT("Tracing a buffered data is expected only if channel is enabled.")))
+		if (ensureMsgf(UE_TRACE_CHANNELEXPR_IS_ENABLED(StateTreeDebugChannel), TEXT("Tracing a buffered data is expected only if channel is enabled.")))
 		{
-			return;
-		}
-
-		if (const UStateTree* StateTree = WeakStateTree.Get())
-		{
-			// Force a world time update since we are tracing an event from the past
-			UE_TRACE_LOG(StateTreeDebugger, WorldTimestampEvent, StateTreeDebugChannel)
-				<< WorldTimestampEvent.WorldTime(LifetimeRecordingWorldTime);
-
-			OutputInstanceLifetimeEvent(InstanceId, StateTree, *InstanceName, EventType);
-
-			if (ActiveStates.Num() > 0)
+			if (const UStateTree* StateTree = WeakStateTree.Get())
 			{
-				// Force a world time update since we are tracing an event from the past
-				UE_TRACE_LOG(StateTreeDebugger, WorldTimestampEvent, StateTreeDebugChannel)
-					<< WorldTimestampEvent.WorldTime(ActiveStatesRecordingWorldTime);
-
-				OutputActiveStatesEventTrace(InstanceId, ActiveStates);
+				OutputAssetDebugIdEvent(StateTree, AssetDebugId);
 			}
 		}
 	}
 
-	FStateTreeActiveStates ActiveStates;
+	TWeakObjectPtr<const UStateTree> WeakStateTree;
+	FStateTreeIndex16 AssetDebugId;
+};
+
+/**
+ * Struct to hold data for active states events until we are ready to trace the events (i.e. traces are active and channel is enabled).
+ */
+struct FInstanceEventBufferedData
+{
+	struct FActiveStates
+	{
+		FActiveStates() = default;
+		explicit FActiveStates(const TConstArrayView<FStateTreeExecutionFrame> ActiveFrames)
+		{
+			for (const FStateTreeExecutionFrame& Frame : ActiveFrames)
+			{
+				const FStateTreeIndex16 AssetDebugId = FindOrAddDebugIdForAsset(Frame.StateTree.Get());
+
+				const int32 RequiredSize = StatesIndices.Num() + Frame.ActiveStates.Num();
+				StatesIndices.Reserve(RequiredSize);
+				AssetDebugIds.Reserve(RequiredSize);
+
+				for (const FStateTreeStateHandle StateHandle : Frame.ActiveStates)
+				{
+					StatesIndices.Add(StateHandle.Index);
+					AssetDebugIds.Add(AssetDebugId.Get());
+				}
+			}
+		}
+
+		bool IsValid() const { return StatesIndices.Num() > 0 && StatesIndices.Num() == AssetDebugIds.Num(); }
+		void Output(const FStateTreeInstanceDebugId InInstanceId) const
+		{
+			UE_TRACE_LOG(StateTreeDebugger, ActiveStatesEvent, StateTreeDebugChannel)
+				<< ActiveStatesEvent.Cycle(FPlatformTime::Cycles64())
+				<< ActiveStatesEvent.InstanceId(InInstanceId.Id)
+				<< ActiveStatesEvent.InstanceSerial(InInstanceId.SerialNumber)
+				<< ActiveStatesEvent.ActiveStates(StatesIndices.GetData(), StatesIndices.Num())
+				<< ActiveStatesEvent.AssetDebugIds(AssetDebugIds.GetData(), AssetDebugIds.Num());
+		}
+
+		TArray<uint16> StatesIndices;
+		TArray<uint16> AssetDebugIds;
+	};
+
+	FInstanceEventBufferedData() = default;
+	explicit FInstanceEventBufferedData(
+		const double RecordingWorldTime,
+		const UStateTree* StateTree,
+		const FStateTreeInstanceDebugId InstanceId,
+		const FString& InstanceName)
+		: InstanceName(InstanceName)
+		, WeakStateTree(StateTree)
+		, InstanceId(InstanceId)
+		, LifetimeRecordingWorldTime(RecordingWorldTime)
+	{
+	}
+
+	void Trace() const
+	{
+		if (ensureMsgf(UE_TRACE_CHANNELEXPR_IS_ENABLED(StateTreeDebugChannel), TEXT("Tracing a buffered data is expected only if channel is enabled.")))
+		{
+			if (const UStateTree* StateTree = WeakStateTree.Get())
+			{
+				// Force a world time update since we are tracing an event from the past
+				UE_TRACE_LOG(StateTreeDebugger, WorldTimestampEvent, StateTreeDebugChannel)
+					<< WorldTimestampEvent.WorldTime(LifetimeRecordingWorldTime);
+
+				OutputInstanceLifetimeEvent(InstanceId, StateTree, *InstanceName, EStateTreeTraceEventType::Push);
+
+				if (ActiveStates.IsValid())
+				{
+					// Force a world time update since we are tracing an event from the past
+					UE_TRACE_LOG(StateTreeDebugger, WorldTimestampEvent, StateTreeDebugChannel)
+						<< WorldTimestampEvent.WorldTime(ActiveStatesRecordingWorldTime);
+
+					ActiveStates.Output(InstanceId);
+				}
+			}
+		}
+	}
+
+	FActiveStates ActiveStates;
 	FString InstanceName;
 	TWeakObjectPtr<const UStateTree> WeakStateTree;
 	FStateTreeInstanceDebugId InstanceId;
 	double LifetimeRecordingWorldTime = 0;
 	double ActiveStatesRecordingWorldTime = 0;
-	EStateTreeTraceEventType EventType = EStateTreeTraceEventType::Unset;
 };
 
 /** Struct to keep track of the buffered event data and flush them. */
 struct FBufferedDataList
 {
+	double RecordingWorldTime = -1;
 	double TracedRecordingWorldTime = -1;
 	
 	/**
@@ -203,11 +268,18 @@ struct FBufferedDataList
 	 */
 	TArray<FPhaseStack> PhaseStacks;
 
+	/** List of asset debug ids events that will be output if channel gets enabled. */
+	TArray<FAssetDebugIdEventBufferedData> AssetDebugIdEvents;
+
 	/** List of lifetime events that will be output if channel gets enabled in the Push - Pop lifetime window of an instance. */
-	TArray<FInstanceEventBufferedData> Events;
+	TMap<FStateTreeInstanceDebugId, FInstanceEventBufferedData> InstanceLifetimeEvents;
 
 	/** Flag use to prevent reentrant calls */
 	bool bFlushing = false;
+
+	uint16 NextAssetDebugId = 1;
+	int32 CurrentVersion = 0;
+	int32 FlushedVersion = -1;
 
 	void Flush(const FStateTreeInstanceDebugId InstanceId)
 	{
@@ -218,16 +290,33 @@ struct FBufferedDataList
 
 		TGuardValue<bool> GuardReentry(bFlushing, true);
 
-		// Trace instance lifetime events first since they are required for other event types.
-		// It is also associated to an older world time.
-		for (const FInstanceEventBufferedData& InstanceEventData : Events)
+		if (FlushedVersion != CurrentVersion)
 		{
-			InstanceEventData.Trace();
+			FlushedVersion = CurrentVersion;
+
+			// Trace asset events first since they are required for instance lifetime event types.
+			// Events are preserved in case the trace session is stopped and then a new one gets started
+			// in the same game session. In which case we need to output the ids to that new trace.
+			for (const FAssetDebugIdEventBufferedData& AssetDebugIdEventData : AssetDebugIdEvents)
+			{
+				AssetDebugIdEventData.Trace();
+			}
+
+			// Then trace instance lifetime events since they are required for other event types.
+			// It is also associated to an older world time.
+			// Events are also preserved for the same reason as AssetDebugIdEvents.
+			for (TPair<FStateTreeInstanceDebugId, FInstanceEventBufferedData>& Pair : InstanceLifetimeEvents)
+			{
+				Pair.Value.Trace();
+			}
 		}
-		Events.Empty();
 
 		TraceWorldTime();
-		TraceStackedPhases(InstanceId);
+
+		if (InstanceId.IsValid())
+		{
+			TraceStackedPhases(InstanceId);
+		}
 	}
 
 	/**
@@ -235,11 +324,11 @@ struct FBufferedDataList
 	 */
 	void TraceWorldTime()
 	{
-		if (TracedRecordingWorldTime != GRecordingWorldTime)
+		if (TracedRecordingWorldTime != RecordingWorldTime)
 		{
-			TracedRecordingWorldTime = GRecordingWorldTime;
+			TracedRecordingWorldTime = RecordingWorldTime;
 			UE_TRACE_LOG(StateTreeDebugger, WorldTimestampEvent, StateTreeDebugChannel)
-				<< WorldTimestampEvent.WorldTime(GRecordingWorldTime);
+				<< WorldTimestampEvent.WorldTime(RecordingWorldTime);
 		}
 	}
 
@@ -268,13 +357,22 @@ struct FBufferedDataList
 							<< PhaseEvent.Phase(static_cast<std::underlying_type_t<EStateTreeUpdatePhase>>(StackEntry.Phase))
 							<< PhaseEvent.StateIndex(StackEntry.StateHandle.Index)
 							<< PhaseEvent.EventType(static_cast<std::underlying_type_t<EStateTreeTraceEventType>>(EStateTreeTraceEventType::Push));
-			
+
 						StackEntry.bTraced = true;
 					}
 				}
 				break;
 			}
 		}
+	}
+
+	void BumpTraceVersion()
+	{
+		// Bump version so shareable data will be flush in the next trace (e.g. Asset ids, instance lifetime events, etc.)
+		CurrentVersion++;
+
+		// Force world time to trace on the next event
+		RecordingWorldTime = -1;
 	}
 };
 
@@ -289,7 +387,7 @@ thread_local FBufferedDataList GBufferedEvents;
  * Pushed or pops an entry on the Phase stack for a given Instance.
  * Will send the Pop events for phases popped if their associated Push events were sent.
  */
-void ProcessPhaseScopeEvent(const FStateTreeInstanceDebugId InstanceId, const EStateTreeUpdatePhase Phase, const EStateTreeTraceEventType EventType, const FStateTreeStateHandle StateHandle)
+void OutputPhaseScopeEvent(const FStateTreeInstanceDebugId InstanceId, const EStateTreeUpdatePhase Phase, const EStateTreeTraceEventType EventType, const FStateTreeStateHandle StateHandle)
 {
 	TArray<FPhaseStack>& PhaseStacks = GBufferedEvents.PhaseStacks;
 	int32 ExistingStackIndex = PhaseStacks.IndexOfByPredicate([InstanceId](const FPhaseStack& PhaseStack){ return PhaseStack.InstanceId == InstanceId; });
@@ -317,7 +415,7 @@ void ProcessPhaseScopeEvent(const FStateTreeInstanceDebugId InstanceId, const ES
 			// Clear associated InstanceId when removing last entry from the stack.
 			if (PhaseStack.Stack.IsEmpty())
 			{
-				PhaseStacks.RemoveAt(ExistingStackIndex);
+				PhaseStacks.RemoveAt(ExistingStackIndex, /*Count*/1, EAllowShrinking::No);
 			}
 
 			// Phase was previously traced (i.e. other events were traced in that scope so we need to trace the closing (i.e. Pop) event.
@@ -344,7 +442,7 @@ void TraceBufferedEvents(const FStateTreeInstanceDebugId InstanceId)
 	GBufferedEvents.Flush(InstanceId);
 }
 
-void SerializeDataViewToArchive(FBufferArchive Ar, const FStateTreeDataView DataView)
+void SerializeDataViewToArchive(FBufferArchive& Ar, const FStateTreeDataView DataView)
 {
 	constexpr uint32 PortFlags = 
 		PPF_PropertyWindow // limit to properties visible in Editor 
@@ -383,29 +481,77 @@ void SerializeDataViewToArchive(FBufferArchive Ar, const FStateTreeDataView Data
 
 void RegisterGlobalDelegates()
 {
-#if WITH_EDITOR
-	GOnPIEStartDelegateHandle = FEditorDelegates::BeginPIE.AddLambda([&LastRecordingWorldTime=GBufferedEvents.TracedRecordingWorldTime](const bool bIsSimulating)
-		{
-			LastRecordingWorldTime = -1;
-		});
-#endif // WITH_EDITOR
-	
-	GOnWorldTickStartDelegateHandle = FWorldDelegates::OnWorldTickStart.AddLambda([&WorldTime=GRecordingWorldTime](const UWorld* TickedWorld, ELevelTick TickType, float DeltaTime)
+	GOnWorldTickStartDelegateHandle = FWorldDelegates::OnWorldTickStart.AddLambda([&WorldTime=GBufferedEvents.RecordingWorldTime](const UWorld* TickedWorld, ELevelTick TickType, float DeltaTime)
 		{
 #if OBJECT_TRACE_ENABLED
 			WorldTime = FObjectTrace::GetWorldElapsedTime(TickedWorld);
 #endif// OBJECT_TRACE_ENABLED
 		});
+
+	GTracingStateChangedDelegateHandle = UE::StateTree::Delegates::OnTracingStateChanged.AddLambda([](const bool bTracesEnabled)
+	{
+		// Bump trace version when disabling traces so next trace will flush buffered events that are still relevant.
+		if (!bTracesEnabled)
+		{
+			GBufferedEvents.BumpTraceVersion();
+		}
+	});
 }
 
 void UnregisterGlobalDelegates()
 {
-#if WITH_EDITOR
-	FEditorDelegates::BeginPIE.Remove(GOnPIEStartDelegateHandle);
-#endif // WITH_EDITOR
-	
 	FWorldDelegates::OnWorldTickStart.Remove(GOnWorldTickStartDelegateHandle);
 	GOnWorldTickStartDelegateHandle.Reset();
+
+	UE::StateTree::Delegates::OnTracingStateChanged.Remove(GTracingStateChangedDelegateHandle);
+	GTracingStateChangedDelegateHandle.Reset();
+}
+
+FStateTreeIndex16 FindOrAddDebugIdForAsset(const UStateTree* StateTree)
+{
+	FStateTreeIndex16 AssetDebugId;
+	const FAssetDebugIdEventBufferedData* ExistingPair = GBufferedEvents.AssetDebugIdEvents.FindByPredicate([StateTree](const FAssetDebugIdEventBufferedData& BufferedData)
+	{
+		return BufferedData.WeakStateTree == StateTree;
+	});
+
+	if (ExistingPair == nullptr)
+	{
+		if (ensure(StateTree != nullptr))
+		{
+			AssetDebugId = FStateTreeIndex16(GBufferedEvents.NextAssetDebugId++);
+			GBufferedEvents.AssetDebugIdEvents.Emplace(StateTree, AssetDebugId);
+			OutputAssetDebugIdEvent(StateTree, AssetDebugId);
+		}
+	}
+	else
+	{
+		AssetDebugId = ExistingPair->AssetDebugId;
+	}
+
+	return AssetDebugId;
+}
+
+void OutputAssetDebugIdEvent(
+	const UStateTree* StateTree,
+	const FStateTreeIndex16 AssetDebugId
+	)
+{
+	if (UE_TRACE_CHANNELEXPR_IS_ENABLED(StateTreeDebugChannel))
+	{
+		TraceBufferedEvents(FStateTreeInstanceDebugId::Invalid);
+
+		check(StateTree);
+		const FString TreeName = StateTree->GetName();
+		const FString TreePath = StateTree->GetPathName();
+
+		UE_TRACE_LOG(StateTreeDebugger, AssetDebugIdEvent, StateTreeDebugChannel)
+			<< AssetDebugIdEvent.Cycle(FPlatformTime::Cycles64())
+			<< AssetDebugIdEvent.TreeName(*TreeName, TreeName.Len())
+			<< AssetDebugIdEvent.TreePath(*TreePath, TreePath.Len())
+			<< AssetDebugIdEvent.CompiledDataHash(StateTree->LastCompiledEditorDataHash)
+			<< AssetDebugIdEvent.AssetDebugId(AssetDebugId.Get());
+	}
 }
 
 void OutputInstanceLifetimeEvent(
@@ -415,42 +561,33 @@ void OutputInstanceLifetimeEvent(
 	const EStateTreeTraceEventType EventType
 	)
 {
-	if (StateTree == nullptr)
-	{
-		return;
-	}
-
 	if (UE_TRACE_CHANNELEXPR_IS_ENABLED(StateTreeDebugChannel))
 	{
 		TraceBufferedEvents(InstanceId);
 
-		const FString TreeName = StateTree->GetName();
-		const FString TreePath = StateTree->GetPackage()->GetName();
+		const FStateTreeIndex16 AssetDebugId = FindOrAddDebugIdForAsset(StateTree);
 
 		UE_TRACE_LOG(StateTreeDebugger, InstanceEvent, StateTreeDebugChannel)
 			<< InstanceEvent.Cycle(FPlatformTime::Cycles64())
-			<< InstanceEvent.TreeName(*TreeName, TreeName.Len())
-			<< InstanceEvent.TreePath(*TreePath, TreePath.Len())
-			<< InstanceEvent.CompiledDataHash(StateTree->LastCompiledEditorDataHash)
 			<< InstanceEvent.InstanceId(InstanceId.Id)
 			<< InstanceEvent.InstanceSerial(InstanceId.SerialNumber)
 			<< InstanceEvent.InstanceName(InstanceName)
-			<< InstanceEvent.EventType(static_cast<std::underlying_type_t<EStateTreeTraceEventType>>(EventType));
+			<< InstanceEvent.EventType(static_cast<std::underlying_type_t<EStateTreeTraceEventType>>(EventType))
+			<< InstanceEvent.AssetDebugId(AssetDebugId.Get());
 	}
-	else
+
+	// Buffer these events regardless of the status of the channel since they will be used
+	// when flushing buffered event when a late recording is started or more than one trace are started
+	// during the same game session (i.e. Start Traces -> Stop Traces -> Start Traces).
+	if (!GBufferedEvents.bFlushing)
 	{
 		if (EventType == EStateTreeTraceEventType::Push)
 		{
-			GBufferedEvents.Events.Emplace(GRecordingWorldTime, *StateTree, InstanceId, InstanceName, EventType);
+			GBufferedEvents.InstanceLifetimeEvents.Emplace(InstanceId, FInstanceEventBufferedData(GBufferedEvents.RecordingWorldTime, StateTree, InstanceId, InstanceName));
 		}
 		else if (EventType == EStateTreeTraceEventType::Pop)
 		{
-			// Remove matching instance events since if it was not sent then no other events were sent between, hence not needed in the trace.
-			GBufferedEvents.Events.SetNum(Algo::StableRemoveIf(GBufferedEvents.Events, 
-				[InstanceId](const FInstanceEventBufferedData& BufferedData)
-				{
-					return BufferedData.InstanceId == InstanceId;
-				}));
+			GBufferedEvents.InstanceLifetimeEvents.Remove(InstanceId);
 		}
 		else
 		{
@@ -459,13 +596,36 @@ void OutputInstanceLifetimeEvent(
 	}
 }
 
+void OutputInstanceFrameEvent(
+	const FStateTreeInstanceDebugId InstanceId,
+	const FStateTreeExecutionFrame* Frame
+	)
+{
+	check(Frame != nullptr);
+
+	if (UE_TRACE_CHANNELEXPR_IS_ENABLED(StateTreeDebugChannel))
+	{
+		TraceBufferedEvents(InstanceId);
+
+		const FStateTreeIndex16 AssetDebugId = FindOrAddDebugIdForAsset(Frame->StateTree.Get());
+
+		UE_TRACE_LOG(StateTreeDebugger, InstanceFrameEvent, StateTreeDebugChannel)
+			<< InstanceFrameEvent.Cycle(FPlatformTime::Cycles64())
+			<< InstanceFrameEvent.InstanceId(InstanceId.Id)
+			<< InstanceFrameEvent.InstanceSerial(InstanceId.SerialNumber)
+			<< InstanceFrameEvent.AssetDebugId(AssetDebugId.Get());
+	}
+	// No need to buffer since frame event are sent each time a FrameScope is used by the execution context
+	// and we don't expect the trace channel to be enabled/disabled during a single execution context update.
+}
+
 void OutputLogEventTrace(
 	const FStateTreeInstanceDebugId InstanceId,
 	const TCHAR* Fmt, ...
 	)
 {
 	static TCHAR TraceStaticBuffer[8192];
-	GET_VARARGS(TraceStaticBuffer, UE_ARRAY_COUNT(TraceStaticBuffer), UE_ARRAY_COUNT(TraceStaticBuffer) - 1, Fmt, Fmt);
+	GET_TYPED_VARARGS(TCHAR, TraceStaticBuffer, UE_ARRAY_COUNT(TraceStaticBuffer), UE_ARRAY_COUNT(TraceStaticBuffer) - 1, Fmt, Fmt);
 
 	TraceBufferedEvents(InstanceId);
 
@@ -479,8 +639,7 @@ void OutputLogEventTrace(
 void OutputStateEventTrace(
 	const FStateTreeInstanceDebugId InstanceId,
 	const FStateTreeStateHandle StateHandle,
-	const EStateTreeTraceEventType EventType,
-	const EStateTreeStateSelectionBehavior SelectionBehavior
+	const EStateTreeTraceEventType EventType
 	)
 {
 	TraceBufferedEvents(InstanceId);
@@ -490,8 +649,7 @@ void OutputStateEventTrace(
 		<< StateEvent.InstanceId(InstanceId.Id)
 		<< StateEvent.InstanceSerial(InstanceId.SerialNumber)
 		<< StateEvent.StateIndex(StateHandle.Index)
-		<< StateEvent.EventType(static_cast<std::underlying_type_t<EStateTreeTraceEventType>>(EventType))
-		<< StateEvent.SelectionBehavior(static_cast<std::underlying_type_t<EStateTreeStateSelectionBehavior>>(SelectionBehavior));
+		<< StateEvent.EventType(static_cast<std::underlying_type_t<EStateTreeTraceEventType>>(EventType));
 }
 
 void OutputTaskEventTrace(
@@ -521,7 +679,8 @@ void OutputEvaluatorEventTrace(
 	const FStateTreeInstanceDebugId InstanceId,
 	const FStateTreeIndex16 EvaluatorIdx,
 	const FStateTreeDataView DataView,
-	const EStateTreeTraceEventType EventType)
+	const EStateTreeTraceEventType EventType
+	)
 {
 	FBufferArchive Archive;
 	SerializeDataViewToArchive(Archive, DataView);
@@ -582,38 +741,24 @@ void OutputConditionEventTrace(
 
 void OutputActiveStatesEventTrace(
 	const FStateTreeInstanceDebugId InstanceId,
-	const FStateTreeActiveStates& ActiveStates
+	const TConstArrayView<FStateTreeExecutionFrame> ActiveFrames
 	)
 {
 	if (UE_TRACE_CHANNELEXPR_IS_ENABLED(StateTreeDebugChannel))
 	{
 		TraceBufferedEvents(InstanceId);
 
-		TArray<uint16, TInlineAllocator<FStateTreeActiveStates::MaxStates>> StatesIndices;
-		for (int32 i = 0; i < ActiveStates.Num(); i++)
-		{
-			StatesIndices.Add(ActiveStates[i].Index);
-		}
-
-		UE_TRACE_LOG(StateTreeDebugger, ActiveStatesEvent, StateTreeDebugChannel)
-			<< ActiveStatesEvent.Cycle(FPlatformTime::Cycles64())
-			<< ActiveStatesEvent.InstanceId(InstanceId.Id)
-			<< ActiveStatesEvent.InstanceSerial(InstanceId.SerialNumber)
-			<< ActiveStatesEvent.ActiveStates(StatesIndices.GetData(), StatesIndices.Num());
+		const FInstanceEventBufferedData::FActiveStates ActiveStates(ActiveFrames);
+		ActiveStates.Output(InstanceId);
 	}
 	else
 	{
-		FInstanceEventBufferedData* ExisingBufferedData = GBufferedEvents.Events.FindByPredicate([InstanceId](const FInstanceEventBufferedData& BufferedData)
-			{
-				return BufferedData.InstanceId == InstanceId;
-			});
-
 		// We keep only the most recent active states since this is all we need to know in which state was the instance
-		// when we start receiving the events once the channel is enabled. 
-		if (ExisingBufferedData != nullptr)
+		// when we start receiving the events once the channel is enabled.
+		if (FInstanceEventBufferedData* ExisingBufferedData = GBufferedEvents.InstanceLifetimeEvents.Find(InstanceId))
 		{
-			ExisingBufferedData->ActiveStates = ActiveStates;
-			ExisingBufferedData->ActiveStatesRecordingWorldTime = GRecordingWorldTime;
+			ExisingBufferedData->ActiveStates= FInstanceEventBufferedData::FActiveStates(ActiveFrames);
+			ExisingBufferedData->ActiveStatesRecordingWorldTime = GBufferedEvents.RecordingWorldTime;
 		}
 	}
 }

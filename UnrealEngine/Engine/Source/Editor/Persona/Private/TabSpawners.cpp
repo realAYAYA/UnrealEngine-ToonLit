@@ -76,6 +76,8 @@ const FName FPersonaTabs::DetailsID("DetailsTab");
 
 const FName FPersonaTabs::FindReplaceID("FindReplaceTab");
 
+const FName FPersonaTabs::ToolboxID("ToolBox");
+
 /////////////////////////////////////////////////////
 // FPersonaMode
 
@@ -375,9 +377,11 @@ TSharedRef<SWidget> FRetargetSourcesTabSummoner::CreateTabBody(const FWorkflowTa
 /////////////////////////////////////////////////////
 // SPersonaPreviewPropertyEditor
 
-void SPersonaPreviewPropertyEditor::Construct(const FArguments& InArgs, TSharedRef<IPersonaPreviewScene> InPreviewScene)
+void SPersonaPreviewPropertyEditor::Construct(const FArguments& InArgs, TSharedRef<IPersonaPreviewScene> InPreviewScene, TSharedRef<FBlueprintEditor> InBPEditor)
 {
 	PreviewScene = InPreviewScene;
+	BPEditor = InBPEditor;
+
 	bPropertyEdited = false;
 
 	SSingleObjectDetailsPanel::Construct(SSingleObjectDetailsPanel::FArguments(), /*bAutomaticallyObserveViaGetObjectToObserve*/ true, /*bAllowSearch*/ true);
@@ -388,6 +392,16 @@ void SPersonaPreviewPropertyEditor::Construct(const FArguments& InArgs, TSharedR
 
 UObject* SPersonaPreviewPropertyEditor::GetObjectToObserve() const
 {
+	// Use the selected debug instance, if we have one.
+	if (UBlueprint* Blueprint = BPEditor.Pin()->GetBlueprintObj())
+	{
+		if (UObject* DebugObject = Blueprint->GetObjectBeingDebugged())
+		{
+			return DebugObject;
+		}
+	}
+
+	// If there's no selection, fall-back to preview instance.
 	if (UDebugSkelMeshComponent* PreviewMeshComponent = PreviewScene.Pin()->GetPreviewMeshComponent())
 	{
 		if (PreviewMeshComponent->GetAnimInstance() != nullptr)
@@ -421,7 +435,7 @@ TSharedRef<SWidget> SPersonaPreviewPropertyEditor::PopulateSlot(TSharedRef<SWidg
 				.Padding(2.0f)
 				[
 					SNew(STextBlock)
-					.Text(LOCTEXT("AnimBlueprintEditPreviewText", "Changes made to preview only. Changes will not be saved!"))
+					.Text(LOCTEXT("AnimBlueprintEditPreviewText", "Changes made to the selected instance only. Changes will not be saved!"))
 					.ColorAndOpacity(FLinearColor::Yellow)
 					.ShadowOffset(FVector2D::UnitVector)
 					.AutoWrapText(true)
@@ -434,7 +448,7 @@ TSharedRef<SWidget> SPersonaPreviewPropertyEditor::PopulateSlot(TSharedRef<SWidg
 				[
 					SNew(SButton)
 					.OnClicked(this, &SPersonaPreviewPropertyEditor::HandleApplyChanges)
-					.ToolTipText(LOCTEXT("AnimBlueprintEditApplyChanges_Tooltip", "Apply any changes that have been made to the preview to the defaults."))
+					.ToolTipText(LOCTEXT("AnimBlueprintEditApplyChanges_Tooltip", "Apply the selected instance's current property values to the defaults."))
 					[
 						SNew(STextBlock)
 						.Text(LOCTEXT("AnimBlueprintEditApplyChanges", "Apply"))
@@ -446,14 +460,27 @@ TSharedRef<SWidget> SPersonaPreviewPropertyEditor::PopulateSlot(TSharedRef<SWidg
 
 void SPersonaPreviewPropertyEditor::HandlePropertyChanged(const FPropertyChangedEvent& InPropertyChangedEvent)
 {
-	if (UDebugSkelMeshComponent* PreviewMeshComponent = PreviewScene.Pin()->GetPreviewMeshComponent())
+	UAnimInstance* AnimInstance = nullptr;
+
+	if (UBlueprint* Blueprint = BPEditor.Pin()->GetBlueprintObj())
 	{
-		if (UAnimInstance* AnimInstance = PreviewMeshComponent->GetAnimInstance())
+		if (UAnimInstance* DebugInstance = Cast<UAnimInstance>(Blueprint->GetObjectBeingDebugged()))
 		{
-			// check to see how many properties have changed
-			const int32 NumChangedProperties = PersonaUtils::CopyPropertiesToCDO(AnimInstance, PersonaUtils::FCopyOptions(PersonaUtils::ECopyOptions::PreviewOnly));
-			bPropertyEdited = (NumChangedProperties > 0);
+			// Compare the selected debug instance (if we have one) against the CDO.
+			AnimInstance = DebugInstance;
 		}
+		else if (UDebugSkelMeshComponent* PreviewMeshComponent = PreviewScene.Pin()->GetPreviewMeshComponent())
+		{
+			// If there's no selection, fall-back to preview instance.
+			AnimInstance = PreviewMeshComponent->GetAnimInstance();
+		}
+	}
+
+	if (AnimInstance != nullptr)
+	{
+		// check to see how many properties have changed
+		const int32 NumChangedProperties = PersonaUtils::CopyPropertiesToCDO(AnimInstance, PersonaUtils::FCopyOptions(PersonaUtils::ECopyOptions::PreviewOnly));
+		bPropertyEdited = (NumChangedProperties > 0);
 	}
 }
 
@@ -512,7 +539,7 @@ TSharedRef<SWidget> FAnimBlueprintPreviewEditorSummoner::CreateTabBody(const FWo
 																	TEXT("AnimBlueprintPropertyEditorPreviewMode")))
 					[
 						SNew( STextBlock )
-						.Text( LOCTEXT("AnimBlueprintDefaultsPreviewMode", "Edit Preview") )
+						.Text( LOCTEXT("AnimBlueprintDefaultsPreviewMode", "Edit Selected Instance") )
 					]
 				]
 				+SHorizontalBox::Slot()
@@ -543,7 +570,7 @@ TSharedRef<SWidget> FAnimBlueprintPreviewEditorSummoner::CreateTabBody(const FWo
 					.BorderImage( FAppStyle::GetBrush("NoBorder") )
 					.Visibility(this, &FAnimBlueprintPreviewEditorSummoner::IsEditorVisible, EAnimBlueprintEditorMode::PreviewMode)
 					[
-						SNew(SPersonaPreviewPropertyEditor, PreviewScene.Pin().ToSharedRef())
+						SNew(SPersonaPreviewPropertyEditor, PreviewScene.Pin().ToSharedRef(), BlueprintEditor.Pin().ToSharedRef())
 					]
 				]
 				+SOverlay::Slot()
@@ -561,7 +588,7 @@ TSharedRef<SWidget> FAnimBlueprintPreviewEditorSummoner::CreateTabBody(const FWo
 
 FText FAnimBlueprintPreviewEditorSummoner::GetTabToolTipText(const FWorkflowTabSpawnInfo& Info) const
 {
-	return LOCTEXT("AnimBlueprintPreviewEditorTooltip", "The editor lets you change the values of the preview instance");
+	return LOCTEXT("AnimBlueprintPreviewEditorTooltip", "The editor lets you change the values of the selected instance");
 }
 
 EVisibility FAnimBlueprintPreviewEditorSummoner::IsEditorVisible(EAnimBlueprintEditorMode::Type Mode) const

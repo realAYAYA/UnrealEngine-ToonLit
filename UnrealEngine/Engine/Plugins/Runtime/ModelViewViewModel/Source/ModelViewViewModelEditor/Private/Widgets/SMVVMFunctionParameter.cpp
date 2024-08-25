@@ -3,12 +3,15 @@
 #include "SMVVMFunctionParameter.h" 
 #include "EdGraphSchema_K2.h"
 #include "Editor.h"
+#include "MVVMBlueprintFunctionReference.h"
 #include "MVVMBlueprintView.h"
+#include "MVVMBlueprintViewConversionFunction.h"
 #include "MVVMEditorSubsystem.h"
 #include "NodeFactory.h"
 #include "SGraphPin.h"
 #include "Styling/MVVMEditorStyle.h"
 #include "Types/MVVMBindingMode.h"
+
 #include "WidgetBlueprint.h"
 #include "Widgets/Images/SImage.h"
 #include "Widgets/SBoxPanel.h"
@@ -19,7 +22,7 @@
 #include "Widgets/SOverlay.h"
 #include "Widgets/Text/STextBlock.h"
 
-#define LOCTEXT_NAMESPACE "MVVMFieldBinding"
+#define LOCTEXT_NAMESPACE "FunctionParameter"
 
 namespace UE::MVVM
 {
@@ -32,8 +35,8 @@ void SFunctionParameter::Construct(const FArguments& InArgs, UWidgetBlueprint* I
 	BindingId = InArgs._BindingId;
 	check(BindingId.IsValid());
 
-	ParameterName = InArgs._ParameterName;
-	check(!ParameterName.IsNone());
+	ParameterId = InArgs._ParameterId;
+	check(ParameterId.IsValid());
 	
 	bSourceToDestination = InArgs._SourceToDestination;
 	bAllowDefault = InArgs._AllowDefault;
@@ -45,14 +48,10 @@ void SFunctionParameter::Construct(const FArguments& InArgs, UWidgetBlueprint* I
 	const FMVVMBlueprintViewBinding* Binding = View->GetBinding(BindingId);
 	check(Binding);
 
-	const UFunction* ConversionFunction = EditorSubsystem->GetConversionFunction(InWidgetBlueprint, *Binding, bSourceToDestination);
-	const FProperty* Property = ConversionFunction->FindPropertyByName(ParameterName);
-	check(Property);
-
 	TSharedRef<SWidget> ValueWidget = SNullWidget::NullWidget;
-	bool bIsBooleanPin = CastField<const FBoolProperty>(Property) != nullptr;
+	bool bIsBooleanPin = false;
 
-	if (UEdGraphPin* Pin = EditorSubsystem->GetConversionFunctionArgumentPin(InWidgetBlueprint, *Binding, ParameterName, bSourceToDestination))
+	if (UEdGraphPin* Pin = EditorSubsystem->GetConversionFunctionArgumentPin(InWidgetBlueprint, *Binding, ParameterId, bSourceToDestination))
 	{
 		bIsBooleanPin = Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Boolean;
 		// create a new pin widget so that we can get the default value widget out of it
@@ -80,8 +79,7 @@ void SFunctionParameter::Construct(const FArguments& InArgs, UWidgetBlueprint* I
 			];
 	}
 
-	FMVVMBlueprintPropertyPath Path = OnGetSelectedField();
-	bDefaultValueVisible = Path.IsEmpty();
+	bDefaultValueVisible = !OnGetSelectedField().IsValid();
 
 	bool bFromViewModel = UE::MVVM::IsForwardBinding(Binding->BindingType);
 	TSharedPtr<SHorizontalBox> HBox;
@@ -105,8 +103,8 @@ void SFunctionParameter::Construct(const FArguments& InArgs, UWidgetBlueprint* I
 				+ SWidgetSwitcher::Slot()
 				[
 					SNew(SFieldSelector, WidgetBlueprint.Get())
-					.OnGetPropertyPath(this, &SFunctionParameter::OnGetSelectedField)
-					.OnFieldSelectionChanged(this, &SFunctionParameter::HandleFieldSelectionChanged)
+					.OnGetLinkedValue(this, &SFunctionParameter::OnGetSelectedField)
+					.OnSelectionChanged(this, &SFunctionParameter::HandleFieldSelectionChanged)
 					.OnGetSelectionContext(this, &SFunctionParameter::GetSelectedSelectionContext)
 				]
 			]
@@ -159,7 +157,7 @@ void SFunctionParameter::OnBindArgumentChecked(ECheckBoxState Checked)
 	if (bDefaultValueVisible)
 	{
 		PreviousSelectedField = OnGetSelectedField();
-		SetSelectedField(FMVVMBlueprintPropertyPath());
+		SetSelectedField(FMVVMLinkedPinValue());
 	}
 	else
 	{
@@ -167,7 +165,7 @@ void SFunctionParameter::OnBindArgumentChecked(ECheckBoxState Checked)
 	}
 }
 
-FMVVMBlueprintPropertyPath SFunctionParameter::OnGetSelectedField() const
+FMVVMLinkedPinValue SFunctionParameter::OnGetSelectedField() const
 {
 	if (const UWidgetBlueprint* WidgetBlueprintPtr = WidgetBlueprint.Get())
 	{
@@ -176,14 +174,14 @@ FMVVMBlueprintPropertyPath SFunctionParameter::OnGetSelectedField() const
 		{
 			if (const FMVVMBlueprintViewBinding* Binding = View->GetBinding(BindingId))
 			{
-				return Subsystem->GetPathForConversionFunctionArgument(WidgetBlueprint.Get(), *Binding, ParameterName, bSourceToDestination);
+				return FMVVMLinkedPinValue(Subsystem->GetPathForConversionFunctionArgument(WidgetBlueprint.Get(), *Binding, ParameterId, bSourceToDestination));
 			}
 		}
 	}
-	return FMVVMBlueprintPropertyPath();
+	return FMVVMLinkedPinValue();
 }
 
-void SFunctionParameter::SetSelectedField(const FMVVMBlueprintPropertyPath& Path)
+void SFunctionParameter::SetSelectedField(const FMVVMLinkedPinValue& Value)
 {
 	if (const UWidgetBlueprint* WidgetBlueprintPtr = WidgetBlueprint.Get())
 	{
@@ -192,15 +190,15 @@ void SFunctionParameter::SetSelectedField(const FMVVMBlueprintPropertyPath& Path
 		{
 			if (FMVVMBlueprintViewBinding* Binding = View->GetBinding(BindingId))
 			{
-				Subsystem->SetPathForConversionFunctionArgument(WidgetBlueprint.Get(), *Binding, ParameterName, Path, bSourceToDestination);
+				Subsystem->SetPathForConversionFunctionArgument(WidgetBlueprint.Get(), *Binding, ParameterId, Value.IsPropertyPath() ? Value.GetPropertyPath() : FMVVMBlueprintPropertyPath(), bSourceToDestination);
 			}
 		}
 	}
 }
 
-void SFunctionParameter::HandleFieldSelectionChanged(FMVVMBlueprintPropertyPath SelectedField, const UFunction* Function)
+void SFunctionParameter::HandleFieldSelectionChanged(FMVVMLinkedPinValue Value)
 {
-	SetSelectedField(SelectedField);
+	SetSelectedField(Value);
 }
 
 FFieldSelectionContext SFunctionParameter::GetSelectedSelectionContext() const
@@ -222,14 +220,25 @@ FFieldSelectionContext SFunctionParameter::GetSelectedSelectionContext() const
 		return Result;
 	}
 
-	const UFunction* ConversionFunction = GEditor->GetEditorSubsystem<UMVVMEditorSubsystem>()->GetConversionFunction(WidgetBlueprintPtr, *Binding, bSourceToDestination);
+	UMVVMBlueprintViewConversionFunction* ConversionFunction = Binding->Conversion.GetConversionFunction(bSourceToDestination);
 	if (ConversionFunction == nullptr)
 	{
 		return Result;
 	}
 
+	FProperty* PinProperty = nullptr;
+	if (ParameterId.GetNames().Num() > 0)
+	{
+		FMVVMBlueprintFunctionReference FunctionReference = ConversionFunction->GetConversionFunction();
+		if (FunctionReference.GetType() == EMVVMBlueprintFunctionReferenceType::Function)
+		{
+			const UFunction* Function = FunctionReference.GetFunction(WidgetBlueprintPtr);
+			PinProperty = Function ? Function->FindPropertyByName(ParameterId.GetNames().Last()) : nullptr;
+		}
+	}
+
 	Result.BindingMode = EMVVMBindingMode::OneWayToDestination;
-	Result.AssignableTo = ConversionFunction->FindPropertyByName(ParameterName);
+	Result.AssignableTo = PinProperty;
 	Result.bAllowWidgets = true;
 	Result.bAllowViewModels = true;
 	Result.bAllowConversionFunctions = false;

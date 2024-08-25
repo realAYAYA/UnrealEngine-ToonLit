@@ -106,6 +106,8 @@ private:
 	enum class EFolderType : uint8
 	{
 		Normal,
+		CustomVirtual, // No corresponding on-disk path, used for organization in the content browser
+		PluginRoot,    // Root content folder of a plugin
 		Code,
 		Developer,
 	};
@@ -124,14 +126,6 @@ private:
 
 	/** True when this item has children and is expanded */
 	TAttribute<bool> IsItemExpanded;
-
-	/** Brushes for the different folder states */
-	const FSlateBrush* FolderOpenBrush;
-	const FSlateBrush* FolderClosedBrush;
-	const FSlateBrush* FolderOpenCodeBrush;
-	const FSlateBrush* FolderClosedCodeBrush;
-	const FSlateBrush* FolderOpenDeveloperBrush;
-	const FSlateBrush* FolderClosedDeveloperBrush;
 
 	/** Delegate called to get the selection state of an asset path */
 	FIsSelected IsSelected;

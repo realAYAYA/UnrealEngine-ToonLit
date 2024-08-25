@@ -30,7 +30,6 @@ namespace UE::VertexDeltaModel
 		// FMLDeformerEditorModel overrides.
 		virtual ETrainingResult Train() override;
 		virtual bool LoadTrainedNetwork() const override;
-		virtual bool IsTrained() const override;
 		virtual FString GetHeatMapDeformerGraphPath() const override;
 		// ~END FMLDeformerEditorModel overrides.
 

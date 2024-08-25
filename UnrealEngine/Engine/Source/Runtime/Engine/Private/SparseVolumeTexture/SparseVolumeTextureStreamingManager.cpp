@@ -9,33 +9,19 @@
 #include "GlobalShader.h"
 #include "ShaderCompilerCore.h" // AllowGlobalShaderLoad()
 #include "Async/ParallelFor.h"
+#include "SparseVolumeTextureTileDataTexture.h"
+#include "SparseVolumeTextureUpload.h"
+#include "SparseVolumeTextureStreamingInstance.h"
+#include "GlobalRenderResources.h"
 
 #if WITH_EDITORONLY_DATA
 #include "DerivedDataCache.h"
 #include "DerivedDataRequestOwner.h"
 #endif
 
-DEFINE_LOG_CATEGORY_STATIC(LogSparseVolumeTextureStreamingManager, Log, All);
+DEFINE_LOG_CATEGORY(LogSparseVolumeTextureStreamingManager);
 
-#ifndef SVT_STREAMING_LOG_VERBOSE
-#define SVT_STREAMING_LOG_VERBOSE 0
-#endif
-
-static int32 GSVTStreamingNumPrefetchFrames = 3;
-static FAutoConsoleVariableRef CVarSVTStreamingNumPrefetchFrames(
-	TEXT("r.SparseVolumeTexture.Streaming.NumPrefetchFrames"),
-	GSVTStreamingNumPrefetchFrames,
-	TEXT("Number of frames to prefetch when a frame is requested."),
-	ECVF_RenderThreadSafe
-);
-
-static int32 GSVTStreamingPrefetchMipLevelBias = -1;
-static FAutoConsoleVariableRef CVarSVTStreamingPrefetchMipLevelBias(
-	TEXT("r.SparseVolumeTexture.Streaming.PrefetchMipLevelBias"),
-	GSVTStreamingPrefetchMipLevelBias,
-	TEXT("Bias to apply to the mip level of prefetched frames. Prefetching is done at increasingly higher mip levels (lower resolution), so setting a negative value here will increase the requested mip level resolution."),
-	ECVF_RenderThreadSafe
-);
+DECLARE_GPU_STAT(SVTStreaming);
 
 static int32 GSVTStreamingForceBlockingRequests = 0;
 static FAutoConsoleVariableRef CVarSVTStreamingForceBlockingRequests(
@@ -50,14 +36,6 @@ static FAutoConsoleVariableRef CVarSVTStreamingAsync(
 	TEXT("r.SparseVolumeTexture.Streaming.AsyncThread"),
 	GSVTStreamingAsyncThread,
 	TEXT("Perform most of the SVT streaming on an asynchronous worker thread instead of the rendering thread."),
-	ECVF_RenderThreadSafe
-);
-
-static int32 GSVTStreamingAsyncCompute = 1;
-static FAutoConsoleVariableRef CVarSVTStreamingAsyncCompute(
-	TEXT("r.SparseVolumeTexture.Streaming.AsyncCompute"),
-	GSVTStreamingAsyncCompute,
-	TEXT("Schedule GPU work in async compute queue."),
 	ECVF_RenderThreadSafe
 );
 
@@ -77,13 +55,55 @@ static FAutoConsoleVariableRef CVarSVTStreamingPrintMemoryStats(
 	ECVF_RenderThreadSafe
 );
 
-static int32 GSVTStreamingMaxPendingMipLevels = 128;
-static FAutoConsoleVariableRef CVarSVTStreamingMaxPendingMipLevels(
-	TEXT("r.SparseVolumeTexture.Streaming.MaxPendingMipLevels"),
-	GSVTStreamingMaxPendingMipLevels,
-	TEXT("Maximum number of mip levels that can be pending for installation."),
+static int32 GSVTStreamingLogVerbosity = 1;
+static FAutoConsoleVariableRef CVarSVTStreamingLogVerbosity(
+	TEXT("r.SparseVolumeTexture.Streaming.LogVerbosity"),
+	GSVTStreamingLogVerbosity,
+	TEXT("0: no logging, 1: basic logging, 2: additional logging (might spam the log) 3: log everything (will spam the log)"),
+	ECVF_RenderThreadSafe
+);
+
+static int32 GSVTStreamingMaxPendingRequests = 256 * 32;
+static FAutoConsoleVariableRef CVarSVTStreamingMaxPendingRequests(
+	TEXT("r.SparseVolumeTexture.Streaming.MaxPendingRequests"),
+	GSVTStreamingMaxPendingRequests,
+	TEXT("Maximum number of IO requests that can be pending for installation."),
 	ECVF_RenderThreadSafe | ECVF_ReadOnly
 );
+
+static int32 GSVTStreamingRequestSize = -1;
+static FAutoConsoleVariableRef CVarSVTStreamingRequestSize(
+	TEXT("r.SparseVolumeTexture.Streaming.RequestSize"),
+	GSVTStreamingRequestSize,
+	TEXT("IO request size in KiB. The SVT streaming manager will attempt to create IO requests of roughly this size. Default: -1 (unlimited)"),
+	ECVF_RenderThreadSafe
+);
+
+static int32 GSVTStreamingBandwidthLimit = 512;
+static FAutoConsoleVariableRef CVarSVTStreamingBandwidthLimit(
+	TEXT("r.SparseVolumeTexture.Streaming.BandwidthLimit"),
+	GSVTStreamingBandwidthLimit,
+	TEXT("Bandwidth limit for SVT streaming in MiB/s. When requests exceed this limit, the system will stream at lower mip levels instead."),
+	ECVF_RenderThreadSafe
+);
+
+static int32 GSVTStreamingInstanceCleanupThreshold = 5;
+static FAutoConsoleVariableRef CVarSVTStreamingInstanceCleanupThreshold(
+	TEXT("r.SparseVolumeTexture.Streaming.InstanceCleanupThreshold"),
+	GSVTStreamingInstanceCleanupThreshold,
+	TEXT("Number of SVT streaming system updates to wait until unused streaming instances are cleaned up. A streaming instance is an internal book keeping object to track playback of a SVT asset in a given context. Default: 5"),
+	ECVF_RenderThreadSafe
+);
+
+// When in editor, data is streamed from DDC. The request finishes in a callback on some other thread. This callback currently reads FPendingRequest::SVTHandle and FPendingRequest::RequestVersion
+// and writes to FPendingRequest::SharedBuffer and FPendingRequest::State. Other than this, FPendingRequest is never accessed from multiple threads at the same time. However, in order to avoid race conditions, 
+// all accesses to FPendingRequest should be guarded by using the following macro. Contention only happens if the streaming manager is currently accessing a request during an update and a DDC request 
+// finishes at the exact same time this access happens. While this is possible, it is very unlikely, so the performance impact of always using the lock should be minimal.
+#if WITH_EDITORONLY_DATA
+#define LOCK_PENDING_REQUEST(PendingRequest) FScopeLock Lock(&PendingRequest.DDCAsyncGuard)
+#else
+#define LOCK_PENDING_REQUEST(PendingRequest)
+#endif
 
 namespace UE
 {
@@ -99,743 +119,9 @@ IStreamingManager& GetStreamingManager()
 
 static bool DoesPlatformSupportSparseVolumeTexture(EShaderPlatform Platform)
 {
-	// SVT_TODO: This is a bit of a hack: FStreamingManager::Add_GameThread() issues a rendering thread lambda for creating the RHI resources and uploading root tile data.
-	// Uploading root tile data involves access to the global shader map, which is empty under certain circumstances. By checking AllowGlobalShaderLoad(), we disallow streaming completely.
-	return AllowGlobalShaderLoad();
+	// There are currently no hard platform restrictions for SVT support
+	return true;
 }
-
-static FIntVector3 ComputeTileDataVolumeResolution(int32 NumAllocatedPages)
-{
-	int32 TileVolumeResolutionCube = 1;
-	while (TileVolumeResolutionCube * TileVolumeResolutionCube * TileVolumeResolutionCube < NumAllocatedPages)
-	{
-		TileVolumeResolutionCube++;				// We use a simple loop to compute the minimum resolution of a cube to store all the tile data
-	}
-	FIntVector3 TileDataVolumeResolution = FIntVector3(TileVolumeResolutionCube, TileVolumeResolutionCube, TileVolumeResolutionCube);
-	
-	// Trim volume to reclaim some space
-	while ((TileDataVolumeResolution.X * TileDataVolumeResolution.Y * (TileDataVolumeResolution.Z - 1)) > NumAllocatedPages)
-	{
-		TileDataVolumeResolution.Z--;
-	}
-	while ((TileDataVolumeResolution.X * (TileDataVolumeResolution.Y - 1) * TileDataVolumeResolution.Z) > NumAllocatedPages)
-	{
-		TileDataVolumeResolution.Y--;
-	}
-	while (((TileDataVolumeResolution.X - 1) * TileDataVolumeResolution.Y * TileDataVolumeResolution.Z) > NumAllocatedPages)
-	{
-		TileDataVolumeResolution.X--;
-	}
-
-	return TileDataVolumeResolution * SPARSE_VOLUME_TILE_RES_PADDED;
-}
-
-static FIntVector3 ComputeLargestPossibleTileDataVolumeResolution(int32 VoxelMemSize)
-{
-	const int64 TileMemSize = SVT::NumVoxelsPerPaddedTile * VoxelMemSize;
-	const int64 NumMaxTiles = SVT::MaxResourceSize / TileMemSize;
-	int64 ResourceSize = NumMaxTiles * TileMemSize;
-
-	// Find a cube with a volume as close to NumMaxTiles as possible
-	int32 TileVolumeResolutionCube = 1;
-	while (((TileVolumeResolutionCube + 1) * (TileVolumeResolutionCube + 1) * (TileVolumeResolutionCube + 1)) <= NumMaxTiles)
-	{
-		++TileVolumeResolutionCube;
-	}
-
-	// Try to add to the sides to get closer to NumMaxTiles
-	FIntVector3 ResolutionInTiles = FIntVector3(TileVolumeResolutionCube, TileVolumeResolutionCube, TileVolumeResolutionCube);
-	if (((ResolutionInTiles.X + 1) * ResolutionInTiles.Y * ResolutionInTiles.Z) <= NumMaxTiles)
-	{
-		++ResolutionInTiles.X;
-	}
-	if ((ResolutionInTiles.X * (ResolutionInTiles.Y + 1) * ResolutionInTiles.Z) <= NumMaxTiles)
-	{
-		++ResolutionInTiles.Y;
-	}
-	if ((ResolutionInTiles.X * ResolutionInTiles.Y * (ResolutionInTiles.Z + 1)) <= NumMaxTiles)
-	{
-		++ResolutionInTiles.Z;
-	}
-
-	const FIntVector3 Resolution = ResolutionInTiles * SPARSE_VOLUME_TILE_RES_PADDED;
-	check(Resolution.X <= SVT::MaxVolumeTextureDim && Resolution.Y <= SVT::MaxVolumeTextureDim && Resolution.Z <= SVT::MaxVolumeTextureDim);
-	check(((int64)Resolution.X * (int64)Resolution.Y * (int64)Resolution.Z) < SVT::MaxResourceSize);
-
-	return Resolution;
-}
-
-class FSparseVolumeTextureUpdateFromBufferCS : public FGlobalShader
-{
-	DECLARE_GLOBAL_SHADER(FSparseVolumeTextureUpdateFromBufferCS);
-	SHADER_USE_PARAMETER_STRUCT(FSparseVolumeTextureUpdateFromBufferCS, FGlobalShader)
-
-	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture3D, DstPhysicalTileTextureA)
-		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture3D, DstPhysicalTileTextureB)
-		SHADER_PARAMETER_RDG_BUFFER_SRV(ByteAddressBuffer, DstTileCoords)
-		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float4>, SrcPhysicalTileBufferA)
-		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float4>, SrcPhysicalTileBufferB)
-		SHADER_PARAMETER(uint32, TileCoordsBufferOffset)
-		SHADER_PARAMETER(uint32, TileDataBufferOffsetInTiles)
-		SHADER_PARAMETER(uint32, NumTilesToCopy)
-		SHADER_PARAMETER(uint32, NumDispatchedGroups)
-		SHADER_PARAMETER(uint32, PaddedTileSize)
-		SHADER_PARAMETER(uint32, bCopyTexureAOnlyUI)
-	END_SHADER_PARAMETER_STRUCT()
-
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return true;
-	}
-
-	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("UPDATE_TILE_TEXTURE_FROM_BUFFER"), 1);
-	}
-};
-IMPLEMENT_GLOBAL_SHADER(FSparseVolumeTextureUpdateFromBufferCS, "/Engine/Private/SparseVolumeTexture/UpdateSparseVolumeTexture.usf", "SparseVolumeTextureUpdateFromBufferCS", SF_Compute);
-
-class FSparseVolumeTextureUpdateFromSparseBufferCS : public FGlobalShader
-{
-	DECLARE_GLOBAL_SHADER(FSparseVolumeTextureUpdateFromSparseBufferCS);
-	SHADER_USE_PARAMETER_STRUCT(FSparseVolumeTextureUpdateFromSparseBufferCS, FGlobalShader)
-
-	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture3D, DstPhysicalTileTextureA)
-		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture3D, DstPhysicalTileTextureB)
-		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float4>, SrcPhysicalTileBufferA)
-		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<float4>, SrcPhysicalTileBufferB)
-		SHADER_PARAMETER_RDG_BUFFER_SRV(ByteAddressBuffer, OccupancyBitsBuffer)
-		SHADER_PARAMETER_RDG_BUFFER_SRV(ByteAddressBuffer, TileDataOffsetsBuffer)
-		SHADER_PARAMETER_RDG_BUFFER_SRV(ByteAddressBuffer, DstTileCoordsBuffer)
-		SHADER_PARAMETER(FVector4f, FallbackValueA)
-		SHADER_PARAMETER(FVector4f, FallbackValueB)
-		SHADER_PARAMETER(uint32, TileIndexOffset)
-		SHADER_PARAMETER(uint32, SrcVoxelDataOffsetA)
-		SHADER_PARAMETER(uint32, SrcVoxelDataOffsetB)
-		SHADER_PARAMETER(uint32, NumTilesToCopy)
-		SHADER_PARAMETER(uint32, BufferTileStep)
-		SHADER_PARAMETER(uint32, NumDispatchedGroups)
-		SHADER_PARAMETER(uint32, PaddedTileSize)
-		SHADER_PARAMETER(uint32, CopyTexureMask)
-	END_SHADER_PARAMETER_STRUCT()
-
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return true;
-	}
-
-	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("UPDATE_TILE_TEXTURE_FROM_SPARSE_BUFFER"), 1);
-	}
-};
-IMPLEMENT_GLOBAL_SHADER(FSparseVolumeTextureUpdateFromSparseBufferCS, "/Engine/Private/SparseVolumeTexture/UpdateSparseVolumeTexture.usf", "SparseVolumeTextureUpdateFromSparseBufferCS", SF_Compute);
-
-class FSparseVolumeTextureUpdatePageTableCS : public FGlobalShader
-{
-	DECLARE_GLOBAL_SHADER(FSparseVolumeTextureUpdatePageTableCS);
-	SHADER_USE_PARAMETER_STRUCT(FSparseVolumeTextureUpdatePageTableCS, FGlobalShader)
-
-	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture3D, PageTable)
-		SHADER_PARAMETER_RDG_BUFFER_SRV(ByteAddressBuffer, PageTableUpdates)
-		SHADER_PARAMETER(uint32, UpdateCoordOffset)
-		SHADER_PARAMETER(uint32, UpdatePayloadOffset)
-		SHADER_PARAMETER(uint32, NumUpdates)
-	END_SHADER_PARAMETER_STRUCT()
-
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return true;
-	}
-
-	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("UPDATE_PAGE_TABLE"), 1);
-	}
-};
-IMPLEMENT_GLOBAL_SHADER(FSparseVolumeTextureUpdatePageTableCS, "/Engine/Private/SparseVolumeTexture/UpdateSparseVolumeTexture.usf", "SparseVolumeTextureUpdatePageTableCS", SF_Compute);
-
-class FSparseVolumeTextureUpdateStreamingInfoBufferCS : public FGlobalShader
-{
-	DECLARE_GLOBAL_SHADER(FSparseVolumeTextureUpdateStreamingInfoBufferCS);
-	SHADER_USE_PARAMETER_STRUCT(FSparseVolumeTextureUpdateStreamingInfoBufferCS, FGlobalShader)
-
-	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		SHADER_PARAMETER_RDG_BUFFER_UAV(RWByteAddressBuffer, StreamingInfoBuffer)
-		SHADER_PARAMETER_RDG_BUFFER_SRV(ByteAddressBuffer, StreamingInfoBufferUpdates)
-		SHADER_PARAMETER(uint32, UpdateOffset)
-		SHADER_PARAMETER(uint32, NumUpdates)
-	END_SHADER_PARAMETER_STRUCT()
-
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
-	{
-		return true;
-	}
-
-	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
-	{
-		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("UPDATE_STREAMING_INFO_BUFFER"), 1);
-	}
-};
-IMPLEMENT_GLOBAL_SHADER(FSparseVolumeTextureUpdateStreamingInfoBufferCS, "/Engine/Private/SparseVolumeTexture/UpdateSparseVolumeTexture.usf", "SparseVolumeTextureUpdateStreamingInfoBufferCS", SF_Compute);
-
-// Utility class for uploading tiles to a physical tile data texture
-class FTileUploader
-{
-public:
-
-	struct FAddResult
-	{
-		TStaticArray<uint8*, 2> OccupancyBitsPtrs;
-		TStaticArray<uint8*, 2> TileDataOffsetsPtrs;
-		TStaticArray<uint8*, 2> TileDataPtrs;
-		TStaticArray<uint32, 2> TileDataBaseOffsets; // Caller needs to add this value to all data written to TileDataOffsetsPtrs
-		uint8* PackedPhysicalTileCoordsPtr;
-	};
-
-	FTileUploader()
-	{
-		ResetState();
-	}
-
-	void Init(FRDGBuilder& GraphBuilder, int32 InMaxNumTiles, int32 InMaxNumVoxelsA, int32 InMaxNumVoxelsB, EPixelFormat InFormatA, EPixelFormat InFormatB)
-	{
-		check(InFormatA != PF_Unknown || InFormatB != PF_Unknown);
-		ResetState();
-		MaxNumTiles = InMaxNumTiles;
-		MaxNumVoxelsA = InMaxNumVoxelsA;
-		MaxNumVoxelsB = InMaxNumVoxelsB;
-		FormatA = InFormatA;
-		FormatB = InFormatB;
-		FormatSizeA = GPixelFormats[FormatA].BlockBytes;
-		FormatSizeB = GPixelFormats[FormatB].BlockBytes;
-
-		// Create a new set of buffers if the old set is already queued into RDG.
-		if (IsRegistered(GraphBuilder, DstTileCoordsUploadBuffer))
-		{
-			OccupancyBitsUploadBuffer = nullptr;
-			TileDataOffsetsUploadBuffer = nullptr;
-			DstTileCoordsUploadBuffer = nullptr;
-			TileDataAUploadBuffer = nullptr;
-			TileDataBUploadBuffer = nullptr;
-		}
-
-		const int32 NumTextures = (FormatA == PF_Unknown || FormatB == PF_Unknown) ? 1 : 2;
-
-		if (MaxNumTiles > 0)
-		{
-			FRHICommandListBase& RHICmdList = GraphBuilder.RHICmdList;
-
-			// Occupancy bits
-			{
-				const uint32 BufferSize = NumTextures * MaxNumTiles * SVT::NumOccupancyWordsPerPaddedTile * sizeof(uint32);
-				FRDGBufferDesc BufferDesc = FRDGBufferDesc::CreateByteAddressUploadDesc(BufferSize);
-				BufferDesc.Usage |= EBufferUsageFlags::Dynamic; // Skip the unneeded copy from upload to VRAM resource on d3d12 RHI
-				AllocatePooledBuffer(BufferDesc, OccupancyBitsUploadBuffer, TEXT("SparseVolumeTexture.OccupancyBitsUploadBuffer"));
-
-				OccupancyBitsAPtr = (uint8*)RHICmdList.LockBuffer(OccupancyBitsUploadBuffer->GetRHI(), 0, BufferSize, RLM_WriteOnly);
-				OccupancyBitsBPtr = OccupancyBitsAPtr + (FormatA != PF_Unknown ? (MaxNumTiles * SVT::NumOccupancyWordsPerPaddedTile * sizeof(uint32)) : 0);
-			}
-			// Tile data offsets
-			{
-				const uint32 BufferSize = NumTextures * MaxNumTiles * sizeof(uint32);
-				FRDGBufferDesc BufferDesc = FRDGBufferDesc::CreateByteAddressUploadDesc(BufferSize);
-				BufferDesc.Usage |= EBufferUsageFlags::Dynamic; // Skip the unneeded copy from upload to VRAM resource on d3d12 RHI
-				AllocatePooledBuffer(BufferDesc, TileDataOffsetsUploadBuffer, TEXT("SparseVolumeTexture.TileDataOffsetsUploadBuffer"));
-
-				// Due to a limit on the maximum number of texels in a buffer SRV, we need to upload the data in smaller chunks. In order to figure out the chunk offsets/sizes,
-				// we need to read the TileDataOffset values the caller has written to the returned pointers. We want to avoid reading from a mapped upload buffer pointer,
-				// which is why we use a temporary allocation to write the upload data to.
-				TileDataOffsets.SetNumUninitialized(NumTextures * MaxNumTiles);
-				TileDataOffsetsAPtr = (uint8*)TileDataOffsets.GetData();
-				TileDataOffsetsBPtr = TileDataOffsetsAPtr + (FormatA != PF_Unknown ? (MaxNumTiles * sizeof(uint32)) : 0);
-			}
-			// TileCoords
-			{
-				const uint32 BufferSize = MaxNumTiles * sizeof(uint32);
-				FRDGBufferDesc BufferDesc = FRDGBufferDesc::CreateByteAddressUploadDesc(BufferSize);
-				BufferDesc.Usage |= EBufferUsageFlags::Dynamic; // Skip the unneeded copy from upload to VRAM resource on d3d12 RHI
-				AllocatePooledBuffer(BufferDesc, DstTileCoordsUploadBuffer, TEXT("SparseVolumeTexture.TileCoordsUploadBuffer"));
-
-				TileCoordsPtr = (uint8*)RHICmdList.LockBuffer(DstTileCoordsUploadBuffer->GetRHI(), 0, BufferSize, RLM_WriteOnly);
-			}
-
-			// TileData
-			if (FormatSizeA > 0)
-			{
-				FRDGBufferDesc BufferDesc = FRDGBufferDesc::CreateUploadDesc(FormatSizeA, FMath::Max(MaxNumVoxelsA, 1));
-				BufferDesc.Usage |= EBufferUsageFlags::Dynamic; // Skip the unneeded copy from upload to VRAM resource on d3d12 RHI
-				AllocatePooledBuffer(BufferDesc, TileDataAUploadBuffer, TEXT("SparseVolumeTexture.TileDataAUploadBuffer"));
-
-				TileDataAPtr = (uint8*)RHICmdList.LockBuffer(TileDataAUploadBuffer->GetRHI(), 0, FMath::Max(MaxNumVoxelsA, 1) * FormatSizeA, RLM_WriteOnly);
-			}
-			if (FormatSizeB > 0)
-			{
-				FRDGBufferDesc BufferDesc = FRDGBufferDesc::CreateUploadDesc(FormatSizeB, FMath::Max(MaxNumVoxelsB, 1));
-				BufferDesc.Usage |= EBufferUsageFlags::Dynamic; // Skip the unneeded copy from upload to VRAM resource on d3d12 RHI
-				AllocatePooledBuffer(BufferDesc, TileDataBUploadBuffer, TEXT("SparseVolumeTexture.TileDataBUploadBuffer"));
-
-				TileDataBPtr = (uint8*)RHICmdList.LockBuffer(TileDataBUploadBuffer->GetRHI(), 0, FMath::Max(MaxNumVoxelsB, 1) * FormatSizeB, RLM_WriteOnly);
-			}
-		}
-	}
-
-	FAddResult Add_GetRef(int32 NumTiles, int32 NumVoxelsA, int32 NumVoxelsB)
-	{
-		check((NumWrittenTiles + NumTiles) <= MaxNumTiles);
-		check((NumWrittenVoxelsA + NumVoxelsA) <= MaxNumVoxelsA);
-		check((NumWrittenVoxelsB + NumVoxelsB) <= MaxNumVoxelsB);
-		check(TileCoordsPtr);
-		check(FormatSizeA <= 0 || TileDataAPtr);
-		check(FormatSizeB <= 0 || TileDataBPtr);
-
-		FAddResult Result = {};
-		Result.OccupancyBitsPtrs[0] = TileDataAPtr ? OccupancyBitsAPtr + (NumWrittenTiles * SVT::NumOccupancyWordsPerPaddedTile * sizeof(uint32)) : nullptr;
-		Result.OccupancyBitsPtrs[1] = TileDataBPtr ? OccupancyBitsBPtr + (NumWrittenTiles * SVT::NumOccupancyWordsPerPaddedTile * sizeof(uint32)) : nullptr;
-		Result.TileDataOffsetsPtrs[0] = TileDataAPtr ? TileDataOffsetsAPtr + (NumWrittenTiles * sizeof(uint32)) : nullptr;
-		Result.TileDataOffsetsPtrs[1] = TileDataBPtr ? TileDataOffsetsBPtr + (NumWrittenTiles * sizeof(uint32)) : nullptr;
-		Result.TileDataPtrs[0] = TileDataAPtr ? TileDataAPtr + (NumWrittenVoxelsA * FormatSizeA) : nullptr;
-		Result.TileDataPtrs[1] = TileDataBPtr ? TileDataBPtr + (NumWrittenVoxelsB * FormatSizeB) : nullptr;
-		Result.TileDataBaseOffsets[0] = NumWrittenVoxelsA;
-		Result.TileDataBaseOffsets[1] = NumWrittenVoxelsB;
-		Result.PackedPhysicalTileCoordsPtr = TileCoordsPtr + NumWrittenTiles * sizeof(uint32);
-		
-		NumWrittenTiles += NumTiles;
-		NumWrittenVoxelsA += NumVoxelsA;
-		NumWrittenVoxelsB += NumVoxelsB;
-
-		return Result;
-	}
-
-	void Release()
-	{
-		OccupancyBitsUploadBuffer.SafeRelease();
-		TileDataOffsetsUploadBuffer.SafeRelease();
-		DstTileCoordsUploadBuffer.SafeRelease();
-		TileDataAUploadBuffer.SafeRelease();
-		TileDataBUploadBuffer.SafeRelease();
-		TileDataOffsets.Reset();
-		ResetState();
-	}
-
-	void ResourceUploadTo(FRDGBuilder& GraphBuilder, FRHITexture* DstTextureA, FRHITexture* DstTextureB, const FVector4f& FallbackValueA, const FVector4f& FallbackValueB)
-	{
-		check(DstTextureA || FormatSizeA <= 0);
-		check(DstTextureB || FormatSizeB <= 0);
-		if (MaxNumTiles > 0)
-		{
-			FRHICommandListBase& RHICmdList = GraphBuilder.RHICmdList;
-
-			RHICmdList.UnlockBuffer(OccupancyBitsUploadBuffer->GetRHI());
-			RHICmdList.UnlockBuffer(DstTileCoordsUploadBuffer->GetRHI());
-
-			// TileDataOffset values were written to a temporary allocation so that we can access them later in this function. Unlike the other buffers, we now need to copy that data over to the actual upload buffer.
-			void* TileDataOffsetsUploadPtr = RHICmdList.LockBuffer(TileDataOffsetsUploadBuffer->GetRHI(), 0, TileDataOffsets.Num() * sizeof(TileDataOffsets[0]), RLM_WriteOnly);
-			FMemory::Memcpy(TileDataOffsetsUploadPtr, TileDataOffsets.GetData(), TileDataOffsets.Num() * sizeof(TileDataOffsets[0]));
-			RHICmdList.UnlockBuffer(TileDataOffsetsUploadBuffer->GetRHI());
-
-			if (TileDataAPtr)
-			{
-				RHICmdList.UnlockBuffer(TileDataAUploadBuffer->GetRHI());
-			}
-			if (TileDataBPtr)
-			{
-				RHICmdList.UnlockBuffer(TileDataBUploadBuffer->GetRHI());
-			}
-
-			if (NumWrittenTiles > 0)
-			{
-				FRDGTexture* DummyTexture = GraphBuilder.CreateTexture(FRDGTextureDesc::Create3D(FIntVector(1), PF_R8, FClearValueBinding::None, ETextureCreateFlags::UAV), TEXT("SparseVolumeTexture.DummyTexture"));
-				FRDGTexture* DstTextureARDG = DstTextureA ? GraphBuilder.RegisterExternalTexture(CreateRenderTarget(DstTextureA, TEXT("SparseVolumeTexture.TileDataTextureA"))) : nullptr;
-				FRDGTexture* DstTextureBRDG = DstTextureB ? GraphBuilder.RegisterExternalTexture(CreateRenderTarget(DstTextureB, TEXT("SparseVolumeTexture.TileDataTextureB"))) : nullptr;
-				FRDGBuffer* SrcBufferARDG = FormatSizeA > 0 ? GraphBuilder.RegisterExternalBuffer(TileDataAUploadBuffer) : nullptr;
-				FRDGBuffer* SrcBufferBRDG = FormatSizeB > 0 ? GraphBuilder.RegisterExternalBuffer(TileDataBUploadBuffer) : nullptr;
-				check(SrcBufferARDG || SrcBufferBRDG);
-
-				FRDGTextureUAV* DummyTextureUAV = GraphBuilder.CreateUAV(DummyTexture);
-				FRDGTextureUAV* DstTextureAUAV = DstTextureARDG ? GraphBuilder.CreateUAV(DstTextureARDG) : nullptr;
-				FRDGTextureUAV* DstTextureBUAV = DstTextureBRDG ? GraphBuilder.CreateUAV(DstTextureBRDG) : nullptr;
-
-				FRDGBufferSRV* OccupancyBitsBufferSRV = GraphBuilder.CreateSRV(GraphBuilder.RegisterExternalBuffer(OccupancyBitsUploadBuffer));
-				FRDGBufferSRV* TileDataOffsetsBufferSRV = GraphBuilder.CreateSRV(GraphBuilder.RegisterExternalBuffer(TileDataOffsetsUploadBuffer));
-				FRDGBufferSRV* DstTileCoordsBufferSRV = GraphBuilder.CreateSRV(GraphBuilder.RegisterExternalBuffer(DstTileCoordsUploadBuffer));
-				// Either SrcBufferARDG or SrcBufferBRDG must exist and will have at least 1 element.
-				FRDGBufferSRV* DummySrcBufferSRV = SrcBufferARDG ? GraphBuilder.CreateSRV(SrcBufferARDG, FormatA) : GraphBuilder.CreateSRV(SrcBufferBRDG, FormatB);
-
-				auto ComputeShader = GetGlobalShaderMap(GMaxRHIFeatureLevel)->GetShader<FSparseVolumeTextureUpdateFromSparseBufferCS>();
-
-				int32 NumUploadedTiles = 0;
-				int32 NumUploadedVoxelsA = 0;
-				int32 NumUploadedVoxelsB = 0;
-
-				// This is a limit on some platforms on the maximum number of texels in a texel/typed buffer. Unfortunately for R8 (1 byte) formats, this means that we can upload only 1/16 of all the texels of a 2GB texture.
-				// In order to work around this issue, the data to be uploaded is split into chunks such that this limit is not violated. We can use the TileDataOffsets values to get the number of voxels per tile and then
-				// just add as many tiles to the batch as we can.
-				const int32 MaxNumTexelsPerResource = 1 << 27;
-
-				while (NumUploadedTiles < NumWrittenTiles)
-				{
-					// Determine the number of tiles to upload in this iteration
-					int32 NumTilesInThisBatch = 0;
-					int32 NumVoxelsAInThisBatch = 0;
-					int32 NumVoxelsBInThisBatch = 0;
-					for (int32 TileIndex = NumUploadedTiles; TileIndex < NumWrittenTiles; ++TileIndex)
-					{
-						const int32 VoxelOffsetA = FormatSizeA > 0 ? reinterpret_cast<uint32*>(TileDataOffsetsAPtr)[TileIndex] : 0;
-						const int32 VoxelOffsetB = FormatSizeB > 0 ? reinterpret_cast<uint32*>(TileDataOffsetsBPtr)[TileIndex] : 0;
-						const int32 VoxelEndIndexA = FormatSizeA > 0 && (TileIndex + 1) < NumWrittenTiles ? reinterpret_cast<uint32*>(TileDataOffsetsAPtr)[TileIndex + 1] : NumWrittenVoxelsA;
-						const int32 VoxelEndIndexB = FormatSizeB > 0 && (TileIndex + 1) < NumWrittenTiles ? reinterpret_cast<uint32*>(TileDataOffsetsBPtr)[TileIndex + 1] : NumWrittenVoxelsB;
-						const int32 TileNumVoxelsA = VoxelEndIndexA - VoxelOffsetA;
-						const int32 TileNumVoxelsB = VoxelEndIndexB - VoxelOffsetB;
-						check(TileNumVoxelsA >= 0 && TileNumVoxelsA <= SVT::NumVoxelsPerPaddedTile);
-						check(TileNumVoxelsB >= 0 && TileNumVoxelsB <= SVT::NumVoxelsPerPaddedTile);
-
-						// Adding additional voxels to the batch would exceed the limit, so exit the loop and upload the data.
-						if ((NumVoxelsAInThisBatch + TileNumVoxelsA) > MaxNumTexelsPerResource || (NumVoxelsBInThisBatch + TileNumVoxelsB) > MaxNumTexelsPerResource)
-						{
-							break;
-						}
-
-						NumTilesInThisBatch += 1;
-						NumVoxelsAInThisBatch += TileNumVoxelsA;
-						NumVoxelsBInThisBatch += TileNumVoxelsB;
-					}
-
-					FRDGBufferSRV* TileDataABufferSRV = nullptr;
-					FRDGBufferSRV* TileDataBBufferSRV = nullptr;
-
-					// This is the critical part: For every batch we create a SRV scoped to a range within the voxel data upload buffer still fitting within the typed buffer texel limit.
-					if (FormatSizeA && NumVoxelsAInThisBatch)
-					{
-						FRDGBufferSRVDesc SRVDesc(SrcBufferARDG, FormatA);
-						SRVDesc.StartOffsetBytes = NumUploadedVoxelsA * FormatSizeA;
-						SRVDesc.NumElements = NumVoxelsAInThisBatch;
-						TileDataABufferSRV = GraphBuilder.CreateSRV(SRVDesc);
-					}
-					if (FormatSizeB && NumVoxelsBInThisBatch)
-					{
-						FRDGBufferSRVDesc SRVDesc(SrcBufferBRDG, FormatB);
-						SRVDesc.StartOffsetBytes = NumUploadedVoxelsB * FormatSizeB;
-						SRVDesc.NumElements = NumVoxelsBInThisBatch;
-						TileDataBBufferSRV = GraphBuilder.CreateSRV(SRVDesc);
-					}
-
-					FSparseVolumeTextureUpdateFromSparseBufferCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FSparseVolumeTextureUpdateFromSparseBufferCS::FParameters>();
-					PassParameters->DstPhysicalTileTextureA = DstTextureAUAV ? DstTextureAUAV : DummyTextureUAV;
-					PassParameters->DstPhysicalTileTextureB = DstTextureBUAV ? DstTextureBUAV : DummyTextureUAV;
-					PassParameters->SrcPhysicalTileBufferA = TileDataABufferSRV ? TileDataABufferSRV : DummySrcBufferSRV;
-					PassParameters->SrcPhysicalTileBufferB = TileDataBBufferSRV ? TileDataBBufferSRV : DummySrcBufferSRV;
-					PassParameters->OccupancyBitsBuffer = OccupancyBitsBufferSRV;
-					PassParameters->TileDataOffsetsBuffer = TileDataOffsetsBufferSRV;
-					PassParameters->DstTileCoordsBuffer = DstTileCoordsBufferSRV;
-					PassParameters->FallbackValueA = FallbackValueA;
-					PassParameters->FallbackValueB = FallbackValueB;
-					PassParameters->TileIndexOffset = NumUploadedTiles; // This lets the shader know how many tiles have already been processed in previous dispatches.
-					PassParameters->SrcVoxelDataOffsetA = NumUploadedVoxelsA; // SrcVoxelDataOffsetA and SrcVoxelDataOffsetB are subtracted from the calculated voxel data buffer read indices
-					PassParameters->SrcVoxelDataOffsetB = NumUploadedVoxelsB;
-					PassParameters->NumTilesToCopy = NumTilesInThisBatch;
-					PassParameters->BufferTileStep = MaxNumTiles;
-					PassParameters->NumDispatchedGroups = FMath::Min(NumTilesInThisBatch, GRHIMaxDispatchThreadGroupsPerDimension.X);
-					PassParameters->PaddedTileSize = SPARSE_VOLUME_TILE_RES_PADDED;
-					PassParameters->CopyTexureMask = 0;
-					PassParameters->CopyTexureMask |= FormatSizeA > 0 ? 0x1u : 0x0u;
-					PassParameters->CopyTexureMask |= FormatSizeB > 0 ? 0x2u : 0x0u;
-
-					// Disable async compute for streaming systems when MGPU is active, to work around GPU hangs
-					const bool bAsyncCompute = GSupportsEfficientAsyncCompute && (GSVTStreamingAsyncCompute != 0) && (GNumExplicitGPUsForRendering == 1);
-
-					FComputeShaderUtils::AddPass(
-						GraphBuilder,
-						RDG_EVENT_NAME("Upload SVT Tiles (TileCount: %u)", NumTilesInThisBatch),
-						bAsyncCompute ? ERDGPassFlags::AsyncCompute : ERDGPassFlags::Compute,
-						ComputeShader,
-						PassParameters,
-						FIntVector3(PassParameters->NumDispatchedGroups, 1, 1)
-					);
-
-					NumUploadedTiles += NumTilesInThisBatch;
-					NumUploadedVoxelsA += NumVoxelsAInThisBatch;
-					NumUploadedVoxelsB += NumVoxelsBInThisBatch;
-				}
-
-				check(NumUploadedTiles == NumWrittenTiles);
-				check(NumUploadedVoxelsA == NumWrittenVoxelsA);
-				check(NumUploadedVoxelsB == NumWrittenVoxelsB);
-			}
-		}
-		Release();
-	}
-
-private:
-	TRefCountPtr<FRDGPooledBuffer> OccupancyBitsUploadBuffer;
-	TRefCountPtr<FRDGPooledBuffer> TileDataOffsetsUploadBuffer;
-	TRefCountPtr<FRDGPooledBuffer> DstTileCoordsUploadBuffer;
-	TRefCountPtr<FRDGPooledBuffer> TileDataAUploadBuffer;
-	TRefCountPtr<FRDGPooledBuffer> TileDataBUploadBuffer;
-	TArray<uint32> TileDataOffsets; // CPU-readable per-tile offsets into tile data
-	uint8* OccupancyBitsAPtr = nullptr;
-	uint8* OccupancyBitsBPtr = nullptr;
-	uint8* TileDataOffsetsAPtr = nullptr;
-	uint8* TileDataOffsetsBPtr = nullptr;
-	uint8* TileCoordsPtr = nullptr;
-	uint8* TileDataAPtr = nullptr;
-	uint8* TileDataBPtr = nullptr;
-	int32 MaxNumTiles = 0;
-	int32 MaxNumVoxelsA = 0;
-	int32 MaxNumVoxelsB = 0;
-	EPixelFormat FormatA = PF_Unknown;
-	EPixelFormat FormatB = PF_Unknown;
-	int32 FormatSizeA = 0;
-	int32 FormatSizeB = 0;
-	int32 NumWrittenTiles = 0;
-	int32 NumWrittenVoxelsA = 0;
-	int32 NumWrittenVoxelsB = 0;
-
-	void ResetState()
-	{
-		OccupancyBitsAPtr = nullptr;
-		OccupancyBitsBPtr = nullptr;
-		TileDataOffsetsAPtr = nullptr;
-		TileDataOffsetsBPtr = nullptr;
-		TileCoordsPtr = nullptr;
-		TileDataAPtr = nullptr;
-		TileDataBPtr = nullptr;
-		MaxNumTiles = 0;
-		MaxNumVoxelsA = 0;
-		MaxNumVoxelsB = 0;
-		FormatA = PF_Unknown;
-		FormatB = PF_Unknown;
-		FormatSizeA = 0;
-		FormatSizeB = 0;
-		NumWrittenTiles = 0;
-		NumWrittenVoxelsA = 0;
-		NumWrittenVoxelsB = 0;
-	}
-};
-
-// Utility class for writing page table entries
-class FPageTableUpdater
-{
-public:
-	FPageTableUpdater()
-	{
-		ResetState();
-	}
-
-	void Init(FRDGBuilder& GraphBuilder, int32 InMaxNumUpdates, int32 InEstimatedNumBatches)
-	{
-		ResetState();
-		MaxNumUpdates = InMaxNumUpdates;
-		Batches.Reserve(InEstimatedNumBatches);
-
-		// Create a new buffer if the old one is already queued into RDG.
-		if (IsRegistered(GraphBuilder, UpdatesUploadBuffer))
-		{
-			UpdatesUploadBuffer = nullptr;
-		}
-
-		if (MaxNumUpdates > 0)
-		{
-			// Add EBufferUsageFlags::Dynamic to skip the unneeded copy from upload to VRAM resource on d3d12 RHI
-			FRDGBufferDesc BufferDesc = FRDGBufferDesc::CreateByteAddressUploadDesc(MaxNumUpdates * 2 * sizeof(uint32));
-			BufferDesc.Usage |= EBufferUsageFlags::Dynamic;
-			AllocatePooledBuffer(BufferDesc, UpdatesUploadBuffer, TEXT("SparseVolumeTexture.PageTableUpdatesUploadBuffer"));
-
-			DataPtr = (uint8*)GraphBuilder.RHICmdList.LockBuffer(UpdatesUploadBuffer->GetRHI(), 0, MaxNumUpdates * 2 * sizeof(uint32), RLM_WriteOnly);
-		}
-	}
-
-	void Add_GetRef(FRHITexture* PageTable, int32 MipLevel, int32 NumUpdates, uint8*& OutCoordsPtr, uint8*& OutPayloadPtr)
-	{
-		check((NumWrittenUpdates + NumUpdates) <= MaxNumUpdates);
-		check(DataPtr);
-		FBatch* Batch = Batches.IsEmpty() ? nullptr : &Batches.Last();
-		if (!Batch || Batch->PageTable != PageTable || Batch->MipLevel != MipLevel)
-		{
-			Batch = &Batches.Add_GetRef(FBatch(PageTable, MipLevel));
-		}
-
-		OutCoordsPtr = DataPtr + NumWrittenUpdates * sizeof(uint32);
-		OutPayloadPtr = DataPtr + (MaxNumUpdates + NumWrittenUpdates) * sizeof(uint32);
-
-		Batch->NumUpdates += NumUpdates;
-		NumWrittenUpdates += NumUpdates;
-	}
-
-	void Release()
-	{
-		UpdatesUploadBuffer.SafeRelease();
-		ResetState();
-	}
-
-	void Apply(FRDGBuilder& GraphBuilder)
-	{
-		if (MaxNumUpdates > 0)
-		{
-			GraphBuilder.RHICmdList.UnlockBuffer(UpdatesUploadBuffer->GetRHI());
-
-			if (NumWrittenUpdates > 0)
-			{
-				// Disable async compute for streaming systems when MGPU is active, to work around GPU hangs
-				const bool bAsyncCompute = GSupportsEfficientAsyncCompute && (GSVTStreamingAsyncCompute != 0) && (GNumExplicitGPUsForRendering == 1);
-				auto ComputeShader = GetGlobalShaderMap(GMaxRHIFeatureLevel)->GetShader<FSparseVolumeTextureUpdatePageTableCS>();
-
-				uint32 UpdatesOffset = 0;
-				for (const FBatch& Batch : Batches)
-				{
-					FRDGTexture* PageTableRDG = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(Batch.PageTable, TEXT("SparseVolumeTexture.PageTableTexture")));
-					FRDGTextureUAV* PageTableUAV = GraphBuilder.CreateUAV(FRDGTextureUAVDesc(PageTableRDG, Batch.MipLevel, PF_R32_UINT));
-					FRDGBufferSRV* UpdatesBufferSRV = GraphBuilder.CreateSRV(GraphBuilder.RegisterExternalBuffer(UpdatesUploadBuffer));
-
-					FSparseVolumeTextureUpdatePageTableCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FSparseVolumeTextureUpdatePageTableCS::FParameters>();
-					PassParameters->PageTable = PageTableUAV;
-					PassParameters->PageTableUpdates = UpdatesBufferSRV;
-					PassParameters->UpdateCoordOffset = UpdatesOffset;
-					PassParameters->UpdatePayloadOffset = MaxNumUpdates + UpdatesOffset;
-					PassParameters->NumUpdates = Batch.NumUpdates;
-
-					FComputeShaderUtils::AddPass(
-						GraphBuilder,
-						RDG_EVENT_NAME("Update SVT PageTable (UpdateCount: %u)", Batch.NumUpdates),
-						bAsyncCompute ? ERDGPassFlags::AsyncCompute : ERDGPassFlags::Compute,
-						ComputeShader,
-						PassParameters,
-						FComputeShaderUtils::GetGroupCount(Batch.NumUpdates, 64)
-					);
-
-					UpdatesOffset += Batch.NumUpdates;
-				}
-			}
-		}
-		
-		Release();
-	}
-
-private:
-	struct FBatch
-	{
-		FRHITexture* PageTable;
-		int32 MipLevel;
-		int32 NumUpdates;
-
-		FBatch() = default;
-		FBatch(FRHITexture* InPageTable, int32 InMipLevel) : PageTable(InPageTable), MipLevel(InMipLevel), NumUpdates(0) {}
-	};
-
-	TRefCountPtr<FRDGPooledBuffer> UpdatesUploadBuffer;
-	TArray<FBatch> Batches;
-	uint8* DataPtr = nullptr;
-	int32 NumWrittenUpdates = 0;
-	int32 MaxNumUpdates = 0;
-
-
-	void ResetState()
-	{
-		Batches.Reset();
-		DataPtr = nullptr;
-		NumWrittenUpdates = 0;
-		MaxNumUpdates = 0;
-	}
-};
-
-// Updates entries in the streaming info buffers of multiple SVTs
-class FStreamingInfoBufferUpdater
-{
-public:
-	FStreamingInfoBufferUpdater()
-	{
-		ResetState();
-	}
-
-	void Add(TRefCountPtr<FRDGPooledBuffer> StreamingInfoBuffer, int32 FrameIndex, int32 LowestResidentMipLevel)
-	{
-		FBatch* Batch = Batches.IsEmpty() ? nullptr : &Batches.Last();
-		if (!Batch || Batch->StreamingInfoBuffer != StreamingInfoBuffer)
-		{
-			Batch = &Batches.Add_GetRef(FBatch(StreamingInfoBuffer, Updates.Num()));
-		}
-
-		Updates.Add(FrameIndex);
-		Updates.Add(LowestResidentMipLevel);
-
-		++Batch->NumUpdates;
-	}
-
-	void Apply(FRDGBuilder& GraphBuilder)
-	{
-		if (!Updates.IsEmpty())
-		{
-			TRefCountPtr<FRDGPooledBuffer> UpdatesUploadBuffer;
-			{
-				// Add EBufferUsageFlags::Dynamic to skip the unneeded copy from upload to VRAM resource on d3d12 RHI
-				FRDGBufferDesc BufferDesc = FRDGBufferDesc::CreateByteAddressUploadDesc(Updates.Num() * sizeof(uint32));
-				BufferDesc.Usage |= EBufferUsageFlags::Dynamic;
-				AllocatePooledBuffer(BufferDesc, UpdatesUploadBuffer, TEXT("SparseVolumeTexture.StreamingInfoUploadBuffer"));
-
-				void* DataPtr = GraphBuilder.RHICmdList.LockBuffer(UpdatesUploadBuffer->GetRHI(), 0, Updates.Num() * sizeof(uint32), RLM_WriteOnly);
-				FMemory::Memcpy(DataPtr, Updates.GetData(), Updates.Num() * sizeof(uint32));
-				GraphBuilder.RHICmdList.UnlockBuffer(UpdatesUploadBuffer->GetRHI());
-			}
-
-			// Disable async compute for streaming systems when MGPU is active, to work around GPU hangs
-			const bool bAsyncCompute = GSupportsEfficientAsyncCompute && (GSVTStreamingAsyncCompute != 0) && (GNumExplicitGPUsForRendering == 1);
-			auto ComputeShader = GetGlobalShaderMap(GMaxRHIFeatureLevel)->GetShader<FSparseVolumeTextureUpdateStreamingInfoBufferCS>();
-
-			uint32 UpdatesOffset = 0;
-			for (const FBatch& Batch : Batches)
-			{
-				FRDGBufferUAV* StreamingInfoBufferUAV = GraphBuilder.CreateUAV(GraphBuilder.RegisterExternalBuffer(Batch.StreamingInfoBuffer), PF_R32_UINT);
-				FRDGBufferSRV* UpdatesBufferSRV = GraphBuilder.CreateSRV(GraphBuilder.RegisterExternalBuffer(UpdatesUploadBuffer));
-
-				FSparseVolumeTextureUpdateStreamingInfoBufferCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FSparseVolumeTextureUpdateStreamingInfoBufferCS::FParameters>();
-				PassParameters->StreamingInfoBuffer = StreamingInfoBufferUAV;
-				PassParameters->StreamingInfoBufferUpdates = UpdatesBufferSRV;
-				PassParameters->UpdateOffset = UpdatesOffset;
-				PassParameters->NumUpdates = Batch.NumUpdates;
-
-				FComputeShaderUtils::AddPass(
-					GraphBuilder,
-					RDG_EVENT_NAME("Update SVT StreamingInfoBuffer (UpdateCount: %u)", Batch.NumUpdates),
-					bAsyncCompute ? ERDGPassFlags::AsyncCompute : ERDGPassFlags::Compute,
-					ComputeShader,
-					PassParameters,
-					FComputeShaderUtils::GetGroupCount(Batch.NumUpdates, 64)
-				);
-
-				UpdatesOffset += Batch.NumUpdates;
-			}
-		}
-		
-		ResetState();
-	}
-
-private:
-	struct FBatch
-	{
-		TRefCountPtr<FRDGPooledBuffer> StreamingInfoBuffer;
-		int32 UpdatesOffset;
-		int32 NumUpdates;
-
-		FBatch() = default;
-		FBatch(TRefCountPtr<FRDGPooledBuffer> InStreamingInfoBuffer, int32 InUpdatesOffset) : StreamingInfoBuffer(InStreamingInfoBuffer), UpdatesOffset(InUpdatesOffset), NumUpdates(0) {}
-	};
-
-	TArray<FBatch> Batches;
-	TArray<uint32> Updates;
-
-	void ResetState()
-	{
-		Batches.Reset();
-		Updates.Reset();
-	}
-};
 
 struct FStreamingUpdateParameters
 {
@@ -851,7 +137,7 @@ public:
 
 	void DoTask(ENamedThreads::Type CurrentThread, const FGraphEventRef& MyCompletionGraphEvent)
 	{
-		Parameters.StreamingManager->InstallReadyMipLevels();
+		Parameters.StreamingManager->InstallReadyRequests();
 	}
 
 	static ESubsequentsMode::Type	GetSubsequentsMode() { return ESubsequentsMode::TrackSubsequents; }
@@ -859,10 +145,10 @@ public:
 	FORCEINLINE TStatId				GetStatId() const { return TStatId(); }
 };
 
-FStreamingManager::FStreamingManager()
-{
+FStreamingManager::FStreamingManager() = default;
+// needed in module to forward declare some members
+FStreamingManager::~FStreamingManager() = default;
 
-}
 
 void FStreamingManager::InitRHI(FRHICommandListBase& RHICmdList)
 {
@@ -873,13 +159,12 @@ void FStreamingManager::InitRHI(FRHICommandListBase& RHICmdList)
 		return;
 	}
 
-	MaxPendingMipLevels = GSVTStreamingMaxPendingMipLevels;
-	PendingMipLevels.SetNum(MaxPendingMipLevels);
+	MaxPendingRequests = GSVTStreamingMaxPendingRequests;
+	PendingRequests.SetNum(MaxPendingRequests);
 	PageTableUpdater = MakeUnique<FPageTableUpdater>();
-	StreamingInfoBufferUpdater = MakeUnique<FStreamingInfoBufferUpdater>();
 
 #if WITH_EDITORONLY_DATA
-	RequestOwner = MakeUnique<FRequestOwner>(EPriority::Normal);
+	RequestOwner = MakeUnique<FRequestOwner>(EPriority::Highest);
 	RequestOwnerBlocking = MakeUnique<FRequestOwner>(EPriority::Blocking);
 #endif
 }
@@ -902,11 +187,16 @@ void FStreamingManager::Add_GameThread(UStreamableSparseVolumeTexture* SparseVol
 	FNewSparseVolumeTextureInfo NewSVTInfo{};
 	const int32 NumFrames = SparseVolumeTexture->GetNumFrames();
 	NewSVTInfo.SVT = SparseVolumeTexture;
+	NewSVTInfo.SVTName = SparseVolumeTexture->GetFName();
 	NewSVTInfo.FormatA = SparseVolumeTexture->GetFormat(0);
 	NewSVTInfo.FormatB = SparseVolumeTexture->GetFormat(1);
 	NewSVTInfo.FallbackValueA = SparseVolumeTexture->GetFallbackValue(0);
 	NewSVTInfo.FallbackValueB = SparseVolumeTexture->GetFallbackValue(1);
 	NewSVTInfo.NumMipLevelsGlobal = SparseVolumeTexture->GetNumMipLevels();
+	NewSVTInfo.StreamingPoolSizeFactor = SparseVolumeTexture->StreamingPoolSizeFactor;
+	NewSVTInfo.NumPrefetchFrames = SparseVolumeTexture->NumberOfPrefetchFrames;
+	NewSVTInfo.PrefetchPercentageStepSize = SparseVolumeTexture->PrefetchPercentageStepSize;
+	NewSVTInfo.PrefetchPercentageBias = SparseVolumeTexture->PrefetchPercentageBias;
 	NewSVTInfo.FrameInfo.SetNum(NumFrames);
 
 	for (int32 FrameIdx = 0; FrameIdx < NumFrames; ++FrameIdx)
@@ -943,16 +233,16 @@ void FStreamingManager::Remove_GameThread(UStreamableSparseVolumeTexture* Sparse
 		});
 }
 
-void FStreamingManager::Request_GameThread(UStreamableSparseVolumeTexture* SparseVolumeTexture, float FrameIndex, int32 MipLevel, bool bBlocking)
+void FStreamingManager::Request_GameThread(UStreamableSparseVolumeTexture* SparseVolumeTexture, uint32 StreamingInstanceKey, float FrameRate, float FrameIndex, float MipLevel, EStreamingRequestFlags Flags)
 {
 	if (!DoesPlatformSupportSparseVolumeTexture(GMaxRHIShaderPlatform) || !SparseVolumeTexture)
 	{
 		return;
 	}
 	ENQUEUE_RENDER_COMMAND(SVTRequest)(
-		[this, SparseVolumeTexture, FrameIndex, MipLevel, bBlocking](FRHICommandListImmediate& RHICmdList)
+		[this, SparseVolumeTexture, StreamingInstanceKey, FrameRate, FrameIndex, MipLevel, Flags](FRHICommandListImmediate& RHICmdList)
 		{
-			Request(SparseVolumeTexture, FrameIndex, MipLevel, bBlocking);
+			Request(SparseVolumeTexture, StreamingInstanceKey, FrameRate, FrameIndex, MipLevel, Flags);
 		});
 }
 
@@ -966,14 +256,14 @@ void FStreamingManager::Update_GameThread()
 		[](FRHICommandListImmediate& RHICmdList)
 		{
 			FRDGBuilder GraphBuilder(RHICmdList);
-			const bool bForceNonAsync = true; // No need to spin up a thread if we immediately wait on it anyways.
-			GStreamingManager.BeginAsyncUpdate(GraphBuilder, bForceNonAsync);
+			const bool bUseAsyncThread = false; // No need to spin up a thread if we immediately wait on it anyways.
+			GStreamingManager.BeginAsyncUpdate(GraphBuilder, bUseAsyncThread);
 			GStreamingManager.EndAsyncUpdate(GraphBuilder);
 			GraphBuilder.Execute();
 		});
 }
 
-void FStreamingManager::Request(UStreamableSparseVolumeTexture* SparseVolumeTexture, float FrameIndex, int32 MipLevel, bool bBlocking)
+void FStreamingManager::Request(UStreamableSparseVolumeTexture* SparseVolumeTexture, uint32 StreamingInstanceKey, float FrameRate, float FrameIndex, float MipLevel, EStreamingRequestFlags Flags)
 {
 	check(IsInRenderingThread());
 	if (!DoesPlatformSupportSparseVolumeTexture(GMaxRHIShaderPlatform) || !SparseVolumeTexture)
@@ -985,61 +275,23 @@ void FStreamingManager::Request(UStreamableSparseVolumeTexture* SparseVolumeText
 	if (SVTInfo)
 	{
 		const int32 NumFrames = SVTInfo->PerFrameInfo.Num();
-		const int32 FrameIndexI32 = static_cast<int32>(FrameIndex);
+		const int32 FrameIndexI32 = FMath::FloorToInt32(FrameIndex);
 		if (FrameIndexI32 < 0 || FrameIndexI32 >= NumFrames)
 		{
 			return;
 		}
 
-		// Try to find a FStreamingWindow around the requested frame index. This will inform us about which direction we need to prefetch into.
-		FStreamingWindow* StreamingWindow = nullptr;
-		for (FStreamingWindow& Window : SVTInfo->StreamingWindows)
-		{
-			if (FMath::Abs(FrameIndex - Window.CenterFrame) <= FStreamingWindow::WindowSize)
-			{
-				StreamingWindow = &Window;
-				break;
-			}
-		}
-		// Found an existing window!
-		if (StreamingWindow)
-		{
-			const bool bForward = StreamingWindow->LastCenterFrame <= FrameIndex;
-			if (StreamingWindow->LastRequested < NextUpdateIndex)
-			{
-				StreamingWindow->LastCenterFrame = StreamingWindow->CenterFrame;
-				StreamingWindow->CenterFrame = FrameIndex;
-				StreamingWindow->NumRequestsThisUpdate = 1;
-				StreamingWindow->LastRequested = NextUpdateIndex;
-				StreamingWindow->bPlayForward = bForward;
-				StreamingWindow->bPlayBackward = !bForward;
-			}
-			else
-			{
-				// Update the average center frame
-				StreamingWindow->CenterFrame = (StreamingWindow->CenterFrame * StreamingWindow->NumRequestsThisUpdate + FrameIndex) / (StreamingWindow->NumRequestsThisUpdate + 1.0f);
-				++StreamingWindow->NumRequestsThisUpdate;
-				StreamingWindow->bPlayForward |= bForward;
-				StreamingWindow->bPlayBackward |= !bForward;
-			}
-		}
-		// No existing window. Create a new one.
-		else
-		{
-			StreamingWindow = &SVTInfo->StreamingWindows.AddDefaulted_GetRef();
-			StreamingWindow->CenterFrame = FrameIndex;
-			StreamingWindow->LastCenterFrame = FrameIndex;
-			StreamingWindow->NumRequestsThisUpdate = 1;
-			StreamingWindow->LastRequested = NextUpdateIndex;
-			StreamingWindow->bPlayForward = true; // No prior data, so just take a guess that playback is forwards
-			StreamingWindow->bPlayBackward = false;
-		}
+		const bool bBlocking = !!(Flags & EStreamingRequestFlags::Blocking);
+		const double CurrentTime = (FTimespan(FDateTime::Now().GetTicks()) - FTimespan(InitTime.GetTicks())).GetTotalSeconds();
 
-		check(StreamingWindow);
+		// Try to find a FStreamingInstance around the requested frame index and add the current request to it. This will inform us about which direction we need to prefetch into.
+		const FStreamingInstanceRequest StreamingInstanceRequest(UpdateIndex, CurrentTime, FrameRate, FrameIndex, MipLevel, Flags);
+		FStreamingInstance* StreamingInstance = SVTInfo->GetAndUpdateStreamingInstance(StreamingInstanceKey, StreamingInstanceRequest);
+		check(StreamingInstance);
 
 		// Make sure the number of prefetched frames doesn't exceed the total number of frames.
 		// Not only does this make no sense, it also breaks the wrap around logic in the loop below if there is reverse playback.
-		const int32 NumPrefetchFrames = FMath::Clamp(GSVTStreamingNumPrefetchFrames, 0, NumFrames);
+		const int32 NumPrefetchFrames = FMath::Clamp(SVTInfo->NumPrefetchFrames, 0, NumFrames);
 
 		// No prefetching for blocking requests. Making the prefetches blocking would increase latency even more and making them non-blocking could lead
 		// to situations where lower mips are already streamed in in subsequent frames but can't be used because dependent higher mips haven't finished streaming
@@ -1047,32 +299,38 @@ void FStreamingManager::Request(UStreamableSparseVolumeTexture* SparseVolumeText
 		// SVT_TODO: This can still break if blocking and non-blocking requests of the same frames/mips are made to the same SVT. We would need to cancel already scheduled non-blocking requests and reissue them as blocking.
 		// Or alternatively we could just block on all requests if we detect this case. If we had a single DDC request owner per request, we could just selectively wait on already scheduled non-blocking requests.
 		const int32 OffsetMagnitude = !bBlocking ? NumPrefetchFrames : 0;
-		const int32 LowerFrameOffset = StreamingWindow->bPlayBackward ? -OffsetMagnitude : 0;
-		const int32 UpperFrameOffset = StreamingWindow->bPlayForward ? OffsetMagnitude : 0;
+		const int32 LowerFrameOffset = StreamingInstance->IsPlayingBackwards() ? -OffsetMagnitude : 0;
+		const int32 UpperFrameOffset = StreamingInstance->IsPlayingForwards() ? OffsetMagnitude : 0;
+		const float PrefetchPercentageStepSize = FMath::Clamp(SVTInfo->PrefetchPercentageStepSize / 100.0f, 0.0f, 1.0f);
+		const float PrefetchPercentageBias = FMath::Clamp(SVTInfo->PrefetchPercentageBias / 100.0f, -1.0f, 1.0f);
 
 		for (int32 i = LowerFrameOffset; i <= UpperFrameOffset; ++i)
 		{
 			// Wrap around on both positive and negative numbers, assuming (i + NumFrames) >= 0. See the comment on NumPrefetchFrames.
-			const int32 RequestFrameIndex = (static_cast<int32>(FrameIndex) + i + NumFrames) % NumFrames;
-			const int32 RequestMipLevelOffset = FMath::Abs(i) + GSVTStreamingPrefetchMipLevelBias;
+			const int32 RequestFrameIndex = (FrameIndexI32 + i + NumFrames) % NumFrames;
+			const float MipPercentage = FMath::Clamp((1.0f - FMath::Abs(i) * PrefetchPercentageStepSize) + (i != 0 ? PrefetchPercentageBias : 0.0f), 0.0f, 1.0f);
+			const float RequestMipLevel = StreamingInstance->GetPrefetchMipLevel(MipLevel, MipPercentage);
+			const int32 RequestMipLevelI = FMath::FloorToInt32(RequestMipLevel);
+			const float LowestMipLevelFraction = 1.0f - FMath::Frac(RequestMipLevel);
+			const uint8 Priority = bBlocking ? UINT8_MAX : FMath::Max(0, OffsetMagnitude - FMath::Abs(i));
 			FStreamingRequest Request;
-			Request.Key.SVT = SparseVolumeTexture;
+			Request.Key.SVTHandle = SVTInfo->SVTHandle;
 			Request.Key.FrameIndex = RequestFrameIndex;
-			Request.Key.MipLevelIndex = FMath::Clamp(MipLevel + RequestMipLevelOffset, 0, SVTInfo->PerFrameInfo[RequestFrameIndex].NumMipLevels);
-			Request.Priority = FMath::Max(0, OffsetMagnitude - FMath::Abs(i));
-			if (bBlocking)
+			Request.Payload.StreamingInstance = StreamingInstance;
+			Request.Payload.MipLevelMask = ~0u << RequestMipLevelI;
+			Request.Payload.LowestMipFraction = LowestMipLevelFraction;
+			for (int32 j = RequestMipLevelI; j < Request.Payload.Priorities.Num(); ++j)
 			{
-				Request.Priority = FStreamingRequest::BlockingPriority;
+				Request.Payload.Priorities[j] = Priority;
 			}
 			AddRequest(Request);
 		}
 
-		// Clean up unused streaming windows
-		SVTInfo->StreamingWindows.RemoveAll([&](const FStreamingWindow& Window) { return (NextUpdateIndex - Window.LastRequested) > 5; });
+		ActiveStreamingInstances.Add(StreamingInstance);
 	}
 }
 
-void FStreamingManager::BeginAsyncUpdate(FRDGBuilder& GraphBuilder, bool bBlocking)
+void FStreamingManager::BeginAsyncUpdate(FRDGBuilder& GraphBuilder, bool bUseAsyncThread)
 {
 	check(IsInRenderingThread());
 	check(!AsyncState.bUpdateActive);
@@ -1081,69 +339,94 @@ void FStreamingManager::BeginAsyncUpdate(FRDGBuilder& GraphBuilder, bool bBlocki
 		return;
 	}
 
-	TRACE_CPUPROFILER_EVENT_SCOPE(SVT::FStreamingManager::BeginAsyncUpdate);
+	RDG_EVENT_SCOPE(GraphBuilder, "SVT::StreamingBeginAsyncUpdate");
+	RDG_GPU_STAT_SCOPE(GraphBuilder, SVTStreaming);
+	RDG_CSV_STAT_EXCLUSIVE_SCOPE(GraphBuilder, SVTStreaming);
+	SCOPED_NAMED_EVENT_TEXT("SVT::StreamingBeginAsyncUpdate", FColor::Green);
 
-#if SVT_STREAMING_LOG_VERBOSE
-	UE_LOG(LogSparseVolumeTextureStreamingManager, Display, TEXT("SVT Streaming Update %i"), NextUpdateIndex);
-#endif
+	if (GSVTStreamingLogVerbosity > 2)
+	{
+		UE_LOG(LogSparseVolumeTextureStreamingManager, Display, TEXT("SVT Streaming Update %i"), UpdateIndex);
+	}
 
 	AsyncState = {};
 	AsyncState.bUpdateActive = true;
 
+	// Clean up unused streaming instances
+	for (TUniquePtr<FStreamingInfo>& SVTInfo : StreamingInfo)
+	{
+		if (SVTInfo)
+		{
+			SVTInfo->StreamingInstances.RemoveAll([&](const TUniquePtr<FStreamingInstance>& Instance) { return (UpdateIndex - Instance->GetUpdateIndex()) > (uint32)FMath::Max(1, GSVTStreamingInstanceCleanupThreshold); });
+		}
+	}
+
 	// For debugging, we can stream out ALL tiles
 	if (GSVTStreamingEmptyPhysicalTileTextures != 0)
 	{
-		TArray<FLRUNode*> MipLevelsToFree;
-		for (auto& Pair : StreamingInfo)
+		for (TUniquePtr<FStreamingInfo>& SVTInfo : StreamingInfo)
 		{
-			MipLevelsToFree.Reset();
-			FStreamingInfo* SVTInfo = Pair.Value.Get();
-			const int32 NumFrames = SVTInfo->PerFrameInfo.Num();
-			const int32 NumMipLevelsGlobal = SVTInfo->NumMipLevelsGlobal;
-			
-			for (int32 MipLevel = 0; MipLevel < NumMipLevelsGlobal; ++MipLevel)
+			if (!SVTInfo)
 			{
-				for (auto& Node : SVTInfo->PerMipLRULists[MipLevel])
-				{
-					MipLevelsToFree.Add(&Node);
-				}
+				continue;
 			}
-			for (FLRUNode* Node : MipLevelsToFree)
+			const int32 NumFrames = SVTInfo->PerFrameInfo.Num();
+			for (int32 FrameIndex = 0; FrameIndex < NumFrames; ++FrameIndex)
 			{
-				StreamOutMipLevel(SVTInfo, Node);
+				FFrameInfo& FrameInfo = SVTInfo->PerFrameInfo[FrameIndex];
+				const bool bHasRootTile = FrameInfo.Resources->StreamingMetaData.HasRootTile();
+				for (TConstSetBitIterator It(FrameInfo.StreamingTiles, bHasRootTile ? 1 : 0); It; ++It)
+				{
+					const uint32 TileIndex = It.GetIndex();
+					FrameInfo.StreamingTiles[TileIndex] = false;
+					FrameInfo.ResidentTiles[TileIndex] = false;
+					check(FrameInfo.TileAllocations[TileIndex] != 0);
+					SVTInfo->TileAllocator.Free(FrameInfo.TileAllocations[TileIndex]);
+					FrameInfo.TileAllocations[TileIndex] = 0;
+				}
+				FrameInfo.TileIndexToPendingRequestIndex.Reset();
+				InvalidatedSVTFrames.Add(&FrameInfo);
 			}
 		}
+
+		// Cancel all IO requests
+		for (FPendingRequest& PendingRequest : PendingRequests)
+		{
+			LOCK_PENDING_REQUEST(PendingRequest);
+			PendingRequest.Reset();
+		}
+		NumPendingRequests = 0;
 
 		GSVTStreamingEmptyPhysicalTileTextures = 0;
 	}
 
 	if (GSVTStreamingPrintMemoryStats != 0)
 	{
-		for (auto& Pair : StreamingInfo)
+		for (TUniquePtr<FStreamingInfo>& SVTInfo : StreamingInfo)
 		{
+			if (!SVTInfo)
+			{
+				continue;
+			}
+
 			double MinFrameMiB = FLT_MAX;
 			double MaxFrameMiB = -FLT_MAX;
 			double SumFrameMiB = 0.0;
 
-			const int32 NumFrames = Pair.Value->PerFrameInfo.Num();
-			UE_LOG(LogSparseVolumeTextureStreamingManager, Display, TEXT("Memory stats for SVT '%p': Each mip level is printed as a tuple of [PageTable Size | VoxelData Size | Total]"), Pair.Key);
-
+			const int32 NumFrames = SVTInfo->PerFrameInfo.Num();
+			UE_LOG(LogSparseVolumeTextureStreamingManager, Display, TEXT("Memory stats for SVT '%s':"), *SVTInfo->SVTName.ToString());
+		
 			for (int32 FrameIdx = 0; FrameIdx < NumFrames; ++FrameIdx)
 			{
-				const FFrameInfo& FrameInfo = Pair.Value->PerFrameInfo[FrameIdx];
-				FString Str;
-				int32 TotalSize = 0;
-				for (const auto& SInfo : FrameInfo.Resources->MipLevelStreamingInfo)
-				{
-					Str += FString::Printf(TEXT("[%5.2f KiB|%5.2f KiB|%5.2f KiB] "), SInfo.PageTableSize / 1024.0f, (SInfo.TileDataSize[0] + SInfo.TileDataSize[1]) / 1024.0f, (SInfo.PageTableSize + SInfo.TileDataSize[0] + SInfo.TileDataSize[1]) / 1024.0f);
-					TotalSize += SInfo.BulkSize;
-				}
+				const FFrameInfo& FrameInfo = SVTInfo->PerFrameInfo[FrameIdx];
+				const uint32 Size = FrameInfo.Resources->StreamingMetaData.TileDataOffsets.Last() - FrameInfo.Resources->StreamingMetaData.GetRootTileSize();
+				const uint32 NumTiles = FrameInfo.Resources->StreamingMetaData.GetNumStreamingTiles();
 
-				MinFrameMiB = FMath::Min(MinFrameMiB, TotalSize / 1024.0 / 1024.0);
-				MaxFrameMiB = FMath::Max(MaxFrameMiB, TotalSize / 1024.0 / 1024.0);
-				SumFrameMiB += TotalSize / 1024.0 / 1024.0;
+				MinFrameMiB = FMath::Min(MinFrameMiB, Size / 1024.0 / 1024.0);
+				MaxFrameMiB = FMath::Max(MaxFrameMiB, Size / 1024.0 / 1024.0);
+				SumFrameMiB += Size / 1024.0 / 1024.0;
 
-				UE_LOG(LogSparseVolumeTextureStreamingManager, Display, TEXT("SVT Frame %3i: TotalSize: %3.2f MiB %s"), FrameIdx, TotalSize / 1024.0f / 1024.0f, *Str);
+				UE_LOG(LogSparseVolumeTextureStreamingManager, Display, TEXT("SVT Frame %3u: Size: %5.4f MiB Num Tiles: %u"), FrameIdx, Size / 1024.0f / 1024.0f, NumTiles);
 			}
 
 			UE_LOG(LogSparseVolumeTextureStreamingManager, Display, TEXT("SVT Frame Stats: Min: %3.2f MiB, Max: %3.2f MiB, Avg: %3.2f, Total All: %3.2f MiB"), (float)MinFrameMiB, (float)MaxFrameMiB, (float)(SumFrameMiB / NumFrames), SumFrameMiB);
@@ -1152,43 +435,55 @@ void FStreamingManager::BeginAsyncUpdate(FRDGBuilder& GraphBuilder, bool bBlocki
 		GSVTStreamingPrintMemoryStats = 0;
 	}
 
-	AddParentRequests();
-	const int32 MaxSelectedRequests = MaxPendingMipLevels - NumPendingMipLevels;
-	SelectHighestPriorityRequestsAndUpdateLRU(MaxSelectedRequests);
-	IssueRequests(MaxSelectedRequests);
-	AsyncState.NumReadyMipLevels = DetermineReadyMipLevels();
+	ComputeBandwidthLimit();
+	FilterRequests();
+	IssueRequests();
+	AsyncState.NumReadyRequests = DetermineReadyRequests();
 
-	// Do a first pass over all the mips to be uploaded to compute the upload buffer size requirements.
-	int32 NumPageTableUpdatesTotal = 0;
+	// Do a first pass over all the tiles to be uploaded to compute the upload buffer size requirements.
 	TileDataTexturesToUpdate.Reset();
 	{
-		const int32 StartPendingMipLevelIndex = (NextPendingMipLevelIndex + MaxPendingMipLevels - NumPendingMipLevels) % MaxPendingMipLevels;
-		for (int32 i = 0; i < AsyncState.NumReadyMipLevels; ++i)
+		const int32 StartPendingRequestIndex = (NextPendingRequestIndex + MaxPendingRequests - NumPendingRequests) % MaxPendingRequests;
+		for (int32 i = 0; i < AsyncState.NumReadyRequests; ++i)
 		{
-			const int32 PendingMipLevelIndex = (StartPendingMipLevelIndex + i) % MaxPendingMipLevels;
-			FPendingMipLevel& PendingMipLevel = PendingMipLevels[PendingMipLevelIndex];
+			const int32 PendingRequestIndex = (StartPendingRequestIndex + i) % MaxPendingRequests;
+			FPendingRequest& PendingRequest = PendingRequests[PendingRequestIndex];
+			LOCK_PENDING_REQUEST(PendingRequest);
 
-			FStreamingInfo* SVTInfo = FindStreamingInfo(PendingMipLevel.SparseVolumeTexture);
-			if (!SVTInfo || (SVTInfo->PerFrameInfo[PendingMipLevel.FrameIndex].LowestRequestedMipLevel > PendingMipLevel.MipLevelIndex))
+			// Skip if request was cancelled
+			if (!PendingRequest.IsValid())
 			{
-				continue; // Skip mip level install. SVT no longer exists or mip level was "streamed out" before it was even installed in the first place.
+				continue;
+			}
+
+			FStreamingInfo* SVTInfo = FindStreamingInfo(PendingRequest.SVTHandle);
+			check(SVTInfo);
+
+			// Prepare tile data texture for upload
+			const FTileDataTexture::EUploaderState UploaderState = SVTInfo->TileDataTexture->GetUploaderState();
+			check(UploaderState == FTileDataTexture::EUploaderState::Ready || UploaderState == FTileDataTexture::EUploaderState::Reserving);
+			if (UploaderState == FTileDataTexture::EUploaderState::Ready)
+			{
+				SVTInfo->TileDataTexture->BeginReserveUpload();
 			}
 
 			const int32 FormatSizeA = GPixelFormats[SVTInfo->FormatA].BlockBytes;
 			const int32 FormatSizeB = GPixelFormats[SVTInfo->FormatB].BlockBytes;
-			const FResources* Resources = SVTInfo->PerFrameInfo[PendingMipLevel.FrameIndex].Resources;
-			SVTInfo->TileDataTexture->NumTilesToUpload += Resources->MipLevelStreamingInfo[PendingMipLevel.MipLevelIndex].NumPhysicalTiles;
-			SVTInfo->TileDataTexture->NumVoxelsToUploadA += FormatSizeA > 0 ? Resources->MipLevelStreamingInfo[PendingMipLevel.MipLevelIndex].TileDataSize[0] / FormatSizeA : 0;
-			SVTInfo->TileDataTexture->NumVoxelsToUploadB += FormatSizeB > 0 ? Resources->MipLevelStreamingInfo[PendingMipLevel.MipLevelIndex].TileDataSize[1] / FormatSizeB : 0;
-			TileDataTexturesToUpdate.Add(SVTInfo->TileDataTexture.Get());
-			NumPageTableUpdatesTotal += Resources->MipLevelStreamingInfo[PendingMipLevel.MipLevelIndex].PageTableSize / (2 * sizeof(uint32));
-		}
+			FFrameInfo& FrameInfo = SVTInfo->PerFrameInfo[PendingRequest.FrameIndex];
 
-		PageTableUpdater->Init(GraphBuilder, NumPageTableUpdatesTotal, 1);
+			uint32 NumVoxelsA = 0;
+			uint32 NumVoxelsB = 0;
+			FrameInfo.Resources->StreamingMetaData.GetNumVoxelsInTileRange(PendingRequest.TileOffset, PendingRequest.TileCount, FormatSizeA, FormatSizeB, &FrameInfo.StreamingTiles, NumVoxelsA, NumVoxelsB);
+
+			SVTInfo->TileDataTexture->ReserveUpload(PendingRequest.TileCount, NumVoxelsA, NumVoxelsB);
+
+			TileDataTexturesToUpdate.Add(SVTInfo->TileDataTexture.Get());
+		}
 
 		for (FTileDataTexture* TileDataTexture : TileDataTexturesToUpdate)
 		{
-			TileDataTexture->TileUploader->Init(GraphBuilder, TileDataTexture->NumTilesToUpload, TileDataTexture->NumVoxelsToUploadA, TileDataTexture->NumVoxelsToUploadB, TileDataTexture->FormatA, TileDataTexture->FormatB);
+			TileDataTexture->EndReserveUpload();
+			TileDataTexture->BeginUpload(GraphBuilder);
 		}
 	}
 
@@ -1197,14 +492,14 @@ void FStreamingManager::BeginAsyncUpdate(FRDGBuilder& GraphBuilder, bool bBlocki
 	Parameters.StreamingManager = this;
 	
 	check(AsyncTaskEvents.IsEmpty());
-	if (GSVTStreamingAsyncThread && !bBlocking)
+	if (GSVTStreamingAsyncThread && bUseAsyncThread)
 	{
 		AsyncState.bUpdateIsAsync = true;
 		AsyncTaskEvents.Add(TGraphTask<FStreamingUpdateTask>::CreateTask().ConstructAndDispatchWhenReady(Parameters));
 	}
 	else
 	{
-		InstallReadyMipLevels();
+		InstallReadyRequests();
 	}
 }
 
@@ -1217,7 +512,10 @@ void FStreamingManager::EndAsyncUpdate(FRDGBuilder& GraphBuilder)
 	}
 	check(AsyncState.bUpdateActive);
 
-	TRACE_CPUPROFILER_EVENT_SCOPE(SVT::FStreamingManager::EndAsyncUpdate);
+	RDG_EVENT_SCOPE(GraphBuilder, "SVT::StreamingEndAsyncUpdate");
+	RDG_GPU_STAT_SCOPE(GraphBuilder, SVTStreaming);
+	RDG_CSV_STAT_EXCLUSIVE_SCOPE(GraphBuilder, SVTStreaming);
+	SCOPED_NAMED_EVENT_TEXT("SVT::StreamingEndAsyncUpdate", FColor::Green);
 
 	// Wait for async processing to finish
 	if (AsyncState.bUpdateIsAsync)
@@ -1227,108 +525,124 @@ void FStreamingManager::EndAsyncUpdate(FRDGBuilder& GraphBuilder)
 	}
 	AsyncTaskEvents.Empty();
 
-	// Clear unused mip levels to 0. SVT_TODO: We can probably skip this because the page table lookup in the shader is clamped
-	if (!PageTableClears.IsEmpty())
-	{
-		for (auto& Clear : PageTableClears)
-		{
-			FRDGTexture* PageTableTextureRDG = GraphBuilder.RegisterExternalTexture(CreateRenderTarget(Clear.PageTableTexture, TEXT("SparseVolumeTexture.PageTableTexture")));
-			FRDGTextureUAVDesc UAVDesc(PageTableTextureRDG, static_cast<uint8>(Clear.MipLevel), PF_R32_UINT);
-			AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(UAVDesc), FUintVector4(ForceInitToZero));
-		}
-		PageTableClears.Reset();
-	}
-
 	// Issue the actual data uploads
 	for (FTileDataTexture* TileDataTexture : TileDataTexturesToUpdate)
 	{
-		TileDataTexture->TileUploader->ResourceUploadTo(GraphBuilder, TileDataTexture->TileDataTextureARHIRef, TileDataTexture->TileDataTextureBRHIRef, TileDataTexture->FallbackValueA, TileDataTexture->FallbackValueB);
-		TileDataTexture->NumTilesToUpload = 0;
-		TileDataTexture->NumVoxelsToUploadA = 0;
-		TileDataTexture->NumVoxelsToUploadB = 0;
+		TileDataTexture->EndUpload(GraphBuilder);
 	}
 
-	// Update streaming info buffers
-	for (FStreamingInfo* SVTInfo : SVTsWithInvalidatedStreamingInfoBuffer)
-	{
-#if DO_CHECK
-		bool bSVTInfoExists = false;
-		for (const auto& Pair : StreamingInfo)
-		{
-			if (Pair.Value.Get() == SVTInfo)
-			{
-				bSVTInfoExists = true;
-				break;
-			}
-		}
-		check(bSVTInfoExists);
-#endif
-		
-		for (TConstSetBitIterator It(SVTInfo->DirtyStreamingInfoData); It; ++It)
-		{
-			const int32 FrameIndex = It.GetIndex();
-			StreamingInfoBufferUpdater->Add(SVTInfo->StreamingInfoBuffer, FrameIndex, SVTInfo->PerFrameInfo[FrameIndex].LowestResidentMipLevel);
-		}
-	}
-	SVTsWithInvalidatedStreamingInfoBuffer.Reset();
-	StreamingInfoBufferUpdater->Apply(GraphBuilder);
+	// Update page table with newly streamed in/out pages and make sure descendant pages in the hierarchy have correct fallback values
+	PatchPageTable(GraphBuilder);
 
-	PageTableUpdater->Apply(GraphBuilder);
-
-	check(AsyncState.NumReadyMipLevels <= NumPendingMipLevels);
-	NumPendingMipLevels -= AsyncState.NumReadyMipLevels;
-	++NextUpdateIndex;
+	check(AsyncState.NumReadyRequests <= NumPendingRequests);
+	NumPendingRequests -= AsyncState.NumReadyRequests;
+	++UpdateIndex;
 	AsyncState.bUpdateActive = false;
 	AsyncState.bUpdateIsAsync = false;
+}
 
-#if DO_CHECK
-	for (const auto& Pair : StreamingInfo)
+const FStreamingDebugInfo* FStreamingManager::GetStreamingDebugInfo(FRDGBuilder& GraphBuilder) const
+{
+	const int64 BandwidthLimit = FMath::Max(GSVTStreamingBandwidthLimit, 1) * 1024LL * 1024LL;
+	const bool bLimitApplies = (GSVTStreamingBandwidthLimit > 0 && (TotalRequestedBandwidth > BandwidthLimit));
+	const double DownscaleFactor = bLimitApplies ? ((double)BandwidthLimit / (double)TotalRequestedBandwidth) : 1.0;
+	const int32 NumSVTs = StreamingInfo.Num();
+
+	FStreamingDebugInfo::FSVT* DebugInfoSVTs = GraphBuilder.AllocPODArray<FStreamingDebugInfo::FSVT>(NumSVTs);
+	int32 SVTArrayWriteSlot = 0;
+	for (const TUniquePtr<FStreamingInfo>& SVTInfo : StreamingInfo)
 	{
-#if SVT_STREAMING_LOG_VERBOSE
-		FString ResidentMipLevelsStr = TEXT("");
-#endif
-		const int32 NumFrames = Pair.Value->PerFrameInfo.Num();
+		if (!SVTInfo)
+		{
+			continue;
+		}
+		const int32 NumFrames = SVTInfo->PerFrameInfo.Num();
+		const int32 NumInstances = SVTInfo->StreamingInstances.Num();
+		const int32 NameStrLength = SVTInfo->SVTName.GetStringLength() + 1;
+
+		TCHAR* AssetName = GraphBuilder.AllocPODArray<TCHAR>(NameStrLength);
+		SVTInfo->SVTName.ToString(AssetName, NameStrLength);
+		
+		float* ResidencyPercentages = GraphBuilder.AllocPODArray<float>(NumFrames);
+		float* StreamingPercentages = GraphBuilder.AllocPODArray<float>(NumFrames);
 		for (int32 FrameIndex = 0; FrameIndex < NumFrames; ++FrameIndex)
 		{
-			const auto& FrameInfo = Pair.Value->PerFrameInfo[FrameIndex];
-			check(FrameInfo.LowestResidentMipLevel <= (FrameInfo.NumMipLevels - 1));
-			check(FrameInfo.LowestRequestedMipLevel <= FrameInfo.LowestResidentMipLevel);
-			check(FrameInfo.TextureRenderResources->GetNumLogicalMipLevels() == FrameInfo.NumMipLevels);
-
-#if SVT_STREAMING_LOG_VERBOSE
-			ResidentMipLevelsStr += FString::Printf(TEXT("%i"), FrameInfo.LowestResidentMipLevel);
-#endif
+			const FFrameInfo& FrameInfo = SVTInfo->PerFrameInfo[FrameIndex];
+			ResidencyPercentages[FrameIndex] = FrameInfo.ResidentTiles.CountSetBits() / (float)FMath::Max(FrameInfo.ResidentTiles.Num(), 1);
+			StreamingPercentages[FrameIndex] = FrameInfo.StreamingTiles.CountSetBits() / (float)FMath::Max(FrameInfo.StreamingTiles.Num(), 1);
 		}
-#if SVT_STREAMING_LOG_VERBOSE
-		UE_LOG(LogSparseVolumeTextureStreamingManager, Display, TEXT("%s"), *ResidentMipLevelsStr);
-#endif
+		
+		FStreamingDebugInfo::FSVT::FInstance* Instances = GraphBuilder.AllocPODArray<FStreamingDebugInfo::FSVT::FInstance>(NumInstances);
+		for (int32 InstanceIndex = 0; InstanceIndex < NumInstances; ++InstanceIndex)
+		{
+			FStreamingInstance* StreamingInstance = SVTInfo->StreamingInstances[InstanceIndex].Get();
+			if (StreamingInstance)
+			{
+				FStreamingDebugInfo::FSVT::FInstance Instance;
+				Instance.Key = StreamingInstance->GetKey();
+				Instance.Frame = StreamingInstance->GetAverageFrame();
+				Instance.FrameRate = StreamingInstance->GetEstimatedFrameRate();
+				Instance.RequestedBandwidth = float(StreamingInstance->GetRequestedBandwidth(true) / 1024.0 / 1024.0);
+				Instance.AllocatedBandwidth = Instance.RequestedBandwidth * DownscaleFactor;
+				Instance.RequestedMip = StreamingInstance->GetLowestRequestedMipLevel();
+				Instance.InBudgetMip = StreamingInstance->GetLowestMipLevelInBandwidthBudget();
+
+				Instances[InstanceIndex] = Instance;
+			}
+		}
+
+		FStreamingDebugInfo::FSVT& SVT = DebugInfoSVTs[SVTArrayWriteSlot++];
+		SVT.AssetName = AssetName;
+		SVT.FrameResidencyPercentages = ResidencyPercentages;
+		SVT.FrameStreamingPercentages = StreamingPercentages;
+		SVT.Instances = Instances;
+		SVT.NumFrames = NumFrames;
+		SVT.NumInstances = NumInstances;
 	}
-#endif // DO_CHECK
+
+	FStreamingDebugInfo* DebugInfo = GraphBuilder.AllocPOD<FStreamingDebugInfo>();
+	DebugInfo->SVTs = DebugInfoSVTs;
+	DebugInfo->NumSVTs = SVTArrayWriteSlot;
+	DebugInfo->RequestedBandwidth = float(TotalRequestedBandwidth / 1024.0 / 1024.0);
+	DebugInfo->BandwidthLimit = float(BandwidthLimit / 1024.0 / 1024.0);
+	DebugInfo->BandwidthScale = float(DownscaleFactor);
+	
+	return DebugInfo;
 }
 
 void FStreamingManager::AddInternal(FRDGBuilder& GraphBuilder, FNewSparseVolumeTextureInfo&& NewSVTInfo)
 {
 	check(IsInRenderingThread());
 	check(!AsyncState.bUpdateActive);
-	if (!ensure(!StreamingInfo.Contains(NewSVTInfo.SVT)))
+	if (!ensure(!SparseVolumeTextureToHandle.Contains(NewSVTInfo.SVT)))
 	{
 		return;
 	}
 
-	TRACE_CPUPROFILER_EVENT_SCOPE(SVT::FStreamingManager::AddInternal);
+	RDG_EVENT_SCOPE(GraphBuilder, "SVT::StreamingAddInternal");
+	RDG_GPU_STAT_SCOPE(GraphBuilder, SVTStreaming);
+	RDG_CSV_STAT_EXCLUSIVE_SCOPE(GraphBuilder, SVTStreaming);
+	SCOPED_NAMED_EVENT_TEXT("SVT::StreamingAddInternal", FColor::Green);
+
+	// Allocate SVTHandle, which is actually simply an index into the sparse StreamingInfo array.
+	int32 LowestFreeIndexSearchStart = 0;
+	const uint16 SVTHandle = StreamingInfo.EmplaceAtLowestFreeIndex(LowestFreeIndexSearchStart, MakeUnique<FStreamingInfo>());
+	SparseVolumeTextureToHandle.Add(NewSVTInfo.SVT, SVTHandle);
 
 	const int32 NumFrames = NewSVTInfo.FrameInfo.Num();
 
-	FStreamingInfo& SVTInfo = *StreamingInfo.Emplace(NewSVTInfo.SVT, MakeUnique<FStreamingInfo>());
+	FStreamingInfo& SVTInfo = *StreamingInfo[SVTHandle];
+	SVTInfo.SVTHandle = SVTHandle;
+	SVTInfo.SVTName = NewSVTInfo.SVTName;
 	SVTInfo.FormatA = NewSVTInfo.FormatA;
 	SVTInfo.FormatB = NewSVTInfo.FormatB;
 	SVTInfo.FallbackValueA = NewSVTInfo.FallbackValueA;
 	SVTInfo.FallbackValueB = NewSVTInfo.FallbackValueB;
-	SVTInfo.NumMipLevelsGlobal = NewSVTInfo.NumMipLevelsGlobal;
-	SVTInfo.LastRequested = 0;
+	SVTInfo.NumPrefetchFrames = NewSVTInfo.NumPrefetchFrames;
+	SVTInfo.PrefetchPercentageStepSize = NewSVTInfo.PrefetchPercentageStepSize;
+	SVTInfo.PrefetchPercentageBias = NewSVTInfo.PrefetchPercentageBias;
 	SVTInfo.PerFrameInfo = MoveTemp(NewSVTInfo.FrameInfo);
-	SVTInfo.LRUNodes.SetNum(NumFrames * SVTInfo.NumMipLevelsGlobal);
-	SVTInfo.PerMipLRULists.SetNum(SVTInfo.NumMipLevelsGlobal);
+	SVTInfo.MipLevelStreamingSize.SetNumZeroed(NewSVTInfo.NumMipLevelsGlobal);
 
 	const int32 FormatSizes[] = { GPixelFormats[SVTInfo.FormatA].BlockBytes, GPixelFormats[SVTInfo.FormatB].BlockBytes };
 
@@ -1341,71 +655,65 @@ void FStreamingManager::AddInternal(FRDGBuilder& GraphBuilder, FNewSparseVolumeT
 		FFrameInfo& FrameInfo = SVTInfo.PerFrameInfo[FrameIdx];
 		check(FrameInfo.TextureRenderResources && FrameInfo.TextureRenderResources->IsInitialized());
 		const FResources* Resources = FrameInfo.Resources;
+		const FPageTopology& Topology = Resources->Topology;
 
-		FrameInfo.NumMipLevels = Resources->MipLevelStreamingInfo.Num();
-		FrameInfo.LowestRequestedMipLevel = FrameInfo.NumMipLevels - 1;
-		FrameInfo.LowestResidentMipLevel = FrameInfo.NumMipLevels - 1;
-		FrameInfo.TileAllocations.SetNum(FrameInfo.NumMipLevels);
-		for (int32 MipLevel = 0; MipLevel < FrameInfo.NumMipLevels; ++MipLevel)
-		{
-			FrameInfo.TileAllocations[MipLevel].SetNumZeroed(Resources->MipLevelStreamingInfo[MipLevel].NumPhysicalTiles);
-		}
-		
-		int32 NumPhysicalTiles = 0;
-		for (const FMipLevelStreamingInfo& MipLevelStreamingInfo : Resources->MipLevelStreamingInfo)
-		{
-			NumPhysicalTiles += MipLevelStreamingInfo.NumPhysicalTiles;
-		}
-
+		const int32 NumPhysicalTiles = Resources->StreamingMetaData.GetNumTiles();
 		MaxNumPhysicalTiles = FMath::Max(NumPhysicalTiles, MaxNumPhysicalTiles);
-		if (NumPhysicalTiles > 0)
+
+		FrameInfo.NumMipLevels = Topology.MipInfo.Num();
+		FrameInfo.TileAllocations.SetNumZeroed(NumPhysicalTiles);
+
+		const int32 NumPagesTotal = Topology.NumPages();
+		FrameInfo.ResidentPages.SetNum(NumPagesTotal, false);
+		FrameInfo.InvalidatedPages.SetNum(NumPagesTotal, false);
+		FrameInfo.ResidentTiles.SetNum(NumPhysicalTiles, false);
+		FrameInfo.StreamingTiles.SetNum(NumPhysicalTiles, false);
+		
+		if (!Topology.MipInfo.IsEmpty() && Topology.MipInfo.Last().PageCount > 0)
 		{
+			check(Topology.MipInfo.Last().PageOffset == 0);
+			check(Topology.MipInfo.Last().PageCount == 1);
 			++NumRootPhysicalTiles;
-			check(FormatSizes[0] == 0 || (Resources->MipLevelStreamingInfo.Last().TileDataSize[0] % FormatSizes[0]) == 0);
-			check(FormatSizes[1] == 0 || (Resources->MipLevelStreamingInfo.Last().TileDataSize[1] % FormatSizes[1]) == 0);
-			NumRootVoxelsA += FormatSizes[0] > 0 ? (Resources->MipLevelStreamingInfo.Last().TileDataSize[0] / FormatSizes[0]) : 0;
-			NumRootVoxelsB += FormatSizes[1] > 0 ? (Resources->MipLevelStreamingInfo.Last().TileDataSize[1] / FormatSizes[1]) : 0;
+			FTileInfo RootTileInfo = Resources->StreamingMetaData.GetTileInfo(0, FormatSizes[0], FormatSizes[1]);
+			NumRootVoxelsA += RootTileInfo.NumVoxels[0];
+			NumRootVoxelsB += RootTileInfo.NumVoxels[1];
 		}
 
-		for (int32 MipIdx = 0; MipIdx < SVTInfo.NumMipLevelsGlobal; ++MipIdx)
+		// Determine the high water mark of per frame streaming size when streaming at any given mip level.
+		// Find the maximum referenced tile index + 1, which is the index in TileDataOffsets (a prefix sum with N+1 elements) at which the cumulative size of this tile and all prior tiles is stored.
+		uint32 MaxReferencedTileIndexPlusOne = 0;
+		for (int32 MipLevel = FrameInfo.NumMipLevels - 2; MipLevel >= 0; --MipLevel)
 		{
-			FLRUNode& LRUNode = SVTInfo.LRUNodes[FrameIdx * SVTInfo.NumMipLevelsGlobal + MipIdx];
-			LRUNode.Reset();
-			LRUNode.FrameIndex = FrameIdx;
-			LRUNode.MipLevelIndex = MipIdx < FrameInfo.NumMipLevels ? MipIdx : INDEX_NONE;
-
-			if ((MipIdx + 1) < FrameInfo.NumMipLevels)
+			if (Topology.MipInfo.IsValidIndex(MipLevel))
 			{
-				LRUNode.NextHigherMipLevel = &SVTInfo.LRUNodes[FrameIdx * SVTInfo.NumMipLevelsGlobal + (MipIdx + 1)];
+				const FPageTopology::FMip& MipInfo = Topology.MipInfo[MipLevel];
+				for (uint32 PageIndex = MipInfo.PageOffset; PageIndex < (MipInfo.PageOffset + MipInfo.PageCount); ++PageIndex)
+				{
+					const uint32 TileIndex = Topology.TileIndices[PageIndex];
+					MaxReferencedTileIndexPlusOne = FMath::Max(MaxReferencedTileIndexPlusOne, TileIndex + 1);
+				}
+				const uint32 MipStreamingSize = Resources->StreamingMetaData.TileDataOffsets[MaxReferencedTileIndexPlusOne] - Resources->StreamingMetaData.GetRootTileSize();
+				SVTInfo.MipLevelStreamingSize[MipLevel] = FMath::Max(SVTInfo.MipLevelStreamingSize[MipLevel], MipStreamingSize);
 			}
 		}
 	}
 
 	// Create RHI resources and upload root tile data
 	{
-		const int32 TileFactor = NumFrames <= 1 ? 1 : 3;
-		const int32 NumPhysicalTilesCapacity = FMath::Max(1, NumRootPhysicalTiles + (TileFactor * MaxNumPhysicalTiles)); // Ensure a minimum size of 1
-		const FIntVector3 TileDataVolumeResolution = ComputeTileDataVolumeResolution(NumPhysicalTilesCapacity);
-		const FIntVector3 TileDataVolumeResolutionInTiles = TileDataVolumeResolution / SPARSE_VOLUME_TILE_RES_PADDED;
+		const float TileFactor = NumFrames <= 1 ? 1.0f : FMath::Clamp(NewSVTInfo.StreamingPoolSizeFactor, 1.0f, static_cast<float>(NumFrames));
+		const int32 NumPhysicalTilesCapacity = FMath::Max(1, NumRootPhysicalTiles + FMath::CeilToInt32(TileFactor * MaxNumPhysicalTiles)); // Ensure a minimum size of 1
+		const FIntVector3 TileDataVolumeResolutionInTiles = FTileDataTexture::GetVolumeResolutionInTiles(NumPhysicalTilesCapacity);
 
 		SVTInfo.TileDataTexture = MakeUnique<FTileDataTexture>(TileDataVolumeResolutionInTiles, SVTInfo.FormatA, SVTInfo.FormatB, SVTInfo.FallbackValueA, SVTInfo.FallbackValueB);
 		SVTInfo.TileDataTexture->InitResource(GraphBuilder.RHICmdList);
-
-		// Create streaming info buffer
-		{
-			FRDGBufferRef StreamingInfoBufferRDG = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateByteAddressDesc(sizeof(uint32) * NumFrames), TEXT("SparseVolumeTexture.StreamingInfo.RHIBuffer"));
-			SVTInfo.StreamingInfoBuffer = GraphBuilder.ConvertToExternalBuffer(StreamingInfoBufferRDG);
-			SVTInfo.StreamingInfoBufferSRVRHIRef = SVTInfo.StreamingInfoBuffer->GetSRV();
-			SVTInfo.DirtyStreamingInfoData.Init(true, NumFrames);
-		}
+		SVTInfo.TileAllocator.Init(SVTInfo.TileDataTexture->GetResolutionInTiles());
 
 		FTileUploader RootTileUploader;
 		RootTileUploader.Init(GraphBuilder, NumRootPhysicalTiles + 1 /*null tile*/, NumRootVoxelsA, NumRootVoxelsB, SVTInfo.FormatA, SVTInfo.FormatB);
 
-		// Allocate null tile
+		// Create null tile
 		{
-			const uint32 NullTileCoord = SVTInfo.TileDataTexture->Allocate();
-			check(NullTileCoord == 0);
+			const uint32 NullTileCoord = 0; // Implicitly allocated when we created the tile allocator
 			FTileUploader::FAddResult AddResult = RootTileUploader.Add_GetRef(1 /*NumTiles*/, 0 /*NumVoxelsA*/, 0 /*NumVoxelsB*/);
 			FMemory::Memcpy(AddResult.PackedPhysicalTileCoordsPtr, &NullTileCoord, sizeof(NullTileCoord));
 			if (SVTInfo.FormatA != PF_Unknown)
@@ -1421,52 +729,61 @@ void FStreamingManager::AddInternal(FRDGBuilder& GraphBuilder, FNewSparseVolumeT
 			// No need to write to TileDataPtrA and TileDataPtrB because we zeroed out all the occupancy bits.
 		}
 
+		const bool bAsyncCompute = UseAsyncComputeForStreaming();
+
 		// Process frames
 		for (int32 FrameIdx = 0; FrameIdx < NumFrames; ++FrameIdx)
 		{
 			FFrameInfo& FrameInfo = SVTInfo.PerFrameInfo[FrameIdx];
 			const FResources* Resources = FrameInfo.Resources;
-			const int32 NumMipLevels = Resources->MipLevelStreamingInfo.Num();
-
-			FrameInfo.LowestRequestedMipLevel = NumMipLevels - 1;
-			FrameInfo.LowestResidentMipLevel = NumMipLevels - 1;
+			const FPageTopology& Topology = Resources->Topology;
+			const int32 NumMipLevels = Topology.MipInfo.Num();
 
 			// Create page table
 			{
-				// SVT_TODO: Currently we keep all mips of the page table resident. It would be better to stream in/out page table mips.
-				const int32 NumResidentMipLevels = NumMipLevels;
 				FIntVector3 PageTableResolution = Resources->Header.PageTableVolumeResolution;
 				PageTableResolution = FIntVector3(FMath::Max(1, PageTableResolution.X), FMath::Max(1, PageTableResolution.Y), FMath::Max(1, PageTableResolution.Z));
 
 				const EPixelFormat PageEntryFormat = PF_R32_UINT;
-				const FRHITextureCreateDesc Desc =
-					FRHITextureCreateDesc::Create3D(TEXT("SparseVolumeTexture.PageTable.RHITexture"), PageTableResolution.X, PageTableResolution.Y, PageTableResolution.Z, PageEntryFormat)
-					.SetFlags(ETextureCreateFlags::ShaderResource | ETextureCreateFlags::UAV)
-					.SetNumMips((uint8)NumResidentMipLevels);
+				const ETextureCreateFlags Flags = TexCreate_ShaderResource | TexCreate_UAV | TexCreate_3DTiling | TexCreate_ReduceMemoryWithTilingMode;
+				FRDGTexture* PageTableRDG = GraphBuilder.CreateTexture(FRDGTextureDesc::Create3D(PageTableResolution, PageEntryFormat, FClearValueBinding::Black, Flags, (uint8)NumMipLevels), TEXT("SparseVolumeTexture.PageTableTexture"));
 
-				FrameInfo.PageTableTextureRHIRef = RHICreateTexture(Desc);
+				// Clear page table to zero
+				for (int32 MipLevelIndex = 0; MipLevelIndex < NumMipLevels; ++MipLevelIndex)
+				{
+					FRDGTextureUAV* UAV = GraphBuilder.CreateUAV(FRDGTextureUAVDesc(PageTableRDG, MipLevelIndex, PageEntryFormat));
+					AddClearUAVPass(GraphBuilder, UAV, FUintVector4(ForceInitToZero), bAsyncCompute ? ERDGPassFlags::AsyncCompute : ERDGPassFlags::Compute);
+				}
+
+				FrameInfo.PageTableTexture = GraphBuilder.ConvertToExternalTexture(PageTableRDG);
+				GraphBuilder.UseExternalAccessMode(PageTableRDG, ERHIAccess::SRVMask, ERHIPipeline::All);
 			}
 
 			// Initialize TextureRenderResources
-			RHIUpdateTextureReference(FrameInfo.TextureRenderResources->PageTableTextureReferenceRHI, FrameInfo.PageTableTextureRHIRef);
-			RHIUpdateTextureReference(FrameInfo.TextureRenderResources->PhysicalTileDataATextureReferenceRHI, SVTInfo.TileDataTexture->TileDataTextureARHIRef);
-			RHIUpdateTextureReference(FrameInfo.TextureRenderResources->PhysicalTileDataBTextureReferenceRHI, SVTInfo.TileDataTexture->TileDataTextureBRHIRef);
-			FrameInfo.TextureRenderResources->StreamingInfoBufferSRVRHI = SVTInfo.StreamingInfoBufferSRVRHIRef;
+			GraphBuilder.RHICmdList.UpdateTextureReference(FrameInfo.TextureRenderResources->PageTableTextureReferenceRHI, FrameInfo.PageTableTexture->GetRHI());
+			GraphBuilder.RHICmdList.UpdateTextureReference(FrameInfo.TextureRenderResources->PhysicalTileDataATextureReferenceRHI, SVTInfo.TileDataTexture->GetTileDataTextureA() ? SVTInfo.TileDataTexture->GetTileDataTextureA()->GetRHI() : GBlackVolumeTexture->TextureRHI.GetReference());
+			GraphBuilder.RHICmdList.UpdateTextureReference(FrameInfo.TextureRenderResources->PhysicalTileDataBTextureReferenceRHI, SVTInfo.TileDataTexture->GetTileDataTextureB() ? SVTInfo.TileDataTexture->GetTileDataTextureB()->GetRHI() : GBlackVolumeTexture->TextureRHI.GetReference());
 			FrameInfo.TextureRenderResources->Header = Resources->Header;
-			FrameInfo.TextureRenderResources->TileDataTextureResolution = SVTInfo.TileDataTexture->ResolutionInTiles * SPARSE_VOLUME_TILE_RES_PADDED;
+			FrameInfo.TextureRenderResources->TileDataTextureResolution = SVTInfo.TileDataTexture->GetResolutionInTiles() * SPARSE_VOLUME_TILE_RES_PADDED;
 			FrameInfo.TextureRenderResources->FrameIndex = FrameIdx;
 			FrameInfo.TextureRenderResources->NumLogicalMipLevels = NumMipLevels;
 
 			// Upload root mip data and update page tables
-			const FMipLevelStreamingInfo* RootStreamingInfo = !Resources->MipLevelStreamingInfo.IsEmpty() ? &Resources->MipLevelStreamingInfo.Last() : nullptr;
-			if (!Resources->RootData.IsEmpty() && RootStreamingInfo)
+			if (!Topology.MipInfo.IsEmpty() && Topology.MipInfo.Last().PageCount > 0)
 			{
-				const uint32 TileCoord = SVTInfo.TileDataTexture->Allocate();
+				check(!Resources->RootData.IsEmpty());
+				FTileAllocator::FAllocation PreviousAllocation;
+				const uint32 TileCoord = SVTInfo.TileAllocator.Allocate(UpdateIndex, 0 /*FreeThreshold*/, FrameIdx, 0 /*TileIndexInFrame*/, -1 /*TilePriority*/, true, PreviousAllocation);
 				check(TileCoord != INDEX_NONE);
-				FrameInfo.TileAllocations.Last()[0] = TileCoord;
+				check(TileCoord != 0);
+				check(!PreviousAllocation.bIsAllocated); // We should never have to evict another tile to upload a root tile
+				FrameInfo.TileAllocations[0] = TileCoord;
+				FrameInfo.ResidentTiles[0] = true;
+				FrameInfo.StreamingTiles[0] = true; // This tile is not technically streaming, but StreamingTiles is a super set of ResidentTiles and represents tiles that are resident or about to be
 
-				const int32 NumVoxelsA = FormatSizes[0] > 0 ? RootStreamingInfo->TileDataSize[0] / FormatSizes[0] : 0;
-				const int32 NumVoxelsB = FormatSizes[1] > 0 ? RootStreamingInfo->TileDataSize[1] / FormatSizes[1] : 0;
+				const FTileInfo RootTileInfo = Resources->StreamingMetaData.GetTileInfo(0, FormatSizes[0], FormatSizes[1]);
+				const int32 NumVoxelsA = RootTileInfo.NumVoxels[0];
+				const int32 NumVoxelsB = RootTileInfo.NumVoxels[1];
 				FTileUploader::FAddResult AddResult = RootTileUploader.Add_GetRef(1, NumVoxelsA, NumVoxelsB);
 
 				FMemory::Memcpy(AddResult.PackedPhysicalTileCoordsPtr, &TileCoord, sizeof(TileCoord));
@@ -1475,46 +792,37 @@ void FStreamingManager::AddInternal(FRDGBuilder& GraphBuilder, FNewSparseVolumeT
 					if (FormatSizes[AttributesIdx] > 0)
 					{
 						// Occupancy bits
-						const uint8* SrcOccupancyBits = Resources->RootData.GetData() + RootStreamingInfo->OccupancyBitsOffset[AttributesIdx];
+						const uint8* SrcOccupancyBits = Resources->RootData.GetData() + RootTileInfo.OccupancyBitsOffsets[AttributesIdx];
 						check(AddResult.OccupancyBitsPtrs[AttributesIdx]);
-						FMemory::Memcpy(AddResult.OccupancyBitsPtrs[AttributesIdx], SrcOccupancyBits, RootStreamingInfo->OccupancyBitsSize[AttributesIdx]);
+						FMemory::Memcpy(AddResult.OccupancyBitsPtrs[AttributesIdx], SrcOccupancyBits, RootTileInfo.OccupancyBitsSizes[AttributesIdx]);
 
 						// Per-tile offsets into tile data
-						const uint32* SrcTileDataOffsets = reinterpret_cast<const uint32*>(Resources->RootData.GetData() + RootStreamingInfo->TileDataOffsetsOffset[AttributesIdx]);
 						check(AddResult.TileDataOffsetsPtrs[AttributesIdx]);
-						check(RootStreamingInfo->TileDataOffsetsSize[AttributesIdx] == sizeof(uint32));
-						reinterpret_cast<uint32*>(AddResult.TileDataOffsetsPtrs[AttributesIdx])[0] = AddResult.TileDataBaseOffsets[AttributesIdx] + SrcTileDataOffsets[0];
+						reinterpret_cast<uint32*>(AddResult.TileDataOffsetsPtrs[AttributesIdx])[0] = AddResult.TileDataBaseOffsets[AttributesIdx] + 0; // + 0 because we're only uploading this single tile in the current batch
 
 						// Tile data
-						const uint8* SrcTileData = Resources->RootData.GetData() + RootStreamingInfo->TileDataOffset[AttributesIdx];
+						const uint8* SrcTileData = Resources->RootData.GetData() + RootTileInfo.VoxelDataOffsets[AttributesIdx];
 						check(AddResult.TileDataPtrs[AttributesIdx]);
-						FMemory::Memcpy(AddResult.TileDataPtrs[AttributesIdx], SrcTileData, RootStreamingInfo->TileDataSize[AttributesIdx]);
+						FMemory::Memcpy(AddResult.TileDataPtrs[AttributesIdx], SrcTileData, RootTileInfo.VoxelDataSizes[AttributesIdx]);
 					}
 				}
-
-				// Update highest mip (1x1x1) in page table
-				const FUpdateTextureRegion3D UpdateRegion(0, 0, 0, 0, 0, 0, 1, 1, 1);
-				RHIUpdateTexture3D(FrameInfo.PageTableTextureRHIRef, FrameInfo.PageTableTextureRHIRef->GetDesc().NumMips - 1, UpdateRegion, sizeof(uint32), sizeof(uint32), (uint8*)&TileCoord);
 			}
+
+			InvalidatedSVTFrames.Add(&FrameInfo);
 		}
 
-		RootTileUploader.ResourceUploadTo(GraphBuilder, SVTInfo.TileDataTexture->TileDataTextureARHIRef, SVTInfo.TileDataTexture->TileDataTextureBRHIRef, SVTInfo.FallbackValueA, SVTInfo.FallbackValueB);
+		RootTileUploader.ResourceUploadTo(GraphBuilder, SVTInfo.TileDataTexture->GetTileDataTextureA(), SVTInfo.TileDataTexture->GetTileDataTextureB(), SVTInfo.FallbackValueA, SVTInfo.FallbackValueB);
 	}
-
-	SVTsWithInvalidatedStreamingInfoBuffer.Add(&SVTInfo);
 
 	// Add requests for all mips the first frame. This is necessary for cases where UAnimatedSparseVolumeTexture or UStaticSparseVolumeTexture
 	// are directly bound to the material without getting a specific frame through USparseVolumeTextureFrame::GetFrameAndIssueStreamingRequest().
 	const int32 NumMipLevelsFrame0 = SVTInfo.PerFrameInfo[0].NumMipLevels;
-	for (int32 MipLevel = 0; (MipLevel + 1) < NumMipLevelsFrame0; ++MipLevel)
-	{
-		FStreamingRequest Request;
-		Request.Key.SVT = NewSVTInfo.SVT;
-		Request.Key.FrameIndex = 0;
-		Request.Key.MipLevelIndex = MipLevel;
-		Request.Priority = MipLevel;
-		AddRequest(Request);
-	}
+	FStreamingRequest Request;
+	Request.Key.SVTHandle = SVTHandle;
+	Request.Key.FrameIndex = 0;
+	Request.Payload.MipLevelMask = UINT16_MAX;
+	Request.Payload.LowestMipFraction = 1.0f;
+	AddRequest(Request);
 }
 
 void FStreamingManager::RemoveInternal(UStreamableSparseVolumeTexture* SparseVolumeTexture)
@@ -1525,32 +833,40 @@ void FStreamingManager::RemoveInternal(UStreamableSparseVolumeTexture* SparseVol
 	if (SVTInfo)
 	{
 		// Remove any requests for this SVT
-		TArray<FMipLevelKey> RequestsToRemove;
+		TArray<FFrameKey> RequestsToRemove;
 		for (auto& Pair : RequestsHashTable)
 		{
-			if (Pair.Key.SVT == SparseVolumeTexture)
+			if (Pair.Key.SVTHandle == SVTInfo->SVTHandle)
 			{
 				RequestsToRemove.Add(Pair.Key);
 			}
 		}
-		for (const FMipLevelKey& Key : RequestsToRemove)
+		for (const FFrameKey& Key : RequestsToRemove)
 		{
 			RequestsHashTable.Remove(Key);
 		}
 
-		// Cancel any pending mip levels
-		for (FPendingMipLevel& PendingMipLevel : PendingMipLevels)
+		// Cancel any pending requests
+		for (FPendingRequest& PendingRequest : PendingRequests)
 		{
-			if (PendingMipLevel.SparseVolumeTexture == SparseVolumeTexture)
+			LOCK_PENDING_REQUEST(PendingRequest);
+			if (PendingRequest.SVTHandle == SVTInfo->SVTHandle)
 			{
-				PendingMipLevel.Reset();
+				PendingRequest.Reset();
 			}
+		}
+
+		// Make sure ActiveStreamingInstances doesn't have any references to this SVT anymore
+		for (TUniquePtr<FStreamingInstance>& StreamingInstance : SVTInfo->StreamingInstances)
+		{
+			ActiveStreamingInstances.Remove(StreamingInstance.Get());
 		}
 
 		// Release resources
 		for (FFrameInfo& FrameInfo : SVTInfo->PerFrameInfo)
 		{
-			FrameInfo.PageTableTextureRHIRef.SafeRelease();
+			FrameInfo.PageTableTexture.SafeRelease();
+			InvalidatedSVTFrames.Remove(&FrameInfo);
 		}
 		if (SVTInfo->TileDataTexture)
 		{
@@ -1558,484 +874,570 @@ void FStreamingManager::RemoveInternal(UStreamableSparseVolumeTexture* SparseVol
 			SVTInfo->TileDataTexture.Reset();
 		}
 
-		SVTsWithInvalidatedStreamingInfoBuffer.Remove(SVTInfo);
-
-		StreamingInfo.Remove(SparseVolumeTexture);
+		StreamingInfo.RemoveAt(SVTInfo->SVTHandle, 1);
+		SparseVolumeTextureToHandle.Remove(SparseVolumeTexture);
 	}
 }
 
-bool FStreamingManager::AddRequest(const FStreamingRequest& Request)
+void FStreamingManager::AddRequest(const FStreamingRequest& Request)
 {
-	uint32* ExistingRequestPriority = RequestsHashTable.Find(Request.Key);
-	if (ExistingRequestPriority)
+	FRequestPayload* ExistingRequestPayload = RequestsHashTable.Find(Request.Key);
+	if (ExistingRequestPayload)
 	{
-		if (Request.Priority > *ExistingRequestPriority)
+		ExistingRequestPayload->MipLevelMask |= Request.Payload.MipLevelMask;
+		const int32 ExistingLowestMip = FMath::CountTrailingZeros(ExistingRequestPayload->MipLevelMask);
+		const int32 IncomingLowestMip = FMath::CountTrailingZeros(Request.Payload.MipLevelMask);
+		if (IncomingLowestMip == ExistingLowestMip)
 		{
-			*ExistingRequestPriority = Request.Priority;
-			return true;
+			ExistingRequestPayload->LowestMipFraction = FMath::Max(ExistingRequestPayload->LowestMipFraction, Request.Payload.LowestMipFraction);
 		}
-		else
+		else if (IncomingLowestMip < ExistingLowestMip)
 		{
-			return false;
+			ExistingRequestPayload->LowestMipFraction = Request.Payload.LowestMipFraction;
+		}
+		for (int32 i = 0; i < Request.Payload.Priorities.Num(); ++i)
+		{
+			ExistingRequestPayload->Priorities[i] = FMath::Max(ExistingRequestPayload->Priorities[i], Request.Payload.Priorities[i]);
 		}
 	}
 	else
 	{
-		RequestsHashTable.Add(Request.Key, Request.Priority);
-		return true;
+		RequestsHashTable.Add(Request.Key, Request.Payload);
 	}
 }
 
-void FStreamingManager::AddParentRequests()
+void FStreamingManager::ComputeBandwidthLimit()
 {
-	TRACE_CPUPROFILER_EVENT_SCOPE(SVT::AddParentRequests);
+	TRACE_CPUPROFILER_EVENT_SCOPE(SVT::StreamingComputeBandwidthLimit);
 
-	ParentRequestsToAdd.Reset();
-	for (const auto& Request : RequestsHashTable)
+	// Get the total requested bandwidth and initialize all streaming instances to not apply any limit.
+	TotalRequestedBandwidth = 0;
+	for (FStreamingInstance* StreamingInstance : ActiveStreamingInstances)
 	{
-		FStreamingInfo* SVTInfo = FindStreamingInfo(Request.Key.SVT);
-		check(SVTInfo);
-		const int32 NumStreamableMipLevels = SVTInfo->PerFrameInfo[Request.Key.FrameIndex].NumMipLevels - 1;
-		uint32 Priority = Request.Value == FStreamingRequest::BlockingPriority ? FStreamingRequest::BlockingPriority : (Request.Value + 1);
-		for (int32 MipLevelIndex = Request.Key.MipLevelIndex + 1; MipLevelIndex < NumStreamableMipLevels; ++MipLevelIndex)
-		{
-			FMipLevelKey ParentKey = Request.Key;
-			ParentKey.MipLevelIndex = MipLevelIndex;
-			
-			uint32* ExistingParentRequestPriority = RequestsHashTable.Find(ParentKey);
-			if (ExistingParentRequestPriority && Priority > *ExistingParentRequestPriority)
-			{
-				*ExistingParentRequestPriority = Priority;
-			}
-			else
-			{
-				ParentRequestsToAdd.Add(FStreamingRequest{ ParentKey, Priority });
-			}
+		check(StreamingInstance->GetUpdateIndex() == UpdateIndex);
+		TotalRequestedBandwidth += StreamingInstance->GetRequestedBandwidth(true /*bZeroIfBlocking*/);
+		StreamingInstance->ComputeLowestMipLevelInBandwidthBudget(-1); // -1 sets the LowestMipLevelInBandwidthBuget to 0.0f
+	}
 
-			if (Priority != FStreamingRequest::BlockingPriority)
+	// Apply the limit if the cvar is set and the requested bandwidth exceeds the limit.
+	const int64 AvailableBandwidth = FMath::Max(GSVTStreamingBandwidthLimit, 1) * 1024LL * 1024LL;
+	if (GSVTStreamingBandwidthLimit > 0 && (TotalRequestedBandwidth > AvailableBandwidth))
+	{
+		// This is the factor by which we need to scale down the bandwidth of all currently active streaming instances.
+		const double DownscaleFactor = ((double)AvailableBandwidth / (double)TotalRequestedBandwidth);
+		if (GSVTStreamingLogVerbosity > 2)
+		{
+			UE_LOG(LogSparseVolumeTextureStreamingManager, Display, TEXT("Total Requested Bandwidth: %f MiB/s, Total Available Bandwidth: %f MiB/s, Percentage: %f %%"), 
+				float(TotalRequestedBandwidth / 1024.0 / 1024.0), float(AvailableBandwidth / 1024.0 / 1024.0), float(DownscaleFactor * 100.0));
+		}
+
+		for (FStreamingInstance* StreamingInstance : ActiveStreamingInstances)
+		{
+			const int64 RequestedBandWidth = StreamingInstance->GetRequestedBandwidth(true /*bZeroIfBlocking*/);
+			const int64 AllocatedBandwidth = FMath::CeilToInt64(RequestedBandWidth * DownscaleFactor);
+			StreamingInstance->ComputeLowestMipLevelInBandwidthBudget(AllocatedBandwidth);
+
+			if (GSVTStreamingLogVerbosity > 2)
 			{
-				++Priority;
+				UE_LOG(LogSparseVolumeTextureStreamingManager, Display, TEXT("Key: %u, Requested: %f MiB, Allocated: %f MiB, FPS: %f, InBudgetMipLevel: %f"),
+					StreamingInstance->GetKey(), float(RequestedBandWidth / 1024.0 / 1024.0), float(AllocatedBandwidth / 1024.0 / 1024.0), StreamingInstance->GetEstimatedFrameRate(), StreamingInstance->GetLowestMipLevelInBandwidthBudget());
 			}
 		}
 	}
 
-	for (const FStreamingRequest& Request : ParentRequestsToAdd)
-	{
-		AddRequest(Request);
-	}
+	// We don't need this set after this point, so clear it for the next frames requests.
+	ActiveStreamingInstances.Reset();
 }
 
-void FStreamingManager::SelectHighestPriorityRequestsAndUpdateLRU(int32 MaxSelectedRequests)
+void FStreamingManager::FilterRequests()
 {
-	PrioritizedRequestsHeap.Reset();
-	SelectedRequests.Reset();
+	TRACE_CPUPROFILER_EVENT_SCOPE(SVT::StreamingFilterRequests);
 
-	if (!RequestsHashTable.IsEmpty())
+	TileRangesToStream.Reset();
+
+	// Convert requests into contiguous ranges of tiles with the same priority
+	for (const auto& RequestPair : RequestsHashTable)
 	{
-		TRACE_CPUPROFILER_EVENT_SCOPE(SVT::SelectHighestPriorityRequestsAndUpdateLRU);
-
-		for (const auto& Request : RequestsHashTable)
+		const FFrameKey& RequestKey = RequestPair.Key;
+		const FRequestPayload& RequestValue = RequestPair.Value;
+		FStreamingInfo* SVTInfo = FindStreamingInfo(RequestKey.SVTHandle);
+		if (!SVTInfo || !SVTInfo->PerFrameInfo.IsValidIndex(RequestKey.FrameIndex))
 		{
-			FStreamingInfo* SVTInfo = FindStreamingInfo(Request.Key.SVT);
-			check(SVTInfo);
+			continue;
+		}
 
-			// Discard invalid requests: frame index out of bounds, mip level index out of bounds (or root mip level) and mip levels without any data.
-			// There can never be lower mip levels with data depending on higher mip levels without any data, so discarding such requests is ok.
-			if (Request.Key.FrameIndex < 0
-				|| Request.Key.FrameIndex >= SVTInfo->PerFrameInfo.Num()
-				|| Request.Key.MipLevelIndex < 0
-				|| Request.Key.MipLevelIndex >= (SVTInfo->PerFrameInfo[Request.Key.FrameIndex].NumMipLevels - 1)
-				|| SVTInfo->PerFrameInfo[Request.Key.FrameIndex].Resources->MipLevelStreamingInfo[Request.Key.MipLevelIndex].BulkSize == 0)
+		FFrameInfo& FrameInfo = SVTInfo->PerFrameInfo[RequestKey.FrameIndex];
+		const FPageTopology& Topology = FrameInfo.Resources->Topology;
+		const FTileStreamingMetaData& StreamingMetaData = FrameInfo.Resources->StreamingMetaData;
+		const int32 FirstStreamingMipLevel = FrameInfo.NumMipLevels - 2;
+		const int32 LowestRequestedMipI = static_cast<int32>(FMath::CountTrailingZeros((uint32)RequestValue.MipLevelMask));
+		const float LowestRequestedMipF = LowestRequestedMipI + (1.0f - FMath::Clamp(RequestValue.LowestMipFraction, 0.0f, 1.0f));
+		const float LowestAllowedMipF = FMath::Clamp(RequestValue.StreamingInstance ? RequestValue.StreamingInstance->GetLowestMipLevelInBandwidthBudget() : 0.0f, LowestRequestedMipF, FrameInfo.NumMipLevels - 1.0f); // Clamp to ensure Allows >= Requested
+		const int32 LowestAllowedMipI = FMath::FloorToInt32(LowestAllowedMipF);
+		const float LowestMipToStreamF = FMath::Max(LowestAllowedMipF, LowestRequestedMipF);
+		const int32 LowestMipToStreamI = FMath::FloorToInt32(LowestMipToStreamF);
+
+		// Keep track of all tiles requested in this frame and also of the tiles requested only within the current priority
+		const uint32 NumTiles = FrameInfo.TileAllocations.Num();
+		TBitArray<> RequestedTiles = FrameInfo.StreamingTiles;
+		TBitArray<> RequestedTilesInCurrentPriority = TBitArray<>(false, NumTiles);
+
+		// StreamingTiles must be a super set of ResidentTiles
+		check(TBitArray<>::BitwiseAND(FrameInfo.StreamingTiles, FrameInfo.ResidentTiles, EBitwiseOperatorFlags::MaxSize) == FrameInfo.ResidentTiles);
+
+		const uint32 TargetRequestSize = GSVTStreamingRequestSize <= 0 ? UINT32_MAX : (uint32)FMath::Clamp(GSVTStreamingRequestSize, 1, int32(UINT32_MAX / 1024)) * 1024u;
+
+		// Creates a FTileRange for each contiguous range of set bits in RequestedTilesInCurrentPriority and appends it to TileRangesToStream
+		auto MakeTileRanges = [&](uint8 Priority)
+		{
+			bool bResetCounters = true;
+			uint32 TileOffset = 0;
+			uint32 TileCount = 0;
+			for (TConstSetBitIterator It(RequestedTilesInCurrentPriority); It; ++It)
+			{
+				const uint32 TileIndex = It.GetIndex();
+				if (bResetCounters)
+				{
+					TileOffset = TileIndex;
+					TileCount = 0;
+					bResetCounters = false;
+				}
+				++TileCount;
+
+				const bool bIsLastTile = !RequestedTilesInCurrentPriority.IsValidIndex(TileIndex + 1);
+				const bool bIsNextTileBitSet = !bIsLastTile && RequestedTilesInCurrentPriority[TileIndex + 1];
+				bool bReachedTargetRequestSize = false;
+				if (bIsNextTileBitSet)
+				{
+					// End the current batch if adding the next tile would get us past the target request size.
+					// TileDataOffsets has N+1 elements, so accessing with +2 is fine because we checked that +1 is < N.
+					const uint32 RequestSizeIncludingNextTile = StreamingMetaData.TileDataOffsets[TileIndex + 2] - StreamingMetaData.TileDataOffsets[TileOffset];
+					bReachedTargetRequestSize = RequestSizeIncludingNextTile >= TargetRequestSize;
+				}
+
+				// Is the next bit unset? If so, this tile is the end of the current range
+				if (bIsLastTile || !bIsNextTileBitSet || bReachedTargetRequestSize)
+				{
+					FTileRange& TileRange = TileRangesToStream.AddDefaulted_GetRef();
+					TileRange.SVTHandle = RequestKey.SVTHandle;
+					TileRange.TileOffset = TileOffset;
+					TileRange.TileCount = TileCount;
+					TileRange.FrameIndex = RequestKey.FrameIndex;
+					TileRange.Priority = Priority;
+
+					bResetCounters = true;
+				}
+			}
+		};
+
+		uint32 PrevPriority = 0xFFFFFFFFu;
+		for (int32 MipLevelIndex = FirstStreamingMipLevel; MipLevelIndex >= LowestRequestedMipI; --MipLevelIndex)
+		{
+			// Skip if mip level was not requested
+			if (((uint32)RequestValue.MipLevelMask & (1u << MipLevelIndex)) == 0)
 			{
 				continue;
 			}
 
-			const int32 LRUNodeIndex = Request.Key.FrameIndex * SVTInfo->NumMipLevelsGlobal + Request.Key.MipLevelIndex;
-			FLRUNode* LRUNode = &SVTInfo->LRUNodes[LRUNodeIndex];
-#if DO_CHECK
-			bool bFoundNodeInList = false;
-			for (auto& Node : SVTInfo->PerMipLRULists[Request.Key.MipLevelIndex])
+			const uint8 Priority = RequestValue.Priorities[MipLevelIndex];
+			const bool bIsBlocking = Priority == uint8(-1);
+
+			// Skip if mip level is outside the allowed range for the bandwidth budget and is not a blocking request
+			if (MipLevelIndex < LowestAllowedMipI && !bIsBlocking)
 			{
-				if (&Node == LRUNode)
+				continue;
+			}
+
+			// When the priority changes, we need to create tile ranges based on the currently set bets in RequestedTilesInCurrentPriority.
+			if (Priority != PrevPriority)
+			{
+				MakeTileRanges(Priority);
+				RequestedTilesInCurrentPriority.SetRange(0, NumTiles, false);
+			}
+			PrevPriority = Priority;
+
+			auto GetFractionalPageCount = [](uint32 PageCount, float FractionalMipLevel)
+			{
+				const float Fraction = 1.0f - FMath::Frac(FractionalMipLevel);
+				const uint32 ResultPageCount = FMath::CeilToInt32((float)PageCount * Fraction);
+				check(ResultPageCount <= PageCount);
+				return ResultPageCount;
+			};
+
+			// Get the range of pages to try and stream in
+			const FPageTopology::FMip& MipInfo = Topology.MipInfo[MipLevelIndex];
+			uint32 PageCount = MipInfo.PageCount;
+			if (MipLevelIndex == LowestRequestedMipI)
+			{
+				PageCount = GetFractionalPageCount(MipInfo.PageCount, LowestRequestedMipF);
+			}
+			if (MipLevelIndex == LowestAllowedMipI && !bIsBlocking) // Apply the fractional allowed mip limit only on non-blocking requests
+			{
+				// If the lowest requested mip is the same integer mip as the lowest allowed mip, take the maximum fractional mip -> minimum bandwidth
+				const float FractionalMip = MipLevelIndex == LowestRequestedMipI ? FMath::Max(LowestRequestedMipF, LowestAllowedMipF) : LowestAllowedMipF;
+				PageCount = GetFractionalPageCount(MipInfo.PageCount, FractionalMip);
+			}
+			const uint32 PageBegin = MipInfo.PageOffset;
+			const uint32 PageEnd = MipInfo.PageOffset + PageCount;
+
+			// Mark requested tiles
+			for (uint32 PageIndex = PageBegin; PageIndex < PageEnd; ++PageIndex)
+			{
+				const uint32 TileIndex = Topology.TileIndices[PageIndex];
+				if (!RequestedTiles[TileIndex])
 				{
-					bFoundNodeInList = true;
-					break;
+					RequestedTiles[TileIndex] = true;
+					RequestedTilesInCurrentPriority[TileIndex] = true;
+				}
+
+				// Tell the allocator that we're still interested in this tile
+				if (FrameInfo.StreamingTiles[TileIndex])
+				{
+					check(FrameInfo.TileAllocations[TileIndex] != 0);
+					const uint32 TilePriority = FrameInfo.ResidentTiles.Num() - TileIndex; // Higher value means higher priority, but we want higher tiles to be streamed out first
+					SVTInfo->TileAllocator.UpdateUsage(UpdateIndex, FrameInfo.TileAllocations[TileIndex], TilePriority);
 				}
 			}
-#endif
-
-			const bool bIsAlreadyStreaming = Request.Key.MipLevelIndex >= SVTInfo->PerFrameInfo[Request.Key.FrameIndex].LowestRequestedMipLevel;
-			if (bIsAlreadyStreaming)
-			{
-				check(bFoundNodeInList);
-				// Update LastRequested and move to front of LRU
-				LRUNode->LastRequested = NextUpdateIndex;
-
-				// Unlink
-				LRUNode->Remove();
-
-				// Insert at the end of the LRU list
-				SVTInfo->PerMipLRULists[Request.Key.MipLevelIndex].AddTail(LRUNode);
-			}
-			else
-			{
-				check(!bFoundNodeInList);
-				PrioritizedRequestsHeap.Add(FStreamingRequest{ Request.Key, Request.Value });
-			}
 		}
 
-		// Sort by priority but make sure to load higher mip levels with the same priority first. This can happen when a blocking priority is used.
-		auto PriorityPredicate = [](const auto& A, const auto& B) { return A.Priority != B.Priority ? (A.Priority > B.Priority) : A.Key.MipLevelIndex > B.Key.MipLevelIndex; };
-		PrioritizedRequestsHeap.Heapify(PriorityPredicate);
-
-		while (SelectedRequests.Num() < MaxSelectedRequests && PrioritizedRequestsHeap.Num() > 0)
-		{
-			FStreamingRequest SelectedRequest;
-			PrioritizedRequestsHeap.HeapPop(SelectedRequest, PriorityPredicate, false /*bAllowShrinking*/);
-
-			FStreamingInfo* SVTInfo = FindStreamingInfo(SelectedRequest.Key.SVT);
-			if (SVTInfo)
-			{
-				check(SelectedRequest.Key.FrameIndex < SVTInfo->PerFrameInfo.Num());
-				check(SelectedRequest.Key.MipLevelIndex < SVTInfo->PerFrameInfo[SelectedRequest.Key.FrameIndex].NumMipLevels);
-				SelectedRequests.Push(SelectedRequest);
-			}
-		}
-
-		RequestsHashTable.Reset();
+		// After processing the lowest/last mip level, we need to create one final batch of tile ranges
+		MakeTileRanges(PrevPriority);
 	}
+
+	RequestsHashTable.Reset();
+
+	// Sort by priority
+	auto PriorityPredicate = [](const auto& A, const auto& B) { return A.Priority != B.Priority ? (A.Priority > B.Priority) : A.TileOffset < B.TileOffset; };
+	TileRangesToStream.Sort(PriorityPredicate);
+
+	const int32 MaxSelectedRequests = MaxPendingRequests - NumPendingRequests;
+	const int32 NumSelectedRequests = FMath::Min(MaxSelectedRequests, TileRangesToStream.Num());
+
+	TileRangesToStream.SetNum(NumSelectedRequests, EAllowShrinking::No);
 }
 
-void FStreamingManager::IssueRequests(int32 MaxSelectedRequests)
+void FStreamingManager::IssueRequests()
 {
 	using namespace UE::DerivedData;
 
-	if (SelectedRequests.IsEmpty())
+	if (TileRangesToStream.IsEmpty())
 	{
 		return;
 	}
 
-	TRACE_CPUPROFILER_EVENT_SCOPE(SVT::IssueRequests);
+	TRACE_CPUPROFILER_EVENT_SCOPE(SVT::StreamingIssueRequests);
 
 #if WITH_EDITORONLY_DATA
 	TArray<FCacheGetChunkRequest> DDCRequests;
-	DDCRequests.Reserve(MaxSelectedRequests);
+	DDCRequests.Reserve(TileRangesToStream.Num());
 	TArray<FCacheGetChunkRequest> DDCRequestsBlocking;
-	DDCRequestsBlocking.Reserve(MaxSelectedRequests);
+	DDCRequestsBlocking.Reserve(TileRangesToStream.Num());
 #endif
 
-	FBulkDataBatchRequest::FBatchBuilder Batch = FBulkDataBatchRequest::NewBatch(SelectedRequests.Num());
-	bool bIssueIOBatch = false;
-
-	for (const FStreamingRequest& SelectedRequest : SelectedRequests)
+	// Process all tile ranges selected for streaming, allocate a slot in the tile data texture for every tile and finally create IO requests for every range.
+	for (FTileRange& TileRange : TileRangesToStream)
 	{
-		const FMipLevelKey& SelectedKey = SelectedRequest.Key;
-		FStreamingInfo* SVTInfo = FindStreamingInfo(SelectedKey.SVT);
-		check(SVTInfo);
-		check(SVTInfo->PerFrameInfo.Num() > SelectedKey.FrameIndex && SelectedKey.FrameIndex >= 0);
-		check(SVTInfo->PerFrameInfo[SelectedKey.FrameIndex].LowestRequestedMipLevel > SelectedKey.MipLevelIndex);
-		const FResources* Resources = SVTInfo->PerFrameInfo[SelectedKey.FrameIndex].Resources;
-		check((SelectedKey.MipLevelIndex + 1) < Resources->MipLevelStreamingInfo.Num()); // The lowest/last mip level is always resident and does not stream.
-		const FMipLevelStreamingInfo& MipLevelStreamingInfo = Resources->MipLevelStreamingInfo[SelectedKey.MipLevelIndex];
+		FStreamingInfo* SVTInfo = FindStreamingInfo(TileRange.SVTHandle);
+		FFrameInfo& FrameInfo = SVTInfo->PerFrameInfo[TileRange.FrameIndex];
+		const FResources* Resources = FrameInfo.Resources;
+		FTileDataTexture* TileDataTexture = SVTInfo->TileDataTexture.Get();
+		const int32 NumFrames = SVTInfo->PerFrameInfo.Num();
 
-		TUniquePtr<FTileDataTexture>& TileDataTexture = SVTInfo->TileDataTexture;
-		check(TileDataTexture);
-
-		// Ensure that enough tiles are available in the tile texture
-		const int32 TileDataTextureCapacity = TileDataTexture->PhysicalTilesCapacity;
-		const int32 NumAvailableTiles = TileDataTexture->GetNumAvailableTiles();
-		const int32 NumRequiredTiles = MipLevelStreamingInfo.NumPhysicalTiles;
-		if (NumAvailableTiles < NumRequiredTiles)
+		// Allocate tiles
+		uint32 NumSuccessfulAllocations = 0;
+		bool bOutOfRequestSlots = false;
+		for (uint32 i = 0; i < TileRange.TileCount; ++i)
 		{
-#if SVT_STREAMING_LOG_VERBOSE
-			UE_LOG(LogSparseVolumeTextureStreamingManager, Display, TEXT("(%i)%i IssueRequests() Frame %i Mip %i: Not enough tiles available (%i) to fit mip level (%i)"), 
-				NextUpdateIndex, NextPendingMipLevelIndex, SelectedKey.FrameIndex, SelectedKey.MipLevelIndex, NumAvailableTiles, NumRequiredTiles);
-#endif
-
-			// Try to free old mip levels, starting at higher resolution mips and going up the mip chain
-			TArray<FLRUNode*, TInlineAllocator<16>> MipLevelsToFree;
-			int32 NumNewlyAvailableTiles = 0;
-			const int32 NumMipLevelsGlobal = SVTInfo->NumMipLevelsGlobal;
-			for (int32 MipLevel = 0; MipLevel < NumMipLevelsGlobal && (NumAvailableTiles + NumNewlyAvailableTiles) < NumRequiredTiles; ++MipLevel)
+			if (bOutOfRequestSlots)
 			{
-				for (auto& Node : SVTInfo->PerMipLRULists[MipLevel])
-				{
-					// Only free "leaf" mip levels with no higher resolution mip levels resident. Don't free mip levels requested this frame.
-					if (Node.RefCount == 0 && Node.LastRequested < NextUpdateIndex)
-					{
-						MipLevelsToFree.Add(&Node);
-						NumNewlyAvailableTiles += SVTInfo->PerFrameInfo[Node.FrameIndex].Resources->MipLevelStreamingInfo[Node.MipLevelIndex].NumPhysicalTiles;
+				break;
+			}
 
-						// Decrement ref count of mip levels higher up the chain
-						FLRUNode* Dependency = Node.NextHigherMipLevel;
-						while (Dependency)
+			const uint32 TileIndex = TileRange.TileOffset + i;
+			check(FrameInfo.TileAllocations[TileIndex] == 0);
+
+			// Allocate tile
+			const uint32 TilePriority = FrameInfo.ResidentTiles.Num() - TileIndex; // Higher value means higher priority, but we want higher tiles to be streamed out first
+			FTileAllocator::FAllocation PreviousAllocation;
+			const uint32 TileCoord = SVTInfo->TileAllocator.Allocate(UpdateIndex, 0 /*FreeThreshold*/, TileRange.FrameIndex, TileIndex, TilePriority, false /*bLocked*/, PreviousAllocation);
+			
+			// Allocation failed, cut the TileRange short and upload what we have.
+			if (TileCoord == INDEX_NONE)
+			{
+				if (GSVTStreamingLogVerbosity > 1)
+				{
+					UE_LOG(LogSparseVolumeTextureStreamingManager, Warning, TEXT("Streaming pool of SVT '%s' is oversubscribed! Tried to allocate %u tiles for frame %u, but only %u were available."),
+						*SVTInfo->SVTName.ToString(), TileRange.TileCount, TileRange.FrameIndex, NumSuccessfulAllocations);
+				}
+				break;
+			}
+			++NumSuccessfulAllocations;
+			FrameInfo.TileAllocations[TileIndex] = TileCoord;
+
+			// Slot in the tile data texture was previously used by a different tile -> mark it as no longer resident/streaming.
+			if (PreviousAllocation.bIsAllocated)
+			{
+				check(SVTInfo->PerFrameInfo.IsValidIndex(PreviousAllocation.FrameIndex));
+				check(SVTInfo->PerFrameInfo[PreviousAllocation.FrameIndex].ResidentTiles.IsValidIndex(PreviousAllocation.TileIndexInFrame));
+				FFrameInfo& FrameInfoTmp = SVTInfo->PerFrameInfo[PreviousAllocation.FrameIndex];
+
+				// Mark the tile as no longer resident/streaming and make sure to set its entry in TileAllocations to 0 (for validation purposes).
+				check(FrameInfoTmp.StreamingTiles[PreviousAllocation.TileIndexInFrame]);
+				check(FrameInfoTmp.TileAllocations[PreviousAllocation.TileIndexInFrame] != 0);
+				FrameInfoTmp.StreamingTiles[PreviousAllocation.TileIndexInFrame] = false;
+				FrameInfoTmp.ResidentTiles[PreviousAllocation.TileIndexInFrame] = false;
+				FrameInfoTmp.TileAllocations[PreviousAllocation.TileIndexInFrame] = 0;
+
+				// Cancel potential IO request
+				if (uint32* PendingRequestIndexPtr = FrameInfoTmp.TileIndexToPendingRequestIndex.Find((uint32)PreviousAllocation.TileIndexInFrame))
+				{
+					FPendingRequest& PendingRequest = PendingRequests[*PendingRequestIndexPtr];
+					LOCK_PENDING_REQUEST(PendingRequest);
+					check(PendingRequest.IsValid());
+					if (FrameInfoTmp.StreamingTiles.CountSetBits(PendingRequest.TileOffset, PendingRequest.TileOffset + PendingRequest.TileCount) == 0)
+					{
+						// None of the tiles in the tile range of the IO request is still requested, so we can cancel the request
+						PendingRequest.Reset();
+
+						if (GSVTStreamingLogVerbosity > 2)
 						{
-							check(Dependency->RefCount > 0);
-							--Dependency->RefCount;
-							Dependency = Dependency->NextHigherMipLevel;
+							UE_LOG(LogSparseVolumeTextureStreamingManager, Warning, TEXT("SVT '%s' frame %i: Cancelled IO request for frame %i, tile offset %i, tile count %i."),
+								*SVTInfo->SVTName.ToString(), TileRange.FrameIndex, PreviousAllocation.FrameIndex, TileRange.TileCount, TileRange.FrameIndex, NumSuccessfulAllocations);
 						}
 					}
 
-					// Exit once we freed enough tiles
-					if ((NumAvailableTiles + NumNewlyAvailableTiles) >= NumRequiredTiles)
+					// Remove the tile -> IO request mapping
+					FrameInfoTmp.TileIndexToPendingRequestIndex.Remove((uint32)PreviousAllocation.TileIndexInFrame);
+				}
+
+				// We changed the tile residency of this frame, so add it to the set of invalidated frames that need a page table fixup
+				InvalidatedSVTFrames.Add(&FrameInfoTmp);
+			}
+		}
+
+		TileRange.TileCount = NumSuccessfulAllocations;
+		if (TileRange.TileCount == 0)
+		{
+			continue;
+		}
+
+		// Create request
+		{
+			auto HandleRequestAllocationFailure = [&](uint32 FirstTileIndex, uint32 LastTileIndex)
+			{
+				// Free allocated tile data texture slots of all the tiles for which we haven't issued a request yet.
+				for (uint32 TileIndexToFree = FirstTileIndex; TileIndexToFree < LastTileIndex; ++TileIndexToFree)
+				{
+					SVTInfo->TileAllocator.Free(FrameInfo.TileAllocations[TileIndexToFree]);
+					FrameInfo.TileAllocations[TileIndexToFree] = 0;
+				}
+				bOutOfRequestSlots = true;
+				UE_LOG(LogSparseVolumeTextureStreamingManager, Error, TEXT("Ran out of SparseVolumeTexture IO request slots (%i)! r.SparseVolumeTexture.Streaming.MaxPendingRequests must be increased to fix this issue."), MaxPendingRequests);
+			};
+
+			const FByteBulkData& BulkData = Resources->StreamableMipLevels;
+			const bool bBlockingRequest = GSVTStreamingForceBlockingRequests || (TileRange.Priority == uint8(-1));
+#if WITH_EDITORONLY_DATA
+			const bool bDiskRequest = (!(Resources->ResourceFlags & EResourceFlag_StreamingDataInDDC) && !BulkData.IsBulkDataLoaded());
+#else
+			const bool bDiskRequest = true;
+#endif
+
+#if WITH_EDITORONLY_DATA
+			// When streaming from DDC, we have a slightly more complicated setup where the data is spread over multiple DDC chunks, so we likely need to issue multiple requests
+			if (!bDiskRequest && (Resources->ResourceFlags & EResourceFlag_StreamingDataInDDC))
+			{
+				// Iterate over all chunks to find the range of chunks storing the requested range of tiles and issue a DDC request for each chunk.
+				uint32 FirstTileIndexInChunk = Resources->StreamingMetaData.FirstStreamingTileIndex;
+				uint32 FirstTileIndexToRead = TileRange.TileOffset;
+				uint32 NumRemainingTiles = TileRange.TileCount;
+
+				const int32 NumChunks = Resources->DDCChunkMaxTileIndices.Num();
+				for (int32 ChunkIndex = 0; ChunkIndex < NumChunks && NumRemainingTiles > 0; ++ChunkIndex)
+				{
+					// Does this chunk overlap the requested tile range?
+					const uint32 LastTileIndexInChunkPlusOne = Resources->DDCChunkMaxTileIndices[ChunkIndex] + 1;
+					if (FirstTileIndexToRead >= FirstTileIndexInChunk && FirstTileIndexToRead < LastTileIndexInChunkPlusOne)
 					{
-						break;
+						// We can only read within a single chunk per request, so we need to limit the number of tiles in this request.
+						const uint32 ChunkNumReadTiles = FMath::Min(FirstTileIndexToRead + NumRemainingTiles, LastTileIndexInChunkPlusOne) - FirstTileIndexToRead;
+
+						// Allocate and fill out a FPendingRequest.
+						const int32 PendingRequestIndex = AllocatePendingRequestIndex();
+						if (!ensure(PendingRequestIndex != INDEX_NONE)) // Handle allocation failure
+						{
+							HandleRequestAllocationFailure(FirstTileIndexToRead, FirstTileIndexToRead + NumRemainingTiles);
+							break;
+						}
+						FPendingRequest& PendingRequest = PendingRequests[PendingRequestIndex];
+						LOCK_PENDING_REQUEST(PendingRequest);
+						PendingRequest.Reset();
+						PendingRequest.Set(TileRange.SVTHandle, TileRange.FrameIndex, FirstTileIndexToRead, ChunkNumReadTiles, UpdateIndex, bBlockingRequest);
+						PendingRequest.State = FPendingRequest::EState::DDC_Pending;
+
+						// Create the DDC request.
+						const FCacheGetChunkRequest DDCRequest = BuildDDCRequest(*Resources, PendingRequest.TileOffset, PendingRequest.TileCount, PendingRequestIndex, ChunkIndex);
+						new (PendingRequest.bBlocking ? DDCRequestsBlocking : DDCRequests) FCacheGetChunkRequest(DDCRequest);
+
+						check(ChunkNumReadTiles <= NumRemainingTiles);
+						NumRemainingTiles -= ChunkNumReadTiles;
+						FirstTileIndexToRead += ChunkNumReadTiles;
+
+						// Link the streaming tiles with the request.
+						for (uint32 TileIndex = PendingRequest.TileOffset; TileIndex < (PendingRequest.TileOffset + PendingRequest.TileCount); ++TileIndex)
+						{
+							FrameInfo.TileIndexToPendingRequestIndex.Add(TileIndex, (uint32)PendingRequestIndex);
+						}
+
+						// Mark tiles as streaming. Once they've actually been loaded into GPU memory, they'll also be marked as resident.
+						FrameInfo.StreamingTiles.SetRange(PendingRequest.TileOffset, PendingRequest.TileCount, true);
 					}
+					FirstTileIndexInChunk = LastTileIndexInChunkPlusOne;
 				}
 			}
-
-			// Free mip levels
-			for (FLRUNode* MipLevelToFree : MipLevelsToFree)
-			{
-				StreamOutMipLevel(SVTInfo, MipLevelToFree);
-			}
-
-			// Couldn't free enough tiles, so skip this mip level
-			if ((NumAvailableTiles + NumNewlyAvailableTiles) < NumRequiredTiles)
-			{
-				UE_LOG(LogSparseVolumeTextureStreamingManager, Warning, TEXT("IssueRequests() SVT %p Frame %i Mip %i: Not enough tiles available (%i) to fit mip level (%i) even after freeing"),
-					SelectedKey.SVT, SelectedKey.FrameIndex, SelectedKey.MipLevelIndex, (NumAvailableTiles + NumNewlyAvailableTiles), NumRequiredTiles);
-				continue;
-			}
-		}
-
-#if DO_CHECK
-		for (auto& Pending : PendingMipLevels)
-		{
-			check(Pending.SparseVolumeTexture != SelectedKey.SVT || Pending.FrameIndex != SelectedKey.FrameIndex || Pending.MipLevelIndex != SelectedKey.MipLevelIndex);
-		}
+			// Otherwise we can use a single request to fetch all the tiles.
+			else
 #endif
-
-		const int32 PendingMipLevelIndex = NextPendingMipLevelIndex;
-		FPendingMipLevel& PendingMipLevel = PendingMipLevels[PendingMipLevelIndex];
-		PendingMipLevel.Reset();
-		PendingMipLevel.SparseVolumeTexture = SelectedKey.SVT;
-		PendingMipLevel.FrameIndex = SelectedKey.FrameIndex;
-		PendingMipLevel.MipLevelIndex = SelectedKey.MipLevelIndex;
-		PendingMipLevel.IssuedInFrame = NextUpdateIndex;
-		PendingMipLevel.bBlocking = GSVTStreamingForceBlockingRequests || (SelectedRequest.Priority == FStreamingRequest::BlockingPriority);
-
-		const FByteBulkData& BulkData = Resources->StreamableMipLevels;
-#if WITH_EDITORONLY_DATA
-		const bool bDiskRequest = (!(Resources->ResourceFlags & EResourceFlag_StreamingDataInDDC) && !BulkData.IsBulkDataLoaded());
-#else
-		const bool bDiskRequest = true;
-#endif
-
-#if WITH_EDITORONLY_DATA
-		if (!bDiskRequest)
-		{
-			if (Resources->ResourceFlags & EResourceFlag_StreamingDataInDDC)
 			{
-				UE::DerivedData::FCacheGetChunkRequest DDCRequest = BuildDDCRequest(*Resources, MipLevelStreamingInfo, NextPendingMipLevelIndex);
-				if (PendingMipLevel.bBlocking)
+				// Allocate and fill out a FPendingRequest.
+				const int32 PendingRequestIndex = AllocatePendingRequestIndex();
+				if (!ensure(PendingRequestIndex != INDEX_NONE)) // Handle allocation failure
 				{
-					DDCRequestsBlocking.Add(DDCRequest);
+					HandleRequestAllocationFailure(TileRange.TileOffset, TileRange.TileOffset + TileRange.TileCount);
+					continue;
+				}
+				FPendingRequest& PendingRequest = PendingRequests[PendingRequestIndex];
+				LOCK_PENDING_REQUEST(PendingRequest);
+				PendingRequest.Reset();
+				PendingRequest.Set(TileRange.SVTHandle, TileRange.FrameIndex, TileRange.TileOffset, TileRange.TileCount, UpdateIndex, bBlockingRequest);
+
+#if WITH_EDITORONLY_DATA
+				if (!bDiskRequest)
+				{
+					PendingRequest.State = FPendingRequest::EState::Memory;
 				}
 				else
+#endif
 				{
-					DDCRequests.Add(DDCRequest);
+					uint32 ReadOffset = 0;
+					uint32 ReadSize = 0;
+					Resources->StreamingMetaData.GetTileRangeMemoryOffsetSize(TileRange.TileOffset, TileRange.TileCount, ReadOffset, ReadSize);
+
+					PendingRequest.RequestBuffer = FIoBuffer(ReadSize); // SVT_TODO: Use FIoBuffer::Wrap with preallocated memory
+					const EAsyncIOPriorityAndFlags Priority = PendingRequest.bBlocking ? AIOP_CriticalPath : AIOP_Low;
+					// SVT_TODO: We're currently using a single batch per request so we can individually cancel and wait on requests.
+					// This isn't ideal and should be revisited in the future.
+					FBulkDataBatchRequest::FScatterGatherBuilder Batch = FBulkDataBatchRequest::ScatterGather(1);
+					Batch.Read(BulkData, ReadOffset, ReadSize);
+					Batch.Issue(PendingRequest.RequestBuffer, Priority, [](FBulkDataRequest::EStatus){}, PendingRequest.Request);
+
+#if WITH_EDITORONLY_DATA
+					PendingRequest.State = FPendingRequest::EState::Disk;
+#endif
 				}
-				PendingMipLevel.State = FPendingMipLevel::EState::DDC_Pending;
-			}
-			else
-			{
-				PendingMipLevel.State = FPendingMipLevel::EState::Memory;
+
+				// Link the streaming tiles with the request.
+				for (uint32 TileIndex = PendingRequest.TileOffset; TileIndex < (PendingRequest.TileOffset + PendingRequest.TileCount); ++TileIndex)
+				{
+					FrameInfo.TileIndexToPendingRequestIndex.Add(TileIndex, (uint32)PendingRequestIndex);
+				}
+
+				// Mark tiles as streaming. Once they've actually been loaded into GPU memory, they'll also be marked as resident.
+				FrameInfo.StreamingTiles.SetRange(PendingRequest.TileOffset, PendingRequest.TileCount, true);
 			}
 		}
-		else
-#endif
-		{
-			PendingMipLevel.RequestBuffer = FIoBuffer(MipLevelStreamingInfo.BulkSize); // SVT_TODO: Use FIoBuffer::Wrap with preallocated memory
-			const EAsyncIOPriorityAndFlags Priority = PendingMipLevel.bBlocking ? AIOP_CriticalPath : AIOP_Low;
-			Batch.Read(BulkData, MipLevelStreamingInfo.BulkOffset, MipLevelStreamingInfo.BulkSize, Priority, PendingMipLevel.RequestBuffer, PendingMipLevel.Request);
-			bIssueIOBatch = true;
+	}
 
+	// Now we can finally issue the requests
+	{
 #if WITH_EDITORONLY_DATA
-			PendingMipLevel.State = FPendingMipLevel::EState::Disk;
-#endif
-		}
-
-		NextPendingMipLevelIndex = (NextPendingMipLevelIndex + 1) % MaxPendingMipLevels;
-		check(NumPendingMipLevels < MaxPendingMipLevels);
-		++NumPendingMipLevels;
-
-		FFrameInfo& FrameInfo = SVTInfo->PerFrameInfo[SelectedKey.FrameIndex];
-
-		// Allocate tiles in the tile data texture
+		if (!DDCRequests.IsEmpty())
 		{
-			TArray<uint32>& TileAllocations = FrameInfo.TileAllocations[SelectedKey.MipLevelIndex];
-			check(TileAllocations.Num() == NumRequiredTiles);
-			for (int32 TileIdx = 0; TileIdx < NumRequiredTiles; ++TileIdx)
-			{
-				const int32 TileCoord = TileDataTexture->Allocate();
-				check(TileCoord != INDEX_NONE);
-				TileAllocations[TileIdx] = TileCoord;
-			}
+			RequestDDCData(DDCRequests, false /*bBlocking*/);
+			DDCRequests.Empty();
 		}
-
-		// Add to tail of LRU list
+		if (!DDCRequestsBlocking.IsEmpty())
 		{
-			const int32 LRUNodeIndex = SelectedKey.FrameIndex * SVTInfo->NumMipLevelsGlobal + SelectedKey.MipLevelIndex;
-			FLRUNode* LRUNode = &SVTInfo->LRUNodes[LRUNodeIndex];
-			check(!LRUNode->IsInList());
-			LRUNode->LastRequested = NextUpdateIndex;
-			LRUNode->PendingMipLevelIndex = PendingMipLevelIndex;
-
-			FLRUNode* Dependency = LRUNode->NextHigherMipLevel;
-			while (Dependency)
-			{
-				++Dependency->RefCount;
-				Dependency = Dependency->NextHigherMipLevel;
-			}
-
-			SVTInfo->PerMipLRULists[SelectedKey.MipLevelIndex].AddTail(LRUNode);
+			RequestDDCData(DDCRequestsBlocking, true /*bBlocking*/);
+			DDCRequestsBlocking.Empty();
 		}
-
-#if SVT_STREAMING_LOG_VERBOSE
-		UE_LOG(LogSparseVolumeTextureStreamingManager, Display, TEXT("(%i)%i StreamIn Frame %i OldReqMip %i, NewReqMip %i, ResMip %i"),
-			PendingMipLevel.IssuedInFrame, PendingMipLevelIndex,
-			SelectedKey.FrameIndex, 
-			FrameInfo.LowestRequestedMipLevel, SelectedKey.MipLevelIndex, 
-			FrameInfo.LowestResidentMipLevel);
 #endif
-
-		check(FrameInfo.LowestRequestedMipLevel == (SelectedKey.MipLevelIndex + 1));
-		FrameInfo.LowestRequestedMipLevel = SelectedKey.MipLevelIndex;
-	}
-
-#if WITH_EDITORONLY_DATA
-	if (!DDCRequests.IsEmpty())
-	{
-		RequestDDCData(DDCRequests, false /*bBlocking*/);
-		DDCRequests.Empty();
-	}
-	if (!DDCRequestsBlocking.IsEmpty())
-	{
-		RequestDDCData(DDCRequestsBlocking, true /*bBlocking*/);
-		DDCRequestsBlocking.Empty();
-	}
-#endif
-
-	if (bIssueIOBatch)
-	{
-		(void)Batch.Issue();
 	}
 }
 
-void FStreamingManager::StreamOutMipLevel(FStreamingInfo* SVTInfo, FLRUNode* LRUNode)
-{
-	const int32 FrameIndex = LRUNode->FrameIndex;
-	const int32 MipLevelIndex = LRUNode->MipLevelIndex;
-
-	FFrameInfo& FrameInfo = SVTInfo->PerFrameInfo[FrameIndex];
-
-	check(FrameInfo.LowestResidentMipLevel >= MipLevelIndex); // mip might not have streamed in yet, so use >= instead of ==
-	check(FrameInfo.LowestRequestedMipLevel == MipLevelIndex);
-
-	// Cancel potential IO request
-	check((MipLevelIndex < FrameInfo.LowestResidentMipLevel) == (LRUNode->PendingMipLevelIndex != INDEX_NONE));
-	if (LRUNode->PendingMipLevelIndex != INDEX_NONE)
-	{
-		PendingMipLevels[LRUNode->PendingMipLevelIndex].Reset();
-		LRUNode->PendingMipLevelIndex = INDEX_NONE;
-	}
-
-	const int32 NewLowestRequestedMipLevel = MipLevelIndex + 1;
-	const int32 NewLowestResidentMipLevel = FMath::Max(MipLevelIndex + 1, FrameInfo.LowestResidentMipLevel);
-#if SVT_STREAMING_LOG_VERBOSE
-	UE_LOG(LogSparseVolumeTextureStreamingManager, Display, TEXT("(%i)%i StreamOut Frame %i OldReqMip %i, NewReqMip %i, OldResMip %i, NewResMip %i"),
-		NextUpdateIndex, NextPendingMipLevelIndex,
-		FrameIndex,
-		FrameInfo.LowestRequestedMipLevel, NewLowestRequestedMipLevel,
-		FrameInfo.LowestResidentMipLevel, NewLowestResidentMipLevel);
-#endif
-
-	// Only clear page table mip if the mip to be freed is actually resident.
-	const bool bNeedsPageTableClear = MipLevelIndex >= FrameInfo.LowestResidentMipLevel;
-	FrameInfo.LowestRequestedMipLevel = NewLowestRequestedMipLevel;
-	FrameInfo.LowestResidentMipLevel = NewLowestResidentMipLevel;
-	
-	// Update the streaming info buffer data
-	SVTInfo->DirtyStreamingInfoData[FrameIndex] = true;
-	SVTsWithInvalidatedStreamingInfoBuffer.Add(SVTInfo);
-
-	// Unlink
-	LRUNode->Remove();
-	LRUNode->LastRequested = INDEX_NONE;
-
-	if (bNeedsPageTableClear)
-	{
-		PageTableClears.Push({ FrameInfo.PageTableTextureRHIRef, MipLevelIndex });
-	}
-
-	// Free allocated tiles
-	for (uint32& TileCoord : FrameInfo.TileAllocations[MipLevelIndex])
-	{
-		SVTInfo->TileDataTexture->Free(TileCoord);
-		TileCoord = 0;
-	}
-}
-
-int32 FStreamingManager::DetermineReadyMipLevels()
+int32 FStreamingManager::DetermineReadyRequests()
 {
 	using namespace UE::DerivedData;
 
-	TRACE_CPUPROFILER_EVENT_SCOPE(SVT::DetermineReadyMipLevels);
+	TRACE_CPUPROFILER_EVENT_SCOPE(SVT::StreamingDetermineReadyRequests);
 
-	const int32 StartPendingMipLevelIndex = (NextPendingMipLevelIndex + MaxPendingMipLevels - NumPendingMipLevels) % MaxPendingMipLevels;
-	int32 NumReadyMipLevels = 0;
+	const int32 StartPendingRequestIndex = (NextPendingRequestIndex + MaxPendingRequests - NumPendingRequests) % MaxPendingRequests;
+	int32 NumReadyRequests = 0;
 
-	for (int32 i = 0; i < NumPendingMipLevels; ++i)
+	for (int32 i = 0; i < NumPendingRequests; ++i)
 	{
-		const int32 PendingMipLevelIndex = (StartPendingMipLevelIndex + i) % MaxPendingMipLevels;
-		FPendingMipLevel& PendingMipLevel = PendingMipLevels[PendingMipLevelIndex];
+		const int32 PendingRequestIndex = (StartPendingRequestIndex + i) % MaxPendingRequests;
+		FPendingRequest& PendingRequest = PendingRequests[PendingRequestIndex];
+		LOCK_PENDING_REQUEST(PendingRequest);
 
-		FStreamingInfo* SVTInfo = FindStreamingInfo(PendingMipLevel.SparseVolumeTexture);
-		if (!SVTInfo)
+		// Check if request was cancelled
+		if (!PendingRequest.IsValid())
 		{
 #if WITH_EDITORONLY_DATA
-			// Resource is no longer there. Just mark as ready so it will be skipped later
-			PendingMipLevel.State = FPendingMipLevel::EState::DDC_Ready;
+			// Just mark as ready so it will be skipped later
+			PendingRequest.State = FPendingRequest::EState::DDC_Ready;
 #endif
+			++NumReadyRequests; // Don't forget to increment in this case too or we might miss some ready requests later!
 			continue; 
 		}
-
-		const FResources* Resources = SVTInfo->PerFrameInfo[PendingMipLevel.FrameIndex].Resources;
+		FStreamingInfo* SVTInfo = FindStreamingInfo(PendingRequest.SVTHandle);
+		check(SVTInfo);
+		const FResources* Resources = SVTInfo->PerFrameInfo[PendingRequest.FrameIndex].Resources;
 
 #if WITH_EDITORONLY_DATA
-		if (PendingMipLevel.State == FPendingMipLevel::EState::DDC_Ready)
+		if (PendingRequest.State == FPendingRequest::EState::DDC_Ready)
 		{
-			if (PendingMipLevel.RetryCount > 0)
+			if (PendingRequest.RetryCount > 0 && GSVTStreamingLogVerbosity > 0)
 			{
 				check(SVTInfo);
-				UE_LOG(LogSparseVolumeTextureStreamingManager, Display, TEXT("SVT DDC retry succeeded for '%s' (frame %i, mip %i) on %i attempt."), 
-					*Resources->ResourceName, PendingMipLevel.FrameIndex, PendingMipLevel.MipLevelIndex, PendingMipLevel.RetryCount);
+				UE_LOG(LogSparseVolumeTextureStreamingManager, Display, TEXT("SVT DDC retry succeeded for '%s' (frame %i, tile offset %i, tile count %i) on %i attempt."),
+					*SVTInfo->SVTName.ToString(), PendingRequest.FrameIndex, PendingRequest.TileOffset, PendingRequest.TileCount, PendingRequest.RetryCount);
 			}
 		}
-		else if (PendingMipLevel.State == FPendingMipLevel::EState::DDC_Pending)
+		else if (PendingRequest.State == FPendingRequest::EState::DDC_Pending)
 		{
 			break;
 		}
-		else if (PendingMipLevel.State == FPendingMipLevel::EState::DDC_Failed)
+		else if (PendingRequest.State == FPendingRequest::EState::DDC_Failed)
 		{
-			PendingMipLevel.State = FPendingMipLevel::EState::DDC_Pending;
+			PendingRequest.State = FPendingRequest::EState::DDC_Pending;
 
-			if (PendingMipLevel.RetryCount == 0) // Only warn on first retry to prevent spam
+			if (GSVTStreamingLogVerbosity > 1 || (GSVTStreamingLogVerbosity > 0 && PendingRequest.RetryCount == 0)) // Only warn on first retry to prevent spam
 			{
-				UE_LOG(LogSparseVolumeTextureStreamingManager, Warning, TEXT("SVT DDC request failed for '%s' (frame %i, mip %i). Retrying..."),
-					*Resources->ResourceName, PendingMipLevel.FrameIndex, PendingMipLevel.MipLevelIndex);
+				UE_LOG(LogSparseVolumeTextureStreamingManager, Warning, TEXT("SVT DDC request failed for '%s' (frame %i, tile offset %i, tile count %i). Retrying..."),
+					*SVTInfo->SVTName.ToString(), PendingRequest.FrameIndex, PendingRequest.TileOffset, PendingRequest.TileCount);
 			}
 
-			const FMipLevelStreamingInfo& MipLevelStreamingInfo = Resources->MipLevelStreamingInfo[PendingMipLevel.MipLevelIndex];
-			FCacheGetChunkRequest Request = BuildDDCRequest(*Resources, MipLevelStreamingInfo, PendingMipLevelIndex);
-			const bool bBlocking = GSVTStreamingForceBlockingRequests || PendingMipLevel.bBlocking;
-			RequestDDCData(MakeArrayView(&Request, 1), bBlocking);
-
-			++PendingMipLevel.RetryCount;
+			const int32 NumChunks = Resources->DDCChunkMaxTileIndices.Num();
+			uint32 FirstTileIndexInChunk = Resources->StreamingMetaData.FirstStreamingTileIndex;
+			bool bFoundChunk = false;
+			for (int32 ChunkIndex = 0; ChunkIndex < NumChunks; ++ChunkIndex)
+			{
+				const uint32 LastTileIndexInChunkPlusOne = Resources->DDCChunkMaxTileIndices[ChunkIndex] + 1;
+				if (PendingRequest.TileOffset >= FirstTileIndexInChunk && (PendingRequest.TileOffset + PendingRequest.TileCount) <= LastTileIndexInChunkPlusOne)
+				{
+					bFoundChunk = true;
+					const FCacheGetChunkRequest Request = BuildDDCRequest(*Resources, PendingRequest.TileOffset, PendingRequest.TileCount, PendingRequestIndex, ChunkIndex);
+					const bool bBlocking = GSVTStreamingForceBlockingRequests || PendingRequest.bBlocking;
+					RequestDDCData(MakeArrayView(&Request, 1), bBlocking);
+					break;
+				}
+			}
+			check(bFoundChunk);
+			++PendingRequest.RetryCount;
 			break;
 		}
-		else if (PendingMipLevel.State == FPendingMipLevel::EState::Memory)
+		else if (PendingRequest.State == FPendingRequest::EState::Memory)
 		{
 			// Memory is always ready
 		}
@@ -2043,20 +1445,25 @@ int32 FStreamingManager::DetermineReadyMipLevels()
 #endif // WITH_EDITORONLY_DATA
 		{
 #if WITH_EDITORONLY_DATA
-			check(PendingMipLevel.State == FPendingMipLevel::EState::Disk);
+			check(PendingRequest.State == FPendingRequest::EState::Disk);
 #endif
-			if (PendingMipLevel.Request.IsCompleted())
+			if (PendingRequest.Request.IsCompleted())
 			{
-				if (!PendingMipLevel.Request.IsOk())
+				if (!PendingRequest.Request.IsOk())
 				{
 					// Retry if IO request failed for some reason
-					const FMipLevelStreamingInfo& MipLevelStreamingInfo = Resources->MipLevelStreamingInfo[PendingMipLevel.MipLevelIndex];
-					UE_LOG(LogSparseVolumeTextureStreamingManager, Warning, TEXT("SVT IO request failed for %p (frame %i, mip %i, offset %i, size %i). Retrying..."),
-						PendingMipLevel.SparseVolumeTexture, PendingMipLevel.FrameIndex, PendingMipLevel.MipLevelIndex, MipLevelStreamingInfo.BulkOffset, MipLevelStreamingInfo.BulkSize);
+					uint32 ReadOffset = 0;
+					uint32 ReadSize = 0;
+					Resources->StreamingMetaData.GetTileRangeMemoryOffsetSize(PendingRequest.TileOffset, PendingRequest.TileCount, ReadOffset, ReadSize);
+					if (GSVTStreamingLogVerbosity > 0)
+					{
+						UE_LOG(LogSparseVolumeTextureStreamingManager, Warning, TEXT("SVT IO request failed for %s (frame %i, tile offset %i, tile count %i, offset %i, size %i). Retrying..."),
+							*SVTInfo->SVTName.ToString(), PendingRequest.FrameIndex, PendingRequest.TileOffset, PendingRequest.TileCount, ReadOffset, ReadSize);
+					}
 					
-					FBulkDataBatchRequest::FBatchBuilder Batch = FBulkDataBatchRequest::NewBatch(1);
-					Batch.Read(Resources->StreamableMipLevels, MipLevelStreamingInfo.BulkOffset, MipLevelStreamingInfo.BulkSize, AIOP_Low, PendingMipLevel.RequestBuffer, PendingMipLevel.Request);
-					(void)Batch.Issue();
+					FBulkDataBatchRequest::FScatterGatherBuilder Batch = FBulkDataBatchRequest::ScatterGather(1);
+					Batch.Read(Resources->StreamableMipLevels, ReadOffset, ReadSize);
+					Batch.Issue(PendingRequest.RequestBuffer, AIOP_Low, [](FBulkDataRequest::EStatus) {}, PendingRequest.Request);
 					break;
 				}
 			}
@@ -2066,63 +1473,74 @@ int32 FStreamingManager::DetermineReadyMipLevels()
 			}
 		}
 
-		++NumReadyMipLevels;
+		++NumReadyRequests;
 	}
 
-	return NumReadyMipLevels;
+	return NumReadyRequests;
 }
 
-void FStreamingManager::InstallReadyMipLevels()
+void FStreamingManager::InstallReadyRequests()
 {
 	check(AsyncState.bUpdateActive);
-	check(AsyncState.NumReadyMipLevels <= PendingMipLevels.Num())
-	if (AsyncState.NumReadyMipLevels <= 0)
+	check(AsyncState.NumReadyRequests <= PendingRequests.Num());
+	if (AsyncState.NumReadyRequests <= 0)
 	{
 		return;
 	}
 
-	TRACE_CPUPROFILER_EVENT_SCOPE(SVT::InstallReadyMipLevels);
+	TRACE_CPUPROFILER_EVENT_SCOPE(SVT::StreamingInstallReadyRequests);
 
 	UploadTasks.Reset();
-	UploadTasks.Reserve(AsyncState.NumReadyMipLevels * 2 /*slack for splitting large uploads*/);
-	UploadCleanupTasks.Reset();
+	UploadTasks.Reserve(AsyncState.NumReadyRequests * 2 /*slack for splitting large uploads*/);
+	RequestsToCleanUp.Reset();
 
 #if WITH_EDITORONLY_DATA
 	TMap<const FResources*, const uint8*> ResourceToBulkPointer;
 #endif
 
-	// Do a second pass over all ready mip levels, claiming memory in the upload buffers and creating FUploadTasks
-	const int32 StartPendingMipLevelIndex = (NextPendingMipLevelIndex + MaxPendingMipLevels - NumPendingMipLevels) % MaxPendingMipLevels;
-	for (int32 i = 0; i < AsyncState.NumReadyMipLevels; ++i)
+	// Do a second pass over all ready requests, claiming memory in the upload buffers and creating FUploadTasks
+	const int32 StartPendingRequestIndex = (NextPendingRequestIndex + MaxPendingRequests - NumPendingRequests) % MaxPendingRequests;
+	for (int32 i = 0; i < AsyncState.NumReadyRequests; ++i)
 	{
-		const int32 PendingMipLevelIndex = (StartPendingMipLevelIndex + i) % MaxPendingMipLevels;
-		FPendingMipLevel& PendingMipLevel = PendingMipLevels[PendingMipLevelIndex];
+		const int32 PendingRequestIndex = (StartPendingRequestIndex + i) % MaxPendingRequests;
+		FPendingRequest& PendingRequest = PendingRequests[PendingRequestIndex];
+		LOCK_PENDING_REQUEST(PendingRequest);
 
-		FStreamingInfo* SVTInfo = FindStreamingInfo(PendingMipLevel.SparseVolumeTexture);
-		if (!SVTInfo || (SVTInfo->PerFrameInfo[PendingMipLevel.FrameIndex].LowestRequestedMipLevel > PendingMipLevel.MipLevelIndex))
+		// Skip if request was cancelled
+		if (!PendingRequest.IsValid())
 		{
-			PendingMipLevel.Reset();
-			continue; // Skip mip level install. SVT no longer exists or mip level was "streamed out" before it was even installed in the first place.
+			continue;
 		}
 
-		FFrameInfo& FrameInfo = SVTInfo->PerFrameInfo[PendingMipLevel.FrameIndex];
+		FStreamingInfo* SVTInfo = FindStreamingInfo(PendingRequest.SVTHandle);
+		check(SVTInfo);
+		const int32 FormatSizeA = GPixelFormats[SVTInfo->FormatA].BlockBytes;
+		const int32 FormatSizeB = GPixelFormats[SVTInfo->FormatB].BlockBytes;
+
+		FFrameInfo& FrameInfo = SVTInfo->PerFrameInfo[PendingRequest.FrameIndex];
 		const FResources* Resources = FrameInfo.Resources;
-		const FMipLevelStreamingInfo& MipLevelStreamingInfo = Resources->MipLevelStreamingInfo[PendingMipLevel.MipLevelIndex];
+		const FPageTopology& Topology = FrameInfo.Resources->Topology;
+		uint32 ReadOffset = 0;
+		uint32 ReadSize = 0;
+		Resources->StreamingMetaData.GetTileRangeMemoryOffsetSize(PendingRequest.TileOffset, PendingRequest.TileCount, ReadOffset, ReadSize);
 
 		const uint8* SrcPtr = nullptr;
+		const uint8* SrcEndPtr = nullptr;
 
 #if WITH_EDITORONLY_DATA
-		if (PendingMipLevel.State == FPendingMipLevel::EState::DDC_Ready)
+		if (PendingRequest.State == FPendingRequest::EState::DDC_Ready)
 		{
 			check(Resources->ResourceFlags & EResourceFlag_StreamingDataInDDC);
-			SrcPtr = (const uint8*)PendingMipLevel.SharedBuffer.GetData();
+			SrcPtr = (const uint8*)PendingRequest.SharedBuffer.GetData();
+			SrcEndPtr = SrcPtr + PendingRequest.SharedBuffer.GetSize();
 		}
-		else if (PendingMipLevel.State == FPendingMipLevel::EState::Memory)
+		else if (PendingRequest.State == FPendingRequest::EState::Memory)
 		{
 			const uint8** BulkDataPtrPtr = ResourceToBulkPointer.Find(Resources);
 			if (BulkDataPtrPtr)
 			{
-				SrcPtr = *BulkDataPtrPtr + MipLevelStreamingInfo.BulkOffset;
+				SrcPtr = *BulkDataPtrPtr + ReadOffset;
+				SrcEndPtr = SrcPtr + ReadSize;
 			}
 			else
 			{
@@ -2130,174 +1548,107 @@ void FStreamingManager::InstallReadyMipLevels()
 				check(BulkData.IsBulkDataLoaded() && BulkData.GetBulkDataSize() > 0);
 				const uint8* BulkDataPtr = (const uint8*)BulkData.LockReadOnly();
 				ResourceToBulkPointer.Add(Resources, BulkDataPtr);
-				SrcPtr = BulkDataPtr + MipLevelStreamingInfo.BulkOffset;
+				SrcPtr = BulkDataPtr + ReadOffset;
+				SrcEndPtr = BulkDataPtr + BulkData.GetBulkDataSize();
 			}
 		}
 		else
 #endif
 		{
 #if WITH_EDITORONLY_DATA
-			check(PendingMipLevel.State == FPendingMipLevel::EState::Disk);
+			check(PendingRequest.State == FPendingRequest::EState::Disk);
 #endif
-			SrcPtr = PendingMipLevel.RequestBuffer.GetData();
+			SrcPtr = PendingRequest.RequestBuffer.GetData();
+			SrcEndPtr = SrcPtr + PendingRequest.RequestBuffer.DataSize();
 		}
 
-		check(SrcPtr);
-
-		const int32 FormatSizeA = GPixelFormats[SVTInfo->FormatA].BlockBytes;
-		const int32 FormatSizeB = GPixelFormats[SVTInfo->FormatB].BlockBytes;
-
-		const int32 NumPhysicalTiles = MipLevelStreamingInfo.NumPhysicalTiles;
-		const int32 NumVoxelsA = FormatSizeA > 0 ? MipLevelStreamingInfo.TileDataSize[0] / FormatSizeA : 0;
-		const int32 NumVoxelsB = FormatSizeB > 0 ? MipLevelStreamingInfo.TileDataSize[1] / FormatSizeB : 0;
-		TArray<uint32>& TileAllocations = FrameInfo.TileAllocations[PendingMipLevel.MipLevelIndex];
-		check(TileAllocations.Num() == NumPhysicalTiles);
-		check((MipLevelStreamingInfo.PageTableSize % (sizeof(uint32) * 2)) == 0);
-		const int32 NumPageTableUpdates = MipLevelStreamingInfo.PageTableSize / (sizeof(uint32) * 2);
-
-		FTileUploader::FAddResult TileDataAddResult = SVTInfo->TileDataTexture->TileUploader->Add_GetRef(NumPhysicalTiles, NumVoxelsA, NumVoxelsB);
-
-		uint8* DstPageCoords = nullptr;
-		uint8* DstPageEntries = nullptr;
-		PageTableUpdater->Add_GetRef(FrameInfo.PageTableTextureRHIRef, PendingMipLevel.MipLevelIndex, NumPageTableUpdates, DstPageCoords, DstPageEntries);
-
-		// Tile data
+		for (uint32 TileIndex = PendingRequest.TileOffset; TileIndex < (PendingRequest.TileOffset + PendingRequest.TileCount); ++TileIndex)
 		{
-			FUploadTask::FTileDataTask TileDataTask = {};
+			SVTInfo->PerFrameInfo[PendingRequest.FrameIndex].TileIndexToPendingRequestIndex.Remove(TileIndex);
+			if (!SVTInfo->PerFrameInfo[PendingRequest.FrameIndex].StreamingTiles[TileIndex])
+			{
+				continue; // Skip tile install. Tile was "streamed out" before it was even installed in the first place.
+			}
+
+			const FTileInfo TileInfo = Resources->StreamingMetaData.GetTileInfo(TileIndex, FormatSizeA, FormatSizeB);
+
+			check(SrcPtr);
+			check(TileInfo.Offset >= ReadOffset);
+			const uint8* TileSrcPtr = SrcPtr + (TileInfo.Offset - ReadOffset);
+			check((TileSrcPtr + TileInfo.Size) <= SrcEndPtr);
+
+			FTileUploader::FAddResult TileDataAddResult = SVTInfo->TileDataTexture->AddUpload(1, TileInfo.NumVoxels[0], TileInfo.NumVoxels[1]);
+
+			FTileDataTask& TileDataTask = UploadTasks.AddDefaulted_GetRef();
 			TileDataTask.DstOccupancyBitsPtrs = TileDataAddResult.OccupancyBitsPtrs;
 			TileDataTask.DstTileDataOffsetsPtrs = TileDataAddResult.TileDataOffsetsPtrs;
 			TileDataTask.DstTileDataPtrs = TileDataAddResult.TileDataPtrs;
-			TileDataTask.DstPhysicalTileCoords = TileDataAddResult.PackedPhysicalTileCoordsPtr;
-			TileDataTask.SrcOccupancyBitsPtrs[0] = SrcPtr + MipLevelStreamingInfo.OccupancyBitsOffset[0];
-			TileDataTask.SrcOccupancyBitsPtrs[1] = SrcPtr + MipLevelStreamingInfo.OccupancyBitsOffset[1];
-			TileDataTask.SrcTileDataOffsetsPtrs[0] = SrcPtr + MipLevelStreamingInfo.TileDataOffsetsOffset[0];
-			TileDataTask.SrcTileDataOffsetsPtrs[1] = SrcPtr + MipLevelStreamingInfo.TileDataOffsetsOffset[1];
-			TileDataTask.SrcTileDataPtrs[0] = SrcPtr + MipLevelStreamingInfo.TileDataOffset[0];
-			TileDataTask.SrcTileDataPtrs[1] = SrcPtr + MipLevelStreamingInfo.TileDataOffset[1];
-			TileDataTask.SrcPhysicalTileCoords = reinterpret_cast<const uint8*>(TileAllocations.GetData());
-			TileDataTask.TileDataBaseOffsets = TileDataAddResult.TileDataBaseOffsets;
-			TileDataTask.TileDataSizes = MipLevelStreamingInfo.TileDataSize;
-			TileDataTask.NumPhysicalTiles = NumPhysicalTiles;
+			TileDataTask.DstPhysicalTileCoordsPtr = TileDataAddResult.PackedPhysicalTileCoordsPtr;
+			TileDataTask.SrcOccupancyBitsPtrs[0] = TileSrcPtr + TileInfo.OccupancyBitsOffsets[0];
+			TileDataTask.SrcOccupancyBitsPtrs[1] = TileSrcPtr + TileInfo.OccupancyBitsOffsets[1];
+			TileDataTask.SrcVoxelDataPtrs[0] = TileSrcPtr + TileInfo.VoxelDataOffsets[0];
+			TileDataTask.SrcVoxelDataPtrs[1] = TileSrcPtr + TileInfo.VoxelDataOffsets[1];
+			TileDataTask.VoxelDataSizes = TileInfo.VoxelDataSizes;
+			TileDataTask.VoxelDataBaseOffsets = TileDataAddResult.TileDataBaseOffsets;
+			TileDataTask.PhysicalTileCoord = FrameInfo.TileAllocations[TileIndex];
 
-			FUploadTask& Task = UploadTasks.AddDefaulted_GetRef();
-			Task.Union.SetSubtype<FUploadTask::FTileDataTask>(TileDataTask);
-		}
-
-		// Page table
-		{
-			FUploadTask::FPageTableTask PageTableTask = {};
-			PageTableTask.PendingMipLevel = &PendingMipLevel;
-			PageTableTask.DstPageCoords = DstPageCoords;
-			PageTableTask.DstPageEntries = DstPageEntries;
-			PageTableTask.SrcPageCoords = SrcPtr + MipLevelStreamingInfo.PageTableOffset;
-			PageTableTask.SrcPageEntries = SrcPtr + MipLevelStreamingInfo.PageTableOffset + NumPageTableUpdates * sizeof(uint32);
-			PageTableTask.NumPageTableUpdates = NumPageTableUpdates;
-
-			FUploadTask& Task = UploadTasks.AddDefaulted_GetRef();
-			Task.Union.SetSubtype<FUploadTask::FPageTableTask>(PageTableTask);
+			FrameInfo.ResidentTiles[TileIndex] = true;
 		}
 
 		// Cleanup
 		{
-			UploadCleanupTasks.Add(&PendingMipLevel);
+			RequestsToCleanUp.Add(PendingRequestIndex);
 		}
-	
-#if SVT_STREAMING_LOG_VERBOSE
-		UE_LOG(LogSparseVolumeTextureStreamingManager, Display, TEXT("(%i)%i Install Frame %i OldResMip %i, NewResMip %i, ReqMip %i"),
-			PendingMipLevel.IssuedInFrame, PendingMipLevelIndex,
-			PendingMipLevel.FrameIndex, 
-			FrameInfo.LowestResidentMipLevel, PendingMipLevel.MipLevelIndex,
-			FrameInfo.LowestRequestedMipLevel);
-#endif
 
-		check(FrameInfo.LowestResidentMipLevel == (PendingMipLevel.MipLevelIndex + 1));
-		FrameInfo.LowestResidentMipLevel = PendingMipLevel.MipLevelIndex;
-
-		// Update the streaming info buffer data
-		SVTInfo->DirtyStreamingInfoData[PendingMipLevel.FrameIndex] = true;
-		SVTsWithInvalidatedStreamingInfoBuffer.Add(SVTInfo);
-
-		const int32 LRUNodeIndex = PendingMipLevel.FrameIndex * SVTInfo->NumMipLevelsGlobal + PendingMipLevel.MipLevelIndex;
-		SVTInfo->LRUNodes[LRUNodeIndex].PendingMipLevelIndex = INDEX_NONE;
+		InvalidatedSVTFrames.Add(&FrameInfo);
 	}
 
-	// Do all the memcpy's in parallel
-	ParallelFor(UploadTasks.Num(), [&](int32 TaskIndex)
-		{
-			TRACE_CPUPROFILER_EVENT_SCOPE(SVT::FUploadTask);
-
-			FUploadTask& Task = UploadTasks[TaskIndex];
-
-			if (Task.Union.HasSubtype<FUploadTask::FPageTableTask>())
-			{
-				TRACE_CPUPROFILER_EVENT_SCOPE(SVT::PageTableUpload);
-				FUploadTask::FPageTableTask& PageTableTask = Task.Union.GetSubtype<FUploadTask::FPageTableTask>();
-				if (PageTableTask.NumPageTableUpdates > 0)
-				{
-					FMemory::Memcpy(PageTableTask.DstPageCoords, PageTableTask.SrcPageCoords, PageTableTask.NumPageTableUpdates * sizeof(uint32));
-
-					FStreamingInfo* SVTInfo = FindStreamingInfo(PageTableTask.PendingMipLevel->SparseVolumeTexture);
-					TArray<uint32>& TileAllocations = SVTInfo->PerFrameInfo[PageTableTask.PendingMipLevel->FrameIndex].TileAllocations[PageTableTask.PendingMipLevel->MipLevelIndex];
-					const uint32* SrcEntries = reinterpret_cast<const uint32*>(PageTableTask.SrcPageEntries);
-					uint32* DstEntries = reinterpret_cast<uint32*>(PageTableTask.DstPageEntries);
-					for (int32 i = 0; i < PageTableTask.NumPageTableUpdates; ++i)
-					{
-						DstEntries[i] = TileAllocations[SrcEntries[i]];
-					}
-				}
-			}
-			else if(Task.Union.HasSubtype<FUploadTask::FTileDataTask>())
-			{
-				TRACE_CPUPROFILER_EVENT_SCOPE(SVT::TileDataUpload);
-				FUploadTask::FTileDataTask& TileDataTask = Task.Union.GetSubtype<FUploadTask::FTileDataTask>();
-				for (int32 i = 0; i < 2; ++i)
-				{
-					if (TileDataTask.DstOccupancyBitsPtrs[i])
-					{
-						FMemory::Memcpy(TileDataTask.DstOccupancyBitsPtrs[i], TileDataTask.SrcOccupancyBitsPtrs[i], TileDataTask.NumPhysicalTiles * SVT::NumOccupancyWordsPerPaddedTile * sizeof(uint32));
-					}
-					if (TileDataTask.TileDataSizes[i] > 0)
-					{
-						FMemory::Memcpy(TileDataTask.DstTileDataPtrs[i], TileDataTask.SrcTileDataPtrs[i], TileDataTask.TileDataSizes[i]);
-					}
-					if (TileDataTask.DstTileDataOffsetsPtrs[i])
-					{
-						uint32* Dst = reinterpret_cast<uint32*>(TileDataTask.DstTileDataOffsetsPtrs[i]);
-						const uint32* Src = reinterpret_cast<const uint32*>(TileDataTask.SrcTileDataOffsetsPtrs[i]);
-						for (int32 TileIndex = 0; TileIndex < TileDataTask.NumPhysicalTiles; ++TileIndex)
-						{
-							Dst[TileIndex] = Src[TileIndex] + TileDataTask.TileDataBaseOffsets[i];
-						}
-					}
-				}
-				FMemory::Memcpy(TileDataTask.DstPhysicalTileCoords, TileDataTask.SrcPhysicalTileCoords, TileDataTask.NumPhysicalTiles * sizeof(uint32));
-			}
-			else
-			{
-				checkNoEntry();
-			}
-		});
-
-	ParallelFor(UploadCleanupTasks.Num(), [&](int32 TaskIndex)
-		{
-			TRACE_CPUPROFILER_EVENT_SCOPE(SVT::FUploadCleanupTask);
-
-			FPendingMipLevel* PendingMipLevel = UploadCleanupTasks[TaskIndex];
-#if WITH_EDITORONLY_DATA
-			PendingMipLevel->SharedBuffer.Reset();
-#endif
-			if (!PendingMipLevel->Request.IsNone())
-			{
-				check(PendingMipLevel->Request.IsCompleted());
-				PendingMipLevel->Request.Reset();
-			}
-		});
-
-#if DO_CHECK // Clear processed pending mip levels for better debugging
-	for (int32 i = 0; i < AsyncState.NumReadyMipLevels; ++i)
+	// Do all the memcpys in parallel
+	ParallelFor(TEXT("SVT::UploadTileDataTasks"), UploadTasks.Num(), 8, [&](int32 TaskIndex)
 	{
-		const int32 PendingMipLevelIndex = (StartPendingMipLevelIndex + i) % MaxPendingMipLevels;
-		PendingMipLevels[PendingMipLevelIndex].Reset();
+		TRACE_CPUPROFILER_EVENT_SCOPE(SVT::StreamingTileDataUpload);
+
+		FTileDataTask& TileDataTask = UploadTasks[TaskIndex];
+		for (int32 TexIdx = 0; TexIdx < 2; ++TexIdx)
+		{
+			if (TileDataTask.DstOccupancyBitsPtrs[TexIdx])
+			{
+				FMemory::Memcpy(TileDataTask.DstOccupancyBitsPtrs[TexIdx], TileDataTask.SrcOccupancyBitsPtrs[TexIdx], SVT::NumOccupancyWordsPerPaddedTile * sizeof(uint32));
+			}
+			if (TileDataTask.VoxelDataSizes[TexIdx] > 0)
+			{
+				FMemory::Memcpy(TileDataTask.DstTileDataPtrs[TexIdx], TileDataTask.SrcVoxelDataPtrs[TexIdx], TileDataTask.VoxelDataSizes[TexIdx]);
+			}
+			if (TileDataTask.DstTileDataOffsetsPtrs[TexIdx])
+			{
+				FMemory::Memcpy(TileDataTask.DstTileDataOffsetsPtrs[TexIdx], &TileDataTask.VoxelDataBaseOffsets[TexIdx], sizeof(uint32));
+			}
+		}
+		FMemory::Memcpy(TileDataTask.DstPhysicalTileCoordsPtr, &TileDataTask.PhysicalTileCoord, sizeof(uint32));
+	});
+
+	// Clean up requests
+	for (int32 PendingRequestIndex : RequestsToCleanUp)
+	{
+		FPendingRequest& PendingRequest = PendingRequests[PendingRequestIndex];
+		LOCK_PENDING_REQUEST(PendingRequest);
+#if WITH_EDITORONLY_DATA
+		PendingRequest.SharedBuffer.Reset();
+#endif
+		if (!PendingRequest.Request.IsNone())
+		{
+			check(PendingRequest.Request.IsCompleted());
+			PendingRequest.Request.Reset();
+		}
+	}
+
+#if DO_CHECK // Clear processed pending requests for better debugging
+	for (int32 i = 0; i < AsyncState.NumReadyRequests; ++i)
+	{
+		const int32 PendingRequestIndex = (StartPendingRequestIndex + i) % MaxPendingRequests;
+		FPendingRequest& PendingRequest = PendingRequests[PendingRequestIndex];
+		LOCK_PENDING_REQUEST(PendingRequest);
+		PendingRequest.Reset();
 	}
 #endif
 
@@ -2310,31 +1661,216 @@ void FStreamingManager::InstallReadyMipLevels()
 #endif
 }
 
-FStreamingManager::FStreamingInfo* FStreamingManager::FindStreamingInfo(UStreamableSparseVolumeTexture* Key)
+void FStreamingManager::PatchPageTable(FRDGBuilder& GraphBuilder)
 {
-	TUniquePtr<FStreamingInfo>* SVTInfoPtr = StreamingInfo.Find(Key);
-	check(!SVTInfoPtr || SVTInfoPtr->Get());
-	return SVTInfoPtr ? SVTInfoPtr->Get() : nullptr;
+	TRACE_CPUPROFILER_EVENT_SCOPE(SVT::StreamingPatchPageTable);
+
+	int32 NumUpdates = 0;
+
+	// Generate bitsets of invalidated pages for every frame.
+	for (FFrameInfo* FrameInfoPtr : InvalidatedSVTFrames)
+	{
+		FFrameInfo& FrameInfo = *FrameInfoPtr;
+		const FPageTopology& Topology = FrameInfo.Resources->Topology;
+		const uint32 NumPages = Topology.NumPages();
+
+		// Mark all pages with resident tiles as resident. For now we also enforce that a page is only resident if its parent is resident, but in theory this is not needed.
+		ResidentPagesNew.SetNumUninitialized(NumPages);
+		ResidentPagesNew.SetRange(0, NumPages, false);
+		for (uint32 PageIndex = 0; PageIndex < NumPages; ++PageIndex)
+		{
+			const uint32 ParentIndex = Topology.ParentIndices[PageIndex];
+			const uint32 TileIndex = Topology.TileIndices[PageIndex];
+			ResidentPagesNew[PageIndex] = (ParentIndex == INDEX_NONE || ResidentPagesNew[ParentIndex]) && FrameInfo.ResidentTiles[TileIndex];
+		}
+
+		// Get all pages that were streamed in or out in this streaming update by doing a bitwise XOR with the resident pages from before the current streaming update.
+		ResidentPagesDiff = FrameInfo.ResidentPages;
+		ResidentPagesDiff.CombineWithBitwiseXOR(ResidentPagesNew, EBitwiseOperatorFlags::MaxSize);
+		
+		// Initialize InvalidatedPages with the diff. In the following loop, we then find all descendants of the newly streamed in/out pages and also mark them as invalidated.
+		FrameInfo.InvalidatedPages = ResidentPagesDiff;
+		// Iterate over all pages that were NOT changed in this update. We then dig down into their parents and try to figure out if they were newly streamed in/out. If so, mark the current page as also invalidated.
+		ResidentPagesDiff.BitwiseNOT();
+		for (TConstSetBitIterator It(ResidentPagesDiff); It; ++It)
+		{
+			const int32 PageIndex = It.GetIndex();
+			check(Topology.IsValidPageIndex(PageIndex));
+
+			// Only try to invalidate this page if it is not already resident in GPU memory
+			if (!FrameInfo.InvalidatedPages[PageIndex] && !FrameInfo.ResidentPages[PageIndex])
+			{
+				uint32 ParentPageIndex = Topology.ParentIndices[PageIndex];
+				while (ParentPageIndex != INDEX_NONE)
+				{
+					if (FrameInfo.InvalidatedPages[ParentPageIndex])
+					{
+						FrameInfo.InvalidatedPages[PageIndex] = true;
+						break;
+					}
+					ParentPageIndex = Topology.ParentIndices[ParentPageIndex];
+				}
+			}
+		}
+
+		// Update the bitset of resident pages
+		FrameInfo.ResidentPages = ResidentPagesNew;
+		
+		NumUpdates += FrameInfo.InvalidatedPages.CountSetBits();
+	}
+
+	if (NumUpdates > 0)
+	{
+		PageTableUpdater->Init(GraphBuilder, NumUpdates, 0);
+
+		// Generate updates
+		for (FFrameInfo* FrameInfoPtr : InvalidatedSVTFrames)
+		{
+			FFrameInfo& FrameInfo = *FrameInfoPtr;
+			const FPageTopology& Topology = FrameInfo.Resources->Topology;
+			
+			// This set of variables is updated every time we start processing a new mip level
+			bool bEnteredNewMipRange = true;
+			int32 MipLevel = FrameInfo.NumMipLevels - 1;
+			int32 NumUpdatesThisMip = 0;
+			uint32 MipUpdateWriteIndex = 0;
+			uint8* DstCoordsPtr = nullptr;
+			uint8* DstEntryPtr = nullptr;
+
+			// Iterate over all invalidated pages and generate page table updates (packed page write coord and data to write to that coord).
+			for (TConstSetBitIterator It(FrameInfo.InvalidatedPages); It; ++It)
+			{
+				const int32 PageIndex = It.GetIndex();
+				check(Topology.IsValidPageIndex(PageIndex));
+
+				auto IsInMipRange = [](const FPageTopology& InTopology, uint32 InIndex, int32 InMipLevel)
+				{
+					return InIndex >= InTopology.MipInfo[InMipLevel].PageOffset && InIndex < (InTopology.MipInfo[InMipLevel].PageOffset + InTopology.MipInfo[InMipLevel].PageCount);
+				};
+
+				// Determine the current mip level. Bits are ordered highest to lowest mip level.
+				while (MipLevel > 0 && !IsInMipRange(Topology, PageIndex, MipLevel))
+				{
+					bEnteredNewMipRange = true;
+					--MipLevel;
+					check(MipLevel >= 0);
+				}
+				check(IsInMipRange(Topology, PageIndex, MipLevel));
+
+				// If we entered a new mip range, get a new set of write pointers from the PageTableUpdater.
+				if (bEnteredNewMipRange)
+				{
+					check(NumUpdatesThisMip == MipUpdateWriteIndex);
+					const uint32 PageOffset = Topology.MipInfo[MipLevel].PageOffset;
+					const uint32 PageCount = Topology.MipInfo[MipLevel].PageCount;
+					NumUpdatesThisMip = FrameInfo.InvalidatedPages.CountSetBits(PageOffset, PageOffset + PageCount);
+					MipUpdateWriteIndex = 0;
+					bEnteredNewMipRange = false;
+
+					PageTableUpdater->Add_GetRef(FrameInfo.PageTableTexture, MipLevel, NumUpdatesThisMip, DstCoordsPtr, DstEntryPtr);
+				}
+
+				// Get the tile data texture coordinate we need to write into the GPU page table texture.
+				uint32 PageTableEntry = 0;
+				if (FrameInfo.ResidentPages[PageIndex])
+				{
+					// This page is already resident, so we can simply use its value from TileAllocations
+					PageTableEntry = FrameInfo.TileAllocations[Topology.TileIndices[PageIndex]];
+					check(PageTableEntry);
+					PageTableEntry |= MipLevel << 24u;
+				}
+				else
+				{
+					// This page is not resident but needs a fallback value written to it, so we probe the parent pages until we find a resident one
+					uint32 ParentPageIndex = Topology.ParentIndices[PageIndex];
+					int32 ParentMipLevel = MipLevel + 1;
+					while (ParentPageIndex != INDEX_NONE)
+					{
+						// The parent page is resident in GPU memory, so we can use it's cached value in PageEntries.
+						if (FrameInfo.ResidentPages[ParentPageIndex])
+						{
+							PageTableEntry = FrameInfo.TileAllocations[Topology.TileIndices[ParentPageIndex]];
+							check(PageTableEntry);
+							PageTableEntry |= ParentMipLevel << 24u;
+							break;
+						}
+						ParentPageIndex = Topology.ParentIndices[ParentPageIndex];
+						++ParentMipLevel;
+					}
+					check(ParentPageIndex != INDEX_NONE); // If we hit this, then we tried to find the root node's parent. This should never happen as the root node should always be resident.
+				}
+
+				// Write the update to the upload buffer pointers
+				reinterpret_cast<uint32*>(DstCoordsPtr)[MipUpdateWriteIndex] = Topology.PackedPageTableCoords[PageIndex];
+				reinterpret_cast<uint32*>(DstEntryPtr)[MipUpdateWriteIndex] = PageTableEntry;
+				++MipUpdateWriteIndex;
+			}
+		}
+
+		PageTableUpdater->Apply(GraphBuilder);
+	}
+
+	InvalidatedSVTFrames.Reset();
+}
+
+FStreamingManager::FStreamingInfo* FStreamingManager::FindStreamingInfo(uint16 SparseVolumeTextureHandle)
+{
+	if (!StreamingInfo.IsValidIndex(SparseVolumeTextureHandle) || !StreamingInfo.IsAllocated(SparseVolumeTextureHandle))
+	{
+		return nullptr;
+	}
+	TUniquePtr<FStreamingInfo>& SVTInfo = StreamingInfo[SparseVolumeTextureHandle];
+	return SVTInfo.Get();
+}
+
+FStreamingManager::FStreamingInfo* FStreamingManager::FindStreamingInfo(UStreamableSparseVolumeTexture* SparseVolumeTexture)
+{
+	if (uint16* HandlePtr = SparseVolumeTextureToHandle.Find(SparseVolumeTexture))
+	{
+		return FindStreamingInfo(*HandlePtr);
+	}
+	return nullptr;
+}
+
+int32 FStreamingManager::AllocatePendingRequestIndex()
+{
+	if (NumPendingRequests < MaxPendingRequests)
+	{
+		int32 Result = NextPendingRequestIndex;
+		NextPendingRequestIndex = (NextPendingRequestIndex + 1) % MaxPendingRequests;
+		++NumPendingRequests;
+		return Result;
+	}
+	else
+	{
+		return INDEX_NONE;
+	}
 }
 
 #if WITH_EDITORONLY_DATA
 
-UE::DerivedData::FCacheGetChunkRequest FStreamingManager::BuildDDCRequest(const FResources& Resources, const FMipLevelStreamingInfo& MipLevelStreamingInfo, const uint32 PendingMipLevelIndex)
+UE::DerivedData::FCacheGetChunkRequest FStreamingManager::BuildDDCRequest(const FResources& Resources, uint32 FirstTileIndex, uint32 NumTiles, uint32 PendingRequestIndex, int32 ChunkIndex)
 {
 	using namespace UE::DerivedData;
 
-	FCacheKey Key;
-	Key.Bucket = FCacheBucket(TEXT("SparseVolumeTexture"));
-	Key.Hash = Resources.DDCKeyHash;
-	check(!Resources.DDCRawHash.IsZero());
+	const uint32 FirstTileIndexInChunk = ChunkIndex > 0 ? (Resources.DDCChunkMaxTileIndices[ChunkIndex - 1] + 1) : Resources.StreamingMetaData.FirstStreamingTileIndex;
+	const uint32 LastTileIndexInChunkPlusOne = Resources.DDCChunkMaxTileIndices[ChunkIndex] + 1;
+	check(FirstTileIndex >= FirstTileIndexInChunk);
+	check((FirstTileIndex + NumTiles) <= LastTileIndexInChunkPlusOne);
+	const uint32 ReadOffsetInChunk = Resources.StreamingMetaData.TileDataOffsets[FirstTileIndex] - Resources.StreamingMetaData.TileDataOffsets[FirstTileIndexInChunk];
+	const uint32 ReadSizeInChunk = Resources.StreamingMetaData.TileDataOffsets[FirstTileIndex + NumTiles] - Resources.StreamingMetaData.TileDataOffsets[FirstTileIndex];
+	const uint32 ChunkTotalSize = Resources.StreamingMetaData.TileDataOffsets[LastTileIndexInChunkPlusOne] - Resources.StreamingMetaData.TileDataOffsets[FirstTileIndexInChunk];
 
 	FCacheGetChunkRequest Request;
-	Request.Id = FValueId::FromName("SparseVolumeTextureStreamingData");
-	Request.Key = Key;
-	Request.RawOffset = MipLevelStreamingInfo.BulkOffset;
-	Request.RawSize = MipLevelStreamingInfo.BulkSize;
-	Request.RawHash = Resources.DDCRawHash;
-	Request.UserData = (((uint64)PendingMipLevelIndex) << uint64(32)) | (uint64)PendingMipLevels[PendingMipLevelIndex].RequestVersion;
+	Request.Id = FValueId(FMemoryView(Resources.DDCChunkIds[ChunkIndex].GetData(), 12));
+	Request.Key.Bucket = FCacheBucket(TEXT("SparseVolumeTexture"));
+	Request.Key.Hash = Resources.DDCKeyHash;
+	if (ReadOffsetInChunk != 0 || ReadSizeInChunk != ChunkTotalSize)
+	{
+		Request.RawOffset = ReadOffsetInChunk;
+		Request.RawSize = ReadSizeInChunk;
+	}
+	Request.UserData = (((uint64)PendingRequestIndex) << uint64(32)) | (uint64)PendingRequests[PendingRequestIndex].RequestVersion;
 	return Request;
 }
 
@@ -2348,26 +1884,28 @@ void FStreamingManager::RequestDDCData(TConstArrayView<UE::DerivedData::FCacheGe
 		GetCache().GetChunks(DDCRequests, *RequestOwnerPtr,
 			[this](FCacheGetChunkResponse&& Response)
 			{
-				const uint32 PendingMipLevelIndex = (uint32)(Response.UserData >> uint64(32));
+				const uint32 PendingRequestIndex = (uint32)(Response.UserData >> uint64(32));
 				const uint32 RequestVersion = (uint32)Response.UserData;
 
-				// In case the request returned after the mip level was already streamed out again we need to abort so that we do not overwrite data in the FPendingMipLevel slot.
-				if (RequestVersion < PendingMipLevels[PendingMipLevelIndex].RequestVersion)
+				FPendingRequest& PendingRequest = PendingRequests[PendingRequestIndex];
+				LOCK_PENDING_REQUEST(PendingRequest);
+
+				// In case the request returned after the data was already streamed out again we need to abort so that we do not overwrite data in the FPendingRequest slot.
+				if (RequestVersion != PendingRequest.RequestVersion)
 				{
 					return;
 				}
 
-				FPendingMipLevel& PendingMipLevel = PendingMipLevels[PendingMipLevelIndex];
-				check(PendingMipLevel.SparseVolumeTexture); // A valid PendingMipLevel should have a non-nullptr here
+				check(PendingRequest.IsValid());
 
 				if (Response.Status == EStatus::Ok)
 				{
-					PendingMipLevel.SharedBuffer = MoveTemp(Response.RawData);
-					PendingMipLevel.State = FPendingMipLevel::EState::DDC_Ready;
+					PendingRequest.SharedBuffer = MoveTemp(Response.RawData);
+					PendingRequest.State = FPendingRequest::EState::DDC_Ready;
 				}
 				else
 				{
-					PendingMipLevel.State = FPendingMipLevel::EState::DDC_Failed;
+					PendingRequest.State = FPendingRequest::EState::DDC_Failed;
 				}
 			});
 	}
@@ -2380,83 +1918,152 @@ void FStreamingManager::RequestDDCData(TConstArrayView<UE::DerivedData::FCacheGe
 
 #endif // WITH_EDITORONLY_DATA
 
-FStreamingManager::FTileDataTexture::FTileDataTexture(const FIntVector3& InResolutionInTiles, EPixelFormat InFormatA, EPixelFormat InFormatB, const FVector4f& InFallbackValueA, const FVector4f& InFallbackValueB)
-	: ResolutionInTiles(InResolutionInTiles), 
-	PhysicalTilesCapacity(InResolutionInTiles.X * InResolutionInTiles.Y * InResolutionInTiles.Z), 
-	FormatA(InFormatA),
-	FormatB(InFormatB),
-	FallbackValueA(InFallbackValueA),
-	FallbackValueB(InFallbackValueB),
-	TileUploader(MakeUnique<FTileUploader>()),
-	NumTilesToUpload(0),
-	NumVoxelsToUploadA(0),
-	NumVoxelsToUploadB(0)
+FStreamingInstance* FStreamingManager::FStreamingInfo::GetAndUpdateStreamingInstance(uint64 StreamingInstanceKey, const FStreamingInstanceRequest& Request)
 {
-	const int64 MaxFormatSize = FMath::Max(GPixelFormats[FormatA].BlockBytes, GPixelFormats[FormatB].BlockBytes);
-	const FIntVector3 LargestPossibleResolution = ComputeLargestPossibleTileDataVolumeResolution(MaxFormatSize);
-	const int32 LargestPossiblePhysicalTilesCapacity = LargestPossibleResolution.X * LargestPossibleResolution.Y * LargestPossibleResolution.Z;
-	
-	// Ensure that the tile data texture(s) do not exceed the memory size and resolution limits.
-	if (PhysicalTilesCapacity > LargestPossiblePhysicalTilesCapacity
-		|| (ResolutionInTiles.X * SPARSE_VOLUME_TILE_RES_PADDED) > SVT::MaxVolumeTextureDim
-		|| (ResolutionInTiles.Y * SPARSE_VOLUME_TILE_RES_PADDED) > SVT::MaxVolumeTextureDim
-		|| (ResolutionInTiles.Z * SPARSE_VOLUME_TILE_RES_PADDED) > SVT::MaxVolumeTextureDim)
+	// Try to find a FStreamingInstance around the requested frame index and matching the same key
+	FStreamingInstance* StreamingInstance = nullptr;
+	for (TUniquePtr<FStreamingInstance>& Instance : StreamingInstances)
 	{
-		ResolutionInTiles = LargestPossibleResolution;
-		PhysicalTilesCapacity = LargestPossiblePhysicalTilesCapacity;
-
-		UE_LOG(LogSparseVolumeTextureStreamingManager, Warning, TEXT("Requested SparseVolumeTexture tile data texture resolution (in tiles) (%i, %i, %i) exceeds the resource size limit. Using the maximum value of (%i, %i. %i) instead."),
-			InResolutionInTiles.X, InResolutionInTiles.Y, InResolutionInTiles.Z,
-			LargestPossibleResolution.X, LargestPossibleResolution.Y, LargestPossibleResolution.Z);
-	}
-
-	const FIntVector3 Resolution = ResolutionInTiles * SPARSE_VOLUME_TILE_RES_PADDED;
-	check(Resolution.X <= SVT::MaxVolumeTextureDim && Resolution.Y <= SVT::MaxVolumeTextureDim && Resolution.Z <= SVT::MaxVolumeTextureDim);
-	check(((int64)Resolution.X * (int64)Resolution.Y * (int64)Resolution.Z * (int64)GPixelFormats[FormatA].BlockBytes) <= SVT::MaxResourceSize);
-	check(((int64)Resolution.X * (int64)Resolution.Y * (int64)Resolution.Z * (int64)GPixelFormats[FormatB].BlockBytes) <= SVT::MaxResourceSize);
-	
-	TileCoords.SetNum(PhysicalTilesCapacity);
-
-	int32 TileCoordsIndex = 0;
-	for (int32 Z = 0; Z < ResolutionInTiles.Z; ++Z)
-	{
-		for (int32 Y = 0; Y < ResolutionInTiles.Y; ++Y)
+		if (Instance->IsFrameInWindow(Request.FrameIndex) && (StreamingInstanceKey == Instance->GetKey()))
 		{
-			for (int32 X = 0; X < ResolutionInTiles.X; ++X)
+			StreamingInstance = Instance.Get();
+			StreamingInstance->AddRequest(Request);
+			break;
+		}
+	}
+	// No existing instance found -> create a new one
+	if (!StreamingInstance)
+	{
+		StreamingInstance = StreamingInstances[StreamingInstances.Emplace(MakeUnique<FStreamingInstance>(StreamingInstanceKey, PerFrameInfo.Num(), TArrayView<uint32>(MipLevelStreamingSize), Request))].Get();
+	}
+	return StreamingInstance;
+}
+
+void FTileAllocator::Init(const FIntVector3& InResolutionInTiles)
+{
+	check(InResolutionInTiles.X > 0 && InResolutionInTiles.Y > 0 && InResolutionInTiles.Z > 0);
+	FreeHeap.Clear();
+	ResolutionInTiles = InResolutionInTiles;
+	TileCapacity = ResolutionInTiles.X * ResolutionInTiles.Y * ResolutionInTiles.Z;
+	NumAllocated = 1; // Implicitly allocate null tile
+	Allocations.SetNumZeroed(TileCapacity);
+	Allocations[0] = FAllocation(INDEX_NONE, INDEX_NONE, true, true);
+	
+	// Populate free heap with packed tile coordinates, ready for allocation
+	for (int32 TileZ = 0; TileZ < ResolutionInTiles.Z; ++TileZ)
+	{
+		for (int32 TileY = 0; TileY < ResolutionInTiles.Y; ++TileY)
+		{
+			for (int32 TileX = 0; TileX < ResolutionInTiles.X; ++TileX)
 			{
-				uint32 PackedCoord = 0;
-				PackedCoord |= (X & 0xFFu);
-				PackedCoord |= (Y & 0xFFu) << 8u;
-				PackedCoord |= (Z & 0xFFu) << 16u;
-				TileCoords[TileCoordsIndex++] = PackedCoord;
+				// Skip (0,0,0): That's where we implicitly allocated the null tile
+				const uint32 PackedCoord = SVT::PackPageTableEntry(FIntVector3(TileX, TileY, TileZ));
+				if (PackedCoord)
+				{
+					FreeHeap.Add(0, PackedCoord);
+				}
 			}
 		}
 	}
-	check(TileCoordsIndex == PhysicalTilesCapacity);
 }
 
-void FStreamingManager::FTileDataTexture::InitRHI(FRHICommandListBase&)
+uint32 FTileAllocator::Allocate(uint32 UpdateIndex, uint32 FreeThreshold, uint16 FrameIndex, uint32 TileIndexInFrame, uint32 TilePriority, bool bLocked, FAllocation& OutPreviousAllocation)
 {
-	const FIntVector3 Resolution = ResolutionInTiles * SPARSE_VOLUME_TILE_RES_PADDED;
-	if (FormatA != PF_Unknown)
+	if (FreeHeap.IsEmpty())
 	{
-		const FRHITextureCreateDesc Desc =
-			FRHITextureCreateDesc::Create3D(TEXT("SparseVolumeTexture.PhysicalTileDataA.RHITexture"), Resolution.X, Resolution.Y, Resolution.Z, FormatA)
-			.SetFlags(ETextureCreateFlags::ShaderResource | ETextureCreateFlags::UAV);
-		TileDataTextureARHIRef = RHICreateTexture(Desc);
+		// No free tiles available!
+		return INDEX_NONE;
 	}
-	if (FormatB != PF_Unknown)
+
+	const uint32 TileCoord = FreeHeap.Top();
+
+	// There are non-locked tiles in the heap, but they've all been recently requested, so we can't reuse them for this allocation!
+	const uint32 LastRequested = uint32(FreeHeap.GetKey(TileCoord) >> 32u);
+	if ((LastRequested + FreeThreshold) >= UpdateIndex)
 	{
-		const FRHITextureCreateDesc Desc =
-			FRHITextureCreateDesc::Create3D(TEXT("SparseVolumeTexture.PhysicalTileDataB.RHITexture"), Resolution.X, Resolution.Y, Resolution.Z, FormatB)
-			.SetFlags(ETextureCreateFlags::ShaderResource | ETextureCreateFlags::UAV);
-		TileDataTextureBRHIRef = RHICreateTexture(Desc);
+		return INDEX_NONE;
 	}
+
+	const FIntVector3 UnpackedTileCoord = SVT::UnpackPageTableEntry(TileCoord);
+	const uint32 LinearTileCoord = (UnpackedTileCoord.Z * ResolutionInTiles.Y * ResolutionInTiles.X) + (UnpackedTileCoord.Y * ResolutionInTiles.X) + UnpackedTileCoord.X;
+	FAllocation& Allocation = Allocations[LinearTileCoord];
+
+	// Tile was already allocated
+	if (Allocation.bIsAllocated)
+	{
+		check(!Allocation.bIsLocked);
+		OutPreviousAllocation = Allocation;
+		--NumAllocated;
+	}
+	else
+	{
+		// Tile wasn't allocated, but for consistency and debugging, simply zero the out parameter.
+		FMemory::Memzero(OutPreviousAllocation);
+	}
+
+	// Mark as used by the new SVT frame
+	Allocation.FrameIndex = FrameIndex;
+	Allocation.TileIndexInFrame = TileIndexInFrame;
+	Allocation.bIsLocked = bLocked;
+	Allocation.bIsAllocated = true;
+
+	if (bLocked)
+	{
+		// Allocation is locked: remove it from the FreeHeap so it can't ever be reused unless manually freed.
+		FreeHeap.Pop();
+	}
+	else
+	{
+		// Allocation is not locked: update it with the new key
+		const uint64 HeapKey = (((uint64)UpdateIndex) << 32u) + TilePriority;
+		FreeHeap.Update(HeapKey, TileCoord);
+	}
+
+	++NumAllocated;
+	check(NumAllocated <= TileCapacity);
+
+	return TileCoord;
 }
 
-void FStreamingManager::FTileDataTexture::ReleaseRHI()
+void FTileAllocator::UpdateUsage(uint32 UpdateIndex, uint32 TileCoord, uint32 TilePriority)
 {
+	if (FreeHeap.IsPresent(TileCoord))
+	{
+		// Mark tile as requested in the given UpdateIndex
+		const uint64 HeapKey = (((uint64)UpdateIndex) << 32u) + TilePriority;
+		FreeHeap.Update(HeapKey, TileCoord);
+	}
+}
+
+void FTileAllocator::Free(uint32 TileCoord)
+{
+	TileCoord &= PhysicalCoordMask; // Clear the upper 8 bit in case the caller wrote "user data" (mip level index) there.
+	check(TileCoord);
+
+	// Make sure the passed in TileCoord actually has a valid value.
+	const FIntVector3 UnpackedTileCoord = SVT::UnpackPageTableEntry(TileCoord);
+	check(IsInBounds(UnpackedTileCoord, FIntVector3::ZeroValue, ResolutionInTiles));
+	
+	// Zero the allocation info
+	const uint32 LinearTileCoord = (UnpackedTileCoord.Z * ResolutionInTiles.Y * ResolutionInTiles.X) + (UnpackedTileCoord.Y * ResolutionInTiles.X) + UnpackedTileCoord.X;
+	FMemory::Memzero(Allocations[LinearTileCoord]);
+
+	if (FreeHeap.IsPresent(TileCoord))
+	{
+		// Tile was already in the heap; simply put it at the front so it'll be used in the next allocation.
+		FreeHeap.Update(0, TileCoord);
+	}
+	else
+	{
+		// Tile wasn't in the heap (must have been a locked allocation), so we add it now.
+		FreeHeap.Add(0, TileCoord);
+	}
+
+	check(NumAllocated > 1); // Null tile is permanently allocated
+	--NumAllocated;
 }
 
 }
 }
+
+#undef LOCK_PENDING_REQUEST

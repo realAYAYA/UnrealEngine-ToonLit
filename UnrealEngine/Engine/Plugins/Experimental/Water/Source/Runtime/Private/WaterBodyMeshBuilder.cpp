@@ -32,20 +32,20 @@
 #endif // WITH_EDITOR
 
 #if WITH_EDITOR
-void FWaterBodyMeshBuilder::BuildWaterInfoMeshes(UWaterBodyComponent* WaterBodyComponent, UWaterBodyInfoMeshComponent* WaterInfoMeshComponent, UWaterBodyInfoMeshComponent* WaterInfoDilatedMeshComponent) const
+void FWaterBodyMeshBuilder::BuildWaterInfoMeshes(UWaterBodyComponent* WaterBodyComponent, UWaterBodyInfoMeshComponent* WaterInfoMeshComponent, UWaterBodyInfoMeshComponent* WaterInfoDilatedMeshComponent, bool bMakeWaterInfoMeshConservativeRasterCompatible) const
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FWaterBodyMeshBuilder::BuildWaterInfoMesh);
 	
 	using namespace UE::Geometry;
 
-	FDynamicMesh3 WaterBodyMesh(EMeshComponents::None);
-	FDynamicMesh3 WaterBodyDilatedMesh(EMeshComponents::None);
-	GetDynamicMesh(WaterBodyComponent, WaterBodyMesh, &WaterBodyDilatedMesh);
+	FDynamicMesh3 WaterInfoMesh(EMeshComponents::None);
+	FDynamicMesh3 WaterInfoDilatedMesh(EMeshComponents::None);
+	GetDynamicMesh(WaterBodyComponent, WaterInfoMesh, &WaterInfoDilatedMesh, bMakeWaterInfoMeshConservativeRasterCompatible);
 
 	UMaterialInterface* WaterInfoMID = WaterBodyComponent->GetWaterInfoMaterialInstance();
 	UObject* Outer = WaterBodyComponent->GetOwner();
 
-	auto BuildWaterInfoMesh = [this, Outer, WaterInfoMID](const FDynamicMesh3& DynamicMesh, UWaterBodyInfoMeshComponent* MeshComponent, FName BaseName) -> UStaticMesh*
+	auto BuildWaterInfoMesh = [this, Outer, WaterInfoMID](const FDynamicMesh3& DynamicMesh, UWaterBodyInfoMeshComponent* MeshComponent, FName BaseName, bool bIsConservativeRasterMesh) -> UStaticMesh*
 	{
 		if (DynamicMesh.TriangleCount() == 0)
 		{
@@ -55,18 +55,20 @@ void FWaterBodyMeshBuilder::BuildWaterInfoMeshes(UWaterBodyComponent* WaterBodyC
 		FName WaterInfoMeshName = MakeUniqueObjectName(Outer, UStaticMesh::StaticClass(), BaseName);
 		UStaticMesh* StaticMesh = CreateUStaticMesh(Outer, WaterInfoMeshName);
 
-		UpdateStaticMesh(StaticMesh, ConvertDynamicMeshToMeshDescription(DynamicMesh));
+		UpdateStaticMesh(StaticMesh, ConvertDynamicMeshToMeshDescription(DynamicMesh), bIsConservativeRasterMesh);
 
 		StaticMesh->AddMaterial(WaterInfoMID);
 
 		MeshComponent->SetStaticMesh(StaticMesh);
+		MeshComponent->bIsConservativeRasterCompatible = bIsConservativeRasterMesh;
 
 		return StaticMesh;
 	};
 
-	TArray<UStaticMesh*> StaticMeshes = {
-		BuildWaterInfoMesh(WaterBodyMesh, WaterInfoMeshComponent, TEXT("WaterInfoMesh")),
-		BuildWaterInfoMesh(WaterBodyDilatedMesh, WaterInfoDilatedMeshComponent, TEXT("WaterInfoDilatedMesh")),
+	TArray<UStaticMesh*> StaticMeshes = 
+	{
+		BuildWaterInfoMesh(WaterInfoMesh, WaterInfoMeshComponent, TEXT("WaterInfoMesh"), bMakeWaterInfoMeshConservativeRasterCompatible),
+		BuildWaterInfoMesh(WaterInfoDilatedMesh, WaterInfoDilatedMeshComponent, TEXT("WaterInfoDilatedMesh"), false /*bIsConservativeRasterMesh*/),
 	};
 
 	UStaticMesh::BatchBuild(StaticMeshes);
@@ -400,7 +402,7 @@ TArray<TObjectPtr<UWaterBodyStaticMeshComponent>> FWaterBodyMeshBuilder::BuildWa
 
 			StaticMesh->AddMaterial(WaterStaticMeshMID);
 
-			UpdateStaticMesh(StaticMesh, MeshDescription);
+			UpdateStaticMesh(StaticMesh, MeshDescription, false /*bIsConservativeRasterMesh*/);
 
 			WaterBodyStaticMeshComponent->SetStaticMesh(StaticMesh);
 
@@ -471,7 +473,7 @@ TArray<TObjectPtr<UWaterBodyStaticMeshComponent>> FWaterBodyMeshBuilder::BuildWa
 
 		StaticMeshes.Add(QuadStaticMesh);
 
-		UpdateStaticMesh(QuadStaticMesh, QuadMeshDescription);
+		UpdateStaticMesh(QuadStaticMesh, QuadMeshDescription, false /*bIsConservativeRasterMesh*/);
 
 		for (const FVector& QuadMeshPosition : QuadSectionPositions)
 		{
@@ -492,7 +494,7 @@ TArray<TObjectPtr<UWaterBodyStaticMeshComponent>> FWaterBodyMeshBuilder::BuildWa
 	return StaticMeshComponents;
 }
 
-void FWaterBodyMeshBuilder::GetDynamicMesh(const UWaterBodyComponent* WaterBodyComponent, UE::Geometry::FDynamicMesh3& InMesh, UE::Geometry::FDynamicMesh3* InDilatedMesh) const
+void FWaterBodyMeshBuilder::GetDynamicMesh(const UWaterBodyComponent* WaterBodyComponent, UE::Geometry::FDynamicMesh3& InMesh, UE::Geometry::FDynamicMesh3* InDilatedMesh, bool bMakeWaterInfoMeshConservativeRasterCompatible) const
 {
 	using namespace UE::Geometry;
 
@@ -507,6 +509,39 @@ void FWaterBodyMeshBuilder::GetDynamicMesh(const UWaterBodyComponent* WaterBodyC
 	}
 
 	WaterBodyComponent->GenerateWaterBodyMesh(InMesh, InDilatedMesh);
+
+	// Store positions of the previous and next vertex within each triangle in three UV channels.
+	// This is needed for conservative rasterization of the mesh when building the GPU water quadtree.
+	if (bMakeWaterInfoMeshConservativeRasterCompatible)
+	{
+		InMesh.Attributes()->SetNumUVLayers(3);
+		FDynamicMeshUVOverlay* UVOverlay0 = InMesh.Attributes()->GetUVLayer(0);
+		FDynamicMeshUVOverlay* UVOverlay1 = InMesh.Attributes()->GetUVLayer(1);
+		FDynamicMeshUVOverlay* UVOverlay2 = InMesh.Attributes()->GetUVLayer(2);
+
+		for (int TriangleID : InMesh.TriangleIndicesItr())
+		{
+			FVector3d TriangleVertices[3];
+			InMesh.GetTriVertices(TriangleID, TriangleVertices[0], TriangleVertices[1], TriangleVertices[2]);
+
+			FIndex3i UVTriangle0;
+			FIndex3i UVTriangle1;
+			FIndex3i UVTriangle2;
+			for (int TriangleVertexIndex = 0; TriangleVertexIndex < 3; ++TriangleVertexIndex)
+			{
+				const FVector3f PrevVertex = FVector3f(TriangleVertices[(TriangleVertexIndex + 2) % 3]);
+				const FVector3f NextVertex = FVector3f(TriangleVertices[(TriangleVertexIndex + 1) % 3]);
+
+				UVTriangle0[TriangleVertexIndex] = UVOverlay0->AppendElement(FVector2f(PrevVertex.X, PrevVertex.Y));
+				UVTriangle1[TriangleVertexIndex] = UVOverlay1->AppendElement(FVector2f(PrevVertex.Z, NextVertex.X));
+				UVTriangle2[TriangleVertexIndex] = UVOverlay2->AppendElement(FVector2f(NextVertex.Y, NextVertex.Z));
+			}
+
+			UVOverlay0->SetTriangle(TriangleID, UVTriangle0);
+			UVOverlay1->SetTriangle(TriangleID, UVTriangle1);
+			UVOverlay2->SetTriangle(TriangleID, UVTriangle2);
+		}
+	}
 
 	for (FDynamicMesh3* Mesh : { &InMesh, InDilatedMesh })
 	{
@@ -526,18 +561,12 @@ FMeshDescription FWaterBodyMeshBuilder::ConvertDynamicMeshToMeshDescription(cons
 	StaticMeshAttributes.Register();
 
 	FDynamicMeshToMeshDescription DynamicMeshToMeshDescription;
-	DynamicMeshToMeshDescription.ConversionOptions.bUpdateVtxColors = true;
-	// We recompute normals and tangents after generating the mesh so no need to recompute them here
-	DynamicMeshToMeshDescription.ConversionOptions.bUpdateNormals = false;
-	DynamicMeshToMeshDescription.ConversionOptions.bUpdateTangents = false;
-
 	DynamicMeshToMeshDescription.Convert(&Mesh, Result);
-	DynamicMeshToMeshDescription.UpdateUsingConversionOptions(&Mesh, Result);
 
 	return Result;
 }
 
-void FWaterBodyMeshBuilder::UpdateStaticMesh(UStaticMesh* WaterMesh, const FMeshDescription& MeshDescription) const
+void FWaterBodyMeshBuilder::UpdateStaticMesh(UStaticMesh* WaterMesh, const FMeshDescription& MeshDescription, bool bIsConservativeRasterMesh) const
 {
 	if (!WaterMesh->IsSourceModelValid(0))
 	{
@@ -549,7 +578,8 @@ void FWaterBodyMeshBuilder::UpdateStaticMesh(UStaticMesh* WaterMesh, const FMesh
 	SrcModel.BuildSettings.bRecomputeTangents = true;
 	SrcModel.BuildSettings.bRemoveDegenerates = false;
 	SrcModel.BuildSettings.bUseHighPrecisionTangentBasis = false;
-	SrcModel.BuildSettings.bUseFullPrecisionUVs = false;
+	SrcModel.BuildSettings.bUseFullPrecisionUVs = bIsConservativeRasterMesh; // CR mesh stores vertex positions in the UVs and needs full 32bit precision
+	SrcModel.BuildSettings.bGenerateLightmapUVs = false;
 	WaterMesh->CreateMeshDescription(0, MeshDescription);
 
 	UStaticMesh::FCommitMeshDescriptionParams CommitParams;
@@ -570,12 +600,16 @@ UStaticMesh* FWaterBodyMeshBuilder::CreateUStaticMesh(UObject* Outer, FName Mesh
 	// Disable ray tracing as we don't want water meshes to show up in LumenScene.
 	StaticMesh->bSupportRayTracing = false;
 
+	// Always call CreateBodySetup before attempting to modify it.  The BodySetup is normally created when the mesh data is built, but can be created ahead of time to set default data
+	StaticMesh->CreateBodySetup();
+
 	if (UBodySetup* BodySetup = StaticMesh->GetBodySetup())
 	{
 		BodySetup->DefaultInstance.SetCollisionProfileName(UCollisionProfile::NoCollision_ProfileName);
 		BodySetup->CollisionTraceFlag = CTF_UseSimpleAsComplex;
 		// We won't ever enable collisions (since collisions are handled by the dedicated water body collision components), ensure we don't even cook or load any collision data on this mesh: 
 		BodySetup->bNeverNeedsCookedCollisionData = true;
+		BodySetup->bHasCookedCollisionData = false;
 	}
 	return StaticMesh;
 }

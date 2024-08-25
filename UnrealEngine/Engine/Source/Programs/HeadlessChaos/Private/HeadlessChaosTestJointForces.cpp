@@ -203,7 +203,7 @@ namespace ChaosTest {
 		FGenericParticleHandle P1 = Test.GetParticle(1);
 
 		// Reposition the particle to have some extension in the spring
-		P1->InitTransform(P1->X() + FVec3(0,0,-Extension), P1->R());
+		P1->InitTransform(P1->GetX() + FVec3(0,0,-Extension), P1->GetR());
 
 		// Run the sim
 		Test.Evolution.AdvanceOneTimeStep(Dt);
@@ -395,7 +395,7 @@ namespace ChaosTest {
 		const FReal ExpectedVZ = 0;
 		const FReal ExpectedZ = Test.ParticlePositions[1].Z - Extension;
 		EXPECT_NEAR(P1->V().Z, ExpectedVZ, 1);
-		EXPECT_NEAR(P1->X().Z, ExpectedZ, 1);
+		EXPECT_NEAR(P1->GetX().Z, ExpectedZ, 1);
 	}
 
 	// Check that the maximum drive force setting honored for linear drives.
@@ -498,13 +498,13 @@ namespace ChaosTest {
 		const FReal ExpectedVZ = 0;
 		const FReal ExpectedZ = Test.ParticlePositions[1].Z - Extension;
 		EXPECT_NEAR(P1->V().Z, ExpectedVZ, 1);
-		EXPECT_NEAR(P1->X().Z, ExpectedZ, 1);
+		EXPECT_NEAR(P1->GetX().Z, ExpectedZ, 1);
 	}
 
 
 	// Check that the maximum drive force setting honored for linear drives.
 	// We repeat TestLinearDriveForceMode_MaxForcePreTest but with a max force which is less than K.X at the rest extension
-	// NOTE: Using Accleration mode on the drive but with adjusted stiffness and damping. 
+	// NOTE: Using Acceleration mode on the drive but with adjusted stiffness and damping. 
 	//
 	GTEST_TEST(JointForceTests, TestLinearDriveAccMode_MaxForce)
 	{

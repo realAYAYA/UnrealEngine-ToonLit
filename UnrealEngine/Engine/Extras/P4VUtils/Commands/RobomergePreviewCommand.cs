@@ -4,9 +4,7 @@ using EpicGames.Perforce;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
-using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -74,15 +72,59 @@ namespace P4VUtils.Commands
 			return 0;
 		}
 
-		public virtual string GetUrl(int Change, IReadOnlyDictionary<string, string> ConfigValues)
+		static public string GetUrl(int Change, IReadOnlyDictionary<string, string> ConfigValues)
 		{
 			string? BaseUrl;
-			if (!ConfigValues.TryGetValue("RobomergePreviewURL", out BaseUrl))
+			if (!ConfigValues.TryGetValue("RobomergeURL", out BaseUrl))
 			{
 				BaseUrl = "https://configure-server-url-in-p4vutils.ini";
 			}
 
-			return $"{BaseUrl.TrimEnd('/')}/{Change}";
+			return $"{BaseUrl.TrimEnd('/')}/preview/{Change}";
+
+		}
+	}
+
+	[Command("robomergetrackchange", CommandCategory.Toolbox, 11)]
+	class RobomergeTrackChangeCommand : Command
+	{
+		public override string Description => "Opens the RoboMerge site to track where a submitted change has been merged to.";
+
+		public override CustomToolInfo CustomTool => new CustomToolInfo("Robomerge Track Change", "%c") { ShowConsole = true, RefreshUI = false };
+
+		public override async Task<int> Execute(string[] Args, IReadOnlyDictionary<string, string> ConfigValues, ILogger Logger)
+		{
+			await Task.Yield();
+
+			int Change;
+			if (Args.Length < 2)
+			{
+				Logger.LogError("Missing changelist number");
+				return 1;
+			}
+			else if (!int.TryParse(Args[1], out Change))
+			{
+				Logger.LogError("'{Argument}' is not a numbered changelist", Args[1]);
+				return 1;
+			}
+
+			string Url = GetUrl(Change, ConfigValues);
+			Logger.LogInformation("Opening {Url}", Url);
+
+			ProcessUtils.OpenInNewProcess(Url);
+
+			return 0;
+		}
+
+		static public string GetUrl(int Change, IReadOnlyDictionary<string, string> ConfigValues)
+		{
+			string? BaseUrl;
+			if (!ConfigValues.TryGetValue("RobomergeURL", out BaseUrl))
+			{
+				BaseUrl = "https://configure-server-url-in-p4vutils.ini";
+			}
+
+			return $"{BaseUrl.TrimEnd('/')}/trackchange/{Change}";
 
 		}
 	}

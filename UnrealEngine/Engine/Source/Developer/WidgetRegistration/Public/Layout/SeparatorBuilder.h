@@ -86,7 +86,7 @@ public:
 	 *
  	 * @return the TSharedRef<SSeparator> as a reference to the generated SSeparator
 	 */
-	TSharedRef<SSeparator> operator*();
+	WIDGETREGISTRATION_API TSharedRef<SSeparator> operator*();
 
 	/**
 	 * Initializes the size of the separator. If called after the widget creation (that is, a call to GenerateWidget)
@@ -95,7 +95,7 @@ public:
 	 * @param NewSize the FSeparatorSize& that will provide the size for the Separator
 	 * @return this FSeparatorBuilder to enable cascading.
 	 */
-	FSeparatorBuilder& InitializeSize(const FSeparatorSize& NewSize);
+	WIDGETREGISTRATION_API FSeparatorBuilder& InitializeSize(const FSeparatorSize& NewSize);
 
 	/** 
 	 * Sets the color of the Separator. This will update the color of the Separator even after widget creation.
@@ -105,7 +105,7 @@ public:
 	 * for that EStyleColor immediately.
 	 * @return this FSeparatorBuilder to enable cascading.
 	 */
-	FSeparatorBuilder& SetColor(const EStyleColor& NewColor);
+	WIDGETREGISTRATION_API FSeparatorBuilder& SetColor(const EStyleColor& NewColor);
 
 	/** 
 	 * Binds the Visibility of the Separator to a TAttribute for continuous update.
@@ -113,7 +113,7 @@ public:
 	 * @param NewVisibility the TAttribute<EVisibility> to bind for the SSeparator. 
 	 * @return this FSeparatorBuilder to enable cascading.
 	 */
-	FSeparatorBuilder& BindVisibility(TAttribute<EVisibility> NewVisibility)
+	WIDGETREGISTRATION_API FSeparatorBuilder& BindVisibility(TAttribute<EVisibility> NewVisibility)
 	{
 		Visibility = NewVisibility;
 		return *this;

@@ -65,7 +65,7 @@ void UMovieSceneEventRepeaterSection::ImportEntityImpl(UMovieSceneEntitySystemLi
 		Event.Ptrs,
 		Params.GetObjectBindingID(),
 		ThisInstance.GetSequenceID(),
-		Context.GetTime() * Context.GetSequenceToRootTransform()
+		Context.GetTime() * Context.GetSequenceToRootSequenceTransform()
 	};
 
 	EventSystem->AddEvent(ThisInstance.GetRootInstanceHandle(), TriggerData);

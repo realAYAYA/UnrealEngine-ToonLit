@@ -22,6 +22,7 @@
 #include "Framework/Application/SlateApplication.h"
 #include "Misc/PackageName.h"
 #include "Net/ReplayPlaylistTracker.h"
+#include "Net/Core/Connection/NetEnums.h"
 #include "ReplaySubsystem.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(GameInstance)
@@ -277,6 +278,7 @@ static ENetMode GetNetModeFromPlayNetMode(const EPlayNetMode InPlayNetMode, cons
 FGameInstancePIEResult UGameInstance::InitializeForPlayInEditor(int32 PIEInstanceIndex, const FGameInstancePIEParameters& Params)
 {
 	FWorldDelegates::OnPIEStarted.Broadcast(this);
+	FWorldDelegates::OnPIEMapCreated.Broadcast(this);
 
 	UEditorEngine* const EditorEngine = CastChecked<UEditorEngine>(GetEngine());
 
@@ -298,7 +300,8 @@ FGameInstancePIEResult UGameInstance::InitializeForPlayInEditor(int32 PIEInstanc
 
 	WorldContext->OwningGameInstance = this;
 	
-	const FString WorldPackageName = EditorEngine->EditorWorld->GetOutermost()->GetName();
+	UWorld* EditorWorld = EditorEngine->GetEditorWorldContext().World();
+	const FString WorldPackageName = EditorWorld->GetOutermost()->GetName();
 
 	// Establish World Context for PIE World
 	WorldContext->LastURL.Map = WorldPackageName;
@@ -313,7 +316,7 @@ FGameInstancePIEResult UGameInstance::InitializeForPlayInEditor(int32 PIEInstanc
 	if (Params.NetMode == EPlayNetMode::PIE_Client)
 	{
 		// We are going to connect, so just load an empty world
-		NewWorld = EditorEngine->CreatePIEWorldFromEntry(*WorldContext, EditorEngine->EditorWorld, PIEMapName);
+		NewWorld = EditorEngine->CreatePIEWorldFromEntry(*WorldContext, EditorWorld, PIEMapName);
 	}
 	else
 	{
@@ -324,14 +327,14 @@ FGameInstancePIEResult UGameInstance::InitializeForPlayInEditor(int32 PIEInstanc
 			UWorld* WorldToDuplicate = Cast<UWorld>(TargetWorld.TryLoad());
 			if (WorldToDuplicate)
 			{
-				WorldToDuplicate->ChangeFeatureLevel(EditorEngine->EditorWorld->GetFeatureLevel(), false);
+				WorldToDuplicate->ChangeFeatureLevel(EditorWorld->GetFeatureLevel(), false);
 				NewWorld = EditorEngine->CreatePIEWorldByDuplication(*WorldContext, WorldToDuplicate, PIEMapName);
 			}
 		}
 		else
 		{
 			// Standard PIE path: just duplicate the EditorWorld
-			NewWorld = EditorEngine->CreatePIEWorldByDuplication(*WorldContext, EditorEngine->EditorWorld, PIEMapName);
+			NewWorld = EditorEngine->CreatePIEWorldByDuplication(*WorldContext, EditorWorld, PIEMapName);
 		}
 
 		// Duplication can result in unreferenced objects, so indicate that we should do a GC pass after initializing the world context
@@ -363,14 +366,15 @@ FGameInstancePIEResult UGameInstance::InitializeForPlayInEditor(int32 PIEInstanc
 	// This creates the world subsystems and prepares to begin play
 	EditorEngine->PostCreatePIEWorld(NewWorld);
 
+	FWorldDelegates::OnPIEMapReady.Broadcast(this);
+
 	// Games can override this to return failure if PIE is not allowed for some reason
 	return FGameInstancePIEResult::Success();
 }
 
-
+#if WITH_EDITOR
 void UGameInstance::ReportPIEStartupTime()
 {
-#if WITH_EDITOR
 	if (!bReportedPIEStartupTime)
 	{
 		static bool bHasRunPIEThisSession = false;
@@ -387,9 +391,8 @@ void UGameInstance::ReportPIEStartupTime()
 	}
 
 	FWorldDelegates::OnPIEReady.Broadcast(this);
-#endif
 }
-
+#endif
 
 FGameInstancePIEResult UGameInstance::StartPlayInEditorGameInstance(ULocalPlayer* LocalPlayer, const FGameInstancePIEParameters& Params)
 {
@@ -504,14 +507,27 @@ FGameInstancePIEResult UGameInstance::StartPlayInEditorGameInstance(ULocalPlayer
 		}
 
 		SlowTask.EnterProgressFrame(10, NSLOCTEXT("UnrealEd", "PIEFlushingLevelStreaming", "Starting PIE (Loading always loaded objects)..."));
+
 		// Make sure "always loaded" sub-levels are fully loaded
 		PlayWorld->FlushLevelStreaming(EFlushLevelStreamingType::Visibility);
+
+		UGameViewportClient* const GameViewport = GetGameViewportClient();
+		if (GameViewport != NULL && GameViewport->Viewport != NULL)
+		{
+			SlowTask.EnterProgressFrame(25, NSLOCTEXT("UnrealEd", "PIEWaitingForInitialLevelStreaming", "Starting PIE (Waiting for initial level streaming)..."));
+			// Stream any always loaded levels now that need to be loaded before the game starts
+			GEngine->BlockTillLevelStreamingCompleted(PlayWorld);
+		}
 
 		SlowTask.EnterProgressFrame(10, NSLOCTEXT("UnrealEd", "PIECreatingAISystem", "Starting PIE (Creating AI System)..."));
 		PlayWorld->CreateAISystem();
 
 		SlowTask.EnterProgressFrame(10, NSLOCTEXT("UnrealEd", "PIEInitializingActors", "Starting PIE (Initializing Actors)..."));
-		PlayWorld->InitializeActorsForPlay(URL);
+		{
+			FRegisterComponentContext Context(PlayWorld);
+			PlayWorld->InitializeActorsForPlay(URL, true, &Context);
+			Context.Process();
+		}
 		// calling it after InitializeActorsForPlay has been called to have all potential bounding boxed initialized
 		FNavigationSystem::AddNavigationSystemToWorld(*PlayWorld, FNavigationSystemRunMode::PIEMode);
 
@@ -523,14 +539,13 @@ FGameInstancePIEResult UGameInstance::StartPlayInEditorGameInstance(ULocalPlayer
 			{
 				return FGameInstancePIEResult::Failure(FText::Format(NSLOCTEXT("UnrealEd", "Error_CouldntSpawnPlayer", "Couldn't spawn player: {0}"), FText::FromString(Error)));
 			}
-		}
 
-		UGameViewportClient* const GameViewport = GetGameViewportClient();
-		if (GameViewport != NULL && GameViewport->Viewport != NULL)
-		{
-			SlowTask.EnterProgressFrame(50, NSLOCTEXT("UnrealEd", "PIEWaitingForLevelStreaming", "Starting PIE (Waiting for level streaming)..."));
-			// Stream any levels now that need to be loaded before the game starts
-			GEngine->BlockTillLevelStreamingCompleted(PlayWorld);
+			if (GameViewport != NULL && GameViewport->Viewport != NULL)
+			{
+				SlowTask.EnterProgressFrame(25, NSLOCTEXT("UnrealEd", "PIEWaitingForLevelStreaming", "Starting PIE (Waiting for level streaming)..."));
+				// Stream any levels now that need to be loaded before the game starts as a result of spawning the local player
+				GEngine->BlockTillLevelStreamingCompleted(PlayWorld);
+			}
 		}
 
 		if (Params.NetMode == PIE_ListenServer)
@@ -981,7 +996,7 @@ bool UGameInstance::RemoveLocalPlayer(ULocalPlayer* ExistingPlayer)
 	OnLocalPlayerRemovedEvent.Broadcast(ExistingPlayer);
 
 	// Marked as garbage here to detect outstanding references
-	if (!UObjectBaseUtility::IsPendingKillEnabled())
+	if (!UObjectBaseUtility::IsGarbageEliminationEnabled())
 	{
 		ExistingPlayer->MarkAsGarbage();
 	}
@@ -1417,6 +1432,25 @@ void UGameInstance::NotifyPreClientTravel(const FString& PendingURL, ETravelType
 	OnNotifyPreClientTravel().Broadcast(PendingURL, TravelType, bIsSeamlessTravel);
 }
 
+EReplicationSystem UGameInstance::GetDesiredReplicationSystem(FName InNetDriverDefinition) const
+{
+	EReplicationSystem DesiredRepSystem = EReplicationSystem::Default;
+
+	if (InNetDriverDefinition == NAME_GameNetDriver)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			// If we are the server, return the game mode's desired replication system
+			if (AGameModeBase* ServerGameMode = World->GetAuthGameMode())
+			{
+				return ServerGameMode->GetGameNetDriverReplicationSystem();
+			}
+		}
+	}
+
+	return DesiredRepSystem;
+}
+
 void UGameInstance::ReturnToMainMenu()
 {
 	UWorld* const World = GetWorld();
@@ -1489,7 +1523,7 @@ AGameModeBase* UGameInstance::CreateGameModeForURL(FURL InURL, UWorld* InWorld)
 		if (MapNameNoPath.StartsWith(PLAYWORLD_PACKAGE_PREFIX))
 		{
 			const int32 PrefixLen = UWorld::BuildPIEPackagePrefix(WorldContext->PIEInstance).Len();
-			MapNameNoPath.MidInline(PrefixLen, MAX_int32, false);
+			MapNameNoPath.MidInline(PrefixLen, MAX_int32, EAllowShrinking::No);
 		}
 
 		FString const GameClassName = UGameMapsSettings::GetGameModeForMapName(FString(MapNameNoPath));
@@ -1560,4 +1594,3 @@ void UGameInstance::UnregisterReferencedObject(UObject* ObjectToReference)
 {
 	ReferencedObjects.RemoveSingleSwap(ObjectToReference);
 }
-

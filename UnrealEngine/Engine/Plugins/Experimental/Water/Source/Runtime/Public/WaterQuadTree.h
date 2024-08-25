@@ -28,6 +28,13 @@ struct FWaterBodyRenderData
 	/** World Z position of the waterbody, this is where the tiles for this water body will be rendered*/
 	double SurfaceBaseHeight = 0.0;
 
+	/** Z bounds of the water body */
+	double BoundsMinZ = DBL_MAX;
+	double BoundsMaxZ = -DBL_MAX;
+
+	/** Maximum Z displacement due to waves */
+	float MaxWaveHeight = 0.0f;
+
 	/** Render priority. If two water bodies overlap, this will decide which water body is used for a tile */
 	int16 Priority = TNumericLimits<int16>::Min();
 
@@ -66,6 +73,15 @@ struct FWaterBodyRenderData
 	}
 };
 
+struct FWaterBodyQuadTreeRasterInfo
+{
+	FTransform LocalToWorld = FTransform::Identity;
+	const class FStaticMeshRenderData* RenderData = nullptr;
+	uint32 WaterBodyRenderDataIndex = INDEX_NONE;
+	uint8 Priority = 0;
+	bool bIsRiver = false;
+};
+
 struct FWaterQuadTree 
 {
 	enum { INVALID_PARENT = 0xFFFFFFF };
@@ -99,6 +115,8 @@ struct FWaterQuadTree
 	/** Output of the quadtree when asking to traverse it for visible water tiles */
 	struct FTraversalDesc
 	{
+		const TArray<bool>* OcclusionCullingResults = nullptr;
+		int32 OcclusionCullingFarMeshOffset = 0;
 		int32 LowestLOD = 0;
 		int32 LODCount = 0;
 		int32 DensityCount = 0;
@@ -108,13 +126,14 @@ struct FWaterQuadTree
 		FVector ObserverPosition = FVector::ZeroVector;
 		FVector PreViewTranslation = FVector::ZeroVector;
 		FConvexVolume Frustum;
+		FBox2D WaterInfoBounds = FBox2D(ForceInitToZero);
 		bool bLODMorphingEnabled = true;
-		FBox2D TessellatedWaterMeshBounds = FBox2D(ForceInit);
 
 #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
 		// Debug
 		int32 DebugShowTile = 0;
 		class FPrimitiveDrawInterface* DebugPDI = nullptr;
+		bool bDebugDrawIntoForeground = false;
 #endif
 	};
 
@@ -122,7 +141,7 @@ struct FWaterQuadTree
 	 *	Initialize the tree. This will unlock the tree for node insertion using AddWaterTilesInsideBounds(...). 
 	 *	Tree must be locked before traversal, see Lock(). 
 	 */
-	void InitTree(const FBox2D& InBounds, float InTileSize, FIntPoint InExtentInTiles);
+	void InitTree(const FBox2D& InBounds, float InTileSize, FIntPoint InExtentInTiles, bool bInIsGPUQuadTree);
 
 	/** Unlock to make it read-only. This will optionally prune the node array to remove redundant nodes, nodes that can be implicitly traversed */
 	void Unlock(bool bPruneRedundantNodes);
@@ -136,8 +155,8 @@ struct FWaterQuadTree
 	/** Add Lake by giving a closed spline that represents the lake */
 	void AddLake(const TArray<FVector2D>& InPoly, const FBox& InLakeBounds, uint32 InWaterBodyIndex);
 
-	/** Add an automatically generated mesh (8 quads) skirt around the main water quadtree which extends out InFarDistanceMeshExtent, is placed at Z value InFarDistanceMeshHeight and is rendered using InFarMeshMaterial */
-	void AddFarMesh(const UMaterialInterface* InFarMeshMaterial, double InFarDistanceMeshExtent, double InFarDistanceMeshHeight);
+	/** Add an automatically generated mesh (8 quads) skirt around InInnerRegion which extends out InFarDistanceMeshExtent, is placed at Z value InFarDistanceMeshHeight and is rendered using InFarMeshMaterial */
+	void AddFarMesh(const UMaterialInterface* InFarMeshMaterial, const FBox2D& InInnerRegion, double InFarDistanceMeshExtent, double InFarDistanceMeshHeight);
 
 	/** Assign an index to each material */
 	void BuildMaterialIndices();
@@ -145,8 +164,13 @@ struct FWaterQuadTree
 	/** Add water body render data to this tree. Returns the index in the array. Use this index to add tiles with this water body to the tree, see AddWaterTilesInsideBounds(..) */
 	uint32 AddWaterBodyRenderData(const FWaterBodyRenderData& InWaterBodyRenderData) { return NodeData.WaterBodyRenderData.Add(InWaterBodyRenderData); }
 
+	void AddWaterBodyRasterInfo(const FWaterBodyQuadTreeRasterInfo& InWaterBodyRasterInfo) { WaterBodyRasterInfos.Add(InWaterBodyRasterInfo); }
+
 	/** Get bounds of the root node if there is one, otherwise some default box */
 	FBox GetBounds() const { return NodeData.Nodes.Num() > 0 ? NodeData.Nodes[0].Bounds : FBox(-FVector::OneVector, FVector::OneVector); }
+
+	/** Get bounds of the root node if there is one (including far mesh), otherwise some default box */
+	FBox GetBoundsIncludingFarMesh() const { return GetBounds() + FarMeshData.FarMeshBounds; }
 	
 	/** Return the 2D region containing water tiles. Tiles can not be generated outside of this region */
 	FBox2D GetTileRegion() const { return TileRegion; }
@@ -177,16 +201,26 @@ struct FWaterQuadTree
 
 	const TArray<FMaterialRenderProxy*>& GetWaterMaterials() const { return WaterMaterials; }
 
+	const TArray<FWaterBodyQuadTreeRasterInfo>& GetWaterBodyRasterInfos() const { return WaterBodyRasterInfos; }
+
+	const TArray<FWaterBodyRenderData>& GetWaterBodyRenderData() const { return NodeData.WaterBodyRenderData; }
+
+	FIntPoint GetResolution() const { return ExtentInTiles * 2; }
+
+	bool IsGPUQuadTree() const { return bIsGPUQuadTree; }
+
 	/** Calculate the world distance to a LOD */
 	static float GetLODDistance(int32 InLODLevel, float InLODScale) { return FMath::Pow(2.0f, (float)(InLODLevel + 1)) * InLODScale; }
 
 	/** Total memory dynamically allocated by this object */
-	uint32 GetAllocatedSize() const { return NodeData.GetAllocatedSize() + WaterMaterials.GetAllocatedSize() + FarMeshData.GetAllocatedSize(); }
+	uint32 GetAllocatedSize() const { return NodeData.GetAllocatedSize() + WaterMaterials.GetAllocatedSize() + WaterBodyRasterInfos.GetAllocatedSize() + BreadthFirstOrder.GetAllocatedSize() + FarMeshData.GetAllocatedSize(); }
 
 #if WITH_WATER_SELECTION_SUPPORT
 	/** Obtain all possible hit proxies (proxies of all the water bodies) */
 	void GatherHitProxies(TArray<TRefCountPtr<HHitProxy> >& OutHitProxies) const;
 #endif // WITH_WATER_SELECTION_SUPPORT
+
+	TArray<FBoxSphereBounds> ComputeNodeBounds(int32 MaxNumBounds, float OcclusionCullExpandBoundsAmountXY, bool bIncludeFarMeshTiles, int32* OutFarMeshOffset) const;
 
 private:
 	struct FNodeData;
@@ -254,6 +288,7 @@ private:
 
 		/** Children, 0 means invalid */
 		uint32 Children[4] = { 0, 0, 0, 0 };
+		uint32 BreadthFirstIndex = INDEX_NONE;
 	};
 
 	int32 TreeDepth = 0;
@@ -282,6 +317,10 @@ private:
 	} NodeData;
 
 	TArray<FMaterialRenderProxy*> WaterMaterials;
+	TArray<FWaterBodyQuadTreeRasterInfo> WaterBodyRasterInfos;
+	
+/** Node indices ordered by breadth first ordering */
+	TArray<int32> BreadthFirstOrder;
 
 	/** Contains everything needed to render the far mesh. This data lives outside the quadtree structure itself */
 	struct FFarMeshData
@@ -303,6 +342,7 @@ private:
 			InstanceData.Empty();
 			Material = nullptr;
 			MaterialIndex = INDEX_NONE;
+			FarMeshBounds.Init();
 		}
 
 		/** Total memory dynamically allocated by this object */
@@ -311,8 +351,13 @@ private:
 		/** Cached material index */
 		int16 MaterialIndex = INDEX_NONE;
 
+		/** FarMesh bounds */
+		FBox FarMeshBounds;
+
 	} FarMeshData;
 
 	/** If true, the tree may not change */
 	bool bIsReadOnly = true;
+
+	bool bIsGPUQuadTree = false;
 };

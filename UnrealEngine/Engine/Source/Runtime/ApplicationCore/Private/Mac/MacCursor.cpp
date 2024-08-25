@@ -247,8 +247,8 @@ void* FMacCursor::CreateCursorFromFile(const FString& InPathToCursorWithoutExten
 
 	NSImageRep* CursorImageRep = [[CursorImage representations] objectAtIndex:0];
 
-	const int32 PixelHotspotX = FMath::RoundToInt(InHotSpot.X * CursorImageRep.pixelsWide);
-	const int32 PixelHotspotY = FMath::RoundToInt(InHotSpot.Y * CursorImageRep.pixelsHigh);
+	const int32 PixelHotspotX = FMath::RoundToInt(InHotSpot.X * (CursorImageRep.size.width-1));
+	const int32 PixelHotspotY = FMath::RoundToInt(InHotSpot.Y * (CursorImageRep.size.height-1));
 
 	NSCursor* CursorHandle = [[NSCursor alloc] initWithImage:CursorImage hotSpot : NSMakePoint(PixelHotspotX, PixelHotspotY)];
 	[CursorImage release];

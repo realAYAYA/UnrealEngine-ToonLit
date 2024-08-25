@@ -438,6 +438,12 @@ public:
 	/** find or add a auto instance mesh and return its index */
 	GEOMETRYCOLLECTIONENGINE_API const FGeometryCollectionAutoInstanceMesh& GetAutoInstanceMesh(int32 AutoInstanceMeshIndex) const;
 
+	/** 
+	* Assign an auto instanced meshes array
+	* if there's duplicate entry in the array , they will be collapsed as one and the index attribute will be adjusted acoordingly
+	*/
+	GEOMETRYCOLLECTIONENGINE_API void SetAutoInstanceMeshes(const TArray<FGeometryCollectionAutoInstanceMesh>& InAutoInstanceMeshes);
+	
 	/**  find or add a auto instance mesh from another one and return its index */
 	GEOMETRYCOLLECTIONENGINE_API int32 FindOrAddAutoInstanceMesh(const FGeometryCollectionAutoInstanceMesh& AutoInstanceMesh);
 
@@ -484,11 +490,17 @@ public:
 	GEOMETRYCOLLECTIONENGINE_API void GetSharedSimulationParams(FSharedSimulationParameters& OutParams) const;
 
 	/**
-	* Get Mass or density as set by the asset 
+	* Get Mass or density as set by the asset ( this is the value used by to compute the cached attributes )
 	* Mass is return in Kg and Density is returned in Kg/Cm3
 	* @param bOutIsDensity  is set to true by the function if the returned value is to be treated as a density
 	*/
 	GEOMETRYCOLLECTIONENGINE_API float GetMassOrDensity(bool& bOutIsDensity) const;
+
+	/*
+	* cache the material density used to compute attribute
+	* Warning : this should only be called after recomputing the mass based on those values
+	*/
+	GEOMETRYCOLLECTIONENGINE_API void CacheMaterialDensity();
 
 	/** Accessors for the two guids used to identify this collection */
 	GEOMETRYCOLLECTIONENGINE_API FGuid GetIdGuid() const;
@@ -522,6 +534,10 @@ public:
 	/** whether to use size specific damage threshold instead of level based ones ( see Size Specific Data array ). */
 	UPROPERTY(EditAnywhere, Category = "Damage", meta = (EditCondition = "DamageModel == EDamageModelTypeEnum::Chaos_Damage_Model_UserDefined_Damage_Threshold"))
 	bool bUseSizeSpecificDamageThreshold;
+
+	/** When on , use the modifiers on the material to adjust the user defined damage threshold values */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Damage", meta = (EditCondition = "DamageModel == EDamageModelTypeEnum::Chaos_Damage_Model_UserDefined_Damage_Threshold"))
+	bool bUseMaterialDamageModifiers;
 
 	/** compatibility check, when true, only cluster compute damage from parameters and propagate to direct children
 	 *  when false, each child will compute it's damage threshold allowing for more precise and intuitive destruction behavior
@@ -658,6 +674,13 @@ public:
 	bool bDensityFromPhysicsMaterial;
 
 	/**
+	* Cached Material density value used to compute the Mass attribute  ( In gram per cm3 )
+	* this is necessary because the material properties could be changed after without causing the mass attribute to be recomputed ( because the GC asset will not get notified )
+	*/
+	UPROPERTY()
+	float CachedDensityFromPhysicsMaterialInGCm3;
+
+	/**
 	* Mass As Density, units are in kg/m^3 ( only enabled if physics material is not set )
 	*/
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Collisions", meta = (EditCondition = "!bDensityFromPhysicsMaterial"))
@@ -680,6 +703,14 @@ public:
 	*/
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Collisions")
 	bool bImportCollisionFromSource;
+
+	/**
+	* whether to optimize convexes for collisions. If true the convex optimizer will generate at runtime one 
+	* single convex shape for physics collisions ignoring all the user defined ones. 
+	* Enable p.Chaos.Convex.SimplifyUnion cvar to be able to use it (experimental)
+	*/
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Collisions")
+	bool bOptimizeConvexes = true;
 	
 #if WITH_EDITORONLY_DATA
 	/**
@@ -795,6 +826,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Dataflow", DisplayName = "DataFlow Overrides")
 	TMap<FString, FString> Overrides;
 
+	GEOMETRYCOLLECTIONENGINE_API const TArray<int32>& GetBreadthFirstTransformIndices() const { return BreadthFirstTransformIndices; }
+
+	GEOMETRYCOLLECTIONENGINE_API const TArray<int32>& GetAutoInstanceTransformRemapIndices() const { return AutoInstanceTransformRemapIndices; }
+
+#if WITH_EDITOR
+	virtual bool CanEditChange(const FProperty* InProperty) const override;
+#endif // WITH_EDITOR
+
 private:
 #if WITH_EDITOR
 	GEOMETRYCOLLECTIONENGINE_API void CreateSimulationDataImp(bool bCopyFromDDC);
@@ -812,6 +851,9 @@ private:
 
 	// fill instanced mesh instance count from geometry collection data if not done yet 
 	GEOMETRYCOLLECTIONENGINE_API void FillAutoInstanceMeshesInstancesIfNeeded();
+
+	void CacheBreadthFirstTransformIndices();
+	void CacheAutoInstanceTransformRemapIndices();
 
 private:
 	/** Guid created on construction of this collection. It should be used to uniquely identify this collection */
@@ -842,6 +884,14 @@ private:
 	UPROPERTY(VisibleAnywhere, Category = "Clustering")
 	int32 RootIndex = INDEX_NONE;
 
+	// cache transform indices in breadth-first order
+	UPROPERTY(VisibleAnywhere, Transient, Category = "Clustering")
+	TArray<int32> BreadthFirstTransformIndices;
+
+	// cache transform remapping for instanced meshes indices
+	UPROPERTY(VisibleAnywhere, Transient, Category = "Clustering")
+	TArray<int32> AutoInstanceTransformRemapIndices;
+
 	// #todo(dmp): rename to be consistent BoneSelectedMaterialID?
 	// Legacy index of the bone selected material in the object's Materials array, or INDEX_NONE if it is not stored there.
 	// Note for new objects the bone selected material should not be stored in the Materials array, so this should be INDEX_NONE
@@ -857,4 +907,6 @@ private:
 	/** Array of user data stored with the asset */
 	UPROPERTY(EditAnywhere, AdvancedDisplay, Instanced, Category = AssetUserData)
 	TArray<TObjectPtr<UAssetUserData>> AssetUserData;
+
+	float GetMassOrDensityInternal(bool& bOutIsDensity, bool bCached) const;
 };

@@ -1,35 +1,27 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "Modules/ModuleManager.h"
+#include "ConcertTakeRecorderModule.h"
+
 #include "ConcertTakeRecorderManager.h"
 #include "ConcertTakeRecorderStyle.h"
 
 LLM_DEFINE_TAG(Concert_ConcertTakeRecorder);
 
-/**
- * Module that adds multi user synchronization to take recorder.
- */
-class FConcertTakeRecorderModule : public IModuleInterface
+namespace UE::ConcertTakeRecorder
 {
-private:
-	virtual void StartupModule() override
+	void FConcertTakeRecorderModule::StartupModule()
 	{
 		LLM_SCOPE_BYTAG(Concert_ConcertTakeRecorder);
+		
 		FConcertTakeRecorderStyle::Initialize();
 		ConcertManager = MakeUnique<FConcertTakeRecorderManager>();
 	}
-
-	virtual void ShutdownModule() override
+	
+	void FConcertTakeRecorderModule::ShutdownModule()
 	{
 		ConcertManager.Reset();
 		FConcertTakeRecorderStyle::Shutdown();
 	}
+}
 
-	virtual ~FConcertTakeRecorderModule() = default;
-
-
-	TUniquePtr<FConcertTakeRecorderManager> ConcertManager;
-};
-
-
-IMPLEMENT_MODULE(FConcertTakeRecorderModule, ConcertTakeRecorder);
+IMPLEMENT_MODULE(UE::ConcertTakeRecorder::FConcertTakeRecorderModule, ConcertTakeRecorder);

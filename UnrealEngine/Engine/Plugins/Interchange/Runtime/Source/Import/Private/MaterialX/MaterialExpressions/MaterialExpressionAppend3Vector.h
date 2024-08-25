@@ -9,7 +9,7 @@
 /**
  * A material expression that allows combining 3 channels together to create a vector with more channel than the original
  */
-UCLASS(MinimalAPI, collapsecategories, hidecategories = Object, meta = ( Private))
+UCLASS(MinimalAPI, collapsecategories, hidecategories = Object, meta = (Private))
 class UMaterialExpressionMaterialXAppend3Vector : public UMaterialExpression
 {
 	GENERATED_UCLASS_BODY()
@@ -27,6 +27,7 @@ class UMaterialExpressionMaterialXAppend3Vector : public UMaterialExpression
 #if WITH_EDITOR
 	virtual int32 Compile(class FMaterialCompiler* Compiler, int32 OutputIndex) override;
 	virtual void GetCaption(TArray<FString>& OutCaptions) const override;
+	virtual bool GenerateHLSLExpression(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope, int32 OutputIndex, UE::HLSLTree::FExpression const*& OutExpression) const override;
 #endif
 	//~ End UMaterialExpressionMaterialX Interface
 };

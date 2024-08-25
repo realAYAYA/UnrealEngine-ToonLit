@@ -439,6 +439,7 @@ namespace CrossCompiler
 				InsertToken(TEXT("inline"), EHlslToken::Inline);
 				InsertToken(TEXT("typedef"), EHlslToken::Typedef);
 				InsertToken(TEXT("packoffset"), EHlslToken::PackOffset);
+				InsertToken(TEXT("operator"), EHlslToken::Operator);
 			}
 		} GStaticInitializer;
 	}

@@ -19,6 +19,17 @@
 
 namespace UE::Mass::Debug
 {
+	bool bAllowProceduralDebuggedEntitySelection = false;
+	bool bAllowBreakOnDebuggedEntity = false;
+
+	FAutoConsoleVariableRef CVars[] =
+	{
+		FAutoConsoleVariableRef(TEXT("mass.debug.AllowProceduralDebuggedEntitySelection"), bAllowProceduralDebuggedEntitySelection
+			, TEXT("Guards whether MASS_SET_ENTITY_DEBUGGED calls take effect."), ECVF_Cheat)
+		, FAutoConsoleVariableRef(TEXT("mass.debug.AllowBreakOnDebuggedEntity"), bAllowBreakOnDebuggedEntity
+			, TEXT("Guards whether MASS_BREAK_IF_ENTITY_DEBUGGED calls take effect."), ECVF_Cheat)
+	};
+	
 
 	FString DebugGetFragmentAccessString(EMassFragmentAccess Access)
 	{
@@ -51,6 +62,92 @@ namespace UE::Mass::Debug
 			}
 		}
 		Ar.SetAutoEmitLineTerminator(bAutoLineEnd);
+	}
+
+	// First Id of a range of lightweight entity for which we want to activate debug information
+	int32 DebugEntityBegin = INDEX_NONE;
+
+	// Last Id of a range of lightweight entity for which we want to activate debug information
+	int32 DebugEntityEnd = INDEX_NONE;
+
+	void SetDebugEntityRange(const int32 InDebugEntityBegin, const int32 InDebugEntityEnd)
+	{
+		DebugEntityBegin = InDebugEntityBegin;
+		DebugEntityEnd = InDebugEntityBegin;
+	}
+
+	static FAutoConsoleCommand SetDebugEntityRangeCommand(
+		TEXT("mass.debug.SetDebugEntityRange"),
+		TEXT("Range of lightweight entity IDs that we want to debug.")
+		TEXT("Usage: \"mass.debug.SetDebugEntityRange <FirstEntity> <LastEntity>\""),
+		FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
+			{
+				if (Args.Num() != 2)
+				{
+					UE_LOG(LogConsoleResponse, Display, TEXT("Error: Expecting 2 parameters"));
+					return;
+				}
+
+				int32 FirstID = INDEX_NONE;
+				int32 LastID = INDEX_NONE;
+				if (!LexTryParseString<int32>(FirstID, *Args[0]))
+				{
+					UE_LOG(LogConsoleResponse, Display, TEXT("Error: first parameter must be an integer"));
+					return;
+				}
+			
+				if (!LexTryParseString<int32>(LastID, *Args[1]))
+				{
+					UE_LOG(LogConsoleResponse, Display, TEXT("Error: second parameter must be an integer"));
+					return;
+				}
+
+				SetDebugEntityRange(FirstID, LastID);
+			}));
+
+	static FAutoConsoleCommand ResetDebugEntity(
+		TEXT("mass.debug.ResetDebugEntity"),
+		TEXT("Disables lightweight entities debugging.")
+		TEXT("Usage: \"mass.debug.ResetDebugEntity\""),
+		FConsoleCommandWithArgsDelegate::CreateLambda([](const TArray<FString>& Args)
+			{
+				SetDebugEntityRange(INDEX_NONE, INDEX_NONE);
+			}));
+
+	bool HasDebugEntities()
+	{
+		return DebugEntityBegin != INDEX_NONE && DebugEntityEnd != INDEX_NONE;
+	}
+
+	bool IsDebuggingSingleEntity()
+	{
+		return DebugEntityBegin != INDEX_NONE && DebugEntityBegin == DebugEntityEnd;
+	}
+
+	bool GetDebugEntitiesRange(int32& OutBegin, int32& OutEnd)
+	{
+		OutBegin = DebugEntityBegin;
+		OutEnd = DebugEntityEnd;
+		return DebugEntityBegin != INDEX_NONE && DebugEntityEnd != INDEX_NONE && DebugEntityBegin <= DebugEntityEnd;
+	}
+	
+	bool IsDebuggingEntity(FMassEntityHandle Entity, FColor* OutEntityColor)
+	{
+		const int32 EntityIdx = Entity.Index;
+		const bool bIsDebuggingEntity = (DebugEntityBegin != INDEX_NONE && DebugEntityEnd != INDEX_NONE && DebugEntityBegin <= EntityIdx && EntityIdx <= DebugEntityEnd);
+	
+		if (bIsDebuggingEntity && OutEntityColor != nullptr)
+		{
+			*OutEntityColor = GetEntityDebugColor(Entity);
+		}
+
+		return bIsDebuggingEntity;
+	}
+
+	FColor GetEntityDebugColor(FMassEntityHandle Entity)
+	{
+		const int32 EntityIdx = Entity.Index;
+		return EntityIdx != INDEX_NONE ? GColorList.GetFColorByIndex(EntityIdx % GColorList.GetColorsNum()) : FColor::Black;
 	}
 
 	FAutoConsoleCommandWithWorldArgsAndOutputDevice PrintEntityFragmentsCmd(
@@ -192,9 +289,9 @@ namespace UE::Mass::Debug
 			}));
 
 	static FAutoConsoleCommandWithWorldAndArgs DestroyEntity(
-		TEXT("ai.debug.mass.DestroyEntity"),
-		TEXT("ID of a lightweight entity that we want to destroy.")
-		TEXT("Usage: \"ai.debug.mass.DestoryEntity <Entity>\""),
+		TEXT("mass.debug.DestroyEntity"),
+		TEXT("ID of a Mass entity that we want to destroy.")
+		TEXT("Usage: \"mass.debug.DestoryEntity <Entity>\""),
 		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
 	{
 		if (Args.Num() != 1)
@@ -227,6 +324,45 @@ namespace UE::Mass::Debug
 		EntityManager.Defer().DestroyEntity(EntityToDestroy);
 	}));
 
+	static FAutoConsoleCommandWithWorldAndArgs SetDebugEntity(
+		TEXT("mass.debug.DebugEntity"),
+		TEXT("ID of a Mass entity that we want to debug.")
+		TEXT("Usage: \"mass.debug.DebugEntity <Entity>\""),
+		FConsoleCommandWithWorldAndArgsDelegate::CreateLambda([](const TArray<FString>& Args, UWorld* World)
+		{
+			if (Args.Num() != 1)
+			{
+				UE_LOG(LogConsoleResponse, Display, TEXT("Error: Expecting 1 parameter"));
+				return;
+			}
+
+			int32 ID = INDEX_NONE;
+			if (!LexTryParseString<int32>(ID, *Args[0]))
+			{
+				UE_LOG(LogConsoleResponse, Display, TEXT("Error: parameter must be an integer"));
+				return;
+			}
+
+			if (!World)
+			{
+				UE_LOG(LogConsoleResponse, Display, TEXT("Error: invalid world"));
+				return;
+			}
+
+			SetDebugEntityRange(ID, ID);
+
+			FMassEntityManager& EntityManager = UE::Mass::Utils::GetEntityManagerChecked(*World);
+			FMassEntityHandle EntityToDebug = EntityManager.DebugGetEntityIndexHandle(ID);
+			if (!EntityToDebug.IsSet())
+			{
+				UE_LOG(LogConsoleResponse, Display, TEXT("Error: cannot find entity for this index"));
+				return;
+			}
+
+			FMassDebugger::SelectEntity(EntityManager, EntityToDebug);
+		}
+	));
+
 } // namespace UE::Mass::Debug
 
 //----------------------------------------------------------------------//
@@ -236,7 +372,7 @@ FMassDebugger::FOnEntitySelected FMassDebugger::OnEntitySelectedDelegate;
 
 FMassDebugger::FOnMassEntityManagerEvent FMassDebugger::OnEntityManagerInitialized;
 FMassDebugger::FOnMassEntityManagerEvent FMassDebugger::OnEntityManagerDeinitialized;
-TArray<TWeakPtr<const FMassEntityManager>> FMassDebugger::ActiveEntityManagers;
+TArray<FMassDebugger::FEnvironment> FMassDebugger::ActiveEnvironments;
 UE::FSpinLock FMassDebugger::EntityManagerRegistrationLock;
 
 TConstArrayView<FMassEntityQuery*> FMassDebugger::GetProcessorQueries(const UMassProcessor& Processor)
@@ -299,6 +435,12 @@ void FMassDebugger::GetArchetypeEntityStats(const FMassArchetypeHandle& Archetyp
 	OutStats.EntitiesCountPerChunk = ArchetypeData.GetNumEntitiesPerChunk();
 	OutStats.ChunksCount = ArchetypeData.GetChunkCount();
 	OutStats.AllocatedSize = ArchetypeData.GetAllocatedSize();
+	OutStats.BytesPerEntity = ArchetypeData.GetBytesPerEntity();
+
+	SIZE_T ActiveChunksMemorySize = 0;
+	SIZE_T ActiveEntitiesMemorySize = 0;
+	ArchetypeData.DebugGetEntityMemoryNumbers(ActiveChunksMemorySize, ActiveEntitiesMemorySize);
+	OutStats.WastedEntityMemory = ActiveChunksMemorySize - ActiveEntitiesMemorySize;
 }
 
 const TConstArrayView<FName> FMassDebugger::GetArchetypeDebugNames(const FMassArchetypeHandle& ArchetypeHandle)
@@ -462,14 +604,35 @@ void FMassDebugger::OutputEntityDescription(FOutputDevice& Ar, const FMassEntity
 
 void FMassDebugger::SelectEntity(const FMassEntityManager& EntityManager, const FMassEntityHandle EntityHandle)
 {
+	UE::Mass::Debug::SetDebugEntityRange(EntityHandle.Index, EntityHandle.Index);
+
+	const int32 Index = ActiveEnvironments.IndexOfByPredicate([WeakManager = EntityManager.AsWeak()](const FEnvironment& Element)
+		{
+			return Element.EntityManager == WeakManager;
+		});
+	if (ensure(Index != INDEX_NONE))
+	{
+		ActiveEnvironments[Index].SelectedEntity = EntityHandle;
+	}
+
 	OnEntitySelectedDelegate.Broadcast(EntityManager, EntityHandle);
+}
+
+FMassEntityHandle FMassDebugger::GetSelectedEntity(const FMassEntityManager& EntityManager)
+{
+	const int32 Index = ActiveEnvironments.IndexOfByPredicate([WeakManager = EntityManager.AsWeak()](const FEnvironment& Element)
+		{
+			return Element.EntityManager == WeakManager;
+		});
+
+	return Index != INDEX_NONE ? ActiveEnvironments[Index].SelectedEntity : FMassEntityHandle();
 }
 
 void FMassDebugger::RegisterEntityManager(FMassEntityManager& EntityManager)
 {
 	UE::TScopeLock<UE::FSpinLock> ScopeLock(EntityManagerRegistrationLock);
 
-	ActiveEntityManagers.Add(EntityManager.AsShared());
+	ActiveEnvironments.Emplace(EntityManager);
 	OnEntityManagerInitialized.Broadcast(EntityManager);
 }
 
@@ -479,13 +642,20 @@ void FMassDebugger::UnregisterEntityManager(FMassEntityManager& EntityManager)
 
 	if (EntityManager.DoesSharedInstanceExist())
 	{
-		ActiveEntityManagers.Remove(EntityManager.AsWeak());
+		const int32 Index = ActiveEnvironments.IndexOfByPredicate([WeakManager = EntityManager.AsWeak()](const FEnvironment& Element) 
+		{
+			return Element.EntityManager == WeakManager;
+		});
+		if (Index != INDEX_NONE)
+		{
+			ActiveEnvironments.RemoveAt(Index, 1, EAllowShrinking::No);
+		}
 	}
 	else
 	{
-		ActiveEntityManagers.RemoveAll([](const TWeakPtr<const FMassEntityManager>& Item)
+		ActiveEnvironments.RemoveAll([](const FEnvironment& Item)
 			{
-				return Item.IsValid();
+				return Item.IsValid() == false;
 			});
 	}
 	OnEntityManagerDeinitialized.Broadcast(EntityManager);

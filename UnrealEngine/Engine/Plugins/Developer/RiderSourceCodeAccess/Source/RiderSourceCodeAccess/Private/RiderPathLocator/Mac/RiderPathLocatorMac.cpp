@@ -14,13 +14,13 @@
 
 TOptional<FInstallInfo> FRiderPathLocator::GetInstallInfoFromRiderPath(const FString& PathToRiderApp, FInstallInfo::EInstallType InstallType)
 {
-	if(!FPaths::DirectoryExists(PathToRiderApp))
+	if(!DirectoryExistsAndNonEmpty(PathToRiderApp))
 	{
 		return {};
 	}
 
 	const FString RiderCppPluginPath = FPaths::Combine(PathToRiderApp, TEXT("Contents"), TEXT("plugins"), TEXT("rider-cpp"));
-	if (!FPaths::DirectoryExists(RiderCppPluginPath))
+	if (!DirectoryExistsAndNonEmpty(RiderCppPluginPath))
 	{
 		return {};
 	}

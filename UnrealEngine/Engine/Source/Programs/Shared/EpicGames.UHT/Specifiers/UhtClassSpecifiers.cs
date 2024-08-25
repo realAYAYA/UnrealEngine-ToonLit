@@ -121,6 +121,13 @@ namespace EpicGames.UHT.Parsers
 		}
 
 		[UhtSpecifier(Extends = UhtTableNames.Class, ValueType = UhtSpecifierValueType.Legacy)]
+		private static void PerPlatformConfigSpecifier(UhtSpecifierContext specifierContext)
+		{
+			UhtClass classObj = (UhtClass)specifierContext.Type;
+			classObj.AddClassFlags(EClassFlags.PerPlatformConfig);
+		}
+
+		[UhtSpecifier(Extends = UhtTableNames.Class, ValueType = UhtSpecifierValueType.Legacy)]
 		private static void ConfigDoNotCheckDefaultsSpecifier(UhtSpecifierContext specifierContext)
 		{
 			UhtClass classObj = (UhtClass)specifierContext.Type;

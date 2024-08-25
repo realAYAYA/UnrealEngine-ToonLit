@@ -1,11 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Perforce;
-using Microsoft.Extensions.Logging;
 using System;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using EpicGames.Perforce;
+using Microsoft.Extensions.Logging;
 
 namespace UnrealGameSync
 {
@@ -25,8 +25,8 @@ namespace UnrealGameSync
 		{
 			async Task<int> ExecuteTypedAsync(IPerforceConnection perforce, CancellationToken cancellationToken)
 			{
-				await executeAsync(perforce, cancellationToken); 
-				return 0; 
+				await executeAsync(perforce, cancellationToken);
+				return 0;
 			}
 
 			return Execute(owner, title, message, perforceSettings, ExecuteTypedAsync, logger, flags);
@@ -70,7 +70,7 @@ namespace UnrealGameSync
 		private static ModalTask<T>? ExecuteInternal<T>(IWin32Window? owner, string title, string message, IPerforceSettings perforceSettings, Func<Task<IPerforceConnection>> connectAsync, Func<IPerforceConnection, CancellationToken, Task<T>> executeAsync, ModalTaskFlags flags = ModalTaskFlags.None)
 		{
 			string? password = perforceSettings.Password;
-			for(;;)
+			for (; ; )
 			{
 				Task<T> RunAsync(CancellationToken cancellationToken) => LoginAndExecuteAsync(password, connectAsync, executeAsync, cancellationToken);
 

@@ -105,15 +105,6 @@ public:
 public:
 	FKismetFunctionContext(FCompilerResultsLog& InMessageLog, const UEdGraphSchema_K2* InSchema, UBlueprintGeneratedClass* InNewClass, UBlueprint* InBlueprint);
 
-	// @todo: BP2CPP_remove
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	UE_DEPRECATED(5.0, "Please use the version that does not include the Cpp generation flag as a parameter.")
-	FKismetFunctionContext(FCompilerResultsLog& InMessageLog, const UEdGraphSchema_K2* InSchema, UBlueprintGeneratedClass* InNewClass, UBlueprint* InBlueprint, bool bInGeneratingCpp)
-		:FKismetFunctionContext(InMessageLog, InSchema, InNewClass, InBlueprint)
-	{
-	}
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
-
 	~FKismetFunctionContext();
 
 	void SetExternalNetNameMap(FNetNameMapping* NewMap);
@@ -317,10 +308,6 @@ public:
 		return (SourceStatementList != NULL) && (SourceStatementList->Num() > 0);
 	}
 
-	// @todo: BP2CPP_remove
-	UE_DEPRECATED(5.0, "This API is no longer in use and will be removed.")
-	bool MustUseSwitchState(const FBlueprintCompiledStatement* ExcludeThisOne) const { return false; }
-
 private:
 	// Optimize out any useless jumps (jump to the very next statement, where the control flow can just fall through)
 	void MergeAdjacentStates();
@@ -332,11 +319,10 @@ private:
 	void ResolveGotoFixups();
 
 public:
-	// @todo: BP2CPP_remove
-	UE_DEPRECATED(5.0, "This API is no longer in use and will be removed.")
-	static bool DoesStatementRequiresSwitch(const FBlueprintCompiledStatement* Statement) { return false; }
+	/** Returns true if this statement cannot be optimized to remove the flow stack */
 	static bool DoesStatementRequiresFlowStack(const FBlueprintCompiledStatement* Statement);
-	// The function links gotos, sorts statments, and merges adjacent ones. 
+	
+	/** This function links gotos, sorts statments, and merges adjacent ones */
 	void ResolveStatements();
 
 	/**

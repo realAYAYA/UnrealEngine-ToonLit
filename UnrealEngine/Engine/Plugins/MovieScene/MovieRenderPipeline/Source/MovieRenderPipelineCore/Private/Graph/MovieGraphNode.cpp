@@ -10,7 +10,7 @@ FString UMovieGraphNode::GlobalsPinNameString = FString("Globals");
 
 namespace UE::MovieGraph::Private
 {
-	EMovieGraphValueType GetValueTypeFromProperty(const FProperty* InSourceProperty)
+	EMovieGraphValueType GetValueTypeFromProperty(const FProperty* InSourceProperty, TObjectPtr<const UObject>& OutValueTypeObject)
 	{
 		if (CastField<FBoolProperty>(InSourceProperty))
 		{
@@ -18,7 +18,13 @@ namespace UE::MovieGraph::Private
 		}
 		if (const FByteProperty* ByteProperty = CastField<FByteProperty>(InSourceProperty))
 		{
-			return ByteProperty->IsEnum() ? EMovieGraphValueType::Enum : EMovieGraphValueType::Byte;
+			if (ByteProperty->IsEnum())
+			{
+				OutValueTypeObject = ByteProperty->Enum.Get();
+				return EMovieGraphValueType::Enum;
+			}
+			
+			return EMovieGraphValueType::Byte;
 		}
 		if (CastField<FIntProperty>(InSourceProperty))
 		{
@@ -48,35 +54,41 @@ namespace UE::MovieGraph::Private
 		{
 			return EMovieGraphValueType::Text;
 		}
-		if (CastField<FEnumProperty>(InSourceProperty))
+		if (const FEnumProperty* EnumProperty = CastField<FEnumProperty>(InSourceProperty))
 		{
+			OutValueTypeObject = EnumProperty->GetEnum();
 			return EMovieGraphValueType::Enum;
 		}
-		if (CastField<FStructProperty>(InSourceProperty))
+		if (const FStructProperty* StructProperty = CastField<FStructProperty>(InSourceProperty))
 		{
+			OutValueTypeObject = StructProperty->Struct.Get();
 			return EMovieGraphValueType::Struct;
 		}
-		if (CastField<FObjectProperty>(InSourceProperty))
+		if (const FObjectProperty* ObjectProperty = CastField<FObjectProperty>(InSourceProperty))
 		{
+			OutValueTypeObject = ObjectProperty->PropertyClass.Get();
 			return EMovieGraphValueType::Object;
 		}
-		if (CastField<FSoftObjectProperty>(InSourceProperty))
+		if (const FSoftObjectProperty* SoftObjectProperty = CastField<FSoftObjectProperty>(InSourceProperty))
 		{
+			OutValueTypeObject = SoftObjectProperty->PropertyClass.Get();
 			return EMovieGraphValueType::SoftObject;
 		}
-		if (CastField<FClassProperty>(InSourceProperty))
+		if (const FClassProperty* ClassProperty = CastField<FClassProperty>(InSourceProperty))
 		{
+			OutValueTypeObject = ClassProperty->PropertyClass.Get();
 			return EMovieGraphValueType::Class;
 		}
-		if (CastField<FSoftClassProperty>(InSourceProperty))
+		if (const FSoftClassProperty* SoftClassProperty = CastField<FSoftClassProperty>(InSourceProperty))
 		{
+			OutValueTypeObject = SoftClassProperty->PropertyClass.Get();
 			return EMovieGraphValueType::SoftClass;
 		}
 
 		// Handle array property
 		if (const FArrayProperty* ArrayProperty = CastField<FArrayProperty>(InSourceProperty))
 		{
-			return GetValueTypeFromProperty(ArrayProperty->Inner);	
+			return GetValueTypeFromProperty(ArrayProperty->Inner, OutValueTypeObject);	
 		}
 
 		return EMovieGraphValueType::None;
@@ -100,7 +112,7 @@ TArray<FMovieGraphPinProperties> UMovieGraphNode::GetExposedPinProperties() cons
 		}
 		
 		constexpr bool bAllowMultipleConnections = false;
-		Properties.Add(FMovieGraphPinProperties(PropertyInfo.Name, PropertyInfo.ValueType, bAllowMultipleConnections));
+		Properties.Add(FMovieGraphPinProperties(PropertyInfo.Name, PropertyInfo.ValueType, PropertyInfo.ValueTypeObject, bAllowMultipleConnections));
 	}
 
 	return Properties;
@@ -141,6 +153,14 @@ void UMovieGraphNode::TogglePromotePropertyToPin(const FName& PropertyName)
 			});
 		}
 	}
+	else
+	{
+		// They requested a property that didn't exist, throw a kismet exception so scripts can know.
+		FFrame::KismetExecutionMessage(
+			*FString::Printf(
+				TEXT("%hs: Could not find a property with the name '%s' to promote to pin."), __FUNCTION__, *PropertyName.ToString()),
+			ELogVerbosity::Error);
+	}
 
 	UpdatePins();
 }
@@ -179,10 +199,11 @@ void UMovieGraphNode::UpdatePins()
 	// Include the exposed dynamic properties in the input pins
 	InputPinProperties.Append(GetExposedPinProperties());
 
-	auto UpdatePins = [this](TArray<UMovieGraphPin*>& Pins, const TArray<FMovieGraphPinProperties>& PinProperties)
+	bool bChangedPins = false;
+
+	auto UpdatePins = [this, &bChangedPins](TArray<UMovieGraphPin*>& Pins, const TArray<FMovieGraphPinProperties>& PinProperties)
 	{
 		bool bAppliedEdgeChanges = false;
-		bool bChangedPins = false;
 
 		// Find unmatched pins vs. properties (via name matching)
 		TArray<UMovieGraphPin*> UnmatchedPins;
@@ -234,7 +255,7 @@ void UMovieGraphNode::UpdatePins()
 		for (const FMovieGraphPinProperties& UnmatchedProperty : UnmatchedProperties)
 		{
 			const int32 InsertIndex = PinProperties.IndexOfByKey(UnmatchedProperty);
-			UMovieGraphPin* NewPin = NewObject<UMovieGraphPin>(this);
+			UMovieGraphPin* NewPin = NewObject<UMovieGraphPin>(this, NAME_None, RF_Transactional);
 			NewPin->Node = this;
 			NewPin->Properties = UnmatchedProperty;
 			Pins.Insert(NewPin, InsertIndex);
@@ -246,7 +267,10 @@ void UMovieGraphNode::UpdatePins()
 	UpdatePins(MutableView(InputPins), InputPinProperties);
 	UpdatePins(MutableView(OutputPins), OutputPinProperties);
 
-	OnNodeChangedDelegate.Broadcast(this);
+	if (bChangedPins)
+	{
+		OnNodeChangedDelegate.Broadcast(this);
+	}
 }
 
 void UMovieGraphNode::UpdateDynamicProperties()
@@ -286,11 +310,27 @@ UMovieGraphConfig* UMovieGraphNode::GetGraph() const
 	return Cast<UMovieGraphConfig>(GetOuter());
 }
 
-UMovieGraphPin* UMovieGraphNode::GetInputPin(const FName& Label) const
+UMovieGraphPin* UMovieGraphNode::GetInputPin(const FName& InPinLabel, const EMovieGraphPinQueryRequirement PinRequirement) const
 {
 	for (UMovieGraphPin* InputPin : InputPins)
 	{
-		if (InputPin->Properties.Label == Label)
+		if (InputPin->Properties.Label != InPinLabel)
+		{
+			continue;
+		}
+
+		if (PinRequirement == EMovieGraphPinQueryRequirement::BuiltInOrDynamic)
+		{
+			return InputPin;
+		}
+
+		const bool bIsBuiltIn = InputPin->Properties.bIsBuiltIn;
+		if ((PinRequirement == EMovieGraphPinQueryRequirement::BuiltIn) && bIsBuiltIn)
+		{
+			return InputPin;
+		}
+		
+		if ((PinRequirement == EMovieGraphPinQueryRequirement::Dynamic) && !bIsBuiltIn)
 		{
 			return InputPin;
 		}
@@ -312,6 +352,48 @@ UMovieGraphPin* UMovieGraphNode::GetOutputPin(const FName& Label) const
 	return nullptr;
 }
 
+UMovieGraphPin* UMovieGraphNode::GetFirstConnectedInputPin() const
+{
+	for (const TObjectPtr<UMovieGraphPin>& InputPin : InputPins)
+	{
+		if (InputPin->IsConnected())
+		{
+			return InputPin.Get();
+		}
+	}
+
+	return nullptr;
+}
+
+UMovieGraphPin* UMovieGraphNode::GetFirstConnectedOutputPin() const
+{
+	for (const TObjectPtr<UMovieGraphPin>& OutputPin : OutputPins)
+	{
+		if (OutputPin->IsConnected())
+		{
+			return OutputPin.Get();
+		}
+	}
+
+	return nullptr;
+}
+
+bool UMovieGraphNode::CanBeDisabled() const
+{
+	// By default, all nodes can be disabled
+	return true;
+}
+
+void UMovieGraphNode::SetDisabled(const bool bNewDisableState)
+{
+	bIsDisabled = bNewDisableState;
+}
+
+bool UMovieGraphNode::IsDisabled() const
+{
+	return bIsDisabled;
+}
+
 #if WITH_EDITOR
 FLinearColor UMovieGraphNode::GetNodeTitleColor() const
 {
@@ -329,6 +411,14 @@ void UMovieGraphNode::PostLoad()
 {
 	Super::PostLoad();
 
+	RegisterDelegates();
+}
+
+void UMovieGraphNode::PostDuplicate(EDuplicateMode::Type DuplicateMode)
+{
+	Super::PostDuplicate(DuplicateMode);
+
+	// New graphs are typically created by duplicating a template. Make sure the nodes in the template have their delegates registered.
 	RegisterDelegates();
 }
 
@@ -391,12 +481,21 @@ TArray<FMovieGraphPropertyInfo> UMovieGraphNode::GetOverrideablePropertyInfo() c
 	
 	for (TFieldIterator<FProperty> PropertyIterator(GetClass()); PropertyIterator; ++PropertyIterator)
 	{
+		// Only allow overriding properties that are shown in the details panel (ie, has EditAnywhere/VisibleAnywhere property flags -- CPF_Edit). However,
+		// if the property has VisibleAnywhere (CPF_EditConst) then hide the property from being overrideable. Setting the property as VisibleAnywhere
+		// gives details customizations the opportunity to pick up the property for further processing, but because of the complicated nature of these
+		// properties, VisibleAnywhere serves as a filtering mechanism to prevent it from being overridden.
+		if (!PropertyIterator->HasAnyPropertyFlags(CPF_Edit) || PropertyIterator->HasAnyPropertyFlags(CPF_EditConst))
+		{
+			continue;
+		}
+		
 		if (UMovieGraphConfig::FindOverridePropertyForRealProperty(GetClass(), *PropertyIterator))
 		{
 			FMovieGraphPropertyInfo Info;
 			Info.Name = PropertyIterator->GetFName();
 			Info.bIsDynamicProperty = false;
-			Info.ValueType = UE::MovieGraph::Private::GetValueTypeFromProperty(*PropertyIterator);
+			Info.ValueType = UE::MovieGraph::Private::GetValueTypeFromProperty(*PropertyIterator, Info.ValueTypeObject);
 			
 			OverrideableProperties.Add(MoveTemp(Info));
 		}
@@ -410,6 +509,7 @@ TArray<FMovieGraphPropertyInfo> UMovieGraphNode::GetOverrideablePropertyInfo() c
 			Info.Name = Desc.Name;
 			Info.bIsDynamicProperty = true;
 			Info.ValueType = static_cast<EMovieGraphValueType>(Desc.ValueType);
+			Info.ValueTypeObject = Desc.ValueTypeObject.Get();
 
 			OverrideableProperties.Add(MoveTemp(Info));
 		}
@@ -421,6 +521,39 @@ TArray<FMovieGraphPropertyInfo> UMovieGraphNode::GetOverrideablePropertyInfo() c
 TArray<UMovieGraphPin*> UMovieGraphNode::EvaluatePinsToFollow(FMovieGraphEvaluationContext& InContext) const
 {
 	TArray<UMovieGraphPin*> PinsToFollow;
+	
+	if (!ensure(InContext.PinBeingFollowed))
+    {
+    	return PinsToFollow;
+    }
+    
+	// If the node is disabled, only follow the first connected pin.
+    // This is only important for branch connections. For data pins, just continue following the connection.
+	if (IsDisabled() && InContext.PinBeingFollowed->Properties.bIsBranch)
+	{
+		if (UMovieGraphPin* GraphPin = GetFirstConnectedInputPin())
+		{
+			PinsToFollow.Add(GraphPin);
+		}
+
+		return PinsToFollow;
+	}
+
+	// If this is a data (non-branch) connection, just return the first connected pin.
+	if (!InContext.PinBeingFollowed->Properties.bIsBranch)
+	{
+		// Only do this if the pin is an input though. For data output pins, the generic case does not have enough information to determine what
+		// the upstream connected data pin is.
+		if (InContext.PinBeingFollowed->IsInputPin())
+		{
+			if (UMovieGraphPin* ConnectedInputPin = InContext.PinBeingFollowed->GetFirstConnectedPin())
+			{
+				PinsToFollow.Add(ConnectedInputPin);
+			}
+		}
+		
+		return PinsToFollow;
+	}
 
 	// By default we provide all Input Pins to this node that are the Branch Type.
 	// You should override this in downstream nodes that need custom logic, such
@@ -432,6 +565,7 @@ TArray<UMovieGraphPin*> UMovieGraphNode::EvaluatePinsToFollow(FMovieGraphEvaluat
 			PinsToFollow.Add(InputPin);
 		}
 	}
+	
 	return PinsToFollow;
 }
 

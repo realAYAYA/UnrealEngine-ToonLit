@@ -6,7 +6,7 @@
 #include "ContextualAnimSceneAsset.h"
 #include "ContextualAnimViewModel.h"
 #include "DetailsViewArgs.h"
-#include "SequencerUtilities.h"
+#include "MVVM/Views/ViewUtilities.h"
 #include "Framework/Commands/UICommandList.h"
 #include "SequencerSectionPainter.h"
 #include "Animation/AnimNotifies/AnimNotify.h"
@@ -184,13 +184,10 @@ TSharedPtr<SWidget> FContextualAnimMovieSceneNotifyTrackEditor::BuildOutlinerEdi
 		return MenuBuilder.MakeWidget();
 	};
 
-	return SNew(SHorizontalBox)
-		+ SHorizontalBox::Slot()
-		.AutoWidth()
-		.VAlign(VAlign_Center)
-		[
-			FSequencerUtilities::MakeAddButton(LOCTEXT("Notify", "Notify"), FOnGetContent::CreateLambda(SubMenuCallback), Params.NodeIsHovered, GetSequencer())
-		];
+	return UE::Sequencer::MakeAddButton(
+		LOCTEXT("Notify", "Notify"),
+		FOnGetContent::CreateLambda(SubMenuCallback),
+		Params.ViewModel);
 }
 
 void FContextualAnimMovieSceneNotifyTrackEditor::BuildNewIKTargetSubMenu(FMenuBuilder& MenuBuilder, UContextualAnimMovieSceneNotifyTrack* Track, int32 RowIndex)

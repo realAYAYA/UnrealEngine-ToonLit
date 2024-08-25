@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "ShaderParameterMetadata.h"
+#include "ShaderCore.h"
 
 class FShaderCompilerFlags;
 struct FShaderCompilerInput;
@@ -16,14 +17,51 @@ enum class EShaderParameterType : uint8;
 enum class EBindlessConversionType : uint8
 {
 	None,
-	Resource,
-	Sampler
+	SRV,
+	UAV,
+	Sampler,
 };
+
+enum class EShaderParameterParserConfigurationFlags
+{
+	None                    = 0,
+	UseStableConstantBuffer = 1 << 0,
+	SupportsBindless        = 1 << 1,
+	// "Vulkan" style
+	BindlessUsesArrays      = 1 << 2,
+};
+ENUM_CLASS_FLAGS(EShaderParameterParserConfigurationFlags)
 
 /** Validates and moves all the shader loose data parameter defined in the root scope of the shader into the root uniform buffer. */
 class FShaderParameterParser
 {
 public:
+	struct FPlatformConfiguration
+	{
+		FPlatformConfiguration() = default;
+		FPlatformConfiguration(FStringView InConstantBufferType, EShaderParameterParserConfigurationFlags InFlags = EShaderParameterParserConfigurationFlags::None)
+			: ConstantBufferType(InConstantBufferType)
+			, Flags(InFlags)
+		{
+			if (InConstantBufferType.Len())
+			{
+				EnumAddFlags(Flags, EShaderParameterParserConfigurationFlags::UseStableConstantBuffer);
+			}
+		}
+
+		/** Generate shader code for accessing a bindless resource or sampler */
+		virtual FString GenerateBindlessAccess(EBindlessConversionType BindlessType, FStringView ShaderTypeString, FStringView IndexString) const
+		{
+			checkf(false, TEXT("Platforms that support bindless must override GenerateBindlessAccess"));
+			return FString();
+		}
+
+		TConstArrayView<FStringView> ExtraSRVTypes;
+		TConstArrayView<FStringView> ExtraUAVTypes;
+		FStringView ConstantBufferType;
+		EShaderParameterParserConfigurationFlags Flags = EShaderParameterParserConfigurationFlags::None;
+	};
+
 	struct FParsedShaderParameter
 	{
 	public:
@@ -61,41 +99,29 @@ public:
 		bool bGloballyCoherent = false;
 		bool bIsBindable = false;
 
+		EShaderCodeResourceBindingType ParsedTypeDecl = EShaderCodeResourceBindingType::Invalid;
+
 		friend class FShaderParameterParser;
 	};
 
-	RENDERCORE_API FShaderParameterParser();
-
-	UE_DEPRECATED(5.3, "Use FShaderParameterParser constructor which accepts FShaderCompilerFlags")
-	RENDERCORE_API FShaderParameterParser(const TCHAR* InConstantBufferType);
-	UE_DEPRECATED(5.3, "Use FShaderParameterParser constructor which accepts FShaderCompilerFlags")
-	RENDERCORE_API FShaderParameterParser(const TCHAR* InConstantBufferType, TConstArrayView<const TCHAR*> InExtraSRVTypes, TConstArrayView<const TCHAR*> InExtraUAVTypes);
-
-	RENDERCORE_API FShaderParameterParser(
-		FShaderCompilerFlags CompilerFlags,
-		const TCHAR* InConstantBufferType = nullptr,
-		TConstArrayView<const TCHAR*> InExtraSRVTypes = {},
-		TConstArrayView<const TCHAR*> InExtraUAVTypes = {});
+	FShaderParameterParser() = delete;
+	RENDERCORE_API FShaderParameterParser(const FPlatformConfiguration& InPlatformConfiguration);
 
 	RENDERCORE_API virtual ~FShaderParameterParser();
 
-	FShaderParameterParser& operator=(FShaderParameterParser&&) = default;
-
-	static constexpr const TCHAR* kBindlessResourcePrefix = TEXT("BindlessResource_");
+	static constexpr const TCHAR* kBindlessSRVPrefix = TEXT("BindlessSRV_");
+	static constexpr const TCHAR* kBindlessUAVPrefix = TEXT("BindlessUAV_");
 	static constexpr const TCHAR* kBindlessSamplerPrefix = TEXT("BindlessSampler_");
 
-	static RENDERCORE_API EShaderParameterType ParseParameterType(FStringView InType, TConstArrayView<const TCHAR*> InExtraSRVTypes, TConstArrayView<const TCHAR*> InExtraUAVTypes);
+	// Prefix used to declare arrays of samplers/resources for bindless
+	static constexpr const TCHAR* kBindlessSRVArrayPrefix = TEXT("SRVDescriptorHeap_");
+	static constexpr const TCHAR* kBindlessUAVArrayPrefix = TEXT("UAVDescriptorHeap_");
+	static constexpr const TCHAR* kBindlessSamplerArrayPrefix = TEXT("SamplerDescriptorHeap_");
+
 	static RENDERCORE_API EShaderParameterType ParseAndRemoveBindlessParameterPrefix(FStringView& InName);
 	static RENDERCORE_API EShaderParameterType ParseAndRemoveBindlessParameterPrefix(FString& InName);
 	static RENDERCORE_API bool RemoveBindlessParameterPrefix(FString& InName);
-
-	/** Parses the preprocessed shader code and applies the necessary modifications to it. */
-	UE_DEPRECATED(5.3, "Use ParseAndModify overload accepting array of FShaderCompilerError instead of passing FShaderCompilerOutput")
-	RENDERCORE_API bool ParseAndModify(
-		const FShaderCompilerInput& CompilerInput,
-		FShaderCompilerOutput& CompilerOutput,
-		FString& PreprocessedShaderSource
-	);
+	static RENDERCORE_API FStringView GetBindlessParameterPrefix(EShaderParameterType InShaderParameterType);
 
 	RENDERCORE_API bool ParseAndModify(
 		const FShaderCompilerInput& CompilerInput,
@@ -103,23 +129,15 @@ public:
 		FString& PreprocessedShaderSource
 	);
 
-	UE_DEPRECATED(5.2, "ParseAndModify doesn't need ConstantBufferType anymore")
-	bool ParseAndModify(
-		const FShaderCompilerInput& CompilerInput,
-		FShaderCompilerOutput& CompilerOutput,
-		FString& PreprocessedShaderSource,
-		const TCHAR* InConstantBufferType
-	)
-	{
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		return ParseAndModify(CompilerInput, CompilerOutput, PreprocessedShaderSource);
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
-	}
-
 	/** Gets parsing information from a parameter binding name. */
 	const FParsedShaderParameter& FindParameterInfos(const FString& ParameterName) const
 	{
 		return ParsedParameters.FindChecked(ParameterName);
+	}
+
+	const FParsedShaderParameter* FindParameterInfosUnsafe(const FString& ParameterName) const
+	{
+		return ParsedParameters.Find(ParameterName);
 	}
 
 	/** Validates the shader parameter in code is compatible with the shader parameter structure. */
@@ -160,9 +178,11 @@ public:
 		return ExtractFileAndLine(ParsedParameter.ParsedPragmaLineOffset, ParsedParameter.ParsedLineOffset, OutFile, OutLine);
 	}
 
-	friend FArchive& operator<<(FArchive& Ar, FShaderParameterParser& Parser);
+	bool DidModifyShader() const { return bModifiedShader; }
 
 protected:
+	RENDERCORE_API EShaderParameterType ParseParameterType(FStringView InType);
+
 	/** Parses the preprocessed shader code */
 	RENDERCORE_API bool ParseParameters(
 		const FShaderParametersMetadata* RootParametersStructure,
@@ -190,12 +210,9 @@ protected:
 	* Generates shader source code to declare a bindless resource or sampler (for automatic bindless conversion).
 	* May be overriden to allow custom implementations for different platforms.
 	*/
-	RENDERCORE_API virtual FString GenerateBindlessParameterDeclaration(const FParsedShaderParameter& ParsedParameter) const;
+	RENDERCORE_API FString GenerateBindlessParameterDeclaration(const FParsedShaderParameter& ParsedParameter) const;
 
-	const TCHAR* ConstantBufferType = nullptr;
-
-	TConstArrayView<const TCHAR*> ExtraSRVTypes;
-	TConstArrayView<const TCHAR*> ExtraUAVTypes;
+	const FPlatformConfiguration& PlatformConfiguration;
 
 	FString OriginalParsedShader;
 
@@ -209,4 +226,7 @@ protected:
 
 	/** Indicates that parameters were actually moved to the root constant buffer. */
 	bool bMovedLoosedParametersToRootConstantBuffer = false;
+
+	/** Indicates that the shader source was actually modified. */
+	bool bModifiedShader = false;
 };

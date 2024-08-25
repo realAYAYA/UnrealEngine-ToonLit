@@ -21,6 +21,7 @@ namespace Metasound::Frontend
 		FOnMetaSoundFrontendDocumentMutateInterfaceArray OnRemovingInterface;
 
 		FOnMetaSoundFrontendDocumentMutateArray OnInputAdded;
+		FOnMetaSoundFrontendDocumentMutateArray OnInputDefaultChanged;
 		FOnMetaSoundFrontendDocumentMutateArray OnRemovingInput;
 
 		FOnMetaSoundFrontendDocumentMutateArray OnOutputAdded;

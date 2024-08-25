@@ -544,12 +544,11 @@ void FCategorySectionHelper::DumpParsedObject_Internal(FArchive& Ar) const
 //////////////////////////////////////////
 // FImaginaryBlueprint
 
-FImaginaryBlueprint::FImaginaryBlueprint(FString InBlueprintName, FString InBlueprintPath, FString InBlueprintParentClass, TArray<FString>& InInterfaces, FString InUnparsedStringData, FSearchDataVersionInfo InVersionInfo)
+FImaginaryBlueprint::FImaginaryBlueprint(const FString& InBlueprintName, const FString& InBlueprintPath, const FString& InBlueprintParentClass, const TArray<FString>& InInterfaces, const FString& InUnparsedStringData, FSearchDataVersionInfo InVersionInfo)
 	: FImaginaryFiBData(nullptr)
 	, BlueprintPath(InBlueprintPath)
-	, UnparsedStringData(InUnparsedStringData)
 {
-	ParseToJson(InVersionInfo);
+	ParseToJson(InVersionInfo, InUnparsedStringData);
 	LookupTablePtr = &LookupTable;
 	ParsedTagsAndValues.Add(FindInBlueprintsHelpers::FSimpleFTextKeyStorage(FFindInBlueprintSearchTags::FiB_Name), FSearchableValueInfo(FFindInBlueprintSearchTags::FiB_Name, FText::FromString(InBlueprintName), ESearchableValueStatus::ExplicitySearchable));
 	ParsedTagsAndValues.Add(FindInBlueprintsHelpers::FSimpleFTextKeyStorage(FFindInBlueprintSearchTags::FiB_Path), FSearchableValueInfo(FFindInBlueprintSearchTags::FiB_Path, FText::FromString(InBlueprintPath), ESearchableValueStatus::ExplicitySearchable));
@@ -558,7 +557,7 @@ FImaginaryBlueprint::FImaginaryBlueprint(FString InBlueprintName, FString InBlue
 	TSharedPtr< FCategorySectionHelper, ESPMode::ThreadSafe > InterfaceCategory = MakeShareable(new FCategorySectionHelper(nullptr, &LookupTable, FFindInBlueprintSearchTags::FiB_Interfaces, true));
 	for( int32 InterfaceIdx = 0; InterfaceIdx < InInterfaces.Num(); ++InterfaceIdx)
 	{
-		FString& Interface = InInterfaces[InterfaceIdx];
+		const FString& Interface = InInterfaces[InterfaceIdx];
 		FText Key = FText::FromString(FString::FromInt(InterfaceIdx));
 		FSearchableValueInfo Value(Key, FText::FromString(Interface), ESearchableValueStatus::ExplicitySearchable);
 		InterfaceCategory->AddKeyValuePair(FFindInBlueprintSearchTags::FiB_Interfaces, Value);
@@ -608,7 +607,7 @@ bool FImaginaryBlueprint::CanCallFilter(ESearchQueryFilter InSearchQueryFilter) 
 		FImaginaryFiBData::CanCallFilter(InSearchQueryFilter);
 }
 
-void FImaginaryBlueprint::ParseToJson(FSearchDataVersionInfo InVersionInfo)
+void FImaginaryBlueprint::ParseToJson(FSearchDataVersionInfo InVersionInfo, const FString& UnparsedStringData)
 {
 	UnparsedJsonObject = FFindInBlueprintSearchManager::ConvertJsonStringToObject(InVersionInfo, UnparsedStringData, LookupTable);
 }

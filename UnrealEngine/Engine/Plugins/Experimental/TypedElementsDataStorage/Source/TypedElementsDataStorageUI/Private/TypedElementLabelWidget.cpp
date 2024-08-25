@@ -2,13 +2,19 @@
 
 #include "TypedElementLabelWidget.h"
 
+#include "ActorEditorUtils.h"
 #include "Elements/Columns/TypedElementLabelColumns.h"
 #include "Elements/Columns/TypedElementMiscColumns.h"
 #include "Elements/Columns/TypedElementSlateWidgetColumns.h"
 #include "Elements/Columns/TypedElementValueCacheColumns.h"
 #include "Elements/Framework/TypedElementQueryBuilder.h"
+#include "Elements/Interfaces/Capabilities/TypedElementUiEditableCapability.h"
+#include "Elements/Interfaces/Capabilities/TypedElementUiTextCapability.h"
+#include "Elements/Interfaces/Capabilities/TypedElementUiTooltipCapability.h"
+#include "Elements/Interfaces/Capabilities/TypedElementUiStyleOverrideCapability.h"
 #include "TypedElementSubsystems.h"
 #include "Widgets/Text/STextBlock.h"
+#include "Widgets/Text/SInlineEditableTextBlock.h"
 
 #define LOCTEXT_NAMESPACE "TypedElementUI_LabelWidget"
 
@@ -19,22 +25,26 @@
 static void UpdateTextWidget(const TWeakPtr<SWidget>& Widget, const FTypedElementLabelColumn& Label, const uint64* HashValue)
 {
 	TSharedPtr<SWidget> WidgetPointer = Widget.Pin();
-	checkf(WidgetPointer, TEXT("Referenced widget is not valid. A constructed widget may not have been cleaned up. This can "
+	if (ensureMsgf(WidgetPointer, TEXT("Referenced widget is not valid. A constructed widget may not have been cleaned up. This can "
 		"also happen if this processor is running in the same phase as the processors responsible for cleaning up old "
-		"references."));
-	checkf(WidgetPointer->GetType() == STextBlock::StaticWidgetClass().GetWidgetType(),
-		TEXT("Stored widget with FTypedElementLabelWidgetConstructor doesn't match type %s, but was a %s."),
-		*(STextBlock::StaticWidgetClass().GetWidgetType().ToString()),
-		*(WidgetPointer->GetTypeAsString()));
-	STextBlock* WidgetInstance = static_cast<STextBlock*>(WidgetPointer.Get());
-	WidgetInstance->SetText(FText::FromString(Label.Label));
-	if (!HashValue)
+		"references.")))
 	{
-		WidgetInstance->SetToolTipText(FText::FromString(Label.Label));
-	}
-	else
-	{
-		WidgetInstance->SetToolTipText(FText::FromString(FString::Format(TEXT("{0}\nHash: {1}"), { Label.Label, *HashValue })));
+		if (TSharedPtr<ITypedElementUiTextCapability> Text = WidgetPointer->GetMetaData<ITypedElementUiTextCapability>())
+		{
+			Text->SetText(FText::FromString(Label.Label));
+		}
+
+		if (TSharedPtr<ITypedElementUiTooltipCapability> ToolTip = WidgetPointer->GetMetaData<ITypedElementUiTooltipCapability>())
+		{
+			if (!HashValue)
+			{
+				ToolTip->SetToolTipText(FText::FromString(Label.Label));
+			}
+			else
+			{
+				ToolTip->SetToolTipText(FText::FromString(FString::Format(TEXT("{0}\nHash: {1}"), { Label.Label, *HashValue })));
+			}
+		}
 	}
 }
 
@@ -62,32 +72,55 @@ static void SyncColumnsToWidget(
 	}
 }
 
-void UTypedElementLabelWidgetFactory::RegisterQueries(ITypedElementDataStorageInterface& DataStorage) const
+void UTypedElementLabelWidgetFactory::RegisterQueries(ITypedElementDataStorageInterface& DataStorage)
 {
 	using namespace TypedElementQueryBuilder;
 	using DSI = ITypedElementDataStorageInterface;
+
+	TypedElementQueryHandle UpdateLabelWidget = DataStorage.RegisterQuery(
+		Select()
+			.ReadOnly<FTypedElementLabelColumn>()
+		.Where()
+			.Any<FTypedElementSyncFromWorldTag, FTypedElementSyncBackToWorldTag>()
+			.None<FTypedElementLabelHashColumn>()
+		.Compile());
+
+	TypedElementQueryHandle UpdateLabelAndHashWidget = DataStorage.RegisterQuery(
+		Select()
+			.ReadOnly<FTypedElementLabelColumn, FTypedElementLabelHashColumn>()
+		.Where()
+			.Any<FTypedElementSyncFromWorldTag, FTypedElementSyncBackToWorldTag>()
+		.Compile());
 
 	DataStorage.RegisterQuery(
 		Select(
 			TEXT("Sync label to widget"),
 			FProcessor(DSI::EQueryTickPhase::FrameEnd, DataStorage.GetQueryTickGroupName(DSI::EQueryTickGroups::SyncWidgets))
 				.ForceToGameThread(true),
-			[](	FCachedQueryContext<UTypedElementDataStorageSubsystem>& Context, 
+			[](
+				DSI::IQueryContext& Context, 
 				FTypedElementSlateWidgetReferenceColumn& Widget,
 				FTypedElementU64IntValueCacheColumn& TextHash,
 				const FTypedElementLabelWidgetColumn& Config,
 				const FTypedElementRowReferenceColumn& Target)
 			{
-				DSI* DataStorage = Context.GetCachedMutableDependency<UTypedElementDataStorageSubsystem>().Get();
-				checkf(DataStorage, TEXT("FTypedElementsDataStorageUiModule tried to process widgets before the "
-					"Typed Elements Data Storage interface is available."));
-				
-				if (DataStorage->HasColumns<FTypedElementSyncFromWorldTag>(Target.Row) ||
-					DataStorage->HasColumns<FTypedElementSyncBackToWorldTag>(Target.Row))
-				{
-					SyncColumnsToWidget(DataStorage, Target.Row, TextHash, Widget.Widget, Config.bShowHashInTooltip);
-				}
+				Context.RunSubquery(0, Target.Row, CreateSubqueryCallbackBinding(
+					[&Widget](const FTypedElementLabelColumn& Label)
+					{
+						UpdateTextWidget(Widget.Widget, Label, nullptr);
+					}));
+				Context.RunSubquery(1, Target.Row, CreateSubqueryCallbackBinding(
+					[&Widget, &TextHash, &Config](const FTypedElementLabelColumn& Label, const FTypedElementLabelHashColumn& Hash)
+					{
+						if (Hash.LabelHash != TextHash.Value)
+						{
+							UpdateTextWidget(Widget.Widget, Label, Config.bShowHashInTooltip ? &Hash.LabelHash : nullptr);
+							TextHash.Value = Hash.LabelHash;
+						}
+					}));
 			})
+		.DependsOn()
+			.SubQuery({ UpdateLabelWidget, UpdateLabelAndHashWidget })
 		.Compile()
 	);
 }
@@ -95,10 +128,10 @@ void UTypedElementLabelWidgetFactory::RegisterQueries(ITypedElementDataStorageIn
 void UTypedElementLabelWidgetFactory::RegisterWidgetConstructors(ITypedElementDataStorageInterface& DataStorage,
 	ITypedElementDataStorageUiInterface& DataStorageUi) const
 {
-	 DataStorageUi.RegisterWidgetFactory(FName(TEXT("General.Cell")), FTypedElementLabelWidgetConstructor::StaticStruct(),
-		{ FTypedElementLabelColumn::StaticStruct() });
-	DataStorageUi.RegisterWidgetFactory(FName(TEXT("General.Cell")), FTypedElementLabelWithHashTooltipWidgetConstructor::StaticStruct(),
-		{ FTypedElementLabelColumn::StaticStruct(), FTypedElementLabelHashColumn::StaticStruct() });
+	using namespace TypedElementDataStorage;
+
+	DataStorageUi.RegisterWidgetFactory<FTypedElementLabelWidgetConstructor>(FName(TEXT("General.Cell")), 
+		FColumn<FTypedElementLabelColumn>() || (FColumn<FTypedElementLabelColumn>() && FColumn<FTypedElementLabelHashColumn>()));
 }
 
 
@@ -126,21 +159,75 @@ TConstArrayView<const UScriptStruct*> FTypedElementLabelWidgetConstructor::GetAd
 	return Columns;
 }
 
-bool FTypedElementLabelWidgetConstructor::CanBeReused() const
+TSharedPtr<SWidget> FTypedElementLabelWidgetConstructor::Construct(
+	TypedElementRowHandle Row,
+	ITypedElementDataStorageInterface* DataStorage,
+	ITypedElementDataStorageUiInterface* DataStorageUi,
+	const TypedElementDataStorage::FMetaDataView& Arguments)
 {
-	return true;
-}
+	TSharedPtr<SWidget> Result;
+	const bool* IsEditable = Arguments.FindForColumn<FTypedElementLabelColumn>(TypedElementDataStorage::IsEditableName).TryGetExact<bool>();
+	if (IsEditable && *IsEditable)
+	{
+		if (FTypedElementRowReferenceColumn* TargetRowColumn = DataStorage->GetColumn<FTypedElementRowReferenceColumn>(Row))
+		{
+			TSharedPtr<SInlineEditableTextBlock> TextBlock = SNew(SInlineEditableTextBlock)
+				.OnTextCommitted_Lambda(
+					[DataStorage, TargetRow = TargetRowColumn->Row](const FText& NewText, ETextCommit::Type CommitInfo)
+					{
+						// This callback happens on the game thread so it's safe to directly call into the data storage.
+						FString NewLabelText = NewText.ToString();
+						if (FTypedElementLabelHashColumn* LabelHashColumn = DataStorage->GetColumn<FTypedElementLabelHashColumn>(TargetRow))
+						{
+							LabelHashColumn->LabelHash = CityHash64(reinterpret_cast<const char*>(*NewLabelText), NewLabelText.Len() * sizeof(**NewLabelText));
+						}
+						if (FTypedElementLabelColumn* LabelColumn = DataStorage->GetColumn<FTypedElementLabelColumn>(TargetRow))
+						{
+							LabelColumn->Label = MoveTemp(NewLabelText);
+						}
+						DataStorage->AddColumn<FTypedElementSyncBackToWorldTag>(TargetRow);
+					})
+				.OnVerifyTextChanged_Lambda([](const FText& Label, FText& ErrorMessage)
+					{
+						// Note: The use of actor specific functionality should be minimized, but this function acts generic enough that the 
+						// use of actor is just in names.
+						return FActorEditorUtils::ValidateActorName(Label, ErrorMessage);
+					});
+			TextBlock->AddMetadata(MakeShared<TTypedElementUiEditableCapability<SInlineEditableTextBlock>>(*TextBlock));
+			TextBlock->AddMetadata(MakeShared<TTypedElementUiTextCapability<SInlineEditableTextBlock>>(*TextBlock));
+			TextBlock->AddMetadata(MakeShared<TTypedElementUiTooltipCapability<SInlineEditableTextBlock>>(*TextBlock));
+			TextBlock->AddMetadata(MakeShared<TTypedElementUiStyleOverrideCapability<SInlineEditableTextBlock>>(*TextBlock));
+			Result = TextBlock;
+		}
+	}
+	else
+	{
+		TSharedPtr<STextBlock> TextBlock = SNew(STextBlock)
+			.IsEnabled(false);
+		TextBlock->AddMetadata(MakeShared<TTypedElementUiTextCapability<STextBlock>>(*TextBlock));
+		TextBlock->AddMetadata(MakeShared<TTypedElementUiTooltipCapability<STextBlock>>(*TextBlock));
+		Result = TextBlock;
+	}
+	
+	if (Result)
+	{
+		DataStorage->GetColumn<FTypedElementSlateWidgetReferenceColumn>(Row)->Widget = Result;
+		if (SetColumns(DataStorage, Row))
+		{
+			if (FinalizeWidget(DataStorage, DataStorageUi, Row, Result))
+			{
+				return Result;
+			}
+		}
+	}
 
-TSharedPtr<SWidget> FTypedElementLabelWidgetConstructor::CreateWidget()
-{
-	return SNew(STextBlock);
+	return nullptr;
 }
 
 bool FTypedElementLabelWidgetConstructor::SetColumns(ITypedElementDataStorageInterface* DataStorage, TypedElementRowHandle Row)
 {
 	DataStorage->GetColumn<FTypedElementU64IntValueCacheColumn>(Row)->Value = 0;
-	DataStorage->GetColumn<FTypedElementLabelWidgetColumn>(Row)->bShowHashInTooltip = false;
-
+	DataStorage->AddOrGetColumn<FTypedElementLabelWidgetColumn>(Row)->bShowHashInTooltip = (MatchedColumnTypes.Num() == 2);
 	return true;
 }
 
@@ -154,42 +241,7 @@ bool FTypedElementLabelWidgetConstructor::FinalizeWidget(
 		DataStorage, 
 		DataStorage->GetColumn<FTypedElementRowReferenceColumn>(Row)->Row,
 		*DataStorage->GetColumn<FTypedElementU64IntValueCacheColumn>(Row),
-		Widget,
-		false);
-	return true;
-}
-
-
-
-//
-// FTypedElementLabelWithHashTooltipWidgetConstructor
-//
-
-FTypedElementLabelWithHashTooltipWidgetConstructor::FTypedElementLabelWithHashTooltipWidgetConstructor()
-	: Super(FTypedElementLabelWithHashTooltipWidgetConstructor::StaticStruct())
-{
-}
-
-bool FTypedElementLabelWithHashTooltipWidgetConstructor::SetColumns(ITypedElementDataStorageInterface* DataStorage, TypedElementRowHandle Row)
-{
-	DataStorage->GetColumn<FTypedElementU64IntValueCacheColumn>(Row)->Value = 0;
-	DataStorage->GetColumn<FTypedElementLabelWidgetColumn>(Row)->bShowHashInTooltip = true;
-
-	return true;
-}
-
-bool FTypedElementLabelWithHashTooltipWidgetConstructor::FinalizeWidget(
-	ITypedElementDataStorageInterface* DataStorage,
-	ITypedElementDataStorageUiInterface* DataStorageUi,
-	TypedElementRowHandle Row,
-	const TSharedPtr<SWidget>& Widget)
-{
-	SyncColumnsToWidget(
-		DataStorage,
-		DataStorage->GetColumn<FTypedElementRowReferenceColumn>(Row)->Row,
-		*DataStorage->GetColumn<FTypedElementU64IntValueCacheColumn>(Row),
-		Widget,
-		true);
+		Widget, MatchedColumnTypes.Num() == 2);
 	return true;
 }
 

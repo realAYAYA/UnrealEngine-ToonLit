@@ -18,6 +18,7 @@ public:
 	static FAudioWidgetsStyle& Get();
 
 private:
+	void SetResources();
 
 	FAudioWidgetsStyle();
 	~FAudioWidgetsStyle();

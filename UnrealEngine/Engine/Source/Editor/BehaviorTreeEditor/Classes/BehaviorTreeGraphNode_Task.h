@@ -13,15 +13,16 @@
 
 class UObject;
 
-UCLASS()
+UCLASS(MinimalAPI)
 class UBehaviorTreeGraphNode_Task : public UBehaviorTreeGraphNode
 {
 	GENERATED_UCLASS_BODY()
 
-	virtual void AllocateDefaultPins() override;
-	virtual FText GetNodeTitle(ENodeTitleType::Type TitleType) const override;
+	BEHAVIORTREEEDITOR_API virtual void AllocateDefaultPins() override;
+	BEHAVIORTREEEDITOR_API virtual FText GetNodeTitle(ENodeTitleType::Type TitleType) const override;
 	/** Gets a list of actions that can be done to this particular node */
-	virtual void GetNodeContextMenuActions(class UToolMenu* Menu, class UGraphNodeContextMenuContext* Context) const override;
+	BEHAVIORTREEEDITOR_API virtual void GetNodeContextMenuActions(class UToolMenu* Menu, class UGraphNodeContextMenuContext* Context) const override;
 
-	virtual bool CanPlaceBreakpoints() const override { return true; }
+	BEHAVIORTREEEDITOR_API virtual bool CanPlaceBreakpoints() const override { return true; }
+	BEHAVIORTREEEDITOR_API virtual FLinearColor GetBackgroundColor(bool bIsActiveForDebugger) const override;
 };

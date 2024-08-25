@@ -20,7 +20,7 @@ public:
 	void Release_RenderThread();
 
 private:
-	void ImplRelease_RenderThread();
+	void ImplRelease();
 
 private:
 	/* RenderThread resources */

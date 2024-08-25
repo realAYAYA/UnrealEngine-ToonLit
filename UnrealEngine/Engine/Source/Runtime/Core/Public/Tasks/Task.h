@@ -4,6 +4,7 @@
 
 #include "Tasks/TaskPrivate.h"
 #include "Async/Fundamental/Task.h"
+#include "Async/ManualResetEvent.h"
 #include "Containers/StaticArray.h"
 #include "HAL/Event.h"
 #include "HAL/IConsoleManager.h"
@@ -104,19 +105,21 @@ namespace UE::Tasks
 			// @param DebugName - a unique name for task identification in debugger and profiler, is compiled out in test/shipping builds
 			// @param TaskBody - a functor that will be executed asynchronously
 			// @param Priority - task priority that affects when the task will be executed
+			// @param TaskFlags - task config options
 			// @return a trivially relocatable instance that can be used to wait for task completion or to obtain task execution result
 			template<typename TaskBodyType>
 			void Launch(
 				const TCHAR* DebugName,
 				TaskBodyType&& TaskBody,
 				ETaskPriority Priority = ETaskPriority::Normal,
-				EExtendedTaskPriority ExtendedPriority = EExtendedTaskPriority::None
+				EExtendedTaskPriority ExtendedPriority = EExtendedTaskPriority::None,
+				ETaskFlags Flags = ETaskFlags::None
 			)
 			{
 				check(!IsValid());
 
 				using FExecutableTask = Private::TExecutableTask<std::decay_t<TaskBodyType>>;
-				FExecutableTask* Task = FExecutableTask::Create(DebugName, Forward<TaskBodyType>(TaskBody), Priority, ExtendedPriority);
+				FExecutableTask* Task = FExecutableTask::Create(DebugName, Forward<TaskBodyType>(TaskBody), Priority, ExtendedPriority, Flags);
 				// this must happen before launching, to support an ability to access the task itself from inside it
 				*Pimpl.GetInitReference() = Task;
 				Task->TryLaunch(sizeof(*Task));
@@ -128,6 +131,7 @@ namespace UE::Tasks
 			// @param Prerequisites - tasks or task events that must be completed before the task being launched can be scheduled, accepts any 
 			// iterable collection (.begin()/.end()), `Tasks::Prerequisites()` helper is recommended to create such collection on the fly
 			// @param Priority - task priority that affects when the task will be executed
+			// @param TaskFlags - task config options
 			// @return a trivially relocatable instance that can be used to wait for task completion or to obtain task execution result
 			template<typename TaskBodyType, typename PrerequisitesCollectionType>
 			void Launch(
@@ -135,13 +139,14 @@ namespace UE::Tasks
 				TaskBodyType&& TaskBody,
 				PrerequisitesCollectionType&& Prerequisites,
 				ETaskPriority Priority = ETaskPriority::Normal,
-				EExtendedTaskPriority ExtendedPriority = EExtendedTaskPriority::None
+				EExtendedTaskPriority ExtendedPriority = EExtendedTaskPriority::None,
+				ETaskFlags Flags = ETaskFlags::None
 			)
 			{
 				check(!IsValid());
 
 				using FExecutableTask = Private::TExecutableTask<std::decay_t<TaskBodyType>>;
-				FExecutableTask* Task = FExecutableTask::Create(DebugName, Forward<TaskBodyType>(TaskBody), Priority, ExtendedPriority);
+				FExecutableTask* Task = FExecutableTask::Create(DebugName, Forward<TaskBodyType>(TaskBody), Priority, ExtendedPriority, Flags);
 				Task->AddPrerequisites(Forward<PrerequisitesCollectionType>(Prerequisites));
 				// this must happen before launching, to support an ability to access the task itself from inside it
 				*Pimpl.GetInitReference() = Task;
@@ -247,18 +252,20 @@ namespace UE::Tasks
 	// @param DebugName - a unique name for task identification in debugger and profiler, is compiled out in test/shipping builds
 	// @param TaskBody - a functor that will be executed asynchronously
 	// @param Priority - task priority that affects when the task will be executed
+	// @param TaskFlags - task config options
 	// @return a trivially relocatable instance that can be used to wait for task completion or to obtain task execution result
 	template<typename TaskBodyType>
 	TTask<TInvokeResult_T<TaskBodyType>> Launch(
 		const TCHAR* DebugName,
 		TaskBodyType&& TaskBody,
 		ETaskPriority Priority = ETaskPriority::Normal,
-		EExtendedTaskPriority ExtendedPriority = EExtendedTaskPriority::None
+		EExtendedTaskPriority ExtendedPriority = EExtendedTaskPriority::None,
+		ETaskFlags Flags = ETaskFlags::None
 	)
 	{
 		using FResult = TInvokeResult_T<TaskBodyType>;
 		TTask<FResult> Task;
-		Task.Launch(DebugName, Forward<TaskBodyType>(TaskBody), Priority, ExtendedPriority);
+		Task.Launch(DebugName, Forward<TaskBodyType>(TaskBody), Priority, ExtendedPriority, Flags);
 		return Task;
 	}
 
@@ -268,6 +275,7 @@ namespace UE::Tasks
 	// @param Prerequisites - tasks or task events that must be completed before the task being launched can be scheduled, accepts any 
 	// iterable collection (.begin()/.end()), `Tasks::Prerequisites()` helper is recommended to create such collection on the fly
 	// @param Priority - task priority that affects when the task will be executed
+	// @param TaskFlags - task config options
 	// @return a trivially relocatable instance that can be used to wait for task completion or to obtain task execution result
 	template<typename TaskBodyType, typename PrerequisitesCollectionType>
 	TTask<TInvokeResult_T<TaskBodyType>> Launch(
@@ -275,12 +283,13 @@ namespace UE::Tasks
 		TaskBodyType&& TaskBody,
 		PrerequisitesCollectionType&& Prerequisites,
 		ETaskPriority Priority = ETaskPriority::Normal,
-		EExtendedTaskPriority ExtendedPriority = EExtendedTaskPriority::None
+		EExtendedTaskPriority ExtendedPriority = EExtendedTaskPriority::None,
+		ETaskFlags Flags = ETaskFlags::None
 	)
 	{
 		using FResult = TInvokeResult_T<TaskBodyType>;
 		TTask<FResult> Task;
-		Task.Launch(DebugName, Forward<TaskBodyType>(TaskBody), Forward<PrerequisitesCollectionType>(Prerequisites), Priority, ExtendedPriority);
+		Task.Launch(DebugName, Forward<TaskBodyType>(TaskBody), Forward<PrerequisitesCollectionType>(Prerequisites), Priority, ExtendedPriority, Flags);
 		return Task;
 	}
 
@@ -332,7 +341,7 @@ namespace UE::Tasks
 		auto WaitingTaskBody = [CompletionEvent] { CompletionEvent->Trigger(); };
 		using FWaitingTask = Private::TExecutableTask<decltype(WaitingTaskBody)>;
 
-		TRefCountPtr<FWaitingTask> WaitingTask{ FWaitingTask::Create(TEXT("Waiting Task"), MoveTemp(WaitingTaskBody), ETaskPriority::Default /* doesn't matter */, EExtendedTaskPriority::Inline), /*bAddRef=*/ false};
+		TRefCountPtr<FWaitingTask> WaitingTask{ FWaitingTask::Create(TEXT("Waiting Task"), MoveTemp(WaitingTaskBody), ETaskPriority::Default /* doesn't matter */, EExtendedTaskPriority::Inline, ETaskFlags::None), /*bAddRef=*/ false};
 		WaitingTask->AddPrerequisites(Tasks);
 
 		if (WaitingTask->TryLaunch(sizeof(WaitingTask)))
@@ -383,6 +392,18 @@ namespace UE::Tasks
 		{
 			Array[Index] = Task.Pimpl.GetReference();
 		}
+
+		template<typename HigherLevelTaskType, std::enable_if_t<std::is_same_v<HigherLevelTaskType, FTask>>* = nullptr>
+		bool IsCompleted(const HigherLevelTaskType& Prerequisite)
+		{
+			return Prerequisite.IsCompleted();
+		}
+
+		template<typename HigherLevelTaskType, std::enable_if_t<std::is_same_v<HigherLevelTaskType, FGraphEventRef>>* = nullptr>
+		bool IsCompleted(const HigherLevelTaskType& Prerequisite)
+		{
+			return Prerequisite.IsValid() ? Prerequisite->IsCompleted() : false;
+		}
 	}
 
 	template<typename... TaskTypes, 
@@ -398,6 +419,114 @@ namespace UE::Tasks
 	const TaskCollectionType& Prerequisites(const TaskCollectionType& Tasks)
 	{
 		return Tasks;
+	}
+
+	/////////////////////////////////////////////////////////////
+	// "any task" support. these functions allocate excessively (per input task plus more).
+	// can be reduced to a single alloc if this is a perf issue
+	
+	// Blocks the current thread until any of the given tasks is completed.
+	// Is slightly more efficient than `Any().Wait()`.
+	// Returns the index of the first completed task, or `INDEX_NONE` on timeout
+	template<typename TaskCollectionType>
+	int32 WaitAny(const TaskCollectionType& Tasks, FTimespan Timeout = FTimespan::MaxValue())
+	{
+		if (UNLIKELY(Tasks.Num() == 0))
+		{
+			return INDEX_NONE;
+		}
+
+		// Avoid memory allocations if any of the events are already completed
+		for (int32 Index = 0; Index < Tasks.Num(); ++Index)
+		{
+			if (Private::IsCompleted(Tasks[Index]))
+			{
+				return Index;
+			}
+		}
+
+		struct FSharedData
+		{
+			UE::FManualResetEvent Event;
+			std::atomic<int32>    CompletedTaskIndex{ 0 };
+		};
+
+		// Shared data usage is important to avoid the variable to go out of scope
+		// before all the task have been run even if we exit after the first event
+		// is triggered.
+		TSharedRef<FSharedData> SharedData = MakeShared<FSharedData>();
+
+		for (int32 Index = 0; Index < Tasks.Num(); ++Index)
+		{
+			Launch(UE_SOURCE_LOCATION, 
+				[SharedData, Index]
+				{ 
+					SharedData->CompletedTaskIndex.store(Index, std::memory_order_relaxed);
+					SharedData->Event.Notify();
+				}, 
+				Prerequisites(Tasks[Index]),
+				ETaskPriority::Default, 
+				EExtendedTaskPriority::Inline
+			);
+		}
+
+		if (SharedData->Event.WaitFor(UE::FMonotonicTimeSpan::FromMilliseconds(Timeout.GetTotalMilliseconds())))
+		{
+			return SharedData->CompletedTaskIndex.load(std::memory_order_relaxed);
+		}
+
+		return INDEX_NONE;
+	}
+
+	// Returns a task that gets completed as soon as any of the given tasks gets completed
+	template<typename TaskCollectionType>
+	FTask Any(const TaskCollectionType& Tasks)
+	{
+		if (UNLIKELY(Tasks.Num() == 0))
+		{
+			return FTask{};
+		}
+
+		struct FSharedData
+		{
+			explicit FSharedData(uint32 InitRefCount)
+				: RefCount(InitRefCount)
+			{
+			}
+
+			FTaskEvent Event{ UE_SOURCE_LOCATION };
+			std::atomic<uint32> RefCount;
+		};
+
+		FSharedData* SharedData = new FSharedData(Tasks.Num());
+		// `SharedData` can be destroyed before leaving the scope, cache the result locally
+		FTaskEvent Result = SharedData->Event;
+
+		for (const FTask& Task : Tasks)
+		{
+			Launch(UE_SOURCE_LOCATION,
+				[SharedData, Num = Tasks.Num()]
+				{
+					// cache the local copy as `SharedData` can be concurrently deleted right after decrementing the ref counter
+					FTaskEvent Event = SharedData->Event;
+					uint32 PrevRefCount = SharedData->RefCount.fetch_sub(1, std::memory_order_acq_rel); // acq_rel to sync between tasks
+
+					if (UNLIKELY(PrevRefCount == Num))
+					{	// the first completed task
+						Event.Trigger();
+					}
+					else if (UNLIKELY(PrevRefCount == 1))
+					{	// the last competed task
+						delete SharedData;
+					}
+				},
+				Prerequisites(Task),
+				ETaskPriority::Default,
+				EExtendedTaskPriority::Inline
+			);
+		}
+
+		return Result;
 	}
 
 	// Adds the nested task to the task that is being currently executed by the current thread. A parent task is not flagged completed
@@ -460,4 +589,35 @@ namespace UE::Tasks
 			ETaskPriority::Default, // doesn't matter
 			EExtendedTaskPriority::Inline);
 	}
+
+	// support for canceling tasks mid-execution
+	// usage:
+	//		FCancellationToken Token;
+	//		Launch(UE_SOURCE_LOCATION, [&Token] { ... if (Token.IsCanceled()) return; ... });
+	//		Token.Cancel();
+	// * it's user's decision and responsibility to manage cancellation token lifetime, to check cancellation token, return early, 
+	//		to do any required cleanup, or to do nothing at all
+	// * no way to cancel a task to skip its execution completely
+	// * waiting for a canceled task is blocking until its prerequisites are completed and the task is executed and completed, 
+	//		basically same as for not canceled tasks except a canceled one can quit execution early
+	// * canceling a task doesn't affect its subsequents (unless they use the same cancellation token instance)
+	class FCancellationToken
+	{
+	public:
+		UE_NONCOPYABLE(FCancellationToken);
+		FCancellationToken() = default;
+
+		void Cancel()
+		{
+			bCanceled = true;
+		}
+
+		bool IsCanceled() const
+		{
+			return bCanceled;
+		}
+
+	private:
+		std::atomic<bool> bCanceled{ false };
+	};
 }

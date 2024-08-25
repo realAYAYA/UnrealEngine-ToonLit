@@ -104,7 +104,7 @@ public:
 	virtual void PostLoad()override;
 	virtual void PostEditChangeProperty(struct FPropertyChangedEvent& PropertyChangedEvent) override;
 	//End UObject interface
-
+	
 	//~ Begin UNiagaraNode Interface
 	virtual void Compile(FTranslator* Translator, TArray<int32>& Outputs) const override;
 	virtual UObject* GetReferencedAsset() const override;
@@ -112,7 +112,7 @@ public:
 	virtual bool RefreshFromExternalChanges() override;
 	virtual ENiagaraNumericOutputTypeSelectionMode GetNumericOutputTypeSelectionMode() const override;
 	virtual bool CanAddToGraph(UNiagaraGraph* TargetGraph, FString& OutErrorMsg) const override;
-	virtual void GatherExternalDependencyData(ENiagaraScriptUsage InUsage, const FGuid& InUsageId, TArray<FNiagaraCompileHash>& InReferencedCompileHashes, TArray<FString>& InReferencedObjs) const override;
+	virtual void GatherExternalDependencyData(ENiagaraScriptUsage InUsage, const FGuid& InUsageId, FNiagaraScriptHashCollector& HashCollector) const override;
 	virtual void UpdateCompileHashForNode(FSHA1& HashState) const override;
 	virtual void GetNodeContextMenuActions(class UToolMenu* Menu, class UGraphNodeContextMenuContext* Context) const override;
 	virtual TSharedRef<SWidget> CreateTitleRightWidget() override;
@@ -180,12 +180,9 @@ public:
 	// Messages API
 	FNiagaraMessageStore& GetMessageStore() { return MessageStore; }
 
-	// Custom Notes API
-	const TArray<FNiagaraStackMessage>& GetCustomNotes() const { return StackMessages; };
-	NIAGARAEDITOR_API void AddCustomNote(const FNiagaraStackMessage& StackMessage);
-	NIAGARAEDITOR_API void RemoveCustomNote(const FGuid& MessageKey);
-	FSimpleDelegate& OnCustomNotesChanged() { return OnCustomNotesChangedDelegate; }
-	void RemoveCustomNoteViaDelegate(const FGuid MessageKey);
+	// Custom Notes API - Deprecated. Used for transferring to stack editor data
+	const TArray<FNiagaraStackMessage>& GetDeprecatedCustomNotes() const { return StackMessages; }
+	
 	TArray<FGuid> GetBoundPinGuidsByName(FName InputName) const;
 
 	/** Adds a static switch pin to this function call node by variable id and sets it's default value using the supplied data and marks it as
@@ -254,7 +251,5 @@ protected:
 	TMap<FGuid, FName> BoundPinNames;
 
 	FOnInputsChanged OnInputsChangedDelegate;
-
-	FSimpleDelegate OnCustomNotesChangedDelegate;
 };
 

@@ -288,7 +288,7 @@ FAsyncDirectoryReader::EProgressResult FAsyncDirectoryReader::Tick(const FTimeLi
 		if (TimeLimit.Exceeded())
 		{
 			// We've spent too long, bail
-			PendingDirectories.RemoveAt(0, Index + 1, false);
+			PendingDirectories.RemoveAt(0, Index + 1, EAllowShrinking::No);
 			return EProgressResult::Pending;
 		}
 	}
@@ -325,7 +325,7 @@ FAsyncDirectoryReader::EProgressResult FAsyncDirectoryReader::Tick(const FTimeLi
 		if (TimeLimit.Exceeded())
 		{
 			// We've spent too long, bail
-			PendingFiles.RemoveAt(0, Index + 1, false);
+			PendingFiles.RemoveAt(0, Index + 1, EAllowShrinking::No);
 			return EProgressResult::Pending;
 		}
 	}

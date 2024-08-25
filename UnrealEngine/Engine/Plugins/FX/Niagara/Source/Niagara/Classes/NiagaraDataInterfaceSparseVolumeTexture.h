@@ -20,7 +20,6 @@ class UNiagaraDataInterfaceSparseVolumeTexture : public UNiagaraDataInterface
 		SHADER_PARAMETER_TEXTURE(Texture3D<uint>, PageTableTexture)
 		SHADER_PARAMETER_TEXTURE(Texture3D, PhysicalTileDataATexture)
 		SHADER_PARAMETER_TEXTURE(Texture3D, PhysicalTileDataBTexture)
-		SHADER_PARAMETER_SRV(ByteAddressBuffer, StreamingInfoBuffer)
 		SHADER_PARAMETER(FUintVector4, PackedUniforms0)
 		SHADER_PARAMETER(FUintVector4, PackedUniforms1)
 		SHADER_PARAMETER(FIntVector3, TextureSize)
@@ -41,7 +40,6 @@ public:
 	//UObject Interface End
 
 	//UNiagaraDataInterface Interface
-	NIAGARA_API virtual void GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions) override;
 	NIAGARA_API virtual void GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction& OutFunc) override;
 	virtual bool CanExecuteOnTarget(ENiagaraSimTarget Target) const override { return Target == ENiagaraSimTarget::GPUComputeSim; }
 
@@ -71,6 +69,9 @@ public:
 	NIAGARA_API void SetTexture(USparseVolumeTexture* InSparseVolumeTexture);
 
 protected:
+#if WITH_EDITORONLY_DATA
+	NIAGARA_API virtual void GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const override;
+#endif
 	NIAGARA_API virtual bool CopyToInternal(UNiagaraDataInterface* Destination) const override;
 
 protected:

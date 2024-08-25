@@ -145,7 +145,7 @@ int FCurlSocketEventLoopHttpThread::HandleCurlSocketCallback(CURL* CurlE, curl_s
 
 	FCurlSocketData* CurlSocketData = reinterpret_cast<FCurlSocketData*>(SocketData);
 
-	UE_LOG(LogHttp, VeryVerbose, TEXT("[FCurlSocketEventLoopHttpThread::HandleCurlSocketCallback] Socket: %p, EventFlags: 0x%08X, SocketData: %p"), Socket, EventFlags, SocketData);
+	UE_LOG(LogHttp, VeryVerbose, TEXT("[FCurlSocketEventLoopHttpThread::HandleCurlSocketCallback] Socket: %p, EventFlags: 0x%08X, SocketData: %p"), reinterpret_cast<void*>(Socket), EventFlags, SocketData);
 
 	switch (EventFlags)
 	{
@@ -224,7 +224,7 @@ void FCurlSocketEventLoopHttpThread::ProcessCurlSocketActions(curl_socket_t Sock
 {
 	QUICK_SCOPE_CYCLE_COUNTER(STAT_FCurlSocketEventLoopHttpThread_ProcessCurlSocketActions);
 
-	UE_LOG(LogHttp, VeryVerbose, TEXT("[FCurlSocketEventLoopHttpThread::ProcessCurlSocketActions] Socket: %p CurlEvents: 0x%08X"), Socket, EventFlags);
+	UE_LOG(LogHttp, VeryVerbose, TEXT("[FCurlSocketEventLoopHttpThread::ProcessCurlSocketActions] Socket: %p CurlEvents: 0x%08X"), reinterpret_cast<void*>(Socket), EventFlags);
 
 	int running_handles;
 	curl_multi_socket_action(FCurlHttpManager::GMultiHandle, Socket, EventFlags, &running_handles);
@@ -235,7 +235,7 @@ void FCurlSocketEventLoopHttpThread::ProcessCurlSocketEvent(curl_socket_t Socket
 {
 	if (Status != UE::EventLoop::ESocketIoRequestStatus::Ok)
 	{
-		UE_LOG(LogHttp, Warning, TEXT("Socket event request failed. Socket %p, Status: %s"), Socket, *LexToString(Status));
+		UE_LOG(LogHttp, Warning, TEXT("Socket event request failed. Socket %p, Status: %s"), reinterpret_cast<void*>(Socket), *LexToString(Status));
 		ProcessCurlSocketActions(CURL_SOCKET_TIMEOUT, 0);
 	}
 	else

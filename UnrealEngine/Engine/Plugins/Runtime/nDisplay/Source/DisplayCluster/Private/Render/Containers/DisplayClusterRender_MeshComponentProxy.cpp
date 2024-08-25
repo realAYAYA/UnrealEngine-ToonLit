@@ -16,19 +16,17 @@ FDisplayClusterRender_MeshComponentProxy::FDisplayClusterRender_MeshComponentPro
 
 FDisplayClusterRender_MeshComponentProxy::~FDisplayClusterRender_MeshComponentProxy()
 {
-	check(IsInRenderingThread());
-
-	ImplRelease_RenderThread();
+	ImplRelease();
 }
 
 void FDisplayClusterRender_MeshComponentProxy::Release_RenderThread()
 {
 	check(IsInRenderingThread());
 
-	ImplRelease_RenderThread();
+	ImplRelease();
 }
 
-void FDisplayClusterRender_MeshComponentProxy::ImplRelease_RenderThread()
+void FDisplayClusterRender_MeshComponentProxy::ImplRelease()
 {
 	VertexBufferRHI.SafeRelease();
 	IndexBufferRHI.SafeRelease();
@@ -72,7 +70,7 @@ void FDisplayClusterRender_MeshComponentProxy::UpdateRHI_RenderThread(FRHIComman
 {
 	check(IsInRenderingThread());
 
-	ImplRelease_RenderThread();
+	ImplRelease();
 
 	if (InMeshData && InMeshData->IsValid())
 	{

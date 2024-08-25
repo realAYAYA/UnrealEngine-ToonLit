@@ -33,13 +33,13 @@ class IStepExecutor
 public:
 
 	DECLARE_DELEGATE_RetVal_OneParam(FStepResult, FExecuteStepDelegate, const FTimespan& /*TotalProcessTime*/);
-	virtual void Add(const FExecuteStepDelegate& Step) = 0;
+	virtual void Add(const TSharedRef<FExecuteStepDelegate>& Step) = 0;
 
-	virtual void Add(const TFunction<FStepResult(const FTimespan&)>& Step) = 0;
+	virtual void Add(const TFunction<FStepResult(const FTimespan&)>& StepFunction) = 0;
 
-	virtual void InsertNext(const FExecuteStepDelegate& Step) = 0;
+	virtual void InsertNext(const TSharedRef<FExecuteStepDelegate>& Step) = 0;
 
-	virtual void InsertNext(const TFunction<FStepResult(const FTimespan&)>& Step) = 0;
+	virtual void InsertNext(const TFunction<FStepResult(const FTimespan&)>& StepFunction) = 0;
 
 	virtual TAsyncResult<bool> Execute() = 0;
 

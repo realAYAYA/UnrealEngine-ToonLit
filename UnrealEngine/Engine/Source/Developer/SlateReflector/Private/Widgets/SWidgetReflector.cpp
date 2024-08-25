@@ -1210,8 +1210,8 @@ int32 SWidgetReflector::Visualize( const FWidgetPath& InWidgetsToVisualize, FSla
 		TSharedPtr<FVisualTreeSnapshot> Tree = VisualCapture.GetVisualTreeForWindow(OutDrawElements.GetPaintWindow());
 		if (Tree.IsValid())
 		{
-			const FVector2D AbsPoint = FSlateApplication::Get().GetCursorPos();
-			const FVector2D WindowPoint = AbsPoint - OutDrawElements.GetPaintWindow()->GetPositionInScreen();
+			const FVector2f AbsPoint = FSlateApplication::Get().GetCursorPos();
+			const FVector2f WindowPoint = AbsPoint - OutDrawElements.GetPaintWindow()->GetPositionInScreen();
 			if (TSharedPtr<const SWidget> PickedWidget = Tree->Pick(WindowPoint))
 			{
 				FWidgetPath WidgetsToVisualize = InWidgetsToVisualize;
@@ -1373,7 +1373,7 @@ void SWidgetReflector::VisualizeAsTree( const TArray<TSharedRef<FWidgetReflector
 			const auto& CurWidget = WidgetPathToVisualize[WidgetIndex];
 
 			// Tint the item based on depth in picked path
-			const float ColorFactor = static_cast<float>(WidgetIndex) / WidgetPathToVisualize.Num();
+			const float ColorFactor = static_cast<float>(WidgetIndex) / static_cast<float>(WidgetPathToVisualize.Num());
 			CurWidget->SetTint(FMath::Lerp(TopmostWidgetColor, LeafmostWidgetColor, ColorFactor));
 
 			// Make sure the user can see the picked path in the tree.
@@ -1398,7 +1398,7 @@ int32 SWidgetReflector::VisualizePickAsRectangles( const FWidgetPath& InWidgetsT
 	for (int32 WidgetIndex = 0; WidgetIndex < InWidgetsToVisualize.Widgets.Num(); ++WidgetIndex)
 	{
 		const FArrangedWidget& WidgetGeometry = InWidgetsToVisualize.Widgets[WidgetIndex];
-		const float ColorFactor = static_cast<float>(WidgetIndex)/InWidgetsToVisualize.Widgets.Num();
+		const float ColorFactor = static_cast<float>(WidgetIndex)/ static_cast<float>(InWidgetsToVisualize.Widgets.Num());
 		const FLinearColor Tint(1.0f - ColorFactor, ColorFactor, 0.0f, 1.0f);
 
 		// The FGeometry we get is from a WidgetPath, so it's rooted in desktop space.
@@ -1535,7 +1535,6 @@ void SWidgetReflector::HandlePickingModeStateChanged()
 	default:
 		return FSlateIcon(FWidgetReflectorStyle::GetStyleSetName(), "Icon.Empty");
 	}
-	return FSlateIcon(FWidgetReflectorStyle::GetStyleSetName(), "Icon.Empty");
 }
 
 FText SWidgetReflector::HandleGetPickingModeText() const

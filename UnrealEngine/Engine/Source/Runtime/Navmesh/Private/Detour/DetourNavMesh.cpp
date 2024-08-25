@@ -933,12 +933,13 @@ int dtNavMesh::findConnectingPolys(const dtReal* va, const dtReal* vb,
 			if (poly->neis[j] != m) continue;
 
 			const dtReal* vc = &tile->verts[poly->verts[j] * 3];
-			const dtReal* vd = &tile->verts[poly->verts[(j + 1) % nv] * 3];
 			const dtReal bpos = getSlabCoord(vc, side);
 
 			// Segments are not close enough.
 			if (dtAbs(apos - bpos) > 0.01f)
 				continue;
+
+			const dtReal* vd = &tile->verts[poly->verts[(j + 1) % nv] * 3];
 
 			// Check if the segments touch.
 			calcSlabEndPoints(vc, vd, bmin, bmax, side);

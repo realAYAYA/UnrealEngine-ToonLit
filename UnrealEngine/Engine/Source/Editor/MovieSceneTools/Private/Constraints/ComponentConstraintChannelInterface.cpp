@@ -12,6 +12,7 @@
 #include "Sections/MovieScene3DTransformSection.h"
 #include "Systems/MovieScenePropertyInstantiator.h"
 #include "Tracks/MovieScene3DTransformTrack.h"
+#include "ConstraintsManager.h"
 #include "ScopedTransaction.h"
 
 UMovieSceneSection* FComponentConstraintChannelInterface::GetHandleSection(const UTransformableHandle* InHandle, const TSharedPtr<ISequencer>& InSequencer)
@@ -78,8 +79,13 @@ bool FComponentConstraintChannelInterface::SmartConstraintKey(
 	InConstraint->bDynamicOffset = true;
 	
 	// add the channel
-	if (ConstraintSection->HasConstraintChannel(InConstraint->GetFName()) == false)
+	if (ConstraintSection->HasConstraintChannel(InConstraint->ConstraintID) == false)
 	{
+		//check if static if so we need to delete it from world, will get added later again
+		if (UConstraintsManager* Manager = InConstraint->GetTypedOuter<UConstraintsManager>())
+		{
+			Manager->RemoveStaticConstraint(InConstraint);
+		}
 		ConstraintSection->AddConstraintChannel(InConstraint);
 		if (InSequencer.IsValid())
 		{
@@ -88,7 +94,7 @@ bool FComponentConstraintChannelInterface::SmartConstraintKey(
 	}
 
 	// add key if needed
-	if (FConstraintAndActiveChannel* Channel = ConstraintSection->GetConstraintChannel(InConstraint->GetFName()))
+	if (FConstraintAndActiveChannel* Channel = ConstraintSection->GetConstraintChannel(InConstraint->ConstraintID))
 	{
 		bool ActiveValueToBeSet = false;
 		//add key if we can and make sure the key we are setting is what we want
@@ -380,11 +386,11 @@ void FComponentConstraintChannelInterface::RecomposeTransforms(
 		// add keys
 		for (int32 Index = 0; Index < InFrames.Num(); ++Index)
 		{
-			const FFrameNumber& FrameNumber = (FFrameTime(InFrames[Index]) * RootToLocalTransform.InverseLinearOnly()).GetFrame();
+			const FFrameNumber& FrameNumber = (FFrameTime(InFrames[Index]) * RootToLocalTransform.InverseNoLooping()).GetFrame();
 			const FMovieSceneEvaluationRange EvaluationRange = FMovieSceneEvaluationRange(FFrameTime(FrameNumber), TickResolution);
 			const FMovieSceneContext Context = FMovieSceneContext(EvaluationRange, PlaybackStatus).SetHasJumped(true);
 
-			EvaluationTemplate.EvaluateSynchronousBlocking(Context, *InSequencer);
+			EvaluationTemplate.EvaluateSynchronousBlocking(Context);
 
 			if (EntityIDs.IsEmpty())
 			{

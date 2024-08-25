@@ -3,6 +3,7 @@
 #pragma once
 
 #include "NNEDmlCommon.h"
+#include "NNEModelData.h"
 #include "NNERuntimeRDGModel.h"
 
 struct ID3D12DynamicRHI;
@@ -37,14 +38,42 @@ private:
 class FDmlDeviceContext;
 class FOperatorDml;
 
-//
-//
-//
 class FModelInstance : public FModelInstanceRDG
 {
 	class FGraphBuilder;
 	class FBindingTable;
-	class FDebugName;
+	
+	friend class FGraphBuilder;
+
+	// Utility class to hold debug names used by D3D
+	class FDebugName
+	{
+		static constexpr int32 Size = 128;
+
+	public:
+
+		FDebugName();
+		FDebugName(const FString& InStr);
+		FDebugName(FStringView InStr);
+
+		const char* Get() const;
+
+	private:
+
+		char	Str[Size];
+		int32	Length;
+	};
+
+	// Utility class to help with deferred DML graph building
+	struct FGraphOpDesc
+	{
+		int32			OpIndex;
+		int32			InputStart;
+		int32			InputCount;
+		int32			OutputStart;
+		int32			OutputCount;
+		FDebugName		DbgName;
+	};
 
 public:
 
@@ -60,48 +89,51 @@ protected:
 
 private:
 
-	bool InitCompiledOp(TConstArrayView<int32> OpInputIndices, uint64 TensorDataSize);
+	FOperatorDml* OpCreate(const FOperatorDesc& OpDesc, TConstArrayView<NNE::FTensorDesc> Inputs, TConstArrayView<NNE::FTensorDesc> Outputs, const NNE::FAttributeMap& Attributes);
 
-	FOperatorDml* OpCreate(const FString& Name, TArrayView<const NNE::Internal::FTensor> InputTensorDesc, TArrayView<const NNE::Internal::FTensor> OutputTensorDescs, const NNE::FAttributeMap& Attributes);
+	bool InitCompiledOp();
 
 	FBufferRHIRef CreateRHIBuffer(FRHICommandListImmediate& RHICmdList, uint32 Size, EBufferUsageFlags Usage, ERHIAccess Access, const TCHAR* DbgName);
-	ID3D12Resource* CreateD3D12Buffer(uint32 Size, D3D12_RESOURCE_STATES ResourceState = D3D12_RESOURCE_STATE_COMMON, D3D12_HEAP_TYPE HeapType = D3D12_HEAP_TYPE_DEFAULT, const TCHAR* DebugName = nullptr);
 
-	//Note: This should go into RDG
 	static constexpr int32 MaxNumInputs = 512;
 	static constexpr int32 MaxNumOutputs = 4;
 
 	using FRHIBufferInputArray = TArray<FRHIBuffer*, TInlineAllocator<MaxNumInputs>>;
 	using FRHIBufferOutputArray = TArray<FRHIBuffer*, TInlineAllocator<MaxNumOutputs>>;
 
+	FDmlDeviceContext*					DevCtx;
+	TArray<FOperatorDml*>				Operators;
+	TArray<FGraphOpDesc>				GraphOperators;
+	TArray<int32>						GraphOpInputIndices;
+	TArray<int32>						GraphOpOutputIndices;
+
 	TComPtr<IDMLOperatorInitializer>	OpInit;
 	TComPtr<IDMLCompiledOperator>		CompiledOp;
-	FDmlDeviceContext*					DevCtx;
+	
+	TArray<int32>						ConstantCPUTensorIndices;
+
+	ID3D12DynamicRHI*					DynamicRHI;
 	TUniquePtr<FBindingTable>			BindingTable;
 	TComPtr<ID3D12DescriptorHeap>		DescHeap;
 	uint32								DescCount;
 	uint32								DescSize;
 
-	TArray<int32>						ConstantCPUTensorIndices;
-
 	FBufferRHIRef						PersistBuff;
-	FBufferRHIRef						TempBuff;
 	uint64								MemSizeWeights;
 	uint64								MemSizeTemp;
 	uint64								MemSizePersist;
-	ID3D12DynamicRHI*					DynamicRHI;
 };
 
 class FModel : public NNE::IModelRDG
 {
 public:
-	FModel(TConstArrayView<uint8> InModelData, FDmlDeviceContext* InDevCtx);
+	FModel(const TSharedPtr<NNE::FSharedModelData>& InModelData, FDmlDeviceContext* InDevCtx);
 	virtual ~FModel() {};
 
-	virtual TUniquePtr<UE::NNE::IModelInstanceRDG> CreateModelInstance() override;
+	virtual TSharedPtr<NNE::IModelInstanceRDG> CreateModelInstanceRDG() override;
 
 private:
-	TArray<uint8> ModelData;
+	TSharedPtr<NNE::FSharedModelData> ModelData;
 	FDmlDeviceContext* DevCtx;
 };
 

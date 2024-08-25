@@ -369,7 +369,7 @@ FArchive* FInMemoryNetworkReplayStreamer::GetCheckpointArchive()
 
 			// Remove the checkpoints.
 			const int32 NumCheckpointsToRemove = FirstCheckpointIndexToKeep;
-			FoundReplay->Checkpoints.RemoveAt(0, NumCheckpointsToRemove, false);
+			FoundReplay->Checkpoints.RemoveAt(0, NumCheckpointsToRemove, EAllowShrinking::No);
 
 			// Always keep at least one chunk
 			int32 FirstChunkIndexToKeep = 0;
@@ -387,7 +387,7 @@ FArchive* FInMemoryNetworkReplayStreamer::GetCheckpointArchive()
 
 			// Remove the chunks.
 			const int32 NumChunksToRemove = FirstChunkIndexToKeep;
-			FoundReplay->StreamChunks.RemoveAt(0, NumChunksToRemove, false);
+			FoundReplay->StreamChunks.RemoveAt(0, NumChunksToRemove, EAllowShrinking::No);
 		}
 
 		// Save to a temporary checkpoint that will moved onto the replay's checkpoint list in FlushCheckpoint().

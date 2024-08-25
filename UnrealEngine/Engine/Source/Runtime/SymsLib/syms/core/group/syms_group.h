@@ -5,52 +5,6 @@
 #define SYMS_GROUP_H
 
 ////////////////////////////////
-//~ allen: Syms Line Mapping Structures
-
-typedef struct SYMS_LineToAddrMap{
-  SYMS_U64Range *ranges;
-  // line_range_indexes ranges from [0,line_count] inclusive so that:
-  // for-all i in [0,line_count):
-  //   (line_range_indexes[i + 1] - line_range_indexes[i]) == # of ranges for line at index i
-  SYMS_U32 *line_range_indexes;
-  SYMS_U32 *line_numbers;
-  SYMS_U64 line_count;
-} SYMS_LineToAddrMap;
-
-typedef struct SYMS_FileToLineToAddrNode{
-  struct SYMS_FileToLineToAddrNode *next;
-  SYMS_FileID file_id;
-  SYMS_LineToAddrMap *map;
-} SYMS_FileToLineToAddrNode;
-
-typedef struct SYMS_FileToLineToAddrBuckets{
-  SYMS_FileToLineToAddrNode **buckets;
-  SYMS_U64 bucket_count;
-} SYMS_FileToLineToAddrBuckets;
-
-//- loose version
-typedef struct SYMS_FileToLineToAddrLooseLine{
-  struct SYMS_FileToLineToAddrLooseLine *next;
-  SYMS_U32 line;
-  SYMS_U64RangeList ranges;
-} SYMS_FileToLineToAddrLooseLine;
-
-typedef struct SYMS_FileToLineToAddrLooseFile{
-  struct SYMS_FileToLineToAddrLooseFile *next;
-  SYMS_FileID file_id;
-  SYMS_FileToLineToAddrLooseLine *first;
-  SYMS_FileToLineToAddrLooseLine *last;
-  SYMS_U64 line_count;
-  SYMS_U64 range_count;
-} SYMS_FileToLineToAddrLooseFile;
-
-typedef struct SYMS_FileToLineToAddrLoose{
-  SYMS_FileToLineToAddrLooseFile *first;
-  SYMS_FileToLineToAddrLooseFile *last;
-  SYMS_U64 count;
-} SYMS_FileToLineToAddrLoose;
-
-////////////////////////////////
 //~ allen: Syms Group Types
 
 typedef SYMS_U32 SYMS_GroupUnitCacheFlags;
@@ -65,8 +19,8 @@ enum{
   SYMS_GroupUnitCacheFlag_HasProcMap        = (1 <<  7),
   SYMS_GroupUnitCacheFlag_HasVarMap         = (1 <<  8),
   SYMS_GroupUnitCacheFlag_HasLineSeqMap     = (1 <<  9),
-  SYMS_GroupUnitCacheFlag_HasLineToAddrMap  = (1 <<  10),
-  SYMS_GroupUnitCacheFlag_HasTypeNameMap    = (1 <<  11),
+  SYMS_GroupUnitCacheFlag_HasLineToAddrMap  = (1 << 10),
+  SYMS_GroupUnitCacheFlag_HasTypeNameMap    = (1 << 11),
 };
 
 typedef struct SYMS_Group{
@@ -107,7 +61,9 @@ typedef struct SYMS_Group{
   SYMS_SpatialMap1D *unit_proc_maps;
   SYMS_SpatialMap1D *unit_var_maps;
   SYMS_SpatialMap1D *line_sequence_maps;
-  SYMS_FileToLineToAddrBuckets *file_to_line_to_addr_buckets;
+  SYMS_FileToLineToAddrMap *file_to_line_to_addr_maps;
+  
+  // TODO(allen): we probably don't need to do this as the type graph does it better
   SYMS_SymbolNameMap *unit_type_maps;
   
   //- hash tables caches
@@ -154,8 +110,6 @@ SYMS_READ_ONLY SYMS_GLOBAL SYMS_String8Array syms_string_array_nil = {0};
 SYMS_READ_ONLY SYMS_GLOBAL SYMS_LineParseOut syms_line_parse_nil = {{0}};
 SYMS_READ_ONLY SYMS_GLOBAL SYMS_SpatialMap1D syms_spatial_map_1d_nil = {0};
 SYMS_READ_ONLY SYMS_GLOBAL SYMS_LineToAddrMap syms_line_to_addr_map_nil = {0};
-SYMS_READ_ONLY SYMS_GLOBAL SYMS_TypeMemberArray syms_type_member_array_nil = {0};
-SYMS_READ_ONLY SYMS_GLOBAL SYMS_EnumInfoArray syms_enum_info_array_nil = {0};
 
 ////////////////////////////////
 //~ allen: Syms Group Setup Functions
@@ -182,6 +136,7 @@ SYMS_API SYMS_String8       syms_group_bin_data(SYMS_Group *group);
 SYMS_API SYMS_BinAccel*     syms_group_bin(SYMS_Group *group);
 SYMS_API SYMS_String8       syms_group_dbg_data(SYMS_Group *group);
 SYMS_API SYMS_DbgAccel*     syms_group_dbg(SYMS_Group *group);
+SYMS_API SYMS_Arch          syms_group_arch(SYMS_Group *group);
 SYMS_API SYMS_UnitSetAccel* syms_group_unit_set(SYMS_Group *group);
 
 SYMS_API SYMS_U64           syms_group_address_size(SYMS_Group *group);
@@ -279,12 +234,10 @@ SYMS_API SYMS_Line     syms_group_line_from_uid_voff__accelerated(SYMS_Group *gr
 SYMS_API SYMS_U64RangeArray syms_group_vranges_from_uid_line__accelerated(SYMS_Group *group, SYMS_UnitID uid,
                                                                           SYMS_FileID file_id, SYMS_U32 line);
 
-//- line info binary search helper
-SYMS_API SYMS_U64      syms_index_from_n__u32__binary_search_round_up(SYMS_U32 *v, SYMS_U64 count, SYMS_U32 n);
+//- higher level mapping functions
+SYMS_API SYMS_ResolvedLine syms_group_resolved_location_from_proc_sid(SYMS_Group *group, SYMS_UnitAccel *unit,
+                                                                      SYMS_SymbolID sid);
 
-//- line-to-addr map helpers
-SYMS_API void          syms_line_to_addr_line_sort(SYMS_FileToLineToAddrLooseLine **array, SYMS_U64 count);
-SYMS_API void          syms_line_to_addr_line_sort__rec(SYMS_FileToLineToAddrLooseLine **array, SYMS_U64 count);
 
 ////////////////////////////////
 //~ allen: Syms Group Name Mapping Functions
@@ -308,32 +261,29 @@ SYMS_API SYMS_TypeGraph* syms_group_type_graph(SYMS_Group *group);
 // cannot be parallelized like the others
 
 
-SYMS_API SYMS_SymbolID syms_group_var_sid_from_uid_voff__linear_scan(SYMS_TypeGraph *graph, SYMS_Group *group,
+SYMS_API SYMS_SymbolID syms_group_var_sid_from_uid_voff__linear_scan(SYMS_Group *group,
                                                                      SYMS_UnitID uid, SYMS_U64 voff);
 
-SYMS_API SYMS_SpatialMap1D* syms_group_var_map_from_uid(SYMS_TypeGraph *graph, SYMS_Group *group, SYMS_UnitID uid);
+SYMS_API SYMS_SpatialMap1D* syms_group_var_map_from_uid(SYMS_Group *group, SYMS_UnitID uid);
 
-SYMS_API SYMS_SymbolID syms_group_var_sid_from_uid_voff__accelerated(SYMS_TypeGraph *graph, SYMS_Group *group,
+SYMS_API SYMS_SymbolID syms_group_var_sid_from_uid_voff__accelerated(SYMS_Group *group,
                                                                      SYMS_UnitID uid, SYMS_U64 voff);
 
 
 ////////////////////////////////
 //~ allen: Syms Group Type Info Functions
 
-SYMS_API SYMS_TypeNode* syms_group_type_from_usid(SYMS_TypeGraph *graph, SYMS_Group *group, SYMS_USID usid);
-SYMS_API SYMS_TypeNode* syms_group_type_from_usid__rec(SYMS_TypeGraph *graph, SYMS_Group *group, SYMS_USID usid);
-
-SYMS_API SYMS_TypeChain syms_group_artificial_types_from_name(SYMS_Group *group, SYMS_String8 name);
+SYMS_API SYMS_TypeNode* syms_group_type_from_usid(SYMS_Group *group, SYMS_USID usid);
 
 // TODO(allen): sort with name maps?
 SYMS_API SYMS_USIDList syms_group_type_list_from_name_accelerated(SYMS_Arena *arena, SYMS_Group *group,
                                                                   SYMS_String8 name);
 SYMS_API SYMS_SymbolIDArray syms_group_types_from_unit_name(SYMS_Group *group, SYMS_UnitID uid, SYMS_String8 name);
 
-SYMS_API SYMS_U64       syms_group_type_size_from_usid(SYMS_TypeGraph *graph, SYMS_Group *group, SYMS_USID usid);
+SYMS_API SYMS_U64       syms_group_type_size_from_usid(SYMS_Group *group, SYMS_USID usid);
 
-SYMS_API SYMS_TypeMemberArray* syms_type_members_from_type(SYMS_Group *group, SYMS_TypeNode *type);
-SYMS_API SYMS_EnumInfoArray*   syms_type_enum_members_from_type(SYMS_Group *group, SYMS_TypeNode *type);
+SYMS_API SYMS_TypeMemberArray syms_group_type_members_from_type(SYMS_Group *group, SYMS_TypeNode *type);
+SYMS_API SYMS_EnumMemberArray syms_group_type_enum_members_from_type(SYMS_Group *group, SYMS_TypeNode *type);
 
 ////////////////////////////////
 //~ allen: Syms File Map

@@ -1,9 +1,20 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "NiagaraDebuggerCommon.h"
+#include "NiagaraModule.h"
+#include "Modules/ModuleManager.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(NiagaraDebuggerCommon)
 
+INiagaraDebuggerClient* INiagaraDebuggerClient::Get()
+{
+#if WITH_NIAGARA_DEBUGGER
+	INiagaraModule& NiagaraModule = FModuleManager::LoadModuleChecked<INiagaraModule>("Niagara");
+	return reinterpret_cast<INiagaraDebuggerClient*>(NiagaraModule.GetDebuggerClient());
+#else
+	return nullptr;
+#endif
+}
 
 //////////////////////////////////////////////////////////////////////////
 
@@ -16,6 +27,17 @@ FNiagaraDebugHUDSettingsData::FNiagaraDebugHUDSettingsData()
 }
 
 //////////////////////////////////////////////////////////////////////////
+
+void UNiagaraDebugHUDSettings::PostInitProperties()
+{
+	Super::PostInitProperties();
+
+	// Reset the properties we don't want to carry between editor sessions, we have to do this as all the properties are inside a
+	// data structure, and the whole data structure will go into the config rather than individual properties that specify if they should.
+	FNiagaraDebugHUDSettingsData Defaults;
+	Data.PlaybackMode			= Defaults.PlaybackMode;
+	Data.bPlaybackRateEnabled	= Defaults.bPlaybackRateEnabled;
+}
 
 void UNiagaraDebugHUDSettings::NotifyPropertyChanged()
 {

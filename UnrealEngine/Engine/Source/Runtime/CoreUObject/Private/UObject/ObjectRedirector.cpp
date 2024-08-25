@@ -6,6 +6,7 @@
 
 #include "UObject/ObjectRedirector.h"
 
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/ObjectSaveContext.h"
 #include "UObject/Package.h"
 #include "Templates/Casts.h"
@@ -62,6 +63,15 @@ bool UObjectRedirector::NeedsLoadForEditorGame() const
 
 void UObjectRedirector::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UObjectRedirector::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	Super::GetAssetRegistryTags(Context);
+
 	FString DestVal;
 	if ( DestinationObject != nullptr )
 	{
@@ -72,7 +82,7 @@ void UObjectRedirector::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags)
 		DestVal = TEXT("None");
 	}
 
-	OutTags.Add(FAssetRegistryTag("DestinationObject", DestVal, UObject::FAssetRegistryTag::TT_Alphabetical));
+	Context.AddTag(FAssetRegistryTag("DestinationObject", DestVal, UObject::FAssetRegistryTag::TT_Alphabetical));
 }
 
 /**

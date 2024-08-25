@@ -4,7 +4,6 @@
 #include "Misc/AssertionMacros.h"
 #include "Math/UnrealMathUtility.h"
 #include "Containers/UnrealString.h"
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 
 FWindowsSystemWideCriticalSection::FWindowsSystemWideCriticalSection(const FString& InName, FTimespan InTimeout)

@@ -6,6 +6,7 @@
 #include "Algo/Count.h"
 #include "CoreMinimal.h"
 #include "Misc/EnumerateRange.h"
+#include "NNE.h"
 #include "NNETensor.h"
 #include "NNETypes.h"
 

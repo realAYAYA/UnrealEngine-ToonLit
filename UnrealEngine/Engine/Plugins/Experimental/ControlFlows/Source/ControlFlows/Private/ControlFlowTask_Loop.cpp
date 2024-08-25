@@ -11,6 +11,8 @@ void FControlFlowTask_ConditionalLoop::Execute()
 	{
 		ConditionalLoop = MakeShared<FConditionalLoop>();
 
+		ConditionalLoop->FlowLoop->ParentFlow = GetOwningFlowForTaskNode();
+
 		ConditionalLoop->FlowLoop->OnCompleteDelegate_Internal.BindSP(SharedThis(this), &FControlFlowTask_ConditionalLoop::HandleLoopCompleted);
 		ConditionalLoop->FlowLoop->OnExecutedWithoutAnyNodesDelegate_Internal.BindSP(SharedThis(this), &FControlFlowTask_ConditionalLoop::HandleLoopCompleted);
 		ConditionalLoop->FlowLoop->OnCancelledDelegate_Internal.BindSP(SharedThis(this), &FControlFlowTask_ConditionalLoop::HandleLoopCancelled);
@@ -33,6 +35,7 @@ void FControlFlowTask_ConditionalLoop::Execute()
 				}
 				else
 				{
+					ConditionalLoop->FlowLoop->LastZeroSecondDelay = GetOwningFlowForTaskNode().Pin()->LastZeroSecondDelay;
 					ConditionalLoop->FlowLoop->ExecuteFlow();
 				}
 			}
@@ -50,7 +53,7 @@ void FControlFlowTask_ConditionalLoop::Execute()
 
 void FControlFlowTask_ConditionalLoop::Cancel()
 {
-	if (ensureAlways(ConditionalLoop.IsValid()) && ConditionalLoop->FlowLoop->IsRunning())
+	if (ConditionalLoop.IsValid() && ConditionalLoop->FlowLoop->IsRunning())
 	{
 		ConditionalLoop->FlowLoop->CancelFlow();
 	}
@@ -63,6 +66,7 @@ void FControlFlowTask_ConditionalLoop::Helper_ConditionalCheck(const EConditiona
 {
 	if (InCondition == EConditionalLoopResult::RunLoop)
 	{
+		ConditionalLoop->FlowLoop->LastZeroSecondDelay = GetOwningFlowForTaskNode().Pin()->LastZeroSecondDelay;
 		ConditionalLoop->FlowLoop->ExecuteFlow();
 	}
 	else if (InCondition == EConditionalLoopResult::LoopFinished)

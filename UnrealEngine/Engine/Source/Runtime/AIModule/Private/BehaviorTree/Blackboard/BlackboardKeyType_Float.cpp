@@ -33,6 +33,11 @@ EBlackboardCompare::Type UBlackboardKeyType_Float::CompareValues(const UBlackboa
 		EBlackboardCompare::Less;
 }
 
+void UBlackboardKeyType_Float::InitializeMemory(UBlackboardComponent& OwnerComp, uint8* MemoryBlock)
+{
+	SetValue(this, MemoryBlock, DefaultValue);
+}
+
 FString UBlackboardKeyType_Float::DescribeValue(const UBlackboardComponent& OwnerComp, const uint8* RawData) const
 {
 	return FString::Printf(TEXT("%f"), GetValue(this, RawData));

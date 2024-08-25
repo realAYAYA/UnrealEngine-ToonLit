@@ -714,11 +714,16 @@ public:
 	 * @param ForGuid	The binding's Guid to look for.
 	 * @return			Pointer to the binding, otherwise nullptr.
 	 */
-	FMovieSceneBinding* FindBinding(const FGuid& ForGuid)
-	{
-		return ObjectBindings.FindByPredicate([ForGuid](const FMovieSceneBinding& Binding) { return Binding.GetObjectGuid() == ForGuid; });
-	}
+	MOVIESCENE_API FMovieSceneBinding* FindBinding(const FGuid& ForGuid);
 
+	/**
+	* Tries to find an FMovieSceneBinding for the specified Guid.
+	*
+	* @param ForGuid	The binding's Guid to look for.
+	* @return			Pointer to the binding, otherwise nullptr.
+	*/
+	MOVIESCENE_API const FMovieSceneBinding* FindBinding(const FGuid& ForGuid) const;
+	
 public:
 
 	// @todo sequencer: the following methods really shouldn't be here
@@ -987,7 +992,7 @@ public:
 	 * @param Start The offset from 0-time to view this movie scene.
 	 * @param End The offset from 0-time to view this movie scene
 	 */
-	MOVIESCENE_API void SetWorkingRange(float Start, float End);
+	MOVIESCENE_API void SetWorkingRange(double Start, double End);
 
 	/**
 	 * Set the start and end view range (inner) for this movie scene
@@ -995,7 +1000,7 @@ public:
 	 * @param Start The offset from 0-time to view this movie scene
 	 * @param End The offset from 0-time to view this movie scene
 	 */
-	MOVIESCENE_API void SetViewRange(float Start, float End);
+	MOVIESCENE_API void SetViewRange(double Start, double End);
 
 #if WITH_EDITORONLY_DATA
 
@@ -1193,6 +1198,32 @@ protected:
 	 * @param Guid The guid bound to animation data to remove
 	 */
 	MOVIESCENE_API void RemoveBinding(const FGuid& Guid);
+
+
+	/**
+	 * Tries to find an FMovieSceneBinding for the specified Guid.
+	 *
+	 * @param ForGuid	The binding's Guid to look for.
+	 * @return			Index of the binding in ObjectBindings array, otherwise INDEX_NONE.
+	 */
+	int32 IndexOfBinding(const FGuid& ForGuid) const;
+
+	/**
+	* Tries to find an FMovieSceneSpawnable for the specified Guid.
+	*
+	* @param ForGuid	The spawnable's Guid to look for.
+	* @return			Index of the binding in Spawnables array, otherwise INDEX_NONE.
+	*/
+	int32 IndexOfSpawnable(const FGuid& ForGuid) const;
+
+
+	/**
+	* Tries to find an FMovieScenePossessable for the specified Guid.
+	*
+	* @param ForGuid	The possessable's Guid to look for.
+	* @return			Index of the binding in Possessables array, otherwise INDEX_NONE.
+	*/
+	int32 IndexOfPossessable(const FGuid& ForGuid) const;
 
 protected:
 

@@ -16,26 +16,26 @@ using namespace BuildPatchServices;
 
 /* FBuildPatchUtils implementation
 *****************************************************************************/
-FString FBuildPatchUtils::GetChunkNewFilename(const EFeatureLevel FeatureLevel, const FString& RootDirectory, const FGuid& ChunkGUID, const uint64& ChunkHash)
+FString FBuildPatchUtils::GetChunkNewFilename(const EFeatureLevel FeatureLevel, const FGuid& ChunkGUID, const uint64& ChunkHash)
 {
 	check(ChunkGUID.IsValid());
 	if (FeatureLevel < EFeatureLevel::DataFileRenames)
 	{
-		return GetChunkOldFilename(RootDirectory, ChunkGUID);
+		return GetChunkOldFilename(ChunkGUID);
 	}
-	return FPaths::Combine(*RootDirectory, *FString::Printf(TEXT("%s/%02d/%016llX_%s.chunk"), ManifestVersionHelpers::GetChunkSubdir(FeatureLevel), FCrc::MemCrc32(&ChunkGUID, sizeof(FGuid)) % 100, ChunkHash, *ChunkGUID.ToString()));
+	return FString::Printf(TEXT("%s/%02d/%016llX_%s.chunk"), ManifestVersionHelpers::GetChunkSubdir(FeatureLevel), FCrc::MemCrc32(&ChunkGUID, sizeof(FGuid)) % 100, ChunkHash, *ChunkGUID.ToString());
 }
 
-FString FBuildPatchUtils::GetFileNewFilename(const EFeatureLevel FeatureLevel, const FString& RootDirectory, const FGuid& FileGUID, const FSHAHash& FileHash)
+FString FBuildPatchUtils::GetFileNewFilename(const EFeatureLevel FeatureLevel, const FGuid& FileGUID, const FSHAHash& FileHash)
 {
 	check(FileGUID.IsValid());
-	return FPaths::Combine(*RootDirectory, *FString::Printf(TEXT("%s/%02d/%s_%s.file"), ManifestVersionHelpers::GetFileSubdir(FeatureLevel), FCrc::MemCrc32(&FileGUID, sizeof(FGuid)) % 100, *FileHash.ToString(), *FileGUID.ToString()));
+	return FString::Printf(TEXT("%s/%02d/%s_%s.file"), ManifestVersionHelpers::GetFileSubdir(FeatureLevel), FCrc::MemCrc32(&FileGUID, sizeof(FGuid)) % 100, *FileHash.ToString(), *FileGUID.ToString());
 }
 
-FString FBuildPatchUtils::GetFileNewFilename(const EFeatureLevel FeatureLevel, const FString& RootDirectory, const FGuid& FileGUID, const uint64& FileHash)
+FString FBuildPatchUtils::GetFileNewFilename(const EFeatureLevel FeatureLevel, const FGuid& FileGUID, const uint64& FileHash)
 {
 	check(FileGUID.IsValid());
-	return FPaths::Combine(*RootDirectory, *FString::Printf(TEXT("%s/%02d/%016llX_%s.file"), ManifestVersionHelpers::GetFileSubdir(FeatureLevel), FCrc::MemCrc32(&FileGUID, sizeof(FGuid)) % 100, FileHash, *FileGUID.ToString()));
+	return FString::Printf(TEXT("%s/%02d/%016llX_%s.file"), ManifestVersionHelpers::GetFileSubdir(FeatureLevel), FCrc::MemCrc32(&FileGUID, sizeof(FGuid)) % 100, FileHash, *FileGUID.ToString());
 }
 
 void FBuildPatchUtils::GetChunkDetailFromNewFilename( const FString& ChunkNewFilename, FGuid& ChunkGUID, uint64& ChunkHash )
@@ -64,46 +64,46 @@ void FBuildPatchUtils::GetFileDetailFromNewFilename(const FString& FileNewFilena
 	FGuid::Parse( GuidString, FileGUID );
 }
 
-FString FBuildPatchUtils::GetChunkOldFilename( const FString& RootDirectory, const FGuid& ChunkGUID )
+FString FBuildPatchUtils::GetChunkOldFilename(const FGuid& ChunkGUID)
 {
-	check( ChunkGUID.IsValid() );
-	return FPaths::Combine( *RootDirectory, *FString::Printf( TEXT("Chunks/%02d/%s.chunk"), FCrc::MemCrc_DEPRECATED( &ChunkGUID, sizeof( FGuid ) ) % 100, *ChunkGUID.ToString() ) );
+	check(ChunkGUID.IsValid());
+	return FString::Printf(TEXT("Chunks/%02d/%s.chunk"), FCrc::MemCrc_DEPRECATED(&ChunkGUID, sizeof(FGuid)) % 100, *ChunkGUID.ToString());
 }
 
-FString FBuildPatchUtils::GetFileOldFilename( const FString& RootDirectory, const FGuid& FileGUID )
+FString FBuildPatchUtils::GetFileOldFilename(const FGuid& FileGUID)
 {
-	check( FileGUID.IsValid() );
-	return FPaths::Combine( *RootDirectory, *FString::Printf( TEXT("Files/%02d/%s.file"), FCrc::MemCrc_DEPRECATED( &FileGUID, sizeof( FGuid ) ) % 100, *FileGUID.ToString() ) );
+	check(FileGUID.IsValid());
+	return FString::Printf(TEXT("Files/%02d/%s.file"), FCrc::MemCrc_DEPRECATED(&FileGUID, sizeof(FGuid)) % 100, *FileGUID.ToString());
 }
 
-FString FBuildPatchUtils::GetDataTypeOldFilename( EBuildPatchDataType DataType, const FString& RootDirectory, const FGuid& Guid )
+FString FBuildPatchUtils::GetDataTypeOldFilename(EBuildPatchDataType DataType, const FGuid& Guid)
 {
-	check( Guid.IsValid() );
+	check(Guid.IsValid());
 
-	switch ( DataType )
+	switch (DataType)
 	{
 	case EBuildPatchDataType::ChunkData:
-		return GetChunkOldFilename( RootDirectory, Guid );
+		return GetChunkOldFilename(Guid);
 	case EBuildPatchDataType::FileData:
-		return GetFileOldFilename( RootDirectory, Guid );
+		return GetFileOldFilename(Guid);
 	}
 
 	// Error, didn't case type
-	check( false );
-	return TEXT( "" );
+	check(false);
+	return TEXT("");
 }
 
-FString FBuildPatchUtils::GetDataFilename(const FBuildPatchAppManifestRef& Manifest, const FString& RootDirectory, const FGuid& DataGUID)
+FString FBuildPatchUtils::GetDataFilename(const FBuildPatchAppManifestRef& Manifest, const FGuid& DataGUID)
 {
-	return GetDataFilename(Manifest.Get(), RootDirectory, DataGUID);
+	return GetDataFilename(Manifest.Get(), DataGUID);
 }
 
-FString FBuildPatchUtils::GetDataFilename(const FBuildPatchAppManifest&    Manifest, const FString& RootDirectory, const FGuid& DataGUID)
+FString FBuildPatchUtils::GetDataFilename(const FBuildPatchAppManifest&    Manifest, const FGuid& DataGUID)
 {
 	const EBuildPatchDataType DataType = Manifest.IsFileDataManifest() ? EBuildPatchDataType::FileData : EBuildPatchDataType::ChunkData;
 	if (Manifest.GetFeatureLevel() < EFeatureLevel::DataFileRenames)
 	{
-		return FBuildPatchUtils::GetDataTypeOldFilename(DataType, RootDirectory, DataGUID);
+		return FBuildPatchUtils::GetDataTypeOldFilename(DataType, DataGUID);
 	}
 	else if (!Manifest.IsFileDataManifest())
 	{
@@ -111,7 +111,7 @@ FString FBuildPatchUtils::GetDataFilename(const FBuildPatchAppManifest&    Manif
 		const bool bFound = Manifest.GetChunkHash(DataGUID, ChunkHash);
 		// Should be impossible to not exist
 		check(bFound);
-		return FBuildPatchUtils::GetChunkNewFilename(Manifest.GetFeatureLevel(), RootDirectory, DataGUID, ChunkHash);
+		return FBuildPatchUtils::GetChunkNewFilename(Manifest.GetFeatureLevel(), DataGUID, ChunkHash);
 	}
 	else if (Manifest.GetFeatureLevel() <= EFeatureLevel::StoredAsCompressedUClass)
 	{
@@ -119,7 +119,7 @@ FString FBuildPatchUtils::GetDataFilename(const FBuildPatchAppManifest&    Manif
 		const bool bFound = Manifest.GetFileHash(DataGUID, FileHash);
 		// Should be impossible to not exist
 		check(bFound);
-		return FBuildPatchUtils::GetFileNewFilename(Manifest.GetFeatureLevel(), RootDirectory, DataGUID, FileHash);
+		return FBuildPatchUtils::GetFileNewFilename(Manifest.GetFeatureLevel(), DataGUID, FileHash);
 	}
 	else
 	{
@@ -127,9 +127,8 @@ FString FBuildPatchUtils::GetDataFilename(const FBuildPatchAppManifest&    Manif
 		const bool bFound = Manifest.GetFilePartHash(DataGUID, FileHash);
 		// Should be impossible to not exist
 		check(bFound);
-		return FBuildPatchUtils::GetFileNewFilename(Manifest.GetFeatureLevel(), RootDirectory, DataGUID, FileHash);
+		return FBuildPatchUtils::GetFileNewFilename(Manifest.GetFeatureLevel(), DataGUID, FileHash);
 	}
-	return TEXT("");
 }
 
 bool FBuildPatchUtils::GetGUIDFromFilename( const FString& DataFilename, FGuid& DataGUID )

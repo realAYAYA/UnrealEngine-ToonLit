@@ -153,7 +153,7 @@ void FUnixSignalGameHitchHeartBeat::InitSettings()
 	{
 		bFirst = false;
 
-		bool bStartSuspended = false;
+		bStartSuspended = false;
 		GConfig->GetBool(TEXT("Core.System"), TEXT("GameThreadHeartBeatStartSuspended"), bStartSuspended, GEngineIni);
 
 		if (FParse::Param(FCommandLine::Get(), TEXT("hitchdetectionstartsuspended")))
@@ -272,6 +272,11 @@ void FUnixSignalGameHitchHeartBeat::ResumeHeartBeat()
 		FrameStart(true);
 	}
 #endif
+}
+
+bool FUnixSignalGameHitchHeartBeat::IsStartedSuspended()
+{
+	return bStartSuspended;
 }
 
 void FUnixSignalGameHitchHeartBeat::Restart()

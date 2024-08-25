@@ -11,16 +11,16 @@
 
 #include "InterchangeSkeletonFactoryNode.generated.h"
 
-UCLASS(BlueprintType, Experimental)
+UCLASS(BlueprintType)
 class INTERCHANGEFACTORYNODES_API UInterchangeSkeletonFactoryNode : public UInterchangeFactoryBaseNode
 {
 	GENERATED_BODY()
 
 public:
 	/**
-	 * Initialize node data
-	 * @param: UniqueID - The uniqueId for this node
-	 * @param DisplayLabel - The name of the node
+	 * Initialize node data.
+	 * @param: UniqueID - The unique ID for this node.
+	 * @param DisplayLabel - The name of the node.
 	 * @param InAssetClass - The class the Skeleton factory will create for this node.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Skeleton")
@@ -47,7 +47,7 @@ public:
 	}
 
 	/**
-	 * Return the node type name of the class, we use this when reporting error
+	 * Return the node type name of the class. This is used when reporting errors.
 	 */
 	virtual FString GetTypeName() const override
 	{
@@ -55,7 +55,7 @@ public:
 		return TypeName;
 	}
 
-	/** Get the class this node want to create */
+	/** Get the class this node creates. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Skeleton")
 	virtual class UClass* GetObjectClass() const override
 	{
@@ -73,7 +73,7 @@ public:
 	}
 
 public:
-	/** Return false if the Attribute was not set previously.*/
+	/** Return false if the attribute was not set previously. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Skeleton")
 	bool GetCustomRootJointUid(FString& AttributeValue) const
 	{
@@ -86,14 +86,14 @@ public:
 		IMPLEMENT_NODE_ATTRIBUTE_SETTER_NODELEGATE(RootJointID, FString)
 	}
 
-	/** Query if this skeleton should replace joint transform with time zero evaluation instead of bind pose.*/
+	/** Query whether this skeleton should replace joint transforms with time-zero evaluation instead of bind pose. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Skeleton")
 	bool GetCustomUseTimeZeroForBindPose(bool& AttributeValue) const
 	{
 		IMPLEMENT_NODE_ATTRIBUTE_GETTER(UseTimeZeroForBindPose, bool);
 	}
 
-	/** If AttributeValue is true, force this skeleton bind pose to use time zero instead of bind pose.*/
+	/** If AttributeValue is true, force this skeleton to use time-zero evaluation instead of its bind pose. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | Skeleton")
 	bool SetCustomUseTimeZeroForBindPose(const bool& AttributeValue)
 	{

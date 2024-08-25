@@ -116,5 +116,7 @@ public:
 	bool GetImportContentFilename(FString& OutFilename, FString& OutFilenameLabel) const;
 
 	/** This function add the last import content type to the asset registry which is use by the thumbnail overlay of the skeletal mesh */
-	virtual void AppendAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags);
+	virtual void AppendAssetRegistryTags(FAssetRegistryTagsContext Context) override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
+	virtual void AppendAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) override;
 };

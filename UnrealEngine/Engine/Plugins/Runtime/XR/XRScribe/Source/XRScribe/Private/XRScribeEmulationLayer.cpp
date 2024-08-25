@@ -297,7 +297,7 @@ void FOpenXREmulationLayer::PostLoadActions()
 
 	TArray<TStaticArray<ANSICHAR, XR_MAX_API_LAYER_NAME_SIZE>> EmulatedLayers;
 	SupportedEmulatedLayers = CaptureDecoder.GetApiLayerProperties().FilterByPredicate([EmulatedLayers](const XrApiLayerProperties& Layer) {
-		for (const TStaticArray<ANSICHAR, XR_MAX_API_LAYER_NAME_SIZE>& EmulatedLayerName : EmulatedLayers)
+		for (const TStaticArray<ANSICHAR, XR_MAX_API_LAYER_NAME_SIZE>& EmulatedLayerName : EmulatedLayers) //-V1078
 		{
 			if (FCStringAnsi::Strcmp(Layer.layerName, EmulatedLayerName.GetData()) == 0)
 			{
@@ -358,20 +358,23 @@ void FOpenXREmulationLayer::PostLoadActions()
 		FCStringAnsi::Strncpy(&EmulatedSystemProperties.systemName[ActualSystemNameLen], EmuStringAddend, RemainingSpace);
 	}
 
-	PoseManager.RegisterCapturedWaitFrames(CaptureDecoder.GetWaitFrames());
+	ActionPoseManager.RegisterCapturedPathStrings(CaptureDecoder.GetPathToStringMap());
+	ActionPoseManager.RegisterCapturedWaitFrames(CaptureDecoder.GetWaitFrames());
 
-	PoseManager.RegisterCapturedReferenceSpaces(CaptureDecoder.GetCreatedReferenceSpaces());
+	ActionPoseManager.RegisterCapturedReferenceSpaces(CaptureDecoder.GetCreatedReferenceSpaces());
 
-	PoseManager.RegisterCapturedActions(CaptureDecoder.GetCreatedActions());
-	PoseManager.RegisterCapturedActionSpaces(CaptureDecoder.GetCreatedActionSpaces());
+	ActionPoseManager.RegisterCapturedActions(CaptureDecoder.GetCreatedActions());
+	ActionPoseManager.RegisterCapturedActionSpaces(CaptureDecoder.GetCreatedActionSpaces());
 
-	PoseManager.RegisterCapturedSpaceHistories(CaptureDecoder.GetSpaceLocations());
+	ActionPoseManager.RegisterCapturedSpaceHistories(CaptureDecoder.GetSpaceLocations());
 
-	PoseManager.RegisterCapturedActionStates(CaptureDecoder.GetSyncActions(),
+	ActionPoseManager.RegisterCapturedActionStates(CaptureDecoder.GetSyncActions(),
 		CaptureDecoder.GetBooleanActionStates(), 
 		CaptureDecoder.GetFloatActionStates(), 
 		CaptureDecoder.GetVectorActionStates(), 
 		CaptureDecoder.GetPoseActionStates());
+
+	ActionPoseManager.ProcessCapturedHistories();
 }
 
 bool FOpenXREmulationLayer::InstanceHandleCheck(XrInstance InputInstance)
@@ -1015,7 +1018,7 @@ XrResult FOpenXREmulationLayer::XrLayerDestroySession(XrSession session)
 	// from the spec: "The application is responsible for ensuring that it has no calls using session in progress when the session is destroyed."
 	CurrentSession.Reset();
 
-	PoseManager.OnSessionTeardown();
+	ActionPoseManager.OnSessionTeardown();
 
 	return XR_SUCCESS;
 }
@@ -1099,7 +1102,7 @@ XrResult FOpenXREmulationLayer::XrLayerCreateReferenceSpace(XrSession session, c
 		*space = reinterpret_cast<XrSpace>(CurrentSession->ActiveSpaces.Last().Get());
 	}
 
-	PoseManager.RegisterEmulatedReferenceSpace(*createInfo, *space);
+	ActionPoseManager.RegisterEmulatedReferenceSpace(*createInfo, *space);
 
 	return XrResult::XR_SUCCESS;
 }
@@ -1187,7 +1190,7 @@ XrResult FOpenXREmulationLayer::XrLayerCreateActionSpace(XrSession session, cons
 
 	{
 		FOpenXREmulatedAction* OwningAction = reinterpret_cast<FOpenXREmulatedAction*>(createInfo->action);
-		PoseManager.RegisterEmulatedActionSpace(OwningAction->ActionName, *createInfo, *space);
+		ActionPoseManager.RegisterEmulatedActionSpace(OwningAction->ActionName, *createInfo, *space);
 	}
 
 	return XrResult::XR_SUCCESS;
@@ -1213,7 +1216,7 @@ XrResult FOpenXREmulationLayer::XrLayerLocateSpace(XrSpace space, XrSpace baseSp
 		return XR_ERROR_VALIDATION_FAILURE;
 	}
 
-	*location = PoseManager.GetEmulatedPoseForTime(space, baseSpace, time);
+	*location = ActionPoseManager.GetEmulatedPoseForTime(space, baseSpace, time);
 
 	return XrResult::XR_SUCCESS;
 }
@@ -1825,7 +1828,7 @@ XrResult FOpenXREmulationLayer::XrLayerWaitFrame(XrSession session, const XrFram
 	// TODO: i'm just making up 4 frames of latency
 	frameState->predictedDisplayTime = UETicksToXrTime(FDateTime::Now().GetTicks()) + (4 * frameState->predictedDisplayPeriod);
 
-	PoseManager.AddEmulatedFrameTime(frameState->predictedDisplayTime, CurrentSession->WaitFrameCounter);
+	ActionPoseManager.AddEmulatedFrameTime(frameState->predictedDisplayTime, CurrentSession->WaitFrameCounter);
 
 	return XR_SUCCESS;
 }
@@ -2052,6 +2055,7 @@ XrResult FOpenXREmulationLayer::XrLayerStringToPath(XrInstance instance, const c
 			const int32 AddedIndex = CurrentInstance->PathList.Add(MoveTemp(EmulatedPathString));
 			const XrPath AddedPath = AddedIndex;
 			CurrentInstance->ANSIStringToPathMap.Add(pathString, AddedPath);
+			ActionPoseManager.RegisterEmulatedPath(FName(ANSI_TO_TCHAR(pathString)), AddedPath);
 			*path = AddedPath;
 		}
 	}
@@ -2255,6 +2259,8 @@ XrResult FOpenXREmulationLayer::XrLayerCreateAction(XrActionSet actionSet, const
 		EmulatedActionSet->ActionNames.Add(Action->ActionName.GetData());
 		EmulatedActionSet->Actions.Add(MoveTemp(Action));
 		CurrentInstance->AllActiveActions.Add(*action);
+
+		ActionPoseManager.RegisterEmulatedAction(FName(ANSI_TO_TCHAR(createInfo->actionName)), *action, createInfo->actionType);
 	}
 
 	return XrResult::XR_SUCCESS;
@@ -2405,11 +2411,7 @@ XrResult FOpenXREmulationLayer::XrLayerGetActionStateBoolean(XrSession session, 
 	// TODO: check action exists and is attached
 	// TODO: check subaction path
 
-	// TODO: fill XrActionStateBoolean with real data
-	state->currentState = XR_FALSE;
-	state->changedSinceLastSync = XR_FALSE;
-	state->lastChangeTime = UETicksToXrTime(LastSyncTimeTicks);
-	state->isActive = XR_FALSE;
+	*state = ActionPoseManager.GetEmulatedActionStateBoolean(getInfo, UETicksToXrTime(LastSyncTimeTicks));
 
 	return XR_SUCCESS;
 }
@@ -2436,11 +2438,7 @@ XrResult FOpenXREmulationLayer::XrLayerGetActionStateFloat(XrSession session, co
 	// TODO: check action exists and is attached
 	// TODO: check subaction path
 
-	// TODO: fill XrActionStateFloat with real data
-	state->currentState = 0.0;
-	state->changedSinceLastSync = XR_FALSE;
-	state->lastChangeTime = UETicksToXrTime(LastSyncTimeTicks);
-	state->isActive = XR_FALSE;
+	*state = ActionPoseManager.GetEmulatedActionStateFloat(getInfo, UETicksToXrTime(LastSyncTimeTicks));
 
 	return XR_SUCCESS;
 }
@@ -2467,11 +2465,8 @@ XrResult FOpenXREmulationLayer::XrLayerGetActionStateVector2f(XrSession session,
 	// TODO: check action exists and is attached
 	// TODO: check subaction path
 
-	// TODO: fill XrActionStateVector2f with real data
-	state->currentState = XrVector2f({0.0f, 0.0f});
-	state->changedSinceLastSync = XR_FALSE;
-	state->lastChangeTime = UETicksToXrTime(LastSyncTimeTicks);
-	state->isActive = XR_FALSE;
+	*state = ActionPoseManager.GetEmulatedActionStateVector2f(getInfo, UETicksToXrTime(LastSyncTimeTicks));
+
 
 	return XR_SUCCESS;
 }
@@ -2514,7 +2509,7 @@ XrResult FOpenXREmulationLayer::XrLayerGetActionStatePose(XrSession session, con
 
 	// TODO: check subaction path?
 
-	state->isActive = PoseManager.DoesActionContainPoseHistory(Action->ActionName);
+	state->isActive = ActionPoseManager.DoesActionContainPoseHistory(Action->ActionName);
 
 	return XR_SUCCESS;
 }
@@ -2556,7 +2551,8 @@ XrResult FOpenXREmulationLayer::XrLayerSyncActions(XrSession session, const	XrAc
 
 	// TODO: validate the action set subaction path
 
-	LastSyncTimeTicks = FDateTime::Now().GetTicks() - StartTimeTicks;
+	//LastSyncTimeTicks = FDateTime::Now().GetTicks() - StartTimeTicks;
+	LastSyncTimeTicks = FDateTime::Now().GetTicks();
 
 	return XR_SUCCESS;
 }

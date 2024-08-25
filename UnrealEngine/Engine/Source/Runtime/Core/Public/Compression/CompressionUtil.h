@@ -3,6 +3,8 @@
 #pragma once
 
 #include "CoreTypes.h"
+#include "Containers/Array.h"
+#include "Containers/UnrealString.h"
 
 class FArchive;
 class FCustomVersionContainer;
@@ -16,7 +18,8 @@ namespace FCompressionUtil
 	void CORE_API SerializeCompressorName(FArchive & Archive,FName & Compressor);
 
 
-	/** Logs out a memory region as a hex dump (log category: LogCore, level: Display).
+	/** Logs or writes to an array of strings a memory region as a hex dump
+	 * For logging, log category: LogCore, level: Display.
 	 *  Bytes, BytesNum are used to designate the overall memory region of interest (e.g. a file in memory), but only bytes from OffsetStart to OffsetEnd will be logged out,
 	 * and current offset will be printed at each line's start.
 	 * 
@@ -26,5 +29,6 @@ namespace FCompressionUtil
 	 * @param OffsetEnd offset to the end of log window (pass BytesNum if you want to log out whole region)
 	 * @param BytesPerLine how many bytes to print per line of hex dump
 	 */
+	TArray<FString> CORE_API HexDumpLines(const uint8* Bytes, int64 BytesNum, int64 OffsetStart, int64 OffsetEnd, int32 BytesPerLine = 32);
 	void CORE_API LogHexDump(const uint8* Bytes, int64 BytesNum, int64 OffsetStart, int64 OffsetEnd, int32 BytesPerLine = 32);
 };

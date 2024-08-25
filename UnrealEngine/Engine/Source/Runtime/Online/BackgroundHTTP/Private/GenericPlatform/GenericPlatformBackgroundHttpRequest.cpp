@@ -75,7 +75,7 @@ void FGenericPlatformBackgroundHttpRequest::FGenericPlatformBackgroundHttpWrappe
 		//Create new Request
 		HttpRequest = FHttpModule::Get().CreateRequest();
 		HttpRequest->OnProcessRequestComplete().BindRaw(this, &FGenericPlatformBackgroundHttpRequest::FGenericPlatformBackgroundHttpWrapper::HttpRequestComplete);
-		HttpRequest->OnRequestProgress().BindRaw(this, &FGenericPlatformBackgroundHttpRequest::FGenericPlatformBackgroundHttpWrapper::UpdateHttpProgress);
+		HttpRequest->OnRequestProgress64().BindRaw(this, &FGenericPlatformBackgroundHttpRequest::FGenericPlatformBackgroundHttpWrapper::UpdateHttpProgress);
 
 		const FString& RequestURL = GetURLForCurrentRetryNumber();
 		if (!RequestURL.IsEmpty())
@@ -102,7 +102,7 @@ void FGenericPlatformBackgroundHttpRequest::FGenericPlatformBackgroundHttpWrappe
 	if (HttpRequest.IsValid())
 	{
 		HttpRequest->OnProcessRequestComplete().Unbind();
-		HttpRequest->OnRequestProgress().Unbind();
+		HttpRequest->OnRequestProgress64().Unbind();
 		HttpRequest->CancelRequest();
 
 		HttpRequest.Reset();
@@ -168,15 +168,15 @@ bool FGenericPlatformBackgroundHttpRequest::FGenericPlatformBackgroundHttpWrappe
 	return (CurrentRetryNumber <= MaxRetries);
 }
 
-void FGenericPlatformBackgroundHttpRequest::FGenericPlatformBackgroundHttpWrapper::UpdateHttpProgress(FHttpRequestPtr UnderlyingHttpRequest, int32 BytesSent, int32 BytesReceived)
+void FGenericPlatformBackgroundHttpRequest::FGenericPlatformBackgroundHttpWrapper::UpdateHttpProgress(FHttpRequestPtr UnderlyingHttpRequest, uint64 BytesSent, uint64 BytesReceived)
 {
 	if (ensureAlwaysMsgf(OriginalRequest.IsValid(), TEXT("Received UpdateHttpProgress callback with invalid OriginalRequest pointer! Can not update request progress!")))
 	{
-		const int32 ByteDifference = (LastProgressUpdateBytes > 0) ? BytesReceived - LastProgressUpdateBytes : BytesReceived;
-		ensureAlwaysMsgf((ByteDifference >= 0), TEXT("Invalid Byte Difference in UpdateHttpProgress -- ByteDifference:%d | LastProgressUpdateBytes:%d | BytesSent:%d | BytesReceived:%d"), ByteDifference, LastProgressUpdateBytes, BytesSent, BytesReceived);
+		ensureAlwaysMsgf((BytesReceived >= LastProgressUpdateBytes), TEXT("Invalid Byte Difference in UpdateHttpProgress -- LastProgressUpdateBytes:%llu | BytesSent:%llu | BytesReceived:%llu"), LastProgressUpdateBytes, BytesSent, BytesReceived);
+		const uint64 ByteDifference = BytesReceived - LastProgressUpdateBytes;
 		LastProgressUpdateBytes = BytesReceived;
 
-		UE_LOG(LogBackgroundHttpRequest, VeryVerbose, TEXT("HttpRequest Progress Update- RequestID:%s | BytesSent: %d | BytesReceived:%d | BytesReceivedSinceLastUpdate:%d"), *OriginalRequest.Pin()->GetRequestID(), BytesSent, BytesReceived, ByteDifference);
+		UE_LOG(LogBackgroundHttpRequest, VeryVerbose, TEXT("HttpRequest Progress Update- RequestID:%s | BytesSent: %llu | BytesReceived:%llu | BytesReceivedSinceLastUpdate:%llu"), *OriginalRequest.Pin()->GetRequestID(), BytesSent, BytesReceived, ByteDifference);
 
 		OriginalRequest.Pin()->OnProgressUpdated().ExecuteIfBound(OriginalRequest.Pin(), BytesReceived, ByteDifference);
 	}

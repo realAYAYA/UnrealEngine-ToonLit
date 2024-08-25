@@ -3,6 +3,7 @@
 #if WITH_TESTS
 
 #include "Memory/CompositeBuffer.h"
+#include "Templates/Function.h"
 
 #include "Tests/TestHarnessAdapter.h"
 #include <type_traits>

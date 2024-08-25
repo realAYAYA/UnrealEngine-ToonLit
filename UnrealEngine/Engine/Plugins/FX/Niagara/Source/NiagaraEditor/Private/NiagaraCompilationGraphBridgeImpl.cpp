@@ -87,12 +87,12 @@ const UNiagaraGraph* FNiagaraCompilationGraphBridge::GetOwningGraph(const FNode*
 
 bool FNiagaraCompilationGraphBridge::CustomHlslReferencesTokens(const FCustomHlslNode* CustomNode, TConstArrayView<FStringView> TokenStrings)
 {
-	TArray<FString> StringTokens;
+	TArray<FStringView> StringTokens;
 	UNiagaraNodeCustomHlsl::GetTokensFromString(CustomNode->GetCustomHlsl(), StringTokens, false, false);
 
 	for (FStringView Token : TokenStrings)
 	{
-		const bool TokenMatched = StringTokens.ContainsByPredicate([&Token](const FString& HlslToken) -> bool
+		const bool TokenMatched = StringTokens.ContainsByPredicate([&Token](const FStringView& HlslToken) -> bool
 			{
 				return HlslToken.Contains(Token);
 			});
@@ -104,6 +104,27 @@ bool FNiagaraCompilationGraphBridge::CustomHlslReferencesTokens(const FCustomHls
 	}
 
 	return false;
+}
+
+void FNiagaraCompilationGraphBridge::CustomHlslReferencesTokens(const FCustomHlslNode* CustomNode, TConstArrayView<FName> TokenStrings, TArrayView<bool> Results)
+{
+	checkf(TokenStrings.Num() == Results.Num(), TEXT("Number of results must match the number of tokens queried for"));
+	if (TokenStrings.Num() == 0)
+	{
+		return;
+	}
+	TArray<FStringView> StringTokens;
+	UNiagaraNodeCustomHlsl::GetTokensFromString(CustomNode->GetCustomHlsl(), StringTokens, false, false);
+
+	for (SIZE_T i = 0; i < TokenStrings.Num(); i++)
+	{
+		FNameBuilder NameBuilder(TokenStrings[i]);
+		FStringView NameString(NameBuilder.ToView());
+		Results[i] = StringTokens.ContainsByPredicate([NameString](const FStringView& HlslToken) -> bool
+			{
+				return HlslToken.Contains(NameString);
+			});
+	}
 }
 
 ENiagaraScriptUsage FNiagaraCompilationGraphBridge::GetCustomHlslUsage(const FCustomHlslNode* CustomNode)
@@ -216,6 +237,11 @@ void FNiagaraCompilationGraphBridge::BuildTraversal(const FGraph* Graph, const F
 const UNiagaraGraph* FNiagaraCompilationGraphBridge::GetEmitterGraph(const FEmitterNode* EmitterNode)
 {
 	return EmitterNode->GetCalledGraph();
+}
+
+FNiagaraEmitterID FNiagaraCompilationGraphBridge::GetEmitterID(const FEmitterNode* EmitterNode)
+{
+	return EmitterNode->GetEmitterID();
 }
 
 FString FNiagaraCompilationGraphBridge::GetEmitterUniqueName(const FEmitterNode* EmitterNode)
@@ -523,6 +549,11 @@ bool FNiagaraCompilationGraphBridge::GetGraphReferencesStaticVariables(const FGr
 const UNiagaraNodeEmitter* FNiagaraCompilationGraphBridge::GetNodeAsEmitter(const FNode* Node)
 {
 	return Cast<const UNiagaraNodeEmitter>(Node);
+}
+
+bool FNiagaraCompilationGraphBridge::GetCustomNodeUsesImpureFunctions(const UNiagaraNodeCustomHlsl* CustomNode)
+{
+	return CustomNode->CallsImpureDataInterfaceFunctions();
 }
 
 UNiagaraParameterCollection* FNiagaraCompilationGraphBridge::FAvailableParameterCollections::FindCollection(const FNiagaraVariable& Variable) const

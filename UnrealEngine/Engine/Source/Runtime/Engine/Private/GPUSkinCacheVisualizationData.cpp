@@ -4,6 +4,7 @@
 #include "HAL/IConsoleManager.h"
 #include "RenderUtils.h"
 #include "RHIDefinitions.h"
+#include "Misc/ScopeLock.h"
 
 #define LOCTEXT_NAMESPACE "FGPUSkinCacheVisualizationData"
 
@@ -13,6 +14,7 @@ static FGPUSkinCacheVisualizationData GGPUSkinCacheVisualizationData;
 
 void FGPUSkinCacheVisualizationData::Initialize()
 {
+	UE::TScopeLock Lock(Mutex);
 	if (!bIsInitialized)
 	{
 		// NOTE: The first parameter determines the console command parameter. "none", "off" and "list" are reserved

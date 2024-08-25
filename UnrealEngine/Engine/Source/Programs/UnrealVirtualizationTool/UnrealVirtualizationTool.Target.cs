@@ -30,7 +30,11 @@ public class UnrealVirtualizationToolTarget : TargetRules
 		// Enable Developer plugins
 		bCompileWithPluginSupport = true;
 
-		GlobalDefinitions.Add("UE_TRACE_ENABLED=1");
+		// Reduce the final exe/pdb size
+		WindowsPlatform.bStripUnreferencedSymbols = true;
+		WindowsPlatform.bMergeIdenticalCOMDATs = true;
+
+		bEnableTrace = true;
 		GlobalDefinitions.Add("UE_SUPPORT_FULL_PACKAGEPATH=1");
 	}
 }

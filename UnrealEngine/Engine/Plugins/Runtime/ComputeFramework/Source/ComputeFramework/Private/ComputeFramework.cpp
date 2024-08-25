@@ -12,6 +12,7 @@
 #include "RenderGraphBuilder.h"
 #include "ShaderCore.h"
 #include "UObject/UObjectIterator.h"
+#include "Rendering/RenderCommandPipes.h"
 
 DEFINE_LOG_CATEGORY(LogComputeFramework);
 
@@ -85,8 +86,10 @@ namespace ComputeFramework
 	{
 		FComputeFrameworkSystem* ComputeSystem = FComputeFrameworkModule::GetComputeSystem();
 		FComputeGraphTaskWorker* ComputeGraphWorker = ComputeSystem != nullptr ? ComputeSystem->GetComputeWorker(InScene) : nullptr;
-		if (ensure(ComputeGraphWorker))
+		if (ComputeGraphWorker)
 		{
+			UE::RenderCommandPipe::FSyncScope SyncScope({ &UE::RenderCommandPipe::SkeletalMesh });
+
 			ENQUEUE_RENDER_COMMAND(ComputeFrameworkFlushCommand)(
 				[ComputeGraphWorker, InExecutionGroupName](FRHICommandListImmediate& RHICmdList)
 				{
@@ -94,6 +97,20 @@ namespace ComputeFramework
 					ComputeGraphWorker->SubmitWork(GraphBuilder, InExecutionGroupName, GMaxRHIFeatureLevel);
 					GraphBuilder.Execute();
 				});
+		}
+	}
+
+	void AbortWork(FSceneInterface const* InScene, UObject* InOwnerPointer)
+	{
+		FComputeFrameworkSystem* ComputeSystem = FComputeFrameworkModule::GetComputeSystem();
+		FComputeGraphTaskWorker* ComputeGraphWorker = ComputeSystem != nullptr ? ComputeSystem->GetComputeWorker(InScene) : nullptr;
+		if (ComputeGraphWorker)
+		{
+			ENQUEUE_RENDER_COMMAND(ComputeFrameworkAbortCommand)(
+				[ComputeGraphWorker, InOwnerPointer](FRHICommandListImmediate& RHICmdList)
+			{
+				ComputeGraphWorker->Abort(InOwnerPointer);
+			});
 		}
 	}
 }

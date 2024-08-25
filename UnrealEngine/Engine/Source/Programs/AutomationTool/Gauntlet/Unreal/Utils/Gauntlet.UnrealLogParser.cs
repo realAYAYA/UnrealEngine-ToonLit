@@ -2,13 +2,12 @@
 
 using System;
 using System.Collections.Generic;
-using System.IO;
-using AutomationTool;
-using UnrealBuildTool;
-using System.Threading;
 using System.Text.RegularExpressions;
-using System.Drawing;
 using System.Linq;
+using System.Text;
+using EpicGames.Core;
+using Microsoft.Extensions.Logging;
+using Logging = Microsoft.Extensions.Logging;
 
 namespace Gauntlet
 {
@@ -31,6 +30,11 @@ namespace Gauntlet
 			Error,
 			Fatal
 		}
+
+		/// <summary>
+		/// Set of log channels that are used to monitor Editor processing
+		/// </summary>
+		public static string[] EditorBusyChannels = new string[] { "Automation", "FunctionalTest", "Material", "DerivedDataCache", "ShaderCompilers", "Texture", "SkeletalMesh", "StaticMesh", "Python" };
 
 		/// <summary>
 		/// Represents an entry in an Unreal logfile with and contails the associated category, level, and message
@@ -129,6 +133,7 @@ namespace Gauntlet
 		/// </summary>
 		public class BuildInfo
 		{
+			public string BuildVersion;
 			public string BranchName;
 			public int Changelist;
 		}
@@ -204,6 +209,350 @@ namespace Gauntlet
 	}
 
 	/// <summary>
+	/// Parse Unreal log from string chunk and aggregate lines as LogEvents
+	/// Support structure logging output and legacy logging style
+	/// </summary>
+	public class UnrealLogStreamParser
+	{
+
+		static class LogEventProperties
+		{
+			public static readonly string Channel = "_channel";
+			public static readonly string Severity = "_severity";
+		}
+
+		protected List<LogEvent> LogEvents { get; private set; }
+
+		private List<string> UnidentifiedLogLevels { get; set; }
+
+		public UnrealLogStreamParser()
+		{
+			LogEvents = new List<LogEvent>();
+			UnidentifiedLogLevels = new List<string>();
+		}
+
+		/// <summary>
+		/// Clear aggregated log events 
+		/// </summary>
+		public void Clear()
+		{
+			LogEvents.Clear();
+		}
+
+		/// <summary>
+		/// Parse a string as log and aggregate identified unreal log lines
+		/// </summary>
+		/// <param name="InContent"></param>
+		/// <param name="LineOffset">Line offset to start parsing and aggregate</param>
+		/// <returns>The number of line parsed</returns>
+		public int ReadStream(string InContent, int LineOffset = 0)
+		{
+			int Cursor = 0;
+
+			for (int BaseIdx = 0; BaseIdx < InContent.Length;)
+			{
+				// Extract the next line
+				int EndIdx = InContent.IndexOf('\n', BaseIdx);
+				if (EndIdx == -1)
+				{
+					break;
+				}
+
+				// Position Cursor
+				if (Cursor < LineOffset)
+				{
+					// Skip to next line
+					Cursor++;
+					BaseIdx = EndIdx + 1;
+					continue;
+				}
+
+				// Skip over any windows CR-LF line endings
+				int LineEndIdx = EndIdx;
+				if (LineEndIdx > BaseIdx && InContent[LineEndIdx - 1] == '\r')
+				{
+					LineEndIdx--;
+				}
+
+				// Grab a line
+				string Line = InContent.Substring(BaseIdx, LineEndIdx - BaseIdx);
+				// Move to the next line
+				Cursor++;
+				BaseIdx = EndIdx + 1;
+
+				// Parse the line
+				if (Line.Length > 0 && Line[0] == '{')
+				{
+
+					try
+					{
+						byte[] Buffer = Encoding.UTF8.GetBytes(Line);
+						LogEvent LogEntry = LogEvent.Read(JsonLogEvent.Parse(Buffer).Data.Span);
+						LogEvents.Add(LogEntry);
+						continue;
+					}
+					catch { /* Ignore the exception and handle the line like a regular log line then */ }
+				}
+
+				// Parse the line as Unreal legacy line
+				Match MatchLine = Regex.Match(Line, @"(?<channel>[A-Za-z][\w\d]+):\s(?:(?<level>Display|Verbose|VeryVerbose|Warning|Error|Fatal):\s)?(?<message>.*)");
+
+				if (MatchLine.Success)
+				{
+					string Channel = MatchLine.Groups["channel"].ToString();
+					string LevelStr = MatchLine.Groups["level"].ToString();
+					string Message = MatchLine.Groups["message"].ToString();
+
+					Logging.LogLevel Level = Logging.LogLevel.Information;
+					switch (LevelStr)
+					{
+						case "Display":
+							Level = Logging.LogLevel.Information;
+							break;
+
+						case "Verbose":
+						case "VeryVerbose":
+							Level = Logging.LogLevel.Debug;
+							break;
+
+						default:
+							if (!string.IsNullOrEmpty(LevelStr))
+							{
+								if (!Enum.TryParse(LevelStr, out Level))
+								{
+									// only show a warning once
+									if (!UnidentifiedLogLevels.Contains(LevelStr))
+									{
+										UnidentifiedLogLevels.Add(LevelStr);
+										Log.Warning("Failed to match log level {0} to enum!", LevelStr);
+									}
+								}
+							}
+							break;
+					}
+
+					Dictionary<string, object> Properties = new Dictionary<string, object>();
+					string Format = Message;
+					if (!string.IsNullOrEmpty(LevelStr))
+					{
+						Properties.Add(LogEventProperties.Severity, new LogValue(LogValueType.Severity, LevelStr));
+						Format = $"{{{LogEventProperties.Severity}}}: {Format}";
+					}
+					Properties.Add(LogEventProperties.Channel, new LogValue(LogValueType.Channel, Channel));
+					Format = $"{{{LogEventProperties.Channel}}}: {Format}";
+
+					LogEvents.Add(new LogEvent(new DateTime(0), Level, KnownLogEvents.Engine_LogChannel, 0, 1, MatchLine.Groups[0].ToString(), Format, Properties, null));
+				}
+				else
+				{
+					// Not an Unreal Engine log line
+					LogEvents.Add(new LogEvent(new DateTime(0), Logging.LogLevel.Information, new EventId(0), 0, 1, Line, Line, null, null));
+				}
+			}
+			return Cursor - LineOffset;
+		}
+
+		/// <summary>
+		/// Return All the LogEvent instances
+		/// </summary>
+		/// <returns></returns>
+		public IEnumerable<LogEvent> GetEvents()
+		{
+			return LogEvents;
+		}
+
+		/// <summary>
+		/// Return the LogEvent instances which property type and value match requirements
+		/// </summary>
+		/// <param name="PropertyName">The property name type to match the value</param>
+		/// <param name="InValues">The property values to match</param>
+		/// <param name="ExactMatch">Whether to use an exact match or partial match</param>
+		/// <returns></returns>
+		public IEnumerable<LogEvent> GetEventsFromProperty(string PropertyName, IEnumerable<string> InValues, bool ExactMatch = false)
+		{
+			IEnumerable<LogEvent> Events;
+
+			if (ExactMatch)
+			{
+				Events = LogEvents.Where(E =>
+				{
+					LogValue PropertyValue = null;
+					if (E.TryGetProperty(PropertyName, out PropertyValue))
+					{
+						return InValues.Contains(PropertyValue.Text, StringComparer.OrdinalIgnoreCase);
+					}
+
+					return false;
+
+				});
+			}
+			else
+			{
+				// partial match
+				Events = LogEvents.Where(E =>
+				{
+					LogValue PropertyValue = null;
+					if (!E.TryGetProperty(PropertyName, out PropertyValue))
+					{
+						return false;
+					}
+
+					foreach (string Value in InValues)
+					{
+						if (PropertyValue.Text.IndexOf(Value, StringComparison.OrdinalIgnoreCase) >= 0)
+						{
+							return true;
+						}
+					}
+
+					return false;
+				});
+			}
+			return Events;
+		}
+
+		/// <summary>
+		/// Return the LogEvent instances which property value meet predicate
+		/// </summary>
+		/// <param name="PropertyName"></param>
+		/// <param name="InPredicate"></param>
+		/// <returns></returns>
+		public IEnumerable<LogEvent> GetEventsFromProperty(string PropertyName, Predicate<string> InPredicate)
+		{
+			IEnumerable<LogEvent> Events;
+
+			Events = LogEvents.Where(E =>
+			{
+				LogValue PropertyValue = null;
+				if (E.TryGetProperty(PropertyName, out PropertyValue))
+				{
+					return InPredicate(PropertyValue.Text);
+				}
+
+				return false;
+			});
+
+			return Events;
+		}
+
+		/// <summary>
+		/// Return the LogEvent instances that match the channel names
+		/// </summary>
+		/// <param name="Channels">The names of the channel to match</param>
+		/// <param name="ExactMatch"></param>
+		/// <returns></returns>
+		public IEnumerable<LogEvent> GetEventsFromChannels(IEnumerable<string> Channels, bool ExactMatch = true)
+		{
+			return GetEventsFromProperty(LogEventProperties.Channel, Channels, ExactMatch);
+		}
+
+		/// <summary>
+		/// Return the LogEvent instances which Channel property meet predicate
+		/// </summary>
+		/// <param name="InPredicate"></param>
+		/// <returns></returns>
+		public IEnumerable<LogEvent> GetEventsFromChannels(Predicate<string> InPredicate)
+		{
+			return GetEventsFromProperty(LogEventProperties.Channel, InPredicate);
+		}
+
+		/// <summary>
+		/// Return the LogEvent instances that match the Editor busy channels
+		/// </summary>
+		/// <returns></returns>
+		public IEnumerable<LogEvent> GetEventsFromEditorBusyChannels()
+		{
+			return GetEventsFromChannels(UnrealLog.EditorBusyChannels, false);
+		}
+
+		/// <summary>
+		/// Return the log lines that match the channel names
+		/// </summary>
+		/// <param name="Channels">The names of the channel to match</param>
+		/// <param name="ExactMatch"></param>
+		/// <returns></returns>
+		public IEnumerable<string> GetLogFromChannels(IEnumerable<string> Channels, bool ExactMatch = true)
+		{
+			return GetEventsFromChannels(Channels, ExactMatch).Select(E => E.Message);
+		}
+
+		/// <summary>
+		/// Return the log lines that match the channel names ignoring the "log" prefix
+		/// </summary>
+		/// <param name="Channels"></param>
+		/// <returns></returns>
+		public IEnumerable<string> GetLogFromShortNameChannels(IEnumerable<string> Channels)
+		{
+			return GetEventsFromChannels(
+				V => Channels.Contains(
+					V.StartsWith("log", StringComparison.OrdinalIgnoreCase)? V.Substring(3) : V,
+					StringComparer.OrdinalIgnoreCase
+				)
+			).Select(E => E.Message);
+		}
+
+		/// <summary>
+		/// Return the log lines that match the Editor busy channels
+		/// </summary>
+		/// <returns></returns>
+		public IEnumerable<string> GetLogFromEditorBusyChannels()
+		{
+			return GetLogFromChannels(UnrealLog.EditorBusyChannels, false);
+		}
+
+		/// <summary>
+		/// Return the log lines that match the channel name
+		/// </summary>
+		/// <param name="Channel">The channel name to match</param>
+		/// <param name="ExactMatch"></param>
+		/// <returns></returns>
+		public IEnumerable<string> GetLogFromChannel(string Channel, bool ExactMatch = true)
+		{
+			return GetLogFromChannels(new string[] { Channel }, ExactMatch);
+		}
+
+		/// <summary>
+		/// Return the log lines that match the severity name
+		/// </summary>
+		/// <param name="Severity">The severity string to match</param>
+		/// <returns></returns>
+		public IEnumerable<string> GetLogFromSeverity(string Severity)
+		{
+			return GetEventsFromProperty(LogEventProperties.Severity, new string[] { Severity }, true).Select(E => E.Message);
+		}
+
+		/// <summary>
+		/// Return all the aggregated log lines 
+		/// </summary>
+		/// <returns></returns>
+		public IEnumerable<string> GetLogLines()
+		{
+			return LogEvents.Select(E => E.Message);
+		}
+
+		/// <summary>
+		/// Return the log lines that contain a string
+		/// </summary>
+		/// <param name="Text">The text to match in the line</param>
+		/// <returns></returns>
+		public IEnumerable<string> GetLogLinesContaining(string Text)
+		{
+			return GetLogLines().Where(L => L.IndexOf(Text, StringComparison.OrdinalIgnoreCase) >= 0);
+		}
+
+		/// <summary>
+		/// Return the log lines that match the regex pattern
+		/// </summary>
+		/// <param name="Pattern">The regex pattern to match in the line</param>
+		/// <returns></returns>
+		public IEnumerable<string> GetLogLinesMatchingPattern(string Pattern)
+		{
+			Regex RegexPattern = new Regex(Pattern, RegexOptions.IgnoreCase);
+			return GetLogLines().Where(L => RegexPattern.IsMatch(L));
+		}
+	}
+
+	/// <summary>
 	/// Helper class for parsing logs
 	/// </summary>
 	public class UnrealLogParser
@@ -233,8 +582,7 @@ namespace Gauntlet
 		/// <returns></returns>
 		public UnrealLogParser(string InContent)
 		{
-			// convert linefeed to remove \r which is captured in regex's :(
-			Content = InContent.Replace(Environment.NewLine, "\n");
+			Content = SanitizeLogText(InContent);
 
 			// Search for LogFoo: <Display|Error|etc>: Message
 			// Also need to handle 'Log' not always being present, and the category being empty for a level of 'Log'
@@ -268,6 +616,61 @@ namespace Gauntlet
 			}
 
 			LogEntries = ParsedEntries;
+		}
+
+		public static string SanitizeLogText(string InContent)
+		{
+			StringBuilder ContentBuilder = new StringBuilder();
+
+			for (int BaseIdx = 0; BaseIdx < InContent.Length;)
+			{
+				// Extract the next line
+				int EndIdx = InContent.IndexOf('\n', BaseIdx);
+				if (EndIdx == -1)
+				{
+					break;
+				}
+
+				// Skip over any windows CR-LF line endings
+				int LineEndIdx = EndIdx;
+				if (LineEndIdx > BaseIdx && InContent[LineEndIdx - 1] == '\r')
+				{
+					LineEndIdx--;
+				}
+
+				// Render any JSON log events
+				string Line = InContent.Substring(BaseIdx, LineEndIdx - BaseIdx);
+				if (Line.Length > 0 && Line[0] == '{')
+				{
+					try
+					{
+						byte[] Buffer = Encoding.UTF8.GetBytes(Line);
+						JsonLogEvent JsonEvent = JsonLogEvent.Parse(Buffer);
+						Line = JsonEvent.GetLegacyLogLine();
+					}
+					catch (Exception ex)
+					{
+						EpicGames.Core.Log.Logger.LogDebug(ex, "Unable to parse log line: {Line}, Exception: {Ex}", Line, ex.ToString());
+
+						int MinIdx = Math.Max(BaseIdx - 2048, 0);
+						int MaxIdx = Math.Min(BaseIdx + 2048, InContent.Length);
+
+						string[] Context = InContent.Substring(MinIdx, MaxIdx - MinIdx).Split('\n');
+						for (int idx = 1; idx < Context.Length - 1; idx++)
+						{
+							EpicGames.Core.Log.Logger.LogDebug("Context {Idx}: {Line}", idx, Context[idx].TrimEnd());
+						}
+					}
+				}
+
+				ContentBuilder.Append(Line);
+				ContentBuilder.Append('\n');
+
+				// Move to the next line
+				BaseIdx = EndIdx + 1;
+			}
+
+			return ContentBuilder.ToString();
 		}
 
 		public UnrealLog GetSummary()
@@ -407,6 +810,13 @@ namespace Gauntlet
 				Info.Changelist = Convert.ToInt32(M.Groups[1].ToString());
 			}
 
+			M = Regex.Match(Content, @"LogInit.+Build:\s*(\+.*)", RegexOptions.IgnoreCase);
+
+			if (M.Success)
+			{
+				Info.BuildVersion = M.Groups[1].ToString();
+			}
+
 			return Info;
 		}
 
@@ -472,7 +882,7 @@ namespace Gauntlet
 		/// <returns></returns>
 		public IEnumerable<string> GetEditorBusyChannels()
 		{
-			return GetLogChannels(new string[] { "Automation", "FunctionalTest", "Material", "DerivedDataCache", "ShaderCompilers", "Texture", "SkeletalMesh", "StaticMesh", "Python" }, false);
+			return GetLogChannels(UnrealLog.EditorBusyChannels, false);
 		}
 
 		/// <summary>

@@ -308,8 +308,6 @@ bool UTextAssetCommandlet::DoTextAssetProcessing(const FProcessingArgs& InArgs)
 
 	RepairDamagedFiles();
 
-	TArray<FString> DenyList;
-
 	switch (InArgs.ProcessingMode)
 	{
 	case ETextAssetCommandletMode::FindMismatchedSerializers:
@@ -401,15 +399,6 @@ bool UTextAssetCommandlet::DoTextAssetProcessing(const FProcessingArgs& InArgs)
 
 		bIgnore = bIgnore || (InputAssetFilename.Contains(TEXT("_BuiltData")));
 
-		for (const FString& DeniedItem : DenyList)
-		{
-			if (InputAssetFilename.Contains(DeniedItem))
-			{
-				bIgnore = true;
-				break;
-			}
-		}
-
 		if (bIgnore)
 		{
 			continue;
@@ -486,7 +475,6 @@ bool UTextAssetCommandlet::DoTextAssetProcessing(const FProcessingArgs& InArgs)
 		TArray<FString> PhaseSuccess;
 		TArray<TArray<FString>> PhaseFails;
 		PhaseFails.AddDefaulted(3);
-		TArray<FString> IntermediateFilenames;
 
 		for (const TTuple<FString, FString>& FileToProcess : FilesToProcess)
 		{
@@ -495,8 +483,6 @@ bool UTextAssetCommandlet::DoTextAssetProcessing(const FProcessingArgs& InArgs)
 			FString DestinationFilename = FileToProcess.Get<1>();
 
 			TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*SourceFilename);
-
-			IntermediateFilenames.Empty();
 
 			double StartTime = FPlatformTime::Seconds();
 
@@ -710,14 +696,6 @@ bool UTextAssetCommandlet::DoTextAssetProcessing(const FProcessingArgs& InArgs)
 				IFileManager::Get().Delete(*BaseBinaryPackageBackup, false, true, true);
 				IFileManager::Get().Delete(*SourceFilename, false, true, true);
 				IFileManager::Get().Move(*SourceFilename, *SourceBackupFilename);
-
-				if (!bDisableCleanup)
-				{
-					for (const FString& IntermediateFilename : IntermediateFilenames)
-					{
-						IFileManager::Get().Delete(*IntermediateFilename, false, true, true);
-					}
-				}
 
 				if (!bPhasesMatched[0])
 				{

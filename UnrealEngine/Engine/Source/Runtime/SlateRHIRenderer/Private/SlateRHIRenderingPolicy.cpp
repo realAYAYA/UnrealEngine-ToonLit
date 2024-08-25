@@ -10,6 +10,7 @@
 #include "RHIStaticStates.h"
 #include "RHIUtilities.h"
 #include "GlobalRenderResources.h"
+#include "Interfaces/SlateRHIRenderingPolicyInterface.h"
 #include "SceneView.h"
 #include "SceneUtils.h"
 #include "Engine/Engine.h"
@@ -57,8 +58,10 @@ static FAutoConsoleVariableRef CVarSlateDrawBatchNum(TEXT("Slate.DrawBatchNum"),
 
 #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
 	#define SLATE_DRAW_EVENT(RHICmdList, EventName) SCOPED_CONDITIONAL_DRAW_EVENT(RHICmdList, EventName, SlateEnableDrawEvents);
+	#define SLATE_DRAW_EVENTF(RHICmdList, EventName, Format, ...) SCOPED_CONDITIONAL_DRAW_EVENTF(RHICmdList, EventName, SlateEnableDrawEvents, Format, ##__VA_ARGS__);
 #else
 	#define SLATE_DRAW_EVENT(RHICmdList, EventName)
+	#define SLATE_DRAW_EVENTF(RHICmdList, EventName, Format, ...);
 #endif
 
 TAutoConsoleVariable<int32> CVarSlateAbsoluteIndices(
@@ -194,7 +197,7 @@ void FSlateRHIRenderingPolicy::BuildRenderingBuffers(FRHICommandListImmediate& R
 	SET_DWORD_STAT(STAT_SlateVertexCount, InBatchData.GetFinalVertexData().Num());
 }
 
-static FSceneView* CreateSceneView( FSceneViewFamilyContext* ViewFamilyContext, FSlateBackBuffer& BackBuffer, const FMatrix& ViewProjectionMatrix )
+static FSceneView* CreateSceneView( FSceneViewFamilyContext* ViewFamilyContext, FSlateBackBuffer& BackBuffer, const FMatrix& ViewProjectionMatrix, const FIntRect InViewRect)
 {
 	QUICK_SCOPE_CYCLE_COUNTER(STAT_Slate_CreateSceneView);
 	// In loading screens, the engine is NULL, so we skip out.
@@ -202,8 +205,12 @@ static FSceneView* CreateSceneView( FSceneViewFamilyContext* ViewFamilyContext, 
 	{
 		return nullptr;
 	}
-
-	FIntRect ViewRect(FIntPoint(0, 0), BackBuffer.GetSizeXY());
+	
+	FIntRect ViewRect = InViewRect;
+	if (ViewRect.IsEmpty())
+	{
+		ViewRect = FIntRect(FIntPoint(0, 0), BackBuffer.GetSizeXY());
+	}
 
 	// make a temporary view
 	FSceneViewInitOptions ViewInitOptions;
@@ -234,7 +241,7 @@ static FSceneView* CreateSceneView( FSceneViewFamilyContext* ViewFamilyContext, 
 	);
 
 	// TODO LWC
-	ViewUniformShaderParameters.RelativeWorldViewOrigin = (FVector3f)View->ViewMatrices.GetViewOrigin();
+	ViewUniformShaderParameters.WorldViewOriginHigh = (FVector3f)View->ViewMatrices.GetViewOrigin();
 	
 	// Slate materials need this scale to be positive, otherwise it can fail in querying scene textures (e.g., custom stencil)
 	ViewUniformShaderParameters.BufferToSceneTextureScale = FVector2f(1.0f, 1.0f);
@@ -343,11 +350,35 @@ static bool UpdateScissorRect(
 
 				// We only clear the stencil the first time, and if some how the user draws more than 255 masking quads
 				// in a single frame.
-				bool bClearStencil = false;
-				if (MaskingID == 0)
-				{
-					bClearStencil = true;
+				const bool bClearStencil = MaskingID == 0;
 
+				// Don't bother setting the render targets unless we actually need to clear them.
+				if (bClearStencil || bForceStateChange)
+				{
+					// #todo-renderpasses Similar to above this is gross. Would require a refactor to really fix.
+					RHICmdList.EndRenderPass();
+					bDidRestartRenderpass = true;
+
+					// Clear current stencil buffer, we use ELoad/EStore, because we need to keep the stencil around.
+					ERenderTargetLoadAction StencilLoadAction = bClearStencil ? ERenderTargetLoadAction::EClear : ERenderTargetLoadAction::ELoad;
+					ERenderTargetActions StencilAction = MakeRenderTargetActions(StencilLoadAction, ERenderTargetStoreAction::EStore);
+					if (IsMemorylessTexture(DepthStencilTarget))
+					{
+						// We can't preserve content for memoryless targets
+						StencilAction = bClearStencil ? ERenderTargetActions::Clear_DontStore : ERenderTargetActions::DontLoad_DontStore;
+					}
+
+					RPInfo.DepthStencilRenderTarget.Action = MakeDepthStencilTargetActions(ERenderTargetActions::DontLoad_DontStore, StencilAction);
+					RPInfo.DepthStencilRenderTarget.DepthStencilTarget = DepthStencilTarget;
+					RPInfo.DepthStencilRenderTarget.ExclusiveDepthStencil = FExclusiveDepthStencil::DepthNop_StencilWrite;
+					TransitionRenderPassTargets(RHICmdList, RPInfo);
+					RHICmdList.BeginRenderPass(RPInfo, TEXT("SlateUpdateScissorRect_ClearStencil"));
+				}
+
+				// Setup the scissor rect after starting the render pass, as the RHI does not preserve the scissor state between passes / render targets.
+
+				if (bClearStencil)
+				{
 					// We don't want there to be any scissor rect when we clear the stencil
 					RHICmdList.SetScissorRect(false, 0, 0, 0, 0);
 				}
@@ -375,28 +406,6 @@ static bool UpdateScissorRect(
 					RHICmdList.SetScissorRect(true, ScissorRect.Left, ScissorRect.Top, ScissorRect.Right, ScissorRect.Bottom);
 				}
 
-				// Don't bother setting the render targets unless we actually need to clear them.
-				if (bClearStencil || bForceStateChange)
-				{
-					// #todo-renderpasses Similar to above this is gross. Would require a refactor to really fix.
-					RHICmdList.EndRenderPass();
-					bDidRestartRenderpass = true;
-
-					// Clear current stencil buffer, we use ELoad/EStore, because we need to keep the stencil around.
-					ERenderTargetLoadAction StencilLoadAction = bClearStencil ? ERenderTargetLoadAction::EClear : ERenderTargetLoadAction::ELoad;
-					ERenderTargetActions StencilAction = MakeRenderTargetActions(StencilLoadAction, ERenderTargetStoreAction::EStore);
-					if (IsMemorylessTexture(DepthStencilTarget))
-					{
-						// We can't preserve content for memoryless targets
-						StencilAction = bClearStencil ? ERenderTargetActions::Clear_DontStore : ERenderTargetActions::DontLoad_DontStore;
-					}
-
-					RPInfo.DepthStencilRenderTarget.Action = MakeDepthStencilTargetActions(ERenderTargetActions::DontLoad_DontStore, StencilAction);
-					RPInfo.DepthStencilRenderTarget.DepthStencilTarget = DepthStencilTarget;
-					RPInfo.DepthStencilRenderTarget.ExclusiveDepthStencil = FExclusiveDepthStencil::DepthNop_StencilWrite;
-					TransitionRenderPassTargets(RHICmdList, RPInfo);
-					RHICmdList.BeginRenderPass(RPInfo, TEXT("SlateUpdateScissorRect_ClearStencil"));
-				}
 
 				FGlobalShaderMap* MaxFeatureLevelShaderMap = GetGlobalShaderMap(GMaxRHIShaderPlatform);
 
@@ -745,10 +754,9 @@ void FSlateRHIRenderingPolicy::DrawElements(
 					DefaultShowFlags
 				)
 				.SetTime(Params.Time)
-				.SetGammaCorrection(DisplayGamma)
 				.SetRealtimeUpdate(true)
 			);
-			SceneViews[i] = CreateSceneView(SceneViewFamilyContexts[i], BackBuffer, FMatrix(Params.ViewProjectionMatrix));
+			SceneViews[i] = CreateSceneView(SceneViewFamilyContexts[i], BackBuffer, FMatrix(Params.ViewProjectionMatrix), Params.ViewRect);
 		}
 
 		SceneViewFamilyContexts[NumScenes - 1] = new FSceneViewFamilyContext
@@ -760,10 +768,9 @@ void FSlateRHIRenderingPolicy::DrawElements(
 				DefaultShowFlags
 			)
 			.SetTime(Params.Time)
-			.SetGammaCorrection(DisplayGamma)
 			.SetRealtimeUpdate(true)
 		);
-		SceneViews[NumScenes - 1] = CreateSceneView(SceneViewFamilyContexts[NumScenes - 1], BackBuffer, FMatrix(Params.ViewProjectionMatrix));
+		SceneViews[NumScenes - 1] = CreateSceneView(SceneViewFamilyContexts[NumScenes - 1], BackBuffer, FMatrix(Params.ViewProjectionMatrix), Params.ViewRect);
 	}
 
 	TShaderMapRef<FSlateElementVS> GlobalVertexShader(GetGlobalShaderMap(GMaxRHIShaderPlatform));
@@ -866,11 +873,11 @@ void FSlateRHIRenderingPolicy::DrawElements(
 
 		if (EnumHasAllFlags(DrawFlags, ESlateBatchDrawFlag::Wireframe))
 		{
-			GraphicsPSOInit.RasterizerState = TStaticRasterizerState<FM_Wireframe, CM_None, false>::GetRHI();
+			GraphicsPSOInit.RasterizerState = TStaticRasterizerState<FM_Wireframe>::GetRHI();
 		}
 		else
 		{
-			GraphicsPSOInit.RasterizerState = TStaticRasterizerState<FM_Solid, CM_None, false>::GetRHI();
+			GraphicsPSOInit.RasterizerState = TStaticRasterizerState<FM_Solid>::GetRHI();
 		}
 
 		if (!RenderBatch.CustomDrawer)
@@ -966,7 +973,7 @@ void FSlateRHIRenderingPolicy::DrawElements(
 
 				if (EnumHasAllFlags(DrawFlags, ESlateBatchDrawFlag::Wireframe) || Params.bWireFrame)
 				{
-					GraphicsPSOInit.RasterizerState = TStaticRasterizerState<FM_Wireframe, CM_None, false>::GetRHI();
+					GraphicsPSOInit.RasterizerState = TStaticRasterizerState<FM_Wireframe>::GetRHI();
 
 					if (Params.bWireFrame)
 					{
@@ -975,7 +982,7 @@ void FSlateRHIRenderingPolicy::DrawElements(
 				}
 				else
 				{
-					GraphicsPSOInit.RasterizerState = TStaticRasterizerState<FM_Solid, CM_None, false>::GetRHI();
+					GraphicsPSOInit.RasterizerState = TStaticRasterizerState<FM_Solid>::GetRHI();
 				}
 
 				GraphicsPSOInit.BoundShaderState.VertexDeclarationRHI = GSlateVertexDeclaration.VertexDeclarationRHI;
@@ -1068,7 +1075,6 @@ void FSlateRHIRenderingPolicy::DrawElements(
 			}
 			else if (GEngine && ShaderResource && ShaderResource->GetType() == ESlateShaderResource::Material && ShaderType != ESlateShader::PostProcess)
 			{
-				SLATE_DRAW_EVENT(RHICmdList, MaterialBatch);
 				check(RHICmdList.IsInsideRenderPass());
 
 				check(RenderBatch.NumIndices > 0);
@@ -1105,6 +1111,8 @@ void FSlateRHIRenderingPolicy::DrawElements(
 				FSlateMaterialResource* MaterialShaderResource = (FSlateMaterialResource*)ShaderResource;
 				if (const FMaterialRenderProxy* MaterialRenderProxy = MaterialShaderResource->GetRenderProxy())
 				{
+					SLATE_DRAW_EVENTF(RHICmdList, MaterialBatch, TEXT("Slate Material: %s"), *MaterialRenderProxy->GetMaterialName());
+
 					MaterialShaderResource->CheckForStaleResources();
 
 					const bool bUseInstancing = RenderBatch.InstanceCount > 0 && RenderBatch.InstanceData != nullptr;
@@ -1240,7 +1248,7 @@ void FSlateRHIRenderingPolicy::DrawElements(
 
 				FPostProcessRectParams RectParams;
 				RectParams.SourceTexture = PostProcessTexture;
-				RectParams.SourceRect = FSlateRect(0.f, 0.f, (float)PostProcessTexture->GetSizeX(), (float)PostProcessTexture->GetSizeY());
+				RectParams.SourceRect = FSlateRect((float)Params.ViewRect.Min.X, (float)Params.ViewRect.Min.Y, (float)Params.ViewRect.Max.X, (float)Params.ViewRect.Max.Y);
 				RectParams.DestRect = FSlateRect(QuadPositionData.X, QuadPositionData.Y, QuadPositionData.Z, QuadPositionData.W);
 				RectParams.SourceTextureSize = PostProcessTexture->GetSizeXY();
 				RectParams.CornerRadius = ShaderParams.PixelParams3;
@@ -1296,8 +1304,25 @@ void FSlateRHIRenderingPolicy::DrawElements(
 				RHICmdList.SetScissorRect(false, 0, 0, 0, 0);
 				LastClippingState = nullptr;
 
+				ICustomSlateElement::FSlateCustomDrawParams CustomDrawParams = ICustomSlateElement::FSlateCustomDrawParams();
+				CustomDrawParams.ViewProjectionMatrix = Params.ViewProjectionMatrix;
+				CustomDrawParams.ViewOffset = Params.ViewOffset;
+				CustomDrawParams.ViewRect = Params.ViewRect;
+				CustomDrawParams.HDRDisplayColorGamut = Params.HDRDisplayColorGamut;
+				CustomDrawParams.UsedSlatePostBuffers = Params.UsedSlatePostBuffers;
+				CustomDrawParams.bWireFrame = Params.bWireFrame;
+				CustomDrawParams.bIsHDR = Params.bIsHDR;
+
 				// This element is custom and has no Slate geometry.  Tell it to render itself now
-				CustomDrawer->DrawRenderThread(RHICmdList, &BackBuffer.GetRenderTargetTexture());
+				if (CustomDrawer->UsesAdditionalRHIParams())
+				{
+					ICustomSlateElementRHI* CustomDrawerRHI = static_cast<ICustomSlateElementRHI*>(CustomDrawer);
+					CustomDrawerRHI->Draw_RHIRenderThread(RHICmdList, BackBuffer.GetRenderTargetTexture(), CustomDrawParams, FSlateRHIRenderingPolicyInterface(this));
+				}
+				else
+				{
+					CustomDrawer->Draw_RenderThread(RHICmdList, &BackBuffer.GetRenderTargetTexture(), CustomDrawParams);
+				}
 
 				//We reset the maskingID here because otherwise the RT might not get re-set in the lines above see: if (bClearStencil || bForceStateChange)
 				MaskingID = 0;
@@ -1477,6 +1502,12 @@ TShaderRef<FSlateElementPS> FSlateRHIRenderingPolicy::GetTexturePixelShader(FGlo
 		case ESlateShader::RoundedBox:
 			PixelShader = TShaderMapRef<TSlateElementPS<ESlateShader::RoundedBox, true> >(ShaderMap);
 			break;
+		case ESlateShader::SdfFont:
+			PixelShader = TShaderMapRef<TSlateElementPS<ESlateShader::SdfFont, true> >(ShaderMap);
+			break;
+		case ESlateShader::MsdfFont:
+			PixelShader = TShaderMapRef<TSlateElementPS<ESlateShader::MsdfFont, true> >(ShaderMap);
+			break;
 		}
 	}
 	else
@@ -1558,6 +1589,12 @@ TShaderRef<FSlateElementPS> FSlateRHIRenderingPolicy::GetTexturePixelShader(FGlo
 		case ESlateShader::RoundedBox:
 			PixelShader = TShaderMapRef<TSlateElementPS<ESlateShader::RoundedBox, false> >(ShaderMap);
 			break;
+		case ESlateShader::SdfFont:
+			PixelShader = TShaderMapRef<TSlateElementPS<ESlateShader::SdfFont, false> >(ShaderMap);
+			break;
+		case ESlateShader::MsdfFont:
+			PixelShader = TShaderMapRef<TSlateElementPS<ESlateShader::MsdfFont, false> >(ShaderMap);
+			break;
 		}
 	}
 	}
@@ -1571,8 +1608,6 @@ void FSlateRHIRenderingPolicy::ChooseMaterialShaderTypes(ESlateShader ShaderType
 {
 	switch (ShaderType)
 	{
-	case ESlateShader::RoundedBox:
-		// Todo rounded box not supported in materials currently, intentional fall-through to Default
 	case ESlateShader::Default:
 		OutShaderTypes.AddShaderType<TSlateMaterialShaderPS<ESlateShader::Default>>();
 		break;
@@ -1587,6 +1622,15 @@ void FSlateRHIRenderingPolicy::ChooseMaterialShaderTypes(ESlateShader ShaderType
 		break;
 	case ESlateShader::Custom:
 		OutShaderTypes.AddShaderType<TSlateMaterialShaderPS<ESlateShader::Custom>>();
+		break;
+	case ESlateShader::RoundedBox:
+		OutShaderTypes.AddShaderType<TSlateMaterialShaderPS<ESlateShader::RoundedBox>>();
+		break;
+	case ESlateShader::SdfFont:
+		OutShaderTypes.AddShaderType<TSlateMaterialShaderPS<ESlateShader::SdfFont>>();
+		break;
+	case ESlateShader::MsdfFont:
+		OutShaderTypes.AddShaderType<TSlateMaterialShaderPS<ESlateShader::MsdfFont>>();
 		break;
 	default:
 		checkf(false, TEXT("Unsupported Slate shader type for use with materials"));
@@ -1630,5 +1674,72 @@ void FSlateRHIRenderingPolicy::ClearScenes()
 void FSlateRHIRenderingPolicy::FlushGeneratedResources()
 {
 	PostProcessor->ReleaseRenderTargets();
+}
+
+void FSlateRHIRenderingPolicy::TickPostProcessResources()
+{
+	PostProcessor->TickPostProcessResources();
+}
+
+void FSlateRHIRenderingPolicy::BlurRectExternal(FRHICommandListImmediate& RHICmdList, FRHITexture* BlurSrc, FRHITexture* BlurDst, FIntRect SrcRect, FIntRect DstRect, float BlurStrength) const
+{
+	SLATE_DRAW_EVENT(RHICmdList, PostProcess);
+
+	FIntPoint BlurDstExtent = FIntPoint(DstRect.Width(), DstRect.Height());
+
+	// If the radius isn't set, auto-compute it based on the strength
+	int32 OutKernelSize = FMath::RoundToInt(BlurStrength * 3.f);
+
+	// Downsample if needed
+	int32 OutDownsampleAmount = 0;
+	if (OutKernelSize > 9)
+	{
+		OutDownsampleAmount = OutKernelSize >= 64 ? 4 : 2;
+		OutKernelSize /= OutDownsampleAmount;
+	}
+
+	// Kernel sizes must be odd
+	if (OutKernelSize % 2 == 0)
+	{
+		++OutKernelSize;
+	}
+
+	float ComputedStrength = FMath::Max(.5f, BlurStrength);
+
+	int32 RenderTargetWidth = BlurDstExtent.X;
+	int32 RenderTargetHeight = BlurDstExtent.Y;
+	
+	if (OutDownsampleAmount > 0)
+	{
+		RenderTargetWidth = FMath::DivideAndRoundUp(RenderTargetWidth, OutDownsampleAmount);
+		RenderTargetHeight = FMath::DivideAndRoundUp(RenderTargetHeight, OutDownsampleAmount);
+		ComputedStrength /= OutDownsampleAmount;
+	}
+
+	OutKernelSize = FMath::Clamp(OutKernelSize, 3, 255 /*MaxKernelSize*/);
+
+	FVector4f PostProcessData = FVector4f((float)OutKernelSize, ComputedStrength, (float)RenderTargetWidth, (float)RenderTargetHeight);
+
+	FVector2f TopLeft = FVector2f::ZeroVector;
+	FVector2f BotRight = FVector2f(BlurDstExtent.X, BlurDstExtent.Y);
+
+	FPostProcessRectParams RectParams;
+	RectParams.SourceTexture = BlurSrc;
+	RectParams.SourceRect = FSlateRect((float)SrcRect.Min.X, (float)SrcRect.Min.Y, (float)SrcRect.Max.X, (float)SrcRect.Max.Y);
+	RectParams.DestRect = FSlateRect(TopLeft.X, TopLeft.Y, BotRight.X, BotRight.Y);
+	RectParams.SourceTextureSize = BlurSrc->GetSizeXY();
+	RectParams.CornerRadius = FVector4f(0, 0, 0, 0);
+	RectParams.DestTexture = BlurDst;
+	RectParams.PostProcessDest = EPostProcessDestination::DestTexture;
+
+	FBlurRectParams BlurParams;
+	BlurParams.KernelSize = PostProcessData.X;
+	BlurParams.Strength = PostProcessData.Y;
+	BlurParams.DownsampleAmount = OutDownsampleAmount;
+
+	IRendererModule& RendererModule = FModuleManager::GetModuleChecked<IRendererModule>(RendererModuleName);
+	PostProcessor->BlurRect(RHICmdList, RendererModule, BlurParams, RectParams);
+
+	RHICmdList.Transition(FRHITransitionInfo(BlurDst, ERHIAccess::RTV, ERHIAccess::SRVGraphics));
 }
 	

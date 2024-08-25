@@ -8,6 +8,8 @@
 
 #if defined(__clang__)
 	#include "Clang/ClangPlatform.h"
+#elif defined(__INTEL_LLVM_COMPILER)
+	#include "IntelICX/IntelICXPlatform.h"
 #else
 	#include "MSVC/MSVCPlatform.h"
 #endif
@@ -100,7 +102,6 @@ typedef FWindowsPlatformTypes FPlatformTypes;
 #endif
 
 #define PLATFORM_SUPPORTS_STACK_SYMBOLS						1
-#define PLATFORM_COMPILER_HAS_DECLTYPE_AUTO					1
 
 #define PLATFORM_GLOBAL_LOG_CATEGORY						LogWindows
 
@@ -162,11 +163,6 @@ typedef FWindowsPlatformTypes FPlatformTypes;
 
 #pragma warning(disable : 4481) // nonstandard extension used: override specifier 'override'
 
-#if defined(__clang__) || _MSC_VER >= 1900
-	#define CONSTEXPR constexpr
-#else
-	#define CONSTEXPR
-#endif
 #define ABSTRACT abstract
 
 // Strings.
@@ -201,9 +197,24 @@ typedef FWindowsPlatformTypes FPlatformTypes;
 
 
 // Include code analysis features
-#include "Windows/WindowsPlatformCodeAnalysis.h"
+#if PLATFORM_COMPILER_CLANG
+	#include "Clang/ClangPlatformCodeAnalysis.h"
+#elif PLATFORM_WINDOWS
+	#include "Windows/WindowsPlatformCodeAnalysis.h"
+#endif
 
 // Other macros
 #ifndef ENABLE_WIN_ALLOC_TRACKING
 #define ENABLE_WIN_ALLOC_TRACKING 0
+#endif
+
+// If set, ShouldExpectLowIntegrityLevel defaults to true. This affects paths for local settings and storage.
+#ifndef WINDOWS_LOWINTEGRITYLEVEL_EXPECT_DEFAULT
+#define WINDOWS_LOWINTEGRITYLEVEL_EXPECT_DEFAULT 0
+#endif
+
+// If set, the engine will attempt to automatically migrate user data like settings from the default medium integrity ProjectUserDir path to the low integrity one.
+// Migration is only attempted if the low integrity ProjectUserDir path is empty, e.g. first run after a game update that sets WINDOWS_LOWINTEGRITYLEVEL_EXPECT_DEFAULT = 1.
+#ifndef WINDOWS_LOWINTEGRITYLEVEL_AUTOMIGRATE_USERDATA
+#define WINDOWS_LOWINTEGRITYLEVEL_AUTOMIGRATE_USERDATA 0
 #endif

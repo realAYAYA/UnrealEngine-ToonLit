@@ -1,7 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
  
 #include "BaseGizmos/GizmoElementTorus.h"
-#include "BaseGizmos/GizmoRenderingUtil.h"
 #include "BaseGizmos/GizmoMath.h"
 #include "InputState.h"
 #include "Materials/MaterialInterface.h"
@@ -24,7 +23,7 @@ void UGizmoElementTorus::Render(IToolsContextRenderAPI* RenderAPI, const FRender
 			const FVector Normal = Axis0 ^ Axis1; 
 			const FVector WorldNormal = CurrentRenderState.LocalToWorldTransform.TransformVectorNoScale(Normal);
 
-			bool bPartial = IsPartial(RenderAPI->GetSceneView(), WorldCenter, WorldNormal);
+			const bool bPartial = IsPartial(RenderAPI->GetSceneView(), WorldCenter, WorldNormal);
 			FVector BeginAxis = bPartial ? Axis0.RotateAngleAxis(PartialStartAngle, Normal).GetSafeNormal() : Axis0;
 
 			const float PartialAngle = static_cast<float>(PartialEndAngle - PartialStartAngle);			

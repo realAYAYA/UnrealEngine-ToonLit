@@ -14,8 +14,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-    NODE_TYPE NodeColourSwitch::Private::s_type =
-            NODE_TYPE( "ColourSwitch", NodeColour::GetStaticType() );
+    FNodeType NodeColourSwitch::Private::s_type =
+            FNodeType( "ColourSwitch", NodeColour::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -23,55 +23,6 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 
     MUTABLE_IMPLEMENT_NODE( NodeColourSwitch, EType::Switch, Node, Node::EType::Colour)
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-    int NodeColourSwitch::GetInputCount() const
-	{
-		return 1 + m_pD->m_options.Num();
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    Node* NodeColourSwitch::GetInputNode( int i ) const
-	{
-		check( i>=0 && i<GetInputCount() );
-
-		Node* pResult = 0;
-
-		switch (i)
-		{
-		case 0:
-			pResult = m_pD->m_pParameter.get();
-			break;
-
-		default:
-			pResult = m_pD->m_options[i-1].get();
-			break;
-		}
-
-		return pResult;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    void NodeColourSwitch::SetInputNode( int i, NodePtr pNode )
-	{
-		check( i>=0 && i<GetInputCount() );
-
-		switch (i)
-		{
-		case 0:
-			m_pD->m_pParameter = dynamic_cast<NodeScalar*>(pNode.get());
-			break;
-
-		default:
-            m_pD->m_options[i-1] = dynamic_cast<NodeColour*>(pNode.get());
-			break;
-		}
-	}
 
 
 	//---------------------------------------------------------------------------------------------

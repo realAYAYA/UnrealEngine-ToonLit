@@ -3,6 +3,7 @@
 #pragma once
 
 #include "MuCOE/Nodes/CustomizableObjectNodeModifierBase.h"
+#include "MuT/NodeModifier.h"
 
 #include "CustomizableObjectNodeMeshClipWithMesh.generated.h"
 
@@ -24,6 +25,9 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = MeshToClip)
 	TArray<FString> Tags;
+
+	UPROPERTY(EditAnywhere, Category = CustomizableObjectToClip)
+	EMutableMultipleTagPolicy MultipleTagPolicy = EMutableMultipleTagPolicy::OnlyOneRequired;
 
 	//!< If assigned, then a material inside this CO will be clipped by this node.
     //!< If several materials with the same name, all are considered (to cover all LOD levels)

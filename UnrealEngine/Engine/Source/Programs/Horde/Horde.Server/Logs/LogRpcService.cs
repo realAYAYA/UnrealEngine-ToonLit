@@ -1,15 +1,17 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using Microsoft.AspNetCore.Authorization;
-using Horde.Common.Rpc;
-using System.Threading.Tasks;
-using Grpc.Core;
-using Horde.Server.Utilities;
-using EpicGames.Horde.Storage;
-using Horde.Server.Storage;
-using Microsoft.Extensions.Logging;
-using System.Threading;
 using System;
+using System.Threading;
+using System.Threading.Tasks;
+using EpicGames.Core;
+using EpicGames.Horde.Logs;
+using EpicGames.Horde.Storage;
+using Grpc.Core;
+using Horde.Common.Rpc;
+using Horde.Server.Storage;
+using Horde.Server.Utilities;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.Extensions.Logging;
 
 namespace Horde.Server.Logs
 {
@@ -40,7 +42,7 @@ namespace Horde.Server.Logs
 		/// <inheritdoc/>
 		public override async Task<UpdateLogResponse> UpdateLog(UpdateLogRequest request, ServerCallContext context)
 		{
-			ILogFile? logFile = await _logFileService.GetCachedLogFileAsync(LogId.Parse(request.LogId), context.CancellationToken);
+			ILogFile? logFile = await _logFileService.GetLogFileAsync(LogId.Parse(request.LogId), context.CancellationToken);
 			if (logFile == null)
 			{
 				throw new StructuredRpcException(StatusCode.NotFound, "Resource not found");
@@ -50,9 +52,18 @@ namespace Horde.Server.Logs
 				throw new StructuredRpcException(StatusCode.PermissionDenied, "Access denied");
 			}
 
-			IStorageClientImpl store = await _storageService.GetClientAsync(Namespace.Logs, context.CancellationToken);
-			_logger.LogInformation("Updating {LogId} to node {RefTarget} (lines: {LineCount}, complete: {Complete})", request.LogId, request.Target, request.LineCount, request.Complete);
-			await store.WriteRefTargetAsync(new RefName(request.LogId), NodeLocator.Parse(request.Target));
+			using IStorageClient store = _storageService.CreateClient(Namespace.Logs);
+
+			_logger.LogInformation("Updating {LogId} to node {RefTarget} (lines: {LineCount}, complete: {Complete})", request.LogId, request.TargetLocator, request.LineCount, request.Complete);
+
+			IoHash hash;
+			if (!IoHash.TryParse(request.TargetHash, out hash))
+			{
+				hash = IoHash.Zero;
+			}
+
+			IBlobRef target = store.CreateBlobRef(hash, new BlobLocator(request.TargetLocator));
+			await store.WriteRefAsync(new RefName(request.LogId), target);
 
 			await _logFileCollection.UpdateLineCountAsync(logFile, request.LineCount, request.Complete, CancellationToken.None);
 
@@ -90,7 +101,7 @@ namespace Horde.Server.Logs
 						Task<int> waitTask = _logTailService.WaitForTailNextAsync(logId, cancellationSource.Token);
 
 						await Task.WhenAny(waitTask, moveNextTask);
-						cancellationSource.Cancel();
+						await cancellationSource.CancelAsync();
 
 						try
 						{

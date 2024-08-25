@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using UnrealBuildTool;
+using System.IO;
 
 namespace UnrealBuildTool.Rules
 {
@@ -10,10 +11,7 @@ namespace UnrealBuildTool.Rules
 		{
 			PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
 
-			PublicIncludePaths.AddRange(
-				new string[] {
-				}
-			);
+			PrivateIncludePaths.Add(Path.Combine(GetModuleDirectory("MassEntity"), "Private")); 
 
 			PublicDependencyModuleNames.AddRange(
 				new string[] {

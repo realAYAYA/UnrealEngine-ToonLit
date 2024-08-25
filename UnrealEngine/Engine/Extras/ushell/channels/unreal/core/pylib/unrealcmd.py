@@ -91,7 +91,8 @@ class MultiPlatformCmd(Cmd):
                 print(item.key, "=", dir)
             return context
 
-        self.print_info("Establishing platforms")
+        if self.is_interactive():
+            self.print_info("Establishing platforms")
 
         found = []
         failed = []
@@ -104,12 +105,13 @@ class MultiPlatformCmd(Cmd):
             except EnvironmentError:
                 failed.append(platform_name)
 
-        if found:
-            print("  found:", flow.cmd.text.green(" ".join(found)))
-        if failed:
-            out = "missing: "
-            out += flow.cmd.text.light_red(" ".join(failed))
-            out += flow.cmd.text.grey(" ('.info' for details)")
-            print(out)
+        if self.is_interactive():
+            if found:
+                print("  found:", flow.cmd.text.green(" ".join(found)))
+            if failed:
+                out = "missing: "
+                out += flow.cmd.text.light_red(" ".join(failed))
+                out += flow.cmd.text.grey(" ('.info' for details)")
+                print(out)
 
         return context

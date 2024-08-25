@@ -101,6 +101,7 @@ struct FPreviewPlatformMenuItem
 	FName ShaderFormat;
 	FName ShaderPlatformToPreview;
 	FName PreviewShaderPlatformName;
+	FName PreviewFeatureLevelName;
 	FString ActiveIconPath;
 	FName ActiveIconName;
 	FString InactiveIconPath;
@@ -160,6 +161,18 @@ struct FDataDrivenPlatformInfo
 
 	// the compression format that this platform wants; overrides game unless bForceUseProjectCompressionFormat
 	FString HardwareCompressionFormat;
+
+	/** Platform name to be used for cooking (note: DOES NOT include the configuration name, eg "Server", "Client", only the platform name) */
+	FName OverrideCookPlatformName;
+
+	const FName& GetCookPlatformName() const
+	{
+		if (!OverrideCookPlatformName.IsNone() && OverrideCookPlatformName.IsValid())
+		{
+			return OverrideCookPlatformName;
+		}
+		return IniPlatformName;
+	}
 
 	// NOTE: add more settings here (and read them in in the LoadDDPIIniSettings() function in the .cpp)
 
@@ -259,10 +272,18 @@ struct FDataDrivenPlatformInfoRegistry
 	static CORE_API const TMap<FName, FDataDrivenPlatformInfo>& GetAllPlatformInfos();
 
 	/**
+	 * Gets a set of platform names based on GetAllPlatformInfos, their AdditionalRestrictedFolders
+	 * This is not necessarily the same as IniParents, although there is overlap - IniParents come from chaining DDPIs, so those will be in GetAllPlatformInfos already to be checked 
+	 *
+	 * @param bCheckValid	If true, the result is filtered based on what editor has support compiled for
+	 */
+	static CORE_API const TArray<FString>& GetPlatformDirectoryNames(bool bCheckValid);
+
+	/**
 	 * Gets a set of platform names based on GetAllPlatformInfos, their AdditionalRestrictedFolders, and possibly filtered based on what editor has support compiled for
 	 * This is not necessarily the same as IniParents, although there is overlap - IniParents come from chaining DDPIs, so those will be in GetAllPlatformInfos already to be checked 
 	 */
-	static CORE_API const TArray<FString>& GetValidPlatformDirectoryNames();
+	static CORE_API const TArray<FString>& GetValidPlatformDirectoryNames() { return GetPlatformDirectoryNames(true); }
 
 	/**
 	 * Get the data driven platform info for a given platform. If the platform doesn't have any on disk,

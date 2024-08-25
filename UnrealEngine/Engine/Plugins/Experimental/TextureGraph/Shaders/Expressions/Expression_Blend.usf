@@ -1,0 +1,153 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+#include "/Engine/Public/Platform.ush"
+#include "/Plugin/TextureGraph/SamplerStates.ush"
+
+Texture2D				BackgroundTexture;
+Texture2D       		ForegroundTexture;
+Texture2D       		MaskTexture;
+float           		Opacity;
+
+float GetMask(Texture2D MaskTexture, float2 uv, float Opacity)
+{
+	float4 Mask = MaskTexture.Sample(SamplerStates_Linear_Clamp, uv);
+
+	// Mask should be grey scale or single channel.
+	// For mask we are going to keep the value between 0-1 range
+	float MaskingValue = saturate(Mask.r) * Opacity;
+	
+	return MaskingValue;
+}
+
+float4 FSH_BlendNormal(in float2 uv : TEXCOORD0) : SV_Target0
+{
+	float4 BackgroundTex = BackgroundTexture.Sample(SamplerStates_Linear_Clamp, uv);
+	float4 ForegroundTex = ForegroundTexture.Sample(SamplerStates_Linear_Clamp, uv);
+
+	float MaskingValue = GetMask(MaskTexture, uv, Opacity);
+	
+	float4 FinalColor = lerp(BackgroundTex, ForegroundTex, MaskingValue);
+	
+    return FinalColor;
+}
+
+float4 FSH_BlendAdd(in float2 uv : TEXCOORD0) : SV_Target0
+{
+	float4 BackgroundTex = BackgroundTexture.Sample(SamplerStates_Linear_Clamp, uv);
+	float4 ForegroundTex = ForegroundTexture.Sample(SamplerStates_Linear_Clamp, uv);
+	
+	float MaskingValue = GetMask(MaskTexture, uv, Opacity);
+	
+	float4 FinalColor = lerp(BackgroundTex, BackgroundTex + ForegroundTex, MaskingValue);
+	
+	return FinalColor;
+}
+
+float4 FSH_BlendSubtract(in float2 uv : TEXCOORD0) : SV_Target0
+{
+	float4 BackgroundTex = BackgroundTexture.Sample(SamplerStates_Linear_Clamp, uv);
+	float4 ForegroundTex = ForegroundTexture.Sample(SamplerStates_Linear_Clamp, uv);
+
+	float MaskingValue = GetMask(MaskTexture, uv, Opacity);
+	
+	float4 FinalColor = lerp(BackgroundTex, saturate(BackgroundTex - ForegroundTex), MaskingValue);
+	
+	return FinalColor;
+}
+
+float4 FSH_BlendMultiply(in float2 uv : TEXCOORD0) : SV_Target0
+{
+	float4 BackgroundTex = BackgroundTexture.Sample(SamplerStates_Linear_Clamp, uv);
+	float4 ForegroundTex = ForegroundTexture.Sample(SamplerStates_Linear_Clamp, uv);
+
+	float MaskingValue = GetMask(MaskTexture, uv, Opacity);
+	
+	float4 FinalColor = lerp(BackgroundTex, saturate(ForegroundTex * BackgroundTex), MaskingValue);
+	
+	return FinalColor;
+}
+
+float4 FSH_BlendDivide(in float2 uv : TEXCOORD0) : SV_Target0
+{
+	float4 BackgroundTex = BackgroundTexture.Sample(SamplerStates_Linear_Clamp, uv);
+	float4 ForegroundTex = ForegroundTexture.Sample(SamplerStates_Linear_Clamp, uv);
+	
+	float MaskingValue = GetMask(MaskTexture, uv, Opacity);
+	
+	float4 DivisionResult = saturate(BackgroundTex/ForegroundTex);
+	
+	float4 FinalColor = lerp(BackgroundTex, DivisionResult, MaskingValue);
+	
+	return FinalColor;
+}
+
+float4 FSH_BlendDifference(in float2 uv : TEXCOORD0) : SV_Target0
+{
+	float4 BackgroundTex = BackgroundTexture.Sample(SamplerStates_Linear_Clamp, uv);
+	float4 ForegroundTex = ForegroundTexture.Sample(SamplerStates_Linear_Clamp, uv);
+
+	float MaskingValue = GetMask(MaskTexture, uv, Opacity);
+	
+	float4 FinalColor = lerp(BackgroundTex, abs(BackgroundTex - ForegroundTex), MaskingValue);
+	
+	return FinalColor;
+}
+
+float4 FSH_BlendMax(in float2 uv : TEXCOORD0) : SV_Target0
+{
+	float4 BackgroundTex = BackgroundTexture.Sample(SamplerStates_Linear_Clamp, uv);
+	float4 ForegroundTex = ForegroundTexture.Sample(SamplerStates_Linear_Clamp, uv);
+
+	float MaskingValue = GetMask(MaskTexture, uv, Opacity);
+	
+	float4 FinalColor = lerp(BackgroundTex, max(BackgroundTex, ForegroundTex), MaskingValue);
+	
+	return FinalColor;
+}
+
+float4 FSH_BlendMin(in float2 uv : TEXCOORD0) : SV_Target0
+{
+	float4 BackgroundTex = BackgroundTexture.Sample(SamplerStates_Linear_Clamp, uv);
+	float4 ForegroundTex = ForegroundTexture.Sample(SamplerStates_Linear_Clamp, uv);
+
+	float MaskingValue = GetMask(MaskTexture, uv, Opacity);
+	
+	float4 FinalColor = lerp(BackgroundTex, min(BackgroundTex, ForegroundTex), MaskingValue);
+	
+	return FinalColor;
+}
+
+float4 FSH_BlendStep(in float2 uv : TEXCOORD0) : SV_Target0
+{
+	float4 BackgroundTex = BackgroundTexture.Sample(SamplerStates_Linear_Clamp, uv);
+	float4 ForegroundTex = ForegroundTexture.Sample(SamplerStates_Linear_Clamp, uv);
+
+	float MaskingValue = GetMask(MaskTexture, uv, Opacity);
+
+	float4 StepValue = 1 - step(ForegroundTex, BackgroundTex);
+	
+	float4 FinalColor = lerp(BackgroundTex, StepValue, MaskingValue);
+	
+	return FinalColor;
+}
+
+float4 OverlayBlend( float4 base , float4 overlay )
+{
+	return lerp(2 * base * overlay, 1 - 2 * (1 - base) * (1 - overlay), 1 - step(base, 0.5));
+}
+
+float4 FSH_BlendOverlay(in float2 uv : TEXCOORD0) : SV_Target0
+{
+	float4 BackgroundTex = BackgroundTexture.Sample(SamplerStates_Linear_Clamp, uv);
+	float4 ForegroundTex = ForegroundTexture.Sample(SamplerStates_Linear_Clamp, uv);
+
+	float MaskingValue = GetMask(MaskTexture, uv, Opacity);
+	
+	float4 FinalColor = lerp(BackgroundTex, OverlayBlend(BackgroundTex, ForegroundTex), MaskingValue);
+	
+	return FinalColor;
+}
+
+float4 FSH_BlendDistort(in float2 uv : TEXCOORD0) : SV_Target0
+{
+	return float4(0,0,0,0);
+}

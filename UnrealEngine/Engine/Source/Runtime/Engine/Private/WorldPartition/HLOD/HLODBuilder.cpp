@@ -12,7 +12,7 @@
 #include "Materials/MaterialInterface.h"
 #include "Misc/ConfigCacheIni.h"
 #include "UObject/Package.h"
-#include "WorldPartition/HLOD/HLODTemplatedInstancedStaticMeshComponent.h"
+#include "WorldPartition/HLOD/HLODInstancedStaticMeshComponent.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(HLODBuilder)
 
@@ -23,7 +23,7 @@ DEFINE_LOG_CATEGORY(LogHLODBuilder);
 UHLODBuilder::UHLODBuilder(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 #if WITH_EDITORONLY_DATA
-	, HLODInstancedStaticMeshComponentClass(UInstancedStaticMeshComponent::StaticClass())
+	, HLODInstancedStaticMeshComponentClass(UHLODInstancedStaticMeshComponent::StaticClass())
 #endif
 {
 }
@@ -142,60 +142,27 @@ uint32 UHLODBuilder::ComputeHLODHash(const TArray<UActorComponent*>& InSourceCom
 	return FCrc::MemCrc32(ComponentsCRCs.GetData(), ComponentsCRCs.Num() * ComponentsCRCs.GetTypeSize());
 }
 
-TSubclassOf<UInstancedStaticMeshComponent> UHLODBuilder::GetInstancedStaticMeshComponentClass()
+TSubclassOf<UHLODInstancedStaticMeshComponent> UHLODBuilder::GetInstancedStaticMeshComponentClass()
 {
-	TSubclassOf<UInstancedStaticMeshComponent> ISMClass = StaticClass()->GetDefaultObject<UHLODBuilder>()->HLODInstancedStaticMeshComponentClass;
+	TSubclassOf<UHLODInstancedStaticMeshComponent> ISMClass = StaticClass()->GetDefaultObject<UHLODBuilder>()->HLODInstancedStaticMeshComponentClass;
 	if (!ISMClass)
 	{
 		FString ConfigValue;
 		GConfig->GetString(TEXT("/Script/Engine.HLODBuilder"), TEXT("HLODInstancedStaticMeshComponentClass"), ConfigValue, GEditorIni);
 		UE_LOG(LogHLODBuilder, Error, TEXT("Could not resolve the class specified for HLODInstancedStaticMeshComponentClass. Config value was %s"), *ConfigValue);
 
-		// Fallback to standard ISMC
-		ISMClass = UInstancedStaticMeshComponent::StaticClass();
+		// Fallback to standard HLOD ISMC
+		ISMClass = UHLODInstancedStaticMeshComponent::StaticClass();
 	}
 	return ISMClass;
 }
 
 namespace
 {
-	// Instance batcher class based on FISMComponentDescriptor
-	struct FCustomISMComponentDescriptor : public FISMComponentDescriptor
+	struct FInstanceBatch
 	{
-		TSubclassOf<AActor> TemplateActorClass;
-		FName				TemplateComponentName;
-
-		FCustomISMComponentDescriptor(UStaticMeshComponent* SMC)
-		{
-			InitFrom(SMC, false);
-
-			// We'll always want to spawn ISMC, even if our source components are all SMC
-			ComponentClass = UHLODBuilder::GetInstancedStaticMeshComponentClass();
-
-			// Extra work for templated ISMC
-			// This code should be reorganized
-			if (ComponentClass->IsChildOf<UHLODTemplatedInstancedStaticMeshComponent>())
-			{
-				TemplateActorClass = SMC->GetOwner()->GetClass();
-				TemplateComponentName = SMC->GetFName();
-			}			
-
-			// Stationnary can be considered as static for the purpose of HLODs
-			if (Mobility == EComponentMobility::Stationary)
-			{
-				Mobility = EComponentMobility::Static;
-			}
-
-			ComputeHash();
-
-			// Extra work for templated ISMC
-			// This code should be reorganized
-			if (ComponentClass->IsChildOf<UHLODTemplatedInstancedStaticMeshComponent>())
-			{
-				Hash = HashCombine(Hash, GetTypeHash(TemplateActorClass));
-				Hash = HashCombine(Hash, GetTypeHash(TemplateComponentName));
-			}
-		}
+		TUniquePtr<FISMComponentDescriptor>		ISMComponentDescriptor;
+		FISMComponentBatcher					ISMComponentBatcher;
 	};
 }
 
@@ -205,35 +172,42 @@ TArray<UActorComponent*> UHLODBuilder::BatchInstances(const TArray<UActorCompone
 
 	TArray<UStaticMeshComponent*> SourceStaticMeshComponents = FilterComponents<UStaticMeshComponent>(InSourceComponents);
 
+	TSubclassOf<UHLODInstancedStaticMeshComponent> ComponentClass = UHLODBuilder::GetInstancedStaticMeshComponentClass();
+
 	// Prepare instance batches
-	TMap<FCustomISMComponentDescriptor, FISMComponentBatcher> InstancesData;
+	TMap<uint32, FInstanceBatch> InstancesData;
 	for (UStaticMeshComponent* SMC : SourceStaticMeshComponents)
 	{
-		FCustomISMComponentDescriptor ISMComponentDescriptor(SMC);
-		FISMComponentBatcher& ISMComponentBatcher = InstancesData.FindOrAdd(ISMComponentDescriptor);
-		ISMComponentBatcher.Add(SMC);
+		const UStaticMesh* StaticMesh = SMC->GetStaticMesh();
+		const bool bPrivateStaticMesh = StaticMesh && !StaticMesh->HasAnyFlags(RF_Public);
+		const bool bTransientStaticMesh = StaticMesh && StaticMesh->HasAnyFlags(RF_Transient);
+		if (!StaticMesh || bPrivateStaticMesh || bTransientStaticMesh)
+		{
+			UE_LOG(LogHLODBuilder, Warning, TEXT("Instanced HLOD source component %s points to a %s static mesh, ignoring."), *SMC->GetPathName(), !StaticMesh ? TEXT("null") : bPrivateStaticMesh ? TEXT("private") : TEXT("transient"));
+			continue;
+		}
+
+		TUniquePtr<FISMComponentDescriptor> ISMComponentDescriptor = ComponentClass->GetDefaultObject<UHLODInstancedStaticMeshComponent>()->AllocateISMComponentDescriptor();
+		ISMComponentDescriptor->InitFrom(SMC, false);
+
+		FInstanceBatch& InstanceBatch = InstancesData.FindOrAdd(ISMComponentDescriptor->GetTypeHash());
+		if (!InstanceBatch.ISMComponentDescriptor.IsValid())
+		{
+			InstanceBatch.ISMComponentDescriptor = MoveTemp(ISMComponentDescriptor);
+		}
+		
+		InstanceBatch.ISMComponentBatcher.Add(SMC);
 	}
 
 	// Create an ISMC for each SM asset we found
 	TArray<UActorComponent*> HLODComponents;
 	for (auto& Entry : InstancesData)
 	{
-		const FCustomISMComponentDescriptor& ISMComponentDescriptor = Entry.Key;
-		const FISMComponentBatcher& ISMComponentBatcher = Entry.Value;
+		const FInstanceBatch& InstanceBatch = Entry.Value;
 
-		UInstancedStaticMeshComponent* ISMComponent = ISMComponentDescriptor.CreateComponent(GetTransientPackage());
-		ISMComponentBatcher.InitComponent(ISMComponent);
-		
-		// Extra work for templated ISMC
-		// This code should be reorganized
-		if (UHLODTemplatedInstancedStaticMeshComponent* TemplatedISMC = Cast<UHLODTemplatedInstancedStaticMeshComponent>(ISMComponent))
-		{
-			TemplatedISMC->SetTemplateActorClass(ISMComponentDescriptor.TemplateActorClass);
-			TemplatedISMC->SetTemplateComponentName(ISMComponentDescriptor.TemplateComponentName);
-		}
-
-		ISMComponent->SetForcedLodModel(ISMComponent->GetStaticMesh()->GetNumLODs());
-
+		UInstancedStaticMeshComponent* ISMComponent = InstanceBatch.ISMComponentDescriptor->CreateComponent(GetTransientPackage());
+		InstanceBatch.ISMComponentBatcher.InitComponent(ISMComponent);
+				
 		HLODComponents.Add(ISMComponent);
 	};
 

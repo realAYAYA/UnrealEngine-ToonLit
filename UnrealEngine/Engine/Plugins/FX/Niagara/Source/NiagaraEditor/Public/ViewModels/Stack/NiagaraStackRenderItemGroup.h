@@ -6,9 +6,9 @@
 #include "ViewModels/Stack/NiagaraStackItemGroup.h"
 #include "NiagaraStackRenderItemGroup.generated.h"
 
-class UNiagaraRendererProperties;
-class UNiagaraEmitter;
+class INiagaraStackRenderersOwner;
 class UNiagaraClipboardContent;
+class UNiagaraRendererProperties;
 
 UCLASS(MinimalAPI)
 class UNiagaraStackRenderItemGroup : public UNiagaraStackItemGroup
@@ -16,7 +16,15 @@ class UNiagaraStackRenderItemGroup : public UNiagaraStackItemGroup
 	GENERATED_BODY()
 
 public:
-	NIAGARAEDITOR_API void Initialize(FRequiredEntryData InRequiredEntryData);
+	NIAGARAEDITOR_API void Initialize(FRequiredEntryData InRequiredEntryData, TSharedPtr<INiagaraStackRenderersOwner> InRenderersOwner);
+
+	virtual UNiagaraStackEntry::EIconMode GetSupportedIconMode() const override;
+	virtual const FSlateBrush* GetIconBrush() const override;
+	virtual FText GetIconText() const override;
+
+	TSharedPtr<INiagaraStackRenderersOwner> GetRenderersOwner() const { return RenderersOwner; }
+
+	NIAGARAEDITOR_API virtual bool GetCanExpandInOverview() const;
 
 	virtual bool SupportsPaste() const override { return true; }
 	NIAGARAEDITOR_API virtual bool TestCanPasteWithMessage(const UNiagaraClipboardContent* ClipboardContent, FText& OutMessage) const override;
@@ -27,7 +35,7 @@ protected:
 	NIAGARAEDITOR_API virtual void RefreshChildrenInternal(const TArray<UNiagaraStackEntry*>& CurrentChildren, TArray<UNiagaraStackEntry*>& NewChildren, TArray<FStackIssue>& NewIssues) override;
 	NIAGARAEDITOR_API virtual void FinalizeInternal() override;
 private:
-	NIAGARAEDITOR_API void EmitterRenderersChanged();
+	NIAGARAEDITOR_API void OwnerRenderersChanged();
 
 	NIAGARAEDITOR_API bool ChildRequestCanPaste(const UNiagaraClipboardContent* ClipboardContent,FText& OutCanPasteMessage);
 	NIAGARAEDITOR_API void ChildRequestPaste(const UNiagaraClipboardContent* ClipboardContent, int32 PasteIndex, FText& OutPasteWarning);
@@ -35,6 +43,5 @@ private:
 private:
 	NIAGARAEDITOR_API void OnRendererAdded(UNiagaraRendererProperties* RendererProperties) const;
 	TSharedPtr<INiagaraStackItemGroupAddUtilities> AddUtilities;
-
-	FVersionedNiagaraEmitterWeakPtr EmitterWeak;
+	TSharedPtr<INiagaraStackRenderersOwner> RenderersOwner;
 };

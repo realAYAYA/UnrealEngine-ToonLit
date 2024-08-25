@@ -10,6 +10,7 @@
 #include "Algo/FindLast.h"
 #include "Containers/DirectoryTree.h"
 #include "Containers/StringView.h"
+#include "Containers/VersePath.h"
 #include "GenericPlatform/GenericPlatformFile.h"
 #include "HAL/CriticalSection.h"
 #include "HAL/FileManager.h"
@@ -25,16 +26,20 @@
 #include "Misc/PackageSegment.h"
 #include "Misc/Paths.h"
 #include "Misc/PathViews.h"
+#include "Misc/CoreUObjectPluginManager.h"
 #include "Misc/ScopeRWLock.h"
 #include "Misc/StringBuilder.h"
 #include "Modules/ModuleManager.h"
 #include "ProfilingDebugging/LoadTimeTracker.h"
 #include "Stats/Stats.h"
+#include "String/Find.h"
+#include "String/ParseTokens.h"
 #include "Templates/UniquePtr.h"
 #include "UObject/Linker.h"
 #include "UObject/Package.h"
 #include "UObject/PackageFileSummary.h"
 #include "UObject/PackageResourceManager.h"
+#include "UObject/SoftObjectPath.h"
 
 DEFINE_LOG_CATEGORY(LogPackageName);
 
@@ -244,8 +249,10 @@ struct FLongPackagePathsSingleton
 	{
 		// Allow the plugin manager to mount new content paths by exposing access through a delegate.  PluginManager is 
 		// a Core class, but content path functionality is added at the CoreUObject level.
-		IPluginManager::Get().SetRegisterMountPointDelegate(IPluginManager::FRegisterMountPointDelegate::CreateStatic(&FPackageName::RegisterMountPoint));
-		IPluginManager::Get().SetUnRegisterMountPointDelegate(IPluginManager::FRegisterMountPointDelegate::CreateStatic(&FPackageName::UnRegisterMountPoint));
+		IPluginManager& PluginManager = IPluginManager::Get();
+		PluginManager.SetRegisterMountPointDelegate(IPluginManager::FRegisterMountPointDelegate::CreateStatic(&FPackageName::RegisterMountPoint));
+		PluginManager.SetUnRegisterMountPointDelegate(IPluginManager::FRegisterMountPointDelegate::CreateStatic(&FPackageName::UnRegisterMountPoint));
+		UE::CoreUObject::Private::PluginHandler::Install();
 	}
 
 	/**
@@ -299,9 +306,20 @@ struct FLongPackagePathsSingleton
 			ContentPathTree.FindOrAdd(MountPoint->ContentPathAbsolute) = MountPoint;
 		}		
 
-		UE_LOG(LogPackageName, Display, TEXT("FPackageName: Mount point added: '%s' mounted to '%s'"),
+		// Downgrade the log messages on startup to Verbose to reduce startup spam
+#if !NO_LOGGING
+		FString Message = FString::Printf(TEXT("FPackageName: Mount point added: '%s' mounted to '%s'"),
 			*MountPoint->ContentPathRelative, *MountPoint->RootPath);
-		
+		if (IsEngineStartupModuleLoadingComplete())
+		{
+			UE_LOG(LogPackageName, Log, TEXT("%s"), *Message);
+		}
+		else
+		{
+			UE_LOG(LogPackageName, Verbose, TEXT("%s"), *Message);
+		}
+#endif
+
 		// Let subscribers know that a new content path was mounted
 		FPackageName::OnContentPathMounted().Broadcast( RootPath, MountPoint->ContentPathRelative);
 	}
@@ -771,16 +789,40 @@ void FPackageName::InternalFilenameToLongPackageName(FStringView InFilename, FSt
 
 bool FPackageName::TryConvertFilenameToLongPackageName(const FString& InFilename, FString& OutPackageName, FString* OutFailureReason)
 {
+	TStringBuilder<256> FailureReasonBuilder;
+	FStringBuilderBase* FailureReasonBuilderPtr = nullptr;
+	if (OutFailureReason != nullptr)
+	{
+		FailureReasonBuilderPtr = &FailureReasonBuilder;
+	}
+
+	TStringBuilder<256> PackageNameBuilder;
+	const bool bResult = TryConvertFilenameToLongPackageName(MakeStringView(InFilename), PackageNameBuilder, FailureReasonBuilderPtr);
+	if (bResult)
+	{
+		OutPackageName = PackageNameBuilder.ToView();
+	}
+	else if (OutFailureReason != nullptr)
+	{
+		*OutFailureReason = FailureReasonBuilder.ToView();
+	}
+	return bResult;
+}
+
+bool FPackageName::TryConvertFilenameToLongPackageName(FStringView InFilename, FStringBuilderBase& OutPackageName, FStringBuilderBase* OutFailureReason /*= nullptr*/)
+{
 	TStringBuilder<256> LongPackageNameBuilder;
 	InternalFilenameToLongPackageName(InFilename, LongPackageNameBuilder);
-	FStringView LongPackageName = LongPackageNameBuilder.ToString();
+	const FStringView LongPackageName = LongPackageNameBuilder.ToView();
 
 	if (LongPackageName.IsEmpty())
 	{
-		if (OutFailureReason)
+		if (OutFailureReason != nullptr)
 		{
 			FStringView FilenameWithoutExtension = FPathViews::GetBaseFilenameWithPath(InFilename);
-			*OutFailureReason = FString::Printf(TEXT("FilenameToLongPackageName failed to convert '%s'. The Result would be indistinguishable from using '%.*s' as the InFilename."), *InFilename, FilenameWithoutExtension.Len(), FilenameWithoutExtension.GetData());
+			OutFailureReason->Reset();
+			*OutFailureReason << TEXTVIEW("FilenameToLongPackageName failed to convert '") << InFilename << TEXTVIEW("'. ");
+			*OutFailureReason << TEXTVIEW("The Result would be indistinguishable from using '") << FilenameWithoutExtension << TEXTVIEW("' as the InFilename.");
 		}
 		return false;
 	}
@@ -799,10 +841,11 @@ bool FPackageName::TryConvertFilenameToLongPackageName(const FString& InFilename
 
 	// if the package name resolution failed and a relative path was provided, convert to an absolute path
 	// as content may be mounted in a different relative path to the one given
-	if (FPaths::IsRelative(InFilename))
+	if (FPathViews::IsRelativePath(InFilename))
 	{
-		FString AbsPath = FPaths::ConvertRelativePathToFull(InFilename);
-		if (!FPaths::IsRelative(AbsPath) && AbsPath.Len() > 1)
+		TStringBuilder<256> AbsPath;
+		FPathViews::ToAbsolutePath(InFilename, AbsPath);
+		if (!FPathViews::IsRelativePath(AbsPath) && AbsPath.Len() > 1)
 		{
 			if (TryConvertFilenameToLongPackageName(AbsPath, OutPackageName, nullptr))
 			{
@@ -813,20 +856,22 @@ bool FPackageName::TryConvertFilenameToLongPackageName(const FString& InFilename
 
 	if (OutFailureReason != nullptr)
 	{
-		FString InvalidChars;
+		TStringBuilder<16> InvalidChars;
 		if (bContainsDot)
 		{
-			InvalidChars += TEXT(".");
+			InvalidChars << TEXT('.');
 		}
 		if (bContainsBackslash)
 		{
-			InvalidChars += TEXT("\\");
+			InvalidChars << TEXT('\\');
 		}
 		if (bContainsColon)
 		{
-			InvalidChars += TEXT(":");
+			InvalidChars << TEXT(':');
 		}
-		*OutFailureReason = FString::Printf(TEXT("FilenameToLongPackageName failed to convert '%s'. Attempt result was '%.*s', but the path contains illegal characters '%s'"), *InFilename, LongPackageName.Len(), LongPackageName.GetData(), *InvalidChars);
+		OutFailureReason->Reset();
+		*OutFailureReason << TEXTVIEW("FilenameToLongPackageName failed to convert '") << InFilename << TEXTVIEW("'. ");
+		*OutFailureReason << TEXTVIEW("Attempt result was '") << LongPackageName << TEXTVIEW("', but the path contains illegal characters '") << InvalidChars << TEXTVIEW("'.");
 	}
 
 	return false;
@@ -878,6 +923,11 @@ FString FPackageName::FilenameToLongPackageName(const FString& InFilename)
 }
 
 bool FPackageName::TryConvertLongPackageNameToFilename(const FString& InLongPackageName, FString& OutFilename, const FString& InExtension)
+{
+	return TryConvertLongPackageNameToFilename(FStringView(InLongPackageName), OutFilename, InExtension);
+}
+
+bool FPackageName::TryConvertLongPackageNameToFilename(FStringView InLongPackageName, FString& OutFilename, FStringView InExtension)
 {
 	const auto& Paths = FLongPackagePathsSingleton::Get();
 	FReadScopeLock ScopeLock(Paths.MountLock);
@@ -1653,6 +1703,19 @@ FName FPackageName::GetModuleScriptPackageName(FName InModuleName)
 	return FName(WriteToString<128>(TEXT("/Script/"), InModuleName));
 }
 
+bool FPackageName::TryConvertScriptPackageNameToModuleName(FStringView PackageName, FStringView& OutModuleName)
+{
+	constexpr FStringView ScriptPrefix(TEXTVIEW("/Script/"));
+	if (!PackageName.StartsWith(ScriptPrefix))
+	{
+		OutModuleName.Reset();
+		return false;
+	}
+	OutModuleName = PackageName.RightChop(ScriptPrefix.Len());
+	return true;
+};
+
+
 FString FPackageName::ConvertToLongScriptPackageName(const TCHAR* InShortName)
 {
 	if (IsShortPackageName(FString(InShortName)))
@@ -2055,7 +2118,7 @@ FString FPackageName::GetDelegateResolvedPackagePath(const FString& InSourcePack
 		if (PathName.FindChar(TEXT('.'), DotIndex))
 		{
 			ObjectName = PathName.Mid(DotIndex + 1);
-			PathName.LeftInline(DotIndex, false);
+			PathName.LeftInline(DotIndex, EAllowShrinking::No);
 		}
 
 		for (auto Delegate : FCoreDelegates::PackageNameResolvers)
@@ -2158,6 +2221,72 @@ FString FPackageName::GetLocalizedPackagePath(const FString& InSourcePackagePath
 {
 	const FName LocalizedPackageName = FPackageLocalizationManager::Get().FindLocalizedPackageNameForCulture(*InSourcePackagePath, InCultureName);
 	return (LocalizedPackageName.IsNone()) ? InSourcePackagePath : LocalizedPackageName.ToString();
+}
+
+UE::Core::FVersePath FPackageName::GetVersePath(const FSoftObjectPath& ObjectPath)
+{
+	// We only handle vpaths at the level of the package and top level objects right now
+	if (ObjectPath.IsSubobject())
+	{
+		return {};
+	}
+
+	TStringBuilder<128> PackageNameBuilder;
+	ObjectPath.GetLongPackageFName().ToString(PackageNameBuilder);
+	const FStringView PackageName = PackageNameBuilder.ToView();
+	
+	// If the mount point is invalid, we can't create a vpath from it
+	bool bHadClassesPrefix = false;
+	const FStringView MountPointName = FPathViews::GetMountPointNameFromPath(PackageName, &bHadClassesPrefix);
+	if (MountPointName.IsEmpty() || bHadClassesPrefix)
+	{
+		return {};
+	}
+
+	// If the object isn't mounted under a plugin, the object doesn't have a vpath
+	TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(MountPointName);
+	if (!Plugin)
+	{
+		return {};
+	}
+
+	// If the plugin doesn't have a root vpath, the object doesn't have a vpath
+	const FString& PluginVersePath = Plugin->GetVersePath();
+	if (PluginVersePath.IsEmpty())
+	{
+		return {};
+	}
+
+	FString VerseModule = FPaths::Combine(PluginVersePath, PackageName.RightChop(MountPointName.Len() + 1));
+
+	// If this is not the package, append the name of the object
+	if (!ObjectPath.GetAssetFName().IsNone())
+	{
+		VerseModule /= WriteToString<128>(ObjectPath.GetAssetFName());
+	}
+
+	// Hack to reject names containing "$" - currently used for non-user facing vobject names in Verse, e.g. $SolarisSignatureFunctionOuter
+	if (VerseModule.Contains(TEXT("$")))
+	{
+		return {};
+	}
+
+	UE::Core::FVersePath Result;
+	if (!UE::Core::FVersePath::TryMake(Result, VerseModule))
+	{
+#if !NO_LOGGING
+		static thread_local TSet<FString> AlreadyLogged;
+
+		bool bAlreadyInSet = false;
+		AlreadyLogged.Add(VerseModule, &bAlreadyInSet);
+		if (!bAlreadyInSet)
+		{
+			UE_LOG(LogCore, Display, TEXT("Unable to make a VersePath for object '%s' with path '%s'"), *ObjectPath.ToString(), *VerseModule);
+		}
+#endif
+	}
+
+	return Result;
 }
 
 const FString& FPackageName::GetAssetPackageExtension()
@@ -2373,15 +2502,34 @@ void FPackageName::QueryRootContentPaths(TArray<FString>& OutRootContentPaths, b
 		{
 			if (bWithoutTrailingSlashes && It.Len() > 1 && It[It.Len() - 1] == TEXT('/'))
 			{
-				It.RemoveAt(It.Len() - 1, /*Count*/ 1, /*bAllowShrinking*/ false);
+				It.RemoveAt(It.Len() - 1, /*Count*/ 1, EAllowShrinking::No);
 			}
 
 			if (bWithoutLeadingSlashes && It.Len() > 1 && It[0] == TEXT('/'))
 			{
-				It.RemoveAt(0, /*Count*/ 1, /*bAllowShrinking*/ false);
+				It.RemoveAt(0, /*Count*/ 1, EAllowShrinking::No);
 			}
 		}
 	}
+}
+
+TArray<FString> FPackageName::QueryMountPointLocalAbsPaths()
+{
+	const FLongPackagePathsSingleton& Paths = FLongPackagePathsSingleton::Get();
+	TArray<FString> OutAbsPaths;
+
+	{
+		FReadScopeLock ScopeLock(Paths.MountLock);
+		OutAbsPaths.Reserve(Paths.MountPoints.Num() + 1);
+		for (const TUniquePtr<FMountPoint>& MountPoint : Paths.MountPoints)
+		{
+			if (!MountPoint->bAlias && !MountPoint->ContentPathAbsolute.IsEmpty())
+			{
+				OutAbsPaths.Add(MountPoint->ContentPathAbsolute);
+			}
+		}
+	}
+	return OutAbsPaths;
 }
 
 void FPackageName::OnCoreUObjectInitialized()
@@ -2655,6 +2803,93 @@ FAnsiStringView FPackageName::ObjectPathToObjectName(FAnsiStringView InObjectPat
 FWideStringView FPackageName::ObjectPathToObjectName(FWideStringView InObjectPath)
 {
 	return ObjectPathToObjectNameImpl(InObjectPath);
+}
+
+template<class CharType>
+static void ObjectPathSplitFirstNameImpl(TStringView<CharType> Text, TStringView<CharType>& OutFirst,
+	TStringView<CharType>& OutRemainder)
+{
+	int32 DelimiterIndex = UE::String::FindFirstOfAnyChar(Text, { CharType(':'), CharType('.') });
+	if (DelimiterIndex < 0)
+	{
+		OutFirst = Text;
+		OutRemainder.Reset();
+		return;
+	}
+	OutFirst = Text.Left(DelimiterIndex);
+	OutRemainder = Text.RightChop(DelimiterIndex + 1);
+}
+
+void FPackageName::ObjectPathSplitFirstName(FWideStringView Text, FWideStringView& OutFirst,
+	FWideStringView& OutRemainder)
+{
+	ObjectPathSplitFirstNameImpl(Text, OutFirst, OutRemainder);
+}
+
+void FPackageName::ObjectPathSplitFirstName(FAnsiStringView Text, FAnsiStringView& OutFirst, FAnsiStringView& OutRemainder)
+{
+	ObjectPathSplitFirstNameImpl(Text, OutFirst, OutRemainder);
+}
+
+void FPackageName::ObjectPathAppend(FStringBuilderBase& ObjectPath, FStringView NextName)
+{
+	if (ObjectPath.Len() == 0)
+	{
+		ObjectPath << NextName;
+		return;
+	}
+	if (NextName.IsEmpty())
+	{
+		return;
+	}
+	if (NextName[0] == '/')
+	{
+		ObjectPath.Reset();
+		ObjectPath << NextName;
+		return;
+	}
+
+	int32 NumObjectDelimiters = 0;
+	{
+		int32 LastSlash;
+		FStringView ObjectPathView(ObjectPath);
+		ObjectPathView.FindLastChar('/', LastSlash);
+		if (LastSlash == INDEX_NONE)
+		{
+			// Not a full object path. Always append with '.'
+			NumObjectDelimiters = 2;
+		}
+		else
+		{
+			ObjectPathView.RightChopInline(LastSlash + 1);
+			for (NumObjectDelimiters = 0;
+				NumObjectDelimiters < 2; // Stop counting after the second delimiter since behavior no longer changes
+				++NumObjectDelimiters)
+			{
+				int32 NextDelimiter = UE::String::FindFirstOfAnyChar(ObjectPathView, { TCHAR('.'), TCHAR(':') });
+				if (NextDelimiter == INDEX_NONE)
+				{
+					break;
+				}
+				ObjectPathView.RightChopInline(NextDelimiter + 1);
+			}
+		}
+	}
+
+	UE::String::ParseTokensMultiple(NextName, { TCHAR(':'), TCHAR('.') },
+	[&ObjectPath, &NumObjectDelimiters](FStringView NextSingleName)
+	{
+		TCHAR Delimiter = NumObjectDelimiters++ == 1 ? ':' : '.';
+		ObjectPath << Delimiter << NextSingleName;
+	},
+	UE::String::EParseTokensOptions::SkipEmpty);
+}
+
+FString FPackageName::ObjectPathCombine(FStringView ObjectPath, FStringView NextName)
+{
+	TStringBuilder<256> Base(InPlace, ObjectPath);
+	ObjectPathAppend(Base, NextName);
+	return FString(Base);
 }
 
 bool FPackageName::IsVersePackage(FStringView InPackageName)
@@ -2955,6 +3190,55 @@ bool FPackageNameTests::RunTest(const FString& Parameters)
 				TEXT("/Game/MyAsset"),
 			};
 			RunObjectPathTests(TEXT("ObjectPathToObjectName"), ExpectedOutputPaths, [](FStringView ObjectPath) { return FPackageName::ObjectPathToObjectName(ObjectPath); });
+		}
+
+		// ObjectPathSplitFirstName
+		{
+			auto ObjectPathSplitFirstNameTest = [this](FStringView Text, FStringView ExpectedFirst, FStringView ExpectedRemainder)
+				{
+					FStringView ActualFirst;
+					FStringView ActualRemainder;
+					FPackageName::ObjectPathSplitFirstName(Text, ActualFirst, ActualRemainder);
+					if (!ActualFirst.Equals(ExpectedFirst, ESearchCase::CaseSensitive) ||
+						!ActualRemainder.Equals(ExpectedRemainder, ESearchCase::CaseSensitive))
+					{
+						AddError(*WriteToString<256>(TEXT("ObjectPathSplitFirstName"), TEXT(": Expected {'"),
+							ExpectedFirst, TEXT("', '"), ExpectedRemainder, TEXT("'} but got {'"),
+							ActualFirst, TEXT("', '"), ActualRemainder, TEXT("'} for input '"), Text, TEXT("'")));
+					}
+				};
+			ObjectPathSplitFirstNameTest(TEXT("/Game/MyAsset.MyAsset:SubObject.AnotherObject"), TEXT("/Game/MyAsset"), TEXT("MyAsset:SubObject.AnotherObject"));
+			ObjectPathSplitFirstNameTest(TEXT("/Game/MyAsset.MyAsset:SubObject"), TEXT("/Game/MyAsset"), TEXT("MyAsset:SubObject"));
+			ObjectPathSplitFirstNameTest(TEXT("/Game/MyAsset.MyAsset"), TEXT("/Game/MyAsset"), TEXT("MyAsset"));
+			ObjectPathSplitFirstNameTest(TEXT("/Game/MyAsset"), TEXT("/Game/MyAsset"), TEXT(""));
+			ObjectPathSplitFirstNameTest(TEXT("MyAsset:SubObject"), TEXT("MyAsset"), TEXT("SubObject"));
+			ObjectPathSplitFirstNameTest(TEXT("MyAsset.SubObject"), TEXT("MyAsset"), TEXT("SubObject"));
+			ObjectPathSplitFirstNameTest(TEXT("MyAsset"), TEXT("MyAsset"), TEXT(""));
+			ObjectPathSplitFirstNameTest(TEXT(""), TEXT(""), TEXT(""));
+		}
+
+		// ObjectPathAppend
+		{
+			auto ObjectPathAppendTest = [this](FStringView A, FStringView B, FStringView Expected)
+				{
+					TStringBuilder<256> Base(InPlace, A);
+					FPackageName::ObjectPathAppend(Base, B);
+					if (!Base.ToView().Equals(Expected, ESearchCase::CaseSensitive))
+					{
+						AddError(*WriteToString<256>(TEXT("ObjectPathAppend"), TEXT(": Expected '"),
+							Expected, TEXT("' but got '"), Base, TEXT("' for input {'"),
+							A, TEXT("', '"), B, TEXT("'}")));
+					}
+				};
+			ObjectPathAppendTest(TEXT("/Package"), TEXT("Object"), TEXT("/Package.Object"));
+			ObjectPathAppendTest(TEXT("/Package.Object"), TEXT("SubObject"), TEXT("/Package.Object:SubObject"));
+			ObjectPathAppendTest(TEXT("/Package.Object:SubObject"), TEXT("NextSubObject"), TEXT("/Package.Object:SubObject.NextSubObject"));
+			ObjectPathAppendTest(TEXT("/Package"), TEXT("Object.SubObject"), TEXT("/Package.Object:SubObject"));
+			ObjectPathAppendTest(TEXT("/Package"), TEXT("/OtherPackage.Object:SubObject"), TEXT("/OtherPackage.Object:SubObject"));
+			ObjectPathAppendTest(TEXT("/Package"), TEXT(""), TEXT("/Package"));
+			ObjectPathAppendTest(TEXT(""), TEXT("/Package.Object:SubObject"), TEXT("/Package.Object:SubObject"));
+			ObjectPathAppendTest(TEXT(""), TEXT("Object"), TEXT("Object"));
+			ObjectPathAppendTest(TEXT(""), TEXT(""), TEXT(""));
 		}
 	}
 

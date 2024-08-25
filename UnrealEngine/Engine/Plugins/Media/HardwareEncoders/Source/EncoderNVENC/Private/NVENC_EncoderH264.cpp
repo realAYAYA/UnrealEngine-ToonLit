@@ -17,6 +17,7 @@
 
 namespace
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	NV_ENC_PARAMS_RC_MODE ConvertRateControlModeNVENC(AVEncoder::FVideoEncoder::RateControlMode mode)
 	{
 		switch (mode)
@@ -62,14 +63,13 @@ namespace
 				return NV_ENC_H264_PROFILE_HIGH_444_GUID;
 			case AVEncoder::FVideoEncoder::H264Profile::STEREO:
 				return NV_ENC_H264_PROFILE_STEREO_GUID;
-			case AVEncoder::FVideoEncoder::H264Profile::SVC_TEMPORAL_SCALABILITY:
-				return NV_ENC_H264_PROFILE_SVC_TEMPORAL_SCALABILTY;
 			case AVEncoder::FVideoEncoder::H264Profile::PROGRESSIVE_HIGH:
 				return NV_ENC_H264_PROFILE_PROGRESSIVE_HIGH_GUID;
 			case AVEncoder::FVideoEncoder::H264Profile::CONSTRAINED_HIGH:
 				return NV_ENC_H264_PROFILE_CONSTRAINED_HIGH_GUID;
 		}
 	}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 } // namespace
 
 namespace AVEncoder
@@ -164,43 +164,63 @@ namespace AVEncoder
 		});
 	}
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	static bool GetEncoderInfo(FNVENCCommon& NVENC, FVideoEncoderInfo& EncoderInfo);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	static int GetEncoderCapability(FNVENCCommon& NVENC, void* InEncoder, NV_ENC_CAPS InCapsToQuery);
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	bool FVideoEncoderNVENC_H264::GetIsAvailable(const FVideoEncoderInput& InVideoFrameFactory, FVideoEncoderInfo& OutEncoderInfo)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		FNVENCCommon& NVENC = FNVENCCommon::Setup();
 		bool bIsAvailable = NVENC.GetIsAvailable();
 		if (bIsAvailable)
 		{
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			OutEncoderInfo.CodecType = ECodecType::H264;
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		}
+		
 		return bIsAvailable;
 	}
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	void FVideoEncoderNVENC_H264::Register(FVideoEncoderFactory& InFactory)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		FNVENCCommon& NVENC = FNVENCCommon::Setup();
 		if (NVENC.GetIsAvailable() && IsRHIDeviceNVIDIA())
 		{
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			FVideoEncoderInfo EncoderInfo;
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			if (GetEncoderInfo(NVENC, EncoderInfo))
 			{
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS
 				InFactory.Register(EncoderInfo, []() { return TUniquePtr<FVideoEncoder>(new FVideoEncoderNVENC_H264()); });
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			}
+			
 		}
 	}
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FVideoEncoderNVENC_H264::FVideoEncoderNVENC_H264()
 		: NVENC(FNVENCCommon::Setup())
 	{
 		// Parse NVENC settings from command line (if any relevant ones are passed)
 		NVENCParseCommandLineFlags();
 	}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FVideoEncoderNVENC_H264::~FVideoEncoderNVENC_H264() { Shutdown(); }
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	bool FVideoEncoderNVENC_H264::Setup(TSharedRef<FVideoEncoderInput> InputFrameFactory, const FLayerConfig& InitConfig)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		if (!NVENC.GetIsAvailable())
 		{
@@ -208,6 +228,7 @@ namespace AVEncoder
 			return false;
 		}
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		FrameFormat = InputFrameFactory->GetFrameFormat();
 		switch (FrameFormat)
 		{
@@ -225,6 +246,7 @@ namespace AVEncoder
 				UE_LOG(LogEncoderNVENC, Error, TEXT("Frame format %s is not supported by NVENC_Encoder on this platform."), *ToString(FrameFormat));
 				return false;
 		}
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		if (!EncoderDevice)
 		{
@@ -232,6 +254,7 @@ namespace AVEncoder
 			return false;
 		}
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		FLayerConfig mutableConfig = InitConfig;
 		if (mutableConfig.MaxFramerate == 0)
 		{
@@ -239,9 +262,12 @@ namespace AVEncoder
 		}
 
 		return AddLayer(mutableConfig);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FVideoEncoder::FLayer* FVideoEncoderNVENC_H264::CreateLayer(uint32 layerIdx, FLayerConfig const& config)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		auto const layer = new FNVENCLayer(layerIdx, config, *this);
 		if (!layer->Setup())
@@ -252,11 +278,17 @@ namespace AVEncoder
 		return layer;
 	}
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	void FVideoEncoderNVENC_H264::DestroyLayer(FLayer* layer) { delete layer; }
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	void FVideoEncoderNVENC_H264::Encode(const TSharedPtr<FVideoEncoderInputFrame> InFrame, const FEncodeOptions& EncodeOptions)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		for (FVideoEncoder::FLayer* Layer : Layers)
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		{
 			FVideoEncoderNVENC_H264::FNVENCLayer* NVLayer = static_cast<FVideoEncoderNVENC_H264::FNVENCLayer*>(Layer);
 			NVLayer->Encode(InFrame, EncodeOptions);
@@ -265,7 +297,9 @@ namespace AVEncoder
 
 	void FVideoEncoderNVENC_H264::Flush()
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		for (FVideoEncoder::FLayer* Layer : Layers)
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		{
 			FVideoEncoderNVENC_H264::FNVENCLayer* NVLayer = static_cast<FVideoEncoderNVENC_H264::FNVENCLayer*>(Layer);
 			NVLayer->Flush();
@@ -274,16 +308,22 @@ namespace AVEncoder
 
 	void FVideoEncoderNVENC_H264::Shutdown()
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		for (FVideoEncoder::FLayer* Layer : Layers)
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		{
 			FVideoEncoderNVENC_H264::FNVENCLayer* NVLayer = static_cast<FVideoEncoderNVENC_H264::FNVENCLayer*>(Layer);
 			NVLayer->Shutdown();
 			DestroyLayer(NVLayer);
 		}
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		Layers.Reset();
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
+	
 
 	// --- FVideoEncoderNVENC_H264::FLayer ------------------------------------------------------------
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FVideoEncoderNVENC_H264::FNVENCLayer::FNVENCLayer(uint32 layerIdx, FLayerConfig const& config, FVideoEncoderNVENC_H264& encoder)
 		: FLayer(config)
 		, Encoder(encoder)
@@ -292,8 +332,11 @@ namespace AVEncoder
 		, LayerIndex(layerIdx)
 	{
 	}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FVideoEncoderNVENC_H264::FNVENCLayer::~FNVENCLayer() {}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	bool FVideoEncoderNVENC_H264::FNVENCLayer::Setup()
 	{
@@ -324,6 +367,7 @@ namespace AVEncoder
 			OpenEncodeSessionExParams.apiVersion = NVENCAPI_VERSION;
 			OpenEncodeSessionExParams.device = Encoder.EncoderDevice;
 
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			switch (Encoder.FrameFormat)
 			{
 				case EVideoFrameFormat::D3D11_R8G8B8A8_UNORM:
@@ -338,6 +382,7 @@ namespace AVEncoder
 					return false;
 					break;
 			}
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 			auto const result = NVENC.nvEncOpenEncodeSessionEx(&OpenEncodeSessionExParams, &NVEncoder);
 			if (result != NV_ENC_SUCCESS)
@@ -356,12 +401,16 @@ namespace AVEncoder
 		// set the initialization parameters
 		FMemory::Memzero(EncoderInitParams);
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		CurrentConfig.MaxFramerate = 60;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		EncoderInitParams.version = NV_ENC_INITIALIZE_PARAMS_VER;
 		EncoderInitParams.encodeGUID = NV_ENC_CODEC_H264_GUID;
 		EncoderInitParams.presetGUID = NV_ENC_PRESET_P4_GUID;
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		EncoderInitParams.frameRateNum = CurrentConfig.MaxFramerate;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		EncoderInitParams.frameRateDen = 1;
 		EncoderInitParams.enablePTD = 1;
 		EncoderInitParams.reportSliceOffsets = 0;
@@ -382,7 +431,9 @@ namespace AVEncoder
 
 		// copy the preset config to our config
 		FMemory::Memcpy(&EncoderConfig, &PresetConfig.presetCfg, sizeof(NV_ENC_CONFIG));
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		EncoderConfig.profileGUID = ConvertH264Profile(CurrentConfig.H264Profile);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		EncoderConfig.rcParams.version = NV_ENC_RC_PARAMS_VER;
 
 		EncoderInitParams.encodeConfig = &EncoderConfig;
@@ -449,6 +500,7 @@ namespace AVEncoder
 	{
 		uint64 PreReconfigureCycles = FPlatformTime::Cycles64();
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		FScopeLock lock(&ConfigMutex);
 		if (NeedsReconfigure)
 		{
@@ -486,6 +538,7 @@ namespace AVEncoder
 				FNVENCStats::Get().SetReconfigureLatency(ReconfigureDeltaMs);
 			}
 		}
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
 
 	void FVideoEncoderNVENC_H264::FNVENCLayer::UpdateLastEncodedQP(uint32 InLastEncodedQP)
@@ -497,11 +550,15 @@ namespace AVEncoder
 		}
 
 		LastEncodedQP = InLastEncodedQP;
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		NeedsReconfigure = true;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
+	
 
 	void FVideoEncoderNVENC_H264::FNVENCLayer::UpdateConfig()
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		EncoderInitParams.encodeWidth = EncoderInitParams.darWidth = CurrentConfig.Width;
 		EncoderInitParams.encodeHeight = EncoderInitParams.darHeight = CurrentConfig.Height;
 
@@ -517,6 +574,7 @@ namespace AVEncoder
 		RateControlParams.maxQP = { MaxQP, MaxQP, MaxQP };
 		RateControlParams.enableMinQP = CurrentConfig.QPMin > -1;
 		RateControlParams.enableMaxQP = CurrentConfig.QPMax > -1;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		// If we have QP ranges turned on use the last encoded QP to guide the max QP for an i-frame, so the i-frame doesn't look too blocky
 		// Note: this does nothing if we have i-frames turned off.
@@ -525,12 +583,16 @@ namespace AVEncoder
 			RateControlParams.maxQP.qpIntra = LastEncodedQP;
 		}
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		EncoderInitParams.encodeConfig->profileGUID = ConvertH264Profile(CurrentConfig.H264Profile);
-
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+		
 		NV_ENC_CONFIG_H264& H264Config = EncoderInitParams.encodeConfig->encodeCodecConfig.h264Config;
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		H264Config.enableFillerDataInsertion = CurrentConfig.FillData ? 1 : 0;
 
 		if (CurrentConfig.RateControlMode == AVEncoder::FVideoEncoder::RateControlMode::CBR && CurrentConfig.FillData)
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		{
 			// `outputPictureTimingSEI` is used in CBR mode to fill video frame with data to match the requested bitrate.
 			H264Config.outputPictureTimingSEI = 1;
@@ -621,7 +683,9 @@ namespace AVEncoder
 		}
 	}
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	void FVideoEncoderNVENC_H264::FNVENCLayer::Encode(const TSharedPtr<FVideoEncoderInputFrame> InFrame, const FEncodeOptions& EncodeOptions)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		// This encode is single threaded and blocking, if someone else is encoding right now, we wait.
 		while (bIsProcessingFrame) 
@@ -646,7 +710,9 @@ namespace AVEncoder
 		Buffer->PicParams = {};
 		Buffer->PicParams.encodePicFlags = 0;
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		if (EncodeOptions.bForceKeyFrame)
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		{
 			LastKeyFrameTime = FDateTime::UtcNow();
 			Buffer->PicParams.encodePicFlags |= NV_ENC_PIC_FLAG_FORCEIDR;
@@ -655,8 +721,10 @@ namespace AVEncoder
 		// Send SPS/PPS every frame (wasteful)
 		//Buffer->PicParams.encodePicFlags |= NV_ENC_PIC_FLAG_OUTPUT_SPSPPS;
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		Buffer->PicParams.frameIdx = InFrame->GetFrameID();
 		Buffer->PicParams.inputTimeStamp = Buffer->TimeStamp = InFrame->GetTimestampUs();
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		EncodeBuffer(Buffer);
 
@@ -715,15 +783,22 @@ namespace AVEncoder
 		// lock output buffers for CPU access
 		if (LockOutputBuffer(Buffer))
 		{
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			if (Encoder.OnEncodedPacket)
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			{
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS
 				FCodecPacket Packet = FCodecPacket::Create(static_cast<const uint8*>(Buffer->BitstreamData), Buffer->BitstreamDataSize);
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 				if (Buffer->PictureType & NV_ENC_PIC_TYPE_IDR)
 				{
 					UE_LOG(LogEncoderNVENC, Verbose, TEXT("Generated IDR Frame"));
+					PRAGMA_DISABLE_DEPRECATION_WARNINGS
 					Packet.IsKeyFrame = true;
+					PRAGMA_ENABLE_DEPRECATION_WARNINGS
 				}
+				
 				else
 				{
 					// If it is not a keyframe store the QP.
@@ -731,10 +806,12 @@ namespace AVEncoder
 				}
 
 				FinishedEncodingCycles = FPlatformTime::Cycles64();
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS
 				Packet.VideoQP = Buffer->FrameAvgQP;
 				Packet.Timings.StartTs = FTimespan::FromMilliseconds(FPlatformTime::ToMilliseconds64(Buffer->SubmitTimeCycles));
 				Packet.Timings.FinishTs = FTimespan::FromMilliseconds(FPlatformTime::ToMilliseconds64(FinishedEncodingCycles));
 				Packet.Framerate = EncoderInitParams.frameRateNum;
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 				// Stats
 				if (CVarNVENCEnableStats.GetValueOnAnyThread())
@@ -744,15 +821,19 @@ namespace AVEncoder
 					FNVENCStats::Get().SetProcessFramesFuncLatency(ProcessFramesFuncDeltaMs);
 
 					// Total time the encoder took to process a frame from submit through to encode
+					PRAGMA_DISABLE_DEPRECATION_WARNINGS
 					double TotalEncoderLatencyMs = Packet.Timings.FinishTs.GetTotalMilliseconds() - Packet.Timings.StartTs.GetTotalMilliseconds();
+					PRAGMA_ENABLE_DEPRECATION_WARNINGS
 					FNVENCStats::Get().SetTotalEncoderLatency(TotalEncoderLatencyMs);
 				}
 
 				// Send frame to OnEncodedPacket listener, such as WebRTC.
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS
 				if (Encoder.OnEncodedPacket)
 				{
 					Encoder.OnEncodedPacket(LayerIndex, Buffer->SourceFrame, Packet);
 				}
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			}
 
 			if (!UnlockOutputBuffer(Buffer))
@@ -792,17 +873,24 @@ namespace AVEncoder
 		else
 		{
 			// Check for buffer and Frame texture resolution mismatch
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			if (InFrame->GetWidth() != InputOutputBuffer->Width || InFrame->GetHeight() != InputOutputBuffer->Height)
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			{
 				DestroyBuffer(InputOutputBuffer);
 				InputOutputBuffer = CreateBuffer();
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS
 				NeedsReconfigure = true;
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			}
+			
 		}
 
 		InputOutputBuffer->SourceFrame = InFrame;
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		InputOutputBuffer->Width = InFrame->GetWidth();
 		InputOutputBuffer->Height = InFrame->GetHeight();
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		return InputOutputBuffer;
 	}
 
@@ -912,6 +1000,7 @@ namespace AVEncoder
 			return;
 		}
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		switch (InBuffer->SourceFrame->GetCUDA().UnderlyingRHI)
 		{
 			case FVideoEncoderInputFrame::EUnderlyingRHI::Vulkan:
@@ -924,6 +1013,7 @@ namespace AVEncoder
 			default:
 				break;
 		}
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		InBuffer->Width = TextureSize.X;
 		InBuffer->Height = TextureSize.Y;
@@ -951,6 +1041,7 @@ namespace AVEncoder
 
 			void* TextureToCompress = nullptr;
 
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			switch (InBuffer->SourceFrame->GetFormat())
 			{
 #if PLATFORM_WINDOWS
@@ -968,6 +1059,7 @@ namespace AVEncoder
 				default:
 					break;
 			}
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 			if (!TextureToCompress)
 			{
@@ -978,6 +1070,7 @@ namespace AVEncoder
 			InBuffer->InputTexture = TextureToCompress;
 			NVENCStruct(NV_ENC_REGISTER_RESOURCE, RegisterParam);
 
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			FIntPoint TextureSize(InBuffer->SourceFrame->GetWidth(), InBuffer->SourceFrame->GetHeight());
 
 			switch (InBuffer->SourceFrame->GetFormat())
@@ -995,6 +1088,7 @@ namespace AVEncoder
 				default:
 					break;
 			}
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 			RegisterParam.resourceToRegister = InBuffer->InputTexture;
 
@@ -1309,7 +1403,9 @@ namespace AVEncoder
 		return OutSupportedProfiles != 0;
 	}
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	static bool GetEncoderSupportedInputFormats(FNVENCCommon& NVENC, void* InEncoder, TArray<EVideoFrameFormat>& OutSupportedInputFormats)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		const uint32_t MaxInputFmtCount = 32;
 		uint32_t InputFmtCount = 0;
@@ -1332,18 +1428,22 @@ namespace AVEncoder
 				case NV_ENC_BUFFER_FORMAT_ARGB:
 					break;
 				case NV_ENC_BUFFER_FORMAT_ABGR:
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS
 #if PLATFORM_WINDOWS
 					OutSupportedInputFormats.Push(EVideoFrameFormat::D3D11_R8G8B8A8_UNORM);
 					OutSupportedInputFormats.Push(EVideoFrameFormat::D3D12_R8G8B8A8_UNORM);
 #endif
 					OutSupportedInputFormats.Push(EVideoFrameFormat::CUDA_R8G8B8A8_UNORM);
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
 					break;
 			}
 		}
 		return true;
 	}
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	static bool GetEncoderInfo(FNVENCCommon& NVENC, FVideoEncoderInfo& EncoderInfo)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		bool bSuccess = true;
 
@@ -1386,17 +1486,21 @@ namespace AVEncoder
 			return false;
 		}
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		EncoderInfo.CodecType = ECodecType::H264;
 		EncoderInfo.MaxWidth = GetEncoderCapability(NVENC, EncoderSession, NV_ENC_CAPS_WIDTH_MAX);
 		EncoderInfo.MaxHeight = GetEncoderCapability(NVENC, EncoderSession, NV_ENC_CAPS_HEIGHT_MAX);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		int LevelMax = GetEncoderCapability(NVENC, EncoderSession, NV_ENC_CAPS_LEVEL_MAX);
 		int LevelMin = GetEncoderCapability(NVENC, EncoderSession, NV_ENC_CAPS_LEVEL_MIN);
 		if (LevelMin > 0 && LevelMax > 0 && LevelMax >= LevelMin)
 		{
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			EncoderInfo.H264.MinLevel = (LevelMin > 9) ? LevelMin : 9;
 			EncoderInfo.H264.MaxLevel = (LevelMax < 9) ? 9 : (LevelMax > NV_ENC_LEVEL_H264_52) ? NV_ENC_LEVEL_H264_52
 																							   : LevelMax;
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		}
 		else
 		{
@@ -1404,7 +1508,9 @@ namespace AVEncoder
 			bSuccess = false;
 		}
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		if (!GetEncoderSupportedProfiles(NVENC, EncoderSession, EncoderInfo.H264.SupportedProfiles) || !GetEncoderSupportedInputFormats(NVENC, EncoderSession, EncoderInfo.SupportedInputFormats))
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		{
 			bSuccess = false;
 		}

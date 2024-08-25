@@ -15,31 +15,31 @@
 	"Hidden": true,
 	"IsBetaVersion": true,
 	"Installed": false,
-	"SupportedPrograms": [ "UnrealMultiUserServer", "UnrealMultiUserSlateServer", "UnrealRecoverySvc", "CrashReportClientEditor" ],
+	"SupportedPrograms": [ "UnrealMultiUserServer", "CoopMultiUserServer", "UnrealMultiUserSlateServer", "UnrealRecoverySvc", "CrashReportClientEditor", "LiveLinkHub" ],
 	"Modules": [
 		{
 			"Name": "Concert",
 			"Type": "UncookedOnly",
 			"LoadingPhase": "PreDefault",
-			"ProgramAllowList": [ "UnrealMultiUserServer", "UnrealMultiUserSlateServer", "UnrealRecoverySvc", "CrashReportClientEditor" ]
+			"ProgramAllowList": [ "UnrealMultiUserServer", "CoopMultiUserServer", "UnrealMultiUserSlateServer", "UnrealRecoverySvc", "CrashReportClientEditor", "LiveLinkHub" ]
 		},
 		{
 			"Name": "ConcertClient",
 			"Type": "UncookedOnly",
 			"LoadingPhase": "PreDefault",
-			"ProgramDenyList": [ "UnrealMultiUserServer", "UnrealMultiUserSlateServer", "UnrealRecoverySvc", "CrashReportClientEditor" ]
+			"ProgramDenyList": [ "UnrealMultiUserServer", "CoopMultiUserServer", "UnrealMultiUserSlateServer", "UnrealRecoverySvc", "CrashReportClientEditor", "LiveLinkHub" ]
 		},
 		{
 			"Name": "ConcertServer",
 			"Type": "UncookedOnly",
 			"LoadingPhase": "PreDefault",
-			"ProgramAllowList": [ "UnrealMultiUserServer", "UnrealMultiUserSlateServer", "UnrealRecoverySvc", "CrashReportClientEditor" ]
+			"ProgramAllowList": [ "UnrealMultiUserServer", "CoopMultiUserServer", "UnrealMultiUserSlateServer", "UnrealRecoverySvc", "CrashReportClientEditor", "LiveLinkHub" ]
 		},
 		{
 			"Name": "ConcertTransport",
 			"Type": "UncookedOnly",
 			"LoadingPhase": "PreDefault",
-			"ProgramAllowList": [ "UnrealMultiUserServer", "UnrealMultiUserSlateServer", "UnrealRecoverySvc", "CrashReportClientEditor" ]
+			"ProgramAllowList": [ "UnrealMultiUserServer", "CoopMultiUserServer", "UnrealMultiUserSlateServer", "UnrealRecoverySvc", "CrashReportClientEditor", "LiveLinkHub" ]
 		}
 	]
 }

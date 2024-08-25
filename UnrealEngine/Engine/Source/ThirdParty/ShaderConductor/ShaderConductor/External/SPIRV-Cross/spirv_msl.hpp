@@ -460,6 +460,7 @@ public:
 		// UE Change Begin: Support for image atomics on M2+ devices
 		// Allow implicit 2Darray to 2D conversion (for VSM)
 		bool flatten_2d_array = false;
+		std::set<std::string> flatten_2d_array_names;
 		// UE Change End: Support for image atomics on M2+ devices
 
 		enum class IndexType

@@ -10,6 +10,10 @@
 #include "HeightFogCommon.ush"
 #include "Random.ush"
 
+#if PERMUTATION_SUPPORT_LOCAL_FOG_VOLUME
+#include "LocalFogVolumes/LocalFogVolumeCommon.ush"
+#endif
+
 float UpsampleJitterMultiplier;
 
 float bOnlyOnRenderedOpaque;
@@ -24,6 +28,13 @@ SamplerState OcclusionSampler;
 Texture2D WaterDepthTexture;
 SamplerState WaterDepthSampler;
 
+#if PERMUTATION_SAMPLE_FOG_ON_CLOUDS
+Texture2D<float> SrcCloudDepthTexture;
+SamplerState SrcCloudDepthSampler;
+Texture2D<float4> SrcCloudViewTexture;
+SamplerState SrcCloudViewSampler;
+#endif
+
 void ExponentialPixelMain(
 	float2 TexCoord : TEXCOORD0,
 	float3 ScreenVector : TEXCOORD1,
@@ -33,6 +44,22 @@ void ExponentialPixelMain(
 {
 	float SceneDepth;
 	float DeviceZ;
+#if PERMUTATION_SAMPLE_FOG_ON_CLOUDS
+
+	float2 PixPos = SVPos.xy;
+	const float4 CloudLuminanceTransmittance = SrcCloudViewTexture.Load(int3(PixPos, 0));
+	const float CloudCoverage = 1.0f - CloudLuminanceTransmittance.a;
+	if (CloudLuminanceTransmittance.a > 0.999)
+	{
+		OutColor = float4(0.0f, 0.0f, 0.0f, 1.0f);
+		return;
+	}
+
+	const float CloudDepthKm = SrcCloudDepthTexture.Load(int3(PixPos, 0)).r;
+	SceneDepth = CloudDepthKm * KILOMETER_TO_CENTIMETER;
+	DeviceZ = ConvertToDeviceZ(SceneDepth); // Warning: for simplicity, we use DeviceZ as world distance in kilometer when SAMPLE_ATMOSPHERE_ON_CLOUDS. See special case in IntegrateSingleScatteredLuminance.
+
+#else
 	if (bUseWaterDepthTexture)
 	{
 		float2 SampleUV = clamp(TexCoord, WaterDepthTextureMinMaxUV.xy, WaterDepthTextureMinMaxUV.zw);
@@ -49,6 +76,7 @@ void ExponentialPixelMain(
 		SceneDepth = ConvertFromDeviceZ(DeviceZ); // Fetch the depth buffer Z / W value, solve for W
 	#endif
 	}
+#endif
 
 	bool bIsRendered = (DeviceZ != 0.0);
 
@@ -71,6 +99,12 @@ void ExponentialPixelMain(
 
 	float4 HeightFogInscatteringAndOpacity = CalculateHeightFog(WorldPositionRelativeToCamera);
 
+#if PERMUTATION_SUPPORT_LOCAL_FOG_VOLUME
+	uint2 TilePos = uint2(SVPos.xy - View.ViewRectMin.xy) / LFVTilePixelSize.xx;
+	float4 LFVContribution = GetLFVContribution(PrimaryView, TilePos, WorldPositionRelativeToCamera);
+	HeightFogInscatteringAndOpacity = float4(LFVContribution.rgb + HeightFogInscatteringAndOpacity.rgb * LFVContribution.a, LFVContribution.a * HeightFogInscatteringAndOpacity.a);
+#endif
+
 	float4 FogInscatteringAndOpacity = CombineVolumetricFog(HeightFogInscatteringAndOpacity, VolumeUV, 0, SceneDepth);
 	float2 OcclusionTexCoord = clamp(TexCoord, OcclusionTextureMinMaxUV.xy, OcclusionTextureMinMaxUV.zw);
 	float LightShaftMask = Texture2DSample(OcclusionTexture, OcclusionSampler, OcclusionTexCoord).x;
@@ -78,11 +112,28 @@ void ExponentialPixelMain(
 
 	FogInscatteringAndOpacity.rgb *= View.PreExposure;
 
+
+#if PERMUTATION_SAMPLE_FOG_ON_CLOUDS
+
+	// Reduce cloud luminance according to the fog transmittance and add the fog in scattering luminance according to the cloud coverage.
+	OutColor.rgb = CloudLuminanceTransmittance.rgb* FogInscatteringAndOpacity.a + FogInscatteringAndOpacity.rgb * CloudCoverage;
+	// Coverage of the cloud layer itself does not change.
+	OutColor.a   = CloudLuminanceTransmittance.a;
+
+#else // PERMUTATION_SAMPLE_FOG_ON_CLOUDS
+
 	if (bOnlyOnRenderedOpaque > 0.0 && !bIsRendered)
 	{
 		FogInscatteringAndOpacity.rgb = 0;
 		FogInscatteringAndOpacity.a = 1;
 	}
-
+	
+#if POST_PROCESS_ALPHA
+	// We need to output coverage so that we can potentially apply alpha hold out blending. See RenderViewFog.
+	OutColor = RETURN_COLOR(float4(FogInscatteringAndOpacity.rgb, 1.0 - FogInscatteringAndOpacity.w));
+#else
 	OutColor = RETURN_COLOR(float4(FogInscatteringAndOpacity.rgb, FogInscatteringAndOpacity.w));
+#endif
+	
+#endif // PERMUTATION_SAMPLE_FOG_ON_CLOUDS
 }

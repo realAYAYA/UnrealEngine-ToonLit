@@ -62,7 +62,7 @@ void AWorldPartitionMiniMap::CheckForErrors()
 	{
 		const int32 MaxTextureDimension = GetMax2DTextureDimension();
 		const bool bExceedMaxDimension = MiniMapTexture->GetImportedSize().GetMax() > MaxTextureDimension;
-		if (!UseVirtualTexturing(GMaxRHIFeatureLevel) && bExceedMaxDimension)
+		if (!UseVirtualTexturing(GMaxRHIShaderPlatform) && bExceedMaxDimension)
 		{
 			FFormatNamedArguments Arguments;
 			Arguments.Add(TEXT("ActorName"), FText::FromString(GetName()));

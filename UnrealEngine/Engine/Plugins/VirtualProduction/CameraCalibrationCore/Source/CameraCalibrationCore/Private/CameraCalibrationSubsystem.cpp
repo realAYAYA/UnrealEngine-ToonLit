@@ -7,7 +7,6 @@
 #include "CineCameraComponent.h"
 #include "Engine/TimecodeProvider.h"
 #include "GameFramework/Actor.h"
-#include "LensComponent.h"
 #include "Misc/CoreDelegates.h"
 #include "UObject/UObjectIterator.h"
 
@@ -46,20 +45,6 @@ TArray<ULensDistortionModelHandlerBase*> UCameraCalibrationSubsystem::GetDistort
 {
 	// This function has been deprecated. The implementation has been changed to provide some backwards compatibility, but code should be updated to not call this function.
 	TArray<ULensDistortionModelHandlerBase*> Handlers;
-
-	if (Component)
-	{
-		AActor* OwningActor = Component->GetOwner();
-
-		TInlineComponentArray<ULensComponent*> LensComponents;
-		OwningActor->GetComponents(LensComponents);
-
-		for (ULensComponent* LensComponent : LensComponents)
-		{
-			Handlers.Add(LensComponent->GetLensDistortionHandler());
-		}
-	}
-
 	return Handlers;
 }
 
@@ -68,38 +53,12 @@ ULensDistortionModelHandlerBase* UCameraCalibrationSubsystem::FindDistortionMode
 {
 	// This function has been deprecated. The implementation has been changed to provide some backwards compatibility, but code should be updated to not call this function.
 	TArray<ULensDistortionModelHandlerBase*> Handlers;
-
-	if (!DistortionHandlerPicker.TargetCameraComponent)
-	{
-		return nullptr;
-	}
-
-	AActor* OwningActor = DistortionHandlerPicker.TargetCameraComponent->GetOwner();
-
-	TInlineComponentArray<ULensComponent*> LensComponents;
-	OwningActor->GetComponents(LensComponents);
-
-	if (LensComponents.Num() > 0)
-	{
-		return LensComponents[0]->GetLensDistortionHandler();
-	}
-
 	return nullptr;
 }
 
 ULensDistortionModelHandlerBase* UCameraCalibrationSubsystem::FindOrCreateDistortionModelHandler(FDistortionHandlerPicker& DistortionHandlerPicker, const TSubclassOf<ULensModel> LensModelClass)
 {
 	// This function has been deprecated. The implementation has been changed to provide some backwards compatibility, but code should be updated to not call this function.
-	TArray<ULensDistortionModelHandlerBase*> Handlers = GetDistortionModelHandlers(DistortionHandlerPicker.TargetCameraComponent);
-
-	for (ULensDistortionModelHandlerBase* Handler : Handlers)
-	{
-		if (Handler->GetLensModelClass() == LensModelClass)
-		{
-			return Handler;
-		}
-	}
-
 	return nullptr;
 }
 PRAGMA_ENABLE_DEPRECATION_WARNINGS

@@ -2,6 +2,7 @@
 
 #include "AudioGameplayVolumeSubsystem.h"
 #include "ActiveSound.h"
+#include "Algo/Transform.h"
 #include "AudioGameplayVolumeLogs.h"
 #include "AudioGameplayVolumeComponent.h"
 #include "AudioGameplayVolumeProxy.h"
@@ -43,6 +44,13 @@ namespace AudioGameplayVolumeConsoleVariables
 		TEXT("A random delta to add to update rate to avoid performance heartbeats."),
 		ECVF_Default);
 
+	int32 bAudioThreadCmdRollback = 0;
+	FAutoConsoleVariableRef CVarAudioThreadCmdRollback(
+		TEXT("au.AudioGameplayVolumes.AudioThreadCmdRollback"),
+		bAudioThreadCmdRollback,
+		TEXT("When non-zero, uses old code to rollback late thread command change."),
+		ECVF_Default);
+
 } // namespace AudioGameplayVolumeConsoleVariables
 
 void FAudioGameplayActiveSoundInfo::Update(double ListenerInteriorStartTime)
@@ -65,7 +73,7 @@ void FAudioGameplayActiveSoundInfo::Update(double ListenerInteriorStartTime)
 	InteriorSettings.UpdateInteriorValues();
 }
 
-void FAudioProxyMutatorSearchObject::SearchVolumes(const TArray<TWeakObjectPtr<UAudioGameplayVolumeProxy>>& ProxyVolumes, FAudioProxyMutatorSearchResult& OutResult)
+void FAudioProxyMutatorSearchObject::SearchVolumes(const TArray<UAudioGameplayVolumeProxy*>& ProxyVolumes, FAudioProxyMutatorSearchResult& OutResult)
 {
 	check(IsInAudioThread());
 	SCOPED_NAMED_EVENT(FAudioProxyMutatorSearchObject_SearchVolumes, FColor::Blue);
@@ -75,9 +83,9 @@ void FAudioProxyMutatorSearchObject::SearchVolumes(const TArray<TWeakObjectPtr<U
 	MutatorPriorities.PayloadType = PayloadType;
 	MutatorPriorities.bFilterPayload = bFilterPayload;
 
-	for (const TWeakObjectPtr<UAudioGameplayVolumeProxy>& ProxyVolume : ProxyVolumes)
+	for (const UAudioGameplayVolumeProxy* ProxyVolume : ProxyVolumes)
 	{
-		if (!ProxyVolume.IsValid() || ProxyVolume->GetWorldID() != WorldID)
+		if (!ProxyVolume || ProxyVolume->GetWorldID() != WorldID)
 		{
 			continue;
 		}
@@ -108,9 +116,9 @@ void FAudioProxyMutatorSearchObject::SearchVolumes(const TArray<TWeakObjectPtr<U
 
 	if (bCollectMutators)
 	{
-		for (const TWeakObjectPtr<UAudioGameplayVolumeProxy>& ProxyVolume : ProxyVolumes)
+		for (const UAudioGameplayVolumeProxy* ProxyVolume : ProxyVolumes)
 		{
-			if (!ProxyVolume.IsValid())
+			if (!ProxyVolume)
 			{
 				continue;
 			}
@@ -170,7 +178,7 @@ void UAudioGameplayVolumeSubsystem::Update()
 	check(IsInAudioThread());
 	
 	// We track and check our previous proxy count to ensure we get one update after all of the volumes have been removed
-	if (AudioGameplayVolumeConsoleVariables::bEnabled == 0 || (ProxyVolumes.Num() == 0 && PreviousProxyCount == 0))
+	if (AudioGameplayVolumeConsoleVariables::bEnabled == 0 || (KnownProxyIDs.Num() == 0 && PreviousProxyCount == 0))
 	{
 		return;
 	}
@@ -202,7 +210,7 @@ void UAudioGameplayVolumeSubsystem::Update()
 		UpdateFromListeners();
 	}
 
-	PreviousProxyCount = ProxyVolumes.Num();
+	PreviousProxyCount = KnownProxyIDs.Num();
 }
 
 void UAudioGameplayVolumeSubsystem::GatherInteriorData(const FActiveSound& ActiveSound, FSoundParseParameters& ParseParams)
@@ -221,13 +229,17 @@ void UAudioGameplayVolumeSubsystem::GatherInteriorData(const FActiveSound& Activ
 	MutatorSearch.AudioDeviceHandle = GetAudioDeviceHandle();
 	MutatorSearch.bAffectedByLegacySystem = (ActiveSound.AudioVolumeID != 0);
 
+	GenerateVolumeProxyList();
 	FAudioProxyMutatorSearchResult Result;
-	MutatorSearch.SearchVolumes(ProxyVolumes, Result);
+	MutatorSearch.SearchVolumes(TransientProxyList, Result);
 
 	// Save info about this active sound for application.
 	FAudioGameplayActiveSoundInfo& ActiveSoundInfo = ActiveSoundData.FindOrAdd(ActiveSound.GetInstanceID());
 	ActiveSoundInfo.CurrentMutators = MoveTemp(Result.MatchingMutators);
 	ActiveSoundInfo.InteriorSettings.Apply(Result.InteriorSettings);
+
+	// We need to drop references, but we can at least prevent some allocs from using a member variable
+	TransientProxyList.Reset();
 }
 
 void UAudioGameplayVolumeSubsystem::ApplyInteriorSettings(const FActiveSound& ActiveSound, FSoundParseParameters& ParseParams)
@@ -312,17 +324,24 @@ void UAudioGameplayVolumeSubsystem::AddVolumeComponent(const UAudioGameplayVolum
 	{
 		VolumeProxy->InitFromComponent(VolumeComponent);
 		AGVComponents.Emplace(ComponentID, VolumeComponent);
+		const uint32 WorldID = VolumeProxy->GetWorldID();
 
 		UE_LOG(AudioGameplayVolumeLog, VeryVerbose, TEXT("AudioGameplayVolumeComponent %s [%08x] added"), *VolumeComponent->GetFName().ToString(), ComponentID);
 
 		// Copy representation of volume to audio thread
-		TWeakObjectPtr<UAudioGameplayVolumeProxy> WeakProxy(VolumeProxy);
-		TWeakObjectPtr<UAudioGameplayVolumeSubsystem> WeakThis(this);
-		FAudioThread::RunCommandOnAudioThread([WeakThis, WeakProxy]()
+		Audio::FDeviceId CurrentDeviceId = GetAudioDeviceId();
+		FAudioThread::RunCommandOnAudioThread([CurrentDeviceId, ComponentID, WorldID]()
 		{
-			if (WeakThis.IsValid() && WeakProxy.IsValid())
+			if (FAudioDeviceManager* AudioDeviceManager = FAudioDeviceManager::Get())
 			{
-				WeakThis->AddProxy(WeakProxy);
+				FAudioDeviceHandle DeviceHandle = AudioDeviceManager->GetAudioDevice(CurrentDeviceId);
+				if (DeviceHandle.IsValid())
+				{
+					if (UAudioGameplayVolumeSubsystem* AGVSubsystem = DeviceHandle->GetSubsystem<UAudioGameplayVolumeSubsystem>())
+					{
+						AGVSubsystem->AddProxy(ComponentID, WorldID);
+					}
+				}
 			}
 		});
 	}
@@ -344,13 +363,20 @@ void UAudioGameplayVolumeSubsystem::UpdateVolumeComponent(const UAudioGameplayVo
 
 		UE_LOG(AudioGameplayVolumeLog, VeryVerbose, TEXT("AudioGameplayVolumeComponent %s [%08x] updated"), *VolumeComponent->GetFName().ToString(), ComponentID);
 
-		TWeakObjectPtr<UAudioGameplayVolumeProxy> WeakProxy(VolumeProxy);
-		TWeakObjectPtr<UAudioGameplayVolumeSubsystem> WeakThis(this);
-		FAudioThread::RunCommandOnAudioThread([WeakThis, WeakProxy]()
+		// Update representation of volume on audio thread
+		Audio::FDeviceId CurrentDeviceId = GetAudioDeviceId();
+		FAudioThread::RunCommandOnAudioThread([CurrentDeviceId, ComponentID]()
 		{
-			if (WeakThis.IsValid() && WeakProxy.IsValid())
+			if (FAudioDeviceManager* AudioDeviceManager = FAudioDeviceManager::Get())
 			{
-				WeakThis->UpdateProxy(WeakProxy);
+				FAudioDeviceHandle DeviceHandle = AudioDeviceManager->GetAudioDevice(CurrentDeviceId);
+				if (DeviceHandle.IsValid())
+				{
+					if (UAudioGameplayVolumeSubsystem* AGVSubsystem = DeviceHandle->GetSubsystem<UAudioGameplayVolumeSubsystem>())
+					{
+						AGVSubsystem->UpdateProxy(ComponentID);
+					}
+				}
 			}
 		});
 	}
@@ -372,14 +398,35 @@ void UAudioGameplayVolumeSubsystem::RemoveVolumeComponent(const UAudioGameplayVo
 	}
 
 	// Remove representation of volume from audio thread
-	TWeakObjectPtr<UAudioGameplayVolumeSubsystem> WeakThis(this);
-	FAudioThread::RunCommandOnAudioThread([WeakThis, ComponentID]()
+	if (AudioGameplayVolumeConsoleVariables::bAudioThreadCmdRollback)
 	{
-		if (WeakThis.IsValid())
+		TWeakObjectPtr<UAudioGameplayVolumeSubsystem> WeakThis(this);
+		FAudioThread::RunCommandOnAudioThread([WeakThis, ComponentID]()
 		{
-			WeakThis->RemoveProxy(ComponentID);
-		}
-	});
+			if (WeakThis.IsValid())
+			{
+				WeakThis->RemoveProxy(ComponentID);
+			}
+		});
+	}
+	else
+	{
+		Audio::FDeviceId CurrentDeviceId = GetAudioDeviceId();
+		FAudioThread::RunCommandOnAudioThread([CurrentDeviceId, ComponentID]()
+		{
+			if (FAudioDeviceManager* AudioDeviceManager = FAudioDeviceManager::Get())
+			{
+				FAudioDeviceHandle DeviceHandle = AudioDeviceManager->GetAudioDevice(CurrentDeviceId);
+				if (DeviceHandle.IsValid())
+				{
+					if (UAudioGameplayVolumeSubsystem* AGVSubsystem = DeviceHandle->GetSubsystem<UAudioGameplayVolumeSubsystem>())
+					{
+						AGVSubsystem->RemoveProxy(ComponentID);
+					}
+				}
+			}
+		});
+	}
 }
 
 bool UAudioGameplayVolumeSubsystem::DoesSupportWorld(UWorld* World) const
@@ -391,42 +438,35 @@ bool UAudioGameplayVolumeSubsystem::DoesSupportWorld(UWorld* World) const
 	return false;
 }
 
-bool UAudioGameplayVolumeSubsystem::AddProxy(TWeakObjectPtr<UAudioGameplayVolumeProxy> WeakProxy)
+bool UAudioGameplayVolumeSubsystem::AddProxy(uint32 AudioGameplayVolumeID, uint32 WorldID)
 {
 	check(IsInAudioThread());
-	check(WeakProxy.IsValid());
 
-	// Only add to the Proxy array if the element doesn't already exist
-	const uint32 NewVolumeID = WeakProxy->GetVolumeID();
-	if (!ProxyVolumes.FindByPredicate([NewVolumeID](const TWeakObjectPtr<UAudioGameplayVolumeProxy>& Proxy) { return Proxy.IsValid() && Proxy->GetVolumeID() == NewVolumeID; }))
+	if (!AGVComponents.Contains(AudioGameplayVolumeID) || AGVComponents[AudioGameplayVolumeID]->GetProxy() == nullptr)
 	{
-		ProxyVolumes.Emplace(WeakProxy);
-
-		WorldProxyLists.FindOrAdd(WeakProxy->GetWorldID());
-		bHasStaleProxy = true;
-
-		UE_LOG(AudioGameplayVolumeLog, VeryVerbose, TEXT("Proxy [%08x] added"), NewVolumeID);
-		return true;
+		return false;
 	}
 
-	UE_LOG(AudioGameplayVolumeLog, VeryVerbose, TEXT("Attempting to add Proxy [%08x] multiple times"), NewVolumeID);
-	return false;
+	if (KnownProxyIDs.Contains(AudioGameplayVolumeID))
+	{
+		UE_LOG(AudioGameplayVolumeLog, VeryVerbose, TEXT("Attempting to add Proxy [%08x] multiple times"), AudioGameplayVolumeID);
+		return false;
+	}
+
+	KnownProxyIDs.Add(AudioGameplayVolumeID);
+	WorldProxyLists.FindOrAdd(WorldID);
+	bHasStaleProxy = true;
+
+	UE_LOG(AudioGameplayVolumeLog, VeryVerbose, TEXT("Proxy [%08x] added"), AudioGameplayVolumeID);
+	return true;
 }
 
-bool UAudioGameplayVolumeSubsystem::UpdateProxy(TWeakObjectPtr<UAudioGameplayVolumeProxy> WeakProxy)
+bool UAudioGameplayVolumeSubsystem::UpdateProxy(uint32 AudioGameplayVolumeID)
 {
 	check(IsInAudioThread());
-	check(WeakProxy.IsValid());
 
-	const uint32 ProxyVolumeID = WeakProxy->GetVolumeID();
-	TWeakObjectPtr<UAudioGameplayVolumeProxy>* ProxyPtr = ProxyVolumes.FindByPredicate([ProxyVolumeID](const TWeakObjectPtr<UAudioGameplayVolumeProxy>& Proxy)
+	if (KnownProxyIDs.Contains(AudioGameplayVolumeID))
 	{
-		return Proxy.IsValid() && Proxy->GetVolumeID() == ProxyVolumeID;
-	});
-
-	if (ProxyPtr)
-	{
-		*ProxyPtr = WeakProxy;
 		bHasStaleProxy = true;
 		return true;
 	}
@@ -437,11 +477,8 @@ bool UAudioGameplayVolumeSubsystem::UpdateProxy(TWeakObjectPtr<UAudioGameplayVol
 bool UAudioGameplayVolumeSubsystem::RemoveProxy(uint32 AudioGameplayVolumeID)
 {
 	check(IsInAudioThread());
-	const int32 NumRemoved = ProxyVolumes.RemoveAllSwap([AudioGameplayVolumeID](const TWeakObjectPtr<UAudioGameplayVolumeProxy>& Proxy)
-	{
-		return !Proxy.IsValid() || Proxy->GetVolumeID() == AudioGameplayVolumeID;
-	});
 
+	const int32 NumRemoved = KnownProxyIDs.Remove(AudioGameplayVolumeID);
 	if (NumRemoved > 0)
 	{
 		bHasStaleProxy = true;
@@ -450,6 +487,15 @@ bool UAudioGameplayVolumeSubsystem::RemoveProxy(uint32 AudioGameplayVolumeID)
 	}
 
 	return false;
+}
+
+void UAudioGameplayVolumeSubsystem::GenerateVolumeProxyList()
+{
+	TransientProxyList.Reset(256);
+	Algo::Transform(AGVComponents, TransientProxyList, [](const TPair<uint32, TObjectPtr<const UAudioGameplayVolumeComponent>>& Pair)
+	{
+		return Pair.Value ? Pair.Value->GetProxy() : nullptr;
+	});
 }
 
 bool UAudioGameplayVolumeSubsystem::IsAnyListenerInVolume(uint32 WorldID, uint32 VolumeID) const
@@ -501,9 +547,8 @@ void UAudioGameplayVolumeSubsystem::UpdateFromListeners()
 	check(DeviceHandle.IsValid());
 	const uint32 AudioDeviceID = DeviceHandle.GetDeviceID();
 
-	constexpr bool bAllowShrink = false;
 	const int32 ListenerCount = DeviceHandle->GetListeners().Num();
-	AGVListeners.SetNum(ListenerCount, bAllowShrink);
+	AGVListeners.SetNum(ListenerCount, EAllowShrinking::No);
 	constexpr bool bAllowAttenuationOverride = true;
 
 	// We have to search twice, as we only care about mutators that affect listeners, but we care about ALL proxyVolumes we're a part of
@@ -514,6 +559,8 @@ void UAudioGameplayVolumeSubsystem::UpdateFromListeners()
 	FAudioProxyMutatorSearchResult Result;
 	TSet<uint32> TempVolumeSet;
 	FTransform ListenerTransform;
+	
+	GenerateVolumeProxyList();
 
 	// Grabbing the listeners directly here should be removed when possible - done out of necessity due to the legacy audio volume system
 	const TArray<FListener>& AudioListeners = DeviceHandle->GetListeners();
@@ -531,7 +578,7 @@ void UAudioGameplayVolumeSubsystem::UpdateFromListeners()
 				ProxySearch.bFilterPayload = false;
 				ProxySearch.bCollectMutators = false;
 				ProxySearch.bGetDefaultAudioSettings = false;
-				ProxySearch.SearchVolumes(ProxyVolumes, Result);
+				ProxySearch.SearchVolumes(TransientProxyList, Result);
 
 				// Hold on to these
 				Swap(TempVolumeSet, Result.VolumeSet);
@@ -540,7 +587,7 @@ void UAudioGameplayVolumeSubsystem::UpdateFromListeners()
 				ProxySearch.bFilterPayload = true;
 				ProxySearch.bCollectMutators = true;
 				ProxySearch.bGetDefaultAudioSettings = true;
-				ProxySearch.SearchVolumes(ProxyVolumes, Result);
+				ProxySearch.SearchVolumes(TransientProxyList, Result);
 
 				if (i < AudioListeners.Num())
 				{
@@ -564,6 +611,9 @@ void UAudioGameplayVolumeSubsystem::UpdateFromListeners()
 		Result.Reset();
 		AGVListeners[i].Update(Result, FVector::ZeroVector, AudioDeviceID);
 	}
+
+	// We need to drop references, but we can at least prevent some allocs from using a member variable
+	TransientProxyList.Reset();
 
 	FAudioGameplayProxyUpdateResult ProxyUpdateResult;
 	TWeakObjectPtr<UAudioGameplayVolumeSubsystem> WeakThis(this);

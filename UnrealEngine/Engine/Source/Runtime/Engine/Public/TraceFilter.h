@@ -84,7 +84,7 @@ struct FTraceFilter
 
 	/** Returns whether or not an object is eligible to be outputted (output trace data) */
 	template<bool bForceThreadSafe = true>
-	static bool IsObjectTraceable(const UObject* InObject);
+	static ENGINE_API bool IsObjectTraceable(const UObject* InObject);
 
 	static ENGINE_API void Lock();
 	static ENGINE_API void Unlock();

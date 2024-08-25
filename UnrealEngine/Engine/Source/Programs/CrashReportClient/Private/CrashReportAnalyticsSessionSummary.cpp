@@ -502,7 +502,7 @@ void FCrashReportAnalyticsSessionSummary::AppendLog(const TCHAR* Event)
 		}
 		else
 		{
-			DiagnosticLog.RemoveAt(0, EventLen - FreeLen, /*bAllowShrinking*/false); // Free space, remove the chars from the oldest events (in front).
+			DiagnosticLog.RemoveAt(0, EventLen - FreeLen, EAllowShrinking::No); // Free space, remove the chars from the oldest events (in front).
 		}
 	}
 

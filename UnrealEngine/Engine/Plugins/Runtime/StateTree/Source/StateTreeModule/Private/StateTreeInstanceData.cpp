@@ -7,8 +7,13 @@
 #include "VisualLogger/VisualLogger.h"
 #include "StateTree.h"
 #include "Serialization/ObjectAndNameAsStringProxyArchive.h"
+#include "Serialization/CustomVersion.h"
+#include "Serialization/PropertyLocalizationDataGathering.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(StateTreeInstanceData)
+
+const FGuid FStateTreeInstanceStorageCustomVersion::GUID(0x60C4F0DE, 0x8B264C34, 0xAA937201, 0x5DFF09CC);
+FCustomVersionRegistration GRegisterStateTreeInstanceStorageCustomVersion(FStateTreeInstanceStorageCustomVersion::GUID, FStateTreeInstanceStorageCustomVersion::LatestVersion, TEXT("StateTreeInstanceStorage"));
 
 namespace UE::StateTree
 {
@@ -47,6 +52,30 @@ namespace UE::StateTree
 		return DuplicateObject(&Instance, &InOwner);
 	}
 
+#if WITH_EDITORONLY_DATA
+	void GatherForLocalization(const FString& PathToParent, const UScriptStruct* Struct, const void* StructData, const void* DefaultStructData, FPropertyLocalizationDataGatherer& PropertyLocalizationDataGatherer, const EPropertyLocalizationGathererTextFlags GatherTextFlags)
+	{
+		const FStateTreeInstanceData* ThisInstance = static_cast<const FStateTreeInstanceData*>(StructData);
+		const FStateTreeInstanceData* DefaultInstance = static_cast<const FStateTreeInstanceData*>(DefaultStructData);
+
+		PropertyLocalizationDataGatherer.GatherLocalizationDataFromStruct(PathToParent, Struct, StructData, DefaultStructData, GatherTextFlags);
+
+		const uint8* DefaultInstanceMemory = nullptr;
+		if (DefaultInstance)
+		{
+			DefaultInstanceMemory = reinterpret_cast<const uint8*>(&DefaultInstance->GetStorage());
+		}
+		
+		const UScriptStruct* StructTypePtr = FStateTreeInstanceStorage::StaticStruct();
+		PropertyLocalizationDataGatherer.GatherLocalizationDataFromStructWithCallbacks(PathToParent + TEXT(".InstanceStorage"), StructTypePtr, &ThisInstance->GetStorage(), DefaultInstanceMemory, GatherTextFlags);
+	}
+
+	void RegisterInstanceDataForLocalization()
+	{
+		{ static const FAutoRegisterLocalizationDataGatheringCallback AutomaticRegistrationOfLocalizationGatherer(TBaseStructure<FStateTreeInstanceData>::Get(), &GatherForLocalization); }
+	}
+#endif // WITH_EDITORONLY_DATA
+
 } // UE::StateTree
 
 
@@ -80,25 +109,122 @@ bool FStateTreeInstanceStorage::AreAllInstancesValid() const
 		{
 			return false;
 		}
-	}
-	for (const UObject* Instance : InstanceObjects)
-	{
-		if (!Instance)
+		if (const FStateTreeInstanceObjectWrapper* Wrapper = Instance.GetPtr<const FStateTreeInstanceObjectWrapper>())
 		{
-			return false;
+			if (!Wrapper->InstanceObject)
+			{
+				return false;
+			}
 		}
 	}
 	return true;
 }
 
+FStructView FStateTreeInstanceStorage::AddTemporaryInstance(UObject& InOwner, const FStateTreeExecutionFrame& Frame, const FStateTreeIndex16 OwnerNodeIndex, const FStateTreeDataHandle DataHandle, FConstStructView NewInstanceData)
+{
+	FStateTreeTemporaryInstanceData* TempInstance = TemporaryInstances.FindByPredicate([&Frame, &OwnerNodeIndex, &DataHandle](const FStateTreeTemporaryInstanceData& TempInstance)
+	{
+		return TempInstance.StateTree == Frame.StateTree
+				&& TempInstance.RootState == Frame.RootState
+				&& TempInstance.OwnerNodeIndex == OwnerNodeIndex
+				&& TempInstance.DataHandle == DataHandle;
+	});
+	
+	if (TempInstance)
+	{
+		if (TempInstance->Instance.GetScriptStruct() != NewInstanceData.GetScriptStruct())
+		{
+			TempInstance->Instance = NewInstanceData;
+		}
+	}
+	else
+	{
+		TempInstance = &TemporaryInstances.AddDefaulted_GetRef();
+		check(TempInstance);
+		TempInstance->StateTree = Frame.StateTree;
+		TempInstance->RootState = Frame.RootState;
+		TempInstance->OwnerNodeIndex = OwnerNodeIndex;
+		TempInstance->DataHandle = DataHandle;
+		TempInstance->Instance = NewInstanceData;
+	}
+
+	if (FStateTreeInstanceObjectWrapper* Wrapper = TempInstance->Instance.GetMutablePtr<FStateTreeInstanceObjectWrapper>())
+	{
+		if (Wrapper->InstanceObject)
+		{
+			Wrapper->InstanceObject = UE::StateTree::DuplicateNodeInstance(*Wrapper->InstanceObject, InOwner);
+		}
+	}
+
+	return TempInstance->Instance;
+}
+
+FStructView FStateTreeInstanceStorage::GetMutableTemporaryStruct(const FStateTreeExecutionFrame& Frame, const FStateTreeDataHandle DataHandle)
+{
+	FStateTreeTemporaryInstanceData* ExistingInstance = TemporaryInstances.FindByPredicate([&Frame, &DataHandle](const FStateTreeTemporaryInstanceData& TempInstance)
+	{
+		return TempInstance.StateTree == Frame.StateTree
+				&& TempInstance.RootState == Frame.RootState
+				&& TempInstance.DataHandle == DataHandle;
+	});
+	return ExistingInstance ? FStructView(ExistingInstance->Instance) : FStructView();
+}
+
+UObject* FStateTreeInstanceStorage::GetMutableTemporaryObject(const FStateTreeExecutionFrame& Frame, const FStateTreeDataHandle DataHandle)
+{
+	FStateTreeTemporaryInstanceData* ExistingInstance = TemporaryInstances.FindByPredicate([&Frame, &DataHandle](const FStateTreeTemporaryInstanceData& TempInstance)
+	{
+		return TempInstance.StateTree == Frame.StateTree
+				&& TempInstance.RootState == Frame.RootState
+				&& TempInstance.DataHandle == DataHandle;
+	});
+	if (ExistingInstance)
+	{
+		const FStateTreeInstanceObjectWrapper& Wrapper = ExistingInstance->Instance.Get<FStateTreeInstanceObjectWrapper>();
+		return Wrapper.InstanceObject;
+	}
+	return nullptr;
+}
+
+void FStateTreeInstanceStorage::ResetTemporaryInstances()
+{
+	TemporaryInstances.Reset();
+}
+
+
+void FStateTreeInstanceStorage::SetGlobalParameters(const FInstancedPropertyBag& Parameters)
+{
+	GlobalParameters = Parameters;
+}
 
 //----------------------------------------------------------------//
 // FStateTreeInstanceData
 //----------------------------------------------------------------//
 
-FStateTreeInstanceData::FStateTreeInstanceData()
+FStateTreeInstanceData::FStateTreeInstanceData() = default;
+
+FStateTreeInstanceData::FStateTreeInstanceData(const FStateTreeInstanceData& Other)
 {
-	InstanceStorage.InitializeAs<FStateTreeInstanceStorage>();
+	InstanceStorage = MakeShared<FStateTreeInstanceStorage>(*Other.InstanceStorage);
+}
+
+FStateTreeInstanceData::FStateTreeInstanceData(FStateTreeInstanceData&& Other)
+{
+	InstanceStorage = Other.InstanceStorage;
+	Other.InstanceStorage = MakeShared<FStateTreeInstanceStorage>();
+}
+
+FStateTreeInstanceData& FStateTreeInstanceData::operator=(const FStateTreeInstanceData& Other)
+{
+	InstanceStorage = MakeShared<FStateTreeInstanceStorage>(*Other.InstanceStorage);
+	return *this;
+}
+
+FStateTreeInstanceData& FStateTreeInstanceData::operator=(FStateTreeInstanceData&& Other)
+{
+	InstanceStorage = Other.InstanceStorage;
+	Other.InstanceStorage = MakeShared<FStateTreeInstanceStorage>();
+	return *this;
 }
 
 FStateTreeInstanceData::~FStateTreeInstanceData()
@@ -106,36 +232,24 @@ FStateTreeInstanceData::~FStateTreeInstanceData()
 	Reset();
 }
 
-bool FStateTreeInstanceStorage::IsValid() const
-{
-	return InstanceStructs.Num() > 0 || InstanceObjects.Num() > 0;
-}
-
 const FStateTreeInstanceStorage& FStateTreeInstanceData::GetStorage() const
 {
-	check(InstanceStorage.GetMemory() != nullptr && InstanceStorage.GetScriptStruct() == TBaseStructure<FStateTreeInstanceStorage>::Get());
-	return *reinterpret_cast<const FStateTreeInstanceStorage*>(InstanceStorage.GetMemory());
+	return *InstanceStorage;
+}
+
+TWeakPtr<FStateTreeInstanceStorage> FStateTreeInstanceData::GetWeakMutableStorage()
+{
+	return InstanceStorage;
+}
+
+TWeakPtr<const FStateTreeInstanceStorage> FStateTreeInstanceData::GetWeakStorage() const
+{
+	return InstanceStorage;
 }
 
 FStateTreeInstanceStorage& FStateTreeInstanceData::GetMutableStorage()
 {
-	check(InstanceStorage.GetMemory() != nullptr && InstanceStorage.GetScriptStruct() == TBaseStructure<FStateTreeInstanceStorage>::Get());
-	return *reinterpret_cast<FStateTreeInstanceStorage*>(InstanceStorage.GetMutableMemory());
-}
-
-const FStateTreeExecutionState* FStateTreeInstanceData::GetExecutionState() const
-{
-	if (!IsValid())
-	{
-		return nullptr;
-	}
-	const FConstStructView ExecView = GetStruct(0); // Execution state is fixed at index 0. 
-	return ExecView.GetPtr<const FStateTreeExecutionState>();
-}
-
-TArray<FStateTreeEvent>& FStateTreeInstanceData::GetEvents() const
-{
-	return const_cast<FStateTreeInstanceData*>(this)->GetMutableStorage().EventQueue.GetEventsArray();
+	return *InstanceStorage;
 }
 
 FStateTreeEventQueue& FStateTreeInstanceData::GetMutableEventQueue()
@@ -175,21 +289,18 @@ int32 FStateTreeInstanceData::GetEstimatedMemoryUsage() const
 
 	Size += Storage.InstanceStructs.GetAllocatedMemory();
 
-	for (const UObject* InstanceObject : Storage.InstanceObjects)
+	for (FConstStructView Instance : Storage.InstanceStructs)
 	{
-		if (InstanceObject)
+		if (const FStateTreeInstanceObjectWrapper* Wrapper = Instance.GetPtr<const FStateTreeInstanceObjectWrapper>())
 		{
-			Size += InstanceObject->GetClass()->GetStructureSize();
+			if (Wrapper->InstanceObject)
+			{
+				Size += Wrapper->InstanceObject->GetClass()->GetStructureSize();
+			}
 		}
 	}
 
 	return Size;
-}
-
-int32 FStateTreeInstanceData::GetNumItems() const
-{
-	const FStateTreeInstanceStorage& Storage = GetStorage();
-	return Storage.InstanceStructs.Num() + Storage.InstanceObjects.Num();
 }
 
 bool FStateTreeInstanceData::Identical(const FStateTreeInstanceData* Other, uint32 PortFlags) const
@@ -199,23 +310,11 @@ bool FStateTreeInstanceData::Identical(const FStateTreeInstanceData* Other, uint
 		return false;
 	}
 
-	// Identical if both are uninitialized.
-	if (!IsValid() && !Other->IsValid())
-	{
-		return true;
-	}
-
-	// Not identical if one is valid and other is not.
-	if (IsValid() != Other->IsValid())
-	{
-		return false;
-	}
-
 	const FStateTreeInstanceStorage& Storage = GetStorage();
 	const FStateTreeInstanceStorage& OtherStorage = Other->GetStorage();
 
-	// Not identical if different amount of instanced objects.
-	if (Storage.InstanceObjects.Num() != OtherStorage.InstanceObjects.Num())
+	// Not identical if global parameters don't match.
+	if (!Storage.GlobalParameters.Identical(&OtherStorage.GlobalParameters, PortFlags))
 	{
 		return false;
 	}
@@ -250,47 +349,90 @@ bool FStateTreeInstanceData::Identical(const FStateTreeInstanceData* Other, uint
 	};
 
 	bool bResult = true;
-	for (int32 Index = 0; Index < Storage.InstanceObjects.Num(); Index++)
+
+	for (int32 Index = 0; Index < Storage.InstanceStructs.Num(); Index++)
 	{
-		if (Storage.InstanceObjects[Index] != nullptr && OtherStorage.InstanceObjects[Index] != nullptr)
+		const FStateTreeInstanceObjectWrapper* Wrapper = Storage.InstanceStructs[Index].GetPtr<const FStateTreeInstanceObjectWrapper>();
+		const FStateTreeInstanceObjectWrapper* OtherWrapper = OtherStorage.InstanceStructs[Index].GetPtr<const FStateTreeInstanceObjectWrapper>();
+
+		if (Wrapper)
 		{
-			if (!AreObjectsIdentical(Storage.InstanceObjects[Index], OtherStorage.InstanceObjects[Index], PortFlags))
+			if (!OtherWrapper)
 			{
 				bResult = false;
 				break;
 			}
-		}
-		else
-		{
-			bResult = false;
-			break;
+			if (Wrapper->InstanceObject && OtherWrapper->InstanceObject)
+			{
+				if (!AreObjectsIdentical(Wrapper->InstanceObject, OtherWrapper->InstanceObject, PortFlags))
+				{
+					bResult = false;
+					break;
+				}
+			}
 		}
 	}
 	
 	return bResult;
 }
 
-void FStateTreeInstanceData::PostSerialize(const FArchive& Ar)
+void FStateTreeInstanceData::AddStructReferencedObjects(FReferenceCollector& Collector)
 {
-#if WITH_EDITORONLY_DATA
+	Collector.AddPropertyReferencesWithStructARO(FStateTreeInstanceStorage::StaticStruct(), &GetMutableStorage());
+}
+
+bool FStateTreeInstanceData::Serialize(FArchive& Ar)
+{
+	Ar.UsingCustomVersion(FStateTreeInstanceStorageCustomVersion::GUID);
+
 	if (Ar.IsLoading())
 	{
-		FStateTreeInstanceStorage& Storage = GetMutableStorage();
-		PRAGMA_DISABLE_DEPRECATION_WARNINGS
-		if (InstanceStructs_DEPRECATED.Num() > 0 || InstanceObjects_DEPRECATED.Num() > 0)
+		if (Ar.CustomVer(FStateTreeInstanceStorageCustomVersion::GUID) < FStateTreeInstanceStorageCustomVersion::AddedCustomSerialization)
 		{
-			if (!Storage.IsValid())
+#if WITH_EDITORONLY_DATA
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+			StaticStruct()->SerializeTaggedProperties(Ar, (uint8*)this, StaticStruct(), nullptr);
+
+			if (InstanceStorage_DEPRECATED.IsValid())
 			{
-				Storage.InstanceStructs.Reset();
-				Storage.InstanceStructs.Append(InstanceStructs_DEPRECATED);
-				Storage.InstanceObjects = InstanceObjects_DEPRECATED;
+				InstanceStorage = MakeShared<FStateTreeInstanceStorage>(MoveTemp(InstanceStorage_DEPRECATED.GetMutable()));
+				InstanceStorage_DEPRECATED.Reset();
+				return true;
 			}
-			InstanceStructs_DEPRECATED.Reset();
-			InstanceObjects_DEPRECATED.Reset();
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
+#endif // WITH_EDITORONLY_DATA
+
+			InstanceStorage = MakeShared<FStateTreeInstanceStorage>();
+			return true;
 		}
-		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+		InstanceStorage = MakeShared<FStateTreeInstanceStorage>();
 	}
-#endif
+
+	FStateTreeInstanceStorage::StaticStruct()->SerializeItem(Ar, &InstanceStorage.Get(), nullptr);
+
+	return true;
+}
+
+void FStateTreeInstanceData::GetPreloadDependencies(TArray<UObject*>& OutDeps)
+{
+	UScriptStruct* ScriptStruct = FStateTreeInstanceStorage::StaticStruct();
+	OutDeps.Add(ScriptStruct);
+
+	if (UScriptStruct::ICppStructOps* CppStructOps = ScriptStruct->GetCppStructOps())
+	{
+		CppStructOps->GetPreloadDependencies(&GetMutableStorage(), OutDeps);
+	}
+
+	for (TPropertyValueIterator<FStructProperty> It(ScriptStruct, &GetMutableStorage()); It; ++It)
+	{
+		const UScriptStruct* StructType = It.Key()->Struct;
+		if (UScriptStruct::ICppStructOps* CppStructOps = StructType->GetCppStructOps())
+		{
+			void* StructDataPtr = const_cast<void*>(It.Value());
+			CppStructOps->GetPreloadDependencies(StructDataPtr, OutDeps);
+		}
+	}
 }
 
 void FStateTreeInstanceData::CopyFrom(UObject& InOwner, const FStateTreeInstanceData& InOther)
@@ -307,81 +449,117 @@ void FStateTreeInstanceData::CopyFrom(UObject& InOwner, const FStateTreeInstance
 	Storage.InstanceStructs = OtherStorage.InstanceStructs;
 
 	// Copy instance objects.
-	Storage.InstanceObjects.Reset();
-	for (const UObject* Instance : OtherStorage.InstanceObjects)
+	for (FStructView Instance : Storage.InstanceStructs)
 	{
-		if (ensure(Instance != nullptr))
+		if (FStateTreeInstanceObjectWrapper* Wrapper = Instance.GetPtr<FStateTreeInstanceObjectWrapper>())
 		{
-			Storage.InstanceObjects.Add(UE::StateTree::DuplicateNodeInstance(*Instance, InOwner));
+			if (Wrapper->InstanceObject)
+			{
+				Wrapper->InstanceObject = UE::StateTree::DuplicateNodeInstance(*Wrapper->InstanceObject, InOwner);
+			}
 		}
 	}
 }
 
-void FStateTreeInstanceData::Init(UObject& InOwner, TConstArrayView<FInstancedStruct> InStructs, TConstArrayView<const UObject*> InObjects)
+void FStateTreeInstanceData::Init(UObject& InOwner, TConstArrayView<FInstancedStruct> InStructs)
 {
 	Reset();
-	Append(InOwner, InStructs, InObjects);
+	Append(InOwner, InStructs);
 }
 
-void FStateTreeInstanceData::Init(UObject& InOwner, TConstArrayView<FConstStructView> InStructs, TConstArrayView<const UObject*> InObjects)
+void FStateTreeInstanceData::Init(UObject& InOwner, TConstArrayView<FConstStructView> InStructs)
 {
 	Reset();
-	Append(InOwner, InStructs, InObjects);
+	Append(InOwner, InStructs);
 }
 
-void FStateTreeInstanceData::Append(UObject& InOwner, TConstArrayView<FInstancedStruct> InStructs, TConstArrayView<const UObject*> InObjects)
+void FStateTreeInstanceData::Append(UObject& InOwner, TConstArrayView<FInstancedStruct> InStructs)
 {
 	FStateTreeInstanceStorage& Storage = GetMutableStorage();
 
+	const int32 StartIndex = Storage.InstanceStructs.Num();
 	Storage.InstanceStructs.Append(InStructs);
-	
-	Storage.InstanceObjects.Reserve(Storage.InstanceObjects.Num() + InObjects.Num());
-	for (const UObject* Instance : InObjects)
+
+	for (int32 Index = StartIndex; Index < Storage.InstanceStructs.Num(); Index++)
 	{
-		if (ensure(Instance != nullptr))
+		if (FStateTreeInstanceObjectWrapper* Wrapper = Storage.InstanceStructs[Index].GetPtr<FStateTreeInstanceObjectWrapper>())
 		{
-			Storage.InstanceObjects.Add(UE::StateTree::DuplicateNodeInstance(*Instance, InOwner));
+			if (Wrapper->InstanceObject)
+			{
+				Wrapper->InstanceObject = UE::StateTree::DuplicateNodeInstance(*Wrapper->InstanceObject, InOwner);
+			}
 		}
 	}
 }
 
-void FStateTreeInstanceData::Append(UObject& InOwner, TConstArrayView<FConstStructView> InStructs, TConstArrayView<const UObject*> InObjects)
+void FStateTreeInstanceData::Append(UObject& InOwner, TConstArrayView<FConstStructView> InStructs)
 {
 	FStateTreeInstanceStorage& Storage = GetMutableStorage();
 
+	const int32 StartIndex = Storage.InstanceStructs.Num();
 	Storage.InstanceStructs.Append(InStructs);
 	
-	Storage.InstanceObjects.Reserve(Storage.InstanceObjects.Num() + InObjects.Num());
-	for (const UObject* Instance : InObjects)
+	for (int32 Index = StartIndex; Index < Storage.InstanceStructs.Num(); Index++)
 	{
-		if (ensure(Instance != nullptr))
+		if (FStateTreeInstanceObjectWrapper* Wrapper = Storage.InstanceStructs[Index].GetPtr<FStateTreeInstanceObjectWrapper>())
 		{
-			Storage.InstanceObjects.Add(UE::StateTree::DuplicateNodeInstance(*Instance, InOwner));
+			if (Wrapper->InstanceObject)
+			{
+				Wrapper->InstanceObject = UE::StateTree::DuplicateNodeInstance(*Wrapper->InstanceObject, InOwner);
+			}
 		}
 	}
 }
 
-void FStateTreeInstanceData::ShrinkTo(const int32 NumStructs, const int32 NumObjects)
+void FStateTreeInstanceData::Append(UObject& InOwner, TConstArrayView<FConstStructView> InStructs, TConstArrayView<FInstancedStruct*> InInstancesToMove)
+{
+	check(InStructs.Num() == InInstancesToMove.Num());
+	
+	FStateTreeInstanceStorage& Storage = GetMutableStorage();
+
+	const int32 StartIndex = Storage.InstanceStructs.Num();
+	Storage.InstanceStructs.Append(InStructs);
+
+	for (int32 Index = StartIndex; Index < Storage.InstanceStructs.Num(); Index++)
+	{
+		FStructView Struct = Storage.InstanceStructs[Index];
+		FInstancedStruct* Source = InInstancesToMove[Index - StartIndex];
+
+		// The source is used to move temporary instance data into instance data. Not all entries may have it.
+		// The instance struct can be empty, in which case the temporary instance is ignored.
+		// If the source is specified, move it to the instance data.
+		// We assume that if the source is object wrapper, it is already the instance we want.
+		if (Struct.IsValid()
+			&& (Source && Source->IsValid()))
+		{
+			check(Struct.GetScriptStruct() == Source->GetScriptStruct());
+				
+			FMemory::Memswap(Struct.GetMemory(), Source->GetMutableMemory(), Struct.GetScriptStruct()->GetStructureSize());
+			Source->Reset();
+		}
+		else if (FStateTreeInstanceObjectWrapper* Wrapper = Struct.GetPtr<FStateTreeInstanceObjectWrapper>())
+		{
+			if (Wrapper->InstanceObject)
+			{
+				Wrapper->InstanceObject = UE::StateTree::DuplicateNodeInstance(*Wrapper->InstanceObject, InOwner);
+			}
+		}
+	}
+}
+
+void FStateTreeInstanceData::ShrinkTo(const int32 NumStructs)
 {
 	FStateTreeInstanceStorage& Storage = GetMutableStorage();
-	check(NumStructs <= Storage.InstanceStructs.Num() && NumObjects <= Storage.InstanceObjects.Num());  
+	check(NumStructs <= Storage.InstanceStructs.Num());  
 	Storage.InstanceStructs.SetNum(NumStructs);
-	Storage.InstanceObjects.SetNum(NumObjects);
-}
-
-bool FStateTreeInstanceData::IsValid() const
-{
-	if (!InstanceStorage.IsValid())
-	{
-		return false;
-	}
-	return GetStorage().IsValid();
 }
 
 void FStateTreeInstanceData::Reset()
 {
 	FStateTreeInstanceStorage& Storage = GetMutableStorage();
 	Storage.InstanceStructs.Reset();
-	Storage.InstanceObjects.Reset();
 	Storage.EventQueue.Reset();
+	Storage.ExecutionState.Reset();
+	Storage.TemporaryInstances.Reset();
+	Storage.GlobalParameters.Reset();
 }

@@ -40,6 +40,7 @@ public:
 	// End IOnlineAccountRegistryEOSGS
 
 	FAccountId FindAccountId(const EOS_EpicAccountId EpicAccountId) const;
+	FAccountId FindOrAddAccountId(const EOS_EpicAccountId EpicAccountId, const EOS_ProductUserId ProductUserId);
 
 	// Return copies as it is not thread safe to return pointers/references to array elements, in case the array is grown+relocated on another thread.
 	FOnlineAccountIdDataEOS GetAccountIdData(const FAccountId& AccountId) const;
@@ -50,7 +51,6 @@ private:
 	friend class FAuthEOS;
 	friend class FOnlineServicesEOSModule;
 	friend FAccountIdReplicationTest;
-	FAccountId FindOrAddAccountId(const EOS_EpicAccountId EpicAccountId, const EOS_ProductUserId ProductUserId);
 
 	mutable FRWLock Lock;
 

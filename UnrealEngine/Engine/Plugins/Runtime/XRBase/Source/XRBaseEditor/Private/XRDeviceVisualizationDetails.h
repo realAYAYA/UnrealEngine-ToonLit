@@ -2,15 +2,10 @@
 
 #pragma once
 
-#include "Containers/Array.h"
-#include "Containers/Map.h"
 #include "IDetailCustomization.h"
 #include "Misc/Attribute.h"
 #include "Templates/SharedPointer.h"
-#include "Templates/TypeHash.h"
 #include "Types/SlateEnums.h" // for ETextCommit, ESelectInfo
-#include "UObject/WeakObjectPtr.h"
-#include "UObject/WeakObjectPtrTemplates.h"
 
 class IDetailLayoutBuilder;
 class IDetailPropertyRow;
@@ -52,6 +47,4 @@ private:
 	TSharedPtr<IPropertyHandle> DisplayMaterialsProperty;
 
 	static TMap< FName, TSharedPtr<FName> > CustomSourceNames;
-
-	TSharedPtr<IPropertyHandle> MotionSourceProperty;
 };

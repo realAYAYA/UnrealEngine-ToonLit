@@ -34,7 +34,7 @@ namespace AVEncoder
 	class FVideoEncoderInputFrame;
 
 #if PLATFORM_DESKTOP && !PLATFORM_APPLE
-	struct FVulkanDataStruct
+	struct UE_DEPRECATED(5.4, "AVEncoder has been deprecated. Please use the AVCodecs plugin family instead.") FVulkanDataStruct
 	{
 		VkInstance VulkanInstance;
 		VkPhysicalDevice VulkanPhysicalDevice;
@@ -42,7 +42,7 @@ namespace AVEncoder
 	};
 #endif
 
-	class FVideoEncoderInput
+	class UE_DEPRECATED(5.4, "AVEncoder has been deprecated. Please use the AVCodecs plugin family instead.") FVideoEncoderInput
 	{
 	public:
 		// --- construct video encoder input based on expected input frame format
@@ -64,12 +64,16 @@ namespace AVEncoder
 		// --- properties
 		AVENCODER_API virtual void SetMaxNumBuffers(uint32 InMaxNumBuffers);
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		EVideoFrameFormat GetFrameFormat() const { return FrameFormat; }
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		// --- available encoders
 
 		// get a list of supported video encoders
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		virtual const TArray<FVideoEncoderInfo>& GetAvailableEncoders() = 0;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		// --- create encoders
 
@@ -112,7 +116,10 @@ namespace AVEncoder
 		FVideoEncoderInput(const FVideoEncoderInput&) = delete;
 		FVideoEncoderInput& operator=(const FVideoEncoderInput&) = delete;
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		EVideoFrameFormat				FrameFormat = EVideoFrameFormat::Undefined;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
 		uint32 MaxNumBuffers = 3;
 		uint32 NumBuffers = 0;
 
@@ -123,7 +130,7 @@ namespace AVEncoder
 
 
 	// TODO this should go elsewhere and be made cross platform
-	class FVideoEncoderInputFrame
+	class UE_DEPRECATED(5.4, "AVEncoder has been deprecated. Please use the AVCodecs plugin family instead.") FVideoEncoderInputFrame
 	{
 	public:
 		// Obtain (increase reference count) of this input frame
@@ -147,7 +154,9 @@ namespace AVEncoder
 		int64 GetTimestampRTP() const { return TimestampRTP; }
 
 		// current format of frame
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		EVideoFrameFormat GetFormat() const { return Format; }
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		// width of frame buffer
 		void SetWidth(uint32 InWidth) { Width = InWidth; }
 		uint32 GetWidth() const { return Width; }
@@ -159,7 +168,7 @@ namespace AVEncoder
 
 		// --- YUV420P
 
-		struct FYUV420P
+		struct UE_DEPRECATED(5.4, "AVEncoder has been deprecated. Please use the AVCodecs plugin family instead.") FYUV420P
 		{
 			const uint8*		Data[3] = { nullptr, nullptr, nullptr };
 			uint32				StrideY = 0;
@@ -180,7 +189,7 @@ namespace AVEncoder
 #if PLATFORM_WINDOWS
 		// --- D3D11
 
-		struct FD3D11
+		struct UE_DEPRECATED(5.4, "AVEncoder has been deprecated. Please use the AVCodecs plugin family instead.") FD3D11
 		{
 			ID3D11Texture2D*	Texture = nullptr;
 			ID3D11Device*		EncoderDevice = nullptr;
@@ -198,7 +207,7 @@ namespace AVEncoder
 
 		// --- D3D12
 
-		struct FD3D12
+		struct UE_DEPRECATED(5.4, "AVEncoder has been deprecated. Please use the AVCodecs plugin family instead.") FD3D12
 		{
 			ID3D12Resource*		Texture = nullptr;
 			ID3D12Device*		EncoderDevice = nullptr;
@@ -215,7 +224,7 @@ namespace AVEncoder
 
 #endif // PLATFORM_WINDOWS
 
-		enum class EUnderlyingRHI
+		enum class UE_DEPRECATED(5.4, "AVEncoder has been deprecated. Please use the AVCodecs plugin family instead.") EUnderlyingRHI
 		{
 			Undefined,
 			D3D11,
@@ -224,12 +233,15 @@ namespace AVEncoder
 		};
 
 		// --- CUDA
-		struct FCUDA
+		struct UE_DEPRECATED(5.4, "AVEncoder has been deprecated. Please use the AVCodecs plugin family instead.") FCUDA
 		{
 			CUarray			EncoderTexture = nullptr;
 			CUcontext   	EncoderDevice = nullptr;
-			EUnderlyingRHI	UnderlyingRHI = EUnderlyingRHI::Undefined;
 			void*			SharedHandle = nullptr;
+
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
+			EUnderlyingRHI	UnderlyingRHI = EUnderlyingRHI::Undefined;
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		};
 
 		const FCUDA& GetCUDA() const { return CUDA; }
@@ -242,7 +254,7 @@ namespace AVEncoder
 
 #if PLATFORM_DESKTOP && !PLATFORM_APPLE
 		// --- Vulkan
-		struct FVulkan
+		struct UE_DEPRECATED(5.4, "AVEncoder has been deprecated. Please use the AVCodecs plugin family instead.") FVulkan
 		{
 			VkImage				EncoderTexture = VK_NULL_HANDLE;
 			VkDeviceMemory		EncoderDeviceMemory;
@@ -273,11 +285,14 @@ namespace AVEncoder
 		int64									TimestampUs;
 		int64									TimestampRTP;
 		mutable FThreadSafeCounter				NumReferences;
-		EVideoFrameFormat						Format;
 		uint32									Width;
 		uint32									Height;
 		FYUV420P								YUV420P;
 		bool									bFreeYUV420PData;
+
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
+		EVideoFrameFormat						Format;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 #if PLATFORM_WINDOWS
 		FD3D11									D3D11;

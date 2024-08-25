@@ -48,6 +48,10 @@
 		{
 			"Name": "VariantManagerContent",
 			"Enabled": true
+		},
+		{
+			"Name": "Interchange",
+			"Enabled": true
 		}
 	],
 	"IsExperimentalVersion": false

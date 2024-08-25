@@ -299,6 +299,8 @@ void FPolygonEdgeMeshGenerator::CurvePath(const TArray<FVector3d>& InPath,
 FMeshShapeGenerator& FPolygonEdgeMeshGenerator::Generate()
 {
 	using namespace PolygonEdgeMeshGeneratorLocal;
+	
+	TRACE_CPUPROFILER_EVENT_SCOPE(PolygonEdgeMeshGenerator_Generate);
 
 	const int32 NumInputVertices = Polygon.Num();
 

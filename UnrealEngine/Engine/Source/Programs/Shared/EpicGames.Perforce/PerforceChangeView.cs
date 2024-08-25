@@ -84,7 +84,7 @@ namespace EpicGames.Perforce
 			regexPattern = regexPattern.Replace(@"\?", ".", StringComparison.Ordinal);
 			regexPattern = regexPattern.Replace(@"\.\.\.", ".*", StringComparison.Ordinal);
 
-			_pathRegex = new Regex($"^{regexPattern}$", ignoreCase? RegexOptions.IgnoreCase : RegexOptions.None);
+			_pathRegex = new Regex($"^{regexPattern}$", ignoreCase ? RegexOptions.IgnoreCase : RegexOptions.None);
 		}
 
 		/// <summary>

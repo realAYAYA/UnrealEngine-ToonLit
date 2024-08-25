@@ -2,6 +2,8 @@
 
 #include "WaterBodyExclusionVolume.h"
 #include "UObject/FortniteMainBranchObjectVersion.h"
+#include "UObject/FortniteValkyrieBranchObjectVersion.h"
+#include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 #include "UObject/UObjectIterator.h"
 #include "WaterBodyActor.h"
@@ -25,7 +27,7 @@ AWaterBodyExclusionVolume::AWaterBodyExclusionVolume(const FObjectInitializer& O
 #endif
 }
 
-void AWaterBodyExclusionVolume::UpdateOverlappingWaterBodies()
+void AWaterBodyExclusionVolume::UpdateOverlappingWaterBodies(const FWaterExclusionVolumeChangedParams& Params)
 {
 	TArray<FOverlapResult> Overlaps;
 
@@ -51,26 +53,47 @@ void AWaterBodyExclusionVolume::UpdateOverlappingWaterBodies()
 	for (const FOverlapResult& Result : Overlaps)
 	{
 		AWaterBody* WaterBody = Result.OverlapObjectHandle.FetchActor<AWaterBody>();
-		if (WaterBody && (bExcludeAllOverlappingWaterBodies || WaterBodiesToExclude.Contains(WaterBody)))
+		if (WaterBody)
 		{
-			UWaterBodyComponent* WaterBodyComponent = WaterBody->GetWaterBodyComponent();
-			NewOverlappingBodies.Add(WaterBodyComponent);
-			// If the water body is not already overlapping then notify
-			if (!ExistingOverlappingBodies.Contains(WaterBodyComponent))
+			bool bWaterBodyIsInList = WaterBodies.Contains(WaterBody);
+			bool bAddToExclusion = (ExclusionMode == EWaterExclusionMode::RemoveWaterBodiesListFromExclusion && !bWaterBodyIsInList)
+				|| (ExclusionMode == EWaterExclusionMode::AddWaterBodiesListToExclusion && bWaterBodyIsInList);
+			
+			if (bAddToExclusion)
 			{
-				WaterBodyComponent->AddExclusionVolume(this);
+				UWaterBodyComponent* WaterBodyComponent = WaterBody->GetWaterBodyComponent();
+				NewOverlappingBodies.Add(WaterBodyComponent);
+				// If the water body is not already overlapping then notify
+				if (!ExistingOverlappingBodies.Contains(WaterBodyComponent))
+				{
+					WaterBodyComponent->AddExclusionVolume(this);
+				}
 			}
 		}
 	}
 
-	// Find existing bodies that are no longer overlapping and remove them
+	// Find existing bodies that are no longer overlapping and remove them, otherwise trigger them to rebuild with the new location
+	FOnWaterBodyChangedParams WaterBodyChangedParams(Params.PropertyChangedEvent);
+	WaterBodyChangedParams.bUserTriggered = Params.bUserTriggered;
+	WaterBodyChangedParams.bShapeOrPositionChanged = false;
+	WaterBodyChangedParams.bWeightmapSettingsChanged = false;
 	for (UWaterBodyComponent* ExistingBody : ExistingOverlappingBodies)
 	{
-		if (ExistingBody && !NewOverlappingBodies.Contains(ExistingBody))
+		if (ExistingBody)
 		{
-			ExistingBody->RemoveExclusionVolume(this);
+			if (!NewOverlappingBodies.Contains(ExistingBody))
+			{
+				ExistingBody->RemoveExclusionVolume(this);
+			}
 		}
 	}
+}
+
+void AWaterBodyExclusionVolume::UpdateOverlappingWaterBodies()
+{
+	FWaterExclusionVolumeChangedParams Params;
+	Params.bUserTriggered = false;
+	UpdateOverlappingWaterBodies(Params);
 }
 
 #if WITH_EDITOR
@@ -85,6 +108,35 @@ void AWaterBodyExclusionVolume::UpdateActorIcon()
 	FWaterIconHelper::UpdateSpriteComponent(this, IconTexture);
 }
 #endif // WITH_EDITOR
+
+void AWaterBodyExclusionVolume::PostRegisterAllComponents()
+{
+	Super::PostRegisterAllComponents();
+
+	FWaterExclusionVolumeChangedParams Params;
+	Params.bUserTriggered = false;
+	UpdateOverlappingWaterBodies(Params);
+
+	UpdateAffectedWaterBodyCollisions(Params);
+}
+
+void AWaterBodyExclusionVolume::UpdateAffectedWaterBodyCollisions(const FWaterExclusionVolumeChangedParams& Params)
+{
+	TSoftObjectPtr<AWaterBodyExclusionVolume> SoftThis(this);
+
+	FOnWaterBodyChangedParams WaterBodyChangedParams(Params.PropertyChangedEvent);
+	WaterBodyChangedParams.bUserTriggered = Params.bUserTriggered;
+	WaterBodyChangedParams.bShapeOrPositionChanged = false;
+	WaterBodyChangedParams.bWeightmapSettingsChanged = false;
+	FWaterBodyManager::ForEachWaterBodyComponent(GetWorld(), [SoftThis, &WaterBodyChangedParams](UWaterBodyComponent* WaterBodyComponent)
+	{
+		if (WaterBodyComponent->ContainsExclusionVolume(SoftThis))
+		{
+			WaterBodyComponent->OnWaterBodyChanged(WaterBodyChangedParams);
+		}
+		return true;
+	});
+}
 
 void AWaterBodyExclusionVolume::PostLoad()
 {
@@ -103,17 +155,30 @@ void AWaterBodyExclusionVolume::PostLoad()
 
 	if (GetLinkerCustomVersion(FFortniteMainBranchObjectVersion::GUID) < FFortniteMainBranchObjectVersion::WaterExclusionVolumeExcludeAllDefault)
 	{
-		WaterBodiesToExclude = MoveTemp(WaterBodiesToIgnore_DEPRECATED);
+		WaterBodiesToExclude_DEPRECATED = MoveTemp(WaterBodiesToIgnore_DEPRECATED);
 
 		// If the existing actor had selected specific water bodies to exclude then we set the new value to false by default.
-		if (!bIgnoreAllOverlappingWaterBodies_DEPRECATED && WaterBodiesToExclude.Num() > 0)
+		if (!bIgnoreAllOverlappingWaterBodies_DEPRECATED && WaterBodiesToExclude_DEPRECATED.Num() > 0)
 		{
-			bExcludeAllOverlappingWaterBodies = false;
+			bExcludeAllOverlappingWaterBodies_DEPRECATED = false;
+		}
+	}
+	if (GetLinkerCustomVersion(FFortniteValkyrieBranchObjectVersion::GUID) < FFortniteValkyrieBranchObjectVersion::WaterBodyExclusionVolumeMode)
+	{
+		ExclusionMode = bExcludeAllOverlappingWaterBodies_DEPRECATED ? EWaterExclusionMode::RemoveWaterBodiesListFromExclusion : EWaterExclusionMode::AddWaterBodiesListToExclusion;
+		for (AWaterBody* WaterBody : WaterBodiesToExclude_DEPRECATED)
+		{
+			WaterBodies.Add(WaterBody);
 		}
 	}
 #endif // WITH_EDITORONLY_DATA
+}
 
-	UpdateOverlappingWaterBodies();
+void AWaterBodyExclusionVolume::Serialize(FArchive& Ar)
+{
+	Super::Serialize(Ar);
+
+	Ar.UsingCustomVersion(FFortniteValkyrieBranchObjectVersion::GUID);
 }
 
 void AWaterBodyExclusionVolume::Destroyed()
@@ -137,28 +202,45 @@ void AWaterBodyExclusionVolume::PostEditMove(bool bFinished)
 {
 	Super::PostEditMove(bFinished);
 
-	UpdateOverlappingWaterBodies();
+	FWaterExclusionVolumeChangedParams Params;
+	Params.PropertyChangedEvent.ChangeType = bFinished ? EPropertyChangeType::ValueSet : EPropertyChangeType::Interactive;
+	Params.bUserTriggered = true;
+	UpdateOverlappingWaterBodies(Params);
+
+	UpdateAffectedWaterBodyCollisions(Params);
 }
 
 void AWaterBodyExclusionVolume::PostEditUndo()
 {
 	Super::PostEditUndo();
 
-	UpdateOverlappingWaterBodies();
+	FWaterExclusionVolumeChangedParams Params;
+	Params.bUserTriggered = true;
+	UpdateOverlappingWaterBodies(Params);
+
+	UpdateAffectedWaterBodyCollisions(Params);
 }
 
 void AWaterBodyExclusionVolume::PostEditImport()
 {
 	Super::PostEditImport();
 
-	UpdateOverlappingWaterBodies();
+	FWaterExclusionVolumeChangedParams Params;
+	Params.bUserTriggered = true;
+	UpdateOverlappingWaterBodies(Params);
+
+	UpdateAffectedWaterBodyCollisions(Params);
 }
 
 void AWaterBodyExclusionVolume::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 {
 	Super::PostEditChangeProperty(PropertyChangedEvent);
 
-	UpdateOverlappingWaterBodies();
+	FWaterExclusionVolumeChangedParams Params(PropertyChangedEvent);
+	Params.bUserTriggered = true;
+	UpdateOverlappingWaterBodies(Params);
+
+	UpdateAffectedWaterBodyCollisions(Params);
 }
 
 FName AWaterBodyExclusionVolume::GetCustomIconName() const

@@ -6,13 +6,19 @@ const TCHAR* FGLTFJsonUtilities::GetValue(EGLTFJsonExtension Enum)
 {
 	switch (Enum)
 	{
-		case EGLTFJsonExtension::KHR_LightsPunctual:            return TEXT("KHR_lights_punctual");
-		case EGLTFJsonExtension::KHR_MaterialsClearCoat:        return TEXT("KHR_materials_clearcoat");
-		case EGLTFJsonExtension::KHR_MaterialsEmissiveStrength: return TEXT("KHR_materials_emissive_strength");
-		case EGLTFJsonExtension::KHR_MaterialsUnlit:            return TEXT("KHR_materials_unlit");
-		case EGLTFJsonExtension::KHR_MaterialsVariants:         return TEXT("KHR_materials_variants");
-		case EGLTFJsonExtension::KHR_MeshQuantization:          return TEXT("KHR_mesh_quantization");
-		case EGLTFJsonExtension::KHR_TextureTransform:          return TEXT("KHR_texture_transform");
+		case EGLTFJsonExtension::KHR_LightsPunctual:                  return TEXT("KHR_lights_punctual");
+		case EGLTFJsonExtension::KHR_MaterialsClearCoat:              return TEXT("KHR_materials_clearcoat");
+		case EGLTFJsonExtension::KHR_MaterialsEmissiveStrength:       return TEXT("KHR_materials_emissive_strength");
+		case EGLTFJsonExtension::KHR_MaterialsUnlit:                  return TEXT("KHR_materials_unlit");
+		case EGLTFJsonExtension::KHR_MaterialsVariants:               return TEXT("KHR_materials_variants");
+		case EGLTFJsonExtension::KHR_MaterialsIOR:                    return TEXT("KHR_materials_ior");
+		case EGLTFJsonExtension::KHR_MaterialsSheen:                  return TEXT("KHR_materials_sheen");
+		case EGLTFJsonExtension::KHR_MaterialsTransmission:           return TEXT("KHR_materials_transmission");
+		case EGLTFJsonExtension::KHR_MaterialsSpecularGlossiness:     return TEXT("KHR_materials_pbrSpecularGlossiness");
+		case EGLTFJsonExtension::KHR_MaterialsIridescence:            return TEXT("KHR_materials_iridescence");
+		case EGLTFJsonExtension::KHR_MeshQuantization:                return TEXT("KHR_mesh_quantization");
+		case EGLTFJsonExtension::KHR_TextureTransform:                return TEXT("KHR_texture_transform");
+		case EGLTFJsonExtension::KHR_MaterialsSpecular:	              return TEXT("KHR_materials_specular");
 		default:
 			checkNoEntry();
 			return TEXT("");
@@ -117,9 +123,12 @@ const TCHAR* FGLTFJsonUtilities::GetValue(EGLTFJsonShadingModel Enum)
 {
 	switch (Enum)
 	{
-		case EGLTFJsonShadingModel::Default:   return TEXT("Default");
-		case EGLTFJsonShadingModel::Unlit:     return TEXT("Unlit");
-		case EGLTFJsonShadingModel::ClearCoat: return TEXT("ClearCoat");
+		case EGLTFJsonShadingModel::Default:                return TEXT("Default");
+		case EGLTFJsonShadingModel::Unlit:                  return TEXT("Unlit");
+		case EGLTFJsonShadingModel::ClearCoat:              return TEXT("ClearCoat");
+		case EGLTFJsonShadingModel::Sheen:                  return TEXT("Sheen");
+		case EGLTFJsonShadingModel::Transmission:           return TEXT("Transmission");
+		case EGLTFJsonShadingModel::SpecularGlossiness:     return TEXT("SpecularGlossiness");
 		default:
 			checkNoEntry();
 			return TEXT("");

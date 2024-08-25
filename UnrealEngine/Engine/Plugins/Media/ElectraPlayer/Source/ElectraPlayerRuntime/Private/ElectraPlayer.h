@@ -110,6 +110,7 @@ public:
 
 	void SetPlaybackRange(const FPlaybackRange& InPlaybackRange) override;
 	void GetPlaybackRange(FPlaybackRange& OutPlaybackRange) const override;
+	TRange<FTimespan> GetPlaybackRange(ETimeRangeType InRangeToGet) const override;
 
 	TRangeSet<float> GetSupportedRates(EPlayRateType InPlayRateType) const override;
 	float GetRate() const override;
@@ -195,6 +196,7 @@ private:
 			LicenseKey,
 			DataAvailabilityChange,
 			VideoQualityChange,
+			AudioQualityChange,
 			CodecFormatChange,
 			PrerollStart,
 			PrerollEnd,
@@ -274,6 +276,13 @@ private:
 		int32 PreviousBitrate;
 		bool bIsDrasticDownswitch;
 	};
+	struct FPlayerMetricEvent_AudioQualityChange : public FPlayerMetricEventBase
+	{
+		FPlayerMetricEvent_AudioQualityChange(int32 InNewBitrate, int32 InPreviousBitrate, bool bInIsDrasticDownswitch) : FPlayerMetricEventBase(EType::AudioQualityChange), NewBitrate(InNewBitrate), PreviousBitrate(InPreviousBitrate), bIsDrasticDownswitch(bInIsDrasticDownswitch) {}
+		int32 NewBitrate;
+		int32 PreviousBitrate;
+		bool bIsDrasticDownswitch;
+	};
 	struct FPlayerMetricEvent_CodecFormatChange : public FPlayerMetricEventBase
 	{
 		FPlayerMetricEvent_CodecFormatChange(const FStreamCodecInformation& InNewDecodingFormat) : FPlayerMetricEventBase(EType::CodecFormatChange), NewDecodingFormat(InNewDecodingFormat) {}
@@ -347,6 +356,8 @@ private:
 	{ DeferredPlayerEvents.Enqueue(MakeSharedTS<FPlayerMetricEvent_DataAvailabilityChange>(DataAvailability)); }
 	virtual void ReportVideoQualityChange(int32 NewBitrate, int32 PreviousBitrate, bool bIsDrasticDownswitch) override
 	{ DeferredPlayerEvents.Enqueue(MakeSharedTS<FPlayerMetricEvent_VideoQualityChange>(NewBitrate, PreviousBitrate, bIsDrasticDownswitch)); }
+	virtual void ReportAudioQualityChange(int32 NewBitrate, int32 PreviousBitrate, bool bIsDrasticDownswitch) override
+	{ DeferredPlayerEvents.Enqueue(MakeSharedTS<FPlayerMetricEvent_AudioQualityChange>(NewBitrate, PreviousBitrate, bIsDrasticDownswitch)); }
 	virtual void ReportDecodingFormatChange(const FStreamCodecInformation& NewDecodingFormat) override
 	{ DeferredPlayerEvents.Enqueue(MakeSharedTS<FPlayerMetricEvent_CodecFormatChange>(NewDecodingFormat)); }
 	virtual void ReportPrerollStart() override
@@ -408,6 +419,7 @@ private:
 
 	bool											bInitialSeekPerformed;
 	bool											bDiscardOutputUntilCleanStart;
+	bool											bIsFirstBuffering;
 
 	FPlaybackRange									CurrentPlaybackRange;
 	TOptional<bool>									bFrameAccurateSeeking;
@@ -677,36 +689,40 @@ private:
 			CurrentlyActivePlaylistURL.Empty();
 			LastError.Empty();
 			LastState = "Empty";
-			TimeAtOpen  					= -1.0;
-			TimeToLoadMasterPlaylist		= -1.0;
-			TimeToLoadStreamPlaylists   	= -1.0;
-			InitialBufferingDuration		= -1.0;
-			InitialStreamBitrate			= 0;
-			TimeAtPrerollBegin  			= -1.0;
-			TimeForInitialPreroll   		= -1.0;
-			NumTimesRebuffered  			= 0;
-			NumTimesForwarded   			= 0;
-			NumTimesRewound 				= 0;
-			NumTimesLooped  				= 0;
-			TimeAtBufferingBegin			= 0.0;
-			TotalRebufferingDuration		= 0.0;
-			LongestRebufferingDuration  	= 0.0;
-			PlayPosAtStart  				= -1.0;
-			PlayPosAtEnd					= -1.0;
-			NumQualityUpswitches			= 0;
-			NumQualityDownswitches  		= 0;
-			NumQualityDrasticDownswitches   = 0;
-			NumVideoDatabytesStreamed   	= 0;
-			NumAudioDatabytesStreamed   	= 0;
-			NumSegmentDownloadsAborted  	= 0;
-			CurrentlyActiveResolutionWidth  = 0;
+			TimeAtOpen = -1.0;
+			TimeToLoadMasterPlaylist = -1.0;
+			TimeToLoadStreamPlaylists = -1.0;
+			InitialBufferingDuration = -1.0;
+			InitialVideoStreamBitrate = 0;
+			InitialAudioStreamBitrate = 0;
+			TimeAtPrerollBegin = -1.0;
+			TimeForInitialPreroll = -1.0;
+			NumTimesRebuffered = 0;
+			NumTimesForwarded = 0;
+			NumTimesRewound = 0;
+			NumTimesLooped = 0;
+			TimeAtBufferingBegin = 0.0;
+			TotalRebufferingDuration = 0.0;
+			LongestRebufferingDuration = 0.0;
+			PlayPosAtStart = -1.0;
+			PlayPosAtEnd = -1.0;
+			NumVideoQualityUpswitches = 0;
+			NumVideoQualityDownswitches = 0;
+			NumVideoQualityDrasticDownswitches = 0;
+			NumAudioQualityUpswitches = 0;
+			NumAudioQualityDownswitches = 0;
+			NumAudioQualityDrasticDownswitches = 0;
+			NumVideoDatabytesStreamed = 0;
+			NumAudioDatabytesStreamed = 0;
+			NumSegmentDownloadsAborted = 0;
+			CurrentlyActiveResolutionWidth = 0;
 			CurrentlyActiveResolutionHeight = 0;
 			VideoSegmentBitratesStreamed.Empty();
 			InitialBufferingBandwidth.Reset();
-			bIsInitiallyDownloading 		= false;
-			bDidPlaybackEnd 				= false;
+			bIsInitiallyDownloading = false;
+			bDidPlaybackEnd = false;
 			SubtitlesURL.Empty();
-			SubtitlesResponseTime			= 0.0;
+			SubtitlesResponseTime = 0.0;
 			SubtitlesLastError.Empty();
 			DroppedVideoFrames.Reset();
 			DroppedAudioFrames.Reset();
@@ -725,7 +741,8 @@ private:
 		double					TimeToLoadMasterPlaylist;
 		double					TimeToLoadStreamPlaylists;
 		double					InitialBufferingDuration;
-		int32					InitialStreamBitrate;
+		int32					InitialVideoStreamBitrate;
+		int32					InitialAudioStreamBitrate;
 		double					TimeAtPrerollBegin;
 		double					TimeForInitialPreroll;
 		int32					NumTimesRebuffered;
@@ -737,9 +754,12 @@ private:
 		double					LongestRebufferingDuration;
 		double					PlayPosAtStart;
 		double					PlayPosAtEnd;
-		int32					NumQualityUpswitches;
-		int32					NumQualityDownswitches;
-		int32					NumQualityDrasticDownswitches;
+		int32					NumVideoQualityUpswitches;
+		int32					NumVideoQualityDownswitches;
+		int32					NumVideoQualityDrasticDownswitches;
+		int32					NumAudioQualityUpswitches;
+		int32					NumAudioQualityDownswitches;
+		int32					NumAudioQualityDrasticDownswitches;
 		int64					NumVideoDatabytesStreamed;
 		int64					NumAudioDatabytesStreamed;
 		int32					NumSegmentDownloadsAborted;
@@ -805,6 +825,7 @@ private:
 	void HandlePlayerEventLicenseKey(const Metrics::FLicenseKeyStats& LicenseKeyStats);
 	void HandlePlayerEventDataAvailabilityChange(const Metrics::FDataAvailabilityChange& DataAvailability);
 	void HandlePlayerEventVideoQualityChange(int32 NewBitrate, int32 PreviousBitrate, bool bIsDrasticDownswitch);
+	void HandlePlayerEventAudioQualityChange(int32 NewBitrate, int32 PreviousBitrate, bool bIsDrasticDownswitch);
 	void HandlePlayerEventCodecFormatChange(const Electra::FStreamCodecInformation& NewDecodingFormat);
 	void HandlePlayerEventPrerollStart();
 	void HandlePlayerEventPrerollEnd();

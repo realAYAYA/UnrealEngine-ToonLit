@@ -24,6 +24,7 @@
 
 namespace
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD_ENUM ConvertRateControlModeAMF(AVEncoder::FVideoEncoder::RateControlMode mode)
 	{
 		switch (mode)
@@ -48,6 +49,7 @@ namespace
 			case AVEncoder::FVideoEncoder::H264Profile::AUTO: return AMF_VIDEO_ENCODER_PROFILE_BASELINE;
 		}
 	}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
 namespace AVEncoder
@@ -96,46 +98,62 @@ namespace AVEncoder
 		});
 	}
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	static bool GetEncoderInfo(FAmfCommon& Amf, FVideoEncoderInfo& EncoderInfo);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	bool FVideoEncoderAmf_H264::GetIsAvailable(FVideoEncoderInputImpl& InInput, FVideoEncoderInfo& OutEncoderInfo)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		FAmfCommon& Amf = FAmfCommon::Setup();
 		bool bIsAvailable = Amf.GetIsAvailable();
 		if (bIsAvailable)
 		{
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			OutEncoderInfo.CodecType = ECodecType::H264;
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		}
+		
 		return bIsAvailable;
 	}
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	void FVideoEncoderAmf_H264::Register(FVideoEncoderFactory& InFactory)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		FAmfCommon& Amf = FAmfCommon::Setup();
 		if (Amf.GetIsAvailable() && IsRHIDeviceAMD())
 		{
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			FVideoEncoderInfo	EncoderInfo;
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			if (GetEncoderInfo(Amf, EncoderInfo))
 			{
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS
 				InFactory.Register(EncoderInfo, []() {
 					return TUniquePtr<FVideoEncoder>(new FVideoEncoderAmf_H264());
 				});
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			}
 		}
 	}
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FVideoEncoderAmf_H264::FVideoEncoderAmf_H264()
 		: Amf(FAmfCommon::Setup())
 	{
 		AMFParseCommandLineFlags();
 	}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
-	FVideoEncoderAmf_H264::~FVideoEncoderAmf_H264()
-	{
-		Shutdown();
-	}
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	FVideoEncoderAmf_H264::~FVideoEncoderAmf_H264() { Shutdown(); }
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	bool FVideoEncoderAmf_H264::Setup(TSharedRef<FVideoEncoderInput> input, FLayerConfig const& config)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		if (!Amf.GetIsAvailable())
 		{
@@ -148,6 +166,7 @@ namespace AVEncoder
 		ERHIInterfaceType RHIType = ERHIInterfaceType::Hidden;
 
 		// TODO fix initializing contexts
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		FrameFormat = input->GetFrameFormat();
 		switch (FrameFormat)
 		{
@@ -170,6 +189,7 @@ namespace AVEncoder
 			UE_LOG(LogEncoderAMF, Error, TEXT("Frame format %s is not currently supported by Amf Encoder on this platform."), *ToString(FrameFormat));
 			return false;
 		}
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		if (!EncoderDevice)
 		{
@@ -188,14 +208,17 @@ namespace AVEncoder
 			}
 			else
 			{
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS
 				FVulkanDataStruct* VulkanData = static_cast<FVulkanDataStruct*>(EncoderDevice);
 				if (!Amf.InitializeContext(RHIGetInterfaceType(), GDynamicRHI->GetName(), VulkanData->VulkanDevice, VulkanData->VulkanInstance, VulkanData->VulkanPhysicalDevice))
 				{
 					UE_LOG(LogEncoderAMF, Error, TEXT("Amf component not initialised"));
 				}
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			}
 		}
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		FLayerConfig MutableConfig = config;
 		if (MutableConfig.MaxFramerate == 0)
 		{
@@ -203,9 +226,12 @@ namespace AVEncoder
 		}
 
 		return AddLayer(config);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FVideoEncoder::FLayer* FVideoEncoderAmf_H264::CreateLayer(uint32 layerIdx, FLayerConfig const& config)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		auto const layer = new FAMFLayer(layerIdx, config, *this);
 		if (!layer->Setup())
@@ -217,15 +243,18 @@ namespace AVEncoder
 		return layer;
 	}
 
-	void FVideoEncoderAmf_H264::DestroyLayer(FLayer* layer)
-	{
-		delete layer;
-	}
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	void FVideoEncoderAmf_H264::DestroyLayer(FLayer* layer) { delete layer; }
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	void FVideoEncoderAmf_H264::Encode(const TSharedPtr<FVideoEncoderInputFrame> frame, FEncodeOptions const& options)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		const TSharedPtr<FVideoEncoderInputFrameImpl> amfFrame = StaticCastSharedPtr<FVideoEncoderInputFrameImpl>(frame);
 		for (auto& layer : Layers)
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		{
 			FAMFLayer* amfLayer = static_cast<FAMFLayer*>(layer);
 			AMF_RESULT Res = amfLayer->Encode(amfFrame, options);
@@ -238,7 +267,9 @@ namespace AVEncoder
 
 	void FVideoEncoderAmf_H264::Flush()
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		for (auto&& layer : Layers)
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		{
 			auto const amfLayer = static_cast<FAMFLayer*>(layer);
 			amfLayer->Flush();
@@ -247,17 +278,23 @@ namespace AVEncoder
 
 	void FVideoEncoderAmf_H264::Shutdown()
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		for (auto&& layer : Layers)
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		{
 			auto const amfLayer = static_cast<FAMFLayer*>(layer);
 			amfLayer->Shutdown();
 			DestroyLayer(amfLayer);
 		}
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		Layers.Reset();
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	}
+	
 
 	// --- Amf_EncoderH264::FLayer ------------------------------------------------------------
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FVideoEncoderAmf_H264::FAMFLayer::FAMFLayer(uint32 layerIdx, FLayerConfig const& config, FVideoEncoderAmf_H264& encoder)
 		: FLayer(config)
 		, Encoder(encoder)
@@ -265,10 +302,11 @@ namespace AVEncoder
 		, LayerIndex(layerIdx)
 	{
 	}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
-	FVideoEncoderAmf_H264::FAMFLayer::~FAMFLayer()
-	{
-	}
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	FVideoEncoderAmf_H264::FAMFLayer::~FAMFLayer() {}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	bool FVideoEncoderAmf_H264::FAMFLayer::Setup()
 	{
@@ -291,10 +329,13 @@ namespace AVEncoder
 
 		Result = AmfEncoder->SetProperty(AMF_VIDEO_ENCODER_USAGE, AMF_VIDEO_ENCODER_USAGE_LOW_LATENCY);
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		AMF_VIDEO_ENCODER_PROFILE_ENUM H264Profile = ConvertH264Profile(CurrentConfig.H264Profile);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		Result = AmfEncoder->SetProperty(AMF_VIDEO_ENCODER_PROFILE, H264Profile);
 		Result = AmfEncoder->SetProperty(AMF_VIDEO_ENCODER_PROFILE_LEVEL, 51);
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		AMFRate frameRate = { CurrentConfig.MaxFramerate, 1 };
 		Result = AmfEncoder->SetProperty(AMF_VIDEO_ENCODER_FRAMERATE, frameRate);
 		CurrentFrameRate = CurrentConfig.MaxFramerate;
@@ -327,16 +368,20 @@ namespace AVEncoder
 		Result = AmfEncoder->Init(AMF_SURFACE_BGRA, CurrentConfig.Width, CurrentConfig.Height);
 		CurrentWidth = CurrentConfig.Width;
 		CurrentHeight = CurrentConfig.Height;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		return Result == AMF_OK;
 	}
 
 	void FVideoEncoderAmf_H264::FAMFLayer::MaybeReconfigure()
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		FScopeLock lock(&ConfigMutex);
 		if (NeedsReconfigure)
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		{	
 			// Static properties - need ReInit
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			if (CurrentConfig.Width != CurrentWidth || CurrentConfig.Height != CurrentHeight || CurrentConfig.MaxFramerate != CurrentFrameRate)
 			{
 				AMF_RESULT Result = AMF_OK;
@@ -355,66 +400,90 @@ namespace AVEncoder
 					UE_LOG(LogEncoderAMF, Error, TEXT("Amf failed to ReInit for config change"));
 				}
 			}
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 			// Dynamic Properties
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			if (AmfEncoder->SetProperty(AMF_VIDEO_ENCODER_MIN_QP, FMath::Clamp<amf_int64>(CurrentConfig.QPMin, 0, 51)) != AMF_OK)
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			{
 				UE_LOG(LogEncoderAMF, Error, TEXT("Amf failed to set min qp"));
 			}
 
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			if (AmfEncoder->SetProperty(AMF_VIDEO_ENCODER_MAX_QP, CurrentConfig.QPMax > -1 ? FMath::Clamp<amf_int64>(CurrentConfig.QPMax, 0, 51) : 51) != AMF_OK)
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			{
 				UE_LOG(LogEncoderAMF, Error, TEXT("Amf failed to set max qp"));
 			}
 
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			if (AmfEncoder->SetProperty(AMF_VIDEO_ENCODER_TARGET_BITRATE, CurrentConfig.TargetBitrate) != AMF_OK)
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			{
 				UE_LOG(LogEncoderAMF, Error, TEXT("Amf failed to set target bitrate"));
 			}
 
 #if PLATFORM_WINDOWS
 			// Properties in this macro block are supposed to be dynamic but error when used with Vulkan
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			if (AmfEncoder->SetProperty(AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD, ConvertRateControlModeAMF(CurrentConfig.RateControlMode)) != AMF_OK)
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			{
 				UE_LOG(LogEncoderAMF, Error, TEXT("Amf failed to set rate control method"));
 			}
 
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			if (CurrentConfig.RateControlMode == RateControlMode::CBR)
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			{
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS
 				if (AmfEncoder->SetProperty(AMF_VIDEO_ENCODER_FILLER_DATA_ENABLE, CurrentConfig.FillData) != AMF_OK)
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
 				{
 					UE_LOG(LogEncoderAMF, Error, TEXT("Amf failed to enable filler data to maintain CBR"));
 				}
 			}
 
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			if (AmfEncoder->SetProperty(AMF_VIDEO_ENCODER_PEAK_BITRATE, CurrentConfig.MaxBitrate) != AMF_OK)
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			{
 				UE_LOG(LogEncoderAMF, Error, TEXT("Amf failed to set peak bitrate"));
 			}
 #endif
 
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			NeedsReconfigure = false;
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		}
+		
 	}
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	AMF_RESULT FVideoEncoderAmf_H264::FAMFLayer::Encode(const TSharedPtr<FVideoEncoderInputFrameImpl> frame, FEncodeOptions const& options)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		AMF_RESULT Result = AMF_FAIL;
 		TSharedPtr<FInputOutput> Buffer = GetOrCreateSurface(frame);
 
 		if (Buffer)
 		{
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			if(CurrentConfig.Width != frame->GetWidth() || CurrentConfig.Height != frame->GetHeight())
 			{
 				CurrentConfig.Width = frame->GetWidth();
 				CurrentConfig.Height = frame->GetHeight();
 				NeedsReconfigure = true;
 			}
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 			
 			MaybeReconfigure();
 
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			Buffer->Surface->SetPts(frame->GetTimestampRTP());
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			amf_int64 Start_ts = FPlatformTime::Cycles64();
 			Buffer->Surface->SetProperty(AMF_VIDEO_ENCODER_START_TS, Start_ts);
 			Buffer->Surface->SetProperty(AMF_BUFFER_INPUT_FRAME, uintptr_t(frame.Get()));
@@ -423,7 +492,9 @@ namespace AVEncoder
 			Buffer->Surface->SetProperty(AMF_VIDEO_ENCODER_STATISTICS_FEEDBACK, true);
 #endif
 
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			if (options.bForceKeyFrame)
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			{
 				if (Buffer->Surface->SetProperty(AMF_VIDEO_ENCODER_FORCE_PICTURE_TYPE, AMF_VIDEO_ENCODER_PICTURE_TYPE_IDR) != AMF_OK)
 				{
@@ -502,7 +573,9 @@ namespace AVEncoder
 			AMFBufferPtr OutBuffer(data);
 
 			// Create packet with buffer contents
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			FCodecPacket Packet = FCodecPacket::Create(static_cast<const uint8*>(OutBuffer->GetNative()), OutBuffer->GetSize());
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 			uint32 PictureType = AMF_VIDEO_ENCODER_PICTURE_TYPE_NONE;
 			if (OutBuffer->GetProperty(AMF_VIDEO_ENCODER_OUTPUT_DATA_TYPE, &PictureType) != AMF_OK)
@@ -512,12 +585,17 @@ namespace AVEncoder
 			else if (PictureType == AMF_VIDEO_ENCODER_OUTPUT_DATA_TYPE_IDR)
 			{
 				UE_LOG(LogEncoderAMF, Verbose, TEXT("Generated IDR Frame"));
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS
 				Packet.IsKeyFrame = true;
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
 			}
+			
 
 			if (RHIGetInterfaceType() != ERHIInterfaceType::Vulkan) // Amf with Vulkan doesn't currently support statistics
 			{
+				PRAGMA_DISABLE_DEPRECATION_WARNINGS
 				if (OutBuffer->GetProperty(AMF_VIDEO_ENCODER_STATISTIC_FRAME_QP, &Packet.VideoQP) != AMF_OK)
+				PRAGMA_ENABLE_DEPRECATION_WARNINGS
 				{
 					UE_LOG(LogEncoderAMF, Error, TEXT("Amf failed to get frame QP."));
 				}
@@ -529,9 +607,11 @@ namespace AVEncoder
 				UE_LOG(LogEncoderAMF, Error, TEXT("Amf failed to get encode start time."));
 			}
 
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			Packet.Timings.StartTs = FTimespan::FromSeconds(FPlatformTime::ToSeconds64(StartTs));
 			Packet.Timings.FinishTs = FTimespan::FromSeconds(FPlatformTime::ToSeconds64(FPlatformTime::Cycles64()));
 			Packet.Framerate = GetConfig().MaxFramerate;
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 			TSharedPtr<FVideoEncoderInputFrameImpl> SourceFrame;
 			if (OutBuffer->GetProperty(AMF_BUFFER_INPUT_FRAME, (intptr_t*)&SourceFrame) != AMF_OK)
@@ -539,10 +619,12 @@ namespace AVEncoder
 				UE_LOG(LogEncoderAMF, Fatal, TEXT("Amf failed to get buffer input frame."));
 			}
 
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			if (Encoder.OnEncodedPacket)
 			{
 				Encoder.OnEncodedPacket(LayerIndex, SourceFrame, Packet);
 			}
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 			bIsProcessingFrame = false;
 		}
@@ -567,16 +649,21 @@ namespace AVEncoder
 		return true;
 	}
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	amf::AMFVulkanSurface* CreateVulkanSurface(VkImage Image, VkDeviceMemory DeviceMemory, EVideoFrameFormat Format, uint32 Size, uint32 Width, uint32 Height)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		amf_int32 pixelFormat = 0;
 		int pixelSize = 0;
-		switch (Format) {
-		default:
-		case EVideoFrameFormat::VULKAN_R8G8B8A8_UNORM:
-			pixelFormat = VK_FORMAT_B8G8R8A8_UNORM;
-			break;
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
+		switch (Format) 
+		{
+			default:
+			case EVideoFrameFormat::VULKAN_R8G8B8A8_UNORM:
+				pixelFormat = VK_FORMAT_B8G8R8A8_UNORM;
+				break;
 		}
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		amf::AMFVulkanSurface* SurfaceTexture = new amf::AMFVulkanSurface();
 		SurfaceTexture->cbSizeof = sizeof(amf::AMFVulkanSurface);
@@ -601,6 +688,7 @@ namespace AVEncoder
 	{
 		void* TextureToCompress = nullptr;
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		switch (InFrame->GetFormat())
 		{
 #if PLATFORM_WINDOWS
@@ -647,6 +735,7 @@ namespace AVEncoder
 			UE_LOG(LogEncoderAMF, Error, TEXT("Video Frame Format %s not supported by Amf on this platform."), *ToString(InFrame->GetFormat()));
 			break;
 		}
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		if (!TextureToCompress)
 		{
@@ -707,6 +796,7 @@ namespace AVEncoder
 
 		if (TextureToCompress)
 		{
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			switch (SourceFrame->GetFormat())
 			{
 #if PLATFORM_WINDOWS
@@ -725,6 +815,7 @@ namespace AVEncoder
 				UE_LOG(LogEncoderAMF, Error, TEXT("Video format %s not inplemented for Amf on this platform"), *ToString(SourceFrame->GetFormat()));
 				break;
 			}
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		}
 		else
 		{
@@ -771,26 +862,33 @@ namespace AVEncoder
 		return true;
 	}
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	static bool GetEncoderSupportedInputFormats(AMFIOCapsPtr IOCaps, TArray<EVideoFrameFormat>& OutSupportedInputFormats)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		// TODO check if we actually need to query Amf for this
-
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 #if PLATFORM_WINDOWS
 		OutSupportedInputFormats.Push(EVideoFrameFormat::D3D11_R8G8B8A8_UNORM);
 		OutSupportedInputFormats.Push(EVideoFrameFormat::D3D12_R8G8B8A8_UNORM);
 #endif
 		OutSupportedInputFormats.Push(EVideoFrameFormat::VULKAN_R8G8B8A8_UNORM);
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		return true;
 	}
 
 
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	static bool GetEncoderInfo(FAmfCommon& AMF, FVideoEncoderInfo& EncoderInfo)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		bool bSuccess = true;
 
 		AMF.InitializeContext(RHIGetInterfaceType(), GDynamicRHI->GetName(), NULL);
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		EncoderInfo.CodecType = ECodecType::H264;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		
 		// Create temp component
 		AMFComponentPtr TempEncoder;
@@ -811,8 +909,10 @@ namespace AVEncoder
 		uint32 LevelMax;
 		if (EncoderCaps->GetProperty(AMF_VIDEO_ENCODER_CAP_MAX_LEVEL, &LevelMax) == AMF_OK)
 		{
+			PRAGMA_DISABLE_DEPRECATION_WARNINGS
 			EncoderInfo.H264.MinLevel = 9;														// Like NVENC we hard min at 9
 			EncoderInfo.H264.MaxLevel = (LevelMax < 9) ? 9 : (LevelMax > 52) ? 52 : LevelMax;	// Like NVENC we hard max at 52
+			PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		}
 		else
 		{
@@ -820,8 +920,10 @@ namespace AVEncoder
 			bSuccess = false;
 		}
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		if (!GetEncoderSupportedProfiles(EncoderCaps, EncoderInfo.H264.SupportedProfiles) ||
 			!GetEncoderSupportedInputFormats(InputCaps, EncoderInfo.SupportedInputFormats))
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 		{
 			bSuccess = false;
 		}

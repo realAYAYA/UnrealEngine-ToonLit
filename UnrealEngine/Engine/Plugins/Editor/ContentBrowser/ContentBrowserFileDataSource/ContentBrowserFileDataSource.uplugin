@@ -14,11 +14,12 @@
 	"CanContainContent" : false,
 	"IsBetaVersion" : false,
 	"Installed" : false,
+	"SupportedPrograms": ["LiveLinkHub"],
 	"Modules" :
 	[
 		{
 			"Name" : "ContentBrowserFileDataSource",
-			"Type" : "Editor",
+			"Type" : "EditorAndProgram",
 			"LoadingPhase" : "Default"
 		}
 	]

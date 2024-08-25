@@ -3,6 +3,7 @@
 #include "OIT.h"
 #include "DataDrivenShaderPlatformInfo.h"
 #include "LocalVertexFactory.h"
+#include "MeshBatch.h"
 #include "OITParameters.h"
 #include "Shader.h"
 #include "GlobalShader.h"
@@ -19,7 +20,7 @@
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // Variables: sorted triangles
 
-static TAutoConsoleVariable<int32> CVarOIT_SortedTriangles_Enable(
+static TAutoConsoleVariable<int32> CVarOIT_SortedTriangles_Enable_Project(
 	TEXT("r.OIT.SortedTriangles"), 
 	1, 
 	TEXT("Enable per-instance triangle sorting to avoid invalid triangle ordering."),
@@ -47,11 +48,17 @@ static TAutoConsoleVariable<int32> CVarOIT_SortedTriangles_PoolReleaseThreshold(
 // Variables: sorted pixels
 
 // Referenced in RendererSettings.h, as it is a project settings
-static TAutoConsoleVariable<int32> CVarOIT_SortedPixels_Enable(
+static TAutoConsoleVariable<int32> CVarOIT_SortedPixels_Enable_Project(
 	TEXT("r.OIT.SortedPixels"),
 	0,
 	TEXT("Enable OIT rendering (project settings, can't be changed at runtime)"),
 	ECVF_ReadOnly | ECVF_RenderThreadSafe);
+
+static TAutoConsoleVariable<int32> CVarOIT_SortedPixels_Enable_Runtime(
+	TEXT("r.OIT.SortedPixels.Enable"),
+	1,
+	TEXT("Enable OIT rendering (runtime setting, selects shader permutation)"),
+	ECVF_Scalability | ECVF_RenderThreadSafe);
 
 static TAutoConsoleVariable<int32> CVarOIT_SortedPixels_PassType(
 	TEXT("r.OIT.SortedPixels.PassType"),
@@ -105,14 +112,12 @@ class FOITPixelDebugCS : public FGlobalShader
 		SHADER_PARAMETER(uint32, Method)
 		SHADER_PARAMETER(uint32, PassType)
 		SHADER_PARAMETER(uint32, SupportedPass)
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<float3>, SampleColorTexture)
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<float3>, SampleTransTexture)
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<float>, SampleDepthTexture)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2DArray<uint>, SampleDataTexture)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<uint>, SampleCountTexture)
 		SHADER_PARAMETER_STRUCT_INCLUDE(ShaderPrint::FShaderParameters, ShaderPrintUniformBuffer)
 		END_SHADER_PARAMETER_STRUCT()
 public:
-	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return IsOITSortedPixelsSupported(Parameters.Platform); }
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return IsOITSortedPixelsSupported(Parameters.Platform) && ShaderPrint::IsSupported(Parameters.Platform); }
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 	{
 		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
@@ -127,9 +132,7 @@ static void AddOITPixelDebugPass(
 	const FViewInfo& View,
 	FOITData& OITData)
 {
-	if (!OITData.SampleColorTexture ||
-		!OITData.SampleTransTexture ||
-		!OITData.SampleDepthTexture ||
+	if (!OITData.SampleDataTexture ||
 		!OITData.SampleCountTexture || 
 		!ShaderPrint::IsSupported(View.GetShaderPlatform()))
 		return;
@@ -146,9 +149,7 @@ static void AddOITPixelDebugPass(
 	Parameters->MaxSampleCount = OITData.MaxSamplePerPixel;
 	Parameters->Method = OITData.Method;
 	Parameters->MaxSideSampleCount = OITData.MaxSideSamplePerPixel;
-	Parameters->SampleColorTexture = OITData.SampleColorTexture;
-	Parameters->SampleTransTexture = OITData.SampleTransTexture;
-	Parameters->SampleDepthTexture = OITData.SampleDepthTexture;
+	Parameters->SampleDataTexture  = OITData.SampleDataTexture;
 	Parameters->SampleCountTexture = OITData.SampleCountTexture;
 	ShaderPrint::SetParameters(GraphBuilder, View.ShaderPrintData, Parameters->ShaderPrintUniformBuffer);
 
@@ -170,18 +171,16 @@ class FOITPixelCombineCS : public FGlobalShader
 	DECLARE_GLOBAL_SHADER(FOITPixelCombineCS);
 	SHADER_USE_PARAMETER_STRUCT(FOITPixelCombineCS, FGlobalShader);
 
-	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters,)
 		SHADER_PARAMETER(FIntPoint, Resolution)
 		SHADER_PARAMETER(uint32, MaxSideSampleCount)
 		SHADER_PARAMETER(uint32, MaxSampleCount)
 		SHADER_PARAMETER(uint32, Method)
 		SHADER_PARAMETER(uint32, PassType)
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<float3>, SampleColorTexture)
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<float3>, SampleTransTexture)
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<float>, SampleDepthTexture)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2DArray<uint>, SampleDataTexture)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<uint>, SampleCountTexture)
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, OutColorTexture)
-		END_SHADER_PARAMETER_STRUCT()
+	END_SHADER_PARAMETER_STRUCT()
 public:
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) { return IsOITSortedPixelsSupported(Parameters.Platform); }
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
@@ -204,13 +203,11 @@ static void AddInternalOITComposePass(
 
 	if (!SceneColorTexture ||
 		 SceneColorTexture->Desc.NumSamples > 1 ||
-		!OITData.SampleColorTexture ||
-		!OITData.SampleTransTexture ||
-		!OITData.SampleDepthTexture ||
+		!OITData.SampleDataTexture ||
 		!OITData.SampleCountTexture)
 		return;
 
-	FIntPoint InResolution = OITData.SampleColorTexture->Desc.Extent;
+	FIntPoint InResolution = OITData.SampleDataTexture->Desc.Extent;
 	FIntPoint OutResolution = SceneColorTexture->Desc.Extent;
 	FIntPoint Resolution = FIntPoint(FMath::Min(InResolution.X, OutResolution.X), FMath::Min(InResolution.Y, OutResolution.Y));
 
@@ -220,9 +217,7 @@ static void AddInternalOITComposePass(
 	Parameters->Method = OITData.Method;
 	Parameters->MaxSampleCount = OITData.MaxSamplePerPixel;
 	Parameters->MaxSideSampleCount = OITData.MaxSideSamplePerPixel;
-	Parameters->SampleColorTexture = OITData.SampleColorTexture;
-	Parameters->SampleTransTexture = OITData.SampleTransTexture;
-	Parameters->SampleDepthTexture = OITData.SampleDepthTexture;
+	Parameters->SampleDataTexture = OITData.SampleDataTexture;
 	Parameters->SampleCountTexture = OITData.SampleCountTexture;
 	Parameters->OutColorTexture = GraphBuilder.CreateUAV(SceneColorTexture);
 
@@ -230,11 +225,8 @@ static void AddInternalOITComposePass(
 	TShaderMapRef<FOITPixelCombineCS > ComputeShader(View.ShaderMap, PermutationVector);
 
 	// Add 64 threads permutation
-	const uint32 GroupSize = 8;
-	const FIntVector DispatchCount = FIntVector(
-		(Resolution.X + GroupSize - 1) / GroupSize,
-		(Resolution.Y + GroupSize - 1) / GroupSize,
-		1);
+	const int32 GroupSize = 8;
+	const FIntVector DispatchCount = FIntVector(FMath::DivideAndRoundUp(Resolution.X, GroupSize), FMath::DivideAndRoundUp(Resolution.Y, GroupSize), 1);
 	FComputeShaderUtils::AddPass(
 		GraphBuilder,
 		RDG_EVENT_NAME("Translucency::OITCombine(%s)", !!(OITData.PassType & OITPass_SeperateTranslucency) ? TEXT("SeparateTransluency") : TEXT("Regular")),
@@ -258,23 +250,28 @@ class FSortedIndexBuffer : public FIndexBuffer
 public:
 	static const uint32 SliceCount = 256u;
 
-	FSortedIndexBuffer(uint32 InId, const FBufferRHIRef& InSourceIndexBuffer, uint32 InNumIndices, const TCHAR* InDebugName)
+	FSortedIndexBuffer(uint32 InId, const FIndexBuffer* InSourceIndexBuffer, uint32 InNumIndices, const TCHAR* InDebugName)
 	: SourceIndexBuffer(InSourceIndexBuffer)
 	, NumIndices(InNumIndices)
 	, Id(InId)
 	, DebugName(InDebugName) { }
 
+	bool CanBeInitialized() const
+	{
+		return SourceIndexBuffer && SourceIndexBuffer->IndexBufferRHI && SourceIndexBuffer->IndexBufferRHI->GetStride() > 0;
+	}
+
 	virtual void InitRHI(FRHICommandListBase& RHICmdList) override
 	{
-		check(SourceIndexBuffer);
-		const uint32 BytesPerElement = SourceIndexBuffer->GetStride();
+		check(SourceIndexBuffer && SourceIndexBuffer->IndexBufferRHI);
+		const uint32 BytesPerElement = SourceIndexBuffer->IndexBufferRHI->GetStride();
 		check(BytesPerElement == 2 || BytesPerElement == 4);
 		const EPixelFormat Format = BytesPerElement == 2 ? PF_R16_UINT : PF_R32_UINT;
 
 		FRHIResourceCreateInfo CreateInfo(DebugName);
 		IndexBufferRHI = RHICmdList.CreateBuffer(NumIndices * BytesPerElement, BUF_UnorderedAccess | BUF_ShaderResource | BUF_IndexBuffer, BytesPerElement /*Stride*/, ERHIAccess::VertexOrIndexBuffer, CreateInfo);
 		SortedIndexUAV = RHICmdList.CreateUnorderedAccessView(IndexBufferRHI, Format);
-		SourceIndexSRV = RHICmdList.CreateShaderResourceView(SourceIndexBuffer, BytesPerElement, Format);
+		SourceIndexSRV = RHICmdList.CreateShaderResourceView(SourceIndexBuffer->IndexBufferRHI, BytesPerElement, Format);
 	}
 
 	virtual void ReleaseRHI() override
@@ -286,7 +283,7 @@ public:
 
 	static constexpr uint32 InvalidId = ~0;
 
-	FBufferRHIRef SourceIndexBuffer = nullptr;
+	const FIndexBuffer* SourceIndexBuffer = nullptr;
 	uint32 NumIndices = 0;
 	uint32 Id = FSortedIndexBuffer::InvalidId;
 	uint32 LastUsedFrameId = 0;
@@ -296,14 +293,7 @@ public:
 	FUnorderedAccessViewRHIRef SortedIndexUAV = nullptr;
 };
 
-static void RemoveAllocation(FSortedIndexBuffer* InBuffer)
-{
-	InBuffer->ReleaseResource();
-	delete InBuffer;
-	InBuffer = nullptr;
-}
-
-static void TrimSortedIndexBuffers(TArray<FSortedIndexBuffer*>& FreeBuffers, uint32 FrameId)
+static void TrimSortedIndexBuffers(TArray<FSortedIndexBuffer*>& FreeBuffers, TQueue<FSortedIndexBuffer*>& DeleteQueue, uint32 FrameId)
 {
 	uint32 FreeCount = FreeBuffers.Num();
 	for (uint32 FreeIt = 0; FreeIt < FreeCount;)
@@ -315,8 +305,7 @@ static void TrimSortedIndexBuffers(TArray<FSortedIndexBuffer*>& FreeBuffers, uin
 			const int32 ElapsedFrame = FMath::Abs(int32(FrameId) - int32(LastFrameId));
 			if (ElapsedFrame > CVarOIT_SortedTriangles_PoolReleaseThreshold.GetValueOnRenderThread())
 			{
-				FSortedIndexBuffer* Buffer = FreeBuffers[FreeIt];
-				RemoveAllocation(Buffer);
+				DeleteQueue.Enqueue(FreeBuffers[FreeIt]);
 				FreeBuffers[FreeIt] = FreeBuffers[FreeCount - 1];
 				--FreeCount;
 				FreeBuffers.SetNum(FreeCount);
@@ -327,10 +316,14 @@ static void TrimSortedIndexBuffers(TArray<FSortedIndexBuffer*>& FreeBuffers, uin
 	}
 }
 
-FSortedTriangleData FOITSceneData::Allocate(FRHICommandListBase& RHICmdList, const FIndexBuffer* InSource, EPrimitiveType PrimitiveType, uint32 InFirstIndex, uint32 InNumPrimitives)
+void FOITSceneData::Allocate(
+	FRHICommandListBase& RHICmdList, 
+	EPrimitiveType InPrimitiveType, 
+	const FMeshBatchElement& InMeshElement, 
+	FMeshBatchElementDynamicIndexBuffer& OutMeshElement)
 {
-	check(InSource && InSource->IndexBufferRHI);
-	check(PrimitiveType == PT_TriangleList || PrimitiveType == PT_TriangleStrip);
+	check(InMeshElement.IndexBuffer && InMeshElement.IndexBuffer->IndexBufferRHI);
+	check(InPrimitiveType == PT_TriangleList || InPrimitiveType == PT_TriangleStrip);
 
 	// Find a free slot, or create a new one
 	FSortedTriangleData* Out = nullptr;
@@ -347,14 +340,15 @@ FSortedTriangleData FOITSceneData::Allocate(FRHICommandListBase& RHICmdList, con
 	}
 
 	// Linear scan if there are some free resource which are large enough
-	const uint32 NumIndices = InNumPrimitives * 3; // Sorted index always has triangle list topology
+	const uint32 NumIndices = InMeshElement.NumPrimitives * 3; // Sorted index always has triangle list topology
 	FSortedIndexBuffer* OITIndexBuffer = nullptr;
 	if (CVarOIT_SortedTriangles_Pool.GetValueOnRenderThread() > 0)
 	{
 		for (uint32 FreeIt=0,FreeCount=FreeBuffers.Num(); FreeIt<FreeCount; ++FreeIt)
 		{		
 			FSortedIndexBuffer* FreeBuffer = FreeBuffers[FreeIt];
-			if (FreeBuffer != nullptr && FreeBuffer->NumIndices >= NumIndices && FreeBuffer->Id == FSortedIndexBuffer::InvalidId)
+			// TODO: check for format as well + more robust comparison
+			if (FreeBuffer != nullptr && FreeBuffer->NumIndices >= NumIndices && FreeBuffer->Id == FSortedIndexBuffer::InvalidId) 
 			{			
 				OITIndexBuffer = FreeBuffer;
 				OITIndexBuffer->Id = FreeSlot;
@@ -368,50 +362,53 @@ FSortedTriangleData FOITSceneData::Allocate(FRHICommandListBase& RHICmdList, con
 	// Otherwise create a new one
 	if (OITIndexBuffer == nullptr)
 	{
-		OITIndexBuffer = new FSortedIndexBuffer(FreeSlot, InSource->IndexBufferRHI, NumIndices, TEXT("OIT::SortedIndexBuffer"));
-		OITIndexBuffer->InitResource(RHICmdList);	
-	}
-	Out->NumPrimitives = InNumPrimitives;
-	Out->NumIndices = NumIndices;
-	Out->SourceFirstIndex = InFirstIndex;
-	Out->SortedFirstIndex = 0u;
-	Out->SourcePrimitiveType = PrimitiveType;
-	Out->SortedPrimitiveType = PT_TriangleList;
-	Out->SourceIndexBuffer = InSource;
-	Out->SortedIndexBuffer = OITIndexBuffer;
-	Out->SortedIndexUAV = OITIndexBuffer->SortedIndexUAV;
-	Out->SourceIndexSRV = OITIndexBuffer->SourceIndexSRV;
+		OITIndexBuffer = new FSortedIndexBuffer(FreeSlot, InMeshElement.IndexBuffer, NumIndices, TEXT("OIT::SortedIndexBuffer"));
 
-	return *Out;
+		// It's possible the index buffer isn't ready yet (data not streamed-in yet). In such case we post-pone OITIndexBuffer creation.
+		if (OITIndexBuffer->CanBeInitialized())
+		{
+			OITIndexBuffer->InitResource(RHICmdList);
+		}
+	}
+	Out->NumPrimitives = InMeshElement.NumPrimitives;
+	Out->NumIndices = NumIndices;
+	Out->SourceFirstIndex = InMeshElement.FirstIndex;
+	Out->SourceBaseVertexIndex = InMeshElement.BaseVertexIndex;
+	Out->SourceMinVertexIndex = InMeshElement.MinVertexIndex;
+	Out->SourceMaxVertexIndex = InMeshElement.MaxVertexIndex;
+	Out->SortedFirstIndex = 0u;
+	Out->SourcePrimitiveType = InPrimitiveType;
+	Out->SortedPrimitiveType = PT_TriangleList;
+	Out->SourceIndexBuffer = InMeshElement.IndexBuffer;
+	Out->SortedIndexBuffer = OITIndexBuffer;
+
+	OutMeshElement.IndexBuffer 	= Out->SortedIndexBuffer;
+	OutMeshElement.FirstIndex 	= Out->SortedFirstIndex;
+	OutMeshElement.PrimitiveType= Out->SortedPrimitiveType;
 }
 
-void FOITSceneData::Deallocate(FIndexBuffer* InIndexBuffer)
+void FOITSceneData::Deallocate(FMeshBatchElement& OutMeshElement)
 {
-	if (InIndexBuffer == nullptr)
+	if (FSortedIndexBuffer* OITIndexBuffer = (FSortedIndexBuffer*)OutMeshElement.DynamicIndexBuffer.IndexBuffer)
 	{
-		return;
-	}
-
-	FSortedIndexBuffer* OITIndexBuffer = (FSortedIndexBuffer*)InIndexBuffer;
-	const uint32 Slot = OITIndexBuffer->Id;
-	if (Slot < uint32(Allocations.Num()))
-	{
-		if (CVarOIT_SortedTriangles_Pool.GetValueOnAnyThread() > 0)
+		const uint32 Slot = OITIndexBuffer->Id;
+		if (Slot < uint32(Allocations.Num()))
 		{
-			OITIndexBuffer->Id = FSortedIndexBuffer::InvalidId;
-			OITIndexBuffer->LastUsedFrameId = FrameIndex;
-			FreeBuffers.Add(OITIndexBuffer);
-			Allocations[Slot] = FSortedTriangleData();
+			if (CVarOIT_SortedTriangles_Pool.GetValueOnAnyThread() > 0)
+			{
+				OITIndexBuffer->Id = FSortedIndexBuffer::InvalidId;
+				OITIndexBuffer->LastUsedFrameId = FrameIndex;
+				FreeBuffers.Add(OITIndexBuffer);
+				Allocations[Slot] = FSortedTriangleData();
+			}
+			else
+			{
+				FSortedTriangleData& In = Allocations[Slot];
+				PendingDeletes.Enqueue((FSortedIndexBuffer*)In.SortedIndexBuffer);
+				In = FSortedTriangleData();
+			}
+			FreeSlots.Enqueue(Slot);
 		}
-		else
-		{
-			FSortedTriangleData& In = Allocations[Slot];
-			In.SortedIndexUAV = nullptr;
-			In.SourceIndexSRV = nullptr;
-			RemoveAllocation((FSortedIndexBuffer*)In.SortedIndexBuffer);
-			In = FSortedTriangleData();
-		}
-		FreeSlots.Enqueue(Slot);
 	}
 }
 
@@ -426,45 +423,53 @@ class FOITSortTriangleIndex_ScanCS : public FGlobalShader
 	class FDebug : SHADER_PERMUTATION_BOOL("PERMUTATION_DEBUG");
 	using FPermutationDomain = TShaderPermutationDomain<FDebug>;
 
-	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters,)
 
-		// For Debug
-		SHADER_PARAMETER_STRUCT_INCLUDE(ShaderPrint::FShaderParameters, ShaderPrintParameters)
-		SHADER_PARAMETER(FMatrix44f, ViewToWorld)
-		SHADER_PARAMETER(FVector3f, WorldBound_Min)
-		SHADER_PARAMETER(FVector3f, WorldBound_Max)
-		SHADER_PARAMETER(FVector3f, ViewBound_Min)
-		SHADER_PARAMETER(FVector3f, ViewBound_Max)
+	// For Debug
+	SHADER_PARAMETER_STRUCT_INCLUDE(ShaderPrint::FShaderParameters, ShaderPrintParameters)
+	SHADER_PARAMETER(FMatrix44f, ViewToWorld)
+	SHADER_PARAMETER(FVector3f, WorldBound_Min)
+	SHADER_PARAMETER(FVector3f, WorldBound_Max)
+	SHADER_PARAMETER(FVector3f, ViewBound_Min)
+	SHADER_PARAMETER(FVector3f, ViewBound_Max)
 
-		SHADER_PARAMETER(FMatrix44f, LocalToWorld)
-		SHADER_PARAMETER(FMatrix44f, WorldToView)
-		SHADER_PARAMETER(FMatrix44f, LocalToView)
+	SHADER_PARAMETER(FMatrix44f, LocalToWorld)
+	SHADER_PARAMETER(FMatrix44f, LocalToView)
 
-		SHADER_PARAMETER(uint32, SourcePrimitiveType)
-		SHADER_PARAMETER(uint32, NumPrimitives)
-		SHADER_PARAMETER(uint32, NumIndices)
-		SHADER_PARAMETER(uint32, SourceFirstIndex)
-		SHADER_PARAMETER(uint32, SortType)
-		SHADER_PARAMETER(uint32, SortedIndexBufferSizeInByte)
+	SHADER_PARAMETER(uint32, SourcePrimitiveType)
+	SHADER_PARAMETER(uint32, SourceFirstIndex)
+	SHADER_PARAMETER(uint32, SourceBaseVertexIndex)
+	SHADER_PARAMETER(uint32, SourceMinVertexIndex)
+	SHADER_PARAMETER(uint32, SourceMaxVertexIndex)
+
+	SHADER_PARAMETER(uint32, NumPrimitives)
+	SHADER_PARAMETER(uint32, NumIndices)
+	SHADER_PARAMETER(uint32, SortType)
+	SHADER_PARAMETER(uint32, SortedIndexBufferSizeInByte)
 		
-		SHADER_PARAMETER(float, ViewBoundMinZ)
-		SHADER_PARAMETER(float, ViewBoundMaxZ)
+	SHADER_PARAMETER(float, ViewBoundMinZ)
+	SHADER_PARAMETER(float, ViewBoundMaxZ)
 
-		SHADER_PARAMETER_SRV(Buffer<float>, PositionBuffer)
-		SHADER_PARAMETER_SRV(Buffer<uint>, IndexBuffer)
-		SHADER_PARAMETER_UAV(Buffer<uint>, OutIndexBuffer)
-		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint2>, OutSliceCounterBuffer)
-		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, OutPrimitiveSliceBuffer)
-		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, OutDebugData)
+	SHADER_PARAMETER_SRV(Buffer < float > , PositionBuffer)
+	SHADER_PARAMETER_SRV(Buffer < uint > , IndexBuffer)
+	SHADER_PARAMETER_UAV(Buffer < uint > , OutIndexBuffer)
+	SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer < uint2 > , OutSliceCounterBuffer)
+	SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer < uint > , OutPrimitiveSliceBuffer)
+	SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer < uint > , OutDebugData)
 
 
 	END_SHADER_PARAMETER_STRUCT()
 public:
 
+	static bool SupportDebugMode(EShaderPlatform InPlatform)
+	{
+		return ShaderPrint::IsSupported(InPlatform) && !IsHlslccShaderPlatform(InPlatform);
+	}
+
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) 
 	{ 
 		FPermutationDomain PermutationVector(Parameters.PermutationId);
-		if (PermutationVector.Get<FDebug>() == 1 && !ShaderPrint::IsSupported(Parameters.Platform))
+		if (PermutationVector.Get<FDebug>() == 1 && !SupportDebugMode(Parameters.Platform))
 		{
 			return false;
 		}
@@ -557,7 +562,7 @@ public:
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters) 
 	{
-		return ShaderPrint::IsSupported(Parameters.Platform); 
+		return FOITSortTriangleIndex_ScanCS::SupportDebugMode(Parameters.Platform);
 	}
 
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
@@ -618,6 +623,18 @@ static void AddOITSortTriangleIndexPass(
 		return;
 	}
 
+	// If the index buffer hasn't been initialized yet (e.g., data are not streamed in yet), run initialization
+	FSortedIndexBuffer* SortedIndexBuffer = (FSortedIndexBuffer*)MeshBatch.Mesh->Elements[0].DynamicIndexBuffer.IndexBuffer;
+	if (!SortedIndexBuffer->IsInitialized())
+	{
+		if (!SortedIndexBuffer->CanBeInitialized())
+		{
+			// Data are still not ready yet
+			return;
+		}
+		SortedIndexBuffer->InitResource(GraphBuilder.RHICmdList);
+	}
+
 	const FLocalVertexFactory* VF = (const FLocalVertexFactory*)MeshBatch.Mesh->VertexFactory;
 	if (!VF) { return; }
 	const FShaderResourceViewRHIRef VertexPosition = VF->GetPositionsSRV();
@@ -638,7 +655,7 @@ static void AddOITSortTriangleIndexPass(
 	AddClearUAVPass(GraphBuilder, SliceCounterUAV, 0u);
 
 	const EShaderPlatform Platform = View.Family->GetShaderPlatform();
-	const bool bDebugEnable = DebugData.IsValid() && ShaderPrint::IsSupported(Platform) && ShaderPrint::IsValid(View.ShaderPrintData);
+	const bool bDebugEnable = DebugData.IsValid() && FOITSortTriangleIndex_ScanCS::SupportDebugMode(Platform) && ShaderPrint::IsValid(View.ShaderPrintData);
 	FRHIBuffer* SortedIndexBufferRHI = Allocation.SortedIndexBuffer->IndexBufferRHI;
 
 	// 1. Scan the primitive and assign each primitive to a slice
@@ -651,6 +668,7 @@ static void AddOITSortTriangleIndexPass(
 
 		FOITSortTriangleIndex_ScanCS::FParameters* Parameters = GraphBuilder.AllocParameters<FOITSortTriangleIndex_ScanCS::FParameters>();
 		Parameters->LocalToView				= FMatrix44f(MeshBatch.Proxy->GetLocalToWorld() * View.ViewMatrices.GetViewMatrix());
+		Parameters->LocalToWorld 			= FMatrix44f(MeshBatch.Proxy->GetLocalToWorld());
 		Parameters->SourcePrimitiveType		= Allocation.SourcePrimitiveType == PT_TriangleStrip ? 1u : 0u;
 		Parameters->NumPrimitives			= Allocation.NumPrimitives;
 		Parameters->NumIndices				= Allocation.NumIndices;
@@ -660,24 +678,23 @@ static void AddOITSortTriangleIndexPass(
 		Parameters->SortedIndexBufferSizeInByte = Allocation.SortedIndexBuffer->IndexBufferRHI->GetSize();
 		Parameters->PositionBuffer			= VertexPosition;
 		Parameters->SourceFirstIndex		= Allocation.SourceFirstIndex;
-		Parameters->IndexBuffer				= Allocation.SourceIndexSRV;
-		Parameters->OutIndexBuffer			= Allocation.SortedIndexUAV;
+		Parameters->SourceBaseVertexIndex	= Allocation.SourceBaseVertexIndex;
+		Parameters->SourceMinVertexIndex	= Allocation.SourceMinVertexIndex;
+		Parameters->SourceMaxVertexIndex	= Allocation.SourceMaxVertexIndex;
+		Parameters->IndexBuffer				= Allocation.SortedIndexBuffer->SourceIndexSRV;
+		Parameters->OutIndexBuffer			= Allocation.SortedIndexBuffer->SortedIndexUAV;
 		Parameters->OutSliceCounterBuffer	= SliceCounterUAV;
 		Parameters->OutPrimitiveSliceBuffer = GraphBuilder.CreateUAV(PrimitiveSliceBuffer, PackedFormat);
 
 		// Debug
 		if (bDebugEnable)
 		{
-			ShaderPrint::SetEnabled(true);
-			ShaderPrint::RequestSpaceForCharacters(DebugData.VisibleInstances * 256 + 512);
-			ShaderPrint::RequestSpaceForLines(DebugData.VisiblePrimitives * 8 + DebugData.VisibleInstances * 32);
-
 			Parameters->ViewToWorld		= FMatrix44f(View.ViewMatrices.GetViewMatrix().Inverse());	 // LWC_TODO: Precision loss?
 			Parameters->WorldBound_Min	= (FVector3f)Bounds.GetBox().Min;
 			Parameters->WorldBound_Max	= (FVector3f)Bounds.GetBox().Max;
 			Parameters->ViewBound_Min	= (FVector3f)ViewBounds.GetBox().Min;
 			Parameters->ViewBound_Max	= (FVector3f)ViewBounds.GetBox().Max;
-				ShaderPrint::SetParameters(GraphBuilder, View.ShaderPrintData, Parameters->ShaderPrintParameters);
+			ShaderPrint::SetParameters(GraphBuilder, View.ShaderPrintData, Parameters->ShaderPrintParameters);
 
 			check(DebugData.Buffer);
 
@@ -732,8 +749,8 @@ static void AddOITSortTriangleIndexPass(
 		Parameters->SliceOffsetsBuffer		= GraphBuilder.CreateSRV(SliceOffsetsBuffer, PF_R32_UINT);
 		Parameters->PrimitiveSliceBuffer	= GraphBuilder.CreateSRV(PrimitiveSliceBuffer, PackedFormat);
 
-		Parameters->IndexBuffer				= Allocation.SourceIndexSRV;
-		Parameters->OutIndexBuffer			= Allocation.SortedIndexUAV;
+		Parameters->IndexBuffer				= Allocation.SortedIndexBuffer->SourceIndexSRV;
+		Parameters->OutIndexBuffer			= Allocation.SortedIndexBuffer->SortedIndexUAV;
 
 		TShaderMapRef<FOITSortTriangleIndex_WriteOutCS> ComputeShader(View.ShaderMap);
 
@@ -798,38 +815,29 @@ static void AddOITTriangleDebugPass(
 
 namespace OIT
 {
-	bool IsEnabled(EOITSortingType Type)
+	bool IsSortedTrianglesEnabled(EShaderPlatform InPlatform)
 	{
-		switch (Type)
-		{
-		case EOITSortingType::SortedTriangles: return CVarOIT_SortedTriangles_Enable.GetValueOnAnyThread() > 0;
-		case EOITSortingType::SortedPixels	 : return CVarOIT_SortedPixels_Enable.GetValueOnAnyThread() > 0;
-		}
-		return false;
+		return CVarOIT_SortedTriangles_Enable_Project.GetValueOnAnyThread() > 0;
 	}
 
-	bool IsEnabled(EOITSortingType Type, const FViewInfo& View)
+	bool IsSortedPixelsEnabledForProject(EShaderPlatform InPlatform)
 	{
-		switch (Type)
-		{
-		case EOITSortingType::SortedTriangles: return CVarOIT_SortedTriangles_Enable.GetValueOnAnyThread() > 0;
-		case EOITSortingType::SortedPixels	 : return CVarOIT_SortedPixels_Enable.GetValueOnAnyThread() > 0 && FDataDrivenShaderPlatformInfo::GetSupportsOIT(View.GetShaderPlatform());
-		}
-		return false;
-
-		
+		//const bool bMSAAEnabled = GetDefaultAntiAliasingMethod(GetMaxSupportedFeatureLevel(InPlatform)) != EAntiAliasingMethod::AAM_MSAA;
+		const bool bPixelOIT = CVarOIT_SortedPixels_Enable_Project.GetValueOnAnyThread() > 0 && FDataDrivenShaderPlatformInfo::GetSupportsOIT(EShaderPlatform(InPlatform));
+		return bPixelOIT;
 	}
 
-	bool IsEnabled(EOITSortingType Type, EShaderPlatform InPlatform)
+	bool InternalIsSortedPixelsEnabled(EShaderPlatform InPlatform, bool bMSAA)
 	{
-		const bool bMSAAEnabled = GetDefaultAntiAliasingMethod(GetMaxSupportedFeatureLevel(InPlatform)) != EAntiAliasingMethod::AAM_MSAA;
-
-		switch (Type)
-		{
-			case EOITSortingType::SortedTriangles: return CVarOIT_SortedTriangles_Enable.GetValueOnAnyThread() > 0;
-			case EOITSortingType::SortedPixels	 : return CVarOIT_SortedPixels_Enable.GetValueOnAnyThread() > 0 && FDataDrivenShaderPlatformInfo::GetSupportsOIT(EShaderPlatform(InPlatform));
-		}
-		return false;
+		return IsSortedPixelsEnabledForProject(InPlatform) && GRHISupportsRasterOrderViews && !!CVarOIT_SortedPixels_Enable_Runtime.GetValueOnRenderThread() && !bMSAA;
+	}
+	bool IsSortedPixelsEnabled(const FViewInfo& InView) 	{ return InternalIsSortedPixelsEnabled(InView.GetShaderPlatform(), InView.AntiAliasingMethod == EAntiAliasingMethod::AAM_MSAA); }
+	bool IsSortedPixelsEnabled(EShaderPlatform InPlatform)	{ return InternalIsSortedPixelsEnabled(InPlatform, false /*bMSAA*/); }
+	
+	bool IsSortedPixelsEnabledForPass(EOITPassType PassType)
+	{
+		const uint32 PassTypeBits = FMath::Clamp(CVarOIT_SortedPixels_PassType.GetValueOnRenderThread(), 0, 3);
+		return !!(PassTypeBits & PassType);
 	}
 
 	bool IsCompatible(const FMeshBatch& InMesh, ERHIFeatureLevel::Type InFeatureLevel)
@@ -846,7 +854,7 @@ namespace OIT
 
 	void AddSortTrianglesPass(FRDGBuilder& GraphBuilder, const FViewInfo& View, FOITSceneData& OITSceneData, FTriangleSortingOrder SortType)
 	{
-		if (!IsEnabled(EOITSortingType::SortedTriangles))
+		if (!IsSortedTrianglesEnabled(View.GetShaderPlatform()))
 		{
 			return;
 		}
@@ -858,18 +866,24 @@ namespace OIT
 		if (bDebugEnable)
 		{
 			const uint32 ValidAllocationCount = OITSceneData.Allocations.Num();
-			DebugData.Buffer = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateBufferDesc(4u, ValidAllocationCount + 1), TEXT("OIT.DebugData"));
+			DebugData.Buffer = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateBufferDesc(4u, 10*ValidAllocationCount + 1), TEXT("OIT.DebugData"));
 			AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(DebugData.Buffer, FOITDebugData::Format), 0u);
 
 			// Allocated/used
+			uint32 AllocatedNumPrimitives = 0;
 			for (const FSortedTriangleData& Allocated : OITSceneData.Allocations)
 			{
 				if (Allocated.IsValid())
 				{
 					++DebugData.AllocatedBuffers;
 					DebugData.AllocatedIndexSizeInBytes += Allocated.SortedIndexBuffer->IndexBufferRHI->GetSize();
+					AllocatedNumPrimitives += Allocated.NumPrimitives;
 				}
 			}
+
+			ShaderPrint::SetEnabled(true);
+			ShaderPrint::RequestSpaceForCharacters(DebugData.AllocatedBuffers * 256 + 512);
+			ShaderPrint::RequestSpaceForLines(AllocatedNumPrimitives * 8 + DebugData.AllocatedBuffers * 32);
 
 			// Unused
 			for (const FSortedIndexBuffer* FreeBuffer : OITSceneData.FreeBuffers)
@@ -895,23 +909,16 @@ namespace OIT
 		OITSceneData.FrameIndex = View.Family->FrameNumber;
 		if (CVarOIT_SortedTriangles_Pool.GetValueOnRenderThread() > 0 && CVarOIT_SortedTriangles_PoolReleaseThreshold.GetValueOnRenderThread() > 0)
 		{
-			TrimSortedIndexBuffers(OITSceneData.FreeBuffers, OITSceneData.FrameIndex);
+			TrimSortedIndexBuffers(OITSceneData.FreeBuffers, OITSceneData.PendingDeletes, OITSceneData.FrameIndex);
 		}
-	}
-
-	void ConvertSortedIndexToDynamicIndex(FSortedTriangleData* In, FMeshBatchElementDynamicIndexBuffer* Out)
-	{
-		check(In && Out);
-		Out->IndexBuffer = In->SortedIndexBuffer;
-		Out->FirstIndex = In->SortedFirstIndex;
-		Out->PrimitiveType = In->SortedPrimitiveType;
 	}
 
 	FOITData CreateOITData(FRDGBuilder& GraphBuilder, const FViewInfo& View, EOITPassType PassType)
 	{
-		const bool bOIT = IsEnabled(EOITSortingType::SortedPixels, View.GetShaderPlatform());
+		const bool bOIT = IsSortedPixelsEnabled(View);
 		const uint32 PassTypeBits = FMath::Clamp(CVarOIT_SortedPixels_PassType.GetValueOnRenderThread(), 0, 3);
 		const bool bPassValid = !!(PassTypeBits & PassType);
+		const uint32 LayerCount = 3u; /*Depth/Color/Trans*/
 
 		FOITData Out;
 		if (!bOIT || !bPassValid)
@@ -921,10 +928,8 @@ namespace OIT
 			Out.Method = 0;
 			Out.TransmittanceThreshold = 0;
 
-			Out.SampleColorTexture = GraphBuilder.CreateTexture(FRDGTextureDesc::Create2D(FIntPoint(1, 1), PF_R32_UINT, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV), TEXT("OIT.SampleColor"));
-			Out.SampleTransTexture = GraphBuilder.CreateTexture(FRDGTextureDesc::Create2D(FIntPoint(1, 1), PF_R32_UINT, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV), TEXT("OIT.SampleTrans"));
-			Out.SampleDepthTexture = GraphBuilder.CreateTexture(FRDGTextureDesc::Create2D(FIntPoint(1, 1), PF_R32_FLOAT, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV), TEXT("OIT.SampleDepth"));
-			Out.SampleCountTexture = GraphBuilder.CreateTexture(FRDGTextureDesc::Create2D(FIntPoint(1, 1), PF_R32_UINT, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV), TEXT("OIT.SampleCount"));
+			Out.SampleDataTexture  = GraphBuilder.CreateTexture(FRDGTextureDesc::Create2DArray(FIntPoint(1, 1), PF_R32_UINT, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV, LayerCount), TEXT("OIT.SampleData"));
+			Out.SampleCountTexture = GraphBuilder.CreateTexture(FRDGTextureDesc::Create2D(FIntPoint(1, 1), PF_R32_UINT, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV), TEXT("OIT.SampleCount"));
 			return Out;
 		}
 
@@ -950,17 +955,13 @@ namespace OIT
 			Out.Method = FMath::Clamp(CVarOIT_SortedPixels_Method.GetValueOnRenderThread(), 0, 1);
 			Out.TransmittanceThreshold = FMath::Clamp(CVarOIT_SortedPixels_TransmittanceThreshold.GetValueOnRenderThread(), 0.f, 1.f);
 
-			Out.SampleColorTexture = GraphBuilder.CreateTexture(FRDGTextureDesc::Create2D(EffectiveBufferSize * MaxSideSamplePerPixel, PF_R32_UINT, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV), TEXT("OIT.SampleColor"));
-			Out.SampleTransTexture = GraphBuilder.CreateTexture(FRDGTextureDesc::Create2D(EffectiveBufferSize * MaxSideSamplePerPixel, PF_R32_UINT, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV), TEXT("OIT.SampleTrans"));
-			Out.SampleDepthTexture = GraphBuilder.CreateTexture(FRDGTextureDesc::Create2D(EffectiveBufferSize * MaxSideSamplePerPixel, PF_R32_FLOAT, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV), TEXT("OIT.SampleDepth"));
+			Out.SampleDataTexture = GraphBuilder.CreateTexture(FRDGTextureDesc::Create2DArray(EffectiveBufferSize * MaxSideSamplePerPixel, PF_R32_UINT, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV, LayerCount), TEXT("OIT.SampleData"));
 			Out.SampleCountTexture = GraphBuilder.CreateTexture(FRDGTextureDesc::Create2D(EffectiveBufferSize, PF_R32_UINT, FClearValueBinding::None, TexCreate_ShaderResource | TexCreate_UAV), TEXT("OIT.SampleCount"));
 		}
 
 		// TODO: Add tile clear based on the coarse translucent raster AABB buffer
-		AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(Out.SampleColorTexture), 0u);
-		AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(Out.SampleTransTexture), 0u);
+		//AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(Out.SampleDataTexture), 0u);
 		AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(Out.SampleCountTexture), 0u);
-		AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(Out.SampleDepthTexture), 0.f);
 
 		return Out;
 	}
@@ -973,14 +974,27 @@ namespace OIT
 		OutOIT.MaxSideSamplePerPixel = InOITData.MaxSideSamplePerPixel;
 		OutOIT.MaxSamplePerPixel = InOITData.MaxSamplePerPixel;
 		OutOIT.TransmittanceThreshold = InOITData.TransmittanceThreshold;
-		OutOIT.OutOITSampleColor = GraphBuilder.CreateUAV(InOITData.SampleColorTexture);
-		OutOIT.OutOITSampleTrans = GraphBuilder.CreateUAV(InOITData.SampleTransTexture);
-		OutOIT.OutOITSampleDepth = GraphBuilder.CreateUAV(InOITData.SampleDepthTexture);
+		OutOIT.OutOITSampleData  = GraphBuilder.CreateUAV(InOITData.SampleDataTexture);
 		OutOIT.OutOITSampleCount = GraphBuilder.CreateUAV(InOITData.SampleCountTexture);
 	}
 
 	void AddOITComposePass(FRDGBuilder& GraphBuilder, const FViewInfo& View, FOITData& OITData, FRDGTextureRef SceneColorTexture)
 	{
 		AddInternalOITComposePass(GraphBuilder, View, OITData, SceneColorTexture);
+	}
+
+	void OnRenderBegin(FOITSceneData& OITSceneData)
+	{
+		// Delete all enqueue buffer for deletion
+		FSortedIndexBuffer* Buffer = nullptr;
+		while (OITSceneData.PendingDeletes.Dequeue(Buffer))
+		{
+			if (Buffer)
+			{
+				Buffer->ReleaseResource();
+				delete Buffer;
+				Buffer = nullptr;
+			}
+		}
 	}
 }

@@ -7,7 +7,7 @@
 #pragma once
 
 THIRD_PARTY_INCLUDES_START
-#if !PLATFORM_TVOS
+#if !PLATFORM_TVOS && !PLATFORM_VISIONOS
 #include "PLCrashReporter.h"
 #include "PLCrashReport.h"
 #include "PLCrashReportTextFormatter.h"

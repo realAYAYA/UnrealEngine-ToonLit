@@ -233,7 +233,7 @@ public:
 					}
 					for (int32 i = 0; i < NumNodes; i++)
 					{
-						OutWeights[i] += MaxNegative;
+						OutWeights[i] -= MaxNegative;
 					}
 				}
 

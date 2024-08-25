@@ -45,6 +45,7 @@ class FileStreamImpl : public FileStream {
         AccessMode fileAccessMode;
         OpenMode fileOpenMode;
         std::uint64_t fileSize;
+        std::uint64_t filePos;
         MemoryResource* memRes;
         StreamStatus status;
 };

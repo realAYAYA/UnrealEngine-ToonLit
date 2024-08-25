@@ -6,6 +6,8 @@
 
 #include <type_traits>
 
+class FStructuredArchiveSlot;
+
 template <typename T>
 class TSubclassOf;
 
@@ -152,6 +154,11 @@ public:
 		Ar << Class;
 	}
 
+	FORCEINLINE void Serialize(FStructuredArchiveSlot& Slot)
+	{
+		Slot << Class;
+	}
+
 	friend uint32 GetTypeHash(const TSubclassOf& SubclassOf)
 	{
 		return GetTypeHash(SubclassOf.Class);
@@ -186,6 +193,12 @@ FArchive& operator<<(FArchive& Ar, TSubclassOf<T>& SubclassOf)
 {
 	SubclassOf.Serialize(Ar);
 	return Ar;
+}
+
+template <typename T>
+void operator<<(FStructuredArchiveSlot Slot, TSubclassOf<T>& SubclassOf)
+{
+	SubclassOf.Serialize(Slot);
 }
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2

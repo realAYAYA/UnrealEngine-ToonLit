@@ -83,6 +83,7 @@ struct FAnimNode_CallFunction : public FAnimNode_Base
 	ANIMGRAPHRUNTIME_API virtual void Update_AnyThread(const FAnimationUpdateContext& Context) override;
 	ANIMGRAPHRUNTIME_API virtual void Evaluate_AnyThread(FPoseContext& Context) override;
 	ANIMGRAPHRUNTIME_API virtual void Initialize_AnyThread(const FAnimationInitializeContext& Context) override;
+	ANIMGRAPHRUNTIME_API virtual void CacheBones_AnyThread(const FAnimationCacheBonesContext& Context) override;
 	// End of FAnimNode_Base interface
 
 	// Calls the function we hold if the callsite matches the one we have set

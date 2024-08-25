@@ -14,6 +14,12 @@ struct FDisplayClusterProjectionCameraPolicySettings
 	// Move incamera frustum on this value to fix broken lens on physic camera
 	FVector  FrustumOffset = FVector::ZeroVector;
 
+	// Off-axis / off-center projection offset as proportion of screen dimensions
+	FVector2D OffCenterProjectionOffset = FVector2D::ZeroVector;
+
 	// When enabled, ignore all next updates, until null cam ref not assigned (UE-137222)
 	bool bCameraOverrideDefaults = false;
+
+	// Allow to use camera postprocess
+	bool bUseCameraPostprocess = true;
 };

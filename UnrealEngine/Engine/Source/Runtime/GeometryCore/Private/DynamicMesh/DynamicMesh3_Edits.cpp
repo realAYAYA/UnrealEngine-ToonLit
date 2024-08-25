@@ -286,7 +286,21 @@ EMeshResult FDynamicMesh3::InsertTriangle(int tid, const FIndex3i& tv, int gid, 
 
 
 
+void FDynamicMesh3::RemoveUnusedVertices()
+{
+	for (int32 VID = 0; VID < MaxVertexID(); ++VID)
+	{
+		// If vertex exists but is not referenced by any triangles
+		if (VertexRefCounts.GetRefCount(VID) == 1)
+		{
+			VertexRefCounts.Decrement(VID);
+			checkSlow(VertexRefCounts.IsValid(VID) == false); // vertex should now not be valid
+			checkSlow(VertexEdgeLists.GetCount(VID) == 0); // vertex should not have had any edges attached
+		}
+	}
 
+	UpdateChangeStamps(true, true);
+}
 
 
 
@@ -1254,13 +1268,8 @@ bool FDynamicMesh3::SplitVertexWouldLeaveIsolated(int VertexID, const TArrayView
 }
 
 
-
-
-EMeshResult FDynamicMesh3::CollapseEdge(int vKeep, int vRemove, double collapse_t, FEdgeCollapseInfo& CollapseInfo)
+EMeshResult FDynamicMesh3::CanCollapseEdgeInternal(int vKeep, int vRemove, double collapse_t, FEdgeCollapseInfo* OutCollapseInfo) const
 {
-	
-	CollapseInfo = FEdgeCollapseInfo();
-
 	if (IsVertex(vKeep) == false || IsVertex(vRemove) == false)
 	{
 		return EMeshResult::Failed_NotAnEdge;
@@ -1301,8 +1310,6 @@ EMeshResult FDynamicMesh3::CollapseEdge(int vKeep, int vRemove, double collapse_
 	{
 		bIsBoundaryEdge = true;
 	}
-
-	CollapseInfo.OpposingVerts = FIndex2i(c, d);
 
 	// We cannot collapse if edge lists of a and b share vertices other
 	//  than c and d  (because then we will make a triangle [x b b].
@@ -1382,6 +1389,55 @@ EMeshResult FDynamicMesh3::CollapseEdge(int vKeep, int vRemove, double collapse_
 	{
 		return EMeshResult::Failed_InvalidNeighbourhood;
 	}
+
+	if (OutCollapseInfo)
+	{
+		OutCollapseInfo->OpposingVerts = FIndex2i(c, d);
+		OutCollapseInfo->KeptVertex = b;
+		OutCollapseInfo->RemovedVertex = a;
+		OutCollapseInfo->bIsBoundary = bIsBoundaryEdge;
+		OutCollapseInfo->CollapsedEdge = eab;
+		OutCollapseInfo->RemovedTris = FIndex2i(t0, t1);
+		OutCollapseInfo->RemovedEdges = FIndex2i(eac, ead);
+		OutCollapseInfo->KeptEdges = FIndex2i(ebc, ebd);
+		OutCollapseInfo->CollapseT = collapse_t;
+	}
+
+	return EMeshResult::Ok;
+}
+
+
+EMeshResult FDynamicMesh3::CanCollapseEdge(int vKeep, int vRemove, double collapse_t) const
+{
+	return CanCollapseEdgeInternal(vKeep, vRemove, collapse_t, nullptr);
+}
+
+
+EMeshResult FDynamicMesh3::CollapseEdge(int vKeep, int vRemove, double collapse_t, FEdgeCollapseInfo& CollapseInfo)
+{
+	CollapseInfo = FEdgeCollapseInfo();
+
+	const EMeshResult CanCollapseResult = CanCollapseEdgeInternal(vKeep, vRemove, collapse_t, &CollapseInfo);
+	if (CanCollapseResult != EMeshResult::Ok)
+	{
+		return CanCollapseResult;
+	}
+
+	const int b = vKeep;		// renaming for sanity. We remove a and keep b
+	const int a = vRemove;
+	const int c = CollapseInfo.OpposingVerts[0];
+	const int d = CollapseInfo.OpposingVerts[1];
+	const int t0 = CollapseInfo.RemovedTris[0];
+	const int t1 = CollapseInfo.RemovedTris[1];
+	const int eab = CollapseInfo.CollapsedEdge;
+	const bool bIsBoundaryEdge = CollapseInfo.bIsBoundary;
+	const int eac = CollapseInfo.RemovedEdges[0];
+	const int ead = CollapseInfo.RemovedEdges[1];
+
+	// This may or may not have been computed already
+	int ebc = CollapseInfo.KeptEdges[0];
+	int ebd = InvalidID;
+
 
 	// save vertex positions before we delete removed (can defer kept?)
 	FVector3d KeptPos = GetVertex(vKeep);
@@ -1586,14 +1642,7 @@ EMeshResult FDynamicMesh3::CollapseEdge(int vKeep, int vRemove, double collapse_
 		SetVertexColor(vKeep, Lerp(GetVertexColor(vKeep), RemovedColor, (float)collapse_t));
 	}
 
-	CollapseInfo.KeptVertex = vKeep;
-	CollapseInfo.RemovedVertex = vRemove;
-	CollapseInfo.bIsBoundary = bIsBoundaryEdge;
-	CollapseInfo.CollapsedEdge = eab;
-	CollapseInfo.RemovedTris = FIndex2i(t0, t1);
-	CollapseInfo.RemovedEdges = FIndex2i(eac, ead);
 	CollapseInfo.KeptEdges = FIndex2i(ebc, ebd);
-	CollapseInfo.CollapseT = collapse_t;
 
 	if (HasAttributes())
 	{

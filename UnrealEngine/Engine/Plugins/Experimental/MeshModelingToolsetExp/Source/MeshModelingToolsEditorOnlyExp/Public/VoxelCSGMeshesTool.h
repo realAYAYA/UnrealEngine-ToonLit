@@ -84,6 +84,19 @@ protected:
 	UPROPERTY()
 	TObjectPtr<UVoxelCSGMeshesToolProperties> CSGProps;
 
+	virtual bool KeepCollisionFrom(int32 TargetIdx) const override
+	{
+		if (CSGProps->Operation == EVoxelCSGOperation::DifferenceAB)
+		{
+			return TargetIdx == 0;
+		}
+		else if (CSGProps->Operation == EVoxelCSGOperation::DifferenceBA)
+		{
+			return TargetIdx == 1;
+		}
+		return true;
+	}
+
 };
 
 

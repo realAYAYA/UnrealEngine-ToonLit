@@ -11,8 +11,8 @@ public class PropertyEditor : ModuleRules
 				"EditorConfig",
 				"EditorFramework",
 				"UnrealEd",
-                	"ActorPickerMode",
-                	"SceneDepthPickerMode",
+                "ActorPickerMode",
+                "SceneDepthPickerMode",
 			}
 		);
 
@@ -20,7 +20,7 @@ public class PropertyEditor : ModuleRules
 			new string[] {
 				"MainFrame",
                	"AssetRegistry",
-                	"AssetTools",
+                "AssetTools",
 				"ClassViewer",
 				"StructViewer",
 				"ContentBrowser",
@@ -29,7 +29,7 @@ public class PropertyEditor : ModuleRules
 
 		PrivateDependencyModuleNames.AddRange(
 			new string[] {
-                	"AppFramework",
+                "AppFramework",
 				"Core",
 				"CoreUObject",
 				"ApplicationCore",
@@ -41,18 +41,20 @@ public class PropertyEditor : ModuleRules
 				"EditorWidgets",
 				"Documentation",
 				"ConfigEditor",
-                	"SceneOutliner",
+                "SceneOutliner",
 				"DesktopPlatform",
 				"PropertyPath",
 				"ToolWidgets",
-				"Json"
+				"WidgetRegistration",
+				"Json",
+				"ToolMenus"
 			}
         );
 
 		DynamicallyLoadedModuleNames.AddRange(
 			new string[] {
-                	"AssetRegistry",
-                	"AssetTools",
+                "AssetRegistry",
+                "AssetTools",
 				"ClassViewer",
 				"StructViewer",
 				"ContentBrowser",

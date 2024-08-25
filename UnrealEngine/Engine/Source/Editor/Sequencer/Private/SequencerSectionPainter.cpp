@@ -6,8 +6,7 @@
 #include "MVVM/ViewModels/SectionModel.h"
 
 FSequencerSectionPainter::FSequencerSectionPainter(FSlateWindowElementList& OutDrawElements, const FGeometry& InSectionGeometry, TSharedPtr<UE::Sequencer::FSectionModel> InSection)
-	: Section(*InSection->GetSection())
-	, SectionModel(InSection)
+	: SectionModel(InSection)
 	, DrawElements(OutDrawElements)
 	, SectionGeometry(InSectionGeometry)
 	, LayerId(0)

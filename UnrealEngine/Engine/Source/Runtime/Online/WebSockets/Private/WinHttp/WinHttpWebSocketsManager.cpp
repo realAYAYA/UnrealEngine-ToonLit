@@ -13,8 +13,6 @@
 
 void FWinHttpWebSocketsManager::InitWebSockets(TArrayView<const FString> Protocols)
 {
-	(void)FModuleManager::LoadModuleChecked<FHttpModule>(TEXT("Http"));
-
 	if (FWinHttpHttpManager::GetManager() == nullptr)
 	{
 		InitHttpManager();
@@ -28,17 +26,16 @@ void FWinHttpWebSocketsManager::InitWebSockets(TArrayView<const FString> Protoco
 
 void FWinHttpWebSocketsManager::InitHttpManager()
 {
-	HttpManager = FPlatformHttp::CreateWinHttpHttpManager();
-	check(HttpManager);
-	HttpManager->Initialize();
+	WinHttpHttpManager = FPlatformHttp::CreateWinHttpHttpManager();
+	check(WinHttpHttpManager);
 }
 
 void FWinHttpWebSocketsManager::ShutdownWebSockets()
 {
-	if (HttpManager)
+	if (WinHttpHttpManager)
 	{
-		delete HttpManager;
-		HttpManager = nullptr;
+		delete WinHttpHttpManager;
+		WinHttpHttpManager = nullptr;
 	}
 
 	for (TWeakPtr<FWinHttpWebSocket>& WeakWebSocket : ActiveWebSockets)

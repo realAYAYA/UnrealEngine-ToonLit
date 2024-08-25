@@ -283,7 +283,7 @@ private:
 				ReserveSlot();
 
 				TRACE_PLATFORMFILE_BEGIN_OPEN(*Filename);
-				FileHandle = open(TCHAR_TO_UTF8(*Filename), O_RDONLY | O_SHLOCK);
+				FileHandle = open(TCHAR_TO_UTF8(*Filename), O_RDONLY | O_SHLOCK | O_CLOEXEC);
 				if( FileHandle != -1 )
 				{
 					TRACE_PLATFORMFILE_END_OPEN(FileHandle);
@@ -515,7 +515,7 @@ FDateTime FApplePlatformFile::GetTimeStamp(const TCHAR* Filename)
 {
 	// get file times
 	struct stat FileInfo;
-	if(Stat(Filename, &FileInfo) == -1)
+	if(Stat(Filename, &FileInfo) != 0)
 	{
 		return FDateTime::MinValue();
 	}
@@ -530,7 +530,7 @@ void FApplePlatformFile::SetTimeStamp(const TCHAR* Filename, const FDateTime Dat
 {
 	// get file times
 	struct stat FileInfo;
-	if (Stat(Filename, &FileInfo) == 0)
+	if (Stat(Filename, &FileInfo) != 0)
 	{
 		return;
 	}
@@ -574,7 +574,7 @@ ESymlinkResult FApplePlatformFile::IsSymlink(const TCHAR* Filename)
 IFileHandle* FApplePlatformFile::OpenRead(const TCHAR* Filename, bool bAllowWrite)
 {
 	TRACE_PLATFORMFILE_BEGIN_OPEN(Filename);
-	int32 Handle = open(TCHAR_TO_UTF8(*NormalizeFilename(Filename)), O_RDONLY);
+	int32 Handle = open(TCHAR_TO_UTF8(*NormalizeFilename(Filename)), O_RDONLY | O_CLOEXEC);
 	if (Handle != -1)
 	{
 		TRACE_PLATFORMFILE_END_OPEN(Handle);
@@ -615,7 +615,7 @@ IFileHandle* FApplePlatformFile::OpenRead(const TCHAR* Filename, bool bAllowWrit
 
 IFileHandle* FApplePlatformFile::OpenWrite(const TCHAR* Filename, bool bAppend, bool bAllowRead)
 {
-	int Flags = O_CREAT;
+	int Flags = O_CREAT | O_CLOEXEC;
 	
 	if (bAllowRead)
 	{
@@ -743,7 +743,7 @@ bool FApplePlatformFile::IterateDirectory(const TCHAR* Directory, FDirectoryVisi
 			}
 		}
 
-		return Visitor.Visit(*(DirectoryStr / NormalizedFilename), bIsDirectory);
+		return Visitor.CallShouldVisitAndVisit(*(DirectoryStr / NormalizedFilename), bIsDirectory);
 	});
 }
 
@@ -762,7 +762,7 @@ bool FApplePlatformFile::IterateDirectoryStat(const TCHAR* Directory, FDirectory
 		struct stat StatInfo;
 		if (stat(TCHAR_TO_UTF8(*(NormalizedDirectoryStr / NormalizedFilename)), &StatInfo) == 0)
 		{
-			return Visitor.Visit(*(DirectoryStr / NormalizedFilename), MacStatToUEFileData(StatInfo));
+			return Visitor.CallShouldVisitAndVisit(*(DirectoryStr / NormalizedFilename), MacStatToUEFileData(StatInfo));
 		}
 
 		return true;

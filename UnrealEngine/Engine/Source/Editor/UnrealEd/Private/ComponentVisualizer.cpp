@@ -357,11 +357,11 @@ void FComponentVisualizer::NotifyPropertiesModified(UActorComponent* Component, 
 				InstanceOwner->PostEditMove(PropertyChangeType == EPropertyChangeType::ValueSet);
 			}
 		}
-	}
 
-	// Rerun construction script on preview actor
-	if (Owner)
-	{
-		Owner->PostEditMove(PropertyChangeType == EPropertyChangeType::ValueSet);
+		// Rerun construction script on preview actor
+		if (Owner)
+		{
+			Owner->PostEditMove(PropertyChangeType == EPropertyChangeType::ValueSet);
+		}
 	}
 }

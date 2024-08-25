@@ -388,7 +388,7 @@ namespace Delaunay3Internal
 			{
 				return NoTri;
 			}
-			if (Chosen == 0)
+			else if (Chosen == 0)
 			{
 				return NoTri; // we're on this tri
 			}
@@ -480,7 +480,7 @@ namespace Delaunay3Internal
 		TArray<FIndex3i> Border;
 		while (!ToConsider.IsEmpty())
 		{
-			FIndex3i Consider = ToConsider.Pop(false);
+			FIndex3i Consider = ToConsider.Pop(EAllowShrinking::No);
 			int32 TetV = Connectivity.GetVertex(Consider);
 			if (TetV != FDelaunay3Connectivity::InvalidIndex) // tet still exists (wasn't deleted by earlier traversal)
 			{

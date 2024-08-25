@@ -1405,7 +1405,7 @@ void FPasteContextMenu::Setup()
 
 				if (!Destination.Reconcilers.Num())
 				{
-					PasteDestinations.RemoveAt(PasteDestinations.Num() - 1, 1, false);
+					PasteDestinations.RemoveAt(PasteDestinations.Num() - 1, 1, EAllowShrinking::No);
 				}
 			}
 
@@ -1500,7 +1500,7 @@ void FPasteContextMenu::Setup()
 		}
 		if (!Destination.Reconcilers.Num())
 		{
-			PasteDestinations.RemoveAt(PasteDestinations.Num() - 1, 1, false);
+			PasteDestinations.RemoveAt(PasteDestinations.Num() - 1, 1, EAllowShrinking::No);
 		}
 	}
 }

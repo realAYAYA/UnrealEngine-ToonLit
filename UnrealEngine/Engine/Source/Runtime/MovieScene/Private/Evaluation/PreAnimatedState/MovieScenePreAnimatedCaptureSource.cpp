@@ -4,13 +4,34 @@
 #include "Evaluation/PreAnimatedState/MovieScenePreAnimatedCaptureSources.inl"
 #include "Evaluation/MovieScenePreAnimatedState.h"
 #include "EntitySystem/MovieSceneEntitySystemLinker.h"
+#include "EntitySystem/MovieSceneSharedPlaybackState.h"
 #include "MovieSceneSection.h"
 #include "MovieSceneSequence.h"
 
+FScopedPreAnimatedCaptureSource::FScopedPreAnimatedCaptureSource(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, const FMovieSceneEvaluationKey& InEvalKey, bool bInWantsRestoreState)
+	: Variant(TInPlaceType<FPreAnimatedEvaluationKeyType>(), FPreAnimatedEvaluationKeyType{ InEvalKey, SharedPlaybackState->GetRootInstanceHandle() })
+	, RootInstanceHandle(SharedPlaybackState->GetRootInstanceHandle())
+	, WeakLinker(SharedPlaybackState->GetLinker())
+	, bWantsRestoreState(bInWantsRestoreState)
+{
+	FScopedPreAnimatedCaptureSource*& CaptureSourcePtr = GetCaptureSourcePtr();
+	PrevCaptureSource = CaptureSourcePtr;
+	CaptureSourcePtr = this;
+}
 FScopedPreAnimatedCaptureSource::FScopedPreAnimatedCaptureSource(FMovieScenePreAnimatedState* InPreAnimatedState, const FMovieSceneEvaluationKey& InEvalKey, bool bInWantsRestoreState)
-	: Variant(TInPlaceType<FMovieSceneEvaluationKey>(), InEvalKey)
-	, WeakLinker(InPreAnimatedState ? InPreAnimatedState->GetLinker() : nullptr)
-	, OptionalSequencePreAnimatedState(InPreAnimatedState)
+	: Variant(TInPlaceType<FPreAnimatedEvaluationKeyType>(), FPreAnimatedEvaluationKeyType{ InEvalKey, InPreAnimatedState->InstanceHandle })
+	, RootInstanceHandle(InPreAnimatedState->InstanceHandle)
+	, WeakLinker(InPreAnimatedState->GetLinker())
+	, bWantsRestoreState(bInWantsRestoreState)
+{
+	FScopedPreAnimatedCaptureSource*& CaptureSourcePtr = GetCaptureSourcePtr();
+	PrevCaptureSource = CaptureSourcePtr;
+	CaptureSourcePtr = this;
+}
+FScopedPreAnimatedCaptureSource::FScopedPreAnimatedCaptureSource(TSharedRef<const FSharedPlaybackState> SharedPlaybackState, const UObject* InEvalHook, FMovieSceneSequenceID InSequenceID, bool bInWantsRestoreState)
+	: Variant(TInPlaceType<FPreAnimatedEvalHookKeyType>(), FPreAnimatedEvalHookKeyType{ InEvalHook, SharedPlaybackState->GetRootInstanceHandle(), InSequenceID } )
+	, RootInstanceHandle(SharedPlaybackState->GetRootInstanceHandle())
+	, WeakLinker(SharedPlaybackState->GetLinker())
 	, bWantsRestoreState(bInWantsRestoreState)
 {
 	FScopedPreAnimatedCaptureSource*& CaptureSourcePtr = GetCaptureSourcePtr();
@@ -18,9 +39,9 @@ FScopedPreAnimatedCaptureSource::FScopedPreAnimatedCaptureSource(FMovieScenePreA
 	CaptureSourcePtr = this;
 }
 FScopedPreAnimatedCaptureSource::FScopedPreAnimatedCaptureSource(FMovieScenePreAnimatedState* InPreAnimatedState, const UObject* InEvalHook, FMovieSceneSequenceID InSequenceID, bool bInWantsRestoreState)
-	: Variant(TInPlaceType<FEvalHookType>(), FEvalHookType{InEvalHook, InSequenceID} )
+	: Variant(TInPlaceType<FPreAnimatedEvalHookKeyType>(), FPreAnimatedEvalHookKeyType{InEvalHook, InPreAnimatedState->InstanceHandle, InSequenceID} )
+	, RootInstanceHandle(InPreAnimatedState->InstanceHandle)
 	, WeakLinker(InPreAnimatedState ? InPreAnimatedState->GetLinker() : nullptr)
-	, OptionalSequencePreAnimatedState(InPreAnimatedState)
 	, bWantsRestoreState(bInWantsRestoreState)
 {
 	FScopedPreAnimatedCaptureSource*& CaptureSourcePtr = GetCaptureSourcePtr();
@@ -30,7 +51,6 @@ FScopedPreAnimatedCaptureSource::FScopedPreAnimatedCaptureSource(FMovieScenePreA
 FScopedPreAnimatedCaptureSource::FScopedPreAnimatedCaptureSource(UMovieSceneEntitySystemLinker* InLinker, UMovieSceneTrackInstance* InTrackInstance, bool bInWantsRestoreState)
 	: Variant(TInPlaceType<UMovieSceneTrackInstance*>(), InTrackInstance)
 	, WeakLinker(InLinker)
-	, OptionalSequencePreAnimatedState(nullptr)
 	, bWantsRestoreState(bInWantsRestoreState)
 {
 	FScopedPreAnimatedCaptureSource*& CaptureSourcePtr = GetCaptureSourcePtr();
@@ -40,7 +60,6 @@ FScopedPreAnimatedCaptureSource::FScopedPreAnimatedCaptureSource(UMovieSceneEnti
 FScopedPreAnimatedCaptureSource::FScopedPreAnimatedCaptureSource(UMovieSceneEntitySystemLinker* InLinker, const FMovieSceneTrackInstanceInput& TrackInstanceInput)
 	: Variant(TInPlaceType<FMovieSceneTrackInstanceInput>(), TrackInstanceInput)
 	, WeakLinker(InLinker)
-	, OptionalSequencePreAnimatedState(nullptr)
 {
 	EMovieSceneCompletionMode CompletionMode = TrackInstanceInput.Section->GetCompletionMode();
 	if (CompletionMode == EMovieSceneCompletionMode::ProjectDefault)
@@ -69,11 +88,10 @@ FScopedPreAnimatedCaptureSource*& FScopedPreAnimatedCaptureSource::GetCaptureSou
 
 UE::MovieScene::FRootInstanceHandle FScopedPreAnimatedCaptureSource::GetRootInstanceHandle(UMovieSceneEntitySystemLinker* Linker) const
 {
-	if (OptionalSequencePreAnimatedState)
+	if (RootInstanceHandle.IsValid())
 	{
-		return OptionalSequencePreAnimatedState->InstanceHandle;
+		return RootInstanceHandle;
 	}
-
 	if (const FMovieSceneTrackInstanceInput* TrackInstanceInput = Variant.TryGet<FMovieSceneTrackInstanceInput>())
 	{
 		return Linker->GetInstanceRegistry()->GetInstance(TrackInstanceInput->InstanceHandle).GetRootInstanceHandle();
@@ -88,36 +106,27 @@ void FScopedPreAnimatedCaptureSource::BeginTracking(const UE::MovieScene::FPreAn
 	ensureMsgf(!WeakLinker.IsValid() || WeakLinker.Get() == Linker, 
 			TEXT("Attempting to track state on a capture source related to a different linker. Are you missing setting a scoped capture source?"));
 
-	if (FMovieSceneEvaluationKey* EvalKey = Variant.TryGet<FMovieSceneEvaluationKey>())
+	// All capture sources' meta-data is shared between all players
+
+	if (FPreAnimatedEvaluationKeyType* EvalKey = Variant.TryGet<FPreAnimatedEvaluationKeyType>())
 	{
-		check(OptionalSequencePreAnimatedState);
-		// Make the association to this track template key
-		if (!OptionalSequencePreAnimatedState->TemplateMetaData)
-		{
-			OptionalSequencePreAnimatedState->TemplateMetaData = MakeShared<FPreAnimatedTemplateCaptureSources>(&Linker->PreAnimatedState);
-			Linker->PreAnimatedState.AddWeakCaptureSource(OptionalSequencePreAnimatedState->TemplateMetaData);
-		}
-		OptionalSequencePreAnimatedState->TemplateMetaData->BeginTrackingCaptureSource(*EvalKey, MetaData);
+		FPreAnimatedTemplateCaptureSources* TemplateMetaData = Linker->PreAnimatedState.GetOrCreateTemplateMetaData();
+		ensureMsgf(EvalKey->RootInstanceHandle == MetaData.RootInstanceHandle, TEXT("Mismatched root handles between the scoped evaluation key and the given metadata"));
+		TemplateMetaData->BeginTrackingCaptureSource(*EvalKey, MetaData);
 	}
-	else if (FScopedPreAnimatedCaptureSource::FEvalHookType* EvalHook = Variant.TryGet<FScopedPreAnimatedCaptureSource::FEvalHookType>())
+	else if (FPreAnimatedEvalHookKeyType* EvalHook = Variant.TryGet<FPreAnimatedEvalHookKeyType>())
 	{
-		check(OptionalSequencePreAnimatedState);
-		if (!OptionalSequencePreAnimatedState->EvaluationHookMetaData)
-		{
-			OptionalSequencePreAnimatedState->EvaluationHookMetaData = MakeShared<FPreAnimatedEvaluationHookCaptureSources>(&Linker->PreAnimatedState);
-			Linker->PreAnimatedState.AddWeakCaptureSource(OptionalSequencePreAnimatedState->EvaluationHookMetaData);
-		}
-		OptionalSequencePreAnimatedState->EvaluationHookMetaData->BeginTrackingCaptureSource(EvalHook->EvalHook, EvalHook->SequenceID, MetaData);
+		FPreAnimatedEvaluationHookCaptureSources* EvaluationHookMetaData = Linker->PreAnimatedState.GetOrCreateEvaluationHookMetaData();
+		ensureMsgf(EvalHook->RootInstanceHandle == MetaData.RootInstanceHandle, TEXT("Mismatched root handles between the scoped evaluation hook and the given metadata"));
+		EvaluationHookMetaData->BeginTrackingCaptureSource(*EvalHook, MetaData);
 	}
 	else if (UMovieSceneTrackInstance* const * TrackInstance = Variant.TryGet<UMovieSceneTrackInstance*>())
 	{
-		// Track instance meta-data is shared between all players
 		FPreAnimatedTrackInstanceCaptureSources* TrackInstanceMetaData = Linker->PreAnimatedState.GetOrCreateTrackInstanceMetaData();
 		TrackInstanceMetaData->BeginTrackingCaptureSource(*TrackInstance, MetaData);
 	}
 	else if (const FMovieSceneTrackInstanceInput* TrackInstanceInput = Variant.TryGet<FMovieSceneTrackInstanceInput>())
 	{
-		// Track instance meta-data is shared between all players
 		FPreAnimatedTrackInstanceInputCaptureSources* TrackInstanceInputMetaData = Linker->PreAnimatedState.GetOrCreateTrackInstanceInputMetaData();
 		TrackInstanceInputMetaData->BeginTrackingCaptureSource(*TrackInstanceInput, MetaData);
 	}

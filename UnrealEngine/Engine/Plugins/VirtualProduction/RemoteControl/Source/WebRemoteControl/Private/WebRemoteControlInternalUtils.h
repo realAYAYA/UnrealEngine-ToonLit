@@ -96,7 +96,7 @@ namespace WebRemoteControlInternalUtils
 	 * @note InCompleteCallback will be called with an appropriate http response if the deserialization fails.
 	 */
 	template <typename RequestType>
-	UE_NODISCARD bool DeserializeRequestPayload(TConstArrayView<uint8> InTCHARPayload, const FHttpResultCallback* InCompleteCallback, RequestType& OutDeserializedRequest)
+	[[nodiscard]] bool DeserializeRequestPayload(TConstArrayView<uint8> InTCHARPayload, const FHttpResultCallback* InCompleteCallback, RequestType& OutDeserializedRequest)
 	{
 		FMemoryReaderView Reader(InTCHARPayload);
 		FJsonStructDeserializerBackend DeserializerBackend(Reader);
@@ -132,7 +132,7 @@ namespace WebRemoteControlInternalUtils
 	 * @param The wrapper structure to populate with the request's content.
 	 * @return Whether the deserialization was successful.
 	 */
-	UE_NODISCARD inline bool DeserializeWrappedRequestPayload(TConstArrayView<uint8> InTCHARPayload, const FHttpResultCallback* InCompleteCallback, FRCRequestWrapper& Wrapper)
+	[[nodiscard]] inline bool DeserializeWrappedRequestPayload(TConstArrayView<uint8> InTCHARPayload, const FHttpResultCallback* InCompleteCallback, FRCRequestWrapper& Wrapper)
 	{
 		if (!DeserializeRequestPayload(InTCHARPayload, InCompleteCallback, Wrapper))
 		{
@@ -155,7 +155,7 @@ namespace WebRemoteControlInternalUtils
 	 * @param OutErrorText If set, the string pointer will be populated with an error message on error.
 	 * @return Whether the delimiters were able to be found.
 	 */
-	UE_NODISCARD bool GetBatchRequestStructDelimiters(TConstArrayView<uint8> InTCHARPayload, TMap<int32, FBlockDelimiters>& OutStructParameters, FString* OutErrorText = nullptr);
+	[[nodiscard]] bool GetBatchRequestStructDelimiters(TConstArrayView<uint8> InTCHARPayload, TMap<int32, FBlockDelimiters>& OutStructParameters, FString* OutErrorText = nullptr);
 
 	/**
 	 * Get the struct delimiters for all the batched WebSocket requests.
@@ -164,7 +164,7 @@ namespace WebRemoteControlInternalUtils
 	 * @param OutErrorText If set, the string pointer will be populated with an error message on error.
 	 * @return Whether the delimiters were able to be found.
 	 */
-	UE_NODISCARD bool GetBatchWebSocketRequestStructDelimiters(TConstArrayView<uint8> InTCHARPayload, TArray<FBlockDelimiters>& OutStructParameters, FString* OutErrorText = nullptr);
+	[[nodiscard]] bool GetBatchWebSocketRequestStructDelimiters(TConstArrayView<uint8> InTCHARPayload, TArray<FBlockDelimiters>& OutStructParameters, FString* OutErrorText = nullptr);
 	
 	/**
 	 * Specialization of DeserializeRequestPayload that handles Batch requests.
@@ -177,7 +177,7 @@ namespace WebRemoteControlInternalUtils
 	 * @note InCompleteCallback will be called with an appropriate http response if the deserialization fails.
 	 */
 	template <>
-	UE_NODISCARD inline bool DeserializeRequestPayload(TConstArrayView<uint8> InTCHARPayload, const FHttpResultCallback* InCompleteCallback, FRCBatchRequest& OutDeserializedRequest)
+	[[nodiscard]] inline bool DeserializeRequestPayload(TConstArrayView<uint8> InTCHARPayload, const FHttpResultCallback* InCompleteCallback, FRCBatchRequest& OutDeserializedRequest)
 	{
 		FMemoryReaderView Reader(InTCHARPayload);
 		FJsonStructDeserializerBackend DeserializerBackend(Reader);
@@ -228,7 +228,7 @@ namespace WebRemoteControlInternalUtils
 	 * @note InCompleteCallback will be called with an appropriate http response if the deserialization fails.
 	 */
 	template <>
-	UE_NODISCARD inline bool DeserializeRequestPayload(TConstArrayView<uint8> InTCHARPayload, const FHttpResultCallback* InCompleteCallback, FRCWebSocketBatchRequest& OutDeserializedRequest)
+	[[nodiscard]] inline bool DeserializeRequestPayload(TConstArrayView<uint8> InTCHARPayload, const FHttpResultCallback* InCompleteCallback, FRCWebSocketBatchRequest& OutDeserializedRequest)
 	{
 		FMemoryReaderView Reader(InTCHARPayload);
 		FJsonStructDeserializerBackend DeserializerBackend(Reader);
@@ -298,7 +298,7 @@ namespace WebRemoteControlInternalUtils
 	 * @note InCompleteCallback will be called with an appropriate http response if the deserialization fails.
 	 */
 	template <typename RequestType>
-	UE_NODISCARD bool DeserializeRequest(const FHttpServerRequest& InRequest, const FHttpResultCallback* InCompleteCallback, RequestType& OutDeserializedRequest)
+	[[nodiscard]] bool DeserializeRequest(const FHttpServerRequest& InRequest, const FHttpResultCallback* InCompleteCallback, RequestType& OutDeserializedRequest)
 	{
 		static_assert(TIsDerivedFrom<RequestType, FRCRequest>::IsDerived, "Argument OutDeserializedRequest must derive from FRCRequest");
 		
@@ -325,14 +325,14 @@ namespace WebRemoteControlInternalUtils
 	 * 
 	 * @note InCompleteCallback will be called with an appropriate http response if the content type is not valid.
 	 */
-	UE_NODISCARD bool ValidateContentType(const FHttpServerRequest& InRequest, FString InContentType, const FHttpResultCallback& InCompleteCallback);
+	[[nodiscard]] bool ValidateContentType(const FHttpServerRequest& InRequest, FString InContentType, const FHttpResultCallback& InCompleteCallback);
 
 	/**
 	 * Check if a function call is valid since some objects//functions are disabled remotely for security reasons.
 	 * @param InRCCall The RC call to validate.
 	 * @param OutErrorText Optional error text.
 	 **/
-	UE_NODISCARD bool ValidateFunctionCall(const FRCCall& InRCCall, FString* OutErrorText);
+	[[nodiscard]] bool ValidateFunctionCall(const FRCCall& InRCCall, FString* OutErrorText);
 
 	/**
 	 * Add the desired content type to the http response headers.
@@ -379,7 +379,7 @@ namespace WebRemoteControlInternalUtils
 	 * @param Access The access mode to use for this operation.
 	 */
 	template <typename RequestType>
-	bool ModifyPropertyUsingPayload(FRemoteControlProperty& Property, const RequestType& Request, const TArrayView<uint8>& Payload, const FGuid& ClientId, FWebSocketMessageHandler& WebSocketHandler, ERCAccess Access)
+	bool ModifyPropertyUsingPayload(FRemoteControlProperty& Property, const RequestType& Request, const TArrayView<uint8>& Payload, const FGuid& ClientId, FWebSocketMessageHandler& WebSocketHandler, ERCAccess Access, FString* OutError = nullptr)
 	{
 		FRCObjectReference ObjectRef;
 
@@ -407,7 +407,7 @@ namespace WebRemoteControlInternalUtils
 
 		for (UObject* Object : Property.GetBoundObjects())
 		{
-			IRemoteControlModule::Get().ResolveObjectProperty(ObjectRef.Access, Object, Property.FieldPathInfo.ToString(), ObjectRef);
+			IRemoteControlModule::Get().ResolveObjectProperty(ObjectRef.Access, Object, Property.FieldPathInfo.ToString(), ObjectRef, OutError);
 
 			// Notify the handler before the change to ensure that the notification triggered by PostEditChange is ignored by the handler 
 			// if the client does not want remote change notifications.

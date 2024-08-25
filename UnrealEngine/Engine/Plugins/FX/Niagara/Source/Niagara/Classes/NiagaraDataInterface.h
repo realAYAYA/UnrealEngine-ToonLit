@@ -30,24 +30,34 @@ struct FNDITransformHandlerNoop
 {
 	FORCEINLINE void TransformPosition(FVector3f& V, const FMatrix44f& M) const { }
 	FORCEINLINE void TransformPosition(FVector3d& V, const FMatrix44d& M) const { }
-	FORCEINLINE void TransformVector(FVector3f& V, const FMatrix44f& M) const { }
-	FORCEINLINE void TransformVector(FVector3d& V, const FMatrix44d& M) const { }
+	FORCEINLINE void TransformUnitVector(FVector3f& V, const FMatrix44f& M) const { }
+	FORCEINLINE void TransformUnitVector(FVector3d& V, const FMatrix44d& M) const { }
 	FORCEINLINE void TransformNotUnitVector(FVector3f& V, const FMatrix44f& M) const { }
 	FORCEINLINE void TransformNotUnitVector(FVector3d& V, const FMatrix44d& M) const { }
 	FORCEINLINE void TransformRotation(FQuat4f& Q1, const FQuat4f& Q2) const { }
 	FORCEINLINE void TransformRotation(FQuat4d& Q1, const FQuat4d& Q2) const { }
+
+	UE_DEPRECATED(5.4, "Please update your code to use TransformUnitVector")
+	FORCEINLINE void TransformVector(FVector3f& V, const FMatrix44f& M) const { }
+	UE_DEPRECATED(5.4, "Please update your code to use TransformUnitVector")
+	FORCEINLINE void TransformVector(FVector3d& V, const FMatrix44d& M) const { }
 };
 
 struct FNDITransformHandler
 {
 	FORCEINLINE void TransformPosition(FVector3f& P, const FMatrix44f& M) const { P = M.TransformPosition(P); }
 	FORCEINLINE void TransformPosition(FVector3d& P, const FMatrix44d& M) const { P = M.TransformPosition(P); }
-	FORCEINLINE void TransformVector(FVector3f& V, const FMatrix44f& M) const { V = M.TransformVector(V).GetUnsafeNormal3(); }
-	FORCEINLINE void TransformVector(FVector3d& V, const FMatrix44d& M) const { V = M.TransformVector(V).GetUnsafeNormal3(); }
+	FORCEINLINE void TransformUnitVector(FVector3f& V, const FMatrix44f& M) const { V = M.TransformVector(V).GetUnsafeNormal3(); }
+	FORCEINLINE void TransformUnitVector(FVector3d& V, const FMatrix44d& M) const { V = M.TransformVector(V).GetUnsafeNormal3(); }
 	FORCEINLINE void TransformNotUnitVector(FVector3f& V, const FMatrix44f& M) const { V = M.TransformVector(V); }
 	FORCEINLINE void TransformNotUnitVector(FVector3d& V, const FMatrix44d& M) const { V = M.TransformVector(V); }
 	FORCEINLINE void TransformRotation(FQuat4f& Q1, const FQuat4f& Q2) const { Q1 = Q2 * Q1; }
 	FORCEINLINE void TransformRotation(FQuat4d& Q1, const FQuat4d& Q2) const { Q1 = Q2 * Q1; }
+
+	UE_DEPRECATED(5.4, "Please update your code to use TransformUnitVector")
+	FORCEINLINE void TransformVector(FVector3f& V, const FMatrix44f& M) const { V = M.TransformVector(V).GetUnsafeNormal3(); }
+	UE_DEPRECATED(5.4, "Please update your code to use TransformUnitVector")
+	FORCEINLINE void TransformVector(FVector3d& V, const FMatrix44d& M) const { V = M.TransformVector(V).GetUnsafeNormal3(); }
 };
 
 // FNiagaraDataInterfaceProxy should always outlive any ticks, etc, that are on the rendering thread.
@@ -639,8 +649,12 @@ public:
 	*/
 	virtual int32 PerInstanceDataSize()const { return 0; }
 
-	/** Gets all the available functions for this data interface. */
-	virtual void GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions) {}
+#if WITH_EDITORONLY_DATA
+	/**
+	Gets all the available functions for this data interface.
+	*/
+	NIAGARA_API void GetFunctionSignatures(TArray<FNiagaraFunctionSignature>& OutFunctions) const;
+#endif
 
 	/** Returns the delegate for the passed function signature. */
 	virtual void GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction &OutFunc) { };
@@ -673,13 +687,23 @@ public:
 	*/
 	virtual bool PostStageCanOverlapTickGroups() const { return true; }
 
+	UE_DEPRECATED(5.4, "RequiresDistanceFieldData was renamed to RequiresGlobalDistanceField.")
 	virtual bool RequiresDistanceFieldData() const { return false; }
+
+	virtual bool RequiresGlobalDistanceField() const
+	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
+		return RequiresDistanceFieldData();
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	}
 	virtual bool RequiresDepthBuffer() const { return false; }
 	virtual bool RequiresEarlyViewData() const { return false; }
 	virtual bool RequiresRayTracingScene() const { return false; }
 
 	virtual bool HasTickGroupPrereqs() const { return false; }
 	virtual ETickingGroup CalculateTickGroup(const void* PerInstanceData) const { return NiagaraFirstTickGroup; }
+	virtual bool HasTickGroupPostreqs() const { return false; }
+	virtual ETickingGroup CalculateFinalTickGroup(const void* PerInstanceData) const { return NiagaraLastTickGroup; }
 
 	/** Determines if this type definition matches to a known data interface type.*/
 	static NIAGARA_API bool IsDataInterfaceType(const FNiagaraTypeDefinition& TypeDef);
@@ -799,6 +823,20 @@ public:
 
 protected:
 	virtual void PushToRenderThreadImpl() {}
+
+	// deprecated function for backwards compatibility.  Callers should be using GetFunctionSignatures
+	// and sub classes should be implementing GetFunctionsInternal().
+	UE_DEPRECATED(5.4, "GetFunctions() should be renamed GetFunctionsInternal() and guarded with WITH_EDITORONLY_DATA.")
+	virtual void GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+	{
+#if WITH_EDITORONLY_DATA
+		GetFunctionsInternal(OutFunctions);
+#endif
+	}
+
+#if WITH_EDITORONLY_DATA
+	virtual void GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const {};
+#endif
 
 public:
 	void PushToRenderThread()
@@ -1331,6 +1369,53 @@ struct FNDIInputParam<FNiagaraSpawnInfo>
 	FORCEINLINE void Reset() { Count.Reset(); InterpStartDt.Reset();  IntervalDt.Reset(); SpawnGroup.Reset();}
 };
 
+template<>
+struct FNDIInputParam<FNiagaraEmitterID>
+{
+	VectorVM::FExternalFuncInputHandler<int32> Index;
+	FORCEINLINE FNDIInputParam(FVectorVMExternalFunctionContext& Context) : Index(Context) {}
+	FORCEINLINE FNDIInputParam() { }
+	FORCEINLINE void Init(FVectorVMExternalFunctionContext& Context) { new(this)FNDIInputParam<FNiagaraEmitterID>(Context); }
+	FORCEINLINE FNiagaraEmitterID GetAndAdvance() { return FNiagaraEmitterID(Index.GetAndAdvance()); }
+	FORCEINLINE FNiagaraEmitterID Get() { return FNiagaraEmitterID(Index.Get()); }
+	FORCEINLINE void Advance(int32 Count = 1) { return Index.Advance(Count); }
+	FORCEINLINE bool IsConstant() const { return Index.IsConstant(); }
+	FORCEINLINE void Reset() { Index.Reset(); }
+};
+
+template<>
+struct FNDIInputParam<FIntVector2>
+{
+	VectorVM::FExternalFuncInputHandler<int32> X;
+	VectorVM::FExternalFuncInputHandler<int32> Y;
+	FORCEINLINE FNDIInputParam(FVectorVMExternalFunctionContext& Context) : X(Context), Y(Context) {}
+	FORCEINLINE FIntVector2 GetAndAdvance() { return FIntVector2(X.GetAndAdvance(), Y.GetAndAdvance()); }
+	FORCEINLINE bool IsConstant() const { return X.IsConstant() && Y.IsConstant(); }
+};
+
+template<>
+struct FNDIInputParam<FIntVector3>
+{
+	VectorVM::FExternalFuncInputHandler<int32> X;
+	VectorVM::FExternalFuncInputHandler<int32> Y;
+	VectorVM::FExternalFuncInputHandler<int32> Z;
+	FORCEINLINE FNDIInputParam(FVectorVMExternalFunctionContext& Context) : X(Context), Y(Context), Z(Context) {}
+	FORCEINLINE FIntVector3 GetAndAdvance() { return FIntVector3(X.GetAndAdvance(), Y.GetAndAdvance(), Z.GetAndAdvance()); }
+	FORCEINLINE bool IsConstant() const { return X.IsConstant() && Y.IsConstant() && Z.IsConstant(); }
+};
+
+template<>
+struct FNDIInputParam<FIntVector4>
+{
+	VectorVM::FExternalFuncInputHandler<int32> X;
+	VectorVM::FExternalFuncInputHandler<int32> Y;
+	VectorVM::FExternalFuncInputHandler<int32> Z;
+	VectorVM::FExternalFuncInputHandler<int32> W;
+	FORCEINLINE FNDIInputParam(FVectorVMExternalFunctionContext& Context) : X(Context), Y(Context), Z(Context), W(Context) {}
+	FORCEINLINE FIntVector4 GetAndAdvance() { return FIntVector4(X.GetAndAdvance(), Y.GetAndAdvance(), Z.GetAndAdvance(), W.GetAndAdvance()); }
+	FORCEINLINE bool IsConstant() const { return X.IsConstant() && Y.IsConstant() && Z.IsConstant() && W.IsConstant(); }
+};
+
 //Helper to deal with types with potentially several output registers.
 template<typename T>
 struct FNDIOutputParam
@@ -1516,6 +1601,54 @@ struct FNDIOutputParam<FNiagaraID>
 	{
 		*Index.GetDestAndAdvance() = Val.Index;
 		*AcquireTag.GetDestAndAdvance() = Val.AcquireTag;
+	}
+};
+
+template<>
+struct FNDIOutputParam<FIntVector2>
+{
+	VectorVM::FExternalFuncRegisterHandler<int32> X;
+	VectorVM::FExternalFuncRegisterHandler<int32> Y;
+	FORCEINLINE FNDIOutputParam(FVectorVMExternalFunctionContext& Context) : X(Context), Y(Context) {}
+	FORCEINLINE bool IsValid() const { return X.IsValid() || Y.IsValid(); }
+	FORCEINLINE void SetAndAdvance(FIntVector2 Val)
+	{
+		*X.GetDestAndAdvance() = Val.X;
+		*Y.GetDestAndAdvance() = Val.Y;
+	}
+};
+
+template<>
+struct FNDIOutputParam<FIntVector3>
+{
+	VectorVM::FExternalFuncRegisterHandler<int32> X;
+	VectorVM::FExternalFuncRegisterHandler<int32> Y;
+	VectorVM::FExternalFuncRegisterHandler<int32> Z;
+	FORCEINLINE FNDIOutputParam(FVectorVMExternalFunctionContext& Context) : X(Context), Y(Context), Z(Context) {}
+	FORCEINLINE bool IsValid() const { return X.IsValid() || Y.IsValid() || Z.IsValid(); }
+	FORCEINLINE void SetAndAdvance(FIntVector3 Val)
+	{
+		*X.GetDestAndAdvance() = Val.X;
+		*Y.GetDestAndAdvance() = Val.Y;
+		*Z.GetDestAndAdvance() = Val.Z;
+	}
+};
+
+template<>
+struct FNDIOutputParam<FIntVector4>
+{
+	VectorVM::FExternalFuncRegisterHandler<int32> X;
+	VectorVM::FExternalFuncRegisterHandler<int32> Y;
+	VectorVM::FExternalFuncRegisterHandler<int32> Z;
+	VectorVM::FExternalFuncRegisterHandler<int32> W;
+	FORCEINLINE FNDIOutputParam(FVectorVMExternalFunctionContext& Context) : X(Context), Y(Context), Z(Context), W(Context) {}
+	FORCEINLINE bool IsValid() const { return X.IsValid() || Y.IsValid() || Z.IsValid() || W.IsValid(); }
+	FORCEINLINE void SetAndAdvance(FIntVector4 Val)
+	{
+		*X.GetDestAndAdvance() = Val.X;
+		*Y.GetDestAndAdvance() = Val.Y;
+		*Z.GetDestAndAdvance() = Val.Z;
+		*W.GetDestAndAdvance() = Val.W;
 	}
 };
 

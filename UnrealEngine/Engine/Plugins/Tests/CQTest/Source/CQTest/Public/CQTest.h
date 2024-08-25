@@ -70,6 +70,36 @@ struct TBaseTest
 	void AddCommand(IAutomationLatentCommand* Cmd);
 	void AddCommand(TSharedPtr<IAutomationLatentCommand> Cmd);
 
+	/**
+	 * Adds an error message to this test
+	 *
+	 * @param	InError	Error message to add to this test
+	 */
+	void AddError(const FString& InError) const;
+
+	/**
+	 * Adds an error message to this test if the condition is false
+	 *
+	 * @param   bCondition	The condition to validate.
+	 * @param   InError		Error message to add to this test
+	 * @return	False if there was an error
+	 */
+	bool AddErrorIfFalse(bool bCondition, const FString& InError) const;
+
+	/**
+	 * Adds a warning to this test
+	 *
+	 * @param	InWarning	Warning message to add to this test
+	 */
+	void AddWarning(const FString& InWarning) const;
+
+	/**
+	 * Adds a log item to this test
+	 *
+	 * @param	InLogItem	Log item to add to this test
+	 */
+	void AddInfo(const FString& InLogItem) const;
+
 	virtual void RunTest(const FString& MethodName) = 0;
 
 	bool bInitializing{ true };

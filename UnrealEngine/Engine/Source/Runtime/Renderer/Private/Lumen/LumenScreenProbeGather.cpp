@@ -14,9 +14,8 @@
 #include "ScreenSpaceDenoise.h"
 #include "HairStrands/HairStrandsEnvironment.h"
 #include "ShaderPrint.h"
-#include "Strata/Strata.h"
+#include "Substrate/Substrate.h"
 #include "LumenReflections.h"
-#include "DepthCopy.h"
 
 extern FLumenGatherCvarState GLumenGatherCvars;
 
@@ -194,10 +193,9 @@ FAutoConsoleVariableRef CVarLumenScreenProbeTemporalFastUpdateModeUseNeighborhoo
 	ECVF_Scalability | ECVF_RenderThreadSafe
 	);
 
-int32 GLumenScreenProbeTemporalRejectBasedOnNormal = 0;
-FAutoConsoleVariableRef CVarLumenScreenProbeTemporalRejectBasedOnNormal(
+static TAutoConsoleVariable<int32> CVarLumenScreenProbeTemporalRejectBasedOnNormal(
 	TEXT("r.Lumen.ScreenProbeGather.Temporal.RejectBasedOnNormal"),
-	GLumenScreenProbeTemporalRejectBasedOnNormal,
+	0,
 	TEXT("Whether to reject history lighting based on their normal.  Increases cost of the temporal filter but can reduce streaking especially around character feet."),
 	ECVF_Scalability | ECVF_RenderThreadSafe
 	);
@@ -217,6 +215,12 @@ FAutoConsoleVariableRef CVarLumenScreenProbeTemporalMaxFramesAccumulated(
 	TEXT("Lower values cause the temporal filter to propagate lighting changes faster, but also increase flickering from noise."),
 	ECVF_Scalability | ECVF_RenderThreadSafe
 	);
+
+TAutoConsoleVariable<int32> CVarLumenScreenProbeTemporalMaxRayDirections(
+	TEXT("r.Lumen.ScreenProbeGather.Temporal.MaxRayDirections"),
+	8,
+	TEXT("Number of possible random directions per pixel. Should be tweaked based on MaxFramesAccumulated."),
+	ECVF_Scalability | ECVF_RenderThreadSafe);
 
 float GLumenScreenProbeTemporalHistoryNormalThreshold = 45.0f;
 FAutoConsoleVariableRef CVarLumenScreenProbeTemporalHistoryNormalThreshold(
@@ -305,6 +309,14 @@ FAutoConsoleVariableRef GVarLumenScreenProbeMaxRoughnessToEvaluateRoughSpecular(
 	TEXT("r.Lumen.ScreenProbeGather.MaxRoughnessToEvaluateRoughSpecular"),
 	GLumenScreenProbeMaxRoughnessToEvaluateRoughSpecular,
 	TEXT("Maximum roughness value to evaluate rough specular in Screen Probe Gather.  Lower values reduce GPU cost of integration, but also lose rough specular."),
+	ECVF_Scalability | ECVF_RenderThreadSafe
+);
+
+int32 GLumenScreenProbeRoughSpecularSamplingMode = 0;
+FAutoConsoleVariableRef GVarLumenScreenProbeRoughSpecularSamplingMode(
+	TEXT("r.Lumen.ScreenProbeGather.RoughSpecularSamplingMode"),
+	GLumenScreenProbeRoughSpecularSamplingMode,
+	TEXT("Mode 0: use the diffuse SH sample as specular. Mode 1: sample the SH along the main GGX specular reflection vector."),
 	ECVF_Scalability | ECVF_RenderThreadSafe
 );
 
@@ -400,6 +412,12 @@ namespace LumenScreenProbeGather
 	float GetScreenProbeFullResolutionJitterWidth(const FViewInfo& View)
 	{
 		return GLumenScreenProbeFullResolutionJitterWidth * (View.FinalPostProcessSettings.LumenFinalGatherQuality >= 4.0f ? .5f : 1.0f);
+	}
+
+	bool UseRejectBasedOnNormal()
+	{
+		return GLumenScreenProbeGather != 0
+			&& CVarLumenScreenProbeTemporalRejectBasedOnNormal.GetValueOnRenderThread() != 0;
 	}
 }
 
@@ -558,7 +576,7 @@ class FScreenProbeDownsampleDepthUniformCS : public FGlobalShader
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float3>, RWScreenProbeTranslatedWorldPosition)
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneTextureUniformParameters, SceneTexturesStruct)
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FSceneTextureParameters, SceneTextures)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FScreenProbeParameters, ScreenProbeParameters)
 	END_SHADER_PARAMETER_STRUCT()
@@ -600,7 +618,7 @@ class FScreenProbeAdaptivePlacementCS : public FGlobalShader
 		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<uint>, RWScreenTileAdaptiveProbeIndices)
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneTextureUniformParameters, SceneTexturesStruct)
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FSceneTextureParameters, SceneTextures)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FScreenProbeParameters, ScreenProbeParameters)
 		SHADER_PARAMETER(uint32, PlacementDownsampleFactor)
@@ -755,14 +773,14 @@ class FScreenProbeTileClassificationMarkCS : public FGlobalShader
 	SHADER_USE_PARAMETER_STRUCT(FScreenProbeTileClassificationMarkCS, FGlobalShader)
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, RWDiffuseIndirect)
-		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float3>, RWBackfaceDiffuseIndirect)
-		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float3>, RWRoughSpecularIndirect)
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2DArray<float4>, RWDiffuseIndirect)
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2DArray<float3>, RWBackfaceDiffuseIndirect)
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2DArray<float3>, RWRoughSpecularIndirect)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, RWIntegrateIndirectArgs)
-		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<uint>, RWTileClassificationModes)
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2DArray<uint>, RWTileClassificationModes)
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneTextureUniformParameters, SceneTexturesStruct)
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 		SHADER_PARAMETER_STRUCT_INCLUDE(LumenReflections::FCompositeParameters, ReflectionsCompositeParameters)
 		SHADER_PARAMETER(uint32, DefaultDiffuseIntegrationMethod)
 		SHADER_PARAMETER(float, MaxRoughnessToEvaluateRoughSpecular)
@@ -772,7 +790,7 @@ class FScreenProbeTileClassificationMarkCS : public FGlobalShader
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
 	{
 		FPermutationDomain PermutationVector(Parameters.PermutationId);
-		if (PermutationVector.Get<FOverflowTile>() && !Strata::IsStrataEnabled())
+		if (PermutationVector.Get<FOverflowTile>() && !Substrate::IsSubstrateEnabled())
 		{
 			return false;
 		}
@@ -800,9 +818,9 @@ class FScreenProbeTileClassificationBuildListsCS : public FGlobalShader
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWBuffer<uint>, RWIntegrateIndirectArgs)
 		SHADER_PARAMETER_RDG_BUFFER_UAV(RWStructuredBuffer<uint2>, RWIntegrateTileData)
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<uint>, TileClassificationModes)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2DArray<uint>, TileClassificationModes)
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 		SHADER_PARAMETER(FIntPoint, ViewportTileDimensions)
 		SHADER_PARAMETER(FIntPoint, ViewportTileDimensionsWithOverflow)
 		RDG_BUFFER_ACCESS(TileIndirectBuffer, ERHIAccess::IndirectArgs)
@@ -811,7 +829,7 @@ class FScreenProbeTileClassificationBuildListsCS : public FGlobalShader
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
 	{
 		FPermutationDomain PermutationVector(Parameters.PermutationId);
-		if (PermutationVector.Get<FOverflowTile>() && !Strata::IsStrataEnabled())
+		if (PermutationVector.Get<FOverflowTile>() && !Substrate::IsSubstrateEnabled())
 		{
 			return false;
 		}
@@ -841,15 +859,15 @@ class FScreenProbeIntegrateCS : public FGlobalShader
 	SHADER_USE_PARAMETER_STRUCT(FScreenProbeIntegrateCS, FGlobalShader)
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float4>, RWDiffuseIndirect)
-		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float3>, RWBackfaceDiffuseIndirect)
-		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float3>, RWRoughSpecularIndirect)
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2DArray<float4>, RWDiffuseIndirect)
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2DArray<float3>, RWBackfaceDiffuseIndirect)
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2DArray<float3>, RWRoughSpecularIndirect)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint2>, IntegrateTileData)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FScreenProbeParameters, ScreenProbeParameters)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FScreenProbeGatherParameters, GatherParameters)
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneTextureUniformParameters, SceneTexturesStruct)
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FLumenScreenSpaceBentNormalParameters, ScreenSpaceBentNormalParameters)
 		SHADER_PARAMETER_STRUCT_INCLUDE(LumenReflections::FCompositeParameters, ReflectionsCompositeParameters)
 		SHADER_PARAMETER(float, FullResolutionJitterWidth)
@@ -866,7 +884,7 @@ class FScreenProbeIntegrateCS : public FGlobalShader
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
 	{
 		FPermutationDomain PermutationVector(Parameters.PermutationId);
-		if (PermutationVector.Get<FOverflowTile>() && !Strata::IsStrataEnabled())
+		if (PermutationVector.Get<FOverflowTile>() && !Substrate::IsSubstrateEnabled())
 		{
 			return false;
 		}
@@ -880,7 +898,8 @@ class FScreenProbeIntegrateCS : public FGlobalShader
 	class FOverflowTile : SHADER_PERMUTATION_BOOL("PERMUTATION_OVERFLOW_TILE");
 	class FDirectLighting : SHADER_PERMUTATION_BOOL("SUPPORT_DIRECT_LIGHTING");
 	class FSupportBackfaceDiffuse : SHADER_PERMUTATION_BOOL("SUPPORT_BACKFACE_DIFFUSE");
-	using FPermutationDomain = TShaderPermutationDomain<FTileClassificationMode, FShortRangeAO, FProbeIrradianceFormat, FStochasticProbeInterpolation, FOverflowTile, FDirectLighting, FSupportBackfaceDiffuse>;
+	class FRoughSpecularSamplingMode : SHADER_PERMUTATION_INT("ROUGH_SPECULAR_SAMPLING_MODE", 2);
+	using FPermutationDomain = TShaderPermutationDomain<FTileClassificationMode, FShortRangeAO, FProbeIrradianceFormat, FStochasticProbeInterpolation, FOverflowTile, FDirectLighting, FSupportBackfaceDiffuse, FRoughSpecularSamplingMode>;
 
 	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 	{
@@ -898,23 +917,22 @@ class FScreenProbeTemporalReprojectionCS : public FGlobalShader
 	SHADER_USE_PARAMETER_STRUCT(FScreenProbeTemporalReprojectionCS, FGlobalShader)
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
-		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float3>, RWNewHistoryDiffuseIndirect)
-		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float3>, RWNewHistoryBackfaceDiffuseIndirect)
-		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float3>, RWNewHistoryRoughSpecularIndirect)
-		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float>, RWNumHistoryFramesAccumulated)
-		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float>, RWNewHistoryFastUpdateMode)
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2DArray<float3>, RWNewHistoryDiffuseIndirect)
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2DArray<float3>, RWNewHistoryBackfaceDiffuseIndirect)
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2DArray<float3>, RWNewHistoryRoughSpecularIndirect)
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2DArray<float>, RWNumHistoryFramesAccumulated)
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2DArray<float>, RWNewHistoryFastUpdateMode)
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FSceneTextureParameters, SceneTextures)
 		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneTextureUniformParameters, SceneTexturesStruct)
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, DiffuseIndirectHistory)
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, BackfaceDiffuseIndirectHistory)
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, RoughSpecularIndirectHistory)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2DArray, DiffuseIndirectHistory)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2DArray, BackfaceDiffuseIndirectHistory)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2DArray, RoughSpecularIndirectHistory)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2DArray, HistoryNumFramesAccumulated)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2DArray, FastUpdateModeHistory)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, DiffuseIndirectDepthHistory)
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, HistoryNumFramesAccumulated)
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, FastUpdateModeHistory)
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, NormalHistory)
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<uint>, BSDFTileHistory)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, DiffuseIndirectNormalHistory)
 		SHADER_PARAMETER(float,HistoryDistanceThreshold)
 		SHADER_PARAMETER(float,PrevSceneColorPreExposureCorrection)
 		SHADER_PARAMETER(float,InvFractionOfLightingMovingForFastUpdateMode)
@@ -925,14 +943,10 @@ class FScreenProbeTemporalReprojectionCS : public FGlobalShader
 		SHADER_PARAMETER(FVector4f,HistoryUVToScreenPositionScaleBias)
 		SHADER_PARAMETER(FVector4f,HistoryUVMinMax)
 		SHADER_PARAMETER(FIntVector4,HistoryViewportMinMax)
-		SHADER_PARAMETER(FVector4f, EffectiveResolution)
-		SHADER_PARAMETER(FVector4f, HistoryEffectiveResolution)
-		SHADER_PARAMETER(FIntPoint, HistoryOverflowTileOffset)
-		SHADER_PARAMETER(FIntPoint, HistoryOverflowTileCount)
-		SHADER_PARAMETER(uint32, bIsStrataTileHistoryValid)
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, DiffuseIndirect)
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, BackfaceDiffuseIndirect)
-		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, RoughSpecularIndirect)
+		SHADER_PARAMETER(uint32, bIsSubstrateTileHistoryValid)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2DArray, DiffuseIndirect)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2DArray, BackfaceDiffuseIndirect)
+		SHADER_PARAMETER_RDG_TEXTURE(Texture2DArray, RoughSpecularIndirect)
 		RDG_BUFFER_ACCESS(TileIndirectBuffer, ERHIAccess::IndirectArgs)
 	END_SHADER_PARAMETER_STRUCT()
 
@@ -953,7 +967,7 @@ class FScreenProbeTemporalReprojectionCS : public FGlobalShader
 		}
 #endif
 		FPermutationDomain PermutationVector(Parameters.PermutationId);
-		if (PermutationVector.Get<FOverflowTile>() && !Strata::IsStrataEnabled())
+		if (PermutationVector.Get<FOverflowTile>() && !Substrate::IsSubstrateEnabled())
 		{
 			return false;
 		}
@@ -974,16 +988,17 @@ class FScreenProbeTemporalReprojectionCS : public FGlobalShader
 
 IMPLEMENT_GLOBAL_SHADER(FScreenProbeTemporalReprojectionCS, "/Engine/Private/Lumen/LumenScreenProbeGather.usf", "ScreenProbeTemporalReprojectionCS", SF_Compute);
 
-class FLumenScreenProbeStrataDebugPass : public FGlobalShader
+class FLumenScreenProbeSubstrateDebugPass : public FGlobalShader
 {
-	DECLARE_GLOBAL_SHADER(FLumenScreenProbeStrataDebugPass)
-	SHADER_USE_PARAMETER_STRUCT(FLumenScreenProbeStrataDebugPass, FGlobalShader)
+	DECLARE_GLOBAL_SHADER(FLumenScreenProbeSubstrateDebugPass)
+	SHADER_USE_PARAMETER_STRUCT(FLumenScreenProbeSubstrateDebugPass, FGlobalShader)
 
 	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+		SHADER_PARAMETER(uint32, LayerCount)
 		SHADER_PARAMETER(FIntPoint, ViewportIntegrateTileDimensions)
 		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
 		SHADER_PARAMETER_STRUCT_INCLUDE(ShaderPrint::FShaderParameters, ShaderPrint)
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, IntegrateTileData)
 		SHADER_PARAMETER_RDG_BUFFER_SRV(Buffer<uint>, IntegrateIndirectArgs)
 	END_SHADER_PARAMETER_STRUCT()
@@ -1006,7 +1021,7 @@ class FLumenScreenProbeStrataDebugPass : public FGlobalShader
 	}
 };
 
-IMPLEMENT_GLOBAL_SHADER(FLumenScreenProbeStrataDebugPass, "/Engine/Private/Lumen/LumenScreenProbeGather.usf", "ScreenProbeDebugMain", SF_Compute);
+IMPLEMENT_GLOBAL_SHADER(FLumenScreenProbeSubstrateDebugPass, "/Engine/Private/Lumen/LumenScreenProbeGather.usf", "ScreenProbeDebugMain", SF_Compute);
 
 void AddLumenScreenProbeDebugPass(
 	FRDGBuilder& GraphBuilder, 
@@ -1023,16 +1038,17 @@ void AddLumenScreenProbeDebugPass(
 	ShaderPrint::RequestSpaceForLines(1024);
 	ShaderPrint::RequestSpaceForTriangles(ViewportIntegrateTileDimensionsWithOverflow.X * ViewportIntegrateTileDimensionsWithOverflow.Y * 2);
 
-	FLumenScreenProbeStrataDebugPass::FParameters* PassParameters = GraphBuilder.AllocParameters<FLumenScreenProbeStrataDebugPass::FParameters>();
+	FLumenScreenProbeSubstrateDebugPass::FParameters* PassParameters = GraphBuilder.AllocParameters<FLumenScreenProbeSubstrateDebugPass::FParameters>();
 	PassParameters->View = View.ViewUniformBuffer;
-	PassParameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
+	PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
+	PassParameters->LayerCount = Substrate::GetSubstrateMaxClosureCount(View);
 	PassParameters->ViewportIntegrateTileDimensions = ViewportIntegrateTileDimensions;
 	PassParameters->IntegrateTileData = GraphBuilder.CreateSRV(IntegrateTileData);
 	PassParameters->IntegrateIndirectArgs = GraphBuilder.CreateSRV(IntegrateIndirectArgs, PF_R32_UINT);
 	ShaderPrint::SetParameters(GraphBuilder, View.ShaderPrintData, PassParameters->ShaderPrint);
 
-	FLumenScreenProbeStrataDebugPass::FPermutationDomain PermutationVector;
-	auto ComputeShader = View.ShaderMap->GetShader<FLumenScreenProbeStrataDebugPass>(PermutationVector);
+	FLumenScreenProbeSubstrateDebugPass::FPermutationDomain PermutationVector;
+	auto ComputeShader = View.ShaderMap->GetShader<FLumenScreenProbeSubstrateDebugPass>(PermutationVector);
 	FComputeShaderUtils::AddPass(
 		GraphBuilder,
 		RDG_EVENT_NAME("ScreenProbeDebug"),
@@ -1078,9 +1094,10 @@ void InterpolateAndIntegrate(
 	const bool bApplyShortRangeAO = ScreenSpaceBentNormalParameters.UseShortRangeAO != 0 && LumenScreenProbeGather::ApplyShortRangeAODuringIntegration();
 	const bool bUseTileClassification = GLumenScreenProbeIntegrationTileClassification != 0 && LumenScreenProbeGather::GetDiffuseIntegralMethod() != 2;
 	const bool bSupportBackfaceDiffuse = BackfaceDiffuseIndirect != nullptr;
+	const int32 RoughSpecularSamplingMode = GLumenScreenProbeRoughSpecularSamplingMode > 0 ? 1 : 0;
 
 	LumenReflections::FCompositeParameters ReflectionsCompositeParameters;
-	LumenReflections::SetupCompositeParameters(ReflectionsCompositeParameters);
+	LumenReflections::SetupCompositeParameters(View, ReflectionsCompositeParameters);
 
 	if (bSSREnabled)
 	{
@@ -1092,9 +1109,9 @@ void InterpolateAndIntegrate(
 	{
 		RDG_EVENT_SCOPE(GraphBuilder, "Integrate");
 
-		const uint32 ClassificationScaleFactor = Strata::IsStrataEnabled() ? 2u : 1u;
+		const uint32 ClassificationScaleFactor = Substrate::IsSubstrateEnabled() ? 2u : 1u;
 		FRDGBufferRef IntegrateIndirectArgs = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateIndirectDesc<FRHIDispatchIndirectParameters>(ClassificationScaleFactor * (uint32)EScreenProbeIntegrateTileClassification::Num), TEXT("Lumen.ScreenProbeGather.IntegrateIndirectArgs"));
-		if (Strata::IsStrataEnabled())
+		if (Substrate::IsSubstrateEnabled())
 		{
 			AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(IntegrateIndirectArgs, PF_R32_UINT), 0u);
 		}
@@ -1105,12 +1122,13 @@ void InterpolateAndIntegrate(
 
 		checkf(ViewportIntegrateTileDimensions.X > 0 && ViewportIntegrateTileDimensions.Y > 0, TEXT("Compute shader needs non-zero dispatch to clear next pass's indirect args"));
 
-		const FIntPoint EffectiveBufferResolution = Strata::GetStrataTextureResolution(View, SceneTextures.Config.Extent);
+		const FIntPoint EffectiveBufferResolution = Substrate::GetSubstrateTextureResolution(View, SceneTextures.Config.Extent);
+		const uint32 ClosureCount = Substrate::GetSubstrateMaxClosureCount(View);
 		const FIntPoint TileClassificationBufferDimensions(
 			FMath::DivideAndRoundUp(EffectiveBufferResolution.X, GScreenProbeIntegrateTileSize),
 			FMath::DivideAndRoundUp(EffectiveBufferResolution.Y, GScreenProbeIntegrateTileSize));
 
-		FRDGTextureDesc TileClassificationModesDesc = FRDGTextureDesc::Create2D(TileClassificationBufferDimensions, PF_R8_UINT, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV);
+		FRDGTextureDesc TileClassificationModesDesc = FRDGTextureDesc::Create2DArray(TileClassificationBufferDimensions, PF_R8_UINT, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV, ClosureCount);
 		FRDGTextureRef TileClassificationModes = GraphBuilder.CreateTexture(TileClassificationModesDesc, TEXT("Lumen.ScreenProbeGather.TileClassificationModes"));
 
 		{
@@ -1130,7 +1148,7 @@ void InterpolateAndIntegrate(
 				PassParameters->RWTileClassificationModes = RWTileClassificationModes;
 				PassParameters->View = View.ViewUniformBuffer;
 				PassParameters->SceneTexturesStruct = SceneTextures.UniformBuffer;
-				PassParameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
+				PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 				PassParameters->DefaultDiffuseIntegrationMethod = (uint32)LumenScreenProbeGather::GetDiffuseIntegralMethod();
 				PassParameters->ReflectionsCompositeParameters = ReflectionsCompositeParameters;
 				PassParameters->MaxRoughnessToEvaluateRoughSpecular = GLumenScreenProbeMaxRoughnessToEvaluateRoughSpecular;
@@ -1142,14 +1160,14 @@ void InterpolateAndIntegrate(
 
 				if (bOverflow)
 				{
-					PassParameters->TileIndirectBuffer = View.StrataViewData.BSDFTileDispatchIndirectBuffer;
+					PassParameters->TileIndirectBuffer = View.SubstrateViewData.ClosureTileDispatchIndirectBuffer;
 					FComputeShaderUtils::AddPass(
 						GraphBuilder,
 						RDG_EVENT_NAME("TileClassificationMark(Overflow)"),
 						ComputePassFlags,
 						ComputeShader,
 						PassParameters,
-						View.StrataViewData.BSDFTileDispatchIndirectBuffer,
+						View.SubstrateViewData.ClosureTileDispatchIndirectBuffer,
 						0u);
 				}
 				else
@@ -1165,7 +1183,7 @@ void InterpolateAndIntegrate(
 			};
 		
 			ScreenProbeTileClassificationMark(false);
-			if (Strata::IsStrataEnabled())
+			if (Substrate::IsSubstrateEnabled())
 			{
 				ScreenProbeTileClassificationMark(true);
 			}
@@ -1184,7 +1202,7 @@ void InterpolateAndIntegrate(
 				PassParameters->RWIntegrateTileData = RWIntegrateTileData;
 				PassParameters->TileClassificationModes = TileClassificationModes;
 				PassParameters->View = View.ViewUniformBuffer;
-				PassParameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
+				PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 				PassParameters->ViewportTileDimensions = ViewportIntegrateTileDimensions;
 				PassParameters->ViewportTileDimensionsWithOverflow = TileClassificationBufferDimensions;
 
@@ -1194,14 +1212,14 @@ void InterpolateAndIntegrate(
 
 				if (bOverflow)
 				{
-					PassParameters->TileIndirectBuffer = View.StrataViewData.BSDFTilePerThreadDispatchIndirectBuffer;
+					PassParameters->TileIndirectBuffer = View.SubstrateViewData.ClosureTilePerThreadDispatchIndirectBuffer;
 					FComputeShaderUtils::AddPass(
 						GraphBuilder,
 						RDG_EVENT_NAME("TileClassificationBuildLists(Overflow)"),
 						ComputePassFlags,
 						ComputeShader,
 						PassParameters,
-						View.StrataViewData.BSDFTilePerThreadDispatchIndirectBuffer, 0u);
+						View.SubstrateViewData.ClosureTilePerThreadDispatchIndirectBuffer, 0u);
 				}
 				else
 				{
@@ -1216,7 +1234,7 @@ void InterpolateAndIntegrate(
 			};
 		
 			ScreenProbeTileClassificationBuildLists(false);
-			if (Strata::IsStrataEnabled())
+			if (Substrate::IsSubstrateEnabled())
 			{
 				ScreenProbeTileClassificationBuildLists(true);
 			}
@@ -1251,7 +1269,7 @@ void InterpolateAndIntegrate(
 				PassParameters->ViewportTileDimensions = ViewportIntegrateTileDimensions;
 				PassParameters->ViewportTileDimensionsWithOverflow = TileClassificationBufferDimensions;
 				PassParameters->IndirectArgs = IntegrateIndirectArgs;
-				PassParameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
+				PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 
 				FScreenProbeIntegrateCS::FPermutationDomain PermutationVector;
 				PermutationVector.Set< FScreenProbeIntegrateCS::FOverflowTile >(bOverflow);
@@ -1261,6 +1279,7 @@ void InterpolateAndIntegrate(
 				PermutationVector.Set< FScreenProbeIntegrateCS::FStochasticProbeInterpolation >(GLumenScreenProbeStochasticInterpolation != 0);
 				PermutationVector.Set< FScreenProbeIntegrateCS::FDirectLighting >(bRenderDirectLighting && !GLumenScreenProbeInjectLightsToProbes);
 				PermutationVector.Set< FScreenProbeIntegrateCS::FSupportBackfaceDiffuse >(bSupportBackfaceDiffuse);
+				PermutationVector.Set< FScreenProbeIntegrateCS::FRoughSpecularSamplingMode >(RoughSpecularSamplingMode);
 				auto ComputeShader = View.ShaderMap->GetShader<FScreenProbeIntegrateCS>(PermutationVector);
 
 				FComputeShaderUtils::AddPass(
@@ -1274,7 +1293,7 @@ void InterpolateAndIntegrate(
 			};
 
 			ScreenProbeIntegrate(false);
-			if (Strata::IsStrataEnabled())
+			if (Substrate::IsSubstrateEnabled())
 			{
 				ScreenProbeIntegrate(true);
 			}
@@ -1288,6 +1307,8 @@ void InterpolateAndIntegrate(
 	}
 	else // No tile classification
 	{	
+		const uint32 ClosureCount = Substrate::GetSubstrateMaxClosureCount(View);
+
 		auto ScreenProbeIntegrate = [&](bool bOverflow)
 		{
 			FScreenProbeIntegrateCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FScreenProbeIntegrateCS::FParameters>();
@@ -1315,18 +1336,22 @@ void InterpolateAndIntegrate(
 			PassParameters->DefaultDiffuseIntegrationMethod = (uint32)LumenScreenProbeGather::GetDiffuseIntegralMethod();
 			PassParameters->ViewportTileDimensions = FIntPoint(0, 0);
 			PassParameters->ViewportTileDimensionsWithOverflow = FIntPoint(0, 0);
-			PassParameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
+			PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 
 			FScreenProbeIntegrateCS::FPermutationDomain PermutationVector;
 			PermutationVector.Set< FScreenProbeIntegrateCS::FOverflowTile >(bOverflow);
 			PermutationVector.Set< FScreenProbeIntegrateCS::FTileClassificationMode >((uint32)EScreenProbeIntegrateTileClassification::Num);
 			PermutationVector.Set< FScreenProbeIntegrateCS::FShortRangeAO >(bApplyShortRangeAO);
+			PermutationVector.Set< FScreenProbeIntegrateCS::FProbeIrradianceFormat >(LumenScreenProbeGather::GetScreenProbeIrradianceFormat(View.Family->EngineShowFlags));
+			PermutationVector.Set< FScreenProbeIntegrateCS::FStochasticProbeInterpolation >(GLumenScreenProbeStochasticInterpolation != 0);
 			PermutationVector.Set< FScreenProbeIntegrateCS::FDirectLighting >(bRenderDirectLighting && !GLumenScreenProbeInjectLightsToProbes);
 			PermutationVector.Set< FScreenProbeIntegrateCS::FSupportBackfaceDiffuse >(bSupportBackfaceDiffuse);
+			PermutationVector.Set< FScreenProbeIntegrateCS::FRoughSpecularSamplingMode >(RoughSpecularSamplingMode);
 			auto ComputeShader = View.ShaderMap->GetShader<FScreenProbeIntegrateCS>(PermutationVector);
 
-			const FIntPoint OverflowViewRect = View.StrataViewData.OverflowTileCount * STRATA_TILE_SIZE;
-			FIntPoint DispatchViewRect = bOverflow ? OverflowViewRect : View.ViewRect.Size();
+			const FIntPoint DispatchViewRect = View.ViewRect.Size();
+			FIntVector DispatchCount = FComputeShaderUtils::GetGroupCount(DispatchViewRect, GScreenProbeIntegrateTileSize);
+			DispatchCount.Z = ClosureCount;
 
 			FComputeShaderUtils::AddPass(
 				GraphBuilder,
@@ -1334,11 +1359,11 @@ void InterpolateAndIntegrate(
 				ComputePassFlags,
 				ComputeShader,
 				PassParameters,
-				FComputeShaderUtils::GetGroupCount(DispatchViewRect, GScreenProbeIntegrateTileSize));
+				DispatchCount);
 		};
 
 		ScreenProbeIntegrate(false);
-		if (Strata::IsStrataEnabled())
+		if (Substrate::IsSubstrateEnabled())
 		{
 			ScreenProbeIntegrate(true);
 		}
@@ -1367,18 +1392,18 @@ void UpdateHistoryScreenProbeGather(
 		FVector4f* DiffuseIndirectHistoryScreenPositionScaleBias = &ScreenProbeGatherState.DiffuseIndirectHistoryScreenPositionScaleBias;
 		TRefCountPtr<IPooledRenderTarget>* HistoryNumFramesAccumulated = &ScreenProbeGatherState.NumFramesAccumulatedRT;
 		TRefCountPtr<IPooledRenderTarget>* FastUpdateModeHistoryState = &ScreenProbeGatherState.FastUpdateModeHistoryRT;
-		TRefCountPtr<IPooledRenderTarget>& NormalHistoryState = ScreenProbeGatherState.NormalHistoryRT;
 
-		const bool bWantToRejectBasedOnNormal = GLumenScreenProbeTemporalRejectBasedOnNormal != 0
-			&& !Strata::IsStrataEnabled(); // STRATA_TODO provide Lumen with a valid normal
-		const bool bRejectBasedOnNormal = bWantToRejectBasedOnNormal && NormalHistoryState;
+		FRDGTextureRef OldNormalHistory = View.ViewState->Lumen.NormalHistoryRT ? GraphBuilder.RegisterExternalTexture(View.ViewState->Lumen.NormalHistoryRT) : nullptr;
+
+		const uint32 ClosureCount = Substrate::GetSubstrateMaxClosureCount(View);
+		const bool bRejectBasedOnNormal = LumenScreenProbeGather::UseRejectBasedOnNormal() && OldNormalHistory;
 		const bool bSupportBackfaceDiffuse = BackfaceDiffuseIndirect != nullptr;
-		const bool bOverflowTileHistoryValid = Strata::IsStrataEnabled() ? View.StrataViewData.MaxBSDFCount == ScreenProbeGatherState.HistoryStrataMaxBSDFCount : true;
+		const bool bOverflowTileHistoryValid = Substrate::IsSubstrateEnabled() ? ClosureCount == ScreenProbeGatherState.HistorySubstrateMaxClosureCount : true;
 
 		ensureMsgf(SceneTextures.Velocity->Desc.Format != PF_G16R16, TEXT("Lumen requires 3d velocity.  Update Velocity format code."));
 
 		// If the scene render targets reallocate, toss the history so we don't read uninitialized data
-		const FIntPoint EffectiveResolution = Strata::GetStrataTextureResolution(View, SceneTextures.Config.Extent);
+		const FIntPoint EffectiveResolution = Substrate::GetSubstrateTextureResolution(View, SceneTextures.Config.Extent);
 		const FIntPoint HistoryEffectiveResolution = ScreenProbeGatherState.HistoryEffectiveResolution;
 		const bool bSceneTextureExtentMatchHistory = ScreenProbeGatherState.HistorySceneTexturesExtent == SceneTextures.Config.Extent;
 
@@ -1393,8 +1418,8 @@ void UpdateHistoryScreenProbeGather(
 			&& ScreenProbeGatherState.LumenGatherCvars == GLumenGatherCvars
 			&& !bPropagateGlobalLightingChange)
 		{
-			FRDGTextureDesc DiffuseIndirectDesc = FRDGTextureDesc::Create2D(EffectiveResolution, PF_FloatRGBA, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV);
-			FRDGTextureDesc RoughSpecularIndirectDesc = FRDGTextureDesc::Create2D(EffectiveResolution, PF_FloatRGB, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV);
+			FRDGTextureDesc DiffuseIndirectDesc = FRDGTextureDesc::Create2DArray(EffectiveResolution, PF_FloatRGBA, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV, ClosureCount);
+			FRDGTextureDesc RoughSpecularIndirectDesc = FRDGTextureDesc::Create2DArray(EffectiveResolution, PF_FloatRGB, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV, ClosureCount);
 
 			FRDGTextureRef NewDiffuseIndirect = GraphBuilder.CreateTexture(DiffuseIndirectDesc, TEXT("Lumen.ScreenProbeGather.DiffuseIndirect"));
 			FRDGTextureRef NewBackfaceDiffuseIndirect = bSupportBackfaceDiffuse ? GraphBuilder.CreateTexture(RoughSpecularIndirectDesc, TEXT("Lumen.ScreenProbeGather.BackfaceDiffuseIndirect")) : nullptr;
@@ -1403,11 +1428,9 @@ void UpdateHistoryScreenProbeGather(
 			FRDGTextureRef OldBackfaceDiffuseIndirectHistory = bSupportBackfaceDiffuse ? GraphBuilder.RegisterExternalTexture(ScreenProbeGatherState.BackfaceDiffuseIndirectHistoryRT) : nullptr;
 			FRDGTextureRef NewRoughSpecularIndirect = GraphBuilder.CreateTexture(RoughSpecularIndirectDesc, TEXT("Lumen.ScreenProbeGather.RoughSpecularIndirect"));
 
-			FRDGTextureDesc NumHistoryFramesAccumulatedDesc(FRDGTextureDesc::Create2D(EffectiveResolution, PF_R8, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV));
+			FRDGTextureDesc NumHistoryFramesAccumulatedDesc = FRDGTextureDesc::Create2DArray(EffectiveResolution, PF_R8, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV, ClosureCount);
 			FRDGTextureRef NewNumHistoryFramesAccumulated = GraphBuilder.CreateTexture(NumHistoryFramesAccumulatedDesc, TEXT("Lumen.ScreenProbeGather.NumHistoryFramesAccumulated"));
 			FRDGTextureRef NewHistoryFastUpdateMode = GraphBuilder.CreateTexture(NumHistoryFramesAccumulatedDesc, TEXT("Lumen.ScreenProbeGather.FastUpdateMode"));
-
-			FRDGTextureRef BSDFTileHistory = GraphBuilder.RegisterExternalTexture(View.ViewState->Lumen.ScreenProbeGatherState.BSDFTileHistoryRT ? View.ViewState->Lumen.ScreenProbeGatherState.BSDFTileHistoryRT : GSystemTextures.BlackDummy);
 
 			{
 				FRDGTextureRef OldRoughSpecularIndirectHistory = GraphBuilder.RegisterExternalTexture(*RoughSpecularIndirectHistoryState);
@@ -1441,26 +1464,21 @@ void UpdateHistoryScreenProbeGather(
 						PassParameters->View = View.ViewUniformBuffer;
 						PassParameters->SceneTextures = GetSceneTextureParameters(GraphBuilder, SceneTextures.UniformBuffer);
 						PassParameters->SceneTexturesStruct = SceneTextures.UniformBuffer;
-						PassParameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
+						PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 
 						PassParameters->DiffuseIndirectHistory = OldDiffuseIndirectHistory;
 						PassParameters->BackfaceDiffuseIndirectHistory = OldBackfaceDiffuseIndirectHistory;
 						PassParameters->RoughSpecularIndirectHistory = OldRoughSpecularIndirectHistory;
-						PassParameters->DiffuseIndirectDepthHistory = OldDepthHistory;
 						PassParameters->HistoryNumFramesAccumulated = OldHistoryNumFramesAccumulated;
 						PassParameters->FastUpdateModeHistory = OldFastUpdateModeHistory;
-						PassParameters->NormalHistory = bRejectBasedOnNormal ? GraphBuilder.RegisterExternalTexture(NormalHistoryState) : nullptr;
-						PassParameters->BSDFTileHistory = BSDFTileHistory;
-						PassParameters->EffectiveResolution = FVector4f(EffectiveResolution.X, EffectiveResolution.Y, 1.0f / EffectiveResolution.X, 1.0f / EffectiveResolution.Y);
-						PassParameters->HistoryEffectiveResolution = FVector4f(HistoryEffectiveResolution.X, HistoryEffectiveResolution.Y, 1.0f / HistoryEffectiveResolution.X, 1.0f / HistoryEffectiveResolution.Y);
-						PassParameters->HistoryOverflowTileOffset = ScreenProbeGatherState.HistoryOverflowTileOffset;
-						PassParameters->HistoryOverflowTileCount = ScreenProbeGatherState.HistoryOverflowTileCount;
+						PassParameters->DiffuseIndirectDepthHistory = OldDepthHistory;
+						PassParameters->DiffuseIndirectNormalHistory = OldNormalHistory;
 
 						PassParameters->HistoryDistanceThreshold = GLumenScreenProbeHistoryDistanceThreshold;
 						PassParameters->PrevSceneColorPreExposureCorrection = View.PreExposure / View.PrevViewInfo.SceneColorPreExposure;
 						PassParameters->InvFractionOfLightingMovingForFastUpdateMode = 1.0f / FMath::Max(GLumenScreenProbeFractionOfLightingMovingForFastUpdateMode, .001f);
 						PassParameters->MaxFastUpdateModeAmount = GLumenScreenProbeTemporalMaxFastUpdateModeAmount;
-						PassParameters->bIsStrataTileHistoryValid = bOverflowTileHistoryValid ? 1u : 0u;
+						PassParameters->bIsSubstrateTileHistoryValid = bOverflowTileHistoryValid ? 1u : 0u;
 
 						const float MaxFramesAccumulatedScale = 1.0f / FMath::Sqrt(FMath::Clamp(View.FinalPostProcessSettings.LumenFinalGatherLightingUpdateSpeed, .5f, 8.0f));
 						const float EditingScale = View.Family->bCurrentlyBeingEdited ? .5f : 1.0f;
@@ -1493,35 +1511,43 @@ void UpdateHistoryScreenProbeGather(
 						PassParameters->BackfaceDiffuseIndirect = BackfaceDiffuseIndirect;
 						PassParameters->RoughSpecularIndirect = RoughSpecularIndirect;
 
+						// SUBSTRATE_TODO: Reenable once history tracking is correct
+						#if 0
 						if (bOverflow)
 						{
-							PassParameters->TileIndirectBuffer = View.StrataViewData.BSDFTileDispatchIndirectBuffer;
+							PassParameters->TileIndirectBuffer = View.SubstrateViewData.ClosureTileDispatchIndirectBuffer;
 							FComputeShaderUtils::AddPass(
 								GraphBuilder,
 								RDG_EVENT_NAME("TemporalReprojection(Overflow)"),
 								ComputePassFlags,
 								ComputeShader,
 								PassParameters,
-								View.StrataViewData.BSDFTileDispatchIndirectBuffer,
+								View.SubstrateViewData.ClosureTileDispatchIndirectBuffer,
 								0u);
 						}
 						else
+						#endif
 						{
+							FIntVector DispatchCount = FComputeShaderUtils::GetGroupCount(View.ViewRect.Size(), FScreenProbeTemporalReprojectionCS::GetGroupSize());
+							DispatchCount.Z = Substrate::IsSubstrateEnabled() ? ClosureCount : 1u;
 							FComputeShaderUtils::AddPass(
 								GraphBuilder,
 								RDG_EVENT_NAME("TemporalReprojection(%ux%u)", View.ViewRect.Width(), View.ViewRect.Height()),
 								ComputePassFlags,
 								ComputeShader,
 								PassParameters,
-								FComputeShaderUtils::GetGroupCount(View.ViewRect.Size(), FScreenProbeTemporalReprojectionCS::GetGroupSize()));
+								DispatchCount);
 						}
 					};
 
 					ScreenProbeTemporalReprojection(false);
-					if (Strata::IsStrataEnabled())
+					// SUBSTRATE_TODO: Reenable once history tracking is correct
+					#if 0
+					if (Substrate::IsSubstrateEnabled())
 					{
 						ScreenProbeTemporalReprojection(true);
 					}
+					#endif
 				}
 				if (!View.bStatePrevViewInfoIsReadOnly)
 				{
@@ -1540,11 +1566,6 @@ void UpdateHistoryScreenProbeGather(
 					GraphBuilder.QueueTextureExtraction(NewRoughSpecularIndirect, RoughSpecularIndirectHistoryState);
 					GraphBuilder.QueueTextureExtraction(NewNumHistoryFramesAccumulated, HistoryNumFramesAccumulated);
 					GraphBuilder.QueueTextureExtraction(NewHistoryFastUpdateMode, FastUpdateModeHistoryState);
-
-					if (Strata::IsStrataEnabled())
-					{
-						GraphBuilder.QueueTextureExtraction(View.StrataViewData.BSDFTileTexture, &ScreenProbeGatherState.BSDFTileHistoryRT);
-					}
 				}
 			}
 
@@ -1567,15 +1588,10 @@ void UpdateHistoryScreenProbeGather(
 				{
 					ScreenProbeGatherState.BackfaceDiffuseIndirectHistoryRT = nullptr;
 				}
-				
-				if (Strata::IsStrataEnabled())
-				{
-					GraphBuilder.QueueTextureExtraction(View.StrataViewData.BSDFTileTexture, &ScreenProbeGatherState.BSDFTileHistoryRT);
-				}
 
 				GraphBuilder.QueueTextureExtraction(RoughSpecularIndirect, RoughSpecularIndirectHistoryState);
-				*HistoryNumFramesAccumulated = GSystemTextures.BlackDummy;
-				*FastUpdateModeHistoryState = GSystemTextures.BlackDummy;
+				*HistoryNumFramesAccumulated = GSystemTextures.BlackArrayDummy;
+				*FastUpdateModeHistoryState = GSystemTextures.BlackArrayDummy;
 			}
 		}
 
@@ -1584,24 +1600,9 @@ void UpdateHistoryScreenProbeGather(
 			*DiffuseIndirectHistoryViewRect = NewHistoryViewRect;
 			*DiffuseIndirectHistoryScreenPositionScaleBias = View.GetScreenPositionScaleBias(SceneTextures.Config.Extent, View.ViewRect);
 			ScreenProbeGatherState.LumenGatherCvars = GLumenGatherCvars;
-			ScreenProbeGatherState.HistoryOverflowTileOffset = View.StrataViewData.OverflowTileOffset;
-			ScreenProbeGatherState.HistoryOverflowTileCount = View.StrataViewData.OverflowTileCount;
-			ScreenProbeGatherState.HistoryStrataMaxBSDFCount = View.StrataViewData.MaxBSDFCount;
 			ScreenProbeGatherState.HistoryEffectiveResolution = EffectiveResolution;
+			ScreenProbeGatherState.HistorySubstrateMaxClosureCount = ClosureCount;
 			ScreenProbeGatherState.HistorySceneTexturesExtent = SceneTextures.Config.Extent;
-
-			if (bWantToRejectBasedOnNormal)
-			{
-				if (Strata::IsStrataEnabled())
-				{
-					check(View.StrataViewData.SceneData);
-					GraphBuilder.QueueTextureExtraction(View.StrataViewData.SceneData->TopLayerTexture, &NormalHistoryState);
-				}
-				else
-				{
-					GraphBuilder.QueueTextureExtraction(SceneTextures.GBufferA, &NormalHistoryState);
-				}
-			}
 		}
 	}
 	else
@@ -1610,18 +1611,88 @@ void UpdateHistoryScreenProbeGather(
 	}
 }
 
+class FStoreLumenDepthCS : public FGlobalShader
+{
+	DECLARE_GLOBAL_SHADER(FStoreLumenDepthCS)
+	SHADER_USE_PARAMETER_STRUCT(FStoreLumenDepthCS, FGlobalShader)
+
+	BEGIN_SHADER_PARAMETER_STRUCT(FParameters, )
+		SHADER_PARAMETER_STRUCT_REF(FViewUniformShaderParameters, View)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSceneTextureUniformParameters, SceneTexturesStruct)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float>, RWDepthTexture)
+		SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float3>, RWNormalTexture)
+	END_SHADER_PARAMETER_STRUCT()
+
+	class FStoreNormal : SHADER_PERMUTATION_BOOL("STORE_NORMAL");
+	using FPermutationDomain = TShaderPermutationDomain<FStoreNormal>;
+
+	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
+	{
+		return DoesPlatformSupportLumenGI(Parameters.Platform);
+	}
+
+	static int32 GetGroupSize()
+	{
+		return 8;
+	}
+
+	static void ModifyCompilationEnvironment(const FGlobalShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
+	{
+		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
+		OutEnvironment.SetDefine(TEXT("THREADGROUP_SIZE"), GetGroupSize());
+	}
+};
+
+IMPLEMENT_GLOBAL_SHADER(FStoreLumenDepthCS, "/Engine/Private/Lumen/LumenDenoising.usf", "StoreLumenDepthCS", SF_Compute);
+
+/**
+ * Copy depth and normal for opaque before it gets possibly overwritten by water or other translucency writing depth
+ */
 void FDeferredShadingSceneRenderer::StoreLumenDepthHistory(FRDGBuilder& GraphBuilder, const FSceneTextures& SceneTextures, FViewInfo& View)
 {
 	if (View.ViewState && !View.bStatePrevViewInfoIsReadOnly)
 	{
-		FRDGTextureDesc DepthDesc = SceneTextures.Depth.Resolve->Desc;
+		const FPerViewPipelineState& ViewPipelineState = GetViewPipelineState(View);
+		const FSceneTextureParameters& SceneTextureParameters = GetSceneTextureParameters(GraphBuilder, SceneTextures);
+		const bool bStoreNormal = ViewPipelineState.DiffuseIndirectMethod == EDiffuseIndirectMethod::Lumen && LumenScreenProbeGather::UseRejectBasedOnNormal();
 
-		FRDGTextureDesc NewDepthHistoryDesc = FRDGTextureDesc::Create2D(DepthDesc.Extent, PF_R32_FLOAT, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV);
-		FRDGTextureRef NewDepthHistory = GraphBuilder.CreateTexture(NewDepthHistoryDesc, TEXT("Lumen.DepthHistory"));
+		FRDGTextureRef DepthHistory = GraphBuilder.CreateTexture(
+			FRDGTextureDesc::Create2D(SceneTextures.Config.Extent, PF_R32_FLOAT, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV),
+			TEXT("Lumen.DepthHistory"));
 
-		AddViewDepthCopyCSPass(GraphBuilder, View, SceneTextures.Depth.Resolve, NewDepthHistory);
+		FRDGTextureRef NormalHistory = bStoreNormal ? GraphBuilder.CreateTexture(
+			FRDGTextureDesc::Create2D(SceneTextures.Config.Extent, PF_A2B10G10R10, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV),
+			TEXT("Lumen.NormalHistory")) : nullptr;
 
-		GraphBuilder.QueueTextureExtraction(NewDepthHistory, &View.ViewState->Lumen.DepthHistoryRT);
+		FStoreLumenDepthCS::FPermutationDomain PermutationVector;
+		PermutationVector.Set<FStoreLumenDepthCS::FStoreNormal>(bStoreNormal);
+		auto ComputeShader = View.ShaderMap->GetShader<FStoreLumenDepthCS>(PermutationVector);
+
+		FStoreLumenDepthCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FStoreLumenDepthCS::FParameters>();
+		PassParameters->View = View.ViewUniformBuffer;
+		PassParameters->SceneTexturesStruct = SceneTextures.UniformBuffer;
+		PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
+		PassParameters->RWDepthTexture = GraphBuilder.CreateUAV(FRDGTextureUAVDesc(DepthHistory));
+		PassParameters->RWNormalTexture = NormalHistory ? GraphBuilder.CreateUAV(FRDGTextureUAVDesc(NormalHistory)) : nullptr;
+
+		FComputeShaderUtils::AddPass(
+			GraphBuilder,
+			RDG_EVENT_NAME("StoreLumenDepth%s", bStoreNormal ? TEXT("AndNormal") : TEXT("")),
+			ComputeShader,
+			PassParameters,
+			FComputeShaderUtils::GetGroupCount(View.ViewRect.Size(), FStoreLumenDepthCS::GetGroupSize()));
+
+		GraphBuilder.QueueTextureExtraction(DepthHistory, &View.ViewState->Lumen.DepthHistoryRT);
+
+		if (bStoreNormal)
+		{
+			GraphBuilder.QueueTextureExtraction(NormalHistory, &View.ViewState->Lumen.NormalHistoryRT);
+		}
+		else
+		{
+			View.ViewState->Lumen.NormalHistoryRT = nullptr;
+		}
 	}
 }
 
@@ -1714,6 +1785,18 @@ FSSDSignalTextures FDeferredShadingSceneRenderer::RenderLumenFinalGather(
 	if (GLumenIrradianceFieldGather != 0)
 	{
 		Outputs = RenderLumenIrradianceFieldGather(GraphBuilder, SceneTextures, FrameTemporaries, View, TranslucencyVolumeRadianceCacheParameters, ComputePassFlags);
+	}
+	else if (Lumen::UseReSTIRGather(*View.Family, ShaderPlatform))
+	{
+		Outputs = RenderLumenReSTIRGather(
+			GraphBuilder,
+			SceneTextures,
+			FrameTemporaries,
+			LightingChannelsTexture,
+			View,
+			PreviousViewInfos,
+			ComputePassFlags,
+			ScreenSpaceBentNormalParameters);
 	}
 	else
 	{
@@ -1815,6 +1898,13 @@ FSSDSignalTextures FDeferredShadingSceneRenderer::RenderLumenScreenProbeGather(
 		ScreenProbeParameters.FixedJitterIndex = 6;
 	}
 
+	uint32 StateFrameIndex = View.ViewState ? View.ViewState->GetFrameIndex() : 0;
+	if (ScreenProbeParameters.FixedJitterIndex >= 0)
+	{
+		StateFrameIndex = ScreenProbeParameters.FixedJitterIndex;
+	}
+	ScreenProbeParameters.ScreenProbeRayDirectionFrameIndex = StateFrameIndex % FMath::Clamp(CVarLumenScreenProbeTemporalMaxRayDirections.GetValueOnRenderThread(), 1, 128);
+
 	FRDGTextureDesc DownsampledDepthDesc(FRDGTextureDesc::Create2D(ScreenProbeParameters.ScreenProbeAtlasBufferSize, PF_R32_UINT, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV));
 	ScreenProbeParameters.ScreenProbeSceneDepth = GraphBuilder.CreateTexture(DownsampledDepthDesc, TEXT("Lumen.ScreenProbeGather.ScreenProbeSceneDepth"));
 
@@ -1839,7 +1929,7 @@ FSSDSignalTextures FDeferredShadingSceneRenderer::RenderLumenScreenProbeGather(
 		PassParameters->RWScreenProbeTranslatedWorldPosition = GraphBuilder.CreateUAV(FRDGTextureUAVDesc(ScreenProbeParameters.ScreenProbeTranslatedWorldPosition));
 		PassParameters->View = View.ViewUniformBuffer;
 		PassParameters->SceneTexturesStruct = SceneTextures.UniformBuffer;
-		PassParameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
+		PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 		PassParameters->SceneTextures = SceneTextureParameters;
 		PassParameters->ScreenProbeParameters = ScreenProbeParameters;
 
@@ -1891,7 +1981,7 @@ FSSDSignalTextures FDeferredShadingSceneRenderer::RenderLumenScreenProbeGather(
 			PassParameters->View = View.ViewUniformBuffer;
 			PassParameters->SceneTexturesStruct = SceneTextures.UniformBuffer;
 			PassParameters->SceneTextures = SceneTextureParameters;
-			PassParameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
+			PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 			PassParameters->ScreenProbeParameters = ScreenProbeParameters;
 			PassParameters->PlacementDownsampleFactor = PlacementDownsampleFactor;
 
@@ -1941,7 +2031,8 @@ FSSDSignalTextures FDeferredShadingSceneRenderer::RenderLumenScreenProbeGather(
 
 	if (LumenScreenProbeGather::UseRadianceCache(View))
 	{
-		if (!ShouldUseStereoLumenOptimizations() || View.ShouldRenderView())
+		// Using !View.IsInstancedSceneView() to skip actual secondary stereo views only, View.ShouldRenderView() returns false for empty views as well
+		if (!ShouldUseStereoLumenOptimizations() || !View.IsInstancedSceneView())
 		{
 			FMarkUsedRadianceCacheProbes GraphicsMarkUsedRadianceCacheProbesCallbacks;
 			FMarkUsedRadianceCacheProbes ComputeMarkUsedRadianceCacheProbesCallbacks;
@@ -2142,11 +2233,13 @@ FSSDSignalTextures FDeferredShadingSceneRenderer::RenderLumenScreenProbeGather(
 
 	if (LumenScreenProbeGather::UseShortRangeAmbientOcclusion(ViewFamily.EngineShowFlags))
 	{
-		ScreenSpaceBentNormalParameters = ComputeScreenSpaceShortRangeAO(GraphBuilder, Scene, View, SceneTextures, LightingChannelsTexture, ScreenProbeParameters, ComputePassFlags);
+		float MaxScreenTraceFraction = ScreenProbeParameters.ScreenProbeDownsampleFactor * 2.0f / (float)View.ViewRect.Width();
+		ScreenSpaceBentNormalParameters = ComputeScreenSpaceShortRangeAO(GraphBuilder, Scene, View, SceneTextures, LightingChannelsTexture, BlueNoise, MaxScreenTraceFraction, ScreenProbeParameters.ScreenTraceNoFallbackThicknessScale, ComputePassFlags);
 	}
 
-	const FIntPoint EffectiveResolution = Strata::GetStrataTextureResolution(View, SceneTextures.Config.Extent);
-	FRDGTextureDesc DiffuseIndirectDesc = FRDGTextureDesc::Create2D(EffectiveResolution, PF_FloatRGBA, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV);
+	const FIntPoint EffectiveResolution = Substrate::GetSubstrateTextureResolution(View, SceneTextures.Config.Extent);
+	const uint32 ClosureCount = Substrate::GetSubstrateMaxClosureCount(View);
+	FRDGTextureDesc DiffuseIndirectDesc = FRDGTextureDesc::Create2DArray(EffectiveResolution, PF_FloatRGBA, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV, ClosureCount);
 	FRDGTextureRef DiffuseIndirect = GraphBuilder.CreateTexture(DiffuseIndirectDesc, TEXT("Lumen.ScreenProbeGather.DiffuseIndirect"));
 
 	const bool bSupportBackfaceDiffuse = GLumenScreenProbeSupportTwoSidedFoliageBackfaceDiffuse != 0;
@@ -2154,11 +2247,11 @@ FSSDSignalTextures FDeferredShadingSceneRenderer::RenderLumenScreenProbeGather(
 
 	if (bSupportBackfaceDiffuse)
 	{
-		FRDGTextureDesc BackfaceDiffuseIndirectDesc = FRDGTextureDesc::Create2D(EffectiveResolution, PF_FloatRGB, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV);
+		FRDGTextureDesc BackfaceDiffuseIndirectDesc = FRDGTextureDesc::Create2DArray(EffectiveResolution, PF_FloatRGB, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV, ClosureCount);
 		BackfaceDiffuseIndirect = GraphBuilder.CreateTexture(BackfaceDiffuseIndirectDesc, TEXT("Lumen.ScreenProbeGather.BackfaceDiffuseIndirect"));
 	}
 
-	FRDGTextureDesc RoughSpecularIndirectDesc = FRDGTextureDesc::Create2D(EffectiveResolution, PF_FloatRGB, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV);
+	FRDGTextureDesc RoughSpecularIndirectDesc = FRDGTextureDesc::Create2DArray(EffectiveResolution, PF_FloatRGB, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV, ClosureCount);
 	FRDGTextureRef RoughSpecularIndirect = GraphBuilder.CreateTexture(RoughSpecularIndirectDesc, TEXT("Lumen.ScreenProbeGather.RoughSpecularIndirect"));
 
 	const bool bSSREnabled = GetViewPipelineState(View).ReflectionsMethod == EReflectionsMethod::SSR;

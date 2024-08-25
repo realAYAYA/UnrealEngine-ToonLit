@@ -58,38 +58,6 @@ private:
 	/** */
 	TSharedPtr<SCustomizableObjectLayoutGrid> LayoutGridWidget;
 
-	TSharedPtr< SVerticalBox > LayoutGridSizeWidget;
-
-	/** Widget for displaying the available layout block grid sizes. */
-	TSharedPtr< STextComboBox > LayoutGridSizeCombo;
-	TSharedPtr< STextComboBox > MaxLayoutGridSizeCombo;
-
-	/** List of available layout grid sizes. */
-	TArray< TSharedPtr< FString > > LayoutGridSizes;
-
-	/** List of available layout max grid sizes. */
-	TArray< TSharedPtr< FString > > MaxLayoutGridSizes;
-
-	/** List of available layout packing strategies. */
-	TArray< TSharedPtr< FString > > LayoutPackingStrategies;
-
-	/** Widget to select the available layout packing strategies. */
-	TSharedPtr< STextComboBox > LayoutPackingStrategyCombo;
-
-	/** List of available block reduction methods. */
-	TArray< TSharedPtr< FString > > BlockReductionMethods;
-
-	/** Widget to select the available layout block reduction methods. */
-	TSharedPtr< STextComboBox > BlockReductionMethodsCombo;
-
-	/** Widget to select the layout packing strategy */
-	TSharedPtr< SHorizontalBox> LayoutStrategyWidget;
-
-	/** Widget to select the fixed layout properties */
-	TSharedPtr< SVerticalBox> FixedLayoutWidget;
-
-	TSharedPtr<SWidget> StrategyWidget;
-
 	/** The list of UI Commands executable */
 	TSharedRef<FUICommandList> UICommandList;
 
@@ -102,7 +70,6 @@ private:
 
 	/** Callbacks from the layout block editor. */
 	TSharedRef<SWidget> BuildLayoutToolBar();
-	TSharedRef<SWidget> BuildLayoutStrategyWidgets(const ISlateStyle* Style, const FName& StyleName);
 
 	void OnAddBlock();
 	void OnAddBlockAt(const FIntPoint Min, const FIntPoint Max);
@@ -110,20 +77,15 @@ private:
 
 	/** Generate layout blocks using UVs*/
 	void OnGenerateBlocks();
-		
-	/** . */
-	void OnGridSizeChanged( TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo );
-	void OnMaxGridSizeChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo);
-	void OnReductionMethodChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo);
 
 	/** Sets the block priority from the input text. */
 	void OnSetBlockPriority(int32 InValue);
 
-	/** Sets the block reduction symmetry method. */
+	/** Sets the block reduction symmetry option. */
 	void OnSetBlockReductionSymmetry(bool bInValue);
 
-	/** Called when the packing strategy has changed. */
-	void OnLayoutPackingStrategyChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo);
+	/** Sets the block reduction ReduceByTwo option. */
+	void OnSetBlockReductionByTwo(bool bInValue);
 
 	TSharedPtr<IToolTip> GenerateInfoToolTip() const;
 

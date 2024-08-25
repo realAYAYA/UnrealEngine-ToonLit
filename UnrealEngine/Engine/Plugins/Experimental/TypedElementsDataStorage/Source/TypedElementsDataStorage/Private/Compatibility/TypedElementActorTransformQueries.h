@@ -15,7 +15,7 @@ class UTypedElementActorTransformFactory : public UTypedElementDataStorageFactor
 public:
 	~UTypedElementActorTransformFactory() override = default;
 
-	void RegisterQueries(ITypedElementDataStorageInterface& DataStorage) const override;
+	void RegisterQueries(ITypedElementDataStorageInterface& DataStorage) override;
 
 private:
 	/**

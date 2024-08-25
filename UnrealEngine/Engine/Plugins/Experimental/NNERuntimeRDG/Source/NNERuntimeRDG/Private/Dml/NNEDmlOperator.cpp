@@ -13,21 +13,15 @@ namespace UE::NNERuntimeRDG::Private::Dml
 namespace Util
 {
 
-static bool IsSameShape(TConstArrayView<uint32> Left, TConstArrayView<uint32> Right)
+inline bool IsSameShape(TConstArrayView<uint32> Left, TConstArrayView<uint32> Right)
 {
 	return Algo::Compare(Left, Right);
 }
 
-bool IsSameShape(const NNE::Internal::FTensor& Left, const NNE::Internal::FTensor& Right)
-{
-	return IsSameShape(Left.GetShape().GetData(), Right.GetShape().GetData());
-}
-
-bool IsSameShape(const FTensorDescDml& Left, const FTensorDescDml& Right)
+inline bool IsSameShape(const FTensorDescDml& Left, const FTensorDescDml& Right)
 {
 	return IsSameShape(Left.GetSizes(), Right.GetSizes());
 }
-
 
 DML_TENSOR_DATA_TYPE GetTensorDataType(ENNETensorDataType DataType)
 {
@@ -145,14 +139,13 @@ FTensorDescDml& FTensorDescDml::SetShape(TConstArrayView<uint32> Shape, int32 Ra
 	return *this;
 }
 
-
 FTensorDescDml& FTensorDescDml::SetShape(TConstArrayView<uint32> Shape, TConstArrayView<uint32> BroadcastShape)
 {
 	check(!bIsValidated);
 	
 	if (!bIsValidated)
 	{
-		const uint32 TargetDimension = BroadcastShape.Num() != -1 ? BroadcastShape.Num() : Shape.Num();
+		const uint32 TargetDimension = BroadcastShape.Num() ? BroadcastShape.Num() : Shape.Num();
 		checkf(BroadcastShape.Num() >= Shape.Num(), TEXT("Can't broadcast tensor from rank %d to rank %d, should be inferior or equal."), Shape.Num(), TargetDimension);
 
 		Sizes.SetNum(TargetDimension);
@@ -356,14 +349,11 @@ uint64 FTensorDescDml::CalculateBufferSize(uint64 ElemSizeInBytes)
 	}
 
 	// Round up to the nearest 4 bytes
-	MinSizeInBytes = (MinSizeInBytes + 3) & ~3ull;
+	MinSizeInBytes = Util::AlignBufferSize(MinSizeInBytes);
 
 	return MinSizeInBytes;
 }
 
-//
-// DirectML operator base class
-//
 TConstArrayView<int32> FOperatorDml::GetConstantCPUInputs() const
 {
 	return ConstantCPUInputs;

@@ -5,7 +5,8 @@
 #include "Async/Future.h"
 #include "CompactBinaryTCP.h"
 #include "Containers/Array.h"
-#include "CookTypes.h"
+#include "Cooker/CookTypes.h"
+#include "Cooker/MPCollector.h"
 #include "HAL/CriticalSection.h"
 #include "Templates/UniquePtr.h"
 #include "UObject/NameTypes.h"
@@ -141,12 +142,13 @@ private:
 };
 
 /** Message from Client to Server giving the results for saved or refused-to-cook packages. */
-struct FPackageResultsMessage : public UE::CompactBinaryTCP::IMessage
+struct FPackageResultsMessage : public IMPCollectorMessage
 {
 public:
 	virtual void Write(FCbWriter& Writer) const override;
 	virtual bool TryRead(FCbObjectView Object) override;
 	virtual FGuid GetMessageType() const override { return MessageType; }
+	virtual const TCHAR* GetDebugName() const override { return TEXT("PackageResultsMessage"); }
 
 public:
 	TArray<FPackageRemoteResult> Results;

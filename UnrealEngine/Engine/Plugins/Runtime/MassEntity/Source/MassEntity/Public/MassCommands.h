@@ -287,37 +287,43 @@ protected:
 	FMassTagBitSet TagsToRemove;
 };
 
-template<EMassCommandCheckTime CheckTime, typename T>
-struct FMassCommandAddTagInternal : public FMassCommandChangeTags
+template<EMassCommandCheckTime CheckTime, typename... TTypes>
+struct FMassCommandAddTagsInternal : public FMassCommandChangeTags
 {
 	using Super = FMassCommandChangeTags;
-	FMassCommandAddTagInternal()
+	FMassCommandAddTagsInternal()
 		: Super(
 			EMassCommandOperationType::Add, 
-			UE::Mass::Utils::ConstructTagBitSet<CheckTime, T>(),
+			UE::Mass::Utils::ConstructTagBitSet<CheckTime, TTypes...>(),
 			{} 
 			DEBUG_NAME("CommandAddTag"))
 	{}
 };
 
 template<typename T>
-using FMassCommandAddTag = FMassCommandAddTagInternal<EMassCommandCheckTime::CompileTimeCheck, T>;
+using FMassCommandAddTag = FMassCommandAddTagsInternal<EMassCommandCheckTime::CompileTimeCheck, T>;
 
-template<EMassCommandCheckTime CheckTime, typename T>
-struct FMassCommandRemoveTagInternal : public FMassCommandChangeTags
+template<typename... TTypes>
+using FMassCommandAddTags = FMassCommandAddTagsInternal<EMassCommandCheckTime::CompileTimeCheck, TTypes...>;
+
+template<EMassCommandCheckTime CheckTime, typename... TTypes>
+struct FMassCommandRemoveTagsInternal : public FMassCommandChangeTags
 {
 	using Super = FMassCommandChangeTags;
-	FMassCommandRemoveTagInternal()
+	FMassCommandRemoveTagsInternal()
 		: Super(
 			EMassCommandOperationType::Remove, 
 			{}, 
-			UE::Mass::Utils::ConstructTagBitSet<CheckTime, T>()
+			UE::Mass::Utils::ConstructTagBitSet<CheckTime, TTypes...>()
 			DEBUG_NAME("CommandRemoveTag"))
 	{}
 };
 
 template<typename T>
-using FMassCommandAddTag = FMassCommandAddTagInternal<EMassCommandCheckTime::CompileTimeCheck, T>;
+using FMassCommandRemoveTag = FMassCommandRemoveTagsInternal<EMassCommandCheckTime::CompileTimeCheck, T>;
+
+template<typename... TTypes>
+using FMassCommandRemoveTags = FMassCommandRemoveTagsInternal<EMassCommandCheckTime::CompileTimeCheck, TTypes...>;
 
 template<EMassCommandCheckTime CheckTime, typename TOld, typename TNew>
 struct FMassCommandSwapTagsInternal : public FMassCommandChangeTags

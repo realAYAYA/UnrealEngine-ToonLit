@@ -1,42 +1,60 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
 using EpicGames.Core;
 
 namespace UnrealBuildTool
 {
-	internal partial class ApplePlatformSDK : UEBuildPlatformSDK
+	/////////////////////////////////////////////////////////////////////////////////////
+	// If you are looking for version numbers, see Engine/Config/Apple/Apple_SDK.json
+	/////////////////////////////////////////////////////////////////////////////////////
+	
+	// NOTE: These are currently only used for Mac targets
+
+	partial class ApplePlatformSDK : UEBuildPlatformSDK
 	{
-		protected override string GetMainVersionInternal()
+		/// <summary>
+		/// Get the default deployment target version for the given target type. This will be put into the .plist file for runtime check
+		/// Will be in the format A.B.C
+		/// </summary>
+		/// <param name="Type"></param>
+		/// <returns></returns>
+		public string GetDeploymentTargetVersion(TargetType Type)
 		{
-			// Xcode prefered version?
-			return "14.1";
+			string? DeploymentTarget = null;
+			if (Type == TargetType.Editor || Type == TargetType.Program)
+			{
+				DeploymentTarget = GetVersionFromConfig("EditorDeploymentTarget");
+			}
+
+			if (DeploymentTarget == null)
+			{
+				DeploymentTarget = GetRequiredVersionFromConfig("DeploymentTarget");
+			}
+
+			return DeploymentTarget;
 		}
 
-		protected override void GetValidVersionRange(out string MinVersion, out string MaxVersion)
-		{
-			if (RuntimePlatform.IsMac)
-			{
-				MinVersion = "14.1.0";
-				MaxVersion = "15.9.9";
-			}
-			else
-			{
-				// @todo turnkey: these are MobileDevice .dll versions in Windows - to get the iTunes app version (12.3.4.1 etc) would need to hunt down the .exe
-				MinVersion = "1100.0.0.0";
-				MaxVersion = "8999.0";
-			}
-		}
-
-		protected override void GetValidSoftwareVersionRange(out string? MinVersion, out string? MaxVersion)
-		{
-			MinVersion = MaxVersion = null;
-		}
 
 		/// <summary>
-		/// The minimum macOS SDK version that a dynamic library can be built with
+		/// Get the default build target version for the given target type. This will be passed to clang when compiling/linking
+		/// Will be in the format AA.BB
 		/// </summary>
-		public virtual Version MinimumDynamicLibSDKVersion => new Version("12.1");      // SDK used in Xcode13.2.1
+		/// <param name="Type"></param>
+		/// <returns></returns>
+		public string GetBuildTargetVersion(TargetType Type)
+		{
+			string? DeploymentTarget = null;
+			if (Type == TargetType.Editor || Type == TargetType.Program)
+			{
+				DeploymentTarget = GetVersionFromConfig("EditorBuildTarget");
+			}
 
+			if (DeploymentTarget == null)
+			{
+				DeploymentTarget = GetRequiredVersionFromConfig("BuildTarget");
+			}
+
+			return DeploymentTarget;
+		}
 	}
 }

@@ -28,6 +28,12 @@ public:
 
 	static CHAOSSOLVERENGINE_API void BindWorldDelegates();
 
+protected:
+#if WITH_EDITOR && CHAOS_DEBUG_DRAW
+	virtual void OnRegister() override;
+	virtual void OnUnregister() override;
+#endif // WITH_EDITOR && CHAOS_DEBUG_DRAW
+
 private:
 	static void HandlePostWorldInitialization(UWorld* World, const UWorld::InitializationValues IVS);
 	static void CreateDebugDrawActor(UWorld* World);

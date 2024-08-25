@@ -162,7 +162,7 @@ protected:
 	//TMpscQueue<FOpenXRUpdateEvent> InternalUpdateQueue;
 	TSpscQueue<FOpenXRUpdateEvent> PendingApplicationUpdateQueue;
 	
-	FOpenXRPoseManager PoseManager;
+	FOpenXRActionPoseManager ActionPoseManager;
 };
 
 } // namespace UE::XRScribe

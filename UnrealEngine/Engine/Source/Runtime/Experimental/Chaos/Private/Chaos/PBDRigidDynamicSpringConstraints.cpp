@@ -28,15 +28,15 @@ namespace Chaos
 			const bool bIsRigidDynamic1 = PBDRigid1 && PBDRigid1->ObjectState() == EObjectStateType::Dynamic;
 
 			// Do not create springs between objects with no geometry
-			if(!Static0->Geometry() || !Static1->Geometry())
+			if(!Static0->GetGeometry() || !Static1->GetGeometry())
 			{
 				continue;
 			}
 
-			const FRotation3 Q0 = bIsRigidDynamic0 ? PBDRigid0->Q() : Static0->R();
-			const FRotation3 Q1 = bIsRigidDynamic1 ? PBDRigid1->Q() : Static1->R();
-			const FVec3& P0 = bIsRigidDynamic0 ? PBDRigid0->P() : Static0->X();
-			const FVec3& P1 = bIsRigidDynamic1 ? PBDRigid1->P() : Static1->X();
+			const FRotation3 Q0 = bIsRigidDynamic0 ? PBDRigid0->GetQ() : Static0->GetR();
+			const FRotation3 Q1 = bIsRigidDynamic1 ? PBDRigid1->GetQ() : Static1->GetR();
+			const FVec3 P0 = bIsRigidDynamic0 ? PBDRigid0->GetP() : Static0->GetX();
+			const FVec3 P1 = bIsRigidDynamic1 ? PBDRigid1->GetP() : Static1->GetX();
 
 			// Delete constraints
 			const int32 NumSprings = SpringDistances[ConstraintIndex].Num();
@@ -64,12 +64,12 @@ namespace Chaos
 			FRigidTransform3 Transform2(P1, Q1);
 
 			// Create constraints
-			if(Static0->Geometry()->HasBoundingBox() && Static1->Geometry()->HasBoundingBox())
+			if(Static0->GetGeometry()->HasBoundingBox() && Static1->GetGeometry()->HasBoundingBox())
 			{
 				// Matrix multiplication is reversed intentionally to be compatible with unreal
-				FAABB3 Box1 = Static0->Geometry()->BoundingBox().TransformedAABB(Transform1 * Transform2.Inverse());
+				FAABB3 Box1 = Static0->GetGeometry()->BoundingBox().TransformedAABB(Transform1 * Transform2.Inverse());
 				Box1.Thicken(CreationThreshold);
-				FAABB3 Box2 = Static1->Geometry()->BoundingBox();
+				FAABB3 Box2 = Static1->GetGeometry()->BoundingBox();
 				Box2.Thicken(CreationThreshold);
 				if(!Box1.Intersects(Box2))
 				{
@@ -78,10 +78,10 @@ namespace Chaos
 			}
 			const FVec3 Midpoint = (P0 + P1) / (FReal)2.;
 			FVec3 Normal1;
-			const FReal Phi1 = Static0->Geometry()->PhiWithNormal(Transform1.InverseTransformPosition(Midpoint), Normal1);
+			const FReal Phi1 = Static0->GetGeometry()->PhiWithNormal(Transform1.InverseTransformPosition(Midpoint), Normal1);
 			Normal1 = Transform2.TransformVector(Normal1);
 			FVec3 Normal2;
-			const FReal Phi2 = Static1->Geometry()->PhiWithNormal(Transform2.InverseTransformPosition(Midpoint), Normal2);
+			const FReal Phi2 = Static1->GetGeometry()->PhiWithNormal(Transform2.InverseTransformPosition(Midpoint), Normal2);
 			Normal2 = Transform2.TransformVector(Normal2);
 			if((Phi1 + Phi2) > CreationThreshold)
 			{

@@ -4,6 +4,7 @@
 	LightFunctionRendering.cpp: Implementation for rendering light functions.
 =============================================================================*/
 
+#include "LightFunctionRendering.h"
 #include "CoreMinimal.h"
 #include "Engine/Engine.h"
 #include "HAL/IConsoleManager.h"
@@ -28,6 +29,8 @@
 #include "ClearQuad.h"
 #include "HairStrands/HairStrandsData.h"
 #include "VariableRateShadingImageManager.h"
+
+using namespace LightFunctionAtlas;
 
 /**
  * A vertex shader for projecting a light function onto the scene.
@@ -77,6 +80,35 @@ private:
 
 IMPLEMENT_MATERIAL_SHADER_TYPE(,FLightFunctionVS,TEXT("/Engine/Private/LightFunctionVertexShader.usf"),TEXT("Main"),SF_Vertex);
 
+void LightFunctionSvPositionToLightTransform(FMatrix44f& OutMatrix, const FViewInfo& View, const FLightSceneInfo& LightSceneInfo)
+{
+	const FVector Scale = LightSceneInfo.Proxy->GetLightFunctionScale();
+	// Switch x and z so that z of the user specified scale affects the distance along the light direction
+	const FVector InverseScale = FVector(1.0 / Scale.Z, 1.0 / Scale.Y, 1.0 / Scale.X);
+	const FMatrix WorldToLight = LightSceneInfo.Proxy->GetWorldToLight() * FScaleMatrix(InverseScale);
+	const FVector2D InvViewSize = FVector2D(1.0 / View.ViewRect.Width(), 1.0 / View.ViewRect.Height());
+
+	// setup a matrix to transform float4(SvPosition.xyz,1) directly to Light (quality, performance as we don't need to convert or use interpolator)
+	//	new_xy = (xy - ViewRectMin.xy) * ViewSizeAndInvSize.zw * float2(2,-2) + float2(-1, 1);
+	//  transformed into one MAD:  new_xy = xy * ViewSizeAndInvSize.zw * float2(2,-2)      +       (-ViewRectMin.xy) * ViewSizeAndInvSize.zw * float2(2,-2) + float2(-1, 1);
+
+	const double Mx = 2.0 * InvViewSize.X;
+	const double My = -2.0 * InvViewSize.Y;
+	const double Ax = -1.0 - 2.0 * View.ViewRect.Min.X * InvViewSize.X;
+	const double Ay = 1.0 + 2.0 * View.ViewRect.Min.Y * InvViewSize.Y;
+
+	// todo: we could use InvTranslatedViewProjectionMatrix and TranslatedWorldToLight for better quality
+	const FMatrix SvPositionToLightValue =
+		FMatrix(
+			FPlane(Mx,  0,   0,  0),
+			FPlane(0, My,   0,  0),
+			FPlane(0,  0,   1,  0),
+			FPlane(Ax, Ay,   0,  1)
+		) * View.ViewMatrices.GetInvViewProjectionMatrix() * WorldToLight;
+
+	OutMatrix = FMatrix44f(SvPositionToLightValue);
+}
+
 /**
  * A pixel shader for projecting a light function onto the scene.
  */
@@ -97,7 +129,7 @@ public:
 	static void ModifyCompilationEnvironment(const FMaterialShaderPermutationParameters& Parameters, FShaderCompilerEnvironment& OutEnvironment)
 	{
 		FMaterialShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
-		OutEnvironment.SetDefine(TEXT("STRATA_INLINE_SHADING"), 1);
+		OutEnvironment.SetDefine(TEXT("SUBSTRATE_INLINE_SHADING"), 1);
 		OutEnvironment.SetDefine(TEXT("HAIR_STRANDS_SUPPORTED"), IsHairStrandsSupported(EHairStrandsShaderType::Strands, Parameters.Platform) ? 1 : 0);
 	}
 
@@ -119,31 +151,9 @@ public:
 		// Set the transform from screen space to light space.
 		if ( SvPositionToLight.IsBound() )
 		{
-			const FVector Scale = LightSceneInfo->Proxy->GetLightFunctionScale();
-			// Switch x and z so that z of the user specified scale affects the distance along the light direction
-			const FVector InverseScale = FVector( 1.0 / Scale.Z, 1.0 / Scale.Y, 1.0 / Scale.X );
-			const FMatrix WorldToLight = LightSceneInfo->Proxy->GetWorldToLight() * FScaleMatrix(InverseScale);	
-			const FVector2D InvViewSize = FVector2D(1.0 / View.ViewRect.Width(), 1.0 / View.ViewRect.Height());
-
-			// setup a matrix to transform float4(SvPosition.xyz,1) directly to Light (quality, performance as we don't need to convert or use interpolator)
-			//	new_xy = (xy - ViewRectMin.xy) * ViewSizeAndInvSize.zw * float2(2,-2) + float2(-1, 1);
-			//  transformed into one MAD:  new_xy = xy * ViewSizeAndInvSize.zw * float2(2,-2)      +       (-ViewRectMin.xy) * ViewSizeAndInvSize.zw * float2(2,-2) + float2(-1, 1);
-
-			const double Mx = 2.0 * InvViewSize.X;
-			const double My = -2.0 * InvViewSize.Y;
-			const double Ax = -1.0 - 2.0 * View.ViewRect.Min.X * InvViewSize.X;
-			const double Ay = 1.0 + 2.0 * View.ViewRect.Min.Y * InvViewSize.Y;
-
-			// todo: we could use InvTranslatedViewProjectionMatrix and TranslatedWorldToLight for better quality
-			const FMatrix SvPositionToLightValue = 
-				FMatrix(
-					FPlane(Mx,  0,   0,  0),
-					FPlane( 0, My,   0,  0),
-					FPlane( 0,  0,   1,  0),
-					FPlane(Ax, Ay,   0,  1)
-				) * View.ViewMatrices.GetInvViewProjectionMatrix() * WorldToLight;
-
-			SetShaderValue(BatchedParameters, SvPositionToLight, FMatrix44f(SvPositionToLightValue) );
+			FMatrix44f SvPositionToLightValue;
+			LightFunctionSvPositionToLightTransform(SvPositionToLightValue, View, *LightSceneInfo);
+			SetShaderValue(BatchedParameters, SvPositionToLight, SvPositionToLightValue);
 		}
 
 		LightFunctionParameters.Set(BatchedParameters, LightSceneInfo, ShadowFadeFraction);
@@ -162,7 +172,7 @@ public:
 		auto DeferredLightParameter = GetUniformBufferParameter<FDeferredLightUniformStruct>();
 		if (DeferredLightParameter.IsBound())
 		{
-			SetDeferredLightParameters(BatchedParameters, DeferredLightParameter, LightSceneInfo, View);
+			SetDeferredLightParameters(BatchedParameters, DeferredLightParameter, LightSceneInfo, View, LightFunctionAtlas::IsEnabled(View, ELightFunctionAtlasSystem::DeferredLighting));
 		}
 	}
 
@@ -175,8 +185,7 @@ private:
 
 IMPLEMENT_MATERIAL_SHADER_TYPE(,FLightFunctionPS,TEXT("/Engine/Private/LightFunctionPixelShader.usf"),TEXT("Main"),SF_Pixel);
 
-/** Returns a fade fraction for a light function and a given view based on the appropriate fade settings. */
-static float GetLightFunctionFadeFraction(const FViewInfo& View, FSphere LightBounds)
+float GetLightFunctionFadeFraction(const FViewInfo& View, FSphere LightBounds)
 {
 	extern float CalculateShadowFadeAlpha(const float MaxUnclampedResolution, const uint32 ShadowFadeResolution, const uint32 MinShadowResolution);
 

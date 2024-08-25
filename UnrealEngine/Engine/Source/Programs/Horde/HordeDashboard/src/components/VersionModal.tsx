@@ -3,12 +3,12 @@ import { DetailsList, DetailsListLayoutMode, IColumn, IconButton, Label, Modal, 
 import React, { useState } from 'react';
 import backend from '../backend';
 import { GetServerInfoResponse } from '../backend/Api';
-import { hordeClasses } from '../styles/Styles';
-
+import { getHordeStyling } from '../styles/Styles';
 
 export const VersionModal: React.FC<{ show: boolean, onClose: () => void }> = ({ show, onClose }) => {
-
+   
    const [version, setVersion] = useState<{ serverInfo?: GetServerInfoResponse, querying?: boolean }>({});
+   const { hordeClasses } = getHordeStyling();
 
    type GeneralItem = {
       name: string;

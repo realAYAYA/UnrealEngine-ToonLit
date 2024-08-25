@@ -4,4 +4,4 @@
 
 #include "Logging/LogMacros.h"
 
-USDCLASSES_API DECLARE_LOG_CATEGORY_EXTERN( LogUsd, Log, All );
+USDCLASSES_API DECLARE_LOG_CATEGORY_EXTERN(LogUsd, Log, All);

@@ -96,4 +96,16 @@ bool InitOpenXRCore(XrInstance Instance)
 	return true;
 }
 
+void EnumerateOpenXRApiLayers(TArray<XrApiLayerProperties>& OutProperties)
+{
+	uint32_t Count = 0;
+	XR_ENSURE(xrEnumerateApiLayerProperties(0, &Count, nullptr));
+	OutProperties.SetNum(Count);
+	for (auto& Prop : OutProperties)
+	{
+		Prop = XrApiLayerProperties{ XR_TYPE_API_LAYER_PROPERTIES };
+	}
+	XR_ENSURE(xrEnumerateApiLayerProperties(Count, &Count, OutProperties.GetData()));
+}
+
 #undef GET_XR_ENTRYPOINTS

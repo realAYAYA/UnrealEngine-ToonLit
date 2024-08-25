@@ -102,6 +102,11 @@ FRigVMExternalVariable RigVMTypeUtils::ExternalVariableFromPinType(const FName& 
 		ExternalVariable.TypeName = FStringTypeName;
 		ExternalVariable.Size = sizeof(FString);
 	}
+	else if (InPinType.PinCategory == UEdGraphSchema_K2::PC_Text)
+	{
+		ExternalVariable.TypeName = FTextTypeName;
+		ExternalVariable.Size = sizeof(FText);
+	}
 	else if (InPinType.PinCategory == UEdGraphSchema_K2::PC_Struct)
 	{
 		if (UScriptStruct* Struct = Cast<UScriptStruct>(InPinType.PinSubCategoryObject))
@@ -109,6 +114,15 @@ FRigVMExternalVariable RigVMTypeUtils::ExternalVariableFromPinType(const FName& 
 			ExternalVariable.TypeName = *RigVMTypeUtils::GetUniqueStructTypeName(Struct);
 			ExternalVariable.TypeObject = Struct;
 			ExternalVariable.Size = Struct->GetStructureSize();
+		}
+	}
+	else if (InPinType.PinCategory == UEdGraphSchema_K2::PC_Object)
+	{
+		if (UClass* Class = Cast<UClass>(InPinType.PinSubCategoryObject))
+		{
+			ExternalVariable.TypeName = *(Class->GetPrefixCPP() + Class->GetName());
+			ExternalVariable.TypeObject = Class;
+			ExternalVariable.Size = Class->GetStructureSize();
 		}
 	}
 
@@ -163,6 +177,11 @@ FRigVMExternalVariable RigVMTypeUtils::ExternalVariableFromCPPTypePath(const FNa
 	{
 		Variable.TypeName = *CPPTypePath;
 		Variable.Size = sizeof(FName);
+	}
+	else if (CPPTypePath == FTextType)
+	{
+		Variable.TypeName = *CPPTypePath;
+		Variable.Size = sizeof(FText);
 	}
 	else if(UScriptStruct* ScriptStruct = RigVMTypeUtils::FindObjectFromCPPTypeObjectPath<UScriptStruct>(CPPTypePath))
 	{
@@ -232,6 +251,11 @@ FRigVMExternalVariable RigVMTypeUtils::ExternalVariableFromCPPType(const FName& 
 	{
 		Variable.TypeName = *CPPType;
 		Variable.Size = sizeof(FName);
+	}
+	else if (CPPType == FTextType)
+	{
+		Variable.TypeName = *CPPType;
+		Variable.Size = sizeof(FText);
 	}
 	else if(UScriptStruct* ScriptStruct = RigVMTypeUtils::FindObjectFromCPPTypeObjectPath<UScriptStruct>(CPPType))
 	{

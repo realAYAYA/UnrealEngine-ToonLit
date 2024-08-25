@@ -2,26 +2,71 @@
 <!--OnlineSubsystemGooglePlay plugin additions-->
 <root xmlns:android="http://schemas.android.com/apk/res/android">	
 	<init>
-	  <log text="Subsystem Google Play SDK Android init"/>
+		<log text="Subsystem Google Play SDK Android init"/>
+		<setBoolFromProperty result="bEnableGooglePlaySupport" ini="Engine" section="/Script/AndroidRuntimeSettings.AndroidRuntimeSettings" property="bEnableGooglePlaySupport" default="false"/>
+		<setBoolFromProperty result="bSupportsInAppPurchasing" ini="Engine" section="OnlineSubsystemGooglePlay.Store" property="bSupportsInAppPurchasing" default="false"/>
+		<setIntFromProperty result="RequestCodeForPlayGamesActivities" ini="Engine" section="/Script/AndroidRuntimeSettings.AndroidRuntimeSettings" property="RequestCodeForPlayGamesActivities" default="80002"/>
+		<dumpvars/>
 	</init>
 	
 	<prebuildCopies>
-		<log text="Copying Google Play BillingApiV2 java files"/>
-		<copyDir src="$S(PluginDir)/Java/BillingApiV2"
-				 dst = "$S(BuildDir)/src" />
+		<log text="Copying Google Play wrapper java file"/>
+		<copyFile src="$S(PluginDir)/Java/com/epicgames/unreal/GooglePlayGamesWrapper.java"
+					dst = "$S(BuildDir)/src/com/epicgames/unreal/GooglePlayGamesWrapper.java" />
+		<if condition="bSupportsInAppPurchasing">
+			<true>
+				<log text="Copying Google Play store helper java file"/>
+				<copyFile src="$S(PluginDir)/Java/com/epicgames/unreal/GooglePlayStoreHelper.java"
+						dst = "$S(BuildDir)/src/com/epicgames/unreal/GooglePlayStoreHelper.java" />
+			</true>
+		</if>
 	</prebuildCopies>
 	
 	<!-- gradle dependencies additions -->
 	<buildGradleAdditions>
-		<insert>
+		<if condition="bSupportsInAppPurchasing">
+			<true>
+				<insert>
 			dependencies {
 			implementation 'com.android.billingclient:billing:6.0.0'
 			}
-		</insert>
+				</insert>
+			</true>
+		</if>
 	</buildGradleAdditions>
 
-	<gameActivityAndroidThunkJavaIapBeginPurchase>
+	<!-- optional additions to proguard -->
+	<proguardAdditions>
+		<if condition="bEnableGooglePlaySupport">
+			<true>
+				<insert>
+ -keep class com.epicgames.unreal.GooglePlayGamesWrapper {
+	public *;
+}                   
+				</insert>
+			</true>
+		</if>
+		<if condition="bSupportsInAppPurchasing">
+			<true>
+				<insert>
+ -keep class com.epicgames.unreal.GooglePlayStoreHelper {
+	public *;
+}                   
+				</insert>
+			</true>
+		</if>
+	</proguardAdditions>
+
+	<gameApplicationOnCreateAdditions>
 		<insert>
+		GooglePlayGamesWrapper.Initialize(getApplicationContext());
+		</insert>
+	</gameApplicationOnCreateAdditions>
+
+	<gameActivityAndroidThunkJavaIapBeginPurchase>
+		<if condition="bSupportsInAppPurchasing">
+			<true>
+				<insert>
 public boolean AndroidThunkJava_IapBeginPurchase(String[] ProductIds, String AccountId)
 {
 	Log.debug("[JAVA] - AndroidThunkJava_IapBeginPurchase");
@@ -58,21 +103,33 @@ public boolean AndroidThunkJava_IapBeginPurchase(String[] ProductIds, String Acc
 	}
 	return bTriggeredPurchase;
 }
-		</insert>
+				</insert>
+			</true>
+		</if>
 	</gameActivityAndroidThunkJavaIapBeginPurchase>
 	
 	<!-- optional additions to GameActivity imports in GameActivity.java -->
 	<gameActivityImportAdditions>
-		<insert>
-import com.epicgames.unreal.GooglePlayStoreHelper;
+		<if condition="bSupportsInAppPurchasing">
+			<true>
+				<insert>
 import java.io.UnsupportedEncodingException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-		</insert>
+				</insert>
+			</true>
+		</if>
 	</gameActivityImportAdditions>
 
+	<gameActivityClassAdditions>
+		<insertValue value="public static int REQUEST_CODE_SHOW_GOOGLEPLAY_UI = $I(RequestCodeForPlayGamesActivities);"/>
+		<insertNewline/>
+	</gameActivityClassAdditions>
+
 	<gameActivityIapSetupServiceAdditions>
-		<insert>
+		<if condition="bSupportsInAppPurchasing">
+			<true>
+				<insert>
 		if (getPackageManager().checkPermission("com.android.vending.BILLING", getPackageName()) == getPackageManager().PERMISSION_GRANTED)
 		{
 			IapStoreHelper = new GooglePlayStoreHelper(this, Log);
@@ -90,25 +147,17 @@ import java.security.NoSuchAlgorithmException;
 			Log.debug("[JAVA] - AndroidThunkJava_IapSetupService - You do not have the appropriate permission setup.");
 			Log.debug("[JAVA] - AndroidThunkJava_IapSetupService - Please ensure com.android.vending.BILLING is added to the manifest.");
 		}
-		</insert>
+				</insert>
+			</true>
+		</if>
 	</gameActivityIapSetupServiceAdditions>
 	
-	<!-- optional additions to GameActivity onCreate in GameActivity.java -->
-	<gameActivityOnCreateAdditions>
+	<gameActivityOnActivityResultAdditions>
 		<insert>
-			//Google Play SDK onCreate additions
-			try {
-				GoogleApiClient.Builder gbuilder = new GoogleApiClient.Builder(this);
-				gbuilder.addConnectionCallbacks(this);
-				gbuilder.addOnConnectionFailedListener(this);
-				googleClient = gbuilder.build();
-			}
-			catch (Exception e)
-			{
-				Log.debug("GoogleApiClient exception caught: " + e.toString());
-			}
-			Log.debug("googleClient is " + ((googleClient == null) ? "disabled" : "valid"));
+	if (requestCode == REQUEST_CODE_SHOW_GOOGLEPLAY_UI)
+	{
+		Log.debug("[JAVA] - GooglePlay external activity UI closed (achievements or leaderboards)");
+	}
 		</insert>
-	</gameActivityOnCreateAdditions>
-
+	</gameActivityOnActivityResultAdditions>
 </root>

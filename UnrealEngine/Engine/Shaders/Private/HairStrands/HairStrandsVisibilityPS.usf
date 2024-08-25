@@ -80,7 +80,7 @@ void MainVisibility(
 
 		FHairRenderInfo HairRenderInfo = GetHairRenderInfo(ResolvedView.HairRenderInfo, ResolvedView.HairRenderInfoBits, bUseStableRasterization);
 		const float SceneDepth = ConvertFromDeviceZ(SvPosition.z); // Linear depth in world unit
-		const float PixelRadius = HairRenderInfo.bIsOrthoView ? HairRenderInfo.RadiusAtDepth1Primary : SceneDepth * HairRenderInfo.RadiusAtDepth1Primary; // Not correct but the coverage is not used (we count instead the number of sub-sample covered)
+		const float PixelRadius = ConvertGivenDepthRadiusForProjectionType(HairRenderInfo.RadiusAtDepth1Primary, SceneDepth); // Not correct but the coverage is not used (we count instead the number of sub-sample covered)
 		const float StrandRealRadius = WorldStrandRadius;
 		Coverage = saturate(StrandRealRadius / max(StrandRealRadius, PixelRadius) * HairVisibilityPass_HairCoverageScale);
 	}

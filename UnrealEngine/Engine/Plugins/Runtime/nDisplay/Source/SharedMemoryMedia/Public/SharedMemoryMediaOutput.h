@@ -24,6 +24,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Output")
 	FString UniqueName = TEXT("UniqueName");
 
+	/** If checked, the alpha channel of the texture will be inverted */
+	UPROPERTY(EditAnywhere, AdvancedDisplay, BlueprintReadWrite, Category = "Output")
+	bool bInvertAlpha = true;
+
+	/** If checked, the texture will be shared across different GPUs. Disable if not needed for faster performance */
+	UPROPERTY(EditAnywhere, AdvancedDisplay, BlueprintReadWrite, Category = "Output")
+	bool bCrossGpu = true;
+
 public:
 	
 	//~ Begin UMediaOutput interface

@@ -361,7 +361,7 @@ void UDisplayClusterGameEngine::Tick(float DeltaSeconds, bool bIdleMode)
 
 		// Perform UGameEngine::Tick() calls for scene actors
 		UE_LOG(LogDisplayClusterEngine, Verbose, TEXT("Perform UGameEngine::Tick()"));
-		Super::Tick(DeltaSeconds, bIdleMode);
+		Super::Tick(DeltaSeconds, bIdleMode || bForcedTickIdleMode);
 
 		// Perform PostTick for DisplayCluster module
 		UE_LOG(LogDisplayClusterEngine, Verbose, TEXT("Perform PostTick()"));
@@ -380,6 +380,11 @@ void UDisplayClusterGameEngine::Tick(float DeltaSeconds, bool bIdleMode)
 
 		// Perform EndFrame notification
 		GDisplayCluster->EndFrame(GFrameCounter);
+
+		if (bIsRenderingSuspended)
+		{
+			bIsRenderingSuspended = false;
+		}
 
 		UE_LOG(LogDisplayClusterEngine, Verbose, TEXT("Sync frame end"));
 	}
@@ -520,6 +525,26 @@ EBrowseReturnVal::Type UDisplayClusterGameEngine::BrowseLoadMap(FWorldContext& W
 			WorldContext.PendingNetGame = NewObject<UPendingNetGame>();
 			WorldContext.PendingNetGame->Initialize(URL); //-V595
 			WorldContext.PendingNetGame->InitNetDriver(); //-V595
+
+			UNetDriver* PendingNetDriver = WorldContext.PendingNetGame->GetNetDriver();
+
+			if (IsDisplayCluster && PendingNetDriver)
+			{
+				const bool bIsDisplayClusterNetDriver = PendingNetDriver->GetClass()->GetName().Equals(TEXT("DisplayClusterNetDriver"));
+				
+				if (bIsDisplayClusterNetDriver)
+				{
+					// multiplayer packes, including session handshake are processed on ticks thus we need to enforce engine to tick but preven from rendering until cluster is ready
+					// Force tick idle mode for multiplayer connections
+					bForcedTickIdleMode = true;
+
+					// Suspend rendering until the cluster is ready
+					// By default, engine allowed to render while session being established
+					// to prevent rendering from being invoked we overrided function IsRenderingSuspended() and only enabling this flag here in BrowseLoadMap which is called on in multiplayer
+					// once loading is finished and game tick called in the flag will be reset to false
+					bIsRenderingSuspended = true;
+				}
+			}
 
 			if (!WorldContext.PendingNetGame)
 			{

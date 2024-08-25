@@ -97,6 +97,23 @@ protected:
 		void CheckIsNull() const;
 	};
 
+#if RHI_RAYTRACING
+	struct FIntermediateRayTracingGeometry
+	{
+	private:
+		FRayTracingGeometryInitializer Initializer;
+		FRayTracingGeometryRHIRef RayTracingGeometryRHI;
+		bool bRequiresBuild = false;
+
+	public:
+		void CreateFromCPUData(FRHICommandList& RHICmdList, FRayTracingGeometry& RayTracingGeometry);
+
+		void SafeRelease();
+
+		void TransferRayTracingGeometry(FRayTracingGeometry& RayTracingGeometry, FRHIResourceUpdateBatcher& Batcher);
+	};
+#endif
+
 	/** Create buffers with new LOD data on render or pooled thread */
 	void CreateBuffers_RenderThread(const FContext& Context);
 	void CreateBuffers_Async(const FContext& Context);
@@ -114,7 +131,7 @@ protected:
 	FIntermediateBuffers IntermediateBuffersArray[MAX_MESH_LOD_COUNT];
 	
 #if RHI_RAYTRACING
-	FRayTracingGeometry IntermediateRayTracingGeometry[MAX_MESH_LOD_COUNT];
+	FIntermediateRayTracingGeometry IntermediateRayTracingGeometry[MAX_MESH_LOD_COUNT];
 #endif
 
 private:

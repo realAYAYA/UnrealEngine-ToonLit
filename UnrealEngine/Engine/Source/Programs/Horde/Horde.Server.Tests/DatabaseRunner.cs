@@ -77,7 +77,7 @@ public abstract class DatabaseRunner : IDisposable
 		_processGroup = new ManagedProcessGroup();
 		_process = new ManagedProcess(_processGroup, GetBinaryPath(), GetArguments(), TempDir, null, ProcessPriorityClass.Normal);
 		Task.Run(() => RelayOutputAsync(_process));
-		
+
 		// Try detect when main .NET process exits and kill the runner
 		AppDomain.CurrentDomain.ProcessExit += (sender, eventArgs) =>
 		{
@@ -95,7 +95,7 @@ public abstract class DatabaseRunner : IDisposable
 			{
 				break;
 			}
-//			Console.WriteLine("{0} output: {1}", _name, line);
+			//			Console.WriteLine("{0} output: {1}", _name, line);
 		}
 	}
 
@@ -135,14 +135,14 @@ public abstract class DatabaseRunner : IDisposable
 
 	private static int GetAvailablePort()
 	{
-		TcpListener listener = new(IPAddress.Loopback, 0);
+		using TcpListener listener = new(IPAddress.Loopback, 0);
 		listener.Start();
 		int port = ((IPEndPoint)listener.LocalEndpoint).Port;
 		listener.Stop();
 		return port;
 	}
 
-	private static bool IsPortAvailable(int port)
+	public static bool IsPortAvailable(int port)
 	{
 		if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
 		{
@@ -157,23 +157,16 @@ public abstract class DatabaseRunner : IDisposable
 			return true;
 		}
 
-		TcpListener? listenerAny = null;
-		TcpListener? listenerLoopback = null;
 		try
 		{
-			listenerAny = new TcpListener(IPAddress.Loopback, port);
+			using TcpListener listenerAny = new TcpListener(IPAddress.Loopback, port);
 			listenerAny.Start();
-			listenerLoopback = new TcpListener(IPAddress.Any, port);
+			using TcpListener listenerLoopback = new TcpListener(IPAddress.Any, port);
 			listenerLoopback.Start();
 			return true;
 		}
 		catch (SocketException)
 		{
-		}
-		finally
-		{
-			listenerAny?.Stop();
-			listenerLoopback?.Stop();
 		}
 
 		return false;
@@ -211,17 +204,5 @@ public class MongoDbRunnerLocal : DatabaseRunner
 	{
 		(string host, int listenPort) = GetListenAddress();
 		return $"mongodb://{host}:{listenPort}";
-	}
-}
-
-public class RedisRunner : DatabaseRunner
-{
-	public RedisRunner() : base("redis", "ThirdParty/Redis/redis-server.exe", 6379, true)
-	{
-	}
-
-	protected override string GetArguments()
-	{
-		return $"--port {Port} --save \"\" --appendonly no";
 	}
 }

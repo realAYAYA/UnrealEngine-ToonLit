@@ -2528,6 +2528,11 @@ static void apply_type_qualifier_to_variable(const struct ast_type_qualifier *qu
 		var->mode = ir_var_uniform;
 	}
 
+	if (qual->flags.q.precise)
+	{
+		var->precise = 1;
+	}
+
 	if (state->all_invariant && (state->current_function == NULL))
 	{
 		switch (state->target)
@@ -3813,16 +3818,6 @@ ir_rvalue * ast_function::hir(exec_list *instructions, struct _mesa_glsl_parse_s
 		return_type = glsl_type::error_type;
 	}
 
-	/* From page 56 (page 62 of the PDF) of the GLSL 1.30 spec:
-	* "No qualifier is allowed on the return type of a function."
-	*/
-	if (this->return_type->has_qualifiers())
-	{
-		YYLTYPE loc = this->get_location();
-		_mesa_glsl_error(&loc, state,
-			"function '%s' return type has qualifiers", name);
-	}
-
 	/* From page 17 (page 23 of the PDF) of the GLSL 1.20 spec:
 	*
 	*    "[Sampler types] can only be declared as function parameters
@@ -4680,6 +4675,7 @@ ir_rvalue * ast_switch_body::hir(exec_list *instructions, struct _mesa_glsl_pars
 {
 	if (stmts != NULL)
 	{
+		stmts->sortlabels();
 		stmts->hir(instructions, state);
 	}
 

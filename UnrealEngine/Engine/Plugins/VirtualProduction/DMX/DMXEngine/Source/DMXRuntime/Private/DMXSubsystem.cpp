@@ -2,12 +2,21 @@
 
 #include "DMXSubsystem.h"
 
+
+#include "AssetRegistry/AssetData.h"
+#include "Async/Async.h"
 #include "DMXAttribute.h"
 #include "DMXConversions.h"
 #include "DMXProtocolSettings.h"
 #include "DMXProtocolTypes.h"
 #include "DMXRuntimeUtils.h"
+#include "Engine/Engine.h"
+#include "Engine/ObjectLibrary.h"
+#include "Engine/StreamableManager.h"
+#include "EngineAnalytics.h"
+#include "EngineUtils.h"
 #include "Interfaces/IDMXProtocol.h"
+#include "IO/DMXTrace.h"
 #include "IO/DMXPortManager.h"
 #include "IO/DMXInputPort.h"
 #include "IO/DMXOutputPort.h"
@@ -17,14 +26,6 @@
 #include "Library/DMXEntityController.h"
 #include "Library/DMXEntityFixtureType.h"
 #include "Library/DMXEntityFixturePatch.h"
-
-#include "AssetRegistry/AssetData.h"
-#include "EngineAnalytics.h"
-#include "EngineUtils.h"
-#include "Async/Async.h"
-#include "Engine/Engine.h"
-#include "Engine/ObjectLibrary.h"
-#include "Engine/StreamableManager.h"
 #include "UObject/UObjectIterator.h"
 
 #if WITH_EDITOR
@@ -157,6 +158,7 @@ void UDMXSubsystem::SendDMXToOutputPort(FDMXOutputPortReference OutputPortRefere
 
 	if (OutputPortPtr)
 	{
+		UE_DMX_SCOPED_TRACE_SENDDMX("DMXSubsystem::SendDMXToOutputPort");
 		(*OutputPortPtr)->SendDMX(LocalUniverse, ChannelToValueMap);
 	}
 	else

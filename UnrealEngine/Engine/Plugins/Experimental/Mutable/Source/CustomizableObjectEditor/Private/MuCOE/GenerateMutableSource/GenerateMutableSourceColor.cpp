@@ -47,6 +47,11 @@ mu::NodeColourPtr GenerateMutableSourceColor(const UEdGraphPin* Pin, FMutableGra
 		return static_cast<mu::NodeColour*>(Generated->Node.get());
 	}
 
+	if (Node->IsNodeOutDatedAndNeedsRefresh())
+	{
+		Node->SetRefreshNodeWarning();
+	}
+
 	mu::NodeColourPtr Result;
 
 	if (const UCustomizableObjectNodeColorConstant* TypedNodeColorConst = Cast<UCustomizableObjectNodeColorConstant>(Node))
@@ -64,9 +69,9 @@ mu::NodeColourPtr GenerateMutableSourceColor(const UEdGraphPin* Pin, FMutableGra
 
 		GenerationContext.AddParameterNameUnique(Node, TypedNodeColorParam->ParameterName);
 
-		ColorNode->SetName(StringCast<ANSICHAR>(*TypedNodeColorParam->ParameterName).Get());
-		ColorNode->SetUid(StringCast<ANSICHAR>(*GenerationContext.GetNodeIdUnique(Node).ToString()).Get());
-		ColorNode->SetDefaultValue(TypedNodeColorParam->DefaultValue.R, TypedNodeColorParam->DefaultValue.G, TypedNodeColorParam->DefaultValue.B);
+		ColorNode->SetName(TypedNodeColorParam->ParameterName);
+		ColorNode->SetUid(GenerationContext.GetNodeIdUnique(Node).ToString());
+		ColorNode->SetDefaultValue(TypedNodeColorParam->DefaultValue);
 
 		GenerationContext.ParameterUIDataMap.Add(TypedNodeColorParam->ParameterName, FParameterUIData(
 			TypedNodeColorParam->ParameterName,
@@ -146,7 +151,7 @@ mu::NodeColourPtr GenerateMutableSourceColor(const UEdGraphPin* Pin, FMutableGra
 
 		if (const UEdGraphPin* ConnectedPin = FollowInputPin(*TypedNodeTexSample->TexturePin()))
 		{
-			mu::NodeImagePtr TextureNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, 0.f);
+			mu::NodeImagePtr TextureNode = GenerateMutableSourceImage(ConnectedPin, GenerationContext, 0);
 			ColorNode->SetImage(TextureNode);
 		}
 
@@ -247,18 +252,15 @@ mu::NodeColourPtr GenerateMutableSourceColor(const UEdGraphPin* Pin, FMutableGra
 				GenerationContext.Compiler->CompilerLog(LOCTEXT("ColorFailed", "Color generation failed."), Node);
 			}
 		}
-		else
-		{
-			GenerationContext.Compiler->CompilerLog(LOCTEXT("ColorVarMissingDef", "Color variation node requires a default value."), Node);
-		}
 
-		ColorNode->SetVariationCount(TypedNodeColorVar->Variations.Num());
-		for (int VariationIndex = 0; VariationIndex < TypedNodeColorVar->Variations.Num(); ++VariationIndex)
+		const int32 NumVariations = TypedNodeColorVar->GetNumVariations();
+		ColorNode->SetVariationCount(NumVariations);
+		for (int VariationIndex = 0; VariationIndex < NumVariations; ++VariationIndex)
 		{
 			const UEdGraphPin* VariationPin = TypedNodeColorVar->VariationPin(VariationIndex);
 			if (!VariationPin) continue;
 
-			ColorNode->SetVariationTag(VariationIndex, StringCast<ANSICHAR>(*TypedNodeColorVar->Variations[VariationIndex].Tag).Get());
+			ColorNode->SetVariationTag(VariationIndex, TypedNodeColorVar->GetVariation(VariationIndex).Tag);
 			if (const UEdGraphPin* ConnectedPin = FollowInputPin(*VariationPin))
 			{
 				mu::NodeColourPtr ChildNode = GenerateMutableSourceColor(ConnectedPin, GenerationContext);
@@ -276,11 +278,12 @@ mu::NodeColourPtr GenerateMutableSourceColor(const UEdGraphPin* Pin, FMutableGra
 		Result = WhiteColorNode;
 
 		bool bSuccess = true;
+		UDataTable* DataTable = GetDataTable(TypedNodeTable, GenerationContext);
 
-		if (TypedNodeTable->Table)
+		if (DataTable)
 		{
 			FString ColumnName = Pin->PinFriendlyName.ToString();
-			FProperty* Property = TypedNodeTable->Table->FindTableProperty(FName(*ColumnName));
+			FProperty* Property = DataTable->FindTableProperty(FName(*ColumnName));
 
 			if (!Property)
 			{
@@ -294,14 +297,14 @@ mu::NodeColourPtr GenerateMutableSourceColor(const UEdGraphPin* Pin, FMutableGra
 			{
 				// Generating a new data table if not exists
 				mu::TablePtr Table;
-				Table = GenerateMutableSourceTable(TypedNodeTable->Table->GetName(), Pin, GenerationContext);
+				Table = GenerateMutableSourceTable(DataTable, TypedNodeTable, GenerationContext);
 
 				if (Table)
 				{
 					mu::NodeColourTablePtr ColorTableNode = new mu::NodeColourTable();
 
 					// Generating a new Color column if not exists
-					if (Table->FindColumn(StringCast<ANSICHAR>(*ColumnName).Get()) == INDEX_NONE)
+					if (Table->FindColumn(ColumnName) == INDEX_NONE)
 					{
 						int32 Dummy = -1; // TODO MTBL-1512
 						bool Dummy2 = false;
@@ -319,10 +322,10 @@ mu::NodeColourPtr GenerateMutableSourceColor(const UEdGraphPin* Pin, FMutableGra
 						Result = ColorTableNode;
 
 						ColorTableNode->SetTable(Table);
-						ColorTableNode->SetColumn(StringCast<ANSICHAR>(*ColumnName).Get());
-						ColorTableNode->SetParameterName(StringCast<ANSICHAR>(*TypedNodeTable->ParameterName).Get());
-
-						GenerationContext.AddParameterNameUnique(Node, TypedNodeTable->ParameterName);
+						ColorTableNode->SetColumn(ColumnName);
+						ColorTableNode->SetParameterName(TypedNodeTable->ParameterName);
+						ColorTableNode->SetNoneOption(TypedNodeTable->bAddNoneOption);
+						ColorTableNode->SetDefaultRowName(TypedNodeTable->DefaultRowName.ToString());
 					}
 				}
 				else

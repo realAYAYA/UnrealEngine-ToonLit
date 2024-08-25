@@ -7,7 +7,6 @@
 #include "HAL/PlatformProcess.h"
 #include "Modules/ModuleManager.h"
 
-#include "NvClothIncludes.h"
 #include "NvClothSupport.h"
 
 

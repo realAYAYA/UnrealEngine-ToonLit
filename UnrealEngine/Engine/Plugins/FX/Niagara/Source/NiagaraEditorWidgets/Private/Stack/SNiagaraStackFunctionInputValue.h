@@ -53,6 +53,8 @@ private:
 
 	bool GetInputEnabled() const;
 
+	bool GetEntryEnabled() const;
+
 	TSharedRef<SWidget> ConstructLocalValueStructWidget();
 
 	void OnInputValueChanged();

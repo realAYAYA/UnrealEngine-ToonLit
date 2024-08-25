@@ -472,8 +472,15 @@ namespace AnimationEditorUtils
 			USkeleton* Skeleton = Cast<USkeleton>(SkeletonOrSkeletalMeshObject);
 			if (Skeleton == nullptr)
 			{
-				SkeletalMesh = CastChecked<USkeletalMesh>(SkeletonOrSkeletalMeshObject);
-				Skeleton = SkeletalMesh->GetSkeleton();
+				SkeletalMesh = Cast<USkeletalMesh>(SkeletonOrSkeletalMeshObject);
+				if (SkeletalMesh)
+				{
+					Skeleton = SkeletalMesh->GetSkeleton();				
+				}
+				else
+				{
+					UE_LOG(LogAnimation, Warning, TEXT("Invalid skeleton or skeletal mesh passed to CreateAnimationAssets. No asset will be generated."));
+				}
 			}
 
 			if (Skeleton)
@@ -1088,7 +1095,8 @@ namespace AnimationEditorUtils
 				if(const USkeletalMeshComponent* Component = Cast<USkeletalMeshComponent>(InRootObjectBeingDebugged->GetOuter()))
 				{
 					// See if we have any linked instances
-					for(UAnimInstance* LinkedInstance : Component->GetLinkedAnimInstances())
+					const TArray<UAnimInstance*> LinkedInstances = Component->GetLinkedAnimInstances();
+					for(UAnimInstance* LinkedInstance : LinkedInstances)
 					{
 						if(UAnimBlueprint* LinkedAnimBlueprint = Cast<UAnimBlueprint>(LinkedInstance->GetClass()->ClassGeneratedBy))
 						{
@@ -1102,7 +1110,8 @@ namespace AnimationEditorUtils
 				if(const USkeletalMeshComponent* Component = Cast<USkeletalMeshComponent>(OldDebuggedObject->GetOuter()))
 				{
 					// See if we have any linked instances
-					for(UAnimInstance* LinkedInstance : Component->GetLinkedAnimInstances())
+					const TArray<UAnimInstance*> LinkedInstances = Component->GetLinkedAnimInstances();
+					for(UAnimInstance* LinkedInstance : LinkedInstances)
 					{
 						if(UAnimBlueprint* LinkedAnimBlueprint = Cast<UAnimBlueprint>(LinkedInstance->GetClass()->ClassGeneratedBy))
 						{

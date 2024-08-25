@@ -6,12 +6,19 @@
 #include "BoneControllers/AnimNode_SkeletalControlBase.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "Engine/EngineTypes.h"
+#include "VisualLogger/VisualLogger.h"
 
 #include "AnimNode_FootPlacement.generated.h"
 
 struct FAnimationInitializeContext;
 struct FComponentSpacePoseContext;
 struct FNodeDebugData;
+
+#if ENABLE_ANIM_DEBUG && ENABLE_VISUAL_LOG
+#define ENABLE_FOOTPLACEMENT_DEBUG 1
+#else
+#define  ENABLE_FOOTPLACEMENT_DEBUG 0
+#endif
 
 namespace UE::Anim::FootPlacement
 {
@@ -45,10 +52,12 @@ namespace UE::Anim::FootPlacement
 
 		FName SpeedCurveName = NAME_None;
 		FName DisableLockCurveName = NAME_None;
+		FName DisableLegCurveName = NAME_None;
 
 		// Helper struct to store values coming directly, or trivial to calculate from just the input pose.
 		struct FInputPoseData
 		{
+			FTransform FootFKTransformCS = FTransform::Identity;
 			FTransform FootTransformCS = FTransform::Identity;
 			FTransform BallTransformCS = FTransform::Identity;
 			FTransform HipTransformCS = FTransform::Identity;
@@ -61,6 +70,7 @@ namespace UE::Anim::FootPlacement
 			FTransform BallToGround = FTransform::Identity;
 #endif
 			float Speed = 0.0f;
+			float DisableLeg = 0.0f;
 			float LockAlpha = 0.0f;
 			float DistanceToPlant = 0.0f;
 			// Calculated from a range of toe speeds to define when to blend in/out ground rotational alignment
@@ -96,7 +106,10 @@ namespace UE::Anim::FootPlacement
 		{
 			// Interpolated foot lock offset
 			FTransform UnalignedFootOffsetCS = FTransform::Identity;
-			// Foot lock pring states
+			// Separating plane spring states
+			FVectorSpringState SeparatingPlaneOffsetSpringState;
+			FVector SeparatingPlaneOffset = FVector::ZeroVector;
+			// Foot lock spring states
 			FVectorSpringState PlantOffsetTranslationSpringState;
 			FQuaternionSpringState PlantOffsetRotationSpringState;
 			// Ground alignment spring states
@@ -141,6 +154,9 @@ namespace UE::Anim::FootPlacement
 			FVector PelvisTranslationOffset = FVector::ZeroVector;
 			FVectorSpringState PelvisTranslationSpringState;
 		} Interpolation;
+
+		
+		float DisablePelvis = 0.0f;
 	};
 
 	struct FCharacterData
@@ -222,6 +238,12 @@ public:
 
 	UPROPERTY(EditAnywhere, Category = "Plant Settings")
 	float UnplantAngularDamping = 1.0f;
+	
+	UPROPERTY(EditAnywhere, Category = "Plant Settings", meta=(EditCondition="bEnableSeparationInterpolation", DisplayAfter="bEnableSeparationInterpolation"))
+	float SeparationStiffness = 1000.0f;
+
+	UPROPERTY(EditAnywhere, Category = "Plant Settings", meta=(EditCondition="bEnableSeparationInterpolation", DisplayAfter="bEnableSeparationInterpolation"))
+	float SeparationDamping = 1.0f;
 
 	UPROPERTY(EditAnywhere, Category = "Plant Settings", meta=(EditCondition="bEnableFloorInterpolation", DisplayAfter="bEnableFloorInterpolation"))
 	float FloorLinearStiffness = 1000.0f;
@@ -237,6 +259,9 @@ public:
 
 	UPROPERTY(EditAnywhere, Category = "Plant Settings")
 	bool bEnableFloorInterpolation = true;
+	
+	UPROPERTY(EditAnywhere, Category = "Plant Settings")
+	bool bEnableSeparationInterpolation = true;
 };
 
 USTRUCT(BlueprintType)
@@ -272,7 +297,7 @@ public:
 	// Tracing against simple geometry (i.e. it's common for stairs to have simplified ramp collisions) can provide a 
 	// smoother trajectory when the foot is in flight
 	UPROPERTY(EditAnywhere, Category = "Trace Settings", meta = (EditCondition = "bEnabled", DisplayAfter = "bEnabled"))
-	float SimpleCollisionInfluence = 0.5f;
+	float SimpleCollisionInfluence = 0.0f;
 
 	// The channel to use for our simple trace
 	UPROPERTY(EditAnywhere, Category = "Trace Settings", meta = (EditCondition = "bEnabled", DisplayAfter = "bEnabled"))
@@ -372,6 +397,12 @@ public:
 
 	UPROPERTY(EditAnywhere, Category = "Pelvis Settings")
 	bool bEnableInterpolation = true;
+
+	UPROPERTY(EditAnywhere, Category = "Pelvis Settings")
+	bool bDisablePelvisOffsetInAir = true;
+	
+	UPROPERTY(EditAnywhere, Category = "Pelvis Settings")
+	FName DisablePelvisCurveName = NAME_None;
 };
 
 USTRUCT()
@@ -403,6 +434,10 @@ public:
 	// This allows you to disable locking precisely, instead of relying on the procedural mechanism based on springs and foot analysis
 	UPROPERTY(EditAnywhere, Category = "Settings")
 	FName DisableLockCurveName = NAME_None;
+	
+	// Curve to disable the effect of footplacement on this leg
+	UPROPERTY(EditAnywhere, Category = "Settings")
+	FName DisableLegCurveName = NAME_None;
 
 public:
 
@@ -455,7 +490,7 @@ public:
 	// Value of 0 disables this
 	UPROPERTY(EditAnywhere, Category = "Plant Settings", meta = (ClampMin = "0.0", UIMin = "0.0"))
 	float SeparatingDistance = 0.0f;
-
+	
 	// Speed at which we transition to fully unplanted.
 	// The range between SpeedThreshold and UnalignmentSpeedThreshold should roughly represent the roll-phase of the foot
 	// TODO: This feels innaccurate most of the time, and varies depending on anim speed. Improve this
@@ -650,12 +685,19 @@ private:
 
 	void ResetRuntimeData();
 
-#if ENABLE_ANIM_DEBUG
+	
+#if ENABLE_FOOTPLACEMENT_DEBUG
 	UE::Anim::FootPlacement::FDebugData DebugData;
+
 	void DrawDebug(
 		const UE::Anim::FootPlacement::FEvaluationContext& Context,
 		const UE::Anim::FootPlacement::FLegRuntimeData& LegData,
 		const UE::Anim::FootPlacement::FPlantResult& PlantResult) const;
+
+	void DrawVLog(
+		const UE::Anim::FootPlacement::FEvaluationContext& Context,
+		const UE::Anim::FootPlacement::FLegRuntimeData& LegData,
+    	const UE::Anim::FootPlacement::FPlantResult& PlantResult) const;
 #endif
 
 	bool bIsFirstUpdate = false;

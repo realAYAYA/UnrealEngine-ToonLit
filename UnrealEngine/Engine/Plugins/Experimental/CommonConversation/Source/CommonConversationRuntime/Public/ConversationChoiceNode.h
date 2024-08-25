@@ -25,6 +25,8 @@ public:
 	UPROPERTY(BlueprintReadOnly, EditAnywhere, Category=Conversation)
 	FGameplayTagContainer ChoiceTags;
 
+	bool GetHideChoiceClassName() const { return bHideChoiceClassName; }
+
 	virtual bool GenerateChoice(const FConversationContext& Context, FClientConversationOptionEntry& ChoiceEntry) const;
 
 	virtual void NotifyChoicePickedByUser(const FConversationContext& InContext, const FClientConversationOptionEntry& InClientChoice) const;
@@ -32,6 +34,8 @@ public:
 protected:
 	UFUNCTION(BlueprintNativeEvent)
 	void FillChoice(const FConversationContext& Context, FClientConversationOptionEntry& ChoiceEntry) const;
+
+	bool bHideChoiceClassName = false;
 };
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2

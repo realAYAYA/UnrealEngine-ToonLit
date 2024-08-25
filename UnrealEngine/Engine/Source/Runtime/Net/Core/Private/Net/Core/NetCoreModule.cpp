@@ -9,6 +9,7 @@
 #include "Net/Core/DirtyNetObjectTracker/GlobalDirtyNetObjectTracker.h"
 #include "Net/Core/NetHandle/NetHandleManager.h"
 #include "Net/Serialization/FastArraySerializer.h"
+#include "ProfilingDebugging/CsvProfiler.h"
 
 bool GUseDetailedScopeCounters=true;
 static FAutoConsoleVariableRef CVarNetEnableDetailedScopeCounters(
@@ -20,6 +21,8 @@ static FAutoConsoleVariableRef CVarNetEnableDetailedScopeCounters(
 DEFINE_LOG_CATEGORY(LogNetFastTArray);
 
 DEFINE_LOG_CATEGORY(LogNetCore);
+
+CSV_DEFINE_CATEGORY_MODULE(NETCORE_API, Networking, true);
 
 
 class FNetCoreModule : public IModuleInterface

@@ -13,7 +13,6 @@
 #include "ContentStreaming.h"
 #include "Interfaces/IAudioFormat.h"
 #include "AudioDecompress.h"
-#include "ADPCMAudioInfo.h"
 #include "Audio.h"
 
 const uint32	Callback_Free = 0;
@@ -483,7 +482,7 @@ OSStatus FIOSAudioSoundSource::IOSAudioRenderCallback(void* RefCon, AudioUnitRen
 		}
 		else
 		{
-			Source->IOSBuffer->RenderCallbackBufferSize = NumFrames * sizeof(uint16) * Source->IOSBuffer->DecompressionState->GetNumChannels();
+			Source->IOSBuffer->RenderCallbackBufferSize = NumFrames * sizeof(uint16) * Source->IOSBuffer->NumChannels;
 
 			// Since StreamCompressedData returns interlaced samples we need to decompress all frames(samples) for all channels here so we don't end up decompressing multiple times
 			// Ensure we have enough memory to do this. If needed we could realloc here but that is bad practice inside the audio callback since it has a hard deadline

@@ -5,7 +5,7 @@
 #include "Widgets/Views/STileView.h"
 
 template <typename ItemType>
-class COMMONUI_API SCommonTileView : public STileView<ItemType>
+class SCommonTileView : public STileView<ItemType>
 {
 public:
 	virtual FReply OnFocusReceived(const FGeometry& MyGeometry, const FFocusEvent& InFocusEvent) override

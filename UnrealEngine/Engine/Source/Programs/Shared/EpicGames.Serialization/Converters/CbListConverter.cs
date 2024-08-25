@@ -1,8 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
 using System;
 using System.Collections.Generic;
+using EpicGames.Core;
 
 namespace EpicGames.Serialization.Converters
 {
@@ -10,7 +10,7 @@ namespace EpicGames.Serialization.Converters
 	/// Converter for list types
 	/// </summary>
 	/// <typeparam name="T"></typeparam>
-	class CbListConverter<T> : CbConverterBase<List<T>>
+	class CbListConverter<T> : CbConverter<List<T>>
 	{
 		/// <inheritdoc/>
 		public override List<T> Read(CbField field)
@@ -49,7 +49,7 @@ namespace EpicGames.Serialization.Converters
 		}
 
 		/// <inheritdoc/>
-		public override void WriteNamed(CbWriter writer, Utf8String name, List<T> list)
+		public override void WriteNamed(CbWriter writer, CbFieldName name, List<T> list)
 		{
 			if (list == null)
 			{
@@ -70,7 +70,7 @@ namespace EpicGames.Serialization.Converters
 	/// <summary>
 	/// Specialization for serializing string lists
 	/// </summary>
-	sealed class CbStringListConverter : CbConverterBase<List<Utf8String>>
+	sealed class CbStringListConverter : CbConverter<List<Utf8String>>
 	{
 		/// <inheritdoc/>
 		public override List<Utf8String> Read(CbField field)
@@ -95,7 +95,7 @@ namespace EpicGames.Serialization.Converters
 		}
 
 		/// <inheritdoc/>
-		public override void WriteNamed(CbWriter writer, Utf8String name, List<Utf8String> list)
+		public override void WriteNamed(CbWriter writer, CbFieldName name, List<Utf8String> list)
 		{
 			if (list.Count > 0)
 			{
@@ -115,7 +115,7 @@ namespace EpicGames.Serialization.Converters
 	class CbListConverterFactory : CbConverterFactory
 	{
 		/// <inheritdoc/>
-		public override ICbConverter? CreateConverter(Type type)
+		public override CbConverter? CreateConverter(Type type)
 		{
 			if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(List<>))
 			{
@@ -126,7 +126,7 @@ namespace EpicGames.Serialization.Converters
 				else
 				{
 					Type converterType = typeof(CbListConverter<>).MakeGenericType(type.GenericTypeArguments);
-					return (ICbConverter)Activator.CreateInstance(converterType)!;
+					return (CbConverter)Activator.CreateInstance(converterType)!;
 				}
 			}
 			return null;

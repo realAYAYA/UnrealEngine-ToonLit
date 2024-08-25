@@ -8,6 +8,7 @@
 #include "Algo/Transform.h"
 #include "Data/ManifestData.h"
 #include "BuildPatchManifest.h"
+#include "Misc/Compression.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ManifestUObject)
 

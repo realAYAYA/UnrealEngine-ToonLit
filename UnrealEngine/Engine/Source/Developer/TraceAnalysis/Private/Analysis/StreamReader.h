@@ -21,7 +21,7 @@ public:
 	const uint8*				GetPointerUnchecked();
 	void						Advance(uint32 Size);
 	bool						IsEmpty() const;
-	int32						GetRemaining() const;
+	uint32						GetRemaining() const;
 	bool						CanMeetDemand() const;
 	bool						Backtrack(const uint8* To);
 	struct FMark*				SaveMark() const;
@@ -72,6 +72,7 @@ public:
 	int32						Fill(Lambda&& Source);
 	void						Append(const uint8* Data, uint32 Size);
 	uint8*						Append(uint32 Size);
+	uint32						GetBufferSize() const { return BufferSize; }
 
 protected:
 	void						Consolidate();

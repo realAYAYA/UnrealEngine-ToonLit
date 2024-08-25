@@ -19,7 +19,6 @@ class UGeometryCache;
 class UMaterialInterface;
 class UNiagaraSystem;
 class UGroomAsset;
-struct FHairGroupPlatformData;
 
 USTRUCT(BlueprintType)
 struct HAIRSTRANDSCORE_API FGoomBindingGroupInfo
@@ -180,9 +179,9 @@ public:
 	/** Binding bulk data */
 	struct FHairGroupPlatformData
 	{
-		FHairStrandsRootBulkData		SimRootBulkData;
-		FHairStrandsRootBulkData		RenRootBulkData;
-		TArray<FHairStrandsRootBulkData>CardsRootBulkData;
+		TArray<FHairStrandsRootBulkData>		 SimRootBulkDatas;
+		TArray<FHairStrandsRootBulkData>		 RenRootBulkDatas;
+		TArray<TArray<FHairStrandsRootBulkData>> CardsRootBulkDatas;
 	};
 
 private:
@@ -228,6 +227,7 @@ public:
 
 	/** Helper function to return the asset path name, optionally joined with the LOD index if LODIndex > -1. */
 	FName GetAssetPathName(int32 LODIndex = -1);
+	uint32 GetAssetHash() const { return AssetNameHash; }
 
 #if WITH_EDITOR
 	FOnGroomBindingAssetChanged& GetOnGroomBindingAssetChanged() { return OnGroomBindingAssetChanged; }
@@ -237,14 +237,6 @@ public:
 	
 #endif // WITH_EDITOR
 
-	enum class EQueryStatus
-	{
-		None,
-		Submitted,
-		Completed
-	};
-	volatile EQueryStatus QueryStatus = EQueryStatus::None;
-
 	/** Initialize resources. */
 	void InitResource();
 
@@ -252,7 +244,7 @@ public:
 	void UpdateResource();
 
 	/** Release the hair strands resource. */
-	void ReleaseResource();
+	void ReleaseResource(bool bResetLoadedSize);
 
 	void Reset();
 
@@ -262,6 +254,10 @@ public:
 	//private :
 #if WITH_EDITOR
 	FOnGroomBindingAssetChanged OnGroomBindingAssetChanged;
+
+	void RecreateResources();
+	void ChangeFeatureLevel(ERHIFeatureLevel::Type PendingFeatureLevel);
+	void ChangePlatformLevel(ERHIFeatureLevel::Type PendingFeatureLevel);
 #endif
 
 #if WITH_EDITORONLY_DATA
@@ -269,16 +265,33 @@ public:
 	void Build();
 
 	void CacheDerivedDatas();
-	void CacheDerivedDatas(uint32 InGroupIndex, const FString KeySuffix, bool& bOutValid, bool& bOutReloadResource);
+
+	virtual void BeginCacheForCookedPlatformData(const ITargetPlatform* TargetPlatform);
+	virtual void ClearAllCachedCookedPlatformData();
+	TArray<FHairGroupPlatformData>* GetCachedCookedPlatformData(const ITargetPlatform* TargetPlatform);
 
 	void InvalidateBinding();
 	void InvalidateBinding(class USkeletalMesh*);
+
+	struct FCachedCookedPlatformData
+	{
+		TArray<FString> GroupDerivedDataKeys;
+		TArray<FHairGroupPlatformData> GroupPlatformDatas;
+	};
+private:
+	TArray<FCachedCookedPlatformData*> CachedCookedPlatformDatas;
+
 	bool bRegisterSourceMeshCallback = false;
 	bool bRegisterTargetMeshCallback = false;
 	bool bRegisterGroomAssetCallback = false;
 	TArray<FString> CachedDerivedDataKey;
 #endif
+#if WITH_EDITOR
+	ERHIFeatureLevel::Type CachedResourcesFeatureLevel = ERHIFeatureLevel::Num;
+	ERHIFeatureLevel::Type CachedResourcesPlatformLevel = ERHIFeatureLevel::Num;
+#endif
 	bool bIsValid = false;
+	uint32 AssetNameHash = 0;
 };
 
 UCLASS(BlueprintType, hidecategories = (Object))

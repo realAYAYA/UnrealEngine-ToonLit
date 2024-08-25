@@ -3,8 +3,9 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "IRewindDebuggerTrackCreator.h"
 #include "IRewindDebuggerView.h"
-#include "IRewindDebuggerViewCreator.h"
+#include "RewindDebuggerTrack.h"
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/Views/STreeView.h"
 
@@ -116,13 +117,34 @@ private:
 	uint64 AnimInstanceId;
 };
 
-class FAnimGraphSchematicViewCreator : public IRewindDebuggerViewCreator
+class FAnimGraphSchematicTrack : public RewindDebugger::FRewindDebuggerTrack
 {
-	public:
-		virtual FName GetTargetTypeName() const;
-		virtual FName GetName() const override;
-		virtual FText GetTitle() const override;
-		virtual FSlateIcon GetIcon() const override;
-		virtual TSharedPtr<IRewindDebuggerView> CreateDebugView(uint64 ObjectId, double CurrentTime, const TraceServices::IAnalysisSession& InAnalysisSession) const override;
-		virtual bool HasDebugInfo(uint64 ObjectId) const override;
+public:
+
+	FAnimGraphSchematicTrack(uint64 InObjectId)
+		: AnimInstanceId(InObjectId)
+	{
+	}
+
+private:
+	virtual FSlateIcon GetIconInternal() override;
+	virtual TSharedPtr<SWidget> GetDetailsViewInternal() override;
+	virtual FName GetNameInternal() const override;
+	virtual FText GetDisplayNameInternal() const override;
+	virtual uint64 GetObjectIdInternal() const override { return AnimInstanceId; }
+	virtual bool UpdateInternal() override;
+
+	TWeakPtr<SAnimGraphSchematicView> View;
+	FSlateIcon Icon;
+	uint64 AnimInstanceId;
+};
+
+class FAnimGraphSchematicTrackCreator : public RewindDebugger::IRewindDebuggerTrackCreator
+{
+public:
+	virtual FName GetTargetTypeNameInternal() const override;
+	virtual FName GetNameInternal() const override;
+	virtual void GetTrackTypesInternal(TArray<RewindDebugger::FRewindDebuggerTrackType>& Types) const override;
+	virtual TSharedPtr<RewindDebugger::FRewindDebuggerTrack> CreateTrackInternal(uint64 ObjectId) const override;
+	virtual bool HasDebugInfoInternal(uint64 ObjectId) const override;
 };

@@ -541,11 +541,13 @@ namespace Chaos
 		THandleHeap& operator =(const THandleHeap<ElementType, IndexWidth, GenerationWidth>& Other)
 		{
 			CopyFrom(Other);
+			return *this;
 		}
 
 		THandleHeap& operator =(THandleHeap<ElementType, IndexWidth, GenerationWidth>&& Other)
 		{
 			MoveFrom(Other);
+			return *this;
 		}
 
 		THandleHeap()

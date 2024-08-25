@@ -42,37 +42,25 @@ namespace mu
 		static void Serialise( const NodeScalarParameter* pNode, OutputArchive& arch );
 		static NodeScalarParameterPtr StaticUnserialise( InputArchive& arch );
 
-
 		//-----------------------------------------------------------------------------------------
 		// Node Interface
 		//-----------------------------------------------------------------------------------------
 
-        const NODE_TYPE* GetType() const override;
-		static const NODE_TYPE* GetStaticType();
-
-        int GetInputCount() const override;
-        Node* GetInputNode( int i ) const override;
-        void SetInputNode( int i, NodePtr pNode ) override;
+        const FNodeType* GetType() const override;
+		static const FNodeType* GetStaticType();
 
 		//-----------------------------------------------------------------------------------------
 		// Own Interface
 		//-----------------------------------------------------------------------------------------
 
 		//! Get the name of the parameter. It will be exposed in the final compiled data.
-		const char* GetName() const;
-		void SetName( const char* );
+		void SetName( const FString& );
 
 		//! Get the uid of the parameter. It will be exposed in the final compiled data.
-		const char* GetUid() const;
-		void SetUid( const char* );
+		void SetUid( const FString&);
 
 		//! Get the default value of the parameter.
-		float GetDefaultValue() const;
 		void SetDefaultValue( float v );
-
-		//! Get the additional information about the type
-		PARAMETER_DETAILED_TYPE GetDetailedType() const ;
-		void SetDetailedType( PARAMETER_DETAILED_TYPE type );
 
         //! Set the number of ranges (dimensions) for this parameter.
         //! By default a parameter has 0 ranges, meaning it only has one value.

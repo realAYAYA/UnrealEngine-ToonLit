@@ -19,11 +19,11 @@
  */
 struct FMetalHashedVertexDescriptor
 {
-	NSUInteger VertexDescHash;
-	mtlpp::VertexDescriptor VertexDesc;
+	NS::UInteger VertexDescHash;
+	MTLVertexDescriptorPtr VertexDesc;
 
 	FMetalHashedVertexDescriptor();
-	FMetalHashedVertexDescriptor(mtlpp::VertexDescriptor Desc, uint32 Hash);
+	FMetalHashedVertexDescriptor(MTLVertexDescriptorPtr Desc, uint32 Hash);
 	FMetalHashedVertexDescriptor(FMetalHashedVertexDescriptor const& Other);
 	~FMetalHashedVertexDescriptor();
 

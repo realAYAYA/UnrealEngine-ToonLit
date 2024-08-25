@@ -10,17 +10,66 @@ ConsoleManager.cpp: console command handling
 #include "Misc/Paths.h"
 #include "Stats/Stats.h"
 #include "Misc/ConfigCacheIni.h"
+#include "Misc/ConfigContext.h"
 #include "Misc/ConfigUtilities.h"
 #include "Misc/CoreDelegates.h"
 #include "Misc/OutputDeviceFile.h"
+#include "Misc/RemoteConfigIni.h"
 #include "Modules/ModuleManager.h"
 #include "HAL/PlatformProcess.h"
-#include "Misc/RemoteConfigIni.h"
 #include "ProfilingDebugging/CsvProfiler.h"
 #include "HAL/FileManager.h"
+#include "Serialization/ArchiveCountMem.h"
+
+#include <clocale>
 
 DEFINE_LOG_CATEGORY(LogConsoleResponse);
 DEFINE_LOG_CATEGORY_STATIC(LogConsoleManager, Log, All);
+
+namespace UE::ConsoleManager::Private
+{
+	// this tracks the cvars that were  added dynamically with a tag (via plugin or similar)
+	// we use this structure to unset the cvars and update the value when the plugin unloads
+	TMap<FName, TSet<IConsoleVariable*>*> TaggedCVars;
+
+	/**
+	 * Setup a locale for a given scope, the previous locale is restored on scope end.
+	 */
+	struct FConsoleManagerLocaleScope
+	{
+		// Set a custom locale within this object scope
+		FConsoleManagerLocaleScope()
+		{
+			if (const char* saved = std::setlocale(LC_NUMERIC, nullptr))
+			{
+				SavedLocale = TArray<char>(saved, TCString<char>::Strlen(saved) + 1);
+			}
+			std::setlocale(LC_NUMERIC, "C");
+		}
+
+		// restore the captured Locale
+		~FConsoleManagerLocaleScope()
+		{
+			std::setlocale(LC_NUMERIC, SavedLocale.GetData());
+		}
+
+	private:
+		TArray<char> SavedLocale; // Locale previously used, captured, and to be restored
+	};
+
+	template<typename T>
+	void GetValueFromString(T& Value, const TCHAR* Buffer)
+	{
+		TTypeFromString<T>::FromString(Value, Buffer);
+	};
+
+	template<>
+	void GetValueFromString<float>(float& Value, const TCHAR* Buffer)
+	{
+		FConsoleManagerLocaleScope LocaleScope;
+		TTypeFromString<float>::FromString(Value, Buffer);
+	};
+}
 
 static inline bool IsWhiteSpace(TCHAR Value) { return Value == TCHAR(' '); }
 
@@ -53,25 +102,25 @@ const TCHAR* GetConsoleVariableSetByName(EConsoleVariableFlags ConsoleVariableFl
 {
 	EConsoleVariableFlags SetBy = (EConsoleVariableFlags)((uint32)ConsoleVariableFlags & ECVF_SetByMask);
 
+	#define CASE(x) case ECVF_SetBy##x: return TEXT(#x);
 	switch(SetBy)
 	{
-#define CASE(A) case ECVF_SetBy##A: return TEXT(#A);
-		// Could also be done with enum reflection instead
-		CASE(Constructor)
-		CASE(Scalability)
-		CASE(GameSetting)
-		CASE(ProjectSetting)
-		CASE(SystemSettingsIni)
-		CASE(DeviceProfile)
-		CASE(ConsoleVariablesIni)
-		CASE(Hotfix)
-		CASE(Commandline)
-		CASE(Code)
-		CASE(Console)
-#undef CASE
+		ENUMERATE_SET_BY(CASE)
 	}
+	#undef CASE
+	
 	return TEXT("<UNKNOWN>");
 }
+
+EConsoleVariableFlags GetConsoleVariableSetByValue(const TCHAR* SetByName)
+{
+	#define TEST(x) if (FCString::Stricmp(SetByName, TEXT(#x)) == 0) { return ECVF_SetBy##x; }
+	ENUMERATE_SET_BY(TEST)
+	#undef TEST
+	
+	return ECVF_SetByMask;
+}
+
 
 TArray<const FAutoConsoleObject*>& FAutoConsoleObject::AccessGeneralShaderChangeCvars()
 {
@@ -182,7 +231,7 @@ public:
 				*GetString()
 				);
 				
-			if (OldPri == ECVF_SetByConsoleVariablesIni || OldPri == ECVF_SetByCommandline || OldPri == ECVF_SetBySystemSettingsIni)
+			if (OldPri == ECVF_SetByConsoleVariablesIni || OldPri == ECVF_SetByCommandline || OldPri == ECVF_SetBySystemSettingsIni || OldPri == ECVF_SetByHotfix)
 			{
 				// Set by an ini that has to be hand edited, a deliberate fail
 				UE_LOG(LogConsoleManager, Verbose, TEXT("%s"), *Message);
@@ -203,8 +252,14 @@ public:
 		return bRet;
 	}
 
-	void OnChanged(EConsoleVariableFlags SetBy)
+	virtual void OnChanged(EConsoleVariableFlags SetBy, bool bForce)
 	{
+		// we don't want any of this if SetOnly is used
+		if (SetBy & ECVF_Set_SetOnly_Unsafe)
+		{
+			return;
+		}
+		
 		// SetBy can include set flags. Discard them here
 		SetBy = EConsoleVariableFlags(SetBy & ~ECVF_SetFlagMask);
 
@@ -212,7 +267,7 @@ public:
 		check(((uint32)SetBy & ECVF_SetByMask) || SetBy == ECVF_Default);
 
 		// double check, if this fires we miss a if(CanChange(SetBy))
-		check(CanChange(SetBy));
+		check(bForce || CanChange(SetBy));
 
 		// only change on main thread
 
@@ -222,6 +277,25 @@ public:
 	}
 
 	
+	// ------
+	// Helper accessors to get to FConsoleVariableExtendedData, when we don't have a Type
+
+	/**
+	 * Print the history to a log
+	 */
+	virtual void LogHistory(FOutputDevice& Ar) = 0;
+	/**
+	 * Track memory used by history data
+	 */
+	virtual SIZE_T GetHistorySize() = 0;
+
+#if ALLOW_OTHER_PLATFORM_CONFIG
+	/**
+	 * Internal function for caching data for other platforms - this is like Set(), but won't do any callbacks, or log any errors/warnings
+	 */
+	virtual void SetOtherPlatformValue(const TCHAR* InValue, EConsoleVariableFlags SetBy, FName Tag) = 0;
+#endif
+
 protected: // -----------------------------------------
 
 	// not using TCHAR* to allow chars support reloading of modules (otherwise we would keep a pointer into the module)
@@ -329,6 +403,13 @@ private: // -----------------------------------------
 template <class T>
 void OnCVarChange(T& Dst, const T& Src, EConsoleVariableFlags Flags, EConsoleVariableFlags SetBy)
 {
+    // for the SetOnly case, just copy over the source to the dest
+    if (SetBy & ECVF_Set_SetOnly_Unsafe)
+    {
+        Dst = Src;
+        return;
+    }
+    
 	FConsoleManager& ConsoleManager = (FConsoleManager&)IConsoleManager::Get();
 
 #if WITH_RELOAD
@@ -358,7 +439,7 @@ void OnCVarChange(T& Dst, const T& Src, EConsoleVariableFlags Flags, EConsoleVar
 		check(0);
 	}
 
-	if ((SetBy & ECVF_Set_NoSinkCall_Unsafe)== 0)
+	if ((SetBy & ECVF_Set_NoSinkCall_Unsafe) == 0)
 	{
 		ConsoleManager.OnCVarChanged();
 	}
@@ -372,7 +453,7 @@ static void ExpandScalabilityCVar(FConfigCacheIni* ConfigSystem, const FString& 
 	// if the DP had sg.ResolutionQuality=3, we would read [ResolutionQuality@3]
 	FString SectionName = FString::Printf(TEXT("%s@%s"), *CVarKey.Mid(3), *CVarValue);
 	// walk over the scalability section and add them in, unless already done
-	FConfigSection* ScalabilitySection = ConfigSystem->GetSectionPrivate(*SectionName, false, true, GScalabilityIni);
+	const FConfigSection* ScalabilitySection = ConfigSystem->GetSection(*SectionName, false, GScalabilityIni);
 	if (ScalabilitySection != nullptr)
 	{
 		for (const auto& Pair : *ScalabilitySection)
@@ -485,7 +566,7 @@ bool IConsoleManager::VisitPlatformCVarsForEmulation(FName PlatformName, const F
 	for (const FSectionPair& SectionPair : Sections)
 	{
 		bool bDeleteSection = false;
-		FConfigSection* Section;
+		const FConfigSection* Section;
 		bool bIsDeviceProfile = FCString::Strcmp(SectionPair.Name, DeviceProfileTag) == 0;
 		bool bIsScalabilityLevel = FCString::Strcmp(SectionPair.Name, ScalabilityTag) == 0;
 
@@ -503,14 +584,18 @@ bool IConsoleManager::VisitPlatformCVarsForEmulation(FName PlatformName, const F
 			}
 
 			// make a fake section of the dp cvars - this will let the expansion happen as normal below
-			Section = new FConfigSection();
+			FConfigSection* NewSection = new FConfigSection();
 			bDeleteSection = true;
 
+			UE_LOG(LogConsoleManager, Verbose, TEXT("Gathering device profile cvars for %s, platform config %s"), *DeviceProfileName, *PlatformName.ToString());
 			// run the delegate (this code can't get into DP code directly, so we use a delegate), and walk over the results
 			for (TPair<FName, FString>& Pair : FCoreDelegates::GatherDeviceProfileCVars.Execute(DeviceProfileName))
 			{
-				Section->Add(Pair);
+				NewSection->Add(Pair);
+				UE_LOG(LogConsoleManager, Verbose, TEXT("   %s = %s"), *Pair.Key.ToString(), *Pair.Value);
 			}
+            
+            Section = NewSection;
 		}
 		else if (bIsScalabilityLevel)
 		{
@@ -518,22 +603,24 @@ bool IConsoleManager::VisitPlatformCVarsForEmulation(FName PlatformName, const F
 			FString DefaultLevel = FString::Printf(TEXT("%d"), DefaultScalabilityLevel);
 
 			// make a fake section of the sg. vars - this will let the expansion happen as normal below
-			Section = new FConfigSection();
+            FConfigSection* NewSection = new FConfigSection();
 			bDeleteSection = true;
-			IConsoleManager::Get().ForEachConsoleObjectThatStartsWith(FConsoleObjectVisitor::CreateLambda([&DefaultLevel, Section](const TCHAR* Name, IConsoleObject* Obj)
+			IConsoleManager::Get().ForEachConsoleObjectThatStartsWith(FConsoleObjectVisitor::CreateLambda([&DefaultLevel, NewSection](const TCHAR* Name, IConsoleObject* Obj)
 				{
 					if (Obj->TestFlags(ECVF_ScalabilityGroup))
 					{
-						Section->Add(Name, FConfigValue(DefaultLevel));
+						NewSection->Add(Name, FConfigValue(DefaultLevel));
 					}
 				}
 			));
+            
+            Section = NewSection;
 		}
 		else
 		{
 			static const FString ConsoleVariablesIni = FPaths::EngineDir() + TEXT("Config/ConsoleVariables.ini");
 			const FString& IniFile = (SectionPair.SetBy == ECVF_SetByConsoleVariablesIni) ? ConsoleVariablesIni : GEngineIni;
-			Section = ConfigSystem->GetSectionPrivate(SectionPair.Name, false, true, IniFile);
+			Section = ConfigSystem->GetSection(SectionPair.Name, false, IniFile);
 		}
 
 
@@ -572,10 +659,9 @@ bool IConsoleManager::VisitPlatformCVarsForEmulation(FName PlatformName, const F
 						}
 					}
 				}
-				else
-				{
-					VisitIfAllowed(Key, Value, (EConsoleVariableFlags)(SectionPair.SetBy | PreviewFlag));
-				}
+
+				// run the callback with all cvars, even scalbility groups
+				VisitIfAllowed(Key, Value, (EConsoleVariableFlags)(SectionPair.SetBy | PreviewFlag));
 			}
 
 			// clean up the temp section we made
@@ -592,66 +678,345 @@ bool IConsoleManager::VisitPlatformCVarsForEmulation(FName PlatformName, const F
 }
 
 
-static bool GetConfigValueFromRuntimeSources(FName PlatformName, IConsoleVariable* CVar, FString& OutValue, EConsoleVariableFlags& LastSetBy)
-{
-	FString VariableName = IConsoleManager::Get().FindConsoleObjectName(CVar);
-	if (VariableName.Len() == 0)
-	{
-		return false;
-	}
-
-	OutValue = CVar->GetDefaultValueVariable()->GetString();
-	LastSetBy = ECVF_SetByConstructor;
-
-	// use the platform's base DeviceProfile for emulation
-	IConsoleManager::VisitPlatformCVarsForEmulation(PlatformName, PlatformName.ToString(),
-		[&VariableName, &OutValue, &LastSetBy](const FString& CVarName, const FString& CVarValue, EConsoleVariableFlags SetByAndPreview)
-		{
-			// if this key is the variable, set it at the current SetBy level
-			if (CVarName == VariableName)
-			{
-				OutValue = CVarValue;
-				LastSetBy = (EConsoleVariableFlags)(SetByAndPreview & ECVF_SetByMask);
-			}
-		});
-
-	// by this point, the value will be set, with the DefaultValue if nothing else from the visit function
-	return true;
-}
-
 #endif
 
 
-// an intermediate class between specific typed CVars and FConsoleVariableBase to handle looking up other platform's cvars and caching them
-// if ALLOW_OTHER_PLATFORM_CONFIG is 0, then this is a pass-through class that does nothing
+constexpr bool IsArrayPriority(EConsoleVariableFlags Priority)
+{
+	Priority = (EConsoleVariableFlags)(Priority & ECVF_SetByMask);
+	return
+		Priority == ECVF_SetByPluginLowPriority ||
+		Priority == ECVF_SetByPluginHighPriority ||
+		Priority == ECVF_SetByHotfix ||
+		Priority == ECVF_SetByPreview;
+}
+
 template <class T>
-class FOtherPlatformValueHelper : public FConsoleVariableBase
+class FConsoleVariableHistory
+{
+public:
+	using FHistoryData = TConsoleVariableData<T>;
+	using FTaggedHistoryData = TPair<FName, FHistoryData>;
+	TSortedMap<int, TArray<FTaggedHistoryData>> History;
+	
+	bool bHasTaggedArrayData = false;
+	
+	void Track(const TCHAR* InValue, EConsoleVariableFlags SetBy, FName Tag)
+	{
+		T LocalCopy;
+		UE::ConsoleManager::Private::GetValueFromString<T>(LocalCopy, UE::ConfigUtilities::ConvertValueFromHumanFriendlyValue(InValue));
+		
+		int Priority = (int)SetBy;
+		TArray<FTaggedHistoryData>& ValueArray = History.FindOrAdd(Priority);
+		if (!IsArrayPriority(SetBy))
+		{
+			if (ValueArray.Num() > 0)
+			{
+				// don't do anything if we already are set
+				if (ValueArray[0].Key == Tag && ValueArray[0].Value.GetValueOnAnyThread() == LocalCopy)
+				{
+					return;
+				}
+				//remove the entry but leave space
+				ValueArray.Empty(1);
+			}
+		}
+		// add the value to the array (even if it's a non-array type, we store the value in the array)
+		ValueArray.Emplace(Tag, LocalCopy);
+	}
+	
+	/**
+	 * Unset the value at the SetBy, and optionally Tag.
+	 * Return true if it had been set, or false if nothing happened
+	 */
+	bool Unset(EConsoleVariableFlags SetBy, FName Tag)
+	{
+		if (!History.Contains(SetBy))
+		{
+			return false;
+		}
+		
+		TArray<FTaggedHistoryData>& ValueArray = History[SetBy];
+
+		bool bUnsetSomething = false;
+
+		// first remove the value (if no tag, remove all of them)
+		if (Tag != NAME_None)
+		{
+			if (IsArrayPriority(SetBy))
+			{
+				// look for the tag in the list
+				for (auto It = ValueArray.CreateIterator(); It; ++It)
+				{
+					if (It->Key == Tag)
+					{
+						bUnsetSomething = true;
+						It.RemoveCurrent();
+						break;
+					}
+				}
+
+				// toss it if it's now empty
+				if (ValueArray.IsEmpty())
+				{
+					History.Remove(SetBy);
+				}
+			}
+			else if (ValueArray.Num() > 0 && ValueArray[0].Key == Tag)
+			{
+				bUnsetSomething = true;
+				History.Remove(SetBy);
+			}
+		}
+		else if (ValueArray.Num() > 0)
+		{
+			bUnsetSomething = true;
+			History.Remove(SetBy);
+		}
+
+		return bUnsetSomething;
+	}
+	
+	const FHistoryData& GetMaxValue(EConsoleVariableFlags& MaxSetBy)
+	{
+		for (typename TSortedMap<int, TArray<FTaggedHistoryData>>::TReverseIterator It(History); It; ++It)
+		{
+			if (It.Value().Num() > 0)
+			{
+				MaxSetBy = (EConsoleVariableFlags)It.Key();
+				return It.Value().Last().Value;
+			}
+		}
+		
+		// indicate failed to find one
+		MaxSetBy = ECVF_SetByMask;
+		static FHistoryData Default(T{});
+		return Default;
+	}
+	
+	void Log(FOutputDevice& Ar)
+	{
+		Ar.Logf(TEXT("\nHISTORY"));
+		int Prio = 0;
+		for (auto& Pri : History)
+		{
+			for (FTaggedHistoryData& Pair : Pri.Value)
+			{
+				FString KeyStr = FString();
+				
+				Ar.Logf(TEXT("%s: %s%s"),
+					GetConsoleVariableSetByName((EConsoleVariableFlags)(Pri.Key)),
+					*TTypeToString<T>::ToString(Pair.Value.GetValueOnGameThread()),
+					(Pair.Key != NAME_None) ? *FString::Printf(TEXT(" [%s]"), *Pair.Key.ToString()) : TEXT(""));
+			}
+			Prio++;
+		}
+	}
+};
+
+
+// an intermediate class between specific typed CVars and FConsoleVariableBase to handle history and (in some configurations)
+// cached values of the CVar on other platforms/device profiles. It is expected that all CVar classes extend from this (if not
+// you will get abtract class compilation errors). We need the store type T, so we cannot put this up into FConsoleVariableBase
+template <class T>
+class FConsoleVariableExtendedData : public FConsoleVariableBase
 {
 public:
 
-	FOtherPlatformValueHelper(const T& DefaultValue, const TCHAR* Help, EConsoleVariableFlags Flags, bool bSaveDefault);
+	FConsoleVariableExtendedData(const T& DefaultValue, const TCHAR* Help, EConsoleVariableFlags Flags);
 
-#if ALLOW_OTHER_PLATFORM_CONFIG
-	// remember the default value of this cvar, before anything else can assign to it - this way we can know in the editor what the value
-	// would be for a cvar on another platform, if no .ini file on that platform sets it
-	virtual IConsoleVariable* GetDefaultValueVariable()
+	virtual ~FConsoleVariableExtendedData()
 	{
-		return PlatformIndependentDefault.Get();
+		// if we had been put into any tagged
+		if (PriorityHistory != nullptr && PriorityHistory->bHasTaggedArrayData)
+		{
+			// make sure we are pulled out of the global list of tagged cvars
+			for (auto Pair : UE::ConsoleManager::Private::TaggedCVars)
+			{
+				Pair.Value->Remove(this);
+			}
+			
+			delete PriorityHistory;
+		}
+	}
+	
+	/**
+	 * Subclasses implement this to simply set TypedValue as the current value for the CVar. It must not call any callbacks
+	 */
+	virtual void SetInternal(const T& TypedValue, EConsoleVariableFlags SetBy) = 0;
+
+	/**
+	 * Similar to the Set function, except that it must always work, independent of priority. This is used by the History system
+	 * to set the value wth a lower priority, and then update the priority.
+	 */
+	void SetInternalAndUpdateState(const T& TypedValue, EConsoleVariableFlags SetBy)
+	{
+		SetInternal(TypedValue, SetBy);
+		OnChanged(SetBy, true);
 	}
 
-	virtual TSharedPtr<IConsoleVariable> GetPlatformValueVariable(FName PlatformName) override;
-	virtual void ClearPlatformVariables(FName PlatformName) override;
+#if ALLOW_OTHER_PLATFORM_CONFIG
 
-protected:
-	// cache of the default value - we need to remember this when calculating the value on another platform if that platform doesn't override it in any ini file
-	// even if this platform does (in which case the default is lost)
-	TSharedPtr<IConsoleVariable> PlatformIndependentDefault;
+	virtual TSharedPtr<IConsoleVariable> GetPlatformValueVariable(FName PlatformName, const FString& DeviceProfileName) override;
+	virtual bool HasPlatformValueVariable(FName PlatformName, const FString& DeviceProfileName) override;
+	virtual void ClearPlatformVariables(FName PlatformName) override;
 
 	// cache of the values of this cvar on other platforms
 	TMap<FName, TSharedPtr<IConsoleVariable> > PlatformValues;
 	FRWLock PlatformValuesLock;
+	friend FConsoleManager;
 
 #endif
+
+	virtual FString GetDefaultValue() override
+	{
+		// simply convert the default typed value to a string
+		return TTypeToString<T>::ToString(GetDefaultTypedValue());
+	}
+
+	T GetDefaultTypedValue()
+	{
+		// pull our constructed value out of the history if it exists, (if it doesn't, than our current value is the constructed value!)
+		if (PriorityHistory != nullptr)
+		{
+			// constructor will never have more than one value
+			return PriorityHistory->History[ECVF_SetByConstructor][0].Value.GetValueOnAnyThread(true);
+		}
+		
+		// if we have no history at all, that means we never called Set, so the current value must be the value we were constructed with
+		T ConstructorValue;
+		GetValue(ConstructorValue);
+		return ConstructorValue;
+	}
+
+protected:
+	// A history object will be created and set here the first time Set() is called to change the value
+	FConsoleVariableHistory<T>* PriorityHistory = nullptr;
+	friend class FConsoleManager;
+
+#if ALLOW_OTHER_PLATFORM_CONFIG
+	virtual void SetOtherPlatformValue(const TCHAR* InValue, EConsoleVariableFlags SetBy, FName Tag) override
+	{
+		// always track it
+		TrackHistory(InValue, SetBy, Tag);
+
+		// set it if we are equal to or higher than before
+		uint32 CurrentSetBy = GetFlags() & ECVF_SetByMask;
+		uint32 NewSetBy = SetBy & ECVF_SetByMask;
+
+		if (NewSetBy >= CurrentSetBy)
+		{
+			// update value
+			T ConvertedValue;
+			UE::ConsoleManager::Private::GetValueFromString<T>(ConvertedValue, UE::ConfigUtilities::ConvertValueFromHumanFriendlyValue(InValue));
+			// set the value, and push to render thread value as well, but don't trigger callbacks and don't check priorties
+			SetInternalAndUpdateState(ConvertedValue, (EConsoleVariableFlags)(SetBy | ECVF_Set_SetOnly_Unsafe));
+
+			// update the setby
+			SetFlags((EConsoleVariableFlags)((GetFlags() & ~ECVF_SetByMask) | NewSetBy));
+		}
+	}
+#endif
+
+	/**
+	 * This is the key function that subclasses need to call in their Set() implementation. This will track the values of cvars at
+	 * different priorities, so priorities/plugins/etc can be unset later, and the CVar will updatae state correctly (in Unset())
+	 */
+	void TrackHistory(const TCHAR* InValue, EConsoleVariableFlags SetBy, FName Tag)
+	{
+		// make a history if we want to
+		if (PriorityHistory == nullptr)
+		{
+			PriorityHistory = new FConsoleVariableHistory<T>();
+			PriorityHistory->Track(*GetString(), ECVF_SetByConstructor, NAME_None);
+		}
+		PriorityHistory->Track(InValue, SetBy, Tag);
+
+		// this cvar so we can remove ourself later
+		if (Tag != NAME_None)
+		{
+			TSet<IConsoleVariable*>* TaggedSet = UE::ConsoleManager::Private::TaggedCVars.FindRef(Tag);
+			if (TaggedSet == nullptr)
+			{
+				TaggedSet = UE::ConsoleManager::Private::TaggedCVars.Add(Tag, new TSet<IConsoleVariable*>());
+			}
+			TaggedSet->Add(this);
+			
+			// set a flag to remember we need to remove ourself from TaggedCVars in destructor
+			PriorityHistory->bHasTaggedArrayData = true;
+		}
+	}
+	
+	virtual SIZE_T GetHistorySize() override
+	{
+		if (PriorityHistory != nullptr)
+		{
+			return PriorityHistory->History.GetAllocatedSize();
+		}
+		return 0;
+	}
+
+	void LogHistory(FOutputDevice& Ar)
+	{
+		if (PriorityHistory != nullptr)
+		{
+			PriorityHistory->Log(Ar);
+		}
+	}
+	
+	/**
+	 * Removes the value at the given SetBy (and potentially Tag for the Array type SetBy priorities). This will update the
+	 * current value of the CVar as needed (if the Unset is at the current prio)
+	 */
+	virtual void Unset(EConsoleVariableFlags SetBy, FName Tag) override
+	{
+		
+		if (PriorityHistory == nullptr)
+		{
+			return;
+		}
+		
+		// if we don't know the SetBy, unset from all
+		// this isn't ideal because it could call SetInternal multiple times
+		if (SetBy == ECVF_SetByMask)
+		{
+			#define RECURSE(x) Unset(ECVF_SetBy##x, Tag);
+			ENUMERATE_SET_BY(RECURSE)
+			#undef RECURSE
+			
+			return;
+		}
+		
+		// if nothing was unset, no need to perform any more actions
+		if (PriorityHistory->Unset(SetBy, Tag) == false)
+		{
+			return;
+		}
+		
+		uint32 CurrentPri =	(uint32)this->Flags & ECVF_SetByMask;
+		uint32 UnsetPri =	(uint32)SetBy & ECVF_SetByMask;
+
+		// if we are unsetting at the current setby (or maybe in some weird cases, greater than setby) then we need to reset the SetBy and current value
+		if (UnsetPri >= CurrentPri)
+		{
+			// now figure out the new value
+			EConsoleVariableFlags NewSetBy;
+			auto MaxValue = PriorityHistory->GetMaxValue(NewSetBy);
+			
+			// when we preview SGs, we set their value, but dont run the callbacks, so here we are doing the same operation
+			if (GetFlags() & ECVF_ScalabilityGroup)
+			{
+				NewSetBy = (EConsoleVariableFlags)(NewSetBy | ECVF_Set_SetOnly_Unsafe);
+			}
+			
+			UE_LOG(LogConsoleManager, Display, TEXT(" |-> Unsetting %s, now %s"), *IConsoleManager::Get().FindConsoleObjectName(this),
+				*TTypeToString<T>::ToString(MaxValue.GetValueOnGameThread()));
+
+			// and force it to the new value and call any set callbacks
+			SetInternalAndUpdateState(MaxValue.GetValueOnGameThread(), NewSetBy);
+		}
+	}
+
 };
 
 template<class T>
@@ -715,6 +1080,7 @@ template<> float FConsoleVariableConversionHelper<float>::GetFloat(float Value)
 }
 template<> FString FConsoleVariableConversionHelper<float>::GetString(float Value)
 {
+	UE::ConsoleManager::Private::FConsoleManagerLocaleScope LocaleScope;
 	return FString::Printf(TEXT("%g"), Value);
 }
 
@@ -734,7 +1100,7 @@ template<> int32 FConsoleVariableConversionHelper<FString>::GetInt(FString Value
 template<> float FConsoleVariableConversionHelper<FString>::GetFloat(FString Value)
 {
 	float OutValue = 0.0f;
-	TTypeFromString<float>::FromString(OutValue, *Value);
+	UE::ConsoleManager::Private::GetValueFromString<float>(OutValue, *Value);
 	return OutValue;
 }
 template<> FString FConsoleVariableConversionHelper<FString>::GetString(FString Value)
@@ -745,7 +1111,7 @@ template<> FString FConsoleVariableConversionHelper<FString>::GetString(FString 
 
 // T: bool, int32, float, FString
 template <class T>
-class FConsoleVariable : public FOtherPlatformValueHelper<T>
+class FConsoleVariable : public FConsoleVariableExtendedData<T>
 {
 // help find functions without needing this-> prefixes
 	using FConsoleVariableBase::GetShadowIndex;
@@ -753,9 +1119,12 @@ class FConsoleVariable : public FOtherPlatformValueHelper<T>
 	using FConsoleVariableBase::Flags;
 
 public:
-	FConsoleVariable(T DefaultValue, const TCHAR* Help, EConsoleVariableFlags Flags, bool bSaveDefault=true) 
-		: FOtherPlatformValueHelper<T>(DefaultValue, Help, Flags, bSaveDefault)
+	FConsoleVariable(T DefaultValue, const TCHAR* Help, EConsoleVariableFlags Flags, IConsoleVariable* Parent=nullptr)
+		: FConsoleVariableExtendedData<T>(DefaultValue, Help, Flags)
 		, Data(DefaultValue)
+#if ALLOW_OTHER_PLATFORM_CONFIG
+		, ParentVariable(Parent)
+#endif
 	{
 	}
 
@@ -765,13 +1134,15 @@ public:
 	{
 		delete this; 
 	}
-
-	virtual void Set(const TCHAR* InValue, EConsoleVariableFlags SetBy)
+	
+	virtual void Set(const TCHAR* InValue, EConsoleVariableFlags SetBy, FName Tag)
 	{
+		this->TrackHistory(InValue, SetBy, Tag);
+
 		if (CanChange(SetBy))
 		{
-			TTypeFromString<T>::FromString(Data.ShadowedValue[0], InValue);
-			OnChanged(SetBy);
+			UE::ConsoleManager::Private::GetValueFromString<T>(Data.ShadowedValue[0], InValue);
+			OnChanged(SetBy, false);
 		}
 	}
 
@@ -790,9 +1161,19 @@ public:
 	virtual class TConsoleVariableData<float>* AsVariableFloat() override { return nullptr; }
 	virtual class TConsoleVariableData<FString>* AsVariableString() override { return nullptr; }
 
+#if ALLOW_OTHER_PLATFORM_CONFIG
+	virtual IConsoleObject* GetParentObject() const
+	{
+		return ParentVariable;
+	}
+#endif
+
 private: // ----------------------------------------------------
 
 	TConsoleVariableData<T> Data;
+#if ALLOW_OTHER_PLATFORM_CONFIG
+	IConsoleVariable* ParentVariable;
+#endif
 
 	const T &Value() const
 	{
@@ -800,12 +1181,17 @@ private: // ----------------------------------------------------
 		FConsoleVariable<T>* This = (FConsoleVariable<T>*)this;
 		return This->Data.GetReferenceOnAnyThread();
 	}
+	
+	virtual void SetInternal(const T& TypedValue, EConsoleVariableFlags SetBy)
+	{
+		Data.ShadowedValue[0] = TypedValue;
+	}
 
-	void OnChanged(EConsoleVariableFlags SetBy)
+	virtual void OnChanged(EConsoleVariableFlags SetBy, bool bForce=false)
 	{
 		// propagate from main thread to render thread
 		OnCVarChange(Data.ShadowedValue[1], Data.ShadowedValue[0], Flags, SetBy);
-		FConsoleVariableBase::OnChanged(SetBy);
+		FConsoleVariableBase::OnChanged(SetBy, bForce);
 	}
 };
 
@@ -852,8 +1238,10 @@ template<> TConsoleVariableData<float>* FConsoleVariable<float>::AsVariableFloat
 
 // specialization for FString
 
-template<> void FConsoleVariable<FString>::Set(const TCHAR* InValue, EConsoleVariableFlags SetBy)
+template<> void FConsoleVariable<FString>::Set(const TCHAR* InValue, EConsoleVariableFlags SetBy, FName Tag)
 {
+	TrackHistory(InValue, SetBy, Tag);
+	
 	if(CanChange(SetBy))
 	{
 		Data.ShadowedValue[0] = InValue;
@@ -869,51 +1257,101 @@ template<> TConsoleVariableData<FString>* FConsoleVariable<FString>::AsVariableS
 
 
 template<class T>
-FOtherPlatformValueHelper<T>::FOtherPlatformValueHelper(const T& DefaultValue, const TCHAR* Help, EConsoleVariableFlags Flags, bool bSaveDefault)
+FConsoleVariableExtendedData<T>::FConsoleVariableExtendedData(const T& DefaultValue, const TCHAR* Help, EConsoleVariableFlags Flags)
 	: FConsoleVariableBase(Help, Flags)
 {
-#if ALLOW_OTHER_PLATFORM_CONFIG
-	if (bSaveDefault)
-	{
-		PlatformIndependentDefault = TSharedPtr<IConsoleVariable>(new FConsoleVariable<T>(DefaultValue, TEXT(""), (EConsoleVariableFlags)(Flags | ECVF_ReadOnly), false));
-	}
-#endif
+
 }
 
 #if ALLOW_OTHER_PLATFORM_CONFIG
+
+/**
+ * Helper for FindOrCreatePlatformCVar that will either find the other-platform FConsoleVariable, or create an appropriate one and put it into the
+ * cached set of other-platform CVars inside the passed in CVar
+ */
+template<typename T>
+FConsoleVariable<T>* FindOrCreateTypedPlatformCVar(FConsoleVariableExtendedData<T>* CVar, FName PlatformKey)
+{
+	FRWScopeLock Lock(CVar->PlatformValuesLock, SLT_Write);
+	TSharedPtr<IConsoleVariable> PlatformCVar = CVar->PlatformValues.FindRef(PlatformKey);
+	if (!PlatformCVar.IsValid())
+	{
+		PlatformCVar = TSharedPtr<IConsoleVariable>(new FConsoleVariable(CVar->GetDefaultTypedValue(), TEXT("Platform CVar copy"), CVar->GetFlags(), CVar));
+		
+		// cache it
+		CVar->PlatformValues.Add(PlatformKey, PlatformCVar);
+	}
+
+	return static_cast<FConsoleVariable<T>*>(PlatformCVar.Get());
+}
+
+/**
+ * Will find an existing other-platform FConsoleVariable, or create one based on the type of variable that was passed in
+ */
+FConsoleVariableBase* FindOrCreatePlatformCVar(IConsoleVariable* CVar, FName PlatformKey)
+{
+	if (CVar->IsVariableBool())		return FindOrCreateTypedPlatformCVar(static_cast<FConsoleVariableExtendedData<bool>*>(CVar), PlatformKey);
+	if (CVar->IsVariableInt())		return FindOrCreateTypedPlatformCVar(static_cast<FConsoleVariableExtendedData<int32>*>(CVar), PlatformKey);
+	if (CVar->IsVariableFloat())	return FindOrCreateTypedPlatformCVar(static_cast<FConsoleVariableExtendedData<float>*>(CVar), PlatformKey);
+	if (CVar->IsVariableString())	return FindOrCreateTypedPlatformCVar(static_cast<FConsoleVariableExtendedData<FString>*>(CVar), PlatformKey);
+
+	unimplemented();
+	return nullptr;
+}
+
+static const FString GSpecialDPNameForPremadePlatformKey(TEXT("/"));
+/**
+ * Helper function to make a single key used in the PlatformValues set, that combines Platform and a DP name. If the DP name is empty, this will use
+ * Platform name as the DP name. This matches up with how GetPlatformValueVariable() was generally used in the past - get the CVar using the platform-named
+ * DeviceProfile. 
+ * If DeviceProfileName is the GSpecialDPNameForPremadePlatformKey, then that indicates PlatformName is already a PlatformKey that
+ * was created with this function before, so just return the PlatformName untouched. This makes is so we don't need two versions of functions
+ * that take a PlatformName and DeviceProfileName, and we don't need to keep re-creating PlatformKeys
+ */
+static FName MakePlatformKey(FName PlatformName, const FString& DeviceProfileName)
+{
+	// a bit of a hack to say PlatformName is already a Key
+	if (DeviceProfileName == GSpecialDPNameForPremadePlatformKey || PlatformName == NAME_None)
+	{
+		return PlatformName;
+	}
+	return *(PlatformName.ToString() + TEXT("/") + (DeviceProfileName.Len() ? DeviceProfileName : PlatformName.ToString()));
+}
+
 template<class T>
-TSharedPtr<IConsoleVariable> FOtherPlatformValueHelper<T>::GetPlatformValueVariable(FName PlatformName)
+bool FConsoleVariableExtendedData<T>::HasPlatformValueVariable(FName PlatformName, const FString& DeviceProfileName)
 {
 	// cheap lock here, contention is very rare
 	FRWScopeLock Lock(PlatformValuesLock, SLT_Write);
-	if (!PlatformValues.Contains(PlatformName))
-	{
-		FString ConfigValue;
-		EConsoleVariableFlags LastSetBy;
-		if (!GetConfigValueFromRuntimeSources(PlatformName, this, ConfigValue, LastSetBy))
-		{
-			return nullptr;
-		}
-
-		T TypedValue;
-		TTypeFromString<T>::FromString(TypedValue, UE::ConfigUtilities::ConvertValueFromHumanFriendlyValue(*ConfigValue));
-
-		// clear the existing setby mask
-		int NewFlags = GetFlags() & ~ECVF_SetFlagMask;
-		// add in new LastSetBy and make it readonly
-		NewFlags |= LastSetBy | ECVF_ReadOnly;
-
-		// make a new cvar to hold the value from the other platform
-		TSharedPtr<IConsoleVariable> PlatformCVar = TSharedPtr<IConsoleVariable>(new FConsoleVariable<T>(TypedValue, TEXT(""), (EConsoleVariableFlags)NewFlags, false));
-
-		PlatformValues.Add(PlatformName, PlatformCVar);
-	}
-
-	return PlatformValues.FindRef(PlatformName);
+	return PlatformValues.Contains(MakePlatformKey(PlatformName, DeviceProfileName));
 }
 
 template<class T>
-void FOtherPlatformValueHelper<T>::ClearPlatformVariables(FName PlatformName)
+TSharedPtr<IConsoleVariable> FConsoleVariableExtendedData<T>::GetPlatformValueVariable(FName PlatformName, const FString& DeviceProfileName)
+{
+	// if we have GSpecialDPNameForPremadePlatformKey passed in, we have already gone through the
+	// Load and we have a premade key in PlatformName
+	if (DeviceProfileName != GSpecialDPNameForPremadePlatformKey)
+	{
+		// make sure we have cached this platform/DP
+		IConsoleManager::Get().LoadAllPlatformCVars(PlatformName, DeviceProfileName);
+	}
+
+	// we have assumed in the past that we would return at least the constructor version, so create one if we are explicitly asking
+	// this can happen when .ini files don't give a value to a cvar, but we are asking for a platform's value anyway - in
+	// which case we want the constructor value, not the current platform's value
+	if (!HasPlatformValueVariable(PlatformName, DeviceProfileName))
+	{
+		FindOrCreatePlatformCVar(this, MakePlatformKey(PlatformName, DeviceProfileName));
+	}
+	
+	// cheap lock here, contention is very rare
+	FRWScopeLock Lock(PlatformValuesLock, SLT_Write);
+	return PlatformValues.FindRef(MakePlatformKey(PlatformName, DeviceProfileName));
+}
+
+template<class T>
+void FConsoleVariableExtendedData<T>::ClearPlatformVariables(FName PlatformName)
 {
 	FRWScopeLock Lock(PlatformValuesLock, SLT_Write);
 
@@ -935,7 +1373,7 @@ void FOtherPlatformValueHelper<T>::ClearPlatformVariables(FName PlatformName)
 
 // T: int32, float, bool
 template <class T>
-class FConsoleVariableRef : public FOtherPlatformValueHelper<T>
+class FConsoleVariableRef : public FConsoleVariableExtendedData<T>
 {
 	// help find functions without needing this-> prefixes
 	using FConsoleVariableBase::GetShadowIndex;
@@ -944,7 +1382,7 @@ class FConsoleVariableRef : public FOtherPlatformValueHelper<T>
 
 public:
 	FConsoleVariableRef(T& InRefValue, const TCHAR* Help, EConsoleVariableFlags Flags) 
-		: FOtherPlatformValueHelper<T>(InRefValue, Help, Flags, true)
+		: FConsoleVariableExtendedData<T>(InRefValue, Help, Flags)
 		, RefValue(InRefValue)
 		, MainValue(InRefValue)
 	{
@@ -957,11 +1395,13 @@ public:
 		delete this; 
 	}
 
-	virtual void Set(const TCHAR* InValue, EConsoleVariableFlags SetBy)
+	virtual void Set(const TCHAR* InValue, EConsoleVariableFlags SetBy, FName Tag)
 	{
+		this->TrackHistory(InValue, SetBy, Tag);
+		
 		if(CanChange(SetBy))
 		{
-			TTypeFromString<T>::FromString(MainValue, InValue);
+			UE::ConsoleManager::Private::GetValueFromString<T>(MainValue, InValue);
 			OnChanged(SetBy);
 		}
 	}
@@ -989,15 +1429,17 @@ private: // ----------------------------------------------------
 		checkSlow(Index < 2);
 		return (Index == 0) ? MainValue : RefValue;
 	}
-
-	void OnChanged(EConsoleVariableFlags SetBy)
+	
+	virtual void SetInternal(const T& TypedValue, EConsoleVariableFlags SetBy)
 	{
-		if(CanChange(SetBy))
-		{
-			// propagate from main thread to render thread or to reference
-			OnCVarChange(RefValue, MainValue, Flags, SetBy);
-			FConsoleVariableBase::OnChanged(SetBy);
-		}
+		MainValue = TypedValue;
+	}
+
+	void OnChanged(EConsoleVariableFlags SetBy, bool bForce=false)
+	{
+		// propagate from main thread to render thread or to reference
+		OnCVarChange(RefValue, MainValue, Flags, SetBy);
+		FConsoleVariableBase::OnChanged(SetBy, bForce);
 	}
 };
 
@@ -1022,11 +1464,11 @@ bool FConsoleVariableRef<float>::IsVariableFloat() const
 
 // string version
 
-class FConsoleVariableStringRef : public FConsoleVariableBase
+class FConsoleVariableStringRef : public FConsoleVariableExtendedData<FString>
 {
 public:
 	FConsoleVariableStringRef(FString& InRefValue, const TCHAR* Help, EConsoleVariableFlags Flags)
-		: FConsoleVariableBase(Help, Flags)
+		: FConsoleVariableExtendedData<FString>(FString(), Help, Flags)
 		, RefValue(InRefValue)
 		, MainValue(InRefValue)
 	{
@@ -1038,8 +1480,10 @@ public:
 	{
 		delete this;
 	}
-	virtual void Set(const TCHAR* InValue, EConsoleVariableFlags SetBy)
+	virtual void Set(const TCHAR* InValue, EConsoleVariableFlags SetBy, FName Tag)
 	{
+		TrackHistory(InValue, SetBy, Tag);
+		
 		if (CanChange(SetBy))
 		{
 			MainValue = InValue;
@@ -1061,7 +1505,7 @@ public:
 	virtual float GetFloat() const
 	{
 		float Result = 0.0f;
-		TTypeFromString<float>::FromString(Result, *MainValue);
+		UE::ConsoleManager::Private::GetValueFromString<float>(Result, *MainValue);
 		return Result;
 	}
 	virtual FString GetString() const
@@ -1087,22 +1531,24 @@ private: // ----------------------------------------------------
 		return (Index == 0) ? MainValue : RefValue;
 	}
 
-	void OnChanged(EConsoleVariableFlags SetBy)
+	virtual void SetInternal(const FString& TypedValue, EConsoleVariableFlags SetBy)
 	{
-		if (CanChange(SetBy))
-		{
-			// propagate from main thread to render thread or to reference
-			OnCVarChange(RefValue, MainValue, Flags, SetBy);
-			FConsoleVariableBase::OnChanged(SetBy);
-		}
+		MainValue = TypedValue;
+	}
+	
+	void OnChanged(EConsoleVariableFlags SetBy, bool bForce=false)
+	{
+		// propagate from main thread to render thread or to reference
+		OnCVarChange(RefValue, MainValue, Flags, SetBy);
+		FConsoleVariableBase::OnChanged(SetBy, bForce);
 	}
 };
 
-class FConsoleVariableBitRef : public FConsoleVariableBase
+class FConsoleVariableBitRef : public FConsoleVariableExtendedData<int>
 {
 public:
 	FConsoleVariableBitRef(const TCHAR* FlagName, uint32 InBitNumber, uint8* InForce0MaskPtr, uint8* InForce1MaskPtr, const TCHAR* Help, EConsoleVariableFlags Flags) 
-		: FConsoleVariableBase(Help, Flags), Force0MaskPtr(InForce0MaskPtr), Force1MaskPtr(InForce1MaskPtr), BitNumber(InBitNumber)
+		: FConsoleVariableExtendedData<int>(0, Help, Flags), Force0MaskPtr(InForce0MaskPtr), Force1MaskPtr(InForce1MaskPtr), BitNumber(InBitNumber)
 	{
 	}
 
@@ -1112,8 +1558,10 @@ public:
 	{
 		delete this; 
 	} 
-	virtual void Set(const TCHAR* InValue, EConsoleVariableFlags SetBy)
+	virtual void Set(const TCHAR* InValue, EConsoleVariableFlags SetBy, FName Tag)
 	{
+		TrackHistory(InValue, SetBy, Tag);
+		
 		if(CanChange(SetBy))
 		{
 			int32 Value = FCString::Atoi(InValue);
@@ -1123,7 +1571,7 @@ public:
 			FMath::SetBoolInBitField(Force0MaskPtr, BitNumber, Value == 0);
 			FMath::SetBoolInBitField(Force1MaskPtr, BitNumber, Value == 1);
 
-			OnChanged(SetBy);
+			OnChanged(SetBy, false);
 		}
 	}
 	virtual bool GetBool() const
@@ -1160,6 +1608,13 @@ private: // ----------------------------------------------------
 	uint8* Force0MaskPtr;
 	uint8* Force1MaskPtr;
 	uint32 BitNumber;
+	
+	virtual void SetInternal(const int& TypedValue, EConsoleVariableFlags SetBy)
+	{
+		FMath::SetBoolInBitField(Force0MaskPtr, BitNumber, TypedValue == 0);
+		FMath::SetBoolInBitField(Force1MaskPtr, BitNumber, TypedValue == 1);
+	}
+	
 };
 
 IConsoleVariable* FConsoleManager::RegisterConsoleVariableBitRef(const TCHAR* CVarName, const TCHAR* FlagName, uint32 BitNumber, uint8* Force0MaskPtr, uint8* Force1MaskPtr, const TCHAR* Help, uint32 Flags)
@@ -1674,6 +2129,8 @@ void FConsoleManager::UnregisterConsoleObject(const TCHAR* Name, bool bKeepState
 
 	if(Object)
 	{
+		ConsoleObjectUnregisteredDelegate.Broadcast(Name, Object);
+
 		IConsoleVariable* CVar = Object->AsVariable();
 
 		if (CVar)
@@ -1712,7 +2169,7 @@ void FConsoleManager::LoadHistoryIfNeeded()
 	const FString SectionName = TEXT("ConsoleHistory");
 	const FName KeyName = TEXT("History");
 
-	for (const auto& ConfigPair : Ini)
+	for (const auto& ConfigPair : AsConst(Ini))
 	{
 		FString HistoryKey;
 		if (ConfigPair.Key == SectionName)
@@ -1748,10 +2205,10 @@ void FConsoleManager::SaveHistory()
 
 	for (const auto& HistoryPair : HistoryEntriesMap)
 	{
-		FConfigSection& Section = Ini.Add(FString::Printf(TEXT("%s%s"), *SectionName, *HistoryPair.Key));
+		FString ConfigSectionName = FString::Printf(TEXT("%s%s"), *SectionName, *HistoryPair.Key);
 		for (const auto& HistoryEntry : HistoryPair.Value)
 		{
-			Section.Add(KeyName, HistoryEntry);
+			Ini.AddToSection(*ConfigSectionName, KeyName, HistoryEntry);
 		}
 	}
 
@@ -1842,6 +2299,8 @@ static void DumpObjects(const TMap<FString, IConsoleObject*>& ConsoleObjects, co
 	FString CSVFilename;
 	bool bWriteToCSV = FParse::Value(Params, TEXT("-csv="), CSVFilename);
 	bWriteToCSV = bWriteToCSV || FParse::Param(Params, TEXT("csv"));
+	FString FilterSetBy;
+	FParse::Value(Params, TEXT("-setby="), FilterSetBy);
 	FString Prefix = FParse::Token(Params, false);
 	if (Prefix.StartsWith(TEXT("-")))
 	{
@@ -1914,6 +2373,10 @@ static void DumpObjects(const TMap<FString, IConsoleObject*>& ConsoleObjects, co
 			}
 			if (!bDisplayCommands && CVar != nullptr)
 			{
+				if (FilterSetBy.Len() > 0 && GetConsoleVariableSetByName(CVar->GetFlags()) != FilterSetBy)
+				{
+					continue;
+				}
 				if (bWriteToCSV)
 				{
 					MultiLogf(Log, CSV, TEXT("%s,%s,%s%s"), *Key, *CVar->GetString(), GetConsoleVariableSetByName(CVar->GetFlags()), *Help);
@@ -1927,6 +2390,105 @@ static void DumpObjects(const TMap<FString, IConsoleObject*>& ConsoleObjects, co
 	}
 
 	delete CSV;
+}
+
+static void SetUnsetCVar(const TMap<FString, IConsoleObject*>& ConsoleObjects, const TCHAR* Params, FOutputDevice& Ar, bool bSet)
+{
+	FString CVarName = FParse::Token(Params, false);
+
+	if (CVarName.Len() == 0)
+	{
+		if (bSet)
+		{
+			Ar.Logf(TEXT("Usage: SetCVar [Platform@]CVarName Value [-setby=Priority] [-tag=SomeTag]"));
+		}
+		else
+		{
+			Ar.Logf(TEXT("Usage: UnsetCVar [Platform@]CVarName [-setby=Priority] [-tag=SomeTag]"));
+		}
+		Ar.Logf(TEXT("   Priority can be one of the following (default is Console):"));
+		
+		#define LOGOP(x) Ar.Logf(TEXT("      %s%s"), TEXT(#x), IsArrayPriority(ECVF_SetBy##x) ? TEXT(" [*]") : TEXT(""));
+		ENUMERATE_SET_BY(LOGOP)
+		#undef LOGOP
+		Ar.Logf(TEXT("      [*] Array type priorities, used for dynamic setting/unsetting"));
+		Ar.Logf(TEXT("   Tag should be set for the ones marked as Array types, for ability to set and unset"));
+
+	}
+	
+	FString PlatformName;
+	FString DeviceProfileName;
+	int32 PlatformDelim = CVarName.Find(TEXT("@"));
+	if (PlatformDelim > 0)
+	{
+		PlatformName = CVarName.Mid(0, PlatformDelim);
+		if (PlatformName.Contains(TEXT("/")))
+		{
+			FString Plat;
+			PlatformName.Split(TEXT("/"), &Plat, &DeviceProfileName);
+			PlatformName = *Plat;
+		}
+
+		CVarName = CVarName.Mid(PlatformDelim + 1);
+	}
+
+	IConsoleObject* Obj = ConsoleObjects.FindRef(CVarName);
+	IConsoleVariable* CVar = Obj ? Obj->AsVariable() : nullptr;
+	
+	if (CVar == nullptr)
+	{
+		Ar.Logf(TEXT("No CVar named %s"), *CVarName);
+		return;
+	}
+	
+#if ALLOW_OTHER_PLATFORM_CONFIG
+	// get platform version
+	if (PlatformName.Len())
+	{
+		CVar = CVar->GetPlatformValueVariable(*PlatformName, *DeviceProfileName).Get();
+		if (CVar == nullptr)
+		{
+			Ar.Logf(TEXT("Failed to get CVar for platform %s"), *PlatformName);
+			return;
+		}
+	}
+	
+	FString Value;
+	if (bSet)
+	{
+		Value = FParse::Token(Params, false);
+	}
+	
+	EConsoleVariableFlags SetBy = ECVF_SetByConsole;
+	FName Tag = NAME_None;
+	FString Str;
+	if (FParse::Value(Params, TEXT("-setby="), Str))
+	{
+		SetBy = GetConsoleVariableSetByValue(*Str);
+	}
+	if (FParse::Value(Params, TEXT("-tag="), Str))
+	{
+		Tag = *Str;
+	}
+
+	if (bSet)
+	{
+		CVar->Set(*Value, SetBy, Tag);
+	}
+	else
+	{
+		CVar->Unset(SetBy, Tag);
+	}
+#else
+	Ar.Logf(TEXT("Unable to lookup a CVar value on another platform in this build"));
+	return;
+#endif
+}
+
+void UnsetCVarTag(const TCHAR* Params, FOutputDevice& Ar)
+{
+	FString TagName = FParse::Token(Params, false);
+	IConsoleManager::Get().UnsetAllConsoleVariablesWithTag(*TagName);
 }
 
 bool FConsoleManager::ProcessUserConsoleInput(const TCHAR* InInput, FOutputDevice& Ar, UWorld* InWorld)
@@ -1944,6 +2506,21 @@ bool FConsoleManager::ProcessUserConsoleInput(const TCHAR* InInput, FOutputDevic
 		DumpObjects(ConsoleObjects, InInput, Ar, true);
 		return true;
 	}
+	if (FParse::Command(&InInput, TEXT("setcvar")))
+	{
+		SetUnsetCVar(ConsoleObjects, InInput, Ar, true);
+		return true;
+	}
+	if (FParse::Command(&InInput, TEXT("unsetcvar")))
+	{
+		SetUnsetCVar(ConsoleObjects, InInput, Ar, false);
+		return true;
+	}
+	if (FParse::Command(&InInput, TEXT("unsetcvartag")))
+	{
+		UnsetCVarTag(InInput, Ar);
+		return true;
+	}
 
 	const TCHAR* It = InInput;
 
@@ -1957,11 +2534,12 @@ bool FConsoleManager::ProcessUserConsoleInput(const TCHAR* InInput, FOutputDevic
 	const bool bCommandEndedInQuestion = Param1.EndsWith(TEXT("?"), ESearchCase::CaseSensitive);
 	if (bCommandEndedInQuestion)
 	{
-		Param1.MidInline(0, Param1.Len() - 1, false);
+		Param1.MidInline(0, Param1.Len() - 1, EAllowShrinking::No);
 	}
 
-	// look for the <cvar>@<platform> syntax
+	// look for the <cvar>@<platform[/deviceprofile]> syntax
 	FName PlatformName;
+	FString DeviceProfileName;
 	if (Param1.Contains(TEXT("@")))
 	{
 		FString Left, Right;
@@ -1970,7 +2548,16 @@ bool FConsoleManager::ProcessUserConsoleInput(const TCHAR* InInput, FOutputDevic
 		if (Left.Len() && Right.Len())
 		{
 			Param1 = Left;
-			PlatformName = *Right;
+			if (Right.Contains(TEXT("/")))
+			{
+				FString Plat;
+				Right.Split(TEXT("/"), &Plat, &DeviceProfileName);
+				PlatformName = *Plat;
+			}
+			else
+			{
+				PlatformName = *Right;
+			}
 		}
 	}
 
@@ -2008,7 +2595,7 @@ bool FConsoleManager::ProcessUserConsoleInput(const TCHAR* InInput, FOutputDevic
 		else
 		{
 #if ALLOW_OTHER_PLATFORM_CONFIG
-			PlatformCVar = CVar->GetPlatformValueVariable(PlatformName);
+			PlatformCVar = CVar->GetPlatformValueVariable(PlatformName, DeviceProfileName);
 			CVar = PlatformCVar.Get();
 			if (!CVar)
 			{
@@ -2062,13 +2649,13 @@ bool FConsoleManager::ProcessUserConsoleInput(const TCHAR* InInput, FOutputDevic
 			{
 				if(Param2[0] == (TCHAR)'\"' && Param2[Param2.Len() - 1] == (TCHAR)'\"')
 				{
-					Param2.MidInline(1, Param2.Len() - 2, false);
+					Param2.MidInline(1, Param2.Len() - 2, EAllowShrinking::No);
 				}
 				// this is assumed to be unintended e.g. copy and paste accident from ini file
 				if(Param2.Len() > 0 && Param2[0] == (TCHAR)'=')
 				{
 					Ar.Logf(TEXT("Warning: Processing the console input parameters the leading '=' is ignored (only needed for ini files)."));
-					Param2.MidInline(1, Param2.Len() - 1, false);
+					Param2.MidInline(1, Param2.Len() - 1, EAllowShrinking::No);
 				}
 			}
 
@@ -2106,6 +2693,8 @@ bool FConsoleManager::ProcessUserConsoleInput(const TCHAR* InInput, FOutputDevic
 
 		if(bShowCurrentState)
 		{
+			((FConsoleVariableBase*)CVar)->LogHistory(Ar);
+
 			Ar.Logf(TEXT("%s = \"%s\"      LastSetBy: %s"), *Param1, *CVar->GetString(), GetConsoleVariableSetByName(CVar->GetFlags()));
 		}
 	}
@@ -2295,6 +2884,12 @@ FString FConsoleManager::FindConsoleObjectName(const IConsoleObject* InVar) cons
 		}
 	}
 
+	// if we didn't find one, and it has a parent, then give that a try
+	if (InVar->GetParentObject() != nullptr)
+	{
+		return FindConsoleObjectName(InVar->GetParentObject());
+	}
+
 	return FString();
 }
 
@@ -2427,6 +3022,125 @@ FConsoleVariableMulticastDelegate& FConsoleManager::OnCVarUnregistered()
 {
 	return ConsoleVariableUnregisteredDelegate;
 }
+
+FConsoleObjectWithNameMulticastDelegate& FConsoleManager::OnConsoleObjectUnregistered()
+{
+	return ConsoleObjectUnregisteredDelegate;
+}
+
+void FConsoleManager::UnsetAllConsoleVariablesWithTag(FName Tag, EConsoleVariableFlags Priority)
+{
+	TSet<IConsoleVariable*>* TaggedSet = UE::ConsoleManager::Private::TaggedCVars.FindRef(Tag);
+	if (TaggedSet == nullptr)
+	{
+		return;
+	}
+	
+	for (IConsoleVariable* Var : *TaggedSet)
+	{
+		Var->Unset(Priority, Tag);
+	}
+	
+	UE::ConsoleManager::Private::TaggedCVars.Remove(Tag);
+}
+
+#if ALLOW_OTHER_PLATFORM_CONFIG
+
+void FConsoleManager::LoadAllPlatformCVars(FName PlatformName, const FString& DeviceProfileName)
+{
+	FName PlatformKey = MakePlatformKey(PlatformName, DeviceProfileName);
+	
+	// protect the cached CVar info from two threads trying to get a platform CVar at once, and both attempting to load all of the cvars at the same time
+	FScopeLock Lock(&CachedPlatformsAndDeviceProfilesLock);
+	if (CachedPlatformsAndDeviceProfiles.Contains(PlatformKey))
+	{
+		return;
+	}
+	CachedPlatformsAndDeviceProfiles.Add(PlatformKey);
+	
+	// use the platform's base DeviceProfile for emulation
+	VisitPlatformCVarsForEmulation(PlatformName, DeviceProfileName.IsEmpty() ? PlatformName.ToString() : DeviceProfileName,
+		[PlatformName, PlatformKey](const FString& CVarName, const FString& CVarValue, EConsoleVariableFlags SetByAndPreview)
+	{
+		// make sure the named cvar exists
+		IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(*CVarName);
+		if (CVar == nullptr)
+		{
+			return;
+		}
+		
+		// find or make the cvar for this platformkey
+		FConsoleVariableBase* PlatformCVar = FindOrCreatePlatformCVar(CVar, PlatformKey);
+
+		// now cache the passed in value
+		int32 SetBy = SetByAndPreview & ECVF_SetByMask;
+		PlatformCVar->SetOtherPlatformValue(*CVarValue, (EConsoleVariableFlags)SetBy, NAME_None);
+		
+		UE_LOG(LogConsoleManager, Verbose, TEXT("Loading %s@%s = %s [get = %s]"), *CVarName, *PlatformKey.ToString(),
+			   *CVarValue, *CVar->GetPlatformValueVariable(*PlatformName.ToString())->GetString());
+		
+	});
+}
+
+void FConsoleManager::PreviewPlatformCVars(FName PlatformName, const FString& DeviceProfileName, FName PreviewModeTag)
+{
+	UE_LOG(LogConsoleManager, Display, TEXT("Previewing Platform '%s', DeviceProfile '%s', ModeTag '%s'"), *PlatformName.ToString(), *DeviceProfileName, *PreviewModeTag.ToString());
+	
+	LoadAllPlatformCVars(PlatformName, DeviceProfileName.Len() ? DeviceProfileName : PlatformName.ToString());
+	
+	FName PlatformKey = MakePlatformKey(PlatformName, DeviceProfileName);
+
+	for (auto Pair : ConsoleObjects)
+	{
+		if (IConsoleVariable* CVar = Pair.Value->AsVariable())
+		{
+			// we want Preview but not Cheat
+			if ((CVar->GetFlags() & (ECVF_Preview | ECVF_Cheat)) == ECVF_Preview)
+			{
+				EConsoleVariableFlags Flags = ECVF_SetByPreview;
+				if (CVar->GetFlags() & ECVF_ScalabilityGroup)
+				{
+					// we want to set SG cvars so they can be queried, but not send updates so that we don't use host platform's cvars
+					Flags = (EConsoleVariableFlags)(Flags | ECVF_Set_SetOnly_Unsafe);
+				}
+				
+				// if we have a value for the platform, then set it in the real CVar
+				if (CVar->HasPlatformValueVariable(PlatformKey, GSpecialDPNameForPremadePlatformKey))
+				{
+					TSharedPtr<IConsoleVariable> PlatformCVar = CVar->GetPlatformValueVariable(PlatformKey, GSpecialDPNameForPremadePlatformKey);
+					CVar->Set(*PlatformCVar->GetString(), Flags, PreviewModeTag);
+					
+					UE_LOG(LogConsoleManager, Display, TEXT("  |-> Setting %s = %s"), *Pair.Key, *PlatformCVar->GetString());
+				}
+			}
+		}
+	}
+}
+
+void FConsoleManager::ClearAllPlatformCVars(FName PlatformName, const FString& DeviceProfileName)
+{
+	FName PlatformKey = MakePlatformKey(PlatformName, DeviceProfileName);
+
+	// protect the cached CVar info from two threads trying to get a platform CVar at once, and both attempting to load all of the cvars at the same time
+	FScopeLock Lock(&CachedPlatformsAndDeviceProfilesLock);
+	
+	if (!CachedPlatformsAndDeviceProfiles.Contains(PlatformKey))
+	{
+		return;
+	}
+	CachedPlatformsAndDeviceProfiles.Remove(PlatformKey);
+	
+	for (auto Pair : ConsoleObjects)
+	{
+		if (IConsoleVariable* CVar = Pair.Value->AsVariable())
+		{
+			// clear any cached values for this key
+			CVar->ClearPlatformVariables(PlatformKey);
+		}
+	}
+}
+
+#endif
 
 #if !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
 uint32 GConsoleManagerSinkTestCounter = 0;
@@ -2649,12 +3363,28 @@ void CreateConsoleVariables()
 	IConsoleManager::Get().RegisterConsoleCommand(TEXT("r.ResetRenderTargetsExtent"), TEXT("To reset internal render target extents"), ECVF_Cheat);
 #endif // !(UE_BUILD_SHIPPING || UE_BUILD_TEST)
 
-#if WITH_PROFILEGPU
+#if WITH_DUMPGPU
 	IConsoleManager::Get().RegisterConsoleCommand(TEXT("DumpGPU"), TEXT("Dump one frame of rendering intermediary resources to disk."), ECVF_Cheat);
+#endif
+
+#if WITH_GPUDEBUGCRASH
+	IConsoleManager::Get().RegisterConsoleCommand(TEXT("GPUDebugCrash"), TEXT("Crash GPU intentionally for debugging."), ECVF_Cheat);
+#endif
+
+#if UE_ENABLE_ARRAY_SLACK_TRACKING
+	IConsoleManager::Get().RegisterConsoleCommand(TEXT("SlackReport"),
+		TEXT("Generate an array slack memory report to Saved/Logs/SlackReport.  TSV format can be loaded as a spreadsheet.\nUage: SlackReport [Filename] [-Stack=N] [-Verbose=0,1]\nIf no filename, writes to a default filename which increments each report.\nStack setting specifies number of stack frames to consider when grouping allocations"),
+		ECVF_Default);
 #endif
 
 #if	!UE_BUILD_SHIPPING
 	IConsoleManager::Get().RegisterConsoleCommand( TEXT( "DumpConsoleCommands" ), TEXT( "Dumps all console vaiables and commands and all exec that can be discovered to the log/console" ), ECVF_Default );
+	IConsoleManager::Get().RegisterConsoleCommand( TEXT( "RedirectToFile" ),
+		TEXT( "Creates a file inside Project's Saved folder and outputs command result into it as well as into the log.\n" )
+		TEXT( "Usage: RedirectToFile <filepath/filename> <command> [command arguments]\n" )
+		TEXT( "Example: RedirectToFile Profiling/CSV/objlist.csv obj list -csv -all\n" )
+		TEXT( "Directory structure under Project/Saved folder specified by <filepath> will be created for you if it doesn't exist." ),
+		ECVF_Default );
 
 	IConsoleManager::Get().RegisterConsoleCommand(TEXT("DumpCVars"),
 		TEXT("Lists all CVars (or a subset) and their values. Can also show help, and can save to .csv.\nUsage: DumpCVars [Prefix] [-showhelp] [-csv=[path]]\nIf -csv does not have a file specified, it will create a file in the Project Logs directory"),
@@ -2746,7 +3476,7 @@ static TAutoConsoleVariable<int32> CVarMobileShadingPath(
 	TEXT("r.Mobile.ShadingPath"),
 	0,
 	TEXT("0: Forward shading (default)\n"
-		 "1: Deferred shading"),
+		 "1: Deferred shading (Mobile HDR is required for Deferred)"),
 	ECVF_RenderThreadSafe | ECVF_ReadOnly);
 
 static TAutoConsoleVariable<int32> CVarMobileAllowDeferredShadingOpenGL(
@@ -2847,7 +3577,7 @@ static TAutoConsoleVariable<int32> CVarMobileForwardEnableLocalLights(
 	1,
 	TEXT("0: Local Lights Disabled (default)\n"
 		"1: Local Lights Enabled\n"
-		"2: Local Lights Prepass Enabled\n"),
+		"2: Local Lights Buffer Enabled\n"),
 	ECVF_ReadOnly | ECVF_RenderThreadSafe);
 
 static TAutoConsoleVariable<int32> CVarMobileForwardEnableClusteredReflections(
@@ -3303,11 +4033,12 @@ static TAutoConsoleVariable<int32> CVarFreeSkeletalMeshBuffers(
 
 static TAutoConsoleVariable<int32> CVarDetailMode(
 	TEXT("r.DetailMode"),
-	2,
+	3,
 	TEXT("Current detail mode; determines whether components of actors should be updated/ ticked.\n"
-		 " 0: low, show only object with DetailMode low or higher\n"
-		 " 1: medium, show all object with DetailMode medium or higher\n"
-		 " 2: high, show all objects (default)"),
+		" 0: low, show objects with DetailMode low\n"
+		" 1: medium, show objects with DetailMode medium or below\n"
+		" 2: high, show objects with DetailMode high or below\n"
+		" 3: epic, show all objects (default)"),
 	ECVF_Scalability | ECVF_RenderThreadSafe);
 
 static TAutoConsoleVariable<int32> CVarCookOutUnusedDetailModeComponents(
@@ -3326,6 +4057,16 @@ static TAutoConsoleVariable<int32> CVarDBuffer(
 		 "When enabled, a full prepass will be forced which adds CPU / GPU cost.  Several texture lookups will be done in the base pass to fetch the decal properties, which adds pixel work.\n"
 		 " 0: off\n"
 		 " 1: on (default)"),
+	ECVF_RenderThreadSafe | ECVF_ReadOnly);
+
+static TAutoConsoleVariable<int32> CVarMobileDBuffer(
+	TEXT("r.Mobile.DBuffer"),
+	0,
+	TEXT("Enables DBuffer decal material blend modes when using the mobile forward renderer.\n"
+		"DBuffer decals are rendered before the base pass, allowing them to affect static lighting and skylighting correctly. \n"
+		"When enabled, a full prepass will be forced which adds CPU / GPU cost.  Several texture lookups will be done in the base pass to fetch the decal properties, which adds pixel work.\n"
+		" 0: off (default)\n"
+		" 1: on"),
 	ECVF_RenderThreadSafe | ECVF_ReadOnly);
 
 static TAutoConsoleVariable<float> CVarSkeletalMeshLODRadiusScale(
@@ -3485,7 +4226,7 @@ static TAutoConsoleVariable<int32> CVarMobileDefaultAntiAliasing(
 		 " 1: FXAA (default, faster than TemporalAA but much more shimmering for non static cases)\n"
 		 " 2: TemporalAA(it will fallback to FXAA if SupportsGen4TAA is disabled) \n"
 		 " 3: MSAA"),
-	ECVF_RenderThreadSafe);
+	ECVF_RenderThreadSafe | ECVF_Preview);
 
 static TAutoConsoleVariable<int32> CVarMobileSupportsGen4TAA(
 	TEXT("r.Mobile.SupportsGen4TAA"),

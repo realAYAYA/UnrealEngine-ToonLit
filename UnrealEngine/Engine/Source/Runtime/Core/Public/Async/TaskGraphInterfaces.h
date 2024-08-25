@@ -463,23 +463,19 @@ class FBaseGraphTask : public UE::Tasks::Private::FTaskBase
 {
 public:
 	explicit FBaseGraphTask(const FGraphEventArray* InPrerequisites)
-		: FTaskBase(/*InitRefCount=*/ 1)
-	{		
+		: FTaskBase(/*InitRefCount=*/ 1, false /* bUnlockPrerequisites */)
+	{
 		if (InPrerequisites != nullptr)
 		{
-			for (const FGraphEventRef& Prereq : *InPrerequisites)
-			{
-				if (Prereq)
-				{
-					AddPrerequisites(*Prereq);
-				}
-			}
+			AddPrerequisites(*InPrerequisites, false /* bLockPrerequisite */);
 		}
+
+		UnlockPrerequisites();
 	}
 
-	void Init(const TCHAR* InDebugName, UE::Tasks::ETaskPriority InPriority, UE::Tasks::EExtendedTaskPriority InExtendedPriority)
+	void Init(const TCHAR* InDebugName, UE::Tasks::ETaskPriority InPriority, UE::Tasks::EExtendedTaskPriority InExtendedPriority, UE::Tasks::ETaskFlags InTaskFlags = UE::Tasks::ETaskFlags::None)
 	{
-		FTaskBase::Init(InDebugName, InPriority, InExtendedPriority);
+		FTaskBase::Init(InDebugName, InPriority, InExtendedPriority, InTaskFlags);
 	}
 
 	void Unlock(ENamedThreads::Type CurrentThreadIfKnown = ENamedThreads::AnyThread)
@@ -552,7 +548,7 @@ public:
 			return FTaskGraphInterface::Get().WaitUntilTaskCompletes(this, CurrentThreadIfKnown);
 		}
 
-		FTaskBase::Wait(UE::FTimeout::Never());
+		FTaskBase::WaitWithNamedThreadsSupport();
 	}
 
 	ENamedThreads::Type GetThreadToExecuteOn() const
@@ -561,13 +557,9 @@ public:
 	}
 };
 
-static constexpr int32 SmallTaskSize = 256;
-using FGraphTaskAllocator = TLockFreeFixedSizeAllocator_TLSCache<SmallTaskSize, PLATFORM_CACHE_LINE_SIZE>;
-CORE_API extern FGraphTaskAllocator SmallTaskAllocator;
-
 // the new task implementation integrated into the old task API
 template<typename TTask>
-class TGraphTask : public FBaseGraphTask
+class TGraphTask final : public TConcurrentLinearObject<TGraphTask<TTask>, FTaskGraphBlockAllocationTag>, public FBaseGraphTask
 {
 public:
 	/**
@@ -606,7 +598,6 @@ public:
 		template<typename...T>
 		FORCEINLINE_DEBUGGABLE TGraphTask* ConstructAndHoldImpl(T&&... Args)
 		{
-			LLM_SCOPE_BYNAME(TEXT("Tasks/TGraphTask/ConstructAndHoldImpl"));
 			TGraphTask* Task = new TGraphTask(Prerequisites);
 			TTask* TaskObject = new(&Task->TaskStorage) TTask(Forward<T>(Args)...);
 
@@ -634,9 +625,6 @@ public:
 		return FConstructor(Prerequisites);
 	}
 
-	static void* operator new(size_t Size);
-	static void operator delete(void* Ptr, size_t Size);
-
 private:
 	explicit TGraphTask(const FGraphEventArray* InPrerequisites)
 		: FBaseGraphTask(InPrerequisites)
@@ -661,18 +649,6 @@ private:
 private:
 	TTypeCompatibleBytes<TTask> TaskStorage;
 };
-
-template<typename TTask>
-void* TGraphTask<TTask>::operator new(size_t Size)
-{
-	return Size <= SmallTaskSize ? SmallTaskAllocator.Allocate() : GMalloc->Malloc(sizeof(TGraphTask), PLATFORM_CACHE_LINE_SIZE);
-}
-
-template<typename TTask>
-void TGraphTask<TTask>::operator delete(void* Ptr, size_t Size)
-{
-	Size <= SmallTaskSize ? SmallTaskAllocator.Free(Ptr) : GMalloc->Free(Ptr);
-}
 
 // an adaptation of FBaseGraphTask to be used as a standalone FGraphEvent
 class FGraphEventImpl : public FBaseGraphTask
@@ -710,8 +686,6 @@ inline void FGraphEventImpl::operator delete(void* Ptr)
 
 inline FGraphEventRef FBaseGraphTask::CreateGraphEvent()
 {
-	LLM_SCOPE_BYNAME(TEXT("Tasks/FGraphEvent/CreateGraphEvent"));
-
 	FGraphEventImpl* GraphEvent = new FGraphEventImpl;
 	return FGraphEventRef{ GraphEvent, /*bAddRef = */ false };
 }
@@ -928,7 +902,6 @@ public:
 	**/
 	bool AddSubsequent(class FBaseGraphTask* Subsequent)
 	{
-		LLM_SCOPE_BYNAME(TEXT("Tasks/FGraphEvent/AddSubsequent"));
 		bool bSucceeded = SubsequentList.PushIfNotClosed(Subsequent);
 		if (bSucceeded)
 		{
@@ -952,7 +925,6 @@ public:
 	**/
 	void DontCompleteUntil(FGraphEventRef EventToWaitFor)
 	{
-		LLM_SCOPE_BYNAME(TEXT("Tasks/FGraphEvent/DontCompleteUntil"));
 		checkThreadGraph(!IsComplete()); // it is not legal to add a DontCompleteUntil after the event has been completed. Basically, this is only legal within a task function.
 		EventsToWaitFor.Emplace(EventToWaitFor);
 		TaskTrace::SubsequentAdded(EventToWaitFor->GetTraceId(), GetTraceId());
@@ -1173,7 +1145,7 @@ public:
 		}
 
 	private:
-		friend class TGraphTask;
+		friend TGraphTask;
 
 		/** The task that created me to assist with embeded task construction and preparation. **/
 		TGraphTask*						Owner;
@@ -1210,8 +1182,6 @@ public:
 	static FConstructor CreateTask(const FGraphEventArray* Prerequisites = NULL, ENamedThreads::Type CurrentThreadIfKnown = ENamedThreads::AnyThread)
 	{
 		FGraphEventRef GraphEvent = TTask::GetSubsequentsMode() == ESubsequentsMode::FireAndForget ? NULL : FGraphEvent::CreateGraphEvent();
-
-		LLM_SCOPE_BYNAME(TEXT("Tasks/TGraphTask/CreateTask"));
 
 		int32 NumPrereq = Prerequisites ? Prerequisites->Num() : 0;
 		return FConstructor(new TGraphTask(MoveTemp(GraphEvent), NumPrereq), Prerequisites, CurrentThreadIfKnown);
@@ -1251,7 +1221,7 @@ private:
 
 		// Fire and forget mode must not have subsequents
 		// Track subsequents mode must have subsequents
-		checkThreadGraph(XOR(TTask::GetSubsequentsMode() == ESubsequentsMode::FireAndForget, IsValidRef(Subsequents)));
+		checkThreadGraph((TTask::GetSubsequentsMode() == ESubsequentsMode::FireAndForget) != IsValidRef(Subsequents));
 
 		if (TTask::GetSubsequentsMode() == ESubsequentsMode::TrackSubsequents)
 		{
@@ -1408,6 +1378,14 @@ private:
 
 #endif // TASKGRAPH_NEW_FRONTEND
 
+// Blocks the current thread until any of the given tasks is completed.
+// Is slightly more efficient than `AnyTaskCompleted()->Wait()` and supports timeout while `FGraphEvent::Wait()` doesn't.
+// Returns the index of the first completed task, or `INDEX_NONE` on timeout.
+int32 WaitForAnyTaskCompleted(const FGraphEventArray& GraphEvents, FTimespan Timeout = FTimespan::MaxValue());
+
+// Returns a graph event that gets completed as soon as any of the given tasks gets completed
+FGraphEventRef AnyTaskCompleted(const FGraphEventArray& GraphEvents);
+
 /** 
  *	FReturnGraphTask is a task used to return flow control from a named thread back to the original caller of ProcessThreadUntilRequestReturn
  **/
@@ -1486,8 +1464,9 @@ public:
 	{
 #if STATS|| ENABLE_STATNAMEDEVENTS
 		return StatID;
-#endif
+#else
 		return TStatId();
+#endif
 	}
 
 private:

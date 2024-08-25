@@ -86,7 +86,7 @@ void FConcertServerSyncCommandQueue::ProcessQueue(const double InTimeLimitSecond
 			check(EndpointSyncQueue.CommandQueue.Num() > 0);
 
 			EndpointSyncQueue.CommandQueue[0](FSyncCommandContext{0, EndpointSyncQueue.CommandQueue.Num()}, *TimeSlicedEndpointIdIter);
-			EndpointSyncQueue.CommandQueue.RemoveAt(0, 1, /*bAllowShrinking*/false);
+			EndpointSyncQueue.CommandQueue.RemoveAt(0, 1, EAllowShrinking::No);
 			if (EndpointSyncQueue.CommandQueue.Num() == 0)
 			{
 				TimeSlicedEndpointIdIter.RemoveCurrent();

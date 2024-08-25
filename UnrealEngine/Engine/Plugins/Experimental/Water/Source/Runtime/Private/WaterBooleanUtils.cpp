@@ -430,8 +430,8 @@ void FWaterBooleanUtils::ClusterExclusionVolumes(
 			}
 			ClusterBounds[MergeTo].Contain(ClusterBounds[MergeFrom]);
 
-			VolumeClustersOut.RemoveAtSwap(MergeFrom, 1, false);
-			ClusterBounds.RemoveAtSwap(MergeFrom, 1, false);
+			VolumeClustersOut.RemoveAtSwap(MergeFrom, 1, EAllowShrinking::No);
+			ClusterBounds.RemoveAtSwap(MergeFrom, 1, EAllowShrinking::No);
 		}
 
 	} while (MergeFrom >= 0);
@@ -655,7 +655,7 @@ void FWaterBooleanUtils::FindConvexPairedTrisFromPlanarMesh(FDynamicMesh3& Mesh,
 	TArray<FVector2d> Loop, SaveLoop;
 	while (RemainingT.Num() > 0)
 	{
-		int32 tid = RemainingT.Pop(false);
+		int32 tid = RemainingT.Pop(EAllowShrinking::No);
 		if (DoneT[tid])
 		{
 			continue;
@@ -862,7 +862,7 @@ void FWaterBooleanUtils::FindConvexPolygonsFromPlanarMesh(FDynamicMesh3& Mesh, c
 	// that could not be discovered by incrementally adding triangles.
 	while (RemainingT.Num() > 0)
 	{
-		int32 SeedTID = RemainingT.Pop(false);
+		int32 SeedTID = RemainingT.Pop(EAllowShrinking::No);
 		if (DoneT[SeedTID])
 		{
 			continue;

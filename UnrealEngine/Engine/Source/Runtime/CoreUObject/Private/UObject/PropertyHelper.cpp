@@ -2,14 +2,19 @@
 
 #include "UObject/PropertyHelper.h"
 
-#include "CoreMinimal.h"
-#include "UObject/ObjectMacros.h"
-#include "UObject/Object.h"
+#include "String/Find.h"
+#include "String/ParseTokens.h"
 #include "UObject/Class.h"
 #include "UObject/CoreNet.h"
-#include "UObject/UnrealType.h"
+#include "UObject/CoreRedirects.h"
+#include "UObject/EnumProperty.h"
+#include "UObject/Object.h"
+#include "UObject/ObjectMacros.h"
 #include "UObject/Package.h"
+#include "UObject/PropertyOptional.h"
 #include "UObject/PropertyPortFlags.h"
+#include "UObject/PropertyTypeName.h"
+#include "UObject/UnrealType.h"
 
 void SkipWhitespace(const TCHAR*& Str)
 {
@@ -283,3 +288,211 @@ const TCHAR* DelegatePropertyTools::ImportDelegateFromText( FScriptDelegate& Del
 
 	return ( Func != nullptr && Object != nullptr ) ? Buffer : nullptr;
 }
+
+namespace UE
+{
+
+static FCoreRedirectObjectName BuildCoreRedirectObjectName(FPropertyTypeName TypeName)
+{
+	FName OuterName;
+	if (const int32 OuterCount = TypeName.GetParameterCount() - 1; OuterCount <= 1)
+	{
+		OuterName = TypeName.GetParameterName(1);
+	}
+	else
+	{
+		TStringBuilder<256> OuterChain;
+		for (int32 OuterIndex = 0; OuterIndex < OuterCount; ++OuterIndex)
+		{
+			OuterChain << TypeName.GetParameterName(OuterIndex + 1) << (OuterIndex == 0 ? TEXT(':') : TEXT('.'));
+		}
+		OuterChain.RemoveSuffix(1);
+		OuterName = FName(OuterChain);
+	}
+
+	const FName ObjectName = TypeName.GetName();
+	const FName PackageName = TypeName.GetParameterName(0);
+	checkfSlow(PackageName.IsNone() || String::FindFirstChar(WriteToString<256>(PackageName), TEXT('/')) != INDEX_NONE,
+		TEXT("PropertyTypeName with an outer name but not a package name is not supported yet."));
+	return FCoreRedirectObjectName(ObjectName, OuterName, PackageName);
+}
+
+static void BuildPropertyName(const FCoreRedirectObjectName& Redirect, FPropertyTypeNameBuilder& Builder)
+{
+	Builder.AddName(Redirect.ObjectName);
+	if (!Redirect.PackageName.IsNone() || !Redirect.OuterName.IsNone())
+	{
+		Builder.BeginParameters();
+		if (!Redirect.PackageName.IsNone())
+		{
+			Builder.AddName(Redirect.PackageName);
+		}
+		if (!Redirect.OuterName.IsNone())
+		{
+			TStringBuilder<256> OuterChain(InPlace, Redirect.OuterName);
+			String::ParseTokensMultiple(OuterChain, {TEXT('.'), TEXT(':')}, [&Builder](FStringView Token)
+			{
+				Builder.AddName(FName(Token));
+			});
+		}
+		Builder.EndParameters();
+	}
+}
+
+template <typename PropertyType>
+struct TFindRedirectForPropertyTraits;
+
+template <>
+struct TFindRedirectForPropertyTraits<FStructProperty>
+{
+	static const UField* GetField(const FStructProperty* Property) { return Property->Struct; }
+	static ECoreRedirectFlags GetFlags() { return ECoreRedirectFlags::Type_Struct; }
+};
+
+template <>
+struct TFindRedirectForPropertyTraits<FByteProperty>
+{
+	static const UField* GetField(const FByteProperty* Property) { return Property->Enum; }
+	static ECoreRedirectFlags GetFlags() { return ECoreRedirectFlags::Type_Enum; }
+};
+
+template <>
+struct TFindRedirectForPropertyTraits<FEnumProperty>
+{
+	static const UField* GetField(const FEnumProperty* Property) { return Property->GetEnum(); }
+	static ECoreRedirectFlags GetFlags() { return ECoreRedirectFlags::Type_Enum; }
+};
+
+template <typename PropertyType>
+static bool FindRedirectForProperty(FPropertyTypeName OldType, FPropertyTypeNameBuilder& NewType, const PropertyType* Property)
+{
+	using FTraits = TFindRedirectForPropertyTraits<PropertyType>;
+	const UField* Field = Property ? FTraits::GetField(Property) : nullptr;
+
+	// If the type in the tag matches the field then skip looking for redirects.
+	// This is necessary to handle redirects where the old name continues to be used.
+	FCoreRedirectObjectName OldNameRedirect = BuildCoreRedirectObjectName(OldType);
+	if (Field && Field->GetFName() == OldNameRedirect.ObjectName)
+	{
+		return false;
+	}
+
+	// Look for a partial match if there is a field to compare against, otherwise require a complete match.
+	FCoreRedirectObjectName NewNameRedirect = FCoreRedirects::GetRedirectedName(FTraits::GetFlags(), OldNameRedirect,
+		Field ? ECoreRedirectMatchFlags::AllowPartialMatch : ECoreRedirectMatchFlags::None);
+	if (NewNameRedirect == OldNameRedirect)
+	{
+		return false;
+	}
+
+	// If a partial match does not match the field then repeat the lookup without allowing partial matches.
+	// This is necessary to handle redirects of the original type of a property that changed type.
+	if (Field && Field->GetFName() != NewNameRedirect.ObjectName)
+	{
+		NewNameRedirect = FCoreRedirects::GetRedirectedName(FTraits::GetFlags(), OldNameRedirect, ECoreRedirectMatchFlags::None);
+		if (OldNameRedirect == NewNameRedirect)
+		{
+			return false;
+		}
+	}
+
+	BuildPropertyName(NewNameRedirect, NewType);
+	return true;
+}
+
+static void BuildNewNameForPropertyType(FPropertyTypeName OldTypeName, FPropertyTypeNameBuilder& NewTypeName, const FProperty* Property, bool& bHasRedirect)
+{
+	const FName OldName = OldTypeName.GetName();
+	NewTypeName.AddName(OldName);
+
+	const int32 OldParamCount = OldTypeName.GetParameterCount();
+	if (OldParamCount == 0)
+	{
+		return;
+	}
+
+	int32 OldParamIndex = 0;
+	NewTypeName.BeginParameters();
+
+	if (const EName* OldEName = OldName.ToEName(); OldEName && OldName.GetNumber() == NAME_NO_NUMBER_INTERNAL)
+	{
+		switch (*OldEName)
+		{
+		case NAME_StructProperty:
+		{
+			if (FindRedirectForProperty(OldTypeName.GetParameter(OldParamIndex), NewTypeName, CastField<FStructProperty>(Property)))
+			{
+				++OldParamIndex;
+				bHasRedirect = true;
+			}
+			break;
+		}
+		case NAME_ByteProperty:
+		{
+			if (FindRedirectForProperty(OldTypeName.GetParameter(OldParamIndex), NewTypeName, CastField<FByteProperty>(Property)))
+			{
+				++OldParamIndex;
+				bHasRedirect = true;
+			}
+			break;
+		}
+		case NAME_EnumProperty:
+		{
+			if (FindRedirectForProperty(OldTypeName.GetParameter(OldParamIndex), NewTypeName, CastField<FEnumProperty>(Property)))
+			{
+				++OldParamIndex;
+				bHasRedirect = true;
+			}
+			break;
+		}
+		case NAME_ArrayProperty:
+		{
+			const FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Property);
+			const FProperty* Inner = ArrayProperty ? ArrayProperty->Inner : nullptr;
+			BuildNewNameForPropertyType(OldTypeName.GetParameter(OldParamIndex++), NewTypeName, Inner, bHasRedirect);
+			break;
+		}
+		case NAME_OptionalProperty:
+		{
+			const FOptionalProperty* OptionalProperty = CastField<FOptionalProperty>(Property);
+			const FProperty* Value = OptionalProperty ? OptionalProperty->GetValueProperty() : nullptr;
+			BuildNewNameForPropertyType(OldTypeName.GetParameter(OldParamIndex++), NewTypeName, Value, bHasRedirect);
+			break;
+		}
+		case NAME_SetProperty:
+		{
+			const FSetProperty* SetProperty = CastField<FSetProperty>(Property);
+			const FProperty* Element = SetProperty ? SetProperty->ElementProp : nullptr;
+			BuildNewNameForPropertyType(OldTypeName.GetParameter(OldParamIndex++), NewTypeName, Element, bHasRedirect);
+			break;
+		}
+		case NAME_MapProperty:
+		{
+			const FMapProperty* MapProperty = CastField<FMapProperty>(Property);
+			const FProperty* Key = MapProperty ? MapProperty->KeyProp : nullptr;
+			const FProperty* Value = MapProperty ? MapProperty->ValueProp : nullptr;
+			BuildNewNameForPropertyType(OldTypeName.GetParameter(OldParamIndex++), NewTypeName, Key, bHasRedirect);
+			BuildNewNameForPropertyType(OldTypeName.GetParameter(OldParamIndex++), NewTypeName, Value, bHasRedirect);
+			break;
+		}
+		default:
+			break;
+		}
+	}
+
+	for (; OldParamIndex < OldParamCount; ++OldParamIndex)
+	{
+		BuildNewNameForPropertyType(OldTypeName.GetParameter(OldParamIndex), NewTypeName, nullptr, bHasRedirect);
+	}
+	NewTypeName.EndParameters();
+}
+
+FPropertyTypeName ApplyRedirectsToPropertyType(FPropertyTypeName OldTypeName, const FProperty* Property)
+{
+	bool bHasRedirect = false;
+	FPropertyTypeNameBuilder NewTypeName;
+	BuildNewNameForPropertyType(OldTypeName, NewTypeName, Property, bHasRedirect);
+	return bHasRedirect ? NewTypeName.Build() : FPropertyTypeName();
+}
+
+} // UE

@@ -45,4 +45,8 @@ DECLARE_DELEGATE_RetVal_OneParam( TSharedRef<ISceneOutlinerColumn>, FCreateScene
 /** A delegate used to factory a new filter type */
 DECLARE_DELEGATE_RetVal( TSharedRef<FSceneOutlinerFilter>, FCreateSceneOutlinerFilter );
 
+/** A delegate used to factory a new scene outliner using the given init options */
+DECLARE_DELEGATE_RetVal_OneParam( TSharedRef<ISceneOutliner>, FSceneOutlinerFactory, FSceneOutlinerInitializationOptions);
+
+
 class FSceneOutlinerTreeItemSCC;

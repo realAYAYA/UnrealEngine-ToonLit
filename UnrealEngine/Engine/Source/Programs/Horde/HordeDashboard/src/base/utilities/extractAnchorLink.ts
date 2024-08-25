@@ -14,6 +14,11 @@ export function extractAnchorLink(url: string): string {
   // http://whatever#/components/checkbox
   // #Overview
   // http://whatever#Overview
+
+  if (url.startsWith("#")) {
+    return url.trim().split('?')[0];
+  }
+
   const split = url.split('#');
   if (split.length === 3) {
     // Also remove the query if present

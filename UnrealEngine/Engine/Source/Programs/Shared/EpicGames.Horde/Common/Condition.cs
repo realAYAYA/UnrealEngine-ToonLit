@@ -1,7 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
-using EpicGames.Serialization;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -12,6 +10,8 @@ using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
+using EpicGames.Core;
+using EpicGames.Serialization;
 
 namespace EpicGames.Horde.Common
 {
@@ -295,7 +295,7 @@ namespace EpicGames.Horde.Common
 		/// Constructor
 		/// </summary>
 		/// <param name="error"></param>
-		internal ConditionException(string error)
+		public ConditionException(string error)
 			: base(error)
 		{
 		}
@@ -332,9 +332,12 @@ namespace EpicGames.Horde.Common
 		/// Error produced when parsing the condition
 		/// </summary>
 		public string? Error { get; private set; }
-		
+
 		readonly List<Token> _tokens = new List<Token>();
 		readonly List<string> _strings = new List<string>();
+
+		static readonly IEnumerable<string> s_trueScalar = new[] { "true" };
+		static readonly IEnumerable<string> s_falseScalar = new[] { "false" };
 
 		private Condition(string text)
 		{
@@ -375,7 +378,7 @@ namespace EpicGames.Horde.Common
 		public static Condition Parse(string text)
 		{
 			Condition condition = new Condition(text);
-			if(!condition.IsValid())
+			if (!condition.IsValid())
 			{
 				throw new ConditionException(condition.Error!);
 			}
@@ -472,7 +475,7 @@ namespace EpicGames.Horde.Common
 			string? error = ParseScalarExpr(reader);
 			if (error == null)
 			{
-				switch(reader.Type)
+				switch (reader.Type)
 				{
 					case TokenType.Lt:
 					case TokenType.Lte:
@@ -495,6 +498,11 @@ namespace EpicGames.Horde.Common
 		{
 			switch (reader.Type)
 			{
+				case TokenType.True:
+				case TokenType.False:
+					_tokens.Add(new Token(reader.Type, 0));
+					reader.MoveNext();
+					return null;
 				case TokenType.Identifier:
 					_strings.Add(reader.Token.ToString());
 					_tokens.Add(new Token(TokenType.Identifier, _strings.Count - 1));
@@ -588,6 +596,8 @@ namespace EpicGames.Horde.Common
 			Token token = _tokens[idx++];
 			return token.Type switch
 			{
+				TokenType.True => s_trueScalar,
+				TokenType.False => s_falseScalar,
 				TokenType.Identifier => getPropertyValues(_strings[token.Index]),
 				TokenType.Scalar => new string[] { _strings[token.Index] },
 				_ => throw new InvalidOperationException("Invalid token type")
@@ -629,7 +639,7 @@ namespace EpicGames.Horde.Common
 	/// <summary>
 	/// Converter from conditions to compact binary objects
 	/// </summary>
-	public class ConditionCbConverter : CbConverterBase<Condition>
+	public class ConditionCbConverter : CbConverter<Condition>
 	{
 		/// <inheritdoc/>
 		public override Condition Read(CbField field)
@@ -653,16 +663,16 @@ namespace EpicGames.Horde.Common
 			}
 			else
 			{
-				writer.WriteUtf8StringValue(value.Text);
+				writer.WriteUtf8StringValue(new Utf8String(value.Text));
 			}
 		}
 
 		/// <inheritdoc/>
-		public override void WriteNamed(CbWriter writer, Utf8String name, Condition value)
+		public override void WriteNamed(CbWriter writer, CbFieldName name, Condition value)
 		{
 			if (value != null)
 			{
-				writer.WriteUtf8String(name, value.Text);
+				writer.WriteUtf8String(name, new Utf8String(value.Text));
 			}
 		}
 	}
@@ -696,7 +706,7 @@ namespace EpicGames.Horde.Common
 		public override Condition Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options)
 		{
 			string? text = reader.GetString();
-			if(text == null)
+			if (text == null)
 			{
 				throw new InvalidOperationException();
 			}

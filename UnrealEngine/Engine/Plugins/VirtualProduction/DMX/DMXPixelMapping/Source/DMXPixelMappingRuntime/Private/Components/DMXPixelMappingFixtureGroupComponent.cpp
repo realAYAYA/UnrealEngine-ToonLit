@@ -2,34 +2,19 @@
 
 #include "Components/DMXPixelMappingFixtureGroupComponent.h"
 
+#include "Components/DMXPixelMappingComponentGeometryCache.h"
 #include "Components/DMXPixelMappingMatrixComponent.h"
 #include "Components/DMXPixelMappingRendererComponent.h"
+#include "DMXPixelMapping.h"
 #include "Library/DMXLibrary.h"
-
-#if WITH_EDITOR
-#include "DMXPixelMappingComponentWidget.h"
-#endif // WITH_EDITOR
 
 
 #define LOCTEXT_NAMESPACE "DMXPixelMappingFixtureGroupComponent"
 
 UDMXPixelMappingFixtureGroupComponent::UDMXPixelMappingFixtureGroupComponent()
 {
-	SetSize(FVector2D(500.f, 500.f));
-}
-
-void UDMXPixelMappingFixtureGroupComponent::PostInitProperties()
-{
-	Super::PostInitProperties();
-
-	LastPosition = GetPosition();
-}
-
-void UDMXPixelMappingFixtureGroupComponent::PostLoad()
-{
-	Super::PostLoad();
-
-	LastPosition = GetPosition();
+	SizeX = 500.f;
+	SizeY = 500.f;
 }
 
 #if WITH_EDITOR
@@ -39,33 +24,10 @@ void UDMXPixelMappingFixtureGroupComponent::PostEditChangeProperty(FPropertyChan
 	Super::PostEditChangeProperty(PropertyChangedEvent);
 
 	const FName PropertyName = PropertyChangedEvent.GetPropertyName();
-	if (PropertyName == UDMXPixelMappingOutputComponent::GetPositionXPropertyName() ||
-		PropertyName == UDMXPixelMappingOutputComponent::GetPositionYPropertyName())
-	{
-		HandlePositionChanged();
-	}
-	else if (PropertyName == GET_MEMBER_NAME_CHECKED(UDMXPixelMappingFixtureGroupComponent, DMXLibrary))
+	if (PropertyName == GET_MEMBER_NAME_CHECKED(UDMXPixelMappingFixtureGroupComponent, DMXLibrary))
 	{
 		OnDMXLibraryChangedDelegate.Broadcast();
 	}
-
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	if (PropertyName == UDMXPixelMappingOutputComponent::GetSizeXPropertyName() ||
-		PropertyName == UDMXPixelMappingOutputComponent::GetSizeYPropertyName())
-	{
-		if (ComponentWidget_DEPRECATED.IsValid())
-		{
-			ComponentWidget_DEPRECATED->SetSize(GetSize());
-		}
-	}
-	else if (PropertyName == GET_MEMBER_NAME_CHECKED(UDMXPixelMappingFixtureGroupComponent, DMXLibrary))
-	{
-		if (ComponentWidget_DEPRECATED.IsValid())
-		{
-			ComponentWidget_DEPRECATED->SetLabelText(FText::FromString(GetUserFriendlyName()));
-		}
-	}
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	InvalidatePixelMapRenderer();
 }
@@ -75,9 +37,6 @@ void UDMXPixelMappingFixtureGroupComponent::PostEditChangeProperty(FPropertyChan
 void UDMXPixelMappingFixtureGroupComponent::PostEditUndo()
 {
 	Super::PostEditUndo();
-
-	// Update last position, so the next will be set correctly on children
-	LastPosition = GetPosition();
 
 	// Restore Matrices 
 	for (UDMXPixelMappingBaseComponent* Child : Children)
@@ -122,13 +81,13 @@ void UDMXPixelMappingFixtureGroupComponent::AddChild(UDMXPixelMappingBaseCompone
 	}
 }
 
-void UDMXPixelMappingFixtureGroupComponent::ResetDMX()
+void UDMXPixelMappingFixtureGroupComponent::ResetDMX(EDMXPixelMappingResetDMXMode ResetMode)
 {
 	ForEachChild([&](UDMXPixelMappingBaseComponent* InComponent)
 	{
 		if (UDMXPixelMappingOutputComponent * Component = Cast<UDMXPixelMappingOutputComponent>(InComponent))
 		{
-			Component->ResetDMX();
+			Component->ResetDMX(ResetMode);
 		}
 	}, false);
 }
@@ -155,50 +114,6 @@ void UDMXPixelMappingFixtureGroupComponent::QueueDownsample()
 	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
-void UDMXPixelMappingFixtureGroupComponent::SetPosition(const FVector2D& NewPosition)
-{
-	Super::SetPosition(NewPosition);
-
-	HandlePositionChanged();
-}
-
-void UDMXPixelMappingFixtureGroupComponent::SetSize(const FVector2D& NewSize)
-{
-	Super::SetSize(NewSize);
-
-#if WITH_EDITOR
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	if (ComponentWidget_DEPRECATED.IsValid())
-	{
-		ComponentWidget_DEPRECATED->SetSize(GetSize());
-	}
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
-#endif
-}
-
-void UDMXPixelMappingFixtureGroupComponent::HandlePositionChanged()
-{
-#if WITH_EDITOR
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	if (ComponentWidget_DEPRECATED.IsValid())
-	{
-		ComponentWidget_DEPRECATED->SetPosition(GetPosition());
-	}
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
-#endif
-
-	// Propagonate to children
-	constexpr bool bUpdatePositionRecursive = false;
-	ForEachChildOfClass<UDMXPixelMappingOutputComponent>([this](UDMXPixelMappingOutputComponent* ChildComponent)
-		{
-			const FVector2D ChildOffset = ChildComponent->GetPosition() - LastPosition;
-			ChildComponent->SetPosition(GetPosition() + ChildOffset);
-
-		}, bUpdatePositionRecursive);
-
-	LastPosition = GetPosition();
-}
-
 FString UDMXPixelMappingFixtureGroupComponent::GetUserName() const
 {
 	if (UserName.IsEmpty())
@@ -210,6 +125,68 @@ FString UDMXPixelMappingFixtureGroupComponent::GetUserName() const
 	{
 		return UserName;
 	}
+}
+
+void UDMXPixelMappingFixtureGroupComponent::SetPosition(const FVector2D& NewPosition)
+{
+	PositionX = NewPosition.X;
+	PositionY = NewPosition.Y;
+
+	const FVector2D Translation = CachedGeometry.SetPositionAbsolute(NewPosition);
+	CachedGeometry.PropagonatePositionChangesToChildren(Translation);
+
+#if WITH_EDITOR
+	EditorPositionWithRotation = CachedGeometry.GetPositionRotatedAbsolute();
+#endif
+}
+
+void UDMXPixelMappingFixtureGroupComponent::SetPositionRotated(FVector2D NewRotatedPosition)
+{
+	const FVector2D Translation = CachedGeometry.SetPositionRotatedAbsolute(NewRotatedPosition);
+
+	PositionX = CachedGeometry.GetPositionAbsolute().X;
+	PositionY = CachedGeometry.GetPositionAbsolute().Y;
+
+	CachedGeometry.PropagonatePositionChangesToChildren(Translation);
+
+#if WITH_EDITOR
+	EditorPositionWithRotation = CachedGeometry.GetPositionRotatedAbsolute();
+#endif
+}
+
+void UDMXPixelMappingFixtureGroupComponent::SetSize(const FVector2D& NewSize)
+{
+	SizeX = NewSize.X;
+	SizeY = NewSize.Y;
+
+	FVector2D DeltaSize;
+	FVector2D DeltaPosition;
+	CachedGeometry.SetSizeAbsolute(NewSize, DeltaSize, DeltaPosition);
+
+	// Resizing rotated components moves their pivot, and by that their position without rotation.
+	// Adjust for this so the component keeps its rotated position.
+	SetPosition(CachedGeometry.GetPositionAbsolute());
+
+	// Propagonate size changes to children if desired
+#if WITH_EDITOR
+	UDMXPixelMapping* PixelMapping = GetPixelMapping();
+	if (PixelMapping && PixelMapping->bEditorScaleChildrenWithParent)
+	{
+		CachedGeometry.PropagonateSizeChangesToChildren(DeltaSize, DeltaPosition);
+	}
+#endif
+}
+
+void UDMXPixelMappingFixtureGroupComponent::SetRotation(double NewRotation)
+{
+	Rotation = NewRotation;
+
+	const double DeltaRotation = CachedGeometry.SetRotationAbsolute(NewRotation);
+	CachedGeometry.PropagonateRotationChangesToChildren(DeltaRotation);
+
+#if WITH_EDITOR
+		EditorPositionWithRotation = CachedGeometry.GetPositionRotatedAbsolute();
+#endif
 }
 
 #if WITH_EDITOR

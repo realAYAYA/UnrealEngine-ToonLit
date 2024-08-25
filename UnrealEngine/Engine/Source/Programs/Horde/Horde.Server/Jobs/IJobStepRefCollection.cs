@@ -4,12 +4,13 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using Horde.Server.Agents;
-using Horde.Server.Agents.Pools;
-using Horde.Server.Jobs.Bisect;
+using EpicGames.Horde.Agents;
+using EpicGames.Horde.Agents.Pools;
+using EpicGames.Horde.Jobs;
+using EpicGames.Horde.Jobs.Templates;
+using EpicGames.Horde.Logs;
+using EpicGames.Horde.Streams;
 using Horde.Server.Jobs.Graphs;
-using Horde.Server.Logs;
-using Horde.Server.Streams;
 using HordeCommon;
 using Microsoft.Extensions.Logging;
 
@@ -32,6 +33,7 @@ namespace Horde.Server.Jobs
 		/// <param name="logId">The log file id</param>
 		/// <param name="poolId">The pool id</param>
 		/// <param name="agentId">The agent id</param>
+		/// <param name="state">State of this step</param>
 		/// <param name="outcome">Outcome of this step, if known</param>
 		/// <param name="updateIssues">Whether this step ref is included for issue updates</param>
 		/// <param name="lastSuccess">The last change that completed with success</param>
@@ -40,9 +42,8 @@ namespace Horde.Server.Jobs
 		/// <param name="initTime">Time taken for the batch containing this step to initializer</param>
 		/// <param name="jobStartTimeUtc">Start time of the job</param>
 		/// <param name="startTimeUtc">Start time</param>
-		/// <param name="finishTimeUtc">Finish time for the step, if known</param>
-		/// <param name="bisectTaskId">The bisection task id, if part of a bisection</param>
-		Task<IJobStepRef> InsertOrReplaceAsync(JobStepRefId id, string jobName, string stepName, StreamId streamId, TemplateId templateId, int change, LogId? logId, PoolId? poolId, AgentId? agentId, JobStepOutcome? outcome, bool updateIssues, int? lastSuccess, int? lastWarning, float waitTime, float initTime, DateTime jobStartTimeUtc, DateTime startTimeUtc, DateTime? finishTimeUtc, BisectTaskId? bisectTaskId);
+		/// <param name="finishTimeUtc">Finish time for the step, if known</param>		
+		Task<IJobStepRef> InsertOrReplaceAsync(JobStepRefId id, string jobName, string stepName, StreamId streamId, TemplateId templateId, int change, LogId? logId, PoolId? poolId, AgentId? agentId, JobStepState? state, JobStepOutcome? outcome, bool updateIssues, int? lastSuccess, int? lastWarning, float waitTime, float initTime, DateTime jobStartTimeUtc, DateTime startTimeUtc, DateTime? finishTimeUtc);
 
 		/// <summary>
 		/// Updates a job step ref 
@@ -52,7 +53,7 @@ namespace Horde.Server.Jobs
 		/// <param name="stepId"></param>
 		/// <param name="issueIds"></param>
 		/// <returns></returns>
-		Task<IJobStepRef?> UpdateAsync(JobId jobId, SubResourceId batchId, SubResourceId stepId, List<int>? issueIds);
+		Task<IJobStepRef?> UpdateAsync(JobId jobId, JobStepBatchId batchId, JobStepId stepId, List<int>? issueIds);
 
 		/// <summary>
 		/// Gets a specific job step ref
@@ -61,7 +62,15 @@ namespace Horde.Server.Jobs
 		/// <param name="batchId"></param>
 		/// <param name="stepId"></param>
 		/// <returns></returns>
-		Task<IJobStepRef?> FindAsync(JobId jobId, SubResourceId batchId, SubResourceId stepId);
+		Task<IJobStepRef?> FindAsync(JobId jobId, JobStepBatchId batchId, JobStepId stepId);
+
+		/// <summary>
+		/// Gets job step references given an array of ids
+		/// </summary>
+		/// <param name="ids"></param>
+		/// <param name="cancellationToken"></param>
+		/// <returns></returns>
+		Task<List<IJobStepRef>> FindAsync(JobStepRefId[] ids, CancellationToken cancellationToken);
 
 		/// <summary>
 		/// Gets the history of a given node
@@ -72,10 +81,9 @@ namespace Horde.Server.Jobs
 		/// <param name="change">The current change</param>
 		/// <param name="includeFailed">Whether to include failed nodes</param>
 		/// <param name="maxCount">Number of results to return</param>
-		/// <param name="bisectTaskId">The bisection task to get nodes for</param>
 		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns>List of step references</returns>
-		Task<List<IJobStepRef>> GetStepsForNodeAsync(StreamId streamId, TemplateId templateId, string nodeName, int? change, bool includeFailed, int maxCount, BisectTaskId? bisectTaskId = null, CancellationToken cancellationToken = default);
+		Task<List<IJobStepRef>> GetStepsForNodeAsync(StreamId streamId, TemplateId templateId, string nodeName, int? change, bool includeFailed, int maxCount, CancellationToken cancellationToken = default);
 
 		/// <summary>
 		/// Gets the previous job that ran a given step
@@ -101,6 +109,7 @@ namespace Horde.Server.Jobs
 		/// <param name="updateIssues">If true, constrain to steps which update issues</param>
 		/// <returns>The previous job, or null.</returns>
 		Task<IJobStepRef?> GetNextStepForNodeAsync(StreamId streamId, TemplateId templateId, string nodeName, int change, JobStepOutcome? outcome = null, bool? updateIssues = null);
+
 	}
 
 	static class JobStepRefCollectionExtensions
@@ -139,13 +148,13 @@ namespace Horde.Server.Jobs
 				{
 					outcome = JobStepOutcome.Unspecified;
 				}
-				
+
 				if (logger != null)
 				{
 					logger.LogInformation("Updating step reference {StepId} for job {JobId}, batch {BatchId}, with outcome {JobStepOutcome}", step.Id, job.Id, batch.Id, outcome);
-				}				
+				}
 
-				await jobStepRefs.InsertOrReplaceAsync(new JobStepRefId(job.Id, batch.Id, step.Id), job.Name, nodeName, job.StreamId, job.TemplateId, job.Change, step.LogId, batch.PoolId, batch.AgentId, outcome, job.UpdateIssues, lastSuccess, lastWarning, waitTime, initTime, job.CreateTimeUtc, step.StartTimeUtc ?? DateTime.UtcNow, step.FinishTimeUtc, job.StartedByBisectTaskId);
+				await jobStepRefs.InsertOrReplaceAsync(new JobStepRefId(job.Id, batch.Id, step.Id), job.Name, nodeName, job.StreamId, job.TemplateId, job.Change, step.LogId, batch.PoolId, batch.AgentId, step.State, outcome, job.UpdateIssues, lastSuccess, lastWarning, waitTime, initTime, job.CreateTimeUtc, step.StartTimeUtc ?? DateTime.UtcNow, step.FinishTimeUtc);
 			}
 		}
 	}

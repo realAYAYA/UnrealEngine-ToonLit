@@ -20,6 +20,7 @@
 #include "ConversationGraphNode_Choice.h"
 #include "ConversationGraphNode_Knot.h"
 
+#include "BlueprintActionDatabase.h"
 #include "EdGraph/EdGraph.h"
 #include "GraphEditorActions.h"
 #include "ToolMenu.h"
@@ -29,6 +30,17 @@
 #include UE_INLINE_GENERATED_CPP_BY_NAME(ConversationGraphSchema)
 
 #define LOCTEXT_NAMESPACE "ConversationEditor"
+
+namespace ConversationEditorCVar
+{
+	static bool CheckForCyclesCVar = true;
+	FAutoConsoleVariableRef CVarCheckForCycles(
+		TEXT("ConversationEditor.CheckForCycles"),
+		CheckForCyclesCVar,
+		TEXT("This cvar controles if the Conversation Editor should check for cycles when links are created.\n")
+		TEXT("0: Don't Check, 1: Check for Cycles (Default)"),
+		ECVF_Default);
+}
 
 TSharedPtr<FGraphNodeClassHelper> ConversationClassCache;
 
@@ -84,26 +96,55 @@ void UConversationGraphSchema::GetGraphNodeContextActions(FGraphContextMenuBuild
 	Super::GetGraphNodeContextActions(ContextMenuBuilder, SubNodeFlags);
 }
 
+bool UConversationGraphSchema::HasSubNodeClasses(int32 SubNodeFlags) const
+{
+	TArray<FGraphNodeClassData> TempClassData;
+	UClass* TempClass = nullptr;
+	GetSubNodeClasses(SubNodeFlags, TempClassData, TempClass);
+	return !TempClassData.IsEmpty();
+}
+
 void UConversationGraphSchema::GetSubNodeClasses(int32 SubNodeFlags, TArray<FGraphNodeClassData>& ClassData, UClass*& GraphNodeClass) const
 {
 	FGraphNodeClassHelper& ClassCache = GetConversationClassCache();
+	TArray<FGraphNodeClassData> TempClassData;
 
 	switch ((EConversationGraphSubNodeType)SubNodeFlags)
 	{
 	case EConversationGraphSubNodeType::Requirement:
-		ClassCache.GatherClasses(UConversationRequirementNode::StaticClass(), /*out*/ ClassData);
+		ClassCache.GatherClasses(UConversationRequirementNode::StaticClass(), /*out*/ TempClassData);
 		GraphNodeClass = UConversationGraphNode_Requirement::StaticClass();
 		break;
 	case EConversationGraphSubNodeType::SideEffect:
-		ClassCache.GatherClasses(UConversationSideEffectNode::StaticClass(), /*out*/ ClassData);
+		ClassCache.GatherClasses(UConversationSideEffectNode::StaticClass(), /*out*/ TempClassData);
 		GraphNodeClass = UConversationGraphNode_SideEffect::StaticClass();
 		break;
 	case EConversationGraphSubNodeType::Choice:
-		ClassCache.GatherClasses(UConversationChoiceNode::StaticClass(), /*out*/ ClassData);
+		ClassCache.GatherClasses(UConversationChoiceNode::StaticClass(), /*out*/ TempClassData);
 		GraphNodeClass = UConversationGraphNode_Choice::StaticClass();
 		break;
 	default:
 		unimplemented();
+	}
+
+	for (FGraphNodeClassData& Class : TempClassData)
+	{
+		bool bIsAllowed = false;
+		// We check the name only first to test the allowed status without possibly loading a full uasset class from disk
+		// If there is no package name, fallback to testing with a fully loaded class
+		if (!Class.GetPackageName().IsEmpty())
+		{
+			bIsAllowed = FBlueprintActionDatabase::IsClassAllowed(FTopLevelAssetPath(FName(Class.GetPackageName()), FName(Class.GetClassName())), FBlueprintActionDatabase::EPermissionsContext::Node);
+		}
+		else
+		{
+			bIsAllowed = FBlueprintActionDatabase::IsClassAllowed(Class.GetClass(), FBlueprintActionDatabase::EPermissionsContext::Node);
+		}
+
+		if (bIsAllowed)
+		{
+			ClassData.Add(std::move(Class));
+		}
 	}
 }
 
@@ -114,15 +155,30 @@ void UConversationGraphSchema::AddConversationNodeOptions(const FString& Categor
 	TArray<FGraphNodeClassData> NodeClasses;
 	GetConversationClassCache().GatherClasses(RuntimeNodeType, /*out*/ NodeClasses);
 
-	for (const FGraphNodeClassData& NodeClass : NodeClasses)
+	for (FGraphNodeClassData& NodeClass : NodeClasses)
 	{
-		const FText NodeTypeName = FText::FromString(FName::NameToDisplayString(NodeClass.ToString(), false));
+		bool bIsAllowed = false;
+		// We check the name only first to test the allowed status without possibly loading a full uasset class from disk
+		// If there is no package name, fallback to testing with a fully loaded class
+		if (!NodeClass.GetPackageName().IsEmpty())
+		{
+			bIsAllowed = FBlueprintActionDatabase::IsClassAllowed(FTopLevelAssetPath(FName(NodeClass.GetPackageName()), FName(NodeClass.GetClassName())), FBlueprintActionDatabase::EPermissionsContext::Node);
+		}
+		else
+		{
+			bIsAllowed = FBlueprintActionDatabase::IsClassAllowed(NodeClass.GetClass(), FBlueprintActionDatabase::EPermissionsContext::Node);
+		}
+		
+		if (bIsAllowed)
+		{
+			const FText NodeTypeName = FText::FromString(FName::NameToDisplayString(NodeClass.ToString(), false));
 
-		TSharedPtr<FAISchemaAction_NewNode> AddOpAction = UAIGraphSchema::AddNewNodeAction(ListBuilder, NodeClass.GetCategory(), NodeTypeName, FText::GetEmpty());
+			TSharedPtr<FAISchemaAction_NewNode> AddOpAction = UAIGraphSchema::AddNewNodeAction(ListBuilder, NodeClass.GetCategory(), NodeTypeName, FText::GetEmpty());
 
-		UConversationGraphNode* OpNode = NewObject<UConversationGraphNode>(ContextMenuBuilder.OwnerOfTemporaries, EditorNodeType);
-		OpNode->ClassData = NodeClass;
-		AddOpAction->NodeTemplate = OpNode;
+			UConversationGraphNode* OpNode = NewObject<UConversationGraphNode>(ContextMenuBuilder.OwnerOfTemporaries, EditorNodeType);
+			OpNode->ClassData = NodeClass;
+			AddOpAction->NodeTemplate = OpNode;
+		}
 	}
 
 	ContextMenuBuilder.Append(ListBuilder);
@@ -277,11 +333,14 @@ const FPinConnectionResponse UConversationGraphSchema::CanCreateConnection(const
 		TSet<UEdGraphNode*> VisitedNodes;
 	};
 
-	// check for cycles
-	FNodeVisitorCycleChecker CycleChecker;
-	if (!CycleChecker.CheckForLoop(PinA->GetOwningNode(), PinB->GetOwningNode()))
+	if (ConversationEditorCVar::CheckForCyclesCVar)
 	{
-		return FPinConnectionResponse(CONNECT_RESPONSE_DISALLOW, LOCTEXT("PinErrorcycle", "Can't create a graph cycle"));
+		// check for cycles
+		FNodeVisitorCycleChecker CycleChecker;
+		if (!CycleChecker.CheckForLoop(PinA->GetOwningNode(), PinB->GetOwningNode()))
+		{
+			return FPinConnectionResponse(CONNECT_RESPONSE_DISALLOW, LOCTEXT("PinErrorcycle", "Can't create a graph cycle"));
+		}
 	}
 
 	const bool bPinASingleLink = bPinAIsSingleComposite || bPinAIsSingleTask || bPinAIsSingleNode;

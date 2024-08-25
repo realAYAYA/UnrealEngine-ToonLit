@@ -58,8 +58,9 @@ struct FRenderAssetStreamingManager final : public IRenderAssetStreamingManager
 	 * Either bForceMiplevelsToBeResident or ForceMipLevelsToBeResidentTimestamp need to be set on the asset.
 	 *
 	 * @param RenderAsset The asset to register
+	 * @return bool True if the streaming request is successful
 	 */
-	virtual void FastForceFullyResident(UStreamableRenderAsset* RenderAsset) override;
+	virtual bool FastForceFullyResident(UStreamableRenderAsset* RenderAsset) override;
 
 	/**
 	 * Blocks till all pending requests are fulfilled.

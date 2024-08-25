@@ -13,6 +13,11 @@ class SGraphEditor;
 
 namespace UE::AnimNext::Editor
 {
+	class FParameterBlockEditor;
+}
+
+namespace UE::AnimNext::Editor
+{
 
 DECLARE_DELEGATE_OneParam(FOnDetailsViewCreated, TSharedRef<IDetailsView>);
 
@@ -77,16 +82,18 @@ private:
 class FParameterBlockEditorMode : public FApplicationMode
 {
 public:
-	FParameterBlockEditorMode(TSharedRef<FWorkflowCentricApplication> InHostingApp);
+	FParameterBlockEditorMode(TSharedRef<FParameterBlockEditor> InHostingApp);
 
 private:
 	// FApplicationMode interface
 	virtual void RegisterTabFactories(TSharedPtr<FTabManager> InTabManager) override;
 	virtual void AddTabFactory(FCreateWorkflowTabFactory FactoryCreator) override;
 	virtual void RemoveTabFactory(FName TabFactoryID) override;
-	
+	virtual void PreDeactivateMode() override;
+	virtual void PostActivateMode() override;
+
 	// The hosting app
-	TWeakPtr<FWorkflowCentricApplication> HostingAppPtr;
+	TWeakPtr<FParameterBlockEditor> ParameterBlockEditorPtr;
 
 	// The tab factories we support
 	FWorkflowAllowedTabSet TabFactories;

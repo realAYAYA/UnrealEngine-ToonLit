@@ -5,13 +5,13 @@
 #include "Sections/MovieSceneColorSection.h"
 #include "Channels/MovieSceneChannelProxy.h"
 #include "Channels/MovieSceneFloatChannel.h"
-#include "CommonMovieSceneTools.h"
 
 #include "Misc/FrameNumber.h"
 #include "Widgets/Colors/SColorPicker.h"
 #include "ScopedTransaction.h"
 #include "Framework/Application/SlateApplication.h"
 #include "Engine/Engine.h"
+#include "TimeToPixel.h"
 
 void MovieSceneSectionHelpers::ConsolidateColorCurves( TArray< TTuple<float, FLinearColor> >& OutColorKeys, const FLinearColor& DefaultColor, TArrayView<const FMovieSceneFloatChannel* const> ColorChannels, const FTimeToPixel& TimeConverter )
 {
@@ -63,7 +63,7 @@ void MovieSceneSectionHelpers::ConsolidateColorCurves( TArray< TTuple<float, FLi
 		{
 			if (ChannelTimes[Index].Num() == 0)
 			{
-				ChannelTimes.RemoveAt(Index, 1, false);
+				ChannelTimes.RemoveAt(Index, 1, EAllowShrinking::No);
 			}
 		}
 

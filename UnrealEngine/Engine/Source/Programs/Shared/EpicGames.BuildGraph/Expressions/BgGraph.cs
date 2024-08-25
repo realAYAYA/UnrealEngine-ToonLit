@@ -1,9 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
-using System.Collections.Generic;
-using Microsoft.Extensions.Logging;
-
 namespace EpicGames.BuildGraph.Expressions
 {
 	/// <summary>

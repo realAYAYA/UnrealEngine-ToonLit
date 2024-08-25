@@ -2324,3 +2324,56 @@ bool FDynamicMeshEditor::SplitMesh(const FDynamicMesh3* SourceMesh, TArray<FDyna
 	
 	return true;
 }
+
+
+template <typename RealType, int ElementSize>
+void FDynamicMeshEditor::AppendElementSubset(
+	const FDynamicMesh3* FromMesh,
+	const TSet<int>& TriangleROI,
+	const TSet<int>& VertexROI,
+	const TDynamicMeshOverlay<RealType, ElementSize>* FromOverlay,
+	TDynamicMeshOverlay<RealType, ElementSize>* ToOverlay)
+{
+	TMap<int32, int32> FromElementIDToElementID;
+	for (int32 Tid : TriangleROI) {
+
+		const FIndex3i TriVids = Mesh->GetTriangle(Tid);
+		ensureMsgf(TriVids == FromMesh->GetTriangle(Tid),
+			TEXT("Expected FromOverlay and ToOverlay to have a matching parent meshes"));
+
+		const FIndex3i FromElementIDs = FromOverlay->GetTriangle(Tid);
+		FIndex3i ToElementIDs = ToOverlay->GetTriangle(Tid);
+
+		for (int SubIdx = 0; SubIdx < 3; ++SubIdx){
+
+			const int FromElementID = FromElementIDs[SubIdx];
+
+			if (VertexROI.Contains(TriVids[SubIdx])){
+
+				int* ToElementID = FromElementIDToElementID.Find(FromElementID);
+				if (!ToElementID)
+				{
+					for (int Index = 0; Index < ElementSize; Index++)
+					{
+						RealType FromData[ElementSize];
+						FromOverlay->GetElement(FromElementID, FromData);
+						const int ElementID = ToOverlay->AppendElement(FromData);
+
+						ToElementID = &FromElementIDToElementID.Add(FromElementID, ElementID);
+					}
+				}
+
+				ToElementIDs[SubIdx] = *ToElementID;
+			}
+		}
+
+		ToOverlay->SetTriangle(Tid, ToElementIDs);
+	}
+}
+
+template GEOMETRYCORE_API void FDynamicMeshEditor::AppendElementSubset(
+	const FDynamicMesh3*,
+	const TSet<int>&,
+	const TSet<int>&,
+	const TDynamicMeshOverlay<float, 3>*,
+	TDynamicMeshOverlay<float, 3>*);

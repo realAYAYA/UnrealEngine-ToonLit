@@ -166,13 +166,19 @@ bool UEditorDialogLibrary::ShowObjectsDetailsView(const FText& Title, const TArr
 
 		if (ViewObjects.Num())
 		{
+			FVector2D DefaultWindowSize = FAppStyle::Get().GetVector("WindowSize.Medium");
+			FVector2D MinSize = FVector2D(Options.MinWidth <= 0 ? DefaultWindowSize.X : Options.MinWidth,Options.MinHeight <= 0 ? DefaultWindowSize.Y : Options.MinHeight);
+			
 			TSharedRef<SWindow> Window = SNew(SWindow)
 				.Title(Title)
-				.SizingRule(ESizingRule::Autosized)
+				.SizingRule(Options.bAllowResizing ? ESizingRule::UserSized : ESizingRule::Autosized)
+				.MinWidth(MinSize.X)
+				.MinHeight(MinSize.Y)
+				.ClientSize(Options.bAllowResizing ? MinSize : FVector2D())
 				.AutoCenter(EAutoCenter::PrimaryWorkArea)
 				.SupportsMinimize(false)
 				.SupportsMaximize(false);
-
+				
 			TSharedPtr<SObjParamDialog> Dialog;
 			Window->SetContent(SAssignNew(Dialog, SObjParamDialog, Window, ViewObjects, Options));
 			GEditor->EditorAddModalWindow(Window);

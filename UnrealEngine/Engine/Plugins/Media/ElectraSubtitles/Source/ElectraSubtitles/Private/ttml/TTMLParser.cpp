@@ -562,7 +562,7 @@ void FTTMLParser::PopLastElement(const FString& ElementName)
 {
 	check(ParseStack.Num());
 	check(ElectraSubtitleUtils::StringEquals(*ElementName, *ParseStack.Last().Element->GetName()));
-	ParseStack.Pop(false);
+	ParseStack.Pop(EAllowShrinking::No);
 }
 
 void FTTMLParser::ExpatStartElementHandler(const XML_Char* InName, const XML_Char** InAtts)
@@ -882,8 +882,10 @@ bool FTTMLXML_TTElement::ProcessElement(FTTMLParser* Parser, const FString& Elem
 bool FTTMLXML_TTElement::ProcessAttributes(FTTMLParser* Parser, const TArray<FXmlAttribute>& AllAttributes)
 {
 	TArray<FXmlAttribute> Attributes;
-	for(auto& Attr : Attributes)
+	for(int32 i=0; i<AllAttributes.Num(); ++i)
 	{
+		const FXmlAttribute& Attr = Attributes[i];
+
 		// See: https://www.w3.org/TR/ttml2/#parameter-attribute-timeBase
 		if (ElectraSubtitleUtils::StringEquals(*Attr.GetName(), TEXT("timeBase")))
 		{
@@ -969,7 +971,7 @@ bool FTTMLXML_TTElement::ProcessAttributes(FTTMLParser* Parser, const TArray<FXm
 		}
 		else
 		{
-			Attributes.Emplace(Attr);
+			Attributes.Add(Attr);
 		}
 	}
 	return Super::ProcessAttributes(Parser, Attributes);

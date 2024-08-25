@@ -3,6 +3,7 @@
 
 #include "eos_rtc_types.h"
 #include "eos_rtc_audio_types.h"
+#include "eos_rtc_data_types.h"
 
 /**
  * The RTC Interface is used to manage joining and leaving rooms.
@@ -18,6 +19,15 @@
  * @see eos_rtc_audio_types.h
  */
 EOS_DECLARE_FUNC(EOS_HRTCAudio) EOS_RTC_GetAudioInterface(EOS_HRTC Handle);
+
+/**
+ * Get a handle to the Data interface
+ * @return EOS_HRTCData handle
+ *
+ * @see eos_rtc_data.h
+ * @see eos_rtc_data_types.h
+ */
+EOS_DECLARE_FUNC(EOS_HRTCData) EOS_RTC_GetDataInterface(EOS_HRTC Handle);
 
 /**
  * Use this function to join a room.
@@ -69,7 +79,7 @@ EOS_DECLARE_FUNC(void) EOS_RTC_BlockParticipant(EOS_HRTC Handle, const EOS_RTC_B
  * status of a Lobby-managed RTC room, use the EOS_Lobby_AddNotifyRTCRoomConnectionChanged function instead.
  *
  * @param ClientData Arbitrary data that is passed back in the CompletionDelegate
- * @param CompletionDelegate The callback to be fired when a presence change occurs
+ * @param CompletionDelegate The callback to be fired when a participant is disconnected from the room
  * @return Notification ID representing the registered callback if successful, an invalid NotificationId if not
  *
  * @see EOS_INVALID_NOTIFICATIONID
@@ -99,11 +109,11 @@ EOS_DECLARE_FUNC(void) EOS_RTC_RemoveNotifyDisconnected(EOS_HRTC Handle, EOS_Not
  * You can use this notification to detect internal automatic RTC blocks due to block lists.
  * When a participant joins a room and while the system resolves the block list status of said participant, the participant is set to blocked and you'll receive
  * a notification with ParticipantStatus set to EOS_RTCPS_Joined and bParticipantInBlocklist set to true.
- * Once the block list status is resolved, if the player is not in any applicable block list(s), it is then unblocked a new notification is sent with
+ * Once the block list status is resolved, if the player is not in any applicable block list(s), it is then unblocked and a new notification is sent with
  * ParticipantStatus set to EOS_RTCPS_Joined and bParticipantInBlocklist set to false.
  *
  * @param ClientData Arbitrary data that is passed back in the CompletionDelegate
- * @param CompletionDelegate The callback to be fired when a presence change occurs
+ * @param CompletionDelegate The callback to be fired when a participant changes status
  * @return Notification ID representing the registered callback if successful, an invalid NotificationId if not
  *
  * @note This notification is also raised when the local user joins the room, but NOT when the local user leaves the room.
@@ -139,3 +149,23 @@ EOS_DECLARE_FUNC(EOS_EResult) EOS_RTC_SetSetting(EOS_HRTC Handle, const EOS_RTC_
  * @return EOS_Success when the setting is successfully set, EOS_NotFound when the setting is unknown, EOS_InvalidParameters when the value is invalid.
  */
 EOS_DECLARE_FUNC(EOS_EResult) EOS_RTC_SetRoomSetting(EOS_HRTC Handle, const EOS_RTC_SetRoomSettingOptions* Options);
+
+/**
+ * Register to receive notifications to receiving periodical statistics update. If the returned NotificationId is valid, you must call
+ * EOS_RTC_RemoveNotifyRoomStatisticsUpdated when you no longer wish to have your StatisticsUpdateHandler called.
+ *
+ * @param ClientData Arbitrary data that is passed back in the StatisticsUpdateHandler
+ * @param CompletionDelegate The callback to be fired when a statistics updated.
+ * @return Notification ID representing the registered callback if successful, an invalid NotificationId if not
+ *
+ * @see EOS_INVALID_NOTIFICATIONID
+ * @see EOS_RTC_RemoveNotifyRoomStatisticsUpdated
+ */
+EOS_DECLARE_FUNC(EOS_NotificationId) EOS_RTC_AddNotifyRoomStatisticsUpdated(EOS_HRTC Handle, const EOS_RTC_AddNotifyRoomStatisticsUpdatedOptions* Options, void* ClientData, const EOS_RTC_OnRoomStatisticsUpdatedCallback StatisticsUpdateHandler);
+
+/**
+ * Unregister a previously bound notification handler from receiving periodical statistics update notifications
+ *
+ * @param NotificationId The Notification ID representing the registered callback
+ */
+EOS_DECLARE_FUNC(void) EOS_RTC_RemoveNotifyRoomStatisticsUpdated(EOS_HRTC Handle, EOS_NotificationId NotificationId);

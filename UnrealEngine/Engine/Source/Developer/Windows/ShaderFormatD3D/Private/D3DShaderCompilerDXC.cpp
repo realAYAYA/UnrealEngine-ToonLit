@@ -36,6 +36,7 @@ MSVC_PRAGMA(warning(disable : 4191)) // warning C4191: 'type cast': unsafe conve
 #include <dxc/dxcapi.h>
 #include <dxc/Support/dxcapi.use.h>
 #include <dxc/Support/ErrorCodes.h>
+#include <dxc/DXIL/DxilConstants.h>
 #include <d3d12shader.h>
 MSVC_PRAGMA(warning(pop))
 
@@ -44,6 +45,7 @@ THIRD_PARTY_INCLUDES_START
 	#include "ShaderConductor/ShaderConductor.hpp"
 THIRD_PARTY_INCLUDES_END
 
+#include "DXCUtils.inl"
 #include "D3DShaderCompiler.inl"
 
 FORCENOINLINE static void DXCFilterShaderCompileWarnings(const FString& CompileWarnings, TArray<FString>& FilteredWarnings)
@@ -70,11 +72,11 @@ static uint32 GetAutoBindingSpace(const FShaderTarget& Target)
 	switch (Target.Frequency)
 	{
 	case SF_RayGen:
-		return RAY_TRACING_REGISTER_SPACE_GLOBAL;
+		return UE_HLSL_SPACE_RAY_TRACING_GLOBAL;
 	case SF_RayMiss:
 	case SF_RayHitGroup:
 	case SF_RayCallable:
-		return RAY_TRACING_REGISTER_SPACE_LOCAL;
+		return UE_HLSL_SPACE_RAY_TRACING_LOCAL;
 	default:
 		return 0;
 	}
@@ -174,7 +176,7 @@ public:
 		const FShaderCompilerInput& Input,
 		const FString& InEntryPoint,
 		const TCHAR* InShaderProfile,
-		ELanguage Language,
+		ED3DShaderModel ShaderModel,
 		const FString& InExports
 	)
 		: ShaderProfile(InShaderProfile)
@@ -190,38 +192,22 @@ public:
 		}
 
 		const bool bEnable16BitTypes =
-			// 16bit types are SM6.2 whereas Language == ELanguage::SM6 is SM6.6, so their support at runtime is guarented.
-			(Language == ELanguage::SM6 && Input.Environment.CompilerFlags.Contains(CFLAG_AllowRealTypes))
+			// 16bit types are SM6.2, so their support at runtime is guaranteed in SM6.6.
+			(ShaderModel >= ED3DShaderModel::SM6_6 && Input.Environment.CompilerFlags.Contains(CFLAG_AllowRealTypes))
 
 			// Enable 16bit_types to reduce DXIL size (compiler bug - will be fixed)
 			|| Input.IsRayTracingShader();
 
 		const bool bHlslVersion2021 = Input.Environment.CompilerFlags.Contains(CFLAG_HLSL2021);
-		const uint32 HlslVersion = (bHlslVersion2021 ? 2021 : 2018);
-
-		switch (HlslVersion)
+		if (bHlslVersion2021)
 		{
-		case 2015:
-			ExtraArguments.Add(TEXT("-HV"));
-			ExtraArguments.Add(TEXT("2015"));
-			break;
-		case 2016:
-			ExtraArguments.Add(TEXT("-HV"));
-			ExtraArguments.Add(TEXT("2016"));
-			break;
-		case 2017:
-			ExtraArguments.Add(TEXT("-HV"));
-			ExtraArguments.Add(TEXT("2017"));
-			break;
-		case 2018:
-			break; // Default
-		case 2021:
 			ExtraArguments.Add(TEXT("-HV"));
 			ExtraArguments.Add(TEXT("2021"));
-			break;
-		default:
-			checkf(false, TEXT("Invalid HLSL version: expected 2015, 2016, 2017, 2018, or 2021 but %u was specified"), HlslVersion);
-			break;
+		}
+		else
+		{
+			ExtraArguments.Add(TEXT("-HV"));
+			ExtraArguments.Add(TEXT("2018"));
 		}
 
 		// Unpack uniform matrices as row-major to match the CPU layout.
@@ -256,7 +242,6 @@ public:
 		}
 
 		const uint32 AutoBindingSpace = GetAutoBindingSpace(Input.Target);
-		if (AutoBindingSpace != ~0u)
 		{
 			ExtraArguments.Add(TEXT("-auto-binding-space"));
 			ExtraArguments.Add(FString::Printf(TEXT("%d"), AutoBindingSpace));
@@ -363,12 +348,6 @@ public:
 
 		Out.Add(TEXT("-T"));
 		Out.Add(*ShaderProfile);
-
-		Out.Add(TEXT(" -Fc "));
-		Out.Add(TEXT("zzz.d3dasm"));	// Dummy
-
-		Out.Add(TEXT(" -Fo "));
-		Out.Add(TEXT("zzz.dxil"));	// Dummy
 	}
 
 	const FString& GetBatchBaseFilename() const
@@ -569,6 +548,14 @@ static HRESULT DXCCompileWrapper(
 	TArray<const WCHAR*> CompilerArgs;
 	Arguments.GetCompilerArgs(CompilerArgs);
 
+	// Give a unique name to the d3dasm and dxil outputs (Must have same scope as CompilerArgs so the temporary strings remain valid)
+	FString AsmFilename  = Arguments.GetBatchBaseFilename() + TEXT(".d3dasm");
+	FString DXILFilename = Arguments.GetBatchBaseFilename() + TEXT(".dxil");
+	CompilerArgs.Add(TEXT(" -Fc "));
+	CompilerArgs.Add(*AsmFilename);
+	CompilerArgs.Add(TEXT(" -Fo "));
+	CompilerArgs.Add(*DXILFilename);
+
 	HRESULT Result = InnerDXCCompileWrapper(Compiler, TextBlob,
 		CompilerArgs.GetData(), CompilerArgs.Num(), bExceptionError, OutCompileResult);
 
@@ -644,19 +631,32 @@ static void DumpFourCCParts(dxc::DxcDllSupport& DxcDllHelper, TRefCountPtr<IDxcB
 #endif
 }
 
-static bool RemoveContainerReflection(dxc::DxcDllSupport& DxcDllHelper, TRefCountPtr<IDxcBlob>& Dxil, bool bRemovePDB)
+static bool RemoveContainerParts(const TConstArrayView<uint32> PartCodes, dxc::DxcDllSupport& DxcDllHelper, TRefCountPtr<IDxcBlob>& Dxil)
 {
+	if (PartCodes.Num() == 0)
+	{
+		return false;
+	}
+
 	TRefCountPtr<IDxcOperationResult> Result;
 	TRefCountPtr<IDxcContainerBuilder> Builder;
 	TRefCountPtr<IDxcBlob> StrippedDxil;
 
 	VERIFYHRESULT(DxcDllHelper.CreateInstance2(GetDxcMalloc(), CLSID_DxcContainerBuilder, Builder.GetInitReference()));
 	VERIFYHRESULT(Builder->Load(Dxil));
-	
-	// Try and remove both the PDB & Reflection Data
-	bool bPDBRemoved = bRemovePDB && SUCCEEDED(Builder->RemovePart(DXC_PART_PDB));
-	bool bReflectionDataRemoved = bRemovePDB && SUCCEEDED(Builder->RemovePart(DXC_PART_REFLECTION_DATA));
-	if (bPDBRemoved || bReflectionDataRemoved)
+
+	bool bSuccess = true;
+
+	for (uint32 PartCode : PartCodes)
+	{
+		if (FAILED(Builder->RemovePart(PartCode)))
+		{
+			bSuccess = false;
+			break;
+		}
+	}
+
+	if (bSuccess)
 	{
 		VERIFYHRESULT(Builder->SerializeContainer(Result.GetInitReference()));
 		if (SUCCEEDED(Result->GetResult(StrippedDxil.GetInitReference())))
@@ -667,11 +667,11 @@ static bool RemoveContainerReflection(dxc::DxcDllSupport& DxcDllHelper, TRefCoun
 		}
 	}
 
-	return false;
-};
+	return bSuccess;
+}
 
 static HRESULT D3DCompileToDxil(const char* SourceText, const FDxcArguments& Arguments,
-	TRefCountPtr<IDxcBlob>& OutDxilBlob, TRefCountPtr<IDxcBlob>& OutReflectionBlob, TRefCountPtr<IDxcBlobEncoding>& OutErrorBlob)
+	TRefCountPtr<IDxcBlob>& OutDxilBlob, TRefCountPtr<IDxcBlob>& OutReflectionBlob, TRefCountPtr<IDxcBlobEncoding>& OutErrorBlob, TRefCountPtr<IDxcBlob>& OutPdbBlob, FString& OutPdbName)
 {
 	dxc::DxcDllSupport& DxcDllHelper = GetDxcDllHelper();
 
@@ -700,11 +700,48 @@ static HRESULT D3DCompileToDxil(const char* SourceText, const FDxcArguments& Arg
 		checkf(CompileResult->HasOutput(DXC_OUT_OBJECT), TEXT("No object code found!"));
 		VERIFYHRESULT(CompileResult->GetOutput(DXC_OUT_OBJECT, IID_PPV_ARGS(OutDxilBlob.GetInitReference()), ObjectCodeNameBlob.GetInitReference()));
 
+		const bool bPostCompileSign = false;
+		if (bPostCompileSign)
+		{
+			// https://www.wihlidal.com/blog/pipeline/2018-09-16-dxil-signing-post-compile/
+			TRefCountPtr<IDxcValidator> Validator;
+			VERIFYHRESULT(DxcDllHelper.CreateInstance2(GetDxcMalloc(), CLSID_DxcValidator, Validator.GetInitReference()));
+
+		#if 0
+			struct FDxilMinimalHeader
+			{
+				uint32 FourCC;
+				uint32 HashDigest[4];
+			};
+
+			FDxilMinimalHeader BeforeSignHeader = *reinterpret_cast<FDxilMinimalHeader*>(OutDxilBlob->GetBufferPointer());
+			(void)BeforeSignHeader;
+		#endif
+
+			TRefCountPtr<IDxcOperationResult> ValidateResult;
+			VERIFYHRESULT(Validator->Validate(OutDxilBlob.GetReference(), DxcValidatorFlags_InPlaceEdit, ValidateResult.GetInitReference()));
+
+		#if 0
+			FDxilMinimalHeader AfterSignHeader = *reinterpret_cast<FDxilMinimalHeader*>(OutDxilBlob->GetBufferPointer());
+			(void)AfterSignHeader;
+		#endif
+		}
+
 		TRefCountPtr<IDxcBlobUtf16> ReflectionNameBlob; // Dummy name blob to silence static analysis warning
 		checkf(CompileResult->HasOutput(DXC_OUT_REFLECTION), TEXT("No reflection found!"));
 		VERIFYHRESULT(CompileResult->GetOutput(DXC_OUT_REFLECTION, IID_PPV_ARGS(OutReflectionBlob.GetInitReference()), ReflectionNameBlob.GetInitReference()));
 
-		const bool bHasOutputPDB = CompileResult->HasOutput(DXC_OUT_PDB);
+		RetrieveDebugNameAndBlob(CompileResult, OutPdbName, OutPdbBlob.GetInitReference());
+		const bool bHasOutputPDB = OutPdbBlob.IsValid() && !OutPdbName.IsEmpty();
+		const bool bRemovePDB = bHasOutputPDB && !Arguments.ShouldKeepEmbeddedPDB();
+
+		TArray<uint32, TInlineAllocator<4>> PartsToRemove;
+		if (bRemovePDB)
+		{
+			// Try and remove both the PDB & Reflection Data
+			PartsToRemove.Add(DXC_PART_PDB);
+			PartsToRemove.Add(DXC_PART_REFLECTION_DATA);
+		}
 
 		if (Arguments.ShouldDump())
 		{
@@ -717,22 +754,16 @@ static HRESULT D3DCompileToDxil(const char* SourceText, const FDxcArguments& Arg
 			FString DxilFile = Arguments.GetDumpDisassemblyFilename().LeftChop(7) + TEXT("_refl.dxil");
 			SaveDxcBlobToFile(OutDxilBlob, DxilFile);
 
+			// Dump the PDB.
 			if (bHasOutputPDB)
 			{
-				TRefCountPtr<IDxcBlob> PdbBlob;
-				TRefCountPtr<IDxcBlobUtf16> PdbNameBlob;
-				VERIFYHRESULT(CompileResult->GetOutput(DXC_OUT_PDB, IID_PPV_ARGS(PdbBlob.GetInitReference()), PdbNameBlob.GetInitReference()));
-
-				const FString PdbName = PdbNameBlob->GetStringPointer();
-
-				// Dump pdb (.d3dasm -> .pdb)
-				const FString PdbFile = Arguments.GetDumpDebugInfoPath() / PdbName;
-				SaveDxcBlobToFile(PdbBlob, PdbFile);
+				const FString PdbFile = Arguments.GetDumpDebugInfoPath() / OutPdbName;
+				SaveDxcBlobToFile(OutPdbBlob, PdbFile);
 			}
 		}
 
 		DumpFourCCParts(DxcDllHelper, OutDxilBlob);
-		if (RemoveContainerReflection(DxcDllHelper, OutDxilBlob, bHasOutputPDB && !Arguments.ShouldKeepEmbeddedPDB()))
+		if (RemoveContainerParts(PartsToRemove, DxcDllHelper, OutDxilBlob))
 		{
 			DumpFourCCParts(DxcDllHelper, OutDxilBlob);
 		}
@@ -777,7 +808,7 @@ static FString D3DCreateDXCCompileBatchFile(const FDxcArguments& Args)
 			"\tECHO Couldn't find dxc.exe under \"%s\"\n"
 			"\tGOTO :END\n"
 			")\n"
-			"%%DXC%%%s %s\n"
+			"%%DXC%%%s %s.usf\n"
 			":END\n"
 			"PAUSE\n"
 		),
@@ -800,85 +831,29 @@ inline bool IsCompatibleBinding(const D3D12_SHADER_INPUT_BIND_DESC& BindDesc, ui
 	{
 		// #todo: there is currently no common header where a binding space number or buffer name could be defined. See D3DCommon.ush and D3D12RootSignature.cpp.
 		const bool bIsUEDebugBuffer = (FCStringAnsi::Strcmp(BindDesc.Name, "UEDiagnosticBuffer") == 0);
-		bIsCompatibleBinding = bIsUEDebugBuffer && (BindDesc.Space == 999);
+		bIsCompatibleBinding = bIsUEDebugBuffer && (BindDesc.Space == UE_HLSL_SPACE_DIAGNOSTIC);
+	}
+	if (!bIsCompatibleBinding)
+	{
+		const bool bIsUERootConstants = (FCStringAnsi::Strcmp(BindDesc.Name, "UERootConstants") == 0);
+		bIsCompatibleBinding = bIsUERootConstants && (BindDesc.Space == UE_HLSL_SPACE_SHADER_ROOT_CONSTANTS);
 	}
 
 	return bIsCompatibleBinding;
 }
 
-static ShaderConductor::Compiler::ShaderModel ToDXCShaderModel(ELanguage Language)
-{
-	switch (Language)
-	{
-	case ELanguage::ES3_1:
-	case ELanguage::SM5:
-		return { 5, 0 };
-	default:
-		UE_LOG(LogD3D12ShaderCompiler, Error, TEXT("Invalid input shader target for enum ELanguage (%d)."), (int32)Language);
-	}
-	return { 6,0 };
-}
-
-static ShaderConductor::ShaderStage ToDXCShaderStage(EShaderFrequency Frequency)
-{
-	check(Frequency >= SF_Vertex && Frequency <= SF_Compute);
-	switch (Frequency)
-	{
-	case SF_Vertex:		return ShaderConductor::ShaderStage::VertexShader;
-	case SF_Pixel:		return ShaderConductor::ShaderStage::PixelShader;
-	case SF_Geometry:	return ShaderConductor::ShaderStage::GeometryShader;
-	case SF_Compute:	return ShaderConductor::ShaderStage::ComputeShader;
-	default:			return ShaderConductor::ShaderStage::NumShaderStages;
-	}
-}
-
-// Inner wrapper function is required here because '__try'-statement cannot be used with function that requires object unwinding
-static void InnerScRewriteWrapper(
-	const ShaderConductor::Compiler::SourceDesc& InDesc,
-	const ShaderConductor::Compiler::Options& InOptions,
-	ShaderConductor::Compiler::ResultDesc& OutResultDesc)
-{
-	OutResultDesc = ShaderConductor::Compiler::Rewrite(InDesc, InOptions);
-}
-
-static bool DXCRewriteWrapper(
-	const ShaderConductor::Compiler::SourceDesc& InDesc,
-	const ShaderConductor::Compiler::Options& InOptions,
-	ShaderConductor::Compiler::ResultDesc& OutResultDesc,
-	bool& bOutException)
-{
-	bOutException = false;
-#if !PLATFORM_SEH_EXCEPTIONS_DISABLED
-	__try
-#endif
-	{
-		InnerScRewriteWrapper(InDesc, InOptions, OutResultDesc);
-		return true;
-	}
-#if !PLATFORM_SEH_EXCEPTIONS_DISABLED
-	__except (EXCEPTION_EXECUTE_HANDLER)
-	{
-		FSCWErrorCode::Report(FSCWErrorCode::CrashInsidePlatformCompiler);
-		FMemory::Memzero(OutResultDesc);
-		bOutException = true;
-		return false;
-	}
-#endif
-}
-
 // Generate the dumped usf file; call the D3D compiler, gather reflection information and generate the output data
-bool CompileAndProcessD3DShaderDXC(const FShaderPreprocessOutput& PreprocessOutput,
+bool CompileAndProcessD3DShaderDXC(
 	const FShaderCompilerInput& Input,
+	const FString& PreprocessedShaderSource,
+	const FString& EntryPointName,
 	const FShaderParameterParser& ShaderParameterParser,
 	const TCHAR* ShaderProfile,
-	ELanguage Language,
+	ED3DShaderModel ShaderModel,
 	bool bProcessingSecondTime,
 	FShaderCompilerOutput& Output)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(CompileAndProcessD3DShaderDXC);
-
-	const FString& PreprocessedShaderSource = Output.ModifiedShaderSource.IsEmpty() ? PreprocessOutput.GetSource() : Output.ModifiedShaderSource;
-	const FString& EntryPointName = Output.ModifiedEntryPointName.IsEmpty() ? Input.EntryPointName : Output.ModifiedEntryPointName;
 
 	auto AnsiSourceFile = StringCast<ANSICHAR>(*PreprocessedShaderSource);
 
@@ -915,7 +890,7 @@ bool CompileAndProcessD3DShaderDXC(const FShaderPreprocessOutput& PreprocessOutp
 		Input,
 		EntryPointName,
 		ShaderProfile,
-		Language,
+		ShaderModel,
 		RayTracingExports
 	);
 
@@ -928,8 +903,26 @@ bool CompileAndProcessD3DShaderDXC(const FShaderPreprocessOutput& PreprocessOutp
 	TRefCountPtr<IDxcBlob> ShaderBlob;
 	TRefCountPtr<IDxcBlob> ReflectionBlob;
 	TRefCountPtr<IDxcBlobEncoding> DxcErrorBlob;
+	TRefCountPtr<IDxcBlob> PdbBlob;
+	FString PdbName;
 
-	const HRESULT D3DCompileToDxilResult = D3DCompileToDxil(AnsiSourceFile.Get(), Args, ShaderBlob, ReflectionBlob, DxcErrorBlob);
+	const HRESULT D3DCompileToDxilResult = D3DCompileToDxil(AnsiSourceFile.Get(), Args, ShaderBlob, ReflectionBlob, DxcErrorBlob, PdbBlob, PdbName);
+
+	// Populate the platform-specific debug data with the PDB name, if available.
+	bool bWriteDebugData = Input.Environment.CompilerFlags.Contains(CFLAG_GenerateSymbolsInfo);
+	if (bWriteDebugData && !PdbName.IsEmpty())
+	{
+		FD3DSM6ShaderDebugData DebugData;
+		DebugData.Name = PdbName;
+		DebugData.DebugInfo = Input.GenerateDebugInfo();
+
+		// We don't export the PDB contents here because it would result in duplicate data,
+		// as we use embedded PDBs. Once we are able to use external PDBs, the PDB contents
+		// can be exported too.
+		
+		FMemoryWriter Ar(Output.PlatformDebugData);
+		Ar << DebugData;
+	}
 
 	TArray<FString> FilteredErrors;
 	if (DxcErrorBlob && DxcErrorBlob->GetBufferSize())
@@ -965,6 +958,37 @@ bool CompileAndProcessD3DShaderDXC(const FShaderPreprocessOutput& PreprocessOutp
 		DxcBuffer ReflBuffer = { 0 };
 		ReflBuffer.Ptr = ReflectionBlob->GetBufferPointer();
 		ReflBuffer.Size = ReflectionBlob->GetBufferSize();
+
+		bool bHasNoDerivativeOps = false;
+
+		if (Input.Target.GetFrequency() == SF_Compute && Input.Environment.CompilerFlags.Contains(CFLAG_CheckForDerivativeOps))
+		{
+			TRefCountPtr<IDxcContainerReflection> ContainerRefl;
+			VERIFYHRESULT(DxcDllHelper.CreateInstance2(GetDxcMalloc(), CLSID_DxcContainerReflection, ContainerRefl.GetInitReference()));
+			VERIFYHRESULT(ContainerRefl->Load(ShaderBlob));
+
+			uint32 PartCount = 0;
+			VERIFYHRESULT(ContainerRefl->GetPartCount(&PartCount));
+
+			for (uint32 PartIndex = 0; PartIndex < PartCount; ++PartIndex)
+			{
+				uint32 PartKind;
+				VERIFYHRESULT(ContainerRefl->GetPartKind(PartIndex, &PartKind));
+
+				//if (PartKind == DXC_PART_USER_INFO)
+				if (PartKind == DXC_PART_PRIVATE_DATA) // HACK TODO: Use PrivateData for now (pass validation)
+				{
+					TRefCountPtr<IDxcBlob> UserPartBlob;
+					ContainerRefl->GetPartContent(PartIndex, UserPartBlob.GetInitReference());
+					if (UserPartBlob->GetBufferSize() == sizeof(uint64))
+					{
+						uint64 UserFlags = *(uint64*)UserPartBlob->GetBufferPointer();
+						bHasNoDerivativeOps = (UserFlags & hlsl::DXIL::kNoDerivativeOps) != 0;
+					}
+					break;
+				}
+			}
+		}
 
 		if (bIsRayTracingShader)
 		{
@@ -1119,14 +1143,29 @@ bool CompileAndProcessD3DShaderDXC(const FShaderPreprocessOutput& PreprocessOutp
 				PackedResourceCounts.UsageFlags |= EShaderResourceUsageFlags::GlobalUniformBuffer;
 			}
 
-			if (ShaderRequiresFlags & D3D_SHADER_REQUIRES_RESOURCE_DESCRIPTOR_HEAP_INDEXING)
+			if (Input.Environment.CompilerFlags.Contains(CFLAG_RootConstants))
+			{
+				PackedResourceCounts.UsageFlags |= EShaderResourceUsageFlags::RootConstants;
+			}
+
+			if (Input.Environment.CompilerFlags.Contains(CFLAG_BindlessResources))
 			{
 				PackedResourceCounts.UsageFlags |= EShaderResourceUsageFlags::BindlessResources;
 			}
 
-			if (ShaderRequiresFlags & D3D_SHADER_REQUIRES_SAMPLER_DESCRIPTOR_HEAP_INDEXING)
+			if (Input.Environment.CompilerFlags.Contains(CFLAG_BindlessSamplers))
 			{
 				PackedResourceCounts.UsageFlags |= EShaderResourceUsageFlags::BindlessSamplers;
+			}
+
+			if (bHasNoDerivativeOps)
+			{
+				PackedResourceCounts.UsageFlags |= EShaderResourceUsageFlags::NoDerivativeOps;
+			}
+
+			if (Input.Environment.CompilerFlags.Contains(CFLAG_ShaderBundle))
+			{
+				PackedResourceCounts.UsageFlags |= EShaderResourceUsageFlags::ShaderBundle;
 			}
 
 			PackedResourceCounts.NumSamplers = static_cast<uint8>(NumSamplers);
@@ -1205,13 +1244,18 @@ bool CompileAndProcessD3DShaderDXC(const FShaderPreprocessOutput& PreprocessOutp
 					EnumAddFlags(CodeFeatures.CodeFeatures, EShaderCodeFeatures::StencilRef);
 				}
 
+				if ((ShaderRequiresFlags & D3D_SHADER_REQUIRES_BARYCENTRICS) != 0)
+				{
+					EnumAddFlags(CodeFeatures.CodeFeatures, EShaderCodeFeatures::BarycentricsSemantic);
+				}
+
 				// We only need this to appear when using a DXC shader
 				ShaderCode.AddOptionalData<FShaderCodeFeatures>(CodeFeatures);
 
-				if (Language != ELanguage::SM6)
+				if (ShaderModel >= ED3DShaderModel::SM6_0)
 				{
 					uint8 IsSM6 = 1;
-					ShaderCode.AddOptionalData('6', &IsSM6, 1);
+					ShaderCode.AddOptionalData(EShaderOptionalDataKey::ShaderModel6, &IsSM6, 1);
 				}
 			};
 
@@ -1234,13 +1278,17 @@ bool CompileAndProcessD3DShaderDXC(const FShaderPreprocessOutput& PreprocessOutp
 	}
 	else
 	{
-		TCHAR ErrorMsg[1024];
-		FPlatformMisc::GetSystemErrorMessage(ErrorMsg, UE_ARRAY_COUNT(ErrorMsg), (int)D3DCompileToDxilResult);
-		const bool bKnownError = ErrorMsg[0] != TEXT('\0');
+		// If we failed and didn't get any error messages back from the compile call try and get a system error message.
+		if (FilteredErrors.Num() == 0)
+		{
+			TCHAR ErrorMsg[1024];
+			FPlatformMisc::GetSystemErrorMessage(ErrorMsg, UE_ARRAY_COUNT(ErrorMsg), (int)D3DCompileToDxilResult);
+			const bool bKnownError = ErrorMsg[0] != TEXT('\0');
 
-		FString ErrorString = FString::Printf(TEXT("D3DCompileToDxil failed. Error code: %s (0x%08X)."), bKnownError ? ErrorMsg : TEXT("Unknown error"), (int)D3DCompileToDxilResult);
+			FString ErrorString = FString::Printf(TEXT("D3DCompileToDxil failed. Error code: %s (0x%08X)."), bKnownError ? ErrorMsg : TEXT("Unknown error"), (int)D3DCompileToDxilResult);
 
-		FilteredErrors.Add(ErrorString);
+			FilteredErrors.Add(ErrorString);
+		}
 	}
 
 	// Move intermediate filtered errors into compiler context for unification.

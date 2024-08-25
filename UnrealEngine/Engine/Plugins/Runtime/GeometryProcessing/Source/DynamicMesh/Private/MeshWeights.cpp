@@ -353,7 +353,7 @@ double TVoronoiArea(const FDynamicMesh3& mesh, int32 v_i, GetPositionFuncType Ge
 			double cot_alpha_ij = VectorUtil::VectorCot(Vki, Vkj);
 			cot_alpha_ij = FMathd::Clamp(cot_alpha_ij, -CotClampRange, CotClampRange);
 			double cot_beta_ik = VectorUtil::VectorCot(Vji, -Vkj);
-			cot_beta_ik = FMathd::Clamp(cot_alpha_ij, -CotClampRange, CotClampRange);
+			cot_beta_ik = FMathd::Clamp(cot_beta_ik, -CotClampRange, CotClampRange);
 			areaSum += Vji.SquaredLength() * cot_alpha_ij * 0.125;
 			areaSum += Vki.SquaredLength() * cot_beta_ik * 0.125;
 		}

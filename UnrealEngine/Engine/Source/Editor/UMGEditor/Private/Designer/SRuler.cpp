@@ -317,7 +317,7 @@ int32 SRuler::OnPaint(const FPaintArgs& Args, const FGeometry& AllottedGeometry,
 		FLinearColor(FColor(48,48,48))
 	);
 
-	FVector2D LocalOrigin = AllottedGeometry.AbsoluteToLocal(AbsoluteOrigin);
+	FVector2f LocalOrigin = AllottedGeometry.AbsoluteToLocal(AbsoluteOrigin);
 
 	float Scale = SlateToUnitScale < ScrubConstants::MinDisplayTickSpacing ? ScrubConstants::MinDisplayTickSpacing : SlateToUnitScale;
 	

@@ -3,6 +3,7 @@
 #pragma once
 
 #include "AVPacket.h"
+#include "Templates/SharedPointerFwd.h"
 
 /**
  * Audio-specific packet container.

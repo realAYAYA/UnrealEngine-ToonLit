@@ -5,8 +5,12 @@
 
 #include "EditorSubsystem.h"
 
-#include "SequenceTimeUnit.h"
+#include "MovieSceneTimeUnit.h"
 #include "Containers/SortedMap.h"
+#include "UObject/StructOnScope.h"
+#include "UniversalObjectLocator.h"
+#include "UniversalObjectLocatorResolveParams.h"
+#include "Misc/NotifyHook.h"
 #include "LevelSequenceEditorSubsystem.generated.h"
 
 class FUICommandList;
@@ -27,7 +31,10 @@ class FMenuBuilder;
 class UMovieSceneCompiledDataManager;
 class UMovieSceneFolder;
 class UMovieSceneSection;
-class USequencerScriptingLayer;
+class UMovieSceneSequence;
+class USequencerModuleScriptingLayer;
+class IStructureDetailsView;
+class USequencerCurveEditorObject;
 
 USTRUCT(BlueprintType)
 struct FMovieSceneScriptingParams
@@ -37,14 +44,40 @@ struct FMovieSceneScriptingParams
 	FMovieSceneScriptingParams() {}
 
 	UPROPERTY(BlueprintReadWrite, Category = "Movie Scene")
-	ESequenceTimeUnit TimeUnit = ESequenceTimeUnit::DisplayRate;
+	EMovieSceneTimeUnit TimeUnit = EMovieSceneTimeUnit::DisplayRate;
+};
+
+// Helper struct for Binding Properties UI for locators.
+USTRUCT()
+struct FMovieSceneUniversalLocatorInfo
+{
+	GENERATED_BODY()
+
+	// Locator for the entry
+	UPROPERTY(EditAnywhere, Category = "Default", meta=(AllowedLocators="Actor"))
+	FUniversalObjectLocator Locator;
+
+	// Flags for how to resolve the locator
+	UPROPERTY()
+	ELocatorResolveFlags ResolveFlags = ELocatorResolveFlags::None;
+};
+
+// Helper struct for editing arrays of locators for object bindings
+USTRUCT()
+struct FMovieSceneUniversalLocatorList
+{
+	GENERATED_BODY()
+
+	// List of locator info for a particular binding
+	UPROPERTY(EditAnywhere, Category = "Default")
+	TArray<FMovieSceneUniversalLocatorInfo> Bindings;
 };
 
 /**
 * ULevelSequenceEditorSubsystem
 * Subsystem for level sequence editor related utilities to scripts
 */
-UCLASS(Blueprintable)
+UCLASS()
 class LEVELSEQUENCEEDITOR_API ULevelSequenceEditorSubsystem : public UEditorSubsystem
 {
 	GENERATED_BODY()
@@ -56,9 +89,13 @@ public:
 
 	void OnSequencerCreated(TSharedRef<ISequencer> InSequencer);
 
-	/** Retrieve the outliner */
+	/** Retrieve the scripting layer */
 	UFUNCTION(BlueprintPure, Category = "Level Sequence Editor")
-	USequencerScriptingLayer* GetScriptingLayer();
+	USequencerModuleScriptingLayer* GetScriptingLayer();
+
+	/** Retrieve the curve editor */
+	UFUNCTION(BlueprintPure, Category = "Level Sequence Editor")
+	USequencerCurveEditorObject* GetCurveEditor();
 
 	/** Add existing actors to Sequencer. Tracks will be automatically added based on default track settings. */
 	UFUNCTION(BlueprintCallable, Category = "Level Sequence Editor")
@@ -200,6 +237,20 @@ private:
 	void CalculateFramesPerGuid(TSharedPtr<ISequencer>& Sequencer, const FBakingAnimationKeySettings& InSettings, TMap<FGuid, FBakeData>& OutBakeDataMa,
 		TSortedMap<FFrameNumber, FFrameNumber>&  OutFrameMap);
 
+	// Used by binding properties menu
+	struct FBindingPropertiesNotifyHook : FNotifyHook
+	{
+		UMovieSceneSequence* ObjectToModify = nullptr;
+		FBindingPropertiesNotifyHook() {}
+
+		FBindingPropertiesNotifyHook(UMovieSceneSequence* InObjectToModify) : ObjectToModify(InObjectToModify) {}
+
+		virtual void NotifyPreChange(FProperty* PropertyAboutToChange) override;
+		virtual void NotifyPostChange(const FPropertyChangedEvent& PropertyChangedEvent, FProperty* PropertyThatChanged) override;
+	};
+
+	FBindingPropertiesNotifyHook NotifyHook;
+
 private:
 
 	TSharedPtr<ISequencer> GetActiveSequencer();
@@ -215,6 +266,8 @@ private:
 	void RebindComponentInternal(const FName& ComponentName);
 
 	void AddAssignActorMenu(FMenuBuilder& MenuBuilder);
+	void AddBindingPropertiesMenu(FMenuBuilder& MenuBuilder);
+	void OnFinishedChangingLocators(const FPropertyChangedEvent& PropertyChangedEvent, TSharedRef<IStructureDetailsView> StructDetailsView, TSharedRef<FStructOnScope> LocatorsStruct, FGuid ObjectBindingID);
 
 	void GetRebindComponentNames(TArray<FName>& OutComponentNames);
 	void RebindComponentMenu(FMenuBuilder& MenuBuilder);
@@ -224,12 +277,19 @@ private:
 	/* List of sequencers that have been created */
 	TArray<TWeakPtr<ISequencer>> Sequencers;
 
+	/* Map of curve editors with their sequencers*/
+	TMap<TWeakPtr<ISequencer>, TObjectPtr<USequencerCurveEditorObject>> CurveEditorObjects;
+	/* property array of the curve editors*/
+	UPROPERTY()
+	TArray<TObjectPtr<USequencerCurveEditorObject>> CurveEditorArray;
+
 	TSharedPtr<FUICommandList> CommandList;
 
 	TSharedPtr<FExtender> TransformMenuExtender;
 	TSharedPtr<FExtender> FixActorReferencesMenuExtender;
 
 	TSharedPtr<FExtender> AssignActorMenuExtender;
+	TSharedPtr<FExtender> BindingPropertiesMenuExtender;
 	TSharedPtr<FExtender> RebindComponentMenuExtender;
 };
 

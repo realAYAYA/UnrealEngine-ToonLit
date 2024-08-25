@@ -3,6 +3,7 @@
 #pragma once
 
 #include "IDetailCustomization.h"
+#include "Input/Reply.h"
 #include "UObject/WeakObjectPtr.h"
 #include "Templates/SharedPointer.h"
 #include "Types/SlateEnums.h"
@@ -15,6 +16,7 @@ class IDetailPropertyRow;
 class IPropertyHandle;
 class UInterchangeBaseNode;
 class UInterchangePipelineBase;
+struct FInterchangeConflictInfo;
 
 namespace UE
 {
@@ -31,6 +33,9 @@ public:
 	/** Makes a new instance of this detail layout class for a specific detail view requesting it */
 	static TSharedRef<IDetailCustomization> MakeInstance();
 
+	// Temporary: Used to pass data to the next instance created.
+	static void SetConflictsInfo(TArray<FInterchangeConflictInfo>& ConflictInfos);
+
 	/** IDetailCustomization interface */
 	virtual void CustomizeDetails(IDetailLayoutBuilder& DetailBuilder) override;
 	/** End IDetailCustomization interface */
@@ -45,7 +50,9 @@ private:
 	void LockPropertyHandleRow(const TSharedPtr<IPropertyHandle> PropertyHandle, IDetailPropertyRow& PropertyRow) const;
 	void AddSubCategory(IDetailLayoutBuilder& DetailBuilder, TMap<FName, TMap<FName, TArray<FInternalPropertyData>>>& SubCategoriesPropertiesPerMainCategory);
 	void InternalGetPipelineProperties(const UInterchangePipelineBase* Pipeline, const TArray<FName>& AllCategoryNames, TMap<FName, TArray<FName>>& PropertiesPerCategorys) const;
-	
+	void AddConflictSection();
+	FReply ShowConflictDialog(FInterchangeConflictInfo ConflictInfo);
+
 	void SetTextComboBoxWidget(IDetailPropertyRow& PropertyRow, const TSharedPtr<IPropertyHandle>& Handle, const TArray<FString>& PossibleValues);
 	void OnTextComboBoxChanged(TSharedPtr<FString> NewValue, ESelectInfo::Type SelectInfo, TWeakPtr<IPropertyHandle> HandlePtr);
 	struct FInternalComboBoxData

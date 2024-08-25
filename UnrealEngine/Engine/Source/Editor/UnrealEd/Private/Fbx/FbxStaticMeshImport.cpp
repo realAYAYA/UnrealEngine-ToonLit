@@ -732,7 +732,7 @@ bool UnFbx::FFbxImporter::BuildStaticMeshFromGeometry(FbxNode* Node, UStaticMesh
 			int32 RealVertexIndex = VertexOffset + VertexIndex;
 			FbxVector4 FbxPosition = Mesh->GetControlPoints()[VertexIndex];
 			FbxPosition = TotalMatrix.MultT(FbxPosition);
-			const FVector3f VertexPosition = (FVector3f)Converter.ConvertPos(FbxPosition);
+			FVector3f VertexPosition = (FVector3f)Converter.ConvertPos(FbxPosition);
 			
 			FVertexID AddedVertexId = MeshDescription->CreateVertex();
 			VertexPositions[AddedVertexId] = VertexPosition;
@@ -2526,7 +2526,7 @@ static void FindMeshSockets( FbxNode* StartNode, TArray<FbxSocketNode>& OutFbxSo
 			if( SocketName.StartsWith( SocketPrefix ) )
 			{
 				// Remove the prefix from the name
-				SocketName.RightChopInline( SocketPrefix.Len(), false );
+				SocketName.RightChopInline( SocketPrefix.Len(), EAllowShrinking::No );
 
 				FbxSocketNode NewNode;
 				NewNode.Node = StartNode;

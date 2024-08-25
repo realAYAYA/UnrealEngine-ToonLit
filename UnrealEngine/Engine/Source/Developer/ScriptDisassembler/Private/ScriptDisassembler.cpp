@@ -287,6 +287,11 @@ void FKismetBytecodeDisassembler::ProcessCommon(int32& ScriptIndex, EExprToken O
 					ParameterType += TEXT("Return,");
 				}
 
+				if (PropertyPtr->HasAnyPropertyFlags(CPF_RequiredParm))
+				{
+					ParameterType += TEXT("Required,");
+				}
+
 				if (PropertyPtr->HasAnyPropertyFlags(CPF_ReferenceParm))
 				{
 					ParameterType += TEXT("Reference,");

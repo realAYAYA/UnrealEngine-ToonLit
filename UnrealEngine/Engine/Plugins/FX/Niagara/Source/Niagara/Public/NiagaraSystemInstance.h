@@ -12,6 +12,7 @@
 #include "NiagaraDataInterface.h"
 
 class FNiagaraWorldManager;
+class FNiagaraEmitterInstanceImpl;
 class FNiagaraSystemInstance;
 class FNiagaraSystemSimulation;
 class FNiagaraGpuComputeDispatchInterface;
@@ -135,6 +136,12 @@ public:
 	NIAGARA_API void BindParameters();
 	NIAGARA_API void UnbindParameters(bool bFromComplete = false);
 
+	// Bindings Override Parameters / Instance Parameters / System Simulation Parameters to the provded parameter store
+	// I.e. binds all relevant parameters from us and parent, does not do children (i.e. emitters)
+	void BindToParameterStore(FNiagaraParameterStore& ParameterStore);
+	// Unbinds the parameters that would be bound via BindToParameterStore
+	void UnbindFromParameterStore(FNiagaraParameterStore& ParameterStore);
+
 	FORCEINLINE FNiagaraParameterStore& GetInstanceParameters() { return InstanceParameters; }
 	NIAGARA_API FNiagaraLWCConverter GetLWCConverter(bool bLocalSpaceEmitter = false) const;
 	NIAGARA_API FTransform GetLWCSimToWorld(bool bLocalSpaceEmitter = false) const;
@@ -162,7 +169,7 @@ public:
 	FORCEINLINE FNiagaraEmitterParameters& EditEmitterParameters(int32 EmitterIdx) { return EmitterParameters[EmitterIdx * 2 + GetParameterIndex()]; }
 	
 	NIAGARA_API FNiagaraWorldManager* GetWorldManager()const;
-	NIAGARA_API bool RequiresDistanceFieldData() const;
+	NIAGARA_API bool RequiresGlobalDistanceField() const;
 	NIAGARA_API bool RequiresDepthBuffer() const;
 	NIAGARA_API bool RequiresEarlyViewData() const;
 	NIAGARA_API bool RequiresViewUniformBuffer() const;
@@ -231,15 +238,16 @@ public:
 	FORCEINLINE bool IsDisabled()const { return ActualExecutionState == ENiagaraExecutionState::Disabled; }
 
 	/** Gets the simulation for the supplied emitter handle. */
-	NIAGARA_API TSharedPtr<FNiagaraEmitterInstance, ESPMode::ThreadSafe> GetSimulationForHandle(const FNiagaraEmitterHandle& EmitterHandle);
+	NIAGARA_API FNiagaraEmitterInstancePtr GetSimulationForHandle(const FNiagaraEmitterHandle& EmitterHandle) const;
 
 	FORCEINLINE UWorld* GetWorld() const { return World; }
 	FORCEINLINE UNiagaraSystem* GetSystem() const { return System; }
 	FORCEINLINE USceneComponent* GetAttachComponent() { return AttachComponent.Get(); }
 	FORCEINLINE FNiagaraUserRedirectionParameterStore* GetOverrideParameters() { return OverrideParameters; }
 	FORCEINLINE const FNiagaraUserRedirectionParameterStore* GetOverrideParameters() const { return OverrideParameters; }
-	FORCEINLINE TArray<TSharedRef<FNiagaraEmitterInstance, ESPMode::ThreadSafe> > &GetEmitters() { return Emitters; }
-	FORCEINLINE const TArray<TSharedRef<FNiagaraEmitterInstance, ESPMode::ThreadSafe> >& GetEmitters() const { return Emitters; }
+	[[nodiscard]] NIAGARA_API TArrayView<FNiagaraEmitterInstanceRef> GetEmitters() { return Emitters; }
+	[[nodiscard]] NIAGARA_API TConstArrayView<FNiagaraEmitterInstanceRef> GetEmitters() const { return Emitters; }
+
 	FORCEINLINE const FBox& GetLocalBounds() const { return LocalBounds;  }
 	FORCEINLINE const FVector3f& GetLWCTile() const { return LWCTile;  }
 	NIAGARA_API TConstArrayView<FNiagaraEmitterExecutionIndex> GetEmitterExecutionOrder() const;
@@ -249,7 +257,7 @@ public:
 	NIAGARA_API void SetEmitterFixedBounds(FName EmitterName, const FBox& InLocalBounds);
 	NIAGARA_API FBox GetEmitterFixedBounds(FName EmitterName) const;
 
-	NIAGARA_API FNiagaraEmitterInstance* GetEmitterByID(FGuid InID);
+	NIAGARA_API FNiagaraEmitterInstance* GetEmitterByID(FNiagaraEmitterID ID)const;
 
 	NIAGARA_API void SetForceSolo(bool bForceSolo);
 	FORCEINLINE bool IsSolo() const { return bSolo; }
@@ -479,6 +487,7 @@ private:
 	TWeakObjectPtr<USceneComponent> AttachComponent;
 
 	FTransform WorldTransform;
+	TOptional<FVector> PreviousLocation;
 
 	ENiagaraTickBehavior TickBehavior;
 
@@ -504,7 +513,9 @@ private:
 	int32 WarmupTickCount = -1;
 	float WarmupTickDelta = 0;
 	
-	TArray< TSharedRef<FNiagaraEmitterInstance, ESPMode::ThreadSafe> > Emitters;
+	//-TODO:Stateless:
+	//TArray<TSharedRef<FNiagaraEmitterInstanceImpl, ESPMode::ThreadSafe>> Emitters;
+	TArray<FNiagaraEmitterInstanceRef> Emitters;
 
 	FOnPostTick OnPostTickDelegate;
 	FOnComplete OnCompleteDelegate;
@@ -570,6 +581,8 @@ private:
 	uint32 bHasGPUEmitters : 1;
 	/** The system contains data interfaces that can have tick group prerequisites. */
 	uint32 bDataInterfacesHaveTickPrereqs : 1;
+	/** The system contains data interfaces that can have tick group post requisites. */
+	uint32 bDataInterfacesHaveTickPostreqs : 1;
 
 	uint32 bDataInterfacesInitialized : 1;
 
@@ -638,6 +651,7 @@ public:
 	struct FInstanceParameters
 	{
 		FTransform ComponentTrans = FTransform::Identity;
+		FVector Velocity = FVector::ZeroVector;
 
 		float DeltaSeconds = 0.0f;
 		float TimeSeconds = 0.0f;
@@ -648,13 +662,13 @@ public:
 
 		int32 EmitterCount = 0;
 		int32 NumAlive = 0;
-		int32 TransformMatchCount = 0;
 
 		ENiagaraExecutionState RequestedExecutionState = ENiagaraExecutionState::Active;
 
 		void Init(int32 NumEmitters)
 		{
 			ComponentTrans = FTransform::Identity;
+			Velocity = FVector::ZeroVector;
 			DeltaSeconds = 0.0f;
 			TimeSeconds = 0.0f;
 			RealTimeSeconds = 0.0f;
@@ -663,13 +677,22 @@ public:
 
 			EmitterCount = 0;
 			NumAlive = 0;
-			TransformMatchCount = 0;
 
 			RequestedExecutionState = ENiagaraExecutionState::Active;
 		}
 	};
 
 	FInstanceParameters GatheredInstanceParameters;
+
+	void InitSystemState();
+	void TickSystemState();
+
+	FRandomStream	SystemState_RandomStream;
+	int32			SystemState_LoopCount = 0;
+	float			SystemState_CurrentLoopDuration = 0.0f;
+	float			SystemState_CurrentLoopDelay = 0.0f;
+	float			SystemState_CurrentLoopAgeStart = 0.0f;
+	float			SystemState_CurrentLoopAgeEnd = 0.0f;
 };
 
 FORCEINLINE void FNiagaraSystemInstance::SetLODDistance(float InLODDistance, float InMaxLODDistance, bool bOverride)

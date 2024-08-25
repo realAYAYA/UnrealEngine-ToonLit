@@ -764,7 +764,6 @@ void FLevelEditorMenu::RegisterSelectMenu()
 				}
 				InSection.AddMenuEntry(FLevelEditorCommands::Get().SelectAllActorsOfSameClass, SelectAllActorsText);
 			}));
-		Section.AddMenuEntry(FEditorViewportCommands::Get().FocusViewportToSelection);
 	}
 
 	{

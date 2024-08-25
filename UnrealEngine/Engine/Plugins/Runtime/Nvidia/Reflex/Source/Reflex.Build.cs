@@ -14,6 +14,9 @@ namespace UnrealBuildTool.Rules
 			// error C4002: too many arguments for function-like macro invocation '_TLG_FOR_imp0'
 			CppStandard = CppStandardVersion.Cpp17;
 
+			// Replace with PCHUsageMode.UseExplicitOrSharedPCHs when this plugin can compile with cpp20
+			PCHUsage = PCHUsageMode.NoPCHs;
+
 			PublicDependencyModuleNames.AddRange(
 				new string[]
 				{

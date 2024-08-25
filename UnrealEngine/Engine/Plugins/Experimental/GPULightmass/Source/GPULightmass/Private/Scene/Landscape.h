@@ -25,6 +25,7 @@ public:
 		int32       SubsectionSizeVerts;
 		float       StaticLightingResolution;
 		int32       StaticLightingLOD;
+		float       InvLODBlendRange;
 		FIntPoint   ComponentBase;
 		FIntPoint   SectionBase;
 		UTexture2D* HeightmapTexture;

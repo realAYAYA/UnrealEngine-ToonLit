@@ -81,7 +81,7 @@ struct FEntityCollection_CreateOrderInvariant : FEntityCollectionTestBase
 	virtual bool InstantTest() override
 	{
 		TArray<FMassEntityHandle> EntitiesSubSet(&Entities[10], 30);
-		EntitiesSubSet.RemoveAt(10, 1, false);
+		EntitiesSubSet.RemoveAt(10, 1, EAllowShrinking::No);
 
 		FMassArchetypeEntityCollection CollectionFromOrdered(FloatsArchetype, EntitiesSubSet, FMassArchetypeEntityCollection::NoDuplicates);
 
@@ -132,6 +132,24 @@ struct FEntityCollection_CreateCrossChunk : FEntityTestBase
 };
 IMPLEMENT_AI_INSTANT_TEST(FEntityCollection_CreateCrossChunk, "System.Mass.EntityCollection.Create.CrossChunk");
 
+struct FEntityCollection_CreateWithDuplicatesTrivial : FEntityCollectionTestBase
+{
+	virtual bool InstantTest() override
+	{
+		TArray<FMassEntityHandle> EntitiesWithDuplicates;
+		EntitiesWithDuplicates.Add(Entities[2]);
+		EntitiesWithDuplicates.Add(Entities[2]);
+
+		FMassArchetypeEntityCollection EntityCollection(FloatsArchetype, EntitiesWithDuplicates, FMassArchetypeEntityCollection::FoldDuplicates);
+		FMassArchetypeEntityCollection::FConstEntityRangeArrayView Ranges = EntityCollection.GetRanges();
+		AITEST_EQUAL("The result should have a single subchunk", Ranges.Num(), 1);
+		AITEST_EQUAL("The resulting subchunk should be of length 1", Ranges[0].Length, 1);
+
+		return true;
+	}
+};
+IMPLEMENT_AI_INSTANT_TEST(FEntityCollection_CreateWithDuplicatesTrivial, "System.Mass.EntityCollection.Create.TrivialDuplicates");
+
 struct FEntityCollection_CreateWithDuplicates : FEntityCollectionTestBase
 {
 	virtual bool InstantTest() override
@@ -154,8 +172,87 @@ struct FEntityCollection_CreateWithDuplicates : FEntityCollectionTestBase
 };
 IMPLEMENT_AI_INSTANT_TEST(FEntityCollection_CreateWithDuplicates, "System.Mass.EntityCollection.Create.Duplicates");
 
+struct FEntityCollection_CreateWithInvalidDuplicates : FEntityCollectionTestBase
+{
+	virtual bool InstantTest() override
+	{
+		{
+			TArray<FMassEntityHandle> EntitiesSubSet;
+
+			EntitiesSubSet.Add(FMassEntityHandle());
+			EntitiesSubSet.Add(Entities[0]);
+			EntitiesSubSet.Add(Entities[0]);
+			EntitiesSubSet.Add(FMassEntityHandle());
+
+			FMassArchetypeEntityCollection Collection(FloatsArchetype, EntitiesSubSet, FMassArchetypeEntityCollection::FoldDuplicates);
+
+			// The resulting Collection should have only a single Range consisting of a single entity (matching Entities[0])
+			AITEST_EQUAL(TEXT("We expect only a single resulting range"), Collection.GetRanges().Num(), 1);
+			AITEST_EQUAL(TEXT("We expect only a single entity in the resulting range"), Collection.GetRanges()[0].SubchunkStart, 0);
+			AITEST_EQUAL(TEXT("We expect only a single entity in the resulting range"), Collection.GetRanges()[0].Length, 1);
+		}
+
+		{
+			TArray<FMassEntityHandle> EntitiesSubSet;
+
+			EntitiesSubSet.Add(Entities[4]);
+			EntitiesSubSet.Add(FMassEntityHandle());
+			EntitiesSubSet.Add(FMassEntityHandle()); 
+			EntitiesSubSet.Add(Entities[3]);
+			EntitiesSubSet.Add(FMassEntityHandle());
+			EntitiesSubSet.Add(Entities[1]);
+
+			FMassArchetypeEntityCollection Collection(FloatsArchetype, EntitiesSubSet, FMassArchetypeEntityCollection::FoldDuplicates);
+
+			// The resulting Collection should have two Ranges for a single archetype, one of them with two entities (3, 4).
+			AITEST_EQUAL(TEXT("We expect two resulting range"), Collection.GetRanges().Num(), 2);
+			AITEST_EQUAL(TEXT("We expect the first range to consist of a single entity"), Collection.GetRanges()[0].Length, 1);
+			AITEST_EQUAL(TEXT("We expect the second range to consist of a two entities"), Collection.GetRanges()[1].Length, 2);
+			// the specific composition of resulting ranges is being tested by other tests
+		}
+
+		return true;
+	}
+};
+IMPLEMENT_AI_INSTANT_TEST(FEntityCollection_CreateWithInvalidDuplicates, "System.Mass.EntityCollection.Create.InvalidDuplicates");
+
+struct FEntityCollection_CreateWithInvalidDuplicatesWithPayload : FEntityCollectionTestBase
+{
+	virtual bool InstantTest() override
+	{
+		TArray<FMassEntityHandle> EntitiesSubSet;
+		TArray<FTestFragment_Int> Payload;
+
+		EntitiesSubSet.Add(FMassEntityHandle());
+		Payload.Add(FTestFragment_Int(int32(2)));
+
+		EntitiesSubSet.Add(Entities[0]);
+		Payload.Add(FTestFragment_Int(int32(0)));
+
+		EntitiesSubSet.Add(Entities[0]);
+		Payload.Add(FTestFragment_Int(int32(1)));
+
+		EntitiesSubSet.Add(FMassEntityHandle());
+		Payload.Add(FTestFragment_Int(int32(3)));
+
+		// transform typed payload array into generic one for sorting purposes
+		FStructArrayView PaloadView(Payload);
+		TArray<FMassArchetypeEntityCollectionWithPayload> Result;
+		FMassArchetypeEntityCollectionWithPayload::CreateEntityRangesWithPayload(*EntityManager, EntitiesSubSet, FMassArchetypeEntityCollection::FoldDuplicates
+			, FMassGenericPayloadView(MakeArrayView(&PaloadView, 1)), Result);
+
+		AITEST_EQUAL(TEXT("We expect only a single result"), Result.Num(), 1);
+		AITEST_EQUAL(TEXT("We expect only a single resulting range"), Result[0].GetEntityCollection().GetRanges().Num(), 1);
+		AITEST_EQUAL(TEXT("We expect only a single entity in the resulting range"), Result[0].GetEntityCollection().GetRanges()[0].SubchunkStart, 0);
+		AITEST_EQUAL(TEXT("We expect only a single entity in the resulting range"), Result[0].GetEntityCollection().GetRanges()[0].Length, 1);
+
+		return true;
+	}
+};
+IMPLEMENT_AI_INSTANT_TEST(FEntityCollection_CreateWithInvalidDuplicatesWithPayload, "System.Mass.EntityCollection.Create.InvalidDuplicatesWithPayloadWithPayload");
+
 #if WITH_MASSENTITY_DEBUG
-struct FEntityCollection_WithPayload : FEntityCollectionTestBase
+struct FEntityCollection_WithPayloadBase : FEntityCollectionTestBase
 {
 	virtual bool SetUp() override
 	{
@@ -166,30 +263,105 @@ struct FEntityCollection_WithPayload : FEntityCollectionTestBase
 		EntityManager->BatchCreateEntities(FloatsArchetype, EntitiesPerChunk * 2, Entities);
 		return true;
 	}
+};
 
+struct FEntityCollection_TrivialDuplicatesWithPayload : FEntityCollection_WithPayloadBase
+{
 	virtual bool InstantTest() override
 	{
-		// Entities contains 100 FloatArchetype entities by now, created in SetUp
+		const int32 EntitiesPerChunk = EntityManager->DebugGetArchetypeEntitiesCountPerChunk(FloatsArchetype);
 		const int32 TotalCount = Entities.Num();
 		const int32 SubSetCount = int(0.6 * Entities.Num()); // using >0.5 to ensure some entities picked being in sequence and/or in different chunks
 		TArray<FMassEntityHandle> EntitiesSubSet;
 		TArray<FTestFragment_Int> Payload;
 
-		TArray<uint8> Indices;
-		Indices.AddUninitialized(TotalCount);
-		for (int i = 0; i < Indices.Num(); ++i)
+		EntitiesSubSet.Add(Entities[EntitiesPerChunk + 20]); 
+		Payload.Add(FTestFragment_Int(int32(0)));
+		EntitiesSubSet.Add(Entities[EntitiesPerChunk + 20]);
+		Payload.Add(FTestFragment_Int(int32(1)));
+
+		// transform typed payload array into generic one for sorting purposes
+		FStructArrayView PaloadView(Payload);
+		TArray<FMassArchetypeEntityCollectionWithPayload> Result;
+		FMassArchetypeEntityCollectionWithPayload::CreateEntityRangesWithPayload(*EntityManager, EntitiesSubSet, FMassArchetypeEntityCollection::FoldDuplicates
+			, FMassGenericPayloadView(MakeArrayView(&PaloadView, 1)), Result);
+
+		AITEST_EQUAL(TEXT("We expect only a single result"), Result.Num(), 1);
+		AITEST_EQUAL(TEXT("We expect only a single resulting range"), Result[0].GetEntityCollection().GetRanges().Num(), 1);
+		AITEST_EQUAL(TEXT("We expect only a single entity in the resulting range"), Result[0].GetEntityCollection().GetRanges()[0].Length, 1);
+
+		return true;
+	}
+};
+IMPLEMENT_AI_INSTANT_TEST(FEntityCollection_TrivialDuplicatesWithPayload, "System.Mass.EntityCollection.Create.TrivialDuplicatesWithPayload");
+
+// @todo also add another archetype
+struct FEntityCollection_MultiDuplicatesWithPayload : FEntityCollection_WithPayloadBase
+{
+	virtual bool InstantTest() override
+	{
+		const int32 EntitiesPerChunk = EntityManager->DebugGetArchetypeEntitiesCountPerChunk(FloatsArchetype);
+		const int32 TotalCount = Entities.Num();
+		const int32 SubSetCount = int(0.6 * Entities.Num()); // using >0.5 to ensure some entities picked being in sequence and/or in different chunks
+		TArray<FMassEntityHandle> EntitiesSubSet;
+		TArray<FTestFragment_Int> Payload;
+
+		constexpr int32 NumUniques = 3;
+		constexpr int32 NumDuplicatesEach = 4;
+		int32 FragmentValue = 0;
+		for (int32 Iteration = 0; Iteration < NumDuplicatesEach; ++Iteration, ++FragmentValue)
 		{
-			Indices[i] = uint8(i);
+			for (int32 Unique = 0; Unique < NumUniques; ++Unique)
+			{
+				EntitiesSubSet.Add(Entities[EntitiesPerChunk + 20 + Unique]);
+				Payload.Add(FTestFragment_Int(Unique));
+			}
+		}
+
+		// transform typed payload array into generic one for sorting purposes
+		FStructArrayView PaloadView(Payload);
+		TArray<FMassArchetypeEntityCollectionWithPayload> Result;
+		FMassArchetypeEntityCollectionWithPayload::CreateEntityRangesWithPayload(*EntityManager, EntitiesSubSet, FMassArchetypeEntityCollection::FoldDuplicates
+			, FMassGenericPayloadView(MakeArrayView(&PaloadView, 1)), Result);
+
+		AITEST_EQUAL(TEXT("We expect only a single result"), Result.Num(), 1);
+		AITEST_EQUAL(TEXT("We expect only a single resulting range"), Result[0].GetEntityCollection().GetRanges().Num(), 1);
+		AITEST_EQUAL(TEXT("We expect exatly NumUniques entities in the resulting range"), Result[0].GetEntityCollection().GetRanges()[0].Length, NumUniques);
+		const FMassGenericPayloadViewSlice& PayloadSlice = Result[0].GetPayload();
+		for (int32 Unique = 0; Unique < NumUniques; ++Unique)
+		{
+			AITEST_EQUAL("The surviving payload value should match the expected", PayloadSlice[0].GetAt<FTestFragment_Int>(Unique).Value, Unique);
+		}
+
+		return true;
+	}
+};
+IMPLEMENT_AI_INSTANT_TEST(FEntityCollection_MultiDuplicatesWithPayload, "System.Mass.EntityCollection.Create.MultiDuplicatesWithPayload");
+
+struct FEntityCollection_WithPayload : FEntityCollection_WithPayloadBase
+{
+	virtual bool InstantTest() override
+	{
+		const int32 TotalCount = Entities.Num();
+		const int32 SubSetCount = int(0.6 * Entities.Num()); // using >0.5 to ensure some entities picked being in sequence and/or in different chunks
+		TArray<FMassEntityHandle> EntitiesSubSet;
+		TArray<FTestFragment_Int> Payload;
+
+		TArray<int32> Indices;
+		Indices.AddUninitialized(TotalCount);
+		for (int32 i = 0; i < Indices.Num(); ++i)
+		{
+			Indices[i] = i;
 		}
 
 		FMath::SRandInit(TotalCount);
 		Algo::RandomShuffle(Indices);
 		Indices.SetNum(SubSetCount);
 
-		for (uint8 i : Indices)
+		for (int32 i : Indices)
 		{
 			EntitiesSubSet.Add(Entities[i]);
-			Payload.Add(FTestFragment_Int(int32(i)));
+			Payload.Add(FTestFragment_Int(i));
 		}
 
 		// transform typed payload array into generic one for sorting purposes

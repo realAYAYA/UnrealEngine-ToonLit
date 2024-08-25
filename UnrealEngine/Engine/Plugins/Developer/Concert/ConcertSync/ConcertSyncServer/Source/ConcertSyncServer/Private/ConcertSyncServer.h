@@ -5,6 +5,7 @@
 #include "ConcertServerEventForwardingSink.h"
 #include "IConcertSyncServer.h"
 #include "IConcertServerEventSink.h"
+#include "HAL/IConsoleManager.h"
 
 class IConcertServerSession;
 class FConcertServerWorkspace;
@@ -12,6 +13,11 @@ class FConcertServerSequencerManager;
 class FConcertSyncServerLiveSession;
 class FConcertSyncServerArchivedSession;
 class FConcertSyncSessionDatabase;
+
+namespace UE::ConcertSyncServer::Replication
+{
+	class FConcertServerReplicationManager;
+}
 
 struct FConcertSessionFilter;
 
@@ -21,6 +27,7 @@ struct FConcertSessionFilter;
 class FConcertSyncServer : public IConcertSyncServer, public TConcertServerEventForwardingSink<FConcertSyncServer>
 {
 public:
+	
 	FConcertSyncServer(const FString& InRole, const FConcertSessionFilter& InAutoArchiveSessionFilter);
 	virtual ~FConcertSyncServer();
 
@@ -53,6 +60,9 @@ private:
 
 	void CreateSequencerManager(const TSharedRef<FConcertSyncServerLiveSession>& InLiveSession);
 	void DestroySequencerManager(const TSharedRef<FConcertSyncServerLiveSession>& InLiveSession);
+	
+	void CreateReplicationManager(TSharedRef<IConcertServerSession> InLiveSession);
+	void DestroyReplicationManager(const TSharedRef<IConcertServerSession>& InLiveSession); 
 
 	bool CreateLiveSession(const TSharedRef<IConcertServerSession>& InSession, const FInternalLiveSessionCreationParams& AdditionalParams);
 	void DestroyLiveSession(const TSharedRef<IConcertServerSession>& InSession);
@@ -74,6 +84,9 @@ private:
 	/** Map of live session IDs to their associated sequencer managers */
 	TMap<FGuid, TSharedPtr<FConcertServerSequencerManager>> LiveSessionSequencerManagers;
 
+	/** Map of live session IDs to their associated replication managers */
+	TMap<FGuid, TSharedRef<UE::ConcertSyncServer::Replication::FConcertServerReplicationManager>> LiveSessionReplicationManagers;
+
 	/** Map of live session IDs to their associated session data */
 	TMap<FGuid, TSharedPtr<FConcertSyncServerLiveSession>> LiveSessions;
 
@@ -82,4 +95,14 @@ private:
 
 	/** Optional side channel to exchange large blobs (package data) with the server in a scalable way (ex. the request/response transport layer is not designed and doesn't support exchanging 3GB packages). */
 	TSharedPtr<IConcertFileSharingService> FileSharingService;
+
+	/** Logs the replication streams registered by all clients */
+	FAutoConsoleCommand LogReplicationStreamsConsoleCommand;
+	/** Logs the replication authority of the clients */
+	FAutoConsoleCommand LogReplicationAuthorityConsoleCommand;
+
+	/** Logs the replication streams registered by all clients */
+	void LogReplicationStreams() const;
+	/** Logs the replication authority of the clients */
+	void LogReplicationAuthority() const;
 };

@@ -6,41 +6,28 @@ using UnrealBuildTool;
 
 public class LibJpegTurbo : ModuleRules
 {
+	protected readonly string Version = "3.0.0";
+
+	protected string VersionPath { get => Path.Combine(ModuleDirectory, Version); }
+	protected string LibraryPath { get => Path.Combine(VersionPath, "lib"); }
+
 	public LibJpegTurbo(ReadOnlyTargetRules Target) : base(Target)
 	{
 		Type = ModuleType.External;
 
-		string IncPath = Path.Combine(ModuleDirectory, "include");
-		PublicSystemIncludePaths.Add(IncPath);
+		PublicSystemIncludePaths.Add(Path.Combine(VersionPath, "include"));
 
 		if (Target.Platform.IsInGroup(UnrealPlatformGroup.Windows))
 		{
-			string LibPath = Path.Combine(ModuleDirectory, "lib/Win64");
-			PublicAdditionalLibraries.Add(Path.Combine(LibPath, "turbojpeg-static.lib"));
-			PublicSystemIncludePaths.Add(Path.Combine(IncPath, "Win64"));
+			PublicAdditionalLibraries.Add(Path.Combine(LibraryPath, "Win64", "Release", "turbojpeg-static.lib"));
 		}
 		else if (Target.IsInPlatformGroup(UnrealPlatformGroup.Unix))
 		{
-			string LibPath = Path.Combine(ModuleDirectory, "lib/Unix", Target.Architecture.LinuxName);
-
-			if (Target.Configuration == UnrealTargetConfiguration.Debug)
-			{
-				PublicAdditionalLibraries.Add(Path.Combine(LibPath, "libturbojpegd.a"));
-			}
-			else
-			{
-				PublicAdditionalLibraries.Add(Path.Combine(LibPath, "libturbojpeg.a"));
-			}
-
-			PublicSystemIncludePaths.Add(Path.Combine(IncPath, "Unix", Target.Architecture.LinuxName));
+			PublicAdditionalLibraries.Add(Path.Combine(LibraryPath, "Unix", Target.Architecture.LinuxName, "Release", "libturbojpeg.a"));
 		}
 		else if (Target.Platform == UnrealTargetPlatform.Mac)
 		{
-			string LibPathMac = Path.Combine(ModuleDirectory, "lib", Target.Platform.ToString(), "libturbojpeg.a");
-			string IncPathMac = Path.Combine(IncPath,                Target.Platform.ToString());
-
-			PublicAdditionalLibraries.Add(LibPathMac);
-			PublicSystemIncludePaths.Add(IncPathMac);
+			PublicAdditionalLibraries.Add(Path.Combine(LibraryPath, "Mac", "Release", "libturbojpeg.a"));
 		}
 	}
 }

@@ -114,22 +114,26 @@ public:
 	FManagedArrayCollection Collection;
 
 	/** Optional transform selection to compute leaf hulls on -- if not provided, all leaf hulls will be computed. */
-	UPROPERTY(meta = (DataflowInput, DataflowIntrinsic))
+	UPROPERTY(meta = (DataflowInput))
 	FDataflowTransformSelection OptionalSelectionFilter;
 
 	/** How convex hulls are generated -- computed from geometry, imported from external collision shapes, or an intersection of both options. */
 	UPROPERTY(EditAnywhere, Category = Options)
 	EGenerateConvexMethod GenerateMethod = EGenerateConvexMethod::ExternalCollision;
 
-	/** If GenerateMethod is Intersect, only actually intersect when the volume of the Computed Hull is less than this fraction of the volume of the External Hull(s) */
+	/** If GenerateMethod is Intersect, only actually intersect when the volume of the Computed Hull is less than this fraction of the volume of the External Hull(s). */
 	UPROPERTY(EditAnywhere, Category = IntersectionFilters, meta = (ClampMin = 0.0, ClampMax = 1.0, EditCondition = "GenerateMethod == EGenerateConvexMethod::IntersectExternalWithComputed"))
 	float IntersectIfComputedIsSmallerByFactor = 1.0f;
 
-	/** If GenerateMethod is Intersect, only actually intersect if the volume of the External Hull(s) exceed this threshold */
+	/** If GenerateMethod is Intersect, only actually intersect if the volume of the External Hull(s) exceed this threshold. */
 	UPROPERTY(EditAnywhere, Category = IntersectionFilters, meta = (ClampMin = 0.0, EditCondition = "GenerateMethod == EGenerateConvexMethod::IntersectExternalWithComputed"))
 	float MinExternalVolumeToIntersect = 0.0f;
 
-	/** Computed convex hulls are simplified to keep points spaced at least this far apart (except where needed to keep the hull from collapsing to zero volume) */
+	/** Whether to compute the intersection before computing convex hulls. Typically should be enabled. */
+	UPROPERTY(EditAnywhere, Category = Convex, meta = (EditCondition = "GenerateMethod == EGenerateConvexMethod::IntersectExternalWithComputed"))
+	bool bComputeIntersectionsBeforeHull = true;
+
+	/** Computed convex hulls are simplified to keep points spaced at least this far apart (except where needed to keep the hull from collapsing to zero volume). */
 	UPROPERTY(EditAnywhere, Category = Convex, meta = (DataflowInput, ClampMin = 0.f, EditCondition = "GenerateMethod != EGenerateConvexMethod::ExternalCollision"))
 	float SimplificationDistanceThreshold = 10.f;
 
@@ -152,7 +156,7 @@ public:
 	FManagedArrayCollection Collection;
 
 	/** Optional transform selection to compute leaf hulls on -- if not provided, all leaf hulls will be computed. */
-	UPROPERTY(meta = (DataflowInput, DataflowIntrinsic))
+	UPROPERTY(meta = (DataflowInput))
 	FDataflowTransformSelection OptionalSelectionFilter;
 
 	UPROPERTY(EditAnywhere, Category = "Convex")
@@ -231,6 +235,18 @@ public:
 	UE::Geometry::FSphereCovering Spheres;
 };
 
+//~ Dataflow-specific copy of the negative space sampling method enum in ConvexDecomposition3.h,
+//~ so that it can be exposed as a UENUM
+// Method to distribute sampling spheres
+UENUM()
+enum class ENegativeSpaceSampleMethodDataflowEnum : uint8
+{
+	// Place sample spheres in a uniform grid pattern
+	Uniform,
+	// Use voxel-based subtraction and offsetting methods to specifically target concavities
+	VoxelSearch
+};
+
 /**
  *
  * Generates cluster convex hulls for leafs hulls
@@ -271,12 +287,24 @@ public:
 	EAllowConvexMergeMethod AllowMerges = EAllowConvexMergeMethod::ByProximity;
 
 	/** Optional transform selection to compute cluster hulls on -- if not provided, all cluster hulls will be computed. */
-	UPROPERTY(meta = (DataflowInput, DataflowIntrinsic))
+	UPROPERTY(meta = (DataflowInput))
 	FDataflowTransformSelection OptionalSelectionFilter;
 
 	/** Whether to use a sphere cover to define negative space that should not be covered by convex hulls */
 	UPROPERTY(EditAnywhere, Category = NegativeSpace, meta = (DataflowInput))
 	bool bProtectNegativeSpace = false;
+
+	/** Method to use to find and sample negative space */
+	UPROPERTY(EditAnywhere, Category = NegativeSpace, meta = (EditCondition = "bProtectNegativeSpace", EditConditionHides))
+	ENegativeSpaceSampleMethodDataflowEnum SampleMethod = ENegativeSpaceSampleMethodDataflowEnum::Uniform;
+
+	/** Whether to require that all candidate locations identified by Voxel Search are covered by negative space samples, up to the specified Min Sample Spacing. Only applies to Voxel Search. */
+	UPROPERTY(EditAnywhere, Category = NegativeSpace, meta = (EditCondition = "bProtectNegativeSpace && SampleMethod == ENegativeSpaceSampleMethodDataflowEnum::VoxelSearch", EditConditionHides))
+	bool bRequireSearchSampleCoverage = false;
+
+	/** When performing Voxel Search, only look for negative space that is connected out to the convex hull. This removes inaccessable internal negative space from consideration. Only applies to Voxel Search. */
+	UPROPERTY(EditAnywhere, Category = NegativeSpace, meta = (EditCondition = "bProtectNegativeSpace && SampleMethod == ENegativeSpaceSampleMethodDataflowEnum::VoxelSearch", EditConditionHides))
+	bool bOnlyConnectedToHull = false;
 
 	/** Approximate number of spheres to consider when covering negative space */
 	UPROPERTY(EditAnywhere, Category = NegativeSpace, meta = (DataflowInput, ClampMin = 1, EditCondition = "bProtectNegativeSpace", EditConditionHides))
@@ -336,12 +364,24 @@ public:
 	bool bPreferExternalCollisionShapes = true;
 
 	/** Optional transform selection to compute cluster hulls on -- if not provided, all cluster hulls will be computed. */
-	UPROPERTY(meta = (DataflowInput, DataflowIntrinsic))
+	UPROPERTY(meta = (DataflowInput))
 	FDataflowTransformSelection OptionalSelectionFilter;
 
 	/** Whether to use a sphere cover to define negative space that should not be covered by convex hulls */
 	UPROPERTY(EditAnywhere, Category = NegativeSpace, meta = (DataflowInput))
 	bool bProtectNegativeSpace = false;
+
+	/** Method to use to find and sample negative space */
+	UPROPERTY(EditAnywhere, Category = NegativeSpace, meta = (EditCondition = "bProtectNegativeSpace", EditConditionHides))
+	ENegativeSpaceSampleMethodDataflowEnum SampleMethod = ENegativeSpaceSampleMethodDataflowEnum::Uniform;
+
+	/** Whether to require that all candidate locations identified by Voxel Search are covered by negative space samples, up to the specified Min Sample Spacing. Only applies to Voxel Search. */
+	UPROPERTY(EditAnywhere, Category = NegativeSpace, meta = (EditCondition = "bProtectNegativeSpace && SampleMethod == ENegativeSpaceSampleMethodDataflowEnum::VoxelSearch", EditConditionHides))
+	bool bRequireSearchSampleCoverage = false;
+
+	/** When performing Voxel Search, only look for negative space that is connected out to the convex hull. This removes inaccessable internal negative space from consideration. Only applies to Voxel Search. */
+	UPROPERTY(EditAnywhere, Category = NegativeSpace, meta = (EditCondition = "bProtectNegativeSpace && SampleMethod == ENegativeSpaceSampleMethodDataflowEnum::VoxelSearch", EditConditionHides))
+	bool bOnlyConnectedToHull = false;
 
 	/** Approximate number of spheres to consider when covering negative space */
 	UPROPERTY(EditAnywhere, Category = NegativeSpace, meta = (DataflowInput, ClampMin = 1, EditCondition = "bProtectNegativeSpace", EditConditionHides))
@@ -363,6 +403,34 @@ public:
 
 	virtual void Evaluate(Dataflow::FContext& Context, const FDataflowOutput* Out) const override;
 
+};
+
+
+/** Clear convex hulls from the selected transforms */
+USTRUCT(meta = (DataflowGeometryCollection))
+struct FClearConvexHullsDataflowNode : public FDataflowNode
+{
+	GENERATED_USTRUCT_BODY()
+	DATAFLOW_NODE_DEFINE_INTERNAL(FClearConvexHullsDataflowNode, "ClearConvexHulls", "GeometryCollection|Utilities", "")
+
+public:
+	UPROPERTY(meta = (DataflowInput, DataflowOutput, DataflowPassthrough = "Collection", DataflowIntrinsic))
+	FManagedArrayCollection Collection;
+
+	/** Convex hulls will be cleared from these transforms */
+	UPROPERTY(meta = (DataflowInput, DataflowIntrinsic))
+	FDataflowTransformSelection TransformSelection;
+
+	FClearConvexHullsDataflowNode(const Dataflow::FNodeParameters& InParam, FGuid InGuid = FGuid::NewGuid())
+		: FDataflowNode(InParam, InGuid)
+	{
+		RegisterInputConnection(&Collection);
+		RegisterInputConnection(&TransformSelection);
+
+		RegisterOutputConnection(&Collection, &Collection);
+	}
+
+	virtual void Evaluate(Dataflow::FContext& Context, const FDataflowOutput* Out) const override;
 };
 
 
@@ -394,12 +462,28 @@ public:
 	double ErrorTolerance = 0.0;
 
 	/** Optional transform selection to compute cluster hulls on -- if not provided, all cluster hulls will be computed. */
-	UPROPERTY(meta = (DataflowInput, DataflowIntrinsic))
+	UPROPERTY(meta = (DataflowInput))
 	FDataflowTransformSelection OptionalSelectionFilter;
 
 	/** Whether to use a sphere cover to define negative space that should not be covered by convex hulls */
 	UPROPERTY(EditAnywhere, Category = NegativeSpace, meta = (DataflowInput))
 	bool bProtectNegativeSpace = false;
+
+	/** Whether to compute separate negative space for each bone. Otherwise, a single negative space will be computed once and re-used for all bones. */
+	UPROPERTY(EditAnywhere, Category = NegativeSpace, meta = (EditCondition = "bProtectNegativeSpace", EditConditionHides))
+	bool bComputeNegativeSpacePerBone = false;
+
+	/** Method to use to find and sample negative space */
+	UPROPERTY(EditAnywhere, Category = NegativeSpace, meta = (EditCondition = "bProtectNegativeSpace", EditConditionHides))
+	ENegativeSpaceSampleMethodDataflowEnum SampleMethod = ENegativeSpaceSampleMethodDataflowEnum::Uniform;
+
+	/** Whether to require that all candidate locations identified by Voxel Search are covered by negative space samples, up to the specified Min Sample Spacing. Only applies to Voxel Search. */
+	UPROPERTY(EditAnywhere, Category = NegativeSpace, meta = (EditCondition = "bProtectNegativeSpace && SampleMethod == ENegativeSpaceSampleMethodDataflowEnum::VoxelSearch", EditConditionHides))
+	bool bRequireSearchSampleCoverage = false;
+
+	/** When performing Voxel Search, only look for negative space that is connected out to the convex hull. This removes inaccessable internal negative space from consideration. Only applies to Voxel Search. */
+	UPROPERTY(EditAnywhere, Category = NegativeSpace, meta = (EditCondition = "bProtectNegativeSpace && SampleMethod == ENegativeSpaceSampleMethodDataflowEnum::VoxelSearch", EditConditionHides))
+	bool bOnlyConnectedToHull = false;
 
 	/** Approximate number of spheres to consider when covering negative space */
 	UPROPERTY(EditAnywhere, Category = NegativeSpace, meta = (DataflowInput, ClampMin = 1, EditCondition = "bProtectNegativeSpace", EditConditionHides))

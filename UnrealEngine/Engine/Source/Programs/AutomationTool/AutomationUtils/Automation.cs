@@ -193,6 +193,11 @@ namespace AutomationTool
 					Logger.LogInformation(Ex, "{Message}", Ex.ToString().Replace("\n", "\n  "));
 					Logger.LogDebug(Ex, "{Details}", ExceptionUtils.FormatExceptionDetails(Ex));
 				}
+				else if (Ex.OutputFormat == AutomationExceptionOutputFormat.MinimalError)
+				{
+					Logger.LogError(Ex, "{Message}", Ex.ToString().Replace("\n", "\n  "));
+					Logger.LogDebug(Ex, "{Details}", ExceptionUtils.FormatExceptionDetails(Ex));
+				}
 				else
 				{
 					Log.WriteException(Ex, LogUtils.FinalLogFileName);
@@ -404,6 +409,12 @@ AutomationTool.exe [-verbose] [-compileonly] [-p4] Command0 [-Arg0 -Arg1 -Arg2 .
 			NoSubmit = AutomationToolCommandLine.IsSetGlobal("-NoSubmit");
 			P4 = AutomationToolCommandLine.IsSetGlobal("-P4");
 			NoP4 = AutomationToolCommandLine.IsSetGlobal("-NoP4");
+
+			int WaitTimeMs;
+			if (int.TryParse((string)AutomationToolCommandLine.GetValueUnchecked("-WaitForStdStreams"), out WaitTimeMs))
+			{
+				WaitForStdStreams = WaitTimeMs;
+			}
 		}
 
 		// Using Nullable bools here to ensure that Initialize() has been called before the members are accesed.
@@ -506,5 +517,11 @@ AutomationTool.exe [-verbose] [-compileonly] [-p4] Command0 [-Arg0 -Arg1 -Arg2 .
 			get; 
 			private set;
 		}
+
+		public static int WaitForStdStreams
+		{
+			get;
+			private set;
+		} = -1;
 	}
 }

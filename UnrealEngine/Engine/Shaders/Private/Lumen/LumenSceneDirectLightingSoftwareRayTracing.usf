@@ -197,7 +197,7 @@ void LumenSceneDirectLightingTraceDistanceFieldShadowsCS(
 		FLumenSurfaceCacheData SurfaceCacheData = GetSurfaceCacheData(CardData, CardUV, AtlasUV);
 
 		float3 WorldPosition = SurfaceCacheData.WorldPosition;
-		float3 TranslatedWorldPosition = WorldPosition + LWCHackToFloat(PrimaryView.PreViewTranslation); // LUMEN_LWC_TODO
+		float3 TranslatedWorldPosition = WorldPosition + DFHackToFloat(PrimaryView.PreViewTranslation); // LUMEN_LWC_TODO
 		float3 WorldNormal = SurfaceCacheData.WorldNormal;
 
 		float3 L = LightData.Direction;

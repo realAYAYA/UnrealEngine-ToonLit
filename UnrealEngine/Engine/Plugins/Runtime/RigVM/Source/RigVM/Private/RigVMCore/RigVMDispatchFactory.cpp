@@ -155,8 +155,8 @@ bool FRigVMDispatchFactory::IsLazyInputArgument(const FName& InArgumentName) con
 
 FName FRigVMDispatchFactory::GetArgumentNameForOperandIndex(int32 InOperandIndex, int32 InTotalOperands) const
 {
-	check(GetArguments().Num() == InTotalOperands);
-	return GetArguments()[InOperandIndex].GetName();
+	check(GetArgumentInfos().Num() == InTotalOperands);
+	return GetArgumentInfos()[InOperandIndex].Name;
 }
 
 const TArray<FName>& FRigVMDispatchFactory::GetControlFlowBlocks(const FRigVMDispatchContext& InContext) const
@@ -200,9 +200,9 @@ const TArray<FName>* FRigVMDispatchFactory::UpdateArgumentNameCache_NoLock(int32
 	return ArgumentNames.Get();
 }
 
-const TArray<FRigVMTemplateArgument>& FRigVMDispatchFactory::GetArguments() const
+const TArray<FRigVMTemplateArgumentInfo>& FRigVMDispatchFactory::GetArgumentInfos() const
 {
-	static TArray<FRigVMTemplateArgument> EmptyArguments;
+	static const TArray<FRigVMTemplateArgumentInfo> EmptyArguments;
 	return EmptyArguments;
 }
 
@@ -232,7 +232,7 @@ const TArray<FRigVMExecuteArgument>& FRigVMDispatchFactory::GetExecuteArguments_
 
 FRigVMFunctionPtr FRigVMDispatchFactory::GetOrCreateDispatchFunction(const FRigVMTemplateTypeMap& InTypes) const
 {
-	FScopeLock GetTemplateScopeLock(&FRigVMRegistry::GetDispatchFunctionMutex);
+	FScopeLock DispatchFunctionScopeLock(&FRigVMRegistry::DispatchFunctionMutex);
 
 	const FString PermutationName = GetPermutationNameImpl(InTypes);
 	if(const FRigVMFunction* ExistingFunction = FRigVMRegistry::Get().FindFunction(*PermutationName))
@@ -245,7 +245,7 @@ FRigVMFunctionPtr FRigVMDispatchFactory::GetOrCreateDispatchFunction(const FRigV
 
 FRigVMFunctionPtr FRigVMDispatchFactory::CreateDispatchFunction(const FRigVMTemplateTypeMap& InTypes) const
 {
-	FScopeLock GetTemplateScopeLock(&FRigVMRegistry::GetDispatchFunctionMutex);
+	FScopeLock DispatchFunctionScopeLock(&FRigVMRegistry::DispatchFunctionMutex);
 	return CreateDispatchFunction_NoLock(InTypes);
 }
 
@@ -256,7 +256,7 @@ FRigVMFunctionPtr FRigVMDispatchFactory::CreateDispatchFunction_NoLock(const FRi
 
 TArray<FRigVMFunction> FRigVMDispatchFactory::CreateDispatchPredicates(const FRigVMTemplateTypeMap& InTypes) const
 {
-	FScopeLock GetTemplateScopeLock(&FRigVMRegistry::GetDispatchPredicatesMutex);
+	FScopeLock DispatchPredicatesScopeLock(&FRigVMRegistry::DispatchPredicatesMutex);
 	return CreateDispatchPredicates_NoLock(InTypes);
 }
 
@@ -268,14 +268,88 @@ TArray<FRigVMFunction> FRigVMDispatchFactory::CreateDispatchPredicates_NoLock(co
 FString FRigVMDispatchFactory::GetPermutationName(const FRigVMTemplateTypeMap& InTypes) const
 {
 #if WITH_EDITOR
-	const TArray<FRigVMTemplateArgument>& Arguments = GetArguments();
-	check(InTypes.Num() == Arguments.Num());
-	for(const FRigVMTemplateArgument& Argument : Arguments)
+	const TArray<FRigVMTemplateArgumentInfo>& Arguments = GetArgumentInfos();
+	
+	checkf(InTypes.Num() == Arguments.Num(), TEXT("Failed getting permutation names for '%s' "), *GetFactoryName().ToString());
+	
+	for(const FRigVMTemplateArgumentInfo& Argument : Arguments)
 	{
-		check(InTypes.Contains(Argument.GetName()));
+		check(InTypes.Contains(Argument.Name));
 	}
 #endif
 	return GetPermutationNameImpl(InTypes);
+}
+
+TArray<FRigVMTemplateArgumentInfo> FRigVMDispatchFactory::BuildArgumentListFromPrimaryArgument(const TArray<FRigVMTemplateArgumentInfo>& InInfos, const FName& InPrimaryArgumentName) const
+{
+	TArray<FRigVMTemplateArgumentInfo> NewInfos;
+	
+	const FRigVMTemplateArgumentInfo* PrimaryInfo = InInfos.FindByPredicate([InPrimaryArgumentName](const FRigVMTemplateArgumentInfo& Arg)
+	{
+		return Arg.Name == InPrimaryArgumentName;
+	});
+
+	if (!PrimaryInfo)
+	{
+		return NewInfos;
+	}
+
+	const int32 NumInfos = InInfos.Num();
+	TArray< TArray<TRigVMTypeIndex> > TypeIndicesArray;
+	TypeIndicesArray.SetNum(NumInfos);
+
+	const FRigVMTemplateArgument PrimaryArgument = PrimaryInfo->GetArgument();
+	bool bFoundArg = true;
+	PrimaryArgument.ForEachType([&](const TRigVMTypeIndex Type)
+	{
+		if (bFoundArg)
+		{
+			TArray<FRigVMTemplateTypeMap, TInlineAllocator<1>> Permutations;
+			GetPermutationsFromArgumentType(InPrimaryArgumentName, Type, Permutations);
+			for (const FRigVMTemplateTypeMap& Permutation : Permutations)
+			{
+				for (int32 Index=0; Index < InInfos.Num(); ++Index)
+				{
+					if (const TRigVMTypeIndex* PermutationArg = Permutation.Find(InInfos[Index].Name))
+					{
+						TypeIndicesArray[Index].Add(*PermutationArg);
+					}
+					else
+					{
+						bFoundArg = false;
+						break;
+					}
+				}
+				if (!bFoundArg)
+				{
+					break;
+				}
+			}
+		}
+		return true;
+	});
+
+	if (!bFoundArg)
+	{
+		return NewInfos;	
+	}
+
+	NewInfos.Reserve(NumInfos);
+	for (int32 Index=0; Index < NumInfos; ++Index)
+	{
+		const FRigVMTemplateArgument Argument = InInfos[Index].GetArgument();
+		const TArray<TRigVMTypeIndex>& TypeIndices = TypeIndicesArray[Index];
+		if (TypeIndices.IsEmpty())
+		{
+			NewInfos.Emplace(InInfos[Index].Name, Argument.Direction, Argument.TypeCategories);
+		}
+		else
+		{
+			NewInfos.Emplace(InInfos[Index].Name, Argument.Direction, TypeIndices);
+		}
+	}
+	
+	return NewInfos;
 }
 
 FString FRigVMDispatchFactory::GetPermutationNameImpl(const FRigVMTemplateTypeMap& InTypes) const
@@ -309,49 +383,33 @@ const FRigVMTemplate* FRigVMDispatchFactory::GetTemplate() const
 		return CachedTemplate;
 	}
 
-	const TArray<FRigVMTemplateArgument>& Arguments = GetArguments();
-
-	// we don't allow execute types on arguments
-	for(const FRigVMTemplateArgument& Argument : Arguments)
+	
+	// we don't allow execute types on arguments	
+	const TArray<FRigVMTemplateArgumentInfo>& Infos = GetArgumentInfos();
+	for (const FRigVMTemplateArgumentInfo& Info : Infos)
 	{
-		for(const TRigVMTypeIndex& TypeIndex : Argument.GetTypeIndices())
+		const FRigVMTemplateArgument Argument = Info.GetArgument();
+		const int32 Index = Argument.IndexOfByPredicate([&](const TRigVMTypeIndex TypeIndex)
 		{
-			if(Registry.IsExecuteType(TypeIndex))
-			{
-				UE_LOG(LogRigVM, Error, TEXT("Failed to add template for dispatch '%s'. Argument '%s' is an execute type."),
-					*GetFactoryName().ToString(),
-					*Argument.GetName().ToString());
-				return nullptr;
-			}
+			return Registry.IsExecuteType(TypeIndex);
+		});
+		
+		if (Index != INDEX_NONE)
+		{
+			UE_LOG(LogRigVM, Error, TEXT("Failed to add template for dispatch '%s'. Argument '%s' is an execute type."),
+				*FactoryName.ToString(), *Info.Name.ToString());
+			return nullptr;			
 		}
 	}
 
 	FRigVMTemplateDelegates Delegates;
-	Delegates.NewArgumentTypeDelegate = FRigVMTemplate_NewArgumentTypeDelegate::CreateLambda(
-		[this](const FRigVMTemplate*, const FName& InArgumentName, int32 InTypeIndex)
-		{
-			return OnNewArgumentType(InArgumentName, InTypeIndex);
-		});
-
 	Delegates.GetDispatchFactoryDelegate = FRigVMTemplate_GetDispatchFactoryDelegate::CreateLambda(
-[FactoryName]()
+	[FactoryName]()
 	{
 		return FRigVMRegistry::Get().FindDispatchFactory(FactoryName);
 	});
 
-	Delegates.RequestDispatchFunctionDelegate = FRigVMTemplate_RequestDispatchFunctionDelegate::CreateLambda(
-	[this](const FRigVMTemplate*, const FRigVMTemplateTypeMap& InTypes)
-	{
-		return CreateDispatchFunction(InTypes);
-	});
-
-	Delegates.RequestDispatchPredicatesDelegate = FRigVMTemplate_RequestDispatchPredicatesDelegate::CreateLambda(
-	[this](const FRigVMTemplate*, const FRigVMTemplateTypeMap& InTypes)
-	{
-		return CreateDispatchPredicates(InTypes);
-	});
-
-	CachedTemplate = Registry.AddTemplateFromArguments(GetFactoryName(), Arguments, Delegates); 
+	CachedTemplate = Registry.AddTemplateFromArguments(GetFactoryName(), Infos, Delegates); 
 	return CachedTemplate;
 }
 

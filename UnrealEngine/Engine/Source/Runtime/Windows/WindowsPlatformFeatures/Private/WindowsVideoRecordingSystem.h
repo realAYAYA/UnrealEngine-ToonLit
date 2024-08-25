@@ -18,7 +18,9 @@ DECLARE_LOG_CATEGORY_EXTERN(WindowsVideoRecordingSystem, VeryVerbose, VeryVerbos
 
 class FHighlightRecorder;
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 class FWindowsVideoRecordingSystem : public IVideoRecordingSystem
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 {
 public:
 	FWindowsVideoRecordingSystem();

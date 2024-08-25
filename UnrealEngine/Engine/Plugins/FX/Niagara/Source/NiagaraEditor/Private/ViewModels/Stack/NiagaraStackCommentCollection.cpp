@@ -48,8 +48,10 @@ void UNiagaraStackCommentCollection::RefreshChildrenInternal(const TArray<UNiaga
 			
 			if(StackObject == nullptr)
 			{
-			    StackObject = NewObject<UNiagaraStackObject>(this);
-			    StackObject->Initialize(CreateDefaultChildRequiredData(), CommentNode, true, GetStackEditorDataKey(), nullptr);
+				bool bIsInTopLevelObject = true;
+				bool bHideTopLevelCategories = false;
+				StackObject = NewObject<UNiagaraStackObject>(this);
+				StackObject->Initialize(CreateDefaultChildRequiredData(), CommentNode, bIsInTopLevelObject, bHideTopLevelCategories, GetStackEditorDataKey(), nullptr);
 			}
 			
 			NewChildren.Add(StackObject);

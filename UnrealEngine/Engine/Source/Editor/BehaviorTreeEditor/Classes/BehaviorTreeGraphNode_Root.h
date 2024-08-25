@@ -39,6 +39,8 @@ class BEHAVIORTREEEDITOR_API UBehaviorTreeGraphNode_Root : public UBehaviorTreeG
 	virtual void PostEditUndo() override;
 	virtual FText GetDescription() const override;
 
+	virtual FLinearColor GetBackgroundColor(bool bIsActiveForDebugger) const override;
+
 	/** notify behavior tree about blackboard change */
 	void UpdateBlackboard();
 };

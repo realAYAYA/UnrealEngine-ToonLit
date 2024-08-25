@@ -187,7 +187,7 @@ FString UAIDataProvider::ToString(FName PropName) const
 	const bool bFound = ProviderName.FindChar(TEXT('_'), SplitIdx);
 	if (bFound)
 	{
-		ProviderName.MidInline(SplitIdx + 1, MAX_int32, false);
+		ProviderName.MidInline(SplitIdx + 1, MAX_int32, EAllowShrinking::No);
 	}
 
 	ProviderName += TEXT('.');

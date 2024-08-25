@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Caching.Memory;
 using MongoDB.Bson;
@@ -44,15 +45,15 @@ namespace Horde.Server.Utilities
 			_cache.Dispose();
 		}
 
-		async Task RefreshAsync(QueryState state, FilterDefinition<TDocument> filter)
+		async Task RefreshAsync(QueryState state, FilterDefinition<TDocument> filter, CancellationToken cancellationToken = default)
 		{
-			state._results = await _collection.Find(filter).ToListAsync();
+			state._results = await _collection.Find(filter).ToListAsync(cancellationToken);
 			state._timer.Restart();
 		}
 
 		public async Task<List<TDocument>> FindAsync(FilterDefinition<TDocument> filter, int index, int count)
 		{
-			BsonDocument rendered = filter.Render(BsonSerializer.LookupSerializer<TDocument>(), BsonSerializer.SerializerRegistry);
+			BsonDocument rendered = filter.Render(BsonSerializer.LookupSerializer<TDocument>(), BsonSerializer.SerializerRegistry, MongoDB.Driver.Linq.LinqProvider.V2);
 			BsonDocument document = new BsonDocument { new BsonElement("filter", rendered), new BsonElement("index", index), new BsonElement("count", count) };
 
 			string filterKey = document.ToString();
@@ -68,7 +69,7 @@ namespace Horde.Server.Utilities
 				}
 			}
 
-			if(state._queryTask != null && state._queryTask.IsCompleted)
+			if (state._queryTask != null && state._queryTask.IsCompleted)
 			{
 				await state._queryTask;
 				state._queryTask = null;
@@ -76,7 +77,7 @@ namespace Horde.Server.Utilities
 
 			if (state._queryTask == null && (state._results == null || state._timer.Elapsed > _maxLatency))
 			{
-				state._queryTask = Task.Run(() => RefreshAsync(state, filter));
+				state._queryTask = Task.Run(() => RefreshAsync(state, filter, CancellationToken.None), CancellationToken.None);
 			}
 			if (state._queryTask != null && (state._results == null || state._timer.Elapsed > _maxLatency))
 			{

@@ -75,7 +75,7 @@ protected:
 			{
 				if(IdxVer == Tail.load(std::memory_order_acquire))
 				{
-					uint32 Prev = Tail.fetch_add(1, std::memory_order_release);
+					uint32 Prev = Tail.fetch_add(1, std::memory_order_release); (void)Prev;
 					checkSlow(Prev % NumItems == Idx);
 					ItemSlots[Idx].Value.store(uintptr_t(ESlotState::Free), std::memory_order_release);
 					Item = Slot;
@@ -120,6 +120,8 @@ public:
 };
 }
 
+namespace Private {
+
 enum class ELocalQueueType
 {
 	EBackground,
@@ -137,6 +139,247 @@ enum class ELocalQueueType
 template<uint32 NumLocalItems = 1024>
 class TLocalQueueRegistry
 {
+	static uint32 Rand()
+	{
+		uint32 State = FPlatformTime::Cycles();
+		State = State * 747796405u + 2891336453u;
+		State = ((State >> ((State >> 28u) + 4u)) ^ State) * 277803737u;
+		return (State >> 22u) ^ State;
+	}
+
+public:
+	class TLocalQueue;
+
+private:
+	using FLocalQueueType	 = LocalQueue_Impl::TWorkStealingQueue2<FTask, NumLocalItems>;
+	using FOverflowQueueType = FAAArrayQueue<FTask>;
+	using DequeueHazard		 = typename FOverflowQueueType::DequeueHazard;
+
+	enum class EOverflowType
+	{
+		// Tasks that can't be run inside busy waiting will be moved in that queue during busy wait loops.
+		// This queue is always looked at first by non busy waiting workers to keep ordering as much as possible.
+		DoNotRunInsideBusyWait,
+		// All tasks including those that can't run inside busy wait are queued here by default to keep FIFO ordering as much as possible.
+		Default,
+		Count,
+	};
+
+public:
+	class TLocalQueue
+	{
+		template<uint32>
+		friend class TLocalQueueRegistry;
+
+	public:
+		TLocalQueue(TLocalQueueRegistry& InRegistry, ELocalQueueType InQueueType) : Registry(&InRegistry), QueueType(InQueueType)
+		{
+			AffinityIndex = Registry->AddLocalQueue(this, QueueType);
+			for (int32 PriorityIndex = 0; PriorityIndex < int32(ETaskPriority::Count); ++PriorityIndex)
+			{
+				for (int32 OverflowIndex = 0; OverflowIndex < int32(EOverflowType::Count); ++OverflowIndex)
+				{
+					DequeueHazards[PriorityIndex][OverflowIndex] = Registry->OverflowQueues[PriorityIndex][OverflowIndex].getHeadHazard();
+				}
+			}
+		}
+
+		~TLocalQueue()
+		{
+			for (int32 PriorityIndex = 0; PriorityIndex < int32(ETaskPriority::Count); PriorityIndex++)
+			{
+				while (true)
+				{
+					FTask* Item;
+					if (!LocalQueues[PriorityIndex].Get(Item))
+					{
+						break;
+					}
+					Registry->OverflowQueues[PriorityIndex][(int32)EOverflowType::Default].enqueue(Item);
+				}
+			}
+			Registry->DeleteLocalQueue(this, QueueType);
+		}
+
+		// add an item to the local queue and overflow into the global queue if full
+		// returns true if we should wake a worker
+		inline void Enqueue(FTask* Item, uint32 PriorityIndex)
+		{
+			checkSlow(Registry);
+			checkSlow(PriorityIndex < int32(ETaskPriority::Count));
+			checkSlow(Item != nullptr);
+
+			if (!LocalQueues[PriorityIndex].Put(Item))
+			{
+				Registry->OverflowQueues[PriorityIndex][(int32)EOverflowType::Default].enqueue(Item);
+			}
+		}
+
+		// Check both the local and global queue in priority order
+		template <bool bIsInsideBusyWait = false>
+		inline FTask* Dequeue(bool GetBackGroundTasks)
+		{
+			const int32 MaxPriority = GetBackGroundTasks ? int32(ETaskPriority::Count)   : int32(ETaskPriority::ForegroundCount);
+			constexpr int32 MinOverflow = bIsInsideBusyWait  ? int32(EOverflowType::Default) : int32(EOverflowType::DoNotRunInsideBusyWait);
+
+			for (int32 PriorityIndex = 0; PriorityIndex < MaxPriority; ++PriorityIndex)
+			{
+				FTask* Item;
+				if (LocalQueues[PriorityIndex].Get(Item))
+				{
+					return Item;
+				}
+
+				for (int32 OverflowIndex = MinOverflow; OverflowIndex < int32(EOverflowType::Count); ++OverflowIndex)
+				{
+					Item = Registry->OverflowQueues[PriorityIndex][OverflowIndex].dequeue(DequeueHazards[PriorityIndex][OverflowIndex]);
+					if (Item)
+					{
+						return Item;
+					}
+				}
+			}
+			return nullptr;
+		}
+
+		inline FTask* DequeueSteal(bool GetBackGroundTasks)
+		{
+			if (CachedRandomIndex == InvalidIndex)
+			{
+				CachedRandomIndex = Rand();
+			}
+
+			FTask* Result = Registry->StealItem(CachedRandomIndex, CachedPriorityIndex, GetBackGroundTasks);
+			if (Result)
+			{
+				return Result;
+			}
+			return nullptr;
+		}
+
+		uint32 GetAffinityIndex() const
+		{
+			return AffinityIndex;
+		}
+
+	private:
+		static constexpr uint32    InvalidIndex = ~0u;
+		FLocalQueueType            LocalQueues[uint32(ETaskPriority::Count)];
+		DequeueHazard              DequeueHazards[uint32(ETaskPriority::Count)][int32(EOverflowType::Count)];
+		TLocalQueueRegistry*       Registry;
+		uint32                     CachedRandomIndex = InvalidIndex;
+		uint32                     CachedPriorityIndex = 0;
+		uint32                     AffinityIndex = ~0u;
+		ELocalQueueType            QueueType;
+	};
+
+	TLocalQueueRegistry() = default;
+
+private:
+	// add a queue to the Registry
+	uint32 AddLocalQueue(TLocalQueue* QueueToAdd, ELocalQueueType QueueType)
+	{
+		NumActiveWorkers[QueueType == ELocalQueueType::EBackground]++;
+		LocalQueues.Add(QueueToAdd);
+		return LocalQueues.Num() - 1;
+	}
+
+	// remove a queue from the Registry
+	void DeleteLocalQueue(TLocalQueue* QueueToRemove, ELocalQueueType QueueType)
+	{
+		NumActiveWorkers[QueueType == ELocalQueueType::EBackground]--;
+		verify(LocalQueues.Remove(QueueToRemove) == 1);
+	}
+
+	// StealItem tries to steal an Item from a Registered LocalQueue
+	FTask* StealItem(uint32& CachedRandomIndex, uint32& CachedPriorityIndex, bool GetBackGroundTasks)
+	{
+		uint32 NumQueues = LocalQueues.Num();
+		uint32 MaxPriority = GetBackGroundTasks ? int32(ETaskPriority::Count) : int32(ETaskPriority::ForegroundCount);
+		CachedRandomIndex = CachedRandomIndex % NumQueues;
+
+		for(uint32 i = 0; i < NumQueues; i++)
+		{
+			TLocalQueue* LocalQueue = LocalQueues[CachedRandomIndex];
+			for(uint32 PriorityIndex = 0; PriorityIndex < MaxPriority; PriorityIndex++)
+			{
+				FTask* Item;
+				if (LocalQueue->LocalQueues[CachedPriorityIndex].Steal(Item))
+				{
+					return Item;
+				}
+				CachedPriorityIndex = ++CachedPriorityIndex < MaxPriority ? CachedPriorityIndex : 0;
+			}
+			CachedRandomIndex = ++CachedRandomIndex < NumQueues ? CachedRandomIndex : 0;
+		}
+		CachedPriorityIndex = 0;
+		CachedRandomIndex = TLocalQueue::InvalidIndex;
+		return nullptr;
+	}
+
+public:
+	// enqueue an Item directy into the Global OverflowQueue
+	template <bool bAllowInsideBusyWaiting = true>
+	void Enqueue(FTask* Item, uint32 PriorityIndex)
+	{
+		check(PriorityIndex < int32(ETaskPriority::Count));
+		check(Item != nullptr);
+
+		constexpr int32 OverflowIndex = bAllowInsideBusyWaiting ? (int32)EOverflowType::Default : (int32)EOverflowType::DoNotRunInsideBusyWait;
+		OverflowQueues[PriorityIndex][OverflowIndex].enqueue(Item);
+	}
+
+	// grab an Item directy from the Global OverflowQueue
+	template <bool bIsInsideBusyWait = false>
+	FTask* DequeueGlobal(bool GetBackGroundTasks = true)
+	{
+		const int32 MaxPriority = GetBackGroundTasks ? int32(ETaskPriority::Count) : int32(ETaskPriority::ForegroundCount);
+		constexpr int32 MinOverflow = bIsInsideBusyWait ? int32(EOverflowType::Default) : int32(EOverflowType::DoNotRunInsideBusyWait);
+
+		for (int32 PriorityIndex = 0; PriorityIndex < MaxPriority; ++PriorityIndex)
+		{
+			for (int32 OverflowIndex = MinOverflow; OverflowIndex < int32(EOverflowType::Count); ++OverflowIndex)
+			{
+				if (FTask* Item = OverflowQueues[PriorityIndex][OverflowIndex].dequeue())
+				{
+					return Item;
+				}
+			}
+		}
+		return nullptr;
+	}
+
+	inline FTask* DequeueSteal(bool GetBackGroundTasks)
+	{
+		uint32 CachedRandomIndex = Rand();
+		uint32 CachedPriorityIndex = 0;
+		FTask* Result = StealItem(CachedRandomIndex, CachedPriorityIndex, GetBackGroundTasks);
+		if (Result)
+		{
+			return Result;
+		}
+		return nullptr;
+	}
+
+private:
+	FOverflowQueueType     OverflowQueues[uint32(ETaskPriority::Count)][uint32(EOverflowType::Count)];
+	TArray<TLocalQueue*>   LocalQueues;
+	int                    NumActiveWorkers[2] = { 0, 0 };
+};
+
+} // namespace Private
+
+enum class UE_DEPRECATED(5.4, "This was meant for internal use only and will be removed") ELocalQueueType
+{
+	EBackground,
+	EForeground,
+};
+
+
+template<uint32 NumLocalItems = 1024>
+class UE_DEPRECATED(5.4, "This was meant for internal use only and will be removed") TLocalQueueRegistry
+{
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	static uint32 Rand()
 	{
 		uint32 State = FPlatformTime::Cycles();
@@ -352,7 +595,7 @@ public:
 		FSleepEvent*			SleepEvent;
 		uint32					CachedRandomIndex = InvalidIndex;
 		uint32					CachedPriorityIndex = 0;
-		uint32					AffinityIndex = ~0;
+		uint32					AffinityIndex = ~0u;
 		ELocalQueueType			QueueType;
 	};
 
@@ -479,6 +722,7 @@ private:
 	TArray<TLocalQueue*>	LocalQueues;
 	std::atomic_int			NumWorkersLookingForWork[2] = { {0}, {0} };
 	int						NumActiveWorkers[2] = { 0, 0 };
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 };
 
 }

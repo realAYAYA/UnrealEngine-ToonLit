@@ -410,9 +410,9 @@ public:
 	 * 
 	 * @return Conversion Matrix
 	 */
-	virtual FMatrix44f GetGamutToXYZMatrix() const
+	virtual FMatrix44d GetGamutToXYZMatrix() const
 	{
-		return GamutToXYZMatrix(EDisplayColorGamut::sRGB_D65);
+		return FMatrix44d(GamutToXYZMatrix(EDisplayColorGamut::sRGB_D65));
 	}
 
 	/**
@@ -420,24 +420,24 @@ public:
 	 * 
 	 * @return White point
 	 */
-	virtual FVector2f GetWhitePoint() const
+	virtual FVector2d GetWhitePoint() const
 	{
-		return FVector2f(UE::Color::GetWhitePoint(UE::Color::EWhitePoint::CIE1931_D65));
+		return UE::Color::GetWhitePoint(UE::Color::EWhitePoint::CIE1931_D65);
 	}
 
-	virtual FVector2f GetDisplayPrimaryRed() const
+	virtual FVector2d GetDisplayPrimaryRed() const
 	{
-		return FVector2f(0.64, 0.33);
+		return FVector2d(0.64, 0.33);
 	}
 
-	virtual FVector2f GetDisplayPrimaryGreen() const
+	virtual FVector2d GetDisplayPrimaryGreen() const
 	{
-		return FVector2f(0.30, 0.60);
+		return FVector2d(0.30, 0.60);
 	}
 
-	virtual FVector2f GetDisplayPrimaryBlue() const
+	virtual FVector2d GetDisplayPrimaryBlue() const
 	{
-		return FVector2f(0.15, 0.06);
+		return FVector2d(0.15, 0.06);
 	}
 
 	/**
@@ -448,9 +448,28 @@ public:
 		return IsOutputSrgb() ? UE::Color::EEncoding::sRGB : UE::Color::EEncoding::Linear;
 	}
 
+	/**
+	 * Get factor to normalize data from nits to scene color values
+	 */
 	virtual float GetHDRNitsNormalizationFactor() const
 	{
 		return (GetEncodingType() == UE::Color::EEncoding::sRGB || GetEncodingType() == UE::Color::EEncoding::Linear) ? 1.0f : kMediaSample_HDR_NitsNormalizationFactor;
+	}
+
+	/**
+	 * Get display mastering luminance information
+	 */
+	virtual bool GetDisplayMasteringLuminance(float& OutMin, float& OutMax) const
+	{
+		return false;
+	}
+
+	/**
+	 * Get maximum luminance information
+	 */
+	virtual bool GetMaxLuminanceLevels(uint16& OutCLL, uint16& OutFALL) const
+	{
+		return false;
 	}
 
 	/**

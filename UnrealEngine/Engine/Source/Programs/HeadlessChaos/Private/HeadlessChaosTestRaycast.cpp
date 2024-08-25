@@ -350,9 +350,9 @@ namespace ChaosTest
 
 		FTriangleMeshImplicitObject::ParticlesType Particles;
 		Particles.AddParticles(3);
-		Particles.X(0) = FVec3(1, 1, 1);
-		Particles.X(1) = FVec3(5, 1, 1);
-		Particles.X(2) = FVec3(1, 5, 1);
+		Particles.SetX(0, FVec3(1, 1, 1));
+		Particles.SetX(1, FVec3(5, 1, 1));
+		Particles.SetX(2, FVec3(1, 5, 1));
 		TArray<TVec3<int32>> Indices;
 		Indices.Emplace(0, 1, 2);
 		FTriangleMeshImplicitObject Tri(MoveTemp(Particles), MoveTemp(Indices), MoveTemp(DummyMaterials));
@@ -441,9 +441,9 @@ namespace ChaosTest
 
 		FTriangleMeshImplicitObject::ParticlesType Particles;
 		Particles.AddParticles(3);
-		Particles.X(0) = FVec3(1, 1, 1);
-		Particles.X(1) = FVec3(1, 1, 2);
-		Particles.X(2) = FVec3(1, 1, 3);
+		Particles.SetX(0, FVec3(1, 1, 1));
+		Particles.SetX(1, FVec3(1, 1, 2));
+		Particles.SetX(2, FVec3(1, 1, 3));
 		TArray<TVec3<int32>> Indices;
 		Indices.Emplace(0, 1, 2);
 		FTriangleMeshImplicitObject Tri(MoveTemp(Particles), MoveTemp(Indices), MoveTemp(DummyMaterials));
@@ -573,13 +573,13 @@ namespace ChaosTest
 		int32 FaceIndex;
 		const FReal Thickness = 0.1;
 
-		TUniquePtr<TSphere<FReal, 3>> Sphere = MakeUnique<TSphere<FReal,3>>(FVec3(1), 2);
-		TImplicitObjectScaled<TSphere<FReal, 3>> Unscaled(MakeSerializable(Sphere), nullptr, FVec3(1));
-		TImplicitObjectScaled<TSphere<FReal, 3>> UnscaledThickened(MakeSerializable(Sphere), nullptr, FVec3(1), Thickness);
-		TImplicitObjectScaled<TSphere<FReal, 3>> UniformScaled(MakeSerializable(Sphere), nullptr, FVec3(2));
-		TImplicitObjectScaled<TSphere<FReal, 3>> UniformScaledThickened(MakeSerializable(Sphere), nullptr, FVec3(2), Thickness);
-		TImplicitObjectScaled<TSphere<FReal, 3>> NonUniformScaled(MakeSerializable(Sphere), nullptr, FVec3(2,1,1));
-		TImplicitObjectScaled<TSphere<FReal, 3>> NonUniformScaledThickened(MakeSerializable(Sphere), nullptr, FVec3(2, 1, 1), Thickness);
+		FSpherePtr Sphere( new TSphere<FReal,3>(FVec3(1), 2));
+		TImplicitObjectScaled<TSphere<FReal, 3>> Unscaled(Sphere, FVec3(1));
+		TImplicitObjectScaled<TSphere<FReal, 3>> UnscaledThickened(Sphere, FVec3(1), Thickness);
+		TImplicitObjectScaled<TSphere<FReal, 3>> UniformScaled(Sphere, FVec3(2));
+		TImplicitObjectScaled<TSphere<FReal, 3>> UniformScaledThickened(Sphere, FVec3(2), Thickness);
+		TImplicitObjectScaled<TSphere<FReal, 3>> NonUniformScaled(Sphere, FVec3(2,1,1));
+		TImplicitObjectScaled<TSphere<FReal, 3>> NonUniformScaledThickened(Sphere, FVec3(2, 1, 1), Thickness);
 
 		//simple
 		bool bHit = Unscaled.Raycast(FVec3(1, 1, 8), FVec3(0, 0, -1), 8, 0, Time, Position, Normal, FaceIndex);

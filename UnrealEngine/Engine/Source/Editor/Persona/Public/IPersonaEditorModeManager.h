@@ -35,7 +35,7 @@ public:
 class IPersonaEditorModeManager;
 
 UCLASS()
-class UPersonaEditorModeManagerContext : public UObject, public IPersonaManagerContext
+class PERSONA_API UPersonaEditorModeManagerContext : public UObject, public IPersonaManagerContext
 {
 	GENERATED_BODY()
 public:

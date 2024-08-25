@@ -11,11 +11,13 @@ namespace UE::AnimNext
 {
 	void FNodeDescription::Serialize(FArchive& Ar)
 	{
-		Ar << UID;
+		const FNodeTemplateRegistry& NodeTemplateRegistry = FNodeTemplateRegistry::Get();
+
+		Ar << NodeID;
 
 		if (Ar.IsSaving())
 		{
-			const FNodeTemplate* NodeTemplate = FNodeTemplateRegistry::Get().Find(TemplateHandle);
+			const FNodeTemplate* NodeTemplate = NodeTemplateRegistry.Find(TemplateHandle);
 
 			uint32 TemplateUID = NodeTemplate->GetUID();
 			Ar << TemplateUID;
@@ -25,7 +27,7 @@ namespace UE::AnimNext
 			uint32 TemplateUID = 0;
 			Ar << TemplateUID;
 
-			TemplateHandle = FNodeTemplateRegistry::Get().Find(TemplateUID);
+			TemplateHandle = NodeTemplateRegistry.Find(TemplateUID);
 		}
 		else
 		{
@@ -35,7 +37,7 @@ namespace UE::AnimNext
 		}
 
 		// Use our template to serialize our decorators
-		const FNodeTemplate* NodeTemplate = FNodeTemplateRegistry::Get().Find(TemplateHandle);
+		const FNodeTemplate* NodeTemplate = NodeTemplateRegistry.Find(TemplateHandle);
 
 		const uint32 NumDecorators = NodeTemplate->GetNumDecorators();
 		const FDecoratorTemplate* DecoratorTemplates = NodeTemplate->GetDecorators();

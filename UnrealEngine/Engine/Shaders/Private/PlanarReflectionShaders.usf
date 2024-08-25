@@ -8,7 +8,7 @@
 #include "DeferredShadingCommon.ush"
 #include "PlanarReflectionShared.ush"
 #include "SceneTextureParameters.ush"
-#include "Strata/Strata.ush"
+#include "Substrate/Substrate.ush"
 
 Texture2D SceneColorInputTexture;
 SamplerState SceneColorInputSampler;
@@ -142,9 +142,9 @@ void PlanarReflectionPS(
 	OutColor = 0;
 
 
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 
-	const FStrataTopLayerData TopLayerData = StrataUnpackTopLayerData(Strata.TopLayerTexture.Load(uint3(SVPos.xy, 0)));
+	const FSubstrateTopLayerData TopLayerData = SubstrateUnpackTopLayerData(Substrate.TopLayerTexture.Load(uint3(SVPos.xy, 0)));
 
 	float DeviceZ = SampleDeviceZFromSceneTextures(BufferUV);
 	float SceneDepth = ConvertFromDeviceZ(DeviceZ);
@@ -153,7 +153,7 @@ void PlanarReflectionPS(
 
 	const float Roughness = TopLayerData.Roughness;
 	const float3 WorldNormal = TopLayerData.WorldNormal;
-	const bool bNoMaterial = !IsStrataMaterial(TopLayerData);
+	const bool bNoMaterial = !IsSubstrateMaterial(TopLayerData);
 
 	// Skip unlit pixels (skybox)
 	BRANCH

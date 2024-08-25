@@ -5,7 +5,6 @@
 #include "CanvasTypes.h"
 #include "DataDrivenShaderPlatformInfo.h"
 #include "Engine/Engine.h"
-#include "RenderTargetTemp.h"
 #include "ScenePrivate.h"
 #include "SpriteIndexBuffer.h"
 #include "PostProcess/PostProcessing.h"
@@ -1167,7 +1166,6 @@ FScreenPassTextureSlice AddVisualizeMotionBlurPass(FRDGBuilder& GraphBuilder, co
 		Canvas.DrawShadowedString(X, Y += YStep, TEXT("Paused, r.VelocityTest, Parallel:"), GetStatsFont(), FLinearColor(1, 1, 0));
 		Canvas.DrawShadowedString(X + ColumnWidth, Y, *Line, GetStatsFont(), FLinearColor(1, 1, 0));
 
-		const FScene* Scene = (const FScene*)View.Family->Scene;
 		const FSceneViewState *SceneViewState = (const FSceneViewState*)View.State;
 
 		Line = FString::Printf(TEXT("View=%.4x PrevView=%.4x"),

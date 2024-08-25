@@ -55,17 +55,10 @@ void MakeSpawnerToolMenuEntry(TSharedPtr<FTabManager> TabManager, FToolMenuSecti
 
 void PopulateTabSpawnerToolMenu_Helper(UToolMenu* InMenu, TSharedPtr<FTabManager> TabManager, TSharedRef<FWorkspaceItem> InMenuStructure, TSharedRef< TArray< TWeakPtr<FTabSpawnerEntry> > > AllSpawners, const int32 RecursionLevel, bool PutLabelOnSection)
 {
-	FToolMenuSection* TheSection = nullptr;
+	FToolMenuSection& Section = InMenu->FindOrAddSection(InMenuStructure->GetFName());
 	if (PutLabelOnSection)
 	{
-		const FText Label = InMenuStructure->GetDisplayName();
-		const FName Name = MakeObjectNameFromDisplayLabel(Label.ToString(), FName(TEXT("SectionName")));
-		TheSection = &InMenu->FindOrAddSection(Name);
-		TheSection->Label = Label;
-	}
-	else
-	{
-		TheSection = &InMenu->FindOrAddSection(NAME_None);
+		Section.Label = InMenuStructure->GetDisplayName();
 	}
 
 	for (const TSharedRef<FWorkspaceItem>& Child : InMenuStructure->GetChildItems())
@@ -77,7 +70,7 @@ void PopulateTabSpawnerToolMenu_Helper(UToolMenu* InMenu, TSharedPtr<FTabManager
 			// Only show non-hidden items that have a valid spawner.
 			if (AllSpawners->Contains(Spawner.ToSharedRef()))
 			{
-				MakeSpawnerToolMenuEntry(TabManager, *TheSection, Spawner);
+				MakeSpawnerToolMenuEntry(TabManager, Section, Spawner);
 			}
 		}
 		else if (Child->HasChildrenIn(*AllSpawners))
@@ -91,8 +84,8 @@ void PopulateTabSpawnerToolMenu_Helper(UToolMenu* InMenu, TSharedPtr<FTabManager
 			else
 			{
 				// Create a submenu and add all children there.
-				FToolMenuEntry& SubMenu = TheSection->AddSubMenu(
-					NAME_None,
+				FToolMenuEntry& SubMenu = Section.AddSubMenu(
+					Child->GetFName(),
 					Child->GetDisplayName(),
 					Child->GetTooltipText(),
 					FNewToolMenuDelegate::CreateStatic(&PopulateTabSpawnerToolMenu_Helper, TabManager, Child, AllSpawners, RecursionLevel+1, false),

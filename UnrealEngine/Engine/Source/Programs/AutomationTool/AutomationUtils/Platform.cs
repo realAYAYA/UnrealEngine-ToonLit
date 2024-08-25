@@ -394,6 +394,19 @@ namespace AutomationTool
 		/// <param name="ClientRunFlags"></param>
 		/// <param name="ClientApp"></param>
 		/// <param name="ClientCmdLine"></param>
+		/// <param name="Params"></param>
+		/// <param name="SC"></param>
+		public virtual IProcessResult RunClient(ERunOptions ClientRunFlags, string ClientApp, string ClientCmdLine, ProjectParams Params, DeploymentContext SC)
+		{
+			return RunClient(ClientRunFlags, ClientApp, ClientCmdLine, Params );
+		}
+
+		/// <summary>
+		/// Run the client application on the platform
+		/// </summary>
+		/// <param name="ClientRunFlags"></param>
+		/// <param name="ClientApp"></param>
+		/// <param name="ClientCmdLine"></param>
 		public virtual IProcessResult RunClient(ERunOptions ClientRunFlags, string ClientApp, string ClientCmdLine, ProjectParams Params)
 		{
 			PushDir(Path.GetDirectoryName(ClientApp));
@@ -786,6 +799,12 @@ namespace AutomationTool
 		{
 			Logger.LogWarning("PublishSymbols() has not been implemented for {Arg0}", PlatformType.ToString());
 			return false;
+		}
+
+		public virtual int GetExecutableSize(DirectoryReference BinariesDirectory, string ClientName, HashSet<FileReference> BuildProducts)
+		{
+			Logger.LogWarning("GetExecutableSize() has not been implemented for {Arg0}", PlatformType.ToString());
+			return -1;
 		}
 
 		/// <summary>

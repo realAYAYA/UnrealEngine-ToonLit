@@ -1,0 +1,101 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#include "../../../../../../Runtime/Launch/Resources/Windows/resource.h"
+#include "../../../../../../Runtime/Core/Public/Misc/CoreMiscDefines.h"
+#include "../../../../../../Runtime/Launch/Resources/Version.h"
+
+#include "../../../Internal/SwitchboardListenerVersion.h"
+
+#define APSTUDIO_READONLY_SYMBOLS
+#include <windows.h>
+#undef APSTUDIO_READONLY_SYMBOLS
+
+// Various strings used for project resources
+#ifdef PROJECT_COMPANY_NAME
+	#define BUILD_PROJECT_COMPANY_NAME PREPROCESSOR_TO_STRING(PROJECT_COMPANY_NAME)
+#else
+	#define BUILD_PROJECT_COMPANY_NAME EPIC_COMPANY_NAME
+#endif
+
+#ifdef PROJECT_COPYRIGHT_STRING
+	#define BUILD_PROJECT_COPYRIGHT_STRING PREPROCESSOR_TO_STRING(PROJECT_COPYRIGHT_STRING)
+#else
+	#define BUILD_PROJECT_COPYRIGHT_STRING EPIC_COPYRIGHT_STRING
+#endif
+
+#ifdef PROJECT_PRODUCT_NAME
+	#define BUILD_PROJECT_PRODUCT_NAME PREPROCESSOR_TO_STRING(PROJECT_PRODUCT_NAME)
+#else
+	#define BUILD_PROJECT_PRODUCT_NAME PREPROCESSOR_TO_STRING(UE_APP_NAME)
+#endif
+
+#ifdef BUILD_VERSION
+	#define BUILD_PROJECT_PRODUCT_VERSION PREPROCESSOR_TO_STRING(BUILD_VERSION)
+#else
+	#define BUILD_PROJECT_PRODUCT_VERSION ENGINE_VERSION_STRING
+#endif
+
+#ifdef PROJECT_PRODUCT_IDENTIFIER
+	#define BUILD_PROJECT_PRODUCT_IDENTIFIER PREPROCESSOR_TO_STRING(PROJECT_PRODUCT_IDENTIFIER)
+#else
+	#define BUILD_PROJECT_PRODUCT_IDENTIFIER EPIC_PRODUCT_IDENTIFIER
+#endif
+
+/////////////////////////////////////////////////////////////////////////////
+// English (United States) resources
+
+#if !defined(AFX_RESOURCE_DLL) || defined(AFX_TARG_ENU)
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+#pragma code_page(1252)
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Version
+//
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION SBLISTENER_VERSION_MAJOR,SBLISTENER_VERSION_MINOR,SBLISTENER_VERSION_PATCH,0
+ PRODUCTVERSION ENGINE_MAJOR_VERSION,ENGINE_MINOR_VERSION,ENGINE_PATCH_VERSION,0
+ FILEFLAGSMASK 0x17L
+#ifdef _DEBUG
+ FILEFLAGS 0x1L
+#else
+ FILEFLAGS 0x0L
+#endif
+ FILEOS 0x4L
+ FILETYPE 0x2L
+ FILESUBTYPE 0x0L
+BEGIN
+	BLOCK "StringFileInfo"
+	BEGIN
+		BLOCK "040904b0"
+		BEGIN
+			VALUE "CompanyName", BUILD_PROJECT_COMPANY_NAME
+			VALUE "LegalCopyright", BUILD_PROJECT_COPYRIGHT_STRING
+			VALUE "ProductName", BUILD_PROJECT_PRODUCT_NAME
+			VALUE "ProductVersion", BUILD_PROJECT_PRODUCT_VERSION
+			VALUE "FileDescription", BUILD_PROJECT_PRODUCT_NAME
+			VALUE "InternalName", BUILD_PROJECT_PRODUCT_IDENTIFIER
+#ifdef ORIGINAL_FILE_NAME
+			VALUE "OriginalFilename", PREPROCESSOR_TO_STRING(ORIGINAL_FILE_NAME)
+#endif
+		END
+	END
+	BLOCK "VarFileInfo"
+	BEGIN
+		VALUE "Translation", 0x409, 1200
+	END
+END
+
+/////////////////////////////////////////////////////////////////////////////
+//
+// Icon
+//
+
+// Icon with lowest ID value placed first to ensure application icon
+// remains consistent on all systems.
+
+IDICON_UEGame			ICON                    "Icon.ico"
+
+#endif    // English (United States) resources
+/////////////////////////////////////////////////////////////////////////////

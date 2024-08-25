@@ -17,7 +17,8 @@ FStorageServerPackageStoreBackend::FStorageServerPackageStoreBackend(FStorageSer
 		});
 }
 
-EPackageStoreEntryStatus FStorageServerPackageStoreBackend::GetPackageStoreEntry(FPackageId PackageId, FPackageStoreEntry& OutPackageStoreEntry)
+EPackageStoreEntryStatus FStorageServerPackageStoreBackend::GetPackageStoreEntry(FPackageId PackageId, FName PackageName,
+	FPackageStoreEntry& OutPackageStoreEntry)
 {
 	const FStoreEntry* FindEntry = StoreEntriesMap.Find(PackageId);
 	if (FindEntry)

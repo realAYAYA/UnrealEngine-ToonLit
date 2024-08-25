@@ -71,6 +71,32 @@ FDMXEditorStyle::FDMXEditorStyle()
 		Set("DMXEditor.Font.InputUniverseID", FSlateFontInfo(FontRoboto, 10, FName(TEXT("Regular"))));
 		Set("DMXEditor.Font.InputUniverseChannelID", FSlateFontInfo(FontRoboto, 10, FName(TEXT("Regular"))));
 		Set("DMXEditor.Font.InputUniverseChannelValue", FSlateFontInfo(FontRoboto, 10, FName(TEXT("Light"))));
+
+		// Normal Text
+		const FTextBlockStyle NormalText = FTextBlockStyle()
+			.SetFont(DEFAULT_FONT("Regular", 9))
+			.SetColorAndOpacity(FSlateColor::UseForeground())
+			.SetShadowOffset(FVector2D::ZeroVector)
+			.SetShadowColorAndOpacity(FLinearColor::Black)
+			.SetHighlightColor(FLinearColor(0.02f, 0.3f, 0.0f))
+			.SetHighlightShape(BOX_BRUSH("Common/TextBlockHighlightShape", FMargin(3.f / 8.f)));
+
+		const FTextBlockStyle NormalLogText = FTextBlockStyle(NormalText)
+			.SetFont(DEFAULT_FONT("Mono", 9.f))
+			.SetColorAndOpacity(FStyleColors::Foreground)
+			.SetSelectedBackgroundColor(FStyleColors::Highlight)
+			.SetHighlightColor(FStyleColors::Black);
+
+		Set("ConflictLog.Normal", NormalLogText);
+
+		Set("ConflictLog.Title", FTextBlockStyle(NormalLogText)
+			.SetFont(DEFAULT_FONT("Mono", 10.f)));
+
+		Set("ConflictLog.Warning", FTextBlockStyle(NormalLogText)
+			.SetColorAndOpacity(FStyleColors::Warning));
+
+		Set("ConflictLog.Error", FTextBlockStyle(NormalLogText)
+			.SetColorAndOpacity(FStyleColors::Error));
 	}
 
 	// Asset icons
@@ -98,12 +124,25 @@ FDMXEditorStyle::FDMXEditorStyle()
 	
 		Set("Icons.ChannelsMonitor", new IMAGE_BRUSH_SVG("ChannelsMonitor_16", Icon16x16));
 		Set("Icons.ActivityMonitor", new IMAGE_BRUSH_SVG("ActivityMonitor_16", Icon16x16));
+		Set("Icons.ConflictMonitor", new CORE_IMAGE_BRUSH_SVG("Starship/Common/OutputLog", Icon16x16));
 		Set("Icons.OutputConsole", new IMAGE_BRUSH_SVG("OutputConsole_16", Icon16x16));
 		Set("Icons.PatchTool", new IMAGE_BRUSH_SVG("PatchTool_16", Icon16x16));
 		Set("Icons.ReceiveDMX", new IMAGE_BRUSH_SVG("ToggleReceiveDMX_16", Icon16x16));
 		Set("Icons.SendDMX", new IMAGE_BRUSH_SVG("ToggleSendDMX_16", Icon16x16));
 
 		Set("Icons.WarningExclamationMark", new CORE_IMAGE_BRUSH("Old/Tiles/Outer/alertSolid", Icon16x16, FStyleColors::Warning));
+
+		// Play/Stop/Pause related icons
+		{
+			Set("Icons.Preview", new IMAGE_BRUSH_SVG("Preview", Icon16x16));
+			Set("Icons.PlayDMX", new CORE_IMAGE_BRUSH_SVG("Starship/Common/play", Icon20x20));
+			Set("Icons.StopDMX", new CORE_IMAGE_BRUSH_SVG("Starship/Common/stop", Icon20x20));
+
+			SetCoreContentRoot(FPaths::EngineContentDir() / TEXT("Editor/Slate"));
+			Set("Icons.ResumeDMX", new CORE_IMAGE_BRUSH_SVG("Starship/MainToolbar/simulate", Icon20x20));
+			Set("Icons.PauseDMX", new CORE_IMAGE_BRUSH_SVG("Starship/MainToolbar/pause", Icon20x20));
+			SetCoreContentRoot(FPaths::EngineContentDir() / TEXT("Slate"));
+		}
 	}
 	
 	// Distribution Grid buttons
@@ -203,7 +242,7 @@ void FDMXEditorStyle::Initialize()
 void FDMXEditorStyle::Shutdown()
 {
 	// DEPRECATED 5.0
-	ensureMsgf(StyleInstance_DEPRECATED.IsValid(), TEXT("%S called, but StyleInstance wasn't initialized"));
+	ensureMsgf(StyleInstance_DEPRECATED.IsValid(), TEXT("FDMXEditorStyle::Shutdown called, but StyleInstance wasn't initialized"));
 	FSlateStyleRegistry::UnRegisterSlateStyle(*StyleInstance_DEPRECATED);
 	ensure(StyleInstance_DEPRECATED.IsUnique());
 	StyleInstance_DEPRECATED.Reset();

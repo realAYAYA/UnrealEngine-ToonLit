@@ -136,7 +136,6 @@ bool STrackLane::IsPinned() const
 void STrackLane::OnHierarchyUpdated()
 {
 	bWidgetsDirty = true;
-	RecreateWidgets();
 }
 
 TSharedPtr<ITrackLaneWidget> STrackLane::FindWidgetForModel(const FWeakViewModelPtr& InModel) const
@@ -169,11 +168,8 @@ void STrackLane::RecreateWidgets()
 	ViewParams.OwningTrackLane = SharedThis(this);
 	ViewParams.TimeToPixel = TimeToPixel;
 
-	// Construct views for this track lane
-	for (TTypedIterator<ITrackLaneExtension, FViewModelVariantIterator> It(TrackAreaExtension->GetTrackAreaModelList()); It; ++It)
+	auto ConstructTrackLaneView = [&](TViewModelPtr<ITrackLaneExtension> Model)
 	{
-		TViewModelPtr<ITrackLaneExtension> Model = *It;
-
 		TSharedPtr<ITrackLaneWidget> ParentView;
 
 		if (ParentLane)
@@ -202,8 +198,18 @@ void STrackLane::RecreateWidgets()
 			SlotArguments.AttachWidget(NewView->AsWidget());
 			Children.AddSlot(MoveTemp(SlotArguments));
 		}
+	};
+
+	// Construct views for this track lane
+	for (TTypedIterator<ITrackLaneExtension, FViewModelVariantIterator> It(TrackAreaExtension->GetTrackAreaModelList()); It; ++It)
+	{
+		ConstructTrackLaneView(*It);
 	}
 
+	for (TTypedIterator<ITrackLaneExtension, FViewModelVariantIterator> It(TrackAreaExtension->GetTopLevelChildTrackAreaModels()); It; ++It)
+	{
+		ConstructTrackLaneView(*It);
+	}
 }
 
 void STrackLane::OnArrangeChildren( const FGeometry& AllottedGeometry, FArrangedChildren& ArrangedChildren ) const
@@ -228,8 +234,6 @@ void STrackLane::OnArrangeChildren( const FGeometry& AllottedGeometry, FArranged
 
 int32 STrackLane::OnPaint(const FPaintArgs& Args, const FGeometry& AllottedGeometry, const FSlateRect& MyCullingRect, FSlateWindowElementList& OutDrawElements, int32 LayerId, const FWidgetStyle& InWidgetStyle, bool bParentEnabled) const
 {
-	LayerId = PaintLaneBackground(AllottedGeometry, MyCullingRect, OutDrawElements, LayerId, InWidgetStyle);
-
 	FArrangedChildren ArrangedChildren(EVisibility::Visible);
 	ArrangeChildren(AllottedGeometry, ArrangedChildren);
 
@@ -240,10 +244,12 @@ int32 STrackLane::OnPaint(const FPaintArgs& Args, const FGeometry& AllottedGeome
 		LayerId = CurWidget.Widget->Paint( Args.WithNewParent(this), CurWidget.Geometry, ChildClipRect, OutDrawElements, LayerId, InWidgetStyle, ShouldBeEnabled( bParentEnabled ) );
 	}
 
+	LayerId = PaintLaneForeground(AllottedGeometry, MyCullingRect, OutDrawElements, LayerId, InWidgetStyle);
+
 	return LayerId + 1;
 }
 
-int32 STrackLane::PaintLaneBackground(const FGeometry& AllottedGeometry, const FSlateRect& MyCullingRect, FSlateWindowElementList& OutDrawElements, int32 LayerId, const FWidgetStyle& InWidgetStyle) const
+int32 STrackLane::PaintLaneForeground(const FGeometry& AllottedGeometry, const FSlateRect& MyCullingRect, FSlateWindowElementList& OutDrawElements, int32 LayerId, const FWidgetStyle& InWidgetStyle) const
 {
 	static const FName BorderName("Sequencer.AnimationOutliner.DefaultBorder");
 	static const FName SelectionColorName("SelectionColor");
@@ -254,8 +260,6 @@ int32 STrackLane::PaintLaneBackground(const FGeometry& AllottedGeometry, const F
 	{
 		return LayerId;
 	}
-
-	const int32 PaintLayerId = TrackAreaView->GetPaintLayers().LaneBackgrounds;
 
 	TViewModelPtr<IHoveredExtension> Hoverable = OutlinerItem.ImplicitCast();
 
@@ -270,14 +274,14 @@ int32 STrackLane::PaintLaneBackground(const FGeometry& AllottedGeometry, const F
 
 		FSlateDrawElement::MakeBox(
 			OutDrawElements,
-			PaintLayerId,
+			LayerId++,
 			AllottedGeometry.ToPaintGeometry(
 				FVector2f(AllottedGeometry.GetLocalSize().X, TotalNodeHeight),
 				FSlateLayoutTransform()
 			),
 			FAppStyle::GetBrush(BorderName),
 			ESlateDrawEffect::None,
-			SelectionColor
+			SelectionColor.CopyWithNewOpacity(0.2f)
 		);
 	}
 
@@ -301,7 +305,7 @@ int32 STrackLane::PaintLaneBackground(const FGeometry& AllottedGeometry, const F
 		{
 			FSlateDrawElement::MakeBox(
 				OutDrawElements,
-				PaintLayerId,
+				LayerId++,
 				AllottedGeometry.ToPaintGeometry(
 					FVector2f(AllottedGeometry.GetLocalSize().X, TotalNodeHeight),
 					FSlateLayoutTransform()
@@ -486,7 +490,7 @@ FReply STrackLane::OnMouseButtonDown(const FGeometry& MyGeometry, const FPointer
 				TViewModelPtr<IOutlinerExtension> OutlinerItem = WeakOutlinerItem.Pin();
 				const float OriginalHeight = OutlinerItem ? OutlinerItem->GetOutlinerSizing().GetTotalHeight() : 10.f;
 
-				DragParameters = FDragParameters(OriginalHeight, MouseEvent.GetScreenSpacePosition().Y);
+				DragParameters = FDragParameters(OriginalHeight, LocalPos.Y);
 				return FReply::Handled().CaptureMouse(AsShared());
 			}
 		}
@@ -511,7 +515,9 @@ FReply STrackLane::OnMouseMove(const FGeometry& MyGeometry, const FPointerEvent&
 
 	if (DragParameters.IsSet() && HasMouseCapture() && ResizableExtension)
 	{
-		float NewHeight = DragParameters->OriginalHeight + (MouseEvent.GetScreenSpacePosition().Y - DragParameters->DragStartY);
+		FVector2D LocalPos = MyGeometry.AbsoluteToLocal(MouseEvent.GetScreenSpacePosition());
+
+		float NewHeight = DragParameters->OriginalHeight + (LocalPos.Y - DragParameters->DragStartY);
 
 		if (FMath::RoundToInt(NewHeight) != FMath::RoundToInt(DragParameters->OriginalHeight))
 		{

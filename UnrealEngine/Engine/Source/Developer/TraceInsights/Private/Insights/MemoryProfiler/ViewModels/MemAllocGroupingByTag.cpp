@@ -6,7 +6,9 @@
 
 // Insights
 #include "Insights/Common/AsyncOperationProgress.h"
+#include "Insights/InsightsManager.h"
 #include "Insights/MemoryProfiler/ViewModels/MemAllocNode.h"
+#include "Insights/MemoryProfiler/MemoryProfilerManager.h"
 
 #define LOCTEXT_NAMESPACE "Insights::FMemAllocGroupingByTag"
 
@@ -17,8 +19,11 @@ namespace Insights
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-INSIGHTS_IMPLEMENT_RTTI(FMemAllocGroupingByTag);
+INSIGHTS_IMPLEMENT_RTTI(FMemAllocGroupingByTag)
+INSIGHTS_IMPLEMENT_RTTI(FMemTagTableTreeNode)
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// FMemAllocGroupingByTag
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 FMemAllocGroupingByTag::FMemAllocGroupingByTag(const TraceServices::IAllocationsProvider& InTagProvider)
@@ -114,9 +119,6 @@ void FMemAllocGroupingByTag::GroupNodes(const TArray<FTableTreeNodePtr>& Nodes,
 	};
 	FScopedMemory _(TagNodes);
 
-	const FSlateBrush* IconBrush = FBaseTreeNode::GetDefaultIcon(true);
-	FLinearColor GroupNodeColor(0.75f, 0.5f, 1.0f, 1.0f);
-
 	// Create tag nodes.
 	{
 		TraceServices::FProviderReadScopeLock TagProviderReadScopeLock(TagProvider);
@@ -124,10 +126,10 @@ void FMemAllocGroupingByTag::GroupNodes(const TArray<FTableTreeNodePtr>& Nodes,
 			{
 				const FName NodeName(Name);
 #if INSIGHTS_MERGE_MEM_TAGS_BY_NAME
-				FTableTreeNodePtr TreeNode = MakeShared<FCustomTableTreeNode>(NodeName, InParentTable, IconBrush, GroupNodeColor);
+				FTableTreeNodePtr TreeNode = MakeShared<FMemTagTableTreeNode>(NodeName, InParentTable, FullName);
 #else
 				const FName NodeNameEx(Name, int32(Id));
-				FTableTreeNodePtr TreeNode = MakeShared<FCustomTableTreeNode>(NodeNameEx, InParentTable, IconBrush, GroupNodeColor);
+				FTableTreeNodePtr TreeNode = MakeShared<FMemTagTableTreeNode>(NodeNameEx, InParentTable, FullName);
 #endif
 				FTagNode* TagNode = new FTagNode(NodeName, Id, ParentId, TreeNode);
 				TagNodes.Add(TagNode);
@@ -141,7 +143,7 @@ void FMemAllocGroupingByTag::GroupNodes(const TArray<FTableTreeNodePtr>& Nodes,
 	if (!UntaggedNode)
 	{
 		const FName NodeName(TEXT("Untagged"));
-		FTableTreeNodePtr UntaggedTreeNode = MakeShared<FCustomTableTreeNode>(NodeName, InParentTable, IconBrush, GroupNodeColor);
+		FTableTreeNodePtr UntaggedTreeNode = MakeShared<FMemTagTableTreeNode>(NodeName, InParentTable, TEXT("Untagged"));
 		UntaggedNode = new FTagNode(NodeName, UntaggedNodeId, InvalidTagId, UntaggedTreeNode);
 		TagNodes.Add(UntaggedNode);
 		IdToNodeMap.Add(UntaggedNodeId, UntaggedNode);
@@ -153,7 +155,7 @@ void FMemAllocGroupingByTag::GroupNodes(const TArray<FTableTreeNodePtr>& Nodes,
 	if (!UnknownTagNode)
 	{
 		const FName NodeName(TEXT("Unknown"));
-		FTableTreeNodePtr UnknownTagTreeNode = MakeShared<FCustomTableTreeNode>(NodeName, InParentTable, IconBrush, GroupNodeColor);
+		FTableTreeNodePtr UnknownTagTreeNode = MakeShared<FMemTagTableTreeNode>(NodeName, InParentTable, TEXT("Unknown"));
 		UnknownTagNode = new FTagNode(NodeName, UnknownTagNodeId, InvalidTagId, UnknownTagTreeNode);
 		TagNodes.Add(UnknownTagNode);
 		IdToNodeMap.Add(UnknownTagNodeId, UnknownTagNode);
@@ -262,8 +264,93 @@ void FMemAllocGroupingByTag::GroupNodes(const TArray<FTableTreeNodePtr>& Nodes,
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+// FMemTagTableTreeNode
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void FMemTagTableTreeNode::UpdateLLMSize() const
+{
+	LLMSize = 0;
+
+	TSharedPtr<FTable> Table = ParentTable.Pin();
+	if (!Table.IsValid())
+	{
+		return;
+	}
+
+	TSharedPtr<FMemAllocTable> MemAllocTable = StaticCastSharedPtr<FMemAllocTable>(Table);
+	if (!MemAllocTable.IsValid())
+	{
+		return;
+	}
+
+	double Time = MemAllocTable->GetTimeMarkerA();
+
+	TSharedPtr<const TraceServices::IAnalysisSession> Session = FInsightsManager::Get()->GetSession();
+	if (!Session.IsValid())
+	{
+		return;
+	}
+
+	::FMemorySharedState* SharedState = FMemoryProfilerManager::Get()->GetSharedState();
+	if (!SharedState)
+	{
+		return;
+	}
+
+	TraceServices::FMemoryTrackerId TrackerId = FMemoryTracker::InvalidTrackerId;
+	TraceServices::FMemoryTagId TagId = FMemoryTag::InvalidTagId;
+
+	const Insights::FMemoryTagList& TagList = SharedState->GetTagList();
+	for (const Insights::FMemoryTag* MemTag : TagList.GetTags())
+	{
+		if (MemTag)
+		{
+			const FString& FullName = MemTag->GetStatFullName();
+			if (FCString::Stricmp(*FullName, TagFullName) == 0)
+			{
+				TrackerId = MemTag->GetTrackerId();
+				TagId = MemTag->GetId();
+				break;
+			}
+		}
+	}
+	if (TrackerId == FMemoryTracker::InvalidTrackerId || TagId == FMemoryTag::InvalidTagId)
+	{
+		return;
+	}
+
+	const TraceServices::IMemoryProvider* MemoryProvider = TraceServices::ReadMemoryProvider(*Session.Get());
+	if (!MemoryProvider)
+	{
+		return;
+	}
+
+	TraceServices::FAnalysisSessionReadScope SessionReadScope(*Session.Get());
+
+	const uint64 TotalSampleCount = MemoryProvider->GetTagSampleCount(TrackerId, TagId);
+	if (TotalSampleCount == 0)
+	{
+		return;
+	}
+
+	int64 LocalLLMSize = INT64_MAX;
+	MemoryProvider->EnumerateTagSamples(TrackerId, TagId, Time, Time, true,
+		[&LocalLLMSize](double Time, double Duration, const TraceServices::FMemoryTagSample& Sample)
+		{
+			if (LocalLLMSize == INT64_MAX)
+			{
+				LocalLLMSize = Sample.Value;
+			}
+		});
+	if (LocalLLMSize != INT64_MAX)
+	{
+		LLMSize = LocalLLMSize;
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+} // namespace Insights
 
 #undef INSIGHTS_MERGE_MEM_TAGS_BY_NAME
 #undef LOCTEXT_NAMESPACE
-
-} // namespace Insights

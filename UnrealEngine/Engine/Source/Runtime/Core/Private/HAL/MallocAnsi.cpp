@@ -221,12 +221,8 @@ bool FMallocAnsi::GetAllocationSize( void *Original, SIZE_T &SizeOut )
 		return false;
 	}
 
-#if	PLATFORM_USES__ALIGNED_MALLOC
-	return false;
-#else
 	SizeOut = AnsiGetAllocationSize(Original);
 	return true;
-#endif
 }
 
 bool FMallocAnsi::IsInternallyThreadSafe() const
@@ -247,8 +243,6 @@ bool FMallocAnsi::ValidateHeap()
 	check(Result != _HEAPBADPTR);
 	check(Result != _HEAPEMPTY);
 	check(Result == _HEAPOK);
-#else
-	return true;
 #endif
 	return true;
 }

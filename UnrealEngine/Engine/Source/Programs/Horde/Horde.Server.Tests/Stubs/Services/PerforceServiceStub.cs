@@ -7,10 +7,12 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using EpicGames.Core;
-using EpicGames.Perforce;
+using EpicGames.Horde.Streams;
+using EpicGames.Horde.Users;
 using Horde.Server.Perforce;
 using Horde.Server.Streams;
 using Horde.Server.Users;
+using Horde.Server.Utilities;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace Horde.Server.Tests.Stubs.Services
@@ -26,7 +28,7 @@ namespace Horde.Server.Tests.Stubs.Services
 
 			public User(string login)
 			{
-				Id = UserId.GenerateNewId();
+				Id = new UserId(BinaryIdUtils.CreateNew());
 				Name = login.ToUpperInvariant();
 				Email = $"{login}@server";
 				Login = login;
@@ -106,7 +108,7 @@ namespace Horde.Server.Tests.Stubs.Services
 
 		public async ValueTask<IUser> FindOrAddUserAsync(string clusterName, string userName, CancellationToken cancellationToken)
 		{
-			return await _userCollection.FindOrAddUserByLoginAsync(userName);
+			return await _userCollection.FindOrAddUserByLoginAsync(userName, cancellationToken: cancellationToken);
 		}
 
 		public void AddChange(StreamId streamId, int number, IUser author, string description, IEnumerable<string> files)
@@ -127,6 +129,8 @@ namespace Horde.Server.Tests.Stubs.Services
 
 		public Task<List<ICommit>> GetChangesAsync(StreamConfig stream, int? minChange, int? maxChange, int? numResults, CancellationToken cancellationToken)
 		{
+			_ = cancellationToken;
+
 			List<ICommit> results = new List<ICommit>();
 
 			SortedDictionary<int, Commit>? streamChanges;
@@ -159,6 +163,8 @@ namespace Horde.Server.Tests.Stubs.Services
 
 		public Task<List<ICommit>> GetChangeDetailsAsync(StreamConfig stream, IReadOnlyList<int> changeNumbers, CancellationToken cancellationToken)
 		{
+			_ = cancellationToken;
+
 			List<ICommit> results = new List<ICommit>();
 			foreach (int changeNumber in changeNumbers)
 			{
@@ -201,12 +207,12 @@ namespace Horde.Server.Tests.Stubs.Services
 		{
 			throw new NotImplementedException();
 		}
-
-		public Task<ICommit> GetChangeDetailsAsync(IStream stream, int changeNumber, CancellationToken cancellationToken)
-		{
-			return Task.FromResult<ICommit>(Changes[stream.Id][changeNumber]);
-		}
-
+		/*
+				public Task<ICommit> GetChangeDetailsAsync(IStream stream, int changeNumber, CancellationToken cancellationToken)
+				{
+					return Task.FromResult<ICommit>(Changes[stream.Id][changeNumber]);
+				}
+		*/
 		class CommitCollection : ICommitCollection
 		{
 			readonly PerforceServiceStub _owner;

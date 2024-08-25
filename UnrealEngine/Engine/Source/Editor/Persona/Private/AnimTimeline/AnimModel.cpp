@@ -137,7 +137,7 @@ void FAnimModel::HandleWorkingRangeChanged(TRange<double> InRange)
 	WorkingRange = InRange;
 }
 
-bool FAnimModel::IsTrackSelected(const TSharedRef<FAnimTimelineTrack>& InTrack) const
+bool FAnimModel::IsTrackSelected(const TSharedRef<const FAnimTimelineTrack>& InTrack) const
 { 
 	return SelectedTracks.Find(InTrack) != nullptr;
 }

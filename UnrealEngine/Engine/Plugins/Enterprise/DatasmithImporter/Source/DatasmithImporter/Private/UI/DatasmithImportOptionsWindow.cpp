@@ -306,7 +306,7 @@ bool FDatasmithImportOptionHelpURLTestHelper::SendHttpRequest()
 	});
 
 	TOptional<float> RequestTimeout = HttpRequest->GetTimeout();
-	MaxTimeoutDelay = RequestTimeout.IsSet() ? RequestTimeout.GetValue() : HttpModule.GetHttpReceiveTimeout();
+	MaxTimeoutDelay = RequestTimeout.IsSet() ? RequestTimeout.GetValue() : HttpModule.GetHttpActivityTimeout();
 
 	return HttpRequest->ProcessRequest();
 }

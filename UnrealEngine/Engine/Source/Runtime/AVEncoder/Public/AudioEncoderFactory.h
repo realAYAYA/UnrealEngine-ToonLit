@@ -11,13 +11,15 @@ namespace AVEncoder
 {
 	class FAudioEncoder;
 
-	class FAudioEncoderFactory
+	class UE_DEPRECATED(5.4, "AVEncoder has been deprecated. Please use the AVCodecs plugin family instead.") FAudioEncoderFactory
 	{
 	public:
 		virtual ~FAudioEncoderFactory() {}
 		virtual const TCHAR* GetName() const = 0;
 		virtual TArray<FString> GetSupportedCodecs() const = 0;
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		virtual TUniquePtr<FAudioEncoder> CreateEncoder(const FString& Codec) = 0;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 		static AVENCODER_API void RegisterFactory(FAudioEncoderFactory& Factory);
 		static AVENCODER_API void UnregisterFactory(FAudioEncoderFactory& Factory);

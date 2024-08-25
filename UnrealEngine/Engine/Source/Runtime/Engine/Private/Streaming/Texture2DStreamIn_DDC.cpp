@@ -6,6 +6,7 @@ Texture2DStreamIn_DDC.cpp: Stream in helper for 2D textures loading DDC files.
 
 #include "Streaming/Texture2DStreamIn_DDC.h"
 #include "EngineLogs.h"
+#include "TextureCompiler.h"
 #include "Rendering/Texture2DResource.h"
 #include "RenderUtils.h"
 #include "Streaming/Texture2DStreamIn.h"
@@ -31,6 +32,7 @@ static FAutoConsoleVariableRef CVarStreamingDDCPendingSleep(
 FTexture2DStreamIn_DDC::FTexture2DStreamIn_DDC(UTexture2D* InTexture)
 	: FTexture2DStreamIn(InTexture)
 	, DDCRequestOwner(UE::DerivedData::EPriority::Normal)
+	, Texture(InTexture)
 {
 	DDCMipRequestStatus.AddZeroed(ResourceState.MaxNumLODs);
 }
@@ -129,6 +131,10 @@ void FTexture2DStreamIn_DDC::DoCreateAsyncDDCRequests(const FContext& Context)
 					Status.Buffer = MoveTemp(Response.RawData);
 					check(Status.bRequestIssued);
 					Status.bRequestIssued = false;
+				}
+				else if (Response.Status == EStatus::Error)
+				{
+					FTextureCompilingManager::Get().ForceDeferredTextureRebuildAnyThread({Texture});
 				}
 			});
 		}

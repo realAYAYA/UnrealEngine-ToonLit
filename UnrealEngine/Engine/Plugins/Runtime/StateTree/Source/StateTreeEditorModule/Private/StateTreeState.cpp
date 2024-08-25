@@ -10,6 +10,28 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(StateTreeState)
 
+
+//////////////////////////////////////////////////////////////////////////
+// FStateTreeStateParameters
+
+void FStateTreeStateParameters::RemoveUnusedOverrides()
+{
+	// Remove overrides that do not exists anymore
+	if (!PropertyOverrides.IsEmpty())
+	{
+		if (const UPropertyBag* Bag = Parameters.GetPropertyBagStruct())
+		{
+			for (TArray<FGuid>::TIterator It = PropertyOverrides.CreateIterator(); It; ++It)
+			{
+				if (!Bag->FindPropertyDescByID(*It))
+				{
+					It.RemoveCurrentSwap();
+				}
+			}
+		}
+	}
+}
+
 //////////////////////////////////////////////////////////////////////////
 // FStateTreeTransition
 
@@ -26,18 +48,6 @@ FStateTreeTransition::FStateTreeTransition(const EStateTreeTransitionTrigger InT
 	State = InState ? InState->GetLinkToState() : FStateTreeStateLink(InType);
 }
 
-void FStateTreeTransition::PostSerialize(const FArchive& Ar)
-{
-#if WITH_EDITORONLY_DATA
-	const int32 CurrentVersion = Ar.CustomVer(FStateTreeCustomVersion::GUID);
-	if (CurrentVersion < FStateTreeCustomVersion::AddedTransitionIds)
-	{
-		ID = FGuid::NewGuid();
-	}
-#endif // WITH_EDITORONLY_DAT
-}
-
-
 //////////////////////////////////////////////////////////////////////////
 // UStateTreeState
 
@@ -48,7 +58,44 @@ UStateTreeState::UStateTreeState(const FObjectInitializer& ObjectInitializer)
 	Parameters.ID = FGuid::NewGuid();
 }
 
-#if WITH_EDITOR
+UStateTreeState::~UStateTreeState()
+{
+	UE::StateTree::Delegates::OnPostCompile.RemoveAll(this);
+}
+
+void UStateTreeState::PostInitProperties()
+{
+	Super::PostInitProperties();
+	
+	UE::StateTree::Delegates::OnPostCompile.AddUObject(this, &UStateTreeState::OnTreeCompiled);
+}
+
+void UStateTreeState::OnTreeCompiled(const UStateTree& StateTree)
+{
+	if (&StateTree == LinkedAsset)
+	{
+		UpdateParametersFromLinkedSubtree();
+	}
+}
+
+void UStateTreeState::PreEditChange(FEditPropertyChain& PropertyAboutToChange)
+{
+	Super::PreEditChange(PropertyAboutToChange);
+
+	const FStateTreeEditPropertyPath PropertyChainPath(PropertyAboutToChange);
+
+	static const FStateTreeEditPropertyPath StateTypePath(UStateTreeState::StaticClass(), TEXT("Type"));
+
+	if (PropertyChainPath.IsPathExact(StateTypePath))
+	{
+		// If transitioning from linked state, reset the parameters
+		if (Type == EStateTreeStateType::Linked
+			|| Type == EStateTreeStateType::LinkedAsset)
+		{
+			Parameters.Reset();
+		}
+	}
+}
 
 void UStateTreeState::PostEditChangeChainProperty(FPropertyChangedChainEvent& PropertyChangedEvent)
 {
@@ -75,6 +122,7 @@ void UStateTreeState::PostEditChangeChainProperty(FPropertyChangedChainEvent& Pr
 	static const FStateTreeEditPropertyPath StateTypePath(UStateTreeState::StaticClass(), TEXT("Type"));
 	static const FStateTreeEditPropertyPath SelectionBehaviorPath(UStateTreeState::StaticClass(), TEXT("SelectionBehavior"));
 	static const FStateTreeEditPropertyPath StateLinkedSubtreePath(UStateTreeState::StaticClass(), TEXT("LinkedSubtree"));
+	static const FStateTreeEditPropertyPath StateLinkedAssetPath(UStateTreeState::StaticClass(), TEXT("LinkedAsset"));
 	static const FStateTreeEditPropertyPath StateParametersPath(UStateTreeState::StaticClass(), TEXT("Parameters"));
 	static const FStateTreeEditPropertyPath StateTasksPath(UStateTreeState::StaticClass(), TEXT("Tasks"));
 	static const FStateTreeEditPropertyPath StateEnterConditionsPath(UStateTreeState::StaticClass(), TEXT("EnterConditions"));
@@ -94,7 +142,7 @@ void UStateTreeState::PostEditChangeChainProperty(FPropertyChangedChainEvent& Pr
 	}
 
 	// Broadcast selection type changes so that the UI can update.
-	if (SelectionBehaviorPath.IsPathExact(StateTypePath))
+	if (ChangePropertyPath.IsPathExact(SelectionBehaviorPath))
 	{
 		const UStateTree* StateTree = GetTypedOuter<UStateTree>();
 		if (ensure(StateTree))
@@ -106,7 +154,7 @@ void UStateTreeState::PostEditChangeChainProperty(FPropertyChangedChainEvent& Pr
 	if (ChangePropertyPath.IsPathExact(StateTypePath))
 	{
 		// Remove any tasks and evaluators when they are not used.
-		if (Type == EStateTreeStateType::Group || Type == EStateTreeStateType::Linked)
+		if (Type == EStateTreeStateType::Group || Type == EStateTreeStateType::Linked || Type == EStateTreeStateType::LinkedAsset)
 		{
 			Tasks.Reset();
 		}
@@ -116,22 +164,23 @@ void UStateTreeState::PostEditChangeChainProperty(FPropertyChangedChainEvent& Pr
 		{
 			LinkedSubtree = FStateTreeStateLink();
 		}
+		if (Type != EStateTreeStateType::LinkedAsset)
+		{
+			LinkedAsset = nullptr;
+		}
 
-		if (Type == EStateTreeStateType::Linked)
+		if (Type == EStateTreeStateType::Linked
+			|| Type == EStateTreeStateType::LinkedAsset)
 		{
 			// Linked parameter layout is fixed, and copied from the linked target state.
 			Parameters.bFixedLayout = true;
 			UpdateParametersFromLinkedSubtree();
 			SelectionBehavior = EStateTreeStateSelectionBehavior::TrySelectChildrenInOrder;
 		}
-		else if (Type == EStateTreeStateType::Subtree)
-		{
-			// Subtree parameter layout can be edited
-			Parameters.bFixedLayout = false;
-		}
 		else
 		{
-			Parameters.Reset();
+			// Other layouts can be edited
+			Parameters.bFixedLayout = false;
 		}
 	}
 
@@ -143,11 +192,20 @@ void UStateTreeState::PostEditChangeChainProperty(FPropertyChangedChainEvent& Pr
 			UpdateParametersFromLinkedSubtree();
 		}
 	}
+	
+	if (ChangePropertyPath.IsPathExact(StateLinkedAssetPath))
+	{
+		if (Type == EStateTreeStateType::LinkedAsset)
+		{
+			UpdateParametersFromLinkedSubtree();
+		}
+	}
 
 	// Broadcast subtree parameter layout edits so that the linked states can adapt.
 	if (ChangePropertyPath.IsPathExact(StateParametersPath))
 	{
-		if (Type == EStateTreeStateType::Subtree)
+		if (!(Type == EStateTreeStateType::Linked
+				|| Type == EStateTreeStateType::LinkedAsset))
 		{
 			const UStateTree* StateTree = GetTypedOuter<UStateTree>();
 			if (ensure(StateTree))
@@ -286,6 +344,7 @@ void UStateTreeState::PostEditChangeChainProperty(FPropertyChangedChainEvent& Pr
 		}
 	}
 
+	UE::StateTree::PropertyHelpers::DispatchPostEditToNodes(*this, PropertyChangedEvent);
 }
 
 void UStateTreeState::PostLoad()
@@ -299,32 +358,101 @@ void UStateTreeState::PostLoad()
 	}
 
 #if WITH_EDITORONLY_DATA
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	// Move deprecated evaluators to editor data.
-	if (Evaluators_DEPRECATED.Num() > 0)
+	const int32 CurrentVersion = GetLinkerCustomVersion(FStateTreeCustomVersion::GUID);
+	if (CurrentVersion < FStateTreeCustomVersion::AddedTransitionIds)
 	{
-		if (UStateTreeEditorData* TreeData = GetTypedOuter<UStateTreeEditorData>())
+		// Make guids for transitions. These need to be deterministic when upgrading because of cooking.
+		for (int32 Index = 0; Index < Transitions.Num(); Index++)
 		{
-			TreeData->Evaluators.Append(Evaluators_DEPRECATED);
-			Evaluators_DEPRECATED.Reset();
-		}		
+			FStateTreeTransition& Transition = Transitions[Index];
+			Transition.ID = FGuid::NewDeterministicGuid(GetPathName(), Index);
+		}
 	}
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
-#endif
+
+	if (CurrentVersion < FStateTreeCustomVersion::OverridableStateParameters)
+	{
+		// In earlier versions, all parameters were overwritten.
+		if (const UPropertyBag* Bag = Parameters.Parameters.GetPropertyBagStruct())
+		{
+			for (const FPropertyBagPropertyDesc& Desc : Bag->GetPropertyDescs())
+			{
+				Parameters.PropertyOverrides.Add(Desc.ID);
+			}
+		}
+	}
+	
+#endif // WITH_EDITORONLY_DATA
+
 }
 
 void UStateTreeState::UpdateParametersFromLinkedSubtree()
 {
-	if (const UStateTreeEditorData* TreeData = GetTypedOuter<UStateTreeEditorData>())
+	if (const FInstancedPropertyBag* DefaultParameters = GetDefaultParameters())
 	{
-		if (const UStateTreeState* LinkTargetState = TreeData->GetStateByID(LinkedSubtree.ID))
+		Parameters.Parameters.MigrateToNewBagInstanceWithOverrides(*DefaultParameters, Parameters.PropertyOverrides);
+		Parameters.RemoveUnusedOverrides();
+	}
+	else
+	{
+		Parameters.Reset();
+	}
+}
+
+void UStateTreeState::SetParametersPropertyOverridden(const FGuid PropertyID, const bool bIsOverridden)
+{
+	if (bIsOverridden)
+	{
+		Parameters.PropertyOverrides.AddUnique(PropertyID);
+	}
+	else
+	{
+		Parameters.PropertyOverrides.Remove(PropertyID);
+		UpdateParametersFromLinkedSubtree();
+
+		// Remove binding when override is removed.
+		if (UStateTreeEditorData* EditorData = GetTypedOuter<UStateTreeEditorData>())
 		{
-			Parameters.Parameters.MigrateToNewBagInstance(LinkTargetState->Parameters.Parameters);
+			if (FStateTreeEditorPropertyBindings* Bindings = EditorData->GetPropertyEditorBindings())
+			{
+				if (const UPropertyBag* ParametersBag = Parameters.Parameters.GetPropertyBagStruct())
+				{
+					if (const FPropertyBagPropertyDesc* Desc = ParametersBag->FindPropertyDescByID(PropertyID))
+					{
+						check(Desc->CachedProperty);
+
+						EditorData->Modify();
+
+						FStateTreePropertyPath Path(Parameters.ID, Desc->CachedProperty->GetFName());
+						Bindings->RemovePropertyBindings(Path);
+					}
+				}
+			}
 		}
 	}
 }
 
-#endif
+const FInstancedPropertyBag* UStateTreeState::GetDefaultParameters() const
+{
+	if (Type == EStateTreeStateType::Linked)
+	{
+		if (const UStateTreeEditorData* TreeData = GetTypedOuter<UStateTreeEditorData>())
+		{
+			if (const UStateTreeState* LinkTargetState = TreeData->GetStateByID(LinkedSubtree.ID))
+			{
+				return &LinkTargetState->Parameters.Parameters;
+			}
+		}
+	}
+	else if (Type == EStateTreeStateType::LinkedAsset)
+	{
+		if (LinkedAsset)
+		{
+			return &LinkedAsset->GetDefaultParameters();
+		}
+	}
+
+	return nullptr;
+}
 
 const UStateTreeState* UStateTreeState::GetRootState() const
 {

@@ -24,6 +24,7 @@ private:
 	FNiagaraEditorStyle();
 	void InitStats();
 	void InitAssetPicker();
+	void InitAssetBrowser();
 	void InitActionMenu();
 	void InitEmitterHeader();
 	void InitParameters();

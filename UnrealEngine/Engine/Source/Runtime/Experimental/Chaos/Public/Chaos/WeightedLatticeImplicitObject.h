@@ -55,7 +55,7 @@ inline FArchive& operator<<(FArchive& Ar, FWeightedLatticeInfluenceData& Value)
 class FWeightedLatticeImplicitObject : public FImplicitObject
 {
 public:
-	using ObjectType = TUniquePtr<FImplicitObject>;
+	using ObjectType = FImplicitObjectPtr;
 	using FImplicitObject::GetTypeName;
 
 	CHAOS_API FWeightedLatticeImplicitObject(int32 Flags, EImplicitObjectType InType, TUniformGrid<FReal, 3>&& InGrid,
@@ -181,7 +181,7 @@ class TWeightedLatticeImplicitObject : public FWeightedLatticeImplicitObject
 public:
 	using T = typename TConcrete::TType;
 	using TType = T;
-	using ObjectType = TUniquePtr<TConcrete>;
+	using ObjectType = TRefCountPtr<TConcrete>;
 
 	TWeightedLatticeImplicitObject(ObjectType&& InObject, TUniformGrid<FReal, 3>&& InGrid,
 		TArrayND<FWeightedLatticeInfluenceData, 3>&& InBoneData, TArray<FName>&& InUsedBones, TArray<FTransform>&& InReferenceRelativeTransforms);
@@ -195,12 +195,11 @@ public:
 
 	const TConcrete* GetEmbeddedObject() const
 	{
-		return Object.Get();
+		return Object.GetReference();
 	}
 
-	virtual FImplicitObject* Duplicate() const override;
-	virtual TUniquePtr<FImplicitObject> Copy() const override;
-	virtual TUniquePtr<FImplicitObject> DeepCopy() const override;
+	virtual FImplicitObjectPtr CopyGeometry() const override;
+	virtual FImplicitObjectPtr DeepCopyGeometry() const override;
 
 	virtual uint32 GetTypeHash() const override
 	{
@@ -232,8 +231,8 @@ private:
 
 	static TWeightedLatticeImplicitObject<TConcrete>* CopyHelper(const TWeightedLatticeImplicitObject<TConcrete>* Obj)
 	{
-		TUniquePtr<FImplicitObject> CopiedShape = Obj->Object->Copy();
-		return new TWeightedLatticeImplicitObject<TConcrete>(reinterpret_cast<TUniquePtr<TConcrete>&&>(CopiedShape), *Obj);
+		FImplicitObjectPtr CopiedShape = Obj->Object->CopyGeometry();
+		return new TWeightedLatticeImplicitObject<TConcrete>(reinterpret_cast<ObjectType&&>(CopiedShape), *Obj);
 	}
 
 	TWeightedLatticeImplicitObject(ObjectType&& InObject, const FWeightedLatticeImplicitObject& Other)
@@ -264,7 +263,11 @@ public:
 	inline void FinalizeInfluences(const FBoneIndexToBoneName& BoneIndexToBoneName, const FBoneIndexToReferenceTransform& BoneIndexToReferenceTransform);
 
 	template<typename TConcrete>
+	UE_DEPRECATED(5.4, "Please use Generate with TRefCountPtr instead")
 	inline TUniquePtr< TWeightedLatticeImplicitObject<TConcrete> > Generate(TUniquePtr<TConcrete>&& Object);
+	
+	template<typename TConcrete>
+	inline TRefCountPtr< TWeightedLatticeImplicitObject<TConcrete> > Generate(TRefCountPtr<TConcrete>&& Object);
 
 	const TUniformGrid<FReal, 3>& GetGrid() const { return Grid; }
 	const TArrayND<FWeightedLatticeInfluenceData, 3>& GetBoneData() const { return BoneData; }
@@ -416,12 +419,12 @@ inline void FWeightedLatticeImplicitObjectBuilder::FinalizeInfluences(const FBon
 }
 
 template<typename TConcrete>
-inline TUniquePtr< TWeightedLatticeImplicitObject<TConcrete> > FWeightedLatticeImplicitObjectBuilder::Generate(TUniquePtr<TConcrete>&& Object)
+inline TRefCountPtr< TWeightedLatticeImplicitObject<TConcrete> > FWeightedLatticeImplicitObjectBuilder::Generate(TRefCountPtr<TConcrete>&& Object)
 {
 	check(BuildStep == EBuildStep::InfluencesFinalized);
 
-	TUniquePtr< TWeightedLatticeImplicitObject<TConcrete> > Ret = MakeUnique< TWeightedLatticeImplicitObject<TConcrete> >(
-		MoveTemp(Object), MoveTemp(Grid), MoveTemp(BoneData), MoveTemp(UsedBones), MoveTemp(ReferenceRelativeTransforms));
+	TRefCountPtr<TWeightedLatticeImplicitObject<TConcrete>> Ret( new TWeightedLatticeImplicitObject<TConcrete>(
+		MoveTemp(Object), MoveTemp(Grid), MoveTemp(BoneData), MoveTemp(UsedBones), MoveTemp(ReferenceRelativeTransforms)));
 
 	BuildStep = EBuildStep::Finished;
 

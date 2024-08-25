@@ -1,234 +1,112 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "NearestNeighborEditorModel.h"
-#include "IDetailsView.h"
-#include "NearestNeighborModel.h"
-#include "NearestNeighborModelInstance.h"
-#include "NearestNeighborTrainingModel.h"
-#include "NearestNeighborModelInputInfo.h"
-#include "NearestNeighborEditorModelActor.h"
-#include "NearestNeighborModelStyle.h"
-#include "NearestNeighborGeomCacheSampler.h"
+
+#include "Algo/Copy.h"
+#include "Animation/AnimSequence.h"
 #include "Components/ExternalMorphSet.h"
-#include "MLDeformerComponent.h"
-#include "MLDeformerEditorToolkit.h"
-#include "MLDeformerAsset.h"
+#include "Engine/SkeletalMesh.h"
 #include "GeometryCache.h"
 #include "GeometryCacheComponent.h"
-#include "Animation/DebugSkelMeshComponent.h"
-#include "Animation/MorphTarget.h"
-#include "Animation/AnimSequence.h"
-#include "Animation/AnimInstance.h"
-#include "BonePose.h"
-#include "PackageTools.h"
-#include "ObjectTools.h"
-#include "UObject/SavePackage.h"
-#include "Misc/FileHelper.h"
-
+#include "IPersonaPreviewScene.h"
+#include "Misc/MessageDialog.h"
+#include "MLDeformerAsset.h"
+#include "MLDeformerComponent.h"
+#include "MLDeformerEditorStyle.h"
+#include "MLDeformerEditorToolkit.h"
+#include "NearestNeighborGeomCacheSampler.h"
+#include "NearestNeighborModel.h"
+#include "NearestNeighborModelInputInfo.h"
+#include "NearestNeighborModelInstance.h"
+#include "NearestNeighborModelStyle.h"
+#include "NearestNeighborModelVizSettings.h"
+#include "NearestNeighborTrainingModel.h"
+#include "Rendering/SkeletalMeshModel.h"
+#include "SceneManagement.h"
+#include "SkeletalMeshAttributes.h"
 
 #define LOCTEXT_NAMESPACE "NearestNeighborEditorModel"
 
 namespace UE::NearestNeighborModel
 {
-	using namespace UE::MLDeformer;
+	namespace Private
+	{
+		void AddFloatArrayToDeltaArray(TConstArrayView<float> FloatArr, TConstArrayView<int32> VertexMap, TConstArrayView<float> VertexWeights, TArrayView<FVector3f> OutDeltaArr)
+		{
+			const int32 SectionNumVerts = VertexMap.Num();
+			check(FloatArr.Num() == SectionNumVerts * 3);
+			check(VertexWeights.Num() == SectionNumVerts);
+			for (int32 Index = 0; Index < SectionNumVerts; ++Index)
+			{
+				const int32 FloatIndex = Index * 3;
+				const int32 DeltaIndex = VertexMap[Index];
+				const float Weight = VertexWeights[Index];
+				OutDeltaArr[DeltaIndex] = FVector3f(FloatArr[FloatIndex], FloatArr[FloatIndex + 1], FloatArr[FloatIndex + 2]) * Weight;
+			}
+		}
+	};
 
-	FMLDeformerEditorModel* FNearestNeighborEditorModel::MakeInstance()
+	UE::MLDeformer::FMLDeformerEditorModel* FNearestNeighborEditorModel::MakeInstance()
 	{
 		return new FNearestNeighborEditorModel();
 	}
 
 	void FNearestNeighborEditorModel::Init(const InitSettings& InitSettings)
 	{
-		FMLDeformerEditorModel::Init(InitSettings);
+		FMLDeformerMorphModelEditorModel::Init(InitSettings);
 		InitInputInfo(Model->GetInputInfo());
-	}
-
-	FMLDeformerSampler* FNearestNeighborEditorModel::CreateSampler() const
-	{
-		FNearestNeighborGeomCacheSampler* NewSampler = new FNearestNeighborGeomCacheSampler();
-		NewSampler->OnGetGeometryCache().BindLambda([this] { return GetGeomCacheModel()->GetGeometryCache(); });
-		return NewSampler;
-	}
-
-	void FNearestNeighborEditorModel::OnPropertyChanged(FPropertyChangedEvent& PropertyChangedEvent)
-	{
-		const FProperty* Property = PropertyChangedEvent.Property;
-		if (Property == nullptr)
+		VertexMapSelector = MakeUnique<FVertexMapSelector>();
+		VertexMapSelector->Update(Model->GetSkeletalMesh());
+		const UNearestNeighborModel* const NearestNeighborModel = GetCastModel();
+		if (!NearestNeighborModel)
 		{
 			return;
 		}
-
-		FMLDeformerMorphModelEditorModel::OnPropertyChanged(PropertyChangedEvent);
-
-		if (Property->GetFName() == UMLDeformerModel::GetSkeletalMeshPropertyName() ||
-			Property->GetFName() == UMLDeformerModel::GetAnimSequencePropertyName() ||
-			Property->GetFName() == UMLDeformerGeomCacheModel::GetGeometryCachePropertyName() ||
-			Property->GetFName() == UNearestNeighborModel::GetClothPartEditorDataPropertyName()
-			|| (PropertyChangedEvent.MemberProperty != nullptr && PropertyChangedEvent.MemberProperty->GetFName() == UNearestNeighborModel::GetClothPartEditorDataPropertyName()))
+		const int32 NumSections = NearestNeighborModel->GetNumSections();
+		if (UNearestNeighborModelVizSettings* const NNViz = GetCastVizSettings())
 		{
-			GetNearestNeighborModel()->InvalidateClothPartData();
-			GetEditor()->GetModelDetailsView()->ForceRefresh();
-		}
-
-		if (Property->GetFName() == UNearestNeighborModel::GetNearestNeighborDataPropertyName() || (PropertyChangedEvent.MemberProperty != nullptr && PropertyChangedEvent.MemberProperty->GetFName() == UNearestNeighborModel::GetNearestNeighborDataPropertyName()))
-		{
-			GetNearestNeighborModel()->InvalidateNearestNeighborData();
-			GetEditor()->GetModelDetailsView()->ForceRefresh();
-		}
-
-		if (Property->GetFName() == UNearestNeighborModel::GetMorphCompressionLevelPropertyName() || Property->GetFName() == UNearestNeighborModel::GetMorphDeltaZeroThresholdPropertyName())
-		{
-			GetNearestNeighborModel()->InvalidateMorphTargetData();
-			GetEditor()->GetModelDetailsView()->ForceRefresh();
+			VertVizSelector = MakeUnique<FVertVizSelector>(NNViz);
+			VertVizSelector->Update(NumSections);
 		}
 	}
 
-	void FNearestNeighborEditorModel::OnPostTraining(ETrainingResult TrainingResult, bool bUsePartiallyTrainedWhenAborted)
+	TSharedPtr<UE::MLDeformer::FMLDeformerSampler> FNearestNeighborEditorModel::CreateSamplerObject() const
 	{
-		FMLDeformerEditorModel::OnPostTraining(TrainingResult, bUsePartiallyTrainedWhenAborted);
-		if (TrainingResult == ETrainingResult::Success || (TrainingResult == ETrainingResult::Aborted && bUsePartiallyTrainedWhenAborted))
-		{
-			GetNearestNeighborModel()->InvalidateNearestNeighborData();
-			InitTestMLDeformerPreviousWeights();
-			GetEditor()->GetModelDetailsView()->ForceRefresh();
-		}
-	}
-	
-	bool FNearestNeighborEditorModel::LoadTrainedNetwork() const
-	{
-		UNearestNeighborModel* NearestNeighborModel = GetNearestNeighborModel();
-		if (NearestNeighborModel)
-		{	
-			const FString OnnxFile = GetTrainedNetworkOnnxFile();
-			if (NearestNeighborModel->ShouldUseOptimizedNetwork())
-			{
-				const bool bSuccess = NearestNeighborModel->LoadOptimizedNetwork(OnnxFile);
-				if (bSuccess)
-				{
-					UNearestNeighborModelInstance* ModelInstance = static_cast<UNearestNeighborModelInstance*>(GetTestMLDeformerModelInstance());
-					if (ModelInstance)
-					{
-						ModelInstance->InitOptimizedNetworkInstance();
-						NearestNeighborModel->SetUseOptimizedNetwork(true);
-						return true;
-					}
-				}
-			}
-		}
-		return false;
-	}
-
-	bool FNearestNeighborEditorModel::IsTrained() const
-	{
-		const UNearestNeighborModel* NearestNeighborModel = GetNearestNeighborModel();
-		if (NearestNeighborModel)
-		{
-			return NearestNeighborModel->DoesUseOptimizedNetwork() && NearestNeighborModel->GetOptimizedNetwork() != nullptr;
-		}
-		return false;
-	}
-
-	FString FNearestNeighborEditorModel::GetTrainedNetworkOnnxFile() const
-	{
-		const UNearestNeighborModel* NearestNeighborModel = GetNearestNeighborModel();
-		if (NearestNeighborModel)
-		{
-			return NearestNeighborModel->GetModelDir() + TEXT("/NearestNeighborModel.onnx");
-		}
-		else
-		{
-			return FMLDeformerEditorModel::GetTrainedNetworkOnnxFile();
-		}
-	}
-
-	int32 FNearestNeighborEditorModel::GetNumTrainingFrames() const
-	{
-		if (NumTrainingFramesOverride >= 0)
-		{
-			return NumTrainingFramesOverride;
-		}
-		else
-		{
-			return FMLDeformerMorphModelEditorModel::GetNumTrainingFrames();
-		}
-	}
-
-	UNearestNeighborModelVizSettings* FNearestNeighborEditorModel::GetNearestNeighborModelVizSettings() const
-	{
-		return Cast<UNearestNeighborModelVizSettings>(GetMorphModel()->GetVizSettings()); 
+		return MakeShared<FNearestNeighborGeomCacheSampler>();
 	}
 
 	void FNearestNeighborEditorModel::CreateActors(const TSharedRef<IPersonaPreviewScene>& InPersonaPreviewScene)
 	{
 		FMLDeformerMorphModelEditorModel::CreateActors(InPersonaPreviewScene);
+	
+		UWorld* const World = InPersonaPreviewScene->GetWorld();
+		if (!World)
+		{
+			return;
+		}
 
-		UWorld* World = InPersonaPreviewScene->GetWorld();
-		CreateNearestNeighborActors(World);
-		EditorWorld = World;
+		if (NearestNeighborActor)
+		{
+			EditorActors.Remove(NearestNeighborActor);
+			if (NearestNeighborActor->GetActor())
+			{
+				World->DestroyActor(NearestNeighborActor->GetActor(), true);
+			}
+		}
+		NearestNeighborActor = CreateNearestNeighborActor(World);
+		UpdateNearestNeighborActor(*NearestNeighborActor);
+		EditorActors.Add(NearestNeighborActor);
 	}
 
 	void FNearestNeighborEditorModel::Tick(FEditorViewportClient* ViewportClient, float DeltaTime)
 	{
 		FMLDeformerEditorModel::Tick(ViewportClient, DeltaTime);
-		if (!NearestNeighborActors.IsEmpty())
+		if (NearestNeighborActor)
 		{
-			UNearestNeighborModelVizSettings* NNViz = GetNearestNeighborModelVizSettings();
-			const float Offset = NNViz->GetNearestNeighborActorsOffset();
-			for (FNearestNeighborEditorModelActor* NearestNeighborActor : NearestNeighborActors)
-			{
-				if (NearestNeighborActor)
-				{
-					NearestNeighborActor->TickNearestNeighborActor();
-					NearestNeighborActor->SetMeshOffsetFactor(Offset);
-				}
-			}
-			const UNearestNeighborModelInstance* ModelInstance = static_cast<UNearestNeighborModelInstance*>(GetTestMLDeformerModelInstance());
-			if (ModelInstance)
-			{
-				NNViz->SetNearestNeighborIds(ModelInstance->GetNearestNeighborIds());
-			}
+			UpdateNearestNeighborActor(*NearestNeighborActor);
+			NearestNeighborActor->Tick();
 		}
-	}
-
-	void FNearestNeighborEditorModel::CreateNearestNeighborActors(UWorld* World, int32 StartIndex)
-	{
-		UNearestNeighborModel* NearestNeighborModel = GetNearestNeighborModel();
-		const int32 NumParts = NearestNeighborModel->GetNumParts();
-
-		if (StartIndex == 0)
-		{
-			NearestNeighborActors.Reset();
-		}
-		NearestNeighborActors.SetNumZeroed(NumParts);
-
-		const UNearestNeighborModelVizSettings* NNViz = GetNearestNeighborModelVizSettings();
-		const float Offset = NNViz->GetNearestNeighborActorsOffset();
-		
-		for(int32 PartId = StartIndex; PartId < NumParts; PartId++)
-		{
-			UGeometryCache* GeomCache = NearestNeighborModel->GetNearestNeighborCache(PartId);
-			const FLinearColor LabelColor = FNearestNeighborModelEditorStyle::Get().GetColor("NearestNeighborModel.NearestNeighborActors.LabelColor");
-			const FLinearColor WireframeColor = FNearestNeighborModelEditorStyle::Get().GetColor("NearestNeighborModel.NearestNeighborActors.WireframeColor");
-			CreateGeomCacheActor(
-				World, 
-				ActorID_NearestNeighborActors,
-				*FString::Printf(TEXT("NearestNeighbors%d"), PartId), 
-				GeomCache, 
-				LabelColor,					
-				WireframeColor,
-				LOCTEXT("TestNearestNeighborLabelText", "Nearest Neigbors"),
-				false);
-			FNearestNeighborEditorModelActor* NearestNeighborActor = static_cast<FNearestNeighborEditorModelActor*>(EditorActors.Last());
-			UMLDeformerComponent* MLDeformerComponent = GetTestMLDeformerComponent();
-			NearestNeighborActor->InitNearestNeighborActor(PartId, MLDeformerComponent);
-			NearestNeighborActor->SetMeshOffsetFactor(Offset);
-			NearestNeighborActors[PartId] = NearestNeighborActor;
-		}
-	}
-
-	FMLDeformerEditorActor* FNearestNeighborEditorModel::CreateEditorActor(const FMLDeformerEditorActor::FConstructSettings& Settings) const
-	{
-		return new FNearestNeighborEditorModelActor(Settings);
+		UpdateNearestNeighborIds();
 	}
 
 	void FNearestNeighborEditorModel::InitInputInfo(UMLDeformerInputInfo* InputInfo)
@@ -237,700 +115,865 @@ namespace UE::NearestNeighborModel
 		UNearestNeighborModelInputInfo* NearestNeighborInputInfo = static_cast<UNearestNeighborModelInputInfo*>(InputInfo);
 		NearestNeighborInputInfo->InitRefBoneRotations(Model->GetSkeletalMesh());
 	}
-
+	
 	ETrainingResult FNearestNeighborEditorModel::Train()
 	{
-		UNearestNeighborModel* NearestNeighborModel = GetNearestNeighborModel();
-		MorphTargetUpdateResult = EUpdateResult::SUCCESS;
-		if (!NearestNeighborModel->IsClothPartDataValid())
+		UNearestNeighborModel* const NearestNeighborModel = GetCastModel();
+		if (!NearestNeighborModel)
 		{
-			MorphTargetUpdateResult |= NearestNeighborModel->UpdateClothPartData();
-			if (HasError(MorphTargetUpdateResult))
-			{
-				UpdateNearestNeighborActors();
-				return ETrainingResult::FailOnData;
-			}
+			return ETrainingResult::FailPythonError;
 		}
-
+		if(OpFlag::HasError(NearestNeighborModel->UpdateForTraining()))
+		{
+			return ETrainingResult::FailPythonError;
+		}
+		if (!NearestNeighborModel->IsReadyForTraining())
+		{
+			return ETrainingResult::FailPythonError;
+		}
+		const int32 NumFrames = GetNumFramesForTraining();
+		const int32 NumBasis = NearestNeighborModel->GetTotalNumBasis();
+		if (NumFrames <= NumBasis)
+		{
+			UE_LOG(LogNearestNeighborModel, Error, TEXT("Training frames (%d) must be greater than the number of basis (%d)"), NumFrames, NumBasis);
+			return ETrainingResult::FailPythonError;
+		}
 		return TrainModel<UNearestNeighborTrainingModel>(this);
 	}
 
-	uint8 FNearestNeighborEditorModel::SetSamplerPartData(const int32 PartId)
+	bool FNearestNeighborEditorModel::LoadTrainedNetwork() const
 	{
-		FNearestNeighborGeomCacheSampler* GeomCacheSampler = static_cast<FNearestNeighborGeomCacheSampler*>(GetGeomCacheSampler());
-		UNearestNeighborModel* NearestNeighborModel = GetNearestNeighborModel();
-		if (GeomCacheSampler && NearestNeighborModel && PartId < NearestNeighborModel->GetNumParts())
-		{
-			TObjectPtr<USkeletalMeshComponent> SkeletalMeshComponent = GeomCacheSampler->GetSkeletalMeshComponent();
-			TObjectPtr<UGeometryCacheComponent> GeometryCacheComponent = GeomCacheSampler->GetGeometryCacheComponent();
-
-			const TObjectPtr<UAnimSequence> AnimSequence = NearestNeighborModel->GetNearestNeighborSkeletons(PartId);
-			const TObjectPtr<UGeometryCache> GeometryCache = NearestNeighborModel->GetNearestNeighborCache(PartId);
-
-			if (SkeletalMeshComponent && GeometryCacheComponent && AnimSequence && GeometryCache)
+		UNearestNeighborModel* const NearestNeighborModel = GetCastModel();
+		if (NearestNeighborModel)
+		{	
+			const FString File = NearestNeighborModel->GetModelDir() / TEXT("NearestNeighborModel.ubnne");
+			const bool bSuccess = NearestNeighborModel->LoadOptimizedNetworkFromFile(File);
+			if (bSuccess)
 			{
-				const int32 NumNeighborsFromGeomCache = NearestNeighborModel->GetNumNeighborsFromGeometryCache(PartId);
-				const int32 NumNeighborsFromAnimSequence = NearestNeighborModel->GetNumNeighborsFromAnimSequence(PartId);
-				const int32 NumFrames = FMath::Min(NumNeighborsFromGeomCache, NumNeighborsFromAnimSequence);
-				if (NumFrames > 0)
+				UNearestNeighborModelInstance* ModelInstance = GetTestNearestNeighborModelInstance();
+				if (ModelInstance)
 				{
-					AnimSequence->Interpolation = EAnimInterpolationType::Step;
-
-					SkeletalMeshComponent->SetAnimationMode(EAnimationMode::AnimationSingleNode);
-					SkeletalMeshComponent->SetAnimation(AnimSequence);
-					SkeletalMeshComponent->SetPosition(0.0f);
-					SkeletalMeshComponent->SetPlayRate(1.0f);
-					SkeletalMeshComponent->Play(false);
-					SkeletalMeshComponent->RefreshBoneTransforms();
-					if (SkeletalMeshComponent->GetAnimInstance())
-					{
-						SkeletalMeshComponent->GetAnimInstance()->GetRequiredBones().SetUseRAWData(true);
-					}
-
-					// assuming MeshMappings do not change
-					GeometryCacheComponent->SetGeometryCache(GeometryCache);
-					GeometryCacheComponent->ResetAnimationTime();
-					GeometryCacheComponent->SetLooping(false);
-					GeometryCacheComponent->SetManualTick(true);
-					GeometryCacheComponent->SetPlaybackSpeed(1.0f);
-					GeometryCacheComponent->Play();
-					if (uint8 ReturnCode = GeomCacheSampler->GenerateMeshMappings(); HasError(ReturnCode))
-					{
-						return ReturnCode;
-					}
-
-					NumTrainingFramesOverride = NumFrames;
-
-					if (NumNeighborsFromGeomCache == NumNeighborsFromAnimSequence)
-					{
-						return EUpdateResult::SUCCESS;
-					}
-					else
-					{
-						UE_LOG(LogNearestNeighborModel, Warning, TEXT("NearestNeighborData: part %d frame mismatch: AnimSequence has %d frames and GeometryCache has %d frames. Using %d frames only."), PartId, NumNeighborsFromAnimSequence, NumNeighborsFromGeomCache, NumFrames);
-						return EUpdateResult::WARNING;
-					}
+					ModelInstance->InitOptimizedNetworkInstance();
+					return true;
 				}
-				else
-				{
-					UE_LOG(LogNearestNeighborModel, Warning, TEXT("Part %d: AnimSequence or GeometryCache has zero frames"), PartId);
-					return EUpdateResult::WARNING;
-				}
-			}
-			else if (AnimSequence == nullptr && GeometryCache == nullptr)
-			{
-				return EUpdateResult::SUCCESS;
-			}
-			else
-			{
-				UE_LOG(LogNearestNeighborModel, Warning, TEXT("Part %d is skipped because AnimSequence or GeometryCache is None"), PartId);
-				return EUpdateResult::WARNING;
 			}
 		}
-		UE_LOG(LogNearestNeighborModel, Error, TEXT("SetSamplerPartData: unknown error"));
-		return EUpdateResult::ERROR;
+		return false;
 	}
 
-	int32 FNearestNeighborEditorModel::GetNumParts()
+	void FNearestNeighborEditorModel::OnPostTraining(ETrainingResult TrainingResult, bool bUsePartiallyTrainedWhenAborted)
 	{
-		UNearestNeighborModel *NearestNeighborModel = GetNearestNeighborModel();
-		if (NearestNeighborModel != nullptr)
+		if (TrainingResult == ETrainingResult::Aborted && !bUsePartiallyTrainedWhenAborted)
 		{
-			return NearestNeighborModel->GetNumParts();
+			GetMorphModel()->SetMorphTargetDeltas(MorphTargetDeltasBackup);
+			GetMorphModel()->SetMorphTargetsMinMaxWeights(MorphTargetsMinMaxWeightsBackup);
+		}
+		else if (TrainingResult == ETrainingResult::Success || (TrainingResult == ETrainingResult::Aborted && bUsePartiallyTrainedWhenAborted))
+		{
+			UNearestNeighborModel* const NearestNeighborModel = GetCastModel();
+			if (!NearestNeighborModel)
+			{
+				return;
+			}
+			NearestNeighborModel->InvalidateInference();
+			if (NearestNeighborModel->DoesUseFileCache())
+			{
+				NearestNeighborModel->UpdateFileCache();
+			}
+			ResetMorphTargets();
+		}
+		FMLDeformerMorphModelEditorModel::OnPostTraining(TrainingResult, bUsePartiallyTrainedWhenAborted);
+	}
+
+	FMLDeformerTrainingInputAnim* FNearestNeighborEditorModel::GetTrainingInputAnim(int32 Index) const
+	{
+		UNearestNeighborModel* const NearestNeighborModel = GetCastModel();
+		if (!NearestNeighborModel)
+		{
+			return nullptr;
+		}
+		TArray<FMLDeformerGeomCacheTrainingInputAnim>& TrainingInputAnims = NearestNeighborModel->GetTrainingInputAnims();
+		const int32 NumTrainingAnims = TrainingInputAnims.Num();
+		const int32 NumSections = NearestNeighborModel->GetNumSections();
+		if (Index >= 0 && Index < NumTrainingAnims)
+		{
+			return &TrainingInputAnims[Index];
+		}
+		else if (Index >= NumTrainingAnims && Index < NumTrainingAnims + NumSections)
+		{
+			const int32 SectionIndex = Index - NumTrainingAnims;
+			return NearestNeighborModel->GetNearestNeighborAnim(SectionIndex);
 		}
 		else
 		{
-			return 0;
-		}
-	}
-
-	void FNearestNeighborEditorModel::ResetSamplerData()
-	{
-		FNearestNeighborGeomCacheSampler* GeomCacheSampler = static_cast<FNearestNeighborGeomCacheSampler*>(GetGeomCacheSampler());
-		UNearestNeighborModel* NearestNeighborModel = GetNearestNeighborModel();
-		if (GeomCacheSampler && NearestNeighborModel)
-		{
-			TObjectPtr<USkeletalMeshComponent> SkeletalMeshComponent = GeomCacheSampler->GetSkeletalMeshComponent();
-			const TObjectPtr<UAnimSequence> AnimSequence = NearestNeighborModel->GetAnimSequence();
-
-			if (SkeletalMeshComponent && AnimSequence)
-			{
-				SkeletalMeshComponent->SetAnimationMode(EAnimationMode::AnimationSingleNode);
-				SkeletalMeshComponent->SetAnimation(AnimSequence);
-				SkeletalMeshComponent->SetPosition(0.0f);
-				SkeletalMeshComponent->SetPlayRate(1.0f);
-				SkeletalMeshComponent->Play(false);
-				SkeletalMeshComponent->RefreshBoneTransforms();
-			}
-			NumTrainingFramesOverride = -1;
-			GeomCacheSampler->RegisterTargetComponents();
-		}
-	}
-
-	void FNearestNeighborEditorModel::UpdateNearestNeighborActors()
-	{
-		if (EditorWorld != nullptr)
-		{
-			const UNearestNeighborModel* NearestNeighborModel = GetNearestNeighborModel();
-			const int32 TargetNumActors = NearestNeighborModel->GetNumParts();
-			if (NearestNeighborActors.Num() > TargetNumActors)
-			{
-				for (int32 i = NearestNeighborActors.Num() - 1; i >= TargetNumActors; i--)
-				{
-					FNearestNeighborEditorModelActor* EditorActor = NearestNeighborActors[i];
-					NearestNeighborActors.RemoveAt(i);
-					EditorActors.Remove(EditorActor);
-					EditorWorld->RemoveActor(EditorActor->GetActor(), true/*ShouldModifyLevel*/);
-					delete EditorActor;
-				}
-			}
-			if (NearestNeighborActors.Num() < TargetNumActors)
-			{
-				CreateNearestNeighborActors(EditorWorld, NearestNeighborActors.Num());
-			}
-
-			for (int32 PartId = 0; PartId < NearestNeighborActors.Num(); PartId++)
-			{
-				const TObjectPtr<UGeometryCache> GeometryCache = GetNearestNeighborModel()->GetNearestNeighborCache(PartId);
-				NearestNeighborActors[PartId]->GetGeometryCacheComponent()->SetGeometryCache(GeometryCache);
-			}
-		}
-	}
-
-	uint8 FNearestNeighborEditorModel::UpdateNearestNeighborData()
-	{
-		UNearestNeighborModel *NearestNeighborModel = static_cast<UNearestNeighborModel*>(Model);
-		check(NearestNeighborModel != nullptr);
-
-		if (NearestNeighborModel->GetNumParts() == 0)
-		{
-			return EUpdateResult::SUCCESS;
-		}
-
-		FNearestNeighborGeomCacheSampler* GeomCacheSampler = static_cast<FNearestNeighborGeomCacheSampler*>(GetGeomCacheSampler());
-		if (GeomCacheSampler)
-		{
-			TObjectPtr<USkeletalMeshComponent> SkeletalMeshComponent = GeomCacheSampler->GetSkeletalMeshComponent();
-			TObjectPtr<UGeometryCacheComponent> GeometryCacheComponent = GeomCacheSampler->GetGeometryCacheComponent();
-
-			if(SkeletalMeshComponent && GeometryCacheComponent)
-			{
-				UNearestNeighborTrainingModel *TrainingModel = InitTrainingModel<UNearestNeighborTrainingModel>(this);
-				check(TrainingModel != nullptr);
-				uint8 ReturnCode = TrainingModel->UpdateNearestNeighborData();
-				ResetSamplerData();
-				if (HasError(ReturnCode) == 0)
-				{
-					NearestNeighborModel->ValidateNearestNeighborData();
-				}
-				return ReturnCode;
-			}
-		}
-		UE_LOG(LogNearestNeighborModel, Warning, TEXT("GeomCacheSampler is empty. Nearest neighbor data is not updated."))
-		return EUpdateResult::ERROR;
-	}
-
-	template<typename T>
-	T* CreateObjectInstance(const FString& PackageName)
-	{
-		// Parent package to place new mesh
-		UPackage* Package = nullptr;
-		FString NewPackageName = PackageName;
-		const FString ObjectName = FPaths::GetBaseFilename(PackageName);
-
-		// Setup package name and create one accordingly
-		NewPackageName = UPackageTools::SanitizePackageName(NewPackageName);
-		Package = CreatePackage(*NewPackageName);
-
-		const FString SanitizedObjectName = ObjectTools::SanitizeObjectName(ObjectName);
-
-		T* ExistingTypedObject = FindObject<T>(Package, *SanitizedObjectName);
-		UObject* ExistingObject = FindObject<UObject>(Package, *SanitizedObjectName);
-
-		if (ExistingTypedObject != nullptr)
-		{
-			ExistingTypedObject->PreEditChange(nullptr);
-		}
-		else if (ExistingObject != nullptr)
-		{
-			// Replacing an object.  Here we go!
-			// Delete the existing object
-			const bool bDeleteSucceeded = ObjectTools::DeleteSingleObject(ExistingObject);
-
-			if (bDeleteSucceeded)
-			{
-				// Force GC so we can cleanly create a new asset (and not do an 'in place' replacement)
-				CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS);
-
-				// Create a package for each mesh
-				Package = CreatePackage(*NewPackageName);
-			}
-			else
-			{
-				// failed to delete
-				UE_LOG(LogNearestNeighborModel, Error, TEXT("Failed to delete existing object %s"), *SanitizedObjectName);
-				return nullptr;
-			}
-		}
-
-		if (Package == nullptr)
-		{
-			UE_LOG(LogNearestNeighborModel, Error, TEXT("Failed to create package %s"), *NewPackageName);
 			return nullptr;
 		}
-
-		return NewObject<T>(Package, FName(*SanitizedObjectName),  RF_Public | RF_Standalone);
 	}
 
-	void FNearestNeighborEditorModel::KMeansClusterPoses()
+	void FNearestNeighborEditorModel::UpdateTimelineTrainingAnimList()
 	{
-		KMeansClusterResult = EUpdateResult::SUCCESS;
-		UNearestNeighborModel* NearestNeighborModel = static_cast<UNearestNeighborModel*>(Model);
-		check(NearestNeighborModel != nullptr);
-
-		if (NearestNeighborModel->KMeansPartId >= NearestNeighborModel->GetNumParts())
+		TArray<TSharedPtr<FMLDeformerTrainingInputAnimName>> NameList;
+		
+		// Build the list of names, based on the training inputs.
+		const int32 NumAnims = GetNumTrainingInputAnims();
+		for (int32 AnimIndex = 0; AnimIndex < NumAnims; ++AnimIndex)
 		{
-			UE_LOG(LogNearestNeighborModel, Error, TEXT("KMeansPartId %d is out of range [0, %d). Nothing will be done."), NearestNeighborModel->KMeansPartId, NearestNeighborModel->GetNumParts());
-			KMeansClusterResult |= EUpdateResult::ERROR;
-			return;
-		}
-		if (NearestNeighborModel->SourceAnims.Num() == 0)
-		{
-			UE_LOG(LogNearestNeighborModel, Error, TEXT("No source anims found."));
-			KMeansClusterResult |= EUpdateResult::ERROR;
-			return;
-		}
-		for (int32 i = 0; i < NearestNeighborModel->SourceAnims.Num(); i++)
-		{
-			if (NearestNeighborModel->SourceAnims[i] == nullptr)
+			const FMLDeformerTrainingInputAnim* Anim = GetTrainingInputAnim(AnimIndex);
+			if (Anim)
 			{
-				UE_LOG(LogNearestNeighborModel, Error, TEXT("Source anim %d is null."), i);
-				KMeansClusterResult |= EUpdateResult::ERROR;
-				return;
+				if (Anim->IsValid())
+				{
+					TSharedPtr<FMLDeformerTrainingInputAnimName> AnimName = MakeShared<FMLDeformerTrainingInputAnimName>();
+					AnimName->TrainingInputAnimIndex = AnimIndex;
+					AnimName->Name = FString::Printf(TEXT("[#%d] %s"), AnimIndex, *Anim->GetAnimSequence()->GetName());
+					NameList.Emplace(AnimName);
+				}
 			}
 		}
 
-		UNearestNeighborTrainingModel *TrainingModel = InitTrainingModel<UNearestNeighborTrainingModel>(this);
-		check(TrainingModel != nullptr);
-		KMeansClusterResult |= TrainingModel->KmeansClusterPoses(NearestNeighborModel->KMeansPartId);
-		if (HasError(KMeansClusterResult))
+		if (const UNearestNeighborModel* const NearestNeighborModel = GetCastModel())
 		{
-			return;
+			const int32 NumSections = NearestNeighborModel->GetNumSections();
+			for (int32 Index = 0; Index < NumSections; ++Index)
+			{
+				const FMLDeformerTrainingInputAnim* Anim = NearestNeighborModel->GetNearestNeighborAnim(Index);
+				if (Anim && Anim->IsValid())
+				{
+					TSharedPtr<FMLDeformerTrainingInputAnimName> AnimName = MakeShared<FMLDeformerTrainingInputAnimName>();
+					AnimName->TrainingInputAnimIndex = Index + NumAnims;
+					AnimName->Name = FString::Printf(TEXT("Neighbor[#%d] %s"), Index, *Anim->GetAnimSequence()->GetName());	
+					NameList.Emplace(AnimName);
+				}
+			}
 		}
-		ResetSamplerData();
-		TArray<int32> KmeansResults = TrainingModel->KmeansResults;
 
-		const FString PackageName = GetTestMLDeformerComponent()->GetDeformerAsset()->GetPackage()->GetName();
-		const FString DirName = FPackageName::GetLongPackagePath(PackageName);
-		const FString FileName = FPaths::GetBaseFilename(PackageName);
-		const FString SavePath = FString::Printf(TEXT("%s/%s_PartId_%d"), *DirName, *FileName, NearestNeighborModel->KMeansPartId);
+		SetTimelineAnimNames(NameList);
+	}
 
-		TPair<UAnimSequence*, uint8> AnimAndFlag = CreateAnimOfClusterCenters(SavePath, KmeansResults);
-		UAnimSequence* Anim = AnimAndFlag.Get<0>();
-		KMeansClusterResult |= AnimAndFlag.Get<1>();
-		if (HasError(KMeansClusterResult))
+	void FNearestNeighborEditorModel::OnPropertyChanged(FPropertyChangedEvent& PropertyChangedEvent)
+	{
+		FMLDeformerMorphModelEditorModel::OnPropertyChanged(PropertyChangedEvent);
+		const FProperty* Property = PropertyChangedEvent.Property;
+		if (Property == nullptr)
 		{
 			return;
 		}
-
-		UPackage* Package = Anim->GetPackage();
-		const bool bSaveSucced = UPackage::SavePackage(Package, Anim, *SavePath, FSavePackageArgs());
-
-		KmeansResults.Reset();
-	}
-
-	template<typename T>
-	TArray<T> Range(T End)
-	{
-		TArray<T> Result;
-		Result.SetNum(End);
-		for (uint32 i = 0; i < End; i++)
-		{
-			Result[i] = i;
-		}
-		return Result;
-	}
-
-	class FAnimEvaluator
-	{
-	public:
-		FAnimEvaluator(USkeleton* Skeleton)
-		{
-			const FReferenceSkeleton& ReferenceSkeleton = Skeleton->GetReferenceSkeleton();
-			const int32 NumBones = ReferenceSkeleton.GetNum();
-			TArray<uint16> BoneIndices = Range<uint16>(NumBones);
-			BoneContainer.SetUseRAWData(true);
-			BoneContainer.InitializeTo(BoneIndices, UE::Anim::FCurveFilterSettings(), *Skeleton);
-			OutPose.SetBoneContainer(&BoneContainer);
-			OutCurve.InitFrom(BoneContainer);
-		}
-
-		TArray<FTransform> GetBoneTransforms(const UAnimSequence* Anim, int32 Frame)
-		{
-			const double Time = FMath::Clamp(Anim->GetSamplingFrameRate().AsSeconds(Frame), 0., (double)Anim->GetPlayLength());
-			FAnimExtractContext ExtractionContext(Time);
-			FAnimationPoseData AnimationPoseData(OutPose, OutCurve, TempAttributes);
-			Anim->GetAnimationPose(AnimationPoseData, ExtractionContext);
-
-			const int32 NumBones = BoneContainer.GetNumBones();
-			TArray<FTransform> Transforms;
-			Transforms.SetNum(NumBones);
-			for (int32 BoneIndex = 0; BoneIndex < NumBones; ++BoneIndex)
-			{
-				const FCompactPoseBoneIndex CompactIndex = BoneContainer.MakeCompactPoseIndex(FMeshPoseBoneIndex(BoneIndex));
-				const FTransform BoneTransform = OutPose[CompactIndex];
-				Transforms[BoneIndex] = BoneTransform;
-			}
-			return Transforms;
-		}
-
-	private:
-		FBoneContainer BoneContainer;
-		FCompactPose OutPose;
-		FBlendedCurve OutCurve;
-		UE::Anim::FStackAttributeContainer TempAttributes;
-	};
-
-	TPair<UAnimSequence*, uint8> FNearestNeighborEditorModel::CreateAnimOfClusterCenters(const FString& PackageName, const TArray<int32>& KmeansResults)
-	{
-		uint8 ReturnCode = EUpdateResult::SUCCESS;
-		UNearestNeighborModel *NearestNeighborModel = static_cast<UNearestNeighborModel*>(Model);
-		TTuple<UAnimSequence*, uint8> None = TTuple<UAnimSequence*, uint8>(nullptr, EUpdateResult::ERROR);
-
-		if (KmeansResults.Num() != NearestNeighborModel->NumClusters * 2)
-		{
-			UE_LOG(LogNearestNeighborModel, Error, TEXT("KmeansClusterPoses returned %d clusters whereas %d are expected."), KmeansResults.Num() / 2, NearestNeighborModel->NumClusters);
-			return None;
-		}
-		if (NearestNeighborModel->SourceAnims.Num() == 0)
-		{
-			UE_LOG(LogNearestNeighborModel, Error, TEXT("No source anims found."));
-			return None;
-		}
-		const UAnimSequence* DefaultAnim = NearestNeighborModel->SourceAnims[0];
-		if (DefaultAnim == nullptr)
-		{
-			UE_LOG(LogNearestNeighborModel, Error, TEXT("Source anim 0 is null."));
-			return None;
-		}
-
-		UAnimSequence* Anim = CreateObjectInstance<UAnimSequence>(PackageName);
-		if (Anim == nullptr)
-		{
-			UE_LOG(LogNearestNeighborModel, Error, TEXT("Failed to create AnimSequence."));
-			return None;
-		}
-
-		USkeleton* const Skeleton = DefaultAnim->GetSkeleton();
-		if (Skeleton == nullptr)
-		{
-			UE_LOG(LogNearestNeighborModel, Error, TEXT("Skeleton is null."));
-			return None;
-		}
-		const FReferenceSkeleton& ReferenceSkeleton = Skeleton->GetReferenceSkeleton();
-		const int32 NumBones = ReferenceSkeleton.GetNum();
-
-		Anim->SetSkeleton(Skeleton);
-		IAnimationDataController& Controller = Anim->GetController();
-		Controller.OpenBracket(LOCTEXT("CreateNewAnim_Bracket", "Create New Anim"));
-		Controller.InitializeModel();
-		Anim->ResetAnimation();
-		Anim->SetPreviewMesh(NearestNeighborModel->GetSkeletalMesh());
-		const IAnimationDataModel* AnimData = Anim->GetDataModel();
-		const int32 NumKeys = NearestNeighborModel->NumClusters;
-		Controller.SetNumberOfFrames(NumKeys - 1);
-		Controller.SetFrameRate(FFrameRate(30, 1));
-
-		FMemMark Mark(FMemStack::Get());
-		FAnimEvaluator AnimEval(Skeleton);
-
-		TArray<TArray<FVector3f>> PosKeys;
-		TArray<TArray<FQuat4f>> RotKeys;
-		TArray<TArray<FVector3f>> ScaleKeys;
-		PosKeys.SetNum(NumBones);
-		RotKeys.SetNum(NumBones);
-		ScaleKeys.SetNum(NumBones);
-		for (int32 BoneIndex = 0; BoneIndex < NumBones; ++BoneIndex)
-		{
-			PosKeys[BoneIndex].SetNum(NumKeys);
-			RotKeys[BoneIndex].SetNum(NumKeys);
-			ScaleKeys[BoneIndex].SetNum(NumKeys);
-		}
-
-		for (int32 KeyIndex = 0; KeyIndex < NumKeys; ++KeyIndex)
-		{
-			const int32 PickedAnimId = KmeansResults[KeyIndex * 2];
-			const int32 PickedFrame = KmeansResults[KeyIndex * 2 + 1];
-			if (PickedAnimId < 0 || PickedAnimId >= NearestNeighborModel->SourceAnims.Num())
-			{
-				UE_LOG(LogNearestNeighborModel, Error, TEXT("CreateAnimOfClusterCenters: PickedAnimId %d is out of range."), PickedAnimId);
-				return None;
-			}
-			
-			const UAnimSequence* PickedAnim = NearestNeighborModel->SourceAnims[PickedAnimId];
-			if (PickedAnim == nullptr)
-			{
-				UE_LOG(LogNearestNeighborModel, Error, TEXT("CreateAnimOfClusterCenters: PickedAnim %d is null."), PickedAnimId);
-				return None;
-			}
-
-			const TArray<FTransform> BoneTransforms = AnimEval.GetBoneTransforms(PickedAnim, PickedFrame);
-			for (int32 BoneIndex = 0; BoneIndex < NumBones; ++BoneIndex)
-			{
-				const FTransform& BoneTransform = BoneTransforms[BoneIndex];
-				PosKeys[BoneIndex][KeyIndex] = FVector3f(BoneTransform.GetLocation());
-				RotKeys[BoneIndex][KeyIndex] = FQuat4f(BoneTransform.GetRotation());
-				ScaleKeys[BoneIndex][KeyIndex] = FVector3f(BoneTransform.GetScale3D());
-			}
-		}
-		for (int32 BoneIndex = 0; BoneIndex < NumBones; ++BoneIndex)
-		{
-			const FName BoneName = ReferenceSkeleton.GetBoneName(BoneIndex);
-			Controller.AddBoneCurve(BoneName);
-			Controller.SetBoneTrackKeys(BoneName, PosKeys[BoneIndex], RotKeys[BoneIndex], ScaleKeys[BoneIndex]);
-		}
-
-		Controller.NotifyPopulated();
-		Controller.CloseBracket();
-		return MakeTuple(Anim, ReturnCode);
-	}
-
-	void FNearestNeighborEditorModel::AddFloatArrayToDeltaArray(const TArray<float>& FloatArr, const TArray<uint32>& VertexMap, TArray<FVector3f>& DeltaArr, int32 DeltaArrayOffset, float ScaleFactor)
-	{
-		const int32 NumBaseMeshVerts = Model->GetNumBaseMeshVerts();
-		const UNearestNeighborModel* NearestNeighborModel = GetNearestNeighborModel();
-		const int32 PartNumVerts = VertexMap.Num();
-		if (PartNumVerts == 0)
+		UNearestNeighborModel* const NearestNeighborModel = GetCastModel();
+		if (!NearestNeighborModel)
 		{
 			return;
 		}
-		const int32 NumShapes = FloatArr.Num() / (PartNumVerts * 3);
-		if (DeltaArrayOffset < 0)
-		{
-			DeltaArrayOffset = DeltaArr.Num();
-		}
-		DeltaArr.SetNumZeroed(FMath::Max(DeltaArrayOffset + NumShapes * NumBaseMeshVerts, DeltaArr.Num()), false);
 
-		for(int32 ShapeId = 0; ShapeId < NumShapes; ShapeId++)
+		if (Property->GetFName() == UMLDeformerModel::GetSkeletalMeshPropertyName())
 		{
-			for(int32 VertexId = 0; VertexId < PartNumVerts; VertexId++)
+			if (VertexMapSelector.IsValid())
 			{
-				const int32 DeltaId = ShapeId * NumBaseMeshVerts + VertexMap[VertexId];
-				const int32 FloatId = (ShapeId * PartNumVerts + VertexId) * 3;
-				DeltaArr[DeltaArrayOffset + DeltaId] = FVector3f(FloatArr[FloatId], FloatArr[FloatId + 1], FloatArr[FloatId + 2]) * ScaleFactor;
+				VertexMapSelector->Update(NearestNeighborModel->GetSkeletalMesh());
+			}
+		}
+
+		if (Property->GetFName() == UNearestNeighborModel::GetSectionsPropertyName())
+		{
+			if (VertVizSelector.IsValid())
+			{
+				VertVizSelector->Update(NearestNeighborModel->GetNumSections());
+			}
+			UpdateTimelineTrainingAnimList();
+		}
+
+		if (Property->GetFName() == UNearestNeighborModelSection::GetNeighborPosesPropertyName())
+		{
+			UpdateTimelineTrainingAnimList();
+		}
+	}
+
+	void FNearestNeighborEditorModel::Render(const FSceneView* View, FViewport* Viewport, FPrimitiveDrawInterface* PDI)
+	{
+		FMLDeformerMorphModelEditorModel::Render(View, Viewport, PDI);
+		const FMLDeformerSampler* Sampler = GetSamplerForActiveAnim();
+		if (!Sampler || !Sampler->IsInitialized())
+		{
+			return;
+		}
+
+		const UNearestNeighborModelVizSettings* VizSettings = GetCastVizSettings();
+		if (!VizSettings)
+		{
+			return;
+		}
+
+		if (VizSettings->GetVisualizationMode() == EMLDeformerVizMode::TrainingData)
+		{
+			const TArray<FVector3f>& LinearSkinnedPositions = Sampler->GetSkinnedVertexPositions();
+			bool bDrawVerts = VizSettings->bDrawVerts;
+
+			// Disable drawing deltas when we're playing the training anim sequence, as that can get too slow.
+			const UE::MLDeformer::FMLDeformerEditorActor* BaseActor = FindEditorActor(UE::MLDeformer::ActorID_Train_Base);
+			if (BaseActor)
+			{
+				bDrawVerts &= !BaseActor->IsPlaying();
+			}
+
+			// Draw the verts for the current frame.
+			if (bDrawVerts)
+			{
+				const FLinearColor VertsColor0 = FNearestNeighborModelEditorStyle::Get().GetColor("NearestNeighborModel.Verts.VertsColor0");
+				const FLinearColor VertsColor1 = FNearestNeighborModelEditorStyle::Get().GetColor("NearestNeighborModel.Verts.VertsColor1");
+				const uint8 DepthGroup = VizSettings->GetXRayDeltas() ? 100 : 0;
+				const float PointSize = 5;
+				const int32 SectionIndex = VizSettings->VertVizSectionIndex;
+				if (SectionIndex != INDEX_NONE)
+				{
+					const UNearestNeighborModel* const NearestNeighborModel = GetCastModel();
+					if (NearestNeighborModel)
+					{
+						TConstArrayView<int32> VertexMap = NearestNeighborModel->GetSection(SectionIndex).GetVertexMap();
+						TConstArrayView<float> VertexWeights = NearestNeighborModel->GetSection(SectionIndex).GetVertexWeights();
+						for (int32 Index = 0; Index < VertexMap.Num(); ++Index)
+						{
+							const int32 ArrayIndex = 3 * VertexMap[Index];
+							const float Weight = VertexWeights[Index];
+							const FLinearColor VertsColor = FMath::Lerp(VertsColor0, VertsColor1, Weight);
+							const FVector VertexPos = (FVector)LinearSkinnedPositions[VertexMap[Index]];
+							PDI->DrawPoint(VertexPos, VertsColor, PointSize, DepthGroup);
+						}
+					}
+				}
+				else // draw all verts
+				{
+					for (int32 Index = 0; Index < LinearSkinnedPositions.Num(); ++Index)
+					{
+						const FVector VertexPos = (FVector)LinearSkinnedPositions[Index];
+						PDI->DrawPoint(VertexPos, VertsColor1, PointSize, DepthGroup);
+					}
+				}
 			}
 		}
 	}
+
+	FVertexMapSelector* FNearestNeighborEditorModel::GetVertexMapSelector() const
+	{
+		return VertexMapSelector.Get();
+	}
+
+	FVertVizSelector* FNearestNeighborEditorModel::GetVertVizSelector() const
+	{
+		return VertVizSelector.Get();
+	}
+
+	void FNearestNeighborEditorModel::CreateSamplers()
+	{
+		FMLDeformerMorphModelEditorModel::CreateSamplers();
+		const UNearestNeighborModel* const NearestNeighborModel = GetCastModel();
+		if (!NearestNeighborModel)
+		{
+			return;
+		}
+		
+		const int32 NumTrainingAnims = GetNumTrainingInputAnims();
+		const int32 NumSections = NearestNeighborModel->GetNumSections();
+		for (int32 Index = 0; Index < NumSections; ++Index)
+		{
+			TSharedPtr<FNearestNeighborGeomCacheSampler> Sampler = StaticCastSharedPtr<FNearestNeighborGeomCacheSampler>(CreateSamplerObject());
+			check(Sampler.IsValid());
+			Sampler->Init(this, NumTrainingAnims + Index);
+			Samplers.Add(Sampler);
+		}
+	}
+
+	bool FNearestNeighborEditorModel::IsAnimIndexValid(int32 Index) const
+	{
+		const UNearestNeighborModel* const NearestNeighborModel = GetCastModel();
+		if (!NearestNeighborModel)
+		{
+			return false;
+		}
+		const int32 NumSections = NearestNeighborModel->GetNumSections();
+		const int32 NumTrainingAnims = GetNumTrainingInputAnims();
+		return FMath::IsWithin(Index, 0, NumTrainingAnims + NumSections);
+	}
+
+	UNearestNeighborModel* FNearestNeighborEditorModel::GetCastModel() const
+	{
+		return Cast<UNearestNeighborModel>(Model.Get());
+	}
+
+	FNearestNeighborEditorModelActor* FNearestNeighborEditorModel::CreateNearestNeighborActor(UWorld* World) const
+	{
+		static FLinearColor LabelColor = FNearestNeighborModelEditorStyle::Get().GetColor("NearestNeighborModel.NearestNeighborActors.LabelColor");
+		static FLinearColor WireframeColor = FNearestNeighborModelEditorStyle::Get().GetColor("NearestNeighborModel.NearestNeighborActors.WireframeColor");
+		static FName ActorName = FName("NearestNeighborActor");
+		static FText LabelText = LOCTEXT("NearestNeighborLabelText", "Nearest Neighbor");
+		static int32 ActorID = ActorID_NearestNeighborActors;
+
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.Name = MakeUniqueObjectName(World, AActor::StaticClass(), ActorName);
+		AActor* Actor = World->SpawnActor<AActor>(SpawnParams);
+		Actor->SetFlags(RF_Transient);
+		
+		// Create the Geometry Cache Component.
+		UGeometryCacheComponent* GeomCacheComponent = NewObject<UGeometryCacheComponent>(Actor);
+		GeomCacheComponent->RegisterComponent();
+		GeomCacheComponent->SetOverrideWireframeColor(true);
+		GeomCacheComponent->SetWireframeOverrideColor(WireframeColor);
+		GeomCacheComponent->MarkRenderStateDirty();
+		GeomCacheComponent->SetVisibility(false);
+		Actor->SetRootComponent(GeomCacheComponent);
+		
+		// Create the editor actor.
+		UE::MLDeformer::FMLDeformerEditorActor::FConstructSettings Settings;
+		Settings.Actor = Actor;
+		Settings.TypeID = ActorID;
+		Settings.LabelColor = LabelColor;
+		Settings.LabelText = LabelText;
+		Settings.bIsTrainingActor = false;
+
+		FNearestNeighborEditorModelActor* NewActor = new FNearestNeighborEditorModelActor(Settings);
+		NewActor->SetGeometryCacheComponent(GeomCacheComponent);
+		return NewActor;
+	}
+
+	void FNearestNeighborEditorModel::UpdateNearestNeighborActor(FNearestNeighborEditorModelActor& Actor) const
+	{
+		using namespace UE::MLDeformer;
+
+		const UNearestNeighborModel* const NearestNeighborModel = GetCastModel();
+		if (!NearestNeighborModel)
+		{
+			return;
+		}
+		const UNearestNeighborModelVizSettings* NNViz = GetCastVizSettings();
+		if (!NNViz)
+		{
+			return;
+		}
+		const int32 SectionIndex = NNViz->NearestNeighborActorSectionIndex;
+		const int32 NumSections = NearestNeighborModel->GetNumSections();
+		if (SectionIndex < 0 || SectionIndex >= NumSections)
+		{
+			return;
+		}
+
+		float MaxOffset = 0.0f;
+		for (FMLDeformerEditorActor* EditorActor : EditorActors)
+		{
+			if (EditorActor && 
+				EditorActor->GetTypeID() != ActorID_NearestNeighborActors &&
+				EditorActor->IsVisible()) 
+			{
+				MaxOffset = FMath::Max(EditorActor->GetMeshOffsetFactor(), MaxOffset);
+			}
+		}
+
+		Actor.SetMeshOffsetFactor(MaxOffset + 1.0f);
+
+		UGeometryCache* const GeomCache = NearestNeighborModel->GetSection(SectionIndex).GetMutableNeighborMeshes();
+		if (!GeomCache)
+		{
+			return;
+		}
+		Actor.SetGeometryCache(GeomCache);
+		const UMLDeformerComponent* MLDeformerComponent = GetTestMLDeformerComponent();
+		if (!MLDeformerComponent)
+		{
+			return;
+		}
+		Actor.SetTrackedComponent(MLDeformerComponent, SectionIndex);
+	}
+
+	EOpFlag FNearestNeighborEditorModel::Update()
+	{
+		UNearestNeighborModel* const NearestNeighborModel = GetCastModel();
+		if (!NearestNeighborModel)
+		{
+			return EOpFlag::Error;
+		}
+		if (!NearestNeighborModel->IsReadyForTraining())
+		{
+			if (IsTrained())
+			{
+				NearestNeighborModel->ClearOptimizedNetwork();
+			}
+			return EOpFlag::Error;
+		}
+		EOpFlag UpdateResult = CheckNetwork();
+		if (OpFlag::HasError(UpdateResult))
+		{
+			return UpdateResult;
+		}
+		if (!IsReadyForTraining())
+		{
+			UE_LOG(LogNearestNeighborModel, Error, TEXT("Model is not ready for training. Please check if training data is not empty or reload MLDeformer editor."));
+			return EOpFlag::Error;
+		}
+		UpdateResult |= UpdateNearestNeighborData();
+		if (OpFlag::HasError(UpdateResult))
+		{
+			return UpdateResult;
+		}
+		UpdateResult |= NearestNeighborModel->UpdateForInference();
+		if (OpFlag::HasError(UpdateResult))
+		{
+			return UpdateResult;
+		}
+		UpdateNearestNeighborActor(*NearestNeighborActor);
+		UpdateResult |= UpdateMorphDeltas();
+		if (OpFlag::HasError(UpdateResult))
+		{
+			return UpdateResult;
+		}
+		InitEngineMorphTargets(NearestNeighborModel->GetMorphTargetDeltas());
+		const int32 LOD = 0;
+		const TSharedPtr<const FExternalMorphSet> MorphSet = NearestNeighborModel->GetMorphTargetSet(LOD);
+		if (MorphSet.IsValid() && MorphSet->MorphBuffers.IsMorphResourcesInitialized())
+		{
+			NearestNeighborModel->UpdateMorphTargetsLastWriteTime();
+		}
+		else
+		{
+			UE_LOG(LogNearestNeighborModel, Error, TEXT("Morph target set is empty"));
+			UpdateResult |= EOpFlag::Error;
+		}
+		SetDefaultDeformerGraphIfNeeded();
+		return UpdateResult;
+	}
+
+	void FNearestNeighborEditorModel::OnUpdateClicked()
+	{
+		EOpFlag Result = Update();
+		if (OpFlag::HasError(Result))
+		{
+			FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("UpdateErrorMessage", "Update failed. Please check Output Log for details") , LOCTEXT("UpdateErrorWindowTitle", "Update Results"));
+		}
+		else if (OpFlag::HasWarning(Result))
+		{
+			FMessageDialog::Open(EAppMsgType::Ok, LOCTEXT("UpdateWarningMessage", "Update succeeded with warnings. Please check Output Log for details"), LOCTEXT("UpdateWarningWindowTitle", "Update Results"));
+		}
+	}
+
+	void FNearestNeighborEditorModel::ClearReferences()
+	{
+		UNearestNeighborModel* const NearestNeighborModel = GetCastModel();
+		if (NearestNeighborModel)
+		{
+			NearestNeighborModel->ClearReferences();
+		}
+		if (Editor->GetModelDetailsView())
+		{
+			Editor->GetModelDetailsView()->ForceRefresh();
+		}
+		if (Editor->GetVizSettingsDetailsView())
+		{
+			Editor->GetVizSettingsDetailsView()->ForceRefresh();
+		}
+		UpdateIsReadyForTrainingState();
+	}
+
+	EOpFlag FNearestNeighborEditorModel::CheckNetwork()
+	{
+		const UNearestNeighborModel* const NearestNeighborModel = GetCastModel();
+		if (!NearestNeighborModel)
+		{
+			return EOpFlag::Error;
+		}
+
+		if (!NearestNeighborModel->GetOptimizedNetwork().IsValid())
+		{
+			UE_LOG(LogNearestNeighborModel, Error, TEXT("Network is empty. Please (re-)train model."));
+			return EOpFlag::Error;
+		}
 	
-	void FNearestNeighborEditorModel::OnMorphTargetUpdate()
-	{
-		MorphTargetUpdateResult = EUpdateResult::SUCCESS;
-
-		UNearestNeighborModel* NearestNeighborModel = GetNearestNeighborModel();
-
-		if (!NearestNeighborModel->IsClothPartDataValid())
+		const int32 NumNetworkWeights = NearestNeighborModel->GetNumNetworkOutputs();
+		const int32 NumBasis = NearestNeighborModel->GetTotalNumBasis();
+		if (NumNetworkWeights != NumBasis)
 		{
-			MorphTargetUpdateResult |= NearestNeighborModel->UpdateClothPartData();
-			if (HasError(MorphTargetUpdateResult))
-			{
-				UpdateNearestNeighborActors();
-				return;
-			}
-		}
-		MorphTargetUpdateResult |= WarnIfNetworkInvalid();
-
-		if (!NearestNeighborModel->IsNearestNeighborDataValid())
-		{
-			MorphTargetUpdateResult |= UpdateNearestNeighborData();
-			UpdateNearestNeighborActors();
-			if (HasError(MorphTargetUpdateResult))
-			{
-				return;
-			}
+			UE_LOG(LogNearestNeighborModel, Error, TEXT("Network output dimension %d does not equal to total number of basis %d. Network needs to be re-trained."), NumNetworkWeights, NumBasis);
+			return EOpFlag::Error;
 		}
 
-		if (IsTrained())
-		{
-			MorphTargetUpdateResult |= InitMorphTargets();
-			if (HasError(MorphTargetUpdateResult))
-			{
-				return;
-			}
-			RefreshMorphTargets();
-			GetNearestNeighborModel()->UpdateNetworkSize();
-			GetNearestNeighborModel()->UpdateMorphTargetSize();
-		}
-
-		InitTestMLDeformerPreviousWeights();
-		GetNearestNeighborModel()->ValidateMorphTargetData();
-
-		GetNearestNeighborModel()->UpdateInputMultipliers();
+		return EOpFlag::Success;
 	}
 
-	uint8 FNearestNeighborEditorModel::InitMorphTargets()
+	EOpFlag FNearestNeighborEditorModel::UpdateNearestNeighborData()
 	{
-		uint8 Result = EUpdateResult::SUCCESS;
-		UNearestNeighborModel* NearestNeighborModel = GetNearestNeighborModel();
+		const UNearestNeighborModel* const NearestNeighborModel = GetCastModel();
+		if (!NearestNeighborModel)
+		{
+			return EOpFlag::Error;
+		}
+		if (!IsTrained())
+		{
+			UE_LOG(LogNearestNeighborModel, Error, TEXT("Network is not trained. Nearest neighbor data cannot be updated."));
+			return EOpFlag::Error;
+		}
+		if (NearestNeighborModel->GetNumNetworkOutputs() != NearestNeighborModel->GetTotalNumBasis())
+		{
+			UE_LOG(LogNearestNeighborModel, Error, TEXT("Network output dimension %d does not equal to total number of basis %d. Please re-train network."), NearestNeighborModel->GetNumNetworkOutputs(), NearestNeighborModel->GetTotalNumBasis());
+			return EOpFlag::Error;
+		}
+		
+		UNearestNeighborTrainingModel *TrainingModel = FHelpers::NewDerivedObject<UNearestNeighborTrainingModel>();
+		if (!TrainingModel)
+		{
+			return EOpFlag::Error;
+		}
+		TrainingModel->Init(this);
 
+		return ToOpFlag(TrainingModel->UpdateNearestNeighborData());
+	}
+
+	EOpFlag FNearestNeighborEditorModel::UpdateMorphDeltas()
+	{
+		const UNearestNeighborModel* const NearestNeighborModel = GetCastModel();
+		if (!NearestNeighborModel)
+		{
+			return EOpFlag::Error;
+		}
+		EOpFlag Result = EOpFlag::Success;
+	
 		const USkeletalMesh* SkelMesh = Model->GetSkeletalMesh();
 		const int32 NumBaseMeshVerts = Model->GetNumBaseMeshVerts();
 		if (!SkelMesh || NumBaseMeshVerts == 0)
 		{
 			UE_LOG(LogNearestNeighborModel, Error, TEXT("SkeletalMesh is empty. No morph targets are generated"));
-			return EUpdateResult::ERROR;
+			return EOpFlag::Error;
 		}
-
+	
 		if (Model->GetVertexMap().IsEmpty())
 		{
 			UE_LOG(LogNearestNeighborModel, Error, TEXT("VertexMap of the skeletal mesh is empty. No morph targets are generated"));
-			return EUpdateResult::ERROR;
+			return EOpFlag::Error;
 		}
-
-		const int32 NumParts = NearestNeighborModel->GetNumParts();
-		if (NumParts == 0)
+	
+		const int32 NumSections = NearestNeighborModel->GetNumSections();
+		if (NumSections == 0)
 		{
-			UE_LOG(LogNearestNeighborModel, Error, TEXT("There are no cloth parts. No morph targets are generated"));
-			return EUpdateResult::ERROR;
+			UE_LOG(LogNearestNeighborModel, Error, TEXT("There are no cloth sections. No morph targets are generated"));
+			return EOpFlag::Error;
 		}
-
+	
 		const int32 NumImportedModelVerts = FMath::Max(NearestNeighborModel->GetVertexMap()) + 1;
 		if (NumImportedModelVerts != NumBaseMeshVerts)
 		{
 			UE_LOG(LogNearestNeighborModel, Error, TEXT("Vertex count mismatch: imported model of SkeletalMesh has %d vertices and cached SkeletalMesh has %d vertices"), NumImportedModelVerts, NumBaseMeshVerts);
-			return EUpdateResult::ERROR;
+			return EOpFlag::Error;
 		}
-
+	
 		TArray<FVector3f> Deltas;
-		Deltas.Reset();
-
-		int32 NumPCACoeff = 0;
-		for (int32 PartId = 0; PartId < NumParts; PartId++)
+	
+		const int32 TotalNumBasis = NearestNeighborModel->GetTotalNumBasis();
+		const int32 TotalNumNeighbors = NearestNeighborModel->GetTotalNumNeighbors();
+		Deltas.SetNumZeroed((1 + TotalNumBasis + TotalNumNeighbors) * NumBaseMeshVerts);
+	
+		using Private::AddFloatArrayToDeltaArray;
+		int32 MorphOffset = 1;
+		for (int32 SectionIndex = 0; SectionIndex < NearestNeighborModel->GetNumSections(); ++SectionIndex)
 		{
-			NumPCACoeff += NearestNeighborModel->GetPCACoeffNum(PartId);
-		}
-		Deltas.Reserve((1 + NumPCACoeff) * NumBaseMeshVerts);
-
-		for (int32 PartId = 0; PartId < NumParts; PartId++)
-		{
-			const TArray<uint32>& VertexMap = NearestNeighborModel->PartVertexMap(PartId);
+			const FSection& Section = NearestNeighborModel->GetSection(SectionIndex);
+			TConstArrayView<int32> VertexMap = Section.GetVertexMap();
+			TConstArrayView<float> VertexWeights = Section.GetVertexWeights();
 			if (VertexMap.IsEmpty())
 			{
-				UE_LOG(LogNearestNeighborModel, Warning, TEXT("Cloth part %d has empty vertex map. No morph targets are generated for this part."), PartId);
-				Result = EUpdateResult::WARNING;
+				UE_LOG(LogNearestNeighborModel, Warning, TEXT("Section %d has empty vertex map. No morph targets are generated for this section"), SectionIndex);
+				Result |= EOpFlag::Warning;
+				continue;
 			}
-			AddFloatArrayToDeltaArray(NearestNeighborModel->ClothPartData[PartId].VertexMean, VertexMap, Deltas, 0);
-			AddFloatArrayToDeltaArray(NearestNeighborModel->ClothPartData[PartId].PCABasis, VertexMap, Deltas);
+			check(VertexMap.Num() == Section.GetNumVertices());
+			check(VertexWeights.Num() == Section.GetNumVertices());
+			TArrayView<FVector3f> MeanDeltas(Deltas.GetData(), NumBaseMeshVerts);
+			AddFloatArrayToDeltaArray(Section.GetVertexMean(), VertexMap, VertexWeights, MeanDeltas);
+			const int32 NumBasis = Section.GetNumBasis();
+			const int32 SectionNumVerts = Section.GetNumVertices();
+			check(VertexMap.Num() == SectionNumVerts);
+			for (int32 Index = 0; Index < NumBasis; ++Index)
+			{
+				TConstArrayView<float> BasisFloats(Section.GetBasis().GetData() + Index * SectionNumVerts * 3, SectionNumVerts * 3);
+				TArrayView<FVector3f> BasisDeltas(Deltas.GetData() + (MorphOffset + Index) * NumBaseMeshVerts, NumBaseMeshVerts);
+				AddFloatArrayToDeltaArray(BasisFloats, VertexMap, VertexWeights, BasisDeltas);
+			}
+			if (NearestNeighborModel->DoesUsePCA())
+			{
+				MorphOffset += NumBasis;
+			}
 		}
-
-		for (int32 PartId = 0; PartId < NumParts; PartId++)
+		if (!NearestNeighborModel->DoesUsePCA())
 		{
-			const TArray<uint32>& VertexMap = NearestNeighborModel->PartVertexMap(PartId);
-			AddFloatArrayToDeltaArray(NearestNeighborModel->ClothPartData[PartId].NeighborOffsets, VertexMap, Deltas);
+			MorphOffset += TotalNumBasis;
 		}
-
+	
+		for (int32 SectionIndex = 0; SectionIndex < NearestNeighborModel->GetNumSections(); ++SectionIndex)
+		{
+			const FSection& Section = NearestNeighborModel->GetSection(SectionIndex);
+			TConstArrayView<int32> VertexMap = Section.GetVertexMap();
+			TConstArrayView<float> VertexWeights = Section.GetVertexWeights();
+			if (VertexMap.IsEmpty())
+			{
+				// Warning already generated
+				continue;
+			}
+			if (!Section.IsReadyForInference())
+			{
+				UE_LOG(LogNearestNeighborModel, Warning, TEXT("Section %d is not ready for inference. No morph targets are generated for this section"), SectionIndex);
+				Result |= EOpFlag::Warning;
+				continue;
+			}
+			TArray<float> RuntimeNeighborOffsets;
+			Section.GetRuntimeNeighborOffsets(RuntimeNeighborOffsets);
+			const int32 SectionNumVerts = Section.GetNumVertices();
+			const int32 SectionNumNeighbors = Section.GetRuntimeNumNeighbors();
+			check(RuntimeNeighborOffsets.Num() == SectionNumVerts * 3 * SectionNumNeighbors);
+			for (int32 Index = 0; Index < SectionNumNeighbors; ++Index)
+			{
+				TConstArrayView<float> NeighborOffsets(RuntimeNeighborOffsets.GetData() + Index * SectionNumVerts * 3, SectionNumVerts * 3);
+				TArrayView<FVector3f> NeighborDeltas(Deltas.GetData() + (MorphOffset + Index) * NumBaseMeshVerts, NumBaseMeshVerts);
+				AddFloatArrayToDeltaArray(NeighborOffsets, VertexMap, VertexWeights, NeighborDeltas);
+			}
+			MorphOffset += SectionNumNeighbors;
+		}
+	
 		if (Deltas.Num() == 0)
 		{
-			UE_LOG(LogNearestNeighborModel, Error, TEXT("All cloth parts are empty. No morph targets are generated."));
-			return EUpdateResult::ERROR;
+			UE_LOG(LogNearestNeighborModel, Error, TEXT("All sections are empty. No morph targets are generated."));
+			return EOpFlag::Error;
 		}
 
-		const int32 LOD = 0;
-		TArray<UMorphTarget*> MorphTargets;
-		CreateMorphTargets(
-			MorphTargets, 
-			Deltas, 
-			FString("NNMorphTarget_"),
-			LOD,
-			NearestNeighborModel->GetMorphDeltaZeroThreshold(),
-			NearestNeighborModel->GetIncludeMorphTargetNormals(),
-			NearestNeighborModel->GetMaskChannel(),
-			NearestNeighborModel->GetInvertMaskChannel());
-
-		check(NearestNeighborModel->GetMorphTargetSet().IsValid());
-		FMorphTargetVertexInfoBuffers& MorphBuffers = NearestNeighborModel->GetMorphTargetSet()->MorphBuffers;
-		CompressMorphTargets(MorphBuffers, MorphTargets, LOD, NearestNeighborModel->GetMorphCompressionLevel());
-
-		if (MorphBuffers.GetNumBatches() <= 0)
-		{
-			UE_LOG(LogNearestNeighborModel, Warning, TEXT("Morph buffer is empty. It is possible that all deltas are zero. No morph targets are generated."));
-			Result = EUpdateResult::WARNING;
-			NearestNeighborModel->ResetMorphBuffers();
-		}
-
-		// Remove the morph targets again, as we don't need them anymore.
-		for (UMorphTarget* MorphTarget : MorphTargets)
-		{
-			MorphTarget->ConditionalBeginDestroy();
-		}
-
-		NearestNeighborModel->SetMorphTargetDeltas(Deltas);
+		GetCastModel()->SetMorphTargetDeltas(Deltas);
 		return Result;
 	}
 
-	void FNearestNeighborEditorModel::RefreshMorphTargets()
+	void FNearestNeighborEditorModel::ResetMorphTargets()
 	{
-		USkeletalMeshComponent* SkelMeshComponent = FindEditorActor(ActorID_Test_MLDeformed)->GetSkeletalMeshComponent() ;
-		if (SkelMeshComponent)
+		const int32 NumLODs = GetMorphModel()->GetNumLODs();
+		for (int32 LOD = 0; LOD < NumLODs; ++LOD)
 		{
-			check(GetNearestNeighborModel()->GetMorphTargetSet().IsValid());
-			FMorphTargetVertexInfoBuffers& MorphBuffers = GetNearestNeighborModel()->GetMorphTargetSet()->MorphBuffers;
-			BeginReleaseResource(&MorphBuffers);
-			if (MorphBuffers.IsMorphCPUDataValid() && MorphBuffers.GetNumMorphs() > 0 && MorphBuffers.GetNumBatches() > 0)
+			const TSharedPtr<FExternalMorphSet> MorphSet = GetMorphModel()->GetMorphTargetSet(LOD);
+			if (MorphSet.IsValid())
 			{
-				BeginInitResource(&MorphBuffers);
+				MorphSet->MorphBuffers = FMorphTargetVertexInfoBuffers();
 			}
-			SkelMeshComponent->RefreshExternalMorphTargetWeights();
 		}
+	}
+
+	void FNearestNeighborEditorModel::UpdateNearestNeighborIds()
+	{
+		const UNearestNeighborModelInstance* ModelInstance = GetTestNearestNeighborModelInstance();
+		const UNearestNeighborModel* NearestNeighborModel = GetCastModel();
+		UNearestNeighborModelVizSettings* NNViz = GetCastVizSettings();
+		if (ModelInstance && NearestNeighborModel && NNViz)
+		{
+			const TArray<uint32>& NeighborIds = ModelInstance->GetNearestNeighborIds();
+			const int32 Num = FMath::Min(NeighborIds.Num(), NearestNeighborModel->GetNumSections());
+			TArray<int32> AssetNeighborIds;
+			AssetNeighborIds.SetNum(Num);
+			for(int32 Index = 0; Index < Num; ++Index)
+			{
+				const int32 NeighborId = NeighborIds[Index];
+				const TArray<int32>& IndexMap = NearestNeighborModel->GetSection(Index).GetAssetNeighborIndexMap();
+				AssetNeighborIds[Index] = IndexMap.IsValidIndex(NeighborId) ? IndexMap[NeighborId] : INDEX_NONE;
+			}
+			NNViz->NearestNeighborIds = AssetNeighborIds;
+		}
+	}
+
+	UNearestNeighborModelVizSettings* FNearestNeighborEditorModel::GetCastVizSettings() const
+	{
+		return Cast<UNearestNeighborModelVizSettings>(GetMorphModel()->GetVizSettings()); 
 	}
 
 	UMLDeformerComponent* FNearestNeighborEditorModel::GetTestMLDeformerComponent() const
 	{
-		return FindMLDeformerComponent(ActorID_Test_MLDeformed);
+		return FindMLDeformerComponent(UE::MLDeformer::ActorID_Test_MLDeformed);
 	}
 
-
-	void FNearestNeighborEditorModel::InitTestMLDeformerPreviousWeights() 
+	USkeletalMeshComponent* FNearestNeighborEditorModel::GetTestSkeletalMeshComponent() const
 	{
-		UNearestNeighborModelInstance* ModelInstance = static_cast<UNearestNeighborModelInstance*>(GetTestMLDeformerModelInstance());
-		if (ModelInstance)
+		if (const UMLDeformerComponent* MLDeformerComponent = GetTestMLDeformerComponent())
 		{
-			ModelInstance->InitPreviousWeights();
+			return MLDeformerComponent->GetSkeletalMeshComponent();
 		}
+		return nullptr;
+	}
+	
+	UNearestNeighborModelInstance* FNearestNeighborEditorModel::GetTestNearestNeighborModelInstance() const
+	{
+		if (const UMLDeformerComponent* MLDeformerComponent = FindMLDeformerComponent(UE::MLDeformer::ActorID_Test_MLDeformed))
+		{
+			return Cast<UNearestNeighborModelInstance>(MLDeformerComponent->GetModelInstance());
+		}
+		return nullptr;
 	}
 
-	uint8 FNearestNeighborEditorModel::WarnIfNetworkInvalid()
+	void FVertexMapSelector::Update(const USkeletalMesh* SkelMesh)
 	{
-		const UNearestNeighborModel *NearestNeighborModel = static_cast<UNearestNeighborModel*>(Model);
-
-		if (NearestNeighborModel->DoesUseOptimizedNetwork())
+		constexpr int32 LODIndex = 0;
+		if (!SkelMesh || !SkelMesh->HasMeshDescription(LODIndex))
 		{
-			if (NearestNeighborModel->GetOptimizedNetwork() == nullptr)
+			Reset();
+			return;
+		}
+
+		const FMeshDescription* MeshDescription = SkelMesh->GetMeshDescription(LODIndex);
+		const FSkeletalMeshConstAttributes MeshAttributes(*MeshDescription);
+		
+		const FSkeletalMeshAttributesShared::FSourceGeometryPartNameConstRef NameRef = MeshAttributes.GetSourceGeometryPartNames();
+		const FSkeletalMeshAttributesShared::FSourceGeometryPartVertexOffsetAndCountConstRef PartOffsetAndCountRef = MeshAttributes.GetSourceGeometryPartVertexOffsetAndCounts();
+		
+		Options.Reserve(MeshAttributes.GetNumSourceGeometryParts() + 1);
+		VertexMapStrings.Reserve(MeshAttributes.GetNumSourceGeometryParts() + 1);
+
+		for (const FSourceGeometryPartID GeometryPartID: MeshAttributes.SourceGeometryParts().GetElementIDs())
+		{
+			FName Name = NameRef.Get(GeometryPartID);
+			TArrayView<const int32> OffsetAndCount = PartOffsetAndCountRef.Get(GeometryPartID);
+
+			TSharedPtr<FString> Option = MakeShared<FString>(Name.ToString());
+			FString VertexMapString = FString::Printf(TEXT("%d-%d"), OffsetAndCount[0], OffsetAndCount[0] + OffsetAndCount[1] - 1);
+			Options.Add(Option);
+			VertexMapStrings.Add(Option, MoveTemp(VertexMapString));
+		}
+		
+		Options.Add(CustomString);
+		VertexMapStrings.Add(CustomString, FString::Printf(TEXT("0-%d"), MeshDescription->Vertices().Num() - 1));
+	}
+
+	TArray<TSharedPtr<FString>>* FVertexMapSelector::GetOptions()
+	{
+		return &Options;
+	}
+
+	void FVertexMapSelector::OnSelectionChanged(UNearestNeighborModelSection& Section, TSharedPtr<FString> InSelectedItem, ESelectInfo::Type SelectInfo) const
+	{
+		TSharedPtr<FString> SelectedItem = GetSelectedItem(Section);
+		if (InSelectedItem != SelectedItem)
+		{
+			Section.SetVertexMapString(VertexMapStrings[InSelectedItem]);
+			const int32 Index = Options.Find(InSelectedItem);
+			if (Index >= 0 && Index < Options.Num() - 1)
 			{
-				UE_LOG(LogNearestNeighborModel, Warning, TEXT("Optimized network is not set. Model needs to be re-trained."));
-				return EUpdateResult::WARNING;
+				Section.SetMeshIndex(Index);
 			}
-
-			const int32 NumNetworkWeights = NearestNeighborModel->GetOptimizedNetworkNumOutputs();
-			const int32 NumPCACoeffs = NearestNeighborModel->GetTotalNumPCACoeffs();
-			if (NumNetworkWeights != NumPCACoeffs)
+			else
 			{
-				UE_LOG(LogNearestNeighborModel, Warning, TEXT("Network output dimension %d is not equal to number of morph targets %d. Network needs to be re-trained and no deformation will be applied."), NumNetworkWeights, NumPCACoeffs);
-				return EUpdateResult::WARNING;
+				Section.SetMeshIndex(INDEX_NONE);
 			}
 		}
-		return EUpdateResult::SUCCESS;
 	}
 
-
-	UMLDeformerModelInstance* FNearestNeighborEditorModel::GetTestMLDeformerModelInstance() const
+	TSharedPtr<FString> FVertexMapSelector::GetSelectedItem(const UNearestNeighborModelSection& Section) const
 	{
-		UMLDeformerModelInstance* ModelInstance = nullptr;
-		const UMLDeformerComponent* MLDeformerComponent = FindMLDeformerComponent(ActorID_Test_MLDeformed);
-		if (MLDeformerComponent)
+		const int32 MeshIndex = Section.GetMeshIndex();
+		if (Options.IsValidIndex(MeshIndex))
 		{
-			ModelInstance = MLDeformerComponent->GetModelInstance();
+			return Options[MeshIndex];
 		}
-		return ModelInstance;
+		else if (!Options.IsEmpty())
+		{
+			return Options.Last();
+		}
+		else
+		{
+			return nullptr;
+		}
+	}
+
+	FString FVertexMapSelector::GetVertexMapString(const UNearestNeighborModelSection& Section) const
+	{
+		const int32 MeshIndex = Section.GetMeshIndex();
+		if (Options.IsValidIndex(MeshIndex))
+		{
+			return VertexMapStrings[Options[MeshIndex]];
+		}
+		else if (!Options.IsEmpty())
+		{
+			return VertexMapStrings[Options.Last()];
+		}
+		else
+		{
+			return FString();
+		}
+	}
+
+	bool FVertexMapSelector::IsValid() const
+	{
+		return Options.Num() > 0 && Options.Num() == VertexMapStrings.Num();
+	}
+
+	void FVertexMapSelector::Reset()
+	{
+		Options.Reset();
+		VertexMapStrings.Reset();
+	}
+
+	TSharedPtr<FString> FVertexMapSelector::CustomString = MakeShared<FString>(TEXT("Custom"));
+
+	FVertVizSelector::FVertVizSelector(UNearestNeighborModelVizSettings* InSettings)
+		: Settings(InSettings)
+	{
+		Options.Add(MakeShared<FString>(TEXT("All Sections")));
+	}
+
+	void FVertVizSelector::Update(int32 NumSections)
+	{
+		check (NumSections >= 0);
+		if (NumSections < Options.Num() - 1)
+		{
+			Options.SetNum(NumSections + 1);
+		}
+		else
+		{
+			for (int32 i = Options.Num() - 1; i < NumSections; ++i)
+			{
+				Options.Add(MakeShared<FString>(FString::Printf(TEXT("Section %d"), i)));
+			}
+		}
+	}
+	
+	TArray<TSharedPtr<FString>>* FVertVizSelector::GetOptions()
+	{
+		return &Options;
+	}
+	
+	void FVertVizSelector::OnSelectionChanged(TSharedPtr<FString> InSelectedItem, ESelectInfo::Type SelectInfo) const
+	{
+		if (!Settings)
+		{
+			return;
+		}
+		const int32 Index = Options.Find(InSelectedItem);
+		if (Index != INDEX_NONE)
+		{
+			Settings->VertVizSectionIndex = Index - 1;
+		}
+	}
+	
+	TSharedPtr<FString> FVertVizSelector::GetSelectedItem() const
+	{
+		if (!Settings)
+		{
+			return nullptr;
+		}
+		return Options[Settings->VertVizSectionIndex + 1];
+	}
+
+	int32 FVertVizSelector::GetSectionIndex(TSharedPtr<FString> Item) const
+	{
+		return Options.Find(Item) - 1;
+	}
+
+	void FVertVizSelector::SelectSection(int32 SectionIndex)
+	{
+		if (!Settings)
+		{
+			return;
+		}
+		if (SectionIndex < INDEX_NONE || SectionIndex >= Options.Num() - 1)
+		{
+			Settings->VertVizSectionIndex = INDEX_NONE; // set to default
+		}
+		else
+		{
+			Settings->VertVizSectionIndex = SectionIndex;
+		}
 	}
 }	// namespace UE::NearestNeighborModel
 

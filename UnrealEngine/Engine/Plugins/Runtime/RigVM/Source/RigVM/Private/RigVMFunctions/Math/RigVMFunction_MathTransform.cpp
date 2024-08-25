@@ -36,6 +36,14 @@ FRigVMFunction_MathTransformToEulerTransform_Execute()
 	Result.FromFTransform(Value);
 }
 
+FRigVMFunction_MathTransformToVectors_Execute()
+{
+	const FQuat Rotation = Value.GetRotation().GetNormalized();
+	Forward = Rotation.GetForwardVector();
+	Right = Rotation.GetRightVector();
+	Up = Rotation.GetUpVector();
+}
+
 FRigVMFunction_MathTransformMul_Execute()
 {
 	Result = A * B;

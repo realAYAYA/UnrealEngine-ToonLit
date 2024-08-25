@@ -56,7 +56,7 @@ protected:
 	float RandomDeviation;
 
 	/** call Tick event when task search enters this node (SearchStart will be called as well) */
-	UPROPERTY(Category = Service, EditAnywhere, AdvancedDisplay)
+	UPROPERTY(Category = Service, EditAnywhere, AdvancedDisplay, meta=(EditCondition = bCanTickOnSearchStartBeExposed, EditConditionHides))
 	uint32 bCallTickOnSearchStart : 1;
 
 	/** if set, next tick time will be always reset to service's interval when node is activated */
@@ -65,6 +65,12 @@ protected:
 
 	/** if set, service will be notified about search entering underlying branch */
 	uint32 bNotifyOnSearch : 1;
+
+#if WITH_EDITORONLY_DATA
+	/** if set, the service exposes the option to call Tick event when task search enters this node */
+	UPROPERTY(transient)
+	uint32 bCanTickOnSearchStartBeExposed : 1;
+#endif // WITH_EDITORONLY_DATA
 
 	/** update next tick interval
 	 * this function should be considered as const (don't modify state of object) if node is not instanced!

@@ -33,7 +33,7 @@ DEFINE_LOG_CATEGORY(LogVRS);
 void CVarVRSPreviewCallback(IConsoleVariable* Var)
 {
 	const int32 RequestedPreview = Var->GetInt();
-	if (RequestedPreview < 0 || RequestedPreview > 2)
+	if (RequestedPreview < 0 || RequestedPreview > 4)
 	{
 		UE_LOG(LogVRS, Warning, TEXT("Selected invalid preview mode, disabling preview"));
 	}
@@ -42,17 +42,18 @@ void CVarVRSPreviewCallback(IConsoleVariable* Var)
 TAutoConsoleVariable<int32> CVarVRSPreview(
 	TEXT("r.VRS.Preview"),
 	0,
-	TEXT("Show a debug visualization of the VRS shading rate image texture.")
-	TEXT("0 - off, 1 - on, 2 - conservative (affects CAS only)"),
+	TEXT("Show a debug visualization of the VRS shading rate image texture. Conservative and software images are only available via Contrast Adaptive Shading.")
+	TEXT("0 - off, 1 - full (hardware), 2 - conservative (hardware), 3 - full (software), 4 - conservative (software)"),
 	FConsoleVariableDelegate::CreateStatic(&CVarVRSPreviewCallback),
 	ECVF_RenderThreadSafe);
 
 void CVarVRSDebugForceRateCallback(IConsoleVariable* Var)
 {
 	const int32 RequestedDebugForceRate = Var->GetInt();
-	if (RequestedDebugForceRate > 6) 
+	const int32 NumberOfAvailableRates = FVariableRateShadingImageManager::GetNumberOfSupportedRates();
+	if (RequestedDebugForceRate >= NumberOfAvailableRates) 
 	{
-		UE_LOG(LogVRS, Warning, TEXT("Selected forced shading rate exceeds maximum available, defaulting to 4x4"));
+		UE_LOG(LogVRS, Warning, TEXT("Selected forced shading rate exceeds maximum available, defaulting to %s"), GRHISupportsLargerVariableRateShadingSizes ? TEXT("4x4") : TEXT("2x2"));
 	}
 }
 
@@ -60,9 +61,17 @@ int GVRSDebugForceRate = -1;
 FAutoConsoleVariableRef CVarVRSDebugForceRate(
 	TEXT("r.VRS.DebugForceRate"),
 	GVRSDebugForceRate,
-	TEXT("-1 : None, 0 : Force 1x1, 1 : Force 1x2, 2 : Force 2x1, 3: Force 2x2, 4 : Force 2x4, 5 : Force 4x2, 6 : Force 4x4"),
+	TEXT("-1: None, 0: Force 1x1, 1: Force 1x2, 2: Force 2x1, 3: Force 2x2, 4: Force 2x4, 5: Force 4x2, 6: Force 4x4"),
 	FConsoleVariableDelegate::CreateStatic(&CVarVRSDebugForceRateCallback),
 	ECVF_RenderThreadSafe);
+
+TAutoConsoleVariable<int32> CVarVRSSoftwareImage(
+	TEXT("r.VRS.EnableSoftware"),
+	0,
+	TEXT("Generate 2x2 tile size software shading rate images when possible for use with nanite CS. Works even when r.VRS.Enable = 0 or Tier 2 VRS is unsupported by the hardware.")
+	TEXT("0: Off, 1: On"),
+	ECVF_RenderThreadSafe);
+
 
 /**
  * Pass Settings
@@ -181,9 +190,7 @@ public:
 	{
 		FGlobalShader::ModifyCompilationEnvironment(Parameters, OutEnvironment);
 
-		OutEnvironment.SetDefine(TEXT("THREADGROUP_SIZEX"), VRSHelpers::kCombineGroupSize);
-		OutEnvironment.SetDefine(TEXT("THREADGROUP_SIZEY"), VRSHelpers::kCombineGroupSize);
-
+		OutEnvironment.SetDefine(TEXT("THREADGROUP_SIZE_XY"), VRSHelpers::kCombineGroupSize);
 		OutEnvironment.SetDefine(TEXT("SHADING_RATE_DIMENSION_BITS"), VRSHelpers::kShadingRateDimensionBits);
 	}
 
@@ -293,7 +300,7 @@ FVariableRateShadingImageManager::~FVariableRateShadingImageManager() {}
 
 void FVariableRateShadingImageManager::InitRHI(FRHICommandListBase& RHICmdList)
 {
-	if (IsVRSSupportedByRHI())
+	if (IsHardwareVRSSupported())
 	{
 		UE_LOG(LogVRS, Log, TEXT("Current RHI supports Variable Rate Shading"));
 	}
@@ -308,20 +315,46 @@ void FVariableRateShadingImageManager::ReleaseRHI()
 	GRenderTargetPool.FreeUnusedResources();
 }
 
-static EDisplayOutputFormat GetDisplayOutputFormat(const FViewInfo& View)
-{
-	FTonemapperOutputDeviceParameters Parameters = GetTonemapperOutputDeviceParameters(*View.Family);
-	return (EDisplayOutputFormat)Parameters.OutputDevice;
-}
-
-bool FVariableRateShadingImageManager::IsVRSSupportedByRHI()
+bool FVariableRateShadingImageManager::IsHardwareVRSSupported()
 {
 	return GRHISupportsAttachmentVariableRateShading && FDataDrivenShaderPlatformInfo::GetSupportsVariableRateShading(GMaxRHIShaderPlatform);
 }
 
-bool FVariableRateShadingImageManager::IsVRSEnabled()
+bool FVariableRateShadingImageManager::IsSoftwareVRSSupported()
 {
+	return IsFeatureLevelSupported(GMaxRHIShaderPlatform, ERHIFeatureLevel::SM6);
+}
+
+bool FVariableRateShadingImageManager::IsHardwareVRSEnabled()
+{
+	// Currently corresponds to r.VRS.Enable and r.VRS.EnableImage
 	return GRHIVariableRateShadingEnabled && GRHIAttachmentVariableRateShadingEnabled;
+}
+
+bool FVariableRateShadingImageManager::IsSoftwareVRSEnabled()
+{
+	return CVarVRSSoftwareImage.GetValueOnRenderThread() > 0;
+}
+
+bool FVariableRateShadingImageManager::IsVRSEnabledForFrame()
+{
+	return bHardwareVRSEnabledForFrame || bSoftwareVRSEnabledForFrame;
+}
+
+bool FVariableRateShadingImageManager::IsHardwareVRSEnabledForFrame()
+{
+	return bHardwareVRSEnabledForFrame;
+}
+
+bool FVariableRateShadingImageManager::IsSoftwareVRSEnabledForFrame()
+{
+	return bSoftwareVRSEnabledForFrame;
+}
+
+static EDisplayOutputFormat GetDisplayOutputFormat(const FViewInfo& View)
+{
+	FTonemapperOutputDeviceParameters Parameters = GetTonemapperOutputDeviceParameters(*View.Family);
+	return (EDisplayOutputFormat)Parameters.OutputDevice;
 }
 
 bool FVariableRateShadingImageManager::IsVRSCompatibleWithOutputType(const EDisplayOutputFormat& OutputFormat)
@@ -342,32 +375,58 @@ bool FVariableRateShadingImageManager::IsVRSCompatibleWithView(const FViewInfo& 
 		&& IsVRSCompatibleWithOutputType(GetDisplayOutputFormat(ViewInfo));
 }
 
-FIntPoint FVariableRateShadingImageManager::GetSRITileSize()
+FIntPoint FVariableRateShadingImageManager::GetSRITileSize(bool bSoftwareVRS)
 {
-	return FIntPoint(GRHIVariableRateShadingImageTileMinWidth, GRHIVariableRateShadingImageTileMinHeight);
+	return bSoftwareVRS ? FIntPoint(2, 2) : FIntPoint(GRHIVariableRateShadingImageTileMinWidth, GRHIVariableRateShadingImageTileMinHeight);
 }
 
-FRDGTextureDesc FVariableRateShadingImageManager::GetSRIDesc()
+FRDGTextureDesc FVariableRateShadingImageManager::GetSRIDesc(const FSceneViewFamily& ViewFamily, bool bSoftwareVRS)
 {
-	const FIntPoint Size = FSceneTexturesConfig::Get().Extent;
-	const FIntPoint TileSize = GetSRITileSize();
-	const FIntPoint SRISize = FMath::DivideAndRoundUp(Size, TileSize);
+	check(!ViewFamily.Views.IsEmpty())
+	check(ViewFamily.Views[0]->bIsViewInfo);
+
+	const FViewInfo* ViewInfo = static_cast<const FViewInfo*>(ViewFamily.Views[0]);
+	const FIntRect FamilyViewRect = ViewInfo->GetFamilyViewRect(); // May vary from the size of the scene textures if using constrained aspect ratios
+	const FIntPoint SRISize = FMath::DivideAndRoundUp(FamilyViewRect.Size(), GetSRITileSize(bSoftwareVRS));
 
 	return FRDGTextureDesc::Create2D(
 		SRISize,
-		GRHIVariableRateShadingImageFormat,
+		bSoftwareVRS ? PF_R8_UINT : GRHIVariableRateShadingImageFormat,
 		FClearValueBinding::None,
 		TexCreate_Foveation | TexCreate_UAV | TexCreate_ShaderResource | TexCreate_DisableDCC);
-
 }
 
-FRDGTextureRef FVariableRateShadingImageManager::GetVariableRateShadingImage(FRDGBuilder& GraphBuilder, const FViewInfo& ViewInfo, FVariableRateShadingImageManager::EVRSPassType PassType,
-	FVariableRateShadingImageManager::EVRSSourceType VRSTypesToExclude)
+int32 FVariableRateShadingImageManager::GetNumberOfSupportedRates()
 {
-	EVRSImageType ImageType = GetImageTypeFromPassType(PassType);
+	// We will always support the 4 rates 1x1, 1x2, 2x1, and 2x2.
+	// If the RHI supports larger rates, we can also use 2x4, 4x2, and 4x4, for 7 total.
+	static const int32 NumBaseRates = 4;
+	static const int32 NumExpandedRates = 7;
 
+	return GRHISupportsLargerVariableRateShadingSizes ? NumExpandedRates : NumBaseRates;
+}
+
+FRDGTextureRef FVariableRateShadingImageManager::GetVariableRateShadingImage(FRDGBuilder& GraphBuilder, const FViewInfo& ViewInfo, FVariableRateShadingImageManager::EVRSPassType PassType, bool bRequestSoftwareImage)
+{
 	// If the view doesn't support VRS or this pass is disabled, bail immediately
-	if (!bVRSEnabledForFrame || !IsVRSCompatibleWithView(ViewInfo) || ImageType == EVRSImageType::Disabled)
+	if (!IsVRSEnabledForFrame())
+	{
+		return nullptr;
+	}
+
+	EVRSImageType ImageType = GetImageTypeFromPassType(PassType);
+	if (ImageType == EVRSImageType::Disabled || !IsVRSCompatibleWithView(ViewInfo))
+	{
+		return nullptr;
+	}
+
+	// Use debug rate if provided, otherwise bail if no generators available
+	if (VRSForceRateForFrame >= 0)
+	{
+		return GetForceRateImage(GraphBuilder, *ViewInfo.Family, VRSForceRateForFrame, GetImageTypeFromPassType(PassType), bRequestSoftwareImage);
+	}
+
+	if (ActiveGenerators.IsEmpty())
 	{
 		return nullptr;
 	}
@@ -375,29 +434,21 @@ FRDGTextureRef FVariableRateShadingImageManager::GetVariableRateShadingImage(FRD
 	RDG_EVENT_SCOPE(GraphBuilder, "GetVariableRateShadingImage");
 	SCOPED_NAMED_EVENT(GetVariableRateShadingImage, FColor::Yellow);
 
-	// Use debug rate if provided
-	if (VRSForceRateForFrame >= 0)
-	{
-		return GetForceRateImage(GraphBuilder, VRSForceRateForFrame, ImageType);
-	}
-
-	// Otherwise collate all internal sources
+	// Collate all internal sources
 	TArray<FRDGTextureRef> InternalVRSSources;
-
+	for (IVariableRateShadingImageGenerator* const Generator : ActiveGenerators)
 	{
-		FReadScopeLock GeneratorsLock(GeneratorsMutex);	
-		for (IVariableRateShadingImageGenerator* const Generator : ImageGenerators)
-		{
-			FRDGTextureRef Image = nullptr;
-			if (Generator->IsEnabledForView(ViewInfo) && !EnumHasAnyFlags(VRSTypesToExclude, Generator->GetType()))
-			{
-				Image = Generator->GetImage(GraphBuilder, ViewInfo, ImageType);
-			}
+		const bool bGetSoftwareImage = bSoftwareVRSEnabledForFrame && bRequestSoftwareImage;
 
-			if (Image)
-			{
-				InternalVRSSources.Add(Image);
-			}
+		FRDGTextureRef Image = nullptr;
+		if (Generator && Generator->IsSupportedByView(ViewInfo))
+		{
+			Image = Generator->GetImage(GraphBuilder, ViewInfo, ImageType, bGetSoftwareImage);
+		}
+
+		if (Image)
+		{
+			InternalVRSSources.Add(Image);
 		}
 	}
 
@@ -405,7 +456,7 @@ FRDGTextureRef FVariableRateShadingImageManager::GetVariableRateShadingImage(FRD
 	// If we have exactly one, the combiner will just return that
 	if (InternalVRSSources.Num())
 	{
-		return CombineShadingRateImages(GraphBuilder, ViewInfo, InternalVRSSources);
+		return CombineShadingRateImages(GraphBuilder, *ViewInfo.Family, InternalVRSSources);
 	}
 
 	// Default to nullptr if no sources are available
@@ -417,18 +468,27 @@ FRDGTextureRef FVariableRateShadingImageManager::GetVariableRateShadingImage(FRD
 
 void FVariableRateShadingImageManager::PrepareImageBasedVRS(FRDGBuilder& GraphBuilder, const FSceneViewFamily& ViewFamily, const FMinimalSceneTextures& SceneTextures)
 {
-	bVRSEnabledForFrame = IsVRSSupportedByRHI() && IsVRSEnabled();
-	if (!bVRSEnabledForFrame)
+	bHardwareVRSEnabledForFrame = IsHardwareVRSSupported() && IsHardwareVRSEnabled();
+	bSoftwareVRSEnabledForFrame = IsSoftwareVRSSupported() && CVarVRSSoftwareImage.GetValueOnRenderThread() != 0;
+	if (!IsVRSEnabledForFrame())
 	{
 		return;
 	}
 
-	RDG_EVENT_SCOPE(GraphBuilder, "PrepareImageBasedVRS");
-	SCOPED_NAMED_EVENT(PrepareImageBasedVRS, FColor::Red);
+	// If no generators or forced rate are active, bail
+	{
+		FReadScopeLock GeneratorsLock(GeneratorsMutex);
+		ActiveGenerators = ImageGenerators.FilterByPredicate([](IVariableRateShadingImageGenerator* const InGenerator) { return InGenerator && InGenerator->IsEnabled(); });
+	}
 
 	VRSForceRateForFrame = CVarVRSDebugForceRate->GetInt();
 
-	// If no views support VRS, bail immediately
+	if (ActiveGenerators.IsEmpty() && VRSForceRateForFrame < 0)
+	{
+		return;
+	}
+	
+	// If no views support VRS, bail
 	bool bIsAnyViewVRSCompatible = false;
 	for (const FSceneView* View : ViewFamily.Views)
 	{
@@ -453,25 +513,26 @@ void FVariableRateShadingImageManager::PrepareImageBasedVRS(FRDGBuilder& GraphBu
 		return;
 	}
 
-	// Invoke image generators
+	RDG_EVENT_SCOPE(GraphBuilder, "PrepareImageBasedVRS");
+	SCOPED_NAMED_EVENT(PrepareImageBasedVRS, FColor::Red);
+
+	VRSForceRateForFrame = CVarVRSDebugForceRate->GetInt();
+
+	// Invoke active image generators
+	for (IVariableRateShadingImageGenerator* const Generator : ActiveGenerators)
 	{
-		FReadScopeLock GeneratorsLock(GeneratorsMutex);
-		for (IVariableRateShadingImageGenerator* const Generator : ImageGenerators)
+		if (Generator && Generator->IsSupportedByView(*ViewFamily.Views[0]))
 		{
-			if (Generator->IsEnabledForView(*ViewFamily.Views[0]))
-			{
-				Generator->PrepareImages(GraphBuilder, ViewFamily, SceneTextures);
-			}
+			Generator->PrepareImages(GraphBuilder, ViewFamily, SceneTextures, bHardwareVRSEnabledForFrame, bSoftwareVRSEnabledForFrame);
 		}
 	}
 }
 
 bool FVariableRateShadingImageManager::IsTypeEnabledForView(const FSceneView& View, FVariableRateShadingImageManager::EVRSSourceType Type)
 {
-	FReadScopeLock GeneratorsLock(GeneratorsMutex);
-	for (IVariableRateShadingImageGenerator* const Generator : ImageGenerators)
+	for (IVariableRateShadingImageGenerator* const Generator : ActiveGenerators)
 	{
-		if (EnumHasAnyFlags(Type, Generator->GetType()) && Generator->IsEnabledForView(View))
+		if (Generator && EnumHasAnyFlags(Type, Generator->GetType()) && Generator->IsSupportedByView(View))
 		{
 			return true;
 		}
@@ -481,14 +542,44 @@ bool FVariableRateShadingImageManager::IsTypeEnabledForView(const FSceneView& Vi
 
 void FVariableRateShadingImageManager::DrawDebugPreview(FRDGBuilder& GraphBuilder, const FSceneViewFamily& ViewFamily, FRDGTextureRef OutputSceneColor)
 {
-	uint32 ImageTypeAsInt = CVarVRSPreview.GetValueOnRenderThread();
-	EVRSImageType PreviewImageType = EVRSImageType::Disabled;
-	if (ImageTypeAsInt >= 0 && ImageTypeAsInt <= EVRSImageType::Conservative)
+	if (!IsVRSEnabledForFrame() || !OutputSceneColor)
 	{
-		PreviewImageType = static_cast<EVRSImageType>(ImageTypeAsInt);
+		return;
 	}
 
-	if (PreviewImageType == EVRSImageType::Disabled || !OutputSceneColor)
+	uint32 ImageTypeAsInt = CVarVRSPreview.GetValueOnRenderThread();
+	EVRSImageType PreviewImageType = EVRSImageType::Disabled;
+	bool bUseSoftwareImage = false;
+	
+	switch (ImageTypeAsInt)
+	{
+		// Full hardware
+		case 1: 
+			PreviewImageType = EVRSImageType::Full;
+			break;
+
+		// Conservative hardware
+		case 2:
+			PreviewImageType = EVRSImageType::Conservative;
+			break;
+
+		// Full software
+		case 3:
+			PreviewImageType = EVRSImageType::Full;
+			bUseSoftwareImage = true;
+			break;
+
+		// Conservative software
+		case 4:
+			PreviewImageType = EVRSImageType::Conservative;
+			bUseSoftwareImage = true;
+			break;
+
+		default:
+			return;
+	}
+
+	if ((bUseSoftwareImage && !IsSoftwareVRSEnabledForFrame()) || (!bUseSoftwareImage && !IsHardwareVRSEnabledForFrame()))
 	{
 		return;
 	}
@@ -504,7 +595,7 @@ void FVariableRateShadingImageManager::DrawDebugPreview(FRDGBuilder& GraphBuilde
 			// Use debug rate if provided
 			if (VRSForceRateForFrame >= 0)
 			{
-				PreviewTexture = GetForceRateImage(GraphBuilder, VRSForceRateForFrame, PreviewImageType);
+				PreviewTexture = GetForceRateImage(GraphBuilder, ViewFamily, VRSForceRateForFrame, PreviewImageType, bUseSoftwareImage);
 			}
 
 			// Otherwise collate debug images
@@ -512,29 +603,26 @@ void FVariableRateShadingImageManager::DrawDebugPreview(FRDGBuilder& GraphBuilde
 			{
 				TArray<FRDGTextureRef> InternalVRSSources;
 
+				for (IVariableRateShadingImageGenerator* const Generator : ActiveGenerators)
 				{
-					FReadScopeLock GeneratorsLock(GeneratorsMutex);
-					for (IVariableRateShadingImageGenerator* const Generator : ImageGenerators)
+					FRDGTextureRef Image = nullptr;
+					if (Generator && Generator->IsSupportedByView(*View))
 					{
-						FRDGTextureRef Image = nullptr;
-						if (Generator->IsEnabledForView(*View))
-						{
-							Image = Generator->GetDebugImage(GraphBuilder, *ViewInfo, PreviewImageType);
-						}
+						Image = Generator->GetDebugImage(GraphBuilder, *ViewInfo, PreviewImageType, bUseSoftwareImage);
+					}
 
-						if (Image)
-						{
-							InternalVRSSources.Add(Image);
-						}
+					if (Image)
+					{
+						InternalVRSSources.Add(Image);
 					}
 				}
 
-				PreviewTexture = CombineShadingRateImages(GraphBuilder, *ViewInfo, InternalVRSSources);
+				PreviewTexture = CombineShadingRateImages(GraphBuilder, ViewFamily, InternalVRSSources);
 
 				// Generate a dummy 1x1 image if we have no VRS sources
 				if (!PreviewTexture)
 				{
-					PreviewTexture = GetForceRateImage(GraphBuilder);
+					PreviewTexture = GetForceRateImage(GraphBuilder, ViewFamily, VRSSR_1x1, EVRSImageType::Full, bUseSoftwareImage);
 				}
 			}
 
@@ -563,7 +651,7 @@ void FVariableRateShadingImageManager::DrawDebugPreview(FRDGBuilder& GraphBuilde
 
 			EScreenPassDrawFlags DrawFlags = EScreenPassDrawFlags::AllowHMDHiddenAreaMask;
 
-			FIntRect ScaledSrcRect = FIntRect::DivideAndRoundUp(SrcViewRect, FVariableRateShadingImageManager::GetSRITileSize());
+			FIntRect ScaledSrcRect = FIntRect::DivideAndRoundUp(SrcViewRect, FVariableRateShadingImageManager::GetSRITileSize(bUseSoftwareImage));
 
 			const FScreenPassTextureViewport InputViewport = FScreenPassTextureViewport(PreviewTexture, ScaledSrcRect);
 			const FScreenPassTextureViewport OutputViewport(OutputSceneColor, DestViewRect);
@@ -611,7 +699,7 @@ void FVariableRateShadingImageManager::UnregisterExternalImageGenerator(IVariabl
  * Private functions
  */
 
-FRDGTextureRef FVariableRateShadingImageManager::CombineShadingRateImages(FRDGBuilder& GraphBuilder, const FViewInfo& ViewInfo, TArray<FRDGTextureRef> Sources)
+FRDGTextureRef FVariableRateShadingImageManager::CombineShadingRateImages(FRDGBuilder& GraphBuilder, const FSceneViewFamily& ViewFamily, TArray<FRDGTextureRef> Sources)
 {
 	// If we have more than one source, combine the first available two
 	// TODO: Support combining more textures
@@ -628,7 +716,7 @@ FRDGTextureRef FVariableRateShadingImageManager::CombineShadingRateImages(FRDGBu
 		SCOPED_NAMED_EVENT(CombineShadingRateImages, FColor::Green);
 
 		// Create texture to hold shading rate image
-		FRDGTextureRef CombinedShadingRateTexture = GraphBuilder.CreateTexture(GetSRIDesc(), TEXT("CombinedShadingRateTexture"));
+		FRDGTextureRef CombinedShadingRateTexture = GraphBuilder.CreateTexture(Sources[0]->Desc, TEXT("CombinedShadingRateTexture"));
 
 		FCombineShadingRateTexturesCS::FParameters* PassParameters = GraphBuilder.AllocParameters<FCombineShadingRateTexturesCS::FParameters>();
 		PassParameters->SourceTexture0 = Sources[0];
@@ -643,28 +731,30 @@ FRDGTextureRef FVariableRateShadingImageManager::CombineShadingRateImages(FRDGBu
 			ERDGPassFlags::AsyncCompute | ERDGPassFlags::NeverCull,
 			ComputeShader,
 			PassParameters,
-			FComputeShaderUtils::GetGroupCount(FSceneTexturesConfig::Get().Extent, GetSRITileSize()));
+			FComputeShaderUtils::GetGroupCount(FSceneTexturesConfig::Get().Extent, FIntPoint(VRSHelpers::kCombineGroupSize, VRSHelpers::kCombineGroupSize)));
 
 		return CombinedShadingRateTexture;
 	}
 
 }
 
-FRDGTextureRef FVariableRateShadingImageManager::GetForceRateImage(FRDGBuilder& GraphBuilder, int RateIndex /* = 0*/, EVRSImageType ImageType /* = EVRSImageType::Full*/)
+FRDGTextureRef FVariableRateShadingImageManager::GetForceRateImage(FRDGBuilder& GraphBuilder, const FSceneViewFamily& ViewFamily, int RateIndex /* = 0*/, EVRSImageType ImageType /* = EVRSImageType::Full*/, bool bGetSoftwareImage)
 {
 	static const TArray<uint32> ValidShadingRates = { VRSSR_1x1, VRSSR_1x2, VRSSR_2x1, VRSSR_2x2, VRSSR_2x4, VRSSR_4x2, VRSSR_4x4 };
 
-	if (RateIndex >= ValidShadingRates.Num())
+	const int32 NumberOfAvailableRates = GetNumberOfSupportedRates();
+
+	if (RateIndex >= NumberOfAvailableRates)
 	{
-		RateIndex = ValidShadingRates.Num() - 1; // Default to maximum shading rate if value exceeds valid rates
+		RateIndex = NumberOfAvailableRates - 1; // Default to maximum shading rate if value exceeds valid rates
 	}
 
 	if (ImageType == EVRSImageType::Disabled)
 	{
-		RateIndex = ValidShadingRates[0]; // Force to minimum shading rate if VRS is disabled for this pass
+		RateIndex = 0; // Force to minimum shading rate if VRS is disabled for this pass
 	}
 
-	FRDGTextureRef ForceShadingRateTexture = GraphBuilder.CreateTexture(GetSRIDesc(), TEXT("ForceShadingRateTexture"));
+	FRDGTextureRef ForceShadingRateTexture = GraphBuilder.CreateTexture(GetSRIDesc(ViewFamily, bGetSoftwareImage), TEXT("ForceShadingRateTexture"));
 	FRDGTextureUAVRef ForceShadingRateUAV = GraphBuilder.CreateUAV(ForceShadingRateTexture);
 	AddClearUAVPass(GraphBuilder, ForceShadingRateUAV, ValidShadingRates[RateIndex]);
 

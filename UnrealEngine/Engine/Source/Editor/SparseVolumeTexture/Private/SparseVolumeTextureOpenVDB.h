@@ -5,7 +5,7 @@
 #include "HAL/Platform.h"
 #include "Misc/CoreMiscDefines.h" // UE_PUSH_MACRO seems to break without this
 
-#if PLATFORM_WINDOWS
+#if PLATFORM_WINDOWS || PLATFORM_LINUX
 
 #define OPENVDB_AVAILABLE 1
 

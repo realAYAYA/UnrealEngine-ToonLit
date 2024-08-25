@@ -1540,7 +1540,7 @@ void UCommonUserSubsystem::ProcessLoginRequest(TSharedRef<FUserLoginRequest> Req
 	}
 
 	// Check for overall success
-	if (CurrentStatus != ELoginStatusType::NotLoggedIn && CurrentId.IsValid())
+	if (bHasRequiredStatus && CurrentId.IsValid())
 	{
 		// Stall if we're waiting for the login UI to close
 		if (Request->LoginUIState == ECommonUserAsyncTaskState::InProgress)
@@ -1662,6 +1662,8 @@ void UCommonUserSubsystem::ProcessLoginRequest(TSharedRef<FUserLoginRequest> Req
 				Request->OverallLoginState = ECommonUserAsyncTaskState::NotStarted;
 				Request->PrivilegeCheckState = ECommonUserAsyncTaskState::NotStarted;
 				Request->TransferPlatformAuthState = ECommonUserAsyncTaskState::NotStarted;
+				Request->AutoLoginState = ECommonUserAsyncTaskState::NotStarted;
+				Request->LoginUIState = ECommonUserAsyncTaskState::NotStarted;
 
 				// Reprocess and immediately return
 				ProcessLoginRequest(Request);

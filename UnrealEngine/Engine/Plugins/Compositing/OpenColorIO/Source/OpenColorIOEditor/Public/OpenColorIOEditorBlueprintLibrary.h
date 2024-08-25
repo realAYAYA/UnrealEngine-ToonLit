@@ -24,6 +24,16 @@ public:
 	static OPENCOLORIOEDITOR_API void SetActiveViewportConfiguration(const FOpenColorIODisplayConfiguration& InConfiguration);
 
 	/**
+	 * Apply a color space transform to a color value.
+	 *
+	 * @param ConversionSettings Color transformation settings.
+	 * @param InOutColor Color value transform.
+	 * @return true upon success.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "OpenColorIO")
+	static OPENCOLORIOEDITOR_API bool ApplyColorSpaceTransformToColor(const FOpenColorIOColorConversionSettings& ConversionSettings, const FLinearColor& InColor, FLinearColor& OutColor);
+
+	/**
 	 * Apply a color space transform to a texture asset.
 	 *
 	 * @param ConversionSettings Color transformation settings.

@@ -41,7 +41,11 @@ void FOnlineServicesOSSAdapter::RegisterComponents()
 
 	Components.Register<FPresenceOSSAdapter>(*this);
 	Components.Register<FPrivilegesOSSAdapter>(*this);
-	Components.Register<FStatsOSSAdapter>(*this);
+
+	if (Subsystem->GetStatsInterface().IsValid())
+	{
+		Components.Register<FStatsOSSAdapter>(*this);
+	}
 
 	if (Subsystem->GetFriendsInterface().IsValid())
 	{

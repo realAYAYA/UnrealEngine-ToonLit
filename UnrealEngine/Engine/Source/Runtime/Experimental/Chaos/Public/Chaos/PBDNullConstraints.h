@@ -146,17 +146,4 @@ namespace Chaos
 	};
 
 
-	inline FPBDNullConstraints::FPBDNullConstraints()
-		: TPBDIndexedConstraintContainer<FPBDNullConstraints>(FPBDNullConstraintHandle::StaticType())
-	{
-	}
-
-	inline FPBDNullConstraintHandle* FPBDNullConstraints::AddConstraint(const TVec2<FGeometryParticleHandle*>& InConstraintedParticles)
-	{
-		const int32 ConstraintIndex = Constraints.Emplace(FPBDNullConstraint(InConstraintedParticles));
-		const int32 HandleIndex = Handles.Emplace(HandleAllocator.AllocHandle(this, ConstraintIndex));
-		check(ConstraintIndex == HandleIndex);
-		return Handles[HandleIndex];
-	}
-
 }

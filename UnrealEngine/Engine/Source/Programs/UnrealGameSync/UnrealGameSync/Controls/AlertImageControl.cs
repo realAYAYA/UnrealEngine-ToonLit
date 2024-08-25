@@ -14,10 +14,10 @@ namespace UnrealGameSync
 		public Image? Image
 		{
 			get => _imageValue;
-			set 
-			{ 
-				_imageValue = value; 
-				Invalidate(); 
+			set
+			{
+				_imageValue = value;
+				Invalidate();
 			}
 		}
 
@@ -29,7 +29,7 @@ namespace UnrealGameSync
 		{
 			e.Graphics.FillRectangle(SystemBrushes.Window, 0, 0, Width, Height);
 
-			if(Image != null)
+			if (Image != null)
 			{
 				float scale = Math.Min((float)Width / Image.Width, (float)Height / Image.Height);
 
@@ -39,7 +39,7 @@ namespace UnrealGameSync
 				e.Graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
 				e.Graphics.SmoothingMode = SmoothingMode.HighQuality;
 				e.Graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
-				e.Graphics.DrawImage(Image, (Width - imageW) / 2, (Height - imageH) / 2, imageW, imageH); 
+				e.Graphics.DrawImage(Image, (Width - imageW) / 2, (Height - imageH) / 2, imageW, imageH);
 			}
 		}
 	}

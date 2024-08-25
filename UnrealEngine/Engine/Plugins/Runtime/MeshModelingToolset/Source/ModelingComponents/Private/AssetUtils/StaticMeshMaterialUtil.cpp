@@ -100,7 +100,8 @@ bool UE::AssetUtils::GetStaticMeshLODMaterialListBySection(
 	UStaticMesh* StaticMeshAsset,
 	int32 LODIndex,
 	TArray<UMaterialInterface*>& MaterialListOut,
-	TArray<int32>& MaterialIndexOut)
+	TArray<int32>& MaterialIndexOut,
+	TArray<FName>& MaterialSlotNameOut)
 {
 #if WITH_EDITOR
 	// need valid MeshDescription in Editor path
@@ -141,11 +142,13 @@ bool UE::AssetUtils::GetStaticMeshLODMaterialListBySection(
 		{
 			MaterialIndexOut.Add(UseSlotIndex);
 			MaterialListOut.Add(MaterialSetInfo.MaterialSlots[UseSlotIndex].Material);
+			MaterialSlotNameOut.Add(MaterialSetInfo.MaterialSlots[UseSlotIndex].SlotName);
 		}
 		else
 		{
 			MaterialIndexOut.Add(-1);
 			MaterialListOut.Add(nullptr);
+			MaterialSlotNameOut.Add(NAME_None);
 		}
 	}
 

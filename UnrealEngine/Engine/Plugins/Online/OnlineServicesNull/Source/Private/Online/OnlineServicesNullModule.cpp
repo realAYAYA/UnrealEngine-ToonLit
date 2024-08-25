@@ -1,7 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-#include "Modules/ModuleManager.h"
+#include "Online/OnlineServicesNullModule.h"
 
+#include "Modules/ModuleManager.h"
 #include "Online/OnlineServicesRegistry.h"
 #include "Online/OnlineServicesNull.h"
 #include "Online/AuthNull.h"
@@ -9,14 +10,6 @@
 
 namespace UE::Online
 {
-
-class FOnlineServicesNullModule : public IModuleInterface
-{
-public:
-	virtual void StartupModule() override;
-	virtual void ShutdownModule() override;
-protected:
-};
 
 class FOnlineServicesFactoryNull : public IOnlineServicesFactory
 {
@@ -28,6 +21,11 @@ public:
 	}
 protected:
 };
+
+int FOnlineServicesNullModule::GetRegistryPriority()
+{
+	return 0;
+}
 
 void FOnlineServicesNullModule::StartupModule()
 {

@@ -50,6 +50,11 @@ void UActorEditorContextSubsystem::UnregisterClient(IActorEditorContextClient* C
 
 void UActorEditorContextSubsystem::ApplyContext(AActor* InActor)
 {
+	if (GIsReinstancing)
+	{
+		return;
+	}
+
 	UWorld* World = GetWorld();
 	if (Clients.IsEmpty() || !World)
 	{
@@ -99,7 +104,7 @@ void UActorEditorContextSubsystem::ResetContext(IActorEditorContextClient* Clien
 	}
 }
 
-void UActorEditorContextSubsystem::PushContext()
+void UActorEditorContextSubsystem::PushContext(bool bDuplicateContext)
 {
 	UWorld* World = GetWorld();
 	if (Clients.IsEmpty() || !World)
@@ -109,7 +114,7 @@ void UActorEditorContextSubsystem::PushContext()
 
 	for (IActorEditorContextClient* Client : Clients)
 	{
-		Client->OnExecuteActorEditorContextAction(World, EActorEditorContextAction::PushContext);
+		Client->OnExecuteActorEditorContextAction(World, bDuplicateContext ? EActorEditorContextAction::PushDuplicateContext : EActorEditorContextAction::PushContext);
 	}
 	ActorEditorContextSubsystemChanged.Broadcast();
 }
@@ -125,6 +130,21 @@ void UActorEditorContextSubsystem::PopContext()
 	for (IActorEditorContextClient* Client : Clients)
 	{
 		Client->OnExecuteActorEditorContextAction(World, EActorEditorContextAction::PopContext);
+	}
+	ActorEditorContextSubsystemChanged.Broadcast();
+}
+
+void UActorEditorContextSubsystem::InitializeContextFromActor(AActor* Actor)
+{
+	UWorld* World = GetWorld();
+	if (Clients.IsEmpty() || !World || !Actor)
+	{
+		return;
+	}
+
+	for (IActorEditorContextClient* Client : Clients)
+	{
+		Client->OnExecuteActorEditorContextAction(World, EActorEditorContextAction::InitializeContextFromActor, Actor);
 	}
 	ActorEditorContextSubsystemChanged.Broadcast();
 }

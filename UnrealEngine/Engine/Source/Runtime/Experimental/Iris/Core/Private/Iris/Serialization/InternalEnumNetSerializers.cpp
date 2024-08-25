@@ -18,6 +18,8 @@ public:
 		const int32 EnumValueCount = Enum->NumEnums();
 
 		using LargeIntegerType = std::conditional_t<std::is_signed_v<SourceType>, int64, uint64>;
+		constexpr LargeIntegerType MaxSupportedValue = static_cast<LargeIntegerType>(std::numeric_limits<SourceType>::max());
+
 
 		// Find smallest and largest values.
 		if (EnumValueCount <= 0)
@@ -38,7 +40,8 @@ public:
 			{
 				const LargeIntegerType Value = static_cast<LargeIntegerType>(Enum->GetValueByIndex(EnumIt));
 				SmallestValue = FMath::Min(SmallestValue, Value);
-				LargestValue = FMath::Max(LargestValue, Value);
+				// Prevent out of bounds auto-generated _MAX values from sneaking in.
+				LargestValue = FMath::Max(LargestValue, FMath::Min(Value, MaxSupportedValue));
 			}
 
 			OutConfig.LowerBound = static_cast<SourceType>(SmallestValue);

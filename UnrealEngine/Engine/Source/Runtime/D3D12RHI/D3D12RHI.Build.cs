@@ -8,14 +8,16 @@ public class D3D12RHI : ModuleRules
 {
 	public D3D12RHI(ReadOnlyTargetRules Target) : base(Target)
 	{
-		PrivateIncludePaths.Add("../Shaders/Shared");
-
 		PrivateDependencyModuleNames.AddAll(
 			"CoreUObject",
 			"Engine",
 			"RHICore",
 			"RenderCore",
 			"TraceLog"
+		);
+
+		PrivateIncludePathModuleNames.AddAll(
+			"Shaders"
 		);
 
 		PublicDependencyModuleNames.AddAll(
@@ -26,7 +28,6 @@ public class D3D12RHI : ModuleRules
 		AddEngineThirdPartyPrivateStaticDependencies(Target, "AMD_AGS");
 		AddEngineThirdPartyPrivateStaticDependencies(Target, "DX12");
 		AddEngineThirdPartyPrivateStaticDependencies(Target, "IntelExtensionsFramework");
-		AddEngineThirdPartyPrivateStaticDependencies(Target, "IntelMetricsDiscovery");
 		AddEngineThirdPartyPrivateStaticDependencies(Target, "NVAftermath");
 		AddEngineThirdPartyPrivateStaticDependencies(Target, "NVAPI");
 

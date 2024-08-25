@@ -11,6 +11,8 @@ class FPositionVertexBuffer;
 class FColorVertexBuffer;
 class FStaticMeshVertexBuffer;
 class FSkinWeightVertexBuffer;
+class FGLTFNormalArray;
+class FGLTFUVArray;
 
 typedef TGLTFConverter<FGLTFJsonAccessor*, const FGLTFMeshSection*, const FPositionVertexBuffer*> IGLTFPositionBufferConverter;
 typedef TGLTFConverter<FGLTFJsonAccessor*, const FGLTFMeshSection*, const FColorVertexBuffer*> IGLTFColorBufferConverter;
@@ -20,6 +22,11 @@ typedef TGLTFConverter<FGLTFJsonAccessor*, const FGLTFMeshSection*, const FStati
 typedef TGLTFConverter<FGLTFJsonAccessor*, const FGLTFMeshSection*, const FSkinWeightVertexBuffer*, uint32> IGLTFBoneIndexBufferConverter;
 typedef TGLTFConverter<FGLTFJsonAccessor*, const FGLTFMeshSection*, const FSkinWeightVertexBuffer*, uint32> IGLTFBoneWeightBufferConverter;
 typedef TGLTFConverter<FGLTFJsonAccessor*, const FGLTFMeshSection*> IGLTFIndexBufferConverter;
+typedef TGLTFConverter<FGLTFJsonAccessor*, const FPositionVertexBuffer*> IGLTFPositionBufferConverterRaw;
+typedef TGLTFConverter<FGLTFJsonAccessor*, const FGLTFIndexArray*, FString> IGLTFIndexBufferConverterRaw;
+typedef TGLTFConverter<FGLTFJsonAccessor*, const FGLTFNormalArray*> IGLTFNormalBufferConverterRaw;
+typedef TGLTFConverter<FGLTFJsonAccessor*, const FGLTFUVArray*> IGLTFUVBufferConverterRaw;
+
 
 class GLTFEXPORTER_API FGLTFPositionBufferConverter : public FGLTFBuilderContext, public IGLTFPositionBufferConverter
 {
@@ -141,9 +148,56 @@ public:
 protected:
 
 	virtual FGLTFJsonAccessor* Convert(const FGLTFMeshSection* MeshSection) override;
+};
+
+
+class GLTFEXPORTER_API FGLTFPositionBufferConverterRaw : public FGLTFBuilderContext, public IGLTFPositionBufferConverterRaw
+{
+public:
+
+	using FGLTFBuilderContext::FGLTFBuilderContext;
+
+protected:
+
+	virtual FGLTFJsonAccessor* Convert(const FPositionVertexBuffer* VertexBuffer) override;
+};
+
+class GLTFEXPORTER_API FGLTFIndexBufferConverterRaw : public FGLTFBuilderContext, public IGLTFIndexBufferConverterRaw
+{
+public:
+
+	using FGLTFBuilderContext::FGLTFBuilderContext;
+
+protected:
+	virtual FGLTFJsonAccessor* Convert(const FGLTFIndexArray* IndexBuffer, FString MeshName) override;
+};
+
+class GLTFEXPORTER_API FGLTFNormalBufferConverterRaw : public FGLTFBuilderContext, public IGLTFNormalBufferConverterRaw
+{
+public:
+
+	using FGLTFBuilderContext::FGLTFBuilderContext;
+
+protected:
+
+	virtual FGLTFJsonAccessor* Convert(const FGLTFNormalArray* NormalSource) override;
 
 private:
 
-	template <typename IndexType>
-	FGLTFJsonAccessor* Convert(const FGLTFMeshSection* MeshSection) const;
+	FGLTFJsonBufferView* ConvertBufferView(const FGLTFNormalArray* NormalSource);
+};
+
+class GLTFEXPORTER_API FGLTFUVBufferConverterRaw : public FGLTFBuilderContext, public IGLTFUVBufferConverterRaw
+{
+public:
+
+	using FGLTFBuilderContext::FGLTFBuilderContext;
+
+protected:
+
+	virtual FGLTFJsonAccessor* Convert(const FGLTFUVArray* UVSource) override;
+
+private:
+
+	FGLTFJsonBufferView* ConvertBufferView(const FGLTFUVArray* UVSource);
 };

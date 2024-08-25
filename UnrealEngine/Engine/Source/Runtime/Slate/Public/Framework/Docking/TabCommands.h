@@ -23,4 +23,5 @@ public:
 
 	TSharedPtr<FUICommandInfo> CloseMajorTab;
 	TSharedPtr<FUICommandInfo> CloseMinorTab;
+	TSharedPtr<FUICommandInfo> CloseFocusedTab;
 };

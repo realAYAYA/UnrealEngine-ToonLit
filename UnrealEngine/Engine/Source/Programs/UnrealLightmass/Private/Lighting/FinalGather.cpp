@@ -9,7 +9,6 @@
 #include "HAL/ExceptionHandling.h"
 
 #if PLATFORM_WINDOWS
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 	#include <psapi.h>
 #include "Windows/HideWindowsPlatformTypes.h"
@@ -956,7 +955,7 @@ public:
 						
 						if (MappingContext.RefinementTreeFreePool.Num() > 0)
 						{
-							FreeNode = MappingContext.RefinementTreeFreePool.Pop(false);
+							FreeNode = MappingContext.RefinementTreeFreePool.Pop(EAllowShrinking::No);
 							*FreeNode = FSimpleQuadTreeNode<FRefinementElement>();
 						}
 						else

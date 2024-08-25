@@ -47,29 +47,29 @@ namespace ChaosTest {
 		Particles.GetParticleHandles().AddArray(&PerParticlePhysicsMaterials);
 
 		auto Box0 = AppendDynamicParticleBoxMargin(Particles, Size, Margin0);
-		Box0->X() = FVec3(0, 0, 0);
-		Box0->R() = FRotation3(FQuat::Identity);
-		Box0->V() = FVec3(0);
-		Box0->PreV() = Box0->V();
-		Box0->P() = Box0->X();
-		Box0->Q() = Box0->R();
+		Box0->SetX(FVec3(0, 0, 0));
+		Box0->SetR(FRotation3(FQuat::Identity));
+		Box0->SetV(FVec3(0));
+		Box0->SetPreV(Box0->GetV());
+		Box0->SetP(Box0->GetX());
+		Box0->SetQ(Box0->GetR());
 		Box0->AuxilaryValue(PhysicsMaterials) = MakeSerializable(PhysicsMaterial);
 
 		auto Box1 = AppendDynamicParticleBoxMargin(Particles, Size, Margin1);
-		Box1->X() = Delta;
-		Box1->R() = FRotation3(FQuat::Identity);
-		Box1->V() = FVec3(0);
-		Box1->PreV() = Box1->V();
-		Box1->P() = Box1->X();
-		Box1->Q() = Box1->R();
+		Box1->SetX(Delta);
+		Box1->SetR(FRotation3(FQuat::Identity));
+		Box1->SetV(FVec3(0));
+		Box1->SetPreV(Box1->GetV());
+		Box1->SetP(Box1->GetX());
+		Box1->SetQ(Box1->GetR());
 		Box1->AuxilaryValue(PhysicsMaterials) = MakeSerializable(PhysicsMaterial);
 
-		const FImplicitBox3* BoxImplicit0 = Box0->Geometry()->template GetObject<FImplicitBox3>();
-		const FImplicitBox3* BoxImplicit1 = Box1->Geometry()->template GetObject<FImplicitBox3>();
+		const FImplicitBox3* BoxImplicit0 = Box0->GetGeometry()->template GetObject<FImplicitBox3>();
+		const FImplicitBox3* BoxImplicit1 = Box1->GetGeometry()->template GetObject<FImplicitBox3>();
 
 		const FReal Tolerance = 2.0f * KINDA_SMALL_NUMBER;
 
-		// Boxes should have a margin, limited by the minumum box dimension
+		// Boxes should have a margin, limited by the minimum box dimension
 		float ExpectedMargin0 = BoxImplicit0->ClampedMargin(Margin0);
 		float ExpectedMargin1 = BoxImplicit0->ClampedMargin(Margin1);
 		EXPECT_NEAR(BoxImplicit0->GetMargin(), ExpectedMargin0, Tolerance);
@@ -90,12 +90,12 @@ namespace ChaosTest {
 
 		FPBDCollisionConstraintPtr Constraint = CollisionAllocator.GetContextAllocator(0)->CreateConstraint(
 			Box0,
-			Box0->Geometry().Get(),
+			Box0->GetGeometry(),
 			Box0->ShapesArray()[0].Get(),
 			nullptr,
 			FRigidTransform3(),
 			Box1,
-			Box1->Geometry().Get(),
+			Box1->GetGeometry(),
 			Box1->ShapesArray()[0].Get(),
 			nullptr,
 			FRigidTransform3(),
@@ -166,25 +166,25 @@ namespace ChaosTest {
 		Particles.GetParticleHandles().AddArray(&PerParticlePhysicsMaterials);
 
 		auto Box0 = AppendDynamicParticleConvexBoxMargin(Particles, 0.5f * Size, Margin0);
-		Box0->X() = FVec3(0, 0, 0);
-		Box0->R() = FRotation3(FQuat::Identity);
-		Box0->V() = FVec3(0);
-		Box0->PreV() = Box0->V();
-		Box0->P() = Box0->X();
-		Box0->Q() = Box0->R();
+		Box0->SetX(FVec3(0, 0, 0));
+		Box0->SetR(FRotation3(FQuat::Identity));
+		Box0->SetV(FVec3(0));
+		Box0->SetPreV(Box0->GetV());
+		Box0->SetP(Box0->GetX());
+		Box0->SetQ(Box0->GetR());
 		Box0->AuxilaryValue(PhysicsMaterials) = MakeSerializable(PhysicsMaterial);
 
 		auto Box1 = AppendDynamicParticleConvexBoxMargin(Particles, 0.5f * Size, Margin1);
-		Box1->X() = Delta;
-		Box1->R() = FRotation3(FQuat::Identity);
-		Box1->V() = FVec3(0);
-		Box1->PreV() = Box1->V();
-		Box1->P() = Box1->X();
-		Box1->Q() = Box1->R();
+		Box1->SetX(Delta);
+		Box1->SetR(FRotation3(FQuat::Identity));
+		Box1->SetV(FVec3(0));
+		Box1->SetPreV(Box1->GetV());
+		Box1->SetP(Box1->GetX());
+		Box1->SetQ(Box1->GetR());
 		Box1->AuxilaryValue(PhysicsMaterials) = MakeSerializable(PhysicsMaterial);
 
-		const FImplicitConvex3* ConvexImplicit0 = Box0->Geometry()->template GetObject<FImplicitConvex3>();
-		const FImplicitConvex3* ConvexImplicit1 = Box1->Geometry()->template GetObject<FImplicitConvex3>();
+		const FImplicitConvex3* ConvexImplicit0 = Box0->GetGeometry()->template GetObject<FImplicitConvex3>();
+		const FImplicitConvex3* ConvexImplicit1 = Box1->GetGeometry()->template GetObject<FImplicitConvex3>();
 
 		const FReal Tolerance = 2.0f * KINDA_SMALL_NUMBER;
 
@@ -207,12 +207,12 @@ namespace ChaosTest {
 
 		FPBDCollisionConstraintPtr Constraint = CollisionAllocator.GetContextAllocator(0)->CreateConstraint(
 			Box0,
-			Box0->Geometry().Get(),
+			Box0->GetGeometry(),
 			Box0->ShapesArray()[0].Get(),
 			nullptr,
 			FRigidTransform3(),
 			Box1,
-			Box1->Geometry().Get(),
+			Box1->GetGeometry(),
 			Box1->ShapesArray()[0].Get(),
 			nullptr,
 			FRigidTransform3(),
@@ -258,7 +258,7 @@ namespace ChaosTest {
 	TEST(CollisionTests, DISABLED_TestConvexConvexCollisionMarginTooLarge)
 	{
 		// If the margin is too large, the margin should be limited
-		// @todo(chaos): fix this for convex - we do not have margin limits implemeted
+		// @todo(chaos): fix this for convex - we do not have margin limits implemented
 		TestConvexConvexCollisionMargin(15, 15, FVec3(20, 100, 100), FVec3(0, -100, 0), 0.0f, FVec3(0, 1, 0));
 		TestConvexConvexCollisionMargin(15, 15, FVec3(20, 100, 100), FVec3(20, 0, 0), 0.0f, FVec3(-1, 0, 0));
 	}
@@ -290,15 +290,15 @@ namespace ChaosTest {
 		Particles.GetParticleHandles().AddArray(&PerParticlePhysicsMaterials);
 
 		auto Box0 = AppendDynamicParticleBoxMargin(Particles, Size, Margin0);
-		Box0->X() = FVec3(0, 0, 0);
-		Box0->R() = FRotation3(FQuat::Identity);
-		Box0->V() = FVec3(0);
-		Box0->PreV() = Box0->V();
-		Box0->P() = Box0->X();
-		Box0->Q() = Box0->R();
+		Box0->SetX(FVec3(0, 0, 0));
+		Box0->SetR(FRotation3(FQuat::Identity));
+		Box0->SetV(FVec3(0));
+		Box0->SetPreV(Box0->GetV());
+		Box0->SetP(Box0->GetX());
+		Box0->SetQ(Box0->GetR());
 		Box0->AuxilaryValue(PhysicsMaterials) = MakeSerializable(PhysicsMaterial);
 
-		const FImplicitBox3* BoxImplicit0 = Box0->Geometry()->template GetObject<FImplicitBox3>();
+		const FImplicitBox3* BoxImplicit0 = Box0->GetGeometry()->template GetObject<FImplicitBox3>();
 
 		const FReal Tolerance = KINDA_SMALL_NUMBER;
 

@@ -126,6 +126,14 @@ UE::RivermaxCore::FRivermaxOutputStreamOptions URivermaxMediaCapture::GetOutputS
 	return Options;
 }
 
+void URivermaxMediaCapture::GetLastPresentedFrameInformation(UE::RivermaxCore::FPresentedFrameInfo& OutFrameInfo) const
+{
+	if (RivermaxStream)
+	{
+		RivermaxStream->GetLastPresentedFrame(OutFrameInfo);
+	}
+}
+
 bool URivermaxMediaCapture::ValidateMediaOutput() const
 {
 	URivermaxMediaOutput* RivermaxMediaOutput = Cast<URivermaxMediaOutput>(MediaOutput);
@@ -280,12 +288,11 @@ void URivermaxMediaCapture::AddFrameReservationPass(FRDGBuilder& GraphBuilder)
 	});
 }
 
-void URivermaxMediaCapture::OnFrameCaptured_RenderingThread(const FCaptureBaseData& InBaseData, TSharedPtr<FMediaCaptureUserData, ESPMode::ThreadSafe> InUserData, void* InBuffer, int32 Width, int32 Height, int32 BytesPerRow)
+void URivermaxMediaCapture::OnFrameCapturedInternal_AnyThread(const FCaptureBaseData& InBaseData, TSharedPtr<FMediaCaptureUserData, ESPMode::ThreadSafe> InUserData, void* InBuffer, int32 Width, int32 Height, int32 BytesPerRow)
 {
 	using namespace UE::RivermaxCore;
+	TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*FRivermaxTracingUtils::RmaxOutMediaCapturePipeTraceEvents[InBaseData.SourceFrameNumberRenderThread % 10]);
 
-	TRACE_CPUPROFILER_EVENT_SCOPE(URivermaxMediaCapture::OnFrameCaptured_RenderingThread);
-	
 	FRivermaxOutputVideoFrameInfo NewFrame;
 	NewFrame.Height = Height;
 	NewFrame.Width = Width;
@@ -298,11 +305,9 @@ void URivermaxMediaCapture::OnFrameCaptured_RenderingThread(const FCaptureBaseDa
 	}
 }
 
-void URivermaxMediaCapture::OnRHIResourceCaptured_AnyThread(const FCaptureBaseData& InBaseData, TSharedPtr<FMediaCaptureUserData, ESPMode::ThreadSafe> InUserData, FBufferRHIRef InBuffer)
+void URivermaxMediaCapture::OnRHIResourceCapturedInternal_AnyThread(const FCaptureBaseData& InBaseData, TSharedPtr<FMediaCaptureUserData, ESPMode::ThreadSafe> InUserData, FBufferRHIRef InBuffer)
 {
 	using namespace UE::RivermaxCore;
-
-	TRACE_CPUPROFILER_EVENT_SCOPE(URivermaxMediaCapture::OnRHIResourceCaptured_AnyThread);
 	TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*FRivermaxTracingUtils::RmaxOutMediaCapturePipeTraceEvents[InBaseData.SourceFrameNumberRenderThread % 10]);
 
 	FRivermaxOutputVideoFrameInfo NewFrame;
@@ -314,23 +319,32 @@ void URivermaxMediaCapture::OnRHIResourceCaptured_AnyThread(const FCaptureBaseDa
 	}
 }
 
+void URivermaxMediaCapture::OnFrameCaptured_RenderingThread(const FCaptureBaseData& InBaseData, TSharedPtr<FMediaCaptureUserData, ESPMode::ThreadSafe> InUserData, void* InBuffer, int32 Width, int32 Height, int32 BytesPerRow)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(URivermaxMediaCapture::OnFrameCaptured_RenderingThread);
+	OnFrameCapturedInternal_AnyThread(InBaseData, InUserData, InBuffer, Width, Height, BytesPerRow);
+}
+
+void URivermaxMediaCapture::OnRHIResourceCaptured_RenderingThread(const FCaptureBaseData& InBaseData, TSharedPtr<FMediaCaptureUserData, ESPMode::ThreadSafe> InUserData, FBufferRHIRef InBuffer)
+{
+	TRACE_CPUPROFILER_EVENT_SCOPE(URivermaxMediaCapture::OnRHIResourceCaptured_RenderingThread);
+	OnRHIResourceCapturedInternal_AnyThread(InBaseData, InUserData, InBuffer);
+}
+
+void URivermaxMediaCapture::OnRHIResourceCaptured_AnyThread(const FCaptureBaseData& InBaseData, TSharedPtr<FMediaCaptureUserData, ESPMode::ThreadSafe> InUserData, FBufferRHIRef InBuffer)
+{
+	using namespace UE::RivermaxCore;
+
+	TRACE_CPUPROFILER_EVENT_SCOPE(URivermaxMediaCapture::OnRHIResourceCaptured_AnyThread);
+	OnRHIResourceCapturedInternal_AnyThread(InBaseData, InUserData, InBuffer);
+}
+
 void URivermaxMediaCapture::OnFrameCaptured_AnyThread(const FCaptureBaseData& InBaseData, TSharedPtr<FMediaCaptureUserData, ESPMode::ThreadSafe> InUserData, const FMediaCaptureResourceData& InResourceData)
 {
 	using namespace UE::RivermaxCore;
 
 	TRACE_CPUPROFILER_EVENT_SCOPE(URivermaxMediaCapture::OnFrameCaptured_AnyThread);
-	TRACE_CPUPROFILER_EVENT_SCOPE_TEXT(*FRivermaxTracingUtils::RmaxOutMediaCapturePipeTraceEvents[InBaseData.SourceFrameNumberRenderThread % 10]);
-	
-	FRivermaxOutputVideoFrameInfo NewFrame;
-	NewFrame.Height = InResourceData.Height;
-	NewFrame.Width = InResourceData.Width;
-	NewFrame.Stride = InResourceData.BytesPerRow;
-	NewFrame.VideoBuffer = InResourceData.Buffer;
-	NewFrame.FrameIdentifier = InBaseData.SourceFrameNumberRenderThread;
-	if (RivermaxStream->PushVideoFrame(NewFrame) == false)
-	{
-		UE_LOG(LogRivermaxMedia, Verbose, TEXT("Failed to pushed captured frame"));
-	}
+	OnFrameCapturedInternal_AnyThread(InBaseData, InUserData, InResourceData.Buffer, InResourceData.Width, InResourceData.Height, InResourceData.BytesPerRow);
 }
 
 FIntPoint URivermaxMediaCapture::GetCustomOutputSize(const FIntPoint& InSize) const

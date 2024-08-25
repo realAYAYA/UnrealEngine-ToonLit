@@ -6,20 +6,13 @@
 #include "Misc/AssertionMacros.h"
 #include "Misc/IntrusiveUnsetOptionalState.h"
 #include "HAL/UnrealMemory.h"
-#include "Templates/AndOrNot.h"
-#include "Templates/ChooseClass.h"
+#include "Templates/FunctionFwd.h"
 #include "Templates/UnrealTypeTraits.h"
-#include "Templates/RemoveReference.h"
-#include "Templates/Decay.h"
 #include "Templates/Invoke.h"
-#include "Templates/IsConstructible.h"
-#include "Templates/IsInvocable.h"
-#include "Templates/IsMemberPointer.h"
-#include "Templates/IsPointer.h"
 #include "Templates/UnrealTemplate.h"
 #include "Math/UnrealMathUtility.h"
 #include <new> // IWYU pragma: export
-
+#include <type_traits>
 
 // Disable visualization hack for shipping or test builds.
 #ifndef UE_ENABLE_TFUNCTIONREF_VISUALIZATION
@@ -40,63 +33,6 @@
 	#define TFUNCTION_INLINE_SIZE         NUM_TFUNCTION_INLINE_BYTES
 	#define TFUNCTION_INLINE_ALIGNMENT    16
 #endif
-
-template <typename FuncType> class TFunction;
-template <typename FuncType> class TFunctionRef;
-
-/**
- * TFunction<FuncType>
- *
- * See the class definition for intended usage.
- */
-template <typename FuncType>
-class TFunction;
-
-/**
- * TUniqueFunction<FuncType>
- *
- * See the class definition for intended usage.
- */
-template <typename FuncType>
-class TUniqueFunction;
-
-/**
- * TFunctionRef<FuncType>
- *
- * See the class definition for intended usage.
- */
-template <typename FuncType>
-class TFunctionRef;
-
-/**
- * Traits class which checks if T is a TFunction<> type.
- */
-template <typename T> struct TIsTFunction               { enum { Value = false }; };
-template <typename T> struct TIsTFunction<TFunction<T>> { enum { Value = true  }; };
-
-template <typename T> struct TIsTFunction<const          T> { enum { Value = TIsTFunction<T>::Value }; };
-template <typename T> struct TIsTFunction<      volatile T> { enum { Value = TIsTFunction<T>::Value }; };
-template <typename T> struct TIsTFunction<const volatile T> { enum { Value = TIsTFunction<T>::Value }; };
-
-/**
- * Traits class which checks if T is a TFunction<> type.
- */
-template <typename T> struct TIsTUniqueFunction                     { enum { Value = false }; };
-template <typename T> struct TIsTUniqueFunction<TUniqueFunction<T>> { enum { Value = true  }; };
-
-template <typename T> struct TIsTUniqueFunction<const          T> { enum { Value = TIsTUniqueFunction<T>::Value }; };
-template <typename T> struct TIsTUniqueFunction<      volatile T> { enum { Value = TIsTUniqueFunction<T>::Value }; };
-template <typename T> struct TIsTUniqueFunction<const volatile T> { enum { Value = TIsTUniqueFunction<T>::Value }; };
-
-/**
- * Traits class which checks if T is a TFunctionRef<> type.
- */
-template <typename T> struct TIsTFunctionRef                  { enum { Value = false }; };
-template <typename T> struct TIsTFunctionRef<TFunctionRef<T>> { enum { Value = true  }; };
-
-template <typename T> struct TIsTFunctionRef<const          T> { enum { Value = TIsTFunctionRef<T>::Value }; };
-template <typename T> struct TIsTFunctionRef<      volatile T> { enum { Value = TIsTFunctionRef<T>::Value }; };
-template <typename T> struct TIsTFunctionRef<const volatile T> { enum { Value = TIsTFunctionRef<T>::Value }; };
 
 /**
  * Private implementation details of TFunction and TFunctionRef.
@@ -182,7 +118,7 @@ namespace UE::Core::Private::Function
 	template <typename T, bool bOnHeap>
 	struct TFunction_OwnedObject : public
 #if TFUNCTION_USES_INLINE_STORAGE
-		TChooseClass<bOnHeap, IFunction_OwnedObject_OnHeap<T>, IFunction_OwnedObject_Inline<T>>::Result
+		std::conditional_t<bOnHeap, IFunction_OwnedObject_OnHeap<T>, IFunction_OwnedObject_Inline<T>>
 #else
 		IFunction_OwnedObject_OnHeap<T>
 #endif
@@ -249,19 +185,9 @@ namespace UE::Core::Private::Function
 	};
 
 	template <typename T>
-	struct TIsNullableBinding :
-		TOr<
-			TIsPointer<T>,
-			TIsMemberPointer<T>,
-			TIsTFunction<T>
-		>
-	{
-	};
-
-	template <typename T>
 	FORCEINLINE bool IsBound(const T& Func)
 	{
-		if constexpr (TIsNullableBinding<T>::Value)
+		if constexpr (std::is_pointer_v<T> || std::is_member_pointer_v<T> || TIsTFunction<T>::Value)
 		{
 			// Function pointers, data member pointers, member function pointers and TFunctions
 			// can all be null/unbound, so test them using their boolean state.
@@ -280,13 +206,13 @@ namespace UE::Core::Private::Function
 	template <typename FunctorType, bool bOnHeap>
 	struct TStorageOwnerType<FunctorType, true, bOnHeap>
 	{
-		using Type = TFunction_UniqueOwnedObject<typename TDecay<FunctorType>::Type, bOnHeap>;
+		using Type = TFunction_UniqueOwnedObject<std::decay_t<FunctorType>, bOnHeap>;
 	};
 
 	template <typename FunctorType, bool bOnHeap>
 	struct TStorageOwnerType<FunctorType, false, bOnHeap>
 	{
-		using Type = TFunction_CopyableOwnedObject<typename TDecay<FunctorType>::Type, bOnHeap>;
+		using Type = TFunction_CopyableOwnedObject<std::decay_t<FunctorType>, bOnHeap>;
 	};
 
 	template <typename FunctorType, bool bUnique, bool bOnHeap>
@@ -378,7 +304,7 @@ namespace UE::Core::Private::Function
 		}
 
 		template <typename FunctorType>
-		typename TDecay<FunctorType>::Type* Bind(FunctorType&& InFunc)
+		std::decay_t<FunctorType>* Bind(FunctorType&& InFunc)
 		{
 			if (!IsBound(InFunc))
 			{
@@ -671,60 +597,12 @@ namespace UE::Core::Private::Function
 		#endif
 	};
 
-	template <typename FunctorType, typename Ret, typename... ParamTypes>
-	struct TFunctorReturnTypeIsCompatible
-		: TIsConstructible<Ret, decltype(DeclVal<FunctorType>()(DeclVal<ParamTypes>()...))>
-	{
-	};
-
-	template <typename MemberRet, typename Class, typename Ret, typename... ParamTypes>
-	struct TFunctorReturnTypeIsCompatible<MemberRet Class::*, Ret, ParamTypes...>
-		: TIsConstructible<Ret, MemberRet>
-	{
-	};
-
-	template <typename MemberRet, typename Class, typename Ret, typename... ParamTypes>
-	struct TFunctorReturnTypeIsCompatible<MemberRet Class::* const, Ret, ParamTypes...>
-		: TIsConstructible<Ret, MemberRet>
-	{
-	};
-
-	template <typename MemberRet, typename Class, typename... MemberParamTypes, typename Ret, typename... ParamTypes>
-	struct TFunctorReturnTypeIsCompatible<MemberRet (Class::*)(MemberParamTypes...), Ret, ParamTypes...>
-		: TIsConstructible<Ret, MemberRet>
-	{
-	};
-
-	template <typename MemberRet, typename Class, typename... MemberParamTypes, typename Ret, typename... ParamTypes>
-	struct TFunctorReturnTypeIsCompatible<MemberRet (Class::*)(MemberParamTypes...) const, Ret, ParamTypes...>
-		: TIsConstructible<Ret, MemberRet>
-	{
-	};
-
-	template <typename FuncType, typename FunctorType>
-	struct TFuncCanBindToFunctor;
-
-	template <typename FunctorType, typename Ret, typename... ParamTypes>
-	struct TFuncCanBindToFunctor<Ret(ParamTypes...), FunctorType> :
-		TAnd<
-			TIsInvocable<FunctorType, ParamTypes...>,
-			TFunctorReturnTypeIsCompatible<FunctorType, Ret, ParamTypes...>
-		>
-	{
-	};
-
-	template <typename FunctorType, typename... ParamTypes>
-	struct TFuncCanBindToFunctor<void(ParamTypes...), FunctorType> :
-		TIsInvocable<FunctorType, ParamTypes...>
-	{
-	};
-
 	struct FFunctionRefStoragePolicy
 	{
 		constexpr static bool bCanBeNull = false;
 
 		template <typename FunctorType>
-		typename TRemoveReference<FunctorType>::Type* Bind(FunctorType&& InFunc)
+		std::remove_reference_t<FunctorType>* Bind(FunctorType&& InFunc)
 		{
 			checkf(IsBound(InFunc), TEXT("Cannot bind a null/unbound callable to a TFunctionRef"));
 
@@ -812,23 +690,21 @@ namespace UE::Core::Private::Function
  *     });
  * }
  */
-template <typename FuncType>
-class TFunctionRef final : public UE::Core::Private::Function::TFunctionRefBase<UE::Core::Private::Function::FFunctionRefStoragePolicy, FuncType>
+template <typename Ret, typename... ParamTypes>
+class TFunctionRef<Ret(ParamTypes...)> final : public UE::Core::Private::Function::TFunctionRefBase<UE::Core::Private::Function::FFunctionRefStoragePolicy, Ret(ParamTypes...)>
 {
-	using Super = UE::Core::Private::Function::TFunctionRefBase<UE::Core::Private::Function::FFunctionRefStoragePolicy, FuncType>;
+	using Super = UE::Core::Private::Function::TFunctionRefBase<UE::Core::Private::Function::FFunctionRefStoragePolicy, Ret(ParamTypes...)>;
 
 public:
 	/**
 	 * Constructor which binds a TFunctionRef to a callable object.
 	 */
 	template <
-		typename FunctorType,
-		typename = typename TEnableIf<
-			TAnd<
-				TNot<TIsTFunctionRef<typename TDecay<FunctorType>::Type>>,
-				UE::Core::Private::Function::TFuncCanBindToFunctor<FuncType, typename TDecay<FunctorType>::Type>
-			>::Value
-		>::Type
+		typename FunctorType
+		UE_REQUIRES(
+			!TIsTFunctionRef<std::decay_t<FunctorType>>::Value &&
+			std::is_invocable_r_v<Ret, std::decay_t<FunctorType>, ParamTypes...>
+		)
 	>
 	TFunctionRef(FunctorType&& InFunc UE_LIFETIMEBOUND)
 		: Super(Forward<FunctorType>(InFunc))
@@ -903,10 +779,10 @@ public:
  *     FString Result = Transform(5); // "Hello: 25"
  * }
  */
-template <typename FuncType>
-class TFunction final : public UE::Core::Private::Function::TFunctionRefBase<UE::Core::Private::Function::TFunctionStorage<false>, FuncType>
+template <typename Ret, typename... ParamTypes>
+class TFunction<Ret(ParamTypes...)> final : public UE::Core::Private::Function::TFunctionRefBase<UE::Core::Private::Function::TFunctionStorage<false>, Ret(ParamTypes...)>
 {
-	using Super = UE::Core::Private::Function::TFunctionRefBase<UE::Core::Private::Function::TFunctionStorage<false>, FuncType>;
+	using Super = UE::Core::Private::Function::TFunctionRefBase<UE::Core::Private::Function::TFunctionStorage<false>, Ret(ParamTypes...)>;
 
 public:
 	/**
@@ -920,13 +796,11 @@ public:
 	 * Constructor which binds a TFunction to any function object.
 	 */
 	template <
-		typename FunctorType,
-		typename = typename TEnableIf<
-			TAnd<
-				TNot<TIsTFunction<typename TDecay<FunctorType>::Type>>,
-				UE::Core::Private::Function::TFuncCanBindToFunctor<FuncType, FunctorType>
-			>::Value
-		>::Type
+		typename FunctorType
+		UE_REQUIRES(
+			!TIsTFunction<std::decay_t<FunctorType>>::Value &&
+			std::is_invocable_r_v<Ret, std::decay_t<FunctorType>, ParamTypes...>
+		)
 	>
 	TFunction(FunctorType&& InFunc)
 		: Super(Forward<FunctorType>(InFunc))
@@ -941,7 +815,7 @@ public:
 		// reference):
 		//
 		// TFunction<int32(float)> MyFunction = [MyFunctionRef](float F) { return MyFunctionRef(F); };
-		static_assert(!TIsTFunctionRef<typename TDecay<FunctorType>::Type>::Value, "Cannot construct a TFunction from a TFunctionRef");
+		static_assert(!TIsTFunctionRef<std::decay_t<FunctorType>>::Value, "Cannot construct a TFunction from a TFunctionRef");
 	}
 
 	TFunction(TFunction&&) = default;
@@ -1016,10 +890,10 @@ public:
  * Foo(MovableFunc);           // error - TUniqueFunction is not copyable
  * Foo(MoveTemp(MovableFunc)); // ok
  */
-template <typename FuncType>
-class TUniqueFunction final : public UE::Core::Private::Function::TFunctionRefBase<UE::Core::Private::Function::TFunctionStorage<true>, FuncType>
+template <typename Ret, typename... ParamTypes>
+class TUniqueFunction<Ret(ParamTypes...)> final : public UE::Core::Private::Function::TFunctionRefBase<UE::Core::Private::Function::TFunctionStorage<true>, Ret(ParamTypes...)>
 {
-	using Super = UE::Core::Private::Function::TFunctionRefBase<UE::Core::Private::Function::TFunctionStorage<true>, FuncType>;
+	using Super = UE::Core::Private::Function::TFunctionRefBase<UE::Core::Private::Function::TFunctionStorage<true>, Ret(ParamTypes...)>;
 
 public:
 	/**
@@ -1033,13 +907,12 @@ public:
 	 * Constructor which binds a TFunction to any function object.
 	 */
 	template <
-		typename FunctorType,
-		typename = typename TEnableIf<
-			TAnd<
-				TNot<TOr<TIsTUniqueFunction<typename TDecay<FunctorType>::Type>, TIsTFunction<typename TDecay<FunctorType>::Type>>>,
-				UE::Core::Private::Function::TFuncCanBindToFunctor<FuncType, FunctorType>
-			>::Value
-		>::Type
+		typename FunctorType
+		UE_REQUIRES(
+			!TIsTUniqueFunction<std::decay_t<FunctorType>>::Value &&
+			!TIsTFunction      <std::decay_t<FunctorType>>::Value &&
+			std::is_invocable_r_v<Ret, std::decay_t<FunctorType>, ParamTypes...>
+		)
 	>
 	TUniqueFunction(FunctorType&& InFunc)
 		: Super(Forward<FunctorType>(InFunc))
@@ -1054,22 +927,22 @@ public:
 		// reference):
 		//
 		// TFunction<int32(float)> MyFunction = [MyFunctionRef](float F) { return MyFunctionRef(F); };
-		static_assert(!TIsTFunctionRef<typename TDecay<FunctorType>::Type>::Value, "Cannot construct a TUniqueFunction from a TFunctionRef");
+		static_assert(!TIsTFunctionRef<std::decay_t<FunctorType>>::Value, "Cannot construct a TUniqueFunction from a TFunctionRef");
 	}
 
 	/**
 	 * Constructor which takes ownership of a TFunction's functor.
 	 */
-	TUniqueFunction(TFunction<FuncType>&& Other)
-		: Super(MoveTemp(*(UE::Core::Private::Function::TFunctionRefBase<UE::Core::Private::Function::TFunctionStorage<false>, FuncType>*)&Other))
+	TUniqueFunction(TFunction<Ret(ParamTypes...)>&& Other)
+		: Super(MoveTemp(*(UE::Core::Private::Function::TFunctionRefBase<UE::Core::Private::Function::TFunctionStorage<false>, Ret(ParamTypes...)>*)&Other))
 	{
 	}
 
 	/**
 	 * Constructor which takes ownership of a TFunction's functor.
 	 */
-	TUniqueFunction(const TFunction<FuncType>& Other)
-		: Super(*(const UE::Core::Private::Function::TFunctionRefBase<UE::Core::Private::Function::TFunctionStorage<false>, FuncType>*)&Other)
+	TUniqueFunction(const TFunction<Ret(ParamTypes...)>& Other)
+		: Super(*(const UE::Core::Private::Function::TFunctionRefBase<UE::Core::Private::Function::TFunctionStorage<false>, Ret(ParamTypes...)>*)&Other)
 	{
 	}
 
@@ -1123,4 +996,14 @@ FORCEINLINE bool operator!=(TYPE_OF_NULLPTR, const TFunction<FuncType>& Func)
 {
 	return (bool)Func;
 }
+#endif
+
+#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_4
+#include "Templates/AndOrNot.h"
+#include "Templates/Decay.h"
+#include "Templates/IsConstructible.h"
+#include "Templates/IsInvocable.h"
+#include "Templates/IsPointer.h"
+#include "Templates/IsMemberPointer.h"
+#include "Templates/RemoveReference.h"
 #endif

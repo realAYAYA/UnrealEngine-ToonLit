@@ -422,8 +422,10 @@ public:
 	 * 
 	 * Return true if the task was added to a batch, false otherwise, could be because GPU sorting is disabled.
 	 */
-	ENGINE_API bool AddTask(FAllocationInfo& OutInfo, int32 ValueCount, EGPUSortFlags TaskFlags);
+	ENGINE_API bool AddTask(FRHICommandListBase& RHICmdList, FAllocationInfo& OutInfo, int32 ValueCount, EGPUSortFlags TaskFlags);
 
+	UE_DEPRECATED(5.4, "AddTask now requires a command list.")
+	ENGINE_API bool AddTask(FAllocationInfo& OutInfo, int32 ValueCount, EGPUSortFlags TaskFlags);
 
 	/**
 	 * Callback that needs to be called in the rendering loop, after calls to FFXSystemInterface::PreRender() are issued.

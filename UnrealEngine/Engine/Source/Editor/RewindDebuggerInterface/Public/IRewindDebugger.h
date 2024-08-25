@@ -56,6 +56,9 @@ public:
 
 	// get the time the debugger is scrubbed to, in seconds since the capture started (or the recording duration while the game is running)
 	virtual double CurrentTraceTime() const = 0;
+	
+	// get the time the debugger is scrubbed to, in seconds since the recording started
+	virtual double GetScrubTime() const = 0;
 
 	// current visible range in trace/profiler units (same units as CurrentTraceTime)
 	virtual const TRange<double>& GetCurrentTraceRange() const = 0;

@@ -32,4 +32,6 @@ public:
 	virtual void SetCacheRecordingAllowed(bool bShouldRecord) {};
 
 	virtual bool IsCacheRecordingAllowed() const { return true; };
+
+	virtual int32 GetMinimumEngineScalabilitySetting() const { return -1; };
 };

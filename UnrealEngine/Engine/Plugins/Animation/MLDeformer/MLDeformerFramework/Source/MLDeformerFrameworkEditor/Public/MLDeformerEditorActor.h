@@ -32,7 +32,10 @@ namespace UE::MLDeformer
 		ActorID_Test_MLDeformed,
 
 		/** The ground truth test actor, in test mode. This will represent your test anim sequence ground truth. */
-		ActorID_Test_GroundTruth
+		ActorID_Test_GroundTruth,
+
+		/** The comparison actor, in test mode. This can be used to compare the results to another pretrained ML Deformer model. */
+		ActorID_Test_Compare
 	};
 
 	/**
@@ -54,6 +57,12 @@ namespace UE::MLDeformer
 
 			/** The ID of the actor. Look at the UE::MLDeformer::ActorID_Train_Base etc for example. */
 			int32 TypeID = -1;
+
+			/** 
+			 * The instance index. There can for example be multiple editor actors with a TypeID of ActorID_Test_Compare. 
+			 * This index separates those. If you have three test compare editor actors, on will have index 0, another 1, and the third one will have a value of 2 for this member.
+			 */
+			int32 ActorTypeInstanceIndex = 0;
 
 			/** The color of the label text. */
 			FLinearColor LabelColor = FLinearColor(1.0f, 0.0f, 0.0f);
@@ -82,18 +91,20 @@ namespace UE::MLDeformer
 		virtual bool IsGroundTruthActor() const;
 		virtual bool HasVisualMesh() const;
 
-		AActor* GetActor() const { return Actor; }
-		int32 GetTypeID() const { return TypeID; }
+		AActor* GetActor() const													{ return Actor; }
+		int32 GetTypeID() const														{ return TypeID; }
+		int32 GetActorTypeInstanceIndex() const										{ return ActorTypeInstanceIndex; }
+		UDebugSkelMeshComponent* GetSkeletalMeshComponent() const					{ return SkeletalMeshComponent.Get(); }
+		UTextRenderComponent* GetLabelComponent() const								{ return LabelComponent.Get(); }
+		UMLDeformerComponent* GetMLDeformerComponent() const						{ return MLDeformerComponent.Get(); }
+		bool IsTrainingActor() const												{ return bIsTrainingActor; }
+		bool IsTestActor() const													{ return !bIsTrainingActor; }
+		float GetMeshOffsetFactor() const											{ return MeshOffsetFactor; }
 
-		UDebugSkelMeshComponent* GetSkeletalMeshComponent() const { return SkeletalMeshComponent.Get(); }
-		UTextRenderComponent* GetLabelComponent() const { return LabelComponent.Get(); }
-		UMLDeformerComponent* GetMLDeformerComponent() const { return MLDeformerComponent.Get(); }
-		void SetSkeletalMeshComponent(UDebugSkelMeshComponent* SkelMeshComponent) { SkeletalMeshComponent = SkelMeshComponent; }
-		void SetMLDeformerComponent(UMLDeformerComponent* Component) { MLDeformerComponent = Component; }
-		void SetMeshOffsetFactor(float OffsetFactor) { MeshOffsetFactor = OffsetFactor; }
-		bool IsTrainingActor() const { return bIsTrainingActor; }
-		bool IsTestActor() const { return !bIsTrainingActor; }
-		float GetMeshOffsetFactor() const { return MeshOffsetFactor; }
+		void SetSkeletalMeshComponent(UDebugSkelMeshComponent* SkelMeshComponent)	{ SkeletalMeshComponent = SkelMeshComponent; }
+		void SetMLDeformerComponent(UMLDeformerComponent* Component)				{ MLDeformerComponent = Component; }
+		void SetMeshOffsetFactor(float OffsetFactor)								{ MeshOffsetFactor = OffsetFactor; }
+		void SetActorTypeInstanceIndex(int32 Index)									{ ActorTypeInstanceIndex = Index; }
 
 	protected:
 		UTextRenderComponent* CreateLabelComponent(AActor* InActor, FLinearColor Color, const FText& Text) const;
@@ -104,6 +115,12 @@ namespace UE::MLDeformer
 		 * This can be used to identify what actor we are dealing with, for example the base actor or ML Deformed one etc.
 		 */
 		int32 TypeID = -1;
+
+		/** 
+ 		 * The instance index. There can for example be multiple editor actors with a TypeID of ActorID_Test_Compare. 
+		 * This index separates those. If you have three test compare editor actors, on will have index 0, another 1, and the third one will have a value of 2 for this member.
+		 */
+		int32 ActorTypeInstanceIndex = 0;
 
 		/** The label component, which shows above the actor. */
 		TObjectPtr<UTextRenderComponent> LabelComponent = nullptr;

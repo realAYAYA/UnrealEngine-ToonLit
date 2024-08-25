@@ -256,6 +256,9 @@ private:
 
 	void OnAddClicked();
 
+	void OnFindCurveUsesClicked();
+	bool CanFindCurveUses();
+	
 	// Adds a new curve metadata name entry to the skeleton
 	void CreateNewNameEntry(const FText& CommittedText, ETextCommit::Type CommitType);
 
@@ -270,6 +273,9 @@ private:
 	
 	/** Get the anim instance we are viewing */
 	UAnimInstance* GetAnimInstance() const;
+
+	/** Open the find/replace tab to process curves. Automatically supplies the name of the selected curve, if any */
+	void FindReplaceCurves();
 
 	/** Pointer to the preview scene we are bound to */
 	TWeakPtr<class IPersonaPreviewScene> PreviewScenePtr;

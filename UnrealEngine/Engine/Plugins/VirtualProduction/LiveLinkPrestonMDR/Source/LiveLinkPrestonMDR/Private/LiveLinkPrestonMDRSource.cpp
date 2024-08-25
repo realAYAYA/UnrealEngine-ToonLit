@@ -238,8 +238,6 @@ FText FLiveLinkPrestonMDRSource::GetSourceStatus() const
 		return LOCTEXT("UnknownStatus", "Unknown");
 	}
 	}
-
-	return LOCTEXT("UnknownStatus", "Unknown");
 }
 
 void FLiveLinkPrestonMDRSource::OpenConnection()

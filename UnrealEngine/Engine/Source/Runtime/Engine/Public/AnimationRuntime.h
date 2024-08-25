@@ -14,6 +14,7 @@
 #include "Animation/AnimationAsset.h"
 #include "Animation/AnimCurveTypes.h"
 #include "Animation/AnimSequenceBase.h"
+#include "Animation/SkeletonRemapping.h"
 #include "Components/SkinnedMeshComponent.h"
 #include "BonePose.h"
 #include "Containers/ArrayView.h"
@@ -61,6 +62,7 @@ FORCEINLINE void BlendTransform<ETransformBlendMode::Accumulate>(const FTransfor
 
 ENGINE_API void BlendCurves(const TArrayView<const FBlendedCurve> SourceCurves, const TArrayView<const float> SourceWeights, FBlendedCurve& OutCurve);
 void ENGINE_API BlendCurves(const TArrayView<const FBlendedCurve* const> SourceCurves, const TArrayView<const float> SourceWeights, FBlendedCurve& OutCurve);
+ENGINE_API void BlendCurves(const TArrayView<const FBlendedCurve* const> SourceCurves, const TArrayView<const float> SourceWeights, FBlendedCurve& OutCurve, ECurveBlendOption::Type BlendOption);
 
 
 /////////////////////////////////////////////////////////
@@ -89,6 +91,11 @@ public:
 	// up/blending BoneIndex. This call will be passed the results of GetPerBoneInterpolationData, so the two functions
 	// should be matched.
 	virtual int32 GetPerBoneInterpolationIndex(const FCompactPoseBoneIndex& InCompactPoseBoneIndex, const FBoneContainer& RequiredBones, const FPerBoneInterpolationData* Data) const = 0;
+
+	// Implementation should return the index into the PerBoneBlendData array that would be required when looking
+	// up/blending BoneIndex. This call will be passed the results of GetPerBoneInterpolationData, so the two functions
+	// should be matched.
+	virtual int32 GetPerBoneInterpolationIndex(const FSkeletonPoseBoneIndex InSkeletonBoneIndex, const USkeleton* TargetSkeleton, const IInterpolationIndexProvider::FPerBoneInterpolationData* Data) const = 0;
 };
 
 /** In AnimationRunTime Library, we extract animation data based on Skeleton hierarchy, not ref pose hierarchy. 
@@ -253,6 +260,17 @@ public:
 		const IInterpolationIndexProvider* InterpolationIndexProvider,
 		TArrayView<const FBlendSampleData> BlendSampleDataCache,
 		/*out*/ FAnimationPoseData& OutAnimationPoseData);
+
+	static ENGINE_API void BlendPosesTogetherPerBoneRemapped(
+		TArrayView<const FCompactPose> SourcePoses, 
+		TArrayView<const FBlendedCurve> SourceCurves, 
+		TArrayView<const UE::Anim::FStackAttributeContainer> SourceAttributes, 
+		const IInterpolationIndexProvider* InterpolationIndexProvider,
+		TArrayView<const FBlendSampleData> BlendSampleDataCache,
+		TArrayView<const int32> BlendSampleDataCacheIndices, 
+		const FSkeletonRemapping& SkeletonRemapping,
+		/*out*/ FAnimationPoseData& OutAnimationPoseData);
+
 
 	/**
 	* Blends together a set of poses, each with a given weight.
@@ -527,7 +545,7 @@ public:
 	 *
 	 * return ETypeAdvanceAnim type
 	 */
-	static ENGINE_API ETypeAdvanceAnim AdvanceTime(const bool& bAllowLooping, const float& MoveDelta, float& InOutTime, const float& EndTime);
+	static ENGINE_API ETypeAdvanceAnim AdvanceTime(const bool bAllowLooping, const float MoveDelta, float& InOutTime, const float EndTime);
 
 	static ENGINE_API void TickBlendWeight(float DeltaTime, float DesiredWeight, float& Weight, float& BlendTime);
 	/** 

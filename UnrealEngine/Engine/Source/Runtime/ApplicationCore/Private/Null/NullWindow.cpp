@@ -17,6 +17,7 @@ FNullWindow::FNullWindow()
 	, ScreenPosition(FIntPoint::ZeroValue)
 	, SizeInScreen(FIntPoint::ZeroValue)
 	, bIsVisible(false)
+	, bIsInitialized(false)
 {
 }
 
@@ -27,6 +28,13 @@ FNullWindow::~FNullWindow()
 void FNullWindow::Initialize(class FNullApplication* const Application, const TSharedRef<FGenericWindowDefinition>& InDefinition, const TSharedPtr<FNullWindow>& InParent, const bool bShowImmediately)
 {
 	Definition = InDefinition;
+
+	ScreenPosition.X = static_cast<int32>(InDefinition->XDesiredPositionOnScreen);
+	ScreenPosition.Y = static_cast<int32>(InDefinition->YDesiredPositionOnScreen);
+	SizeInScreen.X = static_cast<int32>(InDefinition->WidthDesiredOnScreen);
+	SizeInScreen.Y = static_cast<int32>(InDefinition->HeightDesiredOnScreen);
+
+	bIsInitialized = true;
 }
 
 void FNullWindow::ReshapeWindow(int32 X, int32 Y, int32 Width, int32 Height)
@@ -212,8 +220,11 @@ bool FNullWindow::IsDefinitionValid() const
 
 void FNullWindow::AdjustCachedSize(FVector2D& Size) const
 {
-	Size.X = ScreenPosition.X;
-	Size.Y = ScreenPosition.Y;
+	if (bIsInitialized)
+	{
+		Size.X = SizeInScreen.X;
+		Size.Y = SizeInScreen.Y;
+	}
 }
 
 bool FNullWindow::IsManualManageDPIChanges() const

@@ -513,7 +513,7 @@ void FExrImageWrapper::Uncompress(const ERGBFormat InFormat, const int32 InBitDe
 			
 			if ( ! FileChannelNamesUnused.IsEmpty() )
 			{
-				ChannelNames[ChannelIndex] = FileChannelNamesUnused.Pop(false);
+				ChannelNames[ChannelIndex] = FileChannelNamesUnused.Pop(EAllowShrinking::No);
 			}
 			else
 			{

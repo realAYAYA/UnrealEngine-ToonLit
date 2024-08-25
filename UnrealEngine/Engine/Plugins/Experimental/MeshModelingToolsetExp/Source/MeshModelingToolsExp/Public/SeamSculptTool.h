@@ -49,7 +49,7 @@ public:
 
 
 UCLASS(Transient)
-class MESHMODELINGTOOLSEXP_API USeamSculptTool : public UDynamicMeshBrushTool
+class MESHMODELINGTOOLSEXP_API USeamSculptTool : public UDynamicMeshBrushTool, public IInteractiveToolManageGeometrySelectionAPI
 {
 	GENERATED_BODY()
 public:
@@ -69,6 +69,12 @@ public:
 	virtual void OnUpdateDrag(const FRay& Ray) override;
 	virtual void OnEndDrag(const FRay& Ray) override;
 	virtual bool OnUpdateHover(const FInputDeviceRay& DevicePos) override;
+
+	// IInteractiveToolManageGeometrySelectionAPI -- this tool won't update external geometry selection or change selection-relevant mesh IDs
+	virtual bool IsInputSelectionValidOnOutput() override
+	{
+		return true;
+	}
 
 
 protected:

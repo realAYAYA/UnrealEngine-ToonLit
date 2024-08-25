@@ -4,6 +4,7 @@
 
 #include "Containers/UnrealString.h"
 #include "HAL/Platform.h"
+#include "UObject/CookEnums.h"
 #include "UObject/ObjectSaveOverride.h"
 
 class FPackagePath;
@@ -40,6 +41,9 @@ struct FObjectSaveContextData
 
 	/** Package->GetPackageFlags before the save, or 0 if no package. */
 	uint32 OriginalPackageFlags = 0;
+
+	UE::Cook::ECookType CookType = UE::Cook::ECookType::Unknown;
+	UE::Cook::ECookingDLC CookingDLC = UE::Cook::ECookingDLC::Unknown;
 
 	/**
 	 * Set to true when the package is being saved due to a procedural save.
@@ -110,6 +114,12 @@ public:
 	/** Return the targetplatform of the save, if cooking. Null if not cooking. */
 	const ITargetPlatform* GetTargetPlatform() const { return Data.TargetPlatform; }
 
+	bool IsCookByTheBook() const { return GetCookType()  == UE::Cook::ECookType::ByTheBook; }
+	bool IsCookOnTheFly() const { return GetCookType() == UE::Cook::ECookType::OnTheFly; }
+	bool IsCookTypeUnknown() const { return GetCookType() == UE::Cook::ECookType::Unknown; }
+	UE::Cook::ECookType GetCookType() const { return Data.CookType; }
+	UE::Cook::ECookingDLC GetCookingDLC() const { return Data.CookingDLC; }
+
 	/**
 	 * Return whether the package is being saved due to a procedural save.
 	 * Any save without the possibility of user-generated edits to the package is a procedural save (Cooking, EditorDomain).
@@ -174,6 +184,12 @@ public:
 
 	/** Return the targetplatform of the save, if cooking. Null if not cooking. */
 	const ITargetPlatform* GetTargetPlatform() const { return Data.TargetPlatform; }
+
+	bool IsCookByTheBook() const { return GetCookType() == UE::Cook::ECookType::ByTheBook; }
+	bool IsCookOnTheFly() const { return GetCookType() == UE::Cook::ECookType::OnTheFly; }
+	bool IsCookTypeUnknown() const { return GetCookType() == UE::Cook::ECookType::Unknown; }
+	UE::Cook::ECookType GetCookType() const { return Data.CookType; }
+	UE::Cook::ECookingDLC GetCookingDLC() const { return Data.CookingDLC; }
 
 	/**
 	 * Return whether the package is being saved due to a procedural save.

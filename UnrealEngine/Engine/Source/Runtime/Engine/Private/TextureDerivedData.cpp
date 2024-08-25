@@ -33,12 +33,14 @@
 #include "DerivedDataRequestOwner.h"
 #include "Hash/xxhash.h"
 #include "ImageCoreUtils.h"
+#include "ImageUtils.h"
 #include "Interfaces/ITargetPlatform.h"
 #include "Interfaces/ITargetPlatformManagerModule.h"
 #include "Interfaces/ITextureFormat.h"
 #include "ProfilingDebugging/CookStats.h"
 #include "UObject/ArchiveCookContext.h"
 #include "VT/LightmapVirtualTexture.h"
+#include "Serialization/MemoryWriter.h"
 #include "TextureBuildUtilities.h"
 #include "TextureCompiler.h"
 #include "TextureCompressorModule.h"
@@ -74,9 +76,6 @@ static TAutoConsoleVariable<int32> CVarTexturesCookToDerivedDataReferences(
 // rebuild. This is in both texture build paths.
 static const FGuid GTextureSLEDerivedDataVer(0xBD855730U, 0xA5B44BBBU, 0x89D051D0U, 0x695AC618U);
 const FGuid& GetTextureSLEDerivedDataVersion() { return GTextureSLEDerivedDataVer; }
-
-// This GUID is copied in TextureBuildFunction.cpp for the IBuild flow (TextureMetadataDerivedDataVer)
-#define TEXTURE_METADATA_DERIVEDDATA_VER TEXT("B9106D68A61B4F2A8105E16F48799976")
 
 static bool IsUsingNewDerivedData()
 {
@@ -184,7 +183,8 @@ static void SerializeForKey(FArchive& Ar, const FTextureBuildSettings& Settings)
 		TempVector4f = Settings.AlphaCoverageThresholds; Ar << TempVector4f;
 	}
 	
-	TempByte = Settings.bComputeBokehAlpha ? 2 : 0; Ar << TempByte;
+	// Bokeh output version number bumped when processing changes
+	TempByte = Settings.bComputeBokehAlpha ? 3 : 0; Ar << TempByte;
 	TempByte = Settings.bReplicateRed; Ar << TempByte;
 	TempByte = Settings.bReplicateAlpha; Ar << TempByte;
 	TempByte = Settings.bDownsampleWithAverage; Ar << TempByte;
@@ -194,6 +194,7 @@ static void SerializeForKey(FArchive& Ar, const FTextureBuildSettings& Settings)
 
 		if(Settings.bSharpenWithoutColorShift && Settings.MipSharpening != 0.0f)
 		{
+			// @todo SerializeForKey these can go away whenever we bump the overall ddc key
 			// bSharpenWithoutColorShift prevented alpha sharpening. This got fixed
 			// Here we update the key to get those cases recooked.
 			TempByte = 2;
@@ -214,6 +215,14 @@ static void SerializeForKey(FArchive& Ar, const FTextureBuildSettings& Settings)
 	TempColor = Settings.ChromaKeyColor; Ar << TempColor;
 	TempFloat = Settings.ChromaKeyThreshold; Ar << TempFloat;
 	
+	if ( Settings.PowerOfTwoMode >= ETexturePowerOfTwoSetting::Type::StretchToPowerOfTwo )
+	{
+		// @todo SerializeForKey these can go away whenever we bump the overall ddc key
+		// Stretch power of two modes ResizeImage changed 10-31-2023
+		TempGuid = FGuid(0xb88aa846, 0xadec4199, 0x9a3cf2f2, 0x1413abc6);
+		Ar << TempGuid;
+	}
+
 	// Avoid changing key for non-VT enabled textures
 	if (Settings.bVirtualStreamable)
 	{
@@ -243,6 +252,14 @@ static void SerializeForKey(FArchive& Ar, const FTextureBuildSettings& Settings)
 	{
 		TempFloat = Settings.Downscale; Ar << TempFloat;
 		TempByte = Settings.DownscaleOptions; Ar << TempByte;
+
+		if ( Settings.bUseNewMipFilter )
+		{
+			// downscale behavior changed
+			// @todo SerializeForKey these can go away whenever we bump the overall ddc key
+			TempGuid = FGuid(0xBC9D413B, 0x2C9DF1E3, 0xBF963C7A, 0xABADF00D);
+			Ar << TempGuid;
+		}
 	}
 
 	// this is done in a funny way to add the bool that wasn't being serialized before
@@ -321,6 +338,27 @@ static void SerializeForKey(FArchive& Ar, const FTextureBuildSettings& Settings)
 		Ar << TempGuid;
 	}
 
+	if (Settings.bCPUAccessible)
+	{
+		// @todo SerializeForKey these can go away whenever we bump the overall ddc key
+		TempGuid = FGuid(0x583A3B04, 0xC41C4E2C, 0x9FB77E7D, 0xC7AEFE7E);
+		Ar << TempGuid;
+	}
+
+	if (Settings.bPadWithBorderColor)
+	{
+		// @todo SerializeForKey these can go away whenever we bump the overall ddc key
+		TempGuid = FGuid(0xB128BA67, 0x3F3C4797, 0x81C66E55, 0xDEEE78EB);
+		Ar << TempGuid;
+	}
+
+	if (Settings.ResizeDuringBuildX || Settings.ResizeDuringBuildY)
+	{
+		// @todo SerializeForKey these can go away whenever we bump the overall ddc key
+		TempGuid = FGuid(0xDAE8B3E9, 0x605B49DC, 0xADA3C221, 0x02D5567D); Ar << TempGuid;
+		TempUint32 = Settings.ResizeDuringBuildX; Ar << TempUint32;
+		TempUint32 = Settings.ResizeDuringBuildY; Ar << TempUint32;
+	}
 
 	if ( Settings.bUseNewMipFilter )
 	{
@@ -340,6 +378,7 @@ static void SerializeForKey(FArchive& Ar, const FTextureBuildSettings& Settings)
 	//	OodleEncodeEffort
 	//	OodleUniversalTiling
 	//  OodleTextureSdkVersion
+	//	bOodlePreserveExtremes
 }
 
 /**
@@ -515,18 +554,6 @@ void GetTextureDerivedMipKey(
 		);
 }
 
-// Get the ddc key for the texture metadata (old build flow).
-UE::DerivedData::FCacheKey GetTextureDerivedMetadataKeyFromSuffix(
-	const FString& KeySuffix
-	)
-{
-	FString Key = FDerivedDataCacheInterface::BuildCacheKey(
-		TEXT("TEXTURE"),
-		TEXTURE_DERIVEDDATA_VER,
-		*(KeySuffix + FString(TEXT("_METADATA_" TEXTURE_METADATA_DERIVEDDATA_VER))));
-	return UE::DerivedData::ConvertLegacyCacheKey(Key);
-}
-
 /**
  * Computes the derived data key for a texture with the specified compression settings.
  * @param Texture - The texture for which to compute the derived data key.
@@ -608,6 +635,15 @@ static void FinalizeBuildSettingsForLayer(
 	else if (FormatSettings.CompressionSettings == TC_Grayscale || FormatSettings.CompressionSettings == TC_Alpha)
 	{
 		OutSettings.bReplicateRed = true;
+	}
+
+	// If we have channel boundary information, use that to determine whether we expect to have
+	// a non opaque alpha.
+	if (LayerIndex < Texture.Source.GetLayerColorInfo().Num())
+	{
+		const FTextureSourceLayerColorInfo& LayerChannelBounds = Texture.Source.GetLayerColorInfo()[LayerIndex];
+		OutSettings.bKnowAlphaTransparency = ITextureCompressorModule::DetermineAlphaChannelTransparency(OutSettings, 
+			LayerChannelBounds.ColorMin, LayerChannelBounds.ColorMax, OutSettings.bHasTransparentAlpha);
 	}
 
 	// this is called once per Texture with OutSettings.TextureFormatName == None
@@ -747,12 +783,23 @@ ENGINE_API ETextureEncodeSpeed UTexture::GetDesiredEncodeSpeed() const
 	return FResolvedTextureEncodingSettings::Get().EncodeSpeed;
 }
 
+// from Texture.cpp
+extern FName GetLatestOodleTextureSdkVersion();
 
 static FName ConditionalRemapOodleTextureSdkVersion(FName InOodleTextureSdkVersion, const ITargetPlatform* TargetPlatform)
 {
 #if WITH_EDITOR
 
 	// optionally remap InOodleTextureSdkVersion
+	
+	bool bOodleTextureSdkForceLatestVersion = false;
+	if ( TargetPlatform->GetConfigSystem()->GetBool(TEXT("AlternateTextureCompression"), TEXT("OodleTextureSdkForceLatestVersion"), bOodleTextureSdkForceLatestVersion, GEngineIni) &&
+		bOodleTextureSdkForceLatestVersion )
+	{
+		static FName LatestOodleTextureSdkVersion = GetLatestOodleTextureSdkVersion();
+
+		return LatestOodleTextureSdkVersion;
+	}
 
 	if ( InOodleTextureSdkVersion.IsNone() )
 	{
@@ -905,7 +952,14 @@ static void GetTextureBuildSettings(
 	static const auto CVarVirtualTexturesEnabled = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.VirtualTextures")); check(CVarVirtualTexturesEnabled);
 	// A ULightMapVirtualTexture2D with multiple layers saved in MapBuildData could be loaded with the r.VirtualTexture disabled, it will generate DDC before we decide to invalidate the light map data, to skip the ensure failure let it generate VT DDC anyway.
 	const bool bForVirtualTextureStreamingBuild = ULightMapVirtualTexture2D::StaticClass() == Texture.GetClass();
-	const bool bVirtualTextureStreaming = bForVirtualTextureStreamingBuild || (CVarVirtualTexturesEnabled->GetValueOnAnyThread() && bPlatformSupportsVirtualTextureStreaming && Texture.VirtualTextureStreaming);
+	bool bVirtualTextureStreaming = bForVirtualTextureStreamingBuild || (CVarVirtualTexturesEnabled->GetValueOnAnyThread() && bPlatformSupportsVirtualTextureStreaming && Texture.VirtualTextureStreaming);
+	if (Texture.Availability == ETextureAvailability::CPU && TextureClass == ETextureClass::TwoD)
+	{
+		// We are swapping with a placeholder - don't VT it.
+		OutBuildSettings.bCPUAccessible = true;
+		bVirtualTextureStreaming = false;
+		MipGenSettings = TMGS_NoMipmaps;
+	}
 
 
 	// Virtual textures must have mips as VT memory management relies on a 1:1 texel/pixel mapping, which in turn
@@ -960,11 +1014,15 @@ static void GetTextureBuildSettings(
 	OutBuildSettings.bVirtualStreamable = bVirtualTextureStreaming;
 	OutBuildSettings.PowerOfTwoMode = Texture.PowerOfTwoMode;
 	OutBuildSettings.PaddingColor = Texture.PaddingColor;
+	OutBuildSettings.bPadWithBorderColor = Texture.bPadWithBorderColor;
+	OutBuildSettings.ResizeDuringBuildX = Texture.ResizeDuringBuildX;
+	OutBuildSettings.ResizeDuringBuildY = Texture.ResizeDuringBuildY;
 	OutBuildSettings.ChromaKeyColor = Texture.ChromaKeyColor;
 	OutBuildSettings.bChromaKeyTexture = Texture.bChromaKeyTexture;
 	OutBuildSettings.ChromaKeyThreshold = Texture.ChromaKeyThreshold;
 	OutBuildSettings.CompressionQuality = Texture.CompressionQuality - 1; // translate from enum's 0 .. 5 to desired compression (-1 .. 4, where -1 is default while 0 .. 4 are actual quality setting override)
-	
+	OutBuildSettings.bOodlePreserveExtremes = Texture.bOodlePreserveExtremes;
+
 	// do remap here before we send to TBW's which may not have access to config :
 	OutBuildSettings.OodleTextureSdkVersion = ConditionalRemapOodleTextureSdkVersion(Texture.OodleTextureSdkVersion,&TargetPlatform);
 
@@ -988,13 +1046,29 @@ static void GetTextureBuildSettings(
 	}
 
 	OutBuildSettings.Downscale = 1.0f;
+
+	float Downscale;
+	ETextureDownscaleOptions DownscaleOptions;
+	TextureLODSettings.GetDownscaleOptions(Texture, TargetPlatform, Downscale, DownscaleOptions);
+
 	// Downscale only allowed if NoMipMaps, 2d, and not VT
 	//	silently does nothing otherwise
 	if (! bVirtualTextureStreaming &&
 		MipGenSettings == TMGS_NoMipmaps && 
 		Texture.IsA(UTexture2D::StaticClass()))	// TODO: support more texture types
 	{
-		TextureLODSettings.GetDownscaleOptions(Texture, TargetPlatform, OutBuildSettings.Downscale, (ETextureDownscaleOptions&)OutBuildSettings.DownscaleOptions);
+		OutBuildSettings.Downscale = Downscale;
+		OutBuildSettings.DownscaleOptions = (uint8)DownscaleOptions;
+	}
+	// only show a warning for textures where Downscale setting would have effect if it was used
+	else if (Downscale != 1.f)
+	{
+		UE_LOG(LogTexture, Warning, TEXT("Downscale setting of %f was not used when building texture %s%s."), Downscale, *Texture.GetName(),
+			bVirtualTextureStreaming ? TEXT(" because it is using virtual texturing") :
+			MipGenSettings != TMGS_NoMipmaps ? TEXT(" because it is using mipmaps") :
+			!Texture.IsA(UTexture2D::StaticClass()) ? TEXT(" because it is only supported for 2D textures") :
+			TEXT("")
+		);
 	}
 	
 	// For virtual texturing we take the address mode into consideration
@@ -1181,8 +1255,6 @@ static void GetBuildSettingsPerFormat(
 	}
 }
 
-void UnpackTextureBuildMetadataFromPlatformData(UE::TextureBuildUtilities::FTextureBuildMetadata* BuildMetadata, const FTexturePlatformData* PlatformData);
-
 /**
  * Stores derived data in the DDC.
  * After this returns, all bulk data from streaming (non-inline) mips will be sent separately to the DDC and the BulkData for those mips removed.
@@ -1201,20 +1273,6 @@ int64 PutDerivedDataInCache(FTexturePlatformData* DerivedData, const FString& De
 
 	// Build the key with which to cache derived data.
 	GetTextureDerivedDataKeyFromSuffix(DerivedDataKeySuffix, DerivedDataKey);
-
-	{
-		// Store the metadata.
-		UE::TextureBuildUtilities::FTextureBuildMetadata BuildMetadata;
-		UnpackTextureBuildMetadataFromPlatformData(&BuildMetadata, DerivedData);
-		FCbObject MetadataObject = BuildMetadata.ToCompactBinaryWithDefaults();
-		UE::DerivedData::FValue Value = UE::DerivedData::FValue::Compress(MetadataObject.GetBuffer());
-
-		const UE::DerivedData::FSharedString Name = TextureName;
-		UE::DerivedData::FRequestOwner AsyncOwner(UE::DerivedData::EPriority::Normal);
-		const UE::DerivedData::ECachePolicy Policy = bReplaceExistingDDC ? UE::DerivedData::ECachePolicy::Store : UE::DerivedData::ECachePolicy::Default;
-		UE::DerivedData::GetCache().PutValue({ {Name, GetTextureDerivedMetadataKeyFromSuffix(DerivedDataKeySuffix), MoveTemp(Value), Policy} }, AsyncOwner);
-		AsyncOwner.KeepAlive();
-	}
 
 	FString LogString;
 
@@ -1469,6 +1527,28 @@ void FTexturePlatformData::FinishCache()
 		AsyncTask = nullptr;
 	}
 }
+
+void FTexturePlatformData::Reset()
+{
+	Mips.Empty();
+	SizeX = 0;
+	SizeY = 0;
+	PixelFormat = PF_Unknown;
+	PackedData = 0;
+	OptData = FOptTexturePlatformData();
+	if (VTData)
+	{
+		delete VTData;
+	}
+	VTData = nullptr;
+	CPUCopy.SafeRelease();
+
+#if WITH_EDITORONLY_DATA
+	PreEncodeMipsHash = 0;
+	ResultMetadata.bIsValid = false;
+#endif
+}
+
 
 typedef TArray<uint32, TInlineAllocator<MAX_TEXTURE_MIP_COUNT> > FAsyncMipHandles;
 typedef TArray<uint32> FAsyncVTChunkHandles;
@@ -1792,7 +1872,7 @@ static void EstimateOnDiskCompressionForTextureData(
 			CopyBytes == InCompressionBlockSize) // we can fit in this chunk
 		{
 			// Direct.
-			Compressed.SetNum(0,false);
+			Compressed.SetNum(0,EAllowShrinking::No);
 			FOodleCompressedArray::CompressData(
 				Compressed,
 				CurrentContainer.GetData() + CurrentOffsetInContainer,
@@ -1816,7 +1896,7 @@ static void EstimateOnDiskCompressionForTextureData(
 			if (ContinuousMemory.Num() == InCompressionBlockSize)
 			{
 				// Filled a block - kick.
-				Compressed.SetNum(0,false);
+				Compressed.SetNum(0,EAllowShrinking::No);
 				FOodleCompressedArray::CompressData(
 					Compressed,
 					ContinuousMemory.GetData(),
@@ -1855,7 +1935,7 @@ static void EstimateOnDiskCompressionForTextureData(
 	if (ContinuousMemory.Num())
 	{
 		// If we ran out of source data before we completely filled, kick here.
-		Compressed.SetNum(0,false);
+		Compressed.SetNum(0,EAllowShrinking::No);
 		FOodleCompressedArray::CompressData(
 			Compressed,
 			ContinuousMemory.GetData(),
@@ -1995,7 +2075,11 @@ FTexturePlatformData::~FTexturePlatformData()
 		AsyncTask = nullptr;
 	}
 #endif
-	if (VTData) delete VTData;
+	if (VTData) 
+	{
+		delete VTData;
+	}
+	CPUCopy = nullptr;
 }
 
 bool FTexturePlatformData::IsReadyForAsyncPostLoad() const
@@ -2508,7 +2592,7 @@ static void SerializePlatformData(
 
 		#if WITH_EDITORONLY_DATA
 			static bool bDisableOptionalMips = FParse::Param(FCommandLine::Get(), TEXT("DisableOptionalMips"));
-			if (!bDisableOptionalMips)
+			if (!bDisableOptionalMips && NumMips > 0 )
 			{
 				const int32 LODGroup = Texture->LODGroup;
 				const int32 FirstMipWidth  = PlatformData->Mips[FirstMipToSerialize].SizeX;
@@ -2780,6 +2864,23 @@ static void SerializePlatformData(
 	if (PlatformData->GetHasOptData())
 	{
 		Ar << PlatformData->OptData;
+	}
+
+	if (PlatformData->GetHasCpuCopy())
+	{
+		if (Ar.IsLoading())
+		{
+			PlatformData->CPUCopy = FSharedImageConstRef(new FSharedImage());
+		}
+
+		// we have to cast off the const since we load in to it here as well as save.
+		FSharedImage* ImageToSerialize = (FSharedImage*)PlatformData->CPUCopy.GetReference();
+		Ar << ImageToSerialize->SizeX;
+		Ar << ImageToSerialize->SizeY;
+		Ar << ImageToSerialize->NumSlices;
+		Ar << (uint8&)ImageToSerialize->Format;
+		Ar << ImageToSerialize->GammaSpace;
+		Ar << ImageToSerialize->RawData;
 	}
 
 	if (bCooked)
@@ -3823,26 +3924,75 @@ void UTexture::SetMinTextureResidentMipCount(int32 InMinTextureResidentMipCount)
 }
 
 #if WITH_EDITOR
-bool UTexture::DownsizeImageUsingTextureSettings(const ITargetPlatform* TargetPlatform, FImage& InOutImage, int32 TargetSize, int32 LayerIndex)
+// return value false for critical errors
+// may return true even if nothing was done; check OutMadeChanges
+// InOutImage is modified in place ; output image will be same format but changed dimensions
+bool UTexture::DownsizeImageUsingTextureSettings(const ITargetPlatform* TargetPlatform, FImage& InOutImage, int32 TargetSize, int32 LayerIndex, bool & OutMadeChanges) const
 {
 	// resize so that the largest dimension is <= TargetSize
+	OutMadeChanges = false;
+
+	if (TargetSize <= 1 || LayerIndex < 0 || InOutImage.IsImageInfoValid() == false)
+	{
+		UE_LOG(LogTexture, Error, TEXT("Invalid parameter supplied to DownsizeImageUsingTextureSettings target size = %d layer index = %d image valid: %s"),
+			TargetSize, LayerIndex, InOutImage.IsImageInfoValid() ? TEXT("true") : TEXT("false"));
+		return false;
+	}
 
 	if (TargetSize >= InOutImage.SizeX && TargetSize >= InOutImage.SizeY)
 	{
 		// both dimensions already small enough, early out
-		return false;
+		// InOutImage is not changed
+		return true;
 	}
 
 	// Ideally this code wouldn't live here but at the moment of writing this code the coupling between the texture and the texture compressor make it hard to move that logic elsewhere
 	TArray<FTextureBuildSettings> SettingPerLayer;
 	GetBuildSettingsForTargetPlatform(*this, TargetPlatform, ETextureEncodeSpeed::Final, SettingPerLayer, nullptr);
 
+	if (LayerIndex >= SettingPerLayer.Num())
+	{
+		UE_LOG(LogTexture, Error, TEXT("Invalid layer supplied to DownsizeImageUsingTextureSettings, layer index = %d"), LayerIndex);
+		return false;
+	}
+
 	// Teak the build setting to generate a mip for our image
 	FTextureBuildSettings& BuildSettings = SettingPerLayer[LayerIndex];
+	// even if we are a Cube or LatLong, tell it we are just 2d ?
+	//  so the image is shrunk as a plain 2d
 	BuildSettings.bCubemap = false;
 	BuildSettings.bTextureArray = false;
 	BuildSettings.bVolume = false;
 	BuildSettings.bLongLatSource = false;
+	
+	// make sure modern options are set:
+	BuildSettings.bUseNewMipFilter = true;
+	BuildSettings.bSharpenWithoutColorShift = false;
+	if ( IsNormalMap() )
+	{
+		BuildSettings.bNormalizeNormals = true;
+	}
+
+	if ( BuildSettings.MipGenSettings == TMGS_NoMipmaps ||
+		BuildSettings.MipGenSettings == TMGS_LeaveExistingMips ||
+		BuildSettings.MipGenSettings == TMGS_Angular )
+	{
+		// what kind of mipgen do we use here? (default from GetMipGenSettings will use 2x2 simple average)
+		// external caller now prefers to use use ResizeImage in this case
+		BuildSettings.MipGenSettings = TMGS_SimpleAverage;
+	}
+
+	// we turned off bCubeMap, make sure cube face filters clamp, not wrap
+	//  see ComputeAddressMode
+	if ( GetTextureClass() == ETextureClass::Cube || GetTextureClass() == ETextureClass::CubeArray )
+	{
+		// for 6-face cubes, just clamp
+		// for LatLong we want to Clamp Y but Wrap X ; that's not supported so just clamp
+		// external caller now prefers to use use ResizeImage for latlongs
+
+		BuildSettings.TextureAddressModeX = TA_Clamp;
+		BuildSettings.TextureAddressModeY = TA_Clamp;
+	}
 
 	FImage Temp;
 	// convert to RGBA32F linear for the compressor
@@ -3859,6 +4009,9 @@ bool UTexture::DownsizeImageUsingTextureSettings(const ITargetPlatform* TargetPl
 	// make sure BuildSourceImageMips doesn't reallocate :
 	constexpr int BuildSourceImageMipsMaxCount = 20; // plenty
 	BuildSourceImageMips.Empty(BuildSourceImageMipsMaxCount);
+
+	// one nice thing we do get from GenerateMipChain (as opposed to ResizeImage)
+	//	is that wrap/clamp address mode is respected and cubemaps clamp
 
 	ITextureCompressorModule::GenerateMipChain(BuildSettings, Temp, BuildSourceImageMips, 1);
 
@@ -3882,6 +4035,48 @@ bool UTexture::DownsizeImageUsingTextureSettings(const ITargetPlatform* TargetPl
 		SelectedOutput->CopyTo(InOutImage, InOutImage.Format, InOutImage.GammaSpace);
 	}
 
+	OutMadeChanges = true;
+
 	return true;
 }
+
+
+void UTexture::GetTargetPlatformBuildSettings(const ITargetPlatform* TargetPlatform, TArray<TArray<FTextureBuildSettings>>& OutSettingPerSupportedFormatPerLayer) const
+{
+	ETextureEncodeSpeed EncodeSpeed = ETextureEncodeSpeed::Final;
+
+	if (!TargetPlatform)
+	{
+		OutSettingPerSupportedFormatPerLayer.Empty();
+		return;
+	}
+
+	const UTextureLODSettings* LODSettings = (UTextureLODSettings*)UDeviceProfileManager::Get().FindProfile(TargetPlatform->PlatformName());
+	FTextureBuildSettings SourceBuildSettings;
+	FTexturePlatformData::FTextureEncodeResultMetadata SourceMetadata;
+	GetTextureBuildSettings(*this, *LODSettings, *TargetPlatform, EncodeSpeed, SourceBuildSettings, &SourceMetadata);
+
+	TArray< TArray<FName> > PlatformFormats;
+	GetPlatformTextureFormatNamesWithPrefix(TargetPlatform, PlatformFormats);
+
+	int32 NumFormats = PlatformFormats.Num();
+	OutSettingPerSupportedFormatPerLayer.SetNum(NumFormats);
+	for ( int32 FormatIndex = 0; FormatIndex < NumFormats; ++FormatIndex)
+	{
+		const int32 NumLayers = Source.GetNumLayers();
+		check(PlatformFormats[FormatIndex].Num() == NumLayers);
+
+		OutSettingPerSupportedFormatPerLayer[FormatIndex].Reserve(NumLayers);
+		for (int32 LayerIndex = 0; LayerIndex < NumLayers; ++LayerIndex)
+		{
+			FTextureBuildSettings& OutSettings = OutSettingPerSupportedFormatPerLayer[FormatIndex].Add_GetRef(SourceBuildSettings);
+			OutSettings.TextureFormatName = PlatformFormats[FormatIndex][LayerIndex];
+
+			FTexturePlatformData::FTextureEncodeResultMetadata* OutMetadata = nullptr;
+			FinalizeBuildSettingsForLayer(*this, LayerIndex, TargetPlatform, EncodeSpeed, OutSettings, OutMetadata);
+		}
+	}
+}
+
+
 #endif

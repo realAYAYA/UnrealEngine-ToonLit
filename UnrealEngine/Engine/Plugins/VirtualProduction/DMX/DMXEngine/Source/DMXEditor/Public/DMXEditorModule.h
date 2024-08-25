@@ -2,22 +2,19 @@
 
 #pragma once
 
-#include "DMXPIEManager.h"
-
 #include "AssetTypeCategories.h"
-#include "CoreMinimal.h"
-#include "ISequencerModule.h"
-#include "PropertyEditorDelegates.h"
+#include "DMXPIEManager.h"
 #include "Framework/MultiBox/MultiBoxBuilder.h"
+#include "ISequencerModule.h"
 #include "Modules/ModuleInterface.h"
+#include "PropertyEditorDelegates.h"
 #include "Toolkits/AssetEditorToolkit.h"
 
 class FDMXEditor;
-class UDMXLibrary;
-
 class FExtender;
 class IAssetTools;
 class IAssetTypeActions;
+class UDMXLibrary;
 
 
 /**
@@ -118,17 +115,23 @@ private:
 	/** Called when the nomad tab spawner tries to spawn an activity monitor tab */
 	static TSharedRef<class SDockTab> OnSpawnActivityMonitorTab(const class FSpawnTabArgs& InSpawnTabArgs);
 
+	/** Called when the nomad tab spawner tries to spawn an activity monitor tab */
+	static TSharedRef<class SDockTab> OnSpawnConflictMonitorTab(const class FSpawnTabArgs& InSpawnTabArgs);
+
 	/** Called when the nomad tab spawner tries to spawn a patch tool tab */
 	static TSharedRef<class SDockTab> OnSpawnPatchToolTab(const class FSpawnTabArgs& InSpawnTabArgs);
 
-	/** Called when Open Channels Montior command is selected */
-	static void OnOpenChannelsMonitor();
+	/** Opens the channel monitor */
+	static void OpenChannelsMonitor();
 
-	/** Called when Open Universe Montior command is selected */
-	static void OnOpenActivityMonitor();
+	/** Opens the activity monitor */
+	static void OpenActivityMonitor();
 
-	/** Called when Open Patch Tool command is selected */
-	static void OnOpenPatchTool();
+	/** Opens the conflict monitor*/
+	static void OpenConflictMonitor();
+
+	/** Opens the patch tool */
+	static void OpenPatchTool();
 
 	/** Called when the Toggle Receive DMX menu command is selected */
 	static void OnToggleSendDMX();

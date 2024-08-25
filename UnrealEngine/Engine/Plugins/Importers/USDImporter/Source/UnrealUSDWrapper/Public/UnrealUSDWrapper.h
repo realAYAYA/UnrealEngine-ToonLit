@@ -12,15 +12,15 @@
 
 #include "UsdWrappers/ForwardDeclarations.h"
 
+#include <memory>
 #include <string>
 #include <vector>
-#include <memory>
 
 #if USE_USD_SDK
 #include "USDIncludesStart.h"
-	#include "pxr/pxr.h"
+#include "pxr/pxr.h"
 #include "USDIncludesEnd.h"
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 #include "UnrealUSDWrapper.generated.h"
 
@@ -39,9 +39,10 @@ PXR_NAMESPACE_OPEN_SCOPE
 	class UsdStage;
 	class UsdStageCache;
 
-	template< typename T > class TfRefPtr;
+	template<typename T>
+	class TfRefPtr;
 PXR_NAMESPACE_CLOSE_SCOPE
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 class IUsdPrim;
 class FUsdDiagnosticDelegate;
@@ -89,24 +90,24 @@ enum class EUsdPurpose : int32
 };
 ENUM_CLASS_FLAGS(EUsdPurpose);
 
-UENUM( meta = ( Bitflags, UseEnumValuesAsMaskValuesInEditor = "true" ) )
+UENUM(meta = (Bitflags, UseEnumValuesAsMaskValuesInEditor = "true"))
 enum class EUsdDefaultKind : int32
 {
-	None = 0 UMETA( Hidden ),
+	None = 0 UMETA(Hidden),
 	Model = 1,
 	Component = 2,
 	Group = 4,
 	Assembly = 8,
 	Subcomponent = 16
 };
-ENUM_CLASS_FLAGS( EUsdDefaultKind );
+ENUM_CLASS_FLAGS(EUsdDefaultKind);
 
 /** Corresponds to pxr::UsdLoadPolicy, refer to the USD SDK documentation */
 UENUM()
 enum class EUsdLoadPolicy : uint8
 {
-	UsdLoadWithDescendants,    // Load a prim plus all its descendants.
-	UsdLoadWithoutDescendants  // Load a prim by itself with no descendants.
+	UsdLoadWithDescendants,		 // Load a prim plus all its descendants.
+	UsdLoadWithoutDescendants	 // Load a prim by itself with no descendants.
 };
 
 UENUM()
@@ -124,7 +125,7 @@ enum class EUsdInterpolationType : uint8
 };
 
 UENUM()
-enum class EUsdRootMotionHandling
+enum class EUsdRootMotionHandling : uint8
 {
 	// Use for the root bone just its regular joint animation as described on the SkelAnimation prim.
 	NoAdditionalRootMotion,
@@ -168,6 +169,43 @@ enum class EUsdListPosition : uint8
 	BackOfAppendList
 };
 
+/**
+ * Corresponds to pxr::GfMatrix2d. We don't expose any methods though, this is just to facilitate reading/writing
+ * these types from USD.
+ */
+USTRUCT(BlueprintType)
+
+struct FMatrix2D
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "USD")
+	FVector2D Row0 = FVector2D(1.0, 0.0);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "USD")
+	FVector2D Row1 = FVector2D(0.0, 1.0);
+};
+
+/**
+ * Corresponds to pxr::GfMatrix3d. We don't expose any methods though, this is just to facilitate reading/writing
+ * these types from USD.
+ */
+USTRUCT(BlueprintType)
+
+struct FMatrix3D
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "USD")
+	FVector Row0 = FVector(1.0, 0.0, 0.0);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "USD")
+	FVector Row1 = FVector(0.0, 1.0, 0.0);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "USD")
+	FVector Row2 = FVector(0.0, 0.0, 1.0);
+};
+
 class IUnrealUSDWrapperModule : public IModuleInterface
 {
 };
@@ -177,7 +215,7 @@ class UnrealUSDWrapper
 public:
 #if USE_USD_SDK
 	UNREALUSDWRAPPER_API static double GetDefaultTimeCode();
-#endif  // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 	/**
 	 * Registers all USD plug-ins discovered at PathToPlugInfo.
@@ -207,10 +245,24 @@ public:
 	 * These are the extensions for the file formats built into USD (i.e. "usd", "usda", "usdc", and "usdz").
 	 */
 	UNREALUSDWRAPPER_API static TArray<FString> GetNativeFileFormats();
+	UNREALUSDWRAPPER_API static void GetNativeFileFormats(TArray<FString>& OutTextFormats, TArray<FString>& OutPossiblyBinaryFormats);
+
+	/**
+	 * Internally used by all the export factories, this will query the supported export USD file formats and fill out
+	 * OutFormatExtensions with entries like "usd", "usda", "usdc", etc., and OutFormatDescriptions with entries like
+	 * "Universal Scene Description binary file" or "Universal Scene Description text file"
+	 */
+	UNREALUSDWRAPPER_API static void AddUsdExportFileFormatDescriptions(TArray<FString>& OutFormatExtensions, TArray<FString>& OutFormatDescriptions);
+	/**
+	 * Internally used by all the import factories, this will query the supported export USD file formats and fill out
+	 * OutFormats with entries like "usda; Universal Scene Description text files", "usdc; Universal Scene Description binary files", etc.
+	 */
+	UNREALUSDWRAPPER_API static void AddUsdImportFileFormatDescriptions(TArray<FString>& OutFormats);
 
 	/**
 	 * Opens a USD stage from a file on disk or existing layers, with a population mask or not.
-	 * @param Identifier - Path to a file that the USD SDK can open (or the identifier of a root layer), which will become the root layer of the new stage
+	 * @param Identifier - Path to a file that the USD SDK can open (or the identifier of a root layer), which will become the root layer of the new
+	 *stage
 	 * @param RootLayer - Existing root layer to use for the new stage, instead of reading it from disk
 	 * @param SessionLayer - Existing session layer to use for the new stage, instead of creating a new one
 	 * @param InitialLoadSet - How to handle USD payloads when opening this stage
@@ -252,7 +304,7 @@ public:
 	);
 
 	/** Creates a new USD root layer file, opens it as a new stage and returns that stage */
-	UNREALUSDWRAPPER_API static UE::FUsdStage NewStage( const TCHAR* FilePath );
+	UNREALUSDWRAPPER_API static UE::FUsdStage NewStage(const TCHAR* FilePath);
 
 	/** Creates a new memory USD root layer, opens it as a new stage and returns that stage */
 	UNREALUSDWRAPPER_API static UE::FUsdStage NewStage();
@@ -265,10 +317,10 @@ public:
 	UNREALUSDWRAPPER_API static UE::FUsdStage GetClipboardStage();
 
 	/** Returns all the stages that are currently opened in the USD utils stage cache, shared between C++ and Python */
-	UNREALUSDWRAPPER_API static TArray< UE::FUsdStage > GetAllStagesFromCache();
+	UNREALUSDWRAPPER_API static TArray<UE::FUsdStage> GetAllStagesFromCache();
 
 	/** Removes the stage from the stage cache. See UsdStageCache::Erase. */
-	UNREALUSDWRAPPER_API static void EraseStageFromCache( const UE::FUsdStage& Stage );
+	UNREALUSDWRAPPER_API static void EraseStageFromCache(const UE::FUsdStage& Stage);
 
 	/**
 	 * Set the directories that will be used as the default search path by USD's default resolver during asset resolution.
@@ -278,7 +330,7 @@ public:
 	 * Note that the default search path must be set before the first invocation of USD's resolver system, so this function
 	 * must be called before that to have any effect.
 	 */
-	UNREALUSDWRAPPER_API static void SetDefaultResolverDefaultSearchPath( const TArray<FDirectoryPath>& SearchPath );
+	UNREALUSDWRAPPER_API static void SetDefaultResolverDefaultSearchPath(const TArray<FDirectoryPath>& SearchPath);
 
 	/** Starts listening to error/warning/log messages emitted by USD */
 	UNREALUSDWRAPPER_API static void SetupDiagnosticDelegate();
@@ -308,8 +360,8 @@ public:
 	static UNREALUSDWRAPPER_API bool ClearKind(const pxr::UsdPrim& Prim);
 
 	static UNREALUSDWRAPPER_API pxr::GfMatrix4d GetLocalTransform(const pxr::UsdPrim& Prim);
-	static UNREALUSDWRAPPER_API pxr::GfMatrix4d GetLocalToWorldTransform(const pxr::UsdPrim& Prim );
-	static UNREALUSDWRAPPER_API pxr::GfMatrix4d GetLocalToWorldTransform(const pxr::UsdPrim& Prim, double Time );
+	static UNREALUSDWRAPPER_API pxr::GfMatrix4d GetLocalToWorldTransform(const pxr::UsdPrim& Prim);
+	static UNREALUSDWRAPPER_API pxr::GfMatrix4d GetLocalToWorldTransform(const pxr::UsdPrim& Prim, double Time);
 	static UNREALUSDWRAPPER_API pxr::GfMatrix4d GetLocalToWorldTransform(const pxr::UsdPrim& Prim, double Time, const pxr::SdfPath& AbsoluteRootPath);
 	static UNREALUSDWRAPPER_API bool HasTransform(const pxr::UsdPrim& Prim);
 
@@ -317,7 +369,7 @@ public:
 
 	static UNREALUSDWRAPPER_API EUsdGeomOrientation GetGeometryOrientation(const pxr::UsdGeomMesh& Mesh);
 	static UNREALUSDWRAPPER_API EUsdGeomOrientation GetGeometryOrientation(const pxr::UsdGeomMesh& Mesh, double Time);
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 };
 
 namespace UnrealIdentifiers
@@ -342,6 +394,14 @@ namespace UnrealIdentifiers
 	extern UNREALUSDWRAPPER_API const pxr::TfToken UnrealUseFKControlRig;
 	extern UNREALUSDWRAPPER_API const pxr::TfToken UnrealControlRigReduceKeys;
 	extern UNREALUSDWRAPPER_API const pxr::TfToken UnrealControlRigReductionTolerance;
+
+	extern UNREALUSDWRAPPER_API const pxr::TfToken SparseVolumeTextureAPI;
+	extern UNREALUSDWRAPPER_API const pxr::TfToken UnrealSVTMappedFields;
+	extern UNREALUSDWRAPPER_API const pxr::TfToken UnrealSVTMappedMaterialParameters;
+	extern UNREALUSDWRAPPER_API const pxr::TfToken UnrealSVTMappedGridComponents;
+	extern UNREALUSDWRAPPER_API const pxr::TfToken UnrealSVTMappedAttributeChannels;
+	extern UNREALUSDWRAPPER_API const pxr::TfToken UnrealSVTAttributesADataType;
+	extern UNREALUSDWRAPPER_API const pxr::TfToken UnrealSVTAttributesBDataType;
 
 	extern UNREALUSDWRAPPER_API const pxr::TfToken DiffuseColor;
 	extern UNREALUSDWRAPPER_API const pxr::TfToken EmissiveColor;
@@ -388,6 +448,10 @@ namespace UnrealIdentifiers
 	// Token used to indicate that a material parsed from a material prim should use world space normals
 	extern UNREALUSDWRAPPER_API const pxr::TfToken WorldSpaceNormals;
 
+	// Normals and points can also be primvars and have indices, but there is no defined tokens for them
+	extern UNREALUSDWRAPPER_API const pxr::TfToken PrimvarsNormals;
+	extern UNREALUSDWRAPPER_API const pxr::TfToken PrimvarsPoints;
+
 	extern UNREALUSDWRAPPER_API const pxr::TfToken GroomAPI;
 	extern UNREALUSDWRAPPER_API const pxr::TfToken GroomBindingAPI;
 	extern UNREALUSDWRAPPER_API const pxr::TfToken UnrealGroomToBind;
@@ -397,7 +461,7 @@ namespace UnrealIdentifiers
 	extern UNREALUSDWRAPPER_API const pxr::TfToken UnrealAssetType;
 	extern UNREALUSDWRAPPER_API const pxr::TfToken UnrealExportTime;
 	extern UNREALUSDWRAPPER_API const pxr::TfToken UnrealEngineVersion;
-#endif // #if USE_USD_SDK
+#endif	  // #if USE_USD_SDK
 
 	extern UNREALUSDWRAPPER_API const TCHAR* LayerSavedComment;
 	extern UNREALUSDWRAPPER_API const TCHAR* TwoSidedMaterialSuffix;
@@ -405,6 +469,9 @@ namespace UnrealIdentifiers
 	extern UNREALUSDWRAPPER_API const TCHAR* Invisible;
 	extern UNREALUSDWRAPPER_API const TCHAR* Inherited;
 	extern UNREALUSDWRAPPER_API const TCHAR* IdentifierPrefix;
+
+	// The prim name we always use when exporting Skeletons inside SkelRoots to USD
+	extern UNREALUSDWRAPPER_API const TCHAR* ExportedSkeletonPrimName;
 
 	// USceneComponent properties
 	extern UNREALUSDWRAPPER_API FName TransformPropertyName;
@@ -442,18 +509,25 @@ namespace UnrealIdentifiers
 
 	// Material purpose tokens that we convert from USD, if available
 	extern UNREALUSDWRAPPER_API FString MaterialAllPurpose;
-	extern UNREALUSDWRAPPER_API FString MaterialAllPurposeText; // Text to show on UI for "allPurpose", as its value is actually the empty string
+	extern UNREALUSDWRAPPER_API FString MaterialAllPurposeText;	   // Text to show on UI for "allPurpose", as its value is actually the empty string
 	extern UNREALUSDWRAPPER_API FString MaterialPreviewPurpose;
 	extern UNREALUSDWRAPPER_API FString MaterialFullPurpose;
 
 	extern UNREALUSDWRAPPER_API FString PrimvarsDisplayColor;
 	extern UNREALUSDWRAPPER_API FString PrimvarsDisplayOpacity;
 	extern UNREALUSDWRAPPER_API FString DoubleSided;
-}
+
+	// Tokens from UsdGeomModelAPI that we need to reference from the UsdStageActor
+	extern UNREALUSDWRAPPER_API FString ModelDrawMode;
+	extern UNREALUSDWRAPPER_API FString ModelApplyDrawMode;
+
+	// The character used to separate property namespaces (usually just ':')
+	extern UNREALUSDWRAPPER_API FString UsdNamespaceDelimiter;
+}	 // namespace UnrealIdentifiers
 
 struct UNREALUSDWRAPPER_API FUsdDelegates
 {
-	DECLARE_MULTICAST_DELEGATE_OneParam( FUsdImportDelegate, FString /* FilePath */);
+	DECLARE_MULTICAST_DELEGATE_OneParam(FUsdImportDelegate, FString /* FilePath */);
 	static FUsdImportDelegate OnPreUsdImport;
 	static FUsdImportDelegate OnPostUsdImport;
 };

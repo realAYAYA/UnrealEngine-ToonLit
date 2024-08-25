@@ -47,6 +47,15 @@ public:
 	FVulkanTransientResourceAllocator(FVulkanTransientHeapCache& InHeapCache);
 
 	//! IRHITransientResourceAllocator Overrides
+	bool SupportsResourceType(ERHITransientResourceType InType) const override
+	{
+		switch (InType)
+		{
+		case ERHITransientResourceType::Buffer: return true;
+		case ERHITransientResourceType::Texture: return true;
+		default: checkNoEntry(); return false;
+		}
+	}
 	FRHITransientTexture* CreateTexture(const FRHITextureCreateInfo& InCreateInfo, const TCHAR* InDebugName, uint32 InPassIndex) override;
 	FRHITransientBuffer* CreateBuffer(const FRHIBufferCreateInfo& InCreateInfo, const TCHAR* InDebugName, uint32 InPassIndex) override;
 };

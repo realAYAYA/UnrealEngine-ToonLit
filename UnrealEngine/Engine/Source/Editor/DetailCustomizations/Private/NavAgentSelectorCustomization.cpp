@@ -17,7 +17,6 @@
 #include "NavigationSystem.h"
 #include "PropertyEditorModule.h"
 #include "PropertyHandle.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/SubclassOf.h"
 #include "Types/SlateEnums.h"
 #include "UObject/Class.h"

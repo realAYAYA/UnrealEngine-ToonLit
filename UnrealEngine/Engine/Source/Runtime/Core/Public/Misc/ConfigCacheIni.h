@@ -34,7 +34,6 @@
 #include "Serialization/StructuredArchive.h"
 #include "Serialization/StructuredArchiveAdapters.h"
 #include "Serialization/StructuredArchiveSlots.h"
-#include "Templates/ChooseClass.h"
 #include "Templates/Function.h"
 #include "Templates/UnrealTemplate.h"
 #include "UObject/NameTypes.h"
@@ -50,6 +49,33 @@ CORE_API DECLARE_LOG_CATEGORY_EXTERN(LogConfig, Log, All);
 // Server builds should be tweakable even in Shipping
 #define ALLOW_INI_OVERRIDE_FROM_COMMANDLINE			(UE_SERVER || !(UE_BUILD_SHIPPING))
 #define CONFIG_REMEMBER_ACCESS_PATTERN (WITH_EDITOR || 0)
+
+
+///////////////////////////////////////////////////////////////////////////////
+// Info about the deprecation of functions returning non-const FConfigSections:
+//   In a future change, we will be tracking operations done to config files (via GConfig, etc) for improved saving and allowing for plugin unloading.
+//   To prepare for this, we need to remove the ability for code to directly modify config sections because then we can't track them. So, functions
+//   that return non-cont FConfigSections have been deprecated - continuing to use them may cause these directly-modified settings to not be saved correctly
+//
+// If you are receiving deprecation messages, you should update your code ASAP. The deprecation messages will tell you how to fix that line, but if you
+// were counting on modifying a section directly, or you were iterating over an FConfigFile with a ranged-for iterator ("for (auto& Pair : File)") you will need to
+// make some additional code changes:
+//
+// Modifying:
+//    * Replace your direct modification with calls to SetSeting, SetBool, etc for non-array values
+//    * Replace your direct modifications of array type values with AddToSection, AddUniqueToSection, RemoveKeyFromSection, RemoveFromSection
+//    * Fully construct a local new FConfigSection and then add that fully into the FConfigFile with Add
+//
+// Iterating over key/value pairs:
+//    * Replace FConfigSection::TIterator with FConfigSection::TConstIterator
+//
+// Iterating over sections in a file:
+//    * Ranged-for will need to use a const FConfigFile, to force the compiler to use the iterator that returns a const FConfigSection:
+//       * for (auto& Pair : AsConst(MyFile))
+//    * FConfigFile::TIterator did not seem to be used, but if you did use it, you should replace it with the above ranged-for version
+///////////////////////////////////////////////////////////////////////////////
+
+
 
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -86,16 +112,8 @@ enum class EKnownIniFile : uint8
 	NumKnownFiles,
 };
 
-namespace UE
-{
-namespace ConfigCacheIni
-{
-namespace Private
-{
-struct FAccessor;
-}
-}
-}
+namespace UE::ConfigCacheIni::Private { struct FAccessor; }
+namespace UE::ConfigCacheIni::Private { struct FImpl; }
 
 class FConfigContext;
 
@@ -177,6 +195,25 @@ public:
 		bRead = RHS.bRead;
 #endif
 
+		return *this;
+	}
+
+	FConfigValue& operator=(const TCHAR* RHS)
+	{
+		*this = FString(RHS);
+		return *this;
+	}
+	FConfigValue& operator=(const FString& RHS)
+	{
+		*this = FString(RHS);
+		return *this;
+	}
+	FConfigValue& operator=(FString&& RHS)
+	{
+		SavedValue = MoveTemp(RHS);
+		SavedValueHash = FTextLocalizationResource::HashString(SavedValue);
+		ExpandedValue.Empty();
+		ExpandValueInternal();
 		return *this;
 	}
 
@@ -274,8 +311,14 @@ private:
 	/** Internal version of ExpandValue that expands SavedValue into ExpandedValue, or produces an empty ExpandedValue if no expansion occurred. */
 	CORE_API void ExpandValueInternal();
 
-	/** Gets the SavedValue without marking it as having been accessed for e.g. writing out to a ConfigFile to disk */
+	/** Gets the expanded value (GetValue) without marking it as having been accessed for e.g. writing out to a ConfigFile to disk */
 	friend struct UE::ConfigCacheIni::Private::FAccessor;
+	const FString& GetValueForWriting() const
+	{
+		return (ExpandedValue.Len() > 0 ? ExpandedValue : SavedValue);
+	};
+
+	/** Gets the SavedValue without marking it as having been accessed for e.g. writing out to a ConfigFile to disk */
 	const FString& GetSavedValueForWriting() const
 	{
 		return SavedValue;
@@ -288,28 +331,6 @@ private:
 	mutable bool bRead; // has this value been read since the config system started
 #endif
 };
-
-namespace UE
-{
-namespace ConfigCacheIni
-{
-namespace Private
-{
-/** An accessor class to access functions that should be restricted only to FConfigFileCache Internal use */
-struct FAccessor
-{
-private:
-	friend class ::FConfigCacheIni;
-	friend class ::FConfigFile;
-
-	static const FString& GetSavedValueForWriting(const FConfigValue& ConfigValue)
-	{
-		return ConfigValue.GetSavedValueForWriting();
-	}
-};
-}
-}
-}
 
 typedef TMultiMap<FName,FConfigValue> FConfigSectionMap;
 
@@ -329,7 +350,7 @@ public:
 	bool operator!=( const FConfigSection& Other ) const;
 
 	// process the '+' and '.' commands, takingf into account ArrayOfStruct unique keys
-	void CORE_API HandleAddCommand(FName Key, FString&& Value, bool bAppendValueIfNotArrayOfStructsKeyUsed);
+	void CORE_API HandleAddCommand(FName ValueName, FString&& Value, bool bAppendValueIfNotArrayOfStructsKeyUsed);
 
 	bool HandleArrayOfKeyedStructsCommand(FName Key, FString&& Value);
 
@@ -356,9 +377,35 @@ public:
 	// look for "array of struct" keys for overwriting single entries of an array
 	TMap<FName, FString> ArrayOfStructKeys;
 
+	friend struct UE::ConfigCacheIni::Private::FAccessor;
 	friend FArchive& operator<<(FArchive& Ar, FConfigSection& ConfigSection);
 };
 
+namespace UE::ConfigCacheIni::Private
+{
+
+/** An accessor class to access functions that should be restricted only to FConfigFileCache Internal use */
+struct FAccessor
+{
+private:
+	friend class ::FConfigCacheIni;
+	friend class ::FConfigFile;
+	friend class ::FConfigSection;
+	friend class ::FConfigContext;
+	friend struct ::UE::ConfigCacheIni::Private::FImpl;
+
+	static const FString& GetValueForWriting(const FConfigValue& ConfigValue)
+	{
+		return ConfigValue.GetValueForWriting();
+	}
+	static const FString& GetSavedValueForWriting(const FConfigValue& ConfigValue)
+	{
+		return ConfigValue.GetSavedValueForWriting();
+	}
+	static bool AreSectionsEqualForWriting(const FConfigSection& A, const FConfigSection& B);
+};
+
+}
 
 #if ALLOW_INI_OVERRIDE_FROM_COMMANDLINE
 // Options which stemmed from the commandline
@@ -368,17 +415,20 @@ struct FConfigCommandlineOverride
 };
 #endif // ALLOW_INI_OVERRIDE_FROM_COMMANDLINE
 
+typedef TMap<FString, FConfigSection> FConfigFileMap;
 
 // One config file.
-
-class FConfigFile : public TMap<FString,FConfigSection>
+class FConfigFile : private FConfigFileMap
 {
 public:
-	bool Dirty;
-	bool NoSave;
-	bool bHasPlatformName = false;
+	bool Dirty : 1; // = false;
+	bool NoSave : 1; // = false;
+	bool bHasPlatformName : 1; // = false;
+	// by default, we allow saving - this is going to be applied to config files that are not loaded from disk
+	// (when loading, this will get set to false, and then the ini sections will be checked)
+	bool bCanSaveAllSections : 1; // = true;
 
-	/** The name of this config file */	
+	/** The name of this config file */
 	FName Name;
 
 	// The collection of source files which were used to generate this file.
@@ -397,13 +447,68 @@ public:
 	/** The collection of overrides which stemmed from the commandline */
 	TArray<FConfigCommandlineOverride> CommandlineOptions;
 #endif // ALLOW_INI_OVERRIDE_FROM_COMMANDLINE
-	
+
+private:
+	// This holds per-object config class names, with their ArrayOfStructKeys. Since the POC sections are all unique,
+	// we can't track it just in that section. This is expected to be empty/small
+	TMap<FString, TMap<FName, FString> > PerObjectConfigArrayOfStructKeys;
+
+public:
 	CORE_API FConfigFile();
 	FConfigFile( int32 ) {}	// @todo UE-DLL: Workaround for instantiated TMap template during DLLExport (TMap::FindRef)
 	CORE_API ~FConfigFile();
-	
+
 	// looks for a section by name, and creates an empty one if it can't be found
+	UE_DEPRECATED(5.4, "Use FindOrAddConfigSection, and/or use the new AddToSection, etc APIs to modify sections without retrieving the section. See top of ConfigCacheIni.h for more info.")
 	CORE_API FConfigSection* FindOrAddSection(const FString& Name);
+	CORE_API const FConfigSection* FindOrAddConfigSection(const FString& Name);
+
+	///////////////////////////////////
+	// Replacement functionality of TMap so we can deprecate the direct access to FConfigSection
+	UE_DEPRECATED(5.4, "Use FindSection, and/or use the new AddToSection, etc APIs to modify sections without retrieving the section. See top of ConfigCacheIni.h for more info.")
+	FORCEINLINE const FConfigSection* Find(const FString& SectionName) const
+	{
+		return FConfigFileMap::Find(SectionName);
+	}
+	UE_DEPRECATED(5.4, "Use FindSection, and/or use the new AddToSection, etc APIs to modify sections without retrieving the section. See top of ConfigCacheIni.h for more info.")
+	FORCEINLINE FConfigSection* Find(const FString& SectionName)
+	{
+		return FConfigFileMap::Find(SectionName);
+	}
+
+	FORCEINLINE const FConfigSection* FindSection(const FString& SectionName) const
+	{
+		return FConfigFileMap::Find(SectionName);
+	}
+
+	FORCEINLINE int32 Num() const 								{ return FConfigFileMap::Num(); }
+	FORCEINLINE bool IsEmpty() const							{ return FConfigFileMap::IsEmpty(); }
+	FORCEINLINE void Empty(int32 ExpectedNumElements = 0) 		{ FConfigFileMap::Empty(ExpectedNumElements); }
+	FORCEINLINE bool Contains(const FString& SectionName) const	{ return FConfigFileMap::Contains(SectionName); }
+	FORCEINLINE int32 GetKeys(TArray<FString>& Keys) const 		{ return FConfigFileMap::GetKeys(Keys); }
+	FORCEINLINE int32 GetKeys(TSet<FString>& Keys) const		{ return FConfigFileMap::GetKeys(Keys); }
+	FORCEINLINE int32 Remove(KeyConstPointerType InKey) 		{ return FConfigFileMap::Remove(InKey); }
+
+	FORCEINLINE ValueType& Add(const KeyType&  InKey, const ValueType&  InValue) { return FConfigFileMap::Add(InKey, InValue); }
+	FORCEINLINE ValueType& Add(const KeyType&  InKey,		ValueType&& InValue) { return FConfigFileMap::Add(InKey, MoveTempIfPossible(InValue)); }
+	FORCEINLINE ValueType& Add(		 KeyType&& InKey, const ValueType&  InValue) { return FConfigFileMap::Add(MoveTempIfPossible(InKey), InValue); }
+	FORCEINLINE ValueType& Add(		 KeyType&& InKey,		ValueType&& InValue) { return FConfigFileMap::Add(MoveTempIfPossible(InKey), MoveTempIfPossible(InValue)); }
+	
+	FORCEINLINE void Append(TMap<FString, FConfigSection> Other) { FConfigFileMap::Append(MoveTemp(Other)); }
+	FORCEINLINE void Reset() { FConfigFileMap::Reset(); }
+
+
+	UE_DEPRECATED(5.4, "Use FindOrAddConfigSection, and/or use the new AddToSection, etc APIs to modify sections without retrieving the section. See top of ConfigCacheIni.h for more info.")
+	FORCEINLINE ValueType& FindOrAdd(const FString& Key) 		{ return FConfigFileMap::FindOrAdd(Key); }
+
+	UE_DEPRECATED(5.4, "Use const ranged for iterators, (wrap your FConfigFile variable in AsConst to force the const iterator). See top of ConfigCacheIni.h for more info.")
+	FORCEINLINE TRangedForIterator      begin() { return TRangedForIterator(Pairs.begin()); }
+	FORCEINLINE TRangedForConstIterator begin() const { return TRangedForConstIterator(Pairs.begin()); }
+	UE_DEPRECATED(5.4, "Use const ranged for iterators, (wrap your FConfigFile variable in AsConst to force the const iterator). See top of ConfigCacheIni.h for more info.")
+	FORCEINLINE TRangedForIterator      end() { return TRangedForIterator(Pairs.end()); }
+	FORCEINLINE TRangedForConstIterator end() const { return TRangedForConstIterator(Pairs.end()); }
+	
+	///////////////////////////////////
 
 	bool operator==( const FConfigFile& Other ) const;
 	bool operator!=( const FConfigFile& Other ) const;
@@ -461,6 +566,11 @@ private:
 	 */
 	void WriteToStringInternal(FString& InOutText, bool bIsADefaultIniWrite, int32 IniCombineThreshold, TMap<FString, FString>& InOutSectionTexts, const TArray<FString>& InSectionOrder);
 
+	FConfigSection* FindOrAddSectionInternal(const FString& SectionName);
+	FORCEINLINE FConfigSection* FindInternal(const FString& SectionName) { return FConfigFileMap::Find(SectionName); };
+
+
+
 public:
 	CORE_API void Dump(FOutputDevice& Ar);
 
@@ -517,6 +627,35 @@ public:
 	CORE_API void SetInt64(const TCHAR* Section, const TCHAR* Key, const int64 Value);
 	CORE_API void SetArray(const TCHAR* Section, const TCHAR* Key, const TArray<FString>& Value);
 	
+
+	/**
+	 * Adds the given key/value pair to the Section. This will always add this pair to the section, even if the pair already exists.
+	 * This is equivalent to the . operator in .ini files
+	 * @return true if the section was modified
+	 */
+	CORE_API bool AddToSection(const TCHAR* Section, FName Key, const FString& Value);
+
+	/**
+	 * Adds the given key/value pair to the Section, if the pair didn't already exist
+	 * This is equivalent to the + operator in .ini files
+	 * @return true if the section was modified
+	 */
+	CORE_API bool AddUniqueToSection(const TCHAR* Section, FName Key, const FString& Value);
+
+	/**
+	 * Removes every entry in the Section that has Key, no matter what the Value is
+	 * This is equivalent to the ! operator in .ini files
+	 * @return true if the section was modified
+	 */
+	CORE_API bool RemoveKeyFromSection(const TCHAR* Section, FName Key);
+
+	/**
+	 * Removes every  entry in the Section that has the Key/Value pair
+	 * This is equivalent to the - operator in .ini files (although it will remove all instances of the pair, not just a single one)
+	 * @return true if the section was modified
+	 */
+	CORE_API bool RemoveFromSection(const TCHAR* Section, FName Key, const FString& Value);
+
 	/**
 	 * Process the contents of an .ini file that has been read into an FString
 	 * 
@@ -584,11 +723,6 @@ public:
 
 	friend FArchive& operator<<(FArchive& Ar, FConfigFile& ConfigFile);
 private:
-
-	// This holds per-object config class names, with their ArrayOfStructKeys. Since the POC sections are all unique,
-	// we can't track it just in that section. This is expected to be empty/small
-	TMap<FString, TMap<FName, FString> > PerObjectConfigArrayOfStructKeys;
-
 	/** 
 	 * Save the source hierarchy which was loaded out to a backup file so we can check future changes in the base/default configs
 	 */
@@ -740,10 +874,8 @@ public:
 	/** Finds Config file that matches the base name such as "Engine" */
 	CORE_API FConfigFile* FindConfigFileWithBaseName(FName BaseName);
 
-	FConfigFile& Add(const FString& Filename, const FConfigFile& File)
-	{
-		return *OtherFiles.Add(Filename, new FConfigFile(File));
-	}
+	CORE_API FConfigFile& Add(const FString& Filename, const FConfigFile& File);
+
 	int32 Remove(const FString& Filename)
 	{
 		delete OtherFiles.FindRef(Filename);
@@ -767,7 +899,9 @@ public:
 	 * @param Force Whether to create the Section on Filename if it did not exist previously.
 	 * @param Const If Const (and not Force), then it will not modify File->Dirty. If not Const (or Force is true), then File->Dirty will be set to true.
 	 */
-	CORE_API FConfigSection* GetSectionPrivate( const TCHAR* Section, const bool Force, const bool Const, const FString& Filename );
+    UE_DEPRECATED(5.4, "Use GetSection instead, and/or use the new AddToSection, etc APIs to modify sections without retrieving the section. See top of ConfigCacheIni.h for more info.")
+    CORE_API FConfigSection* GetSectionPrivate( const TCHAR* Section, const bool Force, const bool Const, const FString& Filename );
+    CORE_API const FConfigSection* GetSection( const TCHAR* Section, const bool Force, const FString& Filename );
 	CORE_API void SetString( const TCHAR* Section, const TCHAR* Key, const TCHAR* Value, const FString& Filename );
 	CORE_API void SetText( const TCHAR* Section, const TCHAR* Key, const FText& Value, const FString& Filename );
 	CORE_API bool RemoveKey( const TCHAR* Section, const TCHAR* Key, const FString& Filename );
@@ -1093,6 +1227,35 @@ public:
 		FRotator			Value,
 		const FString&	Filename
 	);
+	
+	/**
+	 * Adds the given key/value pair to the Section in the given File. This will always add this pair to the section, even if the pair already exists.
+	 * This is equivalent to the . operator in .ini files
+	 * @return true if the section was modified
+	 */
+	CORE_API bool AddToSection(const TCHAR* Section, FName Key, const FString& Value, const FString& Filename);
+
+	/**
+	 * Adds the given key/value pair to the Section in the given File, if the pair didn't already exist
+	 * This is equivalent to the + operator in .ini files
+	 * @return true if the section was modified
+	 */
+	CORE_API bool AddUniqueToSection(const TCHAR* Section, FName Key, const FString& Value, const FString& Filename);
+
+	/**
+	 * Removes every entry in the Section in the given File that has Key, no matter what the Value is
+	 * This is equivalent to the ! operator in .ini files
+	 * @return true if the section was modified
+	 */
+	CORE_API bool RemoveKeyFromSection(const TCHAR* Section, FName Key, const FString& Filename);
+
+	/**
+	 * Removes every  entry in the Section in the given File that has the Key/Value pair
+	 * This is equivalent to the - operator in .ini files (although it will remove all instances of the pair, not just a single one)
+	 * @return true if the section was modified
+	 */
+	CORE_API bool RemoveFromSection(const TCHAR* Section, FName Key, const FString& Value, const FString& Filename);
+
 
 	// Static helper functions
 
@@ -1308,6 +1471,9 @@ private:
 
 	/** Serialize a bootstrapping state into or from an archive */
 	CORE_API void SerializeStateForBootstrap_Impl(FArchive& Ar);
+	
+	void DumpFile(FOutputDevice& Ar, const FString& Filename, const FConfigFile& File);
+
 
 	/** true if file operations should not be performed */
 	bool bAreFileOperationsDisabled;

@@ -56,8 +56,8 @@ public:
 	/** Retrieves the count for the specified bin */
 	int32 GetCount(int32 Bin) const
 	{
-		float MinVal = MinValue + Bin * Interval;
-		float MaxVal = MinValue + (Bin+1) * Interval;
+		float MinVal = MinValue + (float)Bin * Interval;
+		float MaxVal = MinValue + (float)(Bin+1) * Interval;
 		return HistogramDataSource->GetCount(MinVal, MaxVal);
 	}
 

@@ -219,8 +219,10 @@ class _BuildToolBase(object):
         suffix = "UnrealBuildTool/BuildConfiguration.xml"
         yield _BuildConfig(engine_dir / "Restricted/NotForLicensees/Programs" / suffix, _BuildConfigLevel.INTERNAL)
         yield self.get_configuration(True)
-        yield self.get_configuration()
         if os.name == "nt":
+            for var_name in ("ProgramData", "APPDATA", "LOCALAPPDATA"):
+                prefix = os.getenv(var_name, "!notset")
+                yield _BuildConfig(prefix + "/Unreal Engine/" + suffix, _BuildConfigLevel.GLOBAL)
             user_profile = os.getenv("USERPROFILE", "userprofile-notset")
             yield _BuildConfig(user_profile + "/Documents/Unreal Engine/" + suffix, _BuildConfigLevel.LEGACY)
         else:
@@ -233,7 +235,7 @@ class _BuildToolBase(object):
         if branch:
             cfg_path = self._engine.get_dir() / "Saved" / suffix
         else:
-            if os.name == "nt": prefix = os.getenv("APPDATA", "appdata")
+            if os.name == "nt": prefix = os.getenv("LOCALAPPDATA", "appdata")
             else:               prefix = os.path.expanduser("~")
             cfg_path = Path(prefix) / "Unreal Engine" / suffix
 

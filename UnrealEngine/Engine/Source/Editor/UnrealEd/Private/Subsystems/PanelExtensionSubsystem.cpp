@@ -24,6 +24,7 @@ void SExtensionPanel::Construct(const FArguments& InArgs)
 	ExtensionPanelID = InArgs._ExtensionPanelID.Get(NAME_None);
 	DefaultWidget = InArgs._DefaultWidget.Get(nullptr);
 	ExtensionContext = InArgs._ExtensionContext.Get(nullptr);
+	WindowZoneOverride = InArgs._WindowZoneOverride;
 
 	if (GEditor && ExtensionPanelID != NAME_None)
 	{

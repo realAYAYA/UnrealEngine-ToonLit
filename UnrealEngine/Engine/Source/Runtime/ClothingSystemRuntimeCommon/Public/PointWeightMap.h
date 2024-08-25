@@ -1,6 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #pragma once
 
+#include <type_traits>
+
 #include "UObject/ObjectMacros.h"
 #include "PointWeightMap.generated.h"
 
@@ -53,6 +55,21 @@ struct FPointWeightMap
 #endif
 	{}
 
+	FPointWeightMap(const TConstArrayView<float>& InValues, float Offset, float Scale)
+#if WITH_EDITORONLY_DATA
+		: Name(NAME_None)
+		, CurrentTarget((uint8)EWeightMapTargetCommon::None)
+		, bEnabled(false)
+#endif
+	{
+		const int32 NumPoints = InValues.Num();
+		Values.SetNumUninitialized(NumPoints);
+		for (int32 Index = 0; Index < NumPoints; ++Index)
+		{
+			Values[Index] = Offset + Scale * InValues[Index];
+		}
+	}
+
 	~FPointWeightMap()
 	{}
 
@@ -73,7 +90,10 @@ struct FPointWeightMap
 	 * Initialize a weight map from another weight map while enabling and setting a new target.
 	 * @param Source the source weight map to copy the values from.
 	 * @param Target the new weight map target. */
-	template <typename T, typename = typename TEnableIf<TOr<TIsEnum<T>, TIsArithmetic<T>>::Value>::Type>
+	template <
+		typename T
+		UE_REQUIRES(std::is_enum_v<T> || std::is_arithmetic_v<T>)
+	>
 	void Initialize(const FPointWeightMap& Source, T Target)
 	{
 		Values = Source.Values;

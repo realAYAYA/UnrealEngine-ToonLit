@@ -96,5 +96,13 @@ namespace BuildPatchServices
 		 * @return the new IFileOperationTracker instance created.
 		 */
 		static IFileOperationTracker* Create(FTSTicker& Ticker);
+
+		/**
+		 * Creates a null implementation of a file operation tracker which serves as the dependency for for systems providing these updates.
+		 * @param   Ticker      The ticker to register for main thread ticks with.
+		 * @param   Manifest    The manifest for the build being installed.
+		 * @return the new IFileOperationTracker instance created.
+		 */
+		static IFileOperationTracker* CreateNull();
 	};
 }

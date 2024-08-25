@@ -152,7 +152,9 @@ public:
 		, _ShowFilterTextBox(true)
 		, _UseSectionStyling(false)
 		, _bAllowPreselectedItemActivation(false)
+		, _DefaultRowExpanderBaseIndentLevel(0)
 		, _GraphObj(nullptr)
+		, _bAutomaticallySelectSingleAction(false)
 		{ }
 
 		SLATE_EVENT( FOnActionSelected, OnActionSelected )
@@ -178,8 +180,10 @@ public:
 		SLATE_ARGUMENT( bool, ShowFilterTextBox )
 		SLATE_ARGUMENT( bool, UseSectionStyling )
 		SLATE_ARGUMENT( bool, bAllowPreselectedItemActivation )
+		SLATE_ARGUMENT( int32, DefaultRowExpanderBaseIndentLevel )
 		SLATE_ARGUMENT( TArray<UEdGraphPin*>, DraggedFromPins )
 		SLATE_ARGUMENT( UEdGraph*, GraphObj )
+		SLATE_ARGUMENT( bool, bAutomaticallySelectSingleAction )
 
 	SLATE_END_ARGS()
 
@@ -237,6 +241,10 @@ protected:
 	bool bUseSectionStyling;
 	/** Whether we allow pre-selected items to be activated with a left-click */
 	bool bAllowPreselectedItemActivation;
+	/** Whether to automatically proceed with an action if it's the only one in the list. */
+	bool bAutomaticallySelectSingleAction;
+	/** The BaseIndentLevel of the default-created row expander. Not used with OnCreateCustomRowExpander. */
+	int32 DefaultRowExpanderBaseIndentLevel;
 	
 	/** Delegate to call when action is selected */
 	FOnActionSelected OnActionSelected;

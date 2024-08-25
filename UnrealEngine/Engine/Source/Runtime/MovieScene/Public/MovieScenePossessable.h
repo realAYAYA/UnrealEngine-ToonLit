@@ -15,16 +15,17 @@
 #include "UObject/ObjectMacros.h"
 #include "UObject/SoftObjectPtr.h"
 
-#if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_1
-#include "IMovieScenePlayer.h"
-#endif
-
 #include "MovieScenePossessable.generated.h"
 
 class IMovieScenePlayer;
 class UClass;
 class UMovieScene;
 struct FMovieSceneSequenceID;
+
+namespace UE::MovieScene
+{
+	struct FSharedPlaybackState;
+}
 
 /**
  * MovieScenePossessable is a "typed slot" used to allow the MovieScene to control an already-existing object
@@ -108,7 +109,7 @@ public:
 	 */
 	const UClass* GetPossessedObjectClass() const
 	{
-		return (const UClass*)(PossessedObjectClass.Get());
+		return (const UClass*)(PossessedObjectClass.LoadSynchronous());
 	}
 
 	/**
@@ -121,6 +122,11 @@ public:
 	{
 		PossessedObjectClass = InClass;
 	}
+
+	/**
+	 * Fixup the possessed object class by resolving the possessable and determining the most common class
+	 */
+	MOVIESCENE_API void FixupPossessedObjectClass(UMovieSceneSequence* InSequence, UObject* Context);
 
 #endif
 
@@ -165,7 +171,15 @@ public:
 	}
 
 	/* Bind the potential spawnable object to this possessable by setting the ObjectBindingID */
+	MOVIESCENE_API bool BindSpawnableObject(FMovieSceneSequenceID SequenceID, UObject* Object, TSharedRef<const UE::MovieScene::FSharedPlaybackState> SharedPlaybackState);
+
+	UE_DEPRECATED(5.4, "Please use the FSharedPlaybackState version of this method")
 	MOVIESCENE_API bool BindSpawnableObject(FMovieSceneSequenceID SequenceID, UObject* Object, IMovieScenePlayer* Player);
+
+	/* For sorts so we can search quickly by Guid */
+	FORCEINLINE bool operator<(const FMovieScenePossessable& RHS) const { return Guid < RHS.Guid; }
+	FORCEINLINE friend bool operator<(const FGuid& InGuid, const FMovieScenePossessable& RHS) { return InGuid < RHS.GetGuid(); }
+	FORCEINLINE bool operator<(const FGuid& InGuid) const { return Guid < InGuid; }
 
 private:
 

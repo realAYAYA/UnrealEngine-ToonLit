@@ -22,6 +22,7 @@
 #include "Modules/ModuleManager.h"
 #include "ProfilingDebugging/MiscTrace.h"
 #include "ProfilingDebugging/TraceScreenshot.h"
+#include "ProfilingDebugging/PlatformEvents.h"
 #include "SRecentTracesList.h"
 #include "Styling/StyleColors.h"
 #include "ToolMenus.h"
@@ -29,6 +30,7 @@
 #include "Trace/StoreClient.h"
 #include "Trace/Trace.h"
 #include "UnrealInsightsLauncher.h"
+#include "Insights/Widgets/STraceServerControl.h"
 #include "Widgets/SBoxPanel.h"
 #include "Widgets/SOverlay.h"
 #include "Widgets/Images/SImage.h"
@@ -168,7 +170,7 @@ void SInsightsStatusBarWidget::Construct(const FArguments& InArgs)
 			.HAlign(HAlign_Left)
 			.VAlign(VAlign_Bottom)
 			.ToolTipText(this, &SInsightsStatusBarWidget::GetRecordingButtonTooltipText)
-			.OnClicked_Lambda([this]() { this->ToggleTracing_OnClicked(); return FReply::Handled(); })
+			.OnClicked_Lambda([this]() { this->ToggleTrace_OnClicked(); return FReply::Handled(); })
 			.OnHovered_Lambda([this]() { this->bIsTraceRecordButtonHovered = true; })
 			.OnUnhovered_Lambda([this]() { this->bIsTraceRecordButtonHovered = false; })
 			.Content()
@@ -248,6 +250,11 @@ TSharedRef<SWidget> SInsightsStatusBarWidget::MakeTraceMenu()
 {
 	LiveSessionTracker->StartQuery();
 
+	if (ServerControls.IsEmpty())
+	{
+		ServerControls.Emplace(TEXT("127.0.0.1"), 0, FEditorTraceUtilitiesStyle::Get().GetStyleSetName());
+	}
+
 	FMenuBuilder MenuBuilder(true, CommandList.ToSharedRef());
 
 	MenuBuilder.BeginSection("TraceData", LOCTEXT("TraceMenu_Section_Data", "Trace Data"));
@@ -324,10 +331,35 @@ TSharedRef<SWidget> SInsightsStatusBarWidget::MakeTraceMenu()
 			TAttribute<FText>::CreateSP(this, &SInsightsStatusBarWidget::GetTraceMenuItemText),
 			TAttribute<FText>::CreateSP(this, &SInsightsStatusBarWidget::GetTraceMenuItemTooltipText),
 			FSlateIcon(FEditorTraceUtilitiesStyle::Get().GetStyleSetName(), "Icons.StartTrace.Menu"),
-			FUIAction(FExecuteAction::CreateSP(this, &SInsightsStatusBarWidget::ToggleTracing_OnClicked)),
+			FUIAction(FExecuteAction::CreateSP(this, &SInsightsStatusBarWidget::ToggleTrace_OnClicked)),
 			NAME_None,
 			EUserInterfaceActionType::Button
 		);
+
+		if (FTraceAuxiliary::IsPaused())
+		{
+			MenuBuilder.AddMenuEntry(
+				LOCTEXT("ResumeTraceButtonText", "Resume Trace"),
+				LOCTEXT("ResumesTraceButtonTooltip", "Enables all channels that were active when tracing was paused."),
+				FSlateIcon(FEditorTraceUtilitiesStyle::Get().GetStyleSetName(), "Icons.ResumeTrace.Menu"),
+				FUIAction(FExecuteAction::CreateSP(this, &SInsightsStatusBarWidget::TogglePauseTrace_OnClicked),
+						  FCanExecuteAction::CreateSP(this, &SInsightsStatusBarWidget::PauseTrace_CanExecute)),
+				NAME_None,
+				EUserInterfaceActionType::Button
+			);
+		}
+		else
+		{
+			MenuBuilder.AddMenuEntry(
+				LOCTEXT("PauseTraceButtonText", "Pause Trace"),
+				TAttribute<FText>::CreateSP(this, &SInsightsStatusBarWidget::GetPauseTraceMenuItemTooltipText),
+				FSlateIcon(FEditorTraceUtilitiesStyle::Get().GetStyleSetName(), "Icons.PauseTrace.Menu"),
+				FUIAction(FExecuteAction::CreateSP(this, &SInsightsStatusBarWidget::TogglePauseTrace_OnClicked),
+						  FCanExecuteAction::CreateSP(this, &SInsightsStatusBarWidget::PauseTrace_CanExecute)),
+				NAME_None,
+				EUserInterfaceActionType::Button
+			);
+		}
 
 		MenuBuilder.AddMenuEntry(
 			LOCTEXT("SaveSnapshotLabel", "Save Trace Snapshot"),
@@ -402,6 +434,20 @@ TSharedRef<SWidget> SInsightsStatusBarWidget::MakeTraceMenu()
 
 	MenuBuilder.BeginSection("Insights", LOCTEXT("TraceMenu_Section_Insights", "Insights"));
 	{
+		MenuBuilder.AddSubMenu(
+			LOCTEXT("ServerControlLabel", "Unreal Trace Server"),
+			LOCTEXT("ServerControlTooltip", "Info and controls for the Unreal Trace Server instances"),
+			FNewMenuDelegate::CreateLambda([this](FMenuBuilder& MenuBuilder)
+				{
+					for (auto& ServerControl : ServerControls)
+					{
+						ServerControl.MakeMenu(MenuBuilder);
+					}
+				}),
+			false,
+			FSlateIcon(FAppStyle::Get().GetStyleSetName(), "Icons.Server")
+		);
+
 		MenuBuilder.AddMenuEntry(
 			LOCTEXT("OpenInsightsLabel", "Unreal Insights (Session Browser)"),
 			LOCTEXT("OpenInsightsTooltip", "Launch the Unreal Insights Session Browser."),
@@ -491,7 +537,7 @@ FText SInsightsStatusBarWidget::GetTitleToolTipText() const
 	FTextBuilder DescBuilder;
 
 	const FString Dest = FTraceAuxiliary::GetTraceDestinationString();
-	
+
 	if (*Dest != 0)
 	{
 		DescBuilder.AppendLineFormat(LOCTEXT("TracingToText", "Tracing to: {0}"), FText::FromString(Dest));
@@ -504,7 +550,7 @@ FText SInsightsStatusBarWidget::GetTitleToolTipText() const
 	{
 		DescBuilder.AppendLine(LOCTEXT("NotTracingText","Not currently tracing."));
 	}
-		
+
 	return DescBuilder.ToText();
 }
 
@@ -723,7 +769,7 @@ FText SInsightsStatusBarWidget::GetTraceMenuItemTooltipText() const
 	return LOCTEXT("StartTraceButtonTooltip", "Start tracing to the selected trace destination.");
 }
 
-void SInsightsStatusBarWidget::ToggleTracing_OnClicked()
+void SInsightsStatusBarWidget::ToggleTrace_OnClicked()
 {
 	if (UE::Trace::IsTracing())
 	{
@@ -750,6 +796,38 @@ void SInsightsStatusBarWidget::ToggleTracing_OnClicked()
 		{
 			LogMessage(LOCTEXT("TraceFailedToStartMsg", "Trace Failed to Start."));
 		}
+	}
+}
+
+bool SInsightsStatusBarWidget::PauseTrace_CanExecute()
+{
+	return UE::Trace::IsTracing();
+}
+
+FText SInsightsStatusBarWidget::GetPauseTraceMenuItemTooltipText() const
+{
+	if (!UE::Trace::IsTracing())
+	{
+		return LOCTEXT("PauseTraceDisabledButtonTooltip", "Tracing must be running to enable the pause functionality.");
+	}
+
+	return LOCTEXT("PauseTraceButtonTooltip", "Disables all enabled trace channels. The same channels will be re-enabled when tracing is resumed.");
+}
+
+void SInsightsStatusBarWidget::TogglePauseTrace_OnClicked()
+{ 
+	if (!UE::Trace::IsTracing())
+	{
+		return;
+	}
+
+	if (FTraceAuxiliary::IsPaused())
+	{
+		FTraceAuxiliary::Resume();
+	}
+	else
+	{
+		FTraceAuxiliary::Pause();
 	}
 }
 
@@ -859,7 +937,9 @@ void SInsightsStatusBarWidget::CacheTraceStorePath()
 {
 	if (TraceStorePath.IsEmpty())
 	{
-		UE::Trace::FStoreClient* StoreClient = UE::Trace::FStoreClient::Connect(TEXT("localhost"));
+		using UE::Trace::FStoreClient;
+		FStoreClient* StoreClientPtr = FStoreClient::Connect(TEXT("localhost"));
+		TUniquePtr<FStoreClient> StoreClient = TUniquePtr<FStoreClient>(StoreClientPtr);
 
 		if (!StoreClient)
 		{
@@ -867,13 +947,12 @@ void SInsightsStatusBarWidget::CacheTraceStorePath()
 			return;
 		}
 
-		const UE::Trace::FStoreClient::FStatus* Status = StoreClient->GetStatus();
+		const FStoreClient::FStatus* Status = StoreClient->GetStatus();
 		if (!Status)
 		{
 			LogMessage(LOCTEXT("FailedToGetStoreStatusMsg", "Failed to get the status of the store client."));
 			return;
 		}
-
 		TraceStorePath = FString(Status->GetStoreDir());
 	}
 }
@@ -935,7 +1014,11 @@ void SInsightsStatusBarWidget::ToggleChannel_Execute(int32 Index)
 {
 	if (Index < ChannelsInfo.Num())
 	{
-		UE::Trace::ToggleChannel(*ChannelsInfo[Index].Name, !ChannelsInfo[Index].bIsEnabled);
+		const FString& ChannelName = ChannelsInfo[Index].Name;
+		bool bChannelShouldBeEnabled = !ChannelsInfo[Index].bIsEnabled;
+		UE::Trace::ToggleChannel(*ChannelName, bChannelShouldBeEnabled);
+
+		FPlatformEventsTrace::OnTraceChannelUpdated(ChannelName, bChannelShouldBeEnabled);
 	}
 }
 
@@ -1020,7 +1103,7 @@ void SInsightsStatusBarWidget::OpenTrace(int32 Index)
 				const FLiveSessionsMap& Sessions = LiveSessionTracker->GetLiveSessions();
 				FString FileName = FPaths::GetBaseFilename(Traces[Index]->FilePath);
 				const uint32* TraceId = Sessions.Find(FileName);
-				
+
 				if (TraceId)
 				{
 					FUnrealInsightsLauncher::Get()->OpenRemoteTrace(TEXT("localhost"), uint16(LiveSessionTracker->GetStorePort()), *TraceId);

@@ -59,6 +59,11 @@ void FRemeshMeshOp::SetTransform(const FTransformSRT3d& Transform)
 	ResultTransform = Transform;
 }
 
+void FRemeshMeshOp::SetUserSpecifiedConstraints(const FMeshConstraints& Constraints)
+{
+	UserSpecifiedConstraints = Constraints;
+}
+
 void FRemeshMeshOp::CalculateResult(FProgressCancel* Progress)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(RemeshMeshOp);
@@ -122,7 +127,8 @@ void FRemeshMeshOp::CalculateResult(FProgressCancel* Progress)
 
 	Remesher->DEBUG_CHECK_LEVEL = 0;
 
-	FMeshConstraints Constraints;
+	FMeshConstraints Constraints = UserSpecifiedConstraints;		// Initialize with externally supplied constraints
+
 	constexpr bool bAllowSeamSplits = true;
 	const bool bAllowSeamCollapse = !bPreserveSharpEdges;
 	const bool bAllowSeamSmoothing = !bPreserveSharpEdges;
@@ -176,6 +182,7 @@ void FRemeshMeshOp::CalculateResult(FProgressCancel* Progress)
 	}
 	Remesher->SetProjectionTarget(ProjTarget.Get());
 
+	Remesher->CustomEdgeLengthScaleF = CustomEdgeLengthScaleF;
 
 	Remesher->Progress = Progress;
 

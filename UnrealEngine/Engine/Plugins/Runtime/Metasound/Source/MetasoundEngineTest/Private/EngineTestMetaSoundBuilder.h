@@ -98,7 +98,7 @@ bool FMetaSoundSourceBuilderCreateAndConnectTriGeneratorNodeLatentCommand::Updat
 	if (Builder)
 	{
 		// Tri Oscillator Node
-		FMetaSoundNodeHandle TriNode = Builder->AddNodeByClassName({ "UE", "Triangle", "Audio" }, 1, Result);
+		FMetaSoundNodeHandle TriNode = Builder->AddNodeByClassName({ "UE", "Triangle", "Audio" }, Result, 1);
 		Test.AddErrorIfFalse(Result == EMetaSoundBuilderResult::Succeeded && TriNode.IsSet(), TEXT("Failed to create node by class name 'UE:Triangle:Audio"));
 
 		FMetaSoundBuilderNodeOutputHandle TriNodeAudioOutput = Builder->FindNodeOutputByName(TriNode, "Audio", Result);
@@ -124,7 +124,7 @@ bool FBuilderRemoveFromRootLatentCommand::Update()
 }
 
 // Creates a collection of MetaSound patches from builders and exercises bindings all input and output interfaces by connecting and disconnecting using various builder API calls.
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAudioMetaSoundBuilderInterfaceBindingConnectAndDisconnect, "Audio.Metasound.InterfaceBindingConnectAndDisconnect", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAudioMetaSoundBuilderInterfaceBindingConnectAndDisconnect, "Audio.Metasound.Builder.InterfaceBindingConnectAndDisconnect", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FAudioMetaSoundBuilderInterfaceBindingConnectAndDisconnect::RunTest(const FString& Parameters)
 {
 	using namespace EngineTestMetaSoundPatchBuilderPrivate;
@@ -187,6 +187,86 @@ bool FAudioMetaSoundBuilderInterfaceBindingConnectAndDisconnect::RunTest(const F
 				}
 			}
 		}
+	}
+
+	return true;
+}
+
+// This test creates a MetaSound patch, then adds and connects sin oscillator, attempts to retrieve a default input set, then clears it, and finally retrieves the class default
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FAudioMetasoundNodeClassQueryFunctions, "Audio.Metasound.Builder.NodeClassQueryFunctions", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FAudioMetasoundNodeClassQueryFunctions::RunTest(const FString& Parameters)
+{
+	using namespace EngineTestMetaSoundPatchBuilderPrivate;
+	using namespace Metasound;
+	using namespace Metasound::Frontend;
+
+	constexpr float NodeDefaultFreq = 100.0f;
+
+	EMetaSoundBuilderResult Result = EMetaSoundBuilderResult::Failed;
+	UMetaSoundPatchBuilder& Builder = CreatePatchBuilderChecked(*this, "DefaultLiteralAssignment", { });
+
+	// Sine Oscillator Node
+	const FMetaSoundNodeHandle OscNode = Builder.AddNodeByClassName({ "UE", "Sine", "Audio" }, Result, 1);
+	AddErrorIfFalse(Result == EMetaSoundBuilderResult::Succeeded && OscNode.IsSet(), TEXT("Failed to create new MetaSound node by class name"));
+
+	// Make connections:
+	const FMetaSoundBuilderNodeInputHandle OscNodeFrequencyInput = Builder.FindNodeInputByName(OscNode, "Frequency", Result);
+	AddErrorIfFalse(Result == EMetaSoundBuilderResult::Succeeded && OscNodeFrequencyInput.IsSet(), TEXT("Failed to find Sine Oscillator node input 'Frequency'"));
+
+	FMetasoundFrontendLiteral Literal;
+	Literal.Set(100.0f);
+
+	Builder.SetNodeInputDefault(OscNodeFrequencyInput, Literal, Result);
+	AddErrorIfFalse(Result == EMetaSoundBuilderResult::Succeeded, TEXT("Failed to 'SetNodeInputDefault'"));
+
+	Literal = Builder.GetNodeInputDefault(OscNodeFrequencyInput, Result);
+	AddErrorIfFalse(Result == EMetaSoundBuilderResult::Succeeded, TEXT("Failed to 'GetNodeInputDefault'"));
+
+	float Freq = 0.0f;
+	bool bLiteralIsFloat = Literal.TryGet(Freq);
+	AddErrorIfFalse(bLiteralIsFloat, TEXT("Failed to retrieve node literal as 'float'"));
+	AddErrorIfFalse(FMath::IsNearlyEqual(NodeDefaultFreq, Freq), TEXT("'Freq' node default not set to provided default"));
+
+	Builder.RemoveNodeInputDefault(OscNodeFrequencyInput, Result);
+	AddErrorIfFalse(Result == EMetaSoundBuilderResult::Succeeded, TEXT("Failed to 'RemoveNodeInputDefault'"));
+
+	Literal = Builder.GetNodeInputClassDefault(OscNodeFrequencyInput, Result);
+	AddErrorIfFalse(Result == EMetaSoundBuilderResult::Succeeded, TEXT("Failed to 'GetNodeInputClassDefault' on c++ Sin Osc node"));
+
+	bLiteralIsFloat = Literal.TryGet(Freq);
+	AddErrorIfFalse(bLiteralIsFloat, TEXT("Failed to retrieve class input literal as 'float'"));
+	AddErrorIfFalse(FMath::IsNearlyEqual(440.0f, Freq), TEXT("'Freq' node default not set to expected sin freq default of 440.0f Hz"));
+
+	// Output Default Test
+	{
+		Literal.Set(123.0f);
+		const FMetaSoundBuilderNodeInputHandle InputTest = Builder.AddGraphOutputNode("Output", GetMetasoundDataTypeName<float>(), Literal, Result);
+		AddErrorIfFalse(Result == EMetaSoundBuilderResult::Succeeded && InputTest.IsSet(), TEXT("Failed to create new MetaSound graph input"));
+
+		bLiteralIsFloat = Literal.TryGet(Freq);
+		AddErrorIfFalse(bLiteralIsFloat, TEXT("Failed to retrieve class input literal as 'float'"));
+		AddErrorIfFalse(FMath::IsNearlyEqual(123.0f, Freq), TEXT("'Freq' node default not set to expected sin freq default of 440.0f Hz"));
+
+		const bool bIsConstructorPin = Builder.GetNodeInputIsConstructorPin(InputTest);
+		AddErrorIfFalse(!bIsConstructorPin, TEXT("Pin is not constructor pin but GetNodeInputIsConstructorPin is returning true"));
+	}
+
+	// Output Ctor tests
+	{
+		const FMetaSoundBuilderNodeInputHandle CtorTest = Builder.AddGraphOutputNode("CtorOutputTest", GetMetasoundDataTypeName<float>(), Literal, Result, true);
+		AddErrorIfFalse(Result == EMetaSoundBuilderResult::Succeeded && CtorTest.IsSet(), TEXT("Failed to create new MetaSound graph input"));
+
+		const bool bIsConstructorPin = Builder.GetNodeInputIsConstructorPin(CtorTest);
+		AddErrorIfFalse(bIsConstructorPin, TEXT("Output handle is constructor pin but GetNodeInputIsConstructorPin is returning false"));
+	}
+
+	// Input Ctor tests
+	{
+		const FMetaSoundBuilderNodeOutputHandle CtorTest = Builder.AddGraphInputNode("CtorOutput", GetMetasoundDataTypeName<float>(), Literal, Result, true);
+		AddErrorIfFalse(Result == EMetaSoundBuilderResult::Succeeded && CtorTest.IsSet(), TEXT("Failed to create new MetaSound graph input"));
+
+		const bool bIsConstructorPin = Builder.GetNodeOutputIsConstructorPin(CtorTest);
+		AddErrorIfFalse(bIsConstructorPin, TEXT("Input handle is constructor pin but GetNodeInputIsConstructorPin is returning false"));
 	}
 
 	return true;

@@ -20,6 +20,13 @@ namespace Metasound
 		struct FDynamicGraphOperatorData;
 		using FLiteralAssignmentFunction = void(*)(const FOperatorSettings& InOperatorSettings, const FLiteral& InLiteral, const FAnyDataReference& OutDataRef);
 
+		/** Where to place a new operator in the execution order. */
+		enum class EExecutionOrderInsertLocation : uint8
+		{
+			First, //< New operator executes before all existing operators.
+			Last   //< New operator executes after all existing operators.
+		};
+
 		/** Action to perform after a single transformation. */
 		enum class EDynamicOperatorTransformQueueAction : uint8
 		{
@@ -60,6 +67,7 @@ namespace Metasound
 
 		private:
 			void ApplyTransformsUntilFence();
+			void ApplyTransformsUntilFenceOrTimeout(double InTimeoutInSeconds);
 			void Execute();
 			void PostExecute();
 			void Reset(const IOperator::FResetParams& InParams);
@@ -95,10 +103,12 @@ namespace Metasound
 		class FAddOperator : public IDynamicOperatorTransform
 		{
 		public:
-			FAddOperator(FOperatorID InOperatorID, FOperatorInfo&& InInfo);
+
+			FAddOperator(FOperatorID InOperatorID, EExecutionOrderInsertLocation InLocation, FOperatorInfo&& InInfo);
 			virtual EDynamicOperatorTransformQueueAction Transform(FDynamicGraphOperatorData& InGraphOperatorData) override;
 		private:
 			FOperatorID OperatorID;
+			EExecutionOrderInsertLocation Location;
 			FOperatorInfo OperatorInfo;
 		};
 

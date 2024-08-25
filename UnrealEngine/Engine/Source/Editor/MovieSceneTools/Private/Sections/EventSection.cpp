@@ -7,7 +7,6 @@
 #include "SequencerSectionPainter.h"
 #include "ISectionLayoutBuilder.h"
 #include "Styling/AppStyle.h"
-#include "CommonMovieSceneTools.h"
 #include "Tracks/MovieSceneEventTrack.h"
 #include "Sections/MovieSceneEventSection.h"
 #include "Sections/MovieSceneEventTriggerSection.h"
@@ -22,6 +21,7 @@
 #include "MovieSceneSequence.h"
 #include "EditorFontGlyphs.h"
 #include "ScopedTransaction.h"
+#include "TimeToPixel.h"
 
 #define LOCTEXT_NAMESPACE "EventSection"
 

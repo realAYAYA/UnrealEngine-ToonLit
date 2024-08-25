@@ -9,7 +9,7 @@ UConstantCameraShakePattern::UConstantCameraShakePattern(const FObjectInitialize
 {
 }
 
-void UConstantCameraShakePattern::UpdateShakePatternImpl(const FCameraShakeUpdateParams& Params, FCameraShakeUpdateResult& OutResult)
+void UConstantCameraShakePattern::UpdateShakePatternImpl(const FCameraShakePatternUpdateParams& Params, FCameraShakePatternUpdateResult& OutResult)
 {
 	OutResult.Location = LocationOffset;
 	OutResult.Rotation = RotationOffset;

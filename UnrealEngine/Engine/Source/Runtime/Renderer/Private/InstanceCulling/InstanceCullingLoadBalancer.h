@@ -81,6 +81,7 @@ public:
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer< FPackedItem >, ItemBuffer)
 		SHADER_PARAMETER(uint32, NumBatches)
 		SHADER_PARAMETER(uint32, NumItems)
+		SHADER_PARAMETER(uint32, NumGroupsPerBatch)
 	END_SHADER_PARAMETER_STRUCT()
 
 	/*
@@ -93,15 +94,17 @@ public:
 	{
 		int32 NumBatches = 0;
 		int32 NumItems = 0;
+		// Optional to allow launching multiple groups that all get the same batch on the shader side
+		int32 NumGroupsPerBatch = 1;
 		FRDGBufferRef BatchBuffer = nullptr;
 		FRDGBufferRef ItemBuffer = nullptr;
 
 		void GetShaderParameters(FRDGBuilder& GraphBuilder, FShaderParameters& ShaderParameters);
 	};
 
-	FGPUData Upload(FRDGBuilder& GraphBuilder, TConstArrayView<FPackedBatch> Batches, TConstArrayView<FPackedItem> Items, ERDGInitialDataFlags RDGInitialDataFlags) const;
+	FGPUData Upload(FRDGBuilder& GraphBuilder, TConstArrayView<FPackedBatch> Batches, TConstArrayView<FPackedItem> Items, ERDGInitialDataFlags RDGInitialDataFlags, int32 NumGroupsPerBatch) const;
 
-	FIntVector GetWrappedCsGroupCount(TConstArrayView<FPackedBatch> Batches) const;
+	FIntVector GetWrappedCsGroupCount(TConstArrayView<FPackedBatch> Batches, int32 NumGroupsPerBatch) const;
 };
 
 /*
@@ -163,18 +166,19 @@ public:
 		return Items.IsEmpty();
 	}
 
-	FGPUData Upload(FRDGBuilder& GraphBuilder, ERDGInitialDataFlags RDGInitialDataFlags = DefaultRDGInitialDataFlags)
+	FGPUData Upload(FRDGBuilder& GraphBuilder, ERDGInitialDataFlags RDGInitialDataFlags = DefaultRDGInitialDataFlags, int32 NumGroupsPerBatch = 1)
 	{
 		FinalizeBatches();
 
-		return FInstanceCullingLoadBalancerBase::Upload(GraphBuilder, Batches, Items, RDGInitialDataFlags);
+		return FInstanceCullingLoadBalancerBase::Upload(GraphBuilder, Batches, Items, RDGInitialDataFlags, NumGroupsPerBatch);
 	}
 
 	/* Const variant that assumes the batches have already been finalized */
-	FGPUData UploadFinalized(FRDGBuilder& GraphBuilder, ERDGInitialDataFlags RDGInitialDataFlags = DefaultRDGInitialDataFlags) const
+	FGPUData UploadFinalized(FRDGBuilder& GraphBuilder, ERDGInitialDataFlags RDGInitialDataFlags = DefaultRDGInitialDataFlags, int32 NumGroupsPerBatch = 1) const
 	{
 		check(CurrentBatchNumItems == 0);
-		return FInstanceCullingLoadBalancerBase::Upload(GraphBuilder, Batches, Items, RDGInitialDataFlags);
+
+		return FInstanceCullingLoadBalancerBase::Upload(GraphBuilder, Batches, Items, RDGInitialDataFlags, NumGroupsPerBatch);
 	}
 
 	/**
@@ -192,10 +196,11 @@ public:
 	/**
 	 * Returns a 3D group count that is large enough to generate one group per batch using FComputeShaderUtils::GetGroupCountWrapped.
 	 * Use GetUnWrappedDispatchGroupId in the shader to retrieve the linear index.
+	 * NOTE: NumGroupsPerBatch must be consistent with the value passed to Upload
 	 */
-	FIntVector GetWrappedCsGroupCount() const
+	FIntVector GetWrappedCsGroupCount(int32 NumGroupsPerBatch = 1) const
 	{
-		return FInstanceCullingLoadBalancerBase::GetWrappedCsGroupCount(Batches);
+		return FInstanceCullingLoadBalancerBase::GetWrappedCsGroupCount(Batches, NumGroupsPerBatch);
 	}
 
 	const TArray<FPackedBatch, AllocatorType> &GetBatches() const

@@ -19,6 +19,10 @@ class UTakeRecorderSources;
 class UTakeRecorderOverlayWidget;
 class UMovieSceneSequence;
 
+namespace UE::MovieScene
+{
+	struct FScopedVolatilityManagerSuppression;
+}
 
 UENUM(BlueprintType)
 enum class ETakeRecorderState : uint8
@@ -310,4 +314,6 @@ private:
 	EUpdateClockSource CachedClockSource;
 	
 	TRange<FFrameNumber> CachedPlaybackRange;
+
+	TUniquePtr<UE::MovieScene::FScopedVolatilityManagerSuppression> CompileSuppression;
 };

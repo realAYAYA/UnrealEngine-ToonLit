@@ -28,10 +28,13 @@ void FNiagaraSimCacheCapture::FinishCapture()
 	{
 		CaptureSimCache->EndWrite();
 	}
-	CaptureComplete.Broadcast(CaptureSimCache);
-	CaptureComplete.Clear();
 
+	// in order to support the broadcasted message resulting in us being deleted we need to
+	// be sure that we don't manipulate any data post broadcast
+	FOnCaptureComplete LocalDelegate = MoveTemp(CaptureComplete);
 	WeakCaptureComponent = nullptr;
+
+	LocalDelegate.Broadcast(CaptureSimCache);
 }
 
 void FNiagaraSimCacheCapture::CaptureNiagaraSimCache(UNiagaraSimCache* SimCache, FNiagaraSimCacheCreateParameters CreateParameters, UNiagaraComponent* NiagaraComponent, FNiagaraSimCacheCaptureParameters InCaptureParameters)

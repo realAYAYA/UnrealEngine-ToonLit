@@ -60,7 +60,7 @@ public:
 	virtual void UnregisterWidgetFactoryForType(UScriptStruct* RemoteControlEntityType) override;
 	virtual void HighlightPropertyInDetailsPanel(const FPropertyPath& Path) const override;
 	virtual void SelectObjects(const TArray<UObject*>& Objects) const override;
-	virtual TSharedPtr<SWidget> CreateCustomControllerWidget(URCVirtualPropertyBase* InController) const override;
+	virtual TSharedPtr<SWidget> CreateCustomControllerWidget(URCVirtualPropertyBase* InController, TSharedPtr<IPropertyHandle> InOriginalPropertyHandle) const override;
 	//~ End IRemoteControlUIModule interface
 
 	/**

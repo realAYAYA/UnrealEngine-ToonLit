@@ -4,6 +4,7 @@
 
 #include "MovieSceneScriptingChannel.h"
 #include "KeyParams.h"
+#include "MovieSceneTimeUnit.h"
 #include "Channels/MovieSceneEventChannel.h"
 
 #include "MovieSceneScriptingEvent.generated.h"
@@ -23,7 +24,7 @@ public:
 	* @return			The time of this key which combines both the frame number and the sub-frame it is on. Sub-frame will be zero if you request Tick Resolution.
 	*/
 	UFUNCTION(BlueprintCallable, Category = "Sequencer|Keys", meta = (DisplayName = "Get Time (Event)"))
-	virtual FFrameTime GetTime(ESequenceTimeUnit TimeUnit = ESequenceTimeUnit::DisplayRate) const override { return GetTimeFromChannel(KeyHandle, OwningSequence, TimeUnit); }
+	virtual FFrameTime GetTime(EMovieSceneTimeUnit TimeUnit = EMovieSceneTimeUnit::DisplayRate) const override { return GetTimeFromChannel(KeyHandle, OwningSequence, TimeUnit); }
 	
 	/**
 	* Sets the time for this key in the owning channel. Will replace any key that already exists at that frame number in this channel.
@@ -32,7 +33,7 @@ public:
 	* @param TimeUnit		Should the NewFrameNumber be interpreted as Display Rate frames or in Tick Resolution?
 	*/
 	UFUNCTION(BlueprintCallable, Category = "Sequencer|Keys", meta = (DisplayName = "Set Time (Event)"))
-	void SetTime(const FFrameNumber& NewFrameNumber, float SubFrame = 0.f, ESequenceTimeUnit TimeUnit = ESequenceTimeUnit::DisplayRate) { SetTimeInChannel(KeyHandle, OwningSequence, OwningSection, NewFrameNumber, TimeUnit, SubFrame); }
+	void SetTime(const FFrameNumber& NewFrameNumber, float SubFrame = 0.f, EMovieSceneTimeUnit TimeUnit = EMovieSceneTimeUnit::DisplayRate) { SetTimeInChannel(KeyHandle, OwningSequence, OwningSection, NewFrameNumber, TimeUnit, SubFrame); }
 
 	/**
 	* Gets the value for this key from the owning channel.
@@ -72,7 +73,7 @@ public:
 	* @return	The key that was created with the specified values at the specified time.
 	*/
 	UFUNCTION(BlueprintCallable, Category = "Sequencer|Keys", meta = (DisplayName = "Add Key (Event)"))
-	UMovieSceneScriptingEventKey* AddKey(const FFrameNumber& InTime, FMovieSceneEvent NewValue, float SubFrame = 0.f, ESequenceTimeUnit TimeUnit = ESequenceTimeUnit::DisplayRate)
+	UMovieSceneScriptingEventKey* AddKey(const FFrameNumber& InTime, FMovieSceneEvent NewValue, float SubFrame = 0.f, EMovieSceneTimeUnit TimeUnit = EMovieSceneTimeUnit::DisplayRate)
 	{
 		return Impl::AddKeyInChannel(ChannelHandle, OwningSequence, OwningSection,InTime, NewValue, SubFrame, TimeUnit, EMovieSceneKeyInterpolation::Auto);
 	}
@@ -95,6 +96,18 @@ public:
 	virtual TArray<UMovieSceneScriptingKey*> GetKeys() const override
 	{
 		return Impl::GetKeysInChannel(ChannelHandle, OwningSequence, OwningSection);
+	}
+
+	/**
+	* Gets the keys in this channel specified by the specific index
+	* @Indices  The indices from which to get the keys from
+	* @return	An array of UMovieSceneScriptingKey's contained by this channel.
+	*			Returns all keys specified by the indices, even if out of range.
+	*/
+	UFUNCTION(BlueprintCallable, Category = "Sequencer|Keys", meta = (DisplayName = "Get Keys By Index (Event)"))
+	virtual TArray<UMovieSceneScriptingKey*> GetKeysByIndex(const TArray<int32>& Indices) const override
+	{
+		return Impl::GetKeysInChannelByIndex(ChannelHandle, OwningSequence, OwningSection, Indices);
 	}
 
 public:

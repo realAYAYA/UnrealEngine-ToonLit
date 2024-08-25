@@ -8,12 +8,13 @@
 		<isArch arch="arm64-v8a">
 			<setBool result="bCpuArchSupported" value="true"/>
 		</isArch>
-        <setBoolFromProperty result="bPackageForMetaQuest" ini="Engine" section="/Script/AndroidRuntimeSettings.AndroidRuntimeSettings" property="bPackageForMetaQuest" default="false"/>
+		<setBoolFromProperty result="bPackageForMetaQuest" ini="Engine" section="/Script/AndroidRuntimeSettings.AndroidRuntimeSettings" property="bPackageForMetaQuest" default="false"/>
 		<!-- Backcompat for deprecated oculus device target setting -->
 		<setBoolFromPropertyContains result="bPackageForOculusQuest" ini="Engine" section="/Script/AndroidRuntimeSettings.AndroidRuntimeSettings" property="PackageForOculusMobile" contains="Quest"/>
 		<setBoolFromPropertyContains result="bPackageForOculusQuest2" ini="Engine" section="/Script/AndroidRuntimeSettings.AndroidRuntimeSettings" property="PackageForOculusMobile" contains="Quest2"/>
-        <setBoolOr result="bPackageForMetaQuest" arg1="$B(bPackageForMetaQuest)" arg2="$B(bPackageForOculusQuest)"/>
+		<setBoolOr result="bPackageForMetaQuest" arg1="$B(bPackageForMetaQuest)" arg2="$B(bPackageForOculusQuest)"/>
 		<setBoolOr result="bPackageForMetaQuest" arg1="$B(bPackageForMetaQuest)" arg2="$B(bPackageForOculusQuest2)"/>
+		<setBoolFromProperty result="bShowLaunchImage" ini="Engine" section="/Script/AndroidRuntimeSettings.AndroidRuntimeSettings" property="bShowLaunchImage" default="false"/>
 
 		<if condition="bCpuArchSupported">
 			<false>
@@ -26,7 +27,7 @@
 	<androidManifestUpdates>
 		<if condition="bPackageForMetaQuest">
 			<true>
-				<addFeature android:name="android.hardware.vr.headtracking" android:version="1" android:required="true" />
+				<addFeature android:name="android.hardware.vr.headtracking" android:version="1" android:required="true"  __ExcludeFromAFS="true"/>
 
 				<!-- Detect existence of intent-filter in either GameActivity or SplashActivity, game by default -->
 				<setString result="targetActivityName" value="com.epicgames.unreal.GameActivity"/>
@@ -41,7 +42,18 @@
 						</true>
 					</if>
 				</loopElements>
-				
+
+				<!-- Add Oculus Splash Screen -->
+				<if condition="bShowLaunchImage">
+					<true>
+						<setElement result="showOculusSplash" value="meta-data"/>
+						<addAttribute tag="$showOculusSplash" name="android:name" value="com.oculus.ossplash"/>
+						<addAttribute tag="$showOculusSplash" name="android:value" value="true"/>
+						<addAttribute tag="$showOculusSplash" name="__ExcludeFromAFS" value="true" />
+						<addElement tag="application" name="showOculusSplash"/>
+					</true>
+				</if>
+
 				<!-- Add Activity Specific Flags -->
 				<loopElements tag="activity">
 					<setStringFromAttribute result="activityName" tag="$" name="android:name"/>
@@ -55,20 +67,22 @@
 							<!-- Add VR Intent Filter, Permissions, and Features -->
 							<setElement result="vrIntent" value="category"/>
 							<addAttribute tag="$vrIntent" name="android:name" value="com.oculus.intent.category.VR"/>
+							<addAttribute tag="$vrIntent" name="__ExcludeFromAFS" value="true" />
 							<addElement tag="intent-filter" name="vrIntent"/>
 
-							<addFeature android:name="android.hardware.usb.host"/>
-									
+							<addFeature android:name="android.hardware.usb.host" __ExcludeFromAFS="true"/>
+
 							<setElement result="focusAware" value="meta-data" />
 							<addAttribute tag="$focusAware" name="android:name" value="com.oculus.vr.focusaware" />
 							<addAttribute tag="$focusAware" name="android:value" value="true" />
+							<addAttribute tag="$focusAware" name="__ExcludeFromAFS" value="true" />
 							<addElement tag="activity" name="focusAware"/>
 						</true>
 					</if>
 				</loopElements>
 
 				<!-- Add Application Specific Flags -->
-                <!-- Backcompat for deprecated oculus device target setting -->
+				<!-- Backcompat for deprecated oculus device target setting -->
 				<loopElements tag="application">
 					<!-- Add SupportedDevices Tag -->
 					<setString result="devicesString" value="" />
@@ -106,6 +120,7 @@
 							<setStringSubstring result="devicesString" source="$S(devicesString)" start="0" length="$I(devicesStringLength)" />
 							<log text="OculusOpenXRLoader: Adding Meta Quest supported devices tag: $S(devicesString)" />
 							<addAttribute tag="$supportedDevices" name="android:value" value="$S(devicesString)" />
+							<addAttribute tag="$supportedDevices" name="__ExcludeFromAFS" value="true" />
 							<addElement tag="application" name="supportedDevices"/>
 						</true>
 					</if>
@@ -164,7 +179,7 @@
 			</true>
 		</if>
 	</gameActivityReadMetadataAdditions>
-	
+
 
 	<!-- optional files or directories to copy to Intermediate/Android/APK -->
 	<resourceCopies>

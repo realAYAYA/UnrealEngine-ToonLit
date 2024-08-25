@@ -5,6 +5,7 @@
 #include "MassSpawnLocationProcessor.h"
 #include "VisualLogger/VisualLogger.h"
 #include "MassGameplaySettings.h"
+#include "MassCommonUtils.h"
 
 
 UMassEntityEQSSpawnPointsGenerator::UMassEntityEQSSpawnPointsGenerator()
@@ -56,7 +57,7 @@ void UMassEntityEQSSpawnPointsGenerator::OnEQSQueryFinished(TSharedPtr<FEnvQuery
 	EQSResult->GetAllAsLocations(Locations);
 
 	// Randomize them
-	FRandomStream RandomStream(GetRandomSelectionSeed());
+	FRandomStream RandomStream(UE::Mass::Utils::OverrideRandomSeedForTesting(GetRandomSelectionSeed()));
 	for (int32 I = 0; I < Locations.Num(); ++I)
 	{
 		const int32 J = RandomStream.RandHelper(Locations.Num());

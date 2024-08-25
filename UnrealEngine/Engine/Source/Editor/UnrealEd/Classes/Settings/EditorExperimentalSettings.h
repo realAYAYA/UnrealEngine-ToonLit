@@ -143,6 +143,9 @@ public:
 	UPROPERTY(EditAnywhere, config, Category = WorldPartition)
 	bool bEnableWorldPartitionActorFilters;
 
+	UPROPERTY(EditAnywhere, config, Category = WorldPartition)
+	bool bEnableWorldPartitionExternalDataLayers;
+
 	/**
 	 * Returns an event delegate that is executed when a setting has changed.
 	 *

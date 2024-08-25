@@ -1758,6 +1758,68 @@ PyObject* GetInterpreterExecutablePath()
 	return PyConversion::Pythonize(PythonPath);
 }
 
+PyObject* CreatePythonObjectHandle(PyObject* InSelf, PyObject* InArgs)
+{
+	PyObject* PyObj = nullptr;
+	if (!PyArg_ParseTuple(InArgs, "O:create_python_object_handle", &PyObj))
+	{
+		return nullptr;
+	}
+
+	UPythonObjectHandle* Handle = UPythonObjectHandle::Create(PyObj);
+	return PyConversion::Pythonize(Handle);
+}
+
+PyObject* ResolvePythonObjectHandle(PyObject* InSelf, PyObject* InArgs)
+{
+	PyObject* PyHandle = nullptr;
+	if (!PyArg_ParseTuple(InArgs, "O:resolve_python_object_handle", &PyHandle))
+	{
+		return nullptr;
+	}
+	check(PyHandle);
+
+	UPythonObjectHandle* Handle = nullptr;
+	if (!PyConversion::Nativize(PyHandle, Handle))
+	{
+		PyUtil::SetPythonError(PyExc_TypeError, TEXT("resolve_python_object_handle"), *FString::Printf(TEXT("Parameter must be a 'PythonObjectHandle' not '%s'"), *PyUtil::GetFriendlyTypename(PyHandle)));
+		return nullptr;
+	}
+	
+	if (Handle)
+	{
+		PyObject* PyObj = Handle->Resolve();
+		Py_INCREF(PyObj);
+		return PyObj;
+	}
+
+	Py_RETURN_NONE;
+}
+
+PyObject* DestroyPythonObjectHandle(PyObject* InSelf, PyObject* InArgs)
+{
+	PyObject* PyHandle = nullptr;
+	if (!PyArg_ParseTuple(InArgs, "O:destroy_python_object_handle", &PyHandle))
+	{
+		return nullptr;
+	}
+	check(PyHandle);
+
+	UPythonObjectHandle* Handle = nullptr;
+	if (!PyConversion::Nativize(PyHandle, Handle))
+	{
+		PyUtil::SetPythonError(PyExc_TypeError, TEXT("destroy_python_object_handle"), *FString::Printf(TEXT("Parameter must be a 'PythonObjectHandle' not '%s'"), *PyUtil::GetFriendlyTypename(PyHandle)));
+		return nullptr;
+	}
+
+	if (Handle)
+	{
+		Handle->ReleasePythonResources();
+	}
+
+	Py_RETURN_NONE;
+}
+
 PyObject* RegisterPythonShutdownCallback(PyObject* InSelf, PyObject* InArgs)
 {
 	PyObject* PyObj = nullptr;
@@ -1836,6 +1898,9 @@ PyMethodDef PyCoreMethods[] = {
 	{ "LOCTABLE", PyCFunctionCast(&CreateLocalizedTextFromStringTable), METH_VARARGS, "LOCTABLE(id: Union[Name, str], key: str) -> Text -- get a localized Text from the given string table id and key" },
 	{ "is_editor", PyCFunctionCast(&IsEditor), METH_NOARGS, "is_editor() -> bool -- tells if the editor is running or not" },
 	{ "get_interpreter_executable_path", PyCFunctionCast(&GetInterpreterExecutablePath), METH_NOARGS, "get_interpreter_executable_path() -> str -- get the path to the Python interpreter executable of the Python SDK this plugin was compiled against" },
+	{ "create_python_object_handle", PyCFunctionCast(&CreatePythonObjectHandle), METH_VARARGS, "create_python_object_handle(obj: Optional[Any]) -> Optional[PythonObjectHandle] -- create a PythonObjectHandle from the given PyObject" },
+	{ "resolve_python_object_handle", PyCFunctionCast(&ResolvePythonObjectHandle), METH_VARARGS, "resolve_python_object_handle(handle: Optional[PythonObjectHandle]) -> Optional[Any] -- resolve a PythonObjectHandle to its PyObject, or None" },
+	{ "destroy_python_object_handle", PyCFunctionCast(&DestroyPythonObjectHandle), METH_VARARGS, "destroy_python_object_handle(handle: Optional[PythonObjectHandle]) -- destroy a PythonObjectHandle (clearing its PyObject reference)" },
 	{ nullptr, nullptr, 0, nullptr }
 };
 

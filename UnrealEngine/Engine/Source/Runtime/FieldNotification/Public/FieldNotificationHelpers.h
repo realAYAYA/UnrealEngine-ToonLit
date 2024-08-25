@@ -7,7 +7,7 @@
 
 namespace UE::FieldNotification::Helpers
 {
-	UE_NODISCARD FORCEINLINE bool IsValidAsField(const UFunction* InFunction)
+	[[nodiscard]] FORCEINLINE bool IsValidAsField(const UFunction* InFunction)
 	{
 		return InFunction != nullptr
 			&& !InFunction->HasAnyFunctionFlags(FUNC_Net | FUNC_Event)

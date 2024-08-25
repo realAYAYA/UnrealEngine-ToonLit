@@ -17,7 +17,6 @@
 #include "Misc/Attribute.h"
 #include "Modules/ModuleManager.h"
 #include "PropertyHandle.h"
-#include "Templates/ChooseClass.h"
 #include "UObject/NameTypes.h"
 #include "UObject/UnrealNames.h"
 #include "UObject/UnrealType.h"

@@ -44,8 +44,17 @@ public:
 		FGuid Guid;
 
 		TArray<Chaos::FMaterialHandle> UsedChaosMaterials;
+		Chaos::FTriangleMeshImplicitObjectPtr TrimeshGeometry;
+
+		// When deleted, remove PRAGMA_DISABLE_DEPRECATION_WARNINGS / PRAGMA_ENABLE_DEPRECATION_WARNINGS from ~FTriMeshGeometryRef()
+		UE_DEPRECATED(5.4, "Please use TrimeshGeometry instead")
 		TUniquePtr<Chaos::FTriangleMeshImplicitObject> Trimesh;
+		
 #if WITH_EDITORONLY_DATA
+		Chaos::FTriangleMeshImplicitObjectPtr EditorTrimeshGeometry;
+		
+		// When deleted, remove PRAGMA_DISABLE_DEPRECATION_WARNINGS / PRAGMA_ENABLE_DEPRECATION_WARNINGS from ~FTriMeshGeometryRef()
+		UE_DEPRECATED(5.4, "Please use EditorTrimeshGeometry instead")
 		TUniquePtr<Chaos::FTriangleMeshImplicitObject> EditorTrimesh;
 #endif // WITH_EDITORONLY_DATA
 

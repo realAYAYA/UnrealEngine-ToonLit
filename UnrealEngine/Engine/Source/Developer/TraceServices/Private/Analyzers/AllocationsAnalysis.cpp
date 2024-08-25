@@ -68,7 +68,7 @@ void FAllocationsAnalyzer::OnAnalysisBegin(const FOnAnalysisContext& Context)
 
 #if INSIGHTS_MEM_TRACE_METADATA_TEST
 	{
-		FMetadataProvider::FEditScopeLock _(MetadataProvider);
+		FProviderEditScopeLock _(MetadataProvider);
 		TagIdMetadataType = MetadataProvider.RegisterMetadataType(TEXT("MemTagId"), sizeof(TagIdType));
 	}
 #endif
@@ -156,6 +156,7 @@ bool FAllocationsAnalyzer::OnEvent(uint16 RouteId, EStyle Style, const FOnEventC
 			//     FAllocEvent Event; // aligned
 			//     EventData.CopyData(&Event, sizeof(Event));
 
+			const uint32 ThreadId = Context.ThreadInfo.GetId();
 			const double Time = GetCurrentTime();
 
 			// CallstackId is optional. If the field is not present CallstackId will be 0 (i.e. "no callstack").
@@ -172,16 +173,12 @@ bool FAllocationsAnalyzer::OnEvent(uint16 RouteId, EStyle Style, const FOnEventC
 			const uint64 Size = (SizeUpper << SizeShift) | static_cast<uint64>(AlignmentPow2_SizeLower & SizeLowerMask);
 			const uint32 Alignment = 1u << (AlignmentPow2_SizeLower >> SizeShift);
 
-			const uint32 TraceThreadId = Context.ThreadInfo.GetId();
-			const uint32 SystemThreadId = Context.ThreadInfo.GetSystemId();
-
 			FProviderEditScopeLock _(AllocationsProvider);
-			AllocationsProvider.SetCurrentThreadId(TraceThreadId, SystemThreadId);
-			AllocationsProvider.EditAlloc(Time, CallstackId, Address, Size, Alignment, RootHeap);
+			AllocationsProvider.EditAlloc(ThreadId, Time, CallstackId, Address, Size, Alignment, RootHeap);
 			if (RouteId == RouteId_ReallocAlloc || RouteId == RouteId_ReallocAllocSystem)
 			{
 				const uint8 Tracker = 0; // We only care about the default tracker for now.
-				AllocationsProvider.EditPopTagFromPtr(SystemThreadId, Tracker);
+				AllocationsProvider.EditPopTagFromPtr(ThreadId, Tracker);
 			}
 			break;
 		}
@@ -196,6 +193,7 @@ bool FAllocationsAnalyzer::OnEvent(uint16 RouteId, EStyle Style, const FOnEventC
 		case RouteId_Free:
 		case RouteId_ReallocFree:
 		{
+			const uint32 ThreadId = Context.ThreadInfo.GetId();
 			const double Time = GetCurrentTime();
 
 			// CallstackId is optional. If the field is not present CallstackId will be 0 (i.e. "no callstack").
@@ -205,22 +203,19 @@ bool FAllocationsAnalyzer::OnEvent(uint16 RouteId, EStyle Style, const FOnEventC
 
 			RootHeap = EventData.GetValue<uint8>("RootHeap", static_cast<uint8>(RootHeap));
 
-			const uint32 TraceThreadId = Context.ThreadInfo.GetId();
-			const uint32 SystemThreadId = Context.ThreadInfo.GetSystemId();
-
 			FProviderEditScopeLock _(AllocationsProvider);
-			AllocationsProvider.SetCurrentThreadId(TraceThreadId, SystemThreadId);
 			if (RouteId == RouteId_ReallocFree || RouteId == RouteId_ReallocFreeSystem)
 			{
 				const uint8 Tracker = 0; // We only care about the default tracker for now.
-				AllocationsProvider.EditPushTagFromPtr(SystemThreadId, Tracker, Address, RootHeap);
+				AllocationsProvider.EditPushTagFromPtr(ThreadId, Tracker, Address, RootHeap);
 			}
-			AllocationsProvider.EditFree(Time, CallstackId, Address, RootHeap);
+			AllocationsProvider.EditFree(ThreadId, Time, CallstackId, Address, RootHeap);
 			break;
 		}
 
 		case RouteId_HeapMarkAlloc:
 		{
+			const uint32 ThreadId = Context.ThreadInfo.GetId();
 			const double Time = GetCurrentTime();
 
 			// CallstackId is optional. If the field is not present CallstackId will be 0 (i.e. "no callstack").
@@ -230,17 +225,14 @@ bool FAllocationsAnalyzer::OnEvent(uint16 RouteId, EStyle Style, const FOnEventC
 			const HeapId Heap = EventData.GetValue<uint16>("Heap", 0);
 			const EMemoryTraceHeapAllocationFlags Flags = EventData.GetValue<EMemoryTraceHeapAllocationFlags>("Flags");
 
-			const uint32 TraceThreadId = Context.ThreadInfo.GetId();
-			const uint32 SystemThreadId = Context.ThreadInfo.GetSystemId();
-
 			FProviderEditScopeLock _(AllocationsProvider);
-			AllocationsProvider.SetCurrentThreadId(TraceThreadId, SystemThreadId);
-			AllocationsProvider.EditMarkAllocationAsHeap(Time, CallstackId, Address, Heap, Flags);
+			AllocationsProvider.EditMarkAllocationAsHeap(ThreadId, Time, CallstackId, Address, Heap, Flags);
 			break;
 		}
 
 		case RouteId_HeapUnmarkAlloc:
 		{
+			const uint32 ThreadId = Context.ThreadInfo.GetId();
 			const double Time = GetCurrentTime();
 
 			// CallstackId is optional. If the field is not present CallstackId will be 0 (i.e. "no callstack").
@@ -249,12 +241,8 @@ bool FAllocationsAnalyzer::OnEvent(uint16 RouteId, EStyle Style, const FOnEventC
 			const uint64 Address = EventData.GetValue<uint64>("Address");
 			const HeapId Heap = EventData.GetValue<uint16>("Heap", 0);
 
-			const uint32 TraceThreadId = Context.ThreadInfo.GetId();
-			const uint32 SystemThreadId = Context.ThreadInfo.GetSystemId();
-
 			FProviderEditScopeLock _(AllocationsProvider);
-			AllocationsProvider.SetCurrentThreadId(TraceThreadId, SystemThreadId);
-			AllocationsProvider.EditUnmarkAllocationAsHeap(Time, CallstackId, Address, Heap);
+			AllocationsProvider.EditUnmarkAllocationAsHeap(ThreadId, Time, CallstackId, Address, Heap);
 			break;
 		}
 
@@ -300,7 +288,7 @@ bool FAllocationsAnalyzer::OnEvent(uint16 RouteId, EStyle Style, const FOnEventC
 
 		case RouteId_MemScopeTag: // "MemoryScope", see UE_MEMSCOPE
 		{
-			const uint32 ThreadId = Context.ThreadInfo.GetSystemId();
+			const uint32 ThreadId = Context.ThreadInfo.GetId();
 			const uint8 Tracker = 0; // We only care about the default tracker for now.
 
 			if (Style == EStyle::EnterScope)
@@ -312,7 +300,7 @@ bool FAllocationsAnalyzer::OnEvent(uint16 RouteId, EStyle Style, const FOnEventC
 				}
 #if INSIGHTS_MEM_TRACE_METADATA_TEST
 				{
-					FMetadataProvider::FEditScopeLock _(MetadataProvider);
+					FProviderEditScopeLock _(MetadataProvider);
 					MetadataProvider.PushScopedMetadata(ThreadId, TagIdMetadataType, (void*)&Tag, sizeof(TagIdType));
 				}
 #endif
@@ -321,7 +309,7 @@ bool FAllocationsAnalyzer::OnEvent(uint16 RouteId, EStyle Style, const FOnEventC
 			{
 #if INSIGHTS_MEM_TRACE_METADATA_TEST
 				{
-					FMetadataProvider::FEditScopeLock _(MetadataProvider);
+					FProviderEditScopeLock _(MetadataProvider);
 					MetadataProvider.PopScopedMetadata(ThreadId, TagIdMetadataType);
 				}
 #endif
@@ -335,7 +323,7 @@ bool FAllocationsAnalyzer::OnEvent(uint16 RouteId, EStyle Style, const FOnEventC
 
 		case RouteId_MemScopePtr: // "MemoryScopePtr", see UE_MEMSCOPE_PTR
 		{
-			const uint32 ThreadId = Context.ThreadInfo.GetSystemId();
+			const uint32 ThreadId = Context.ThreadInfo.GetId();
 			const uint8 Tracker = 0; // We only care about the default tracker for now.
 
 			if (Style == EStyle::EnterScope)
@@ -351,7 +339,7 @@ bool FAllocationsAnalyzer::OnEvent(uint16 RouteId, EStyle Style, const FOnEventC
 				}
 #if INSIGHTS_MEM_TRACE_METADATA_TEST
 				{
-					FMetadataProvider::FEditScopeLock _(MetadataProvider);
+					FProviderEditScopeLock _(MetadataProvider);
 					TagIdType Tag = 0; //TODO: AllocationsProvider.GetTagFromPtr(ThreadId, Tracker, Ptr, RootHeapId);
 					MetadataProvider.PushScopedMetadata(ThreadId, TagIdMetadataType, (void*)&Tag, sizeof(TagIdType));
 				}
@@ -361,7 +349,7 @@ bool FAllocationsAnalyzer::OnEvent(uint16 RouteId, EStyle Style, const FOnEventC
 			{
 #if INSIGHTS_MEM_TRACE_METADATA_TEST
 				{
-					FMetadataProvider::FEditScopeLock _(MetadataProvider);
+					FProviderEditScopeLock _(MetadataProvider);
 					MetadataProvider.PopScopedMetadata(ThreadId, TagIdMetadataType);
 				}
 #endif

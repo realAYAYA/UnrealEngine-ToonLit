@@ -13,7 +13,6 @@
 #include "PixelShaderUtils.h"
 #include "RenderGraphEvent.h"
 #include "RenderGraphResources.h"
-#include "SceneRendering.h"
 #include "SceneView.h"
 #include "ScreenPass.h"
 #include "ShaderParameterMacros.h"
@@ -64,7 +63,7 @@ namespace UE::MediaCapture::Resample
 	IMPLEMENT_GLOBAL_SHADER(FMediaCaptureResamplePS, "/MediaIOShaders/MediaIO.usf", "MediaDownsample", SF_Pixel);
 	
 	/** Adds a Resample pass to the graph builder. */
-	void AddResamplePass(FRDGBuilder& GraphBuilder, const FViewInfo& View, const FScreenPassTexture& InputTexture, FRDGTextureRef OutputTexture)
+	void AddResamplePass(FRDGBuilder& GraphBuilder, const FScreenPassTexture& InputTexture, FRDGTextureRef OutputTexture)
 	{
 		check(InputTexture.Texture);
 		FScreenPassRenderTarget Input;
@@ -156,7 +155,7 @@ namespace UE::MediaCapture
 		ColorConversionOutputTextureDesc.ClearValue = FClearValueBinding(FLinearColor::White);
 		ColorConversionOutputTextureDesc.Reset();
 
-		TRefCountPtr<IPooledRenderTarget> RenderTarget = AllocatePooledTexture(ColorConversionOutputTextureDesc, *FString::Printf(TEXT("MediaCapture ColorConversion RenderTarget %d"), FrameId));
+		TRefCountPtr<IPooledRenderTarget> RenderTarget = AllocatePooledTexture(ColorConversionOutputTextureDesc, TEXT("MediaCapture ColorConversion RenderTarget"));
 		return RenderTargetResource(MoveTemp(RenderTarget));
 	}
 
@@ -174,7 +173,7 @@ namespace UE::MediaCapture
 		ResampleOutputTextureDesc.Flags |= TexCreate_RenderTargetable | TexCreate_UAV | TexCreate_NoFastClear;
 		ResampleOutputTextureDesc.ClearValue = FClearValueBinding(FLinearColor(0, 0, 0, 0));
 
-		TRefCountPtr<IPooledRenderTarget> RenderTarget = AllocatePooledTexture(ResampleOutputTextureDesc, *FString::Printf(TEXT("MediaCapture Resample RenderTarget %d"), FrameId));
+		TRefCountPtr<IPooledRenderTarget> RenderTarget = AllocatePooledTexture(ResampleOutputTextureDesc, TEXT("MediaCapture Resample RenderTarget"));
 		return RenderTargetResource(MoveTemp(RenderTarget));
 	}
 
@@ -244,7 +243,7 @@ namespace UE::MediaCapture
 		ResamplePass.Name = "Resample";
 		ResamplePass.OutputType = ERDGViewableResourceType::Texture;
 		ResamplePass.InitializePassOutputDelegate = FRenderPass::FInitializePassOutput::CreateStatic(&InitializeResamplePassOutputTexture);
-		ResamplePass.ExecutePassDelegate = FRenderPass::FExecutePass::CreateLambda([](const UE::MediaCaptureData::FCaptureFrameArgs& Args, const TSharedPtr<UE::MediaCaptureData::FCaptureFrame> CapturingFrame, FRDGViewableResource* InputResource, FRDGViewableResource* OutputTexture)
+		ResamplePass.ExecutePassDelegate = FRenderPass::FExecutePass::CreateLambda([](const UE::MediaCaptureData::FCaptureFrameArgs& Args, const TSharedPtr<UE::MediaCaptureData::FCaptureFrame>& CapturingFrame, FRDGViewableResource* InputResource, FRDGViewableResource* OutputTexture)
 		{
 			check(InputResource->Type == ERDGViewableResourceType::Texture);
 
@@ -268,7 +267,7 @@ namespace UE::MediaCapture
 		ColorConversionPass.Name = "ColorConversion";
 		ColorConversionPass.OutputType = ERDGViewableResourceType::Texture;
 		ColorConversionPass.InitializePassOutputDelegate = FRenderPass::FInitializePassOutput::CreateStatic(&InitializeColorConversionPassOutputTexture);
-		ColorConversionPass.ExecutePassDelegate = FRenderPass::FExecutePass::CreateLambda([CachedOCIOResources = UE::MediaCapture::ColorConversion::GetColorConversionResources(MediaCapture)](const UE::MediaCaptureData::FCaptureFrameArgs& Args, const TSharedPtr<UE::MediaCaptureData::FCaptureFrame> CapturingFrame, FRDGViewableResource* InputResource, FRDGViewableResource* OutputTexture)
+		ColorConversionPass.ExecutePassDelegate = FRenderPass::FExecutePass::CreateLambda([CachedOCIOResources = UE::MediaCapture::ColorConversion::GetColorConversionResources(MediaCapture)](const UE::MediaCaptureData::FCaptureFrameArgs& Args, const TSharedPtr<UE::MediaCaptureData::FCaptureFrame>& CapturingFrame, FRDGViewableResource* InputResource, FRDGViewableResource* OutputTexture)
 		{
 			check(InputResource->Type == ERDGViewableResourceType::Texture);
 
@@ -303,7 +302,7 @@ namespace UE::MediaCapture
 		{
 			ConversionPass.InitializePassOutputDelegate = FRenderPass::FInitializePassOutput::CreateLambda([](const UE::MediaCapture::FInitializePassOutputArgs& Args, uint32 FrameId)
 			{
-				TRefCountPtr<FRDGPooledBuffer> Buffer = AllocatePooledBuffer(Args.MediaCapture->DesiredOutputBufferDescription , TEXT("MediaCapture Output Buffer"));
+				TRefCountPtr<FRDGPooledBuffer> Buffer = AllocatePooledBuffer(Args.MediaCapture->DesiredOutputBufferDescription, TEXT("MediaCapture Output Buffer"));
 				return BufferResource(MoveTemp(Buffer));
 			});
 		}
@@ -311,7 +310,7 @@ namespace UE::MediaCapture
 		if (MediaCapture->GetConversionOperation() == EMediaCaptureConversionOperation::CUSTOM)
 		{
 			ConversionPass.Name = "CustomConversion";
-			ConversionPass.ExecutePassDelegate = FRenderPass::FExecutePass::CreateLambda([](const UE::MediaCaptureData::FCaptureFrameArgs& Args, const TSharedPtr<UE::MediaCaptureData::FCaptureFrame> CapturingFrame, FRDGViewableResource* InputResource, FRDGViewableResource* OutputResource)
+			ConversionPass.ExecutePassDelegate = FRenderPass::FExecutePass::CreateLambda([](const UE::MediaCaptureData::FCaptureFrameArgs& Args, const TSharedPtr<UE::MediaCaptureData::FCaptureFrame>& CapturingFrame, FRDGViewableResource* InputResource, FRDGViewableResource* OutputResource)
 			{
 				// We only support Texture inputs
 				check(InputResource->Type == ERDGViewableResourceType::Texture);
@@ -337,7 +336,7 @@ namespace UE::MediaCapture
 		else
 		{
 			ConversionPass.Name = "Conversion";
-			ConversionPass.ExecutePassDelegate = FRenderPass::FExecutePass::CreateLambda([](const UE::MediaCaptureData::FCaptureFrameArgs& Args, const TSharedPtr<UE::MediaCaptureData::FCaptureFrame> CapturingFrame, FRDGViewableResource* InputResource, FRDGViewableResource* OutputResource)
+			ConversionPass.ExecutePassDelegate = FRenderPass::FExecutePass::CreateLambda([](const UE::MediaCaptureData::FCaptureFrameArgs& Args, const TSharedPtr<UE::MediaCaptureData::FCaptureFrame>& CapturingFrame, FRDGViewableResource* InputResource, FRDGViewableResource* OutputResource)
 			{
 				// At the moment we only support Texture inputs
 				check(InputResource->Type == ERDGViewableResourceType::Texture);
@@ -374,7 +373,14 @@ namespace UE::MediaCapture
 
 		if (MediaCapture->GetDesiredCaptureOptions().ResizeMethod == EMediaCaptureResizeMethod::ResizeInRenderPass)
 		{
-			RenderPasses.Add(CreateResamplePass());
+			if (MediaCapture->GetDesiredCaptureOptions().Crop != EMediaCaptureCroppingType::None)
+			{
+				UE_LOG(LogMediaIOCore, Warning, TEXT("The capture for %s will not be cropped because ResizeMethod was already set to \'Resize in Render Pass\' and these options are mutually exclusive."), *MediaCapture->GetMediaOutputName());
+			}
+			else
+			{
+				RenderPasses.Add(CreateResamplePass());
+			}
 		}
 		
 		if (MediaCapture->GetDesiredCaptureOptions().ColorConversionSettings.IsValid())
@@ -476,20 +482,8 @@ namespace UE::MediaCapture
 			
 		const FIntRect ViewRect(ConversionPassArgs.CopyInfo.GetSourceRect());
 
-		//Dummy ViewFamily/ViewInfo created to use built in Draw Screen/Texture Pass
-		FSceneViewFamily ViewFamily(FSceneViewFamily::ConstructionValues(nullptr, nullptr, FEngineShowFlags(ESFIM_Game))
-			.SetTime(FGameTime()));
-		FSceneViewInitOptions ViewInitOptions;
-		ViewInitOptions.ViewFamily = &ViewFamily;
-		ViewInitOptions.SetViewRectangle(ViewRect);
-		ViewInitOptions.ViewOrigin = FVector::ZeroVector;
-		ViewInitOptions.ViewRotationMatrix = FMatrix::Identity;
-		ViewInitOptions.ProjectionMatrix = FMatrix::Identity;
-			
-		FViewInfo ViewInfo = FViewInfo(ViewInitOptions);
-
 		RDG_GPU_STAT_SCOPE(Args.GraphBuilder, MediaCapture_Resample);
-		MediaCapture::Resample::AddResamplePass(Args.GraphBuilder, ViewInfo, FScreenPassTexture(ConversionPassArgs.SourceRGBTexture), (FRDGTextureRef)OutputTexture);
+		MediaCapture::Resample::AddResamplePass(Args.GraphBuilder, FScreenPassTexture(ConversionPassArgs.SourceRGBTexture), (FRDGTextureRef)OutputTexture);
 	}
 
 	FRenderPipeline::FRenderPipeline(UMediaCapture* InMediaCapture)

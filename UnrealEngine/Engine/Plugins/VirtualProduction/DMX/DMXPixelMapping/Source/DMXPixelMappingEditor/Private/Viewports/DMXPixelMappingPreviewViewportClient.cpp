@@ -129,6 +129,8 @@ void FDMXPixelMappingPreviewViewportClient::Draw(FViewport* InViewport, FCanvas*
 
 				FCanvasTileItem TileItem(Position, Size, Element->GetColor());
 				TileItem.BlendMode = ESimpleElementBlendMode::SE_BLEND_MAX;
+				TileItem.PivotPoint = FVector2D(0.5, 0.5);
+				TileItem.Rotation = FRotator(0.0, Element->GetParameters().Rotation, 0.0);
 				Canvas->DrawItem(TileItem);
 			}
 		}
@@ -139,6 +141,8 @@ void FDMXPixelMappingPreviewViewportClient::Draw(FViewport* InViewport, FCanvas*
 
 			FCanvasTileItem TileItem(Position, Size, Element->GetColor());
 			TileItem.BlendMode = ESimpleElementBlendMode::SE_BLEND_MAX;
+			TileItem.PivotPoint = FVector2D(0.5, 0.5);
+			TileItem.Rotation = FRotator(0.0, Element->GetParameters().Rotation, 0.0);
 			Canvas->DrawItem(TileItem);
 		}
 	}

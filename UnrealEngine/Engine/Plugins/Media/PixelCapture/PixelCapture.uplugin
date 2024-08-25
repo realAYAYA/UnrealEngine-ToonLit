@@ -19,14 +19,14 @@
 			"Name": "PixelCapture",
 			"Type": "Runtime",
 			"LoadingPhase": "PreDefault",
-			"PlatformAllowList": [ "Win64", "Linux" ],
+			"PlatformAllowList": [ "Win64", "Linux", "Mac" ],
 			"TargetDenyList": [ "Server" ]
 		},
 		{
             "Name": "PixelCaptureShaders",
             "Type": "Runtime",
             "LoadingPhase": "PostConfigInit",
-            "PlatformAllowList": [ "Win64", "Linux" ],
+            "PlatformAllowList": [ "Win64", "Linux", "Mac" ],
             "TargetDenyList": [ "Server" ]
 		}
 	],

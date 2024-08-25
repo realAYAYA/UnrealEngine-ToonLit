@@ -23,6 +23,7 @@ public:
 	virtual void GetSystemAuthCredentialsOptions(void*& OutCredentialsOptions);
 	virtual void PlatformTriggerLoginUI(FOnlineSubsystemEOS* EOSSubsystem, const int ControllerIndex, bool bShowOnlineOnly, bool bShowSkipButton, const FOnLoginUIClosedDelegate& Delegate);
 	virtual IEOSPlatformHandlePtr CreatePlatform(EOS_Platform_Options& PlatformOptions);
+	virtual void AddExternalAccountMapping(IEOSPlatformHandlePtr PlatformHandlePtr, const EOS_EpicAccountId& EpicAccountId, int32 LocalUserNum);
 
 protected:
 	/** Shared LoginUI logic that can be used by platforms that support LoginUI */

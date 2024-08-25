@@ -172,7 +172,7 @@ class FScreenProbeTraceScreenTexturesCS : public FGlobalShader
 		SHADER_PARAMETER_STRUCT_INCLUDE(FLumenCardTracingParameters, TracingParameters)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FLumenHZBScreenTraceParameters, HZBScreenTraceParameters)
 		SHADER_PARAMETER_STRUCT_INCLUDE(FSceneTextureParameters, SceneTextures)
-		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FStrataGlobalUniformParameters, Strata)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, FurthestHZBTexture)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D<uint>, LightingChannelsTexture)
 		SHADER_PARAMETER(float, MaxHierarchicalScreenTraceIterations)
@@ -677,7 +677,8 @@ void TraceScreenProbes(
 	const bool bTraceScreen = View.PrevViewInfo.ScreenSpaceRayTracingInput.IsValid()
 		&& GLumenScreenProbeGatherScreenTraces != 0
 		&& GLumenVisualizeIndirectDiffuse == 0
-		&& View.Family->EngineShowFlags.LumenScreenTraces;
+		&& View.Family->EngineShowFlags.LumenScreenTraces
+		&& View.FinalPostProcessSettings.LumenFinalGatherScreenTraces;
 
 	if (bTraceScreen)
 	{
@@ -694,7 +695,7 @@ void TraceScreenProbes(
 				PassParameters->SceneTextures.GBufferVelocityTexture = GSystemTextures.GetBlackDummy(GraphBuilder);
 			}
 
-			PassParameters->Strata = Strata::BindStrataGlobalUniformParameters(View);
+			PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 			PassParameters->FurthestHZBTexture = View.HZB;
 			PassParameters->LightingChannelsTexture = LightingChannelsTexture;
 			PassParameters->MaxHierarchicalScreenTraceIterations = GLumenScreenProbeGatherHierarchicalScreenTracesMaxIterations;
@@ -725,7 +726,7 @@ void TraceScreenProbes(
 			FScreenProbeTraceScreenTexturesCS::FPermutationDomain PermutationVector;
 			PermutationVector.Set< FScreenProbeTraceScreenTexturesCS::FRadianceCache >(LumenScreenProbeGather::UseRadianceCache(View) && !bTraceLightSamples);
 			PermutationVector.Set< FScreenProbeTraceScreenTexturesCS::FHierarchicalScreenTracing >(bHZBTraversal);
-			PermutationVector.Set< FScreenProbeTraceScreenTexturesCS::FTraceFullResDepth >(bHZBTraversal && GLumenScreenProbeGatherHierarchicalScreenTracesFullResDepth != 0 && View.IsPerspectiveProjection());
+			PermutationVector.Set< FScreenProbeTraceScreenTexturesCS::FTraceFullResDepth >(bHZBTraversal && GLumenScreenProbeGatherHierarchicalScreenTracesFullResDepth != 0);
 			PermutationVector.Set< FScreenProbeTraceScreenTexturesCS::FStructuredImportanceSampling >(LumenScreenProbeGather::UseImportanceSampling(View));
 			PermutationVector.Set< FScreenProbeTraceScreenTexturesCS::FHairStrands>(bHasHairStrands);
 			PermutationVector.Set< FScreenProbeTraceScreenTexturesCS::FTerminateOnLowOccupancy>(bTerminateOnLowOccupancy);

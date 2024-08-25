@@ -3,12 +3,18 @@
 #include "WorldPartition/DataLayer/DataLayerInstance.h"
 
 #include "Internationalization/Text.h"
+#include "UObject/AssetRegistryTagsContext.h"
 #include "UObject/UnrealType.h"
 #include "WorldPartition/WorldPartitionLog.h"
 #include "WorldPartition/WorldPartitionActorLoaderInterface.h"
 #include "WorldPartition/DataLayer/DataLayerUtils.h"
+#include "WorldPartition/DataLayer/DataLayerAsset.h"
 #include "WorldPartition/DataLayer/WorldDataLayers.h"
+#include "WorldPartition/DataLayer/WorldDataLayersActorDesc.h"
+#include "WorldPartition/DataLayer/ExternalDataLayerInstance.h"
 #include "WorldPartition/ErrorHandling/WorldPartitionStreamingGenerationErrorHandler.h"
+#include "AssetRegistry/AssetData.h"
+#include "AssetRegistry/AssetRegistryHelpers.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(DataLayerInstance)
 
@@ -24,9 +30,7 @@ UDataLayerInstance::UDataLayerInstance(const FObjectInitializer& ObjectInitializ
 	, bIsLocked(false)
 #endif
 	, InitialRuntimeState(EDataLayerRuntimeState::Unloaded)
-{
-
-}
+{}
 
 void UDataLayerInstance::PostLoad()
 {
@@ -50,10 +54,119 @@ UWorld* UDataLayerInstance::GetOuterWorld() const
 
 AWorldDataLayers* UDataLayerInstance::GetOuterWorldDataLayers() const
 {
+	check(GetOuterWorld());
 	return GetOuterWorld()->GetWorldDataLayers();
 }
 
+AWorldDataLayers* UDataLayerInstance::GetDirectOuterWorldDataLayers() const
+{
+	// To retrieve the direct outer WorldDataLayers use UObject interface since UDataLayerInstance::GetTypedOuter<AWorldDataLayers>() won't compile.
+	AWorldDataLayers* DirectOuterWorldDataLayers = this->UObject::GetTypedOuter<AWorldDataLayers>();
+	return DirectOuterWorldDataLayers;
+}
+
 #if WITH_EDITOR
+bool UDataLayerInstance::IsAsset() const
+{
+	// When using external packaging, Data Layer Instances are considered assets to allow using the asset logic for save dialogs, etc.
+	// Also, they return true even if pending kill, in order to show up as deleted in these dialogs.
+	return IsPackageExternal() && !GetPackage()->HasAnyFlags(RF_Transient) && !HasAnyFlags(RF_Transient | RF_ClassDefaultObject) && !GetPackage()->HasAnyPackageFlags(PKG_PlayInEditor);
+}
+
+namespace DataLayerInstance
+{
+	static const FName NAME_DataLayerInstanceName(TEXT("DataLayerInstanceName"));
+	static const FName NAME_DataLayerInstanceParentName(TEXT("DataLayerInstanceParentName"));
+	static const FName NAME_DataLayerInstanceAssetPath(TEXT("DataLayerInstanceAssetPath"));
+	static const FName NAME_DataLayerInstanceIsPrivate(TEXT("DataLayerInstanceIsPrivate"));
+	static const FName NAME_DataLayerInstanceIsIncludedInActorFilterDefault(TEXT("DataLayerInstanceIsIncludedInActorFilterDefault"));
+	static const FName NAME_DataLayerInstancePrivateDataLayerSupportsActorFilter(TEXT("DataLayerInstancePrivateDataLayerSupportsActorFilter"));
+	static const FName NAME_DataLayerInstancePrivateShortName(TEXT("DataLayerInstancePrivateShortName"));
+};
+
+void UDataLayerInstance::GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const
+{
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
+	Super::GetAssetRegistryTags(OutTags);
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
+}
+
+void UDataLayerInstance::GetAssetRegistryTags(FAssetRegistryTagsContext Context) const
+{
+	Super::GetAssetRegistryTags(Context);
+
+	if (IsPackageExternal())
+	{
+		// Set generic FPrimaryAssetId::PrimaryAssetDisplayNameTag
+		Context.AddTag(FAssetRegistryTag(FPrimaryAssetId::PrimaryAssetDisplayNameTag, *GetDataLayerShortName(), FAssetRegistryTag::TT_Hidden));
+
+		// Set DataLayerInstance specific tags
+		Context.AddTag(FAssetRegistryTag(DataLayerInstance::NAME_DataLayerInstanceName, *GetDataLayerFName().ToString(), FAssetRegistryTag::TT_Hidden));
+		if (GetParent())
+		{
+			Context.AddTag(FAssetRegistryTag(DataLayerInstance::NAME_DataLayerInstanceParentName, *GetParent()->GetDataLayerFName().ToString(), FAssetRegistryTag::TT_Hidden));
+		}
+		if (const UDataLayerAsset* DataLayerAsset = GetAsset())
+		{
+			Context.AddTag(FAssetRegistryTag(DataLayerInstance::NAME_DataLayerInstanceAssetPath, *DataLayerAsset->GetPathName(), FAssetRegistryTag::TT_Hidden));
+			Context.AddTag(FAssetRegistryTag(DataLayerInstance::NAME_DataLayerInstanceIsPrivate, DataLayerAsset->IsPrivate() ? TEXT("1") : TEXT("0"), FAssetRegistryTag::TT_Hidden));
+		}
+		Context.AddTag(FAssetRegistryTag(DataLayerInstance::NAME_DataLayerInstanceIsIncludedInActorFilterDefault, IsIncludedInActorFilterDefault() ? TEXT("1") : TEXT("0"), FAssetRegistryTag::TT_Hidden));
+		Context.AddTag(FAssetRegistryTag(DataLayerInstance::NAME_DataLayerInstancePrivateDataLayerSupportsActorFilter, SupportsActorFilters() ? TEXT("1") : TEXT("0"), FAssetRegistryTag::TT_Hidden));
+		Context.AddTag(FAssetRegistryTag(DataLayerInstance::NAME_DataLayerInstancePrivateShortName, *GetDataLayerShortName(), FAssetRegistryTag::TT_Hidden));
+	}
+}
+
+bool UDataLayerInstance::GetAssetRegistryInfoFromPackage(FName InDataLayerInstancePackageName, FDataLayerInstanceDesc& OutDataLayerInstanceDesc)
+{
+	IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+	OutDataLayerInstanceDesc.bIsUsingAsset = true;
+	TArray<FAssetData> Assets;
+	AssetRegistry.GetAssetsByPackageName(InDataLayerInstancePackageName, Assets, true);
+	check(Assets.Num() <= 1);
+	if (Assets.Num() == 1)
+	{
+		return GetAssetRegistryInfoFromPackage(Assets[0], OutDataLayerInstanceDesc);
+	}
+	return false;
+}
+
+bool UDataLayerInstance::GetAssetRegistryInfoFromPackage(const FAssetData& InAsset, FDataLayerInstanceDesc& OutDataLayerInstanceDesc)
+{
+	FString Value;
+	if (InAsset.GetTagValue(DataLayerInstance::NAME_DataLayerInstanceName, Value))
+	{
+		OutDataLayerInstanceDesc.Name = *Value;
+	}
+	if (InAsset.GetTagValue(DataLayerInstance::NAME_DataLayerInstanceParentName, Value))
+	{
+		OutDataLayerInstanceDesc.ParentName = *Value;
+	}
+	if (InAsset.GetTagValue(DataLayerInstance::NAME_DataLayerInstanceAssetPath, Value))
+	{
+		FName AssetPath = *Value;
+		UAssetRegistryHelpers::FixupRedirectedAssetPath(AssetPath);
+		OutDataLayerInstanceDesc.AssetPath = AssetPath;
+	}
+	if (InAsset.GetTagValue(DataLayerInstance::NAME_DataLayerInstanceIsPrivate, Value))
+	{
+		OutDataLayerInstanceDesc.bIsPrivate = (Value == TEXT("1"));
+	}
+	if (InAsset.GetTagValue(DataLayerInstance::NAME_DataLayerInstanceIsIncludedInActorFilterDefault, Value))
+	{
+		OutDataLayerInstanceDesc.bIsIncludedInActorFilterDefault = (Value == TEXT("1"));
+	}
+	if (InAsset.GetTagValue(DataLayerInstance::NAME_DataLayerInstancePrivateDataLayerSupportsActorFilter, Value))
+	{
+		OutDataLayerInstanceDesc.bPrivateDataLayerSupportsActorFilter = (Value == TEXT("1"));
+	}
+	if (InAsset.GetTagValue(DataLayerInstance::NAME_DataLayerInstancePrivateShortName, Value))
+	{
+		OutDataLayerInstanceDesc.PrivateShortName = Value;
+	}
+	return !OutDataLayerInstanceDesc.Name.IsNone();
+}
+
 void UDataLayerInstance::PreEditUndo()
 {
 	Super::PreEditUndo();
@@ -122,27 +235,63 @@ bool UDataLayerInstance::CanEditChange(const FProperty* InProperty) const
 		return false;
 	}
 
-	if (!IsRuntime() && (InProperty->GetFName() == GET_MEMBER_NAME_CHECKED(UDataLayerInstance, InitialRuntimeState)))
+	if (InProperty->GetFName() == GET_MEMBER_NAME_CHECKED(UDataLayerInstance, InitialRuntimeState))
 	{
-		return false;
+		if (!IsRuntime() || IsClientOnly() || IsServerOnly())
+		{
+			return false;
+		}
 	}
 
 	return true;
 }
 
-bool UDataLayerInstance::IsLocked() const
+bool UDataLayerInstance::IsLocked(FText* OutReason) const
 {
 	if (bIsLocked)
 	{
+		if (OutReason)
+		{
+			*OutReason = LOCTEXT("DataLayerInstanceLocked", "Data layer instance is locked.");
+		}
 		return true;
 	}
 
-	return IsRuntime() && !GetOuterWorldDataLayers()->GetAllowRuntimeDataLayerEditing();
+	if (IsRuntime() && !GetOuterWorldDataLayers()->GetAllowRuntimeDataLayerEditing())
+	{
+		if (OutReason)
+		{
+			*OutReason = LOCTEXT("DataLayerRuntimeDataLayerEditingNotAllowed", "Runtime data layer editing is not allowed.");
+		}
+		return true;
+	}
+
+	return false;
 }
 
-bool UDataLayerInstance::IsReadOnly() const
+bool UDataLayerInstance::IsReadOnly(FText* OutReason) const
 {
-	return GetWorld()->IsGameWorld();
+	const UWorld* World = GetWorld();
+	if (!World || World->IsGameWorld())
+	{
+		if (OutReason)
+		{
+			*OutReason = LOCTEXT("DataLayerInstanceReadOnlyInGameWorld", "Data layer instance is read-only in game world.");
+		}
+		return true;
+	}
+
+	// Check if root External Data Layer is read-only
+	const UExternalDataLayerInstance* ExternalDataLayerInstance = GetRootExternalDataLayerInstance();
+	if (ExternalDataLayerInstance && (ExternalDataLayerInstance != this))
+	{
+		if (ExternalDataLayerInstance->IsReadOnly(OutReason))
+		{
+			return true;
+		}
+	}
+
+	return IsLocked(OutReason);
 }
 
 const TCHAR* UDataLayerInstance::GetDataLayerIconName() const
@@ -150,14 +299,38 @@ const TCHAR* UDataLayerInstance::GetDataLayerIconName() const
 	return FDataLayerUtils::GetDataLayerIconName(GetType());
 }
 
-bool UDataLayerInstance::CanUserAddActors() const
+bool UDataLayerInstance::CanUserAddActors(FText* OutReason) const
 {
-	return !IsLocked();
+	return !IsReadOnly(OutReason);
 }
 
-bool UDataLayerInstance::CanAddActor(AActor* InActor) const
+bool UDataLayerInstance::CanUserRemoveActors(FText* OutReason) const
 {
-	return InActor != nullptr && InActor->CanAddDataLayer(this);
+	return !IsReadOnly(OutReason);
+}
+
+bool UDataLayerInstance::CanAddActor(AActor* InActor, FText* OutReason) const
+{
+	if (!InActor)
+	{
+		if (OutReason)
+		{
+			*OutReason = LOCTEXT("CantAddActorInvalidActor", "Invalid actor.");
+		}
+		return false;
+	}
+
+	if (IsReadOnly(OutReason))
+	{
+		return false;
+	}
+
+	if (!InActor->CanAddDataLayer(this, OutReason))
+	{
+		return false;
+	}
+
+	return true;
 }
 
 bool UDataLayerInstance::AddActor(AActor* InActor) const
@@ -170,14 +343,27 @@ bool UDataLayerInstance::AddActor(AActor* InActor) const
 	return false;
 }
 
-bool UDataLayerInstance::CanUserRemoveActors() const
+bool UDataLayerInstance::CanRemoveActor(AActor* InActor, FText* OutReason) const
 {
-	return !IsLocked();
-}
+	if (!InActor)
+	{
+		if (OutReason)
+		{
+			*OutReason = LOCTEXT("CantRemoveActorInvalidActor", "Invalid actor.");
+		}
+		return false;
+	}
 
-bool UDataLayerInstance::CanRemoveActor(AActor* InActor) const
-{
-	return InActor->GetDataLayerInstances().Contains(this) || InActor->GetDataLayerInstancesForLevel().Contains(this);
+	if (!InActor->GetDataLayerInstances().Contains(this) && !InActor->GetDataLayerInstancesForLevel().Contains(this))
+	{
+		if (OutReason)
+		{
+			*OutReason = LOCTEXT("CantRemoveActorNotAssignedToDataLayer", "Actor is not assigned to data layer.");
+		}
+		return false;
+	}
+
+	return true;
 }
 
 bool UDataLayerInstance::RemoveActor(AActor* InActor) const
@@ -192,17 +378,21 @@ bool UDataLayerInstance::RemoveActor(AActor* InActor) const
 
 bool UDataLayerInstance::CanBeChildOf(const UDataLayerInstance* InParent, FText* OutReason) const
 {
-	auto AssignReason = [OutReason](FText&& Reason)
+	if (this == InParent)
 	{
-		if(OutReason != nullptr)
+		if (OutReason)
 		{
-			*OutReason = MoveTemp(Reason);
+			*OutReason = LOCTEXT("ParentIsThis", "Can't parent to itself");
 		}
-	};
+		return false;
+	}
 
-	if (this == InParent || Parent == InParent)
+	if (Parent == InParent)
 	{
-		AssignReason(LOCTEXT("SameParentOrSameDataLayer", "Data Layer already has this parent"));
+		if (OutReason)
+		{
+			*OutReason = LOCTEXT("SameParent", "Data Layer already has this parent");
+		}
 		return false;
 	}
 
@@ -212,45 +402,71 @@ bool UDataLayerInstance::CanBeChildOf(const UDataLayerInstance* InParent, FText*
 		return true;
 	}
 
-	if (!CanHaveParentDataLayer())
+	if (!CanHaveParentDataLayerInstance())
 	{
-		AssignReason(FText::Format(LOCTEXT("ParentDataLayerUnsupported", "Data Layer \"{0}\" does not support parent data layers"), FText::FromString(GetDataLayerShortName())));
+		if (OutReason)
+		{
+			*OutReason = FText::Format(LOCTEXT("ParentDataLayerUnsupported", "Data Layer \"{0}\" does not support parent data layers"), FText::FromString(GetDataLayerShortName()));
+		}
 		return false;
 	}
 
-	if (!InParent->CanHaveChildDataLayers())
+	if (!InParent->CanHaveChildDataLayerInstance(this))
 	{
-		AssignReason(FText::Format(LOCTEXT("ChildDataLayerUnsuported", "Data Layer \"{0}\" does not support child data layers"), FText::FromString(InParent->GetDataLayerShortName())));
+		if (OutReason)
+		{
+			*OutReason = FText::Format(LOCTEXT("ChildDataLayerUnsuported", "Data Layer \"{0}\" does not support child data layers"), FText::FromString(InParent->GetDataLayerShortName()));
+		}
 		return false;
 	}
 
-	if (!IsParentDataLayerTypeCompatible(InParent))
+	if (!IsParentDataLayerTypeCompatible(InParent, OutReason))
 	{
-		AssignReason(FText::Format(LOCTEXT("IncompatibleChildType", "{0} Data Layer cannot have {1} child Data Layers"), UEnum::GetDisplayValueAsText(GetType()), UEnum::GetDisplayValueAsText(InParent->GetType())));
 		return false;
 	}
 
-	if (InParent->GetOuterWorldDataLayers() != GetOuterWorldDataLayers())
+	if (InParent->GetDirectOuterWorldDataLayers() != GetDirectOuterWorldDataLayers())
 	{
-		AssignReason(LOCTEXT("DifferentOuterWorldDataLayer", "Parent WorldDataLayers is a different from child WorldDataLayers"));
+		if (OutReason)
+		{
+			*OutReason = LOCTEXT("DifferentOuterWorldDataLayer", "Parent WorldDataLayers is a different from child WorldDataLayers");
+		}
 		return false;
 	}
 
 	return true;
 }
 
-bool UDataLayerInstance::IsParentDataLayerTypeCompatible(const UDataLayerInstance* InParent) const
+bool UDataLayerInstance::IsParentDataLayerTypeCompatible(const UDataLayerInstance* InParent, FText* OutReason) const
 {
 	if (InParent == nullptr)
 	{
 		return false;
 	}
 
-	EDataLayerType ParentDataLayerType = InParent->GetType();
+	if (IsClientOnly() || IsServerOnly())
+	{
+		if (OutReason)
+		{
+			*OutReason = FText::Format(LOCTEXT("ClientOrServerOnlyCantHaveParent", "{0} Data Layer cannot be a child Data Layer"), IsClientOnly() ? FText::FromString(TEXT("Client-Only")) : FText::FromString(TEXT("Server-Only")));
+		}
+		return false;
+	}
 
-	return GetType() != EDataLayerType::Unknown
-		&& ParentDataLayerType != EDataLayerType::Unknown
-		&& (ParentDataLayerType == EDataLayerType::Editor || GetType() == EDataLayerType::Runtime);
+	const EDataLayerType ParentType = InParent->GetType();
+	const EDataLayerType ChildType = GetType();
+
+	if ((ChildType == EDataLayerType::Unknown) ||
+		(ParentType == EDataLayerType::Unknown) || 
+		(ParentType != EDataLayerType::Editor && ChildType != EDataLayerType::Runtime))
+	{
+		if (OutReason)
+		{
+			*OutReason = FText::Format(LOCTEXT("IncompatibleChildType", "{0} Data Layer cannot have {1} child Data Layers"), UEnum::GetDisplayValueAsText(InParent->GetType()), UEnum::GetDisplayValueAsText(GetType()));
+		}
+		return false;
+	}
+	return true;
 }
 
 bool UDataLayerInstance::SetParent(UDataLayerInstance* InParent)
@@ -260,7 +476,7 @@ bool UDataLayerInstance::SetParent(UDataLayerInstance* InParent)
 		return false;
 	}
 
-	check(CanHaveParentDataLayer());
+	check(CanHaveParentDataLayerInstance());
 
 	Modify();
 
@@ -290,25 +506,24 @@ bool UDataLayerInstance::SetParent(UDataLayerInstance* InParent)
 	return true;
 }
 
-void UDataLayerInstance::SetChildParent(UDataLayerInstance* InParent)
+void UDataLayerInstance::OnRemovedFromWorldDataLayers()
 {
-	if (this == InParent)
-	{
-		return;
-	}
-
-	check(!InParent || InParent->CanHaveChildDataLayers());
-
-	Modify();
 	while (Children.Num())
 	{
-		Children[0]->SetParent(InParent);
+		// If can't reparent, move to root
+		UDataLayerInstance* ChildNewParent = Children[0]->CanBeChildOf(Parent) ? Parent : nullptr;
+		verify(Children[0]->SetParent(ChildNewParent));
 	};
+
+	if (Parent)
+	{
+		Parent->RemoveChild(this);
+	}
 }
 
 void UDataLayerInstance::RemoveChild(UDataLayerInstance* InDataLayer)
 {
-	Modify();
+	Modify(false);
 	check(Children.Contains(InDataLayer));
 	Children.RemoveSingle(InDataLayer);
 }
@@ -331,7 +546,12 @@ bool UDataLayerInstance::Validate(IStreamingGenerationErrorHandler* ErrorHandler
 
 bool UDataLayerInstance::CanBeInActorEditorContext() const
 {
-	return !IsLocked();
+	return !IsReadOnly();
+}
+
+bool UDataLayerInstance::IsActorEditorContextCurrentColorized() const
+{
+	return GetOuterWorldDataLayers()->IsActorEditorContextCurrentColorized(this);
 }
 
 bool UDataLayerInstance::IsInActorEditorContext() const
@@ -398,9 +618,9 @@ void UDataLayerInstance::ForEachChild(TFunctionRef<bool(const UDataLayerInstance
 
 void UDataLayerInstance::AddChild(UDataLayerInstance* InDataLayer)
 {
-	check(InDataLayer->GetOuterWorldDataLayers() == GetOuterWorldDataLayers())
-	check(CanHaveChildDataLayers());
-	Modify();
+	check(InDataLayer->GetDirectOuterWorldDataLayers() == GetDirectOuterWorldDataLayers())
+	check(CanHaveChildDataLayerInstance(InDataLayer));
+	Modify(false);
 	checkSlow(!Children.Contains(InDataLayer));
 	Children.Add(InDataLayer);
 }
@@ -413,17 +633,6 @@ EDataLayerRuntimeState UDataLayerInstance::GetRuntimeState() const
 EDataLayerRuntimeState UDataLayerInstance::GetEffectiveRuntimeState() const
 {
 	return GetOuterWorldDataLayers()->GetDataLayerEffectiveRuntimeStateByName(GetDataLayerFName());
-}
-
-bool UDataLayerInstance::SetRuntimeState(EDataLayerRuntimeState InState, bool bInIsRecursive) const
-{
-	if (GetOuterWorldDataLayers()->HasAuthority())
-	{
-		GetOuterWorldDataLayers()->SetDataLayerRuntimeState(this, InState, bInIsRecursive);
-		return true;
-	}
-	UE_LOG(LogWorldPartition, Error, TEXT("SetDataLayerRuntimeState can only execute on authority"));
-	return false;
 }
 
 #undef LOCTEXT_NAMESPACE

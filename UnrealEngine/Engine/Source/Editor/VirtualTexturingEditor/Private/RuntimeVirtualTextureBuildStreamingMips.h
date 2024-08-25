@@ -4,7 +4,6 @@
 
 #include "CoreMinimal.h"
 
-enum class ERuntimeVirtualTextureDebugType;
 class URuntimeVirtualTextureComponent;
 enum class EShadingPath;
 
@@ -15,6 +14,6 @@ namespace RuntimeVirtualTexture
 	bool HasStreamedMips(EShadingPath ShadingPath, URuntimeVirtualTextureComponent* InComponent);
 
 	/** Build the streaming mips texture. */
-	bool BuildStreamedMips(URuntimeVirtualTextureComponent* InComponent, ERuntimeVirtualTextureDebugType DebugType);
-	bool BuildStreamedMips(EShadingPath ShadingPath, URuntimeVirtualTextureComponent* InComponent, ERuntimeVirtualTextureDebugType DebugType);
+	bool BuildStreamedMips(URuntimeVirtualTextureComponent* InComponent, FLinearColor const& FixedColor);
+	bool BuildStreamedMips(EShadingPath ShadingPath, URuntimeVirtualTextureComponent* InComponent, FLinearColor const& FixedColor);
 };

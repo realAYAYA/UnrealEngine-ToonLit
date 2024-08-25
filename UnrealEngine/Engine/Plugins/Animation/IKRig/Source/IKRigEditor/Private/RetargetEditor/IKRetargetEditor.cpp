@@ -18,6 +18,7 @@
 #include "Framework/MultiBox/MultiBoxBuilder.h"
 
 #include "Retargeter/IKRetargeter.h"
+#include "Retargeter/IKRetargetOps.h"
 #include "RetargetEditor/IKRetargetAnimInstance.h"
 #include "RetargetEditor/IKRetargetCommands.h"
 #include "RetargetEditor/IKRetargetEditPoseMode.h"
@@ -54,8 +55,8 @@ void FIKRetargetEditor::InitAssetEditor(
 	FPersonaModule& PersonaModule = FModuleManager::LoadModuleChecked<FPersonaModule>("Persona");
 	PersonaToolkit = PersonaModule.CreatePersonaToolkit(InAsset, PersonaToolkitArgs);
 
-	const bool bCreateDefaultStandaloneMenu = true;
-	const bool bCreateDefaultToolbar = true;
+	constexpr bool bCreateDefaultStandaloneMenu = true;
+	constexpr bool bCreateDefaultToolbar = true;
 	FAssetEditorToolkit::InitAssetEditor(
 		Mode, 
 		InitToolkitHost, 
@@ -88,13 +89,6 @@ void FIKRetargetEditor::InitAssetEditor(
 
 	ExtendToolbar();
 	RegenerateMenusAndToolbars();
-
-	// DISABLED: MAY 2023 - These modal dialogs cause an editor crash when closing the main UE editor. Not clear why this happens,
-	// and it's not clear that we want to keep this creation flow. It was a compromise for UEFN, but we will likely do
-	// something better once we revisit UEFN integration.
-	// initial setup, ignored if IK Rig is already assigned
-	//EditorController->PromptUserToAssignIKRig(ERetargetSourceOrTarget::Source);
-	//EditorController->PromptUserToAssignIKRig(ERetargetSourceOrTarget::Target);
 
 	// run retarget by default
 	EditorController->SetRetargeterMode(ERetargeterOutputMode::RunRetarget);
@@ -132,12 +126,6 @@ void FIKRetargetEditor::BindCommands()
 		FCanExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::IsReadyToRetarget));
 
 	ToolkitCommands->MapAction(
-		Commands.ShowRetargetPose,
-		FExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::SetRetargeterMode, ERetargeterOutputMode::ShowRetargetPose),
-		FCanExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::IsCurrentMeshLoaded),
-		FIsActionChecked());
-
-	ToolkitCommands->MapAction(
 		Commands.EditRetargetPose,
 		FExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::SetRetargeterMode, ERetargeterOutputMode::EditRetargetPose),
 		FCanExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::IsCurrentMeshLoaded),
@@ -145,18 +133,48 @@ void FIKRetargetEditor::BindCommands()
 
 
 	//
-	// Show global / root settings in details panel
+	// Show various settings in details panel
 	//
+	ToolkitCommands->MapAction(
+		Commands.ShowAssetSettings,
+		FExecuteAction::CreateLambda([this]()
+		{
+			UIKRetargeter* Asset = EditorController->AssetController->GetAsset();
+			return EditorController->SetDetailsObject(Asset);
+		}),
+		FCanExecuteAction(),
+		FIsActionChecked::CreateLambda([this]() ->bool
+		{
+			const UIKRetargeter* Asset = EditorController->AssetController->GetAsset();
+			return EditorController->IsObjectInDetailsView(Asset);	
+		}));
 	ToolkitCommands->MapAction(
 		Commands.ShowGlobalSettings,
 		FExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::ShowGlobalSettings),
 		FCanExecuteAction(),
-		FIsActionChecked::CreateSP(EditorController,  &FIKRetargetEditorController::IsShowingGlobalSettings));
+		FIsActionChecked::CreateLambda([this]() ->bool
+		{
+			const UIKRetargetGlobalSettings* GlobalSettings = EditorController->AssetController->GetAsset()->GetGlobalSettingsUObject();
+			return EditorController->IsObjectInDetailsView(GlobalSettings);	
+		}));
 	ToolkitCommands->MapAction(
 		Commands.ShowRootSettings,
 		FExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::ShowRootSettings),
 		FCanExecuteAction(),
-		FIsActionChecked::CreateSP(EditorController,  &FIKRetargetEditorController::IsShowingRootSettings));
+		FIsActionChecked::CreateLambda([this]() ->bool
+		{
+			const URetargetRootSettings* RootSettings = EditorController->AssetController->GetAsset()->GetRootSettingsUObject();
+			return EditorController->IsObjectInDetailsView(RootSettings);	
+		}));
+	ToolkitCommands->MapAction(
+		Commands.ShowPostSettings,
+		FExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::ShowPostPhaseSettings),
+		FCanExecuteAction(),
+		FIsActionChecked::CreateLambda([this]() ->bool
+		{
+			const URetargetOpStack* PostSettings = EditorController->AssetController->GetAsset()->GetPostSettingsUObject();
+			return EditorController->IsObjectInDetailsView(PostSettings);	
+		}));
 
 	//
 	// Edit pose commands
@@ -165,70 +183,101 @@ void FIKRetargetEditor::BindCommands()
 	ToolkitCommands->MapAction(
 		Commands.ResetAllBones,
 		FExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::HandleResetAllBones),
-		FCanExecuteAction(),
+		FCanExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::IsEditingPose),
 		EUIActionRepeatMode::RepeatDisabled);
 
 	ToolkitCommands->MapAction(
 		Commands.ResetSelectedBones,
 		FExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::HandleResetSelectedBones),
-		FCanExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::CanResetSelected),
+		FCanExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::IsEditingPoseWithAnyBoneSelected),
 		EUIActionRepeatMode::RepeatDisabled);
 
 	ToolkitCommands->MapAction(
 		Commands.ResetSelectedAndChildrenBones,
 		FExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::HandleResetSelectedAndChildrenBones),
-		FCanExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::CanResetSelected),
+		FCanExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::IsEditingPoseWithAnyBoneSelected),
 		EUIActionRepeatMode::RepeatDisabled);
 
 	ToolkitCommands->MapAction(
 		Commands.NewRetargetPose,
 		FExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::HandleNewPose),
-		FCanExecuteAction(),
-		FCanExecuteAction(),
+		FCanExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::IsEditingPose),
 		EUIActionRepeatMode::RepeatDisabled);
 
 	ToolkitCommands->MapAction(
 		Commands.DuplicateRetargetPose,
 		FExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::HandleDuplicatePose),
-		FCanExecuteAction(),
-		FCanExecuteAction(),
+		FCanExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::IsEditingPose),
 		EUIActionRepeatMode::RepeatDisabled);
 
 	ToolkitCommands->MapAction(
 		Commands.DeleteRetargetPose,
 		FExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::HandleDeletePose),
 		FCanExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::CanDeletePose),
-		FCanExecuteAction(),
 		EUIActionRepeatMode::RepeatDisabled);
 
 	ToolkitCommands->MapAction(
 		Commands.RenameRetargetPose,
 		FExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::HandleRenamePose),
 		FCanExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::CanRenamePose),
-		FCanExecuteAction(),
 		EUIActionRepeatMode::RepeatDisabled);
 
+	//
+	// Auto-gen retarget pose
+	//
+	
+	ToolkitCommands->MapAction(
+		Commands.AutoAlignAllBones,
+		FExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::HandleAlignAllBones),
+		FCanExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::IsEditingPose),
+		EUIActionRepeatMode::RepeatDisabled);
+	
+	ToolkitCommands->MapAction(
+		Commands.AlignSelected,
+		FExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::HandleAlignSelectedBones, ERetargetAutoAlignMethod::ChainToChain, false /* no children*/),
+		FCanExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::IsEditingPoseWithAnyBoneSelected),
+		EUIActionRepeatMode::RepeatDisabled);
+
+	ToolkitCommands->MapAction(
+		Commands.AlignSelectedAndChildren,
+		FExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::HandleAlignSelectedBones, ERetargetAutoAlignMethod::ChainToChain, true /* include children*/),
+		FCanExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::IsEditingPoseWithAnyBoneSelected),
+		EUIActionRepeatMode::RepeatDisabled);
+
+	ToolkitCommands->MapAction(
+		Commands.AlignSelectedUsingMesh,
+		FExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::HandleAlignSelectedBones, ERetargetAutoAlignMethod::MeshToMesh, false /* no children*/),
+		FCanExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::IsEditingPoseWithAnyBoneSelected),
+		EUIActionRepeatMode::RepeatDisabled);
+
+	ToolkitCommands->MapAction(
+		Commands.SnapCharacterToGround,
+		FExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::HandleSnapToGround),
+		FCanExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::IsEditingPose),
+		EUIActionRepeatMode::RepeatDisabled);
+	
+
+	//
+	// Pose exporter
+	//
 	const TSharedRef<FIKRetargetPoseExporter> PoseExporterRef = EditorController->PoseExporter.ToSharedRef();
 	
 	ToolkitCommands->MapAction(
 		Commands.ImportRetargetPose,
 		FExecuteAction::CreateSP(PoseExporterRef, &FIKRetargetPoseExporter::HandleImportFromPoseAsset),
-		FCanExecuteAction(),
-		FCanExecuteAction(),
+		FCanExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::IsEditingPose),
 		EUIActionRepeatMode::RepeatDisabled);
 
 	ToolkitCommands->MapAction(
 		Commands.ImportRetargetPoseFromAnim,
 		FExecuteAction::CreateSP(PoseExporterRef, &FIKRetargetPoseExporter::HandleImportFromSequenceAsset),
-		FCanExecuteAction(),
-		FCanExecuteAction(),
+		FCanExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::IsEditingPose),
 		EUIActionRepeatMode::RepeatDisabled);
 
 	ToolkitCommands->MapAction(
 		Commands.ExportRetargetPose,
 		FExecuteAction::CreateSP(PoseExporterRef, &FIKRetargetPoseExporter::HandleExportPoseAsset),
-		FCanExecuteAction(),
-		FCanExecuteAction(),
+		FCanExecuteAction::CreateSP(EditorController, &FIKRetargetEditorController::IsEditingPose),
 		EUIActionRepeatMode::RepeatDisabled);
 }
 
@@ -248,7 +297,7 @@ void FIKRetargetEditor::ExtendToolbar()
 
 void FIKRetargetEditor::FillToolbar(FToolBarBuilder& ToolbarBuilder)
 {
-	ToolbarBuilder.BeginSection("Show Retarget Pose");
+	ToolbarBuilder.BeginSection("Retarget Modes");
 	{
 		ToolbarBuilder.AddToolBarButton(
 			FExecuteAction::CreateLambda([this]{ EditorController->SetRetargetModeToPreviousMode(); }),
@@ -265,6 +314,10 @@ void FIKRetargetEditor::FillToolbar(FToolBarBuilder& ToolbarBuilder)
 			LOCTEXT("RetargetMode_ToolTip", "Choose which mode to display in the viewport."),
 			FSlateIcon(FAppStyle::GetAppStyleSetName(), "LevelEditor.Recompile"),
 			true);
+
+		ToolbarBuilder.AddSeparator();
+		const TSharedPtr<SHorizontalBox> RetargetPhaseButtons = GenerateRetargetPhaseButtons();
+		ToolbarBuilder.AddWidget(RetargetPhaseButtons.ToSharedRef());
 	}
 	ToolbarBuilder.EndSection();
 
@@ -273,6 +326,13 @@ void FIKRetargetEditor::FillToolbar(FToolBarBuilder& ToolbarBuilder)
 
 	ToolbarBuilder.BeginSection("Show Settings");
 	{
+		ToolbarBuilder.AddToolBarButton(
+		FIKRetargetCommands::Get().ShowAssetSettings,
+		NAME_None,
+		TAttribute<FText>(),
+		TAttribute<FText>(),
+		FSlateIcon(FIKRetargetEditorStyle::Get().GetStyleSetName(),"IKRetarget.AssetSettings"));
+		
 		ToolbarBuilder.AddToolBarButton(
 		FIKRetargetCommands::Get().ShowGlobalSettings,
 		NAME_None,
@@ -286,95 +346,13 @@ void FIKRetargetEditor::FillToolbar(FToolBarBuilder& ToolbarBuilder)
 		TAttribute<FText>(),
 		TAttribute<FText>(),
 		FSlateIcon(FIKRetargetEditorStyle::Get().GetStyleSetName(),"IKRetarget.RootSettings"));
-	}
-	ToolbarBuilder.EndSection();
 
-	ToolbarBuilder.AddSeparator();
-
-	FLinearColor OffColor = FLinearColor::White;
-	FLinearColor OnColor = FLinearColor(.32f, .66f, .32f, 1.f);
-	
-	TSharedPtr<SVerticalBox> Box = SNew(SVerticalBox)
-	+ SVerticalBox::Slot()
-	.VAlign(VAlign_Center)
-	.HAlign(HAlign_Center)
-	.AutoHeight()
-	[
-		SNew(SHorizontalBox)
-		+ SHorizontalBox::Slot()
-		.FillWidth(1.f)
-		.HAlign(HAlign_Center)
-		[
-			SNew(STextBlock)
-			.Font(FCoreStyle::Get().GetFontStyle("SmallFont"))
-			.Text(FText::FromString("Toggle Retarget Phases"))
-		]
-	]
-	+ SVerticalBox::Slot()
-	.AutoHeight()
-	[
-		SNew(SHorizontalBox)
-		+ SHorizontalBox::Slot()
-		.AutoWidth()
-		.HAlign(HAlign_Center)
-		[
-			SNew(SButton)
-			.OnClicked_Lambda([this]()
-			{
-				EditorController->ToggleRootRetargetPass();
-				return FReply::Handled();
-			})
-			.ButtonColorAndOpacity_Lambda([this, OffColor, OnColor]() -> FLinearColor
-			{
-				return EditorController->IsRootRetargetOn() ? OnColor : OffColor;
-			})
-			[
-				SNew(STextBlock).Text(FText::FromString("Root"))
-			]
-		]
-
-		+ SHorizontalBox::Slot()
-		.AutoWidth()
-		.HAlign(HAlign_Center)
-		[
-			SNew(SButton)
-			.OnClicked_Lambda([this]()
-			{
-				EditorController->ToggleFKRetargetPass();
-				return FReply::Handled();
-			})
-			.ButtonColorAndOpacity_Lambda([this, OffColor, OnColor]() -> FLinearColor
-			{
-				return EditorController->IsFKRetargetOn() ? OnColor : OffColor;
-			})
-			[
-				SNew(STextBlock).Text(FText::FromString("FK"))
-			]
-		]
-		
-		+ SHorizontalBox::Slot()
-		.AutoWidth()
-		.HAlign(HAlign_Center)
-		[
-			SNew(SButton)
-			.OnClicked_Lambda([this]()
-			{
-				EditorController->ToggleIKRetargetPass();
-				return FReply::Handled();
-			})
-			.ButtonColorAndOpacity_Lambda([this, OffColor, OnColor]() -> FLinearColor
-			{
-				return EditorController->IsIKRetargetOn() ? OnColor : OffColor;
-			})
-			[
-				SNew(STextBlock).Text(FText::FromString("IK"))
-			]
-		]
-	];
-
-	ToolbarBuilder.BeginSection("Toggle Retarget Passes");
-	{
-		ToolbarBuilder.AddWidget(Box.ToSharedRef());
+		ToolbarBuilder.AddToolBarButton(
+		FIKRetargetCommands::Get().ShowPostSettings,
+		NAME_None,
+		TAttribute<FText>(),
+		TAttribute<FText>(),
+		FSlateIcon(FIKRetargetEditorStyle::Get().GetStyleSetName(),"IKRetarget.PostSettings"));
 	}
 	ToolbarBuilder.EndSection();
 }
@@ -386,10 +364,124 @@ TSharedRef<SWidget> FIKRetargetEditor::GenerateRetargetModesMenu()
 	MenuBuilder.BeginSection(TEXT("Retarget Modes"));
 	MenuBuilder.AddMenuEntry(FIKRetargetCommands::Get().RunRetargeter, TEXT("Run Retargeter"), TAttribute<FText>(), TAttribute<FText>(),  EditorController->GetRetargeterModeIcon(ERetargeterOutputMode::RunRetarget));
 	MenuBuilder.AddMenuEntry(FIKRetargetCommands::Get().EditRetargetPose, TEXT("Edit Retarget Pose"), TAttribute<FText>(), TAttribute<FText>(), EditorController->GetRetargeterModeIcon(ERetargeterOutputMode::EditRetargetPose));
-	MenuBuilder.AddMenuEntry(FIKRetargetCommands::Get().ShowRetargetPose, TEXT("Show Retarget Pose"), TAttribute<FText>(), TAttribute<FText>(), EditorController->GetRetargeterModeIcon(ERetargeterOutputMode::ShowRetargetPose));
 	MenuBuilder.EndSection();
 	
 	return MenuBuilder.MakeWidget();
+}
+
+TSharedPtr<SHorizontalBox> FIKRetargetEditor::GenerateRetargetPhaseButtons() const
+{
+	constexpr float PhaseButtonMargin = 2.f;
+	
+	TSharedPtr<SHorizontalBox> Box = SNew(SHorizontalBox)
+	+ SHorizontalBox::Slot()
+	.VAlign(VAlign_Center)
+	.HAlign(HAlign_Center)
+	.AutoWidth()
+	[
+		SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot()
+		.FillWidth(1.f)
+		.HAlign(HAlign_Center)
+		[
+			SNew(STextBlock).Text(FText::FromString("Retarget Phases: "))
+		]
+	]
+	+ SHorizontalBox::Slot()
+	.AutoWidth()
+	[
+		SNew(SHorizontalBox)
+		+ SHorizontalBox::Slot()
+		.AutoWidth()
+		.VAlign(VAlign_Center)
+		.Padding(FMargin(PhaseButtonMargin))
+		[
+			SNew(SCheckBox)
+			.Style(FAppStyle::Get(), "ToggleButtonCheckbox")
+			.IsChecked_Lambda([this]()
+			{
+				const bool bIsOn =  EditorController->GetGlobalSettings().bEnableRoot;
+				return bIsOn ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+			})
+			.OnCheckStateChanged_Lambda([this](ECheckBoxState InCheckBoxState)
+			{
+				FRetargetGlobalSettings& GlobalSettings = EditorController->GetGlobalSettings();
+				GlobalSettings.bEnableRoot = !GlobalSettings.bEnableRoot;
+			})
+			[
+				SNew(STextBlock).Text(FText::FromString("Root"))
+			]
+		]
+
+		+ SHorizontalBox::Slot()
+		.AutoWidth()
+		.VAlign(VAlign_Center)
+		.Padding(FMargin(PhaseButtonMargin))
+		[
+			SNew(SCheckBox)
+			.Style(FAppStyle::Get(), "ToggleButtonCheckbox")
+			.IsChecked_Lambda([this]()
+			{
+				const bool bIsOn =  EditorController->GetGlobalSettings().bEnableFK;
+				return bIsOn ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+			})
+			.OnCheckStateChanged_Lambda([this](ECheckBoxState InCheckBoxState)
+			{
+				FRetargetGlobalSettings& GlobalSettings = EditorController->GetGlobalSettings();
+				GlobalSettings.bEnableFK = !GlobalSettings.bEnableFK;
+			})
+			[
+				SNew(STextBlock).Text(FText::FromString("FK"))
+			]
+		]
+		
+		+ SHorizontalBox::Slot()
+		.AutoWidth()
+		.VAlign(VAlign_Center)
+		.Padding(FMargin(PhaseButtonMargin))
+		[
+
+			SNew(SCheckBox)
+			.Style(FAppStyle::Get(), "ToggleButtonCheckbox")
+			.IsChecked_Lambda([this]()
+			{
+				const bool bIsOn =  EditorController->GetGlobalSettings().bEnableIK;
+				return bIsOn ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+			})
+			.OnCheckStateChanged_Lambda([this](ECheckBoxState InCheckBoxState)
+			{
+				FRetargetGlobalSettings& GlobalSettings = EditorController->GetGlobalSettings();
+				GlobalSettings.bEnableIK = !GlobalSettings.bEnableIK;
+			})
+			[
+				SNew(STextBlock).Text(FText::FromString("IK"))
+			]
+		]
+
+		+ SHorizontalBox::Slot()
+		.AutoWidth()
+		.VAlign(VAlign_Center)
+		.Padding(FMargin(PhaseButtonMargin))
+		[
+			SNew(SCheckBox)
+			.Style(FAppStyle::Get(), "ToggleButtonCheckbox")
+			.IsChecked_Lambda([this]()
+			{
+				const bool bIsOn =  EditorController->GetGlobalSettings().bEnablePost;
+				return bIsOn ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+			})
+			.OnCheckStateChanged_Lambda([this](ECheckBoxState InCheckBoxState)
+			{
+				FRetargetGlobalSettings& GlobalSettings = EditorController->GetGlobalSettings();
+				GlobalSettings.bEnablePost = !GlobalSettings.bEnablePost;
+			})
+			[
+				SNew(STextBlock).Text(FText::FromString("Post"))
+			]
+		]
+	];
+	
+	return Box;
 }
 
 FName FIKRetargetEditor::GetToolkitFName() const
@@ -417,12 +509,6 @@ FString FIKRetargetEditor::GetWorldCentricTabPrefix() const
 	return TEXT("IKRetargetEditor");
 }
 
-void FIKRetargetEditor::AddReferencedObjects(FReferenceCollector& Collector)
-{
-	// hold the asset we are working on
-	Collector.AddReferencedObject(EditorController->AssetController->GetAssetPtr());
-}
-
 void FIKRetargetEditor::Tick(float DeltaTime)
 {
 	// update with latest offsets
@@ -437,6 +523,9 @@ void FIKRetargetEditor::Tick(float DeltaTime)
 		EditorController->ResetIKPlantingState();
 	}
 	PreviousTime = CurrentTime;
+	
+	// forces viewport to always update, even when mouse pressed down in other tabs
+	GetPersonaToolkit()->GetPreviewScene()->InvalidateViews();
 }
 
 TStatId FIKRetargetEditor::GetStatId() const
@@ -522,6 +611,10 @@ void FIKRetargetEditor::HandlePreviewSceneCreated(const TSharedRef<IPersonaPrevi
 	EditorController->SourceSkelMeshComponent = NewObject<UDebugSkelMeshComponent>(Actor);
 	EditorController->TargetSkelMeshComponent = NewObject<UDebugSkelMeshComponent>(Actor);
 
+	// do not process root motion, we need all motion in world space for retargeting to work correctly
+	EditorController->SourceSkelMeshComponent->SetProcessRootMotionMode(EProcessRootMotionMode::Ignore);
+	EditorController->TargetSkelMeshComponent->SetProcessRootMotionMode(EProcessRootMotionMode::Ignore);
+
 	// hide skeletons, we want to do custom rendering
 	EditorController->SourceSkelMeshComponent->SkeletonDrawMode = ESkeletonDrawMode::Hidden;
 	EditorController->TargetSkelMeshComponent->SkeletonDrawMode = ESkeletonDrawMode::Hidden;
@@ -558,6 +651,12 @@ void FIKRetargetEditor::HandlePreviewSceneCreated(const TSharedRef<IPersonaPrevi
 	
 	EditorController->FixZeroHeightRetargetRoot(ERetargetSourceOrTarget::Source);
 	EditorController->FixZeroHeightRetargetRoot(ERetargetSourceOrTarget::Target);
+
+	// bind a callback to update the UI whenever the retarget processor in the target anim instance is initialized
+	EditorController->RetargeterInitializedDelegateHandle = EditorController->GetRetargetProcessor()->OnRetargeterInitialized().AddLambda([this]()
+	{
+		EditorController->RefreshHierarchyView();
+	});
 }
 
 void FIKRetargetEditor::SetupAnimInstance()

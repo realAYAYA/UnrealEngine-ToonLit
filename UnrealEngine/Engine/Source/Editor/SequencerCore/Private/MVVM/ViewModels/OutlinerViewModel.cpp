@@ -100,6 +100,11 @@ TSharedPtr<SWidget> FOutlinerViewModel::CreateContextMenuWidget()
 	return nullptr;
 }
 
+void FOutlinerViewModel::RequestUpdate()
+{
+
+}
+
 FViewModelPtr FOutlinerViewModel::GetRootItem() const
 {
 	return WeakRootDataModel.Pin();

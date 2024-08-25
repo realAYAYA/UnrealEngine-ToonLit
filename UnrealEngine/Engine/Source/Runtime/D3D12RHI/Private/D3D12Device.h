@@ -13,7 +13,7 @@ D3D12Device.h: D3D12 Device Interfaces
 class FD3D12Device;
 class FD3D12DynamicRHI;
 class FD3D12Buffer;
-class FD3D12RayTracingDescriptorHeapCache;
+class FD3D12ExplicitDescriptorHeapCache;
 class FD3D12RayTracingPipelineCache;
 class FD3D12RayTracingCompactionRequestHandler;
 struct FD3D12RayTracingPipelineInfo;
@@ -124,6 +124,9 @@ public:
 	uint64 ExecutePayload();
 
 	bool bRequiresSignal = false;
+
+	// On some hardware, some auxiliary queue types may not support tile mapping and a separate queue must be used
+	bool bSupportsTileMapping = true;
 
 	// The underlying D3D queue object
 	TRefCountPtr<ID3D12CommandQueue> D3DCommandQueue;
@@ -258,6 +261,9 @@ public:
 	D3D12_RESOURCE_ALLOCATION_INFO GetResourceAllocationInfo(const FD3D12ResourceDesc& InDesc);
 	TUniquePtr<FD3D12DiagnosticBuffer> CreateDiagnosticBuffer(const D3D12_RESOURCE_DESC& Desc, const TCHAR* Name);
 
+	void									  InitExplicitDescriptorHeap();
+	FD3D12ExplicitDescriptorHeapCache*		  GetExplicitDescriptorHeapCache() { return ExplicitDescriptorHeapCache; }
+
 	// Ray Tracing
 #if D3D12_RHI_RAYTRACING
 	void									  InitRayTracing();
@@ -266,7 +272,6 @@ public:
 	ID3D12Device5*							  GetDevice5();
 	ID3D12Device7*							  GetDevice7();
 
-	FD3D12RayTracingDescriptorHeapCache*	  GetRayTracingDescriptorHeapCache     () { return RayTracingDescriptorHeapCache;      }
 	FD3D12RayTracingPipelineCache*			  GetRayTracingPipelineCache           () { return RayTracingPipelineCache;            }
 	FD3D12Buffer*							  GetRayTracingDispatchRaysDescBuffer  () { return RayTracingDispatchRaysDescBuffer;   }
 	FD3D12RayTracingCompactionRequestHandler* GetRayTracingCompactionRequestHandler() { return RayTracingCompactionRequestHandler; }
@@ -339,6 +344,10 @@ public:
 	// shared code for different D3D12  devices (e.g. PC DirectX12 and XboxOne) called
 	// after device creation and GRHISupportsAsyncTextureCreation was set and before resource init
 	void SetupAfterDeviceCreation();
+	void CleanupResources();
+
+	TRefCountPtr<ID3D12CommandQueue> TileMappingQueue;
+	FD3D12Fence TileMappingFence;
 
 private:
 	// called by SetupAfterDeviceCreation() when the device gets initialized
@@ -394,7 +403,8 @@ private:
 	FD3D12RayTracingCompactionRequestHandler* RayTracingCompactionRequestHandler = nullptr;
 	FD3D12Buffer* RayTracingDispatchRaysDescBuffer = nullptr;
 // #dxr_todo UE-72158: unify RT descriptor cache with main FD3D12DescriptorCache
-	FD3D12RayTracingDescriptorHeapCache* RayTracingDescriptorHeapCache = nullptr;
-	void DestroyRayTracingDescriptorCache();
 #endif
+
+	FD3D12ExplicitDescriptorHeapCache* ExplicitDescriptorHeapCache = nullptr;
+	void DestroyExplicitDescriptorCache();
 };

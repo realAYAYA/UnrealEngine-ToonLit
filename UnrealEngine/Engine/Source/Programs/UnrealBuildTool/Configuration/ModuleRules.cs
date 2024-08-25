@@ -44,19 +44,24 @@ namespace UnrealBuildTool
 	public enum VerseScope
 	{
 		/// <summary>
-		/// Created by Epic and is entirely hidden from public users
-		/// </summary>
-		InternalAPI,
-
-		/// <summary>
 		/// Created by Epic and only public definitions will be visible to public users
 		/// </summary>
 		PublicAPI,
 
 		/// <summary>
+		/// Created by Epic and is entirely hidden from public users
+		/// </summary>
+		InternalAPI,
+
+		/// <summary>
 		/// Created by a public user
 		/// </summary>
-		User
+		PublicUser,
+
+		/// <summary>
+		/// Created by an Epic internal user
+		/// </summary>
+		InternalUser
 	}
 
 	/// <summary>
@@ -269,40 +274,40 @@ namespace UnrealBuildTool
 			/// <summary>
 			/// The file that should be staged. Should use $(EngineDir) and $(ProjectDir) variables as a root, so that the target can be relocated to different machines.
 			/// </summary>
-			public string Path;
+			public string Path { get; init; }
 
 			/// <summary>
 			/// The initial location for this file. It will be copied to Path at build time, ready for staging.
 			/// </summary>
-			public string? SourcePath;
+			public string? SourcePath { get; init; }
 
 			/// <summary>
 			/// How to stage this file.
 			/// </summary>
-			public StagedFileType Type;
+			public StagedFileType Type { get; init; }
 
 			/// <summary>
 			/// Constructor
 			/// </summary>
-			/// <param name="InPath">Path to the runtime dependency</param>
-			/// <param name="InType">How to stage the given path</param>
-			public RuntimeDependency(string InPath, StagedFileType InType = StagedFileType.NonUFS)
+			/// <param name="inPath">Path to the runtime dependency</param>
+			/// <param name="inType">How to stage the given path</param>
+			public RuntimeDependency(string inPath, StagedFileType inType = StagedFileType.NonUFS)
 			{
-				Path = InPath;
-				Type = InType;
+				Path = inPath;
+				Type = inType;
 			}
 
 			/// <summary>
 			/// Constructor
 			/// </summary>
-			/// <param name="InPath">Path to the runtime dependency</param>
-			/// <param name="InSourcePath">Source path for the file in the working tree</param>
-			/// <param name="InType">How to stage the given path</param>
-			public RuntimeDependency(string InPath, string InSourcePath, StagedFileType InType = StagedFileType.NonUFS)
+			/// <param name="inPath">Path to the runtime dependency</param>
+			/// <param name="inSourcePath">Source path for the file in the working tree</param>
+			/// <param name="inType">How to stage the given path</param>
+			public RuntimeDependency(string inPath, string inSourcePath, StagedFileType inType = StagedFileType.NonUFS)
 			{
-				Path = InPath;
-				SourcePath = InSourcePath;
-				Type = InType;
+				Path = inPath;
+				SourcePath = inSourcePath;
+				Type = inType;
 			}
 		}
 
@@ -315,7 +320,12 @@ namespace UnrealBuildTool
 			/// <summary>
 			/// Inner list of runtime dependencies
 			/// </summary>
-			internal List<RuntimeDependency> Inner = new List<RuntimeDependency>();
+			readonly List<RuntimeDependency> _inner = new();
+
+			/// <summary>
+			/// Readonly access of inner list of runtime dependencies
+			/// </summary>
+			internal IReadOnlyList<RuntimeDependency> Inner => _inner.AsReadOnly();
 
 			/// <summary>
 			/// Default constructor
@@ -327,31 +337,31 @@ namespace UnrealBuildTool
 			/// <summary>
 			/// Add a runtime dependency to the list
 			/// </summary>
-			/// <param name="InPath">Path to the runtime dependency. May include wildcards.</param>
-			public void Add(string InPath)
+			/// <param name="inPath">Path to the runtime dependency. May include wildcards.</param>
+			public void Add(string inPath)
 			{
-				Inner.Add(new RuntimeDependency(InPath));
+				_inner.Add(new RuntimeDependency(inPath));
 			}
 
 			/// <summary>
 			/// Add a runtime dependency to the list
 			/// </summary>
-			/// <param name="InPath">Path to the runtime dependency. May include wildcards.</param>
-			/// <param name="InType">How to stage this file</param>
-			public void Add(string InPath, StagedFileType InType)
+			/// <param name="inPath">Path to the runtime dependency. May include wildcards.</param>
+			/// <param name="inType">How to stage this file</param>
+			public void Add(string inPath, StagedFileType inType)
 			{
-				Inner.Add(new RuntimeDependency(InPath, InType));
+				_inner.Add(new RuntimeDependency(inPath, inType));
 			}
 
 			/// <summary>
 			/// Add a runtime dependency to the list
 			/// </summary>
-			/// <param name="InPath">Path to the runtime dependency. May include wildcards.</param>
-			/// <param name="InSourcePath">Source path for the file to be added as a dependency. May include wildcards.</param>
-			/// <param name="InType">How to stage this file</param>
-			public void Add(string InPath, string InSourcePath, StagedFileType InType = StagedFileType.NonUFS)
+			/// <param name="inPath">Path to the runtime dependency. May include wildcards.</param>
+			/// <param name="inSourcePath">Source path for the file to be added as a dependency. May include wildcards.</param>
+			/// <param name="inType">How to stage this file</param>
+			public void Add(string inPath, string inSourcePath, StagedFileType inType = StagedFileType.NonUFS)
 			{
-				Inner.Add(new RuntimeDependency(InPath, InSourcePath, InType));
+				_inner.Add(new RuntimeDependency(inPath, inSourcePath, inType));
 			}
 		}
 
@@ -364,7 +374,12 @@ namespace UnrealBuildTool
 			/// <summary>
 			/// Inner list of runtime dependencies
 			/// </summary>
-			internal List<ReceiptProperty> Inner = new List<ReceiptProperty>();
+			readonly List<ReceiptProperty> _inner = new();
+
+			/// <summary>
+			/// Readonly access of inner list of runtime dependencies
+			/// </summary>
+			internal IReadOnlyList<ReceiptProperty> Inner => _inner.AsReadOnly();
 
 			/// <summary>
 			/// Default constructor
@@ -376,11 +391,21 @@ namespace UnrealBuildTool
 			/// <summary>
 			/// Add a receipt property to the list
 			/// </summary>
-			/// <param name="Name">Name of the property</param>
-			/// <param name="Value">Value for the property</param>
-			public void Add(string Name, string Value)
+			/// <param name="name">Name of the property</param>
+			/// <param name="value">Value for the property</param>
+			public void Add(string name, string value)
 			{
-				Inner.Add(new ReceiptProperty(Name, Value));
+				_inner.Add(new ReceiptProperty(name, value));
+			}
+
+			/// <summary>
+			/// Remove recepit properties from the list
+			/// </summary>
+			/// <param name="match">the maatcher predicate</param>
+			/// <returns>the number of items removed</returns>
+			public int RemoveAll(Predicate<ReceiptProperty> match)
+			{
+				return _inner.RemoveAll(match);
 			}
 		}
 
@@ -392,17 +417,17 @@ namespace UnrealBuildTool
 			/// <summary>
 			/// Name of the framework
 			/// </summary>
-			internal string Name;
+			internal string Name { get; init; }
 
 			/// <summary>
 			/// Specifies the path to a zip file that contains it or where the framework is located on disk
 			/// </summary>
-			internal string Path;
+			internal string Path { get; init; }
 
 			/// <summary>
 			/// 
 			/// </summary>
-			internal string? CopyBundledAssets = null;
+			internal string? CopyBundledAssets { get; init; } = null;
 
 			/// <summary>
 			/// How to handle linking and copying the framework
@@ -428,42 +453,39 @@ namespace UnrealBuildTool
 			/// <summary>
 			/// How to treat the framework during linking and creating the .app
 			/// </summary>
-			internal FrameworkMode Mode;
+			internal FrameworkMode Mode { get; init; }
 
 			/// <summary>
 			/// Constructor
 			/// </summary>
-			/// <param name="Name">Name of the framework</param>
-			/// <param name="Path">Path to a zip file containing the framework or a framework on disk</param>
-			/// <param name="CopyBundledAssets"></param>
+			/// <param name="name">Name of the framework</param>
+			/// <param name="path">Path to a zip file containing the framework or a framework on disk</param>
+			/// <param name="copyBundledAssets"></param>
 			/// <param name="bCopyFramework">Copy the framework to the target's Framework directory</param>
-			public Framework(string Name, string Path, string? CopyBundledAssets = null, bool bCopyFramework = false)
-				: this(Name, Path, bCopyFramework ? FrameworkMode.LinkAndCopy : FrameworkMode.Link, CopyBundledAssets)
+			public Framework(string name, string path, string? copyBundledAssets = null, bool bCopyFramework = false)
+				: this(name, path, bCopyFramework ? FrameworkMode.LinkAndCopy : FrameworkMode.Link, copyBundledAssets)
 			{
 			}
 
 			/// <summary>
 			/// Constructor
 			/// </summary>
-			/// <param name="Name">Name of the framework</param>
-			/// <param name="Path">Path to a zip file containing the framework or a framework on disk</param>
-			/// <param name="Mode">How to treat the framework during linking and creating the .app</param>
-			/// <param name="CopyBundledAssets"></param>
-			public Framework(string Name, string Path, FrameworkMode Mode, string? CopyBundledAssets = null)
+			/// <param name="name">Name of the framework</param>
+			/// <param name="path">Path to a zip file containing the framework or a framework on disk</param>
+			/// <param name="mode">How to treat the framework during linking and creating the .app</param>
+			/// <param name="copyBundledAssets"></param>
+			public Framework(string name, string path, FrameworkMode mode, string? copyBundledAssets = null)
 			{
-				this.Name = Name;
-				this.Path = Path;
-				this.Mode = Mode;
-				this.CopyBundledAssets = CopyBundledAssets;
+				Name = name;
+				Path = path;
+				Mode = mode;
+				CopyBundledAssets = copyBundledAssets;
 			}
 
 			/// <summary>
 			/// Specifies if the file is a zip file
 			/// </summary>
-			public bool IsZipFile()
-			{
-				return Path.EndsWith(".zip");
-			}
+			public bool IsZipFile() => Path.EndsWith(".zip", StringComparison.OrdinalIgnoreCase);
 		}
 
 		/// <summary>
@@ -474,28 +496,28 @@ namespace UnrealBuildTool
 			/// <summary>
 			/// 
 			/// </summary>
-			public string? ResourcePath = null;
+			public string? ResourcePath { get; init; } = null;
 
 			/// <summary>
 			/// 
 			/// </summary>
-			public string? BundleContentsSubdir = null;
+			public string? BundleContentsSubdir { get; init; } = null;
 
 			/// <summary>
 			/// 
 			/// </summary>
-			public bool bShouldLog = true;
+			public bool bShouldLog { get; init; } = true;
 
 			/// <summary>
 			/// Constructor
 			/// </summary>
-			/// <param name="ResourcePath"></param>
-			/// <param name="BundleContentsSubdir"></param>
+			/// <param name="resourcePath"></param>
+			/// <param name="bundleContentsSubdir"></param>
 			/// <param name="bShouldLog"></param>
-			public BundleResource(string ResourcePath, string BundleContentsSubdir = "Resources", bool bShouldLog = true)
+			public BundleResource(string resourcePath, string bundleContentsSubdir = "Resources", bool bShouldLog = true)
 			{
-				this.ResourcePath = ResourcePath;
-				this.BundleContentsSubdir = BundleContentsSubdir;
+				ResourcePath = resourcePath;
+				BundleContentsSubdir = bundleContentsSubdir;
 				this.bShouldLog = bShouldLog;
 			}
 		}
@@ -508,40 +530,36 @@ namespace UnrealBuildTool
 			/// <summary>
 			/// Name of the type library
 			/// </summary>
-			public string FileName;
+			public string FileName { get; init; }
 
 			/// <summary>
 			/// Additional attributes for the #import directive
 			/// </summary>
-			public string Attributes;
+			public string Attributes { get; init; }
 
 			/// <summary>
 			/// Name of the output header
 			/// </summary>
-			public string Header;
+			public string Header { get; init; }
 
 			/// <summary>
 			/// Constructor
 			/// </summary>
-			/// <param name="FileName">Name of the type library. Follows the same conventions as the filename parameter in the MSVC #import directive.</param>
-			/// <param name="Attributes">Additional attributes for the import directive</param>
-			/// <param name="Header">Name of the output header</param>
-			public TypeLibrary(string FileName, string Attributes, string Header)
+			/// <param name="fileName">Name of the type library. Follows the same conventions as the filename parameter in the MSVC #import directive.</param>
+			/// <param name="attributes">Additional attributes for the import directive</param>
+			/// <param name="header">Name of the output header</param>
+			public TypeLibrary(string fileName, string attributes, string header)
 			{
-				this.FileName = FileName;
-				this.Attributes = Attributes;
-				this.Header = Header;
+				FileName = fileName;
+				Attributes = attributes;
+				Header = header;
 			}
 		}
 
 		/// <summary>
 		/// Name of this module
 		/// </summary>
-		public string Name
-		{
-			get;
-			internal set;
-		}
+		public string Name { get; internal set; }
 
 		/// <summary>
 		/// File containing this module
@@ -554,15 +572,25 @@ namespace UnrealBuildTool
 		internal DirectoryReference Directory { get; set; }
 
 		/// <summary>
+		/// The Directory that contains either the Build.cs file, or the platform extension's SubClass directory
+		/// </summary>
+		protected DirectoryReference PlatformDirectory => DirectoriesForModuleSubClasses[GetType()]; // this is expected to always exist if we are able to be queried
+
+		/// <summary>
+		/// Returns true if the rules are a platform extension subclass
+		/// </summary>
+		protected bool bIsPlatformExtension => (Directory != PlatformDirectory);
+
+		/// <summary>
 		/// Additional directories that contribute to this module (likely in UnrealBuildTool.EnginePlatformExtensionsDirectory). 
 		/// The dictionary tracks module subclasses 
 		/// </summary>
-		internal Dictionary<Type, DirectoryReference>? DirectoriesForModuleSubClasses;
+		internal Dictionary<Type, DirectoryReference> DirectoriesForModuleSubClasses;
 
 		/// <summary>
 		/// Additional directories that contribute to this module but are not based on a subclass (NotForLicensees, etc)
 		/// </summary>
-		private List<DirectoryReference> AdditionalModuleDirectories = new List<DirectoryReference>();
+		private List<DirectoryReference> AdditionalModuleDirectories = new();
 
 		/// <summary>
 		/// The rules assembly to use when searching for modules
@@ -587,12 +615,12 @@ namespace UnrealBuildTool
 		/// <summary>
 		/// Rules for the target that this module belongs to
 		/// </summary>
-		public readonly ReadOnlyTargetRules Target;
+		public ReadOnlyTargetRules Target { get; init; }
 
 		/// <summary>
 		/// Type of module
 		/// </summary>
-		public ModuleType Type = ModuleType.CPlusPlus;
+		public ModuleType Type { get; set; } = ModuleType.CPlusPlus;
 
 		/// <summary>
 		/// Accessor for the target logger
@@ -607,17 +635,9 @@ namespace UnrealBuildTool
 		public PackageOverrideType OverridePackageType
 		{
 			get => overridePackageType ?? PackageOverrideType.None;
-			set
-			{
-				if (!IsPlugin)
-				{
-					overridePackageType = value;
-				}
-				else
-				{
-					throw new BuildException("Module '{0}' cannot override package type because it is part of a plugin!", Name);
-				}
-			}
+			set => overridePackageType = !IsPlugin
+					? value
+					: throw new CompilationResultException(CompilationResult.RulesError, "Module '{ModuleName}' cannot override package type because it is part of a plugin!", Name);
 		}
 
 		private PackageOverrideType? overridePackageType;
@@ -631,7 +651,7 @@ namespace UnrealBuildTool
 		/// Subfolder of Binaries/PLATFORM folder to put this module in when building DLLs. This should only be used by modules that are found via searching like the
 		/// TargetPlatform or ShaderFormat modules. If FindModules is not used to track them down, the modules will not be found.
 		/// </summary>
-		public string BinariesSubFolder = "";
+		public string BinariesSubFolder { get; set; } = String.Empty;
 
 		private CodeOptimization? OptimizeCodeOverride;
 
@@ -642,7 +662,8 @@ namespace UnrealBuildTool
 		{
 			get
 			{
-				if (bCodeCoverage) {
+				if (bCodeCoverage)
+				{
 					return CodeOptimization.Never;
 				}
 
@@ -651,23 +672,23 @@ namespace UnrealBuildTool
 					return OptimizeCodeOverride.Value;
 				}
 
-				bool? ShouldOptimizeCode = null;
+				bool? shouldOptimizeCode = null;
 				if (Target.EnableOptimizeCodeForModules?.Contains(Name) ?? false)
 				{
-					ShouldOptimizeCode = true;
+					shouldOptimizeCode = true;
 				}
 
 				if (Target.DisableOptimizeCodeForModules?.Contains(Name) ?? false)
 				{
-					ShouldOptimizeCode = false;
+					shouldOptimizeCode = false;
 				}
 
-				if (!ShouldOptimizeCode.HasValue)
+				if (!shouldOptimizeCode.HasValue)
 				{
 					return CodeOptimization.Default;
 				}
 
-				return ShouldOptimizeCode.Value ? CodeOptimization.Always : CodeOptimization.Never;
+				return shouldOptimizeCode.Value ? CodeOptimization.Always : CodeOptimization.Never;
 			}
 			set => OptimizeCodeOverride = value;
 		}
@@ -702,20 +723,31 @@ namespace UnrealBuildTool
 		}
 
 		/// <summary>
+		/// Allows overriding the FP semantics for this module. This requires a private PCH (or NoPCHs, which is not recommended)
+		/// </summary>
+		public FPSemanticsMode FPSemantics
+		{
+			get => FPSemanticsPrivate ?? Target.FPSemantics;
+			set => FPSemanticsPrivate = value;
+		}
+
+		private FPSemanticsMode? FPSemanticsPrivate = null;
+
+		/// <summary>
 		/// Explicit private PCH for this module. Implies that this module will not use a shared PCH.
 		/// </summary>
-		public string? PrivatePCHHeaderFile;
+		public string? PrivatePCHHeaderFile { get; set; }
 
 		/// <summary>
 		/// Header file name for a shared PCH provided by this module.  Must be a valid relative path to a public C++ header file.
 		/// This should only be set for header files that are included by a significant number of other C++ modules.
 		/// </summary>
-		public string? SharedPCHHeaderFile;
+		public string? SharedPCHHeaderFile { get; set; }
 
 		/// <summary>
 		/// Specifies an alternate name for intermediate directories and files for intermediates of this module. Useful when hitting path length limitations.
 		/// </summary>
-		public string? ShortName = null;
+		public string? ShortName { get; set; } = null;
 
 		/// <summary>
 		/// Precompiled header usage for this module
@@ -757,7 +789,27 @@ namespace UnrealBuildTool
 		/// Whether this module should be treated as an engine module (eg. using engine definitions, PCHs, compiled with optimizations enabled in DebugGame configurations, etc...).
 		/// Initialized to a default based on the rules assembly it was created from.
 		/// </summary>
-		public bool bTreatAsEngineModule;
+		public bool bTreatAsEngineModule { get; set; }
+
+		/// <summary>
+		/// Emits compilation errors for incorrect UE_LOG format strings.
+		/// </summary>
+		public bool bValidateFormatStrings
+		{
+			get => bValidateFormatStringsPrivate ?? (bTreatAsEngineModule || Target.bValidateFormatStrings);
+			set => bValidateFormatStringsPrivate = value;
+		}
+		private bool? bValidateFormatStringsPrivate;
+
+		/// <summary>
+		/// Emits deprecated warnings\errors for internal API usage for non-engine modules 
+		/// </summary>
+		public bool bValidateInternalApi
+		{
+			get => bValidateInternalApiPrivate ?? !bTreatAsEngineModule;
+			set => bValidateInternalApiPrivate = value;
+		}
+		private bool? bValidateInternalApiPrivate;
 
 		/// <summary>
 		/// Which engine version's build settings to use by default. 
@@ -793,12 +845,18 @@ namespace UnrealBuildTool
 		/// <summary>
 		/// Use run time type information
 		/// </summary>
-		public bool bUseRTTI = false;
+		public bool bUseRTTI { get; set; }
+
+		/// <summary>
+		/// Whether to direct MSVC to remove unreferenced COMDAT functions and data.
+		/// </summary>
+		/// <seealso href="https://learn.microsoft.com/en-us/cpp/build/reference/zc-inline-remove-unreferenced-comdat">zc-inline-remove-unreferenced-comdat</seealso>
+		public bool bVcRemoveUnreferencedComdat { get; set; } = true;
 
 		/// <summary>
 		/// Enable code coverage compilation/linking support.
 		/// </summary>
-		public bool bCodeCoverage = false;
+		public bool bCodeCoverage { get; set; }
 
 		/// <summary>
 		/// Obsolete: Direct the compiler to generate AVX instructions wherever SSE or AVX intrinsics are used, on the platforms that support it.
@@ -815,29 +873,29 @@ namespace UnrealBuildTool
 		/// Direct the compiler to generate AVX instructions wherever SSE or AVX intrinsics are used, on the x64 platforms that support it.
 		/// Note that by enabling this you are changing the minspec for the PC platform, and the resultant executable will crash on machines without AVX support.
 		/// </summary>
-		public MinimumCpuArchitectureX64? MinCpuArchX64 = null;
+		public MinimumCpuArchitectureX64? MinCpuArchX64 { get; set; } = null;
 
 		/// <summary>
 		/// Enable buffer security checks.  This should usually be enabled as it prevents severe security risks.
 		/// </summary>
-		public bool bEnableBufferSecurityChecks = true;
+		public bool bEnableBufferSecurityChecks { get; set; } = true;
 
 		/// <summary>
 		/// Enable exception handling
 		/// </summary>
-		public bool bEnableExceptions = false;
+		public bool bEnableExceptions { get; set; }
 
 		/// <summary>
 		/// Enable objective C exception handling
 		/// </summary>
-		public bool bEnableObjCExceptions = false;
+		public bool bEnableObjCExceptions { get; set; }
 
 		/// <summary>
 		/// Enable objective C automatic reference counting (ARC)
 		/// If you set this to true you should not use shared PCHs for this module. The engine won't be extensively using ARC in the short term  
 		/// Not doing this will result in a compile errors because shared PCHs were compiled with different flags than consumer
 		/// </summary>
-		public bool bEnableObjCAutomaticReferenceCounting = false;
+		public bool bEnableObjCAutomaticReferenceCounting { get; set; }
 
 		/// <summary>
 		/// How to treat deterministic warnings (experimental).
@@ -866,7 +924,7 @@ namespace UnrealBuildTool
 		/// <summary>
 		/// Whether to enable all warnings as errors. UE enables most warnings as errors already, but disables a few (such as deprecation warnings).
 		/// </summary>`
-		public bool bWarningsAsErrors = false;
+		public bool bWarningsAsErrors { get; set; }
 
 		/// <summary>
 		/// How to treat unsafe implicit type cast warnings (e.g., double->float or int64->int32)
@@ -883,7 +941,7 @@ namespace UnrealBuildTool
 		/// <summary>
 		/// Enable warnings for using undefined identifiers in #if expressions
 		/// </summary>
-		public bool bEnableUndefinedIdentifierWarnings = true;
+		public bool bEnableUndefinedIdentifierWarnings { get; set; } = true;
 
 		/// <summary>
 		/// How to treat general module include path validation messages
@@ -924,20 +982,20 @@ namespace UnrealBuildTool
 		/// <summary>
 		/// Disable all static analysis - clang, msvc, pvs-studio.
 		/// </summary>
-		public bool bDisableStaticAnalysis = false;
+		public bool bDisableStaticAnalysis { get; set; }
 
 		/// <summary>
 		/// Enable additional analyzer extension warnings using the EspXEngine plugin. This is only supported for MSVC.
 		/// See https://learn.microsoft.com/en-us/cpp/code-quality/using-the-cpp-core-guidelines-checkers
 		/// This will add a large number of warnings by default. It's recommended to use StaticAnalyzerRulesets if this is enabled.
 		/// </summary>
-		public bool bStaticAnalyzerExtensions = false;
+		public bool bStaticAnalyzerExtensions { get; set; }
 
 		/// <summary>
 		/// The static analyzer rulesets that should be used to filter warnings. This is only supported for MSVC.
 		/// See https://learn.microsoft.com/en-us/cpp/code-quality/using-rule-sets-to-specify-the-cpp-rules-to-run
 		/// </summary>
-		public HashSet<FileReference> StaticAnalyzerRulesets = new HashSet<FileReference>();
+		public HashSet<FileReference> StaticAnalyzerRulesets = new();
 
 		/// <summary>
 		/// The static analyzer checkers that should be enabled rather than the defaults. This is only supported for Clang.
@@ -947,7 +1005,7 @@ namespace UnrealBuildTool
 		///    'clang -Xclang -analyzer-checker-help-alpha' 
 		/// for the list of experimental checkers.
 		/// </summary>
-		public HashSet<string> StaticAnalyzerCheckers = new HashSet<string>();
+		public HashSet<string> StaticAnalyzerCheckers = new();
 
 		/// <summary>
 		/// The static analyzer default checkers that should be disabled. Unused if StaticAnalyzerCheckers is populated. This is only supported for Clang.
@@ -958,7 +1016,7 @@ namespace UnrealBuildTool
 		///    'clang -Xclang -analyzer-checker-help-alpha' 
 		/// for the list of experimental checkers.
 		/// </summary>
-		public HashSet<string> StaticAnalyzerDisabledCheckers = new HashSet<string>() { "deadcode.DeadStores", "security.FloatLoopCounter" };
+		public HashSet<string> StaticAnalyzerDisabledCheckers = new() { "deadcode.DeadStores", "security.FloatLoopCounter" };
 
 		/// <summary>
 		/// The static analyzer non-default checkers that should be enabled. Unused if StaticAnalyzerCheckers is populated. This is only supported for Clang.
@@ -968,7 +1026,7 @@ namespace UnrealBuildTool
 		///    'clang -Xclang -analyzer-checker-help-alpha' 
 		/// for the list of experimental checkers.
 		/// </summary>
-		public HashSet<string> StaticAnalyzerAdditionalCheckers = new HashSet<string>();
+		public HashSet<string> StaticAnalyzerAdditionalCheckers = new();
 
 		private bool? bUseUnityOverride;
 		/// <summary>
@@ -978,78 +1036,66 @@ namespace UnrealBuildTool
 		public bool bUseUnity
 		{
 			set => bUseUnityOverride = value;
-			get
-			{
-				bool UseUnity = true;
-				if (Target.DisableUnityBuildForModules?.Contains(Name) ?? false)
-				{
-					UseUnity = false;
-				}
-
-				return bUseUnityOverride ?? UseUnity;
-			}
+			get => bUseUnityOverride ?? Target.DisableUnityBuildForModules?.Contains(Name) != true;
 		}
 
 		/// <summary>
 		/// Whether to merge module and generated unity files for faster compilation.
 		/// </summary>
-		public bool bMergeUnityFiles = true;
+		public bool bMergeUnityFiles { get; set; } = true;
 
 		/// <summary>
 		/// The number of source files in this module before unity build will be activated for that module.  If set to
 		/// anything besides -1, will override the default setting which is controlled by MinGameModuleSourceFilesForUnityBuild
 		/// </summary>
-		public int MinSourceFilesForUnityBuildOverride = 0;
+		public int MinSourceFilesForUnityBuildOverride { get; set; } = 0;
 
 		/// <summary>
 		/// Overrides BuildConfiguration.MinFilesUsingPrecompiledHeader if non-zero.
 		/// </summary>
-		public int MinFilesUsingPrecompiledHeaderOverride = 0;
+		public int MinFilesUsingPrecompiledHeaderOverride { get; set; } = 0;
 
 		/// <summary>
 		/// Overrides Target.NumIncludedBytesPerUnityCPP if non-zero.
 		/// </summary>
-		public int NumIncludedBytesPerUnityCPPOverride = 0;
+		public int NumIncludedBytesPerUnityCPPOverride { get; set; } = 0;
 
 		/// <summary>
 		/// Helper function to get the number of byes per unity cpp file
 		/// </summary>
-		public int GetNumIncludedBytesPerUnityCPP()
-		{
-			return (NumIncludedBytesPerUnityCPPOverride != 0 && !Target.bDisableModuleNumIncludedBytesPerUnityCPPOverride) ? NumIncludedBytesPerUnityCPPOverride : Target.NumIncludedBytesPerUnityCPP;
-		}
+		public int GetNumIncludedBytesPerUnityCPP() => (NumIncludedBytesPerUnityCPPOverride != 0 && !Target.bDisableModuleNumIncludedBytesPerUnityCPPOverride) ? NumIncludedBytesPerUnityCPPOverride : Target.NumIncludedBytesPerUnityCPP;
 
 		/// <summary>
 		/// Module uses a #import so must be built locally when compiling with SN-DBS
 		/// </summary>
-		public bool bBuildLocallyWithSNDBS = false;
+		public bool bBuildLocallyWithSNDBS { get; set; }
 
 		/// <summary>
 		/// Enable warnings for when there are .gen.cpp files that could be inlined in a matching handwritten cpp file
 		/// </summary>
-		public bool bEnableNonInlinedGenCppWarnings = false;
+		public bool bEnableNonInlinedGenCppWarnings { get; set; }
 
 		/// <summary>
 		/// Redistribution override flag for this module.
 		/// </summary>
-		public bool? IsRedistributableOverride = null;
+		public bool? IsRedistributableOverride { get; set; } = null;
 
 		/// <summary>
 		/// Whether the output from this module can be publicly distributed, even if it has code/
 		/// dependencies on modules that are not (i.e. CarefullyRedist, NotForLicensees, NoRedist).
 		/// This should be used when you plan to release binaries but not source.
 		/// </summary>
-		public bool bLegalToDistributeObjectCode = false;
+		public bool bLegalToDistributeObjectCode { get; set; }
 
 		/// <summary>
 		/// List of folders which are allowed to be referenced when compiling this binary, without propagating restricted folder names
 		/// </summary>
-		public List<string> AllowedRestrictedFolders = new List<string>();
+		public List<string> AllowedRestrictedFolders = new();
 
 		/// <summary>
 		/// Set of aliased restricted folder references
 		/// </summary>
-		public Dictionary<string, string> AliasRestrictedFolders = new Dictionary<string, string>();
+		public Dictionary<string, string> AliasRestrictedFolders = new();
 
 		/// <summary>
 		/// Enforce "include what you use" rules when PCHUsage is set to ExplicitOrSharedPCH; warns when monolithic headers (Engine.h, UnrealEd.h, etc...) 
@@ -1062,105 +1108,105 @@ namespace UnrealBuildTool
 		/// Allows "include what you use" to modify the source code when run. bEnforceIWYU must be true for this variable to matter.
 		/// 
 		/// </summary>
-		public IWYUSupport IWYUSupport = IWYUSupport.Full;
+		public IWYUSupport IWYUSupport { get; set; } = IWYUSupport.Full;
 
 		/// <summary>
 		/// Whether to add all the default include paths to the module (eg. the Source/Classes folder, subfolders under Source/Public).
 		/// </summary>
-		public bool bAddDefaultIncludePaths = true;
+		public bool bAddDefaultIncludePaths { get; set; } = true;
 
 		/// <summary>
 		/// Whether to ignore dangling (i.e. unresolved external) symbols in modules
 		/// </summary>
-		public bool bIgnoreUnresolvedSymbols = false;
+		public bool bIgnoreUnresolvedSymbols { get; set; }
 
 		/// <summary>
 		/// Whether this module should be precompiled. Defaults to the bPrecompile flag from the target. Clear this flag to prevent a module being precompiled.
 		/// </summary>
-		public bool bPrecompile;
+		public bool bPrecompile { get; set; }
 
 		/// <summary>
 		/// Whether this module should use precompiled data. Always true for modules created from installed assemblies.
 		/// </summary>
-		public bool bUsePrecompiled;
+		public bool bUsePrecompiled { get; set; }
 
 		/// <summary>
 		/// Whether this module can use PLATFORM_XXXX style defines, where XXXX is a confidential platform name. This is used to ensure engine or other 
 		/// shared code does not reveal confidential information inside an #if PLATFORM_XXXX block. Licensee game code may want to allow for them, however.
 		/// </summary>
-		public bool bAllowConfidentialPlatformDefines = false;
+		public bool bAllowConfidentialPlatformDefines { get; set; }
 
 		/// <summary>
 		/// Enables AutoRTFM instrumentation to this module only when AutoRTFMCompiler is enabled
 		/// </summary>
-		public bool bAllowAutoRTFMInstrumentation = false;
+		public bool bAllowAutoRTFMInstrumentation { get; set; }
 
 		/// <summary>
 		/// List of modules names (no path needed) with header files that our module's public headers needs access to, but we don't need to "import" or link against.
 		/// </summary>
-		public List<string> PublicIncludePathModuleNames = new List<string>();
+		public List<string> PublicIncludePathModuleNames = new();
 
 		/// <summary>
 		/// List of public dependency module names (no path needed) (automatically does the private/public include). These are modules that are required by our public source files.
 		/// </summary>
-		public List<string> PublicDependencyModuleNames = new List<string>();
+		public List<string> PublicDependencyModuleNames = new();
 
 		/// <summary>
 		/// List of modules name (no path needed) with header files that our module's private code files needs access to, but we don't need to "import" or link against.
 		/// </summary>
-		public List<string> PrivateIncludePathModuleNames = new List<string>();
+		public List<string> PrivateIncludePathModuleNames = new();
 
 		/// <summary>
 		/// List of private dependency module names.  These are modules that our private code depends on but nothing in our public
 		/// include files depend on.
 		/// </summary>
-		public List<string> PrivateDependencyModuleNames = new List<string>();
+		public List<string> PrivateDependencyModuleNames = new();
 
 		/// <summary>
 		/// Only for legacy reason, should not be used in new code. List of module dependencies that should be treated as circular references.  This modules must have already been added to
 		/// either the public or private dependent module list.
 		/// </summary>
-		public List<string> CircularlyReferencedDependentModules = new List<string>();
+		public List<string> CircularlyReferencedDependentModules = new();
 
 		/// <summary>
 		/// List of system/library include paths - typically used for External (third party) modules.  These are public stable header file directories that are not checked when resolving header dependencies.
 		/// </summary>
-		public List<string> PublicSystemIncludePaths = new List<string>();
+		public List<string> PublicSystemIncludePaths = new();
 
 		/// <summary>
 		/// (This setting is currently not need as we discover all files from the 'Public' folder) List of all paths to include files that are exposed to other modules
 		/// </summary>
-		public List<string> PublicIncludePaths = new List<string>();
+		public List<string> PublicIncludePaths = new();
 
 		/// <summary>
 		/// (This setting is currently not need as we discover all files from the 'Internal' folder) List of all paths to include files that are exposed to other internal modules
 		/// </summary>
-		public List<string> InternalncludePaths = new List<string>();
+		public List<string> InternalIncludePaths = new();
 
 		/// <summary>
 		/// List of all paths to this module's internal include files, not exposed to other modules (at least one include to the 'Private' path, more if we want to avoid relative paths)
 		/// </summary>
-		public List<string> PrivateIncludePaths = new List<string>();
+		public List<string> PrivateIncludePaths = new();
 
 		/// <summary>
 		/// List of system library paths (directory of .lib files) - for External (third party) modules please use the PublicAdditionalLibaries instead
 		/// </summary>
-		public List<string> PublicSystemLibraryPaths = new List<string>();
+		public List<string> PublicSystemLibraryPaths = new();
 
 		/// <summary>
 		/// List of search paths for libraries at runtime (eg. .so files)
 		/// </summary>
-		public List<string> PrivateRuntimeLibraryPaths = new List<string>();
+		public List<string> PrivateRuntimeLibraryPaths = new();
 
 		/// <summary>
 		/// List of search paths for libraries at runtime (eg. .so files)
 		/// </summary>
-		public List<string> PublicRuntimeLibraryPaths = new List<string>();
+		public List<string> PublicRuntimeLibraryPaths = new();
 
 		/// <summary>
 		/// List of additional libraries (names of the .lib files including extension) - typically used for External (third party) modules
 		/// </summary>
-		public List<string> PublicAdditionalLibraries = new List<string>();
+		public List<string> PublicAdditionalLibraries = new();
 
 		/// <summary>
 		/// Per-architecture lists of dependencies for linking to ignore (useful when building for multiple architectures, and a lib only is needed for one architecture), it's up to the Toolchain to use this
@@ -1170,113 +1216,110 @@ namespace UnrealBuildTool
 		/// <summary>
 		/// Returns the directory of where the passed in module name lives.
 		/// </summary>
-		/// <param name="ModuleName">Name of the module</param>
+		/// <param name="moduleName">Name of the module</param>
 		/// <returns>Directory where the module lives</returns>
-		public string GetModuleDirectory(string ModuleName)
+		public string GetModuleDirectory(string moduleName)
 		{
-			FileReference? ModuleFileReference = RulesAssembly.GetModuleFileName(ModuleName);
-			if (ModuleFileReference == null)
-			{
-				throw new BuildException("Could not find a module named '{0}'.", ModuleName);
-			}
-			return ModuleFileReference.Directory.FullName;
+			FileReference? moduleFileReference = RulesAssembly.GetModuleFileName(moduleName)
+				?? throw new CompilationResultException(CompilationResult.RulesError, "Could not find a module named '{ModuleName}'.", moduleName);
+			return moduleFileReference.Directory.FullName;
 		}
 
 		/// <summary>
 		/// List of additional pre-build libraries (names of the .lib files including extension) - typically used for additional targets which are still built, but using either TargetRules.PreBuildSteps or TargetRules.PreBuildTargets.
 		/// </summary>
-		public List<string> PublicPreBuildLibraries = new List<string>();
+		public List<string> PublicPreBuildLibraries = new();
 
 		/// <summary>
 		/// List of system libraries to use - these are typically referenced via name and then found via the system paths. If you need to reference a .lib file use the PublicAdditionalLibraries instead
 		/// </summary>
-		public List<string> PublicSystemLibraries = new List<string>();
+		public List<string> PublicSystemLibraries = new();
 
 		/// <summary>
 		/// List of XCode frameworks (iOS and MacOS)
 		/// </summary>
-		public List<string> PublicFrameworks = new List<string>();
+		public List<string> PublicFrameworks = new();
 
 		/// <summary>
 		/// List of weak frameworks (for OS version transitions)
 		/// </summary>
-		public List<string> PublicWeakFrameworks = new List<string>();
+		public List<string> PublicWeakFrameworks = new();
 
 		/// <summary>
 		/// List of addition frameworks - typically used for External (third party) modules on Mac and iOS
 		/// </summary>
-		public List<Framework> PublicAdditionalFrameworks = new List<Framework>();
+		public List<Framework> PublicAdditionalFrameworks = new();
 
 		/// <summary>
 		/// List of addition resources that should be copied to the app bundle for Mac or iOS
 		/// </summary>
-		public List<BundleResource> AdditionalBundleResources = new List<BundleResource>();
+		public List<BundleResource> AdditionalBundleResources = new();
 
 		/// <summary>
 		/// List of type libraries that we need to generate headers for (Windows only)
 		/// </summary>
-		public List<TypeLibrary> TypeLibraries = new List<TypeLibrary>();
+		public List<TypeLibrary> TypeLibraries = new();
 
 		/// <summary>
 		/// List of delay load DLLs - typically used for External (third party) modules
 		/// </summary>
-		public List<string> PublicDelayLoadDLLs = new List<string>();
+		public List<string> PublicDelayLoadDLLs = new();
 
 		/// <summary>
 		/// Private compiler definitions for this module
 		/// </summary>
-		public List<string> PrivateDefinitions = new List<string>();
+		public List<string> PrivateDefinitions = new();
 
 		/// <summary>
 		/// Public compiler definitions for this module
 		/// </summary>
-		public List<string> PublicDefinitions = new List<string>();
+		public List<string> PublicDefinitions = new();
 
 		/// <summary>
 		/// Append (or create)
 		/// </summary>
-		/// <param name="Definition"></param>
-		/// <param name="Text"></param>
-		public void AppendStringToPublicDefinition(string Definition, string Text)
+		/// <param name="definition"></param>
+		/// <param name="text"></param>
+		public void AppendStringToPublicDefinition(string definition, string text)
 		{
-			string WithEquals = Definition + "=";
-			for (int Index = 0; Index < PublicDefinitions.Count; Index++)
+			string withEquals = definition + "=";
+			for (int index = 0; index < PublicDefinitions.Count; index++)
 			{
-				if (PublicDefinitions[Index].StartsWith(WithEquals))
+				if (PublicDefinitions[index].StartsWith(withEquals, StringComparison.Ordinal))
 				{
-					PublicDefinitions[Index] = PublicDefinitions[Index] + Text;
+					PublicDefinitions[index] = PublicDefinitions[index] + text;
 					return;
 				}
 			}
 
 			// if we get here, we need to make a new entry
-			PublicDefinitions.Add(Definition + "=" + Text);
+			PublicDefinitions.Add(definition + "=" + text);
 		}
 
 		/// <summary>
 		/// Addition modules this module may require at run-time 
 		/// </summary>
-		public List<string> DynamicallyLoadedModuleNames = new List<string>();
+		public List<string> DynamicallyLoadedModuleNames = new();
 
 		/// <summary>
 		/// List of files which this module depends on at runtime. These files will be staged along with the target.
 		/// </summary>
-		public RuntimeDependencyList RuntimeDependencies = new RuntimeDependencyList();
+		public RuntimeDependencyList RuntimeDependencies = new();
 
 		/// <summary>
 		/// List of additional properties to be added to the build receipt
 		/// </summary>
-		public ReceiptPropertyList AdditionalPropertiesForReceipt = new ReceiptPropertyList();
+		public ReceiptPropertyList AdditionalPropertiesForReceipt = new();
 
 		/// <summary>
 		/// Which targets this module should be precompiled for
 		/// </summary>
-		public PrecompileTargetsType PrecompileForTargets = PrecompileTargetsType.Default;
+		public PrecompileTargetsType PrecompileForTargets { get; set; } = PrecompileTargetsType.Default;
 
 		/// <summary>
 		/// External files which invalidate the makefile if modified. Relative paths are resolved relative to the .build.cs file.
 		/// </summary>
-		public List<string> ExternalDependencies = new List<string>();
+		public List<string> ExternalDependencies = new();
 
 		/// <summary>
 		/// Subclass rules files which invalidate the makefile if modified.
@@ -1287,17 +1330,17 @@ namespace UnrealBuildTool
 		/// Whether this module requires the IMPLEMENT_MODULE macro to be implemented. Most UE modules require this, since we use the IMPLEMENT_MODULE macro
 		/// to do other global overloads (eg. operator new/delete forwarding to GMalloc).
 		/// </summary>
-		public bool? bRequiresImplementModule;
+		public bool? bRequiresImplementModule { get; set; }
 
 		/// <summary>
 		/// If this module has associated Verse code, this is the Verse root path of it
 		/// </summary>
-		public string? VersePath;
+		public string? VersePath { get; set; }
 
 		/// <summary>
 		/// Visibility of Verse code in this module's Source/Verse folder
 		/// </summary>
-		public VerseScope VerseScope = VerseScope.User;
+		public VerseScope VerseScope { get; set; } = VerseScope.PublicUser;
 
 		/// <summary>
 		/// Whether this module qualifies included headers from other modules relative to the root of their 'Public' folder. This reduces the number
@@ -1306,7 +1349,7 @@ namespace UnrealBuildTool
 		public bool bLegacyPublicIncludePaths
 		{
 			set => bLegacyPublicIncludePathsPrivate = value;
-			get => bLegacyPublicIncludePathsPrivate ?? ((DefaultBuildSettings < BuildSettingsVersion.V2) ? Target.bLegacyPublicIncludePaths : false);
+			get => bLegacyPublicIncludePathsPrivate ?? ((DefaultBuildSettings < BuildSettingsVersion.V2) && Target.bLegacyPublicIncludePaths);
 		}
 		private bool? bLegacyPublicIncludePathsPrivate;
 
@@ -1317,7 +1360,7 @@ namespace UnrealBuildTool
 		public bool bLegacyParentIncludePaths
 		{
 			set => bLegacyParentIncludePathsPrivate = value;
-			get => bLegacyParentIncludePathsPrivate ?? ((DefaultBuildSettings < BuildSettingsVersion.V3) ? Target.bLegacyParentIncludePaths : false);
+			get => bLegacyParentIncludePathsPrivate ?? ((DefaultBuildSettings < BuildSettingsVersion.V3) && Target.bLegacyParentIncludePaths);
 		}
 		private bool? bLegacyParentIncludePathsPrivate;
 
@@ -1326,41 +1369,34 @@ namespace UnrealBuildTool
 		/// Circular module dependencies result in slower builds. Disabling this option is strongly discouraged.
 		/// This option is ignored for Engine modules which will always be validated against the allow list.
 		/// </summary>
-		public bool bValidateCircularDependencies = true;
+		public bool bValidateCircularDependencies { get; set; } = true;
 
 		/// <summary>
 		/// Which stanard to use for compiling this module
 		/// </summary>
-		public CppStandardVersion? CppStandard;
+		public CppStandardVersion? CppStandard { get; set; }
 
 		/// <summary>
 		/// Which standard to use for compiling this module
 		/// </summary>
-		public CStandardVersion? CStandard;
+		public CStandardVersion? CStandard { get; set; }
 
 		/// <summary>
 		/// A list of subdirectory names and functions that are invoked to generate header files.
 		/// The subdirectory name is appended to the generated code directory to form a new directory
 		/// that headers are generated inside.
 		/// </summary>
-		public List<Tuple<string, Action<ILogger, DirectoryReference>>> GenerateHeaderFuncs = new List<Tuple<string, Action<ILogger, DirectoryReference>>>();
+		public List<(string, Action<ILogger, DirectoryReference>)> GenerateHeaderFuncs = new();
 
 		/// <summary>
 		///  Control visibility of symbols
 		/// </summary>
-		public SymbolVisibility ModuleSymbolVisibility = ModuleRules.SymbolVisibility.Default;
+		public SymbolVisibility ModuleSymbolVisibility { get; set; } = SymbolVisibility.Default;
 
 		/// <summary>
 		/// The AutoSDK directory for the active host platform
 		/// </summary>
-		public string? AutoSdkDirectory
-		{
-			get
-			{
-				DirectoryReference? AutoSdkDir;
-				return UEBuildPlatformSDK.TryGetHostPlatformAutoSDKDir(out AutoSdkDir) ? AutoSdkDir.FullName : null;
-			}
-		}
+		public string? AutoSdkDirectory => UEBuildPlatformSDK.TryGetHostPlatformAutoSDKDir(out DirectoryReference? autoSdkDir) ? autoSdkDir.FullName : null;
 
 		/// <summary>
 		/// The current engine directory
@@ -1370,50 +1406,40 @@ namespace UnrealBuildTool
 		/// <summary>
 		/// Property for the directory containing this plugin. Useful for adding paths to third party dependencies.
 		/// </summary>
-		public string PluginDirectory
-		{
-			get
-			{
-				if (Plugin == null)
-				{
-					throw new BuildException("Module '{0}' does not belong to a plugin; PluginDirectory property is invalid.", Name);
-				}
-				else
-				{
-					return Plugin.Directory.FullName;
-				}
-			}
-		}
+		public string PluginDirectory => Plugin == null
+					? throw new CompilationResultException(CompilationResult.RulesError, "Module '{ModuleName}' does not belong to a plugin; PluginDirectory property is invalid.", Name)
+					: Plugin.Directory.FullName;
 
 		/// <summary>
 		/// Property for the directory containing this module. Useful for adding paths to third party dependencies.
 		/// </summary>
+		[SuppressMessage("Naming", "CA1721:Property names should not match get methods", Justification = "GetModuleDirectory() is to get the path to other modules")]
 		public string ModuleDirectory => Directory.FullName;
+
+		/// <summary>
+		/// Property for the directory containing this module or the platform extension's subclass. Useful for adding paths to third party dependencies.
+		/// </summary>
+		protected string PlatformModuleDirectory => PlatformDirectory.FullName;
+
+		/// <summary>
+		/// Name of a platform under the PlatformModuleDirectory - for a PlatfomrExtension, we don't use platform subdirectories since it's already in a platform dir, so this returns '.'
+		/// </summary>
+		protected string PlatformSubdirectoryName => bIsPlatformExtension ? "." : Target.Platform.ToString();
 
 		/// <summary>
 		/// Returns module's low level tests directory "Tests".
 		/// </summary>
-		public string TestsDirectory
-		{
-			get
-			{
-				if (IsTestModule)
-				{
-					return Directory.FullName;
-				}
-				return Path.Combine(Directory.FullName, "Tests");
-			}
-		}
+		public string TestsDirectory => IsTestModule ? Directory.FullName : Path.Combine(Directory.FullName, "Tests");
 
 #nullable disable
 		/// <summary>
 		/// Constructor. For backwards compatibility while the parameterless constructor is being phased out, initialization which would happen here is done by 
 		/// RulesAssembly.CreateModulRules instead.
 		/// </summary>
-		/// <param name="Target">Rules for building this target</param>
-		public ModuleRules(ReadOnlyTargetRules Target)
+		/// <param name="target">Rules for building this target</param>
+		public ModuleRules(ReadOnlyTargetRules target)
 		{
-			this.Target = Target;
+			Target = target;
 		}
 #nullable restore
 
@@ -1423,13 +1449,13 @@ namespace UnrealBuildTool
 		///	Private, meaning the include paths for the included modules will not be exposed when giving this modules include paths
 		///	NOTE: There is no AddThirdPartyPublicStaticDependencies function.
 		/// </summary>
-		/// <param name="Target">The target this module belongs to</param>
-		/// <param name="ModuleNames">The names of the modules to add</param>
-		public void AddEngineThirdPartyPrivateStaticDependencies(ReadOnlyTargetRules Target, params string[] ModuleNames)
+		/// <param name="target">The target this module belongs to</param>
+		/// <param name="moduleNames">The names of the modules to add</param>
+		public void AddEngineThirdPartyPrivateStaticDependencies(ReadOnlyTargetRules target, params string[] moduleNames)
 		{
-			if (!bUsePrecompiled || Target.LinkType == TargetLinkType.Monolithic)
+			if (!bUsePrecompiled || target.LinkType == TargetLinkType.Monolithic)
 			{
-				PrivateDependencyModuleNames.AddRange(ModuleNames);
+				PrivateDependencyModuleNames.AddRange(moduleNames);
 			}
 		}
 
@@ -1439,42 +1465,32 @@ namespace UnrealBuildTool
 		///	Private, meaning the include paths for the included modules will not be exposed when giving this modules include paths
 		///	NOTE: There is no AddThirdPartyPublicDynamicDependencies function.
 		/// </summary>
-		/// <param name="Target">Rules for the target being built</param>
-		/// <param name="ModuleNames">The names of the modules to add</param>
-		public void AddEngineThirdPartyPrivateDynamicDependencies(ReadOnlyTargetRules Target, params string[] ModuleNames)
+		/// <param name="target">Rules for the target being built</param>
+		/// <param name="moduleNames">The names of the modules to add</param>
+		public void AddEngineThirdPartyPrivateDynamicDependencies(ReadOnlyTargetRules target, params string[] moduleNames)
 		{
-			if (!bUsePrecompiled || Target.LinkType == TargetLinkType.Monolithic)
+			if (!bUsePrecompiled || target.LinkType == TargetLinkType.Monolithic)
 			{
-				PrivateIncludePathModuleNames.AddRange(ModuleNames);
-				DynamicallyLoadedModuleNames.AddRange(ModuleNames);
+				PrivateIncludePathModuleNames.AddRange(moduleNames);
+				DynamicallyLoadedModuleNames.AddRange(moduleNames);
 			}
 		}
 
 		/// <summary>
 		/// Setup this module for Mesh Editor support (based on the settings in UEBuildConfiguration)
 		/// </summary>
-		public void EnableMeshEditorSupport(ReadOnlyTargetRules Target)
-		{
-			if (Target.bEnableMeshEditor == true)
-			{
-				PublicDefinitions.Add("ENABLE_MESH_EDITOR=1");
-			}
-			else
-			{
-				PublicDefinitions.Add("ENABLE_MESH_EDITOR=0");
-			}
-		}
+		public void EnableMeshEditorSupport(ReadOnlyTargetRules target) => PublicDefinitions.Add($"ENABLE_MESH_EDITOR={(target.bEnableMeshEditor ? 1 : 0)}");
 
 		/// <summary>
 		/// Setup this module for GameplayDebugger support
 		/// </summary>
-		public void SetupGameplayDebuggerSupport(ReadOnlyTargetRules Target, bool bAddAsPublicDependency = false)
+		public void SetupGameplayDebuggerSupport(ReadOnlyTargetRules target, bool bAddAsPublicDependency = false)
 		{
-			if (Target.bUseGameplayDebugger || Target.bUseGameplayDebuggerCore)
+			if (target.bUseGameplayDebugger || target.bUseGameplayDebuggerCore)
 			{
 				PublicDefinitions.Add("WITH_GAMEPLAY_DEBUGGER_CORE=1");
-				PublicDefinitions.Add("WITH_GAMEPLAY_DEBUGGER=" + (Target.bUseGameplayDebugger ? 1 : 0));
-				if (Target.bUseGameplayDebugger || (Target.bUseGameplayDebuggerCore && Target.Configuration != UnrealTargetConfiguration.Shipping))
+				PublicDefinitions.Add("WITH_GAMEPLAY_DEBUGGER=" + (target.bUseGameplayDebugger ? 1 : 0));
+				if (target.bUseGameplayDebugger || (target.bUseGameplayDebuggerCore && target.Configuration != UnrealTargetConfiguration.Shipping))
 				{
 					PublicDefinitions.Add("WITH_GAMEPLAY_DEBUGGER_MENU=1");
 				}
@@ -1486,7 +1502,7 @@ namespace UnrealBuildTool
 				if (bAddAsPublicDependency)
 				{
 					PublicDependencyModuleNames.Add("GameplayDebugger");
-					if (Target.Type == TargetType.Editor)
+					if (target.Type == TargetType.Editor)
 					{
 						PublicDependencyModuleNames.Add("GameplayDebuggerEditor");
 					}
@@ -1494,7 +1510,7 @@ namespace UnrealBuildTool
 				else
 				{
 					PrivateDependencyModuleNames.Add("GameplayDebugger");
-					if (Target.Type == TargetType.Editor)
+					if (target.Type == TargetType.Editor)
 					{
 						PrivateDependencyModuleNames.Add("GameplayDebuggerEditor");
 					}
@@ -1511,9 +1527,9 @@ namespace UnrealBuildTool
 		/// <summary>
 		/// Setup this module for Iris support (based on the settings in UEBuildConfiguration)
 		/// </summary>
-		public void SetupIrisSupport(ReadOnlyTargetRules Target, bool bAddAsPublicDependency = false)
+		public void SetupIrisSupport(ReadOnlyTargetRules target, bool bAddAsPublicDependency = false)
 		{
-			if (Target.bUseIris == true)
+			if (target.bUseIris == true)
 			{
 				PublicDefinitions.Add("UE_WITH_IRIS=1");
 				PrivateDefinitions.Add("UE_NET_HAS_IRIS_FASTARRAY_BINDING=1");
@@ -1546,9 +1562,10 @@ namespace UnrealBuildTool
 		/// <summary>
 		/// Setup this module for Chaos Visual Debugger support (Required for recording debug data that will be visualized in the Chaos Visual Debugger tool)
 		/// </summary>
-		public void SetupModuleChaosVisualDebuggerSupport(ReadOnlyTargetRules Target)
+		public void SetupModuleChaosVisualDebuggerSupport(ReadOnlyTargetRules target)
 		{
-			bool bHasChaosVisualDebuggerSupport = Target.bCompileChaosVisualDebuggerSupport && Target.Configuration != UnrealTargetConfiguration.Shipping;
+			//TODO: Emit some form of warning if CVD support is explicitly enabled, but UE Trace is disabled
+			bool bHasChaosVisualDebuggerSupport = target.bCompileChaosVisualDebuggerSupport && target.Configuration != UnrealTargetConfiguration.Shipping && target.bEnableTrace;
 			if (bHasChaosVisualDebuggerSupport)
 			{
 				PublicDependencyModuleNames.Add("ChaosVDRuntime");
@@ -1564,7 +1581,7 @@ namespace UnrealBuildTool
 		/// <summary>
 		/// Setup this module for physics support (based on the settings in UEBuildConfiguration)
 		/// </summary>
-		public void SetupModulePhysicsSupport(ReadOnlyTargetRules Target)
+		public void SetupModulePhysicsSupport(ReadOnlyTargetRules target)
 		{
 			PublicIncludePathModuleNames.AddRange(
 					new string[] {
@@ -1582,17 +1599,13 @@ namespace UnrealBuildTool
 
 			PublicDefinitions.Add("WITH_CLOTH_COLLISION_DETECTION=1");
 
-			SetupModuleChaosVisualDebuggerSupport(Target);
+			SetupModuleChaosVisualDebuggerSupport(target);
 
 			// Modules may still be relying on appropriate definitions for physics.
 			// Nothing in engine should use these anymore as they were all deprecated and 
 			// assumed to be in the following configuration from 5.1, this will cause
 			// deprecation warning to fire in any module still relying on these macros
-
-			Func<string, string, string, string> GetDeprecatedPhysicsMacro = (string Macro, string Value, string Version) =>
-			{
-				return Macro + "=UE_DEPRECATED_MACRO(" + Version + ", \"" + Macro + " is deprecated and should always be considered " + Value + ".\") " + Value;
-			};
+			static string GetDeprecatedPhysicsMacro(string macro, string value, string version) => $"{macro}=UE_DEPRECATED_MACRO({version}, \"{macro} is deprecated and should always be considered {value}.\") {value}";
 
 			PublicDefinitions.AddRange(
 				new string[]{
@@ -1614,63 +1627,63 @@ namespace UnrealBuildTool
 		/// <summary>
 		/// Determines if a module type is valid for a target, based on custom attributes
 		/// </summary>
-		/// <param name="ModuleType">The type of the module to check</param>
-		/// <param name="TargetRules">The target to check against</param>
-		/// <param name="InvalidReason">Out, reason this module was invalid</param>
+		/// <param name="moduleType">The type of the module to check</param>
+		/// <param name="targetRules">The target to check against</param>
+		/// <param name="invalidReason">Out, reason this module was invalid</param>
 		/// <returns>True if the module is valid, false otherwise</returns>
-		internal static bool IsValidForTarget(Type ModuleType, ReadOnlyTargetRules TargetRules, [NotNullWhen(false)] out string? InvalidReason)
+		internal static bool IsValidForTarget(Type moduleType, ReadOnlyTargetRules targetRules, [NotNullWhen(false)] out string? invalidReason)
 		{
-			IEnumerable<TargetType> SupportedTargetTypes = ModuleType.GetCustomAttributes<SupportedTargetTypesAttribute>().SelectMany(x => x.TargetTypes).Distinct();
-			if (SupportedTargetTypes.Any() && !SupportedTargetTypes.Contains(TargetRules.Type))
+			IEnumerable<TargetType> supportedTargetTypes = moduleType.GetCustomAttributes<SupportedTargetTypesAttribute>().SelectMany(x => x.TargetTypes).Distinct();
+			if (supportedTargetTypes.Any() && !supportedTargetTypes.Contains(targetRules.Type))
 			{
-				InvalidReason = $"TargetType '{TargetRules.Type}'";
+				invalidReason = $"TargetType '{targetRules.Type}'";
 				return false;
 			}
 
-			IEnumerable<UnrealTargetConfiguration> SupportedConfigurations = ModuleType.GetCustomAttributes<SupportedConfigurationsAttribute>().SelectMany(x => x.Configurations).Distinct();
-			if (SupportedConfigurations.Any() && !SupportedConfigurations.Contains(TargetRules.Configuration))
+			IEnumerable<UnrealTargetConfiguration> supportedConfigurations = moduleType.GetCustomAttributes<SupportedConfigurationsAttribute>().SelectMany(x => x.Configurations).Distinct();
+			if (supportedConfigurations.Any() && !supportedConfigurations.Contains(targetRules.Configuration))
 			{
-				InvalidReason = $"Configuration '{TargetRules.Configuration}'";
+				invalidReason = $"Configuration '{targetRules.Configuration}'";
 				return false;
 			}
 
 			// Skip platform extension modules. We only care about the base modules, not the platform overrides.
 			// The platform overrides get applied at a later stage when we actually come to build the module.
-			if (!UEBuildPlatform.GetPlatformFolderNames().Any(Name => ModuleType.Name.EndsWith("_" + Name)))
+			if (!UEBuildPlatform.GetPlatformFolderNames().Any(name => moduleType.Name.EndsWith("_" + name, StringComparison.OrdinalIgnoreCase)))
 			{
-				IEnumerable<SupportedPlatformsAttribute> PlatformAttributes = ModuleType.GetCustomAttributes<SupportedPlatformsAttribute>();
-				IEnumerable<UnrealTargetPlatform> SupportedPlatforms = PlatformAttributes.SelectMany(x => x.Platforms).Distinct();
-				if (PlatformAttributes.Any() && !SupportedPlatforms.Contains(TargetRules.Platform))
+				IEnumerable<SupportedPlatformsAttribute> platformAttributes = moduleType.GetCustomAttributes<SupportedPlatformsAttribute>();
+				IEnumerable<UnrealTargetPlatform> supportedPlatforms = platformAttributes.SelectMany(x => x.Platforms).Distinct();
+				if (platformAttributes.Any() && !supportedPlatforms.Contains(targetRules.Platform))
 				{
-					InvalidReason = $"Platform '{TargetRules.Platform}'";
+					invalidReason = $"Platform '{targetRules.Platform}'";
 					return false;
 				}
 			}
 
-			InvalidReason = null;
+			invalidReason = null;
 			return true;
 		}
 
 		/// <summary>
 		/// Determines if this module can be precompiled for the current target.
 		/// </summary>
-		/// <param name="RulesFile">Path to the module rules file</param>
+		/// <param name="rulesFile">Path to the module rules file</param>
 		/// <returns>True if the module can be precompiled, false otherwise</returns>
-		internal bool IsValidForTarget(FileReference RulesFile)
+		internal bool IsValidForTarget(FileReference rulesFile)
 		{
-			if (Type == ModuleRules.ModuleType.CPlusPlus)
+			if (Type == ModuleType.CPlusPlus)
 			{
 				switch (PrecompileForTargets)
 				{
-					case ModuleRules.PrecompileTargetsType.None:
+					case PrecompileTargetsType.None:
 						return false;
-					case ModuleRules.PrecompileTargetsType.Default:
-						return (Target.Type == TargetType.Editor || !Unreal.GetExtensionDirs(Unreal.EngineDirectory, "Source/Developer").Any(Dir => RulesFile.IsUnderDirectory(Dir)) || Plugin != null);
-					case ModuleRules.PrecompileTargetsType.Game:
+					case PrecompileTargetsType.Default:
+						return (Target.Type == TargetType.Editor || !Unreal.GetExtensionDirs(Unreal.EngineDirectory, "Source/Developer").Any(dir => rulesFile.IsUnderDirectory(dir)) || Plugin != null);
+					case PrecompileTargetsType.Game:
 						return (Target.Type == TargetType.Client || Target.Type == TargetType.Server || Target.Type == TargetType.Game);
-					case ModuleRules.PrecompileTargetsType.Editor:
+					case PrecompileTargetsType.Editor:
 						return (Target.Type == TargetType.Editor);
-					case ModuleRules.PrecompileTargetsType.Any:
+					case PrecompileTargetsType.Any:
 						return true;
 				}
 			}
@@ -1680,104 +1693,84 @@ namespace UnrealBuildTool
 		/// <summary>
 		/// Determines whether a given platform is available in the context of the current Target
 		/// </summary>
-		/// <param name="InPlatform">The platform to check for</param>
+		/// <param name="inPlatform">The platform to check for</param>
 		/// <returns>True if it's available, false otherwise</returns>
-		protected bool IsPlatformAvailable(UnrealTargetPlatform InPlatform)
+		protected bool IsPlatformAvailable(UnrealTargetPlatform inPlatform) => UEBuildPlatform.IsPlatformAvailableForTarget(inPlatform, Target);
+
+		/// <summary>
+		/// Returns all the modules that are in the given module group
+		/// </summary>
+		/// <param name="moduleGroup">The name of the module group, as defined by a [ModuleGroup("Name")] attribute</param>
+		/// <param name="bOnlyValid">Only include modules that are valid for the current Target</param>
+		/// <returns></returns>
+		public IEnumerable<string> GetModulesInGroup(string moduleGroup, bool bOnlyValid = true)
 		{
-			return UEBuildPlatform.IsPlatformAvailableForTarget(InPlatform, Target);
+			// figure out what platforms/groups aren't allowed with this opted in list
+			List<string>? disallowedPlatformsAndGroups = (bOnlyValid && Target.OptedInModulePlatforms != null) ? Utils.MakeListOfUnsupportedPlatforms(Target.OptedInModulePlatforms.ToList(), false, Logger) : null;
+
+			foreach (Type moduleType in RulesAssembly.GetTypes()
+				.Where(t => t.IsSubclassOf(typeof(ModuleRules)) && t.IsDefined(typeof(ModuleGroupsAttribute), true))
+				.Where(t => !bOnlyValid || IsValidForTarget(t, Target, out string? _))
+				)
+			{
+				// check if the module file is disallowed
+				if (disallowedPlatformsAndGroups != null)
+				{
+					FileReference? moduleFileName = RulesAssembly.GetModuleFileName(moduleType.Name);
+					if (moduleFileName != null)
+					{
+						if (moduleFileName.ContainsAnyNames(disallowedPlatformsAndGroups, Unreal.EngineDirectory) ||
+							(Target.ProjectFile != null && moduleFileName.ContainsAnyNames(disallowedPlatformsAndGroups, Target.ProjectFile.Directory)))
+						{
+							continue;
+						}
+					}
+				}
+
+				if (moduleType.GetCustomAttributes<ModuleGroupsAttribute>().Any(x => x.ModuleGroups.Contains(moduleGroup)))
+				{
+					yield return moduleType.Name;
+				}
+			}
 		}
 
 		/// <summary>
 		/// Prepares a module for building a low level tests executable.
-		/// If we're building a module as part of a test module chain and there's a Tests folder with low level tests, then they require the LowLevelTestsRunner dependency.
-		/// We also keep track of any Editor, Engine and other conditionally compiled dependencies.
+		/// If we're building a module as part of a test module chain, then they require the LowLevelTestsRunner dependency.
 		/// </summary>
 		internal void PrepareModuleForTests()
 		{
-			TestTargetRules? TestTargetRules = Target.InnerTestTargetRules;
-			if (TestTargetRules == null)
+			TestTargetRules? testTargetRules = Target.InnerTestTargetRules;
+			if (testTargetRules == null)
 			{
 				return;
 			}
 
-			lock (TestTargetRules)
+			lock (testTargetRules)
 			{
-				if (Name != "LowLevelTestsRunner" && System.IO.Directory.Exists(TestsDirectory))
+				if (Name != "LowLevelTestsRunner")
 				{
 					if (!PrivateIncludePathModuleNames.Contains("LowLevelTestsRunner"))
 					{
 						PrivateIncludePathModuleNames.Add("LowLevelTestsRunner");
 					}
 				}
-				else if (Name == "LowLevelTestsRunner")
-				{
-					TestTargetRules.LowLevelTestsRunnerModule = this;
-				}
-
-				if (Name == "Engine" && !TestTargetRules.bNeverCompileAgainstEngine)
-				{
-					TestTargetRules.bTestsRequireEngine = true;
-				}
-				if (Name == "UnrealEd" && !TestTargetRules.bNeverCompileAgainstEditor)
-				{
-					TestTargetRules.bTestsRequireEditor = true;
-				}
-				if (Name == "ApplicationCore" && !TestTargetRules.bNeverCompileAgainstApplicationCore)
-				{
-					TestTargetRules.bTestsRequireApplicationCore = true;
-				}
-				if (Name == "CoreUObject" && !TestTargetRules.bNeverCompileAgainstCoreUObject)
-				{
-					TestTargetRules.bTestsRequireCoreUObject = true;
-				}
-
-				if (TestTargetRules.LowLevelTestsRunnerModule != null)
-				{
-					if (TestTargetRules.bTestsRequireEditor && !TestTargetRules.LowLevelTestsRunnerModule.PrivateDependencyModuleNames.Contains("UnrealEd"))
-					{
-						TestTargetRules.LowLevelTestsRunnerModule.PrivateDependencyModuleNames.Add("UnrealEd");
-					}
-					if (TestTargetRules.bTestsRequireEngine && !TestTargetRules.LowLevelTestsRunnerModule.PrivateDependencyModuleNames.Contains("Engine"))
-					{
-						TestTargetRules.LowLevelTestsRunnerModule.PrivateDependencyModuleNames.Add("Engine");
-					}
-					if (TestTargetRules.bTestsRequireApplicationCore && !TestTargetRules.LowLevelTestsRunnerModule.PrivateDependencyModuleNames.Contains("ApplicationCore"))
-					{
-						TestTargetRules.LowLevelTestsRunnerModule.PrivateDependencyModuleNames.Add("ApplicationCore");
-					}
-					if (TestTargetRules.bTestsRequireCoreUObject && !TestTargetRules.LowLevelTestsRunnerModule.PrivateDependencyModuleNames.Contains("CoreUObject"))
-					{
-						TestTargetRules.LowLevelTestsRunnerModule.PrivateDependencyModuleNames.Add("CoreUObject");
-					}
-				}
 			}
 		}
 
 		internal bool IsTestModule => bIsTestModuleOverride ?? false;
+
 		/// <summary>
 		/// Whether this is a low level tests module.
 		/// </summary>
-		protected bool? bIsTestModuleOverride;
+		protected bool? bIsTestModuleOverride { get; set; }
 
 		/// <summary>
 		/// Returns the module directory for a given subclass of the module (platform extensions add subclasses of ModuleRules to add in platform-specific settings)
 		/// </summary>
-		/// <param name="Type">typeof the subclass</param>
+		/// <param name="type">typeof the subclass</param>
 		/// <returns>Directory where the subclass's .Build.cs lives, or null if not found</returns>
-		public DirectoryReference? GetModuleDirectoryForSubClass(Type Type)
-		{
-			if (DirectoriesForModuleSubClasses == null)
-			{
-				return null;
-			}
-
-			DirectoryReference? Directory;
-			if (DirectoriesForModuleSubClasses.TryGetValue(Type, out Directory))
-			{
-				return Directory;
-			}
-			return null;
-		}
+		public DirectoryReference? GetModuleDirectoryForSubClass(Type type) => DirectoriesForModuleSubClasses.TryGetValue(type, out DirectoryReference? directory) ? directory : null;
 
 		/// <summary>
 		/// Returns the directories for all subclasses of this module, as well as any additional directories specified by the rules
@@ -1785,27 +1778,21 @@ namespace UnrealBuildTool
 		/// <returns>List of directories, or null if none were added</returns>
 		public DirectoryReference[] GetAllModuleDirectories()
 		{
-			List<DirectoryReference> AllDirectories = new List<DirectoryReference> { Directory };
-			AllDirectories.AddRange(AdditionalModuleDirectories);
-
-			if (DirectoriesForModuleSubClasses != null)
-			{
-				AllDirectories.AddRange(DirectoriesForModuleSubClasses.Values);
-			}
-
-			return AllDirectories.ToArray();
+			List<DirectoryReference> allDirectories = new List<DirectoryReference>(DirectoriesForModuleSubClasses.Values);
+			allDirectories.AddRange(AdditionalModuleDirectories);
+			return allDirectories.ToArray();
 		}
 
 		/// <summary>
 		/// Adds an additional module directory, if it exists (useful for NotForLicensees/NoRedist)
 		/// </summary>
-		/// <param name="Directory"></param>
+		/// <param name="directory"></param>
 		/// <returns>true if the directory exists</returns>
-		protected bool ConditionalAddModuleDirectory(DirectoryReference Directory)
+		protected bool ConditionalAddModuleDirectory(DirectoryReference directory)
 		{
-			if (DirectoryReference.Exists(Directory))
+			if (DirectoryReference.Exists(directory))
 			{
-				AdditionalModuleDirectories.Add(Directory);
+				AdditionalModuleDirectories.Add(directory);
 				return true;
 			}
 
@@ -1824,138 +1811,139 @@ namespace UnrealBuildTool
 		/// <summary>
 		/// Returns the VcPkg root directory for the build configuration
 		/// </summary>
-		/// <param name="PackageName">The name of the third-party package</param>
+		/// <param name="packageName">The name of the third-party package</param>
 		/// <returns></returns>
-		public string GetVcPackageRoot(string PackageName)
+		[SuppressMessage("Globalization", "CA1308:Normalize strings to uppercase", Justification = "Architecture path is lowercase")]
+		public string GetVcPackageRoot(string packageName)
 		{
 			// TODO: MacOS support, other platform support
-			string TargetPlatform = Target.Platform.ToString();
-			string? Platform = null;
-			string? Architecture = null;
-			string Linkage = String.Empty;
-			string Toolset = String.Empty;
+			string targetPlatform = Target.Platform.ToString();
+			string? platform = null;
+			string? architecture = null;
+			string linkage = String.Empty;
+			string toolset = String.Empty;
 			if (Target.Platform == UnrealTargetPlatform.Win64)
 			{
-				Platform = "windows";
-				Architecture = Target.WindowsPlatform.Architecture.ToString().ToLowerInvariant();
+				platform = "windows";
+				architecture = Target.WindowsPlatform.Architecture.ToString().ToLowerInvariant();
 				if (Target.bUseStaticCRT)
 				{
-					Linkage = "-static";
+					linkage = "-static";
 				}
 				else
 				{
-					Linkage = "-static-md";
+					linkage = "-static-md";
 				}
-				Toolset = "-v142";
+				toolset = "-v142";
 			}
 			else if (Target.Platform == UnrealTargetPlatform.Linux)
 			{
-				Architecture = "x86_64";
-				Platform = "unknown-linux-gnu";
+				architecture = "x86_64";
+				platform = "unknown-linux-gnu";
 			}
 			else if (Target.Platform == UnrealTargetPlatform.LinuxArm64)
 			{
-				Architecture = "aarch64";
-				Platform = "unknown-linux-gnueabi";
+				architecture = "aarch64";
+				platform = "unknown-linux-gnueabi";
 			}
 			else if (Target.Platform == UnrealTargetPlatform.Mac)
 			{
-				Architecture = "x86_64";
-				Platform = "osx";
+				architecture = "x86_64";
+				platform = "osx";
 			}
 
-			if (String.IsNullOrEmpty(TargetPlatform) || String.IsNullOrEmpty(Platform) || String.IsNullOrEmpty(Architecture))
+			if (String.IsNullOrEmpty(targetPlatform) || String.IsNullOrEmpty(platform) || String.IsNullOrEmpty(architecture))
 			{
 				throw new System.NotSupportedException($"Platform {Target.Platform} not currently supported by vcpkg");
 			}
 
-			string Triplet = $"{Architecture}-{Platform}{Linkage}{Toolset}";
+			string triplet = $"{architecture}-{platform}{linkage}{toolset}";
 
-			return Path.Combine("ThirdParty", "vcpkg", TargetPlatform, Triplet, $"{PackageName}_{Triplet}");
+			return Path.Combine("ThirdParty", "vcpkg", targetPlatform, triplet, $"{packageName}_{triplet}");
 		}
 
 		/// <summary>
 		/// Adds libraries compiled with vcpkg to the current module
 		/// </summary>
-		/// <param name="PackageName">The name of the third-party package</param>
-		/// <param name="AddInclude">Should the include directory be added to PublicIncludePaths</param>
-		/// <param name="Libraries">The names of the libaries to add to PublicAdditionalLibraries/</param>
-		public void AddVcPackage(string PackageName, bool AddInclude, params string[] Libraries)
+		/// <param name="packageName">The name of the third-party package</param>
+		/// <param name="addInclude">Should the include directory be added to PublicIncludePaths</param>
+		/// <param name="libraries">The names of the libaries to add to PublicAdditionalLibraries/</param>
+		public void AddVcPackage(string packageName, bool addInclude, params string[] libraries)
 		{
-			string VcPackageRoot = GetVcPackageRoot(PackageName);
+			string vcPackageRoot = GetVcPackageRoot(packageName);
 
-			if (!System.IO.Directory.Exists(VcPackageRoot))
+			if (!System.IO.Directory.Exists(vcPackageRoot))
 			{
-				throw new DirectoryNotFoundException(VcPackageRoot);
+				throw new DirectoryNotFoundException(vcPackageRoot);
 			}
 
-			string LibraryExtension = String.Empty;
+			string libraryExtension = String.Empty;
 			if (Target.Platform == UnrealTargetPlatform.Win64)
 			{
-				LibraryExtension = ".lib";
+				libraryExtension = ".lib";
 			}
 			else if (Target.Platform == UnrealTargetPlatform.Linux || Target.Platform == UnrealTargetPlatform.LinuxArm64 || Target.Platform == UnrealTargetPlatform.Mac)
 			{
-				LibraryExtension = ".a";
+				libraryExtension = ".a";
 			}
 
-			foreach (string Library in Libraries)
+			foreach (string library in libraries)
 			{
-				string LibraryPath = Path.Combine(VcPackageRoot, "lib", $"{Library}{LibraryExtension}");
-				if ((Target.Platform == UnrealTargetPlatform.Linux || Target.Platform == UnrealTargetPlatform.LinuxArm64 || Target.Platform == UnrealTargetPlatform.Mac) && !Library.StartsWith("lib"))
+				string libraryPath = Path.Combine(vcPackageRoot, "lib", $"{library}{libraryExtension}");
+				if ((Target.Platform == UnrealTargetPlatform.Linux || Target.Platform == UnrealTargetPlatform.LinuxArm64 || Target.Platform == UnrealTargetPlatform.Mac) && !library.StartsWith("lib", StringComparison.OrdinalIgnoreCase))
 				{
-					LibraryPath = Path.Combine(VcPackageRoot, "lib", $"lib{Library}{LibraryExtension}");
+					libraryPath = Path.Combine(vcPackageRoot, "lib", $"lib{library}{libraryExtension}");
 				}
-				if (!System.IO.File.Exists(LibraryPath))
+				if (!System.IO.File.Exists(libraryPath))
 				{
-					throw new FileNotFoundException(LibraryPath);
+					throw new FileNotFoundException(libraryPath);
 				}
-				PublicAdditionalLibraries.Add(LibraryPath);
+				PublicAdditionalLibraries.Add(libraryPath);
 			}
 
-			if (AddInclude)
+			if (addInclude)
 			{
-				string IncludePath = Path.Combine(VcPackageRoot, "include");
-				if (!System.IO.Directory.Exists(IncludePath))
+				string includePath = Path.Combine(vcPackageRoot, "include");
+				if (!System.IO.Directory.Exists(includePath))
 				{
-					throw new DirectoryNotFoundException(IncludePath);
+					throw new DirectoryNotFoundException(includePath);
 				}
 
-				PublicSystemIncludePaths.Add(Path.Combine(VcPackageRoot, "include"));
+				PublicSystemIncludePaths.Add(Path.Combine(vcPackageRoot, "include"));
 			}
 		}
 
 		/// <summary>
 		/// Replace an expected value in a list of definitions with a new value
 		/// </summary>
-		/// <param name="Definitions">List of definitions e.g. PublicDefinitions</param>
-		/// <param name="Name">Name of the define to change</param>
-		/// <param name="PreviousValue">Expected value</param>
-		/// <param name="NewValue">New value</param>
+		/// <param name="definitions">List of definitions e.g. PublicDefinitions</param>
+		/// <param name="name">Name of the define to change</param>
+		/// <param name="previousValue">Expected value</param>
+		/// <param name="newValue">New value</param>
 		/// <exception cref="Exception"></exception>
-		protected static void ChangeDefinition(List<string> Definitions, string Name, string PreviousValue, string NewValue)
+		protected static void ChangeDefinition(List<string> definitions, string name, string previousValue, string newValue)
 		{
-			if (!Definitions.Remove($"{Name}={PreviousValue}"))
+			if (!definitions.Remove($"{name}={previousValue}"))
 			{
 				throw new Exception("Failed to removed expected definition");
 			}
-			Definitions.Add($"{Name}={NewValue}");
+			definitions.Add($"{name}={newValue}");
 		}
 
 		/// <summary>
 		/// Replace an expected value in a list of module names with a new value
 		/// </summary>
-		/// <param name="Definitions">List of module names e.g. PublicDependencyModuleNames</param>
-		/// <param name="PreviousModule">Expected value</param>
-		/// <param name="NewModule">New value</param>
+		/// <param name="definitions">List of module names e.g. PublicDependencyModuleNames</param>
+		/// <param name="previousModule">Expected value</param>
+		/// <param name="newModule">New value</param>
 		/// <exception cref="Exception"></exception>
-		protected static void ReplaceModule(List<string> Definitions, string PreviousModule, string NewModule)
+		protected static void ReplaceModule(List<string> definitions, string previousModule, string newModule)
 		{
-			if (!Definitions.Remove(PreviousModule))
+			if (!definitions.Remove(previousModule))
 			{
 				throw new Exception("Failed to removed expected module name");
 			}
-			Definitions.Add(NewModule);
+			definitions.Add(newModule);
 		}
 	}
 }

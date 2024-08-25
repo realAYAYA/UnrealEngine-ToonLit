@@ -76,8 +76,8 @@ public:
 #endif // WITH_EDITOR
 
 	//UControlRig Delegates
-	void HandleOnInitialized_GameThread();
-	void HandleOnInitialized(URigVMHost* Subject, const FName& InEventName);
+	void HandleOnPostConstructed_GameThread();
+	void HandleOnPostConstructed(UControlRig* Subject, const FName& InEventName);
 
 #if WITH_EDITOR
 	void HandlePackageDone(const FEndLoadPackageContext& Context);
@@ -156,6 +156,9 @@ public:
 	// if order is not set then it uses the default FRotator conversions
 	CONTROLRIG_API void ChangeControlRotationOrder(const FName& InControlName, const TOptional<EEulerRotationOrder>& NewOrder,
 		EMovieSceneKeyInterpolation Interpolation = EMovieSceneKeyInterpolation::SmartAuto);
+
+	CONTROLRIG_API int32 GetPriorityOrder() const;
+	CONTROLRIG_API void SetPriorityOrder(int32 InPriorityIndex);
 private:
 	//get the rotation orderm will not be set if it's default FRotator order. If bCurrent is true, it uses what's set
 	//if false it uses the default setting from the current control rig.
@@ -173,11 +176,10 @@ private:
 		IMovieSceneConstrainedSection* InSection,
 		FMovieSceneConstraintChannel* InChannel) const;
 	IMovieSceneConstrainedSection::FConstraintChannelAddedEvent OnConstraintChannelAdded;
-
-
 	void ReconstructControlRig();
 
 private:
+
 
 	/** Control Rig we control*/
 	UPROPERTY()
@@ -199,6 +201,19 @@ private:
 	UPROPERTY()
 	TMap<FName,FControlRotationOrder> ControlsRotationOrder;
 
+	UPROPERTY()
+	int32 PriorityOrder;
+
+public:
+	static CONTROLRIG_API FColor AbsoluteRigTrackColor;
+	static CONTROLRIG_API FColor LayeredRigTrackColor;
+
+public:
+	UControlRig* GetGameWorldControlRig(UWorld* InWorld);
+private:
+	/** copy of the controlled control rig that we use in the game world so editor control rig doesn't conflict*/
+	UPROPERTY(transient)
+	TMap<TWeakObjectPtr<UWorld>,TObjectPtr<UControlRig>> GameWorldControlRigs;
 };
 
 

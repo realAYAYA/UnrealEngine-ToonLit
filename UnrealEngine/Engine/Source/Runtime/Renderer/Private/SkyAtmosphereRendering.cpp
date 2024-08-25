@@ -10,7 +10,6 @@
 #include "DeferredShadingRenderer.h"
 #include "LightSceneInfo.h"
 #include "PixelShaderUtils.h"
-#include "RenderTargetTemp.h"
 #include "Rendering/SkyAtmosphereCommonData.h"
 #include "ScenePrivate.h"
 #include "SceneRenderTargetParameters.h"
@@ -20,6 +19,7 @@
 #include "RendererUtils.h"
 #include "ScreenPass.h"
 #include "UnrealEngine.h"
+#include "PostProcess/PostProcessing.h" // IsPostProcessingWithAlphaChannelSupported
 
 
 //PRAGMA_DISABLE_OPTIMIZATION
@@ -217,8 +217,8 @@ static TAutoConsoleVariable<int32> CVarSkyAtmosphereEditorNotifications(
 	TEXT("Enable the rendering of in editor notification to warn the user about missing sky dome pixels on screen. It is better to keep it enabled and will be removed when shipping.\n"),
 	ECVF_RenderThreadSafe | ECVF_Scalability);
 
-static TAutoConsoleVariable<bool> CVarSkyAtmosphereASyncCompute(
-	TEXT("r.SkyAtmosphereASyncCompute"), false,
+static TAutoConsoleVariable<int32> CVarSkyAtmosphereASyncCompute(
+	TEXT("r.SkyAtmosphereASyncCompute"), 0,
 	TEXT("SkyAtmosphere on async compute (default: false). When running on the async pipe, SkyAtmosphere lut generation will overlap with the occlusion pass.\n"),
 	ECVF_RenderThreadSafe);
 
@@ -284,10 +284,14 @@ IMPLEMENT_GLOBAL_SHADER_PARAMETER_STRUCT(FSkyAtmosphereInternalCommonParameters,
 
 ESkyAtmospherePassLocation GetSkyAtmospherePassLocation()
 {
-	if (CVarSkyAtmosphereASyncCompute.GetValueOnAnyThread())
+	if (CVarSkyAtmosphereASyncCompute.GetValueOnAnyThread() == 1)
 	{
 		// When SkyAtmLUT is running on async compute, try to kick it before occlusion pass to have better wave occupancy
 		return ESkyAtmospherePassLocation::BeforeOcclusion;
+	}
+	else if (CVarSkyAtmosphereASyncCompute.GetValueOnAnyThread() == 2)
+	{
+		return ESkyAtmospherePassLocation::BeforePrePass;
 	}
 	// When SkyAtmLUT is running on graphics pipe, kickbefore BasePass to have a better overlap when DistanceFieldShadows is running async
 	return ESkyAtmospherePassLocation::BeforeBasePass;
@@ -374,7 +378,7 @@ bool ShouldRenderSkyAtmosphere(const FScene* Scene, const FEngineShowFlags& Engi
 		const FSkyAtmosphereRenderSceneInfo* SkyAtmosphere = Scene->GetSkyAtmosphereSceneInfo();
 		check(SkyAtmosphere);
 
-		return FReadOnlyCVARCache::Get().bSupportSkyAtmosphere && CVarSkyAtmosphere.GetValueOnRenderThread() > 0;
+		return FReadOnlyCVARCache::SupportSkyAtmosphere() && CVarSkyAtmosphere.GetValueOnRenderThread() > 0;
 	}
 	return false;
 }
@@ -1107,7 +1111,8 @@ void FSceneRenderer::InitSkyAtmosphereForViews(FRHICommandListImmediate& RHICmdL
 static EPixelFormat GetSkyLutTextureFormat(ERHIFeatureLevel::Type FeatureLevel)
 {
 	EPixelFormat TextureLUTFormat = PF_FloatRGB;
-	if (FeatureLevel <= ERHIFeatureLevel::ES3_1)
+	const bool bSupportsAlpha = IsPostProcessingWithAlphaChannelSupported();
+	if (FeatureLevel <= ERHIFeatureLevel::ES3_1 || bSupportsAlpha)
 	{
 		// OpenGL ES3.1 does not support storing into 3-component images
 		// TODO: check if need this for Metal, Vulkan
@@ -1291,7 +1296,7 @@ static void SetupSkyAtmosphereInternalCommonParameters(
 	InternalCommonParameters.CameraAerialPerspectiveVolumeSizeAndInvSize = GetSizeAndInvSize(CameraAerialPerspectiveVolumeScreenResolution, CameraAerialPerspectiveVolumeScreenResolution);
 }
 
-void FSceneRenderer::RenderSkyAtmosphereLookUpTables(FRDGBuilder& GraphBuilder, FRDGExternalAccessQueue& ExternalAccessQueue)
+void FSceneRenderer::RenderSkyAtmosphereLookUpTables(FRDGBuilder& GraphBuilder, class FSkyAtmospherePendingRDGResources& PendingRDGResources)
 {
 	check(ShouldRenderSkyAtmosphere(Scene, ViewFamily.EngineShowFlags)); // This should not be called if we should not render SkyAtmosphere
 
@@ -1302,6 +1307,9 @@ void FSceneRenderer::RenderSkyAtmosphereLookUpTables(FRDGBuilder& GraphBuilder, 
 
 	FSkyAtmosphereRenderSceneInfo& SkyInfo = *Scene->GetSkyAtmosphereSceneInfo();
 	const FSkyAtmosphereSceneProxy& SkyAtmosphereSceneProxy = SkyInfo.GetSkyAtmosphereSceneProxy();
+
+	PendingRDGResources.SceneRenderer = this;
+	PendingRDGResources.ViewResources.SetNum(Views.Num());
 
 	const bool bHighQualityMultiScattering = CVarSkyAtmosphereMultiScatteringLUTHighQuality.GetValueOnRenderThread() > 0;
 	const bool bSecondAtmosphereLightEnabled = Scene->IsSecondAtmosphereLightEnabled();
@@ -1406,7 +1414,7 @@ void FSceneRenderer::RenderSkyAtmosphereLookUpTables(FRDGBuilder& GraphBuilder, 
 		const FIntVector NumGroups = FIntVector::DivideAndRoundUp(TextureSize, FRenderDistantSkyLightLutCS::GroupSize);
 		FComputeShaderUtils::AddPass(GraphBuilder, RDG_EVENT_NAME("DistantSkyLightLut"), PassFlag, ComputeShader, PassParameters, NumGroups);
 
-		SkyInfo.GetDistantSkyLightLutTexture() = ConvertToExternalAccessTexture(GraphBuilder, ExternalAccessQueue, DistantSkyLightLut, ERHIAccess::SRVMask, ERHIPipeline::All);
+		PendingRDGResources.DistantSkyLightLut = DistantSkyLightLut;
 	}
 
 	SkyAtmosphereLightShadowData LightShadowData;
@@ -1506,11 +1514,7 @@ void FSceneRenderer::RenderSkyAtmosphereLookUpTables(FRDGBuilder& GraphBuilder, 
 			const FIntVector NumGroups = FIntVector::DivideAndRoundUp(TextureSize, FRenderSkyViewLutCS::GroupSize);
 			FComputeShaderUtils::AddPass(GraphBuilder, RDG_EVENT_NAME("RealTimeCaptureSkyViewLut"), PassFlag, ComputeShader, PassParameters, NumGroups);
 
-			Scene->RealTimeReflectionCaptureSkyAtmosphereViewLutTexture = ConvertToExternalAccessTexture(GraphBuilder, ExternalAccessQueue, RealTimeReflectionCaptureSkyAtmosphereViewLutTexture, ERHIAccess::SRVMask, ERHIPipeline::All);
-		}
-		else
-		{
-			Scene->RealTimeReflectionCaptureSkyAtmosphereViewLutTexture = nullptr;
+			PendingRDGResources.RealTimeReflectionCaptureSkyAtmosphereViewLutTexture = RealTimeReflectionCaptureSkyAtmosphereViewLutTexture;
 		}
 
 		if (bRealTimeReflectionCapture360APLutTexture)
@@ -1560,17 +1564,8 @@ void FSceneRenderer::RenderSkyAtmosphereLookUpTables(FRDGBuilder& GraphBuilder, 
 			const FIntVector NumGroups = FIntVector::DivideAndRoundUp(TextureSize, FRenderCameraAerialPerspectiveVolumeCS::GroupSize);
 			FComputeShaderUtils::AddPass(GraphBuilder, RDG_EVENT_NAME("RealTimeCaptureCamera360VolumeLut"), PassFlag, ComputeShader, PassParameters, NumGroups);
 
-			Scene->RealTimeReflectionCaptureCamera360APLutTexture = ConvertToExternalAccessTexture(GraphBuilder, ExternalAccessQueue, RealTimeReflectionCaptureCamera360APLutTexture, ERHIAccess::SRVMask, ERHIPipeline::All);
+			PendingRDGResources.RealTimeReflectionCaptureCamera360APLutTexture = RealTimeReflectionCaptureCamera360APLutTexture;
 		}
-		else
-		{
-			Scene->RealTimeReflectionCaptureCamera360APLutTexture = nullptr;
-		}
-	}
-	else
-	{
-		Scene->RealTimeReflectionCaptureSkyAtmosphereViewLutTexture = nullptr;
-		Scene->RealTimeReflectionCaptureCamera360APLutTexture = nullptr;
 	}
 
 	for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ViewIndex++)
@@ -1697,13 +1692,51 @@ void FSceneRenderer::RenderSkyAtmosphereLookUpTables(FRDGBuilder& GraphBuilder, 
 			FComputeShaderUtils::AddPass(GraphBuilder, RDG_EVENT_NAME("CameraVolumeLut"), PassFlag, ComputeShader, PassParameters, NumGroups);
 		}
 
-		View.SkyAtmosphereViewLutTexture = ConvertToExternalAccessTexture(GraphBuilder, ExternalAccessQueue, SkyAtmosphereViewLutTexture);
-		View.SkyAtmosphereCameraAerialPerspectiveVolume = ConvertToExternalAccessTexture(GraphBuilder, ExternalAccessQueue, SkyAtmosphereCameraAerialPerspectiveVolume, ERHIAccess::SRVMask, ERHIPipeline::All);
+		PendingRDGResources.ViewResources[ViewIndex].SkyAtmosphereViewLutTexture = SkyAtmosphereViewLutTexture;
+		PendingRDGResources.ViewResources[ViewIndex].SkyAtmosphereCameraAerialPerspectiveVolume = SkyAtmosphereCameraAerialPerspectiveVolume;
 	}
 
-	SkyInfo.GetTransmittanceLutTexture() = ConvertToExternalAccessTexture(GraphBuilder, ExternalAccessQueue, TransmittanceLut);
+	PendingRDGResources.TransmittanceLut = TransmittanceLut;
+}
 
-	// TODO have RDG execute those above passes with compute overlap similarly to using AutomaticCacheFlushAfterComputeShader(true);
+void FSkyAtmospherePendingRDGResources::CommitToSceneAndViewUniformBuffers(FRDGBuilder& GraphBuilder, FRDGExternalAccessQueue& ExternalAccessQueue) const
+{
+	check(SceneRenderer);
+	FScene* Scene = SceneRenderer->Scene;
+	FSkyAtmosphereRenderSceneInfo& SkyInfo = *Scene->GetSkyAtmosphereSceneInfo();
+
+	if (DistantSkyLightLut)
+	{
+		SkyInfo.GetDistantSkyLightLutTexture() = ConvertToExternalAccessTexture(GraphBuilder, ExternalAccessQueue, DistantSkyLightLut, ERHIAccess::SRVMask, ERHIPipeline::All);
+	}
+
+	if (RealTimeReflectionCaptureSkyAtmosphereViewLutTexture)
+	{
+		Scene->RealTimeReflectionCaptureSkyAtmosphereViewLutTexture = ConvertToExternalAccessTexture(GraphBuilder, ExternalAccessQueue, RealTimeReflectionCaptureSkyAtmosphereViewLutTexture, ERHIAccess::SRVMask, ERHIPipeline::All);
+	}
+	else
+	{
+		Scene->RealTimeReflectionCaptureSkyAtmosphereViewLutTexture = nullptr;
+	}
+
+	if (RealTimeReflectionCaptureCamera360APLutTexture)
+	{
+		Scene->RealTimeReflectionCaptureCamera360APLutTexture = ConvertToExternalAccessTexture(GraphBuilder, ExternalAccessQueue, RealTimeReflectionCaptureCamera360APLutTexture, ERHIAccess::SRVMask, ERHIPipeline::All);
+	}
+	else
+	{
+		Scene->RealTimeReflectionCaptureCamera360APLutTexture = nullptr;
+	}
+
+	for (int32 ViewIndex = 0; ViewIndex < SceneRenderer->Views.Num(); ViewIndex++)
+	{
+		FViewInfo& View = SceneRenderer->Views[ViewIndex];
+		View.SkyAtmosphereViewLutTexture = ConvertToExternalAccessTexture(GraphBuilder, ExternalAccessQueue, ViewResources[ViewIndex].SkyAtmosphereViewLutTexture, ERHIAccess::SRVMask, ERHIPipeline::All);
+		View.SkyAtmosphereCameraAerialPerspectiveVolume = ConvertToExternalAccessTexture(GraphBuilder, ExternalAccessQueue, ViewResources[ViewIndex].SkyAtmosphereCameraAerialPerspectiveVolume, ERHIAccess::SRVMask, ERHIPipeline::All);
+	}
+
+	check(TransmittanceLut);
+	SkyInfo.GetTransmittanceLutTexture() = ConvertToExternalAccessTexture(GraphBuilder, ExternalAccessQueue, TransmittanceLut);
 }
 
 FSkyAtmosphereRenderContext::FSkyAtmosphereRenderContext()
@@ -1753,12 +1786,17 @@ void FSceneRenderer::RenderSkyAtmosphereInternal(
 		const float CloudShadowOnAtmosphereStrength1 = AtmosphereLight1Proxy ? AtmosphereLight1Proxy->GetCloudShadowOnAtmosphereStrength() : 0.0f;
 		const bool bShouldSampleCloudShadow = SkyRC.bShouldSampleCloudShadow && (CloudShadowOnAtmosphereStrength0 > 0.0f || CloudShadowOnAtmosphereStrength1 > 0.0f);
 
+		const bool bFastAerialPerspectiveDepthTest = SkyRC.bFastAerialPerspectiveDepthTest;
+		const bool SkyAtmosphereOutputsAlpha = IsPostProcessingWithAlphaChannelSupported();
+		const bool SkyAtmosphereAlphaHoldOut = SkyAtmosphereOutputsAlpha && SkyAtmosphereSceneProxy.IsHoldout();
+		const bool bRenderSkyPixel = SkyRC.bRenderSkyPixel || SkyAtmosphereOutputsAlpha;	// In this case we need to write alpha holdout values in the sky pixels.
+
 		FRenderSkyAtmospherePS::FPermutationDomain PsPermutationVector;
 		PsPermutationVector.Set<FSampleCloudSkyAO>(SkyRC.bShouldSampleCloudSkyAO);
 		PsPermutationVector.Set<FFastSky>(SkyRC.bFastSky && !ForceRayMarching);
 		PsPermutationVector.Set<FFastAerialPespective>(SkyRC.bFastAerialPerspective && !ForceRayMarching);
 		PsPermutationVector.Set<FSecondAtmosphereLight>(SkyRC.bSecondAtmosphereLightEnabled);
-		PsPermutationVector.Set<FRenderSky>(SkyRC.bRenderSkyPixel);
+		PsPermutationVector.Set<FRenderSky>(bRenderSkyPixel);
 		PsPermutationVector.Set<FSampleOpaqueShadow>(SkyRC.bShouldSampleOpaqueShadow);
 		PsPermutationVector.Set<FSampleCloudShadow>(bShouldSampleCloudShadow);
 		PsPermutationVector.Set<FAtmosphereOnClouds>(SkyRC.bAPOnCloudMode);
@@ -1824,14 +1862,12 @@ void FSceneRenderer::RenderSkyAtmosphereInternal(
 			StartDepthZ = float(Projected.Z / Projected.W); // LWC_TODO: precision loss
 		}
 
-		const bool bFastAerialPerspectiveDepthTest = SkyRC.bFastAerialPerspectiveDepthTest;
-		const bool bRenderSkyPixel = SkyRC.bRenderSkyPixel;
 		FIntRect Viewport = SkyRC.Viewport;
 		GraphBuilder.AddPass(
 			{},
 			PsPassParameters,
 			ERDGPassFlags::Raster,
-			[PsPassParameters, VertexShader, PixelShader, Viewport, bFastAerialPerspectiveDepthTest, bRenderSkyPixel, bDisableBlending, StartDepthZ](FRHICommandList& RHICmdListLambda)
+			[PsPassParameters, VertexShader, PixelShader, Viewport, bFastAerialPerspectiveDepthTest, bRenderSkyPixel, bDisableBlending, StartDepthZ, SkyAtmosphereOutputsAlpha, SkyAtmosphereAlphaHoldOut](FRHICommandList& RHICmdListLambda)
 		{
 			RHICmdListLambda.SetViewport(Viewport.Min.X, Viewport.Min.Y, 0.0f, Viewport.Max.X, Viewport.Max.Y, 1.0f);
 
@@ -1844,7 +1880,24 @@ void FSceneRenderer::RenderSkyAtmosphereInternal(
 			}
 			else
 			{
-				GraphicsPSOInit.BlendState = TStaticBlendState<CW_RGB, BO_Add, BF_One, BF_SourceAlpha, BO_Add, BF_Zero, BF_One>::GetRHI();
+				if (SkyAtmosphereOutputsAlpha)
+				{
+					if (SkyAtmosphereAlphaHoldOut)
+					{
+						// We might need to write alpha holdout data. Since this is the sky writing to 
+						GraphicsPSOInit.BlendState = TStaticBlendState<CW_RGBA, BO_Add, BF_One, BF_InverseSourceAlpha, BO_Add, BF_One, BF_InverseSourceAlpha>::GetRHI();
+					}
+					else
+					{
+						// Maintain alpha untouched
+						GraphicsPSOInit.BlendState = TStaticBlendState<CW_RGBA, BO_Add, BF_One, BF_InverseSourceAlpha, BO_Add, BF_Zero, BF_InverseSourceAlpha>::GetRHI();
+					}
+				}
+				else
+				{
+					// Disable alpha writes 
+					GraphicsPSOInit.BlendState = TStaticBlendState<CW_RGB, BO_Add, BF_One, BF_SourceAlpha>::GetRHI();
+				}
 			}
 			if (bFastAerialPerspectiveDepthTest)
 			{

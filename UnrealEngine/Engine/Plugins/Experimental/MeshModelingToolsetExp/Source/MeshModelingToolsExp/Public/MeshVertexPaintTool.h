@@ -458,7 +458,7 @@ public:
  * Mesh Vertex Color Painting TOol
  */
 UCLASS()
-class MESHMODELINGTOOLSEXP_API UMeshVertexPaintTool : public UMeshSculptToolBase
+class MESHMODELINGTOOLSEXP_API UMeshVertexPaintTool : public UMeshSculptToolBase, public IInteractiveToolManageGeometrySelectionAPI
 {
 	GENERATED_BODY()
 
@@ -483,6 +483,11 @@ public:
 
 	virtual void CommitResult(UBaseDynamicMeshComponent* Component, bool bModifiedTopology) override;
 
+	// IInteractiveToolManageGeometrySelectionAPI -- this tool won't update external geometry selection or change selection-relevant mesh IDs
+	virtual bool IsInputSelectionValidOnOutput() override
+	{
+		return true;
+	}
 
 public:
 
@@ -529,6 +534,7 @@ protected:
 
 	virtual void OnBeginStroke(const FRay& WorldRay) override;
 	virtual void OnEndStroke() override;
+	virtual void OnCancelStroke() override;
 
 	virtual TUniquePtr<FMeshSculptBrushOp>& GetActiveBrushOp();
 	// end UMeshSculptToolBase API

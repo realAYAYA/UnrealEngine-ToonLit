@@ -18,7 +18,7 @@ template <class SCALAR> class vec4;
 	//---------------------------------------------------------------------------------------------
 	//! Variable sized switch operation.
 	//---------------------------------------------------------------------------------------------
-	class ASTOpSwitch : public ASTOp
+	class ASTOpSwitch final : public ASTOp
 	{
 	public:
 
@@ -73,6 +73,7 @@ template <class SCALAR> class vec4;
 		bool GetNonBlackRect(FImageRect& maskUsage) const override;
 		bool IsImagePlainConstant(FVector4f& colour) const override;
 		Ptr<ImageSizeExpression> GetImageSizeExpression() const override;
+		virtual bool IsSwitch() const override { return true; }
 
 		// Own interface
 

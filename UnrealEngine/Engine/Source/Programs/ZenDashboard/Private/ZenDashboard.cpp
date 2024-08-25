@@ -19,7 +19,10 @@
 #include "SMessageDialog.h"
 #include "StandaloneRenderer.h"
 #include "SZenCacheStatistics.h"
+#include "SZenCidStoreStatistics.h"
+#include "SZenProjectStatistics.h"
 #include "SZenServiceStatus.h"
+#include "Tasks/Task.h"
 #include "Templates/SharedPointer.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SButton.h"
@@ -29,13 +32,11 @@
 #include "ZenDashboardStyle.h"
 
 #if PLATFORM_WINDOWS
-#include "Windows/WindowsHWrapper.h"
 #include "Runtime/Launch/Resources/Windows/Resource.h"
 #include "Windows/WindowsApplication.h"
-#include "Windows/WindowsHWrapper.h"
-#include "Windows/PreWindowsApi.h"
+#include "Windows/AllowWindowsPlatformTypes.h"
 #include <shellapi.h>
-#include "Windows/PostWindowsApi.h"
+#include "Windows/HideWindowsPlatformTypes.h"
 #elif PLATFORM_LINUX
 #include "UnixCommonStartup.h"
 #elif PLATFORM_MAC
@@ -59,7 +60,10 @@ static void HideOnCloseOverride(const TSharedRef<SWindow>& WindowBeingClosed)
 	WindowBeingClosed->HideWindow();
 }
 
-#if PLATFORM_WINDOWS
+// Controls whether we want the ZenDashboard app to behave as a systray app.  Currently only supported for windows.
+#define UE_ZENDASHBOARD_SYSTRAY 0
+
+#if UE_ZENDASHBOARD_SYSTRAY && PLATFORM_WINDOWS
 #define WM_TRAYICON (WM_USER + 1000)
 
 #define CMD_USER 400
@@ -71,7 +75,7 @@ static void HideOnCloseOverride(const TSharedRef<SWindow>& WindowBeingClosed)
 #endif
 
 class FZenDashboardApp
-#if PLATFORM_WINDOWS
+#if UE_ZENDASHBOARD_SYSTRAY && PLATFORM_WINDOWS
 	: IWindowsMessageHandler
 #endif
 {
@@ -82,7 +86,9 @@ class FZenDashboardApp
 	TSharedPtr<UE::Zen::FServiceInstanceManager> ServiceInstanceManager;
 	TArray<FSimpleDelegate> MainThreadTasks;
 
-#if PLATFORM_WINDOWS
+	std::atomic<bool> bLatentExclusiveOperationActive = false;
+
+#if UE_ZENDASHBOARD_SYSTRAY && PLATFORM_WINDOWS
 	bool ProcessMessage(HWND hwnd, uint32 msg, WPARAM wParam, LPARAM lParam, int32& OutResult) override
 	{
 		switch (msg)
@@ -133,16 +139,28 @@ class FZenDashboardApp
 				Window->ShowWindow();
 				break;
 			case CMD_STARTZENSERVER:
-				StartZenServer();
+				if (CanExecuteExclusiveAction())
+				{
+					StartZenServer();
+				}
 				break;
 			case CMD_STOPZENSERVER:
-				StopZenServer();
+				if (CanExecuteExclusiveAction())
+				{
+					StopZenServer();
+				}
 				break;
 			case CMD_RESTARTZENSERVER:
-				RestartZenServer();
+				if (CanExecuteExclusiveAction())
+				{
+					RestartZenServer();
+				}
 				break;
 			case CMD_EXITDASHBOARD:
-				ExitDashboard();
+				if (CanExecuteExclusiveAction())
+				{
+					ExitDashboard();
+				}
 				break;
 			}
 			break;
@@ -150,11 +168,16 @@ class FZenDashboardApp
 
 		return false;
 	}
-#endif // PLATFORM_WINDOWS
+#endif // UE_ZENDASHBOARD_SYSTRAY && PLATFORM_WINDOWS
 
 	void ExitDashboard()
 	{
 		FSlateApplication::Get().RequestDestroyWindow(Window.ToSharedRef());
+	}
+
+	bool CanExecuteExclusiveAction()
+	{
+		return !bLatentExclusiveOperationActive;
 	}
 
 	void StartZenServer()
@@ -199,9 +222,20 @@ class FZenDashboardApp
 
 				StopZenServer();
 
-				FPlatformFileManager::Get().GetPlatformFile().DeleteDirectoryRecursively(*RunContext.GetDataPath());
+				bLatentExclusiveOperationActive = true;
 
-				StartZenServer();
+				UE::Tasks::Launch(TEXT("DeleteZenDataAndRestart"),
+					[this, DataPath = RunContext.GetDataPath()] ()
+					{
+						FPlatformProcess::Sleep(10.0f);
+						FPlatformFileManager::Get().GetPlatformFile().DeleteDirectoryRecursively(*DataPath);
+
+						StartZenServer();
+
+						bLatentExclusiveOperationActive = false;
+					},
+					UE::Tasks::ETaskPriority::BackgroundNormal
+				);
 			}
 		}
 	}
@@ -256,13 +290,13 @@ class FZenDashboardApp
 			MenuBuilder.AddPullDownMenu(
 				LOCTEXT( "FileMenu", "File" ),
 				LOCTEXT( "FileMenu_ToolTip", "Opens the file menu" ),
-				FNewMenuDelegate::CreateRaw( this, &FZenDashboardApp::FillFileMenu ) );
+				FOnGetContent::CreateRaw( this, &FZenDashboardApp::FillFileMenu ) );
 
 			// Control
 			MenuBuilder.AddPullDownMenu(
 				LOCTEXT( "ToolsMenu", "Tools" ),
 				LOCTEXT( "ToolsMenu_ToolTip", "Opens the tools menu" ),
-				FNewMenuDelegate::CreateRaw( this, &FZenDashboardApp::FillToolsMenu ) );
+				FOnGetContent::CreateRaw( this, &FZenDashboardApp::FillToolsMenu ) );
 		}
 
 		// Create the menu bar
@@ -272,23 +306,51 @@ class FZenDashboardApp
 		return MenuBarWidget;
 	}
 
-	void FillFileMenu(FMenuBuilder& MenuBuilder)
+	TSharedRef<SWidget> FillFileMenu()
 	{
+		const bool bCloseSelfOnly = false;
+		const bool bSearchable = false;
+		const bool bRecursivelySearchable = false;
+
+		FMenuBuilder MenuBuilder(true,
+			nullptr,
+			TSharedPtr<FExtender>(),
+			bCloseSelfOnly,
+			&FCoreStyle::Get(),
+			bSearchable,
+			NAME_None,
+			bRecursivelySearchable);
+
 		MenuBuilder.AddMenuEntry(
 			LOCTEXT("Exit", "Exit"),
 			LOCTEXT("Exit_ToolTip", "Exits the Zen Dashboard"),
 			FSlateIcon(),
 			FUIAction(
 				FExecuteAction::CreateRaw( this, &FZenDashboardApp::ExitDashboard ),
-				FCanExecuteAction()
+				FCanExecuteAction::CreateRaw(this, &FZenDashboardApp::CanExecuteExclusiveAction)
 			),
 			NAME_None,
 			EUserInterfaceActionType::Button
 		);
+
+		return MenuBuilder.MakeWidget();
 	}
 
-	void FillToolsMenu(FMenuBuilder& MenuBuilder)
+	TSharedRef<SWidget> FillToolsMenu()
 	{
+		const bool bCloseSelfOnly = false;
+		const bool bSearchable = false;
+		const bool bRecursivelySearchable = false;
+
+		FMenuBuilder MenuBuilder(true,
+			nullptr,
+			TSharedPtr<FExtender>(),
+			bCloseSelfOnly,
+			&FCoreStyle::Get(),
+			bSearchable,
+			NAME_None,
+			bRecursivelySearchable);
+
 		MenuBuilder.BeginSection(NAME_None, LOCTEXT("ServiceControls", "Service controls"));
 		{
 			MenuBuilder.AddMenuEntry(
@@ -297,7 +359,7 @@ class FZenDashboardApp
 				FSlateIcon(),
 				FUIAction(
 					FExecuteAction::CreateRaw(this, &FZenDashboardApp::StartZenServer),
-					FCanExecuteAction()
+					FCanExecuteAction::CreateRaw(this, &FZenDashboardApp::CanExecuteExclusiveAction)
 				),
 				NAME_None,
 				EUserInterfaceActionType::Button
@@ -308,7 +370,7 @@ class FZenDashboardApp
 				FSlateIcon(),
 				FUIAction(
 					FExecuteAction::CreateRaw(this, &FZenDashboardApp::StopZenServer),
-					FCanExecuteAction()
+					FCanExecuteAction::CreateRaw(this, &FZenDashboardApp::CanExecuteExclusiveAction)
 				),
 				NAME_None,
 				EUserInterfaceActionType::Button
@@ -319,27 +381,43 @@ class FZenDashboardApp
 				FSlateIcon(),
 				FUIAction(
 					FExecuteAction::CreateRaw(this, &FZenDashboardApp::RestartZenServer),
-					FCanExecuteAction()
+					FCanExecuteAction::CreateRaw(this, &FZenDashboardApp::CanExecuteExclusiveAction)
 				),
 				NAME_None,
 				EUserInterfaceActionType::Button
 			);
 
-			MenuBuilder.AddSubMenu(LOCTEXT("Advanced", "Advanced"), LOCTEXT("Advanced_ToolTip", "Advanced service control commands"),
-				FNewMenuDelegate::CreateLambda([this](FMenuBuilder& SubMenuBuilder)
+			MenuBuilder.AddWrapperSubMenu(LOCTEXT("Advanced", "Advanced"), LOCTEXT("Advanced_ToolTip", "Advanced service control commands"),
+				FOnGetContent::CreateLambda([this]() -> TSharedRef<SWidget>
 					{
+						const bool bCloseSelfOnly = false;
+						const bool bSearchable = false;
+						const bool bRecursivelySearchable = false;
+
+						FMenuBuilder SubMenuBuilder(true,
+							nullptr,
+							TSharedPtr<FExtender>(),
+							bCloseSelfOnly,
+							&FCoreStyle::Get(),
+							bSearchable,
+							NAME_None,
+							bRecursivelySearchable);
+
 						SubMenuBuilder.AddMenuEntry(
 							LOCTEXT("DeleteDataAndRestart_ZenServer", "Delete data and restart Zen Server"),
 							LOCTEXT("DeleteDataAndRestart_ZenServer_ToolTip", "Stops ZenServer if it is running, deletes ALL of its data, then starts it from a blank state"),
 							FSlateIcon(),
 							FUIAction(
 								FExecuteAction::CreateRaw(this, &FZenDashboardApp::DeleteDataAndRestartZenServer),
-								FCanExecuteAction()
+								FCanExecuteAction::CreateRaw(this, &FZenDashboardApp::CanExecuteExclusiveAction)
 							),
 							NAME_None,
 							EUserInterfaceActionType::Button
 						);
+
+						return SubMenuBuilder.MakeWidget();
 					})
+				, FSlateIcon()
 			);
 		}
 		MenuBuilder.EndSection();
@@ -380,7 +458,7 @@ class FZenDashboardApp
 				FSlateIcon(),
 				FUIAction(
 					FExecuteAction::CreateRaw(this, &FZenDashboardApp::RunGC),
-					FCanExecuteAction()
+					FCanExecuteAction::CreateRaw(this, &FZenDashboardApp::CanExecuteExclusiveAction)
 				),
 				NAME_None,
 				EUserInterfaceActionType::Button
@@ -392,7 +470,7 @@ class FZenDashboardApp
 				FSlateIcon(),
 				FUIAction(
 					FExecuteAction::CreateRaw(this, &FZenDashboardApp::RunGCOneWeek),
-					FCanExecuteAction()
+					FCanExecuteAction::CreateRaw(this, &FZenDashboardApp::CanExecuteExclusiveAction)
 				),
 				NAME_None,
 				EUserInterfaceActionType::Button
@@ -404,13 +482,15 @@ class FZenDashboardApp
 				FSlateIcon(),
 				FUIAction(
 					FExecuteAction::CreateRaw(this, &FZenDashboardApp::RunGCOneDay),
-					FCanExecuteAction()
+					FCanExecuteAction::CreateRaw(this, &FZenDashboardApp::CanExecuteExclusiveAction)
 				),
 				NAME_None,
 				EUserInterfaceActionType::Button
 			);
 		}
 		MenuBuilder.EndSection();
+
+		return MenuBuilder.MakeWidget();
 	}
 
 public:
@@ -428,8 +508,8 @@ public:
 
 	void Run()
 	{
-		const bool bSystemTrayMode = !!PLATFORM_WINDOWS;
-		const bool bShowWindow = !(bSystemTrayMode && FParse::Param(FCommandLine::Get(), TEXT("Minimized")));
+		const bool bSystemTrayMode = !!UE_ZENDASHBOARD_SYSTRAY && !!PLATFORM_WINDOWS;
+		const bool bShowWindow = !(FParse::Param(FCommandLine::Get(), TEXT("Minimized")) && bSystemTrayMode);
 		
 		Window =
 			SNew(SWindow)
@@ -471,8 +551,34 @@ public:
 					.Padding(0.0f, 10.0f, 0.0f, 0.0f)
 					.VAlign(VAlign_Top)
 					[
-						SNew(SZenCacheStatistics)
-						.ZenServiceInstance(ServiceInstanceManager.ToSharedRef(), &UE::Zen::FServiceInstanceManager::GetZenServiceInstance)
+						SNew(SHorizontalBox)
+
+						+SHorizontalBox::Slot()
+						.AutoWidth()
+						.HAlign(HAlign_Left)
+						.VAlign(VAlign_Top)
+						[
+							SNew(SZenCacheStatistics)
+							.ZenServiceInstance(ServiceInstanceManager.ToSharedRef(), &UE::Zen::FServiceInstanceManager::GetZenServiceInstance)
+						]
+
+						+SHorizontalBox::Slot()
+						.AutoWidth()
+						.HAlign(HAlign_Left)
+						.VAlign(VAlign_Top)
+						[
+							SNew(SZenProjectStatistics)
+							.ZenServiceInstance(ServiceInstanceManager.ToSharedRef(), &UE::Zen::FServiceInstanceManager::GetZenServiceInstance)
+						]
+
+						+SHorizontalBox::Slot()
+						.AutoWidth()
+						.HAlign(HAlign_Left)
+						.VAlign(VAlign_Top)
+						[
+							SNew(SZenCidStoreStatistics)
+							.ZenServiceInstance(ServiceInstanceManager.ToSharedRef(), &UE::Zen::FServiceInstanceManager::GetZenServiceInstance)
+						]
 					]
 				]
 			];
@@ -488,18 +594,21 @@ public:
 		Slate.ClearKeyboardFocus(EFocusCause::Cleared);
 
 		// 
-#if PLATFORM_WINDOWS
-		((FWindowsApplication*)Slate.Get().GetPlatformApplication().Get())->AddMessageHandler(*this);
+#if UE_ZENDASHBOARD_SYSTRAY && PLATFORM_WINDOWS
+		if (bSystemTrayMode)
+		{
+			((FWindowsApplication*)Slate.Get().GetPlatformApplication().Get())->AddMessageHandler(*this);
 
-		NOTIFYICONDATAW NotifyIconData;
-		memset(&NotifyIconData, 0, sizeof(NotifyIconData));
-		NotifyIconData.cbSize = sizeof(NotifyIconData);
-		NotifyIconData.hWnd = (HWND)Window->GetNativeWindow()->GetOSWindowHandle();
-		NotifyIconData.uID = 0;
-		NotifyIconData.uCallbackMessage = WM_USER + 1000;
-		NotifyIconData.uFlags = NIF_ICON | NIF_MESSAGE;
-		NotifyIconData.hIcon = ::LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCE(IDICON_UEGame));
-		Shell_NotifyIcon(NIM_ADD, &NotifyIconData);
+			NOTIFYICONDATAW NotifyIconData;
+			memset(&NotifyIconData, 0, sizeof(NotifyIconData));
+			NotifyIconData.cbSize = sizeof(NotifyIconData);
+			NotifyIconData.hWnd = (HWND)Window->GetNativeWindow()->GetOSWindowHandle();
+			NotifyIconData.uID = 0;
+			NotifyIconData.uCallbackMessage = WM_USER + 1000;
+			NotifyIconData.uFlags = NIF_ICON | NIF_MESSAGE;
+			NotifyIconData.hIcon = ::LoadIconW(GetModuleHandleW(nullptr), MAKEINTRESOURCE(IDICON_UEGame));
+			Shell_NotifyIcon(NIM_ADD, &NotifyIconData);
+		}
 #endif
 
 		// loop until the app is ready to quit
@@ -521,12 +630,15 @@ public:
 			MainThreadTasks.Empty();
 		}
 
-#if PLATFORM_WINDOWS
-		memset(&NotifyIconData, 0, sizeof(NotifyIconData));
-		NotifyIconData.cbSize = sizeof(NotifyIconData);
-		NotifyIconData.uID = 0;
-		NotifyIconData.hWnd = (HWND)Window->GetNativeWindow()->GetOSWindowHandle();
-		Shell_NotifyIcon(NIM_DELETE, &NotifyIconData);
+#if UE_ZENDASHBOARD_SYSTRAY && PLATFORM_WINDOWS
+		if (bSystemTrayMode)
+		{
+			memset(&NotifyIconData, 0, sizeof(NotifyIconData));
+			NotifyIconData.cbSize = sizeof(NotifyIconData);
+			NotifyIconData.uID = 0;
+			NotifyIconData.hWnd = (HWND)Window->GetNativeWindow()->GetOSWindowHandle();
+			Shell_NotifyIcon(NIM_DELETE, &NotifyIconData);
+		}
 #endif
 
 		// Make sure the window is hidden, because it might take a while for the background thread to finish.
@@ -536,7 +648,7 @@ public:
 private:
 	FText GetWindowTitle()
 	{
-		return LOCTEXT("WindowTitle", "Zen Dashboard");
+		return LOCTEXT("WindowTitle", "Unreal Zen Dashboard");
 	}
 
 	EAppReturnType::Type OnModalMessageDialog(EAppMsgCategory InMessageCategory, EAppMsgType::Type InMessage, const FText& InText, const FText& InTitle)
@@ -627,7 +739,7 @@ int ZenDashboardMain(const TCHAR* CmdLine)
 }
 
 #if PLATFORM_WINDOWS
-int WINAPI WinMain(HINSTANCE hCurrInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd)
+int WINAPI WinMain(_In_ HINSTANCE hCurrInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPSTR lpCmdLine, _In_ int nShowCmd)
 {
 	hInstance = hCurrInstance;
 	return ZenDashboardMain(GetCommandLineW())? 0 : 1;

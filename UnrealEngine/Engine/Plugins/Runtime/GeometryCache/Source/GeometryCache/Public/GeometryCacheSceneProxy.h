@@ -37,20 +37,20 @@ public:
 	/**
 	 * Sugar function to update from a typed array.
 	 */
-	template<class DataType> void Update(const TArray<DataType>& Vertices)
+	template<class DataType> void Update(FRHICommandListBase& RHICmdList, const TArray<DataType>& Vertices)
 	{
 		int32 InSize = Vertices.Num() * sizeof(DataType);
-		UpdateRaw(Vertices.GetData(), InSize, 1, 1);
+		UpdateRaw(RHICmdList, Vertices.GetData(), InSize, 1, 1);
 	}
 
-	void UpdatePositionsOnly(const TArray<FDynamicMeshVertex>& Vertices)
+	void UpdatePositionsOnly(FRHICommandListBase& RHICmdList, const TArray<FDynamicMeshVertex>& Vertices)
 	{
 		const uint32 PositionOffset = STRUCT_OFFSET(FDynamicMeshVertex, Position);
 		const uint32 PositionSize = sizeof(((FDynamicMeshVertex*)nullptr)->Position);
-		UpdateRaw(Vertices.GetData() + PositionOffset, Vertices.Num(), PositionSize, sizeof(FDynamicMeshVertex));
+		UpdateRaw(RHICmdList, Vertices.GetData() + PositionOffset, Vertices.Num(), PositionSize, sizeof(FDynamicMeshVertex));
 	}
 
-	void UpdateExceptPositions(const TArray<FDynamicMeshVertex>& Vertices)
+	void UpdateExceptPositions(FRHICommandListBase& RHICmdList, const TArray<FDynamicMeshVertex>& Vertices)
 	{
 		const uint32 PositionSize = sizeof(((FDynamicMeshVertex*)nullptr)->Position);
 		const uint32 PositionOffset = STRUCT_OFFSET(FDynamicMeshVertex, Position);
@@ -58,25 +58,25 @@ public:
 		static_assert(PositionOffset == 0, "Expecting position to be the first struct member");
 		static_assert(PositionSize == STRUCT_OFFSET(FDynamicMeshVertex, TextureCoordinate), "Expecting the texture coordinate to immediately follow the Position");
 
-		UpdateRaw((int8*)Vertices.GetData() + PositionSize, Vertices.Num(), sizeof(FDynamicMeshVertex) - PositionSize, sizeof(FDynamicMeshVertex));
+		UpdateRaw(RHICmdList, (int8*)Vertices.GetData() + PositionSize, Vertices.Num(), sizeof(FDynamicMeshVertex) - PositionSize, sizeof(FDynamicMeshVertex));
 	}
 
 	/**
 	 * Update the raw contents of the buffer, possibly reallocate if needed.
 	 */
-	void UpdateRaw(const void* Data, int32 NumItems, int32 ItemSizeBytes, int32 ItemStrideBytes);
+	void UpdateRaw(FRHICommandListBase& RHICmdList, const void* Data, int32 NumItems, int32 ItemSizeBytes, int32 ItemStrideBytes);
 
 	/**
 	 * Resize the buffer but don't initialize it with any data.
 	 */
-	void UpdateSize(int32 NewSizeInBytes);
+	void UpdateSize(FRHICommandListBase& RHICmdList, int32 NewSizeInBytes);
 
 	/**
 	* Resize the buffer but don't initialize it with any data.
 	*/
-	template<class DataType> void UpdateSizeTyped(int32 NewSizeInElements)
+	template<class DataType> void UpdateSizeTyped(FRHICommandListBase& RHICmdList, int32 NewSizeInElements)
 	{
-		UpdateSize(sizeof(DataType) * NewSizeInElements);
+		UpdateSize(RHICmdList, sizeof(DataType) * NewSizeInElements);
 	}
 
 	/**
@@ -120,9 +120,8 @@ public:
 	/**
 		Update the data and possibly reallocate if needed.
 	*/
-	void Update(const TArray<uint32>& Indices);
-
-	void UpdateSizeOnly(int32 NewNumIndices);
+	void Update(FRHICommandListBase& RHICmdList, const TArray<uint32>& Indices);
+	void UpdateSizeOnly(FRHICommandListBase& RHICmdList, int32 NewNumIndices);
 
 	unsigned SizeInBytes() { return NumAllocatedIndices * sizeof(uint32); }
 
@@ -136,14 +135,9 @@ protected:
 class GEOMETRYCACHE_API FGeomCacheVertexFactory : public FGeometryCacheVertexVertexFactory
 {
 public:
-
 	FGeomCacheVertexFactory(ERHIFeatureLevel::Type InFeatureLevel);
 
-	/** Init function that should only be called on render thread. */
-	void Init_RenderThread(const FVertexBuffer* PositionBuffer, const FVertexBuffer* MotionBlurDataBuffer, const FVertexBuffer* TangentXBuffer, const FVertexBuffer* TangentZBuffer, const FVertexBuffer* TextureCoordinateBuffer, const FVertexBuffer* ColorBuffer);
-
-	/** Init function that can be called on any thread, and will do the right thing (enqueue command if called on main thread) */
-	void Init(const FVertexBuffer* PositionBuffer, const FVertexBuffer* MotionBlurDataBuffer, const FVertexBuffer* TangentXBuffer, const FVertexBuffer* TangentZBuffer, const FVertexBuffer* TextureCoordinateBuffer, const FVertexBuffer* ColorBuffer);
+	void Init(FRHICommandListBase& RHICmdList, const FVertexBuffer* PositionBuffer, const FVertexBuffer* MotionBlurDataBuffer, const FVertexBuffer* TangentXBuffer, const FVertexBuffer* TangentZBuffer, const FVertexBuffer* TextureCoordinateBuffer, const FVertexBuffer* ColorBuffer);
 };
 
 /**
@@ -224,7 +218,7 @@ public:
 	 * @param NumVertices - The initial number of vertices to initialize the buffers with. Must be greater than 0
 	 * @param NumIndices - The initial number of indices to initialize the buffers with. Must be greater than 0
 	 */
-	virtual void InitRenderResources(int32 NumVertices, int32 NumIndices);
+	virtual void InitRenderResources(FRHICommandListBase& RHICmdList, int32 NumVertices, int32 NumIndices);
 
 	/** MeshData storing information used for rendering this Track */
 	FGeometryCacheMeshData* MeshData;
@@ -300,7 +294,7 @@ public:
 	uint32 GetAllocatedSize(void) const;
 	// End FPrimitiveSceneProxy interface.
 
-	void UpdateAnimation(float NewTime, bool bLooping, bool bIsPlayingBackwards, float PlaybackSpeed, float MotionVectorScale);
+	void UpdateAnimation(FRHICommandListBase& RHICmdList, float NewTime, bool bLooping, bool bIsPlayingBackwards, float PlaybackSpeed, float MotionVectorScale);
 
 	/** Update world matrix for specific section */
 	void UpdateSectionWorldMatrix(const int32 SectionIndex, const FMatrix& WorldMatrix);
@@ -321,7 +315,7 @@ public:
 	const TArray<FGeomCacheTrackProxy*>& GetTracks() const { return Tracks; }
 
 private:
-	void FrameUpdate() const;
+	void FrameUpdate(FRHICommandListBase& RHICmdList) const;
 
 	void CreateMeshBatch(
 		FRHICommandListBase& RHICmdList,
@@ -349,7 +343,7 @@ private:
 		TArray<FColor> InterpolatedColors;
 		TArray<FVector3f> InterpolatedMotionVectors;
 
-		void Prepare(SIZE_T NumVertices, bool bHasMotionVectors)
+		void Prepare(int32 NumVertices, bool bHasMotionVectors)
 		{
 			// Clear entries but keep allocations.
 			InterpolatedPositions.Reset();

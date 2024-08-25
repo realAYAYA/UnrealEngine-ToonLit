@@ -31,13 +31,16 @@ class IDisplayClusterConfiguratorBlueprintEditor;
 class FTransactionObjectEvent;
 #endif
 
+class FDisplayClusterViewportManager;
 class IDisplayClusterStageActor;
 class USceneComponent;
+class UDisplayClusterDisplayDeviceBaseComponent;
+class ULineBatchComponent;
 class UDisplayClusterConfigurationData;
 class UDisplayClusterCameraComponent;
 class UDisplayClusterOriginComponent;
-class UDisplayClusterPreviewComponent;
 class UDisplayClusterStageGeometryComponent;
+class UDisplayClusterStageIsosphereComponent;
 class UDisplayClusterSyncTickComponent;
 class UProceduralMeshComponent;
 
@@ -81,7 +84,21 @@ public:
 	 */
 	void UpdateConfigDataInstance(UDisplayClusterConfigurationData* ConfigDataTemplate, bool bForceRecreate = false);
 
+	/** Returns true if this RootActor is used as the primary RootActor in the DC GameManager. */
+	bool IsPrimaryRootActor() const;
+
+	/** Returns true if this RootActor is primary and should be displayed in PIE mode. */
+	bool IsPrimaryRootActorForPIE() const;
+
+	/** Returns true if this RootActor is running in PIE mode. */
+	bool IsRunningPIE() const;
+
+	/** Returns true if this RootActor is running in game or in PIE mode. */
 	bool IsRunningGameOrPIE() const;
+
+	/** Returns true if this RootActor is running in DC mode. */
+	bool IsRunningDisplayCluster() const;
+
 
 	UDisplayClusterConfigurationData* GetDefaultConfigDataFromAsset() const;
 	UDisplayClusterConfigurationData* GetConfigData() const;
@@ -103,10 +120,18 @@ public:
 	/** Returns the current rendering mode of this DCRA (not a value from configuration).
 	 * This value can be overridden from DCRenderDevice or other rendering subsystems (e.g. Preview).
 	 */
-	EDisplayClusterRenderFrameMode GetRenderMode() const;
+	UE_DEPRECATED(5.4, "This function has been deprecated.")
+	EDisplayClusterRenderFrameMode GetRenderMode() const
+	{
+		return EDisplayClusterRenderFrameMode::Unknown;
+	}
 
 	/** Returns the preview rendering mode of this DCRA. */
-	EDisplayClusterRenderFrameMode GetPreviewRenderMode() const;
+	UE_DEPRECATED(5.4, "This function has been deprecated.")
+	EDisplayClusterRenderFrameMode GetPreviewRenderMode() const
+	{
+		return EDisplayClusterRenderFrameMode::Unknown;
+	}
 
 protected:
 	//////////////////////////////////////////////////////////////////////////////////////////////
@@ -133,11 +158,21 @@ protected:
 	void SetLightCardOwnership();
 
 public:
-	UFUNCTION(BlueprintCallable, Category = "NDisplay")
+	UFUNCTION(BlueprintCallable, Category = "NDisplay|DCRA")
 	bool GetFlushPositionAndNormal(const FVector& WorldPosition, FVector& OutPosition, FVector& OutNormal);
 
-	UFUNCTION(BlueprintCallable, Category = "NDisplay")
+	UFUNCTION(BlueprintCallable, Category = "NDisplay|DCRA")
 	bool MakeStageActorFlushToWall(const TScriptInterface<IDisplayClusterStageActor>& StageActor, double DesiredOffsetFromFlush = 0.0f);
+
+	/**
+	 * Gets the distance from a world position to the stage's geometry along the specified direction, if there is an intersection
+	 * @param WorldPosition - The world position to measure the distance from
+	 * @param WorldDirection - The direction to find the distance to the geometry along
+	 * @param OutDistance - The distance to the stage geometry from the specified point
+	 * @return True if an intersection point from WorldPosition along WorldDirection was found, false if not
+	 */
+	UFUNCTION(BlueprintCallable, Category = "NDisplay|Stage")
+	bool GetDistanceToStageGeometry(const FVector& WorldPosition, const FVector& WorldDirection, float& OutDistance) const;
 
 	UFUNCTION(BlueprintGetter)
 	UDisplayClusterStageGeometryComponent* GetStageGeometryComponent() const { return StageGeometryComponent; }
@@ -145,11 +180,18 @@ public:
 	UFUNCTION(BlueprintGetter)
 	UDisplayClusterCameraComponent* GetDefaultCamera() const;
 
+	/** Retrieve the default display device, creating it if it doesn't exist */
+	UFUNCTION(BlueprintGetter)
+	UDisplayClusterDisplayDeviceBaseComponent* GetDefaultDisplayDevice() const;
+
+	/** Retrieve the line batch component. */
+	ULineBatchComponent* GetLineBatchComponent() const;
+
 	/**
 	 * Get the view origin most commonly used by viewports in this cluster.
 	 * If no viewports override the camera, this returns the default camera, or if there isn't one, the actor's root component.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "NDisplay|Components")
+	UFUNCTION(BlueprintCallable, Category = "NDisplay|DCRA")
 	USceneComponent* GetCommonViewPoint() const;
 
 	UFUNCTION(BlueprintCallable, Category = "NDisplay|Render")
@@ -198,6 +240,15 @@ public:
 public:
 	/** Get ViewportManager API. */
 	IDisplayClusterViewportManager* GetViewportManager() const;
+
+	/** Get or Create ViewportManager API. */
+	IDisplayClusterViewportManager* GetOrCreateViewportManager();
+
+	/** Release the viewport manager instance, if it exists. */
+	void RemoveViewportManager();
+
+	/** Get ViewportConfiguration API.*/
+	IDisplayClusterViewportConfiguration* GetViewportConfiguration() const;
 	
 	static FName GetCurrentConfigDataMemberName()
 	{
@@ -205,15 +256,15 @@ public:
 	}
 
 private:
-	/** Create a new instance of the viewport manager if it does not exist. */
-	void CreateViewportManagerImpl();
+	/** Get ViewportManager API. */
+	FDisplayClusterViewportManager* GetViewportManagerImpl() const;
 
-	/** Release the viewport manager instance, if it exists. */
-	void RemoveViewportManagerImpl();
+	/** Reset preview rendering. */
+	void ResetEntireClusterPreviewRendering();
 
 private:
 	// DC ViewportManager instance for this DCRA
-	TSharedPtr<class FDisplayClusterViewportManager, ESPMode::ThreadSafe> ViewportManager;
+	TSharedPtr<FDisplayClusterViewportManager, ESPMode::ThreadSafe> ViewportManagerPtr;
 
 //////////////////////////////////////////////////////////////////////////////////////////////
 // Details Panel Property Referencers
@@ -324,7 +375,11 @@ private:
 	/** Component that stores the stage's geometry map, which is used to make objects flush with the stage's walls and ceilings */
 	UPROPERTY()
 	TObjectPtr<UDisplayClusterStageGeometryComponent> StageGeometryComponent;
-	
+
+	/** Component that stores a 3D representation of the stage's geometry map, which can be used to perform ray traces against the processed stage geometry */
+	UPROPERTY()
+	TObjectPtr<UDisplayClusterStageIsosphereComponent> StageIsosphereComponent;
+
 private:
 	// Current operation mode
 	EDisplayClusterOperationMode OperationMode;
@@ -362,14 +417,22 @@ public:
 		return LastDeltaSecondsValue;
 	}
 
+	/** Get current settings for preview rendering.
+	* 
+	* @param bIgnorePreviewSetttingsSource - if true, the PreviewSettingsSource is ignored
+	*/
+	FDisplayClusterViewport_PreviewSettings GetPreviewSettings(bool bIgnorePreviewSetttingsSource = false) const;
+
 //////////////////////////////////////////////////////////////////////////////////////////////
 // EDITOR RELATED SETTINGS
 //////////////////////////////////////////////////////////////////////////////////////////////
-#if WITH_EDITORONLY_DATA
 public:
-	/** When the MRQ is rendered, this flag is raised. */
-	UPROPERTY()
-	bool bMoviePipelineRenderPass = false;
+	/** Render this DCRA in game for Standalone/Package builds. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview In Game", meta = (DisplayName = "Enable Preview in Game"))
+	bool bPreviewInGameEnable = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Preview In Game", meta = (DisplayName = "Render Preview Frustum in Game"))
+	bool bPreviewInGameRenderFrustum = false;
 
 	/** Render the scene and display it as a preview on the nDisplay root actor in the editor.  This will impact editor performance. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Editor Preview", meta = (DisplayName = "Enable Editor Preview"))
@@ -383,6 +446,26 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Editor Preview", meta = (DisplayName = "Enable Post Process"), BlueprintSetter = SetPreviewEnablePostProcess)
 	bool bPreviewEnablePostProcess = false;
 
+	/** Show overlay material on the preview mesh when preview rendering is enabled (UMeshComponent::OverlayMaterial). */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Editor Preview", meta = (DisplayName = "Enable Preview Overlay"))
+	bool bPreviewEnableOverlayMaterial = true;
+
+	/** Configure the root actor for Techvis rendering with preview components. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Editor Preview")
+	bool bEnablePreviewTechvis = false;
+
+	/** Enable the use of a preview mesh for the preview for this DCRA. */
+	UPROPERTY(Transient, NonTransactional)
+	bool bEnablePreviewMesh = true;
+
+	/** Enable the use of a preview editable mesh for the preview for this DCRA. */
+	UPROPERTY(Transient, NonTransactional)
+	bool bEnablePreviewEditableMesh = true;
+
+	/** Determines where the preview settings will be retrieved from. */
+	UPROPERTY(Transient, NonTransactional)
+	EDisplayClusterConfigurationRootActorPreviewSettingsSource PreviewSetttingsSource = EDisplayClusterConfigurationRootActorPreviewSettingsSource::RootActor;
+
 	/** Freeze preview render.  This will impact editor performance. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Editor Preview", meta = (DisplayName = "Freeze Editor Preview"))
 	bool bFreezePreviewRender = false;
@@ -395,6 +478,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Editor Preview", meta = (DisplayName = "Camera Frustum Distance"))
 	float PreviewICVFXFrustumsFarDistance = 1000.0f;
 
+#if WITH_EDITORONLY_DATA
+	/** When the MRQ is rendered, this flag is raised. */
+	UPROPERTY(Transient, NonTransactional)
+	bool bMoviePipelineRenderPass = false;
+
 	/** Selectively preview a specific viewport or show all/none. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Editor Preview", meta = (DisplayName = "Preview Node"))
 	FString PreviewNodeId = DisplayClusterConfigurationStrings::gui::preview::PreviewNodeNone;
@@ -402,6 +490,7 @@ public:
 	/** Render Mode */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Editor Preview", meta = (DisplayName = "Render Mode"))
 	EDisplayClusterConfigurationRenderMode RenderMode = EDisplayClusterConfigurationRenderMode::Mono;
+#endif
 
 	/** Tick Per Frame */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Editor Preview", AdvancedDisplay, meta = (DisplayName = "Tick Per Frame", ClampMin = "1", UIMin = "1", ClampMax = "200", UIMax = "200"))
@@ -415,33 +504,48 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Editor Preview", AdvancedDisplay, meta = (DisplayName = "Preview Texture Max Size", ClampMin = "64", UIMin = "64", ClampMax = "4096", UIMax = "4096"))
 	int PreviewMaxTextureDimension = 2048;
 
-private:
-	UPROPERTY(Transient)
-	TMap<FString, TObjectPtr<UDisplayClusterPreviewComponent>> PreviewComponents;
+	/** The included display device nDisplay provides by default */
+	UPROPERTY(VisibleDefaultsOnly, Category = "Editor Preview", DisplayName = "Basic Display Device")
+	TObjectPtr<UDisplayClusterDisplayDeviceBaseComponent> BasicDisplayDeviceComponent;
 
-	UPROPERTY(Transient)
-	bool bDeferPreviewGeneration = false;
+	/** Select the default display device class to use when a viewport doesn't have one assigned */
+	UPROPERTY(EditDefaultsOnly, Category = "Editor Preview", DisplayName = "Default Display Device")
+	FName DefaultDisplayDeviceName;
+
+
+#if WITH_EDITORONLY_DATA
+	/** Toggles the visibility of the stage's geometry mesh, a smooth, continuous mesh generated and processed from the stage's geometry */
+	UPROPERTY(EditInstanceOnly, Category = "Editor Preview", AdvancedDisplay)
+	bool bPreviewStageGeometryMesh = false;
 #endif
+
+protected:
+	/** The default display device to use for preview rendering */
+	UPROPERTY(Transient, NonTransactional)
+	mutable TObjectPtr<UDisplayClusterDisplayDeviceBaseComponent> DefaultDisplayDeviceComponent;
+
+	/** Line Batchers. All lines to be drawn in the world, but not inside viewports. */
+	UPROPERTY(Transient, NonTransactional)
+	TObjectPtr<ULineBatchComponent> LineBatcherComponent;
+
+protected:
+	/** The name the internal default display device uses. */
+	virtual FName GetInternalDisplayDeviceName() const;
+
+//////////////////////////////////////////////////////////////////////////////////////////////
+// EDITOR RELATED SETTINGS
+//////////////////////////////////////////////////////////////////////////////////////////////
 
 #if WITH_EDITOR
 public:
 	/** Enable or disable editor render. Preview components may need to be on for texture overrides, but capture and rendering disabled. */
-	void EnableEditorRender(bool bValue);
+	UE_DEPRECATED(5.4, "This function has been deprecated.")
+	void EnableEditorRender(bool bValue) { }
 
 	/** If editor rendering is enabled. */
-	bool IsEditorRenderEnabled() const { return bEnableEditorRender; }
+	UE_DEPRECATED(5.4, "This function has been deprecated.")
+	bool IsEditorRenderEnabled() const { return false; }
 
-protected:
-	/** Reset preview rendering for cluster node. */
-	void ResetClusterNodePreviewRendering_Editor();
-
-	/** Is preview rendering for cluster node in progress. */
-	bool IsActiveClusterNodePreviewRendering_Editor() const;
-
-private:
-	/** Is editor rendering enabled? This can be false and the preview still enabled. */
-	bool bEnableEditorRender = true;
-	
 public:
 	DECLARE_DELEGATE(FOnPreviewUpdated);
 
@@ -449,20 +553,26 @@ public:
 	// We need tick in Editor
 	virtual bool ShouldTickIfViewportsOnly() const override { return true; }
 
-	FOnPreviewUpdated& GetOnPreviewGenerated() { return OnPreviewGenerated; }
-	FOnPreviewUpdated& GetOnPreviewDestroyed() { return OnPreviewDestroyed; }
+	UE_DEPRECATED(5.4, "This function has been deprecated.")
+	FOnPreviewUpdated& GetOnPreviewGenerated() { return DeprecatedPreviewDelegate; }
+
+	UE_DEPRECATED(5.4, "This function has been deprecated.")
+	FOnPreviewUpdated& GetOnPreviewDestroyed() { return DeprecatedPreviewDelegate; }
 
 	// return true, if preview enabled for this actor
-	bool IsPreviewEnabled() const;
+	UE_DEPRECATED(5.4, "This function has been deprecated.")
+	bool IsPreviewEnabled() const { return false; }
 
 	/** Gets whether the preview output is displayed onto the stage actor's screen meshes */
-	bool IsPreviewDrawnToScreens() const;
+	UE_DEPRECATED(5.4, "This function has been deprecated.")
+	bool IsPreviewDrawnToScreens() const { return false; }
 
 	void Constructor_Editor();
 	void Destructor_Editor();
 
 	/** Perform a rendering of the DCRA preview. */
-	void RenderPreview_Editor();
+	UE_DEPRECATED(5.4, "This function has been deprecated.")
+	void RenderPreview_Editor() { };
 
 	void PostLoad_Editor();
 	void PostActorCreated_Editor();
@@ -472,12 +582,16 @@ public:
 	void RerunConstructionScripts_Editor();
 
 	// Preview components free referenced meshes and materials
-	void ResetPreviewComponents_Editor(bool bInRestoreSceneMaterial);
+	UE_DEPRECATED(5.4, "This function has been deprecated.")
+	void ResetPreviewComponents_Editor(bool bInRestoreSceneMaterial) { }
 
-	UDisplayClusterPreviewComponent* GetPreviewComponent(const FString& NodeId, const FString& ViewportId) const;
+	UE_DEPRECATED(5.4, "This function has been deprecated.")
+	class UDisplayClusterPreviewComponent* GetPreviewComponent(const FString& NodeId, const FString& ViewportId) const { return nullptr; }
 
-	void UpdatePreviewComponents();
-	void ReleasePreviewComponents();
+	UE_DEPRECATED(5.4, "This function has been deprecated.")
+	void UpdatePreviewComponents() { }
+	UE_DEPRECATED(5.4, "This function has been deprecated.")
+	void ReleasePreviewComponents() { }
 
 	/**
 	 * Enable the use of a post process render target when bPreviewEnablePostProcess is disabled on the actor. The root actor
@@ -488,7 +602,8 @@ public:
 	 * @param Object The object subscribing to updates
 	 * @return The number of subscribers to use post process.
 	 */
-	int32 SubscribeToPostProcessRenderTarget(const uint8* Object);
+	UE_DEPRECATED(5.4, "This function has been deprecated.")
+	int32 SubscribeToPostProcessRenderTarget(const uint8* Object) { return INDEX_NONE; };
 
 	/**
 	 * Unsubscribe a registered object from requiring post process render target updates.
@@ -496,13 +611,16 @@ public:
 	 * @param Object The object subscribing to updates. When the counter is zero post process render targets will not be used.
 	 * @return The number of subscribers to use post process.
 	 */
-	int32 UnsubscribeFromPostProcessRenderTarget(const uint8* Object);
+	UE_DEPRECATED(5.4, "This function has been deprecated.")
+	int32 UnsubscribeFromPostProcessRenderTarget(const uint8* Object) { return INDEX_NONE; };
 
 	/** If one or more observers are subscribed to receive post process preview targets. */
-	bool DoObserversNeedPostProcessRenderTarget() const;
+	UE_DEPRECATED(5.4, "This function has been deprecated.")
+	bool DoObserversNeedPostProcessRenderTarget() const { return false; };
 	
 	/** When rendering the preview determine which render target should be used for the current frame. */
-	bool ShouldThisFrameOutputPreviewToPostProcessRenderTarget() const;
+	UE_DEPRECATED(5.4, "This function has been deprecated.")
+	bool ShouldThisFrameOutputPreviewToPostProcessRenderTarget() const { return false; }
 
 	/** Force preview rendering to be enabled regardless of the user's setting until a matching RemovePreviewEnableOverride call is made. */
 	void AddPreviewEnableOverride(const uint8* Object);
@@ -513,14 +631,21 @@ public:
 	 */
 	void RemovePreviewEnableOverride(const uint8* Object);
 
+	UE_DEPRECATED(5.4, "This function has been deprecated.")
 	float GetPreviewRenderTargetRatioMult() const
 	{
 		return PreviewRenderTargetRatioMult;
 	};
 
-	IDisplayClusterViewport* FindPreviewViewport(const FString& InViewportId) const;
+	UE_DEPRECATED(5.4, "This function has been deprecated.")
+	IDisplayClusterViewport* FindPreviewViewport(const FString& InViewportId) const
+	{
+		return nullptr;
+	}
 
-	void GetPreviewRenderTargetableTextures(const TArray<FString>& InViewportNames, TArray<FTextureRHIRef>& OutTextures);
+	UE_DEPRECATED(5.4, "This function has been deprecated.")
+	void GetPreviewRenderTargetableTextures(const TArray<FString>& InViewportNames, TArray<FTextureRHIRef>& OutTextures)
+	{ }
 
 	void UpdateInnerFrustumPriority();
 	void ResetInnerFrustumPriority();
@@ -529,25 +654,13 @@ public:
 	void SetIsSelectedInEditor(bool bValue);
 
 	// Don't show actor preview in the level viewport when DCRA actor is selected, but none of its children are.
+	UE_DEPRECATED(5.4, "This function has been deprecated.")
 	virtual bool IsDefaultPreviewEnabled() const override
 	{
 		return false;
 	}
 
 protected:
-	FString GeneratePreviewComponentName_Editor(const FString& NodeId, const FString& ViewportId) const;
-	void ResetPreviewInternals_Editor();
-
-	bool ImplUpdatePreviewConfiguration_Editor(const FString& InClusterNodeId);
-
-	void ImplRenderPreview_Editor();
-	bool ImplRenderPassPreviewClusterNode_Editor(const FString& InClusterNodeId);
-
-	bool ImplUpdatePreviewRenderFrame_Editor(const FString& InClusterNodeId);
-
-	void ImplRenderPreviewFrustums_Editor();
-	void ImplRenderPreviewViewportFrustum_Editor(const FMatrix ProjectionMatrix, const FMatrix ViewMatrix, const FVector ViewOrigin);
-
 	virtual void PostEditChangeChainProperty(FPropertyChangedChainEvent& PropertyChainEvent) override;
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 	virtual void PostEditMove(bool bFinished) override;
@@ -569,38 +682,12 @@ private:
 
 	bool bIsSelectedInEditor = false;
 
-	/** When the preview render should be directed to the post process render target. */
-	bool bOutputFrameToPostProcessRenderTarget;
-
-	/** Enables preview components to output to the post process render target when bPreviewEnablePostProcess is disabled. Contains all subscribed objects. */
-	TSet<const uint8*> PostProcessRenderTargetObservers;
-
 	/* Addresses of callers to AddPreviewEnableOverride that haven't removed their overrides yet. */
 	TSet<const uint8*> PreviewEnableOverriders;
-	
+
 	TWeakPtr<IDisplayClusterConfiguratorBlueprintEditor> ToolkitPtr;
 
-	int32 TickPerFrameCounter = 0;
-
-	int32 PreviewClusterNodeIndex = 0;
-	
-	int32 PreviewViewportIndex = -1;
-	TUniquePtr<FDisplayClusterRenderFrame> PreviewRenderFrame;
-	FString PreviewRenderFrameClusterNodeId;
-
-	int32 PreviewViewportsRenderedInThisFrameCnt = 0;
-
-	FOnPreviewUpdated OnPreviewGenerated;
-	FOnPreviewUpdated OnPreviewDestroyed;
-
-	struct FFrustumPreviewViewportContextCache
-	{
-		FVector  ViewLocation;
-		FRotator ViewRotation;
-		FMatrix  ProjectionMatrix;
-	};
-	// Cache the last valid viewport context
-	TMap<FString, FFrustumPreviewViewportContextCache> FrustumPreviewViewportContextCache;
-
+	// UE_DEPRECATED 5.4
+	FOnPreviewUpdated DeprecatedPreviewDelegate;
 #endif
 };

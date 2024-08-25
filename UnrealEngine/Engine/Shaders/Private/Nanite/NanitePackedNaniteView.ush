@@ -2,6 +2,7 @@
 
 #pragma once
 
+// Counterpart to Nanite::FPackedView in NaniteShared.h
 struct FPackedNaniteView
 {
 	float4x4	SVPositionToTranslatedWorld;
@@ -20,27 +21,32 @@ struct FPackedNaniteView
 	int4		ViewRect;
 	float4		ViewSizeAndInvSize;
 	float4		ClipSpaceScaleOffset;
-	float3		RelativePreViewTranslation;
-	float		ViewTilePositionX;
-	float3		RelativePrevPreViewTranslation;
-	float		ViewTilePositionY;
-	float3		RelativeWorldCameraOrigin;
-	float		ViewTilePositionZ;
-	float3		DrawDistanceOriginTranslatedWorld;
+	float3		PreViewTranslationHigh;
+	float		ViewOriginHighX;
+	float3		PrevPreViewTranslationHigh;
+	float		ViewOriginHighY;
+	float3		PrevPreViewTranslationLow;
+	float		MinBoundsRadiusSq;
+	float3		ViewOriginLow;
+	float		ViewOriginHighZ;
+	float3		CullingViewOriginTranslatedWorld;
 	float		RangeBasedCullingDistance;
 	float3		ViewForward;
 	float 		NearPlane;
 
 	float4		TranslatedGlobalClipPlane; // Not actually used unless project setting is enabled
 
-	float3		MatrixTilePosition;
-	float		Padding1;
-
+	float3		PreViewTranslationLow;
+	float		CullingViewScreenMultiple;
+	
 	float2		LODScales;
-	float		MinBoundsRadiusSq;
+	uint		InstanceOcclusionQueryMask;
 	uint		StreamingPriorityCategory_AndFlags;
 
 	int4		TargetLayerIdX_AndMipLevelY_AndNumMipLevelsZ;
 
 	int4		HZBTestViewRect;
+
+	float3		Padding1;
+	uint		LightingChannelMask;
 };

@@ -6,13 +6,16 @@
 #include "ISequencerSection.h"
 #include "MVVM/Extensions/ITrackExtension.h"
 #include "MVVM/ViewModels/ChannelModel.h"
+#include "MVVM/ViewModels/ObjectBindingModel.h"
 #include "MVVM/ViewModels/SectionModel.h"
 #include "MVVM/ViewModels/SequencerEditorViewModel.h"
+#include "MVVM/ViewModels/SequenceModel.h"
 #include "MVVM/ViewModels/SequencerModelUtils.h"
-#include "MVVM/ViewModels/ViewModelIterators.h"
 #include "MVVM/Views/SChannelView.h"
 #include "MVVM/Views/SOutlinerItemViewBase.h"
 #include "MVVM/Views/SSequencerKeyNavigationButtons.h"
+#include "MVVM/Views/SOutlinerTrackColorPicker.h"
+#include "MVVM/ViewModels/OutlinerColumns/OutlinerColumnTypes.h"
 #include "Math/UnrealMathUtility.h"
 #include "Misc/AssertionMacros.h"
 #include "MovieSceneTrack.h"
@@ -32,9 +35,7 @@ class SWidget;
 
 #define LOCTEXT_NAMESPACE "SequencerCategoryModel"
 
-namespace UE
-{
-namespace Sequencer
+namespace UE::Sequencer
 {
 
 FCategoryModel::FCategoryModel(FName InCategoryName)
@@ -85,9 +86,10 @@ FLinearColor FCategoryModel::GetKeyBarColor() const
 	return FColor(160, 160, 160);
 }
 
-FCategoryGroupModel::FCategoryGroupModel(FName InCategoryName, const FText& InDisplayText)
+FCategoryGroupModel::FCategoryGroupModel(FName InCategoryName, const FText& InDisplayText, FGetMovieSceneTooltipText InGetGroupTooltipTextDelegate)
 	: CategoryName(InCategoryName)
 	, DisplayText(InDisplayText)
+	, GetGroupTooltipTextDelegate(InGetGroupTooltipTextDelegate)
 {
 	SetIdentifier(InCategoryName);
 }
@@ -157,12 +159,44 @@ FOutlinerSizing FCategoryGroupModel::GetOutlinerSizing() const
 	{
 		const_cast<FCategoryGroupModel*>(this)->RecomputeSizing();
 	}
-	return ComputedSizing;
+
+	FOutlinerSizing FinalSizing = ComputedSizing;
+	if (!EnumHasAnyFlags(ComputedSizing.Flags, EOutlinerSizingFlags::CustomHeight))
+	{
+		FViewDensityInfo Density = GetEditor()->GetViewDensity();
+		FinalSizing.Height = Density.UniformHeight.Get(FinalSizing.Height);
+	}
+	return FinalSizing;
 }
 
 FText FCategoryGroupModel::GetLabel() const
 {
 	return GetDisplayText();
+}
+
+FText FCategoryGroupModel::GetLabelToolTipText() const
+{
+	if (GetGroupTooltipTextDelegate.IsBound())
+	{
+		if (TViewModelPtr<FSequenceModel> SequenceModel = FindAncestorOfType<FSequenceModel>())
+		{
+			if (TSharedPtr<FSequencerEditorViewModel> SequencerModel = SequenceModel->GetEditor())
+			{
+				FMovieSceneSequenceID SequenceID = SequenceModel->GetSequenceID();
+				IMovieScenePlayer* Player = SequencerModel->GetSequencer().Get();
+				if (Player)
+				{
+					if (TViewModelPtr<FObjectBindingModel> ObjectBindingModel = FindAncestorOfType<FObjectBindingModel>())
+					{
+						FGuid ObjectBindingID = ObjectBindingModel->GetObjectGuid();
+
+						return GetGroupTooltipTextDelegate.Execute(Player, ObjectBindingID, SequenceID);
+					}
+				}
+			}
+		}
+	}
+	return FText();
 }
 
 FSlateFontInfo FCategoryGroupModel::GetLabelFont() const
@@ -172,27 +206,53 @@ FSlateFontInfo FCategoryGroupModel::GetLabelFont() const
 		: FOutlinerItemModel::GetLabelFont();
 }
 
-TSharedRef<SWidget> FCategoryGroupModel::CreateOutlinerView(const FCreateOutlinerViewParams& InParams)
+TSharedPtr<SWidget> FCategoryGroupModel::CreateOutlinerViewForColumn(const FCreateOutlinerViewParams& InParams, const FName& InColumnName)
 {
-	TSharedPtr<FSequencerEditorViewModel> EditorViewModel = GetEditor();
+	TViewModelPtr<FSequencerEditorViewModel> Editor = InParams.Editor->CastThisShared<FSequencerEditorViewModel>();
+	if (!Editor)
+	{
+		return SNullWidget::NullWidget;
+	}
 
-	return SNew(SOutlinerItemViewBase, SharedThis(this), InParams.Editor, InParams.TreeViewRow)
-		.CustomContent()
-		[
-			SNew(SBox)
-			.HAlign(HAlign_Right)
-			.VAlign(VAlign_Center)
-			[
-				SNew(SHorizontalBox)
+	if (InColumnName == FCommonOutlinerNames::Label)
+	{
+		return SNew(SOutlinerItemViewBase, SharedThis(this), InParams.Editor, InParams.TreeViewRow);
+	}
 
-				+ SHorizontalBox::Slot()
-				.AutoWidth()
-				.VAlign(VAlign_Center)
-				[
-					SNew(SSequencerKeyNavigationButtons, SharedThis(this), EditorViewModel->GetSequencer())
-				]
-			]
-		];
+	if (InColumnName == FCommonOutlinerNames::Edit)
+	{
+
+	}
+
+	if (InColumnName == FCommonOutlinerNames::KeyFrame)
+	{
+		EKeyNavigationButtons Buttons = EKeyNavigationButtons::AddKey;
+
+		return SNew(SSequencerKeyNavigationButtons, SharedThis(this), Editor->GetSequencer())
+			.Buttons(Buttons);
+	}
+
+	if (InColumnName == FCommonOutlinerNames::Nav)
+	{
+		EKeyNavigationButtons Buttons = InParams.TreeViewRow->IsColumnVisible(FCommonOutlinerNames::KeyFrame)
+			? EKeyNavigationButtons::NavOnly
+			: EKeyNavigationButtons::All;
+
+		return SNew(SSequencerKeyNavigationButtons, SharedThis(this), Editor->GetSequencer())
+			.Buttons(Buttons);
+	}
+
+	if (InColumnName == FCommonOutlinerNames::Nav)
+	{
+		return SNew(SSequencerKeyNavigationButtons, SharedThis(this), Editor->GetSequencer());
+	}
+
+	if (InColumnName == FCommonOutlinerNames::ColorPicker)
+	{
+		return SNew(SOutlinerTrackColorPicker, SharedThis(this), InParams.Editor);
+	}
+
+	return nullptr;
 }
 
 FTrackAreaParameters FCategoryGroupModel::GetTrackAreaParameters() const
@@ -234,8 +294,7 @@ void FCategoryGroupModel::OnRecycle()
 	Categories.Empty();
 }
 
-} // namespace Sequencer
-} // namespace UE
+} // namespace UE::Sequencer
 
 #undef LOCTEXT_NAMESPACE
 

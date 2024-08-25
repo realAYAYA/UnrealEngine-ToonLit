@@ -67,6 +67,8 @@ class UWaveformTransformationBase : public UObject
 public:
 	virtual Audio::FTransformationPtr CreateTransformation() const { return nullptr; }
 	virtual void UpdateConfiguration(FWaveTransformUObjectConfiguration& InOutConfiguration) {};
+	
+	virtual bool IsEditorOnly() const override { return true; }
 };
 
 // Object that holds an ordered list of transformations to perform on a sound wave
@@ -79,5 +81,7 @@ public:
 	UPROPERTY(EditAnywhere, Instanced, Category = "Transformations")
 	TArray<TObjectPtr<UWaveformTransformationBase>> Transformations;
 
+	virtual bool IsEditorOnly() const override { return true; }
+	
 	AUDIOEXTENSIONS_API TArray<Audio::FTransformationPtr> CreateTransformations() const;
 };

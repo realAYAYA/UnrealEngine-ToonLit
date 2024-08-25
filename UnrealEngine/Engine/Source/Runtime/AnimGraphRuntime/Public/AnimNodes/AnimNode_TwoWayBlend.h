@@ -40,6 +40,10 @@ protected:
 	UPROPERTY(EditAnywhere, Category = Option)
 	uint8 bResetChildOnActivation:1;
 
+	/** Always update children, regardless of whether or not that child has weight. */
+	UPROPERTY(EditAnywhere, Category = Option, meta=(PinHiddenByDefault))
+	uint8 bAlwaysUpdateChildren:1;
+
 public:
 	/** The float value that controls the alpha blending when the alpha input type is set to 'Float' */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category=Settings, meta=(PinShownByDefault))
@@ -68,6 +72,7 @@ public:
 		, bAIsRelevant(false)
 		, bBIsRelevant(false)
 		, bResetChildOnActivation(false)
+		, bAlwaysUpdateChildren(false)
 		, Alpha(0.0f)
 		, AlphaCurveName(NAME_None)
 		, InternalBlendAlpha(0.0f)

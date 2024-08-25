@@ -28,7 +28,7 @@ public:
 		EOptimusNodePinDirection NewPinDirection;
 		FName Key;
 		FText ToolTip;
-		bool bCanAutoLink;
+		bool bCanAutoLink = false;;
 	};
 	
 	virtual TArray<FAdderPinAction> GetAvailableAdderPinActions(
@@ -36,10 +36,13 @@ public:
 		EOptimusNodePinDirection InNewPinDirection,
 		FString* OutReason = nullptr
 		) const = 0;
-	
+
+	// Make sure pins created this way don't have different names each time the function is called. Because
+	// this function is called during undo/redo, output has to be stable(same input gives same output)
 	virtual TArray<UOptimusNodePin*> TryAddPinFromPin(
 		const FAdderPinAction& InSelectedAction,
-		UOptimusNodePin* InSourcePin
+		UOptimusNodePin* InSourcePin,
+		FName InNameToUse
 		) = 0;
 	
 	virtual bool RemoveAddedPins(TConstArrayView<UOptimusNodePin*> InAddedPinsToRemove) = 0;

@@ -959,7 +959,7 @@ struct ZONEGRAPH_API FZoneGraphBuildSettings
 	/** @return tessellation tolerance for specific case, or common tolerance if no match. */
 	float GetLaneTessellationTolerance(const FZoneGraphTagMask LaneTags) const;
 
-	/** @retrun Connection restrictions for specified lane based on PolygonRoutingRules */
+	/** @return Connection restrictions for specified lane based on PolygonRoutingRules */
 	EZoneShapeLaneConnectionRestrictions GetConnectionRestrictions(const FZoneGraphTagMask ZoneTags,
 																   const FZoneLaneProfileRef& SourceLaneProfile, const int32 SourceConnectionCount,
 																   const FZoneLaneProfileRef& DestinationLaneProfile, const int32 DestinationConnectionCount) const;
@@ -995,4 +995,8 @@ struct ZONEGRAPH_API FZoneGraphBuildSettings
 	/** Max relative angle (in degrees) between two shape points for them to be snapped together. */
 	UPROPERTY(Category = PointSnapping, EditAnywhere)
 	float ConnectionSnapAngle = 10.0f;
+
+	/** Max distance to auto connect a dragged end control point to the closest connector when released. */
+	UPROPERTY(Category = PointSnapping, EditAnywhere)
+	float DragEndpointAutoConnectRange = 250.0f;
 };

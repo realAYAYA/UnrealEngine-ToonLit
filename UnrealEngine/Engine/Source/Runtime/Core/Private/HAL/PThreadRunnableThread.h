@@ -263,7 +263,7 @@ public:
 		// Impossible in pthreads!
 	}
 
-	virtual bool Kill(bool bShouldWait = false) override
+	virtual bool Kill(bool bShouldWait) override
 	{
 		check(Thread && "Did you forget to call Create()?");
 		bool bDidExitOK = true;

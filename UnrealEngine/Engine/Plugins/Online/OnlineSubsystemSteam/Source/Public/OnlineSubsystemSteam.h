@@ -21,6 +21,8 @@ class FOnlineAuthSteam;
 class FOnlineAuthUtilsSteam;
 class FOnlinePingInterfaceSteam;
 class FOnlineEncryptedAppTicketSteam;
+class FOnlinePurchaseSteam;
+class FOnlineStoreSteam;
 
 /** Forward declarations of all interface classes */
 typedef TSharedPtr<class FOnlineSessionSteam, ESPMode::ThreadSafe> FOnlineSessionSteamPtr;
@@ -37,6 +39,8 @@ typedef TSharedPtr<class FOnlineAuthSteam, ESPMode::ThreadSafe> FOnlineAuthSteam
 typedef TSharedPtr<class FOnlineAuthUtilsSteam, ESPMode::ThreadSafe> FOnlineAuthSteamUtilsPtr;
 typedef TSharedPtr<class FOnlinePingInterfaceSteam, ESPMode::ThreadSafe> FOnlinePingSteamPtr;
 typedef TSharedPtr<class FOnlineEncryptedAppTicketSteam, ESPMode::ThreadSafe> FOnlineEncryptedAppTicketSteamPtr;
+typedef TSharedPtr<class FOnlinePurchaseSteam, ESPMode::ThreadSafe> FOnlinePurchaseSteamPtr;
+typedef TSharedPtr<class FOnlineStoreSteam, ESPMode::ThreadSafe> FOnlineStoreSteamPtr;
 
 /**
 * Delegate fired when a Steam Game Server has completed its login tasks with the Steam backend.
@@ -119,6 +123,12 @@ protected:
 	/** Interface for Steam encrypted application tickets. */
 	FOnlineEncryptedAppTicketSteamPtr EncryptedAppTicketInterface;
 
+	/** Interface for the Purchase interface */
+	FOnlinePurchaseSteamPtr PurchaseInterface;
+
+	/** Interface for the Store interface */
+	FOnlineStoreSteamPtr StoreInterface;
+
 	/** Online async task runnable */
 	class FOnlineAsyncTaskManagerSteam* OnlineAsyncTaskThreadRunnable;
 
@@ -157,6 +167,8 @@ PACKAGE_SCOPE:
 		AuthInterfaceUtils(nullptr),
 		PingInterface(nullptr),
 		EncryptedAppTicketInterface(nullptr),
+		PurchaseInterface(nullptr),
+		StoreInterface(nullptr),
 		OnlineAsyncTaskThreadRunnable(nullptr),
 		OnlineAsyncTaskThread(nullptr),
 		SteamAPIClientHandle(nullptr),
@@ -261,8 +273,8 @@ public:
 	virtual IOnlineIdentityPtr GetIdentityInterface() const override;
 	virtual IOnlineTitleFilePtr GetTitleFileInterface() const override;
 	virtual IOnlineEntitlementsPtr GetEntitlementsInterface() const override;
-	virtual IOnlineStoreV2Ptr GetStoreV2Interface() const override { return nullptr; }
-	virtual IOnlinePurchasePtr GetPurchaseInterface() const override { return nullptr; }
+	virtual IOnlineStoreV2Ptr GetStoreV2Interface() const override;
+	virtual IOnlinePurchasePtr GetPurchaseInterface() const override;
 	virtual IOnlineEventsPtr GetEventsInterface() const override;
 	virtual IOnlineAchievementsPtr GetAchievementsInterface() const override;
 	virtual IOnlineSharingPtr GetSharingInterface() const override;

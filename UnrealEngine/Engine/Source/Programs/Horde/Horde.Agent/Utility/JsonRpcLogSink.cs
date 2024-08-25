@@ -1,11 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
-using System.Collections.Generic;
 using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
 using EpicGames.Core;
+using EpicGames.Horde.Jobs;
 using EpicGames.Horde.Logs;
 using EpicGames.Horde.Storage;
 using Google.Protobuf;
@@ -25,83 +22,37 @@ namespace Horde.Agent.Utility
 		Task SetOutcomeAsync(JobStepOutcome outcome, CancellationToken cancellationToken);
 	}
 
-	sealed class JsonRpcLogSink : IJsonRpcLogSink
-	{
-		readonly IRpcConnection _rpcClient;
-		readonly string? _jobId;
-		readonly string? _jobBatchId;
-		readonly string? _jobStepId;
-		readonly ILogger _logger;
-
-		public JsonRpcLogSink(IRpcConnection rpcClient, string? jobId, string? jobBatchId, string? jobStepId, ILogger logger)
-		{
-			_rpcClient = rpcClient;
-			_jobId = jobId;
-			_jobBatchId = jobBatchId;
-			_jobStepId = jobStepId;
-			_logger = logger;
-		}
-
-		public ValueTask DisposeAsync() => new ValueTask();
-
-		/// <inheritdoc/>
-		public async Task WriteEventsAsync(List<CreateEventRequest> events, CancellationToken cancellationToken)
-		{
-			await _rpcClient.InvokeAsync((JobRpc.JobRpcClient x) => x.CreateEventsAsync(new CreateEventsRequest(events)), cancellationToken);
-		}
-
-		/// <inheritdoc/>
-		public async Task WriteOutputAsync(WriteOutputRequest request, CancellationToken cancellationToken)
-		{
-			await _rpcClient.InvokeAsync((JobRpc.JobRpcClient x) => x.WriteOutputAsync(request), cancellationToken);
-		}
-
-		/// <inheritdoc/>
-		public async Task SetOutcomeAsync(JobStepOutcome outcome, CancellationToken cancellationToken)
-		{
-			// Update the outcome of this jobstep
-			if (_jobId != null && _jobBatchId != null && _jobStepId != null)
-			{
-				try
-				{
-					await _rpcClient.InvokeAsync((JobRpc.JobRpcClient x) => x.UpdateStepAsync(new UpdateStepRequest(_jobId, _jobBatchId, _jobStepId, JobStepState.Unspecified, outcome)), cancellationToken);
-				}
-				catch (Exception ex)
-				{
-					_logger.LogWarning(ex, "Unable to update step outcome to {NewOutcome}", outcome);
-				}
-			}
-		}
-	}
-
 	class JsonRpcAndStorageLogSink : IJsonRpcLogSink, IAsyncDisposable
 	{
 		const int FlushLength = 1024 * 1024;
 
 		readonly IRpcConnection _connection;
-		readonly string _logId;
+		readonly JobId? _jobId;
+		readonly JobStepBatchId? _jobBatchId;
+		readonly JobStepId? _jobStepId;
+		readonly LogId _logId;
 		readonly LogBuilder _builder;
-		readonly IJsonRpcLogSink? _inner;
-		readonly IStorageWriter _writer;
+		readonly IStorageClient _store;
+		readonly IBlobWriter _writer;
 		readonly ILogger _logger;
 
 		int _bufferLength;
-
-		// Background task
-		readonly object _lockObject = new object();
 
 		// Tailing task
 		readonly Task _tailTask;
 		AsyncEvent _tailTaskStop;
 		readonly AsyncEvent _newTailDataEvent = new AsyncEvent();
 
-		public JsonRpcAndStorageLogSink(IRpcConnection connection, string logId, IJsonRpcLogSink? inner, IStorageClient store, ILogger logger)
+		public JsonRpcAndStorageLogSink(IRpcConnection connection, LogId logId, JobId? jobId, JobStepBatchId? jobBatchId, JobStepId? jobStepId, IStorageClient store, ILogger logger)
 		{
 			_connection = connection;
 			_logId = logId;
+			_jobId = jobId;
+			_jobBatchId = jobBatchId;
+			_jobStepId = jobStepId;
 			_builder = new LogBuilder(LogFormat.Json, logger);
-			_inner = inner;
-			_writer = store.CreateWriter();
+			_store = store;
+			_writer = store.CreateBlobWriter();
 			_logger = logger;
 
 			_tailTaskStop = new AsyncEvent();
@@ -110,59 +61,69 @@ namespace Horde.Agent.Utility
 
 		public async ValueTask DisposeAsync()
 		{
+			_logger.LogInformation("Disposing json log task");
+
 			if (_tailTaskStop != null)
 			{
 				_tailTaskStop.Latch();
 				_newTailDataEvent.Latch();
 
-				try
-				{
-					await _tailTask;
-				}
-				catch (OperationCanceledException)
-				{
-				}
-				catch (Exception ex)
-				{
-					_logger.LogError(ex, "Exception on log tailing task ({LogId}): {Message}", _logId, ex.Message);
-				}
+				await _tailTask;
 				_tailTaskStop = null!;
-			}
-
-			if (_inner != null)
-			{
-				await _inner.DisposeAsync();
 			}
 
 			if (_writer != null)
 			{
 				await _writer.DisposeAsync();
 			}
+
+			if (_store != null)
+			{
+				_store.Dispose();
+			}
 		}
 
 		async Task TickTailAsync()
 		{
+			for (; ; )
+			{
+				try
+				{
+					await TickTailInternalAsync();
+					break;
+				}
+				catch (OperationCanceledException ex)
+				{
+					_logger.LogInformation(ex, "Cancelled log tailing task");
+					break;
+				}
+				catch (Exception ex)
+				{
+					_logger.LogError(ex, "Exception on log tailing task ({LogId}): {Message}", _logId, ex.Message);
+					await Task.Delay(TimeSpan.FromSeconds(10.0));
+				}
+			}
+		}
+
+		async Task TickTailInternalAsync()
+		{
 			int tailNext = -1;
 			while (!_tailTaskStop.IsSet())
 			{
-				Task newTailDataTask;
+				Task newTailDataTask = _newTailDataEvent.Task;
+				int initialTailNext = tailNext;
 
 				// Get the data to send to the server
 				ReadOnlyMemory<byte> tailData = ReadOnlyMemory<byte>.Empty;
-				lock (_lockObject)
+				if (tailNext != -1)
 				{
-					if (tailNext != -1)
-					{
-						tailNext = Math.Max(tailNext, _builder.FlushedLineCount);
-						tailData = _builder.ReadTailData(tailNext, 16 * 1024);
-					}
-					newTailDataTask = _newTailDataEvent.Task;
+					(tailNext, tailData) = _builder.ReadTailData(tailNext, 16 * 1024);
 				}
 
 				// If we don't have any updates for the server, wait until we do.
-				if (tailNext != -1 && tailData.IsEmpty)
+				if (tailNext != -1 && tailData.IsEmpty && tailNext == initialTailNext)
 				{
-					_logger.LogInformation("No tail data available for log {LogId} after {TailNext}; waiting for more...", _logId, tailNext);
+					_logger.LogInformation("No tail data available for log {LogId} after line {TailNext}; waiting for more...", _logId, tailNext);
 					await newTailDataTask;
 					continue;
 				}
@@ -177,7 +138,7 @@ namespace Horde.Agent.Utility
 				int numLines = CountLines(tailData.Span);
 				_logger.LogInformation("Setting log {LogId} tail = {TailNext}, data = {TailDataSize} bytes, {NumLines} lines ('{Start}')", _logId, tailNext, tailData.Length, numLines, start);
 
-				int newTailNext = await UpdateLogTailAsync(tailNext, tailData);
+				int newTailNext = await UpdateLogTailAsync(tailNext, tailData, CancellationToken.None);
 				_logger.LogInformation("Log {LogId} tail next = {TailNext}", _logId, newTailNext);
 
 				if (newTailNext != tailNext)
@@ -186,6 +147,7 @@ namespace Horde.Agent.Utility
 					_logger.LogInformation("Modified tail position for log {LogId} to {TailNext}", _logId, tailNext);
 				}
 			}
+			_logger.LogInformation("Finishing log tail task");
 		}
 
 		static int CountLines(ReadOnlySpan<byte> data)
@@ -204,19 +166,24 @@ namespace Horde.Agent.Utility
 		/// <inheritdoc/>
 		public async Task SetOutcomeAsync(JobStepOutcome outcome, CancellationToken cancellationToken)
 		{
-			if (_inner != null)
+			// Update the outcome of this jobstep
+			if (_jobId != null && _jobBatchId != null && _jobStepId != null)
 			{
-				await _inner.SetOutcomeAsync(outcome, cancellationToken);
+				try
+				{
+					await _connection.InvokeAsync((JobRpc.JobRpcClient x) => x.UpdateStepAsync(new UpdateStepRequest(_jobId.Value, _jobBatchId.Value, _jobStepId.Value, JobStepState.Unspecified, outcome)), cancellationToken);
+				}
+				catch (Exception ex)
+				{
+					_logger.LogWarning(ex, "Unable to update step outcome to {NewOutcome}", outcome);
+				}
 			}
 		}
 
 		/// <inheritdoc/>
 		public async Task WriteEventsAsync(List<CreateEventRequest> events, CancellationToken cancellationToken)
 		{
-			if (_inner != null)
-			{
-				await _inner.WriteEventsAsync(events, cancellationToken);
-			}
+			await _connection.InvokeAsync((JobRpc.JobRpcClient x) => x.CreateEventsAsync(new CreateEventsRequest(events)), cancellationToken);
 		}
 
 		/// <inheritdoc/>
@@ -227,8 +194,8 @@ namespace Horde.Agent.Utility
 
 			if (request.Flush || _bufferLength > FlushLength)
 			{
-				NodeRef<LogNode> target = await _builder.FlushAsync(_writer, request.Flush, cancellationToken);
-				await UpdateLogAsync(target.Handle, _builder.LineCount, request.Flush, cancellationToken);
+				IBlobRef<LogNode> target = await _builder.FlushAsync(_writer, request.Flush, cancellationToken);
+				await UpdateLogAsync(target, _builder.LineCount, request.Flush, cancellationToken);
 				_bufferLength = 0;
 			}
 
@@ -237,58 +204,66 @@ namespace Horde.Agent.Utility
 
 		#region RPC calls
 
-		protected virtual async Task UpdateLogAsync(BlobHandle target, int lineCount, bool complete, CancellationToken cancellationToken)
+		protected virtual async Task UpdateLogAsync(IBlobRef target, int lineCount, bool complete, CancellationToken cancellationToken)
 		{
-			_logger.LogInformation("Updating log {LogId} to line {LineCount}, target {Locator}", _logId, lineCount, target);
+			_logger.LogInformation("Updating log {LogId} to line {LineCount}, target {Locator}", _logId, lineCount, target.GetLocator());
 
 			UpdateLogRequest request = new UpdateLogRequest();
-			request.LogId = _logId;
+			request.LogId = _logId.ToString();
 			request.LineCount = lineCount;
-			request.Target = target.GetLocator().ToString();
+			request.TargetHash = target.Hash.ToString();
+			request.TargetLocator = target.GetLocator().ToString();
 			request.Complete = complete;
 			await _connection.InvokeAsync((LogRpcClient client) => client.UpdateLogAsync(request, cancellationToken: cancellationToken), cancellationToken);
 		}
 
-		protected virtual async Task<int> UpdateLogTailAsync(int tailNext, ReadOnlyMemory<byte> tailData)
+		protected virtual async Task<int> UpdateLogTailAsync(int tailNext, ReadOnlyMemory<byte> tailData, CancellationToken cancellationToken)
 		{
 			DateTime deadline = DateTime.UtcNow.AddMinutes(2.0);
-			using (IRpcClientRef<LogRpcClient> clientRef = await _connection.GetClientRefAsync<LogRpcClient>(CancellationToken.None))
+			try
 			{
-				using (AsyncDuplexStreamingCall<UpdateLogTailRequest, UpdateLogTailResponse> call = clientRef.Client.UpdateLogTail(deadline: deadline))
+				using IRpcClientRef<LogRpcClient> clientRef = await _connection.GetClientRefAsync<LogRpcClient>(cancellationToken);
+				using AsyncDuplexStreamingCall<UpdateLogTailRequest, UpdateLogTailResponse> call = clientRef.Client.UpdateLogTail(deadline: deadline, cancellationToken: cancellationToken);
+
+				// Write the request to the server
+				UpdateLogTailRequest request = new UpdateLogTailRequest();
+				request.LogId = _logId.ToString();
+				request.TailNext = tailNext;
+				request.TailData = UnsafeByteOperations.UnsafeWrap(tailData);
+				await call.RequestStream.WriteAsync(request, cancellationToken);
+				_logger.LogInformation("Writing log data: {LogId}, {TailNext}, {TailData} bytes", _logId, tailNext, tailData.Length);
+
+				// Wait until the server responds or we need to trigger a new update
+				Task<bool> moveNextAsync = call.ResponseStream.MoveNext();
+
+				Task task = await Task.WhenAny(moveNextAsync, clientRef.DisposingTask, _tailTaskStop.Task, Task.Delay(TimeSpan.FromMinutes(1.0), CancellationToken.None));
+				if (task == clientRef.DisposingTask)
 				{
-					// Write the request to the server
-					UpdateLogTailRequest request = new UpdateLogTailRequest();
-					request.LogId = _logId;
-					request.TailNext = tailNext;
-					request.TailData = UnsafeByteOperations.UnsafeWrap(tailData);
-					await call.RequestStream.WriteAsync(request);
-					_logger.LogInformation("Writing log data: {LogId}, {TailNext}, {TailData} bytes", _logId, tailNext, tailData.Length);
-
-					// Wait until the server responds or we need to trigger a new update
-					Task<bool> moveNextAsync = call.ResponseStream.MoveNext();
-
-					Task task = await Task.WhenAny(moveNextAsync, clientRef.DisposingTask, _tailTaskStop.Task, Task.Delay(TimeSpan.FromMinutes(1.0), CancellationToken.None));
-					if (task == clientRef.DisposingTask)
-					{
-						_logger.LogInformation("Cancelling long poll from client side (server migration)");
-					}
-					else if (task == _tailTaskStop.Task)
-					{
-						_logger.LogInformation("Cancelling long poll from client side (complete)");
-					}
-
-					// Close the request stream to indicate that we're finished
-					await call.RequestStream.CompleteAsync();
-
-					// Wait for a response or a new update to come in, then close the request stream
-					UpdateLogTailResponse? response = null;
-					while (await moveNextAsync)
-					{
-						response = call.ResponseStream.Current;
-						moveNextAsync = call.ResponseStream.MoveNext();
-					}
-					return response?.TailNext ?? -1;
+					TimeSpan graceDelay = TimeSpan.FromSeconds(10);
+					_logger.LogInformation("Cancelling long poll from client side (server migration). Backing off for {Delay} ms...", graceDelay.TotalMilliseconds);
+					await Task.Delay(graceDelay, cancellationToken);
 				}
+				else if (task == _tailTaskStop.Task)
+				{
+					_logger.LogInformation("Cancelling long poll from client side (complete)");
+				}
+
+				// Close the request stream to indicate that we're finished
+				await call.RequestStream.CompleteAsync();
+
+				// Wait for a response or a new update to come in, then close the request stream
+				UpdateLogTailResponse? response = null;
+				while (await moveNextAsync)
+				{
+					response = call.ResponseStream.Current;
+					moveNextAsync = call.ResponseStream.MoveNext();
+				}
+				return response?.TailNext ?? -1;
+			}
+			catch (RpcException ex) when (ex.StatusCode == StatusCode.DeadlineExceeded)
+			{
+				_logger.LogDebug(ex, "Log tail deadline exceeded, ignoring.");
+				return -1;
 			}
 		}
 

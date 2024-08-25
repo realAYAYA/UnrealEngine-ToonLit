@@ -33,7 +33,7 @@ namespace UE::PixelStreaming
 
 	FAudioDeviceModule::FAudioDeviceModule(TSharedPtr<UE::PixelStreaming::FAudioInputMixer> InMixer)
 		: bInitialized(false)
-		, Capturer(MakeUnique<UE::PixelStreaming::FAudioSubmixCapturer>())
+		, Capturer(MakeShared<UE::PixelStreaming::FAudioSubmixCapturer, ESPMode::ThreadSafe>())
 		, Requester(MakeUnique<UE::PixelStreaming::FAudioPlayoutRequester>())
 		, InputMixer(InMixer)
 	{

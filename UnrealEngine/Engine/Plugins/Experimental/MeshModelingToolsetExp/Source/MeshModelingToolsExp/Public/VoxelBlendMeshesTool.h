@@ -88,6 +88,15 @@ protected:
 
 	UPROPERTY()
 	TObjectPtr<UVoxelBlendMeshesToolProperties> BlendProperties;
+
+	virtual bool KeepCollisionFrom(int32 TargetIdx) const override
+	{
+		if (BlendProperties->Operation == EVoxelBlendOperation::Subtract)
+		{
+			return TargetIdx == 0;
+		}
+		return true;
+	}
 };
 
 

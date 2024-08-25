@@ -30,11 +30,19 @@
 			"Enabled": true
 		},
 		{
+			"Name": "LensComponent",
+			"Enabled": true
+		},
+		{
 			"Name": "MediaFrameworkUtilities",
 			"Enabled": true
 		},
 		{
 			"Name": "OpenCVLensDistortion",
+			"Enabled": true
+		},
+		{
+			"Name": "PythonFoundationPackages",
 			"Enabled": true
 		}
 	]

@@ -75,17 +75,13 @@ mu::NodeExtensionDataPtr UCustomizableObjectNodeExtensionDataVariation::Generate
 			}
 		}
 	}
-	else
-	{
-		InCompilerInterface.CompilerLog(LOCTEXT("ExtensionDataVariationMissinfDef", "Extension Data Variation node requires a default value"), this);
-	}
 
 	VariationNode->SetVariationCount(Variations.Num());
 	for (int32 VariationIndex = 0; VariationIndex < Variations.Num(); ++VariationIndex)
 	{
 		if (const UEdGraphPin* VariationPin = GetVariationPin(VariationIndex))
 		{
-			VariationNode->SetVariationTag(VariationIndex, StringCast<ANSICHAR>(*Variations[VariationIndex].Tag).Get());
+			VariationNode->SetVariationTag(VariationIndex, Variations[VariationIndex].Tag);
 			if (const UEdGraphPin* ConnectedPin = FollowInputPin(*VariationPin))
 			{
 				if (const ICustomizableObjectExtensionNode* ExtensionNode = Cast<ICustomizableObjectExtensionNode>(ConnectedPin->GetOwningNode()))

@@ -8,6 +8,7 @@
 #include "RHIResourceUpdates.h"
 #include "SkeletalMeshLegacyCustomVersions.h"
 #include "UObject/UE5MainStreamObjectVersion.h"
+#include "Rendering/RenderCommandPipes.h"
 
 /*-----------------------------------------------------------------------------
 FSkinWeightLookupVertexBuffer
@@ -83,7 +84,7 @@ FArchive& operator<<(FArchive& Ar, FSkinWeightLookupVertexBuffer& VertexBuffer)
 	}
 
 	// if Ar is counting, it still should serialize. Need to count VertexData
-	if (!StripFlags.IsDataStrippedForServer() || Ar.IsCountingMemory())
+	if (!StripFlags.IsAudioVisualDataStripped() || Ar.IsCountingMemory())
 	{
 		if (VertexBuffer.LookupData != NULL)
 		{
@@ -128,7 +129,7 @@ void FSkinWeightLookupVertexBuffer::AllocateData()
 void FSkinWeightLookupVertexBuffer::InitRHI(FRHICommandListBase& RHICmdList)
 {
 	// BUF_ShaderResource is needed for support of the SkinCache (we could make is dependent on GEnableGPUSkinCacheShaders or are there other users?)
-	VertexBufferRHI = CreateRHIBuffer_RenderThread();
+	VertexBufferRHI = CreateRHIBuffer(RHICmdList);
 	if (VertexBufferRHI)
 	{
 		bool bSRV = GPixelFormats[PixelFormat].Supported;
@@ -153,12 +154,13 @@ void FSkinWeightLookupVertexBuffer::ReleaseRHI()
 
 FBufferRHIRef FSkinWeightLookupVertexBuffer::CreateRHIBuffer_RenderThread()
 {
-	return CreateRHIBuffer_Internal<true>();
+	return CreateRHIBuffer(FRHICommandListImmediate::Get());
 }
 
 FBufferRHIRef FSkinWeightLookupVertexBuffer::CreateRHIBuffer_Async()
 {
-	return CreateRHIBuffer_Internal<false>();
+	FRHIAsyncCommandList CommandList;
+	return CreateRHIBuffer(*CommandList);
 }
 
 void FSkinWeightLookupVertexBuffer::InitRHIForStreaming(FRHIBuffer* IntermediateBuffer, FRHIResourceUpdateBatcher& Batcher)
@@ -192,10 +194,9 @@ void FSkinWeightLookupVertexBuffer::SetWeightOffsetAndInfluenceCount(uint32 Vert
 	*DataUInt32 = (WeightOffset << 8) | InfluenceCount;
 }
 
-template <bool bRenderThread>
-FBufferRHIRef FSkinWeightLookupVertexBuffer::CreateRHIBuffer_Internal()
+FBufferRHIRef FSkinWeightLookupVertexBuffer::CreateRHIBuffer(FRHICommandListBase& RHICmdList)
 {
-	return CreateRHIBuffer<bRenderThread>(LookupData, NumVertices, BUF_Static | BUF_ShaderResource | BUF_SourceCopy, TEXT("FSkinWeightLookupVertexBuffer"));
+	return FRenderResource::CreateRHIBuffer(RHICmdList, LookupData, NumVertices, BUF_Static | BUF_ShaderResource | BUF_SourceCopy, TEXT("FSkinWeightLookupVertexBuffer"));
 }
 
 /*-----------------------------------------------------------------------------
@@ -286,7 +287,7 @@ FArchive& operator<<(FArchive& Ar, FSkinWeightDataVertexBuffer& VertexBuffer)
 	}
 
 	// if Ar is counting, it still should serialize. Need to count VertexData
-	if (!StripFlags.IsDataStrippedForServer() || Ar.IsCountingMemory())
+	if (!StripFlags.IsAudioVisualDataStripped() || Ar.IsCountingMemory())
 	{
 		if (VertexBuffer.WeightData != NULL)
 		{
@@ -393,21 +394,21 @@ void FSkinWeightDataVertexBuffer::CopyMetaData(const FSkinWeightDataVertexBuffer
 	NumBoneWeights = Other.NumBoneWeights;
 }
 
-template <bool bRenderThread>
-FBufferRHIRef FSkinWeightDataVertexBuffer::CreateRHIBuffer_Internal()
+FBufferRHIRef FSkinWeightDataVertexBuffer::CreateRHIBuffer(FRHICommandListBase& RHICmdList)
 {
 	// BUF_ShaderResource is needed for support of the SkinCache (we could make is dependent on GEnableGPUSkinCacheShaders or are there other users?)
-	return CreateRHIBuffer<bRenderThread>(WeightData, NumBoneWeights, BUF_Static | BUF_ShaderResource | BUF_SourceCopy, TEXT("FSkinWeightDataVertexBuffer"));
+	return FRenderResource::CreateRHIBuffer(RHICmdList, WeightData, NumBoneWeights, BUF_Static | BUF_ShaderResource | BUF_SourceCopy, TEXT("FSkinWeightDataVertexBuffer"));
 }
 
 FBufferRHIRef FSkinWeightDataVertexBuffer::CreateRHIBuffer_RenderThread()
 {
-	return CreateRHIBuffer_Internal<true>();
+	return CreateRHIBuffer(FRHICommandListImmediate::Get());
 }
 
 FBufferRHIRef FSkinWeightDataVertexBuffer::CreateRHIBuffer_Async()
 {
-	return CreateRHIBuffer_Internal<false>();
+	FRHIAsyncCommandList CommandList;
+	return CreateRHIBuffer(*CommandList);
 }
 
 void FSkinWeightDataVertexBuffer::InitRHIForStreaming(FRHIBuffer* IntermediateBuffer, FRHIResourceUpdateBatcher& Batcher)
@@ -436,8 +437,8 @@ void FSkinWeightDataVertexBuffer::InitRHI(FRHICommandListBase& RHICmdList)
 	SCOPED_LOADTIMER(FSkinWeightVertexBuffer_InitRHI);
 
 	// BUF_ShaderResource is needed for support of the SkinCache (we could make is dependent on GEnableGPUSkinCacheShaders or are there other users?)
-	VertexBufferRHI = CreateRHIBuffer_RenderThread();
-	
+	VertexBufferRHI = CreateRHIBuffer(RHICmdList);
+
 	bool bSRV = VertexBufferRHI && GPixelFormats[GetPixelFormat()].Supported;
 	// When bAllowCPUAccess is true, the meshes is likely going to be used for Niagara to spawn particles on mesh surface.
 	// And it can be the case for CPU *and* GPU access: no differenciation today. That is why we create a SRV in this case.
@@ -583,7 +584,7 @@ void FSkinWeightDataVertexBuffer::SetBoneWeight(uint32 VertexWeightOffset, uint3
 		const uint32 BoneWeightOffset = GetBoneIndexByteSize() * VertexInfluenceCount;
 		uint8* BoneData = Data + VertexWeightOffset + BoneWeightOffset;
 		uint8* BoneVertexData = &BoneData[InfluenceIndex * GetBoneWeightByteSize()];  
-		
+
 		if (Use16BitBoneWeight())
 		{
 			*reinterpret_cast<uint16*>(BoneVertexData) = BoneWeight;
@@ -592,7 +593,7 @@ void FSkinWeightDataVertexBuffer::SetBoneWeight(uint32 VertexWeightOffset, uint3
 		{
 			*BoneVertexData = static_cast<uint8>(BoneWeight >> 8);
 		}
-		
+
 	}
 	else
 	{
@@ -703,19 +704,25 @@ void FSkinWeightVertexBuffer::CopyMetaData(const FSkinWeightVertexBuffer& Other)
 	LookupVertexBuffer.CopyMetaData(Other.LookupVertexBuffer);
 }
 
-FSkinWeightRHIInfo FSkinWeightVertexBuffer::CreateRHIBuffer_RenderThread()
+FSkinWeightRHIInfo FSkinWeightVertexBuffer::CreateRHIBuffer(FRHICommandListBase& RHICmdList)
 {
 	FSkinWeightRHIInfo RHIInfo;
-	RHIInfo.DataVertexBufferRHI = DataVertexBuffer.CreateRHIBuffer_RenderThread();
-	RHIInfo.LookupVertexBufferRHI = LookupVertexBuffer.CreateRHIBuffer_RenderThread();
+	RHIInfo.DataVertexBufferRHI = DataVertexBuffer.CreateRHIBuffer(RHICmdList);
+	RHIInfo.LookupVertexBufferRHI = LookupVertexBuffer.CreateRHIBuffer(RHICmdList);
 	return RHIInfo;
+}
+
+FSkinWeightRHIInfo FSkinWeightVertexBuffer::CreateRHIBuffer_RenderThread()
+{
+	return CreateRHIBuffer(FRHICommandListImmediate::Get());
 }
 
 FSkinWeightRHIInfo FSkinWeightVertexBuffer::CreateRHIBuffer_Async()
 {
 	FSkinWeightRHIInfo RHIInfo;
-	RHIInfo.DataVertexBufferRHI = DataVertexBuffer.CreateRHIBuffer_Async();
-	RHIInfo.LookupVertexBufferRHI = LookupVertexBuffer.CreateRHIBuffer_Async();
+	FRHIAsyncCommandList CommandList;
+	RHIInfo.DataVertexBufferRHI = DataVertexBuffer.CreateRHIBuffer(*CommandList);
+	RHIInfo.LookupVertexBufferRHI = LookupVertexBuffer.CreateRHIBuffer(*CommandList);
 	return RHIInfo;
 }
 
@@ -800,14 +807,14 @@ void FSkinWeightVertexBuffer::SetOwnerName(const FName& OwnerName)
 
 void FSkinWeightVertexBuffer::BeginInitResources()
 {
-	BeginInitResource(&LookupVertexBuffer);
-	BeginInitResource(&DataVertexBuffer);
+	BeginInitResource(&LookupVertexBuffer, &UE::RenderCommandPipe::SkeletalMesh);
+	BeginInitResource(&DataVertexBuffer, &UE::RenderCommandPipe::SkeletalMesh);
 }
 
 void FSkinWeightVertexBuffer::BeginReleaseResources()
 {
-	BeginReleaseResource(&LookupVertexBuffer);
-	BeginReleaseResource(&DataVertexBuffer);
+	BeginReleaseResource(&LookupVertexBuffer, &UE::RenderCommandPipe::SkeletalMesh);
+	BeginReleaseResource(&DataVertexBuffer, &UE::RenderCommandPipe::SkeletalMesh);
 }
 
 void FSkinWeightVertexBuffer::ReleaseResources()

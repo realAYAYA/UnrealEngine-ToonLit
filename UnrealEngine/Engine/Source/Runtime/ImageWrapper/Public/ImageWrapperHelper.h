@@ -5,10 +5,16 @@
 #include "CoreMinimal.h"
 #include "IImageWrapper.h"
 
+// ImageWrapperHelper is deprecated, use IImageWrapperModule instead
 class ImageWrapperHelper
 {
 public:
-	 static IMAGEWRAPPER_API FStringView GetFormatExtension(EImageFormat InImageFormat, bool bIncludeDot=false);
-	 static IMAGEWRAPPER_API EImageFormat GetImageFormat(FStringView StringExtention);
-	 static IMAGEWRAPPER_API const FStringView GetImageFilesFilterString(bool bIncludeAllFiles);
+
+	// deprecated, use IImageWrapperModule::GetExtension() instead
+	static IMAGEWRAPPER_API FStringView GetFormatExtension(EImageFormat InImageFormat, bool bIncludeDot=false);
+
+	// deprecated, use IImageWrapperModule::GetImageFormatFromExtension instead
+	static IMAGEWRAPPER_API EImageFormat GetImageFormat(FStringView StringExtention);
+
+	static IMAGEWRAPPER_API const FStringView GetImageFilesFilterString(bool bIncludeAllFiles);
 };

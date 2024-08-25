@@ -11,6 +11,7 @@
 #include "LumenRadianceCacheCommon.ush"
 #include "LumenVisualizeTraces.ush"
 #include "LumenVisualize.ush"
+#include "../ShaderPrint.ush"
 
 uint3 CullGridSize;
 uint CardGridPixelSizeShift;
@@ -57,7 +58,7 @@ void VisualizeQuadsCS(
 	bool bCoveredByRadianceCache = false;
 
 #if RADIANCE_CACHE
-	FRadianceCacheCoverage Coverage = GetRadianceCacheCoverage(LWCHackToFloat(PrimaryView.WorldCameraOrigin), CameraVector, .5f);
+	FRadianceCacheCoverage Coverage = GetRadianceCacheCoverage(DFHackToFloat(PrimaryView.WorldCameraOrigin), CameraVector, .5f);
 				
 	if (Coverage.bValid)
 	{
@@ -66,7 +67,7 @@ void VisualizeQuadsCS(
 #endif
 
 	FConeTraceInput TraceInput;
-	TraceInput.Setup(LWCHackToFloat(PrimaryView.WorldCameraOrigin), PrimaryView.TranslatedWorldCameraOrigin, CameraVector, ConeAngle, .01f, MinTraceDistance, TraceDistance, VisualizeStepFactor);
+	TraceInput.Setup(DFHackToFloat(PrimaryView.WorldCameraOrigin), PrimaryView.TranslatedWorldCameraOrigin, CameraVector, ConeAngle, .01f, MinTraceDistance, TraceDistance, VisualizeStepFactor);
 	TraceInput.SDFStepFactor = lerp(.8f, 1.0f, Noise);
 	TraceInput.bDitheredTransparency = false;
 	TraceInput.DitherScreenCoord = PixelPos;
@@ -118,7 +119,7 @@ void VisualizeQuadsCS(
 #endif
 
 #if RADIANCE_CACHE
-	TraceResult.Lighting += SampleRadianceCacheInterpolated(Coverage, LWCHackToFloat(PrimaryView.WorldCameraOrigin), CameraVector, ConeAngle).xyz * TraceResult.Transparency;
+	TraceResult.Lighting += SampleRadianceCacheInterpolated(Coverage, DFHackToFloat(PrimaryView.WorldCameraOrigin), CameraVector, ConeAngle).xyz * TraceResult.Transparency;
 	TraceResult.Transparency = 0.0f;
 #else
 	ApplySkylightToTraceResult(CameraVector, TraceResult);
@@ -154,8 +155,10 @@ void VisualizeQuadsCS(
 		FinalColor = float4(Debug, 0);
 	}
 
-	// The overview outputs after the tonemapper to overwrite editor primitives and must apply its own tonemapping
-	FinalColor.rgb = VisualizeTonemap(FinalColor.rgb);
+	LumenVisualizationFinalize(
+		ViewportUV,
+		CameraVector,
+		FinalColor.xyz);
 
 	RWSceneColor[OutputScreenCoord] = FinalColor;
 }
@@ -181,7 +184,7 @@ void VisualizeTracesVS(
 		WorldPosition += VisualizeTracesData[TraceIndex * VISUALIZE_TRACE_DATA_STRIDE + 1].xyz;
 	}
 
-	OutPosition = mul(float4(WorldPosition, 1), LWCHackToFloat(PrimaryView.WorldToClip));
+	OutPosition = mul(float4(WorldPosition, 1), DFHackToFloat(PrimaryView.WorldToClip));
 	Output.TraceLighting = VisualizeTracesData[TraceIndex * VISUALIZE_TRACE_DATA_STRIDE + 2].xyz;
 } 
 
@@ -191,4 +194,28 @@ void VisualizeTracesPS(
 	out float4 OutColor : SV_Target0)
 {
 	OutColor = float4(Input.TraceLighting, 0);
+}
+
+uint NumTracesToVisualize;
+
+[numthreads(THREADGROUP_SIZE, THREADGROUP_SIZE, 1)]
+void VisualizeTracesCS(
+	uint3 GroupId : SV_GroupID,
+	uint3 GroupThreadId : SV_GroupThreadID,
+	uint3 DispatchThreadId : SV_DispatchThreadID)
+{
+	uint TraceIndex = DispatchThreadId.x;
+
+	if (TraceIndex < NumTracesToVisualize)
+	{
+		FShaderPrintContext Context = InitShaderPrintContext(true, float2(0.05, 0.05));
+
+		float3 WorldPosition0 = VisualizeTracesData[TraceIndex * VISUALIZE_TRACE_DATA_STRIDE + 0].xyz;
+		float3 WorldPosition1 = WorldPosition0 + VisualizeTracesData[TraceIndex * VISUALIZE_TRACE_DATA_STRIDE + 1].xyz;
+		float3 TraceLighting = VisualizeTracesData[TraceIndex * VISUALIZE_TRACE_DATA_STRIDE + 2].xyz;
+
+		float3 LineColor = VisualizeTonemap(TraceLighting);
+
+		AddLineWS(Context, WorldPosition0, WorldPosition1, float4(LineColor, 1.0f));
+	}
 }

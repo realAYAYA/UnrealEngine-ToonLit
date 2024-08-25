@@ -129,7 +129,7 @@ float FinalizeWeightmapChannel(uint2 InSampleCoordinates, uint InChannelIndex)
 {
 	float Result = 0.0f;
 	
-	if (InValidTextureChannelsMask & (1 << InChannelIndex))
+	if (InValidTextureChannelsMask & (1u << InChannelIndex))
 	{
 		uint PaintLayerIndexInWeightmaps = InPerChannelPaintLayerIndexInWeightmaps[InChannelIndex];
 		uint NumPaintLayers = InPerChannelNumPaintLayers[InChannelIndex];

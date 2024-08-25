@@ -5,6 +5,7 @@
 #include "MaterialStats.h"
 #include "LocalVertexFactory.h"
 #include "GPUSkinVertexFactory.h"
+#include "RenderUtils.h"
 #include "MaterialEditorSettings.h"
 #include "RHIShaderFormatDefinitions.inl"
 #include "DataDrivenShaderPlatformInfo.h"
@@ -26,10 +27,10 @@ void FMaterialResourceStats::SetupExtraCompilationSettings(const EShaderPlatform
 /***********************************************************************************************************************/
 /*begin FMaterialStatsUtils */
 
-TSharedPtr<FMaterialStats> FMaterialStatsUtils::CreateMaterialStats(class IMaterialEditor* MaterialEditor)
+TSharedPtr<FMaterialStats> FMaterialStatsUtils::CreateMaterialStats(class IMaterialEditor* MaterialEditor, const bool bShowMaterialInstancesMenu, const bool bAllowIgnoringCompilationErrors)
 {
 	TSharedPtr<FMaterialStats> MaterialStats = MakeShareable(new FMaterialStats());
-	MaterialStats->Initialize(MaterialEditor);
+	MaterialStats->Initialize(MaterialEditor, bShowMaterialInstancesMenu, bAllowIgnoringCompilationErrors);
 
 	return MaterialStats;
 }
@@ -130,7 +131,7 @@ FString FMaterialStatsUtils::ShaderPlatformTypeName(const EShaderPlatform Platfo
 	FString FormatName = LexToString(PlatformID);
 	if (FormatName.StartsWith(TEXT("SF_")))
 	{
-		FormatName.MidInline(3, MAX_int32, false);
+		FormatName.MidInline(3, MAX_int32, EAllowShrinking::No);
 	}
 	return FormatName;
 }
@@ -263,8 +264,6 @@ FSlateColor FMaterialStatsUtils::QualitySettingColor(const EMaterialQualityLevel
 			return FStyleColors::Foreground;
 		break;
 	}
-
-	return  FStyleColors::Foreground;
 }
 
 static void MobileBasePassShaderName(bool bVertexShader, const TCHAR* PolicyName, const TCHAR* LocalLightSetting, bool bHDR, bool bSkyLight, FString& OutName)
@@ -285,8 +284,7 @@ static void MobileBasePassShaderName(bool bVertexShader, const TCHAR* PolicyName
 
 void FMaterialStatsUtils::GetRepresentativeShaderTypesAndDescriptions(TMap<FName, TArray<FRepresentativeShaderInfo>>& ShaderTypeNamesAndDescriptions, const FMaterial* TargetMaterial)
 {
-	static auto* MobileHDR = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.MobileHDR"));
-	bool bMobileHDR = MobileHDR && MobileHDR->GetValueOnAnyThread() == 1;
+	bool bMobileHDR = IsMobileHDR();
 
 	static const FName FLocalVertexFactoryName = FLocalVertexFactory::StaticType.GetFName();
 	static const FName FGPUFactoryName = TEXT("TGPUSkinVertexFactoryDefault");
@@ -322,10 +320,7 @@ void FMaterialStatsUtils::GetRepresentativeShaderTypesAndDescriptions(TMap<FName
 			ShaderTypeNamesAndDescriptions.FindOrAdd(FLocalVertexFactoryName)
 				.Add(FRepresentativeShaderInfo(ERepresentativeShader::DynamicallyLitObject, TBasePassPSFNoLightMapPolicyName, TEXT("Base pass shader")));
 
-			static auto* CVarAllowStaticLighting = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-			const bool bAllowStaticLighting = CVarAllowStaticLighting->GetValueOnAnyThread() != 0;
-
-			if (bAllowStaticLighting)
+			if (IsStaticLightingAllowed())
 			{
 				if (TargetMaterial->IsUsedWithStaticLighting())
 				{
@@ -402,14 +397,11 @@ void FMaterialStatsUtils::GetRepresentativeShaderTypesAndDescriptions(TMap<FName
 			}
 		}
 		else
-		{
-			static auto* CVarAllowStaticLighting = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-			const bool bAllowStaticLighting = CVarAllowStaticLighting->GetValueOnAnyThread() != 0;
-			
+		{			
 			static auto* CVarMobileSkyLightPermutation = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.Mobile.SkyLightPermutation"));
 			const bool bOnlySkyPermutation = CVarMobileSkyLightPermutation->GetValueOnAnyThread() == 2;
 						
-			if (bAllowStaticLighting && TargetMaterial->IsUsedWithStaticLighting())
+			if (IsStaticLightingAllowed() && TargetMaterial->IsUsedWithStaticLighting())
 			{
 				static auto* CVarAllowDistanceFieldShadows = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.Mobile.AllowDistanceFieldShadows"));
 				const bool bAllowDistanceFieldShadows = CVarAllowDistanceFieldShadows->GetValueOnAnyThread() != 0;
@@ -447,7 +439,7 @@ void FMaterialStatsUtils::GetRepresentativeShaderTypesAndDescriptions(TMap<FName
 						}
 
 						{
-							MobileBasePassShaderName(false, TEXT("FMobileDistanceFieldShadowsAndLQLightMapPolicy"), TEXT("LOCAL_LIGHTS_PREPASS_ENABLED"), bMobileHDR, bOnlySkyPermutation, ShaderNameStr);
+							MobileBasePassShaderName(false, TEXT("FMobileDistanceFieldShadowsAndLQLightMapPolicy"), TEXT("LOCAL_LIGHTS_BUFFER"), bMobileHDR, bOnlySkyPermutation, ShaderNameStr);
 							const FString Description = FString::Printf(TEXT("Mobile base pass shader with distance field shadows, CSM and local light(s) %s"), DescSuffix);
 
 							FRepresentativeShaderInfo ShaderInfo = FRepresentativeShaderInfo(ERepresentativeShader::StationarySurfaceNPointLights, FName(ShaderNameStr), Description);
@@ -474,7 +466,7 @@ void FMaterialStatsUtils::GetRepresentativeShaderTypesAndDescriptions(TMap<FName
 					}
 
 					{
-						MobileBasePassShaderName(false, TEXT("TLightMapPolicyLQ"), TEXT("LOCAL_LIGHTS_PREPASS_ENABLED"), bMobileHDR, bOnlySkyPermutation, ShaderNameStr);
+						MobileBasePassShaderName(false, TEXT("TLightMapPolicyLQ"), TEXT("LOCAL_LIGHTS_BUFFER"), bMobileHDR, bOnlySkyPermutation, ShaderNameStr);
 						const FString Description = FString::Printf(TEXT("Mobile base pass shader with static lighting and local light(s) %s"), DescSuffix);
 						FRepresentativeShaderInfo ShaderInfo = FRepresentativeShaderInfo(ERepresentativeShader::StationarySurfaceNPointLights, FName(ShaderNameStr), Description);
 						ShaderTypeNamesAndDescriptions.FindOrAdd(FLocalVertexFactoryName).Add(ShaderInfo);
@@ -535,6 +527,21 @@ void FMaterialStatsUtils::GetRepresentativeShaderTypesAndDescriptions(TMap<FName
 	}
 }
 
+static FString GetShaderString(const FShader::FShaderStatisticMap& Statistics)
+{
+	TStringBuilder<2048> StatisticsStrBuilder;
+	for (const auto& Stat : Statistics)
+	{
+		StatisticsStrBuilder << Stat.Key << ": ";
+		Visit([&StatisticsStrBuilder](auto& StoredValue)
+		{
+			StatisticsStrBuilder << StoredValue << "\n";
+		}, Stat.Value);
+	}
+
+	return StatisticsStrBuilder.ToString();
+}
+
 /**
 * Gets instruction counts that best represent the likely usage of this material based on shading model and other factors.
 * @param Results - an array of descriptions to be populated
@@ -571,6 +578,11 @@ void FMaterialStatsUtils::GetRepresentativeInstructionCounts(TArray<FShaderInstr
 						Info.ShaderType = ShaderInfo.ShaderType;
 						Info.ShaderDescription = ShaderInfo.ShaderDescription;
 						Info.InstructionCount = NumInstructions;
+						Info.ShaderStatisticsString = GetShaderString(MaterialShaderMap->GetShaderStatisticsMapForShader(ShaderType));
+						if (Info.ShaderStatisticsString.Len() == 0)
+						{
+							Info.ShaderStatisticsString = TEXT("n/a");
+						}
 
 						Results.Push(Info);
 
@@ -608,6 +620,11 @@ void FMaterialStatsUtils::GetRepresentativeInstructionCounts(TArray<FShaderInstr
 									Info.ShaderType = ShaderInfo.ShaderType;
 									Info.ShaderDescription = ShaderInfo.ShaderDescription;
 									Info.InstructionCount = NumInstructions;
+									Info.ShaderStatisticsString = GetShaderString(MeshShaderMap->GetShaderStatisticsMapForShader(*MaterialShaderMap, ShaderType));
+									if (Info.ShaderStatisticsString.Len() == 0)
+									{
+										Info.ShaderStatisticsString = TEXT("n/a");
+									}
 
 									Results.Push(Info);
 
@@ -654,6 +671,12 @@ void FMaterialStatsUtils::ExtractMatertialStatsInfo(EShaderPlatform ShaderPlatfo
 				TEXT("Offline shader compiler not available or an error was encountered!");
 
 			OutInfo.ShaderInstructionCount.Add(ShaderInstructionInfo[InstructionIndex].ShaderType, Content);
+
+			FString Description = ShaderInstructionInfo[InstructionIndex].ShaderStatisticsString;
+			FShaderStatsInfo::FContent GenericContent;
+			GenericContent.StrDescription = Description;
+			GenericContent.StrDescriptionLong = Description;
+			OutInfo.GenericShaderStatistics.Add(ShaderInstructionInfo[InstructionIndex].ShaderType, GenericContent);
 		}
 
 		// extract samplers info
@@ -705,6 +728,29 @@ void FMaterialStatsUtils::ExtractMatertialStatsInfo(EShaderPlatform ShaderPlatfo
 
 		OutInfo.ShaderCount.StrDescription = FString::Printf(TEXT("%u"), TotalShadersForMaterial);
 		OutInfo.ShaderCount.StrDescriptionLong = FString::Printf(TEXT("Total Shaders: %u"), TotalShadersForMaterial);
+
+		FString LWCMessage;
+		TStaticArray<uint16, (int)ELWCFunctionKind::Max> LWCFuncUsages = MaterialResource->GetEstimatedLWCFuncUsages();
+		for (int KindIndex = 0; KindIndex < (int)ELWCFunctionKind::Max; ++KindIndex)
+		{
+			int Usages = LWCFuncUsages[KindIndex];
+			if (LWCFuncUsages[KindIndex] > 0)
+			{
+				LWCMessage += FString::Printf(TEXT("%s: %u\n"), *UEnum::GetDisplayValueAsText((ELWCFunctionKind)KindIndex).ToString(), Usages);
+			}
+		}
+
+		OutInfo.LWCUsage.StrDescription = LWCMessage;
+		OutInfo.LWCUsage.StrDescriptionLong = LWCMessage;
+
+		if (FMaterialShaderMap* ShaderMap = MaterialResource->GetGameThreadShaderMap())
+		{
+			// Add number of preshaders and stats
+			uint32 TotalParams, TotalOps;
+			MaterialResource->GetPreshaderStats(TotalParams, TotalOps);
+			OutInfo.PreShaderCount.StrDescription = FString::Printf(TEXT("%u outputs\n%u params\n%u ops"), ShaderMap->GetNumPreshaders(), TotalParams, TotalOps);
+			OutInfo.PreShaderCount.StrDescriptionLong = FString::Printf(TEXT("%u outputs, %u parameter fetches, %u total operations"), ShaderMap->GetNumPreshaders(), TotalParams, TotalOps);
+		}
 	}
 }
 

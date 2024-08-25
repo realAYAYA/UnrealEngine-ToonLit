@@ -1,19 +1,20 @@
 {
-	"FileVersion" : 1,
-	"Version" : 1,
-	"VersionName" : "1.0",
-	"FriendlyName" : "Datasmith Interchange",
-	"Description" : "Interchange Importer for Datasmith.",
-	"Category" : "Importers",
-	"CreatedBy" : "Epic Games, Inc.",
-	"CreatedByURL" : "https://epicgames.com",
-	"DocsURL" : "",
-	"MarketplaceURL" : "",
-	"SupportURL" : "",
-	"EnabledByDefault" : false,
-	"CanContainContent" : false,
-	"IsBetaVersion" : true,
-	"Installed" : false,
+	"FileVersion": 1,
+	"Version": 1,
+	"VersionName": "1.0",
+	"FriendlyName": "Datasmith Interchange",
+	"Description": "Interchange Importer for Datasmith.",
+	"Category": "Importers",
+	"CreatedBy": "Epic Games, Inc.",
+	"CreatedByURL": "https://epicgames.com",
+	"DocsURL": "",
+	"MarketplaceURL": "",
+	"SupportURL": "",
+	"EnabledByDefault": false,
+	"CanContainContent": true,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": true,
+	"Installed": false,
 	"PlatformAllowList": [
 		"Win64",
 		"Linux",
@@ -22,11 +23,6 @@
 	"Modules": [
 		{
 			"Name": "DatasmithInterchange",
-			"Type": "Runtime",
-			"LoadingPhase": "Default"
-		},
-		{
-			"Name": "DatasmithInterchangeScripting",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"
 		}
@@ -38,7 +34,22 @@
 		},
 		{
 			"Name": "DatasmithContent",
-			"Enabled":  true
+			"Enabled": true
+		},
+		{
+			"Name": "DatasmithCADImporter",
+			"Enabled": true,
+			"SupportedTargetPlatforms": [
+				"Win64"
+			]
+		},
+		{
+			"Name": "DatasmithC4DImporter",
+			"Enabled": true,
+			"SupportedTargetPlatforms": [
+				"Win64",
+				"Mac"
+			]
 		},
 		{
 			"Name": "Interchange",

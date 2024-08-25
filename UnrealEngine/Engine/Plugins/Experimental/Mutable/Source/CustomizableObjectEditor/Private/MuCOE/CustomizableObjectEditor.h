@@ -2,12 +2,14 @@
 
 #pragma once
 
+#include "CustomizableObjectInstanceEditor.h"
 #include "EditorUndoClient.h"
 #include "GraphEditor.h"
 #include "Misc/NotifyHook.h"
 #include "MuCOE/CustomizableObjectCompiler.h"
 #include "MuCOE/ICustomizableObjectEditor.h"
 #include "TickableEditorObject.h"
+#include "MuCO/CustomizableObjectPrivate.h"
 #include "Widgets/Input/SNumericDropDown.h"
 
 #include "CustomizableObjectEditor.generated.h"
@@ -45,6 +47,20 @@ struct FPropertyChangedEvent;
 template <typename FuncType> class TFunction;
 
 DECLARE_DELEGATE(FCreatePreviewInstanceFlagDelegate);
+
+extern void RemoveRestrictedChars(FString& String);
+
+
+enum class EGizmoType : uint8
+{
+	Hidden,
+	ProjectorParameter,
+	NodeProjectorConstant,
+	NodeProjectorParameter,
+	ClipMorph,
+	ClipMesh,
+	Light,
+};
 
 
 /**
@@ -144,14 +160,7 @@ class FCustomizableObjectEditor :
 	public FEditorUndoClient
 {
 public:
-	/**
-	 * Create a new Customizable Object editor. Called immediately after construction.
-	 *
-	 * @param	Mode					Asset editing mode for this editor (standalone or world-centric)
-	 * @param	InitToolkitHost			When Mode is WorldCentric, this is the level editor instance to spawn this editor within
-	 * @param	ObjectToEdit			The object to edit
-	 */
-	static TSharedRef<FCustomizableObjectEditor> Create(const EToolkitMode::Type Mode, const TSharedPtr<IToolkitHost>& InitToolkitHost, UCustomizableObject* ObjectToEdit);
+	explicit FCustomizableObjectEditor(UCustomizableObject& ObjectToEdit);
 
 	virtual ~FCustomizableObjectEditor() override;
 
@@ -184,13 +193,31 @@ public:
 	// ICustomizableObjectEditor interface
 	virtual UCustomizableObject* GetCustomizableObject() override;
 	virtual void RefreshTool() override;
-	virtual void RefreshViewport() override;
+	virtual TSharedPtr<SCustomizableObjectEditorViewportTabBody> GetViewport() override;
 	virtual UCustomizableObjectInstance* GetPreviewInstance() override;
 	virtual bool CanPasteNodes() const override;
 	virtual void PasteNodesHere(const FVector2D& Location) override;
-	virtual void SelectNode(const UCustomizableObjectNode* Node) override;
+	virtual void SelectNode(const UEdGraphNode* Node) override;
 	virtual void ReconstructAllChildNodes(UCustomizableObjectNode& StartNode, const UClass& NodeType) override;
+	virtual UProjectorParameter* GetProjectorParameter() override;
+	virtual UCustomSettings* GetCustomSettings() override;
+	virtual void HideGizmo() override;
+	virtual void ShowGizmoProjectorNodeProjectorConstant(UCustomizableObjectNodeProjectorConstant& Node) override;
+	virtual void HideGizmoProjectorNodeProjectorConstant() override;
+	virtual void ShowGizmoProjectorNodeProjectorParameter(UCustomizableObjectNodeProjectorParameter& Node) override;
+	virtual void HideGizmoProjectorNodeProjectorParameter() override;
+	virtual void ShowGizmoProjectorParameter(const FString& ParamName, int32 RangeIndex = -1) override;
+	virtual void HideGizmoProjectorParameter() override;
+	virtual void ShowGizmoClipMorph(UCustomizableObjectNodeMeshClipMorph& Node) override;
+	virtual void HideGizmoClipMorph() override;
+	virtual void ShowGizmoClipMesh(UCustomizableObjectNodeMeshClipWithMesh& Node) override;
+	virtual void HideGizmoClipMesh() override;
+	virtual void ShowGizmoLight(ULightComponent& SelectedLight) override;
+	virtual void HideGizmoLight() override;
 
+	/** Select only this node only. Do nothing if already was only selected. */
+	void SelectSingleNode(UCustomizableObjectNode& Node);
+	
 	/** Called to undo the last action */
 	void UndoGraphAction();
 
@@ -231,9 +258,6 @@ public:
 
 	virtual void UpdateGraphNodeProperties();
 
-	/** Getter of AssetRegistryLoaded */
-	bool GetAssetRegistryLoaded();
-
 	/** Callback to notify the editor when the PreviewInstance has been updated */
 	void OnUpdatePreviewInstance();
 
@@ -245,9 +269,10 @@ public:
 
 	TSharedPtr<class SCustomizableObjectNodeLayoutBlocksEditor> GetLayoutBlocksEditor() { return LayoutBlocksEditor; }
 
+	/** Debug the object as a raw mutable data in the internal tools. */
+	void DebugObject() const;
+	
 private:
-	explicit FCustomizableObjectEditor(UCustomizableObject& ObjectToEdit);
-
 	TSharedRef<SDockTab> SpawnTab_Viewport(const FSpawnTabArgs& Args);
 	TSharedRef<SDockTab> SpawnTab_ObjectProperties(const FSpawnTabArgs& Args);
 	TSharedRef<SDockTab> SpawnTab_InstanceProperties(const FSpawnTabArgs& Args);
@@ -274,21 +299,21 @@ private:
 	void CompileObjectUserPressedButton();
 	void CompileOnlySelectedObjectUserPressedButton();
 	
-	/** Debug the object as a raw mutable data in the internal tools. */
-	void DebugObject();
-
 	// Compile options menu callbacks
 	TSharedRef<SWidget> GenerateCompileOptionsMenuContent(TSharedRef<FUICommandList> InCommandList);
 	void ResetCompileOptions();
 	TSharedPtr<STextComboBox> CompileOptimizationCombo;
 	TArray< TSharedPtr<FString> > CompileOptimizationStrings;
+	TSharedPtr<STextComboBox> CompileTextureCompressionCombo;
+	TArray< TSharedPtr<FString> > CompileTextureCompressionStrings;
 	TSharedPtr<SNumericDropDown<float>> CompileTilingCombo;
+	TSharedPtr<SNumericDropDown<float>> EmbeddedDataLimitCombo;
+	TSharedPtr<SNumericDropDown<float>> PackagedDataLimitCombo;
 
 	void CompileOptions_UseDiskCompilation_Toggled();
 	bool CompileOptions_UseDiskCompilation_IsChecked();
-	void CompileOptions_TextureCompression_Toggled();
-	bool CompileOptions_TextureCompression_IsChecked();
-	void OnChangeCompileOptimizationLevel(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo);
+	void OnChangeCompileOptimizationLevel(TSharedPtr<FString> NewSelection, ESelectInfo::Type);
+	void OnChangeCompileTextureCompressionType(TSharedPtr<FString> NewSelection, ESelectInfo::Type);
 
 	/** Save Customizable Object open in editor */
 	void SaveAsset_Execute() override;
@@ -301,10 +326,7 @@ private:
 
 	/** Callback for the object modified event */
 	void OnObjectModified(UObject* Object);
-	
-	/** */
-	void OnPreviewInstanceUpdated();
-	
+		
 	void CreateGraphEditorWidget(UEdGraph* InGraph);
 
 	/** Copy the currently selected nodes */
@@ -322,28 +344,19 @@ private:
 
 	virtual UEdGraphNode* CreateCommentBox(const FVector2D& NodePos) override;
 
-	/** Callback for the asset registry initial load */
-	void OnAssetRegistryLoadComplete();
-
 	/** Updates the visibility of PreviewSkeletalMeshComponent */
 	void UpdatePreviewVisibility();
-
-	/** Handler for when an asset's property has changed */
-	void OnObjectPropertyChanged(UObject* Object, FPropertyChangedEvent& PropertyChangedEvent);
-
-	/** Utility method to reset current's projector visibility with no Skeletal Mesh Update */
-	void ResetProjectorVisibilityNoUpdate();
 
 	/** Searches a node that contains the inserted word */
 	void OnEnterText(const FText& NewText, ETextCommit::Type TextType);
 
 	/** Logs the search results of the search
-	 * @param Node The Customizable Object Node we have found to be related with the searched string.
+	 * @param Context The UObject we have found to be related with the searched string.
 	 * @param Type The type of relation with the searched word. It is a node, a value or maybe a variable?
 	 * @param bIsFirst Is this the first time we encountered something during our search?
 	 * @param Result The string containing the search word we are looking for in Node
 	 */
-	void LogSearchResult(UCustomizableObjectNode* Node, FString Type, bool bIsFirst, FString Result) const;
+	void LogSearchResult(const UObject& Context, const FString& Type, bool bIsFirst, const FString& Result) const;
 
 	/** Open the Texture Analyzer tab */
 	void OpenTextureAnalyzerTab();
@@ -354,13 +367,21 @@ private:
 	/** Creates the necessary components for the preview of the CO instance */
 	void CreatePreviewComponents();
 
+	/** Recursively find any property that its name or value contains the given string.
+	  * @param Property Root property.
+	  * @param Container Root property container (address of the property value).
+	  * @param FindString String to find for.
+	  * @param Context UObject Context where this string has been found.
+	  * @param bFound Mark as true if any property has been found. */
+	void FindProperty(const FProperty* Property, const void* Container, const FString& FindString, const UObject& Context, bool& bFound);
+	
 public:
+	void OnCustomizableObjectStatusChanged(FCustomizableObjectStatus::EState PreviousState, FCustomizableObjectStatus::EState CurrentState);
 
 	// Helpers to get the absolute parent of a Customizable Object
 	static UCustomizableObject* GetAbsoluteCOParent(const UCustomizableObjectNodeObject* const Root);
 	static void AddCachedReferencers(const FName& PathName, TArray<FName>& ArrayReferenceNames, TArray<FAssetData>& ArrayAssetData);
 	static void GetExternalChildObjects(const UCustomizableObject* const Object, TArray<UCustomizableObject*>& ExternalChildren, const bool bRecursively = true, const EObjectFlags ExcludeFlags = EObjectFlags::RF_Transient);
-
 
 	/**	The tab ids for all the tabs used */
 	static const FName ViewportTabId;
@@ -381,7 +402,6 @@ private:
 	TObjectPtr<UCustomizableObject> CustomizableObject;
 	TObjectPtr<UCustomizableObjectInstance> PreviewInstance = nullptr;
 	TArray<TObjectPtr<UCustomizableSkeletalComponent>> PreviewCustomizableSkeletalComponents;
-	TObjectPtr<UStaticMeshComponent> PreviewStaticMeshComponent = nullptr;
 	TArray<TObjectPtr<UDebugSkelMeshComponent>> PreviewSkeletalMeshComponents;
 
 	/** Object compiler */
@@ -394,7 +414,7 @@ private:
 	TSharedPtr<SCustomizableObjectEditorViewportTabBody> Viewport;
 	TSharedPtr<FCustomizableObjectEditorViewportClient> ViewportClient;
 
-	TSharedPtr<class IDetailsView> CustomizableInstanceDetailsView;
+	TSharedPtr<IDetailsView> CustomizableInstanceDetailsView;
 
 
 	/** Property View */
@@ -410,42 +430,6 @@ private:
 
 	/** Widget to select which node pins are visible. */
 	TSharedPtr<class SCustomizableObjectNodePinViewer> NodePinViewer;
-
-	UCustomizableObjectNodeMeshClipMorph* SelectedMeshClipMorphNode = nullptr;
-
-	UCustomizableObjectNodeMeshClipWithMesh* SelectedMeshClipWithMeshNode = nullptr;
-
-	UCustomizableObjectNodeProjectorConstant* SelectedProjectorNode = nullptr;
-
-	UCustomizableObjectNodeProjectorParameter* SelectedProjectorParameterNode = nullptr;
-
-	/** Handle for the OnObjectModified event */
-	FDelegateHandle OnObjectModifiedHandle;
-
-	bool ProjectorConstantNodeSelected = false;
-	bool ProjectorParameterNodeSelected = false;
-	bool SelectedGraphNodesChanged = false;
-	bool SelectedProjectorParameterNotNode = false;
-	bool ResetProjectorVisibilityForNonNode = false;
-	bool SetProjectorVisibilityForParameter = false;
-	bool SetProjectorTypeForParameter = false;
-	FString ProjectorParameterName;
-	FString ProjectorParameterNameWithIndex;
-	int32 ProjectorRangeIndex;
-	int32 ProjectorParameterIndex = -1;
-	FVector3f ProjectorParameterPosition;
-	FVector3f ProjectorParameterDirection;
-	FVector3f ProjectorParameterUp;
-	FVector3f ProjectorParameterScale;
-	ECustomizableObjectProjectorType ProjectorParameterProjectionType;
-	float ProjectionAngle;
-	bool ManagingProjector = false;
-
-	/** Flag to know when the asset registry initial loading has completed */
-	bool AssetRegistryLoaded = false;
-
-	/** Flag to know whether the lasts steps when making a new preview instance need to be done when asset registry completes asset loading */
-	bool UpdateSkeletalMeshAfterAssetLoaded = false;
 	
 	/** UObject class to be able to use the update callback */
 	TObjectPtr<UUpdateClassWrapper> HelperCallback;
@@ -455,14 +439,11 @@ private:
 
 	/** Scene preview settings widget */
 	TSharedPtr<class SCustomizableObjectEditorAdvancedPreviewSettings> CustomizableObjectEditorAdvancedPreviewSettings;
-
-	/** Advanced scene preview settings */
-	TObjectPtr<class UCustomizableObjectEmptyClassForSettings> AdditionalSettings;
 	
 	/** Texture Analyzer table widget which shows the information of the transient textures used in the customizable object instance */
 	TSharedPtr<class SCustomizableObjecEditorTextureAnalyzer> TextureAnalyzer;
 
-	/** Performance report widget to test and analyze the current cusomizable object resource demands */
+	/** Performance report widget to test and analyze the current customizable object resource demands */
 	TSharedPtr<class SCustomizableObjecEditorPerformanceReport> PerformanceReport;
 
 	/** Widget to explore all the tags related with the Customizable Object open in the editor */
@@ -472,11 +453,19 @@ private:
 	void ExtendToolbar();
 
 	/** URL to open when pressing the documentation button generated by UE */
-	const FString DocumentationURL{ TEXT("https://work.anticto.com/w/mutable/unreal-engine-4/") };
+	const FString DocumentationURL{ TEXT("https://github.com/anticto/Mutable-Documentation/wiki") };
 
 	/** Postponed work to do when OnUpdatePreviewInstance is called. Emptied at the end on each OnUpdatePreviewInstance call. */
 	TArray<TFunction<void()>> OnUpdatePreviewInstanceWork;
+
+	TObjectPtr<UProjectorParameter> ProjectorParameter = nullptr;
+
+	TObjectPtr<UCustomSettings> CustomSettings = nullptr;
+
+	bool bRecursionGuard = false;
 	
+	EGizmoType GizmoType = EGizmoType::Hidden;
+
 protected:
 	/** @return the documentation location for this editor */
 	virtual FString GetDocumentationLink() const override;

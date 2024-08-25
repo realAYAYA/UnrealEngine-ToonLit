@@ -426,7 +426,7 @@ bool FGameplayCueNotify_ParticleInfo::PlayParticleEffect(const FGameplayCueNotif
 						SpawnLocation, SpawnRotation, SpawnScale, bAutoDestroy, bAutoActivate, ENCPoolMethod::AutoRelease);
 				}
 
-				if (ensure(SpawnedFXSC))
+				if (SpawnedFXSC)
 				{
 					SpawnedFXSC->SetCastShadow(bCastShadow);
 				}
@@ -882,7 +882,7 @@ bool FGameplayCueNotify_InputDevicePropertyInfo::SetDeviceProperties(const FGame
 void FGameplayCueNotify_InputDevicePropertyInfo::ValidateBurstAssets(const UObject* ContainingAsset, const FString& Context, FDataValidationContext& ValidationContext) const
 {
 #if WITH_EDITORONLY_DATA
-	for (const TSubclassOf<UInputDeviceProperty> PropClass : DeviceProperties)
+	for (const TSubclassOf<UInputDeviceProperty>& PropClass : DeviceProperties)
 	{
 		if (!PropClass)
 		{

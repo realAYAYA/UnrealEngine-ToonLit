@@ -9,6 +9,7 @@
 #include "PropertyCustomizationHelpers.h"
 #include "AnimGraphNode_ControlRig.h"
 #include "Algo/Transform.h"
+#include "Units/Execution/RigUnit_BeginExecution.h"
 
 #define LOCTEXT_NAMESPACE "ControlRigAnimGraphDetails"
 static const FText ControlRigAnimDetailsMultipleValues = LOCTEXT("MultipleValues", "Multiple Values");
@@ -134,7 +135,13 @@ void FControlRigAnimNodeEventNameDetails::UpdateEntryNameList()
 		{
 			if(const UControlRig* CDO = Cast<UControlRig>(Class->GetDefaultObject(true)))
 			{
-				Algo::Transform(CDO->GetSupportedEvents(), EntryNameList,[](const FName& InEntryName)
+				TArray<FName> SupportedEvents = CDO->GetSupportedEvents();
+
+				// Remove Pre/Post forward solve
+				SupportedEvents.Remove(FRigUnit_PreBeginExecution::EventName);
+				SupportedEvents.Remove(FRigUnit_PostBeginExecution::EventName);
+				
+				Algo::Transform(SupportedEvents, EntryNameList,[](const FName& InEntryName)
 				{
 					return MakeShareable(new FString(InEntryName.ToString()));
 				});

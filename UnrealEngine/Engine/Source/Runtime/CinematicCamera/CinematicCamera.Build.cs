@@ -12,6 +12,8 @@ public class CinematicCamera : ModuleRules
 				"CoreUObject",
 				"DeveloperSettings",
                 "Engine",
+                "MovieScene",
+                "MovieSceneTracks",
                 "Slate",
                 "SlateCore"
 			}

@@ -11,17 +11,26 @@ namespace UnrealBuildTool.Rules
 		{
 			CppStandard = CppStandardVersion.Cpp17;
 
-			// Remove when this plugin can compile with cpp20
+			// Replace with PCHUsageMode.UseExplicitOrSharedPCHs when this plugin can compile with cpp20
 			PCHUsage = PCHUsageMode.NoPCHs;
 
+			string ACLSDKDir = Path.GetFullPath(Path.Combine(ModuleDirectory, "../ThirdParty"));
+
+			PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "Public"));
+			PublicIncludePaths.Add(Path.Combine(ACLSDKDir, "acl/external/sjson-cpp/includes"));
+
 			PublicDependencyModuleNames.Add("ACLPlugin");
+			PublicDependencyModuleNames.Add("AnimationDataController");
 			PublicDependencyModuleNames.Add("Core");
 			PublicDependencyModuleNames.Add("CoreUObject");
 			PublicDependencyModuleNames.Add("Engine");
 
+			PrivateDependencyModuleNames.Add("EditorStyle");
 			PrivateDependencyModuleNames.Add("Slate");
 			PrivateDependencyModuleNames.Add("SlateCore");
 			PrivateDependencyModuleNames.Add("UnrealEd");
+
+			PrivateDefinitions.Add("ACL_USE_SJSON");
 		}
 	}
 }

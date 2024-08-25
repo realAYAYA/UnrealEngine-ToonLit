@@ -12,10 +12,12 @@ namespace UE::Net
 	class FNetBitArrayView;
 	class FNetBitStreamReader;
 	class FNetBitStreamWriter;
+
 	namespace Private
 	{
 		class FInternalNetSerializationContext;
 		class FNetExportContext;
+		class FNetStatsContext;
 	}
 }
 
@@ -41,9 +43,17 @@ public:
 
 	bool HasError() const { return ErrorContext.HasError(); }
 	bool HasErrorOrOverflow() const;
-	/** If an error has already been set calling this function again will be a no-op. */
-	void SetError(const FName Error);
+	
+	/** If an error has already been set calling this function again will be a no-op, if bDoOverFlow is true, the function will also mark the current bitstream as overflown */
+	void SetError(const FName Error, bool bDoOverFlow = true);
 	FName GetError() const { return ErrorContext.GetError(); }
+
+	/** Store extra information regarding the object that triggered an error. */
+	void SetErrorHandleContext(const FNetRefHandle& HandleContext);
+	const FNetRefHandle& GetErrorHandleContext() const { return ErrorContext.GetObjectHandle(); }
+
+	/** There are cases where an error is handled and reported where we want to stay calm, reset the error context and carry on */
+	void ResetErrorContext() { ErrorContext = FNetErrorContext(); }
 
 	void SetIsInitState(bool bInIsInitState) { bIsInitState = bInIsInitState; }
 	bool IsInitState() const { return bIsInitState; }
@@ -72,6 +82,9 @@ public:
 	void SetExportContext(Private::FNetExportContext* InExportContext) { ExportContext = InExportContext; }
 	Private::FNetExportContext* GetExportContext() { return ExportContext; }
 
+	void SetNetStatsContext(Private::FNetStatsContext* InNetStatsContext) { NetStatsContext = InNetStatsContext; }
+	Private::FNetStatsContext* GetNetStatsContext() { return NetStatsContext; }
+
 	void SetIsInitializingDefaultState(bool bInIsInitializingDefaultState) { bIsInitializingDefaultState = bInIsInitializingDefaultState; }
 	bool IsInitializingDefaultState() const { return bIsInitializingDefaultState; }
 
@@ -83,15 +96,21 @@ private:
 	IRISCORE_API void SetBitStreamOverflow();
 
 	FNetErrorContext ErrorContext;
-	FNetBitStreamReader* BitStreamReader;
-	FNetBitStreamWriter* BitStreamWriter;
-	FNetTraceCollector* TraceCollector;
-	Private::FInternalNetSerializationContext* InternalContext;
-	Private::FNetExportContext* ExportContext;
-	const FNetBitArrayView* ChangeMask;
-	INetBlobReceiver* NetBlobReceiver;
-	uint32 LocalConnectionId;
-	int32 PacketId;
+
+	FNetBitStreamReader* BitStreamReader = nullptr;
+	FNetBitStreamWriter* BitStreamWriter = nullptr;
+	FNetTraceCollector* TraceCollector = nullptr;
+
+	Private::FInternalNetSerializationContext* InternalContext = nullptr;
+	Private::FNetExportContext* ExportContext = nullptr;
+	Private::FNetStatsContext* NetStatsContext = nullptr;
+
+	const FNetBitArrayView* ChangeMask = nullptr;
+	INetBlobReceiver* NetBlobReceiver = nullptr ;
+
+	uint32 LocalConnectionId = 0;
+	int32 PacketId = -1;
+
 	/** Set when replicated objects send their very first state. */
 	uint32 bIsInitState : 1;
 	/** Set only when dealing with a default state. */
@@ -102,13 +121,6 @@ private:
 inline FNetSerializationContext::FNetSerializationContext(FNetBitStreamReader* InBitStreamReader, FNetBitStreamWriter* InBitStreamWriter)
 : BitStreamReader(InBitStreamReader)
 , BitStreamWriter(InBitStreamWriter)
-, TraceCollector(nullptr)
-, InternalContext(nullptr)
-, ExportContext(nullptr)
-, ChangeMask(nullptr)
-, NetBlobReceiver(nullptr)
-, LocalConnectionId(0)
-, PacketId(-1)
 , bIsInitState(0)
 , bIsInitializingDefaultState(0)
 {
@@ -149,10 +161,18 @@ inline FNetSerializationContext FNetSerializationContext::MakeSubContext(FNetBit
 	return SubContext;
 }
 
-inline void FNetSerializationContext::SetError(const FName Error)
+inline void FNetSerializationContext::SetError(const FName Error, bool bDoOverFlow)
 {
-	SetBitStreamOverflow();
+	if (bDoOverFlow)
+	{
+		SetBitStreamOverflow();
+	}
 	ErrorContext.SetError(Error);
+}
+
+inline void FNetSerializationContext::SetErrorHandleContext(const FNetRefHandle& HandleContext)
+{
+	ErrorContext.SetObjectHandle(HandleContext);
 }
 
 inline bool FNetSerializationContext::HasErrorOrOverflow() const

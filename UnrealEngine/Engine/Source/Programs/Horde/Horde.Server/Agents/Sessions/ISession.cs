@@ -2,7 +2,8 @@
 
 using System;
 using System.Collections.Generic;
-using Horde.Server.Utilities;
+using EpicGames.Horde.Agents;
+using EpicGames.Horde.Agents.Sessions;
 
 namespace Horde.Server.Agents.Sessions
 {

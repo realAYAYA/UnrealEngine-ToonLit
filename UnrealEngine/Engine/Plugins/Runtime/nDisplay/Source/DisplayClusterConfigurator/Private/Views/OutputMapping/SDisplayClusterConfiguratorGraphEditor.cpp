@@ -6,7 +6,7 @@
 #include "DisplayClusterConfiguratorBlueprintEditor.h"
 #include "DisplayClusterConfigurationTypes.h"
 #include "IDisplayClusterConfigurator.h"
-#include "ClusterConfiguration/DisplayClusterConfiguratorClusterUtils.h"
+#include "ClusterConfiguration/DisplayClusterConfiguratorClusterEditorUtils.h"
 #include "ClusterConfiguration/SDisplayClusterConfiguratorNewClusterItemDialog.h"
 #include "Views/OutputMapping/DisplayClusterConfiguratorGraph.h"
 #include "Views/OutputMapping/DisplayClusterConfiguratorOutputMappingCommands.h"
@@ -412,7 +412,7 @@ void SDisplayClusterConfiguratorGraphEditor::AddNewClusterNode()
 
 		TSharedPtr<FScopedTransaction> Transaction;
 		if (UDisplayClusterConfigurationClusterNode* NewNode =
-			FDisplayClusterConfiguratorClusterUtils::CreateNewClusterNodeFromDialog(Toolkit.ToSharedRef(), Cluster, PresetRect,Transaction, Host))
+			UE::DisplayClusterConfiguratorClusterEditorUtils::CreateNewClusterNodeFromDialog(Toolkit.ToSharedRef(), Cluster, PresetRect,Transaction, Host))
 		{
 			// Mark the cluster configuration data as dirty, allowing user to save the changes, and fire off a cluster changed event to let other
 			// parts of the UI update as well
@@ -450,7 +450,7 @@ void SDisplayClusterConfiguratorGraphEditor::AddNewViewport()
 		const FDisplayClusterConfigurationRectangle PresetRect = FDisplayClusterConfigurationRectangle(0, 0, PresetSize.X, PresetSize.Y);
 
 		TSharedPtr<FScopedTransaction> Transaction;
-		if (UDisplayClusterConfigurationViewport* NewViewport = FDisplayClusterConfiguratorClusterUtils::CreateNewViewportFromDialog(Toolkit.ToSharedRef(), SelectedClusterNode, PresetRect, Transaction))
+		if (UDisplayClusterConfigurationViewport* NewViewport = UE::DisplayClusterConfiguratorClusterEditorUtils::CreateNewViewportFromDialog(Toolkit.ToSharedRef(), SelectedClusterNode, PresetRect, Transaction))
 		{
 			// Mark the cluster configuration data as dirty, allowing user to save the changes, and fire off a cluster changed event to let other
 			// parts of the UI update as well
@@ -539,7 +539,7 @@ void SDisplayClusterConfiguratorGraphEditor::CopySelectedNodes()
 			}
 		}
 
-		FDisplayClusterConfiguratorClusterUtils::CopyClusterItemsToClipboard(ObjectsToCopy);
+		UE::DisplayClusterConfiguratorClusterEditorUtils::CopyClusterItemsToClipboard(ObjectsToCopy);
 	}
 }
 
@@ -615,11 +615,11 @@ void SDisplayClusterConfiguratorGraphEditor::PasteNodes()
 	}
 
 	int32 NumClusterItems;
-	if (FDisplayClusterConfiguratorClusterUtils::CanPasteClusterItemsFromClipboard(TargetObjects, NumClusterItems))
+	if (UE::DisplayClusterConfiguratorClusterEditorUtils::CanPasteClusterItemsFromClipboard(TargetObjects, NumClusterItems))
 	{
 		FScopedTransaction Transaction(FText::Format(LOCTEXT("PasteClusterItems", "Paste Cluster {0}|plural(one=Item, other=Items)"), NumClusterItems));
 
-		TArray<UObject*> PastedObjects = FDisplayClusterConfiguratorClusterUtils::PasteClusterItemsFromClipboard(TargetObjects, GetPasteLocation() / ViewScale);
+		TArray<UObject*> PastedObjects = UE::DisplayClusterConfiguratorClusterEditorUtils::PasteClusterItemsFromClipboard(TargetObjects, GetPasteLocation() / ViewScale);
 		if (PastedObjects.Num() > 0)
 		{
 			Toolkit->GetEditorData()->MarkPackageDirty();
@@ -665,7 +665,7 @@ bool SDisplayClusterConfiguratorGraphEditor::CanPasteNodes() const
 	}
 
 	int32 NumClusterItems;
-	return FDisplayClusterConfiguratorClusterUtils::CanPasteClusterItemsFromClipboard(TargetObjects, NumClusterItems);
+	return UE::DisplayClusterConfiguratorClusterEditorUtils::CanPasteClusterItemsFromClipboard(TargetObjects, NumClusterItems);
 }
 
 void SDisplayClusterConfiguratorGraphEditor::DuplicateNodes()

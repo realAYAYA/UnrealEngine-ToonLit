@@ -88,28 +88,8 @@ DECLARE_MULTICAST_DELEGATE(FSourceControlStateChanged);
 class ISourceControlProvider : public IModularFeature
 {
 public:
-	/**
-	 * Virtual destructor
-	 */
-	virtual ~ISourceControlProvider() {}
 
-	/**
-	 * Initialize source control provider.
-	 * @param	bForceConnection	If set, this flag forces the provider to attempt a connection to its server.
-	 */
-	virtual void Init(bool bForceConnection = true) = 0;
-
-	/**
-	 * Shut down source control provider.
-	 */
-	virtual void Close() = 0;
-
-	/** Get the source control provider name */
-	virtual const FName& GetName() const = 0;
-
-	/** Get the source control status as plain, human-readable text */
-	virtual FText GetStatusText() const = 0;
-
+	/** Key value for common source control provider statuses */
 	enum class EStatus
 	{
 		Enabled,
@@ -127,6 +107,81 @@ public:
 		WorkspacePath,
 		Changeset
 	};
+
+	/** Flags used when calling ISourceControlProvider::Init */
+	enum class EInitFlags : uint32
+	{
+		/** No flags set */
+		None				= 0,
+		/** A connection attempt to the provider will be made as part of the initialization */
+		AttemptConnection	= 1 << 0,
+		/** Errors will not be logged but will still be returned to the caller */
+		SupressErrorLogging = 1 << 1
+	};
+
+	/** The result info returned form calls to  ISourceControlProvider::Init */
+	struct FInitResult
+	{
+		/** True if the provider is ready for use, otherwise false. This value should match calling ISourceControlProvider::IsAvailable. */
+		bool bIsAvailable = false;
+
+		/** 
+		 * Contains the important settings used when trying to make a server connection.
+		 * This will only contain entries if Init is called with the EInitFlags::AttemptConnection flag.
+		 * 
+		 * This map should still contain entries if the connection failed.
+		 */
+		TMap<EStatus, FString> ConnectionSettings;
+
+		/** Contains errors encountered during initialization */
+		struct FConnectionErrors
+		{
+			/** A higher level error message describing at what point in the connection something went wrong. */
+			FText ErrorMessage;
+
+			/** A collection of lower level error messages usually from the source revision api itself. */
+			TArray<FText> AdditionalErrors;
+
+			FConnectionErrors() = default;
+			FConnectionErrors(const FText& InErrorMessage, const TArray<FText>& InAdditionalErrors)
+				: ErrorMessage(InErrorMessage), AdditionalErrors(InAdditionalErrors)
+			{
+			}
+
+			~FConnectionErrors() = default;
+		} Errors;
+	};
+
+public:
+	/**
+	 * Virtual destructor
+	 */
+	virtual ~ISourceControlProvider() {}
+
+	/**
+	 * Initialize source control provider.
+	 * @param	bForceConnection	If set, this flag forces the provider to attempt a connection to its server.
+	 */
+	virtual void Init(bool bForceConnection = true) = 0;
+
+	/**
+	 * Initialize source control provider.
+	 * @param Flags		Used to specialize initialization behavior, @see EInitFlags
+	 * 
+	 * @return			A structure containing the result as well as any errors. @see FInitResult
+	 */
+	SOURCECONTROL_API virtual FInitResult Init(EInitFlags Flags);
+
+	/**
+	 * Shut down source control provider.
+	 */
+	virtual void Close() = 0;
+
+	/** Get the source control provider name */
+	virtual const FName& GetName() const = 0;
+
+	/** Get the source control status as plain, human-readable text */
+	virtual FText GetStatusText() const = 0;
 
 	/** Get the source control status as a series of key value pairs */
 	virtual TMap<EStatus, FString> GetStatus() const = 0;
@@ -428,4 +483,4 @@ protected:
 	virtual TUniquePtr<ISourceControlProvider> Create(const FStringView& OwnerName, const FSourceControlInitSettings& InitialSettings) const { return TUniquePtr<ISourceControlProvider>(); }
 };
 
-
+ENUM_CLASS_FLAGS(ISourceControlProvider::EInitFlags);

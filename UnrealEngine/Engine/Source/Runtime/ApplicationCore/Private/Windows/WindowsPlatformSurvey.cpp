@@ -18,7 +18,6 @@
 #define USING_WINSAT_API	1
 #define USING_POWRPROF		1
 
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 	#include <ShlObj.h>
 #if USING_WINSAT_API

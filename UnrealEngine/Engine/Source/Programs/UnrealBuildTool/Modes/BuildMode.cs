@@ -804,6 +804,22 @@ namespace UnrealBuildTool
 								await actionArtifactCache.FlushChangesAsync(default); //ETSTODO
 							}
 						}
+
+						// these are parsed by external tools wishing to open this file directly
+						foreach (LinkedAction BuildAction in MergedActionsToExecute.Where(BuildAction => BuildAction.ActionType == ActionType.Compile && (BuildAction.Inner as VCCompileAction)?.bIsAnalyzing != true))
+						{
+							FileItem? PreprocessedFile = BuildAction.ProducedItems.FirstOrDefault(x => x.HasExtension(".i"));
+							if (PreprocessedFile != null)
+							{
+								Logger.LogInformation("PreProcessPath: {File}", PreprocessedFile);
+							}
+
+							FileItem? AssemblyPath = BuildAction.ProducedItems.FirstOrDefault(x => x.HasExtension(".asm"));
+							if (AssemblyPath != null)
+							{
+								Logger.LogInformation("AssemblyPath: {File}", AssemblyPath);
+							}
+						}
 					}
 
 					// Run the deployment steps
@@ -820,6 +836,24 @@ namespace UnrealBuildTool
 					}
 				}
 			}
+			else
+			{
+				foreach (TargetMakefile Makefile in Makefiles)
+				{
+					FileReference TargetInfoFile = FileReference.Combine(Makefile.ProjectIntermediateDirectory, "TargetMetadata.dat");
+					if (FileReference.Exists(TargetInfoFile))
+					{
+						List<string> ArgumentsList = new List<string>()
+						{
+							$"-Input={TargetInfoFile}",
+							$"-Version={WriteMetadataMode.CurrentVersionNumber}"
+						};
+						CommandLineArguments Arguments = new CommandLineArguments(ArgumentsList.ToArray());
+						WriteMetadataMode MetadataMode = new WriteMetadataMode();
+						await MetadataMode.ExecuteAsync(Arguments, Logger);
+					}
+				}
+			}
 		}
 
 		internal static List<FileItem> CreateLinkedActionsFromFileList(TargetDescriptor Target, BuildConfiguration BuildConfiguration, List<FileReference> FileList, List<LinkedAction> Actions, ILogger Logger)
@@ -831,41 +865,25 @@ namespace UnrealBuildTool
 			// First, find all the SpecificFileActions.
 			// These are used to create a custom action for the source file in case it is inside a unity or normally not part of the build (headers for example)
 			Dictionary<DirectoryReference, ISpecificFileAction> SpecificFileActions = new();
-			foreach (LinkedAction Action in Actions)
+			foreach (ISpecificFileAction SpecificFileAction in Actions.Select(x => x.Inner).OfType<ISpecificFileAction>())
 			{
-				if (Action.Inner is ISpecificFileAction SpecificFileAction)
-				{
-					SpecificFileActions.TryAdd(SpecificFileAction.RootDirectory, SpecificFileAction);
-				}
+				SpecificFileActions.TryAdd(SpecificFileAction.RootDirectory, SpecificFileAction);
 			}
 
 			// Now traverse all specific files and make sure we find or create actions for them.
-			foreach (FileReference FileRef in FileList)
+			foreach (FileItem SourceFile in FileList.Select(x => FileItem.GetItemByFileReference(x)).Where(x => x.Exists))
 			{
-				FileItem SourceFile = FileItem.GetItemByFileReference(FileRef);
-
-				// Ensure the file requested exists on disk
-				if (!SourceFile.Exists)
-				{
-					continue;
-				}
-
 				ISpecificFileAction? SpecificFileAction = null;
 
 				// Traverse upwards from file directory to try to find a SpecificFileAction.
-				DirectoryItem Dir = SourceFile.Directory;
-				while (true)
+				DirectoryItem? Dir = SourceFile.Directory;
+				while (Dir != null)
 				{
 					if (SpecificFileActions.TryGetValue(Dir.Location, out SpecificFileAction))
 					{
 						break;
 					}
-					DirectoryItem? ParentDir = Dir.GetParentDirectoryItem();
-					if (ParentDir == null)
-					{
-						break;
-					}
-					Dir = ParentDir;
+					Dir = Dir.GetParentDirectoryItem();
 				}
 
 				// We found an action to take care of this file.
@@ -881,27 +899,15 @@ namespace UnrealBuildTool
 				}
 
 				// There is no special action for this file.. let's look for an action that has this exact file as input and use that (for example ispc files)
-				bool FoundAction = false;
-				foreach (LinkedAction Action in Actions)
-				{
-					foreach (FileItem PrereqItem in Action.PrerequisiteItems)
-					{
-						if (PrereqItem == SourceFile)
-						{
-							FoundAction = true;
-							ProducedItems.AddRange(Action.ProducedItems);
-							break;
-						}
-					}
-					if (FoundAction)
-					{
-						break;
-					}
-				}
+				LinkedAction? Action = Actions.Find(x => x.PrerequisiteItems.Contains(SourceFile));
 
-				if (!FoundAction && !BuildConfiguration.bIgnoreInvalidFiles)
+				if (Action != null)
 				{
-					Logger.LogError($"{FileRef.FullName} - ERROR: Failed to find an Action that can be used to build this file (does target use this file?)");
+					ProducedItems.AddRange(Action.ProducedItems);
+				}
+				else if (!BuildConfiguration.bIgnoreInvalidFiles)
+				{
+					Logger.LogError("ERROR: Failed to find an Action that can be used to build \"{Path}\" (does target use this file?)", SourceFile);
 				}
 			}
 
@@ -1241,6 +1247,7 @@ namespace UnrealBuildTool
 					if (TargetAction.IgnoreConflicts())
 					{
 						IgnoreConflictActions.Add(TargetAction);
+						TargetAction.GroupNames.Add(GroupPrefix);
 						continue;
 					}
 

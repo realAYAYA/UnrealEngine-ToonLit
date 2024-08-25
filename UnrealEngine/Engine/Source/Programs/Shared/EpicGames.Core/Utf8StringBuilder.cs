@@ -66,6 +66,24 @@ namespace EpicGames.Core
 		}
 
 		/// <summary>
+		/// Append a character to the end of this builder
+		/// </summary>
+		/// <param name="ch">Character to append</param>
+		public void Append(char ch)
+		{
+			if (ch < 127)
+			{
+				_writer.WriteUInt8((byte)ch);
+			}
+			else
+			{
+				Span<char> buffer = stackalloc char[1];
+				buffer[0] = ch;
+				Append(buffer);
+			}
+		}
+
+		/// <summary>
 		/// Appends a string to the end of this builder
 		/// </summary>
 		/// <param name="text">Text to append</param>
@@ -131,10 +149,10 @@ namespace EpicGames.Core
 		/// Appends a string to the end of this builder
 		/// </summary>
 		/// <param name="text">Text to append</param>
-		public void Append(string text)
+		public void Append(ReadOnlySpan<char> text)
 		{
 			Span<byte> span = _writer.GetSpanAndAdvance(Encoding.UTF8.GetByteCount(text));
-			Encoding.UTF8.GetBytes(text.AsSpan(), span);
+			Encoding.UTF8.GetBytes(text, span);
 		}
 
 		/// <summary>

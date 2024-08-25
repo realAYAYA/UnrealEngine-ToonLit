@@ -107,6 +107,10 @@ namespace Audio
 	 */ 
 	SIGNALPROCESSING_API void ArrayMinMaxNormalize(TArrayView<const float> InView, TArray<float>& OutArray);
 
+	/** Element-wise Max
+	 */
+	SIGNALPROCESSING_API void ArrayMax(const TArrayView<const float>& InView1, const TArrayView<const float>& InView2, const TArrayView<float>& OutView);
+
 	/** Returns the largest value of an array irrespective of sign (ex. {-3, 2, 1} would return 3).
 	 *  InView is a view of a float array to get the largest absolute value from.
 	 */
@@ -217,6 +221,7 @@ namespace Audio
 	/* This operation completely ignores channel counts, so avoid using this function on buffers that are not mono, stereo or quad */
 	/* if the buffer needs to fade all channels uniformly. */
 	SIGNALPROCESSING_API void ArrayFade(TArrayView<float> InOutBuffer, const float StartValue, const float EndValue);
+	SIGNALPROCESSING_API void ArrayFade(TArrayView<const float> InBuffer, const float InStartValue, const float InEndValue, TArrayView<float> OutBuffer);
 
 	/** Takes buffer InFloatBuffer, optionally multiplies it by Gain, and adds it to BufferToSumTo. */
 	SIGNALPROCESSING_API void ArrayMixIn(TArrayView<const float> InFloatBuffer, TArrayView<float> BufferToSumTo, const float Gain);
@@ -235,13 +240,16 @@ namespace Audio
 	SIGNALPROCESSING_API void ArrayInterleave(const TArray<FAlignedFloatBuffer>& InBuffers, FAlignedFloatBuffer& OutBuffer);
 
 	/** Interleaves samples from an array of input buffers */
-	SIGNALPROCESSING_API void ArrayInterleave(const float** RESTRICT InBuffers, float* RESTRICT OutBuffer, const int32 InFrames, const int32 InChannels);
+	SIGNALPROCESSING_API void ArrayInterleave(const float* const* RESTRICT InBuffers, float* RESTRICT OutBuffer, const int32 InFrames, const int32 InChannels);
 
 	/** Interleaves samples from an array of input buffers */
 	SIGNALPROCESSING_API void ArrayDeinterleave(const FAlignedFloatBuffer& InBuffer, TArray<FAlignedFloatBuffer>& OutBuffers, const int32 InChannels);
 
 	/** Interleaves samples from an array of input buffers */
-	SIGNALPROCESSING_API void ArrayDeinterleave(const float* RESTRICT InBuffer, float** RESTRICT OutBuffers, const int32 InFrames, const int32 InChannels);
+	SIGNALPROCESSING_API void ArrayDeinterleave(const float* RESTRICT InBuffer, float* const* RESTRICT OutBuffers, const int32 InFrames, const int32 InChannels);
+
+	/** Interpolates a Mono audio buffer. */
+	SIGNALPROCESSING_API void ArrayInterpolate(const float* RESTRICT InBuffer, float* RESTRICT OutBuffer, const int32 NumInSamples, const int32 NumOutSamples);
 
 	/** FContiguousSparse2DKernelTransform
 	 *

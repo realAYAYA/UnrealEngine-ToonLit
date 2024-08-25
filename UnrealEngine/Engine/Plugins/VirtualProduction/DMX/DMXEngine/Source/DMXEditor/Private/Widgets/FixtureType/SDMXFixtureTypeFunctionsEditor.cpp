@@ -25,10 +25,11 @@
 
 #define LOCTEXT_NAMESPACE "SDMXFixtureTypeFunctionsEditor"
 
-const FName FDMXFixtureTypeFunctionsEditorCollumnIDs::Status = "Status";
-const FName FDMXFixtureTypeFunctionsEditorCollumnIDs::Channel = "Channel";
-const FName FDMXFixtureTypeFunctionsEditorCollumnIDs::Name = "Name";
-const FName FDMXFixtureTypeFunctionsEditorCollumnIDs::Attribute = "Attribute";
+const FName SDMXFixtureTypeFunctionsEditor::FCollumnID::Status = "Status";
+const FName SDMXFixtureTypeFunctionsEditor::FCollumnID::Channel = "Channel";
+const FName SDMXFixtureTypeFunctionsEditor::FCollumnID::Name = "Name";
+const FName SDMXFixtureTypeFunctionsEditor::FCollumnID::Attribute = "Attribute";
+const FName SDMXFixtureTypeFunctionsEditor::FCollumnID::DeleteAttribute = "DeleteAttribute";
 
 SDMXFixtureTypeFunctionsEditor::~SDMXFixtureTypeFunctionsEditor()
 {
@@ -371,36 +372,44 @@ void SDMXFixtureTypeFunctionsEditor::OnFixtureTypeChanged(const UDMXEntityFixtur
 TSharedRef<SHeaderRow> SDMXFixtureTypeFunctionsEditor::GenerateHeaderRow()
 {
 	const float StatusColumnWidth = FMath::Max(FAppStyle::Get().GetBrush("Icons.Warning")->GetImageSize().X + 6.f, FAppStyle::Get().GetBrush("Icons.Error")->GetImageSize().X + 6.f);
+	const float DeleteAttributeColumnWidth = FAppStyle::GetBrush("Icons.Delete")->GetImageSize().X + 8.f;
 
 	HeaderRow = SNew(SHeaderRow);
 	SHeaderRow::FColumn::FArguments ColumnArgs;
 
 	HeaderRow->AddColumn(
 		SHeaderRow::FColumn::FArguments()
-		.ColumnId(FDMXFixtureTypeFunctionsEditorCollumnIDs::Status)
+		.ColumnId(SDMXFixtureTypeFunctionsEditor::FCollumnID::Status)
 		.DefaultLabel(LOCTEXT("StatusColumnLabel", ""))
 		.FixedWidth(StatusColumnWidth)
 	);
 
 	HeaderRow->AddColumn(
 		SHeaderRow::FColumn::FArguments()
-		.ColumnId(FDMXFixtureTypeFunctionsEditorCollumnIDs::Channel)
+		.ColumnId(SDMXFixtureTypeFunctionsEditor::FCollumnID::Channel)
 		.DefaultLabel(LOCTEXT("ChannelColumnLabel", "Ch."))
 		.FixedWidth(56.f)
 	);
 
 	HeaderRow->AddColumn(
 		SHeaderRow::FColumn::FArguments()
-		.ColumnId(FDMXFixtureTypeFunctionsEditorCollumnIDs::Name)
+		.ColumnId(SDMXFixtureTypeFunctionsEditor::FCollumnID::Name)
 		.DefaultLabel(LOCTEXT("NameColumnLabel", "Name"))
 		.FillWidth(0.5f)
 	);
 
 	HeaderRow->AddColumn(
 		SHeaderRow::FColumn::FArguments()
-		.ColumnId(FDMXFixtureTypeFunctionsEditorCollumnIDs::Attribute)
+		.ColumnId(SDMXFixtureTypeFunctionsEditor::FCollumnID::Attribute)
 		.DefaultLabel(LOCTEXT("AttributeColumnLabel", "Attribute"))
 		.FillWidth(0.5f)
+	);
+
+	HeaderRow->AddColumn(
+		SHeaderRow::FColumn::FArguments()
+		.ColumnId(SDMXFixtureTypeFunctionsEditor::FCollumnID::DeleteAttribute)
+		.DefaultLabel(LOCTEXT("DeleteAttributeColumnLabel", ""))
+		.FixedWidth(DeleteAttributeColumnWidth)
 	);
 
 	// Restore user settings
@@ -415,7 +424,7 @@ TSharedRef<SHeaderRow> SDMXFixtureTypeFunctionsEditor::GenerateHeaderRow()
 		const float AttributeColumnWidth = EditorSettings->FixtureTypeFunctionsEditorSettings.AttributeColumnWidth;
 		if (AttributeColumnWidth > 10.f)
 		{
-			HeaderRow->SetColumnWidth(FDMXFixtureTypeFunctionsEditorCollumnIDs::Attribute, AttributeColumnWidth);
+			HeaderRow->SetColumnWidth(SDMXFixtureTypeFunctionsEditor::FCollumnID::Attribute, AttributeColumnWidth);
 		}
 	}
 
@@ -429,12 +438,12 @@ void SDMXFixtureTypeFunctionsEditor::SaveHeaderRowSettings()
 	{
 		for (const SHeaderRow::FColumn& Column : HeaderRow->GetColumns())
 		{
-			if (Column.ColumnId == FDMXFixtureTypeFunctionsEditorCollumnIDs::Name)
+			if (Column.ColumnId == SDMXFixtureTypeFunctionsEditor::FCollumnID::Name)
 			{
 				EditorSettings->FixtureTypeFunctionsEditorSettings.NameColumnWidth = Column.Width.Get();
 
 			}
-			else if (Column.ColumnId == FDMXFixtureTypeFunctionsEditorCollumnIDs::Attribute)
+			else if (Column.ColumnId == SDMXFixtureTypeFunctionsEditor::FCollumnID::Attribute)
 			{
 				EditorSettings->FixtureTypeFunctionsEditorSettings.AttributeColumnWidth = Column.Width.Get();
 			}

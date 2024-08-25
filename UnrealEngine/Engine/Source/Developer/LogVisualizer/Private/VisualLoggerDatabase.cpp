@@ -221,7 +221,7 @@ void FVisualLoggerDatabase::DeselectRow(FName InName)
 		FVisualLoggerDBRow& DBRow = GetRowByName(InName);
 		DBRow.MoveTo(INDEX_NONE);
 
-		SelectedRows.RemoveSingleSwap(InName, false);
+		SelectedRows.RemoveSingleSwap(InName, EAllowShrinking::No);
 		DBEvents.OnRowSelectionChanged.Broadcast(SelectedRows);
 	}
 }
@@ -262,7 +262,7 @@ void FVisualLoggerDatabase::RemoveRow(FName RowName)
 	if (RowNameToIndex.Contains(RowName))
 	{
 		const int32 RemovedIndex = RowNameToIndex.FindAndRemoveChecked(RowName);
-		Rows.RemoveAtSwap(RemovedIndex, 1, false);
+		Rows.RemoveAtSwap(RemovedIndex, 1, EAllowShrinking::No);
 		if (Rows.IsValidIndex(RemovedIndex))
 		{
 			RowNameToIndex[Rows[RemovedIndex].GetOwnerName()] = RemovedIndex;

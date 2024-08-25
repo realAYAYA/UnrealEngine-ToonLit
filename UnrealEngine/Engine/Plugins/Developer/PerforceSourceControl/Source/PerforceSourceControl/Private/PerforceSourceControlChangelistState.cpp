@@ -41,14 +41,26 @@ const FDateTime& FPerforceSourceControlChangelistState::GetTimeStamp() const
 	return TimeStamp;
 }
 
-const TArray<FSourceControlStateRef>& FPerforceSourceControlChangelistState::GetFilesStates() const
+const TArray<FSourceControlStateRef> FPerforceSourceControlChangelistState::GetFilesStates() const
 {
 	return Files;
 }
 
-const TArray<FSourceControlStateRef>& FPerforceSourceControlChangelistState::GetShelvedFilesStates() const
+int32 FPerforceSourceControlChangelistState::GetFilesStatesNum() const
 {
-	return ShelvedFiles;
+	return Files.Num();
+}
+
+const TArray<FSourceControlStateRef> FPerforceSourceControlChangelistState::GetShelvedFilesStates() const
+{
+	TArray<FSourceControlStateRef> Result;
+	ShelvedFiles.GenerateValueArray(Result);
+	return Result;
+}
+
+int32 FPerforceSourceControlChangelistState::GetShelvedFilesStatesNum() const
+{
+	return ShelvedFiles.Num();
 }
 
 FSourceControlChangelistRef FPerforceSourceControlChangelistState::GetChangelist() const

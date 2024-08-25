@@ -134,7 +134,11 @@ public:
 	TArray<FString> StaticEndpoints;
 
 	/**
-	 * List of IP addresses that are banned from communicating with this client.
+	 * List of IP addresses that are banned from communicating with this client. Wildcard IPv4 addresses can be specified by using '*' and '?'
+	 * characters.
+	 *
+	 * For example, 192.168.12.* will deny all addresses on the .12 subnet for the class C network.
+	 * The string 192.16?.12.10 will deny all addresses in the range 192.160.12.10-192.169.12.10.
 	 *
 	 * The format is IP_ADDRESS:PORT_NUMBER.  If port number is 0 then all ports are blocked.
 	 */

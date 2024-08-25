@@ -531,7 +531,7 @@ void ALODActor::PostRegisterAllComponents()
 
 	if( UWorld* World = GetWorld(); World && World->IsGameWorld())
 	{
-		for (TObjectPtr<AActor> ActorPtr : SubActors)
+		for (TObjectPtr<AActor>& ActorPtr : SubActors)
 		{
 			if (AActor* Actor = ActorPtr.Get())
 			{
@@ -1082,11 +1082,6 @@ void ALODActor::AddInstances(const UStaticMesh* InStaticMesh, const UMaterialInt
 	AddInstances(InStaticMesh, InMaterial, InTransforms, {});
 }
 
-void ALODActor::SetupImposters(const UMaterialInterface* InImposterMaterial, UStaticMesh* InStaticMesh, const TArray<FTransform>& InTransforms)
-{
-	AddInstances(InStaticMesh, InImposterMaterial, InTransforms);
-}
-
 void ALODActor::UpdateSubActorLODParents()
 {
 	for (AActor* Actor : SubActors)
@@ -1418,13 +1413,6 @@ void ALODActor::Serialize(FArchive& Ar)
 }
 
 #if WITH_EDITOR
-
-void ALODActor::PreSave(const class ITargetPlatform* TargetPlatform)
-{
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
-	Super::PreSave(TargetPlatform);
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
-}
 
 void ALODActor::PreSave(FObjectPreSaveContext ObjectSaveContext)
 {

@@ -23,6 +23,7 @@ struct FGameplayInteractionContext
 	GENERATED_BODY()
 
 public:
+	const FSmartObjectClaimHandle& GetClaimedHandle() const { return ClaimedHandle; }
 	void SetClaimedHandle(const FSmartObjectClaimHandle& InClaimedHandle) { ClaimedHandle = InClaimedHandle; }
 
 	void SetSlotEntranceHandle(const FSmartObjectSlotEntranceHandle InSlotEntranceHandle) { SlotEntranceHandle = InSlotEntranceHandle; }
@@ -68,7 +69,7 @@ protected:
 	 * Updates all external data views from the provided interaction context.  
 	 * @return True if all external data views are valid, false otherwise.
 	 */
-	bool SetContextRequirements(FStateTreeExecutionContext& StateTreeContext) const;
+	bool SetContextRequirements(FStateTreeExecutionContext& StateTreeContext);
 
 	/** @return true of the ContextActor and SmartObjectActor match the ones set in schema. */
 	bool ValidateSchema(const FStateTreeExecutionContext& StateTreeContext) const;

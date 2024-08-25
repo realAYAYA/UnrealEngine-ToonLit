@@ -335,6 +335,10 @@ _mesa_ast_type_qualifier_print(const struct ast_type_qualifier *q)
 	{
 		printf("noperspective ");
 	}
+	if (q->flags.q.precise)
+	{
+		printf("precise ");
+	}
 }
 
 
@@ -862,11 +866,37 @@ ast_case_statement::ast_case_statement(ast_case_label_list *labels)
 void ast_case_statement_list::print(void) const
 {
 	print_attributes();
-
+	
 	foreach_list_const(n, &this->cases)
 	{
 		ast_node *ast = exec_node_data(ast_node, n, link);
 		ast->print();
+	}
+}
+
+void ast_case_statement_list::sortlabels()
+{
+	exec_node* defaultnode = NULL;
+
+	foreach_iter(exec_list_iterator, iter, cases)
+	{
+		exec_node* currentnode = (exec_node*)iter.get();
+		ast_case_statement* casestatement = exec_node_data(ast_case_statement, currentnode, link);
+
+		exec_node* mynode = casestatement->labels->labels.get_head();
+		ast_case_label* mylabel = exec_node_data(ast_case_label, mynode, link);
+
+		if (mylabel->test_value == NULL)
+		{
+			defaultnode = currentnode;
+			break;
+		}
+	}
+
+	if (defaultnode != NULL)
+	{
+		defaultnode->remove();
+		cases.push_tail(defaultnode);
 	}
 }
 

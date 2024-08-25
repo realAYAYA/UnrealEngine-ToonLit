@@ -47,7 +47,7 @@ public:
 
 		// Format the input string.
 		TCHAR ColumnText[4096];
-		GET_VARARGS(ColumnText,UE_ARRAY_COUNT(ColumnText),UE_ARRAY_COUNT(ColumnText)-1,Format,Format);
+		GET_TYPED_VARARGS(TCHAR,ColumnText,UE_ARRAY_COUNT(ColumnText),UE_ARRAY_COUNT(ColumnText)-1,Format,Format);
 
 		// If this isn't the first column in the row, add a comma to separate the columns.
 		if(CurrentRow.Len())

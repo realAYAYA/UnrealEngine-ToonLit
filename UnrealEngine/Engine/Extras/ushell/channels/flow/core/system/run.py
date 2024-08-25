@@ -25,7 +25,7 @@ def _print_sub_commands_impl(tree_node):
             child_command = child_class.construct()
             desc = child_command.get_desc().lstrip()
         else:
-            desc = "[%s]" % ",".join(x for x,_ in child_node.read_children())
+            desc = "<%s>" % "|".join(x for x,_ in child_node.read_children())
         desc = desc.replace("\n", "")
         desc = desc.replace("    ", " ")
 

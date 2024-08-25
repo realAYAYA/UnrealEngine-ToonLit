@@ -66,6 +66,9 @@ protected:
 
 	EVisibility GetGotoBindingVisibility() const;
 
+	// Helper function to call the OnCanAcceptProperty* delegates, handles conversion of binding chain to TConstArrayView<FBindingChainElement> as expected by the delegate.
+	bool CanAcceptPropertyOrChildren(FProperty* InProperty, TConstArrayView<TSharedPtr<FBindingChainElement>> InBindingChain) const;
+
 	FReply HandleGotoBindingClicked();
 
 	virtual FReply OnDrop(const FGeometry& MyGeometry, const FDragDropEvent& DragDropEvent) override;
@@ -75,14 +78,18 @@ private:
 	bool IsFieldFromDeniedClass(FFieldVariant Field) const;
 	bool HasBindableProperties(UStruct* InStruct, TArray<TSharedPtr<FBindingChainElement>>& BindingChain) const;
 	bool HasBindablePropertiesRecursive(UStruct* InStruct, TSet<UStruct*>& VisitedStructs, TArray<TSharedPtr<FBindingChainElement>>& BindingChain) const;
-	
+
+	/**
+	 * Note that an ArrayView is not used to pass the BindingChain around since the predicate can modify the array
+	 * and this will invalidate the ArrayView if reallocation is performed.
+	 */
 	template <typename Predicate>
-	void ForEachBindableProperty(UStruct* InStruct, Predicate Pred) const;
+	void ForEachBindableProperty(UStruct* InStruct, const TArray<TSharedPtr<FBindingChainElement>>& BindingChain, Predicate Pred) const;
 
 	template <typename Predicate>
 	void ForEachBindableFunction(UClass* FromClass, Predicate Pred) const;
 
-	UBlueprint* Blueprint;
+	UBlueprint* Blueprint = nullptr;
 	TArray<FBindingContextStruct> BindingContextStructs;
 	FPropertyBindingWidgetArgs Args;
 	FName PropertyName;

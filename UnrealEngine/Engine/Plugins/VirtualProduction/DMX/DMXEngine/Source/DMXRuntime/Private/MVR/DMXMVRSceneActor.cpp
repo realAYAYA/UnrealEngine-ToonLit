@@ -370,7 +370,7 @@ void ADMXMVRSceneActor::UpdateGDTFToDefaultActorClasses(const TSharedRef<FDMXMVR
 	}
 
 	// Remove those GDTFs that are no longer used by any actor
-	Algo::RemoveIf(GDTFToDefaultActorClasses, [this](const FDMXMVRSceneGDTFToActorClassPair& GDTFToActorClassPair)
+	GDTFToDefaultActorClasses.SetNum(Algo::RemoveIf(GDTFToDefaultActorClasses, [this](const FDMXMVRSceneGDTFToActorClassPair& GDTFToActorClassPair)
 		{
 			const TSoftObjectPtr<AActor>* ActorThatUsesGDTF = Algo::FindByPredicate(RelatedActors, [this, GDTFToActorClassPair](const TSoftObjectPtr<AActor>& Actor)
 				{
@@ -381,7 +381,7 @@ void ADMXMVRSceneActor::UpdateGDTFToDefaultActorClasses(const TSharedRef<FDMXMVR
 					return GDTFToActorClassPair.GDTF == GDTF;
 				});
 			return ActorThatUsesGDTF == nullptr;
-		});
+		}));
 }
 
 #if WITH_EDITOR

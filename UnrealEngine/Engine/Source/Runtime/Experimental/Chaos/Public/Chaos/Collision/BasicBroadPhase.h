@@ -86,6 +86,10 @@ namespace Chaos
 			FParticleHandle* ParticleB,
 			FParticleHandle* SearchParticle)
 		{
+			if (!ParticleA->HasCollision() || !ParticleB->HasCollision())
+			{
+				return;
+			}
 			const FAABB3& Box0 = ParticleA->WorldSpaceInflatedBounds();
 			const FAABB3& Box1 = ParticleB->WorldSpaceInflatedBounds();
 			if (Box0.Intersects(Box1))

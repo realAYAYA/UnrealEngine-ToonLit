@@ -9,7 +9,10 @@
 // Forward Declare
 class UMoviePipelineExecutorJob;
 class UMovieGraphEvaluatedConfig;
+class UMovieGraphPipeline;
 class UMoviePipelineExecutorShot;
+
+struct FMovieGraphTraversalContext;
 
 /**
 * This data structure contains a list of key-value pairs (as strings) for both filename resolving, and file metadata.
@@ -42,7 +45,7 @@ struct FMovieGraphResolveArgs
 * be preserved so the resulting string back would say "my_seq_name/{frame_number}".
 */
 USTRUCT(BlueprintType)
-struct FMovieGraphFilenameResolveParams
+struct MOVIERENDERPIPELINECORE_API FMovieGraphFilenameResolveParams
 {
 	GENERATED_BODY()
 
@@ -60,12 +63,21 @@ struct FMovieGraphFilenameResolveParams
 		, Shot(nullptr)
 		, EvaluatedConfig(nullptr)
 		, FrameNumberOffset(0)
+		, DefaultFrameRate(FFrameRate(24, 1))
 	{
 	}
+
+	/** Convenience function to make filename resolve parameters for output files, or OCIO contexts. */
+	static FMovieGraphFilenameResolveParams MakeResolveParams(
+		const FMovieGraphRenderDataIdentifier& InRenderId,
+		const UMovieGraphPipeline* InPipeline,
+		const TObjectPtr<UMovieGraphEvaluatedConfig>& InEvaluatedConfig,
+		const FMovieGraphTraversalContext& InTraversalContext,
+		const TMap<FString, FString>& InAdditionalFormatArgs = {});
 	
 	/**
 	* This is used to fill out tokens related to the render data that the file represents.
-	* Used to fill out the {camera_name}, {render_layer}, {renderer_name}, {renderer_sub_name} tokens.
+	* Used to fill out the {camera_name}, {layer_name}, {renderer_name}, {renderer_sub_name} tokens.
 	*/
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Movie Graph")
 	FMovieGraphRenderDataIdentifier RenderDataIdentifier;
@@ -110,6 +122,10 @@ struct FMovieGraphFilenameResolveParams
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Movie Graph")
 	bool bForceRelativeFrameNumbers;
 
+	/** If specified, this is the filename that will be used instead of building it from the Output Setting node. */
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Movie Graph")
+	FString FileNameOverride;
+
 	/** 
 	* If true, If the format string is a relative path, then the resulting resolved path will be converted to an absolute path.
 	* Assumes that the relative path should be resolved relative to the engine/editor executable.
@@ -117,11 +133,18 @@ struct FMovieGraphFilenameResolveParams
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Movie Graph")
 	bool bEnsureAbsolutePath;
 	
-	/** The initialization time for this job. Used to resolve time-based format arguments. */
+	/**
+	* The initialization time for this job. Used to resolve time-based format arguments. This should be in UTC, if you want filenames in a local timezone
+	* then you should set InitializationTimeOffset to your offset from UTC.
+	*/
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Movie Graph")
 	FDateTime InitializationTime;
+
+	/** What offset should be applied to InitializationTime when generating {time} related filename tokens? Likely your offset from UTC if you want local time. */
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Movie Render Pipeline")
+	FTimespan InitializationTimeOffset;
 	
-	/** When converitng frame numbers to strings, how many digits should we pad them up to? ie: 5 => 0005 with a count of 4. */
+	/** When converting frame numbers to strings, how many digits should we pad them up to? ie: 5 => 0005 with a count of 4. */
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Movie Graph")
 	int32 ZeroPadFrameNumberCount;
 

@@ -16,7 +16,6 @@
 #include "Insights/Table/ViewModels/TreeNodeGrouping.h"
 #include "Insights/TimingProfilerManager.h"
 #include "Insights/ViewModels/FilterConfigurator.h"
-#include "Insights/ViewModels/ThreadTimingTrack.h"
 #include "Insights/Widgets/STimingProfilerWindow.h"
 #include "Insights/Widgets/STimingView.h"
 
@@ -424,6 +423,20 @@ void SPackageTableTreeView::InitAvailableViewPresets()
 	AvailableViewPresets.Add(MakeShared<FAssetClassViewPreset>());
 
 	SelectedViewPreset = AvailableViewPresets[0];
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void SPackageTableTreeView::UpdateBannerText()
+{
+	if (!bDataLoaded)
+	{
+		TreeViewBannerText = LOCTEXT("DataWillLoad", "Package data will load when session analysis is complete.");
+	}
+	else
+	{
+		STableTreeView::UpdateBannerText();
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

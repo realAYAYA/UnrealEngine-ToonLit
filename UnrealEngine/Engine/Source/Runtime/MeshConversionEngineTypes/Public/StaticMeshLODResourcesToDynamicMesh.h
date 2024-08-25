@@ -36,9 +36,18 @@ public:
 		FVector3d BuildScale = FVector3d::One();
 	};
 
+	// @param bHasVertexColors					Whether to add vertex colors to the output (if available)
+	// @param GetVertexColorFromLODVertexIndex	Function for getting the vertex color of a given vertex index
 	static MESHCONVERSIONENGINETYPES_API bool Convert(
 		const FStaticMeshLODResources* StaticMeshResources, 
 		const ConversionOptions& Options, 
+		FDynamicMesh3& OutputMesh,
+		bool bHasVertexColors,
+		TFunctionRef<FColor(int32)> GetVertexColorFromLODVertexIndex);
+
+	static MESHCONVERSIONENGINETYPES_API bool Convert(
+		const FStaticMeshLODResources* StaticMeshResources,
+		const ConversionOptions& Options,
 		FDynamicMesh3& OutputMesh);
 
 };

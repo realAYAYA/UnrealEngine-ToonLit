@@ -134,11 +134,6 @@ namespace EpicGames.UHT.Types
 		public string CppType { get; set; } = String.Empty;
 
 		/// <summary>
-		/// True if the enum was declared in an WITH_EDITORONLY_DATA block
-		/// </summary>
-		public bool IsEditorOnly { get; set; } = false;
-
-		/// <summary>
 		/// Collection of enumeration values
 		/// </summary>
 		public List<UhtEnumValue> EnumValues { get; }

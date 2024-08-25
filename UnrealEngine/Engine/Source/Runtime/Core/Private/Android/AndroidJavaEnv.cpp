@@ -59,7 +59,7 @@ private:
 	}
 };
 
-void AndroidJavaEnv::InitializeJavaEnv( JavaVM* VM, jint Version, jobject GlobalThis )
+void AndroidJavaEnv::InitializeJavaEnv( JavaVM* VM, jint Version, jobject GlobalThis)
 {
 	if (CurrentJavaVM == nullptr)
 	{
@@ -67,7 +67,7 @@ void AndroidJavaEnv::InitializeJavaEnv( JavaVM* VM, jint Version, jobject Global
 		CurrentJavaVersion = Version;
 
 		JNIEnv* Env = GetJavaEnv(false);
-		jclass MainClass = Env->FindClass("com/epicgames/unreal/GameActivity");
+		jclass MainClass = Env->FindClass(ANDROID_GAMEACTIVITY_CLASSPATH);
 		jclass classClass = Env->FindClass("java/lang/Class");
 		jclass classLoaderClass = Env->FindClass("java/lang/ClassLoader");
 		jmethodID getClassLoaderMethod = Env->GetMethodID(classClass, "getClassLoader", "()Ljava/lang/ClassLoader;");
@@ -112,8 +112,8 @@ JNIEnv* AndroidJavaEnv::GetJavaEnv( bool bRequireGlobalThis /*= true*/ )
 
 	// Magic static - *should* be thread safe
 	//Android & pthread specific, bind a destructor for thread exit
-	static uint32 TlsSlot = 0;
-	if (TlsSlot == 0)
+	static uint32 TlsSlot = FPlatformTLS::InvalidTlsSlot;
+	if (!FPlatformTLS::IsValidTlsSlot(TlsSlot))
 	{
 		pthread_key_create((pthread_key_t*)&TlsSlot, &JavaEnvDestructor);
 	}
@@ -141,8 +141,8 @@ JNIEnv* AndroidJavaEnv::GetJavaEnv( bool bRequireGlobalThis /*= true*/ )
 	return (!bRequireGlobalThis || (GlobalObjectRef != nullptr)) ? Env : nullptr;
 #else
 	// register a destructor to detach this thread
-	static uint32 TlsSlot = 0;
-	if (TlsSlot == 0)
+	static uint32 TlsSlot = FPlatformTLS::InvalidTlsSlot;
+	if (!FPlatformTLS::IsValidTlsSlot(TlsSlot))
 	{
 		pthread_key_create((pthread_key_t*)&TlsSlot, &JavaEnvDestructor);
 	}
@@ -191,10 +191,23 @@ jclass AndroidJavaEnv::FindJavaClass(const char* name)
 	{
 		return nullptr;
 	}
+
 	jstring ClassNameObj = Env->NewStringUTF(name);
 	jclass FoundClass = static_cast<jclass>(Env->CallObjectMethod(ClassLoader, FindClassMethod, ClassNameObj));
-	CheckJavaException();
+
+	if (!FoundClass)
+	{
+		// Clear exception because we failed to find the class and try again using JNIEnv
+		if (Env->ExceptionCheck())
+		{
+			Env->ExceptionClear();
+		}
+
+		FoundClass = static_cast<jclass>(Env->FindClass(name));
+		CheckJavaException();
+	}
 	Env->DeleteLocalRef(ClassNameObj);
+	
 	return FoundClass;
 }
 
@@ -205,9 +218,23 @@ jclass AndroidJavaEnv::FindJavaClassGlobalRef(const char* name)
 	{
 		return nullptr;
 	}
-	auto ClassNameObj = FJavaHelper::ToJavaString(Env, FString(ANSI_TO_TCHAR(name)));
-	auto FoundClass = NewScopedJavaObject(Env, static_cast<jclass>(Env->CallObjectMethod(ClassLoader, FindClassMethod, *ClassNameObj)));
-	CheckJavaException();
+
+	jstring ClassNameObj = Env->NewStringUTF(name);
+	auto FoundClass = NewScopedJavaObject(Env, static_cast<jclass>(Env->CallObjectMethod(ClassLoader, FindClassMethod, ClassNameObj)));
+	
+	if (!FoundClass)
+	{
+		// Clear exception because we failed to find the class and try again using JNIEnv
+		if (Env->ExceptionCheck())
+		{
+			Env->ExceptionClear();
+		}
+
+		FoundClass = NewScopedJavaObject(Env, static_cast<jclass>(Env->FindClass(name)));
+		CheckJavaException();
+	}
+	Env->DeleteLocalRef(ClassNameObj);
+
 	auto GlobalClass = (jclass)Env->NewGlobalRef(*FoundClass);
 	return GlobalClass;
 }

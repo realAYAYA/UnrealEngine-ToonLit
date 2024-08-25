@@ -1,0 +1,167 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "../AreaLightCommon.ush"
+
+#if USE_LIGHT_FUNCTION_ATLAS
+#include "../LightFunctionAtlas/LightFunctionAtlasCommon.usf"
+#endif
+
+// Sanity guard. 
+#ifndef SUBSTRATE_ENABLED
+	#define SUBSTRATE_ENABLED 1
+	#error SUBSTRATE_ENABLED needs to be defined
+#endif
+
+#if SUBSTRATE_ENABLED
+
+float4 SubstrateReadPrecomputedShadowFactors(FSubstratePixelHeader SubstratePixelHeader, int2 PixelPos, Texture2D PrecomputedShadowTexture)
+{
+	if (SubstratePixelHeader.HasPrecShadowMask())
+	{
+	#if ALLOW_STATIC_LIGHTING
+		float4 GBufferE = PrecomputedShadowTexture.Load(int3(PixelPos, 0));
+	#else
+		float4 GBufferE = 1;
+	#endif
+		return GBufferE;
+	}
+	return SubstratePixelHeader.HasZeroPrecShadowMask() ? 0.0f : 1.0f;
+}
+
+struct FSubstrateShadowTermInputParameters
+{
+	bool bEvaluateShadowTerm;
+	float SceneDepth;
+	float4 PrecomputedShadowFactors;
+	float3 TranslatedWorldPosition;
+	float4 LightAttenuation;
+	float Dither;
+};
+
+FSubstrateShadowTermInputParameters GetInitialisedSubstrateShadowTermInputParameters()
+{
+	FSubstrateShadowTermInputParameters Params = (FSubstrateShadowTermInputParameters)0;
+	return Params;
+}
+
+// Analytical lighting evaluation for Substrate material.
+// Unpack BSDF on-the-fly
+FSubstrateDeferredLighting SubstrateDeferredLighting(
+	FDeferredLightData LightData,
+	float3 V,
+	float3 L,
+	float3 ToLight,
+	float LightMask,
+	FSubstrateShadowTermInputParameters SubstrateShadowTermInputParameters,
+	FSubstrateMaterialContainer MaterialBuffer,
+	FSubstrateAddressing SubstrateAddressing,
+	FSubstratePixelHeader SubstratePixelHeader)
+{
+	FSubstrateDeferredLighting SubstrateLighting = GetInitialisedSubstrateDeferredLighting();
+#if SUBSTRATE_MATERIALCONTAINER_IS_VIEWRESOURCE
+	const FSubstrateIntegrationSettings Settings = InitSubstrateIntegrationSettings(false /*bForceFullyRough*/, Substrate.bRoughDiffuse, Substrate.PeelLayersAboveDepth, Substrate.bRoughnessTracking);
+#else
+	const FSubstrateIntegrationSettings Settings = InitSubstrateIntegrationSettings();
+#endif
+
+	FRectTexture RectTexture = ConvertToRectTexture(LightData);
+
+	// Get the basic shadow terms
+	FShadowTerms ShadowTerms = { SubstrateGetAO(SubstratePixelHeader), 1.0, 1.0, InitHairTransmittanceData() };
+	if (SubstrateShadowTermInputParameters.bEvaluateShadowTerm)
+	{
+		// Get the shadow term that is independent from Substrate closures.
+		GetShadowTermsBase(
+			SubstrateShadowTermInputParameters.SceneDepth,
+			SubstrateShadowTermInputParameters.PrecomputedShadowFactors,
+			LightData,
+			SubstrateShadowTermInputParameters.LightAttenuation,
+			ShadowTerms);
+
+		SubstrateLighting.EstimatedCost += 0.3;	// add the cost of getting the shadow terms
+	}
+	
+#if USE_LIGHT_FUNCTION_ATLAS
+	const FLightFunctionColor LightFunctionColor = GetLocalLightFunctionCommon(SubstrateShadowTermInputParameters.TranslatedWorldPosition, LightData.LightFunctionAtlasLightIndex);
+#endif
+
+	Substrate_for (uint ClosureIndex = 0, ClosureIndex < SubstratePixelHeader.ClosureCount, ++ClosureIndex)
+	{
+		// Unpack BSDF data
+		FSubstrateBSDF BSDF = UnpackSubstrateBSDF(MaterialBuffer, SubstrateAddressing, SubstratePixelHeader);
+
+		FShadowTerms BSDFShadowTerms = ShadowTerms;
+		if (SubstrateShadowTermInputParameters.bEvaluateShadowTerm)	// This is going to be a evaluation done at compile time
+		{
+			const float BSDFContactShadowOpacity= 1.f - abs(SLAB_SSSPHASEANISOTROPY(BSDF));
+			const uint  BSDFShadingModelID		= SubstrateGetLegacyShadingModels(BSDF);
+
+			// Now combine with shadow term that are dependent on the Substrate closures (screens space contact shadow) if necessary.
+			ApplyContactShadowWithShadowTerms(
+				SubstrateShadowTermInputParameters.SceneDepth,
+				BSDFShadingModelID,
+				BSDFContactShadowOpacity,
+				LightData,
+				SubstrateShadowTermInputParameters.TranslatedWorldPosition,
+				L,
+				SubstrateShadowTermInputParameters.Dither,
+				BSDFShadowTerms);
+		}
+
+		FSubstrateBSDFContext BSDFContext = SubstrateCreateBSDFContext(SubstratePixelHeader, BSDF, SubstrateAddressing, V, L);
+
+		float Roughness = SubstrateGetBSDFRoughness(BSDFContext.BSDF);
+
+		FAreaLightIntegrateContext AreaLightContext = InitAreaLightIntegrateContext();
+		FSubstrateEvaluateResult BSDFEvaluate = (FSubstrateEvaluateResult)0;
+		if (LightData.bRectLight)
+		{
+			FRect Rect = GetRect(ToLight, LightData);
+			if (!IsRectVisible(Rect))
+			{
+				return GetInitialisedSubstrateDeferredLighting(); // Rect light can be non visible due to barn door occlusion
+			}
+			AreaLightContext = CreateRectIntegrateContext(Roughness, BSDFContext.N, BSDFContext.V, Rect, RectTexture);
+
+			// We must have the SubstrateIntegrateBSDF inside the if due to the rectlight texture: it must be non ambiguous which texture is going to be used.
+			// After the compilation, a local resource must map to a unique global resource (the default or the actual rect light texture).
+			BSDFEvaluate = SubstrateEvaluateBSDFCommon(BSDFContext, BSDFShadowTerms, AreaLightContext, Settings, INTEGRATION_AREA_LIGHT_RECT);
+		}
+		else
+		{
+			FCapsuleLight Capsule = GetCapsule(ToLight, LightData);
+			AreaLightContext = CreateCapsuleIntegrateContext(Roughness, BSDFContext.N, BSDFContext.V, Capsule, LightData.bInverseSquared);
+
+			BRANCH
+			if(IsAreaLight(AreaLightContext.AreaLight))
+			{
+				BSDFEvaluate = SubstrateEvaluateBSDFCommon(BSDFContext, BSDFShadowTerms, AreaLightContext, Settings, INTEGRATION_AREA_LIGHT_CAPSULE);
+			}
+			else
+			{
+				BSDFEvaluate = SubstrateEvaluateBSDFCommon(BSDFContext, BSDFShadowTerms, AreaLightContext, Settings, INTEGRATION_PUNCTUAL_LIGHT);
+			}
+		}
+
+		SubstrateLighting.EstimatedCost += 0.4;	// add the cost of the lighting computations (should sum up to 1 form one light)
+
+		float3 DiffuseLuminance = BSDFEvaluate.IntegratedDiffuseValue;
+		float3 SpecularLuminance = BSDFEvaluate.IntegratedSpecularValue * LightData.SpecularScale;
+
+		const float3 CommonMultiplier = LightData.Color * LightMask * LuminanceWeight(BSDFContext, BSDF)
+	#if USE_LIGHT_FUNCTION_ATLAS
+			* LightFunctionColor
+	#endif
+			;
+
+		FLightAccumulator Out = (FLightAccumulator)0;
+		LightAccumulator_AddSplit(Out, DiffuseLuminance, SpecularLuminance, DiffuseLuminance, CommonMultiplier, BSDFEvaluate.bPostProcessSubsurface);
+		AccumulateSubstrateDeferredLighting(SubstrateLighting, Out, BSDFEvaluate.bPostProcessSubsurface, BSDF_GETISTOPLAYER(BSDF));
+	}
+
+	return SubstrateLighting;
+}
+
+#endif // SUBSTRATE_ENABLED

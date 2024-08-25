@@ -131,15 +131,14 @@ void UNiagaraDataInterfaceMeshRendererInfo::OnMeshRendererChanged(UNiagaraMeshRe
 	UpdateCachedData();
 }
 
-void UNiagaraDataInterfaceMeshRendererInfo::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceMeshRendererInfo::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	{
 		FNiagaraFunctionSignature& Signature = OutFunctions.AddDefaulted_GetRef();
 		Signature.Name = NDIMeshRendererInfoInternal::GetNumMeshesName;
-#if WITH_EDITORONLY_DATA
 		Signature.FunctionVersion = (uint32)ENDIMeshRendererInfoVersion::LatestVersion;
 		Signature.Description = LOCTEXT("GetNumMeshesInRendererDesc", "Retrieves the number of meshes on the mesh renderer by index, or -1 if the index is invalid.");
-#endif
 		Signature.bMemberFunction = true;
 		Signature.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("MeshRendererInfo")));
 		Signature.Outputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("OutNumMeshes")));
@@ -147,10 +146,8 @@ void UNiagaraDataInterfaceMeshRendererInfo::GetFunctions(TArray<FNiagaraFunction
 	{
 		FNiagaraFunctionSignature& Signature = OutFunctions.AddDefaulted_GetRef();
 		Signature.Name = NDIMeshRendererInfoInternal::GetMeshLocalBoundsName;
-#if WITH_EDITORONLY_DATA
 		Signature.FunctionVersion = (uint32)ENDIMeshRendererInfoVersion::LatestVersion;
 		Signature.Description = LOCTEXT("GetMeshLocalBoundsDesc", "Retrieves the local bounds of the specified mesh's vertices.");
-#endif
 		Signature.bMemberFunction = true;
 		Signature.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition(GetClass()), TEXT("MeshRendererInfo")));
 		Signature.Inputs.Add(FNiagaraVariable(FNiagaraTypeDefinition::GetIntDef(), TEXT("MeshIndex")));
@@ -161,15 +158,14 @@ void UNiagaraDataInterfaceMeshRendererInfo::GetFunctions(TArray<FNiagaraFunction
 	{
 		FNiagaraFunctionSignature& Signature = OutFunctions.AddDefaulted_GetRef();
 		Signature.Name = NDIMeshRendererInfoInternal::GetSubUVDetailsName;
-#if WITH_EDITORONLY_DATA
 		Signature.FunctionVersion = (uint32)ENDIMeshRendererInfoVersion::LatestVersion;
-#endif
 		Signature.bMemberFunction = true;
 		Signature.Inputs.Emplace(FNiagaraTypeDefinition(GetClass()), TEXT("MeshRendererInfo"));
 		Signature.Outputs.Emplace(FNiagaraTypeDefinition::GetBoolDef(), TEXT("BlendEnabled"));
 		Signature.Outputs.Emplace(FNiagaraTypeDefinition::GetVec2Def(), TEXT("SubImageSize"));
 	}
 }
+#endif
 
 void UNiagaraDataInterfaceMeshRendererInfo::GetVMExternalFunction(const FVMExternalFunctionBindingInfo& BindingInfo, void* InstanceData, FVMExternalFunction& OutFunc)
 {

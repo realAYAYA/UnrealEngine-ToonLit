@@ -48,10 +48,8 @@ public:
 
 	static bool ShouldCompilePermutation(const FMeshMaterialShaderPermutationParameters& Parameters)
 	{
-		static const auto AllowStaticLightingVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-		bool bAllowStaticLighting = AllowStaticLightingVar->GetValueOnAnyThread() != 0;
 		return  AllowDebugViewmodes(Parameters.Platform) 
-				&& bAllowStaticLighting
+				&& IsStaticLightingAllowed()
 				&& (Parameters.MaterialParameters.bIsSpecialEngineMaterial || Parameters.MaterialParameters.bIsMasked || Parameters.MaterialParameters.bMaterialMayModifyMeshPosition)
 				&& LightMapPolicyType::ShouldCompilePermutation(Parameters)
 				&& IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
@@ -77,11 +75,10 @@ public:
 		const FPrimitiveSceneProxy* PrimitiveSceneProxy,
 		const FMaterialRenderProxy& MaterialRenderProxy,
 		const FMaterial& Material,
-		const FMeshPassProcessorRenderState& DrawRenderState,
 		const TLightMapDensityElementData<LightMapPolicyType>& ShaderElementData,
 		FMeshDrawSingleShaderBindings& ShaderBindings) const
 	{
-		FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, DrawRenderState, ShaderElementData, ShaderBindings);
+		FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, ShaderElementData, ShaderBindings);
 
 		LightMapPolicyType::GetVertexShaderBindings(
 			PrimitiveSceneProxy,
@@ -103,10 +100,8 @@ class TLightMapDensityPS : public FMeshMaterialShader, public LightMapPolicyType
 public:
 	static bool ShouldCompilePermutation(const FMeshMaterialShaderPermutationParameters& Parameters)
 	{
-		static const auto AllowStaticLightingVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-		bool bAllowStaticLighting = AllowStaticLightingVar->GetValueOnAnyThread() != 0;
 		return	AllowDebugViewmodes(Parameters.Platform) 
-				&& bAllowStaticLighting
+				&& IsStaticLightingAllowed()
 				&& (Parameters.MaterialParameters.bIsSpecialEngineMaterial || Parameters.MaterialParameters.bIsMasked || Parameters.MaterialParameters.bMaterialMayModifyMeshPosition)
 				&& LightMapPolicyType::ShouldCompilePermutation(Parameters)
 				&& IsFeatureLevelSupported(Parameters.Platform, ERHIFeatureLevel::SM5);
@@ -135,11 +130,10 @@ public:
 		const FPrimitiveSceneProxy* PrimitiveSceneProxy,
 		const FMaterialRenderProxy& MaterialRenderProxy,
 		const FMaterial& Material,
-		const FMeshPassProcessorRenderState& DrawRenderState,
 		const TLightMapDensityElementData<LightMapPolicyType>& ShaderElementData,
 		FMeshDrawSingleShaderBindings& ShaderBindings) const
 	{
-		FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, DrawRenderState, ShaderElementData, ShaderBindings);
+		FMeshMaterialShader::GetShaderBindings(Scene, FeatureLevel, PrimitiveSceneProxy, MaterialRenderProxy, Material, ShaderElementData, ShaderBindings);
 
 		LightMapPolicyType::GetPixelShaderBindings(
 			PrimitiveSceneProxy,

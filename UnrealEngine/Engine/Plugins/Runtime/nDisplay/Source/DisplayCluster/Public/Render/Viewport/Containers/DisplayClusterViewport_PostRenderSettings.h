@@ -8,6 +8,9 @@
 #include "ShaderParameters/DisplayClusterShaderParameters_PostprocessBlur.h"
 #include "ShaderParameters/DisplayClusterShaderParameters_GenerateMips.h"
 
+/**
+* Additional DC viewport rendering settings
+*/
 class FDisplayClusterViewport_PostRenderSettings
 {
 public:
@@ -17,14 +20,13 @@ public:
 	~FDisplayClusterViewport_PostRenderSettings()
 	{}
 
-	void SetParameters(const FDisplayClusterViewport_PostRenderSettings& InPostRenderSettings)
+	inline void SetParameters(const FDisplayClusterViewport_PostRenderSettings& InPostRenderSettings)
 	{
 		Replace.SetParameters(InPostRenderSettings.Replace);
 		PostprocessBlur = InPostRenderSettings.PostprocessBlur;
 		GenerateMips = InPostRenderSettings.GenerateMips;
 	}
 
-public:
 	inline void BeginUpdateSettings()
 	{
 		Replace.Reset();
@@ -37,5 +39,3 @@ public:
 	FDisplayClusterShaderParameters_PostprocessBlur PostprocessBlur;
 	FDisplayClusterShaderParameters_GenerateMips    GenerateMips;
 };
-
-

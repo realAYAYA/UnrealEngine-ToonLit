@@ -27,7 +27,7 @@ public:
 * FDataflowNodeView class implements common functions for single node based Dataflow views
 *
 */
-class FDataflowNodeView : public IDataflowViewListener
+class FDataflowNodeView : public IDataflowViewListener, public FGCObject
 {
 public:
 	virtual ~FDataflowNodeView();
@@ -62,8 +62,13 @@ public:
 	virtual void OnSelectedNodeChanged(UDataflowEdNode* InNode) override;  // nullptr is valid
 	virtual void OnNodeInvalidated(FDataflowNode* InvalidatedNode) override;
 
+
+	/** FGCObject interface */
+	virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
+	virtual FString GetReferencerName() const override { return TEXT("FDataflowNodeView"); }
+
 private:
-	UDataflowEdNode* SelectedNode = nullptr;
+	TObjectPtr<UDataflowEdNode> SelectedNode = nullptr;
 	TSharedPtr<Dataflow::FContext> Context;
 	bool bIsPinnedDown = false;
 	bool bIsRefreshLocked = false;

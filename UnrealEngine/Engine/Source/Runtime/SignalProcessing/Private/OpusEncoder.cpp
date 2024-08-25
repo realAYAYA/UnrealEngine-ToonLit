@@ -397,13 +397,13 @@ bool FOpusEncoder::EncodeChunk(const TArray<float>& InAudio, TArray<uint8>& OutB
 		check(CompressedSize != 0);
 
 		// Trim to our actual output. Don't allow shrinking since we're going to be using this array again.
-		OutBytes.SetNum(CompressedSize, false);
+		OutBytes.SetNum(CompressedSize, EAllowShrinking::No);
 		LastValidFrameSize = CompressedSize;
 		return true;
 	}
 	else
 	{
-		OutBytes.SetNum(CompressedSize, false);
+		OutBytes.SetNum(CompressedSize, EAllowShrinking::No);
 		LastValidFrameSize = CompressedSize;
 
 		// If we are encoding a .opus file, we need to push opus packets to an ogg stream.

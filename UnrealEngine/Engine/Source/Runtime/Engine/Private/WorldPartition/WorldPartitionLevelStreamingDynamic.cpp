@@ -1,10 +1,12 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "WorldPartition/WorldPartitionLevelStreamingDynamic.h"
+#include "WorldPartition/WorldPartitionRuntimeLevelStreamingCell.h"
+
 #include "Engine/LevelStreaming.h"
 #include "WorldPartition/WorldPartition.h"
 #include "UObject/PropertyPortFlags.h"
-#include "WorldPartition/HLOD/HLODSubsystem.h"
+#include "WorldPartition/HLOD/HLODRuntimeSubsystem.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(WorldPartitionLevelStreamingDynamic)
 
@@ -13,6 +15,7 @@
 #include "Engine/Level.h"
 #include "Misc/PathViews.h"
 #include "ContentStreaming.h"
+#include "WorldPartition/DataLayer/ExternalDataLayerHelper.h"
 #include "WorldPartition/ContentBundle/ContentBundlePaths.h"
 #endif
 
@@ -90,6 +93,10 @@ UWorldPartitionLevelStreamingDynamic* UWorldPartitionLevelStreamingDynamic::Load
 	FString PackageName = FString::Printf(TEXT("Temp/%s"), *LevelStreamingName.ToString());
 	TSoftObjectPtr<UWorld> WorldAsset(FSoftObjectPath(FString::Printf(TEXT("/%.*s/%s.%s"), WorldMountPointName.Len(), WorldMountPointName.GetData(), *PackageName, *World->GetName())));
 	LevelStreaming->SetWorldAsset(WorldAsset);
+
+	// Assign a dummy runtime cell to ensure that code that is testing for IsWorldPartitionRuntimeCell() behaves as expected
+	UWorldPartitionRuntimeLevelStreamingCell* StreamingCell = NewObject<UWorldPartitionRuntimeLevelStreamingCell>(LevelStreaming, NAME_None, RF_Transient);
+	LevelStreaming->StreamingCell = StreamingCell;
 	
 	LevelStreaming->LevelTransform = FTransform::Identity;
 	LevelStreaming->Initialize(World, InPackages);
@@ -161,12 +168,14 @@ void UWorldPartitionLevelStreamingDynamic::CreateRuntimeLevel()
 	check(World && (World->IsGameWorld() || GetShouldBeVisibleInEditor()));
 
 	// Make sure we are creating a runtime level for a cell.
-	// Or, we created a transient WPLevelStreamingDynamic via UWorldPartitionLevelStreamingDynamic::LoadInEditor, to load a pack of actors (Hlods generation).
-	check(StreamingCell != nullptr || GetShouldBeVisibleInEditor());
+	check(StreamingCell != nullptr);
 
 	// Create streaming cell Level package
 	RuntimeLevel = FWorldPartitionLevelHelper::CreateEmptyLevelForRuntimeCell(StreamingCell.Get(), World, GetWorldAsset().ToString());
 	check(RuntimeLevel);
+
+	// Force world partition level/actor packages not to be reused
+	RuntimeLevel->SetForceCantReuseUnloadedButStillAround(true);
 
 	// Make sure Actor Folders is disabled on generated runtime levels to avoid any problems with duplicate folders that
 	// can be caused by level instances injecting their actors, which can cause duplicate folders (which only happens during PIE).
@@ -190,13 +199,12 @@ void UWorldPartitionLevelStreamingDynamic::CreateRuntimeLevel()
  */
 bool UWorldPartitionLevelStreamingDynamic::RequestLevel(UWorld* InPersistentWorld, bool bInAllowLevelLoadRequests, EReqLevelBlock InBlockPolicy)
 {
-	const FName WorldAssetPackageFName = GetWorldAssetPackageFName();
-	const FString WorldAssetPackageName = GetWorldAssetPackageName();
-
 	if (bShouldPerformStandardLevelLoading)
 	{
 		return Super::RequestLevel(InPersistentWorld, bInAllowLevelLoadRequests, InBlockPolicy);
 	}
+
+	QUICK_SCOPE_CYCLE_COUNTER(STAT_ULevelStreaming_RequestLevel);
 
 	// Quit early in case load request already issued
 	if (GetLevelStreamingState() == ELevelStreamingState::Loading)
@@ -216,6 +224,9 @@ bool UWorldPartitionLevelStreamingDynamic::RequestLevel(UWorld* InPersistentWorl
 		return false;
 	}
 
+	const FName WorldAssetPackageFName = GetWorldAssetPackageFName();
+	const FString WorldAssetPackageName = GetWorldAssetPackageName();
+
 	// Can not load new level now either, we're still processing visibility for this one
 	ULevel* PendingLevelVisOrInvis = (InPersistentWorld->GetCurrentLevelPendingVisibility() ? InPersistentWorld->GetCurrentLevelPendingVisibility() : InPersistentWorld->GetCurrentLevelPendingInvisibility());
 	if (PendingLevelVisOrInvis && PendingLevelVisOrInvis == LoadedLevel)
@@ -224,7 +235,12 @@ bool UWorldPartitionLevelStreamingDynamic::RequestLevel(UWorld* InPersistentWorl
 		return false;
 	}
 
-	QUICK_SCOPE_CYCLE_COUNTER(STAT_ULevelStreaming_RequestLevel);
+	// Validate that our new streaming level is unique, check for clash with currently loaded streaming levels
+	if (!ValidateUniqueWorldAsset(InPersistentWorld))
+	{
+		return false;
+	}
+
 	FScopeCycleCounterUObject Context(InPersistentWorld);
 
 	// Try to find the package to load
@@ -290,6 +306,11 @@ bool UWorldPartitionLevelStreamingDynamic::RequestLevel(UWorld* InPersistentWorl
 			CreateRuntimeLevel();
 			check(RuntimeLevel);
 
+			if (const UWorldPartitionRuntimeLevelStreamingCell* RuntimeLevelStreamingCell = StreamingCell.Get())
+			{
+				LevelColor = RuntimeLevelStreamingCell->GetCellDebugColor();
+			}
+
 			UPackage* CellLevelPackage = RuntimeLevel->GetPackage();
 			check(CellLevelPackage);
 			check(UWorld::FindWorldInPackage(CellLevelPackage));
@@ -336,7 +357,7 @@ bool UWorldPartitionLevelStreamingDynamic::IssueLoadRequests()
 	bLoadSucceeded = false;
 	bLoadRequestInProgress = true;
 
-	auto BuildInstancingContext = [this](FLinkerInstancingContext& OutLinkInstancingContext)
+	auto BuildInstancingContext = [this](FLinkerInstancingContext& OutLinkInstancingContext, const TArray<FName>& InChildPackagesToDuplicate)
 	{
 		// Don't do SoftObjectPath remapping for PersistentLevel actors because references can end up in different cells
 		OutLinkInstancingContext.SetSoftObjectPathRemappingEnabled(false);
@@ -346,23 +367,27 @@ bool UWorldPartitionLevelStreamingDynamic::IssueLoadRequests()
 
 		for (const FWorldPartitionRuntimeCellObjectMapping& CellObjectMapping : ChildPackages)
 		{
-			if (ContentBundlePaths::IsAContentBundlePath(CellObjectMapping.ContainerPackage.ToString()))
+			if (ContentBundlePaths::IsAContentBundlePath(CellObjectMapping.ContainerPackage.ToString()) ||
+				FExternalDataLayerHelper::IsExternalDataLayerPath(CellObjectMapping.ContainerPackage.ToString()))
 			{
 				check(CellObjectMapping.ContainerPackage != CellObjectMapping.WorldPackage);
 				bool bIsContainerPackageAlreadyRemapped = OutLinkInstancingContext.RemapPackage(CellObjectMapping.ContainerPackage) != CellObjectMapping.ContainerPackage;
 				if (!bIsContainerPackageAlreadyRemapped)
 				{
 					OutLinkInstancingContext.AddPackageMapping(CellObjectMapping.ContainerPackage, RuntimePackage->GetFName());
-					
 				}
 			}
 		}
+
+		for (FName ChildPackageToDuplicate : InChildPackagesToDuplicate)
+		{
+			// Add mapping in case we have a ChildPackageToLoad that references this package (Spatial actor references Non-spatial actor in a ContentBundle Alwaysloaded Cell)
+			OutLinkInstancingContext.AddPackageMapping(ChildPackageToDuplicate, RuntimePackage->GetFName());
+		}
 	};
 	
-	FLinkerInstancingContext InstancingContext;
-	BuildInstancingContext(InstancingContext);
-
 	ChildPackagesToLoad.Reset(ChildPackages.Num());
+	TArray<FName> ChildPackagesToDuplicate;
 
 	UWorld* World = GetWorld();
 	for (FWorldPartitionRuntimeCellObjectMapping& ChildPackage : ChildPackages)
@@ -378,6 +403,7 @@ bool UWorldPartitionLevelStreamingDynamic::IssueLoadRequests()
 				{
 					if (AActor* ActorModifiedForPIE = UnsavedActorsContainer->Actors.FindRef(*SubObjectName))
 					{
+						ChildPackagesToDuplicate.Add(ChildPackage.Package);
 						bNeedDup = true;
 					}
 				}
@@ -389,6 +415,9 @@ bool UWorldPartitionLevelStreamingDynamic::IssueLoadRequests()
 			ChildPackagesToLoad.Add(ChildPackage);
 		}
 	}
+		
+	FLinkerInstancingContext InstancingContext;
+	BuildInstancingContext(InstancingContext, ChildPackagesToDuplicate);
 
 	// Duplicate unsaved actors
 	if (UnsavedActorsContainer)
@@ -396,7 +425,7 @@ bool UWorldPartitionLevelStreamingDynamic::IssueLoadRequests()
 		FObjectDuplicationParameters Parameters(UnsavedActorsContainer, RuntimeLevel);
 		Parameters.DestClass = UnsavedActorsContainer->GetClass();
 		Parameters.FlagMask = RF_AllFlags & ~(RF_MarkAsRootSet | RF_MarkAsNative | RF_HasExternalPackage);
-		Parameters.InternalFlagMask = EInternalObjectFlags::AllFlags;
+		Parameters.InternalFlagMask = EInternalObjectFlags_AllFlags;
 		Parameters.DuplicateMode = EDuplicateMode::PIE;
 		Parameters.PortFlags = PPF_DuplicateForPIE;
 		Parameters.DuplicationSeed.Add(World->PersistentLevel, RuntimeLevel);
@@ -430,7 +459,16 @@ bool UWorldPartitionLevelStreamingDynamic::IssueLoadRequests()
 	// Load saved actors
 	if (ChildPackagesToLoad.Num())
 	{
-		FWorldPartitionLevelHelper::LoadActors(GetStreamingWorld(), RuntimeLevel, ChildPackagesToLoad, PackageReferencer, FinalizeLoading, World->IsGameWorld(), MoveTemp(InstancingContext));
+		FWorldPartitionLevelHelper::FLoadActorsParams Params = FWorldPartitionLevelHelper::FLoadActorsParams()
+			.SetOuterWorld(GetStreamingWorld())
+			.SetDestLevel(RuntimeLevel)
+			.SetActorPackages(ChildPackagesToLoad)
+			.SetPackageReferencer(&PackageReferencer)
+			.SetCompletionCallback(FinalizeLoading)
+			.SetLoadAsync(World->IsGameWorld())
+			.SetInstancingContext(MoveTemp(InstancingContext));
+
+		FWorldPartitionLevelHelper::LoadActors(Params);
 	}
 	else
 	{
@@ -525,38 +563,6 @@ void UWorldPartitionLevelStreamingDynamic::OnCleanupLevel()
 		check(OnCleanupLevelDelegateHandle.IsValid());
 		RuntimeLevel->OnCleanupLevel.Remove(OnCleanupLevelDelegateHandle);
 		OnCleanupLevelDelegateHandle.Reset();
-
-		// If reusing levels is enabled, trash world partition level/actor packages
-		// as it won't be done by ULevel::CleanupLevel
-		if (ShouldReuseUnloadedButStillAroundLevels(RuntimeLevel))
-		{
-			TSet<UPackage*> TrashedPackages;
-			auto TrashPackage = [&TrashedPackages](UPackage* Package)
-			{
-				bool bWasAlreadyInSet;
-				TrashedPackages.Add(Package, &bWasAlreadyInSet);
-
-				if (!bWasAlreadyInSet)
-				{
-					// Clears RF_Standalone flag on objects in package (UMetaData)
-					ForEachObjectWithPackage(Package, [](UObject* Object) { Object->ClearFlags(RF_Standalone); return true; }, false);
-
-					// Rename package to avoid having to deal with pending kill objects in subsequent RequestLevel calls
-					FName NewPackageName = MakeUniqueObjectName(nullptr, UPackage::StaticClass(), FName(*FString::Printf(TEXT("%s_Trashed"), *Package->GetName())));
-					Package->Rename(*NewPackageName.ToString(), nullptr, REN_ForceNoResetLoaders | REN_DontCreateRedirectors | REN_NonTransactional | REN_DoNotDirty);
-				}
-			};
-
-			TrashPackage(RuntimeLevel->GetPackage());
-			for (AActor* Actor : RuntimeLevel->Actors)
-			{
-				if (UPackage* ActorPackage = Actor ? Actor->GetExternalPackage() : nullptr)
-				{
-					TrashPackage(ActorPackage);
-				}
-			}
-		}
-
 		RuntimeLevel = nullptr;
 	}
 	else
@@ -647,8 +653,7 @@ UWorld* UWorldPartitionLevelStreamingDynamic::GetStreamingWorld() const
 {
 	// For UWorldPartitionLevelStreamingDynamic the StreamingWorld is the world to which the OuterWorldPartition is outered.
 	// This World can be used to resolved SoftObjectPaths between cells.
-	check(OuterWorldPartition);
-	return OuterWorldPartition->GetTypedOuter<UWorld>();
+	return OuterWorldPartition.IsValid() ? OuterWorldPartition->GetTypedOuter<UWorld>() : nullptr;
 }
 
 bool UWorldPartitionLevelStreamingDynamic::CanChangeVisibility(bool bMakeVisible) const
@@ -667,7 +672,7 @@ bool UWorldPartitionLevelStreamingDynamic::CanChangeVisibility(bool bMakeVisible
 				{
 					if (const UWorldPartition* WorldPartition = OuterWorld->GetWorldPartition())
 					{
-						if (UHLODSubsystem* HLODSubsystem = GetWorld()->GetSubsystem<UHLODSubsystem>())
+						if (UWorldPartitionHLODRuntimeSubsystem* HLODSubsystem = GetWorld()->GetSubsystem<UWorldPartitionHLODRuntimeSubsystem>())
 						{
 							if (bMakeVisible)
 							{
@@ -703,7 +708,7 @@ bool UWorldPartitionLevelStreamingDynamic::ShouldBlockOnUnload() const
 
 	// When world partition cannot stream (anymore), return true so that RemoveFromWorld of this level is not incremental. 
 	// This guarantees that unloaded instanced wp levels fully unload their cell levels.
-	if (OuterWorldPartition && !OuterWorldPartition->CanStream())
+	if (OuterWorldPartition.IsValid() && !OuterWorldPartition->CanStream())
 	{
 		return true;
 	}
@@ -714,7 +719,7 @@ bool UWorldPartitionLevelStreamingDynamic::ShouldBlockOnUnload() const
 void UWorldPartitionLevelStreamingDynamic::UpdateShouldSkipMakingVisibilityTransactionRequest()
 {
 	const UWorldPartitionRuntimeCell* Cell = GetWorldPartitionRuntimeCell();
-	if (ensure(Cell && OuterWorldPartition))
+	if (ensure(Cell && OuterWorldPartition.IsValid()))
 	{
 		// It is safe to skip client MakingVisibility transaction requests for cells without data layers when world partition server streaming is disabled
 		bSkipClientUseMakingVisibleTransactionRequest = !(OuterWorldPartition->IsServerStreamingEnabled() || Cell->HasDataLayers());

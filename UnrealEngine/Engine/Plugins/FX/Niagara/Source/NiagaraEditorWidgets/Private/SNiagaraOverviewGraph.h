@@ -36,6 +36,7 @@ private:
 	FActionMenuContent OnCreateGraphActionMenu(UEdGraph* InGraph, const FVector2D& InNodePosition, const TArray<UEdGraphPin*>& InDraggedPins, bool bAutoExpand, SGraphEditor::FActionMenuClosed InOnMenuClosed);
 
 	void OnCreateEmptyEmitter();
+	void OnCreateStatelessEmitter();
 	void OnCreateComment();
 	void OnClearIsolated();
 

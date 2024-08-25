@@ -114,19 +114,25 @@ public:
 		LayerHeightDataCache.Read(X1, Y1, X2, Y2, HeightData);
 
 		TArray<uint8> WeightDatas; // Weight*Layers...
-		WeightCache.CacheData(X1, Y1, X2, Y2);
-		WeightCache.GetCachedData(X1, Y1, X2, Y2, WeightDatas, LayerNum);
+		if (UISettings->bErosionUseLayerHardness || bWeightApplied)
+		{
+			WeightCache.CacheData(X1, Y1, X2, Y2);
+			WeightCache.GetCachedData(X1, Y1, X2, Y2, WeightDatas, LayerNum);
+		}
 
 		// Apply the brush	
 		uint16 Thresh = static_cast<uint16>(UISettings->ErodeThresh);
 		int32 WeightMoveThresh = FMath::Min<int32>(FMath::Max<int32>(Thickness >> 2, Thresh), Thickness >> 1);
 
 		TArray<float> CenterWeights;
-		CenterWeights.Empty(LayerNum);
-		CenterWeights.AddUninitialized(LayerNum);
 		TArray<float> NeighborWeight;
-		NeighborWeight.Empty(NeighborNum*LayerNum);
-		NeighborWeight.AddUninitialized(NeighborNum*LayerNum);
+		if (bWeightApplied)
+		{
+			CenterWeights.Empty(LayerNum);
+			CenterWeights.AddUninitialized(LayerNum);
+			NeighborWeight.Empty(NeighborNum*LayerNum);
+			NeighborWeight.AddUninitialized(NeighborNum*LayerNum);
+		}
 
 		bool bHasChanged = false;
 		for (int32 i = 0; i < Iteration; i++)
@@ -170,6 +176,7 @@ public:
 						if (SlopeTotal > 0)
 						{
 							float Softness = 1.0f;
+							if (UISettings->bErosionUseLayerHardness)
 							{
 								for (int32 Idx = 0; Idx < LayerNum; Idx++)
 								{

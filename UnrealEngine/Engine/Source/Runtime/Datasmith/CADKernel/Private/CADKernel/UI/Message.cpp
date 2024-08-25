@@ -49,7 +49,7 @@ void FMessage::VPrintf(EVerboseLevel Level, const TCHAR* Text, ...)
 		{
 			FMemory::Free(Buffer);
 			Buffer = (TCHAR*)FMemory::Malloc(BufferSize * sizeof(TCHAR));
-			GET_VARARGS_RESULT(Buffer, BufferSize, BufferSize - 1, Text, Text, Result);
+			GET_TYPED_VARARGS_RESULT(TCHAR, Buffer, BufferSize, BufferSize - 1, Text, Text, Result);
 			BufferSize *= 2;
 		};
 		Buffer[Result] = 0;
@@ -112,7 +112,7 @@ void FMessage::VReportPrintF(FString Header, const TCHAR* Text, ...)
 		{
 			FMemory::Free(Buffer);
 			Buffer = (TCHAR*)FMemory::Malloc(BufferSize * sizeof(TCHAR));
-			GET_VARARGS_RESULT(Buffer, BufferSize, BufferSize - 1, Text, Text, Result);
+			GET_TYPED_VARARGS_RESULT(TCHAR, Buffer, BufferSize, BufferSize - 1, Text, Text, Result);
 			BufferSize *= 2;
 		};
 		Buffer[Result] = 0;

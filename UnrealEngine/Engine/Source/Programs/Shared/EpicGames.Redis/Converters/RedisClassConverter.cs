@@ -1,11 +1,11 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
-using StackExchange.Redis;
 using System;
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using EpicGames.Core;
+using StackExchange.Redis;
 
 namespace EpicGames.Redis.Converters
 {
@@ -47,7 +47,7 @@ namespace EpicGames.Redis.Converters
 				else if (TryGetStringTypeConverter(propertyType, out converter))
 				{
 					_typeReaders[idx] = str => converter.ConvertFromInvariantString(str.ToString());
-					_typeWriters[idx] = (obj, builder) => WriteEscapedString(converter.ConvertToInvariantString(obj) ?? String.Empty, builder);
+					_typeWriters[idx] = (obj, builder) => WriteEscapedString(new Utf8String(converter.ConvertToInvariantString(obj) ?? String.Empty), builder);
 				}
 				else
 				{

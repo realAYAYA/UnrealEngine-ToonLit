@@ -34,13 +34,8 @@ namespace mu
 		// Node Interface
 		//-----------------------------------------------------------------------------------------
 
-		const NODE_TYPE* GetType() const override;
-		static const NODE_TYPE* GetStaticType();
-
-        int GetInputCount() const override;
-        Node* GetInputNode( int i ) const override;
-		void SetInputNode( int i, NodePtr pNode ) override;
-
+		const FNodeType* GetType() const override;
+		static const FNodeType* GetStaticType();
 
 		//-----------------------------------------------------------------------------------------
 		// Own Interface
@@ -51,8 +46,8 @@ namespace mu
         void SetSize( const Ptr<NodeScalar>& );
 
         //!
-        const char* GetName() const;
-        void SetName( const char* strName );
+		const FString& GetName() const;
+		void SetName(const FString& Name);
 
 		//-----------------------------------------------------------------------------------------
 		// Interface pattern

@@ -9,18 +9,21 @@ using System.Net.Http;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using EpicGames.Perforce;
 using Google.Protobuf.WellKnownTypes;
 using Horde.Server.Agents;
 using Horde.Server.Agents.Leases;
 using Horde.Server.Server;
 using Horde.Server.Utilities;
 using HordeCommon;
+using HordeCommon.Rpc.Messages;
 using HordeCommon.Rpc.Tasks;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MongoDB.Bson.Serialization.Attributes;
-using MongoDB.Driver;
+using OpenTelemetry.Trace;
 using StackExchange.Redis;
 
 namespace Horde.Server.Perforce
@@ -74,6 +77,11 @@ namespace Horde.Server.Perforce
 		public string Cluster { get; }
 
 		/// <summary>
+		/// Whether this server supports partitioned workspaces
+		/// </summary>
+		public bool SupportsPartitionedWorkspaces { get; }
+
+		/// <summary>
 		/// Current status
 		/// </summary>
 		public PerforceServerStatus Status { get; }
@@ -97,7 +105,7 @@ namespace Horde.Server.Perforce
 	/// <summary>
 	/// Load balancer for Perforce edge servers
 	/// </summary>
-	public sealed class PerforceLoadBalancer : IHostedService, IDisposable
+	public sealed class PerforceLoadBalancer : IHostedService, IAsyncDisposable
 	{
 		/// <summary>
 		/// Information about a resolved Perforce server
@@ -108,6 +116,7 @@ namespace Horde.Server.Perforce
 			public string BaseServerAndPort { get; set; } = String.Empty;
 			public string? HealthCheckUrl { get; set; }
 			public string Cluster { get; set; } = String.Empty;
+			public bool SupportsPartitionedWorkspaces { get; set; }
 			public PerforceServerStatus Status { get; set; }
 			public string? Detail { get; set; }
 			public int NumLeases { get; set; }
@@ -118,12 +127,13 @@ namespace Horde.Server.Perforce
 			{
 			}
 
-			public PerforceServerEntry(string serverAndPort, string baseServerAndPort, string? healthCheckUrl, string cluster, PerforceServerStatus status, string? detail, DateTime? lastUpdateTime)
+			public PerforceServerEntry(string serverAndPort, string baseServerAndPort, string? healthCheckUrl, string cluster, bool supportsPartitionedWorkspaces, PerforceServerStatus status, string? detail, DateTime? lastUpdateTime)
 			{
 				ServerAndPort = serverAndPort;
 				BaseServerAndPort = baseServerAndPort;
 				HealthCheckUrl = healthCheckUrl;
 				Cluster = cluster;
+				SupportsPartitionedWorkspaces = supportsPartitionedWorkspaces;
 				Status = status;
 				Detail = detail;
 				LastUpdateTime = lastUpdateTime;
@@ -139,27 +149,28 @@ namespace Horde.Server.Perforce
 			public List<PerforceServerEntry> Servers { get; set; } = new List<PerforceServerEntry>();
 		}
 
-		readonly MongoService _mongoService;
-		readonly GlobalsService _globalsService;
 		readonly RedisService _redisService;
 		readonly ILeaseCollection _leaseCollection;
 		readonly SingletonDocument<PerforceServerList> _serverListSingleton;
 		readonly Random _random = new Random();
+		readonly HttpClient _httpClient;
 		readonly IOptionsMonitor<GlobalConfig> _globalConfig;
+		readonly IHealthMonitor _health;
+		readonly Tracer _tracer;
 		readonly ILogger _logger;
 		readonly ITicker _ticker;
 
 		/// <summary>
 		/// Constructor
 		/// </summary>
-		public PerforceLoadBalancer(MongoService mongoService, GlobalsService globalsService, RedisService redisService, ILeaseCollection leaseCollection, IClock clock, IOptionsMonitor<GlobalConfig> globalConfig, ILogger<PerforceLoadBalancer> logger)
+		public PerforceLoadBalancer(MongoService mongoService, RedisService redisService, ILeaseCollection leaseCollection, IClock clock, HttpClient httpClient, IOptionsMonitor<GlobalConfig> globalConfig, IHealthMonitor<PerforceLoadBalancer> health, Tracer tracer, ILogger<PerforceLoadBalancer> logger)
 		{
-			_mongoService = mongoService;
-			_globalsService = globalsService;
 			_redisService = redisService;
 			_leaseCollection = leaseCollection;
 			_serverListSingleton = new SingletonDocument<PerforceServerList>(mongoService);
+			_httpClient = httpClient;
 			_globalConfig = globalConfig;
+			_tracer = tracer;
 			_logger = logger;
 			if (mongoService.ReadOnlyMode)
 			{
@@ -169,6 +180,9 @@ namespace Horde.Server.Perforce
 			{
 				_ticker = clock.AddSharedTicker<PerforceLoadBalancer>(TimeSpan.FromMinutes(1.0), TickInternalAsync, logger);
 			}
+
+			_health = health;
+			_health.SetName("Perforce");
 		}
 
 		/// <inheritdoc/>
@@ -178,15 +192,15 @@ namespace Horde.Server.Perforce
 		public Task StopAsync(CancellationToken cancellationToken) => _ticker.StopAsync();
 
 		/// <inheritdoc/>
-		public void Dispose() => _ticker.Dispose();
+		public async ValueTask DisposeAsync() => await _ticker.DisposeAsync();
 
 		/// <summary>
 		/// Get the current server list
 		/// </summary>
 		/// <returns></returns>
-		async Task<PerforceServerList> GetServerListAsync()
+		async Task<PerforceServerList> GetServerListAsync(CancellationToken cancellationToken)
 		{
-			PerforceServerList serverList = await _serverListSingleton.GetAsync();
+			PerforceServerList serverList = await _serverListSingleton.GetAsync(cancellationToken);
 
 			DateTime minLastUpdateTime = DateTime.UtcNow - TimeSpan.FromMinutes(2.5);
 			foreach (PerforceServerEntry server in serverList.Servers)
@@ -205,9 +219,9 @@ namespace Horde.Server.Perforce
 		/// Get the perforce servers
 		/// </summary>
 		/// <returns></returns>
-		public async Task<List<IPerforceServer>> GetServersAsync()
+		public async Task<List<IPerforceServer>> GetServersAsync(CancellationToken cancellationToken)
 		{
-			PerforceServerList serverList = await GetServerListAsync();
+			PerforceServerList serverList = await GetServerListAsync(cancellationToken);
 			return serverList.Servers.ConvertAll<IPerforceServer>(x => x);
 		}
 
@@ -215,12 +229,12 @@ namespace Horde.Server.Perforce
 		/// Allocates a server for use by a lease
 		/// </summary>
 		/// <returns>The server to use. Null if there is no healthy server available.</returns>
-		public async Task<IPerforceServer?> GetServer(string cluster)
+		public async Task<IPerforceServer?> GetServerAsync(string cluster, CancellationToken cancellationToken)
 		{
-			PerforceServerList serverList = await GetServerListAsync();
+			PerforceServerList serverList = await GetServerListAsync(cancellationToken);
 
 			List<PerforceServerEntry> candidates = serverList.Servers.Where(x => x.Cluster == cluster && x.Status >= PerforceServerStatus.Healthy).ToList();
-			if(candidates.Count == 0)
+			if (candidates.Count == 0)
 			{
 				int idx = _random.Next(0, candidates.Count);
 				return candidates[idx];
@@ -232,11 +246,12 @@ namespace Horde.Server.Perforce
 		/// Select a Perforce server to use by the Horde server
 		/// </summary>
 		/// <param name="cluster"></param>
+		/// <param name="cancellationToken"></param>
 		/// <returns></returns>
-		public Task<IPerforceServer?> SelectServerAsync(PerforceCluster cluster)
+		public Task<IPerforceServer?> SelectServerAsync(PerforceCluster cluster, CancellationToken cancellationToken)
 		{
-			List<string> properties = new List<string>{ "HordeServer=1" };
-			return SelectServerAsync("server", cluster, properties);
+			List<string> properties = new List<string> { "HordeServer=1" };
+			return SelectServerAsync("server", cluster, properties, cancellationToken);
 		}
 
 		/// <summary>
@@ -244,10 +259,11 @@ namespace Horde.Server.Perforce
 		/// </summary>
 		/// <param name="cluster"></param>
 		/// <param name="agent"></param>
+		/// <param name="cancellationToken"></param>
 		/// <returns></returns>
-		public Task<IPerforceServer?> SelectServerAsync(PerforceCluster cluster, IAgent agent)
+		public Task<IPerforceServer?> SelectServerAsync(PerforceCluster cluster, IAgent agent, CancellationToken cancellationToken)
 		{
-			return SelectServerAsync($"agent:{agent.Id}", cluster, agent.Properties);
+			return SelectServerAsync($"agent:{agent.Id}", cluster, agent.Properties, cancellationToken);
 		}
 
 		/// <summary>
@@ -290,8 +306,9 @@ namespace Horde.Server.Perforce
 		/// <param name="key"></param>
 		/// <param name="cluster"></param>
 		/// <param name="properties"></param>
+		/// <param name="cancellationToken">Cancellation token for the operation</param>
 		/// <returns></returns>
-		public async Task<IPerforceServer?> SelectServerAsync(string key, PerforceCluster cluster, IReadOnlyList<string> properties)
+		public async Task<IPerforceServer?> SelectServerAsync(string key, PerforceCluster cluster, IReadOnlyList<string> properties, CancellationToken cancellationToken)
 		{
 			// Find all the valid servers for this agent
 			List<PerforceServer> validServers = new List<PerforceServer>();
@@ -307,7 +324,7 @@ namespace Horde.Server.Perforce
 			HashSet<string> validServerNames = new HashSet<string>(validServers.Select(x => x.ServerAndPort), StringComparer.OrdinalIgnoreCase);
 
 			// Find all the matching servers.
-			PerforceServerList serverList = await GetServerListAsync();
+			PerforceServerList serverList = await GetServerListAsync(cancellationToken);
 
 			List<PerforceServerEntry> candidates = serverList.Servers.Where(x => x.Cluster == cluster.Name && validServerNames.Contains(x.BaseServerAndPort)).ToList();
 			if (candidates.Count == 0)
@@ -315,12 +332,12 @@ namespace Horde.Server.Perforce
 				foreach (PerforceServer validServer in validServers)
 				{
 					_logger.LogDebug("Fetching server info for {ServerAndPort}", validServer.ServerAndPort);
-					await UpdateServerAsync(cluster, validServer, candidates);
+					await UpdateServerAsync(cluster, validServer, candidates, cancellationToken);
 				}
 				if (candidates.Count == 0)
 				{
 					_logger.LogWarning("Unable to resolve any Perforce servers from valid list");
-					return null; 
+					return null;
 				}
 			}
 
@@ -358,7 +375,7 @@ namespace Horde.Server.Perforce
 				for (; index + 1 < candidates.Count; index++)
 				{
 					weight -= GetWeight(candidates[index], prevCandidate, totalLeases);
-					if(weight < 0)
+					if (weight < 0)
 					{
 						break;
 					}
@@ -403,6 +420,8 @@ namespace Horde.Server.Perforce
 		/// <inheritdoc/>
 		async ValueTask TickInternalAsync(CancellationToken cancellationToken)
 		{
+			using TelemetrySpan span = _tracer.StartActiveSpan($"{nameof(PerforceLoadBalancer)}.{nameof(TickInternalAsync)}");
+
 			GlobalConfig globalConfig = _globalConfig.CurrentValue;
 
 			// Set of new server entries
@@ -415,7 +434,7 @@ namespace Horde.Server.Perforce
 				{
 					try
 					{
-						await UpdateServerAsync(cluster, server, newServers);
+						await UpdateServerAsync(cluster, server, newServers, cancellationToken);
 					}
 					catch (Exception ex)
 					{
@@ -426,16 +445,49 @@ namespace Horde.Server.Perforce
 
 			// Update the number of leases for each entry
 			List<PerforceServerEntry> newEntries = newServers.OrderBy(x => x.Cluster).ThenBy(x => x.BaseServerAndPort).ThenBy(x => x.ServerAndPort).ToList();
-			await UpdateLeaseCounts(newEntries);
-			PerforceServerList list = await _serverListSingleton.UpdateAsync(list => MergeServerList(list, newEntries));
+			await UpdateLeaseCountsAsync(newEntries, cancellationToken);
+			PerforceServerList list = await _serverListSingleton.UpdateAsync(list => MergeServerList(list, newEntries), cancellationToken);
 
-			// Now update the health of each entry
-			List<Task> tasks = new List<Task>();
+			// Now update the health of each entry in parallel
+			List<Task> tasks = [];
 			foreach (PerforceServerEntry entry in list.Servers)
 			{
-				tasks.Add(Task.Run(() => UpdateHealthAsync(entry), CancellationToken.None));
+				tasks.Add(Task.Run(() => UpdateHealthAsync(entry, cancellationToken), cancellationToken));
 			}
 			await Task.WhenAll(tasks);
+
+			list = await _serverListSingleton.GetAsync(cancellationToken);
+			(HealthStatus health, string message) = GetPerforceHealth(list.Servers);
+			span.SetAttribute("health.status", health.ToString());
+			span.SetAttribute("health.message", message);
+			await _health.UpdateAsync(health, message);
+		}
+
+		static (HealthStatus health, string message) GetPerforceHealth(List<PerforceServerEntry> servers)
+		{
+			HealthStatus result = HealthStatus.Healthy;
+			foreach (PerforceServerEntry server in servers)
+			{
+				HealthStatus serverHealth = server.Status switch
+				{
+					PerforceServerStatus.Unknown => HealthStatus.Degraded,
+					PerforceServerStatus.Unhealthy => HealthStatus.Unhealthy,
+					PerforceServerStatus.Degraded => HealthStatus.Degraded,
+					PerforceServerStatus.Healthy => HealthStatus.Healthy,
+					_ => throw new ArgumentOutOfRangeException($"Unknown health status: {server.Status}")
+				};
+				result = serverHealth < result ? serverHealth : result;
+			}
+
+			string message = result switch
+			{
+				HealthStatus.Unhealthy => "One or more Perforce servers are unhealthy. Check Perforce servers page for details.",
+				HealthStatus.Degraded => "One or more Perforce servers are degraded. Check Perforce servers page for details.",
+				HealthStatus.Healthy => "All Perforce servers are healthy",
+				_ => throw new ArgumentOutOfRangeException($"Unknown health status: {result}")
+			};
+
+			return (result, message);
 		}
 
 		static void MergeServerList(PerforceServerList serverList, List<PerforceServerEntry> newEntries)
@@ -458,7 +510,7 @@ namespace Horde.Server.Perforce
 			serverList.Servers = newEntries;
 		}
 
-		async Task UpdateLeaseCounts(IEnumerable<PerforceServerEntry> newServerEntries)
+		async Task UpdateLeaseCountsAsync(IEnumerable<PerforceServerEntry> newServerEntries, CancellationToken cancellationToken)
 		{
 			Dictionary<string, Dictionary<string, PerforceServerEntry>> newServerLookup = new Dictionary<string, Dictionary<string, PerforceServerEntry>>();
 			foreach (PerforceServerEntry newServerEntry in newServerEntries)
@@ -475,7 +527,7 @@ namespace Horde.Server.Perforce
 				}
 			}
 
-			List<ILease> leases = await _leaseCollection.FindActiveLeasesAsync();
+			IReadOnlyList<ILease> leases = await _leaseCollection.FindActiveLeasesAsync(cancellationToken: cancellationToken);
 			foreach (ILease lease in leases)
 			{
 				Any any = Any.Parser.ParseFrom(lease.Payload.ToArray());
@@ -483,7 +535,7 @@ namespace Horde.Server.Perforce
 				HashSet<(string, string)> servers = new HashSet<(string, string)>();
 				if (any.TryUnpack(out ConformTask conformTask))
 				{
-					foreach (HordeCommon.Rpc.Messages.AgentWorkspace workspace in conformTask.Workspaces)
+					foreach (AgentWorkspace workspace in conformTask.Workspaces)
 					{
 						servers.Add((workspace.Cluster, workspace.ServerAndPort));
 					}
@@ -520,7 +572,7 @@ namespace Horde.Server.Perforce
 			}
 		}
 
-		async Task UpdateServerAsync(PerforceCluster cluster, PerforceServer server, List<PerforceServerEntry> newServers)
+		async Task UpdateServerAsync(PerforceCluster cluster, PerforceServer server, List<PerforceServerEntry> newServers, CancellationToken cancellationToken)
 		{
 			string initialHostName = server.ServerAndPort;
 			int port = 1666;
@@ -539,7 +591,7 @@ namespace Horde.Server.Perforce
 			}
 			else
 			{
-				await ResolveServersAsync(initialHostName, hostNames);
+				await ResolveServersAsync(initialHostName, hostNames, cancellationToken);
 			}
 
 			foreach (string hostName in hostNames)
@@ -549,14 +601,14 @@ namespace Horde.Server.Perforce
 				{
 					healthCheckUrl = $"http://{hostName}:5000/healthcheck";
 				}
-				newServers.Add(new PerforceServerEntry($"{hostName}:{port}", server.ServerAndPort, healthCheckUrl, cluster.Name, PerforceServerStatus.Unknown, "", DateTime.UtcNow));
+				newServers.Add(new PerforceServerEntry($"{hostName}:{port}", server.ServerAndPort, healthCheckUrl, cluster.Name, cluster.SupportsPartitionedWorkspaces, PerforceServerStatus.Unknown, "", DateTime.UtcNow));
 			}
 		}
 
-		async Task ResolveServersAsync(string hostName, List<string> hostNames)
+		async Task ResolveServersAsync(string hostName, List<string> hostNames, CancellationToken cancellationToken)
 		{
 			// Find all the addresses of the hosts
-			IPHostEntry entry = await Dns.GetHostEntryAsync(hostName);
+			IPHostEntry entry = await Dns.GetHostEntryAsync(hostName, cancellationToken);
 			foreach (IPAddress address in entry.AddressList)
 			{
 				try
@@ -571,36 +623,29 @@ namespace Horde.Server.Perforce
 		}
 
 		/// <summary>
-		/// Updates 
+		/// Checks and updates the health of a Perforce server
 		/// </summary>
-		/// <param name="entry"></param>
-		/// <returns></returns>
-		async Task UpdateHealthAsync(PerforceServerEntry entry)
+		async Task UpdateHealthAsync(PerforceServerEntry entry, CancellationToken cancellationToken)
 		{
-			DateTime? updateTime = null;
-			string detail = "Health check disabled";
-
-			// Get the health of the server
-			PerforceServerStatus health = PerforceServerStatus.Healthy;
+			ServerHealth health = await GetServerHealthViaP4InfoAsync(entry.BaseServerAndPort, _logger, cancellationToken);
 			if (entry.HealthCheckUrl != null)
 			{
-				updateTime = DateTime.UtcNow;
-				Uri healthCheckUrl = new Uri(entry.HealthCheckUrl);
-				try
+				ServerHealth http = await GetServerHealthViaHttpAsync(entry.HealthCheckUrl, cancellationToken);
+				if (http.Status == PerforceServerStatus.Unhealthy)
 				{
-					(health, detail) = await GetServerHealthAsync(healthCheckUrl);
-				}
-				catch
-				{
-					(health, detail) = (PerforceServerStatus.Unhealthy, $"Failed to query status at {healthCheckUrl}");
+					// Unhealthy HTTP status will override any p4 info-based status
+					health = new ServerHealth(http.Status, http.Detail);
 				}
 			}
 
-			// Update the server record
-			if (health != entry.Status || detail != entry.Detail || updateTime != entry.LastUpdateTime)
-			{
-				await _serverListSingleton.UpdateAsync(x => UpdateHealth(x, entry.ServerAndPort, health, detail, updateTime));
-			}
+			await _serverListSingleton.UpdateAsync(x => UpdateHealth(x, entry.ServerAndPort, health.Status, health.Detail, DateTime.UtcNow), cancellationToken);
+		}
+
+		internal async Task UpdateHealthTestOnlyAsync(string cluster, string serverAndPort, string? healthCheckUrl, CancellationToken cancellationToken)
+		{
+			PerforceServerEntry pse = new(serverAndPort, serverAndPort, healthCheckUrl, cluster, false, PerforceServerStatus.Unknown, null, null);
+			await _serverListSingleton.UpdateAsync((x) => x.Servers = [pse], cancellationToken);
+			await UpdateHealthAsync(pse, cancellationToken);
 		}
 
 		static void UpdateHealth(PerforceServerList serverList, string serverAndPort, PerforceServerStatus status, string detail, DateTime? updateTime)
@@ -617,37 +662,72 @@ namespace Horde.Server.Perforce
 			}
 		}
 
-		static async Task<(PerforceServerStatus, string)> GetServerHealthAsync(Uri healthCheckUrl)
+		internal record ServerHealth(PerforceServerStatus Status, string Detail);
+
+		/// <summary>
+		/// Queries the server's associated health check URL for status
+		/// </summary>
+		/// <param name="healthCheckUrl">URL to query</param>
+		/// <param name="cancellationToken"></param>
+		/// <returns>Status as reported by the URL response</returns>
+		async Task<ServerHealth> GetServerHealthViaHttpAsync(string healthCheckUrl, CancellationToken cancellationToken)
 		{
-			using HttpClient client = new HttpClient();
-			HttpResponseMessage response = await client.GetAsync(healthCheckUrl);
-
-			byte[] data = await response.Content.ReadAsByteArrayAsync();
-			JsonDocument document = JsonDocument.Parse(data);
-
-			foreach (JsonElement element in document.RootElement.GetProperty("results").EnumerateArray())
+			try
 			{
-				if (element.TryGetProperty("checker", out JsonElement checker) && checker.ValueEquals("edge_traffic_lights"))
+				Uri healthCheckUri = new(healthCheckUrl);
+				HttpResponseMessage response = await _httpClient.GetAsync(healthCheckUri, cancellationToken);
+
+				byte[] data = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+				JsonDocument document = JsonDocument.Parse(data);
+
+				foreach (JsonElement element in document.RootElement.GetProperty("results").EnumerateArray())
 				{
-					if (element.TryGetProperty("output", out JsonElement output))
+					if (element.TryGetProperty("checker", out JsonElement checker) && checker.ValueEquals("edge_traffic_lights"))
 					{
-						string status = output.GetString() ?? String.Empty;
-						switch(status)
+						if (element.TryGetProperty("output", out JsonElement output))
 						{
-							case "green":
-								return (PerforceServerStatus.Healthy, "Server is healthy");
-							case "yellow":
-								return (PerforceServerStatus.Degraded, "Degraded service");
-							case "red":
-								return (PerforceServerStatus.Unhealthy, "Server is being drained");
-							default:
-								return (PerforceServerStatus.Unknown, $"Expected state for health check ({status})");
+							string status = output.GetString() ?? String.Empty;
+							return status switch
+							{
+								"green" => new ServerHealth(PerforceServerStatus.Healthy, "Server is healthy"),
+								"yellow" => new ServerHealth(PerforceServerStatus.Degraded, "Degraded service"),
+								"red" => new ServerHealth(PerforceServerStatus.Unhealthy, "Server is being drained"),
+								_ => new ServerHealth(PerforceServerStatus.Unknown, $"Expected state for health check ({status})")
+							};
 						}
 					}
 				}
-			}
 
-			return (PerforceServerStatus.Unknown, "Unable to parse health check output");
+				return new ServerHealth(PerforceServerStatus.Unknown, "Unable to parse health check output");
+			}
+			catch
+			{
+				return new ServerHealth(PerforceServerStatus.Unhealthy, $"Failed to query status at {healthCheckUrl}");
+			}
+		}
+
+		/// <summary>
+		/// Checks the health of given Perforce server by invoking the equivalent of "p4 info"
+		/// </summary>
+		/// <param name="serverAndPort">Perforce server hostname with port</param>
+		/// <param name="logger">Logger</param>
+		/// <param name="cancellationToken"></param>
+		/// <returns>Health status of server</returns>
+		internal static async Task<ServerHealth> GetServerHealthViaP4InfoAsync(string serverAndPort, ILogger logger, CancellationToken cancellationToken)
+		{
+			PerforceSettings settings = new(serverAndPort, "") { AppName = "Horde.Server", PreferNativeClient = true };
+
+			try
+			{
+				using IPerforceConnection connection = await PerforceConnection.CreateAsync(settings, logger);
+				await connection.GetInfoAsync(InfoOptions.ShortOutput, cancellationToken);
+				return new ServerHealth(PerforceServerStatus.Healthy, "Server responded to \"p4 info\"");
+			}
+			catch (Exception e)
+			{
+				logger.LogWarning("Failed checking Perforce server health via info command. Reason {Reason}", e.Message);
+				return new ServerHealth(PerforceServerStatus.Unhealthy, "Server failed \"p4 info\" query");
+			}
 		}
 	}
 }

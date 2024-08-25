@@ -21,68 +21,73 @@ namespace EpicGames.Horde.Tests
 		const int ChannelId = 0;
 
 		[TestMethod]
-		public async Task TestSimpleBuffer()
+		public async Task TestSimpleBufferAsync()
 		{
 			using PooledBuffer buffer = new PooledBuffer(2, 1024);
-			buffer.Writer.AdvanceWritePosition(10);
-			await buffer.Reader.WaitToReadAsync(9);
-			buffer.Reader.AdvanceReadPosition(9);
-			await buffer.Reader.WaitToReadAsync(1);
+			using ComputeBufferWriter bufferWriter = buffer.CreateWriter();
+			bufferWriter.AdvanceWritePosition(10);
+
+			using ComputeBufferReader bufferReader = buffer.CreateReader();
+			await bufferReader.WaitToReadAsync(9);
+			bufferReader.AdvanceReadPosition(9);
+			await bufferReader.WaitToReadAsync(1);
 		}
 
 		[TestMethod]
-		public void TestOverflow()
+		public async Task TestOverflowAsync()
 		{
 			using PooledBuffer buffer = new PooledBuffer(2, 20);
+			using ComputeBufferReader bufferReader = buffer.CreateReader();
+			using ComputeBufferWriter bufferWriter = buffer.CreateWriter();
 
 			// Fill up the first chunk
-			Assert.AreEqual(20, buffer.Writer.GetWriteBuffer().Length);
-			buffer.Writer.AdvanceWritePosition(10);
-			Assert.AreEqual(10, buffer.Writer.GetWriteBuffer().Length);
-			buffer.Writer.AdvanceWritePosition(10);
-			Assert.AreEqual(0, buffer.Writer.GetWriteBuffer().Length);
+			Assert.AreEqual(20, bufferWriter.GetWriteBuffer().Length);
+			bufferWriter.AdvanceWritePosition(10);
+			Assert.AreEqual(10, bufferWriter.GetWriteBuffer().Length);
+			bufferWriter.AdvanceWritePosition(10);
+			Assert.AreEqual(0, bufferWriter.GetWriteBuffer().Length);
 
-			Task waitToWriteTask = buffer.Writer.WaitToWriteAsync(1).AsTask();
+			Task waitToWriteTask = bufferWriter.WaitToWriteAsync(1).AsTask();
 			Assert.IsTrue(waitToWriteTask.IsCompleted);
 
 			// Fill up the second chunk
-			Assert.AreEqual(20, buffer.Writer.GetWriteBuffer().Length);
-			buffer.Writer.AdvanceWritePosition(10);
-			Assert.AreEqual(10, buffer.Writer.GetWriteBuffer().Length);
-			buffer.Writer.AdvanceWritePosition(10);
-			Assert.AreEqual(0, buffer.Writer.GetWriteBuffer().Length);
+			Assert.AreEqual(20, bufferWriter.GetWriteBuffer().Length);
+			bufferWriter.AdvanceWritePosition(10);
+			Assert.AreEqual(10, bufferWriter.GetWriteBuffer().Length);
+			bufferWriter.AdvanceWritePosition(10);
+			Assert.AreEqual(0, bufferWriter.GetWriteBuffer().Length);
 
-			waitToWriteTask = buffer.Writer.WaitToWriteAsync(1).AsTask();
+			waitToWriteTask = bufferWriter.WaitToWriteAsync(1).AsTask();
 			Assert.IsFalse(waitToWriteTask.IsCompleted);
 
 			// Wait for data to be read
-			Assert.AreEqual(20, buffer.Reader.GetReadBuffer().Length);
-			buffer.Reader.AdvanceReadPosition(10);
+			Assert.AreEqual(20, bufferReader.GetReadBuffer().Length);
+			bufferReader.AdvanceReadPosition(10);
 			Assert.IsFalse(waitToWriteTask.IsCompleted);
 
-			Assert.AreEqual(10, buffer.Reader.GetReadBuffer().Length);
-			buffer.Reader.AdvanceReadPosition(10);
-			Assert.AreEqual(0, buffer.Reader.GetReadBuffer().Length);
+			Assert.AreEqual(10, bufferReader.GetReadBuffer().Length);
+			bufferReader.AdvanceReadPosition(10);
+			Assert.AreEqual(0, bufferReader.GetReadBuffer().Length);
 
-			Task waitToReadTask = buffer.Reader.WaitToReadAsync(1).AsTask();
+			Task waitToReadTask = bufferReader.WaitToReadAsync(1).AsTask();
 			Assert.IsTrue(waitToReadTask.IsCompleted);
 
-			Assert.AreEqual(20, buffer.Reader.GetReadBuffer().Length);
-			Assert.IsTrue(waitToWriteTask.IsCompleted);
+			Assert.AreEqual(20, bufferReader.GetReadBuffer().Length);
+			await waitToWriteTask;
 
 			// Make sure both reader and writer have something to work with
-			Assert.AreEqual(20, buffer.Reader.GetReadBuffer().Length);
-			Assert.AreEqual(20, buffer.Writer.GetWriteBuffer().Length);
+			Assert.AreEqual(20, bufferReader.GetReadBuffer().Length);
+			Assert.AreEqual(20, bufferWriter.GetWriteBuffer().Length);
 		}
 
 		[TestMethod]
-		public async Task TestPooledBuffer()
+		public async Task TestPooledBufferAsync()
 		{
 			await TestProducerConsumerAsync(length => new PooledBuffer(length), CancellationToken.None);
 		}
 
 		[TestMethod]
-		public async Task TestSharedMemoryBuffer()
+		public async Task TestSharedMemoryBufferAsync()
 		{
 			if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
 			{
@@ -90,43 +95,55 @@ namespace EpicGames.Horde.Tests
 			}
 		}
 
-		static async Task TestProducerConsumerAsync(Func<int, IComputeBuffer> createBuffer, CancellationToken cancellationToken)
+		static async Task TestProducerConsumerAsync(Func<int, ComputeBuffer> createBuffer, CancellationToken cancellationToken)
 		{
+			_ = cancellationToken;
+
 			const int Length = 8000;
 
 			Pipe sourceToTargetPipe = new Pipe();
 			Pipe targetToSourcePipe = new Pipe();
 
-			await using ComputeSocket producerSocket = new ComputeSocket(new PipeTransport(targetToSourcePipe.Reader, sourceToTargetPipe.Writer), ComputeSocketEndpoint.Local, NullLogger.Instance);
-			await using ComputeSocket consumerSocket = new ComputeSocket(new PipeTransport(sourceToTargetPipe.Reader, targetToSourcePipe.Writer), ComputeSocketEndpoint.Remote, NullLogger.Instance);
+			await using PipeTransport producerTransport = new(targetToSourcePipe.Reader, sourceToTargetPipe.Writer);
+			await using PipeTransport consumerTransport = new(sourceToTargetPipe.Reader, targetToSourcePipe.Writer);
+			await using RemoteComputeSocket producerSocket = new(producerTransport, ComputeProtocol.Latest, NullLogger.Instance);
+			await using RemoteComputeSocket consumerSocket = new(consumerTransport, ComputeProtocol.Latest, NullLogger.Instance);
 
-			using IComputeBuffer consumerBuffer = createBuffer(Length);
-			consumerSocket.AttachRecvBuffer(ChannelId, consumerBuffer.Writer);
+			using ComputeBuffer consumerBuffer = createBuffer(Length);
+			consumerSocket.AttachRecvBuffer(ChannelId, consumerBuffer);
+
+			using ComputeBuffer producerBuffer = createBuffer(Length);
+			producerSocket.AttachSendBuffer(ChannelId, producerBuffer);
 
 			byte[] input = RandomNumberGenerator.GetBytes(Length);
-			Task producerTask = RunProducerAsync(producerSocket, input);
+			Task producerTask = RunProducerAsync(producerBuffer, input);
+
+			using ComputeBufferReader consumerBufferReader = consumerBuffer.CreateReader();
 
 			byte[] output = new byte[Length];
-			await RunConsumerAsync(consumerBuffer.Reader, output);
+			await RunConsumerAsync(consumerBufferReader, output);
 
 			await producerTask;
 			Assert.IsTrue(input.SequenceEqual(output));
 		}
 
-		static async Task RunProducerAsync(ComputeSocket socket, ReadOnlyMemory<byte> input)
+		static async Task RunProducerAsync(ComputeBuffer buffer, ReadOnlyMemory<byte> input)
 		{
+			using ComputeBufferWriter writer = buffer.CreateWriter();
+
 			int offset = 0;
 			while (offset < input.Length)
 			{
 				int length = Math.Min(input.Length - offset, 100);
-				await socket.SendAsync(ChannelId, input.Slice(offset, length));
+				await writer.WriteAsync(input.Slice(offset, length));
 				await Task.Delay(10);
 				offset += length;
 			}
-			await socket.MarkCompleteAsync(ChannelId);
+
+			writer.MarkComplete();
 		}
 
-		static async Task RunConsumerAsync(IComputeBufferReader reader, Memory<byte> output)
+		static async Task RunConsumerAsync(ComputeBufferReader reader, Memory<byte> output)
 		{
 			int offset = 0;
 			while (!reader.IsComplete)
@@ -142,6 +159,40 @@ namespace EpicGames.Horde.Tests
 				memory.Slice(0, length).CopyTo(output.Slice(offset));
 				reader.AdvanceReadPosition(length);
 				offset += length;
+			}
+		}
+
+		[TestMethod]
+		public async Task TestSendBufferCompleteAsync()
+		{
+			Pipe recvPipe = new Pipe();
+			Pipe sendPipe = new Pipe();
+			await using PipeTransport localTransport = new(sendPipe.Reader, recvPipe.Writer);
+			await using PipeTransport remoteTransport = new(recvPipe.Reader, sendPipe.Writer);
+			await using RemoteComputeSocket localSocket = new(localTransport, ComputeProtocol.Latest, NullLogger.Instance);
+			await using RemoteComputeSocket remoteSocket = new(remoteTransport, ComputeProtocol.Latest, NullLogger.Instance);
+
+			using (PooledBuffer remoteBuffer = new PooledBuffer(1024))
+			{
+				remoteSocket.AttachRecvBuffer(1, remoteBuffer);
+
+				using ComputeBufferReader reader = remoteBuffer.CreateReader();
+
+				// Disposing of the buffer should mark the channel as complete
+				using (PooledBuffer localBuffer = new PooledBuffer(1024))
+				{
+					localSocket.AttachSendBuffer(1, localBuffer);
+
+					using ComputeBufferWriter localBufferWriter = localBuffer.CreateWriter();
+					await localBufferWriter.WriteAsync(new byte[] { 1, 2, 3 });
+				}
+
+				Assert.IsTrue(await reader.WaitToReadAsync(3));
+				Assert.IsTrue(reader.GetReadBuffer().Slice(0, 3).Span.SequenceEqual(new byte[] { 1, 2, 3 }));
+				reader.AdvanceReadPosition(3);
+
+				Assert.IsFalse(await reader.WaitToReadAsync(1));
+				Assert.IsTrue(reader.IsComplete);
 			}
 		}
 	}

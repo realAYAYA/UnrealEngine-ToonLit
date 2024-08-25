@@ -5,6 +5,7 @@
 #include "Components/DirectionalLightComponent.h"
 #include "Components/LightComponentBase.h"
 #include "Components/SceneComponent.h"
+#include "RenderUtils.h"
 #include "Delegates/Delegate.h"
 #include "DetailCategoryBuilder.h"
 #include "DetailLayoutBuilder.h"
@@ -30,10 +31,7 @@ void FDirectionalLightComponentDetails::CustomizeDetails( IDetailLayoutBuilder& 
 	TSharedPtr<IPropertyHandle> MovableShadowRadiusPropertyHandle = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UDirectionalLightComponent, DynamicShadowDistanceMovableLight));
 	TSharedPtr<IPropertyHandle> StationaryShadowRadiusPropertyHandle = DetailBuilder.GetProperty(GET_MEMBER_NAME_CHECKED(UDirectionalLightComponent, DynamicShadowDistanceStationaryLight));
 
-	static const auto AllowStaticLightingVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.AllowStaticLighting"));
-	const bool bAllowStaticLighting = (!AllowStaticLightingVar || AllowStaticLightingVar->GetValueOnGameThread() != 0);
-
-	if(!bAllowStaticLighting)
+	if(!IsStaticLightingAllowed())
 	{
 		// If static lighting is not allowed, hide DynamicShadowDistanceStationaryLight and rename DynamicShadowDistanceMovableLight to "Dynamic Shadow Distance"
 		MovableShadowRadiusPropertyHandle->SetPropertyDisplayName(LOCTEXT("DynamicShadowDistanceDisplayName", "Dynamic Shadow Distance"));

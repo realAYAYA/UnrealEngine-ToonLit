@@ -371,12 +371,12 @@ struct FGBufferData
 	// 0..1, 2 bits, use CastContactShadow(GBuffer) or HasDynamicIndirectShadowCasterRepresentation(GBuffer) to extract
 	half PerObjectGBufferData;
 	// in world units
-	half CustomDepth;
+	float CustomDepth;
 	// Custom depth stencil value
 	uint CustomStencil;
 	// in unreal units (linear), can be used to reconstruct world position,
 	// only valid when decoding the GBuffer as the value gets reconstructed from the Z buffer
-	half Depth;
+	float Depth;
 	// Velocity for motion blur (only used when WRITES_VELOCITY_TO_GBUFFER is enabled)
 	half4 Velocity;
 
@@ -538,7 +538,7 @@ void MobileEncodeGBuffer(
 	{
 		OutGBufferA.rg = UnitVectorToOctahedron( normalize(GBuffer.WorldNormal) ) * 0.5f + 0.5f;
 #if ALLOW_STATIC_LIGHTING
-		OutGBufferA.b = EncodeIndirectIrradiance(GBuffer.IndirectIrradiance * GBuffer.GBufferAO);
+		OutGBufferA.b = EncodeIndirectIrradiance(GBuffer.IndirectIrradiance);
 #else
 		OutGBufferA.b = 1;
 #endif
@@ -783,7 +783,7 @@ void MobileFetchGBuffer(in float2 UV, out half4 GBufferA, out half4 GBufferB, ou
 	GBufferD = VulkanSubpassFetch4();
 #endif
 	SceneDepth = ConvertFromDeviceZ(VulkanSubpassDepthFetch());
-#elif METAL_PROFILE
+#elif (METAL_PROFILE && !MAC)
 	GBufferA = SubpassFetchRGBA_1(); 
 	GBufferB = SubpassFetchRGBA_2(); 
 	GBufferC = SubpassFetchRGBA_3(); 
@@ -930,6 +930,12 @@ bool AdjustBaseColorAndSpecularColorForSubsurfaceProfileLighting(inout float3 Ba
 }
 void AdjustBaseColorAndSpecularColorForSubsurfaceProfileLighting(inout float3 BaseColor, inout float3 SpecularColor, inout float Specular, bool bChecker)
 {
+// If this function is called in translucent pass, we should not modify the BaseColor, instead directly read the base color as it is. 
+// The translucent pass is called after the main post process subsurface scattering pass, it will not affect previous logic.
+#if MATERIALBLENDING_TRANSLUCENT
+	return;
+#endif
+
 	const bool bCheckerboardRequired = AdjustBaseColorAndSpecularColorForSubsurfaceProfileLighting(BaseColor, Specular, bChecker);
 	if (bCheckerboardRequired)
 	{

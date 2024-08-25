@@ -9,7 +9,6 @@
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Text/STextBlock.h"
 #include "HAL/PlatformApplicationMisc.h"
-#include "ControlRig.h"
 #include "IPropertyUtilities.h"
 #include "IPythonScriptPlugin.h"
 #include "RigVMPythonUtils.h"

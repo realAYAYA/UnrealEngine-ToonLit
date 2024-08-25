@@ -38,11 +38,11 @@ enum class EElectraDecoderFlags : uint32
 {
 	None = 0,
 	IsSyncSample = 0x01,
-	IsReplaySample = 0x02,
-	IsLastReplaySample = 0x04,
-	InitCSDOnly = 0x08,
-	//DoNotOutput = 0x10,
-	//TimeUpdateOnly = 0x20
+	IsDiscardable = 0x02,
+	IsReplaySample = 0x04,
+	IsLastReplaySample = 0x08,
+	InitCSDOnly = 0x10,
+	DoNotOutput = 0x20
 };
 ENUM_CLASS_FLAGS(EElectraDecoderFlags);
 

@@ -169,28 +169,27 @@ void FVideoDecoderInputBitstreamProcessorH264::SetPropertiesOnOutput(TSharedPtr<
 	TSharedPtr<FCodecSpecificMessages> Msg = StaticCastSharedPtr<FCodecSpecificMessages>(InFromBSI.CodecSpecificMessages);
 
 	const TArray<ElectraDecodersUtil::MPEG::FISO14496_10_seq_parameter_set_data>& SPSList = Msg.IsValid() ? Msg->SPSs : SPSs;
-	for(int32 nMsg=0; nMsg<SPSList.Num(); ++nMsg)
+
+	// We only interact with the first SPS.
+	if (SPSList.Num() > 0)
 	{
 		// Set the bit depth and the colorimetry.
 		uint8 colour_primaries=2, transfer_characteristics=2, matrix_coeffs=2;
 		uint8 video_full_range_flag=0, video_format=5;
-		if (SPSList[nMsg].colour_description_present_flag)
+		if (SPSList[0].colour_description_present_flag)
 		{
-			colour_primaries = SPSList[nMsg].colour_primaries;
-			transfer_characteristics = SPSList[nMsg].transfer_characteristics;
-			matrix_coeffs = SPSList[nMsg].matrix_coefficients;
+			colour_primaries = SPSList[0].colour_primaries;
+			transfer_characteristics = SPSList[0].transfer_characteristics;
+			matrix_coeffs = SPSList[0].matrix_coefficients;
 		}
-		if (SPSList[nMsg].video_signal_type_present_flag)
+		if (SPSList[0].video_signal_type_present_flag)
 		{
-			video_full_range_flag = SPSList[nMsg].video_full_range_flag;
-			video_format = SPSList[nMsg].video_format;
+			video_full_range_flag = SPSList[0].video_full_range_flag;
+			video_format = SPSList[0].video_format;
 		}
 
 		Colorimetry.Update(colour_primaries, transfer_characteristics, matrix_coeffs, video_full_range_flag, video_format);
 		Colorimetry.UpdateParamDict(*InOutProperties);
-
-		// We stop after the first SPS.
-		break;
 	}
 }
 

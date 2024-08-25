@@ -85,6 +85,13 @@ FInputCaptureUpdate USingleClickOrDragInputBehavior::UpdateCapture(const FInputD
 		Modifiers.UpdateModifiers(Input, DragTarget);
 	}
 
+	// We have to check the device before going further because we get passed captures from 
+	// keyboard for modifier key press/releases, and those don't have valid mouse data.
+	if (!Input.IsFromDevice(GetSupportedDevices()))
+	{
+		return FInputCaptureUpdate::Continue();
+	}
+
 	// check if mouse has moved far enough that we want to swap to drag behavior
 	if (bInDrag == false)
 	{

@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include "MVVM/ViewModelPtr.h"
+#include "MVVM/ViewModels/ObjectBindingModel.h"
 #include "SequencerCustomizationManager.h"
 
 class UActorFactory;
@@ -25,6 +27,9 @@ protected:
 
 	ISequencer* GetSequencer() const { return Sequencer; }
 	UTemplateSequence* GetTemplateSequence() const { return TemplateSequence; }
+
+	TSharedPtr<FExtender> CreateObjectBindingContextMenuExtender(UE::Sequencer::FViewModelPtr InViewModel);
+	void ExtendObjectBindingContextMenu(FMenuBuilder& MenuBuilder, TSharedPtr<UE::Sequencer::FObjectBindingModel> ObjectBindingModel);
 
 private:
 	ESequencerPasteSupport OnPaste();

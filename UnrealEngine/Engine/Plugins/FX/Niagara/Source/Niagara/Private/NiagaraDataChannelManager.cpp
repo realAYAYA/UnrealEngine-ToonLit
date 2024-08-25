@@ -11,6 +11,15 @@ DECLARE_CYCLE_STAT(TEXT("FNiagaraDataChannelManager::BeginFrame"), STAT_DataChan
 DECLARE_CYCLE_STAT(TEXT("FNiagaraDataChannelManager::EndFrame"), STAT_DataChannelManager_EndFrame, STATGROUP_NiagaraDataChannels);
 DECLARE_CYCLE_STAT(TEXT("FNiagaraDataChannelManager::Tick"), STAT_DataChannelManager_Tick, STATGROUP_NiagaraDataChannels);
 
+
+static int GNDCAllowLazyHandlerInit = 1;
+static FAutoConsoleVariableRef CVarNDCAllowLazyHandlerInit(
+	TEXT("fx.Niagara.DataChannels.AllowLazyHandlerInit"),
+	GNDCAllowLazyHandlerInit,
+	TEXT("True if we allow lazy initialization of NDC handlers."),
+	ECVF_Default
+);
+
 FNiagaraDataChannelManager::FNiagaraDataChannelManager(FNiagaraWorldManager* InWorldMan)
 	: WorldMan(InWorldMan)
 {
@@ -30,10 +39,7 @@ void FNiagaraDataChannelManager::RefreshDataChannels()
 
 	UNiagaraDataChannel::ForEachDataChannel([&](UNiagaraDataChannel* DataChannel)
 	{
-		if (DataChannel->HasAnyFlags(RF_ClassDefaultObject) == false)
-		{
-			InitDataChannel(DataChannel, false);
-		}
+		InitDataChannel(DataChannel, false);
 	});
 }
 
@@ -44,10 +50,7 @@ void FNiagaraDataChannelManager::Init()
 	//Initialize any existing data channels, more may be initialized later as they are loaded.
 	UNiagaraDataChannel::ForEachDataChannel([&](UNiagaraDataChannel* DataChannel)
 	{
-		if (DataChannel->HasAnyFlags(RF_ClassDefaultObject) == false)
-		{
-			InitDataChannel(DataChannel, true);
-		}
+		InitDataChannel(DataChannel, true);
 	});
 }
 
@@ -113,14 +116,28 @@ void FNiagaraDataChannelManager::Tick(float DeltaSeconds, ETickingGroup TickGrou
 UNiagaraDataChannelHandler* FNiagaraDataChannelManager::FindDataChannelHandler(const UNiagaraDataChannel* Channel)
 {
 	check(IsInGameThread());
-	if (TObjectPtr<UNiagaraDataChannelHandler>* Found = Channels.Find(Channel))
+	if(Channel == nullptr)
 	{
-		return (*Found).Get();
+		return nullptr;
 	}
-	return nullptr;
+
+	if(GNDCAllowLazyHandlerInit != 0)
+	{
+		//Try to lazy init the channel.
+		//It's possible we've just loaded the channel and it's pending init.
+		return InitDataChannel(Channel, false);
+	}
+	else
+	{
+		if (TObjectPtr<UNiagaraDataChannelHandler>* Found = Channels.Find(Channel))
+		{
+			return (*Found).Get();
+		}
+		return nullptr;
+	}
 }
 
-void FNiagaraDataChannelManager::InitDataChannel(const UNiagaraDataChannel* InChannel, bool bForce)
+UNiagaraDataChannelHandler* FNiagaraDataChannelManager::InitDataChannel(const UNiagaraDataChannel* InChannel, bool bForce)
 {
 	check(IsInGameThread());
 	UWorld* World = GetWorld();
@@ -132,7 +149,9 @@ void FNiagaraDataChannelManager::InitDataChannel(const UNiagaraDataChannel* InCh
 		{
 			Handler = InChannel->CreateHandler(WorldMan->GetWorld());
 		}
+		return Handler;
 	}
+	return nullptr;
 }
 
 void FNiagaraDataChannelManager::RemoveDataChannel(const UNiagaraDataChannel* InChannel)

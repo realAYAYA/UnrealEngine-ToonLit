@@ -9,24 +9,21 @@
 
 bool FSlateColor::SerializeFromMismatchedTag(const FPropertyTag& Tag, FStructuredArchive::FSlot Slot)
 {
-	if (Tag.Type == NAME_StructProperty)
+	if (Tag.GetType().IsStruct(NAME_Color))
 	{
-		if (Tag.StructName == NAME_Color)
-		{
-			FColor OldColor;
-			Slot << OldColor;
-			*this = FSlateColor(FLinearColor(OldColor));
+		FColor OldColor;
+		Slot << OldColor;
+		*this = FSlateColor(FLinearColor(OldColor));
 
-			return true;
-		}
-		else if(Tag.StructName == NAME_LinearColor)
-		{
-			FLinearColor OldColor;
-			Slot << OldColor;
-			*this = FSlateColor(OldColor);
+		return true;
+	}
+	else if (Tag.GetType().IsStruct(NAME_LinearColor))
+	{
+		FLinearColor OldColor;
+		Slot << OldColor;
+		*this = FSlateColor(OldColor);
 
-			return true;
-		}
+		return true;
 	}
 
 	return false;

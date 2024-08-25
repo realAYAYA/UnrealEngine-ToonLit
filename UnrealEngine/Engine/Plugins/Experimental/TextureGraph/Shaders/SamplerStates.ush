@@ -1,0 +1,17 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+// 
+// Declare the standard SamplerStates
+//
+
+#ifndef SAMPLER_STATES_USH
+#define SAMPLER_STATES_USH
+
+SamplerState SamplerStates_Clamp;
+SamplerState SamplerStates_Wrap;
+SamplerState SamplerStates_NoBorder;
+SamplerState SamplerStates_Linear_Clamp;
+SamplerState SamplerStates_Linear_Wrap;
+SamplerState SamplerStates_Linear_Border;
+
+#endif

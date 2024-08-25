@@ -84,7 +84,7 @@ namespace Chaos
 
 		int32 AddVertices(int32 InNumVertices)
 		{
-			Vertices.SetNum(Vertices.Num() + InNumVertices, false);
+			Vertices.SetNum(Vertices.Num() + InNumVertices, EAllowShrinking::No);
 			return Vertices.Num() - InNumVertices;
 		}
 

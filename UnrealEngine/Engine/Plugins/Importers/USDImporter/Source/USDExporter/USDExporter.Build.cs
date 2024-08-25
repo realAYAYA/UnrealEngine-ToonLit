@@ -51,6 +51,7 @@ namespace UnrealBuildTool.Rules
 					"Slate",
 					"SlateCore",
 					"StaticMeshDescription",
+					"UniversalObjectLocator",
 					"UnrealEd",
 					"USDClasses",
 					"USDStage",

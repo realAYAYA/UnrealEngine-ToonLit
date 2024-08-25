@@ -341,7 +341,7 @@ void FDisplayClusterSpec::Define()
 			// a new node to the instance's map results in an invalid access. This test catches 
 			
 			DisplayClusterTestUtils::AddClusterNodeToCluster(ClusterAsset, AssetRootCluster);
-			FDisplayClusterConfiguratorClusterUtils::RemoveClusterNodeFromCluster(AssetClusterNode);
+			UE::DisplayClusterConfiguratorClusterUtils::RemoveClusterNodeFromCluster(AssetClusterNode);
 			FKismetEditorUtilities::CompileBlueprint(ClusterAsset);
 
 			// We recompiled, so reacquire the instanced pointers

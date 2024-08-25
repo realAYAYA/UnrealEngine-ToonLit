@@ -14,8 +14,6 @@
 	#define WITH_PLATFORM_INSTALL_BUNDLE_SOURCE 0
 #endif
 
-DEFAULTINSTALLBUNDLEMANAGER_API FString GInstallBundleManagerIni;
-
 DEFINE_LOG_CATEGORY(LogDefaultInstallBundleManager);
 
 // Json writer subclass to allow us to avoid using a SharedPtr to write basic Json.

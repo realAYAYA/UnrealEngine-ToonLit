@@ -23,15 +23,28 @@ namespace UnrealBuildTool.Rules
 				"RHI",
 				"StructUtils",
 				"WorldConditions",
-				"NavigationSystem"
+				"NavigationSystem",
+				"TargetingSystem",
+				"PropertyBindingUtils",
 			}
 			);
 
 			PrivateDependencyModuleNames.AddRange(
 			new string[] {
-				"RenderCore"
+				"RenderCore",
+				"InputCore"
 			}
 			);
+
+			if (Target.bBuildEditor)
+			{
+				PublicDependencyModuleNames.AddRange(
+					new string[] {
+						"UnrealEd",
+						"BlueprintGraph",
+					}
+				);
+			}
 
 			SetupGameplayDebuggerSupport(Target);
 		}

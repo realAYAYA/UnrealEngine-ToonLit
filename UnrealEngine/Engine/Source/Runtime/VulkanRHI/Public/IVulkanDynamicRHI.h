@@ -3,17 +3,7 @@
 #pragma once
 
 #include "RHI.h"
-
-#if defined(VK_USE_PLATFORM_WIN32_KHR)
-	#include "Microsoft/AllowMicrosoftPlatformTypes.h"
-	#include <windows.h>
-	#include "Microsoft/HideMicrosoftPlatformTypes.h"
-#endif
-
-THIRD_PARTY_INCLUDES_START
-	#define VK_NO_PROTOTYPES
-	#include <vulkan.h>
-THIRD_PARTY_INCLUDES_END
+#include "VulkanThirdParty.h"
 
 struct FVulkanRHIAllocationInfo
 {
@@ -54,6 +44,7 @@ struct IVulkanDynamicRHI : public FDynamicRHI
 	virtual uint64           RHIGetGraphicsAdapterLUID(VkPhysicalDevice InPhysicalDevice) const = 0;
 	virtual bool             RHIDoesAdapterMatchDevice(const void* InAdapterId) const = 0;
 	virtual void*            RHIGetVkDeviceProcAddr(const char* InName) const = 0;
+	virtual void*            RHIGetVkInstanceProcAddr(const char* InName) const = 0;
 	virtual VkFormat         RHIGetSwapChainVkFormat(EPixelFormat InFormat) const = 0;
 	virtual bool             RHISupportsEXTFragmentDensityMap2() const = 0;
 
@@ -68,9 +59,6 @@ struct IVulkanDynamicRHI : public FDynamicRHI
 	virtual VkFormat                 RHIGetViewVkFormat(FRHITexture* InTexture) const = 0;
 	virtual FVulkanRHIAllocationInfo RHIGetAllocationInfo(FRHITexture* InTexture) const = 0;
 	virtual FVulkanRHIImageViewInfo  RHIGetImageViewInfo(FRHITexture* InTexture) const = 0;
-
-	UE_DEPRECATED(5.2, "Altering image layout tracking directly is not permitted anymore.")
-	virtual VkImageLayout& RHIFindOrAddLayoutRW(FRHITexture* InTexture, VkImageLayout LayoutIfNotFound) = 0;
 
 	virtual void           RHISetImageLayout(VkImage Image, VkImageLayout OldLayout, VkImageLayout NewLayout, const VkImageSubresourceRange& SubresourceRange) = 0;
 	virtual void           RHISetUploadImageLayout(VkImage Image, VkImageLayout OldLayout, VkImageLayout NewLayout, const VkImageSubresourceRange& SubresourceRange) = 0;

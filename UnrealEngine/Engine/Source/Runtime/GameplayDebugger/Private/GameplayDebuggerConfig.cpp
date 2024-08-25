@@ -238,7 +238,7 @@ void UGameplayDebuggerConfig::RemoveUnknownConfigs()
 		const bool bValid = KnownCategoryNames.Contains(*ConfigData.CategoryName);
 		if (!bValid)
 		{
-			Categories.RemoveAt(Idx, 1, false);
+			Categories.RemoveAt(Idx, 1, EAllowShrinking::No);
 		}
 		else
 		{
@@ -248,7 +248,7 @@ void UGameplayDebuggerConfig::RemoveUnknownConfigs()
 				const FName* FoundDataPtr = KnownCategoryInputNames.FindPair(*ConfigData.CategoryName, *InputConfigData.ConfigName);
 				if (FoundDataPtr == nullptr)
 				{
-					ConfigData.InputHandlers.RemoveAt(InputIdx, 1, false);
+					ConfigData.InputHandlers.RemoveAt(InputIdx, 1, EAllowShrinking::No);
 				}
 			}
 		}
@@ -260,7 +260,7 @@ void UGameplayDebuggerConfig::RemoveUnknownConfigs()
 		const bool bValid = KnownExtensionNames.Contains(*ConfigData.ExtensionName);
 		if (!bValid)
 		{
-			Extensions.RemoveAt(Idx, 1, false);
+			Extensions.RemoveAt(Idx, 1, EAllowShrinking::No);
 		}
 		else
 		{
@@ -270,7 +270,7 @@ void UGameplayDebuggerConfig::RemoveUnknownConfigs()
 				const FName* FoundDataPtr = KnownExtensionInputNames.FindPair(*ConfigData.ExtensionName, *InputConfigData.ConfigName);
 				if (FoundDataPtr == nullptr)
 				{
-					ConfigData.InputHandlers.RemoveAt(InputIdx, 1, false);
+					ConfigData.InputHandlers.RemoveAt(InputIdx, 1, EAllowShrinking::No);
 				}
 			}
 		}

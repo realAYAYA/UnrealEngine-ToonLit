@@ -139,13 +139,13 @@ public:
  * settings.
  * Should only be used from the rendering thread.
  */
-template<ERasterizerFillMode FillMode=FM_Solid,ERasterizerCullMode CullMode=CM_None,bool bEnableLineAA=false,bool bEnableMSAA=true, ERasterizerDepthClipMode DepthClipMode=ERasterizerDepthClipMode::DepthClip>
-class TStaticRasterizerState : public TStaticStateRHI<TStaticRasterizerState<FillMode,CullMode,bEnableLineAA>,FRasterizerStateRHIRef, FRHIRasterizerState*>
+template<ERasterizerFillMode FillMode = FM_Solid, ERasterizerCullMode CullMode = CM_None, ERasterizerDepthClipMode DepthClipMode = ERasterizerDepthClipMode::DepthClip, bool bEnableMSAA = true>
+class TStaticRasterizerState : public TStaticStateRHI<TStaticRasterizerState<FillMode, CullMode, DepthClipMode, bEnableMSAA>, FRasterizerStateRHIRef, FRHIRasterizerState*>
 {
 public:
 	FORCEINLINE_DEBUGGABLE static FRasterizerStateRHIRef CreateRHI()
 	{
-		const FRasterizerStateInitializerRHI Initializer(FillMode, CullMode, 0.0f, 0.0f, DepthClipMode, bEnableMSAA, bEnableLineAA);
+		const FRasterizerStateInitializerRHI Initializer(FillMode, CullMode, 0.0f, 0.0f, DepthClipMode, bEnableMSAA);
 		return RHICreateRasterizerState(Initializer);
 	}
 };
@@ -154,6 +154,7 @@ public:
 template<bool bEnableMSAA>
 FORCEINLINE_DEBUGGABLE FRHIRasterizerState* GetStaticRasterizerState(ERasterizerFillMode FillMode,ERasterizerCullMode CullMode)
 {
+	constexpr ERasterizerDepthClipMode DepthClipMode = ERasterizerDepthClipMode::DepthClip;
 	switch(FillMode)
 	{
 	default:
@@ -161,27 +162,27 @@ FORCEINLINE_DEBUGGABLE FRHIRasterizerState* GetStaticRasterizerState(ERasterizer
 		switch(CullMode)
 		{
 		default:
-		case CM_CW:   return TStaticRasterizerState<FM_Solid,CM_CW  ,false,bEnableMSAA>::GetRHI();
-		case CM_CCW:  return TStaticRasterizerState<FM_Solid,CM_CCW ,false,bEnableMSAA>::GetRHI();
-		case CM_None: return TStaticRasterizerState<FM_Solid,CM_None,false,bEnableMSAA>::GetRHI();
+		case CM_CW:   return TStaticRasterizerState<FM_Solid,CM_CW  , DepthClipMode, bEnableMSAA>::GetRHI();
+		case CM_CCW:  return TStaticRasterizerState<FM_Solid,CM_CCW , DepthClipMode, bEnableMSAA>::GetRHI();
+		case CM_None: return TStaticRasterizerState<FM_Solid,CM_None, DepthClipMode, bEnableMSAA>::GetRHI();
 		};
 		break;
 	case FM_Wireframe:
 		switch(CullMode)
 		{
 		default:
-		case CM_CW:   return TStaticRasterizerState<FM_Wireframe,CM_CW  ,false,bEnableMSAA>::GetRHI();
-		case CM_CCW:  return TStaticRasterizerState<FM_Wireframe,CM_CCW ,false,bEnableMSAA>::GetRHI();
-		case CM_None: return TStaticRasterizerState<FM_Wireframe,CM_None,false,bEnableMSAA>::GetRHI();
+		case CM_CW:   return TStaticRasterizerState<FM_Wireframe,CM_CW  , DepthClipMode, bEnableMSAA>::GetRHI();
+		case CM_CCW:  return TStaticRasterizerState<FM_Wireframe,CM_CCW , DepthClipMode, bEnableMSAA>::GetRHI();
+		case CM_None: return TStaticRasterizerState<FM_Wireframe,CM_None, DepthClipMode, bEnableMSAA>::GetRHI();
 		};
 		break;
 	case FM_Point:
 		switch(CullMode)
 		{
 		default:
-		case CM_CW:   return TStaticRasterizerState<FM_Point,CM_CW  ,false,bEnableMSAA>::GetRHI();
-		case CM_CCW:  return TStaticRasterizerState<FM_Point,CM_CCW ,false,bEnableMSAA>::GetRHI();
-		case CM_None: return TStaticRasterizerState<FM_Point,CM_None,false,bEnableMSAA>::GetRHI();
+		case CM_CW:   return TStaticRasterizerState<FM_Point,CM_CW  , DepthClipMode, bEnableMSAA>::GetRHI();
+		case CM_CCW:  return TStaticRasterizerState<FM_Point,CM_CCW , DepthClipMode, bEnableMSAA>::GetRHI();
+		case CM_None: return TStaticRasterizerState<FM_Point,CM_None, DepthClipMode, bEnableMSAA>::GetRHI();
 		};
 		break;
 	}

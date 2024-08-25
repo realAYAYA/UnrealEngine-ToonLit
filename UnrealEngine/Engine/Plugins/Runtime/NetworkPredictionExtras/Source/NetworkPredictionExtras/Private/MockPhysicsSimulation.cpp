@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "MockPhysicsSimulation.h"
+#include "Engine/OverlapResult.h"
 #include "Engine/World.h"
 #include "DrawDebugHelpers.h"
 #include "NetworkPredictionTickState.h"

@@ -7,7 +7,7 @@
 #include "TargetTagsGameplayEffectComponent.generated.h"
 
 /** Handles granting Tags to the Target (sometimes referred to as the Owner) of the Gameplay Effect */
-UCLASS()
+UCLASS(DisplayName="Grant Tags to Target Actor")
 class GAMEPLAYABILITIES_API UTargetTagsGameplayEffectComponent : public UGameplayEffectComponent
 {
 	GENERATED_BODY()
@@ -17,7 +17,7 @@ public:
 	virtual void PostInitProperties() override;
 
 	/** Needed to properly load FInheritedTagContainer properties */
-	virtual void OnGameplayEffectChanged() const override;
+	virtual void OnGameplayEffectChanged() override;
 
 	/** Gets the (Granted) Target Tags inherited tag structure (as configured) */
 	const FInheritedTagContainer& GetConfiguredTargetTagChanges() const { return InheritableGrantedTagsContainer; }
@@ -28,6 +28,9 @@ public:
 #if WITH_EDITOR
 	/** Needed to properly update FInheritedTagContainer properties */
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+
+	/** Validate incompatible configurations */
+	virtual EDataValidationResult IsDataValid(class FDataValidationContext& Context) const override;
 
 private:
 	/** Get a cached version of the FProperty Name for PostEditChangeProperty */

@@ -9,8 +9,9 @@
 #include "Framework/MultiBox/MultiBoxExtender.h"
 #include "ISequencer.h"
 #include "ISequencerModule.h"
+#include "LevelSequenceDirector.h"
 #include "LevelSequenceEditorCommands.h"
-#include "Misc/LevelSequenceFBXInterop.h"
+#include "LevelSequenceFBXInterop.h"
 #include "Modules/ModuleManager.h"
 #include "MovieScene.h"
 #include "MVVM/Extensions/IObjectBindingExtension.h"
@@ -240,10 +241,13 @@ void FLevelSequenceCustomization::ExtendObjectBindingContextMenu(FMenuBuilder& M
 
 		MenuBuilder.AddMenuEntry(FSequencerCommands::Get().ConvertToSpawnable);
 
-		MenuBuilder.AddSubMenu(
-				LOCTEXT("DynamicPossession", "Dynamic Possession"),
-				LOCTEXT("DynamicPossessionTooltip", "Specify a Blueprint method that will find a compatible actor for this binding"),
-				FNewMenuDelegate::CreateRaw(this, &FLevelSequenceCustomization::AddDynamicPossessionMenu, ObjectBindingModel));
+		if (UMovieScene::IsTrackClassAllowed(ULevelSequenceDirector::StaticClass()))
+		{
+			MenuBuilder.AddSubMenu(
+					LOCTEXT("DynamicPossession", "Dynamic Possession"),
+					LOCTEXT("DynamicPossessionTooltip", "Specify a Blueprint method that will find a compatible actor for this binding"),
+					FNewMenuDelegate::CreateRaw(this, &FLevelSequenceCustomization::AddDynamicPossessionMenu, ObjectBindingModel));
+		}
 
 		MenuBuilder.EndSection();
 	}
@@ -384,7 +388,7 @@ void FLevelSequenceCustomization::AddSpawnLevelMenu(FMenuBuilder& MenuBuilder, T
 		EUserInterfaceActionType::ToggleButton
 	);
 
-	UWorld* World = Cast<UWorld>(Sequencer->GetPlaybackContext());
+	UWorld* World = Sequencer->GetPlaybackContext()->GetWorld();
 	if (!World)
 	{
 		return;

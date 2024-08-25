@@ -57,6 +57,7 @@ void FAnimationUtils::BuildSkeletonMetaData(USkeleton* Skeleton, TArray<FBoneDat
 
 		BoneData.Orientation = SrcTransform.GetRotation();
 		BoneData.Position = (FVector3f)SrcTransform.GetTranslation();
+		BoneData.Scale = (FVector3f)SrcTransform.GetScale3D();
 		BoneData.Name = RefSkeleton.GetBoneName(BoneIndex);
 
 		if ( BoneIndex > 0 )
@@ -283,7 +284,7 @@ void FAnimationUtils::ComputeCompressionError(const FCompressibleAnimData& Compr
 		const FTransform EndEffectorDummyBone(FQuat::Identity, FVector(END_EFFECTOR_DUMMY_BONE_LENGTH));
 
 		FAnimSequenceDecompressionContext DecompContext(CompressibleAnimData.SampledFrameRate, CompressibleAnimData.GetNumberOfFrames(), CompressibleAnimData.Interpolation, CompressibleAnimData.AnimFName, *CompressedData.AnimData, RefPose,
-			CompressibleAnimData.TrackToSkeletonMapTable, nullptr, CompressibleAnimData.bIsValidAdditive);
+			CompressibleAnimData.TrackToSkeletonMapTable, nullptr, CompressibleAnimData.bIsValidAdditive, CompressibleAnimData.AdditiveType);
 
 		const TArray<FBoneData>& BoneData = CompressibleAnimData.BoneData;
 
@@ -885,7 +886,7 @@ static void EnsureDependenciesAreLoaded(UObject* Object)
 
 UObject* GetDefaultAnimationCompressionSettings(const TCHAR* IniValueName, bool bIsFatal)
 {
-	FConfigSection* AnimDefaultObjectSettingsSection = GConfig->GetSectionPrivate(TEXT("Animation.DefaultObjectSettings"), false, true, GEngineIni);
+	const FConfigSection* AnimDefaultObjectSettingsSection = GConfig->GetSection(TEXT("Animation.DefaultObjectSettings"), false, GEngineIni);
 	const FConfigValue* Value = AnimDefaultObjectSettingsSection != nullptr ? AnimDefaultObjectSettingsSection->Find(IniValueName) : nullptr;
 
 	if (Value == nullptr)
@@ -968,7 +969,12 @@ UAnimCurveCompressionSettings* FAnimationUtils::GetDefaultAnimationCurveCompress
 {
 	if (DefaultCurveCompressionSettings == nullptr)
 	{
-		DefaultCurveCompressionSettings = Cast<UAnimCurveCompressionSettings>(GetDefaultAnimationCompressionSettings(TEXT("CurveCompressionSettings"), true));
+		DefaultCurveCompressionSettings = Cast<UAnimCurveCompressionSettings>(GetDefaultAnimationCompressionSettings(TEXT("CurveCompressionSettings"), false));
+
+		if (DefaultCurveCompressionSettings == nullptr)
+		{
+			DefaultCurveCompressionSettings = Cast<UAnimCurveCompressionSettings>(GetDefaultAnimationCompressionSettings(TEXT("CurveCompressionSettingsFallback"), true));
+		}
 	}
 
 	return DefaultCurveCompressionSettings;
@@ -1111,7 +1117,7 @@ void FAnimationUtils::ExtractTransformFromCompressionData(const FCompressibleAni
 		// Build our read-only version from the mutable source
 		FUECompressedAnimData AnimData(AnimDataMutable);
 
-		FAnimSequenceDecompressionContext DecompContext(CompressibleAnimData.SampledFrameRate, CompressibleAnimData.GetNumberOfFrames(), CompressibleAnimData.Interpolation, CompressibleAnimData.AnimFName, AnimData, CompressibleAnimData.RefLocalPoses, CompressibleAnimData.TrackToSkeletonMapTable, nullptr, CompressibleAnimData.bIsValidAdditive);
+		FAnimSequenceDecompressionContext DecompContext(CompressibleAnimData.SampledFrameRate, CompressibleAnimData.GetNumberOfFrames(), CompressibleAnimData.Interpolation, CompressibleAnimData.AnimFName, AnimData, CompressibleAnimData.RefLocalPoses, CompressibleAnimData.TrackToSkeletonMapTable, nullptr, CompressibleAnimData.bIsValidAdditive, CompressibleAnimData.AdditiveType);
 		DecompContext.Seek(Time);
 		CompressedAnimData.Codec->DecompressBone(DecompContext, TrackIndex, OutBoneTransform);
 		return;

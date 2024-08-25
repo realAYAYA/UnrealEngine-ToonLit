@@ -28,6 +28,11 @@ struct FClothPhysicalMeshData
 
 	/** Construct an empty cloth physical mesh with default common targets. */
 	CLOTHINGSYSTEMRUNTIMECOMMON_API FClothPhysicalMeshData();
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	~FClothPhysicalMeshData() = default;
+	FClothPhysicalMeshData(const FClothPhysicalMeshData&) = default;
+	FClothPhysicalMeshData& operator=(const FClothPhysicalMeshData&) = default;
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	/** Migrate from same, used to migrate LOD data from the UClothLODDataCommon_Legacy. */
 	CLOTHINGSYSTEMRUNTIMECOMMON_API void MigrateFrom(FClothPhysicalMeshData& ClothPhysicalMeshData);
@@ -122,7 +127,7 @@ struct FClothPhysicalMeshData
 
 	// Valid indices to use for self collisions (reduced set of Indices)
 	UPROPERTY(EditAnywhere, Category = SimMesh)
-	TArray<uint32> SelfCollisionIndices;
+	TSet<int32> SelfCollisionVertexSet;
 
 	// Long range attachment tethers, using euclidean (beeline) distance to find the closest attachment
 	UPROPERTY(EditAnywhere, Category = SimMesh)
@@ -140,6 +145,9 @@ struct FClothPhysicalMeshData
 	UPROPERTY(EditAnywhere, Category = SimMesh)
 	int32 NumFixedVerts;
 
+	UE_DEPRECATED(5.4, "Use SelfCollisionVertexSet instead.")
+	UPROPERTY()
+	TArray<uint32> SelfCollisionIndices;
 #if WITH_EDITORONLY_DATA
 	// Deprecated. Use WeightMaps instead.
 	UPROPERTY()
@@ -150,5 +158,6 @@ struct FClothPhysicalMeshData
 	TArray<float> BackstopRadiuses_DEPRECATED;
 	UPROPERTY()
 	TArray<float> AnimDriveMultipliers_DEPRECATED;
+
 #endif // WITH_EDITORONLY_DATA
 };

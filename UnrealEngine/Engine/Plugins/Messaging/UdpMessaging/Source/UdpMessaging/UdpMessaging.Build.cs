@@ -30,7 +30,7 @@ namespace UnrealBuildTool.Rules
 					"MessagingCommon",
 				});
 
-			if (Target.Type == TargetType.Editor)
+			if (Target.bCompileAgainstEditor)
 			{
 				DynamicallyLoadedModuleNames.AddRange(
 					new string[] {

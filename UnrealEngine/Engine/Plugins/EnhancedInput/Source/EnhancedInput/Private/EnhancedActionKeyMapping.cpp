@@ -2,14 +2,28 @@
 
 #include "EnhancedActionKeyMapping.h"
 #include "PlayerMappableKeySettings.h"
-
+#include "HAL/IConsoleManager.h"
 #if WITH_EDITOR
+#include "Internationalization/Text.h"
 #include "Misc/DataValidation.h"
 #endif
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(EnhancedActionKeyMapping)
 
 #define LOCTEXT_NAMESPACE "ActionKeyMapping"
+
+#if WITH_EDITOR
+namespace UE::EnhancedInput
+{
+	static TAutoConsoleVariable<bool> CVarCheckForEmptyKeyMappingsDuringValidation
+	(
+		TEXT("EnhancedInput.Mappings.bCheckForEmptyKeyMappingsDuringValidation"),
+		false,
+		TEXT("When true, Enhanced Input key mappings will throw an error during validation if they are mapped to an empty key."),
+		ECVF_Default
+	);
+}
+#endif	// WITH_EDITOR
 
 UPlayerMappableKeySettings* FEnhancedActionKeyMapping::GetPlayerMappableKeySettings() const
 {
@@ -100,6 +114,24 @@ EDataValidationResult FEnhancedActionKeyMapping::IsDataValid(FDataValidationCont
 	if (PlayerMappableKeySettings != nullptr)
 	{
 		Result = CombineDataValidationResults(Result, PlayerMappableKeySettings->IsDataValid(Context));
+	}
+
+	// Check for an invalid key mapping if enabled. Having an invalid key mapping is not technically disallowed by Enhanced Input, but 
+	// can oftentimes having an invalid key mapping could be something that you want to track down because of some custom system you have
+	// made for your game. This setting makes it really easy to track down any empty mappings! 
+	if (UE::EnhancedInput::CVarCheckForEmptyKeyMappingsDuringValidation.GetValueOnAnyThread() && Key == EKeys::Invalid)
+	{
+		Result = EDataValidationResult::Invalid;
+		
+		FFormatNamedArguments Args;
+		Args.Add(TEXT("ActionName"), FText::FromString(GetNameSafe(Action)));
+
+		const FText ErrorMsg =
+			FText::Format(
+				LOCTEXT("MappedToInvalidKey", "Mapping to Input Action {ActionName}. \nEnhanced Input Key Mappings cannot be mapped to EKeys::Invalid when 'EnhancedInput.Mappings.bCheckForEmptyKeyMappingsDuringValidation' is true!"),
+				Args);
+		
+		Context.AddError(ErrorMsg);
 	}
 
 	// Validate the triggers.

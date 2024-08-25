@@ -21,7 +21,9 @@ namespace
 
 namespace AVEncoder
 {
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
 	FCodecPacket FCodecPacket::Create(const uint8* InData, uint32 InDataSize)
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	{
 		uint8* DataCopy = static_cast<uint8*>(FMemory::Malloc(InDataSize));
 		FMemory::BigBlockMemcpy(DataCopy, InData, InDataSize);

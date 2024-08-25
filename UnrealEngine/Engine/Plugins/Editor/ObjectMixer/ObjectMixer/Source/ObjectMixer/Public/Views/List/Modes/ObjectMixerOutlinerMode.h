@@ -8,6 +8,7 @@
 #include "ObjectFilter/ObjectMixerEditorObjectFilter.h"
 #include "UObject/ObjectPtr.h"
 #include "UObject/UObjectGlobals.h"
+#include "WorldPartition/WorldPartitionHandle.h"
 
 #include "ObjectMixerOutlinerMode.generated.h"
 
@@ -37,11 +38,16 @@ namespace ObjectMixerOutliner
 	{
 		bool operator()(const TWeakPtr<ISceneOutlinerTreeItem>& Item, AActor*& ActorPtrOut) const;
 	};
+		
+	struct UE_DEPRECATED(5.4, "Use FActorHandleSelector instead") FActorDescSelector
+	{
+		bool operator()(const TWeakPtr<ISceneOutlinerTreeItem>& Item, FWorldPartitionActorDesc*& ActorDescPtrOut) const { return false; }
+	};
 
 	/** Functor which can be used to get actor descriptors from a selection  */
-	struct FActorDescSelector
+	struct FActorHandleSelector
 	{
-		bool operator()(const TWeakPtr<ISceneOutlinerTreeItem>& Item, FWorldPartitionActorDesc*& ActorDescPtrOut) const;
+		bool operator()(const TWeakPtr<ISceneOutlinerTreeItem>& Item, FWorldPartitionHandle& ActorHandleOut) const;
 	};
 
 	struct FFolderPathSelector
@@ -230,8 +236,11 @@ public:
 	/** Called by the editor to allow selection of unloaded actors */
 	void OnSelectUnloadedActors(const TArray<FGuid>& ActorGuids);
 	
-	/** Called when an actor desc is removed */
-	void OnActorDescRemoved(FWorldPartitionActorDesc* InActorDesc);
+	/** Called when an actor desc instance is removed */
+	void OnActorDescInstanceRemoved(FWorldPartitionActorDescInstance* InActorDescInstance);
+	
+	UE_DEPRECATED(5.4, "Use OnActorDescInstanceRemoved instead")
+	void OnActorDescRemoved(FWorldPartitionActorDesc* InActorDesc) {}
 
 	/** Called by engine when edit cut actors begins */
 	void OnEditCutActorsBegin();
@@ -339,7 +348,7 @@ protected:
 	/** Number of unloaded actors which have passed through all the filters */
 	uint32 FilteredUnloadedActorCount = 0;
 	/** List of unloaded actors which passed through the regular filters and may or may not have passed the search filter */
-	TSet<const FWorldPartitionActorDesc*> ApplicableUnloadedActors;
+	TSet<FWorldPartitionHandle> ApplicableUnloadedActors;
 	/** List of actors which passed the regular filters and may or may not have passed the search filter */
 	TSet<TWeakObjectPtr<AActor>> ApplicableActors;
 

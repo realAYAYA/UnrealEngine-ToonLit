@@ -45,6 +45,9 @@ void FRemoteControlCommands::RegisterCommands()
 
 	// Duplicate Item
 	UI_COMMAND(DuplicateItem, "Duplicate", "Duplicate the selected UI item", EUserInterfaceActionType::Button, FInputChord(EKeys::D, EModifierKey::Control));
+
+	// Update Value
+	UI_COMMAND(UpdateValue, "Update Value", "Update the selected UI item value with the one in the fields list", EUserInterfaceActionType::Button, FInputChord(EKeys::U, EModifierKey::Control));
 }
 
 #undef LOCTEXT_NAMESPACE

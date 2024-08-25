@@ -21,5 +21,5 @@ void Main(
 	OutTexCoord = InPosition * ResolvedView.ScreenPositionScaleBias.xy + ResolvedView.ScreenPositionScaleBias.wz;
 
 	// deproject to world space
-	OutScreenVector = mul(float4(InPosition,1,0), ResolvedView.ScreenToTranslatedWorld).xyz;
+	OutScreenVector = ScreenVectorFromScreenRect(float4(InPosition,1,0));
 }

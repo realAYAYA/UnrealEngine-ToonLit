@@ -74,11 +74,13 @@ struct FExpressionInput
 	ENGINE_API const UE::HLSLTree::FExpression* AcquireHLSLExpression(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope, int32 InputIndex) const;
 	ENGINE_API const UE::HLSLTree::FExpression* AcquireHLSLExpressionOrConstant(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope, const UE::Shader::FValue& ConstantValue, int32 InputIndex) const;
 	ENGINE_API const UE::HLSLTree::FExpression* AcquireHLSLExpressionOrExternalInput(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope, UE::HLSLTree::Material::EExternalInput Input, int32 InputIndex) const;
+	ENGINE_API const UE::HLSLTree::FExpression* AcquireHLSLExpressionOrDefaultExpression(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope, const UE::HLSLTree::FExpression* DefaultExpression, int32 InputIndex) const;
 
 	ENGINE_API const UE::HLSLTree::FExpression* TryAcquireHLSLExpression(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope) const;
 	ENGINE_API const UE::HLSLTree::FExpression* AcquireHLSLExpression(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope) const;
 	ENGINE_API const UE::HLSLTree::FExpression* AcquireHLSLExpressionOrConstant(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope, const UE::Shader::FValue& ConstantValue) const;
 	ENGINE_API const UE::HLSLTree::FExpression* AcquireHLSLExpressionOrExternalInput(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope, UE::HLSLTree::Material::EExternalInput Input) const;
+	ENGINE_API const UE::HLSLTree::FExpression* AcquireHLSLExpressionOrDefaultExpression(FMaterialHLSLGenerator& Generator, UE::HLSLTree::FScope& Scope, const UE::HLSLTree::FExpression* DefaultExpression) const;
 
 	/**
 	 * Tests if the input has a material expression connected to it
@@ -190,6 +192,8 @@ struct FColorMaterialInput : FMaterialInput<FColor>
 #endif  // WITH_EDITOR
 	/** ICPPStructOps interface */
 	ENGINE_API bool Serialize(FArchive& Ar);
+	ENGINE_API void DefaultValueChanged(const FString& DefaultValue);
+	ENGINE_API FString GetDefaultValue() const;
 };
 
 template<>
@@ -211,6 +215,8 @@ struct FScalarMaterialInput : FMaterialInput<float>
 #endif  // WITH_EDITOR
 	/** ICPPStructOps interface */
 	ENGINE_API bool Serialize(FArchive& Ar);
+	ENGINE_API void DefaultValueChanged(const FString& DefaultValue);
+	ENGINE_API FString GetDefaultValue() const;
 };
 
 template<>
@@ -231,6 +237,8 @@ struct FShadingModelMaterialInput : FMaterialInput<uint32>
 #endif  // WITH_EDITOR
 	/** ICPPStructOps interface */
 	ENGINE_API bool Serialize(FArchive& Ar);
+	ENGINE_API void DefaultValueChanged(const FString& DefaultValue);
+	ENGINE_API FString GetDefaultValue() const;
 };
 
 template<>
@@ -243,18 +251,20 @@ struct TStructOpsTypeTraits<FShadingModelMaterialInput>
 	};
 };
 
-struct FStrataMaterialInput : FMaterialInput<uint32> // Still giving it a default type
+struct FSubstrateMaterialInput : FMaterialInput<uint32> // Still giving it a default type
 {
 #if WITH_EDITOR
 	ENGINE_API int32 CompileWithDefault(class FMaterialCompiler* Compiler, EMaterialProperty Property);
 #endif  // WITH_EDITOR
 	/** ICPPStructOps interface */
 	ENGINE_API bool Serialize(FArchive& Ar);
+	ENGINE_API void DefaultValueChanged(const FString& DefaultValue);
+    ENGINE_API FString GetDefaultValue() const;
 };
 
 template<>
-struct TStructOpsTypeTraits<FStrataMaterialInput>
-	: public TStructOpsTypeTraitsBase2<FStrataMaterialInput>
+struct TStructOpsTypeTraits<FSubstrateMaterialInput>
+	: public TStructOpsTypeTraitsBase2<FSubstrateMaterialInput>
 {
 	enum
 	{
@@ -269,6 +279,8 @@ struct FVectorMaterialInput : FMaterialInput<FVector3f>
 #endif  // WITH_EDITOR
 	/** ICPPStructOps interface */
 	ENGINE_API bool Serialize(FArchive& Ar);
+	ENGINE_API void DefaultValueChanged(const FString& DefaultValue);
+	ENGINE_API FString GetDefaultValue() const;
 };
 
 template<>
@@ -289,6 +301,8 @@ struct FVector2MaterialInput : FMaterialInput<FVector2f>
 #endif  // WITH_EDITOR
 	/** ICPPStructOps interface */
 	ENGINE_API bool Serialize(FArchive& Ar);
+	ENGINE_API void DefaultValueChanged(const FString& DefaultValue);
+	ENGINE_API FString GetDefaultValue() const;
 };
 
 template<>

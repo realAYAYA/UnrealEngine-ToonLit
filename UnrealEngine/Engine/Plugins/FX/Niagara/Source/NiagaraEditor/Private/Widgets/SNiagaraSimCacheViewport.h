@@ -43,6 +43,8 @@ protected:
 	virtual TSharedRef<FEditorViewportClient> MakeEditorViewportClient() override;
 	virtual TSharedPtr<SWidget> MakeViewportToolbar() override;
 	virtual EVisibility OnGetViewportContentVisibility() const override;
+	void ToggleOrbit();
+	bool IsToggleOrbitChecked();
 	virtual void BindCommands() override;
 	virtual void OnFocusViewportToSelection() override;
 

@@ -260,8 +260,8 @@ bool TriangulateSimpleXYPlanarPolygon(const TArray<FVector>& VertexPositions, TA
 	// in the polygon.  This will just save us having to iterate later on.
 	static TArray<int32> PrevVertexNumbers, NextVertexNumbers;
 
-	PrevVertexNumbers.SetNumUninitialized(PolygonVertexCount, false);
-	NextVertexNumbers.SetNumUninitialized(PolygonVertexCount, false);
+	PrevVertexNumbers.SetNumUninitialized(PolygonVertexCount, EAllowShrinking::No);
+	NextVertexNumbers.SetNumUninitialized(PolygonVertexCount, EAllowShrinking::No);
 
 	for (int32 VertexNumber = 0; VertexNumber < PolygonVertexCount; ++VertexNumber)
 	{

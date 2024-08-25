@@ -2,6 +2,7 @@
 
 #include "WidgetModeManager.h"
 
+#include "EditorGizmos/EditorTransformGizmoUtil.h"
 #include "ToolContexts/WidgetToolsContext.h"
 
 //////////////////////////////////////////////////////////////////////////
@@ -13,6 +14,7 @@ FWidgetModeManager::FWidgetModeManager()
 	// Since we can't call virtuals in constructor, need free and re-create InteractiveToolsContext resource
 	if (UObjectInitialized())
 	{
+		UE::EditorTransformGizmoUtil::UnregisterTransformGizmoContextObject(this);
 		InteractiveToolsContext->ShutdownContext();
 		InteractiveToolsContext = nullptr;
 	}
@@ -20,6 +22,7 @@ FWidgetModeManager::FWidgetModeManager()
 	CachedWidgetToolContext = NewObject<UWidgetToolsContext>(GetTransientPackage(), UWidgetToolsContext::StaticClass(), NAME_None, RF_Transient);
 	InteractiveToolsContext = CachedWidgetToolContext;
 	InteractiveToolsContext->InitializeContextWithEditorModeManager(this);
+	UE::EditorTransformGizmoUtil::RegisterTransformGizmoContextObject(this);
 }
 
 bool FWidgetModeManager::OnKeyChar(const FGeometry& MyGeometry, const FCharacterEvent& InCharacterEvent)

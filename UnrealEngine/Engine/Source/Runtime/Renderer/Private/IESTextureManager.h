@@ -25,7 +25,7 @@ RENDERER_API float GetAtlasSlot(uint32 InSlotId);
 RENDERER_API FRHITexture* GetAtlasTexture();
 
 // Update the rect light atlas texture
-RENDERER_API void UpdateAtlasTexture(FRDGBuilder& GraphBuilder, const ERHIFeatureLevel::Type FeatureLevel);
+RENDERER_API void UpdateAtlasTexture(FRDGBuilder& GraphBuilder, const FStaticShaderPlatform ShaderPlatform);
 
 // Return the rect light atlas debug pass
 RENDERER_API void AddDebugPass(FRDGBuilder& GraphBuilder, const FViewInfo& View, FRDGTextureRef OutputTexture);

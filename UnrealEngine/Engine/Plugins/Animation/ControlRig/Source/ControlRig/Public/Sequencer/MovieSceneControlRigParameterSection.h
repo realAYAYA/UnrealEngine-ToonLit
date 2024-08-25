@@ -19,7 +19,7 @@
 #include "Channels/MovieSceneBoolChannel.h"
 #include "Sequencer/MovieSceneControlRigSpaceChannel.h"
 #include "ConstraintChannel.h"
-
+#include "KeyParams.h"
 #include "MovieSceneControlRigParameterSection.generated.h"
 
 class UAnimSequence;
@@ -268,16 +268,18 @@ public:
 	//UMovieSceneSection virtuals
 	virtual void SetBlendType(EMovieSceneBlendType InBlendType) override;
 	virtual UObject* GetImplicitObjectOwner() override;
+	virtual EMovieSceneChannelProxyType CacheChannelProxy() override;
+
 	// IMovieSceneConstrainedSection overrides
 	/*
 	* Whether it has that channel
 	*/
-	virtual bool HasConstraintChannel(const FName& InConstraintName) const override;
+	virtual bool HasConstraintChannel(const FGuid& InConstraintName) const override;
 
 	/*
 	* Get constraint with that name
 	*/
-	virtual FConstraintAndActiveChannel* GetConstraintChannel(const FName& InConstraintName) override;
+	virtual FConstraintAndActiveChannel* GetConstraintChannel(const FGuid& InConstraintID) override;
 
 	/*
 	*  Add Constraint channel
@@ -309,19 +311,27 @@ public:
 
 #if WITH_EDITOR
 	//Function to save control rig key when recording.
-	void RecordControlRigKey(FFrameNumber FrameNumber, bool bSetDefault, ERichCurveInterpMode InInterpMode);
+	void RecordControlRigKey(FFrameNumber FrameNumber, bool bSetDefault, EMovieSceneKeyInterpolation InInterpMode);
 
 	//Function to load an Anim Sequence into this section. It will automatically resize to the section size.
 	//Will return false if fails or is canceled
-	virtual bool LoadAnimSequenceIntoThisSection(UAnimSequence* Sequence, UMovieScene* MovieScene, UObject* BoundObject, bool bKeyReduce, float Tolerance, FFrameNumber InStartFrame = 0);
+	virtual bool LoadAnimSequenceIntoThisSection(UAnimSequence* Sequence, UMovieScene* MovieScene, UObject* BoundObject, bool bKeyReduce, float Tolerance, bool bResetControls, FFrameNumber InStartFrame , EMovieSceneKeyInterpolation InInterolation);
 #endif
-	const TArray<bool>& GetControlsMask() const
+	const TArray<bool>& GetControlsMask() 
 	{
+		if (ChannelProxy.IsValid() == false)
+		{
+			CacheChannelProxy();
+		}
 		return ControlsMask;
 	}
 
-	bool GetControlsMask(int32 Index) const
+	bool GetControlsMask(int32 Index)  
 	{
+		if (ChannelProxy.IsValid() == false)
+		{
+			CacheChannelProxy();
+		}
 		if (Index >= 0 && Index < ControlsMask.Num())
 		{
 			return ControlsMask[Index];
@@ -378,8 +388,8 @@ public:
 
 	/* Set the control rig for this section */
 	void SetControlRig(UControlRig* InControlRig);
-	/* Get the control rig for this section */
-	UControlRig* GetControlRig() const { return ControlRig; }
+	/* Get the control rig for this section, by default in non-game world */
+	UControlRig* GetControlRig(UWorld* InGameWorld = nullptr) const;
 
 	/** Whether or not to key currently, maybe evaluating so don't*/
 	void  SetDoNotKey(bool bIn) const { bDoNotKey = bIn; }

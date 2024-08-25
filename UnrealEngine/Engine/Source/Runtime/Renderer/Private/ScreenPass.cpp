@@ -62,6 +62,7 @@ FScreenPassTexture FScreenPassTexture::CopyFromSlice(FRDGBuilder& GraphBuilder, 
 
 	FRHICopyTextureInfo CopyInfo;
 	CopyInfo.SourceSliceIndex = ScreenTextureSlice.TextureSRV->Desc.FirstArraySlice;
+	CopyInfo.NumMips = ScreenTextureSlice.TextureSRV->Desc.Texture->Desc.NumMips;
 
 	AddCopyTexturePass(
 		GraphBuilder,
@@ -80,7 +81,6 @@ FScreenPassTextureSlice FScreenPassTextureSlice::CreateFromScreenPassTexture(FRD
 		return FScreenPassTextureSlice(nullptr, ScreenTexture.ViewRect);
 	}
 
-	check(!ScreenTexture.Texture->Desc.IsTextureArray());
 	return FScreenPassTextureSlice(GraphBuilder.CreateSRV(FRDGTextureSRVDesc(ScreenTexture.Texture)), ScreenTexture.ViewRect);
 }
 
@@ -231,31 +231,32 @@ void AddDrawTexturePass(
 	FRDGTextureRef InputTexture,
 	FRDGTextureRef OutputTexture,
 	FIntPoint InputPosition,
+	FIntPoint InputSize,
 	FIntPoint OutputPosition,
-	FIntPoint Size)
+	FIntPoint OutputSize)
 {
 	const FRDGTextureDesc& InputDesc = InputTexture->Desc;
 	const FRDGTextureDesc& OutputDesc = OutputTexture->Desc;
 
-	// Use a hardware copy if formats match.
-	if (InputDesc.Format == OutputDesc.Format)
+	// Use a hardware copy if formats and sizes match.
+	if (InputDesc.Format == OutputDesc.Format && InputSize == OutputSize)
 	{
-		return AddCopyTexturePass(GraphBuilder, InputTexture, OutputTexture, InputPosition, OutputPosition, Size);
+		return AddCopyTexturePass(GraphBuilder, InputTexture, OutputTexture, InputPosition, OutputPosition, InputSize);
 	}
 
-	if (Size == FIntPoint::ZeroValue)
+	if (InputSize == FIntPoint::ZeroValue)
 	{
 		// Copy entire input texture to output texture.
-		Size = InputTexture->Desc.Extent;
+		InputSize = InputTexture->Desc.Extent;
 	}
 
 	// Don't prime color data if the whole texture is being overwritten.
-	const ERenderTargetLoadAction LoadAction = (OutputPosition == FIntPoint::ZeroValue && Size == OutputDesc.Extent)
+	const ERenderTargetLoadAction LoadAction = (OutputPosition == FIntPoint::ZeroValue && InputSize == OutputDesc.Extent)
 		? ERenderTargetLoadAction::ENoAction
 		: ERenderTargetLoadAction::ELoad;
 
-	const FScreenPassTextureViewport InputViewport(InputDesc.Extent, FIntRect(InputPosition, InputPosition + Size));
-	const FScreenPassTextureViewport OutputViewport(OutputDesc.Extent, FIntRect(OutputPosition, OutputPosition + Size));
+	const FScreenPassTextureViewport InputViewport(InputDesc.Extent, FIntRect(InputPosition, InputPosition + InputSize));
+	const FScreenPassTextureViewport OutputViewport(OutputDesc.Extent, FIntRect(OutputPosition, OutputPosition + OutputSize));
 
 	TShaderMapRef<FCopyRectPS> PixelShader(static_cast<const FViewInfo&>(View).ShaderMap);
 
@@ -265,6 +266,26 @@ void AddDrawTexturePass(
 	Parameters->RenderTargets[0] = FRenderTargetBinding(OutputTexture, LoadAction);
 
 	AddDrawScreenPass(GraphBuilder, RDG_EVENT_NAME("DrawTexture"), View, OutputViewport, InputViewport, PixelShader, Parameters);
+}
+
+void AddDrawTexturePass(
+	FRDGBuilder& GraphBuilder,
+	const FSceneView& View,
+	FRDGTextureRef InputTexture,
+	FRDGTextureRef OutputTexture,
+	FIntPoint InputPosition,
+	FIntPoint OutputPosition,
+	FIntPoint Size)
+{
+	AddDrawTexturePass(
+		GraphBuilder,
+		View,
+		InputTexture,
+		OutputTexture,
+		InputPosition,
+		Size,
+		OutputPosition,
+		Size);
 }
 
 void AddDrawTexturePass(

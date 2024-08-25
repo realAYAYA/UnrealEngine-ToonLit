@@ -73,9 +73,7 @@ public:
 
 	NIAGARAEDITOR_API void ToClipboardFunctionInputs(UObject* InOuter, TArray<const UNiagaraClipboardFunctionInput*>& OutClipboardFunctionInputs) const;
 
-	// We pass in the owning input collection to refresh the inputs of a category after setting a static switch value.
-	// This is done to support copy paste for chained static switches, as otherwise the stack entry for the 2nd static switch won't exist for pasting data
-	NIAGARAEDITOR_API void SetStaticSwitchValuesFromClipboardFunctionInputs(const TArray<const UNiagaraClipboardFunctionInput*>& ClipboardFunctionInputs, class UNiagaraStackFunctionInputCollection& OwningFunctionCollection);
+	NIAGARAEDITOR_API bool TrySetStaticSwitchValuesFromClipboardFunctionInput(const UNiagaraClipboardFunctionInput& ClipboardFunctionInput);
 
 	NIAGARAEDITOR_API void SetStandardValuesFromClipboardFunctionInputs(const TArray<const UNiagaraClipboardFunctionInput*>& ClipboardFunctionInputs);
 

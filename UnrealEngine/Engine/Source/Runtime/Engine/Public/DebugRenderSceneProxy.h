@@ -34,6 +34,7 @@ public:
 		SolidMesh = 0,
 		WireMesh = 1,
 		SolidAndWireMeshes = 2,
+		Invalid = 3,
 	};
 	ENGINE_API FDebugRenderSceneProxy(const UPrimitiveComponent* InComponent);
 	FDebugRenderSceneProxy(FDebugRenderSceneProxy const&) = default;
@@ -83,11 +84,12 @@ public:
 	/** Struct to hold info about lines to render. */
 	struct FDebugLine
 	{
-		FDebugLine(const FVector &InStart, const FVector &InEnd, const FColor &InColor, float InThickness = 0) :
-		Start(InStart),
-		End(InEnd),
-		Color(InColor),
-		Thickness(InThickness) {}
+		FDebugLine(const FVector &InStart, const FVector &InEnd, const FColor &InColor, float InThickness = 0) 
+			: Start(InStart)
+			, End(InEnd)
+			, Color(InColor)
+			, Thickness(InThickness) 
+		{}
 
 		FVector Start;
 		FVector End;
@@ -100,47 +102,57 @@ public:
 	/** Struct to hold info about boxes to render. */
 	struct FDebugBox
 	{
-		FDebugBox(const FBox& InBox, const FColor& InColor)
-			: Box(InBox), Color(InColor)
-		{
-		}
+		FDebugBox(const FBox& InBox, const FColor& InColor, EDrawType InDrawTypeOverride = EDrawType::Invalid)
+			: Box(InBox)
+			, Color(InColor)
+			, DrawTypeOverride(InDrawTypeOverride)
+		{}
 
-		FDebugBox(const FBox& InBox, const FColor& InColor, const FTransform& InTransform)
-			: Box(InBox), Color(InColor), Transform(InTransform)
-		{
-		}
+		FDebugBox(const FBox& InBox, const FColor& InColor, const FTransform& InTransform, EDrawType InDrawTypeOverride = EDrawType::Invalid)
+			: Box(InBox)
+			, Color(InColor)
+			, Transform(InTransform)
+			, DrawTypeOverride(InDrawTypeOverride)
+		{}
 
 		ENGINE_API void Draw(FPrimitiveDrawInterface* PDI, EDrawType InDrawType, uint32 InDrawAlpha, FMaterialCache& MaterialCache, int32 ViewIndex, FMeshElementCollector& Collector) const;
 
 		FBox Box;
 		FColor Color;
 		FTransform Transform;
+		EDrawType DrawTypeOverride = EDrawType::Invalid;
 	};
 
 	/** Struct to hold info about cylinders to render. */
 	struct FWireCylinder
 	{
-		FWireCylinder(const FVector &InBase, const float InRadius, const float InHalfHeight, const FColor &InColor) :
-		Base(InBase),
-		Radius(InRadius),
-		HalfHeight(InHalfHeight),
-		Color(InColor) {}
+		FWireCylinder(const FVector& InBase, const FVector& InDirection, const float InRadius, const float InHalfHeight, const FColor &InColor, EDrawType InDrawTypeOverride = EDrawType::Invalid)
+			: Base(InBase)
+			, Direction(InDirection)
+			, Radius(InRadius)
+			, HalfHeight(InHalfHeight)
+			, Color(InColor) 
+			, DrawTypeOverride(InDrawTypeOverride)
+		{}
 
 		ENGINE_API void Draw(FPrimitiveDrawInterface* PDI, EDrawType InDrawType, uint32 InDrawAlpha, FMaterialCache& MaterialCache, int32 ViewIndex, FMeshElementCollector& Collector) const;
 
 		FVector Base;
+		FVector Direction;
 		float Radius;
 		float HalfHeight;
 		FColor Color;
+		EDrawType DrawTypeOverride = EDrawType::Invalid;
 	};
 
 	/** Struct to hold info about lined stars to render. */
 	struct FWireStar
 	{
-		FWireStar(const FVector &InPosition, const FColor &InColor, const float &InSize) : 
-		Position(InPosition),
-		Color(InColor),
-		Size(InSize) {}
+		FWireStar(const FVector &InPosition, const FColor &InColor, const float &InSize)
+			: Position(InPosition)
+			, Color(InColor)
+			, Size(InSize) 
+		{}
 
 		ENGINE_API void Draw(FPrimitiveDrawInterface* PDI) const;
 
@@ -152,10 +164,11 @@ public:
 	/** Struct to hold info about arrowed lines to render. */
 	struct FArrowLine
 	{
-		FArrowLine(const FVector &InStart, const FVector &InEnd, const FColor &InColor) : 
-		Start(InStart),
-		End(InEnd),
-		Color(InColor) {}
+		FArrowLine(const FVector &InStart, const FVector &InEnd, const FColor &InColor) 
+			: Start(InStart)
+			, End(InEnd)
+			, Color(InColor) 
+		{}
 
 		ENGINE_API void Draw(FPrimitiveDrawInterface* PDI, const float Mag) const;
 
@@ -167,11 +180,12 @@ public:
 	/** Struct to gold info about dashed lines to render. */
 	struct FDashedLine
 	{
-		FDashedLine(const FVector &InStart, const FVector &InEnd, const FColor &InColor, const float InDashSize) :
-		Start(InStart),
-		End(InEnd),
-		Color(InColor),
-		DashSize(InDashSize) {}
+		FDashedLine(const FVector &InStart, const FVector &InEnd, const FColor &InColor, const float InDashSize) 
+			: Start(InStart)
+			, End(InEnd)
+			, Color(InColor)
+			, DashSize(InDashSize) 
+		{}
 
 		ENGINE_API void Draw(FPrimitiveDrawInterface* PDI) const;
 
@@ -185,26 +199,30 @@ public:
 	struct FSphere
 	{
 		FSphere() {}
-		FSphere(const float& InRadius, const FVector& InLocation, const FLinearColor& InColor) :
-		Radius(InRadius),
-		Location(InLocation),
-		Color(InColor.ToFColor(true)) {}
+		FSphere(const float& InRadius, const FVector& InLocation, const FLinearColor& InColor, EDrawType InDrawTypeOverride = EDrawType::Invalid)
+			: Radius(InRadius)
+			, Location(InLocation)
+			, Color(InColor.ToFColor(true)) 
+			, DrawTypeOverride(InDrawTypeOverride)
+		{}
 
 		ENGINE_API void Draw(FPrimitiveDrawInterface* PDI, EDrawType InDrawType, uint32 InDrawAlpha, FMaterialCache& MaterialCache, int32 ViewIndex, FMeshElementCollector& Collector) const;
 
 		float Radius;
 		FVector Location;
 		FColor Color;
+		EDrawType DrawTypeOverride = EDrawType::Invalid;
 	};
 
 	/** Struct to hold info about texts to render using 3d coordinates */
 	struct FText3d
 	{
 		FText3d() {}
-		FText3d(const FString& InString, const FVector& InLocation, const FLinearColor& InColor) :
-		Text(InString),
-		Location(InLocation),
-		Color(InColor.ToFColor(true)) {}
+		FText3d(const FString& InString, const FVector& InLocation, const FLinearColor& InColor)
+			: Text(InString)
+			, Location(InLocation)
+			, Color(InColor.ToFColor(true)) 
+		{}
 
 		FString Text;
 		FVector Location;
@@ -214,11 +232,13 @@ public:
 	struct FCone
 	{
 		FCone() {}
-		FCone(const FMatrix& InConeToWorld, const float InAngle1, const float InAngle2, const FLinearColor& InColor) :
-			ConeToWorld(InConeToWorld),
-			Angle1(InAngle1),
-			Angle2(InAngle2),
-			Color(InColor.ToFColor(true)) {}
+		FCone(const FMatrix& InConeToWorld, const float InAngle1, const float InAngle2, const FLinearColor& InColor, EDrawType InDrawTypeOverride = EDrawType::Invalid)
+			: ConeToWorld(InConeToWorld)
+			, Angle1(InAngle1)
+			, Angle2(InAngle2)
+			, Color(InColor.ToFColor(true)) 
+			, DrawTypeOverride(InDrawTypeOverride)
+		{}
 
 		ENGINE_API void Draw(FPrimitiveDrawInterface* PDI, EDrawType InDrawType, uint32 InDrawAlpha, FMaterialCache& MaterialCache, int32 ViewIndex, FMeshElementCollector& Collector, TArray<FVector>* VertsCache = nullptr) const;
 
@@ -226,6 +246,7 @@ public:
 		float Angle1;
 		float Angle2;
 		FColor Color;
+		EDrawType DrawTypeOverride = EDrawType::Invalid;
 	};
 
 	struct FMesh
@@ -238,14 +259,16 @@ public:
 	struct FCapsule
 	{
 		FCapsule() {}
-		FCapsule(const FVector& InBase, const float& InRadius, const FVector& x, const FVector& y, const FVector &z, const float& InHalfHeight, const FLinearColor& InColor)
+		FCapsule(const FVector& InBase, const float& InRadius, const FVector& x, const FVector& y, const FVector &z, const float& InHalfHeight, const FLinearColor& InColor, EDrawType InDrawTypeOverride = EDrawType::Invalid)
 			: Radius(InRadius)
 			, Base(InBase)
 			, Color(InColor.ToFColor(true))
 			, HalfHeight(InHalfHeight)
 			, X(x)
 			, Y(y)
-			, Z(z) {}
+			, Z(z) 
+			, DrawTypeOverride(InDrawTypeOverride)
+		{}
 
 		ENGINE_API void Draw(FPrimitiveDrawInterface* PDI, EDrawType InDrawType, uint32 InDrawAlpha, FMaterialCache& MaterialCache, int32 ViewIndex, FMeshElementCollector& Collector) const;
 
@@ -254,6 +277,7 @@ public:
 		FColor Color;
 		float HalfHeight;
 		FVector X, Y, Z; //X, Y, and Z alignment axes to draw along.
+		EDrawType DrawTypeOverride = EDrawType::Invalid;
 	};
 
 	TArray<FDebugLine> Lines;

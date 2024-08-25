@@ -225,64 +225,57 @@ bool FSceneCaptureConfig::operator!=(const FSceneCaptureConfig& Other) const
 
 
 void UE::Geometry::ConfigureSceneCapture(
-	const TUniquePtr<FSceneCapturePhotoSet>& SceneCapture,
+	FSceneCapturePhotoSet& SceneCapture,
 	const TArray<TObjectPtr<AActor>>& Actors,
 	const FSceneCaptureConfig& Options,
 	bool bAllowCancel)
 {
-	if (SceneCapture.IsValid() == false)
-	{
-		ensure(false);
-		return;
-	}
-
 	ForEachCaptureType([&SceneCapture, &Options](ERenderCaptureType CaptureType)
 	{
 		const bool bCaptureTypeEnabled = Options.Flags[CaptureType];
-		SceneCapture->SetCaptureTypeEnabled(CaptureType, bCaptureTypeEnabled);
+		SceneCapture.SetCaptureTypeEnabled(CaptureType, bCaptureTypeEnabled);
 
 		FRenderCaptureConfig Config;
 		Config.bAntiAliasing = (CaptureType == ERenderCaptureType::DeviceDepth ? false : Options.bAntiAliasing);
-		SceneCapture->SetCaptureConfig(CaptureType, Config);
+		SceneCapture.SetCaptureConfig(CaptureType, Config);
 	});
 
 	UWorld* World = Actors.IsEmpty() ? nullptr : Actors[0]->GetWorld();
 
-	SceneCapture->SetCaptureSceneActors(World, Actors);
+	SceneCapture.SetCaptureSceneActors(World, Actors);
 
 	const TArray<FSpatialPhotoParams> SpatialParams = ComputeStandardExteriorSpatialPhotoParameters(
 		World,
 		Actors,
+		TArray<UActorComponent*>(),
 		FImageDimensions(Options.RenderCaptureImageSize, Options.RenderCaptureImageSize),
 		Options.FieldOfViewDegrees,
 		Options.NearPlaneDist,
 		true, true, true, true, true);
 
-	SceneCapture->SetSpatialPhotoParams(SpatialParams);
+	SceneCapture.SetSpatialPhotoParams(SpatialParams);
 
-	SceneCapture->SetAllowCancel(bAllowCancel);
+	SceneCapture.SetAllowCancel(bAllowCancel);
 }
 
 
 
 UE::Geometry::FRenderCaptureTypeFlags UE::Geometry::UpdateSceneCapture(
-	const TUniquePtr<FSceneCapturePhotoSet>& SceneCapture,
+	FSceneCapturePhotoSet& SceneCapture,
 	const TArray<TObjectPtr<AActor>>& Actors,
 	const FSceneCaptureConfig& DesiredConfig,
 	bool bAllowCancel)
 {
-	check(SceneCapture.IsValid());
-
-	const FSceneCapturePhotoSet::FStatus PreConfigStatus = SceneCapture->GetSceneCaptureStatus();
+	const FSceneCapturePhotoSet::FStatus PreConfigStatus = SceneCapture.GetSceneCaptureStatus();
 	ConfigureSceneCapture(SceneCapture, Actors, DesiredConfig, true);
-	const FSceneCapturePhotoSet::FStatus PreComputeStatus = SceneCapture->GetSceneCaptureStatus();
-	SceneCapture->Compute();
-	const FSceneCapturePhotoSet::FStatus PostComputeStatus = SceneCapture->GetSceneCaptureStatus();
+	const FSceneCapturePhotoSet::FStatus PreComputeStatus = SceneCapture.GetSceneCaptureStatus();
+	SceneCapture.Compute();
+	const FSceneCapturePhotoSet::FStatus PostComputeStatus = SceneCapture.GetSceneCaptureStatus();
 
 	const FSceneCaptureConfig AchievedConfig = GetSceneCaptureConfig(SceneCapture);
 
 	// DesiredConfig and AchievedConfig mismatch iff the SceneCapture was cancelled. Also, the mismatch should only be in the Flags member
-	ensure(SceneCapture->Cancelled() == (AchievedConfig != DesiredConfig));
+	ensure(SceneCapture.Cancelled() == (AchievedConfig != DesiredConfig));
 	ensure(AchievedConfig.RenderCaptureImageSize == DesiredConfig.RenderCaptureImageSize);
 	ensure(AchievedConfig.FieldOfViewDegrees == DesiredConfig.FieldOfViewDegrees);
 	ensure(AchievedConfig.bAntiAliasing == DesiredConfig.bAntiAliasing);
@@ -373,17 +366,17 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 // Return the SceneCapture configuration, the Flags in the returned struct are set if the corresponding capture type is computed
 FSceneCaptureConfig UE::Geometry::GetSceneCaptureConfig(
-	const TUniquePtr<FSceneCapturePhotoSet>& SceneCapture,
+	const FSceneCapturePhotoSet& SceneCapture,
 	const FSceneCapturePhotoSet::ECaptureTypeStatus QueryStatus)
 {
 	FSceneCaptureConfig Result;
 
 	ForEachCaptureType([&SceneCapture, &QueryStatus, &Result](ERenderCaptureType CaptureType)
 	{
-		Result.Flags[CaptureType] = (SceneCapture->GetCaptureTypeStatus(CaptureType) == QueryStatus);
+		Result.Flags[CaptureType] = (SceneCapture.GetCaptureTypeStatus(CaptureType) == QueryStatus);
 	});
 
-	const TArray<FSpatialPhotoParams> SpatialParams = SceneCapture->GetSpatialPhotoParams();
+	const TArray<FSpatialPhotoParams> SpatialParams = SceneCapture.GetSpatialPhotoParams();
 
 	if (!SpatialParams.IsEmpty())
 	{
@@ -393,16 +386,16 @@ FSceneCaptureConfig UE::Geometry::GetSceneCaptureConfig(
 		Result.NearPlaneDist = SpatialParams[0].NearPlaneDist;
 
 		const bool Values[] = {
-			SceneCapture->GetCaptureConfig(ERenderCaptureType::BaseColor).bAntiAliasing,
-			SceneCapture->GetCaptureConfig(ERenderCaptureType::WorldNormal).bAntiAliasing,
-			SceneCapture->GetCaptureConfig(ERenderCaptureType::Metallic).bAntiAliasing,
-			SceneCapture->GetCaptureConfig(ERenderCaptureType::Roughness).bAntiAliasing,
-			SceneCapture->GetCaptureConfig(ERenderCaptureType::Specular).bAntiAliasing,
-			SceneCapture->GetCaptureConfig(ERenderCaptureType::CombinedMRS).bAntiAliasing,
-			SceneCapture->GetCaptureConfig(ERenderCaptureType::Emissive).bAntiAliasing,
-			SceneCapture->GetCaptureConfig(ERenderCaptureType::Opacity).bAntiAliasing,
-			SceneCapture->GetCaptureConfig(ERenderCaptureType::SubsurfaceColor).bAntiAliasing,
-			SceneCapture->GetCaptureConfig(ERenderCaptureType::DeviceDepth).bAntiAliasing,
+			SceneCapture.GetCaptureConfig(ERenderCaptureType::BaseColor).bAntiAliasing,
+			SceneCapture.GetCaptureConfig(ERenderCaptureType::WorldNormal).bAntiAliasing,
+			SceneCapture.GetCaptureConfig(ERenderCaptureType::Metallic).bAntiAliasing,
+			SceneCapture.GetCaptureConfig(ERenderCaptureType::Roughness).bAntiAliasing,
+			SceneCapture.GetCaptureConfig(ERenderCaptureType::Specular).bAntiAliasing,
+			SceneCapture.GetCaptureConfig(ERenderCaptureType::CombinedMRS).bAntiAliasing,
+			SceneCapture.GetCaptureConfig(ERenderCaptureType::Emissive).bAntiAliasing,
+			SceneCapture.GetCaptureConfig(ERenderCaptureType::Opacity).bAntiAliasing,
+			SceneCapture.GetCaptureConfig(ERenderCaptureType::SubsurfaceColor).bAntiAliasing,
+			SceneCapture.GetCaptureConfig(ERenderCaptureType::DeviceDepth).bAntiAliasing,
 		};
 		Result.bAntiAliasing = Algo::AnyOf(Values);
 	}
@@ -705,15 +698,15 @@ TUniquePtr<FMeshMapBaker> UE::Geometry::MakeRenderCaptureBaker(
 PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 
-void UE::Geometry::GetTexturesFromRenderCaptureBaker(const TUniquePtr<FMeshMapBaker>& Baker, FRenderCaptureTextures& TexturesOut)
+void UE::Geometry::GetTexturesFromRenderCaptureBaker(FMeshMapBaker& Baker, FRenderCaptureTextures& TexturesOut)
 {
 	// We do this to defer work I guess, it was like this in the original ApproximateActors implementation :DeferredPopulateSourceData 
 	constexpr bool bPopulateSourceData = false;
 
-	const int32 NumEval = Baker->NumEvaluators();
+	const int32 NumEval = Baker.NumEvaluators();
 	for (int32 EvalIdx = 0; EvalIdx < NumEval; ++EvalIdx)
 	{
-		FMeshMapEvaluator* BaseEval = Baker->GetEvaluator(EvalIdx);
+		FMeshMapEvaluator* BaseEval = Baker.GetEvaluator(EvalIdx);
 		check(BaseEval->DataLayout().Num() == 1);
 		switch (BaseEval->DataLayout()[0])
 		{
@@ -721,7 +714,7 @@ void UE::Geometry::GetTexturesFromRenderCaptureBaker(const TUniquePtr<FMeshMapBa
 
 			{
 				FRenderCaptureMapEvaluator<FVector4f>* Eval = static_cast<FRenderCaptureMapEvaluator<FVector4f>*>(BaseEval);
-				TUniquePtr<TImageBuilder<FVector4f>> ImageBuilder = MoveTemp(Baker->GetBakeResults(EvalIdx)[0]);
+				TUniquePtr<TImageBuilder<FVector4f>> ImageBuilder = MoveTemp(Baker.GetBakeResults(EvalIdx)[0]);
 				
 				if (ensure(ImageBuilder.IsValid()) == false) return;
 
@@ -826,7 +819,7 @@ void UE::Geometry::GetTexturesFromRenderCaptureBaker(const TUniquePtr<FMeshMapBa
 
 			{
 				FRenderCaptureMapEvaluator<FVector3f>* Eval = static_cast<FRenderCaptureMapEvaluator<FVector3f>*>(BaseEval);
-				TUniquePtr<TImageBuilder<FVector4f>> ImageBuilder = MoveTemp(Baker->GetBakeResults(EvalIdx)[0]);
+				TUniquePtr<TImageBuilder<FVector4f>> ImageBuilder = MoveTemp(Baker.GetBakeResults(EvalIdx)[0]);
 				
 				if (ensure(ImageBuilder.IsValid()) == false) return;
 				if (ensure(Eval->Channel == ERenderCaptureChannel::WorldNormal) == false) return;
@@ -846,5 +839,40 @@ void UE::Geometry::GetTexturesFromRenderCaptureBaker(const TUniquePtr<FMeshMapBa
 	}
 }
 
+
+
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+// Everything that follows is deprecated 
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+void UE::Geometry::ConfigureSceneCapture(
+	const TUniquePtr<FSceneCapturePhotoSet>& SceneCapture,
+	const TArray<TObjectPtr<AActor>>& Actors,
+	const FSceneCaptureConfig& Options,
+	bool bAllowCancel)
+{
+	return ConfigureSceneCapture(*SceneCapture, Actors, Options, bAllowCancel);
+}
+
+UE::Geometry::FRenderCaptureTypeFlags UE::Geometry::UpdateSceneCapture(
+	const TUniquePtr<FSceneCapturePhotoSet>& SceneCapture,
+	const TArray<TObjectPtr<AActor>>& Actors,
+	const FSceneCaptureConfig& DesiredConfig,
+	bool bAllowCancel)
+{
+	return UpdateSceneCapture(*SceneCapture, Actors, DesiredConfig, bAllowCancel);
+}
+
+FSceneCaptureConfig UE::Geometry::GetSceneCaptureConfig(
+	const TUniquePtr<FSceneCapturePhotoSet>& SceneCapture,
+	const FSceneCapturePhotoSet::ECaptureTypeStatus QueryStatus)
+{
+	return GetSceneCaptureConfig(*SceneCapture, QueryStatus);
+}
+
+void UE::Geometry::GetTexturesFromRenderCaptureBaker(const TUniquePtr<FMeshMapBaker>& Baker, FRenderCaptureTextures& TexturesOut)
+{
+	GetTexturesFromRenderCaptureBaker(*Baker, TexturesOut);
+}
 
 #undef LOCTEXT_NAMESPACE

@@ -20,7 +20,6 @@ namespace UnrealBuildTool.Rules
 					"Engine",
 					"GeometryCache",
 					"InputCore",
-					"InterchangePipelines",
 					"JsonUtilities",
 					"LevelSequence",
 					"MainFrame",

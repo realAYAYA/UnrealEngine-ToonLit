@@ -27,15 +27,18 @@ public:
 	bool AddAlternative();
 
 	TOptional<FAutomationScreenshotMetadata> GetMetadata();
+	FString GetName();
 
 private:
 
 	bool RemoveExistingApproved();
+	void TryLoadMetadata();
 
 private:
 	bool bComplete;
 
 	TOptional<FAutomationScreenshotMetadata> Metadata;
+	FString Name;
 
 	struct FFileMapping
 	{

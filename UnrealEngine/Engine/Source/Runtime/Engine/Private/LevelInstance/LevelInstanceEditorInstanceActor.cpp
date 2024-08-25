@@ -59,6 +59,8 @@ ALevelInstanceEditorInstanceActor* ALevelInstanceEditorInstanceActor::Create(ILe
 		}
 	}
 
+	InstanceActor->PushSelectionToProxies();
+
 	return InstanceActor;
 }
 

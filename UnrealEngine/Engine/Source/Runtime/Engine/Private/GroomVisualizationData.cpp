@@ -192,6 +192,7 @@ static void AddVisualizationMode(
 
 void FGroomVisualizationData::Initialize()
 {
+	UE::TScopeLock Lock(Mutex);
 	if (!bIsInitialized && IsGroomEnabled())
 	{
 		AddVisualizationMode(ModeMap, true, EGroomViewMode::None,						LOCTEXT("NoneDebug", "None"),								LOCTEXT("NoneDebugDesc", "No debug mode"));

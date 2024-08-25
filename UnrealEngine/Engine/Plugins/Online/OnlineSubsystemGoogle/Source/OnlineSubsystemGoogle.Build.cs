@@ -22,12 +22,9 @@ public class OnlineSubsystemGoogle : ModuleRules
 			new string[] { 
 				"Core",
 				"CoreOnline",
-				"CoreUObject",
 				"ApplicationCore",
 				"HTTP",
-				"ImageCore",
 				"Json",
-				"Sockets",
 				"OnlineSubsystem", 
 			}
 			);
@@ -40,24 +37,49 @@ public class OnlineSubsystemGoogle : ModuleRules
 			// These are iOS system libraries that Google depends on
 			PublicFrameworks.AddRange(
 			new string[] {
+				"CoreGraphics",
+    			"CoreText",
+    			"Foundation",
+    			"LocalAuthentication",
 				"SafariServices",
-				"SystemConfiguration"
+				"Security",
 			});
+
+			PublicWeakFrameworks.Add("AuthenticationServices");
+
+			PCHUsage = ModuleRules.PCHUsageMode.NoPCHs;
+			bEnableObjCAutomaticReferenceCounting = true;
 
 			PublicAdditionalFrameworks.Add(
 			new Framework(
 				"GoogleSignIn",
 				"ThirdParty/IOS/GoogleSignInSDK/GoogleSignIn.embeddedframework.zip",
-				"GoogleSignIn.bundle"
-			)
+				Framework.FrameworkMode.LinkAndCopy)
 			);
 
 			PublicAdditionalFrameworks.Add(
 			new Framework(
-				"GoogleSignInDependencies",
-				"ThirdParty/IOS/GoogleSignInSDK/GoogleSignInDependencies.embeddedframework.zip"
-			)
+				"AppAuth",
+				"ThirdParty/IOS/GoogleSignInSDK/AppAuth.embeddedframework.zip",
+				Framework.FrameworkMode.LinkAndCopy)
 			);
+
+			PublicAdditionalFrameworks.Add(
+			new Framework(
+				"GTMAppAuth",
+				"ThirdParty/IOS/GoogleSignInSDK/GTMAppAuth.embeddedframework.zip",
+				Framework.FrameworkMode.LinkAndCopy)
+			);
+
+			PublicAdditionalFrameworks.Add(
+			new Framework(
+				"GTMSessionFetcher",
+				"ThirdParty/IOS/GoogleSignInSDK/GTMSessionFetcher.embeddedframework.zip",
+				Framework.FrameworkMode.LinkAndCopy)
+			);
+
+			string PluginPath = Utils.MakePathRelativeTo(ModuleDirectory, Target.RelativeEnginePath);
+			AdditionalPropertiesForReceipt.Add("IOSPlugin", Path.Combine(PluginPath, "OnlineSubsystemGoogle_IOS_UPL.xml"));
 		}
 		else if (Target.Platform == UnrealTargetPlatform.Android)
 		{
@@ -68,7 +90,7 @@ public class OnlineSubsystemGoogle : ModuleRules
 			);
 
 			string PluginPath = Utils.MakePathRelativeTo(ModuleDirectory, Target.RelativeEnginePath);
-			AdditionalPropertiesForReceipt.Add("AndroidPlugin", Path.Combine(PluginPath, "OnlineSubsystemGoogle_UPL.xml"));
+			AdditionalPropertiesForReceipt.Add("AndroidPlugin", Path.Combine(PluginPath, "OnlineSubsystemGoogle_Android_UPL.xml"));
 
 			PrivateIncludePaths.Add("Private/Android");
 		}

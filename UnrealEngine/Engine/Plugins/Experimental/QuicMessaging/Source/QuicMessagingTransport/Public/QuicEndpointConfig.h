@@ -2,6 +2,10 @@
 
 #pragma once
 
+#include "HAL/Platform.h"
+#include "Interfaces/IPv4/IPv4Endpoint.h"
+#include "QuicFlags.h"
+
 struct FIPv4Endpoint;
 struct FGuid;
 enum class EEncryptionMode : uint8;

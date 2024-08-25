@@ -5,7 +5,6 @@
 #include "CoreTypes.h"
 #include "Misc/Timespan.h"
 #include "Misc/AssertionMacros.h"
-#include "Windows/WindowsHWrapper.h"
 #include "Windows/AllowWindowsPlatformTypes.h"
 
 class FWindowsSemaphore

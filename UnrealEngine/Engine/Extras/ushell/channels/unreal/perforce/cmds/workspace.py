@@ -57,8 +57,11 @@ def _populate_ue_branch_engine(depot_path, dry_run):
         print(*minimal_sync_specs, sep="\n")
         return
 
-    for item in P4.sync(*minimal_sync_specs):
+    count = 0
+    for item in P4.sync(*minimal_sync_specs).read(on_error=False):
+        count += 1
         print(item.depotFile)
+    print("synced:", count)
 
 #-------------------------------------------------------------------------------
 def _populate_ue_branch_project(depot_path, dry_run):
@@ -90,7 +93,7 @@ def _populate_ue_branch_project(depot_path, dry_run):
 
 #-------------------------------------------------------------------------------
 class Workspace(flow.cmd.Cmd):
-    """ Creates a new workspace """
+    """ Creates a new workspace and sync the bare minimum. """
     localdir  = flow.cmd.Arg(str, "Directory to create the new workspace in")
     depotpath = flow.cmd.Arg("", "Depot path to map the workspace to")
     name      = flow.cmd.Opt("", "The name of the workspace to use")
@@ -178,3 +181,25 @@ class Workspace(flow.cmd.Cmd):
             _populate_ue_branch(depot_path, self.args.dryrun)
         else:
             print("New clientspec does not appear to be an Unreal Engine branch")
+
+
+
+#-------------------------------------------------------------------------------
+class MinSync(flow.cmd.Cmd):
+    """ Syncs just enough to make a branch functional with ushell """
+    dryrun = flow.cmd.Opt(False, "Try but don't try too hard")
+
+    def main(self):
+        p4utils.login()
+
+        self.print_info("Perforce environment")
+        info = P4.info().run()
+        depot_path = f"//{info.clientName}"
+
+        print("Cwd:", os.getcwd())
+        print("Client:", info.clientName)
+        print("Root:", depot_path)
+
+        self.print_info("Syncing")
+        depot_path = PurePosixPath(depot_path)
+        _populate_ue_branch(depot_path, self.args.dryrun)

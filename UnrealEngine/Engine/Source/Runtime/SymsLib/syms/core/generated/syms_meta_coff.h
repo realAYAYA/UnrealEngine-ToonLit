@@ -93,6 +93,9 @@ SYMS_CoffSectionFlag_LNK_INFO = (1 << 9),
 SYMS_CoffSectionFlag_LNK_REMOVE = (1 << 11),
 SYMS_CoffSectionFlag_LNK_COMDAT = (1 << 12),
 SYMS_CoffSectionFlag_GPREL = (1 << 15),
+SYMS_CoffSectionFlag_MEM_16BIT = (1 << 17),
+SYMS_CoffSectionFlag_MEM_LOCKED = (1 << 18),
+SYMS_CoffSectionFlag_MEM_PRELOAD = (1 << 19),
 SYMS_CoffSectionFlag_ALIGN_SHIFT = 20, SYMS_CoffSectionFlag_ALIGN_MASK = 0xf,
 SYMS_CoffSectionFlag_LNK_NRELOC_OVFL = (1 << 24),
 SYMS_CoffSectionFlag_MEM_DISCARDABLE = (1 << 25),
@@ -104,18 +107,18 @@ SYMS_CoffSectionFlag_MEM_READ = (1 << 30),
 SYMS_CoffSectionFlag_MEM_WRITE = (1 << 31),
 };
 #define SYMS_CoffSectionFlags_Extract_ALIGN(f) (SYMS_CoffSectionAlign)(((f) >> SYMS_CoffSectionFlag_ALIGN_SHIFT) & SYMS_CoffSectionFlag_ALIGN_MASK)
-typedef struct SYMS_CoffSection{
+typedef struct SYMS_CoffSectionHeader{
 SYMS_U8 name[8];
 SYMS_U32 virt_size;
 SYMS_U32 virt_off;
 SYMS_U32 file_size;
 SYMS_U32 file_off;
-SYMS_U32 relocs_file_offset;
-SYMS_U32 line_nums_file_offset;
-SYMS_U16 relocs_count;
-SYMS_U16 line_nums_count;
+SYMS_U32 relocs_file_off;
+SYMS_U32 lines_file_off;
+SYMS_U16 reloc_count;
+SYMS_U16 line_count;
 SYMS_CoffSectionFlags flags;
-} SYMS_CoffSection;
+} SYMS_CoffSectionHeader;
 typedef SYMS_U16 SYMS_CoffRelocTypeX64;
 enum{
 SYMS_CoffRelocTypeX64_ABS = 0x0,
@@ -200,7 +203,24 @@ SYMS_CoffRelocTypeARM_COUNT = 20
 };
 typedef SYMS_U16 SYMS_CoffRelocTypeARM64;
 enum{
-SYMS_CoffRelocTypeARM64_COUNT = 0
+SYMS_CoffRelocTypeARM64_ABS = 0x0,
+SYMS_CoffRelocTypeARM64_ADDR32 = 0x1,
+SYMS_CoffRelocTypeARM64_ADDR32NB = 0x2,
+SYMS_CoffRelocTypeARM64_BRANCH26 = 0x3,
+SYMS_CoffRelocTypeARM64_PAGEBASE_REL21 = 0x4,
+SYMS_CoffRelocTypeARM64_REL21 = 0x5,
+SYMS_CoffRelocTypeARM64_PAGEOFFSET_12A = 0x6,
+SYMS_CoffRelocTypeARM64_SECREL = 0x8,
+SYMS_CoffRelocTypeARM64_SECREL_LOW12A = 0x9,
+SYMS_CoffRelocTypeARM64_SECREL_HIGH12A = 0xA,
+SYMS_CoffRelocTypeARM64_SECREL_LOW12L = 0xB,
+SYMS_CoffRelocTypeARM64_TOKEN = 0xC,
+SYMS_CoffRelocTypeARM64_SECTION = 0xD,
+SYMS_CoffRelocTypeARM64_ADDR64 = 0xE,
+SYMS_CoffRelocTypeARM64_BRANCH19 = 0xF,
+SYMS_CoffRelocTypeARM64_BRANCH14 = 0x10,
+SYMS_CoffRelocTypeARM64_REL32 = 0x11,
+SYMS_CoffRelocTypeARM64_COUNT = 17
 };
 typedef SYMS_U8 SYMS_CoffSymType;
 enum{
@@ -290,6 +310,23 @@ SYMS_CoffImportHeaderNameType_NAME = 1,
 SYMS_CoffImportHeaderNameType_NAME_NOPREFIX = 2,
 SYMS_CoffImportHeaderNameType_UNDECORATE = 3,
 SYMS_CoffImportHeaderNameType_COUNT = 4
+};
+typedef SYMS_U8 SYMS_CoffComdatSelectType;
+enum{
+SYMS_CoffComdatSelectType_NULL = 0,
+//  Only one symbol is allowed to be in global symbol table, otherwise multiply defintion error is thrown.
+SYMS_CoffComdatSelectType_NODUPLICATES = 1,
+//  Select any symbol, even if there are multiple definitions. (we default to first declaration)
+SYMS_CoffComdatSelectType_ANY = 2,
+//  Sections that symbols reference must match in size, otherwise multiply definition error is thrown.
+SYMS_CoffComdatSelectType_SAME_SIZE = 3,
+//  Sections that symbols reference must have identical checksums, otherwise multiply defintion error is thrown.
+SYMS_CoffComdatSelectType_EXACT_MATCH = 4,
+//  Symbols with associative type form a chain of sections are related to each other. (next link is indicated in SYMS_CoffSecDef in 'number')
+SYMS_CoffComdatSelectType_ASSOCIATIVE = 5,
+//  Linker selects section with largest size.
+SYMS_CoffComdatSelectType_LARGEST = 6,
+SYMS_CoffComdatSelectType_COUNT = 7
 };
 #pragma pack(pop)
 

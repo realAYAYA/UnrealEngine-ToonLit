@@ -8,99 +8,99 @@ using EpicGames.Core;
 
 namespace Jupiter.Implementation
 {
-    [TypeConverter(typeof(ContentIdTypeConverter))]
-    public class ContentId : ContentHash, IEquatable<ContentId>
-    {
-        public ContentId(byte[] identifier) : base(identifier)
-        {
-        }
+	[TypeConverter(typeof(ContentIdTypeConverter))]
+	public class ContentId : ContentHash, IEquatable<ContentId>
+	{
+		public ContentId(byte[] identifier) : base(identifier)
+		{
+		}
 
-        [JsonConstructor]
-        public ContentId(string identifier) : base(identifier)
-        {
+		[JsonConstructor]
+		public ContentId(string identifier) : base(identifier)
+		{
 
-        }
+		}
 
-        public override int GetHashCode()
-        {
-            return Comparer.GetHashCode(Identifier);
-        }
+		public override int GetHashCode()
+		{
+			return Comparer.GetHashCode(Identifier);
+		}
 
-        public bool Equals(ContentId? other)
-        {
-            if (other == null)
-            {
-                return false;
-            }
+		public bool Equals(ContentId? other)
+		{
+			if (other == null)
+			{
+				return false;
+			}
 
-            return Comparer.Equals(Identifier, other.Identifier);
-        }
+			return Comparer.Equals(Identifier, other.Identifier);
+		}
 
-        public override bool Equals(object? obj)
-        {
-            if (ReferenceEquals(null, obj))
-            {
-                return false;
-            }
+		public override bool Equals(object? obj)
+		{
+			if (ReferenceEquals(null, obj))
+			{
+				return false;
+			}
 
-            if (ReferenceEquals(this, obj))
-            {
-                return true;
-            }
+			if (ReferenceEquals(this, obj))
+			{
+				return true;
+			}
 
-            if (obj.GetType() != GetType())
-            {
-                return false;
-            }
+			if (obj.GetType() != GetType())
+			{
+				return false;
+			}
 
-            return Equals((ContentId) obj);
-        }
+			return Equals((ContentId) obj);
+		}
 
-        public static ContentId FromContentHash(ContentHash contentHash)
-        {
-            return new ContentId(contentHash.HashData);
-        }
+		public static ContentId FromContentHash(ContentHash contentHash)
+		{
+			return new ContentId(contentHash.HashData);
+		}
 
-        public static ContentId FromBlobIdentifier(BlobIdentifier blobIdentifier)
-        {
-            return new ContentId(blobIdentifier.HashData);
-        }
+		public static ContentId FromBlobIdentifier(BlobId blobIdentifier)
+		{
+			return new ContentId(blobIdentifier.HashData);
+		}
 
-        public BlobIdentifier AsBlobIdentifier()
-        {
-            return new BlobIdentifier(HashData);
-        }
+		public BlobId AsBlobIdentifier()
+		{
+			return new BlobId(HashData);
+		}
 
-        public static ContentId FromIoHash(IoHash ioHash)
-        {
-            return new ContentId(ioHash.ToByteArray());
-        }
+		public static ContentId FromIoHash(IoHash ioHash)
+		{
+			return new ContentId(ioHash.ToByteArray());
+		}
 
-        public IoHash AsIoHash()
-        {
-            return new IoHash(HashData);
-        }
-    }
+		public IoHash AsIoHash()
+		{
+			return new IoHash(HashData);
+		}
+	}
 
-    public class ContentIdTypeConverter : TypeConverter
-    {
-        public override bool CanConvertFrom(ITypeDescriptorContext? context, Type sourceType)
-        {  
-            if (sourceType == typeof(string))  
-            {  
-                return true;
-            }  
-            return base.CanConvertFrom(context, sourceType);
-        }  
+	public class ContentIdTypeConverter : TypeConverter
+	{
+		public override bool CanConvertFrom(ITypeDescriptorContext? context, Type sourceType)
+		{  
+			if (sourceType == typeof(string))  
+			{  
+				return true;
+			}  
+			return base.CanConvertFrom(context, sourceType);
+		}  
   
-        public override object? ConvertFrom(ITypeDescriptorContext? context, CultureInfo? culture, object value)  
-        {
-            if (value is string s)
-            {
-                return new ContentId(s);
-            }
+		public override object? ConvertFrom(ITypeDescriptorContext? context, CultureInfo? culture, object value)  
+		{
+			if (value is string s)
+			{
+				return new ContentId(s);
+			}
 
-            return base.ConvertFrom(context, culture, value);  
-        }  
-    }
+			return base.ConvertFrom(context, culture, value);  
+		}  
+	}
 }

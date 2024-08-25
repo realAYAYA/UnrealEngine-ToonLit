@@ -6,7 +6,7 @@
 #include "../MonteCarlo.ush"
 #include "../SceneTextureParameters.ush"
 #include "../ScreenSpaceDenoise/SSDPublic.ush"
-#include "../Strata/Strata.ush"
+#include "../Substrate/Substrate.ush"
 
 // Generate vector truncation warnings to errors.
 #pragma warning(error: 3206)
@@ -70,21 +70,21 @@ void ScreenSpaceReflectionsStencilPS(
 {
 	float2 UV = SvPosition.xy * View.BufferSizeAndInvSize.zw;
 	
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 
 	uint2 PixelCoord = SvPosition.xy;
-	const FStrataTopLayerData TopLayerData = StrataUnpackTopLayerData(Strata.TopLayerTexture.Load(uint3(PixelCoord, 0)));
+	const FSubstrateTopLayerData TopLayerData = SubstrateUnpackTopLayerData(Substrate.TopLayerTexture.Load(uint3(PixelCoord, 0)));
 
 	const float Roughness = TopLayerData.Roughness;
-	const bool bNoMaterial = !IsStrataMaterial(TopLayerData);
+	const bool bNoMaterial = !IsSubstrateMaterial(TopLayerData);
 
-#else // STRATA_ENABLED
+#else // SUBSTRATE_ENABLED
 
 	FGBufferData GBuffer = GetGBufferDataFromSceneTextures(UV);
 	const float Roughness = GetRoughness(GBuffer);
 	const bool bNoMaterial = GBuffer.ShadingModelID == 0;
 
-#endif // STRATA_ENABLED
+#endif // SUBSTRATE_ENABLED
 
 	const float RoughnessFade = GetRoughnessFade(Roughness);
 
@@ -126,7 +126,7 @@ void ScreenSpaceReflections(
 		OutClosestHitDistance = -2.0;
 	#endif
 
-#if STRATA_ENABLED
+#if SUBSTRATE_ENABLED
 
 	uint2 PixelCoord = SvPosition.xy;
 
@@ -134,30 +134,30 @@ void ScreenSpaceReflections(
 	float Roughness = 0.0;
 	bool bNoMaterial = true;
 
-	const FStrataTopLayerData TopLayerData = StrataUnpackTopLayerData(Strata.TopLayerTexture.Load(uint3(PixelCoord, 0)));
+	const FSubstrateTopLayerData TopLayerData = SubstrateUnpackTopLayerData(Substrate.TopLayerTexture.Load(uint3(PixelCoord, 0)));
 
 	// For now, SSR is only used to trace the top material layer.
 	N = TopLayerData.WorldNormal;
 	Roughness = TopLayerData.Roughness;
-	bNoMaterial = ShouldReflectOnlyWater ? !IsSingleLayerWaterMaterial(TopLayerData) : !IsStrataMaterial(TopLayerData);
+	bNoMaterial = ShouldReflectOnlyWater ? !IsSingleLayerWaterMaterial(TopLayerData) : !IsSubstrateMaterial(TopLayerData);
 
 	float DeviceZ = SampleDeviceZFromSceneTextures(UV);
 	float SceneDepth = ConvertFromDeviceZ(DeviceZ);
 
 	const float3 PositionTranslatedWorld = mul(float4(GetScreenPositionForProjectionType(ScreenPos, SceneDepth), SceneDepth, 1), View.ScreenToTranslatedWorld).xyz;
-	const float3 V = normalize(View.TranslatedWorldCameraOrigin - PositionTranslatedWorld);
+	const float3 V = -GetCameraVectorFromTranslatedWorldPosition(PositionTranslatedWorld);
 
-	// STRATA_TODO Handle anisotropy using ModifyGGXAnisotropicNormalRoughness or similar approach. 
+	// SUBSTRATE_TODO Handle anisotropy using ModifyGGXAnisotropicNormalRoughness or similar approach. 
 	// Although the pass will be more expenssive if reading the material data itself, so this will need to be carefully measured on console.
 
-#else // STRATA_ENABLED
+#else // SUBSTRATE_ENABLED
 
 	FGBufferData GBuffer = GetGBufferDataFromSceneTextures(UV);
 
 	float3 N = GBuffer.WorldNormal;
 	const float SceneDepth = GBuffer.Depth;
 	const float3 PositionTranslatedWorld = mul(float4(GetScreenPositionForProjectionType(ScreenPos, SceneDepth), SceneDepth, 1), View.ScreenToTranslatedWorld).xyz;
-	const float3 V = normalize(View.TranslatedWorldCameraOrigin - PositionTranslatedWorld);
+	const float3 V = -GetCameraVectorFromTranslatedWorldPosition(PositionTranslatedWorld);
 
 #if SUPPORTS_ANISOTROPIC_MATERIALS
 	// We do not need to execute ModifyGGXAnisotropicNormalRoughness in order to handle anisotropy on clear coat material.
@@ -172,7 +172,7 @@ void ScreenSpaceReflections(
 	float Roughness = GetRoughness(GBuffer);
 	const bool bNoMaterial = GBuffer.ShadingModelID == 0;
 
-#endif // STRATA_ENABLED
+#endif // SUBSTRATE_ENABLED
 
 	float RoughnessFade = GetRoughnessFade(Roughness);
 
@@ -189,7 +189,7 @@ void ScreenSpaceReflections(
 
 	OutColor = lerp(float4(1, 0, 0, 1), float4(1, 1 ,0, 1), PatternMask) * 0.2f;
 	return;
-#endif
+#else
 
 	float a = Roughness * Roughness;
 	float a2 = a * a;
@@ -416,6 +416,7 @@ void ScreenSpaceReflections(
 			sqrt(ClosestHitDistanceSqr));
 	}
 	#endif
+#endif // SSR_QUALITY == 0
 }
 
 void ScreenSpaceReflectionsPS(
@@ -433,4 +434,27 @@ void ScreenSpaceReflectionsPS(
 	);
 }
 
+void VisualizeTiledScreenSpaceReflectionsPS(
+	float4 SvPosition : SV_POSITION
+	, out float4 OutColor : SV_Target0
+#if SSR_OUTPUT_FOR_DENOISER
+	, out float4 OutClosestHitDistance : SV_Target1
+#endif
+)
+{
+	ScreenSpaceReflections(SvPosition, OutColor
+#if SSR_OUTPUT_FOR_DENOISER
+		, OutClosestHitDistance
+#endif
+	);
+
+	bool bVisualizeSSRTile = (View.FrameNumber / 30u) % 2u;
+	if (bVisualizeSSRTile)
+	{
+		OutColor = float4(8.0f * View.PreExposure, OutColor.y, OutColor.z, 1.0f);
+#if SSR_OUTPUT_FOR_DENOISER
+		OutClosestHitDistance = 2.0f;
+#endif
+	}
+}
 

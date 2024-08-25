@@ -1,14 +1,10 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using System;
 using System.Net;
-using System.Net.Http;
 using System.Net.Http.Headers;
-using System.Net.Security;
 using System.Net.Http.Json;
+using System.Net.Security;
 using System.Net.Sockets;
-using System.Threading;
-using System.Threading.Tasks;
 using Grpc.Core;
 using Grpc.Core.Interceptors;
 using Grpc.Net.Client;
@@ -62,7 +58,7 @@ namespace Horde.Agent.Services
 		{
 			return CreateGrpcChannelAsync(_serverProfile.Token, cancellationToken);
 		}
-		
+
 		/// <summary>
 		/// Create a GRPC channel with the given bearer token
 		/// </summary>
@@ -86,7 +82,7 @@ namespace Horde.Agent.Services
 						ips = await Dns.GetHostAddressesAsync(context.DnsEndPoint.Host, connectCt);
 					}
 
-					IPEndPoint ipEndpoint = new (ips[0], context.DnsEndPoint.Port);
+					IPEndPoint ipEndpoint = new(ips[0], context.DnsEndPoint.Port);
 					using (IScope _ = GlobalTracer.Instance.BuildSpan("TcpConnect").StartActive())
 					{
 						Socket socket = new(SocketType.Stream, ProtocolType.Tcp);
@@ -102,7 +98,7 @@ namespace Horde.Agent.Services
 						}
 					}
 				},
-				
+
 				SslOptions = new SslClientAuthenticationOptions
 				{
 					RemoteCertificateValidationCallback = (sender, cert, chain, errors) => CertificateHelper.CertificateValidationCallBack(_logger, sender, cert, chain, errors, _serverProfile)
@@ -110,7 +106,7 @@ namespace Horde.Agent.Services
 			};
 #pragma warning restore CA2000 // Dispose objects before losing scope
 
-			HttpClient httpClient = new (httpHandler, true);
+			HttpClient httpClient = new(httpHandler, true);
 			httpClient.DefaultRequestHeaders.Add("Accept", "application/json");
 			if (bearerToken != null)
 			{
@@ -127,7 +123,7 @@ namespace Horde.Agent.Services
 				_logger.LogInformation("Querying server {BaseUrl} for rpc port", serverUri);
 				using (HttpResponseMessage response = await httpClient.GetAsync(new Uri(serverUri, "api/v1/server/ports"), cancellationToken))
 				{
-					GetPortsResponse? ports = await response.Content.ReadFromJsonAsync<GetPortsResponse>(Program.DefaultJsonSerializerOptions, cancellationToken);
+					GetPortsResponse? ports = await response.Content.ReadFromJsonAsync<GetPortsResponse>(AgentApp.DefaultJsonSerializerOptions, cancellationToken);
 					if (ports != null && ports.UnencryptedHttp2 != 0)
 					{
 						UriBuilder builder = new UriBuilder(serverUri);
@@ -159,11 +155,11 @@ namespace Horde.Agent.Services
 		{
 			CallInvoker invoker = channel.Intercept(headers =>
 			{
-				headers.Add("Horde-Agent-Version", Program.Version);
+				headers.Add("Horde-Agent-Version", AgentApp.Version);
 				headers.Add("Horde-Agent-Name", _settings.Value.GetAgentName());
 				return headers;
 			});
-			
+
 			return invoker;
 		}
 	}

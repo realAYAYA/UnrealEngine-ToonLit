@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
@@ -145,6 +146,27 @@ namespace P4VUtils.Commands
 				if (!Debug)
 				{
 					await Perforce.SyncAsync(SyncOptions.KeepWorkspaceFiles, -1, NotSyncedOpenFiles.Select(x => $"{x.ClientFile}#{x.Revision}").ToArray(), CancellationToken.None).ToListAsync();
+				}
+			}
+
+			// Clear the readonly flag from adds. Edits do not need to do this because p4 edit will do it automatically
+			if (AddActions.Count > 0)
+			{
+				Logger.LogInformation("Clearing the read-only flag from adds");
+
+				string[] LocalAddFiles = AddActions.Select(x => PerforceUtils.EscapePath(OpenedClientToLocalMap[x.ClientFile!])).ToArray();
+				foreach (string LocalFile in LocalAddFiles)
+				{
+					Logger.LogInformation("    {LocalFile}", LocalFile);
+				}
+
+				if (!Debug)
+				{
+					foreach (string LocalAddFile in LocalAddFiles)
+					{
+						FileInfo FileInfo = new FileInfo(LocalAddFile);
+						FileInfo.IsReadOnly = false;
+					}
 				}
 			}
 

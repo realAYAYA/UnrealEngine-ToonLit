@@ -20,7 +20,7 @@ int32 UOptimusNode_GetResource::GetDataFunctionIndexFromPin(const UOptimusNodePi
 		return INDEX_NONE;
 	}
 
-	return UOptimusRawBufferDataInterface::GetReadValueInputIndex();
+	return UOptimusRawBufferDataInterface::GetReadValueInputIndex(EOptimusBufferReadType::Default);
 }
 
 void UOptimusNode_GetResource::ConstructNode()

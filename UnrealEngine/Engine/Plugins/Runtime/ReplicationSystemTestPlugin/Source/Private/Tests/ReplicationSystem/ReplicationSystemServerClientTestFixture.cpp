@@ -100,9 +100,15 @@ uint32 FReplicationSystemTestNode::GetNetTraceId() const
 	return ReplicationSystem ? ReplicationSystem->GetId() : ~0U;
 }
 
-UTestReplicatedIrisObject* FReplicationSystemTestNode::CreateObject(const UObjectReplicationBridge::FCreateNetRefHandleParams& Params)
+UTestReplicatedIrisObject* FReplicationSystemTestNode::CreateObject(const UObjectReplicationBridge::FCreateNetRefHandleParams& Params, UTestReplicatedIrisObject::FComponents* ComponentsToCreate)
 {
 	UTestReplicatedIrisObject* CreatedObject = NewObject<UTestReplicatedIrisObject>();
+
+	if (ComponentsToCreate)
+	{
+		CreatedObject->AddComponents(*ComponentsToCreate);
+	}
+
 	CreatedObjects.Add(TStrongObjectPtr<UObject>(CreatedObject));
 
 	// Add it to the bridge for replication
@@ -231,9 +237,15 @@ uint32 FReplicationSystemTestNode::AddConnection()
 	return Connection.ConnectionId;
 }
 
+void FReplicationSystemTestNode::PreSendUpdate(const UReplicationSystem::FSendUpdateParams& Params)
+{
+	ReplicationSystem->PreSendUpdate(Params);
+	CurrentSendPass = Params.SendPass;
+}
+
 void FReplicationSystemTestNode::PreSendUpdate()
 {
-	ReplicationSystem->PreSendUpdate(1.f);
+	PreSendUpdate(UReplicationSystem::FSendUpdateParams {.SendPass = EReplicationSystemSendPass::TickFlush, .DeltaSeconds = 1.f});
 }
 
 bool FReplicationSystemTestNode::SendUpdate(uint32 ConnectionId, const TCHAR* Desc)
@@ -250,8 +262,14 @@ bool FReplicationSystemTestNode::SendUpdate(uint32 ConnectionId, const TCHAR* De
 	FConnectionInfo& Connection = GetConnectionInfo(ConnectionId);
 
 	const FDataStreamRecord* Record = nullptr;
+	UDataStream::FBeginWriteParameters BeginWriteParameters;
 
-	const bool bResult = (Connection.DataStreamManager->BeginWrite() != UDataStream::EWriteResult::NoData) && (Connection.DataStreamManager->WriteData(Context, Record)  != UDataStream::EWriteResult::NoData);
+	if (CurrentSendPass == EReplicationSystemSendPass::PostTickDispatch)
+	{
+		BeginWriteParameters.WriteMode = EDataStreamWriteMode::PostTickDispatch;
+	}
+
+	const bool bResult = (Connection.DataStreamManager->BeginWrite(BeginWriteParameters) != UDataStream::EWriteResult::NoData) && (Connection.DataStreamManager->WriteData(Context, Record)  != UDataStream::EWriteResult::NoData);
 	if (bResult)
 	{
 		Writer.CommitWrites();
@@ -283,11 +301,18 @@ bool FReplicationSystemTestNode::SendUpdate(uint32 ConnectionId, const TCHAR* De
 void FReplicationSystemTestNode::PostSendUpdate()
 {
 	ReplicationSystem->PostSendUpdate();
+	CurrentSendPass =	EReplicationSystemSendPass::Invalid;
 }
 
 void FReplicationSystemTestNode::DeliverTo(FReplicationSystemTestNode& Dest, uint32 LocalConnectionId, uint32 RemoteConnectionId, bool bDeliver)
 {
 	FConnectionInfo& Connection = GetConnectionInfo(LocalConnectionId);
+	if (Connection.WrittenPackets.IsEmpty())
+	{
+		UE_LOG(LogIris, Log, TEXT("ReplicationSystemTestFixture: Conn: %u Unable to %hs packet as there are no packets."), LocalConnectionId, (bDeliver ? "deliver" : "drop"));
+		return;
+	}
+
 	const FPacketData& Packet = Connection.WrittenPackets.Peek();
 
 	if (bDeliver)
@@ -339,16 +364,40 @@ float FReplicationSystemTestNode::ConvertPollPeriodIntoFrequency(uint32 PollPeri
 	return PollFrequency;
 }
 
-// FReplicationSystemTestClient implementation
+//*****************************************************************************
+// Class FReplicationSystemTestClient
+//*****************************************************************************
+
 FReplicationSystemTestClient::FReplicationSystemTestClient(const TCHAR* Name)
 : FReplicationSystemTestNode(false, Name)
 , ConnectionIdOnServer(~0U)
 {
 }
 
-// FReplicationSystemTestServer implementation
+bool FReplicationSystemTestClient::UpdateAndSend(FReplicationSystemTestServer* Server, bool bDeliver)
+{
+	bool bSuccess = false;
+
+	PreSendUpdate();
+
+	if (SendUpdate())
+	{
+		constexpr uint32 ServerRemoteConnectionId = 0x01;
+		DeliverTo(*Server, LocalConnectionId, ServerRemoteConnectionId, bDeliver);
+		bSuccess = true;
+	}
+
+	PostSendUpdate();
+
+	return bSuccess;
+}
+
+//*****************************************************************************
+// Class FReplicationSystemTestServer
+//*****************************************************************************
+
 FReplicationSystemTestServer::FReplicationSystemTestServer(const TCHAR* Name)
-: FReplicationSystemTestNode(true, Name)
+	: FReplicationSystemTestNode(true, Name)
 {
 }
 
@@ -377,7 +426,7 @@ void FReplicationSystemTestServer::DeliverTo(FReplicationSystemTestClient* Clien
 	FReplicationSystemTestNode::DeliverTo(*Client, Client->ConnectionIdOnServer, Client->LocalConnectionId, bDeliver);
 }
 
-bool FReplicationSystemTestServer::UpdateAndSend(const TArray<FReplicationSystemTestClient*>& Clients, bool bDeliver /*= true*/)
+bool FReplicationSystemTestServer::UpdateAndSend(const TArrayView<FReplicationSystemTestClient*const>& Clients, bool bDeliver /*= true*/)
 {
 	bool bSuccess = true;
 
@@ -393,7 +442,10 @@ bool FReplicationSystemTestServer::UpdateAndSend(const TArray<FReplicationSystem
 	return bSuccess;
 }
 
-// FReplicationSystemServerClientTestFixture implementation
+//*****************************************************************************
+// Class FReplicationSystemServerClientTestFixture
+//*****************************************************************************
+
 void FReplicationSystemServerClientTestFixture::SetUp()
 {
 	FNetworkAutomationTestSuiteFixture::SetUp();

@@ -191,7 +191,7 @@ void UMockNetObjectFilterUsingFragmentData::UpdateObjects(FNetObjectFilterUpdate
 		if (UPTRINT* InternalStateOffset = ObjectToFilterOutOffset.Find(ObjectIndex))
 		{
 			// Warning: This is generally not safe, not even for primitive types.
-			const bool bFilterOut = *reinterpret_cast<const bool*>(Params.StateBuffers[ObjectIndex] + *InternalStateOffset);
+			const bool bFilterOut = *reinterpret_cast<const bool*>((*Params.StateBuffers)[ObjectIndex] + *InternalStateOffset);
 			ObjectToFilterOut.Emplace(ObjectIndex, bFilterOut);
 		}
 	}

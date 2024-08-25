@@ -1,21 +1,22 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+using System;
+using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows.Forms;
 using EpicGames.Core;
+using EpicGames.Horde;
 using EpicGames.OIDC;
 using EpicGames.Perforce;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Sentry;
 using Sentry.Infrastructure;
-using System;
-using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
-using System.IO;
-using System.Net;
-using System.Reflection;
-using System.Threading;
-using System.Threading.Tasks;
-using System.Windows.Forms;
 
 namespace UnrealGameSync
 {
@@ -74,27 +75,58 @@ namespace UnrealGameSync
 				TaskScheduler.UnobservedTaskException += Application_UnobservedException_Sentry;
 			}
 
+			try
+			{
+				RealMain(args);
+			}
+			catch (Exception ex)
+			{
+				CaptureException(ex);
+			}
+		}
+
+		static void RealMain(string[] args)
+		{
 			bool firstInstance;
 			using (Mutex instanceMutex = new Mutex(true, "UnrealGameSyncRunning", out firstInstance))
 			{
-				if (firstInstance)
-				{
-					Application.EnableVisualStyles();
-					Application.SetCompatibleTextRenderingDefault(false);
-					Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
-				}
+				Application.EnableVisualStyles();
+				Application.SetCompatibleTextRenderingDefault(false);
+				Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+
+				// Don't auto install (or - more importantly- auto *un-install*) the winforms sync context. We want to be able to access it from the
+				// constructor of our ApplicationContext, which will be after the temporary install/uninstall prompted by spawning the settings dialog.
+				WindowsFormsSynchronizationContext.AutoInstall = false;
+
+				using WindowsFormsSynchronizationContext synchronizationContext = new WindowsFormsSynchronizationContext();
+				SynchronizationContext.SetSynchronizationContext(synchronizationContext);
 
 				using (EventWaitHandle activateEvent = new EventWaitHandle(false, EventResetMode.AutoReset, "ActivateUnrealGameSync"))
 				{
-					// handle any url passed in, possibly exiting
+					bool runUpdateCheck = ShouldRunAutoUpdate(args);
+
+					// Check for a newer version of the application
+					if (runUpdateCheck && Launcher.SyncAndRunLatest(instanceMutex, args) != LauncherResult.Continue)
+					{
+						return;
+					}
+
+					// Handle any url passed in, possibly exiting
 					if (UriHandler.ProcessCommandLine(args, firstInstance, activateEvent))
 					{
 						return;
 					}
 
+					// Handle any .uartifact downloads
+					if (ArtifactDownload.ProcessCommandLine(args))
+					{
+						return;
+					}
+
+					// Launch the application proper
 					if (firstInstance)
 					{
-						GuardedInnerMainAsync(instanceMutex, activateEvent, args);
+						InnerMain(instanceMutex, activateEvent, args, runUpdateCheck);
 					}
 					else
 					{
@@ -104,25 +136,10 @@ namespace UnrealGameSync
 			}
 		}
 
-		static void GuardedInnerMainAsync(Mutex instanceMutex, EventWaitHandle activateEvent, string[] args)
+		static void InnerMain(Mutex instanceMutex, EventWaitHandle activateEvent, string[] args, bool runUpdateCheck)
 		{
-			try
-			{
-				InnerMainAsync(instanceMutex, activateEvent, args).GetAwaiter().GetResult();
-			}
-			catch (Exception ex)
-			{
-				CaptureException(ex);
-			}
-		}
-
-		static async Task InnerMainAsync(Mutex instanceMutex, EventWaitHandle activateEvent, string[] args)
-		{
-			string? serverAndPort = null;
-			string? userName = null;
-			string? baseUpdatePath = null;
-			bool previewSetting = false;
-			GlobalPerforceSettings.ReadGlobalPerforceSettings(ref serverAndPort, ref userName, ref baseUpdatePath, ref previewSetting);
+			LauncherSettings launcherSettings = new LauncherSettings();
+			launcherSettings.Read();
 
 			List<string> remainingArgs = new List<string>(args);
 
@@ -141,8 +158,8 @@ namespace UnrealGameSync
 			ParseOption(remainingArgs, "-preview", out preview);
 			preview |= unstable;
 
-            string? projectFileName;
-            ParseArgument(remainingArgs, "-project=", out projectFileName);
+			string? projectFileName;
+			ParseArgument(remainingArgs, "-project=", out projectFileName);
 
 			string? uri;
 			ParseArgument(remainingArgs, "-uri=", out uri);
@@ -164,17 +181,19 @@ namespace UnrealGameSync
 			}
 
 			string syncVersionFile = Path.Combine(Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location!)!, "SyncVersion.txt");
-			if(File.Exists(syncVersionFile))
+			if (File.Exists(syncVersionFile))
 			{
 				try
 				{
 					SyncVersion = File.ReadAllText(syncVersionFile).Trim();
 				}
-				catch(Exception)
+				catch (Exception)
 				{
 					SyncVersion = null;
 				}
 			}
+
+			ArtifactDownload.RegisterFileAssociations(updateSpawn ?? GetCurrentExecutable());
 
 			DirectoryReference dataFolder = DirectoryReference.Combine(DirectoryReference.GetSpecialFolder(Environment.SpecialFolder.LocalApplicationData)!, "UnrealGameSync");
 			DirectoryReference.CreateDirectory(dataFolder);
@@ -188,7 +207,17 @@ namespace UnrealGameSync
 				services.AddSingleton(sp => TokenStoreFactory.CreateTokenStore());
 				services.AddSingleton<OidcTokenManager>();
 
-				await using (ServiceProvider serviceProvider = services.BuildServiceProvider())
+				if (launcherSettings.HordeServer != null)
+				{
+					services.AddHorde(options =>
+					{
+						options.ServerUrl = new Uri(launcherSettings.HordeServer);
+						options.AllowAuthPrompt = false;
+					});
+				}
+
+				ServiceProvider serviceProvider = services.BuildServiceProvider();
+				try
 				{
 					ILoggerFactory loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
 
@@ -201,56 +230,110 @@ namespace UnrealGameSync
 					string sessionId = Guid.NewGuid().ToString();
 					logger.LogInformation("SessionId: {SessionId}", sessionId);
 
-					if (serverAndPort == null || userName == null)
+					if (launcherSettings.PerforceServerAndPort == null || launcherSettings.PerforceUserName == null)
 					{
 						logger.LogInformation("Missing server settings; finding defaults.");
-						serverAndPort ??= PerforceSettings.Default.ServerAndPort;
-						userName ??= PerforceSettings.Default.UserName;
-						GlobalPerforceSettings.SaveGlobalPerforceSettings(serverAndPort, userName, baseUpdatePath, previewSetting);
+						launcherSettings.PerforceServerAndPort ??= DeploymentSettings.Instance.DefaultPerforceServer ?? PerforceSettings.Default.ServerAndPort;
+						launcherSettings.PerforceUserName ??= PerforceSettings.Default.UserName;
+						launcherSettings.Save();
 					}
 
 					ILogger telemetryLogger = loggerProvider.CreateLogger("Telemetry");
 					telemetryLogger.LogInformation("Creating telemetry sink for session {SessionId}", sessionId);
 
-					using (ITelemetrySink telemetrySink = CreateTelemetrySink(userName, sessionId, telemetryLogger))
+					using (ITelemetrySink telemetrySink = CreateTelemetrySink(launcherSettings.PerforceUserName, sessionId, telemetryLogger))
 					{
-						ITelemetrySink? prevTelemetrySink = Telemetry.ActiveSink;
+						ITelemetrySink? prevTelemetrySink = UgsTelemetry.ActiveSink;
 						try
 						{
-							Telemetry.ActiveSink = telemetrySink;
+							UgsTelemetry.ActiveSink = telemetrySink;
 
-							Telemetry.SendEvent("Startup", new { User = Environment.UserName, Machine = Environment.MachineName });
+							UgsTelemetry.SendEvent("Startup", new { User = Environment.UserName, Machine = System.Net.Dns.GetHostName() });
 
 							AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
 
-							IPerforceSettings defaultSettings = new PerforceSettings(serverAndPort, userName) { PreferNativeClient = true };
+							IPerforceSettings defaultSettings = new PerforceSettings(launcherSettings.PerforceServerAndPort, launcherSettings.PerforceUserName) { PreferNativeClient = true };
 
 							ProtocolHandlerUtils.InstallQuiet(logger);
 
-							using (UpdateMonitor updateMonitor = new UpdateMonitor(defaultSettings, updatePath, serviceProvider))
+							UpdateMonitor updateMonitor = CreateUpdateMonitor(launcherSettings, defaultSettings, updatePath, runUpdateCheck, serviceProvider);
+							try
 							{
 								using ProgramApplicationContext context = new ProgramApplicationContext(defaultSettings, updateMonitor, DeploymentSettings.Instance.ApiUrl, dataFolder, activateEvent, restoreState, updateSpawn, projectFileName, preview, serviceProvider, uri);
 								Application.Run(context);
 
-								if (updateMonitor.IsUpdateAvailable && updateSpawn != null)
+								if (updateMonitor.IsUpdateAvailable)
 								{
 									instanceMutex.Close();
-									bool launchPreview = updateMonitor.RelaunchPreview ?? preview;
-									Utility.SpawnProcess(updateSpawn, "-restorestate" + (launchPreview ? " -unstable" : ""));
+									Utility.SpawnProcess(updateSpawn ?? GetCurrentExecutable(), "-restorestate" + (updateMonitor.OpenSettings ? " -settings" : ""));
 								}
+							}
+							finally
+							{
+								AsyncDispose(updateMonitor);
 							}
 						}
 						catch (Exception ex)
 						{
-							Telemetry.SendEvent("Crash", new { Exception = ex.ToString() });
+							UgsTelemetry.SendEvent("Crash", new { Exception = ex.ToString() });
 							throw;
 						}
 						finally
 						{
-							Telemetry.ActiveSink = prevTelemetrySink;
+							UgsTelemetry.ActiveSink = prevTelemetrySink;
 						}
 					}
 				}
+				finally
+				{
+					AsyncDispose(serviceProvider);
+				}
+			}
+		}
+
+		static void AsyncDispose(IAsyncDisposable disposable)
+		{
+			// Force the dispose to run on a task without a synchronization context, so we don't have to worry about waiting for it on the Winforms thread.
+			Task task = Task.Run(async () => await disposable.DisposeAsync());
+			task.GetAwaiter().GetResult();
+		}
+
+		public static string GetCurrentExecutable()
+		{
+			string originalExecutable = Assembly.GetEntryAssembly()!.Location;
+			if (Path.GetExtension(originalExecutable).Equals(".dll", StringComparison.OrdinalIgnoreCase))
+			{
+				string newExecutable = Path.ChangeExtension(originalExecutable, ".exe");
+				if (File.Exists(newExecutable))
+				{
+					return newExecutable;
+				}
+			}
+			return originalExecutable;
+		}
+
+		static bool ShouldRunAutoUpdate(string[] args)
+		{
+#if WITH_AUTOUPDATE
+			return !args.Contains("-NoUpdateCheck", StringComparer.OrdinalIgnoreCase);
+#else
+			return args.Contains("-UpdateCheck", StringComparer.OrdinalIgnoreCase) || args.Contains("-Settings", StringComparer.OrdinalIgnoreCase);
+#endif
+		}
+
+		private static UpdateMonitor CreateUpdateMonitor(LauncherSettings launcherSettings, IPerforceSettings defaultSettings, string? updatePath, bool runUpdateCheck, IServiceProvider serviceProvider)
+		{
+			if (!runUpdateCheck)
+			{
+				return new NullUpdateMonitor();
+			}
+			else if (launcherSettings.UpdateSource == LauncherUpdateSource.Horde)
+			{
+				return new HordeUpdateMonitor(SyncVersion ?? String.Empty, serviceProvider);
+			}
+			else
+			{
+				return new PerforceUpdateMonitor(defaultSettings, updatePath, serviceProvider);
 			}
 		}
 
@@ -266,9 +349,9 @@ namespace UnrealGameSync
 		private static void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs args)
 		{
 			Exception? ex = args.ExceptionObject as Exception;
-			if(ex != null)
+			if (ex != null)
 			{
-				Telemetry.SendEvent("Crash", new {Exception = ex.ToString()});
+				UgsTelemetry.SendEvent("Crash", new { Exception = ex.ToString() });
 			}
 		}
 
@@ -303,12 +386,12 @@ namespace UnrealGameSync
 			try
 			{
 				ConfigFile updateConfig = new ConfigFile();
-				if(FileReference.Exists(updateConfigFile))
+				if (FileReference.Exists(updateConfigFile))
 				{
 					updateConfig.Load(updateConfigFile);
 				}
 
-				if(updatePath == null)
+				if (updatePath == null)
 				{
 					updatePath = updateConfig.GetValue("Update.Path", null);
 				}
@@ -317,7 +400,7 @@ namespace UnrealGameSync
 					updateConfig.SetValue("Update.Path", updatePath);
 				}
 
-				if(updateSpawn == null)
+				if (updateSpawn == null)
 				{
 					updateSpawn = updateConfig.GetValue("Update.Spawn", null);
 				}
@@ -328,16 +411,16 @@ namespace UnrealGameSync
 
 				updateConfig.Save(updateConfigFile);
 			}
-			catch(Exception)
+			catch (Exception)
 			{
 			}
 		}
 
 		static bool ParseOption(List<string> remainingArgs, string option, out bool value)
 		{
-			for(int idx = 0; idx < remainingArgs.Count; idx++)
+			for (int idx = 0; idx < remainingArgs.Count; idx++)
 			{
-				if(remainingArgs[idx].Equals(option, StringComparison.OrdinalIgnoreCase))
+				if (remainingArgs[idx].Equals(option, StringComparison.OrdinalIgnoreCase))
 				{
 					value = true;
 					remainingArgs.RemoveAt(idx);
@@ -351,9 +434,9 @@ namespace UnrealGameSync
 
 		static bool ParseArgument(List<string> remainingArgs, string prefix, [NotNullWhen(true)] out string? value)
 		{
-			for(int idx = 0; idx < remainingArgs.Count; idx++)
+			for (int idx = 0; idx < remainingArgs.Count; idx++)
 			{
-				if(remainingArgs[idx].StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+				if (remainingArgs[idx].StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
 				{
 					value = remainingArgs[idx].Substring(prefix.Length);
 					remainingArgs.RemoveAt(idx);

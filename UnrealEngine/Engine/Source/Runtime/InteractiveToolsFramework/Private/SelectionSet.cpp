@@ -25,7 +25,6 @@ TArray<int>& UMeshSelectionSet::GetElements(EMeshSelectionElementType ElementTyp
 	case EMeshSelectionElementType::Group:
 		return Groups;
 	}
-	check(false);
 }
 
 const TArray<int>& UMeshSelectionSet::GetElements(EMeshSelectionElementType ElementType) const
@@ -42,7 +41,6 @@ const TArray<int>& UMeshSelectionSet::GetElements(EMeshSelectionElementType Elem
 	case EMeshSelectionElementType::Group:
 		return Groups;
 	}
-	check(false);
 }
 
 

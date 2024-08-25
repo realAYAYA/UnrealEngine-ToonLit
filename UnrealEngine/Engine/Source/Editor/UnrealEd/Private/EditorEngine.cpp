@@ -54,6 +54,7 @@
 #include "Engine/Texture2D.h"
 #include "Animation/SkeletalMeshActor.h"
 #include "Engine/NavigationObjectBase.h"
+#include "GameFramework/ActorPrimitiveColorHandler.h"
 #include "GameFramework/PlayerStart.h"
 #include "Engine/StaticMesh.h"
 #include "Sound/SoundBase.h"
@@ -109,6 +110,7 @@
 #include "UncontrolledChangelistsModule.h"
 #include "SceneView.h"
 #include "StaticBoundShaderState.h"
+#include "PropertyColorSettings.h"
 
 // needed for the RemotePropagator
 #include "AudioDevice.h"
@@ -244,7 +246,6 @@
 #include "IToolMenusEditorModule.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "LevelEditorSubsystem.h"
-#include "StudioAnalytics.h"
 #include "Engine/LevelScriptActor.h"
 #include "UObject/UnrealType.h"
 #include "Factories/TextureFactory.h"
@@ -337,6 +338,11 @@ void DestroySelectionSets()
 }
 
 } // namespace PrivateEditorSelection
+
+static FAutoConsoleVariable GInvalidateHitProxiesEachSIEFrameCVar(
+	TEXT("r.Editor.Viewport.InvalidateEachSIEFrame"),
+	1,
+	TEXT("Invalidate the viewport on each frame when SIE is running. Disabling this cvar (setting to 0) may improve performance, but impact the ability to click on objects that are moving in the viewport."));
 
 /**
 * A mapping of all startup packages to whether or not we have warned the user about editing them
@@ -496,6 +502,82 @@ UEditorEngine::UEditorEngine(const FObjectInitializer& ObjectInitializer)
 
 	// The AssetRegistry module is needed early in initialization functions so load it here rather than in Init
 	FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+
+	// Callback to get the preview platform is used for PerPlatformConfig classes
+	UObject::OnGetPreviewPlatform.BindUObject(this, &UEditorEngine::GetPreviewPlatformName);
+
+#if ENABLE_ACTOR_PRIMITIVE_COLOR_HANDLER
+	if (HasAnyFlags(RF_ClassDefaultObject) && ExactCast<UEditorEngine>(this))
+	{
+		FActorPrimitiveColorHandler::Get().RegisterPrimitiveColorHandler(TEXT("PropertyColor"), LOCTEXT("PropertyColor", "Property Color"), 
+			[this](const UPrimitiveComponent* InPrimitiveComponent)
+			{
+				FColor PropertyColor(FColor::White);
+				if (AActor* Actor = InPrimitiveComponent->GetOwner())
+				{
+					if (GetPropertyColorationMatch(Actor))
+					{
+						PropertyColor = FColor::Red;
+					}
+				}
+				return PropertyColor;
+			},
+			[this]()
+			{
+				const FString EmptyString;
+				SetPropertyColorationTarget(GWorld, EmptyString, nullptr, nullptr, nullptr);
+			});
+
+		for (const FPropertyColorCustomProperty& PropertyColorCustomProperty : GetDefault<UPropertyColorSettings>()->CustomProperties)
+		{
+			FActorPrimitiveColorHandler::Get().RegisterPrimitiveColorHandler(PropertyColorCustomProperty.Name, 
+				FInternationalization::ForUseOnlyByLocMacroAndGraphNodeTextLiterals_CreateText(*PropertyColorCustomProperty.Text, TEXT("PropertyColor"), *PropertyColorCustomProperty.Name.ToString()),
+				[this, PropertyColorCustomProperty](const UPrimitiveComponent* InPrimitiveComponent)
+				{
+					if (AActor* Actor = InPrimitiveComponent->GetOwner())
+					{
+						if (GetPropertyColorationMatch(Actor))
+						{
+							return PropertyColorCustomProperty.PropertyColor;
+						}
+					}
+					return PropertyColorCustomProperty.DefaultColor;
+				},
+				[this, PropertyColorCustomProperty]()
+				{
+					TArray<FString> PropertyChainNames;
+					UStruct* PropertyContainer = AActor::StaticClass();
+					if (PropertyColorCustomProperty.PropertyChain.ParseIntoArray(PropertyChainNames, TEXT(".")))
+					{
+						TSharedRef<FEditPropertyChain> PropertyChain = MakeShared<FEditPropertyChain>();
+
+						for (const FString& PropertyName : PropertyChainNames)
+						{
+							if (FProperty* Property = PropertyContainer->FindPropertyByName(*PropertyName))
+							{
+								PropertyChain->AddTail(Property);
+
+								if (FObjectProperty* ObjectProperty = CastField<FObjectProperty>(Property))
+								{
+									PropertyContainer = ObjectProperty->PropertyClass;
+								}
+							}
+							else
+							{
+								UE_LOG(LogEditor, Warning, TEXT("Invalid custom property color %s (%s)"), *PropertyColorCustomProperty.Name.ToString(), *PropertyColorCustomProperty.PropertyChain);
+								break;
+							}
+						}
+
+						if (PropertyChain->Num() == PropertyChainNames.Num())
+						{
+							SetPropertyColorationTarget(GWorld, PropertyColorCustomProperty.PropertyValue, PropertyChain->GetTail()->GetValue(), AActor::StaticClass(), &PropertyChain);
+						}
+					}
+				});
+		}
+	}
+#endif
 }
 
 
@@ -731,6 +813,11 @@ static bool GetDisplayMultiboxHooks()
 	return GetDefault<UEditorPerProjectUserSettings>()->bDisplayUIExtensionPoints;
 }
 
+static int GetMenuSearchFieldVisibilityThreshold()
+{
+	return GetDefault<UEditorStyleSettings>()->MenuSearchFieldVisibilityThreshold;
+}
+
 void UEditorEngine::InitEditor(IEngineLoop* InEngineLoop)
 {
 	// Allow remote execution of derived data builds from this point
@@ -754,6 +841,7 @@ void UEditorEngine::InitEditor(IEngineLoop* InEngineLoop)
 	// Set slate options
 	FMultiBoxSettings::UseSmallToolBarIcons = TAttribute<bool>::Create(TAttribute<bool>::FGetter::CreateStatic(&GetSmallToolBarIcons));
 	FMultiBoxSettings::DisplayMultiboxHooks = TAttribute<bool>::Create(TAttribute<bool>::FGetter::CreateStatic(&GetDisplayMultiboxHooks));
+	FMultiBoxSettings::MenuSearchFieldVisibilityThreshold = TAttribute<int>::Create(TAttribute<int>::FGetter::CreateStatic(&GetMenuSearchFieldVisibilityThreshold));
 
 	if ( FSlateApplication::IsInitialized() )
 	{
@@ -945,7 +1033,7 @@ void UEditorEngine::InitEditor(IEngineLoop* InEngineLoop)
 				bNewSetEditMenusMode = (Args[0] == TEXT("1")) || FCString::ToBool(*Args[0]);
 			}
 
-			UE_LOG(LogEditor, Log, TEXT("%s menu editing"), bNewSetEditMenusMode ? TEXT("Enable") : TEXT("Disable"));			
+			UE_LOG(LogEditor, Log, TEXT("%s menu editing"), bNewSetEditMenusMode ? TEXT("Enable") : TEXT("Disable"));
 			UToolMenus::Get()->SetEditMenusMode(bNewSetEditMenusMode);
 		}));
 
@@ -1109,120 +1197,7 @@ void UEditorEngine::Init(IEngineLoop* InEngineLoop)
 	SlowTask.EnterProgressFrame(50);
 
 	// Load all editor modules here
-	{
-		static const TCHAR* ModuleNames[] =
-		{
-			TEXT("Documentation"),
-			TEXT("WorkspaceMenuStructure"),
-			TEXT("MainFrame"),
-			TEXT("OutputLog"),
-			TEXT("SourceControl"),
-			TEXT("SourceControlWindows"),
-			TEXT("SourceControlWindowExtender"),
-			TEXT("UncontrolledChangelists"),
-			TEXT("TextureCompressor"),
-			TEXT("MeshUtilities"),
-			TEXT("MovieSceneTools"),
-			TEXT("ClassViewer"),
-			TEXT("StructViewer"),
-			TEXT("ContentBrowser"),
-			TEXT("AssetTools"),
-			TEXT("GraphEditor"),
-			TEXT("KismetCompiler"),
-			TEXT("Kismet"),
-			TEXT("Persona"),
-			TEXT("AnimationBlueprintEditor"),
-			TEXT("LevelEditor"),
-			TEXT("MainFrame"),
-			TEXT("PropertyEditor"),
-			TEXT("PackagesDialog"),
-			// TEXT("AssetRegistry"), // Loaded in constructor
-			TEXT("DetailCustomizations"),
-			TEXT("ComponentVisualizers"),
-			TEXT("Layers"),
-			TEXT("AutomationWindow"),
-			TEXT("AutomationController"),
-			TEXT("DeviceManager"),
-			TEXT("ProfilerClient"),
-			TEXT("SessionFrontend"),
-			TEXT("ProjectLauncher"),
-			TEXT("SettingsEditor"),
-			TEXT("EditorSettingsViewer"),
-			TEXT("ProjectSettingsViewer"),
-			TEXT("Blutility"),
-			TEXT("ScriptableEditorWidgets"),
-			TEXT("XmlParser"),
-			TEXT("UndoHistory"),
-			TEXT("DeviceProfileEditor"),
-			TEXT("SourceCodeAccess"),
-			TEXT("BehaviorTreeEditor"),
-			TEXT("HardwareTargeting"),
-			TEXT("LocalizationDashboard"),
-			TEXT("MergeActors"),
-			TEXT("InputBindingEditor"),
-			TEXT("AudioEditor"),
-			TEXT("EditorInteractiveToolsFramework"),
-			TEXT("TraceInsights"),
-			TEXT("StaticMeshEditor"),
-			TEXT("EditorFramework"),
-			TEXT("WorldPartitionEditor"),
-			TEXT("EditorConfig"),
-			TEXT("DerivedDataEditor"),
-			TEXT("CSVtoSVG"),
-			TEXT("GeometryFramework"),
-			TEXT("VirtualizationEditor"),
-			TEXT("AnimationSettings"),
-			TEXT("GameplayDebuggerEditor"),
-			TEXT("RenderResourceViewer"),
-		};
-
-		FScopedSlowTask ModuleSlowTask((float)UE_ARRAY_COUNT(ModuleNames));
-		for (const TCHAR* ModuleName : ModuleNames)
-		{
-			ModuleSlowTask.EnterProgressFrame(1);
-			FModuleManager::Get().LoadModule(ModuleName);
-		}
-
-		{
-			// Load platform runtime settings modules
-			TArray<FName> Modules;
-			FModuleManager::Get().FindModules( TEXT( "*RuntimeSettings" ), Modules );
-
-			for( int32 Index = 0; Index < Modules.Num(); Index++ )
-			{
-				FModuleManager::Get().LoadModule( Modules[Index] );
-			}
-		}
-
-		{
-			// Load platform editor modules
-			TArray<FName> Modules;
-			FModuleManager::Get().FindModules( TEXT( "*PlatformEditor" ), Modules );
-
-			for( int32 Index = 0; Index < Modules.Num(); Index++ )
-			{
-				if( Modules[Index] != TEXT("ProjectTargetPlatformEditor") )
-				{
-					FModuleManager::Get().LoadModule( Modules[Index] );
-				}
-			}
-		}
-
-		if( FParse::Param( FCommandLine::Get(),TEXT( "PListEditor" ) ) )
-		{
-			FModuleManager::Get().LoadModule(TEXT("PListEditor"));
-		}
-
-		FModuleManager::Get().LoadModule(TEXT("LogVisualizer"));
-		FModuleManager::Get().LoadModule(TEXT("WidgetRegistration"));
-		FModuleManager::Get().LoadModule(TEXT("HotReload"));
-
-		FModuleManager::Get().LoadModuleChecked(TEXT("ClothPainter"));
-
-		// Load VR Editor support
-		FModuleManager::Get().LoadModuleChecked( TEXT( "ViewportInteraction" ) );
-		FModuleManager::Get().LoadModuleChecked( TEXT( "VREditor" ) );
-	}
+	LoadDefaultEditorModules();
 
 	SlowTask.EnterProgressFrame(10);
 
@@ -1347,8 +1322,124 @@ void UEditorEngine::RemoveLevelViewportClients(FLevelEditorViewportClient* Viewp
 
 void UEditorEngine::BroadcastObjectReimported(UObject* InObject)
 {
-	ObjectReimportedEvent.Broadcast(InObject);
 	GetEditorSubsystem<UImportSubsystem>()->BroadcastAssetReimport(InObject);
+}
+
+void UEditorEngine::LoadDefaultEditorModules()
+{
+	static const TCHAR* ModuleNames[] =
+		{
+			TEXT("Documentation"),
+			TEXT("WorkspaceMenuStructure"),
+			TEXT("MainFrame"),
+			TEXT("OutputLog"),
+			TEXT("SourceControl"),
+			TEXT("SourceControlWindows"),
+			TEXT("SourceControlWindowExtender"),
+			TEXT("UncontrolledChangelists"),
+			TEXT("TextureCompressor"),
+			TEXT("MeshUtilities"),
+			TEXT("MovieSceneTools"),
+			TEXT("ClassViewer"),
+			TEXT("StructViewer"),
+			TEXT("ContentBrowser"),
+			TEXT("AssetTools"),
+			TEXT("GraphEditor"),
+			TEXT("KismetCompiler"),
+			TEXT("Kismet"),
+			TEXT("Persona"),
+			TEXT("AnimationBlueprintEditor"),
+			TEXT("LevelEditor"),
+			TEXT("MainFrame"),
+			TEXT("PropertyEditor"),
+			TEXT("PackagesDialog"),
+			// TEXT("AssetRegistry"), // Loaded in constructor
+			TEXT("DetailCustomizations"),
+			TEXT("ComponentVisualizers"),
+			TEXT("Layers"),
+			TEXT("AutomationWindow"),
+			TEXT("AutomationController"),
+			TEXT("DeviceManager"),
+			TEXT("ProfilerClient"),
+			TEXT("SessionFrontend"),
+			TEXT("ProjectLauncher"),
+			TEXT("SettingsEditor"),
+			TEXT("EditorSettingsViewer"),
+			TEXT("ProjectSettingsViewer"),
+			TEXT("Blutility"),
+			TEXT("ScriptableEditorWidgets"),
+			TEXT("XmlParser"),
+			TEXT("UndoHistory"),
+			TEXT("DeviceProfileEditor"),
+			TEXT("SourceCodeAccess"),
+			TEXT("BehaviorTreeEditor"),
+			TEXT("HardwareTargeting"),
+			TEXT("LocalizationDashboard"),
+			TEXT("MergeActors"),
+			TEXT("InputBindingEditor"),
+			TEXT("AudioEditor"),
+			TEXT("EditorInteractiveToolsFramework"),
+			TEXT("TraceInsights"),
+			TEXT("StaticMeshEditor"),
+			TEXT("EditorFramework"),
+			TEXT("WorldPartitionEditor"),
+			TEXT("EditorConfig"),
+			TEXT("DerivedDataEditor"),
+			TEXT("CSVtoSVG"),
+			TEXT("GeometryFramework"),
+			TEXT("VirtualizationEditor"),
+			TEXT("AnimationSettings"),
+			TEXT("GameplayDebuggerEditor"),
+			TEXT("RenderResourceViewer"),
+			TEXT("UniversalObjectLocatorEditor"),
+		};
+
+	FScopedSlowTask ModuleSlowTask((float)UE_ARRAY_COUNT(ModuleNames));
+	for (const TCHAR* ModuleName : ModuleNames)
+	{
+		ModuleSlowTask.EnterProgressFrame(1);
+		FModuleManager::Get().LoadModule(ModuleName);
+	}
+
+	{
+		// Load platform runtime settings modules
+		TArray<FName> Modules;
+		FModuleManager::Get().FindModules( TEXT( "*RuntimeSettings" ), Modules );
+
+		for( int32 Index = 0; Index < Modules.Num(); Index++ )
+		{
+			FModuleManager::Get().LoadModule( Modules[Index] );
+		}
+	}
+
+	{
+		// Load platform editor modules
+		TArray<FName> Modules;
+		FModuleManager::Get().FindModules( TEXT( "*PlatformEditor" ), Modules );
+
+		for( int32 Index = 0; Index < Modules.Num(); Index++ )
+		{
+			if( Modules[Index] != TEXT("ProjectTargetPlatformEditor") )
+			{
+				FModuleManager::Get().LoadModule( Modules[Index] );
+			}
+		}
+	}
+
+	if( FParse::Param( FCommandLine::Get(),TEXT( "PListEditor" ) ) )
+	{
+		FModuleManager::Get().LoadModule(TEXT("PListEditor"));
+	}
+
+	FModuleManager::Get().LoadModule(TEXT("LogVisualizer"));
+	FModuleManager::Get().LoadModule(TEXT("WidgetRegistration"));
+	FModuleManager::Get().LoadModule(TEXT("HotReload"));
+
+	FModuleManager::Get().LoadModuleChecked(TEXT("ClothPainter"));
+
+	// Load VR Editor support
+	FModuleManager::Get().LoadModuleChecked( TEXT( "ViewportInteraction" ) );
+	FModuleManager::Get().LoadModuleChecked( TEXT( "VREditor" ) );
 }
 
 void UEditorEngine::PreExit()
@@ -1397,6 +1488,7 @@ void UEditorEngine::FinishDestroy()
 		}
 
 		// Unregister events
+		UObject::OnGetPreviewPlatform.Unbind();
 		FEditorDelegates::MapChange.RemoveAll(this);
 		FCoreDelegates::ModalMessageDialog.Unbind();
 		FCoreUObjectDelegates::ShouldLoadOnTop.Unbind();
@@ -1533,8 +1625,7 @@ void UEditorEngine::Tick( float DeltaSeconds, bool bIdleMode )
 	}
 
 	FEngineAnalytics::Tick(DeltaSeconds);
-	FStudioAnalytics::Tick(DeltaSeconds);
-
+	
 	// Look for realtime flags.
 	bool IsRealtime = false;
 
@@ -2078,7 +2169,7 @@ void UEditorEngine::Tick( float DeltaSeconds, bool bIdleMode )
 
 	// Do not redraw if the application is hidden
 	const bool bAllWindowsHidden = !bHasFocus && AreAllWindowsHidden();
-	bool bEditorFrameNonRealtimeViewportDrawn = false;
+	bool bAnyLevelEditorsDrawn = false;
 	if (!bAllWindowsHidden || bRunDrawWithEditorHidden)
 	{
 		FPixelInspectorModule& PixelInspectorModule = FModuleManager::LoadModuleChecked<FPixelInspectorModule>(TEXT("PixelInspectorModule"));
@@ -2088,16 +2179,19 @@ void UEditorEngine::Tick( float DeltaSeconds, bool bIdleMode )
 		}
 
 		// Render view parents, then view children.
+		bool bEditorFrameNonRealtimeViewportDrawn = false;
 		if (GCurrentLevelEditingViewportClient && GCurrentLevelEditingViewportClient->IsVisible())
 		{
 			if (!bAllWindowsHidden || GCurrentLevelEditingViewportClient->WantsDrawWhenAppIsHidden())
 			{
 				bool bAllowNonRealtimeViewports = true;
 				GCurrentLevelEditingViewportClient->SetIsCurrentLevelEditingFocus(true);
-				bool bWasNonRealtimeViewportDraw = UpdateSingleViewportClient(GCurrentLevelEditingViewportClient, bAllowNonRealtimeViewports, bUpdateLinkedOrthoViewports);
+				bool bViewportDrawn;
+				bool bWasNonRealtimeViewportDrawn = UpdateSingleViewportClient(GCurrentLevelEditingViewportClient, bAllowNonRealtimeViewports, bUpdateLinkedOrthoViewports, &bViewportDrawn);
 				if (GCurrentLevelEditingViewportClient->IsLevelEditorClient())
 				{
-					bEditorFrameNonRealtimeViewportDrawn |= bWasNonRealtimeViewportDraw;
+					bEditorFrameNonRealtimeViewportDrawn |= bWasNonRealtimeViewportDrawn;
+					bAnyLevelEditorsDrawn |= bViewportDrawn;
 				}
 			}
 		}
@@ -2121,10 +2215,12 @@ void UEditorEngine::Tick( float DeltaSeconds, bool bIdleMode )
 						//if we haven't drawn a non-realtime viewport OR not one of the main viewports
 						bool bAllowNonRealtimeViewports = (!bEditorFrameNonRealtimeViewportDrawn) || !(ViewportClient->IsLevelEditorClient());
 						ViewportClient->SetIsCurrentLevelEditingFocus(true);
-						bool bWasNonRealtimeViewportDrawn = UpdateSingleViewportClient(ViewportClient, bAllowNonRealtimeViewports, bUpdateLinkedOrthoViewports);
+						bool bViewportDrawn;
+						bool bWasNonRealtimeViewportDrawn = UpdateSingleViewportClient(ViewportClient, bAllowNonRealtimeViewports, bUpdateLinkedOrthoViewports, &bViewportDrawn);
 						if (ViewportClient->IsLevelEditorClient())
 						{
 							bEditorFrameNonRealtimeViewportDrawn |= bWasNonRealtimeViewportDrawn;
+							bAnyLevelEditorsDrawn |= bViewportDrawn;
 						}
 					}
 				}
@@ -2132,8 +2228,12 @@ void UEditorEngine::Tick( float DeltaSeconds, bool bIdleMode )
 		}
 	}
 
-	// If we're not Realtime and no NonRealtime viewports are drawn, or if everything is hidden, make sure RHI gets its flush to prevent memory from accumulating
-	if ((bAllWindowsHidden || !IsRealtime) && !bEditorFrameNonRealtimeViewportDrawn && !bHasPIEViewport && IsRunningRHIInSeparateThread())
+	// Rendering resources are normally flushed when a 3D viewport is drawn. If no viewports are updated (because the editor is hidden, or no realtime viewports are visible),
+	// we need to force-flush resources here, since nothing else will. Note that this condition checks if any *level* viewports have been drawn in the block above; other
+	// editors can contain 3D viewports and refreshing them will also flush resources, but it's difficult to know when 3D rendering has happened in general. Instead, we
+	// optimize for the level editor case, since that's performance-sensitive. If there's no level editor, but there are other 3D editors, this will do an unnecessary
+	// flush, but the small performance impact in that case should not affect users.
+	if (!bAnyLevelEditorsDrawn && !bHasPIEViewport && IsRunningRHIInSeparateThread())
 	{
 		ENQUEUE_RENDER_COMMAND(FlushPendingDeleteRHIResources_NonRealtime)(
 			[](FRHICommandListImmediate& RHICmdList)
@@ -2184,6 +2284,10 @@ void UEditorEngine::Tick( float DeltaSeconds, bool bIdleMode )
 	// Update resource streaming after both regular Editor viewports and PIE had a chance to add viewers.
 	IStreamingManager::Get().Tick(DeltaSeconds);
 
+	// Determine whether or not we should end the current PIE session. In some cases the client context may not be fully
+	// initialized until player login is complete, so make sure we have a valid world before actually handling the request.
+	const bool bEndPlayMapThisFrame = PlayWorld && bRequestEndPlayMapQueued;
+
 	// Update Audio. This needs to occur after rendering as the rendering code updates the listener position.
 	if (AudioDeviceManager)
 	{
@@ -2196,7 +2300,7 @@ void UEditorEngine::Tick( float DeltaSeconds, bool bIdleMode )
 
 		// Update audio device.
 		AudioDeviceManager->UpdateActiveAudioDevices((!PlayWorld && bAudioIsRealtime) || (PlayWorld && !PlayWorld->IsPaused()));
-		if (bRequestEndPlayMapQueued)
+		if (bEndPlayMapThisFrame)
 		{
 			// Shutdown all audio devices if we've requested end playmap now to avoid issues with GC running
 			TArray<FAudioDevice*> AudioDevices = AudioDeviceManager->GetAudioDevices();
@@ -2236,7 +2340,7 @@ void UEditorEngine::Tick( float DeltaSeconds, bool bIdleMode )
 	}
 
 	// After the play world has ticked, see if a request was made to end pie
-	if( bRequestEndPlayMapQueued )
+	if (bEndPlayMapThisFrame)
 	{
 		EndPlayMap();
 	}
@@ -2326,9 +2430,10 @@ void UEditorEngine::SetRealTimeAudioVolume(float VolumeLevel)
 	LevelEditorMiscSettings->PostEditChange();
 }
 
-bool UEditorEngine::UpdateSingleViewportClient(FEditorViewportClient* InViewportClient, const bool bInAllowNonRealtimeViewportToDraw, bool bLinkedOrthoMovement )
+bool UEditorEngine::UpdateSingleViewportClient(FEditorViewportClient* InViewportClient, const bool bInAllowNonRealtimeViewportToDraw, bool bLinkedOrthoMovement, bool* bOutViewportDrawn /*= nullptr*/)
 {
 	bool bUpdatedNonRealtimeViewport = false;
+	bool bViewportDrawn = false;
 
 	if (InViewportClient->Viewport->IsSlateViewport())
 	{
@@ -2374,7 +2479,7 @@ bool UEditorEngine::UpdateSingleViewportClient(FEditorViewportClient* InViewport
 				InViewportClient->GetWorld()->UpdateLevelStreaming();
 
 				// Also make sure hit proxies are refreshed for SIE viewports, as the user may be trying to grab an object or widget manipulator that's moving!
-				if( InViewportClient->IsRealtime() )
+				if( InViewportClient->IsRealtime() && (GInvalidateHitProxiesEachSIEFrameCVar->GetInt() != 0))
 				{
 					// @todo simulate: This may cause simulate performance to be worse in cases where you aren't needing to interact with gizmos.  Consider making this optional.
 					InViewportClient->RequestInvalidateHitProxy( InViewportClient->Viewport );
@@ -2388,6 +2493,7 @@ bool UEditorEngine::UpdateSingleViewportClient(FEditorViewportClient* InViewport
 			InViewportClient->Viewport->Draw();
 			InViewportClient->bNeedsRedraw = false;
 			InViewportClient->bNeedsLinkedRedraw = false;
+			bViewportDrawn = true;
 		}
 		// Redraw any linked ortho viewports that need to be updated this frame.
 		else if( InViewportClient->IsOrtho() && bLinkedOrthoMovement && InViewportClient->IsVisible() )
@@ -2398,6 +2504,7 @@ bool UEditorEngine::UpdateSingleViewportClient(FEditorViewportClient* InViewport
 				InViewportClient->Viewport->Draw();
 				InViewportClient->bNeedsLinkedRedraw = false;
 				InViewportClient->bNeedsRedraw = false;
+				bViewportDrawn = true;
 			}
 			else
 			{
@@ -2410,6 +2517,7 @@ bool UEditorEngine::UpdateSingleViewportClient(FEditorViewportClient* InViewport
 		{
 			InViewportClient->Viewport->Draw();
 			InViewportClient->bNeedsRedraw = false;
+			bViewportDrawn = true;
 			bUpdatedNonRealtimeViewport = true;
 		}
 		else if(UWorld* World = GetWorld())
@@ -2431,6 +2539,11 @@ bool UEditorEngine::UpdateSingleViewportClient(FEditorViewportClient* InViewport
 			InViewportClient->Viewport->InvalidateHitProxy();
 			InViewportClient->bNeedsInvalidateHitProxy = false;
 		}
+	}
+
+	if (bOutViewportDrawn)
+	{
+		*bOutViewportDrawn = bViewportDrawn;
 	}
 
 	return bUpdatedNonRealtimeViewport;
@@ -2997,7 +3110,7 @@ void UEditorEngine::ParseMapSectionIni(const TCHAR* InCmdParams, TArray<FString>
 void UEditorEngine::LoadMapListFromIni(const FString& InSectionName, TArray<FString>& OutMapList)
 {
 	// 
-	FConfigSection* MapListList = GConfig->GetSectionPrivate(*InSectionName, false, true, GEditorIni);
+	const FConfigSection* MapListList = GConfig->GetSection(*InSectionName, false, GEditorIni);
 	if (MapListList)
 	{
 		for (FConfigSectionMap::TConstIterator It(*MapListList) ; It ; ++It)
@@ -3053,17 +3166,6 @@ bool UEditorEngine::CanSyncToContentBrowser()
 	TArray<FAssetData> Assets;
 	GetAssetsToSyncToContentBrowser(Assets);
 	return Assets.Num() > 0;
-}
-
-
-void UEditorEngine::GetObjectsToSyncToContentBrowser(TArray<UObject*>& Objects, bool bAllowBrowseToAssetOverride)
-{
-	TArray<FAssetData> Assets;
-	GetAssetsToSyncToContentBrowser(Assets, bAllowBrowseToAssetOverride);
-	for (const FAssetData& Asset : Assets)
-	{
-		Objects.Add(Asset.GetAsset());
-	}
 }
 
 void UEditorEngine::GetAssetsToSyncToContentBrowser(TArray<FAssetData>& Assets, bool bAllowBrowseToAssetOverride)
@@ -3268,6 +3370,14 @@ void UEditorEngine::ToggleSelectedActorMovementLock()
 		LevelDirtyCallback.Request();
 	}
 
+	// Update the editability status in the active viewport, which will update the gizmos
+	if (GCurrentLevelEditingViewportClient)
+	{
+		constexpr bool bForceCachedElementRefresh = true;
+		GCurrentLevelEditingViewportClient->GetElementsToManipulate(bForceCachedElementRefresh);
+	}
+	RedrawLevelEditingViewports(false);
+
 	bCheckForLockActors = true;
 }
 
@@ -3352,7 +3462,7 @@ void UEditorEngine::SelectAllActorsWithClass( bool bArchetype )
 		UWorld* CurrentEditorWorld = GetEditorWorldContext().World();
 		for (UClass* Class : SelectedClasses)
 		{
-			Exec(CurrentEditorWorld, *FString::Printf(TEXT("ACTOR SELECT OFCLASS CLASS=%s"), *Class->GetName()));
+			Exec(CurrentEditorWorld, *FString::Printf(TEXT("ACTOR SELECT OFCLASS CLASS=%s"), *Class->GetPathName()));
 		}
 	}
 	else
@@ -3506,7 +3616,7 @@ void UEditorEngine::ConvertSelectedBrushesToVolumes( UClass* VolumeClass )
 
 				NewVolume->PostEditChange();
 				NewVolume->PostEditMove( true );
-				NewVolume->Modify();
+				NewVolume->Modify(false);
 
 				// Make the actor visible as the brush is hidden by default
 				NewVolume->SetActorHiddenInGame(false);
@@ -4366,7 +4476,13 @@ bool UEditorEngine::CanParentActors( const AActor* ParentActor, const AActor* Ch
 			FFormatNamedArguments Arguments;
 			Arguments.Add(TEXT("StaticActor"), FText::FromString(ChildActor->GetActorLabel()));
 			Arguments.Add(TEXT("DynamicActor"), FText::FromString(ParentActor->GetActorLabel()));
-			*ReasonText = FText::Format( NSLOCTEXT("ActorAttachmentError", "StaticDynamic_ActorAttachmentError", "Cannot attach static actor {StaticActor} to dynamic actor {DynamicActor}."), Arguments);
+			
+			Arguments.Add(TEXT("DynamicActorMobility"),
+				ParentRoot->Mobility == EComponentMobility::Stationary
+				? NSLOCTEXT("ActorAttachmentError", "StationaryMobility", "Stationary")
+				: NSLOCTEXT("ActorAttachmentError", "MovableMobility", "Movable"));
+				
+			*ReasonText = FText::Format( NSLOCTEXT("ActorAttachmentError", "StaticDynamic_ActorAttachmentError", "Cannot attach actor with Static mobility ({StaticActor}) to actor with {DynamicActorMobility} mobility ({DynamicActor})."), Arguments);
 		}
 		return false;
 	}
@@ -4385,6 +4501,15 @@ bool UEditorEngine::CanParentActors( const AActor* ParentActor, const AActor* Ch
 		if (ReasonText)
 		{
 			*ReasonText = NSLOCTEXT("ActorAttachmentError", "WrongContentBundle_AttachmentError", "Actors need to be in the same content bundle!");
+		}
+		return false;
+	}
+
+	if (ChildActor->GetExternalDataLayerAsset() != ParentActor->GetExternalDataLayerAsset())
+	{
+		if (ReasonText)
+		{
+			*ReasonText = NSLOCTEXT("ActorAttachmentError", "WrongExternalDataLayer_AttachmentError", "Actors need to be in the same external data layer");
 		}
 		return false;
 	}
@@ -4606,6 +4731,11 @@ FSavePackageResultStruct UEditorEngine::Save(UPackage* InOuter, UObject* InAsset
 	const bool bSavingConcurrent = !!(SaveArgs.SaveFlags & ESaveFlags::SAVE_Concurrent);
 
 	FObjectSaveContextData ObjectSaveContext(InOuter, SaveArgs.GetTargetPlatform(), Filename, SaveArgs.SaveFlags);
+	if (InSaveArgs.ArchiveCookData)
+	{
+		ObjectSaveContext.CookType = InSaveArgs.ArchiveCookData->CookContext.GetCookType();
+		ObjectSaveContext.CookingDLC = InSaveArgs.ArchiveCookData->CookContext.GetCookingDLC();
+	}
 	UWorld *OriginalOwningWorld = nullptr;
 	if ( World )
 	{
@@ -5295,6 +5425,11 @@ void UEditorEngine::ReplaceActors(UActorFactory* Factory, const FAssetData& Asse
 		ULevel* Level = OldActor->GetLevel();
 		AActor* NewActor = NULL;
 
+		// Destroy any non-native constructed components, but make sure we grab the transform first in case it has a
+		// non-native root component. These will be reconstructed as part of the new actor when it's created/instanced.
+		const FTransform OldTransform = OldActor->ActorToWorld();
+		OldActor->DestroyConstructedComponents();
+
 		// Unregister this actors components because we are effectively replacing it with an actor sharing the same ActorGuid.
 		// This allows it to be unregistered before a new actor with the same guid gets registered avoiding conflicts.
 		OldActor->UnregisterAllComponents();
@@ -5312,8 +5447,6 @@ void UEditorEngine::ReplaceActors(UActorFactory* Factory, const FAssetData& Asse
 		// if the actor is using an external package. We really just want to rename that actor out of the way so we can spawn the new one in
 		// the exact same package, keeping the package name intact.
 		OldActor->UObject::Rename(*OldActorReplacedNamed.ToString(), OldActor->GetOuter(), REN_DoNotDirty | REN_DontCreateRedirectors | REN_ForceNoResetLoaders);
-
-		const FTransform OldTransform = OldActor->ActorToWorld();
 
 		// create the actor
 		NewActor = Factory->CreateActor(Asset, Level, OldTransform, SpawnParams);
@@ -5366,8 +5499,10 @@ void UEditorEngine::ReplaceActors(UActorFactory* Factory, const FAssetData& Asse
 
 			if (SelectedActors->IsSelected(OldActor))
 			{
-				SelectActor(OldActor, false, true);
-				SelectActor(NewActor, true, true);
+				// Avoid notifications as we are in a Batch Select Operation
+				const bool bNotify = false;
+				SelectActor(OldActor, false, bNotify);
+				SelectActor(NewActor, true, bNotify);
 			}
 
 			// Find compatible static mesh components and copy instance colors between them.
@@ -5389,7 +5524,7 @@ void UEditorEngine::ReplaceActors(UActorFactory* Factory, const FAssetData& Asse
 				ULevel* BrushLevel = OldActor->GetLevel();
 				if (BrushLevel && !Brush->IsVolumeBrush())
 				{
-					BrushLevel->Model->Modify();
+					BrushLevel->Model->Modify(false);
 					LevelsToRebuildBSP.Add(BrushLevel);
 				}
 			}
@@ -5425,7 +5560,8 @@ void UEditorEngine::ReplaceActors(UActorFactory* Factory, const FAssetData& Asse
 		}
 	}
 
-	SelectedActors->EndBatchSelectOperation();
+	const bool bNotify = true;
+	SelectedActors->EndBatchSelectOperation(bNotify);
 
 	// Reattaches actors based on their previous parent child relationship.
 	ReattachActorsHelper::ReattachActors(ConvertedMap, AttachmentInfo);
@@ -6269,6 +6405,7 @@ void UEditorEngine::DoConvertActors( const TArray<AActor*>& ActorsToConvert, UCl
 void UEditorEngine::NotifyToolsOfObjectReplacement(const TMap<UObject*, UObject*>& OldToNewInstanceMap)
 {
 	// Allow any other observers to act upon the object replacement
+	UE_TRACK_REFERENCING_OPNAME_SCOPED(PackageAccessTrackingOps::NAME_ResetContext);
 	FCoreUObjectDelegates::OnObjectsReplaced.Broadcast(OldToNewInstanceMap);
 }
 
@@ -6305,56 +6442,6 @@ void UEditorEngine::RemoveViewportsRealtimeOverride(FText SystemDisplayName)
 	RedrawAllViewports();
 
 	FEditorSupportDelegates::UpdateUI.Broadcast();
-}
-
-void UEditorEngine::RemoveViewportsRealtimeOverride()
-{
-	for (FEditorViewportClient* VC : AllViewportClients)
-	{
-		if (VC)
-		{
-			VC->PopRealtimeOverride();
-		}
-	}
-
-	RedrawAllViewports();
-
-	FEditorSupportDelegates::UpdateUI.Broadcast();
-}
-
-void UEditorEngine::DisableRealtimeViewports()
-{
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	for(FEditorViewportClient* VC : AllViewportClients)
-	{
-		if( VC )
-		{
-			VC->SetRealtime( false, true );
-		}
-	}
-
-	RedrawAllViewports();
-
-	FEditorSupportDelegates::UpdateUI.Broadcast();
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
-}
-
-
-void UEditorEngine::RestoreRealtimeViewports()
-{
-PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	for(FEditorViewportClient* VC : AllViewportClients)
-	{
-		if( VC )
-		{
-			VC->RestoreRealtime(true);
-		}
-	}
-
-	RedrawAllViewports();
-
-	FEditorSupportDelegates::UpdateUI.Broadcast();
-PRAGMA_ENABLE_DEPRECATION_WARNINGS
 }
 
 
@@ -6434,27 +6521,6 @@ bool UEditorEngine::ShouldThrottleCPUUsage() const
 	}
 
 	return bShouldThrottle;
-}
-
-bool UEditorEngine::AreAllWindowsHidden() const
-{
-	if (!FSlateApplication::IsInitialized())
-	{
-		return true;
-	}
-	const TArray< TSharedRef<SWindow> > AllWindows = FSlateApplication::Get().GetInteractiveTopLevelWindows();
-
-	bool bAllHidden = true;
-	for( const TSharedRef<SWindow>& Window : AllWindows )
-	{
-		if( !Window->IsWindowMinimized() && Window->IsVisible() )
-		{
-			bAllHidden = false;
-			break;
-		}
-	}
-
-	return bAllHidden;
 }
 
 AActor* UEditorEngine::AddActor(ULevel* InLevel, UClass* Class, const FTransform& Transform, bool bSilent, EObjectFlags InObjectFlags, bool bSelectActor)
@@ -6913,6 +6979,11 @@ void UEditorEngine::OnLevelRemovedFromWorld(ULevel* InLevel, UWorld* InWorld)
 		{
 			if (InWorld->IsPlayInEditor())
 			{
+				if (Trans->ContainsPieObjects())
+				{
+					ResetTransaction(NSLOCTEXT("UnrealEd", "LevelRemovedFromWorldEditorCallbackPIE", "Level removed from PIE/SIE world"));
+				}
+
 				// Each additional instance of PIE in a multiplayer game will add another barrier, so if the event is triggered then this is the case and we need to lift it
 				// Otherwise there will be an imbalance between barriers set and barriers removed and we won't be able to undo when we return.
 				Trans->RemoveUndoBarrier();
@@ -7291,7 +7362,7 @@ void UEditorEngine::CheckAndHandleStaleWorldObjectReferences(FWorldContext* InWo
 				UE_LOG(LogLoad, Error, TEXT("Once a world has become active, it cannot be reused and must be destroyed and reloaded. World referenced by:"));
 			
 				FReferenceChainSearch::FindAndPrintStaleReferencesToObject(World,
-					UObjectBaseUtility::IsPendingKillEnabled() ? EPrintStaleReferencesOptions::Fatal : (EPrintStaleReferencesOptions::Error | EPrintStaleReferencesOptions::Ensure));
+					UObjectBaseUtility::IsGarbageEliminationEnabled() ? EPrintStaleReferencesOptions::Fatal : (EPrintStaleReferencesOptions::Error | EPrintStaleReferencesOptions::Ensure));
 			}
 		}
 	}
@@ -7300,12 +7371,12 @@ void UEditorEngine::CheckAndHandleStaleWorldObjectReferences(FWorldContext* InWo
 	{
 		for (FObjectKey Key : InWorldContext->GarbageObjectsToVerify)
 		{
-			if (UObject* Object = Key.ResolveObjectPtrEvenIfPendingKill())
+			if (UObject* Object = Key.ResolveObjectPtrEvenIfGarbage())
 			{
 				UE_LOG(LogLoad, Error, TEXT("Object %s not cleaned up by garbage collection!"), *Object->GetPathName());
 			
 				FReferenceChainSearch::FindAndPrintStaleReferencesToObject(Object,
-					UObjectBaseUtility::IsPendingKillEnabled() ? EPrintStaleReferencesOptions::Fatal : (EPrintStaleReferencesOptions::Error | EPrintStaleReferencesOptions::Ensure));
+					UObjectBaseUtility::IsGarbageEliminationEnabled() ? EPrintStaleReferencesOptions::Fatal : (EPrintStaleReferencesOptions::Error | EPrintStaleReferencesOptions::Ensure));
 			}
 		}
 		InWorldContext->GarbageObjectsToVerify.Reset();
@@ -7438,6 +7509,9 @@ void UEditorEngine::InitializeNewlyCreatedInactiveWorld(UWorld* World)
 
 	if (!World->bIsWorldInitialized && World->WorldType == EWorldType::Inactive && !World->IsInstanced())
 	{
+		// Guard against dirtying packages while initializing the map
+		TGuardValue<bool> IsEditorLoadingPackageGuard(GIsEditorLoadingPackage, true);
+		// This is probably no longer needed with the EditorLoadingPackage guard but doesn't hurt to keep for safety.
 		const bool bOldDirtyState = World->GetOutermost()->IsDirty();
 
 		// Make sure we have a navigation system if we are cooking the asset.
@@ -7741,6 +7815,29 @@ void UEditorEngine::OnEffectivePreviewShaderPlatformChange()
 	}
 }
 
+static void SaveFeatureLevelAsDisabled(FPreviewPlatformInfo& PreviewPlatform)
+{
+	auto* Settings = GetMutableDefault<UEditorPerProjectUserSettings>();
+
+	Settings->PreviewFeatureLevel = 0;
+	Settings->PreviewPlatformName = NAME_None;
+	Settings->PreviewShaderFormatName = NAME_None;
+	Settings->bPreviewFeatureLevelActive = false;
+	Settings->bPreviewFeatureLevelWasDefault = true;
+	Settings->PreviewDeviceProfileName = NAME_None;
+	Settings->PreviewShaderPlatformName = NAME_None;
+
+	Settings->SaveConfig();
+
+	Settings->PreviewFeatureLevel = (int32)PreviewPlatform.PreviewFeatureLevel;
+	Settings->PreviewPlatformName = PreviewPlatform.PreviewPlatformName;
+	Settings->PreviewShaderFormatName = PreviewPlatform.PreviewShaderFormatName;
+	Settings->bPreviewFeatureLevelActive = PreviewPlatform.bPreviewFeatureLevelActive;
+	Settings->bPreviewFeatureLevelWasDefault = (PreviewPlatform.PreviewFeatureLevel == GMaxRHIFeatureLevel);
+	Settings->PreviewDeviceProfileName = PreviewPlatform.DeviceProfileName;
+	Settings->PreviewShaderPlatformName = PreviewPlatform.PreviewShaderPlatformName;
+}
+
 void UEditorEngine::SetPreviewPlatform(const FPreviewPlatformInfo& NewPreviewPlatform, bool bSaveSettings)
 {
 	// Get the requested preview platform, make sure it is valid.
@@ -7762,6 +7859,9 @@ void UEditorEngine::SetPreviewPlatform(const FPreviewPlatformInfo& NewPreviewPla
 	// Record the new preview platform
 	PreviewPlatform = NewPreviewPlatform;
 
+	// Initially set preview as disabled in case it fails
+	SaveFeatureLevelAsDisabled(PreviewPlatform);
+
 	// If we changed the preview platform, we need to update the material quality settings
 	if (bChangedPreviewShaderPlatform)
 	{
@@ -7773,6 +7873,15 @@ void UEditorEngine::SetPreviewPlatform(const FPreviewPlatformInfo& NewPreviewPla
 		if (bChangedEffectiveShaderPlatform)
 		{
 			OnEffectivePreviewShaderPlatformChange();
+		}
+	}
+
+	// Update any PerPlatformConfig class defaults or instances
+	for (FThreadSafeObjectIterator ObjIterator(UObject::StaticClass(), RF_NoFlags); ObjIterator; ++ObjIterator)
+	{
+		if ((*ObjIterator) && ObjIterator->GetClass()->HasAnyClassFlags(CLASS_PerPlatformConfig))
+		{
+			ObjIterator->LoadConfig();
 		}
 	}
 
@@ -7884,8 +7993,18 @@ void UEditorEngine::ToggleFeatureLevelPreview()
 		UDeviceProfileManager::Get().RestorePreviewDeviceProfile();
 	}
 
+	// Update any PerPlatformConfig class defaults or instances
+	for (FThreadSafeObjectIterator ObjIterator(UObject::StaticClass(), RF_NoFlags); ObjIterator; ++ObjIterator)
+	{
+		if ((*ObjIterator) && ObjIterator->GetClass()->HasAnyClassFlags(CLASS_PerPlatformConfig))
+		{
+			ObjIterator->LoadConfig();
+		}
+	}
+
 	Scalability::ApplyCachedQualityLevelForShaderPlatform(GetActiveShaderPlatform());
 	OnEffectivePreviewShaderPlatformChange();
+
 	PreviewPlatformChanged.Broadcast();
 
 	UStaticMesh::OnLodStrippingQualityLevelChanged(nullptr);

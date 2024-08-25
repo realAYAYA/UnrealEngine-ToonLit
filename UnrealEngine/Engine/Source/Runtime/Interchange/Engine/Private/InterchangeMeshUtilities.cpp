@@ -24,18 +24,18 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(InterchangeMeshUtilities)
 
-TFuture<bool> UInterchangeMeshUtilities::ImportCustomLodAsync(UObject* MeshObject, const int32 LodIndex)
+TFuture<bool> UInterchangeMeshUtilities::ImportCustomLod(UObject* MeshObject, const int32 LodIndex)
 {
 	TSharedPtr<TPromise<bool>> Promise = MakeShared<TPromise<bool>>();
 	if (!MeshObject)
 	{
-		UE_LOG(LogInterchangeEngine, Warning, TEXT("FInterchangeMeshUtilities::ImportCustomLod parameter MeshObject cannot be null."));
+		UE_LOG(LogInterchangeEngine, Warning, TEXT("FInterchangeMeshUtilities::ImportCustomLod: The MeshObject parameter cannot be null."));
 		Promise->SetValue(false);
 		return Promise->GetFuture();
 	}
 	if (!IsInGameThread())
 	{
-		UE_LOG(LogInterchangeEngine, Warning, TEXT("FInterchangeMeshUtilities::ImportCustomLod Cannot ask user a file path outside of the game thread."));
+		UE_LOG(LogInterchangeEngine, Warning, TEXT("FInterchangeMeshUtilities::ImportCustomLod: Cannot ask the user for a file path outside of the game thread."));
 		Promise->SetValue(false);
 		return Promise->GetFuture();
 	}
@@ -69,7 +69,7 @@ TFuture<bool> UInterchangeMeshUtilities::ImportCustomLodAsync(UObject* MeshObjec
 			if (ensure(Filenames.Num() == 1))
 			{
 				const UInterchangeSourceData* SourceData = InterchangeManager.CreateSourceData(Filenames[0]);
-				return InternalImportCustomLodAsync(Promise, MeshObject, LodIndex, SourceData);
+				return InternalImportCustomLod(Promise, MeshObject, LodIndex, SourceData);
 			}
 		}
 	}
@@ -78,14 +78,14 @@ TFuture<bool> UInterchangeMeshUtilities::ImportCustomLodAsync(UObject* MeshObjec
 	return Promise->GetFuture();
 }
 
-TFuture<bool> UInterchangeMeshUtilities::ImportCustomLodAsync(UObject* MeshObject, const int32 LodIndex, const UInterchangeSourceData* SourceData)
+TFuture<bool> UInterchangeMeshUtilities::ImportCustomLod(UObject* MeshObject, const int32 LodIndex, const UInterchangeSourceData* SourceData)
 {
 	TSharedPtr<TPromise<bool>> Promise = MakeShared<TPromise<bool>>();
 	
-	return InternalImportCustomLodAsync(Promise, MeshObject, LodIndex, SourceData);
+	return InternalImportCustomLod(Promise, MeshObject, LodIndex, SourceData);
 }
 
-TFuture<bool> UInterchangeMeshUtilities::InternalImportCustomLodAsync(TSharedPtr<TPromise<bool>> Promise, UObject* MeshObject, const int32 LodIndex, const UInterchangeSourceData* SourceData)
+TFuture<bool> UInterchangeMeshUtilities::InternalImportCustomLod(TSharedPtr<TPromise<bool>> Promise, UObject* MeshObject, const int32 LodIndex, const UInterchangeSourceData* SourceData)
 {
 #if WITH_EDITOR
 	UInterchangeManager& InterchangeManager = UInterchangeManager::GetInterchangeManager();
@@ -94,12 +94,17 @@ TFuture<bool> UInterchangeMeshUtilities::InternalImportCustomLodAsync(TSharedPtr
 	USkeletalMesh* SkeletalMesh = Cast<USkeletalMesh>(MeshObject);
 	UStaticMesh* StaticMesh = Cast<UStaticMesh>(MeshObject);
 	EInterchangePipelineContext ImportType = EInterchangePipelineContext::AssetCustomLODImport;
+	bool bInvalidLodIndex = false;
 	if (SkeletalMesh)
 	{
 		InterchangeAssetImportData = Cast<UInterchangeAssetImportData>(SkeletalMesh->GetAssetImportData());
 		if (SkeletalMesh->GetLODNum() > LodIndex && InterchangeAssetImportData)
 		{
 			ImportType = EInterchangePipelineContext::AssetCustomLODReimport;
+		}
+		if (LodIndex > SkeletalMesh->GetLODNum())
+		{
+			bInvalidLodIndex = true;
 		}
 	}
 	else if (StaticMesh)
@@ -109,10 +114,21 @@ TFuture<bool> UInterchangeMeshUtilities::InternalImportCustomLodAsync(TSharedPtr
 		{
 			ImportType = EInterchangePipelineContext::AssetCustomLODReimport;
 		}
+		if (LodIndex > StaticMesh->GetNumSourceModels())
+		{
+			bInvalidLodIndex = true;
+		}
 	}
 	else
 	{
 		//We support Import custom LOD only for skeletalmesh and staticmesh
+		Promise->SetValue(false);
+		return Promise->GetFuture();
+	}
+
+	if (bInvalidLodIndex)
+	{
+		UE_LOG(LogInterchangeEngine, Warning, TEXT("FInterchangeMeshUtilities::InternalImportCustomLod: Invalid mesh LOD index %d, no prior LOD index exists."), LodIndex);
 		Promise->SetValue(false);
 		return Promise->GetFuture();
 	}

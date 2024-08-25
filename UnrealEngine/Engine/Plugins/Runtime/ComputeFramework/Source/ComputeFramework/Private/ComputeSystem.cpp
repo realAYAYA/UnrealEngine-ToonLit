@@ -19,7 +19,7 @@ void FComputeFrameworkSystem::DestroyWorkers(FSceneInterface const* InScene, TAr
 		int32 ArrayIndex = InOutWorkers.Find(*Found);
 		if (ArrayIndex != INDEX_NONE)
 		{
-			InOutWorkers.RemoveAtSwap(ArrayIndex, 1, false);
+			InOutWorkers.RemoveAtSwap(ArrayIndex, 1, EAllowShrinking::No);
 		}
 
 		ComputeWorkers.Remove(InScene);

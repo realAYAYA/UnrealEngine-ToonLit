@@ -1,6 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
 using System;
 using System.Collections.Generic;
 
@@ -10,7 +9,7 @@ namespace EpicGames.Serialization.Converters
 	/// Converter for array types
 	/// </summary>
 	/// <typeparam name="T"></typeparam>
-	class CbArrayConverter<T> : CbConverterBase<T[]>
+	class CbArrayConverter<T> : CbConverter<T[]>
 	{
 		/// <inheritdoc/>
 		public override T[] Read(CbField field)
@@ -47,7 +46,7 @@ namespace EpicGames.Serialization.Converters
 		}
 
 		/// <inheritdoc/>
-		public override void WriteNamed(CbWriter writer, Utf8String name, T[] array)
+		public override void WriteNamed(CbWriter writer, CbFieldName name, T[] array)
 		{
 			if (array == null)
 			{
@@ -64,20 +63,20 @@ namespace EpicGames.Serialization.Converters
 			}
 		}
 	}
-	
+
 	/// <summary>
 	/// Factory for CbListConverter
 	/// </summary>
 	class CbArrayConverterFactory : CbConverterFactory
 	{
 		/// <inheritdoc/>
-		public override ICbConverter? CreateConverter(Type type)
+		public override CbConverter? CreateConverter(Type type)
 		{
 			if (type.IsArray)
 			{
 				Type elementType = type.GetElementType()!;
 				Type converterType = typeof(CbArrayConverter<>).MakeGenericType(elementType);
-				return (ICbConverter)Activator.CreateInstance(converterType)!;
+				return (CbConverter)Activator.CreateInstance(converterType)!;
 			}
 			return null;
 		}

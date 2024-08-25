@@ -106,7 +106,7 @@ struct FFieldExecutionDatas
 template<typename FieldType>
 FORCEINLINE void ResetResultsArray(const int32 FieldSize, TArray<FieldType>& FieldArray, const FieldType DefaultValue)
 {
-	FieldArray.SetNum(FieldSize, false);
+	FieldArray.SetNum(FieldSize, EAllowShrinking::No);
 	for (int32 i = 0; i < FieldSize; ++i)
 	{
 		FieldArray[i] = DefaultValue;
@@ -130,7 +130,7 @@ FORCEINLINE void ResetResultsArrays(const int32 FieldSize, const TArray<EFieldCo
 template<typename FieldType>
 FORCEINLINE void EmptyResultsArray(TArray<FieldType>& FieldArray)
 {
-	FieldArray.SetNum(0, false);
+	FieldArray.SetNum(0, EAllowShrinking::No);
 }
 
 /** Empty the results arrays given a list of targets */

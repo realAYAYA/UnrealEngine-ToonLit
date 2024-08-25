@@ -242,15 +242,15 @@ bool UBlueprintGameplayTagLibrary::NotEqual_TagContainerTagContainer(FGameplayTa
 	FString TagString = MoveTemp(B);
 	if (TagString.StartsWith(OpenParenthesesStr, ESearchCase::CaseSensitive) && TagString.EndsWith(CloseParenthesesStr, ESearchCase::CaseSensitive))
 	{
-		TagString.LeftChopInline(1, false);
-		TagString.RightChopInline(1, false);
+		TagString.LeftChopInline(1, EAllowShrinking::No);
+		TagString.RightChopInline(1, EAllowShrinking::No);
 
 		const FString EqualStr(TEXT("="));
 
 		TagString.Split(EqualStr, nullptr, &TagString, ESearchCase::CaseSensitive);
 
-		TagString.LeftChopInline(1, false);
-		TagString.RightChopInline(1, false);
+		TagString.LeftChopInline(1, EAllowShrinking::No);
+		TagString.RightChopInline(1, EAllowShrinking::No);
 
 		FString ReadTag;
 		FString Remainder;
@@ -263,11 +263,11 @@ bool UBlueprintGameplayTagLibrary::NotEqual_TagContainerTagContainer(FGameplayTa
 			ReadTag.Split(EqualStr, nullptr, &ReadTag, ESearchCase::CaseSensitive);
 			if (ReadTag.EndsWith(CloseParenthesesStr, ESearchCase::CaseSensitive))
 			{
-				ReadTag.LeftChopInline(1, false);
+				ReadTag.LeftChopInline(1, EAllowShrinking::No);
 				if (ReadTag.StartsWith(QuoteStr, ESearchCase::CaseSensitive) && ReadTag.EndsWith(QuoteStr, ESearchCase::CaseSensitive))
 				{
-					ReadTag.LeftChopInline(1, false);
-					ReadTag.RightChopInline(1, false);
+					ReadTag.LeftChopInline(1, EAllowShrinking::No);
+					ReadTag.RightChopInline(1, EAllowShrinking::No);
 				}
 			}
 			TagString = Remainder;
@@ -284,11 +284,11 @@ bool UBlueprintGameplayTagLibrary::NotEqual_TagContainerTagContainer(FGameplayTa
 			Remainder.Split(EqualStr, nullptr, &Remainder, ESearchCase::CaseSensitive);
 			if (Remainder.EndsWith(CloseParenthesesStr, ESearchCase::CaseSensitive))
 			{
-				Remainder.LeftChopInline(1, false);
+				Remainder.LeftChopInline(1, EAllowShrinking::No);
 				if (Remainder.StartsWith(QuoteStr, ESearchCase::CaseSensitive) && Remainder.EndsWith(QuoteStr, ESearchCase::CaseSensitive))
 				{
-					Remainder.LeftChopInline(1, false);
-					Remainder.RightChopInline(1, false);
+					Remainder.LeftChopInline(1, EAllowShrinking::No);
+					Remainder.RightChopInline(1, EAllowShrinking::No);
 				}
 			}
 			const FGameplayTag Tag = FGameplayTag::RequestGameplayTag(FName(*Remainder));

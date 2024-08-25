@@ -21,9 +21,18 @@ public:
 	{
 		FUtf8StringView	GetStoreDir() const;
 		uint32			GetRecorderPort() const;
+		uint32			GetStorePort() const;
+		bool			GetSponsored() const;
 		uint32			GetChangeSerial() const;
 		uint32			GetSettingsSerial() const;
 		void			GetWatchDirectories(TArray<FString>& OutDirs) const;
+	};
+
+	struct TRACEANALYSIS_API FVersion
+	{
+		uint32			GetMajorVersion() const;
+		uint32			GetMinorVersion() const;
+		FUtf8StringView GetConfiguration() const;
 	};
 
 	struct TRACEANALYSIS_API FTraceInfo
@@ -33,8 +42,6 @@ public:
 		uint64			GetSize() const;
 		uint64			GetTimestamp() const;
 		FUtf8StringView GetUri() const;
-		//const TCHAR*	GetMetadata(const TCHAR* Key) const;
-		//template <typename Lambda> uint32 ReadMetadata(Lambda&& Callback) const;
 	};
 
 	struct FTraceData
@@ -42,24 +49,22 @@ public:
 	{
 		using TUniquePtr<IInDataStream>::TUniquePtr;
 	};
-	
+
 						~FStoreClient() = default;
-	static FStoreClient*Connect(const TCHAR* Host, uint32 Port=0);
+	static FStoreClient* Connect(const TCHAR* Host, uint32 Port = 0);
 	bool				Reconnect(const TCHAR* Host, uint32 Port);
 	void				operator delete (void* Addr);
 	bool				IsValid() const;
 	uint32				GetStoreAddress() const;
 	uint32				GetStorePort() const;
-	const FStatus*		GetStatus();
-	uint32				GetTraceCount();
-	const FTraceInfo*	GetTraceInfo(uint32 Index);
-	const FTraceInfo*	GetTraceInfoById(uint32 Id);
-	FTraceData			ReadTrace(uint32 Id);
-	bool SetStoreDirectories(const TCHAR* StoreDir, const TArray<FString>& AddWatchDirs,
-							const TArray<FString>& RemoveWatchDirs);
-#if 0
-	template <typename Lambda> uint32 GetTraceInfos(uint32 StartIndex, uint32 Count, Lambda&& Callback) const;
-#endif // 0
+	const FStatus*		GetStatus() const;
+	const FVersion*		GetVersion() const;
+	uint32				GetTraceCount() const;
+	const FTraceInfo*	GetTraceInfo(uint32 Index) const;
+	const FTraceInfo*	GetTraceInfoById(uint32 Id) const;
+	FTraceData			ReadTrace(uint32 Id) const;
+	bool				SetStoreDirectories(const TCHAR* StoreDir, const TArray<FString>& AddWatchDirs, const TArray<FString>& RemoveWatchDirs);
+	bool				SetSponsored(bool bSponsored);
 
 	struct TRACEANALYSIS_API FSessionInfo
 	{
@@ -72,20 +77,7 @@ public:
 	const FSessionInfo* GetSessionInfo(uint32 Index) const;
 	const FSessionInfo* GetSessionInfoById(uint32 Id) const;
 	const FSessionInfo* GetSessionInfoByTraceId(uint32 TraceId) const;
-	const FSessionInfo* GetSessionInfoByGuid(const FGuid& TraceGuid);
-#if 0
-	template <typename Lambda> uint32	GetSessionInfos(uint32 StartIndex, uint32 Count, Lambda&& Callback) const;
-#endif // 0
-
-#if 0
-	// -------
-	class IStoreSubscriber
-	{
-		virtual void	OnStoreEvent() = 0;
-	};
-	bool				Subscribe(IStoreSubscriber* Subscriber);
-	bool				Unsubscribe(IStoreSubscriber* Subscriber);
-#endif // 0
+	const FSessionInfo* GetSessionInfoByGuid(const FGuid& TraceGuid) const;
 
 private:
 						FStoreClient() = default;

@@ -556,6 +556,14 @@ bool SEnvironmentLightingViewer::GetIsPropertyVisible(const FPropertyAndParent& 
 		}
 		return true;
 	}
+	else if (OwnerStruct && OwnerStruct->GetName().Equals(TEXT("ExponentialHeightFogData")))
+	{
+		if (bShowMinimalOnly)
+		{
+			return false;
+		}
+		return true;
+	}
 	else if (OwnerClass == UExponentialHeightFogComponent::StaticClass())
 	{
 		if (bShowMinimalOnly)

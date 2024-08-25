@@ -4,44 +4,47 @@
 #include "OnlineSubsystemGooglePlay.h"
 #include "OnlineAchievementsInterfaceGooglePlay.h"
 
-THIRD_PARTY_INCLUDES_START
-#include "gpg/achievement_manager.h"
-THIRD_PARTY_INCLUDES_END
-
 FOnlineAsyncTaskGooglePlayQueryAchievements::FOnlineAsyncTaskGooglePlayQueryAchievements(
 	FOnlineSubsystemGooglePlay* InSubsystem,
-	const FUniqueNetIdGooglePlay& InUserId,
+	const FUniqueNetIdPtr& InPlayerId,
 	const FOnQueryAchievementsCompleteDelegate& InDelegate)
 	: FOnlineAsyncTaskBasic(InSubsystem)
-	, UserId(InUserId.AsShared())
+	, PlayerId(InPlayerId)
 	, Delegate(InDelegate)
 {
 }
 
+void FOnlineAsyncTaskGooglePlayQueryAchievements::SetAchievementsData(TArray<FOnlineAchievementGooglePlay>&& InAchievementsData, TArray<FOnlineAchievementDesc>&& InAchievementsDesc)
+{
+	AchievementsData = MoveTemp(InAchievementsData);	
+	AchievementsDesc = MoveTemp(InAchievementsDesc);
+}
+
+void FOnlineAsyncTaskGooglePlayQueryAchievements::Tick()
+{
+	if ( !bStarted)
+	{
+		bStarted = true;
+		bWasSuccessful = Subsystem->GetGooglePlayGamesWrapper().QueryAchievements(this); 
+		bIsComplete = !bWasSuccessful;
+	}
+}
+
 void FOnlineAsyncTaskGooglePlayQueryAchievements::Finalize()
 {
+	FOnlineAchievementsGooglePlayPtr AchievementsInt = Subsystem->GetAchievementsGooglePlay();
+
 	if (bWasSuccessful)
 	{
-		Subsystem->GetAchievementsGooglePlay()->UpdateCache(Response);
+		AchievementsInt->UpdateCache(MoveTemp(AchievementsData), MoveTemp(AchievementsDesc));
 	}
 	else
 	{
-		Subsystem->GetAchievementsGooglePlay()->ClearCache();
+		AchievementsInt->ClearCache();
 	}
 }
 
 void FOnlineAsyncTaskGooglePlayQueryAchievements::TriggerDelegates()
 {
-	Delegate.ExecuteIfBound(*UserId, bWasSuccessful);
-}
-
-void FOnlineAsyncTaskGooglePlayQueryAchievements::Tick()
-{
-	// We're already running on the online thread. Using the blocking version of the API function
-	// won't block the main thread and simplifies things a bit.
-	// Try a 10 second timeout.
-	Response = Subsystem->GetGameServices()->Achievements().FetchAllBlocking(gpg::DataSource::CACHE_OR_NETWORK, gpg::Timeout(10000));
-	
-	bWasSuccessful = Response.status == gpg::ResponseStatus::VALID || Response.status == gpg::ResponseStatus::VALID_BUT_STALE;
-	bIsComplete = true;
+	Delegate.ExecuteIfBound(*PlayerId, bWasSuccessful);
 }

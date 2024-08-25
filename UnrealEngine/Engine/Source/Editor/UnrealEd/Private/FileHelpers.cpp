@@ -30,6 +30,7 @@
 #include "UncontrolledChangelistsModule.h"
 #include "SourceControlOperations.h"
 #include "Editor/UnrealEdEngine.h"
+#include "Serialization/ArchiveReplaceObjectRef.h"
 #include "Settings/EditorLoadingSavingSettings.h"
 #include "Factories/Factory.h"
 #include "Factories/FbxSceneImportFactory.h"
@@ -75,13 +76,13 @@
 #include "HierarchicalLOD.h"
 #include "WorldPartition/IWorldPartitionEditorModule.h"
 #include "WorldPartition/ActorDescContainer.h"
+#include "WorldPartition/WorldPartitionRuntimeHash.h"
 #include "WorldPartition/WorldPartition.h"
 #include "WorldPartition/WorldPartitionEditorPerProjectUserSettings.h"
 #include "WorldPartition/HLOD/HLODLayer.h"
 #include "WorldPartition/LoaderAdapter/LoaderAdapterShape.h"
 #include "LevelInstance/LevelInstanceSubsystem.h"
 #include "PackageSourceControlHelper.h"
-#include "ActorFolder.h"
 #include "InterchangeManager.h"
 #include "SourceControlHelpers.h"
 #include "InterchangeProjectSettings.h"
@@ -584,6 +585,38 @@ FString FEditorFileUtils::GetFilterString(EFileInteraction Interaction)
 
 ///////////////////////////////////////////////////////////////////////////////
 
+// Gather external packages to save for maps an other package that use external packages
+// @param	InPackage				The package that is being saved
+// @param	InOutPackagesToSave		Any packages to save. Array will be modified with additional packages if they are found, then those packages will all be saved
+// @param	bInNewlyCreated			Whether the package was newly created
+// @param	bInAutosaving			Should be set to true if autosaving
+// @returns true if all the save operations completed successfully
+static bool SaveExternalPackages(UPackage* InPackage, TArray<UPackage*>& InOutPackagesToSave, bool bInNewlyCreated, bool bInAutosaving)
+{
+	bool bSuccess = true;
+
+	if (!bInAutosaving && (!FEditorFileUtils::ShouldSkipExternalObjectSave() || bInNewlyCreated))
+	{
+		for (UPackage* ExternalPackage : InPackage->GetExternalPackages())
+		{
+			if (!FPackageName::IsTempPackage(ExternalPackage->GetName()))
+			{
+				InOutPackagesToSave.Add(ExternalPackage);
+			}
+		}
+
+		if (InOutPackagesToSave.Num())
+		{
+			if (!UEditorLoadingAndSavingUtils::SavePackages(InOutPackagesToSave, /*bCheckDirty=*/ !bInNewlyCreated))
+			{
+				FMessageDialog::Open(EAppMsgType::Ok, NSLOCTEXT("UnrealEd", "Error_FailedToSaveExternalPackages", "Failed to save external packages"));
+				bSuccess = false;
+			}
+		}
+	}
+
+	return bSuccess;
+}
 
 /**
  * @param	World					The world to save.
@@ -810,17 +843,22 @@ static bool SaveWorld(UWorld* World,
 
 					if (bIsTempPackage)
 					{
-						if (UHLODLayer* CurrentHLODLayer = RenamedWorldPartition->GetDefaultHLODLayer())
+						if (UHLODLayer* CurHLODLayer = RenamedWorldPartition->GetDefaultHLODLayer())
 						{
-							CurrentHLODLayer = UHLODLayer::DuplicateHLODLayersSetup(CurrentHLODLayer, NewPackageName, NewWorldAssetName);
-							
-							RenamedWorldPartition->SetDefaultHLODLayer(CurrentHLODLayer);
+							UHLODLayer* NewHLODLayer = UHLODLayer::DuplicateHLODLayersSetup(CurHLODLayer, NewPackageName, NewWorldAssetName);
 
-							while (CurrentHLODLayer)
+							RenamedWorldPartition->SetDefaultHLODLayer(NewHLODLayer);
+
+							TMap<UHLODLayer*, UHLODLayer*> ReplacementMap;
+							while (NewHLODLayer)
 							{
-								PackagesToSave.Add(CurrentHLODLayer->GetPackage());
-								CurrentHLODLayer = CurrentHLODLayer->GetParentLayer();
+								PackagesToSave.Add(NewHLODLayer->GetPackage());
+								ReplacementMap.Add(CurHLODLayer, NewHLODLayer);
+								CurHLODLayer = CurHLODLayer->GetParentLayer();
+								NewHLODLayer = NewHLODLayer->GetParentLayer();
 							}
+							
+							FArchiveReplaceObjectRef<UHLODLayer> ReplaceObjectRefAr(RenamedWorldPartition->RuntimeHash, ReplacementMap, EArchiveReplaceObjectFlags::IgnoreOuterRef | EArchiveReplaceObjectFlags::IgnoreArchetypeRef);							
 						}
 					}
 				}
@@ -909,28 +947,9 @@ static bool SaveWorld(UWorld* World,
 
 		SlowTask.EnterProgressFrame(50);
 
-		if (!bAutosaving && !FEditorFileUtils::ShouldSkipExternalObjectSave())
+		if (bSuccess)
 		{
-			if (bSuccess)
-			{
-				// Gather external actors to save
-				for (UPackage* ExternalPackage : Package->GetExternalPackages())
-				{
-					if (!FPackageName::IsTempPackage(ExternalPackage->GetName()))
-					{
-						PackagesToSave.Add(ExternalPackage);
-					}
-				}
-
-				if (PackagesToSave.Num())
-				{
-					if (!UEditorLoadingAndSavingUtils::SavePackages(PackagesToSave, /*bCheckDirty=*/ !bNewlyCreated))
-					{
-						FMessageDialog::Open(EAppMsgType::Ok, NSLOCTEXT("UnrealEd", "Error_FailedToSaveHLODLayersPackages", "Failed to save dependant map packages"));
-						bSuccess = false;
-					}
-				}
-			}
+			bSuccess = SaveExternalPackages(Package, PackagesToSave, bNewlyCreated, bAutosaving);
 		}
 
 		if (bSuccess)
@@ -1017,6 +1036,19 @@ static bool SaveWorld(UWorld* World,
 	}
 
 	return bSuccess;
+}
+
+// Save an individual asset's package as well as any external packages too
+// @param	InPackage				The package to save
+// @param	PackageName				The name of the package to save
+// @param	FinalPackageSavePath	The save path of the package
+// @param	SaveOutput				Output device for error reporting
+// @returns true if all the save operations completed successfully
+static bool SaveAsset(UPackage* InPackage, const FString& PackageName, const FString& FinalPackageSavePath, FOutputDevice& SaveOutput)
+{
+	TArray<UPackage*> PackagesToSave;
+	return	SaveExternalPackages(InPackage, PackagesToSave, InPackage->HasAnyPackageFlags(PKG_NewlyCreated), false) &&
+			GEngine->Exec(nullptr, *FString::Printf( TEXT("OBJ SAVEPACKAGE PACKAGE=\"%s\" FILE=\"%s\" SILENT=true"), *PackageName, *FinalPackageSavePath));
 }
 
 FString FEditorFileUtils::GetAutoSaveFilename(UPackage* const Package, const FString& AbsoluteAutosaveDir, const int32 AutoSaveIndex, const FString& PackageExt)
@@ -1507,7 +1539,8 @@ void FEditorFileUtils::Import(const FString& InFilename)
 	const FScopedBusyCursor BusyCursor;
 
 	UE::Interchange::FScopedSourceData ScopedSourceData(InFilename);
-	const bool bImportThroughInterchange = UInterchangeManager::GetInterchangeManager().CanTranslateSourceData(ScopedSourceData.GetSourceData());
+	const bool bIsSceneImport = true; // Only scene import is requested from FEditorFileUtils::Import
+	const bool bImportThroughInterchange = UInterchangeManager::GetInterchangeManager().CanTranslateSourceData(ScopedSourceData.GetSourceData(), bIsSceneImport);
 
 	USceneImportFactory* SceneFactory = nullptr;
 
@@ -2312,7 +2345,6 @@ ECommandResult::Type FEditorFileUtils::CheckoutPackages(const TArray<FString>& P
 			if(bShowCheckoutError)
 			{
 				PkgsWhichFailedCheckout += FString::Printf( TEXT("\n%s"), *PackageToCheckOutName );
-				CheckOutResult = ECommandResult::Failed;
 			}
 		}
 	}
@@ -2393,15 +2425,16 @@ ECommandResult::Type FEditorFileUtils::CheckoutPackages(const TArray<FString>& P
 				else
 				{
 					PkgsWhichFailedCheckout += FString::Printf( TEXT("\n%s"), *CurPackageName );
-					CheckOutResult = ECommandResult::Failed;
 				}
 			}
 		}
 	}
 
 	// If any packages failed the check out process, report them to the user so they know
-	if ( CheckOutResult == ECommandResult::Failed )
+	if (!PkgsWhichFailedCheckout.IsEmpty())
 	{
+		CheckOutResult = ECommandResult::Type::Failed;
+
 		FFormatNamedArguments Arguments;
 		Arguments.Add(TEXT("Packages"), FText::FromString( PkgsWhichFailedCheckout ));
 		FText MessageFormat = NSLOCTEXT("FileHelper", "FailedCheckoutDlgMessageFormatting", "The following assets could not be successfully checked out from revision control:{Packages}");
@@ -2504,7 +2537,7 @@ void FEditorFileUtils::OpenLevelPickingDialog(const FOnLevelsChosen& OnLevelsCho
 				// Remove the slash if needed
 				if ( FilesystemPath.EndsWith(TEXT("/"), ESearchCase::CaseSensitive) )
 				{
-					FilesystemPath.LeftChopInline(1, false);
+					FilesystemPath.LeftChopInline(1, EAllowShrinking::No);
 				}
 
 				FEditorDirectories::Get().SetLastDirectory(ELastDirectory::LEVEL, FilesystemPath);
@@ -3095,19 +3128,10 @@ EAutosaveContentPackagesResult::Type FEditorFileUtils::AutosaveMapEx(const FStri
 						&& FPackageName::IsValidLongPackageName(ExternalPackage->GetName(), /*bIncludeReadOnlyRoots=*/false))
 					{
 						// Don't try to save external packages that will get deleted
-						ForEachObjectWithPackage(ExternalPackage, [ExternalPackage, &ExternalPackagesToSave](UObject* Object)
+						if (IsValid(ExternalPackage->FindAssetInPackage()))
 						{
-							// @todo_ow: Find better way
-							if (Object->IsA<AActor>() || Object->IsA<UActorFolder>())
-							{
-								if (IsValid(Object))
-								{
-									ExternalPackagesToSave.Add(ExternalPackage);
-									return false;
-								}
-							}
-							return true;
-						}, false);
+							ExternalPackagesToSave.Add(ExternalPackage);
+						}
 					}
 				}
 
@@ -3523,9 +3547,9 @@ static InternalSavePackageResult InternalSavePackage(UPackage* PackageToSave, bo
 		}
 		else
 		{
-			// normally, we just save the package
+			// normally, we just save the package (and its external packages)
 			SaveOutput.Log("LogFileHelpers", ELogVerbosity::Log, FString::Printf(TEXT("Saving Package: %s"), *PackageName));
-			bWasSuccessful = GEngine->Exec( NULL, *FString::Printf( TEXT("OBJ SAVEPACKAGE PACKAGE=\"%s\" FILE=\"%s\" SILENT=true"), *PackageName, *FinalPackageSavePath ), SaveOutput );
+			bWasSuccessful = SaveAsset(PackageToSave, PackageName, FinalPackageSavePath, SaveOutput);
 		}
 
 		ISourceControlProvider& SourceControlProvider = ISourceControlModule::Get().GetProvider();
@@ -3917,7 +3941,7 @@ bool FEditorFileUtils::SaveLevel(ULevel* Level, const FString& DefaultFilename, 
 	return bLevelWasSaved;
 }
 
-bool FEditorFileUtils::SaveDirtyPackages(const bool bPromptUserToSave, const bool bSaveMapPackages, const bool bSaveContentPackages, const bool bFastSave, const bool bNotifyNoPackagesSaved, const bool bCanBeDeclined, bool* bOutPackagesNeededSaving, const FShouldIgnorePackageFunctionRef& ShouldIgnorePackageFunction)
+bool FEditorFileUtils::SaveDirtyPackages(const bool bPromptUserToSave, const bool bSaveMapPackages, const bool bSaveContentPackages, const bool bFastSave, const bool bNotifyNoPackagesSaved, const bool bCanBeDeclined, bool* bOutPackagesNeededSaving, const FShouldIgnorePackageFunctionRef& ShouldIgnorePackageFunction, bool bInSkipExternalObjectSave)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(FEditorFileUtils::SaveDirtyPackages);
 
@@ -3948,6 +3972,7 @@ bool FEditorFileUtils::SaveDirtyPackages(const bool bPromptUserToSave, const boo
 			*bOutPackagesNeededSaving = true;
 		}
 
+		TGuardValue<bool> SkipExternalObjectSaveGuard(bSkipExternalObjectSave, bInSkipExternalObjectSave);
 		const bool bCheckDirty = true;
 		bReturnCode = InternalSavePackages(PackagesToSave, bPromptUserToSave, bFastSave, bCanBeDeclined, bCheckDirty);
 	}
@@ -4075,8 +4100,8 @@ bool FEditorFileUtils::SaveCurrentLevel()
 		{
 			TGuardValue<bool> IsExplicitSaveGuard(EditorFileUtils::bIsExplicitSave, true);
 
-			// If Level gets saved we don't want it to save its external packages because we've already filtered out the ones that need saving and they are part of the PackagesToSave array (unless level is PKG_NewlyCreated then we should save all actors)
-			TGuardValue<bool> GuardValue(bSkipExternalObjectSave, !LevelPackage->HasAnyPackageFlags(PKG_NewlyCreated));
+			// If Level gets saved we don't want it to save its external packages because we've already filtered out the ones that need saving and they are part of the PackagesToSave array (Worlds in package with PKG_NewlyCreated will ignore this flag)
+			TGuardValue<bool> GuardValue(bSkipExternalObjectSave, true);
 
 			const bool bPromptUserToSave = false;
 			const bool bFastSave = false;
@@ -5172,6 +5197,12 @@ void FEditorFileUtils::GetDirtyWorldPackages(TArray<UPackage*>& OutDirtyPackages
 
 	for (TObjectIterator<UWorld> WorldIt; WorldIt; ++WorldIt)
 	{
+		// Filter out pending-delete worlds that may have leaked, e.g. from PIE sessions which were not cleaned up which cleared the PKG_PlayInEditor flag
+		if (!IsValid(*WorldIt))
+		{
+			continue;
+		}
+
 		UPackage* WorldPackage = WorldIt->GetOutermost();
 		if (!WorldPackage->HasAnyPackageFlags(PKG_PlayInEditor)
 			&& !WorldPackage->HasAnyFlags(RF_Transient)
@@ -5249,20 +5280,7 @@ void FEditorFileUtils::GetDirtyWorldPackages(TArray<UPackage*>& OutDirtyPackages
 							// Skip unsaved packages containing only pending kill actors
 							if (ExternalPackage->HasAnyPackageFlags(PKG_NewlyCreated))
 							{
-								bActorPackageNeedsToSave = false;
-								ForEachObjectWithPackage(ExternalPackage, [&bActorPackageNeedsToSave](UObject* Object)
-								{
-									// @todo_ow: Find better way
-									if (Object->IsA<AActor>() || Object->IsA<UActorFolder>())
-									{
-										if (IsValid(Object))
-										{
-											bActorPackageNeedsToSave = true;
-											return false;
-										}
-									}
-									return true;
-								}, false);
+								bActorPackageNeedsToSave = IsValid(ExternalPackage->FindAssetInPackage());
 							}
 
 							// Filter out Actors that might be unsaved (/Temp folder)

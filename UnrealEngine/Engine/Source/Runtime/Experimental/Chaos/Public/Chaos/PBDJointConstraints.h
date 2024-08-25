@@ -47,8 +47,45 @@ namespace Chaos
 		CHAOS_API const FPBDJointSettings& GetSettings() const;
 		const FPBDJointSettings& GetJointSettings() const { return GetSettings(); }	//needed for property macros
 
-		// Note that setting drive targets etc can be done through the settings
+		// Note that this is the "regular" way to change any settings, but note that if it results
+		// in a change of state/mode there may be some overhead. For simple/numerical changes, it
+		// may be faster to call one of the specific "Set" functions.
 		CHAOS_API void SetSettings(const FPBDJointSettings& Settings);
+
+		// Individual properties can be set if the settings don't need to be Sanitized().
+
+		CHAOS_API void SetParentConnectorLocation(const FVec3 Location);
+		CHAOS_API void SetParentConnectorRotation(const FQuat Rotation);
+		CHAOS_API void SetChildConnectorLocation(const FVec3 Location);
+		CHAOS_API void SetChildConnectorRotation(const FQuat Rotation);
+
+		CHAOS_API void SetLinearDrivePositionTarget(const FVec3 Target);
+		CHAOS_API void SetAngularDrivePositionTarget(const FQuat Target);
+
+		CHAOS_API void SetLinearDriveVelocityTarget(const FVec3 Target);
+		CHAOS_API void SetAngularDriveVelocityTarget(const FVec3 Target);
+
+		CHAOS_API void SetLinearDriveStiffness(const FVec3 Stiffness);
+		CHAOS_API void SetLinearDriveDamping(const FVec3 Damping);
+		CHAOS_API void SetLinearDriveMaxForce(const FVec3 MaxForce);
+
+		CHAOS_API void SetAngularDriveStiffness(const FVec3 Stiffness);
+		CHAOS_API void SetAngularDriveDamping(const FVec3 Damping);
+		CHAOS_API void SetAngularDriveMaxTorque(const FVec3 MaxTorque);
+
+		CHAOS_API void SetCollisionEnabled(const bool bCollisionEnabled);
+		CHAOS_API void SetParentInvMassScale(const FReal ParentInvMassScale);
+
+		/**
+		 * This allows the most common drive parameters to be set in one call. Note that the 
+		 * individual drive elements will be enabled/disabled depending on the strength/damping
+		 * values passed in.
+		 *
+		 * Angular values are passed in as (swing, twist, slerp)
+		 */
+		CHAOS_API void SetDriveParams(
+			const FVec3 LinearStiffness, const FVec3 LinearDamping, const FVec3 MaxForce,
+			const FVec3 AngularStiffness, const FVec3 AngularDamping, const FVec3 MaxTorque);
 
 		CHAOS_API TVec2<FGeometryParticleHandle*> GetConstrainedParticles() const override final;
 
@@ -62,6 +99,7 @@ namespace Chaos
 		CHAOS_API void SetSyncState(ESyncState SyncState);
 
 		CHAOS_API void SetEnabledDuringResim(bool bEnabled);
+		CHAOS_API bool IsEnabledDuringResim() const;
 		CHAOS_API EResimType ResimType() const;
 
 		UE_DEPRECATED(5.2, "No longer used")
@@ -75,6 +113,9 @@ namespace Chaos
 		using Base::ConstraintIndex;
 		using Base::ConcreteContainer;
 	private:
+		// Our own direct access to the settings, to modify things that don't need to go through sanitize
+		FPBDJointSettings& GetConstraintSettingsInternal();
+
 		bool bLinearPlasticityInitialized;
 		bool bAngularPlasticityInitialized;
 	};
@@ -112,7 +153,6 @@ namespace Chaos
 
 		using FConstraintContainerHandle = FPBDJointConstraintHandle;
 		using FConstraintHandleAllocator = TConstraintHandleAllocator<FPBDJointConstraints>;
-		using FTransformPair = TVector<FRigidTransform3, 2>;
 		using FHandles = TArray<FConstraintContainerHandle*>;
 
 		CHAOS_API FPBDJointConstraints();
@@ -296,6 +336,8 @@ namespace Chaos
 		CHAOS_API void SetConstraintSyncState(int32 ConstraintIndex, ESyncState SyncState);
 		
 		CHAOS_API void SetConstraintEnabledDuringResim(int32 ConstraintIndex, bool bEnabled);
+		
+		CHAOS_API bool IsConstraintEnabledDuringResim(int32 ConstraintIndex) const;
 		
 		CHAOS_API EResimType GetConstraintResimType(int32 ConstraintIndex) const;
 

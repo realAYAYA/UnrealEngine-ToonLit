@@ -7,7 +7,7 @@ import typing
 from datetime import datetime
 from zipfile import ZipFile
 
-from PySide2 import QtCore, QtGui, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from switchboard.config import Config
 from switchboard.devices.device_base import DeviceStatus

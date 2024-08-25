@@ -1,6 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
 using System;
 
 namespace EpicGames.Serialization.Converters
@@ -9,7 +8,7 @@ namespace EpicGames.Serialization.Converters
 	/// Converter for list types
 	/// </summary>
 	/// <typeparam name="T"></typeparam>
-	class CbNullableConverter<T> : CbConverterBase<Nullable<T>> where T : struct
+	class CbNullableConverter<T> : CbConverter<Nullable<T>> where T : struct
 	{
 		/// <inheritdoc/>
 		public override T? Read(CbField field)
@@ -27,7 +26,7 @@ namespace EpicGames.Serialization.Converters
 		}
 
 		/// <inheritdoc/>
-		public override void WriteNamed(CbWriter writer, Utf8String name, T? nullable)
+		public override void WriteNamed(CbWriter writer, CbFieldName name, T? nullable)
 		{
 			if (nullable.HasValue)
 			{
@@ -42,12 +41,12 @@ namespace EpicGames.Serialization.Converters
 	class CbNullableConverterFactory : CbConverterFactory
 	{
 		/// <inheritdoc/>
-		public override ICbConverter? CreateConverter(Type type)
+		public override CbConverter? CreateConverter(Type type)
 		{
 			if (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Nullable<>))
 			{
 				Type converterType = typeof(CbNullableConverter<>).MakeGenericType(type.GenericTypeArguments);
-				return (ICbConverter)Activator.CreateInstance(converterType)!;
+				return (CbConverter)Activator.CreateInstance(converterType)!;
 			}
 			return null;
 		}

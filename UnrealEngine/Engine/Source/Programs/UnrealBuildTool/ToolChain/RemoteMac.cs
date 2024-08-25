@@ -278,7 +278,7 @@ namespace UnrealBuildTool
 			string RemoteServerOverrideBuildPath;
 			if ((bIsPrimary ? Ini.GetString("/Script/IOSRuntimeSettings.IOSRuntimeSettings", "RemoteServerOverrideBuildPath", out RemoteServerOverrideBuildPath) : Ini.GetString("/Script/IOSRuntimeSettings.IOSRuntimeSettings", "SecondaryRemoteServerOverrideBuildPath", out RemoteServerOverrideBuildPath)) && !String.IsNullOrEmpty(RemoteServerOverrideBuildPath))
 			{
-				RemoteBaseDir = String.Format("{0}/{1}", RemoteServerOverrideBuildPath.Trim().TrimEnd('/'), Environment.MachineName);
+				RemoteBaseDir = String.Format("{0}/{1}", RemoteServerOverrideBuildPath.Trim().TrimEnd('/'), Unreal.MachineName);
 			}
 			else
 			{
@@ -287,7 +287,7 @@ namespace UnrealBuildTool
 				{
 					throw new BuildException("Unable to determine home directory for remote user. SSH output:\n{0}", StringUtils.Indent(Output.ToString(), "  "));
 				}
-				RemoteBaseDir = String.Format("{0}/UE5/Builds/{1}", Output.ToString().Trim().TrimEnd('/'), Environment.MachineName);
+				RemoteBaseDir = String.Format("{0}/UE5/Builds/{1}", Output.ToString().Trim().TrimEnd('/'), Unreal.MachineName);
 			}
 
 			Logger.LogInformation("[Remote] Using base directory '{RemoteBaseDir}'", RemoteBaseDir);

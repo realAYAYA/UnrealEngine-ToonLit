@@ -38,6 +38,7 @@ public:
 	virtual void LoadedFromAnotherClass(const FName& OldClassName) override;
 	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 	virtual bool CanChangeIsSpatiallyLoadedFlag() const override { return false; }
+	virtual FBox GetStreamingBounds() const override { return FBox(ForceInit); }
 #endif
 
 public:

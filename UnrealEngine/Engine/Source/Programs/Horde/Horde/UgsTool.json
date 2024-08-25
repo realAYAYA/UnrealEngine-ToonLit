@@ -1,0 +1,4 @@
+{
+	"installCommand": "horde.exe install",
+	"uninstallCommand": "horde.exe uninstall"
+}

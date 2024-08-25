@@ -99,15 +99,15 @@ struct FConstraintAndActiveChannel
 
 	FConstraintAndActiveChannel() {}
 	FConstraintAndActiveChannel(const TObjectPtr<UTickableConstraint>& InConstraint)
-		: Constraint(InConstraint)
+		: ConstraintCopyToSpawn(InConstraint)
 	{};
-
-	UPROPERTY()
-	TSoftObjectPtr<UTickableConstraint> Constraint;
+	TObjectPtr<UTickableConstraint> GetConstraint() const { return ConstraintCopyToSpawn; }
+	void SetConstraint(UTickableConstraint* InConstraint) { ConstraintCopyToSpawn = InConstraint; }
 
 	UPROPERTY()
 	FMovieSceneConstraintChannel ActiveChannel;
 
+private:
 	UPROPERTY()
 	TObjectPtr<UTickableConstraint> ConstraintCopyToSpawn;
 };

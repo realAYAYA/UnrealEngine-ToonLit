@@ -57,6 +57,7 @@ public:
 		, DraggingTangent_End(false)
 		, bMovingControlPoint(false)
 		, bAutoRotateOnJoin(true)
+		, bAlwaysRotateForward(false)
 		, bAutoChangeConnectionsOnMove(true)
 		, bDeleteLooseEnds(false)
 		, bCopyMeshToNewControlPoint(false)
@@ -372,13 +373,13 @@ public:
 		bool bUpdatedEnd = false;
 		if (bAutoRotateStart)
 		{
-			Start->AutoCalcRotation();
+			Start->AutoCalcRotation(bAlwaysRotateForward);
 			Start->UpdateSplinePoints();
 			bUpdatedStart = true;
 		}
 		if (bAutoRotateEnd)
 		{
-			End->AutoCalcRotation();
+			End->AutoCalcRotation(bAlwaysRotateForward);
 			End->UpdateSplinePoints();
 			bUpdatedEnd = true;
 		}
@@ -442,14 +443,14 @@ public:
 		bool bUpdatedEnd = false;
 		if (bAutoRotateStart)
 		{
-			Start->AutoCalcRotation();
+			Start->AutoCalcRotation(bAlwaysRotateForward);
 			Start->UpdateSplinePoints();
 			bUpdatedStart = true;
 		}
 
 		if (bAutoRotateEnd)
 		{
-			End->AutoCalcRotation();
+			End->AutoCalcRotation(bAlwaysRotateForward);
 			End->UpdateSplinePoints();
 			bUpdatedEnd = true;
 		}
@@ -1204,15 +1205,15 @@ public:
 
 				for (ULandscapeSplineControlPoint* ControlPoint : SelectedSplineControlPoints)
 				{
-					ControlPoint->AutoCalcRotation();
+					ControlPoint->AutoCalcRotation(bAlwaysRotateForward);
 					ControlPoint->UpdateSplinePoints();
 				}
 
 				for (ULandscapeSplineSegment* Segment : SelectedSplineSegments)
 				{
-					Segment->Connections[0].ControlPoint->AutoCalcRotation();
+					Segment->Connections[0].ControlPoint->AutoCalcRotation(bAlwaysRotateForward);
 					Segment->Connections[0].ControlPoint->UpdateSplinePoints();
-					Segment->Connections[1].ControlPoint->AutoCalcRotation();
+					Segment->Connections[1].ControlPoint->AutoCalcRotation(bAlwaysRotateForward);
 					Segment->Connections[1].ControlPoint->UpdateSplinePoints();
 				}
 
@@ -1515,7 +1516,7 @@ public:
 					{
 						if (bDuplicatingControlPoint && bAutoRotateOnJoin)
 						{
-							ControlPoint->AutoCalcRotation();
+							ControlPoint->AutoCalcRotation(bAlwaysRotateForward);
 						}
 
 						ControlPoint->UpdateSplinePoints(true);
@@ -2326,6 +2327,7 @@ protected:
 	uint32 bMovingControlPoint : 1;
 
 	uint32 bAutoRotateOnJoin : 1;
+	uint32 bAlwaysRotateForward : 1;
 	uint32 bAutoChangeConnectionsOnMove : 1;
 	uint32 bDeleteLooseEnds : 1;
 	uint32 bCopyMeshToNewControlPoint : 1;
@@ -2508,6 +2510,23 @@ bool FEdModeLandscape::GetbUseAutoRotateOnJoin()
 		return SplinesTool->bAutoRotateOnJoin;
 	}
 	return true; // default value
+}
+
+void FEdModeLandscape::SetbAlwaysRotateForward(bool InbAlwaysRotateForward)
+{
+	if (SplinesTool /*&& SplinesTool == CurrentTool*/)
+	{
+		SplinesTool->bAlwaysRotateForward = InbAlwaysRotateForward;
+	}
+}
+
+bool FEdModeLandscape::GetbAlwaysRotateForward()
+{
+	if (SplinesTool /*&& SplinesTool == CurrentTool*/)
+	{
+		return SplinesTool->bAlwaysRotateForward;
+	}
+	return false; // default value
 }
 
 void FEdModeLandscape::InitializeTool_Splines()

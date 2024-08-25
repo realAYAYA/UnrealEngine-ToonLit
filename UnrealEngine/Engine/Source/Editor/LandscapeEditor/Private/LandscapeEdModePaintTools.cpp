@@ -79,7 +79,7 @@ namespace
 		// Find matching runtime virtual texture components and invalidate dirty region.
 		if (RuntimeVirtualTextures.Num() > 0)
 		{
-			for (TObjectIterator<URuntimeVirtualTextureComponent> It; It; ++It)
+			for (TObjectIterator<URuntimeVirtualTextureComponent> It(/*AdditionalExclusionFlags = */RF_ClassDefaultObject, /*bIncludeDerivedClasses = */true, /*InInternalExclusionFlags = */EInternalObjectFlags::Garbage); It; ++It)
 			{
 				if (It->GetVirtualTexture() != nullptr && RuntimeVirtualTextures.Contains(It->GetVirtualTexture()))
 				{

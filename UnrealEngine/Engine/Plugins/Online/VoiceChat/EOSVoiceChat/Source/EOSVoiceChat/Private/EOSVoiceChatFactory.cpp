@@ -2,7 +2,7 @@
 
 #include "EOSVoiceChatFactory.h"
 
-#if WITH_EOS_RTC
+#if WITH_EOSVOICECHAT
 
 #include "Misc/Parse.h"
 #include "IEOSSDKManager.h"
@@ -94,4 +94,4 @@ bool FEOSVoiceChatFactory::Exec(UWorld* InWorld, const TCHAR* Cmd, FOutputDevice
 }
 #endif // UE_ALLOW_EXEC_COMMANDS
 
-#endif // WITH_EOS_RTC
+#endif // WITH_EOSVOICECHAT

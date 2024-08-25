@@ -29,23 +29,34 @@ void SCurveEditorTreeFilterStatusBar::Construct(const FArguments& InArgs, TShare
 	WeakCurveEditor = InCurveEditor;
 
 	ChildSlot
-	.Padding(FMargin(5.f, 3.f))
+	.Padding(FMargin(5.f, 0.f))
 	[
 		SNew(SHorizontalBox)
-
-		+ SHorizontalBox::Slot()
-		[
-			SAssignNew(TextBlock, STextBlock)
-		]
 
 		+ SHorizontalBox::Slot()
 		.AutoWidth()
 		.Padding(FMargin(3.f, 0.f, 0.f, 0.f))
 		[
-			SNew(SHyperlink)
-			.Visibility(this, &SCurveEditorTreeFilterStatusBar::GetVisibilityFromFilter)
-			.Text(LOCTEXT("ClearFilters", "clear"))
-			.OnNavigate(this, &SCurveEditorTreeFilterStatusBar::ClearFilters)
+			SNew(SBorder)
+			.BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
+			.Padding(FMargin(3.0f, 3.0f))
+			[
+				SNew(SHyperlink)
+				.Visibility(this, &SCurveEditorTreeFilterStatusBar::GetVisibilityFromFilter)
+				.Text(LOCTEXT("ClearFilters", "clear"))
+				.OnNavigate(this, &SCurveEditorTreeFilterStatusBar::ClearFilters)
+			]
+		]
+
+		+ SHorizontalBox::Slot()
+		[
+			SNew(SBorder)
+			.BorderImage(FAppStyle::GetBrush("ToolPanel.GroupBorder"))
+			.Padding(FMargin(3.0f, 3.0f))
+			.Visibility(EVisibility::HitTestInvisible)
+			[
+				SAssignNew(TextBlock, STextBlock)
+			]
 		]
 	];
 
@@ -134,6 +145,65 @@ void SCurveEditorTreeFilterStatusBar::UpdateText()
 
 	TextBlock->SetColorAndOpacity(NewColor);
 	TextBlock->SetText(NewText);
+}
+
+static double CurveEditorOpacityDurationSeconds = 2.0;
+
+void SCurveEditorTreeFilterStatusBar::Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime)
+{
+	if (GetVisibility() == EVisibility::Visible && OpacityThrobEndTime != FLT_MAX)
+	{
+		if (IsHovered())
+		{
+			// Make sure the status bar stays visible and keep it from fading until OnUnhovered
+			ShowStatusBar();
+			FadeOutStatusBar();
+		}
+		else
+		{
+			double CurrentTime = FPlatformTime::Seconds();
+
+			float Opacity = 0.f;
+			if (OpacityThrobEndTime > CurrentTime)
+			{
+				double Difference = OpacityThrobEndTime - CurrentTime;
+				Opacity = Difference / CurveEditorOpacityDurationSeconds;
+			}
+
+			if (Opacity > 0.f)
+			{
+				FLinearColor BorderColor = GetColorAndOpacity();
+				BorderColor.A = Opacity;
+				SetColorAndOpacity(BorderColor);
+			}
+			else
+			{
+				SetVisibility(EVisibility::Hidden);
+			}
+		}
+	}
+
+	SCompoundWidget::Tick(AllottedGeometry, InCurrentTime, InDeltaTime);
+}
+
+void SCurveEditorTreeFilterStatusBar::ShowStatusBar()
+{
+	OpacityThrobEndTime = FLT_MAX;
+	FLinearColor BorderColor = GetColorAndOpacity();
+	BorderColor.A = 1.f;
+	SetColorAndOpacity(BorderColor);
+	SetVisibility(EVisibility::Visible);
+}
+
+void SCurveEditorTreeFilterStatusBar::HideStatusBar()
+{
+	SetVisibility(EVisibility::Hidden);
+}
+
+void SCurveEditorTreeFilterStatusBar::FadeOutStatusBar()
+{
+	// Show and then start fading out the status bar
+	OpacityThrobEndTime = FPlatformTime::Seconds() + CurveEditorOpacityDurationSeconds;
 }
 
 #undef LOCTEXT_NAMESPACE

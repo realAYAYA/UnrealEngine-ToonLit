@@ -6,7 +6,7 @@
 
 #include "UsdWrappers/ForwardDeclarations.h"
 
-class USDSTAGEEDITORVIEWMODELS_API FUsdReference : public TSharedFromThis< FUsdReference >
+class USDSTAGEEDITORVIEWMODELS_API FUsdReference : public TSharedFromThis<FUsdReference>
 {
 public:
 	FString AssetPath;
@@ -16,8 +16,8 @@ public:
 class USDSTAGEEDITORVIEWMODELS_API FUsdReferencesViewModel
 {
 public:
-	void UpdateReferences( const UE::FUsdStageWeak& UsdStage, const TCHAR* PrimPath );
+	void UpdateReferences(const UE::FUsdStageWeak& UsdStage, const TCHAR* PrimPath);
 
 public:
-	TArray< TSharedPtr< FUsdReference > > References;
+	TArray<TSharedPtr<FUsdReference>> References;
 };

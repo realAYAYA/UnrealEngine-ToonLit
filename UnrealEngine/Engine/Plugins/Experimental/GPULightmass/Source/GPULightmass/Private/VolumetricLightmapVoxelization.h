@@ -103,7 +103,7 @@ class FVLMVoxelizationMeshProcessor : public FMeshPassProcessor
 {
 public:
 	FVLMVoxelizationMeshProcessor(const FScene* InScene, const FSceneView* InView, FMeshPassDrawListContext* InDrawListContext)
-		: FMeshPassProcessor(InScene, InView->GetFeatureLevel(), InView, InDrawListContext)
+		: FMeshPassProcessor(TEXT("VLMVoxelization"), InScene, InView->GetFeatureLevel(), InView, InDrawListContext)
 	{
 		DrawRenderState.SetDepthStencilState(TStaticDepthStencilState<false, CF_Always>::GetRHI());
 		DrawRenderState.SetBlendState(TStaticBlendState<>::GetRHI());

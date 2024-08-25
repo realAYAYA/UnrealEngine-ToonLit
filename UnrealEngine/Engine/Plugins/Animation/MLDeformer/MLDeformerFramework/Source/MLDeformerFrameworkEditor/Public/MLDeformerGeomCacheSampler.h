@@ -25,8 +25,8 @@ namespace UE::MLDeformer
 	{
 	public:
 		// FVertexDeltaSampler overrides.
+		virtual void Init(FMLDeformerEditorModel* InModel, int32 InAnimIndex) override;
 		virtual void Sample(int32 AnimFrameIndex) override;
-		virtual void RegisterTargetComponents() override;
 		virtual float GetTimeAtFrame(int32 InAnimFrameIndex) const override;
 		// ~END FVertexDeltaSampler overrides.
 
@@ -43,6 +43,7 @@ namespace UE::MLDeformer
 		 * Executed when we need a pointer to the geometry cache object that we want to sample from.
 		 * @return A reference to the delegate.
 		 */
+		UE_DEPRECATED(5.4, "This method will be removed. To get the geom cache use FMLDeformerGeomCacheEditorModel::GetTrainingInputAnims() together with the AnimIndex as index value.")
 		FMLDeformerGetGeomCacheEvent& OnGetGeometryCache()			{ return GetGeometryCacheEvent; }
 
 		UGeometryCacheComponent* GetGeometryCacheComponent()		{ return GeometryCacheComponent; }
@@ -62,7 +63,8 @@ namespace UE::MLDeformer
 		 * @param OutVertexDeltas The array that will receive the deltas, in a float buffer. The buffer will contain 3*NumVerts number of elements, and the layout is
 		 *                        (x, y, z, x, y, z, x, y, z...) so 3 values per vertex: x, y and z.
 		 */
-		void CalculateVertexDeltas(const TArray<FVector3f>& SkinnedPositions, float DeltaCutoffLength, TArray<float>& OutVertexDeltas);
+		UE_DEPRECATED(5.4, "This method will be removed.")
+		void CalculateVertexDeltas(const TArray<FVector3f>& SkinnedPositions, float DeltaCutoffLength, TArray<float>& OutVertexDeltas) {}
 
 	protected:
 		/** The geometry cache component used to sample the geometry cache. */

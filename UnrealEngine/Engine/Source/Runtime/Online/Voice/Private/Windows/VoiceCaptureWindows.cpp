@@ -635,7 +635,7 @@ void FVoiceCaptureWindows::ProcessData()
 
 			bSampleStartCached = false;
 
-			UncompressedAudioBuffer.SetNum(Offset + (SamplesPushedToUncompressedAudioBuffer * sizeof(int16)), false);
+			UncompressedAudioBuffer.SetNum(Offset + (SamplesPushedToUncompressedAudioBuffer * sizeof(int16)), EAllowShrinking::No);
 
 			CA_SUPPRESS(6385);
 			CV->VoiceCaptureBuffer8->Unlock(CaptureData, OriginalCaptureLength, CaptureData2, OriginalCaptureLength2);

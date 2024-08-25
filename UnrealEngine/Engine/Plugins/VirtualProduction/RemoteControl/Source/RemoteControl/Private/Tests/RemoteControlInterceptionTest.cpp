@@ -387,7 +387,7 @@ private:
 	TUniquePtr<IRemoteControlInterceptionFeatureProcessor>   FeatureProcessor;
 };
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRemoteControlPresetInterceptionTest, "Plugin.RemoteControl.Interception", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FRemoteControlPresetInterceptionTest, "Plugins.RemoteControl.Interception", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FRemoteControlPresetInterceptionTest::RunTest(const FString& Parameters)
 {
 	FRemoteControlInterceptionTest RemoteControlInterceptionTest(this);

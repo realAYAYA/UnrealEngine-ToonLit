@@ -1,0 +1,11 @@
+FROM ubuntu:latest
+
+ARG app_base_dir
+
+WORKDIR /app
+
+COPY . /app/$app_base_dir/
+
+RUN apt-get update -y
+RUN apt-get install build-essential -y
+RUN apt-get install gdb-multiarch qemu-user gcc-aarch64-linux-gnu -y

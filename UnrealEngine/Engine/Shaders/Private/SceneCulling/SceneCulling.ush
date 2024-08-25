@@ -1,0 +1,101 @@
+// Copyright Epic Games, Inc. All Rights Reserved.
+
+#pragma once
+
+#include "../Common.ush"
+
+#include "/Engine/Shared/SceneCullingDefinitions.h"
+
+
+/**
+ * Unpacked cell data.
+ */
+struct FSceneHiearchyCellData
+{
+	uint3 LocalCellCoord;
+	float3 LocalBoundsCenter; // Bounds center is local to the cell block
+	float3 LocalBoundsExtent;
+	uint BlockId;
+
+	FCellBlockData BlockData;
+};
+
+// Make these compile time constants?
+uint NumCellsPerBlockLog2;
+uint LocalCellCoordMask;
+uint CellBlockDimLog2;
+int FirstLevel;
+uint MaxCells;
+
+StructuredBuffer<uint> InstanceIds;
+StructuredBuffer<FCellBlockData> InstanceHierarchyCellBlockData;
+
+FCellBlockData GetCellBlockData(uint BlockId)
+{
+	return InstanceHierarchyCellBlockData[BlockId];
+}
+
+StructuredBuffer<FPackedCellHeader> InstanceHierarchyCellHeaders;
+
+FCellHeader GetCellHeader(uint CellId)
+{
+	return UnpackCellHeader(InstanceHierarchyCellHeaders[CellId]);
+}
+StructuredBuffer<uint> InstanceHierarchyItemChunks;
+
+inline uint CellIndexToBlockId(uint CellIndex)
+{
+	return CellIndex >> NumCellsPerBlockLog2;
+}
+
+uint bUseExplicitCellBounds;
+StructuredBuffer<float4> ExplicitCellBounds;
+
+FSceneHiearchyCellData GetSceneHiearchyCellData(uint CellId, bool bAllowExplicitBounds = true)
+{
+	FSceneHiearchyCellData CellData;
+	CellData.BlockId = CellIndexToBlockId(CellId);
+
+	// These data sizes are small enough that we could tabulate this if it were ever important (unlikely)
+	CellData.LocalCellCoord.x = CellId & LocalCellCoordMask;
+	CellData.LocalCellCoord.y = (CellId >> CellBlockDimLog2) & LocalCellCoordMask;
+	CellData.LocalCellCoord.z = (CellId >> (CellBlockDimLog2 * 2u)) & LocalCellCoordMask;
+	// Cache the block data for future use.
+	CellData.BlockData = GetCellBlockData(CellData.BlockId);
+	const float LevelCellSize = CellData.BlockData.LevelCellSize;
+
+	// TODO: roll half-offset into the block world position?
+	CellData.LocalBoundsCenter = float3(CellData.LocalCellCoord) * LevelCellSize + (LevelCellSize * 0.5f).xxx;
+	if (bUseExplicitCellBounds && bAllowExplicitBounds)
+	{
+		CellData.LocalBoundsCenter += ExplicitCellBounds[CellId * 2 + 0].xyz;
+		CellData.LocalBoundsExtent = ExplicitCellBounds[CellId * 2 + 1].xyz;
+	}
+	else
+	{
+		// Note: extent is _not_ half the cell size as we have loose bounds.
+		CellData.LocalBoundsExtent = LevelCellSize;
+	}
+	return CellData;
+}
+
+uint UnpackChunkInstanceCount(uint PackedItemChunkDesc, inout bool bOutIsRLEPackedChunk)
+{
+	bOutIsRLEPackedChunk = (PackedItemChunkDesc & INSTANCE_HIERARCHY_ITEM_CHUNK_COMPRESSED_FLAG) != 0u;
+	uint NumInstances =  bOutIsRLEPackedChunk ? 64u : (PackedItemChunkDesc >> INSTANCE_HIERARCHY_ITEM_CHUNK_COUNT_SHIFT);
+	return NumInstances;
+}
+
+uint UnpackChunkInstanceId(bool bIsRLEPackedChunk, uint PackedItemChunkDesc, uint GroupThreadIndex)
+{
+	if (bIsRLEPackedChunk)
+	{
+		uint InstanceDataOffset = PackedItemChunkDesc & INSTANCE_HIERARCHY_ITEM_CHUNK_COMPRESSED_PAYLOAD_MASK;
+		return InstanceDataOffset + GroupThreadIndex;
+	}
+	else
+	{
+		uint ChunkId = PackedItemChunkDesc & INSTANCE_HIERARCHY_ITEM_CHUNK_ID_MASK;
+		return InstanceIds[ChunkId * INSTANCE_HIERARCHY_MAX_CHUNK_SIZE + GroupThreadIndex];
+	}
+}

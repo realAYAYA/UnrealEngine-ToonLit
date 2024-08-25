@@ -93,7 +93,8 @@ void FReplicationStateDescriptor::Release() const
 				FunctionDescriptor.Descriptor->Release();
 			}
 
-			delete this;
+			// Allocated via FMemory::Malloc in ReplicationStateDescriptorBuilder
+			FMemory::Free(const_cast<FReplicationStateDescriptor*>(this));
 		}
 	}
 }

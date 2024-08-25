@@ -45,7 +45,7 @@ enum EMaterialValueType
 	
 	MCT_ShadingModel		  = 1 << 16,
 
-	MCT_Strata				  = 1 << 17,
+	MCT_Substrate			  = 1 << 17,
 
 	MCT_LWCScalar			  = 1 << 18,
 	MCT_LWCVector2			  = 1 << 19,

@@ -28,11 +28,6 @@ struct FWindowsPlatformProperties
 		return TEXT("/Script/WindowsTargetPlatform.WindowsTargetSettings");
 	}
 
-	static FORCEINLINE const char* GetPhysicsFormat()
-	{
-		return "PhysXPC";
-	}
-
 	static FORCEINLINE bool IsGameOnly()
 	{
 		return UE_GAME;

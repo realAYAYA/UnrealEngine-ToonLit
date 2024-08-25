@@ -1519,7 +1519,7 @@ public:
 	/** Return true if the threading is ready **/
 	static FORCEINLINE_STATS bool IsThreadingReady()
 	{
-		return !!TlsSlot;
+		return FPlatformTLS::IsValidTlsSlot(TlsSlot);
 	}
 
 	/** Indicate that you would like the system to begin collecting data, if it isn't already collecting data. Think reference count. **/
@@ -1710,6 +1710,17 @@ public:
 		if (UE_TRACE_CHANNELEXPR_IS_ENABLED(CpuChannel))
 		{
 			FCpuProfilerTrace::OutputBeginDynamicEvent(Name);
+			EmittedEvent |= TraceEvent;
+		}
+#endif
+	}
+
+	FORCEINLINE_STATS void StartTrace(const FName Name, const TCHAR* Desc)
+	{
+#if CPUPROFILERTRACE_ENABLED
+		if (UE_TRACE_CHANNELEXPR_IS_ENABLED(CpuChannel))
+		{
+			FCpuProfilerTrace::OutputBeginDynamicEventWithId(Name, Desc);
 			EmittedEvent |= TraceEvent;
 		}
 #endif

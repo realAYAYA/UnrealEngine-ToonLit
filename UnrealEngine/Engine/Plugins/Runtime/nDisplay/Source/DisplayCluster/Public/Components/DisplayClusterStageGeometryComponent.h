@@ -50,6 +50,10 @@ public:
 	virtual void TickComponent(float DeltaTime, ELevelTick TickType, FActorComponentTickFunction* ThisTickFunction) override;
 	//~ End UObject interface
 
+	/** Gets whether the stage geometry map is valid and usable */
+	UFUNCTION(BlueprintCallable, Category = "NDisplay")
+	bool IsGeometryMapValid() const { return bGeometryMapLoaded; }
+
 	/**
 	 * Invalidates and regenerates the cached stage geometry map
 	 * @param bForceImmediateRedraw Indicates whether the geometry map is regenerated immediately or is queued to redraw on the next tick
@@ -75,10 +79,15 @@ public:
 
 	/**
 	 * Morphs the specified procedural mesh to match the stage's geometry map
+	 * @param InProceduralMeshComponent - The mesh component to morph
+	 * @param bSyncMeshLocation - When true, the procedural mesh's world location will be synced to the view origin's world location
 	 */
-	bool MorphProceduralMesh(UProceduralMeshComponent* InProceduralMeshComponent);
+	bool MorphProceduralMesh(UProceduralMeshComponent* InProceduralMeshComponent, bool bSyncMeshLocation = false);
 
 private:
+	/** Gets the parent stage's common view point, or null if none were found */
+	USceneComponent* GetCommonViewPoint() const;
+
 	/** Creates a new render target that can be used to render the stage's geometry map */
 	UTextureRenderTarget2D* CreateRenderTarget();
 
@@ -87,6 +96,9 @@ private:
 
 	/** Updates the stage's current geometry with the renderer */
 	void UpdateStageGeometry();
+
+	/** Updates any isosphere that is found on the stage to match the geometry map */
+	void UpdateStageIsosphere();
 
 	/** Renders the stage's geometry to the specified geometry map */
 	void GenerateGeometryMap(bool bIsNorthMap);

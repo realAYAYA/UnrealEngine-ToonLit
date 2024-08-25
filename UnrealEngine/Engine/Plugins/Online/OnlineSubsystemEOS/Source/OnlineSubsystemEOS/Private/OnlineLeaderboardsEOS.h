@@ -39,6 +39,8 @@ public:
 	{
 	}
 
+	bool HandleLeaderboardsExec(UWorld* InWorld, const TCHAR* Cmd, FOutputDevice& Ar);
+
 private:
 
 	/** Reference to the main EOS subsystem */

@@ -17,20 +17,19 @@ class FPerParticlePBDUpdateFromDeltaPosition : public FPerParticleRule
 	template<class T_PARTICLES>
 	inline void ApplyHelper(T_PARTICLES& InParticles, const FReal Dt, const int32 Index) const
 	{
-		InParticles.V(Index) = (InParticles.P(Index) - InParticles.X(Index)) / Dt;
-		//InParticles.X(Index) = InParticles.P(Index);
+		InParticles.SetV(Index, (InParticles.GetP(Index) - InParticles.GetX(Index)) / Dt);
 	}
 
 	inline void Apply(FPBDParticles& InParticles, const FReal Dt, const int32 Index) const override //-V762
 	{
-		InParticles.V(Index) = (InParticles.P(Index) - InParticles.X(Index)) / Dt;
-		InParticles.X(Index) = InParticles.P(Index);
+		InParticles.V(Index) = (InParticles.GetP(Index) - InParticles.GetX(Index)) / Dt;
+		InParticles.SetX(Index,  InParticles.GetP(Index));
 	}
 
 	inline void Apply(TPBDRigidParticles<FReal, 3>& InParticles, const FReal Dt, const int32 Index) const override //-V762
 	{
 		ApplyHelper(InParticles, Dt, Index);
-		InParticles.W(Index) = FRotation3::CalculateAngularVelocity(InParticles.R(Index), InParticles.Q(Index), Dt);
+		InParticles.SetW(Index, FRotation3f::CalculateAngularVelocity(InParticles.GetRf(Index), InParticles.GetQf(Index), FRealSingle(Dt)));
 	}
 
 	inline void Apply(FPBDRigidParticleHandle* Particle, const FReal Dt) const override //-V762
@@ -38,8 +37,8 @@ class FPerParticlePBDUpdateFromDeltaPosition : public FPerParticleRule
 		const FVec3& CenterOfMass = Particle->CenterOfMass();
 		const FVec3 CenteredX = Particle->XCom();
 		const FVec3 CenteredP = Particle->PCom();
-		Particle->V() = FVec3::CalculateVelocity(CenteredX, CenteredP, Dt);
-		Particle->W() = FRotation3::CalculateAngularVelocity(Particle->R(), Particle->Q(), Dt);
+		Particle->SetV(FVec3::CalculateVelocity(CenteredX, CenteredP, Dt));
+		Particle->SetWf(FRotation3f::CalculateAngularVelocity(Particle->GetRf(), Particle->GetQf(), FRealSingle(Dt)));
 	}
 
 	inline void Apply(TTransientPBDRigidParticleHandle<FReal, 3>& Particle, const FReal Dt) const override //-V762
@@ -47,8 +46,8 @@ class FPerParticlePBDUpdateFromDeltaPosition : public FPerParticleRule
 		const FVec3& CenterOfMass = Particle.CenterOfMass();
 		const FVec3 CenteredX = Particle.XCom();
 		const FVec3 CenteredP = Particle.PCom();
-		Particle.V() = FVec3::CalculateVelocity(CenteredX, CenteredP, Dt);
-		Particle.W() = FRotation3::CalculateAngularVelocity(Particle.R(), Particle.Q(), Dt);
+		Particle.SetV(FVec3::CalculateVelocity(CenteredX, CenteredP, Dt));
+		Particle.SetWf(FRotation3f::CalculateAngularVelocity(Particle.GetRf(), Particle.GetQf(), FRealSingle(Dt)));
 	}
 };
 

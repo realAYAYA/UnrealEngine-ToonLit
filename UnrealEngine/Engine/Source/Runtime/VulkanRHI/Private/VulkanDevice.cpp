@@ -8,6 +8,7 @@
 #include "VulkanDevice.h"
 #include "VulkanPendingState.h"
 #include "VulkanContext.h"
+#include "Misc/CommandLine.h"
 #include "Misc/Paths.h"
 #include "HAL/FileManager.h"
 #include "Misc/FileHelper.h"
@@ -18,6 +19,7 @@
 #include "VulkanRenderpass.h"
 #include "VulkanRayTracing.h"
 #include "VulkanDescriptorSets.h"
+#include "VulkanChunkedPipelineCache.h"
 
 TAutoConsoleVariable<int32> GRHIAllowAsyncComputeCvar(
 	TEXT("r.Vulkan.AllowAsyncCompute"),
@@ -524,9 +526,7 @@ void FVulkanDevice::CreateDevice(TArray<const ANSICHAR*>& DeviceLayers, FVulkanD
 void FVulkanDevice::SetupDrawMarkers()
 {
 #if VULKAN_ENABLE_DRAW_MARKERS
-#if 0//VULKAN_SUPPORTS_DEBUG_UTILS
-	FVulkanDynamicRHI* RHI = GVulkanRHI;
-	if (RHI->SupportsDebugUtilsExt() && GRenderDocFound)
+	if (RHI->SupportsDebugUtilsExt())
 	{
 		DebugMarkers.CmdBeginDebugLabel = (PFN_vkCmdBeginDebugUtilsLabelEXT)(void*)VulkanRHI::vkGetInstanceProcAddr(RHI->GetInstance(), "vkCmdBeginDebugUtilsLabelEXT");
 		DebugMarkers.CmdEndDebugLabel = (PFN_vkCmdEndDebugUtilsLabelEXT)(void*)VulkanRHI::vkGetInstanceProcAddr(RHI->GetInstance(), "vkCmdEndDebugUtilsLabelEXT");
@@ -536,46 +536,14 @@ void FVulkanDevice::SetupDrawMarkers()
 			bDebugMarkersFound = true;
 		}
 	}
-	else
-#endif	// VULKAN_SUPPORTS_DEBUG_UTILS
-	if (bDebugMarkersFound || FVulkanPlatform::ForceEnableDebugMarkers())
-	{
-		DebugMarkers.CmdBegin = (PFN_vkCmdDebugMarkerBeginEXT)(void*)VulkanRHI::vkGetDeviceProcAddr(Device, "vkCmdDebugMarkerBeginEXT");
-		DebugMarkers.CmdEnd = (PFN_vkCmdDebugMarkerEndEXT)(void*)VulkanRHI::vkGetDeviceProcAddr(Device, "vkCmdDebugMarkerEndEXT");
-		DebugMarkers.CmdSetObjectName = (PFN_vkDebugMarkerSetObjectNameEXT)(void*)VulkanRHI::vkGetDeviceProcAddr(Device, "vkDebugMarkerSetObjectNameEXT");
 
-		if (DebugMarkers.CmdBegin && DebugMarkers.CmdEnd && DebugMarkers.CmdSetObjectName)
-		{
-			bDebugMarkersFound = true;
-		}
-
-		if (!DebugMarkers.CmdBegin || !DebugMarkers.CmdEnd || !DebugMarkers.CmdSetObjectName)
-		{
-			UE_LOG(LogVulkanRHI, Warning, TEXT("Extension found, but entry points for vkCmdDebugMarker(Begin|End)EXT NOT found!"));
-			bDebugMarkersFound = false;
-			DebugMarkers.CmdBegin = nullptr;
-			DebugMarkers.CmdEnd = nullptr;
-			DebugMarkers.CmdSetObjectName = nullptr;
-		}
-	}
-	else
-	{
-		if (DebugMarkers.CmdBegin && DebugMarkers.CmdEnd && DebugMarkers.CmdSetObjectName)
-		{
-			UE_LOG(LogVulkanRHI, Warning, TEXT("Extension not found, but entry points for vkCmdDebugMarker(Begin|End)EXT found!"));
-			bDebugMarkersFound = true;
-		}
-	}
-	if(GVulkanRHI->SupportsDebugUtilsExt())
-	{
-		DebugMarkers.SetDebugName = (PFN_vkSetDebugUtilsObjectNameEXT)(void*)VulkanRHI::vkGetInstanceProcAddr(RHI->GetInstance(), "vkSetDebugUtilsObjectNameEXT");
-	}
-
-	if (bDebugMarkersFound)
+#if VULKAN_HAS_DEBUGGING_ENABLED
+	if (bDebugMarkersFound && GRenderDocFound)
 	{
 		// We're running under RenderDoc or other trace tool, so enable capturing mode
 		EnableDrawMarkers();
 	}
+#endif
 #endif
 
 #if VULKAN_ENABLE_DUMP_LAYER
@@ -1090,6 +1058,81 @@ bool FVulkanDevice::SupportsBindless() const
 	return BindlessDescriptorManager->IsSupported();
 }
 
+void FVulkanDevice::ChooseVariableRateShadingMethod()
+{
+	auto IsFragmentShadingRateAvailable = [](VkPhysicalDeviceFragmentShadingRateFeaturesKHR& FragmentShadingRateFeatures)
+	{
+		return FragmentShadingRateFeatures.attachmentFragmentShadingRate == VK_TRUE;
+	};
+
+	auto IsFragmentDensityMapAvailable = [](FOptionalVulkanDeviceExtensions& ExtensionFlags)
+	{
+		return ExtensionFlags.HasEXTFragmentDensityMap;
+	};
+
+	auto TurnOffFragmentShadingRate = [](VkPhysicalDeviceFragmentShadingRateFeaturesKHR& FragmentShadingRateFeatures)
+	{
+		FragmentShadingRateFeatures.primitiveFragmentShadingRate = VK_FALSE;
+		FragmentShadingRateFeatures.attachmentFragmentShadingRate = VK_FALSE;
+		FragmentShadingRateFeatures.pipelineFragmentShadingRate = VK_FALSE;
+		GRHISupportsPipelineVariableRateShading = false;
+		GRHISupportsLargerVariableRateShadingSizes = false;
+	};
+
+	auto TurnOffFragmentDensityMap = [](FOptionalVulkanDeviceExtensions& ExtensionFlags, VkPhysicalDeviceFragmentDensityMapFeaturesEXT& FragmentDensityMapFeatures, VkPhysicalDeviceFragmentDensityMap2FeaturesEXT& FragmentDensityMap2Features)
+	{
+		ExtensionFlags.HasEXTFragmentDensityMap = 0;
+		FragmentDensityMapFeatures.fragmentDensityMap = VK_FALSE;
+		FragmentDensityMapFeatures.fragmentDensityMapDynamic = VK_FALSE;
+		FragmentDensityMapFeatures.fragmentDensityMapNonSubsampledImages = VK_FALSE;
+		ExtensionFlags.HasEXTFragmentDensityMap2 = 0;
+		FragmentDensityMap2Features.fragmentDensityMapDeferred = VK_FALSE;
+	};
+
+	int32 VRSFormatPreference = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.Vulkan.VRSFormat"))->GetValueOnAnyThread();
+	UE_LOG(LogVulkanRHI, Display, TEXT("Vulkan Variable Rate Shading choice: %d."), VRSFormatPreference);
+
+	// If both FSR and FDM are available we turn off the one that we're not using to prevent Vulkan validation layers warnings.
+	if (IsFragmentDensityMapAvailable(OptionalDeviceExtensions) && IsFragmentShadingRateAvailable(OptionalDeviceExtensionProperties.FragmentShadingRateFeatures))
+	{
+		if (VRSFormatPreference <= (uint8)EVulkanVariableRateShadingPreference::RequireFSR)
+		{
+			TurnOffFragmentDensityMap(OptionalDeviceExtensions, OptionalDeviceExtensionProperties.FragmentDensityMapFeatures, OptionalDeviceExtensionProperties.FragmentDensityMap2Features);
+		}
+		else
+		{
+			TurnOffFragmentShadingRate(OptionalDeviceExtensionProperties.FragmentShadingRateFeatures);
+		}
+		return;
+	}
+	// When only FSR is available.
+	if (IsFragmentShadingRateAvailable(OptionalDeviceExtensionProperties.FragmentShadingRateFeatures))
+	{
+		if (VRSFormatPreference == (uint8)EVulkanVariableRateShadingPreference::UseFDMOnlyIfAvailable)
+		{
+			UE_LOG(LogVulkanRHI, Display, TEXT("Fragment Density Map was requested but is not available."));
+		}
+		else if (VRSFormatPreference == (uint8)EVulkanVariableRateShadingPreference::RequireFDM)
+		{
+			UE_LOG(LogVulkanRHI, Error, TEXT("Fragment Density Map was required but is not available."));
+		}
+		TurnOffFragmentDensityMap(OptionalDeviceExtensions, OptionalDeviceExtensionProperties.FragmentDensityMapFeatures, OptionalDeviceExtensionProperties.FragmentDensityMap2Features);
+	}
+	// When only FDM is available.
+	if (IsFragmentDensityMapAvailable(OptionalDeviceExtensions))
+	{
+		if (VRSFormatPreference == (uint8)EVulkanVariableRateShadingPreference::UseFSROnlyIfAvailable)
+		{
+			UE_LOG(LogVulkanRHI, Display, TEXT("Fragment Shading Rate was requested but is not available."));
+		}
+		else if (VRSFormatPreference == (uint8)EVulkanVariableRateShadingPreference::RequireFSR)
+		{
+			UE_LOG(LogVulkanRHI, Error, TEXT("Fragment Shading Rate was required but is not available."));
+		}
+		TurnOffFragmentShadingRate(OptionalDeviceExtensionProperties.FragmentShadingRateFeatures);
+	}
+}
+
 void FVulkanDevice::InitGPU()
 {
 	LLM_SCOPE_VULKAN(ELLMTagVulkan::VulkanMisc);
@@ -1158,7 +1201,7 @@ void FVulkanDevice::InitGPU()
 		}
 	}
 
-	ChooseVariableRateShadingMethod(OptionalDeviceExtensions, GetOptionalExtensionProperties().FragmentShadingRateFeatures);
+	ChooseVariableRateShadingMethod();
 
 	UE_LOG(LogVulkanRHI, Display, TEXT("Device properties: Geometry %d BufferAtomic64 %d ImageAtomic64 %d"), 
 		PhysicalDeviceFeatures.Core_1_0.geometryShader, OptionalDeviceExtensions.HasKHRShaderAtomicInt64, OptionalDeviceExtensions.HasImageAtomicInt64);
@@ -1254,6 +1297,8 @@ void FVulkanDevice::InitGPU()
 	}
 #endif
 
+	FVulkanChunkedPipelineCacheManager::Init();
+
 	PipelineStateCache->InitAndLoad(CacheFilenames);
 
 	// Setup default resource
@@ -1278,7 +1323,7 @@ void FVulkanDevice::InitGPU()
 	}
 #endif
 
-	FVulkanPlatform::SetupImageMemoryRequirementWorkaround(*this);
+	FVulkanPlatform::PostInitGPU(*this);
 }
 
 void FVulkanDevice::PrepareForDestroy()
@@ -1356,12 +1401,12 @@ void FVulkanDevice::Destroy()
 	{
 		delete Pool;
 	}
-	UsedOcclusionQueryPools.SetNum(0, false);
+	UsedOcclusionQueryPools.SetNum(0, EAllowShrinking::No);
 	for (FVulkanOcclusionQueryPool* Pool : FreeOcclusionQueryPools)
 	{
 		delete Pool;
 	}
-	FreeOcclusionQueryPools.SetNum(0, false);
+	FreeOcclusionQueryPools.SetNum(0, EAllowShrinking::No);
 
 	delete PipelineStateCache;
 	PipelineStateCache = nullptr;
@@ -1398,6 +1443,7 @@ void FVulkanDevice::Destroy()
 
 	FenceManager.Deinit();
 	DeviceMemoryManager.Deinit();
+	FVulkanChunkedPipelineCacheManager::Shutdown();
 
 	VulkanRHI::vkDestroyDevice(Device, VULKAN_CPU_ALLOCATOR);
 	Device = VK_NULL_HANDLE;
@@ -1504,7 +1550,7 @@ FVulkanCommandListContext* FVulkanDevice::AcquireDeferredContext()
 	{
 		return new FVulkanCommandListContext(GVulkanRHI, this, GfxQueue, ImmediateContext);
 	}
-	return CommandContexts.Pop(false);
+	return CommandContexts.Pop(EAllowShrinking::No);
 }
 
 void FVulkanDevice::ReleaseDeferredContext(FVulkanCommandListContext* InContext)

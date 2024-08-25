@@ -166,7 +166,7 @@ void FKeyHandleSet::Toggle(FKeyHandle Handle, ECurvePointType PointType)
 			if (HandleToPointType.FindChecked(Handle) == ECurvePointType::None)
 			{
 				HandleToPointType.FindAndRemoveChecked(Handle);		
-				SortedHandles.RemoveAt(ExistingIndex, 1, false);
+				SortedHandles.RemoveAt(ExistingIndex, 1, EAllowShrinking::No);
 			}
 		}
 	}
@@ -190,7 +190,7 @@ void FKeyHandleSet::Remove(FKeyHandle Handle, ECurvePointType PointType)
 			if (HandleToPointType.FindChecked(Handle) == ECurvePointType::None)
 			{
 				HandleToPointType.FindAndRemoveChecked(Handle);		
-				SortedHandles.RemoveAt(ExistingIndex, 1, false);
+				SortedHandles.RemoveAt(ExistingIndex, 1, EAllowShrinking::No);
 			}
 		}
 	}

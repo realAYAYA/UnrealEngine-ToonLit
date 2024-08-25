@@ -30,7 +30,7 @@ public:
 	{
 		STableRow< TSharedPtr< class FPropertyNode* > >::Construct(
 			STableRow< TSharedPtr< class FPropertyNode* > >::FArguments()
-				.Padding(3)
+				.Padding(3.0f)
 				[
 					SNew( STextBlock )
 					.Text( InArgs._DisplayName )

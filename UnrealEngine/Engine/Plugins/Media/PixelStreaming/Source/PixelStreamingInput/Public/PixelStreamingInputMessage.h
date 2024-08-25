@@ -10,28 +10,26 @@
 class PIXELSTREAMINGINPUT_API FPixelStreamingInputMessage
 {
 public:
-	// Emtpy constructor. Sets ID to next available ID, byteLength to 0, and an empty Structure
+	// Emtpy constructor. Sets ID to next available ID, and Structure to []
 	FPixelStreamingInputMessage();
 
-	// Constructor taking an ID. Sets byteLength to 0, and an empty Structure
+	// Constructor taking an ID. Sets Structure to []
 	FPixelStreamingInputMessage(uint8 InId);
 
-	// Constructor taking a Structure. Sets ID to next available ID and calculates bytelength from the structure
+	// Constructor taking a Structure. Sets ID to next available ID
 	FPixelStreamingInputMessage(TArray<EPixelStreamingMessageTypes> InStructure);
 
-	// Constructor taking an ID and a Structure. Calculates bytelength from the structure
+	// Constructor taking an ID and a Structure
 	FPixelStreamingInputMessage(uint8 InId, TArray<EPixelStreamingMessageTypes> InStructure);
 
-	uint8 GetByteLength() const { return ByteLength; }
+    UE_DEPRECATED(5.3, "ByteLength no longer exists on FPixelStreamingInputMessage.")
+    uint8 GetByteLength() const { return 0; }
 	uint8 GetID() const { return Id; }
 	TArray<EPixelStreamingMessageTypes> GetStructure() const { return Structure; }
 
 private:
-	uint8 CalculateByteLength();
-
 	uint8 Id;
 	TArray<EPixelStreamingMessageTypes> Structure;
-	uint8 ByteLength;
 
 	static uint8 CurrentId;
 };

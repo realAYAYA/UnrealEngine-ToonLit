@@ -10,7 +10,7 @@
 
 struct FMassCommandBuffer;
 
-namespace UE::MassRepresentation
+namespace UE::Mass::Representation
 {
 
 inline EMassVisibility GetVisibilityFromArchetype(const FMassExecutionContext& Context)
@@ -90,4 +90,4 @@ inline bool IsVisibilityTagSet(const FMassExecutionContext& Context, EMassVisibi
 
 void PushSwapTagsCommand(FMassCommandBuffer& CommandBuffer, const FMassEntityHandle Entity, const EMassVisibility PrevVisibility, const EMassVisibility NewVisibility);
 
-} // UE::MassRepresentation
+} // UE::Mass::Representation

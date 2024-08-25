@@ -11,6 +11,6 @@ public class Catch2Extras : ModuleRules
 		Type = ModuleType.External;
 
 		// Just setup our include path for catch_amalgamated.hpp/cpp
-		PublicSystemIncludePaths.Add(Path.Combine(Unreal.EngineDirectory.FullName, "Source", "ThirdParty", "Catch2", "v3.0.1", "extras"));
+		PublicSystemIncludePaths.Add(Path.Combine(Unreal.EngineDirectory.FullName, "Source", "ThirdParty", "Catch2", "v3.4.0", "extras"));
 	}
 }

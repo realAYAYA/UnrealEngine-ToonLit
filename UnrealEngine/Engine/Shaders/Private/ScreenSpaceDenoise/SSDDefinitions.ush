@@ -202,13 +202,6 @@
 	#define COLOR_SPACE_KARIS_WEIGHTING 0x8
 
 
-/** Light types */
-	#define LIGHT_TYPE_DIRECTIONAL 0
-	#define LIGHT_TYPE_POINT 1
-	#define LIGHT_TYPE_SPOT 2
-	#define LIGHT_TYPE_RECT 3
-
-
 /** Sets of sample available for the spatial kernel. */
 	// For debug purpose, only sample the center of the kernel.
 	#define SAMPLE_SET_1X1 0

@@ -21,7 +21,7 @@ public class DX12 : ModuleRules
 				"dxguid.lib",
 			};
 
-			string DirectXSDKDir = DirectX.GetLibDir(Target);
+			string DirectXSDKDir = Target.WindowsPlatform.DirectXLibDir;
 			PublicAdditionalLibraries.AddRange(AllD3DLibs.Select(LibName => Path.Combine(DirectXSDKDir, LibName)));
 
 			// D3D12Core runtime
@@ -40,21 +40,18 @@ public class DX12 : ModuleRules
 
 			RuntimeDependencies.Add(
 				"$(TargetOutputDir)/D3D12/D3D12Core.dll",
-				DirectX.GetDllDir(Target) + "D3D12Core.dll");
+				Path.Combine(Target.WindowsPlatform.DirectXDllDir, "D3D12Core.dll"));
 
-			if (Target.Configuration != UnrealTargetConfiguration.Shipping &&
-				Target.Configuration != UnrealTargetConfiguration.Test)
-			{
-				RuntimeDependencies.Add(
-					"$(TargetOutputDir)/D3D12/d3d12SDKLayers.dll",
-					DirectX.GetDllDir(Target) + "d3d12SDKLayers.dll");
-			}
+			RuntimeDependencies.Add(
+				"$(TargetOutputDir)/D3D12/d3d12SDKLayers.dll",
+				Path.Combine(Target.WindowsPlatform.DirectXDllDir, "d3d12SDKLayers.dll"));
 
 			// Always delay-load D3D12
 			PublicDelayLoadDLLs.Add("d3d12.dll");
 
 			PublicDefinitions.Add("D3D12_MAX_DEVICE_INTERFACE=12");
 			PublicDefinitions.Add("D3D12_MAX_COMMANDLIST_INTERFACE=9");
+			PublicDefinitions.Add("D3D12_MAX_FEATURE_OPTIONS=20");
 			PublicDefinitions.Add("D3D12_SUPPORTS_INFO_QUEUE=1");
 			PublicDefinitions.Add("D3D12_SUPPORTS_DXGI_DEBUG=1");
 			PublicDefinitions.Add("DXGI_MAX_FACTORY_INTERFACE=7");

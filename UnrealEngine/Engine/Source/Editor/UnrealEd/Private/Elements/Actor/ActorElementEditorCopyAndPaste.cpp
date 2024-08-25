@@ -51,7 +51,11 @@ bool UActorElementsExporterT3D::ExportText(const FExportObjectInnerContext* Cont
 		ULevel* Level = Actor->GetLevel();
 		AActor* ParentActor = Actor->GetAttachParentActor();
 		FName SocketName = Actor->GetAttachParentSocketName();
-		Actor->DetachFromActor(FDetachmentTransformRules::KeepWorldTransform);
+
+		// We set DetachmentTransformRules.bCallModify to false to match the level editor (don't need to modify on copy)
+		FDetachmentTransformRules DetachmentTransformRules = FDetachmentTransformRules::KeepWorldTransform;
+		DetachmentTransformRules.bCallModify = false;
+		Actor->DetachFromActor(DetachmentTransformRules);
 
 		FString ParentActorString = (ParentActor
 			                             ? FString::Printf(TEXT(" ParentActor=%s"), *ParentActor->GetName())
@@ -423,14 +427,20 @@ void FActorElementEditorPasteImporter::PostImportProcess()
 			}
 		}
 
-		// Do the attachment of actors
+		// Do the attachment of actors 
 		for (FImportedActor& ImportedActor : ImportedActors)
 		{
 			if (ImportedActor.ActorPtr)
 			{
+				// Try to find the parent in our imported actors
 				if (AActor** Parent = NameToImportedActors.Find(ImportedActor.ParentActor))
 				{
 					GEditor->ParentActors(*Parent, ImportedActor.ActorPtr, ImportedActor.SocketNameString);
+				}
+				// Otherwise try to find the parent in the world
+				else if(AActor* ParentActor = FindObject<AActor>( ImportedActor.ActorPtr->GetWorld()->GetCurrentLevel(), *ImportedActor.ParentActor.ToString() ))
+				{
+					GEditor->ParentActors(ParentActor, ImportedActor.ActorPtr, ImportedActor.SocketNameString);
 				}
 			}
 		}

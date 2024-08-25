@@ -27,7 +27,7 @@
 FModelingModeActionCommands::FModelingModeActionCommands() :
 	TCommands<FModelingModeActionCommands>(
 		"ModelingModeCommands", // Context name for fast lookup
-		NSLOCTEXT("Contexts", "ModelingModeCommands", "Modeling Mode Shortcuts"), // Localized context name for displaying
+		NSLOCTEXT("Contexts", "ModelingModeCommands", "Modeling Mode"), // Localized context name for displaying
 		NAME_None, // Parent
 		FAppStyle::GetAppStyleSetName() // Icon Style Set
 		)

@@ -134,6 +134,11 @@ const FString UMetaSoundEditorSubsystem::GetDefaultAuthor()
 	return Author;
 }
 
+const TArray<TSharedRef<FExtender>>& UMetaSoundEditorSubsystem::GetToolbarExtenders() const
+{
+	return EditorToolbarExtenders;
+}
+
 void UMetaSoundEditorSubsystem::InitAsset(UObject& InNewMetaSound, UObject* InReferencedMetaSound)
 {
 	using namespace Metasound;
@@ -158,9 +163,7 @@ void UMetaSoundEditorSubsystem::InitAsset(UObject& InNewMetaSound, UObject* InRe
 
 		// Initialize preset with referenced Metasound 
 		TScriptInterface<IMetaSoundDocumentInterface> ReferencedDocInterface = InReferencedMetaSound;
-		const IMetaSoundDocumentInterface* ReferencedInterface = ReferencedDocInterface.GetInterface();
-		check(ReferencedInterface);
-		Builder.ConvertToPreset(ReferencedInterface->GetDocument());
+		Builder.ConvertToPreset(ReferencedDocInterface->GetConstDocument());
 
 		// Update asset object data from interfaces 
 		FMetasoundAssetBase* PresetAsset = IMetasoundUObjectRegistry::Get().GetObjectAsAssetBase(&InNewMetaSound);
@@ -168,7 +171,7 @@ void UMetaSoundEditorSubsystem::InitAsset(UObject& InNewMetaSound, UObject* InRe
 		PresetAsset->ConformObjectDataToInterfaces();
 
 		// Copy sound wave settings to preset for sources
-		if (&ReferencedInterface->GetBaseMetaSoundUClass() == UMetaSoundSource::StaticClass())
+		if (&ReferencedDocInterface->GetBaseMetaSoundUClass() == UMetaSoundSource::StaticClass())
 		{
 			SetSoundWaveSettingsFromTemplate(*CastChecked<USoundWave>(&InNewMetaSound), *CastChecked<USoundWave>(InReferencedMetaSound));
 		}
@@ -203,6 +206,17 @@ void UMetaSoundEditorSubsystem::InitEdGraph(UObject& InMetaSound)
 void UMetaSoundEditorSubsystem::RegisterGraphWithFrontend(UObject& InMetaSound, bool bInForceViewSynchronization)
 {
 	Metasound::Editor::FGraphBuilder::RegisterGraphWithFrontend(InMetaSound, bInForceViewSynchronization);
+}
+
+void UMetaSoundEditorSubsystem::RegisterToolbarExtender(TSharedRef<FExtender> InExtender)
+{
+	EditorToolbarExtenders.AddUnique(InExtender);
+}
+
+bool UMetaSoundEditorSubsystem::UnregisterToolbarExtender(TSharedRef<FExtender> InExtender)
+{
+	const int32 NumRemoved = EditorToolbarExtenders.RemoveAllSwap([&InExtender](const TSharedRef<FExtender>& Extender) { return Extender == InExtender; });
+	return NumRemoved > 0;
 }
 
 void UMetaSoundEditorSubsystem::SetNodeLocation(

@@ -72,12 +72,15 @@ FReply SVisualLoggerTimelineBar::OnMouseMove(const FGeometry& MyGeometry, const 
 		if (Items.IsValidIndex(MouseMoveClosestItemIndex))
 		{
 			const FVisualLogEntry& CurrentEntry = Items[MouseMoveClosestItemIndex].Entry;
-				
-			TooltipBuilder = FString::Printf(TEXT("Time: %.2f"), CurrentEntry.TimeStamp);
+			
+			TooltipBuilder = FString::Printf(TEXT("Time: %.2lf WorldTime: %.2lf"), CurrentEntry.TimeStamp, CurrentEntry.WorldTimeStamp);
 
 			for (const FVisualLogShapeElement& Shape : CurrentEntry.ElementsToDraw)
 			{
-				TooltipBuilder += FString::Printf(TEXT("\n(shape) %s: %s"), ::ToString(Shape.Verbosity), *Shape.Description);
+				if (!Shape.Description.IsEmpty())
+				{
+					TooltipBuilder += FString::Printf(TEXT("\n(shape) %s: %s"), ::ToString(Shape.Verbosity), *Shape.Description);
+				}
 			}
 
 			for (const FVisualLogLine& Line : CurrentEntry.LogLines)

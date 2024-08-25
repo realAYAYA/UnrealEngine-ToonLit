@@ -12,7 +12,6 @@
 #include "CoreTypes.h"
 #include "Misc/NetworkGuid.h"
 #include "Net/Core/Trace/NetDebugName.h"
-#include "Templates/ChooseClass.h"
 #include "UObject/NameTypes.h"
 
 class FNetTraceCollector;
@@ -274,7 +273,7 @@ struct FNetTrace
 	template<uint32 Verbosity, typename StreamType>
 	struct TChooseTraceEventScope
 	{
-		typedef typename TChooseClass<FNetTrace::GetNetTraceVerbosityEnabled(Verbosity), FNetTraceEventScope<StreamType>, FNetTraceNullEventScope<StreamType> >::Result Type;
+		typedef std::conditional_t<FNetTrace::GetNetTraceVerbosityEnabled(Verbosity), FNetTraceEventScope<StreamType>, FNetTraceNullEventScope<StreamType> > Type;
 	};
 };
 
@@ -282,6 +281,7 @@ template<typename T>
 uint64 GetObjectIdForNetTrace(const T&)
 {
 	static_assert(sizeof(T) == 0, "Not supported type for NetTraceObjectID, implement uint64 GetObjectIdForNetTrace(const T&)");
+	return 0;
 }
 
 inline uint64 GetObjectIdForNetTrace(const FNetworkGUID& NetGUID)

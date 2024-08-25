@@ -14,7 +14,7 @@ namespace mu
 {
 struct FProgram;
 
-	class ASTOpImagePatch : public ASTOp
+	class ASTOpImagePatch final : public ASTOp
 	{
 	public:
 
@@ -37,7 +37,7 @@ struct FProgram;
 		FImageDesc GetImageDesc(bool returnBestOption, FGetImageDescContext* context) const override;
 		Ptr<ImageSizeExpression> GetImageSizeExpression() const override;
 		void GetLayoutBlockSize(int* pBlockX, int* pBlockY) override;
-		//TODO: bool IsImagePlainConstant(vec4<float>& colour) const override;
+		//TODO: bool IsImagePlainConstant(FVector4f& colour) const override;
 	};
 
 

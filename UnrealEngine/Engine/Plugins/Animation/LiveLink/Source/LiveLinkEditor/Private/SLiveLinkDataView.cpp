@@ -99,6 +99,7 @@ void SLiveLinkDataView::Construct(const FArguments& Args, FLiveLinkClient* InCli
 
 	SettingsDetailsView = PropertyEditorModule.CreateDetailView(DetailsViewArgs);
 	SettingsDetailsView->OnFinishedChangingProperties().AddSP(this, &SLiveLinkDataView::OnPropertyChanged);
+	SettingsDetailsView->SetIsPropertyEditingEnabledDelegate(FIsPropertyEditingEnabled::CreateLambda([bReadOnly = Args._ReadOnly](){ return !bReadOnly.Get(); }));
 
 	FStructureDetailsViewArgs StructViewArgs;
 	StructureDetailsView = PropertyEditorModule.CreateStructureDetailView(DetailsViewArgs, StructViewArgs, TSharedPtr<FStructOnScope>());

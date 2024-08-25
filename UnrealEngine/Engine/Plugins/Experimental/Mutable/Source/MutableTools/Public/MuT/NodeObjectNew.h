@@ -33,23 +33,16 @@ namespace mu
 		//-----------------------------------------------------------------------------------------
 		// Node Interface
 		//-----------------------------------------------------------------------------------------
-
-        
-
-        const NODE_TYPE* GetType() const override;
-		static const NODE_TYPE* GetStaticType();
-
-        int GetInputCount() const override;
-        Node* GetInputNode( int i ) const override;
-        void SetInputNode( int i, NodePtr pNode ) override;
+        const FNodeType* GetType() const override;
+		static const FNodeType* GetStaticType();
 
 		//-----------------------------------------------------------------------------------------
 		// NodeObject Interface
 		//-----------------------------------------------------------------------------------------
-        const char* GetName() const override;
-        void SetName( const char* strName ) override;
-        const char* GetUid() const override;
-        void SetUid( const char* strUid ) override;
+        virtual const FString& GetName() const override;
+		virtual void SetName( const FString& ) override;
+		virtual const FString& GetUid() const override;
+		virtual void SetUid( const FString& ) override;
 
 		//-----------------------------------------------------------------------------------------
 		// Own Interface
@@ -72,27 +65,20 @@ namespace mu
 		void SetChild( int index, NodeObjectPtr );
 
 		//! Set the number of states that the model can be in.
-		int GetStateCount() const;
-		void SetStateCount( int c );
+		int32 GetStateCount() const;
+		void SetStateCount( int32 c );
 
 		//! Set the name of a state
-		const char* GetStateName( int s ) const;
-		void SetStateName( int s, const char* n );
-
-		//! State optimization options
-		void SetStateGPUOptimisation( int s, bool internal, bool external, bool returnGPU = false );
-		bool GetStateGPUOptimisationInternal( int s ) const;
-		bool GetStateGPUOptimisationExternal( int s ) const;
-		bool GetStateGPUOptimisationReturnImages( int s ) const;
+		void SetStateName( int32 s, const FString& n );
 
 		//! See if a state has a parameter as runtime.
-		bool HasStateParam( int s, const char* param ) const;
+		bool HasStateParam( int32 s, const FString& param ) const;
 
 		//! Add a runtime parameter to the state.
-		void AddStateParam( int s, const char* param );
+		void AddStateParam( int32 s, const FString& param );
 
 		//! Remove a runtime parameter from a state.
-		void RemoveStateParam( int s, const char* param );
+		void RemoveStateParam( int32 s, const FString& param );
 
         //! Set the optimisation properties of a state
 		void SetStateProperties(int32 StateIndex,
@@ -102,7 +88,7 @@ namespace mu
 			uint8 NumExtraLODsToBuildAfterFirstLOD);
 
 		//! Connect a node that produces ExtensionData to be added to the final Instance, and provide a name to associate with the data
-		void AddExtensionDataNode(NodeExtensionDataPtr Node, const char* Name);
+		void AddExtensionDataNode(NodeExtensionDataPtr Node, const FString& Name);
 
 		//-----------------------------------------------------------------------------------------
 		// Interface pattern

@@ -43,16 +43,19 @@ FCloudLayerParameters GetCloudLayerParams(
 
 // Function to update the material parameter structure for an evaluation
 void UpdateMaterialCloudParam(inout FMaterialPixelParameters MaterialParameters,
-	FLWCVector3 AbsoluteWorldPosition, in ViewState InputView, in FCloudLayerParameters CloudLayerParams,
-	in float ShadowSampleDistance, in float EmptySpaceSkippingSliceDepth)
+                              float3 TranslatedWorldPosition, in ViewState InputView, in FCloudLayerParameters CloudLayerParams,
+                              in float ShadowSampleDistance, in float EmptySpaceSkippingSliceDepth)
 {
-	MaterialParameters.AbsoluteWorldPosition = AbsoluteWorldPosition;
-	MaterialParameters.WorldPosition_CamRelative = LWCToFloat(LWCAdd(MaterialParameters.AbsoluteWorldPosition, InputView.PreViewTranslation));
+	MaterialParameters.AbsoluteWorldPosition = DFFastSubtract(TranslatedWorldPosition, InputView.PreViewTranslation);
+	MaterialParameters.LWCData.AbsoluteWorldPosition = LWCSubtract(TranslatedWorldPosition, MaterialParameters.LWCData.PreViewTranslation);
+	MaterialParameters.WorldPosition_CamRelative = TranslatedWorldPosition;
 	//MaterialParameters.WorldPosition_NoOffsets;				// TODO
+	//MaterialParameters.LWCData.WorldPosition_NoOffsets;	// TODO
 	//MaterialParameters.WorldPosition_NoOffsets_CamRelative;	// TODO
-	MaterialParameters.CameraVector = normalize(LWCToFloat(LWCSubtract(InputView.WorldCameraOrigin, MaterialParameters.AbsoluteWorldPosition)));
+	MaterialParameters.CameraVector = normalize(InputView.TranslatedWorldCameraOrigin - TranslatedWorldPosition);
 
-	float CloudSampleAltitude = length(LWCHackToFloat(MaterialParameters.AbsoluteWorldPosition) - CloudLayerParams.CloudLayerCenter);
+	float3 AbsoluteWorldPositionTruncated = TranslatedWorldPosition - DFHackToFloat(InputView.PreViewTranslation);
+	float CloudSampleAltitude = length(AbsoluteWorldPositionTruncated - CloudLayerParams.CloudLayerCenter);
 	MaterialParameters.CloudSampleAltitude = CloudSampleAltitude - CloudLayerParams.PlanetRadius;
 	MaterialParameters.CloudSampleAltitudeInLayer = CloudSampleAltitude - CloudLayerParams.BottomRadius;
 	MaterialParameters.CloudSampleNormAltitudeInLayer = saturate(MaterialParameters.CloudSampleAltitudeInLayer * CloudLayerParams.ToNormAltitude);
@@ -63,7 +66,7 @@ void UpdateMaterialCloudParam(inout FMaterialPixelParameters MaterialParameters,
 	MaterialParameters.VolumeSampleConservativeDensity = GetVolumetricAdvancedMaterialOutput6(MaterialParameters);	// Evaluate conservative density
 #endif
 
-	MaterialParameters.CloudEmptySpaceSkippingSphereCenterWorldPosition = LWCHackToFloat(MaterialParameters.AbsoluteWorldPosition); // This is the same as the WorldPosition node but float3
+	MaterialParameters.CloudEmptySpaceSkippingSphereCenterWorldPosition = AbsoluteWorldPositionTruncated; // This is the same as the WorldPosition node but float3
 	MaterialParameters.CloudEmptySpaceSkippingSphereRadius = 0.5f * EmptySpaceSkippingSliceDepth * 1.73f;			// 1.73 = sqrt(1*1+1*1+1*1), the lenght of the diagonal of a cube as compared to its unit edge length
 
 	MaterialParameters.ShadowSampleDistance = ShadowSampleDistance;

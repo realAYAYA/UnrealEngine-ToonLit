@@ -128,7 +128,7 @@ void FBackgroundURLSessionHandler::CreateBackgroundSessionWorkingDirectory()
         {
             NSString* PathAsNSString = DirectoryPath.GetNSString();
             //May not yet have UE_Log
-            ensureAlwaysMsgf(false, TEXT("Warning: Error in CreateBackgroundSessionWorkingDirectory: %s"), [PathAsNSString UTF8String]);
+            ensureAlwaysMsgf(false, TEXT("Warning: Error in CreateBackgroundSessionWorkingDirectory"));
         }
 	}
 }

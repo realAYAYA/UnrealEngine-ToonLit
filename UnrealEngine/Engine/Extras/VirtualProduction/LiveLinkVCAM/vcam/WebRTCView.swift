@@ -7,64 +7,81 @@
 import Foundation
 import UIKit
 import WebRTC
+import MetalKit
 
-protocol WebRTCViewDelegate {
+protocol WebRTCViewDelegate : AnyObject {
     func webRTCView(_ view : WebRTCView, didChangeVideoSize size : CGSize)
 }
 
 final class WebRTCView: UIView, RTCVideoViewDelegate {
     
-    var delegate : WebRTCViewDelegate?
+    weak var delegate : WebRTCViewDelegate?
+    weak var videoView : RTCMTLVideoViewWithTouch?
     
-    let videoView = RTCMTLVideoViewWithTouch(frame: .zero)
     var videoSize = CGSize.zero
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         
-        self.videoView.videoContentMode = .scaleAspectFit
-        self.videoView.isEnabled = true
-        self.videoView.isHidden = false
-        self.videoView.backgroundColor = UIColor.lightGray
+        let videoView = RTCMTLVideoViewWithTouch(frame: .zero)
+        videoView.videoContentMode = .scaleAspectFit
+        videoView.isEnabled = true
+        videoView.isHidden = false
+        videoView.backgroundColor = UIColor.lightGray
         
         videoView.delegate = self
         addSubview(videoView)
+        self.videoView = videoView
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         
+        let videoView = RTCMTLVideoViewWithTouch(frame: .zero)
         videoView.delegate = self
         addSubview(videoView)
+        self.videoView = videoView
+    }
+    
+    deinit {
+        Log.info("WebRTCView destructed.")
     }
 
     func videoView(_ videoView: RTCVideoRenderer, didChangeVideoSize size: CGSize) {
         self.videoSize = size
-        self.videoView.touchDelegate?.onVideoChangedSize(size: size)
+        self.videoView?.touchDelegate?.onVideoChangedSize(size: size)
         setNeedsLayout()
         
         self.delegate?.webRTCView(self, didChangeVideoSize: size)
     }
     
     func attachVideoTrack(track: RTCVideoTrack) {
-        track.remove(self.videoView)
-        track.add(self.videoView)
-        track.isEnabled = true
-        self.videoView.renderFrame(nil)
-        let trackState : RTCMediaStreamTrackState = track.readyState
-        if trackState == RTCMediaStreamTrackState.live {
-            print("Video track is live | id=\(track.trackId) | kind=\(track.kind)")
+        if let vidView = self.videoView {
+            track.remove(vidView)
+            track.add(vidView)
+            track.isEnabled = true
+            vidView.renderFrame(nil)
+            let trackState : RTCMediaStreamTrackState = track.readyState
+            if trackState == RTCMediaStreamTrackState.live {
+                print("Video track is live | id=\(track.trackId) | kind=\(track.kind)")
+            }
+        }
+    }
+    
+    func removeVideoTrack(track: RTCVideoTrack) {
+        if let vidView = self.videoView {
+            track.remove(vidView)
         }
     }
     
     func attachTouchDelegate(delegate: TouchDelegate) {
-        self.videoView.touchDelegate = delegate
+        self.videoView?.touchDelegate = delegate
     }
 
     override func layoutSubviews() {
         super.layoutSubviews()
         guard videoSize.width > 0 && videoSize.height > 0 else {
-            videoView.frame = bounds
+            videoView?.frame = bounds
             return
         }
 
@@ -73,8 +90,8 @@ final class WebRTCView: UIView, RTCVideoViewDelegate {
         videoFrame.size.width = videoFrame.size.width * CGFloat(scale)
         videoFrame.size.height = videoFrame.size.height * CGFloat(scale)
 
-        videoView.frame = videoFrame
-        videoView.center = CGPoint(x: bounds.midX, y: bounds.midY)
+        videoView?.frame = videoFrame
+        videoView?.center = CGPoint(x: bounds.midX, y: bounds.midY)
     }
     
 }
@@ -131,4 +148,13 @@ class RTCMTLVideoViewWithTouch : RTCMTLVideoView {
         super.touchesCancelled(touches, with: event)
         self.touchDelegate?.touchesCancelled(touches)
     }
+    
+    func setPreferredFramerate(fps: Int) {
+        for subview in self.subviews {
+            if let mtlView = subview as? MTKView {
+                mtlView.preferredFramesPerSecond = fps
+            }
+        }
+    }
+    
 }

@@ -2,9 +2,9 @@
 
 import os
 import re
-import pathlib
 from enum import Enum, Flag
-from typing import ForwardRef, Iterator, Optional, Tuple, Dict
+from typing import Iterator
+from pathlib import Path, WindowsPath, PosixPath
 
 from . import _ini as ini
 from ._ubt import BuildTool
@@ -13,7 +13,7 @@ from ._platform import Platform
 # {{{1 misc --------------------------------------------------------------------
 
 #-------------------------------------------------------------------------------
-def _resolve_association_nt(association:str) -> Optional[pathlib.Path]:
+def _resolve_association_nt(association:str) -> Path|None:
     import winreg
 
     if association[0] == "{":
@@ -32,12 +32,33 @@ def _resolve_association_nt(association:str) -> Optional[pathlib.Path]:
         return
 
     if value[1] == 1:
-        return pathlib.Path(value[0])
+        return Path(value[0])
 
-def _resolve_association_posix(association:str) -> Optional[pathlib.Path]:
-    raise NotImplementedError("Foreign projects are not yet supported")
+def _resolve_association_posix(association:str) -> Path|None:
+    import configparser, sys
 
-def _resolve_association(association:str) -> Optional[pathlib.Path]:
+    # GUID values might be stored with or without curly braces, depending on platform and engine version
+    candidates = [association]
+    if association.startswith("{") and association.endswith("}"):
+        candidates.append(association[1:-1])
+    else:
+        candidates.append(f"{{{association}}}")
+
+    # Official engine releases are prefixed with "UE_" in Install.ini under Linux, but not in .uproject files
+    candidates.append(f"UE_{association}")
+
+    config_dir = "~/.config" if sys.platform == "linux" else "~/Library/Application Support"
+    ini_file = Path(config_dir).expanduser() / "Epic" / "UnrealEngine" / "Install.ini"
+
+    config = configparser.ConfigParser()
+    config.read([ini_file])
+
+    for candidate in candidates:
+        value = config.get("Installations", candidate, fallback=None)
+        if value is not None:
+            return Path(value)
+
+def _resolve_association(association:str) -> Path|None:
     if os.name == "nt":
         return _resolve_association_nt(association)
     else:
@@ -59,7 +80,7 @@ class Variant(Enum):
         return "DebugGame" if self == Variant.DEBUGGAME else self.name.title()
 
     @staticmethod
-    def parse(external:str) -> ForwardRef("Variant"):
+    def parse(external:str) -> "Variant":
         try: return Variant[external.upper()]
         except: raise ValueError(f"Unknown build variant '{external}'")
 
@@ -73,7 +94,7 @@ class TargetType(Enum):
     SERVER      = 0x05
 
     @staticmethod
-    def parse(external:str) -> ForwardRef("TargetType"):
+    def parse(external:str) -> "TargetType":
         try: return TargetType[external.upper()]
         except: raise ValueError(f"Unknown target type '{external}'")
 
@@ -86,46 +107,49 @@ class ContextType(Enum):
 
 
 # {{{1 ufs-item-----------------------------------------------------------------
-class _UfsItem(pathlib.Path):
-    _mount:ForwardRef("_UfsMount")
+class _UfsItem(Path):
+    _mount:"_UfsMount"
 
-    def __new__(cls, mount:ForwardRef("_UfsMount"), *args) -> ForwardRef("_UfsItem"):
+    def __new__(cls, mount:"_UfsMount", *args) -> "_UfsItem":
         cls = _WindowsUfsItem if os.name == "nt" else _PosixUfsItem
         instance = super().__new__(cls, *args)
         instance._mount = mount
         return instance
 
-    def get_mount(self) -> ForwardRef("_UfsMount"):
+    def get_mount(self) -> "_UfsMount":
         return self._mount
 
-class _WindowsUfsItem(pathlib.WindowsPath, _UfsItem):
+class _WindowsUfsItem(WindowsPath, _UfsItem):
     pass
 
-class _PosixUfsItem(pathlib.PosixPath, _UfsItem):
+class _PosixUfsItem(PosixPath, _UfsItem):
     pass
 
 
 
 # {{{1 ufs_mount ---------------------------------------------------------------
 class _UfsMount(object):
-    _dir    :pathlib.Path
-    _node   :ForwardRef("_UfsNode")
+    _dir    :Path
+    _node   :"_UfsNode"
 
-    def __init__(self, dir:pathlib.Path, node:ForwardRef("_UfsNode")):
+    def __init__(self, dir:Path, node:"_UfsNode"):
         self._dir = dir
         self._node = node
 
-    def get_dir(self) -> pathlib.Path:
+    def __fspath__(self):
+        return str(self._dir)
+
+    def get_dir(self) -> Path:
         return self._dir
 
-    def get_node(self) -> ForwardRef("_UfsNode"):
+    def get_node(self) -> "_UfsNode":
         return self._node
 
     def glob(self, pattern:str) -> Iterator[_UfsItem]:
         for x in self.get_dir().glob(pattern):
             yield _UfsItem(self, x)
 
-    def get_item(self, file_path:str) -> Optional[_UfsItem]:
+    def get_item(self, file_path:str) -> _UfsItem|None:
         dest = self.get_dir() / file_path
         if dest.is_file():
             return _UfsItem(self, dest)
@@ -134,12 +158,12 @@ class _UfsMount(object):
 
 # {{{1 build -------------------------------------------------------------------
 class _Build(object):
-    _receipt_path   :pathlib.Path
+    _receipt_path   :Path
     _variant        :Variant
     _ufs_mount      :_UfsMount
     _platform       :str
 
-    def __init__(self, receipt_path:pathlib.Path, variant:Variant, platform:str, ufs_mount:_UfsMount):
+    def __init__(self, receipt_path:Path, variant:Variant, platform:str, ufs_mount:_UfsMount):
         self._receipt_path = receipt_path
         self._variant = variant
         self._platform = platform
@@ -151,7 +175,7 @@ class _Build(object):
     def get_platform(self) -> str:
         return self._platform
 
-    def get_binary_path(self) -> Optional[pathlib.Path]:
+    def get_binary_path(self) -> Path|None:
         with self._receipt_path.open("rt") as x:
             try:
                 import json
@@ -170,7 +194,7 @@ class _Build(object):
         binary_path = binary_path.replace("$(ProjectDir)", str(proj_node.get_dir()))
         binary_path = binary_path.replace("$(EngineDir)", str(eng_node.get_dir()))
 
-        ret = pathlib.Path(binary_path)
+        ret = Path(binary_path)
         return ret if ret.exists() else None
 
 
@@ -195,7 +219,7 @@ class _Target(object):
     def is_project_target(self) -> bool:
         return isinstance(self._ufs_mount.get_node(), _Project)
 
-    def get_build(self, variant:Variant=Variant.DEVELOPMENT, platform:str="") -> Optional[_Build]:
+    def get_build(self, variant:Variant=Variant.DEVELOPMENT, platform:str="") -> _Build|None:
         platform = platform or Platform.get_host()
 
         path = f"Binaries/{platform}/{self.get_name()}"
@@ -210,17 +234,17 @@ class _Target(object):
 
 # {{{1 ufs_node ----------------------------------------------------------------
 class _UfsNode(object):
-    _parent :ForwardRef("_UfsNode")
-    _dir    :pathlib.Path
+    _parent :"_UfsNode"
+    _dir    :Path
 
-    def __init__(self, dir:pathlib.Path, parent:ForwardRef("_UfsNode")=None):
+    def __init__(self, dir:Path, parent:"_UfsNode"=None):
         self._parent = parent
         self._dir = dir
 
-    def get_parent_node(self) -> Optional[ForwardRef("_UfsNode")]:
+    def get_parent_node(self) -> "_UfsNode|None":
         return self._parent
 
-    def get_dir(self) -> pathlib.Path:
+    def get_dir(self) -> Path:
         return self._dir
 
     def get_root_mount(self) -> _UfsMount:
@@ -259,14 +283,14 @@ class _UfsNode(object):
                     type = find_line(r"=\s*TargetType\.(.+)\s*;", line_iter)
                     return name, type or "UNKNOWN"
 
-        pattern = str(pathlib.Path(targets_dir) / "*.Target.cs")
+        pattern = str(Path(targets_dir) / "*.Target.cs")
         for target_cs in self.glob(pattern, **kwargs):
             if info := parse_target_cs(target_cs):
                 name, type = info
                 type = TargetType.parse(type)
                 yield _Target(name, type, target_cs.get_mount())
 
-    def get_target_by_type(self, target_type:TargetType) -> Optional[_Target]:
+    def get_target_by_type(self, target_type:TargetType) -> _Target|None:
         if target_type.value <= TargetType.PROGRAM.value:
             return
 
@@ -274,7 +298,7 @@ class _UfsNode(object):
             if target.get_type() == target_type:
                 return target
 
-    def get_target_by_name(self, target_name:str) -> Optional[_Target]:
+    def get_target_by_name(self, target_name:str) -> _Target|None:
         lower_name = target_name.lower()
 
         for dir in ("Source/Programs/*", "Source"):
@@ -326,7 +350,7 @@ class _Config(object):
 
         return ret
 
-    def get(self, category:str, section:str="", key:str="", *, override:str="") -> Optional[ini.Ini|ini._Struct|ini._Value]:
+    def get(self, category:str, section:str="", key:str="", *, override:str="") -> ini.Ini|ini._Struct|ini._Value|None:
         ret = self._load_hives(category, override=override)
 
         if section:
@@ -339,7 +363,7 @@ class _Config(object):
 
 # {{{1 engine ------------------------------------------------------------------
 class _Engine(_UfsNode):
-    def __init__(self, dir:pathlib.Path):
+    def __init__(self, dir:Path):
         super().__init__(dir)
 
     def get_ubt(self) -> BuildTool:
@@ -377,24 +401,24 @@ class _Engine(_UfsNode):
 
 # {{{1 project -----------------------------------------------------------------
 class _Project(_UfsNode):
-    _path   :pathlib.Path
+    _path   :Path
     _engine :_Engine
 
-    def __init__(self, path:pathlib.Path, engine:_Engine):
+    def __init__(self, path:Path, engine:_Engine):
         super().__init__(path.parent, engine)
         self._path = path
         self._engine = engine
 
-    def get_path(self) -> pathlib.Path:
+    def get_path(self) -> Path:
         return self._path
 
-    def get_name(self) -> pathlib.Path:
+    def get_name(self) -> Path:
         return self._path.stem
 
     def get_engine(self) -> _Engine:
         return self._engine
 
-    def get_target_by_type(self, target_type:TargetType, *, create_temp:bool=True) -> Optional[_Target]:
+    def get_target_by_type(self, target_type:TargetType, *, create_temp:bool=True) -> _Target|None:
         if target_type.value <= TargetType.PROGRAM.value:
             return
 
@@ -408,7 +432,7 @@ class _Project(_UfsNode):
             target_name += type_name
 
         target = _Target(target_name, target_type, self.get_root_mount())
-        if create_temp:
+        if create_temp and Platform.get_host() != "Mac":
             self._create_temp_target(target)
 
         return target
@@ -443,29 +467,29 @@ class _Project(_UfsNode):
 
 # {{{1 branch ------------------------------------------------------------------
 class _Branch(object):
-    _dir:pathlib.Path
+    _dir:Path
 
-    def __init__(self, dir:pathlib.Path):
+    def __init__(self, dir:Path):
         self._dir = dir
 
     def get_name(self) -> str:
         return self._dir.name
 
-    def get_dir(self) -> pathlib.Path:
+    def get_dir(self) -> Path:
         return self._dir
 
-    def find_project(self, name:str) -> Optional[pathlib.Path]:
+    def find_project(self, name:str) -> Path|None:
         name = name.lower()
         for project_path in self.read_projects():
             if project_path.stem.lower() == name:
                 return project_path
 
-    def read_projects(self) -> Iterator[pathlib.Path]:
-        def read_dir(dir:pathlib.Path):
+    def read_projects(self) -> Iterator[Path]:
+        def read_dir(dir:Path):
             for sub_dir in (x for x in dir.glob("*") if x.is_dir()):
                 yield from sub_dir.glob("*.uproject")
 
-        def read_uprojectdirs(uprojdirs_path:pathlib.Path) -> Iterator[pathlib.Path]:
+        def read_uprojectdirs(uprojdirs_path:Path) -> Iterator[Path]:
             with uprojdirs_path.open() as file:
                 root_dir = uprojdirs_path.parent
                 for line in file:
@@ -483,15 +507,15 @@ class _Branch(object):
 
 # {{{1 platform-provider -------------------------------------------------------
 class _PlatformProvider(object):
-    _temp_ctx   :ForwardRef("Context")
-    _provisions :Dict[str, pathlib.Path]
+    _temp_ctx   :"Context"
+    _provisions :dict[str, Path]
 
-    def __init__(self, temp_ctx):
+    def __init__(self, temp_ctx:"Context"):
         self._temp_ctx = temp_ctx
         self._provisions = None
 
     @classmethod
-    def _get_host_platform_name(self):
+    def _get_host_platform_name(self) -> str:
         if hasattr(self, "_host_name"):
             return self._host_name
 
@@ -505,7 +529,7 @@ class _PlatformProvider(object):
 
         return self._host_name
 
-    def _get_provisions(self) -> Dict[str, pathlib.Path]:
+    def _get_provisions(self) -> dict[str, Path]:
         if self._provisions is not None:
             return self._provisions
 
@@ -513,7 +537,7 @@ class _PlatformProvider(object):
 
         # Built-in platforms
         host_name = self._get_host_platform_name()
-        for item in pathlib.Path(__file__).parent.glob(f"platforms/{host_name}/*.py"):
+        for item in Path(__file__).parent.glob(f"platforms/{host_name}/*.py"):
             if not item.name.startswith("_"):
                 provisions[item.stem] = item
 
@@ -521,7 +545,7 @@ class _PlatformProvider(object):
             return provisions
 
         # Use Engine/Platforms if we are hosted in a UE branch
-        for candidate in pathlib.Path(__file__).parent.parent.parents:
+        for candidate in Path(__file__).parent.parent.parents:
             if candidate.name == "Engine":
                 candidate = (candidate / "Platforms")
                 if candidate.is_dir():
@@ -539,7 +563,7 @@ class _PlatformProvider(object):
 
         return provisions
 
-    def get_platform(self, name:None|str=None) -> Platform|None:
+    def get_platform(self, name:str|None=None) -> Platform|None:
         host_name = self._get_host_platform_name()
         name = (name or host_name).lower()
 
@@ -561,12 +585,12 @@ class _PlatformProvider(object):
 # {{{1 context -----------------------------------------------------------------
 class Context(object):
     _type          :ContextType
-    _engine_dir    :pathlib.Path
-    _project_path  :pathlib.Path
+    _engine_dir    :Path
+    _project_path  :Path
     _platforms     :_PlatformProvider
 
     def __init__(self, primary_dir:str):
-        primary_dir:pathlib.Path = pathlib.Path(primary_dir).resolve()
+        primary_dir:Path = Path(primary_dir).resolve()
 
         # If a .uproject* was given instead the strip it off.
         if primary_dir.suffix.startswith(".uproject"):
@@ -576,7 +600,7 @@ class Context(object):
 
         # Walk up from 'primary_dir' and find something to build a context from
         if primary_dir.is_dir():
-            iter_dir:pathlib.Path = primary_dir
+            iter_dir:Path = primary_dir
             while not iter_dir.samefile(iter_dir.anchor):
                 if uproj_path := next(iter_dir.glob("*.uproject*"), None):
                     return self._initialize(uproj_path)
@@ -585,20 +609,20 @@ class Context(object):
 
         raise EnvironmentError(f"Unable to establish an Unreal context with '{primary_dir}'")
 
-    def _initialize(self, uproj_path:pathlib.Path) -> None:
+    def _initialize(self, uproj_path:Path) -> None:
         if uproj_path.suffix == ".uproject":
             return self._initialize_project(uproj_path)
         else:
             return self._initialize_noproject(uproj_path)
 
-    def _initialize_project(self, uproj_path:pathlib.Path) -> None:
+    def _initialize_project(self, uproj_path:Path) -> None:
         self._project_path = uproj_path
 
         # Find engine. First look up the tree from the project for an Engine/ dir
-        iter_dir:pathlib.Path = uproj_path.parent.parent
+        iter_dir:Path = uproj_path.parent.parent
         while not iter_dir.samefile(iter_dir.anchor):
             candidate = iter_dir / "Engine"
-            if candidate.is_dir():
+            if candidate.is_dir() and (candidate / "Config").is_dir():
                 self._type = ContextType.PROJECT
                 self._engine_dir = candidate
                 return
@@ -623,7 +647,7 @@ class Context(object):
 
         raise EnvironmentError(f"Unable to locate the engine for project '{uproj_path}'")
 
-    def _initialize_noproject(self, uprojdirs_path:pathlib.Path) -> None:
+    def _initialize_noproject(self, uprojdirs_path:Path) -> None:
         # Engine/ is expected to be a sibling of the .uprojectdirs file
         engine_dir = uprojdirs_path.parent / "Engine"
         if not engine_dir.is_dir():
@@ -643,10 +667,10 @@ class Context(object):
     def get_name(self) -> str:
         return self._engine_dir.parent.name or "UnrealEngine"
 
-    def get_primary_path(self) -> pathlib.Path:
+    def get_primary_path(self) -> Path:
         return self._project_path if self._project_path else self.get_branch().get_dir()
 
-    def get_project(self) -> Optional[_Project]:
+    def get_project(self) -> _Project|None:
         if self._type != ContextType.BRANCH:
             return _Project(self._project_path, self.get_engine())
 
@@ -656,7 +680,7 @@ class Context(object):
     def get_engine(self) -> _Engine:
         return _Engine(self._engine_dir)
 
-    def get_branch(self, *, must_exist:bool=False) -> Optional[_Branch]:
+    def get_branch(self, *, must_exist:bool=False) -> _Branch|None:
         if self._type != ContextType.FOREIGN:
             return _Branch(self._engine_dir.parent)
 
@@ -671,7 +695,7 @@ class Context(object):
     def glob(self, pattern:str, shallow:bool=False) -> Iterator[_UfsItem]:
         yield from self._get_ufs_node().glob(pattern, shallow=shallow)
 
-    def get_target_by_type(self, target_type:TargetType) -> Optional[_Target]:
+    def get_target_by_type(self, target_type:TargetType) -> _Target|None:
         return self._get_ufs_node().get_target_by_type(target_type)
 
     def get_target_by_name(self, name:str) -> _Target:

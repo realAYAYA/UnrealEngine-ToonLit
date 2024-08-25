@@ -44,8 +44,6 @@ DECLARE_DELEGATE_RetVal(bool, FOnGetDisplayCurrentState);
 /** Delegate used to get the debugger's current timestamp */
 DECLARE_DELEGATE_RetVal_OneParam(double, FOnGetDebugTimeStamp, bool /* bUseCurrentState */);
 
-/** Delegate for when a blackboard key changes (added, removed, renamed) */
-DECLARE_DELEGATE_TwoParams(FOnBlackboardKeyChanged, UBlackboardData* /*InBlackboardData*/, FBlackboardEntry* const /*InKey*/);
 
 /** Blackboard entry in the list */
 class FEdGraphSchemaAction_BlackboardEntry : public FEdGraphSchemaAction_Dummy
@@ -86,12 +84,12 @@ public:
 		SLATE_EVENT(FOnIsDebuggerReady, OnIsDebuggerReady)
 		SLATE_EVENT(FOnIsDebuggerPaused, OnIsDebuggerPaused)
 		SLATE_EVENT(FOnGetDebugTimeStamp, OnGetDebugTimeStamp)
-		SLATE_EVENT(FOnBlackboardKeyChanged, OnBlackboardKeyChanged)
 		SLATE_ARGUMENT(bool, IsReadOnly)
 
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs, TSharedRef<FUICommandList> InCommandList, UBlackboardData* InBlackboardData);
+	~SBehaviorTreeBlackboardView();
 
 	/**
 	 * Retrieves the blackboard item currently selected by the user.
@@ -111,6 +109,9 @@ public:
 	void SetObject(UBlackboardData* InBlackboardData);
 
 protected:
+	/** Delegate handler for when a blackboard key changes (added, removed, renamed) */
+	void HandleBlackboardKeyChanged(const UBlackboardData& InBlackboardData, FBlackboardEntry* const InKey);
+
 	/** Delegate handler used to generate a widget for an 'action' (key) in the list */
 	TSharedRef<SWidget> HandleCreateWidgetForAction(FCreateWidgetForActionData* const InCreateData);
 
@@ -190,8 +191,8 @@ protected:
 	/** Delegate used to get the debugger's current timestamp */
 	FOnGetDebugTimeStamp OnGetDebugTimeStamp;
 
-	/** Delegate for when a blackboard key changes (added, removed, renamed) */
-	FOnBlackboardKeyChanged OnBlackboardKeyChanged;
+	/** Handle to the registered OnBlackboardKeyChanged delegate */
+	FDelegateHandle OnBlackboardKeyChangedDelegateHandle;
 
 	/** Whether we want to show the current or saved state */
 	bool bShowCurrentState;

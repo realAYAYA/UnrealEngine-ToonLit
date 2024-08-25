@@ -2,7 +2,9 @@
 
 #include "Rendering/ElementBatcher.h"
 #include "Fonts/SlateFontInfo.h"
+#include "Fonts/SlateTextShaper.h"
 #include "Fonts/FontCache.h"
+#include "Fonts/FontCacheFreeType.h"
 #include "Rendering/RenderingCommon.h"
 #include "Rendering/DrawElements.h"
 #include "Rendering/RenderingPolicy.h"
@@ -25,6 +27,7 @@ DEFINE_STAT(STAT_SlateElements_Box);
 DEFINE_STAT(STAT_SlateElements_Border);
 DEFINE_STAT(STAT_SlateElements_Text);
 DEFINE_STAT(STAT_SlateElements_ShapedText);
+DEFINE_STAT(STAT_SlateElements_ShapedTextSdf);
 DEFINE_STAT(STAT_SlateElements_Line);
 DEFINE_STAT(STAT_SlateElements_Other);
 DEFINE_STAT(STAT_SlateInvalidation_RecachedElements);
@@ -113,6 +116,26 @@ void FSlateBatchData::AddCachedBatches(const TSparseArray<FSlateRenderBatch>& In
 	for (const FSlateRenderBatch& CachedBatch : InCachedBatches)
 	{
 		RenderBatches.Add(CachedBatch);
+	}
+}
+
+void FSlateBatchData::AddCachedBatchesToBatchData(FSlateBatchData* BatchDataSDR, FSlateBatchData* BatchDataHDR, const TSparseArray<FSlateRenderBatch>& InCachedBatches)
+{
+	TArray<FSlateRenderBatch>& RenderBatchesSDR = BatchDataSDR->RenderBatches;
+	TArray<FSlateRenderBatch>& RenderBatchesHDR = BatchDataHDR->RenderBatches;
+
+	RenderBatchesSDR.Reserve(RenderBatchesSDR.Num() + InCachedBatches.Num());
+	RenderBatchesHDR.Reserve(RenderBatchesHDR.Num() + InCachedBatches.Num());
+	for (const FSlateRenderBatch& CachedBatch : InCachedBatches)
+	{
+		if (EnumHasAnyFlags(CachedBatch.GetDrawFlags(), ESlateBatchDrawFlag::HDR))
+		{
+			RenderBatchesHDR.Add(CachedBatch);
+		}
+		else
+		{
+			RenderBatchesSDR.Add(CachedBatch);
+		}
 	}
 }
 
@@ -280,6 +303,9 @@ FSlateElementBatcher::FSlateElementBatcher( TSharedRef<FSlateRenderingPolicy> In
 	, bSRGBVertexColor( !InRenderingPolicy->IsVertexColorInLinearSpace() )
 	, bRequiresVsync(false)
 	, bCompositeHDRViewports(false)
+	, UsedSlatePostBuffers(ESlatePostRT::None)
+	, ResourceUpdatingPostBuffers(ESlatePostRT::None)
+	, SkipDefaultUpdatePostBuffers(ESlatePostRT::None)
 {
 }
 
@@ -299,6 +325,7 @@ void FSlateElementBatcher::AddElements(FSlateWindowElementList& WindowElementLis
 	ElementStat_Borders = 0;
 	ElementStat_Text = 0;
 	ElementStat_ShapedText = 0;
+	ElementStat_ShapedTextSdf = 0;
 	ElementStat_Line = 0;
 	ElementStat_RecachedElements = 0;
 #endif
@@ -342,6 +369,7 @@ void FSlateElementBatcher::AddElements(FSlateWindowElementList& WindowElementLis
 		ElementStat_Borders +
 		ElementStat_Text +
 		ElementStat_ShapedText +
+		ElementStat_ShapedTextSdf +
 		ElementStat_Line +
 		ElementStat_Other;
 
@@ -350,6 +378,7 @@ void FSlateElementBatcher::AddElements(FSlateWindowElementList& WindowElementLis
 	INC_DWORD_STAT_BY(STAT_SlateElements_Border, ElementStat_Borders);
 	INC_DWORD_STAT_BY(STAT_SlateElements_Text, ElementStat_Text);
 	INC_DWORD_STAT_BY(STAT_SlateElements_ShapedText, ElementStat_ShapedText);
+	INC_DWORD_STAT_BY(STAT_SlateElements_ShapedTextSdf, ElementStat_ShapedTextSdf);
 	INC_DWORD_STAT_BY(STAT_SlateElements_Line, ElementStat_Line);
 	INC_DWORD_STAT_BY(STAT_SlateElements_Other, ElementStat_Other);
 	INC_DWORD_STAT_BY(STAT_SlateInvalidation_RecachedElements, ElementStat_RecachedElements);
@@ -400,10 +429,11 @@ void FSlateElementBatcher::AddElementsInternal(const FSlateDrawElementMap& DrawE
 	if (ShapedTextElements.Num() > 0)
 	{
 		SCOPED_NAMED_EVENT_TEXT("Slate::AddShapedTextElement", FColor::Magenta);
-		STAT(ElementStat_ShapedText += ShapedTextElements.Num());
+		// ElementStat_ShapedText/Sdf incremented in AddShapedTextElement
 		for (const FSlateShapedTextElement& DrawElement : ShapedTextElements)
 		{
-			DrawElement.IsPixelSnapped() ? AddShapedTextElement<ESlateVertexRounding::Enabled>(DrawElement) : AddShapedTextElement<ESlateVertexRounding::Disabled>(DrawElement);
+			bool bSdfFont = DrawElement.GetShapedGlyphSequence() && DrawElement.GetShapedGlyphSequence()->IsSdfFont();
+			DrawElement.IsPixelSnapped() && !bSdfFont ? AddShapedTextElement<ESlateVertexRounding::Enabled>(DrawElement) : AddShapedTextElement<ESlateVertexRounding::Disabled>(DrawElement);
 		}
 	}
 
@@ -502,7 +532,6 @@ void FSlateElementBatcher::AddElementsInternal(const FSlateDrawElementMap& DrawE
 
 void FSlateElementBatcher::AddCachedElements(FSlateCachedElementData& CachedElementData, FVector2f ViewportSize)
 {
-	CSV_SCOPED_TIMING_STAT(Slate, AddCachedElements);
 	SCOPED_NAMED_EVENT_TEXT("Slate::AddCachedElements", FColor::Magenta);
 
 #if SLATE_CSV_TRACKER
@@ -538,9 +567,21 @@ void FSlateElementBatcher::AddCachedElements(FSlateCachedElementData& CachedElem
 	}
 	CachedElementData.ListsWithNewData.Empty();
 
-	// Add the existing and new cached batches.
-	BatchData->AddCachedBatches(CachedElementData.GetCachedBatches());
+	const TSparseArray<FSlateRenderBatch>& CachedBatches = CachedElementData.GetCachedBatches();
+	if (!CachedBatches.IsEmpty())
+	{
+		QUICK_SCOPE_CYCLE_COUNTER(STAT_UpdateUsedSlatePostBuffers);
+		for (const FSlateRenderBatch& CachedBatch : CachedElementData.GetCachedBatches())
+		{
+			if (const FSlateShaderResource* ShaderResource = CachedBatch.GetShaderResource())
+			{
+				UsedSlatePostBuffers |= ShaderResource->GetUsedSlatePostBuffers();
+			}
+		}
+	}
 
+	// Add the existing and new cached batches.
+	FSlateBatchData::AddCachedBatchesToBatchData(BatchData, BatchDataHDR, CachedElementData.GetCachedBatches());
 	CachedElementData.CleanupUnusedClipStates();
 
 #if SLATE_CSV_TRACKER
@@ -1322,10 +1363,31 @@ void FSlateElementBatcher::AddTextElement(const FSlateTextElement& DrawElement)
 					FontShaderResource = ResourceManager.GetFontShaderResource( FontTextureIndex, FontAtlasTexture, DrawElement.GetFontInfo().FontMaterial );
 					check(FontShaderResource);
 
-					const bool bIsGrayscale = SlateFontTexture->IsGrayscale();
-					FontTint = bIsGrayscale ? InTint : FColor::White;
+					const ESlateFontAtlasContentType ContentType = SlateFontTexture->GetContentType();
+					FontTint = ContentType == ESlateFontAtlasContentType::Color ? FColor::White : InTint;
 
-					RenderBatch = &CreateRenderBatch(InLayer, FShaderParams(), FontShaderResource, ESlateDrawPrimitive::TriangleList, bIsGrayscale ? ESlateShader::GrayscaleFont : ESlateShader::ColorFont, InDrawEffects, ESlateBatchDrawFlag::None, DrawElement);
+					ESlateShader ShaderType = ESlateShader::Default;
+					switch (ContentType)
+					{
+						case ESlateFontAtlasContentType::Alpha:
+							ShaderType = ESlateShader::GrayscaleFont;
+							break;
+						case ESlateFontAtlasContentType::Color:
+							ShaderType = ESlateShader::ColorFont;
+							break;
+						case ESlateFontAtlasContentType::Msdf:
+							check(IsSlateSdfTextFeatureEnabled());
+							ShaderType = !bEnableOutline || InOutlineSettings.bMiteredCorners ? ESlateShader::MsdfFont : ESlateShader::SdfFont;
+							break;
+						default:
+							checkNoEntry();
+							// Default to Color
+							ShaderType = ESlateShader::ColorFont;
+							break;
+					}
+					check(ShaderType != ESlateShader::Default);
+
+					RenderBatch = &CreateRenderBatch(InLayer, FShaderParams(), FontShaderResource, ESlateDrawPrimitive::TriangleList, ShaderType, InDrawEffects, ESlateBatchDrawFlag::None, DrawElement);
 
 					// Reserve memory for the glyphs.  This isn't perfect as the text could contain spaces and we might not render the rest of the text in this batch but its better than resizing constantly
 					const int32 GlyphsLeft = NumChars - CharIndex;
@@ -1448,12 +1510,11 @@ void FSlateElementBatcher::AddTextElement(const FSlateTextElement& DrawElement)
 
 	if (bOutlineFont)
 	{
-		// Build geometry for the outline
-		BuildFontGeometry(OutlineSettings, PackVertexColor(OutlineSettings.OutlineColor), OutlineFontMaterial, Layer, 0.f);
-
 		//The fill area was measured without an outline so it must be shifted by the scaled outline size
 		const float HorizontalOffset = FMath::RoundToFloat((float)OutlineSize * FontScale);
 
+		// Build geometry for the outline
+		BuildFontGeometry(OutlineSettings, PackVertexColor(OutlineSettings.OutlineColor), OutlineFontMaterial, Layer, HorizontalOffset);
 		// Build geometry for the base font which is always rendered on top of the outline
 		BuildFontGeometry(FFontOutlineSettings::NoOutline, BaseTint, BaseFontMaterial, Layer + 1, HorizontalOffset);
 	}
@@ -1506,6 +1567,7 @@ void FSlateElementBatcher::AddShapedTextElement( const FSlateShapedTextElement& 
 	checkSlow(ShapedGlyphSequence);
 
 	const FFontOutlineSettings& OutlineSettings = ShapedGlyphSequence->GetFontOutlineSettings();
+	const bool bSdfFont = ShapedGlyphSequence->IsSdfFont();
 
 	ensure(ShapedGlyphSequence->GetGlyphsToRender().Num() > 0);
 
@@ -1612,14 +1674,15 @@ void FSlateElementBatcher::AddShapedTextElement( const FSlateShapedTextElement& 
 		BuildShapedTextSequence<Rounding>(BuildContext);
 	};
 
+	STAT((bSdfFont ? ElementStat_ShapedTextSdf : ElementStat_ShapedText)++);
+
 	if (bOutlineFont)
 	{
-		// Build geometry for the outline
-		BuildFontGeometry(OutlineSettings, PackVertexColor(DrawElement.GetOutlineTint()), OutlineFontMaterial, Layer, 0.f);
-		
 		//The fill area was measured without an outline so it must be shifted by the scaled outline size
 		const float HorizontalOffset = FMath::RoundToFloat((float)OutlineSize * FontScale);
 
+		// Build geometry for the outline
+		BuildFontGeometry(OutlineSettings, PackVertexColor(DrawElement.GetOutlineTint()), OutlineFontMaterial, Layer, HorizontalOffset);
 		// Build geometry for the base font which is always rendered on top of the outline 
 		BuildFontGeometry(FFontOutlineSettings::NoOutline, BaseTint, BaseFontMaterial, Layer+1, HorizontalOffset);
 	}
@@ -2627,7 +2690,11 @@ void FSlateElementBatcher::AddViewportElement( const FSlateViewportElement& Draw
 		// This is a slight hack, but the grayscale font shader is the same as the general shader except it reads alpha only textures and doesn't support tiling
 		ShaderType = ESlateShader::GrayscaleFont;
 	}
-	FSlateBatchData* UsedBatchData = bCompositeHDRViewports ? BatchDataHDR : BatchData;
+
+	bool bIsHDRViewport = EnumHasAnyFlags(DrawFlags, ESlateBatchDrawFlag::HDR);
+	bool bUseBatchDataHDR = (bCompositeHDRViewports && bIsHDRViewport);
+
+	FSlateBatchData* UsedBatchData = bUseBatchDataHDR ? BatchDataHDR : BatchData;
 	FSlateRenderBatch& RenderBatch = CreateRenderBatch(UsedBatchData, Layer, FShaderParams(), ViewportResource, ESlateDrawPrimitive::TriangleList, ShaderType, InDrawEffects, DrawFlags, DrawElement);
 
 	// Tag this batch as requiring vsync if the viewport requires it.
@@ -2668,7 +2735,7 @@ void FSlateElementBatcher::AddViewportElement( const FSlateViewportElement& Draw
 	RenderBatch.AddIndex( IndexStart + 1 );
 	RenderBatch.AddIndex( IndexStart + 3 );
 
-	if (bCompositeHDRViewports)
+	if (bUseBatchDataHDR)
 	{
 		// used to poke a hole in the slate tree: in case HDR is enabled, we need to compose the hdr scene with the SDR ui based on UI alpha
 		// The problem is that in editor mode, there's already a few quads already drawn below the viewport that we actually don't want. If we had an easy way to split
@@ -2931,6 +2998,7 @@ void FSlateElementBatcher::AddCustomElement( const FSlateCustomDrawerElement& Dr
 	FSlateRenderBatch& RenderBatch = CreateRenderBatch(Layer, FShaderParams(), nullptr, ESlateDrawPrimitive::None, ESlateShader::Default, ESlateDrawEffect::None, ESlateBatchDrawFlag::None, DrawElement);
 	RenderBatch.CustomDrawer = DrawElement.CustomDrawer.Pin().Get();
 	RenderBatch.bIsMergable = false;
+	RenderBatch.CustomDrawer->PostCustomElementAdded(*this);
 }
 
 void FSlateElementBatcher::AddCustomVerts(const FSlateCustomVertsElement& DrawElement)
@@ -3061,6 +3129,11 @@ FSlateRenderBatch& FSlateElementBatcher::CreateRenderBatch(
 
 	NewBatch.ClippingState = ClippingState;
 
+	if (InResource)
+	{
+		UsedSlatePostBuffers |= InResource->GetUsedSlatePostBuffers();
+	}
+
 	return NewBatch;
 }
 
@@ -3080,6 +3153,11 @@ FSlateRenderBatch& FSlateElementBatcher::CreateRenderBatch(
 		: SlateBatchData->AddRenderBatch(Layer, ShaderParams, InResource, PrimitiveType, ShaderType, DrawEffects, DrawFlags, DrawElement.GetSceneIndex());
 
 	NewBatch.ClippingState = ResolveClippingState(DrawElement);
+
+	if (InResource)
+	{
+		UsedSlatePostBuffers |= InResource->GetUsedSlatePostBuffers();
+	}
 
 	return NewBatch;
 }
@@ -3132,7 +3210,10 @@ void FSlateElementBatcher::BuildShapedTextSequence(const FShapedTextBuildContext
 	float EllipsisLineY = 0;
 	bool bNeedEllipsis = false;
 	bool bNeedSpaceForEllipsis = false;
-
+	bool bIsSdfFont = GlyphSequenceToRender->IsSdfFont();
+	bool bRequiresManualSkewing = bIsSdfFont && !FMath::IsNearlyEqual(GlyphSequenceToRender->GetFontSkew(), 0.f);
+	float SdfPixelSpread = 0;
+	float SdfBias = 0;
 	// For left to right overflow direction - Sum of total whitespace we're currently advancing through. Once a non-whitespace glyph is detected this will return to 0
 	// For right to left this value is unused. We just skip all leading whitespace
 	float PreviousWhitespaceAdvance = 0;
@@ -3159,19 +3240,73 @@ void FSlateElementBatcher::BuildShapedTextSequence(const FShapedTextBuildContext
 		float SizeU = 0;
 		float SizeV = 0;
 
-		bool bCanRenderGlyph = GlyphToRender.bIsVisible;
+		bool bIsVisible = GlyphToRender.bIsVisible;
+
+		bool bCanRenderGlyph = bIsVisible;
+		const bool bOutlineFont = Context.OutlineSettings->OutlineSize > 0;
+
+		FVector2f SpriteSize(0.f, 0.f);
+		FVector2f SpriteOffset(0.f, 0.f);
+		FVector2f QuadMeshSize(0.f, 0.f);
+		FVector2f QuadMeshOffsets(0.f, 0.f);
+
 		if (bCanRenderGlyph)
 		{
 			// Get Sizing and atlas info
-			const FShapedGlyphFontAtlasData GlyphAtlasData = Context.FontCache->GetShapedGlyphFontAtlasData(GlyphToRender, *Context.OutlineSettings);
-			if (GlyphAtlasData.Valid && (!Context.bEnableOutline || GlyphAtlasData.SupportsOutline))
+			int8 NextAtlasDataTextureIndex = -1;
+			float NextSdfPixelSpread = 0;
+			float NextSdfBias = 0;
+			const bool bIsSdfGlyph = bIsSdfFont && GlyphToRender.FontFaceData && GlyphToRender.FontFaceData->bSupportsSdf;
+
+			if (bIsSdfGlyph)
 			{
-				X = LineX + GlyphAtlasData.HorizontalOffset + GlyphToRender.XOffset;
+				const FFontSdfSettings& FontSdfSettings = GlyphSequenceToRender->GetFontSdfSettings();
+				const FSdfGlyphFontAtlasData SdfGlyphAtlasData = Context.FontCache->GetSdfGlyphFontAtlasData(GlyphToRender, *Context.OutlineSettings, FontSdfSettings);
+				bCanRenderGlyph = (SdfGlyphAtlasData.Valid && SdfGlyphAtlasData.bSupportsSdf);
+				if (bCanRenderGlyph)
+				{
+					float EmOutlineSize = 0.f;
+#if WITH_FREETYPE
+					if (bOutlineFont)
+					{
+						const float TargetPpem = static_cast<float>(FreeTypeUtils::ComputeFontPixelSize(GlyphToRender.FontFaceData->FontSize, GlyphToRender.FontFaceData->FontScale));
+						EmOutlineSize = FMath::RoundToFloat(Context.OutlineSettings->OutlineSize * GlyphToRender.FontFaceData->FontScale)/TargetPpem;
+					}
+#endif // WITH_FREETYPE
+					NextAtlasDataTextureIndex = SdfGlyphAtlasData.TextureIndex;
+					QuadMeshOffsets = FVector2f(SdfGlyphAtlasData.Metrics.BearingX, SdfGlyphAtlasData.Metrics.BearingY);
+					QuadMeshSize = FVector2f(SdfGlyphAtlasData.Metrics.Width, SdfGlyphAtlasData.Metrics.Height);
+					// We are cutting off one half of a pixel's width from each side to avoid interpolation with neighbors.
+					// SdfGlyphAtlasData.Metrics values assume this operation, so QuadMeshSize already accounts for this
+					SpriteSize = FVector2f(SdfGlyphAtlasData.USize-1, SdfGlyphAtlasData.VSize-1);
+					SpriteOffset = FVector2f(SdfGlyphAtlasData.StartU+.5f, SdfGlyphAtlasData.StartV+.5f);
+					NextSdfPixelSpread = (SdfGlyphAtlasData.EmInnerSpread+SdfGlyphAtlasData.EmOuterSpread)*static_cast<float>(FontSdfSettings.GetClampedPpem());
+					// Value representing zero distance
+					NextSdfBias = (SdfGlyphAtlasData.EmOuterSpread-EmOutlineSize)/(SdfGlyphAtlasData.EmInnerSpread+SdfGlyphAtlasData.EmOuterSpread);
+				}
+			}
+			else
+			{
+				const FShapedGlyphFontAtlasData GlyphAtlasData = Context.FontCache->GetShapedGlyphFontAtlasData(GlyphToRender, *Context.OutlineSettings);
+				bCanRenderGlyph = (GlyphAtlasData.Valid && (!Context.bEnableOutline || GlyphAtlasData.SupportsOutline));
+				if (bCanRenderGlyph)
+				{
+					NextAtlasDataTextureIndex = GlyphAtlasData.TextureIndex;
+					QuadMeshOffsets = FVector2f(GlyphAtlasData.HorizontalOffset, GlyphAtlasData.VerticalOffset);
+					QuadMeshSize = SpriteSize = FVector2f(GlyphAtlasData.USize, GlyphAtlasData.VSize);
+					SpriteOffset = FVector2f(GlyphAtlasData.StartU, GlyphAtlasData.StartV);
+				}
+			}
+
+			if (bCanRenderGlyph)
+			{
 				// Note PosX,PosY is the upper left corner of the bounding box representing the string.  This computes the Y position of the baseline where text will sit
+				X = LineX + QuadMeshOffsets.X + (float)GlyphToRender.XOffset;
+				Y = LineY - QuadMeshOffsets.Y + (float)GlyphToRender.YOffset + ((Context.MaxHeight + Context.TextBaseline) * InvBitmapRenderScale);
 
 				if (Context.bEnableCulling)
 				{
-					if (X + GlyphAtlasData.USize < Context.LocalClipBoundingBoxLeft)
+					if (X + QuadMeshSize.X < Context.LocalClipBoundingBoxLeft)
 					{
 						LineX += GlyphToRender.XAdvance;
 						LineY += GlyphToRender.YAdvance;
@@ -3183,10 +3318,11 @@ void FSlateElementBatcher::BuildShapedTextSequence(const FShapedTextBuildContext
 					}
 				}
 
-				if (FontAtlasTexture == nullptr || GlyphAtlasData.TextureIndex != FontTextureIndex)
+				check(NextAtlasDataTextureIndex >= 0);
+				if (FontAtlasTexture == nullptr || NextAtlasDataTextureIndex != FontTextureIndex || (bIsSdfGlyph && (NextSdfPixelSpread != SdfPixelSpread || NextSdfBias != SdfBias)))
 				{
-					// Font has a new texture for this glyph. Refresh the batch we use and the index we are currently using
-					FontTextureIndex = GlyphAtlasData.TextureIndex;
+					// Font has a new texture for this glyph or shader parameters changed. Refresh the batch we use and the index we are currently using
+					FontTextureIndex = NextAtlasDataTextureIndex;
 
 					ISlateFontTexture* SlateFontTexture = Context.FontCache->GetFontTexture(FontTextureIndex);
 					check(SlateFontTexture);
@@ -3197,10 +3333,58 @@ void FSlateElementBatcher::BuildShapedTextSequence(const FShapedTextBuildContext
 					FontShaderResource = ResourceManager.GetFontShaderResource(FontTextureIndex, FontAtlasTexture, Context.FontMaterial);
 					check(FontShaderResource);
 
-					const bool bIsGrayscale = SlateFontTexture->IsGrayscale();
-					Tint = bIsGrayscale ? Context.FontTint : FColor::White;
+					InvTextureSizeX = 1.0f / FontAtlasTexture->GetWidth();
+					InvTextureSizeY = 1.0f / FontAtlasTexture->GetHeight();
 
-					RenderBatch = &CreateRenderBatch(Context.LayerId, FShaderParams(), FontShaderResource, ESlateDrawPrimitive::TriangleList, bIsGrayscale ? ESlateShader::GrayscaleFont : ESlateShader::ColorFont, Context.DrawElement->GetDrawEffects(), ESlateBatchDrawFlag::None, *Context.DrawElement);
+					const ESlateFontAtlasContentType ContentType = SlateFontTexture->GetContentType();
+					Tint = ContentType == ESlateFontAtlasContentType::Color ? FColor::White : Context.FontTint;
+					check(bIsSdfGlyph == (ContentType == ESlateFontAtlasContentType::Msdf));
+
+					ESlateShader ShaderType = ESlateShader::Default;
+					switch (ContentType)
+					{
+						case ESlateFontAtlasContentType::Alpha:
+							ShaderType = ESlateShader::GrayscaleFont;
+							break;
+						case ESlateFontAtlasContentType::Color:
+							ShaderType = ESlateShader::ColorFont;
+							break;
+						case ESlateFontAtlasContentType::Msdf:
+							ShaderType = !bOutlineFont || Context.OutlineSettings->bMiteredCorners ? ESlateShader::MsdfFont : ESlateShader::SdfFont;
+							break;
+						default:
+							checkNoEntry();
+							// Default to Color
+							ShaderType = ESlateShader::ColorFont;
+							break;
+					}
+					check(ShaderType != ESlateShader::Default);
+
+					FShaderParams ShaderParams;
+					if (bIsSdfGlyph)
+					{
+						SdfPixelSpread = NextSdfPixelSpread;
+						SdfBias = NextSdfBias;
+						// Note - it would be much better to pass the SDF shader params as per-vertex attributes instead to avoid having to switch batches too often
+						ShaderParams = FShaderParams::MakePixelShaderParams(FVector4f(
+							// Half of horizontal, vertical spread in texture coordinate units
+							.5f*InvTextureSizeX*SdfPixelSpread,
+							.5f*InvTextureSizeY*SdfPixelSpread,
+							// Signed distance sample bias, the color value (between 0 to 1) representing zero distance
+							SdfBias,
+							// The last parameter needs to be 0 for alpha texture single-channel SDF, 1 for BGRA/RGBA MTSDF
+							1.f
+						));
+					}
+
+					RenderBatch = &CreateRenderBatch(Context.LayerId,
+						ShaderParams,
+						FontShaderResource,
+						ESlateDrawPrimitive::TriangleList,
+						ShaderType,
+						Context.DrawElement->GetDrawEffects(),
+						ESlateBatchDrawFlag::None,
+						*Context.DrawElement);
 
 					// Reserve memory for the glyphs.  This isn't perfect as the text could contain spaces and we might not render the rest of the text in this batch but its better than resizing constantly
 					const int32 GlyphsLeft = NumGlyphs - GlyphIndex;
@@ -3237,25 +3421,14 @@ void FSlateElementBatcher::BuildShapedTextSequence(const FShapedTextBuildContext
 					{
 						RenderBatch->ReserveIndices(GlyphsLeft * 6);
 					}
-
-					InvTextureSizeX = 1.0f / FontAtlasTexture->GetWidth();
-					InvTextureSizeY = 1.0f / FontAtlasTexture->GetHeight();
 				}
-
-
-				Y = LineY - GlyphAtlasData.VerticalOffset + GlyphToRender.YOffset + ((Context.MaxHeight + Context.TextBaseline) * InvBitmapRenderScale);
-				U = GlyphAtlasData.StartU * InvTextureSizeX;
-				V = GlyphAtlasData.StartV * InvTextureSizeY;
-				SizeX = GlyphAtlasData.USize * BitmapRenderScale;
-				SizeY = GlyphAtlasData.VSize * BitmapRenderScale;
-				SizeU = GlyphAtlasData.USize * InvTextureSizeX;
-				SizeV = GlyphAtlasData.VSize * InvTextureSizeY;
+				U = SpriteOffset.X * InvTextureSizeX;
+				V = SpriteOffset.Y * InvTextureSizeY;
+				SizeU = SpriteSize.X * InvTextureSizeX;
+				SizeV = SpriteSize.Y * InvTextureSizeY;
+				SizeX = QuadMeshSize.X * BitmapRenderScale;
+				SizeY = QuadMeshSize.Y * BitmapRenderScale;
 			}
-			else
-			{
-				bCanRenderGlyph = false;
-			}
-
 		}
 		else
 		{
@@ -3345,10 +3518,10 @@ void FSlateElementBatcher::BuildShapedTextSequence(const FShapedTextBuildContext
 
 		if(bCanRenderGlyph && RenderBatch)
 		{
-			const FVector2f UpperLeft(X, Y);
-			const FVector2f UpperRight(X + SizeX, Y);
-			const FVector2f LowerLeft(X, Y + SizeY);
-			const FVector2f LowerRight(X + SizeX, Y + SizeY);
+			FVector2f UpperLeft(X, Y);
+			FVector2f UpperRight(X + SizeX, Y);
+			FVector2f LowerLeft(X, Y + SizeY);
+			FVector2f LowerRight(X + SizeX, Y + SizeY);
 
 			// The start index of these vertices in the index buffer
 			const uint32 IndexStart = RenderBatch->GetNumVertices();
@@ -3367,10 +3540,20 @@ void FSlateElementBatcher::BuildShapedTextSequence(const FShapedTextBuildContext
 				VtMax = FMath::Lerp(0.0f, 1.0f, LowerLeft.Y / Context.MaxHeight);
 			}
 
+			if (bRequiresManualSkewing)
+			{
+				FTransform2f ShearTransform(FShear2f(GlyphSequenceToRender->GetFontSkew(), 0.f));
+				FVector2f DeltaTopLeft(0, QuadMeshOffsets.Y);
+				FVector2f DeltaBottomLeft(0, QuadMeshOffsets.Y - QuadMeshSize.Y);
+				DeltaTopLeft = ShearTransform.TransformVector(DeltaTopLeft);
+				DeltaBottomLeft = ShearTransform.TransformVector(DeltaBottomLeft);
+				UpperLeft.X += DeltaTopLeft.X;		UpperRight.X += DeltaTopLeft.X;
+				LowerLeft.X += DeltaBottomLeft.X;	LowerRight.X += DeltaBottomLeft.X;
+			}
 			// Add four vertices to the list of verts to be added to the vertex buffer
 			RenderBatch->AddVertex(FSlateVertex::Make<Rounding>(RenderTransform, FVector2f(UpperLeft), FVector4f(U, V, Ut, Vt), FVector2f(0.0f, 0.0f), Tint));
-			RenderBatch->AddVertex(FSlateVertex::Make<Rounding>(RenderTransform, FVector2f(LowerRight.X, UpperLeft.Y), FVector4f(U + SizeU, V, UtMax, Vt), FVector2f(1.0f, 0.0f), Tint));
-			RenderBatch->AddVertex(FSlateVertex::Make<Rounding>(RenderTransform, FVector2f(UpperLeft.X, LowerRight.Y), FVector4f(U, V + SizeV, Ut, VtMax), FVector2f(0.0f, 1.0f), Tint));
+			RenderBatch->AddVertex(FSlateVertex::Make<Rounding>(RenderTransform, FVector2f(UpperRight), FVector4f(U + SizeU, V, UtMax, Vt), FVector2f(1.0f, 0.0f), Tint));
+			RenderBatch->AddVertex(FSlateVertex::Make<Rounding>(RenderTransform, FVector2f(LowerLeft), FVector4f(U, V + SizeV, Ut, VtMax), FVector2f(0.0f, 1.0f), Tint));
 			RenderBatch->AddVertex(FSlateVertex::Make<Rounding>(RenderTransform, FVector2f(LowerRight), FVector4f(U + SizeU, V + SizeV, UtMax, VtMax), FVector2f(1.0f, 1.0f), Tint));
 
 			if (bUseStaticIndicies)
@@ -3390,7 +3573,7 @@ void FSlateElementBatcher::BuildShapedTextSequence(const FShapedTextBuildContext
 			// Reset whitespace advance to 0, this is a visible character
 			PreviousWhitespaceAdvance = 0;
 		}
-		else if(!GlyphToRender.bIsVisible)
+		else if (!bIsVisible)
 		{
 			// How much whitespace we are currently walking through
 			PreviousWhitespaceAdvance += GlyphToRender.XAdvance;
@@ -3427,6 +3610,9 @@ void FSlateElementBatcher::ResetBatches()
 {
 	bRequiresVsync = false;
 	bCompositeHDRViewports = false;
+	UsedSlatePostBuffers = ESlatePostRT::None;
+	ResourceUpdatingPostBuffers = ESlatePostRT::None;
+	SkipDefaultUpdatePostBuffers = ESlatePostRT::None;
 	NumPostProcessPasses = 0;
 }
 

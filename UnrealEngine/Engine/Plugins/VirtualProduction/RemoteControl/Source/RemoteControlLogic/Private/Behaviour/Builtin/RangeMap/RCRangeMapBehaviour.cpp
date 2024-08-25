@@ -1,4 +1,4 @@
-﻿// Copyright Epic Games, Inc. All Rights Reserved.
+// Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Behaviour/Builtin/RangeMap/RCRangeMapBehaviour.h"
 
@@ -13,6 +13,7 @@
 #include "Controller/RCController.h"
 #include "IRemoteControlPropertyHandle.h"
 #include "Kismet/KismetMathLibrary.h"
+#include "PropertyBag.h"
 #include "RCVirtualProperty.h"
 #include "RCVirtualPropertyContainer.h"
 #include "RemoteControlField.h"
@@ -133,6 +134,15 @@ bool URCRangeMapBehaviour::GetNearestActionByThreshold(TTuple<URCAction*, bool>&
 	return true;
 }
 
+bool FRCRangeMapInput::SetInputValue(double InValue) const
+{
+	if (InputProperty)
+	{
+		return InputProperty->SetValueDouble(InValue);
+	}
+	return false;
+}
+
 bool FRCRangeMapInput::GetInputValue(double& OutValue) const
 {
 	if (InputProperty)
@@ -153,42 +163,15 @@ bool URCRangeMapBehaviour::GetValueForAction(const URCAction* InAction, double& 
 	return false;
 }
 
-void URCRangeMapBehaviour::GetLerpActions(TMap<FGuid, TArray<URCAction*>>& OutNumericActionsByField)
+void URCRangeMapBehaviour::NotifyActionValueChanged(URCAction* InChangedAction)
 {
-	for (URCAction* Action : ActionContainer->GetActions())
+	if (InChangedAction)
 	{
-		TArray<URCAction*>& LerpActionArray = OutNumericActionsByField.FindOrAdd(Action->ExposedFieldId);
-		
-		// Step 01: Find Action
-		if (IsSupportedActionLerpType(Action))
-		{
-			// Step 02: Add Action if it's numerical
-			LerpActionArray.Add(Action);
-		}
-	}
-
-	// Step 03: Sort actions using their InputValue
-	for (TTuple<FGuid, TArray<URCAction*>>& NumericActionTuple : OutNumericActionsByField)
-	{
-		TArray<URCAction*>& ArrayToSort = NumericActionTuple.Value;
-
-		Algo::Sort(ArrayToSort, [this](const URCAction* ActionA, const URCAction* ActionB)
-		{
-			double A, B;
-			bool bRes1 = GetValueForAction(ActionA, A);
-			bool bRes2 = GetValueForAction(ActionB, B);
-
-			if (bRes1 && bRes2)
-			{
-				return A < B;
-			}
-
-			return false;
-		});
+		ExecuteSingleAction(InChangedAction);
 	}
 }
 
-void URCRangeMapBehaviour::Execute()
+void URCRangeMapBehaviour::ExecuteInternal(const TSet<TObjectPtr<URCAction>>& InActionsToExecute)
 {
 	Refresh();
 	const URCBehaviourNode* BehaviourNode = GetBehaviourNode();
@@ -227,7 +210,29 @@ void URCRangeMapBehaviour::Execute()
 
 	// Apply Lerp if possible
 	TMap<FGuid, TTuple<URCAction*, URCAction*>> LerpActions;
-	if (!GetRangeValuePairsForLerp(LerpActions))
+	TSet<TObjectPtr<URCAction>> RangeMapActionToExecute;
+
+	// Do this only when the action to execute is 1 otherwise pass the entire array
+	if (InActionsToExecute.Num() == 1)
+	{
+		// Get the single action
+		const TObjectPtr<URCAction> ActionToExecute = InActionsToExecute.Array()[0];
+
+		// Get all actions that are based on the same exposed property
+		for (const TObjectPtr<URCAction>& Action : ActionContainer->GetActions())
+		{
+			if (Action->ExposedFieldId == ActionToExecute->ExposedFieldId)
+			{
+				RangeMapActionToExecute.Add(Action);
+			}
+		}
+	}
+	else
+	{
+		RangeMapActionToExecute = InActionsToExecute;
+	}
+
+	if (!GetRangeValuePairsForLerp(LerpActions, RangeMapActionToExecute))
 	{
 		return;
 	}
@@ -323,6 +328,41 @@ void URCRangeMapBehaviour::Execute()
 	}
 }
 
+void URCRangeMapBehaviour::GetLerpActions(TMap<FGuid, TArray<URCAction*>>& OutNumericActionsByField, const TSet<TObjectPtr<URCAction>>& InActionsToExecute)
+{
+	for (URCAction* Action : InActionsToExecute)
+	{
+		TArray<URCAction*>& LerpActionArray = OutNumericActionsByField.FindOrAdd(Action->ExposedFieldId);
+		
+		// Step 01: Find Action
+		if (IsSupportedActionLerpType(Action))
+		{
+			// Step 02: Add Action if it's numerical
+			LerpActionArray.Add(Action);
+		}
+	}
+
+	// Step 03: Sort actions using their InputValue
+	for (TTuple<FGuid, TArray<URCAction*>>& NumericActionTuple : OutNumericActionsByField)
+	{
+		TArray<URCAction*>& ArrayToSort = NumericActionTuple.Value;
+
+		Algo::Sort(ArrayToSort, [this](const URCAction* ActionA, const URCAction* ActionB)
+		{
+			double A, B;
+			bool bRes1 = GetValueForAction(ActionA, A);
+			bool bRes2 = GetValueForAction(ActionB, B);
+
+			if (bRes1 && bRes2)
+			{
+				return A < B;
+			}
+
+			return false;
+		});
+	}
+}
+
 URCAction* URCRangeMapBehaviour::DuplicateAction(URCAction* InAction, URCBehaviour* InBehaviour)
 {
 	URCRangeMapBehaviour* InBehaviourRangeMap = Cast< URCRangeMapBehaviour>(InBehaviour);
@@ -377,12 +417,12 @@ void URCRangeMapBehaviour::OnActionAdded(URCAction* Action, URCVirtualPropertySe
 	RangeMapActionContainer.Add(Action, MoveTemp(RangeMapInput));
 }
 
-bool URCRangeMapBehaviour::GetRangeValuePairsForLerp(TMap<FGuid, TTuple<URCAction*, URCAction*>>& OutPairs)
+bool URCRangeMapBehaviour::GetRangeValuePairsForLerp(TMap<FGuid, TTuple<URCAction*, URCAction*>>& OutPairs, const TSet<TObjectPtr<URCAction>>& InActionsToExecute)
 {
 	const double NormalizedControllerValue = UKismetMathLibrary::NormalizeToRange(ControllerFloatValue, InputMin, InputMax);
 
 	TMap<FGuid, TArray<URCAction*>> LerpActionMap;
-	GetLerpActions(LerpActionMap);
+	GetLerpActions(LerpActionMap, InActionsToExecute);
 	
 	for (TTuple<FGuid, TArray<URCAction*>>& NumericActionTuple : LerpActionMap)
 	{
@@ -475,8 +515,19 @@ TMap<double, URCAction*> URCRangeMapBehaviour::GetNonLerpActions()
 
 bool URCRangeMapBehaviour::CanHaveActionForField(const TSharedPtr<FRemoteControlField> InRemoteControlField) const
 {
-	// We can select all of the actions, and the check whether its actually added is done elsewhere.
-	return true;
+	if (InRemoteControlField->FieldType == EExposedFieldType::Property)
+	{
+		if (const TSharedPtr<FRemoteControlProperty>& RCProperty = StaticCastSharedPtr<FRemoteControlProperty>(InRemoteControlField))
+		{
+			if (const FProperty* Property = RCProperty->GetProperty())
+			{
+				const FPropertyBagPropertyDesc PropertyBagDesc = FPropertyBagPropertyDesc(Property->GetFName(), Property);
+				return RCProperty->IsEditable() && PropertyBagDesc.ValueType != EPropertyBagPropertyType::None;
+			}
+		}
+	}
+
+	return false;
 }
 
 void URCRangeMapBehaviour::ApplyLerpOnStruct(const FRCRangeMapInput* MinRangeInput, const FRCRangeMapInput* MaxRangeInput, const double& InputAlpha, const FGuid& FieldId)

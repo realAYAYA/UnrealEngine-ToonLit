@@ -22,6 +22,7 @@ float EyeAdaptation_IgnoreMaterialsLuminanceScale;
 float EyeAdaptation_IgnoreMaterialsMinBaseColorLuminance;
 uint EyeAdaptation_IgnoreMaterialsReconstructFromSceneColor;
 float EyeAdaptation_GreyMult;
+float3 EyeAdaptation_LuminanceWeights;
 float EyeAdaptation_ExponentialUpM;
 float EyeAdaptation_ExponentialDownM;
 float EyeAdaptation_StartDistance;
@@ -38,9 +39,12 @@ float LocalExposure_BlurredLuminanceBlend;
 float LocalExposure_MiddleGreyExposureCompensation;
 float2 LocalExposure_BilateralGridUVScale;
 
+float LocalExposure_HighlightThreshold;
+float LocalExposure_ShadowThreshold;
+
 float CalculateEyeAdaptationLuminance(float3 Color)
 {
-	return max(dot(Color, float3(1.0f, 1.0f, 1.0f) / 3.0f), EyeAdaptation_LuminanceMin);
+	return max(dot(Color, EyeAdaptation_LuminanceWeights), EyeAdaptation_LuminanceMin);
 }
 
 // inverse of ComputeLogLuminanceFromHistogramPosition
@@ -245,7 +249,24 @@ float CalculateLogLocalExposure(float LogLum, float BaseLogLum, float LogMiddleG
 	float BaseCentered = (BaseLogLum - LogMiddleGrey);
 	float ContrastScale = BaseCentered > 0 ? HighlightContrastScale : ShadowContrastScale;
 
-	float LogLocalLum = LogMiddleGrey + BaseCentered * ContrastScale + DetailLogLum * DetailStrength;
+	// Apply threshold
+
+	float ThresholdOffset;
+	{
+		if (BaseCentered > 0)
+		{
+			ThresholdOffset = BaseCentered - max(0.0f, BaseCentered - LocalExposure_HighlightThreshold);
+		}
+		else
+		{
+			ThresholdOffset = BaseCentered - min(0.0f, BaseCentered + LocalExposure_ShadowThreshold);
+		}
+
+		BaseCentered -= ThresholdOffset;
+	}
+
+	float LogLocalLum = LogMiddleGrey + ThresholdOffset + BaseCentered * ContrastScale + DetailLogLum * DetailStrength;
+
 	return LogLocalLum - LogLum;
 }
 

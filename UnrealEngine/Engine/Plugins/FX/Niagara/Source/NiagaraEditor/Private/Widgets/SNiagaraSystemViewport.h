@@ -13,7 +13,6 @@
 #include "ISequencerModule.h"
 #include "SEditorViewport.h"
 #include "SCommonEditorViewportToolbarBase.h"
-#include "Particles/ParticlePerfStatsManager.h"
 #include "NiagaraPerfBaseline.h"
 
 class FNiagaraSystemViewModel;
@@ -28,7 +27,7 @@ class UNiagaraEffectType;
 class SNiagaraSystemViewport : public SEditorViewport, public FGCObject, public ICommonEditorViewportToolbarInfoProvider
 {
 public:
-	DECLARE_DELEGATE_OneParam(FOnThumbnailCaptured, UTexture2D*);
+	DECLARE_DELEGATE_TwoParams(FOnThumbnailCaptured, UTexture2D*, TOptional<FGuid> /** An optional emitter handle guid */);
 
 public:
 	SLATE_BEGIN_ARGS( SNiagaraSystemViewport ){}
@@ -38,7 +37,7 @@ public:
 	SLATE_END_ARGS()
 	
 	void Construct(const FArguments& InArgs, TSharedRef<FNiagaraSystemViewModel> InSystemViewModel);
-	~SNiagaraSystemViewport();
+	virtual ~SNiagaraSystemViewport() override;
 	
 	virtual void AddReferencedObjects( FReferenceCollector& Collector ) override;
 	virtual FString GetReferencerName() const override
@@ -57,7 +56,7 @@ public:
 	/** If true, render background object in the preview scene. */
 	bool bShowBackground;
 
-	TSharedRef<class FAdvancedPreviewScene> GetPreviewScene() { return AdvancedPreviewScene.ToSharedRef(); }
+	TSharedRef<class FAdvancedPreviewScene> GetPreviewScene() const { return AdvancedPreviewScene.ToSharedRef(); }
 	TWeakPtr<FNiagaraSystemViewModel> GetSystemViewModel() { return SystemViewModel; }
 	
 	/** The material editor has been added to a tab */
@@ -85,11 +84,13 @@ public:
 		EmitterExecutionOrder	= 0x100,
 		GpuTickInformation		= 0x200,
 		MemoryInfo				= 0x400,
+		StatelessInfo			= 0x800,
 	};
 
 	bool GetDrawElement(EDrawElements Element) const;
 	void ToggleDrawElement(EDrawElements Element);
-	void CreateThumbnail(UObject* InScreenShotOwner);
+	/** By specifying an emitter guid, we can record thumbnails for individual emitters within a system.*/
+	void CreateThumbnail(UObject* InScreenShotOwner, TOptional<FGuid> EmitterToCaptureThumbnailFor);
 
 	bool IsToggleOrbitChecked() const;
 	void ToggleOrbit();
@@ -115,10 +116,9 @@ protected:
 	FText GetViewportCompileStatusText() const;
 
 private:
-	bool IsVisible() const override;
+	virtual bool IsVisible() const override;
 	void OnScreenShotCaptured(UTexture2D* ScreenShot);
 
-private:
 	/** The parent tab where this viewport resides */
 	TWeakPtr<SDockTab> ParentTab;
 
@@ -130,7 +130,9 @@ private:
 	TSharedPtr<class FAdvancedPreviewScene> AdvancedPreviewScene;
 
 	TSharedPtr<STextBlock> CompileText;
-	
+
+	TOptional<FGuid> EmitterToCaptureThumbnailFor;
+
 	/** Pointer back to the material editor tool that owns us */
 	//TWeakPtr<INiagaraSystemEditor> SystemEditorPtr;
 	
@@ -139,9 +141,9 @@ private:
 	/** Level viewport client */
 	TSharedPtr<class FNiagaraSystemViewportClient> SystemViewportClient;
 
-	uint32 DrawFlags;
+	uint32 DrawFlags = 0;
 
-	FOnThumbnailCaptured OnThumbnailCaptured;
+	FOnThumbnailCaptured OnThumbnailCapturedDelegate;
 
 	/** Used on tick to determine if a view transition was active so we can restore view settings at the end of it */
 	bool bIsViewTransitioning = false;
@@ -160,26 +162,18 @@ private:
 #if NIAGARA_PERF_BASELINES
 
 /** Niagara Baseline Display Viewport */
-class SNiagaraBaselineViewport : public SEditorViewport, public FGCObject
+class SNiagaraBaselineViewport : public SEditorViewport
 {
 public:
 	SLATE_BEGIN_ARGS(SNiagaraBaselineViewport) {}
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs);
-	virtual ~SNiagaraBaselineViewport();
-
-	virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
-	virtual FString GetReferencerName() const override
-	{
-		return TEXT("SNiagaraBaselineViewport");
-	}
+	virtual ~SNiagaraBaselineViewport() override;
 
 	virtual void Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime) override;
 
 	void RefreshViewport();
-
-	TSharedRef<class FAdvancedPreviewScene> GetPreviewScene() { return AdvancedPreviewScene.ToSharedRef(); }
 
 	void Init(TSharedPtr<SWindow>& InOwnerWindow);
 
@@ -193,10 +187,9 @@ protected:
 	virtual void BindCommands() override;
 	virtual void OnFocusViewportToSelection() override;
 	virtual void PopulateViewportOverlays(TSharedRef<class SOverlay> Overlay) override;
-	EVisibility OnGetViewportCompileTextVisibility() const;
 
 private:
-	bool IsVisible() const override;
+	virtual bool IsVisible() const override;
 
 	/** Preview Scene - uses advanced preview settings */
 	TSharedPtr<class FAdvancedPreviewScene> AdvancedPreviewScene;

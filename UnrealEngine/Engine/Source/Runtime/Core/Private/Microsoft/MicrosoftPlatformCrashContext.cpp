@@ -10,26 +10,34 @@
 void FMicrosoftPlatformCrashContext::CaptureAllThreadContexts()
 {
 #if PLATFORM_SUPPORTS_ALL_THREAD_BACKTRACES
-	TArray<typename FThreadManager::FThreadStackBackTrace> StackTraces;
-	FThreadManager::Get().GetAllThreadStackBackTraces(StackTraces);
-
-	for (const FThreadManager::FThreadStackBackTrace& Thread : StackTraces)
-	{
-		AddPortableThreadCallStack(Thread.ThreadId, *Thread.ThreadName, Thread.ProgramCounters.GetData(), Thread.ProgramCounters.Num());
-	}
+	FThreadManager::Get().ForEachThreadStackBackTrace(
+		[this](uint32 ThreadId, const TCHAR* ThreadName, const TConstArrayView<uint64>& StackTrace)
+		{
+			AddPortableThreadCallStack(ThreadId, ThreadName, StackTrace.GetData(), StackTrace.Num());
+			return true;
+		});
 #endif
 }
 
-void FMicrosoftPlatformCrashContext::AddPortableThreadCallStack(uint32 ThreadId, const TCHAR* ThreadName, const uint64* StackFrames, int32 NumStackFrames)
+void FMicrosoftPlatformCrashContext::AddPortableThreadCallStacks(TConstArrayView<FThreadCallStack> Threads)
 {
 	FModuleHandleArray ProcModuleHandles;
 	GetProcModuleHandles(ProcessHandle, ProcModuleHandles);
 
-	FThreadStackFrames Thread;
-	Thread.ThreadId = ThreadId;
-	Thread.ThreadName = FString(ThreadName);
-	ConvertProgramCountersToStackFrames(ProcessHandle, ProcModuleHandles, StackFrames, NumStackFrames, Thread.StackFrames);
-	ThreadCallStacks.Push(Thread);
+	ThreadCallStacks.Reserve(ThreadCallStacks.Num() + Threads.Num());
+	for (const FThreadCallStack& InThread : Threads)
+	{
+		FThreadStackFrames Thread;
+		Thread.ThreadId = InThread.ThreadId;
+		Thread.ThreadName = FString(InThread.ThreadName);
+		ConvertProgramCountersToStackFrames(ProcessHandle, ProcModuleHandles, InThread.StackFrames.GetData(), InThread.StackFrames.Num(), Thread.StackFrames);
+		ThreadCallStacks.Push(Thread);
+	}
+}
+
+void FMicrosoftPlatformCrashContext::AddPortableThreadCallStack(uint32 ThreadId, const TCHAR* ThreadName, const uint64* StackFrames, int32 NumStackFrames)
+{
+	AddPortableThreadCallStacks({{ MakeArrayView(StackFrames, NumStackFrames), ThreadName, ThreadId }});
 }
 
 void FMicrosoftPlatformCrashContext::SetPortableCallStack(const uint64* StackTrace, int32 StackTraceDepth)

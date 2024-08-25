@@ -107,6 +107,13 @@ FAutoConsoleVariableRef CVarCommandBufferMaxSizeMb(
 	TEXT("How big to allow the command buffer to grow before ignoring more commands"),
 	ECVF_Default);
 
+static int32 CommandBufferInitialCapacityCvar = 500;
+FAutoConsoleVariableRef CVarCommandBufferInitialCapacity(
+	TEXT("au.CommandBufferInitialCapacity"),
+	CommandBufferInitialCapacityCvar,
+	TEXT("How many elements to initialize the command buffer capacity with"),
+	ECVF_Default);
+
 static float AudioCommandExecTimeMsWarningThresholdCvar = 500.f;
 FAutoConsoleVariableRef CVarAudioCommandExecTimeMsWarningThreshold(
 	TEXT("au.AudioThreadCommand.ExecutionTimeWarningThresholdInMs"),
@@ -228,6 +235,10 @@ const TCHAR* LexToString(ESourceManagerRenderThreadPhase InPhase)
 
 namespace Audio
 {
+	int32 GetCommandBufferInitialCapacity()
+	{
+		return FMath::Clamp(CommandBufferInitialCapacityCvar, 0, 10000);
+	}
 	/*************************************************************************
 	* FMixerSourceManager
 	**************************************************************************/
@@ -250,6 +261,9 @@ namespace Audio
 
 		// Immediately trigger the command processed in case a flush happens before the audio thread swaps command buffers
 		CommandsProcessedEvent->Trigger();
+
+		// reserve the first buffer with the initial capacity
+		CommandBuffers[0].SourceCommandQueue.Reserve(GetCommandBufferInitialCapacity());
 	}
 
 	FMixerSourceManager::~FMixerSourceManager()
@@ -1009,8 +1023,8 @@ namespace Audio
 			SourceInfo.bEnableBaseSubmix = InitParams.bEnableBaseSubmix;
 			SourceInfo.bEnableSubmixSends = InitParams.bEnableSubmixSends;
 
-			// Copy the source effect chain if the channel count is 1 or 2
-			if (InitParams.NumInputChannels <= 2)
+			// Copy the source effect chain if the channel count is less than or equal to the number of channels supported by the effect chain
+			if (InitParams.NumInputChannels <= InitParams.SourceEffectChainMaxSupportedChannels)
 			{
 				// If we're told to care about effect chain tails, then we're not allowed
 				// to stop playing until the effect chain tails are finished
@@ -1756,21 +1770,20 @@ namespace Audio
 			FMixerSubmixPtr InSubmixPtr = InSubmixSend.Submix.Pin();
 			if (InSubmixPtr.IsValid())
 			{
+				// Determine whether submix send is new and whether any sends have 
+				// a pre-distance-attenuation send.
 				bool bIsNew = true;
-				
-				SourceInfo.bHasPreDistanceAttenuationSend = false;
+				SourceInfo.bHasPreDistanceAttenuationSend = InSubmixSend.SubmixSendStage == EMixerSourceSubmixSendStage::PreDistanceAttenuation;
+
 				for (FMixerSourceSubmixSend& SubmixSend : SourceInfo.SubmixSends)
 				{
 					FMixerSubmixPtr SubmixPtr = SubmixSend.Submix.Pin();
+
 					if (SubmixPtr.IsValid())
 					{
-						if (SubmixSend.SubmixSendStage == EMixerSourceSubmixSendStage::PreDistanceAttenuation)
-						{
-							SourceInfo.bHasPreDistanceAttenuationSend = true;
-						}
-					
 						if (SubmixPtr->GetId() == InSubmixPtr->GetId())
 						{
+							// Update existing submix send if it already exists
 							SubmixSend.SendLevel = InSubmixSend.SendLevel;
 							SubmixSend.SubmixSendStage = InSubmixSend.SubmixSendStage;
 							bIsNew = false;
@@ -1778,6 +1791,11 @@ namespace Audio
 							{
 								break;
 							}
+						}
+
+						if (SubmixSend.SubmixSendStage == EMixerSourceSubmixSendStage::PreDistanceAttenuation)
+						{
+							SourceInfo.bHasPreDistanceAttenuationSend = true;
 						}
 					}
 				}
@@ -1819,7 +1837,7 @@ namespace Audio
 				{
 					if (SourceInfo.SubmixSends[i].Submix == InSubmixSend.Submix)
 					{
-						SourceInfo.SubmixSends.RemoveAtSwap(i, 1, false);
+						SourceInfo.SubmixSends.RemoveAtSwap(i, 1, EAllowShrinking::No);
 					}
 				}
 
@@ -2233,6 +2251,8 @@ namespace Audio
 				}
 #endif // UE_AUDIO_PROFILERTRACE_ENABLED
 
+				float CurrentAlpha = SourceInfo.CurrentFrameAlpha;
+
 				for (int32 Frame = StartFrame; Frame < NumOutputFrames; ++Frame)
 				{
 					// If we've read our last buffer, we're done
@@ -2249,12 +2269,12 @@ namespace Audio
 					SourceInfo.bHasStarted = true;
 
 					// Update the PrevFrameIndex value for the source based on alpha value
-					if (SourceInfo.CurrentFrameAlpha >= 1.0f)
+					if (CurrentAlpha >= 1.0f)
 					{
 						// Our inter-frame alpha lerping value is causing us to read new source frames
 						bReadNextSample = true;
 						
-						const float Delta = FMath::FloorToFloat(SourceInfo.CurrentFrameAlpha);
+						const float Delta = FMath::FloorToFloat(CurrentAlpha);
 						const int DeltaInt = (int)Delta;
 
 						// Bump up the current frame index
@@ -2264,7 +2284,7 @@ namespace Audio
 						// CurrentFrameIndex can wrap for looping sounds so won't be accurate in that case
 						SourceInfo.NumFramesPlayed += DeltaInt;
 
-						SourceInfo.CurrentFrameAlpha -= Delta;
+						CurrentAlpha -= Delta;
 					}
 
 					// If our alpha parameter caused us to jump to a new source frame, we need
@@ -2281,7 +2301,6 @@ namespace Audio
 						{
 							const float CurrFrameValue = SourceInfo.CurrentFrameValues[Channel];
 							const float NextFrameValue = SourceInfo.NextFrameValues[Channel];
-							const float CurrentAlpha = SourceInfo.CurrentFrameAlpha;
 							PreDistanceAttenBufferPtr[SampleIndex++] = FMath::Lerp(CurrFrameValue, NextFrameValue, CurrentAlpha);
 						}
 					}
@@ -2291,7 +2310,6 @@ namespace Audio
 						{
 							const float CurrFrameValue = SourceInfo.CurrentFrameValues[Channel];
 							const float NextFrameValue = SourceInfo.NextFrameValues[Channel];
-							const float CurrentAlpha = SourceInfo.CurrentFrameAlpha;
 
 							const float CurrentSample = FMath::Lerp(CurrFrameValue, NextFrameValue, CurrentAlpha);
 
@@ -2301,8 +2319,10 @@ namespace Audio
 					}
 
 					const float CurrentPitchScale = SourceInfo.PitchSourceParam.Update();
-					SourceInfo.CurrentFrameAlpha += CurrentPitchScale;
+					CurrentAlpha += CurrentPitchScale;
 				}
+
+				SourceInfo.CurrentFrameAlpha = CurrentAlpha;
 
 				// After processing the frames, reset the pitch param
 				SourceInfo.PitchSourceParam.Reset();
@@ -2315,10 +2335,47 @@ namespace Audio
 		}
 	}
 
+	void FMixerSourceManager::ConnectBusPatches()
+	{
+		while (TOptional<FPendingAudioBusConnection> PendingAudioBusConnection = PendingAudioBusConnections.Dequeue())
+		{
+			FAudioBusKey& AudioBusKey = PendingAudioBusConnection->AudioBusKey;
+			int32 NumChannels = PendingAudioBusConnection->NumChannels;
+			bool bIsAutomatic = PendingAudioBusConnection->bIsAutomatic;
+
+			// If this audio bus id already exists, set it to not be automatic and return it
+			TSharedPtr<FMixerAudioBus> AudioBusPtr = AudioBuses.FindRef(AudioBusKey);
+			if (AudioBusPtr.IsValid())
+			{
+				// If this audio bus already existed, make sure the num channels lines up
+				ensure(AudioBusPtr->GetNumChannels() == NumChannels);
+				AudioBusPtr->SetAutomatic(bIsAutomatic);
+			}
+			else
+			{
+				// If the bus is not registered, make a new entry.
+				AudioBusPtr = TSharedPtr<FMixerAudioBus>(new FMixerAudioBus(this, bIsAutomatic, NumChannels));
+				AudioBuses.Add(AudioBusKey, AudioBusPtr);
+			}
+
+			switch (PendingAudioBusConnection->PatchVariant.GetIndex())
+			{
+			case FPendingAudioBusConnection::FPatchVariant::IndexOfType<FPatchInput>():
+				AudioBusPtr->AddNewPatchInput(PendingAudioBusConnection->PatchVariant.Get<FPatchInput>());
+				break;
+			case FPendingAudioBusConnection::FPatchVariant::IndexOfType<FPatchOutputStrongPtr>():
+				AudioBusPtr->AddNewPatchOutput(PendingAudioBusConnection->PatchVariant.Get<FPatchOutputStrongPtr>());
+				break;
+			}
+		}
+	}
+
 	void FMixerSourceManager::ComputeBuses()
 	{
 		RenderThreadPhase = ESourceManagerRenderThreadPhase::ComputeBusses;
-		
+
+		ConnectBusPatches();
+
 		// Loop through the bus registry and mix source audio
 		for (auto& Entry : AudioBuses)
 		{
@@ -3212,6 +3269,7 @@ namespace Audio
 
 		CSV_SCOPED_TIMING_STAT(Audio, SourceManagerUpdate);
 		SCOPE_CYCLE_COUNTER(STAT_AudioMixerSourceManagerUpdate);
+		CSV_CUSTOM_STAT(Audio, NumActiveSources, NumActiveSources, ECsvCustomStatOp::Set);
 
 		RenderThreadPhase = ESourceManagerRenderThreadPhase::Begin;
 
@@ -3321,41 +3379,63 @@ namespace Audio
 	{
 		FAudioMixerThreadCommand AudioCommand(MoveTemp(InFunction), InDebugString, bInDeferExecution);
 
-		// Here, we make sure that we don't flip our command double buffer while we are executing this function.
-		FScopeLock ScopeLock(&CommandBufferIndexCriticalSection);
-		AUDIO_MIXER_CHECK_GAME_THREAD(MixerDevice);
-
-		// Add the function to the command queue:
-		int32 AudioThreadCommandIndex = !RenderThreadCommandBufferIndex.GetValue();
-		SIZE_T CurrentBufferSizeInBytes = CommandBuffers[AudioThreadCommandIndex].SourceCommandQueue.GetAllocatedSize();
-
-		TRACE_INT_VALUE(TEXT("AudioMixerThreadCommands::CurrentBufferSizeInKb"), CurrentBufferSizeInBytes >> 10);
-
-		static SIZE_T WarnSize = 1024 * 1024;
-		if (CurrentBufferSizeInBytes > WarnSize )
+		// collect values for debugging
+		// outside of the ScopeLock so we can avoid doing a bunch of work that doesn't require the lock
+		SIZE_T OldMax = 0;
+		SIZE_T NewMax = 0;
+		SIZE_T NewNum = 0;
+		SIZE_T CurrentBufferSizeInBytes = 0;
+		int32 AudioThreadCommandIndex = -1;
 		{
-			SIZE_T Num = CommandBuffers[AudioThreadCommandIndex].SourceCommandQueue.Num();
-			float TimeSinceLastComplete = FPlatformTime::ToSeconds64(FPlatformTime::Cycles64() - LastPumpCompleteTimeInCycles);
+			// Here, we make sure that we don't flip our command double buffer while modifying the command buffer
+			FScopeLock ScopeLock(&CommandBufferIndexCriticalSection);
+			AUDIO_MIXER_CHECK_GAME_THREAD(MixerDevice);
 
-			UE_LOG(LogAudioMixer, Error, TEXT("Command Queue has grown to %ukb, containing %d cmds, last complete pump was %2.5f seconds ago."),
-				CurrentBufferSizeInBytes >> 10, Num, TimeSinceLastComplete);
-			WarnSize *= 2;
+			// Add the function to the command queue:
+			AudioThreadCommandIndex = !RenderThreadCommandBufferIndex.GetValue();
+			FCommands& Commands = CommandBuffers[AudioThreadCommandIndex];
 
-			DoStallDiagnostics();
-		}
-
-		// Before adding further commands, ensure we're not growing outside any sensible size for these buffers.
-		// On shipping builds, this will just stop us crashing from growing out of control and OOMing the machine.		
-		const SIZE_T MaxBufferSizeInBytes = ((SIZE_T)CommandBufferMaxSizeInMbCvar) << 20;
-		if (CurrentBufferSizeInBytes < MaxBufferSizeInBytes)
-		{
-			CommandBuffers[AudioThreadCommandIndex].SourceCommandQueue.Add(AudioCommand);
+			OldMax = Commands.SourceCommandQueue.Max();
+			
+			// always add commands to the buffer. If we're not going to assert, might as well chug along and hope we can recover!
+			Commands.SourceCommandQueue.Add(AudioCommand);
 			NumCommands.Increment();
+
+			NewNum = Commands.SourceCommandQueue.Num();
+			NewMax = Commands.SourceCommandQueue.Max();
+			CurrentBufferSizeInBytes = Commands.SourceCommandQueue.GetAllocatedSize();
 		}
-		else
+		
+		// log warnings for command buffer growing too large
+		if (OldMax != NewMax)
 		{
-			UE_LOG(LogAudioMixer, Error, TEXT("Command buffer grown to %umb, preventing any more adds! Likely cause the AudioRenderer has hung"), CurrentBufferSizeInBytes >>20);
+			// Only throw a warning every time we have to reallocate, which will be less often then every single time we add
+			static SIZE_T WarnSize = 1024 * 1024;
+			if (CurrentBufferSizeInBytes > WarnSize )
+			{
+				float TimeSinceLastComplete = FPlatformTime::ToSeconds64(FPlatformTime::Cycles64() - LastPumpCompleteTimeInCycles);
+
+				UE_LOG(LogAudioMixer, Error, TEXT("Command Queue %d has grown to %ukb, containing %d cmds, last complete pump was %2.5f seconds ago."),
+					AudioThreadCommandIndex, CurrentBufferSizeInBytes >> 10, NewNum, TimeSinceLastComplete);
+				WarnSize *= 2;
+
+				DoStallDiagnostics();
+			}
+			
+			// check that we haven't gone over the max size
+			const SIZE_T MaxBufferSizeInBytes = ((SIZE_T)CommandBufferMaxSizeInMbCvar) << 20;
+			if (CurrentBufferSizeInBytes >= MaxBufferSizeInBytes)
+			{
+				int32 NumTimesOvergrown = CommandBuffers[AudioThreadCommandIndex].NumTimesOvergrown.Increment();
+				UE_LOG(LogAudioMixer, Error, TEXT("%d: Command buffer %d allocated size has grown to %umb! Likely cause the AudioRenderer has hung"),
+					NumTimesOvergrown, AudioThreadCommandIndex, CurrentBufferSizeInBytes >> 20);
+			}
 		}
+
+		// update trace values
+		CSV_CUSTOM_STAT(Audio, AudioMixerThreadCommands, static_cast<int32>(NewNum), ECsvCustomStatOp::Set);
+		TRACE_INT_VALUE(TEXT("AudioMixerThreadCommands::NumCommands"), NewNum);
+		TRACE_INT_VALUE(TEXT("AudioMixerThreadCommands::CurrentBufferSizeInKb"), CurrentBufferSizeInBytes >> 10);
 	}
 
 
@@ -3401,8 +3481,7 @@ namespace Audio
 
 		// Pop and execute all the commands that came since last update tick
 		TArray<FAudioMixerThreadCommand> DelayedCommands;
-
-		RenderThreadPhase = ESourceManagerRenderThreadPhase::PumpCmds;		
+		RenderThreadPhase = ESourceManagerRenderThreadPhase::PumpCmds;
 		for (int32 Id = 0; Id < NumCommandsToExecute; ++Id)
 		{
 			// First copy/move out the command and keep a copy of it.
@@ -3429,7 +3508,9 @@ namespace Audio
 		}
 
 		LastPumpCompleteTimeInCycles = FPlatformTime::Cycles64();
-		Commands.SourceCommandQueue = DelayedCommands;
+		// This is intentionally re-assigning the Command Queue and clearing the buffer in the process
+		Commands.SourceCommandQueue = MoveTemp(DelayedCommands);
+		Commands.SourceCommandQueue.Reserve(GetCommandBufferInitialCapacity());
 
 		if (FPlatformProcess::SupportsMultithreading())
 		{
@@ -3507,7 +3588,7 @@ namespace Audio
 
 			if (bDeleteSourceBuffer)
 			{
-				PendingSourceBuffers.RemoveAtSwap(i, 1, false);
+				PendingSourceBuffers.RemoveAtSwap(i, 1, EAllowShrinking::No);
 			}
 		}
 	}

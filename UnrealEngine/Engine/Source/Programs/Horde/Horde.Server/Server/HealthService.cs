@@ -36,18 +36,17 @@ namespace Horde.Server.Server
 		public override Task<HealthCheckResponse> Check(HealthCheckRequest request, ServerCallContext context)
 		{
 			ServingStatus status = ServingStatus.Serving;
-			
+
 			bool isStopping = _lifetimeService.IsPreStopping || _lifetimeService.IsStopping;
 			if (isStopping)
 			{
 				context.Status = new Status(StatusCode.Unavailable, "Server is stopping");
 				status = ServingStatus.NotServing;
 			}
-			 
-			return Task.FromResult(new HealthCheckResponse {Status = status});
+
+			return Task.FromResult(new HealthCheckResponse { Status = status });
 		}
 
-		
 		/// <summary>
 		/// Stream the server health status (not implemented)
 		/// </summary>

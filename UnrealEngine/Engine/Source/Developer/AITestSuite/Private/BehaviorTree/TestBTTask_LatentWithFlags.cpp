@@ -98,6 +98,16 @@ uint16 UTestBTTask_LatentWithFlags::GetInstanceMemorySize() const
 	return sizeof(FBTLatentTaskMemory);
 }
 
+void UTestBTTask_LatentWithFlags::InitializeMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryInit::Type InitType) const
+{
+	InitializeNodeMemory<FBTLatentTaskMemory>(NodeMemory, InitType);
+}
+
+void UTestBTTask_LatentWithFlags::CleanupMemory(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory, EBTMemoryClear::Type CleanupType) const
+{
+	CleanupNodeMemory<FBTLatentTaskMemory>(NodeMemory, CleanupType);
+}
+
 void UTestBTTask_LatentWithFlags::LogExecution(UBehaviorTreeComponent& OwnerComp, int32 LogNumber)
 {
 	if (LogNumber >= 0)

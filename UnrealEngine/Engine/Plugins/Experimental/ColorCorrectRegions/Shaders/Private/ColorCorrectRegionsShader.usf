@@ -156,7 +156,7 @@ float GetShapeAlpha(in out FMaterialPixelParameters Parameters, in FExternalExpr
 	float3 RotatedTranslatedScaled = RotateTranslateScale(GetWorldPosition(Parameters), ExternalExpressions.Translate.xyz, ExternalExpressions.Rotate, ExternalExpressions.Scale);
 
 	// Camera position in plane space.
-	float3 CameraVectorPlaneSpace = RotateTranslateScale(LWCHackToFloat(ResolvedView.WorldCameraOrigin).xyz, ExternalExpressions.Translate.xyz, ExternalExpressions.Rotate, ExternalExpressions.Scale);
+	float3 CameraVectorPlaneSpace = RotateTranslateScale(DFHackToFloat(ResolvedView.WorldCameraOrigin).xyz, ExternalExpressions.Translate.xyz, ExternalExpressions.Rotate, ExternalExpressions.Scale);
 
 	float3 PositionOnPlane;
 	float DirectionSign;
@@ -418,7 +418,7 @@ void BuildParameters(in FPostProcessMaterialVSToPS Input, inout FMaterialPixelPa
 
 	// Remove the pre view translation
 	Parameters.WorldPosition_CamRelative = TranslatedWorldPosition.xyz;
-	Parameters.AbsoluteWorldPosition = TranslatedWorldPosition.xyz - LWCHackToFloat(ResolvedView.PreViewTranslation).xyz;
+	Parameters.AbsoluteWorldPosition = TranslatedWorldPosition.xyz - DFHackToFloat(ResolvedView.PreViewTranslation).xyz;
 
 	Parameters.SvPosition = SvPosition;
 	Parameters.ScreenPosition = ScreenPosition;

@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #pragma once
 
+#include "GeometryCollection/ManagedArrayCollection.h"
 #include "UObject/ObjectMacros.h"
 
 #include "FieldSystemTypes.generated.h"
@@ -403,6 +404,38 @@ enum EFieldPhysicsDefaultFields : int
 	Field_EFieldPhysicsDefaultFields_Max                 UMETA(Hidden)
 };
 
+USTRUCT()
+struct CHAOS_API FFieldCollection : public FManagedArrayCollection
+{
+	GENERATED_USTRUCT_BODY()
+public:
+	static FName StaticType() { return FName("FFieldCollection"); }
+	FFieldCollection() 
+	{ 
+		AddGroup("VectorField"); 
+		AddAttribute<FVector3f>("Start", "VectorField");
+		AddAttribute<FVector3f>("End", "VectorField");
+	}
+	
+	void AddVectorToField(FVector3f Start, FVector3f End)
+	{
+		int32 Size = AddElements(1, "VectorField");
+		ModifyAttribute<FVector3f>("Start", "VectorField")[Size] = Start;
+		ModifyAttribute<FVector3f>("End", "VectorField")[Size] = End;
+	}
+	
+	TArray<TPair<FVector3f, FVector3f>> GetVectorField() const
+	{
+		TArray<TPair<FVector3f, FVector3f>> VectorField;
+		const TManagedArray<FVector3f>& VectorFieldStart = GetAttribute<FVector3f>("Start", "VectorField");
+		const TManagedArray<FVector3f>& VectorFieldEnd = GetAttribute<FVector3f>("End", "VectorField");
+		for (int32 i = 0; i < NumElements("VectorField"); i++)
+		{
+			VectorField.Add(TPair<FVector3f, FVector3f>(VectorFieldStart[i], VectorFieldEnd[i]));
+		}
+		return VectorField;
+	}
 
+};
 
 

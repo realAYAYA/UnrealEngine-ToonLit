@@ -12,7 +12,7 @@
  * behaviors for the nested sub-sequence.
  */
 UENUM(BlueprintType)
-enum class EMovieSceneSubSectionFlags
+enum class EMovieSceneSubSectionFlags : uint8
 {
 	None = 0,
 

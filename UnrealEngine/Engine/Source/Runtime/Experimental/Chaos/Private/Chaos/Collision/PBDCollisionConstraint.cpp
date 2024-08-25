@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #include "Chaos/Collision/PBDCollisionConstraint.h"
 #include "Chaos/Collision/CollisionConstraintAllocator.h"
+#include "Chaos/Collision/CollisionUtil.h"
 #include "Chaos/Collision/PBDCollisionConstraintHandle.h"
 #include "Chaos/Collision/PBDCollisionContainerSolver.h"
 #include "Chaos/Collision/PBDCollisionSolver.h"
@@ -31,14 +32,14 @@ namespace Chaos
 	FAutoConsoleVariableRef CVarChaos_Manifold_MatchPositionTolerance(TEXT("p.Chaos.Collision.Manifold.MatchPositionTolerance"), Chaos_Manifold_MatchPositionTolerance, TEXT("A tolerance as a fraction of object size used to determine if two contact points are the same"));
 	FAutoConsoleVariableRef CVarChaos_Manifold_MatchNormalTolerance(TEXT("p.Chaos.Collision.Manifold.MatchNormalTolerance"), Chaos_Manifold_MatchNormalTolerance, TEXT("A tolerance on the normal dot product used to determine if two contact points are the same"));
 
-	FRealSingle Chaos_Manifold_FrictionPositionTolerance = 1.0f;	// Distance a shape-relative contact point can move and still be considered the same point
-	FAutoConsoleVariableRef CVarChaos_Manifold_FrictionPositionTolerance(TEXT("p.Chaos.Collision.Manifold.FrictionPositionTolerance"), Chaos_Manifold_FrictionPositionTolerance, TEXT(""));
+	FRealSingle Chaos_Manifold_FrictionExactPositionTolerance = 0.2f;	// Distance a shape-relative contact point can move and we can still be sure it's the same point (don't look for better options)
+	FRealSingle Chaos_Manifold_FrictionNearPositionTolerance = 1.0f;	// Distance a shape-relative contact point can move and still be considered the same point, if no better option exists
+	FAutoConsoleVariableRef CVarChaos_Manifold_FrictionExactPositionTolerance(TEXT("p.Chaos.Collision.Manifold.FrictionExactPositionTolerance"), Chaos_Manifold_FrictionExactPositionTolerance, TEXT(""));
+	FAutoConsoleVariableRef CVarChaos_Manifold_FrictionNearPositionTolerance(TEXT("p.Chaos.Collision.Manifold.FrictionNearPositionTolerance"), Chaos_Manifold_FrictionNearPositionTolerance, TEXT(""));
+
 
 	FRealSingle Chaos_GBFCharacteristicTimeRatio = 1.0f;
 	FAutoConsoleVariableRef CVarChaos_GBFCharacteristicTimeRatio(TEXT("p.Chaos.Collision.GBFCharacteristicTimeRatio"), Chaos_GBFCharacteristicTimeRatio, TEXT("The ratio between characteristic time and Dt"));
-
-	bool bChaos_Manifold_EnableGjkWarmStart = true;
-	FAutoConsoleVariableRef CVarChaos_Manifold_EnableGjkWarmStart(TEXT("p.Chaos.Collision.Manifold.EnableGjkWarmStart"), bChaos_Manifold_EnableGjkWarmStart, TEXT(""));
 
 	bool bChaos_Manifold_EnableFrictionRestore = true;
 	FAutoConsoleVariableRef CVarChaos_Manifold_EnableFrictionRestore(TEXT("p.Chaos.Collision.Manifold.EnableFrictionRestore"), bChaos_Manifold_EnableFrictionRestore, TEXT(""));
@@ -49,8 +50,27 @@ namespace Chaos
 	FRealSingle Chaos_Collision_ConvexZeroMargin = 0.0f;
 	FAutoConsoleVariableRef CVarChaos_Collision_ConvexZeroMargin(TEXT("p.Chaos.Collision.ConvexZeroMargin"), Chaos_Collision_ConvexZeroMargin, TEXT(""));
 
+	// A collision solver stiffness override if >= 0. A value < 0 means use ths config setting.
 	FRealSingle Chaos_Collision_Stiffness = -1.0f;
 	FAutoConsoleVariableRef CVarChaos_Collision_Stiffness(TEXT("p.Chaos.Collision.Stiffness"), Chaos_Collision_Stiffness, TEXT("Override the collision solver stiffness (if >= 0)"));
+
+	// Enable/Disable the one-way interaction system for collisions
+	bool bChaos_Collision_EnableOneWayInteraction = true;
+	FAutoConsoleVariableRef CVarChaos_Collision_EnableOneWayInteraction(TEXT("p.Chaos.Collision.EnableOneWayInteraction"), bChaos_Collision_EnableOneWayInteraction, TEXT("Whether the one-way interaction flag is respected in collision constraints"));
+
+	// The stiffness used for collision between one-way objects and other dynamic objects. The stiffness against kinematics and statics is not affected. A value of less than 1
+	// will treat collisions with the static scene as "harder" than collisions with dynamics which will prevent one-way objects from getting squeezed out of the world when a dynamic
+	// lands on top of them. Instead, they will stay on top of the terrain and sink into the dynamic.
+	FRealSingle Chaos_Collision_OneWayStiffness = 0.5f;
+	FAutoConsoleVariableRef CVarChaos_Collision_OneWayStiffness(TEXT("p.Chaos.Collision.OneWayStiffness"), Chaos_Collision_OneWayStiffness, TEXT("Collision solver stiffnes for one-way interactions"));
+
+	bool bChaos_Collision_EnableBoundsChecks = true;
+	FAutoConsoleVariableRef CVarChaos_Collision_EnableBoundsChecks(TEXT("p.Chaos.Collision.EnableBoundsChecks"), bChaos_Collision_EnableBoundsChecks, TEXT(""));
+
+	// Maximum number of manifold points per contact (-1 for unlimited)
+	int32 Chaos_Collision_MaxManifoldPoints = -1;
+	FAutoConsoleVariableRef CVarChaos_Collision_MaxManifoldPoints(TEXT("p.Chaos.Collision.MaxManifoldPoints"), Chaos_Collision_MaxManifoldPoints, TEXT(""));
+
 
 	struct FCollisionTolerances
 	{
@@ -71,9 +91,8 @@ namespace Chaos
 	};
 
 	// @todo(chaos): put these tolerances on cvars
-	// @todo(chaos): tune the tolerances used in FPBDCollisionConstraint::UpdateAndTryRestoreManifold
+	// @todo(chaos): tune the tolerances used in FPBDCollisionConstraint::TryRestoreManifold
 	FCollisionTolerances Chaos_Manifold_Tolerances;
-
 
 	FString FPBDCollisionConstraint::ToString() const
 	{
@@ -165,6 +184,7 @@ namespace Chaos
 		// We do not want to overwrite these properties because they are managed by the systems
 		// where the constraint is registsred (allocator, container, graph).
 		const FPBDCollisionConstraintContainerCookie Cookie = ContainerCookie;
+		const Private::FCollisionSortKey SortKey = CollisionSortKey;
 		Private::FPBDIslandConstraint* ConstraintGraphEdge = GetConstraintGraphEdge();
 
 		// Copy everything
@@ -172,23 +192,24 @@ namespace Chaos
 
 		// Restore the system state
 		ContainerCookie = Cookie;
+		CollisionSortKey = SortKey;
 		SetConstraintGraphEdge(ConstraintGraphEdge);
 	}
 
 	FPBDCollisionConstraint::FPBDCollisionConstraint()
-		: ImplicitTransform{ FRigidTransform3(), FRigidTransform3() }
+		: CollisionMargins{ 0, 0 }
+		, ImplicitTransform{ FRigidTransform3(), FRigidTransform3() }
 		, Particle{ nullptr, nullptr }
 		, Implicit{ nullptr, nullptr }
 		, Shape{ nullptr, nullptr }
 		, Simplicial{ nullptr, nullptr }
 		, AccumulatedImpulse(0)
-		, ContainerCookie()
-		, ShapesType(EContactShapesType::Unknown)
-		, ShapeWorldTransforms{ FRigidTransform3(), FRigidTransform3() }
 		, CullDistance(TNumericLimits<FRealSingle>::Max())
-		, CollisionMargins{ 0, 0 }
+		, RelativeMovement(0)
+		, ContainerCookie()
 		, CollisionTolerance(0)
 		, ClosestManifoldPointIndex(INDEX_NONE)
+		, ShapeWorldTransforms{ FRigidTransform3(), FRigidTransform3() }
 		, ExpectedNumManifoldPoints(0)
 		, LastShapeWorldPositionDelta()
 		, LastShapeWorldRotationDelta()
@@ -196,10 +217,13 @@ namespace Chaos
 		, Material()
 		, Stiffness(1)
 		, Flags()
+		, ShapesType(EContactShapesType::Unknown)
 		, SavedManifoldPoints()
 		, ManifoldPoints()
-		, SolverBodies{ nullptr, nullptr }
+		, MinInitialPhi(0)
+		, InitialOverlapDepenetrationVelocity(-1.0f)
 		, CCDTimeOfImpact(0)
+		, SolverBodies{ nullptr, nullptr }
 		, CCDEnablePenetration(0)
 		, CCDTargetPenetration(0)
 	{
@@ -214,19 +238,19 @@ namespace Chaos
 		const FImplicitObject* Implicit1,
 		const FPerShapeData* Shape1,
 		const FBVHParticles* Simplicial1)
-		: ImplicitTransform{ FRigidTransform3(), FRigidTransform3() }
+		: CollisionMargins{ 0, 0 }
+		, ImplicitTransform{ FRigidTransform3(), FRigidTransform3() }
 		, Particle{ Particle0, Particle1 }
 		, Implicit{ Implicit0, Implicit1 }
 		, Shape{ nullptr, nullptr }
 		, Simplicial{ Simplicial0, Simplicial1 }
 		, AccumulatedImpulse(0)
-		, ContainerCookie()
-		, ShapesType(EContactShapesType::Unknown)
-		, ShapeWorldTransforms{ FRigidTransform3(), FRigidTransform3() }
 		, CullDistance(TNumericLimits<FRealSingle>::Max())
-		, CollisionMargins{ 0, 0 }
+		, RelativeMovement(0)
+		, ContainerCookie()
 		, CollisionTolerance(0)
 		, ClosestManifoldPointIndex(INDEX_NONE)
+		, ShapeWorldTransforms{ FRigidTransform3(), FRigidTransform3() }
 		, ExpectedNumManifoldPoints(0)
 		, LastShapeWorldPositionDelta()
 		, LastShapeWorldRotationDelta()
@@ -234,10 +258,13 @@ namespace Chaos
 		, Material()
 		, Stiffness(1)
 		, Flags()
+		, ShapesType(EContactShapesType::Unknown)
 		, SavedManifoldPoints()
 		, ManifoldPoints()
-		, SolverBodies{ nullptr, nullptr }
+		, MinInitialPhi(0)
+		, InitialOverlapDepenetrationVelocity(-1.0f)
 		, CCDTimeOfImpact(0)
+		, SolverBodies{ nullptr, nullptr }
 		, CCDEnablePenetration(0)
 		, CCDTargetPenetration(0)
 	{
@@ -277,12 +304,19 @@ namespace Chaos
 		ImplicitTransform[1] = InImplicitLocalTransform1;
 
 		CullDistance = FRealSingle(InCullDistance);
+		RelativeMovement = FVec3(0);
 
-		// Initialize the is-probe and is-probe-unmodified flags to the same value.
-		// Contact modification may change bIsProbe but we want to store the unmodified value
-		// so that it can be reset between frames.
-		Flags.bIsProbe = (Shape[0] && Shape[0]->GetIsProbe()) || (Shape[1] && Shape[1]->GetIsProbe());
-		Flags.bIsProbeUnmodified = Flags.bIsProbe;
+		FRealSingle DistanceCheckSize = 0;
+		BoundsTestFlags = Private::CalculateImplicitBoundsTestFlags(
+			GetParticle0(), GetImplicit0(), GetShape0(),
+			GetParticle1(), GetImplicit1(), GetShape1(),
+			DistanceCheckSize);
+
+		// The constraint will be enabled after the narrow phase if required
+		Flags.bDisabled = true;
+
+		// Contact modification may change bIsProbe. The original value is stored in BoundsTestFlags.
+		Flags.bIsProbe = BoundsTestFlags.bIsProbe;
 
 		// If this currently a CCD contact (this may change on later ticks)
 		Flags.bCCDEnabled = (InCCDType == ECollisionCCDType::Enabled);
@@ -290,24 +324,32 @@ namespace Chaos
 		// Initialize tolerances that depend on shape type etc, also the bIsQuadratic flags
 		const FRealSingle Margin0 = FRealSingle(GetImplicit0()->GetMargin());
 		const FRealSingle Margin1 = FRealSingle(GetImplicit1()->GetMargin());
-		const EImplicitObjectType ImplicitType0 = Collisions::GetImplicitCollisionType(GetParticle0(), GetImplicit0());
-		const EImplicitObjectType ImplicitType1 = Collisions::GetImplicitCollisionType(GetParticle1(), GetImplicit1());
+		const EImplicitObjectType ImplicitType0 = Private::GetImplicitCollisionType(GetParticle0(), GetImplicit0());
+		const EImplicitObjectType ImplicitType1 = Private::GetImplicitCollisionType(GetParticle1(), GetImplicit1());
 		InitMarginsAndTolerances(ImplicitType0, ImplicitType1, Margin0, Margin1);
 
 		// Are we allowing manifolds?
 		Flags.bUseManifold = bInUseManifold;
 		Flags.bUseIncrementalManifold = false;
 
+		// The initial overlap depenetration velocity is that max of the two body settings. A negative value means use the system default.
+		// If either body has a zero of positive value, it will be used instead of the system setting. If both have a value, the max will be used.
+		// If both bodies have negative values, the solver settings will be used (search for GetInitialOverlapDepentrationVelocity to see where)
+		const FRealSingle InitialOverlapDepenetrationVelocity0 = FConstGenericParticleHandle(GetParticle0())->InitialOverlapDepenetrationVelocity();
+		const FRealSingle InitialOverlapDepenetrationVelocity1 = FConstGenericParticleHandle(GetParticle1())->InitialOverlapDepenetrationVelocity();
+		InitialOverlapDepenetrationVelocity = FMath::Max(InitialOverlapDepenetrationVelocity0, InitialOverlapDepenetrationVelocity1);
+
+		// Is this a one-way interaction? A dynamic one-way interaction particle that hits a kinematic non one-way interaction particle should still be considered one-way.
+		const bool bDynamic0 = FConstGenericParticleHandle(GetParticle0())->IsDynamic();
+		const bool bDynamic1 = FConstGenericParticleHandle(GetParticle1())->IsDynamic();
+		const bool bOneWay0 = FConstGenericParticleHandle(GetParticle0())->OneWayInteraction();
+		const bool bOneWay1 = FConstGenericParticleHandle(GetParticle1())->OneWayInteraction();
+		Flags.bIsOneWayInteraction = (bDynamic0 || bDynamic1) && (bOneWay0 || bOneWay1);
+
 		// Only levelsets use incremental collision manifolds
 		if (bInUseManifold && ((ImplicitType0 == ImplicitObjectType::LevelSet) || (ImplicitType1 == ImplicitObjectType::LevelSet)))
 		{
 			Flags.bUseIncrementalManifold = true;
-		}
-
-		// Debug testing for solver stiffness
-		if (Chaos_Collision_Stiffness >= 0)
-		{
-			SetStiffness(Chaos_Collision_Stiffness);
 		}
 	}
 
@@ -415,12 +457,16 @@ namespace Chaos
 
 	void FPBDCollisionConstraint::Activate()
 	{
-		SetDisabled(false);
+		Flags.bIsCurrent = true;
+		Flags.bDisabled = false;
 
+		// Match new manifold points with data from previous tick
 		AssignSavedManifoldPoints();
 
+		// If any materials were changed, update the friction etc
 		UpdateMaterialProperties();
 
+		// Undo any temporary modifications from user callbacks
 		ResetModifications();
 
 		AccumulatedImpulse = FVec3(0);
@@ -429,6 +475,42 @@ namespace Chaos
 	void FPBDCollisionConstraint::UpdateMaterialPropertiesImpl()
 	{
 		ConcreteContainer()->UpdateConstraintMaterialProperties(*this);
+
+		UpdateMassScales();
+	}
+
+	void FPBDCollisionConstraint::UpdateMassScales()
+	{
+		if (Flags.bIsOneWayInteraction && bChaos_Collision_EnableOneWayInteraction)
+		{
+			const bool bOneWay0 = FConstGenericParticleHandle(GetParticle0())->OneWayInteraction();
+			const bool bOneWay1 = FConstGenericParticleHandle(GetParticle1())->OneWayInteraction();
+			if (bOneWay0 && !bOneWay1)
+			{
+				Material.InvMassScale1 = 0;
+				Material.InvInertiaScale1 = 0;
+			}
+			if (bOneWay1 && !bOneWay0)
+			{
+				Material.InvMassScale0 = 0;
+				Material.InvInertiaScale0 = 0;
+			}
+			Stiffness = Chaos_Collision_OneWayStiffness;
+		}
+		else
+		{
+			Material.InvMassScale0 = 1;
+			Material.InvInertiaScale0 = 1;
+			Material.InvMassScale1 = 1;
+			Material.InvInertiaScale1 = 1;
+			Stiffness = 1;
+
+			// Debug testing for solver stiffness
+			if (Chaos_Collision_Stiffness >= 0)
+			{
+				SetStiffness(Chaos_Collision_Stiffness);
+			}
+		}
 	}
 
 	bool FPBDCollisionConstraint::IsSleeping() const
@@ -493,20 +575,20 @@ namespace Chaos
 
 		// @todo(chaos): cache tolerances?
 		FReal DistanceTolerance = 0.0f;
-		if (Particle[0]->Geometry()->HasBoundingBox() && Particle[1]->Geometry()->HasBoundingBox())
+		if (Particle[0]->GetGeometry()->HasBoundingBox() && Particle[1]->GetGeometry()->HasBoundingBox())
 		{
-			const FReal Size0 = Particle[0]->Geometry()->BoundingBox().Extents().Max();
-			const FReal Size1 = Particle[1]->Geometry()->BoundingBox().Extents().Max();
+			const FReal Size0 = Particle[0]->GetGeometry()->BoundingBox().Extents().Max();
+			const FReal Size1 = Particle[1]->GetGeometry()->BoundingBox().Extents().Max();
 			DistanceTolerance = FMath::Min(Size0, Size1) * Chaos_Manifold_MatchPositionTolerance;
 		}
-		else if (Particle[0]->Geometry()->HasBoundingBox())
+		else if (Particle[0]->GetGeometry()->HasBoundingBox())
 		{
-			const FReal Size0 = Particle[0]->Geometry()->BoundingBox().Extents().Max();
+			const FReal Size0 = Particle[0]->GetGeometry()->BoundingBox().Extents().Max();
 			DistanceTolerance = Size0 * Chaos_Manifold_MatchPositionTolerance;
 		}
-		else if (Particle[1]->Geometry()->HasBoundingBox())
+		else if (Particle[1]->GetGeometry()->HasBoundingBox())
 		{
-			const FReal Size1 = Particle[1]->Geometry()->BoundingBox().Extents().Max();
+			const FReal Size1 = Particle[1]->GetGeometry()->BoundingBox().Extents().Max();
 			DistanceTolerance = Size1 * Chaos_Manifold_MatchPositionTolerance;
 		}
 		else
@@ -574,6 +656,36 @@ namespace Chaos
 		ManifoldPoint.ContactPoint.Phi = FRealSingle(FVec3::DotProduct(WorldContact0 - WorldContact1, WorldContactNormal));
 	}
 
+	void FPBDCollisionConstraint::CorrectManifoldPoints()
+	{
+		const FConstGenericParticleHandle P0 = Particle[0];
+		const FConstGenericParticleHandle P1 = Particle[1];
+		const FReal InvM0 = P0->InvM();
+		const FReal InvM1 = P1->InvM();
+		const FReal Alpha0 = ((InvM0 + InvM1) > FReal(0)) ? InvM1 / (InvM0 + InvM1) : FReal(0);
+		const FReal Alpha1 = FReal(1) - Alpha0;
+
+		for (int32 ManifoldPointIndex = 0; ManifoldPointIndex < ManifoldPoints.Num(); ManifoldPointIndex++)
+		{
+			FManifoldPoint& ManifoldPoint = ManifoldPoints[ManifoldPointIndex];
+			const FVec3 WorldContact0 = GetShapeWorldTransform0().TransformPositionNoScale(FVec3(ManifoldPoint.ContactPoint.ShapeContactPoints[0]));
+			const FVec3 WorldContact1 = GetShapeWorldTransform1().TransformPositionNoScale(FVec3(ManifoldPoint.ContactPoint.ShapeContactPoints[1]));
+			const FVec3 WorldContactNormal = GetShapeWorldTransform1().TransformVectorNoScale(FVec3(ManifoldPoint.ContactPoint.ShapeContactNormal));
+			const FVec3 WorldContactDelta = WorldContact1 - WorldContact0;
+			const FReal WorldContactDeltaNormal = FVec3::DotProduct(WorldContactDelta, WorldContactNormal);
+			const FVec3 WorldContactDeltaTangent = WorldContactDelta - WorldContactDeltaNormal * WorldContactNormal;
+
+			const FVec3 CorrectedWorldContact0 = WorldContact0 + Alpha0 * WorldContactDeltaTangent;
+			const FVec3 CorrectedWorldContact1 = WorldContact1 - Alpha1 * WorldContactDeltaTangent;
+			FContactPoint CorrectedContactPoint = ManifoldPoint.ContactPoint;
+			CorrectedContactPoint.ShapeContactPoints[0] = GetShapeWorldTransform0().InverseTransformPositionNoScale(CorrectedWorldContact0);
+			CorrectedContactPoint.ShapeContactPoints[1] = GetShapeWorldTransform1().InverseTransformPositionNoScale(CorrectedWorldContact1);
+			CorrectedContactPoint.Phi = -WorldContactDeltaNormal;
+
+			InitManifoldPoint(ManifoldPointIndex, CorrectedContactPoint);
+		}
+	}
+
 	void FPBDCollisionConstraint::UpdateManifoldContacts()
 	{
 		if ((GetSolverBody0() != nullptr) && (GetSolverBody1() != nullptr))
@@ -623,14 +735,6 @@ namespace Chaos
 
 	void FPBDCollisionConstraint::AddIncrementalManifoldContact(const FContactPoint& ContactPoint)
 	{
-		if (ManifoldPoints.IsFull())
-		{
-			// @todo(chaos): we should remove a contact here if we try to add a new point
-			// For now just update the existing ones to select the deepest
-			UpdateManifoldContacts();
-			return;
-		}
-
 		if (Flags.bUseManifold)
 		{
 			// See if the manifold point already exists
@@ -687,10 +791,6 @@ namespace Chaos
 
 		// Reset current closest point
 		ClosestManifoldPointIndex = INDEX_NONE;
-
-		// How many manifold points we expect. E.g., for Box-box this will be 4 or 1 depending on whether
-		// we have a face or edge contact. We don't reuse the manifold if we lose points after culling here
-		ExpectedNumManifoldPoints = ManifoldPoints.Num();
 		Flags.bWasManifoldRestored = false;
 
 		if (!Flags.bCanRestoreManifold)
@@ -726,16 +826,22 @@ namespace Chaos
 
 		// Either update or remove each manifold point depending on how far it has moved from its initial relative point
 		// NOTE: We do not reset if we have 0 points - we can still "restore" a zero point manifold if the bodies have not moved
-		int32 ManifoldPointToRemove = INDEX_NONE;
 		if (ManifoldPoints.Num() > 0)
 		{
 			const FRigidTransform3 Shape0ToShape1Transform = ShapeWorldTransforms[0].GetRelativeTransformNoScale(ShapeWorldTransforms[1]);
 			
-			// Update or prune manifold points. If we would end up removing more than 1 point, we just throw the 
-			// whole manifold away because it will get rebuilt in the narrow phasee anyway.
+			// Update or prune manifold points
+			int32 NumActiveManifoldPoints = ManifoldPoints.Num();
 			for (int32 ManifoldPointIndex = 0; ManifoldPointIndex < ManifoldPoints.Num(); ++ManifoldPointIndex)
 			{
 				FManifoldPoint& ManifoldPoint = ManifoldPoints[ManifoldPointIndex];
+				
+				// Point may have been disabled on a previous tick
+				if (ManifoldPoint.Flags.bDisabled)
+				{
+					--NumActiveManifoldPoints;
+					continue;
+				}
 
 				// Calculate the world-space contact location and separation at the current shape transforms
 				// @todo(chaos): this should use the normal owner. Currently we assume body 1 is the owner
@@ -757,46 +863,34 @@ namespace Chaos
 					ManifoldPoint.ContactPoint.ShapeContactPoints[1] = ShapeContactPoint1;
 					ManifoldPoint.ContactPoint.Phi = FRealSingle(ContactPhi);
 
-					// Set the friction anchors.
-					// In principle we should always have the same number of saved manifold points as manifold points 
-					// from the previous frame, but there are ways to break this. E.g., Contact modification resets
-					// friction if positions are changed.
-					if (ManifoldPointIndex < SavedManifoldPoints.Num())
-					{
-						FSavedManifoldPoint& SavedManifoldPoint = SavedManifoldPoints[ManifoldPointIndex];
-						ManifoldPoint.ShapeAnchorPoints[0] = SavedManifoldPoint.ShapeContactPoints[0];
-						ManifoldPoint.ShapeAnchorPoints[1] = SavedManifoldPoint.ShapeContactPoints[1];
-					}
-
 					ManifoldPoint.Flags.bWasRestored = true;
 					ManifoldPoint.Flags.bWasReplaced = false;
+					ManifoldPoint.Flags.bInitialContact = false;
 
 					if (ManifoldPoint.ContactPoint.Phi < GetPhi())
 					{
 						ClosestManifoldPointIndex = ManifoldPointIndex;
 					}
 				}
-				else if ((ManifoldPointToRemove == INDEX_NONE) && (bChaos_Collision_EnableManifoldGJKReplace || bChaos_Collision_EnableManifoldGJKInject))
-				{
-					// We can reject up to 1 point (if we have GJK point injection enabled)
-					ManifoldPointToRemove = ManifoldPointIndex;
-				}
 				else
 				{
-					// We want to remove a(nother) point, but we will never reuse the manifold now so throw it away
-					return false;
+					// This point moved too far - disable it
+					ManifoldPoint.Flags.bDisabled = true;
+					ManifoldPoint.Flags.bWasRestored = false;
+					ManifoldPoint.Flags.bWasReplaced = false;
+					ManifoldPoint.Flags.bInitialContact = false;
+					--NumActiveManifoldPoints;
 				}
 			}
 
-			// Remove points - only one point removal support required (see above)
-			if (ManifoldPointToRemove != INDEX_NONE)
+			// We want to retain a stable supporting manifold, so at least 4 points. Unless we started with less than that, 
+			// in which case make sure it doesn't go any lower.
+			ExpectedNumManifoldPoints = FMath::Min(ManifoldPoints.Num(), 4);
+
+			// If we removed too many points, we must rebuild the manifold
+			// NOTE: We can only add up to one point
+			if (NumActiveManifoldPoints < ExpectedNumManifoldPoints)
 			{
-				ManifoldPoints.RemoveAt(ManifoldPointToRemove);
-				if ((ManifoldPointToRemove < ClosestManifoldPointIndex) && (ClosestManifoldPointIndex != INDEX_NONE))
-				{
-					--ClosestManifoldPointIndex;
-					check(ClosestManifoldPointIndex >= 0);
-				}
 				return false;
 			}
 		}
@@ -1009,101 +1103,122 @@ namespace Chaos
 		return true;
 	}
 
-	FReal FPBDCollisionConstraint::CalculateSavedManifoldPointScore(const FSavedManifoldPoint& SavedManifoldPoint, const FManifoldPoint& ManifoldPoint, const FReal DistanceToleranceSq) const
+	FRealSingle FPBDCollisionConstraint::CalculateSavedManifoldPointDistanceSq(const FSavedManifoldPoint& SavedManifoldPoint, const FManifoldPoint& ManifoldPoint) const
 	{
 		// If we have a vertex-plane (or vertex-vertex) contact, we want to know if we have the same vertex(es).
 		// If we have and edge-edge contact, we want to know if we have the same edges.
 		// But we don't know what type of contact we have, so for now...
 		// If the contact point is in the same spot on one of the bodies, assume it is the same contact
 		// @todo(chaos) - collision detection should provide the contact point types (vertex/edge/plane)
-		FReal DP0Sq = TNumericLimits<FReal>::Max();
-		FReal DP1Sq = TNumericLimits<FReal>::Max();
-		const FVec3 DP0 = ManifoldPoint.ContactPoint.ShapeContactPoints[0] - SavedManifoldPoint.ShapeContactPoints[0];
-		const FVec3 DP1 = ManifoldPoint.ContactPoint.ShapeContactPoints[1] - SavedManifoldPoint.ShapeContactPoints[1];
+		const FVec3f DP0 = ManifoldPoint.ContactPoint.ShapeContactPoints[0] - SavedManifoldPoint.ShapeContactPoints[0];
+		const FVec3f DP1 = ManifoldPoint.ContactPoint.ShapeContactPoints[1] - SavedManifoldPoint.ShapeContactPoints[1];
 
 		// When only one shape is quadratic, we only look at the quadratic contact point so we don't identify
 		// a sphere spinning on the spot as a stationary contact
-		// @todo(chaos): handle quadratic shapes better with static friction
+		// @todo(chaos): we don't really need the quadratic special case any more
 		if (IsQuadratic0() && !IsQuadratic1())
 		{
-			DP0Sq = DP0.SizeSquared();
+			return DP0.SizeSquared();
 		}
 		else if (IsQuadratic1() && !IsQuadratic0())
 		{
-			DP1Sq = DP1.SizeSquared();
+			return DP1.SizeSquared();
 		}
 		else
 		{
-			DP0Sq = DP0.SizeSquared();
-			DP1Sq = DP1.SizeSquared();
+			return FMath::Min(DP0.SizeSquared(), DP1.SizeSquared());
 		}
-
-		const FReal MinDPSq = FMath::Min(DP0Sq, DP1Sq);
-		if (MinDPSq < DistanceToleranceSq)
-		{
-			return MinDPSq;
-		}
-
-		return TNumericLimits<FReal>::Max();
 	}
 
-	int32 FPBDCollisionConstraint::FindSavedManifoldPoint(const int32 ManifoldPointIndex, TCArray<int32, MaxManifoldPoints>& InOutAllowedSavedPointIndices) const
+	int32 FPBDCollisionConstraint::FindSavedManifoldPoint(const int32 ManifoldPointIndex, int32* InOutAllowedSavedPointIndices, int32& InOutNumAllowedSavedPoints) const
 	{
-		int32 MatchIndex = INDEX_NONE;
-
-		const bool bEnableNetworkPhysicsResim = FPhysicsSolverBase::IsNetworkPhysicsPredictionEnabled() && FPhysicsSolverBase::IsPhysicsResimulationEnabled();
-		if (bChaos_Manifold_EnableFrictionRestore && !bEnableNetworkPhysicsResim)
+		if (bChaos_Manifold_EnableFrictionRestore)
 		{
 			const FManifoldPoint& ManifoldPoint = ManifoldPoints[ManifoldPointIndex];
 			if (!ManifoldPoint.Flags.bDisabled)
 			{
-				const FReal DistanceToleranceSq = FMath::Square(Chaos_Manifold_FrictionPositionTolerance);
-				FReal BestScore = DistanceToleranceSq;
+				const FRealSingle ExactDistanceToleranceSq = FMath::Square(Chaos_Manifold_FrictionExactPositionTolerance);
+				const FRealSingle NearDistanceToleranceSq = FMath::Square(Chaos_Manifold_FrictionNearPositionTolerance);
 
-				for (int32 AllowedPointIndex = 0; AllowedPointIndex < InOutAllowedSavedPointIndices.Num(); ++AllowedPointIndex)
+				// Ignore popints farther than NearDistanceTolerance
+				FRealSingle BestDistanceSq = NearDistanceToleranceSq;
+
+				int32 MatchAllowedPointIndex = INDEX_NONE;
+				for (int32 AllowedPointIndex = 0; AllowedPointIndex < InOutNumAllowedSavedPoints; ++AllowedPointIndex)
 				{
 					const int32 SavedPointIndex = InOutAllowedSavedPointIndices[AllowedPointIndex];
 					const FSavedManifoldPoint& SavedManifoldPoint = SavedManifoldPoints[SavedPointIndex];
 
-					const FReal Score = CalculateSavedManifoldPointScore(SavedManifoldPoint, ManifoldPoint, DistanceToleranceSq);
-					if (Score < BestScore)
+					const FRealSingle DistanceSq = CalculateSavedManifoldPointDistanceSq(SavedManifoldPoint, ManifoldPoint);
+
+					// If this is an exact match, take the point without searching further
+					if (DistanceSq < ExactDistanceToleranceSq)
 					{
-						BestScore = Score;
-						MatchIndex = SavedPointIndex;
-
-						InOutAllowedSavedPointIndices.RemoveAtSwap(AllowedPointIndex);
-
-						// Just take the first match we find that meets our tolerance
+						BestDistanceSq = DistanceSq;
+						MatchAllowedPointIndex = AllowedPointIndex;
 						break;
 					}
+
+					// If this is a close match, we may use it if we can't find a better one
+					if (DistanceSq < BestDistanceSq)
+					{
+						BestDistanceSq = DistanceSq;
+						MatchAllowedPointIndex = AllowedPointIndex;
+					}
+				}
+
+				// If we selected a point, remove it from the set
+				if (MatchAllowedPointIndex != INDEX_NONE)
+				{
+					// RemoveAtSwap
+					const int32 MatchIndex = InOutAllowedSavedPointIndices[MatchAllowedPointIndex];
+					--InOutNumAllowedSavedPoints;
+					if (MatchAllowedPointIndex < InOutNumAllowedSavedPoints)
+					{
+						InOutAllowedSavedPointIndices[MatchAllowedPointIndex] = InOutAllowedSavedPointIndices[InOutNumAllowedSavedPoints];
+					}
+
+					return MatchIndex;
 				}
 			}
 		}
 
-		return MatchIndex;
+		return INDEX_NONE;
 	}
 
 	void FPBDCollisionConstraint::AssignSavedManifoldPoints()
 	{
-		TCArray<int32, MaxManifoldPoints> AllowedPointIndices;
+		TManifoldPointArray<int32> AllowedPointIndices;
 		AllowedPointIndices.SetNum(SavedManifoldPoints.Num());
 		for (int32 PointIndex = 0, PointEndIndex = SavedManifoldPoints.Num(); PointIndex < PointEndIndex; ++PointIndex)
 		{
 			AllowedPointIndices[PointIndex] = PointIndex;
 		}
 
+		int32 NumAllowedPointIndices = AllowedPointIndices.Num();
 		for (int32 PointIndex = 0, PointEndIndex = ManifoldPoints.Num(); PointIndex < PointEndIndex; ++PointIndex)
 		{
-			const int32 SavedManifoldPointIndex = FindSavedManifoldPoint(PointIndex, AllowedPointIndices);
-
-			if (SavedManifoldPointIndex != INDEX_NONE)
+			// @todo(chaos): ideally we would skip this step for restored manifold points but for now we need to 
+			// extract InitialPhi from the results
+			// @see UpdateCollisionSolverContactPointFromConstraint
+			//if (!ManifoldPoints[PointIndex].Flags.bWasRestored)
 			{
-				ManifoldPoints[PointIndex].Flags.bHasStaticFrictionAnchor = true;
-				ManifoldPoints[PointIndex].ShapeAnchorPoints[0] = SavedManifoldPoints[SavedManifoldPointIndex].ShapeContactPoints[0];
-				ManifoldPoints[PointIndex].ShapeAnchorPoints[1] = SavedManifoldPoints[SavedManifoldPointIndex].ShapeContactPoints[1];
+				// Assume this is a new contact
+				ManifoldPoints[PointIndex].Flags.bInitialContact = true;
+
+				// See if we have saved data for this contact
+				const int32 SavedManifoldPointIndex = FindSavedManifoldPoint(PointIndex, AllowedPointIndices.GetData(), NumAllowedPointIndices);
+				if (SavedManifoldPointIndex != INDEX_NONE)
+				{
+					ManifoldPoints[PointIndex].Flags.bHasStaticFrictionAnchor = true;
+					ManifoldPoints[PointIndex].ShapeAnchorPoints[0] = SavedManifoldPoints[SavedManifoldPointIndex].ShapeContactPoints[0];
+					ManifoldPoints[PointIndex].ShapeAnchorPoints[1] = SavedManifoldPoints[SavedManifoldPointIndex].ShapeContactPoints[1];
+					ManifoldPoints[PointIndex].InitialPhi = SavedManifoldPoints[SavedManifoldPointIndex].InitialPhi;
+					ManifoldPoints[PointIndex].Flags.bInitialContact = false;
+				}
+				// Nothing to do if no saved friction point because we already set the achor to the most recently detected contact point
+				// (See InitManifoldPoint, And TryRestoreManifold)
 			}
-			// Nothing to do if no saved friction point because we already set the achor to the most recently detected contact point
-			// (See InitManifoldPoint, And UpdateAndTryRestoreManifold)
 		}
 	}
 
@@ -1165,5 +1280,10 @@ namespace Chaos
 		{
 			return NoRestingDependency;
 		}
+	}
+
+	void FPBDCollisionConstraint::LogOneShotManifoldError(const int32 MaxManifoldPoints, const TArrayView<const FContactPoint>& ContactPoints)
+	{
+		UE_LOG(LogChaos, Error, TEXT("FPBDCollisionConstraint: exceeded per-constraint manifold point limit at %d / %d. Particles %s -:- %s"), ContactPoints.Num(), MaxManifoldPoints, *GetParticle0()->GetDebugName(), *GetParticle1()->GetDebugName());
 	}
 }

@@ -66,7 +66,7 @@ void FTimeStretchCurve::BakeFromFloatCurve(const FFloatCurve& TimeStretchCurve, 
 
 			if (FMath::IsNearlyEqual(CurrMarker.Alpha, NextMarker.Alpha, CurveValueMinPrecision))
 			{
-				Markers.RemoveAt(MarkerIndex + 1, 1, false);
+				Markers.RemoveAt(MarkerIndex + 1, 1, EAllowShrinking::No);
 			}
 			else
 			{
@@ -357,8 +357,8 @@ void FTimeStretchCurveInstance::InitializeFromPlayRate(float InPlayRate, const F
 
 			if (FMath::IsNearlyZero(dT_Target, UE_KINDA_SMALL_NUMBER) || FMath::IsNearlyZero(dT_Original, UE_KINDA_SMALL_NUMBER))
 			{
-				P_Marker_Target.RemoveAt(MarkerIndex + 1, 1, false);
-				P_Marker_Original.RemoveAt(MarkerIndex + 1, 1, false);
+				P_Marker_Target.RemoveAt(MarkerIndex + 1, 1, EAllowShrinking::No);
+				P_Marker_Original.RemoveAt(MarkerIndex + 1, 1, EAllowShrinking::No);
 				MarkerIndex--;
 			}
 		}

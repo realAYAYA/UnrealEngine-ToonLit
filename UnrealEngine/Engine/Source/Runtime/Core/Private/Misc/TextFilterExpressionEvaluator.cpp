@@ -87,19 +87,19 @@ namespace TextFilterExpressionParser
 		{
 			// Matched TextCmpExact - update the comparison mode and remove the + token from the start of the string
 			TextComparisonMode = ETextFilterTextComparisonMode::Exact;
-			InString.RemoveAt(0, 1, false);
+			InString.RemoveAt(0, 1, EAllowShrinking::No);
 		}
 		else if (InString.Len() > 2 && InString.StartsWith(TEXT("..."), ESearchCase::CaseSensitive))
 		{
 			// Matched TextCmpAnchor (pre-unary) - update the comparison mode and remove the ... token from the start of the string
 			TextComparisonMode = ETextFilterTextComparisonMode::EndsWith;
-			InString.RemoveAt(0, 3, false);
+			InString.RemoveAt(0, 3, EAllowShrinking::No);
 		}
 		else if (InString.Len() > 2 && InString.EndsWith(TEXT("..."), ESearchCase::CaseSensitive))
 		{
 			// Matched TextCmpAnchor (post-unary) - update the comparison mode and remove the ... token from the end of the string
 			TextComparisonMode = ETextFilterTextComparisonMode::StartsWith;
-			InString.RemoveAt(InString.Len() - 3, 3, false);
+			InString.RemoveAt(InString.Len() - 3, 3, EAllowShrinking::No);
 		}
 
 		// To preserve behavior with the old text filter, the final string may also contain a TextCmpInvert (-) operator (after stripping the TextCmpExact or TextCmpAnchor tokens from the start)
@@ -108,7 +108,7 @@ namespace TextFilterExpressionParser
 		{
 			// Matched TextCmpInvert - remove the - token from the start of the string
 			InvertResult = FTextToken::EInvertResult::Yes;
-			InString.RemoveAt(0, 1, false);
+			InString.RemoveAt(0, 1, EAllowShrinking::No);
 		}
 
 		// Finally, if our string starts and ends with a quote, we need to strip those off now
@@ -118,8 +118,8 @@ namespace TextFilterExpressionParser
 			if (InString[InString.Len() - 1] == QuoteChar)
 			{
 				// Remove the quotes
-				InString.RemoveAt(0, 1, false);
-				InString.RemoveAt(InString.Len() - 1, 1, false);
+				InString.RemoveAt(0, 1, EAllowShrinking::No);
+				InString.RemoveAt(InString.Len() - 1, 1, EAllowShrinking::No);
 			}
 		}
 

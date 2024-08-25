@@ -176,6 +176,7 @@ namespace GeometryCollectionTest
 			SimulationParams.LinearDamping = 0;
 			SimulationParams.AngularDamping = 0;
 			SimulationParams.UseCCD = false;
+			SimulationParams.UseMACD = false;
 
 			Chaos::FErrorReporter ErrorReporter;
 			BuildSimulationData(ErrorReporter, *RestCollection.Get(), SimulationParams.Shared);
@@ -228,7 +229,7 @@ namespace GeometryCollectionTest
 			RestCollection->InnerRadius[0] = 1.f;	// Assume sphere w/radius 1
 			RestCollection->OuterRadius[0] = 1.f;	// Assume sphere w/radius 1
 			RestCollection->AddElements(1, FGeometryCollection::TransformGroup);
-			RestCollection->Transform[0] = Params.RootTransform;
+			RestCollection->Transform[0] = FTransform3f(Params.RootTransform);
 			RestCollection->Transform[0].NormalizeRotation();
 			break;
 		default:
@@ -245,7 +246,7 @@ namespace GeometryCollectionTest
 		TSharedPtr<Chaos::FChaosPhysicsMaterial> PhysicalMaterial = MakeShared<Chaos::FChaosPhysicsMaterial>(); InitMaterialToZero(PhysicalMaterial.Get());
 		auto Proxy = FSingleParticlePhysicsProxy::Create(Chaos::FGeometryParticle::CreateParticle());
 		auto& Particle = Proxy->GetGameThreadAPI();
-		Particle.SetGeometry(TUniquePtr<Chaos::TPlane<FReal, 3>>(new Chaos::TPlane<FReal, 3>(FVector(0), FVector(0, 0, 1))));
+		Particle.SetGeometry(MakeImplicitObjectPtr<Chaos::TPlane<FReal, 3>>(FVector(0), FVector(0, 0, 1)));
 
 		FCollisionFilterData FilterData;
 		FilterData.Word1 = 0xFFFF;

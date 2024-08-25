@@ -53,7 +53,7 @@ TAutoConsoleVariable<float> CVarFastBlurThreshold(
 	ECVF_Scalability | ECVF_RenderThreadSafe);
 
 BEGIN_SHADER_PARAMETER_STRUCT(FFilterParameters, )
-	SHADER_PARAMETER_STRUCT(FScreenPassTextureInput, Filter)
+	SHADER_PARAMETER_STRUCT(FScreenPassTextureSliceInput, Filter)
 	SHADER_PARAMETER_STRUCT(FScreenPassTextureInput, Additive)
 	SHADER_PARAMETER_ARRAY(FVector4f, SampleOffsets, [MAX_PACKED_SAMPLES_OFFSET])
 	SHADER_PARAMETER_ARRAY(FLinearColor, SampleWeights, [MAX_FILTER_SAMPLES])
@@ -62,7 +62,7 @@ END_SHADER_PARAMETER_STRUCT()
 
 void GetFilterParameters(
 	FFilterParameters& OutParameters,
-	const FScreenPassTextureInput& Filter,
+	const FScreenPassTextureSliceInput& Filter,
 	const FScreenPassTextureInput& Additive,
 	TArrayView<const FVector2f> SampleOffsets,
 	TArrayView<const FLinearColor> SampleWeights)
@@ -342,7 +342,7 @@ FScreenPassTexture AddGaussianBlurPass(
 	const FViewInfo& View,
 	const TCHAR* Name,
 	FScreenPassTextureViewport OutputViewport,
-	FScreenPassTexture Filter,
+	FScreenPassTextureSlice Filter,
 	FScreenPassTexture Additive,
 	TArrayView<const FVector2f> SampleOffsets,
 	TArrayView<const FLinearColor> SampleWeights,
@@ -357,7 +357,7 @@ FScreenPassTexture AddGaussianBlurPass(
 
 	const bool bCombineAdditive = Additive.IsValid();
 
-	const bool bManualUVBorder = Filter.ViewRect.Min != FIntPoint::ZeroValue || Filter.ViewRect.Max != Filter.Texture->Desc.Extent;
+	const bool bManualUVBorder = Filter.ViewRect.Min != FIntPoint::ZeroValue || Filter.ViewRect.Max != Filter.TextureSRV->Desc.Texture->Desc.Extent;
 
 	const uint32 SampleCount = SampleOffsets.Num();
 
@@ -374,7 +374,7 @@ FScreenPassTexture AddGaussianBlurPass(
 		SamplerState = TStaticSamplerState<SF_Bilinear, AM_Border, AM_Border, AM_Clamp>::GetRHI();
 	}
 
-	const FScreenPassTextureInput FilterInput = GetScreenPassTextureInput(Filter, SamplerState);
+	const FScreenPassTextureSliceInput FilterInput = GetScreenPassTextureInput(Filter, SamplerState);
 
 	FScreenPassTextureInput AdditiveInput;
 
@@ -383,11 +383,12 @@ FScreenPassTexture AddGaussianBlurPass(
 		AdditiveInput = GetScreenPassTextureInput(Additive, SamplerState);
 	}
 
-	FRDGTextureDesc OutputDesc = Filter.Texture->Desc;
-	OutputDesc.Reset();
-	OutputDesc.Extent = OutputViewport.Extent;
-	OutputDesc.Flags |= bIsComputePass ? TexCreate_UAV : TexCreate_NoFastClear;
-	OutputDesc.ClearValue = FClearValueBinding(FLinearColor::Transparent);
+	const FRDGTextureDesc& InputDesc = Filter.TextureSRV->Desc.Texture->Desc;
+	FRDGTextureDesc OutputDesc = FRDGTextureDesc::Create2D(
+		OutputViewport.Extent,
+		InputDesc.Format,
+		FClearValueBinding(FLinearColor::Transparent),
+		/* InFlags = */ TexCreate_ShaderResource | (bIsComputePass ? TexCreate_UAV : (TexCreate_RenderTargetable | TexCreate_NoFastClear)) | (InputDesc.Flags & (TexCreate_FastVRAM | TexCreate_FastVRAMPartialAlloc)));
 
 	const FScreenPassRenderTarget Output(GraphBuilder.CreateTexture(OutputDesc, Name), OutputViewport.Rect, ERenderTargetLoadAction::ENoAction);
 
@@ -555,7 +556,7 @@ FScreenPassTexture AddGaussianBlurPass(
 			View,
 			Inputs.NameY,
 			FilterViewport,
-			HorizontalOutput,
+			FScreenPassTextureSlice::CreateFromScreenPassTexture(GraphBuilder, HorizontalOutput),
 			Inputs.Additive,
 			TArrayView<const FVector2f>(SampleOffsets, SampleCount),
 			TArrayView<const FLinearColor>(SampleWeights, SampleCount),

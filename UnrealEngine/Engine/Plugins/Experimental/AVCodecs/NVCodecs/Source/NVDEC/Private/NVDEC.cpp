@@ -40,7 +40,7 @@ FNVDEC::FNVDEC()
 #if PLATFORM_WINDOWS
 	static TCHAR const* DllName = TEXT("nvcuvid.dll");
 #elif PLATFORM_LINUX
-	static TCHAR const* DllName = TEXT("libnvcuvid.so");
+	static TCHAR const* DllName = TEXT("libnvcuvid.so.1");
 #else
 	static TCHAR const* DllName = nullptr;
 #endif
@@ -53,6 +53,7 @@ FNVDEC::FNVDEC()
 			LOAD_FROM_DLL(cuvidCreateDecoder);
 			LOAD_FROM_DLL(cuvidParseVideoData);
 			LOAD_FROM_DLL(cuvidCreateVideoParser);
+			LOAD_FROM_DLL(cuvidDestroyVideoParser);
 			LOAD_FROM_DLL(cuvidCtxLockCreate);
 			LOAD_FROM_DLL(cuvidCtxLockDestroy);
 			LOAD_FROM_DLL(cuvidDecodePicture);
@@ -69,6 +70,14 @@ FNVDEC::FNVDEC()
 			LOAD_FROM_DLL(cuvidUnmapVideoFrame);
 #endif
 		}
+		else
+		{
+			FAVResult::Log(EAVResult::Warning, TEXT("Failed to get NVDEC dll handle. NVDEC module will not be available."), TEXT("NVDEC"));
+		}
+	}
+	else
+	{
+		FAVResult::Log(EAVResult::Warning, TEXT("Failed to get NVDEC dll name. NVDEC module will not be available."), TEXT("NVDEC"));
 	}
 }
 

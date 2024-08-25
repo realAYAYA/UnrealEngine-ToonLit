@@ -59,8 +59,17 @@ public:
 	UE_DISABLE_OPTIMIZATION_SHIP
 	virtual void RegisterCommands() override
 	{
-		UI_COMMAND(Command_GoToTask, "Go To Task", "Pan and zoom to the task in Timing View.", EUserInterfaceActionType::Button, FInputChord());
-		UI_COMMAND(Command_OpenInIDE, "Open in IDE", "Open the source location where the selected task was launched in IDE.", EUserInterfaceActionType::Button, FInputChord());
+		UI_COMMAND(Command_GoToTask,
+			"Go To Task",
+			"Pans and zooms to the task in the Timing View.",
+			EUserInterfaceActionType::Button,
+			FInputChord());
+
+		UI_COMMAND(Command_OpenInIDE,
+			"Open in IDE",
+			"Opens the source location where the selected task was launched, in IDE.",
+			EUserInterfaceActionType::Button,
+			FInputChord());
 	}
 	UE_ENABLE_OPTIMIZATION_SHIP
 
@@ -97,34 +106,71 @@ void STaskTableTreeView::Construct(const FArguments& InArgs, TSharedPtr<Insights
 
 void STaskTableTreeView::ExtendMenu(FMenuBuilder& MenuBuilder)
 {
-	ISourceCodeAccessModule& SourceCodeAccessModule = FModuleManager::LoadModuleChecked<ISourceCodeAccessModule>("SourceCodeAccess");
-	ISourceCodeAccessor& SourceCodeAccessor = SourceCodeAccessModule.GetAccessor();
-
-	MenuBuilder.BeginSection("Node", LOCTEXT("ContextMenu_Section_Task", "Task"));
+	MenuBuilder.BeginSection("Task", LOCTEXT("ContextMenu_Section_Task", "Task"));
 
 	{
-		MenuBuilder.AddMenuEntry
-		(
+		MenuBuilder.AddMenuEntry(
 			FTaskTableTreeViewCommands::Get().Command_GoToTask,
 			NAME_None,
 			TAttribute<FText>(),
 			TAttribute<FText>(),
-			FSlateIcon(FInsightsStyle::GetStyleSetName(), "Icons.GoToTask")
-		);
+			FSlateIcon(FInsightsStyle::GetStyleSetName(), "Icons.GoToTask"));
 	}
+
 	{
-		MenuBuilder.AddMenuEntry
-		(
+		FString File;
+		uint32 Line = 0;
+		bool bIsValidSource = GetSourceFileAndLineForSelectedTask(File, Line);
+
+		ISourceCodeAccessModule& SourceCodeAccessModule = FModuleManager::LoadModuleChecked<ISourceCodeAccessModule>("SourceCodeAccess");
+		ISourceCodeAccessor& SourceCodeAccessor = SourceCodeAccessModule.GetAccessor();
+
+		FText ItemLabel;
+		FText ItemToolTip;
+
+		if (SourceCodeAccessor.CanAccessSourceCode())
+		{
+			ItemLabel = FText::Format(LOCTEXT("ContextMenu_OpenSource", "Open Source in {0}"), SourceCodeAccessor.GetNameText());
+			if (bIsValidSource)
+			{
+				ItemToolTip = FText::Format(LOCTEXT("ContextMenu_OpenSource_Desc1", "Opens the source location where the selected task was launched, in {0}.\n{1} ({2})"),
+					SourceCodeAccessor.GetNameText(),
+					FText::FromString(File),
+					FText::AsNumber(Line, &FNumberFormattingOptions::DefaultNoGrouping()));
+			}
+			else
+			{
+				ItemToolTip = FText::Format(LOCTEXT("ContextMenu_OpenSource_Desc2", "Opens the source location where the selected task was launched, in {0}."),
+					SourceCodeAccessor.GetNameText());
+			}
+		}
+		else
+		{
+			ItemLabel = LOCTEXT("ContextMenu_OpenSourceNA", "Open Source");
+			if (bIsValidSource)
+			{
+				ItemToolTip = FText::Format(LOCTEXT("ContextMenu_OpenSourceNA_Desc1", "{0} ({1})\nSource Code Accessor is not available."),
+					FText::FromString(File),
+					FText::AsNumber(Line, &FNumberFormattingOptions::DefaultNoGrouping()));
+			}
+			else
+			{
+				ItemToolTip = LOCTEXT("ContextMenu_OpenSourceNA_Desc2", "Source Code Accessor is not available.");
+			}
+		}
+
+		MenuBuilder.AddMenuEntry(
 			FTaskTableTreeViewCommands::Get().Command_OpenInIDE,
 			NAME_None,
-			TAttribute<FText>(),
-			TAttribute<FText>(),
-			FSlateIcon(FAppStyle::GetAppStyleSetName(), SourceCodeAccessor.GetOpenIconName())
-		);
+			ItemLabel,
+			ItemToolTip,
+			FSlateIcon(SourceCodeAccessor.GetStyleSet(), SourceCodeAccessor.GetOpenIconName()));
 	}
 
 	MenuBuilder.EndSection();
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 void STaskTableTreeView::AddCommmands()
 {
@@ -686,8 +732,6 @@ void STaskTableTreeView::ContextMenu_GoToTask_Execute()
 		return;
 	}
 
-	FTaskGraphProfilerManager::Get()->ShowTaskRelations(TaskEntry->GetId());
-
 	double Duration = (TaskEntry->GetFinishedTimestamp() - TaskEntry->GetCreatedTimestamp()) * 1.5;
 	TimingView->ZoomOnTimeInterval(TaskEntry->GetCreatedTimestamp() - Duration * 0.15, Duration);
 
@@ -724,14 +768,37 @@ void STaskTableTreeView::ContextMenu_GoToTask_Execute()
 
 	FTimingEventSearchParameters SearchParams(TaskEntry->StartedTimestamp, TaskEntry->FinishedTimestamp, ETimingEventSearchFlags::StopAtFirstMatch, SearchFilter);
 
-
 	const TSharedPtr<const ITimingEvent> FoundEvent = Track->SearchEvent(SearchParams);
-	TimingView->SelectTimingEvent(FoundEvent, true);
+	if (FoundEvent.IsValid() && Track->IsVisible())
+	{
+		TimingView->SelectTimingEvent(FoundEvent, true);
+	}
+	else
+	{
+		FTaskGraphProfilerManager::Get()->ShowTaskRelations(TaskEntry->GetId());
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 bool STaskTableTreeView::ContextMenu_OpenInIDE_CanExecute() const
+{
+	ISourceCodeAccessModule& SourceCodeAccessModule = FModuleManager::LoadModuleChecked<ISourceCodeAccessModule>("SourceCodeAccess");
+	ISourceCodeAccessor& SourceCodeAccessor = SourceCodeAccessModule.GetAccessor();
+
+	if (!SourceCodeAccessor.CanAccessSourceCode())
+	{
+		return false;
+	}
+
+	FString File;
+	uint32 Line = 0;
+	return GetSourceFileAndLineForSelectedTask(File, Line);
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+bool STaskTableTreeView::GetSourceFileAndLineForSelectedTask(FString& OutFile, uint32& OutLine) const
 {
 	TArray<FTableTreeNodePtr> SelectedItems;
 	TreeView->GetSelectedItems(SelectedItems);
@@ -741,13 +808,38 @@ bool STaskTableTreeView::ContextMenu_OpenInIDE_CanExecute() const
 		return false;
 	}
 
-	FTaskNodePtr SelectedTask = StaticCastSharedPtr<FTaskNode>(SelectedItems[0]);
-	const FTaskEntry* TaskEntry = SelectedTask.IsValid() ? SelectedTask->GetTask() : nullptr;
-
-	if (!SelectedTask.IsValid() || SelectedTask->IsGroup() || TaskEntry == nullptr || TaskEntry->DebugName == nullptr || TaskEntry->DebugName[FCString::Strlen(TaskEntry->DebugName) - 1] != TEXT(')'))
+	FTableTreeNodePtr SelectedTreeNode = SelectedItems[0];
+	if (!SelectedTreeNode.IsValid() || !SelectedTreeNode->Is<FTaskNode>())
 	{
 		return false;
 	}
+
+	FTaskNodePtr SelectedTask = StaticCastSharedPtr<FTaskNode>(SelectedTreeNode);
+
+	const FTaskEntry* TaskEntry = SelectedTask->GetTask();
+	if (TaskEntry == nullptr || TaskEntry->DebugName == nullptr)
+	{
+		return false;
+	}
+
+	const FString DebugName = TaskEntry->DebugName;
+	if (DebugName.Len() < 4 ||
+		DebugName[DebugName.Len() - 1] != TEXT(')'))
+	{
+		return false;
+	}
+
+	int32 OpenBracketPos;
+	if (!DebugName.FindChar(TEXT('('), OpenBracketPos) ||
+		OpenBracketPos > DebugName.Len() - 3)
+	{
+		return false;
+	}
+
+	OutFile = DebugName.Left(OpenBracketPos);
+
+	FString LineStr = DebugName.Mid(OpenBracketPos + 1, DebugName.Len() - OpenBracketPos - 2);
+	OutLine = FCString::Atoi(*LineStr);
 
 	return true;
 }
@@ -756,39 +848,23 @@ bool STaskTableTreeView::ContextMenu_OpenInIDE_CanExecute() const
 
 void STaskTableTreeView::ContextMenu_OpenInIDE_Execute()
 {
-	TArray<FTableTreeNodePtr> SelectedItems;
-	TreeView->GetSelectedItems(SelectedItems);
-
-	if (SelectedItems.Num() != 1)
+	FString File;
+	uint32 Line = 0;
+	if (!GetSourceFileAndLineForSelectedTask(File, Line))
 	{
 		return;
 	}
-
-	FTaskNodePtr SelectedTask = StaticCastSharedPtr<FTaskNode>(SelectedItems[0]);
-	const FTaskEntry* TaskEntry = SelectedTask.IsValid() ? SelectedTask->GetTask() : nullptr;
-
-	if (TaskEntry == nullptr || TaskEntry->DebugName == nullptr)
-	{
-		return;
-	}
-
-	const FString DebugName = TaskEntry->DebugName;
-	int32 OpenBracketPos;
-	if (DebugName[DebugName.Len() - 1] != TEXT(')') || !DebugName.FindChar(TEXT('('), OpenBracketPos) || OpenBracketPos > DebugName.Len() - 3)
-	{
-		return;
-	}
-	FString Filename = DebugName.Left(OpenBracketPos);
-	if (!FPaths::FileExists(Filename))
-	{
-		return;
-	}
-	FString LineStr = DebugName.Mid(OpenBracketPos + 1, DebugName.Len() - OpenBracketPos - 2);
-	int32 Line = FCString::Atoi(*LineStr);
 
 	ISourceCodeAccessModule& SourceCodeAccessModule = FModuleManager::LoadModuleChecked<ISourceCodeAccessModule>("SourceCodeAccess");
-	ISourceCodeAccessor& SourceCodeAccessor = SourceCodeAccessModule.GetAccessor();
-	SourceCodeAccessor.OpenFileAtLine(Filename, Line);
+	if (FPaths::FileExists(File))
+	{
+		ISourceCodeAccessor& SourceCodeAccessor = SourceCodeAccessModule.GetAccessor();
+		SourceCodeAccessor.OpenFileAtLine(File, Line);
+	}
+	else
+	{
+		SourceCodeAccessModule.OnOpenFileFailed().Broadcast(File);
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -817,7 +893,7 @@ void STaskTableTreeView::SearchForItem(TSharedPtr<FTableTaskCancellationToken> C
 {
 	TSharedPtr<FTaskTable> TaskTable = GetTaskTable();
 	TArray<FTaskEntry>& Tasks = TaskTable->GetTaskEntries();
-	
+
 	uint32 NumEntries = (uint32)Tasks.Num();
 	for (uint32 Index = 0; Index < NumEntries; ++Index)
 	{

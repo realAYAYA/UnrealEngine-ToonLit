@@ -91,7 +91,7 @@ void FFractureEngineFracturing::GenerateExplodedViewAttribute(FManagedArrayColle
 		check(InOutCollection.HasAttribute("ExplodedVector", FGeometryCollection::TransformGroup));
 
 		TManagedArray<FVector3f>& ExplodedVectors = InOutCollection.ModifyAttribute<FVector3f>("ExplodedVector", FGeometryCollection::TransformGroup);
-		const TManagedArray<FTransform>& Transforms = InOutCollection.GetAttribute<FTransform>("Transform", FGeometryCollection::TransformGroup);
+		const TManagedArray<FTransform3f>& Transforms = InOutCollection.GetAttribute<FTransform3f>("Transform", FGeometryCollection::TransformGroup);
 		const TManagedArray<int32>& TransformToGeometryIndices = InOutCollection.GetAttribute<int32>("TransformToGeometryIndex", FGeometryCollection::TransformGroup);
 		const TManagedArray<FBox>& BoundingBoxes = InOutCollection.GetAttribute<FBox>("BoundingBox", FGeometryCollection::GeometryGroup);
 
@@ -204,7 +204,7 @@ void FFractureEngineFracturing::VoronoiFracture(FManagedArrayCollection& InOutCo
 				InOutCollection.HasAttribute("TransformIndex", FGeometryCollection::GeometryGroup) &&
 				InOutCollection.HasAttribute("BoundingBox", FGeometryCollection::GeometryGroup))
 			{
-				const TManagedArray<FTransform>& Transforms = InOutCollection.GetAttribute<FTransform>("Transform", FGeometryCollection::TransformGroup);
+				const TManagedArray<FTransform3f>& Transforms = InOutCollection.GetAttribute<FTransform3f>("Transform", FGeometryCollection::TransformGroup);
 				const TManagedArray<int32>& ParentIndices = InOutCollection.GetAttribute<int32>("Parent", FGeometryCollection::TransformGroup);
 				const TManagedArray<int32>& TransformIndices = InOutCollection.GetAttribute<int32>("TransformIndex", FGeometryCollection::GeometryGroup);
 				const TManagedArray<FBox>& BoundingBoxes = InOutCollection.GetAttribute<FBox>("BoundingBox", FGeometryCollection::GeometryGroup);

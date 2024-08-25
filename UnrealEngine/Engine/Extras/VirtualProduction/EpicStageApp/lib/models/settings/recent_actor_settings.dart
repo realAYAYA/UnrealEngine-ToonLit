@@ -1,9 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+import 'package:epic_common/preferences.dart';
+import 'package:epic_common/utilities/json.dart';
 import 'package:streaming_shared_preferences/streaming_shared_preferences.dart';
 
-import '../../utilities/json_utilities.dart';
-import '../../utilities/preferences_bundle.dart';
 import '../../utilities/streaming_preferences_extensions.dart';
 
 enum RecentlyPlacedActorType {

@@ -5,6 +5,7 @@
 #include "UObject/Interface.h"
 #include "UObject/ObjectMacros.h"
 #include "Engine/EngineTypes.h"
+#include "Evaluation/IMovieScenePlaybackCapability.h"
 #include "MovieSceneSequenceID.h"
 #include "IMovieScenePlaybackClient.generated.h"
 
@@ -24,6 +25,8 @@ class IMovieScenePlaybackClient
 {
 public:
 	GENERATED_BODY()
+
+	static UE::MovieScene::TPlaybackCapabilityID<IMovieScenePlaybackClient> ID;
 
 	/**
 	 * Locate bound objects that relate to the specified binding ID

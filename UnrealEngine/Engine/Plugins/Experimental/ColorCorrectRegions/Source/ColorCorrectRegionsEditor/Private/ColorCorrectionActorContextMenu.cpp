@@ -111,8 +111,10 @@ namespace
 		{
 			AColorCorrectionRegion* CCActorRawPtr = World->SpawnActor<AColorCorrectionRegion>();
 			CCActorRawPtr->Type = EColorCorrectRegionsType::Box;
-			CCActorRawPtr->SetMeshVisibilityForRegionType();
 			CCActorPtr = CCActorRawPtr;
+
+			FPropertyChangedEvent TypeChangedEvent(AColorCorrectRegion::StaticClass()->FindPropertyByName(GET_MEMBER_NAME_CHECKED(AColorCorrectRegion, Type)));
+			CCActorPtr->PostEditChangeProperty(TypeChangedEvent);
 		}
 
 		CCActorPtr->SetActorTransform(Transform);

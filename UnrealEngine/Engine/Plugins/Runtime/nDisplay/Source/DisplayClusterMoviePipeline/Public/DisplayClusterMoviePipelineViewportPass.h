@@ -37,6 +37,7 @@ public:
 	virtual void PostRendererSubmission(const FMoviePipelineRenderPassMetrics& InSampleState, const FMoviePipelinePassIdentifier InPassIdentifier, const int32 InSortingOrder, FCanvas& InCanvas) override;
 
 	virtual int32 GetNumCamerasToRender() const override;
+	virtual int32 GetCameraIndexForRenderPass(const int32 InCameraIndex) const override;
 	virtual FString GetCameraName(const int32 InCameraIndex) const override;
 	virtual FString GetCameraNameOverride(const int32 InCameraIndex) const override;
 

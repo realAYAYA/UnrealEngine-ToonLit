@@ -2,13 +2,10 @@
 
 #include "DMXEditorModule.h"
 
-#include "DMXAttribute.h"
-#include "DMXEditor.h"
-#include "DMXEditorStyle.h"
-#include "DMXEditorTabNames.h"
-#include "DMXProtocolBlueprintLibrary.h"
-#include "DMXProtocolTypes.h"
+#include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetTools/AssetTypeActions_DMXEditorLibrary.h"
+#include "AssetToolsModule.h"
+#include "Commands/DMXConflictMonitorCommands.h"
 #include "Commands/DMXEditorCommands.h"
 #include "Customizations/DMXAttributeNameCustomization.h"
 #include "Customizations/DMXEntityFixtureTypeDetails.h"
@@ -19,34 +16,32 @@
 #include "Customizations/DMXMVRSceneActorDetails.h"
 #include "Customizations/DMXPixelMappingDistributionCustomization.h"
 #include "Customizations/TakeRecorderDMXLibrarySourceEditorCustomization.h"
-#include "Game/DMXComponent.h"
+#include "DMXAttribute.h"
+#include "DMXEditor.h"
+#include "DMXEditorStyle.h"
+#include "DMXEditorTabNames.h"
+#include "DMXProtocolBlueprintLibrary.h"
+#include "DMXProtocolTypes.h"
+#include "Framework/Commands/UICommandList.h"
+#include "Framework/Docking/TabManager.h"
+#include "Framework/MultiBox/MultiBoxBuilder.h"
+#include "ISequencerModule.h"
+#include "LevelEditor.h"
 #include "Library/DMXEntity.h"
 #include "Library/DMXEntityFixtureType.h"
 #include "Library/DMXEntityReference.h"
 #include "Library/DMXLibrary.h"
 #include "MVR/DMXMVRSceneActor.h"
+#include "PropertyEditorModule.h"
 #include "Sequencer/DMXLibraryTrackEditor.h"
 #include "Sequencer/TakeRecorderDMXLibrarySource.h"
-#include "Widgets/Monitors/SDMXActivityMonitor.h"
-#include "Widgets/Monitors/SDMXChannelsMonitor.h"
-#include "Widgets/PatchTool/SDMXPatchTool.h"
-
-#include "AssetToolsModule.h"
-#include "AssetRegistry/AssetRegistryModule.h"
-#include "AssetToolsModule.h"
-#include "ISequencerModule.h"
-#include "LevelEditor.h"
-#include "PropertyEditorModule.h"
 #include "ToolMenus.h"
-#include "Framework/Commands/UICommandList.h"
-#include "Framework/Docking/TabManager.h"
-#include "Framework/MultiBox/MultiBoxBuilder.h"
-#include "Templates/SharedPointer.h"
-#include "Widgets/SBoxPanel.h"
-#include "Widgets/SOverlay.h"
 #include "Widgets/Docking/SDockTab.h"
 #include "Widgets/Images/SImage.h"
-#include "Widgets/Layout/SGridPanel.h"
+#include "Widgets/Monitors/SDMXActivityMonitor.h"
+#include "Widgets/Monitors/SDMXChannelsMonitor.h"
+#include "Widgets/Monitors/SDMXConflictMonitor.h"
+#include "Widgets/PatchTool/SDMXPatchTool.h"
 
 
 #define LOCTEXT_NAMESPACE "DMXEditorModule"
@@ -61,6 +56,8 @@ void FDMXEditorModule::StartupModule()
 {
 	FDMXEditorCommands::Register();
 	BindDMXEditorCommands();
+
+	FDMXConflictMonitorCommands::Register();
 
 	MenuExtensibilityManager = MakeShared<FExtensibilityManager>();
 	ToolBarExtensibilityManager = MakeShared<FExtensibilityManager>();
@@ -86,6 +83,7 @@ void FDMXEditorModule::ShutdownModule()
 	}
 	
 	FDMXEditorCommands::Unregister();
+	FDMXConflictMonitorCommands::Unregister();
 
 	MenuExtensibilityManager.Reset();
 	ToolBarExtensibilityManager.Reset();
@@ -119,15 +117,19 @@ void FDMXEditorModule::BindDMXEditorCommands()
 
 	CommandList->MapAction(
 		FDMXEditorCommands::Get().OpenChannelsMonitor,
-		FExecuteAction::CreateStatic(&FDMXEditorModule::OnOpenChannelsMonitor)
+		FExecuteAction::CreateStatic(&FDMXEditorModule::OpenChannelsMonitor)
 	);
 	CommandList->MapAction(
 		FDMXEditorCommands::Get().OpenActivityMonitor,
-		FExecuteAction::CreateStatic(&FDMXEditorModule::OnOpenActivityMonitor)
+		FExecuteAction::CreateStatic(&FDMXEditorModule::OpenActivityMonitor)
+	);
+	CommandList->MapAction(
+		FDMXEditorCommands::Get().OpenConflictMonitor,
+		FExecuteAction::CreateStatic(&FDMXEditorModule::OpenConflictMonitor)
 	);
 	CommandList->MapAction(
 		FDMXEditorCommands::Get().OpenPatchTool,
-		FExecuteAction::CreateStatic(&FDMXEditorModule::OnOpenPatchTool)
+		FExecuteAction::CreateStatic(&FDMXEditorModule::OpenPatchTool)
 	);
 	CommandList->MapAction(
 		FDMXEditorCommands::Get().ToggleReceiveDMX,
@@ -200,41 +202,46 @@ TSharedRef<SWidget> FDMXEditorModule::GenerateDMXLevelEditorToolbarMenu()
 	FMenuBuilder MenuBuilder(true, CommandBindings, LevelEditorToolbarDMXMenuExtender);
 
 	static const FName NoExtensionHook = NAME_None;
-
-	MenuBuilder.BeginSection(NoExtensionHook, LOCTEXT("MenuSectionTools", "TOOLS"));
+	MenuBuilder.BeginSection(NoExtensionHook, LOCTEXT("MenuSectionDMXTools", "DMX Tools"));
 	{
 		MenuBuilder.AddMenuEntry(FDMXEditorCommands::Get().OpenChannelsMonitor,
-			NoExtensionHook,
-			LOCTEXT("ChannelsMonitorLabel", "Channel Monitor"),
-			LOCTEXT("ChannelsMonitorTooltip", "Opens the Monitor displaying all DMX Channels in a Universe"),
+			"ChannelsMonitor",
+			TAttribute<FText>(), 
+			TAttribute<FText>(),
 			FSlateIcon(FDMXEditorStyle::Get().GetStyleSetName(), "Icons.ChannelsMonitor")
 		);
 		MenuBuilder.AddMenuEntry(FDMXEditorCommands::Get().OpenActivityMonitor,
-			"OpenActivityMonitor",
-			LOCTEXT("ActivityMonitorLabel", "Activity Monitor"),
-			LOCTEXT("ActivityMonitorTooltip", "Opens the Activity Monitor that monitors DMX activity in a range of Universes"),
+			"ActivityMonitor",
+			TAttribute<FText>(),
+			TAttribute<FText>(),
 			FSlateIcon(FDMXEditorStyle::Get().GetStyleSetName(), "Icons.ActivityMonitor")
 		);
+		MenuBuilder.AddMenuEntry(FDMXEditorCommands::Get().OpenConflictMonitor,
+			"ConflictMonitor",
+			TAttribute<FText>(),
+			TAttribute<FText>(),
+			FSlateIcon(FDMXEditorStyle::Get().GetStyleSetName(), "Icons.ConflictMonitor")
+		);
 		MenuBuilder.AddMenuEntry(FDMXEditorCommands::Get().OpenPatchTool,
-			NoExtensionHook,
-			LOCTEXT("PatchToolLabel", "Patch Tool"),
-			LOCTEXT("PatchToolTooltip", "Opens the quick patch tool for helping patch large quantity of DMX fixtures"),
+			"PatchTool",
+			TAttribute<FText>(),
+			TAttribute<FText>(),
 			FSlateIcon(FDMXEditorStyle::Get().GetStyleSetName(), "Icons.PatchTool")
 		);
 	}
 
-	MenuBuilder.BeginSection(NoExtensionHook, LOCTEXT("MenuSectionDMXIO", "DMX IO"));
+	MenuBuilder.BeginSection(NoExtensionHook, LOCTEXT("MenuSectionDMXInputOutput", "DMX IO"));
 	{
 		MenuBuilder.AddMenuEntry(FDMXEditorCommands::Get().ToggleReceiveDMX,
-			NoExtensionHook,
-			LOCTEXT("ReceiveDMXLabel", "Receive DMX"),
-			LOCTEXT("ReceiveDMXTooltip", "Sets whether DMX is received in from the network"),
+			"ReceiveDMXEnabled",
+			TAttribute<FText>(),
+			TAttribute<FText>(),
 			FSlateIcon(FDMXEditorStyle::Get().GetStyleSetName(), "Icons.ReceiveDMX")
 		);
 		MenuBuilder.AddMenuEntry(FDMXEditorCommands::Get().ToggleSendDMX,
-			NoExtensionHook,
-			LOCTEXT("SendDMXLabel", "Send DMX"),
-			LOCTEXT("SendDMXTooltip", "Sets whether DMX is sent to the network"),
+			"SendDMXEnabled",
+			TAttribute<FText>(),
+			TAttribute<FText>(),
 			FSlateIcon(FDMXEditorStyle::Get().GetStyleSetName(), "Icons.SendDMX")
 		);
 	}
@@ -317,6 +324,8 @@ void FDMXEditorModule::RegisterSequencerTypes()
 
 void FDMXEditorModule::RegisterNomadTabSpawners()
 {
+	using namespace UE::DMX;
+
 	RegisterNomadTabSpawner(FDMXEditorTabNames::ChannelsMonitor,
 		FOnSpawnTab::CreateStatic(&FDMXEditorModule::OnSpawnChannelsMonitorTab))
 		.SetDisplayName(LOCTEXT("ChannelsMonitorTabTitle", "DMX Channel Monitor"))
@@ -328,6 +337,12 @@ void FDMXEditorModule::RegisterNomadTabSpawners()
 		.SetDisplayName(LOCTEXT("ActivityMonitorTabTitle", "DMX Activity Monitor"))
 		.SetMenuType(ETabSpawnerMenuType::Hidden)
 		.SetIcon(FSlateIcon(FDMXEditorStyle::Get().GetStyleSetName(), "Icons.ActivityMonitor"));
+
+	RegisterNomadTabSpawner(FDMXEditorTabNames::ConflictMonitor,
+		FOnSpawnTab::CreateStatic(&FDMXEditorModule::OnSpawnConflictMonitorTab))
+		.SetDisplayName(LOCTEXT("OutputConflictMonitorTabTitle", "DMX Output Conflict Monitor"))
+		.SetMenuType(ETabSpawnerMenuType::Hidden)
+		.SetIcon(FSlateIcon(FDMXEditorStyle::Get().GetStyleSetName(), "Icons.ConflictMonitor"));
 
 	RegisterNomadTabSpawner(FDMXEditorTabNames::PatchTool,
 		FOnSpawnTab::CreateStatic(&FDMXEditorModule::OnSpawnPatchToolTab))
@@ -341,6 +356,16 @@ void FDMXEditorModule::StartupPIEManager()
 	PIEManager = MakeUnique<FDMXPIEManager>();
 }
 
+TSharedRef<SDockTab> FDMXEditorModule::OnSpawnChannelsMonitorTab(const FSpawnTabArgs& InSpawnTabArgs)
+{
+	return SNew(SDockTab)
+		.Label(LOCTEXT("ChannelsMonitorTitle", "DMX Channel Monitor"))
+		.TabRole(ETabRole::NomadTab)
+		[
+			SNew(SDMXChannelsMonitor)
+		];
+}
+
 TSharedRef<SDockTab> FDMXEditorModule::OnSpawnActivityMonitorTab(const FSpawnTabArgs& InSpawnTabArgs)
 {
 	return SNew(SDockTab)
@@ -351,13 +376,14 @@ TSharedRef<SDockTab> FDMXEditorModule::OnSpawnActivityMonitorTab(const FSpawnTab
 		];
 }
 
-TSharedRef<SDockTab> FDMXEditorModule::OnSpawnChannelsMonitorTab(const FSpawnTabArgs& InSpawnTabArgs)
+TSharedRef<SDockTab> FDMXEditorModule::OnSpawnConflictMonitorTab(const FSpawnTabArgs& InSpawnTabArgs)
 {
+	using namespace UE::DMX;
 	return SNew(SDockTab)
-		.Label(LOCTEXT("ChannelsMonitorTitle", "DMX Channel Monitor"))
+		.Label(LOCTEXT("ConflictMonitorTitle", "DMX Output Conflict Monitor"))
 		.TabRole(ETabRole::NomadTab)
 		[
-			SNew(SDMXChannelsMonitor)
+			SNew(SDMXConflictMonitor)
 		];
 }
 
@@ -371,18 +397,27 @@ TSharedRef<SDockTab> FDMXEditorModule::OnSpawnPatchToolTab(const FSpawnTabArgs& 
 		];
 }
 
-void FDMXEditorModule::OnOpenChannelsMonitor()
+void FDMXEditorModule::OpenChannelsMonitor()
 {
+	using namespace UE::DMX;
 	FGlobalTabmanager::Get()->TryInvokeTab(FDMXEditorTabNames::ChannelsMonitor);
 }
 
-void FDMXEditorModule::OnOpenActivityMonitor()
+void FDMXEditorModule::OpenActivityMonitor()
 {
+	using namespace UE::DMX;
 	FGlobalTabmanager::Get()->TryInvokeTab(FDMXEditorTabNames::ActivityMonitor);
 }
 
-void FDMXEditorModule::OnOpenPatchTool()
+void FDMXEditorModule::OpenConflictMonitor()
 {
+	using namespace UE::DMX;
+	FGlobalTabmanager::Get()->TryInvokeTab(FDMXEditorTabNames::ConflictMonitor);
+}
+
+void FDMXEditorModule::OpenPatchTool()
+{
+	using namespace UE::DMX;
 	FGlobalTabmanager::Get()->TryInvokeTab(FDMXEditorTabNames::PatchTool);
 }
 

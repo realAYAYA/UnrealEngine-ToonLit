@@ -13,7 +13,12 @@
 
 TAutoConsoleVariable<int32> FAndroidPlatformRHIFramePacer::CVarUseSwappyForFramePacing(
 	TEXT("a.UseSwappyForFramePacing"),
+#if USE_ANDROID_STANDALONE
+	// swappy crashes when using single instance and texture views.
+	0,
+#else
 	1,
+#endif
 	TEXT("True to use Swappy for frame pacing."));
 
 TAutoConsoleVariable<int32> FAndroidPlatformRHIFramePacer::CVarSupportNonVSyncMultipleFrameRates(
@@ -23,7 +28,12 @@ TAutoConsoleVariable<int32> FAndroidPlatformRHIFramePacer::CVarSupportNonVSyncMu
 
 TAutoConsoleVariable<int32> FAndroidPlatformRHIFramePacer::CVarAllowFrameTimestamps(
 	TEXT("a.AllowFrameTimestamps"),
+#if USE_ANDROID_STANDALONE
+	// frame time stamping when using texture views and single instance in android cannot be used as the frame numbering in android driver won't match up to updates.
+	0,
+#else
 	1,
+#endif
 	TEXT("True to allow the use use eglGetFrameTimestampsANDROID et al for frame pacing or spew."));
 
 TAutoConsoleVariable<int32> FAndroidPlatformRHIFramePacer::CVarTimeStampErrorRetryCount(

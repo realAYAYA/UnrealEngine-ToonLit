@@ -5,6 +5,7 @@
 #include "MetasoundFrontendDocument.h"
 #include "MetasoundFrontendDocumentModifyDelegates.h"
 #include "Templates/Function.h"
+#include "UObject/TopLevelAssetPath.h"
 
 #include "MetasoundDocumentInterface.generated.h"
 
@@ -27,9 +28,19 @@ class METASOUNDFRONTEND_API IMetaSoundDocumentInterface : public IInterface
 	GENERATED_BODY()
 
 public:
+	virtual FTopLevelAssetPath GetAssetPathChecked() const = 0;
+
 	// Returns read-only reference to the the MetaSoundFrontendDocument
 	// containing all MetaSound runtime & editor data.
-	virtual const FMetasoundFrontendDocument& GetDocument() const = 0;
+	UE_DEPRECATED(5.4, "Use GetConstDocument instead")
+	virtual const FMetasoundFrontendDocument& GetDocument() const 
+	{
+		return GetConstDocument();
+	}
+
+	// Returns read-only reference to the the MetaSoundFrontendDocument
+	// containing all MetaSound runtime & editor data.
+	virtual const FMetasoundFrontendDocument& GetConstDocument() const = 0;
 
 	// Returns the parent class registered with the MetaSound UObject registry.
 	virtual const UClass& GetBaseMetaSoundUClass() const = 0;
@@ -37,23 +48,39 @@ public:
 private:
 	virtual FMetasoundFrontendDocument& GetDocument() = 0;
 
+	// Derived classes can implement these methods to react to a builder beginning
+	// or finishing. Begin and Finish are tied to the lifetime of the active 
+	// FMetaSoundFrontendDocumentBuilder.
+	virtual void OnBeginActiveBuilder() = 0;
+	virtual void OnFinishActiveBuilder() = 0;
+
 	friend struct FMetaSoundFrontendDocumentBuilder;
 };
 
 namespace Metasound::Frontend
 {
-	class METASOUNDFRONTEND_API IMetaSoundDocumentBuilderRegistry
+	class METASOUNDFRONTEND_API IDocumentBuilderRegistry
 	{
 	public:
-		// Returns delegates used to mutate any internal builder cached state or notify listeners of external system that
-		// has mutated a given document class.  Exists primarily for backward compatibility with the DocumentController system,
-		// and is not recommended for use outside of MetaSound plugin as it may be deprecated in the future (best practice is to
-		// mutate all documents using MetasoundDocumentBuilders).
-		virtual const FDocumentModifyDelegates* FindModifyDelegates(const FMetasoundFrontendClassName& InClassName) const = 0;
+		// Invalidates the cache of a given document's builder should one be registered, causing it to be rebuilt.  Not recommended
+		// for general use, and is only available in case the document is modified by a system other than an active, registered builder
+		// (ex. via the soft deprecated controller/handle API).
+		virtual void InvalidateDocumentCache(const FMetasoundFrontendClassName& InClassName) const = 0;
 
-		static IMetaSoundDocumentBuilderRegistry& GetChecked();
+		static IDocumentBuilderRegistry* Get();
+		static IDocumentBuilderRegistry& GetChecked();
 
 	protected:
-		static void Set(TUniqueFunction<IMetaSoundDocumentBuilderRegistry&()>&& InGetInstance);
+		static void Set(TUniqueFunction<IDocumentBuilderRegistry&()>&& InGetInstance);
+	};
+
+	class METASOUNDFRONTEND_API IMetaSoundDocumentBuilderRegistry : public IDocumentBuilderRegistry
+	{
+	public:
+		UE_DEPRECATED(5.4, "Public exposition of modify delegates no longer available to discourage unsafe manipulation of builder document cache")
+		virtual const FDocumentModifyDelegates* FindModifyDelegates(const FMetasoundFrontendClassName& InClassName) const = 0;
+
+		UE_DEPRECATED(5.4, "Use 'IDocumentBuilderRegistry' instead")
+		static IMetaSoundDocumentBuilderRegistry& GetChecked();
 	};
 } // namespace Metasound::Frontend

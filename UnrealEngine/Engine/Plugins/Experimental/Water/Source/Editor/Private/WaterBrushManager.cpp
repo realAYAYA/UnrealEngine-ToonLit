@@ -681,7 +681,7 @@ void AWaterBrushManager::UpdateCurves()
 	TArray<typename decltype(BrushCurveRTCache)::KeyType> Keys;
 	BrushCurveRTCache.GetKeys(Keys);
 
-	for (TObjectPtr<UCurveFloat> CurCurveFloat : Keys)
+	for (const TObjectPtr<UCurveFloat>& CurCurveFloat : Keys)
 	{
 		if (CurCurveFloat)
 		{

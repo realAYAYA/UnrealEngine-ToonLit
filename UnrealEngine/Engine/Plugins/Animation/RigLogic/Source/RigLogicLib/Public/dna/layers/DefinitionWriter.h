@@ -71,7 +71,6 @@ class DNAAPI DefinitionWriter : public DescriptorWriter {
                 A null-terminated string.
             @note
                 The passed in name is copied, which will involve an additional allocation.
-            @see Joints
         */
         virtual void setJointName(std::uint16_t index, const char* name) = 0;
         /**
@@ -125,7 +124,6 @@ class DNAAPI DefinitionWriter : public DescriptorWriter {
                 A null-terminated string.
             @note
                 The passed in name is copied, which will involve an additional allocation.
-            @see BlendShapes
         */
         virtual void setBlendShapeChannelName(std::uint16_t index, const char* name) = 0;
         /**
@@ -183,7 +181,6 @@ class DNAAPI DefinitionWriter : public DescriptorWriter {
                 A null-terminated string.
             @note
                 The passed in name is copied, which will involve an additional allocation.
-            @see AnimatedMaps
         */
         virtual void setAnimatedMapName(std::uint16_t index, const char* name) = 0;
         /**

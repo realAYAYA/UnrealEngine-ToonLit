@@ -4,12 +4,12 @@ import React, { useEffect, useRef, useState } from 'react';
 import { TopNav } from './TopNav';
 import { Breadcrumbs, BreadcrumbItem } from './Breadcrumbs';
 import { Stack, Spinner, SpinnerSize, Text } from '@fluentui/react';
-import { hordeClasses } from '../styles/Styles';
 import hordePlugins, { PluginMount } from  '../Plugins';
 import { projectStore } from '../backend/ProjectStore';
 import { useParams } from 'react-router-dom';
 import { TestDataCollection, TestDataWrapper } from '../backend/TestDataHandler'
 import { useQuery } from './JobDetailCommon';
+import { getHordeStyling } from '../styles/Styles';
 
 const getFirstComponentFromPlugin = (mount: PluginMount, id: string): React.FC<any> | undefined => {
     let component : React.FC<any> | undefined;
@@ -120,6 +120,8 @@ export const TestReportView: React.FC = () => {
         }
         return function cleanup() {testDataHandler.desactivate()}
     }, [testdataId]);
+   
+    const { hordeClasses } = getHordeStyling();
 
     return (
         <Stack className={hordeClasses.horde} style={{height: '100vh'}}>

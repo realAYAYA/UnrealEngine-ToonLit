@@ -53,8 +53,6 @@ bool UInputTrigger::IsSupportedTriggerEvent(const ETriggerEventsSupported Suppor
 	default:
 		return false;
 	}	
-	
-	return false;
 }
 
 ETriggerState UInputTriggerTimedBase::UpdateState_Implementation(const UEnhancedPlayerInput* PlayerInput, FInputActionValue ModifiedValue, float DeltaTime)
@@ -366,7 +364,7 @@ void UInputTriggerCombo::PostLoad()
 
 	if (!CancelActions.IsEmpty())
 	{
-		for (TObjectPtr<const UInputAction> InputAction : CancelActions)
+		for (const TObjectPtr<const UInputAction>& InputAction : CancelActions)
 		{
 			// use default settings but set cancel action
 			FInputCancelAction InputCancelAction;

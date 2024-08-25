@@ -35,7 +35,7 @@ namespace LumenReflections
 		SHADER_PARAMETER(float, InvRoughnessFadeLength)
 	END_SHADER_PARAMETER_STRUCT()
 
-	void SetupCompositeParameters(LumenReflections::FCompositeParameters& OutParameters);
+	void SetupCompositeParameters(const FViewInfo& View, LumenReflections::FCompositeParameters& OutParameters);
 	bool UseAsyncCompute(const FViewFamilyInfo& ViewFamily);
 }
 
@@ -55,6 +55,10 @@ BEGIN_SHADER_PARAMETER_STRUCT(FLumenReflectionTracingParameters, )
 	SHADER_PARAMETER(uint32, UseJitter)
 	SHADER_PARAMETER(uint32, UseHighResSurface)
 	SHADER_PARAMETER(uint32, MaxReflectionBounces)
+	SHADER_PARAMETER(uint32, MaxRefractionBounces)
+	SHADER_PARAMETER(uint32, ReflectionsStateFrameIndex)
+	SHADER_PARAMETER(uint32, ReflectionsStateFrameIndexMod8)
+	SHADER_PARAMETER(uint32, ReflectionsRayDirectionFrameIndex)
 
 	SHADER_PARAMETER(float, NearFieldMaxTraceDistance)
 	SHADER_PARAMETER(float, NearFieldMaxTraceDistanceDitherScale)
@@ -74,10 +78,10 @@ BEGIN_SHADER_PARAMETER_STRUCT(FLumenReflectionTracingParameters, )
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, TraceMaterialId)
 	SHADER_PARAMETER_RDG_TEXTURE(Texture2D, TraceBookmark)
 
-	SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float3>, RWTraceRadiance)
-	SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<float>, RWTraceHit)
-	SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<uint>, RWTraceMaterialId)
-	SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2D<uint2>, RWTraceBookmark)
+	SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2DArray<float3>, RWTraceRadiance)
+	SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2DArray<float>, RWTraceHit)
+	SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2DArray<uint>, RWTraceMaterialId)
+	SHADER_PARAMETER_RDG_TEXTURE_UAV(RWTexture2DArray<uint2>, RWTraceBookmark)
 
 	SHADER_PARAMETER_STRUCT_REF(FBlueNoise, BlueNoise)
 END_SHADER_PARAMETER_STRUCT()
@@ -101,10 +105,12 @@ namespace LumenReflections
 {
 	bool UseFarField(const FSceneViewFamily& ViewFamily);
 	bool UseHitLighting(const FViewInfo& View, bool bLumenGIEnabled);
+	bool UseTranslucentRayTracing(const FViewInfo& View);
 	bool IsHitLightingForceEnabled(const FViewInfo& View, bool bLumenGIEnabled);
 	bool UseSurfaceCacheFeedback();
 	float GetSampleSceneColorNormalTreshold();
 	uint32 GetMaxReflectionBounces(const FViewInfo& View);
+	uint32 GetMaxRefractionBounces(const FViewInfo& View);
 
 	enum ETraceCompactionMode
 	{

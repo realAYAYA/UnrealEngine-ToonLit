@@ -5,7 +5,7 @@
 #include "DisplayClusterConfiguratorBlueprintEditor.h"
 #include "DisplayClusterConfiguratorGraph.h"
 #include "DisplayClusterConfigurationTypes.h"
-#include "ClusterConfiguration/DisplayClusterConfiguratorClusterUtils.h"
+#include "ClusterConfiguration/DisplayClusterConfiguratorClusterEditorUtils.h"
 #include "ClusterConfiguration/SDisplayClusterConfiguratorNewClusterItemDialog.h"
 
 #include "ScopedTransaction.h"
@@ -36,11 +36,11 @@ UEdGraphNode* FDisplayClusterConfiguratorSchemaAction_NewNode::PerformAction(UEd
 	switch (ItemType)
 	{
 	case EClusterItemType::ClusterNode:
-		CreatedObject = FDisplayClusterConfiguratorClusterUtils::CreateNewClusterNodeFromDialog(Toolkit.ToSharedRef(), Cluster, PresetRect, Transaction);
+		CreatedObject = UE::DisplayClusterConfiguratorClusterEditorUtils::CreateNewClusterNodeFromDialog(Toolkit.ToSharedRef(), Cluster, PresetRect, Transaction);
 		break;
 
 	case EClusterItemType::Viewport:
-		CreatedObject = FDisplayClusterConfiguratorClusterUtils::CreateNewViewportFromDialog(Toolkit.ToSharedRef(), nullptr, PresetRect, Transaction);
+		CreatedObject = UE::DisplayClusterConfiguratorClusterEditorUtils::CreateNewViewportFromDialog(Toolkit.ToSharedRef(), nullptr, PresetRect, Transaction);
 		break;
 	}
 

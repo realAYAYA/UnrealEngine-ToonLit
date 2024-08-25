@@ -289,7 +289,7 @@ void UBrainComponent::TickComponent(float DeltaTime, enum ELevelTick TickType, F
 				MessageObservers[ObserverIndex]->OnMessage(MessageCopy);
 			}
 		}
-		MessagesToProcess.RemoveAt(0, NumMessages, false);
+		MessagesToProcess.RemoveAt(0, NumMessages, EAllowShrinking::No);
 	}
 }
 

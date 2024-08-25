@@ -6,6 +6,7 @@
 #include "GameFramework/Actor.h"
 #include "IRemoteControlModule.h"
 #include "Math/NumericLimits.h"
+#include "Misc/App.h"
 #include "RemoteControlObjectVersion.h"
 #include "RemoteControlFieldPath.h"
 #include "RemoteControlBinding.h"
@@ -85,7 +86,8 @@ void FRemoteControlField::BindObject(UObject* InObjectToBind)
 		else if (AActor* Actor = Cast<AActor>(InObjectToBind))
 		{
 			// Attempt to bind to the root component since it is a very common case.
-			if (Actor->GetRootComponent()->GetClass() == ResolvedOwnerClass)
+			const USceneComponent* RootComponent = Actor->GetRootComponent();
+			if (RootComponent && RootComponent->GetClass() == ResolvedOwnerClass)
 			{
 				FRemoteControlEntity::BindObject(Actor->GetRootComponent());
 			}
@@ -260,6 +262,19 @@ FProperty* FRemoteControlProperty::GetProperty() const
 	return nullptr;
 }
 
+void* FRemoteControlProperty::GetFieldContainerAddress() const
+{
+	// Make a copy in order to preserve constness.
+	FRCFieldPathInfo FieldPathCopy = FieldPathInfo;
+	TArray<UObject*> Objects = GetBoundObjects();
+	if (Objects.Num() && FieldPathCopy.Resolve(Objects[0]))
+	{
+		const FRCFieldResolvedData Data = FieldPathCopy.GetResolvedData();
+		return Data.ContainerAddress;
+	}
+	return nullptr;
+}
+
 TSharedPtr<IRemoteControlPropertyHandle> FRemoteControlProperty::GetPropertyHandle() const 
 {
 	TSharedPtr<FRemoteControlProperty> ThisPtr = Owner->GetExposedEntity<FRemoteControlProperty>(GetId()).Pin();
@@ -311,9 +326,23 @@ void FRemoteControlProperty::EnableEditCondition()
 #endif
 }
 
-bool FRemoteControlProperty::IsEditableInPackaged() const
+bool FRemoteControlProperty::IsEditableInPackaged(FString* OutError) const
 {
-	return bIsEditableInPackaged || IRemoteControlModule::Get().PropertySupportsRawModificationWithoutEditor(GetProperty(), GetSupportedBindingClass());
+	return bIsEditableInPackaged || IRemoteControlModule::Get().PropertySupportsRawModification(GetProperty(), GetBoundObject(), false, OutError);
+}
+
+bool FRemoteControlProperty::IsEditableInEditor(FString* OutError) const
+{
+	return IRemoteControlModule::Get().PropertySupportsRawModification(GetProperty(), GetBoundObject(), true, OutError);
+}
+
+bool FRemoteControlProperty::IsEditable(FString* OutError) const
+{
+	if (FApp::IsGame())
+	{
+		return IsEditableInPackaged(OutError); 
+	}
+	return IsEditableInEditor(OutError);
 }
 
 bool FRemoteControlProperty::Serialize(FArchive& Ar)
@@ -427,6 +456,7 @@ void FRemoteControlProperty::InitializeMetadata()
 		{
 			UStruct* Struct = CastFieldChecked<FStructProperty>(Property)->Struct;
 			return Struct->IsChildOf(TBaseStructure<FVector>::Get())
+				|| Struct->IsChildOf(TBaseStructure<FVector2D>::Get())
 				|| Struct->IsChildOf(TBaseStructure<FRotator>::Get());
 		}
 

@@ -143,7 +143,7 @@ FBox UExampleCharacterFXEditorMode::SceneBoundingBox() const
 	FBoxSphereBounds TotalBounds;
 	bool bAnyValid = false;
 
-	for (TObjectPtr<UDynamicMeshComponent> MeshComponent : DynamicMeshComponents)
+	for (const TObjectPtr<UDynamicMeshComponent>& MeshComponent : DynamicMeshComponents)
 	{
 		if (MeshComponent)
 		{

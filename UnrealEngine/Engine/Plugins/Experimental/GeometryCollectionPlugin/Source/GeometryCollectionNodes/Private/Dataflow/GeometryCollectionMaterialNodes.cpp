@@ -188,7 +188,7 @@ void FMaterialsInfoDataflowNode::Evaluate(Dataflow::FContext& Context, const FDa
 		OutputStr.Appendf(TEXT("Number of Materials: %d\n"), InMaterials.Num());
 
 		int32 Idx = 0;
-		for (TObjectPtr<UMaterial> Material : InMaterials)
+		for (const TObjectPtr<UMaterial>& Material : InMaterials)
 		{
 			OutputStr.Appendf(TEXT("%4d: %s\n"), Idx, *(Material->GetFullName()));
 

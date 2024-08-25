@@ -20,6 +20,9 @@ void SMediaPlateEditorMediaDetails::Construct(const FArguments& InArgs,
 {
 	MediaPlate = &InMediaPlate;
 
+	const ISlateStyle& SlateStyle = FAppStyle::Get();
+	const FName StyleName = TEXT("SmallText");
+
 	ChildSlot
 		[
 			SNew(SScrollBox)
@@ -34,6 +37,16 @@ void SMediaPlateEditorMediaDetails::Construct(const FArguments& InArgs,
 						[
 							SNew(SVerticalBox)
 
+							// Player name.
+							+ SVerticalBox::Slot()
+								.AutoHeight()
+								.VAlign(VAlign_Center)
+								.Padding(4.0f)
+								[
+									SAssignNew(MediaPlayerName, STextBlock)
+									.TextStyle(SlateStyle, StyleName)
+								]
+
 							// Resolution.
 							+ SVerticalBox::Slot()
 								.AutoHeight()
@@ -41,6 +54,7 @@ void SMediaPlateEditorMediaDetails::Construct(const FArguments& InArgs,
 								.Padding(4.0f)
 								[
 									SAssignNew(ResolutionText, STextBlock)
+									.TextStyle(SlateStyle, StyleName)
 								]
 
 							// Frame rate.
@@ -50,6 +64,7 @@ void SMediaPlateEditorMediaDetails::Construct(const FArguments& InArgs,
 								.Padding(4.0f)
 								[
 									SAssignNew(FrameRateText, STextBlock)
+									.TextStyle(SlateStyle, StyleName)
 								]
 
 							// Resource size.
@@ -59,6 +74,7 @@ void SMediaPlateEditorMediaDetails::Construct(const FArguments& InArgs,
 								.Padding(4.0f)
 								[
 									SAssignNew(ResourceSizeText, STextBlock)
+									.TextStyle(SlateStyle, StyleName)
 								]
 
 							// Method.
@@ -68,6 +84,7 @@ void SMediaPlateEditorMediaDetails::Construct(const FArguments& InArgs,
 								.Padding(4.0f)
 								[
 									SAssignNew(MethodText, STextBlock)
+									.TextStyle(SlateStyle, StyleName)
 								]
 						]
 
@@ -83,6 +100,7 @@ void SMediaPlateEditorMediaDetails::Construct(const FArguments& InArgs,
 								.Padding(4.0f)
 								[
 									SAssignNew(FormatText, STextBlock)
+									.TextStyle(SlateStyle, StyleName)
 								]
 
 							// LOD bias.
@@ -92,6 +110,7 @@ void SMediaPlateEditorMediaDetails::Construct(const FArguments& InArgs,
 								.Padding(4.0f)
 								[
 									SAssignNew(LODBiasText, STextBlock)
+									.TextStyle(SlateStyle, StyleName)
 								]
 
 							// Num mips.
@@ -101,6 +120,7 @@ void SMediaPlateEditorMediaDetails::Construct(const FArguments& InArgs,
 								.Padding(4.0f)
 								[
 									SAssignNew(NumMipsText, STextBlock)
+									.TextStyle(SlateStyle, StyleName)
 								]
 
 							// Num tiles.
@@ -110,6 +130,7 @@ void SMediaPlateEditorMediaDetails::Construct(const FArguments& InArgs,
 								.Padding(4.0f)
 								[
 									SAssignNew(NumTilesText, STextBlock)
+									.TextStyle(SlateStyle, StyleName)
 								]
 						]
 				]
@@ -130,6 +151,7 @@ void SMediaPlateEditorMediaDetails::Tick(const FGeometry& AllottedGeometry, cons
 
 void SMediaPlateEditorMediaDetails::UpdateDetails()
 {
+	FName PlayerName;
 	FString Format;
 	float FrameRate = 0.0f;
 	int32 LODBias = 0;
@@ -146,6 +168,7 @@ void SMediaPlateEditorMediaDetails::UpdateDetails()
 		UMediaPlayer* MediaPlayer = MediaPlate->GetMediaPlayer();
 		if (MediaPlayer != nullptr)
 		{
+			PlayerName = MediaPlayer->GetPlayerName();
 			FrameRate = MediaPlayer->GetVideoTrackFrameRate(INDEX_NONE, INDEX_NONE);
 			Format = MediaPlayer->GetVideoTrackType(INDEX_NONE, INDEX_NONE);
 			FIntPoint NumTiles(EForceInit::ForceInitToZero);
@@ -170,6 +193,8 @@ void SMediaPlateEditorMediaDetails::UpdateDetails()
 	}
 
 	// Update text.
+	MediaPlayerName->SetText(FText::Format(LOCTEXT("Player", "Player: {0}"),
+		FText::FromName(PlayerName)));
 	FormatText->SetText(FText::Format(LOCTEXT("Format", "Format: {0}"),
 		FText::FromString(Format)));
 	FrameRateText->SetText(FText::Format(LOCTEXT("FrameRate", "Frame Rate: {0}"), 
@@ -177,9 +202,9 @@ void SMediaPlateEditorMediaDetails::UpdateDetails()
 	LODBiasText->SetText(FText::Format(LOCTEXT("LODBias", "Combined LOD Bias: {0}"),
 		FText::AsNumber(LODBias)));
 	MethodText->SetText(FText::Format(LOCTEXT("Method", "Method: {0}"), Method));
-	NumMipsText->SetText(FText::Format(LOCTEXT("NumberOfMips", "Number Of Mips: {0}"),
+	NumMipsText->SetText(FText::Format(LOCTEXT("NumberOfMips", "Mips: {0}"),
 		FText::AsNumber(NumMips)));
-	NumTilesText->SetText(FText::Format(LOCTEXT("NumberOfTiles", "Number Of Tiles: {0}"),
+	NumTilesText->SetText(FText::Format(LOCTEXT("NumberOfTiles", "Tiles: {0}"),
 		FText::AsNumber(NumTotalTiles)));
 	ResolutionText->SetText(FText::Format(LOCTEXT("Resolution", "Resolution: {0}x{1}"),
 		FText::AsNumber(SurfaceWidth), FText::AsNumber(SurfaceHeight)));

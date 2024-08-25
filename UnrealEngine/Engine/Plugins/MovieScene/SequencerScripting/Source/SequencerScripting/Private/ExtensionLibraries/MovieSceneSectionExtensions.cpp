@@ -2,6 +2,7 @@
 
 #include "ExtensionLibraries/MovieSceneSectionExtensions.h"
 #include "Channels/MovieSceneChannelProxy.h"
+#include "Channels/MovieSceneChannelHandle.h"
 #include "Evaluation/MovieSceneSequenceTransform.h"
 #include "KeysAndChannels/MovieSceneScriptingBool.h"
 #include "Evaluation/MovieSceneTimeTransform.h"
@@ -486,6 +487,20 @@ void GetScriptingChannelsForChannel(FMovieSceneChannelProxy& ChannelProxy,TWeakO
 	}
 }
 
+template<typename ChannelType, typename ScriptingChannelType>
+UMovieSceneScriptingChannel* GetScriptingChannelForChannel(const FMovieSceneChannel* MovieSceneChannel, FMovieSceneChannelProxy& ChannelProxy, const FMovieSceneChannelHandle& ChanneHandle, TWeakObjectPtr<UMovieSceneSequence> Sequence, TWeakObjectPtr<UMovieSceneSection> Section, const FName& ChannelName)
+{
+	FName UniqueChannelName = MakeUniqueObjectName(GetTransientPackage(), ScriptingChannelType::StaticClass(), ChannelName);
+	ScriptingChannelType* ScriptingChannel = NewObject<ScriptingChannelType>(GetTransientPackage(), UniqueChannelName);
+	int32 Index = ChannelProxy.FindIndex(ChanneHandle.GetChannelTypeName(), MovieSceneChannel);
+	SetScriptingChannelHandle<ChannelType, ScriptingChannelType>(ScriptingChannel, ChannelProxy, Index);
+	ScriptingChannel->OwningSection = Section;
+	ScriptingChannel->OwningSequence = Sequence;
+	ScriptingChannel->ChannelName = ChannelName;
+	return ScriptingChannel;
+}
+
+
 TArray<UMovieSceneScriptingChannel*> UMovieSceneSectionExtensions::GetAllChannels(UMovieSceneSection* Section)
 {
 	TArray<UMovieSceneScriptingChannel*> Channels;
@@ -541,8 +556,67 @@ TArray<UMovieSceneScriptingChannel*> UMovieSceneSectionExtensions::GetChannelsBy
 		FFrame::KismetExecutionMessage(TEXT("Unsupported ChannelType for FindChannelsByType!"), ELogVerbosity::Error);
 	}
 
-
 	return Channels;
+}
+
+UMovieSceneScriptingChannel* UMovieSceneSectionExtensions::GetChannel(UMovieSceneSection* Section, const FName& ChannelName)
+{
+#if WITH_EDITORONLY_DATA
+
+	if (!Section)
+	{
+		FFrame::KismetExecutionMessage(TEXT("Cannot get channel for null section"), ELogVerbosity::Error);
+		return nullptr;
+	}
+	FMovieSceneChannel* MovieSceneChannel =  UMovieSceneSectionExtensions::GetMovieSceneChannel(Section, ChannelName);
+	if (!MovieSceneChannel)
+	{
+		FFrame::KismetExecutionMessage(TEXT("Cannot get channel with this name"), ELogVerbosity::Error);
+		return nullptr;
+	}
+
+	FMovieSceneChannelProxy& ChannelProxy = Section->GetChannelProxy();
+	FMovieSceneChannelHandle ChanneHandle = ChannelProxy.GetChannelByName(ChannelName);
+	TWeakObjectPtr<UMovieSceneSequence> Sequence = Section->GetTypedOuter<UMovieSceneSequence>();
+	if (ChanneHandle.GetChannelTypeName() == FMovieSceneBoolChannel::StaticStruct()->GetFName())
+	{
+		return GetScriptingChannelForChannel<FMovieSceneBoolChannel, UMovieSceneScriptingBoolChannel>(MovieSceneChannel, ChannelProxy, ChanneHandle, Sequence, Section, ChannelName);
+	} 
+	else if (ChanneHandle.GetChannelTypeName() == FMovieSceneByteChannel::StaticStruct()->GetFName())
+	{
+		return GetScriptingChannelForChannel<FMovieSceneByteChannel, UMovieSceneScriptingByteChannel>(MovieSceneChannel, ChannelProxy, ChanneHandle, Sequence, Section, ChannelName);
+	}
+	else if (ChanneHandle.GetChannelTypeName() == FMovieSceneFloatChannel::StaticStruct()->GetFName())
+	{
+		return GetScriptingChannelForChannel<FMovieSceneFloatChannel, UMovieSceneScriptingFloatChannel>(MovieSceneChannel, ChannelProxy, ChanneHandle, Sequence, Section, ChannelName);
+	}
+	else if (ChanneHandle.GetChannelTypeName() == FMovieSceneDoubleChannel::StaticStruct()->GetFName())
+	{
+		return GetScriptingChannelForChannel<FMovieSceneDoubleChannel, UMovieSceneScriptingDoubleChannel>(MovieSceneChannel, ChannelProxy, ChanneHandle, Sequence, Section, ChannelName);
+	}
+	else if (ChanneHandle.GetChannelTypeName() == FMovieSceneIntegerChannel::StaticStruct()->GetFName())
+	{
+		return GetScriptingChannelForChannel<FMovieSceneIntegerChannel, UMovieSceneScriptingIntegerChannel>(MovieSceneChannel, ChannelProxy, ChanneHandle, Sequence, Section, ChannelName);
+	}
+	else if (ChanneHandle.GetChannelTypeName() == FMovieSceneStringChannel::StaticStruct()->GetFName())
+	{
+		return GetScriptingChannelForChannel<FMovieSceneStringChannel, UMovieSceneScriptingStringChannel>(MovieSceneChannel, ChannelProxy, ChanneHandle, Sequence, Section, ChannelName);
+	}
+	else if (ChanneHandle.GetChannelTypeName() == FMovieSceneEventChannel::StaticStruct()->GetFName())
+	{
+		return GetScriptingChannelForChannel<FMovieSceneEventChannel, UMovieSceneScriptingEventChannel>(MovieSceneChannel, ChannelProxy, ChanneHandle, Sequence, Section, ChannelName);
+	}
+	else if (ChanneHandle.GetChannelTypeName() == FMovieSceneActorReferenceData::StaticStruct()->GetFName())
+	{
+		return GetScriptingChannelForChannel<FMovieSceneActorReferenceData, UMovieSceneScriptingActorReferenceChannel>(MovieSceneChannel, ChannelProxy, ChanneHandle, Sequence, Section, ChannelName);
+	}
+	else if (ChanneHandle.GetChannelTypeName() == FMovieSceneObjectPathChannel::StaticStruct()->GetFName())
+	{
+		return GetScriptingChannelForChannel<FMovieSceneObjectPathChannel, UMovieSceneScriptingObjectPathChannel>(MovieSceneChannel, ChannelProxy, ChanneHandle, Sequence, Section, ChannelName);
+	}
+#endif
+	FFrame::KismetExecutionMessage(TEXT("Could not find channel"), ELogVerbosity::Error);
+	return nullptr;
 }
 
 bool GetSubSectionChain(UMovieSceneSubSection* InSubSection, UMovieSceneSequence* ParentSequence, TArray<UMovieSceneSubSection*>& SubSectionChain)
@@ -588,7 +662,7 @@ int32 UMovieSceneSectionExtensions::GetParentSequenceFrame(UMovieSceneSubSection
 		
 	for (int32 SectionIndex = 0; SectionIndex < SubSectionChain.Num(); ++SectionIndex)
 	{
-		LocalFrameTime = LocalFrameTime * SubSectionChain[SectionIndex]->OuterToInnerTransform().InverseLinearOnly();
+		LocalFrameTime = LocalFrameTime * SubSectionChain[SectionIndex]->OuterToInnerTransform().InverseNoLooping();
 	}
 
 	FFrameRate ParentDisplayRate = ParentSequence->GetMovieScene()->GetDisplayRate();
@@ -598,3 +672,27 @@ int32 UMovieSceneSectionExtensions::GetParentSequenceFrame(UMovieSceneSubSection
 	return LocalFrameTime.GetFrame().Value;
 }
 
+FMovieSceneChannel* UMovieSceneSectionExtensions::GetMovieSceneChannel(UMovieSceneSection* Section, const FName& Name)
+{
+#if WITH_EDITORONLY_DATA
+
+	FMovieSceneChannelProxy& ChannelProxy = Section->GetChannelProxy();
+	for (const FMovieSceneChannelEntry& Entry : Section->GetChannelProxy().GetAllEntries())
+	{
+		TArrayView<FMovieSceneChannel* const>  Channels = Entry.GetChannels();
+		TArrayView<const FMovieSceneChannelMetaData> MetaData = Entry.GetMetaData();
+		for (int32 Index = 0; Index < MetaData.Num(); ++Index)
+		{
+			if (MetaData[Index].bEnabled)
+			{
+				const FName ChannelName = MetaData[Index].Name;
+				if (ChannelName == Name)
+				{
+					return Channels[Index];
+				}
+			}
+		}
+	}
+#endif
+	return nullptr;
+}

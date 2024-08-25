@@ -2,6 +2,8 @@
 
 #include "OptimusEditorGraphNode.h"
 
+#include "IOptimusComputeKernelProvider.h"
+#include "IOptimusDataInterfaceProvider.h"
 #include "OptimusEditorHelpers.h"
 #include "OptimusEditorGraph.h"
 #include "OptimusEditorGraphSchema.h"
@@ -12,6 +14,11 @@
 #include "OptimusNode.h"
 #include "OptimusNodePin.h"
 #include "IOptimusNodeAdderPinProvider.h"
+#include "IOptimusNonCopyableNode.h"
+#include "IOptimusPinMutabilityDefiner.h"
+#include "OptimusComponentSource.h"
+#include "OptimusDataTypeRegistry.h"
+#include "OptimusNodeGraph.h"
 
 #include "Framework/Commands/GenericCommands.h"
 #include "Logging/TokenizedMessage.h"
@@ -259,6 +266,11 @@ void UOptimusEditorGraphNode::SyncDiagnosticStateWithModelNode()
 }
 
 
+bool UOptimusEditorGraphNode::CanDuplicateNode() const
+{
+	return Super::CanDuplicateNode() && (!ModelNode || Cast<IOptimusNonCopyableNode>(ModelNode) == nullptr);
+}
+
 bool UOptimusEditorGraphNode::CanUserDeleteNode() const
 {
 	return Super::CanUserDeleteNode() && (!ModelNode || ModelNode->CanUserDeleteNode());
@@ -294,10 +306,11 @@ void UOptimusEditorGraphNode::GetNodeContextMenuActions(
 		Clipboard.AddMenuEntry(FGenericCommands::Get().Duplicate);
 
 		FToolMenuSection& PackagingSection = InMenu->AddSection("OptimusNodePackaging", LOCTEXT("NodeMenuPackagingHeader", "Packaging"));
-
+#if 0
+		// NOTE: Unsupported for 5.4 
 		PackagingSection.AddMenuEntry(FOptimusEditorGraphCommands::Get().ConvertToKernelFunction);
 		PackagingSection.AddMenuEntry(FOptimusEditorGraphCommands::Get().ConvertFromKernelFunction);
-
+#endif 
 #if 0
 		// NOTE: Disabled for 5.0
 		PackagingSection.AddMenuEntry(FOptimusEditorGraphCommands::Get().CollapseNodesToFunction);
@@ -305,8 +318,61 @@ void UOptimusEditorGraphNode::GetNodeContextMenuActions(
 		PackagingSection.AddMenuEntry(FOptimusEditorGraphCommands::Get().CollapseNodesToSubGraph);
 		PackagingSection.AddMenuEntry(FOptimusEditorGraphCommands::Get().ExpandCollapsedNode);
 
+		PackagingSection.AddMenuEntry(FOptimusEditorGraphCommands::Get().ConvertToFunction);
+		PackagingSection.AddMenuEntry(FOptimusEditorGraphCommands::Get().ConvertToSubGraph);
 		// FIXME: Add alignment.
 	}
+}
+
+FLinearColor UOptimusEditorGraphNode::GetNodeTitleColor() const
+{
+	if (ModelNode)
+	{
+		const FLinearColor ImmutableColor = FLinearColor::Green;
+
+		if (ModelNode->GetOwningGraph()->GetGraphType() == EOptimusNodeGraphType::Update)
+		{
+			if (Cast<IOptimusDataInterfaceProvider>(ModelNode))
+			{
+				const FOptimusDataTypeRegistry& TypeRegistry = FOptimusDataTypeRegistry::Get();
+				FOptimusDataTypeHandle ComponentSourceType = TypeRegistry.FindType(*UOptimusComponentSourceBinding::StaticClass());
+				
+				// Any writes to data interface provider need to take place every tick, thus they are considered mutable
+				for (const UOptimusNodePin* Pin : ModelNode->GetPinsByDirection(EOptimusNodePinDirection::Input, true))
+				{
+					if (Pin->GetDataType() != ComponentSourceType)
+					{
+						return Super::GetNodeTitleColor();
+					}
+				}
+			}
+			
+			if (ModelNode->GetOwningGraph()->DoesNodeHaveMutableInput(ModelNode, {}))
+			{
+				return Super::GetNodeTitleColor();
+			}
+
+			if (IOptimusPinMutabilityDefiner* PinMutabilityDefiner = Cast<IOptimusPinMutabilityDefiner>(ModelNode))
+			{
+				for (UOptimusNodePin* Pin : ModelNode->GetPins())
+				{
+					if (Pin->GetDirection() == EOptimusNodePinDirection::Output)
+					{
+						const EOptimusPinMutability Mutability = PinMutabilityDefiner->GetOutputPinMutability(Pin);
+						if (Mutability == EOptimusPinMutability::Mutable)
+						{
+							return Super::GetNodeTitleColor();
+						}
+					}
+				}
+			}
+			
+			// No mutable output, no mutable input
+			return ImmutableColor;
+		}
+	}
+	
+	return Super::GetNodeTitleColor();
 }
 
 

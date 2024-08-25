@@ -7,14 +7,20 @@
 #include "Components/DMXPixelMappingMatrixComponent.h"
 #include "Components/DMXPixelMappingMatrixCellComponent.h"
 #include "Library/DMXEntityFixturePatch.h"
+#include "UObject/LinkerLoad.h"
 
 #if WITH_EDITOR
 #include "DMXPixelMappingComponentWidget.h"
 #include "SDMXPixelMappingComponentBox.h"
 #endif // WITH_EDITOR
 
-#include "UObject/LinkerLoad.h"
 
+UDMXPixelMapping::UDMXPixelMapping()
+{
+#if WITH_EDITOR
+	SnapGridColor = FLinearColor::White.CopyWithNewOpacity(.12f);
+#endif // WITH_EDITOR
+}
 
 void UDMXPixelMapping::PostLoad()
 {
@@ -124,30 +130,6 @@ UDMXPixelMappingBaseComponent* UDMXPixelMapping::FindComponent(const FName& InNa
 
 	return FoundComponent;
 }
-
-#if WITH_EDITOR
-UDMXPixelMappingOutputComponent* UDMXPixelMapping::FindComponent(TSharedPtr<SWidget> InWidget) const
-{
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	UDMXPixelMappingOutputComponent* FoundComponent = nullptr;
-
-	ForEachComponentOfClass<UDMXPixelMappingOutputComponent>([&](UDMXPixelMappingOutputComponent* InComponent)
-		{
-			if (TSharedPtr<FDMXPixelMappingComponentWidget> ComponentWidget = InComponent->GetComponentWidget())
-			{
-				if(ComponentWidget->GetComponentBox() == InWidget)
-				{
-					FoundComponent = InComponent;
-				}
-			}
-		});
-
-	return FoundComponent;
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
-}
-
-#endif // WITH_EDITOR
-
 
 void UDMXPixelMapping::RemoveComponent(UDMXPixelMappingBaseComponent* InComponent)
 {

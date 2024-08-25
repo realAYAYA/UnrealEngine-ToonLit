@@ -26,103 +26,97 @@ namespace UnrealBuildTool
 		/// <summary>
 		/// The file being read
 		/// </summary>
-		FileReference File;
+		readonly FileReference _file;
 
 		/// <summary>
 		/// Interface to the LineInfo on the active XmlReader
 		/// </summary>
-		IXmlLineInfo LineInfo = null!;
+		IXmlLineInfo _lineInfo = null!;
 
 		/// <summary>
 		/// Set to true if the reader encounters an error
 		/// </summary>
-		bool bHasErrors;
+		bool _bHasErrors;
 
 		/// <summary>
 		/// Private constructor. Use XmlConfigFile.TryRead to read an XML config file.
 		/// </summary>
-		private XmlConfigFile(FileReference InFile)
+		private XmlConfigFile(FileReference inFile)
 		{
-			File = InFile;
+			_file = inFile;
 		}
 
 		/// <summary>
 		/// Overrides XmlDocument.CreateElement() to construct ScriptElements rather than XmlElements
 		/// </summary>
-		public override XmlElement CreateElement(string? Prefix, string LocalName, string? NamespaceUri)
-		{
-			return new XmlConfigFileElement(File, LineInfo.LineNumber, Prefix!, LocalName, NamespaceUri, this);
-		}
+		public override XmlElement CreateElement(string? prefix, string localName, string? namespaceUri) => new XmlConfigFileElement(_file, _lineInfo.LineNumber, prefix!, localName, namespaceUri, this);
 
 		/// <summary>
 		/// Loads a script document from the given file
 		/// </summary>
-		/// <param name="File">The file to load</param>
-		/// <param name="Schema">The schema to validate against</param>
-		/// <param name="Logger">Logger for output</param>
-		/// <param name="OutConfigFile">If successful, the document that was read</param>
+		/// <param name="file">The file to load</param>
+		/// <param name="schema">The schema to validate against</param>
+		/// <param name="logger">Logger for output</param>
+		/// <param name="outConfigFile">If successful, the document that was read</param>
 		/// <returns>True if the document could be read, false otherwise</returns>
-		public static bool TryRead(FileReference File, XmlSchema Schema, ILogger Logger, [NotNullWhen(true)] out XmlConfigFile? OutConfigFile)
+		public static bool TryRead(FileReference file, XmlSchema schema, ILogger logger, [NotNullWhen(true)] out XmlConfigFile? outConfigFile)
 		{
-			XmlConfigFile ConfigFile = new XmlConfigFile(File);
+			XmlConfigFile configFile = new XmlConfigFile(file);
 
-			XmlReaderSettings Settings = new XmlReaderSettings();
-			Settings.Schemas.Add(Schema);
-			Settings.ValidationType = ValidationType.Schema;
-			Settings.ValidationEventHandler += ConfigFile.ValidationEvent;
+			XmlReaderSettings settings = new XmlReaderSettings();
+			settings.Schemas.Add(schema);
+			settings.ValidationType = ValidationType.Schema;
+			settings.ValidationEventHandler += configFile.ValidationEvent;
 
-			using (XmlReader Reader = XmlReader.Create(File.FullName, Settings))
+			using (XmlReader reader = XmlReader.Create(file.FullName, settings))
 			{
 				// Read the document
-				ConfigFile.LineInfo = (IXmlLineInfo)Reader;
+				configFile._lineInfo = (IXmlLineInfo)reader;
 				try
 				{
-					ConfigFile.Load(Reader);
+					configFile.Load(reader);
 				}
-				catch (XmlException Ex)
+				catch (XmlException ex)
 				{
-					if (!ConfigFile.bHasErrors)
+					if (!configFile._bHasErrors)
 					{
-						Log.TraceErrorTask(File, Ex.LineNumber, "{0}", Ex.Message);
-						ConfigFile.bHasErrors = true;
+						Log.TraceErrorTask(file, ex.LineNumber, "{0}", ex.Message);
+						configFile._bHasErrors = true;
 					}
 				}
 
 				// If we hit any errors while parsing
-				if (ConfigFile.bHasErrors)
+				if (configFile._bHasErrors)
 				{
-					OutConfigFile = null;
+					outConfigFile = null;
 					return false;
 				}
 
 				// Check that the root element is valid. If not, we didn't actually validate against the schema.
-				if (ConfigFile.DocumentElement?.Name != RootElementName)
+				if (configFile.DocumentElement?.Name != RootElementName)
 				{
-					Logger.LogError("Script does not have a root element called '{RootElementName}'", RootElementName);
-					OutConfigFile = null;
+					logger.LogError("Script does not have a root element called '{RootElementName}'", RootElementName);
+					outConfigFile = null;
 					return false;
 				}
-				if (ConfigFile.DocumentElement.NamespaceURI != SchemaNamespaceURI)
+				if (configFile.DocumentElement.NamespaceURI != SchemaNamespaceURI)
 				{
-					Logger.LogError("Script root element is not in the '{NamespaceUri}' namespace (add the xmlns=\"{NamespaceUri2}\" attribute)", SchemaNamespaceURI, SchemaNamespaceURI);
-					OutConfigFile = null;
+					logger.LogError("Script root element is not in the '{NamespaceUri}' namespace (add the xmlns=\"{NamespaceUri2}\" attribute)", SchemaNamespaceURI, SchemaNamespaceURI);
+					outConfigFile = null;
 					return false;
 				}
 			}
 
-			OutConfigFile = ConfigFile;
+			outConfigFile = configFile;
 			return true;
 		}
 
 		/// <summary>
 		/// Callback for validation errors in the document
 		/// </summary>
-		/// <param name="Sender">Standard argument for ValidationEventHandler</param>
-		/// <param name="Args">Standard argument for ValidationEventHandler</param>
-		void ValidationEvent(object? Sender, ValidationEventArgs Args)
-		{
-			Log.TraceWarningTask(File, Args.Exception.LineNumber, "{0}", Args.Message);
-		}
+		/// <param name="sender">Standard argument for ValidationEventHandler</param>
+		/// <param name="args">Standard argument for ValidationEventHandler</param>
+		void ValidationEvent(object? sender, ValidationEventArgs args) => Log.TraceWarningTask(_file, args.Exception.LineNumber, "{0}", args.Message);
 	}
 
 	/// <summary>
@@ -133,21 +127,21 @@ namespace UnrealBuildTool
 		/// <summary>
 		/// The file containing this element
 		/// </summary>
-		public readonly FileReference File;
+		public FileReference File { get; init; }
 
 		/// <summary>
 		/// The line number containing this element
 		/// </summary>
-		public readonly int LineNumber;
+		public int LineNumber { get; init; }
 
 		/// <summary>
 		/// Constructor
 		/// </summary>
-		public XmlConfigFileElement(FileReference InFile, int InLineNumber, string Prefix, string LocalName, string? NamespaceUri, XmlConfigFile ConfigFile)
-			: base(Prefix, LocalName, NamespaceUri, ConfigFile)
+		public XmlConfigFileElement(FileReference inFile, int inLineNumber, string prefix, string localName, string? namespaceUri, XmlConfigFile configFile)
+			: base(prefix, localName, namespaceUri, configFile)
 		{
-			File = InFile;
-			LineNumber = InLineNumber;
+			File = inFile;
+			LineNumber = inLineNumber;
 		}
 	}
 }

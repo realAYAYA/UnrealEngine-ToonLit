@@ -3,9 +3,10 @@
 #include "AnimNextGraphEditor.h"
 #include "GraphEditorMode.h"
 #include "Graph/AnimNextGraph.h"
+#include "Graph/AnimNextGraph_EdGraphNode.h"
 #include "Graph/AnimNextGraph_EditorData.h"
 #include "EdGraphNode_Comment.h"
-#include "SActionMenu.h"
+#include "Common/SActionMenu.h"
 #include "UncookedOnlyUtils.h"
 #include "Framework/Commands/GenericCommands.h"
 #include "RigVMModel/RigVMController.h"
@@ -59,9 +60,6 @@ void FGraphEditor::InitEditor(const EToolkitMode::Type InMode, const TSharedPtr<
 	ExtendMenu();
 	ExtendToolbar();
 	RegenerateMenusAndToolbars();
-
-	// Open initial document
-	DocumentManager->OpenDocument(FTabPayload_UObject::Make(AnimNextGraph_EditorData->RootGraph), FDocumentTracker::EOpenDocumentCause::OpenNewDocument);
 }
 
 void FGraphEditor::BindCommands()
@@ -141,7 +139,7 @@ UEdGraph* FGraphEditor::GetFocusedGraph() const
 URigVMGraph* FGraphEditor::GetFocusedVMGraph() const
 {
 	UAnimNextGraph_EdGraph* EdGraph = Cast<UAnimNextGraph_EdGraph>(GetFocusedGraph());
-	return AnimNextGraph_EditorData->GetVMGraphForEdGraph(EdGraph);
+	return AnimNextGraph_EditorData->GetRigVMGraphForEditorObject(EdGraph);
 }
 
 URigVMController* FGraphEditor::GetFocusedVMController() const
@@ -178,7 +176,8 @@ FActionMenuContent FGraphEditor::OnCreateGraphActionMenu(UEdGraph* InGraph, cons
 		.Graph(InGraph)
 		.NewNodePosition(InNodePosition)
 		.DraggedFromPins(InDraggedPins)
-		.OnClosedCallback(InOnMenuClosed);
+		.OnClosedCallback(InOnMenuClosed)
+		.AllowedExecuteContexts( { FRigVMExecuteContext::StaticStruct(), FAnimNextExecuteContext::StaticStruct() });
 
 	TSharedPtr<SWidget> FilterTextBox = StaticCastSharedRef<SWidget>(ActionMenu->GetFilterTextBox());
 	return FActionMenuContent(StaticCastSharedRef<SWidget>(ActionMenu), FilterTextBox);
@@ -241,6 +240,8 @@ void FGraphEditor::DeleteSelectedNodes()
 		FocusedGraphEd->ClearSelectionSet();
 	}
 
+	TMap<UAnimNextGraph_EdGraphNode*, URigVMNode*> NodesToRemove;
+
 	// Some nodes have sub-objects that are represented as other tabs.
 	// Close them here as a pre-pass before we remove their nodes. If the documents are left open they
 	// may reference dangling data and function incorrectly in cases such as FindBlueprintforNodeChecked
@@ -268,26 +269,35 @@ void FGraphEditor::DeleteSelectedNodes()
 				{
 					CloseAllDocumentsTab(Node);
 				}
-			}
-		}
-	}
 
-	// Now remove the selected nodes
-	for (FGraphPanelSelectionSet::TConstIterator NodeIt( SelectedNodes ); NodeIt; ++NodeIt)
-	{
-		if (UEdGraphNode* Node = Cast<UEdGraphNode>(*NodeIt))
-		{
-			if (Node->CanUserDeleteNode())
-			{
-				if (Node->GetSubGraphs().Num() > 0)
+				if (UAnimNextGraph_EdGraphNode* AnimNextNode = Cast<UAnimNextGraph_EdGraphNode>(Node))
 				{
-					DocumentManager->CleanInvalidTabs();
+					if (URigVMNode* ModelNode = GetFocusedVMController()->GetGraph()->FindNodeByName(*AnimNextNode->GetModelNodePath()))
+					{
+						NodesToRemove.Add(AnimNextNode, ModelNode);
+					}
 				}
-
-				FBlueprintEditorUtils::RemoveNode(nullptr, Node);
 			}
 		}
 	}
+
+	if (NodesToRemove.IsEmpty())
+	{
+		return;
+	}
+
+	GetFocusedVMController()->OpenUndoBracket(TEXT("Delete selected nodes"));
+
+	TArray<URigVMNode*> ModelNodesToRemove;
+	for (auto& It : NodesToRemove)
+	{
+		URigVMNode* ModelNode = It.Value;
+
+		ModelNodesToRemove.Add(ModelNode);
+	}
+
+	GetFocusedVMController()->RemoveNodes(ModelNodesToRemove, true);
+	GetFocusedVMController()->CloseUndoBracket();
 }
 
 bool FGraphEditor::CanDeleteSelectedNodes()

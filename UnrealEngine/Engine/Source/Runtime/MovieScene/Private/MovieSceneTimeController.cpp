@@ -118,7 +118,7 @@ double FMovieSceneTimeController_PlatformClock::GetCurrentTime() const
 double FMovieSceneTimeController_AudioClock::GetCurrentTime() const
 {
 	FAudioDevice* AudioDevice = GEngine ? GEngine->GetMainAudioDevice().GetAudioDevice() : nullptr;
-	return AudioDevice ? AudioDevice->GetAudioClock() : FPlatformTime::Seconds();
+	return AudioDevice ? AudioDevice->GetInterpolatedAudioClock() : FPlatformTime::Seconds();
 }
 
 void FMovieSceneTimeController_RelativeTimecodeClock::OnStopPlaying(const FQualifiedFrameTime& InStopTime)

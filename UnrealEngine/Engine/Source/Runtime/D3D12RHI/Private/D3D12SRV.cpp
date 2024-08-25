@@ -12,7 +12,7 @@ FD3D12ShaderResourceView::FD3D12ShaderResourceView(FD3D12Device* InDevice)
 	: TD3D12View(InDevice, ERHIDescriptorHeapType::Standard)
 {}
 
-void FD3D12ShaderResourceView::CreateView(FResourceInfo const& InResource, D3D12_SHADER_RESOURCE_VIEW_DESC const& InD3DViewDesc, EFlags InFlags)
+void FD3D12ShaderResourceView::UpdateResourceInfo(const FResourceInfo& InResource, const D3D12_SHADER_RESOURCE_VIEW_DESC& InD3DViewDesc, EFlags InFlags)
 {
 	OffsetInBytes = 0;
 	StrideInBytes = 0;
@@ -42,11 +42,21 @@ void FD3D12ShaderResourceView::CreateView(FResourceInfo const& InResource, D3D12
 		StrideInBytes = 1;
 	}
 #endif
+}
 
+void FD3D12ShaderResourceView::CreateView(FResourceInfo const& InResource, D3D12_SHADER_RESOURCE_VIEW_DESC const& InD3DViewDesc, EFlags InFlags)
+{
+	UpdateResourceInfo(InResource, InD3DViewDesc, InFlags);
 	TD3D12View::CreateView(InResource, InD3DViewDesc);
 }
 
-void FD3D12ShaderResourceView::ResourceRenamed(FD3D12BaseShaderResource* InRenamedResource, FD3D12ResourceLocation* InNewResourceLocation)
+void FD3D12ShaderResourceView::UpdateView(FRHICommandListBase& RHICmdList, const FResourceInfo& InResource, const D3D12_SHADER_RESOURCE_VIEW_DESC& InD3DViewDesc, EFlags InFlags)
+{
+	UpdateResourceInfo(InResource, InD3DViewDesc, InFlags);
+	TD3D12View::UpdateView(RHICmdList, InResource, InD3DViewDesc);
+}
+
+void FD3D12ShaderResourceView::ResourceRenamed(FRHICommandListBase& RHICmdList, FD3D12BaseShaderResource* InRenamedResource, FD3D12ResourceLocation* InNewResourceLocation)
 {
 	check(IsInitialized());
 
@@ -66,10 +76,10 @@ void FD3D12ShaderResourceView::ResourceRenamed(FD3D12BaseShaderResource* InRenam
 	}
 #endif
 
-	TD3D12View::ResourceRenamed(InRenamedResource, InNewResourceLocation);
+	TD3D12View::ResourceRenamed(RHICmdList, InRenamedResource, InNewResourceLocation);
 }
 
-void FD3D12ShaderResourceView::UpdateMinLODClamp(float MinLODClamp)
+void FD3D12ShaderResourceView::UpdateMinLODClamp(FRHICommandListBase& RHICmdList, float MinLODClamp)
 {
 	check(IsInitialized());
 
@@ -84,7 +94,7 @@ void FD3D12ShaderResourceView::UpdateMinLODClamp(float MinLODClamp)
 	}
 
 	UpdateDescriptor();
-	UpdateBindlessSlot(EReason::UpdateOrRename);
+	UpdateBindlessSlot(RHICmdList);
 }
 
 void FD3D12ShaderResourceView::UpdateDescriptor()
@@ -107,6 +117,132 @@ void FD3D12ShaderResourceView::UpdateDescriptor()
 	OfflineCpuHandle.IncrementVersion();
 }
 
+static FD3D12ShaderResourceView::EFlags TranslateDesc(D3D12_SHADER_RESOURCE_VIEW_DESC& SRVDesc, FD3D12Buffer* Buffer, const FRHIViewDesc::FBufferSRV::FViewInfo& Info)
+{
+	if (!Info.bNullView)
+	{
+		SRVDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+
+		if (Info.BufferType == FRHIViewDesc::EBufferType::AccelerationStructure)
+		{
+#if D3D12_RHI_RAYTRACING
+			SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE;
+			SRVDesc.Format = DXGI_FORMAT_UNKNOWN;
+
+			SRVDesc.RaytracingAccelerationStructure.Location = Info.OffsetInBytes + Buffer->ResourceLocation.GetGPUVirtualAddress();
+#else
+			UE_LOG(LogD3D12RHI, Fatal, TEXT("Raytracing not implemented."));
+#endif
+		}
+		else
+		{
+			SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_BUFFER;
+			SRVDesc.Format = UE::DXGIUtilities::FindShaderResourceFormat(DXGI_FORMAT(GPixelFormats[Info.Format].PlatformFormat), false);
+			SRVDesc.Buffer.FirstElement = (Info.OffsetInBytes + Buffer->ResourceLocation.GetOffsetFromBaseOfResource()) / Info.StrideInBytes;
+			SRVDesc.Buffer.NumElements = Info.NumElements;
+
+			switch (Info.BufferType)
+			{
+			case FRHIViewDesc::EBufferType::Raw:
+				SRVDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+				SRVDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_RAW;
+				break;
+
+			case FRHIViewDesc::EBufferType::Structured:
+				SRVDesc.Buffer.StructureByteStride = Info.StrideInBytes;
+				break;
+
+			case FRHIViewDesc::EBufferType::Typed:
+				// Nothing more to specify
+				break;
+			}
+		}
+	}
+
+	return FD3D12ShaderResourceView::EFlags::None;
+}
+
+static FD3D12ShaderResourceView::EFlags TranslateDesc(D3D12_SHADER_RESOURCE_VIEW_DESC& SRVDesc, FD3D12Texture* Texture, const FRHIViewDesc::FTextureSRV::FViewInfo& Info)
+{
+	FRHITextureDesc const& TextureDesc = Texture->GetDesc();
+
+	DXGI_FORMAT const ViewFormat = UE::DXGIUtilities::FindShaderResourceFormat(DXGI_FORMAT(GPixelFormats[Info.Format].PlatformFormat), Info.bSRGB);
+	DXGI_FORMAT const BaseFormat = UE::DXGIUtilities::GetPlatformTextureResourceFormat(DXGI_FORMAT(GPixelFormats[TextureDesc.Format].PlatformFormat), TextureDesc.Flags);
+
+	SRVDesc.Format = ViewFormat;
+	SRVDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+
+	uint32 const PlaneSlice = UE::DXGIUtilities::GetPlaneSliceFromViewFormat(BaseFormat, ViewFormat);
+	FRHIRange8 const PlaneRange(PlaneSlice, 1);
+	FRHIViewDesc::EDimension ViewDimension = UE::RHICore::AdjustViewInfoDimensionForNarrowing(Info, TextureDesc);
+	switch (ViewDimension)
+	{
+	case FRHIViewDesc::EDimension::Texture2D:
+		if (TextureDesc.NumSamples > 1)
+		{
+			SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DMS;
+		}
+		else
+		{
+			SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+			SRVDesc.Texture2D.MostDetailedMip = Info.MipRange.First;
+			SRVDesc.Texture2D.MipLevels = Info.MipRange.Num;
+			SRVDesc.Texture2D.PlaneSlice = PlaneSlice;
+		}
+		break;
+
+	case FRHIViewDesc::EDimension::Texture2DArray:
+		if (TextureDesc.NumSamples > 1)
+		{
+			SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DMSARRAY;
+			SRVDesc.Texture2DMSArray.FirstArraySlice = Info.ArrayRange.First;
+			SRVDesc.Texture2DMSArray.ArraySize = Info.ArrayRange.Num;
+		}
+		else
+		{
+			SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+			SRVDesc.Texture2DArray.FirstArraySlice = Info.ArrayRange.First;
+			SRVDesc.Texture2DArray.ArraySize = Info.ArrayRange.Num;
+			SRVDesc.Texture2DArray.MostDetailedMip = Info.MipRange.First;
+			SRVDesc.Texture2DArray.MipLevels = Info.MipRange.Num;
+			SRVDesc.Texture2DArray.PlaneSlice = PlaneSlice;
+		}
+		break;
+
+	case FRHIViewDesc::EDimension::Texture3D:
+		SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE3D;
+		SRVDesc.Texture3D.MostDetailedMip = Info.MipRange.First;
+		SRVDesc.Texture3D.MipLevels = Info.MipRange.Num;
+		break;
+
+	case FRHIViewDesc::EDimension::TextureCube:
+		SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+		SRVDesc.TextureCube.MostDetailedMip = Info.MipRange.First;
+		SRVDesc.TextureCube.MipLevels = Info.MipRange.Num;
+		break;
+
+	case FRHIViewDesc::EDimension::TextureCubeArray:
+		SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBEARRAY;
+		SRVDesc.TextureCubeArray.MostDetailedMip = Info.MipRange.First;
+		SRVDesc.TextureCubeArray.MipLevels = Info.MipRange.Num;
+		SRVDesc.TextureCubeArray.First2DArrayFace = Info.ArrayRange.First * 6;
+		SRVDesc.TextureCubeArray.NumCubes = Info.ArrayRange.Num;
+		break;
+
+	default:
+		checkNoEntry();
+		break;
+	}
+
+	FD3D12ShaderResourceView::EFlags Flags = FD3D12ShaderResourceView::EFlags::None;
+	if (Texture->SkipsFastClearFinalize())
+	{
+		Flags |= FD3D12ShaderResourceView::EFlags::SkipFastClearFinalize;
+	}
+
+	return Flags;
+}
+
 void FD3D12ShaderResourceView_RHI::CreateView()
 {
 	if (IsBuffer())
@@ -114,132 +250,40 @@ void FD3D12ShaderResourceView_RHI::CreateView()
 		FD3D12Buffer* Buffer = FD3D12DynamicRHI::ResourceCast(GetBuffer());
 
 		D3D12_SHADER_RESOURCE_VIEW_DESC SRVDesc{};
+		const EFlags CreateFlags = TranslateDesc(SRVDesc, Buffer, ViewDesc.Buffer.SRV.GetViewInfo(Buffer));
 
-		auto const Info = ViewDesc.Buffer.SRV.GetViewInfo(Buffer);
-		if (!Info.bNullView)
-		{
-			SRVDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-
-			if (Info.BufferType == FRHIViewDesc::EBufferType::AccelerationStructure)
-			{
-#if D3D12_RHI_RAYTRACING
-				SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_RAYTRACING_ACCELERATION_STRUCTURE;
-				SRVDesc.Format        = DXGI_FORMAT_UNKNOWN;
-
-				SRVDesc.RaytracingAccelerationStructure.Location = Info.OffsetInBytes + Buffer->ResourceLocation.GetGPUVirtualAddress();
-#else
-				UE_LOG(LogD3D12RHI, Fatal, TEXT("Raytracing not implemented."));
-#endif
-			}
-			else
-			{
-				SRVDesc.ViewDimension       = D3D12_SRV_DIMENSION_BUFFER;
-				SRVDesc.Format              = UE::DXGIUtilities::FindShaderResourceFormat(DXGI_FORMAT(GPixelFormats[Info.Format].PlatformFormat), false);
-				SRVDesc.Buffer.FirstElement = (Info.OffsetInBytes + Buffer->ResourceLocation.GetOffsetFromBaseOfResource()) / Info.StrideInBytes;
-				SRVDesc.Buffer.NumElements  = Info.NumElements;
-
-				switch (Info.BufferType)
-				{
-				case FRHIViewDesc::EBufferType::Raw:
-					SRVDesc.Format       = DXGI_FORMAT_R32_TYPELESS;
-					SRVDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_RAW;
-					break;
-
-				case FRHIViewDesc::EBufferType::Structured:
-					SRVDesc.Buffer.StructureByteStride = Info.StrideInBytes;
-					break;
-
-				case FRHIViewDesc::EBufferType::Typed:
-					// Nothing more to specify
-					break;
-				}
-			}
-		}
-
-		FD3D12ShaderResourceView::CreateView(Buffer, SRVDesc, EFlags::None);
+		FD3D12ShaderResourceView::CreateView(Buffer, SRVDesc, CreateFlags);
 	}
 	else
 	{
 		FD3D12Texture* Texture = FD3D12DynamicRHI::ResourceCast(GetTexture());
-		FRHITextureDesc const& TextureDesc = Texture->GetDesc();
-
-		auto const Info = ViewDesc.Texture.SRV.GetViewInfo(Texture);
-
-		DXGI_FORMAT const ViewFormat = UE::DXGIUtilities::FindShaderResourceFormat(DXGI_FORMAT(GPixelFormats[Info.Format       ].PlatformFormat), Info.bSRGB       );
-		DXGI_FORMAT const BaseFormat = UE::DXGIUtilities::GetPlatformTextureResourceFormat(DXGI_FORMAT(GPixelFormats[TextureDesc.Format].PlatformFormat), TextureDesc.Flags);
 
 		D3D12_SHADER_RESOURCE_VIEW_DESC SRVDesc{};
-		SRVDesc.Format = ViewFormat;
-		SRVDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		const EFlags CreateFlags = TranslateDesc(SRVDesc, Texture, ViewDesc.Texture.SRV.GetViewInfo(Texture));
 
-		uint32 const PlaneSlice = UE::DXGIUtilities::GetPlaneSliceFromViewFormat(BaseFormat, ViewFormat);
-		FRHIRange8 const PlaneRange(PlaneSlice, 1);
+		FD3D12ShaderResourceView::CreateView(Texture, SRVDesc, CreateFlags);
+	}
+}
 
-		// No need to use Info.Dimension, since D3D supports mixing Texture2D view types.
-		// Create a view which matches the underlying resource dimension.
-		switch (TextureDesc.Dimension)
-		{
-		case ETextureDimension::Texture2D:
-			if (TextureDesc.NumSamples > 1)
-			{
-				SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DMS;
-			}
-			else
-			{
-				SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-				SRVDesc.Texture2D.MostDetailedMip = Info.MipRange.First;
-				SRVDesc.Texture2D.MipLevels       = Info.MipRange.Num;
-				SRVDesc.Texture2D.PlaneSlice      = PlaneSlice;
-			}
-			break;
+void FD3D12ShaderResourceView_RHI::UpdateView(FRHICommandListBase& RHICmdList)
+{
+	if (IsBuffer())
+	{
+		FD3D12Buffer* Buffer = FD3D12DynamicRHI::ResourceCast(GetBuffer());
 
-		case ETextureDimension::Texture2DArray:
-			if (TextureDesc.NumSamples > 1)
-			{
-				SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DMSARRAY;
-				SRVDesc.Texture2DMSArray.FirstArraySlice = Info.ArrayRange.First;
-				SRVDesc.Texture2DMSArray.ArraySize       = Info.ArrayRange.Num;
-			}
-			else
-			{
-				SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
-				SRVDesc.Texture2DArray.FirstArraySlice = Info.ArrayRange.First;
-				SRVDesc.Texture2DArray.ArraySize       = Info.ArrayRange.Num;
-				SRVDesc.Texture2DArray.MostDetailedMip = Info.MipRange.First;
-				SRVDesc.Texture2DArray.MipLevels       = Info.MipRange.Num;
-				SRVDesc.Texture2DArray.PlaneSlice      = PlaneSlice;
-			}
-			break;
+		D3D12_SHADER_RESOURCE_VIEW_DESC SRVDesc{};
+		const EFlags CreateFlags = TranslateDesc(SRVDesc, Buffer, ViewDesc.Buffer.SRV.GetViewInfo(Buffer));
 
-		case ETextureDimension::Texture3D:
-			SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE3D;
-			SRVDesc.Texture3D.MostDetailedMip = Info.MipRange.First;
-			SRVDesc.Texture3D.MipLevels       = Info.MipRange.Num;
-			break;
+		FD3D12ShaderResourceView::UpdateView(RHICmdList, Buffer, SRVDesc, CreateFlags);
+	}
+	else
+	{
+		FD3D12Texture* Texture = FD3D12DynamicRHI::ResourceCast(GetTexture());
 
-		case ETextureDimension::TextureCube:
-			SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
-			SRVDesc.TextureCube.MostDetailedMip = Info.MipRange.First;
-			SRVDesc.TextureCube.MipLevels       = Info.MipRange.Num;
-			break;
+		D3D12_SHADER_RESOURCE_VIEW_DESC SRVDesc{};
+		const EFlags CreateFlags = TranslateDesc(SRVDesc, Texture, ViewDesc.Texture.SRV.GetViewInfo(Texture));
 
-		case ETextureDimension::TextureCubeArray:
-			SRVDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBEARRAY;
-			SRVDesc.TextureCubeArray.MostDetailedMip  = Info.MipRange.First;
-			SRVDesc.TextureCubeArray.MipLevels        = Info.MipRange.Num;
-			SRVDesc.TextureCubeArray.First2DArrayFace = Info.ArrayRange.First * 6;
-			SRVDesc.TextureCubeArray.NumCubes         = Info.ArrayRange.Num;
-			break;
-
-		default:
-			checkNoEntry();
-			break;
-		}
-
-		FD3D12ShaderResourceView::CreateView(Texture, SRVDesc, Texture->SkipsFastClearFinalize()
-			? EFlags::SkipFastClearFinalize
-			: EFlags::None
-		);
+		FD3D12ShaderResourceView::UpdateView(RHICmdList, Texture, SRVDesc, CreateFlags);
 	}
 }
 

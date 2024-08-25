@@ -18,6 +18,7 @@ public class CommonConversationGraph : ModuleRules
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
+				"BlueprintGraph",
 				"CoreUObject",
 				"Engine",
 				"Slate",

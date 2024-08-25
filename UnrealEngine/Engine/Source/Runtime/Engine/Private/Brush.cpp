@@ -247,7 +247,7 @@ bool ABrush::SupportsLayers() const
 bool ABrush::SupportsExternalPackaging() const
 {
 	// Base class ABrush actors do not support OFPA
-	return GetClass() != ABrush::StaticClass();
+	return GetClass() != ABrush::StaticClass() && Super::SupportsExternalPackaging();
 }
 
 void ABrush::PostLoad()

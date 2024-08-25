@@ -86,6 +86,11 @@ public:
 		RealApplication->SetMessageHandler(RealMessageHandler.ToSharedRef());
 
 		AutomatedApplication.Reset();
+		// Note that here we have to return the platform cursor that was overriden by FAutomatedCursor while enabling the module.
+		// Sometimes it is not being replaced with the real platform cursor, so we force it.
+		// It is needed to prevent possible issues that we are sending mouse events to the cursor that is outdated while executing the next tests from the list of AutomationDriver tests.
+		FSlateApplication::Get().UsePlatformCursorForCursorUser(true);
+
 		RealApplication.Reset();
 		RealMessageHandler.Reset();
 	}

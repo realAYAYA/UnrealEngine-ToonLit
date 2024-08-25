@@ -194,17 +194,17 @@ protected:
 	// Subclasses can override these two functions to restrict the affected edges (eg EdgeLoopRemesher)
 
 	// We are using a modulo-index loop to break symmetry/pathological conditions. 
-	const int ModuloPrime = 31337;     // any prime will do...
-	int MaxEdgeID = 0;
+	uint64 MaxEdgeID = 0;
 	virtual int StartEdges() 
 	{
-		MaxEdgeID = Mesh->MaxEdgeID();
+		MaxEdgeID = static_cast<uint64>(Mesh->MaxEdgeID());
 		return 0;
 	}
 
 	virtual int GetNextEdge(int CurEdgeID, bool& bDoneOut) 
 	{
-		int new_eid = (CurEdgeID + ModuloPrime) % MaxEdgeID;
+		constexpr uint64 ModuloPrime = 4294967311ull;     // choose prime > max uint32, to always be co-prime with MaxEdgeID
+		int new_eid = static_cast<int>((static_cast<uint64>(CurEdgeID) + ModuloPrime) % MaxEdgeID);
 		bDoneOut = (new_eid == 0);
 		return new_eid;
 	}

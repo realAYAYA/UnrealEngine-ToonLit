@@ -197,6 +197,10 @@ public:
 			{
 				bShaderTypeMatches = true;
 			}
+			else if (FCString::Stristr(ShaderType->GetName(), TEXT("FDebugViewModePS")))
+			{
+				bShaderTypeMatches = true;
+			}
 			else if (FCString::Stristr(ShaderType->GetName(), TEXT("FVelocity")))
 			{
 				bShaderTypeMatches = true;
@@ -472,6 +476,9 @@ void UMaterialEditorInstanceConstant::PostEditChangeProperty(FPropertyChangedEve
 {
 	if (SourceInstance)
 	{
+		// Warn our source instance that it is about to be updated.
+		SourceInstance->PreEditChange(PropertyChangedEvent.Property);
+
 		FProperty* PropertyThatChanged = PropertyChangedEvent.Property;
 		bool bLayersParameterChanged = false;
 
@@ -941,6 +948,14 @@ void UMaterialEditorInstanceConstant::CopyBasePropertiesFromParent()
 	{
 		BasePropertyOverrides.bOutputTranslucentVelocity = SourceInstance->IsTranslucencyWritingVelocity();
 	}
+	if (!BasePropertyOverrides.bOverride_bHasPixelAnimation)
+	{
+		BasePropertyOverrides.bHasPixelAnimation = SourceInstance->HasPixelAnimation();
+	}
+	if (!BasePropertyOverrides.bOverride_bEnableTessellation)
+	{
+		BasePropertyOverrides.bEnableTessellation = SourceInstance->IsTessellationEnabled();
+	}
 	if (!BasePropertyOverrides.DitheredLODTransition)
 	{
 		BasePropertyOverrides.DitheredLODTransition = SourceInstance->IsDitheredLODTransition();
@@ -952,6 +967,10 @@ void UMaterialEditorInstanceConstant::CopyBasePropertiesFromParent()
 	if (!BasePropertyOverrides.bOverride_MaxWorldPositionOffsetDisplacement)
 	{
 		BasePropertyOverrides.MaxWorldPositionOffsetDisplacement = SourceInstance->GetMaxWorldPositionOffsetDisplacement();
+	}
+	if (!BasePropertyOverrides.bOverride_CastDynamicShadowAsMasked)
+	{
+		BasePropertyOverrides.bCastDynamicShadowAsMasked = SourceInstance->GetCastDynamicShadowAsMasked();
 	}
 
 	// Copy the Lightmass settings...

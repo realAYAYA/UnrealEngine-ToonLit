@@ -126,9 +126,6 @@ public:
 	virtual bool IsReadyForFinishDestroy() override;
 	virtual bool NeedsLoadForTargetPlatform(const ITargetPlatform* TargetPlatform) const override;
 
-	/** Does the NaniteDisplacedMesh provide some additional value for that platform */
-	static bool IsSupportedByTargetPlatform(const ITargetPlatform* TargetPlatform);
-
 	void InitResources();
 	void ReleaseResources();
 

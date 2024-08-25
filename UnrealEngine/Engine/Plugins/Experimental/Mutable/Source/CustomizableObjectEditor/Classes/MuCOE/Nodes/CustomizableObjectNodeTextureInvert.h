@@ -17,16 +17,16 @@ class CUSTOMIZABLEOBJECTEDITOR_API UCustomizableObjectNodeTextureInvert : public
 public:
 	GENERATED_BODY()
 	
-	// Begin EdGraphNode interface
-	FText GetNodeTitle(ENodeTitleType::Type TittleType)const override;
-	FLinearColor GetNodeTitleColor() const override;
-	FText GetTooltipText() const override;
-	virtual void Serialize(FArchive& Ar) override;
+	// EdGraphNode interface
+	virtual FText GetNodeTitle(ENodeTitleType::Type TittleType)const override;
+	virtual FLinearColor GetNodeTitleColor() const override;
+	virtual FText GetTooltipText() const override;
 	
 	// UCustomizableObjectNode interface
 	virtual void AllocateDefaultPins(UCustomizableObjectNodeRemapPins* RemapPins) override;
 	virtual void BackwardsCompatibleFixup() override;
 
+	// Own interface
 	UEdGraphPin* GetBaseImagePin() const;
 
 private:

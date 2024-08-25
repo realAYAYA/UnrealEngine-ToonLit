@@ -44,24 +44,24 @@ namespace mu
 		// Node Interface
 		//-----------------------------------------------------------------------------------------
 
-		const NODE_TYPE* GetType() const override;
-		static const NODE_TYPE* GetStaticType();
+		const FNodeType* GetType() const override;
+		static const FNodeType* GetStaticType();
 
 		//-----------------------------------------------------------------------------------------
 		// Own interface
 		//-----------------------------------------------------------------------------------------
 
 		//! Get the name of the object.
-		virtual const char* GetName() const = 0;
+		virtual const FString& GetName() const = 0;
 
 		//! Set the name of the object.
-		virtual void SetName( const char* strName ) = 0;
+		virtual void SetName( const FString& ) = 0;
 
 		//! Get the uid of the object.
-		virtual const char* GetUid() const = 0;
+		virtual const FString& GetUid() const = 0;
 
 		//! Set the uid of the object.
-		virtual void SetUid( const char* strUid ) = 0;
+		virtual void SetUid( const FString& ) = 0;
 
 		//-----------------------------------------------------------------------------------------
 		// Interface pattern

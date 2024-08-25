@@ -49,9 +49,7 @@ DECLARE_CYCLE_STAT_EXTERN(TEXT("Source Init"), STAT_AudioSourceInitTime, STATGRO
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Source Create"), STAT_AudioSourceCreateTime, STATGROUP_Audio, ENGINE_API);
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Submit Buffers"), STAT_AudioSubmitBuffersTime, STATGROUP_Audio, ENGINE_API);
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Decompress Audio"), STAT_AudioDecompressTime, STATGROUP_Audio, ENGINE_API);
-DECLARE_CYCLE_STAT_EXTERN(TEXT("Decompress Vorbis"), STAT_VorbisDecompressTime, STATGROUP_Audio, );
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Prepare Audio Decompression"), STAT_AudioPrepareDecompressionTime, STATGROUP_Audio, );
-DECLARE_CYCLE_STAT_EXTERN(TEXT("Prepare Vorbis Decompression"), STAT_VorbisPrepareDecompressionTime, STATGROUP_Audio, );
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Finding Nearest Location"), STAT_AudioFindNearestLocation, STATGROUP_Audio, );
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Decompress Streamed"), STAT_AudioStreamedDecompressTime, STATGROUP_Audio, );
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Buffer Creation"), STAT_AudioResourceCreationTime, STATGROUP_Audio, );
@@ -327,6 +325,9 @@ public:
 	/** Whether or not this wave instance is stopping. */
 	uint32 bIsStopping:1;
 
+	/** Is this or any of the submixes above it dynamic */
+	uint32 bIsDynamic:1;
+
 	/** Which spatialization method to use to spatialize 3d sounds. */
 	ESoundSpatializationAlgorithm SpatializationMethod;
 
@@ -403,7 +404,7 @@ public:
 	float ManualReverbSendLevel;
 	
 	/** The submix send settings to use. */
-	TArray<FAttenuationSubmixSendSettings> SubmixSendSettings;
+	TArray<FAttenuationSubmixSendSettings> AttenuationSubmixSends;
 
 private:
 	/** Cached play order */
@@ -721,6 +722,18 @@ public:
 	/** Returns the source's playback percent. */
 	ENGINE_API virtual float GetPlaybackPercent() const;
 
+	/** Returns the sample (frame) rate of the audio played by the sound source. */
+	ENGINE_API virtual float GetSourceSampleRate() const;
+
+	/** Returns the number of frames (Samples / NumChannels) played by the sound source. */
+	ENGINE_API virtual int64 GetNumFramesPlayed() const;
+
+	/** Returns the total number of frames of audio for the sound wave. */
+	ENGINE_API virtual int32 GetNumTotalFrames() const;
+
+	/** Returns the frame index on which the sound source began playback. */
+	ENGINE_API virtual int32 GetStartFrame() const;
+
 	/** Returns the source's envelope at the callback block rate. Only implemented in audio mixer. */
 	virtual float GetEnvelopeValue() const { return 0.0f; };
 
@@ -884,13 +897,20 @@ class FWaveModInfo
 {
 public:
 
+	// Format specifiers
+	static constexpr uint16 WAVE_INFO_FORMAT_PCM = 0x0001;
+	static constexpr uint16 WAVE_INFO_FORMAT_ADPCM = 0x0002;
+	static constexpr uint16 WAVE_INFO_FORMAT_IEEE_FLOAT = 0x0003;
+	static constexpr uint16 WAVE_INFO_FORMAT_DVI_ADPCM = 0x0011;
+	static constexpr uint16 WAVE_INFO_FORMAT_OODLE_WAVE = 0xFFFF;
+
 	// Pointers to variables in the in-memory WAVE file.
 	const uint32* pSamplesPerSec;
 	const uint32* pAvgBytesPerSec;
 	const uint16* pBlockAlign;
 	const uint16* pBitsPerSample;
 	const uint16* pChannels;
-	const uint16* pFormatTag;
+	uint16* pFormatTag;
 
 	const uint32* pWaveDataSize;
 	const uint32* pMasterSize;
@@ -938,6 +958,11 @@ public:
 
 	/** Return total number of samples */
 	ENGINE_API uint32 GetNumSamples() const;
+
+	/** Return whether file format is supported for import */
+	ENGINE_API bool IsFormatSupported() const;
+	/** Return whether file format contains uncompressed PCM data */
+	ENGINE_API bool IsFormatUncompressed() const;
 
 };
 

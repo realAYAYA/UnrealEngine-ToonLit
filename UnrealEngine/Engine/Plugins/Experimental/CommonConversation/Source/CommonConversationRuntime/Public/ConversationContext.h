@@ -178,6 +178,7 @@ public:
 	UConversationRegistry& GetConversationRegistry() const { check(ConversationRegistry) return *ConversationRegistry; }
 
 	UConversationInstance* GetActiveConversation() const { ensure(IsServerContext()); return ActiveConversation; }
+	UConversationInstance* TryGetActiveConversation() const { return IsServerContext() ? ActiveConversation : nullptr; }
 
 	const UConversationTaskNode* GetTaskBeingConsidered() const { return TaskBeingConsidered; }
 

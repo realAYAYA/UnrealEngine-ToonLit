@@ -177,7 +177,7 @@ bool FAVPlayerMovieStreamer::Init(const TArray<FString>& MoviePaths, TEnumAsByte
 {
 	if(MetalTextureCache == NULL && FApp::CanEverRender())
 	{
-		id<MTLDevice> Device = (id<MTLDevice>)GDynamicRHI->RHIGetNativeDevice();
+        id<MTLDevice> Device = (__bridge id<MTLDevice>)GDynamicRHI->RHIGetNativeDevice();
 		check(Device != nil);
 
 		CVReturn Return = CVMetalTextureCacheCreate(kCFAllocatorDefault, nullptr, Device, nullptr, &MetalTextureCache);

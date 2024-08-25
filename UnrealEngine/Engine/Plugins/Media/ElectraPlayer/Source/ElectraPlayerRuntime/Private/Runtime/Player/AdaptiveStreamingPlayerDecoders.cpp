@@ -11,6 +11,12 @@
 
 namespace Electra
 {
+namespace DecoderOptionKeys
+{
+static const FName SendEmptySubtitleDuringGaps(TEXT("sendEmptySubtitleDuringGaps"));
+static const FName MaxResolutionY(TEXT("max_resoY"));
+static const FName MaxResolutionYAbove30FPS(TEXT("max_resoY_above_30fps"));
+}
 
 // AU memory
 void* FAdaptiveStreamingPlayer::AUAllocate(IAccessUnitMemoryProvider::EDataType type, SIZE_T NumBytes, SIZE_T Alignment)
@@ -232,6 +238,10 @@ bool FAdaptiveStreamingPlayer::FindMatchingStreamInfo(FStreamCodecInformation& O
  */
 int32 FAdaptiveStreamingPlayer::CreateDecoder(EStreamType type)
 {
+	if (IsTrackDeselected(type))
+	{
+		return 0;
+	}
 	if (type == EStreamType::Video)
 	{
 		if (VideoDecoder.Decoder == nullptr)
@@ -244,6 +254,7 @@ int32 FAdaptiveStreamingPlayer::CreateDecoder(EStreamType type)
 				check(AccessUnit->BufferSourceInfo.IsValid());
 				FString PeriodID = AccessUnit->BufferSourceInfo.IsValid() ? AccessUnit->BufferSourceInfo->PeriodID : FString();
 				VideoDecoder.CurrentCodecInfo.Clear();
+				VideoDecoder.LastBufferSourceInfo = AccessUnit->BufferSourceInfo;
 				if (AccessUnit->AUCodecData.IsValid())
 				{
 					VideoDecoder.CurrentCodecInfo = AccessUnit->AUCodecData->ParsedInfo;
@@ -272,16 +283,6 @@ int32 FAdaptiveStreamingPlayer::CreateDecoder(EStreamType type)
 				{
 					VideoDecoder.Parent = this;
 					VideoDecoder.Decoder->SetPlayerSessionServices(this);
-
-					// Add in any player options that are for decoder use
-					FParamDict AdditionalOptions;
-					TArray<FString> DecoderOptionKeys;
-					PlayerOptions.GetKeysStartingWith("videoDecoder", DecoderOptionKeys);
-					for (const FString & Key : DecoderOptionKeys)
-					{
-						AdditionalOptions.Set(Key, PlayerOptions.GetValue(Key));
-					}
-
 					// Attach video decoder buffer monitor.
 					VideoDecoder.Decoder->SetAUInputBufferListener(&VideoDecoder);
 					VideoDecoder.Decoder->SetReadyBufferListener(&VideoDecoder);
@@ -290,14 +291,13 @@ int32 FAdaptiveStreamingPlayer::CreateDecoder(EStreamType type)
 					// Hand it (may be nullptr) a delegate for platform for resource queries
 					VideoDecoder.Decoder->SetVideoResourceDelegate(VideoDecoderResourceDelegate);
 					// Open the decoder after having set all listeners.
-					VideoDecoder.Decoder->Open(VideoDecoder.LastSentAUCodecData, AdditionalOptions, &HighestStream);
+					VideoDecoder.Decoder->Open(VideoDecoder.LastSentAUCodecData, PlayerOptions.GetDictionary(), &HighestStream);
 				}
 
 				VideoDecoder.CheckIfNewDecoderMustBeSuspendedImmediately();
 				if (VideoDecoder.Decoder)
 				{
-					// Now we get the currently limited stream resolution and let the decoder now what we will be using
-					// at most right now. This allows the decoder to be created with a smaller memory footprint at first.
+					// Apply the current limit.
 					UpdateStreamResolutionLimit();
 				}
 				else
@@ -330,7 +330,7 @@ int32 FAdaptiveStreamingPlayer::CreateDecoder(EStreamType type)
 				}
 				FAccessUnit::Release(AccessUnit);
 
-					// Create the audio decoder
+				// Create the audio decoder
 				AudioDecoder.Decoder = IAudioDecoder::Create();
 				if (AudioDecoder.Decoder)
 				{
@@ -381,7 +381,7 @@ int32 FAdaptiveStreamingPlayer::CreateDecoder(EStreamType type)
 				if (SubtitleDecoder.Decoder)
 				{
 					FParamDict Options;
-					Options.Set(TEXT("sendEmptySubtitleDuringGaps"), Electra::FVariantValue(true));
+					Options.Set(DecoderOptionKeys::SendEmptySubtitleDuringGaps, Electra::FVariantValue(true));
 
 					SubtitleDecoder.Decoder->SetPlayerSessionServices(this);
 					SubtitleDecoder.Decoder->GetDecodedSubtitleReceiveDelegate().BindRaw(this, &FAdaptiveStreamingPlayer::OnDecodedSubtitleReceived);
@@ -574,32 +574,45 @@ void FAdaptiveStreamingPlayer::FeedDecoder(EStreamType Type, IAccessUnitBufferIn
 	FBufferStats* pStats = nullptr;
 	FStreamCodecInformation* CurrentCodecInfo = nullptr;
 	TSharedPtrTS<FAccessUnit::CodecData>* LastSentAUCodecData = nullptr;
+	TSharedPtrTS<const FBufferSourceInfo>* LastBufferSourceInfo = nullptr;
+
 	bool bCodecChangeDetected = false;
 	bool bIsDeselected = false;
 
 	switch(Type)
 	{
 		case EStreamType::Video:
+		{
 			pStats = &VideoBufferStats;
 			CurrentCodecInfo = &VideoDecoder.CurrentCodecInfo;
 			LastSentAUCodecData = &VideoDecoder.LastSentAUCodecData;
+			LastBufferSourceInfo = &VideoDecoder.LastBufferSourceInfo;
 			bIsDeselected = bIsVideoDeselected;
 			break;
+		}
 		case EStreamType::Audio:
+		{
 			pStats = &AudioBufferStats;
 			CurrentCodecInfo = &AudioDecoder.CurrentCodecInfo;
 			LastSentAUCodecData = &AudioDecoder.LastSentAUCodecData;
+			//LastBufferSourceInfo = &AudioDecoder.LastBufferSourceInfo;
 			bIsDeselected = bIsAudioDeselected;
 			break;
+		}
 		case EStreamType::Subtitle:
+		{
 			pStats = &TextBufferStats;
 			CurrentCodecInfo = &SubtitleDecoder.CurrentCodecInfo;
 			LastSentAUCodecData = &SubtitleDecoder.LastSentAUCodecData;
+			//LastBufferSourceInfo = &SubtitleDecoder.LastBufferSourceInfo;
 			bIsDeselected = bIsTextDeselected;
 			break;
+		}
 		default:
+		{
 			checkNoEntry();
 			return;
+		}
 	}
 
 	// Lock the AU buffer for the duration of this function to ensure this can never clash with a Flush() call
@@ -641,7 +654,7 @@ void FAdaptiveStreamingPlayer::FeedDecoder(EStreamType Type, IAccessUnitBufferIn
 					{
 						RebufferDetectedAtPlayPos = LastKnownPTS;
 					}
-					WorkerThread.Enqueue(FWorkerThreadMessages::FMessage::EType::BufferUnderrun);
+					WorkerThread.EnqueueBufferUnderrun();
 				}
 			}
 		}
@@ -659,9 +672,23 @@ void FAdaptiveStreamingPlayer::FeedDecoder(EStreamType Type, IAccessUnitBufferIn
 					bCodecChangeDetected = true;
 				}
 				// Mimetype change in subtitles?
-				else if (Type == EStreamType::Subtitle && !PeekedAU->AUCodecData->ParsedInfo.GetMimeType().Equals(CurrentCodecInfo->GetMimeType()))
+				if (Type == EStreamType::Subtitle && !PeekedAU->AUCodecData->ParsedInfo.GetMimeType().Equals(CurrentCodecInfo->GetMimeType()))
 				{
 					bCodecChangeDetected = true;
+				}
+				// Change in period of the video stream that may have a new maximum resolution from the one before?
+				if (!bCodecChangeDetected && Type == EStreamType::Video && VideoDecoder.Decoder && LastBufferSourceInfo && PeekedAU->BufferSourceInfo.IsValid() &&
+					(((*LastBufferSourceInfo)->PeriodID != PeekedAU->BufferSourceInfo->PeriodID) || ((*LastBufferSourceInfo)->PeriodAdaptationSetID != PeekedAU->BufferSourceInfo->PeriodAdaptationSetID)))
+				{
+					// Get the new highest stream properties and check if the decoder can still handle those.
+					FStreamCodecInformation HighestStream;
+					if (FindMatchingStreamInfo(HighestStream, PeekedAU->BufferSourceInfo->PeriodID, PeekedAU->EarliestPTS.IsValid() ? PeekedAU->EarliestPTS : PeekedAU->PTS, PeekedAU->AUCodecData->ParsedInfo))
+					{
+						if (!VideoDecoder.Decoder->Reopen(PeekedAU->AUCodecData, PlayerOptions.GetDictionary(), &HighestStream))
+						{
+							bCodecChangeDetected = true;
+						}
+					}
 				}
 			}
 
@@ -714,6 +741,11 @@ void FAdaptiveStreamingPlayer::FeedDecoder(EStreamType Type, IAccessUnitBufferIn
 						Decoder->AUdataClearEOD();
 					}
 					Decoder->AUdataPushAU(AccessUnit);
+					// Remember the buffer info for period transition checks.
+					if (Type == EStreamType::Video)
+					{
+						VideoDecoder.LastBufferSourceInfo = AccessUnit->BufferSourceInfo;
+					}
 				}
 
 				// If there is any pertinent format change, emit an event.
@@ -799,15 +831,15 @@ void FAdaptiveStreamingPlayer::Deprecate_InternalInitializeDecoderLimits()
 	// compared against these limits and those that exceed the limit will not be considered for playback.
 
 	// Maximum allowed vertical resolution specified?
-	if (PlayerOptions.HaveKey(TEXT("max_resoY")))
+	if (PlayerOptions.HaveKey(DecoderOptionKeys::MaxResolutionY))
 	{
-		PlayerConfig.H264LimitUpto30fps.MaxResolution.Height = (int32)PlayerOptions.GetValue(TEXT("max_resoY")).GetInt64();
-		PlayerConfig.H264LimitAbove30fps.MaxResolution.Height = (int32)PlayerOptions.GetValue(TEXT("max_resoY")).GetInt64();
+		PlayerConfig.H264LimitUpto30fps.MaxResolution.Height =
+		PlayerConfig.H264LimitAbove30fps.MaxResolution.Height = (int32)PlayerOptions.GetValue(DecoderOptionKeys::MaxResolutionY).GetInt64();
 	}
 	// A limit in vertical resolution for streams with more than 30fps?
-	if (PlayerOptions.HaveKey(TEXT("max_resoY_above_30fps")))
+	if (PlayerOptions.HaveKey(DecoderOptionKeys::MaxResolutionYAbove30FPS))
 	{
-		PlayerConfig.H264LimitAbove30fps.MaxResolution.Height = (int32)PlayerOptions.GetValue(TEXT("max_resoY_above_30fps")).GetInt64();
+		PlayerConfig.H264LimitAbove30fps.MaxResolution.Height = (int32)PlayerOptions.GetValue(DecoderOptionKeys::MaxResolutionYAbove30FPS).GetInt64();
 	}
 }
 

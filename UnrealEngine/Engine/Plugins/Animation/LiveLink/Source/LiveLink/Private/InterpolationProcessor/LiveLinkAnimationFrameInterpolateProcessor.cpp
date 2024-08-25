@@ -28,7 +28,7 @@ namespace LiveLinkAnimationBlendingUtil
 	void Blend(const TArray<Type>& A, const TArray<Type>& B, TArray<Type>& Output, float BlendWeight)
 	{
 		check(A.Num() == B.Num());
-		Output.SetNum(A.Num(), false);
+		Output.SetNum(A.Num(), EAllowShrinking::No);
 
 		for (int32 BlendIndex = 0; BlendIndex < A.Num(); ++BlendIndex)
 		{

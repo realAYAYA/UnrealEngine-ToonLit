@@ -26,6 +26,8 @@ struct FPreAnimatedObjectGroupManager : TPreAnimatedStateGroupManager<FObjectKey
 	MOVIESCENE_API void OnObjectsReplaced(const TMap<UObject*, UObject*>& ReplacementMap);
 
 	MOVIESCENE_API void GetGroupsByClass(UClass* GeneratedClass, TArray<FPreAnimatedStorageGroupHandle>& OutGroupHandles);
+
+	MOVIESCENE_API void GatherStaleStorageGroups(TArray<FPreAnimatedStorageGroupHandle>& StaleGroupStorage) const override;
 };
 
 

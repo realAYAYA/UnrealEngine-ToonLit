@@ -367,6 +367,16 @@ void TraverseEventTree(
 			EventName = GpuProfilerEvents[Root].GetName();
 		}
 
+		// Since the GpuProfiler uses the Comparison Index of FName, Gpu trace events named with the pattern <base>_N where N
+		// is some non-negative integer, will all end up having the same name in Unreal Insights. Appending a space to the name
+		// avoids this.
+		if (EventName.GetNumber())
+		{
+			EventName = FName(EventName.ToString() + TEXT(" "));
+
+			checkSlow(EventName.GetNumber() == 0);
+		}
+
 		check(GpuProfilerEvents[Root].GetGPUMask().Contains(GPUIndex));
 		FGpuProfilerTrace::SpecifyEventByName(EventName);
 		FGpuProfilerTrace::BeginEventByName(EventName, GpuProfilerEvents[Root].GetFrameNumber(), GpuProfilerEvents[Root].GetStartResultMicroseconds(GPUIndex));
@@ -475,7 +485,7 @@ public:
 
 	void PopEventOverride()
 	{
-		EventStack.Pop(false);
+		EventStack.Pop(EAllowShrinking::No);
 	}
 
 	FRealtimeGPUProfilerQuery PushEvent(FRHIGPUMask GPUMask, const FName& Name, const FName& StatName, const TCHAR* Description)
@@ -486,7 +496,7 @@ public:
 
 			if (MaxNumQueries < 0 || QueryCount < (uint32)MaxNumQueries)
 			{
-				new (GpuProfilerEvents) FRealtimeGPUProfilerEvent(*RenderQueryPool);
+				GpuProfilerEvents.Emplace(*RenderQueryPool);
 				QueryCount += FRealtimeGPUProfilerEvent::GetNumRHIQueriesPerEvent();
 			}
 			else
@@ -519,7 +529,7 @@ public:
 			return {};
 		}
 
-		const int32 EventIdx = EventStack.Pop(false);
+		const int32 EventIdx = EventStack.Pop(EAllowShrinking::No);
 
 		return GpuProfilerEvents[EventIdx].End();
 	}

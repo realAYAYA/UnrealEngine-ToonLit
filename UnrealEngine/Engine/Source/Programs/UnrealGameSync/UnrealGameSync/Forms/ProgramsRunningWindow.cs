@@ -1,11 +1,11 @@
 ﻿// Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
 using System;
 using System.Data;
 using System.Linq;
 using System.Threading;
 using System.Windows.Forms;
+using EpicGames.Core;
 
 namespace UnrealGameSync
 {
@@ -48,17 +48,17 @@ namespace UnrealGameSync
 
 		private void ExecuteBackgroundWork()
 		{
-			for(;;)
+			for (; ; )
 			{
-				if(_terminateEvent!.WaitOne(TimeSpan.FromSeconds(2.0)))
+				if (_terminateEvent!.WaitOne(TimeSpan.FromSeconds(2.0)))
 				{
 					break;
 				}
 
 				FileReference[] newPrograms = _enumeratePrograms().OrderBy(x => x).ToArray();
-				lock(_syncObject)
+				lock (_syncObject)
 				{
-					if(!Enumerable.SequenceEqual(_programs, newPrograms))
+					if (!Enumerable.SequenceEqual(_programs, newPrograms))
 					{
 						_programs = newPrograms;
 						BeginInvoke(new MethodInvoker(() => UpdatePrograms()));
@@ -72,7 +72,7 @@ namespace UnrealGameSync
 			ProgramListBox.Items.Clear();
 			ProgramListBox.Items.AddRange(_programs);
 
-			if(_programs.Length == 0)
+			if (_programs.Length == 0)
 			{
 				DialogResult = DialogResult.OK;
 				Close();
@@ -81,7 +81,7 @@ namespace UnrealGameSync
 
 		private void ProgramsRunningWindow_FormClosed(object sender, FormClosedEventArgs e)
 		{
-			if(_backgroundThread != null)
+			if (_backgroundThread != null)
 			{
 				_terminateEvent!.Set();
 

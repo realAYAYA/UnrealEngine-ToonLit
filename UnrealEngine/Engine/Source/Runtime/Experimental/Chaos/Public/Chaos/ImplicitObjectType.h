@@ -71,4 +71,35 @@ namespace Chaos
 
 		inline const int32 FiniteConvex = IsConvex | HasBoundingBox;
 	}
+
+
+	inline FName GetImplicitObjectTypeName(EImplicitObjectType Val)
+	{
+		static const FName Names[] =
+		{
+				TEXT("EImplicitObjectType:Sphere"),
+				TEXT("EImplicitObjectType:Box"),
+				TEXT("EImplicitObjectType:Plane"),
+				TEXT("EImplicitObjectType:Capsule"),
+				TEXT("EImplicitObjectType:Transformed"),
+				TEXT("EImplicitObjectType:Union"),
+				TEXT("EImplicitObjectType:LevelSet"),
+				TEXT("EImplicitObjectType:Unknown"),
+				TEXT("EImplicitObjectType:Convex"),
+				TEXT("EImplicitObjectType:TaperedCylinder"),
+				TEXT("EImplicitObjectType:Cylinder"),
+				TEXT("EImplicitObjectType:TriangleMesh"),
+				TEXT("EImplicitObjectType:HeightField"),
+				TEXT("EImplicitObjectType:DEPRECATED_Scaled"),
+				TEXT("EImplicitObjectType:Triangle"),
+				TEXT("EImplicitObjectType:UnionClustered"),
+				TEXT("EImplicitObjectType:TaperedCapsule"),
+				TEXT("EImplicitObjectType:WeightedLatticeBone"),
+			};
+
+		static_assert(Chaos::ImplicitObjectType::ConcreteObjectCount == UE_ARRAY_COUNT(Names), "");
+
+		return Names[Val];
+	}
+
 }

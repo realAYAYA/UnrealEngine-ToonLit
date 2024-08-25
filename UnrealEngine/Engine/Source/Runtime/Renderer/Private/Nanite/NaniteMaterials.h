@@ -10,11 +10,11 @@
 static constexpr uint32 NANITE_MAX_MATERIALS = 64;
 
 struct FNaniteMaterialPassCommand;
+struct FNaniteShadingCommands;
 struct FLumenMeshCaptureMaterialPass;
 class  FLumenCardPassUniformParameters;
 class  FCardPageRenderData;
 class  FSceneRenderer;
-struct FCustomDepthTextures;
 
 // VertexCountPerInstance
 // InstanceCount
@@ -158,7 +158,6 @@ class FNaniteMultiViewMaterialVS : public FNaniteGlobalShader
 		const FPrimitiveSceneProxy* PrimitiveSceneProxy,
 		const FMaterialRenderProxy& MaterialRenderProxy,
 		const FMaterial& Material,
-		const FMeshPassProcessorRenderState& DrawRenderState,
 		const FMeshMaterialShaderElementData& ShaderElementData,
 		FMeshDrawSingleShaderBindings& ShaderBindings) const
 	{
@@ -214,7 +213,6 @@ class FNaniteIndirectMaterialVS : public FNaniteGlobalShader
 		const FPrimitiveSceneProxy* PrimitiveSceneProxy,
 		const FMaterialRenderProxy& MaterialRenderProxy,
 		const FMaterial& Material,
-		const FMeshPassProcessorRenderState& DrawRenderState,
 		const FMeshMaterialShaderElementData& ShaderElementData,
 		FMeshDrawSingleShaderBindings& ShaderBindings) const
 	{
@@ -363,12 +361,6 @@ public:
 	{
 	public:
 		void Lock(FRHICommandListBase& RHICmdList);
-
-		void* GetMaterialSlotPtr(uint32 PrimitiveIndex, uint32 EntryCount);
-#if WITH_EDITOR
-		void* GetHitProxyTablePtr(uint32 PrimitiveIndex, uint32 EntryCount);
-#endif
-
 		void Unlock(FRHICommandListBase& RHICmdList);
 
 	private:
@@ -392,8 +384,6 @@ public:
 
 		TArray<FMaterialUploadEntry, FSceneRenderingArrayAllocator> DirtyMaterialEntries;
 
-		FRDGScatterUploader* MaterialSlotUploader = nullptr;
-		FRDGScatterUploader* HitProxyTableUploader = nullptr;
 		FRDGScatterUploader* MaterialDepthUploader = nullptr;
 		FRDGScatterUploader* MaterialEditorUploader = nullptr;
 		int32 MaxMaterials = 0;
@@ -405,11 +395,6 @@ public:
 
 	void Finish(FRDGBuilder& GraphBuilder, FRDGExternalAccessQueue& ExternalAccessQueue, FUploader* Uploader);
 
-#if WITH_EDITOR
-	FRHIShaderResourceView* GetHitProxyTableSRV() const { return HitProxyTableDataBuffer->GetSRV(); }
-#endif
-
-	FRHIShaderResourceView* GetMaterialSlotSRV() const { return MaterialSlotDataBuffer->GetSRV(); }
 	FRHIShaderResourceView* GetMaterialDepthSRV() const { return MaterialDepthDataBuffer->GetSRV(); }
 #if WITH_DEBUG_VIEW_MODES
 	FRHIShaderResourceView* GetMaterialEditorSRV() const { return MaterialEditorDataBuffer->GetSRV(); }
@@ -428,12 +413,6 @@ private:
 	uint32 NumHitProxyTableUpdates = 0;
 	uint32 NumMaterialSlotUpdates = 0;
 	uint32 NumMaterialDepthUpdates = 0;
-
-	FRDGAsyncScatterUploadBuffer MaterialSlotUploadBuffer;
-	TRefCountPtr<FRDGPooledBuffer> MaterialSlotDataBuffer;
-
-	FRDGAsyncScatterUploadBuffer HitProxyTableUploadBuffer;
-	TRefCountPtr<FRDGPooledBuffer> HitProxyTableDataBuffer;
 
 	FGrowOnlySpanAllocator	MaterialSlotAllocator;
 
@@ -464,60 +443,8 @@ inline void UnlockIfValid(FRHICommandListBase& RHICmdList, FNaniteMaterialComman
 	}
 }
 
-extern bool UseComputeDepthExport();
-
 namespace Nanite
 {
-
-struct FCustomDepthContext
-{
-	FRDGTextureRef InputDepth = nullptr;
-	FRDGTextureSRVRef InputStencilSRV = nullptr;
-	FRDGTextureRef DepthTarget = nullptr;
-	FRDGTextureRef StencilTarget = nullptr;
-	bool bComputeExport = true;
-};
-
-struct FShadeBinning
-{
-	FRDGBufferRef ShadingBinMeta  = nullptr;
-	FRDGBufferRef ShadingBinArgs  = nullptr;
-	FRDGBufferRef ShadingBinData = nullptr;
-	FRDGBufferRef ShadingBinStats = nullptr;
-};
-
-void EmitDepthTargets(
-	FRDGBuilder& GraphBuilder,
-	const FScene& Scene,
-	const FViewInfo& View,
-	bool bDrawSceneViewsInOneNanitePass,
-	FRasterResults& RasterResults,
-	FRDGTextureRef SceneDepth,
-	FRDGTextureRef VelocityBuffer
-);
-
-FCustomDepthContext InitCustomDepthStencilContext(
-	FRDGBuilder& GraphBuilder,
-	const FCustomDepthTextures& CustomDepthTextures,
-	bool bWriteCustomStencil
-);
-
-void EmitCustomDepthStencilTargets(
-	FRDGBuilder& GraphBuilder,
-	const FScene& Scene,
-	const FViewInfo& View,
-	const FIntVector4& PageConstants,
-	FRDGBufferRef VisibleClustersSWHW,
-	FRDGBufferRef ViewsBuffer,
-	FRDGTextureRef VisBuffer64,
-	const FCustomDepthContext& CustomDepthContext
-);
-
-void FinalizeCustomDepthStencil(
-	FRDGBuilder& GraphBuilder,
-	const FCustomDepthContext& CustomDepthContext,
-	FCustomDepthTextures& OutTextures
-);
 
 void DrawBasePass(
 	FRDGBuilder& GraphBuilder,
@@ -546,20 +473,6 @@ void DrawLumenMeshCapturePass(
 	FRDGTextureRef NormalAtlasTexture,
 	FRDGTextureRef EmissiveAtlasTexture,
 	FRDGTextureRef DepthAtlasTexture
-);
-
-FShadeBinning ShadeBinning(
-	FRDGBuilder& GraphBuilder,
-	const FScene& Scene,
-	const FViewInfo& View,
-	const FIntRect InViewRect,
-	const FRasterResults& RasterResults
-);
-
-void BuildShadingCommands(
-	const FScene& Scene,
-	const FNaniteShadingPipelines& ShadingPipelines,
-	TArray<TPimplPtr<FNaniteShadingCommand>>& ShadingCommands
 );
 
 EGBufferLayout GetGBufferLayoutForMaterial(bool bMaterialUsesWorldPositionOffset);

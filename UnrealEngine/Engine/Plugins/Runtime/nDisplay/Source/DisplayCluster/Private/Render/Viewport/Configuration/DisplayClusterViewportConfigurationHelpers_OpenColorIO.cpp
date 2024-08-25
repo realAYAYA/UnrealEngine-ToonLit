@@ -11,16 +11,16 @@
 #include "Render/Viewport/DisplayClusterViewportManager.h"
 
 #include "Components/DisplayClusterICVFXCameraComponent.h"
-#include "OpenColorIODisplayExtension.h"
 
 ///////////////////////////////////////////////////////////////////////////////////////
 // FDisplayClusterViewportConfigurationHelpers_OpenColorIO
 ///////////////////////////////////////////////////////////////////////////////////////
-bool FDisplayClusterViewportConfigurationHelpers_OpenColorIO::UpdateBaseViewport(FDisplayClusterViewport& DstViewport, ADisplayClusterRootActor& RootActor, const UDisplayClusterConfigurationViewport& InViewportConfiguration)
+bool FDisplayClusterViewportConfigurationHelpers_OpenColorIO::UpdateBaseViewportOCIO(FDisplayClusterViewport& DstViewport, const UDisplayClusterConfigurationViewport& InViewportConfiguration)
 {
-	if (!EnumHasAnyFlags(DstViewport.RenderSettingsICVFX.RuntimeFlags, EDisplayClusterViewportRuntimeICVFXFlags::InCamera | EDisplayClusterViewportRuntimeICVFXFlags::Chromakey | EDisplayClusterViewportRuntimeICVFXFlags::Lightcard | EDisplayClusterViewportRuntimeICVFXFlags::UVLightcard))
+	if (!EnumHasAnyFlags(DstViewport.GetRenderSettingsICVFX().RuntimeFlags, EDisplayClusterViewportRuntimeICVFXFlags::InCamera | EDisplayClusterViewportRuntimeICVFXFlags::Chromakey | EDisplayClusterViewportRuntimeICVFXFlags::Lightcard | EDisplayClusterViewportRuntimeICVFXFlags::UVLightcard))
 	{
-		if (const FOpenColorIOColorConversionSettings* OCIOConfiguration = RootActor.GetStageSettings().FindViewportOCIOConfiguration(DstViewport.GetId()))
+		const FDisplayClusterConfigurationICVFX_StageSettings* StageSettings =DstViewport.Configuration->GetStageSettings();
+		if (const FOpenColorIOColorConversionSettings* OCIOConfiguration = StageSettings ? StageSettings->FindViewportOCIOConfiguration(DstViewport.GetId()) : nullptr)
 		{
 			ApplyOCIOConfiguration(DstViewport, *OCIOConfiguration);
 
@@ -33,11 +33,12 @@ bool FDisplayClusterViewportConfigurationHelpers_OpenColorIO::UpdateBaseViewport
 	return false;
 }
 
-bool FDisplayClusterViewportConfigurationHelpers_OpenColorIO::UpdateLightcardViewport(FDisplayClusterViewport& DstViewport, FDisplayClusterViewport& BaseViewport, ADisplayClusterRootActor& RootActor)
+bool FDisplayClusterViewportConfigurationHelpers_OpenColorIO::UpdateLightcardViewportOCIO(FDisplayClusterViewport& DstViewport, FDisplayClusterViewport& BaseViewport)
 {
-	if (EnumHasAnyFlags(DstViewport.RenderSettingsICVFX.RuntimeFlags, EDisplayClusterViewportRuntimeICVFXFlags::Lightcard | EDisplayClusterViewportRuntimeICVFXFlags::UVLightcard))
+	if (EnumHasAnyFlags(DstViewport.GetRenderSettingsICVFX().RuntimeFlags, EDisplayClusterViewportRuntimeICVFXFlags::Lightcard | EDisplayClusterViewportRuntimeICVFXFlags::UVLightcard))
 	{
-		if (const FOpenColorIOColorConversionSettings* OCIOConfiguration = RootActor.GetStageSettings().FindLightcardOCIOConfiguration(BaseViewport.GetId()))
+		const FDisplayClusterConfigurationICVFX_StageSettings* StageSettings = DstViewport.Configuration->GetStageSettings();
+		if (const FOpenColorIOColorConversionSettings* OCIOConfiguration = StageSettings ? StageSettings->FindLightcardOCIOConfiguration(BaseViewport.GetId()): nullptr)
 		{
 			ApplyOCIOConfiguration(DstViewport, *OCIOConfiguration);
 
@@ -51,11 +52,11 @@ bool FDisplayClusterViewportConfigurationHelpers_OpenColorIO::UpdateLightcardVie
 	return false;
 }
 
-bool FDisplayClusterViewportConfigurationHelpers_OpenColorIO::UpdateCameraViewport(FDisplayClusterViewport& DstViewport, ADisplayClusterRootActor& RootActor, UDisplayClusterICVFXCameraComponent& InCameraComponent)
+bool FDisplayClusterViewportConfigurationHelpers_OpenColorIO::UpdateCameraViewportOCIO(FDisplayClusterViewport& DstViewport, const FDisplayClusterConfigurationICVFX_CameraSettings& InCameraSettings)
 {
-	if (EnumHasAllFlags(DstViewport.RenderSettingsICVFX.RuntimeFlags, EDisplayClusterViewportRuntimeICVFXFlags::InCamera))
+	if (EnumHasAllFlags(DstViewport.GetRenderSettingsICVFX().RuntimeFlags, EDisplayClusterViewportRuntimeICVFXFlags::InCamera))
 	{
-		if (const FOpenColorIOColorConversionSettings* OCIOConfiguration = InCameraComponent.GetCameraSettingsICVFX().FindInnerFrustumOCIOConfiguration(DstViewport.GetClusterNodeId()))
+		if (const FOpenColorIOColorConversionSettings* OCIOConfiguration = InCameraSettings.FindInnerFrustumOCIOConfiguration(DstViewport.GetClusterNodeId()))
 		{
 			ApplyOCIOConfiguration(DstViewport, *OCIOConfiguration);
 
@@ -68,11 +69,11 @@ bool FDisplayClusterViewportConfigurationHelpers_OpenColorIO::UpdateCameraViewpo
 	return false;
 }
 
-bool FDisplayClusterViewportConfigurationHelpers_OpenColorIO::UpdateChromakeyViewport(FDisplayClusterViewport& DstViewport, ADisplayClusterRootActor& RootActor, UDisplayClusterICVFXCameraComponent& InCameraComponent)
+bool FDisplayClusterViewportConfigurationHelpers_OpenColorIO::UpdateChromakeyViewportOCIO(FDisplayClusterViewport& DstViewport, const FDisplayClusterConfigurationICVFX_CameraSettings& InCameraSettings)
 {
-	if (EnumHasAllFlags(DstViewport.RenderSettingsICVFX.RuntimeFlags, EDisplayClusterViewportRuntimeICVFXFlags::Chromakey))
+	if (EnumHasAllFlags(DstViewport.GetRenderSettingsICVFX().RuntimeFlags, EDisplayClusterViewportRuntimeICVFXFlags::Chromakey))
 	{
-		if (const FOpenColorIOColorConversionSettings* OCIOConfiguration = InCameraComponent.GetCameraSettingsICVFX().FindChromakeyOCIOConfiguration(DstViewport.GetClusterNodeId()))
+		if (const FOpenColorIOColorConversionSettings* OCIOConfiguration = InCameraSettings.FindChromakeyOCIOConfiguration(DstViewport.GetClusterNodeId()))
 		{
 			ApplyOCIOConfiguration(DstViewport, *OCIOConfiguration);
 
@@ -87,30 +88,27 @@ bool FDisplayClusterViewportConfigurationHelpers_OpenColorIO::UpdateChromakeyVie
 
 void FDisplayClusterViewportConfigurationHelpers_OpenColorIO::ApplyOCIOConfiguration(FDisplayClusterViewport& DstViewport, const FOpenColorIOColorConversionSettings& InConversionSettings)
 {
-	if (DstViewport.OpenColorIO.IsValid() && DstViewport.OpenColorIO->IsConversionSettingsEqual(InConversionSettings))
+	if (DstViewport.GetOpenColorIO().IsValid() && DstViewport.GetOpenColorIO()->IsConversionSettingsEqual(InConversionSettings))
 	{
 		// Already assigned
 		return;
 	}
 
-	DstViewport.OpenColorIO.Reset();
-	DstViewport.OpenColorIO = MakeShared<FDisplayClusterViewport_OpenColorIO>(InConversionSettings);
+	DstViewport.SetOpenColorIO(MakeShared<FDisplayClusterViewport_OpenColorIO>(InConversionSettings));
 }
 
 void FDisplayClusterViewportConfigurationHelpers_OpenColorIO::DisableOCIOConfiguration(FDisplayClusterViewport& DstViewport)
 {
 	// Remove OICO ref
-	DstViewport.OpenColorIO.Reset();
+	DstViewport.SetOpenColorIO(nullptr);
 }
 
-#if WITH_EDITOR
-bool FDisplayClusterViewportConfigurationHelpers_OpenColorIO::IsInnerFrustumViewportSettingsEqual_Editor(const FDisplayClusterViewport& InViewport1, const FDisplayClusterViewport& InViewport2, UDisplayClusterICVFXCameraComponent& InCameraComponent)
+bool FDisplayClusterViewportConfigurationHelpers_OpenColorIO::IsInnerFrustumViewportOCIOSettingsEqual(const FDisplayClusterViewport& InViewport1, const FDisplayClusterViewport& InViewport2, const FDisplayClusterConfigurationICVFX_CameraSettings& InCameraSettings)
 {
-	return InCameraComponent.GetCameraSettingsICVFX().IsInnerFrustumViewportSettingsEqual_Editor(InViewport1.GetClusterNodeId(), InViewport2.GetClusterNodeId());
+	return InCameraSettings.IsInnerFrustumViewportSettingsEqual(InViewport1.GetClusterNodeId(), InViewport2.GetClusterNodeId());
 }
 
-bool FDisplayClusterViewportConfigurationHelpers_OpenColorIO::IsChromakeyViewportSettingsEqual_Editor(const FDisplayClusterViewport& InViewport1, const FDisplayClusterViewport& InViewport2, UDisplayClusterICVFXCameraComponent& InCameraComponent)
+bool FDisplayClusterViewportConfigurationHelpers_OpenColorIO::IsChromakeyViewportOCIOSettingsEqual(const FDisplayClusterViewport& InViewport1, const FDisplayClusterViewport& InViewport2, const FDisplayClusterConfigurationICVFX_CameraSettings& InCameraSettings)
 {
-	return InCameraComponent.GetCameraSettingsICVFX().IsChromakeyViewportSettingsEqual_Editor(InViewport1.GetClusterNodeId(), InViewport2.GetClusterNodeId());
+	return InCameraSettings.IsChromakeyViewportSettingsEqual(InViewport1.GetClusterNodeId(), InViewport2.GetClusterNodeId());
 }
-#endif

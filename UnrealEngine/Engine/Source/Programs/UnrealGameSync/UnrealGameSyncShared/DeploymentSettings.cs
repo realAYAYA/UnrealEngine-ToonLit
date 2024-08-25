@@ -3,15 +3,12 @@
 #pragma warning disable IDE0005
 #pragma warning disable CA1802 // warning CA1802: Field 'EnableAlerts' is declared as 'readonly' but is initialized with a constant value. Mark this field as 'const' instead.
 
-using EpicGames.Core;
-using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Abstractions;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
-using System.IO;
 using System.Reflection;
 using System.Text.Json;
-using System.Xml;
+using System.Text.Json.Serialization;
+using EpicGames.Core;
+using EpicGames.Horde.Tools;
 
 namespace UnrealGameSync
 {
@@ -21,14 +18,29 @@ namespace UnrealGameSync
 	public partial class DeploymentSettings
 	{
 		/// <summary>
+		/// Default update source for UGS
+		/// </summary>
+		public LauncherUpdateSource UpdateSource { get; set; }
+
+		/// <summary>
 		/// Url for the Horde server
 		/// </summary>
 		public string? HordeUrl { get; set; }
 
 		/// <summary>
+		/// Identifier for the tool to sync from UGS
+		/// </summary>
+		public ToolId HordeToolId { get; set; } = new ToolId("ugs-win");
+
+		/// <summary>
 		/// SQL connection string used to connect to the database for telemetry and review data.
 		/// </summary>
 		public string? ApiUrl { get; set; }
+
+		/// <summary>
+		/// Default Perforce server to connect to
+		/// </summary>
+		public string? DefaultPerforceServer { get; set; }
 
 		/// <summary>
 		/// Servers to connect to for issue details by default
@@ -78,6 +90,7 @@ namespace UnrealGameSync
 					{
 						byte[] data = FileReference.ReadAllBytes(settingsFile);
 						JsonSerializerOptions options = new JsonSerializerOptions { AllowTrailingCommas = true, PropertyNameCaseInsensitive = true, ReadCommentHandling = JsonCommentHandling.Skip };
+						options.Converters.Add(new JsonStringEnumConverter());
 						s_instance = JsonSerializer.Deserialize<DeploymentSettings>(data, options);
 					}
 

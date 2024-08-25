@@ -103,12 +103,10 @@ class DNAAPI BehaviorWriter : public virtual DefinitionWriter {
         virtual void setPSDValues(const float* weights, std::uint16_t count) = 0;
         /**
             @brief Number of rows in the entire, uncompressed joint matrix.
-            @see Joints
         */
         virtual void setJointRowCount(std::uint16_t rowCount) = 0;
         /**
             @brief Number of columns in the entire, uncompressed joint matrix.
-            @see Joints
         */
         virtual void setJointColumnCount(std::uint16_t columnCount) = 0;
         /**
@@ -141,7 +139,6 @@ class DNAAPI BehaviorWriter : public virtual DefinitionWriter {
                 The source address from which the lod bounds are to be copied.
             @param count
                 The number of lod bounds to copy.
-            @see Joints
         */
         virtual void setJointGroupLODs(std::uint16_t jointGroupIndex, const std::uint16_t* lods, std::uint16_t count) = 0;
         /**
@@ -157,7 +154,6 @@ class DNAAPI BehaviorWriter : public virtual DefinitionWriter {
                 The source address from which the column indices are to be copied.
             @param count
                 The number of column indices to copy.
-            @see Joints
         */
         virtual void setJointGroupInputIndices(std::uint16_t jointGroupIndex,
                                                const std::uint16_t* inputIndices,
@@ -175,7 +171,6 @@ class DNAAPI BehaviorWriter : public virtual DefinitionWriter {
                 The source address from which the row indices are to be copied.
             @param count
                 The number of row indices to copy.
-            @see Joints
         */
         virtual void setJointGroupOutputIndices(std::uint16_t jointGroupIndex,
                                                 const std::uint16_t* outputIndices,
@@ -191,7 +186,6 @@ class DNAAPI BehaviorWriter : public virtual DefinitionWriter {
                 The source address from which the values are to be copied.
             @param count
                 The number of values to copy.
-            @see Joints
         */
         virtual void setJointGroupValues(std::uint16_t jointGroupIndex, const float* values, std::uint32_t count) = 0;
         /**
@@ -205,7 +199,6 @@ class DNAAPI BehaviorWriter : public virtual DefinitionWriter {
                 The source address from which the joint indices are to be copied.
             @param count
                 The number of joint indices to copy.
-            @see Joints
         */
         virtual void setJointGroupJointIndices(std::uint16_t jointGroupIndex,
                                                const std::uint16_t* jointIndices,
@@ -222,7 +215,6 @@ class DNAAPI BehaviorWriter : public virtual DefinitionWriter {
             @warning
                 The LOD values set here are not interchangeable with the LOD indices set in DefinitionWriter::setBlendShapeNameIndices
                 and DefinitionWriter::setLODBlendShapeMapping
-            @see BlendShapes
         */
         virtual void setBlendShapeChannelLODs(const std::uint16_t* lods, std::uint16_t count) = 0;
         /**
@@ -231,7 +223,6 @@ class DNAAPI BehaviorWriter : public virtual DefinitionWriter {
                 The source address from which the input indices are to be copied.
             @param count
                 The number of input indices to copy.
-            @see BlendShapes
         */
         virtual void setBlendShapeChannelInputIndices(const std::uint16_t* inputIndices, std::uint16_t count) = 0;
         /**
@@ -240,7 +231,6 @@ class DNAAPI BehaviorWriter : public virtual DefinitionWriter {
                 The source address from which the output indices are to be copied.
             @param count
                 The number of output indices to copy.
-            @see BlendShapes
         */
         virtual void setBlendShapeChannelOutputIndices(const std::uint16_t* outputIndices, std::uint16_t count) = 0;
         /**
@@ -253,7 +243,6 @@ class DNAAPI BehaviorWriter : public virtual DefinitionWriter {
                 The source address from which the lod bounds are to be copied.
             @param count
                 The number of lod bounds to copy.
-            @see AnimatedMaps
         */
         virtual void setAnimatedMapLODs(const std::uint16_t* lods, std::uint16_t count) = 0;
         /**
@@ -262,7 +251,6 @@ class DNAAPI BehaviorWriter : public virtual DefinitionWriter {
                 The source address from which the input indices are to be copied.
             @param count
                 The number of input indices to copy.
-            @see AnimatedMaps
         */
         virtual void setAnimatedMapInputIndices(const std::uint16_t* inputIndices, std::uint16_t count) = 0;
         /**
@@ -271,7 +259,6 @@ class DNAAPI BehaviorWriter : public virtual DefinitionWriter {
                 The source address from which the output indices are to be copied.
             @param count
                 The number of output indices to copy.
-            @see AnimatedMaps
         */
         virtual void setAnimatedMapOutputIndices(const std::uint16_t* outputIndices, std::uint16_t count) = 0;
         /**
@@ -281,7 +268,6 @@ class DNAAPI BehaviorWriter : public virtual DefinitionWriter {
                 The source address from which the filter values are to be copied.
             @param count
                 The number of filter values to copy.
-            @see AnimatedMaps
         */
         virtual void setAnimatedMapFromValues(const float* fromValues, std::uint16_t count) = 0;
         /**
@@ -291,7 +277,6 @@ class DNAAPI BehaviorWriter : public virtual DefinitionWriter {
                 The source address from which the filter values are to be copied.
             @param count
                 The number of filter values to copy.
-            @see AnimatedMaps
         */
         virtual void setAnimatedMapToValues(const float* toValues, std::uint16_t count) = 0;
         /**
@@ -300,7 +285,6 @@ class DNAAPI BehaviorWriter : public virtual DefinitionWriter {
                 The source address from which the computational values are to be copied.
             @param count
                 The number of computational values to copy.
-            @see AnimatedMaps
         */
         virtual void setAnimatedMapSlopeValues(const float* slopeValues, std::uint16_t count) = 0;
         /**
@@ -309,7 +293,6 @@ class DNAAPI BehaviorWriter : public virtual DefinitionWriter {
                 The source address from which the computational values are to be copied.
             @param count
                 The number of computational values to copy.
-            @see AnimatedMaps
         */
         virtual void setAnimatedMapCutValues(const float* cutValues, std::uint16_t count) = 0;
 };

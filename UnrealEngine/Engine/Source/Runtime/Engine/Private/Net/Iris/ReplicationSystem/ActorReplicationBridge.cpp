@@ -30,9 +30,15 @@
 #include "Engine/Level.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/PlayerController.h"
+#include "HAL/LowLevelMemStats.h"
 #include "Net/DataBunch.h"
+#include "Net/DataChannel.h"
+#include "Net/Core/Connection/NetCloseResult.h"
 #include "Net/Core/Misc/NetSubObjectRegistry.h"
+#include "Net/Core/Trace/NetDebugName.h"
 #include "Net/NetSubObjectRegistryGetter.h"
+#include "ProfilingDebugging/AssetMetadataTrace.h"
 #include "Templates/Casts.h"
 #include "UObject/Package.h"
 #include <limits>
@@ -41,18 +47,15 @@
 
 extern bool GDefaultUseSubObjectReplicationList;
 
-namespace UE::Net
-{
-
-bool ShouldUseIrisReplication(const UObject* Object)
-{
-	return ShouldUseIrisReplication();
-}
-
-}
-
 namespace UE::Net::Private
 {
+
+static bool bEnableActorLevelChanges = true;
+static FAutoConsoleVariableRef CVarEnableActorLevelChanges(
+	TEXT("net.Iris.EnableActorLevelChanges"),
+	bEnableActorLevelChanges,
+	TEXT("When true the ActorReplicationBridge will process actors that change levels by updating the actor's level groups.")
+);
 
 bool IsActorValidForIrisReplication(const AActor* Actor)
 {
@@ -73,13 +76,20 @@ void ActorReplicationBridgePreUpdateFunction(FNetRefHandle Handle, UObject* Inst
 	}
 }
 
-void ActorReplicationBridgeGetActorWorldObjectInfo(FNetRefHandle Handle, const UObject* Instance, FVector& OutWorldLocation, float& OutCullDistance)
+void ActorReplicationBridgeGetActorWorldObjectInfo(FNetRefHandle /*Handle*/, const UObject* Instance, FVector& OutWorldLocation, float& OutCullDistance)
 {
 	if (const AActor* Actor = Cast<AActor>(Instance))
 	{
 		OutWorldLocation = Actor->GetActorLocation();
 		OutCullDistance = Actor->NetCullDistanceSquared > 0.0f ? FMath::Sqrt(Actor->NetCullDistanceSquared) : 0.0f;
 	}
+}
+
+bool ShouldIncludeActorInLevelGroups(const AActor* Actor)
+{
+	// Never filter out PlayerControllers based on level as they are required for travel.
+	// Preserves the special case for PlayerControllers from UNetDriver::IsLevelInitializedForActor.
+	return !Actor->IsA<APlayerController>();
 }
 
 } // end namespace UE::Net::Private
@@ -97,6 +107,8 @@ UActorReplicationBridge::UActorReplicationBridge()
 void UActorReplicationBridge::Initialize(UReplicationSystem* InReplicationSystem)
 {
 	Super::Initialize(InReplicationSystem);
+
+	ensureMsgf(GDefaultUseSubObjectReplicationList, TEXT("Iris requires replicated actors to use registered subobjectslists. Add \n[SystemSettings]\nnet.SubObjects.DefaultUseSubObjectReplicationList=1\n to your DefaultEngine.ini"));
 
 	{
 		auto ShouldSpatialize = [](const UClass* Class)
@@ -155,75 +167,79 @@ UActorReplicationBridge::~UActorReplicationBridge()
 	}
 }
 
+void UActorReplicationBridge::Deinitialize()
+{
+	if (NetDriver)
+	{
+		NetDriver->OnNetServerMaxTickRateChanged.RemoveAll(this);
+	}
+	Super::Deinitialize();
+}
+
 UE::Net::FNetRefHandle UActorReplicationBridge::BeginReplication(AActor* Actor, const FActorBeginReplicationParams& Params)
 {
 	using namespace UE::Net;
 
-	if (!ShouldUseIrisReplication(Actor))
-	{
-		return FNetRefHandle();
-	}
-
 	if (!ensureMsgf(Actor == nullptr || !(Actor->HasAnyFlags(RF_ClassDefaultObject | RF_ArchetypeObject)), TEXT("Actor %s is a CDO or Archetype and should not be replicated."), ToCStr(GetFullNameSafe(Actor))))
 	{
-		return FNetRefHandle();
+		return FNetRefHandle::GetInvalid();
 	}
 
 	const bool bIsNetActor = ULevel::IsNetActor(Actor);
 	if (!bIsNetActor)
 	{
 		UE_LOG_ACTORREPLICATIONBRIDGE(VeryVerbose, TEXT("Actor %s doesn't have a NetRole."), ToCStr(GetFullNameSafe(Actor)));
-		return FNetRefHandle();
+		return FNetRefHandle::GetInvalid();
 	}
 
 	if (Actor->GetLocalRole() != ROLE_Authority)
 	{
 		UE_LOG_ACTORREPLICATIONBRIDGE(VeryVerbose, TEXT("Actor %s NetRole isn't Authority."), ToCStr(GetFullNameSafe(Actor)));
-		return FNetRefHandle();
+		return FNetRefHandle::GetInvalid();
 	}
 
 	if (Actor->IsActorBeingDestroyed() || !IsValid(Actor) || Actor->IsUnreachable())
 	{
 		UE_LOG_ACTORREPLICATIONBRIDGE(Verbose, TEXT("Actor %s is being destroyed or unreachable and can't be replicated."), ToCStr(GetFullNameSafe(Actor)));
-		return FNetRefHandle();
+		return FNetRefHandle::GetInvalid();
 	}
 
 	if (!Actor->GetIsReplicated())
 	{
 		UE_LOG_ACTORREPLICATIONBRIDGE(Verbose, TEXT("Actor %s is not supposed to be replicated."), ToCStr(GetFullNameSafe(Actor)));
-		return FNetRefHandle();
+		return FNetRefHandle::GetInvalid();
 	}
 
 	if (Actor->GetTearOff())
 	{
 		UE_LOG_ACTORREPLICATIONBRIDGE(Verbose, TEXT("Actor %s is torn off and should not be replicated."), ToCStr(GetFullNameSafe(Actor)));
-		return FNetRefHandle();
+		return FNetRefHandle::GetInvalid();
 	}
 
 	if (!Actor->IsActorInitialized())
 	{
 		UE_LOG_ACTORREPLICATIONBRIDGE(Warning, TEXT("Actor %s is not initialized and won't be replicated."), ToCStr(GetFullNameSafe(Actor)));
-		return FNetRefHandle();
+		return FNetRefHandle::GetInvalid();
 	}
 
 	if (!NetDriver)
 	{
 		UE_LOG_ACTORREPLICATIONBRIDGE(VeryVerbose, TEXT("There's no NetDriver so nothing can be replicated."));
-		return FNetRefHandle();
+		return FNetRefHandle::GetInvalid();
 	}
 
 
 	if (!NetDriver->ShouldReplicateActor(Actor))
 	{
 		UE_LOG_ACTORREPLICATIONBRIDGE(VeryVerbose, TEXT("Actor %s doesn't want to replicate with NetDriver %s."), ToCStr(GetFullNameSafe(Actor)), ToCStr(NetDriver->GetName()));
-		return FNetRefHandle();
+		return FNetRefHandle::GetInvalid();
 	}
 
 	// Initially dormant actors begin replication when their dormancy is flushed
 	const ENetDormancy Dormancy = Actor->NetDormancy;	
 	if (Actor->IsNetStartupActor() && (Dormancy == DORM_Initial))
 	{
-		return FNetRefHandle();
+		return FNetRefHandle::GetInvalid();
 	}
 
 	FNetRefHandle ExistingHandle = GetReplicatedRefHandle(Actor);
@@ -235,14 +251,15 @@ UE::Net::FNetRefHandle UActorReplicationBridge::BeginReplication(AActor* Actor, 
 	if (!Actor->IsUsingRegisteredSubObjectList())
 	{
 		// Ensure the first time to get attention!
-		ensureMsgf(GDefaultUseSubObjectReplicationList, TEXT("Iris requires replicated actors to use registered subobjectslists. Add \n[SystemSettings]\nnet.SubObjects.DefaultUseSubObjectReplicationList=1\n to your DefaultEngine.ini"));
+		ensureMsgf(false, TEXT("Actor %s does not replicate subobjects using the registered SubObjectsLists, SubObjects will not replicate properly"), ToCStr(GetFullNameSafe(Actor)));
 		UE_LOG_ACTORREPLICATIONBRIDGE(Warning, TEXT("Actor %s does not replicate subobjects using the registered SubObjectsLists, SubObjects will not replicate properly"), ToCStr(GetFullNameSafe(Actor)));
 	}
 
 	// Create handles for the registered fragments
-	Super::FCreateNetRefHandleParams CreateNetRefHandleParams = DefaultCreateNetRefHandleParams;
+	Super::FCreateNetRefHandleParams CreateNetRefHandleParams = UObjectReplicationBridge::DefaultCreateNetRefHandleParams;
 	CreateNetRefHandleParams.bNeedsPreUpdate = 1U;
 	CreateNetRefHandleParams.bNeedsWorldLocationUpdate = 1U;
+	CreateNetRefHandleParams.bIsDormant = Actor->NetDormancy > DORM_Awake;
 	CreateNetRefHandleParams.StaticPriority = (Actor->bAlwaysRelevant || Actor->bOnlyRelevantToOwner) ? Actor->NetPriority : 0.0f;
 	CreateNetRefHandleParams.PollFrequency = Actor->NetUpdateFrequency;
 
@@ -255,14 +272,24 @@ UE::Net::FNetRefHandle UActorReplicationBridge::BeginReplication(AActor* Actor, 
 	if (!ActorRefHandle.IsValid())
 	{
 		ensureMsgf(false, TEXT("Failed to create NetRefHandle for Actor Named %s"), ToCStr(Actor->GetName()));
-		return FNetRefHandle();
+		return FNetRefHandle::GetInvalid();
 	}
+
+    UE_CLOG(Actor->bAlwaysRelevant, LogIrisBridge, Verbose, TEXT("BeginReplication of AlwaysRelevant actor %s"), *PrintObjectFromNetRefHandle(ActorRefHandle));
 
 	// Set owning connection filtering if actor is only relevant to owner
 	{
 		if (Actor->bOnlyRelevantToOwner && !Actor->bAlwaysRelevant)
 		{
-			GetReplicationSystem()->SetFilter(ActorRefHandle, ToOwnerFilterHandle);
+			// Only apply owner filter if we haven't force enabled a dynamic filter.
+			constexpr bool bRequireForceEnabled = true;
+			FName FilterProfile;
+			FNetObjectFilterHandle FilterHandle = GetDynamicFilter(Actor->GetClass(), bRequireForceEnabled, FilterProfile);
+
+			if (FilterHandle == InvalidNetObjectFilterHandle)
+			{
+				GetReplicationSystem()->SetFilter(ActorRefHandle, ToOwnerFilterHandle);
+			}
 		}
 	}
 
@@ -282,30 +309,8 @@ UE::Net::FNetRefHandle UActorReplicationBridge::BeginReplication(AActor* Actor, 
 		}
 	}
 
-	// Setup Level filtering unless this actor belongs to the persistent level
-	{
-		ULevel* Level = Actor->GetLevel();
-		if (Params.bIncludeInLevelGroupFilter && (!Level->IsPersistentLevel() || (Level != NetDriver->GetWorld()->PersistentLevel)))
-		{
-			const UPackage* const LevelPackage = Level->GetOutermost();
-			const FName PackageName = LevelPackage->GetFName();
-
-			FNetObjectGroupHandle LevelGroup = GetLevelGroup(Level);
-			if (!LevelGroup)
-			{
-				LevelGroup = CreateLevelGroup(Level);
-
-				UE_LOG_ACTORREPLICATIONBRIDGE(Log, TEXT("Created new GroupIndex: %u for Level: %s"), LevelGroup, ToCStr(PackageName.ToString()));
-
-				// Update the filtering status of the group based on current level visibility for all connections
-				NetDriver->UpdateGroupFilterStatusForLevel(Level, LevelGroup);
-			}
-
-			// Add object to group
-			UE_LOG_ACTORREPLICATIONBRIDGE(Verbose, TEXT("Added %s to GroupIndex: %u Level: %s"), *ActorRefHandle.ToString(), LevelGroup, ToCStr(PackageName.ToString()));
-			GetReplicationSystem()->AddToGroup(LevelGroup, ActorRefHandle);	
-		}
-	}
+	// Setup Level filtering
+	AddActorToLevelGroup(Actor);
 
 	// If we have registered sub objects we replicate them as well
 	const FSubObjectRegistry& ActorSubObjects = FSubObjectRegistryGetter::GetSubObjects(Actor);
@@ -346,9 +351,9 @@ UE::Net::FNetRefHandle UActorReplicationBridge::BeginReplication(FNetRefHandle O
 {
 	using namespace UE::Net;
 
-	if (!OwnerHandle.IsValid() || !ShouldUseIrisReplication(SubObject))
+	if (!OwnerHandle.IsValid())
 	{
-		return FNetRefHandle();
+		return FNetRefHandle::GetInvalid();
 	}
 
 	AActor* Owner = SubObject->GetOwner();
@@ -364,7 +369,7 @@ UE::Net::FNetRefHandle UActorReplicationBridge::BeginReplication(FNetRefHandle O
 			|| SubObject->HasAnyFlags(RF_ArchetypeObject | RF_ClassDefaultObject)
 		)
 		{
-			return FNetRefHandle();
+			return FNetRefHandle::GetInvalid();
 		}
 
 		if (!SubObject->IsUsingRegisteredSubObjectList())
@@ -374,7 +379,7 @@ UE::Net::FNetRefHandle UActorReplicationBridge::BeginReplication(FNetRefHandle O
 
 		if (RepComponentInfo == nullptr || RepComponentInfo->NetCondition == ELifetimeCondition::COND_Never)
 		{
-			return FNetRefHandle();
+			return FNetRefHandle::GetInvalid();
 		}
 
 		// Start replicating the subobject with its owner.
@@ -384,7 +389,7 @@ UE::Net::FNetRefHandle UActorReplicationBridge::BeginReplication(FNetRefHandle O
 	if (!ReplicatedComponentHandle.IsValid())
 	{
 		ensureMsgf(false, TEXT("Failed to create or find NetRefHandle for ActorComponent Named %s"), ToCStr(SubObject->GetName()));
-		return FNetRefHandle();
+		return FNetRefHandle::GetInvalid();
 	}
 
 	// Update or set any conditionals
@@ -414,16 +419,24 @@ void UActorReplicationBridge::EndReplication(AActor* Actor, EEndPlayReason::Type
 {
 	using namespace UE::Net;
 
-	FNetRefHandle RefHandle = GetReplicatedRefHandle(Actor);
+	FNetRefHandle RefHandle = GetReplicatedRefHandle(Actor, EGetRefHandleFlags::EvenIfGarbage);
 	if (RefHandle.IsValid())
 	{
-		UE_LOG(LogIrisBridge, Verbose, TEXT("EndReplication for %s %s. Reason %s "), *Actor->GetName(), *RefHandle.ToString(), *UEnum::GetValueAsString(TEXT("Engine.EEndPlayReason"), EndPlayReason));
+		UE_LOG(LogIrisBridge, Verbose, TEXT("EndReplication for %s %s. Reason %s "), *GetNameSafe(Actor), *RefHandle.ToString(), *UEnum::GetValueAsString(TEXT("Engine.EEndPlayReason"), EndPlayReason));
+		ensureMsgf(IsValid(Actor), TEXT("Calling EndReplication for Invalid Object for %s %s."), *GetNameSafe(Actor), *RefHandle.ToString());
 	
 		EEndReplicationFlags Flags = EEndReplicationFlags::None;
 		const bool bShouldDestroyObject = EndPlayReason == EEndPlayReason::Destroyed;		
 		if (bShouldDestroyObject)
 		{ 
 			Flags |= EEndReplicationFlags::Destroy | EEndReplicationFlags::DestroyNetHandle | EEndReplicationFlags::ClearNetPushId;
+		}
+
+		// If we are shutting down or the actor is a nettemporary we do not need to validate that we are not detaching remote instances by accident.
+		const bool bIsShuttingDown = (EndPlayReason == EEndPlayReason::EndPlayInEditor) || (EndPlayReason == EEndPlayReason::Quit);
+		if (bIsShuttingDown || Actor->bNetTemporary)
+		{
+			Flags |= EEndReplicationFlags::SkipPendingEndReplicationValidation;
 		}
 					
 		const bool bShouldCreateDestructionInfo = RefHandle.IsStatic() && bShouldDestroyObject && GetReplicationSystem()->IsServer();
@@ -448,11 +461,11 @@ void UActorReplicationBridge::EndReplicationForActorComponent(UActorComponent* A
 {
 	using namespace UE::Net;
 
-	FNetRefHandle ComponentHandle = GetReplicatedRefHandle(ActorComponent);
-	const AActor* Actor = ActorComponent->GetOwner();
-	if (ComponentHandle.IsValid() && Actor)
+	FNetRefHandle ComponentHandle = GetReplicatedRefHandle(ActorComponent, EGetRefHandleFlags::EvenIfGarbage);
+	if (ComponentHandle.IsValid())
 	{
-		UE_LOG(LogIrisBridge, Verbose, TEXT("EndReplicationForActorComponent for %s %s."), *ActorComponent->GetName(), *ComponentHandle.ToString());
+		UE_LOG(LogIrisBridge, Verbose, TEXT("EndReplicationForActorComponent for %s %s."), *GetNameSafe(ActorComponent), *ComponentHandle.ToString());
+		ensureMsgf(IsValid(ActorComponent), TEXT("Calling EndReplication for Invalid Object for %s %s."), *GetNameSafe(ActorComponent), *ComponentHandle.ToString());
 		
 		UObjectReplicationBridge::EndReplication(ComponentHandle, EndReplicationFlags, nullptr);
 	}
@@ -481,9 +494,11 @@ bool UActorReplicationBridge::WriteCreationHeader(UE::Net::FNetSerializationCont
 	}
 	else if (Object)
 	{
+		const UObject* RootObject = GetReplicatedObject(GetRootObjectOfSubObject(Handle));
+
 		// Get Header
 		FSubObjectCreationHeader Header;
-		GetSubObjectCreationHeader(Object, Header);
+		GetSubObjectCreationHeader(Object, RootObject, Header);
 
 		// Serialize the data
 		// Indicate that this is a SubObject
@@ -493,7 +508,7 @@ bool UActorReplicationBridge::WriteCreationHeader(UE::Net::FNetSerializationCont
 		return !Writer->IsOverflown();
 	}
 
-	ensureMsgf(false, TEXT("UActorReplicationBridge::WriteCreationHeader Failed to write creationHeader for NetRefHandle (Id=%u)"), Handle.GetId());
+	ensureMsgf(false, TEXT("UActorReplicationBridge::WriteCreationHeader Failed to write creationHeader for NetRefHandle (Id=%u) %s"), Handle.GetId(), ToCStr(GetReplicationSystem()->GetDebugName(Handle)));
 
 	return false;
 }
@@ -529,7 +544,7 @@ UObjectReplicationBridge::FCreationHeader* UActorReplicationBridge::ReadCreation
 	return nullptr;
 }
 
-FObjectReplicationBridgeInstantiateResult UActorReplicationBridge::BeginInstantiateFromRemote(FNetRefHandle SubObjectOwnerNetHandle, const UE::Net::FNetObjectResolveContext& ResolveContext, const UObjectReplicationBridge::FCreationHeader* InHeader)
+FObjectReplicationBridgeInstantiateResult UActorReplicationBridge::BeginInstantiateFromRemote(FNetRefHandle RootObjectOfSubObject, const UE::Net::FNetObjectResolveContext& ResolveContext, const UObjectReplicationBridge::FCreationHeader* InHeader)
 {
 	using namespace UE::Net::Private;
 
@@ -559,6 +574,9 @@ FObjectReplicationBridgeInstantiateResult UActorReplicationBridge::BeginInstanti
 
 			if (Archetype)
 			{
+				LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH(Archetype->GetPackage(), ELLMTagSet::Assets);
+				LLM_SCOPE_DYNAMIC_STAT_OBJECTPATH(Archetype->GetClass(), ELLMTagSet::AssetClasses);
+				UE_TRACE_METADATA_SCOPE_ASSET(Archetype, Archetype->GetClass());
 				// For streaming levels, it's possible that the owning level has been made not-visible but is still loaded.
 				// In that case, the level will still be found but the owning world will be invalid.
 				// If that happens, wait to spawn the Actor until the next time the level is streamed in.
@@ -608,8 +626,7 @@ FObjectReplicationBridgeInstantiateResult UActorReplicationBridge::BeginInstanti
 			}
 			else
 			{
-				UE_LOG_ACTORREPLICATIONBRIDGE(Warning, TEXT("OnBeginInstantiateFromRemote Unable to spawn object, failed to resolve archetype with %s"), *(Header->ArchetypeReference.GetRefHandle().ToString()));
-				check(false);
+				UE_LOG_ACTORREPLICATIONBRIDGE(Error, TEXT("OnBeginInstantiateFromRemote Unable to spawn object, failed to resolve archetype with %s"), *DescribeObjectReference(Header->ArchetypeReference, ResolveContext));
 			}
 		}
 		else
@@ -626,7 +643,7 @@ FObjectReplicationBridgeInstantiateResult UActorReplicationBridge::BeginInstanti
 			}
 			else
 			{
-				UE_LOG_ACTORREPLICATIONBRIDGE(Warning, TEXT("OnBeginInstantiateFromRemote Failed to find Resolve ObjectReference for static Actor %s"), *Header->ObjectReference.ToString());
+				UE_LOG_ACTORREPLICATIONBRIDGE(Error, TEXT("OnBeginInstantiateFromRemote Failed to find Resolve ObjectReference for static Actor %s"), *DescribeObjectReference(Header->ObjectReference, ResolveContext));
 			}
 		}
 	}
@@ -637,11 +654,9 @@ FObjectReplicationBridgeInstantiateResult UActorReplicationBridge::BeginInstanti
 		// Spawn sub object
 		if (Header->bIsDynamic)
 		{
-			// Resolve owner
-			UObject* ResolvedOwnerObject = GetReplicatedObject(SubObjectOwnerNetHandle);
-			AActor* Owner = Cast<AActor>(ResolvedOwnerObject);
-
-			check(Owner);
+			// Resolve root object
+			UObject* RootObject = GetReplicatedObject(RootObjectOfSubObject);
+			AActor* RootActor = CastChecked<AActor>(RootObject);
 			
 			UObject* SubObj = nullptr;
 
@@ -652,27 +667,48 @@ FObjectReplicationBridgeInstantiateResult UActorReplicationBridge::BeginInstanti
 
 				if (!SubObj)
 				{
-					UE_LOG_ACTORREPLICATIONBRIDGE(Warning, TEXT("BeginInstantiateFromRemote Failed to find subobjectReference for dynamic SubObject %s, Owner %s (%s)"), *Header->ObjectReference.ToString(), *SubObjectOwnerNetHandle.ToString(), *GetPathNameSafe(GetReplicatedObject(SubObjectOwnerNetHandle)));
+					UE_LOG_ACTORREPLICATIONBRIDGE(Error, TEXT("BeginInstantiateFromRemote Failed to find stable name reference of dynamic SubObject %s, Owner %s, RootObject %s"), *DescribeObjectReference(Header->ObjectReference, ResolveContext), *RootObjectOfSubObject.ToString(), *GetPathNameSafe(RootActor));
 				}
 			}
 			else
 			{
-				UObject* ObjOuter = Owner;
+				// Find the proper Outer
+				UObject* OuterObject = nullptr;
+				if (Header->bOuterIsTransientLevel)
+				{
+					OuterObject = GetTransientPackage();
+				}
+				else if (Header->bOuterIsRootObject)
+				{
+					OuterObject = RootActor;
+				}				
+				else
+				{
+					OuterObject = ResolveObjectReference(Header->OuterReference, ResolveContext);
+
+					if (!OuterObject)
+					{
+						UE_LOG_ACTORREPLICATIONBRIDGE(Error, TEXT("BeginInstantiateFromRemote Failed to find Outer %s for dynamic subobject %s"), *DescribeObjectReference(Header->OuterReference, ResolveContext), *DescribeObjectReference(Header->ObjectReference, ResolveContext))
+
+						// Fallback to the rootobject instead
+						OuterObject = RootActor;
+					}
+				}
 
 				// We need to spawn the subobject
 				UObject* SubObjClassObj = ResolveObjectReference(Header->ObjectClassReference, ResolveContext);
 				UClass * SubObjClass = Cast<UClass>(SubObjClassObj);
 
 				// Try to spawn SubObject
- 				SubObj = NewObject<UObject>(Owner, SubObjClass);
+ 				SubObj = NewObject<UObject>(OuterObject, SubObjClass);
 
 				// Sanity check some things
-				checkf(SubObj != nullptr, TEXT("UActorReplicationBridge::BeginInstantiateFromRemote: Subobject is NULL after instantiating. Class: %s, Actor %s"), *GetNameSafe(SubObjClass), *Owner->GetName());
-				checkf(SubObj->IsIn(ObjOuter), TEXT("UActorReplicationBridge::BeginInstantiateFromRemote: Subobject is not in Outer. SubObject: %s, Actor: %s Outer: %s"), *SubObj->GetName(), *Owner->GetName(), *ObjOuter->GetName());
-				checkf(Cast<AActor>(SubObj) == nullptr, TEXT("UActorReplicationBridge::BeginInstantiateFromRemote: Subobject is an Actor. SubObject: %s, Actor: %s"), *SubObj->GetName(), *Owner->GetName());
+				checkf(SubObj != nullptr, TEXT("UActorReplicationBridge::BeginInstantiateFromRemote: Subobject is NULL after instantiating. Class: %s, Outer %s, Actor %s"), *GetNameSafe(SubObjClass), *GetNameSafe(OuterObject), *GetNameSafe(RootActor));
+				checkf(!OuterObject || SubObj->IsIn(OuterObject), TEXT("UActorReplicationBridge::BeginInstantiateFromRemote: Subobject is not in Outer. SubObject: %s, Outer %s, Actor %s"), *SubObj->GetName(), *GetNameSafe(OuterObject), *GetNameSafe(RootActor));
+				checkf(Cast<AActor>(SubObj) == nullptr, TEXT("UActorReplicationBridge::BeginInstantiateFromRemote: Subobject is an Actor. SubObject: %s, Outer %s, Actor %s"), *SubObj->GetName(), *GetNameSafe(OuterObject), *GetNameSafe(RootActor));
 
-				// Notify actor that we created a component from replication
-				Owner->OnSubobjectCreatedFromReplication(SubObj);
+				// We must defer call OnSubObjectCreatedFromReplication after the state has been applied to the owning actor in order to behave like old system.
+				InstantiateResult.Flags |= EReplicationBridgeCreateNetRefHandleResultFlags::ShouldCallSubObjectCreatedFromReplication;
 
 				// Created objects may be destroyed.
 				InstantiateResult.Flags |= EReplicationBridgeCreateNetRefHandleResultFlags::AllowDestroyInstanceFromRemote;
@@ -693,7 +729,8 @@ FObjectReplicationBridgeInstantiateResult UActorReplicationBridge::BeginInstanti
 			}
 			else
 			{
-				UE_LOG_ACTORREPLICATIONBRIDGE(Warning, TEXT("BeginInstantiateFromRemote Failed to find Resolve SubObjectReference for static SubObject %s, Owner %s (%s)"), *Header->ObjectReference.ToString(), *SubObjectOwnerNetHandle.ToString(), *GetPathNameSafe(GetReplicatedObject(SubObjectOwnerNetHandle)));
+				UE_LOG_ACTORREPLICATIONBRIDGE(Error, TEXT("BeginInstantiateFromRemote Failed to find Resolve SubObjectReference for static SubObject %s, Owner %s (%s)"), 
+				*DescribeObjectReference(Header->ObjectReference, ResolveContext), *RootObjectOfSubObject.ToString(), *GetPathNameSafe(GetReplicatedObject(RootObjectOfSubObject)));
 			}			
 		}
 	}
@@ -710,11 +747,11 @@ bool UActorReplicationBridge::OnInstantiatedFromRemote(UObject* Instance, const 
 	if (BridgeHeader->bIsActor)
 	{
 		const FActorCreationHeader* Header = static_cast<const FActorCreationHeader*>(InHeader);
-
-		if (Header->bIsDynamic)
+		
+		AActor* Actor = CastChecked<AActor>(Instance);
+		if (Actor)
 		{
 			// OnActorChannelOpen
-			AActor* Actor = CastChecked<AActor>(Instance);
 			{
 				UNetConnection* Connection = NetDriver->GetConnectionById(ConnectionId);
 				FInBunch Bunch(Connection, const_cast<uint8*>(Header->CustomCreationData.GetData()), Header->CustomCreationDataBitCount);
@@ -727,6 +764,9 @@ bool UActorReplicationBridge::OnInstantiatedFromRemote(UObject* Instance, const 
 					return false;
 				}
 			}
+
+			// Wake up from dormancy. This is important for client replays.
+			WakeUpObjectInstantiatedFromRemote(Actor);
 		}
 	}
 	
@@ -744,35 +784,30 @@ void UActorReplicationBridge::EndInstantiateFromRemote(FNetRefHandle Handle)
 	}
 }
 
-void UActorReplicationBridge::DestroyInstanceFromRemote(UObject* Instance, EReplicationBridgeDestroyInstanceReason DestroyReason, EReplicationBridgeDestroyInstanceFlags DestroyFlags)
+void UActorReplicationBridge::OnSubObjectCreatedFromReplication(FNetRefHandle SubObjectHandle)
 {
-	if (DestroyReason == EReplicationBridgeDestroyInstanceReason::DoNotDestroy)
+	AActor* RootObject = Cast<AActor>(GetReplicatedObject(GetRootObjectOfSubObject(SubObjectHandle)));
+	UObject* SubObject = GetReplicatedObject(SubObjectHandle);
+	if (IsValid(RootObject) && IsValid(SubObject))
+	{
+		RootObject->OnSubobjectCreatedFromReplication(SubObject);
+	}
+}
+
+void UActorReplicationBridge::DestroyInstanceFromRemote(const FDestroyInstanceParams& Params)
+{
+	if (Params.DestroyReason == EReplicationBridgeDestroyInstanceReason::DoNotDestroy)
 	{
 		return;
 	}
 
-	if (AActor* Actor = Cast<AActor>(Instance))
+	if (AActor* Actor = Cast<AActor>(Params.Instance))
 	{
-		if ((DestroyReason == EReplicationBridgeDestroyInstanceReason::TearOff) && !NetDriver->ShouldClientDestroyTearOffActors())
+		if ((Params.DestroyReason == EReplicationBridgeDestroyInstanceReason::TearOff) && !NetDriver->ShouldClientDestroyTearOffActors())
 		{
-			if (Actor->GetRemoteRole() == ROLE_Authority)
-			{
-				Actor->SetRole(ROLE_Authority);
-				Actor->SetReplicates(false);
-
-				if (Actor->GetWorld() != nullptr && !IsEngineExitRequested())
-				{
-					Actor->TornOff();
-				}
-
-				NetDriver->NotifyActorTornOff(Actor);
-			}
-			else
-			{
-				UE_LOG_ACTORREPLICATIONBRIDGE(Warning, TEXT("Trying to tear off actor which doesn't support it: %s"), ToCStr(GetNameSafe(Actor)));
-			}
+			NetDriver->ClientSetActorTornOff(Actor);
 		}
-		else if (EnumHasAnyFlags(DestroyFlags, EReplicationBridgeDestroyInstanceFlags::AllowDestroyInstanceFromRemote))
+		else if (EnumHasAnyFlags(Params.DestroyFlags, EReplicationBridgeDestroyInstanceFlags::AllowDestroyInstanceFromRemote))
 		{
 			// Any subobjects have already been detached from ReplicationBridge
 			Actor->PreDestroyFromReplication();
@@ -782,24 +817,24 @@ void UActorReplicationBridge::DestroyInstanceFromRemote(UObject* Instance, ERepl
 	else
 	{
 		// If the SubObject is being torn off it is up to owning actor to clean it up properly
-		if (DestroyReason == EReplicationBridgeDestroyInstanceReason::TearOff)
+		if (Params.DestroyReason == EReplicationBridgeDestroyInstanceReason::TearOff)
 		{
 			return;
 		}
 
-		if (!EnumHasAnyFlags(DestroyFlags, EReplicationBridgeDestroyInstanceFlags::AllowDestroyInstanceFromRemote))
+		if (!EnumHasAnyFlags(Params.DestroyFlags, EReplicationBridgeDestroyInstanceFlags::AllowDestroyInstanceFromRemote))
 		{
 			return;
 		}
 
-		AActor* Owner = Cast<AActor>(Instance->GetOuter());
-		if (ensureMsgf(IsValid(Owner) && !Owner->IsUnreachable(), TEXT("UActorReplicationBridge::DestroyInstanceFromRemote Destroyed subobject after owner %s"), *Instance->GetPathName()))
+		AActor* Owner = Cast<AActor>(Params.RootObject);
+		if (ensureMsgf(IsValid(Owner) && !Owner->IsUnreachable(), TEXT("UActorReplicationBridge::DestroyInstanceFromRemote Destroyed subobject: %s has an invalid owner: %s"), *GetNameSafe(Params.Instance), *GetPathNameSafe(Params.RootObject)))
 		{
-			Owner->OnSubobjectDestroyFromReplication(Instance);
+			Owner->OnSubobjectDestroyFromReplication(Params.Instance);
 		}
 
-		Instance->PreDestroyFromReplication();
-		Instance->MarkAsGarbage();
+		Params.Instance->PreDestroyFromReplication();
+		Params.Instance->MarkAsGarbage();
 	}
 }
 
@@ -829,7 +864,7 @@ void UActorReplicationBridge::GetInitialDependencies(FNetRefHandle Handle, FNetD
 			// customized properties will be incorrect on the Client.
 			if (UChildActorComponent* CAC = Actor->GetParentComponent())
 			{
-				Archetype = CAC->GetChildActorTemplate();
+				Archetype = CAC->GetSpawnableChildActorTemplate();
 			}
 			if (Archetype == nullptr)
 			{
@@ -928,7 +963,7 @@ void UActorReplicationBridge::GetActorCreationHeader(const AActor* Actor, UE::Ne
 		// customized properties will be incorrect on the Client.
 		if (UChildActorComponent* CAC = Actor->GetParentComponent())
 		{
-			Archetype = CAC->GetChildActorTemplate();
+			Archetype = CAC->GetSpawnableChildActorTemplate();
 		}
 		if (Archetype == nullptr)
 		{
@@ -942,7 +977,7 @@ void UActorReplicationBridge::GetActorCreationHeader(const AActor* Actor, UE::Ne
 
 		// Fill in Header
 		Header.ArchetypeReference = GetOrCreateObjectReference(Archetype);
-		Header.bUsePersistentLevel = NetDriver->GetWorld()->PersistentLevel == ActorLevel;
+		Header.bUsePersistentLevel = (UE::Net::Private::SerializeNewActorOverrideLevel == 0) || (NetDriver->GetWorld()->PersistentLevel == ActorLevel);
 		if (!Header.bUsePersistentLevel)
 		{
 			Header.LevelReference = GetOrCreateObjectReference(ActorLevel);
@@ -993,12 +1028,20 @@ void UActorReplicationBridge::GetActorCreationHeader(const AActor* Actor, UE::Ne
 	}
 }
 
-void UActorReplicationBridge::GetSubObjectCreationHeader(const UObject* Object, UE::Net::Private::FSubObjectCreationHeader& Header) const
+void UActorReplicationBridge::GetSubObjectCreationHeader(const UObject* Object, const UObject* RootObject, UE::Net::Private::FSubObjectCreationHeader& Header) const
 {
+	using namespace UE::Net;
+	using namespace UE::Net::Private;
+
 	// SubObject
-	UE::Net::FNetObjectReference ObjectRef = GetOrCreateObjectReference(Object);
+	FNetObjectReference ObjectRef = GetOrCreateObjectReference(Object);
+
+	// It's Outer
+	UObject* OuterObject = Object->GetOuter();
 
 	Header.bIsActor = false;
+	Header.bOuterIsTransientLevel = false;
+	Header.bOuterIsRootObject = false;
 	Header.bIsDynamic = ObjectRef.GetRefHandle().IsDynamic();
 	Header.bUsePersistentLevel = false;
 	Header.bIsNameStableForNetworking = Object->IsNameStableForNetworking();
@@ -1012,6 +1055,25 @@ void UActorReplicationBridge::GetSubObjectCreationHeader(const UObject* Object, 
 		if (!Header.bIsNameStableForNetworking)
 		{
 			Header.ObjectClassReference = GetOrCreateObjectReference(Object->GetClass());
+
+			// Find the Outer
+			if (OuterObject == GetTransientPackage())
+			{
+				Header.bOuterIsTransientLevel = true;
+			}
+			else if (OuterObject == RootObject)
+			{
+				Header.bOuterIsRootObject = true;
+			}
+			else
+			{
+				Header.OuterReference = GetOrCreateObjectReference(OuterObject);
+
+				if (!ensure(Header.OuterReference.IsValid()))
+				{
+					UE_LOG_ACTORREPLICATIONBRIDGE(Error, TEXT("Could not create NetReference to Outer %s of subobject %s"), *GetNameSafe(OuterObject), *GetNameSafe(Object));
+				}
+			}
 		}
 	}
 
@@ -1073,6 +1135,188 @@ float UActorReplicationBridge::GetPollFrequencyOfRootObject(const UObject* Repli
 	float PollFrequency = ReplicatedActor->NetUpdateFrequency;
 	GetClassPollFrequency(ReplicatedActor->GetClass(), PollFrequency);
 	return PollFrequency;
+}
+
+void UActorReplicationBridge::WakeUpObjectInstantiatedFromRemote(AActor* Actor) const
+{
+	// If the actor is already awake or can't be woken up then return immediately.
+	if (Actor->NetDormancy <= DORM_Awake)
+	{
+		return;
+	}
+
+	ENetDormancy OldDormancy = Actor->NetDormancy;
+	Actor->NetDormancy = DORM_Awake;
+
+	if (!NetDriver)
+	{
+		return;
+	}
+
+	if (FWorldContext* WorldContext = GEngine->GetWorldContextFromWorld(NetDriver->GetWorld()))
+	{
+		for (FNamedNetDriver& Driver : WorldContext->ActiveNetDrivers)
+		{
+			if (Driver.NetDriver != nullptr && Driver.NetDriver != NetDriver && Driver.NetDriver->ShouldReplicateActor(Actor))
+			{
+				Driver.NetDriver->NotifyActorClientDormancyChanged(Actor, OldDormancy);
+			}
+		}
+	}
+}
+
+void UActorReplicationBridge::OnProtocolMismatchDetected(FNetRefHandle ObjectHandle)
+{
+	Super::OnProtocolMismatchDetected(ObjectHandle);
+
+	// As a client tell the server we could not bind this specific NetRefHandle
+	if (NetDriver && NetDriver->ServerConnection)
+	{
+		uint64 RawHandleId = ObjectHandle.GetId();
+		FNetControlMessage<NMT_IrisProtocolMismatch>::Send(NetDriver->ServerConnection, RawHandleId);
+	}
+}
+
+void UActorReplicationBridge::OnProtocolMismatchReported(FNetRefHandle RefHandle, uint32 ConnectionId)
+{
+	Super::OnProtocolMismatchReported(RefHandle, ConnectionId);
+
+	// If we are the server force the client to disconnect since not replicating a critical class will prevent the game from working.
+	if (NetDriver && NetDriver->IsServer())
+	{
+		const UObject* ReplicatedObject = GetReplicatedObject(RefHandle);
+
+		// If the object instance doesn't exist anymore, pass a null class anyway in case the config wants to disconnect on ALL class types.
+		const UClass* ObjectClass = ReplicatedObject ? ReplicatedObject->GetClass() : nullptr;
+
+		if (IsClassCritical(ObjectClass))
+		{
+			if (UNetConnection* ClientConnection = NetDriver->GetConnectionById(ConnectionId))
+			{
+				FString ErrorMsg = FString::Printf(TEXT("Protocol mismatch: %s:%s. Class: %s"), *RefHandle.ToString(), *GetNameSafe(ReplicatedObject), *GetNameSafe(ObjectClass));
+				UE_LOG(LogIrisBridge, Error, TEXT("%s: Closing connection due to: %s"), ToCStr(ClientConnection->Describe()), ToCStr(ErrorMsg));
+				{
+					UE::Net::FNetCloseResult CloseReason = ENetCloseResult::IrisProtocolMismatch;
+					ClientConnection->SendCloseReason(MoveTemp(CloseReason));
+				}
+
+				FNetControlMessage<NMT_Failure>::Send(ClientConnection, ErrorMsg);
+				ClientConnection->FlushNet(true);
+
+				{
+					UE::Net::FNetCloseResult CloseReason = ENetCloseResult::IrisProtocolMismatch;
+					ClientConnection->Close(MoveTemp(CloseReason));
+				}
+			}
+		}
+	}
+}
+
+void UActorReplicationBridge::ReportErrorWithNetRefHandle(uint32 ErrorType, FNetRefHandle RefHandle, uint32 ConnectionId)
+{
+	if (NetDriver)
+	{
+		if (UNetConnection* ClientConnection = NetDriver->GetConnectionById(ConnectionId))
+		{
+			uint64 RawHandleId = RefHandle.GetId();
+			FNetControlMessage<NMT_IrisNetRefHandleError>::Send(ClientConnection, ErrorType, RawHandleId);
+		}
+		else
+		{
+			UE_LOG(LogIrisBridge, Error, TEXT("UActorReplicationBridge::ReportErrorWithNetRefHandle could not find Connection for id:%u"), ConnectionId);
+		}
+	}
+}
+
+void UActorReplicationBridge::ActorChangedLevel(const AActor* Actor, const ULevel* PreviousLevel)
+{
+	if (!UE::Net::Private::bEnableActorLevelChanges)
+	{
+		return;
+	}
+
+	UE_LOG_ACTORREPLICATIONBRIDGE(Verbose, TEXT("ActorChangedLevel: Actor %s from PreviousLevel %s"), *GetFullNameSafe(Actor), *GetFullNameSafe(PreviousLevel));
+
+	if (!UE::Net::Private::ShouldIncludeActorInLevelGroups(Actor))
+	{
+		return;
+	}
+
+	// Remove from previous level group
+	const bool bPreviousLevelIsPersistentLevel = PreviousLevel && (PreviousLevel->IsPersistentLevel() || (PreviousLevel == NetDriver->GetWorld()->PersistentLevel));
+	
+	if (PreviousLevel && !bPreviousLevelIsPersistentLevel)
+	{
+		const UPackage* const PreviousLevelPackage = PreviousLevel->GetOutermost();
+		const FName PreviousLevelPackageName = PreviousLevelPackage->GetFName();
+
+		const UE::Net::FNetRefHandle ActorRefHandle = GetReplicatedRefHandle(Actor);
+		UE::Net::FNetObjectGroupHandle PreviousLevelGroup = GetLevelGroup(PreviousLevel);
+		if (GetReplicationSystem()->IsInGroup(PreviousLevelGroup, ActorRefHandle))
+		{
+			UE_LOG_ACTORREPLICATIONBRIDGE(Verbose, TEXT("ActorChangedLevel: removing %s from GroupIndex: %u PreviousLevel: %s"), *ActorRefHandle.ToString(), PreviousLevelGroup.GetGroupIndex(), ToCStr(PreviousLevelPackageName.ToString()));
+			GetReplicationSystem()->RemoveFromGroup(PreviousLevelGroup, ActorRefHandle);
+		}
+		else
+		{
+			UE_LOG_ACTORREPLICATIONBRIDGE(Warning, TEXT("ActorChangedLevel: %s not found in GroupIndex: %u PreviousLevel: %s"), *ActorRefHandle.ToString(), PreviousLevelGroup.GetGroupIndex(), ToCStr(PreviousLevelPackageName.ToString()));
+		}
+	}
+
+	AddActorToLevelGroup(Actor);
+}
+
+void UActorReplicationBridge::AddActorToLevelGroup(const AActor* Actor)
+{
+	if (!UE::Net::Private::ShouldIncludeActorInLevelGroups(Actor))
+	{
+		return;
+	}
+	
+	const ULevel* Level = Actor->GetLevel();
+	
+	// Don't filter out actors in the persistent level
+	if (Level && (!Level->IsPersistentLevel() || (Level != NetDriver->GetWorld()->PersistentLevel)))
+	{
+		const UPackage* const LevelPackage = Level->GetOutermost();
+		const FName PackageName = LevelPackage->GetFName();
+
+		UE::Net::FNetObjectGroupHandle LevelGroup = GetLevelGroup(Level);
+		if (!LevelGroup.IsValid())
+		{
+			LevelGroup = CreateLevelGroup(Level);
+
+			UE_LOG_ACTORREPLICATIONBRIDGE(Log, TEXT("Created new GroupIndex: %u for Level: %s"), LevelGroup.GetGroupIndex(), ToCStr(PackageName.ToString()));
+
+			// Update the filtering status of the group based on current level visibility for all connections
+			NetDriver->UpdateGroupFilterStatusForLevel(Level, LevelGroup);
+		}
+
+		const UE::Net::FNetRefHandle ActorRefHandle = GetReplicatedRefHandle(Actor);
+
+		// Add object to group
+		UE_LOG_ACTORREPLICATIONBRIDGE(Verbose, TEXT("Added %s to GroupIndex: %u Level: %s"), *ActorRefHandle.ToString(), LevelGroup.GetGroupIndex(), ToCStr(PackageName.ToString()));
+		GetReplicationSystem()->AddToGroup(LevelGroup, ActorRefHandle);
+	}
+}
+
+FString UActorReplicationBridge::PrintConnectionInfo(uint32 ConnectionId) const
+{
+	if (NetDriver)
+	{
+		if (UNetConnection* ClientConnection = NetDriver->GetConnectionById(ConnectionId))
+		{
+			return FString::Printf(TEXT("ConnectionId:%u ViewTarget: %s Named: %s"), ConnectionId, *GetNameSafe(ClientConnection->ViewTarget), *ClientConnection->Describe());
+		}
+		else
+		{
+			return FString::Printf(TEXT("ConnectionId:%u no NetConnection found"), ConnectionId);
+		}
+	}
+	else
+	{
+		return FString::Printf(TEXT("ConnectionId:%u no NetDriver attached"), ConnectionId);
+	}
 }
 
 #else //!UE_WITH_IRIS

@@ -489,7 +489,7 @@ namespace UE::Reload::Private
 		const int32 DefaultSubobjectArrayCapacity = 16;
 		TArray<UObject*> DefaultSubobjectArray;
 		DefaultSubobjectArray.Empty(DefaultSubobjectArrayCapacity);
-		NewClass->GetDefaultObject()->CollectDefaultSubobjects(DefaultSubobjectArray);
+		NewClass->GetDefaultObject()->GetDefaultSubobjects(DefaultSubobjectArray);
 
 		TArray<FPropertyToUpdate> PropertiesToUpdate;
 		// Collect all properties that have actually changed
@@ -548,7 +548,7 @@ namespace UE::Reload::Private
 				}
 
 				DefaultSubobjectArray.Empty(DefaultSubobjectArrayCapacity);
-				ObjectPtr->CollectDefaultSubobjects(DefaultSubobjectArray);
+				ObjectPtr->GetDefaultSubobjects(DefaultSubobjectArray);
 
 				for (auto& PropertyToUpdate : PropertiesToUpdate)
 				{
@@ -1111,7 +1111,7 @@ void FReload::Reinstance()
 	FBlueprintEditorUtils::UpdateEnumsInNodes(ChangedEnums, OnNodeFoundOrUpdated);
 
 	// Update all the nodes before we could possibly recompile
-	for (TPair<UBlueprint*, FBlueprintUpdateInfo>& KVP : ModifiedBlueprints)
+	for (TPair<UBlueprint*, FBlueprintUpdateInfo>& KVP : ModifiedBlueprints) //-V1078
 	{
 		UBlueprint* Blueprint = KVP.Key;
 		FBlueprintUpdateInfo& Info = KVP.Value;
@@ -1135,7 +1135,7 @@ void FReload::Reinstance()
 	rch.ReinstanceClasses(ClassesToReinstance);
 
 	// Recompile blueprints if they haven't already been recompiled)
-	for (TPair<UBlueprint*, FBlueprintUpdateInfo>& KVP : ModifiedBlueprints)
+	for (TPair<UBlueprint*, FBlueprintUpdateInfo>& KVP : ModifiedBlueprints) //-V1078
 	{
 		UBlueprint* Blueprint = KVP.Key;
 		FBlueprintUpdateInfo& Info = KVP.Value;

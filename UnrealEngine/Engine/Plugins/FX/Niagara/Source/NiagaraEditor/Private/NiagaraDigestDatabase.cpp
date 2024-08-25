@@ -56,18 +56,13 @@ void FNiagaraDigestDatabase::ReleaseDatabase()
 {
 	FWriteScopeLock WriteScope(DigestCacheLock);
 
-	CompilationGraphCache.Empty();
+	CompilationGraphCache.Empty(NiagaraGraphDigestDatabaseImpl::GDigestGraphCacheSize);
 	CompilationNPCCache.Empty();
 }
 
 void FNiagaraDigestDatabase::AddReferencedObjects(FReferenceCollector& Collector)
 {
 	FReadScopeLock ReadScope(DigestCacheLock);
-
-	for (FCompilationGraphCache::TIterator It(CompilationGraphCache); It; ++It)
-	{
-		It.Value()->AddReferencedObjects(Collector);
-	}
 
 	for (FCompilationNPCCache::TIterator It(CompilationNPCCache); It; ++It)
 	{
@@ -107,7 +102,7 @@ FNiagaraDigestedGraphPtr FNiagaraDigestDatabase::CreateGraphDigest(const UNiagar
 
 	if (PendingGraph)
 	{
-		PendingGraph->Create(Graph, Digester);
+		PendingGraph->Digest(Graph, Digester);
 	}
 
 	return PendingGraph;

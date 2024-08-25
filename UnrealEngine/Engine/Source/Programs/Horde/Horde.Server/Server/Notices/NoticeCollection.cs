@@ -1,14 +1,14 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using MongoDB.Bson.Serialization.Attributes;
-using System.Threading.Tasks;
-using MongoDB.Driver;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using Horde.Server.Utilities;
+using System.Threading;
+using System.Threading.Tasks;
+using EpicGames.Horde.Users;
 using MongoDB.Bson;
-using Horde.Server.Users;
+using MongoDB.Bson.Serialization.Attributes;
+using MongoDB.Driver;
 
 namespace Horde.Server.Server.Notices
 {
@@ -63,17 +63,16 @@ namespace Horde.Server.Server.Notices
 		}
 
 		/// <inheritdoc/>
-		public async Task<INotice?> AddNoticeAsync(string message, UserId? userId, DateTime? startTime, DateTime? finishTime)
+		public async Task<INotice?> AddNoticeAsync(string message, UserId? userId, DateTime? startTime, DateTime? finishTime, CancellationToken cancellationToken)
 		{
 			NoticeDocument newNotice = new NoticeDocument(ObjectId.GenerateNewId(), message, userId, startTime, finishTime);
-			await _notices.InsertOneAsync(newNotice);
+			await _notices.InsertOneAsync(newNotice, null, cancellationToken);
 			return newNotice;
 		}
 
 		/// <inheritdoc/>
-		public async Task<bool> UpdateNoticeAsync(ObjectId id, string? message, DateTime? startTime, DateTime? finishTime)
+		public async Task<bool> UpdateNoticeAsync(ObjectId id, string? message, DateTime? startTime, DateTime? finishTime, CancellationToken cancellationToken)
 		{
-
 			UpdateDefinitionBuilder<NoticeDocument> updateBuilder = Builders<NoticeDocument>.Update;
 			List<UpdateDefinition<NoticeDocument>> updates = new List<UpdateDefinition<NoticeDocument>>();
 
@@ -86,28 +85,28 @@ namespace Horde.Server.Server.Notices
 
 			updates.Add(updateBuilder.Set(x => x.FinishTime, finishTime));
 
-			NoticeDocument? document = await _notices.FindOneAndUpdateAsync(x => x.Id == id, updateBuilder.Combine(updates));
+			NoticeDocument? document = await _notices.FindOneAndUpdateAsync(x => x.Id == id, updateBuilder.Combine(updates), null, cancellationToken);
 
 			return document != null;
 		}
 
 		/// <inheritdoc/>
-		public async Task<INotice?> GetNoticeAsync(ObjectId noticeId)
+		public async Task<INotice?> GetNoticeAsync(ObjectId noticeId, CancellationToken cancellationToken)
 		{
-			return await _notices.Find(x => x.Id == noticeId).FirstOrDefaultAsync();
+			return await _notices.Find(x => x.Id == noticeId).FirstOrDefaultAsync(cancellationToken);
 		}
 
 		/// <inheritdoc/>
-		public async Task<List<INotice>> GetNoticesAsync()
+		public async Task<List<INotice>> GetNoticesAsync(CancellationToken cancellationToken)
 		{
-			List<NoticeDocument> results = await _notices.Find(x => true).ToListAsync();
+			List<NoticeDocument> results = await _notices.Find(x => true).ToListAsync(cancellationToken);
 			return results.Select<NoticeDocument, INotice>(x => x).ToList();
 		}
 
 		/// <inheritdoc/>
-		public async Task<bool> RemoveNoticeAsync(ObjectId id)
+		public async Task<bool> RemoveNoticeAsync(ObjectId id, CancellationToken cancellationToken)
 		{
-			DeleteResult result = await _notices.DeleteOneAsync(x => x.Id == id);
+			DeleteResult result = await _notices.DeleteOneAsync(x => x.Id == id, cancellationToken);
 			return result.DeletedCount > 0;
 		}
 	}

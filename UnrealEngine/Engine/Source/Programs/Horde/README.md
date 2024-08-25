@@ -1,62 +1,61 @@
-# Horde
+![Horde](Docs/Images/Logo.png#gh-light-mode-only)![Horde](Docs/Images/Logo-DarkMode.png#gh-dark-mode-only)
 
-**Horde** is a scalable, cloud-ready, distributed build framework and content-addressable storage platform 
-designed for Unreal Engine. 
+**Horde** is a set of services supporting workflows Epic uses to develop Fortnite,
+Unreal Engine, and other titles.
 
-Goals of the project include:
+It is provided with full source code to Unreal Engine licensees, and is meant for licensees to host and configure
+themselves. We provide pre-built Docker images for deployment on Linux, and an MSI installer for Windows.
 
-* Remote execution of arbitrary workloads, including compilation of source code and building assets (like SN-DBS, 
-  FastBuild, IncrediBuild et al).
-* Storage of bulk data for source assets.
-* Caching of assets and build artifacts through Unreal Engine's DDC system.
-* Storage for final build artifacts (eg. packaged builds).
-* Replication of data between studios on a planet scale.
-* A CI/CD system for teams to test, build and publish their projects.
+Horde offers the following functionality, most of which may be enabled or disabled independently:
 
-Horde is written primarily in C# (NET Core), and full source is included with Unreal Engine. The server can be run 
-on Windows or Linux, via local installations or through containers.
+* **[Remote Execution](Docs/Tutorials/RemoteCompilation.md)**: Functionality to offload compute work to other machines,
+  including C++ compilation with **Unreal Build Accelerator**.
+* **[Build Automation (CI/CD)](Docs/Tutorials/BuildAutomation.md)**: A build automation system designed for teams working
+  with large Perforce repositories.
+* **[Test Automation](Docs/Config/AutomationHub.md)**: A frontend for querying automation results across streams and
+  projects, integrated with AutomationTool and Gauntlet.
+* **[Studio Analytics](Docs/Tutorials/Analytics.md)**: Receives telemetry from Unreal Editor, and shows charts for
+  key workflow metrics.
+* **[UnrealGameSync Metadata Server](Docs/Config/UgsMetadataServer.md)**: Various features for teams using
+  UnrealGameSync, including build status reporting, comment aggregation, and crowdsourced build health functionality.
+* **[Mobile/Console Device Management](Docs/Tutorials/DeviceManager.md)**: Tools for managing a farm of development kits and
+  mobile devices.
 
-### Status
+Read more about our [goals and philosophy](Docs/Goals.md), or check out the [FAQ](Docs/Faq.md).
 
-As of writing, Horde is in heavy use within Epic as an CI/CD system, and published builds of Unreal Engine and 
-Fortnite have been made by Horde since late 2020. Other applications listed above are still in heavy development 
-on top of the core framework.
+## Status
 
-We currently **do not recommend Horde for production use** by other teams. The source code is provided as-is, and
-we do not support external deployments of it. We hope to make it fully available for other teams in a future engine
-release, with a streamlined setup experience and complete documentation.
+Horde is under heavy development, and large parts of it are still in flux. While we use aspects of it (particularly
+the CI system) heavily at Epic, we consider it experimental for Unreal Engine licensees and offer limited support
+for it.
 
-### FAQ
+See also: [Feature Status](Docs/Features.md)
 
-#### Why are all these use cases being muddled together?
+## Getting Started
 
-Most of our target use cases are traditionally handled as distinct components, but bringing them all together
-gives us many opportunities for optimization:
+* **[Install the Horde agent](Docs/Tutorials/InstallHorde.md)**
+* **[Enable remote C++ compilation with Unreal Build Accelerator](Docs/Tutorials/RemoteCompilation.md)**
+* **[Set up build automation](Docs/Tutorials/BuildAutomation.md)**
+* **[Enable test automation with Gauntlet](Docs/Tutorials/TestAutomation.md)**
+* **[Get telemetry and analytics for your team](Docs/Tutorials/Analytics.md)**
+* **[Work with mobile and console devices](Docs/Tutorials/DeviceManager.md)**
+* **[Install UnrealGameSync and distribute Unreal Editor to your team](Docs/Tutorials/UnrealGameSync.md)**
+* **[Enable authentication](Docs/Tutorials/Authentication.md)**
 
-* Storage is a key component of any data pipeline for caching. 
-* Remote execution needs data close to compute nodes where it can be retrieved quickly.
-* Scalable build automation systems can make use of the same scheduling, management tools and auto-scaling
-  functionality as a remote execution platform, and require a storage backend for intermediate and final
-  artifacts.
+## Reference
 
-We want Unreal Engine to allow developers to focus on making awesome products, and fast, reliable iteration is a 
-key component of that. Sharing battle-tested infrastructure that works seamlessly with the engine reduces the 
-barrier to entry for other teams.
+Horde's reference documentation is divided into sections by target audience:
 
-#### Why would I use Horde rather than some other off-the-shelf build automation system, like Jenkins or TeamCity?
+* [**Deploying Horde**](Docs/Deployment.md)
+  * Information on the architecture and components making up Horde, and best practices for deploying them.<br>
+  **Audience:** IT, sysadmins, coders intending to modify Horde.
+* [**Configuring and Operating Horde**](Docs/Config.md)
+  * Describes how to set up and administer Horde.<br>
+  **Audience:** Build/dev ops teams, admins.
+* [**Horde Internals**](Docs/Internals.md)
+  * Describes how to build and modify Horde and its architecture.<br>
+  **Audience:** Developers wishing to extend Horde.
 
-Horde is built from the ground up to support development of Unreal Engine projects.
+## Further Reading
 
-While it is possible to customize a more generic build automation tool, Horde is built to serve the specific needs of UE
-developers - supporting heavy throughput, easy parallelism, integration with tools like Unreal Editor and UnrealGameSync,
-and with richer, more context-aware interface choices.
-
-#### Will I need to deploy Horde to use Unreal Engine?
-
-No, Horde will not required to use Unreal Engine. We have been developing with an eye to Epic's needs and believe 
-it can provide similar benefits to others.
-
-### Further Reading
-
-* [Horde Build](Horde.Build/README.md)
-* [Horde Storage](HordeStorage/README.md)
+* [Glossary](Docs/Glossary.md)

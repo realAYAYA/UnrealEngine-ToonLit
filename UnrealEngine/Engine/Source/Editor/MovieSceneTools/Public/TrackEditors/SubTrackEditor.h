@@ -56,7 +56,9 @@ public:
 	virtual const FSlateBrush* GetIconBrush() const override;
 	virtual bool OnAllowDrop(const FDragDropEvent& DragDropEvent, FSequencerDragDropParams& DragDropParams) override;
 	virtual FReply OnDrop(const FDragDropEvent& DragDropEvent, const FSequencerDragDropParams& DragDropParams) override;
-	
+	virtual bool IsResizable(UMovieSceneTrack* InTrack) const override;
+	virtual void Resize(float NewSize, UMovieSceneTrack* InTrack) override;
+
 public:
 	
 	/** Insert sequence into this track */

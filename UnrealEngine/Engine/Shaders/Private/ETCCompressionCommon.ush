@@ -10,7 +10,7 @@
 #include "GammaCorrectionCommon.ush"
 
 #define BLOCK_MODE_INDIVIDUAL				0
-#define BLOCK_MODE_DIFFERENTIAL				1
+#define BLOCK_MODE_DIFFERENTIAL				1u
 #define NUM_RGB_TABLES 8
 #define NUM_ALPHA_TABLES 16
 

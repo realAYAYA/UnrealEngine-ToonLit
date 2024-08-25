@@ -49,6 +49,11 @@ float USizeBox::GetWidthOverride() const
 	return WidthOverride;
 }
 
+bool USizeBox::IsWidthOverride() const
+{
+	return bOverride_WidthOverride;
+}
+
 void USizeBox::SetWidthOverride(float InWidthOverride)
 {
 	bOverride_WidthOverride = true;
@@ -71,6 +76,11 @@ void USizeBox::ClearWidthOverride()
 float USizeBox::GetHeightOverride() const
 {
 	return HeightOverride;
+}
+
+bool USizeBox::IsHeightOverride() const
+{
+	return bOverride_HeightOverride;
 }
 
 void USizeBox::SetHeightOverride(float InHeightOverride)
@@ -97,6 +107,11 @@ float USizeBox::GetMinDesiredWidth() const
 	return MinDesiredWidth;
 }
 
+bool USizeBox::IsMinDesiredWidthOverride() const
+{
+	return bOverride_MinDesiredWidth;
+}
+
 void USizeBox::SetMinDesiredWidth(float InMinDesiredWidth)
 {
 	bOverride_MinDesiredWidth = true;
@@ -119,6 +134,11 @@ void USizeBox::ClearMinDesiredWidth()
 float USizeBox::GetMinDesiredHeight() const
 {
 	return MinDesiredHeight;
+}
+
+bool USizeBox::IsMinDesiredHeightOverride() const
+{
+	return bOverride_MinDesiredHeight;
 }
 
 void USizeBox::SetMinDesiredHeight(float InMinDesiredHeight)
@@ -145,6 +165,11 @@ float USizeBox::GetMaxDesiredWidth() const
 	return MaxDesiredWidth;
 }
 
+bool USizeBox::IsMaxDesiredWidthOverride() const
+{
+	return bOverride_MaxDesiredWidth;
+}
+
 void USizeBox::SetMaxDesiredWidth(float InMaxDesiredWidth)
 {
 	bOverride_MaxDesiredWidth = true;
@@ -167,6 +192,11 @@ void USizeBox::ClearMaxDesiredWidth()
 float USizeBox::GetMaxDesiredHeight() const
 {
 	return MaxDesiredHeight;
+}
+
+bool USizeBox::IsMaxDesiredHeightOverride() const
+{
+	return bOverride_MaxDesiredHeight;
 }
 
 void USizeBox::SetMaxDesiredHeight(float InMaxDesiredHeight)
@@ -193,6 +223,11 @@ float USizeBox::GetMinAspectRatio() const
 	return MinAspectRatio;
 }
 
+bool USizeBox::IsMinAspectRatioOverride() const
+{
+	return bOverride_MinAspectRatio;
+}
+
 void USizeBox::SetMinAspectRatio(float InMinAspectRatio)
 {
 	bOverride_MinAspectRatio = true;
@@ -215,6 +250,11 @@ void USizeBox::ClearMinAspectRatio()
 float USizeBox::GetMaxAspectRatio() const
 {
 	return MaxAspectRatio;
+}
+
+bool USizeBox::IsMaxAspectRatioOverride() const
+{
+	return bOverride_MaxAspectRatio;
 }
 
 void USizeBox::SetMaxAspectRatio(float InMaxAspectRatio)

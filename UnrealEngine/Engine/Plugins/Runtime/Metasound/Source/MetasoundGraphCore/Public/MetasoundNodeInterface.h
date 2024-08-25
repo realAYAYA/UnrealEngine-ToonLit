@@ -69,9 +69,20 @@ namespace Metasound
 		/** Namespace, name and variant of the node class. */
 		const FName& GetFullName() const;
 
+		/** Whether or not this instance of a node class name is a valid name.*/
+		bool IsValid() const;
+
 		static FName FormatFullName(const FName& InNamespace, const FName& InName, const FName& InVariant);
 
 		static FName FormatScopedName(const FName& InNamespace, const FName& InName);
+
+		/** Invalid form of node class name (i.e. empty namespace, name, and variant)*/
+		static const FNodeClassName InvalidNodeClassName;
+
+		friend FORCEINLINE bool operator==(const FNodeClassName& InLHS, const FNodeClassName& InRHS)
+		{
+			return (InLHS.Namespace == InRHS.Namespace) && (InLHS.Name == InRHS.Name) && (InLHS.Variant == InRHS.Variant);
+		}
 
 	private:
 
@@ -83,7 +94,7 @@ namespace Metasound
 	};
 
 	/** Provides metadata for a given node. */
-	struct FNodeClassMetadata
+	struct METASOUNDGRAPHCORE_API FNodeClassMetadata
 	{
 		/** Name of class. Used for registration and lookup. */
 		FNodeClassName ClassName;

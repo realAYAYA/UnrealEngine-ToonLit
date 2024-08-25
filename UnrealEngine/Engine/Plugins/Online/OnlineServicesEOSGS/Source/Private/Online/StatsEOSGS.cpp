@@ -1,7 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Online/StatsEOSGS.h"
+
 #include "EOSShared.h"
+#include "IEOSSDKManager.h"
 #include "Online/AuthEOSGS.h"
 #include "Online/OnlineErrorEOSGS.h"
 #include "Online/OnlineIdEOSGS.h"
@@ -28,7 +30,7 @@ void FStatsEOSGS::Initialize()
 {
 	Super::Initialize();
 
-	StatsHandle = EOS_Platform_GetStatsInterface(static_cast<FOnlineServicesEOSGS&>(GetServices()).GetEOSPlatformHandle());
+	StatsHandle = EOS_Platform_GetStatsInterface(*static_cast<FOnlineServicesEOSGS&>(GetServices()).GetEOSPlatformHandle());
 	check(StatsHandle);
 }
 

@@ -16,7 +16,6 @@
 #include "WorldPartition/HLOD/IWorldPartitionHLODUtilities.h"
 #include "WorldPartition/HLOD/IWorldPartitionHLODUtilitiesModule.h"
 #include "WorldPartition/WorldPartition.h"
-#include "WorldPartition/WorldPartitionActorDescView.h"
 #endif
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(HLODLayer)
@@ -32,57 +31,10 @@ UHLODLayer::UHLODLayer(const FObjectInitializer& ObjectInitializer)
 {}
 
 #if WITH_EDITOR
-UHLODLayer* UHLODLayer::GetHLODLayer(const AActor* InActor)
-{
-	if (UHLODLayer* HLODLayer = InActor->GetHLODLayer())
-	{
-		return HLODLayer;
-	}
-
-	// Only fallback to the default HLODLayer for the first level of HLOD
-	bool bIsHLOD0 = !InActor->IsA<AWorldPartitionHLOD>();
-	if (bIsHLOD0) 
-	{
-		// Fallback to the world partition default HLOD layer
-		if (UWorldPartition* WorldPartition = InActor->GetWorld()->GetWorldPartition())
-		{
-			return WorldPartition->GetDefaultHLODLayer();
-		}
-	}
-
-	return nullptr;
-}
-
-UHLODLayer* UHLODLayer::GetHLODLayer(const FWorldPartitionActorDescView& InActorDesc, const UWorldPartition* InWorldPartition)
-{
-	check(InWorldPartition);
-
-	const FSoftObjectPath HLODLayerPath = InActorDesc.GetHLODLayer();
-	if (UHLODLayer* HLODLayer = Cast<UHLODLayer>(HLODLayerPath.TryLoad()))
-	{
-		return HLODLayer;
-	}
-
-	// Only fallback to the default HLODLayer for the first level of HLOD
-	bool bIsHLOD0 = !InActorDesc.GetActorNativeClass()->IsChildOf<AWorldPartitionHLOD>();
-	if (bIsHLOD0)
-	{
-		// Fallback to the world partition default HLOD layer
-		return InWorldPartition->GetDefaultHLODLayer();
-	}
-
-	return nullptr;
-}
-
-UHLODLayer* UHLODLayer::GetHLODLayer(const FWorldPartitionActorDesc& InActorDesc, const UWorldPartition* InWorldPartition)
-{
-	return GetHLODLayer(FWorldPartitionActorDescView(&InActorDesc), InWorldPartition);
-}
-
 bool UHLODLayer::DoesRequireWarmup() const
 {
-	IWorldPartitionHLODUtilities* WPHLODUtilities = FModuleManager::Get().LoadModuleChecked<IWorldPartitionHLODUtilitiesModule>("WorldPartitionHLODUtilities").GetUtilities();
-	if (WPHLODUtilities)
+	IWorldPartitionHLODUtilitiesModule* WPHLODUtilitiesModule = FModuleManager::Get().LoadModulePtr<IWorldPartitionHLODUtilitiesModule>("WorldPartitionHLODUtilities");
+	if (IWorldPartitionHLODUtilities* WPHLODUtilities = WPHLODUtilitiesModule != nullptr ? WPHLODUtilitiesModule->GetUtilities() : nullptr)
 	{
 		return WPHLODUtilities->GetHLODBuilderClass(this)->GetDefaultObject<UHLODBuilder>()->RequiresWarmup();
 	}
@@ -153,8 +105,8 @@ void UHLODLayer::PostLoad()
 {
 	Super::PostLoad();
 
-	IWorldPartitionHLODUtilities* WPHLODUtilities = FModuleManager::Get().LoadModuleChecked<IWorldPartitionHLODUtilitiesModule>("WorldPartitionHLODUtilities").GetUtilities();
-	if (WPHLODUtilities)
+	IWorldPartitionHLODUtilitiesModule* WPHLODUtilitiesModule = FModuleManager::Get().LoadModulePtr<IWorldPartitionHLODUtilitiesModule>("WorldPartitionHLODUtilities");
+	if (IWorldPartitionHLODUtilities* WPHLODUtilities = WPHLODUtilitiesModule != nullptr ? WPHLODUtilitiesModule->GetUtilities() : nullptr)
 	{
 		const UClass* BuilderClass = WPHLODUtilities->GetHLODBuilderClass(this);
 		const UClass* BuilderSettingsClass = BuilderClass ? BuilderClass->GetDefaultObject<UHLODBuilder>()->GetSettingsClass() : nullptr;
@@ -188,12 +140,16 @@ void UHLODLayer::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEv
 
 	const FName PropertyName = PropertyChangedEvent.Property ? PropertyChangedEvent.Property->GetFName() : FName();
 
-	IWorldPartitionHLODUtilities* WPHLODUtilities = FModuleManager::Get().LoadModuleChecked<IWorldPartitionHLODUtilitiesModule>("WorldPartitionHLODUtilities").GetUtilities();
 
 	if (PropertyName == GET_MEMBER_NAME_CHECKED(UHLODLayer, LayerType) ||
 		PropertyName == GET_MEMBER_NAME_CHECKED(UHLODLayer, HLODBuilderClass))
 	{
-		HLODBuilderSettings = WPHLODUtilities->CreateHLODBuilderSettings(this);
+		IWorldPartitionHLODUtilitiesModule* WPHLODUtilitiesModule = FModuleManager::Get().LoadModulePtr<IWorldPartitionHLODUtilitiesModule>("WorldPartitionHLODUtilities");
+		IWorldPartitionHLODUtilities* WPHLODUtilities = WPHLODUtilitiesModule != nullptr ? WPHLODUtilitiesModule->GetUtilities() : nullptr;
+		if (WPHLODUtilities != nullptr)
+		{
+			HLODBuilderSettings = WPHLODUtilities->CreateHLODBuilderSettings(this);
+		}
 	}
 	else if (PropertyName == GET_MEMBER_NAME_CHECKED(UHLODLayer, ParentLayer))
 	{
@@ -205,7 +161,7 @@ void UHLODLayer::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEv
 			VisitedHLODLayers.Add(CurHLODLayer, &bHLODLayerWasAlreadyInSet);
 			if (bHLODLayerWasAlreadyInSet)
 			{
-				UE_LOG(LogHLODLayer, Warning, TEXT("Circular HLOD parent chain detedted: HLODLayer=%s ParentLayer=%s"), *GetName(), *ParentLayer->GetName());
+				UE_LOG(LogHLODLayer, Warning, TEXT("Circular HLOD parent chain detected: HLODLayer=%s ParentLayer=%s"), *GetName(), *ParentLayer->GetName());
 				ParentLayer = nullptr;
 				break;
 			}

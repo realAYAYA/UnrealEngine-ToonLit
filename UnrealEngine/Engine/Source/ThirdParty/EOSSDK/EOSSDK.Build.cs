@@ -6,11 +6,13 @@ using System.IO;
 using System.Linq;
 using UnrealBuildTool;
 using EpicGames.Core;
+using Microsoft.Extensions.Logging;
 
 public class EOSSDK : ModuleRules
 {
 	public virtual bool bHasPlatformBaseFile { get { return false; } }
 	public virtual bool bHasMultiplePlatformSDKBuilds { get { return false; } }
+	public string KittTargetConfiguration { get { return "shipping"; } }
 
 	public virtual string EOSSDKPlatformName
 	{
@@ -27,7 +29,7 @@ public class EOSSDK : ModuleRules
 		}
 	}
 
-	public virtual string EOSSDKIdealPlatformSDKBuildName
+	public virtual string EOSSDKIdealPlatformSDKVersion
 	{
 		get
 		{
@@ -59,11 +61,7 @@ public class EOSSDK : ModuleRules
 	{
 		get
 		{
-			if (Target.Platform == UnrealTargetPlatform.Android)
-			{
-				return Path.Combine(SDKBinariesDir, "include");
-			}
-			else if(Target.Platform == UnrealTargetPlatform.IOS)
+			if(Target.Platform == UnrealTargetPlatform.IOS)
             {
 				return Path.Combine(SDKBinariesDir, "EOSSDK.framework", "Headers");
 			}
@@ -74,46 +72,42 @@ public class EOSSDK : ModuleRules
 		}
 	}
 
-	public string SDKLibsDir
+	private string FindPlatformSubDir(string ParentDir)
 	{
-		get
+		string PlatformDir = Path.Combine(ParentDir, EOSSDKPlatformName);
+		if (bHasMultiplePlatformSDKBuilds)
 		{
-			string LibDir = Path.Combine(SDKBaseDir, "Lib");
-			string PlatformLibDir = Path.Combine(LibDir, EOSSDKPlatformName);
-			if (Directory.Exists(PlatformLibDir))
+			List<string> AvailableBuilds = new List<string>(Directory.GetDirectories(PlatformDir));
+			string IdealBuildDir = AvailableBuilds.FirstOrDefault(Elem => Elem.Split("\\").Last().StartsWith(EOSSDKIdealPlatformSDKVersion));
+			if (Directory.Exists(IdealBuildDir))
 			{
-				return PlatformLibDir;
+				Log.TraceVerboseOnce("Found EOSSDK for platform SDK \"{0}\" at \"{1}\".", EOSSDKIdealPlatformSDKVersion, IdealBuildDir);
+				return IdealBuildDir;
 			}
-			return LibDir;
+			else
+			{
+				// Sort versions in ascendent order as the array returned by Directory.GetDirectories is not properly sorted
+				Comparison<string> AscendingOrder = (x, y) => int.Parse(x.Split("\\").Last().Split(".").First()).CompareTo(int.Parse(y.Split("\\").Last().Split(".").First()));
+				AvailableBuilds.Sort(AscendingOrder);
+
+				// Fall back to latest one available.
+				string LatestBuildDir = AvailableBuilds.Last();
+				string LatestBuildSDKVersion = LatestBuildDir.Split("\\").Last();
+				Log.TraceWarningOnce("Unable to find EOSSDK for platform SDK \"{0}\", falling back on EOSSDK for platform SDK \"{1}\".", EOSSDKIdealPlatformSDKVersion, LatestBuildSDKVersion);
+
+				return LatestBuildDir;
+			}
 		}
+		else if (Directory.Exists(PlatformDir))
+		{
+			return PlatformDir;
+		}
+		return ParentDir;
 	}
 
-	public string SDKBinariesDir
-	{
-		get
-		{
-			string BinDir = SDKBaseDir;
-			if (bHasMultiplePlatformSDKBuilds)
-			{
-				string PlatformSDKBuildDir = Path.Combine(BinDir, EOSSDKPlatformName + "-" + EOSSDKIdealPlatformSDKBuildName);
-				if(!Directory.Exists(PlatformSDKBuildDir))
-				{
-					// Fall back to latest one available.
-					PlatformSDKBuildDir = Directory.GetDirectories(SDKBaseDir, EOSSDKPlatformName + "-*").Last();
-					string Fallback = PlatformSDKBuildDir.Split(EOSSDKPlatformName + "-").Last();
-					Log.TraceWarningOnce("Unable to find EOSSDK for platform SDK \"{0}\", falling back on EOSSDK for platform SDK \"{1}\".", EOSSDKIdealPlatformSDKBuildName, Fallback);
-				}
-				BinDir = PlatformSDKBuildDir;
-			}
-			BinDir = Path.Combine(BinDir, "Bin");
-			string PlatformBinDir = Path.Combine(BinDir, EOSSDKPlatformName);
-			if (Directory.Exists(PlatformBinDir))
-			{
-				BinDir = PlatformBinDir;
-			}
-			return BinDir;
-		}
-	}
+	public string SDKLibsDir => FindPlatformSubDir(Path.Combine(SDKBaseDir, "Lib"));
+
+	public string SDKBinariesDir => FindPlatformSubDir(Path.Combine(SDKBaseDir, "Bin"));
 
 	public virtual string EngineBinariesDir
 	{
@@ -197,15 +191,71 @@ public class EOSSDK : ModuleRules
 		}
 	}
 
+	/**
+	 * Allow projects to provide their own EOSSDK binaries.
+	 * In monolithic targets, prevents this module adding EOSSDK binaries to the linker args. The project is expected to add EOSSDK binaries to the linker args instead.
+	 * In unique build environments, prevents this module staging EOSSDK binaries. The project is expected to stage EOSSDK binaries instead.
+	 */
+	[ConfigFile(ConfigHierarchyType.Engine, "EOSSDK")]
+	bool bHasProjectBinary = false;
+
+	bool HasProjectBinary
+	{
+		get
+		{
+			// Keep supporting old GlobalDef mechanism in case licensees are using it
+			if (Target.GlobalDefinitions.Contains("EOSSDK_USE_PROJECT_BINARY=1"))
+			{
+				Logger.LogWarning("EOSSDK_USE_PROJECT_BINARY is deprecated, please use Engine.ini [EOSSDK] bHasProjectBinary=true config mechanism instead");
+				return true;
+			}
+
+			ConfigCache.ReadSettings(DirectoryReference.FromFile(Target.ProjectFile), Target.Platform, this);
+			return bHasProjectBinary;
+		}
+	}
+	
+	public virtual bool bIncludeKITT { get { return false; } }
+
+	public virtual string KittModuleName(string BaseName, string ConfigName)
+	{
+		return String.Format("{0}-{1}-{2}", BaseName, EOSSDKPlatformName, KittTargetConfiguration);
+	}
+
+	public virtual string KittModuleExtension()
+	{
+		throw new Exception("KITT is not supported on this platform: " + Target.Platform.ToString());
+	}
+
+	public virtual void AddKITTRuntimeDependency(string BaseName, string ConfigName, string SubDir = null)
+	{
+		// TODO: Pending further testing in other platforms. Not used by Switch
+		
+		string CurrentKittModuleName = KittModuleName(BaseName, ConfigName);
+
+		string KittModuleSource = (SubDir != null && SubDir.Length > 0)
+			? Path.Combine(SDKBinariesDir, SubDir, CurrentKittModuleName + KittModuleExtension())
+			: Path.Combine(SDKBinariesDir, CurrentKittModuleName + KittModuleExtension());
+
+		string KittModuleTarget = Path.Combine(EngineBinariesDir, CurrentKittModuleName + KittModuleExtension());
+
+		RuntimeDependencies.Add(KittModuleTarget, KittModuleSource, StagedFileType.NonUFS);
+	}
+
 	public EOSSDK(ReadOnlyTargetRules Target) : base(Target)
 	{
 		Type = ModuleType.External;
 
 		bool bIsMonolithic = Target.LinkType == TargetLinkType.Monolithic;
 		bool bIsUniqueBuildEnv = Target.BuildEnvironment == TargetBuildEnvironment.Unique;
-		bool bUseProjectBinary = (bIsMonolithic || bIsUniqueBuildEnv) && Target.GlobalDefinitions.Contains("EOSSDK_USE_PROJECT_BINARY=1");
 
-		if (!bUseProjectBinary && Target.Platform == UnrealTargetPlatform.LinuxArm64)
+		// Don't link against the SDK if this is a monolithic build and a project binary is being provided.
+		bool bEnableLink = !(bIsMonolithic && HasProjectBinary);
+
+		// Don't stage SDK binaries if we're not linking against the SDK, or if this is a unique build environment and a project binary is being provided
+		bool bEnableStage = bEnableLink && !(bIsUniqueBuildEnv && HasProjectBinary);
+
+		if (bEnableLink && Target.Platform == UnrealTargetPlatform.LinuxArm64)
         {
 			// Not supported yet for non-project binaries.
 			PublicDefinitions.Add("WITH_EOS_SDK=0");
@@ -228,10 +278,11 @@ public class EOSSDK : ModuleRules
 		{
 			PublicSystemIncludePaths.Add(Path.Combine(SDKIncludesDir, "Android"));
 
-			if (!bUseProjectBinary)
+			if (bEnableLink)
 			{
 				PublicAdditionalLibraries.Add(Path.Combine(SDKBinariesDir, "static-stdc++", "libs", "armeabi-v7a", RuntimeLibraryFileName));
 				PublicAdditionalLibraries.Add(Path.Combine(SDKBinariesDir, "static-stdc++", "libs", "arm64-v8a", RuntimeLibraryFileName));
+				PublicAdditionalLibraries.Add(Path.Combine(SDKBinariesDir, "static-stdc++", "libs", "x86_64", RuntimeLibraryFileName));
 
 				string PluginPath = Utils.MakePathRelativeTo(ModuleDirectory, Target.RelativeEnginePath);
 				AdditionalPropertiesForReceipt.Add("AndroidPlugin", Path.Combine(PluginPath, "EOSSDK_UPL.xml"));
@@ -239,7 +290,7 @@ public class EOSSDK : ModuleRules
         }
 		else if (Target.Platform == UnrealTargetPlatform.IOS)
 		{
-			if (!bUseProjectBinary)
+			if (bEnableLink)
 			{
 				PublicAdditionalFrameworks.Add(new Framework("EOSSDK", SDKBinariesDir, "", true));
 			}
@@ -252,11 +303,14 @@ public class EOSSDK : ModuleRules
 		}
 		else
 		{
-			// Allow projects to provide their own EOSSDK binaries. We will still compile against our own headers, because EOSSDK makes guarantees about forward compat. Note this global definition is only valid for monolithic targets.
-			if(!bUseProjectBinary)
+			if(bEnableLink)
             {
 				PublicAdditionalLibraries.Add(Path.Combine(SDKBinariesDir, LibraryLinkName));
-				RuntimeDependencies.Add(Path.Combine(EngineBinariesDir, RuntimeLibraryFileName), Path.Combine(SDKBinariesDir, RuntimeLibraryFileName));
+
+				if(bEnableStage)
+				{
+					RuntimeDependencies.Add(Path.Combine(EngineBinariesDir, RuntimeLibraryFileName), Path.Combine(SDKBinariesDir, RuntimeLibraryFileName));
+				}
 
 				// needed for linux to find the .so
 				PublicRuntimeLibraryPaths.Add(EngineBinariesDir);
@@ -266,6 +320,14 @@ public class EOSSDK : ModuleRules
 					PublicDelayLoadDLLs.Add(RuntimeLibraryFileName);
 				}
 			}
+		}
+
+		if (bIncludeKITT && bEnableStage)
+		{
+			AddKITTRuntimeDependency("kitt", KittTargetConfiguration);
+			AddKITTRuntimeDependency("kitt_support", KittTargetConfiguration);
+			AddKITTRuntimeDependency("kitt_webkit", KittTargetConfiguration);
+			AddKITTRuntimeDependency("kitt_data_eos", KittTargetConfiguration);
 		}
 	}
 }

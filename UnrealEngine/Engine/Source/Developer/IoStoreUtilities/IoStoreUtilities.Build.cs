@@ -14,6 +14,7 @@ public class IoStoreUtilities : ModuleRules
             "Core",
             "CoreUObject",
 			"AssetRegistry",
+			"CookMetadata",
 			"Projects",
 			"Zen",
 			"RenderCore",

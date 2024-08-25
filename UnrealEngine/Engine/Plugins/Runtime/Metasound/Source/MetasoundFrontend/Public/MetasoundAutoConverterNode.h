@@ -244,15 +244,17 @@ namespace Metasound
 						TDataReadReference<FromDataType> ReadReference = TDataReadReferenceFactory<FromDataType>::CreateAny(InParams.OperatorSettings);
 						return MakeUnique<FConverterOperator>(ReadReference, WriteReference);
 					}
-
-					// Converter node requires parsable reference if input not connected. Report as an error.
-					if (ensure(InParams.Node.GetVertexInterface().ContainsInputVertex(InputName)))
+					else
 					{
-						FInputDataDestination Dest(InParams.Node, InParams.Node.GetVertexInterface().GetInputVertex(GetInputName()));
-						AddBuildError<FMissingInputDataReferenceError>(OutResults.Errors, Dest);
+						// Converter node requires parsable reference if input not connected. Report as an error.
+						if (ensure(InParams.Node.GetVertexInterface().ContainsInputVertex(InputName)))
+						{
+							FInputDataDestination Dest(InParams.Node, InParams.Node.GetVertexInterface().GetInputVertex(GetInputName()));
+							AddBuildError<FMissingInputDataReferenceError>(OutResults.Errors, Dest);
+						}
+	
+						return TUniquePtr<IOperator>(nullptr);
 					}
-
-					return TUniquePtr<IOperator>(nullptr);
 				}
 		};
 

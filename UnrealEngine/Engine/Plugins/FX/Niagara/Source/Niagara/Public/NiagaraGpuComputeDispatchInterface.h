@@ -29,6 +29,8 @@ class FNiagaraSystemGpuComputeProxy;
 class FNiagaraGpuComputeDispatchInterface : public FFXSystemInterface
 {
 public:
+	DECLARE_EVENT_OneParam(FNiagaraGpuComputeDispatchInterface, FOnPostPreRenderEvent, FRDGBuilder&);
+
 	static NIAGARA_API FNiagaraGpuComputeDispatchInterface* Get(class UWorld* World);
 	static NIAGARA_API FNiagaraGpuComputeDispatchInterface* Get(class FSceneInterface* Scene);
 	static NIAGARA_API FNiagaraGpuComputeDispatchInterface* Get(class FFXSystemInterface* FXSceneInterface);
@@ -54,13 +56,15 @@ public:
 	 *
 	 * Return true if the work was registered, or false it GPU sorting is not available or impossible.
 	 */
-	virtual bool AddSortedGPUSimulation(struct FNiagaraGPUSortInfo& SortInfo) = 0;
+	virtual bool AddSortedGPUSimulation(FRHICommandListBase& RHICmdList, struct FNiagaraGPUSortInfo& SortInfo) = 0;
+
+	UE_DEPRECATED(5.4, "AddSortedGPUSimulation requires an RHI command list")
+	virtual bool AddSortedGPUSimulation(struct FNiagaraGPUSortInfo& SortInfo) final { return false; }
 
 	/** Get or create the a data manager, must be done on the rendering thread only. */
 	template<typename TManager>
 	TManager& GetOrCreateDataManager()
-	{	
-		check(IsInRenderingThread());
+	{
 		const FName ManagerName = TManager::GetManagerName();
 		for (auto& DataManager : GpuDataManagers)
 		{
@@ -88,8 +92,8 @@ public:
 	NIAGARA_API virtual const FGlobalDistanceFieldParameterData* GetGlobalDistanceFieldData() const = 0;
 
 	/** Get access to the instance count manager. */
-	FORCEINLINE FNiagaraGPUInstanceCountManager& GetGPUInstanceCounterManager() { check(IsInRenderingThread()); return GPUInstanceCounterManager; }
-	FORCEINLINE const FNiagaraGPUInstanceCountManager& GetGPUInstanceCounterManager() const { check(IsInRenderingThread()); return GPUInstanceCounterManager; }
+	FORCEINLINE FNiagaraGPUInstanceCountManager& GetGPUInstanceCounterManager() { check(IsInParallelRenderingThread()); return GPUInstanceCounterManager; }
+	FORCEINLINE const FNiagaraGPUInstanceCountManager& GetGPUInstanceCounterManager() const { check(IsInParallelRenderingThread()); return GPUInstanceCounterManager; }
 
 #if NIAGARA_COMPUTEDEBUG_ENABLED
 	/** Public interface to Niagara compute debugging. */
@@ -178,6 +182,11 @@ public:
 	FORCEINLINE void MultiGPUResourceModified(FRHICommandList& RHICmdList, FRHITexture* Texture, bool bRequiredForSimulation, bool bRequiredForRendering) const {}
 #endif
 
+	/** Event that broadcast before any rendering work is prepared / executed for Niagara. */
+	FOnPostPreRenderEvent& GetOnPreRenderEvent() { return OnPreRenderEvent; }
+	/** Event that broadcast after all rendering for Niagara is complete. */
+	FOnPostPreRenderEvent& GetOnPostRenderEvent() { return OnPostRenderEvent; }
+
 protected:
 	EShaderPlatform							ShaderPlatform;
 	ERHIFeatureLevel::Type					FeatureLevel;
@@ -197,4 +206,7 @@ protected:
 	bool									bIsOutsideSceneRenderer = false;
 	bool									bIsFirstViewFamily = true;
 	bool									bIsLastViewFamily = true;
+
+	FOnPostPreRenderEvent					OnPreRenderEvent;
+	FOnPostPreRenderEvent					OnPostRenderEvent;
 };

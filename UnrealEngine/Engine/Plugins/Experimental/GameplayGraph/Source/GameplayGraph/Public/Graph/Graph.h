@@ -6,13 +6,15 @@
 #include "Containers/Array.h"
 #include "Containers/Map.h"
 #include "Containers/Set.h"
-#include "Graph/GraphEdge.h"
 #include "Graph/GraphHandle.h"
 #include "Graph/GraphIsland.h"
 #include "Graph/GraphVertex.h"
 #include "Templates/SubclassOf.h"
 
 #include "Graph.generated.h"
+
+class IGraphSerialization;
+class IGraphDeserialization;
 
 USTRUCT()
 struct FGraphProperties
@@ -21,35 +23,34 @@ struct FGraphProperties
 
 	UPROPERTY(SaveGame)
 	bool bGenerateIslands = true;
+	
+	// Comparison operators
+	friend bool operator==(const FGraphProperties& Lhs, const FGraphProperties& Rhs) = default;
+	friend bool operator!=(const FGraphProperties& Lhs, const FGraphProperties& Rhs) = default;
 };
 
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnGraphVertexCreated, const FGraphVertexHandle&);
-DECLARE_MULTICAST_DELEGATE_OneParam(FOnGraphEdgeCreated, const FGraphEdgeHandle&);
 DECLARE_MULTICAST_DELEGATE_OneParam(FOnGraphIslandCreated, const FGraphIslandHandle&);
 
-/**
- * The minimum amount of data we need to serialize to be able to reconstruct the graph as it was.
- * Note that classes that inherit from UGraph and its elements will no doubt want to extend the graph
- * with actual information on each node/edge/island. In that case, they should extend FSerializableGraph
- * to contain the extra information per graph handle. Furthermore, they'll need to extend UGraph to have
- * its own typed serialization save/load functions that call the base functions in UGraph first.
- */
-USTRUCT()
-struct FSerializableGraph
+struct GAMEPLAYGRAPH_API FEdgeSpecifier
 {
-	GENERATED_BODY()
+	FEdgeSpecifier(const FGraphVertexHandle& InVertexHandle1, const FGraphVertexHandle& InVertexHandle2);
 
-	UPROPERTY(SaveGame)
-	FGraphProperties Properties;
+	// Comparison operators
+	friend bool operator==(const FEdgeSpecifier& Lhs, const FEdgeSpecifier& Rhs) = default;
+	friend bool operator!=(const FEdgeSpecifier& Lhs, const FEdgeSpecifier& Rhs) = default;
 
-	UPROPERTY(SaveGame)
-	TArray<FGraphVertexHandle> Vertices;
+	friend uint32 GAMEPLAYGRAPH_API GetTypeHash(const FEdgeSpecifier& InEdge)
+	{
+		return GetTypeHash(TPair<FGraphVertexHandle, FGraphVertexHandle>{InEdge.VertexHandle1, InEdge.VertexHandle2});
+	}
 
-	UPROPERTY(SaveGame)
-	TMap<FGraphEdgeHandle, FSerializedEdgeData> Edges;
+	const FGraphVertexHandle& GetVertexHandle1() const { return VertexHandle1; }
+	const FGraphVertexHandle& GetVertexHandle2() const { return VertexHandle2; }
 
-	UPROPERTY(SaveGame)
-	TMap<FGraphIslandHandle, FSerializedIslandData> Islands;
+private:
+	FGraphVertexHandle VertexHandle1;
+	FGraphVertexHandle VertexHandle2;
 };
 
 /**
@@ -81,26 +82,22 @@ class GAMEPLAYGRAPH_API UGraph: public UObject
 public:
 	UGraph() = default;
 
-	FSerializableGraph GetSerializableGraph() const;
-	void LoadFromSerializedGraph(const FSerializableGraph& Input);
-
 	void Empty();
 	void InitializeFromProperties(const FGraphProperties& Properties);
 
 	/** Given a node handle, find the handle in the current graph with a proper element set. */
-	FGraphVertexHandle GetCompleteNodeHandle(const FGraphVertexHandle& InHandle);
+	FGraphVertexHandle GetCompleteNodeHandle(const FGraphVertexHandle& InHandle) const;
 
 	/** Create a node with the specified subclass, adds it to the graph, and returns a handle to it. */
-	FGraphVertexHandle CreateVertex(int64 InUniqueIndex = INDEX_NONE);
+	FGraphVertexHandle CreateVertex(FGraphUniqueIndex InUniqueIndex = FGraphUniqueIndex::CreateUniqueIndex(false));
 
-	/** Creates an edge between the two nodes. */
-	FGraphEdgeHandle CreateEdge(FGraphVertexHandle Node1, FGraphVertexHandle Node2, int64 InUniqueIndex = INDEX_NONE, bool bAddToIslands = true);
+	/** Creates edges in bulk. This is more efficient than calling CreateEdge multiple times since we will only try to assign a node to an island once. */
+	void CreateBulkEdges(TArray<FEdgeSpecifier>&& NodesToConnect);
 
 	/** Removes a node from the graph along with any edges that contain it. */
 	void RemoveVertex(const FGraphVertexHandle& NodeHandle);
 
-	/** Removes an edge from the graph. */
-	void RemoveEdge(const FGraphEdgeHandle& EdgeHandle, bool bHandleIslands);
+	void RemoveBulkVertices(const TArray<FGraphVertexHandle>& InHandles);
 
 	/** This should be called immediately after a node and any relevant edges have been added to the graph. */
 	virtual void FinalizeVertex(const FGraphVertexHandle& InHandle);
@@ -108,64 +105,68 @@ public:
 	/** Remove an island from the graph. */
 	void RemoveIsland(const FGraphIslandHandle& IslandHandle);
 
+	/** Refresh the connectivity of the given island (re-check to see whether it should be split). */
+	void RefreshIslandConnectivity(const FGraphIslandHandle& IslandHandle);
+
 	int32 NumVertices() const { return Vertices.Num(); }
-	int32 NumEdges() const { return Edges.Num(); }
 	int32 NumIslands() const { return Islands.Num(); }
 
+	template<typename TLambda>
+	void ForEachIsland(TLambda&& Lambda)
+	{
+		for (const TPair<FGraphIslandHandle, TObjectPtr<UGraphIsland>>& Kvp : Islands)
+		{
+			Lambda(Kvp.Key, Kvp.Value);
+		}
+	}
+
 	FOnGraphVertexCreated OnVertexCreated;
-	FOnGraphEdgeCreated OnEdgeCreated;
 	FOnGraphIslandCreated OnIslandCreated;
 
-protected:
 	const TMap<FGraphVertexHandle, TObjectPtr<UGraphVertex>>& GetVertices() const { return Vertices; }
-	const TMap<FGraphEdgeHandle, TObjectPtr<UGraphEdge>>& GetEdges() const { return Edges; }
 	const TMap<FGraphIslandHandle, TObjectPtr<UGraphIsland>>& GetIslands() const { return Islands; }
 	const FGraphProperties& GetProperties() const { return Properties; }
 
+	UGraphVertex* GetSafeVertexFromHandle(const FGraphVertexHandle& Handle) const;
+	UGraphIsland* GetSafeIslandFromHandle(const FGraphIslandHandle& Handle) const;
+
+	GAMEPLAYGRAPH_API friend void operator<<(IGraphSerialization& Output, const UGraph& Graph);
+	GAMEPLAYGRAPH_API friend void operator>>(const IGraphDeserialization& Input, UGraph& Graph);
+
+protected:
+	/** When we add multiple edges into the graph. This function will ensure that the interactions we make externally are kept to a minimum. */
+	void MergeOrCreateIslands(const TArray<FEdgeSpecifier>& InEdges);
+
+	/** After a change, this function will remove the island if it's empty or will attempt to split it into two smaller islands. */
+	void RemoveOrSplitIsland(TObjectPtr<UGraphIsland> Island);
+
+	/** Used for bulk loading in vertices/edges/islands. */
+	void ReserveVertices(int32 Delta);
+	void ReserveIslands(int32 Delta);
 private:
 	UPROPERTY()
 	TMap<FGraphVertexHandle, TObjectPtr<UGraphVertex>> Vertices;
-
-	/** Keeps track of every edge a node is a part of. The node itself will only track edges it's the "source" node of in directed graphs. */
-	TMap<FGraphVertexHandle, TSet<FGraphEdgeHandle>> VertexEdges;
-
-	UPROPERTY()
-	TMap<FGraphEdgeHandle, TObjectPtr<UGraphEdge>> Edges;
 
 	UPROPERTY()
 	TMap<FGraphIslandHandle, TObjectPtr<UGraphIsland>> Islands;
 	FGraphProperties Properties;
 
-	/**
-	 *  The unique index to assign to the next node that gets created.
-	 *  If loading from persistence, as nodes get added into the graph, this
-	 *  value will automatically keep increasing so we never try to reuse
-	 *  the same unique index.
-	 */
-	int64 NextAvailableVertexUniqueIndex = 0;
-	int64 NextAvailableEdgeUniqueIndex = 0;
-	int64 NextAvailableIslandUniqueIndex = 0;
-
 	/** Creates an island out of a given set of nodes. */
-	FGraphIslandHandle CreateIsland(TArray<FGraphVertexHandle> Nodes, int64 InUniqueIndex = INDEX_NONE);
+	FGraphIslandHandle CreateIsland(TArray<FGraphVertexHandle> Nodes, FGraphUniqueIndex InUniqueIndex = FGraphUniqueIndex());
+
+	/** Creates an edge between the two nodes. */
+	bool CreateEdge(FGraphVertexHandle Node1, FGraphVertexHandle Node2, bool bMergeIslands = true);
 
 	/** Adds a node to the graph's node collection and modifies the NextAvailableNodeUniqueIndex as necessary to maintain its validity. */
 	void RegisterVertex(TObjectPtr<UGraphVertex> Node);
 
-	/** Add an edge to the graph and modifies the NextAvailableEdgeUniqueIndex as necessary to maintain its validity. */
-	void RegisterEdge(TObjectPtr<UGraphEdge> Edge);
-
 	/** Add an island to the graph and modifies the NextAvailableIslandUniqueIndex as necessary to maintain its validity. */
 	void RegisterIsland(TObjectPtr<UGraphIsland> Edge);
 
-	/** When we add an edge into a graph, we will want to merge islands if the edge connects two nodes that are in different islands. */
-	void MergeOrCreateIslands(TObjectPtr<UGraphEdge> Edge);
-
-	/** After a change, this function will remove the island if it's empty or will attempt to split it into two smaller islands. */
-	void RemoveOrSplitIsland(TObjectPtr<UGraphIsland> Island);
+	/** Need this so that users aren't able to pass in bHandleIslands = false. */
+	void RemoveEdgeInternal(const FGraphVertexHandle& VertexHandleA, const FGraphVertexHandle& VertexHandleB, bool bHandleIslands);
 
 	/** Factory functions for creating an appropriately typed node/edge/island. */
 	virtual TObjectPtr<UGraphVertex> CreateTypedVertex() const;
-	virtual TObjectPtr<UGraphEdge> CreateTypedEdge() const;
 	virtual TObjectPtr<UGraphIsland> CreateTypedIsland() const;
 };

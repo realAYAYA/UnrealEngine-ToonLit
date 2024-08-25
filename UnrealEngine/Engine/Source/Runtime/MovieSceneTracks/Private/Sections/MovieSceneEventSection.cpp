@@ -285,7 +285,10 @@ void FMovieSceneEventParameters::GetInstance(FStructOnScope& OutStruct) const
 	if (StructPtr && StructPtr->GetStructureSize() > 0 && StructBytes.Num())
 	{
 		// Deserialize the struct bytes into the struct memory
-		FEventParameterReader(StructBytes).Read(StructPtr, Memory);
+		FEventParameterReader ParamReader(StructBytes);
+		ParamReader.SetUEVer(PackageFileVersion);
+		ParamReader.SetLicenseeUEVer(LicenseePackageFileVersion);
+		ParamReader.Read(StructPtr, Memory);
 	}
 }
 
@@ -305,6 +308,12 @@ bool FMovieSceneEventParameters::Serialize(FArchive& Ar)
 	}
 	
 	Ar << StructBytes;
+
+	if (Ar.IsLoading())
+	{
+		PackageFileVersion = Ar.UEVer();
+		LicenseePackageFileVersion = Ar.LicenseeUEVer();
+	}
 
 	return true;
 }
@@ -385,6 +394,17 @@ void FMovieSceneEventSectionData::Reset()
 void FMovieSceneEventSectionData::Offset(FFrameNumber DeltaPosition)
 {
 	GetData().Offset(DeltaPosition);
+}
+
+
+FKeyHandle FMovieSceneEventSectionData::GetHandle(int32 Index)
+{
+	return GetData().GetHandle(Index);
+}
+
+int32 FMovieSceneEventSectionData::GetIndex(FKeyHandle Handle)
+{
+	return GetData().GetIndex(Handle);
 }
 
 /* UMovieSceneSection structors

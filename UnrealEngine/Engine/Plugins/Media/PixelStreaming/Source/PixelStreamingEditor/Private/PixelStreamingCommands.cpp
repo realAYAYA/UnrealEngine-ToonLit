@@ -15,7 +15,7 @@ namespace UE::EditorPixelStreaming
 		UI_COMMAND(VP8, "VP8", "VP8", EUserInterfaceActionType::RadioButton, FInputChord());
 		UI_COMMAND(VP9, "VP9", "VP9", EUserInterfaceActionType::RadioButton, FInputChord());
 		UI_COMMAND(H264, "H264", "H264", EUserInterfaceActionType::RadioButton, FInputChord());
-		UI_COMMAND(H265, "H265 (experimental)", "H265", EUserInterfaceActionType::RadioButton, FInputChord());
+		UI_COMMAND(AV1, "AV1", "AV1 (Requires an Nvidia \"Ada Lovelace\" family GPU)", EUserInterfaceActionType::RadioButton, FInputChord());
 	}
 #undef LOCTEXT_NAMESPACE
 } // namespace UE::EditorPixelStreaming

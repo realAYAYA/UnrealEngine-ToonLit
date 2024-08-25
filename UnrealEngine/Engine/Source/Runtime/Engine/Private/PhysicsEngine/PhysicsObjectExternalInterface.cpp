@@ -1,6 +1,9 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #include "PhysicsEngine/PhysicsObjectExternalInterface.h"
 
+#include "Engine/World.h"
+#include "Physics/Experimental/PhysScene_Chaos.h"
+
 FLockedReadPhysicsObjectExternalInterface FPhysicsObjectExternalInterface::LockRead(FChaosScene* Scene)
 {
 	return FLockedReadPhysicsObjectExternalInterface{ Scene, CreateReadInterface<Chaos::EThreadContext::External>() };
@@ -8,7 +11,7 @@ FLockedReadPhysicsObjectExternalInterface FPhysicsObjectExternalInterface::LockR
 
 FLockedReadPhysicsObjectExternalInterface FPhysicsObjectExternalInterface::LockRead(Chaos::FConstPhysicsObjectHandle InObject)
 {
-	return LockRead(TArray<Chaos::FConstPhysicsObjectHandle>{ InObject });
+	return LockRead(GetScene(InObject));
 }
 
 FLockedReadPhysicsObjectExternalInterface FPhysicsObjectExternalInterface::LockRead(TArrayView<const Chaos::FConstPhysicsObjectHandle> InObjects)
@@ -34,4 +37,21 @@ Chaos::FReadPhysicsObjectInterface_External FPhysicsObjectExternalInterface::Get
 Chaos::FWritePhysicsObjectInterface_External FPhysicsObjectExternalInterface::GetWrite_AssumesLocked()
 {
 	return CreateWriteInterface<Chaos::EThreadContext::External>();
+}
+
+UPrimitiveComponent* FPhysicsObjectExternalInterface::GetComponentFromPhysicsObject(UWorld* World, Chaos::FPhysicsObjectHandle PhysicsObject)
+{
+	if (!PhysicsObject || !World)
+	{
+		return nullptr;
+	}
+
+	IPhysicsProxyBase* Proxy = Chaos::FPhysicsObjectInterface::GetProxy({ &PhysicsObject, 1 });
+	FPhysScene* Scene = World->GetPhysicsScene();
+	if (!Scene || !Proxy)
+	{
+		return nullptr;
+	}
+
+	return Scene->GetOwningComponent<UPrimitiveComponent>(Proxy);
 }

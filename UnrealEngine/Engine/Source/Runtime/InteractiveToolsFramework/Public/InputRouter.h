@@ -122,4 +122,5 @@ protected:
 
 	INTERACTIVETOOLSFRAMEWORK_API void TerminateHover(EInputCaptureSide Side);
 	INTERACTIVETOOLSFRAMEWORK_API bool ProcessMouseHover(const FInputDeviceState& Input);
+	INTERACTIVETOOLSFRAMEWORK_API bool UpdateExistingHoverCaptureIfPresent(const FInputDeviceState& Input);
 };

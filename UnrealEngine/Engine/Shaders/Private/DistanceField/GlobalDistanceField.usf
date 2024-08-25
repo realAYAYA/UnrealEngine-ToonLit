@@ -26,6 +26,53 @@
 	#define THREADGROUP_SIZE_Z 1
 #endif
 
+// Must match FPackedClipmapData in GlobalDistanceField.cpp
+struct FPackedClipmapData
+{
+	float3 TranslatedWorldCenter; // Camera-centered world space
+	float MeshSDFRadiusThreshold;	
+
+	float3 WorldExtent;
+	float InfluenceRadiusSq;
+
+	uint ClipmapIndex; 
+	uint Flags;
+	uint Padding0;
+	uint Padding1;	
+};
+
+struct FPackedClipmap
+{
+	float3 TranslatedWorldCenter; // Camera-centered world space
+	float3 WorldExtent;
+
+	float MeshSDFRadiusThreshold;
+	float InfluenceRadiusSq;
+
+	uint ClipmapIndex; // Global index
+	bool bReadbackHasPendingStreaming;
+};
+
+StructuredBuffer<FPackedClipmapData> PackedClipmapBuffer;
+
+FPackedClipmap GetPackedClipmap(uint PackedClipmapIndex)
+{
+	FPackedClipmapData ClipmapData = PackedClipmapBuffer[PackedClipmapIndex];
+
+	FPackedClipmap PackedClipmap;
+
+	PackedClipmap.TranslatedWorldCenter = ClipmapData.TranslatedWorldCenter;
+	PackedClipmap.WorldExtent = ClipmapData.WorldExtent;
+
+	PackedClipmap.MeshSDFRadiusThreshold = ClipmapData.MeshSDFRadiusThreshold;
+	PackedClipmap.InfluenceRadiusSq = ClipmapData.InfluenceRadiusSq;
+
+	PackedClipmap.ClipmapIndex = ClipmapData.ClipmapIndex;
+	PackedClipmap.bReadbackHasPendingStreaming = ClipmapData.Flags != 0;
+
+	return PackedClipmap;
+}
+
 RWStructuredBuffer<uint> RWCullGridAllocator;
 RWStructuredBuffer<uint> RWCullGridObjectHeader;
 RWStructuredBuffer<uint> RWCullGridObjectArray;
@@ -42,51 +89,61 @@ RWStructuredBuffer<uint> RWObjectIndexNumBuffer;
 
 RWStructuredBuffer<uint> RWHasPendingStreaming;
 
-float3 ClipmapTranslatedWorldCenter;
-float3 ClipmapWorldExtent;
-float InfluenceRadius;
-float InfluenceRadiusSq;
+
+float3 PreViewTranslationHigh;
+float3 PreViewTranslationLow;
+
 // 0: accept only mostly static objects, 1: accept only often moving objects, 2: accept all objects
 uint AcceptOftenMovingObjectsOnly;
-float MeshSDFRadiusThreshold;
-
-float3 ViewTilePosition;
-float3 RelativePreViewTranslation;
+uint NumPackedClipmaps;
+uint ObjectIndexBufferStride;
 
 [numthreads(CULLOBJECTS_THREADGROUP_SIZE, 1, 1)]
 void CullObjectsToClipmapCS(
 	uint GroupIndex : SV_GroupIndex,
 	uint3 GroupId : SV_GroupID)
 {
-	const FLWCVector3 PreViewTranslation = MakeLWCVector3(-ViewTilePosition, RelativePreViewTranslation);
-
 	const uint ObjectIndex = GetUnWrappedDispatchThreadId(GroupId, GroupIndex, CULLOBJECTS_THREADGROUP_SIZE);
 	if (ObjectIndex < NumSceneObjects)
 	{
 		const FDFObjectBounds DFObjectBounds = LoadDFObjectBounds(ObjectIndex);
-		const float3 TranslatedBoundsCenter = LWCToFloat(LWCAdd(DFObjectBounds.Center, PreViewTranslation));
 
-		BRANCH
-		if ((DFObjectBounds.bVisible || DFObjectBounds.bAffectIndirectLightingWhileHidden)
-			&& (DFObjectBounds.SphereRadius > MeshSDFRadiusThreshold || DFObjectBounds.bEmissiveLightSource)
-			&& (AcceptOftenMovingObjectsOnly == 2 || DFObjectBounds.OftenMoving == AcceptOftenMovingObjectsOnly))
+		const bool bMatchingMobility = AcceptOftenMovingObjectsOnly == 2 || DFObjectBounds.OftenMoving == AcceptOftenMovingObjectsOnly;
+		const bool bVisible = DFObjectBounds.bVisible || DFObjectBounds.bAffectIndirectLightingWhileHidden;
+
+		if (bMatchingMobility && bVisible)
 		{
-			float DistanceSq = ComputeSquaredDistanceBetweenAABBs(ClipmapTranslatedWorldCenter, ClipmapWorldExtent, TranslatedBoundsCenter, DFObjectBounds.BoxExtent);
-			if (DistanceSq < InfluenceRadiusSq)
+			const FDFVector3 PreViewTranslation = MakeDFVector3(PreViewTranslationHigh, PreViewTranslationLow);
+			const float3 TranslatedWorldObjectBoundsCenter = DFFastToTranslatedWorld(DFObjectBounds.Center, PreViewTranslation);
+
+			for (uint PackedClipmapIndex = 0; PackedClipmapIndex < NumPackedClipmaps; ++PackedClipmapIndex)
 			{
-				uint DestIndex;
-				InterlockedAdd(RWObjectIndexNumBuffer[0], 1U, DestIndex);
-				RWObjectIndexBuffer[DestIndex] = ObjectIndex;
+				FPackedClipmap Clipmap = GetPackedClipmap(PackedClipmapIndex);
 
-#if READBACK_HAS_PENDING_STREAMING
-				FDFObjectData DFObjectData = LoadDFObjectData(ObjectIndex);
-				uint NumMips = LoadDFAssetData(DFObjectData.AssetIndex, 0).NumMips;
-
-				if (NumMips == 1)
+				if (DFObjectBounds.SphereRadius > Clipmap.MeshSDFRadiusThreshold || DFObjectBounds.bEmissiveLightSource)
 				{
-					RWHasPendingStreaming[0] = 1;
+					float DistanceSq = ComputeSquaredDistanceBetweenAABBs(Clipmap.TranslatedWorldCenter, Clipmap.WorldExtent, TranslatedWorldObjectBoundsCenter, DFObjectBounds.BoxExtent);
+
+					if (DistanceSq < Clipmap.InfluenceRadiusSq)
+					{
+						uint DestIndex;
+						InterlockedAdd(RWObjectIndexNumBuffer[PackedClipmapIndex], 1U, DestIndex);
+						RWObjectIndexBuffer[DestIndex + PackedClipmapIndex * ObjectIndexBufferStride] = ObjectIndex;
+
+						#if READBACK_HAS_PENDING_STREAMING
+						if (Clipmap.bReadbackHasPendingStreaming)
+						{
+							FDFObjectData DFObjectData = LoadDFObjectData(ObjectIndex);
+							uint NumMips = LoadDFAssetData(DFObjectData.AssetIndex, 0).NumMips;
+
+							if (NumMips == 1)
+							{
+								RWHasPendingStreaming[Clipmap.ClipmapIndex] = 1;
+							}
+						}
+						#endif
+					}
 				}
-#endif
 			}
 		}
 	}
@@ -97,13 +154,13 @@ RWBuffer<uint> RWPageUpdateIndirectArgBuffer;
 RWBuffer<uint> RWCullGridUpdateIndirectArgBuffer;
 RWBuffer<uint> RWBuildObjectGridIndirectArgBuffer;
 
-[numthreads(1, 1, 1)]
+[numthreads(THREADGROUP_SIZE, 1, 1)]
 void ClearIndirectArgBufferCS(
 	uint3 GroupId : SV_GroupID,
 	uint3 DispatchThreadId : SV_DispatchThreadID,
 	uint3 GroupThreadId : SV_GroupThreadID)
 {
-	if (DispatchThreadId.x == 0)
+	if (all(DispatchThreadId) == 0)
 	{
 		const uint3 ClearValue = uint3(0, 1, 1);
 		WriteDispatchIndirectArgs(RWPageComposeIndirectArgBuffer, 0, ClearValue);
@@ -121,6 +178,7 @@ RWBuffer<uint> RWCullGridIndirectArgBuffer;
 
 Buffer<float4> UpdateBoundsBuffer;
 uint NumUpdateBounds;
+float InfluenceRadiusSq;
 
 uint3 CullGridResolution;
 float3 CullGridCoordToTranslatedWorldCenterScale;
@@ -199,7 +257,7 @@ void BuildGridTilesCS(
 	{
 		float3 CullGridTranslatedWorldCenter = CullGridCoord * CullGridCoordToTranslatedWorldCenterScale + CullGridCoordToTranslatedWorldCenterBias;
 
-		for (uint UpdateBoundsIndex = ThreadIndex; UpdateBoundsIndex < NumUpdateBounds; UpdateBoundsIndex += THREADGROUP_SIZE)
+		for (uint UpdateBoundsIndex = ThreadIndex; UpdateBoundsIndex < NumUpdateBounds; UpdateBoundsIndex += THREADGROUP_SIZE * THREADGROUP_SIZE * THREADGROUP_SIZE)
 		{
 			float3 UpdateBoundsCenter = UpdateBoundsBuffer[UpdateBoundsIndex * 2 + 0].xyz;
 			float3 UpdateBoundsExtent = UpdateBoundsBuffer[UpdateBoundsIndex * 2 + 1].xyz;
@@ -322,7 +380,7 @@ void AllocatePagesCS(
 	uint3 DispatchThreadId : SV_DispatchThreadID,
 	uint3 GroupThreadId : SV_GroupThreadID)
 {
-	const FLWCVector3 PreViewTranslation = MakeLWCVector3(-ViewTilePosition, RelativePreViewTranslation);
+	const FDFVector3 PreViewTranslation = MakeDFVector3(PreViewTranslationHigh, PreViewTranslationLow);
 
 	uint ThreadIndex = GroupThreadId.x;
 	uint IndexInPageTileBuffer = GroupId.x;
@@ -335,7 +393,7 @@ void AllocatePagesCS(
 
 	uint3 PageTableTextureCoord = PageGridCoordToPageTableTextureCoord(PageGridCoord);
 	float3 PageTranslatedWorldCenter = PageGridCoord * PageCoordToPageTranslatedWorldCenterScale + PageCoordToPageTranslatedWorldCenterBias;
-	FLWCVector3 PageWorldCenter = LWCSubtract(PageTranslatedWorldCenter, PreViewTranslation);
+	FDFVector3 PageWorldCenter = DFFastSubtract(PageTranslatedWorldCenter, PreViewTranslation);
 
 #if PROCESS_DISTANCE_FIELDS
 	// Loop through objects to find out if the current page contains any objects and should be allocated
@@ -349,12 +407,12 @@ void AllocatePagesCS(
 		uint CullGridObjectNum = CullGridObjectHeader[CullGridLinearIndex * 2 + 0];
 		uint CullGridObjectOffset = CullGridObjectHeader[CullGridLinearIndex * 2 + 1];
 
-		for (uint IndexInCullCell = ThreadIndex; IndexInCullCell < CullGridObjectNum; IndexInCullCell += 64)
+		for (uint IndexInCullCell = ThreadIndex; IndexInCullCell < CullGridObjectNum; IndexInCullCell += THREADGROUP_SIZE_X)
 		{
 			uint ObjectIndex = CullGridObjectArray[CullGridObjectOffset + IndexInCullCell];
 
 			const FDFObjectBounds DFObjectBounds = LoadDFObjectBounds(ObjectIndex);
-			const float3 TranslatedBoundsCenter = LWCToFloat(LWCAdd(DFObjectBounds.Center, PreViewTranslation));
+			const float3 TranslatedBoundsCenter = DFFastToTranslatedWorld(DFObjectBounds.Center, PreViewTranslation);
 			float SquaredDistanceBetweenAABBs = ComputeSquaredDistanceBetweenAABBs(PageTranslatedWorldCenter, PageWorldExtent, TranslatedBoundsCenter, DFObjectBounds.BoxExtent);
 
 			if (SquaredDistanceBetweenAABBs < ClipmapInfluenceRadius * ClipmapInfluenceRadius)
@@ -525,6 +583,7 @@ StructuredBuffer<uint> ObjectIndexBuffer;
 StructuredBuffer<uint> ObjectIndexNumBuffer;
 StructuredBuffer<uint> CullGridTileBuffer;
 float3 CullTileWorldExtent;
+uint PackedClipmapIndex;
 
 [numthreads(GRID_CULL_THREADGROUP_TOTALSIZE, 1, 1)]
 void CullObjectsToGridCS(
@@ -532,7 +591,7 @@ void CullObjectsToGridCS(
 	uint3 DispatchThreadId : SV_DispatchThreadID,
     uint3 GroupThreadId : SV_GroupThreadID) 
 {
-	const FLWCVector3 PreViewTranslation = MakeLWCVector3(-ViewTilePosition, RelativePreViewTranslation);
+	const FDFVector3 PreViewTranslation = MakeDFVector3(PreViewTranslationHigh, PreViewTranslationLow);
 
 	uint ThreadIndex = GroupThreadId.x;
 
@@ -551,12 +610,12 @@ void CullObjectsToGridCS(
 
 	if (all(CullGridCoord < CullGridResolution))
 	{
-		for (uint IndexInObjectIndexBuffer = ThreadIndex; IndexInObjectIndexBuffer < ObjectIndexNumBuffer[0]; IndexInObjectIndexBuffer += GRID_CULL_THREADGROUP_TOTALSIZE)
+		for (uint IndexInObjectIndexBuffer = ThreadIndex; IndexInObjectIndexBuffer < ObjectIndexNumBuffer[PackedClipmapIndex]; IndexInObjectIndexBuffer += GRID_CULL_THREADGROUP_TOTALSIZE)
 		{
-			uint ObjectIndex = ObjectIndexBuffer[IndexInObjectIndexBuffer];
+			uint ObjectIndex = ObjectIndexBuffer[PackedClipmapIndex * ObjectIndexBufferStride + IndexInObjectIndexBuffer];
 
 			const FDFObjectBounds DFObjectBounds = LoadDFObjectBounds(ObjectIndex);
-			const float3 TranslatedBoundsCenter = LWCToFloat(LWCAdd(DFObjectBounds.Center, PreViewTranslation));
+			const float3 TranslatedBoundsCenter = DFFastToTranslatedWorld(DFObjectBounds.Center, PreViewTranslation);
 			float DistanceSq = ComputeSquaredDistanceBetweenAABBs(CullTileTranslatedWorldCenter, CullTileWorldExtent, TranslatedBoundsCenter, DFObjectBounds.BoxExtent);
 
 			if (DistanceSq <= InfluenceRadiusSq)
@@ -581,12 +640,12 @@ void CullObjectsToGridCS(
 
 	if (all(CullGridCoord < CullGridResolution))
 	{
-		for (uint IndexInObjectIndexBuffer = ThreadIndex; IndexInObjectIndexBuffer < ObjectIndexNumBuffer[0]; IndexInObjectIndexBuffer += GRID_CULL_THREADGROUP_TOTALSIZE)
+		for (uint IndexInObjectIndexBuffer = ThreadIndex; IndexInObjectIndexBuffer < ObjectIndexNumBuffer[PackedClipmapIndex]; IndexInObjectIndexBuffer += GRID_CULL_THREADGROUP_TOTALSIZE)
 		{
-			uint ObjectIndex = ObjectIndexBuffer[IndexInObjectIndexBuffer];
+			uint ObjectIndex = ObjectIndexBuffer[PackedClipmapIndex * ObjectIndexBufferStride + IndexInObjectIndexBuffer];
 
 			const FDFObjectBounds DFObjectBounds = LoadDFObjectBounds(ObjectIndex);
-			const float3 TranslatedBoundsCenter = LWCToFloat(LWCAdd(DFObjectBounds.Center, PreViewTranslation));
+			const float3 TranslatedBoundsCenter = DFFastToTranslatedWorld(DFObjectBounds.Center, PreViewTranslation);
 			float DistanceSq = ComputeSquaredDistanceBetweenAABBs(CullTileTranslatedWorldCenter, CullTileWorldExtent, TranslatedBoundsCenter, DFObjectBounds.BoxExtent);
 
 			if (DistanceSq <= InfluenceRadiusSq)

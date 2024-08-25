@@ -3,7 +3,7 @@
 
 #include "ChaosFlesh/ChaosFleshEditorPlugin.h"
 
-#include "ChaosFlesh/Asset/AssetTypeActions_FleshAsset.h"
+#include "ChaosFlesh/Asset/AssetDefinition_FleshAsset.h"
 #include "ChaosFlesh/Asset/FleshDeformableInterfaceDetails.h"
 #include "ChaosFlesh/Asset/FleshAssetThumbnailRenderer.h"
 #include "ChaosFlesh/ChaosDeformableCollisionsActor.h"
@@ -22,11 +22,6 @@
 void IChaosFleshEditorPlugin::StartupModule()
 {
 	FChaosFleshEditorStyle::Get();
-
-	IAssetTools& AssetTools = FAssetToolsModule::GetModule().Get();
-
-	FleshAssetActions = new FAssetTypeActions_FleshAsset();
-	AssetTools.RegisterAssetTypeActions(MakeShareable(FleshAssetActions));
 
 	if (GIsEditor && !IsRunningCommandlet())
 	{
@@ -49,8 +44,6 @@ void IChaosFleshEditorPlugin::StartupModule()
 			ECVF_Default
 		));
 	}
-
-	UThumbnailManager::Get().RegisterCustomRenderer(UFleshAsset::StaticClass(), UFleshAssetThumbnailRenderer::StaticClass());
 
 	// register details customization
 	FPropertyEditorModule& PropertyModule = FModuleManager::LoadModuleChecked<FPropertyEditorModule>("PropertyEditor");
@@ -79,13 +72,6 @@ void IChaosFleshEditorPlugin::StartupModule()
 
 void IChaosFleshEditorPlugin::ShutdownModule()
 {
-	if (UObjectInitialized())
-	{	
-		UThumbnailManager::Get().UnregisterCustomRenderer(UFleshAsset::StaticClass());
-
-		IAssetTools& AssetTools = FAssetToolsModule::GetModule().Get();
-		AssetTools.UnregisterAssetTypeActions(FleshAssetActions->AsShared());
-	}
 }
 
 IMPLEMENT_MODULE(IChaosFleshEditorPlugin, ChaosFleshEditor)

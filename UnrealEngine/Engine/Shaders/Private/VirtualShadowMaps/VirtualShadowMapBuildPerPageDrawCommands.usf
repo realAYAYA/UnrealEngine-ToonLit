@@ -228,8 +228,6 @@ void CullPerPageDrawCommandsCs(uint3 GroupId : SV_GroupID, int GroupThreadIndex 
 		FInstanceSceneData InstanceData = GetInstanceSceneData(InstanceId, Scene.GPUScene.InstanceDataSOAStride);
 		FPrimitiveSceneData PrimitiveData = GetPrimitiveData(InstanceData.PrimitiveId);
 
-		bool bMaterialInvalidatesAnyView = false;
-		bool bShouldCacheAsStaticForAnyView = false;
 		uint ThreadTotalForAllViews = 0;
 #if VSM_GENERATE_STATS
 		uint TotalPageArea = 0U;
@@ -257,17 +255,23 @@ void CullPerPageDrawCommandsCs(uint3 GroupId : SV_GroupID, int GroupThreadIndex 
 			Cull.bSkipWPODisableDistance |= DrawCommandDesc.bMaterialAlwaysEvaluatesWorldPositionOffset;
 
 			bEnableWPO = Cull.Distance( PrimitiveData ) && bEnableWPO;
+			
+			// NOTE: Doing this for just the primary view (not mip views) is fine for current logic
+			const bool bAllowWPO = VirtualShadowMapIsWPOAllowed(PrimitiveData, NaniteView.TargetLayerIndex);
+			bEnableWPO = bEnableWPO && bAllowWPO;
+			bool bCacheAsStatic = ShouldCacheInstanceAsStatic(InstanceId, (NaniteView.Flags & NANITE_VIEW_FLAG_UNCACHED), bAllowWPO);
+
 			if (!bEnableWPO)
 			{
 				// Disable the Evaluate WPO culling flag if WPO was disabled
 				CullingFlags &= ~INSTANCE_CULLING_FLAG_EVALUATE_WPO;
 			}
 
-			const bool bMaterialInvalidates = bEnableWPO && ((PrimitiveData.Flags & PRIMITIVE_SCENE_DATA_FLAG_DISABLE_MATERIAL_INVALIDATIONS) == 0u);
-
-			bMaterialInvalidatesAnyView |= bMaterialInvalidates;
+			Cull.ScreenSize(DrawCommandDesc.MinScreenSize, DrawCommandDesc.MaxScreenSize);
 
 			Cull.GlobalClipPlane();
+
+			const bool bMaterialInvalidates = ShouldMaterialInvalidateShadowCache(PrimitiveData, bEnableWPO);
 
 			// A thing is considered to have moved (which causes it to render into cached pages) if:
 			// It was uploaded this frame, OR
@@ -292,9 +296,7 @@ void CullPerPageDrawCommandsCs(uint3 GroupId : SV_GroupID, int GroupThreadIndex 
 				// Compute estimated footprint in the VSM base level - note that we don't use the actual footprint because it changes under rotation and also with edge clipping which makes it unstable when used for culling.
 				float PixelEstRadius = CalcClipSpaceRadiusEstimate(Cull.bIsOrtho, InstanceData, Cull.LocalToTranslatedWorld, NaniteView.ViewToClip) * float(VSM_VIRTUAL_MAX_RESOLUTION_XY);
 
-				bool bShouldCacheAsStatic = ShouldCacheInstanceAsStatic(InstanceData, Cull.bIsViewUncached);
-				uint BaseFlagMask = GetPageFlagMaskForRendering(InstanceData, NaniteView, bHasMoved);
-				bShouldCacheAsStaticForAnyView = bShouldCacheAsStaticForAnyView || bShouldCacheAsStatic;
+				uint BaseFlagMask = GetPageFlagMaskForRendering(bCacheAsStatic, bHasMoved);
 
 				// Loop over mip levels and count number of output visible instances
 				for (uint MipLevel = 0U; MipLevel < uint(NaniteView.TargetNumMipLevels); ++MipLevel)
@@ -305,7 +307,7 @@ void CullPerPageDrawCommandsCs(uint3 GroupId : SV_GroupID, int GroupThreadIndex 
 
 					FScreenRect Rect = GetScreenRect(MipView.ViewRect, FrustumCull, 4);
 
-					uint FlagMask = BaseFlagMask | GetDetailGeometryFlagMaskForCulling(bShouldCacheAsStatic, false, PixelEstRadius);
+					uint FlagMask = BaseFlagMask | GetDetailGeometryFlagMaskForCulling(bCacheAsStatic, false, PixelEstRadius);
 					// Update for next clip level
 					PixelEstRadius *= 0.5f;
 
@@ -354,7 +356,7 @@ void CullPerPageDrawCommandsCs(uint3 GroupId : SV_GroupID, int GroupThreadIndex 
 								{
 									for (uint X = RectPages.x; X <= RectPages.z; ++X)
 									{
-										if (MarkPageDirty(PageTableLevelOffset, uint2(X, Y), MipLevel, bMaterialInvalidates, bShouldCacheAsStatic, Cull.bIsViewUncached, FlagMask))
+										if (MarkPageDirty(PageTableLevelOffset, uint2(X, Y), MipLevel, bMaterialInvalidates, bCacheAsStatic, Cull.bIsViewUncached, FlagMask))
 										{
 											// Count pages if we're touching all of them anyway
 											++NumMappedPages;
@@ -372,7 +374,7 @@ void CullPerPageDrawCommandsCs(uint3 GroupId : SV_GroupID, int GroupThreadIndex 
 								Job.VirtualShadowMapId = VirtualShadowMapId;
 								Job.MipLevel = MipLevel;
 								Job.bMaterialInvalidates = bMaterialInvalidates;
-								Job.bShouldCacheAsStatic = bShouldCacheAsStatic;
+								Job.bShouldCacheAsStatic = bCacheAsStatic;
 								Job.bIsViewUncached = Cull.bIsViewUncached;
 								Job.bHasMoved = bHasMoved;
 								if (JobIndex < MARKING_JOB_QUEUE_SIZE)
@@ -389,7 +391,7 @@ void CullPerPageDrawCommandsCs(uint3 GroupId : SV_GroupID, int GroupThreadIndex 
 						if (NumMappedPages > 0U)
 						{
 							++ThreadTotalForAllViews;
-							WriteCmd(MipViewId, InstanceId, Payload.IndirectArgIndex, CullingFlags, bShouldCacheAsStatic);
+							WriteCmd(MipViewId, InstanceId, Payload.IndirectArgIndex, CullingFlags, bCacheAsStatic);
 						}
 					}
 					else
@@ -402,12 +404,6 @@ void CullPerPageDrawCommandsCs(uint3 GroupId : SV_GroupID, int GroupThreadIndex 
 			{
 				StatsBufferInterlockedAdd(VSM_STAT_NON_NANITE_INSTANCES_FRUSTUM_CULLED, NaniteView.TargetNumMipLevels);
 			}
-		}
-
-		// If the instance has WPO or similar and invalidated the static, we want to move the primitive to be treated as dynamic.
-		if (ThreadTotalForAllViews > 0U && bMaterialInvalidatesAnyView && bShouldCacheAsStaticForAnyView)
-		{
-			RecordStaticPrimitiveInvalidation(PrimitiveData.PersistentPrimitiveIndex);
 		}
 
 		StatsBufferInterlockedAdd(VSM_STAT_NON_NANITE_INSTANCES_DRAWN, ThreadTotalForAllViews);

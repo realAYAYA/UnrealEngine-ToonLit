@@ -6,6 +6,7 @@
 #include "GeometryCollection/ManagedArrayAccessor.h"
 
 struct FManagedArrayCollection;
+class FGeometryDynamicCollection;
 
 namespace GeometryCollection::Facades
 {
@@ -23,7 +24,7 @@ public:
 	static constexpr float DisabledPostBreakDuration = -1;
 	static constexpr float CrumblingRemovalTimer = -1;
 	
-	FGeometryCollectionRemoveOnBreakDynamicFacade(FManagedArrayCollection& InCollection);
+	FGeometryCollectionRemoveOnBreakDynamicFacade(FGeometryDynamicCollection& InCollection);
 
 	/** 
 	 * returns true if all the necessary attributes are present
@@ -46,7 +47,7 @@ public:
 	/** true if the removal is active for a specific piece */
 	bool IsRemovalActive(int32 TransformIndex) const;
 
-	/** true if a specific transfom uses cluster crumbling */
+	/** true if a specific transform uses cluster crumbling */
 	bool UseClusterCrumbling(int32 TransformIndex) const;
 	
 	/**
@@ -67,8 +68,7 @@ private:
 	/** removal duration */
 	TManagedArrayAccessor<float> BreakRemovalDurationAttribute;
 
-	/** utility attribute needed to compute the values and know what's a cluster */
-	TManagedArrayAccessor<TSet<int32>> ChildrenAttribute;
+	const FGeometryDynamicCollection& DynamicCollection;
 };
 
 /**
@@ -118,7 +118,7 @@ public:
 	 */
 	void UpdateSleepTimer(int32 TransformIndex, float DeltaTime);
 
-	/** Compute decay from elapsed timer and durantion attributes */
+	/** Compute decay from elapsed timer and duration attributes */
 	float ComputeDecay(int32 TransformIndex) const;
 
 	

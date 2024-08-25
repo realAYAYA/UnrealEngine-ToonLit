@@ -62,7 +62,8 @@ public:
 	virtual ~ir_algebraic_visitor()
 	{
 	}
-
+	
+	virtual ir_visitor_status visit_leave(ir_assignment*);
 	ir_rvalue *handle_expression(ir_expression *ir);
 	void handle_rvalue(ir_rvalue **rvalue);
 	bool reassociate_constant(ir_expression *ir1,
@@ -80,6 +81,19 @@ public:
 
 	bool progress;
 };
+
+ir_visitor_status ir_algebraic_visitor::visit_leave(ir_assignment* ir)
+{
+	if (ir->lhs->as_variable() != nullptr && ir->lhs->as_variable()->precise)
+	{
+		return visit_continue;
+	}
+
+	handle_rvalue(&ir->rhs);
+	handle_rvalue(&ir->condition);
+
+	return visit_continue;
+}
 
 static inline bool is_vec_zero(ir_constant *ir)
 {
@@ -210,6 +224,11 @@ ir_rvalue* ir_algebraic_visitor::handle_expression(ir_expression *ir)
 	for (i = 0; i < ir->get_num_operands(); i++)
 	{
 		if (ir->operands[i]->type->is_matrix())
+		{
+			return ir;
+		}
+
+		if (ir->operands[i]->as_variable() != nullptr && ir->operands[i]->as_variable()->precise)
 		{
 			return ir;
 		}

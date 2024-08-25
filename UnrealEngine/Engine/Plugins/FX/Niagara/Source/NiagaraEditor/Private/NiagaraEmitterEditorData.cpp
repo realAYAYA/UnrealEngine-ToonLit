@@ -9,6 +9,7 @@
 #include "NiagaraStackEditorData.h"
 #include "ScopedTransaction.h"
 #include "NiagaraNodeAssignment.h"
+#include "Rendering/Texture2DResource.h"
 #include "ViewModels/HierarchyEditor/NiagaraSummaryViewViewModel.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(NiagaraEmitterEditorData)
@@ -29,6 +30,31 @@ UNiagaraEmitterEditorData::UNiagaraEmitterEditorData(const FObjectInitializer& O
 	
 	PlaybackRangeMin = 0;
 	PlaybackRangeMax = 10;
+}
+
+void UNiagaraEmitterEditorData::Serialize(FArchive& Ar)
+{
+#if WITH_EDITORONLY_DATA
+	// When cooking an emitter that's not an asset, clear out the thumbnail image to prevent issues
+	// with cooked editor data.
+	bool bCookingNonAssetEmitter = Ar.IsCooking() && GetTypedOuter<UNiagaraEmitter>() && GetTypedOuter<UNiagaraEmitter>()->IsAsset() == false;
+	UTexture2D* CachedThumbnail = nullptr;
+	if (bCookingNonAssetEmitter)
+	{
+		CachedThumbnail = EmitterThumbnail;
+		EmitterThumbnail = nullptr;
+	}
+	
+#endif
+	Super::Serialize(Ar);
+
+#if WITH_EDITORONLY_DATA
+	// Restore the thumbnail image that was cleared before serialize.
+	if (bCookingNonAssetEmitter)
+	{
+		EmitterThumbnail = CachedThumbnail;
+	}
+#endif
 }
 
 void UNiagaraEmitterEditorData::PostLoad_TransferSummaryDataToNewFormat()
@@ -367,6 +393,52 @@ void UNiagaraEmitterEditorData::PostLoad_TransferSummaryDataToNewFormat()
 	}
 }
 
+void UNiagaraEmitterEditorData::PostLoad_TransferEmitterThumbnailImage(UObject* Owner)
+{
+	UNiagaraEmitter* Emitter = Cast<UNiagaraEmitter>(Owner);
+	
+	if(Emitter->ThumbnailImage != nullptr && EmitterThumbnail == nullptr)
+	{
+		SetThumbnail(Emitter->ThumbnailImage);
+	}
+}
+
+void UNiagaraEmitterEditorData::PostLoad_TransferModuleStackNotesToNewFormat(UObject* Owner)
+{
+	// since we lack graph context during post load, we do this workaround to find the emitter graph
+	UNiagaraEmitter* Emitter = Cast<UNiagaraEmitter>(Owner);
+	TArray<FNiagaraAssetVersion> AssetVersions = Emitter->GetAllAvailableVersions();
+	UNiagaraGraph* EmitterGraph = nullptr;
+	for (FNiagaraAssetVersion& AssetVersion : AssetVersions)
+	{
+		FVersionedNiagaraEmitterData* EmitterData = Emitter->GetEmitterData(AssetVersion.VersionGuid);
+		if(EmitterData->GetEditorData() == this)
+		{
+			if (UNiagaraScriptSource* GraphSource = Cast<UNiagaraScriptSource>(EmitterData->GraphSource))
+			{
+				GraphSource->ConditionalPostLoad();
+				EmitterGraph = GraphSource->NodeGraph;
+			}
+		}
+	}
+
+	if(EmitterGraph == nullptr)
+	{
+		return;
+	}
+
+	TArray<UNiagaraNodeFunctionCall*> FunctionCallNodes;
+	EmitterGraph->GetNodesOfClass(FunctionCallNodes);
+
+	for(UNiagaraNodeFunctionCall* FunctionCallNode : FunctionCallNodes)
+	{
+		if(FunctionCallNode->GetDeprecatedCustomNotes().Num() > 0)
+		{
+			StackEditorData->TransferDeprecatedStackNotes(*FunctionCallNode);
+		}
+	}
+}
+
 void UNiagaraEmitterEditorData::PostLoad()
 {
 	Super::PostLoad();
@@ -386,6 +458,8 @@ void UNiagaraEmitterEditorData::PostLoad()
 void UNiagaraEmitterEditorData::PostLoadFromOwner(UObject* InOwner)
 {
 	PostLoad_TransferSummaryDataToNewFormat();
+	PostLoad_TransferEmitterThumbnailImage(InOwner);
+	PostLoad_TransferModuleStackNotesToNewFormat(InOwner);
 }
 
 #if WITH_EDITORONLY_DATA

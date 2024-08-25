@@ -6,6 +6,7 @@
 #include "MassStateTreeExecutionContext.h"
 #include "MassStateTreeFragments.h"
 #include "MassCommonFragments.h"
+#include "MassDebugger.h"
 #include "MassExecutionContext.h"
 #include "VisualLogger/VisualLogger.h"
 #include "Engine/World.h"

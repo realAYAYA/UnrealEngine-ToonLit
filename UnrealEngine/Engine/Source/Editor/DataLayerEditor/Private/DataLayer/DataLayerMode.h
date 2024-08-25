@@ -56,7 +56,11 @@ struct FDataLayerModeParams
 	FOnSceneOutlinerItemPicked OnItemPicked;
 };
 
-DECLARE_DELEGATE_OneParam(FOnDataLayerPicked, UDataLayerInstance*);
+/** Called when data layer instance is picked in the Data Layer Picker */
+DECLARE_DELEGATE_OneParam(FOnDataLayerInstancePicked, UDataLayerInstance*);
+
+/** Called to check if a data layer instance should be filtered out by Data Layer Picker. Return true to exclude the data layer instance. */
+DECLARE_DELEGATE_RetVal_OneParam(bool, FOnShouldFilterDataLayerInstance, const UDataLayerInstance*);
 
 class FDataLayerMode : public ISceneOutlinerMode
 {
@@ -73,7 +77,7 @@ public:
 
 	virtual void Rebuild() override;
 	virtual TSharedPtr<SWidget> CreateContextMenu() override;
-	virtual void CreateViewContent(FMenuBuilder& MenuBuilder) override;
+	virtual void InitializeViewMenuExtender(TSharedPtr<FExtender> Extender) override;
 	virtual int32 GetTypeSortPriority(const ISceneOutlinerTreeItem& Item) const override;
 	virtual ESelectionMode::Type GetSelectionMode() const override { return ESelectionMode::Multi; }
 	virtual bool SupportsKeyboardFocus() const override { return true; }
@@ -142,7 +146,7 @@ private:
 	TArray<UDataLayerInstance*> GetSelectedDataLayers(SSceneOutliner* InSceneOutliner) const;
 	void SetParentDataLayer(const TArray<UDataLayerInstance*> DataLayers, UDataLayerInstance* ParentDataLayer) const;
 	void OnLevelSelectionChanged(UObject* Obj);
-	static void CreateDataLayerPicker(UToolMenu* InMenu, FOnDataLayerPicked OnDataLayerPicked, bool bInShowRoot = false);
+	static void CreateDataLayerPicker(UToolMenu* InMenu, FOnDataLayerInstancePicked OnDataLayerInstancePicked, FOnShouldFilterDataLayerInstance OnShouldFilterDataLayerInstance, bool bInShowRoot = false);
 	bool ShouldExpandDataLayer(const UDataLayerInstance* DataLayer) const;
 	bool ContainsSelectedChildDataLayer(const UDataLayerInstance* DataLayer) const;
 	void DeleteDataLayers(const TArray<UDataLayerInstance*>& InDataLayersToDelete);
@@ -150,8 +154,9 @@ private:
 	void CacheSelectedItems(const FSceneOutlinerItemSelection& Selection);
 	UWorld* GetOwningWorld() const;
 	AWorldDataLayers* GetOwningWorldAWorldDataLayers() const;
-	AWorldDataLayers* GetWorldDataLayersFromTreeItem(const ISceneOutlinerTreeItem& TreeItem, bool bDefaultToOwningWorldIfNotFound) const;
-	FSceneOutlinerDragValidationInfo ValidateActorDrop(const ISceneOutlinerTreeItem& DropTarget, bool bMoveOperation = false) const;
+	AWorldDataLayers* GetWorldDataLayersFromTreeItem(const ISceneOutlinerTreeItem& TreeItem) const;
+	UDataLayerInstance* GetDataLayerInstanceFromTreeItem(const ISceneOutlinerTreeItem& TreeItem) const;
+	FSceneOutlinerDragValidationInfo ValidateActorDrop(const ISceneOutlinerTreeItem& DropTarget, TArray<AActor*> PayloadActors, bool bMoveOperation = false) const;
 	FSceneOutlinerDragValidationInfo ValidateDataLayerAssetDrop(const ISceneOutlinerTreeItem& DropTarget, const TArray<const UDataLayerAsset*>& DataLayerAssetsToDrop) const;
 	void OnDataLayerAssetDropped(const TArray<const UDataLayerAsset*>& DroppedDataLayerAsset, ISceneOutlinerTreeItem& DropTarget) const;
 
@@ -210,5 +215,5 @@ public:
 	virtual void OnItemSelectionChanged(FSceneOutlinerTreeItemPtr TreeItem, ESelectInfo::Type SelectionType, const FSceneOutlinerItemSelection& Selection) override;
 	virtual void SynchronizeSelection() override {}
 
-	static TSharedRef<SWidget> CreateDataLayerPickerWidget(FOnDataLayerPicked OnDataLayerPicked);
+	static TSharedRef<SWidget> CreateDataLayerPickerWidget(FOnDataLayerInstancePicked OnDataLayerInstancePicked, FOnShouldFilterDataLayerInstance OnShouldFilterDataLayerInstance = FOnShouldFilterDataLayerInstance());
 };

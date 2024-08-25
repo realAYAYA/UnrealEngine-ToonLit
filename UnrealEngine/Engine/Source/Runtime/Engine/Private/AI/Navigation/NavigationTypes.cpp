@@ -3,6 +3,7 @@
 #include "AI/Navigation/NavigationTypes.h"
 #include "AI/NavigationSystemBase.h"
 #include "AI/Navigation/NavQueryFilter.h"
+#include "AI/Navigation/NavigationRelevantData.h"
 #include "Engine/Level.h"
 #include "EngineStats.h"
 #include "Components/ShapeComponent.h"
@@ -75,6 +76,20 @@ namespace FNavigationSystem
 	}	
 }
 
+FNavigationDirtyArea::FNavigationDirtyArea(const FBox& InBounds, int32 InFlags, UObject* const InOptionalSourceObject /*= nullptr*/)
+	: Bounds(InBounds)
+	, Flags(InFlags)
+	, OptionalSourceObject(InOptionalSourceObject)
+{
+#if !NO_LOGGING
+	if (!Bounds.IsValid || Bounds.ContainsNaN())
+	{
+		UE_LOG(LogNavigation, Warning, TEXT("Creation of FNavigationDirtyArea with invalid bounds%s. Bounds: %s, SourceObject: %s."),
+			Bounds.ContainsNaN() ? TEXT(" (contains NaN)") : TEXT(""), *Bounds.ToString(), *GetFullNameSafe(OptionalSourceObject.Get()));
+	}
+#endif //!NO_LOGGING	
+}
+
 //----------------------------------------------------------------------//
 // FNavigationQueryFilter
 //----------------------------------------------------------------------//
@@ -108,6 +123,11 @@ void FNavDataConfig::SetNavDataClass(UClass* InNavDataClass)
 void FNavDataConfig::SetNavDataClass(TSoftClassPtr<AActor> InNavDataClass)
 {
 	NavDataClass = InNavDataClass;
+}
+
+bool FNavDataConfig::IsValid() const 
+{
+	return FNavAgentProperties::IsValid() && NavDataClass.IsValid();
 }
 
 void FNavDataConfig::Invalidate()
@@ -323,6 +343,15 @@ const FNavLinkAuxiliaryId FNavLinkAuxiliaryId::Invalid = FNavLinkAuxiliaryId();
 FNavLinkAuxiliaryId FNavLinkAuxiliaryId::GenerateUniqueAuxiliaryId()
 {
 	const uint64 AuxiliaryId = UE::Navigation::NavLinkIdHelpers::Private::MakeIdFromGUID(FGuid::NewGuid());
+
+	return FNavLinkAuxiliaryId(AuxiliaryId);
+}
+
+FNavLinkAuxiliaryId FNavLinkAuxiliaryId::GenerateUniqueAuxiliaryId(FStringView PathName)
+{
+	check(!PathName.IsEmpty());
+
+	const uint64 AuxiliaryId = UE::Navigation::NavLinkIdHelpers::Private::MakeIdFromGUID(FGuid::NewDeterministicGuid(PathName));
 
 	return FNavLinkAuxiliaryId(AuxiliaryId);
 }

@@ -24,6 +24,9 @@ struct FAnimationCurveMetaData
 
 	UPROPERTY()
 	FLinearColor Color = FLinearColor::White;
+
+	UPROPERTY()
+	FString Comment;
 };
 
 UCLASS()
@@ -139,7 +142,8 @@ protected:
 	FAnimCurveBase* FindMutableCurveById(const FAnimationCurveIdentifier& CurveIdentifier);
 	FRichCurve* GetMutableRichCurve(const FAnimationCurveIdentifier& CurveIdentifier);
 
-	void GenerateLegacyCurveData();
+	void RegenerateLegacyCurveData();
+	void UpdateLegacyCurveData();
 
 	void ValidateData() const;
 	void ValidateSequencerData() const;

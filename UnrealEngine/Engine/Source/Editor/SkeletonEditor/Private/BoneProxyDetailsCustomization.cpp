@@ -387,7 +387,6 @@ void FBoneProxyDetailsCustomization::CustomizeDetails(IDetailLayoutBuilder& Deta
 			static const FName LocationPropertyName = GET_MEMBER_NAME_CHECKED(UBoneProxy, Location);
 			static const FName RotationPropertyName = GET_MEMBER_NAME_CHECKED(UBoneProxy, Rotation);
 			static const FName ScalePropertyName = GET_MEMBER_NAME_CHECKED(UBoneProxy, Scale);
-			static constexpr bool bIsCommit = true;
 
 			for (UBoneProxy* BoneProxy : BoneProxiesView)
 			{
@@ -397,6 +396,9 @@ void FBoneProxyDetailsCustomization::CustomizeDetails(IDetailLayoutBuilder& Deta
 				}
 				if (const UDebugSkelMeshComponent* Component = BoneProxy->SkelMeshComponent.Get())
 				{
+					Component->PreviewInstance->SetFlags(RF_Transactional);
+					Component->PreviewInstance->Modify();
+					
 					switch(InComponent)
 					{
 						case ESlateTransformComponent::Location:
@@ -404,9 +406,9 @@ void FBoneProxyDetailsCustomization::CustomizeDetails(IDetailLayoutBuilder& Deta
 							FVector Data = BoneProxy->Location;
 							if (GetDataFromContent(Content, Data))
 							{
-								BoneProxy->OnPreEditChange(LocationPropertyName, bIsCommit);
+								BoneProxy->OnPreEditChange(LocationPropertyName);
 								BoneProxy->Location = Data;
-								BoneProxy->OnPostEditChangeProperty(LocationPropertyName, bIsCommit);
+								BoneProxy->OnPostEditChangeProperty(LocationPropertyName);
 							}
 							break;
 						}
@@ -415,9 +417,9 @@ void FBoneProxyDetailsCustomization::CustomizeDetails(IDetailLayoutBuilder& Deta
 							FRotator Data = BoneProxy->Rotation;
 							if (GetDataFromContent(Content, Data))
 							{
-								BoneProxy->OnPreEditChange(RotationPropertyName, bIsCommit);
+								BoneProxy->OnPreEditChange(RotationPropertyName);
 								BoneProxy->Rotation = Data;
-								BoneProxy->OnPostEditChangeProperty(RotationPropertyName, bIsCommit);
+								BoneProxy->OnPostEditChangeProperty(RotationPropertyName);
 							}
 							break;
 						}
@@ -426,9 +428,9 @@ void FBoneProxyDetailsCustomization::CustomizeDetails(IDetailLayoutBuilder& Deta
 							FVector Data = BoneProxy->Scale;
 							if (GetDataFromContent(Content, Data))
 							{
-								BoneProxy->OnPreEditChange(ScalePropertyName, bIsCommit);
+								BoneProxy->OnPreEditChange(ScalePropertyName);
 								BoneProxy->Scale = Data;
-								BoneProxy->OnPostEditChangeProperty(ScalePropertyName, bIsCommit);
+								BoneProxy->OnPostEditChangeProperty(ScalePropertyName);
 							}
 							break;
 						}
@@ -438,17 +440,17 @@ void FBoneProxyDetailsCustomization::CustomizeDetails(IDetailLayoutBuilder& Deta
 							FEulerTransform Data = FEulerTransform::Identity;
 							if (GetDataFromContent(Content, Data))
 							{
-								BoneProxy->OnPreEditChange(LocationPropertyName, bIsCommit);
+								BoneProxy->OnPreEditChange(LocationPropertyName);
 								BoneProxy->Location = Data.GetLocation();
-								BoneProxy->OnPostEditChangeProperty(LocationPropertyName, bIsCommit);
+								BoneProxy->OnPostEditChangeProperty(LocationPropertyName);
 								
-								BoneProxy->OnPreEditChange(RotationPropertyName, bIsCommit);
+								BoneProxy->OnPreEditChange(RotationPropertyName);
 								BoneProxy->Rotation = Data.Rotator();
-								BoneProxy->OnPostEditChangeProperty(RotationPropertyName, bIsCommit);
+								BoneProxy->OnPostEditChangeProperty(RotationPropertyName);
 								
-								BoneProxy->OnPreEditChange(ScalePropertyName, bIsCommit);
+								BoneProxy->OnPreEditChange(ScalePropertyName);
 								BoneProxy->Scale = Data.GetScale3D();
-								BoneProxy->OnPostEditChangeProperty(ScalePropertyName, bIsCommit);
+								BoneProxy->OnPostEditChangeProperty(ScalePropertyName);
 							}
 							break;
 						}
@@ -469,6 +471,8 @@ void FBoneProxyDetailsCustomization::CustomizeDetails(IDetailLayoutBuilder& Deta
 		})
 		.OnResetToDefault_Lambda([TransformType, BoneProxiesView](ESlateTransformComponent::Type InComponent)
 		{
+			FScopedTransaction Transaction(LOCTEXT("ResetToDefault", "Reset to Default"));
+			
 			for(UBoneProxy* BoneProxy : BoneProxiesView)
 			{
 				BoneProxy->ResetToDefault(InComponent, TransformType);
@@ -482,8 +486,12 @@ void FBoneProxyDetailsCustomization::CustomizeDetails(IDetailLayoutBuilder& Deta
 
 		if(bIsEditingEnabled)
 		{
-			TransformWidgetArgs.OnNumericValueChanged_Static(&UBoneProxy::OnMultiNumericValueCommitted, ETextCommit::Default, TransformType, BoneProxiesView, false);
-			TransformWidgetArgs.OnNumericValueCommitted_Static (&UBoneProxy::OnMultiNumericValueCommitted, TransformType, BoneProxiesView, true);
+			constexpr bool bNonTransactional = false;
+			constexpr bool bTransactional = true;
+			TransformWidgetArgs.OnBeginSliderMovement_Static(&UBoneProxy::OnSliderMovementStateChanged, 0.0, UBoneProxy::ESliderMovementState::Begin, BoneProxiesView);
+			TransformWidgetArgs.OnEndSliderMovement_Static(&UBoneProxy::OnSliderMovementStateChanged, UBoneProxy::ESliderMovementState::End, BoneProxiesView);
+			TransformWidgetArgs.OnNumericValueChanged_Static(&UBoneProxy::OnMultiNumericValueChanged, ETextCommit::Default, bNonTransactional, TransformType, BoneProxiesView);
+			TransformWidgetArgs.OnNumericValueCommitted_Static (&UBoneProxy::OnMultiNumericValueChanged, bTransactional, TransformType, BoneProxiesView);
 		}
 
 		SAdvancedTransformInputBox<FEulerTransform>::ConstructGroupedTransformRows(

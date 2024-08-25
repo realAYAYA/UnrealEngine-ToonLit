@@ -22,7 +22,6 @@ uint				HairMaterialId;
 float3				CameraOrigin;
 float				RadiusAtDepth1;
 uint				PrimIDsBufferSize;
-uint				bIsOrthoView;
 
 
 struct VSInput
@@ -65,10 +64,8 @@ VSOutput VSMain(VSInput Input)
 
 		const uint VertexIndex0 = HairStrandsVF_CullingIndexBuffer[FetchIndex0];
 		const uint VertexIndex1 = HairStrandsVF_CullingIndexBuffer[FetchIndex1];
-		const float LodRadiusScale0 = HairStrandsVF_CullingRadiusScaleBuffer[FetchIndex0];
-		const float LodRadiusScale1 = HairStrandsVF_CullingRadiusScaleBuffer[FetchIndex1];
 
-		if ((LodRadiusScale0 <= 0.0f) || (VertexIndex1 != VertexIndex0 + 1))
+		if (VertexIndex1 != VertexIndex0 + 1)
 		{
 			return GetNullOutput();
 		}
@@ -82,11 +79,12 @@ VSOutput VSMain(VSInput Input)
 	#endif // PERMUTATION_CULLING
 #endif // PERMUTATION_DRAW_INDIRECT
 
-	const float3 PositionOffset = HairStrandsVF_PositionOffsetBuffer[0].xyz;
+	const float3 PositionOffset = HairStrandsVF_GetHairInstancePositionOffset();
 
 	// Fetch both control points
-	const FHairControlPoint CP0 = UnpackHairControlPoint(
-		HairStrandsVF_PositionBuffer[PrimID],
+	const FHairControlPoint CP0 = ReadHairControlPoint(
+		HairStrandsVF_PositionBuffer,
+		PrimID,
 		PositionOffset,
 		HairStrandsVF_Radius,
 		HairStrandsVF_RootScale,
@@ -98,8 +96,9 @@ VSOutput VSMain(VSInput Input)
 		return GetNullOutput();
 	}
 
-	const FHairControlPoint CP1 = UnpackHairControlPoint(
-		HairStrandsVF_PositionBuffer[PrimID + 1],
+	const FHairControlPoint CP1 = ReadHairControlPoint(
+		HairStrandsVF_PositionBuffer,
+		PrimID + 1,
 		PositionOffset,
 		HairStrandsVF_Radius,
 		HairStrandsVF_RootScale,
@@ -113,8 +112,8 @@ VSOutput VSMain(VSInput Input)
 	const float CPWorldRadius = Input.VertexID < 2 ? CP0.WorldRadius : CP1.WorldRadius;
 
 	// Minimal radius to snap the strand to a sample/pixel center (to avoid aliasing)
-	const float DistanceToCamera = length(CameraOrigin - CPWP);
-	const float MinStrandHairRadius = bIsOrthoView ? RadiusAtDepth1 : DistanceToCamera * RadiusAtDepth1;
+	const float DistanceToCamera = GetDistanceToCameraFromViewVector(CameraOrigin - CPWP);
+	const float MinStrandHairRadius = ConvertGivenDepthRadiusForProjectionType(RadiusAtDepth1, DistanceToCamera);
 
 	const float3 Tangent = normalize(CP1WP - CP0WP);
 	const float3 Right = normalize(cross(Tangent, ViewDir));
@@ -125,7 +124,7 @@ VSOutput VSMain(VSInput Input)
 
 	VSOutput Output = (VSOutput)0;
 	
-	Output.Position = mul(float4(WP, 1.0f), LWCHackToFloat(PrimaryView.WorldToClip));
+	Output.Position = mul(float4(WP, 1.0f), DFHackToFloat(PrimaryView.WorldToClip));
 	Output.Radius = CPWorldRadius * 2000.0f;
 	Output.PrimMatID = PackHairVisControlPointMaterialId(PrimID, HairMaterialId);
 
@@ -141,7 +140,7 @@ RWTexture2D<uint>	OutDepthCovTexture;
 RWTexture2D<uint>	OutPrimMatTexture;
 float				CoverageScale;
 
-[earlydepthstencil]
+EARLYDEPTHSTENCIL
 void PSMain(
 	float4 Position : SV_Position,
 	float Radius : RADIUS,

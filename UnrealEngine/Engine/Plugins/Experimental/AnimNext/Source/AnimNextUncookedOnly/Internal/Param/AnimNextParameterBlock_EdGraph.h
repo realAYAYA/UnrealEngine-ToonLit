@@ -3,10 +3,11 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Graph/ControlRigGraph.h"
+#include "EdGraph/RigVMEdGraph.h"
 #include "AnimNextParameterBlock_EdGraph.generated.h"
 
-class UAnimNextParameterBlock_EditorData;
+class UAnimNextParameterBlockGraph;
+class UAnimNextRigVMAssetEditorData;
 
 namespace UE::AnimNext::UncookedOnly
 {
@@ -14,14 +15,18 @@ namespace UE::AnimNext::UncookedOnly
 }
 
 UCLASS(MinimalAPI)
-class UAnimNextParameterBlock_EdGraph : public UControlRigGraph
+class UAnimNextParameterBlock_EdGraph : public URigVMEdGraph
 {
 	GENERATED_BODY()
 
+	friend class UAnimNextParameterBlockGraph;
 	friend class UAnimNextParameterBlock_EditorData;
+
+	// UObject interface
+	virtual void PostLoad() override;
 
 	// UControlRigGraph interface
 	virtual FRigVMClient* GetRigVMClient() const override;
-	
-	void Initialize(UAnimNextParameterBlock_EditorData* InEditorData);
+
+	void Initialize(UAnimNextRigVMAssetEditorData* InEditorData);
 };

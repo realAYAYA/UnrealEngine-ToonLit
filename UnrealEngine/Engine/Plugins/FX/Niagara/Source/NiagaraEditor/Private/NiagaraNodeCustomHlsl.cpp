@@ -113,24 +113,24 @@ FText UNiagaraNodeCustomHlsl::GetTooltipText() const
 	return LOCTEXT("CustomHlslTooltip", "Inserts the entered hlsl code into the translated script.");
 }
 
-bool UNiagaraNodeCustomHlsl::GetTokensFromString(const FString& InHlsl, TArray<FString>& OutTokens, bool IncludeComments, bool IncludeWhitespace)
+bool UNiagaraNodeCustomHlsl::GetTokensFromString(const FString& InHlsl, TArray<FStringView>& OutTokens, bool IncludeComments, bool IncludeWhitespace)
 {
 	if (InHlsl.Len() == 0)
 	{
 		return false;
 	}
 
-	FString Separators = TEXT(";/*+-=)(?:, []<>\"\t\r\n");
+	FString Separators = TEXT(";/*+-=)(?:, []<>\"\t\r\n{}");
 	const int32 TargetLength = InHlsl.Len();
 
 	int32 TokenStart = 0;
 	bool TokenIsWhitespace = true;
 
-	auto AddToken = [&](bool DoAdd, FString&& TokenString)
+	auto AddToken = [&](bool DoAdd, FStringView TokenString)
 	{
 		if (DoAdd && (!TokenIsWhitespace || IncludeWhitespace))
 		{
-			OutTokens.Add(MoveTemp(TokenString));
+			OutTokens.Add(TokenString);
 		}
 		
 		// reset the meta data about the token
@@ -149,7 +149,7 @@ bool UNiagaraNodeCustomHlsl::GetTokensFromString(const FString& InHlsl, TArray<F
 			// Commit the current token, if any.
 			if (i > TokenStart)
 			{
-				AddToken(true, InHlsl.Mid(TokenStart, i - TokenStart));
+				AddToken(true, FStringView(InHlsl).Mid(TokenStart, i - TokenStart));
 			}
 
 			if (!bWhitespace)
@@ -166,7 +166,7 @@ bool UNiagaraNodeCustomHlsl::GetTokensFromString(const FString& InHlsl, TArray<F
 					FoundEndIdx = TargetLength - 1;
 				}
 
-				AddToken(IncludeComments, InHlsl.Mid(i, FoundEndIdx - i + 1));
+				AddToken(IncludeComments, FStringView(InHlsl).Mid(i, FoundEndIdx - i + 1));
 				i = FoundEndIdx + 1;
 			}
 			else if (InHlsl[i] == '/' && (i + 1 != TargetLength) && InHlsl[i + 1] == '*')
@@ -184,7 +184,7 @@ bool UNiagaraNodeCustomHlsl::GetTokensFromString(const FString& InHlsl, TArray<F
 					FoundEndIdx = TargetLength - 1;
 				}
 
-				AddToken(IncludeComments, InHlsl.Mid(i, FoundEndIdx - i + 1));
+				AddToken(IncludeComments, FStringView(InHlsl).Mid(i, FoundEndIdx - i + 1));
 				i = FoundEndIdx + 1;
 			}
 			else if (InHlsl[i] == '"')
@@ -200,13 +200,13 @@ bool UNiagaraNodeCustomHlsl::GetTokensFromString(const FString& InHlsl, TArray<F
 					FoundEndIdx = TargetLength - 1;
 				}
 
-				AddToken(true, InHlsl.Mid(i, FoundEndIdx - i + 1));
+				AddToken(true, FStringView(InHlsl).Mid(i, FoundEndIdx - i + 1));
 				i = FoundEndIdx + 1;
 
 			}
 			else
 			{
-				AddToken(true, FString(1, &InHlsl[i]));
+				AddToken(true, FStringView(InHlsl).Mid(i, 1));
 				i++;
 			}
 
@@ -228,12 +228,12 @@ bool UNiagaraNodeCustomHlsl::GetTokensFromString(const FString& InHlsl, TArray<F
 	// We may need to pull in the last chars from the end.
 	if (TokenStart < TargetLength)
 	{
-		AddToken(true, InHlsl.Mid(TokenStart));
+		AddToken(true, FStringView(InHlsl).Mid(TokenStart));
 	}
 	return true;
 }
 
-bool UNiagaraNodeCustomHlsl::GetTokens(TArray<FString>& OutTokens, bool IncludeComments, bool IncludeWhitespace) const
+bool UNiagaraNodeCustomHlsl::GetTokens(TArray<FStringView>& OutTokens, bool IncludeComments, bool IncludeWhitespace) const
 {
 	return GetTokensFromString(CustomHlsl, OutTokens, IncludeComments, IncludeWhitespace);
 }
@@ -275,6 +275,57 @@ void UNiagaraNodeCustomHlsl::InitAsCustomHlslDynamicInput(const FNiagaraTypeDefi
 	RequestNewTypedPin(EGPD_Input, FNiagaraTypeDefinition::GetParameterMapDef(), FName("Map"));
 	RequestNewTypedPin(EGPD_Output, OutputType, FName("CustomHLSLOutput"));
 	ScriptUsage = ENiagaraScriptUsage::DynamicInput;
+}
+
+bool UNiagaraNodeCustomHlsl::CallsImpureDataInterfaceFunctions() const
+{
+	TArray<FString> ImpureFunctionNames;
+
+	FPinCollectorArray InputPins;
+	GetInputPins(InputPins);
+
+	for (const UEdGraphPin* InputPin : InputPins)
+	{
+		FNiagaraTypeDefinition NiagaraType = UEdGraphSchema_Niagara::PinToTypeDefinition(InputPin, ENiagaraStructConversion::Simulation);
+		if (NiagaraType.IsDataInterface())
+		{
+			if (UNiagaraDataInterface* DataInterfaceClass = CastChecked<UNiagaraDataInterface>(NiagaraType.GetClass()->ClassDefaultObject))
+			{
+				TArray<FNiagaraFunctionSignature> FunctionSignatures;
+				DataInterfaceClass->GetFunctionSignatures(FunctionSignatures);
+
+				for (const FNiagaraFunctionSignature& FunctionSignature : FunctionSignatures)
+				{
+					if (FunctionSignature.bRequiresExecPin)
+					{
+						TStringBuilder<256> Builder;
+						InputPin->PinName.AppendString(Builder);
+						Builder.AppendChar(TCHAR('.'));
+						FunctionSignature.Name.AppendString(Builder);
+
+						ImpureFunctionNames.AddUnique(Builder.ToString());
+					}
+				}
+			}
+		}
+	}
+
+	if (!ImpureFunctionNames.IsEmpty())
+	{
+		TArray<FStringView> CustomHlslTokens;
+		GetTokensFromString(CustomHlsl, CustomHlslTokens, false, false);
+
+		for (const FString& ImpureFunctionName : ImpureFunctionNames)
+		{
+			if (CustomHlslTokens.Contains(ImpureFunctionName))
+			{
+				return true;
+			}
+		}
+	}
+
+	return false;
+
 }
 
 bool UNiagaraNodeCustomHlsl::IsPinNameEditableUponCreation(const UEdGraphPin* GraphPinObj) const
@@ -407,8 +458,14 @@ void UNiagaraNodeCustomHlsl::BuildParameterMapHistory(FNiagaraParameterMapHistor
 		return;
 	}
 
+	TArray<FStringView> TokenViews;
+	GetTokens(TokenViews, false, false);
 	TArray<FString> Tokens;
-	GetTokens(Tokens, false, false);
+	Tokens.Reset(TokenViews.Num());
+	for (const FStringView View : TokenViews)
+	{
+		Tokens.Push(FString(View));
+	}
 
 	FPinCollectorArray InputPins;
 	GetInputPins(InputPins);
@@ -502,7 +559,7 @@ FNiagaraCompileHash GetFileContentHash(const FString& FileContents)
 	return FNiagaraCompileHash(DataHash);
 }
 
-void UNiagaraNodeCustomHlsl::GatherExternalDependencyData(ENiagaraScriptUsage InUsage, const FGuid& InUsageId, TArray<FNiagaraCompileHash>& InReferencedCompileHashes, TArray<FString>& InReferencedObjs) const
+void UNiagaraNodeCustomHlsl::GatherExternalDependencyData(ENiagaraScriptUsage InUsage, const FGuid& InUsageId, FNiagaraScriptHashCollector& HashCollector) const
 {
 	for (const auto& [IncludePath] : AbsoluteIncludeFilePaths)
 	{
@@ -513,8 +570,7 @@ void UNiagaraNodeCustomHlsl::GatherExternalDependencyData(ENiagaraScriptUsage In
 
 		if (FString FileContents; FFileHelper::LoadFileToString(FileContents, *IncludePath))
 		{
-			InReferencedObjs.AddUnique(IncludePath);
-			InReferencedCompileHashes.AddUnique(GetFileContentHash(FileContents));
+			HashCollector.AddHash(GetFileContentHash(FileContents), IncludePath);
 		}
 	}
 
@@ -528,8 +584,7 @@ void UNiagaraNodeCustomHlsl::GatherExternalDependencyData(ENiagaraScriptUsage In
 		FString FileContents;
 		if(LoadShaderSourceFile(*IncludePath, SP_PCD3D_SM5, &FileContents, nullptr))
 		{
-			InReferencedObjs.AddUnique(IncludePath);
-			InReferencedCompileHashes.AddUnique(GetFileContentHash(FileContents));
+			HashCollector.AddHash(GetFileContentHash(FileContents), IncludePath);
 		}
 	}
 }
@@ -587,13 +642,13 @@ bool UNiagaraNodeCustomHlsl::ReferencesVariable(const FNiagaraVariableBase& InVa
 	// for now we'll just do a text search through the non-comment code strings to see if we can find
 	// the name of the provided variable
 	// todo - all variable references in custom code should be explicit and typed
-	TArray<FString> Tokens;
+	TArray<FStringView> Tokens;
 
 	GetTokens(Tokens, false, false);
 
 	const FString VariableName = InVar.GetName().ToString();
 
-	for (const FString& Token : Tokens)
+	for (const FStringView& Token : Tokens)
 	{
 		if (Token.Contains(VariableName))
 		{

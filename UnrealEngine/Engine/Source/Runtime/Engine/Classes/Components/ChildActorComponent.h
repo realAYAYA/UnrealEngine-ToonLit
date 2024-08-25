@@ -74,6 +74,8 @@ enum class EChildActorComponentTreeViewVisualizationMode : uint8
 	ComponentWithChildActor,
 	/** Show only as a child actor hierarchy (i.e. do not show the outer component node as the root). */
 	ChildActorOnly,
+	/** Do not display the actor in the tree view. */
+	Hidden,
 };
 #endif
 
@@ -127,7 +129,7 @@ private:
 	/** We try to keep the child actor's name as best we can, so we store it off here when destroying */
 	FName ChildActorName;
 
-	/** Detect when the parent actor is renamed, in which case we can't preseve the child actor's name */
+	/** Detect when the parent actor is renamed, in which case we can't preserve the child actor's name */
 	UObject* ActorOuter;
 
 	/** Cached copy of the instance data when the ChildActor is destroyed to be available when needed */
@@ -192,8 +194,12 @@ public:
 	/** Create the child actor */
 	ENGINE_API virtual void CreateChildActor(TFunction<void(AActor*)> CustomizerFunc = nullptr);
 
+	DECLARE_EVENT_OneParam(UChildActorComponent, FOnChildActorCreated, AActor*);
+	FOnChildActorCreated& OnChildActorCreated() { return OnChildActorCreatedDelegate; }
+
 	AActor* GetChildActor() const { return ChildActor; }
 	AActor* GetChildActorTemplate() const { return ChildActorTemplate; }
+	ENGINE_API AActor* GetSpawnableChildActorTemplate() const;
 
 	FName GetChildActorName() const { return ChildActorName; }
 	ENGINE_API void SetChildActorName(const FName InName);
@@ -231,6 +237,8 @@ private:
 
 	UFUNCTION()
 	ENGINE_API void OnChildActorDestroyed(AActor* Actor);
+
+	FOnChildActorCreated OnChildActorCreatedDelegate;
 };
 
 struct FActorParentComponentSetter

@@ -24,11 +24,13 @@ UGLTFExporter::UGLTFExporter(const FObjectInitializer& ObjectInitializer)
 	bText = false;
 	PreferredFormatIndex = 0;
 
+#if GLTF_EXPORT_ENABLE
 	FormatExtension.Add(TEXT("gltf"));
 	FormatDescription.Add(TEXT("GL Transmission Format"));
 
 	FormatExtension.Add(TEXT("glb"));
 	FormatDescription.Add(TEXT("GL Transmission Format (Binary)"));
+#endif
 }
 
 bool UGLTFExporter::ExportBinary(UObject* Object, const TCHAR* Type, FArchive& Archive, FFeedbackContext* Warn, int32 FileIndex, uint32 PortFlags)

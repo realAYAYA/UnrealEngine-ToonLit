@@ -4,6 +4,10 @@
 	ShadowDepthPixelShader.usf: Pixel shader for writing shadow depth.
 =============================================================================*/
 
+#if !MATERIAL_LWC_ENABLED
+#define UE_DF_FORCE_FP32_OPS 1
+#endif
+
 // needs to before Common.usf
 #define SHADOW_DEPTH_SHADER 1
 #define USE_STENCIL_LOD_DITHER	0
@@ -61,13 +65,24 @@ void Main(
 	
 	FMaterialPixelParameters MaterialParameters = GetMaterialPixelParameters(Inputs.FactoryInterpolants, SvPosition);
 	FPixelMaterialInputs PixelMaterialInputs;
-	#if INTERPOLATE_POSITION
+	#if INTERPOLATE_POSITION || (USE_WORLD_POSITION_EXCLUDING_SHADER_OFFSETS && !IS_NANITE_PASS)
 	    {
 			float4 ScreenPosition  = SvPositionToResolvedScreenPosition(SvPosition);  
 			
-			float3 TranslatedWorld = Inputs.PixelPosition.xyz;
+			float3 TranslatedWorld = 
+		#if INTERPOLATE_POSITION
+			Inputs.PixelPosition.xyz;
+		#else
+			SvPositionToResolvedTranslatedWorld(SvPosition);
+		#endif
 
-			CalcMaterialParametersEx(MaterialParameters, PixelMaterialInputs, SvPosition, ScreenPosition, 1, TranslatedWorld, TranslatedWorld);
+			CalcMaterialParametersEx(MaterialParameters, PixelMaterialInputs, SvPosition, ScreenPosition, 1, TranslatedWorld, 
+		#if USE_WORLD_POSITION_EXCLUDING_SHADER_OFFSETS && !IS_NANITE_PASS
+				Inputs.PixelPositionExcludingWPO
+		#else
+				TranslatedWorld
+		#endif			
+			);
 		}
 	#else
 		CalcMaterialParameters(MaterialParameters, PixelMaterialInputs, SvPosition, 1);

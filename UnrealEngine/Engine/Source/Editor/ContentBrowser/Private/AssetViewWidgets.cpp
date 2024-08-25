@@ -27,6 +27,7 @@
 #include "Framework/Application/SlateApplication.h"
 #include "Framework/Text/TextLayout.h"
 #include "HAL/IConsoleManager.h"
+#include "HAL/PlatformApplicationMisc.h"
 #include "ICollectionManager.h"
 #include "ISourceControlModule.h"
 #include "ISourceControlProvider.h"
@@ -96,17 +97,39 @@ FReply FAssetViewModeUtils::OnViewModeKeyDown( const TSet< TSharedPtr<FAssetView
 		)
 	{
 		TArray<FContentBrowserItem> SelectedFiles;
+		TArray<FContentBrowserItem> SelectedFolders;
 		for (const TSharedPtr<FAssetViewItem>& SelectedItem : SelectedItems)
 		{
 			if (SelectedItem->GetItem().IsFile())
 			{
 				SelectedFiles.Add(SelectedItem->GetItem());
 			}
+			else if (SelectedItem->GetItem().IsFolder())
+			{
+				SelectedFolders.Add(SelectedItem->GetItem());
+			}
 		}
+
+		FString ClipboardText;
 
 		if (SelectedFiles.Num() > 0)
 		{
-			ContentBrowserUtils::CopyItemReferencesToClipboard(SelectedFiles);
+			ClipboardText += ContentBrowserUtils::GetItemReferencesText(SelectedFiles);
+		}
+
+		if (SelectedFolders.Num() > 0)
+		{
+			if (!ClipboardText.IsEmpty())
+			{
+				ClipboardText += LINE_TERMINATOR;
+			}
+
+			ClipboardText += ContentBrowserUtils::GetFolderReferencesText(SelectedFolders);
+		}
+
+		if (!ClipboardText.IsEmpty())
+		{
+			FPlatformApplicationMisc::ClipboardCopy(*ClipboardText);
 		}
 
 		return FReply::Handled();
@@ -165,22 +188,42 @@ TSharedRef<SWidget> FAssetViewItemHelper::CreateListTileItemContents(T* const In
 	if (InTileOrListItem->IsFolder())
 	{
 		// TODO: Allow items to customize their widget
+		TSharedPtr<FAssetViewItem>& AssetItem = InTileOrListItem->AssetItem;
 
-		const bool bDeveloperFolder = ContentBrowserUtils::IsItemDeveloperContent(InTileOrListItem->AssetItem->GetItem());
-		const bool bCodeFolder = EnumHasAnyFlags(InTileOrListItem->AssetItem->GetItem().GetItemCategory(), EContentBrowserItemFlags::Category_Class);
-
-		const bool bCollectionFolder = EnumHasAnyFlags(InTileOrListItem->AssetItem->GetItem().GetItemCategory(), EContentBrowserItemFlags::Category_Collection);
+		const bool bDeveloperFolder = ContentBrowserUtils::IsItemDeveloperContent(AssetItem->GetItem());
+		const bool bCodeFolder = EnumHasAnyFlags(AssetItem->GetItem().GetItemCategory(), EContentBrowserItemFlags::Category_Class);
+		FContentBrowserItemDataAttributeValue VirtualAttributeValue = AssetItem->GetItem().GetItemAttribute(ContentBrowserItemAttributes::ItemIsCustomVirtualFolder);
+		const bool bVirtualFolder = VirtualAttributeValue.IsValid() && VirtualAttributeValue.GetValue<bool>();
+		const bool bPluginFolder = ContentBrowserUtils::IsItemPluginRootFolder(AssetItem->GetItem());
+		
+		const bool bCollectionFolder = EnumHasAnyFlags(AssetItem->GetItem().GetItemCategory(), EContentBrowserItemFlags::Category_Collection);
 		ECollectionShareType::Type CollectionFolderShareType = ECollectionShareType::CST_All;
 		if (bCollectionFolder)
 		{
-			ContentBrowserUtils::IsCollectionPath(InTileOrListItem->AssetItem->GetItem().GetVirtualPath().ToString(), nullptr, &CollectionFolderShareType);
+			ContentBrowserUtils::IsCollectionPath(AssetItem->GetItem().GetVirtualPath().ToString(), nullptr, &CollectionFolderShareType);
 		}
 
-		const FSlateBrush* FolderBaseImage = bDeveloperFolder
-			? FAppStyle::GetBrush("ContentBrowser.ListViewDeveloperFolderIcon") 
-			: bCodeFolder
-				? FAppStyle::GetBrush("ContentBrowser.ListViewCodeFolderIcon")
-				: FAppStyle::GetBrush("ContentBrowser.ListViewFolderIcon");
+		const FSlateBrush* FolderBaseImage = nullptr;
+		if (bDeveloperFolder)
+		{
+			FolderBaseImage = FAppStyle::GetBrush("ContentBrowser.ListViewDeveloperFolderIcon");
+		}
+		else if (bCodeFolder)
+		{
+			FolderBaseImage = FAppStyle::GetBrush("ContentBrowser.ListViewCodeFolderIcon");
+		}
+		else if (bVirtualFolder && ContentBrowserUtils::ShouldShowCustomVirtualFolderIcon())
+		{
+			FolderBaseImage = FAppStyle::GetBrush("ContentBrowser.ListViewVirtualFolderIcon");
+		}
+		else if (bPluginFolder && ContentBrowserUtils::ShouldShowPluginFolderIcon())
+		{
+			FolderBaseImage = FAppStyle::GetBrush("ContentBrowser.ListViewPluginFolderIcon");
+		}
+		else
+		{
+			FolderBaseImage = FAppStyle::GetBrush("ContentBrowser.ListViewFolderIcon");
+		}
 
 		// Folder base
 		ItemContentsOverlay->AddSlot()
@@ -774,6 +817,7 @@ TSharedRef<SWidget> SAssetViewItem::CreateToolTipWidget() const
 			const FText ClassText = FText::Format(LOCTEXT("ClassName", "({0})"), GetAssetClassText());
 
 			FText PublicStateText;
+			const FSlateBrush* PublicStateIcon = nullptr;
 			FName PublicStateTextBorder = "ContentBrowser.TileViewTooltip.PillBorder";
 
 			// Create a box to hold every line of info in the body of the tooltip
@@ -791,16 +835,6 @@ TSharedRef<SWidget> SAssetViewItem::CreateToolTipWidget() const
 			{
 				AddToToolTipInfoBox(InfoBox, LOCTEXT("TileViewTooltipPath", "Path"), FText::FromName(AssetItem->GetItem().GetVirtualPath()), false);
 			}
-
-#if UE_USE_VERSE_PATHS
-			{
-				FString VersePath;
-				if (ItemAssetData.GetTagValue(UObject::AssetVersePathTagName(), VersePath))
-				{
-					AddToToolTipInfoBox( InfoBox, LOCTEXT( "TileViewTooltipVersePath", "Asset Verse Path" ), FText::FromString(VersePath), false);
-				}
-			}
-#endif
 
 			if (ItemAssetData.IsValid() && ItemAssetData.PackageName != NAME_None)
 			{
@@ -830,7 +864,17 @@ TSharedRef<SWidget> SAssetViewItem::CreateToolTipWidget() const
 
 			if (!AssetItem->GetItem().CanEdit())
 			{
-				PublicStateText = LOCTEXT("ReadOnlyAssetState", "Read Only");
+				if(AssetItem->GetItem().CanView())
+				{
+					PublicStateText = LOCTEXT("ViewReadOnlyAssetState", "View / Read Only");
+					PublicStateIcon = FAppStyle::GetBrush("AssetEditor.ReadOnlyOpenable");
+
+				}
+				else
+				{
+					PublicStateText = LOCTEXT("ReadOnlyAssetState", "Read Only");
+					PublicStateIcon = FAppStyle::GetBrush("Icons.Lock");
+				}
 			}
 
 			if(!AssetItem->GetItem().IsSupported())
@@ -865,8 +909,8 @@ TSharedRef<SWidget> SAssetViewItem::CreateToolTipWidget() const
 
 			TSharedRef<SVerticalBox> OverallTooltipVBox = SNew(SVerticalBox);
 
-			static const auto PublicAssetUIEnabledCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("ContentBrowser.PublicAsset.EnablePublicAssetFeature"));
-			const bool bIsPublicAssetUIEnabled = PublicAssetUIEnabledCVar && PublicAssetUIEnabledCVar->GetBool();
+			static const IConsoleVariable* EnablePublicAssetFeatureCVar = IConsoleManager::Get().FindConsoleVariable(TEXT("AssetTools.EnablePublicAssetFeature"));
+			const bool bIsPublicAssetUIEnabled = EnablePublicAssetFeatureCVar && EnablePublicAssetFeatureCVar->GetBool();
 
 			// Top section (asset name, type, is checked out)
 			OverallTooltipVBox->AddSlot()
@@ -910,17 +954,38 @@ TSharedRef<SWidget> SAssetViewItem::CreateToolTipWidget() const
 							[
 								SNew(SBorder)
 								.BorderImage(FAppStyle::GetBrush(PublicStateTextBorder))
-								.Padding(FMargin(12.0f, 2.0f, 12.0f, 2.0f))
 								.Visibility(bIsPublicAssetUIEnabled && !PublicStateText.IsEmpty() ? EVisibility::Visible : EVisibility::Hidden)
+								.Padding(FMargin(12.0f, 2.0f, 12.0f, 2.0f))
 								[
-									SNew(STextBlock)
-									.Text(PublicStateText)
-									.HighlightText(HighlightText)
+									SNew(SHorizontalBox)
+									+SHorizontalBox::Slot()
+									.AutoWidth()
+									.HAlign(HAlign_Left)
+									.VAlign(VAlign_Center)
+									.Padding(0.0f)
+									[
+										SNew(SBox)
+										.Visibility(PublicStateIcon ? EVisibility::Visible : EVisibility::Collapsed)
+										.HeightOverride(16.0f)
+										.WidthOverride(16.0f)
+										[
+											SNew(SImage)
+											.Image(PublicStateIcon)
+										]
+											
+									]
+									+SHorizontalBox::Slot()
+									.HAlign(HAlign_Left)
+									.VAlign(VAlign_Center)
+									.Padding(4.0f, 0.0f, 0.0f, 0.0f)
+									[
+										SNew(STextBlock)
+										.Text(PublicStateText)
+										.HighlightText(HighlightText)
+									]
 								]
-								
 							]
 						]
-
 						+ SVerticalBox::Slot()
 						.AutoHeight()
 						[
@@ -1285,29 +1350,20 @@ void SAssetViewItem::CacheDisplayTags()
 	
 					return FText::AsNumber(Num, &NumFormatOpts);
 				}
-				else
+
+				const bool bIsSigned = InNumberString.Len() > 0 && (InNumberString[0] == TEXT('-') || InNumberString[0] == TEXT('+'));
+				if (bIsSigned)
 				{
-					const bool bIsSigned = InNumberString.Len() > 0 && (InNumberString[0] == TEXT('-') || InNumberString[0] == TEXT('+'));
-	
-					if (bIsSigned)
-					{
-						// Convert the number as a signed int
-						int64 Num = 0;
-						LexFromString(Num, *InNumberString);
-	
-						return FText::AsNumber(Num);
-					}
-					else
-					{
-						// Convert the number as an unsigned int
-						uint64 Num = 0;
-						LexFromString(Num, *InNumberString);
-	
-						return FText::AsNumber(Num);
-					}
+					// Convert the number as a signed int
+					int64 Num = 0;
+					LexFromString(Num, *InNumberString);
+					return FText::AsNumber(Num);
 				}
-	
-				return FText::GetEmpty();
+
+				// Convert the number as an unsigned int
+				uint64 Num = 0;
+				LexFromString(Num, *InNumberString);
+				return FText::AsNumber(Num);
 			};
 	
 			bool bHasSetDisplayValue = false;
@@ -1410,7 +1466,7 @@ void SAssetViewItem::CacheDisplayTags()
 				{
 					// Remove the class path for native classes, and also remove Engine. for engine classes
 					const int32 SizeOfPrefix = UE_ARRAY_COUNT(StringToRemove) - 1;
-					ValueString.MidInline(SizeOfPrefix, ValueString.Len() - SizeOfPrefix, false);
+					ValueString.MidInline(SizeOfPrefix, ValueString.Len() - SizeOfPrefix, EAllowShrinking::No);
 					ValueString.ReplaceInline(TEXT("Engine."), TEXT(""));
 				}
 	
@@ -1441,7 +1497,7 @@ void SAssetViewItem::CacheDisplayTags()
 									const FString EnumPrefix = TagEnum->GenerateEnumPrefix();
 									if (EnumPrefix.Len() && ValueString.StartsWith(EnumPrefix))
 									{
-										ValueString.RightChopInline(EnumPrefix.Len() + 1, false);	// +1 to skip over the underscore
+										ValueString.RightChopInline(EnumPrefix.Len() + 1, EAllowShrinking::No);	// +1 to skip over the underscore
 									}
 								}
 
@@ -2227,7 +2283,7 @@ int32 SAssetTileItem::GetGenericThumbnailSize() const
 EVisibility SAssetTileItem::GetSCCIconVisibility() const
 {
 	// Hide the scc state icon when there is no brush or in tiny size since there isn't enough space
-	return bHasCCStateBrush && CurrentThumbnailSize.Get() != EThumbnailSize::Tiny && ISourceControlModule::Get().IsEnabled() && ISourceControlModule::Get().GetProvider().IsAvailable() ? EVisibility::Visible : EVisibility::Collapsed;
+	return bHasCCStateBrush &&  CurrentThumbnailSize.Get() != EThumbnailSize::Tiny && ISourceControlModule::Get().IsEnabled() && ISourceControlModule::Get().GetProvider().IsAvailable() ? EVisibility::Visible : EVisibility::Collapsed;
 }
 
 

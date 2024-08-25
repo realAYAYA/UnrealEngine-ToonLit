@@ -1,18 +1,17 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System.Buffers.Binary;
-using System.Net.Http.Headers;
 using System.Reflection;
 using EpicGames.Core;
+using EpicGames.Horde;
 using EpicGames.Horde.Common;
 using EpicGames.Horde.Compute;
-using EpicGames.Horde.Compute.Buffers;
 using EpicGames.Horde.Compute.Clients;
 using EpicGames.Horde.Storage;
-using EpicGames.Horde.Storage.Backends;
+using EpicGames.Horde.Storage.Bundles;
+using EpicGames.Horde.Storage.Clients;
 using EpicGames.Horde.Storage.Nodes;
-using EpicGames.OIDC;
-using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 
 namespace RemoteClient
@@ -27,6 +26,9 @@ namespace RemoteClient
 
 		[CommandLine("-Condition=")]
 		public string? Condition { get; set; }
+
+		[CommandLine]
+		public bool InProc { get; set; }
 
 		[CommandLine("-Cpp")]
 		public bool UseCppWorker { get; set; }
@@ -47,8 +49,22 @@ namespace RemoteClient
 			arguments.ApplyTo(options);
 			arguments.CheckAllArgumentsUsed(logger);
 
+			// Create a DI container that can create and authenticate Horde HTTP clients for us
+			ServiceCollection services = new ServiceCollection();
+			if (options.Server == null)
+			{
+				DirectoryReference sandboxDir = DirectoryReference.Combine(new FileReference(Assembly.GetExecutingAssembly().Location).Directory, "Sandbox");
+				services.AddSingleton<IComputeClient>(sp => new LocalComputeClient(2000, sandboxDir, options.InProc, new PrefixLogger("[REMOTE]", logger)));
+			}
+			else
+			{
+				services.AddHordeHttpClient(x => x.BaseAddress = new Uri(options.Server));
+				services.AddSingleton<IComputeClient, ServerComputeClient>();
+			}
+
 			// Create the client to handle our requests
-			await using IComputeClient client = await CreateClientAsync(options, logger);
+			await using ServiceProvider serviceProvider = services.BuildServiceProvider();
+			IComputeClient client = serviceProvider.GetRequiredService<IComputeClient>();
 
 			// Allocate a worker
 			Requirements? requirements = null;
@@ -57,7 +73,7 @@ namespace RemoteClient
 				requirements = new Requirements(Condition.Parse(options.Condition));
 			}
 
-			await using IComputeLease? lease = await client.TryAssignWorkerAsync(new ClusterId("default"), requirements);
+			await using IComputeLease? lease = await client.TryAssignWorkerAsync(new ClusterId("default"), requirements, null, null, new PrefixLogger("[CLIENT]", logger));
 			if (lease == null)
 			{
 				logger.LogInformation("Unable to connect to remote");
@@ -84,47 +100,47 @@ namespace RemoteClient
 		static async Task RunRemoteAsync(IComputeLease lease, DirectoryReference uploadDir, string executable, List<string> arguments, ILogger logger)
 		{
 			// Create a message channel on channel id 0. The Horde Agent always listens on this channel for requests.
-			using (AgentMessageChannel channel = lease.Socket.CreateAgentMessageChannel(PrimaryChannelId, 4 * 1024 * 1024, logger))
+			using (AgentMessageChannel channel = lease.Socket.CreateAgentMessageChannel(PrimaryChannelId, 4 * 1024 * 1024))
 			{
 				await channel.WaitForAttachAsync();
 
 				// Fork another message loop. We'll use this to run an XOR task in the background.
-				using AgentMessageChannel backgroundChannel = lease.Socket.CreateAgentMessageChannel(BackgroundChannelId, 4 * 1024 * 1024, logger);
+				using AgentMessageChannel backgroundChannel = lease.Socket.CreateAgentMessageChannel(BackgroundChannelId, 4 * 1024 * 1024);
 				await using BackgroundTask otherChannelTask = BackgroundTask.StartNew(ctx => RunBackgroundXorAsync(backgroundChannel));
 				await channel.ForkAsync(BackgroundChannelId, 4 * 1024 * 1024, default);
 
 				// Upload the sandbox to the primary channel.
-				MemoryStorageClient storage = new MemoryStorageClient();
-				await using (IStorageWriter treeWriter = storage.CreateWriter())
+				using BundleStorageClient storage =  BundleStorageClient.CreateInMemory(logger);
+
+				await using (IBlobWriter writer = storage.CreateBlobWriter())
 				{
-					DirectoryNode sandbox = new DirectoryNode();
-					await sandbox.CopyFromDirectoryAsync(uploadDir.ToDirectoryInfo(), new ChunkingOptions(), treeWriter, null);
-					BlobHandle handle = await treeWriter.FlushAsync(sandbox);
-					await channel.UploadFilesAsync("", handle.GetLocator(), storage);
+					IBlobRef<DirectoryNode> sandbox = await writer.WriteFilesAsync(uploadDir);
+					await writer.FlushAsync();
+					await channel.UploadFilesAsync("", sandbox.GetLocator(), storage.Backend);
 				}
 
 				// Run the task remotely in the background and echo the output to the console
-				await using (AgentManagedProcess process = await channel.ExecuteAsync(executable, arguments, null, null))
-				{
-					await using BackgroundTask tickTask = BackgroundTask.StartNew(ctx => WriteNumbersAsync(lease.Socket, logger, ctx));
+				using ComputeChannel childProcessChannel = lease.Socket.CreateChannel(ChildProcessChannelId);
+				await using BackgroundTask tickTask = BackgroundTask.StartNew(ctx => WriteNumbersAsync(childProcessChannel, lease.Socket.Logger, ctx));
 
+				await using (AgentManagedProcess process = await channel.ExecuteAsync(executable, arguments, null, null, ExecuteProcessFlags.None))
+				{
 					string? line;
 					while ((line = await process.ReadLineAsync()) != null)
 					{
-						logger.LogInformation("[REMOTE] {Line}", line);
+						lease.Socket.Logger.LogInformation("{Line}", line);
 					}
 				}
 			}
 			await lease.CloseAsync();
 		}
 		
-		static async Task WriteNumbersAsync(ComputeSocket socket, ILogger logger, CancellationToken cancellationToken)
+		static async Task WriteNumbersAsync(ComputeChannel channel, ILogger logger, CancellationToken cancellationToken)
 		{
 			// Wait until the remote sends a message indicating that it's ready
-			using (PooledBuffer recvBuffer = new PooledBuffer(1, 20))
+			if (!await channel.Reader.WaitToReadAsync(1, cancellationToken))
 			{
-				socket.AttachRecvBuffer(ChildProcessChannelId, recvBuffer.Writer);
-				await recvBuffer.Reader.WaitToReadAsync(1, cancellationToken);
+				throw new NotImplementedException();
 			}
 
 			// Write data to the child process channel. The remote server will echo them back to us as it receives them, then exit when the channel is complete/closed.
@@ -134,11 +150,11 @@ namespace RemoteClient
 				cancellationToken.ThrowIfCancellationRequested();
 				logger.LogInformation("Writing value: {Value}", idx);
 				BinaryPrimitives.WriteInt32LittleEndian(buffer, idx);
-				await socket.SendAsync(ChildProcessChannelId, buffer, cancellationToken);
+				await channel.Writer.WriteAsync(buffer, cancellationToken);
 				await Task.Delay(1000, cancellationToken);
 			}
 
-			await socket.MarkCompleteAsync(ChildProcessChannelId, cancellationToken);
+			channel.MarkComplete();
 		}
 
 		static async Task RunBackgroundXorAsync(AgentMessageChannel channel)
@@ -158,67 +174,6 @@ namespace RemoteClient
 			}
 
 			await channel.CloseAsync();
-		}
-
-		static async Task<IComputeClient> CreateClientAsync(ClientAppOptions options, ILogger logger)
-		{
-			if (options.Server == null)
-			{
-				DirectoryReference sandboxDir = DirectoryReference.Combine(new FileReference(Assembly.GetExecutingAssembly().Location).Directory, "Sandbox");
-				return new LocalComputeClient(2000, sandboxDir, logger);
-			}
-			else
-			{
-				AuthenticationHeaderValue? authHeader = await GetAuthHeaderAsync(options, logger);
-				return new ServerComputeClient(new Uri(options.Server), authHeader, logger);
-			}
-		}
-
-		static async Task<AuthenticationHeaderValue?> GetAuthHeaderAsync(ClientAppOptions options, ILogger logger)
-		{
-			if (options.OidcProvider == null)
-			{
-				return null;
-			}
-
-			for (DirectoryReference? currentDir = CurrentAssemblyFile.Directory; currentDir != null; currentDir = currentDir.ParentDirectory)
-			{
-				FileReference buildVersionFile = FileReference.Combine(currentDir, "Build/Build.version");
-				if (FileReference.Exists(buildVersionFile))
-				{
-					string bearerToken = await GetOidcBearerTokenAsync(currentDir, null, options.OidcProvider, logger);
-					return new AuthenticationHeaderValue("Bearer", bearerToken);
-				}
-			}
-
-			throw new Exception($"Unable to find engine directory above {CurrentAssemblyFile}");
-		}
-
-		static async Task<string> GetOidcBearerTokenAsync(DirectoryReference engineDir, DirectoryReference? projectDir, string oidcProvider, ILogger logger)
-		{
-			logger.LogInformation("Performing OIDC token refresh...");
-
-			using ITokenStore tokenStore = TokenStoreFactory.CreateTokenStore();
-			IConfiguration providerConfiguration = ProviderConfigurationFactory.ReadConfiguration(engineDir.ToDirectoryInfo(), projectDir?.ToDirectoryInfo());
-			OidcTokenManager oidcTokenManager = OidcTokenManager.CreateTokenManager(providerConfiguration, tokenStore, new List<string>() { oidcProvider });
-
-			OidcTokenInfo result;
-			try
-			{
-				result = await oidcTokenManager.GetAccessToken(oidcProvider);
-			}
-			catch (NotLoggedInException)
-			{
-				result = await oidcTokenManager.Login(oidcProvider);
-			}
-
-			if (result.AccessToken == null)
-			{
-				throw new Exception($"Unable to get access token for {oidcProvider}");
-			}
-
-			logger.LogInformation("Received bearer token for {OidcProvider}", oidcProvider);
-			return result.AccessToken;
 		}
 	}
 }

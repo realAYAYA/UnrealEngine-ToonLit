@@ -2,6 +2,7 @@
 
 #include "ViewModels/Stack/NiagaraStackRendererItem.h"
 #include "ViewModels/Stack/NiagaraStackObject.h"
+#include "ViewModels/Stack/NiagaraStackRenderersOwner.h"
 #include "NiagaraEmitter.h"
 #include "NiagaraStackEditorData.h"
 #include "NiagaraRendererProperties.h"
@@ -36,11 +37,11 @@ UNiagaraStackRendererItem::UNiagaraStackRendererItem()
 {
 }
 
-void UNiagaraStackRendererItem::Initialize(FRequiredEntryData InRequiredEntryData, UNiagaraRendererProperties* InRendererProperties)
+void UNiagaraStackRendererItem::Initialize(FRequiredEntryData InRequiredEntryData, TSharedPtr<INiagaraStackRenderersOwner> InRenderersOwner, UNiagaraRendererProperties* InRendererProperties)
 {
 	checkf(RendererProperties.IsValid() == false, TEXT("Can not initialize more than once."));
-	FString RendererStackEditorDataKey = FString::Printf(TEXT("Renderer-%s"), *InRendererProperties->GetName());
-	Super::Initialize(InRequiredEntryData, RendererStackEditorDataKey);
+	Super::Initialize(InRequiredEntryData, FNiagaraStackGraphUtilities::StackKeys::GenerateStackRendererEditorDataKey(*InRendererProperties));
+	RenderersOwner = InRenderersOwner;
 	RendererProperties = InRendererProperties;
 	RendererProperties->OnChanged().AddUObject(this, &UNiagaraStackRendererItem::RendererChanged);
 }
@@ -105,9 +106,11 @@ bool UNiagaraStackRendererItem::CanMoveRendererUp() const
 	{
 		return false;
 	}
-	if (FVersionedNiagaraEmitterData* EmitterData = GetEmitterViewModel()->GetEmitter().GetEmitterData())
+	if (RenderersOwner.IsValid() && RenderersOwner->IsValid())
 	{
-		return EmitterData->GetRenderers().IndexOfByKey(RendererProperties.Get()) > 0;
+		TArray<UNiagaraRendererProperties*> Renderers;
+		RenderersOwner->GetRenderers(Renderers);
+		return Renderers.IndexOfByKey(RendererProperties.Get()) > 0;
 	}
 	return false;
 }
@@ -119,12 +122,13 @@ void UNiagaraStackRendererItem::MoveRendererUp() const
 		return;
 	}
 
-	FVersionedNiagaraEmitter VersionedEmitter = GetEmitterViewModel()->GetEmitter();
-	if (FVersionedNiagaraEmitterData* EmitterData = VersionedEmitter.GetEmitterData())
+	if (RenderersOwner.IsValid() && RenderersOwner->IsValid())
 	{
 		FScopedTransaction ScopedTransaction(LOCTEXT("MoveRendererUpTransaction", "Move renderer up"));
-		int32 CurrentIndex = EmitterData->GetRenderers().IndexOfByKey(RendererProperties.Get());
-		VersionedEmitter.Emitter->MoveRenderer(RendererProperties.Get(), CurrentIndex - 1, VersionedEmitter.Version);
+		TArray<UNiagaraRendererProperties*> Renderers;
+		RenderersOwner->GetRenderers(Renderers);
+		int32 CurrentIndex = Renderers.IndexOfByKey(RendererProperties.Get());
+		RenderersOwner->MoveRenderer(RendererProperties.Get(), CurrentIndex - 1);
 	}
 }
 
@@ -134,9 +138,11 @@ bool UNiagaraStackRendererItem::CanMoveRendererDown() const
 	{
 		return false;
 	}
-	if (FVersionedNiagaraEmitterData* EmitterData = GetEmitterViewModel()->GetEmitter().GetEmitterData())
+	if (RenderersOwner.IsValid() && RenderersOwner->IsValid())
 	{
-		return EmitterData->GetRenderers().IndexOfByKey(RendererProperties.Get()) < EmitterData->GetRenderers().Num() - 1;
+		TArray<UNiagaraRendererProperties*> Renderers;
+		RenderersOwner->GetRenderers(Renderers);
+		return Renderers.IndexOfByKey(RendererProperties.Get()) < Renderers.Num() - 1;
 	}
 	return false;
 }
@@ -148,12 +154,13 @@ void UNiagaraStackRendererItem::MoveRendererDown() const
 		return;
 	}
 
-	FVersionedNiagaraEmitter VersionedEmitter = GetEmitterViewModel()->GetEmitter();
-	if (FVersionedNiagaraEmitterData* EmitterData = VersionedEmitter.GetEmitterData())
+	if (RenderersOwner.IsValid() && RenderersOwner->IsValid())
 	{
 		FScopedTransaction ScopedTransaction(LOCTEXT("MoveRendererDownTransaction", "Move renderer down"));
-		int32 CurrentIndex = EmitterData->GetRenderers().IndexOfByKey(RendererProperties.Get());
-		VersionedEmitter.Emitter->MoveRenderer(RendererProperties.Get(), CurrentIndex + 1, VersionedEmitter.Version);
+		TArray<UNiagaraRendererProperties*> Renderers;
+		RenderersOwner->GetRenderers(Renderers);
+		int32 CurrentIndex = Renderers.IndexOfByKey(RendererProperties.Get());
+		RenderersOwner->MoveRenderer(RendererProperties.Get(), CurrentIndex + 1);
 	}
 }
 
@@ -246,6 +253,7 @@ bool UNiagaraStackRendererItem::IsExcludedFromScalability() const
 
 bool UNiagaraStackRendererItem::IsOwningEmitterExcludedFromScalability() const
 {
+	// TODO - Stateless - RenderersOwner refactor
 	return GetEmitterViewModel().IsValid() ? !GetEmitterViewModel()->GetEmitter().GetEmitterData()->IsAllowedByScalability() : false;
 }
 
@@ -318,7 +326,7 @@ bool UNiagaraStackRendererItem::TestCanCopyWithMessage(FText& OutMessage) const
 
 void UNiagaraStackRendererItem::Copy(UNiagaraClipboardContent* ClipboardContent) const
 {
-	ClipboardContent->Renderers.Add(CastChecked<UNiagaraRendererProperties>(StaticDuplicateObject(RendererProperties.Get(), ClipboardContent)));
+	ClipboardContent->Renderers.Add(UNiagaraClipboardRenderer::CreateRenderer(ClipboardContent, RendererProperties.Get(), GetStackNoteData()));
 }
 
 bool UNiagaraStackRendererItem::TestCanPasteWithMessage(const UNiagaraClipboardContent* ClipboardContent, FText& OutMessage) const
@@ -367,20 +375,18 @@ FText UNiagaraStackRendererItem::GetDeleteTransactionText() const
 
 void UNiagaraStackRendererItem::Delete()
 {
-	FVersionedNiagaraEmitter VersionedEmitter = GetEmitterViewModel()->GetEmitter();
-
-	UNiagaraRendererProperties* Renderer = RendererProperties.Get();
-	VersionedEmitter.Emitter->Modify();
-	VersionedEmitter.Emitter->RemoveRenderer(Renderer, VersionedEmitter.Version);
-	if (UNiagaraEmitterEditorData* Data = Cast<UNiagaraEmitterEditorData>(VersionedEmitter.GetEmitterData()->GetEditorData()))
+	if (RenderersOwner.IsValid() && RenderersOwner->IsValid())
 	{
-		Data->GetStackEditorData().Modify();
-		Data->GetStackEditorData().SetStackEntryDisplayName(GetStackEditorDataKey(), FText());
-	}
+		GetStackEditorData().Modify();
+		GetStackEditorData().SetStackEntryDisplayName(GetStackEditorDataKey(), FText());
 
-	TArray<UObject*> ChangedObjects;
-	ChangedObjects.Add(Renderer);
-	OnDataObjectModified().Broadcast(ChangedObjects, ENiagaraDataObjectChange::Removed);
+		UNiagaraRendererProperties* Renderer = RendererProperties.Get();
+		RenderersOwner->RemoveRenderer(Renderer);
+
+		TArray<UObject*> ChangedObjects;
+		ChangedObjects.Add(Renderer);
+		OnDataObjectModified().Broadcast(ChangedObjects, ENiagaraDataObjectChange::Removed);
+	}
 }
 
 bool UNiagaraStackRendererItem::GetIsInherited() const
@@ -406,9 +412,7 @@ bool UNiagaraStackRendererItem::HasBaseRenderer() const
 	{
 		if (bHasBaseRendererCache.IsSet() == false)
 		{
-			TSharedRef<FNiagaraScriptMergeManager> MergeManager = FNiagaraScriptMergeManager::Get();
-			FVersionedNiagaraEmitter BaseEmitter = GetEmitterViewModel()->GetEmitter().GetEmitterData()->GetParent();
-			bHasBaseRendererCache = BaseEmitter.Emitter != nullptr && MergeManager->HasBaseRenderer(BaseEmitter, RendererProperties->GetMergeId());
+			bHasBaseRendererCache = RenderersOwner.IsValid() && RenderersOwner->IsValid() && RenderersOwner->HasBaseRenderer(RendererProperties.Get());
 		}
 		return bHasBaseRendererCache.GetValue();
 	}
@@ -419,11 +423,9 @@ bool UNiagaraStackRendererItem::TestCanResetToBaseWithMessage(FText& OutCanReset
 {
 	if (bCanResetToBaseCache.IsSet() == false)
 	{
-		if (HasBaseRenderer())
+		if (HasBaseRenderer() && RenderersOwner.IsValid() && RenderersOwner->IsValid())
 		{
-			TSharedRef<FNiagaraScriptMergeManager> MergeManager = FNiagaraScriptMergeManager::Get();
-			FVersionedNiagaraEmitter BaseEmitter = GetEmitterViewModel()->GetEmitter().GetEmitterData()->GetParent();
-			bCanResetToBaseCache = BaseEmitter.Emitter != nullptr && MergeManager->IsRendererDifferentFromBase(GetEmitterViewModel()->GetEmitter(), BaseEmitter, RendererProperties->GetMergeId());
+			bCanResetToBaseCache = RenderersOwner->IsRendererDifferentFromBase(RendererProperties.Get());
 		}
 		else
 		{
@@ -447,11 +449,17 @@ void UNiagaraStackRendererItem::ResetToBase()
 	FText Unused;
 	if (TestCanResetToBaseWithMessage(Unused))
 	{
-		TSharedRef<FNiagaraScriptMergeManager> MergeManager = FNiagaraScriptMergeManager::Get();
-		FVersionedNiagaraEmitter BaseEmitter = GetEmitterViewModel()->GetEmitter().GetEmitterData()->GetParent();
-		MergeManager->ResetRendererToBase(GetEmitterViewModel()->GetEmitter(), BaseEmitter, RendererProperties->GetMergeId());
-		ModifiedGroupItemsDelegate.Broadcast();
+		if (RenderersOwner.IsValid() && RenderersOwner->IsValid())
+		{
+			RenderersOwner->ResetRendererToBase(RendererProperties.Get());
+			ModifiedGroupItemsDelegate.Broadcast();
+		}
 	}
+}
+
+bool UNiagaraStackRendererItem::GetShouldShowInOverview() const
+{
+	return RenderersOwner.IsValid() && RenderersOwner->ShouldShowRendererItemsInOverview();
 }
 
 bool UNiagaraStackRendererItem::GetIsEnabled() const
@@ -500,7 +508,8 @@ void UNiagaraStackRendererItem::RefreshChildrenInternal(const TArray<UNiagaraSta
 	{
 		RendererObject = NewObject<UNiagaraStackObject>(this);
 		bool bIsTopLevelObject = true;
-		RendererObject->Initialize(CreateDefaultChildRequiredData(), RendererProperties.Get(), bIsTopLevelObject, GetStackEditorDataKey());
+		bool bHideTopLevelCategories = false;
+		RendererObject->Initialize(CreateDefaultChildRequiredData(), RendererProperties.Get(), bIsTopLevelObject, bHideTopLevelCategories, GetStackEditorDataKey());
 		RendererObject->SetObjectGuid(GetRendererProperties()->GetMergeId());
 	}
 
@@ -596,15 +605,44 @@ void UNiagaraStackRendererItem::RefreshIssues(TArray<FStackIssue>& NewIssues)
 
 	if (RendererProperties->GetIsEnabled() && !RendererProperties->IsSimTargetSupported(EmitterData->SimTarget))
 	{
-		
-		FStackIssue TargetSupportError(
-			EStackIssueSeverity::Error,
-			LOCTEXT("FailedRendererDueToSimTarget", "Renderer incompatible with SimTarget mode."),
-			FText::Format(LOCTEXT("FailedRendererDueToSimTargetLong", "Renderer incompatible with SimTarget mode \"{0}\"."), FText::FromName(UEnum::GetValueAsName(EmitterData->SimTarget))),
-			GetStackEditorDataKey(),
-			false);
+		const ENiagaraSimTarget SimTargets[] = {ENiagaraSimTarget::CPUSim, ENiagaraSimTarget::GPUComputeSim};
 
-		NewIssues.Add(TargetSupportError);
+		TArray<FStackIssueFix> Fixes;
+		for (ENiagaraSimTarget SimTarget : SimTargets)
+		{
+			if ( !RendererProperties->IsSimTargetSupported(SimTarget) )
+			{
+				continue;
+			}
+			Fixes.Emplace(
+				FText::Format(LOCTEXT("RendererChangeSimTargetFix", "Change Sim Target to \"{0}\""), UEnum::GetDisplayValueAsText(SimTarget)),
+				FStackIssueFixDelegate::CreateLambda(
+					[WeakEmitterPtr=GetEmitterViewModel()->GetEmitter().ToWeakPtr(), SimTarget]()
+					{
+						FVersionedNiagaraEmitter VersionedEmitter = WeakEmitterPtr.ResolveWeakPtr();
+						if (FVersionedNiagaraEmitterData* VersionedEmitterData = VersionedEmitter.GetEmitterData())
+						{
+							const FScopedTransaction Transaction(LOCTEXT("ChangeSimTarget", "Change Sim Target"));
+							VersionedEmitter.Emitter->Modify();
+							VersionedEmitterData->SimTarget = SimTarget;
+
+							FProperty* SimTargetProperty = FindFProperty<FProperty>(FVersionedNiagaraEmitterData::StaticStruct(), GET_MEMBER_NAME_CHECKED(FVersionedNiagaraEmitterData, SimTarget));
+							FPropertyChangedEvent PropertyChangedEvent(SimTargetProperty);
+							VersionedEmitter.Emitter->PostEditChangeVersionedProperty(PropertyChangedEvent, VersionedEmitter.Version);
+						}
+					}
+				)
+			);
+		}
+
+		NewIssues.Emplace(
+			EStackIssueSeverity::Error,
+			LOCTEXT("FailedRendererDueToSimTarget", "Renderer incompatible with chosen Sim Target in Emitter Properties."),
+			FText::Format(LOCTEXT("FailedRendererDueToSimTargetLong", "Renderer incompatible with Sim Target \"{0}\"."), UEnum::GetDisplayValueAsText(EmitterData->SimTarget)),
+			GetStackEditorDataKey(),
+			false,
+			Fixes
+		);
 	}
 
 	if (RendererProperties->GetIsEnabled())

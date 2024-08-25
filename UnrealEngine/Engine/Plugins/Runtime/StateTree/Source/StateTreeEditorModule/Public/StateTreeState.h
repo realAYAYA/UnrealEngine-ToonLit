@@ -3,6 +3,7 @@
 #pragma once
 
 #include "StateTreeEditorNode.h"
+#include "StateTreeEditorTypes.h"
 #include "StateTreeState.generated.h"
 
 class UStateTreeState;
@@ -19,8 +20,6 @@ struct STATETREEEDITORMODULE_API FStateTreeTransition
 	FStateTreeTransition(const EStateTreeTransitionTrigger InTrigger, const EStateTreeTransitionType InType, const UStateTreeState* InState = nullptr);
 	FStateTreeTransition(const EStateTreeTransitionTrigger InTrigger, const FGameplayTag InEventTag, const EStateTreeTransitionType InType, const UStateTreeState* InState = nullptr);
 
-	void PostSerialize(const FArchive& Ar);
-	
 	template<typename T, typename... TArgs>
 	TStateTreeEditorNode<T>& AddCondition(TArgs&&... InArgs)
 	{
@@ -79,14 +78,6 @@ struct STATETREEEDITORMODULE_API FStateTreeTransition
 	bool bTransitionEnabled = true;
 };
 
-template<>
-struct TStructOpsTypeTraits<FStateTreeTransition> : TStructOpsTypeTraitsBase2<FStateTreeTransition>
-{
-	enum
-	{
-		WithPostSerialize = true,
-	};
-};
 
 USTRUCT()
 struct STATETREEEDITORMODULE_API FStateTreeStateParameters
@@ -96,11 +87,19 @@ struct STATETREEEDITORMODULE_API FStateTreeStateParameters
 	void Reset()
 	{
 		Parameters.Reset();
+		PropertyOverrides.Reset();
 		bFixedLayout = false;
 	}
 
+	/** Removes overrides that do appear in Parameters. */
+	void RemoveUnusedOverrides();
+	
 	UPROPERTY(EditDefaultsOnly, Category = Parameters)
 	FInstancedPropertyBag Parameters;
+
+	/** Overrides for parameters. */
+	UPROPERTY()
+	TArray<FGuid> PropertyOverrides;
 
 	UPROPERTY(EditDefaultsOnly, Category = Parameters)
 	bool bFixedLayout = false;
@@ -119,16 +118,30 @@ class STATETREEEDITORMODULE_API UStateTreeState : public UObject
 
 public:
 	UStateTreeState(const FObjectInitializer& ObjectInitializer);
+	virtual ~UStateTreeState() override;
 
-#if WITH_EDITOR
+	virtual void PostInitProperties() override;
+	virtual void PreEditChange(FEditPropertyChain& PropertyAboutToChange) override;
 	virtual void PostEditChangeChainProperty(FPropertyChangedChainEvent& PropertyChangedEvent) override;
 	virtual void PostLoad() override;;
 	void UpdateParametersFromLinkedSubtree();
-#endif
+	void OnTreeCompiled(const UStateTree& StateTree);
 
 	const UStateTreeState* GetRootState() const;
 	const UStateTreeState* GetNextSiblingState() const;
 	const UStateTreeState* GetNextSelectableSiblingState() const;
+
+	/** @return true if the property of specified ID is overridden. */
+	bool IsParametersPropertyOverridden(const FGuid PropertyID) const
+	{
+		return Parameters.PropertyOverrides.Contains(PropertyID);
+	}
+
+	/** Sets the override status of specified property by ID. */
+	void SetParametersPropertyOverridden(const FGuid PropertyID, const bool bIsOverridden);
+
+	/** @returns Default parameters from linked state or asset). */
+	const FInstancedPropertyBag* GetDefaultParameters() const;
 	
 	// StateTree Builder API
 	/** @return state link to this state. */
@@ -203,18 +216,31 @@ public:
 
 	// ~StateTree Builder API
 
+	/** Display name of the State */
 	UPROPERTY(EditDefaultsOnly, Category = "State")
 	FName Name;
 
+	/** Display color of the State */
+	UPROPERTY(EditDefaultsOnly, Category = "State", DisplayName = "Color")
+	FStateTreeEditorColorRef ColorRef;
+
+	/** Type the State, allows e.g. states to be linked to other States. */
 	UPROPERTY(EditDefaultsOnly, Category = "State")
 	EStateTreeStateType Type = EStateTreeStateType::State;
 
+	/** How to treat child states when this State is selected.  */
 	UPROPERTY(EditDefaultsOnly, Category = "State")
 	EStateTreeStateSelectionBehavior SelectionBehavior = EStateTreeStateSelectionBehavior::TrySelectChildrenInOrder;
-	
+
+	/** Subtree to run as extension of this State. */
 	UPROPERTY(EditDefaultsOnly, Category = "State", Meta=(DirectStatesOnly, SubtreesOnly))
 	FStateTreeStateLink LinkedSubtree;
 
+	/** Another State Tree asset to run as extension of this State. */
+	UPROPERTY(EditDefaultsOnly, Category = "State")
+	TObjectPtr<UStateTree> LinkedAsset = nullptr;
+
+	/** Parameters of this state. If the state is linked to another state or asset, the parameters are for the linked state. */
 	UPROPERTY(EditDefaultsOnly, Category = "State")
 	FStateTreeStateParameters Parameters;
 
@@ -223,12 +249,6 @@ public:
 
 	UPROPERTY(EditDefaultsOnly, Category = "Enter Conditions", meta = (BaseStruct = "/Script/StateTreeModule.StateTreeConditionBase", BaseClass = "/Script/StateTreeModule.StateTreeConditionBlueprintBase"))
 	TArray<FStateTreeEditorNode> EnterConditions;
-
-#if WITH_EDITORONLY_DATA
-	UE_DEPRECATED(5.1, "Evaluators are moved into UStateTreeEditorData. This property will be removed for 5.1.")
-	UPROPERTY(meta = (DeprecatedProperty, BaseStruct = "/Script/StateTreeModule.StateTreeEvaluatorBase", BaseClass = "/Script/StateTreeModule.StateTreeEvaluatorBlueprintBase"))
-	TArray<FStateTreeEditorNode> Evaluators_DEPRECATED;
-#endif
 
 	UPROPERTY(EditDefaultsOnly, Category = "Tasks", meta = (BaseStruct = "/Script/StateTreeModule.StateTreeTaskBase", BaseClass = "/Script/StateTreeModule.StateTreeTaskBlueprintBase"))
 	TArray<FStateTreeEditorNode> Tasks;

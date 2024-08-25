@@ -323,7 +323,7 @@ void UK2Node_EnhancedInputAction::ExpandNode(FKismetCompilerContext& CompilerCon
 			return nullptr;
 		}
 
-		UK2Node_EnhancedInputActionEvent* InputActionEvent = CompilerContext.SpawnIntermediateEventNode<UK2Node_EnhancedInputActionEvent>(this, Pin, SourceGraph);
+		UK2Node_EnhancedInputActionEvent* InputActionEvent = CompilerContext.SpawnIntermediateNode<UK2Node_EnhancedInputActionEvent>(this, SourceGraph);
 		InputActionEvent->CustomFunctionName = FName(*FString::Printf(TEXT("InpActEvt_%s_%s"), *GetActionName().ToString(), *InputActionEvent->GetName()));
 		InputActionEvent->InputAction = InputAction;
 		InputActionEvent->TriggerEvent = TriggerEvent;

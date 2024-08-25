@@ -15,29 +15,29 @@ namespace UE::AnimNext
 	struct FDecoratorRegistryHandle final
 	{
 		// Default constructed handles are invalid
-		FDecoratorRegistryHandle() = default;
+		FDecoratorRegistryHandle() noexcept = default;
 
 		// Returns whether or not this handle points to a valid decorator
-		bool IsValid() const { return HandleValue != 0; }
+		bool IsValid() const noexcept { return HandleValue != 0; }
 
 		// Returns whether or not this handle is valid and points to a static decorator
-		bool IsStatic() const { return IsValid() && HandleValue > 0; }
+		bool IsStatic() const noexcept { return IsValid() && HandleValue > 0; }
 
 		// Returns whether or not this handle is valid and points to a dynamic decorator
-		bool IsDynamic() const { return IsValid() && HandleValue < 0; }
+		bool IsDynamic() const noexcept { return IsValid() && HandleValue < 0; }
 
 		// Returns the static buffer offset for this handle when valid, otherwise INDEX_NONE
-		int32 GetStaticOffset() const { return IsStatic() ? (HandleValue - 1) : INDEX_NONE; }
+		int32 GetStaticOffset() const noexcept { return IsStatic() ? (HandleValue - 1) : INDEX_NONE; }
 
 		// Returns the dynamic array index for this handle when valid, otherwise INDEX_NONE
-		int32 GetDynamicIndex() const { return IsDynamic() ? (-HandleValue - 1) : INDEX_NONE; }
+		int32 GetDynamicIndex() const noexcept { return IsDynamic() ? (-HandleValue - 1) : INDEX_NONE; }
 
 		// Compares for equality and inequality
-		bool operator==(FDecoratorRegistryHandle RHS) const { return HandleValue == RHS.HandleValue; }
-		bool operator!=(FDecoratorRegistryHandle RHS) const { return HandleValue != RHS.HandleValue; }
+		bool operator==(FDecoratorRegistryHandle RHS) const noexcept { return HandleValue == RHS.HandleValue; }
+		bool operator!=(FDecoratorRegistryHandle RHS) const noexcept { return HandleValue != RHS.HandleValue; }
 
 	private:
-		explicit FDecoratorRegistryHandle(int16 HandleValue_)
+		explicit FDecoratorRegistryHandle(int16 HandleValue_) noexcept
 			: HandleValue(HandleValue_)
 		{}
 

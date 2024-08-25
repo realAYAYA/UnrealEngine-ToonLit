@@ -8,6 +8,7 @@
 #include "MoviePipelineBlueprintLibrary.generated.h"
 
 // Forward Declare
+class UCineCameraComponent;
 class UMoviePipeline;
 class UMovieSceneSequence;
 class UMoviePipelineSetting;
@@ -169,4 +170,7 @@ private:
 
 	/** Get the effective output resolution, taking into account overscan. */
 	static FIntPoint Utility_GetEffectiveOutputResolution(const float OverscanPercentage, const FIntPoint& InOutputResolution);
+
+	/** Get the current cine camera in use, or nullptr if there is none. */
+	static UCineCameraComponent* Utility_GetCurrentCineCamera(const UWorld* InWorld);
 };

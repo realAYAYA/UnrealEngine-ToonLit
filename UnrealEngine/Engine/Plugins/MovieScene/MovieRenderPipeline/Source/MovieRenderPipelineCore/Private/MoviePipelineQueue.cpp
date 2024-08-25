@@ -10,6 +10,65 @@
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MoviePipelineQueue)
 
+namespace UE::MovieGraph::Private
+{
+	/**
+	 * Gets the job variable assignments for a specific graph. Creates a new variable assignments container if one was not found for the given graph.
+	 * The owner of the variable assignments must be provided in case a new assignment needs to be created.
+	 */
+	TObjectPtr<UMovieJobVariableAssignmentContainer> GetOrCreateJobVariableAssignmentsForGraph(
+		const UMovieGraphConfig* InGraph, TArray<TObjectPtr<UMovieJobVariableAssignmentContainer>>& InVariableAssignments, UObject* InAssignmentsOwner)
+	{
+		for (TObjectPtr<UMovieJobVariableAssignmentContainer>& VariableAssignment : InVariableAssignments)
+		{
+			const TSoftObjectPtr<UMovieGraphConfig> SoftGraphConfig = VariableAssignment->GetGraphConfig();
+			if (SoftGraphConfig.Get() == InGraph)
+			{
+#if WITH_EDITOR
+				VariableAssignment->UpdateGraphVariableOverrides();
+#endif
+				
+				return VariableAssignment;
+			}
+		}
+
+		// Create the variable assignments container if it wasn't found
+		TObjectPtr<UMovieJobVariableAssignmentContainer> NewVariableAssignments = NewObject<UMovieJobVariableAssignmentContainer>(InAssignmentsOwner);
+		InVariableAssignments.Add(NewVariableAssignments);
+		NewVariableAssignments->SetGraphConfig(InGraph);
+
+#if WITH_EDITOR
+		NewVariableAssignments->UpdateGraphVariableOverrides();
+#endif
+	
+		return NewVariableAssignments;
+	}
+
+	/** Refreshes the variable assignments for the given graph and its associated subgraphs. */
+	void RefreshVariableAssignments(UMovieGraphConfig* InRootGraph, TArray<TObjectPtr<UMovieJobVariableAssignmentContainer>>& InVariableAssignments, UObject* InAssignmentsOwner)
+	{
+		if (!InRootGraph)
+		{
+			return;
+		}
+	
+		TSet<UMovieGraphConfig*> AllGraphs = {InRootGraph};
+		InRootGraph->GetAllContainedSubgraphs(AllGraphs);
+
+		// Add/update variable assignments for the graph on the job and all of its subgraphs
+		for (const UMovieGraphConfig* Graph : AllGraphs)
+		{
+			GetOrCreateJobVariableAssignmentsForGraph(Graph, InVariableAssignments, InAssignmentsOwner);
+		}
+
+		// Remove any stale variable assignments for graphs/subgraphs which are no longer part of the job
+		InVariableAssignments.RemoveAll([&AllGraphs](const TObjectPtr<UMovieJobVariableAssignmentContainer>& VariableAssignment)
+		{
+			return !AllGraphs.Contains(VariableAssignment->GetGraphConfig().LoadSynchronous());
+		});
+	}
+}
+
 UMoviePipelineQueue::UMoviePipelineQueue()
 	: QueueSerialNumber(0)
 	, bIsDirty(false)
@@ -199,30 +258,80 @@ void UMoviePipelineExecutorJob::PreSave(FObjectPreSaveContext ObjectSaveContext)
 {
 	Super::PreSave(ObjectSaveContext);
 
-#if WITH_EDITOR
-	VariableAssignments->UpdateGraphVariableOverrides();
-#endif
+	RefreshAllVariableAssignments();
 }
 
 void UMoviePipelineExecutorJob::PostLoad()
 {
 	Super::PostLoad();
-	
-	if (VariableAssignments)
-	{
-		VariableAssignments->SetGraphConfig(GraphPreset.LoadSynchronous());
-	}
 
-	// Update the job's variable overrides whenever the graph's variables change
-	if (UMovieGraphConfig* Config = GraphPreset.LoadSynchronous())
-	{
 #if WITH_EDITOR
-		Config->OnGraphVariablesChangedDelegate.AddUObject(VariableAssignments, &UMovieJobVariableAssignmentContainer::UpdateGraphVariableOverrides);
+	// Listen for any graph/subgraph saves. It's difficult/error-prone to track which graphs to monitor because the subgraph hierarchy can
+	// constantly change. Instead, just run any logic needed when any graph is saved.
+	FCoreUObjectDelegates::OnObjectPreSave.AddUObject(this, &UMoviePipelineExecutorJob::OnGraphPreSave);
 #endif
+
+	// Ideally the variable assignments would be updated here, but currently GraphPreset.LoadSynchronous() does not provide a fully-loaded
+	// object (GraphPreset will only be partially loaded at this point and its variables will be empty).
+}
+
+void UMoviePipelineExecutorJob::BeginDestroy()
+{
+#if WITH_EDITOR
+	FCoreUObjectDelegates::OnObjectPreSave.RemoveAll(this);
+#endif
+
+	Super::BeginDestroy();
+}
+
+TArray<TObjectPtr<UMovieJobVariableAssignmentContainer>>& UMoviePipelineExecutorJob::GetGraphVariableAssignments(const bool bUpdateAssignments)
+{
+	if (bUpdateAssignments)
+	{
+		RefreshAllVariableAssignments();
+	}
+	
+	return GraphVariableAssignments;
+}
+
+void UMoviePipelineExecutorJob::RefreshAllVariableAssignments()
+{
+	UE::MovieGraph::Private::RefreshVariableAssignments(GraphPreset.LoadSynchronous(), GraphVariableAssignments, this);
+
+	// Notify all shots that they should refresh their assignments as well (this could be needed, for example, when the primary graph preset changes)
+	for (TObjectPtr<UMoviePipelineExecutorShot>& ShotJob : ShotInfo)
+	{
+		if (ShotJob)
+		{
+			ShotJob->RefreshAllVariableAssignments();
+		}
+	}
+}
+
+void UMoviePipelineExecutorJob::SetGraphPreset(const UMovieGraphConfig* InGraphPreset, const bool bUpdateVariableAssignments)
+{
+#if WITH_EDITOR
+	Modify();
+#endif
+	
+	GraphPreset = InGraphPreset;
+
+	// If the graph is being cleared out, also clear out all graphs on the job's shots. A shot cannot have a graph assigned to it while
+	// the parent job is using a legacy config.
+	if (InGraphPreset == nullptr)
+	{
+		for (const TObjectPtr<UMoviePipelineExecutorShot>& Shot : ShotInfo)
+		{
+			Shot->SetGraphPreset(nullptr);
+		}
 	}
 
-	// TODO: The variable assignments need to be updated here, but currently GraphPreset.LoadSynchronous() does not
-	// provide a fully-loaded object (ie, GraphPreset will only be partially loaded at this point).
+	if (bUpdateVariableAssignments)
+	{
+		RefreshAllVariableAssignments();
+	}
+
+	OnJobGraphPresetChanged.Broadcast(this, GraphPreset.Get());
 }
 
 void UMoviePipelineExecutorJob::SetSequence(FSoftObjectPath InSequence)
@@ -245,6 +354,16 @@ void UMoviePipelineExecutorJob::SetSequence(FSoftObjectPath InSequence)
 	{
 		OwningQueue->InvalidateSerialNumber();
 	}
+}
+
+UMovieJobVariableAssignmentContainer* UMoviePipelineExecutorJob::GetOrCreateJobVariableAssignmentsForGraph(const UMovieGraphConfig* InGraph)
+{
+	if (InGraph)
+	{
+		return UE::MovieGraph::Private::GetOrCreateJobVariableAssignmentsForGraph(InGraph, GraphVariableAssignments, this);
+	}
+
+	return nullptr;
 }
 
 void UMoviePipelineExecutorJob::SetConfiguration(UMoviePipelinePrimaryConfig* InPreset)
@@ -271,6 +390,43 @@ void UMoviePipelineExecutorJob::OnDuplicated_Implementation()
 	StatusMessage = FString();
 	StatusProgress = 0.f;
 	SetConsumed(false);
+}
+
+void UMoviePipelineExecutorJob::OnGraphPreSave(UObject* InObject, FObjectPreSaveContext InObjectPreSaveContext)
+{
+	const UMovieGraphConfig* SavedGraph = Cast<UMovieGraphConfig>(InObject);
+	if (!SavedGraph || InObjectPreSaveContext.IsProceduralSave())
+	{
+		return;
+	}
+
+	RefreshAllVariableAssignments();
+}
+
+void UMoviePipelineExecutorShot::SetGraphPreset(const UMovieGraphConfig* InGraphPreset, const bool bUpdateVariableAssignments)
+{
+#if WITH_EDITOR
+	Modify();
+#endif
+	
+	GraphPreset = InGraphPreset;
+
+	if (bUpdateVariableAssignments)
+	{
+		RefreshAllVariableAssignments();
+	}
+
+	OnShotGraphPresetChanged.Broadcast(this, GraphPreset.Get());
+}
+
+UMovieJobVariableAssignmentContainer* UMoviePipelineExecutorShot::GetOrCreateJobVariableAssignmentsForGraph(const UMovieGraphConfig* InGraph, const bool bIsForPrimaryOverrides)
+{
+	if (InGraph)
+	{
+		return UE::MovieGraph::Private::GetOrCreateJobVariableAssignmentsForGraph(InGraph, bIsForPrimaryOverrides ? PrimaryGraphVariableAssignments : GraphVariableAssignments, this);
+	}
+
+	return nullptr;
 }
 
 UMoviePipelineShotConfig* UMoviePipelineExecutorShot::AllocateNewShotOverrideConfig(TSubclassOf<UMoviePipelineShotConfig> InConfigType)
@@ -327,32 +483,85 @@ void UMoviePipelineExecutorShot::SetShotOverridePresetOrigin(UMoviePipelineShotC
 	}
 }
 
+bool UMoviePipelineExecutorShot::IsUsingGraphConfiguration() const
+{
+	const UMoviePipelineExecutorJob* PrimaryJob = GetTypedOuter<UMoviePipelineExecutorJob>();
+
+	// Calling GetGraphPreset() here is important, rather than just referencing GraphPreset (to ensure that the soft ptr has a chance to load) 
+	return (GetGraphPreset() != nullptr) || (PrimaryJob && PrimaryJob->IsUsingGraphConfiguration());
+}
+
 void UMoviePipelineExecutorShot::PreSave(FObjectPreSaveContext ObjectSaveContext)
 {
 	Super::PreSave(ObjectSaveContext);
 
-#if WITH_EDITOR
-	VariableAssignments->UpdateGraphVariableOverrides();
-#endif
+	RefreshAllVariableAssignments();
 }
 
 void UMoviePipelineExecutorShot::PostLoad()
 {
 	Super::PostLoad();
 
-	if (VariableAssignments)
-	{
-		VariableAssignments->SetGraphConfig(GraphPreset.LoadSynchronous());
-	}
-
-	// Update the job's variable overrides whenever the graph's variables change
-	if (UMovieGraphConfig* Config = GraphPreset.LoadSynchronous())
-	{
 #if WITH_EDITOR
-		Config->OnGraphVariablesChangedDelegate.AddUObject(VariableAssignments, &UMovieJobVariableAssignmentContainer::UpdateGraphVariableOverrides);
+	// Listen for any graph/subgraph saves. It's difficult/error-prone to track which graphs to monitor because the subgraph hierarchy can
+	// constantly change. Instead, just run any logic needed when any graph is saved.
+	FCoreUObjectDelegates::OnObjectPreSave.AddUObject(this, &UMoviePipelineExecutorShot::OnGraphPreSave);
 #endif
+
+	// Ideally the variable assignments would be updated here, but currently GraphPreset.LoadSynchronous() does not provide a fully-loaded
+	// object (GraphPreset will only be partially loaded at this point and its variables will be empty).
+}
+
+void UMoviePipelineExecutorShot::BeginDestroy()
+{
+#if WITH_EDITOR
+	FCoreUObjectDelegates::OnObjectPreSave.RemoveAll(this);
+#endif
+
+	Super::BeginDestroy();
+}
+
+TArray<TObjectPtr<UMovieJobVariableAssignmentContainer>>& UMoviePipelineExecutorShot::GetGraphVariableAssignments(const bool bUpdateAssignments)
+{
+	if (bUpdateAssignments)
+	{
+		RefreshAllVariableAssignments();
+	}
+	
+	return GraphVariableAssignments;
+}
+
+TArray<TObjectPtr<UMovieJobVariableAssignmentContainer>>& UMoviePipelineExecutorShot::GetPrimaryGraphVariableAssignments(const bool bUpdateAssignments)
+{
+	if (bUpdateAssignments)
+	{
+		RefreshAllVariableAssignments();
+	}
+	
+	return PrimaryGraphVariableAssignments;
+}
+
+void UMoviePipelineExecutorShot::RefreshAllVariableAssignments()
+{
+	UE::MovieGraph::Private::RefreshVariableAssignments(GraphPreset.LoadSynchronous(), GraphVariableAssignments, this);
+
+	// Refresh the associated primary graph variable override assignments as well
+	if (const UMoviePipelineExecutorJob* PrimaryJob = GetTypedOuter<UMoviePipelineExecutorJob>())
+	{
+		if (UMovieGraphConfig* PrimaryGraph = PrimaryJob->GetGraphPreset())
+		{
+			UE::MovieGraph::Private::RefreshVariableAssignments(PrimaryGraph, PrimaryGraphVariableAssignments, this);
+		}
+	}
+}
+
+void UMoviePipelineExecutorShot::OnGraphPreSave(UObject* InObject, FObjectPreSaveContext InObjectPreSaveContext)
+{
+	const UMovieGraphConfig* SavedGraph = Cast<UMovieGraphConfig>(InObject);
+	if (!SavedGraph || InObjectPreSaveContext.IsProceduralSave())
+	{
+		return;
 	}
 
-	// TODO: The variable assignments need to be updated here, but currently GraphPreset.LoadSynchronous() does not
-	// provide a fully-loaded object (ie, GraphPreset will only be partially loaded at this point).
+	RefreshAllVariableAssignments();
 }

@@ -19,7 +19,7 @@ UClass* UInterchangeCineCameraActorFactory::GetFactoryClass() const
 	return ACineCameraActor::StaticClass();
 }
 
-UObject* UInterchangeCineCameraActorFactory::ProcessActor(AActor& SpawnedActor, const UInterchangeActorFactoryNode& /*FactoryNode*/, const UInterchangeBaseNodeContainer& /*NodeContainer*/)
+UObject* UInterchangeCineCameraActorFactory::ProcessActor(AActor& SpawnedActor, const UInterchangeActorFactoryNode& /*FactoryNode*/, const UInterchangeBaseNodeContainer& /*NodeContainer*/, const FImportSceneObjectsParams& /*Params*/)
 {
 	ACineCameraActor* CineCameraActor = Cast<ACineCameraActor>(&SpawnedActor);
 
@@ -32,7 +32,7 @@ UClass* UInterchangeCameraActorFactory::GetFactoryClass() const
 	return ACameraActor::StaticClass();
 }
 
-UObject* UInterchangeCameraActorFactory::ProcessActor(AActor& SpawnedActor, const UInterchangeActorFactoryNode& /*FactoryNode*/, const UInterchangeBaseNodeContainer& /*NodeContainer*/)
+UObject* UInterchangeCameraActorFactory::ProcessActor(AActor& SpawnedActor, const UInterchangeActorFactoryNode& /*FactoryNode*/, const UInterchangeBaseNodeContainer& /*NodeContainer*/, const FImportSceneObjectsParams& /*Params*/)
 {
 	ACameraActor* CameraActor = Cast<ACameraActor>(&SpawnedActor);
 

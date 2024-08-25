@@ -15,52 +15,34 @@ namespace UnrealBuildTool
 	class MacToolChainSettings : AppleToolChainSettings
 	{
 		/// <summary>
-		/// Which version of the Mac OS SDK to target at build time
-		/// </summary>
-		public string MacOSSDKVersion = "latest";
-		public float MacOSSDKVersionFloat = 0.0f;
-
-		/// <summary>
 		/// Which version of the Mac OS X to allow at run time
 		/// </summary>
-		public string MacOSVersion = "10.15";
+		public string MinMacBuildVersion(TargetType TargetType)
+		{
+			return ((ApplePlatformSDK)UEBuildPlatformSDK.GetSDKForPlatform("Mac")!).GetBuildTargetVersion(TargetType);
+		}
 
 		/// <summary>
 		/// Minimum version of Mac OS X to actually run on, running on earlier versions will display the system minimum version error dialog and exit.
 		/// </summary>
-		public string MinMacOSVersion = "10.15.7";
-
-		/// <summary>
-		/// Directory for the developer binaries
-		/// </summary>
-		public string ToolchainDir = "";
-
-		/// <summary>
-		/// Location of the SDKs
-		/// </summary>
-		public string BaseSDKDir;
+		public string MinMacDeploymentVersion(TargetType TargetType)
+		{
+			return ((ApplePlatformSDK)UEBuildPlatformSDK.GetSDKForPlatform("Mac")!).GetDeploymentTargetVersion(TargetType);
+		}
 
 		/// <summary>
 		/// Constructor
 		/// </summary>
 		/// <param name="bVerbose">Whether to output verbose logging</param>
 		/// <param name="Logger">Logger for output</param>
-		public MacToolChainSettings(bool bVerbose, ILogger Logger) : base(bVerbose, Logger)
+		public MacToolChainSettings(bool bVerbose, ILogger Logger) 
+			: base("MacOSX", null, "macos", bVerbose, Logger)
 		{
-			BaseSDKDir = XcodeDeveloperDir + "Platforms/MacOSX.platform/Developer/SDKs";
-			ToolchainDir = XcodeDeveloperDir + "Toolchains/XcodeDefault.xctoolchain/usr/bin/";
+		}
 
-			SelectSDK(BaseSDKDir, "MacOSX", ref MacOSSDKVersion, bVerbose, Logger);
-
-			// convert to float for easy comparison
-			if (String.IsNullOrWhiteSpace(MacOSSDKVersion))
-			{
-				throw new BuildException("Unable to find installed MacOS SDK on remote agent.");
-			}
-			else if (!Single.TryParse(MacOSSDKVersion, NumberStyles.AllowDecimalPoint, CultureInfo.InvariantCulture.NumberFormat, out MacOSSDKVersionFloat))
-			{
-				throw new BuildException("Unable to parse installed MacOS version (\"{0}\")", MacOSSDKVersion);
-			}
+		public DirectoryReference GetSDKPath()
+		{
+			return GetSDKPath(UnrealArch.Host.Value);
 		}
 	}
 
@@ -69,16 +51,12 @@ namespace UnrealBuildTool
 	/// </summary>
 	class MacToolChain : AppleToolChain
 	{
-		public MacToolChain(FileReference? InProjectFile, ClangToolChainOptions InOptions, ILogger InLogger)
-			: base(InProjectFile, InOptions, InLogger)
+		public MacToolChain(ReadOnlyTargetRules? Target, ClangToolChainOptions InOptions, ILogger InLogger)
+			: base(Target, () => new MacToolChainSettings(false, InLogger), InOptions, InLogger)
 		{
 		}
 
-		public static Lazy<MacToolChainSettings> SettingsPrivate = new Lazy<MacToolChainSettings>(() => new MacToolChainSettings(false, Log.Logger));
-
-		public static MacToolChainSettings Settings => SettingsPrivate.Value;
-
-		public static string SDKPath => Settings.BaseSDKDir + "/MacOSX.sdk";
+		public static MacToolChainSettings Settings => new MacToolChainSettings(false, Log.Logger);
 
 		/// <summary>
 		/// Which compiler\linker frontend to use
@@ -92,13 +70,9 @@ namespace UnrealBuildTool
 
 		protected override ClangToolChainInfo GetToolChainInfo()
 		{
-			FileReference CompilerPath = new FileReference(Settings.ToolchainDir + MacCompiler);
-			FileReference ArchiverPath = new FileReference(Settings.ToolchainDir + MacArchiver);
+			FileReference CompilerPath = FileReference.Combine(Settings.ToolchainDir, MacCompiler);
+			FileReference ArchiverPath = FileReference.Combine(Settings.ToolchainDir, MacArchiver);
 			return new AppleToolChainInfo(CompilerPath, ArchiverPath, Logger);
-		}
-
-		private static void SetupXcodePaths(bool bVerbose)
-		{
 		}
 
 		public static DirectoryReference FindProductDirectory(FileReference? ProjectFile, DirectoryReference BinaryDir, string? NameIfProgram)
@@ -154,13 +128,6 @@ namespace UnrealBuildTool
 			}
 
 			return null;
-		}
-
-		public override void SetUpGlobalEnvironment(ReadOnlyTargetRules Target)
-		{
-			base.SetUpGlobalEnvironment(Target);
-
-			SetupXcodePaths(true);
 		}
 
 		/// <inheritdoc/>
@@ -237,8 +204,8 @@ namespace UnrealBuildTool
 
 			// Pass through architecture and OS info
 			Arguments.Add("" + FormatArchitectureArg(CompileEnvironment.Architectures));
-			Arguments.Add($"-isysroot \"{SDKPath}\"");
-			Arguments.Add("-mmacosx-version-min=" + (CompileEnvironment.bEnableOSX109Support ? "10.9" : Settings.MacOSVersion));
+			Arguments.Add($"-isysroot \"{Settings.GetSDKPath()}\"");
+			Arguments.Add("-mmacosx-version-min=" + (CompileEnvironment.bEnableOSX109Support ? "10.9" : Settings.MinMacBuildVersion(Target!.Type)));
 
 			List<string> FrameworksSearchPaths = new List<string>();
 			foreach (UEBuildFramework Framework in CompileEnvironment.AdditionalFrameworks)
@@ -269,8 +236,8 @@ namespace UnrealBuildTool
 			base.GetLinkArguments_Global(LinkEnvironment, Arguments);
 			// Pass through architecture and OS info		
 			Arguments.Add(FormatArchitectureArg(LinkEnvironment.Architectures));
-			Arguments.Add(String.Format("-isysroot \"{0}\"", SDKPath));
-			Arguments.Add("-mmacosx-version-min=" + Settings.MacOSVersion);
+			Arguments.Add(String.Format("-isysroot \"{0}\"", ToolChainSettings.Value.GetSDKPath(LinkEnvironment.Architecture)));
+			Arguments.Add("-mmacosx-version-min=" + Settings.MinMacBuildVersion(Target!.Type));
 			Arguments.Add("-dead_strip");
 
 			// Temporary workaround for linker warning with Xcode 14:
@@ -407,7 +374,14 @@ namespace UnrealBuildTool
 				bool bCanUseMultipleRPATHs = !ExeAbsolutePath.Contains("EpicGamesLauncher-Mac-Shipping") || !Library.Contains("CEF3");
 
 				// First, add a path relative to the executable.
-				string RelativePath = Utils.MakePathRelativeTo(LibraryDir, ExeDir).Replace("\\", "/");
+				string FinalExeDir = ExeDir;
+				if (bIsBuildingAppBundle)
+				{
+					FinalExeDir = ExeAbsolutePath + ".app/Contents/MacOS";
+				}
+				string RelativePath = Utils.MakePathRelativeTo(LibraryDir, FinalExeDir).Replace("\\", "/");
+				
+
 				if (bCanUseMultipleRPATHs)
 				{
 					LinkCommand += " -rpath \"@loader_path/" + RelativePath + "\"";
@@ -660,7 +634,7 @@ namespace UnrealBuildTool
 				// Fix contents of Info.plist
 				AppendMacLine(FinalizeAppBundleScript, "/usr/bin/sed -i \"\" -e \"s/\\${0}/{1}/g\" \"{2}\"", "{EXECUTABLE_NAME}", ExeName, TempInfoPlist);
 				AppendMacLine(FinalizeAppBundleScript, "/usr/bin/sed -i \"\" -e \"s/\\${0}/{1}/g\" \"{2}\"", "{APP_NAME}", bBuildingEditor ? ("com.epicgames." + GameName) : (BundleIdentifier.Replace("[PROJECT_NAME]", GameName).Replace("_", "")), TempInfoPlist);
-				AppendMacLine(FinalizeAppBundleScript, "/usr/bin/sed -i \"\" -e \"s/\\${0}/{1}/g\" \"{2}\"", "{MACOSX_DEPLOYMENT_TARGET}", Settings.MinMacOSVersion, TempInfoPlist);
+				AppendMacLine(FinalizeAppBundleScript, "/usr/bin/sed -i \"\" -e \"s/\\${0}/{1}/g\" \"{2}\"", "{MACOSX_DEPLOYMENT_TARGET}", Settings.MinMacDeploymentVersion(Target!.Type), TempInfoPlist);
 				AppendMacLine(FinalizeAppBundleScript, "/usr/bin/sed -i \"\" -e \"s/\\${0}/{1}/g\" \"{2}\"", "{ICON_NAME}", GameName, TempInfoPlist);
 				AppendMacLine(FinalizeAppBundleScript, "/usr/bin/sed -i \"\" -e \"s/\\${0}/{1}/g\" \"{2}\"", "{BUNDLE_VERSION}", BundleVersion, TempInfoPlist);
 
@@ -698,8 +672,11 @@ namespace UnrealBuildTool
 
 		private FileItem MakeStubItem(LinkEnvironment LinkEnvironment, string DylibPath)
 		{
-			string IntermediateDirectory = (ProjectFile == null || LinkEnvironment.OutputFilePaths.All(x => x.IsUnderDirectory(Unreal.EngineDirectory)) ? Unreal.EngineDirectory : ProjectFile.Directory) + "/Intermediate/Mac";
-			return FileItem.GetItemByPath(Path.Combine(IntermediateDirectory, "Stubs", LinkEnvironment.Architecture.ToString(), Path.GetFileName(DylibPath)));
+			FileReference DylibPathRef = new FileReference(DylibPath);
+			bool bIsEngineDylib = DylibPathRef.IsUnderDirectory(Unreal.EngineDirectory);
+
+			string IntermediateDirectory = (ProjectFile == null || LinkEnvironment.OutputFilePaths.All(x => x.IsUnderDirectory(Unreal.EngineDirectory)) || bIsEngineDylib ? Unreal.EngineDirectory : ProjectFile.Directory) + "/Intermediate/Mac";
+			return FileItem.GetItemByPath(Path.Combine(IntermediateDirectory, "Stubs", LinkEnvironment.Architecture.ToString(), LinkEnvironment.Configuration.ToString(), Path.GetFileName(DylibPath)));
 		}
 
 		private FileItem LinkArchitectureFiles(LinkEnvironment LinkEnvironment, FileReference MultiArchOutputFile, bool bBuildImportLibraryOnly, IActionGraphBuilder Graph, out string LinkCommand)
@@ -774,6 +751,7 @@ namespace UnrealBuildTool
 			if (bBuildImportLibraryOnly)
 			{
 				LinkCommand += " -undefined dynamic_lookup";
+				LinkCommand += " -Wl,-no_fixup_chains";
 			}
 			else if (!LinkEnvironment.bIsBuildingLibrary)
 			{
@@ -1067,7 +1045,7 @@ namespace UnrealBuildTool
 
 		private static Dictionary<ReadOnlyTargetRules, DirectoryReference> BundleContentsDirectories = new();
 
-		public override void ModifyBuildProducts(ReadOnlyTargetRules Target, UEBuildBinary Binary, List<string> Libraries, List<UEBuildBundleResource> BundleResources, Dictionary<FileReference, BuildProductType> BuildProducts)
+		public override void ModifyBuildProducts(ReadOnlyTargetRules Target, UEBuildBinary Binary, IEnumerable<string> Libraries, IEnumerable<UEBuildBundleResource> BundleResources, Dictionary<FileReference, BuildProductType> BuildProducts)
 		{
 			if (Target.bUsePDBFiles == true)
 			{
@@ -1236,11 +1214,7 @@ namespace UnrealBuildTool
 			bool bIsBuildingAppBundle = !BinaryLinkEnvironment.bIsBuildingDLL && !BinaryLinkEnvironment.bIsBuildingLibrary && !BinaryLinkEnvironment.bIsBuildingConsoleApplication;
 			if (bIsBuildingAppBundle)
 			{
-				if (bUseModernXcode)
-				{
-					OutputFiles.Add(UpdateVersionFile(BinaryLinkEnvironment, FileItem.GetItemByFileReference(BinaryLinkEnvironment.OutputFilePath), Graph));
-				}
-				else
+				if (!bUseModernXcode)
 				{
 					OutputFiles.Add(FinalizeAppBundle(Target, BinaryLinkEnvironment, Executable, Graph));
 				}
@@ -1251,8 +1225,6 @@ namespace UnrealBuildTool
 
 		public void StripSymbols(FileReference SourceFile, FileReference TargetFile)
 		{
-			SetupXcodePaths(false);
-
 			StripSymbolsWithXcode(SourceFile, TargetFile, Settings.ToolchainDir);
 		}
 	};

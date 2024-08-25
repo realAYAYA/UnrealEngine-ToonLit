@@ -8,6 +8,10 @@
 #include "DataRegistry.h"
 #include "ReferencePose.h"
 #include <chrono>
+#if WITH_EDITOR
+#include "Editor.h"
+#include "Editor/Transactor.h"
+#endif
 
 #if WITH_DEV_AUTOMATION_TESTS
 
@@ -37,6 +41,17 @@ public:
 	}
 };
 
+}
+
+void FUtils::CleanupAfterTests()
+{
+#if WITH_EDITOR
+	if(GEditor && GEditor->Trans)
+	{
+		GEditor->Trans->Reset(NSLOCTEXT("AnimNextTests", "CleanupAfterTest", "Cleaning up after AnimNext test"));
+	}
+#endif
+	CollectGarbage(GARBAGE_COLLECTION_KEEPFLAGS);
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FDataRegistryTransformsTest, "Animation.AnimNext.AnimationDataRegistry.TransformsTest", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

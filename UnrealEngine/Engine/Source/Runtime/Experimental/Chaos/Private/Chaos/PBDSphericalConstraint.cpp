@@ -38,16 +38,18 @@ void FPBDSphericalConstraint::SetProperties(
 	SetScale(MeshScale);
 }
 
-void FPBDSphericalConstraint::ApplyHelperISPC(FSolverParticles& Particles, const FSolverReal /*Dt*/) const
+template<typename SolverParticlesOrRange>
+void FPBDSphericalConstraint::ApplyHelperISPC(SolverParticlesOrRange& Particles, const FSolverReal /*Dt*/) const
 {
 	check(bRealTypeCompatibleWithISPC);
+	const TConstArrayView<FSolverVec3> AnimationPositionsView = Particles.GetConstArrayView(AnimationPositions);
 
 #if INTEL_ISPC
 	if (SphereRadii.Num() == ParticleCount)
 	{
 		ispc::ApplySphericalConstraintsWithMap(
 			(ispc::FVector4f*)Particles.GetPAndInvM().GetData(),
-			(const ispc::FVector3f*)AnimationPositions.GetData(),
+			(const ispc::FVector3f*)AnimationPositionsView.GetData(),
 			SphereRadii.GetData(),
 			MaxDistanceBase * GetScale(),
 			MaxDistanceRange * GetScale(),
@@ -58,13 +60,15 @@ void FPBDSphericalConstraint::ApplyHelperISPC(FSolverParticles& Particles, const
 	{
 		ispc::ApplySphericalConstraintsWithoutMap(
 			(ispc::FVector4f*)Particles.GetPAndInvM().GetData(),
-			(const ispc::FVector3f*)AnimationPositions.GetData(),
+			(const ispc::FVector3f*)AnimationPositionsView.GetData(),
 			MaxDistanceBase * GetScale(),
 			ParticleOffset,
 			ParticleCount);
 	}
 #endif
 }
+template CHAOS_API void FPBDSphericalConstraint::ApplyHelperISPC(FSolverParticles& Particles, const FSolverReal /*Dt*/) const;
+template CHAOS_API void FPBDSphericalConstraint::ApplyHelperISPC(FSolverParticlesRange& Particles, const FSolverReal /*Dt*/) const;
 
 void FPBDSphericalBackstopConstraint::SetProperties(
 	const FCollectionPropertyConstFacade& PropertyCollection,
@@ -101,10 +105,13 @@ void FPBDSphericalBackstopConstraint::SetProperties(
 	SetScale(MeshScale);
 }
 
-void FPBDSphericalBackstopConstraint::ApplyLegacyHelperISPC(FSolverParticles& Particles, const FSolverReal /*Dt*/) const
+template<typename SolverParticlesOrRange>
+void FPBDSphericalBackstopConstraint::ApplyLegacyHelperISPC(SolverParticlesOrRange& Particles, const FSolverReal /*Dt*/) const
 {
 	check(bRealTypeCompatibleWithISPC);
 
+	const TConstArrayView<FSolverVec3> AnimationPositionsView = Particles.GetConstArrayView(AnimationPositions);
+	const TConstArrayView<FSolverVec3> AnimationNormalsView = Particles.GetConstArrayView(AnimationNormals);
 #if INTEL_ISPC
 	if (SphereRadii.Num() == ParticleCount)
 	{
@@ -112,8 +119,8 @@ void FPBDSphericalBackstopConstraint::ApplyLegacyHelperISPC(FSolverParticles& Pa
 		{
 			ispc::ApplyLegacySphericalBackstopConstraintsWithMaps(
 				(ispc::FVector4f*)Particles.GetPAndInvM().GetData(),
-				(const ispc::FVector3f*)AnimationPositions.GetData(),
-				(const ispc::FVector3f*)AnimationNormals.GetData(),
+				(const ispc::FVector3f*)AnimationPositionsView.GetData(),
+				(const ispc::FVector3f*)AnimationNormalsView.GetData(),
 				SphereOffsetDistances.GetData(),
 				SphereRadii.GetData(),
 				BackstopDistanceBase * GetScale(),
@@ -127,8 +134,8 @@ void FPBDSphericalBackstopConstraint::ApplyLegacyHelperISPC(FSolverParticles& Pa
 		{
 			ispc::ApplyLegacySphericalBackstopConstraintsWithRadiusMap(
 				(ispc::FVector4f*)Particles.GetPAndInvM().GetData(),
-				(const ispc::FVector3f*)AnimationPositions.GetData(),
-				(const ispc::FVector3f*)AnimationNormals.GetData(),
+				(const ispc::FVector3f*)AnimationPositionsView.GetData(),
+				(const ispc::FVector3f*)AnimationNormalsView.GetData(),
 				SphereRadii.GetData(),
 				BackstopDistanceBase * GetScale(),
 				BackstopRadiusBase * GetScale(),
@@ -141,8 +148,8 @@ void FPBDSphericalBackstopConstraint::ApplyLegacyHelperISPC(FSolverParticles& Pa
 	{
 		ispc::ApplyLegacySphericalBackstopConstraintsWithDistanceMap(
 			(ispc::FVector4f*)Particles.GetPAndInvM().GetData(),
-			(const ispc::FVector3f*)AnimationPositions.GetData(),
-			(const ispc::FVector3f*)AnimationNormals.GetData(),
+			(const ispc::FVector3f*)AnimationPositionsView.GetData(),
+			(const ispc::FVector3f*)AnimationNormalsView.GetData(),
 			SphereOffsetDistances.GetData(),
 			BackstopDistanceBase * GetScale(),
 			BackstopDistanceRange * GetScale(),
@@ -154,8 +161,8 @@ void FPBDSphericalBackstopConstraint::ApplyLegacyHelperISPC(FSolverParticles& Pa
 	{
 		ispc::ApplyLegacySphericalBackstopConstraintsWithoutMaps(
 			(ispc::FVector4f*)Particles.GetPAndInvM().GetData(),
-			(const ispc::FVector3f*)AnimationPositions.GetData(),
-			(const ispc::FVector3f*)AnimationNormals.GetData(),
+			(const ispc::FVector3f*)AnimationPositionsView.GetData(),
+			(const ispc::FVector3f*)AnimationNormalsView.GetData(),
 			BackstopDistanceBase * GetScale(),
 			BackstopRadiusBase * GetScale(),
 			ParticleOffset,
@@ -163,11 +170,16 @@ void FPBDSphericalBackstopConstraint::ApplyLegacyHelperISPC(FSolverParticles& Pa
 	}
 #endif
 }
+template CHAOS_API void FPBDSphericalBackstopConstraint::ApplyLegacyHelperISPC(FSolverParticles& Particles, const FSolverReal /*Dt*/) const;
+template CHAOS_API void FPBDSphericalBackstopConstraint::ApplyLegacyHelperISPC(FSolverParticlesRange& Particles, const FSolverReal /*Dt*/) const;
 
-void FPBDSphericalBackstopConstraint::ApplyHelperISPC(FSolverParticles& Particles, const FSolverReal /*Dt*/) const
+template<typename SolverParticlesOrRange>
+void FPBDSphericalBackstopConstraint::ApplyHelperISPC(SolverParticlesOrRange& Particles, const FSolverReal /*Dt*/) const
 {
 	check(bRealTypeCompatibleWithISPC);
 
+	const TConstArrayView<FSolverVec3> AnimationPositionsView = Particles.GetConstArrayView(AnimationPositions);
+	const TConstArrayView<FSolverVec3> AnimationNormalsView = Particles.GetConstArrayView(AnimationNormals);
 #if INTEL_ISPC
 	if (SphereRadii.Num() == ParticleCount)
 	{
@@ -175,8 +187,8 @@ void FPBDSphericalBackstopConstraint::ApplyHelperISPC(FSolverParticles& Particle
 		{
 			ispc::ApplySphericalBackstopConstraintsWithMaps(
 				(ispc::FVector4f*)Particles.GetPAndInvM().GetData(),
-				(const ispc::FVector3f*)AnimationPositions.GetData(),
-				(const ispc::FVector3f*)AnimationNormals.GetData(),
+				(const ispc::FVector3f*)AnimationPositionsView.GetData(),
+				(const ispc::FVector3f*)AnimationNormalsView.GetData(),
 				SphereOffsetDistances.GetData(),
 				SphereRadii.GetData(),
 				BackstopDistanceBase * GetScale(),
@@ -190,8 +202,8 @@ void FPBDSphericalBackstopConstraint::ApplyHelperISPC(FSolverParticles& Particle
 		{
 			ispc::ApplySphericalBackstopConstraintsWithRadiusMap(
 				(ispc::FVector4f*)Particles.GetPAndInvM().GetData(),
-				(const ispc::FVector3f*)AnimationPositions.GetData(),
-				(const ispc::FVector3f*)AnimationNormals.GetData(),
+				(const ispc::FVector3f*)AnimationPositionsView.GetData(),
+				(const ispc::FVector3f*)AnimationNormalsView.GetData(),
 				SphereRadii.GetData(),
 				BackstopDistanceBase * GetScale(),
 				BackstopRadiusBase * GetScale(),
@@ -204,8 +216,8 @@ void FPBDSphericalBackstopConstraint::ApplyHelperISPC(FSolverParticles& Particle
 	{
 		ispc::ApplySphericalBackstopConstraintsWithDistanceMap(
 			(ispc::FVector4f*)Particles.GetPAndInvM().GetData(),
-			(const ispc::FVector3f*)AnimationPositions.GetData(),
-			(const ispc::FVector3f*)AnimationNormals.GetData(),
+			(const ispc::FVector3f*)AnimationPositionsView.GetData(),
+			(const ispc::FVector3f*)AnimationNormalsView.GetData(),
 			SphereOffsetDistances.GetData(),
 			BackstopDistanceBase * GetScale(),
 			BackstopDistanceRange * GetScale(),
@@ -217,8 +229,8 @@ void FPBDSphericalBackstopConstraint::ApplyHelperISPC(FSolverParticles& Particle
 	{
 		ispc::ApplySphericalBackstopConstraintsWithoutMaps(
 			(ispc::FVector4f*)Particles.GetPAndInvM().GetData(),
-			(const ispc::FVector3f*)AnimationPositions.GetData(),
-			(const ispc::FVector3f*)AnimationNormals.GetData(),
+			(const ispc::FVector3f*)AnimationPositionsView.GetData(),
+			(const ispc::FVector3f*)AnimationNormalsView.GetData(),
 			BackstopDistanceBase * GetScale(),
 			BackstopRadiusBase * GetScale(),
 			ParticleOffset,
@@ -226,5 +238,7 @@ void FPBDSphericalBackstopConstraint::ApplyHelperISPC(FSolverParticles& Particle
 	}
 #endif
 }
+template CHAOS_API void FPBDSphericalBackstopConstraint::ApplyHelperISPC(FSolverParticles& Particles, const FSolverReal /*Dt*/) const;
+template CHAOS_API void FPBDSphericalBackstopConstraint::ApplyHelperISPC(FSolverParticlesRange& Particles, const FSolverReal /*Dt*/) const;
 
 }  // End namespace Chaos::Softs

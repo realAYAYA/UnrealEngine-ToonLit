@@ -1,22 +1,11 @@
 package com.epicgames.unreal;
 
-import android.util.Log;
-
-import android.accounts.Account;
 import android.app.Activity;
 import android.content.Intent;
-import android.content.IntentSender;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.Signature;
-import android.content.res.Resources;
-import android.os.Bundle;
-import androidx.annotation.NonNull;
 import android.util.Base64;
-
-import com.google.android.gms.common.api.Result;
-import com.google.android.gms.common.ConnectionResult;
-import com.google.android.gms.common.GoogleApiAvailability;
 
 import com.google.android.gms.auth.api.signin.GoogleSignIn;
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount;
@@ -24,258 +13,210 @@ import com.google.android.gms.auth.api.signin.GoogleSignInClient;
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions;
 import com.google.android.gms.auth.api.signin.GoogleSignInStatusCodes;
 import com.google.android.gms.common.api.ApiException;
-import com.google.android.gms.tasks.OnCompleteListener;
+import com.google.android.gms.common.api.Scope;
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.GoogleApiAvailability;
 import com.google.android.gms.tasks.Task;
 
 import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 
 public class GoogleLogin
 {
-	/** Responses supported by this class */
+	// Responses supported by this class
 	public static final int GOOGLE_RESPONSE_OK = 0;
 	public static final int GOOGLE_RESPONSE_CANCELED = 1;
 	public static final int GOOGLE_RESPONSE_ERROR = 2;
 	public static final int GOOGLE_RESPONSE_DEVELOPER_ERROR = 3;
 
-	/** Debug output tag */
+	// Debug output tag
 	private static final String TAG = "GOOGLE";
 
 	// Output device for log messages.
-	private Logger GoogleLog;
-	private Logger ActivityLog;
+	private final Logger GoogleLog;
 
-	/** Is this a shipping build */
-	boolean bShippingBuild = false;
-	/** Has init been called succesfully */
-	public boolean bInitialized = false;
-	/** Has onStart() been called */
-	public boolean bStarted = false;
+	// Should request Id Token?
+	boolean bRequestIdToken;
 
-	/**
-	 * Activity needed here to send the signal back when user successfully logged in.
-	 */
-	private GameActivity activity;
+	// Should request server auth code?
+	boolean bRequestServerAuthCode;
 
-	/** Name of game package */
-	private String packageName;
-	/** Android key from Google API dashboard */
-	private String clientId;
-	/** Backend server key from Google API dashboard */
-	private String serverClientId;
-	/** Unique request id when using sign in activity */
-	private static final int REQUEST_SIGN_IN = 9001;
-	/** Google API client needed for actual sign in */
-	private GoogleSignInClient mGoogleSignInClient;
+	// Oauth 2.0 client id for use in server to server communication(Obtained from Google Cloud console)
+	private String ServerClientId;
 
-	public GoogleLogin(GameActivity activity, final Logger InLog, String inPackageName, String BuildConfiguration) 
+	// Owning activity
+	Activity Activity;
+
+	public GoogleLogin(Activity InActivity)
 	{
-		this.activity = activity;
-
+		this.Activity = InActivity;
 		GoogleLog = new Logger("UE", TAG);
-		ActivityLog = InLog;
+	}
 
-		packageName = inPackageName;
-		bShippingBuild = BuildConfiguration.equals("Shipping");
-	} 
-
-	public boolean init(String inClientId, String inServerClientId)
+	public boolean Init(String InServerClientId, boolean bInRequestIdToken, boolean bInRequestServerAuthCode)
 	{
-		if (bShippingBuild)
-		{
-			GoogleLog.SuppressLogs();
-		}
+		boolean bInitialized = false;
 
-		boolean bClientIdValid = (inClientId != null && !inClientId.isEmpty());
-		boolean bServerIdValid = (inServerClientId != null && !inServerClientId.isEmpty());
-		if (bClientIdValid && bServerIdValid)
+		boolean bIsAvailable = GoogleApiAvailability.getInstance().isGooglePlayServicesAvailable(Activity) == ConnectionResult.SUCCESS;
+		GoogleLog.debug("Is Google Play Services Available:" + bIsAvailable);
+		if (bIsAvailable)
 		{
-			GoogleLog.debug("init");
-
-			boolean bIsAvailable = isGooglePlayServicesAvailable();
-			GoogleLog.debug("Is Google Play Services Available:" + bIsAvailable);
-			if (bIsAvailable)
+			if (InServerClientId == null && (bInRequestIdToken || bInRequestServerAuthCode))
 			{
-				GoogleLog.debug("packageName: " + packageName);
-				clientId = inClientId;
-				GoogleLog.debug("GoogleSignIn clientId:" + clientId);
-				serverClientId = inServerClientId;
-				GoogleLog.debug("GoogleSignIn serverClientId:" + serverClientId);
-
-				// Configure sign-in to request the user's ID, email address, and basic
-				// profile. ID and basic profile are included in DEFAULT_SIGN_IN.
-				GoogleSignInOptions gso = new GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-						.requestIdToken(serverClientId)
-						.requestProfile()
-						//.requestServerAuthCode(serverClientId)
-						.requestEmail()
-						.build();
-
-				// Build a GoogleSignInClient with the options specified by gso.
-				mGoogleSignInClient = GoogleSignIn.getClient(activity, gso);
-				
-				bInitialized = true;
-				PrintKeyHash(packageName);
+				GoogleLog.warn("Expected non empty ServerClientId to request id token and/or server auth code. Id token and/or server auth code won't be requested");
 			}
+			else
+			{
+				ServerClientId = InServerClientId;
+				bRequestIdToken = bInRequestIdToken;
+				bRequestServerAuthCode = bInRequestServerAuthCode;
+			}
+			bInitialized = true;
 		}
-		else
-		{
-			GoogleLog.debug("clientId: " + inClientId + " or serverClientId: " + inServerClientId + " is invalid");
-		}
-
-		GoogleLog.debug("init complete: " + bInitialized);
 		return bInitialized;
 	}
 
-	public void onStart()
+	public void Login(String[] ScopeFields)
 	{
-		GoogleLog.debug("onStart");
-		bStarted = true;
-	}
+		// Configure sign-in to request the user's ID, email address, and basic
+		// profile. ID and basic profile are included in DEFAULT_SIGN_IN.
+		GoogleSignInOptions.Builder Builder = new GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+			.requestEmail()
+			.requestProfile();
 
-	public void onStop()
-	{
-		GoogleLog.debug("onStop");
-	}
-
-	public void onDestroy()
-	{
-		GoogleLog.debug("onDestroy");
-	}
-
-	public int login(String[] ScopeFields)
-	{
-		GoogleLog.debug("login:" + ScopeFields.toString());
-
-		int resultCode = GOOGLE_RESPONSE_ERROR;
-
-		Intent signInIntent = mGoogleSignInClient.getSignInIntent();
-		if (signInIntent != null)
+		if(bRequestServerAuthCode)
 		{
-			GoogleLog.debug("login start activity:");
-			activity.startActivityForResult(signInIntent, REQUEST_SIGN_IN);
-			resultCode = GOOGLE_RESPONSE_OK;
-		} 
-		else 
-		{
-			GoogleLog.debug("getSignInIntent failure:");
-			nativeLoginComplete(GOOGLE_RESPONSE_ERROR, "");
+			Builder.requestServerAuthCode(ServerClientId);
 		}
 
-		return resultCode;
-	}
+		if(bRequestIdToken)
+		{
+			Builder.requestIdToken(ServerClientId);
+		}
 
-	public int logout()
-	{
-		GoogleLog.debug("logout");
+		for (String RequiredScope: ScopeFields)
+		{
+			Builder.requestScopes(new Scope(RequiredScope));
+		}
 
-		mGoogleSignInClient.signOut()
-			.addOnCompleteListener(activity, new OnCompleteListener<Void>()
-			{
-				@Override
-				public void onComplete(@NonNull Task<Void> task) 
+		GoogleSignInClient GoogleSignInClient = GoogleSignIn.getClient(Activity, Builder.build());
+
+		GoogleLog.debug("Attempting silent sign in");
+		Task<GoogleSignInAccount> Task = GoogleSignInClient.silentSignIn();
+		if (Task.isSuccessful())
+		{
+			GoogleSignInAccount Account = Task.getResult();
+			SignInSucceeded(Account);
+		}
+		else
+		{
+			Task.addOnCompleteListener(CompletedTask -> {
+				try
 				{
-					boolean bWasSuccessful = task.isSuccessful();
-					GoogleLog.debug("onSignOut Complete success:" + bWasSuccessful);
-					nativeLogoutComplete(bWasSuccessful ? GOOGLE_RESPONSE_OK : GOOGLE_RESPONSE_ERROR);
+					GoogleSignInAccount Account = CompletedTask.getResult(ApiException.class);
+					SignInSucceeded(Account);
+				}
+				catch (ApiException ApiException)
+				{
+					if (ApiException.getStatusCode() == GoogleSignInStatusCodes.SIGN_IN_REQUIRED)
+					{
+						Intent SignInIntent = GoogleSignInClient.getSignInIntent();
+						GoogleLog.debug("Start login intent");
+						Activity.startActivityForResult(SignInIntent, GameActivity.REQUEST_CODE_OSSGOOGLE_LOGIN);
+					}
+					else
+					{
+						SignInFailed(ApiException);
+					}
 				}
 			});
-
-		return GOOGLE_RESPONSE_OK;
+		}
 	}
 
-	public void onActivityResult(int requestCode, int resultCode, Intent data) 
+	public void Logout()
 	{
-		GoogleLog.debug("onActivityResult: " + requestCode + " result: " + resultCode);
+		GoogleLog.debug("Logout started");
+
+		GoogleSignInOptions SignInOptions = new GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+			.build();
+
+		GoogleSignInClient GoogleSignInClient = GoogleSignIn.getClient(Activity, SignInOptions);
+
+		GoogleSignInClient.signOut()
+			.addOnCompleteListener(Task -> {
+				boolean bWasSuccessful = Task.isSuccessful();
+				GoogleLog.debug("Logout complete success: " + bWasSuccessful);
+				nativeLogoutComplete(bWasSuccessful ? GOOGLE_RESPONSE_OK : GOOGLE_RESPONSE_ERROR);
+			});
+	}
+
+	public void onActivityResult(int ResultCode, Intent Data)
+	{
 		// Result returned from launching the Intent from GoogleSignInApi.getSignInIntent(...);
-		if (requestCode == REQUEST_SIGN_IN) 
-		{
-			GoogleLog.debug("onActivityResult REQUEST_SIGN_IN");
-			GoogleLog.debug("data: " + ((data != null) ? data.toString() : "null"));
+		GoogleLog.debug("onActivityResult: Result " + ResultCode + " Data: " + ((Data != null) ? Data.toString() : "null"));
 
-			if (resultCode == Activity.RESULT_OK)
+		Task<GoogleSignInAccount> CompletedTask = GoogleSignIn.getSignedInAccountFromIntent(Data);
+		try
+		{
+			GoogleSignInAccount Account = CompletedTask.getResult(ApiException.class);
+			SignInSucceeded(Account);
+		}
+		catch (ApiException apiException)
+		{
+			SignInFailed(apiException);
+		}
+
+		GoogleLog.debug("onActivityResult end");
+	}
+
+	private void SignInSucceeded(GoogleSignInAccount Account)
+	{
+		GoogleLog.debug("Sign in succeeded");
+		PrintUserAccountInfo(Account);
+
+		String PhotoUrl = null;
+		if (Account.getPhotoUrl() != null)
+		{
+			PhotoUrl = Account.getPhotoUrl().toString();
+		}
+		nativeLoginSuccess(Account.getId(), Account.getGivenName(), Account.getFamilyName(), Account.getDisplayName(), PhotoUrl, Account.getIdToken(), Account.getServerAuthCode());
+	}
+
+	private void SignInFailed(ApiException ApiException)
+	{
+		int ErrorCode = ApiException.getStatusCode();
+
+		GoogleLog.debug("Sign in failed: ErrorCode: " + GoogleSignInStatusCodes.getStatusCodeString(ErrorCode) + "ErrorMessage: " + ApiException.getMessage());
+
+		switch (ErrorCode )
+		{
+			case GoogleSignInStatusCodes.DEVELOPER_ERROR:
 			{
-				GoogleLog.debug("signing in");
+				LogDeveloperError();
+				nativeLoginFailed(GOOGLE_RESPONSE_DEVELOPER_ERROR);
+				break;
 			}
-
-			Task<GoogleSignInAccount> completedTask = GoogleSignIn.getSignedInAccountFromIntent(data);
-			try
+			case GoogleSignInStatusCodes.CANCELED:
+				nativeLoginFailed(GOOGLE_RESPONSE_CANCELED);
+				break;
+			default:
 			{
-				// Try to access the account result
-				GoogleSignInAccount account = completedTask.getResult(ApiException.class);
-				
-				// Signed in successfully
-				GoogleLog.debug("Sign in success");
-				PrintUserAccountInfo(account);
-				nativeLoginComplete(GOOGLE_RESPONSE_OK, getLoginJsonStr(account));
+				nativeLoginFailed(GOOGLE_RESPONSE_ERROR);
+				break;
 			}
-			catch (ApiException e)
-			{
-				// The ApiException status code indicates the detailed failure reason.
-				// Please refer to the GoogleSignInStatusCodes class reference for more information.
-				GoogleLog.debug("Sign in failure:" + GoogleSignInStatusCodes.getStatusCodeString(e.getStatusCode()));
-				if (e.getStatusCode() == GoogleSignInStatusCodes.DEVELOPER_ERROR)
-				{
-					nativeLoginComplete(GOOGLE_RESPONSE_DEVELOPER_ERROR, "");
-				}
-				else
-				{
-					nativeLoginComplete(GOOGLE_RESPONSE_ERROR, "");
-				}
-			}
-
-			GoogleLog.debug("onActivityResult end");
 		}
 	}
 
-	private String getLoginJsonStr(GoogleSignInAccount acct)
+	private void PrintUserAccountInfo(GoogleSignInAccount Acct)
 	{
-		if (acct != null)
-		{
-			return "{\"user_data\":" + getUserJsonStr(acct) + "," +
-					"\"auth_data\":" + getAuthTokenJsonStr(acct) + "}";
-		}
-
-		return "";
-	}
-
-	private String getUserJsonStr(GoogleSignInAccount acct)
-	{
-		if (acct != null)
-		{
-			return "{\"sub\":\""+ acct.getId() + "\"," +
-					"\"given_name\":\"" + acct.getGivenName()  + "\"," +
-					"\"family_name\":\"" + acct.getFamilyName() + "\"," +
-					"\"name\":\"" + acct.getDisplayName() + "\"," +
-					"\"picture\":\"" + acct.getPhotoUrl() + "\"" + "}";
-		}
-		return "";
-	}
-
-	private String getAuthTokenJsonStr(GoogleSignInAccount acct)
-	{
-		if (acct != null)
-		{
-			return "{\"access_token\":\"androidInternal\"," +
-					"\"refresh_token\":\"androidInternal\"," +
-					"\"id_token\":\""+ acct.getIdToken() + "\"}";
-		}
-		return "";
-	}
-
-	public void PrintUserAccountInfo(GoogleSignInAccount acct)
-	{
-		GoogleLog.debug("PrintUserAccountInfo");
-		if (acct != null)
+		if (Acct != null)
 		{
 			GoogleLog.debug("User Details:");
-			GoogleLog.debug("    DisplayName:" + acct.getDisplayName());
-			GoogleLog.debug("    Id:" + acct.getId());
-			GoogleLog.debug("    Email:" + acct.getEmail());
-			GoogleLog.debug("    Account:" + acct.getAccount().toString());
-			GoogleLog.debug("    Scopes:" + acct.getGrantedScopes());
-			GoogleLog.debug("    IdToken:" + acct.getIdToken());
-			GoogleLog.debug("    ServerAuthCode:" + acct.getServerAuthCode());
+			GoogleLog.debug("    DisplayName:" + Acct.getDisplayName());
+			GoogleLog.debug("    Id:" + Acct.getId());
+			GoogleLog.debug("    Email:" + Acct.getEmail());
+			GoogleLog.debug("    Scopes:" + Acct.getGrantedScopes());
+			GoogleLog.debug("    IdToken:" + Acct.getIdToken());
+			GoogleLog.debug("    ServerAuthCode:" + Acct.getServerAuthCode());
 		}
 		else
 		{
@@ -283,46 +224,28 @@ public class GoogleLogin
 		}
 	}
 
-	private boolean isGooglePlayServicesAvailable() 
+	private void LogDeveloperError()
 	{
-		GoogleApiAvailability apiAvail = GoogleApiAvailability.getInstance();
-		int status = apiAvail.isGooglePlayServicesAvailable(activity);
-		GoogleLog.debug("isGooglePlayServicesAvailable statusCode: " + status);
-		if (status == ConnectionResult.SUCCESS) 
+		GoogleLog.error("Sign in failed with DEVELOPER_ERROR status code. Is the apk signed with the certificate expected by the Oauth 2.0 client id associated to your app in Google Cloud Console?");
+		String PackageName = Activity.getPackageName();
+		GoogleLog.error("PackageName: " + PackageName);
+		try
 		{
-			return true;
-		} 
-		else 
-		{
-			return false;
-		}
-	}
-
-	public void PrintKeyHash(String packageName) 
-	{
-		try 
-		{
-			PackageInfo info = activity.getPackageManager().getPackageInfo(
-					packageName,
-					PackageManager.GET_SIGNATURES);
-			for (Signature signature : info.signatures) 
+			PackageInfo Info = Activity.getPackageManager().getPackageInfo(PackageName, PackageManager.GET_SIGNATURES);
+			for (Signature Signature : Info.signatures)
 			{
-				MessageDigest md = MessageDigest.getInstance("SHA");
-				md.update(signature.toByteArray());
-				GoogleLog.debug(Base64.encodeToString(md.digest(), Base64.DEFAULT));
+				MessageDigest Digest = MessageDigest.getInstance("SHA");
+				Digest.update(Signature.toByteArray());
+				GoogleLog.error("Signing certificate signature: " + Base64.encodeToString(Digest.digest(), Base64.DEFAULT));
 			}
-		} 
-		catch (PackageManager.NameNotFoundException e) 
+		}
+		catch (Exception Ex)
 		{
-			GoogleLog.debug("NameNotFoundException:" + e);
-		} 
-		catch (NoSuchAlgorithmException e) 
-		{
-			GoogleLog.debug("NoSuchAlgorithmException:" + e);
+			GoogleLog.error("Could not get signature:" + Ex);
 		}
 	}
 
-	// Callback that notify the C++ implementation that a task has completed
-	public native void nativeLoginComplete(int responseCode, String javaData);
-	public native void nativeLogoutComplete(int responseCode);
+	private native void nativeLoginSuccess(String InUserId, String InGivenName, String InFamilyName, String InDisplayName, String InPhotoUrl, String InIdToken, String InServerAuthCode);
+	private native void nativeLoginFailed(int ResponseCode);
+	private native void nativeLogoutComplete(int ResponseCode);
 }

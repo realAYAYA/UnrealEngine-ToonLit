@@ -37,6 +37,7 @@ class UK2Node_FunctionTerminator : public UK2Node_EditablePinBase
 
 	//~ Begin UEdGraphNode Interface
 	virtual FLinearColor GetNodeTitleColor() const override;
+	virtual FString GetFindReferenceSearchString_Impl(EGetFindReferenceSearchStringFlags InFlags) const override;
 	virtual FName CreateUniquePinName(FName SourcePinName) const override;
 	virtual void ValidateNodeDuringCompilation(class FCompilerResultsLog& MessageLog) const override;
 	virtual bool HasExternalDependencies(TArray<class UStruct*>* OptionalOutput) const override;

@@ -275,6 +275,13 @@ namespace EpicGames.Core
 			public SafeHandle? hStdOutput;
 			public SafeHandle? hStdError;
 		}
+		
+		[StructLayout(LayoutKind.Sequential)]
+		class STARTUPINFOEX
+		{
+			public STARTUPINFO? StartupInfo;
+			public IntPtr lpAttributeList;
+		}
 
 		[DllImport("kernel32.dll", SetLastError = true)]
 		static extern int CloseHandle(IntPtr hObject);
@@ -300,11 +307,12 @@ namespace EpicGames.Core
 			REALTIME_PRIORITY_CLASS = 0x00000100,
 			BELOW_NORMAL_PRIORITY_CLASS = 0x00004000,
 			ABOVE_NORMAL_PRIORITY_CLASS = 0x00008000,
+			EXTENDED_STARTUPINFO_PRESENT = 0x00080000
 		}
 
-		[DllImport("kernel32.dll", SetLastError = true)]
 #pragma warning disable CA1838 // Avoid 'StringBuilder' parameters for P/Invokes
-		static extern int CreateProcess(/*[MarshalAs(UnmanagedType.LPTStr)]*/ string? lpApplicationName, StringBuilder lpCommandLine, IntPtr lpProcessAttributes, IntPtr lpThreadAttributes, bool bInheritHandles, ProcessCreationFlags dwCreationFlags, IntPtr lpEnvironment, /*[MarshalAs(UnmanagedType.LPTStr)]*/ string? lpCurrentDirectory, STARTUPINFO lpStartupInfo, PROCESS_INFORMATION lpProcessInformation);
+		[DllImport("kernel32.dll", SetLastError = true)]
+		static extern int CreateProcess(/*[MarshalAs(UnmanagedType.LPTStr)]*/ string? lpApplicationName, StringBuilder lpCommandLine, IntPtr lpProcessAttributes, IntPtr lpThreadAttributes, bool bInheritHandles, ProcessCreationFlags dwCreationFlags, IntPtr lpEnvironment, /*[MarshalAs(UnmanagedType.LPTStr)]*/ string? lpCurrentDirectory, STARTUPINFOEX lpStartupInfo, PROCESS_INFORMATION lpProcessInformation);
 #pragma warning restore CA1838 // Avoid 'StringBuilder' parameters for P/Invokes
 
 		[DllImport("kernel32.dll", SetLastError = true)]
@@ -557,9 +565,10 @@ namespace EpicGames.Core
 		/// <param name="environment">Environment variables for the new process. May be null, in which case the current process' environment is inherited</param>
 		/// <param name="input">Text to be passed via stdin to the new process. May be null.</param>
 		/// <param name="priority">Priority for the child process</param>
+		/// <param name="appContainer">AppContainer to use for process (only available on Windows)</param>
 		/// <param name="flags">Flags for the process</param>
-		public ManagedProcess(ManagedProcessGroup? group, string fileName, string commandLine, string? workingDirectory, IReadOnlyDictionary<string, string>? environment, byte[]? input, ProcessPriorityClass priority, ManagedProcessFlags flags = ManagedProcessFlags.MergeOutputPipes)
-			: this(group, fileName, commandLine, workingDirectory, environment, priority, flags)
+		public ManagedProcess(ManagedProcessGroup? group, string fileName, string commandLine, string? workingDirectory, IReadOnlyDictionary<string, string>? environment, byte[]? input, ProcessPriorityClass priority, AppContainer? appContainer = null, ManagedProcessFlags flags = ManagedProcessFlags.MergeOutputPipes)
+			: this(group, fileName, commandLine, workingDirectory, environment, priority, appContainer, flags)
 		{
 			if (input != null)
 			{
@@ -577,8 +586,9 @@ namespace EpicGames.Core
 		/// <param name="workingDirectory">Working directory for the new process. May be null to use the current working directory.</param>
 		/// <param name="environment">Environment variables for the new process. May be null, in which case the current process' environment is inherited</param>
 		/// <param name="priority">Priority for the child process</param>
+		/// <param name="appContainer">AppContainer to use for process (only available on Windows)</param>
 		/// <param name="flags">Flags for the process</param>
-		public ManagedProcess(ManagedProcessGroup? group, string fileName, string commandLine, string? workingDirectory, IReadOnlyDictionary<string, string>? environment, ProcessPriorityClass priority, ManagedProcessFlags flags = ManagedProcessFlags.MergeOutputPipes)
+		public ManagedProcess(ManagedProcessGroup? group, string fileName, string commandLine, string? workingDirectory, IReadOnlyDictionary<string, string>? environment, ProcessPriorityClass priority, AppContainer? appContainer = null, ManagedProcessFlags flags = ManagedProcessFlags.MergeOutputPipes)
 		{
 			// Create the child process
 			// NOTE: Child process must be created in a separate method to avoid stomping exception callstacks (https://stackoverflow.com/a/2494150)
@@ -586,7 +596,7 @@ namespace EpicGames.Core
 			{
 				if (ManagedProcessGroup.SupportsJobObjects)
 				{
-					CreateManagedProcessWin32(group, fileName, commandLine, workingDirectory, environment, priority, flags);
+					CreateManagedProcessWin32(group, fileName, commandLine, workingDirectory, environment, priority, appContainer, flags);
 				}
 				else
 				{
@@ -616,8 +626,9 @@ namespace EpicGames.Core
 		/// <param name="workingDirectory">Working directory for the new process. May be null to use the current working directory.</param>
 		/// <param name="environment">Environment variables for the new process. May be null, in which case the current process' environment is inherited</param>
 		/// <param name="priority">Priority for the child process</param>
+		/// <param name="appContainer">AppContainer to use for the new process</param>
 		/// <param name="managedFlags">Flags controlling how the new process is created</param>
-		private void CreateManagedProcessWin32(ManagedProcessGroup? group, string fileName, string commandLine, string? workingDirectory, IReadOnlyDictionary<string, string>? environment, ProcessPriorityClass priority, ManagedProcessFlags managedFlags)
+		private void CreateManagedProcessWin32(ManagedProcessGroup? group, string fileName, string commandLine, string? workingDirectory, IReadOnlyDictionary<string, string>? environment, ProcessPriorityClass priority, AppContainer? appContainer, ManagedProcessFlags? managedFlags)
 		{
 			IntPtr environmentBlock = IntPtr.Zero;
 			try
@@ -709,17 +720,25 @@ namespace EpicGames.Core
 
 							// Create the new process as suspended, so we can modify it before it starts executing (and potentially preempting us)
 							STARTUPINFO startupInfo = new STARTUPINFO();
-							startupInfo.cb = Marshal.SizeOf(startupInfo);
+							startupInfo.cb = Marshal.SizeOf(typeof(STARTUPINFOEX));
 							startupInfo.hStdInput = stdInRead;
 							startupInfo.hStdOutput = stdOutWrite;
 							startupInfo.hStdError = stdErrWrite;
 							startupInfo.dwFlags = STARTF_USESTDHANDLES;
+							
+							flags |= ProcessCreationFlags.EXTENDED_STARTUPINFO_PRESENT;
+							STARTUPINFOEX startupInfoEx = new() { StartupInfo = startupInfo, lpAttributeList = IntPtr.Zero };
+
+							if (appContainer != null && OperatingSystem.IsWindows())
+							{
+								startupInfoEx.lpAttributeList = appContainer.GetAttributeList();
+							}
 
 							// Under heavy load (ie. spawning large number of processes, typically Clang) we see CreateProcess very occasionally failing with ERROR_ACCESS_DENIED.
 							int[] retryDelay = { 100, 200, 1000, 5000 };
 							for(int attemptIdx = 0; ; attemptIdx++)
 							{
-								if (CreateProcess(null, new StringBuilder("\"" + fileName + "\" " + commandLine), IntPtr.Zero, IntPtr.Zero, true, flags, environmentBlock, workingDirectory, startupInfo, processInfo) != 0)
+								if (CreateProcess(null, new StringBuilder("\"" + fileName + "\" " + commandLine), IntPtr.Zero, IntPtr.Zero, true, flags, environmentBlock, workingDirectory, startupInfoEx, processInfo) != 0)
 								{
 									break;
 								}
@@ -824,7 +843,8 @@ namespace EpicGames.Core
 				{
 					if (processInfo.hProcess != IntPtr.Zero && _processHandle == null)
 					{
-						_ = CloseHandle(processInfo.hProcess);
+						using SafeFileHandle processHandle = new(processInfo.hProcess, true);
+						_ = TerminateProcess(processHandle, UInt32.MaxValue);
 					}
 					if (processInfo.hThread != IntPtr.Zero)
 					{
@@ -1072,7 +1092,7 @@ namespace EpicGames.Core
 		/// <returns></returns>
 		public async Task CopyToAsync(Func<byte[], int, int, CancellationToken, Task> writeOutputAsync, int bufferSize, CancellationToken cancellationToken)
 		{
-			TaskCompletionSource<bool> taskCompletionSource = new TaskCompletionSource<bool>();
+			TaskCompletionSource<bool> taskCompletionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 			using (CancellationTokenRegistration registration = cancellationToken.Register(() => taskCompletionSource.SetResult(false)))
 			{
 				byte[] buffer = new byte[bufferSize];

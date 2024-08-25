@@ -66,15 +66,9 @@ private:
 		for (int32 i = 0, I = ToIdMap.Num(); i < I; ++i)
 		{
 			int32 VtxId = ToIdMap[i];
+
 			// Test if the vertex has a one ring
-			
-			bool bEmptyOneRing = true;
-			for (int NeighborVertId : DynamicMesh.VtxVerticesItr(VtxId))
-			{
-				bEmptyOneRing = false;
-				break;
-			};
-				
+			bool bEmptyOneRing = DynamicMesh.GetVtxEdgeCount(VtxId) < 1;
 
 			if (bEmptyOneRing || DynamicMesh.IsBoundaryVertex(VtxId))
 			{

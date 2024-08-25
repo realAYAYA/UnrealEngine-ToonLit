@@ -42,6 +42,8 @@ struct FNiagaraLazyPrecompileReference
 {
 	TSharedPtr<FNiagaraCompileRequestDataBase, ESPMode::ThreadSafe> GetPrecompileData(UNiagaraScript* ForScript);
 	TSharedPtr<FNiagaraCompileRequestDuplicateDataBase, ESPMode::ThreadSafe> GetPrecompileDuplicateData(UNiagaraEmitter* OwningEmitter, UNiagaraScript* TargetScript);
+
+	bool IsValidForPrecompile() const;
 	
 	UNiagaraSystem* System = nullptr;
 	TArray<UNiagaraScript*> Scripts;
@@ -69,6 +71,8 @@ public:
 	bool bWaitForCompileJob = false;
 	bool bUsedShaderCompilerWorker = false;
 	bool bFetchedGCObjects = false;
+	bool bCompilableScript = false;
+	bool bResultsFromDDC = false;
 
 	// in order to coordinate between tasks associated with a system CheckDDC can be handled external to the task.
 	// In that case we disable this flag
@@ -107,6 +111,7 @@ public:
 	bool AwaitResult();
 	void ProcessResult();
 	void OptimizeByteCode();
+	void ProcessNonCompilableScript();
 
 	void AssignInitialCompilationId(const FNiagaraVMExecutableDataId& InitialCompilationId);
 	void UpdateCompilationId(const FNiagaraVMExecutableDataId& UpdatedCompilationId);

@@ -286,7 +286,7 @@ bool FFileHelper::LoadFileToStringArrayWithPredicate(TArray<FString>& Result, co
 				Pos++;
 			}
 
-			FString Line(UE_PTRDIFF_TO_INT32(Pos - LineStart), LineStart);
+			FString Line = FString::ConstructFromPtrSize(LineStart, UE_PTRDIFF_TO_INT32(Pos - LineStart));
 			if (Invoke(Predicate, Line))
 			{
 				Result.Add(MoveTemp(Line));
@@ -612,47 +612,55 @@ bool FFileHelper::SaveStringToFile( FStringView String, const TCHAR* Filename,  
 {
 	// max size of the string is a UCS2CHAR for each character and some UNICODE magic 
 	TUniquePtr<FArchive> Ar = TUniquePtr<FArchive>( FileManager->CreateFileWriter( Filename, WriteFlags ) );
-	if( !Ar )
+	if (!Ar)
+	{
+		//UE_LOG(LogStreaming, Warning, TEXT("SaveStringToFile: Failed to open writer. File:%s"), Filename);
 		return false;
-
-	if( String.IsEmpty() )
-	{
-		Ar->Close();
-		return true;
 	}
 
-	bool SaveAsUnicode = EncodingOptions == EEncodingOptions::ForceUnicode || ( EncodingOptions == EEncodingOptions::AutoDetect && !FCString::IsPureAnsi(String.GetData(), String.Len()) );
-	if( EncodingOptions == EEncodingOptions::ForceUTF8 )
+	if (!String.IsEmpty())
 	{
-		UTF8CHAR UTF8BOM[] = { (UTF8CHAR)0xEF, (UTF8CHAR)0xBB, (UTF8CHAR)0xBF };
-		Ar->Serialize( &UTF8BOM, UE_ARRAY_COUNT(UTF8BOM) * sizeof(UTF8CHAR) );
+		bool SaveAsUnicode = EncodingOptions == EEncodingOptions::ForceUnicode || (EncodingOptions == EEncodingOptions::AutoDetect && !FCString::IsPureAnsi(String.GetData(), String.Len()));
+		if (EncodingOptions == EEncodingOptions::ForceUTF8)
+		{
+			UTF8CHAR UTF8BOM[] = { (UTF8CHAR)0xEF, (UTF8CHAR)0xBB, (UTF8CHAR)0xBF };
+			Ar->Serialize(&UTF8BOM, UE_ARRAY_COUNT(UTF8BOM) * sizeof(UTF8CHAR));
 
-		FTCHARToUTF8 UTF8String(String.GetData(), String.Len());
-		Ar->Serialize( (UTF8CHAR*)UTF8String.Get(), UTF8String.Length() * sizeof(UTF8CHAR) );
-	}
-	else if ( EncodingOptions == EEncodingOptions::ForceUTF8WithoutBOM )
-	{
-		FTCHARToUTF8 UTF8String(String.GetData(), String.Len());
-		Ar->Serialize((UTF8CHAR*)UTF8String.Get(), UTF8String.Length() * sizeof(UTF8CHAR));
-	}
-	else if (SaveAsUnicode)
-	{
-		UTF16CHAR BOM = UNICODE_BOM;
-		Ar->Serialize( &BOM, sizeof(UTF16CHAR) );
+			FTCHARToUTF8 UTF8String(String.GetData(), String.Len());
+			Ar->Serialize((UTF8CHAR*)UTF8String.Get(), UTF8String.Length() * sizeof(UTF8CHAR));
+		}
+		else if (EncodingOptions == EEncodingOptions::ForceUTF8WithoutBOM)
+		{
+			FTCHARToUTF8 UTF8String(String.GetData(), String.Len());
+			Ar->Serialize((UTF8CHAR*)UTF8String.Get(), UTF8String.Length() * sizeof(UTF8CHAR));
+		}
+		else if (SaveAsUnicode)
+		{
+			UTF16CHAR BOM = UNICODE_BOM;
+			Ar->Serialize(&BOM, sizeof(UTF16CHAR));
 
-		// Note: This is a no-op on platforms that are using a 16-bit TCHAR
-		FTCHARToUTF16 UTF16String(String.GetData(), String.Len());
-		Ar->Serialize((UTF16CHAR*)UTF16String.Get(), UTF16String.Length() * sizeof(UTF16CHAR));
-	}
-	else
-	{
-		auto Src = StringCast<ANSICHAR>(String.GetData(), String.Len());
-		Ar->Serialize( (ANSICHAR*)Src.Get(), Src.Length() * sizeof(ANSICHAR) );
+			// Note: This is a no-op on platforms that are using a 16-bit TCHAR
+			FTCHARToUTF16 UTF16String(String.GetData(), String.Len());
+			Ar->Serialize((UTF16CHAR*)UTF16String.Get(), UTF16String.Length() * sizeof(UTF16CHAR));
+		}
+		else
+		{
+			auto Src = StringCast<ANSICHAR>(String.GetData(), String.Len());
+			Ar->Serialize((ANSICHAR*)Src.Get(), Src.Length() * sizeof(ANSICHAR));
+		}
 	}
 
 	// Always explicitly close to catch errors from flush/close
 	Ar->Close();
 
+	if (Ar->IsError())
+	{
+		UE_LOG(LogStreaming, Warning, TEXT("SaveStringToFile: Ar->IsError() == true. File:%s"), Filename);
+	}
+	if (Ar->IsCriticalError())
+	{
+		UE_LOG(LogStreaming, Warning, TEXT("SaveStringToFile: Ar->IsCriticalError() == true. File:%s"), Filename);
+	}
 	return !Ar->IsError() && !Ar->IsCriticalError();
 }
 

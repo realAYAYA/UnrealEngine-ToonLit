@@ -107,6 +107,15 @@ public:
 	virtual bool LoadModulesForProject( const ELoadingPhase::Type LoadingPhase ) = 0;
 
 	/**
+	* Replaces a referenced module with a new name
+	*
+	* @param	OriginalModuleName	Name of module to replace
+	* @param	NewModuleName		Name of replacement module
+	*
+	*/
+	virtual bool SubstituteModule(const FString& OriginalModuleName, const FString& NewModuleName) = 0;
+
+	/**
 	 * Callback for when modules for when LoadModulesForProject() completes loading for a specific phase.
 	 */
 	DECLARE_EVENT_TwoParams(IProjectManager, FLoadingModulesForPhaseEvent, ELoadingPhase::Type /*LoadingPhase*/, bool /*bSuccess*/);

@@ -643,7 +643,7 @@ static EDDSError AllocateMips(FDDSFile* InDDS, const FDXGIFormatInfo* InFormatIn
 	// Validate checks the pixel format is OK, so we don't need to re-check here
 	const FDXGIFormatInfo* FormatInfo = DXGIFormatGetInfo(InFormat);
 	*OutError = AllocateMips(DDS, FormatInfo, InCreateFlags);
-	if (*OutError != EDDSError::OK)
+	if (*OutError != EDDSError::OK) //-V547
 	{
 		delete DDS;
 		return nullptr;

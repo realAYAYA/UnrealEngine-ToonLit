@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 #include "Chaos/PBDTriangleMeshIntersections.h"
 #include "Chaos/PBDSoftsSolverParticles.h"
+#include "Chaos/SoftsSolverParticlesRange.h"
 
 float Chaos_TriangleIntersections_MaxDelta = 0.01f;
 FAutoConsoleVariableRef CVarChaosTriangleIntersectionMaxImpulse(TEXT("p.Chaos.TriangleIntersections.MaxDelta"), Chaos_TriangleIntersections_MaxDelta, TEXT("Maximum delta position applied to resolve triangle intersections."));
@@ -17,8 +18,8 @@ static inline FSolverVec3 GetDelta(const FPBDTriangleMeshCollisions::FContourMin
 	return MaxDelta * GradientLength * FMath::InvSqrt(GradientLength * GradientLength + RegularizeEpsilonSq) * GradientDir;
 }
 
-
-void FPBDTriangleMeshIntersections::Apply(FSolverParticles& Particles, const TArray<FPBDTriangleMeshCollisions::FContourMinimizationIntersection>& Intersections, const FSolverReal Dt) const
+template<typename SolverParticlesOrRange>
+void FPBDTriangleMeshIntersections::Apply(SolverParticlesOrRange& Particles, const TArray<FPBDTriangleMeshCollisions::FContourMinimizationIntersection>& Intersections, const FSolverReal Dt) const
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(ChaosFPBDTriangleMeshIntersections_Apply);
 	static FSolverReal RegularizeEpsilonSq = 1.f;
@@ -47,5 +48,7 @@ void FPBDTriangleMeshIntersections::Apply(FSolverParticles& Particles, const TAr
 		}
 	}
 }
+template CHAOS_API void FPBDTriangleMeshIntersections::Apply(FSolverParticles& Particles, const TArray<FPBDTriangleMeshCollisions::FContourMinimizationIntersection>& Intersections, const FSolverReal Dt) const;
+template CHAOS_API void FPBDTriangleMeshIntersections::Apply(FSolverParticlesRange& Particles, const TArray<FPBDTriangleMeshCollisions::FContourMinimizationIntersection>& Intersections, const FSolverReal Dt) const;
 
 }  // End namespace Chaos::Softs

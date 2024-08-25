@@ -16,7 +16,7 @@ class UTypedElementActorLabelFactory : public UTypedElementDataStorageFactory
 public:
 	~UTypedElementActorLabelFactory() override = default;
 
-	void RegisterQueries(ITypedElementDataStorageInterface& DataStorage) const override;
+	void RegisterQueries(ITypedElementDataStorageInterface& DataStorage) override;
 
 private:
 	/**

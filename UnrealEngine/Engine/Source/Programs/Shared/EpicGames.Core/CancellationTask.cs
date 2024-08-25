@@ -27,7 +27,7 @@ namespace EpicGames.Core
 		/// <param name="token">The cancellation token to register with</param>
 		public CancellationTask(CancellationToken token)
 		{
-			_completionSource = new TaskCompletionSource<bool>();
+			_completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 			_registration = token.Register(() => _completionSource.TrySetResult(true));
 		}
 

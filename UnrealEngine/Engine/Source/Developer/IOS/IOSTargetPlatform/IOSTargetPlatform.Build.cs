@@ -17,6 +17,7 @@ public class IOSTargetPlatform : ModuleRules
 				"DesktopPlatform",
 				"LaunchDaemonMessages",
 				"Projects",
+				"Json",
 				"AudioPlatformConfiguration",
 				"Sockets",
 				"Networking"

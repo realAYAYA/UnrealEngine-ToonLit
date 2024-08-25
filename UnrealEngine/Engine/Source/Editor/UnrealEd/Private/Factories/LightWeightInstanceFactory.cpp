@@ -103,19 +103,4 @@ UObject* ULightWeightInstanceFactory::FactoryCreateNew(UClass* Class, UObject* I
 	return LWIManager;
 }
 
-ALightWeightInstanceManager* ULightWeightInstanceFactory::MakeNewLightWeightInstanceManager(UObject* InParent, FName Name, EObjectFlags Flags)
-{
-	UClass* BlueprintClass = nullptr;
-	UClass* BlueprintGeneratedClass = nullptr;
-
-	IKismetCompilerInterface& KismetCompilerModule = FModuleManager::LoadModuleChecked<IKismetCompilerInterface>("KismetCompiler");
-	KismetCompilerModule.GetBlueprintTypesForClass(ParentClass, BlueprintClass, BlueprintGeneratedClass);
-
-	UBlueprint* NewBP = FKismetEditorUtilities::CreateBlueprint(ParentClass, InParent, Name, BPTYPE_Normal, BlueprintClass, BlueprintGeneratedClass);
-
-	return Cast<ALightWeightInstanceManager>(FKismetEditorUtilities::CreateBlueprint(ParentClass, InParent, Name, BPTYPE_Normal, BlueprintClass, BlueprintGeneratedClass));
-//	return FKismetEditorUtilities::CreateBlueprint(ParentClass, InParent, Name, BPTYPE_Normal, UEditorUtilityBlueprint::StaticClass(), UBlueprintGeneratedClass::StaticClass());
-//	return NewObject<ALightWeightInstanceManager>(InParent, Name, Flags);
-}
-
 #undef LOCTEXT_NAMESPACE // "LightWeightInstanceFactory"

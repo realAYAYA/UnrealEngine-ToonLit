@@ -85,7 +85,16 @@ IVideoDecoderInputBitstreamProcessor::EProcessResult FVideoDecoderInputBitstream
 		}
 	}
 
-	OutBSI.bIsSyncFrame = InOutAccessUnit->bIsSyncSample;
+	// Parse the bitstream header. The sync sample indicator is not always correctly set by the packager.
+	ElectraDecodersUtil::VPxVideo::FVP8UncompressedHeader Header;
+	if (ElectraDecodersUtil::VPxVideo::ParseVP8UncompressedHeader(Header, InOutAccessUnit->AUData, InOutAccessUnit->AUSize))
+	{
+		OutBSI.bIsSyncFrame = Header.IsKeyframe();
+	}
+	else
+	{
+		OutBSI.bIsSyncFrame = InOutAccessUnit->bIsSyncSample;
+	}
 	OutBSI.bIsDiscardable = false;
 
 	return Result;

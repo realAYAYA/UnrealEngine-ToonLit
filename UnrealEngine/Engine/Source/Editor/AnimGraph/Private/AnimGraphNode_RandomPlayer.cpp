@@ -39,4 +39,14 @@ void UAnimGraphNode_RandomPlayer::GetOutputLinkAttributes(FNodeAttributeArray& O
 	}
 }
 
+void UAnimGraphNode_RandomPlayer::PreloadRequiredAssets()
+{
+	for (const FRandomPlayerSequenceEntry& Entry : Node.Entries)
+	{
+		PreloadObject(Entry.Sequence);
+	}
+
+	Super::PreloadRequiredAssets();
+}
+
 #undef LOCTEXT_NAMESPACE

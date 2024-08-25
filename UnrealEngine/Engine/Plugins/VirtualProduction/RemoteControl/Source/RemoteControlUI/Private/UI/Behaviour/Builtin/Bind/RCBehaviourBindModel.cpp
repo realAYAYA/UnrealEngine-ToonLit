@@ -16,6 +16,11 @@ FRCBehaviourBindModel::FRCBehaviourBindModel(URCBehaviourBind* BindBehaviour, co
 {
 }
 
+bool FRCBehaviourBindModel::HasBehaviourDetailsWidget()
+{
+	return true;
+}
+
 TSharedRef<SWidget> FRCBehaviourBindModel::GetBehaviourDetailsWidget()
 {
 	return SAssignNew(BehaviourDetailsWidget, SRCBehaviourBind, SharedThis(this));

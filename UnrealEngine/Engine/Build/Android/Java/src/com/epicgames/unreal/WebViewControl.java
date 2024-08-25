@@ -123,7 +123,7 @@ class WebViewControl
 
 		//GameActivity.Log.debug("WebViewControl width=" + width + ", height=" + height);
 
-		GameActivity._activity.runOnUiThread(new Runnable()
+		GameActivity.Get().runOnUiThread(new Runnable()
 		{
 			@Override
 			public void run()
@@ -131,11 +131,11 @@ class WebViewControl
 				// enable remote debugging if requested and supported by the current platform
 				if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT)
 				{
-					WebView.setWebContentsDebuggingEnabled(bEnableRemoteDebugging && !GameActivity._activity.nativeIsShippingBuild());
+					WebView.setWebContentsDebuggingEnabled(bEnableRemoteDebugging && !GameActivity.Get().nativeIsShippingBuild());
 				}
 				
 				// create the WebView
-				webView = new GLWebView(GameActivity._activity);
+				webView = new GLWebView(GameActivity.Get());
 				webView.setWebViewClient(new ViewClient());
 				webView.setWebChromeClient(new ChromeClient());
 				webView.getSettings().setJavaScriptEnabled(true);
@@ -165,7 +165,7 @@ class WebViewControl
 				}
 
 				// Wrap the webview in a layout that will do absolute positioning for us
-				positionLayout = new WebViewPositionLayout(GameActivity._activity, w);
+				positionLayout = new WebViewPositionLayout(GameActivity.Get(), w);
 				ViewGroup.LayoutParams params = new ViewGroup.LayoutParams(ViewGroup.LayoutParams.FILL_PARENT, ViewGroup.LayoutParams.FILL_PARENT);
 
 				positionLayout.addView(webView, params);
@@ -182,7 +182,7 @@ class WebViewControl
 	public void SetAndroid3DBrowser(boolean InIsAndroid3DBrowser)
 	{
 		PendingSetAndroid3DBrowser = (TargetBitmap == null) ? InIsAndroid3DBrowser : false;
-		GameActivity._activity.runOnUiThread(new Runnable()
+		GameActivity.Get().runOnUiThread(new Runnable()
 		{
 			@Override
 			public void run()
@@ -196,7 +196,7 @@ class WebViewControl
 	public void SetVisibility(boolean InIsVisible)
 	{
 		PendingSetVisibility = InIsVisible;
-		GameActivity._activity.runOnUiThread(new Runnable()
+		GameActivity.Get().runOnUiThread(new Runnable()
 		{
 			@Override
 			public void run()
@@ -247,7 +247,7 @@ class WebViewControl
 
 	public void ExecuteJavascript(final String script)
 	{
-		GameActivity._activity.runOnUiThread(new Runnable()
+		GameActivity.Get().runOnUiThread(new Runnable()
 		{
 			@Override
 			public void run()
@@ -269,7 +269,7 @@ class WebViewControl
 	}
 	public void LoadURL(final String url)
 	{
-		GameActivity._activity.runOnUiThread(new Runnable()
+		GameActivity.Get().runOnUiThread(new Runnable()
 		{
 			@Override
 			public void run()
@@ -282,7 +282,7 @@ class WebViewControl
 
 	public void LoadString(final String contents, final String url)
 	{
-		GameActivity._activity.runOnUiThread(new Runnable()
+		GameActivity.Get().runOnUiThread(new Runnable()
 		{
 			@Override
 			public void run()
@@ -295,7 +295,7 @@ class WebViewControl
 
 	public void StopLoad()
 	{
-		GameActivity._activity.runOnUiThread(new Runnable()
+		GameActivity.Get().runOnUiThread(new Runnable()
 		{
 			@Override
 			public void run()
@@ -307,7 +307,7 @@ class WebViewControl
 
 	public void Reload()
 	{
-		GameActivity._activity.runOnUiThread(new Runnable()
+		GameActivity.Get().runOnUiThread(new Runnable()
 		{
 			@Override
 			public void run()
@@ -319,7 +319,7 @@ class WebViewControl
 
 	public void GoBackOrForward(final int Steps)
 	{
-		GameActivity._activity.runOnUiThread(new Runnable()
+		GameActivity.Get().runOnUiThread(new Runnable()
 		{
 			@Override
 			public void run()
@@ -341,7 +341,7 @@ class WebViewControl
 		final float actionX = webView.getLeft() + (x * webView.getWidth());
 		final float actionY = webView.getTop() + (y * webView.getHeight());
 		//GameActivity.Log.debug("SendTouchEvent(event=" + event + ", x=" + x + ", y=" + y + ") = " + actionX + ", " + actionY);
-		GameActivity._activity.runOnUiThread(new Runnable()
+		GameActivity.Get().runOnUiThread(new Runnable()
 		{
 			@Override
 			public void run()
@@ -514,7 +514,7 @@ class WebViewControl
 		final int actionCode = KeyTableList[keycode].key;
 		final int actionMeta = KeyTableList[keycode].meta;
 //		GameActivity.Log.debug("SendTouchEvent(event=" + (bDown ? "Down" : "Up") + ", key=" + keycode + ", code=" + actionCode + ", meta=" + actionMeta);
-		GameActivity._activity.runOnUiThread(new Runnable()
+		GameActivity.Get().runOnUiThread(new Runnable()
 		{
 			@Override
 			public void run()
@@ -529,7 +529,7 @@ class WebViewControl
 	// called from C++ paint event
 	public void Update(final int x, final int y, final int width, final int height)
 	{
-		GameActivity._activity.runOnUiThread(new Runnable()
+		GameActivity.Get().runOnUiThread(new Runnable()
 		{
 			@Override
 			public void run()
@@ -545,7 +545,7 @@ class WebViewControl
 					
 					// add to the activitiy, on top of the SurfaceView
 					ViewGroup.LayoutParams params = new ViewGroup.LayoutParams(ViewGroup.LayoutParams.FILL_PARENT, ViewGroup.LayoutParams.FILL_PARENT);			
-					GameActivity._activity.addContentView(positionLayout, params);
+					GameActivity.Get().addContentView(positionLayout, params);
 					if(!webView.IsAndroid3DBrowser && TargetBitmap == null)
 					{
 						//GameActivity.Log.warn("request focus create");
@@ -627,7 +627,7 @@ class WebViewControl
 
 	public void Close()
 	{
-		GameActivity._activity.runOnUiThread(new Runnable()
+		GameActivity.Get().runOnUiThread(new Runnable()
 		{
 			@Override
 			public void run()
@@ -666,7 +666,7 @@ class WebViewControl
 		
 		// set this here as the size may have been set before the GL resources were created.
 		mBitmapRenderer.setSize(initialWidth, initialHeight);
-		GameActivity._activity.runOnUiThread(new Runnable()
+		GameActivity.Get().runOnUiThread(new Runnable()
 		{
 			@Override
 			public void run()
@@ -1594,7 +1594,7 @@ class WebViewControl
 		
 		// set this here as the size may have been set before the GL resources were created.
 		mOESTextureRenderer.setSize(initialWidth, initialHeight);
-		GameActivity._activity.runOnUiThread(new Runnable()
+		GameActivity.Get().runOnUiThread(new Runnable()
 		{
 			@Override
 			public void run()
@@ -1966,7 +1966,7 @@ class WebViewControl
 		@Override
 		public boolean onCreateWindow(WebView View, boolean isDialog, boolean isUserGesture, Message resultMsg)
 		{
-			WebView newView = new WebView(GameActivity._activity);
+			WebView newView = new WebView(GameActivity.Get());
 			View.addView(newView);
             WebView.WebViewTransport transport = (WebView.WebViewTransport) resultMsg.obj;
             transport.setWebView(newView);

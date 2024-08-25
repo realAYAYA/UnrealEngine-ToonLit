@@ -2,6 +2,8 @@
 
 #pragma once
 
+#include "HAL/Platform.h"
+
 #ifndef IRIS_PROFILER_ENABLE
 #	if (UE_BUILD_SHIPPING)
 #		define IRIS_PROFILER_ENABLE 0

@@ -129,6 +129,76 @@ void AChaosCacheManager::TickActor(float DeltaTime, enum ELevelTick TickType, FA
 }
 
 #if WITH_EDITOR
+bool
+AChaosCacheManager::ContainsProperty(
+	const UStruct* Struct,
+	const void* InProperty) const
+{
+	for (FPropertyValueIterator PropIt(FProperty::StaticClass(), Struct, this); PropIt; ++PropIt)
+	{
+		const void* CurrProperty = PropIt.Key();
+		if (InProperty == CurrProperty)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+bool AChaosCacheManager::CanEditChange(const FProperty* InProperty) const
+{
+	const bool bRetVal = Super::CanEditChange(InProperty);
+	if (!bRetVal)
+	{
+		return false;
+	}
+
+	if (InProperty->GetFName() == GET_MEMBER_NAME_CHECKED(FObservedComponent, USDCacheDirectory))
+	{
+		// Find the FObservedComponent this FProperty corresponds to, and determine if the
+		// associated component has an associated adapter that supports the USD workflow.
+
+		// We hard code the type name of the component we look for, because currently the 
+		// tetrahedral component is the only one supported, and it exists in ChaosFlesh, which is 
+		// a downstream dependency of Chaos. Once all adapters for deformables support the USD 
+		// caching workflow, then we can target a base class that exists in Chaos.
+		FName TetCompName(TEXT("DeformableTetrahedralComponent"));
+		for (const FObservedComponent& Observed : ObservedComponents)
+		{
+			TUniquePtr<FStructOnScope> StructOnScope(
+				new FStructOnScope(FObservedComponent::StaticStruct(), (uint8*)&Observed));
+			if (StructOnScope)
+			{
+				if (const UStruct* Struct = StructOnScope->GetStruct())
+				{
+					if (ContainsProperty(Struct, InProperty))
+					{
+						if (UPrimitiveComponent* Comp = Observed.GetComponent(const_cast<AChaosCacheManager*>(this)))
+						{
+							UClass* Class = Comp->GetClass();
+							do {
+								FName ClassFName = Class->GetFName();
+								if (Class->GetFName() == TetCompName)
+								{
+									return true;
+								}
+								Class = Class->GetSuperClass();
+							} while (Class);
+						}
+					}
+				}
+			}
+		}
+		// Otherwise, no.
+		return false;
+	}
+
+	return bRetVal;
+}
+#endif
+
+
+#if WITH_EDITOR
 void AChaosCacheManager::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 {
 	Super::PostEditChangeProperty(PropertyChangedEvent);
@@ -185,6 +255,13 @@ void AChaosCacheManager::SetStartTime(float InStartTime)
 {
 	StartTime = InStartTime;
 	OnStartFrameChanged(InStartTime);
+}
+
+void AChaosCacheManager::SetCurrentTime(float CurrentTime)
+{
+	// follow to SetStartTime as this is the how we animate the cache 
+	// todo(chaos) : we should probably separate the concept of start time and current time 
+	SetStartTime(CurrentTime);
 }
 
 void AChaosCacheManager::ResetAllComponentTransforms()
@@ -379,7 +456,7 @@ void AChaosCacheManager::BeginEvaluate()
 								Observed.TickRecord.SetSpaceTransform(GetTransform());
 								Observed.TickRecord.SetLastTime(StartTime);
 								OpenPlaybackCaches.Add(TTuple<FCacheUserToken, UChaosCache*>(MoveTemp(Token), Observed.Cache));
-								CurrAdapter->InitializeForPlayback(Comp, Observed.Cache, StartTime);
+								CurrAdapter->InitializeForPlayback(Comp, Observed, StartTime);
 							}
 						}
 						else
@@ -427,7 +504,7 @@ void AChaosCacheManager::BeginEvaluate()
 						// We'll record the observed component in Cache Manager's local space.
 						Observed.TickRecord.SetSpaceTransform(GetTransform());
 						OpenRecordCaches.Add(TTuple<FCacheUserToken, UChaosCache*>(MoveTemp(Token), Observed.Cache));
-						CurrAdapter->InitializeForRecord(Comp, Observed.Cache);
+						CurrAdapter->InitializeForRecord(Comp, Observed);
 
 						// Ensure we enable the actor tick to flush out the pending record writes
 						bRequiresRecord =  true;
@@ -482,6 +559,14 @@ void AChaosCacheManager::EndEvaluate()
 	check(Module);
 
 	WaitForObservedComponentSolverTasks();
+
+	// Build list of adapters for our observed components
+	IModularFeatures& ModularFeatures = IModularFeatures::Get();
+	TArray<Chaos::FComponentCacheAdapter*> Adapters = ModularFeatures.GetModularFeatureImplementations<Chaos::FComponentCacheAdapter>(Chaos::FComponentCacheAdapter::FeatureName);
+	for (Chaos::FComponentCacheAdapter* Adapter : Adapters)
+	{
+		Adapter->Finalize();
+	}
 
 	for(TPair<Chaos::FPhysicsSolverEvents*, FPerSolverData> PerSolver : PerSolverData)
 	{

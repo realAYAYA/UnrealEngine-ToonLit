@@ -37,29 +37,6 @@ void UPolygonSelectionMechanic::Initialize(
 		GetSpatialSourceFuncIn);
 }
 
-// TODO: Remove this function when Properties is removed after deprecation
-void UPolygonSelectionMechanic::Setup(UInteractiveTool* ParentToolIn)
-{
-	UMeshTopologySelectionMechanic::Setup(ParentToolIn);
-
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS
-	Properties_DEPRECATED = NewObject<UDEPRECATED_PolygonSelectionMechanicProperties>(this);
-	Properties_DEPRECATED->Initialize(this);
-	Properties_DEPRECATED->WatchProperty(Properties_DEPRECATED->bSelectVertices, [this](bool bSelectVertices) {
-		UpdateMarqueeEnabled();
-	});
-	Properties_DEPRECATED->WatchProperty(Properties_DEPRECATED->bSelectEdges, [this](bool bSelectVertices) {
-		UpdateMarqueeEnabled();
-	});
-	Properties_DEPRECATED->WatchProperty(Properties_DEPRECATED->bSelectFaces, [this](bool bSelectFaces) {
-		UpdateMarqueeEnabled();
-	});
-	Properties_DEPRECATED->WatchProperty(Properties_DEPRECATED->bEnableMarquee, [this](bool bEnableMarquee) {
-		UpdateMarqueeEnabled();
-	});
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS
-}
-
 
 void UPolygonSelectionMechanic::GetSelection_AsGroupTopology(UE::Geometry::FGeometrySelection& SelectionOut, const FCompactMaps* CompactMapsToApply) const
 {
@@ -267,6 +244,7 @@ bool UPolygonSelectionMechanic::UpdateHighlight(const FRay& WorldRay)
 	if (HilightSelection.SelectedEdgeIDs.Num() > 0 && Properties->bSelectEdgeLoops && ShouldSelectEdgeLoopsFunc())
 	{
 		GroupTopoSelector->ExpandSelectionByEdgeLoops(HilightSelection);
+		GroupTopoSelector->ExpandSelectionByBoundaryLoops(HilightSelection);
 	}
 
 	// Don't hover highlight a selection that we already selected, because people didn't like that
@@ -346,6 +324,7 @@ bool UPolygonSelectionMechanic::UpdateSelection(const FRay& WorldRay, FVector3d&
 		if (Selection.SelectedEdgeIDs.Num() > 0 && Properties->bSelectEdgeLoops && ShouldSelectEdgeLoopsFunc())
 		{
 			GroupTopoSelector->ExpandSelectionByEdgeLoops(Selection);
+			GroupTopoSelector->ExpandSelectionByBoundaryLoops(Selection);
 		}
 	}
 

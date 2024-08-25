@@ -13,8 +13,7 @@ namespace UE::EditorPixelStreaming
 	enum class PIXELSTREAMINGEDITOR_API EStreamTypes : uint8
 	{
 		LevelEditorViewport = 0,
-		Editor = 1,
-		VCam UE_DEPRECATED(5.2, "EStreamTypes::VCam has been deprecated. Streaming from VCams should be started from the individual actor") = 2
+		Editor = 1
 	};
 
 	FString ToString(EStreamTypes StreamType);

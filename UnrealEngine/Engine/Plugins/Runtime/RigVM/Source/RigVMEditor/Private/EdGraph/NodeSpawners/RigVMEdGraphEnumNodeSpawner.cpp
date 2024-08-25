@@ -56,24 +56,11 @@ UEdGraphNode* URigVMEdGraphEnumNodeSpawner::Invoke(UEdGraph* ParentGraph, FBindi
 	URigVMEdGraphNode* NewNode = nullptr;
 
 	bool const bIsTemplateNode = FBlueprintNodeTemplateCache::IsTemplateOuter(ParentGraph);
-	bool const bIsUserFacingNode = !bIsTemplateNode;
-
 	if (bIsTemplateNode)
 	{
-		NewNode = NewObject<URigVMEdGraphNode>(ParentGraph, TEXT("EnumNode"));
-		ParentGraph->AddNode(NewNode, false);
-
-		NewNode->CreateNewGuid();
-		NewNode->PostPlacedNewNode();
-
-		UEdGraphPin* OutputValuePin = UEdGraphPin::CreatePin(NewNode);
-		NewNode->Pins.Add(OutputValuePin);
-
-		OutputValuePin->PinType.PinCategory = TEXT("int32");
-		OutputValuePin->Direction = EGPD_Output;
-		NewNode->SetFlags(RF_Transactional);
-
-		return NewNode;
+		TArray<FPinInfo> Pins;
+		Pins.Emplace(*URigVMEnumNode::EnumValueName, ERigVMPinDirection::Output, RigVMTypeUtils::Int32TypeName, nullptr);
+		return SpawnTemplateNode(ParentGraph, Pins);
 	}
 
 	// First create a backing member for our node
@@ -83,46 +70,33 @@ UEdGraphNode* URigVMEdGraphEnumNodeSpawner::Invoke(UEdGraph* ParentGraph, FBindi
 	check(RigBlueprint);
 
 #if WITH_EDITOR
-	if (GEditor && !bIsTemplateNode)
+	if (GEditor)
 	{
 		GEditor->CancelTransaction(0);
 	}
 #endif
 
-	URigVMController* Controller = bIsTemplateNode ? RigGraph->GetTemplateController() : RigBlueprint->GetController(ParentGraph);
+	URigVMController* Controller = RigBlueprint->GetController(ParentGraph);
 
 	FName Name = *URigVMEnumNode::EnumName;
 
-	if (!bIsTemplateNode)
-	{
-		Controller->OpenUndoBracket(FString::Printf(TEXT("Add '%s' Node"), *Name.ToString()));
-	}
+	Controller->OpenUndoBracket(FString::Printf(TEXT("Add '%s' Node"), *Name.ToString()));
 
-	if (URigVMEnumNode* ModelNode = Controller->AddEnumNode(*Enum->GetPathName(), Location, Name.ToString(), bIsUserFacingNode, !bIsTemplateNode))
+	if (URigVMEnumNode* ModelNode = Controller->AddEnumNode(*Enum->GetPathName(), Location, Name.ToString(), true, true))
 	{
 		NewNode = Cast<URigVMEdGraphNode>(RigGraph->FindNodeForModelNodeName(ModelNode->GetFName()));
 
-		if (NewNode && bIsUserFacingNode)
+		if (NewNode)
 		{
 			Controller->ClearNodeSelection(true);
 			Controller->SelectNode(ModelNode, true, true);
 		}
 
-		if (bIsUserFacingNode)
-		{
-			Controller->CloseUndoBracket();
-		}
-		else
-		{
-			Controller->RemoveNode(ModelNode, false);
-		}
+		Controller->CloseUndoBracket();
 	}
 	else
 	{
-		if (bIsUserFacingNode)
-		{
-			Controller->CancelUndoBracket();
-		}
+		Controller->CancelUndoBracket();
 	}
 
 

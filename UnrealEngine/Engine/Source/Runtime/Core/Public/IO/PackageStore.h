@@ -120,7 +120,8 @@ public:
 	virtual bool DoesPackageExist(FPackageId PackageId) = 0;
 
 	/* Returns the package store entry data with export info and imported packages for the specified package ID. */
-	virtual EPackageStoreEntryStatus GetPackageStoreEntry(FPackageId PackageId, FPackageStoreEntry& OutPackageStoreEntry) = 0;
+	virtual EPackageStoreEntryStatus GetPackageStoreEntry(FPackageId PackageId, FName PackageName,
+		FPackageStoreEntry& OutPackageStoreEntry) = 0;
 
 	/* Returns the redirected package ID and source package name for the specified package ID if it's being redirected. */
 	virtual bool GetPackageRedirectInfo(FPackageId PackageId, FName& OutSourcePackageName, FPackageId& OutRedirectedToPackageId) = 0;
@@ -172,7 +173,8 @@ public:
 	virtual void EndRead() = 0;
 
 	/* Returns the package store entry data with export info and imported packages for the specified package ID. */
-	virtual EPackageStoreEntryStatus GetPackageStoreEntry(FPackageId PackageId, FPackageStoreEntry& OutPackageStoreEntry) = 0;
+	virtual EPackageStoreEntryStatus GetPackageStoreEntry(FPackageId PackageId, FName PackageName,
+		FPackageStoreEntry& OutPackageStoreEntry) = 0;
 
 	/* Returns the redirected package ID and source package name for the specified package ID if it's being redirected. */
 	virtual bool GetPackageRedirectInfo(FPackageId PackageId, FName& OutSourcePackageName, FPackageId& OutRedirectedToPackageId) = 0;
@@ -190,7 +192,8 @@ public:
 	CORE_API void Mount(TSharedRef<IPackageStoreBackend> Backend, int32 Priority = 0);
 
 	/* Returns the package store entry data with export info and imported packages for the specified package ID. */
-	CORE_API EPackageStoreEntryStatus GetPackageStoreEntry(FPackageId PackageId, FPackageStoreEntry& OutPackageStoreEntry);
+	CORE_API EPackageStoreEntryStatus GetPackageStoreEntry(FPackageId PackageId, FName PackageName, 
+		FPackageStoreEntry& OutPackageStoreEntry);
 
 	/* Returns the redirected package ID and source package name for the specified package ID if it's being redirected. */
 	CORE_API bool GetPackageRedirectInfo(FPackageId PackageId, FName& OutSourcePackageName, FPackageId& OutRedirectedToPackageId);

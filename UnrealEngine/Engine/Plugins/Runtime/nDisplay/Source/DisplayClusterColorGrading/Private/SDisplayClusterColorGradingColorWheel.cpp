@@ -142,7 +142,8 @@ TSharedRef<SWidget> SDisplayClusterColorGradingColorWheel::SDisplayClusterColorG
 			.MainDelta(GetMetadataDelta())
 			.SupportDynamicSliderMinValue(GetMetadataSupportDynamicSliderMinValue())
 			.SupportDynamicSliderMaxValue(GetMetadataSupportDynamicSliderMaxValue())
-			.MainShiftMouseMovePixelPerDelta(GetMetadataShiftMouseMovePixelPerDelta())
+			.MainShiftMultiplier(GetMetadataShiftMultiplier())
+			.MainCtrlMultiplier(GetMetadataCtrlMultiplier())
 			.ColorGradingModes(ColorPropertyMetadata->ColorGradingMode)
 			.OnColorCommitted(this, &SDisplayClusterColorGradingColorWheel::CommitColor)
 			.OnQueryCurrentColor(this, &SDisplayClusterColorGradingColorWheel::GetColor)
@@ -179,7 +180,8 @@ TSharedRef<SWidget> SDisplayClusterColorGradingColorWheel::CreateColorComponentS
 				.OnBeginSliderMovement(this, &SDisplayClusterColorGradingColorWheel::BeginUsingComponentSlider, ComponentIndex)
 				.OnEndSliderMovement(this, &SDisplayClusterColorGradingColorWheel::EndUsingComponentSlider, ComponentIndex)
 				.AllowSpin(ColorPropertyHandle.Pin()->GetNumOuterObjects() == 1)
-				.ShiftMouseMovePixelPerDelta(ColorPropertyMetadata->ShiftMouseMovePixelPerDelta)
+				.ShiftMultiplier(ColorPropertyMetadata->ShiftMultiplier)
+				.CtrlMultiplier(ColorPropertyMetadata->CtrlMultiplier)
 				.SupportDynamicSliderMinValue(this, &SDisplayClusterColorGradingColorWheel::ComponentSupportsDynamicSliderValue, ColorPropertyMetadata->bSupportDynamicSliderMinValue, ComponentIndex)
 				.SupportDynamicSliderMaxValue(this, &SDisplayClusterColorGradingColorWheel::ComponentSupportsDynamicSliderValue, ColorPropertyMetadata->bSupportDynamicSliderMaxValue, ComponentIndex)
 				.OnDynamicSliderMinValueChanged(this, &SDisplayClusterColorGradingColorWheel::UpdateComponentDynamicSliderMinValue)
@@ -268,7 +270,8 @@ SDisplayClusterColorGradingColorWheel::FColorPropertyMetadata SDisplayClusterCol
 		const FString& SliderExponentString = Property->GetMetaData(TEXT("SliderExponent"));
 		const FString& DeltaString = Property->GetMetaData(TEXT("Delta"));
 		const FString& LinearDeltaSensitivityString = Property->GetMetaData(TEXT("LinearDeltaSensitivity"));
-		const FString& ShiftMouseMovePixelPerDeltaString = Property->GetMetaData(TEXT("ShiftMouseMovePixelPerDelta"));
+		const FString& ShiftMultiplierString = Property->GetMetaData(TEXT("ShiftMultiplier"));
+		const FString& CtrlMultiplierString = Property->GetMetaData(TEXT("CtrlMultiplier"));
 		const FString& SupportDynamicSliderMaxValueString = Property->GetMetaData(TEXT("SupportDynamicSliderMaxValue"));
 		const FString& SupportDynamicSliderMinValueString = Property->GetMetaData(TEXT("SupportDynamicSliderMinValue"));
 		const FString& ClampMinString = Property->GetMetaData(TEXT("ClampMin"));
@@ -319,10 +322,16 @@ SDisplayClusterColorGradingColorWheel::FColorPropertyMetadata SDisplayClusterCol
 			PropertyMetadata.Delta = (PropertyMetadata.Delta == 0.0f) ? 1.0f : PropertyMetadata.Delta;
 		}
 
-		if (ShiftMouseMovePixelPerDeltaString.Len())
+		PropertyMetadata.ShiftMultiplier = 10.f;
+		if (ShiftMultiplierString.Len())
 		{
-			TTypeFromString<int32>::FromString(PropertyMetadata.ShiftMouseMovePixelPerDelta, *ShiftMouseMovePixelPerDeltaString);
-			PropertyMetadata.ShiftMouseMovePixelPerDelta = FMath::Max(PropertyMetadata.ShiftMouseMovePixelPerDelta, 1);
+			TTypeFromString<float>::FromString(PropertyMetadata.ShiftMultiplier, *ShiftMultiplierString);
+		}
+
+		PropertyMetadata.CtrlMultiplier = 0.1f;
+		if (CtrlMultiplierString.Len())
+		{
+			TTypeFromString<float>::FromString(PropertyMetadata.CtrlMultiplier, *CtrlMultiplierString);
 		}
 
 		PropertyMetadata.bSupportDynamicSliderMaxValue = SupportDynamicSliderMaxValueString.Len() > 0 && SupportDynamicSliderMaxValueString.ToBool();
@@ -793,14 +802,24 @@ float SDisplayClusterColorGradingColorWheel::GetMetadataDelta() const
 	return 0.0f;
 }
 
-int32 SDisplayClusterColorGradingColorWheel::GetMetadataShiftMouseMovePixelPerDelta() const
+float SDisplayClusterColorGradingColorWheel::GetMetadataShiftMultiplier() const
 {
 	if (ColorPropertyMetadata.IsSet())
 	{
-		return ColorPropertyMetadata->ShiftMouseMovePixelPerDelta;
+		return ColorPropertyMetadata->ShiftMultiplier;
 	}
 
-	return 0;
+	return 10.f;
+}
+
+float SDisplayClusterColorGradingColorWheel::GetMetadataCtrlMultiplier() const
+{
+	if (ColorPropertyMetadata.IsSet())
+	{
+		return ColorPropertyMetadata->CtrlMultiplier;
+	}
+
+	return 0.1f;
 }
 
 bool SDisplayClusterColorGradingColorWheel::GetMetadataSupportDynamicSliderMinValue() const

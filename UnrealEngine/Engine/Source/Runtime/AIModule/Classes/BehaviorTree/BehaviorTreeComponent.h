@@ -230,7 +230,7 @@ public:
 	AIMODULE_API uint16 GetActiveInstanceIdx() const;
 
 	/** @return node memory */
-	AIMODULE_API uint8* GetNodeMemory(UBTNode* Node, int32 InstanceIdx) const;
+	AIMODULE_API uint8* GetNodeMemory(const UBTNode* Node, int32 InstanceIdx) const;
 
 	/** @return true if ExecutionRequest is switching to higher priority node */
 	AIMODULE_API bool IsRestartPending() const;
@@ -246,7 +246,16 @@ public:
 	AIMODULE_API bool IsAuxNodeActive(const UBTAuxiliaryNode* AuxNodeTemplate, int32 InstanceIdx) const;
 
 	/** Returns true if InstanceStack contains any BT runtime instances */
-	bool IsInstanceStackEmpty() const { return (InstanceStack.Num() == 0); }
+	bool IsInstanceStackEmpty() const
+	{
+		return (InstanceStack.Num() == 0);
+	}
+
+	/** Returns the accumulated delta time for the current tick */
+	float GetAccumulatedTickDeltaTime() const
+	{
+		return AccumulatedTickDeltaTime;
+	}
 
 	/** @return status of speficied task */
 	AIMODULE_API EBTTaskStatus::Type GetTaskStatus(const UBTTaskNode* TaskNode) const;
@@ -263,10 +272,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "AI|Logic")
 	AIMODULE_API void AddCooldownTagDuration(FGameplayTag CooldownTag, float CooldownDuration, bool bAddToExistingDuration);
 
-	/** assign subtree to RunBehaviorDynamic task specified by tag */
+	/** assign subtree to RunBehaviorDynamic task specified by tag. */
 	UFUNCTION(BlueprintCallable, Category="AI|Logic")
 	AIMODULE_API virtual void SetDynamicSubtree(FGameplayTag InjectTag, UBehaviorTree* BehaviorAsset);
 
+	/** assign subtree to RunBehaviorDynamic task specified by tag. Optional Starting Node can be given if the location in the tree is known to avoid parsing the whole tree.  */
+	AIMODULE_API virtual void SetDynamicSubtree(FGameplayTag InjectTag, UBehaviorTree* BehaviorAsset, UBTCompositeNode* OptionalStartingNode);
+
+	/** Will call the given functor on each task node in the current instance stacks. */
+	AIMODULE_API void ForEachChildTask(TFunctionRef<void (UBTTaskNode&, const FBehaviorTreeInstance&, int32 InstanceIndex)> Functor);
+
+	/** Will call the given functor on each child node from the given start node. InstanceIndex can be found using FindInstanceContainingNode. */
+	AIMODULE_API void ForEachChildTask(UBTCompositeNode& StartNode, int32 InstanceIndex, TFunctionRef<void(UBTTaskNode&, const FBehaviorTreeInstance&, int32 InstanceIndex)> Functor);
 // Code for timing BT Search for FramePro
 #if !UE_BUILD_SHIPPING
 	static AIMODULE_API void EndFrame();
@@ -403,7 +420,15 @@ protected:
 	AIMODULE_API void ApplyDiscardedSearch();
 
 	/** apply updates from specific list */
+	UE_DEPRECATED(5.4, "This function is deprecated. Please use ApplyAllSearchUpdates instead.")
 	AIMODULE_API void ApplySearchUpdates(const TArray<FBehaviorTreeSearchUpdate>& UpdateList, int32 NewNodeExecutionIndex, bool bPostUpdate = false);
+
+	/** 
+	 * Apply updates and post update from specified UpdateList.
+	 * @param bDoPostUpdate if true the post updates will also be processed.
+	 * @param bAllowTaskUpdates If false Task node updates will not be processed from the UpdateList.
+	 */
+	AIMODULE_API void ApplyAllSearchUpdates(const TArray<FBehaviorTreeSearchUpdate>& UpdateList, int32 NewNodeExecutionIndex, bool bDoPostUpdate = true, bool bAllowTaskUpdates = true);
 
 	/** abort currently executed task */
 	AIMODULE_API void AbortCurrentTask();
@@ -499,6 +524,8 @@ protected:
 		UBehaviorTreeComponent& BTComp;
 	};
 
+	void TickNewlyAddedAuxNodesHelper();
+
 	UE_DEPRECATED(5.1, "This struct is deprecated. Please use FBTSuspendBranchActionsScoped instead.")
 	typedef FBTSuspendBranchActionsScoped FBTSuspendBranchDeactivationScoped;
 
@@ -510,6 +537,10 @@ protected:
 	friend FBehaviorTreeDebugger;
 	friend FBehaviorTreeInstance;
 
+private:
+	/** Please don't call this function directly instead call ApplyAllSearchUpdates */
+	void ApplySearchUpdatesImpl(const TArray<FBehaviorTreeSearchUpdate>& UpdateList, int32 NewNodeExecutionIndex, bool bPostUpdate, bool bAllowTaskUpdates);
+
 protected:
 	/** data asset defining the tree */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadWrite, Category = AI)
@@ -517,12 +548,18 @@ protected:
 
 	/** Used to tell tickmanager that we want interval ticking */
 	bool bTickedOnce = false;
+
 	/** Predicted next DeltaTime*/
-	float NextTickDeltaTime = 0.;
+	float NextTickDeltaTime = 0.f;
+
 	/** Accumulated DeltaTime if ticked more than predicted next delta time */
-	float AccumulatedTickDeltaTime = 0.0f;
+	float AccumulatedTickDeltaTime = 0.f;
+
+	/** Current frame DeltaTime */
+	float CurrentFrameDeltaTime = 0.f;
+
 	/** GameTime of the last DeltaTime request, used for debugging to output warnings about ticking */
-	double LastRequestedDeltaTimeGameTime = 0.;
+	double LastRequestedDeltaTimeGameTime = 0;
 
 #if CSV_PROFILER
 	/** CSV tick stat name. Can be changed but must point to a static string */

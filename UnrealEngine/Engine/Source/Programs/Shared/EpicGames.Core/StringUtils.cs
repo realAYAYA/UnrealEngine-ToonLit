@@ -365,24 +365,42 @@ namespace EpicGames.Core
 		/// <returns></returns>
 		public static bool TryParseHexString(ReadOnlySpan<char> text, [NotNullWhen(true)] out byte[]? outBytes)
 		{
-			if((text.Length & 1) != 0)
+			byte[] bytes = new byte[text.Length / 2];
+			if (TryParseHexString(text, bytes))
+			{
+				outBytes = bytes;
+				return true;
+			}
+			else
 			{
 				outBytes = null;
 				return false;
 			}
+		}
 
-			byte[] bytes = new byte[text.Length / 2];
+		/// <summary>
+		/// Parses a hexadecimal string into an array of bytes
+		/// </summary>
+		/// <param name="text">Text to parse</param>
+		/// <param name="bytes">Receives the parsed string</param>
+		/// <returns></returns>
+		public static bool TryParseHexString(ReadOnlySpan<char> text, Span<byte> bytes)
+		{
+			if((text.Length & 1) != 0)
+			{
+				return false;
+			}
+
 			for(int idx = 0; idx < text.Length; idx += 2)
 			{
 				int value = (GetHexDigit(text[idx]) << 4) | GetHexDigit(text[idx + 1]);
 				if(value < 0)
 				{
-					outBytes = null;
 					return false;
 				}
 				bytes[idx / 2] = (byte)value;
 			}
-			outBytes = bytes;
+
 			return true;
 		}
 
@@ -394,24 +412,42 @@ namespace EpicGames.Core
 		/// <returns></returns>
 		public static bool TryParseHexString(ReadOnlySpan<byte> text, [NotNullWhen(true)] out byte[]? outBytes)
 		{
-			if ((text.Length & 1) != 0)
+			byte[] bytes = new byte[text.Length / 2];
+			if (TryParseHexString(text, bytes))
+			{
+				outBytes = bytes;
+				return true;
+			}
+			else
 			{
 				outBytes = null;
 				return false;
 			}
+		}
 
-			byte[] bytes = new byte[text.Length / 2];
+		/// <summary>
+		/// Parses a hexadecimal string into an array of bytes
+		/// </summary>
+		/// <param name="text">Text to parse</param>
+		/// <param name="bytes">Receives the parsed string</param>
+		/// <returns></returns>
+		public static bool TryParseHexString(ReadOnlySpan<byte> text, Span<byte> bytes)
+		{
+			if ((text.Length & 1) != 0)
+			{
+				return false;
+			}
+
 			for (int idx = 0; idx < text.Length; idx += 2)
 			{
 				int value = ParseHexByte(text, idx);
 				if (value < 0)
 				{
-					outBytes = null;
 					return false;
 				}
 				bytes[idx / 2] = (byte)value;
 			}
-			outBytes = bytes;
+
 			return true;
 		}
 
@@ -484,6 +520,25 @@ namespace EpicGames.Core
 			}
 		}
 
+		/// <summary>
+		/// Formats a 32-bit unsigned integer as a hexadecimal string
+		/// </summary>
+		/// <param name="value">Value to render</param>
+		/// <param name="characters">Buffer to receive the characters</param>
+		public static void FormatLittleEndianUtf8HexString(uint value, Span<byte> characters)
+		{
+			characters[0] = s_hexDigitToUtf8Byte[(value >> 4) & 15];
+			characters[1] = s_hexDigitToUtf8Byte[value & 15];
+
+			characters[2] = s_hexDigitToUtf8Byte[(value >> 12) & 15];
+			characters[3] = s_hexDigitToUtf8Byte[(value >> 8) & 15];
+
+			characters[4] = s_hexDigitToUtf8Byte[(value >> 20) & 15];
+			characters[5] = s_hexDigitToUtf8Byte[(value >> 16) & 15];
+
+			characters[6] = s_hexDigitToUtf8Byte[(value >> 28) & 15];
+			characters[7] = s_hexDigitToUtf8Byte[(value >> 24) & 15];
+		}
 
 		/// <summary>
 		/// Formats a 32-bit unsigned integer as a hexadecimal string
@@ -512,6 +567,17 @@ namespace EpicGames.Core
 			characters[5] = s_hexDigitToUtf8Byte[(value >> 8) & 15];
 			characters[6] = s_hexDigitToUtf8Byte[(value >> 4) & 15];
 			characters[7] = s_hexDigitToUtf8Byte[value & 15];
+		}
+
+		/// <summary>
+		/// Formats a 32-bit unsigned integer as a hexadecimal string
+		/// </summary>
+		/// <param name="value">Value to render</param>
+		/// <param name="characters">Buffer to receive the characters</param>
+		public static void FormatUtf8HexString(ulong value, Span<byte> characters)
+		{
+			FormatUtf8HexString((uint)(value >> 32), characters);
+			FormatUtf8HexString((uint)value, characters.Slice(8));
 		}
 
 		/// <summary>

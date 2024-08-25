@@ -8,7 +8,32 @@ inline bool SkipUAVBarrier(const FRDGSubresourceState& Previous, const FRDGSubre
 	return SkipUAVBarrier(Previous.NoUAVBarrierFilter.GetUniqueHandle(), Next.NoUAVBarrierFilter.GetUniqueHandle());
 }
 
-FRDGViewableResource::FRDGViewableResource(const TCHAR* InName, const ERDGViewableResourceType InType, bool bSkipTracking, bool bImmediateFirstBarrier)
+FRDGTexture::FRDGTexture(const TCHAR* InName, const FRDGTextureDesc& InDesc, ERDGTextureFlags InFlags)
+	: FRDGViewableResource(InName, ERDGViewableResourceType::Texture, EnumHasAnyFlags(InFlags, ERDGTextureFlags::SkipTracking), !EnumHasAnyFlags(InFlags, ERDGTextureFlags::ForceImmediateFirstBarrier) && !EnumHasAnyFlags(InDesc.Flags, ETextureCreateFlags::Presentable))
+	, Desc(InDesc)
+	, Flags(InFlags)
+	, Layout(InDesc)
+	, WholeRange(Layout)
+	, SubresourceCount(Layout.GetSubresourceCount())
+{
+	if (EnumHasAnyFlags(Desc.Flags, ETextureCreateFlags::Foveation))
+	{
+		EpilogueAccess = ERHIAccess::ShadingRateSource;
+	}
+
+	State.SetNum(SubresourceCount);
+	FirstState.SetNum(SubresourceCount);
+	MergeState.SetNum(SubresourceCount);
+	LastProducers.SetNum(SubresourceCount);
+}
+
+FRDGBuffer::FRDGBuffer(const TCHAR* InName, const FRDGBufferDesc& InDesc, ERDGBufferFlags InFlags)
+	: FRDGViewableResource(InName, ERDGViewableResourceType::Buffer, EnumHasAnyFlags(InFlags, ERDGBufferFlags::SkipTracking), !EnumHasAnyFlags(InFlags, ERDGBufferFlags::ForceImmediateFirstBarrier))
+	, Desc(InDesc)
+	, Flags(InFlags)
+{}
+
+FRDGViewableResource::FRDGViewableResource(const TCHAR* InName, const ERDGViewableResourceType InType, bool bSkipTracking, bool bInSplitFirstTransition)
 	: FRDGResource(InName)
 	, Type(InType)
 	, bExternal(0)
@@ -16,10 +41,12 @@ FRDGViewableResource::FRDGViewableResource(const TCHAR* InName, const ERDGViewab
 	, bProduced(0)
 	, bTransient(0)
 	, bForceNonTransient(0)
-	, TransientExtractionHint(ETransientExtractionHint::None)
-	, bLastOwner(1)
+	, bSkipLastTransition(0)
+	, bSplitFirstTransition(bInSplitFirstTransition)
 	, bQueuedForUpload(0)
-	, FirstBarrier(EFirstBarrier::Split)
+	, bCollectForAllocate(1)
+	, bQueuedForReservedCommit(0)
+	, TransientExtractionHint(ETransientExtractionHint::None)
 	, ReferenceCount(IsImmediateMode() ? 1 : 0)
 {
 	if (bSkipTracking)
@@ -27,11 +54,6 @@ FRDGViewableResource::FRDGViewableResource(const TCHAR* InName, const ERDGViewab
 		SetExternalAccessMode(ERHIAccess::ReadOnlyExclusiveMask, ERHIPipeline::All);
 		AccessModeState.bLocked = 1;
 		AccessModeState.ActiveMode = AccessModeState.Mode;
-	}
-
-	if (bImmediateFirstBarrier)
-	{
-		FirstBarrier = EFirstBarrier::ImmediateRequested;
 	}
 }
 
@@ -150,4 +172,13 @@ FRDGTextureSubresourceRange FRDGTexture::GetSubresourceRangeSRV() const
 	Range.NumPlaneSlices = 1;
 
 	return Range;
+}
+
+void FRDGBuffer::FinalizeDesc()
+{
+	if (NumElementsCallback)
+	{
+		Desc.NumElements = FMath::Max(NumElementsCallback(), 1u);
+		NumElementsCallback = {};
+	}
 }

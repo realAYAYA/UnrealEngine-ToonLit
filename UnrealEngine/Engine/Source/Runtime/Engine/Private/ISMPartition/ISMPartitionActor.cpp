@@ -416,7 +416,7 @@ void AISMPartitionActor::RemoveISMInstancesInternal(FISMComponentData& Component
 
 		if (bRemoveSwap)
 		{
-			ComponentData.Instances.RemoveAtSwap(ComponentInstanceIndex, 1, false);
+			ComponentData.Instances.RemoveAtSwap(ComponentInstanceIndex, 1, EAllowShrinking::No);
 
 			// Make sure we have the proper index (if we removed the last element, or the only element)
 			ComponentInstanceIndex = FMath::Min(ComponentInstanceIndex, ComponentData.Instances.Num() - 1);
@@ -442,7 +442,7 @@ void AISMPartitionActor::RemoveISMInstancesInternal(FISMComponentData& Component
 		}
 	}
 
-	ClientData.Instances.RemoveAtSwap(InstanceIndex, 1, false);
+	ClientData.Instances.RemoveAtSwap(InstanceIndex, 1, EAllowShrinking::No);
 	if (ClientData.Instances.IsValidIndex(InstanceIndex))
 	{
 		FISMClientInstance& SwapClientInstance = ClientData.Instances[InstanceIndex];

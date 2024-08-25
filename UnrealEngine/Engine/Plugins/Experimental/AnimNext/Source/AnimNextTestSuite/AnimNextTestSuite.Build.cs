@@ -15,7 +15,8 @@ namespace UnrealBuildTool.Rules
 					"CoreUObject",
 					"Engine",
 					"AnimNext",
-					"StructUtils"
+					"StructUtils",
+					"RigVM",
 				}
 			);
 
@@ -27,7 +28,8 @@ namespace UnrealBuildTool.Rules
 						"UnrealEd",
 						"AnimNextUncookedOnly",
 						"AnimNextEditor",
-						"PythonScriptPlugin"
+						"PythonScriptPlugin",
+						"RigVMDeveloper",
 					}
 				);
 			}

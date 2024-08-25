@@ -15,6 +15,7 @@
 #include "HeterogeneousVolumesLiveShadingUtils.ush"
 #include "HeterogeneousVolumesTracingUtils.ush"
 #include "HeterogeneousVolumesLightingUtils.ush"
+#include "../BlueNoise.ush"
 
 
 #if VIRTUAL_SHADOW_MAP
@@ -42,6 +43,8 @@ int PrimitiveId;
 
 // Volume data
 int3 VoxelResolution;
+int3 VoxelMin;
+int3 VoxelMax;
 
 // Lighting
 int bApplyEmissionAndTransmittance;
@@ -54,6 +57,10 @@ float VolumetricScatteringIntensity;
 uint VirtualShadowMapId;
 float ShadowStepSize;
 float ShadowStepFactor;
+
+// Atmosphere
+int bApplyHeightFog;
+int bApplyVolumetricFog;
 
 // Ray data
 float MaxTraceDistance;
@@ -68,6 +75,7 @@ int3 GroupCount;
 
 // Output
 RWTexture2D<float4> RWLightingTexture;
+RWTexture2D<float4> RWVelocityTexture;
 
 struct FDebugOutput
 {
@@ -81,7 +89,7 @@ struct FDebugOutput
 
 RWStructuredBuffer<FDebugOutput> RWDebugOutputBuffer;
 
-FDebugOutput CreateDebugOutput(
+/*FDebugOutput CreateDebugOutput(
 	inout FMaterialPixelParameters MaterialParameters,
 	inout FPixelMaterialInputs PixelMaterialInputs)
 {
@@ -92,10 +100,15 @@ FDebugOutput CreateDebugOutput(
 	DebugOutput.PrimitiveId = MaterialParameters.PrimitiveId;
 	DebugOutput.LocalObjectBoundsMin = PrimitiveData.LocalObjectBoundsMin.xyz;
 	DebugOutput.LocalObjectBoundsMax = PrimitiveData.LocalObjectBoundsMax.xyz;
-	DebugOutput.LocalToWorld = LWCToFloat(PrimitiveData.LocalToWorld);
-	DebugOutput.WorldToLocal = LWCToFloat(PrimitiveData.WorldToLocal);
+	DebugOutput.LocalToWorld = DFDemote(PrimitiveData.LocalToWorld);
+	DebugOutput.WorldToLocal = DFDemote(PrimitiveData.WorldToLocal);
 
 	return DebugOutput;
+}*/
+
+FPrimitiveSceneData GetPrimitiveData(FMaterialVertexParameters Parameters)
+{
+	return GetPrimitiveData(Parameters, LocalToWorld, WorldToLocal, LocalBoundsOrigin, LocalBoundsExtent);
 }
 
 FPrimitiveSceneData GetPrimitiveData(FMaterialPixelParameters Parameters)
@@ -158,6 +171,16 @@ float GetMaxShadowTraceDistance()
 	return MaxShadowTraceDistance;
 }
 
+int ShouldApplyHeightFog()
+{
+	return bApplyHeightFog;
+}
+
+int ShouldApplyVolumetricFog()
+{
+	return bApplyVolumetricFog;
+}
+
 struct FVolumeSampleContext
 {
 	FMaterialPixelParameters MaterialParameters;
@@ -169,7 +192,11 @@ FVolumeSampleContext CreateVolumeSampleContext(float3 LocalPosition, float3 Worl
 	FVolumeSampleContext VolumeSampleContext;
 	VolumeSampleContext.MaterialParameters = MakeInitializedMaterialPixelParameters();
 	//VolumeSampleContext.MaterialParameters.PrimitiveId = PrimitiveId;
-	VolumeSampleContext.MaterialParameters.AbsoluteWorldPosition = LWCPromote(WorldPosition);
+	VolumeSampleContext.MaterialParameters.AbsoluteWorldPosition = DFPromote(WorldPosition);
+	VolumeSampleContext.MaterialParameters.LWCData.AbsoluteWorldPosition = WSPromote(WorldPosition);
+	// TODO: Add object centroid to LWC.ObjectWorldPosition
+	VolumeSampleContext.MaterialParameters.LWCData.LocalToWorld = WSPromote(GetLocalToWorld());
+	VolumeSampleContext.MaterialParameters.LWCData.WorldToLocal = WSPromoteInverse(GetWorldToLocal());
 
 	// Evaluate Material graph
 	CalcPixelMaterialInputs(VolumeSampleContext.MaterialParameters, VolumeSampleContext.PixelMaterialInputs);
@@ -206,8 +233,8 @@ void RenderLightingCacheWithLiveShadingCS(
 	uint3 DispatchThreadId : SV_DispatchThreadID
 )
 {
-	float3 VoxelIndex = DispatchThreadId;
-	if (any(DispatchThreadId > LightingCacheResolution))
+	float3 VoxelIndex = DispatchThreadId + VoxelMin;
+	if (any(DispatchThreadId > VoxelMax))
 	{
 		return;
 	}
@@ -249,7 +276,7 @@ void RenderLightingCacheWithLiveShadingCS(
 	if (LightType != LIGHT_TYPE_DIRECTIONAL)
 	{
 		// Note: this function also permutes ToLight and L
-		float3 TranslatedWorldPosition = LWCHackToFloat(LWCAdd(WorldRayOrigin, PrimaryView.PreViewTranslation));
+		float3 TranslatedWorldPosition = DFFastToTranslatedWorld(WorldRayOrigin, PrimaryView.PreViewTranslation);
 		GetLocalLightAttenuation(TranslatedWorldPosition, LightData, ToLight, L);
 
 		if (LightData.bRectLight)
@@ -289,6 +316,7 @@ void RenderSingleScatteringWithLiveShadingCS(
 
 	float3 Radiance = 0.0;
 	float3 Transmittance = 1.0 - RWLightingTexture[PixelCoord].a;
+	float PrevOpacity = Luminance(1.0 - Transmittance);
 
 	// Extract depth
 	float DeviceZ = SceneDepthTexture.Load(int3(PixelCoord, 0)).r;
@@ -300,12 +328,12 @@ void RenderSingleScatteringWithLiveShadingCS(
 	float SceneDepth = min(ConvertFromDeviceZ(DeviceZ), GetMaxTraceDistance());
 	DeviceZ = ConvertToDeviceZ(SceneDepth);
 
-	float Jitter = bJitter ? InterleavedGradientNoise(PixelCoord, View.StateFrameIndexMod8) : 0.0;
+	float Jitter = bJitter ? BlueNoiseScalar(PixelCoord, View.StateFrameIndexMod8) : 0.0;
 
 	// Intersect ray with bounding volume
 	// TODO: LWC integration..
-	float3 WorldRayOrigin = LWCHackToFloat(LWCSubtract(View.TranslatedWorldCameraOrigin, PrimaryView.PreViewTranslation));
-	float3 WorldRayEnd = LWCHackToFloat(SvPositionToWorld(float4(PixelCoord + View.TemporalAAJitter.xy, DeviceZ, 1)));
+	float3 WorldRayOrigin = DFHackToFloat(DFFastSubtract(View.TranslatedWorldCameraOrigin, PrimaryView.PreViewTranslation));
+	float3 WorldRayEnd = DFHackToFloat(SvPositionToWorld(float4(PixelCoord + View.TemporalAAJitter.xy, DeviceZ, 1)));
 	float3 WorldRayDirection = WorldRayEnd - WorldRayOrigin;
 	float WorldRayLength = length(WorldRayDirection);
 	WorldRayDirection /= WorldRayLength;
@@ -346,19 +374,38 @@ void RenderSingleScatteringWithLiveShadingCS(
 		const FDeferredLightData LightData = InitDeferredLightFromUniforms(LightType, VolumetricScatteringIntensity);
 		uint StepCount = CalcStepCount(RayMarchingContext);
 
+		float ScatterHitT = HitT.y;
 		RayMarchSingleScattering(
 			RayMarchingContext,
 			LightData,
 			LightType,
 			StepCount,
+			ScatterHitT,
 			Radiance,
 			Transmittance
 		);
 
-		// Output..
-		float3 Opacity = bApplyEmissionAndTransmittance ? 1.0 - Transmittance : 0.0;
+		// Radiance
 		RWLightingTexture[PixelCoord].rgb += Radiance * View.PreExposure;
-		RWLightingTexture[PixelCoord].a = Luminance(Opacity);
+		if (bApplyEmissionAndTransmittance)
+		{
+			float Opacity = Luminance(1.0 - Transmittance);
+			RWLightingTexture[PixelCoord].a = Opacity;
+
+#if DIM_WRITE_VELOCITY
+			bool bWriteVelocity =
+				(ScatterHitT < HitT.y) &&
+				(PrevOpacity < 0.5) &&
+				(Opacity > 0.5);
+
+			if (bWriteVelocity)
+			{
+				float WorldScatterHitT = ScatterHitT * RayMarchingContext.LocalToWorldScale;
+				float3 Velocity = Calculate3DVelocityAtWorldPos(WorldRayOrigin, WorldRayDirection, WorldScatterHitT);
+				RWVelocityTexture[PixelCoord] = EncodeVelocityToTexture(Velocity);
+			}
+#endif // DIM_WRITE_VELOCITY
+		}
 
 		// Debug output
 		//RWDebugOutputBuffer[LinearIndex] = DebugOutput;

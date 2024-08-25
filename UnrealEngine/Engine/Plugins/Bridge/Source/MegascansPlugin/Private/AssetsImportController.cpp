@@ -39,7 +39,7 @@ void FAssetsImportController::DataReceived(const FString DataFromBridge)
 	for (const TSharedPtr<FJsonValue>& AssetJson : AssetsImportDataArray)
 	{
 		EAssetImportType ImportType = JsonUtils::GetImportType(AssetJson->AsObject());
-		FString AssetType = AssetJson->AsObject()->GetStringField("assetType");
+		FString AssetType = AssetJson->AsObject()->GetStringField(TEXT("assetType"));
 		if (ImportType == EAssetImportType::DHI_CHARACTER)
 		{
 			BatchImportCharacters.Add(AssetJson->AsObject()->GetStringField(TEXT("folderName")));
@@ -49,7 +49,7 @@ void FAssetsImportController::DataReceived(const FString DataFromBridge)
 	for (const TSharedPtr<FJsonValue>& AssetJson : AssetsImportDataArray)
 	{
 		const EAssetImportType ImportType = JsonUtils::GetImportType(AssetJson->AsObject());
-		const FString AssetType = AssetJson->AsObject()->GetStringField("assetType");
+		const FString AssetType = AssetJson->AsObject()->GetStringField(TEXT("assetType"));
 		const FString ExportMode = AssetJson->AsObject()->GetStringField(TEXT("exportMode"));
 
 		if (ImportType == EAssetImportType::MEGASCANS_UASSET)
@@ -105,10 +105,10 @@ void FAssetsImportController::DataReceived(const FString DataFromBridge)
 				for (const TSharedPtr<FJsonValue>& Entry : *AvailableMetahumans)
 				{
 					AssetImportDescription.AccountMetaHumans.Emplace(FQuixelAccountMetaHumanEntry{
-						Entry->AsObject()->GetStringField("name"),
-						Entry->AsObject()->GetStringField("id"),
-						Entry->AsObject()->GetBoolField("isLegacy"),
-						Entry->AsObject()->GetStringField("version"),
+						Entry->AsObject()->GetStringField(TEXT("name")),
+						Entry->AsObject()->GetStringField(TEXT("id")),
+						Entry->AsObject()->GetBoolField(TEXT("isLegacy")),
+						Entry->AsObject()->GetStringField(TEXT("version")),
 					});
 				}
 			}

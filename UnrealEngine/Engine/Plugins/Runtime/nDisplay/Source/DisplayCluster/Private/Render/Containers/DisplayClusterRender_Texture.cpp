@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Render/Containers/DisplayClusterRender_Texture.h"
+#include "Misc/App.h"
 #include "RenderingThread.h"
 
 int32 GDisplayClusterRender_TextureCacheEnable = 1;
@@ -28,9 +29,7 @@ FDisplayClusterRender_Texture::FDisplayClusterRender_Texture(const FString& InUn
 { }
 
 FDisplayClusterRender_Texture::~FDisplayClusterRender_Texture()
-{
-	SetTextureResource(nullptr);
-}
+{ }
 
 const TSharedPtr<FDisplayClusterRender_TextureResource, ESPMode::ThreadSafe>& FDisplayClusterRender_Texture::GetTextureResource() const
 {

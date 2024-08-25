@@ -236,18 +236,24 @@ void AllocateProbeTracesCS(
 
 			// Can't trace more than MaxTracesFromMaxUpdateBucket from the last bucket
 			// Make an exception for the first bucket, as it contains probes without valid data
-			if (bTraceProbe && PriorityBucketIndex == MaxUpdateBucketIndex && MaxUpdateBucketIndex > 0)
-			{
-				// Accumulate allocated probe trace cost for the last bucket
-				uint ProbeTraceAllocatedFromMaxUpdateBucket = 0;
-				InterlockedAdd(RWProbesToUpdateTraceCost[1], ProbeTraceCost, ProbeTraceAllocatedFromMaxUpdateBucket);
+			// Note: The conditions were split from 			// if(bTraceProbe && PriorityBucketIndex == MaxUpdateBucketIndex && MaxUpdateBucketIndex > 0)
+			// due to a Metal shader runtime bug with branching and InterlockedAdd
 
-				if (ProbeTraceAllocatedFromMaxUpdateBucket + ProbeTraceCost > LocalMaxTracesFromMaxUpdateBucket)
-				{
-					bTraceProbe = false;
-				}
-			}
+            if(bTraceProbe)
+            {
+                if(PriorityBucketIndex == MaxUpdateBucketIndex && MaxUpdateBucketIndex > 0)
+                {
+                    // Accumulate allocated probe trace cost for the last bucket
+                    uint ProbeTraceAllocatedFromMaxUpdateBucket = 0;
+                    InterlockedAdd(RWProbesToUpdateTraceCost[1], ProbeTraceCost, ProbeTraceAllocatedFromMaxUpdateBucket);
 
+                    if (ProbeTraceAllocatedFromMaxUpdateBucket + ProbeTraceCost > LocalMaxTracesFromMaxUpdateBucket)
+                    {
+                        bTraceProbe = false;
+                    }
+                }
+            }
+			
 			if (bTraceProbe)
 			{
 				InterlockedAdd(RWProbesToUpdateTraceCost[0], ProbeTraceCost);

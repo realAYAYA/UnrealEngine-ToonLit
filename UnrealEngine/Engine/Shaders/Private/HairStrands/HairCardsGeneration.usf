@@ -39,7 +39,7 @@ Buffer<float4> Curve_AttributeBuffer;
 
 float GetPixelWorldRadius()
 {
-	return 0.5f * max(length(Raster_AxisX) / float(Atlas_RectResolution.x), length(Raster_AxisY) / float(Atlas_RectResolution.y));
+	return select(IsOrthoProjection(), 0.5f, 0.5f * max(length(Raster_AxisX) / float(Atlas_RectResolution.x), length(Raster_AxisY) / float(Atlas_RectResolution.y)));
 }
 #endif
 

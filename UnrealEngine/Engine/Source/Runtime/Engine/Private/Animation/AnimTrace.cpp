@@ -6,6 +6,7 @@
 
 #include "Animation/AnimInstanceProxy.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Components/ExternalMorphSet.h"
 #include "Engine/SkeletalMesh.h"
 #include "Animation/AnimMontage.h"
 #include "Animation/AnimBlueprintGeneratedClass.h"
@@ -53,6 +54,21 @@ UE_TRACE_EVENT_BEGIN(Animation, SkeletalMeshComponent3)
 	UE_TRACE_EVENT_FIELD(float[], CurveValues)
 	UE_TRACE_EVENT_FIELD(uint16, LodIndex)
 	UE_TRACE_EVENT_FIELD(uint16, FrameCounter)
+UE_TRACE_EVENT_END()
+
+UE_TRACE_EVENT_BEGIN(Animation, SkeletalMeshComponent4)
+	UE_TRACE_EVENT_FIELD(uint64, Cycle)
+	UE_TRACE_EVENT_FIELD(double, RecordingTime)
+	UE_TRACE_EVENT_FIELD(uint64, ComponentId)
+	UE_TRACE_EVENT_FIELD(uint64, MeshId)
+	UE_TRACE_EVENT_FIELD(float[], ComponentToWorld)
+	UE_TRACE_EVENT_FIELD(float[], Pose)
+	UE_TRACE_EVENT_FIELD(uint32[], CurveIds)
+	UE_TRACE_EVENT_FIELD(float[], CurveValues)
+	UE_TRACE_EVENT_FIELD(uint16, LodIndex)
+	UE_TRACE_EVENT_FIELD(uint16, FrameCounter)
+	UE_TRACE_EVENT_FIELD(float[], ExternalMorphSetWeights)		// Concatenated array [WeightsOfSet0, WeightsOfSet1, ..., WeightsOfSetN].
+	UE_TRACE_EVENT_FIELD(int32[], ExternalMorphSetWeightCounts)	// The number of weights in each external morph set.
 UE_TRACE_EVENT_END()
 
 UE_TRACE_EVENT_BEGIN(Animation, SkeletalMeshFrame)
@@ -269,6 +285,23 @@ UE_TRACE_EVENT_BEGIN(Animation, PoseWatch2)
 	UE_TRACE_EVENT_FIELD(bool, bIsEnabled)
 UE_TRACE_EVENT_END()
 
+UE_TRACE_EVENT_BEGIN(Animation, Inertialization)
+	UE_TRACE_EVENT_FIELD(uint64, Cycle)
+	UE_TRACE_EVENT_FIELD(double, RecordingTime)
+	UE_TRACE_EVENT_FIELD(uint64, ComponentId)
+	UE_TRACE_EVENT_FIELD(uint64, AnimInstanceId)
+	UE_TRACE_EVENT_FIELD(uint32, NodeId)
+	UE_TRACE_EVENT_FIELD(float, Weight)
+	UE_TRACE_EVENT_FIELD(uint8, Type)
+UE_TRACE_EVENT_END()
+
+FAutoConsoleVariable CVarRecordExternalMorphTargets(
+	TEXT("a.RecordExternalMorphTargets"),
+	false,
+	TEXT("Record the external morph target weights inside animation insights. On default this is disabled, because it can slow down recording."),
+	ECVF_Default
+);
+
 // Object annotations used for tracing
 FUObjectAnnotationSparseBool GSkeletalMeshTraceAnnotations;
 
@@ -295,6 +328,8 @@ struct FAnimTraceScratchBuffers : public TThreadSingleton<FAnimTraceScratchBuffe
 	// Curve values/IDs for skeletal mesh component
 	TArray<float> CurveValues;
 	TArray<uint32> CurveIds;
+	TArray<float> ExternalMorphTargetWeights;
+	TArray<int32> ExternalMorphTargetWeightCounts;
 
 	// Parent indices for skeletal meshes
 	TArray<int32> ParentIndices;
@@ -565,8 +600,17 @@ void FAnimTrace::OutputSkeletalMeshComponent(const USkeletalMeshComponent* InCom
 			CurveCount += AnimInstance->GetAnimationCurveList(CurveType).Num();
 		}
 	}
+
+	// Get the external morph target sets.
+	const int32 LOD = InComponent->GetPredictedLODLevel();
 	
-	if(BoneCount > 0 || CurveCount > 0)
+	FExternalMorphSets* ExternalMorphSet = nullptr;
+	if (InComponent->IsValidExternalMorphSetLODIndex(LOD) && CVarRecordExternalMorphTargets->GetBool())
+	{
+		ExternalMorphSet = const_cast<FExternalMorphSets*>(&InComponent->GetExternalMorphSets(LOD));
+	}
+
+	if (BoneCount > 0 || CurveCount > 0 || (ExternalMorphSet && !ExternalMorphSet->IsEmpty()))
 	{
 		TRACE_OBJECT(InComponent);
 		TRACE_SKELETAL_MESH(InComponent->GetSkeletalMeshAsset());
@@ -592,17 +636,45 @@ void FAnimTrace::OutputSkeletalMeshComponent(const USkeletalMeshComponent* InCom
 			}
 		}
 
-		UE_TRACE_LOG(Animation, SkeletalMeshComponent3, AnimationChannel)
-			<< SkeletalMeshComponent3.Cycle(FPlatformTime::Cycles64())
-			<< SkeletalMeshComponent3.RecordingTime(FObjectTrace::GetWorldElapsedTime(InComponent->GetWorld()))
-			<< SkeletalMeshComponent3.ComponentId(FObjectTrace::GetObjectId(InComponent))
-			<< SkeletalMeshComponent3.MeshId(FObjectTrace::GetObjectId(InComponent->GetSkeletalMeshAsset()))
-			<< SkeletalMeshComponent3.ComponentToWorld(reinterpret_cast<const float*>(&InComponent->GetComponentToWorld()), sizeof(FTransform) / sizeof(float))
-			<< SkeletalMeshComponent3.Pose(reinterpret_cast<const float*>(InComponent->GetComponentSpaceTransforms().GetData()), BoneCount * (sizeof(FTransform) / sizeof(float)))
-			<< SkeletalMeshComponent3.CurveIds(CurveIds.GetData(), CurveIds.Num())
-			<< SkeletalMeshComponent3.CurveValues(CurveValues.GetData(), CurveValues.Num())
-			<< SkeletalMeshComponent3.LodIndex((uint16)InComponent->GetPredictedLODLevel())
-			<< SkeletalMeshComponent3.FrameCounter(FObjectTrace::GetObjectWorldTickCounter(InComponent));
+		TArray<float>& ExternalMorphTraceWeights = FAnimTraceScratchBuffers::Get().ExternalMorphTargetWeights;
+		TArray<int32>& ExternalMorphTraceWeightCounts = FAnimTraceScratchBuffers::Get().ExternalMorphTargetWeightCounts;
+		ExternalMorphTraceWeights.Reset();
+		ExternalMorphTraceWeightCounts.Reset();
+
+		// Get the weights for all external morph sets.
+		if (ExternalMorphSet && !ExternalMorphSet->IsEmpty())
+		{
+			const FExternalMorphWeightData& ExternalMorphWeightData = InComponent->GetExternalMorphWeights(LOD);
+			const int32 NumMorphWeightSets = ExternalMorphWeightData.MorphSets.Num();
+			const int32 NumMorphDataSets = ExternalMorphSet->Num();
+			if (!ExternalMorphWeightData.MorphSets.IsEmpty() && NumMorphDataSets == NumMorphWeightSets)
+			{
+				// Allocate enough data in the scratch buffer.
+				ExternalMorphTraceWeightCounts.SetNumZeroed(NumMorphDataSets);
+
+				int32 SetIndex = 0;
+				for (const auto& CurrentSet : ExternalMorphWeightData.MorphSets)
+				{
+					ExternalMorphTraceWeightCounts[SetIndex] = CurrentSet.Value.Weights.Num();
+					ExternalMorphTraceWeights.Append(CurrentSet.Value.Weights);
+					SetIndex++;
+				}
+			}
+		}
+
+		UE_TRACE_LOG(Animation, SkeletalMeshComponent4, AnimationChannel)
+			<< SkeletalMeshComponent4.Cycle(FPlatformTime::Cycles64())
+			<< SkeletalMeshComponent4.RecordingTime(FObjectTrace::GetWorldElapsedTime(InComponent->GetWorld()))
+			<< SkeletalMeshComponent4.ComponentId(FObjectTrace::GetObjectId(InComponent))
+			<< SkeletalMeshComponent4.MeshId(FObjectTrace::GetObjectId(InComponent->GetSkeletalMeshAsset()))
+			<< SkeletalMeshComponent4.ComponentToWorld(reinterpret_cast<const float*>(&InComponent->GetComponentToWorld()), sizeof(FTransform) / sizeof(float))
+			<< SkeletalMeshComponent4.Pose(reinterpret_cast<const float*>(InComponent->GetComponentSpaceTransforms().GetData()), BoneCount * (sizeof(FTransform) / sizeof(float)))
+			<< SkeletalMeshComponent4.CurveIds(CurveIds.GetData(), CurveIds.Num())
+			<< SkeletalMeshComponent4.CurveValues(CurveValues.GetData(), CurveValues.Num())
+			<< SkeletalMeshComponent4.LodIndex((uint16)InComponent->GetPredictedLODLevel())
+			<< SkeletalMeshComponent4.FrameCounter(FObjectTrace::GetObjectWorldTickCounter(InComponent))
+			<< SkeletalMeshComponent4.ExternalMorphSetWeights(ExternalMorphTraceWeights.GetData(), ExternalMorphTraceWeights.Num())
+			<< SkeletalMeshComponent4.ExternalMorphSetWeightCounts(ExternalMorphTraceWeightCounts.GetData(), ExternalMorphTraceWeightCounts.Num());
 	}
 }
 
@@ -1297,6 +1369,20 @@ void FAnimTrace::OutputPoseWatch(const FAnimInstanceProxy& InSourceProxy, UPoseW
 		<< PoseWatch2.CurveIds(CurveIds.GetData(), CurveIds.Num())
 		<< PoseWatch2.RequiredBones(RequiredBones.GetData(), RequiredBones.Num())
 		<< PoseWatch2.bIsEnabled(bIsEnabled);
+}
+
+void FAnimTrace::OutputInertialization(const FAnimInstanceProxy& InSourceProxy, int32 NodeId, float Weight, EInertializationType Type)
+{
+	const UAnimInstance* AnimInstance = CastChecked<UAnimInstance>(InSourceProxy.GetAnimInstanceObject());
+	TRACE_OBJECT(AnimInstance);
+	
+	UE_TRACE_LOG(Animation, Inertialization, AnimationChannel)
+	<< Inertialization.Cycle(FPlatformTime::Cycles64())
+	<< Inertialization.RecordingTime(FObjectTrace::GetWorldElapsedTime(AnimInstance->GetWorld()))
+	<< Inertialization.AnimInstanceId(FObjectTrace::GetObjectId(InSourceProxy.GetAnimInstanceObject()))
+	<< Inertialization.NodeId(NodeId)
+	<< Inertialization.Weight(Weight)
+	<< Inertialization.Type(static_cast<uint8>(Type));
 }
 
 #endif

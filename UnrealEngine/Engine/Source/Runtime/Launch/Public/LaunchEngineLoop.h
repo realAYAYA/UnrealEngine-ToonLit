@@ -87,6 +87,9 @@ public:
 	/** Load core modules. */
 	bool LoadCoreModules();
 
+	/** Allow override of the project module loaded from project file */
+	void OverrideProjectModule(const FString& InOriginalProjectModuleName, const FString& InReplacementProjectModuleName);
+
 	/** Clean up PreInit context. */
 	void CleanupPreInitContext();
 

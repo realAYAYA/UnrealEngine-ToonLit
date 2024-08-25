@@ -26,6 +26,22 @@
  *
  */
 
+#pragma once
+
+#include "HAL/Platform.h"
+
+#if PLATFORM_WINDOWS
+#define NSVG_EXPORT __declspec(dllexport)
+#elif PLATFORM_MAC
+#define NSVG_EXPORT __attribute__((visibility("default")))
+#elif PLATFORM_LINUX
+#define NSVG_EXPORT __attribute__((visibility("default")))
+#elif PLATFORM_CONSOLE_DYNAMIC_LINK
+#define NSVG_EXPORT __declspec(dllexport)
+#else
+#define NSVG_EXPORT
+#endif
+
 #ifndef NANOSVG_H
 #define NANOSVG_H
 
@@ -164,17 +180,20 @@ extern "C" {
 	} NSVGimage;
 
 	// Parses SVG file from a file, returns SVG image as paths.
-	NSVGimage* nsvgParseFromFile(const char* filename, const char* units, float dpi);
+	NSVG_EXPORT NSVGimage* nsvgParseFromFile(const char* filename, const char* units, float dpi);
 
 	// Parses SVG file from a null terminated string, returns SVG image as paths.
 	// Important note: changes the string.
-	NSVGimage* nsvgParse(char* input, const char* units, float dpi);
+	NSVG_EXPORT NSVGimage* nsvgParse(char* input, const char* units, float dpi);
 
 	// Duplicates a path.
-	NSVGpath* nsvgDuplicatePath(NSVGpath* p);
+	NSVG_EXPORT NSVGpath* nsvgDuplicatePath(NSVGpath* p);
 
 	// Deletes an image.
-	void nsvgDelete(NSVGimage* image);
+	NSVG_EXPORT void nsvgDelete(NSVGimage* image);
+
+	// Parses the provided string as a transform, and outputs its elements to a float array
+	NSVG_EXPORT void nsvgParseTransform(float* xform, const char* str);
 
 #ifndef NANOSVG_CPLUSPLUS
 #ifdef __cplusplus
@@ -3221,6 +3240,11 @@ void nsvgDelete(NSVGimage* image)
 		shape = snext;
 	}
 	free(image);
+}
+
+void nsvgParseTransform(float* xform, const char* str)
+{
+	nsvg__parseTransform(xform, str); 
 }
 
 #ifdef _MSC_VER

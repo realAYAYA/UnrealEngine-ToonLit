@@ -105,6 +105,7 @@ class ULyraReplicationGraphNode_PlayerStateFrequencyLimiter : public UReplicatio
 
 	virtual void NotifyAddNetworkActor(const FNewReplicatedActorInfo& Actor) override { }
 	virtual bool NotifyRemoveNetworkActor(const FNewReplicatedActorInfo& ActorInfo, bool bWarnIfNotFound=true) override { return false; }
+	virtual bool NotifyActorRenamed(const FRenamedReplicatedActorInfo& Actor, bool bWarnIfNotFound=true) override { return false; }
 
 	virtual void GatherActorListsForConnection(const FConnectionGatherActorListParameters& Params) override;
 

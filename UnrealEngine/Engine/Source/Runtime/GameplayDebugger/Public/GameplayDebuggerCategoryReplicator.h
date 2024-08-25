@@ -172,7 +172,7 @@ public:
 	GAMEPLAYDEBUGGER_API void CollectCategoryData(bool bForce = false);
 
 	/** get current debug actor */
-	AActor* GetDebugActor() const { return DebugActor.Actor.Get(); }
+	AActor* GetDebugActor() const { return DebugActor.Actor.IsStale() ? nullptr : DebugActor.Actor.Get(); }
 	
 	/** get name of debug actor */
 	FName GetDebugActorName() const { return DebugActor.ActorName; }

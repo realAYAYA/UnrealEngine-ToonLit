@@ -1168,17 +1168,17 @@ void SSourceControlReview::FixupRedirectors()
 	{
 		if (ChangelistFile->ReviewFileTempPath.EndsWith(TEXT(".uasset")) || ChangelistFile->ReviewFileTempPath.EndsWith(TEXT(".umap")))
 		{
-			if (FLinkerLoad* ReviewFileLoad = LoadPackageLinker(nullptr, FPackagePath::FromLocalPath(ChangelistFile->ReviewFileTempPath), LOAD_ForDiff | LOAD_DisableCompileOnLoad | LOAD_DisableEngineVersionChecks))
-            {
-            	if (IsObjectRedirector(ReviewFileLoad, ChangelistFile->AssetName))
-            	{
-            		FString Path = GetContentRelativePath(ReviewFileLoad);
-            		if (!Path.IsEmpty())
-            		{
-            			RedirectorsFound.Add(Path, ChangelistFile.ToWeakPtr());
-            		}
-            	}
-            }
+			if (FLinkerLoad* ReviewFileLoad = GetPackageLinker(nullptr, FPackagePath::FromLocalPath(ChangelistFile->ReviewFileTempPath), LOAD_ForDiff | LOAD_DisableCompileOnLoad | LOAD_DisableEngineVersionChecks, nullptr))
+			{
+				if (IsObjectRedirector(ReviewFileLoad, ChangelistFile->AssetName))
+				{
+					FString Path = GetContentRelativePath(ReviewFileLoad);
+					if (!Path.IsEmpty())
+					{
+						RedirectorsFound.Add(Path, ChangelistFile.ToWeakPtr());
+					}
+				}
+			}
 		}
 	}
 

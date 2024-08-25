@@ -6,6 +6,7 @@
 #include "FunctionalTestingModule.h"
 #include "FunctionalTestingManager.h"
 #include "NavigationSystem.h"
+#include "AI/Navigation/NavAreaBase.h"
 #include "AIController.h"
 #include "Blueprint/AIBlueprintHelperLibrary.h"
 #include "NavMesh/RecastNavMesh.h"
@@ -500,7 +501,7 @@ void AFunctionalAITest::RemoveSpawnSetIfPredicate(TFunctionRef<bool(FAITestSpawn
 	{
 		if (Predicate(SpawnSets[Index]))
 		{
-			SpawnSets.RemoveAt(Index, 1, false);
+			SpawnSets.RemoveAt(Index, 1, EAllowShrinking::No);
 			bRemovedEntry = true;
 		}
 	}

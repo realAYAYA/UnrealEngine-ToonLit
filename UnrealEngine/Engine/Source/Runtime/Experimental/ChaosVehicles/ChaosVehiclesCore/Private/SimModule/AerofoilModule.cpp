@@ -5,7 +5,7 @@
 #include "VehicleUtility.h"
 
 #if VEHICLE_DEBUGGING_ENABLED
-PRAGMA_DISABLE_OPTIMIZATION
+UE_DISABLE_OPTIMIZATION
 #endif
 
 namespace Chaos
@@ -31,7 +31,7 @@ namespace Chaos
 		}
 
 		// needs local velocity at aerofoil to calculate lift and drag
-		FVector LocalForce = GetForce(ModuleLocalVelocity * CmToMScaling(), CmToM(Altitude), DeltaTime);
+		FVector LocalForce = GetForce(LocalLinearVelocity * CmToMScaling(), CmToM(Altitude), DeltaTime);
 		FVector LocalOffset = GetCenterOfLiftOffset() * MToCmScaling();
 
 		AddLocalForceAtPosition(LocalForce * MToCmScaling(), LocalOffset, true, false, false, FColor::Yellow);
@@ -120,7 +120,7 @@ namespace Chaos
 		AirflowNormal.Normalize();
 
 		// determine angle of attack for control surface
-		AngleOfAttack = CalcAngleOfAttackDegrees(Setup().UpAxis, AirflowNormal);
+		AngleOfAttack = CalcAngleOfAttackDegrees(Setup().ForceAxis, AirflowNormal);
 
 		// Aerofoil Camber and Control Surface just lumped together
 		float TotalControlAngle = ControlSurfaceAngle + Setup().Camber;
@@ -133,13 +133,25 @@ namespace Chaos
 		float DragCoef = CalcDragCoefficient(AngleOfAttack, TotalControlAngle) * Setup().DragMultiplier;
 
 		// Combine to create a single force vector
-		Force = Setup().UpAxis * (Common * LiftCoef) + AirflowNormal * (Common * DragCoef);
+		Force = Setup().ForceAxis * (Common * LiftCoef) + AirflowNormal * (Common * DragCoef);
 
 		return Force;
+	}
+
+	void FAerofoilSimModule::Animate(Chaos::FClusterUnionPhysicsProxy* Proxy)
+	{
+		if (FPBDRigidClusteredParticleHandle* ClusterChild = GetClusterParticle(Proxy))
+		{
+			FQuat ControlRotation = FQuat(Setup().ControlRotationAxis, FMath::DegreesToRadians(ControlSurfaceAngle * Setup().AnimationMagnitudeMultiplier));
+
+			FTransform InitialTransform = GetInitialParticleTransform();
+			ClusterChild->ChildToParent().SetRotation(InitialTransform.GetRotation() * ControlRotation);
+		}
+
 	}
 
 } // namespace Chaos
 
 #if VEHICLE_DEBUGGING_ENABLED
-PRAGMA_ENABLE_OPTIMIZATION
+UE_ENABLE_OPTIMIZATION
 #endif

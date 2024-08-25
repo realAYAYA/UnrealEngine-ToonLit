@@ -205,6 +205,7 @@ private:
 	void ExportTimingEvents_InitColumns() const;
 	void ExportTimingEvents_WriteHeader(FExportTimingEventsInternalParams& Params) const;
 	int32 ExportTimingEvents_WriteEvents(FExportTimingEventsInternalParams& Params) const;
+	int32 ExportTimerStatisticsAsTextByRegions(const FString& Filename, FExportTimerStatisticsParams& Params) const;
 
 private:
 	const TraceServices::IAnalysisSession& Session;

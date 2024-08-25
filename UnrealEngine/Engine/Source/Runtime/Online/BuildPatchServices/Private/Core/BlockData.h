@@ -116,7 +116,7 @@ namespace BuildPatchServices
 			const FBlockEntry* LocalSpaceBlock = LocalSpaceStructure.GetTail();
 			while (LocalSpaceBlock != nullptr)
 			{
-				Data.RemoveAt(LocalSpaceBlock->GetOffset(), LocalSpaceBlock->GetSize(), false);
+				Data.RemoveAt(LocalSpaceBlock->GetOffset(), LocalSpaceBlock->GetSize(), EAllowShrinking::No);
 				LocalSpaceBlock = LocalSpaceBlock->GetPrevious();
 			}
 			DataStructure.Remove(Structure);

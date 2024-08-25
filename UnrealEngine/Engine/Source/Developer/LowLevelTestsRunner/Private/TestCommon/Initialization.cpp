@@ -5,9 +5,13 @@
 #include "TestCommon/CoreUObjectUtilities.h"
 #include "TestCommon/EngineUtilities.h"
 
+#include "Containers/UnrealString.h"
 #include "GenericPlatform/GenericPlatformFile.h"
 #include "HAL/PlatformFileManager.h"
+#include "Misc/CommandLine.h"
 #include "Misc/DelayedAutoRegister.h"
+#include "Misc/Paths.h"
+
 
 static IPlatformFile* DefaultPlatformFile;
 
@@ -48,6 +52,44 @@ void SaveDefaultPlatformFile()
 void UseDefaultPlatformFile()
 {
 	FPlatformFileManager::Get().SetPlatformFile(*DefaultPlatformFile);
+}
+
+void SetProjectNameAndDirectory()
+{
+	FString ProjectFileOrName;
+	FString ProjectDirOverride;
+
+	bool bIsProjectNamePassed = false;
+
+	FParse::Value(FCommandLine::Get(), TEXT("-project="), ProjectFileOrName);
+	if (!ProjectFileOrName.IsEmpty())
+	{
+		bIsProjectNamePassed = !ProjectFileOrName.EndsWith(TEXT(".uproject"));
+	}
+
+	FParse::Value(FCommandLine::Get(), TEXT("-projectdir="), ProjectDirOverride);
+	if (!ProjectDirOverride.IsEmpty())
+	{
+		if (!ProjectDirOverride.EndsWith(TEXT("/")))
+		{
+			ProjectDirOverride.Append(TEXT("/"));
+		}
+	}
+
+	if (!bIsProjectNamePassed && ProjectDirOverride.IsEmpty() && !ProjectFileOrName.IsEmpty())
+	{
+		ProjectDirOverride = FPaths::GetPath(ProjectFileOrName);
+	}
+	
+	if (!ProjectDirOverride.IsEmpty())
+	{
+		FPaths::NormalizeDirectoryName(ProjectDirOverride);
+		if (!ProjectDirOverride.EndsWith(TEXT("/")))
+		{
+			ProjectDirOverride.Append(TEXT("/"));
+		}
+		FGenericPlatformMisc::SetOverrideProjectDir(ProjectDirOverride);
+	}
 }
 
 void InitAll(bool bAllowLogging, bool bMultithreaded)

@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Widgets/Views/STreeView.h"
 #include "Rigs/RigHierarchy.h"
+#include "SRigHierarchyTagWidget.h"
 
 class SSearchBox;
 class SRigHierarchyTreeView;
@@ -19,12 +20,15 @@ struct CONTROLRIGEDITOR_API FRigTreeDisplaySettings
 
 		bFlattenHierarchyOnFilter = false;
 		bHideParentsOnFilter = false;
+		bUseShortName = true;
 		bShowImportedBones = true;
 		bShowBones = true;
 		bShowControls = true;
 		bShowNulls = true;
 		bShowRigidBodies = true;
 		bShowReferences = true;
+		bShowSockets = true;
+		bShowConnectors = true;
 		bShowIconColors = true;
 	}
 	
@@ -35,6 +39,9 @@ struct CONTROLRIGEDITOR_API FRigTreeDisplaySettings
 
 	/** Hide parents when text filtering is active */
 	bool bHideParentsOnFilter;
+
+	/** When true, the elements will show their short name */
+	bool bUseShortName;
 
 	/** Whether or not to show imported bones in the hierarchy */
 	bool bShowImportedBones;
@@ -54,15 +61,26 @@ struct CONTROLRIGEDITOR_API FRigTreeDisplaySettings
 	/** Whether or not to show references in the hierarchy */
 	bool bShowReferences;
 
+	/** Whether or not to show sockets in the hierarchy */
+	bool bShowSockets;
+
+	/** Whether or not to show connectors in the hierarchy */
+	bool bShowConnectors;
+	
 	/** Whether to tint the icons with the element color */
 	bool bShowIconColors;
 };
 
 DECLARE_DELEGATE_RetVal(const URigHierarchy*, FOnGetRigTreeHierarchy);
 DECLARE_DELEGATE_RetVal(const FRigTreeDisplaySettings&, FOnGetRigTreeDisplaySettings);
+DECLARE_DELEGATE_RetVal(const TArray<FRigElementKey>, FOnRigTreeGetSelection);
 DECLARE_DELEGATE_RetVal_TwoParams(FName, FOnRigTreeRenameElement, const FRigElementKey& /*OldKey*/, const FString& /*NewName*/);
 DECLARE_DELEGATE_RetVal_ThreeParams(bool, FOnRigTreeVerifyElementNameChanged, const FRigElementKey& /*OldKey*/, const FString& /*NewName*/, FText& /*OutErrorMessage*/);
 DECLARE_DELEGATE_RetVal_TwoParams(bool, FOnRigTreeCompareKeys, const FRigElementKey& /*A*/, const FRigElementKey& /*B*/);
+DECLARE_DELEGATE_RetVal_OneParam(FRigElementKey, FOnRigTreeGetResolvedKey, const FRigElementKey&);
+DECLARE_DELEGATE_OneParam(FOnRigTreeRequestDetailsInspection, const FRigElementKey&);
+DECLARE_DELEGATE_RetVal_OneParam(TOptional<FText>, FOnRigTreeItemGetToolTip, const FRigElementKey&);
+DECLARE_DELEGATE_RetVal_OneParam(bool, FOnRigTreeIsItemVisible, const FRigElementKey&);
 
 typedef STableRow<TSharedPtr<FRigTreeElement>>::FOnCanAcceptDrop FOnRigTreeCanAcceptDrop;
 typedef STableRow<TSharedPtr<FRigTreeElement>>::FOnAcceptDrop FOnRigTreeAcceptDrop;
@@ -80,12 +98,18 @@ struct CONTROLRIGEDITOR_API FRigTreeDelegates
 	FOnDragDetected OnDragDetected;
 	FOnRigTreeCanAcceptDrop OnCanAcceptDrop;
 	FOnRigTreeAcceptDrop OnAcceptDrop;
+	FOnRigTreeGetSelection OnGetSelection;
 	FOnRigTreeSelectionChanged OnSelectionChanged;
 	FOnContextMenuOpening OnContextMenuOpening;
 	FOnRigTreeMouseButtonClick OnMouseButtonClick;
 	FOnRigTreeMouseButtonDoubleClick OnMouseButtonDoubleClick;
 	FOnRigTreeSetExpansionRecursive OnSetExpansionRecursive;
 	FOnRigTreeCompareKeys OnCompareKeys;
+	FOnRigTreeGetResolvedKey OnGetResolvedKey;
+	FOnRigTreeRequestDetailsInspection OnRequestDetailsInspection;
+	FOnRigTreeElementKeyTagDragDetected OnRigTreeElementKeyTagDragDetected;
+	FOnRigTreeItemGetToolTip OnRigTreeGetItemToolTip;
+	FOnRigTreeIsItemVisible OnRigTreeIsItemVisible;
 
 	FRigTreeDelegates()
 	{
@@ -108,6 +132,19 @@ struct CONTROLRIGEDITOR_API FRigTreeDelegates
 			return OnGetDisplaySettings.Execute();
 		}
 		return DefaultDisplaySettings;
+	}
+
+	TArray<FRigElementKey> GetSelection() const
+	{
+		if (OnGetSelection.IsBound())
+		{
+			return OnGetSelection.Execute();
+		}
+		if (const URigHierarchy* Hierarchy = GetHierarchy())
+		{
+			return Hierarchy->GetSelectedKeys();
+		}
+		return {};
 	}
 	
 	FName HandleRenameElement(const FRigElementKey& OldKey, const FString& NewName) const
@@ -136,6 +173,23 @@ struct CONTROLRIGEDITOR_API FRigTreeDelegates
 		}
 		TGuardValue<bool> Guard(bIsChangingRigHierarchy, true);
 		OnSelectionChanged.ExecuteIfBound(Selection, SelectInfo);
+	}
+
+	FRigElementKey GetResolvedKey(const FRigElementKey& InKey)
+	{
+		if(OnGetResolvedKey.IsBound())
+		{
+			return OnGetResolvedKey.Execute(InKey);
+		}
+		return InKey;
+	}
+
+	void RequestDetailsInspection(const FRigElementKey& InKey)
+	{
+		if(OnRequestDetailsInspection.IsBound())
+		{
+			return OnRequestDetailsInspection.Execute(InKey);
+		}
 	}
 
 	static FRigTreeDisplaySettings DefaultDisplaySettings;
@@ -167,6 +221,7 @@ public:
 public:
 	/** Element Data to display */
 	FRigElementKey Key;
+	FName ShortName;
 	FName ChannelName;
 	bool bIsTransient;
 	bool bIsAnimationChannel;
@@ -179,6 +234,9 @@ public:
 	void RequestRename();
 
 	void RefreshDisplaySettings(const URigHierarchy* InHierarchy, const FRigTreeDisplaySettings& InSettings);
+
+	FSlateColor GetIconColor() const;
+	FSlateColor GetTextColor() const;
 
 	/** Delegate for when the context menu requests a rename */
 	DECLARE_DELEGATE(FOnRenameRequested);
@@ -195,6 +253,12 @@ public:
 
 	/** The color to use when rendering the label text */
 	FSlateColor TextColor;
+
+	/** If true the item is filtered out during a drag */
+	bool bFadedOutDuringDragDrop;
+
+	/** The tag arguments for this element */
+	TArray<SRigHierarchyTagWidget::FArguments> Tags;
 };
 
 class SRigHierarchyItem : public STableRow<TSharedPtr<FRigTreeElement>>
@@ -211,7 +275,9 @@ private:
 	TWeakPtr<FRigTreeElement> WeakRigTreeElement;
  	FRigTreeDelegates Delegates;
 
-	FText GetName() const;
+	FText GetNameForUI() const;
+	FText GetName(bool bUseShortName) const;
+	FText GetItemTooltip() const;
 
 	friend class SRigHierarchyTreeView; 
 };
@@ -279,6 +345,7 @@ public:
 	void SetExpansionRecursive(TSharedPtr<FRigTreeElement> InElement, bool bTowardsParent, bool bShouldBeExpanded);
 	TSharedRef<ITableRow> MakeTableRowWidget(TSharedPtr<FRigTreeElement> InItem, const TSharedRef<STableViewBase>& OwnerTable, bool bPinned);
 	void HandleGetChildrenForTree(TSharedPtr<FRigTreeElement> InItem, TArray<TSharedPtr<FRigTreeElement>>& OutChildren);
+	void OnElementKeyTagDragDetected(const FRigElementKey& InDraggedTag);
 
 	TArray<FRigElementKey> GetSelectedKeys() const;
 	const TArray<TSharedPtr<FRigTreeElement>>& GetRootElements() const { return RootElements; }
@@ -288,6 +355,9 @@ public:
 	const TSharedPtr<FRigTreeElement>* FindItemAtPosition(FVector2D InScreenSpacePosition) const;
 
 private:
+
+	void AddConnectorResolveWarningTag(TSharedPtr<FRigTreeElement> InTreeElement, const FRigBaseElement* InRigElement, const URigHierarchy* InHierarchy);
+	FText GetConnectorWarningMessage(TSharedPtr<FRigTreeElement> InTreeElement, TWeakObjectPtr<UControlRig> InControlRigPtr, const FRigElementKey InConnectorKey) const;
 
 	/** A temporary snapshot of the SparseItemInfos in STreeView, used during RefreshTreeView() */
 	TSparseItemMap OldSparseItemInfos;
@@ -317,6 +387,7 @@ public:
 	SLATE_BEGIN_ARGS(SSearchableRigHierarchyTreeView) {}
 		SLATE_ARGUMENT(FRigTreeDelegates, RigTreeDelegates)
 		SLATE_ARGUMENT(FText, InitialFilterText)
+		SLATE_ARGUMENT(float, MaxHeight)
 	SLATE_END_ARGS()
 
 	void Construct(const FArguments& InArgs);
@@ -334,4 +405,5 @@ private:
 	FRigTreeDisplaySettings Settings;
 	TSharedPtr<SSearchBox> SearchBox;
 	TSharedPtr<SRigHierarchyTreeView> TreeView;
+	float MaxHeight = 0.f;
 };

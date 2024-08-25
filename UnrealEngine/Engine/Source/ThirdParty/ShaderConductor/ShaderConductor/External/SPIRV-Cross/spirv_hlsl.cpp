@@ -1289,7 +1289,8 @@ void CompilerHLSL::emit_builtin_variables()
 			break;
 
 		case BuiltInSampleMask:
-			type = "int";
+			type = "uint";
+			array_size = 1;
 			break;
 
 		case BuiltInPrimitiveId:
@@ -1535,6 +1536,17 @@ void CompilerHLSL::replace_illegal_names()
 
 	CompilerGLSL::replace_illegal_names(keywords);
 	CompilerGLSL::replace_illegal_names();
+}
+
+SPIRType::BaseType CompilerHLSL::get_builtin_basetype(BuiltIn builtin, SPIRType::BaseType default_type)
+{
+	switch (builtin)
+	{
+	case BuiltInSampleMask:
+		return SPIRType::UInt;
+	default:
+		return CompilerGLSL::get_builtin_basetype(builtin, default_type);
+	}
 }
 
 void CompilerHLSL::emit_resources()
@@ -3113,6 +3125,10 @@ void CompilerHLSL::emit_hlsl_entry_point()
 		case BuiltInInstanceId:
 			// D3D semantics are uint, but shader wants int.
 			statement(builtin, " = int(stage_input.", builtin, ");");
+			break;
+
+		case BuiltInSampleMask:
+			statement(builtin, "[0] = stage_input.", builtin, ";");
 			break;
 
 		case BuiltInNumWorkgroups:

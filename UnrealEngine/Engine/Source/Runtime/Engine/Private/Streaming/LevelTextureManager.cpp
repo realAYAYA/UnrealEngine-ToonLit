@@ -175,7 +175,7 @@ void FLevelRenderAssetManager::IncrementalBuild(FDynamicRenderAssetInstanceManag
 
 		while ((bForceCompletion || NumStepsLeft > 0) && UnprocessedComponents.Num())
 		{
-			const UPrimitiveComponent* Primitive = UnprocessedComponents.Pop(false);
+			const UPrimitiveComponent* Primitive = UnprocessedComponents.Pop(EAllowShrinking::No);
 
 			const EAddComponentResult AddResult = StaticInstances.Add(Primitive, LevelContext, MaxTextureUVDensity);
 			if (AddResult == EAddComponentResult::Fail && !bLevelIsVisible)
@@ -230,7 +230,7 @@ void FLevelRenderAssetManager::IncrementalBuild(FDynamicRenderAssetInstanceManag
 			// Reprocess the components that didn't have valid data.
 			while (PendingComponents.Num())
 			{
-				const UPrimitiveComponent* Primitive = PendingComponents.Pop(false);
+				const UPrimitiveComponent* Primitive = PendingComponents.Pop(EAllowShrinking::No);
 
 				if (StaticInstances.Add(Primitive, LevelContext, MaxTextureUVDensity) != EAddComponentResult::Success)
 				{

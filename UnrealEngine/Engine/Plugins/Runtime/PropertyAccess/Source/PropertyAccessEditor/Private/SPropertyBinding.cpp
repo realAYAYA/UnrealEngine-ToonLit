@@ -199,9 +199,9 @@ void SPropertyBinding::ForEachBindableFunction(UClass* FromClass, Predicate Pred
 }
 
 template <typename Predicate>
-void SPropertyBinding::ForEachBindableProperty(UStruct* InStruct, Predicate Pred) const
+void SPropertyBinding::ForEachBindableProperty(UStruct* InStruct, const TArray<TSharedPtr<FBindingChainElement>>& BindingChain, Predicate Pred) const
 {
-	if(Args.OnCanBindProperty.IsBound())
+	if(InStruct && Args.OnCanBindProperty.IsBound())
 	{
 		UBlueprintGeneratedClass* SkeletonClass = Blueprint ? Cast<UBlueprintGeneratedClass>(Blueprint->SkeletonGeneratedClass) : nullptr;
 
@@ -215,11 +215,11 @@ void SPropertyBinding::ForEachBindableProperty(UStruct* InStruct, Predicate Pred
 				break;
 			}
 
-			if (Args.OnCanAcceptPropertyOrChildren.IsBound() && Args.OnCanAcceptPropertyOrChildren.Execute(Property) == false)
+			if (!CanAcceptPropertyOrChildren(Property, BindingChain))
 			{
 				continue;
 			}
-
+			
 			if (SkeletonClass)
 			{
 				if (!UEdGraphSchema_K2::CanUserKismetAccessVariable(Property, SkeletonClass, UEdGraphSchema_K2::CannotBeDelegate))
@@ -262,13 +262,13 @@ bool SPropertyBinding::HasBindablePropertiesRecursive(UStruct* InStruct, TSet<US
 	VisitedStructs.Add(InStruct);
 	
 	// Arbitrary cut off to avoid infinite loops.
-	if (BindingChain.Num() > 10)
+	if (BindingChain.Num() > Args.MaxDepth)
 	{
 		return false;
 	}
 	
 	int32 BindableCount = 0;
-	ForEachBindableProperty(InStruct, [this, &BindableCount, &VisitedStructs, &BindingChain] (FProperty* Property)
+	ForEachBindableProperty(InStruct, BindingChain, [this, &BindableCount, &VisitedStructs, &BindingChain] (FProperty* Property)
 	{
 		BindingChain.Emplace(MakeShared<FBindingChainElement>(Property));
 		ON_SCOPE_EXIT{ BindingChain.Pop(); };
@@ -360,11 +360,20 @@ bool SPropertyBinding::HasBindablePropertiesRecursive(UStruct* InStruct, TSet<US
 			{
 				if(FObjectPropertyBase* ObjectPropertyBase = CastField<FObjectPropertyBase>(ReturnProperty))
 				{
-					HasBindablePropertiesRecursive(ObjectPropertyBase->PropertyClass, VisitedStructs, BindingChain);
+					if (HasBindablePropertiesRecursive(ObjectPropertyBase->PropertyClass, VisitedStructs, BindingChain))
+					{
+						if (Args.bAllowUObjectFunctions)
+						{
+							BindableCount++;
+						}
+					}
 				}
 				else if(FStructProperty* StructProperty = CastField<FStructProperty>(ReturnProperty))
 				{
-					HasBindablePropertiesRecursive(StructProperty->Struct, VisitedStructs, BindingChain);
+					if (HasBindablePropertiesRecursive(StructProperty->Struct, VisitedStructs, BindingChain))
+					{
+						BindableCount++;
+					}
 				}
 			}
 		});
@@ -415,11 +424,8 @@ TSharedRef<SWidget> SPropertyBinding::OnGenerateDelegateMenu()
 		// Get the current skeleton class, think header for the blueprint.
 		UBlueprintGeneratedClass* SkeletonClass = Blueprint ? Cast<UBlueprintGeneratedClass>(Blueprint->SkeletonGeneratedClass) : nullptr;
 
-		if (SkeletonClass)
-		{
-			TArray<TSharedPtr<FBindingChainElement>> BindingChain;
-			FillPropertyMenu(MenuBuilder, SkeletonClass, BindingChain);
-		}
+		TArray<TSharedPtr<FBindingChainElement>> BindingChain;
+		FillPropertyMenu(MenuBuilder, SkeletonClass, BindingChain);
 	}
 
 	if (BindingContextStructs.Num() > 0)
@@ -793,7 +799,7 @@ void SPropertyBinding::FillPropertyMenu(FMenuBuilder& MenuBuilder, UStruct* InOw
 
 			MenuBuilder.BeginSection("Properties", LOCTEXT("Properties", "Properties"));
 			{
-				ForEachBindableProperty(InOwnerStruct, [this, &InBindingChain, BindingStruct, &MenuBuilder, &MakeArrayElementPropertyWidget, &MakePropertyWidget, &MakePropertyEntry, &MakeArrayElementEntry] (FProperty* Property)
+				ForEachBindableProperty(InOwnerStruct, InBindingChain, [this, &InBindingChain, BindingStruct, &MenuBuilder, &MakeArrayElementPropertyWidget, &MakePropertyWidget, &MakePropertyEntry, &MakeArrayElementEntry] (FProperty* Property)
 				{
 					TArray<TSharedPtr<FBindingChainElement>> NewBindingChain(InBindingChain);
 					NewBindingChain.Emplace(MakeShared<FBindingChainElement>(Property));
@@ -881,7 +887,7 @@ void SPropertyBinding::FillPropertyMenu(FMenuBuilder& MenuBuilder, UStruct* InOw
 	}
 
 	// Add 'none' entry only if we just have the search block in the builder
-	if ( MenuBuilder.GetMultiBox()->GetBlocks().Num() == 1 )
+	if ( InOwnerStruct && MenuBuilder.GetMultiBox()->GetBlocks().Num() == 1 )
 	{
 		MenuBuilder.BeginSection("None", InOwnerStruct->GetDisplayNameText());
 		MenuBuilder.AddWidget(SNew(STextBlock).Text(LOCTEXT("None", "None")), FText::GetEmpty());
@@ -1072,6 +1078,32 @@ FReply SPropertyBinding::HandleGotoBindingClicked()
 	}
 
 	return FReply::Unhandled();
+}
+
+bool SPropertyBinding::CanAcceptPropertyOrChildren(FProperty* InProperty, TConstArrayView<TSharedPtr<FBindingChainElement>> InBindingChain) const
+{
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	if (Args.OnCanAcceptPropertyOrChildren.IsBound() && Args.OnCanAcceptPropertyOrChildren.Execute(InProperty) == false)
+	{
+		return false;
+	}
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+			
+	if (Args.OnCanAcceptPropertyOrChildrenWithBindingChain.IsBound())
+	{
+		TArray<FBindingChainElement, TInlineAllocator<32>> BindingChain;
+		Algo::Transform(InBindingChain, BindingChain, [](TSharedPtr<FBindingChainElement> InElement)
+		{
+			return *InElement.Get();
+		});
+
+		if (!Args.OnCanAcceptPropertyOrChildrenWithBindingChain.Execute(InProperty, BindingChain))
+		{
+			return false;
+		}
+	}
+
+	return true;
 }
 
 FReply SPropertyBinding::OnDrop(const FGeometry& MyGeometry, const FDragDropEvent& DragDropEvent)

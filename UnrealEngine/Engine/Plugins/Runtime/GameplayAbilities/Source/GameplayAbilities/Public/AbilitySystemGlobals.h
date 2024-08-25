@@ -308,7 +308,8 @@ class GAMEPLAYABILITIES_API UAbilitySystemGlobals : public UObject
 	UPROPERTY()
 	FNetSerializeScriptStructCache	EffectContextStructCache;
 
-	void AddAttributeDefaultTables(const TArray<FSoftObjectPath>& AttribDefaultTableNames);
+	void AddAttributeDefaultTables(const FName OwnerName, const TArray<FSoftObjectPath>& AttribDefaultTableNames);
+	void RemoveAttributeDefaultTables(const FName OwnerName, const TArray<FSoftObjectPath>& AttribDefaultTableNames);
 
 protected:
 
@@ -406,6 +407,12 @@ protected:
 	/** Used to initialize attribute sets */
 	TSharedPtr<FAttributeSetInitter> GlobalAttributeSetInitter;
 
+	/** 
+	 * Curve table names to use for default values for attribute sets, keyed off of Name/Levels (with owners to allow removal of hard reference by GlobalAttributeDefaultsTables)
+	 * Required to allow unloading of plugins
+	*/
+	TMap<FSoftObjectPath, TArray<FName>> GlobalAttributeSetDefaultsTableNamesWithOwners;
+
 	template <class T>
 	T* InternalGetLoadTable(T*& Table, FString TableName);
 
@@ -414,7 +421,7 @@ protected:
 	void OnPreBeginPIE(const bool bIsSimulatingInEditor);
 #endif
 
-	void ResetCachedData();
+	static void ResetCachedData();
 	void HandlePreLoadMap(const FWorldContext& WorldContext, const FString& MapName);
 
 #if WITH_EDITORONLY_DATA

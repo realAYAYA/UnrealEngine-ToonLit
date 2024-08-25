@@ -38,6 +38,12 @@ namespace OpenColorIOShaderCookStats
 #endif
 
 
+static TAutoConsoleVariable<bool> CVarShowOpenColorIONoShaderDDC(
+	TEXT("OpenColorIO.NoShaderDDC"),
+	false,
+	TEXT("When enabled, we don't check the DDC for compiled shaders to simulate a cold DDC.")
+);
+
 //
 // Globals
 //
@@ -208,8 +214,6 @@ FShader* FOpenColorIOShaderType::FinishCompileShader(
 void FOpenColorIOShaderType::SetupCompileEnvironment(EShaderPlatform InPlatform, const FOpenColorIOTransformResource* InColorTransform, FShaderCompilerEnvironment& OutEnvironment) const
 {
 	ModifyCompilationEnvironment(FOpenColorIOShaderPermutationParameters(GetFName(), InPlatform, InColorTransform), OutEnvironment);
-
-	OutEnvironment.SetDefine(TEXT("WORKING_COLOR_SPACE_TRANSFORM_TYPE"), (int32)InColorTransform->GetWorkingColorSpaceTransformType());
 }
 
 #endif // WITH_EDITOR
@@ -255,6 +259,13 @@ void FOpenColorIOShaderMap::LoadFromDerivedDataCache(const FOpenColorIOTransform
 	}
 	else
 	{
+		static bool bNoShaderDDC = FParse::Param(FCommandLine::Get(), TEXT("noshaderddc"));
+
+		if (bNoShaderDDC || CVarShowOpenColorIONoShaderDDC.GetValueOnAnyThread())
+		{
+			return;
+		}
+
 		// Shader map was not found in memory, try to load it from the DDC
 		STAT(double OpenColorIOShaderDDCTime = 0);
 		{

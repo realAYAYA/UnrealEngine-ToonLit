@@ -398,6 +398,11 @@ public:
 	virtual void GetSelectionFrame(const FGeometrySelection& Selection, UE::Geometry::FFrame3d& SelectionFrameOut, bool bTransformToWorld) = 0;
 
 	/**
+	 * Compute a 3D frame for the Selector's target object
+	 */
+	virtual void GetTargetFrame(const FGeometrySelection& Selection, UE::Geometry::FFrame3d& SelectionFrameOut) = 0;
+
+	/**
 	 * Accumulate the bounds of the provided Selection in the provided BoundsInOut. BoundsInOut is not cleared.
 	 * @param bTransformToWorld if true each bounded point/element will be transformed to World space before being "contained" in BoundsInOut
 	 */
@@ -411,7 +416,23 @@ public:
 	 */
 	virtual void AccumulateSelectionElements(const FGeometrySelection& Selection, FGeometrySelectionElements& ElementsInOut, bool bTransformToWorld, bool bIsForPreview) = 0;
 
-
+	/**
+	 * Accumulate all geometric elements (currently 3D triangles, line segments, and points) in the provided ElementsInOut
+	 * by initializing vertex, edge, and face selections using the provided predicate and then accumulating elements for those selections.
+	 * ElementsInOut is not cleared.
+	 * @param bTransformToWorld if true each geometric element will be transformed to World space, based on GetLocalToWorldTransform()
+	 * @param bIsForPreview if true, geometry is being collected for a preview of selection. Selector may return simplified geometry in this case
+	 * @param bUseGroupTopology if true, attempt to use group topology when populating ElementsInOut
+	 * @param Predicate if true for a given element type and element ID, this element will be collected, otherwise this element will be skipped.
+	 */
+	virtual void AccumulateElementsFromPredicate(
+		FGeometrySelectionElements& ElementsInOut,
+		bool bTransformToWorld,
+		bool bIsForPreview,
+		bool bUseGroupTopology,
+		TFunctionRef<bool(UE::Geometry::EGeometryElementType, UE::Geometry::FGeoSelectionID)> Predicate
+	) = 0;
+	
 	/**
 	 * Create and initialize a IGeometrySelectionTransformer for the provided Selection.
 	 * IGeometrySelector retains ownership of the active Transformer, it should not be

@@ -19,6 +19,7 @@
 #include "UObject/StructOnScope.h"
 #include "PropertyPairsMap.h"
 #include "ComponentInstanceDataCache.h"
+#include "Experimental/ConcurrentLinearAllocator.h"
 #include "ActorComponent.generated.h"
 
 struct FTypedElementHandle;
@@ -31,6 +32,7 @@ class ULevel;
 class UWorld;
 class UPrimitiveComponent;
 struct FSimpleMemberReference;
+class IPrimitiveComponent;
 
 ENGINE_API extern int32 GEnableDeferredPhysicsCreation;
 
@@ -47,12 +49,21 @@ public:
 		AddPrimitiveBatches.Add(PrimitiveComponent);
 	}
 
+	void AddSendRenderDynamicData(UPrimitiveComponent* PrimitiveComponent)
+	{
+		checkSlow(!SendRenderDynamicDataPrimitives.Contains(PrimitiveComponent));
+		SendRenderDynamicDataPrimitives.Add(PrimitiveComponent);
+	}
+
+	ENGINE_API static void SendRenderDynamicData(FRegisterComponentContext* Context, UPrimitiveComponent* PrimitiveComponent);
+
 	int32 Count() const { return AddPrimitiveBatches.Num(); }
 	void Process();
 
 private:
 	UWorld* World;
-	TArray<UPrimitiveComponent*> AddPrimitiveBatches;
+	TArray<UPrimitiveComponent*, FConcurrentLinearArrayAllocator> AddPrimitiveBatches;
+	TArray<UPrimitiveComponent*, FConcurrentLinearArrayAllocator> SendRenderDynamicDataPrimitives;
 };
 
 #if WITH_EDITOR
@@ -73,22 +84,22 @@ enum class EUpdateTransformFlags : int32
 	OnlyUpdateIfUsingSocket = 0x4	
 };
 
-CONSTEXPR inline EUpdateTransformFlags operator|(EUpdateTransformFlags Left, EUpdateTransformFlags Right)
+constexpr inline EUpdateTransformFlags operator|(EUpdateTransformFlags Left, EUpdateTransformFlags Right)
 {
 	return static_cast<EUpdateTransformFlags> ( static_cast<int32> (Left) | static_cast<int32> (Right) );
 }
 
-CONSTEXPR inline EUpdateTransformFlags operator&(EUpdateTransformFlags Left, EUpdateTransformFlags Right)
+constexpr inline EUpdateTransformFlags operator&(EUpdateTransformFlags Left, EUpdateTransformFlags Right)
 {
 	return static_cast<EUpdateTransformFlags> (static_cast<int32> (Left) & static_cast<int32> (Right));
 }
 
-CONSTEXPR inline bool operator !(EUpdateTransformFlags Value)
+constexpr inline bool operator !(EUpdateTransformFlags Value)
 {
 	return Value == EUpdateTransformFlags::None;
 }
 
-CONSTEXPR inline EUpdateTransformFlags operator ~(EUpdateTransformFlags Value)
+constexpr inline EUpdateTransformFlags operator ~(EUpdateTransformFlags Value)
 {
 	return static_cast<EUpdateTransformFlags>(~static_cast<int32>(Value));
 }
@@ -98,6 +109,7 @@ FORCEINLINE EUpdateTransformFlags SkipPhysicsToEnum(bool bSkipPhysics){ return b
 
 class FSceneInterface;
 extern ENGINE_API void UpdateAllPrimitiveSceneInfosForSingleComponent(UActorComponent* InComponent, TSet<FSceneInterface*>* InScenesToUpdateAllPrimitiveSceneInfosForBatching = nullptr);
+extern ENGINE_API void UpdateAllPrimitiveSceneInfosForSingleComponentInterface(IPrimitiveComponent* InComponent, TSet<FSceneInterface*>* InScenesToUpdateAllPrimitiveSceneInfosForBatching = nullptr);
 extern ENGINE_API void UpdateAllPrimitiveSceneInfosForScenes(TSet<FSceneInterface*> ScenesToUpdateAllPrimitiveSceneInfos);
 
 class UActorComponent;
@@ -145,6 +157,13 @@ protected:
 	UPROPERTY(EditAnywhere, AdvancedDisplay, Instanced, Category = AssetUserData)
 	TArray<TObjectPtr<UAssetUserData>> AssetUserData;
 
+#if WITH_EDITORONLY_DATA
+	/** Array of user data stored with the component */
+	UPROPERTY(EditAnywhere, AdvancedDisplay, Instanced, Category = AssetUserData)
+	TArray<TObjectPtr<UAssetUserData>> AssetUserDataEditorOnly;
+#endif
+
+
 private:
 	/** Used for fast removal of end of frame update */
 	int32 MarkedForEndOfFrameUpdateArrayIndex;
@@ -161,6 +180,14 @@ protected:
 
 	/** If the render state is currently created for this component */
 	uint8 bRenderStateCreated:1;
+
+	/**
+	 * Render state is being recreated for this component.  Useful if a component wants to preserve certain render state across recreate -- set before a
+	 * call to DestroyRenderState_Concurrent and cleared after the corresponding call to CreateRenderState_Concurrent.  By design, only set for re-creation
+	 * due to MarkRenderStateDirty, not RecreateRenderStateContext variations.  The latter are used for editor operations, file loads, or bulk setting
+	 * changes, which are assumed to potentially change render data in a way that could make preserved render state incompatible.
+	 */
+	uint8 bRenderStateRecreating:1;
 
 	/** If the physics state is currently created for this component */
 	uint8 bPhysicsStateCreated:1;
@@ -619,10 +646,10 @@ public:
 	/** Register all replication fragments */
 	ENGINE_API virtual void RegisterReplicationFragments(UE::Net::FFragmentRegistrationContext& Context, UE::Net::EFragmentRegistrationFlags RegistrationFlags) override;
 	
-	/** Called when we want to start replicating this component */
+	/** Called when we want to start replicating this component, should not be called explicitly.*/
 	ENGINE_API virtual void BeginReplication();
 
-	/** Tell component to end replication */
+	/** Tell component to end replication, should not be called explicitly. */
 	ENGINE_API virtual void EndReplication();
 #endif // UE_WITH_IRIS
 
@@ -666,6 +693,9 @@ protected:
 	 * Called when a component is unregistered. Called after DestroyRenderState_Concurrent and OnDestroyPhysicsState are called.
 	 */
 	ENGINE_API virtual void OnUnregister();
+
+	/** Precache all PSOs which can be used by the actor component */
+	virtual void PrecachePSOs() {}
 
 	/** Return true if CreateRenderState() should be called */
 	virtual bool ShouldCreateRenderState() const 
@@ -963,6 +993,12 @@ public:
 		return bRenderStateCreated;
 	}
 
+	/** Returns true if the render 'state' is being recreated for this component (see additional comments on variable above) */
+	bool IsRenderStateRecreating() const
+	{
+		return bRenderStateRecreating;
+	}
+
 	/** Returns true if the physics 'state' (e.g. physx bodies) are created for this component */
 	bool IsPhysicsStateCreated() const
 	{
@@ -980,6 +1016,9 @@ public:
 
 	/** See if this component is in the persistent level */
 	ENGINE_API bool ComponentIsInPersistentLevel(bool bIncludeLevelStreamingPersistent) const;
+
+	/** Called on each component when the Actor's visibility state changes */
+	virtual void OnActorVisibilityChanged() { MarkRenderStateDirty(); }
 
 	/** Called on each component when the Actor's bEnableCollisionChanged flag changes */
 	virtual void OnActorEnableCollisionChanged() {}
@@ -1036,6 +1075,7 @@ public:
 	virtual void SetPackageExternal(bool bExternal, bool bShouldDirty) {}
 	virtual FBox GetStreamingBounds() const { return FBox(ForceInit); }
 	virtual bool ForceActorNonSpatiallyLoaded() const { return false; }
+	virtual bool ForceActorNoDataLayers() const { return false; }
 #endif // WITH_EDITOR
 	//~ End UObject Interface.
 
@@ -1043,6 +1083,7 @@ public:
 	ENGINE_API virtual void AddAssetUserData(UAssetUserData* InUserData) override;
 	ENGINE_API virtual void RemoveUserDataOfClass(TSubclassOf<UAssetUserData> InUserDataClass) override;
 	ENGINE_API virtual UAssetUserData* GetAssetUserDataOfClass(TSubclassOf<UAssetUserData> InUserDataClass) override;
+	ENGINE_API virtual const TArray<UAssetUserData*>* GetAssetUserDataArray() const override;
 	//~ End IInterface_AssetUserData Interface
 
 	//~ Begin IInterface_ActorSubobject Interface

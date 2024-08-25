@@ -70,12 +70,19 @@ UTransformGizmo* UE::SkeletalMeshGizmoUtils::CreateTransformGizmo(UInteractiveTo
 	}
 
 	static const FString InstanceIdentifier;
-	UInteractiveGizmo* NewGizmo = GizmoManager->CreateGizmo(
-		USkeletalMeshGizmoContextObject::TransformBuilderIdentifier(), InstanceIdentifier, Owner);
+	UTransformGizmo* NewGizmo = Cast<UTransformGizmo>( GizmoManager->CreateGizmo(
+		USkeletalMeshGizmoContextObject::TransformBuilderIdentifier(), InstanceIdentifier, Owner) );
 
-	ensure(NewGizmo);
+	if (ensure(NewGizmo))
+	{
+		GizmoManager->OnGizmosParametersChangedDelegate().AddUObject(NewGizmo, &UTransformGizmo::OnParametersChanged);
+		if (GizmoManager->GetDefaultGizmosParameters())
+		{
+			NewGizmo->OnParametersChanged(*GizmoManager->GetDefaultGizmosParameters());
+		}
+	}
 	
-	return Cast<UTransformGizmo>(NewGizmo);
+	return NewGizmo;
 }
 
 const FString& USkeletalMeshGizmoContextObject::TransformBuilderIdentifier()

@@ -2,6 +2,7 @@
 
 #include "WorldPartition/LoaderAdapter/LoaderAdapterActorList.h"
 #include "WorldPartition/WorldPartition.h"
+#include "WorldPartition/WorldPartitionActorDescInstance.h"
 #include "Engine/Level.h"
 #include "Engine/World.h"
 
@@ -64,21 +65,14 @@ void FLoaderAdapterActorList::RemoveActors(const TArray<FWorldPartitionHandle>& 
 
 	for (const FWorldPartitionHandle& ActorHandle : ActorHandles)
 	{
-		if (ActorHandle->IsContainerInstance())
+		if (ActorHandle->IsChildContainerInstance())
 		{
-			FWorldPartitionActorDesc::FContainerInstance ContainerInstance;
-			if (ActorHandle->GetContainerInstance(ContainerInstance))
+			if (UWorldPartition* ContainerWorldPartition = GetLoadedChildWorldPartition(ActorHandle); ContainerWorldPartition && ContainerWorldPartition->IsStreamingEnabledInEditor())
 			{
-				if (ContainerInstance.bSupportsPartialEditorLoading)
+				for (FActorDescContainerInstanceCollection::TIterator<> Iterator(ContainerWorldPartition); Iterator; ++Iterator)
 				{
-					if (UWorldPartition* ContainerWorldPartition = ContainerInstance.LoadedLevel ? ContainerInstance.LoadedLevel->GetWorldPartition() : nullptr)
-					{
-						for (FActorDescContainerCollection::TIterator<> ActorDescIterator(ContainerWorldPartition); ActorDescIterator; ++ActorDescIterator)
-						{
-							FWorldPartitionHandle SubActorHandle(ContainerWorldPartition, ActorDescIterator->GetGuid());
-							ActorsToRemove.Add(SubActorHandle);
-						}
-					}
+					FWorldPartitionHandle SubActorHandle(ContainerWorldPartition, Iterator->GetGuid());
+					ActorsToRemove.Add(SubActorHandle);
 				}
 			}
 		}

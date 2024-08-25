@@ -1233,7 +1233,7 @@ public:
 	 * @param CursorWidget - the widget to set the cursor to
 	 */
 	UFUNCTION(BlueprintCallable, Category="Game|Player")
-	ENGINE_API void SetMouseCursorWidget(EMouseCursor::Type Cursor, class UUserWidget* CursorWidget);
+	ENGINE_API void SetMouseCursorWidget(EMouseCursor::Type Cursor, UPARAM(Required) class UUserWidget* CursorWidget);
 
 	/** Set the view target
 	 * @param A - new actor to set as view target
@@ -2242,150 +2242,253 @@ private:
 	FString CurrentInputModeDebugString;
 #endif
 
-public: 
+public:
 
 	/**
+	 * DEPRECATED 5.4, physics frame offset and time dilation handled via ClientAckTimeDilation() and ClientSetupAsyncPhysicsTimestamp()
 	 * Frame number exchange. This doesn't inherently do anything but is used by the network prediction physics system.
 	 * This may be moved out at some point.
-	 * 
-	 * This is meant ot provide a mechanism for client side prediction to correlate client input and server frame numbers.
+	 *
+	 * This is meant to provide a mechanism for client side prediction to correlate client input and server frame numbers.
 	 * Frame is a loose concept here. It doesn't necessary mean GFrameNumber. Its just an arbitrary increasing sequence of numbers that is used
-	 * to label disrete units of client->Server input. For example the main thread may tick at a high variable rate but input is generated at a fixed
+	 * to label discrete units of client->Server input. For example the main thread may tick at a high variable rate but input is generated at a fixed
 	 * step interval.
 	 */
-
-	struct FInputCmdBuffer
+	
+	struct UE_DEPRECATED(5.4, "Deprecated for not being used in physics frame offset calculation anymore and will get removed eventually. Use GetPhysicsTimestamp() and GetNetworkPhysicsTickOffset() for the physics frame offset which is automatically kept in sync by time dilation while Physics Prediction in Project Settings is enabled. Recommended when using the new flow: Set p.net.CmdOffsetEnabled = 0 to stop the legacy frame offset logic from running in the background.")
+		FInputCmdBuffer
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		int32 HeadFrame() const { return LastWritten; }
 		int32 TailFrame() const { return FMath::Max(0, LastWritten - Buffer.Num() + 1); }
 		TArray<uint8>& Write(int32 Frame) { LastWritten = FMath::Max(Frame, LastWritten); return Buffer[Frame % Buffer.Num()]; }
 		const TArray<uint8>& Get(int32 Frame) const { return Buffer[Frame % Buffer.Num()]; }
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	private:
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		int32 LastWritten = INDEX_NONE;
 		TStaticArray<TArray<uint8>, 16> Buffer;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+	public:
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
+		FInputCmdBuffer() = default;
+		~FInputCmdBuffer() = default;
+		FInputCmdBuffer(const FInputCmdBuffer&) = default;
+		FInputCmdBuffer(FInputCmdBuffer&&) = default;
+		FInputCmdBuffer& operator=(const FInputCmdBuffer&) = default;
+		FInputCmdBuffer& operator=(FInputCmdBuffer&&) = default;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 	};
 
-	FInputCmdBuffer& GetInputBuffer() { return InputBuffer; }
-
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	UE_DEPRECATED(5.4, "Deprecated for not being used in physics frame offset calculation anymore and will get removed eventually. Use GetPhysicsTimestamp() and GetNetworkPhysicsTickOffset() for the physics frame offset which is automatically kept in sync by time dilation while Physics Prediction in Project Settings is enabled. Recommended when using the new flow: Set p.net.CmdOffsetEnabled = 0 to stop the legacy frame offset logic from running in the background.")
+	FInputCmdBuffer& GetInputBuffer() { return InputBuffer_DEPRECATED; }
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	
 	// -------------------------------------------------------------------------
 	// Client
 	// -------------------------------------------------------------------------
-
-	struct FClientFrameInfo
+	
+	/** DEPRECATED 5.4, physics frame offset and time dilation handled via ClientAckTimeDilation() and ClientSetupAsyncPhysicsTimestamp() */
+	struct UE_DEPRECATED(5.4, "Deprecated for not being used in physics frame offset calculation anymore and will get removed eventually. Use GetPhysicsTimestamp() and GetNetworkPhysicsTickOffset() for the physics frame offset which is automatically kept in sync by time dilation while Physics Prediction in Project Settings is enabled. Recommended when using the new flow: Set p.net.CmdOffsetEnabled = 0 to stop the legacy frame offset logic from running in the background.")
+		FClientFrameInfo
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		int32 LastRecvInputFrame = INDEX_NONE;	// The latest inputcmd that the server acknowledged receiving, but not yet processed (this is our frame number that we gave them)
 		int32 LastProcessedInputFrame = INDEX_NONE; // The latest InputCmd that the server actually processed (this is our frame number that we gave them)
 		int32 LastRecvServerFrame = INDEX_NONE; // the latest ServerFrame number that the processing of LastRecvInputFrame happened on (Server's local frame number)
-
 		int8 QuantizedTimeDilation = 1; // Server sent this to this client, telling them to dilate local time either catch up or slow down
 		float TargetNumBufferedCmds = 0.f;
-
 		int32 GetLocalFrameOffset() const { return LastProcessedInputFrame - LastRecvServerFrame; }
-	};	
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
+		FClientFrameInfo() = default;
+		~FClientFrameInfo() = default;
+		FClientFrameInfo(const FClientFrameInfo&) = default;
+		FClientFrameInfo(FClientFrameInfo&&) = default;
+		FClientFrameInfo& operator=(const FClientFrameInfo&) = default;
+		FClientFrameInfo& operator=(FClientFrameInfo&&) = default;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	};
+	
 	// Client pushes input data locally. RPC is sent here but also includes redundant data
+	UE_DEPRECATED(5.4, "Deprecated for not being used in physics frame offset calculation anymore and will get removed eventually. Use GetPhysicsTimestamp() and GetNetworkPhysicsTickOffset() for the physics frame offset which is automatically kept in sync by time dilation while Physics Prediction in Project Settings is enabled. Recommended when using the new flow: Set p.net.CmdOffsetEnabled = 0 to stop the legacy frame offset logic from running in the background.")
 	ENGINE_API void PushClientInput(int32 ClientInputFrame, TArray<uint8>& Data);
-
+	
 	// Client says "Here is input frame number X" (and then calls other RPCs to deliver InputCmd payload)
+	UE_DEPRECATED(5.4, "Deprecated for not being used in physics frame offset calculation anymore and will get removed eventually. Use GetPhysicsTimestamp() and GetNetworkPhysicsTickOffset() for the physics frame offset which is automatically kept in sync by time dilation while Physics Prediction in Project Settings is enabled. Recommended when using the new flow: Set p.net.CmdOffsetEnabled = 0 to stop the legacy frame offset logic from running in the background.")
 	UFUNCTION(Server, unreliable)
 	ENGINE_API void ServerRecvClientInputFrame(int32 RecvClientInputFrame, const TArray<uint8>& Data);
 
-	const FClientFrameInfo& GetClientFrameInfo() const { return ClientFrameInfo; }
-	FClientFrameInfo& GetClientFrameInfo() { return ClientFrameInfo; }
+	UE_DEPRECATED(5.4, "Set via NetworkPhysicsComponent to enable networking of FInputCmdBuffer which keeps the legacy GetLocalToServerAsyncPhysicsTickOffset() and GetAsyncPhysicsTimestamp() functions updated. Use GetNetworkPhysicsTickOffset() and GetPhysicsTimestamp() instead.")
+	ENGINE_API void EnableNetworkedPhysicsInputSync(bool EnablePrediction)
+	{
+		bSyncInputsForNetworkedPhysics_DEPRECATED = EnablePrediction;
+	}
+
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	UE_DEPRECATED(5.4, "Deprecated for not being used in physics frame offset calculation anymore and will get removed eventually. Use GetPhysicsTimestamp() and GetNetworkPhysicsTickOffset() for the physics frame offset which is automatically kept in sync by time dilation while Physics Prediction in Project Settings is enabled. Recommended when using the new flow: Set p.net.CmdOffsetEnabled = 0 to stop the legacy frame offset logic from running in the background.")
+	const FClientFrameInfo& GetClientFrameInfo() const { return ClientFrameInfo_DEPRECATED; }
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	UE_DEPRECATED(5.4, "Deprecated for not being used in physics frame offset calculation anymore and will get removed eventually. Use GetPhysicsTimestamp() and GetNetworkPhysicsTickOffset() for the physics frame offset which is automatically kept in sync by time dilation while Physics Prediction in Project Settings is enabled. Recommended when using the new flow: Set p.net.CmdOffsetEnabled = 0 to stop the legacy frame offset logic from running in the background.")
+	FClientFrameInfo& GetClientFrameInfo() { return ClientFrameInfo_DEPRECATED; }
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 	// -------------------------------------------------------------------------
 	// Server
 	// -------------------------------------------------------------------------
-
-	struct FServerFrameInfo
+	
+	/** DEPRECATED 5.4, physics frame offset and time dilation handled via ClientAckTimeDilation() and ClientSetupAsyncPhysicsTimestamp() */
+	struct UE_DEPRECATED(5.4, "Deprecated for not being used in physics frame offset calculation anymore and will get removed eventually. Use GetPhysicsTimestamp() and GetNetworkPhysicsTickOffset() for the physics frame offset which is automatically kept in sync by time dilation while Physics Prediction in Project Settings is enabled. Recommended when using the new flow: Set p.net.CmdOffsetEnabled = 0 to stop the legacy frame offset logic from running in the background.")
+		FServerFrameInfo
 	{
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
 		int32 LastProcessedInputFrame = INDEX_NONE;	// The last client frame number we processed. "processed" is arbitrary and we are informed about when commands are processed via SetServerProessedInputFrame
 		int32 LastLocalFrame = INDEX_NONE; // The local frame number that we processed the latest client input frame on. Again, processed is arbitrary and set via SetServerProessedInputFrame
 		int32 LastSentLocalFrame = INDEX_NONE;	// Tracks the latest LastLocalFrame that we sent to the client. Just to prevent redundantly sending info via RPC
-
 		float TargetTimeDilation = 1.f;
 		int8 QuantizedTimeDilation = 1; // Server sets this to tell client to slowdown or speed up
 		float TargetNumBufferedCmds = 1.f; // How many buffered cmds the server thinks this client should ideally have to absorb PL and latency variance
 		bool bFault = true;
-	};
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
+		PRAGMA_DISABLE_DEPRECATION_WARNINGS
+		FServerFrameInfo() = default;
+		~FServerFrameInfo() = default;
+		FServerFrameInfo(const FServerFrameInfo&) = default;
+		FServerFrameInfo(FServerFrameInfo&&) = default;
+		FServerFrameInfo& operator=(const FServerFrameInfo&) = default;
+		FServerFrameInfo& operator=(FServerFrameInfo&&) = default;
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	};
+	
 	// We call this in ::SendClientAdjustment to tell the client what the last processed input frame was for it and on what local frame number it was processed
+	UE_DEPRECATED(5.4, "Deprecated for not being used in physics frame offset calculation anymore and will get removed eventually. Use GetPhysicsTimestamp() and GetNetworkPhysicsTickOffset() for the physics frame offset which is automatically kept in sync by time dilation while Physics Prediction in Project Settings is enabled. Recommended when using the new flow: Set p.net.CmdOffsetEnabled = 0 to stop the legacy frame offset logic from running in the background.")
 	UFUNCTION(Client, unreliable)
 	ENGINE_API void ClientRecvServerAckFrame(int32 LastProcessedInputFrame, int32 RecvServerFrameNumber, int8 TimeDilation);
-
+	
+	UE_DEPRECATED(5.4, "Deprecated for not being used in physics frame offset calculation anymore and will get removed eventually. Use GetPhysicsTimestamp() and GetNetworkPhysicsTickOffset() for the physics frame offset which is automatically kept in sync by time dilation while Physics Prediction in Project Settings is enabled. Recommended when using the new flow: Set p.net.CmdOffsetEnabled = 0 to stop the legacy frame offset logic from running in the background.")
 	UFUNCTION(Client, unreliable)
 	ENGINE_API void ClientRecvServerAckFrameDebug(uint8 NumBuffered, float TargetNumBufferedCmds);
+	
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	UE_DEPRECATED(5.4, "Deprecated for not being used in physics frame offset calculation anymore and will get removed eventually. Use GetPhysicsTimestamp() and GetNetworkPhysicsTickOffset() for the physics frame offset which is automatically kept in sync by time dilation while Physics Prediction in Project Settings is enabled. Recommended when using the new flow: Set p.net.CmdOffsetEnabled = 0 to stop the legacy frame offset logic from running in the background.")
+	FServerFrameInfo& GetServerFrameInfo() { return ServerFrameInfo_DEPRECATED; };
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
-	FServerFrameInfo& GetServerFrameInfo() { return ServerFrameInfo; };
 private:
 
-	FInputCmdBuffer InputBuffer;
-	FClientFrameInfo ClientFrameInfo;
-	FServerFrameInfo ServerFrameInfo;
+	/** Deprecated 5.4 */
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	FInputCmdBuffer InputBuffer_DEPRECATED;
+	FClientFrameInfo ClientFrameInfo_DEPRECATED;
+	FServerFrameInfo ServerFrameInfo_DEPRECATED;
+	PRAGMA_ENABLE_DEPRECATION_WARNINGS
+
+	/** Deprecated 5.4, set by NetworkPhysicsComponent to sync FInputCmdBuffer used in calculating client/server physics frame offset. */
+	bool bSyncInputsForNetworkedPhysics_DEPRECATED = false;
 
 	/** The estimated offset between the local async physics tick frame number and the server's
 	*	This is used to synchronize events that happen in the async physics tick */
-	int32 LocalToServerAsyncPhysicsTickOffset;
-
+	int32 LocalToServerAsyncPhysicsTickOffset_DEPRECATED = INDEX_NONE;
+	
 	/** The estimated offset between the server async physics tick frame number and the local's
 	*	This is used to synchronize events that happen in the async physics tick */
-	int32 ServerToLocalAsyncPhysicsTickOffset = INDEX_NONE;
-	
+	int32 ServerToLocalAsyncPhysicsTickOffset_DEPRECATED = INDEX_NONE;
+
 	/** The latest server step we've received an offset correction for. This allows us to ignore out of order corrections that arrive late */
-	int32 ClientLatestCorrectedOffsetServerStep = INDEX_NONE;
-
-	/** The latest physics step we've sent to the server. Due to async we need to avoid duplicate sends */
-	int32 ClientLatestAsyncPhysicsStepSent = INDEX_NONE;
-
-	/** The latest server step we've received a time dilation for. Needed for out of order updates */
-	int32 ClientLatestTimeDilationServerStep = INDEX_NONE;
-
-	/** The server tells the client to speed up or slow down in order to keep its buffer full */
-	float ServerAsyncPhysicsTimeDilationToSend = 1.f;
-
+	int32 ClientLatestCorrectedOffsetServerStep_DEPRECATED = INDEX_NONE;
+	
 	/** The server records the latest timestamp it has to correct. This is used to update client (which may not happen on every physics step) */
-	FAsyncPhysicsTimestamp ServerLatestTimestampToCorrect;
+	FAsyncPhysicsTimestamp ServerLatestTimestampToCorrect_DEPRECATED;
+	
+	/** The latest timestamp the client has sent to the server with prediction of which server frame it corresponds to. */
+	FAsyncPhysicsTimestamp ServerPendingTimestamp_DEPRECATED;
 
-	/** The set of timestamps the client has sent to the server. Sorted by local frame number */
-	TArray<FAsyncPhysicsTimestamp> ServerPendingTimestamps;
-
-	/** Update the tick ofsset in between the local client and the server */
-	ENGINE_API void UpdateServerAsyncPhysicsTickOffset();
-
-	UFUNCTION(Server, Unreliable)
-	ENGINE_API void ServerSendLatestAsyncPhysicsTimestamp(FAsyncPhysicsTimestamp Timestamp);
-
+	UE_DEPRECATED(5.4, "Deprecated for not being used in physics frame offset calculation anymore and will get removed eventually. Use GetPhysicsTimestamp() and GetNetworkPhysicsTickOffset() for the physics frame offset which is automatically kept in sync by time dilation while Physics Prediction in Project Settings is enabled. Recommended when using the new flow: Set p.net.CmdOffsetEnabled = 0 to stop the legacy frame offset logic from running in the background.")
 	UFUNCTION(Client, Unreliable)
 	ENGINE_API void ClientCorrectionAsyncPhysicsTimestamp(FAsyncPhysicsTimestamp Timestamp);
-
-	UFUNCTION(Client, Unreliable)
-	ENGINE_API void ClientAckTimeDilation(float TimeDilation, int32 ServerStep);
 
 	/** Update the tick offset in between the local client and the server */
 	ENGINE_API virtual void AsyncPhysicsTickActor(float DeltaTime, float SimTime) override;
 
 public:
 
-	/** Enqueues a command to run at the time specified by AsyncPhysicsTimestamp. Note that if the time specified was missed the command is triggered as soon as possible as part of the async tick.
-		These commands are all run on the game thread. If you want to run on the physics thread see FPhysicsSolverBase::RegisterSimOneShotCallback
-		If OwningObject is not null this command will only fire as long as the object is still alive. This allows a lambda to still use the owning object's data for read/write (assuming data is designed for async physics tick)
-	*/
-	ENGINE_API void ExecuteAsyncPhysicsCommand(const FAsyncPhysicsTimestamp& AsyncPhysicsTimestamp, UObject* OwningObject, const TFunction<void()>& Command, const bool bEnableResim = true);
-
 	/** Generates a timestamp for the upcoming physics step (plus any pending time). Useful for synchronizing client and server events on a specific physics step */
+	UE_DEPRECATED(5.4, "Use GetPhysicsTimestamp() and GetNetworkPhysicsTickOffset() for the physics frame offset which is automatically kept in sync by time dilation while Physics Prediction in Project Settings is enabled. Recommended when using the new flow: Set p.net.CmdOffsetEnabled = 0 to stop the legacy frame offset logic from running in the background.")
 	ENGINE_API FAsyncPhysicsTimestamp GetAsyncPhysicsTimestamp(float DeltaSeconds = 0.f);
 
 	/** Returns the current estimated offset between the local async physics step and the server. This is useful for dealing with low level synchronization.
 		In general it's recommended to use GetAsyncPhysicsTimestamp which accounts for the offset automatically*/
-	int32 GetLocalToServerAsyncPhysicsTickOffset() const { return LocalToServerAsyncPhysicsTickOffset; }
+	UE_DEPRECATED(5.4, "Use GetPhysicsTimestamp() and GetNetworkPhysicsTickOffset() for the physics frame offset which is automatically kept in sync by time dilation while Physics Prediction in Project Settings is enabled. Recommended when using the new flow: Set p.net.CmdOffsetEnabled = 0 to stop the legacy frame offset logic from running in the background.")
+	int32 GetLocalToServerAsyncPhysicsTickOffset() const { return LocalToServerAsyncPhysicsTickOffset_DEPRECATED; }
 
 	/** Returns the current estimated offset between the server async physics step and the local one. */
-	int32 GetServerToLocalAsyncPhysicsTickOffset() const { return (ServerToLocalAsyncPhysicsTickOffset != INDEX_NONE) ? ServerToLocalAsyncPhysicsTickOffset : LocalToServerAsyncPhysicsTickOffset; }
-
-	/** Set the offset between the server async physics step and the local one.*/
-	void SetServerToLocalAsyncPhysicsTickOffset( const int32 AsyncPhysicsTickOffset) { ServerToLocalAsyncPhysicsTickOffset = AsyncPhysicsTickOffset; }
+	UE_DEPRECATED(5.4, "Use GetPhysicsTimestamp() and GetNetworkPhysicsTickOffset() for the physics frame offset which is automatically kept in sync by time dilation while Physics Prediction in Project Settings is enabled. Recommended when using the new flow: Set p.net.CmdOffsetEnabled = 0 to stop the legacy frame offset logic from running in the background.")
+	int32 GetServerToLocalAsyncPhysicsTickOffset() const { return (ServerToLocalAsyncPhysicsTickOffset_DEPRECATED != INDEX_NONE) ? ServerToLocalAsyncPhysicsTickOffset_DEPRECATED : LocalToServerAsyncPhysicsTickOffset_DEPRECATED; }
 	
+	/** Set the offset between the server async physics step and the local one.*/
+	UE_DEPRECATED(5.4, "Use GetPhysicsTimestamp() and GetNetworkPhysicsTickOffset() for the physics frame offset which is automatically kept in sync by time dilation while Physics Prediction in Project Settings is enabled. Recommended when using the new flow: Set p.net.CmdOffsetEnabled = 0 to stop the legacy frame offset logic from running in the background.")
+	void SetServerToLocalAsyncPhysicsTickOffset(const int32 AsyncPhysicsTickOffset) { ServerToLocalAsyncPhysicsTickOffset_DEPRECATED = AsyncPhysicsTickOffset; }
+
+	UE_DEPRECATED(5.4, "Deprecated for not being used in physics frame offset calculation anymore and will get removed eventually. Use GetPhysicsTimestamp() and GetNetworkPhysicsTickOffset() for the physics frame offset which is automatically kept in sync by time dilation while Physics Prediction in Project Settings is enabled. Recommended when using the new flow: Set p.net.CmdOffsetEnabled = 0 to stop the legacy frame offset logic from running in the background.")
+	void UpdateServerTimestampToCorrect();
+
+private:
+
+	/** The static offset between the local async physics tick frame number and the server's, kept in sync via time-dilation
+	*	This is used to synchronize events that happen in the async physics tick */
+	int32 NetworkPhysicsTickOffset = INDEX_NONE;
+	bool bNetworkPhysicsTickOffsetAssigned = false;
+
+	/** The latest server step we've received a time dilation for. Needed for out of order updates */
+	int32 ClientLatestTimeDilationServerStep = INDEX_NONE;
+
+	/** The latest physics step we've sent to the server. Due to async we need to avoid duplicate sends */
+	int32 ClientLatestAsyncPhysicsStepSent = INDEX_NONE;
+
+	/** The latest physics step we've received from the client. */
+	int32 ServerLatestAsyncPhysicsStepReceived = INDEX_NONE;
+
+public:
+
+	/** Update the tick offset in between the local client and the server */
+	ENGINE_API void UpdateServerAsyncPhysicsTickOffset();
+
+	/** Server receives the clients FAsyncPhysicsTimestamp with its predicted ServerFrame and clients LocalFrame, to updates the time dilation needed to keep the ServerFrame prediction in sync */
+	UFUNCTION(Server, Unreliable)
+	ENGINE_API void ServerSendLatestAsyncPhysicsTimestamp(FAsyncPhysicsTimestamp Timestamp);
+
+	/** Client receives the setup of the FAsyncPhysicsTimestamp ServerFrame and LocalFrame offset from the server. */
+	UFUNCTION(Client, Reliable)
+	ENGINE_API void ClientSetupNetworkPhysicsTimestamp(FAsyncPhysicsTimestamp Timestamp);
+
+	/** Client receives the time dilation value it needs to use to keep its ServerFrame to LocalFrame offset in sync */
+	UFUNCTION(Client, Unreliable)
+	ENGINE_API void ClientAckTimeDilation(float TimeDilation, int32 ServerStep);
+
+	/** Enqueues a command to run at the time specified by AsyncPhysicsTimestamp. Note that if the time specified was missed the command is triggered as soon as possible as part of the async tick.
+	These commands are all run on the game thread. If you want to run on the physics thread see FPhysicsSolverBase::RegisterSimOneShotCallback
+	If OwningObject is not null this command will only fire as long as the object is still alive. This allows a lambda to still use the owning object's data for read/write (assuming data is designed for async physics tick)
+	*/
+	ENGINE_API void ExecuteAsyncPhysicsCommand(const FAsyncPhysicsTimestamp& AsyncPhysicsTimestamp, UObject* OwningObject, const TFunction<void()>& Command, const bool bEnableResim = true);
+
+	/** Generates a timestamp for the upcoming physics step (plus any pending time). Useful for synchronizing client and server events on a specific physics step 
+	* On the server LocalFrame and ServerFrame are the same, on the client LocalFrame is the current physics frame and ServerFrame is the server-side frame that the LocalFrame corresponds.
+	*/
+	ENGINE_API FAsyncPhysicsTimestamp GetPhysicsTimestamp(float DeltaSeconds = 0.0f);
+
+	/** Get the physics frame number offset between Local and Server, recommended is to use GetPhysicsTimestamp() which takes this offset into account on the client for the ServerFrame value */
+	int32 GetNetworkPhysicsTickOffset() const { return NetworkPhysicsTickOffset; }
+
+	/** True if the NetworkPhysicsTickOffset is setup, before this is setup the GetNetworkPhysicsTickOffset() and GetPhysicsTimestamp() functions will not return valid results */
+	bool GetNetworkPhysicsTickOffsetAssigned() const { return bNetworkPhysicsTickOffsetAssigned; }
+
 };
 
 #if UE_ENABLE_INCLUDE_ORDER_DEPRECATED_IN_5_2

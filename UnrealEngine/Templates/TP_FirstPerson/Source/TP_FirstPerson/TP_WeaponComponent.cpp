@@ -9,6 +9,9 @@
 #include "Kismet/GameplayStatics.h"
 #include "EnhancedInputComponent.h"
 #include "EnhancedInputSubsystems.h"
+#include "Animation/AnimInstance.h"
+#include "Engine/LocalPlayer.h"
+#include "Engine/World.h"
 
 // Sets default values for this component's properties
 UTP_WeaponComponent::UTP_WeaponComponent()
@@ -63,22 +66,22 @@ void UTP_WeaponComponent::Fire()
 	}
 }
 
-void UTP_WeaponComponent::AttachWeapon(ATP_FirstPersonCharacter* TargetCharacter)
+bool UTP_WeaponComponent::AttachWeapon(ATP_FirstPersonCharacter* TargetCharacter)
 {
 	Character = TargetCharacter;
 
-	// Check that the character is valid, and has no rifle yet
-	if (Character == nullptr || Character->GetHasRifle())
+	// Check that the character is valid, and has no weapon component yet
+	if (Character == nullptr || Character->GetInstanceComponents().FindItemByClass<UTP_WeaponComponent>())
 	{
-		return;
+		return false;
 	}
 
 	// Attach the weapon to the First Person Character
 	FAttachmentTransformRules AttachmentRules(EAttachmentRule::SnapToTarget, true);
 	AttachToComponent(Character->GetMesh1P(), AttachmentRules, FName(TEXT("GripPoint")));
-	
-	// switch bHasRifle so the animation blueprint can switch to another animation set
-	Character->SetHasRifle(true);
+
+	// add the weapon as an instance component to the character
+	Character->AddInstanceComponent(this);
 
 	// Set up action bindings
 	if (APlayerController* PlayerController = Cast<APlayerController>(Character->GetController()))
@@ -95,6 +98,8 @@ void UTP_WeaponComponent::AttachWeapon(ATP_FirstPersonCharacter* TargetCharacter
 			EnhancedInputComponent->BindAction(FireAction, ETriggerEvent::Triggered, this, &UTP_WeaponComponent::Fire);
 		}
 	}
+
+	return true;
 }
 
 void UTP_WeaponComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)

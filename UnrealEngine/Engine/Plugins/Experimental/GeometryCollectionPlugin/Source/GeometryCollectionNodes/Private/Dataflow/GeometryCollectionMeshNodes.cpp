@@ -173,7 +173,7 @@ void FCollectionToMeshDataflowNode::Evaluate(Dataflow::FContext& Context, const 
 		{
 			if (TUniquePtr<FGeometryCollection> GeomCollection = TUniquePtr<FGeometryCollection>(InCollection.NewCopy<FGeometryCollection>()))
 			{
-				const TManagedArray<FTransform>& BoneTransforms = InCollection.GetAttribute<FTransform>("Transform", FGeometryCollection::TransformGroup);
+				const TManagedArray<FTransform3f>& BoneTransforms = InCollection.GetAttribute<FTransform3f>("Transform", FGeometryCollection::TransformGroup);
 
 				TArray<int32> TransformIndices;
 				TransformIndices.AddUninitialized(BoneTransforms.Num());

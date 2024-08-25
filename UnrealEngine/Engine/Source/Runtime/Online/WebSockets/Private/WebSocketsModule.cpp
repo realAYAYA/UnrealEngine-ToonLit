@@ -33,6 +33,11 @@ void FWebSocketsModule::StartupModule()
 	// Default configuration values can be found in BaseEngine.ini
 	TArray<FString> Protocols;
 	GConfig->GetArray(TEXT("WebSockets"), TEXT("WebSocketsProtocols"), Protocols, GEngineIni);
+	if (Protocols.IsEmpty())
+	{
+		Protocols.Add(TEXT("ws"));
+		Protocols.Add(TEXT("wss"));
+	}
 
 	WebSocketsManager = new FPlatformWebSocketsManager;
 	WebSocketsManager->InitWebSockets(Protocols);

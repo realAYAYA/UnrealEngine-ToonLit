@@ -56,9 +56,10 @@ namespace AutomationTool.Tasks
 		public bool AllowXGE = true;
 
 		/// <summary>
-		/// Whether to allow using the parallel executor for this compile.
+		/// No longer necessary as UnrealBuildTool is run to compile targets.
 		/// </summary>
 		[TaskParameter(Optional = true)]
+		[Obsolete]
 		public bool AllowParallelExecutor = true;
 
 		/// <summary>
@@ -101,11 +102,6 @@ namespace AutomationTool.Tasks
 		bool bAllowXGE = true;
 
 		/// <summary>
-		/// Whether to allow using the parallel executor for this job
-		/// </summary>
-		bool bAllowParallelExecutor = true;
-
-		/// <summary>
 		/// Whether to allow using all available cores for this job, when bAllowXGE is false
 		/// </summary>
 		bool bAllowAllCores = false;
@@ -138,15 +134,10 @@ namespace AutomationTool.Tasks
 				{
 					return false;
 				}
-				if (!bAllowParallelExecutor || !CompileTask.Parameters.AllowParallelExecutor)
-				{
-					return false;
-				}
 			}
 
 			CompileTaskParameters Parameters = CompileTask.Parameters;
 			bAllowXGE &= Parameters.AllowXGE;
-			bAllowParallelExecutor &= Parameters.AllowParallelExecutor;
 			bAllowAllCores &= Parameters.AllowAllCores;
 
 			UnrealBuild.BuildTarget Target = new UnrealBuild.BuildTarget { TargetName = Parameters.Target, Platform = Parameters.Platform, Config = Parameters.Configuration, UprojectPath = CompileTask.FindProjectFile(), UBTArgs = (Parameters.Arguments ?? ""), Clean = Parameters.Clean };
@@ -176,9 +167,8 @@ namespace AutomationTool.Tasks
 			Dictionary<UnrealBuild.BuildTarget, BuildManifest> TargetToManifest = new Dictionary<UnrealBuild.BuildTarget,BuildManifest>();
 			UnrealBuild Builder = new UnrealBuild(Job.OwnerCommand);
 
-			bool bCanUseParallelExecutor = (BuildHostPlatform.Current.Platform == UnrealTargetPlatform.Win64 && bAllowParallelExecutor);	// parallel executor is only available on Windows as of 2016-09-22
 			bool bAllCores = (CommandUtils.IsBuildMachine || bAllowAllCores);	// Enable using all cores if this is a build agent or the flag was passed in to the task and XGE is disabled.
-			Builder.Build(Agenda, InDeleteBuildProducts: null, InUpdateVersionFiles: false, InForceNoXGE: !bAllowXGE, InUseParallelExecutor: bCanUseParallelExecutor, InAllCores: bAllCores, InTargetToManifest: TargetToManifest);
+			Builder.Build(Agenda, InDeleteBuildProducts: null, InUpdateVersionFiles: false, InForceNoXGE: !bAllowXGE, InAllCores: bAllCores, InTargetToManifest: TargetToManifest);
 
 			UnrealBuild.CheckBuildProducts(Builder.BuildProductFiles);
 
@@ -291,7 +281,7 @@ namespace AutomationTool.Tasks
 		{
 			//
 			// Don't do any logic here. You have to do it in the ctor or a getter
-			//  otherwise you break the ParallelExecutor pathway, which doesn't call this function!
+			//  otherwise you break the ITaskExecutor pathway, which doesn't call this function!
 			//
 			return GetExecutor().ExecuteAsync(Job, BuildProducts, TagNameToFileSet);
 		}
@@ -381,10 +371,9 @@ namespace AutomationTool.Tasks
 		/// <param name="Project">The project to compile with</param>
 		/// <param name="Arguments">Additional arguments for UnrealBuildTool</param>
 		/// <param name="AllowXGE">Whether to allow using XGE for compilation</param>
-		/// <param name="AllowParallelExecutor">Whether to allow using the parallel executor for this compile</param>
 		/// <param name="Clean">Whether to allow cleaning this target. If unspecified, targets are cleaned if the -Clean argument is passed on the command line</param>
 		/// <returns>Build products from the compile</returns>
-		public static async Task<FileSet> CompileAsync(string Target, UnrealTargetPlatform Platform, UnrealTargetConfiguration Configuration, FileReference Project = null, string Arguments = null, bool AllowXGE = true, bool AllowParallelExecutor = true, bool? Clean = null)
+		public static async Task<FileSet> CompileAsync(string Target, UnrealTargetPlatform Platform, UnrealTargetConfiguration Configuration, FileReference Project = null, string Arguments = null, bool AllowXGE = true, bool? Clean = null)
 		{
 			CompileTaskParameters Parameters = new CompileTaskParameters();
 			Parameters.Target = Target;
@@ -393,7 +382,6 @@ namespace AutomationTool.Tasks
 			Parameters.Project = Project?.FullName;
 			Parameters.Arguments = Arguments;
 			Parameters.AllowXGE = AllowXGE;
-			Parameters.AllowParallelExecutor = AllowParallelExecutor;
 			Parameters.Clean = Clean;
 			return await ExecuteAsync(new CompileTask(Parameters));
 		}

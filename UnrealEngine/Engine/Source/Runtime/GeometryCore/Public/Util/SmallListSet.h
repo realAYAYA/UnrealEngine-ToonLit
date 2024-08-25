@@ -189,6 +189,12 @@ public:
 	GEOMETRYCORE_API void Enumerate(int32 ListIndex, TFunctionRef<void(int32)> ApplyFunc) const;
 
 	/**
+	 * Call ApplyFunc on each element of the list at ListIndex, until ApplyFunc returns false
+	 * @return true if all elements were processed and ApplyFunc never returned false
+	 */
+	bool EnumerateEarlyOut(int32 ListIndex, TFunctionRef<bool(int32)> ApplyFunc) const;
+
+	/**
 	 * Serialization operator for FSmallListSet.
 	 *
 	 * @param Ar Archive to serialize with.

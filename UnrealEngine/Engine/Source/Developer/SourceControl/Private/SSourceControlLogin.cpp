@@ -108,7 +108,7 @@ void SSourceControlLogin::Construct(const FArguments& InArgs)
 						.Padding(0)
 						[
 							SNew(SBox)
-							.HeightOverride(250)
+							.HeightOverride(250.0f)
 							[
 								MessageLogModule.CreateLogListingWidget(MessageLogListing)
 							]
@@ -190,8 +190,23 @@ FReply SSourceControlLogin::OnAcceptSettings()
 	return FReply::Handled();
 }
 
+bool SSourceControlLogin::ConfirmDisableSourceControl() const
+{
+	FSourceControlModule& SourceControlModule = FSourceControlModule::Get();
+	if (SourceControlModule.GetSourceControlProviderChanging().IsBound())
+	{
+		return SourceControlModule.GetSourceControlProviderChanging().Execute();
+	}
+	return true;
+}
+
 FReply SSourceControlLogin::OnDisableSourceControl()
 {
+	if (ConfirmDisableSourceControl() == false) // The user has decided to abort the operation
+	{
+		return FReply::Handled();
+	}
+
 	FSourceControlModule& SourceControlModule = FSourceControlModule::Get();
 	SourceControlModule.SetProvider("None");
 	if(ParentWindowPtr.IsValid())

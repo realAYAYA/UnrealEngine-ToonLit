@@ -3,9 +3,11 @@
 #include "MuCOE/SMutableImageViewer.h"
 
 #include "Brushes/SlateImageBrush.h"
-#include "MuCO/CustomizableInstancePrivateData.h"
 #include "MuT/TypeInfo.h"
 #include "TextureResource.h"
+#include "MuCO/CustomizableObject.h"
+#include "MuCO/CustomizableObjectPrivate.h"
+#include "MuCO/CustomizableObjectInstancePrivate.h"
 #include "Widgets/Input/SNumericEntryBox.h"
 #include "Widgets/Input/SSegmentedControl.h"
 
@@ -59,7 +61,8 @@ void SSimpleTextureViewer::SetTexture( UTexture* InTexture)
 	FVector2D Size(Resource->GetSizeX(), Resource->GetSizeY());
 	TextureBrush = MakeShared<FSlateImageBrush>(Texture, Size,
 		FSlateColor(FLinearColor(1, 1, 1, 1)), ESlateBrushTileType::NoTile,
-		ESlateBrushImageType::Linear);
+		ESlateBrushImageType::Linear
+);
 
 }
 
@@ -219,6 +222,12 @@ void SMutableImageViewer::Construct(const FArguments& InArgs)
 				.Text(FText::FromString(TEXT("RGBA")))
 				+ SSegmentedControl<EMutableImageChannels>::Slot(EMutableImageChannels::RGB)
 				.Text(FText::FromString(TEXT("RGB")))
+				+ SSegmentedControl<EMutableImageChannels>::Slot(EMutableImageChannels::R)
+				.Text(FText::FromString(TEXT("R")))
+				+ SSegmentedControl<EMutableImageChannels>::Slot(EMutableImageChannels::G)
+				.Text(FText::FromString(TEXT("G")))
+				+ SSegmentedControl<EMutableImageChannels>::Slot(EMutableImageChannels::B)
+				.Text(FText::FromString(TEXT("B")))
 				+ SSegmentedControl<EMutableImageChannels>::Slot(EMutableImageChannels::A)
 				.Text(FText::FromString(TEXT("A")))
 			]
@@ -251,14 +260,37 @@ void SMutableImageViewer::Tick(const FGeometry& AllottedGeometry, const double I
 
 		if (MutableImage && MutableImage->GetSizeX()>0 && MutableImage->GetSizeY()>0)
 		{
+			// If the image format is not supported in the editor platform (for instance, it is a mobile-specific format)
+			// convert the mutable image to a generic format so that it can be previewed.
+			mu::Ptr<const mu::Image> ImageToConvert = MutableImage;
+
+			// \TODO: This test is a bit weak
+			if (MutableImage->GetFormat() >= mu::EImageFormat::IF_ASTC_4x4_RGB_LDR
+				&&
+				MutableImage->GetFormat() <= mu::EImageFormat::IF_ASTC_10x10_RG_LDR)
+			{
+				mu::FImageOperator ImOp = mu::FImageOperator::GetDefault(mu::FImageOperator::FImagePixelFormatFunc());
+				int32 Quality = 4;
+				ImageToConvert = ImOp.ImagePixelFormat(Quality, MutableImage.get(), mu::GetUncompressedFormat(MutableImage->GetFormat()) );
+			}
+
 			// Should we extract a single channel?
-			int32 ExtractChannel = (GetImageChannels()==EMutableImageChannels::A) ? 3 : -1;
+			int32 ExtractChannel = -1;
+			switch (GetImageChannels())
+			{
+			case EMutableImageChannels::R: ExtractChannel = 0; break;
+			case EMutableImageChannels::G: ExtractChannel = 1; break;
+			case EMutableImageChannels::B: ExtractChannel = 2; break;
+			case EMutableImageChannels::A: ExtractChannel = 3; break;
+			default:
+				break;
+			}
 
 			FMutableModelImageProperties Props;
-			Props.Filter = TF_Bilinear;
+			Props.Filter = TF_Nearest;
 			Props.SRGB = true;
 			Props.LODBias = 0;
-			UCustomizableInstancePrivateData::ConvertImage(UnrealImage, MutableImage, Props, CurrentVisibleLOD, ExtractChannel);
+			ConvertImage(UnrealImage, ImageToConvert, Props, CurrentVisibleLOD, ExtractChannel);
 			UnrealImage->NeverStream = true;
 			UnrealImage->UpdateResource();
 		}

@@ -137,10 +137,16 @@ public:
 	ENGINE_API int32 GetVertexBufferSize(uint32 Stride, uint32 NumElements) const;
 	ENGINE_API virtual ~FDynamicMeshBufferAllocator();
 
-	ENGINE_API virtual FBufferRHIRef AllocIndexBuffer(uint32 NumElements);
+	ENGINE_API virtual FBufferRHIRef AllocIndexBuffer(FRHICommandListBase& RHICmdList, uint32 NumElements);
 	ENGINE_API virtual void ReleaseIndexBuffer(FBufferRHIRef& IndexBufferRHI);
-	ENGINE_API virtual FBufferRHIRef AllocVertexBuffer(uint32 Stride, uint32 NumElements);
+	ENGINE_API virtual FBufferRHIRef AllocVertexBuffer(FRHICommandListBase& RHICmdList, uint32 Stride, uint32 NumElements);
 	ENGINE_API virtual void ReleaseVertexBuffer(FBufferRHIRef& VertexBufferRHI);
+
+	UE_DEPRECATED(5.4, "AllocIndexBuffer requires a command list.")
+	ENGINE_API virtual FBufferRHIRef AllocIndexBuffer(uint32 NumElements) final;
+
+	UE_DEPRECATED(5.4, "AllocVertexBuffer requires a command list.")
+	ENGINE_API virtual FBufferRHIRef AllocVertexBuffer(uint32 Stride, uint32 NumElements) final;
 };
 
 /**

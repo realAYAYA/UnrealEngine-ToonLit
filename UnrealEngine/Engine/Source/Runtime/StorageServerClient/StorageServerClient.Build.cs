@@ -11,7 +11,8 @@ public class StorageServerClient : ModuleRules
                 "Core",
                 "CoreUObject",
                 "Sockets",
-				"CookOnTheFly"
+                "CookOnTheFly",
+                "Json"
             }
         );
     }

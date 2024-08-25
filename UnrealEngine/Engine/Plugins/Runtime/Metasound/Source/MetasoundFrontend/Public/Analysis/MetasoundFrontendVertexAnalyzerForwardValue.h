@@ -106,5 +106,6 @@ namespace Metasound
 		METASOUND_DECLARE_FORWARD_VALUE_ANALYZER(FVertexAnalyzerForwardFloat, "UE.Forward.Float", float)
 		METASOUND_DECLARE_FORWARD_VALUE_ANALYZER(FVertexAnalyzerForwardInt, "UE.Forward.Int32", int32)
 		METASOUND_DECLARE_FORWARD_VALUE_ANALYZER(FVertexAnalyzerForwardString, "UE.Forward.String", FString)
+		METASOUND_DECLARE_FORWARD_VALUE_ANALYZER(FVertexAnalyzerForwardTime, "UE.Forward.Time", FTime)
 	} // namespace Frontend
 } // namespace Metasound

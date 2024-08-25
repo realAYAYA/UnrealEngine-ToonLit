@@ -29,6 +29,7 @@
 #include "Serializable.h"
 
 #include "UObject/ExternalPhysicsCustomObjectVersion.h"
+#include "UObject/FortniteValkyrieBranchObjectVersion.h"
 #include "Chaos/Core.h"
 
 #if COMPILE_WITHOUT_UNREAL_SUPPORT
@@ -63,6 +64,23 @@ namespace Chaos
 		float ShearStrength;
 	};
 
+	struct FChaosPhysicsMaterialDamageModifier
+	{
+		/** 
+		* multiplier for the geometry collection damage thresholds/ internal strain 
+		* this allows for setting up unit damage threshold and use the material to scale them to the desired range of values
+		*/
+		float DamageThresholdMultiplier = 1.0f;
+	};
+
+	// NOTE: must match EPhysicalMaterialSoftCollisionMode
+	enum class EChaosPhysicsMaterialSoftCollisionMode : uint8
+	{
+		None,
+		RelativeThickness,
+		AbsoluteThickness,
+	};
+
 	class FChaosPhysicsMaterial
 	{
 	public:
@@ -81,6 +99,7 @@ namespace Chaos
 		FReal Friction;
 		FReal StaticFriction;
 		FReal Restitution;
+		FReal Density;
 		FReal LinearEtherDrag;
 		FReal AngularEtherDrag;
 		FReal SleepingLinearThreshold;
@@ -90,17 +109,24 @@ namespace Chaos
 		int32 SleepCounterThreshold;
 		void* UserData;
 
+		/** Settings for "sticky" friction */
+		FRealSingle BaseFrictionImpulse;
+
 		/** Variable defaults are used for \c UChaosPhysicalMaterial \c UPROPERTY defaults. */
 		ECombineMode FrictionCombineMode;
 		ECombineMode RestitutionCombineMode;
 
 		FChaosPhysicsMaterialStrength Strength;
+		FChaosPhysicsMaterialDamageModifier DamageModifier;
 
+		EChaosPhysicsMaterialSoftCollisionMode SoftCollisionMode;
+		FRealSingle SoftCollisionThickness;
 
 		FChaosPhysicsMaterial()
 			: Friction(0.5)
 			, StaticFriction(0.0)
 			, Restitution(0.1f)
+			, Density(1.f)
 			, LinearEtherDrag(0.0)
 			, AngularEtherDrag(0.0)
 			, SleepingLinearThreshold(1)
@@ -109,8 +135,11 @@ namespace Chaos
 			, DisabledAngularThreshold(0)
 			, SleepCounterThreshold(0)
 			, UserData(nullptr)
+			, BaseFrictionImpulse(0.0)
 			, FrictionCombineMode(ECombineMode::Avg)
 			, RestitutionCombineMode(ECombineMode::Avg)
+			, SoftCollisionMode(EChaosPhysicsMaterialSoftCollisionMode::None)
+			, SoftCollisionThickness(0)
 		{
 		}
 
@@ -158,6 +187,11 @@ namespace Chaos
 			if (Ar.CustomVer(FExternalPhysicsCustomObjectVersion::GUID) >= FExternalPhysicsCustomObjectVersion::PhysicsMaterialSleepCounterThreshold)
 			{
 				Ar << SleepCounterThreshold;
+			}
+
+			if (Ar.CustomVer(FFortniteValkyrieBranchObjectVersion::GUID) >= FFortniteValkyrieBranchObjectVersion::ChaosAddDensityToPhysicsMaterial)
+			{
+				Ar << Density;
 			}
 		}
 	};

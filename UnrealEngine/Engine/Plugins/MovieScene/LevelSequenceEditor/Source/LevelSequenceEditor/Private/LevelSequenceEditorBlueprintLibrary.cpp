@@ -3,12 +3,20 @@
 #include "LevelSequenceEditorBlueprintLibrary.h"
 
 #include "ISequencer.h"
+#include "MVVM/ViewModels/ChannelModel.h"
+#include "MVVM/ViewModels/SectionModel.h"
+#include "MVVM/ViewModels/SequencerEditorViewModel.h"
+#include "MVVM/SectionModelStorageExtension.h"
+#include "MVVM/Selection/Selection.h"
 #include "IKeyArea.h"
 #include "LevelSequence.h"
+#include "Channels/MovieSceneChannel.h"
 
 #include "LevelEditorViewport.h"
 #include "MovieSceneBindingProxy.h"
 #include "Subsystems/AssetEditorSubsystem.h"
+
+#include "ExtensionLibraries/MovieSceneSectionExtensions.h"
 
 #include "MovieSceneObjectBindingID.h"
 #include "MovieSceneSequencePlayer.h"
@@ -126,7 +134,41 @@ void ULevelSequenceEditorBlueprintLibrary::SetCurrentTime(int32 NewFrame)
 		FFrameRate DisplayRate = CurrentSequencer.Pin()->GetFocusedDisplayRate();
 		FFrameRate TickResolution = CurrentSequencer.Pin()->GetFocusedTickResolution();
 
-		CurrentSequencer.Pin()->SetGlobalTime(ConvertFrameTime(NewFrame, DisplayRate, TickResolution));
+		FFrameTime GlobalTime = ConvertFrameTime(NewFrame, DisplayRate, TickResolution);
+		if (GlobalTime == CurrentSequencer.Pin()->GetGlobalTime().Time)
+		{
+			CurrentSequencer.Pin()->ForceEvaluate();
+		}
+		else
+		{
+			CurrentSequencer.Pin()->SetGlobalTime(GlobalTime);
+		}
+	}
+}
+
+void ULevelSequenceEditorBlueprintLibrary::SetGlobalPosition(FMovieSceneSequencePlaybackParams PlaybackParams, EMovieSceneTimeUnit TimeUnit)
+{
+	if (CurrentSequencer.IsValid())
+	{
+		FFrameRate DisplayRate = CurrentSequencer.Pin()->GetFocusedDisplayRate();
+		FFrameRate TickResolution = CurrentSequencer.Pin()->GetFocusedTickResolution();
+
+		UMovieSceneSequence* Sequence = CurrentSequencer.Pin()->GetFocusedMovieSceneSequence();
+
+		FFrameTime Position = PlaybackParams.GetPlaybackPosition(Sequence);
+		if (TimeUnit == EMovieSceneTimeUnit::DisplayRate)
+		{
+			Position = ConvertFrameTime(Position, DisplayRate, TickResolution);
+		}
+
+		if (Position == CurrentSequencer.Pin()->GetGlobalTime().Time)
+		{
+			CurrentSequencer.Pin()->ForceEvaluate();
+		}
+		else
+		{
+			CurrentSequencer.Pin()->SetGlobalTime(Position);
+		}
 	}
 }
 
@@ -142,6 +184,25 @@ int32 ULevelSequenceEditorBlueprintLibrary::GetCurrentTime()
 	return 0;
 }
 
+FMovieSceneSequencePlaybackParams ULevelSequenceEditorBlueprintLibrary::GetGlobalPosition(EMovieSceneTimeUnit TimeUnit)
+{
+	FMovieSceneSequencePlaybackParams Params;
+	if (CurrentSequencer.IsValid())
+	{
+		FFrameRate DisplayRate = CurrentSequencer.Pin()->GetFocusedDisplayRate();
+		FFrameRate TickResolution = CurrentSequencer.Pin()->GetFocusedTickResolution();
+
+		FQualifiedFrameTime GlobalTime = CurrentSequencer.Pin()->GetGlobalTime();
+
+		Params.Frame = TimeUnit == EMovieSceneTimeUnit::DisplayRate ? ConvertFrameTime(GlobalTime.Time, TickResolution, DisplayRate) : GlobalTime.Time;
+		Params.Timecode = GlobalTime.ToTimecode();
+		Params.Time = GlobalTime.AsSeconds();
+		
+		return Params;
+	}
+	return Params;
+}
+
 void ULevelSequenceEditorBlueprintLibrary::SetCurrentLocalTime(int32 NewFrame)
 {
 	if (CurrentSequencer.IsValid())
@@ -149,7 +210,40 @@ void ULevelSequenceEditorBlueprintLibrary::SetCurrentLocalTime(int32 NewFrame)
 		FFrameRate DisplayRate = CurrentSequencer.Pin()->GetFocusedDisplayRate();
 		FFrameRate TickResolution = CurrentSequencer.Pin()->GetFocusedTickResolution();
 
-		CurrentSequencer.Pin()->SetLocalTime(ConvertFrameTime(NewFrame, DisplayRate, TickResolution));
+		FFrameTime LocalTime = ConvertFrameTime(NewFrame, DisplayRate, TickResolution);
+		if (LocalTime == CurrentSequencer.Pin()->GetLocalTime().Time)
+		{
+			CurrentSequencer.Pin()->ForceEvaluate();
+		}
+		else
+		{
+			CurrentSequencer.Pin()->SetLocalTime(LocalTime);
+		}
+	}
+}
+
+void ULevelSequenceEditorBlueprintLibrary::SetLocalPosition(FMovieSceneSequencePlaybackParams PlaybackParams, EMovieSceneTimeUnit TimeUnit)
+{
+	if (CurrentSequencer.IsValid())
+	{
+		FFrameRate DisplayRate = CurrentSequencer.Pin()->GetFocusedDisplayRate();
+		FFrameRate TickResolution = CurrentSequencer.Pin()->GetFocusedTickResolution();
+
+		UMovieSceneSequence* Sequence = CurrentSequencer.Pin()->GetFocusedMovieSceneSequence();
+		FFrameTime Position = PlaybackParams.GetPlaybackPosition(Sequence);
+		if (TimeUnit == EMovieSceneTimeUnit::DisplayRate)
+		{
+			Position = ConvertFrameTime(Position, DisplayRate, TickResolution);
+		}
+
+		if (Position == CurrentSequencer.Pin()->GetLocalTime().Time)
+		{
+			CurrentSequencer.Pin()->ForceEvaluate();
+		}
+		else
+		{
+			CurrentSequencer.Pin()->SetLocalTime(Position);
+		}
 	}
 }
 
@@ -163,6 +257,25 @@ int32 ULevelSequenceEditorBlueprintLibrary::GetCurrentLocalTime()
 		return ConvertFrameTime(CurrentSequencer.Pin()->GetLocalTime().Time, TickResolution, DisplayRate).FloorToFrame().Value;
 	}
 	return 0;
+}
+
+FMovieSceneSequencePlaybackParams ULevelSequenceEditorBlueprintLibrary::GetLocalPosition(EMovieSceneTimeUnit TimeUnit)
+{
+	FMovieSceneSequencePlaybackParams Params;
+	if (CurrentSequencer.IsValid())
+	{
+		FFrameRate DisplayRate = CurrentSequencer.Pin()->GetFocusedDisplayRate();
+		FFrameRate TickResolution = CurrentSequencer.Pin()->GetFocusedTickResolution();
+
+		FQualifiedFrameTime LocalTime = CurrentSequencer.Pin()->GetLocalTime();
+
+		Params.Frame = TimeUnit == EMovieSceneTimeUnit::DisplayRate ? ConvertFrameTime(LocalTime.Time, TickResolution, DisplayRate) : LocalTime.Time;
+		Params.Timecode = LocalTime.ToTimecode();
+		Params.Time = LocalTime.AsSeconds();
+
+		return Params;
+	}
+	return Params;
 }
 
 void ULevelSequenceEditorBlueprintLibrary::SetPlaybackSpeed(float NewPlaybackSpeed)
@@ -183,10 +296,36 @@ float ULevelSequenceEditorBlueprintLibrary::GetPlaybackSpeed()
 	return 0.f;
 }
 
-void ULevelSequenceEditorBlueprintLibrary::PlayTo(FMovieSceneSequencePlaybackParams PlaybackParams)
+void ULevelSequenceEditorBlueprintLibrary::SetLoopMode(ESequencerLoopMode NewLoopMode)
 {
 	if (CurrentSequencer.IsValid())
 	{
+		CurrentSequencer.Pin()->GetSequencerSettings()->SetLoopMode(NewLoopMode);
+	}
+}
+
+ESequencerLoopMode ULevelSequenceEditorBlueprintLibrary::GetLoopMode()
+{
+	if (CurrentSequencer.IsValid())
+	{
+		return CurrentSequencer.Pin()->GetSequencerSettings()->GetLoopMode();
+	}
+
+	return ESequencerLoopMode::SLM_NoLoop;
+}
+
+void ULevelSequenceEditorBlueprintLibrary::PlayTo(FMovieSceneSequencePlaybackParams PlaybackParams, EMovieSceneTimeUnit TimeUnit)
+{
+	if (CurrentSequencer.IsValid())
+	{
+		FFrameRate DisplayRate = CurrentSequencer.Pin()->GetFocusedDisplayRate();
+		FFrameRate TickResolution = CurrentSequencer.Pin()->GetFocusedTickResolution();
+
+		if (TimeUnit == EMovieSceneTimeUnit::DisplayRate)
+		{
+			PlaybackParams.Frame = ConvertFrameTime(PlaybackParams.Frame, DisplayRate, TickResolution);
+		}
+
 		CurrentSequencer.Pin()->PlayTo(PlaybackParams);
 	}
 }
@@ -241,6 +380,64 @@ TArray<FSequencerChannelProxy> ULevelSequenceEditorBlueprintLibrary::GetSelected
 	return OutSelectedChannels;
 }
 
+TArray<FSequencerChannelProxy> ULevelSequenceEditorBlueprintLibrary::GetChannelsWithSelectedKeys()
+{
+	using namespace UE::Sequencer;
+
+	TArray<FSequencerChannelProxy> OutSelectedChannels;
+	TSet<FChannelModel*> ChannelModels;
+	if (CurrentSequencer.IsValid())
+	{
+		const FKeySelection KeySelection = CurrentSequencer.Pin()->GetViewModel()->GetSelection()->KeySelection;
+
+		for (FKeyHandle Key : KeySelection)
+		{
+			TSharedPtr<FChannelModel> Channel = KeySelection.GetModelForKey(Key);
+			if (Channel)
+			{
+				ChannelModels.Add(Channel.Get());
+			}
+		}
+
+		for (FChannelModel* Channel : ChannelModels)
+		{
+			if (Channel)
+			{
+				FSequencerChannelProxy ChannelProxy(Channel->GetChannelName(), Channel->GetSection());
+				OutSelectedChannels.Add(ChannelProxy);
+			}
+		}
+	}
+	return OutSelectedChannels;
+}
+
+TArray<int32> ULevelSequenceEditorBlueprintLibrary::GetSelectedKeys(const FSequencerChannelProxy& ChannelProxy)
+{
+	TArray<int32> SelectedKeys;
+	using namespace UE::Sequencer;
+
+	if (CurrentSequencer.IsValid())
+	{
+		const FKeySelection KeySelection = CurrentSequencer.Pin()->GetViewModel()->GetSelection()->KeySelection;
+
+		for (FKeyHandle Key : KeySelection)
+		{
+			if (TSharedPtr<FChannelModel> Channel = KeySelection.GetModelForKey(Key))
+			{
+				if (Channel->GetChannelName() == ChannelProxy.ChannelName)
+				{
+					int32 Index = Channel->GetChannel()->GetIndex(Key);
+					if (Index != INDEX_NONE)
+					{
+						SelectedKeys.Add(Index);
+					}
+				}
+			}
+		}
+	}
+	return SelectedKeys;
+}
+
 TArray<UMovieSceneFolder*> ULevelSequenceEditorBlueprintLibrary::GetSelectedFolders()
 {
 	TArray<UMovieSceneFolder*> OutSelectedFolders;
@@ -249,16 +446,6 @@ TArray<UMovieSceneFolder*> ULevelSequenceEditorBlueprintLibrary::GetSelectedFold
 		CurrentSequencer.Pin()->GetSelectedFolders(OutSelectedFolders);
 	}
 	return OutSelectedFolders;
-}
-
-TArray<FGuid> ULevelSequenceEditorBlueprintLibrary::GetSelectedObjects()
-{
-	TArray<FGuid> OutSelectedGuids;
-	if (CurrentSequencer.IsValid())
-	{
-		CurrentSequencer.Pin()->GetSelectedObjects(OutSelectedGuids);
-	}
-	return OutSelectedGuids;
 }
 
 TArray<FMovieSceneBindingProxy> ULevelSequenceEditorBlueprintLibrary::GetSelectedBindings()
@@ -318,6 +505,45 @@ void ULevelSequenceEditorBlueprintLibrary::SelectChannels(const TArray<FSequence
 	}
 }
 
+void ULevelSequenceEditorBlueprintLibrary::SelectKeys(const FSequencerChannelProxy& ChannelProxy, const TArray<int32>& Indices)
+{
+	using namespace UE::Sequencer;
+	if (CurrentSequencer.IsValid())
+	{
+		if (UMovieSceneSection* Section = ChannelProxy.Section)
+		{
+			FSectionModelStorageExtension* SectionModelStorage = CurrentSequencer.Pin()->GetViewModel()->GetRootModel()->CastDynamic<FSectionModelStorageExtension>();
+			check(SectionModelStorage);
+
+			TSharedPtr<FSectionModel> SectionHandle = SectionModelStorage->FindModelForSection(Section);
+			if (SectionHandle)
+			{
+				TParentFirstChildIterator<FChannelGroupModel> KeyAreaNodes = SectionHandle->GetParentTrackModel().AsModel()->GetDescendantsOfType<FChannelGroupModel>();
+				for (const TViewModelPtr<FChannelGroupModel>& KeyAreaNode : KeyAreaNodes)
+				{
+					if (KeyAreaNode->GetChannelName() == ChannelProxy.ChannelName)
+					{
+						if (TSharedPtr<FChannelModel> ChannelModel = KeyAreaNode->GetChannel(Section))
+						{
+							FMovieSceneChannel* MovieSceneChannel = ChannelModel->GetChannel();
+							FKeySelection& KeySelection = CurrentSequencer.Pin()->GetViewModel()->GetSelection()->KeySelection;
+							for (int32 Index : Indices)
+							{
+								if (Index >= 0 && Index < MovieSceneChannel->GetNumKeys())
+								{
+									FKeyHandle KeyHandle = MovieSceneChannel->GetHandle(Index);
+									KeySelection.Select(ChannelModel, KeyHandle);
+								}
+							}
+							break;
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
 void ULevelSequenceEditorBlueprintLibrary::SelectFolders(const TArray<UMovieSceneFolder*>& Folders)
 {
 	if (CurrentSequencer.IsValid())
@@ -325,17 +551,6 @@ void ULevelSequenceEditorBlueprintLibrary::SelectFolders(const TArray<UMovieScen
 		for (UMovieSceneFolder* Folder : Folders)
 		{
 			CurrentSequencer.Pin()->SelectFolder(Folder);
-		}
-	}
-}
-
-void ULevelSequenceEditorBlueprintLibrary::SelectObjects(TArray<FGuid> ObjectBindings)
-{
-	if (CurrentSequencer.IsValid())
-	{
-		for (FGuid ObjectBinding : ObjectBindings)
-		{
-			CurrentSequencer.Pin()->SelectObject(ObjectBinding);
 		}
 	}
 }
@@ -626,27 +841,7 @@ void ULevelSequenceEditorBlueprintLibrary::SetLockCameraCutToViewport(bool bLock
 	if (CurrentSequencer.IsValid())
 	{
 		TSharedPtr<ISequencer> Sequencer = CurrentSequencer.Pin();
-
-		if (bLock)
-		{
-			for(FLevelEditorViewportClient* LevelVC : GEditor->GetLevelViewportClients())
-			{
-				if (LevelVC && LevelVC->AllowsCinematicControl() && LevelVC->GetViewMode() != VMI_Unknown)
-				{
-					LevelVC->SetActorLock(nullptr);
-					LevelVC->bLockedCameraView = false;
-					LevelVC->UpdateViewForLockedActor();
-					LevelVC->Invalidate();
-				}
-			}
-			Sequencer->SetPerspectiveViewportCameraCutEnabled(true);
-		}
-		else
-		{
-			Sequencer->UpdateCameraCut(nullptr, EMovieSceneCameraCutParams());
-			Sequencer->SetPerspectiveViewportCameraCutEnabled(false);
-		}
-
+		Sequencer->SetPerspectiveViewportCameraCutEnabled(bLock);
 		Sequencer->ForceEvaluate();
 	}
 }

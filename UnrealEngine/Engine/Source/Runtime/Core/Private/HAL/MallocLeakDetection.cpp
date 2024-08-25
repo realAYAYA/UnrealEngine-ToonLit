@@ -27,8 +27,8 @@
  */
 struct FMallocLeakDetectionStatics
 {
-	uint32 ContextsTLSID = 0;
-	uint32 SuppressDetectionCountTLSID = 0;
+	uint32 ContextsTLSID = FPlatformTLS::InvalidTlsSlot;
+	uint32 SuppressDetectionCountTLSID = FPlatformTLS::InvalidTlsSlot;
 
 	FMallocLeakDetectionStatics()
 	{
@@ -103,7 +103,7 @@ void FMallocLeakDetection::PopContext()
 {
 	TArray<FContextString>* TLContexts = (TArray<FContextString>*)FPlatformTLS::GetTlsValue(FMallocLeakDetectionStatics::Get().ContextsTLSID);
 	check(TLContexts);
-	TLContexts->Pop(false);
+	TLContexts->Pop(EAllowShrinking::No);
 }
 
 void FMallocLeakDetection::AddCallstack(FCallstackTrack& Callstack)

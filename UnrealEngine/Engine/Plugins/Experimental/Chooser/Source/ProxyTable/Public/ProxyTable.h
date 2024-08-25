@@ -3,9 +3,8 @@
 
 #include "CoreMinimal.h"
 #include "UObject/Object.h"
-#include "IChooserParameterProxyTable.h"
+#include "ChooserPropertyAccess.h"
 #include "InstancedStruct.h"
-#include "InstancedStructContainer.h"
 #include "Misc/Guid.h"
 #include "ProxyAsset.h"
 #include "ProxyTable.generated.h"
@@ -58,27 +57,33 @@ struct PROXYTABLE_API FRuntimeProxyValue
 	GENERATED_BODY()
 
 	UPROPERTY()
+	TObjectPtr<UProxyAsset> ProxyAsset;
+
+	UPROPERTY()
 	FInstancedStruct Value;
 
 	UPROPERTY()
 	TArray<FProxyStructOutput> OutputStructData;
 };
 
-UCLASS(MinimalAPI,BlueprintType)
-class UProxyTable : public UObject
+UCLASS(BlueprintType)
+class PROXYTABLE_API UProxyTable : public UObject
 {
 	GENERATED_UCLASS_BODY()
 public:
 	UProxyTable() {}
+	virtual void BeginDestroy() override;
 
 	UPROPERTY()
 	TArray<FGuid> Keys;
 
 	UPROPERTY()
 	TArray<FRuntimeProxyValue> RuntimeValues;
-	
+
+	FObjectChooserBase::EIteratorStatus FindProxyObjectMulti(const FGuid& Key, FChooserEvaluationContext &Context, FObjectChooserBase::FObjectChooserIteratorCallback Callback) const;
 	UObject* FindProxyObject(const FGuid& Key, FChooserEvaluationContext& Context) const;
 
+	virtual void PostLoad() override;
 #if WITH_EDITORONLY_DATA
 public:
 	FProxyTableChanged OnProxyTableChanged;
@@ -89,7 +94,6 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Inheritance")
 	TArray<TObjectPtr<UProxyTable>> InheritEntriesFrom;
 
-	virtual void PostLoad() override;
 	virtual void PostTransacted(const FTransactionObjectEvent& TransactionEvent) override;
 private:
 	void BuildRuntimeData();

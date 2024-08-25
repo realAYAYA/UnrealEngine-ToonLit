@@ -36,6 +36,4 @@ bool FARSystemSupportBase::OnPinComponentToARPin(USceneComponent* ComponentToPin
 
 		return true;
 	}
-
-	return false;
 }

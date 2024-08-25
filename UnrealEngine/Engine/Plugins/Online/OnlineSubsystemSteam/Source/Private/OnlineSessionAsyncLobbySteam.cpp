@@ -8,6 +8,7 @@
 #include "IPAddressSteam.h"
 #include "SteamSessionKeys.h"
 #include "SteamUtilities.h"
+#include "Misc/ConfigCacheIni.h"
 
 /** 
  * Helper function to convert enums 
@@ -1039,13 +1040,16 @@ void FOnlineAsyncTaskSteamFindLobbiesBase::Tick()
 		{
 			FOnlineSessionSteamPtr SessionInt = StaticCastSharedPtr<FOnlineSessionSteam>(Subsystem->GetSessionInterface());
 
+			float AsyncTimeout = ASYNC_TASK_TIMEOUT;
+			GConfig->GetFloat(TEXT("OnlineSubsystemSteam"), TEXT("OnlineAsyncTaskSteamFindLobbiesBaseTimeout"), AsyncTimeout, GEngineIni);
+
 			// Waiting for the lobby updates to fill in
 			if (LobbyIDs.Num() == SessionInt->PendingSearchLobbyIds.Num())
 			{
 				FindLobbiesState = EFindLobbiesState::Finished;
 			}
 			// Fallback timeout in case we don't hear from Steam
-			else if (GetElapsedTime() >= ASYNC_TASK_TIMEOUT)
+			else if (GetElapsedTime() >= AsyncTimeout)
 			{
 				bWasSuccessful = false;
 				FindLobbiesState = EFindLobbiesState::Finished;

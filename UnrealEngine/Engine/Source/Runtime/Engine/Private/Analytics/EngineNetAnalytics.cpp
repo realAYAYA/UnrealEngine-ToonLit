@@ -555,6 +555,8 @@ void FNetConnAnalyticsData::SendAnalytics()
 			AppendAnalyticsEventAttributeArray(Attrs, EZAttrib_FailedPingUDP, FJsonFragment(MoveTemp(FailedPingAddressesUDPJsonStr)));
 		}
 
+		Aggregator->AppendGameInstanceAttributes(Attrs);
+
 		AnalyticsProvider->RecordEvent(EZEventName, MoveTemp(Attrs));
 	}
 }

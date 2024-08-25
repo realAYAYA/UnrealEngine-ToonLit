@@ -25,6 +25,8 @@
 #include "IPropertyUtilities.h"
 #include "RigVMModel/Nodes/RigVMAggregateNode.h"
 #include "Widgets/SRigVMGraphPinVariableBinding.h"
+#include "InstancedPropertyBagStructureDataProvider.h"
+#include "Widgets/SRigVMGraphPinEnumPicker.h"
 
 #define LOCTEXT_NAMESPACE "RigVMGraphDetailCustomization"
 
@@ -472,6 +474,10 @@ bool FRigVMFunctionArgumentLayout::CanArgumentBeMoved(bool bMoveUp) const
 				for(int32 Index = 0; Index < Node->GetPins().Num(); Index++)
 				{
 					URigVMPin* OtherPin = Node->GetPins()[Index];
+					if(OtherPin->IsExecuteContext())
+					{
+						continue;
+					}
 					if(IsInput(OtherPin) == bLookForInput)
 					{
 						return OtherPin != Pin;
@@ -797,7 +803,7 @@ void FRigVMGraphDetailCustomization::CustomizeDetails(IDetailLayoutBuilder& Deta
 		[
 			SNew(SButton)
 			.ButtonStyle(FAppStyle::Get(), "SimpleButton")
-			.ContentPadding(FMargin(1, 0))
+			.ContentPadding(FMargin(10.f, 0))
 			.OnClicked(this, &FRigVMGraphDetailCustomization::OnAddNewInputClicked)
 			.Visibility(this, &FRigVMGraphDetailCustomization::GetAddNewInputOutputVisibility)
 			.HAlign(HAlign_Right)
@@ -831,7 +837,7 @@ void FRigVMGraphDetailCustomization::CustomizeDetails(IDetailLayoutBuilder& Deta
 		[
 			SNew(SButton)
 			.ButtonStyle(FAppStyle::Get(), "SimpleButton")
-			.ContentPadding(FMargin(1, 0))
+			.ContentPadding(FMargin(10.f, 0))
 			.OnClicked(this, &FRigVMGraphDetailCustomization::OnAddNewOutputClicked)
 			.Visibility(this, &FRigVMGraphDetailCustomization::GetAddNewInputOutputVisibility)
 			.HAlign(HAlign_Right)
@@ -921,8 +927,8 @@ void FRigVMGraphDetailCustomization::CustomizeDetails(IDetailLayoutBuilder& Deta
 
 		if(AccessSpecifierStrings.IsEmpty())
 		{
-			AccessSpecifierStrings.Add(TSharedPtr<FString>(new FString(TEXT("Public"))));
-			AccessSpecifierStrings.Add(TSharedPtr<FString>(new FString(TEXT("Private"))));
+			AccessSpecifierStrings.Add(TSharedPtr<FRigVMStringWithTag>(new FRigVMStringWithTag(TEXT("Public"))));
+			AccessSpecifierStrings.Add(TSharedPtr<FRigVMStringWithTag>(new FRigVMStringWithTag(TEXT("Private"))));
 		}
 
 		// access specifier
@@ -945,7 +951,7 @@ void FRigVMGraphDetailCustomization::CustomizeDetails(IDetailLayoutBuilder& Deta
             ]
             .MenuContent()
             [
-                SNew(SListView<TSharedPtr<FString> >)
+                SNew(SListView<TSharedPtr<FRigVMStringWithTag> >)
                     .ListItemsSource( &AccessSpecifierStrings )
                     .OnGenerateRow(this, &FRigVMGraphDetailCustomization::HandleGenerateRowAccessSpecifier)
                     .OnSelectionChanged(this, &FRigVMGraphDetailCustomization::OnAccessSpecifierSelected)
@@ -1248,7 +1254,7 @@ FReply FRigVMGraphDetailCustomization::OnNodeColorClicked()
 	return FReply::Handled();
 }
 
-TArray<TSharedPtr<FString>> FRigVMGraphDetailCustomization::AccessSpecifierStrings;
+TArray<TSharedPtr<FRigVMStringWithTag>> FRigVMGraphDetailCustomization::AccessSpecifierStrings;
 
 FText FRigVMGraphDetailCustomization::GetCurrentAccessSpecifierName() const
 {
@@ -1263,16 +1269,16 @@ FText FRigVMGraphDetailCustomization::GetCurrentAccessSpecifierName() const
 			{
 				if(RigVMBlueprint->IsFunctionPublic(LibraryNode->GetFName()))
 				{
-					return FText::FromString(*AccessSpecifierStrings[0].Get()); // public
+					return FText::FromString(AccessSpecifierStrings[0]->GetString()); // public
 				}
 			}
 		}
 	}
 
-	return FText::FromString(*AccessSpecifierStrings[1].Get()); // private
+	return FText::FromString(AccessSpecifierStrings[1]->GetString()); // private
 }
 
-void FRigVMGraphDetailCustomization::OnAccessSpecifierSelected( TSharedPtr<FString> SpecifierName, ESelectInfo::Type SelectInfo )
+void FRigVMGraphDetailCustomization::OnAccessSpecifierSelected( TSharedPtr<FRigVMStringWithTag> SpecifierName, ESelectInfo::Type SelectInfo )
 {
 	if(RigVMBlueprintPtr.IsValid() && GraphPtr.IsValid())
 	{
@@ -1296,13 +1302,13 @@ void FRigVMGraphDetailCustomization::OnAccessSpecifierSelected( TSharedPtr<FStri
 	}
 }
 
-TSharedRef<ITableRow> FRigVMGraphDetailCustomization::HandleGenerateRowAccessSpecifier( TSharedPtr<FString> SpecifierName, const TSharedRef<STableViewBase>& OwnerTable )
+TSharedRef<ITableRow> FRigVMGraphDetailCustomization::HandleGenerateRowAccessSpecifier( TSharedPtr<FRigVMStringWithTag> SpecifierName, const TSharedRef<STableViewBase>& OwnerTable )
 {
-	return SNew(STableRow< TSharedPtr<FString> >, OwnerTable)
+	return SNew(STableRow< TSharedPtr<FRigVMStringWithTag> >, OwnerTable)
         .Content()
         [
             SNew( STextBlock ) 
-                .Text(FText::FromString(*SpecifierName.Get()) )
+                .Text(FText::FromString(SpecifierName->GetString()) )
         ];
 }
 
@@ -1411,7 +1417,7 @@ void FRigVMWrappedNodeDetailCustomization::CustomizeDetails(IDetailLayoutBuilder
         			BlueprintBeingCustomized->GetEdGraph(NodesBeingCustomized[0]->GetGraph()));
         		ensure(GraphBeingCustomized);
         		
-        		const TArray<TSharedPtr<FString>>* NameList = GraphBeingCustomized->GetNameListForWidget(CustomWidgetName);
+        		const TArray<TSharedPtr<FRigVMStringWithTag>>* NameList = GraphBeingCustomized->GetNameListForWidget(CustomWidgetName);
         		if (NameList)
         		{
         			TSharedPtr<SRigVMGraphPinNameListValueWidget> NameListWidget;
@@ -1518,9 +1524,10 @@ void FRigVMWrappedNodeDetailCustomization::CustomizeDetails(IDetailLayoutBuilder
 	CustomizeLiveValues(DetailLayout);
 }
 
-TSharedRef<SWidget> FRigVMWrappedNodeDetailCustomization::MakeNameListItemWidget(TSharedPtr<FString> InItem)
+TSharedRef<SWidget> FRigVMWrappedNodeDetailCustomization::MakeNameListItemWidget(TSharedPtr<FRigVMStringWithTag> InItem)
 {
-	return 	SNew(STextBlock).Text(FText::FromString(*InItem));// .Font(FAppStyle::GetFontStyle(TEXT("PropertyWindow.NormalFont")));
+	//TODO: make this prettier
+	return 	SNew(STextBlock).Text(FText::FromString(InItem->GetStringWithTag()));// .Font(FAppStyle::GetFontStyle(TEXT("PropertyWindow.NormalFont")));
 }
 
 FText FRigVMWrappedNodeDetailCustomization::GetNameListText(FNameProperty* InProperty) const
@@ -1544,17 +1551,17 @@ FText FRigVMWrappedNodeDetailCustomization::GetNameListText(FNameProperty* InPro
 	return FirstText;
 }
 
-TSharedPtr<FString> FRigVMWrappedNodeDetailCustomization::GetCurrentlySelectedItem(FNameProperty* InProperty, const TArray<TSharedPtr<FString>>* InNameList) const
+TSharedPtr<FRigVMStringWithTag> FRigVMWrappedNodeDetailCustomization::GetCurrentlySelectedItem(FNameProperty* InProperty, const TArray<TSharedPtr<FRigVMStringWithTag>>* InNameList) const
 {
 	FString CurrentItem = GetNameListText(InProperty).ToString();
-	for (const TSharedPtr<FString>& Item : *InNameList)
+	for (const TSharedPtr<FRigVMStringWithTag>& Item : *InNameList)
 	{
 		if (Item->Equals(CurrentItem))
 		{
 			return Item;
 		}
 	}
-	return TSharedPtr<FString>();
+	return TSharedPtr<FRigVMStringWithTag>();
 }
 
 
@@ -1576,25 +1583,25 @@ void FRigVMWrappedNodeDetailCustomization::SetNameListText(const FText& NewTypeI
 	Controller->CloseUndoBracket();
 }
 
-void FRigVMWrappedNodeDetailCustomization::OnNameListChanged(TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo, FNameProperty* InProperty, TSharedRef<IPropertyUtilities> PropertyUtilities)
+void FRigVMWrappedNodeDetailCustomization::OnNameListChanged(TSharedPtr<FRigVMStringWithTag> NewSelection, ESelectInfo::Type SelectInfo, FNameProperty* InProperty, TSharedRef<IPropertyUtilities> PropertyUtilities)
 {
 	if (SelectInfo != ESelectInfo::Direct)
 	{
-		FString NewValue = *NewSelection.Get();
+		const FString& NewValue = NewSelection->GetString();
 		SetNameListText(FText::FromString(NewValue), ETextCommit::OnEnter, InProperty, PropertyUtilities);
 	}
 }
 
-void FRigVMWrappedNodeDetailCustomization::OnNameListComboBox(FNameProperty* InProperty, const TArray<TSharedPtr<FString>>* InNameList)
+void FRigVMWrappedNodeDetailCustomization::OnNameListComboBox(FNameProperty* InProperty, const TArray<TSharedPtr<FRigVMStringWithTag>>* InNameList)
 {
 	TSharedPtr<SRigVMGraphPinNameListValueWidget> Widget = NameListWidgets.FindChecked(InProperty->GetFName());
-	const TSharedPtr<FString> CurrentlySelected = GetCurrentlySelectedItem(InProperty, InNameList);
+	const TSharedPtr<FRigVMStringWithTag> CurrentlySelected = GetCurrentlySelectedItem(InProperty, InNameList);
 	Widget->SetSelectedItem(CurrentlySelected);
 }
 
 void FRigVMWrappedNodeDetailCustomization::CustomizeLiveValues(IDetailLayoutBuilder& DetailLayout)
 {
-	if(ObjectsBeingCustomized.Num() != 1)
+	if(ObjectsBeingCustomized.Num() > 1)
 	{
 		return;
 	}
@@ -1629,12 +1636,18 @@ void FRigVMWrappedNodeDetailCustomization::CustomizeLiveValues(IDetailLayoutBuil
 	{
 		return;
 	}
-	
+
+	/*
 	IDetailCategoryBuilder& DebugCategory = DetailLayout.EditCategory("DebugLiveValues", LOCTEXT("DebugLiveValues", "Inspect Live Values"), ECategoryPriority::Uncommon);
 	DebugCategory.InitiallyCollapsed(true);
 
 	for(URigVMPin* Pin : FirstNode->GetPins())
 	{
+		if (Pin->IsExecuteContext())
+		{
+			continue;
+		}
+		
 		// only show hidden pins in debug mode
 		if(Pin->GetDirection() == ERigVMPinDirection::Hidden)
 		{
@@ -1709,7 +1722,19 @@ void FRigVMWrappedNodeDetailCustomization::CustomizeLiveValues(IDetailLayoutBuil
 		int32 SuffixIndex = 1;
 		FString NameSuffix;
 
-		TArray<FRigVMOperand> KnownOperands; 
+		auto UpdateRow = [&](IDetailPropertyRow* PropertyRow)
+		{
+			PropertyRow->DisplayName(FText::FromString(FString::Printf(TEXT("%s%s"), *Pin->GetName(), *NameSuffix)));
+			PropertyRow->IsEnabled(false);
+
+			SuffixIndex++;
+			bAddedProperty = true;
+			NameSuffix = FString::Printf(TEXT("_%d"), SuffixIndex);
+		};
+
+		static const FAddPropertyParams AddPropertyParams = FAddPropertyParams().ForceShowProperty();
+
+		TArray<FRigVMOperand> KnownOperands;
 		for(const FRigVMExprAST* Expression : FilteredExpressions)
 		{
 			const FRigVMVarExprAST* VarExpr = Expression->To<FRigVMVarExprAST>();
@@ -1728,6 +1753,8 @@ void FRigVMWrappedNodeDetailCustomization::CustomizeLiveValues(IDetailLayoutBuil
 				}
 
 				const FProperty* Property = nullptr;
+
+				TArray<FRigVMMemoryStorageStruct*> ExternalStructs;
 				TArray<UObject*> ExternalObjects;
 
 				if(Operand->GetMemoryType() == ERigVMMemoryType::External)
@@ -1741,26 +1768,8 @@ void FRigVMWrappedNodeDetailCustomization::CustomizeLiveValues(IDetailLayoutBuil
 				}
 				else
 				{
-					URigVMMemoryStorage* Memory = VM->GetMemoryByType(Operand->GetMemoryType());
+					FRigVMMemoryStorageStruct* Memory = DebuggedHost->GetMemoryByType(Operand->GetMemoryType());
 					if(Memory == nullptr)
-					{
-						continue;
-					}
-
-					if(Memory->GetOuter() == GetTransientPackage())
-					{
-						continue;
-					}
-
-					// the UClass must be alive for the details view to access it
-					// this ensure can fail if VM memory is not updated immediately after compile
-					// because of deferred copy
-					if(!ensure(IsValidChecked(Memory->GetClass())))
-					{
-						continue;
-					}
-
-					if(Memory->GetClass()->GetOuter() == GetTransientPackage())
 					{
 						continue;
 					}
@@ -1776,21 +1785,26 @@ void FRigVMWrappedNodeDetailCustomization::CustomizeLiveValues(IDetailLayoutBuil
 						continue;
 					}
 
-					ExternalObjects.Add(Memory);
+					ExternalStructs.Add(Memory);
 				}
 
-				check(ExternalObjects.Num() > 0);
+				check(ExternalObjects.Num() > 0 || ExternalStructs.Num() > 0);
 				check(Property);
 
-				IDetailPropertyRow* PropertyRow = DebugCategory.AddExternalObjectProperty(ExternalObjects, Property->GetFName(), EPropertyLocation::Default, FAddPropertyParams().ForceShowProperty());
-				if(PropertyRow)
+				if (!ExternalObjects.IsEmpty())
 				{
-					PropertyRow->DisplayName(FText::FromString(FString::Printf(TEXT("%s%s"), *Pin->GetName(), *NameSuffix)));
-					PropertyRow->IsEnabled(false);
+					if(IDetailPropertyRow* PropertyRow = DebugCategory.AddExternalObjectProperty(ExternalObjects, Property->GetFName(), EPropertyLocation::Default, AddPropertyParams))
+					{
+						UpdateRow(PropertyRow);
+					}
+				}
 
-					SuffixIndex++;
-					bAddedProperty = true;
-					NameSuffix = FString::Printf(TEXT("_%d"), SuffixIndex);
+				for (FRigVMMemoryStorageStruct* Memory : ExternalStructs)
+				{
+					if (IDetailPropertyRow* PropertyRow = DebugCategory.AddExternalStructureProperty(MakeShared<FInstancePropertyBagStructureDataProvider>(*Memory), Property->GetFName(), EPropertyLocation::Default, AddPropertyParams))
+					{
+						UpdateRow(PropertyRow);
+					}
 				}
 
 				KnownOperands.Add(*Operand);
@@ -1813,10 +1827,768 @@ void FRigVMWrappedNodeDetailCustomization::CustomizeLiveValues(IDetailLayoutBuil
 				.ValueContent()
 				[
 					PinHandle->CreatePropertyValueWidget()
-				];
+				]
+				.IsEnabled(false);
 			}
 		}
 	}
+	*/
+}
+
+FRigVMGraphEnumDetailCustomization::FRigVMGraphEnumDetailCustomization()
+: BlueprintBeingCustomized(nullptr)
+, GraphBeingCustomized(nullptr)
+{
+}
+
+void FRigVMGraphEnumDetailCustomization::CustomizeHeader(TSharedRef<IPropertyHandle> InPropertyHandle, FDetailWidgetRow& HeaderRow, IPropertyTypeCustomizationUtils& StructCustomizationUtils)
+{
+	TArray<UObject*> Objects;
+	InPropertyHandle->GetOuterObjects(Objects);
+
+	StructsBeingCustomized.Reset();
+	InPropertyHandle->GetOuterStructs(StructsBeingCustomized);
+
+	for (UObject* Object : Objects)
+	{
+		ObjectsBeingCustomized.Add(Object);
+
+		if(BlueprintBeingCustomized == nullptr)
+		{
+			BlueprintBeingCustomized = Object->GetTypedOuter<URigVMBlueprint>();
+		}
+
+		if(GraphBeingCustomized == nullptr)
+		{
+			GraphBeingCustomized = Object->GetTypedOuter<URigVMGraph>();
+		}
+	}
+
+	FProperty* Property = InPropertyHandle->GetProperty();
+	const FObjectProperty* ObjectProperty = CastField<FObjectProperty>(Property);
+
+	HeaderRow
+		.NameContent()
+		[
+			InPropertyHandle->CreatePropertyNameWidget()
+		]
+		.ValueContent()
+			.MinDesiredWidth(375.f)
+			.MaxDesiredWidth(375.f)
+			.HAlign(HAlign_Left)
+			[
+				SNew(SBox)
+					.MinDesiredWidth(150)
+					.MaxDesiredWidth(400)
+					[
+						SNew(SRigVMEnumPicker)
+						.IsEnabled(true)
+						.OnEnumChanged(this, &FRigVMGraphEnumDetailCustomization::HandleControlEnumChanged, InPropertyHandle)
+						.GetCurrentEnum_Lambda([this, InPropertyHandle]()
+						{
+							UEnum* Enum = nullptr;
+							FEditPropertyChain PropertyChain;
+							TArray<int32> PropertyArrayIndices;
+							bool bEnabled;
+							if (!GetPropertyChain(InPropertyHandle, PropertyChain, PropertyArrayIndices, bEnabled))
+							{
+								return Enum;
+							}
+
+							const TArray<uint8*> MemoryBlocks = GetMemoryBeingCustomized();
+							for(uint8* MemoryBlock: MemoryBlocks)
+							{
+								if(MemoryBlock)
+								{
+									if (UEnum** CurrentEnum = ContainerMemoryBlockToEnumPtr(MemoryBlock, PropertyChain, PropertyArrayIndices))
+									{
+										Enum = *CurrentEnum;
+									}
+								}
+							}
+							return Enum;
+						})
+					]
+				];
+}
+
+void FRigVMGraphEnumDetailCustomization::CustomizeChildren(TSharedRef<IPropertyHandle> InPropertyHandle, IDetailChildrenBuilder& StructBuilder, IPropertyTypeCustomizationUtils& StructCustomizationUtils)
+{
+	// nothing to do here
+}
+
+void FRigVMGraphEnumDetailCustomization::HandleControlEnumChanged(TSharedPtr<FString> InEnumPath, ESelectInfo::Type InSelectType, TSharedRef<IPropertyHandle> InPropertyHandle)
+{
+	if (ObjectsBeingCustomized.IsEmpty())
+	{
+		return;
+	}
+		
+	FEditPropertyChain PropertyChain;
+	TArray<int32> PropertyArrayIndices;
+	bool bEnabled;
+	if (!GetPropertyChain(InPropertyHandle, PropertyChain, PropertyArrayIndices, bEnabled))
+	{
+		return;
+	}
+	
+	TArray<UObject*> ObjectsView;
+	for(int32 Index = 0; Index < ObjectsBeingCustomized.Num(); Index++)
+	{
+		const TWeakObjectPtr<UObject>& Object = ObjectsBeingCustomized[Index];
+		if (Object.Get())
+		{
+			ObjectsView.Add(Object.Get());
+		}
+	}
+	FPropertyChangedEvent PropertyChangedEvent(InPropertyHandle->GetProperty(), EPropertyChangeType::ValueSet, ObjectsView);
+	FPropertyChangedChainEvent PropertyChangedChainEvent(PropertyChain, PropertyChangedEvent);
+
+	URigVMController* Controller = nullptr;
+	if(BlueprintBeingCustomized && GraphBeingCustomized)
+	{
+		Controller = BlueprintBeingCustomized->GetController(GraphBeingCustomized);
+		Controller->OpenUndoBracket(FString::Printf(TEXT("Set %s"), *InPropertyHandle->GetProperty()->GetName()));
+	}
+
+	for(int32 Index = 0; Index < ObjectsBeingCustomized.Num(); Index++)
+	{
+		const TWeakObjectPtr<UObject>& Object = ObjectsBeingCustomized[Index];
+		if(Object.Get() && InPropertyHandle->IsValidHandle())
+		{
+			UEnum** CurrentEnum = ContainerMemoryBlockToEnumPtr((uint8*)Object.Get(), PropertyChain, PropertyArrayIndices);
+			if (CurrentEnum)
+			{
+				const UEnum* PreviousEnum = *CurrentEnum;
+				*CurrentEnum = FindObject<UEnum>(nullptr, **InEnumPath.Get(), false);
+
+				if (PreviousEnum != *CurrentEnum)
+				{
+					Object->PostEditChangeChainProperty(PropertyChangedChainEvent);
+					InPropertyHandle->NotifyPostChange(PropertyChangedEvent.ChangeType);
+				}
+			}
+		}
+	}
+
+	if(Controller)
+	{
+		Controller->CloseUndoBracket();
+	}
+}
+
+template<typename VectorType, int32 NumberOfComponents>
+void FRigVMGraphMathTypeDetailCustomization::MakeVectorHeaderRow(TSharedRef<class IPropertyHandle> InPropertyHandle, FDetailWidgetRow& HeaderRow, IPropertyTypeCustomizationUtils& StructCustomizationUtils)
+{
+	typedef typename VectorType::FReal NumericType;
+	typedef SNumericVectorInputBox<NumericType, VectorType, NumberOfComponents> SLocalVectorInputBox;
+
+	FEditPropertyChain PropertyChain;
+	TArray<int32> PropertyArrayIndices;
+	bool bEnabled;
+	if (!GetPropertyChain(InPropertyHandle, PropertyChain, PropertyArrayIndices, bEnabled))
+	{
+		return;
+	}
+
+	typename SLocalVectorInputBox::FArguments Args;
+	Args.Font(IDetailLayoutBuilder::GetDetailFont());
+	Args.IsEnabled(bEnabled);
+	Args.AllowSpin(true);
+	Args.SpinDelta(0.01f);
+	Args.bColorAxisLabels(true);
+	Args.X_Lambda([this, InPropertyHandle]()
+		{
+			return GetVectorComponent<VectorType, NumericType>(InPropertyHandle, 0);
+		});
+	Args.OnXChanged_Lambda([this, InPropertyHandle](NumericType Value)
+		{
+			OnVectorComponentChanged<VectorType, NumericType>(InPropertyHandle, 0, Value, false);
+		});
+	Args.OnXCommitted_Lambda([this, InPropertyHandle](NumericType Value, ETextCommit::Type CommitType)
+		{
+			OnVectorComponentChanged<VectorType, NumericType>(InPropertyHandle, 0, Value, true, CommitType);
+		});
+	Args.Y_Lambda([this, InPropertyHandle]()
+		{
+			return GetVectorComponent<VectorType, NumericType>(InPropertyHandle, 1);
+		});
+	Args.OnYChanged_Lambda([this, InPropertyHandle](NumericType Value)
+		{
+			OnVectorComponentChanged<VectorType, NumericType>(InPropertyHandle, 1, Value, false);
+		});
+	Args.OnYCommitted_Lambda([this, InPropertyHandle](NumericType Value, ETextCommit::Type CommitType)
+		{
+			OnVectorComponentChanged<VectorType, NumericType>(InPropertyHandle, 1, Value, true, CommitType);
+		});
+
+	ExtendVectorArgs<VectorType>(InPropertyHandle, &Args);
+
+	HeaderRow
+		.IsEnabled(bEnabled)
+		.NameContent()
+		[
+			InPropertyHandle->CreatePropertyNameWidget()
+		]
+	.ValueContent()
+		.MinDesiredWidth(375.f)
+		.MaxDesiredWidth(375.f)
+		.HAlign(HAlign_Left)
+		[
+			SArgumentNew(Args, SLocalVectorInputBox)
+		];
+}
+
+template<typename RotationType>
+void FRigVMGraphMathTypeDetailCustomization::MakeRotationHeaderRow(TSharedRef<class IPropertyHandle> InPropertyHandle, FDetailWidgetRow& HeaderRow, IPropertyTypeCustomizationUtils& StructCustomizationUtils)
+{
+	FEditPropertyChain PropertyChain;
+	TArray<int32> PropertyArrayIndices;
+	bool bEnabled;
+	if (!GetPropertyChain(InPropertyHandle, PropertyChain, PropertyArrayIndices, bEnabled))
+	{
+		return;
+	}
+		
+	typedef typename RotationType::FReal NumericType;
+	typedef SAdvancedRotationInputBox<NumericType> SLocalRotationInputBox;
+	typename SLocalRotationInputBox::FArguments Args;
+	Args.Font(IDetailLayoutBuilder::GetDetailFont());
+	Args.IsEnabled(bEnabled);
+	Args.AllowSpin(true);
+	Args.bColorAxisLabels(true);
+
+	ExtendRotationArgs<RotationType>(InPropertyHandle, &Args);
+
+	HeaderRow
+		.IsEnabled(bEnabled)
+		.NameContent()
+		[
+			InPropertyHandle->CreatePropertyNameWidget()
+		]
+	.ValueContent()
+		.MinDesiredWidth(375.f)
+		.MaxDesiredWidth(375.f)
+		.HAlign(HAlign_Left)
+		[
+			SArgumentNew(Args, SLocalRotationInputBox)
+		];
+}
+
+template <typename TransformType>
+void FRigVMGraphMathTypeDetailCustomization::ConfigureTransformWidgetArgs(TSharedRef<IPropertyHandle> InPropertyHandle, typename SAdvancedTransformInputBox<TransformType>::FArguments& WidgetArgs)
+{
+	FEditPropertyChain PropertyChain;
+	TArray<int32> PropertyArrayIndices;
+	bool bEnabled;
+	if (!GetPropertyChain(InPropertyHandle, PropertyChain, PropertyArrayIndices, bEnabled))
+	{
+		return;
+	}
+	
+	typedef typename TransformType::FReal FReal;
+	WidgetArgs.IsEnabled(bEnabled);
+	WidgetArgs.AllowEditRotationRepresentation(true);
+	WidgetArgs.UseQuaternionForRotation(IsQuaternionBasedRotation<TransformType>());
+
+	static TransformType Identity = TransformType::Identity;
+
+	UObject* DefaultObject = !ObjectsBeingCustomized.IsEmpty() ? ObjectsBeingCustomized[0]->GetClass()->GetDefaultObject() :
+	!StructsBeingCustomized.IsEmpty() ? StructsBeingCustomized[0]->GetStruct()->GetClass() : nullptr;
+
+	if (!DefaultObject)
+	{
+		return;
+	}
+	
+	TransformType DefaultValue = ContainerMemoryBlockToValueRef<TransformType>((uint8*)DefaultObject, Identity, PropertyChain, PropertyArrayIndices);
+	
+	WidgetArgs.DiffersFromDefault_Lambda([this, InPropertyHandle, DefaultValue](ESlateTransformComponent::Type InTransformComponent) -> bool
+	{
+		if (ObjectsBeingCustomized.IsEmpty())
+		{
+			return false;
+		}
+		
+		FEditPropertyChain PropertyChain;
+		TArray<int32> PropertyArrayIndices;
+		bool bEnabled;
+		if (!GetPropertyChain(InPropertyHandle, PropertyChain, PropertyArrayIndices, bEnabled))
+		{
+			return false;
+		}
+		
+		for(const TWeakObjectPtr<UObject>& Object : ObjectsBeingCustomized)
+		{
+			if(Object.Get() && InPropertyHandle->IsValidHandle())
+			{
+				const TransformType& Transform = ContainerMemoryBlockToValueRef<TransformType>((uint8*)Object.Get(), Identity, PropertyChain, PropertyArrayIndices);
+
+				switch(InTransformComponent)
+				{
+					case ESlateTransformComponent::Location:
+					{
+						if(!Transform.GetLocation().Equals(DefaultValue.GetLocation()))
+						{
+							return true;
+						}
+						break;
+					}
+					case ESlateTransformComponent::Rotation:
+					{
+						if(!Transform.Rotator().Equals(DefaultValue.Rotator()))
+						{
+							return true;
+						}
+						break;
+					}
+					case ESlateTransformComponent::Scale:
+					{
+						if(!Transform.GetScale3D().Equals(DefaultValue.GetScale3D()))
+						{
+							return true;
+						}
+						break;
+					}
+					default:
+					{
+						break;
+					}
+				}
+			}
+		}
+		return false;
+	});
+
+	WidgetArgs.OnGetNumericValue_Lambda([this, InPropertyHandle](
+		ESlateTransformComponent::Type InTransformComponent,
+		ESlateRotationRepresentation::Type InRotationRepresentation,
+		ESlateTransformSubComponent::Type InTransformSubComponent) -> TOptional<FReal>
+	{
+		TOptional<FReal> Result;
+		FEditPropertyChain PropertyChain;
+		TArray<int32> PropertyArrayIndices;
+		bool bEnabled;
+		if (!GetPropertyChain(InPropertyHandle, PropertyChain, PropertyArrayIndices, bEnabled))
+		{
+			return Result;
+		}
+
+		const TArray<uint8*> MemoryBlocks = GetMemoryBeingCustomized();
+		for(uint8* MemoryBlock: MemoryBlocks)
+		{
+			if(MemoryBlock)
+			{
+				const TransformType& Transform = ContainerMemoryBlockToValueRef<TransformType>(MemoryBlock, Identity, PropertyChain, PropertyArrayIndices);
+				
+				TOptional<FReal> Value = SAdvancedTransformInputBox<TransformType>::GetNumericValueFromTransform(
+					Transform,
+					InTransformComponent,
+					InRotationRepresentation,
+					InTransformSubComponent
+					);
+
+				if(Value.IsSet())
+				{
+					if(Result.IsSet())
+					{
+						if(!FMath::IsNearlyEqual(Result.GetValue(), Value.GetValue()))
+						{
+							return TOptional<FReal>();
+						}
+					}
+					else
+					{
+						Result = Value;
+					}
+				}
+			}
+		}
+		return Result;
+	});
+	
+
+	auto OnNumericValueChanged = [this, InPropertyHandle](
+		ESlateTransformComponent::Type InTransformComponent, 
+		ESlateRotationRepresentation::Type InRotationRepresentation, 
+		ESlateTransformSubComponent::Type InSubComponent,
+		FReal InValue,
+		bool bIsCommit,
+		ETextCommit::Type InCommitType = ETextCommit::Default)
+	{
+		FEditPropertyChain PropertyChain;
+		TArray<int32> PropertyArrayIndices;
+		bool bEnabled;
+		if (!GetPropertyChain(InPropertyHandle, PropertyChain, PropertyArrayIndices, bEnabled))
+		{
+			return;
+		}
+		
+		TArray<UObject*> ObjectsView;
+		for(int32 Index = 0; Index < ObjectsBeingCustomized.Num(); Index++)
+		{
+			const TWeakObjectPtr<UObject>& Object = ObjectsBeingCustomized[Index];
+			if (Object.Get())
+			{
+				ObjectsView.Add(Object.Get());
+			}
+		}
+		FPropertyChangedEvent PropertyChangedEvent(InPropertyHandle->GetProperty(), bIsCommit ? EPropertyChangeType::ValueSet : EPropertyChangeType::Interactive, ObjectsView);
+		FPropertyChangedChainEvent PropertyChangedChainEvent(PropertyChain, PropertyChangedEvent);
+
+		URigVMController* Controller = nullptr;
+		if(BlueprintBeingCustomized && GraphBeingCustomized)
+		{
+			Controller = BlueprintBeingCustomized->GetController(GraphBeingCustomized);
+			if(bIsCommit)
+			{
+				Controller->OpenUndoBracket(FString::Printf(TEXT("Set %s"), *InPropertyHandle->GetProperty()->GetName()));
+			}
+		}
+
+		for(int32 Index = 0; Index < ObjectsBeingCustomized.Num(); Index++)
+		{
+			const TWeakObjectPtr<UObject>& Object = ObjectsBeingCustomized[Index];
+			if(Object.Get() && InPropertyHandle->IsValidHandle())
+			{
+				TransformType& Transform = ContainerMemoryBlockToValueRef<TransformType>((uint8*)Object.Get(), Identity, PropertyChain, PropertyArrayIndices);
+				TransformType PreviousTransform = Transform;
+				
+				SAdvancedTransformInputBox<TransformType>::ApplyNumericValueChange(
+					Transform,
+					InValue,
+					InTransformComponent,
+					InRotationRepresentation,
+					InSubComponent);
+
+				if(!PreviousTransform.Equals(Transform))
+				{
+					Object->PostEditChangeChainProperty(PropertyChangedChainEvent);
+					InPropertyHandle->NotifyPostChange(PropertyChangedEvent.ChangeType);
+				}
+			}
+		}
+
+		if(Controller && bIsCommit)
+		{
+			Controller->CloseUndoBracket();
+		}
+	};
+
+	WidgetArgs.OnNumericValueChanged_Lambda([OnNumericValueChanged](
+		ESlateTransformComponent::Type InTransformComponent, 
+		ESlateRotationRepresentation::Type InRotationRepresentation, 
+		ESlateTransformSubComponent::Type InSubComponent,
+		FReal InValue)
+	{
+		OnNumericValueChanged(InTransformComponent, InRotationRepresentation, InSubComponent, InValue, false);
+	});
+
+	WidgetArgs.OnNumericValueCommitted_Lambda([OnNumericValueChanged](
+		ESlateTransformComponent::Type InTransformComponent, 
+		ESlateRotationRepresentation::Type InRotationRepresentation, 
+		ESlateTransformSubComponent::Type InSubComponent,
+		FReal InValue, 
+		ETextCommit::Type InCommitType)
+	{
+		OnNumericValueChanged(InTransformComponent, InRotationRepresentation, InSubComponent, InValue, true, InCommitType);
+	});
+
+	WidgetArgs.OnResetToDefault_Lambda([this, DefaultValue, InPropertyHandle](ESlateTransformComponent::Type InTransformComponent)
+	{
+		if (ObjectsBeingCustomized.IsEmpty())
+		{
+			return;
+		}
+		
+		FEditPropertyChain PropertyChain;
+		TArray<int32> PropertyArrayIndices;
+		bool bEnabled;
+		if (!GetPropertyChain(InPropertyHandle, PropertyChain, PropertyArrayIndices, bEnabled))
+		{
+			return;
+		}
+		
+		URigVMController* Controller = nullptr;
+		if(BlueprintBeingCustomized && GraphBeingCustomized)
+		{
+			Controller = BlueprintBeingCustomized->GetController(GraphBeingCustomized);
+			if(Controller)
+			{
+				Controller->OpenUndoBracket(FString::Printf(TEXT("Reset %s to Default"), *InPropertyHandle->GetProperty()->GetName()));
+			}
+		}
+
+		TArray<UObject*> ObjectsView;
+		for(int32 Index = 0; Index < ObjectsBeingCustomized.Num(); Index++)
+		{
+			const TWeakObjectPtr<UObject>& Object = ObjectsBeingCustomized[Index];
+			if (Object.Get())
+			{
+				ObjectsView.Add(Object.Get());
+			}
+		}
+		FPropertyChangedEvent PropertyChangedEvent(InPropertyHandle->GetProperty(), EPropertyChangeType::ValueSet, ObjectsView);
+		FPropertyChangedChainEvent PropertyChangedChainEvent(PropertyChain, PropertyChangedEvent);
+		
+		for(int32 Index = 0; Index < ObjectsBeingCustomized.Num(); Index++)
+		{
+			const TWeakObjectPtr<UObject>& Object = ObjectsBeingCustomized[Index];
+			if(Object.Get() && InPropertyHandle->IsValidHandle())
+			{
+				TransformType& Transform = ContainerMemoryBlockToValueRef<TransformType>((uint8*)Object.Get(), Identity, PropertyChain, PropertyArrayIndices);
+				TransformType PreviousTransform = Transform;
+
+				switch(InTransformComponent)
+				{
+					case ESlateTransformComponent::Location:
+					{
+						Transform.SetLocation(DefaultValue.GetLocation());
+						break;
+					}
+					case ESlateTransformComponent::Rotation:
+					{
+						Transform.SetRotation(DefaultValue.GetRotation());
+						break;
+					}
+					case ESlateTransformComponent::Scale:
+					{
+						Transform.SetScale3D(DefaultValue.GetScale3D());
+						break;
+					}
+					case ESlateTransformComponent::Max:
+					default:
+					{
+						Transform.SetLocation(DefaultValue.GetLocation());
+						break;
+					}
+				}
+
+				
+				if(!PreviousTransform.Equals(Transform))
+				{
+					Object->PostEditChangeChainProperty(PropertyChangedChainEvent);
+					InPropertyHandle->NotifyPostChange(PropertyChangedEvent.ChangeType);
+				}
+			}
+		}
+
+		if(Controller)
+		{
+			Controller->CloseUndoBracket();
+		}
+	});
+
+	WidgetArgs.OnCopyToClipboard_Lambda([this, InPropertyHandle](
+		ESlateTransformComponent::Type InComponent
+		)
+	{
+		TOptional<FReal> Result;
+		FEditPropertyChain PropertyChain;
+		TArray<int32> PropertyArrayIndices;
+		bool bEnabled;
+		if (!GetPropertyChain(InPropertyHandle, PropertyChain, PropertyArrayIndices, bEnabled))
+		{
+			return;
+		}
+
+		const TArray<uint8*> MemoryBlocks = GetMemoryBeingCustomized();
+		for(uint8* MemoryBlock: MemoryBlocks)
+		{
+			if(MemoryBlock)
+			{
+				const TransformType& Transform = ContainerMemoryBlockToValueRef<TransformType>(MemoryBlock, Identity, PropertyChain, PropertyArrayIndices);
+				FString Content;
+				switch(InComponent)
+				{
+					case ESlateTransformComponent::Location:
+					{
+						const FVector Data = Transform.GetLocation();
+						TBaseStructure<FVector>::Get()->ExportText(Content, &Data, &Data, nullptr, PPF_None, nullptr);
+						break;
+					}
+					case ESlateTransformComponent::Rotation:
+					{
+						const FRotator Data = Transform.Rotator();
+						TBaseStructure<FRotator>::Get()->ExportText(Content, &Data, &Data, nullptr, PPF_None, nullptr);
+						break;
+					}
+					case ESlateTransformComponent::Scale:
+					{
+						const FVector Data = Transform.GetScale3D();
+						TBaseStructure<FVector>::Get()->ExportText(Content, &Data, &Data, nullptr, PPF_None, nullptr);
+						break;
+					}
+					case ESlateTransformComponent::Max:
+					default:
+					{
+						TBaseStructure<TransformType>::Get()->ExportText(Content, &Transform, &Transform, nullptr, PPF_None, nullptr);
+						break;
+					}
+				}
+
+				if(!Content.IsEmpty())
+				{
+					FPlatformApplicationMisc::ClipboardCopy(*Content);
+				}
+			}
+		}
+	});
+
+	WidgetArgs.OnPasteFromClipboard_Lambda([this, InPropertyHandle, OnNumericValueChanged](
+		ESlateTransformComponent::Type InComponent
+		)
+	{
+		FString Content;
+		FPlatformApplicationMisc::ClipboardPaste(Content);
+	
+		if(Content.IsEmpty())
+		{
+			return;
+		}
+
+		if (ObjectsBeingCustomized.IsEmpty())
+		{
+			return;
+		}
+
+		TOptional<FReal> Result;
+		FEditPropertyChain PropertyChain;
+		TArray<int32> PropertyArrayIndices;
+		bool bEnabled;
+		if (!GetPropertyChain(InPropertyHandle, PropertyChain, PropertyArrayIndices, bEnabled))
+		{
+			return;
+		}
+
+		TArray<UObject*> ObjectsView;
+		for(int32 Index = 0; Index < ObjectsBeingCustomized.Num(); Index++)
+		{
+			const TWeakObjectPtr<UObject>& Object = ObjectsBeingCustomized[Index];
+			if (Object.Get())
+			{
+				ObjectsView.Add(Object.Get());
+			}
+		}
+		FPropertyChangedEvent PropertyChangedEvent(InPropertyHandle->GetProperty(), EPropertyChangeType::ValueSet, ObjectsView);
+		FPropertyChangedChainEvent PropertyChangedChainEvent(PropertyChain, PropertyChangedEvent);
+
+		URigVMController* Controller = nullptr;
+		if(BlueprintBeingCustomized && GraphBeingCustomized)
+		{
+			Controller = BlueprintBeingCustomized->GetController(GraphBeingCustomized);
+			Controller->OpenUndoBracket(FString::Printf(TEXT("Set %s"), *InPropertyHandle->GetProperty()->GetName()));
+		}
+		
+		for(const TWeakObjectPtr<UObject>& Object : ObjectsBeingCustomized)
+		{
+			if(Object.Get() && InPropertyHandle->IsValidHandle())
+			{
+				TransformType& Transform = ContainerMemoryBlockToValueRef<TransformType>((uint8*)Object.Get(), Identity, PropertyChain, PropertyArrayIndices);
+				const TransformType PreviousTransform = Transform;
+
+				// Apply the new value
+				{
+					class FRigPasteTransformWidgetErrorPipe : public FOutputDevice
+					{
+					public:
+				
+						int32 NumErrors;
+				
+						FRigPasteTransformWidgetErrorPipe()
+							: FOutputDevice()
+							, NumErrors(0)
+						{
+						}
+				
+						virtual void Serialize(const TCHAR* V, ELogVerbosity::Type Verbosity, const class FName& Category) override
+						{
+							UE_LOG(LogRigVM, Error, TEXT("Error Pasting to Widget: %s"), V);
+							NumErrors++;
+						}
+					};
+				
+					FRigPasteTransformWidgetErrorPipe ErrorPipe;
+					
+					switch(InComponent)
+					{
+						case ESlateTransformComponent::Location:
+						{
+							FVector Data = Transform.GetLocation();
+							TBaseStructure<FVector>::Get()->ImportText(*Content, &Data, nullptr, PPF_None, &ErrorPipe, TBaseStructure<FVector>::Get()->GetName(), true);
+							Transform.SetLocation(Data);
+							break;
+						}
+						case ESlateTransformComponent::Rotation:
+						{
+							FRotator Data = Transform.Rotator();
+							TBaseStructure<FRotator>::Get()->ImportText(*Content, &Data, nullptr, PPF_None, &ErrorPipe, TBaseStructure<FRotator>::Get()->GetName(), true);
+							FQuat Quat = Data.Quaternion();
+							Transform.SetRotation(Quat);
+							
+							break;
+						}
+						case ESlateTransformComponent::Scale:
+						{
+							FVector Data = Transform.GetScale3D();
+							TBaseStructure<FVector>::Get()->ImportText(*Content, &Data, nullptr, PPF_None, &ErrorPipe, TBaseStructure<FVector>::Get()->GetName(), true);
+							Transform.SetScale3D(Data);
+							break;
+						}
+						case ESlateTransformComponent::Max:
+						default:
+						{
+							TBaseStructure<TransformType>::Get()->ImportText(*Content, &Transform, nullptr, PPF_None, &ErrorPipe, TBaseStructure<TransformType>::Get()->GetName(), true);
+							break;
+						}
+					}
+				
+					if(ErrorPipe.NumErrors == 0 && !PreviousTransform.Equals(Transform))
+					{
+						Object->PostEditChangeChainProperty(PropertyChangedChainEvent);
+						InPropertyHandle->NotifyPostChange(PropertyChangedEvent.ChangeType);
+					}
+				}
+			}
+		}
+		
+		if (Controller)
+		{
+			Controller->CloseUndoBracket();
+		}
+	});
+}
+
+template<typename TransformType>
+void FRigVMGraphMathTypeDetailCustomization::MakeTransformHeaderRow(TSharedRef<class IPropertyHandle> InPropertyHandle, FDetailWidgetRow& HeaderRow, IPropertyTypeCustomizationUtils& StructCustomizationUtils)
+{
+	typename SAdvancedTransformInputBox<TransformType>::FArguments WidgetArgs;
+	ConfigureTransformWidgetArgs<TransformType>(InPropertyHandle, WidgetArgs);
+
+	SAdvancedTransformInputBox<TransformType>::ConfigureHeader(HeaderRow, InPropertyHandle->GetPropertyDisplayName(), InPropertyHandle->GetToolTipText(), WidgetArgs);
+	SAdvancedTransformInputBox<TransformType>::ConfigureComponentWidgetRow(HeaderRow, ESlateTransformComponent::Max, WidgetArgs);
+}
+	
+template<typename TransformType>
+void FRigVMGraphMathTypeDetailCustomization::MakeTransformChildren(TSharedRef<class IPropertyHandle> InPropertyHandle, IDetailChildrenBuilder& StructBuilder, IPropertyTypeCustomizationUtils& StructCustomizationUtils)
+{
+	FDetailWidgetRow* LocationRow = nullptr;
+	FDetailWidgetRow* RotationRow = nullptr;
+	FDetailWidgetRow* ScaleRow = nullptr;
+
+	typename SAdvancedTransformInputBox<TransformType>::FArguments WidgetArgs;
+	ConfigureTransformWidgetArgs<TransformType>(InPropertyHandle, WidgetArgs);
+
+	const FString StandaloneWidgetMetadata = InPropertyHandle->GetMetaData(TEXT("SStandaloneCustomizedValueWidget"));
+	const bool IsUsingStandaloneWidget = StandaloneWidgetMetadata.Equals(TEXT("True"));
+	
+	LocationRow = &StructBuilder.AddCustomRow(LOCTEXT("TransformLocation", "Location"));
+	RotationRow = &StructBuilder.AddCustomRow(LOCTEXT("TransformRotation", "Rotation"));
+	ScaleRow = &StructBuilder.AddCustomRow(LOCTEXT("TransformScale", "Scale"));
+	
+	SAdvancedTransformInputBox<TransformType>::ConfigureComponentWidgetRow(*LocationRow, ESlateTransformComponent::Location, WidgetArgs);
+	SAdvancedTransformInputBox<TransformType>::ConfigureComponentWidgetRow(*RotationRow, ESlateTransformComponent::Rotation, WidgetArgs);
+	SAdvancedTransformInputBox<TransformType>::ConfigureComponentWidgetRow(*ScaleRow, ESlateTransformComponent::Scale, WidgetArgs);
 }
 
 FRigVMGraphMathTypeDetailCustomization::FRigVMGraphMathTypeDetailCustomization()
@@ -1831,6 +2603,9 @@ void FRigVMGraphMathTypeDetailCustomization::CustomizeHeader(TSharedRef<IPropert
 {
 	TArray<UObject*> Objects;
 	InPropertyHandle->GetOuterObjects(Objects);
+
+	StructsBeingCustomized.Reset();
+	InPropertyHandle->GetOuterStructs(StructsBeingCustomized);
 
 	for (UObject* Object : Objects)
 	{
@@ -1850,6 +2625,35 @@ void FRigVMGraphMathTypeDetailCustomization::CustomizeHeader(TSharedRef<IPropert
 	FProperty* Property = InPropertyHandle->GetProperty();
 	const FStructProperty* StructProperty = CastField<FStructProperty>(Property);
 	ScriptStruct = StructProperty->Struct;
+
+	if(ScriptStruct == TBaseStructure<FVector>::Get())
+	{
+		MakeVectorHeaderRow<FVector, 3>(InPropertyHandle, HeaderRow, StructCustomizationUtils);
+	}
+	else if(ScriptStruct == TBaseStructure<FVector2D>::Get())
+	{
+		MakeVectorHeaderRow<FVector2D, 2>(InPropertyHandle, HeaderRow, StructCustomizationUtils);
+	}
+	else if(ScriptStruct == TBaseStructure<FVector4>::Get())
+	{
+		MakeVectorHeaderRow<FVector4, 4>(InPropertyHandle, HeaderRow, StructCustomizationUtils);
+	}
+	else if(ScriptStruct == TBaseStructure<FRotator>::Get())
+	{
+		MakeRotationHeaderRow<FRotator>(InPropertyHandle, HeaderRow, StructCustomizationUtils);
+	}
+	else if(ScriptStruct == TBaseStructure<FQuat>::Get())
+	{
+		MakeRotationHeaderRow<FQuat>(InPropertyHandle, HeaderRow, StructCustomizationUtils);
+	}
+	else if(ScriptStruct == TBaseStructure<FTransform>::Get())
+	{
+		MakeTransformHeaderRow<FTransform>(InPropertyHandle, HeaderRow, StructCustomizationUtils);
+	}
+	else if(ScriptStruct == TBaseStructure<FEulerTransform>::Get())
+	{
+		MakeTransformHeaderRow<FEulerTransform>(InPropertyHandle, HeaderRow, StructCustomizationUtils);
+	}
 }
 
 void FRigVMGraphMathTypeDetailCustomization::CustomizeChildren(TSharedRef<IPropertyHandle> InPropertyHandle,
@@ -1859,34 +2663,39 @@ void FRigVMGraphMathTypeDetailCustomization::CustomizeChildren(TSharedRef<IPrope
 	{
 		return;
 	}
+	
+	TArray<UObject*> Objects;
+	InPropertyHandle->GetOuterObjects(Objects);
 
-	if(ScriptStruct == TBaseStructure<FVector>::Get())
+	for (UObject* Object : Objects)
 	{
-		CustomizeVector<FVector, 3>(InPropertyHandle, StructBuilder, StructCustomizationUtils);
+		ObjectsBeingCustomized.Add(Object);
+
+		if(BlueprintBeingCustomized == nullptr)
+		{
+			BlueprintBeingCustomized = Object->GetTypedOuter<URigVMBlueprint>();
+		}
+
+		if(GraphBeingCustomized == nullptr)
+		{
+			GraphBeingCustomized = Object->GetTypedOuter<URigVMGraph>();
+		}
 	}
-	else if(ScriptStruct == TBaseStructure<FVector2D>::Get())
+
+	StructsBeingCustomized.Reset();
+	InPropertyHandle->GetOuterStructs(StructsBeingCustomized);
+
+	FProperty* Property = InPropertyHandle->GetProperty();
+	const FStructProperty* StructProperty = CastField<FStructProperty>(Property);
+	ScriptStruct = StructProperty->Struct;
+
+	if(ScriptStruct == TBaseStructure<FTransform>::Get())
 	{
-		CustomizeVector<FVector2D, 2>(InPropertyHandle, StructBuilder, StructCustomizationUtils);
-	}
-	else if(ScriptStruct == TBaseStructure<FVector4>::Get())
-	{
-		CustomizeVector<FVector4, 4>(InPropertyHandle, StructBuilder, StructCustomizationUtils);
-	}
-	else if(ScriptStruct == TBaseStructure<FRotator>::Get())
-	{
-		CustomizeRotation<FRotator>(InPropertyHandle, StructBuilder, StructCustomizationUtils);
-	}
-	else if(ScriptStruct == TBaseStructure<FQuat>::Get())
-	{
-		CustomizeRotation<FQuat>(InPropertyHandle, StructBuilder, StructCustomizationUtils);
-	}
-	else if(ScriptStruct == TBaseStructure<FTransform>::Get())
-	{
-		CustomizeTransform<FTransform>(InPropertyHandle, StructBuilder, StructCustomizationUtils);
+		MakeTransformChildren<FTransform>(InPropertyHandle, StructBuilder, StructCustomizationUtils);
 	}
 	else if(ScriptStruct == TBaseStructure<FEulerTransform>::Get())
 	{
-		CustomizeTransform<FEulerTransform>(InPropertyHandle, StructBuilder, StructCustomizationUtils);
+		MakeTransformChildren<FEulerTransform>(InPropertyHandle, StructBuilder, StructCustomizationUtils);
 	}
 }
 

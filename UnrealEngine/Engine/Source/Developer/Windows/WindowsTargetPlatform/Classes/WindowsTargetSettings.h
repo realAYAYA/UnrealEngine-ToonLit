@@ -17,7 +17,7 @@ enum class ECompilerVersion : uint8
 	Default = 0,
 	VisualStudio2015 = 1 UMETA(DisplayName = "Visual Studio 2015 (deprecated)"),
 	VisualStudio2017 = 2 UMETA(DisplayName = "Visual Studio 2017 (deprecated)"),
-	VisualStudio2019 = 3 UMETA(DisplayName = "Visual Studio 2019"),
+	VisualStudio2019 = 3 UMETA(DisplayName = "Visual Studio 2019 (deprecated)"),
 	VisualStudio2022 = 4 UMETA(DisplayName = "Visual Studio 2022"),
 };
 

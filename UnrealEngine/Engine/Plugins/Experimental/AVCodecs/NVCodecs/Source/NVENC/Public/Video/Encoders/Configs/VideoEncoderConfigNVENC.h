@@ -101,4 +101,7 @@ FAVResult FAVExtension::TransformConfig(FVideoEncoderConfigNVENC& OutConfig, str
 template <>
 FAVResult FAVExtension::TransformConfig(FVideoEncoderConfigNVENC& OutConfig, struct FVideoEncoderConfigH265 const& InConfig);
 
+template <>
+FAVResult FAVExtension::TransformConfig(FVideoEncoderConfigNVENC& OutConfig, struct FVideoEncoderConfigAV1 const& InConfig);
+
 DECLARE_TYPEID(FVideoEncoderConfigNVENC, NVENC_API);

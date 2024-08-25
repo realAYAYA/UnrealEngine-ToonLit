@@ -212,7 +212,7 @@ FStaticMeshStaticLightingTextureMapping::FStaticMeshStaticLightingTextureMapping
 void FStaticMeshStaticLightingTextureMapping::Apply(FQuantizedLightmapData* QuantizedData, const TMap<ULightComponent*,FShadowMapData2D*>& ShadowMapData, ULevel* LightingScenario)
 {
 	static const auto CVar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.VirtualTexturedLightmaps"));
-	const bool bUseVirtualTextures = (CVar->GetValueOnAnyThread() != 0) && UseVirtualTexturing(GMaxRHIFeatureLevel);
+	const bool bUseVirtualTextures = (CVar->GetValueOnAnyThread() != 0) && UseVirtualTexturing(GMaxRHIShaderPlatform);
 
 	UStaticMeshComponent* StaticMeshComponent = Primitive.Get();
 
@@ -223,7 +223,7 @@ void FStaticMeshStaticLightingTextureMapping::Apply(FQuantizedLightmapData* Quan
 		// The rendering thread reads from LODData and IrrelevantLights, therefore
 		// the component must have finished detaching from the scene on the rendering
 		// thread before it is safe to continue.
-		check(StaticMeshComponent->AttachmentCounter.GetValue() == 0);
+		check(StaticMeshComponent->GetSceneData().AttachmentCounter.GetValue() == 0);
 
 		// Ensure LODData has enough entries in it, free not required.
 		const bool bLODDataCountChanged = StaticMeshComponent->SetLODDataCount(LODIndex + 1, StaticMeshComponent->GetStaticMesh()->GetNumLODs());
@@ -436,9 +436,9 @@ bool UStaticMeshComponent::IsPrecomputedLightingValid() const
 
 #if WITH_EDITOR
 	return FStaticLightingSystemInterface::GetPrimitiveMeshMapBuildData(this, MinLOD) != nullptr;
-#endif
-
+#else
 	return false;
+#endif
 }
 
 float UStaticMeshComponent::GetEmissiveBoost(int32 ElementIndex) const

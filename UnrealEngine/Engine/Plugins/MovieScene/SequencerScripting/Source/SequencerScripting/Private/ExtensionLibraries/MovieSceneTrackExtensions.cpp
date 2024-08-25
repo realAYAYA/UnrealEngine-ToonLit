@@ -31,8 +31,9 @@ FText UMovieSceneTrackExtensions::GetDisplayName(UMovieSceneTrack* Track)
 
 #if WITH_EDITORONLY_DATA
 	return Track->GetDisplayName();
-#endif
+#else
 	return FText::GetEmpty();
+#endif
 }
 
 void UMovieSceneTrackExtensions::SetTrackRowDisplayName(UMovieSceneTrack* Track, const FText& InName, int32 RowIndex)
@@ -61,8 +62,9 @@ FText UMovieSceneTrackExtensions::GetTrackRowDisplayName(UMovieSceneTrack* Track
 
 #if WITH_EDITORONLY_DATA
 	return Track->GetTrackRowDisplayName(RowIndex);
-#endif
+#else
 	return FText::GetEmpty();
+#endif
 }
 
 UMovieSceneSection* UMovieSceneTrackExtensions::AddSection(UMovieSceneTrack* Track)
@@ -122,8 +124,9 @@ int32 UMovieSceneTrackExtensions::GetSortingOrder(UMovieSceneTrack* Track)
 
 #if WITH_EDITORONLY_DATA
 	return Track->GetSortingOrder(); 
-#endif
+#else
 	return 0;
+#endif
 }
  
 void UMovieSceneTrackExtensions::SetSortingOrder(UMovieSceneTrack* Track, int32 SortingOrder) 

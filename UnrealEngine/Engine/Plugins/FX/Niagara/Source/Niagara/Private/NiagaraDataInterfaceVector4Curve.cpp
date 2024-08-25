@@ -160,7 +160,8 @@ void UNiagaraDataInterfaceVector4Curve::GetCurveData(TArray<FCurveData>& OutCurv
 	OutCurveData.Add(FCurveData(&WCurve, TEXT("W"), FLinearColor(0.2f, 0.2f, 0.2f)));
 }
 
-void UNiagaraDataInterfaceVector4Curve::GetFunctions(TArray<FNiagaraFunctionSignature>& OutFunctions)
+#if WITH_EDITORONLY_DATA
+void UNiagaraDataInterfaceVector4Curve::GetFunctionsInternal(TArray<FNiagaraFunctionSignature>& OutFunctions) const
 {
 	FNiagaraFunctionSignature Sig;
 	Sig.Name = SampleCurveName;
@@ -178,7 +179,6 @@ void UNiagaraDataInterfaceVector4Curve::GetFunctions(TArray<FNiagaraFunctionSign
 // the HLSL in the spirit of a static switch
 // TODO: need a way to identify each specific function here
 // 
-#if WITH_EDITORONLY_DATA
 bool UNiagaraDataInterfaceVector4Curve::GetFunctionHLSL(const FNiagaraDataInterfaceGPUParamInfo& ParamInfo, const FNiagaraDataInterfaceGeneratedFunction& FunctionInfo, int FunctionInstanceIndex, FString& OutHLSL)
 {
 	if (FunctionInfo.DefinitionName == SampleCurveName)

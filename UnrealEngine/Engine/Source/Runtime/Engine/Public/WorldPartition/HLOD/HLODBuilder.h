@@ -10,7 +10,7 @@
 
 class AActor;
 class UActorComponent;
-class UInstancedStaticMeshComponent;
+class UHLODInstancedStaticMeshComponent;
 
 ENGINE_API DECLARE_LOG_CATEGORY_EXTERN(LogHLODBuilder, Log, All);
 
@@ -118,7 +118,7 @@ public:
 	/** 
 	 * Get the InstancedStaticMeshComponent subclass that should be used when creating instanced HLODs.
 	 */
-	static ENGINE_API TSubclassOf<UInstancedStaticMeshComponent> GetInstancedStaticMeshComponentClass();
+	static ENGINE_API TSubclassOf<UHLODInstancedStaticMeshComponent> GetInstancedStaticMeshComponentClass();
 
 protected:
 	virtual bool ShouldIgnoreBatchingPolicy() const { return false; }
@@ -146,7 +146,7 @@ protected:
 
 private:
 	UPROPERTY(Config)
-	TSubclassOf<UInstancedStaticMeshComponent> HLODInstancedStaticMeshComponentClass;
+	TSubclassOf<UHLODInstancedStaticMeshComponent> HLODInstancedStaticMeshComponentClass;
 #endif
 };
 

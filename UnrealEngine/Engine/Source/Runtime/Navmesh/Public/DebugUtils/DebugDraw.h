@@ -134,6 +134,17 @@ struct duDebugDraw
 #endif
 //@UE END
 
+	/// Submit a text label
+	///  @param x,y,z [in] 3D position of the text.
+	///  @param text  [in] text to display.
+	virtual void text(const duReal x, const duReal y, const duReal z, const char* text) = 0;
+//@UE BEGIN Adding support for LWCoords.
+#if !DU_LARGE_WORLD_COORDINATES_DISABLED
+	// float version of this function is now deprecated
+	virtual void text(const float x, const float y, const float z, const char* text) final {}
+#endif
+//@UE END
+	
 	/// End drawing primitives.
 	virtual void end() = 0;
 };

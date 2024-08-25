@@ -21,7 +21,6 @@
 #include "Player/PlayerEntityCache.h"
 #include "Player/AdaptivePlayerOptionKeynames.h"
 #include "Player/DRM/DRMManager.h"
-#include "Async/Async.h"
 
 
 DECLARE_CYCLE_STAT(TEXT("FRepresentation::FindSegment"), STAT_ElectraPlayer_DASH_FindSegment, STATGROUP_ElectraPlayer);
@@ -38,11 +37,11 @@ namespace Electra
 namespace DashUtils
 {
 	#define GETPLAYEROPTION(Type, Getter)																						\
-		bool GetPlayerOption(IPlayerSessionServices* InPlayerSessionServices, Type& OutValue, const TCHAR* Key, Type Default)	\
+		bool GetPlayerOption(IPlayerSessionServices* InPlayerSessionServices, Type& OutValue, const FName& Key, Type Default)	\
 		{																														\
-			if (InPlayerSessionServices->GetOptions().HaveKey(Key))																\
+			if (InPlayerSessionServices->HaveOptionValue(Key))																	\
 			{																													\
-				OutValue = InPlayerSessionServices->GetOptions().GetValue(Key).Getter(Default);									\
+				OutValue = InPlayerSessionServices->GetOptionValue(Key).Getter(Default);										\
 				return true;																									\
 			}																													\
 			OutValue = Default;																									\
@@ -228,7 +227,7 @@ private:
 		FManifestDASHInternal::FSegmentInformation InitSegmentInfo;
 		bool bRequested = false;
 		TSharedPtrTS<FMPDLoadRequestDASH> LoadRequest;
-		
+
 		class FAcceptBoxes : public IParserISO14496_12::IBoxCallback
 		{
 		public:
@@ -345,7 +344,7 @@ IManifest::EType FManifestDASH::GetPresentationType() const
 }
 
 TSharedPtrTS<const FLowLatencyDescriptor> FManifestDASH::GetLowLatencyDescriptor() const
-{ 
+{
 	TSharedPtrTS<FManifestDASHInternal> Manifest(CurrentManifest);
 	return Manifest.IsValid() ? Manifest->GetLowLatencyDescriptor() : nullptr;
 }
@@ -368,10 +367,10 @@ FTimeRange FManifestDASH::GetSeekableTimeRange() const
 	return Manifest.IsValid() ? Manifest->GetSeekableTimeRange() : FTimeRange();
 }
 
-FTimeRange FManifestDASH::GetPlaybackRange() const
+FTimeRange FManifestDASH::GetPlaybackRange(EPlaybackRangeType InRangeType) const
 {
 	TSharedPtrTS<FManifestDASHInternal> Manifest(CurrentManifest);
-	return Manifest.IsValid() ? Manifest->GetPlayTimesFromURI() : FTimeRange();
+	return Manifest.IsValid() ? Manifest->GetPlayTimesFromURI(InRangeType) : FTimeRange();
 }
 
 void FManifestDASH::GetSeekablePositions(TArray<FTimespan>& OutPositions) const
@@ -401,6 +400,21 @@ void FManifestDASH::ClearDefaultStartTime()
 	if (Manifest.IsValid())
 	{
 		Manifest->ClearDefaultStartTime();
+	}
+}
+
+FTimeValue FManifestDASH::GetDefaultEndTime() const
+{
+	TSharedPtrTS<FManifestDASHInternal> Manifest(CurrentManifest);
+	return Manifest.IsValid() ? Manifest->GetDefaultEndTime() : FTimeValue();
+}
+
+void FManifestDASH::ClearDefaultEndTime()
+{
+	TSharedPtrTS<FManifestDASHInternal> Manifest(CurrentManifest);
+	if (Manifest.IsValid())
+	{
+		Manifest->ClearDefaultEndTime();
 	}
 }
 
@@ -999,7 +1013,7 @@ void FDASHPlayPeriod::PrepareForPlay()
 		if (VideoAS.IsValid())
 		{
 			// Get the current average video bitrate with some sensible default if it is not set.
-			int64 StartingBitrate = PlayerSessionServices->GetOptions().GetValue(OptionKeyCurrentAvgStartingVideoBitrate).SafeGetInt64(2*1000*1000);
+			int64 StartingBitrate = PlayerSessionServices->GetOptionValue(OptionKeyCurrentAvgStartingVideoBitrate).SafeGetInt64(2*1000*1000);
 
 			TSharedPtrTS<IPlaybackAssetRepresentation> VideoRepr = GetRepresentationFromAdaptationByMaxBandwidth(VideoAS, (int32) StartingBitrate);
 			if (VideoRepr.IsValid())
@@ -1041,11 +1055,11 @@ void FDASHPlayPeriod::PrepareForPlay()
 		{
 			if (llDesc->Latency.ReferenceID >= 0)
 			{
-				PlayerSessionServices->GetOptions().SetOrUpdate(DASH::OptionKey_LatencyReferenceId, FVariantValue(llDesc->Latency.ReferenceID));
+				PlayerSessionServices->GetMutableOptions().Set(DASH::OptionKey_LatencyReferenceId, FVariantValue(llDesc->Latency.ReferenceID));
 			}
 			else
 			{
-				PlayerSessionServices->GetOptions().Remove(DASH::OptionKey_LatencyReferenceId);
+				PlayerSessionServices->GetMutableOptions().Remove(DASH::OptionKey_LatencyReferenceId);
 			}
 		}
 
@@ -1412,6 +1426,10 @@ IManifest::FResult FDASHPlayPeriod::GetStartingSegment(TSharedPtrTS<IStreamSegme
 				}
 				SegmentRequest->Segment = MoveTemp(SegmentInfo);
 				SegmentRequest->TimestampSequenceIndex = InSequenceState.GetSequenceIndex();
+				if (bFrameAccurateSearch)
+				{
+					SegmentRequest->FrameAccurateStartTime = StartPosition.Time;
+				}
 
 				// The start segment request needs to be able to return a valid first PTS which is what the player sets
 				// the playback position to. If not valid yet update it with the current stream values.
@@ -1749,7 +1767,7 @@ IManifest::FResult FDASHPlayPeriod::GetRetrySegment(TSharedPtrTS<IStreamSegment>
 		OutSegment = NewRequest;
 		return IManifest::FResult(IManifest::FResult::EType::Found);
 	}
-	
+
 	// Pass the download stats bWaitingForRemoteRetryElement to convey if the retry segment needs to wait for a remote element,
 	// which is either some xlink or an index segment.
 	FStreamSegmentRequestDASH* CurrentRequest = const_cast<FStreamSegmentRequestDASH*>(static_cast<const FStreamSegmentRequestDASH*>(InCurrentSegment.Get()));
@@ -2511,7 +2529,7 @@ FString FManifestDASHInternal::FRepresentation::ApplyTemplateStrings(FString Tem
 			if (token2Pos != INDEX_NONE)
 			{
 				FString token(TemplateURL.Mid(tokenPos+1, token2Pos-tokenPos-1));
-				TemplateURL.RightChopInline(token2Pos+1, false);
+				TemplateURL.RightChopInline(token2Pos+1, EAllowShrinking::No);
 				// An empty token results from "$$" used to insert a single '$'.
 				if (token.IsEmpty())
 				{

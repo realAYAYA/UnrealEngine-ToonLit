@@ -66,7 +66,7 @@ namespace Dataflow
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FTransformMeshDataflowNode);
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FCompareIntDataflowNode);
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FCompareFloatDataflowNode);
-		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FBranchDataflowNode);
+		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FBranchMeshDataflowNode);
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FBranchCollectionDataflowNode);
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FGetSchemaDataflowNode);
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FRemoveOnBreakDataflowNode);
@@ -82,6 +82,8 @@ namespace Dataflow
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FMultiplyTransformDataflowNode);
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FInvertTransformDataflowNode);
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FSelectionToVertexListDataflowNode);
+		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FBranchFloatDataflowNode);
+		DATAFLOW_NODE_REGISTER_CREATION_FACTORY(FBranchIntDataflowNode);
 
 		// GeometryCollection
 		DATAFLOW_NODE_REGISTER_CREATION_FACTORY_NODE_COLORS_BY_CATEGORY("GeometryCollection", FLinearColor(0.55f, 0.45f, 1.0f), CDefaultNodeBodyTintColor);
@@ -494,7 +496,7 @@ void FCompareFloatDataflowNode::Evaluate(Dataflow::FContext& Context, const FDat
 }
 
 
-void FBranchDataflowNode::Evaluate(Dataflow::FContext& Context, const FDataflowOutput* Out) const
+void FBranchMeshDataflowNode::Evaluate(Dataflow::FContext& Context, const FDataflowOutput* Out) const
 {
 	if (Out->IsA<TObjectPtr<UDynamicMesh>>(&Mesh))
 	{
@@ -686,17 +688,24 @@ void FProximityDataflowNode::Evaluate(Dataflow::FContext& Context, const FDatafl
 
 			Properties.Method = (EProximityMethod)ProximityMethod;
 			Properties.ContactMethod = (EProximityContactMethod)FilterContactMethod;
-			Properties.DistanceThreshold = DistanceThreshold;
+			Properties.DistanceThreshold = GetValue(Context, &DistanceThreshold);
 			Properties.bUseAsConnectionGraph = bUseAsConnectionGraph;
 			Properties.ContactAreaMethod = (EConnectionContactMethod)ContactAreaMethod;
-			Properties.RequireContactAmount = ContactThreshold;
+			Properties.RequireContactAmount = GetValue(Context, &ContactThreshold);
 
 			GeomCollection->SetProximityProperties(Properties);
+
+			UE::GeometryCollectionConvexUtility::FConvexHulls TransformedExistingHulls;
+			bool bUseExistingHulls = false;
+			if (!bRecomputeConvexHulls)
+			{
+				bUseExistingHulls = UE::GeometryCollectionConvexUtility::GetExistingConvexHullsInSharedSpace(GeomCollection.Get(), TransformedExistingHulls, true);
+			}
 
 			// Invalidate proximity
 			FGeometryCollectionProximityUtility ProximityUtility(GeomCollection.Get());
 			ProximityUtility.InvalidateProximity();
-			ProximityUtility.UpdateProximity();
+			ProximityUtility.UpdateProximity(bUseExistingHulls ? &TransformedExistingHulls : nullptr);
 
 			SetValue<const FManagedArrayCollection&>(Context, *GeomCollection, &Collection);
 		}
@@ -1143,6 +1152,48 @@ void FInvertTransformDataflowNode::Evaluate(Dataflow::FContext& Context, const F
 		const FTransform InXf = GetValue<FTransform>(Context, &InTransform, FTransform::Identity);
 		const FTransform OutXf = InXf.Inverse();
 		SetValue(Context, OutXf, &OutTransform);
+	}
+}
+
+void FBranchFloatDataflowNode::Evaluate(Dataflow::FContext& Context, const FDataflowOutput* Out) const
+{
+	if (Out->IsA<float>(&ReturnValue))
+	{
+		bool InCondition = GetValue<bool>(Context, &bCondition);
+
+		if (InCondition)
+		{
+			const float InA = GetValue<float>(Context, &A, A);
+
+			SetValue(Context, InA, &ReturnValue);
+		}
+		else
+		{
+			const float InB = GetValue<float>(Context, &B, B);
+
+			SetValue(Context, InB, &ReturnValue);
+		}
+	}
+}
+
+void FBranchIntDataflowNode::Evaluate(Dataflow::FContext& Context, const FDataflowOutput* Out) const
+{
+	if (Out->IsA<int32>(&ReturnValue))
+	{
+		bool InCondition = GetValue<bool>(Context, &bCondition);
+
+		if (InCondition)
+		{
+			const int32 InA = GetValue<int32>(Context, &A, A);
+
+			SetValue(Context, InA, &ReturnValue);
+		}
+		else
+		{
+			const int32 InB = GetValue<int32>(Context, &B, B);
+
+			SetValue(Context, InB, &ReturnValue);
+		}
 	}
 }
 

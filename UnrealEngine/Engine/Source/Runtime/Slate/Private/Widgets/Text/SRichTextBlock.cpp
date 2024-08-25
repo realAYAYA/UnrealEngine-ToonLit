@@ -30,6 +30,7 @@ void SRichTextBlock::Construct( const FArguments& InArgs )
 	TransformPolicy = InArgs._TransformPolicy;
 	Margin = InArgs._Margin;
 	LineHeightPercentage = InArgs._LineHeightPercentage;
+	ApplyLineHeightToBottomLine = InArgs._ApplyLineHeightToBottomLine;
 	Justification = InArgs._Justification;
 	MinDesiredWidth = InArgs._MinDesiredWidth;
 
@@ -86,7 +87,7 @@ FVector2D SRichTextBlock::ComputeDesiredSize(float LayoutScaleMultiplier) const
 {
 	// ComputeDesiredSize will also update the text layout cache if required
 	const FVector2D TextSize = TextLayoutCache->ComputeDesiredSize(
-		FSlateTextBlockLayout::FWidgetDesiredSizeArgs(BoundText.Get(), HighlightText.Get(), WrapTextAt.Get(), AutoWrapText.Get(), WrappingPolicy.Get(), TransformPolicy.Get(), Margin.Get(), LineHeightPercentage.Get(), Justification.Get()),
+		FSlateTextBlockLayout::FWidgetDesiredSizeArgs(BoundText.Get(), HighlightText.Get(), WrapTextAt.Get(), AutoWrapText.Get(), WrappingPolicy.Get(), TransformPolicy.Get(), Margin.Get(), LineHeightPercentage.Get(), ApplyLineHeightToBottomLine.Get(), Justification.Get()),
 		LayoutScaleMultiplier * TextBlockScale, TextStyle) * TextBlockScale;
 
 	return FVector2D(FMath::Max(TextSize.X, MinDesiredWidth.Get()), TextSize.Y);
@@ -161,6 +162,11 @@ void SRichTextBlock::SetTransformPolicy(const TAttribute<ETextTransformPolicy>& 
 void SRichTextBlock::SetLineHeightPercentage(const TAttribute<float>& InLineHeightPercentage)
 {
 	SetAttribute(LineHeightPercentage, InLineHeightPercentage, EInvalidateWidgetReason::Layout);
+}
+
+void SRichTextBlock::SetApplyLineHeightToBottomLine(const TAttribute<bool>& InApplyLineHeightToBottomLine)
+{
+	SetAttribute(ApplyLineHeightToBottomLine, InApplyLineHeightToBottomLine, EInvalidateWidgetReason::Layout);
 }
 
 void SRichTextBlock::SetMargin(const TAttribute<FMargin>& InMargin)

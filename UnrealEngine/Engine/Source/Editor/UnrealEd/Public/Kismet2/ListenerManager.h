@@ -51,17 +51,19 @@ public:
 
 	void PreChange(const TType* Changed, TChangeInfo Info)
 	{
-		for (auto Listener : Listeners)
+		// Note: Not using range-based iteration here in case the listener mutates the list via add/remove.
+		for (auto ListenerIt = Listeners.CreateConstIterator(); ListenerIt; ++ListenerIt)
 		{
-			Listener->PreChange(Changed, Info);
+			(*ListenerIt)->PreChange(Changed, Info);
 		}
 	}
 
 	void PostChange(const TType* Changed, TChangeInfo Info)
 	{
-		for (auto Listener : Listeners)
+		// Note: Not using range-based iteration here in case the listener mutates the list via add/remove.
+		for (auto ListenerIt = Listeners.CreateConstIterator(); ListenerIt; ++ListenerIt)
 		{
-			Listener->PostChange(Changed, Info);
+			(*ListenerIt)->PostChange(Changed, Info);
 		}
 	}
 	

@@ -42,6 +42,8 @@ DECLARE_CYCLE_STAT_EXTERN(TEXT("Geometry Collection Sweep"), STAT_GCSweep, STATG
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Geoemtry Collection Update Filter Data"), STAT_GCUpdateFilterData, STATGROUP_Chaos, CHAOS_API)
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Geometry Collection Component UpdateBounds"), STAT_GCCUpdateBounds, STATGROUP_Chaos, CHAOS_API);
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Geometry Collection Component CalculateGlobalMatrices"), STAT_GCCUGlobalMatrices, STATGROUP_Chaos, CHAOS_API);
+DECLARE_CYCLE_STAT_EXTERN(TEXT("Geometry Collection Component OnPostPhysicsSync"), STAT_GCPostPhysicsSync, STATGROUP_Chaos, CHAOS_API);
+DECLARE_CYCLE_STAT_EXTERN(TEXT("Geometry Collection Component FullyDecayed event Broadcast"), STAT_GCFullyDecayedBroadcast, STATGROUP_Chaos, CHAOS_API);
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Geometry Collection InitDynamicData"), STAT_GCInitDynamicData, STATGROUP_Chaos, CHAOS_API);
 DECLARE_DWORD_COUNTER_STAT_EXTERN(TEXT("Geometry Collection Total Transforms"), STAT_GCTotalTransforms, STATGROUP_Chaos, CHAOS_API);
 DECLARE_DWORD_COUNTER_STAT_EXTERN(TEXT("Geometry Collection Changed Transforms"), STAT_GCChangedTransforms, STATGROUP_Chaos, CHAOS_API);
@@ -82,6 +84,14 @@ DECLARE_CYCLE_STAT_EXTERN(TEXT("Gathering Trailing Event Data"), STAT_GatherTrai
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Gathering Sleeping Event Data"), STAT_GatherSleepingEvent, STATGROUP_Chaos, CHAOS_API);
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Acceleration Structure Reset"), STAT_AccelerationStructureReset, STATGROUP_Chaos, CHAOS_API);
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Gathering Crumbling Event Data"), STAT_GatherCrumblingEvent, STATGROUP_Chaos, CHAOS_API);
+
+DECLARE_CYCLE_STAT_EXTERN(TEXT("Finalize Sim Callbacks"), STAT_FinalizeCallbacks, STATGROUP_Chaos, CHAOS_API);
+DECLARE_CYCLE_STAT_EXTERN(TEXT("Reset Clustering Events"), STAT_ResetClusteringEvents, STATGROUP_Chaos, CHAOS_API);
+DECLARE_CYCLE_STAT_EXTERN(TEXT("Rewind Finish Frame"), STAT_RewindFinishFrame, STATGROUP_Chaos, CHAOS_API);
+DECLARE_CYCLE_STAT_EXTERN(TEXT("Reset Marshalling Data"), STAT_ResetMarshallingData, STATGROUP_Chaos, CHAOS_API);
+DECLARE_CYCLE_STAT_EXTERN(TEXT("Conditional Apply Rewind"), STAT_ConditionalApplyRewind, STATGROUP_Chaos, CHAOS_API);
+DECLARE_CYCLE_STAT_EXTERN(TEXT("Finalize Pull Data"), STAT_FinalizePullData, STATGROUP_Chaos, CHAOS_API);
+DECLARE_CYCLE_STAT_EXTERN(TEXT("Destroy Pending Proxies"), STAT_DestroyPendingProxies, STATGROUP_Chaos, CHAOS_API);
 
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Reset Collision Rule"), STAT_ResetCollisionRule, STATGROUP_Chaos, CHAOS_API);
 
@@ -135,6 +145,7 @@ DECLARE_CYCLE_STAT_EXTERN(TEXT("Collisions::Gather"), STAT_Collisions_Gather, ST
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Collisions::Scatter"), STAT_Collisions_Scatter, STATGROUP_ChaosCollision, CHAOS_API);
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Collisions::Apply"), STAT_Collisions_Apply, STATGROUP_ChaosCollision, CHAOS_API);
 DECLARE_CYCLE_STAT_EXTERN(TEXT("Collisions::ApplyPushOut"), STAT_Collisions_ApplyPushOut, STATGROUP_ChaosCollision, CHAOS_API);
+DECLARE_CYCLE_STAT_EXTERN(TEXT("Collisions::SimplifyConvexes"), STAT_Collisions_SimplifyConvexes, STATGROUP_ChaosCollision, CHAOS_API);
 
 
 #if 0

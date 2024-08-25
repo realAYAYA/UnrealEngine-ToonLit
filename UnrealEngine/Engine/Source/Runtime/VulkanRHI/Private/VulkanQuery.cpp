@@ -406,7 +406,7 @@ void FVulkanCommandListContext::ReadAndCalculateGPUFrameTime()
 		const double Frequency = double(FVulkanGPUTiming::GetTimingFrequency());
 		GGPUFrameTime = FMath::TruncToInt(double(Delta) / Frequency / SecondsPerCycle);
 	}
-	else
+	else if(!FVulkanPlatform::HasCustomFrameTiming())
 	{
 		GGPUFrameTime = 0;
 	}

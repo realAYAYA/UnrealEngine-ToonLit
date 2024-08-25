@@ -23,6 +23,7 @@
 #include "Widgets/Input/SComboButton.h"
 #include "Widgets/Input/SNumericEntryBox.h"
 #include "Widgets/Layout/SBox.h"
+#include "Widgets/Layout/SScrollBar.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Layout/SSeparator.h"
 
@@ -32,7 +33,6 @@
 BEGIN_SLATE_FUNCTION_BUILD_OPTIMIZATION
 void SDMXFixturePatcher::Construct(const FArguments& InArgs)
 {
-
 	DMXEditorPtr = InArgs._DMXEditor;
 	if (!DMXEditorPtr.IsValid())
 	{
@@ -40,6 +40,12 @@ void SDMXFixturePatcher::Construct(const FArguments& InArgs)
 	}
 
 	SharedData = DMXEditorPtr.Pin()->GetFixturePatchSharedData();
+
+	const TSharedRef<SScrollBar> HorizontalScrollBar = SNew(SScrollBar)
+		.Orientation(Orient_Horizontal);
+
+	const TSharedRef<SScrollBar> VerticalScrollBar = SNew(SScrollBar)
+		.Orientation(Orient_Vertical);
 
 	const FLinearColor BackgroundTint(0.6f, 0.6f, 0.6f, 1.0f);
 	ChildSlot			
@@ -54,7 +60,6 @@ void SDMXFixturePatcher::Construct(const FArguments& InArgs)
 				.HAlign(HAlign_Fill)
 				.AutoHeight()
 				[
-
 					SNew(SBorder)					
 					.HAlign(HAlign_Fill)
 					.BorderBackgroundColor(BackgroundTint)
@@ -68,10 +73,34 @@ void SDMXFixturePatcher::Construct(const FArguments& InArgs)
 				.HAlign(HAlign_Left)
 				.VAlign(VAlign_Fill)
 				[	
-					SAssignNew(PatchedUniverseScrollBox, SScrollBox)					
-					.Orientation(EOrientation::Orient_Vertical)	
-					.ScrollBarAlwaysVisible(true)
-					.ScrollBarThickness(FVector2D(5.f, 0.f))
+					SNew(SHorizontalBox)
+
+					+SHorizontalBox::Slot()
+					[
+						SAssignNew(PatchedUniverseHorizontalScrollBox, SScrollBox)
+						.Orientation(EOrientation::Orient_Horizontal)
+						.ExternalScrollbar(HorizontalScrollBar)
+
+						+SScrollBox::Slot()
+						.FillSize(1.f)
+						[
+							SAssignNew(PatchedUniverseVerticalScrollBox, SScrollBox)
+							.Orientation(EOrientation::Orient_Vertical)	
+							.ExternalScrollbar(VerticalScrollBar)
+						]
+					]
+
+					+ SHorizontalBox::Slot()
+					.AutoWidth()
+					[
+						VerticalScrollBar
+					]
+				]
+
+				+ SVerticalBox::Slot()
+				.AutoHeight()
+				[
+					HorizontalScrollBar
 				]
 			]
 		];
@@ -534,7 +563,8 @@ void SDMXFixturePatcher::OnFixturePatchSelectionChanged()
 	}
 	else
 	{
-		PatchedUniverseScrollBox->ScrollDescendantIntoView(*UniverseWidgetPtr);
+		PatchedUniverseHorizontalScrollBox->ScrollDescendantIntoView(*UniverseWidgetPtr);
+		PatchedUniverseVerticalScrollBox->ScrollDescendantIntoView(*UniverseWidgetPtr);
 	}
 }
 
@@ -564,7 +594,7 @@ int32 SDMXFixturePatcher::GetSelectedUniverse() const
 
 void SDMXFixturePatcher::ShowSelectedUniverse()
 {
-	PatchedUniverseScrollBox->ClearChildren();
+	PatchedUniverseVerticalScrollBox->ClearChildren();
 	PatchedUniversesByID.Reset();
 	
 	const int32 SelectedUniverseID = GetSelectedUniverse();
@@ -575,7 +605,7 @@ void SDMXFixturePatcher::ShowSelectedUniverse()
 		.OnDragEnterChannel(this, &SDMXFixturePatcher::OnDragEnterChannel)
 		.OnDropOntoChannel(this, &SDMXFixturePatcher::OnDropOntoChannel);
 
-	PatchedUniverseScrollBox->AddSlot()
+	PatchedUniverseVerticalScrollBox->AddSlot()
 		.Padding(FMargin(0.0f, 3.0f, 0.0f, 12.0f))			
 		[
 			NewPatchedUniverse
@@ -590,11 +620,11 @@ void SDMXFixturePatcher::ShowSelectedUniverse()
 
 void SDMXFixturePatcher::ShowAllPatchedUniverses(bool bForceReconstructWidget)
 {
-	check(PatchedUniverseScrollBox.IsValid());
+	check(PatchedUniverseHorizontalScrollBox.IsValid() && PatchedUniverseVerticalScrollBox.IsValid());
 
 	if (bForceReconstructWidget)
 	{
-		PatchedUniverseScrollBox->ClearChildren();
+		PatchedUniverseVerticalScrollBox->ClearChildren();
 		PatchedUniversesByID.Reset();
 	}
 
@@ -634,7 +664,7 @@ void SDMXFixturePatcher::ShowAllPatchedUniverses(bool bForceReconstructWidget)
 			{
 				// Remove universe widgets without patches
 				PatchedUniversesByID.Remove(UniverseByIDKvp.Key);
-				PatchedUniverseScrollBox->RemoveSlot(UniverseByIDKvp.Value.ToSharedRef());
+				PatchedUniverseVerticalScrollBox->RemoveSlot(UniverseByIDKvp.Value.ToSharedRef());
 			}
 		}
 
@@ -657,7 +687,8 @@ void SDMXFixturePatcher::ShowAllPatchedUniverses(bool bForceReconstructWidget)
 		const int32 SelectedUniverse = SharedData->GetSelectedUniverse();
 		if (PatchedUniversesByID.Contains(SelectedUniverse))
 		{
-			PatchedUniverseScrollBox->ScrollDescendantIntoView(PatchedUniversesByID[SelectedUniverse]);
+			PatchedUniverseHorizontalScrollBox->ScrollDescendantIntoView(PatchedUniversesByID[SelectedUniverse]);
+			PatchedUniverseVerticalScrollBox->ScrollDescendantIntoView(PatchedUniversesByID[SelectedUniverse]);
 		}
 	}
 
@@ -675,7 +706,7 @@ void SDMXFixturePatcher::AddUniverse(int32 UniverseID)
 		.OnDragEnterChannel(this, &SDMXFixturePatcher::OnDragEnterChannel)
 		.OnDropOntoChannel(this, &SDMXFixturePatcher::OnDropOntoChannel);
 
-	PatchedUniverseScrollBox->AddSlot()
+	PatchedUniverseVerticalScrollBox->AddSlot()
 		.Padding(FMargin(0.0f, 3.0f, 0.0f, 12.0f))
 		[
 			PatchedUniverse

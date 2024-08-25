@@ -1,14 +1,15 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-
 #include "AudioAnalyzer.h"
+
+#include "Async/Async.h"
 #include "AudioAnalyzerFacade.h"
 #include "AudioAnalyzerModule.h"
-#include "Async/Async.h"
-#include "AudioMixerDevice.h"
-#include "AudioDeviceManager.h"
 #include "AudioAnalyzerSubsystem.h"
 #include "AudioBusSubsystem.h"
+#include "AudioDeviceHandle.h"
+#include "AudioDeviceManager.h"
+#include "AudioMixerDevice.h"
 #include "Engine/Engine.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(AudioAnalyzer)
@@ -26,13 +27,34 @@ void FAudioAnalyzeTask::SetAudioBuffer(TArray<float>&& InAudioData)
 	AudioData = MoveTemp(InAudioData);
 }
 
+void FAudioAnalyzeTask::SetAnalyzerControls(TSharedPtr<Audio::IAnalyzerControls> InControls)
+{
+	AnalyzerControls = InControls;
+}
+
 void FAudioAnalyzeTask::DoWork()
 {
 	check(AnalyzerFacade);
-	Results = AnalyzerFacade->AnalyzeAudioBuffer(AudioData, NumChannels, SampleRate);
+	Results = AnalyzerFacade->AnalyzeAudioBuffer(AudioData, NumChannels, SampleRate, AnalyzerControls);
 }
 
 void UAudioAnalyzer::StartAnalyzing(UWorld* InWorld, UAudioBus* AudioBusToAnalyze)
+{
+	if (!InWorld)
+	{
+		return;
+	}
+
+	const FAudioDeviceHandle AudioDevice = InWorld->GetAudioDevice();
+	if (!AudioDevice.IsValid())
+	{
+		return;
+	}
+
+	StartAnalyzing(AudioDevice.GetDeviceID(), AudioBusToAnalyze);
+}
+
+void UAudioAnalyzer::StartAnalyzing(const Audio::FDeviceId InAudioDeviceId, UAudioBus* AudioBusToAnalyze)
 {
 	if (!AudioBusToAnalyze)
 	{
@@ -40,12 +62,14 @@ void UAudioAnalyzer::StartAnalyzing(UWorld* InWorld, UAudioBus* AudioBusToAnalyz
 		return;
 	}
 
-	if (!InWorld)
+	const FAudioDeviceManager* AudioDeviceManager = FAudioDeviceManager::Get();
+	if (!AudioDeviceManager)
 	{
+		UE_LOG(LogAudioAnalyzer, Error, TEXT("Unable to analyze audio with a null audio device manager."));
 		return;
 	}
 
-	Audio::FMixerDevice* MixerDevice = static_cast<Audio::FMixerDevice*>(InWorld->GetAudioDeviceRaw());
+	const Audio::FMixerDevice* MixerDevice = static_cast<const Audio::FMixerDevice*>(AudioDeviceManager->GetAudioDeviceRaw(InAudioDeviceId));
 
 	if (!MixerDevice)
 	{
@@ -115,7 +139,13 @@ void UAudioAnalyzer::StartAnalyzing(const UObject* WorldContextObject, UAudioBus
 		return;
 	}
 
-	StartAnalyzing(ThisWorld, AudioBusToAnalyze);
+	const FAudioDeviceHandle AudioDevice = ThisWorld->GetAudioDevice();
+	if (!AudioDevice.IsValid())
+	{
+		return;
+	}
+
+	StartAnalyzing(AudioDevice.GetDeviceID(), AudioBusToAnalyze);
 }
 
 void UAudioAnalyzer::StopAnalyzing(const UObject* WorldContextObject)
@@ -193,6 +223,7 @@ bool UAudioAnalyzer::DoAnalysis()
 	check(NumBusChannels != 0);
 
 	FAudioAnalyzeTask& Task = AnalysisTask->GetTask();
+	Task.SetAnalyzerControls(GetAnalyzerControls());
 	Task.SetAudioBuffer(MoveTemp(AnalysisBuffer));
 
  	AnalysisTask->StartBackgroundTask();
@@ -247,4 +278,7 @@ TUniquePtr<Audio::IAnalyzerSettings> UAudioAnalyzer::GetSettings(const int32 InS
 	return MakeUnique<Audio::IAnalyzerSettings>();
 }
 
-
+TSharedPtr<Audio::IAnalyzerControls> UAudioAnalyzer::GetAnalyzerControls() const
+{
+	return AnalyzerControls;
+}

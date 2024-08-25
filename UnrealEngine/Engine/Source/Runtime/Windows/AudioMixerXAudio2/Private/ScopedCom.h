@@ -3,7 +3,6 @@
 #pragma once
 
 #include "Windows/AllowWindowsPlatformTypes.h"
-#include "Windows/MinWindows.h"
 
 THIRD_PARTY_INCLUDES_START
 #include <combaseapi.h>

@@ -106,6 +106,10 @@ struct FMetalShaderBindings
 	FShaderResourceTable							ShaderResourceTable;
 	TMap<uint8, TArray<uint8>>						ArgumentBufferMasks;
 	CrossCompiler::FShaderBindingInOutMask			InOutMask;
+    FString                                         IRConverterReflectionJSON;
+    uint32                                          RSNumCBVs;
+    uint32                                          OutputSizeVS;
+    uint32                                          MaxInputPrimitivesPerMeshThreadgroupGS;
 
 	uint32 	ConstantBuffers;
 	uint32  ArgumentBuffers;
@@ -115,6 +119,9 @@ struct FMetalShaderBindings
 	bool	bDiscards;
 
 	FMetalShaderBindings() :
+        RSNumCBVs(0),
+        OutputSizeVS(0),
+        MaxInputPrimitivesPerMeshThreadgroupGS(0),
 		ConstantBuffers(0),
 		ArgumentBuffers(0),
 		NumSamplers(0),
@@ -138,6 +145,10 @@ inline FArchive& operator<<(FArchive& Ar, FMetalShaderBindings& Bindings)
 	Ar << Bindings.NumUniformBuffers;
 	Ar << Bindings.NumUAVs;
 	Ar << Bindings.bDiscards;
+    Ar << Bindings.IRConverterReflectionJSON;
+    Ar << Bindings.RSNumCBVs;
+    Ar << Bindings.OutputSizeVS;
+    Ar << Bindings.MaxInputPrimitivesPerMeshThreadgroupGS;
 	return Ar;
 }
 

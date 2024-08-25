@@ -130,7 +130,8 @@ void FBlackboardDataDetails::CustomizeDetails( IDetailLayoutBuilder& DetailLayou
 			DetailCategoryBuilder.AddProperty(EntryDescriptionHandle);
 
 			TSharedPtr<IPropertyHandle> KeyTypeProperty = KeyHandle->GetChildHandle(GET_MEMBER_NAME_CHECKED(FBlackboardEntry, KeyType));
-			DetailCategoryBuilder.AddProperty(KeyTypeProperty);
+			DetailCategoryBuilder.AddProperty(KeyTypeProperty)
+			.EditCondition(!bIsInherited, nullptr); /** nullptr because the bool condition will never change so no need for a listener. */
 
 			TSharedPtr<IPropertyHandle> bInstanceSyncedProperty = KeyHandle->GetChildHandle(GET_MEMBER_NAME_CHECKED(FBlackboardEntry, bInstanceSynced));
 			DetailCategoryBuilder.AddProperty(bInstanceSyncedProperty);

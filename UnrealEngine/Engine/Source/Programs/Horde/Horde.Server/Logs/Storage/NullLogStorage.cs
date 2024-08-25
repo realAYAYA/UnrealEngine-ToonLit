@@ -1,8 +1,8 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 using System.Threading.Tasks;
+using EpicGames.Horde.Logs;
 using Horde.Server.Logs.Data;
-using Horde.Server.Utilities;
 
 namespace Horde.Server.Logs.Storage
 {
@@ -23,21 +23,9 @@ namespace Horde.Server.Logs.Storage
 		}
 
 		/// <inheritdoc/>
-		public Task WriteIndexAsync(LogId logId, long length, LogIndexData index)
-		{
-			return Task.CompletedTask;
-		}
-
-		/// <inheritdoc/>
 		public Task<LogChunkData?> ReadChunkAsync(LogId logId, long offset, int lineIndex)
 		{
 			return Task.FromResult<LogChunkData?>(null);
-		}
-
-		/// <inheritdoc/>
-		public Task WriteChunkAsync(LogId logId, long offset, LogChunkData chunkData)
-		{
-			return Task.CompletedTask;
 		}
 	}
 }

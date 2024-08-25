@@ -32,7 +32,7 @@ public:
 	TArray<TScriptInterface<IAudioMotorSimOutput>> AudioComponents;
 
 	UFUNCTION(BlueprintCallable, Category = MotorModel)
-	virtual void Update(FAudioMotorSimInputContext Input);
+	virtual void Update(const FAudioMotorSimInputContext& Input);
 	
 	UFUNCTION(BlueprintCallable, Category = MotorModel)
 	virtual void Reset();
@@ -65,7 +65,7 @@ public:
 	FAudioMotorSimRuntimeContext GetRuntimeInfo() const { return CachedRuntimeContext; }
 
 	UFUNCTION(BlueprintPure, Category = State)
-	FAudioMotorSimInputContext GetCachedInputData() const { return CachedInputContext; }
+	const FAudioMotorSimInputContext& GetCachedInputData() const { return CachedInputContext; }
 
 private:
 	FAudioMotorSimRuntimeContext CachedRuntimeContext;

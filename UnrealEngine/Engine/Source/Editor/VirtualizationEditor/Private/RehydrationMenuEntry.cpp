@@ -25,7 +25,7 @@ namespace UE::Virtualization
  */
 void RehydratePackages(TArray<FString> SelectedFiles)
 {
-	TArray<FText> Errors;
+	//TArray<FText> Errors;
 
 	FRehydrationResult Result = IVirtualizationSystem::Get().TryRehydratePackages(SelectedFiles, ERehydrationOptions::Checkout);
 	if (Result.WasSuccessful())
@@ -47,10 +47,10 @@ void RehydratePackages(TArray<FString> SelectedFiles)
 
 		FMessageLog Log("LogVirtualization");
 
-		for (const FText& Error : Errors)
+		/*for (const FText& Error : Errors)
 		{
 			Log.Error(Error);
-		}
+		}*/
 
 		Log.Notify(LOCTEXT("RehydrationFailed", "Failed to rehydrate packages, see the message log for more info"), EMessageSeverity::Info, bForceNotification);
 	}

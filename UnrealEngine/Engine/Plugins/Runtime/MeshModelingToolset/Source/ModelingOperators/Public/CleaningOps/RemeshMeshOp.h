@@ -90,6 +90,8 @@ public:
 	bool bUseWorldSpace = false;
 	bool bParallel = true;
 
+	TFunction<double(const FDynamicMesh3&, int VertexA, int VertexB)> CustomEdgeLengthScaleF;
+
 	// Normal flow only:
 
 	/// During each call to RemeshIteration, do this many passes of face-aligned projection
@@ -114,6 +116,9 @@ public:
 	// End normal flow only
 
 
+	/// Add arbitrary mesh constraints besides the boundary/seam constraints that are computed by this op
+	void SetUserSpecifiedConstraints(const FMeshConstraints& Constraints);
+
 	void SetTransform(const FTransformSRT3d& Transform);
 
 	//
@@ -129,6 +134,10 @@ public:
 protected:
 
 	TUniquePtr<FRemesher> CreateRemesher(ERemeshType Type, FDynamicMesh3* TargetMesh);
+
+private:
+
+	FMeshConstraints UserSpecifiedConstraints;
 
 };
 

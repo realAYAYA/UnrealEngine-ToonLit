@@ -121,7 +121,7 @@ namespace Chaos::Softs {
 // Helper function to call PhiWithNormal and return data to ISPC
 extern "C" void GetPhiWithNormal(const uint8* CollisionParticles, const FSolverReal* InV, FSolverReal* Normal, FSolverReal* Phi, const int32 i, const int32 ProgramCount, const int32 Mask)
 {
-	const TKinematicGeometryParticlesImp<FSolverReal, 3, EGeometryParticlesSimType::Other>& C = *(const TKinematicGeometryParticlesImp<FSolverReal, 3, EGeometryParticlesSimType::Other>*)CollisionParticles;
+	const FSolverCollisionParticles& C = *(const FSolverCollisionParticles*)CollisionParticles;
 	
 	for (int32 Index = 0; Index < ProgramCount; ++Index)
 	{
@@ -135,7 +135,7 @@ extern "C" void GetPhiWithNormal(const uint8* CollisionParticles, const FSolverR
 			V.Z = InV[Index + 2 * ProgramCount];
 
 			FVec3 ImplicitNormal;
-			Phi[Index] = (FSolverReal)C.Geometry(i)->PhiWithNormal(FVec3(V), ImplicitNormal);
+			Phi[Index] = (FSolverReal)C.GetGeometry(i)->PhiWithNormal(FVec3(V), ImplicitNormal);
 			FSolverVec3 Norm(ImplicitNormal);
 
 			// aos_to_soa3
@@ -149,7 +149,7 @@ extern "C" void GetPhiWithNormal(const uint8* CollisionParticles, const FSolverR
 // Helper function to call PhiWithNormal and return data to ISPC
 extern "C" void GetPhiWithNormalAndVelocityBone(const uint8 * CollisionParticles, const FSolverReal * InV, FSolverReal * Normal, FSolverReal * Phi, int32 * VelocityBone, const int32 i, const FSolverReal Thickness, const int32 ProgramCount, const int32 Mask)
 {
-	const TKinematicGeometryParticlesImp<FSolverReal, 3, EGeometryParticlesSimType::Other>& C = *(const TKinematicGeometryParticlesImp<FSolverReal, 3, EGeometryParticlesSimType::Other>*)CollisionParticles;
+	const FSolverCollisionParticles& C = *(const FSolverCollisionParticles*)CollisionParticles;
 
 	for (int32 Index = 0; Index < ProgramCount; ++Index)
 	{
@@ -165,7 +165,7 @@ extern "C" void GetPhiWithNormalAndVelocityBone(const uint8 * CollisionParticles
 			VelocityBone[Index] = i;
 
 			FVec3 ImplicitNormal;
-			if (const TWeightedLatticeImplicitObject<FLevelSet>* LevelSet = C.Geometry(i)->GetObject< TWeightedLatticeImplicitObject<FLevelSet> >())
+			if (const TWeightedLatticeImplicitObject<FLevelSet>* LevelSet = C.GetGeometry(i)->GetObject< TWeightedLatticeImplicitObject<FLevelSet> >())
 			{
 				FWeightedLatticeImplicitObject::FEmbeddingCoordinate SurfaceCoord;
 				Phi[Index] = (FSolverReal)LevelSet->PhiWithNormalAndSurfacePoint(FVec3(V), ImplicitNormal, SurfaceCoord);
@@ -181,7 +181,7 @@ extern "C" void GetPhiWithNormalAndVelocityBone(const uint8 * CollisionParticles
 			}
 			else
 			{
-				Phi[Index] = (FSolverReal)C.Geometry(i)->PhiWithNormal(FVec3(V), ImplicitNormal);
+				Phi[Index] = (FSolverReal)C.GetGeometry(i)->PhiWithNormal(FVec3(V), ImplicitNormal);
 			}
 			FSolverVec3 Norm(ImplicitNormal);
 
@@ -213,7 +213,7 @@ void FPerParticlePBDCollisionConstraint::ApplyHelperISPC(FSolverParticles& InPar
 
 #if INTEL_ISPC
 		MCollisionParticlesActiveView.RangeFor(
-			[this, &InParticles, Dt, BatchBegin, BatchEnd, DynamicGroupId, PerGroupFriction, PerGroupThickness](FSolverRigidParticles& CollisionParticles, int32 CollisionOffset, int32 CollisionRange)
+			[this, &InParticles, Dt, BatchBegin, BatchEnd, DynamicGroupId, PerGroupFriction, PerGroupThickness](FSolverCollisionParticles& CollisionParticles, int32 CollisionOffset, int32 CollisionRange)
 			{
 				ispc::ApplyPerParticleCollisionFastFriction(
 					(ispc::FVector4f*)InParticles.GetPAndInvM().GetData(),
@@ -249,7 +249,7 @@ void FPerParticlePBDCollisionConstraint::ApplyHelperISPC(FSolverParticles& InPar
 
 #if INTEL_ISPC
 		MCollisionParticlesActiveView.RangeFor(
-			[this, &InParticles, Dt, BatchBegin, BatchEnd, DynamicGroupId, PerGroupThickness](FSolverRigidParticles& CollisionParticles, int32 CollisionOffset, int32 CollisionRange)
+			[this, &InParticles, Dt, BatchBegin, BatchEnd, DynamicGroupId, PerGroupThickness](FSolverCollisionParticles& CollisionParticles, int32 CollisionOffset, int32 CollisionRange)
 			{
 				ispc::ApplyPerParticleCollisionNoFriction(
 					(ispc::FVector4f*)InParticles.GetPAndInvM().GetData(),

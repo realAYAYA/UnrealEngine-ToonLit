@@ -26,6 +26,9 @@
 #include "Views/Details/Cluster/DisplayClusterConfiguratorRectangleCustomization.h"
 #include "Views/Details/Components/DisplayClusterConfiguratorScreenComponentDetailsCustomization.h"
 #include "Views/Details/Components/DisplayClusterICVFXCameraComponentDetailsCustomization.h"
+#include "Views/Details/Media/DisplayClusterConfiguratorICVFXMediaCustomization.h"
+#include "Views/Details/Media/DisplayClusterConfiguratorMediaFullFrameCustomization.h"
+#include "Views/Details/Media/DisplayClusterConfiguratorMediaTileCustomization.h"
 #include "Views/Details/Policies/DisplayClusterConfiguratorPolicyDetailCustomization.h"
 
 #include "Blueprints/DisplayClusterBlueprint.h"
@@ -223,6 +226,13 @@ void FDisplayClusterConfiguratorModule::RegisterCustomLayouts()
 	REGISTER_PROPERTY_LAYOUT(FDisplayClusterConfigurationClusterItemReferenceList, FDisplayClusterConfiguratorClusterReferenceListCustomization);
 	REGISTER_PROPERTY_LAYOUT(FDisplayClusterConfigurationViewport_RemapData, FDisplayClusterConfiguratorViewportRemapCustomization);
 	REGISTER_PROPERTY_LAYOUT(FDisplayClusterConfigurationRectangle, FDisplayClusterConfiguratorRectangleCustomization);
+	REGISTER_PROPERTY_LAYOUT(FDisplayClusterConfigurationMediaICVFX, FDisplayClusterConfiguratorICVFXMediaCustomization);
+	REGISTER_PROPERTY_LAYOUT(FDisplayClusterConfigurationMediaUniformTileInput,  FDisplayClusterConfiguratorMediaInputTileCustomization);
+	REGISTER_PROPERTY_LAYOUT(FDisplayClusterConfigurationMediaUniformTileOutput, FDisplayClusterConfiguratorMediaOutputTileCustomization);
+	REGISTER_PROPERTY_LAYOUT(FDisplayClusterConfigurationMediaInput,  FDisplayClusterConfiguratorMediaFullFrameInputCustomization);
+	REGISTER_PROPERTY_LAYOUT(FDisplayClusterConfigurationMediaOutput, FDisplayClusterConfiguratorMediaFullFrameOutputCustomization);
+	REGISTER_PROPERTY_LAYOUT(FDisplayClusterConfigurationMediaInputGroup,  FDisplayClusterConfiguratorMediaFullFrameInputCustomization);
+	REGISTER_PROPERTY_LAYOUT(FDisplayClusterConfigurationMediaOutputGroup, FDisplayClusterConfiguratorMediaFullFrameOutputCustomization);
 }
 
 void FDisplayClusterConfiguratorModule::UnregisterCustomLayouts()
@@ -277,22 +287,37 @@ void FDisplayClusterConfiguratorModule::RegisterSectionMappings()
 			DisplayClusterConfigurationStrings::categories::PreviewCategory, LOCTEXT("Editor Preview", "Editor Preview"));
 		Section->AddCategory(DisplayClusterConfigurationStrings::categories::PreviewCategory);
 	}
+	{
+		const TSharedRef<FPropertySection> Section = PropertyModule.FindOrCreateSection(ADisplayClusterRootActor::StaticClass()->GetFName(),
+			DisplayClusterConfigurationStrings::categories::PreviewInGameCategory, LOCTEXT("Preview In Game", "Preview In Game"));
+		Section->AddCategory(DisplayClusterConfigurationStrings::categories::PreviewInGameCategory);
+	}
 
 	// ICVFX Component
 	{
 		const TSharedRef<FPropertySection> Section = PropertyModule.FindOrCreateSection(UDisplayClusterICVFXCameraComponent::StaticClass()->GetFName(),
-		DisplayClusterConfigurationStrings::categories::ICVFXCategory, LOCTEXT("In-Camera VFX", "In-Camera VFX"));
+		DisplayClusterConfigurationStrings::categories::ICVFXCategory, LOCTEXT("InnerFrustumSectionLabel", "Inner Frustum"));
 		Section->AddCategory(DisplayClusterConfigurationStrings::categories::ICVFXCategory);
 	}
 	{
 		const TSharedRef<FPropertySection> Section = PropertyModule.FindOrCreateSection(UDisplayClusterICVFXCameraComponent::StaticClass()->GetFName(),
-		DisplayClusterConfigurationStrings::categories::CameraColorGradingCategory, LOCTEXT("Inner Frustum Color Grading", "Inner Frustum Color Grading"));
+			DisplayClusterConfigurationStrings::categories::ICVFXCameraCategory, LOCTEXT("InnerFrustumCameraSectionLabel", "Camera"));
+		Section->AddCategory(DisplayClusterConfigurationStrings::categories::ICVFXCameraCategory);
+	}
+	{
+		const TSharedRef<FPropertySection> Section = PropertyModule.FindOrCreateSection(UDisplayClusterICVFXCameraComponent::StaticClass()->GetFName(),
+		DisplayClusterConfigurationStrings::categories::CameraColorGradingCategory, LOCTEXT("InnerFrustumColorGradingLabel", "Color Grading"));
 		Section->AddCategory(DisplayClusterConfigurationStrings::categories::CameraColorGradingCategory);
 	}
 	{
 		const TSharedRef<FPropertySection> Section = PropertyModule.FindOrCreateSection(UDisplayClusterICVFXCameraComponent::StaticClass()->GetFName(),
 			DisplayClusterConfigurationStrings::categories::OCIOCategory, LOCTEXT("OCIO", "OCIO"));
 		Section->AddCategory(DisplayClusterConfigurationStrings::categories::OCIOCategory);
+	}
+	{
+		const TSharedRef<FPropertySection> Section = PropertyModule.FindOrCreateSection(UDisplayClusterICVFXCameraComponent::StaticClass()->GetFName(),
+			DisplayClusterConfigurationStrings::categories::MediaCategory, LOCTEXT("Media", "Media"));
+		Section->AddCategory(DisplayClusterConfigurationStrings::categories::MediaCategory);
 	}
 	{
 		const TSharedRef<FPropertySection> Section = PropertyModule.FindOrCreateSection(UDisplayClusterICVFXCameraComponent::StaticClass()->GetFName(),
@@ -393,12 +418,15 @@ EVisibility FDisplayClusterConfiguratorModule::GetViewportsFrozenWarningVisibili
 {
 	if (GEditor)
 	{
-		for (TActorIterator<ADisplayClusterRootActor> It(GEditor->GetEditorWorldContext().World()); It; ++It)
+		if (const UWorld* World = GEditor->GetEditorWorldContext().World())
 		{
-			const UDisplayClusterConfigurationData* ConfigData = It->GetConfigData();
-			if (ConfigData && ConfigData->StageSettings.bFreezeRenderOuterViewports)
+			for (TActorIterator<ADisplayClusterRootActor> It(World); It; ++It)
 			{
-				return EVisibility::Visible;
+				const UDisplayClusterConfigurationData* ConfigData = It->GetConfigData();
+				if (ConfigData && ConfigData->StageSettings.bFreezeRenderOuterViewports)
+				{
+					return EVisibility::Visible;
+				}
 			}
 		}
 	}

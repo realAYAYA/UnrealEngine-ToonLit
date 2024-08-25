@@ -69,9 +69,9 @@ public:
 	virtual void Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime);
 
 protected:
-	virtual bool OnContextMenuOpening( FMenuBuilder& MenuBuilder ) override;
+	virtual void PopulateContextMenu(UToolMenu* ToolMenu) override;
 	virtual TArray<TSharedPtr<IPropertyHandle>> GetPropertyHandles(const bool& bRecursive = false) const override;
-	
+
 private:
 	void OnCopyProperty();
 	void OnCopyPropertyDisplayName();
@@ -85,6 +85,15 @@ private:
 	bool CanCopyGroup() const;
 	void OnPasteGroup();
 	bool CanPasteGroup();
+
+	/**
+	 * Returns the TSharedRef<SWidget> for the Name column widget
+	 * 
+	 * @param NameWidget 
+	 * @param Node 
+	 * @return 
+	 */
+	TSharedRef<SWidget> GetNameWidget(TSharedRef<SWidget> NameWidget, const TSharedPtr<FPropertyNode>& Node) const;
 
 	/**
 	 * @return True if the (optionally tagged) input contents can be pasted

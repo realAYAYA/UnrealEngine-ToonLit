@@ -23,6 +23,26 @@ namespace BuildPatchServices
 	typedef TTuple<FString, FByteRange, EFileOperationState> FFileByteRangeState;
 	typedef TUnion<FOperationInitialiser, FDataState, FFileState, FFileByteRangeState> FUpdateMessage;
 
+	class FNullFileOperationTracker 
+		: public IFileOperationTracker
+	{
+	public:
+		// IFileOperationTracker interface begin.
+		virtual const TArray<FFileOperation>& GetStates() const override { return FileOperationStates; }
+		virtual void OnManifestSelection(IBuildManifestSet* ManifestSet) override {}
+		virtual void OnDataStateUpdate(const FGuid& DataId, EFileOperationState State) override {}
+		virtual void OnDataStateUpdate(const TSet<FGuid>& DataIds, EFileOperationState State) override {}
+		virtual void OnDataStateUpdate(const TArray<FGuid>& DataIds, EFileOperationState State) override {}
+		virtual void OnFileStateUpdate(const FString& Filename, EFileOperationState State) override {}
+		virtual void OnFileStateUpdate(const TSet<FString>& Filenames, EFileOperationState State) override {}
+		virtual void OnFileStateUpdate(const TArray<FString>& Filenames, EFileOperationState State) override {}
+		virtual void OnFileByteRangeStateUpdate(const FString& Filename, FByteRange ByteRange, EFileOperationState State) override {}
+		// IFileOperationTracker interface end.
+
+	private:
+		TArray<FFileOperation> FileOperationStates;
+	};
+
 	class FFileOperationTracker
 		: public IFileOperationTracker
 	{
@@ -268,5 +288,10 @@ namespace BuildPatchServices
 	IFileOperationTracker* FFileOperationTrackerFactory::Create(FTSTicker& Ticker)
 	{
 		return new FFileOperationTracker(Ticker);
+	}
+
+	IFileOperationTracker* FFileOperationTrackerFactory::CreateNull()
+	{
+		return new FNullFileOperationTracker();
 	}
 }

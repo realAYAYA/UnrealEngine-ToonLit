@@ -31,7 +31,7 @@ ActorFactory.cpp:
 #include "ActorFactories/ActorFactoryEmptyActor.h"
 #include "ActorFactories/ActorFactoryPawn.h"
 #include "ActorFactories/ActorFactoryExponentialHeightFog.h"
-#include "ActorFactories/ActorFactoryLocalHeightFog.h"
+#include "ActorFactories/ActorFactoryLocalFogVolume.h"
 #include "ActorFactories/ActorFactoryNote.h"
 #include "ActorFactories/ActorFactoryPhysicsAsset.h"
 #include "ActorFactories/ActorFactoryPlaneReflectionCapture.h"
@@ -80,7 +80,7 @@ ActorFactory.cpp:
 #include "Engine/DecalActor.h"
 #include "Atmosphere/AtmosphericFog.h"
 #include "Engine/ExponentialHeightFog.h"
-#include "Engine/LocalHeightFog.h"
+#include "Engine/LocalFogVolume.h"
 #include "Engine/SkyLight.h"
 #include "Engine/DirectionalLight.h"
 #include "Engine/PointLight.h"
@@ -410,14 +410,6 @@ UInstancedPlacemenClientSettings* UActorFactory::FactorySettingsObjectForPlaceme
 	return nullptr;
 }
 
-AActor* UActorFactory::CreateActor( UObject* Asset, ULevel* InLevel, const FTransform& SpawnTransform, EObjectFlags InObjectFlags, const FName Name)
-{
-	FActorSpawnParameters SpawnParams;
-	SpawnParams.ObjectFlags = InObjectFlags;
-	SpawnParams.Name = Name;
-	return CreateActor(Asset, InLevel, SpawnTransform, SpawnParams);
-}
-
 AActor* UActorFactory::CreateActor(UObject* InAsset, ULevel* InLevel, const FTransform& InTransform, const FActorSpawnParameters& InSpawnParams)
 {
 	AActor* NewActor = nullptr;
@@ -444,17 +436,6 @@ AActor* UActorFactory::CreateActor(UObject* InAsset, ULevel* InLevel, const FTra
 	return NewActor;
 }
 
-UBlueprint* UActorFactory::CreateBlueprint( UObject* Asset, UObject* Outer, const FName Name, const FName CallingContext )
-{
-	// @todo sequencer major: Needs to be overridden on any class that needs any custom setup for the new blueprint
-	//	(e.g. static mesh reference assignment.)  Basically, anywhere that PostSpawnActor() or CreateActor() is overridden,
-	//	we should consider overriding CreateBlueprint(), too.
-	UBlueprint* NewBlueprint = FKismetEditorUtilities::CreateBlueprint(NewActorClass, Outer, Name, EBlueprintType::BPTYPE_Normal, UBlueprint::StaticClass(), UBlueprintGeneratedClass::StaticClass(), CallingContext);
-	AActor* CDO = CastChecked<AActor>( NewBlueprint->GeneratedClass->ClassDefaultObject );
-	PostCreateBlueprint( Asset, CDO );
-	return NewBlueprint;
-}
-
 ULevel* UActorFactory::ValidateSpawnActorLevel(ULevel* InLevel, const FActorSpawnParameters& InSpawnParams) const
 {
 	ULevel* LocalLevel = InLevel;
@@ -479,14 +460,6 @@ bool UActorFactory::PreSpawnActor( UObject* Asset, FTransform& InOutLocation)
 
 	// Subclasses may implement this to set up a spawn or to adjust the spawn location or rotation.
 	return true;
-}
-
-AActor* UActorFactory::SpawnActor( UObject* InAsset, ULevel* InLevel, const FTransform& Transform, EObjectFlags InObjectFlags, const FName Name )
-{
-	FActorSpawnParameters SpawnParams;
-	SpawnParams.ObjectFlags = InObjectFlags;
-	SpawnParams.Name = Name;
-	return SpawnActor(InAsset, InLevel, Transform, SpawnParams);
 }
 
 AActor* UActorFactory::SpawnActor(UObject* InAsset, ULevel* InLevel, const FTransform& InTransform, const FActorSpawnParameters& InSpawnParams)
@@ -517,11 +490,6 @@ AActor* UActorFactory::SpawnActor(UObject* InAsset, ULevel* InLevel, const FTran
 void UActorFactory::PostSpawnActor( UObject* Asset, AActor* NewActor)
 {
 	UE_LOG(LogActorFactory, Log, TEXT("Actor Factory spawned %s as actor: %s"), *Asset->GetFullName(), *NewActor->GetFullName());
-}
-
-void UActorFactory::PostCreateBlueprint( UObject* Asset, AActor* CDO )
-{
-	// Override this in derived actor factories to initialize the blueprint's CDO based on the asset assigned to the factory!
 }
 
 FString UActorFactory::GetDefaultActorLabel(UObject* Asset) const
@@ -597,19 +565,6 @@ UObject* UActorFactoryStaticMesh::GetAssetFromActorInstance(AActor* Instance)
 
 	check(SMA->GetStaticMeshComponent());
 	return SMA->GetStaticMeshComponent()->GetStaticMesh();
-}
-
-void UActorFactoryStaticMesh::PostCreateBlueprint( UObject* Asset, AActor* CDO )
-{
-	if (Asset != nullptr && CDO != nullptr)
-	{
-		UStaticMesh* StaticMesh = CastChecked<UStaticMesh>(Asset);
-		AStaticMeshActor* StaticMeshActor = CastChecked<AStaticMeshActor>(CDO);
-		UStaticMeshComponent* StaticMeshComponent = StaticMeshActor->GetStaticMeshComponent();
-
-		StaticMeshComponent->SetStaticMesh(StaticMesh);
-		StaticMeshComponent->StaticMeshDerivedDataKey = StaticMesh->GetRenderData()->DerivedDataKey;
-	}
 }
 
 FQuat UActorFactoryStaticMesh::AlignObjectToSurfaceNormal(const FVector& InSurfaceNormal, const FQuat& ActorRotation) const
@@ -776,30 +731,6 @@ void UActorFactoryDeferredDecal::PostSpawnActor(UObject* Asset, AActor* NewActor
 	}
 }
 
-void UActorFactoryDeferredDecal::PostCreateBlueprint( UObject* Asset, AActor* CDO )
-{
-	if (Asset != nullptr && CDO != nullptr)
-	{
-		UMaterialInterface* Material = GetMaterial(Asset);
-
-		if (Material != nullptr)
-		{
-			UDecalComponent* DecalComponent = nullptr;
-			for (UActorComponent* Component : CDO->GetComponents())
-			{
-				if (UDecalComponent* DecalComp = Cast<UDecalComponent>(Component))
-				{
-					DecalComponent = DecalComp;
-					break;
-				}
-			}
-
-			check(DecalComponent);
-			DecalComponent->SetDecalMaterial(Material);
-		}
-	}
-}
-
 UMaterialInterface* UActorFactoryDeferredDecal::GetMaterial( UObject* Asset ) const
 {
 	UMaterialInterface* TargetMaterial = Cast<UMaterialInterface>( Asset );
@@ -882,16 +813,6 @@ UObject* UActorFactoryEmitter::GetAssetFromActorInstance(AActor* Instance)
 	else
 	{
 		return nullptr;
-	}
-}
-
-void UActorFactoryEmitter::PostCreateBlueprint( UObject* Asset, AActor* CDO )
-{
-	if (Asset != nullptr && CDO != nullptr)
-	{
-		UParticleSystem* ParticleSystem = CastChecked<UParticleSystem>(Asset);
-		AEmitter* Emitter = CastChecked<AEmitter>(CDO);
-		Emitter->SetTemplate(ParticleSystem);
 	}
 }
 
@@ -992,33 +913,6 @@ void UActorFactoryPhysicsAsset::PostSpawnActor(UObject* Asset, AActor* NewActor)
 
 	// Init Component
 	NewSkelActor->GetSkeletalMeshComponent()->RegisterComponent();
-}
-
-void UActorFactoryPhysicsAsset::PostCreateBlueprint( UObject* Asset, AActor* CDO )
-{
-	if (CDO != nullptr)
-	{
-		ASkeletalMeshActor* SkeletalPhysicsActor = CastChecked<ASkeletalMeshActor>(CDO);
-
-		if (Asset != nullptr)
-		{
-			UPhysicsAsset* PhysicsAsset = CastChecked<UPhysicsAsset>(Asset);
-
-			USkeletalMesh* UseSkelMesh = PhysicsAsset->PreviewSkeletalMesh.Get();
-
-			SkeletalPhysicsActor->GetSkeletalMeshComponent()->SetSkeletalMeshAsset(UseSkelMesh);
-			SkeletalPhysicsActor->GetSkeletalMeshComponent()->PhysicsAssetOverride = PhysicsAsset;
-		}
-
-		// set physics setup
-		SkeletalPhysicsActor->GetSkeletalMeshComponent()->KinematicBonesUpdateType = EKinematicBonesUpdateToPhysics::SkipSimulatingBones;
-		SkeletalPhysicsActor->GetSkeletalMeshComponent()->BodyInstance.bSimulatePhysics = true;
-		SkeletalPhysicsActor->GetSkeletalMeshComponent()->bBlendPhysics = true;
-
-		SkeletalPhysicsActor->bAlwaysRelevant = true;
-		SkeletalPhysicsActor->SetReplicatingMovement(true);
-		SkeletalPhysicsActor->SetReplicates(true);
-	}
 }
 
 
@@ -1139,24 +1033,6 @@ void UActorFactoryAnimationAsset::PostSpawnActor( UObject* Asset, AActor* NewAct
 				}
 			}
 			
-		}
-	}
-}
-
-void UActorFactoryAnimationAsset::PostCreateBlueprint( UObject* Asset,  AActor* CDO )
-{
-	Super::PostCreateBlueprint( Asset, CDO );
-	
-	if (Asset != nullptr && CDO != nullptr)
-	{
-		UAnimationAsset* AnimationAsset = Cast<UAnimationAsset>(Asset);
-
-		ASkeletalMeshActor* SkeletalMeshActor = CastChecked<ASkeletalMeshActor>(CDO);
-		USkeletalMeshComponent* SkeletalComponent = (SkeletalMeshActor->GetSkeletalMeshComponent());
-		if (AnimationAsset)
-		{
-			SkeletalComponent->SetAnimationMode(EAnimationMode::Type::AnimationSingleNode);
-			SkeletalComponent->SetAnimation(AnimationAsset);
 		}
 	}
 }
@@ -1373,19 +1249,6 @@ void UActorFactorySkeletalMesh::PostSpawnActor( UObject* Asset, AActor* NewActor
 
 }
 
-void UActorFactorySkeletalMesh::PostCreateBlueprint( UObject* Asset, AActor* CDO )
-{
-	if (Asset != nullptr && CDO != nullptr)
-	{
-		USkeletalMesh* SkeletalMesh = GetSkeletalMeshFromAsset(Asset);
-		UAnimBlueprint* AnimBlueprint = Cast<UAnimBlueprint>(Asset);
-
-		ASkeletalMeshActor* SkeletalMeshActor = CastChecked<ASkeletalMeshActor>(CDO);
-		SkeletalMeshActor->GetSkeletalMeshComponent()->SetSkeletalMeshAsset(SkeletalMesh);
-		SkeletalMeshActor->GetSkeletalMeshComponent()->AnimClass = AnimBlueprint ? Cast<UAnimBlueprintGeneratedClass>(AnimBlueprint->GeneratedClass) : nullptr;
-	}
-}
-
 FQuat UActorFactorySkeletalMesh::AlignObjectToSurfaceNormal(const FVector& InSurfaceNormal, const FQuat& ActorRotation) const
 {
 	// Meshes align the Z (up) axis with the surface normal
@@ -1542,20 +1405,6 @@ UObject* UActorFactoryAmbientSound::GetAssetFromActorInstance(AActor* Instance)
 
 	check(SoundActor->GetAudioComponent());
 	return SoundActor->GetAudioComponent()->Sound;
-}
-
-void UActorFactoryAmbientSound::PostCreateBlueprint( UObject* Asset, AActor* CDO )
-{
-	if (Asset != nullptr && CDO != nullptr)
-	{
-		USoundBase* AmbientSound = Cast<USoundBase>(Asset);
-
-		if (AmbientSound != nullptr)
-		{
-			AAmbientSound* NewSound = CastChecked<AAmbientSound>(CDO);
-			NewSound->GetAudioComponent()->SetSound(AmbientSound);
-		}
-	}
 }
 
 bool UActorFactoryAmbientSound::CanImportAmbientSounds()
@@ -1877,13 +1726,13 @@ UActorFactoryExponentialHeightFog::UActorFactoryExponentialHeightFog(const FObje
 }
 
 /*-----------------------------------------------------------------------------
-UActorFactoryLocalHeightFog
+UActorFactoryLocalFogVolume
 -----------------------------------------------------------------------------*/
-UActorFactoryLocalHeightFog::UActorFactoryLocalHeightFog(const FObjectInitializer& ObjectInitializer)
+UActorFactoryLocalFogVolume::UActorFactoryLocalFogVolume(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
-	DisplayName = LOCTEXT("LocalHeightFogDisplayName", "Local Height Fog");
-	NewActorClass = ALocalHeightFog::StaticClass();
+	DisplayName = LOCTEXT("LocalFogVolumeDisplayName", "Local Height Fog");
+	NewActorClass = ALocalFogVolume::StaticClass();
 }
 
 /*-----------------------------------------------------------------------------

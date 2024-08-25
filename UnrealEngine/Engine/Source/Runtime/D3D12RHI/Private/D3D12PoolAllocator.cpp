@@ -2,10 +2,13 @@
 
 #include "D3D12RHIPrivate.h"
 #include "D3D12PoolAllocator.h"
+#include "HAL/LowLevelMemTracker.h"
 
 #ifndef NEEDS_D3D12_INDIRECT_ARGUMENT_HEAP_WORKAROUND
 #define NEEDS_D3D12_INDIRECT_ARGUMENT_HEAP_WORKAROUND 0
 #endif
+
+LLM_DECLARE_TAG(D3D12AllocatorUnused);
 
 //-----------------------------------------------------------------------------
 //	FD3D12MemoryPool
@@ -132,6 +135,7 @@ void FD3D12MemoryPool::Init()
 	}
 #endif // D3D12_RHI_RAYTRACING
 
+	LLM_SCOPED_PAUSE_TRACKING_WITH_ENUM_AND_AMOUNT_BYTAG(D3D12AllocatorUnused, int64(PoolSize), ELLMTracker::Platform, ELLMAllocType::System);
 	FRHIMemoryPool::Init();
 }
 
@@ -421,12 +425,18 @@ void FD3D12PoolAllocator::AllocateResource(uint32 GPUIndex, D3D12_HEAP_TYPE InHe
 				HeapDesc.Flags |= FD3D12_HEAP_FLAG_CREATE_NOT_ZEROED;
 			}
 
+			if (Desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS)
+			{
+				HeapDesc.Flags |= D3D12_HEAP_FLAG_SHARED;
+			}
+
 			ID3D12Heap* Heap = nullptr;
 			VERIFYD3D12RESULT(Adapter->GetD3DDevice()->CreateHeap(&HeapDesc, IID_PPV_ARGS(&Heap)));
 			TRefCountPtr<FD3D12Heap> BackingHeap = new FD3D12Heap(GetParentDevice(), GetVisibilityMask(), TraceHeapId);
 			bool bTrack = false;
-			BackingHeap->SetHeap(Heap, InName, bTrack);		
-			
+			BackingHeap->SetHeap(Heap, InName, bTrack);
+			BackingHeap->BeginTrackingResidency(HeapDesc.SizeInBytes);
+
 			VERIFYD3D12RESULT(Adapter->CreatePlacedResource(Desc, BackingHeap, 0, InCreateState, InResourceStateMode, InCreateState, InClearValue, &NewResource, InName));
 		}
 		else
@@ -511,7 +521,7 @@ void FD3D12PoolAllocator::DeallocateResource(FD3D12ResourceLocation& ResourceLoc
 	}
 
 	int16 PoolIndex = AllocationData.GetPoolIndex();
-	FRHIPoolAllocationData* ReleasedAllocationData = (AllocationDataPool.Num() > 0) ? AllocationDataPool.Pop(false) : new FRHIPoolAllocationData();
+	FRHIPoolAllocationData* ReleasedAllocationData = (AllocationDataPool.Num() > 0) ? AllocationDataPool.Pop(EAllowShrinking::No) : new FRHIPoolAllocationData();
 	bool bLocked = true;
 	ReleasedAllocationData->MoveFrom(AllocationData, bLocked);
 
@@ -564,7 +574,7 @@ FRHIMemoryPool* FD3D12PoolAllocator::CreateNewPool(int16 InPoolIndex, uint32 InM
 }
 
 
-bool FD3D12PoolAllocator::HandleDefragRequest(FRHIPoolAllocationData* InSourceBlock, FRHIPoolAllocationData& InTmpTargetBlock)
+bool FD3D12PoolAllocator::HandleDefragRequest(FRHICommandListBase& RHICmdList, FRHIPoolAllocationData* InSourceBlock, FRHIPoolAllocationData& InTmpTargetBlock)
 {
 	// Cache source copy data
 	FD3D12ResourceLocation* Owner = (FD3D12ResourceLocation*)InSourceBlock->GetOwner();
@@ -582,7 +592,7 @@ bool FD3D12PoolAllocator::HandleDefragRequest(FRHIPoolAllocationData* InSourceBl
 	Owner->SetPoolAllocator(this);
 
 	// Notify owner of moved allocation data (recreated resources and SRVs if needed)
-	Owner->OnAllocationMoved(InSourceBlock);
+	Owner->OnAllocationMoved(RHICmdList, InSourceBlock);
 
 	// Add request to unlock the source block on the next fence value (copy operation should have been done by then)
 	FD3D12Adapter* Adapter = GetParentDevice()->GetParentAdapter();
@@ -633,7 +643,6 @@ void FD3D12PoolAllocator::CleanUpAllocations(uint64 InFrameLag, bool bForceFree)
 				// Not pending anymore
 				check(PendingDeleteRequestSize >= Operation.AllocationData->GetSize());
 				PendingDeleteRequestSize -= Operation.AllocationData->GetSize();
-
 				// Deallocate the locked block (actually free now)
 				DeallocateInternal(*Operation.AllocationData);
 				Operation.AllocationData->Reset();
@@ -676,7 +685,7 @@ void FD3D12PoolAllocator::CleanUpAllocations(uint64 InFrameLag, bool bForceFree)
 	if (PopCount)
 	{
 		// clear out all of the released blocks, don't allow the array to shrink
-		FrameFencedOperations.RemoveAt(0, PopCount, false);
+		FrameFencedOperations.RemoveAt(0, PopCount, EAllowShrinking::No);
 	}
 
 	// Trim empty allocators if not used in last n frames
@@ -686,6 +695,7 @@ void FD3D12PoolAllocator::CleanUpAllocations(uint64 InFrameLag, bool bForceFree)
 		FD3D12MemoryPool* MemoryPool = (FD3D12MemoryPool*) Pools[PoolIndex];
 		if (MemoryPool != nullptr && MemoryPool->IsEmpty() && (bForceFree || (MemoryPool->GetLastUsedFrameFence() + InFrameLag <= CompletedFence)))
 		{
+			LLM_SCOPED_PAUSE_TRACKING_WITH_ENUM_AND_AMOUNT_BYTAG(D3D12AllocatorUnused, 0 - int64(MemoryPool->GetPoolSize()), ELLMTracker::Platform, ELLMAllocType::System);
 			MemoryPool->Destroy();
 			delete(MemoryPool);
 			Pools[PoolIndex] = nullptr;
@@ -802,6 +812,21 @@ void FD3D12PoolAllocator::UpdateAllocationTracking(FD3D12ResourceLocation& InAll
 		}
 	}
 #endif // TRACK_RESOURCE_ALLOCATIONS
+
+#if ENABLE_LOW_LEVEL_MEM_TRACKER
+	{
+		int64 AllocSize = int64(InAllocation.GetPoolAllocatorPrivateData().PoolData.GetSize());
+		
+		if (InAllocationType == EAllocationType::Allocate)
+		{
+			LLM_SCOPED_PAUSE_TRACKING_WITH_ENUM_AND_AMOUNT_BYTAG(D3D12AllocatorUnused, 0 - AllocSize, ELLMTracker::Platform, ELLMAllocType::System);
+		}
+		else
+		{
+			LLM_SCOPED_PAUSE_TRACKING_WITH_ENUM_AND_AMOUNT_BYTAG(D3D12AllocatorUnused, AllocSize, ELLMTracker::Platform, ELLMAllocType::System);
+		}
+	}
+#endif
 }
 
 
@@ -835,8 +860,8 @@ void FD3D12PoolAllocator::FlushPendingCopyOps(FD3D12CommandContext& InCommandCon
 		else
 #endif // D3D12_RHI_RAYTRACING
 		{
-			FScopedResourceBarrier ScopedResourceBarrierSrc(InCommandContext, CopyOperation.SourceResource, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES);
-			FScopedResourceBarrier ScopedResourceBarrierDst(InCommandContext, CopyOperation.DestResource  , D3D12_RESOURCE_STATE_COPY_DEST  , D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES);
+			FScopedResourceBarrier ScopedResourceBarrierSrc(InCommandContext, CopyOperation.SourceResource, nullptr, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES);
+			FScopedResourceBarrier ScopedResourceBarrierDst(InCommandContext, CopyOperation.DestResource  , nullptr, D3D12_RESOURCE_STATE_COPY_DEST  , D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES);
 
 			InCommandContext.FlushResourceBarriers();
 

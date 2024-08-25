@@ -200,6 +200,7 @@ namespace Lumen
 		const FLumenSceneData& LumenSceneData,
 		const TArray<FViewInfo>& Views,
 		const FLumenSceneFrameTemporaries& FrameTemporaries,
+		bool bIndirectLightingHistoryValid,
 		FLumenCardUpdateContext& DirectLightingCardUpdateContext,
 		FLumenCardUpdateContext& IndirectLightingCardUpdateContext,
 		ERDGPassFlags ComputePassFlags);

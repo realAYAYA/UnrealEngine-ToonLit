@@ -32,7 +32,7 @@ namespace GLTF
 			}
 		}
 
-		//Make the Name FName complient.
+		//Make the Name FName compliant.
 		//For Scenario where Asset.Name is '_x' (where x is a number) making FName to be none:
 		//UE-174253
 		template <typename T>
@@ -98,13 +98,10 @@ namespace GLTF
 			ExtraBinData.Empty(ExtraBinBufferKBytes * 1024);
 	}
 
-	void FAsset::GenerateNames(const FString& Prefix)
+	void FAsset::GenerateNames()
 	{
-		ensure(!Prefix.IsEmpty());
-
 		{
-			const FString ScenePrefix = Prefix + TEXT("_scene_");
-
+			const FString ScenePrefix = Name + TEXT("_scene_");
 			for (size_t SceneIndex = 0; SceneIndex < Scenes.Num(); SceneIndex++)
 			{
 				FScene& Scene = Scenes[SceneIndex];
@@ -121,8 +118,8 @@ namespace GLTF
 		}
 
 		{
-			const FString NodePrefix = Prefix + TEXT("_node_");
-			const FString JointPrefix = Prefix + TEXT("_joint_");
+			const FString NodePrefix = Name + TEXT("_node_");
+			const FString JointPrefix = Name + TEXT("_joint_");
 			for (int32 NodeIndex = 0; NodeIndex < Nodes.Num(); ++NodeIndex)
 			{
 				FNode& Node = Nodes[NodeIndex];
@@ -142,7 +139,7 @@ namespace GLTF
 		}
 
 		{
-			const FString TexPrefix = Prefix + TEXT("_texture_");
+			const FString TexPrefix = Name + TEXT("_texture_");
 			for (int32 TextureIndex = 0; TextureIndex < Textures.Num(); ++TextureIndex)
 			{
 				FTexture& Tex = Textures[TextureIndex];
@@ -179,7 +176,7 @@ namespace GLTF
 		}
 
 		{
-			const FString CameraPrefix = Prefix + TEXT("_camera_");
+			const FString CameraPrefix = Name + TEXT("_camera_");
 			for (int32 CameraIndex = 0; CameraIndex < Cameras.Num(); ++CameraIndex)
 			{
 				FCamera& Camera = Cameras[CameraIndex];
@@ -203,7 +200,7 @@ namespace GLTF
 		}
 
 		{
-			const FString LightPrefix = Prefix + TEXT("_light_");
+			const FString LightPrefix = Name + TEXT("_light_");
 			for (int32 LightIndex = 0; LightIndex < Lights.Num(); ++LightIndex)
 			{
 				FLight& Light = Lights[LightIndex];
@@ -228,14 +225,14 @@ namespace GLTF
 
 		// General pattern here is that we'll have a Prefix that will be a filename (like MyFile). 
 		// The name (display label) and the UniqueId of an object has been separated.
-		// UniqueId will consist of: [Prefil]+[_ElementType_]+[ElementIndex]
+		// UniqueId will consist of: [Prefix]+[_ElementType_]+[ElementIndex]
 		// Name will be the provided GLTF object.name, if present,
 		// if Name is not present the UniqueId will be used as the Name.
-		GLTF::GenerateNames(Prefix + TEXT("_material_"), Materials);
-		GLTF::GenerateNames(Prefix + TEXT("_skin_"), Skins);
-		GLTF::GenerateNames(Prefix + TEXT("_animation_"), Animations);
-		GLTF::GenerateNames(Prefix + TEXT("_image_"), Images);
-		GLTF::GenerateNames(Prefix + TEXT("_mesh_"), Meshes);
+		GLTF::GenerateNames(Name + TEXT("_material_"), Materials);
+		GLTF::GenerateNames(Name + TEXT("_skin_"), Skins);
+		GLTF::GenerateNames(Name + TEXT("_animation_"), Animations);
+		GLTF::GenerateNames(Name + TEXT("_image_"), Images);
+		GLTF::GenerateNames(Name + TEXT("_mesh_"), Meshes);
 
 		// Validate FName criteria for Materials Textures Meshes Animations (assets)
 		GLTF::ValidateFNameCriteria(TEXT("Material_"), Materials);
@@ -396,6 +393,8 @@ namespace GLTF
 				return TEXT("KHR_materials_specular");
 			case GLTF::EExtension::KHR_MaterialsEmissiveStrength:
 				return TEXT("KHR_materials_emissive_strength");
+			case GLTF::EExtension::KHR_MaterialsIridescence:
+				return TEXT("KHR_materials_iridescence");
 			case GLTF::EExtension::KHR_TextureTransform:
 				return TEXT("KHR_texture_transform");
 			case GLTF::EExtension::KHR_DracoMeshCompression:
@@ -421,4 +420,36 @@ namespace GLTF
 		}
 	}
 
+	FAccessor& FAsset::CreateBuffersForAccessorIndex(uint32 AccessorIndex)
+	{
+		if (!Accessors.IsValidIndex(AccessorIndex))
+		{
+			static FAccessor EmptyAccessor;
+			return EmptyAccessor;
+		}
+
+		FAccessor& Accessor = Accessors[AccessorIndex];
+
+		uint32 NumberOfComponents = Accessor.NumberOfComponents;
+		uint32 Stride = Accessor.ByteStride;
+		uint32 Count = Accessor.Count;
+		uint64 BufferSize = Stride * Count;
+
+		//Create Storage for Binary Data
+		TArray64<uint8>& BinaryData = UncompressedDracoBinData.AddDefaulted_GetRef();
+		BinaryData.Reserve(BufferSize);
+		BinaryData.SetNumUninitialized(BufferSize);
+
+		//Create Buffer
+		FBuffer Buffer(BufferSize);
+		Buffer.Data = BinaryData.GetData();
+
+		//create UncompressedBufferView
+		FBufferView UncompressedBufferView(Buffer, 0, BufferSize, Stride);
+
+		//Set the new FBufferView on the FAccessor:
+		Accessor.BufferView = UncompressedBufferView;
+
+		return Accessor;
+	}
 }  // namespace GLTF

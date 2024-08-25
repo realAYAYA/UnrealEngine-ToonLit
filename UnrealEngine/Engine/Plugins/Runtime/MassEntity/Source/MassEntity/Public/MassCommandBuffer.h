@@ -82,14 +82,14 @@ public:
 	void AddTag(FMassEntityHandle Entity)
 	{
 		static_assert(TIsDerivedFrom<T, FMassTag>::IsDerived, "Given struct type is not a valid tag type.");
-		PushCommand<FMassCommandAddTagInternal<EMassCommandCheckTime::CompileTimeCheck, T>>(Entity);
+		PushCommand<FMassCommandAddTagsInternal<EMassCommandCheckTime::CompileTimeCheck, T>>(Entity);
 	}
 
 	template<typename T>
 	void AddTag_RuntimeCheck(FMassEntityHandle Entity)
 	{
 		checkf(T::StaticStruct()->IsChildOf(FMassTag::StaticStruct()), TEXT("Given struct type is not a valid tag type."));
-		PushCommand<FMassCommandAddTagInternal<EMassCommandCheckTime::RuntimeCheck, T>>(Entity);
+		PushCommand<FMassCommandAddTagsInternal<EMassCommandCheckTime::RuntimeCheck, T>>(Entity);
 	}
 
 	/** the convenience function equivalent to calling PushCommand<FMassCommandRemoveTag<T>>(Entity) */
@@ -97,14 +97,14 @@ public:
 	void RemoveTag(FMassEntityHandle Entity)
 	{
 		static_assert(TIsDerivedFrom<T, FMassTag>::IsDerived, "Given struct type is not a valid tag type.");
-		PushCommand<FMassCommandRemoveTagInternal<EMassCommandCheckTime::CompileTimeCheck, T>>(Entity);
+		PushCommand<FMassCommandRemoveTagsInternal<EMassCommandCheckTime::CompileTimeCheck, T>>(Entity);
 	}
 
 	template<typename T>
 	void RemoveTag_RuntimeCheck(FMassEntityHandle Entity)
 	{
 		checkf(T::StaticStruct()->IsChildOf(FMassTag::StaticStruct()), TEXT("Given struct type is not a valid tag type."));
-		PushCommand<FMassCommandRemoveTagInternal<EMassCommandCheckTime::RuntimeCheck, T>>(Entity);
+		PushCommand<FMassCommandRemoveTagsInternal<EMassCommandCheckTime::RuntimeCheck, T>>(Entity);
 	}
 
 	/** the convenience function equivalent to calling PushCommand<FMassCommandSwapTags<TOld, TNew>>(Entity)  */

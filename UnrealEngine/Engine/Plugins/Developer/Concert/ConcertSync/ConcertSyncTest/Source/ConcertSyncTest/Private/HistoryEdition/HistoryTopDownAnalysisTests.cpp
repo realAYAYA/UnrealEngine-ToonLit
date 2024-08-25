@@ -58,7 +58,7 @@ namespace UE::ConcertSyncTests
 
 namespace UE::ConcertSyncTests::AnalysisTests
 {
-	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTopDownUseCase, "Concert.History.Analysis.TopDownUseCase", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::EngineFilter)
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTopDownUseCase, "Editor.Concert.History.Analysis.TopDownUseCase", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 	bool FTopDownUseCase::RunTest(const FString& Parameters)
 	{
 		using namespace RenameEditAndDeleteMapsFlowTest;
@@ -132,7 +132,7 @@ namespace UE::ConcertSyncTests::AnalysisTests
 	 * The test: delete R.
 	 * We want L to be marked has a hard dependency.
 	 */
-	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTopDownDiamond, "Concert.History.Analysis.TopDownDiamond", EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::EngineFilter)
+	IMPLEMENT_SIMPLE_AUTOMATION_TEST(FTopDownDiamond, "Editor.Concert.History.Analysis.TopDownDiamond", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 	bool FTopDownDiamond::RunTest(const FString& Parameters)
 	{
 		using namespace ConcertSyncCore;

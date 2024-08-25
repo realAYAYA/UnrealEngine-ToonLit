@@ -6,6 +6,20 @@
 #include "MuR/Ptr.h"
 #include "MuR/RefCounted.h"
 #include "MuT/Node.h"
+#include "Containers/UnrealString.h"
+
+#include "NodeModifier.generated.h"
+
+
+/** Despite being an UEnum, this is not always version-serialized (in MutableTools).
+* Beware of changing the enum options or order.
+*/
+UENUM()
+enum class EMutableMultipleTagPolicy : uint8
+{
+	OnlyOneRequired,
+	AllRequired
+};
 
 
 namespace mu
@@ -15,7 +29,6 @@ namespace mu
 	class NodeModifier;
 	typedef Ptr<NodeModifier> NodeModifierPtr;
 	typedef Ptr<const NodeModifier> NodeModifierConst;
-
 
 	//! This class is the parent of all nodes that output a component.
 	//! \ingroup model
@@ -38,34 +51,26 @@ namespace mu
 		//-----------------------------------------------------------------------------------------
 
 		static void Serialise( const NodeModifier* pNode, OutputArchive& arch );
-		static NodeModifierPtr StaticUnserialise( InputArchive& arch );
+		static Ptr<NodeModifier> StaticUnserialise( InputArchive& arch );
 
 		//-----------------------------------------------------------------------------------------
         // Node interface
 		//-----------------------------------------------------------------------------------------
 
-		const NODE_TYPE* GetType() const override;
-		static const NODE_TYPE* GetStaticType();
+		const FNodeType* GetType() const override;
+		static const FNodeType* GetStaticType();
 
         //-----------------------------------------------------------------------------------------
         // Own interface
         //-----------------------------------------------------------------------------------------
 
-        //! \name Tags
-        //! \{
+        /** Add a tag to the surface, which will be affected by modifier nodes with the same tag. */
+        void AddTag(const FString& TagName);
 
-        //! Add a tag to the surface, which will be affected by modifier nodes with the same tag
-        void AddTag(const char* tagName);
+		/** Set the policy to interprete the tags when there is more than one. */
+		void SetMultipleTagPolicy(EMutableMultipleTagPolicy);
 
-        //! Get the number of tags added to the Surface.
-        int GetTagCount() const;
-
-        //! Get a tag string from an index (0 to GetTagCount-1)
-        const char* GetTag( int ) const;
-
-        //! \}
-
-		//! Set the stage to apply this modifier in. Default is before normal operations.
+		/** Set the stage to apply this modifier in.Default is before normal operations. */
 		void SetStage( bool bBeforeNormalOperation );
 
 		//-----------------------------------------------------------------------------------------

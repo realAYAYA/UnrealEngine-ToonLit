@@ -144,26 +144,25 @@ namespace Metasound
 			return Metadata;
 		}
 
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, TArray<TUniquePtr<IOperatorBuildError>>& OutErrors)
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 		{
 			using namespace TriggerRouteVertexNames;
 
-			const FInputVertexInterface& InputInterface = InParams.Node.GetVertexInterface().GetInputInterface();
-			const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
+			const FInputVertexInterfaceData& InputData = InParams.InputData;
 
 			TArray<FTriggerReadRef> InputTriggers;
 			TArray<TDataReadReference<ValueType>> InputValues;
 
 			for (uint32 i = 0; i < NumInputs; ++i)
 			{
-				InputTriggers.Add(InputCollection.GetDataReadReferenceOrConstruct<FTrigger>(GetInputTriggerName(i), InParams.OperatorSettings));
-				InputValues.Add(InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<ValueType>(InputInterface, GetInputValueName(i), InParams.OperatorSettings));
+				InputTriggers.Add(InputData.GetOrConstructDataReadReference<FTrigger>(GetInputTriggerName(i), InParams.OperatorSettings));
+				InputValues.Add(InputData.GetOrCreateDefaultDataReadReference<ValueType>(GetInputValueName(i), InParams.OperatorSettings));
 			}
 
 			return MakeUnique<TTriggerRouteOperator<ValueType, NumInputs>>(InParams, MoveTemp(InputTriggers), MoveTemp(InputValues));
 		}
 
-		TTriggerRouteOperator(const FCreateOperatorParams& InParams, TArray<FTriggerReadRef>&& InInputTriggers, TArray<TDataReadReference<ValueType>>&& InInputValues)
+		TTriggerRouteOperator(const FBuildOperatorParams& InParams, TArray<FTriggerReadRef>&& InInputTriggers, TArray<TDataReadReference<ValueType>>&& InInputValues)
 			: InputTriggers(MoveTemp(InInputTriggers))
 			, InputValues(MoveTemp(InInputValues))
 			, OutputTrigger(FTriggerWriteRef::CreateNew(InParams.OperatorSettings))

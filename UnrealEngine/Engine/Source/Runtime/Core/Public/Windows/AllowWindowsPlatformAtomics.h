@@ -14,7 +14,7 @@
 
 #define InterlockedIncrement _InterlockedIncrement
 #define InterlockedDecrement _InterlockedDecrement
-#if !defined(InterlockedAdd)
+#if !defined(InterlockedAdd) && !defined(_M_ARM64EC)
 	#define InterlockedAdd _InterlockedAdd
 #endif
 #define InterlockedExchange _InterlockedExchange

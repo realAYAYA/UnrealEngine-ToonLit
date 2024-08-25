@@ -1,50 +1,23 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
-using EpicGames.Serialization;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Reflection.Metadata;
+using EpicGames.Core;
+using EpicGames.Serialization;
 
 namespace EpicGames.Horde.Storage.Nodes
 {
 	/// <summary>
 	/// A node containing arbitrary compact binary data
 	/// </summary>
-	[NodeType("{34A0793F-8364-42F4-8632-98A71C843229}", 1)]
-	public class CbNode : Node
+	[BlobConverter(typeof(CbNodeConverter))]
+	public class CbNode
 	{
-		class HandleMapper
-		{
-			readonly NodeReader _reader;
-			readonly List<NodeRef> _refs;
-
-			public HandleMapper(NodeReader reader, List<NodeRef> refs)
-			{
-				_reader = reader;
-				_refs = refs;
-			}
-
-			public void IterateField(CbField field)
-			{
-				if (field.IsAttachment())
-				{
-					BlobHandle handle = _reader.GetNodeHandle(_refs.Count, field.AsAttachment());
-					_refs.Add(new NodeRef(handle));
-				}
-				else if (field.IsArray())
-				{
-					CbArray array = field.AsArray();
-					array.IterateAttachments(IterateField);
-				}
-				else if (field.IsObject())
-				{
-					CbObject obj = field.AsObject();
-					obj.IterateAttachments(IterateField);
-				}
-			}
-		}
+		/// <summary>
+		/// Static accessor for the blob type guid
+		/// </summary>
+		public static Guid BlobTypeGuid { get; } = new Guid("{34A0793F-42F4-8364-A798-32862932841C}");
 
 		/// <summary>
 		/// The compact binary object
@@ -54,37 +27,36 @@ namespace EpicGames.Horde.Storage.Nodes
 		/// <summary>
 		/// Imported nodes
 		/// </summary>
-		public IReadOnlyList<NodeRef> References { get; }
+		public IReadOnlyList<IBlobHandle> Imports { get; }
 
 		/// <summary>
 		/// Constructor
 		/// </summary>
 		/// <param name="obj">The compact binary object</param>
-		/// <param name="references">List of references to attachments</param>
-		public CbNode(CbObject obj, IReadOnlyList<NodeRef> references)
+		/// <param name="imports">List of imports for attachments</param>
+		public CbNode(CbObject obj, IReadOnlyList<IBlobHandle> imports)
 		{
 			Object = obj;
-			References = references;
+			Imports = imports;
 		}
+	}
 
-		/// <summary>
-		/// Deserialization constructor
-		/// </summary>
-		/// <param name="reader">Reader to deserialize from</param>
-		public CbNode(NodeReader reader)
+	class CbNodeConverter : BlobConverter<CbNode>
+	{
+		public static BlobType BlobType { get; } = new BlobType(CbNode.BlobTypeGuid, 1);
+
+		/// <inheritdoc/>
+		public override CbNode Read(IBlobReader reader, BlobSerializerOptions options)
 		{
-			Object = new CbObject(reader.ReadFixedLengthBytes(reader.Length));
-
-			List<NodeRef> references = new List<NodeRef>();
-			Object.IterateAttachments(new HandleMapper(reader, references).IterateField);
-
-			References = references;
+			CbObject obj = new CbObject(reader.GetMemory().ToArray());
+			return new CbNode(obj, reader.Imports.ToArray());
 		}
 
 		/// <inheritdoc/>
-		public override void Serialize(NodeWriter writer)
+		public override BlobType Write(IBlobWriter writer, CbNode value, BlobSerializerOptions options)
 		{
-			writer.WriteFixedLengthBytes(Object.GetView().Span);
+			writer.WriteFixedLengthBytes(value.Object.GetView().Span);
+			return BlobType;
 		}
 	}
 }

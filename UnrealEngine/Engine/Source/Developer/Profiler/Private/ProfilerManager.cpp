@@ -302,8 +302,8 @@ bool FProfilerManager::Tick( float DeltaTime )
 		const double MBInv = 1.0 / 1024.0 / 1024.0;
 		const SIZE_T DiffPhys = FPlatformMemory::GetStats().UsedPhysical - StartUsedPhysical;
 
-		const double SessionMemory = MBInv*ProfilerSession->GetMemoryUsage();
-		const double PhysMemory = MBInv*DiffPhys;
+		const double SessionMemory = MBInv * (double)ProfilerSession->GetMemoryUsage();
+		const double PhysMemory = MBInv * (double)DiffPhys;
 
 		UE_LOG( LogStats, VeryVerbose, TEXT( "ProfilerSession: %6.2f MB (%6.2f MB) # (%6.2f MB) / %7u -> %4u" ), 
 			SessionMemory,

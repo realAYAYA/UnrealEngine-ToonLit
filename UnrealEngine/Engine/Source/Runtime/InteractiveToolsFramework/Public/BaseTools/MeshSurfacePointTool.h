@@ -95,8 +95,11 @@ public:
 	 */
 	INTERACTIVETOOLSFRAMEWORK_API virtual void OnEndDrag(const FRay& Ray);
 
-
-
+	/**
+	 * This function is called when the user's drag is cancelled, for example due to the whole tool being shut down.
+	 */
+	virtual void OnCancelDrag() {}
+	
 
 	// IClickDragBehaviorTarget implementation
 	INTERACTIVETOOLSFRAMEWORK_API virtual FInputRayHit CanBeginClickDragSequence(const FInputDeviceRay& PressPos) override;

@@ -55,18 +55,6 @@ UObject* UGroomActorFactory::GetAssetFromActorInstance(AActor* Instance)
 	return SMA->GetGroomComponent()->GroomAsset;
 }
 
-void UGroomActorFactory::PostCreateBlueprint( UObject* Asset, AActor* CDO )
-{
-	if (Asset != NULL && CDO != NULL)
-	{
-		UGroomAsset* GroomAsset = CastChecked<UGroomAsset>(Asset);
-		AGroomActor* GroomActor = CastChecked<AGroomActor>(CDO);
-		UGroomComponent* GroomComponent = GroomActor->GetGroomComponent();
-
-		GroomComponent->SetGroomAsset(GroomAsset);
-	}
-}
-
 FQuat UGroomActorFactory::AlignObjectToSurfaceNormal(const FVector& InSurfaceNormal, const FQuat& ActorRotation) const
 {
 	return FindActorAlignmentRotation(ActorRotation, FVector(0.f, 0.f, 1.f), InSurfaceNormal);

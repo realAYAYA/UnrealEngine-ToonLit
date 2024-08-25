@@ -15,6 +15,7 @@
 #include "Engine/BlueprintGeneratedClass.h"
 #include "Engine/MemberReference.h"
 #include "FindInBlueprintManager.h"
+#include "FindInBlueprints.h"
 #include "HAL/PlatformCrt.h"
 #include "Internationalization/Internationalization.h"
 #include "K2Node.h"
@@ -601,16 +602,28 @@ void UK2Node_CustomEvent::AddSearchMetaDataInfo(TArray<struct FSearchTagDataPair
 {
 	Super::AddSearchMetaDataInfo(OutTaggedMetaData);
 
+	bool bNeedsNameUpdate = true;
+	bool bNeedsNativeNameUpdate = true;
 	for (FSearchTagDataPair& SearchData : OutTaggedMetaData)
 	{
 		// Should always be the first item, but there is no guarantee
-		if (SearchData.Key.CompareTo(FFindInBlueprintSearchTags::FiB_Name) == 0)
+		if (bNeedsNameUpdate && SearchData.Key.CompareTo(FFindInBlueprintSearchTags::FiB_Name) == 0)
 		{
 			SearchData.Value = FText::FromString(FName::NameToDisplayString(CustomFunctionName.ToString(), false));
+			bNeedsNameUpdate = false;
+		}
+		else if (bNeedsNativeNameUpdate && SearchData.Key.CompareTo(FFindInBlueprintSearchTags::FiB_NativeName) == 0)
+		{
+			SearchData.Value = FText::FromName(CustomFunctionName);
+			bNeedsNativeNameUpdate = false;
+		}
+
+		// If no more keys need updating, break
+		if (!bNeedsNameUpdate && !bNeedsNativeNameUpdate)
+		{
 			break;
 		}
 	}
-	OutTaggedMetaData.Add(FSearchTagDataPair(FFindInBlueprintSearchTags::FiB_NativeName, FText::FromName(CustomFunctionName)));
 }
 
 FText UK2Node_CustomEvent::GetKeywords() const

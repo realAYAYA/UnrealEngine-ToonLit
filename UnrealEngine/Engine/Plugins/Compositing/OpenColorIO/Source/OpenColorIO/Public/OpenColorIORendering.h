@@ -3,6 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "UObject/WeakObjectPtr.h"
 #include "RHIFwd.h"
 
 struct FOpenColorIOColorConversionSettings;
@@ -25,7 +26,7 @@ struct OPENCOLORIO_API FOpenColorIORenderPassResources
 	FOpenColorIOTransformResource* ShaderResource = nullptr;
 	
 	/** Collection of LUT textures needed by the shader. */
-	TSortedMap<int32, FTextureResource*> TextureResources = {};
+	TSortedMap<int32, TWeakObjectPtr<UTexture>> TextureResources = {};
 
 	/** Color transform string description. */
 	FString TransformName = FString();

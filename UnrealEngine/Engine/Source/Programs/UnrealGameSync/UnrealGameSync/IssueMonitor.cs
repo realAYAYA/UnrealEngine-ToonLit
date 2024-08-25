@@ -1,8 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Core;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -11,6 +8,9 @@ using System.Linq;
 using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using EpicGames.Core;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 #nullable enable
 
@@ -70,7 +70,7 @@ namespace UnrealGameSync
 			get
 			{
 				// HACK to infer project names from streams
-				if(_cachedProjects == null)
+				if (_cachedProjects == null)
 				{
 					HashSet<string> newProjects = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 					if (!String.IsNullOrEmpty(Project))
@@ -196,7 +196,7 @@ namespace UnrealGameSync
 
 		public void StartTracking(long issueId)
 		{
-			lock(_lockObject)
+			lock (_lockObject)
 			{
 				_trackingIssueIds.Add(issueId);
 			}
@@ -205,7 +205,7 @@ namespace UnrealGameSync
 
 		public void StopTracking(long issueId)
 		{
-			lock(_lockObject)
+			lock (_lockObject)
 			{
 				_trackingIssueIds.RemoveAt(_trackingIssueIds.IndexOf(issueId));
 			}
@@ -219,7 +219,7 @@ namespace UnrealGameSync
 		public void PostUpdate(IssueUpdateData update)
 		{
 			bool updatedIssues;
-			lock(_lockObject)
+			lock (_lockObject)
 			{
 				_pendingUpdates.Add(update);
 				updatedIssues = ApplyPendingUpdate(_issues, update);
@@ -227,7 +227,7 @@ namespace UnrealGameSync
 
 			_refreshEvent.Set();
 
-			if(updatedIssues)
+			if (updatedIssues)
 			{
 				OnIssuesChanged?.Invoke();
 			}
@@ -236,30 +236,30 @@ namespace UnrealGameSync
 		static bool ApplyPendingUpdate(List<IssueData> issues, IssueUpdateData update)
 		{
 			bool updated = false;
-			for(int idx = 0; idx < issues.Count; idx++)
+			for (int idx = 0; idx < issues.Count; idx++)
 			{
 				IssueData issue = issues[idx];
-				if(update.Id == issue.Id)
+				if (update.Id == issue.Id)
 				{
-					if(update.Owner != null && update.Owner != issue.Owner)
+					if (update.Owner != null && update.Owner != issue.Owner)
 					{
 						issue.Owner = update.Owner;
 						updated = true;
 					}
-					if(update.NominatedBy != null && update.NominatedBy != issue.NominatedBy)
+					if (update.NominatedBy != null && update.NominatedBy != issue.NominatedBy)
 					{
 						issue.NominatedBy = update.NominatedBy;
 						updated = true;
 					}
-					if(update.Acknowledged.HasValue && update.Acknowledged.Value != issue.AcknowledgedAt.HasValue)
+					if (update.Acknowledged.HasValue && update.Acknowledged.Value != issue.AcknowledgedAt.HasValue)
 					{
-						issue.AcknowledgedAt = update.Acknowledged.Value? (DateTime?)DateTime.UtcNow : null;
+						issue.AcknowledgedAt = update.Acknowledged.Value ? (DateTime?)DateTime.UtcNow : null;
 						updated = true;
 					}
-					if(update.FixChange.HasValue)
+					if (update.FixChange.HasValue)
 					{
 						issue.FixChange = update.FixChange.Value;
-						if(issue.FixChange != 0)
+						if (issue.FixChange != 0)
 						{
 							issues.RemoveAt(idx);
 						}
@@ -273,7 +273,7 @@ namespace UnrealGameSync
 
 		public void Start()
 		{
-			if(ApiUrl != null)
+			if (ApiUrl != null)
 			{
 				_workerTask = Task.Run(() => PollForUpdatesAsync(_cancellationSource.Token));
 			}
@@ -281,7 +281,7 @@ namespace UnrealGameSync
 
 		public void AddRef()
 		{
-			if(_refCount == 0)
+			if (_refCount == 0)
 			{
 				throw new Exception("Invalid reference count for IssueMonitor (zero)");
 			}
@@ -291,11 +291,11 @@ namespace UnrealGameSync
 		public void Release()
 		{
 			_refCount--;
-			if(_refCount < 0)
+			if (_refCount < 0)
 			{
 				throw new Exception("Invalid reference count for IssueMonitor (ltz)");
 			}
-			if(_refCount == 0)
+			if (_refCount == 0)
 			{
 				DisposeInternal();
 			}
@@ -320,7 +320,7 @@ namespace UnrealGameSync
 
 		async Task PollForUpdatesAsync(CancellationToken cancellationToken)
 		{
-			while (cancellationToken.IsCancellationRequested)
+			while (!cancellationToken.IsCancellationRequested)
 			{
 				Task refreshTask = _refreshEvent.Task;
 
@@ -344,7 +344,7 @@ namespace UnrealGameSync
 					if (await SendUpdateAsync(pendingUpdate, cancellationToken))
 					{
 						lock (_lockObject)
-						{ 
+						{
 							_pendingUpdates.RemoveAt(0);
 						}
 					}
@@ -370,7 +370,7 @@ namespace UnrealGameSync
 				await RestApi.PutAsync<IssueUpdateData>($"{ApiUrl}/api/issues/{update.Id}", update, cancellationToken);
 				return true;
 			}
-			catch(Exception ex)
+			catch (Exception ex)
 			{
 				_logger.LogError(ex, "Failed with exception.");
 				LastStatusMessage = String.Format("Failed to send update: ({0})", ex.ToString());
@@ -393,23 +393,23 @@ namespace UnrealGameSync
 
 				// Check if we're tracking a particular issue. If so, we want updates even when it's resolved.
 				long[] localTrackingIssueIds;
-				lock(_lockObject)
+				lock (_lockObject)
 				{
 					localTrackingIssueIds = _trackingIssueIds.Distinct().ToArray();
 				}
-				foreach(long localTrackingIssueId in localTrackingIssueIds)
+				foreach (long localTrackingIssueId in localTrackingIssueIds)
 				{
-					if(!newIssues.Any(x => x.Id == localTrackingIssueId))
+					if (!newIssues.Any(x => x.Id == localTrackingIssueId))
 					{
 						try
 						{
 							IssueData issue = await RestApi.GetAsync<IssueData>($"{ApiUrl}/api/issues/{localTrackingIssueId}", cancellationToken);
-							if(issue != null)
+							if (issue != null)
 							{
 								newIssues.Add(issue);
 							}
 						}
-						catch(Exception ex)
+						catch (Exception ex)
 						{
 							_logger.LogError(ex, "Exception while fetching tracked issue");
 						}
@@ -438,7 +438,7 @@ namespace UnrealGameSync
 				// Apply any pending updates to this issue list, and update it
 				lock (_lockObject)
 				{
-					foreach(IssueUpdateData pendingUpdate in _pendingUpdates)
+					foreach (IssueUpdateData pendingUpdate in _pendingUpdates)
 					{
 						ApplyPendingUpdate(newIssues, pendingUpdate);
 					}
@@ -446,7 +446,7 @@ namespace UnrealGameSync
 				}
 
 				// Update the main thread
-				if(initialNumIssues > 0 || _issues.Count > 0)
+				if (initialNumIssues > 0 || _issues.Count > 0)
 				{
 					OnIssuesChanged?.Invoke();
 				}
@@ -456,7 +456,7 @@ namespace UnrealGameSync
 				_logger.LogInformation("Done in {Time}ms.", timer.ElapsedMilliseconds);
 				return true;
 			}
-			catch(Exception ex)
+			catch (Exception ex)
 			{
 				_logger.LogError(ex, "Failed with exception.");
 				LastStatusMessage = String.Format("Last update failed: ({0})", ex.ToString());

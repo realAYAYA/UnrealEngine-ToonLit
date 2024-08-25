@@ -10,6 +10,7 @@
 #include "DisplayClusterConfigurationTypes_ICVFX.h"
 #include "DisplayClusterEditorPropertyReference.h"
 #include "Render/Viewport/Containers/DisplayClusterViewport_CameraMotionBlur.h"
+#include "Render/Viewport/Containers/DisplayClusterViewport_CameraDepthOfField.h"
 
 #include "DisplayClusterICVFXCameraComponent.generated.h"
 
@@ -28,11 +29,11 @@ class DISPLAYCLUSTER_API UDisplayClusterICVFXCameraComponent
 	GENERATED_BODY()
 
 public:
-	UDisplayClusterICVFXCameraComponent(const FObjectInitializer& ObjectInitializer)
-	{ }
+	UDisplayClusterICVFXCameraComponent(const FObjectInitializer& ObjectInitializer);
 
 	virtual void Serialize(FArchive& Ar) override;
 	virtual void PostLoad() override;
+	virtual void PostApplyToComponent() override;
 
 public:
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = NDisplay)
@@ -48,8 +49,21 @@ public:
 public:
 	FDisplayClusterViewport_CameraMotionBlur GetMotionBlurParameters();
 
+	/** Gets the depth of field parameters to store on the display cluster viewport */
+	FDisplayClusterViewport_CameraDepthOfField GetDepthOfFieldParameters();
+
+	/**
+	 * Return the actual source camera, e.g. the camera component of the referenced cine camera.
+	 * Use GetCameraView() function to get viewinfo with actual camera position, postprocess and ICVFX postprocess
+	 */
+	UCineCameraComponent* GetActualCineCameraComponent();
+
 	// Returns true if this camera is active
-	bool IsICVFXEnabled() const;
+	UE_DEPRECATED(5.4, "This function has been deprecated. Please use 'GetCameraSettingsICVFX().IsICVFXEnabled()'.")
+	bool IsICVFXEnabled() const
+	{
+		return false;
+	}
 
 	// Return unique camera name
 	FString GetCameraUniqueId() const;
@@ -59,11 +73,17 @@ public:
 		return CameraSettings;
 	}
 
-	UCameraComponent* GetCameraComponent();
-	void GetDesiredView(FMinimalViewInfo& DesiredView);
+	/** Obtaining view information for the actual camera, such as the camera component to which the cine-camera is referencing.
+	 * The data from the CameraSettings variable is used in postprocess settings (EnableCameraPP, OverrideMotionBlur, etc.).
+	 */
+	virtual void GetCameraView(float DeltaTime, FMinimalViewInfo& InOutViewInfo) override;
 
 	// UActorComponent interface
 	virtual void OnRegister() override;
+
+	/** Sets new depth of field parameters and updates the dynamically generated compensation LUT if needed */
+	UFUNCTION(BlueprintCallable, Category = "In Camera VFX")
+	void SetDepthOfFieldParameters(const FDisplayClusterConfigurationICVFX_CameraDepthOfField& NewDepthOfFieldParams);
 
 private:
 	void UpdateOverscanEstimatedFrameSize();
@@ -85,40 +105,47 @@ public:
 private:
 	friend class FDisplayClusterICVFXCameraComponentDetailsCustomization;
 	
-	UPROPERTY(EditAnywhere, Transient, Category = "In Camera VFX", meta = (PropertyPath = "CameraSettings.bEnable"))
+	UPROPERTY(EditAnywhere, Transient, Category = "Inner Frustum", meta = (PropertyPath = "CameraSettings.bEnable"))
 	FDisplayClusterEditorPropertyReference IsEnabledRef;
 
-	UPROPERTY(EditAnywhere, Transient, Category = "In Camera VFX", meta = (PropertyPath = "CameraSettings.HiddenICVFXViewports"))
+	UPROPERTY(EditAnywhere, Transient, Category = "Inner Frustum", meta = (PropertyPath = "CameraSettings.HiddenICVFXViewports"))
 	FDisplayClusterEditorPropertyReference HiddenICVFXViewportsRef;
 
-	UPROPERTY(EditAnywhere, Transient, Category = "In Camera VFX", meta = (PropertyPath = "CameraSettings.ExternalCameraActor"))
-	FDisplayClusterEditorPropertyReference ExternalCameraActorRef;
-
-	UPROPERTY(EditAnywhere, Transient, Category = "In Camera VFX", meta = (PropertyPath = "CameraSettings.BufferRatio"))
+	UPROPERTY(EditAnywhere, Transient, Category = "Inner Frustum", meta = (PropertyPath = "CameraSettings.BufferRatio"))
 	FDisplayClusterEditorPropertyReference BufferRatioRef;
 
-	UPROPERTY(EditAnywhere, Transient, Category = "In Camera VFX", meta = (DisplayName = "Inner Frustum Overscan", PropertyPath = "CameraSettings.CustomFrustum"))
+	UPROPERTY(EditAnywhere, Transient, Category = "Inner Frustum", meta = (DisplayName = "Inner Frustum Overscan", PropertyPath = "CameraSettings.CustomFrustum"))
 	FDisplayClusterEditorPropertyReference CustomFrustumRef;
 
-	UPROPERTY(EditAnywhere, Transient, Category = "In Camera VFX", meta = (PropertyPath = "CameraSettings.SoftEdge"))
+	UPROPERTY(EditAnywhere, Transient, Category = "Inner Frustum", meta = (PropertyPath = "CameraSettings.SoftEdge"))
 	FDisplayClusterEditorPropertyReference SoftEdgeRef;
 
-	UPROPERTY(EditAnywhere, Transient, Category = "In Camera VFX", meta = (PropertyPath = "CameraSettings.Border"))
+	UPROPERTY(EditAnywhere, Transient, Category = "Inner Frustum", meta = (PropertyPath = "CameraSettings.Border"))
 	FDisplayClusterEditorPropertyReference BorderRef;
 
-	UPROPERTY(EditAnywhere, Transient, Category = "In Camera VFX", meta = (PropertyPath = "CameraSettings.FrustumRotation"))
+	UPROPERTY(EditAnywhere, Transient, Category = "Inner Frustum", meta = (PropertyPath = "CameraSettings.FrustumRotation"))
 	FDisplayClusterEditorPropertyReference FrustumRotationRef;
 
-	UPROPERTY(EditAnywhere, Transient, Category = "In Camera VFX", meta = (PropertyPath = "CameraSettings.FrustumOffset"))
+	UPROPERTY(EditAnywhere, Transient, Category = "Inner Frustum", meta = (PropertyPath = "CameraSettings.FrustumOffset"))
 	FDisplayClusterEditorPropertyReference FrustumOffsetRef;
 
-	UPROPERTY(EditAnywhere, Transient, Category = "In Camera VFX", meta = (PropertyPath = "CameraSettings.RenderSettings.GenerateMips"))
+	UPROPERTY(EditAnywhere, Transient, Category = "Inner Frustum", meta = (PropertyPath = "CameraSettings.OffCenterprojectionoffset"))
+	FDisplayClusterEditorPropertyReference OffCenterProjectionOffsetRef;
+
+	UPROPERTY(EditAnywhere, Transient, Category = "Inner Frustum", meta = (PropertyPath = "CameraSettings.RenderSettings.GenerateMips"))
 	FDisplayClusterEditorPropertyReference GenerateMipsRef;
 
-	UPROPERTY(EditAnywhere, Transient, Category = "In Camera VFX", meta = (PropertyPath = "CameraSettings.CameraMotionBlur"))
+	UPROPERTY(EditAnywhere, Transient, Category = "ICVFX Camera", meta = (PropertyPath = "CameraSettings.ExternalCameraActor"))
+	FDisplayClusterEditorPropertyReference ExternalCameraActorRef;
+
+	/** Exposed reference to the camera's inner depth of field settings */
+	UPROPERTY(EditAnywhere, Transient, Category = "ICVFX Camera", meta = (PropertyPath = "CameraSettings.CameraDepthOfField", DisplayName = "ICVFX Depth of Field"))
+	FDisplayClusterEditorPropertyReference CameraDepthOfFieldRef;
+
+	UPROPERTY(EditAnywhere, Transient, Category = "ICVFX Camera", meta = (PropertyPath = "CameraSettings.CameraMotionBlur", DisplayName = "ICVFX Camera Motion Blur"))
 	FDisplayClusterEditorPropertyReference CameraMotionBlurRef;
 
-	UPROPERTY(EditAnywhere, Transient, Category = "In Camera VFX", meta = (PropertyPath = "CameraSettings.CameraHideList"))
+	UPROPERTY(EditAnywhere, Transient, Category = "Inner Frustum", meta = (PropertyPath = "CameraSettings.CameraHideList"))
 	FDisplayClusterEditorPropertyReference CameraHideListRef;
 
 	UPROPERTY(EditAnywhere, Transient, Category = Chromakey, meta = (PropertyPath = "CameraSettings.Chromakey.bEnable"))

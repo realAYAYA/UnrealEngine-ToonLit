@@ -28,6 +28,8 @@
 #define ST_Custom			5
 #define ST_PostProcess		6
 #define ST_RoundedBox		7
+#define ST_SdfFont			8
+#define ST_MsdfFont			9
 
 struct VertexToPixelInterpolants
 {

@@ -7,6 +7,7 @@
 #include "Containers/UnrealString.h"
 #include "CoreFwd.h"
 #include "MetasoundDataReference.h"
+#include "MetasoundFrontendRegistryKey.h"
 #include "MetasoundLog.h"
 #include "MetasoundOperatorSettings.h"
 #include "MetasoundVertex.h"
@@ -30,11 +31,6 @@ namespace Metasound
 	class INode;
 	class FOutputVertexInterfaceData;
 	class FInputVertexInterfaceData;
-
-	namespace Frontend
-	{
-		typedef FString FNodeRegistryKey;
-	}
 }
 
 namespace Metasound::EngineTest 
@@ -144,6 +140,9 @@ namespace Metasound::EngineTest
 
 	// Return an array of all currently registered MetaSound nodes. 
 	void GetAllRegisteredNodes(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutNodeRegistryKeys);
+
+	// Return an array of all currently registered native MetaSound nodes. 
+	void GetAllRegisteredNativeNodes(TArray<FString>& OutBeautifiedNames, TArray<FString>& OutNodeRegistryKeys);
 
 	// Create any variables that exist on the vertex interface.
 	void CreateVariables(const FOperatorSettings& InOperatorSettings, FInputVertexInterfaceData& OutVertexData);

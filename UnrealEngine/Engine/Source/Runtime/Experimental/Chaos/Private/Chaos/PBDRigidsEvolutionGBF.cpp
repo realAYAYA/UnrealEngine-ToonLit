@@ -3,6 +3,7 @@
 #include "Chaos/Collision/SimSweep.h"
 #include "Chaos/Defines.h"
 #include "Chaos/Evolution/SolverBodyContainer.h"
+#include "Chaos/Framework/HashMappedArray.h"
 #include "Chaos/Framework/Parallel.h"
 #include "Chaos/ImplicitObjectTransformed.h"
 #include "Chaos/ImplicitObjectUnion.h"
@@ -26,7 +27,7 @@
 
 #include "ChaosVisualDebugger/ChaosVisualDebuggerTrace.h"
 
-//PRAGMA_DISABLE_OPTIMIZATION
+//UE_DISABLE_OPTIMIZATION
 
 namespace Chaos
 {
@@ -38,6 +39,10 @@ namespace Chaos
 
 	namespace CVars
 	{
+		// Debug/testing MACD
+		extern bool bChaosUseMACD;
+		extern bool bChaosForceMACD;
+
 		FRealSingle HackMaxAngularVelocity = 1000.f;
 		FAutoConsoleVariableRef CVarHackMaxAngularVelocity(TEXT("p.HackMaxAngularVelocity"), HackMaxAngularVelocity, TEXT("Max cap on angular velocity: rad/s. This is only a temp solution and should not be relied on as a feature. -1.f to disable"));
 
@@ -51,7 +56,7 @@ namespace Chaos
 		int CollisionDisableCulledContacts = 0;
 		FAutoConsoleVariableRef CVarDisableCulledContacts(TEXT("p.CollisionDisableCulledContacts"), CollisionDisableCulledContacts, TEXT("Allow the PBDRigidsEvolutionGBF collision constraints to throw out contacts mid solve if they are culled."));
 
-		FRealSingle SmoothedPositionLerpRate = 0.1f;
+		FRealSingle SmoothedPositionLerpRate = 0.3f;
 		FAutoConsoleVariableRef CVarSmoothedPositionLerpRate(TEXT("p.Chaos.SmoothedPositionLerpRate"), SmoothedPositionLerpRate, TEXT("The interpolation rate for the smoothed position calculation. Used for sleeping."));
 
 		int DisableParticleUpdateVelocityParallelFor = 0;
@@ -123,11 +128,20 @@ namespace Chaos
 		bool bChaosSolverPersistentGraph = true;
 		FAutoConsoleVariableRef CVarChaosSolverPersistentGraph(TEXT("p.Chaos.Solver.PersistentGraph"), bChaosSolverPersistentGraph, TEXT(""));
 
+		// Determines what happens when two one-way particles collide
+		// See EOneWayInteractionPairCollisionMode
+		int32 ChaosOneWayInteractionPairCollisionMode = (int32)EOneWayInteractionPairCollisionMode::SphereCollision;
+		FAutoConsoleVariableRef CVarChaosIgnoreOneWayPairCollisions(TEXT("p.Chaos.Solver.OneWayPairCollisionMode"), ChaosOneWayInteractionPairCollisionMode, TEXT("How to treat collisions between two one-way interaction particles. See EOneWayInteractionPairCollisionMode (0: Ignore collisions; 1: Collide as normal; 2: Collide as spheres)"));
+
+
 		DECLARE_CYCLE_STAT(TEXT("FPBDRigidsEvolutionGBF::AdvanceOneTimeStep"), STAT_Evolution_AdvanceOneTimeStep, STATGROUP_Chaos);
 		DECLARE_CYCLE_STAT(TEXT("FPBDRigidsEvolutionGBF::UnclusterUnions"), STAT_Evolution_UnclusterUnions, STATGROUP_Chaos);
 		DECLARE_CYCLE_STAT(TEXT("FPBDRigidsEvolutionGBF::Integrate"), STAT_Evolution_Integrate, STATGROUP_Chaos);
 		DECLARE_CYCLE_STAT(TEXT("FPBDRigidsEvolutionGBF::KinematicTargets"), STAT_Evolution_KinematicTargets, STATGROUP_Chaos);
+		DECLARE_CYCLE_STAT(TEXT("FPBDRigidsEvolutionGBF::PreIntegrateCallback"), STAT_Evolution_PreIntegrateCallback, STATGROUP_Chaos);
 		DECLARE_CYCLE_STAT(TEXT("FPBDRigidsEvolutionGBF::PostIntegrateCallback"), STAT_Evolution_PostIntegrateCallback, STATGROUP_Chaos);
+		DECLARE_CYCLE_STAT(TEXT("FPBDRigidsEvolutionGBF::PreSolveCallback"), STAT_Evolution_PreSolveCallback, STATGROUP_Chaos);
+		DECLARE_CYCLE_STAT(TEXT("FPBDRigidsEvolutionGBF::PostSolveCallback"), STAT_Evolution_PostSolveCallback, STATGROUP_Chaos);
 		DECLARE_CYCLE_STAT(TEXT("FPBDRigidsEvolutionGBF::CCDModifierCallback"), STAT_Evolution_CCDModifierCallback, STATGROUP_Chaos);
 		DECLARE_CYCLE_STAT(TEXT("FPBDRigidsEvolutionGBF::CollisionModifierCallback"), STAT_Evolution_CollisionModifierCallback, STATGROUP_Chaos);
 		DECLARE_CYCLE_STAT(TEXT("FPBDRigidsEvolutionGBF::MidPhaseModifierCallback"), STAT_Evolution_MidPhaseModifierCallback, STATGROUP_Chaos);
@@ -144,11 +158,11 @@ namespace Chaos
 		DECLARE_CYCLE_STAT(TEXT("FPBDRigidsEvolutionGBF::CreateIslands"), STAT_Evolution_CreateIslands, STATGROUP_Chaos);
 		DECLARE_CYCLE_STAT(TEXT("FPBDRigidsEvolutionGBF::PruneCollisions"), STAT_Evolution_PruneCollisions, STATGROUP_Chaos);
 		DECLARE_CYCLE_STAT(TEXT("FPBDRigidsEvolutionGBF::AddSleepingContacts"), STAT_Evolution_AddSleepingContacts, STATGROUP_Chaos);
-		DECLARE_CYCLE_STAT(TEXT("FPBDRigidsEvolutionGBF::PreApplyCallback"), STAT_Evolution_PreApplyCallback, STATGROUP_Chaos);
 		DECLARE_CYCLE_STAT(TEXT("FPBDRigidsEvolutionGBF::ParallelSolve"), STAT_Evolution_ParallelSolve, STATGROUP_Chaos);
 		DECLARE_CYCLE_STAT(TEXT("FPBDRigidsEvolutionGBF::SaveParticlePostSolve"), STAT_Evolution_SavePostSolve, STATGROUP_Chaos);
 		DECLARE_CYCLE_STAT(TEXT("FPBDRigidsEvolutionGBF::DeactivateSleep"), STAT_Evolution_DeactivateSleep, STATGROUP_Chaos);
 		DECLARE_CYCLE_STAT(TEXT("FPBDRigidsEvolutionGBF::InertiaConditioning"), STAT_Evolution_InertiaConditioning, STATGROUP_Chaos);
+
 
 		int32 SerializeEvolution = 0;
 		FAutoConsoleVariableRef CVarSerializeEvolution(TEXT("p.SerializeEvolution"), SerializeEvolution, TEXT(""));
@@ -158,10 +172,25 @@ namespace Chaos
 
 		// Put the solver into a mode where it reset particles to their initial positions each frame.
 		// This is used to test collision detection and - it will be removed
-		// @chaos(todo): remove this when no longer needed
-		bool bChaos_Solver_TestMode  = false;
-		FAutoConsoleVariableRef CVarChaosSolverTestMode(TEXT("p.Chaos.Solver.TestMode"), bChaos_Solver_TestMode, TEXT(""));
+		// NOTE: You should also set the following for dragging in PIE to work while test mode is active:
+		// 		p.DisableEditorPhysicsHandle 1
+		bool bChaos_Solver_TestMode_Enabled  = false;
+		FAutoConsoleVariableRef CVarChaosSolverTestModeEnabled(TEXT("p.Chaos.Solver.TestMode.Enabled"), bChaos_Solver_TestMode_Enabled, TEXT(""));
 
+		bool bChaos_Solver_TestMode_ShowInitialTransforms = false;
+		FAutoConsoleVariableRef CVarChaosSolverTestModeShowInitialTransforms(TEXT("p.Chaos.Solver.TestMode.ShowInitialTransforms"), bChaos_Solver_TestMode_ShowInitialTransforms, TEXT(""));
+		
+		int32 Chaos_Solver_TestMode_Step  = 0;
+		FAutoConsoleVariableRef CVarChaosSolverTestModeStep(TEXT("p.Chaos.Solver.TestMode.Step"), Chaos_Solver_TestMode_Step, TEXT(""));
+		
+		// Set to true to enable some debug validation of the Particle Views every frame
+		bool bChaosSolverCheckParticleViews = false;
+		FAutoConsoleVariableRef CVarChaosSolverCheckParticleViews(TEXT("p.Chaos.Solver.CheckParticleViews"), bChaosSolverCheckParticleViews, TEXT(""));
+
+		// Enable improved midphase distribution among worker threads. Without this the midphase and narrowphase run on whatever thread the
+		// broadphas eoverlap was detected on which tends to give poor distribution.
+		bool bChaosMidPhaseRedistributionEnabled = true;
+		FAutoConsoleVariableRef CVarChaosSolverMidPhaseRedistributionEnabled(TEXT("p.Chaos.BroadPhase.MidPhaseRedistributionEnabled"), bChaosMidPhaseRedistributionEnabled, TEXT(""));
 	}
 	using namespace CVars;
 
@@ -216,6 +245,85 @@ void SerializeToDisk(TEvolution& Evolution)
 	}
 }
 #endif
+
+// Veryify that no particle is one of the aggregate views more than once. This can happen if
+// a particle has been included in more than one orthogonal list (e.g., Active and MovingKinematic)
+// - 
+template<typename TParticleView>
+void CheckParticleViewForDupes(const FString& Name, const TParticleView& ParticleView)
+{
+	TSet<const FGeometryParticleHandle*> FoundParticles;
+	FoundParticles.Reserve(ParticleView.Num());
+
+	for (const auto& Particle : ParticleView)
+	{
+		const bool bAlreadyInView = FoundParticles.Contains(Particle.Handle());
+		if (ensureAlwaysMsgf(!bAlreadyInView, TEXT("%s duplicate Particle <%d>"), *Name, Particle.Handle()->GetHandleIdx()))
+		{
+			FoundParticles.Add(Particle.Handle());
+		}
+	}
+}
+
+void CheckParticleViewsForDupes(FPBDRigidsSOAs& Particles)
+{
+	// Check that all particles know what lists they are in
+	Particles.CheckListMasks();
+
+	// Check that we have no particles in multiple views
+	Particles.CheckViewMasks();
+
+	// A particle appearing twice in either of these results in a race condition because the 
+	// collision detection loop will visit the same particle pair twice on different threads.
+	CheckParticleViewForDupes(TEXT("NonDisabledDynamicView"), Particles.GetNonDisabledDynamicView());
+	CheckParticleViewForDupes(TEXT("ActiveDynamicMovingKinematicParticlesView"), Particles.GetActiveDynamicMovingKinematicParticlesView());
+
+	// No known problems with dupes in these lists, but there should never be dupes
+	CheckParticleViewForDupes(TEXT("NonDisabledView"), Particles.GetNonDisabledView());
+	CheckParticleViewForDupes(TEXT("NonDisabledClusteredView"), Particles.GetNonDisabledClusteredView());
+	CheckParticleViewForDupes(TEXT("ActiveParticlesView"), Particles.GetActiveParticlesView());
+	CheckParticleViewForDupes(TEXT("DirtyParticlesView"), Particles.GetDirtyParticlesView());
+	CheckParticleViewForDupes(TEXT("AllParticlesView"), Particles.GetAllParticlesView());
+	CheckParticleViewForDupes(TEXT("ActiveKinematicParticlesView"), Particles.GetActiveKinematicParticlesView());
+	CheckParticleViewForDupes(TEXT("ActiveMovingKinematicParticlesView"), Particles.GetActiveMovingKinematicParticlesView());
+	CheckParticleViewForDupes(TEXT("ActiveStaticParticlesView"), Particles.GetActiveStaticParticlesView());
+	CheckParticleViewForDupes(TEXT("ActiveDynamicMovingKinematicParticlesView"), Particles.GetActiveDynamicMovingKinematicParticlesView());
+}
+
+void CheckMovingKinematicFlag(FPBDRigidsSOAs& Particles)
+{
+	// Make sure all particles have the correct value for the MovingKinematic flag (NOTE: must be after ApplyKinematicTargets)
+	for (const auto& Particle : Particles.GetActiveParticlesView())
+	{
+		if (const FPBDRigidParticleHandle* Rigid = Particle.Handle()->CastToRigidParticle())
+		{
+			if (Rigid->IsKinematic())
+			{
+				const bool bIsMoving = !Rigid->GetV().IsNearlyZero() || !Rigid->GetW().IsNearlyZero();
+				ensureMsgf(bIsMoving == Rigid->IsMovingKinematic(),
+					TEXT("Kinematic IsMoving flag mismatch. IsMoving=%d V=(%f, %f, %f) W=(%f %f %f) %s"),
+					Rigid->IsMovingKinematic(), Rigid->GetV().X, Rigid->GetV().Y, Rigid->GetV().Z, Rigid->GetW().X, Rigid->GetW().Y, Rigid->GetW().Z, *Rigid->GetDebugName());
+			}
+			else
+			{
+				ensureMsgf(!Rigid->IsMovingKinematic(), TEXT("Kinematic IsMoving flag set for non-kinematic %s"), *Rigid->GetDebugName());
+			}
+		}
+	}
+}
+
+void CheckParticleViewsForErrors(FPBDRigidsSOAs& Particles)
+{
+	if (CVars::bChaosSolverCheckParticleViews)
+	{
+		QUICK_SCOPE_CYCLE_COUNTER(STAT_Evolution_CheckParticleViewsForErrors);
+
+		CheckParticleViewsForDupes(Particles);
+		CheckMovingKinematicFlag(Particles);
+	}
+}
+
+
 
 void FPBDRigidsEvolutionGBF::Advance(const FReal Dt,const FReal MaxStepDt,const int32 MaxSteps)
 {
@@ -338,37 +446,49 @@ void FPBDRigidsEvolutionGBF::AdvanceOneTimeStepImpl(const FReal Dt, const FSubSt
 #endif
 
 	{
-		CVD_SCOPE_TRACE_SOLVER_STEP(TEXT("Evolution Start"))
+		CVD_SCOPE_TRACE_SOLVER_STEP(CVDDC_EvolutionStart, TEXT("Evolution Start"));
 		CVD_TRACE_PARTICLES_SOA(Particles);
 	}
 
 	// Update the collision solver type (used to support runtime comparisons of solver types for debugging/testing)
 	UpdateCollisionSolverType();
 
+#if CHAOS_EVOLUTION_COLLISION_TESTMODE
 	{
-		CVD_SCOPE_TRACE_SOLVER_STEP(TEXT("Integrate"))
-		SCOPE_CYCLE_COUNTER(STAT_Evolution_Integrate);
-		CSV_SCOPED_TIMING_STAT(PhysicsVerbose, StepSolver_Integrate);
-		Integrate(Particles.GetActiveParticlesView(), Dt);
-	}
-
-	if (bChaos_Solver_TestMode)
-	{
-		TestModeResetParticles();
+		TestModeStep();
+		TestModeSaveParticles();
+		TestModeRestoreParticles();
 		TestModeResetCollisions();
 	}
+#endif
+
+	if (PreIntegrateCallback != nullptr)
+	{
+		SCOPE_CYCLE_COUNTER(STAT_Evolution_PreIntegrateCallback);
+		PreIntegrateCallback(Dt);
+	}
 
 	{
-		CVD_SCOPE_TRACE_SOLVER_STEP(TEXT("ApplyKinematicTargets"))
+		SCOPE_CYCLE_COUNTER(STAT_Evolution_Integrate);
+		CSV_SCOPED_TIMING_STAT(PhysicsVerbose, StepSolver_Integrate);
+		Integrate(Dt);
+	}
+
+	{
 		SCOPE_CYCLE_COUNTER(STAT_Evolution_KinematicTargets);
 		CSV_SCOPED_TIMING_STAT(PhysicsVerbose, StepSolver_KinematicTargets);
 		ApplyKinematicTargets(Dt, SubStepInfo.PseudoFraction);
 	}
 
+	{
+		CVD_SCOPE_TRACE_SOLVER_STEP(CVDDC_PostIntegrate, TEXT("Post Integrate"));
+		CVD_TRACE_PARTICLES_SOA(Particles);
+	}
+
 	if (PostIntegrateCallback != nullptr)
 	{
 		SCOPE_CYCLE_COUNTER(STAT_Evolution_PostIntegrateCallback);
-		PostIntegrateCallback();
+		PostIntegrateCallback(Dt);
 	}
 
 	{
@@ -382,13 +502,17 @@ void FPBDRigidsEvolutionGBF::AdvanceOneTimeStepImpl(const FReal Dt, const FSubSt
 		Base::ComputeIntermediateSpatialAcceleration();
 	}
 
+	// Collision detection is sensitive to duplication bugs in the particle views
+	// so this is here to help us track them down when they happen
+	CheckParticleViewsForErrors(Particles);
+
 	{
 		SCOPE_CYCLE_COUNTER(STAT_Evolution_DetectCollisions);
 		CSV_SCOPED_TIMING_STAT(PhysicsVerbose, StepSolver_DetectCollisions);
 		CollisionDetector.GetBroadPhase().SetSpatialAcceleration(InternalAcceleration);
 
 		{
-			CVD_SCOPE_TRACE_SOLVER_STEP(TEXT("Collision Detection Broad Phase"))
+			CVD_SCOPE_TRACE_SOLVER_STEP(CVDDC_CollisionDetectionBroadPhase, TEXT("Collision Detection Broad Phase"));
 			CollisionDetector.RunBroadPhase(Dt, GetCurrentStepResimCache());
 		}
 
@@ -399,8 +523,7 @@ void FPBDRigidsEvolutionGBF::AdvanceOneTimeStepImpl(const FReal Dt, const FSubSt
 		}
 
 		{
-			CVD_SCOPE_TRACE_SOLVER_STEP(TEXT("Collision Detection Narrow Phase"))
-
+			CVD_SCOPE_TRACE_SOLVER_STEP(CVDDC_CollisionDetectionNarrowPhase, TEXT("Collision Detection Narrow Phase"));
 			CollisionDetector.RunNarrowPhase(Dt, GetCurrentStepResimCache());
 		}
 	}
@@ -408,7 +531,7 @@ void FPBDRigidsEvolutionGBF::AdvanceOneTimeStepImpl(const FReal Dt, const FSubSt
 	if (PostDetectCollisionsCallback != nullptr)
 	{
 		SCOPE_CYCLE_COUNTER(STAT_Evolution_PostDetectCollisionsCallback);
-		PostDetectCollisionsCallback();
+		PostDetectCollisionsCallback(Dt);
 	}
 
 	{
@@ -462,10 +585,10 @@ void FPBDRigidsEvolutionGBF::AdvanceOneTimeStepImpl(const FReal Dt, const FSubSt
 		CollisionConstraints.GetConstraintAllocator().PruneExpiredItems();
 	}
 
-	if (PreApplyCallback != nullptr)
+	if (PreSolveCallback != nullptr)
 	{
-		SCOPE_CYCLE_COUNTER(STAT_Evolution_PreApplyCallback);
-		PreApplyCallback();
+		SCOPE_CYCLE_COUNTER(STAT_Evolution_PreSolveCallback);
+		PreSolveCallback(Dt);
 	}
 
 	// todo(chaos) : we are using the main gravity ( index 0 ) we should revise this to account for the various gravities based on the constraint ? 
@@ -475,6 +598,11 @@ void FPBDRigidsEvolutionGBF::AdvanceOneTimeStepImpl(const FReal Dt, const FSubSt
 	{
 		CSV_SCOPED_TIMING_STAT(PhysicsVerbose, StepSolver_ReloadCacheTotalSerialized);
 		ReloadParticlesCache();
+	}
+
+	{
+		CVD_SCOPE_TRACE_SOLVER_STEP(CVDDC_PreConstraintSolve, TEXT("Pre Solve"));
+		CVD_TRACE_PARTICLES_SOA(Particles);
 	}
 
 	// Assign all islands to a set of groups. Each group is solved in parallel with the others.
@@ -515,6 +643,17 @@ void FPBDRigidsEvolutionGBF::AdvanceOneTimeStepImpl(const FReal Dt, const FSubSt
 	}
 
 	{
+		CVD_SCOPE_TRACE_SOLVER_STEP(CVDDC_PostConstraintSolve, TEXT("Post Solve"));
+		CVD_TRACE_PARTICLES_SOA(Particles);
+	}
+
+	if (PostSolveCallback != nullptr)
+	{
+		SCOPE_CYCLE_COUNTER(STAT_Evolution_PostSolveCallback);
+		PostSolveCallback(Dt);
+	}
+
+	{
 		SCOPE_CYCLE_COUNTER(STAT_Evolution_SavePostSolve);
 		CSV_SCOPED_TIMING_STAT(PhysicsVerbose, StepSolver_SavePostSolve);
 		FEvolutionResimCache* ResimCache = GetCurrentStepResimCache();
@@ -541,7 +680,7 @@ void FPBDRigidsEvolutionGBF::AdvanceOneTimeStepImpl(const FReal Dt, const FSubSt
 		CSV_SCOPED_TIMING_STAT(PhysicsVerbose, StepSolver_DeactivateSleep);
 
 		// Put any stationary islands to sleep (based on material settings)
-		GetIslandManager().UpdateSleep();
+		GetIslandManager().UpdateSleep(Dt);
 		
 		// Disable stationary particles (based on material settings)
 		GetIslandManager().UpdateDisable([this](FPBDRigidParticleHandle* Rigid) { DisableParticle(Rigid); });
@@ -562,25 +701,35 @@ void FPBDRigidsEvolutionGBF::AdvanceOneTimeStepImpl(const FReal Dt, const FSubSt
 		GetIslandManager().EndTick();
 	}
 
-	if (bChaos_Solver_TestMode)
+#if CHAOS_EVOLUTION_COLLISION_TESTMODE
+	if (CVars::bChaos_Solver_TestMode_Enabled && CVars::bChaos_Solver_TestMode_ShowInitialTransforms)
 	{
-		TestModeResetParticles();
+		TestModeRestoreParticles();
 	}
+#endif
 
 	if (CVars::DoFinalProbeNarrowPhase)
 	{
 		// Run contact updates on probe constraints
+		// NOTE: This happens after particles have been moved to their new locations
+		// so that we get contacts that are correct for end-of-frame positions
 		GetCollisionConstraints().DetectProbeCollisions(Dt);
 	}
-
+	
 	{
-		CVD_SCOPE_TRACE_SOLVER_STEP(TEXT("Evolution End"));
+		CVD_SCOPE_TRACE_SOLVER_STEP(CVDDC_EvolutionEnd, TEXT("Evolution End"));
 
-		CVD_TRACE_MID_PHASES_FROM_COLLISION_CONSTRAINTS(GetCollisionConstraints());
+		{
+			// This needs to be executed withing a CVD Solver step scope,
+			// but we are giving it its inner scope so specify a CVD Data channel so this data can be opted out
+			// without opting out of the whole step
+			CVD_TRACE_STEP_MID_PHASES_FROM_COLLISION_CONSTRAINTS(CVDDC_EndOfEvolutionCollisionConstraints, GetCollisionConstraints());
+		}
+
+		CVD_TRACE_JOINT_CONSTRAINTS(CVDDC_JointConstraints, JointConstraints);
 
 		CVD_TRACE_PARTICLES_SOA(Particles);
 	}
-	
 
 #if !UE_BUILD_SHIPPING
 	if(SerializeEvolution)
@@ -588,6 +737,283 @@ void FPBDRigidsEvolutionGBF::AdvanceOneTimeStepImpl(const FReal Dt, const FSubSt
 		SerializeToDisk(*this);
 	}
 #endif
+}
+
+void FPBDRigidsEvolutionGBF::Integrate(FReal Dt)
+{
+	TParticleView<FPBDRigidParticles>& ParticlesView = Particles.GetActiveParticlesView();
+
+	//SCOPE_CYCLE_COUNTER(STAT_Integrate);
+	CHAOS_SCOPED_TIMER(Integrate);
+
+	const FReal BoundsThickness = GetCollisionConstraints().GetDetectorSettings().BoundsExpansion;
+	const FReal VelocityBoundsMultiplier = GetCollisionConstraints().GetDetectorSettings().BoundsVelocityInflation;
+	const FReal MaxVelocityBoundsExpansion = GetCollisionConstraints().GetDetectorSettings().MaxVelocityBoundsExpansion;
+	const FReal VelocityBoundsMultiplierMACD = GetCollisionConstraints().GetDetectorSettings().BoundsVelocityInflationMACD;
+	const FReal MaxVelocityBoundsExpansionMACD = GetCollisionConstraints().GetDetectorSettings().MaxVelocityBoundsExpansionMACD;
+	const FReal HackMaxAngularSpeedSq = CVars::HackMaxAngularVelocity * CVars::HackMaxAngularVelocity;
+	const FReal HackMaxLinearSpeedSq = CVars::HackMaxVelocity * CVars::HackMaxVelocity;
+	const bool bAllowMACD = CVars::bChaosUseMACD;
+	const bool bForceMACD = CVars::bChaosForceMACD;
+
+	ParticlesView.ParallelFor([&](auto& GeomParticle, int32 Index)
+		{
+			//question: can we enforce this at the API layer? Right now islands contain non dynamic which makes this hard
+			auto PBDParticle = GeomParticle.CastToRigidParticle();
+			if (PBDParticle && PBDParticle->ObjectState() == EObjectStateType::Dynamic)
+			{
+				auto& Particle = *PBDParticle;
+
+				FVec3 V = Particle.GetV();
+				FVec3 W = Particle.GetW();
+
+				//save off previous velocities
+				Particle.SetPreV(V);
+				Particle.SetPreW(W);
+
+				for (FForceRule ForceRule : ForceRules)
+				{
+					ForceRule(Particle, Dt);
+				}
+
+				//EulerStepVelocityRule.Apply(Particle, Dt);
+				V += Particle.Acceleration() * Dt;
+				W += Particle.AngularAcceleration() * Dt;
+
+				//AddImpulsesRule.Apply(Particle, Dt);
+				V += Particle.LinearImpulseVelocity();
+				W += Particle.AngularImpulseVelocity();
+				Particle.LinearImpulseVelocity() = FVec3(0);
+				Particle.AngularImpulseVelocity() = FVec3(0);
+
+				//EtherDragRule.Apply(Particle, Dt);
+
+				const FReal LinearDrag = LinearEtherDragOverride >= 0 ? LinearEtherDragOverride : Particle.LinearEtherDrag() * Dt;
+				const FReal LinearMultiplier = FMath::Max(FReal(0), FReal(1) - LinearDrag);
+				V *= LinearMultiplier;
+
+				const FReal AngularDrag = AngularEtherDragOverride >= 0 ? AngularEtherDragOverride : Particle.AngularEtherDrag() * Dt;
+				const FReal AngularMultiplier = FMath::Max(FReal(0), FReal(1) - AngularDrag);
+				W *= AngularMultiplier;
+
+				FReal LinearSpeedSq = V.SizeSquared();
+				if (LinearSpeedSq > Particle.MaxLinearSpeedSq())
+				{
+					V *= FMath::Sqrt(Particle.MaxLinearSpeedSq() / LinearSpeedSq);
+				}
+
+				FReal AngularSpeedSq = W.SizeSquared();
+				if (AngularSpeedSq > Particle.MaxAngularSpeedSq())
+				{
+					W *= FMath::Sqrt(Particle.MaxAngularSpeedSq() / AngularSpeedSq);
+				}
+
+				if (CVars::HackMaxAngularVelocity >= 0.f)
+				{
+					AngularSpeedSq = W.SizeSquared();
+					if (AngularSpeedSq > HackMaxAngularSpeedSq)
+					{
+						W = W * (CVars::HackMaxAngularVelocity / FMath::Sqrt(AngularSpeedSq));
+					}
+				}
+
+				if (CVars::HackMaxVelocity >= 0.f)
+				{
+					LinearSpeedSq = V.SizeSquared();
+					if (LinearSpeedSq > HackMaxLinearSpeedSq)
+					{
+						V = V * (CVars::HackMaxVelocity / FMath::Sqrt(LinearSpeedSq));
+					}
+				}
+
+				FVec3 PCoM = Particle.XCom();
+				FRotation3 QCoM = Particle.RCom();
+
+				PCoM = PCoM + V * Dt;
+				QCoM = FRotation3::IntegrateRotationWithAngularVelocity(QCoM, W, Dt);
+
+				Particle.SetTransformPQCom(PCoM, QCoM);
+				Particle.SetV(V);
+				Particle.SetW(W);
+
+				// We need to expand the bounds back along velocity otherwise we can miss collisions when a box
+				// lands on another box, imparting velocity to the lower box and causing the boxes to be
+				// separated by more than Cull Distance at collision detection time.
+				// NOTE: We use a different (larger) max bounds expansion when MACD is enabled.
+				FVec3 VelocityBoundsDelta = FVec3(0);
+				const bool bIsMACD = bForceMACD || (bAllowMACD && Particle.MACDEnabled());
+				const FReal ParticleVelocityBoundsMultiplier = bIsMACD ? VelocityBoundsMultiplierMACD : VelocityBoundsMultiplier;
+				const FReal ParticleMaxVelocityBoundsExpansion = bIsMACD ? MaxVelocityBoundsExpansionMACD : MaxVelocityBoundsExpansion;
+				if ((ParticleVelocityBoundsMultiplier > 0) && (ParticleMaxVelocityBoundsExpansion > 0))
+				{
+					VelocityBoundsDelta = (-ParticleVelocityBoundsMultiplier * Dt) * V;
+					VelocityBoundsDelta = VelocityBoundsDelta.BoundToCube(ParticleMaxVelocityBoundsExpansion);
+				}
+
+				if (!Particle.CCDEnabled())
+				{
+					// Expand bounds about P/Q by a small amount. This can still result in missed collisions, especially
+					// when we have joints that pull the body back to X/R, if P-X is greater than the BoundsThickness
+					Particle.UpdateWorldSpaceStateSwept(FRigidTransform3(Particle.GetP(), Particle.GetQ()), FVec3(BoundsThickness), VelocityBoundsDelta);
+				}
+				else
+				{
+
+#if CHAOS_DEBUG_DRAW
+					if (CVars::ChaosSolverDrawCCDThresholds)
+					{
+						DebugDraw::DrawCCDAxisThreshold(Particle.GetX(), Particle.CCDAxisThreshold(), Particle.GetP() - Particle.GetX(), Particle.GetQ());
+					}
+#endif
+
+					if (FCCDHelpers::DeltaExceedsThreshold(Particle.CCDAxisThreshold(), Particle.GetP() - Particle.GetX(), Particle.GetQ()))
+					{
+						// We sweep the bounds from P back along the velocity and expand by a small amount.
+						// If not using tight bounds we also expand the bounds in all directions by Velocity. This is necessary only for secondary CCD collisions
+						// @todo(chaos): expanding the bounds by velocity is very expensive - revisit this
+						const FVec3 VDt = V * Dt;
+						FReal CCDBoundsExpansion = BoundsThickness;
+						if (!CVars::bChaosCollisionCCDUseTightBoundingBox && (CVars::ChaosCollisionCCDConstraintMaxProcessCount > 1))
+						{
+							CCDBoundsExpansion += VDt.GetAbsMax();
+						}
+						Particle.UpdateWorldSpaceStateSwept(FRigidTransform3(Particle.GetP(), Particle.GetQ()), FVec3(CCDBoundsExpansion), -VDt);
+					}
+					else
+					{
+						Particle.UpdateWorldSpaceStateSwept(FRigidTransform3(Particle.GetP(), Particle.GetQ()), FVec3(BoundsThickness), VelocityBoundsDelta);
+					}
+				}
+			}
+		});
+
+	for (auto& Particle : ParticlesView)
+	{
+		Base::DirtyParticle(Particle);
+	}
+}
+
+void FPBDRigidsEvolutionGBF::ApplyKinematicTargets(const FReal Dt, const FReal StepFraction)
+{
+	check(StepFraction > (FReal)0);
+	check(StepFraction <= (FReal)1);
+
+	const bool IsLastStep = (FMath::IsNearlyEqual(StepFraction, (FReal)1, (FReal)UE_KINDA_SMALL_NUMBER));
+
+	// NOTE: ApplyKinematicTargetForParticle is run in a parallel-for. We only write to particle state
+	const auto& ApplyParticleKinematicTarget =
+	[Dt, StepFraction, IsLastStep](FTransientPBDRigidParticleHandle& Particle, const int32 ParticleIndex) -> void
+	{
+		TKinematicTarget<FReal, 3>& KinematicTarget = Particle.KinematicTarget();
+		const FVec3 CurrentX = Particle.GetX();
+		const FRotation3 CurrentR = Particle.GetR();
+		constexpr FReal MinDt = 1e-6f;
+
+		bool bMoved = false;
+		switch (KinematicTarget.GetMode())
+		{
+		case EKinematicTargetMode::None:
+			// Nothing to do
+			break;
+
+		case EKinematicTargetMode::Reset:
+		{
+			// Reset velocity and then switch to do-nothing mode
+			Particle.SetVf(FVec3f(0.0f, 0.0f, 0.0f));
+			Particle.SetWf(FVec3f(0.0f, 0.0f, 0.0f));
+			Particle.ClearIsMovingKinematic();
+			KinematicTarget.SetMode(EKinematicTargetMode::None);
+			break;
+		}
+
+		case EKinematicTargetMode::Position:
+		{
+			// Move to kinematic target and update velocities to match
+			// Target positions only need to be processed once, and we reset the velocity next frame (if no new target is set)
+			FVec3 NewX;
+			FRotation3 NewR;
+			if (IsLastStep)
+			{
+				NewX = KinematicTarget.GetTarget().GetLocation();
+				NewR = KinematicTarget.GetTarget().GetRotation();
+				KinematicTarget.SetMode(EKinematicTargetMode::Reset);
+			}
+			else
+			{
+				// as a reminder, stepfraction is the remaing fraction of the step from the remaining steps
+				// for total of 4 steps and current step of 2, this will be 1/3 ( 1 step passed, 3 steps remains )
+				NewX = FVec3::Lerp(CurrentX, KinematicTarget.GetTarget().GetLocation(), StepFraction);
+				NewR = FRotation3::Slerp(CurrentR, KinematicTarget.GetTarget().GetRotation(), decltype(FQuat::X)(StepFraction));
+			}
+
+			const bool bPositionChanged = !FVec3::IsNearlyEqual(NewX, CurrentX, UE_SMALL_NUMBER);
+			const bool bRotationChanged = !FRotation3::IsNearlyEqual(NewR, CurrentR, UE_SMALL_NUMBER);
+			bMoved = bPositionChanged || bRotationChanged;
+			FVec3 NewV = FVec3(0);
+			FVec3 NewW = FVec3(0);
+			if (Dt > MinDt)
+			{
+				if (bPositionChanged)
+				{
+					NewV = FVec3::CalculateVelocity(CurrentX, NewX, Dt);
+				}
+				if (bRotationChanged)
+				{
+					NewW = FRotation3::CalculateAngularVelocity(CurrentR, NewR, Dt);
+				}
+			}
+			Particle.SetX(NewX);
+			Particle.SetR(NewR);
+			Particle.SetV(NewV);
+			Particle.SetW(NewW);
+			Particle.SetIsMovingKinematic();
+
+			break;
+		}
+
+		case EKinematicTargetMode::Velocity:
+		{
+			// Move based on velocity
+			bMoved = true;
+			Particle.SetX(Particle.GetX() + Particle.GetV() * Dt);
+			Particle.SetRf(FRotation3f::IntegrateRotationWithAngularVelocity(Particle.GetRf(), Particle.GetWf(), FRealSingle(Dt)));
+			Particle.SetIsMovingKinematic();
+
+			break;
+		}
+		}
+
+		// Set positions and previous velocities if we can
+		// Note: At present kinematics are in fact rigid bodies
+		Particle.SetP(Particle.GetX());
+		Particle.SetQf(Particle.GetRf());
+		Particle.SetPreVf(Particle.GetVf());
+		Particle.SetPreWf(Particle.GetWf());
+
+		if (bMoved)
+		{
+			if (!Particle.CCDEnabled())
+			{
+				Particle.UpdateWorldSpaceState(FRigidTransform3(Particle.GetP(), Particle.GetQ()), FVec3(0));
+			}
+			else
+			{
+				Particle.UpdateWorldSpaceStateSwept(FRigidTransform3(Particle.GetP(), Particle.GetQ()), FVec3(0), -Particle.GetV() * Dt);
+			}
+		}
+	};
+
+	// Apply kinematic targets in parallel
+	Particles.GetActiveMovingKinematicParticlesView().ParallelFor(ApplyParticleKinematicTarget);
+
+	// done with update, let's clear the tracking structures
+	if (IsLastStep)
+	{
+		Particles.UpdateAllMovingKinematic();
+	}
+
+	// If we changed any particle state, the views need to be refreshed
+	Particles.UpdateDirtyViews();
 }
 
 void FPBDRigidsEvolutionGBF::SetIsDeterministic(const bool bInIsDeterministic)
@@ -616,45 +1042,6 @@ void FPBDRigidsEvolutionGBF::SetShockPropagationIterations(const int32 InPositio
 	IslandManager.SetAssignLevels(CollisionConstraints.IsShockPropagationEnabled());
 }
 
-void FPBDRigidsEvolutionGBF::TestModeResetParticles()
-{
-	for (auto& Rigid : Particles.GetNonDisabledDynamicView())
-	{
-		FTestModeParticleData* Data = TestModeData.Find(Rigid.Handle());
-		if (Data != nullptr)
-		{
-			Rigid.X() = Data->X;
-			Rigid.P() = Data->P;
-			Rigid.R() = Data->R;
-			Rigid.Q() = Data->Q;
-			Rigid.V() = Data->V;
-			Rigid.W() = Data->W;
-		}
-		if (Data == nullptr)
-		{
-			Data = &TestModeData.Add(Rigid.Handle());
-			Data->X = Rigid.X();
-			Data->P = Rigid.P();
-			Data->R = Rigid.R();
-			Data->Q = Rigid.Q();
-			Data->V = Rigid.V();
-			Data->W = Rigid.W();
-		}
-	}
-}
-
-void FPBDRigidsEvolutionGBF::TestModeResetCollisions()
-{
-	for (FPBDCollisionConstraintHandle* Collision : CollisionConstraints.GetConstraintHandles())
-	{
-		if (Collision != nullptr)
-		{
-			Collision->GetContact().ResetManifold();
-			Collision->GetContact().ResetModifications();
-			Collision->GetContact().GetGJKWarmStartData().Reset();
-		}
-	}
-}
 
 void FPBDRigidsEvolutionGBF::ResetCollisions()
 {
@@ -662,6 +1049,7 @@ void FPBDRigidsEvolutionGBF::ResetCollisions()
 	{
 		if (Collision != nullptr)
 		{
+			Collision->GetContact().ResetSavedManifoldPoints();
 			Collision->GetContact().GetGJKWarmStartData().Reset();
 		}
 	}
@@ -680,8 +1068,10 @@ FPBDRigidsEvolutionGBF::FPBDRigidsEvolutionGBF(
 	, CollisionConstraints(InParticles, Collided, PhysicsMaterials, PerParticlePhysicsMaterials, &SolverPhysicsMaterials, CalculateNumCollisionsPerBlock(), DefaultRestitutionThreshold)
 	, BroadPhase(InParticles)
 	, CollisionDetector(BroadPhase, CollisionConstraints)
+	, PreIntegrateCallback(nullptr)
 	, PostIntegrateCallback(nullptr)
-	, PreApplyCallback(nullptr)
+	, PreSolveCallback(nullptr)
+	, PostSolveCallback(nullptr)
 	, CurrentStepResimCacheImp(nullptr)
 	, MidPhaseModifiers(InMidPhaseModifiers)
 	, CCDModifiers(InCCDModifiers)
@@ -705,17 +1095,8 @@ FPBDRigidsEvolutionGBF::FPBDRigidsEvolutionGBF(
 	{
 		ParticlesInput.ParallelFor([&](auto& Particle, int32 Index)
 		{
-			if (Dt > UE_SMALL_NUMBER)
-			{
-				const FReal SmoothRate = FMath::Clamp(SmoothedPositionLerpRate, 0.0f, 1.0f);
-				const FVec3 VImp = FVec3::CalculateVelocity(Particle.X(), Particle.P(), Dt);
-				const FVec3 WImp = FRotation3::CalculateAngularVelocity(Particle.R(), Particle.Q(), Dt);
-				Particle.VSmooth() = FMath::Lerp(Particle.VSmooth(), VImp, SmoothRate);
-				Particle.WSmooth() = FMath::Lerp(Particle.WSmooth(), WImp, SmoothRate);
-			}
-
-			Particle.X() = Particle.P();
-			Particle.R() = Particle.Q();
+			Particle.SetX(Particle.GetP());
+			Particle.SetR(Particle.GetQ());
 
 			//TODO: rename this function since it's not just updating position
 			Particle.SetPreObjectStateLowLevel(Particle.ObjectState());
@@ -950,16 +1331,30 @@ void FPBDRigidsEvolutionGBF::DestroyTransientConstraints(FGeometryParticleHandle
 	}
 }
 
-CHAOS_API void FPBDRigidsEvolutionGBF::SetParticleTransform(FGeometryParticleHandle* InParticle, const FVec3& InPos, const FRotation3& InRot, const bool bIsTeleport)
+void FPBDRigidsEvolutionGBF::DestroyTransientConstraints()
 {
-	const FVec3 PrevX = InParticle->X();
-	const FRotation3 PrevR = InParticle->R();
+	for (FTransientGeometryParticleHandle& Particle : Particles.GetAllParticlesView())
+	{
+		DestroyTransientConstraints(Particle.Handle());
+	}
+}
+
+void FPBDRigidsEvolutionGBF::SetParticleTransform(FGeometryParticleHandle* InParticle, const FVec3& InPos, const FRotation3& InRot, const bool bIsTeleport)
+{
+	const FVec3 PrevX = InParticle->GetX();
+	const FRotation3 PrevR = InParticle->GetR();
 
 	FGenericParticleHandle(InParticle)->SetTransform(InPos, InRot);
 
 	OnParticleMoved(InParticle, PrevX, PrevR, bIsTeleport);
-}
 
+#if CHAOS_EVOLUTION_COLLISION_TESTMODE
+	{
+		// Update the test mode cache so we can move particles in PIE to test collisions
+		TestModeUpdateSavedParticle(InParticle);
+	}
+#endif
+}
 
 void FPBDRigidsEvolutionGBF::SetParticleTransformSwept(FGeometryParticleHandle* InParticle, const FVec3& InPos, const FRotation3& InRot, const bool bIsTeleport)
 {
@@ -968,7 +1363,7 @@ void FPBDRigidsEvolutionGBF::SetParticleTransformSwept(FGeometryParticleHandle* 
 	// that are not centerd on their center of mass (either it's multi-shape body, or the user modified the CoM).
 	const FVec3 CoMOffset = FConstGenericParticleHandle(InParticle)->CenterOfMass();
 	const FVec3 EndCoM = InPos + InRot * CoMOffset;
-	const FVec3 StartCoM = InParticle->X() + InParticle->R() * CoMOffset;
+	const FVec3 StartCoM = InParticle->GetX() + InParticle->GetR() * CoMOffset;
 	FVec3 SweepDir = EndCoM - StartCoM;
 	const FReal SweepLength = SweepDir.SafeNormalize();
 	const FVec3 SweepStart = InPos - SweepDir * SweepLength;
@@ -990,15 +1385,52 @@ void FPBDRigidsEvolutionGBF::SetParticleTransformSwept(FGeometryParticleHandle* 
 	}
 }
 
+void FPBDRigidsEvolutionGBF::SetParticleKinematicTarget(FGeometryParticleHandle* ParticleHandle, const FKinematicTarget& NewKinematicTarget)
+{
+	FGenericParticleHandle Particle = ParticleHandle;
+
+	// NOTE: If called on a dynamic body we just move the body
+	// @todo(chaos): maybe we should ensure that this is not called for dynamics
+	if (Particle->IsKinematic())
+	{
+		FKinematicGeometryParticleHandle* Kinematic = Particle->CastToKinematicParticle();
+
+		// optimization : we keep track of moving kinematic targets ( list gets clear every frame )
+		if (NewKinematicTarget.GetMode() != EKinematicTargetMode::None)
+		{
+			// move particle from "non-moving" kinematics to "moving" kinematics
+			Particles.MarkMovingKinematic(Kinematic);
+		}
+		Kinematic->SetKinematicTarget(NewKinematicTarget);
+	}
+	else if (Particle->IsDynamic())
+	{
+		if (NewKinematicTarget.GetMode() == EKinematicTargetMode::Position)
+		{
+			SetParticleTransform(ParticleHandle, NewKinematicTarget.GetTargetPosition(), NewKinematicTarget.GetTargetRotation(), false);
+		}
+	}
+}
+
 void FPBDRigidsEvolutionGBF::OnParticleMoved(FGeometryParticleHandle* InParticle, const FVec3& PrevX, const FRotation3& PrevR, const bool bIsTeleport)
 {
-	// When a particle is moved, we need to tell the collisions because they cache friction state and 
-	// would attempt to undo small translations within the friction cone
-	InParticle->ParticleCollisions().VisitCollisions([this, InParticle](FPBDCollisionConstraint& Collision)
-		{
-			Collision.UpdateParticleTransform(InParticle);
-			return ECollisionVisitorResult::Continue;
-		});
+	// When a particle is moved, we need to 
+	// - tell the collisions because they cache friction state and would attempt to undo small translations within the friction cone
+	// - wake the island(s) that the particle is in
+	// NOTE: we have a tolerance on the transform change because SetParticleTransform may be called with the "same" transform that
+	// is different by very small amounts around 1e-7 in both position and rotation when switching from dynamic to kinematic.
+	const FReal CollisionPositionTolerance = FReal(1.e-4);
+	const FReal CollisionRotationTolerance = FReal(1.e-6);
+	if (!FVec3::IsNearlyEqual(PrevX, InParticle->GetX(), CollisionPositionTolerance) || !FRotation3::IsNearlyEqual(PrevR, InParticle->GetR(), CollisionRotationTolerance))
+	{
+		GetIslandManager().WakeParticleIslands(InParticle);
+
+		InParticle->ParticleCollisions().VisitCollisions([this, InParticle](FPBDCollisionConstraint& Collision)
+			{
+				Collision.UpdateParticleTransform(InParticle);
+				return ECollisionVisitorResult::Continue;
+			});
+	}
 
 	// If this is a teleport, we assume other state has been set separately (V, W, etc) if required, which 
 	// would include resetting any sleep-related state. If this is not a teleport, we want to prevent 
@@ -1012,9 +1444,9 @@ void FPBDRigidsEvolutionGBF::OnParticleMoved(FGeometryParticleHandle* InParticle
 			{
 				// @todo(chaos): better sleep system! We should probably have a sleep accumulator per particle
 				const FReal InvDt = FReal(30.0);
-				const FVec3 DV = (PrevX - Rigid->X()) * InvDt;
+				const FVec3 DV = (PrevX - Rigid->GetX()) * InvDt;
 				const FReal SmoothRate = FMath::Clamp(CVars::SmoothedPositionLerpRate, 0.0f, 1.0f);
-				Rigid->VSmooth() = FMath::Lerp(Rigid->VSmooth(), Rigid->V() + DV, SmoothRate);
+				Rigid->VSmooth() = FMath::Lerp(Rigid->VSmooth(), Rigid->GetV() + DV, SmoothRate);
 			}
 
 			if (Rigid->IsSleeping())
@@ -1025,19 +1457,186 @@ void FPBDRigidsEvolutionGBF::OnParticleMoved(FGeometryParticleHandle* InParticle
 	}
 }
 
+void FPBDRigidsEvolutionGBF::ApplyParticleTransformCorrectionDelta(FGeometryParticleHandle* InParticle, const FVec3& InPosDelta, const FVec3& InRotDelta, const bool bApplyToConnectedBodies)
+{
+	ApplyParticleTransformCorrection(
+		InParticle, 
+		InParticle->GetX() + InPosDelta, 
+		FRotation3::IntegrateRotationWithAngularVelocity(InParticle->GetR(), InRotDelta, FReal(1.0)),
+		bApplyToConnectedBodies);
+}
+
+void FPBDRigidsEvolutionGBF::ApplyParticleTransformCorrection(FGeometryParticleHandle* InParticle, const FVec3& InPos, const FRotation3& InRot, const bool bApplyToConnectedBodies)
+{
+	const FRigidTransform3 OldParticleTransform = InParticle->GetTransformXR();
+	const FRigidTransform3 NewParticleTransform = FRigidTransform3(InPos, InRot);
+
+	// Move the root particle
+	ApplyParticleTransformCorrectionImpl(InParticle, NewParticleTransform);
+
+	if (bApplyToConnectedBodies)
+	{
+		// Find all the connected particles and move them to retain their relative transform
+		// NOTE: ConnectedParticles will not include InParticle
+		TArray<FGeometryParticleHandle*> ConnectedParticles = GetConnectedParticles(InParticle);
+		for (FGeometryParticleHandle* ConnectedParticle : ConnectedParticles)
+		{
+			if (FGenericParticleHandle(ConnectedParticle)->IsDynamic())
+			{
+				const FRigidTransform3 RelativeTransform = ConnectedParticle->GetTransformXR().GetRelativeTransformNoScale(OldParticleTransform);
+				const FRigidTransform3 NewOtherParticleTransform = RelativeTransform * NewParticleTransform;
+				ApplyParticleTransformCorrectionImpl(ConnectedParticle, NewOtherParticleTransform);
+			}
+		}
+	}
+}
+
+void FPBDRigidsEvolutionGBF::ApplyParticleTransformCorrectionImpl(FGeometryParticleHandle* InParticle, const FRigidTransform3& InTransform)
+{
+	FGenericParticleHandle Particle = InParticle;
+
+	Particle->SetX(InTransform.GetTranslation());
+	Particle->SetP(InTransform.GetTranslation());
+	Particle->SetR(InTransform.GetRotation());
+	Particle->SetQ(InTransform.GetRotation());
+
+	// We must fix the collision anchors so that friction doesn't undo our move or rotation
+	InParticle->ParticleCollisions().VisitCollisions(
+		[this, InParticle](FPBDCollisionConstraint& Collision)
+		{
+			Collision.UpdateParticleTransform(InParticle);
+			return ECollisionVisitorResult::Continue;
+		});
+}
+
+TArray<FGeometryParticleHandle*> FPBDRigidsEvolutionGBF::GetConnectedParticles(FGeometryParticleHandle* InParticle)
+{
+	if (InParticle->ParticleConstraints().IsEmpty())
+	{
+		return {};
+	}
+
+	// Use a hashmap to prevent O(N^2) loop below. It will also contains the output list of connected particles.
+	struct FHashMapTraits
+	{
+		static uint32 GetIDHash(const FGeometryParticleHandle* Particle) { return MurmurFinalize32(uint32(Particle->UniqueIdx().Idx)); }
+		static bool ElementHasID(const FGeometryParticleHandle* A, const FGeometryParticleHandle* B) { return A == B; }
+	};
+	Private::THashMappedArray<FGeometryParticleHandle*, FGeometryParticleHandle*, FHashMapTraits> ConnectedParticles(256);
+
+	FGeometryParticleHandle* NextParticle = InParticle;
+	int32 NextParticleIndex = 0;
+	while (true)
+	{
+		// Loop over the joints on the next particle and add the other particle into the queue (if not already in the queue, or already processed)
+		for (FConstraintHandle* Constraint : NextParticle->ParticleConstraints())
+		{
+			if (FPBDJointConstraintHandle* Joint = Constraint->As<FPBDJointConstraintHandle>())
+			{
+				const TVec3<EJointMotionType>& JointLinearMotion = Joint->GetSettings().LinearMotionTypes;
+				if ((JointLinearMotion[0] == EJointMotionType::Locked) && (JointLinearMotion[1] == EJointMotionType::Locked) && (JointLinearMotion[2] == EJointMotionType::Locked))
+				{
+					FParticlePair JointParticles = Joint->GetConstrainedParticles();
+					FGeometryParticleHandle* OtherParticle = (JointParticles[0] != NextParticle) ? JointParticles[0] : JointParticles[1];
+					if ((OtherParticle != InParticle) && (ConnectedParticles.Find(OtherParticle) == nullptr))
+					{
+						ConnectedParticles.Add(OtherParticle, OtherParticle);
+					}
+				}
+			}
+		}
+
+		// We are done if we did not add any particles in the most recent loop above
+		check(NextParticleIndex <= ConnectedParticles.Num());
+		if (NextParticleIndex >= ConnectedParticles.Num())
+		{
+			break;
+		}
+
+		// Move to the next particle in the queue
+		NextParticle = ConnectedParticles.At(NextParticleIndex);
+		++NextParticleIndex;
+	}
+	check(NextParticleIndex == ConnectedParticles.Num());
+
+	// NOTE: This moves the internal array to the output - no duplication
+	return ConnectedParticles.ExtractElements();
+}
+
+void FPBDRigidsEvolutionGBF::SetParticleVelocities(FGeometryParticleHandle* InParticle, const FVec3& InV, const FVec3f& InW)
+{
+	if (FKinematicGeometryParticleHandle* Kinematic = InParticle->CastToKinematicParticle())
+	{
+		Kinematic->SetV(InV);
+		Kinematic->SetW(InW);
+	}
+
+	if (FPBDRigidParticleHandle* Rigid = InParticle->CastToRigidParticle())
+	{
+		// Reset the velocity-based sleepiness tracking properties
+		if (Rigid->IsDynamic())
+		{
+			Rigid->SetVSmooth(InV);
+			Rigid->SetWSmooth(InW);
+
+			// Wake the particle if the velocity is non-zero
+			// NOTE: We do this even when not sleeping because we want to reset the sleep accumulators
+			if (!InV.IsNearlyZero() || !InW.IsNearlyZero())
+			{
+				WakeParticle(Rigid);
+			}
+
+			// @todo(chaos): do we want to reset static friction an any existing contacts as well?
+		}
+	}
+}
+
 void FPBDRigidsEvolutionGBF::ParticleMaterialChanged(FGeometryParticleHandle* Particle)
 {
 	Particle->ParticleCollisions().VisitCollisions([this](FPBDCollisionConstraint& Collision)
 	{
-		// Reset the material - the material properties will get collected later (collision activation)
+		// Reset the material. This is a fast operation - the material properties will get collected later if the collision is activated
 		Collision.ClearMaterialProperties();
 		return ECollisionVisitorResult::Continue;
-	});
+
+	}, ECollisionVisitorFlags::VisitAllCurrentAndExpired);
 
 	// The graph caches some sleep thresholds etc 
 	GetIslandManager().UpdateParticleMaterial(Particle);
 }
 
+const FChaosPhysicsMaterial* FPBDRigidsEvolutionGBF::GetFirstClusteredPhysicsMaterial(const FGeometryParticleHandle* Particle) const
+{
+	if (const FChaosPhysicsMaterial* PhysicsMaterial = GetFirstPhysicsMaterial(Particle))
+	{
+		return PhysicsMaterial;
+	}
+	else if (const FPBDRigidClusteredParticleHandle* Cluster = Particle->CastToClustered())
+	{
+		if (const FClusterUnion* ClusterUnion = Clustering.GetClusterUnionManager().FindClusterUnionFromParticle(Cluster))
+		{
+			if (ClusterUnion->InternalCluster == Cluster)
+			{
+				for (const FPBDRigidParticleHandle* ChildParticle : ClusterUnion->ChildParticles)
+				{
+					// I'm not sure how a cluster might end up containing itself, but
+					// in order to avoid this at all costs we just add a check here to make
+					// sure the particle isn't it's own child before trying to get its
+					// material
+					if (ChildParticle && ensureMsgf(ChildParticle != Particle, TEXT("Clustered particle found which has itself as a child")))
+					{
+						if (const FChaosPhysicsMaterial* ChildPhysicalMaterial = GetFirstClusteredPhysicsMaterial(ChildParticle))
+						{
+							return ChildPhysicalMaterial;
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return nullptr;
+}
 
 void FPBDRigidsEvolutionGBF::UpdateInertiaConditioning()
 {
@@ -1071,5 +1670,24 @@ void FPBDRigidsEvolutionGBF::UpdateInertiaConditioning()
 	}
 }
 
+#if CHAOS_EVOLUTION_COLLISION_TESTMODE
+void FPBDRigidsEvolutionGBF::TestModeResetCollisions()
+{
+	if (!CVars::bChaos_Solver_TestMode_Enabled)
+	{
+		return;
+	}
+	
+	for (FPBDCollisionConstraintHandle* Collision : CollisionConstraints.GetConstraintHandles())
+	{
+		if (Collision != nullptr)
+		{
+			Collision->GetContact().ResetManifold();
+			Collision->GetContact().ResetModifications();
+			Collision->GetContact().GetGJKWarmStartData().Reset();
+		}
+	}
+}
+#endif
 }
 

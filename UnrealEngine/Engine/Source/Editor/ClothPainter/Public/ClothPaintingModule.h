@@ -57,11 +57,11 @@ private:
 	// Gets tool tip for the enable paint tools button
 	FText GetPaintToolsButtonToolTip(TWeakPtr<ISkeletalMeshEditor> InSkeletalMeshEditor) const;
 
-	// Whether paint mode is active
-	bool GetIsPaintToolsButtonChecked(TWeakPtr<ISkeletalMeshEditor> InSkeletalMeshEditor) const;
-
 	// Toggles paint mode on the clothing tab
-	void OnToggleMode(TWeakPtr<ISkeletalMeshEditor> InSkeletalMeshEditor);
+	void OnToggleMode(TWeakPtr<ISkeletalMeshEditor> InSkeletalMeshEditor) const;
+
+	// Return true if currently in paint mode
+	bool IsPaintModeActive(TWeakPtr<ISkeletalMeshEditor> InSkeletalMeshEditor) const;
 
 	// Gets the current active clothing tab, will invoke (spawn or draw attention to) if bInvoke == true
 	TSharedPtr<SClothPaintTab> GetActiveClothTab(TWeakPtr<ISkeletalMeshEditor> InSkeletalMeshEditor, bool bInvoke = true) const;

@@ -37,5 +37,19 @@ FText UCustomizableObjectNodeTextureParameter::GetTooltipText() const
 	return LOCTEXT("Texture_Parameter_Tooltip", "Expose a runtime modifiable texture parameter from the Customizable Object.");
 }
 
+
+void UCustomizableObjectNodeTextureParameter::BackwardsCompatibleFixup()
+{
+	Super::BackwardsCompatibleFixup();
+
+	const int32 CustomizableObjectCustomVersion = GetLinkerCustomVersion(FCustomizableObjectCustomVersion::GUID);
+
+	if (CustomizableObjectCustomVersion < FCustomizableObjectCustomVersion::NodeTextureParameterDefaultToReferenceValue)
+	{
+		ReferenceValue = DefaultValue;
+		DefaultValue = {};
+	}	
+}
+
 #undef LOCTEXT_NAMESPACE
 

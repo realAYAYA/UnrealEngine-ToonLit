@@ -20,7 +20,7 @@
 	#include "Misc/Guid.h"
 #endif
 
-#include "../../WmfMedia/Public/IWmfMediaModule.h"
+#include "IWmfMediaModule.h"
 
 
 DEFINE_LOG_CATEGORY(LogWmfMediaFactory);
@@ -157,7 +157,6 @@ public:
 		SupportedFileExtensions.Add(TEXT("m4a"));
 		SupportedFileExtensions.Add(TEXT("m4v"));
 		SupportedFileExtensions.Add(TEXT("mov"));
-		SupportedFileExtensions.Add(TEXT("mp3"));
 		SupportedFileExtensions.Add(TEXT("mp4"));
 		SupportedFileExtensions.Add(TEXT("sami"));
 		SupportedFileExtensions.Add(TEXT("smi"));

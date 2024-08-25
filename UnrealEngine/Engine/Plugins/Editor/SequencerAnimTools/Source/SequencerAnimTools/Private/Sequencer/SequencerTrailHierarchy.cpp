@@ -162,15 +162,13 @@ void FSequencerTrailHierarchy::OnActorsChangedSomehow(TArray<AActor*>& InActors)
 double FSequencerTrailHierarchy::GetSecondsPerSegment() const 
 { 
 	double SecondsPerFrame =  WeakSequencer.Pin()->GetFocusedDisplayRate().AsInterval();
-	//evalsperframe will not be less than one
-	return SecondsPerFrame / double(UMotionTrailToolOptions::GetTrailOptions()->EvalsPerFrame);
+	return SecondsPerFrame; // no longer use this to avoid divide by zero options / double(UMotionTrailToolOptions::GetTrailOptions()->EvalsPerFrame);
 }
 
 FFrameNumber FSequencerTrailHierarchy::GetFramesPerSegment() const
 {
 	FFrameNumber FramesPerTick = FFrameRate::TransformTime(FFrameNumber(1), WeakSequencer.Pin()->GetFocusedDisplayRate(), 
 		WeakSequencer.Pin()->GetFocusedTickResolution()).RoundToFrame();
-	FramesPerTick.Value /= (UMotionTrailToolOptions::GetTrailOptions()->EvalsPerFrame);
 	return FramesPerTick;
 }
 
@@ -212,7 +210,7 @@ void FSequencerTrailHierarchy::RemoveTrail(const FGuid& Key)
 struct FTrailControlTransforms
 {
 	FName ControlName;
-	FTrail* Trail;
+	FGuid ElementGuid;
 	TArray<FTransform> Transforms;
 };
 
@@ -248,7 +246,7 @@ void FSequencerTrailHierarchy::UpdateControlRig(const TArray<FFrameNumber> &Fram
 				int32 PairIndex = 0;
 				for (TPair<FName, FGuid >& Pair : CompMapPair)
 				{
-					TrailControlTransforms[PairIndex].Trail = AllTrails[Pair.Value].Get();
+					TrailControlTransforms[PairIndex].ElementGuid = Pair.Value;
 					TrailControlTransforms[PairIndex].ControlName = Pair.Key;
 					TrailControlTransforms[PairIndex].Transforms.SetNum(Frames.Num());
 					++PairIndex;
@@ -258,11 +256,11 @@ void FSequencerTrailHierarchy::UpdateControlRig(const TArray<FFrameNumber> &Fram
 				{
 					const FFrameNumber& FrameNumber = Frames[Index];
 					FFrameTime GlobalTime(FrameNumber);
-					GlobalTime = GlobalTime * RootToLocalTransform.InverseLinearOnly(); //player evals in root time so need to go back to it.
+					GlobalTime = GlobalTime * RootToLocalTransform.InverseNoLooping(); //player evals in root time so need to go back to it.
 
 					FMovieSceneContext Context = FMovieSceneContext(FMovieSceneEvaluationRange(GlobalTime, TickResolution), Player->GetPlaybackStatus()).SetHasJumped(true);
 
-					Player->GetEvaluationTemplate().EvaluateSynchronousBlocking(Context, *Player);
+					Player->GetEvaluationTemplate().EvaluateSynchronousBlocking(Context);
 					ControlRig->Evaluate_AnyThread();
 					for (FTrailControlTransforms& TrailControlTransform : TrailControlTransforms)
 					{
@@ -270,31 +268,32 @@ void FSequencerTrailHierarchy::UpdateControlRig(const TArray<FFrameNumber> &Fram
 						if (bUseEditedTimes)
 						{
 							double Sec = TickResolution.AsSeconds(FFrameTime(FrameNumber));
-							TrailControlTransform.Trail->GetTrajectoryTransforms()->Set(Sec, TrailControlTransform.Transforms[Index]);
+							AllTrails[TrailControlTransform.ElementGuid]->GetTrajectoryTransforms()->Set(Sec, TrailControlTransform.Transforms[Index]);
 						}
 					}
 				}
 				for (FTrailControlTransforms& TrailControlTransform : TrailControlTransforms)
 				{
-					if (!TrailControlTransform.Trail)
+					if (!AllTrails.Contains(TrailControlTransform.ElementGuid))
 					{
 						continue;
 					}
 
-					if (bUseEditedTimes == false && TrailControlTransform.Trail->GetTrajectoryTransforms())
+					FTrail* Trail = AllTrails[TrailControlTransform.ElementGuid].Get();
+					if (bUseEditedTimes == false && Trail->GetTrajectoryTransforms())
 					{
-						TrailControlTransform.Trail->GetTrajectoryTransforms()->SetTransforms(TrailControlTransform.Transforms, ControlRigParentWorldTransforms);
+						Trail->GetTrajectoryTransforms()->SetTransforms(TrailControlTransform.Transforms, ControlRigParentWorldTransforms);
 					}
-					TrailControlTransform.Trail->UpdateKeysInRange(GetViewRange());
+					Trail->UpdateKeysInRange(GetViewRange());
 				}
 			}
 		}
 		if (Player)
 		{
 			FFrameTime StartTime = Sequencer->GetLocalTime().Time;
-			StartTime = StartTime * RootToLocalTransform.InverseLinearOnly(); //player evals in root time so need to go back to it.
+			StartTime = StartTime * RootToLocalTransform.InverseNoLooping(); //player evals in root time so need to go back to it.
 			FMovieSceneContext Context = FMovieSceneContext(FMovieSceneEvaluationRange(StartTime, TickResolution), Player->GetPlaybackStatus()).SetHasJumped(true);
-			Player->GetEvaluationTemplate().EvaluateSynchronousBlocking(Context, *Player);
+			Player->GetEvaluationTemplate().EvaluateSynchronousBlocking(Context);
 			ControlRig->Evaluate_AnyThread();
 		}
 	}
@@ -752,16 +751,16 @@ void FSequencerTrailHierarchy::RegisterControlRigDelegates(USkeletalMeshComponen
 
 			if (bSelected)
 			{
-				AddControlRigTrail(Component,ControlRig,CRParameterTrack, ControlElement->GetName());
+				AddControlRigTrail(Component,ControlRig,CRParameterTrack, ControlElement->GetFName());
 			}
 
 			if (ControlsTracked.Find(ControlRig) != nullptr)
 			{
-				if (ControlsTracked[ControlRig].Contains(ControlElement->GetName()))
+				if (ControlsTracked[ControlRig].Contains(ControlElement->GetFName()))
 				{
 					if (bSelected == false)
 					{
-						const FGuid TrailGuid = ControlsTracked[ControlRig][ControlElement->GetName()];
+						const FGuid TrailGuid = ControlsTracked[ControlRig][ControlElement->GetFName()];
 						VisibilityManager.ControlSelected.Remove(TrailGuid);
 						RemoveTrailIfNotAlwaysVisible(TrailGuid);
 					}
@@ -806,12 +805,12 @@ void FSequencerTrailHierarchy::RegisterControlRigDelegates(USkeletalMeshComponen
 			
 			if(InNotif == ERigHierarchyNotification::ElementRemoved)
 			{
-				if (!ControlsTracked.Contains(ControlRig) || !ControlsTracked[ControlRig].Contains(ControlElement->GetName())) // We only care about controls
+				if (!ControlsTracked.Contains(ControlRig) || !ControlsTracked[ControlRig].Contains(ControlElement->GetFName())) // We only care about controls
 				{
 					return;
 				}
 				
-				const FGuid TrailGuid = ControlsTracked[ControlRig][ControlElement->GetName()];
+				const FGuid TrailGuid = ControlsTracked[ControlRig][ControlElement->GetFName()];
 				RemoveTrail(TrailGuid);
 			}
             else if(InNotif == ERigHierarchyNotification::ElementRenamed)
@@ -825,7 +824,7 @@ void FSequencerTrailHierarchy::RegisterControlRigDelegates(USkeletalMeshComponen
 
 				const FGuid TempTrailGuid = ControlsTracked[ControlRig][OldName];
 				ControlsTracked[ControlRig].Remove(OldName);
-				ControlsTracked[ControlRig].Add(ControlElement->GetName(), TempTrailGuid);
+				ControlsTracked[ControlRig].Add(ControlElement->GetFName(), TempTrailGuid);
             }
         }
     );

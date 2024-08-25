@@ -31,6 +31,7 @@
 #include "Engine/Selection.h"
 #include "Editor.h"
 #include "LevelEditorViewport.h"
+#include "EditorCommandLineUtils.h"
 #include "EditorModeRegistry.h"
 #include "EditorModeManager.h"
 #include "EditorModes.h"
@@ -82,6 +83,8 @@
 #include "ObjectTools.h"
 #include "Cooker/ExternalCookOnTheFlyServer.h"
 #include "ISettingsSection.h"
+#include "DirectoryWatcherModule.h"
+#include "IDirectoryWatcher.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogUnrealEdEngine, Log, All);
 
@@ -117,9 +120,19 @@ void UUnrealEdEngine::Init(IEngineLoop* InEngineLoop)
 	// Set-up the initial set of content mount paths to check for write permision
 	TArray<FString> RootPaths;
 	FPackageName::QueryRootContentPaths(RootPaths);
+	int32 RootPathIndex = 0;
+	FDirectoryWatcherModule* DirectoryWatcherModule = FModuleManager::GetModulePtr<FDirectoryWatcherModule>(TEXT("DirectoryWatcher"));
+	IDirectoryWatcher* DirectoryWatcher = DirectoryWatcherModule ? DirectoryWatcherModule->Get() : nullptr;
+
 	for (const FString& RootPath : RootPaths)
 	{
 		VerifyMountPointWritePermission(*RootPath);
+		// We're writing files to test the write permission, and this will send file events to the directory watcher. Tick
+		// every few writes so that we don't overflow the directory watcher's buffer and cause a FCA_RescanRequired event.
+		if (DirectoryWatcher && ((++RootPathIndex) % 10) == 0)
+		{
+			DirectoryWatcher->Tick(-1.0f);
+		}
 	}
 	// Watch for new content mount paths
 	FPackageName::OnContentPathMounted().AddUObject(this, &UUnrealEdEngine::OnContentPathMounted);
@@ -137,8 +150,6 @@ void UUnrealEdEngine::Init(IEngineLoop* InEngineLoop)
 	FEditorSupportDelegates::PostWindowsMessage.AddUObject(this, &UUnrealEdEngine::OnPostWindowsMessage);
 
 	FHierarchicalInstancedStaticMeshDelegates::OnTreeBuilt.AddUObject(this, &UUnrealEdEngine::OnHISMTreeBuilt);
-
-	USelection::SelectionChangedEvent.AddUObject(this, &UUnrealEdEngine::OnEditorSelectionChanged);
 	USelection::SelectionElementSelectionPtrChanged.AddUObject(this, &UUnrealEdEngine::OnEditorElementSelectionPtrChanged);
 
 	// Initialize the snap manager
@@ -217,6 +228,17 @@ void UUnrealEdEngine::Init(IEngineLoop* InEngineLoop)
 		PropertyEditorModule.RegisterCustomClassLayout("EditorStyleSettings", FOnGetDetailCustomizationInstance::CreateStatic(&FEditorStyleSettingsCustomization::MakeInstance));
 		PropertyEditorModule.RegisterCustomPropertyTypeLayout("StyleColorList", FOnGetPropertyTypeCustomizationInstance::CreateStatic(&FStyleColorListCustomization::MakeInstance));
 
+	}
+
+	// Set the UE_EditorUIPid variable; must be set before constructing the UCookOnTheFlyServer
+	if (!IsRunningCommandlet())
+	{
+		FString ParentPid = FPlatformMisc::GetEnvironmentVariable(GEditorUIPidVariable);
+		if (ParentPid.IsEmpty())
+		{
+			FPlatformMisc::SetEnvironmentVar(GEditorUIPidVariable,
+				*LexToString(FPlatformProcess::GetCurrentProcessId()));
+		}
 	}
 
 	if (!IsRunningCommandlet())
@@ -307,10 +329,7 @@ bool CanCookForPlatformInThisProcess( const FString& PlatformName )
 	}
 	ConfigSetting = IniValueString.ToBool();
 
-	// this was stolen from void IsMobileHDR()
-	static TConsoleVariableData<int32>* MobileHDRCvar = IConsoleManager::Get().FindTConsoleVariableDataInt(TEXT("r.MobileHDR"));
-	const bool CurrentRSetting = MobileHDRCvar->GetValueOnAnyThread() == 1;
-
+	const bool CurrentRSetting = IsMobileHDR();
 	if ( CurrentRSetting != ConfigSetting )
 	{
 		UE_LOG(LogUnrealEdEngine, Warning, TEXT("Unable to use cook in editor because r.MobileHDR from Engine ini doesn't match console value r.MobileHDR"));
@@ -1034,6 +1053,37 @@ void UUnrealEdEngine::RebuildTemplateMapData()
 	}
 }
 
+void UUnrealEdEngine::AppendTemplateMaps(const TArray<FTemplateMapInfo>& InTemplateMapInfos)
+{
+	bool bTemplateWasAdded = false;
+	
+	PRAGMA_DISABLE_DEPRECATION_WARNINGS
+	for (const FTemplateMapInfo& TemplateMapInfo : InTemplateMapInfos)
+	{
+		if (!TemplateMapInfos.ContainsByPredicate(
+			[&TemplateMapInfo](const FTemplateMapInfo& InTemplate)
+		{
+			return InTemplate.Map == TemplateMapInfo.Map
+				&& InTemplate.DisplayName.EqualTo(InTemplate.DisplayName);
+		}))
+		{
+			TemplateMapInfos.Emplace(TemplateMapInfo);
+			bTemplateWasAdded = true;
+		}
+		else
+		{
+			UE_LOG(LogUnrealEdEngine, Warning, TEXT("Attempted to register an already registered template map ('%s'). Skipping registration."), *TemplateMapInfo.Map.ToString());
+		}
+		PRAGMA_ENABLE_DEPRECATION_WARNINGS
+	}
+
+	if (bTemplateWasAdded)
+	{
+		// A new template was added, so refresh
+		RebuildTemplateMapData();
+	}
+}
+
 void UUnrealEdEngine::SetCurrentClass( UClass* InClass )
 {
 	USelection* SelectionSet = GetSelectedObjects();
@@ -1476,101 +1526,6 @@ void UUnrealEdEngine::DrawComponentVisualizersHUD(const FViewport* Viewport, con
 			VisualizerForSelection.ComponentVisualizer.Visualizer->DrawVisualizationHUD(VisualizerForSelection.ComponentVisualizer.ComponentPropertyPath.GetComponent(), Viewport, View, Canvas);
 		}
 	}
-}
-
-void UUnrealEdEngine::OnEditorSelectionChanged(UObject* SelectionThatChanged)
-{
-	auto GetVisualizersForSelection = [this](AActor* Actor, const UActorComponent* SelectedComponent)
-	{
-		// Iterate over components of that actor (and recurse through child components)
-		TInlineComponentArray<UActorComponent*> Components;
-		Actor->GetComponents(Components, true);
-
-		for (int32 CompIdx = 0; CompIdx < Components.Num(); CompIdx++)
-		{
-			UActorComponent* Comp = Components[CompIdx];
-			if (Comp->IsRegistered())
-			{
-				// Try and find a visualizer
-				TSharedPtr<FComponentVisualizer> Visualizer = FindComponentVisualizer(Comp->GetClass());
-				if (Visualizer.IsValid() && (Comp == SelectedComponent || Visualizer->ShouldShowForSelectedSubcomponents(Comp)))
-				{
-					FCachedComponentVisualizer CachedComponentVisualizer(Comp, Visualizer);
-					FComponentVisualizerForSelection Temp{CachedComponentVisualizer};
-
-					FComponentVisualizerForSelection& ComponentVisualizerForSelection = VisualizersForSelection.Add_GetRef(MoveTemp(Temp));
-
-					if (Comp != SelectedComponent)
-					{
-						ComponentVisualizerForSelection.IsEnabledDelegate.Emplace([](){ return GetDefault<UEditorPerProjectUserSettings>()->bShowSelectionSubcomponents == true; });
-					}
-				}
-			}
-		}
-	};
-
-	const int32 SelectedComponentCount = GetSelectedComponents()->CountSelections<UActorComponent>();
-	if (SelectionThatChanged == GetSelectedActors() && SelectedComponentCount == 0)
-	{
-		// actor selection changed.  Update the list of component visualizers
-		// This is expensive so we do not search for visualizers each time they want to draw
-		VisualizersForSelection.Empty();
-
-		// Iterate over all selected actors
-		for (FSelectionIterator It(GetSelectedActorIterator()); It; ++It)
-		{
-			AActor* Actor = Cast<AActor>(*It);
-			if (Actor != nullptr)
-			{
-				GetVisualizersForSelection(Actor, Actor->GetRootComponent());
-			}
-		}
-	}
-
-	// Do not proceed if the selection contains no components. This occurs when a component is
-	// deselected while selecting its owner actor. But a corresponding actor selection is not invoked
-	// so if the visualizers are cleared here, they will not be properly reset for the selected actor. 
-	else if (SelectionThatChanged == GetSelectedComponents() && SelectedComponentCount > 0)
-	{
-		if (USelection* Selection = Cast<USelection>(SelectionThatChanged))
-		{
-			VisualizersForSelection.Empty();
-
-			TArray<AActor*> ActorsProcessed;
-
-			// Iterate over all selected components
-			for (FSelectionIterator It(GetSelectedComponentIterator()); It; ++It)
-			{
-				if (UActorComponent* Comp = Cast<UActorComponent>(*It))
-				{
-					if (AActor* Actor = Comp->GetOwner())
-					{
-						if (!ActorsProcessed.Contains(Actor))
-						{
-							GetVisualizersForSelection(Actor, Comp);
-							ActorsProcessed.Emplace(Actor);
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// If there is an undo/redo operation in progress, restore the active component visualizer.
-	if (GIsTransacting)
-	{
-		for (FComponentVisualizerForSelection& VisualizerForSelection : VisualizersForSelection)
-		{
-			if (VisualizerForSelection.ComponentVisualizer.Visualizer->GetEditedComponent() != nullptr)
-			{
-				ComponentVisManager.SetActiveComponentVis(GCurrentLevelEditingViewportClient, VisualizerForSelection.ComponentVisualizer.Visualizer);
-				break;
-			}
-		}
-	}
-#if PLATFORM_MAC
-	FPlatformApplicationMisc::bChachedMacMenuStateNeedsUpdate = true;
-#endif
 }
 
 bool UUnrealEdEngine::HasMountWritePermissionForPackage(const FString& PackageName)

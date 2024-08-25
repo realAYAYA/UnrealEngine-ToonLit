@@ -1474,6 +1474,8 @@ void _mesa_glsl_initialize_functions(exec_list *ir, _mesa_glsl_parse_state *stat
 	make_intrinsic_genType(ir, state, "min", ir_binop_min, IR_INTRINSIC_ALL_FLOATING | IR_INTRINSIC_INT | IR_INTRINSIC_UINT | IR_INTRINSIC_MATRIX, 2);
 	make_intrinsic_genType(ir, state, "max", ir_binop_max, IR_INTRINSIC_ALL_FLOATING | IR_INTRINSIC_INT | IR_INTRINSIC_UINT | IR_INTRINSIC_MATRIX, 2);
 	make_intrinsic_genType(ir, state, "clamp", ir_ternop_clamp, IR_INTRINSIC_ALL_FLOATING | IR_INTRINSIC_INT | IR_INTRINSIC_UINT | IR_INTRINSIC_MATRIX, 3);
+
+	make_intrinsic_genType(ir, state, "mad", ir_ternop_fma, IR_INTRINSIC_ALL_FLOATING, 3);
 	
 	MakeIntrinsicSaturate(ir, state, GLSL_TYPE_FLOAT);
 	

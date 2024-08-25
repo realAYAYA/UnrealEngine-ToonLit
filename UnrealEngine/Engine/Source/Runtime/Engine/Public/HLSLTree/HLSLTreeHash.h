@@ -78,6 +78,7 @@ inline void AppendHash(FHasher& Hasher, const FCustomHLSLInput& Value)
 inline void AppendHash(FHasher& Hasher, const Shader::FType& Type)
 {
 	if (Type.IsStruct()) AppendHash(Hasher, Type.StructType);
+	else if (Type.IsObject()) AppendHash(Hasher, Type.ObjectType);
 	else AppendHash(Hasher, Type.ValueType);
 }
 

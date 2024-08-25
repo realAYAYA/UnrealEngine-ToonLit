@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Framework/SlateDelegates.h"
+#include "Widgets/SBoxPanel.h"
 
 class SWidget;
 
@@ -25,6 +26,7 @@ struct FWidgetDrawerConfig
 	FText ButtonText;
 	FText ToolTipText;
 	const FSlateBrush* Icon = nullptr;
+	TSharedRef<SHorizontalBox> CustomButtonWidgets = SNew(SHorizontalBox);
 
 	bool operator==(const FName& OtherId) const
 	{

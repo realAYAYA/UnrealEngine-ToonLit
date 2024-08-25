@@ -33,7 +33,7 @@ void FNetExports::PushExportRecordForPacket()
 	ExportRecord.Enqueue(Info);
 }
 
-void FNetExports::AcknowledgeBatchExports(FNetExportContext::FBatchExports& BatchExports)
+void FNetExports::AcknowledgeBatchExports(const FNetExportContext::FBatchExports& BatchExports)
 {
 	AcknowledgedExports.AcknowledgedExportedHandles.Append(BatchExports.HandlesExportedInCurrentBatch);
 	AcknowledgedExports.AcknowledgedExportedNetTokens.Append(BatchExports.NetTokensExportedInCurrentBatch);

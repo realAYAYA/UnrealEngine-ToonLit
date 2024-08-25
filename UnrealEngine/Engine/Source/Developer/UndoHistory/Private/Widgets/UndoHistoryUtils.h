@@ -45,28 +45,32 @@ private:
 		
 		for (const FName& PropertyName : InChangedProperties)
 		{
-			const TOptional<FPropertyReflectionData> PropertyData = ReflectionData.GetPropertyReflectionData(InObjectClass, PropertyName);
-			check(PropertyData);
+			if (TOptional<FPropertyReflectionData> PropertyData = ReflectionData.GetPropertyReflectionData(InObjectClass, PropertyName))
+			{
+				FString ClassName;
+				if (PropertyData->PropertyType == UE::UndoHistory::EPropertyType::ObjectProperty
+					|| PropertyData->PropertyType == UE::UndoHistory::EPropertyType::StructProperty
+					|| PropertyData->PropertyType == UE::UndoHistory::EPropertyType::EnumProperty)
+				{
+					ClassName = PropertyData->CppMacroType;
+				}
+				else if (PropertyData->PropertyType == UE::UndoHistory::EPropertyType::ArrayProperty)
+				{
+					ClassName = PropertyData->CppMacroType;
+					ClassName = FString::Printf(TEXT("TArray<%s>"), *ClassName);
+				}
+				else
+				{
+					ClassName = PropertyData->TypeName;
+					ClassName.RemoveFromEnd("Property");
+				}
 
-			FString ClassName;
-			if (PropertyData->PropertyType == UE::UndoHistory::EPropertyType::ObjectProperty
-				|| PropertyData->PropertyType == UE::UndoHistory::EPropertyType::StructProperty 
-				|| PropertyData->PropertyType == UE::UndoHistory::EPropertyType::EnumProperty) 
-			{
-				ClassName = PropertyData->CppMacroType;
-			}
-			else if (PropertyData->PropertyType == UE::UndoHistory::EPropertyType::ArrayProperty)
-			{
-				ClassName = PropertyData->CppMacroType;
-				ClassName = FString::Printf(TEXT("TArray<%s>"), *ClassName); 
+				Properties.Emplace(PropertyName.ToString(), MoveTemp(ClassName), PropertyData->PropertyFlags);
 			}
 			else
 			{
-				ClassName = PropertyData->TypeName;
-				ClassName.RemoveFromEnd("Property");
+				Properties.Emplace(PropertyName.ToString(), TOptional<FString>{}, TOptional<EPropertyFlags>{});
 			}
-
-			Properties.Emplace(PropertyName.ToString(), MoveTemp(ClassName), PropertyData->PropertyFlags);
 		}
 		
 		return Properties;

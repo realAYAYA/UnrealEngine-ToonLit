@@ -1,21 +1,18 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "ConcertClientWorkspace.h"
-#include "Algo/AllOf.h"
+
 #include "ConcertClientTransactionManager.h"
 #include "ConcertClientPackageManager.h"
 #include "ConcertClientLockManager.h"
 #include "IConcertClientPackageBridge.h"
 #include "IConcertClient.h"
 #include "IConcertClientWorkspace.h"
-#include "IConcertModule.h"
+#include "IConcertSyncClient.h"
 #include "IConcertSyncClientModule.h"
 
-#include "IConcertSession.h"
-#include "IConcertFileSharingService.h"
 #include "ConcertSyncClientLiveSession.h"
 #include "ConcertSyncSessionDatabase.h"
-#include "ConcertSyncSettings.h"
 #include "ConcertClientSettings.h"
 #include "ConcertSyncClientUtil.h"
 #include "ConcertLogGlobal.h"
@@ -23,28 +20,20 @@
 #include "ConcertWorkspaceMessages.h"
 #include "ConcertClientDataStore.h"
 #include "ConcertClientLiveTransactionAuthors.h"
+#include "IConcertSession.h"
+#include "IConcertFileSharingService.h"
 
-
-#include "Containers/Ticker.h"
+#include "Algo/AllOf.h"
 #include "Containers/ArrayBuilder.h"
-#include "IConcertSyncClient.h"
 #include "UObject/Package.h"
-#include "UObject/Linker.h"
-#include "UObject/LinkerLoad.h"
 #include "UObject/SavePackage.h"
 #include "UObject/StructOnScope.h"
 #include "Misc/PackageName.h"
 #include "HAL/FileManager.h"
-#include "HAL/PlatformFileManager.h"
 #include "HAL/IConsoleManager.h"
-#include "Misc/App.h"
-#include "Misc/Paths.h"
-#include "Misc/FileHelper.h"
 #include "Misc/CoreDelegates.h"
 #include "Misc/ScopedSlowTask.h"
 #include "Misc/FeedbackContext.h"
-#include "RenderingThread.h"
-#include "Modules/ModuleManager.h"
 #include "Serialization/MemoryReader.h"
 #include "StructDeserializer.h"
 #include "StructSerializer.h"
@@ -56,13 +45,11 @@
 #include "Engine/Engine.h"
 
 #if WITH_EDITOR
+	#include "Editor.h"
 	#include "UnrealEdGlobals.h"
-	#include "UnrealEdMisc.h"
 	#include "Editor/EditorEngine.h"
 	#include "Editor/UnrealEdEngine.h"
 	#include "Editor/TransBuffer.h"
-	#include "FileHelpers.h"
-	#include "GameMapsSettings.h"
 #endif
 
 LLM_DEFINE_TAG(Concert_ConcertClientWorkspace);
@@ -123,26 +110,81 @@ private:
 	TArray<TUniquePtr<FScopedSlowTask>> ExtendedTaskLife;
 };
 
-void SetReflectEditorLevelVisibilityWithGame(bool bInValue, bool bReset = false)
+namespace UE::ConcertWorkspace::Private
 {
+	template <size_t N>
+	struct CVarString
+	{
+		TCHAR Storage[N+1]{};
+		constexpr CVarString(TCHAR const* InStr)
+		{
+			for (size_t Index = 0; Index != N; Index++)
+			{
+				Storage[Index] = InStr[Index];
+			}
+		}
+		constexpr operator TCHAR const*() const {return Storage;}
+	};
+	template<size_t N> CVarString(TCHAR const (&)[N]) -> CVarString<N - 1>;
+
+	template<CVarString T, bool bEditorOnly>
+	struct FCVarBool
+	{
+		static constexpr TCHAR const* CvarName = T;
+		void SetValueOnce(bool bInValue, bool bForce = false)
+		{
 #if WITH_EDITOR
-	static bool bHasBeenSet = false;
-
-	if (bReset)
-	{
-		bHasBeenSet = false;
-	}
-
-	// Detail mode was modified, so store in the CVar
-	static IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(TEXT("Editor.ReflectEditorLevelVisibilityWithGame"));
-	int32 ValAsInt = !!bInValue;
-	bool bCanSet = !bHasBeenSet && CVar->GetInt() != ValAsInt;
-	if (GEditor && bCanSet)
-	{
-		CVar->Set(ValAsInt);
-		bHasBeenSet = bReset ? false : true;
-	}
+			const bool bShouldSetValue = bEditorOnly ? GEditor != nullptr : true;
+			if (bShouldSetValue && (!bHasBeenSet || bForce))
+			{
+				int32 ValueAsInt = !!bInValue;
+				SetValue(ValueAsInt);
+			}
 #endif
+		}
+
+		void Reset()
+		{
+#if WITH_EDITOR
+			if (bHasBeenSet)
+			{
+				SetValue(bOriginalValue);
+				bHasBeenSet = false;
+			}
+#endif
+		}
+
+		bool IsEnabled() const
+		{
+#if WITH_EDITOR
+			static IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(CvarName);
+			if (CVar)
+			{
+				return !!CVar->GetInt();
+			}
+#endif
+			return false;
+		}
+
+	private:
+		void SetValue(int32 InValue)
+		{
+			static IConsoleVariable* CVar = IConsoleManager::Get().FindConsoleVariable(CvarName);
+			if (CVar)
+			{
+				bOriginalValue = CVar->GetInt();
+				CVar->Set(InValue);
+				bHasBeenSet = true;
+			}
+		}
+
+		int32 bOriginalValue = false;
+		bool bHasBeenSet = false;
+	};
+
+	static FCVarBool<TEXT("Editor.ReflectEditorLevelVisibilityWithGame"), true /*Editor Only*/> ReflectVisInGame;
+	static FCVarBool<TEXT("LevelInstance.ForceEditorWorldMode"), false /*Editor Only*/> LevelInstanceForceEditorWorldMode;
+	static FCVarBool<TEXT("EditorPaths.Enabled"), false /*Editor Only*/> EditorPaths;
 }
 
 struct FConcertWorkspaceConsoleCommands
@@ -209,18 +251,14 @@ struct FConcertWorkspaceConsoleCommands
 	FAutoConsoleCommand DisableRemoteVerboseLogging;
 };
 
-FConcertClientWorkspace::FConcertClientWorkspace(TSharedRef<FConcertSyncClientLiveSession> InLiveSession,
-												 IConcertClientPackageBridge* InPackageBridge,
-												 IConcertClientTransactionBridge* InTransactionBridge,
-												 TSharedPtr<IConcertFileSharingService> InFileSharingService,
-												 IConcertSyncClient* InOwnerSyncClient)
-	: OwnerSyncClient(InOwnerSyncClient),
-	  FileSharingService(MoveTemp(InFileSharingService))
+FConcertClientWorkspace::FConcertClientWorkspace(const UE::ConcertSyncClient::FSessionBindArgs& SessionBindArgs, TSharedPtr<IConcertFileSharingService> InFileSharingService, IConcertSyncClient* InOwnerSyncClient)
+	: OwnerSyncClient(InOwnerSyncClient)
+	, FileSharingService(MoveTemp(InFileSharingService))
 {
 	static FConcertWorkspaceConsoleCommands ConsoleCommands;
 
 	check(OwnerSyncClient);
-	BindSession(InLiveSession, InPackageBridge, InTransactionBridge);
+	BindSession(SessionBindArgs);
 }
 
 FConcertClientWorkspace::~FConcertClientWorkspace()
@@ -469,15 +507,13 @@ IConcertClientDataStore& FConcertClientWorkspace::GetDataStore()
 	return *DataStore;
 }
 
-void FConcertClientWorkspace::BindSession(TSharedPtr<FConcertSyncClientLiveSession> InLiveSession, IConcertClientPackageBridge* InPackageBridge, IConcertClientTransactionBridge* InTransactionBridge)
+void FConcertClientWorkspace::BindSession(const UE::ConcertSyncClient::FSessionBindArgs& SessionBindArgs)
 {
-	check(InLiveSession->IsValidSession());
-	check(InPackageBridge);
-	check(InTransactionBridge);
+	check(SessionBindArgs.IsValid());
 
 	UnbindSession();
-	LiveSession = InLiveSession;
-	PackageBridge = InPackageBridge;
+	LiveSession = SessionBindArgs.LiveSession;
+	PackageBridge = SessionBindArgs.Bridges.PackageBridge;
 
 	LoadSessionData();
 
@@ -490,13 +526,13 @@ void FConcertClientWorkspace::BindSession(TSharedPtr<FConcertSyncClientLiveSessi
 	// Create Transaction Manager
 	if (EnumHasAnyFlags(LiveSession->GetSessionFlags(), EConcertSyncSessionFlags::EnableTransactions))
 	{
-		TransactionManager = MakeUnique<FConcertClientTransactionManager>(LiveSession.ToSharedRef(), InTransactionBridge);
+		TransactionManager = MakeUnique<FConcertClientTransactionManager>(LiveSession.ToSharedRef(), SessionBindArgs.Bridges.TransactionBridge);
 	}
 
 	// Create Package Manager
 	if (EnumHasAnyFlags(LiveSession->GetSessionFlags(), EConcertSyncSessionFlags::EnablePackages))
 	{
-		PackageManager = MakeUnique<FConcertClientPackageManager>(LiveSession.ToSharedRef(), InPackageBridge, FileSharingService);
+		PackageManager = MakeUnique<FConcertClientPackageManager>(LiveSession.ToSharedRef(), SessionBindArgs.Bridges.PackageBridge, FileSharingService);
 	}
 
 	// Create Lock Manager
@@ -659,6 +695,14 @@ void FConcertClientWorkspace::HandleConnectionChanged(IConcertClientSession& InS
 				}
 			}
 		}
+		if (GEditor == nullptr)
+		{
+			const bool bLevelInstanceEditorWorldMode = UE::ConcertWorkspace::Private::LevelInstanceForceEditorWorldMode.IsEnabled();
+			UE_CLOG( !bLevelInstanceEditorWorldMode, LogConcert, Warning, TEXT("Level Instance Editor World Mode is off. Ensure LevelInstance.ForceEditorWorldMode=1 on startup. Non-editor world mode in -game may cause issues with transaction playback on Level Instance Actors. Forcing this mode to be ON.") );
+		}
+
+		UE::ConcertWorkspace::Private::LevelInstanceForceEditorWorldMode.SetValueOnce(true);
+		UE::ConcertWorkspace::Private::EditorPaths.SetValueOnce(true);
 #endif
 	}
 	else if (Status == EConcertConnectionStatus::Disconnected)
@@ -666,7 +710,9 @@ void FConcertClientWorkspace::HandleConnectionChanged(IConcertClientSession& InS
 		bHasSyncedWorkspace = false;
 		bFinalizeWorkspaceSyncRequested = false;
 		FConcertSlowTaskStackWorkaround::Get().PopTask(MoveTemp(InitialSyncSlowTask));
-		SetReflectEditorLevelVisibilityWithGame(false, true);
+		UE::ConcertWorkspace::Private::ReflectVisInGame.Reset();
+		UE::ConcertWorkspace::Private::LevelInstanceForceEditorWorldMode.Reset();
+		UE::ConcertWorkspace::Private::EditorPaths.Reset();
 	}
 }
 
@@ -889,7 +935,7 @@ void FConcertClientWorkspace::OnEndFrame()
 	}
 	LiveSession->GetSessionDatabase().UpdateAsynchronousTasks();
 	IConcertClientRef ConcertClient = OwnerSyncClient->GetConcertClient();
-	SetReflectEditorLevelVisibilityWithGame(ConcertClient->GetConfiguration()->ClientSettings.bReflectLevelEditorInGame);
+	UE::ConcertWorkspace::Private::ReflectVisInGame.SetValueOnce(ConcertClient->GetConfiguration()->ClientSettings.bReflectLevelEditorInGame);
 }
 
 void FConcertClientWorkspace::HandleWorkspaceSyncEndpointEvent(const FConcertSessionContext& Context, const FConcertWorkspaceSyncEndpointEvent& Event)

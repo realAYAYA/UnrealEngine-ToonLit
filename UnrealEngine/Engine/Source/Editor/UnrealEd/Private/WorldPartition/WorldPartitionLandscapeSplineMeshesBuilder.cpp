@@ -29,7 +29,9 @@
 #include "WorldPartition/WorldPartition.h"
 #include "WorldPartition/WorldPartitionActorDesc.h"
 #include "WorldPartition/WorldPartitionHelpers.h"
+#include "WorldPartition/WorldPartitionActorDescInstance.h"
 #include "ActorPartition/ActorPartitionSubsystem.h"
+#include "WorldPartition/HLOD/HLODLayer.h"
 #include "Rendering/ColorVertexBuffer.h"
 #include "EngineUtils.h"
 
@@ -263,12 +265,23 @@ ALandscapeSplineMeshesActor* UWorldPartitionLandscapeSplineMeshesBuilder::GetOrC
 	UActorPartitionSubsystem* ActorPartitionSubsystem = InWorld->GetSubsystem<UActorPartitionSubsystem>();
 	check(ActorPartitionSubsystem);
 
+	FGuid GridGuid = InLandscapeGuid;
+
+	AActor* MeshOwner = InMeshComponent->GetOwner();
+	UHLODLayer* HLODLayer = MeshOwner->GetHLODLayer();
+	if (InMeshComponent->IsHLODRelevant() && MeshOwner->IsHLODRelevant() && HLODLayer != nullptr)
+	{
+		// To get a new unique GUID, combine the original GUID with the HLOD Layer package guid
+		GridGuid = FGuid::Combine(GridGuid, HLODLayer->GetPackage()->GetPersistentGuid());
+	}
+
 	// Create or find the placement partition actor
-	auto OnActorCreated = [&InLandscapeGuid](APartitionActor* CreatedPartitionActor)
+	auto OnActorCreated = [&GridGuid, HLODLayer](APartitionActor* CreatedPartitionActor)
 	{
 		if (ALandscapeSplineMeshesActor* LandscapeSplineMeshesActor = CastChecked<ALandscapeSplineMeshesActor>(CreatedPartitionActor))
 		{
-			LandscapeSplineMeshesActor->SetGridGuid(InLandscapeGuid);
+			LandscapeSplineMeshesActor->SetGridGuid(GridGuid);
+			LandscapeSplineMeshesActor->SetHLODLayer(HLODLayer);
 		}
 	};
 
@@ -278,7 +291,7 @@ ALandscapeSplineMeshesActor* UWorldPartitionLandscapeSplineMeshesBuilder::GetOrC
 		InWorld->PersistentLevel,
 		FVector(FVector2D(InMeshComponent->GetComponentLocation()), 0),
 		0,
-		InLandscapeGuid,
+		GridGuid,
 		true,
 		OnActorCreated);
 
@@ -349,10 +362,10 @@ bool UWorldPartitionLandscapeSplineMeshesBuilder::RunInternal(UWorld* InWorld, c
 	TSet<ALandscapeSplineMeshesActor*> PreviousGeneratedActors;
 
 	// Preload all ALandscapeSplineMeshesActor and ALandscapeSplineActor
-	FWorldPartitionHelpers::ForEachActorWithLoading(WorldPartition, [&ActorReferences, &PreviousGeneratedActors, WorldPartition](const FWorldPartitionActorDesc* ActorDesc)
+	FWorldPartitionHelpers::ForEachActorWithLoading(WorldPartition, [&ActorReferences, &PreviousGeneratedActors, WorldPartition](const FWorldPartitionActorDescInstance* ActorDescInstance)
 	{
-		ActorReferences.Emplace(WorldPartition, ActorDesc->GetGuid());
-		AActor* Actor = ActorDesc->GetActor();
+		ActorReferences.Emplace(WorldPartition, ActorDescInstance->GetGuid());
+		AActor* Actor = ActorDescInstance->GetActor();
 		if (IsValid(Actor))
 		{
 			if (ALandscapeSplineMeshesActor* LandscapeSplineMeshesActor = Cast<ALandscapeSplineMeshesActor>(Actor))

@@ -23,7 +23,7 @@ public:
 
 namespace CoroSpinLock_Detail
 {
-	class UE_NODISCARD FScope
+	class [[nodiscard]] FScope
 	{
 		FCoroSpinLock* CoroSpinLock = nullptr;
 		bool WriteLock = true;
@@ -84,7 +84,7 @@ namespace CoroSpinLock_Detail
 		}
 	};
 
-	class UE_NODISCARD FAwaitable
+	class [[nodiscard]] FAwaitable
 	{
 		FCoroSpinLock* CoroSpinLock = nullptr;
 		TLaunchedCoroTask<void> Task;
@@ -176,7 +176,7 @@ class FCoroSpinLock
 {
 	FRWLock CS;
 
-	class UE_NODISCARD FScope
+	class [[nodiscard]] FScope
 	{
 		FRWLock* LockObject = nullptr;
 		bool WriteLock = true;

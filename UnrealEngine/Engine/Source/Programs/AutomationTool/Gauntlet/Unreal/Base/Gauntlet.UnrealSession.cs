@@ -6,10 +6,10 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
 using UnrealBuildTool;
+using Gauntlet.Utils;
 
 namespace Gauntlet
 {
@@ -95,11 +95,12 @@ namespace Gauntlet
 		public List<UnrealFileToCopy> FilesToCopy;
 
 		/// <summary>
-		/// 
+		/// Additional UE directories to copy from when saving artifacts
 		/// </summary>
 		public List<EIntendedBaseCopyDirectory> AdditionalArtifactDirectories;
+
 		/// <summary>
-		/// Role device configuration 
+		/// Role device configuration
 		/// </summary>
 		public ConfigureDeviceHandler ConfigureDevice;
 
@@ -119,7 +120,7 @@ namespace Gauntlet
 		public ERoleModifier RoleModifier;
 
 		/// <summary>
-		/// Is this a dummy executable? 
+		/// Is this a dummy executable?
 		/// </summary>
 		public bool IsDummy() { return RoleModifier == ERoleModifier.Dummy; }
 
@@ -134,7 +135,7 @@ namespace Gauntlet
 		public bool DeferredLaunch { get; set; }
 
 		/// <summary>
-		/// Is this role Null? 
+		/// Is this role Null?
 		/// </summary>
 		public bool IsNullRole() { return RoleModifier == ERoleModifier.Null; }
 
@@ -230,7 +231,7 @@ namespace Gauntlet
 	/// <summary>
 	/// Represents an instance of a running an Unreal session. Basically an aggregate of all processes for
 	/// all roles (clients, server, etc
-	/// 
+	///
 	/// TODO - combine this into UnrealSession
 	/// </summary>
 	public class UnrealSessionInstance : IDisposable
@@ -252,7 +253,7 @@ namespace Gauntlet
 			public UnrealSessionRole Role { get; protected set; }
 
 			/// <summary>
-			/// Underlying AppInstance that us running the role
+			/// Underlying AppInstance that is running the role
 			/// </summary>
 			public IAppInstance AppInstance { get; protected set; }
 
@@ -270,7 +271,7 @@ namespace Gauntlet
 		/// All roles
 		/// </summary>
 		public RoleInstance[] AllRoles { get; protected set; }
-		
+
 		/// <summary>
 		/// All running roles
 		/// </summary>
@@ -546,19 +547,18 @@ namespace Gauntlet
 		/// <param name="InAppInstance"></param>
 		/// <param name="InArtifactPath"></param>
 		/// <param name="InLogSummary"></param>
-		public UnrealRoleArtifacts(UnrealSessionRole InSessionRole, IAppInstance InAppInstance, string InArtifactPath, string InLogPath, UnrealLogParser InLog)
+		public UnrealRoleArtifacts(UnrealSessionRole InSessionRole, IAppInstance InAppInstance, string InArtifactPath, string InLogPath)
 		{
 			SessionRole = InSessionRole;
 			AppInstance = InAppInstance;
 			ArtifactPath = InArtifactPath;
 			LogPath = InLogPath;
-			//LogParser = InLog;
 		}
 	}
 
 
 	/// <summary>
-	/// Helper class that understands how to launch/monitor/stop an an Unreal test (clients + server) based on params contained in the test context and config
+	/// Helper class that understands how to launch/monitor/stop an Unreal test (clients + server) based on params contained in the test context and config
 	/// </summary>
 	public class UnrealSession : IDisposable
 	{
@@ -588,14 +588,43 @@ namespace Gauntlet
 		public string Sandbox { get; set; }
 
 		/// <summary>
-		/// Whether or not we should retain our devices this pass
+		/// Whether or not devices should be retained between each test iteration
 		/// </summary>
 		public bool ShouldRetainDevices { get; set; }
+
+		[AutoParam(false)]
+		public bool ReinstallPerPass { get; set; }
+
+		/// <summary>
+		/// Number of attempts when launching a session.
+		/// Failed installs and runs will trigger a re-try
+		/// </summary>
+		public int LaunchSessionAttempts { get; set; }
+
+		/// <summary>
+		/// Number of attempts when trying to reserve devices
+		/// </summary>
+		public int DeviceReservationAttempts { get; set; }
+
+		/// <summary>
+		/// Number of seconds to wait between failed device reservation attempts
+		/// </summary>
+		public int DeviceReservationRetryTime { get; set; }
+
+		/// <summary>
+		/// Record of each ITargetDevice assigned to a given role
+		/// </summary>
+		public Dictionary<UnrealSessionRole, ITargetDevice> RolesToDevices { get; private set; }
+
+		/// <summary>
+		/// Record of each UnrealAppConfig created for each role
+		/// </summary>
+		public Dictionary<UnrealSessionRole, UnrealAppConfig> RolesToConfigs { get; private set; }
 
 		/// <summary>
 		/// Record of our installations in case we want to re-use them in a later pass
 		/// </summary>
-		public Dictionary<UnrealSessionRole, IAppInstall> RolesToInstalls;
+		public Dictionary<UnrealSessionRole, IAppInstall> RolesToInstalls { get; private set; }
 
 		/// <summary>
 		/// Constructor that takes a build source and a number of roles
@@ -604,8 +633,19 @@ namespace Gauntlet
 		/// <param name="InSessionRoles"></param>
 		public UnrealSession(UnrealBuildSource InSource, IEnumerable<UnrealSessionRole> InSessionRoles)
 		{
+			AutoParam.ApplyParamsAndDefaults(this, Globals.Params.AllArguments);
+
 			BuildSource = InSource;
 			SessionRoles = InSessionRoles.ToArray();
+			ShouldRetainDevices = !Globals.Params.ParseParam("ReacquireDevicesPerPass");
+
+			RolesToDevices = new Dictionary<UnrealSessionRole, ITargetDevice>();
+			RolesToConfigs = new Dictionary<UnrealSessionRole, UnrealAppConfig>();
+			RolesToInstalls = new Dictionary<UnrealSessionRole, IAppInstall>();
+
+			LaunchSessionAttempts = 3;
+			DeviceReservationAttempts = 5;
+			DeviceReservationRetryTime = 120;
 
 			if (SessionRoles.Length == 0)
 			{
@@ -663,30 +703,47 @@ namespace Gauntlet
 		/// <returns></returns>
 		public bool TryReserveDevices()
 		{
-			// figure out how many of each device we need
-			Dictionary<UnrealDeviceTargetConstraint, int> RequiredDeviceTypes = new Dictionary<UnrealDeviceTargetConstraint, int>();
-			IEnumerable<UnrealSessionRole> RolesNeedingDevices = SessionRoles.Where(R => !R.IsNullRole());
-
-			// Get a count of the number of devices required for each platform
-			RolesNeedingDevices.ToList().ForEach(C =>
-			{
-				if (!RequiredDeviceTypes.ContainsKey(C.Constraint))
-				{
-					RequiredDeviceTypes[C.Constraint] = 0;
-				}
-				RequiredDeviceTypes[C.Constraint]++;
-			});
-
-
-			if (UnrealDeviceReservation.ReservedDevices != null && UnrealDeviceReservation.ReservedDevices.Count > 0
-				&& ShouldRetainDevices)
+			if(ShouldRetainDevices && HasAcquiredDevices())
 			{
 				return true;
 			}
-			else
+
+			// figure out how many of each device we need
+			Dictionary<UnrealDeviceTargetConstraint, int> RequiredDeviceTypes = new Dictionary<UnrealDeviceTargetConstraint, int>();
+			IEnumerable<UnrealSessionRole> RolesThatRequireDevice = SessionRoles.Where(R => !R.IsNullRole());
+
+			// Get a count of the number of devices required for each platform
+			foreach(UnrealSessionRole Role in RolesThatRequireDevice)
 			{
-				return UnrealDeviceReservation.TryReserveDevices(RequiredDeviceTypes, RolesNeedingDevices.Count());
+				if(RequiredDeviceTypes.ContainsKey(Role.Constraint))
+				{
+					++RequiredDeviceTypes[Role.Constraint];
+				}
+				else
+				{
+					RequiredDeviceTypes.Add(Role.Constraint, 1);
+				}
 			}
+
+			return UnrealDeviceReservation.TryReserveDevices(RequiredDeviceTypes, RolesThatRequireDevice.Count());
+		}
+
+		public bool TryReserveDevices(int Attempts)
+		{
+			for (; Attempts > 0; --Attempts)
+			{
+				if(Globals.CancelSignalled || TryReserveDevices())
+				{
+					return true;
+				}
+				else
+				{
+					Thread.Sleep(1000 * DeviceReservationRetryTime);
+				}
+			}
+
+			Log.Error("Failed to reserve devices after {Attempts}", Attempts);
+			return false;
 		}
 
 		/// <summary>
@@ -715,6 +772,526 @@ namespace Gauntlet
 		/// </summary>
 		/// <returns></returns>
 		public UnrealSessionInstance LaunchSession()
+		{
+			if(!Globals.Params.ParseParam("ExperimentalLaunchFlow"))
+			{
+				return Legacy_LaunchSession();
+			}
+
+			// Clear any existing session from a previous iteration
+			SessionInstance = null;
+
+			// When launching, issues with devices may be encountered.
+			// When these issues occur, those devices will be marked as problem devices and returned to the pool.
+			// A new set of devices will then be reserved and another attempt at launching the processes will be made.
+			// If LaunchSession() fails LaunchSessionAttempts amount of times, an exception is thrown.
+			for (int RemainingAttempts = LaunchSessionAttempts; RemainingAttempts > 0; --RemainingAttempts)
+			{
+				// Reserve devices, if needed
+				if (!TryReserveDevices(DeviceReservationAttempts))
+				{
+					// If device reservation fails, the device pool cannot support this launch.
+					DevicePool.Instance.ReportDeviceReservationState();
+					throw new AutomationException("Failed to acquire all devices for launch. See above for details.");
+				}
+
+				if(Globals.CancelSignalled)
+				{
+					return null;
+				}
+
+				if(!TryAssignDevicesToRoles())
+				{
+					// If device assignment fails, reservations were likely deleted at an unexpected time.
+					ReleaseSessionDevices();
+					continue;
+				}
+
+				// All roles should now be assigned a device.
+				// Install necessary builds, clear stale test artifacts, and copy any additional files
+				try
+				{
+					ReadyDevicesForSession();
+				}
+				catch (Exception Ex)
+				{
+					if(IsOutOfSpaceException(Ex))
+					{
+						RemainingAttempts = 0;
+						ReleaseSessionDevices();
+						continue;
+					}
+					else if (RemainingAttempts > 1)
+					{
+						Log.Info("A new device will be selected and another attempt at launching session will be made.");
+					}
+
+					ReleaseProblemDevices();
+					continue;
+				}
+
+				if (Globals.CancelSignalled)
+				{
+					ReleaseSessionDevices();
+					return null;
+				}
+
+				// All roles should now be assigned device with an associated IAppInstall.
+				// Launch all the processes!
+				try
+				{
+					SessionInstance = LaunchProcesses();
+				}
+				catch
+				{
+					if (RemainingAttempts > 1)
+					{
+						Log.Info("A new device will be selected and another attempt at launching session will be made.");
+					}
+
+					ReleaseProblemDevices();
+					continue;
+				}
+
+				if (Globals.CancelSignalled)
+				{
+					ReleaseSessionDevices();
+					return null;
+				}
+
+				return SessionInstance;
+			}
+
+			return null;
+		}
+
+		/// <summary>
+		/// Restarts the current session (if any)
+		/// </summary>
+		/// <returns></returns>
+		public UnrealSessionInstance RestartSession()
+		{
+			ShutdownSession();
+
+			// AG-TODO - want to preserve device reservations here...
+
+			return LaunchSession();
+		}
+
+		///<summary>
+		/// Shuts down any running apps
+		/// </summary>
+		public void ShutdownInstance()
+		{
+			if (SessionInstance != null)
+			{
+				SessionInstance.Dispose();
+				SessionInstance = null;
+			}
+		}
+
+		/// <summary>
+		/// Shuts down the current session (if any)
+		/// </summary>
+		/// <returns></returns>
+		public void ShutdownSession()
+		{
+			ShutdownInstance();
+
+			if (!ShouldRetainDevices)
+			{
+				ReleaseSessionDevices();
+			}
+		}
+
+		public void ReleaseSessionDevices()
+		{
+			// Terminate any running apps
+			if (SessionInstance != null && SessionInstance.RunningRoles != null)
+			{
+				foreach (UnrealSessionInstance.RoleInstance RunningRole in SessionInstance.RunningRoles)
+				{
+					Log.Info("Shutting down {0}", RunningRole.AppInstance.Device);
+					RunningRole.AppInstance.Kill();
+					RunningRole.AppInstance.Device.Disconnect();
+				}
+			}
+
+			if (UnrealDeviceReservation == null)
+			{
+				return;
+			}
+
+			UnrealDeviceReservation.ReleaseDevices();
+
+			RolesToDevices.Clear();
+			RolesToConfigs.Clear();
+			RolesToInstalls.Clear();
+		}
+
+		public void ReleaseProblemDevices()
+		{
+			// Terminate any running apps
+			if (SessionInstance != null && SessionInstance.RunningRoles != null)
+			{
+				foreach (UnrealSessionInstance.RoleInstance RunningRole in SessionInstance.RunningRoles.Where(Role => Role.AppInstance != null))
+				{
+					Log.Info("Shutting down {0}", RunningRole.AppInstance.Device);
+					RunningRole.AppInstance.Kill();
+					RunningRole.AppInstance.Device.Disconnect();
+				}
+			}
+
+			if (UnrealDeviceReservation == null)
+			{
+				return;
+			}
+
+			IEnumerable<ITargetDevice> ProblemDevices = UnrealDeviceReservation.ReleaseProblemDevices();
+			IEnumerable<UnrealSessionRole> RolesToClear = RolesToDevices.Keys.Where(Role => ProblemDevices.Contains(RolesToDevices[Role]));
+
+			Log.Info("Released problem devices...");
+			foreach(UnrealSessionRole Role in RolesToClear)
+			{
+				Log.Info("\t {Device}", RolesToDevices[Role].Name);
+				RolesToDevices.Remove(Role);
+				RolesToConfigs.Remove(Role);
+				RolesToInstalls.Remove(Role);
+			}
+		}
+
+		/// <summary>
+		/// Retrieves and saves all artifacts from the provided session role. Artifacts are saved to the destination path
+		/// </summary>
+		/// <param name="InContext"></param>
+		/// <param name="InRunningRole"></param>
+		/// <param name="DestinationArtifactPath"></param>
+		/// <returns></returns>
+		public UnrealRoleArtifacts SaveRoleArtifacts(UnrealTestContext InContext, UnrealSessionInstance.RoleInstance InRunningRole, string DestinationArtifactPath)
+		{
+			DirectoryInfo SourceDirectory = new DirectoryInfo(InRunningRole.AppInstance.ArtifactPath);
+			DirectoryInfo DestinationDirectory = new DirectoryInfo(DestinationArtifactPath);
+			DestinationDirectory.Create();
+
+			// Whether this is a Dummy, Client, Server, Editor, etc
+			string RoleName = (InRunningRole.Role.IsDummy() ? "Dummy" : "") + InRunningRole.Role.RoleType.ToString();
+
+			// We only want to move artifacts for editor data if there was a crash on a buildmachine.
+			// Also, don't move artifacts in dev mode, because peoples saved data could be huuuuuuuge!
+			bool IsDevBuild = InContext.TestParams.ParseParam("dev");
+			bool IsEditorBuild = InRunningRole.Role.RoleType.UsesEditor();
+			bool IsBuildMachine = CommandUtils.IsBuildMachine;
+			bool SkipArchivingAssets = IsDevBuild || (IsEditorBuild && (IsBuildMachine == false || InRunningRole.AppInstance.ExitCode == 0));
+			bool bRetainArtifacts = InContext.TestParams.ParseParam("RetainDeviceArtifacts");
+
+			// Check if we should copy artifacts
+			if (!SkipArchivingAssets)
+			{
+				if (SourceDirectory.Exists)
+				{
+					// If a PersistentDownloadDirectory exists in the saved folder, delete it.
+					foreach (DirectoryInfo SubDirectory in SourceDirectory.EnumerateDirectories("*", SearchOption.AllDirectories))
+					{
+						if (SubDirectory.Name.Equals(EIntendedBaseCopyDirectory.PersistentDownloadDir.ToString(), StringComparison.OrdinalIgnoreCase))
+						{
+							try
+							{
+								SubDirectory.Delete(true);
+							}
+							catch(Exception Exception)
+							{
+								Log.Info("Encountered a {Exception} when attempting to delete PersistentDownloadDirectory {Directory}. The PDD will be present in artifacts", Exception, SubDirectory);
+							}
+							break;
+						}
+					}
+
+					// Perform the copy
+					try
+					{
+						SystemHelpers.CopyDirectory(SourceDirectory.FullName, DestinationDirectory.FullName, SystemHelpers.CopyOptions.Default, TruncateLongPathFilter);
+					}
+					catch(Exception Exception)
+					{
+						bRetainArtifacts = true;
+						Log.Warning("Encountered an {Exception} when copying saved artifacts from {SourceDirectory} to {DestinationDirectory}. " +
+							"Artifacts will not be saved locally, but the source artifacts will not be deleted.", Exception, SourceDirectory, DestinationDirectory);
+					}
+
+					// By default we delete the source artifacts, but we keep them if requested
+					if (!bRetainArtifacts)
+					{
+						// Account for any read-only files.
+						void SetAttributesNormal(DirectoryInfo Directory)
+						{
+							foreach(FileInfo File in Directory.GetFiles())
+							{
+								File.Attributes = FileAttributes.Normal;
+							}
+							foreach(DirectoryInfo SubDirectory in Directory.GetDirectories())
+							{
+								SetAttributesNormal(SubDirectory);
+							}
+						};
+						SetAttributesNormal(SourceDirectory);
+						try
+						{
+							SourceDirectory.Delete(true);
+						}
+						catch(Exception Exception)
+						{
+							Log.Info("Encountered an {Exception} when deleting source artifacts at {SourceDirectory}. Artifacts will remain on the device.", Exception, SourceDirectory);
+						}
+					}
+				}
+				else
+				{
+					Log.Info("Unable to find source artifact directory {SourceDirectory}", SourceDirectory.FullName);
+				}
+			}
+			else
+			{
+				if (IsEditorBuild)
+				{
+					Log.Info("Skipping archival of assets for editor {Role}", RoleName);
+				}
+				else if (IsDevBuild)
+				{
+					Log.Info("Skipping archival of assets for dev build");
+				}
+			}
+
+			// Next, move over any additional artifacts that a role requested
+			foreach (EIntendedBaseCopyDirectory AdditionalDirectory in InRunningRole.Role.AdditionalArtifactDirectories)
+			{
+				Dictionary<EIntendedBaseCopyDirectory, string> PlatformMappings = InRunningRole.AppInstance.Device.GetPlatformDirectoryMappings();
+				if (PlatformMappings.ContainsKey(AdditionalDirectory))
+				{
+					DirectoryInfo AdditionalSourceDirectory = new DirectoryInfo(PlatformMappings[AdditionalDirectory]);
+					if (AdditionalSourceDirectory.Exists)
+					{
+						string TargetDirectory = Path.Combine(DestinationDirectory.FullName, AdditionalSourceDirectory.Name);
+
+						try
+						{
+							SystemHelpers.CopyDirectory(AdditionalSourceDirectory.FullName, TargetDirectory);
+						}
+						catch(Exception Exception)
+						{
+							Log.Warning("Encountered an {Exception} when trying to copy additional artifact directory {BaseCopyDirectory}" +
+								" from {AdditionalSourceDirectory} to {TargetDirectory}.",
+								Exception, AdditionalDirectory, AdditionalDirectory, TargetDirectory);
+						}
+					}
+				}
+			}
+
+			// Now write the role's log file
+			string ArtifactLogFilePath = string.Empty;
+			int MaxLogSize = 1024 * 1024 * 1024;
+			int LogSize = InRunningRole.AppInstance.StdOut.Length * sizeof(char);
+			bool bIgnoreMaxSize = Globals.Params.ParseParam("NoMaxLogSize");
+			if (!bIgnoreMaxSize && LogSize > MaxLogSize)
+			{
+				Log.Warning("The process log for Role {0} was over 1 GB in size. A log artifact will not be generated for this process.", InRunningRole.ToString());
+			}
+			else
+			{
+				try
+				{
+					ArtifactLogFilePath = Path.Combine(DestinationDirectory.FullName, RoleName + "Output.log");
+
+					// Write a short gauntlet blurb before the entire process log
+					using (StreamWriter Writer = new(ArtifactLogFilePath, false))
+					{
+						Writer.WriteLine("------ Gauntlet Test ------");
+						Writer.WriteLine(string.Format("Role: {0}\r\n", InRunningRole.Role));
+						Writer.WriteLine(string.Format("Automation Command: {0}\r\n", Environment.CommandLine));
+						Writer.WriteLine("---------------------------");
+						Writer.Write(UnrealLogParser.SanitizeLogText(InRunningRole.AppInstance.StdOut));
+					}
+					Log.Info($"Wrote {RoleName} Log to {ArtifactLogFilePath}");
+
+					// On build machines, copy all role logs to Horde.
+					if (IsBuildMachine)
+					{
+						string HordeLogFilePath = Path.Combine(CommandUtils.CmdEnv.LogFolder, RoleName + "Output.log");
+						File.Copy(ArtifactLogFilePath, HordeLogFilePath, true);
+					}
+				}
+				catch (Exception Ex)
+				{
+					string Message = "Encountered an {0} when attempting to write the {1} process log. The log may contain malformed encoding and will not be present on horde. {2}";
+					Log.Warning(Message, Ex.GetType().Name, RoleName, Ex.Message);
+				}
+			}
+
+			bool bRetainCrashdumps = InContext.TestParams.ParseParam("RetainCrashDumps");
+			if (InRunningRole.AppInstance.Device.CopyCrashDumps())
+			{
+				DirectoryInfo CrashDumpDirectory = new DirectoryInfo(InRunningRole.AppInstance.Device.CrashDumpPath);
+				if (CrashDumpDirectory.Exists)
+				{
+					string DesinationCrashDumpDirectory = Path.Combine(DestinationDirectory.FullName, "CrashDumps");
+
+					try
+					{
+						Log.Info("Copying crash dumps from {0} to {1}", CrashDumpDirectory.FullName, DesinationCrashDumpDirectory);
+						SystemHelpers.CopyDirectory(CrashDumpDirectory.FullName, DesinationCrashDumpDirectory);
+					}
+					catch (Exception Exception)
+					{
+						bRetainCrashdumps = true;
+						Log.Warning("Encountered an {Exception} when copying crash dumps from {SourceDirectory} to {DestinationDirectory}. " +
+							"Crash dumps will not be saved locally, but the source crash dumps will not be deleted.", Exception, CrashDumpDirectory, DesinationCrashDumpDirectory);
+					}
+
+					if (!bRetainCrashdumps)
+					{
+						try
+						{
+							CrashDumpDirectory.Delete(true);
+						}
+						catch (Exception Exception)
+						{
+							Log.Info("Encountered an {Exception} when deleting source crash dumps at {SourceDirectory}. Crash dumps will remain on the device.", Exception, SourceDirectory);
+						}
+					}
+				}
+			}
+
+			// Convert any screenshots to jpegs and create a gif when not running a server
+			if (!InRunningRole.Role.RoleType.IsServer())
+			{
+				try
+				{
+					DirectoryInfo ScreenshotDirectory = new(Path.Combine(DestinationDirectory.FullName, "Screenshots"));
+					if (ScreenshotDirectory.Exists)
+					{
+						foreach (DirectoryInfo ScreenshotSubdirectory in ScreenshotDirectory.EnumerateDirectories())
+						{
+							if (ScreenshotSubdirectory.GetFiles().Any())
+							{
+								Log.Info("Downsizing and gifying session images at {0}", ScreenshotSubdirectory.FullName);
+
+								// Downsize first so gif-step is quicker and takes less resources.
+								Utils.Image.ConvertImages(ScreenshotSubdirectory.FullName, ScreenshotSubdirectory.FullName, "jpg", true);
+
+								string GifPath = GenerateNotTakenFilePath(Path.Combine(DestinationDirectory.FullName, RoleName + "Test.gif"));
+								if (Utils.Image.SaveImagesAsGif(ScreenshotSubdirectory.FullName, GifPath))
+								{
+									Log.Info("Saved gif to {0}", GifPath);
+								}
+							}
+						}
+					}
+				}
+				catch (Exception Ex)
+				{
+					Log.Info("Failed to downsize and gif-ify images! {0}", Ex.Message);
+				}
+			}
+
+			// TODO REMOVEME- this should go elsewhere, likely a util that can be called or inserted by relevant test nodes.
+			SavePSOs(InContext, InRunningRole, DestinationDirectory.FullName);
+			// END REMOVEME
+
+			// Save the Artifact filepath
+			return new UnrealRoleArtifacts(InRunningRole.Role, InRunningRole.AppInstance, DestinationDirectory.FullName, ArtifactLogFilePath);
+		}
+
+		/// <summary>
+		/// Saves all artifacts from the provided session to the specified output path.
+		/// </summary>
+		/// <param name="Context"></param>
+		/// <param name="TestInstance"></param>
+		/// <param name="OutputPath"></param>
+		/// <returns></returns>
+		public IEnumerable<UnrealRoleArtifacts> SaveRoleArtifacts(UnrealTestContext Context, UnrealSessionInstance TestInstance, string OutputPath)
+		{
+			int DummyClientCount = 0;
+			Dictionary<UnrealTargetRole, int> RoleCounts = new Dictionary<UnrealTargetRole, int>();
+			List<UnrealRoleArtifacts> AllArtifacts = new List<UnrealRoleArtifacts>();
+
+			foreach (UnrealSessionInstance.RoleInstance App in TestInstance.RunningRoles)
+			{
+				string RoleName = (App.Role.IsDummy() ? "Dummy" : "") + App.Role.RoleType.ToString();
+				string FolderName = RoleName;
+
+				int RoleCount = 1;
+
+				if (App.Role.IsDummy())
+				{
+					DummyClientCount++;
+					RoleCount = DummyClientCount;
+				}
+				else
+				{
+					if (!RoleCounts.ContainsKey(App.Role.RoleType))
+					{
+						RoleCounts.Add(App.Role.RoleType, 1);
+					}
+					else
+					{
+						RoleCounts[App.Role.RoleType]++;
+					}
+
+					RoleCount = RoleCounts[App.Role.RoleType];
+				}
+
+				if (RoleCount > 1)
+				{
+					FolderName += string.Format("_{0:00}", RoleCount);
+				}
+
+				string DestPath = Path.Combine(OutputPath, FolderName);
+
+				if (!App.Role.IsNullRole() && !App.Role.InstallOnly)
+				{
+					Log.VeryVerbose("Calling SaveRoleArtifacts, Role: {0}  Artifact Path: {1}", App.ToString(), App.AppInstance.ArtifactPath);
+					UnrealRoleArtifacts Artifacts = null;
+					ITargetDevice device = App.AppInstance.Device;
+					IDeviceUsageReporter.RecordStart(device.Name, device.Platform, IDeviceUsageReporter.EventType.SavingArtifacts);
+					try
+					{
+						Artifacts = SaveRoleArtifacts(Context, App, DestPath);
+					}
+					catch (Exception SaveArtifactsException)
+					{
+						// Caught an exception -> report failure
+						IDeviceUsageReporter.RecordEnd(device.Name, device.Platform, IDeviceUsageReporter.EventType.SavingArtifacts, IDeviceUsageReporter.EventState.Failure);
+
+						// Retry once only, after rebooting device, if artifacts couldn't be saved.
+						if (SaveArtifactsException.Message.Contains("A retry should be performed"))
+						{
+							Log.Info("Rebooting device and retrying save role artifacts once.");
+							App.AppInstance.Device.Reboot();
+							Artifacts = SaveRoleArtifacts(Context, App, DestPath);
+						}
+						else
+						{
+							// Pass exception to the surrounding try/catch in UnrealTestNode while preserving the original callstack
+							throw;
+						}
+					}
+					// Did not catch -> successful reporting
+					IDeviceUsageReporter.RecordEnd(device.Name, device.Platform, IDeviceUsageReporter.EventType.SavingArtifacts, IDeviceUsageReporter.EventState.Success);
+
+					if (Artifacts != null)
+					{
+						AllArtifacts.Add(Artifacts);
+					}
+				}
+				else
+				{
+					Log.Verbose("Skipping SaveRoleArtifacts for Null Role: {0}", App.ToString());
+				}
+			}
+
+			return AllArtifacts;
+		}
+
+		private UnrealSessionInstance Legacy_LaunchSession()
 		{
 			SessionInstance = null;
 
@@ -776,7 +1353,7 @@ namespace Gauntlet
 					if (Role.IsNullRole() == false)
 					{
 						Device = DevicesToInstallOn.Where(D => D.IsConnected && D.Platform == Role.Platform
-															&& ( Role.Constraint.IsIdentity() || DevicePool.Instance.GetConstraint(D) == Role.Constraint)).First();
+															&& (Role.Constraint.IsIdentity() || DevicePool.Instance.GetConstraint(D) == Role.Constraint)).First();
 
 						DevicesToInstallOn = DevicesToInstallOn.Where(D => D != Device);
 					}
@@ -790,75 +1367,14 @@ namespace Gauntlet
 					// create a config from the build source (this also applies the role options)
 					UnrealAppConfig AppConfig = BuildSource.CreateConfiguration(Role, OtherRoles);
 
-					//Verify the device's OS version, and update if necessary
-					if(Globals.Params.ParseParam("TryFirmwareUpdate") && AppConfig.Platform != null)
-					{
-						List<IPlatformFirmwareHandler> PlatformFirmwareHandlers = Gauntlet.Utils.InterfaceHelpers.FindImplementations<IPlatformFirmwareHandler>(true).ToList();
-
-						PlatformFirmwareHandlers = PlatformFirmwareHandlers.Where(FC => FC.CanSupportPlatform((UnrealTargetPlatform)AppConfig.Platform)
-							&& FC.CanSupportProject(AppConfig.ProjectName)).ToList();
-						if (PlatformFirmwareHandlers.Count > 0)
-						{
-							IPlatformFirmwareHandler SelectedFirmwareHandler = PlatformFirmwareHandlers.First();
-							Log.Verbose("Found IPlatformFirmwareHandler {0}", SelectedFirmwareHandler.GetType().Name);
-							string DesiredFirmware = string.Empty;
-							if (!SelectedFirmwareHandler.GetDesiredVersion((UnrealTargetPlatform)AppConfig.Platform, AppConfig.ProjectName, out DesiredFirmware))
-							{
-								Log.Info("Failed to get desired os version for project {0} for platform {1}, skipping firmware check",
-									AppConfig.ProjectName, AppConfig.Platform);
-							}
-							else
-							{
-								Log.Info("Desired Firmware for project {0} and platform {1}: {2}", AppConfig.ProjectName, AppConfig.Platform, DesiredFirmware);
-
-								string CurrentFirmware = string.Empty;
-								if (!SelectedFirmwareHandler.GetCurrentVersion(Device, out CurrentFirmware))
-								{
-									Log.Info("Failed to get current os version for device {0} for role {1}, skipping firmware check", Device, Role);
-								}
-								else
-								{
-									Log.Info("Current Firmware for device {0}: {1}", Device, CurrentFirmware);
-
-									if(CurrentFirmware.Equals(DesiredFirmware))
-									{
-										Log.Info("Device {0} os version match!  No need to update", Device);
-									}
-									else
-									{
-										Log.Info("Device {0} os version out of date!  Updating to version {1}", Device, DesiredFirmware);
-
-										if(SelectedFirmwareHandler.UpdateDeviceFirmware(Device, DesiredFirmware))
-										{
-											Log.Info("Successfully updated device {0} to os version {1}", Device, DesiredFirmware);
-										}
-										else
-										{
-											Log.Info("Failed to update os of device {0} for role {1}.  Will retry with new device", Device, Role);
-											UnrealDeviceReservation.MarkProblemDevice(Device);
-											InstallSuccess = false;
-											break;
-										}
-									}
-								}
-							}
-						}
-						else
-						{
-							Log.Info("Unable to locate any IPlatformFirmwareCheckers that support Project {0} and platform {1}, skipping firmware check",
-								AppConfig.ProjectName, AppConfig.Platform);
-						}
-					}
-
 					// todo - should this be elsewhere?
 					AppConfig.Sandbox = Sandbox;
 
 					IAppInstall Install = null;
-					bool bReinstallPerPass = Globals.Params.ParseParam("ReinstallPerPass");
-					if (RolesToInstalls == null || !RolesToInstalls.ContainsKey(Role) || bReinstallPerPass)
+					if (RolesToInstalls == null || !RolesToInstalls.ContainsKey(Role) || ReinstallPerPass)
 					{
 						// Tag the device for report result
-						if(BuildHostPlatform.Current.Platform != Device.Platform)
+						if (BuildHostPlatform.Current.Platform != Device.Platform)
 						{
 							AppConfig.CommandLineParams.Add("DeviceTag", Device.Name);
 						}
@@ -867,23 +1383,13 @@ namespace Gauntlet
 						IDeviceUsageReporter.RecordStart(Device.Name, Device.Platform, IDeviceUsageReporter.EventType.Install, IDeviceUsageReporter.EventState.Success, BuildSource.BuildName);
 						try
 						{
-							if ((Role.Options as UnrealTestConfiguration).VerifyLogin && Device is IOnlineServiceLogin)
-							{
-								Log.Info("\nVerifying device login...");
-								if (!(Device as IOnlineServiceLogin).VerifyLogin())
-								{
-									throw new AutomationException("Unable to secure login to an online platform account!");
-								}
-								Log.Info("Success! User signed-in.\n");
-							}
-
 							Install = Device.InstallApplication(AppConfig);
 							IDeviceUsageReporter.RecordEnd(Device.Name, Device.Platform, IDeviceUsageReporter.EventType.Install, IDeviceUsageReporter.EventState.Success);
 						}
-						catch (System.Exception Ex)
+						catch (Exception Ex)
 						{
 							// Warn, ignore the device, and do not continue
-							string ErrorMessage = string.Format("Encountered error setting up device {0} for role {1}. {2}. Will retry with new device", Device, Role, Ex);
+							string ErrorMessage = string.Format("Encountered error setting up device {0} for role {1}. {2}", Device, Role, Ex);
 							if (ErrorMessage.Contains("not enough space"))
 							{
 								Log.Error(KnownLogEvents.Gauntlet_DeviceEvent, ErrorMessage);
@@ -915,11 +1421,7 @@ namespace Gauntlet
 
 						InstallsToRoles[Install] = Role;
 
-						if(RolesToInstalls == null)
-						{
-							RolesToInstalls = new Dictionary<UnrealSessionRole, IAppInstall>();
-						}
-						if (!bReinstallPerPass)
+						if (ReinstallPerPass)
 						{
 							RolesToInstalls[Role] = Install;
 						}
@@ -993,7 +1495,7 @@ namespace Gauntlet
 							Log.Warning(KnownLogEvents.Gauntlet_DeviceEvent, "Failed to start build on {Name}. Marking as problem device and retrying with new set", CurrentInstall.Device);
 
 							// terminate anything that's running
-							foreach (UnrealSessionInstance.RoleInstance RunningRole in AllRoles.Where(X => X.AppInstance != null) )
+							foreach (UnrealSessionInstance.RoleInstance RunningRole in AllRoles.Where(X => X.AppInstance != null))
 							{
 								Log.Info("Shutting down {0}", RunningRole.AppInstance.Device);
 								RunningRole.AppInstance.Kill();
@@ -1027,347 +1529,242 @@ namespace Gauntlet
 		}
 
 		/// <summary>
-		/// Restarts the current session (if any)
+		/// Returns true if the number of reserved devices matches the number on non-null session roles
 		/// </summary>
-		/// <returns></returns>
-		public UnrealSessionInstance RestartSession()
+		private bool HasAcquiredDevices()
 		{
-			ShutdownSession();
-
-			// AG-TODO - want to preserve device reservations here...
-
-			return LaunchSession();
-		}
-
-		///<summary>
-		/// Shuts down any running apps
-		/// </summary>
-		public void ShutdownInstance()
-		{
-			if (SessionInstance != null)
-			{
-				SessionInstance.Dispose();
-				SessionInstance = null;
-			}
+			IEnumerable<UnrealSessionRole> RolesThatRequireDevice = SessionRoles.Where(Role => !Role.IsNullRole());
+			return UnrealDeviceReservation != null
+				&& UnrealDeviceReservation.ReservedDevices != null
+				&& UnrealDeviceReservation.ReservedDevices.Count() == RolesThatRequireDevice.Count();
 		}
 
 		/// <summary>
-		/// Shuts down the current session (if any)
+		/// Returns true if the provided session role has not yet been assigned a device
 		/// </summary>
-		/// <returns></returns>
-		public void ShutdownSession()
+		private bool RoleNeedsDevice(UnrealSessionRole Role)
 		{
-			ShutdownInstance();
-
-			if (!ShouldRetainDevices)
-			{
-				ReleaseSessionDevices();
-			}
-		}
-
-		public void ReleaseSessionDevices()
-		{
-			UnrealDeviceReservation.ReleaseDevices();
-			if (RolesToInstalls != null)
-			{
-				RolesToInstalls.Clear();
-			}
+			return !(RolesToDevices.ContainsKey(Role) && RolesToDevices[Role] != null);
 		}
 
 		/// <summary>
-		/// Retrieves and saves all artifacts from the provided session role. Artifacts are saved to the destination path 
+		/// Returns true if the provided session role has not yet had an install performed on it's assigned device
 		/// </summary>
-		/// <param name="InContext"></param>
-		/// <param name="InRunningRole"></param>
-		/// <param name="InDestArtifactPath"></param>
-		/// <returns></returns>
-		public UnrealRoleArtifacts SaveRoleArtifacts(UnrealTestContext InContext, UnrealSessionInstance.RoleInstance InRunningRole, string InDestArtifactPath)
+		private bool RoleNeedsInstall(UnrealSessionRole Role)
 		{
-			bool IsServer = InRunningRole.Role.RoleType.IsServer();
-			string RoleName = (InRunningRole.Role.IsDummy() ? "Dummy" : "") + InRunningRole.Role.RoleType.ToString();
-			UnrealTargetPlatform? Platform = InRunningRole.Role.Platform;
-			string RoleConfig = InRunningRole.Role.Configuration.ToString();
-
-			if (!Directory.Exists(InDestArtifactPath))
-			{
-				Directory.CreateDirectory(InDestArtifactPath);
-			}
-
-			bool IsDevBuild = InContext.TestParams.ParseParam("dev");
-			bool IsEditorBuild = InRunningRole.Role.RoleType.UsesEditor();
-			bool IsBuildMachine = CommandUtils.IsBuildMachine;
-
-			// Unless there was a crash on a builder don't archive editor data (there can be a *lot* of stuff in there).
-			bool SkipArchivingAssets = IsDevBuild ||
-										(IsEditorBuild && 
-											(IsBuildMachine == false || InRunningRole.AppInstance.ExitCode == 0)
-										);
-
-			DirectoryInfo DestSavedDirInfo = new DirectoryInfo(InDestArtifactPath);
-			// save the contents of the saved directory
-			string SourceSavedDir = InRunningRole.AppInstance.ArtifactPath;
-			
-			string ArtifactLogFilePath = String.Empty;
-
-			// Get the size of the log to determine if it should be saved under a certain size
-			int MaxLogSize = 1024 * 1024 * 1024;
-			int LogSize = InRunningRole.AppInstance.StdOut.Length * sizeof(char);
-			bool bIgnoreMaxSize = Globals.Params.ParseParam("NoMaxLogSize");
-
-			if (!bIgnoreMaxSize && LogSize > MaxLogSize)
-			{
-				Log.Warning("The process log for Role {0} was over 1 GB in size. A log artifact will not be generated for this process.", InRunningRole.ToString());
-			}
-			else
-			{
-				try
-				{
-					ArtifactLogFilePath = Path.Combine(DestSavedDirInfo.FullName, RoleName + "Output.log");
-
-					// save the output from TTY
-					using (StreamWriter Writer = new(ArtifactLogFilePath, false))
-					{
-						Writer.WriteLine("------ Gauntlet Test ------");
-						Writer.WriteLine(string.Format("Role: {0}\r\n", InRunningRole.Role));
-						Writer.WriteLine(string.Format("Automation Command: {0}\r\n", Environment.CommandLine));
-						Writer.WriteLine("---------------------------");
-						Writer.Write(InRunningRole.AppInstance.StdOut);
-					}
-					Log.Info($"Wrote {RoleName} Log to {ArtifactLogFilePath}");
-					// On build machines, copy all role logs to Horde.
-					if (IsBuildMachine)
-					{
-						string HordeLogFilePath = Path.Combine(CommandUtils.CmdEnv.LogFolder, RoleName + "Output.log");
-						File.Copy(ArtifactLogFilePath, HordeLogFilePath, true);
-					}
-				}
-				catch (Exception Ex)
-				{
-					string Message = "Encountered an {0} when attempting to write the {1} process log. The log may contain malformed encoding and will not be present on horde. {2}";
-					Log.Warning(Message, Ex.GetType().Name, RoleName, Ex.Message);
-				}
-			}
-
-			if (IsServer == false)
-			{
-				// gif-ify and jpeg-ify any screenshots
-				try
-				{
-					string ScreenshotPath = Path.Combine(SourceSavedDir, "Screenshots", Platform.ToString()).ToLower();
-
-					// Check as early as possible for screenshots before creating a temp folder to copy
-					if (Directory.Exists(ScreenshotPath) && Directory.GetFiles(ScreenshotPath).Any())
-					{
-						string TempScreenshotPath = Path.GetTempPath();
-						if (!Directory.Exists(TempScreenshotPath))
-						{
-							Log.Info("Creating temp directory {0}", TempScreenshotPath);
-							Directory.CreateDirectory(TempScreenshotPath);
-						}
-
-						Log.Info("Downsizing and gifying session images at {0}", ScreenshotPath);
-
-						// downsize first so gif-step is quicker and takes less resoruces.
-						Utils.Image.ConvertImages(ScreenshotPath, TempScreenshotPath, "jpg", true);
-
-						string GifPath = Path.Combine(DestSavedDirInfo.FullName, RoleName + "Test.gif");
-						if (Utils.Image.SaveImagesAsGif(TempScreenshotPath, GifPath))
-						{
-							Log.Info("Saved gif to {0}", GifPath);
-						}
-					}
-				}
-				catch (Exception Ex)
-				{
-					Log.Info("Failed to downsize and gif-ify images! {0}", Ex.Message);
-				}
-			}
-
-			// don't archive data in dev mode, because peoples saved data could be huuuuuuuge!
-			if (SkipArchivingAssets)
-			{
-				if (IsEditorBuild)
-				{
-					Log.Info("Skipping archival of assets for editor {0}", RoleName);
-				}
-				else if (IsDevBuild)
-				{
-					Log.Info("Skipping archival of assets for dev build");
-				}
-			}
-			else
-			{
-				LogLevel OldLevel = Log.Level;
-				Log.Level = LogLevel.Normal;
-
-				if (Directory.Exists(SourceSavedDir))
-				{
-					// Only Copy the artifacts we want
-					foreach (string SubDirectory in Directory.EnumerateDirectories(SourceSavedDir))
-					{
-						DirectoryInfo DirInfo = new DirectoryInfo(SubDirectory);
-
-						if (DirInfo.Name == EIntendedBaseCopyDirectory.PersistentDownloadDir.ToString())
-						{
-							// Do not store the PersistentDownloadDir when possible
-							continue;
-						}
-						
-						// Don't copy an empty directory when possible
-						if (Directory.EnumerateDirectories(SubDirectory).Any() || Directory.EnumerateFiles(SubDirectory).Any())
-						{
-							string FullyQualifiedDestPath = Utils.SystemHelpers.GetFullyQualifiedPath(Path.Combine(DestSavedDirInfo.FullName, DirInfo.Name));
-							Utils.SystemHelpers.CopyDirectory(DirInfo.FullName, FullyQualifiedDestPath, Utils.SystemHelpers.CopyOptions.Default, TruncateLongPathFilter);
-							Log.Info($"Archived artifact \\{DirInfo.Parent.Name}\\{DirInfo.Name}\\ to {FullyQualifiedDestPath}");
-						}
-					}
-
-					// Copy any lose files from the source
-					foreach (string SourceFile in Directory.EnumerateFiles(SourceSavedDir))
-					{
-						FileInfo SourceFileInfo = new FileInfo(SourceFile);
-						string FullyQualifiedDestPath = Utils.SystemHelpers.GetFullyQualifiedPath(Path.Combine(DestSavedDirInfo.FullName, SourceFileInfo.Name));
-						FileInfo DestInfo = new FileInfo(FullyQualifiedDestPath);
-
-						try
-						{
-							DestInfo = SourceFileInfo.CopyTo(DestInfo.FullName, overwrite:true);
-
-							// Clear attributes and set last write time
-							DestInfo.Attributes = FileAttributes.Normal;
-							DestInfo.LastWriteTime = SourceFileInfo.LastWriteTime;
-							Log.Info($"Archived {SourceFileInfo.Name} to {DestInfo.FullName}");
-						}
-						catch (IOException ex)
-						{
-							Log.Warning($"Archive of {SourceFileInfo.Name} to {DestInfo.FullName} FAILED: Skipping\n{ex.Message}");
-						}
-					}
-				}
-				else
-				{
-					Log.Info("Archive path '{0}' was not found!", SourceSavedDir);
-				}
-
-				Log.Level = OldLevel;
-			}
-
-			foreach (EIntendedBaseCopyDirectory ArtifactDir in InRunningRole.Role.AdditionalArtifactDirectories)
-			{
-				if (InRunningRole.AppInstance.Device.GetPlatformDirectoryMappings().ContainsKey(ArtifactDir))
-				{
-					string SourcePath = InRunningRole.AppInstance.Device.GetPlatformDirectoryMappings()[ArtifactDir];
-					var DirToCopy = new DirectoryInfo(SourcePath);
-					if (DirToCopy.Exists)
-					{
-						// Grab the final dir name to copy everything into, so everything does not go into the root artifact dir.
-						string IntendedCopyLocation = Path.Combine(DestSavedDirInfo.FullName, DirToCopy.Name);
-						Utils.SystemHelpers.CopyDirectory(SourcePath, Utils.SystemHelpers.GetFullyQualifiedPath(IntendedCopyLocation), Utils.SystemHelpers.CopyOptions.Default, TruncateLongPathFilter);
-					}
-				}
-			}
-
-			// TODO REMOVEME- this should go elsewhere, likely a util that can be called or inserted by relevant test nodes.
-			SavePSOs(InContext, InRunningRole, DestSavedDirInfo.FullName);
-			// END REMOVEME
-
-			UnrealLogParser LogParser = new UnrealLogParser(InRunningRole.AppInstance.StdOut);
-
-			// Save the Artifact filepath
-			return new UnrealRoleArtifacts(InRunningRole.Role, InRunningRole.AppInstance, DestSavedDirInfo.FullName, ArtifactLogFilePath, LogParser);
+			return !ReinstallPerPass
+				&& !(RolesToConfigs.ContainsKey(Role) && RolesToConfigs[Role] != null)
+				&& !(RolesToInstalls.ContainsKey(Role) && RolesToInstalls[Role] != null);
 		}
 
 		/// <summary>
-		/// Saves all artifacts from the provided session to the specified output path. 
+		/// Returns true if the provided target device matches the constraint requested by the session role
 		/// </summary>
-		/// <param name="Context"></param>
-		/// <param name="TestInstance"></param>
-		/// <param name="OutputPath"></param>
-		/// <returns></returns>
-		public IEnumerable<UnrealRoleArtifacts> SaveRoleArtifacts(UnrealTestContext Context, UnrealSessionInstance TestInstance, string OutputPath)
+		private bool DeviceMatchesRoleConstraint(UnrealSessionRole Role, ITargetDevice Device)
 		{
-			Dictionary<UnrealTargetRole, int> RoleCounts = new Dictionary<UnrealTargetRole, int>();
-			int DummyClientCount = 0;
+			bool bRoleMatchesConstraint = DevicePool.Instance.GetConstraint(Device) == Role.Constraint;
 
-			List<UnrealRoleArtifacts> AllArtifacts = new List<UnrealRoleArtifacts>();
+			return Device.IsConnected
+				&& Device.Platform == Role.Platform
+				&& Role.Constraint.IsIdentity() || bRoleMatchesConstraint;
+		}
 
-			foreach (UnrealSessionInstance.RoleInstance App in TestInstance.RunningRoles)
+		/// <summary>
+		/// From the existing reserved device pool, assign each role a device that matches it's requested constraint
+		/// This will cache a map of each role and the target device it's using in this UnrealSession
+		/// </summary>
+		private bool TryAssignDevicesToRoles()
+		{
+			// Order by constraint. This ensures roles with constraints have their devices selected first.
+			IEnumerable<UnrealSessionRole> RolesSortedByConstraint = SessionRoles.OrderBy(R => R.Constraint.IsIdentity() ? 1 : 0);
+
+			foreach (UnrealSessionRole Role in RolesSortedByConstraint)
 			{
-				string RoleName = (App.Role.IsDummy() ? "Dummy" : "") + App.Role.RoleType.ToString();
-				string FolderName = RoleName;
-
-				int RoleCount = 1;
-
-				if (App.Role.IsDummy())
+				if (RoleNeedsDevice(Role))
 				{
-					DummyClientCount++;
-					RoleCount = DummyClientCount;
-				}
-				else
-				{
-					if (!RoleCounts.ContainsKey(App.Role.RoleType))
+					ITargetDevice DeviceToAssign = null;
+
+					if (Role.IsNullRole())
 					{
-						RoleCounts.Add(App.Role.RoleType, 1);
+						DeviceToAssign = new TargetDeviceNull($"Null{Role.RoleType}");
 					}
 					else
 					{
-						RoleCounts[App.Role.RoleType]++;
-					}
-
-					RoleCount = RoleCounts[App.Role.RoleType];
-				}
-
-				
-				if (RoleCount > 1)
-				{
-					FolderName += string.Format("_{0:00}", RoleCount);
-				}
-
-				string DestPath = Path.Combine(OutputPath, FolderName);
-
-				if (!App.Role.IsNullRole() && !App.Role.InstallOnly)
-				{
-					Log.VeryVerbose("Calling SaveRoleArtifacts, Role: {0}  Artifact Path: {1}", App.ToString(), App.AppInstance.ArtifactPath);
-					UnrealRoleArtifacts Artifacts = null;
-					ITargetDevice device = App.AppInstance.Device;
-					IDeviceUsageReporter.RecordStart(device.Name, device.Platform, IDeviceUsageReporter.EventType.SavingArtifacts);
-					try
-					{
-						Artifacts = SaveRoleArtifacts(Context, App, DestPath);
-					}
-					catch (Exception SaveArtifactsException)
-					{
-						// Caught an exception -> report failure
-						IDeviceUsageReporter.RecordEnd(device.Name, device.Platform, IDeviceUsageReporter.EventType.SavingArtifacts, IDeviceUsageReporter.EventState.Failure);
-
-						// Retry once only, after rebooting device, if artifacts couldn't be saved.
-						if (SaveArtifactsException.Message.Contains("A retry should be performed"))
+						try
 						{
-							Log.Info("Rebooting device and retrying save role artifacts once.");
-							App.AppInstance.Device.Reboot();
-							Artifacts = SaveRoleArtifacts(Context, App, DestPath);
+							DeviceToAssign = UnrealDeviceReservation.ReservedDevices.Where(Device => DeviceMatchesRoleConstraint(Role, Device)).First();
+							IDeviceUsageReporter.RecordStart(DeviceToAssign.Name, DeviceToAssign.Platform, IDeviceUsageReporter.EventType.Device, IDeviceUsageReporter.EventState.Success);
 						}
-						else
+						catch (Exception Ex)
 						{
-							// Pass exception to the surrounding try/catch in UnrealTestNode while preserving the original callstack
-							throw;
+							Log.Warning("Failed to assign a reserved device to role {Role}. " +
+								"This usually means devices were unexpectedly released mid session\n{Exception}", Role, Ex);
+							return false;
 						}
 					}
-					// Did not catch -> successful reporting
-					IDeviceUsageReporter.RecordEnd(device.Name, device.Platform, IDeviceUsageReporter.EventType.SavingArtifacts, IDeviceUsageReporter.EventState.Success);
 
-					if (Artifacts != null)
-					{
-						AllArtifacts.Add(Artifacts);
-					}
-				}
-				else 
-				{
-					Log.Verbose("Skipping SaveRoleArtifacts for Null Role: {0}", App.ToString());
+					RolesToDevices.Add(Role, DeviceToAssign);
 				}
 			}
 
-			return AllArtifacts;
+			return true;
+		}
+
+		/// <summary>
+		/// Prepares each device for launch by performing the following
+		///		- Install builds
+		///		- Clean up old artifacts
+		///		- Copy additional files requested by a test
+		///		- Specific role configurations
+		///	This will create and cache both an UnrealAppConfig and an IAppInstall for future reference
+		/// </summary>
+		private void ReadyDevicesForSession()
+		{
+			foreach(UnrealSessionRole Role in SessionRoles)
+			{
+				UnrealAppConfig AppConfig = null;
+				ITargetDevice Device = RolesToDevices[Role];
+
+				if (Globals.CancelSignalled)
+				{
+					return;
+				}
+
+				try
+				{
+					if (RoleNeedsInstall(Role))
+					{
+						// Create the app config
+						IEnumerable<UnrealSessionRole> OtherRoles = SessionRoles.Where(Other => Other != Role);
+						AppConfig = BuildSource.CreateConfiguration(Role, OtherRoles);
+						AppConfig.Sandbox = Sandbox;
+						AppConfig.CommandLineParams.AddUnique("DeviceTag", Device.Name);
+						RolesToConfigs.Add(Role, AppConfig);
+
+						// Install the build
+						if (AppConfig.FullClean)
+						{
+							Log.Info("Fully cleaning device before install...");
+							Device.FullClean();
+						}
+
+						if (AppConfig.SkipInstall)
+						{
+							Log.Info("Skipping install due to SkipInstall");
+						}
+						else
+						{
+							// Telemetry
+							DateTimeStopwatch Stopwatch = DateTimeStopwatch.Start();
+							Log.Info("Installing {BuildName} of type {BuildType} to {Device}...", BuildSource.BuildName, AppConfig.Build.GetType().Name, Device);
+							IDeviceUsageReporter.RecordStart(Device.Name, Device.Platform, IDeviceUsageReporter.EventType.Install, IDeviceUsageReporter.EventState.Success, BuildSource.BuildName);
+
+							try
+							{
+								Device.InstallBuild(AppConfig);
+								IDeviceUsageReporter.RecordEnd(Device.Name, Device.Platform, IDeviceUsageReporter.EventType.Install, IDeviceUsageReporter.EventState.Success);
+								Log.Info("Installation completed in {InstallTime}", GetInstallTime(Stopwatch.ElapsedTime));
+							}
+							catch
+							{
+								IDeviceUsageReporter.RecordEnd(Device.Name, Device.Platform, IDeviceUsageReporter.EventType.Install, IDeviceUsageReporter.EventState.Failure);
+								throw;
+							}
+						}
+
+						IAppInstall Install = Device.CreateAppInstall(AppConfig);
+						RolesToInstalls.Add(Role, Install);
+					}
+
+					Device.CleanArtifacts();
+					Device.CopyAdditionalFiles(AppConfig.FilesToCopy);
+					Role.ConfigureDevice?.Invoke(Device);
+				}
+				catch(Exception Ex)
+				{
+					string Message = $"Encountered {Ex.GetType()} when creating installation on device {Device}.\n{Ex.Message}";
+
+					if (IsOutOfSpaceException(Ex) && Device.Platform == BuildHostPlatform.Current.Platform)
+					{
+						// If on desktop platform, we are not retrying.
+						// It is unlikely that space is going to be made and InstallBuildParallel has marked the build path as problematic.
+						Log.Error(KnownLogEvents.Gauntlet_DeviceEvent, Message);
+						throw;
+					}
+					else
+					{
+						UnrealDeviceReservation.MarkProblemDevice(Device, Message);
+						Log.Warning(KnownLogEvents.Gauntlet_DeviceEvent, Message);
+					}
+					throw; // Can consider not throwing here - this would let every device complete setup before releasing the problem devices
+				}
+			}
+		}
+
+		/// <summary>
+		/// Launches the Unreal Engine processes for each role requested by this session.
+		/// Roles marked InstallOnly will not have a process launched.
+		/// Roles marked DeferredLaunch will not have a process launched.
+		/// Deferred roles can be launched at anytime (usually in TickTest()) by calling UnrealSessionInstance.LaunchDeferredRole
+		/// </summary>
+		private UnrealSessionInstance LaunchProcesses()
+		{
+			List<UnrealSessionInstance.RoleInstance> RoleInstances = new();
+			Dictionary<UnrealSessionInstance.RoleInstance, IAppInstall> DeferredRolesToInstalls = new();
+
+			foreach (KeyValuePair<UnrealSessionRole, IAppInstall> RoleInstall in RolesToInstalls)
+			{
+				UnrealSessionRole Role = RoleInstall.Key;
+				IAppInstall Install = RoleInstall.Value;
+
+				// InstallOnly roles don't execute a process
+				if (Role.InstallOnly)
+				{
+					RoleInstances.Add(new UnrealSessionInstance.RoleInstance(Role, null));
+					continue;
+				}
+
+				// DeferredLaunch roles don't immediately execute a process.
+				// We cache deferred roles so users can launch the process at the desired time.
+				else if (Role.DeferredLaunch)
+				{
+					UnrealSessionInstance.RoleInstance DeferredRoleInstance = new(Role, null);
+					RoleInstances.Add(DeferredRoleInstance);
+					DeferredRolesToInstalls.Add(DeferredRoleInstance, Install);
+					continue;
+				}
+
+				try
+				{
+					Log.Info("Launching {Install} on {Device}", Install, RolesToDevices[Role]);
+					IAppInstance AppInstance = Install.Run();
+
+					if (AppInstance == null)
+					{
+						throw new AutomationException("Failed to create an IAppInstance after attempting Run() on {Install}", Install);
+					}
+					else
+					{
+						RoleInstances.Add(new UnrealSessionInstance.RoleInstance(Role, AppInstance));
+					}
+				}
+				catch(Exception Ex)
+				{
+					// Kill any processes that were started
+					foreach (UnrealSessionInstance.RoleInstance Instance in RoleInstances.Where(Role => Role.AppInstance != null))
+					{
+						Log.Info("Shutting down {AppInstance}", Instance.AppInstance);
+						Instance.AppInstance.Kill();
+					}
+
+					string WarningMessage = $"Encountered {Ex.GetType()} when attempting to run install {Ex.Message}";
+					UnrealDeviceReservation.MarkProblemDevice(Install.Device, WarningMessage);
+					Log.Warning(WarningMessage);
+					throw;
+				}
+			}
+
+			return new UnrealSessionInstance(RoleInstances.ToArray(), DeferredRolesToInstalls);
 		}
 
 		private void SavePSOs(UnrealTestContext InContext, UnrealSessionInstance.RoleInstance InRunningRole, string DestSavedDir)
@@ -1460,6 +1857,47 @@ namespace Gauntlet
 			}
 		}
 
+		private string GenerateNotTakenFilePath(string DesiredPath)
+		{
+			string ResultPath = null;
+
+			FileInfo PotentialPathFileInfo = new FileInfo(DesiredPath);
+
+			for (int NumericPostfix = 0; (string.IsNullOrEmpty(ResultPath)) && (NumericPostfix < int.MaxValue); NumericPostfix++)
+			{
+				string PotentialPath = DesiredPath;
+
+				if (NumericPostfix > 0)
+				{
+					PotentialPath = Path.Combine(
+						PotentialPathFileInfo.DirectoryName,
+						string.Format("{0}_{1}", Path.GetFileNameWithoutExtension(PotentialPathFileInfo.Name), NumericPostfix));
+
+					if (!string.IsNullOrEmpty(PotentialPathFileInfo.Extension))
+					{
+						PotentialPath += PotentialPathFileInfo.Extension;
+					}
+				}
+
+				bool PathIsTaken = File.Exists(PotentialPath);
+				if (PathIsTaken)
+				{
+					Log.VeryVerbose("File already exists at {0}", PotentialPath);
+				}
+				else
+				{
+					ResultPath = PotentialPath;
+				}
+			}
+
+			if (string.IsNullOrEmpty(ResultPath))
+			{
+				throw new AutomationException("Cannot generate not taken file path for the path {0}", DesiredPath);
+			}
+
+			return ResultPath;
+		}
+
 		/// <summary>
 		/// Filter that Truncate long file paths such as CrashReporter files. //UECC-Windows-F0DD9BB04C3C9250FAF39D8AB4A88556//
 		/// These are particularly problematic with testflights which append a long random name to the destination folder, 
@@ -1471,11 +1909,11 @@ namespace Gauntlet
 		{
 			Dictionary<string, string> LongCrashReporterStringToIndex = new Dictionary<string, string>();
 
-			Match RegexMatch = Regex.Match(LongFilePath, @"UECC-.+-([\dA-Fa-f]+)");
+			Match RegexMatch = Regex.Match(LongFilePath, @"((?i)UECC)-.+-([\dA-Fa-f]+)");
 
 			if (RegexMatch.Success)
 			{
-				string LongString = RegexMatch.Groups[1].ToString();
+				string LongString = RegexMatch.Groups[2].ToString();
 
 				if (!LongCrashReporterStringToIndex.ContainsKey(LongString))
 				{
@@ -1488,5 +1926,20 @@ namespace Gauntlet
 
 			return LongFilePath;
 		}
+
+		private string GetInstallTime(TimeSpan Time)
+		{
+			string Hours = Time.Hours > 0 ? string.Format("{0} hrs, ", Time.Hours) : string.Empty;
+			string Minutes = Time.Minutes > 0 ? string.Format("{0} mins, ", Time.Minutes) : string.Empty;
+			string Seconds = string.Format("{0} secs", Time.Seconds);
+
+			return Hours + Minutes + Seconds;
+		}
+
+		private bool IsOutOfSpaceException(Exception Ex)
+		{
+			return Ex.Message.Contains("not enough space", StringComparison.OrdinalIgnoreCase);
+		}
 	}
+
 }

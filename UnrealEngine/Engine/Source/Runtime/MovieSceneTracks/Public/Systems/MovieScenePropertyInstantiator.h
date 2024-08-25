@@ -2,13 +2,14 @@
 
 #pragma once
 
-#include "EntitySystem/MovieSceneEntityIDs.h"
-#include "EntitySystem/MovieSceneEntitySystem.h"
-#include "EntitySystem/MovieSceneEntityInstantiatorSystem.h"
-#include "EntitySystem/MovieSceneDecompositionQuery.h"
 #include "EntitySystem/BuiltInComponentTypes.h"
-#include "EntitySystem/MovieScenePropertyRegistry.h"
+#include "EntitySystem/EntityAllocationIterator.h"
+#include "EntitySystem/MovieSceneDecompositionQuery.h"
+#include "EntitySystem/MovieSceneEntityIDs.h"
+#include "EntitySystem/MovieSceneEntityInstantiatorSystem.h"
+#include "EntitySystem/MovieSceneEntitySystem.h"
 #include "EntitySystem/MovieScenePropertyComponentHandler.h"
+#include "EntitySystem/MovieScenePropertyRegistry.h"
 
 #include "Misc/TVariant.h"
 #include "Misc/Optional.h"
@@ -49,7 +50,6 @@ public:
 	 * Retrieve the stats for a specific property
 	 */
 	MOVIESCENETRACKS_API UE::MovieScene::FPropertyStats GetStatsForProperty(UE::MovieScene::FCompositePropertyTypeID PropertyID) const;
-
 
 	/**
 	 * Recompose a value from the constituent parts specified in InQuery, taking into account the weightings of each channel.
@@ -103,6 +103,10 @@ private:
 
 private:
 
+	void OnObjectsReplaced(const TMap<UObject*, UObject*>& ReplacementMap);
+
+private:
+
 	using FChannelMask     = TBitArray<TFixedAllocator< 1 >>;
 	using FSlowPropertyPtr = TSharedPtr<FTrackInstancePropertyBindings>;
 
@@ -148,6 +152,7 @@ private:
 			bInUse = false;
 		}
 
+		UE::MovieScene::FHierarchicalBlendTarget BlendTarget;
 		int32 NumContributors = 0;
 		int16 HBias = 0;
 		uint8 bWantsRestoreState : 1;
@@ -241,7 +246,7 @@ private:
 
 	FSetupBlenderSystemResult SetupBlenderSystem(const FPropertyParameters& Params);
 
-	int32 ResolveProperty(UE::MovieScene::FCustomAccessorView CustomAccessors, UObject* Object, const FMovieScenePropertyBinding& PropertyBinding, int32 PropertyDefinitionIndex);
+	bool ResolveProperty(UE::MovieScene::FCustomAccessorView CustomAccessors, UObject* Object, const FMovieScenePropertyBinding& PropertyBinding, const UE::MovieScene::FEntityGroupID& GroupID, int32 PropertyDefinitionIndex);
 
 	UE::MovieScene::FPropertyRecomposerPropertyInfo FindPropertyFromSource(FMovieSceneEntityID EntityID, UObject* Object) const;
 
@@ -251,14 +256,11 @@ private:
 
 	static constexpr uint16 INVALID_BLEND_CHANNEL = uint16(-1);
 
+	UE::MovieScene::FEntityGroupingPolicyKey PropertyGroupingKey;
+
 	TSparseArray<FObjectPropertyInfo> ResolvedProperties;
 	TMultiMap<FContributorKey, FMovieSceneEntityID> Contributors;
 	TMultiMap<FContributorKey, FMovieSceneEntityID> NewContributors;
-
-	/** Reverse lookup from an entity to the index within ResolvedProperties that it animates.
-	 * @note: can contain INDEX_NONE for properties that have not resolved. */
-	TMap<FMovieSceneEntityID, int32> EntityToProperty;
-	TMap< TTuple<UObject*, FName>, int32 > ObjectPropertyToResolvedIndex;
 
 	TArray<UE::MovieScene::FPropertyStats> PropertyStats;
 

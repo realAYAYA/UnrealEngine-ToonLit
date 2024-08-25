@@ -6,12 +6,13 @@
 
 #include "Engine/VolumeTexture.h"
 
-#include "Serialization/EditorBulkData.h"
 #include "Containers/Array.h"
 #include "Containers/StaticArray.h"
+#include "Engine/TextureDefines.h"
+#include "Interfaces/Interface_AssetUserData.h"
+#include "Serialization/EditorBulkData.h"
 #include "UnrealClient.h"
 #include "UObject/ObjectSaveContext.h"
-#include "Engine/TextureDefines.h"
 
 #include "SparseVolumeTexture.generated.h"
 
@@ -53,6 +54,27 @@ struct FHeader
 	ENGINE_API bool Validate(bool bPrintToLog);
 };
 
+// Linear struct of arrays octree describing the mipped SVT topology
+struct FPageTopology
+{
+	struct FMip
+	{
+		uint32 PageOffset; // Offset in Pages array where the pages for this mip begin
+		uint32 PageCount; // Number of pages in this mip
+	};
+
+	TArray<FMip> MipInfo;
+	TArray<uint32> PackedPageTableCoords; // 11|11|10 packed coords of the page within the dense page table. One entry per (sparse) page.
+	TArray<uint32> TileIndices; // Index of tile data the page points to. One entry per (sparse) page.
+	TArray<uint32> ParentIndices; // Parent index. One entry per (sparse) page.
+
+	void Reset();
+	void Serialize(FArchive& Ar);
+	uint32 NumPages() const { return PackedPageTableCoords.Num(); }
+	bool IsValidPageIndex(uint32 PageIndex) const { return PackedPageTableCoords.IsValidIndex(PageIndex); }
+	void GetTileRange(uint32 PageOffset, uint32 PageCount, uint32& OutTileOffset, uint32& OutTileCount) const;
+};
+
 // Describes a mip level of a SVT frame in terms of the sizes and offsets of the data in the built bulk data.
 // Each mip level consists of 4 buffer sections:
 // 
@@ -86,6 +108,82 @@ struct FMipLevelStreamingInfo
 	int32 NumPhysicalTiles;
 };
 
+// All the tiles are essentially stored as an array of structs with each tile having different memory sections:
+// 
+//    | OccupancyBitsA | OccupancyBitsB | VoxelsA | VoxelsB |
+// 
+// OccupancyBitsA and OccupancyBitsB will only be stored if the respective texture/attributes group exists (Format is != Unknown).
+// Each set of occupancy bits has a fixed size, so it doesn't need to be stored explicitely.
+// VoxelsA and VoxelsB are the compacted non-fallback-value voxels of the tile. The sizes of these sections varies with the number of active
+// voxels in the tile (and in each texture).
+
+struct FTileInfo
+{
+	uint32 Offset;
+	uint32 Size;
+	TStaticArray<uint32, 2> OccupancyBitsOffsets; // Relative to Offset
+	TStaticArray<uint32, 2> OccupancyBitsSizes; // Relative to Offset
+	TStaticArray<uint32, 2> VoxelDataOffsets; // Relative to Offset
+	TStaticArray<uint32, 2> VoxelDataSizes;
+	TStaticArray<uint32, 2> NumVoxels;
+};
+
+// Compactly stores data to construct a FTileInfo for every stored (and compressed) tile.
+struct FTileStreamingMetaData
+{
+	// Array of byte offsets into the tile data. Has N+1 entries, with the last entry effectively being the total size of all tiles. This is a "logical" offset
+	// so we can compute the size of each tile as TileDataOffsets[N+1] - TileDataOffsets[N]. Tiles < FirstStreamingTileIndex are not actually stored with the rest of the
+	// streaming tiles, so to get the actual file offset of a streaming tile, the size of the root/non-streaming tile needs to be subtracted first. GetTileInfo() takes this into account.
+	TArray<uint32> TileDataOffsets;
+	TArray<uint16> NumVoxelsA; // Number of stored voxels for texture A for every tile. We reconstruct the number of voxels for texture B based on NumVoxelsA and the tile size.
+	uint32 FirstStreamingTileIndex; // Index of first tile that does not belong to the root mip level. Root tiles are always in memory/resident and do not stream.
+
+	void Reset()
+	{
+		TileDataOffsets.Reset();
+		NumVoxelsA.Reset();
+		FirstStreamingTileIndex = 0;
+	}
+
+	uint32 GetNumTiles() const
+	{
+		return NumVoxelsA.Num();
+	}
+
+	uint32 GetNumStreamingTiles() const
+	{
+		return GetNumTiles() - FirstStreamingTileIndex;
+	}
+
+	bool HasRootTile() const
+	{
+		return FirstStreamingTileIndex > 0;
+	}
+
+	uint32 GetRootTileSize() const
+	{
+		return TileDataOffsets[FirstStreamingTileIndex] - TileDataOffsets[0];
+	}
+
+	uint32 GetTileMemorySize(uint32 TileIndex) const
+	{
+		return TileDataOffsets[TileIndex + 1] - TileDataOffsets[TileIndex];
+	}
+
+	void GetTileRangeMemoryOffsetSize(uint32 TileOffset, uint32 TileCount, uint32& OutMemoryOffset, uint32& OutMemorySize) const
+	{
+		checkf(!(TileOffset < FirstStreamingTileIndex && (TileOffset + TileCount) > FirstStreamingTileIndex), TEXT("Tile range must not straddle the root tile and streaming tiles!"));
+		const uint32 RootTileSize = TileOffset < FirstStreamingTileIndex ? 0 : GetRootTileSize();
+		OutMemoryOffset = TileDataOffsets[TileOffset] - RootTileSize;
+		const uint32 ReadEnd = TileDataOffsets[TileOffset + TileCount] - RootTileSize;
+		OutMemorySize = ReadEnd - OutMemoryOffset;
+	}
+
+	FTileInfo GetTileInfo(uint32 TileIndex, uint32 FormatSizeA, uint32 FormatSizeB) const;
+
+	void GetNumVoxelsInTileRange(uint32 TileOffset, uint32 TileCount, uint32 FormatSizeA, uint32 FormatSizeB, const TBitArray<>* OptionalValidTiles, uint32& OutNumVoxelsA, uint32& OutNumVoxelsB) const;
+};
+
 enum EResourceFlag : uint32
 {
 	EResourceFlag_StreamingDataInDDC = 1 << 0u, // FResources was cached, so MipLevelStreamingInfo can be streamed from DDC
@@ -97,18 +195,22 @@ struct FResources
 public:
 	FHeader Header;
 	uint32 ResourceFlags = 0;
-	// Info about sizes and offsets into the streamable mip level data. The last entry refers to the root mip level which is stored in RootData, not StreamableMipLevels.
-	TArray<FMipLevelStreamingInfo> MipLevelStreamingInfo;
+	int32 NumMipLevels = 0;
+	// Info about offsets into the tile data. 
+	FTileStreamingMetaData StreamingMetaData;
 	// Data for the highest/"root" mip level
 	TArray<uint8> RootData;
 	// Data for all streamable mip levels
 	FByteBulkData StreamableMipLevels;
 
+	FPageTopology Topology;
+
 	// These are used for logging and retrieving StreamableMipLevels from DDC in FStreamingManager
 #if WITH_EDITORONLY_DATA
 	FString ResourceName;
 	FIoHash DDCKeyHash;
-	FIoHash DDCRawHash;
+	TArray<TStaticArray<uint8, 12>> DDCChunkIds; // 12-byte hashes used to reconstruct the FValueId required to look up the chunks.
+	TArray<uint32> DDCChunkMaxTileIndices; // Maximum tile index of each chunk. Used to look up the chunk a given tile belongs to.
 #endif
 
 	// Called when serializing to/from DDC buffers and when serializing the owning USparseVolumeTextureFrame.
@@ -139,9 +241,12 @@ private:
 	};
 	TDontCopy<TPimplPtr<UE::DerivedData::FRequestOwner>> DDCRequestOwner;
 	std::atomic<EDDCRebuildState> DDCRebuildState;
+	std::atomic_int DDCRebuildNumFinishedRequests;
 	void BeginRebuildBulkDataFromCache(const UObject* Owner);
 	void EndRebuildBulkDataFromCache();
 #endif
+
+	static FTileStreamingMetaData CompressTiles(const FPageTopology& Topology, const struct FDerivedTextureData& DerivedTextureData, TArray<uint8>& OutRootBulkData, TArray64<uint8>& OutStreamingBulkData);
 };
 
 // Encapsulates RHI resources needed to render a SparseVolumeTexture.
@@ -156,7 +261,6 @@ public:
 	FRHITextureReference* GetPageTableTexture() const			{ check(IsInParallelRenderingThread()); return PageTableTextureReferenceRHI.GetReference(); }
 	FRHITextureReference* GetPhysicalTileDataATexture() const	{ check(IsInParallelRenderingThread()); return PhysicalTileDataATextureReferenceRHI.GetReference(); }
 	FRHITextureReference* GetPhysicalTileDataBTexture() const	{ check(IsInParallelRenderingThread()); return PhysicalTileDataBTextureReferenceRHI.GetReference(); }
-	FRHIShaderResourceView* GetStreamingInfoBufferSRV() const	{ check(IsInParallelRenderingThread()); return StreamingInfoBufferSRVRHI.GetReference(); }
 	ENGINE_API void GetPackedUniforms(FUintVector4& OutPacked0, FUintVector4& OutPacked1) const;
 	// Updates the GlobalVolumeResolution member in a thread-safe way.
 	ENGINE_API void SetGlobalVolumeResolution_GameThread(const FIntVector3& GlobalVolumeResolution);
@@ -175,13 +279,13 @@ private:
 	FTextureReferenceRHIRef PageTableTextureReferenceRHI;
 	FTextureReferenceRHIRef PhysicalTileDataATextureReferenceRHI;
 	FTextureReferenceRHIRef PhysicalTileDataBTextureReferenceRHI;
-	FShaderResourceViewRHIRef StreamingInfoBufferSRVRHI;
 };
 
 }
 }
 
 FArchive& operator<<(FArchive& Ar, UE::SVT::FHeader& Header);
+FArchive& operator<<(FArchive& Ar, UE::SVT::FPageTopology::FMip& Mip);
 
 enum ESparseVolumeTextureShaderUniform
 {
@@ -218,6 +322,9 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Texture")
 	virtual int32 GetNumMipLevels() const { return 0; }
 
+	UFUNCTION(BlueprintCallable, Category = "Texture")
+	virtual FTransform GetFrameTransform() const { return FTransform::Identity; }
+
 	virtual FIntVector GetVolumeResolution() const { return FIntVector(); }
 	virtual EPixelFormat GetFormat(int32 AttributesIndex) const { return PF_Unknown; }
 	virtual FVector4f GetFallbackValue(int32 AttributesIndex) const { return FVector4f(); }
@@ -225,6 +332,8 @@ public:
 	virtual TextureAddress GetTextureAddressY() const { return TA_Wrap; }
 	virtual TextureAddress GetTextureAddressZ() const { return TA_Wrap; }
 	virtual const UE::SVT::FTextureRenderResources* GetTextureRenderResources() const { return nullptr; }
+	// Computes the optimal mip level to stream the SVT at, based on projected screen space size and voxel resolution.
+	float GetOptimalStreamingMipLevel(const FBoxSphereBounds& Bounds, float MipBias) const;
 
 	/** Getter for the shader uniform parameters with index as ESparseVolumeTextureShaderUniform. */
 	FVector4 GetUniformParameter(int32 Index) const { return FVector4(ForceInitToZero); } // SVT_TODO: This mechanism is no longer needed and can be removed
@@ -259,13 +368,17 @@ public:
 	virtual ~USparseVolumeTextureFrame() = default;
 
 	// Retrieves a frame from the given SparseVolumeTexture and also issues a streaming request for it. 
+	// StreamingInstanceKey can be any arbitrary value that is suitable to keep track of the source of requests for a given SVT. This key is used internally to associate
+	// incoming requests with prior requests issued for the same SVT. A good value to pass here might be the pointer of the component the SVT is used within.
+	// FrameRate is an optional argument which helps to more accurately predict the required bandwidth when using non-blocking requests.
 	// FrameIndex is of float type so that the streaming system can use the fractional part to more easily keep track of playback speed and direction (forward/reverse playback).
 	// MipLevel is the lowest mip level that the caller intends to use but does not guarantee that the mip is actually resident.
 	// If bBlocking is true, DDC streaming requests will block on completion, guaranteeing that the requested frame will have been streamed in after the next streaming system update.
 	// If streaming cooked data from disk, the highest priority will be used, but no guarantee is given.
-	static ENGINE_API USparseVolumeTextureFrame* GetFrameAndIssueStreamingRequest(USparseVolumeTexture* SparseVolumeTexture, float FrameIndex, int32 MipLevel, bool bBlocking);
+	// if bHasValidFrameRate is true, the FrameRate argument will be use to predict the required streaming IO bandwidth.
+	static ENGINE_API USparseVolumeTextureFrame* GetFrameAndIssueStreamingRequest(USparseVolumeTexture* SparseVolumeTexture, uint32 StreamingInstanceKey, float FrameRate, float FrameIndex, float MipLevel, bool bBlocking, bool bHasValidFrameRate);
 
-	ENGINE_API bool Initialize(USparseVolumeTexture* InOwner, int32 InFrameIndex, UE::SVT::FTextureData& UncookedFrame);
+	ENGINE_API bool Initialize(USparseVolumeTexture* InOwner, int32 InFrameIndex, const FTransform& InFrameTransform, UE::SVT::FTextureData& UncookedFrame);
 	int32 GetFrameIndex() const { return FrameIndex; }
 	UE::SVT::FResources* GetResources() { return &Resources; }
 	// Creates TextureRenderResources if they don't already exist. Returns false if they already existed.
@@ -294,6 +407,7 @@ public:
 	//~ Begin USparseVolumeTexture Interface.
 	virtual int32 GetNumFrames() const override { return 1; }
 	virtual int32 GetNumMipLevels() const override { return Owner->GetNumMipLevels(); }
+	virtual FTransform GetFrameTransform() const override { return Transform; }
 	virtual FIntVector GetVolumeResolution() const override { return Owner->GetVolumeResolution(); }
 	virtual EPixelFormat GetFormat(int32 AttributesIndex) const override { return Owner->GetFormat(AttributesIndex); }
 	virtual FVector4f GetFallbackValue(int32 AttributesIndex) const override { return Owner->GetFallbackValue(AttributesIndex); }
@@ -311,6 +425,9 @@ private:
 	UPROPERTY()
 	int32 FrameIndex;
 
+	UPROPERTY(VisibleAnywhere, Category = "Texture", AssetRegistrySearchable)
+	FTransform Transform;
+
 #if WITH_EDITORONLY_DATA
 	// FTextureData from which the FResources data can be built with a call to FResources::Build()
 	UE::Serialization::FEditorBulkData SourceData;
@@ -324,7 +441,7 @@ private:
 
 // Represents a streamable SparseVolumeTexture asset and serves as base class for UStaticSparseVolumeTexture and UAnimatedSparseVolumeTexture. It has an array of USparseVolumeTextureFrame.
 UCLASS(MinimalAPI, ClassGroup = Rendering, BlueprintType)
-class UStreamableSparseVolumeTexture : public USparseVolumeTexture
+class UStreamableSparseVolumeTexture : public USparseVolumeTexture, public IInterface_AssetUserData
 {
 	GENERATED_UCLASS_BODY()
 
@@ -367,10 +484,32 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Texture", AdvancedDisplay)
 	bool bLocalDDCOnly = true;
 
+	// The SVT streaming pool is sized such that it can hold the largest frame multiplied by this value. There should be some slack to allow for prefetching frames.
+	UPROPERTY(EditAnywhere, Category = "Texture", AdvancedDisplay)
+	float StreamingPoolSizeFactor = 3.0f;
+
+	// When using non-blocking streaming requests, upcoming frames are loaded into memory in advance. This property controls how many frames to prefetch.
+	UPROPERTY(EditAnywhere, Category = "Texture", AdvancedDisplay)
+	int32 NumberOfPrefetchFrames = 3;
+
+	// When using non-blocking streaming requests, upcoming frames are loaded into memory in advance. This property controls the size reduction in percent of each additional prefetched frames.
+	// A value of 20.0 would prefetch frame N+1 at 80%, N+2 at 60%, N+3 at 40% etc.
+	UPROPERTY(EditAnywhere, Category = "Texture", AdvancedDisplay)
+	float PrefetchPercentageStepSize = 20.0f;
+
+	// When using non-blocking streaming requests, upcoming frames are loaded into memory in advance. This property applies a bias in percent to how much data is prefetched for every frame.
+	// A value of 20.0 adds 20% to all prefetch percentages. So if PrefetchPercentageStepSize is set to 20.0, frame N+1 is prefetched at 80% + 20% = 100%, frame N+2 at 60% + 20% = 80%, N+3 at 40% + 20% = 60% etc.
+	UPROPERTY(EditAnywhere, Category = "Texture", AdvancedDisplay)
+	float PrefetchPercentageBias = 20.0f;
+
 #if WITH_EDITORONLY_DATA
 	UPROPERTY(VisibleAnywhere, Instanced, Category = ImportSettings)
 	TObjectPtr<class UAssetImportData> AssetImportData;
 #endif // WITH_EDITORONLY_DATA
+
+	/** Array of user data stored with the asset */
+	UPROPERTY(EditAnywhere, AdvancedDisplay, Instanced, Category = "Texture")
+	TArray<TObjectPtr<class UAssetUserData>> AssetUserData;
 
 	UStreamableSparseVolumeTexture();
 	virtual ~UStreamableSparseVolumeTexture() = default;
@@ -379,11 +518,11 @@ public:
 	// The NumExpectedFrames parameter on BeginInitialize() just serves as a potential optimization to reserve memory for the frames to be appended
 	// and doesn't need to match the exact number if it is not known at the time.
 	ENGINE_API virtual bool BeginInitialize(int32 NumExpectedFrames);
-	ENGINE_API virtual bool AppendFrame(UE::SVT::FTextureData& UncookedFrame);
+	ENGINE_API virtual bool AppendFrame(UE::SVT::FTextureData& UncookedFrame, const FTransform& FrameTransform);
 	ENGINE_API virtual bool EndInitialize();
 
 	// Convenience function wrapping the multi-phase initialization functions above
-	virtual bool Initialize(const TArrayView<UE::SVT::FTextureData>& UncookedData);
+	virtual bool Initialize(const TArrayView<UE::SVT::FTextureData>& UncookedData, const TArrayView<FTransform>& FrameTransforms);
 	// Consider using USparseVolumeTextureFrame::GetFrameAndIssueStreamingRequest() if the frame should have streaming requests issued.
 	USparseVolumeTextureFrame* GetFrame(int32 FrameIndex) const { return Frames.IsValidIndex(FrameIndex) ? Frames[FrameIndex] : nullptr; }
 
@@ -397,12 +536,22 @@ public:
 	ENGINE_API virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
 #endif
 	ENGINE_API virtual void GetResourceSizeEx(FResourceSizeEx& CumulativeResourceSize) override;
+	ENGINE_API virtual void GetAssetRegistryTags(FAssetRegistryTagsContext Context) const override;
+	UE_DEPRECATED(5.4, "Implement the version that takes FAssetRegistryTagsContext instead.")
 	ENGINE_API virtual void GetAssetRegistryTags(TArray<FAssetRegistryTag>& OutTags) const override;
 	//~ End UObject Interface.
+
+	//~ Begin IInterface_AssetUserData Interface
+	ENGINE_API virtual void AddAssetUserData(UAssetUserData* InUserData) override;
+	ENGINE_API virtual void RemoveUserDataOfClass(TSubclassOf<UAssetUserData> InUserDataClass) override;
+	ENGINE_API virtual UAssetUserData* GetAssetUserDataOfClass(TSubclassOf<UAssetUserData> InUserDataClass) override;
+	ENGINE_API virtual const TArray<UAssetUserData*>* GetAssetUserDataArray() const override;
+	//~ End IInterface_AssetUserData Interface
 
 	//~ Begin USparseVolumeTexture Interface.
 	virtual int32 GetNumFrames() const override { return Frames.Num(); }
 	virtual int32 GetNumMipLevels() const override { return NumMipLevels; }
+	virtual FTransform GetFrameTransform() const override { return Frames.IsEmpty() ? FTransform::Identity : Frames[0]->GetFrameTransform(); }
 	virtual FIntVector GetVolumeResolution() const override { return VolumeResolution; };
 	virtual EPixelFormat GetFormat(int32 AttributesIndex) const override { check(AttributesIndex >= 0 && AttributesIndex < 2) return AttributesIndex == 0 ? FormatA : FormatB; }
 	virtual FVector4f GetFallbackValue(int32 AttributesIndex) const override { check(AttributesIndex >= 0 && AttributesIndex < 2) return AttributesIndex == 0 ? FallbackValueA : FallbackValueB; }
@@ -411,6 +560,10 @@ public:
 	virtual TextureAddress GetTextureAddressZ() const override { return AddressZ; }
 	virtual const UE::SVT::FTextureRenderResources* GetTextureRenderResources() const override { return Frames.IsEmpty() ? nullptr : Frames[0]->GetTextureRenderResources(); }
 	//~ End USparseVolumeTexture Interface.
+
+#if WITH_EDITOR
+	ENGINE_API void OnAssetsAddExtraObjectsToDelete(TArray<UObject*>& ObjectsToDelete);
+#endif
 
 protected:
 
@@ -439,7 +592,14 @@ protected:
 	// Ensures all frames have derived data (based on the source data and the current settings like TextureAddress modes etc.) cached to DDC and are ready for rendering.
 	// Disconnects this SVT from the streaming manager, calls Cache() on all frames and finally connects to FStreamingManager again.
 	void RecacheFrames();
+
 #endif // WITH_EDITORONLY_DATA
+
+#if WITH_EDITOR
+	ENGINE_API bool ShouldRegisterDelegates();
+	ENGINE_API void RegisterEditorDelegates();
+	ENGINE_API void UnregisterEditorDelegates();
+#endif // WITH_EDITOR
 };
 
 // Represents a streamable SparseVolumeTexture asset with a single frame. Although there is only a single frame, it is still recommended to use USparseVolumeTextureFrame::GetFrameAndIssueStreamingRequest().
@@ -455,7 +615,7 @@ public:
 
 	//~ Begin UStreamableSparseVolumeTexture Interface.
 	// Override AppendFrame() to ensure that there is never more than a single frame in a static SVT
-	ENGINE_API virtual bool AppendFrame(UE::SVT::FTextureData& UncookedFrame) override;
+	ENGINE_API virtual bool AppendFrame(UE::SVT::FTextureData& UncookedFrame, const FTransform& InFrameTransform) override;
 	//~ End UStreamableSparseVolumeTexture Interface.
 
 	//~ Begin USparseVolumeTexture Interface.

@@ -8,6 +8,8 @@
 #include "Templates/RefCounting.h"
 #include "Iris/IrisConfig.h"
 #include "Iris/ReplicationSystem/NetRefHandle.h"
+#include "Iris/ReplicationSystem/NetObjectGroupHandle.h"
+#include "Iris/ReplicationSystem/ReplicationSystemTypes.h"
 #include "Net/Core/NetHandle/NetHandle.h"
 
 #include "ReplicationSystem.generated.h"
@@ -28,7 +30,6 @@ namespace UE::Net
 	class FNetObjectAttachment;
 	enum class ENetObjectDeltaCompressionStatus : unsigned;
 	typedef uint32 FNetObjectFilterHandle;
-	typedef uint16 FNetObjectGroupHandle;
 	typedef uint32 FNetObjectPrioritizerHandle;
 	class FNetObjectReference;
 	enum class EReplicationCondition : uint32;
@@ -38,6 +39,7 @@ namespace UE::Net
 	struct FReplicationView;
 	class FStringTokenStore;
 	class FWorldLocations;
+	struct FNetDebugName;
 	namespace Private
 	{
 		class FReplicationSystemImpl;
@@ -58,12 +60,16 @@ public:
 
 	struct FReplicationSystemParams
 	{
+		//$IRIS TODO: These need documentation
 		UReplicationBridge* ReplicationBridge = nullptr;
 		uint32 MaxReplicatedObjectCount = 65535U;
+		uint32 PreAllocatedReplicatedObjectCount = 65535U;
+		uint32 MaxReplicatedWriterObjectCount = 65535U;
 		uint32 MaxDeltaCompressedObjectCount = 2048U;
 		uint32 MaxNetObjectGroupCount = 2048U;
 		bool bIsServer = false;
 		bool bAllowObjectReplication = false;
+		UE::Net::FForwardNetRPCCallDelegate ForwardNetRPCCallDelegate;
 	};
 
 	/** @return The unique ID of the ReplicationSystem. */
@@ -75,6 +81,25 @@ public:
 	/** @return Whether the system is run on a server. */
 	bool IsServer() const { return bIsServer; }
 
+	/** @return Is this system configured to replicate object properties. */
+	bool AllowObjectReplication() { return bAllowObjectReplication; }
+
+	struct FSendUpdateParams
+	{
+		// Type of SendPass we want to do @see EReplicationSystemSendPass
+		UE::Net::EReplicationSystemSendPass SendPass = UE::Net::EReplicationSystemSendPass::TickFlush;
+
+		// DeltaTime, only relevant for EReplicationSystemSendPass::TickFlush
+		float DeltaSeconds = 0.f;		
+	};
+
+	/**
+	 * PreSendUpdate performs all the necessary work, such as filtering and prioritization of objects,
+	 * so that each connection will be properly updated with all the information needed in order to replicate.
+	 * @param Params, Parameters for the update pass, to @see FSendUpateParams 
+	 */
+	IRISCORE_API void PreSendUpdate(const FSendUpdateParams& Params);	
+
 	/**
 	 * PreSendUpdate performs all the necessary work, such as filtering and prioritization of objects,
 	 * so that each connection will be properly updated with all the information needed in order to replicate.
@@ -83,10 +108,11 @@ public:
 
 	/**
 	 * SendUpdate is currently more of a placeholder for a future where the ReplicationSystem itself is responsible for
-	 * the low level protocol and sending, rather than having the DataStreamChannel.
+	 * the low level protocol and sending, rather than having the DataStreamChannel write data when ticked
 	 * @see UDataStreamChannel.
+	 * @param SendFunction, Function taking an array of ConnectionId`s that has data to send
 	 */
-	IRISCORE_API void SendUpdate();
+	IRISCORE_API void SendUpdate(TFunctionRef<void(TArrayView<uint32>)> SendFunction);
 
 	/**
 	 * Cleanup temporaries and prepare for the next send update.
@@ -212,6 +238,17 @@ public:
 	IRISCORE_API bool SendRPC(const UObject* Object, const UObject* SubObject, const UFunction* Function, const void* Parameters);
 
 	/**
+	 * Set the policy flags for an RPC identified by its function
+	 * @param Function a pointer to a valid function identifying the RPC
+	 * @param SendFlags the ENetObjectAttachmentSendPolicyFlags to set for the RPC
+	 * @return Whether the specified SendFlags is valid for the specific RPC
+	 */
+	IRISCORE_API bool SetRPCSendPolicyFlags(const UFunction* Function, UE::Net::ENetObjectAttachmentSendPolicyFlags SendFlags);
+
+	/** Resets all set RPCSendPolicy flags */
+	IRISCORE_API void ResetRPCSendPolicyFlags();
+	
+	/**
 	 * Unicast an RPC targeting a object/subobject.
 	 * @param ConnectionId A valid connection ID. Only this connection will replicate the RPC.
 	 * @param Object A valid Owner/Actor. If no SubObject is specified the function will be called in this instance on the remote side.
@@ -255,11 +292,19 @@ public:
 	 */
 	IRISCORE_API const UE::Net::FReplicationProtocol* GetReplicationProtocol(FNetRefHandle Handle) const;
 
+	/**
+	 * Get the DebugName associated with a handle.
+	 * @param Handle The handle to retrieve the DebugName for
+	 * @return DebugName if the handle is valid, otherwise nullptr.
+	 */
+	IRISCORE_API const UE::Net::FNetDebugName* GetDebugName(FNetRefHandle Handle) const;
+
 	// Groups
 
 	/**
 	 * Create a group which can be used to logically group objects together. The group must be
 	 * destroyed when it's not needed anymore.
+	 * Groups can be used to setup filtering rules on it's members.
 	 * @return A handle to the group, or InvalidNetObjectGroupHandle if no more groups could be created.
 	 * @see DestroyGroup
 	 */
@@ -306,6 +351,15 @@ public:
 	 */
 	IRISCORE_API bool IsValidGroup(FNetObjectGroupHandle GroupHandle) const;
 
+	/** Special group, root objects assigned to this group will be filtered out for all connections */
+	IRISCORE_API FNetObjectGroupHandle GetNotReplicatedNetObjectGroup() const;
+
+	/** Special group, SubObjects assigned to this group will replicate to owner of RootParent */
+	IRISCORE_API FNetObjectGroupHandle GetNetGroupOwnerNetObjectGroup() const;
+
+	/** Special group, SubObjects assigned to this group will replicate if replay netconditions is met  */
+	IRISCORE_API FNetObjectGroupHandle GetNetGroupReplayNetObjectGroup() const;
+
 	// Filtering
 
 	/**
@@ -326,16 +380,20 @@ public:
 	 * Sets a filter for a replicated object which will be used until the next call to SetFilter or SetConnectionFilter.
 	 * Filters are used prevent objects from being replicated to certain connections. An object that is filtered
 	 * out will cause the object to be destroyed on the remote side.
+	 * 
 	 * @param Handle A valid handle to an object.
 	 * @param FilterHandle A valid handle to a filter, retrieved via a call to GetFilter or one of the two special handles
-	 * InvalidNetObjectFilterHandle to clear filtering or ToOwnerFilterHandle for owner filtering.
+	 *		  InvalidNetObjectFilterHandle to clear filtering or ToOwnerFilterHandle for owner filtering.
+	 * @param FilterConfigProfile Optional name of a specialized profile to use as the object's configuration. When none filters are expected to use default settings.
+	 * 
 	 * @return true if the filter was successfully set and false if it was not. It can fail for various reasons,
 	 * such as the filter not supporting the object in question for implementation defined reasons. If the function fails
 	 * the filter of the object is unspecified, it could be using a previous filter or use no filtering.
+	 * 
 	 * @see GetFilterHandle
 	 * @see SetConnectionFilter
 	 */
-	IRISCORE_API bool SetFilter(FNetRefHandle Handle, UE::Net::FNetObjectFilterHandle FilterHandle);
+	IRISCORE_API bool SetFilter(FNetRefHandle Handle, UE::Net::FNetObjectFilterHandle FilterHandle, FName FilterConfigProfile=NAME_None);
 
 	/**
 	 * Gets the handle for a filter with a given name. The handle can be used in subsequent calls to SetFilter.
@@ -363,13 +421,32 @@ public:
 	// Group Filtering
 
 	/**
-	 * Add a group to the filtering system. By default the filter disallows replication for all objects in the group.
+	 * Add a group to the filtering system. This group is used only for filtering out objects. Exclusion groups are processed before dynamic filters, those implemented by UNetObjectFilter. 
+	 * By default an exclusion group disallows replication for all objects in it. Use SetGroupFilterStatus to change the behavior.
+	 * @note A group can only be either an exclusion group or an inclusion group, not both at the same time.
 	 * @param GroupHandle A valid handle to a group.
-	 * @see CreateGroup 
+	 * @see CreateGroup
+	 * @see AddInclusionFilterGroup
+	 * @see SetGroupFilterStatus
+	 * @return true if the group was successfully added as an exclusion group, false in all other cases such as being an invalid group, reserved group or used as an inclusion filter.
 	 */
-	IRISCORE_API void AddGroupFilter(FNetObjectGroupHandle GroupHandle);
+	IRISCORE_API bool AddExclusionFilterGroup(FNetObjectGroupHandle GroupHandle);
 
-	/** Remove group from filtering system, will cancel effects of the group. */
+	/**
+	 * Add a group to the filtering system. This group is used only for allowing replication of objects. Inclusion groups are processed after dynamic filters, those implemented by UNetObjectFilter. 
+	 * Inclusion groups are used to allow overriding the effect of dynamic filtering which can be useful to always allow replication of team specific objects for example.
+	 * By default the group will not override the effects of dynamic filtering. Use SetGroupFilterStatus to set which connection the objects should be allowed to replicate to, overriding the dynamic filtering.
+	 * @note A group can only be either an exclusion group or an inclusion group, not both at the same time.
+	 * @note Subobjects added to inclusion groups will be ignored during processing. A subobject's filter status is determined by the root object. For subobject filtering one can use SubObjectFilters.
+	 * @param GroupHandle A valid handle to a group.
+	 * @see CreateGroup
+	 * @see AddExclusionFilterGroup
+	 * @see SetGroupFilterStatus
+	 * @return true if the group was successfully added as an inclusion group, false in all other cases such as being an invalid group, reserved group or used as an exclusion filter.
+	 */
+	IRISCORE_API bool AddInclusionFilterGroup(FNetObjectGroupHandle GroupHandle);
+
+	/** Remove group from filtering system, canceling all effects of the group. */
 	IRISCORE_API void RemoveGroupFilter(FNetObjectGroupHandle GroupHandle);
 
 	/** Set status of GroupFilter for specific connection. */
@@ -378,7 +455,7 @@ public:
 	/** Set status of GroupFilter for connection marked in the Connections BitArray. */
 	IRISCORE_API void SetGroupFilterStatus(FNetObjectGroupHandle GroupHandle, const UE::Net::FNetBitArray& Connections, UE::Net::ENetFilterStatus ReplicationStatus);
 
-	/** Set status of GroupFilter for all connnections. */
+	/** Set status of GroupFilter for all connections. */
 	IRISCORE_API void SetGroupFilterStatus(FNetObjectGroupHandle GroupHandle, UE::Net::ENetFilterStatus ReplicationStatus);
 
 
@@ -402,6 +479,7 @@ public:
 	/**
 	 * Set which connections the object is allowed to be replicated to. This will cancel the effect
 	 * of any previous SetFilter or SetConnectionFilter calls on the object.
+	 * It will also remove the object from any dynamic filters
 	 * @param Handle A valid handle to a replicated object.
 	 * @param Connections Set bits indicates the connection IDs that the object is allowed or not allowed to be replicated to depending on ReplicationStatus.
 	 * @param ReplicationStatus Whether the set bits in Connections indicate if the object is allowed or not allowed to be replicated to those connections.
@@ -522,9 +600,14 @@ public:
 	/** Returns elapsed time in seconds since ReplicatonSystem was created */
 	double GetElapsedTime() const { return ElapsedTime; }
 
+	/** Called when a connection finds a protocol divergence when instantiating a replicated object. */
+	IRISCORE_API void ReportProtocolMismatch(uint64 NetRefHandleId, uint32 ConnectionId);
+
+	/** Called when a connection reports a critical error with a netrefhandle object */
+	IRISCORE_API void ReportErrorWithNetRefHandle(uint32 ErrorType, uint64 NetRefHandleId, uint32 ConnectionId);
+
 public:
 	// For internal use and not exported.
-
 	UE::Net::Private::FReplicationSystemInternal* GetReplicationSystemInternal();
 	const UE::Net::Private::FReplicationSystemInternal* GetReplicationSystemInternal() const;
 
@@ -603,11 +686,7 @@ public:
 
 	enum ReplicationSystemConstants : uint32
 	{
-#if UE_NET_ALLOW_MULTIPLE_REPLICATION_SYSTEMS
 		MaxReplicationSystemCount = 16,
-#else
-		MaxReplicationSystemCount = 1,
-#endif
 	};
 
 private:

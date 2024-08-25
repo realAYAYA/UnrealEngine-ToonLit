@@ -70,7 +70,7 @@ void UUVToolSelectionAPI::SetTargets(const TArray<TObjectPtr<UUVEditorToolMeshIn
 	Targets = TargetsIn;
 	SelectionMechanic->SetTargets(Targets);
 
-	for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+	for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 	{
 		Target->OnCanonicalModified.AddWeakLambda(this, [this](UUVEditorToolMeshInput* Target,
 			const UUVEditorToolMeshInput::FCanonicalModifiedInfo ModifiedInfo)
@@ -108,7 +108,7 @@ void UUVToolSelectionAPI::Shutdown()
 	SelectionMechanic = nullptr;
 	MechanicAdapter = nullptr;
 
-	for (TObjectPtr<UUVEditorToolMeshInput> Target : Targets)
+	for (const TObjectPtr<UUVEditorToolMeshInput>& Target : Targets)
 	{
 		Target->OnCanonicalModified.RemoveAll(this);
 	}

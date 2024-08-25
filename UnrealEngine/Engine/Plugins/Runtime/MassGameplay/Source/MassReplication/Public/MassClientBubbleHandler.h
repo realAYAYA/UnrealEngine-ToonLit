@@ -302,7 +302,7 @@ void TClientBubbleHandlerBase<AgentArrayItem>::RemoveAgentImpl(FMassReplicatedAg
 	FMassAgentLookupData& LookUpData = AgentLookupArray[Handle.GetIndex()];
 	const bool bDidSwap = LookUpData.AgentsIdx < ((*Agents).Num() - 1);
 
-	(*Agents).RemoveAtSwap(LookUpData.AgentsIdx, 1, false);
+	(*Agents).RemoveAtSwap(LookUpData.AgentsIdx, 1, EAllowShrinking::No);
 
 	Serializer->MarkArrayDirty();
 

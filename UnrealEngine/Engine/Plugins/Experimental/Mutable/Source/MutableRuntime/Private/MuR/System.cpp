@@ -29,18 +29,33 @@
 #include "MuR/Platform.h"
 #include "MuR/Serialisation.h"
 #include "MuR/SystemPrivate.h"
+#include "MuR/MutableRuntimeModule.h"
 #include "Templates/SharedPointer.h"
 #include "Templates/Tuple.h"
 #include "Trace/Detail/Channel.h"
 #include "ProfilingDebugging/CountersTrace.h"
 #include "PackedNormal.h"
 
+TAutoConsoleVariable<bool> CVarTaskGraphBusyWait(
+	TEXT("mutable.TaskGraphBusyWait"),
+	true,
+	TEXT("Use TaskGraph BusyWait instead of simple Wait. Required to avoid hangs on platforms with low number of cores."),
+	ECVF_Default);
+
+namespace 
+{
+
+bool bEnableDetailedMemoryBudgetExceededLogging = false;
+static FAutoConsoleVariableRef CVarEnableDetailedMemoryBudgetExceededLogging (
+	TEXT("mutable.EnableDetailedMemoryBudgetExceededLogging"),
+	bEnableDetailedMemoryBudgetExceededLogging,
+	TEXT("If set to true, enables a more detailed logging when memory budget is exceeded. Only for Debug and Development builds."),
+	ECVF_Default);
+}
+
 
 namespace mu
 {
-    static_assert( sizeof(mat4f) == 64, "UNEXPECTED_STRUCT_PACKING" );
-
-
 	MUTABLE_IMPLEMENT_ENUM_SERIALISABLE(ETextureCompressionStrategy);
 
 	TRACE_DECLARE_INT_COUNTER(MutableRuntime_LiveInstances,		TEXT("MutableRuntime/LiveInstances"));
@@ -199,6 +214,15 @@ namespace mu
     }
 
 
+	//---------------------------------------------------------------------------------------------
+	void System::SetImagePixelConversionOverride(const FImageOperator::FImagePixelFormatFunc& FormatFunc)
+	{
+		LLM_SCOPE_BYNAME(TEXT("MutableRuntime"));
+
+		m_pD->ImagePixelFormatOverride = FormatFunc;
+	}
+
+
     //---------------------------------------------------------------------------------------------
     Instance::ID System::NewInstance( const TSharedPtr<const Model>& InModel )
     {
@@ -294,7 +318,7 @@ namespace mu
 		pLiveInstance->Instance = Result;
 		if (Result)
 		{
-			Result->GetPrivate()->m_id = pLiveInstance->InstanceID;
+			Result->GetPrivate()->Id = pLiveInstance->InstanceID;
 		}
 
 		m_pD->WorkingMemoryManager.EndRunnerThread();
@@ -305,8 +329,7 @@ namespace mu
 	}
 
 
-	//---------------------------------------------------------------------------------------------
-	Ptr<const Image> System::GetImage(Instance::ID instanceID, FResourceID ImageId, int32 MipsToSkip, int32 InImageLOD)
+	Ptr<const Image> System::GetImageInline(Instance::ID instanceID, FResourceID ImageId, int32 MipsToSkip, int32 InImageLOD)
 	{
 		LLM_SCOPE_BYNAME(TEXT("MutableRuntime"));
 		MUTABLE_CPUPROFILER_SCOPE(SystemGetImage);
@@ -332,6 +355,65 @@ namespace mu
 		return pResult;
 	}
 
+	UE::Tasks::TTask<Ptr<const Image>> System::GetImage(Instance::ID instanceID, FResourceID ImageId, int32 MipsToSkip, int32 InImageLOD)
+	{
+		LLM_SCOPE_BYNAME(TEXT("MutableRuntime"));
+		MUTABLE_CPUPROFILER_SCOPE(SystemGetImage);
+
+		Ptr<const Image> pResult;
+
+		// Find the live instance
+		FLiveInstance* pLiveInstance = m_pD->FindLiveInstance(instanceID);
+		check(pLiveInstance);
+		m_pD->WorkingMemoryManager.CurrentInstanceCache = pLiveInstance->Cache;
+
+		OP::ADDRESS RootAddress = GetResourceIDRoot(ImageId);
+		
+		m_pD->WorkingMemoryManager.BeginRunnerThread();
+		
+		mu::OP_TYPE OpType = pLiveInstance->Model->GetPrivate()->m_program.GetOpType(RootAddress);
+		if (GetOpDataType(OpType) != DT_IMAGE)
+		{
+			m_pD->WorkingMemoryManager.EndRunnerThread();
+			m_pD->WorkingMemoryManager.CurrentInstanceCache = nullptr;
+
+			return UE::Tasks::MakeCompletedTask<Ptr<const Image>>(
+					new mu::Image(16, 16, 1, EImageFormat::IF_RGBA_UBYTE, EInitializationType::Black));
+		}
+		
+		TSharedRef<CodeRunner> Runner = CodeRunner::Create(
+				m_pD->Settings, m_pD, EExecutionStrategy::MinimizeMemory, pLiveInstance->Model, pLiveInstance->OldParameters.get(), RootAddress, System::AllLODs, MipsToSkip, InImageLOD, FScheduledOp::EType::Full);
+	
+		
+		constexpr bool bForceInlineExecution = false;
+		UE::Tasks::FTask RunnerCompletionEvent = Runner->StartRun(bForceInlineExecution);
+
+		return UE::Tasks::Launch(TEXT("System::GetImageResultTask"),
+				[SystemPrivate = m_pD, Runner, RootAddress, MipsToSkip]() -> Ptr<const Image>
+				{
+					Ptr<const Image> Result;
+
+					SystemPrivate->bUnrecoverableError = Runner->bUnrecoverableError;
+					if (!Runner->bUnrecoverableError)
+					{
+						Result = SystemPrivate->WorkingMemoryManager.LoadImage(FCacheAddress(RootAddress, 0, MipsToSkip), true);
+					}
+
+					if (!Result)
+					{
+						Result = new mu::Image(16, 16, 1, EImageFormat::IF_RGBA_UBYTE, EInitializationType::Black);
+					}
+
+					SystemPrivate->WorkingMemoryManager.EndRunnerThread();
+					SystemPrivate->WorkingMemoryManager.CurrentInstanceCache = nullptr;
+					
+					return Result;
+				},
+				UE::Tasks::Prerequisites(RunnerCompletionEvent),
+				UE::Tasks::ETaskPriority::Inherit,
+				UE::Tasks::EExtendedTaskPriority::Inline);
+	}
+
 
 	// Temporarily make the Image DescCache clear at every image because otherwise it makes some textures 
 	// not evaluate their layout and be of size 0 and 0 lods, making them incorrectly evaluate MipsToSkip
@@ -341,9 +423,7 @@ namespace mu
 		TEXT("If different than 0, clear the image desc cache at every image."),
 		ECVF_Scalability);
 
-
-	//---------------------------------------------------------------------------------------------
-	void System::GetImageDesc(Instance::ID instanceID, FResourceID ImageId, FImageDesc& OutDesc)
+	void System::GetImageDescInline(Instance::ID instanceID, FResourceID ImageId, FImageDesc& OutDesc)
 	{
 		LLM_SCOPE_BYNAME(TEXT("MutableRuntime"));
 		MUTABLE_CPUPROFILER_SCOPE(SystemGetImageDesc);
@@ -374,9 +454,14 @@ namespace mu
 			m_pD->WorkingMemoryManager.BeginRunnerThread();
 					
 			int8 executionOptions = 0;
-			CodeRunner Runner(m_pD->Settings, m_pD, EExecutionStrategy::MinimizeMemory, pLiveInstance->Model, pLiveInstance->OldParameters.get(), RootAddress, System::AllLODs, executionOptions, 0, FScheduledOp::EType::ImageDesc);
-			Runner.Run();
-			Runner.GetImageDescResult(OutDesc);
+			TSharedRef<CodeRunner> Runner = CodeRunner::Create(
+					m_pD->Settings, m_pD, EExecutionStrategy::MinimizeMemory, pLiveInstance->Model, pLiveInstance->OldParameters.get(), RootAddress, System::AllLODs, executionOptions, 0, FScheduledOp::EType::ImageDesc);
+			
+			constexpr bool bForceInlineExecution = true;
+			UE::Tasks::FTask CompletionEvent = Runner->StartRun(bForceInlineExecution);
+			check(CompletionEvent.IsCompleted());
+
+			Runner->GetImageDescResult(OutDesc);
 
 			m_pD->WorkingMemoryManager.EndRunnerThread();
 		}
@@ -385,13 +470,70 @@ namespace mu
 	}
 
 
-    //---------------------------------------------------------------------------------------------
-    MeshPtrConst System::GetMesh( Instance::ID instanceID, FResourceID MeshId )
+	UE::Tasks::TTask<FImageDesc> System::GetImageDesc(Instance::ID instanceID, FResourceID ImageId)
+	{
+		LLM_SCOPE_BYNAME(TEXT("MutableRuntime"));
+		MUTABLE_CPUPROFILER_SCOPE(SystemGetImageDesc);
+
+		// Find the live instance
+		FLiveInstance* pLiveInstance = m_pD->FindLiveInstance(instanceID);
+		check(pLiveInstance);
+		m_pD->WorkingMemoryManager.CurrentInstanceCache = pLiveInstance->Cache;
+
+		OP::ADDRESS RootAddress = GetResourceIDRoot(ImageId);
+
+		const mu::Model* Model = pLiveInstance->Model.Get();
+		const mu::FProgram& program = Model->GetPrivate()->m_program;
+
+		// TODO: It should be possible to reuse this data if cleared in the correct places only, together with m_heapImageDesc.
+		int32 VarValue = CVarClearImageDescCache.GetValueOnAnyThread();
+		if (VarValue != 0)
+		{
+			m_pD->WorkingMemoryManager.CurrentInstanceCache->ClearDescCache();
+		}
+
+		m_pD->WorkingMemoryManager.BeginRunnerThread();
+		mu::OP_TYPE OpType = program.GetOpType(RootAddress);
+		if (GetOpDataType(OpType) != DT_IMAGE)
+		{
+			m_pD->WorkingMemoryManager.EndRunnerThread();
+			m_pD->WorkingMemoryManager.CurrentInstanceCache = nullptr;
+
+			return UE::Tasks::MakeCompletedTask<FImageDesc>(); 
+		}
+
+		// GetImageDesc may call normal execution paths where meshes are computed.
+		int8 ExecutionOptions = 0;
+		TSharedRef<CodeRunner> Runner = CodeRunner::Create(
+				m_pD->Settings, m_pD, EExecutionStrategy::MinimizeMemory, pLiveInstance->Model, pLiveInstance->OldParameters.get(), RootAddress, System::AllLODs, ExecutionOptions, 0, FScheduledOp::EType::ImageDesc);
+		
+		constexpr bool bForceInlineExecution = false;
+		UE::Tasks::FTask RunnerCompletionEvent = Runner->StartRun(bForceInlineExecution);
+		
+		return UE::Tasks::Launch(TEXT("System::GetImageDescResultTask"),
+				[SystemPrivate = m_pD, Runner]() -> FImageDesc
+				{
+					FImageDesc Result;
+					Runner->GetImageDescResult(Result);
+
+					SystemPrivate->WorkingMemoryManager.EndRunnerThread();
+					SystemPrivate->WorkingMemoryManager.CurrentInstanceCache = nullptr;
+
+					return Result;
+				},
+				UE::Tasks::Prerequisites(RunnerCompletionEvent),
+				UE::Tasks::ETaskPriority::Inherit,
+				UE::Tasks::EExtendedTaskPriority::Inline);
+
+	}
+
+
+    Ptr<const Mesh> System::GetMeshInline(Instance::ID instanceID, FResourceID MeshId)
     {
 		LLM_SCOPE_BYNAME(TEXT("MutableRuntime"));
 		MUTABLE_CPUPROFILER_SCOPE(SystemGetMesh);
 
-		MeshPtrConst pResult;
+		Ptr<const Mesh> Result;
 
 		// Find the live instance
 		FLiveInstance* pLiveInstance = m_pD->FindLiveInstance(instanceID);
@@ -399,16 +541,72 @@ namespace mu
 		m_pD->WorkingMemoryManager.CurrentInstanceCache = pLiveInstance->Cache;
 
 		OP::ADDRESS RootAddress = GetResourceIDRoot(MeshId);
-		pResult = m_pD->BuildMesh(pLiveInstance->Model, pLiveInstance->OldParameters.get(), RootAddress);
+		Result = m_pD->BuildMesh(pLiveInstance->Model, pLiveInstance->OldParameters.get(), RootAddress);
 
 		// If the mesh is null it means empty, but we still need to return a valid one
-		if (!pResult)
+		if (!Result)
 		{
-			pResult = new Mesh();
+			Result = new Mesh();
 		}
 
 		m_pD->WorkingMemoryManager.CurrentInstanceCache = nullptr;
-		return pResult;
+		return Result;
+	}
+
+	UE::Tasks::TTask<Ptr<const Mesh>> System::GetMesh(Instance::ID instanceID, FResourceID MeshId)
+    {
+		LLM_SCOPE_BYNAME(TEXT("MutableRuntime"));
+		MUTABLE_CPUPROFILER_SCOPE(SystemGetImage);
+
+		Ptr<const Mesh> ResultMesh;
+
+		// Find the live instance
+		FLiveInstance* pLiveInstance = m_pD->FindLiveInstance(instanceID);
+		check(pLiveInstance);
+		m_pD->WorkingMemoryManager.CurrentInstanceCache = pLiveInstance->Cache;
+		m_pD->WorkingMemoryManager.BeginRunnerThread();
+		
+		OP::ADDRESS RootAddress = GetResourceIDRoot(MeshId);
+			
+		mu::OP_TYPE OpType = pLiveInstance->Model->GetPrivate()->m_program.GetOpType(RootAddress);
+		if (GetOpDataType(OpType) != DT_MESH)
+		{
+			m_pD->WorkingMemoryManager.EndRunnerThread();
+			m_pD->WorkingMemoryManager.CurrentInstanceCache = nullptr;
+
+			return UE::Tasks::MakeCompletedTask<Ptr<const Mesh>>(new Mesh());
+		}
+		
+		TSharedRef<CodeRunner> Runner = CodeRunner::Create(
+				m_pD->Settings, m_pD, EExecutionStrategy::MinimizeMemory, pLiveInstance->Model, pLiveInstance->OldParameters.get(), RootAddress, System::AllLODs, 0, 0, FScheduledOp::EType::Full);
+		
+		constexpr bool bForceInlineExecution = false;
+		UE::Tasks::FTask RunnerCompletionEvent = Runner->StartRun(bForceInlineExecution);
+
+		return UE::Tasks::Launch(TEXT("System::GetMeshResultTask"),
+				[SystemPrivate = m_pD, Runner, RootAddress]() -> Ptr<const Mesh>
+				{
+					Ptr<const Mesh> Result;
+
+					SystemPrivate->bUnrecoverableError = Runner->bUnrecoverableError;
+					if (!Runner->bUnrecoverableError)
+					{
+						Result = SystemPrivate->WorkingMemoryManager.LoadMesh(FCacheAddress(RootAddress, 0, 0), true);
+					}
+
+					if (!Result)
+					{
+						Result = new Mesh();
+					}
+
+					SystemPrivate->WorkingMemoryManager.EndRunnerThread();
+					SystemPrivate->WorkingMemoryManager.CurrentInstanceCache = nullptr;
+					
+					return Result;
+				},
+				UE::Tasks::Prerequisites(RunnerCompletionEvent),
+				UE::Tasks::ETaskPriority::Inherit,
+				UE::Tasks::EExtendedTaskPriority::Inline);
 	}
 
 
@@ -463,19 +661,19 @@ namespace mu
 			if (Instance.InstanceID == instanceID)
 			{
 				// Make sure all the resources cached in the instance are removed from the tracking list
-				for (Ptr<const Image>& Data : Instance.Cache->ImageResults)
+				for (const FProgramCache::TResourceResult<Image>& Data : Instance.Cache->ImageResults)
 				{
-					if (Data)
+					if (Data.Value)
 					{
-						m_pD->WorkingMemoryManager.CacheResources.Remove(Data);
+						m_pD->WorkingMemoryManager.CacheResources.Remove(Data.Value);
 					}
 				}
 
-				for (Ptr<const Mesh>& Data : Instance.Cache->MeshResults)
+				for (const FProgramCache::TResourceResult<Mesh>& Data : Instance.Cache->MeshResults)
 				{
-					if (Data)
+					if (Data.Value)
 					{
-						m_pD->WorkingMemoryManager.CacheResources.Remove(Data);
+						m_pD->WorkingMemoryManager.CacheResources.Remove(Data.Value);
 					}
 				}
 
@@ -484,7 +682,7 @@ namespace mu
 			}
 		}
 
- 		int Removed = m_pD->WorkingMemoryManager.LiveInstances.RemoveAllSwap(
+ 		int32 Removed = m_pD->WorkingMemoryManager.LiveInstances.RemoveAllSwap(
 			[instanceID](const FLiveInstance& Instance)
 			{
 				return (Instance.InstanceID == instanceID);
@@ -655,10 +853,14 @@ namespace mu
 	void System::Private::RunCode(const TSharedPtr<const Model>& InModel,
 		const Parameters* InParameters, OP::ADDRESS InCodeRoot, uint32 InLODs, uint8 executionOptions, int32 InImageLOD)
 	{
-		CodeRunner Runner(Settings, this, EExecutionStrategy::MinimizeMemory, InModel, InParameters, InCodeRoot, InLODs,
+		TSharedRef<CodeRunner> Runner = CodeRunner::Create(Settings, this, EExecutionStrategy::MinimizeMemory, InModel, InParameters, InCodeRoot, InLODs,
 			executionOptions, InImageLOD, FScheduledOp::EType::Full);
-		Runner.Run();
-		bUnrecoverableError = Runner.bUnrecoverableError;
+		
+		constexpr bool bForceInlineExecutution = true;
+		UE::Tasks::FTask RunnerCompletionEvent = Runner->StartRun(bForceInlineExecutution);
+		check(RunnerCompletionEvent.IsCompleted());
+
+		bUnrecoverableError = Runner->bUnrecoverableError;
 	}
 
 
@@ -710,7 +912,7 @@ namespace mu
 		int32 Result = 0;
 		if (!bUnrecoverableError)
 		{
-			Result = WorkingMemoryManager.CurrentInstanceCache->GetInt(FCacheAddress(at, 0, 0));;
+			Result = WorkingMemoryManager.CurrentInstanceCache->GetInt(FCacheAddress(at, 0, 0));
 		}
 
 		WorkingMemoryManager.EndRunnerThread();
@@ -761,7 +963,6 @@ namespace mu
 	}
 
 	
-	//---------------------------------------------------------------------------------------------
 	Ptr<const Image> System::Private::BuildImage(const TSharedPtr<const Model>& pModel,
 		const Parameters* Params, OP::ADDRESS at, int32 MipsToSkip, int32 InImageLOD)
 	{
@@ -1018,6 +1219,18 @@ namespace mu
 		return CurrentBytes > BudgetThresholdBytes;
 	}
 
+	namespace Private
+	{
+		enum class EBudgetBelowSearchFlags : uint8
+		{
+			None = 0,
+			Keep = 1 << 1,
+			Visited = 1 << 2,
+			FirstOccurance = 1 << 3
+		};
+
+		ENUM_CLASS_FLAGS(EBudgetBelowSearchFlags);
+	}
 
     //---------------------------------------------------------------------------------------------
 	bool FWorkingMemoryManager::EnsureBudgetBelow( uint64 AdditionalMemory )
@@ -1052,7 +1265,7 @@ namespace mu
 			}
 		}
 		
-		// Try to free a loaded roms
+		// Try to free loaded roms
 		if (!bFinished)
 		{
 			MUTABLE_CPUPROFILER_SCOPE(EnsureBudgetBelow_FreeRoms);
@@ -1071,40 +1284,45 @@ namespace mu
 				TSharedPtr<const Model> CacheModel = ModelCache.Model.Pin();
 				if (CacheModel)
 				{
-					mu::FProgram& program = CacheModel->GetPrivate()->m_program;
-					check(ModelCache.RomWeights.Num() == program.m_roms.Num());
+					mu::FProgram& Program = CacheModel->GetPrivate()->m_program;
+					check(ModelCache.RomWeights.Num() == Program.m_roms.Num());
+	
+					check(Program.LoadedMemTrackedRoms.GetMaxIndex() <= Program.m_roms.Num());
 
-					for (int32 RomIndex = 0; RomIndex < program.m_roms.Num(); ++RomIndex)
+					for (TSparseArray<uint8>::TConstIterator Iter = Program.LoadedMemTrackedRoms.CreateConstIterator(); Iter; ++Iter)
 					{
-						const FRomData& Rom = program.m_roms[RomIndex];
-						bool bIsLoaded = program.IsRomLoaded(RomIndex);
+						const int32 RomIndex = Iter.GetIndex();
+
+						const FRomData& Rom = Program.m_roms[RomIndex];
+						check(Program.IsRomLoaded(RomIndex));
+						check(Rom.ResourceType == (uint32)*Iter);
 
 						// We cannot unload a rom if some operation is expecting it.
-						bool bIsRomLocked = ModelCache.PendingOpsPerRom.IsValidIndex(RomIndex)
-							&& 
-							ModelCache.PendingOpsPerRom[RomIndex]>0;
-						if (bIsLoaded && !bIsRomLocked)
+						const bool bIsRomLocked = ModelCache.PendingOpsPerRom.IsValidIndex(RomIndex) && 
+												  ModelCache.PendingOpsPerRom[RomIndex] > 0;
+						if (!bIsRomLocked)
 						{
 							constexpr float FactorWeight = 100.0f;
 							constexpr float FactorTime = -1.0f;
-							float Priority = FactorWeight * float(ModelCache.RomWeights[RomIndex].Key)
-								+
-								FactorTime * float((RomTick - ModelCache.RomWeights[RomIndex].Value));
+							float Priority = FactorWeight * float(ModelCache.RomWeights[RomIndex].Get<0>()) +
+											 FactorTime * float((RomTick - ModelCache.RomWeights[RomIndex].Get<1>()));
 
-							FRomRef Ref = { CacheModel.Get(), RomIndex };
-							Candidates.Add(TPair<float, FRomRef>(Priority,Ref));
+							Candidates.Emplace(Priority, FRomRef{ CacheModel.Get(), RomIndex });
 						}
 					}
 				}
 			}
 
-			Candidates.Sort([](const TPair<float, FRomRef>& A, const TPair<float, FRomRef>& B) { return A.Key > B.Key; });
+			// Don't sort all candidates, make it a heap in O(N) time. We may not need to visit all elements.
+			auto CompareCandidates = [](const TPair<float, FRomRef>& A, const TPair<float, FRomRef>& B) { return A.Key < B.Key; };
+			Candidates.Heapify(CompareCandidates);
 
 			while (!bFinished && Candidates.Num())
 			{
 				MUTABLE_CPUPROFILER_SCOPE(EnsureBudgetBelow_UnloadRom);
 
-				TPair<float, FRomRef> Candidate = Candidates.Pop(false);
+				TPair<float, FRomRef> Candidate;
+				Candidates.HeapPop(Candidate, CompareCandidates, EAllowShrinking::No);
 
 				// UE_LOG(LogMutableCore,Log, "Unloading rom because of memory budget: %d.", lowestPriorityRom);
 				int32 UnloadedSize = Candidate.Value.Model->GetPrivate()->m_program.UnloadRom(Candidate.Value.RomIndex);
@@ -1112,253 +1330,273 @@ namespace mu
 				bFinished = TotalBytes <= BudgetBytes;
 			}
 		}
-
+	
 		// Try to free cache 1 memory
 		if (!bFinished)
 		{
 			MUTABLE_CPUPROFILER_SCOPE(EnsureBudgetBelow_FreeCached);
 
+			TSet<const Resource*> RemovedResources;
+			RemovedResources.Reserve(1024);
+			
 			// From other live instances first
 			for (const FLiveInstance& Instance : LiveInstances)
 			{
-				if (Instance.Cache==CurrentInstanceCache)
+				if (Instance.Cache == CurrentInstanceCache)
 				{
 					// Ignore the current live instance.
 					continue;
 				}
 
 				// Gather all data in the cache for this instance
-				TArray<const Resource*> CacheUnique;
-				CacheUnique.Reserve(1024);
 				{
-					MUTABLE_CPUPROFILER_SCOPE(EnsureBudgetBelow_FreeCached_Gather_Other);
+					MUTABLE_CPUPROFILER_SCOPE(EnsureBudgetBelow_FreeCached_GatherAndRemove_Other);
 
-					CodeContainer<FProgramCache::FOpExecutionData>::iterator It = Instance.Cache->OpExecutionData.begin();
-					for (; It.IsValid(); ++It)
+					RemovedResources.Reset();
+					int32 ImageRemovedBytes = 0;
+					for (const FProgramCache::TResourceResult<Image>& ImageResult : Instance.Cache->ImageResults)
 					{
-						FProgramCache::FOpExecutionData& Data = *It;
-
-						if (!Data.DataTypeIndex)
+						if (!ImageResult.Value)
 						{
 							continue;
 						}
 
-						const Resource* Value = nullptr;
-						switch (Data.DataType)
+						if (!RemovedResources.Find(ImageResult.Value.get()))
 						{
-						case DATATYPE::DT_IMAGE:
-							Value = Instance.Cache->ImageResults[Data.DataTypeIndex].get();
-							if (Value)
-							{
-								CacheUnique.AddUnique(Value);
-							}
-							break;
+							ImageRemovedBytes += ImageResult.Value->GetDataSize();
+							bFinished = TotalBytes - ImageRemovedBytes <= BudgetBytes;
 
-						case DATATYPE::DT_MESH:
-							Value = Instance.Cache->MeshResults[Data.DataTypeIndex].get();
-							if (Value)
-							{
-								CacheUnique.AddUnique(Value);
-							}
-							break;
+							RemovedResources.Add(ImageResult.Value.get());
+							CacheResources.Remove(ImageResult.Value);
+						}
 
-						default:
+						if (bFinished)
+						{
 							break;
 						}
 					}
-				}
 
-				{
-					MUTABLE_CPUPROFILER_SCOPE(EnsureBudgetBelow_FreeCached_Free_Other);
-
-					while (!bFinished && CacheUnique.Num())
+					if (ImageRemovedBytes > 0)
 					{
-						// Free one
-						const Resource* Removed = CacheUnique.Pop(false);
-
-						int32 RemovedDataSize = Removed->GetDataSize();
-
-						// Clear its cache references
-						CodeContainer<FProgramCache::FOpExecutionData>::iterator RemIt = Instance.Cache->OpExecutionData.begin();
-						for (; RemIt.IsValid(); ++RemIt)
+						for (const FProgramCache::TResourceResult<Image>& ImageResult : Instance.Cache->ImageResults)
 						{
-							FProgramCache::FOpExecutionData& Data = *RemIt;
-
-							if (!Data.DataTypeIndex)
+							if (RemovedResources.Find(ImageResult.Value.get()))
 							{
-								continue;
-							}
-
-							const Resource* Value = nullptr;
-							switch (Data.DataType)
-							{
-							case DATATYPE::DT_IMAGE:
-								Value = Instance.Cache->ImageResults[Data.DataTypeIndex].get();
-								break;
-
-							case DATATYPE::DT_MESH:
-								Value = Instance.Cache->MeshResults[Data.DataTypeIndex].get();
-								break;
-
-							default:
-								break;
-							}
-
-							if (Value == Removed)
-							{
-								CacheResources.Remove(Removed);
-								Instance.Cache->SetUnused(*RemIt);
+								Instance.Cache->SetUnused(Instance.Cache->OpExecutionData[ImageResult.OpAddress]);
 							}
 						}
-
-						TotalBytes -= RemovedDataSize;
-						bFinished = TotalBytes <= BudgetBytes;
 					}
 
+					TotalBytes -= ImageRemovedBytes;
+					if (bFinished)
+					{
+						break;
+					}
+
+					int32 MeshRemovedBytes = 0;
+					RemovedResources.Reset();
+					for (const FProgramCache::TResourceResult<Mesh>& MeshResult : Instance.Cache->MeshResults)
+					{
+						if (!MeshResult.Value)
+						{
+							continue;
+						}
+
+						if (!RemovedResources.Find(MeshResult.Value.get()))
+						{
+							MeshRemovedBytes = MeshResult.Value->GetDataSize();
+							bFinished = TotalBytes - MeshRemovedBytes <= BudgetBytes;
+
+							RemovedResources.Add(MeshResult.Value.get());
+							CacheResources.Remove(MeshResult.Value);
+						}
+
+						if (bFinished)
+						{
+							break;
+						}
+					}
+
+					if (MeshRemovedBytes > 0)
+					{
+						for (const FProgramCache::TResourceResult<Mesh>& MeshResult : Instance.Cache->MeshResults)
+						{
+							if (RemovedResources.Find(MeshResult.Value.get()))
+							{
+								Instance.Cache->SetUnused(Instance.Cache->OpExecutionData[MeshResult.OpAddress]);
+							}
+						}
+					}
+
+					TotalBytes -= MeshRemovedBytes;
 					if (bFinished)
 					{
 						break;
 					}
 				}
 			}
+		}
 
-			// From the current live instances. It is more involved: we have to make sure any data we want to free is not also
-			// in any cache (0 or 1) position with hit-count > 0.
-			if (CurrentInstanceCache && !bFinished)
+		// From the current live instances. It is more involved: we have to make sure any data we want to free is not also
+		// in any cache (0 or 1) position with hit-count > 0.
+		if (!bFinished && CurrentInstanceCache)
+		{
+			MUTABLE_CPUPROFILER_SCOPE(EnsureBudgetBelow_FreeCached_Current);
+			// This removes images first, not sure if this can become a problem.
+			
+			using namespace Private;
+			using ESearchFlags = EBudgetBelowSearchFlags;
+			
+			auto SearchResourcesToRemove = 
+			[
+				TotalBytes = TotalBytes, 
+				BudgetBytes = BudgetBytes, 
+				CurrentInstanceCache = CurrentInstanceCache.Get()
+			](const auto& ResourceRange, TArray<ESearchFlags>& SearchFlags) -> int32
 			{
-				// Gather all data in the cache for this instance
-				TArray<const Resource*> CacheUnique;
-				CacheUnique.Reserve(1024);
+				MUTABLE_CPUPROFILER_SCOPE(EnsureBudgetBelow_FreeCached_Current_SearchResources);
+
+				int32 RemovedBytes = 0;
+
+				const int32 NumResources = ResourceRange.Num();
+				for (int32 ResourceIndex = 0; ResourceIndex < NumResources; ++ResourceIndex)
 				{
-					MUTABLE_CPUPROFILER_SCOPE(EnsureBudgetBelow_FreeCached_Gather_Current);
-
-					CodeContainer<FProgramCache::FOpExecutionData>::iterator It = CurrentInstanceCache->OpExecutionData.begin();
-					for (; It.IsValid(); ++It)
+					// Check if visited.
+					if (EnumHasAnyFlags(SearchFlags[ResourceIndex], ESearchFlags::Visited))
 					{
-						FProgramCache::FOpExecutionData& Data = *It;
+						continue;
+					}
+	
+					// Null values will not have any flag set.
+					if (!ResourceRange[ResourceIndex].Value)
+					{
+						continue;
+					}
 
-						if (!Data.DataTypeIndex || Data.OpHitCount > 0)
+					SearchFlags[ResourceIndex] = (ESearchFlags::Visited | ESearchFlags::FirstOccurance);
+					
+					if (CurrentInstanceCache->OpExecutionData[ResourceRange[ResourceIndex].OpAddress].OpHitCount > 0)
+					{
+						// Mark all occurences as visited to keep. 
+						for (int32 I = ResourceIndex; I < NumResources; ++I)
 						{
-							continue;
+							if (ResourceRange[I].Value == ResourceRange[ResourceIndex].Value)
+							{
+								EnumAddFlags(SearchFlags[I], (ESearchFlags::Visited | ESearchFlags::Keep));
+							}
+						}
+					}
+					else
+					{
+						int32 I = ResourceIndex + 1;
+						for (; I < NumResources; ++I)
+						{
+							// Mark as visted.
+							if (ResourceRange[I].Value == ResourceRange[ResourceIndex].Value)
+							{
+								EnumAddFlags(SearchFlags[I], ESearchFlags::Visited);	
+								if (CurrentInstanceCache->OpExecutionData[ResourceRange[I].OpAddress].OpHitCount > 0)
+								{
+									// Still used, next step will mark to keep.
+									break;
+								}
+							}
 						}
 
-						const Resource* Value = nullptr;
-						switch (Data.DataType)
+						if (I < NumResources)
 						{
-						case DATATYPE::DT_IMAGE:
-							Value = CurrentInstanceCache->ImageResults[Data.DataTypeIndex].get();
-							if (Value)
+							// The image is still used, mark all occurences as visited and keep.
+							for (int32 J = ResourceIndex; J < NumResources; ++J)
 							{
-								CacheUnique.AddUnique(Value);
+								if (ResourceRange[J].Value == ResourceRange[ResourceIndex].Value)
+								{
+									EnumAddFlags(SearchFlags[J], (ESearchFlags::Visited | ESearchFlags::Keep));	
+								}
 							}
-							break;
+						}
+						else
+						{
+							// The resource is not used, see if we can stop searching. 
+							// In that case all occurences have been marked as visited.
+							RemovedBytes += ResourceRange[ResourceIndex].Value->GetDataSize();
 
-						case DATATYPE::DT_MESH:
-							Value = CurrentInstanceCache->MeshResults[Data.DataTypeIndex].get();
-							if (Value)
+							if (TotalBytes - RemovedBytes <= BudgetBytes)
 							{
-								CacheUnique.AddUnique(Value);
+								return RemovedBytes;
 							}
-							break;
-
-						default:
-							break;
 						}
 					}
 				}
 
-				{
-					MUTABLE_CPUPROFILER_SCOPE(EnsureBudgetBelow_FreeCached_Free_Current);
+				return RemovedBytes;
+			};
 
-					while (!bFinished && CacheUnique.Num())
+			const int32 MaxNumResources = FMath::Max(CurrentInstanceCache->ImageResults.Num(), CurrentInstanceCache->MeshResults.Num());
+			TArray<ESearchFlags> SearchFlags;
+			SearchFlags.SetNumUninitialized(MaxNumResources);
+			
+			if (!bFinished)
+			{
+				FMemory::Memzero(SearchFlags.GetData(), MaxNumResources*sizeof(ESearchFlags));
+				
+				const TArrayView<FProgramCache::TResourceResult<Image>>& Images = MakeArrayView(CurrentInstanceCache->ImageResults);
+				const int32 RemovedBytes = SearchResourcesToRemove(Images, SearchFlags); 
+				
+				if (RemovedBytes > 0)
+				{	
+					MUTABLE_CPUPROFILER_SCOPE(EnsureBudgetBelow_FreeCached_Current_FreeResources);
+			
+					const int32 NumImages = Images.Num();
+					for (int32 I = 0; I < NumImages; ++I)
 					{
-						// Free one
-						const Resource* Removed = CacheUnique.Pop(false);
-
-						// Does this data have any other cache references with op-hit-count bigger than 0?
-						bool bStillUsed = false;
-
-						CodeContainer<FProgramCache::FOpExecutionData>::iterator CheckIt = CurrentInstanceCache->OpExecutionData.begin();
-						for (; CheckIt.IsValid(); ++CheckIt)
+						// Remove the first occurence of any visited not to keep. 
+						if (SearchFlags[I] == (ESearchFlags::FirstOccurance | ESearchFlags::Visited))
 						{
-							const FProgramCache::FOpExecutionData& Data = *CheckIt;
-
-							if (!Data.DataTypeIndex)
-							{
-								continue;
-							}
-
-							const Resource* Value = nullptr;
-							switch (Data.DataType)
-							{
-							case DATATYPE::DT_IMAGE:
-								Value = CurrentInstanceCache->ImageResults[Data.DataTypeIndex].get();
-								break;
-
-							case DATATYPE::DT_MESH:
-								Value = CurrentInstanceCache->MeshResults[Data.DataTypeIndex].get();
-								break;
-
-							default:
-								break;
-							}
-
-							if (Value == Removed && Data.OpHitCount > 0)
-							{
-								bStillUsed = true;
-								break;
-							}
+							CacheResources.Remove(Images[I].Value);
 						}
-
-						if (bStillUsed)
+					
+						// Set unused all references visited not marked to keep. 
+						if ((SearchFlags[I] & (ESearchFlags::Visited | ESearchFlags::Keep)) == ESearchFlags::Visited)
 						{
-							continue;
+							CurrentInstanceCache->SetUnused(CurrentInstanceCache->OpExecutionData[Images[I].OpAddress]);
 						}
-
-
-						int32 RemovedDataSize = Removed->GetDataSize();
-
-						// Clear its cache references
-						CodeContainer<FProgramCache::FOpExecutionData>::iterator RemIt = CurrentInstanceCache->OpExecutionData.begin();
-						for (; RemIt.IsValid(); ++RemIt)
-						{
-							FProgramCache::FOpExecutionData& Data = *RemIt;
-
-							if (!Data.DataTypeIndex)
-							{
-								continue;
-							}
-
-							const Resource* Value = nullptr;
-							switch (Data.DataType)
-							{
-							case DATATYPE::DT_IMAGE:
-								Value = CurrentInstanceCache->ImageResults[Data.DataTypeIndex].get();
-								break;
-
-							case DATATYPE::DT_MESH:
-								Value = CurrentInstanceCache->MeshResults[Data.DataTypeIndex].get();
-								break;
-
-							default:
-								break;
-							}
-
-							if (Value == Removed)
-							{
-								MUTABLE_CPUPROFILER_SCOPE(EnsureBudgetBelow_FreeCached_Free_Current_ActualFree);
-
-								CacheResources.Remove(Removed);
-								CurrentInstanceCache->SetUnused(*RemIt);
-							}
-						}
-
-						TotalBytes -= RemovedDataSize;
-						bFinished = TotalBytes <= BudgetBytes;
-					}
+					}	
 				}
+
+				TotalBytes -= RemovedBytes;
+				bFinished = TotalBytes <= BudgetBytes;
 			}
+			
+			if (!bFinished)
+			{
+				FMemory::Memzero(SearchFlags.GetData(), MaxNumResources*sizeof(ESearchFlags));
+				
+				TArrayView<FProgramCache::TResourceResult<Mesh>> Meshes = MakeArrayView(CurrentInstanceCache->MeshResults);
+				const int32 RemovedBytes = SearchResourcesToRemove(Meshes, SearchFlags); 
 
+				if (RemovedBytes > 0)
+				{	
+					MUTABLE_CPUPROFILER_SCOPE(EnsureBudgetBelow_FreeCached_Current_FreeResources);
+					
+					const int32 NumMeshes = Meshes.Num();
+					for (int32 I = 0; I < NumMeshes; ++I)
+					{
+						// Remove the first occurence of any visited not to keep. 
+						if (SearchFlags[I] == (ESearchFlags::FirstOccurance | ESearchFlags::Visited))
+						{
+							CacheResources.Remove(Meshes[I].Value);
+						}
+						
+						if ((SearchFlags[I] & (ESearchFlags::Visited | ESearchFlags::Keep)) == ESearchFlags::Visited)
+						{
+							CurrentInstanceCache->SetUnused(CurrentInstanceCache->OpExecutionData[Meshes[I].OpAddress]);
+						}
+					}
+				}
+
+				TotalBytes -= RemovedBytes;
+				bFinished = TotalBytes <= BudgetBytes;
+			}
 		}
 
 		if (!bFinished)
@@ -1373,10 +1611,14 @@ namespace mu
 				// This is a good place to insert a brakpoint to detect callstacks with memory peaks
 				UE_LOG(LogMutableCore, Log, TEXT("Failed to keep memory budget. Budget: %d, Current: %d, New: %d"),
 					BudgetBytes / 1024, (TotalBytes - AdditionalMemory) / 1024, AdditionalMemory / 1024);
-
-				// We won't show correct internal or streaming buffer memory.
-				LogWorkingMemory(nullptr);
+				
+				if (bEnableDetailedMemoryBudgetExceededLogging)
+				{
+					// We won't show correct internal or streaming buffer memory.
+					LogWorkingMemory(nullptr);
+				}
 			}
+
 		}
 
         return bFinished;
@@ -1462,10 +1704,11 @@ namespace mu
 				bool bInclude = Params->GetPrivate()->HasMultipleValues(ParamIndex);
 				if (!bInclude)
 				{
-					bInclude =
+					bInclude = !(
 						Params->GetPrivate()->m_values[ParamIndex]
-						!=
-						ParamDescs[ParamIndex].m_defaultValue;
+						==
+						ParamDescs[ParamIndex].m_defaultValue
+						);
 				}
 
 				IncludedParameters[IndexIndex] = bInclude;

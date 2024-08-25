@@ -2,6 +2,7 @@
 
 #pragma once
 
+#include "Nodes/InterchangeBaseNodeContainer.h"
 #include "InterchangePipelineBase.h"
 #include "InterchangePipelineConfigurationBase.h"
 #include "Styling/SlateBrush.h"
@@ -13,13 +14,20 @@ struct FPropertyAndParent;
 struct FSlateBrush;
 class IDetailsView;
 class SCheckBox;
+class STextComboBox;
+class UInterchangeTranslatorBase;
+
 
 struct FInterchangePipelineItemType
 {
 public:
 	FString DisplayName;
-
 	UInterchangePipelineBase* Pipeline;
+	UObject* ReimportObject = nullptr;
+	UInterchangeBaseNodeContainer* Container = nullptr;
+	UInterchangeSourceData* SourceData = nullptr;
+	bool bBasicLayout = false;
+	TArray<FInterchangeConflictInfo> ConflictInfos;
 };
 
 class SInterchangePipelineItem : public STableRow<TSharedPtr<FInterchangePipelineItemType>>
@@ -31,8 +39,9 @@ public:
 		TSharedPtr<FInterchangePipelineItemType> InPipelineElement);
 private:
 	const FSlateBrush* GetImageItemIcon() const;
+	FSlateColor GetTextColor() const;
 
-	TSharedPtr<FInterchangePipelineItemType> PipelineElement;
+	TSharedPtr<FInterchangePipelineItemType> PipelineElement = nullptr;
 };
 
 typedef SListView< TSharedPtr<FInterchangePipelineItemType> > SPipelineListViewType;
@@ -57,6 +66,9 @@ public:
 		SLATE_ARGUMENT(bool, bReimport)
 		SLATE_ARGUMENT(TArray<FInterchangeStackInfo>, PipelineStacks)
 		SLATE_ARGUMENT(TArray<UInterchangePipelineBase*>*, OutPipelines)
+		SLATE_ARGUMENT(TWeakObjectPtr<UInterchangeBaseNodeContainer>, BaseNodeContainer)
+		SLATE_ARGUMENT(TWeakObjectPtr<UObject>, ReimportObject)
+		SLATE_ARGUMENT(TWeakObjectPtr<UInterchangeTranslatorBase>, Translator)
 	SLATE_END_ARGS()
 
 public:
@@ -101,15 +113,24 @@ private:
 	/** Internal utility function to properly display pipeline's name */
 	static FString GetPipelineDisplayName(const UInterchangePipelineBase* Pipeline);
 
+	void SetEditPipeline(FInterchangePipelineItemType* PipelineItemToEdit);
+	FReply OnEditTranslatorSettings();
+	void OnFinishedChangingProperties(const FPropertyChangedEvent& PropertyChangedEvent);
+
 private:
 	TWeakPtr< SWindow > OwnerWindow;
 	TWeakObjectPtr<UInterchangeSourceData> SourceData;
+	TWeakObjectPtr<UInterchangeBaseNodeContainer> BaseNodeContainer;
+	TWeakObjectPtr<UObject> ReimportObject;
+	TWeakObjectPtr<UInterchangeTranslatorBase> Translator;
+	TObjectPtr<UInterchangeTranslatorSettings> TranslatorSettings = nullptr;
 	TArray<FInterchangeStackInfo> PipelineStacks;
 	TArray<UInterchangePipelineBase*>* OutPipelines;
 
 	// The available stacks
 	TArray<TSharedPtr<FString>> AvailableStacks;
 	void OnStackSelectionChanged(TSharedPtr<FString> String, ESelectInfo::Type);
+	void RefreshStack(bool bStackSelectionChange);
 
 	//////////////////////////////////////////////////////////////////////////
 	// the pipelines list view
@@ -125,6 +146,23 @@ private:
 	//
 	//////////////////////////////////////////////////////////////////////////
 
+	ECheckBoxState IsFilteringOptions() const
+	{
+		return bFilterOptions ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+	}
+
+	ECheckBoxState IsBasicLayoutEnabled() const
+	{
+		return bBasicLayout ? ECheckBoxState::Checked : ECheckBoxState::Unchecked;
+	}
+
+	void OnFilterOptionsChanged(ECheckBoxState CheckState);
+	void OnBasicLayoutChanged(ECheckBoxState CheckState);
+
+	const FSlateBrush* GetImportButtonIcon() const;
+
+	FReply OnPreviewImport() const;
+
 	TSharedPtr<IDetailsView> PipelineConfigurationDetailsView;
 	TSharedPtr<SCheckBox> UseSameSettingsForAllCheckBox;
 
@@ -132,6 +170,9 @@ private:
 	bool bReimport = false;
 	bool bCanceled = false;
 	bool bImportAll = false;
+
+	bool bFilterOptions = false;
+	bool bBasicLayout = false;
 
 	FName CurrentStackName = NAME_None;
 	TObjectPtr<UInterchangePipelineBase> CurrentSelectedPipeline = nullptr;

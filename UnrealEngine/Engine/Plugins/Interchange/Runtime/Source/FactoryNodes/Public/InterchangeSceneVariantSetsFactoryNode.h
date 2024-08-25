@@ -7,7 +7,7 @@
 
 #include "InterchangeSceneVariantSetsFactoryNode.generated.h"
 
-UCLASS(BlueprintType, Experimental)
+UCLASS(BlueprintType)
 class INTERCHANGEFACTORYNODES_API UInterchangeSceneVariantSetsFactoryNode : public UInterchangeFactoryBaseNode
 {
 	GENERATED_BODY()
@@ -21,7 +21,7 @@ public:
 	}
 
 	/**
-	 * Return the node type name of the class, we use this when reporting errors
+	 * Return the node type name of the class. This is used when reporting errors.
 	 */
 	virtual FString GetTypeName() const override
 	{
@@ -29,36 +29,36 @@ public:
 		return TypeName;
 	}
 
-	/** Get the class this node want to create */
+	/** Get the class this node creates. */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | SceneVariantSetFactory")
 	virtual class UClass* GetObjectClass() const override;
 
 	/**
-	 * This function allow to retrieve the number of translated VariantSets' unique ids for this object.
+	 * Retrieve the number of unique IDs of all translated VariantSets for this object.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | SceneVariantSetFactory")
 	int32 GetCustomVariantSetUidCount() const;
 
 	/**
-	 * This function allow to retrieve all the translated VariantSets' unique ids for this object.
+	 * Retrieve the unique IDs of all translated VariantSets for this object.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | SceneVariantSetFactory")
 	void GetCustomVariantSetUids(TArray<FString>& OutVariantUids) const;
 
 	/**
-	 * This function allow to retrieve one translated VariantSet's unique id for this object.
+	 * Retrieve the UID of the VariantSet with the specified index.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | SceneVariantSetFactory")
 	void GetCustomVariantSetUid(const int32 Index, FString& OutVariantUid) const;
 
 	/**
-	 * Add one translated VariantSet's unique id to this object.
+	 * Add a unique id of a translated VariantSet for this object.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | SceneVariantSetFactory")
 	bool AddCustomVariantSetUid(const FString& VariantUid);
 
 	/**
-	 * Remove one translated VariantSet's unique id from this object.
+	 * Remove the specified unique ID of a translated VariantSet from this object.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Interchange | Node | SceneVariantSetFactory")
 	bool RemoveCustomVariantSetUid(const FString& VariantUid);

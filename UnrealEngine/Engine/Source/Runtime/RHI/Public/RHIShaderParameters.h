@@ -182,3 +182,17 @@ struct FRHIBatchedShaderUnbinds
 	}
 };
 
+struct FRHIShaderBundleDispatch
+{
+	uint32 RecordIndex = ~uint32(0u);
+	class FComputePipelineState* PipelineState = nullptr;
+	FRHIComputeShader* Shader = nullptr;
+	FRHIComputePipelineState* RHIPipeline = nullptr;
+	FRHIBatchedShaderParameters Parameters;
+	FUint32Vector4 Constants;
+
+	inline bool IsValid() const
+	{
+		return RecordIndex != ~uint32(0u);
+	}
+};

@@ -5,17 +5,16 @@
 #include "CoreTypes.h"
 #include "MLDeformerMorphModelDetails.h"
 
-class UNearestNeighborModel;
-class IPropertyHandle;
 class IDetailChildrenBuilder;
-class FDetailWidgetRow;
+class IPropertyHandle;
+class UNearestNeighborModel;
 
 namespace UE::NearestNeighborModel
 {
 	class FNearestNeighborEditorModel;
 
 	class NEARESTNEIGHBORMODELEDITOR_API FNearestNeighborModelDetails
-		: public UE::MLDeformer::FMLDeformerMorphModelDetails
+		: public ::UE::MLDeformer::FMLDeformerMorphModelDetails
 	{
 	public:
 		/** Makes a new instance of this detail layout class for a specific detail view requesting it. */
@@ -31,20 +30,20 @@ namespace UE::NearestNeighborModel
 		// ~END FMLDeformerModelDetails overrides.
 
 	private:
-		UNearestNeighborModel* NearestNeighborModel = nullptr;
-		FNearestNeighborEditorModel* NearestNeighborEditorModel = nullptr;
+		UNearestNeighborModel* GetCastModel() const;
+		FNearestNeighborEditorModel* GetCastEditorModel() const;
 
-		IDetailCategoryBuilder* FileCacheCategoryBuilder = nullptr;
-		IDetailCategoryBuilder* ClothPartCategoryBuilder = nullptr;
+		void CustomizeTrainingSettingsCategory() const;
+		void CustomizeNearestNeighborSettingsCategory() const;
+		void CustomizeSectionsCategory(IDetailLayoutBuilder& DetailBuilder);
+		void CustomizeMorphTargetCategory(IDetailLayoutBuilder& DetailBuilder) const;
+		void CustomizeStatusCategory() const;
+		void CustomizeFileCacheCategory(IDetailLayoutBuilder& DetailBuilder) const;
+
+		void GenerateSectionElementWidget(TSharedRef<IPropertyHandle> PropertyHandle, int32 ArrayIndex, IDetailChildrenBuilder& ChildrenBuilder);
+
 		IDetailCategoryBuilder* NearestNeighborCategoryBuilder = nullptr;
-		IDetailCategoryBuilder* KMeansCategoryBuilder = nullptr;
-
-		TArray<TSharedPtr<FString> > SubMeshNames;
-		TMap<TSharedPtr<FString>, int32> SubMeshNameMap;
-
-		void AddActionResultText(IDetailCategoryBuilder* CategoryBuilder, uint8 Result, const FString& ActionName);
-		void GenerateClothPartElementWidget(TSharedRef<IPropertyHandle> PropertyHandle, int32 ArrayIndex, IDetailChildrenBuilder& ChildrenBuilder);
-		void BuildSubMeshNames();
-		void SubMeshComboSelectionChanged(TSharedPtr<FString> InSelectedItem, ESelectInfo::Type SelectInfo, int32 ArrayIndex);
+		IDetailCategoryBuilder* StatusCategoryBuilder = nullptr;
+		IDetailCategoryBuilder* SectionsCategoryBuilder = nullptr;
 	};
 }	// namespace UE::NearestNeighborModel

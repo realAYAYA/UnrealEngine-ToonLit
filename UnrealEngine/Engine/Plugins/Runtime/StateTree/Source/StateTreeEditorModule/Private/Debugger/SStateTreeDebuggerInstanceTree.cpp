@@ -89,7 +89,7 @@ void SStateTreeDebuggerInstanceTree::ScrollTo(const TSharedPtr<RewindDebugger::F
 
 void SStateTreeDebuggerInstanceTree::ScrollTo(const double ScrollOffset) const
 {
-	TreeView->SetScrollOffset(ScrollOffset);
+	TreeView->SetScrollOffset(static_cast<float>(ScrollOffset));
 }
 
 void SStateTreeDebuggerInstanceTree::Construct(const FArguments& InArgs)

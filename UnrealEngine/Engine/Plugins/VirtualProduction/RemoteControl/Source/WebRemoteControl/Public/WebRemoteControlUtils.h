@@ -66,7 +66,7 @@ namespace WebRemoteControlUtils
 	 * @return Whether the deserialization was successful.
 	 */
 	template <typename MessageType>
-	UE_NODISCARD bool DeserializeMessage(TConstArrayView<uint8> InTCHARPayload, MessageType& OutDeserializedMessage)
+	[[nodiscard]] bool DeserializeMessage(TConstArrayView<uint8> InTCHARPayload, MessageType& OutDeserializedMessage)
 	{
 		FMemoryReaderView Reader(InTCHARPayload);
 		TSharedRef<IStructDeserializerBackend> DeserializerBackend = CreateJsonDeserializerBackend(Reader);

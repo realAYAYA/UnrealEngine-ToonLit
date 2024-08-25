@@ -14,6 +14,7 @@
 #include "Misc/Paths.h"
 #include "Misc/SecureHash.h"
 #include "Serialization/CompactBinaryWriter.h"
+#include "ProfilingDebugging/ScopedTimers.h"
 
 // Test is targeted at HttpDerivedDataBackend but with some backend test interface it could be generalized
 // to function against all backends.
@@ -487,7 +488,7 @@ protected:
 	static inline FString TestNamespace;
 };
 
-TArray<FCacheRecord> CreateTestCacheRecords(ICacheStore* InTestBackend, uint32 InNumKeys, uint32 InNumValues, FCbObject MetaContents = FCbObject(), const char* BucketName = nullptr)
+TArray<FCacheRecord> CreateTestCacheRecords(ICacheStore* InTestBackend, uint32 InNumKeys, uint32 InNumValues, FCbObject MetaContents = FCbObject(), const char* BucketName = nullptr, uint8 Salt = 0)
 {
 	using namespace UE::DerivedData;
 	FCacheBucket TestCacheBucket(BucketName ? BucketName : "AutoTestDummy");
@@ -511,7 +512,7 @@ TArray<FCacheRecord> CreateTestCacheRecords(ICacheStore* InTestBackend, uint32 I
 			ValueContents.AddUninitialized(NumBytes);
 			for (int32 ContentIndex = 0; ContentIndex < NumBytes; ++ContentIndex)
 			{
-				ValueContents[ContentIndex] = (uint8)(KeyIndex + ContentIndex);
+				ValueContents[ContentIndex] = (uint8)(KeyIndex + ContentIndex + Salt);
 			}
 			Values.Emplace(MakeSharedBufferFromArray(MoveTemp(ValueContents)));
 			HashBuilder.Update(Values.Last().GetView());
@@ -558,7 +559,7 @@ TArray<FCacheRecord> CreateTestCacheRecords(ICacheStore* InTestBackend, uint32 I
 	return CacheRecords;
 }
 
-TArray<FValue> CreateTestCacheValues(ICacheStore* InTestBackend, uint32 InNumValues, const char* BucketName = nullptr)
+TArray<FValue> CreateTestCacheValues(ICacheStore* InTestBackend, uint32 InNumValues, const char* BucketName = nullptr, uint8 Salt = 1)
 {
 	using namespace UE::DerivedData;
 	FCacheBucket TestCacheBucket(BucketName ? BucketName : "AutoTestDummy");
@@ -575,7 +576,7 @@ TArray<FValue> CreateTestCacheValues(ICacheStore* InTestBackend, uint32 InNumVal
 		ValueContents.AddUninitialized(NumBytes);
 		for (int32 ContentIndex = 0; ContentIndex < NumBytes; ++ContentIndex)
 		{
-			ValueContents[ContentIndex] = (uint8)(ValueIndex + ContentIndex + 52); // offset of 52 to keep the contents distinct from record test data
+			ValueContents[ContentIndex] = (uint8)(ValueIndex + ContentIndex + Salt);
 		}
 		ValueBuffers.Emplace(MakeSharedBufferFromArray(MoveTemp(ValueContents)));
 	}
@@ -767,6 +768,87 @@ bool FHttpCacheStoreTest::RunTest(const FString& Parameters)
 			GetAndValidateValues(TEXT("SimpleValueSkipDataZen"), PutValues, ECachePolicy::Default | ECachePolicy::SkipData, ZenIntermediarySiblingBackend.Get());
 		}
 #endif // UE_HTTPCACHESTORETEST_USE_ZEN
+	}
+
+	return true;
+}
+
+static void PutTestRecords(ILegacyCacheStore* TestBackend, uint32 NumRecords, bool bSynchronous = false, TArray<FCacheKey>* OutKeys = nullptr)
+{
+	FCacheBucket TestCacheBucket("AutoTestDummy");
+
+	const int64 RunUniqueId = FDateTime::Now().GetTicks();
+
+	TArray<FCachePutRequest> PutRequests;
+	PutRequests.Reserve(NumRecords);
+
+	TArray<FSharedBuffer> ValueBuffers;
+	for (uint32 ValueIndex = 0; ValueIndex < NumRecords; ++ValueIndex)
+	{
+		TArray<uint8> ValueContents;
+		const int32 NumBytes = 12;
+		ValueContents.AddUninitialized(NumBytes);
+		*reinterpret_cast<int64*>(ValueContents.GetData()) = RunUniqueId;
+		*(reinterpret_cast<uint32*>(ValueContents.GetData()) + 2) = ValueIndex;
+		ValueBuffers.Emplace(MakeSharedBufferFromArray(MoveTemp(ValueContents)));
+	}
+
+	if (OutKeys)
+	{
+		OutKeys->Reserve(OutKeys->Num() + NumRecords);
+	}
+	uint64 KeyIndex = 0;
+	for (const FSharedBuffer& ValueBuffer : ValueBuffers)
+	{
+		FIoHash ValueHash(FIoHash::HashBuffer(ValueBuffer));
+
+		FCacheKey Key;
+		Key.Bucket = TestCacheBucket;
+		Key.Hash = ValueHash;
+
+		if (OutKeys)
+		{
+			OutKeys->Add(Key);
+		}
+
+		FCacheRecordBuilder RecordBuilder(Key);
+		RecordBuilder.AddValue(FValueId::FromHash(ValueHash), ValueBuffer);
+
+		PutRequests.Add({ {TEXT("AutoTestStressPutRecord")}, RecordBuilder.Build(), ECachePolicy::Default, KeyIndex });
+	}
+
+	FRequestOwner RequestOwner(bSynchronous ? EPriority::Blocking : EPriority::Normal);
+	{
+		FRequestBarrier RequestBarrier(RequestOwner);
+		if (!bSynchronous)
+		{
+			RequestOwner.KeepAlive();
+		}
+		TestBackend->Put(PutRequests, RequestOwner, [](FCachePutResponse&& Response)
+		{
+			check(Response.Status == EStatus::Ok);
+		});
+	}
+
+	if (bSynchronous)
+	{
+		RequestOwner.Wait();
+	}
+}
+
+
+// Stress test Put operations
+IMPLEMENT_HTTPDERIVEDDATA_AUTOMATION_TEST(FHttpCacheStoreStressPutTest, ".CacheStoreStressPut", EAutomationTestFlags::EditorContext | EAutomationTestFlags::StressFilter)
+bool FHttpCacheStoreStressPutTest::RunTest(const FString& Parameters)
+{
+	using namespace UE::DerivedData;
+	ILegacyCacheStore* TestBackend = GetTestBackend();
+
+	constexpr uint32 NumRecords = 1000;
+	{
+		FAutoScopedDurationTimer AutoTimer;
+		PutTestRecords(TestBackend, NumRecords, true);
+		UE_LOG(LogDerivedDataCache, Display, TEXT("Putting %u records (containing values of size 12 bytes): %.2f s"), NumRecords, AutoTimer.GetTime());
 	}
 
 	return true;

@@ -245,6 +245,7 @@ public:
 	ENGINE_API virtual EDisplayColorGamut GetDisplayColorGamut() const override;
 	ENGINE_API virtual EDisplayOutputFormat GetDisplayOutputFormat() const override;
 	ENGINE_API virtual bool GetSceneHDREnabled() const override;
+	ENGINE_API virtual ESlateViewportDynamicRange GetViewportDynamicRange() const override;
 
 	ENGINE_API void SetViewportSize(uint32 NewSizeX,uint32 NewSizeY);
 	ENGINE_API void SetFixedViewportSize(uint32 NewSizeX, uint32 NewSizeY);

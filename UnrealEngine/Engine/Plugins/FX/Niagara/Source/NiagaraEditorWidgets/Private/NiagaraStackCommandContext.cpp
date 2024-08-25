@@ -191,6 +191,10 @@ FText FNiagaraStackCommandContext::GetCanPasteSelectedEntriesToolTip() const
 {
 	FText CanPasteMessage;
 	FNiagaraStackClipboardUtilities::TestCanPasteSelectionWithMessage(SelectedEntries, CanPasteMessage);
+	if (CanPasteMessage.IsEmptyOrWhitespace())
+	{
+		CanPasteMessage = LOCTEXT("NoValidDataToPaste", "Incompatible or no data to paste.");
+	}
 	return CanPasteMessage;
 }
 

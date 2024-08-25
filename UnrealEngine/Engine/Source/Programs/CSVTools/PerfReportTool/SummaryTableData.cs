@@ -119,6 +119,10 @@ namespace PerfSummaries
 
 		public SummaryTableElement(Type inType, string inName, double inValue, ColourThresholdList inColorThresholdList, string inToolTip, uint inFlags = 0)
 		{
+			if (inName == "")
+			{
+				throw new Exception("Name cannot be empty!");
+			}
 			type = inType;
 			name = inName;
 			isNumeric = true;
@@ -130,6 +134,10 @@ namespace PerfSummaries
 		}
 		public SummaryTableElement(Type inType, string inName, string inValue, ColourThresholdList inColorThresholdList, string inToolTip, uint inFlags = 0)
 		{
+			if (inName == "")
+			{
+				throw new Exception("Name cannot be empty!");
+			}
 			type = inType;
 			name = inName;
 			numericValue = 0.0;
@@ -429,6 +437,19 @@ namespace PerfSummaries
 				return 0;
 			}
 			return (int)dict["framecount"].numericValue;
+		}
+
+		public bool Contains(string key)
+		{
+			return dict.ContainsKey(key);
+		}
+		public SummaryTableElement Get(string key)
+		{
+			if ( dict.TryGetValue(key, out SummaryTableElement elementOut) )
+			{
+				return elementOut;
+			}
+			return null;
 		}
 
 		public void RemoveSafe(string name)

@@ -27,12 +27,10 @@ void UDataRegistrySource_DataTable::SetSourceTable(const TSoftObjectPtr<UDataTab
 
 void UDataRegistrySource_DataTable::SetCachedTable(bool bForceLoad /*= false*/)
 {
-#if WITH_EDITOR
-	if (CachedTable && GIsEditor)
+	if (CachedTable)
 	{
 		CachedTable->OnDataTableChanged().RemoveAll(this);
 	}
-#endif
 
 	CachedTable = nullptr;
 	UDataTable* FoundTable = SourceTable.Get();
@@ -52,6 +50,14 @@ void UDataRegistrySource_DataTable::SetCachedTable(bool bForceLoad /*= false*/)
 			}
 
 			FoundTable = SourceTable.LoadSynchronous();
+			if (!FoundTable)
+			{
+				if (!SourceTable.IsNull())
+				{
+					UE_LOG(LogDataRegistry, Warning, TEXT("Force loading table %s for source %s failed! Source data is invalid and will be ignored."), *SourceTable.ToString(), *GetPathName());
+				}
+				bInvalidSourceTable = true;
+			}
 		}
 	}
 
@@ -63,26 +69,25 @@ void UDataRegistrySource_DataTable::SetCachedTable(bool bForceLoad /*= false*/)
 		if (FoundTable->HasAnyFlags(RF_NeedLoad))
 		{
 			UE_LOG(LogDataRegistry, Error, TEXT("Cannot initialize DataRegistry source %s, Preload table was not set, resave in editor!"), *GetPathName());
+			bInvalidSourceTable = true;
 		}
 		else if(!ItemStruct || !RowStruct)
 		{
 			UE_LOG(LogDataRegistry, Error, TEXT("Cannot initialize DataRegistry source %s, Table %s or registry is invalid!"), *GetPathName(), *FoundTable->GetPathName());
+			bInvalidSourceTable = true;
 		}
 		else if (!RowStruct->IsChildOf(ItemStruct))
 		{
 			UE_LOG(LogDataRegistry, Error, TEXT("Cannot initialize DataRegistry source %s, Table %s type does not match %s"), *GetPathName(), *FoundTable->GetPathName(), *RowStruct->GetName(), *ItemStruct->GetName());
+			bInvalidSourceTable = true;
 		}
 		else
 		{
 			CachedTable = FoundTable;
+			bInvalidSourceTable = false;
 
-#if WITH_EDITOR
-			if (GIsEditor)
-			{
-				// Listen for changes like row 
-				CachedTable->OnDataTableChanged().AddUObject(this, &UDataRegistrySource_DataTable::EditorRefreshSource);
-			}
-#endif
+			// Listen for changes like row 
+			CachedTable->OnDataTableChanged().AddUObject(this, &UDataRegistrySource_DataTable::OnDataTableChanged);
 		}
 	}
 
@@ -150,10 +155,12 @@ EDataRegistryAvailability UDataRegistrySource_DataTable::GetItemAvailability(con
 			return EDataRegistryAvailability::DoesNotExist;
 		}
 	}
-	else
+	else if (bInvalidSourceTable)
 	{
-		return EDataRegistryAvailability::Unknown;
+		return EDataRegistryAvailability::DoesNotExist;
 	}
+
+	return EDataRegistryAvailability::Unknown;
 }
 
 void UDataRegistrySource_DataTable::GetResolvedNames(TArray<FName>& Names) const
@@ -297,22 +304,32 @@ void UDataRegistrySource_DataTable::OnTableLoaded()
 
 	SetCachedTable(false);
 
+	// If we failed to set a cached table, the source data is invalid
+	if (CachedTable == nullptr)
+	{
+		UE_LOG(LogDataRegistry, Warning, TEXT("Loading table %s for source %s failed! Source data is invalid and will be ignored."), *SourceTable.ToString(), *GetPathName());
+		bInvalidSourceTable = true;
+	}
+
 	HandlePendingAcquires();
 }
 
+void UDataRegistrySource_DataTable::OnDataTableChanged()
+{
 #if WITH_EDITOR
+	if (GIsEditor)
+	{
+		SetCachedTable(false);
+	}
+#endif
 
-void UDataRegistrySource_DataTable::EditorRefreshSource()
-{
-	SetCachedTable(false);
+	if (IsInitialized())
+	{
+		GetRegistry()->InvalidateCacheVersion();
+	}
 }
 
-void UDataRegistrySource_DataTable::PreSave(const ITargetPlatform* TargetPlatform)
-{
-	PRAGMA_DISABLE_DEPRECATION_WARNINGS;
-	Super::PreSave(TargetPlatform);
-	PRAGMA_ENABLE_DEPRECATION_WARNINGS;
-}
+#if WITH_EDITOR
 
 void UDataRegistrySource_DataTable::PreSave(FObjectPreSaveContext ObjectSaveContext)
 {

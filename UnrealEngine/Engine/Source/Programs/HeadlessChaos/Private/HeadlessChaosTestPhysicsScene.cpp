@@ -82,17 +82,17 @@ namespace ChaosTest {
 			{
 				if (bQueryGameThread)
 				{
-					FTransform ParticleTransform(Data.Payload.GetExternalGeometryParticle_ExternalThread()->R(), Data.Payload.GetExternalGeometryParticle_ExternalThread()->X());
+					FTransform ParticleTransform(Data.Payload.GetExternalGeometryParticle_ExternalThread()->R(), Data.Payload.GetExternalGeometryParticle_ExternalThread()->GetX());
 					const FVec3 DirLocal = ParticleTransform.InverseTransformVectorNoScale(CurData.Dir);
 					const FVec3 StartLocal = ParticleTransform.InverseTransformPositionNoScale(Start);
-					bHit = Data.Payload.GetExternalGeometryParticle_ExternalThread()->Geometry()->Raycast(StartLocal, DirLocal, CurData.CurrentLength, 0, OutTime, OutPos, OutNorm, FaceIdx);
+					bHit = Data.Payload.GetExternalGeometryParticle_ExternalThread()->GetGeometry()->Raycast(StartLocal, DirLocal, CurData.CurrentLength, 0, OutTime, OutPos, OutNorm, FaceIdx);
 				}
 				else
 				{
-					FTransform ParticleTransform(Data.Payload.GetGeometryParticleHandle_PhysicsThread()->R(), Data.Payload.GetGeometryParticleHandle_PhysicsThread()->X());
+					FTransform ParticleTransform(Data.Payload.GetGeometryParticleHandle_PhysicsThread()->GetR(), Data.Payload.GetGeometryParticleHandle_PhysicsThread()->GetX());
 					const FVec3 DirLocal = ParticleTransform.InverseTransformVectorNoScale(CurData.Dir);
 					const FVec3 StartLocal = ParticleTransform.InverseTransformPositionNoScale(Start);
-					bHit = Data.Payload.GetGeometryParticleHandle_PhysicsThread()->Geometry()->Raycast(StartLocal, DirLocal, CurData.CurrentLength, 0, OutTime, OutPos, OutNorm, FaceIdx);
+					bHit = Data.Payload.GetGeometryParticleHandle_PhysicsThread()->GetGeometry()->Raycast(StartLocal, DirLocal, CurData.CurrentLength, 0, OutTime, OutPos, OutNorm, FaceIdx);
 				}
 
 				if (bHit)
@@ -157,8 +157,8 @@ namespace ChaosTest {
 		EXPECT_NE(Proxy, nullptr);
 
 		{
-			auto Sphere = MakeUnique<TSphere<FReal, 3>>(FVec3(0), 3);
-			Proxy->GetGameThreadAPI().SetGeometry(MoveTemp(Sphere));
+			auto Sphere = MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(0), 3);
+			Proxy->GetGameThreadAPI().SetGeometry(Sphere);
 		}
 
 		FChaosEngineInterface::ReleaseActor(Proxy, &Scene);
@@ -179,8 +179,8 @@ namespace ChaosTest {
 		EXPECT_NE(Proxy, nullptr);
 
 		{
-			auto Sphere = MakeUnique<TSphere<FReal, 3>>(FVec3(0), 3);
-			Particle.SetGeometry(MoveTemp(Sphere));
+			auto Sphere = MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(0), 3);
+			Particle.SetGeometry(Sphere);
 		}
 
 		TArray<FPhysicsActorHandle> Proxys = { Proxy };
@@ -362,16 +362,16 @@ namespace ChaosTest {
 		auto& Particle = Proxy->GetGameThreadAPI();
 		EXPECT_NE(Proxy, nullptr);
 		{
-			auto Sphere = MakeUnique<TSphere<FReal, 3>>(FVec3(0), 3);
-			Particle.SetGeometry(MoveTemp(Sphere));
+			auto Sphere = MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(0), 3);
+			Particle.SetGeometry(Sphere);
 		}
 		FPhysicsActorHandle Proxy2 = nullptr;
 		FChaosEngineInterface::CreateActor(Params, Proxy2);
 		auto& Particle2 = Proxy2->GetGameThreadAPI();
 		EXPECT_NE(Proxy2, nullptr);
 		{
-			auto Sphere = MakeUnique<TSphere<FReal, 3>>(FVec3(0), 3);
-			Particle2.SetGeometry(MoveTemp(Sphere));
+			auto Sphere = MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(0), 3);
+			Particle2.SetGeometry(Sphere);
 		}
 		TArray<FPhysicsActorHandle> Proxys = { Proxy, Proxy2 };
 		Scene.AddActorsToScene_AssumesLocked(Proxys);
@@ -463,8 +463,8 @@ namespace ChaosTest {
 		FChaosEngineInterface::CreateActor(Params, Proxy);
 		auto& Particle = Proxy->GetGameThreadAPI();
 		{
-			auto Sphere = MakeUnique<TSphere<FReal, 3>>(FVec3(0), 3);
-			Particle.SetGeometry(MoveTemp(Sphere));
+			auto Sphere = MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(0), 3);
+			Particle.SetGeometry(Sphere);
 		}
 		TArray<FPhysicsActorHandle> Proxys = { Proxy };
 		Scene.AddActorsToScene_AssumesLocked(Proxys);
@@ -583,8 +583,8 @@ namespace ChaosTest {
 		FChaosEngineInterface::CreateActor(Params, Proxy);
 		auto& Particle = Proxy->GetGameThreadAPI();
 		{
-			auto Sphere = MakeUnique<TSphere<FReal, 3>>(FVec3(0), 3);
-			Particle.SetGeometry(MoveTemp(Sphere));
+			auto Sphere = MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(0), 3);
+			Particle.SetGeometry(Sphere);
 		}
 		TArray<FPhysicsActorHandle> Proxys = { Proxy };
 		Scene.AddActorsToScene_AssumesLocked(Proxys);
@@ -667,8 +667,8 @@ namespace ChaosTest {
 		EXPECT_NE(Proxy, nullptr);
 
 		{
-			auto Sphere = MakeUnique<TSphere<FReal, 3>>(FVec3(0), 3);
-			Particle.SetGeometry(MoveTemp(Sphere));
+			auto Sphere = MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(0), 3);
+			Particle.SetGeometry(Sphere);
 		}
 
 		//tick solver but don't call EndFrame (want to flush and swap manually)
@@ -707,8 +707,8 @@ namespace ChaosTest {
 		EXPECT_NE(Proxy, nullptr);
 
 		{
-			auto Sphere = MakeUnique<TSphere<FReal, 3>>(FVec3(0), 3);
-			Particle.SetGeometry(MoveTemp(Sphere));
+			auto Sphere = MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(0), 3);
+			Particle.SetGeometry(Sphere);
 		}
 
 		//create actor before structure is ticked
@@ -751,8 +751,8 @@ namespace ChaosTest {
 		EXPECT_NE(Proxy, nullptr);
 
 		{
-			auto Sphere = MakeUnique<TSphere<FReal, 3>>(FVec3(0), 3);
-			Particle.SetGeometry(MoveTemp(Sphere));
+			auto Sphere = MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(0), 3);
+			Particle.SetGeometry(Sphere);
 		}
 
 		//create actor before structure is ticked
@@ -794,8 +794,8 @@ namespace ChaosTest {
 		EXPECT_NE(Proxy, nullptr);
 
 		{
-			auto Sphere = MakeUnique<TSphere<FReal, 3>>(FVec3(0), 3);
-			Particle.SetGeometry(MoveTemp(Sphere));
+			auto Sphere = MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(0), 3);
+			Particle.SetGeometry(Sphere);
 		}
 
 		//create actor before structure is ticked
@@ -848,8 +848,8 @@ namespace ChaosTest {
 		EXPECT_NE(Proxy, nullptr);
 
 		{
-			auto Sphere = MakeUnique<TSphere<FReal, 3>>(FVec3(0), 3);
-			Particle.SetGeometry(MoveTemp(Sphere));
+			auto Sphere = MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(0), 3);
+			Particle.SetGeometry(Sphere);
 		}
 
 		//create actor after flush
@@ -884,8 +884,8 @@ namespace ChaosTest {
 			EXPECT_NE(Proxy, nullptr);
 
 			{
-				auto Sphere = MakeUnique<TSphere<FReal, 3>>(FVec3(0), 3);
-				Particle.SetGeometry(MoveTemp(Sphere));
+				auto Sphere = MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(0), 3);
+				Particle.SetGeometry(Sphere);
 			}
 
 			//create actor after flush
@@ -948,7 +948,7 @@ namespace ChaosTest {
 					FPBDRigidsEvolution* Evolution = Scene.GetSolver()->GetEvolution();
 					const auto& SOA = Evolution->GetParticles();
 					const auto& InternalProxy = *SOA.GetAllParticlesView().Begin();
-					EXPECT_EQ(InternalProxy.X()[0], 0);
+					EXPECT_EQ(InternalProxy.GetX()[0], 0);
 				}
 			}
 
@@ -965,7 +965,7 @@ namespace ChaosTest {
 				FPBDRigidsEvolution* Evolution = Scene.GetSolver()->GetEvolution();
 				const auto& SOA = Evolution->GetParticles();
 				const auto& InternalProxy = *SOA.GetAllParticlesView().Begin();
-				EXPECT_EQ(InternalProxy.X()[0], 5);
+				EXPECT_EQ(InternalProxy.GetX()[0], 5);
 			}
 
 			//make sure commands are also deferred
@@ -1016,8 +1016,8 @@ namespace ChaosTest {
 			EXPECT_NE(Proxy, nullptr);
 
 			{
-				auto Sphere = MakeUnique<TSphere<FReal, 3>>(FVec3(0), 3);
-				Particle.SetGeometry(MoveTemp(Sphere));
+				auto Sphere = MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(0), 3);
+				Particle.SetGeometry(Sphere);
 				Particle.SetV(FVec3(0, 0, -1));
 			}
 
@@ -1029,8 +1029,8 @@ namespace ChaosTest {
 			auto& Particle2 = Proxy2->GetGameThreadAPI();
 			EXPECT_NE(Proxy2, nullptr);
 			{
-				auto Sphere = MakeUnique<TSphere<FReal, 3>>(FVec3(0), 3);
-				Particle2.SetGeometry(MoveTemp(Sphere));
+				auto Sphere = MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(0), 3);
+				Particle2.SetGeometry(Sphere);
 				Particle2.SetV(FVec3(0, -1, 0));
 			}
 
@@ -1111,8 +1111,8 @@ namespace ChaosTest {
 			EXPECT_NE(Proxy, nullptr);
 
 			{
-				auto Sphere = MakeUnique<TSphere<FReal, 3>>(FVec3(0), 3);
-				Particle.SetGeometry(MoveTemp(Sphere));
+				auto Sphere = MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(0), 3);
+				Particle.SetGeometry(Sphere);
 				Particle.SetV(FVec3(0, 0, -1));
 			}
 
@@ -1213,8 +1213,8 @@ namespace ChaosTest {
 		FChaosEngineInterface::CreateActor(Params, Proxy);
 		auto& Particle = Proxy->GetGameThreadAPI();
 		{
-			auto Sphere = MakeUnique<TSphere<FReal, 3>>(FVec3(0), 3);
-			Particle.SetGeometry(MoveTemp(Sphere));
+			auto Sphere = MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(0), 3);
+			Particle.SetGeometry(Sphere);
 		}
 
 		TArray<FPhysicsActorHandle> Proxys = { Proxy };
@@ -1258,16 +1258,16 @@ namespace ChaosTest {
 		FChaosEngineInterface::CreateActor(Params, Proxy);
 		auto& Particle = Proxy->GetGameThreadAPI();
 		{
-			auto Sphere = MakeUnique<TSphere<FReal, 3>>(FVec3(0), 3);
-			Particle.SetGeometry(MoveTemp(Sphere));
+			auto Sphere = MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(0), 3);
+			Particle.SetGeometry(Sphere);
 		}
 
 		Params.bSimulatePhysics = true;
 		FChaosEngineInterface::CreateActor(Params, Proxy2);
 		auto& Particle2 = Proxy2->GetGameThreadAPI();
 		{
-			auto Sphere = MakeUnique<TSphere<FReal, 3>>(FVec3(0), 3);
-			Particle2.SetGeometry(MoveTemp(Sphere));
+			auto Sphere = MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(0), 3);
+			Particle2.SetGeometry(Sphere);
 		}
 
 		TArray<FPhysicsActorHandle> Proxys = { Proxy, Proxy2 };
@@ -1333,7 +1333,14 @@ namespace ChaosTest {
 		EXPECT_NEAR(Particle.V()[2], ZVel, 1e-2);
 	}
 
-	GTEST_TEST(EngineInterface, SetKinematicTarget)
+	void ExpectVectorEqual(const FVec3& V0, const FVec3& V1)
+	{
+		EXPECT_EQ(V0.X, V1.X);
+		EXPECT_EQ(V0.Y, V1.Y);
+		EXPECT_EQ(V0.Z, V1.Z);
+	}
+
+	void TestKinematicTarget(const bool bInUpdateKinematicFromSimulation)
 	{
 		// Need to test:
 		// GT particle position is immediately updated after calling SetKinematicTarget_AssumesLocked
@@ -1355,19 +1362,21 @@ namespace ChaosTest {
 		FChaosEngineInterface::CreateActor(Params, Proxy);
 		auto& Particle = Proxy->GetGameThreadAPI();
 		{
-			auto Sphere = MakeUnique<TSphere<FReal, 3>>(FVec3(0), 3);
-			Particle.SetGeometry(MoveTemp(Sphere));
+			auto Sphere = MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(0), 3);
+			Particle.SetGeometry(Sphere);
 		}
 
 		TArray<FPhysicsActorHandle> Proxys = { Proxy };
 		Scene.AddActorsToScene_AssumesLocked(Proxys);
 		Particle.SetObjectState(EObjectStateType::Kinematic);
+		Particle.SetUpdateKinematicFromSimulation(bInUpdateKinematicFromSimulation);
 
 		struct FDummyInput : FSimCallbackInput
 		{
 			FSingleParticlePhysicsProxy* Proxy;
 			FVec3 CorrectX;
 			FVec3 CorrectV;
+			bool bKinematicWritebackEnabled;
 			void Reset() {}
 		};
 
@@ -1375,15 +1384,19 @@ namespace ChaosTest {
 		{
 			virtual void OnPreSimulate_Internal() override
 			{
+				const FVec3 ExpectedX = GetConsumerInput_Internal()->CorrectX;
+				const FVec3 ExpectedV = GetConsumerInput_Internal()->CorrectV;
+
 				auto Handle = GetConsumerInput_Internal()->Proxy->GetPhysicsThreadAPI();
-				EXPECT_EQ(Handle->X(), GetConsumerInput_Internal()->CorrectX);
-				EXPECT_EQ(Handle->V(), GetConsumerInput_Internal()->CorrectV);
+				ExpectVectorEqual(Handle->X(), ExpectedX);
+				ExpectVectorEqual(Handle->V(), ExpectedV);
 			}
 		};
 
 		auto Callback = Scene.GetSolver()->CreateAndRegisterSimCallbackObject_External<FCallback>();
 
 		Callback->GetProducerInputData_External()->Proxy = Proxy;
+		Callback->GetProducerInputData_External()->bKinematicWritebackEnabled = bInUpdateKinematicFromSimulation;
 
 		FVec3 Grav(0, 0, 0);
 		float Dt = 1;
@@ -1394,12 +1407,12 @@ namespace ChaosTest {
 			Scene.StartFrame();
 			Scene.EndFrame();
 			// Test X and V on GT
-			EXPECT_EQ(Particle.X().X, CorrectX.X);
-			EXPECT_EQ(Particle.X().Y, CorrectX.Y);
-			EXPECT_EQ(Particle.X().Z, CorrectX.Z);
-			EXPECT_EQ(Particle.V().X, CorrectV.X);
-			EXPECT_EQ(Particle.V().Y, CorrectV.Y);
-			EXPECT_EQ(Particle.V().Z, CorrectV.Z);
+			// NOTE: GT velocity will not be updated if kinematic writeback from the physics thread is disabled
+			ExpectVectorEqual(Particle.X(), CorrectX);
+			if (Callback->GetProducerInputData_External()->bKinematicWritebackEnabled)
+			{
+				ExpectVectorEqual(Particle.V(), CorrectV);
+			}
 			// Test X and V on PT, this is going to be used in OnPreSimulate_Internal in next frame.
 			Callback->GetProducerInputData_External()->CorrectX = CorrectX;
 			Callback->GetProducerInputData_External()->CorrectV = CorrectV;
@@ -1419,9 +1432,13 @@ namespace ChaosTest {
 		CurrentV = FVec3(1, 1, 1);
 		FChaosEngineInterface::SetKinematicTarget_AssumesLocked(Proxy, FTransform(CurrentX));
 
-		// Test if position is immediately updated on GT after SetKinematicTarget_AssumesLocked
-		EXPECT_EQ(Particle.X(), CurrentX);
+		// Test if position is immediately updated on GT after SetKinematicTarget_AssumesLocked (if we aren't reading data back from PT)
+		if (!bInUpdateKinematicFromSimulation)
+		{
+			ExpectVectorEqual(Particle.X(), CurrentX);
+		}
 
+		// This will fail when bInUpdateKinematicFromSimulation is false becasuse GT and PT disagree on velocity
 		AdvanceFrameAndRunTest(CurrentX, CurrentV);
 
 		// Test if velocity becomes zero when no kinematic target is set
@@ -1444,6 +1461,7 @@ namespace ChaosTest {
 		FChaosEngineInterface::SetGlobalPose_AssumesLocked(Proxy, FTransform(CurrentX));
 
 		Callback->GetProducerInputData_External()->CorrectX = CurrentX;
+		Callback->GetProducerInputData_External()->CorrectV = CurrentV;
 		AdvanceFrameAndRunTest(CurrentX, CurrentV);
 
 		// Test if particle positions and velocities are correct after SetGlobalPose_AssumesLocked, SetKinematicTarget_AssumesLocked
@@ -1475,6 +1493,18 @@ namespace ChaosTest {
 		AdvanceFrameAndRunTest(CurrentX, CurrentV);
 	}
 
+	// Test SetKinematicTarget when writeback from PT is enabled
+	GTEST_TEST(EngineInterface, SetKinematicTargetWriteBackEnabled)
+	{
+		TestKinematicTarget(true);
+	}
+
+	// Test SetKinematicTarget when writeback from PT is disabled
+	GTEST_TEST(EngineInterface, SetKinematicTargetWriteBackDisabled)
+	{
+		TestKinematicTarget(false);
+	}
+
 	GTEST_TEST(EngineInterface, PerPropertySetOnGT)
 	{
 		//Need to test:
@@ -1493,8 +1523,8 @@ namespace ChaosTest {
 		FChaosEngineInterface::CreateActor(Params, Proxy);
 		auto& Particle = Proxy->GetGameThreadAPI();
 		{
-			auto Sphere = MakeUnique<TSphere<FReal, 3>>(FVec3(0), 3);
-			Particle.SetGeometry(MoveTemp(Sphere));
+			auto Sphere = MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(0), 3);
+			Particle.SetGeometry(Sphere);
 		}
 
 		TArray<FPhysicsActorHandle> Proxys = { Proxy };
@@ -1663,8 +1693,8 @@ namespace ChaosTest {
 			FChaosEngineInterface::CreateActor(Params, Proxy);
 			auto& Particle = Proxy->GetGameThreadAPI();
 			{
-				auto Sphere = MakeUnique<TSphere<FReal, 3>>(FVec3(0), 3);
-				Particle.SetGeometry(MoveTemp(Sphere));
+				auto Sphere = MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(0), 3);
+				Particle.SetGeometry(Sphere);
 			}
 
 			TArray<FPhysicsActorHandle> Proxys = { Proxy };
@@ -1721,8 +1751,8 @@ namespace ChaosTest {
 		FChaosEngineInterface::CreateActor(Params, Proxy);
 		auto& Particle = Proxy->GetGameThreadAPI();
 		{
-			auto Sphere = MakeUnique<TSphere<FReal, 3>>(FVec3(0), 3);
-			Particle.SetGeometry(MoveTemp(Sphere));
+			auto Sphere = MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(0), 3);
+			Particle.SetGeometry(Sphere);
 		}
 
 		TArray<FPhysicsActorHandle> Proxys = { Proxy };
@@ -1792,8 +1822,8 @@ namespace ChaosTest {
 		FChaosEngineInterface::CreateActor(Params, Proxy);
 		auto& Particle = Proxy->GetGameThreadAPI();
 		{
-			auto Sphere = MakeUnique<TSphere<FReal, 3>>(FVec3(0), 3);
-			Particle.SetGeometry(MoveTemp(Sphere));
+			auto Sphere = MakeImplicitObjectPtr<TSphere<FReal, 3>>(FVec3(0), 3);
+			Particle.SetGeometry(Sphere);
 		}
 
 		TArray<FPhysicsActorHandle> Proxys = { Proxy };
@@ -1847,14 +1877,14 @@ namespace ChaosTest {
 		// We require a union here, although the second geometry isn't used we need the particle to
 		// have more than one shape in its shapes array otherwise the query acceleration will treat
 		// it as a special case and skip bounds checking during the overlap
-		TArray<TUniquePtr<FImplicitObject>> Geoms;
-		Geoms.Emplace(MakeUnique<TBox<FReal, 3>>(-HalfBoxExtent, HalfBoxExtent));
-		Geoms.Emplace(MakeUnique<TBox<FReal, 3>>(-HalfBoxExtent, HalfBoxExtent));
+		TArray<Chaos::FImplicitObjectPtr> Geoms;
+		Geoms.Emplace(MakeImplicitObjectPtr<TBox<FReal, 3>>(-HalfBoxExtent, HalfBoxExtent));
+		Geoms.Emplace(MakeImplicitObjectPtr<TBox<FReal, 3>>(-HalfBoxExtent, HalfBoxExtent));
 
 		auto& Particle = StaticCube->GetGameThreadAPI();
 		{
-			TUniquePtr<FImplicitObjectUnion> GeomUnion = MakeUnique<FImplicitObjectUnion>(MoveTemp(Geoms));
-			Particle.SetGeometry(MoveTemp(GeomUnion));
+			Chaos::FImplicitObjectPtr GeomUnion = MakeImplicitObjectPtr<FImplicitObjectUnion>(MoveTemp(Geoms));
+			Particle.SetGeometry(GeomUnion);
 		}
 		
 		TArray<FPhysicsActorHandle> Particles{ StaticCube };
@@ -1897,14 +1927,14 @@ namespace ChaosTest {
 		// We require a union here, although the second geometry isn't used we need the particle to
 		// have more than one shape in its shapes array otherwise the query acceleration will treat
 		// it as a special case and skip bounds checking during the overlap
-		TArray<TUniquePtr<FImplicitObject>> Geoms;
-		Geoms.Emplace(MakeUnique<TBox<FReal, 3>>(-HalfBoxExtent, HalfBoxExtent));
-		Geoms.Emplace(MakeUnique<TBox<FReal, 3>>(-HalfBoxExtent, HalfBoxExtent));
+		TArray<Chaos::FImplicitObjectPtr> Geoms;
+		Geoms.Emplace(MakeImplicitObjectPtr<TBox<FReal, 3>>(-HalfBoxExtent, HalfBoxExtent));
+		Geoms.Emplace(MakeImplicitObjectPtr<TBox<FReal, 3>>(-HalfBoxExtent, HalfBoxExtent));
 
 		auto& Particle = StaticCube->GetGameThreadAPI();
 		{
-			TUniquePtr<FImplicitObjectUnion> GeomUnion = MakeUnique<FImplicitObjectUnion>(MoveTemp(Geoms));
-			Particle.SetGeometry(MoveTemp(GeomUnion));
+			Chaos::FImplicitObjectPtr GeomUnion = MakeImplicitObjectPtr<FImplicitObjectUnion>(MoveTemp(Geoms));
+			Particle.SetGeometry(GeomUnion);
 		}
 
 		TArray<FPhysicsActorHandle> Particles{ StaticCube };

@@ -149,13 +149,14 @@ void FFoliageActor::RemoveInstance(int32 InstanceIndex)
 {
 	if (ActorInstances.IsValidIndex(InstanceIndex))
 	{
-		if (AActor* Actor = ActorInstances[InstanceIndex])
+		AActor* Actor = ActorInstances[InstanceIndex];
+		ActorInstances.RemoveAtSwap(InstanceIndex);
+
+		if (Actor)
 		{
 			Actor->GetWorld()->DestroyActor(Actor, true);
 			bActorsDestroyed = true;
 		}
-
-		ActorInstances.RemoveAtSwap(InstanceIndex);
 	}
 }
 

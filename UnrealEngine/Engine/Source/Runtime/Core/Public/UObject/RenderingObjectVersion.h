@@ -133,6 +133,9 @@ struct FRenderingObjectVersion
 		// Added support to force Nanite material usage if Nanite mesh builders are also forced.
 		NaniteForceMaterialUsage,
 
+		// Custom material expression includes are now serialized & used for DDC key generation
+		AddedMaterialExpressionIncludesHash,
+
 		// -----<new versions can be added above this line>-------------------------------------------------
 		VersionPlusOne,
 		LatestVersion = VersionPlusOne - 1

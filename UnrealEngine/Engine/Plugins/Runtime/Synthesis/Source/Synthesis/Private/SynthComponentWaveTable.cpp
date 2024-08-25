@@ -184,10 +184,7 @@ int32 USynthSamplePlayer::OnGenerateAudio(float* OutAudio, int32 NumSamples)
 	}
 	else
 	{
-		for (int32 Sample = 0; Sample < NumSamples; ++Sample)
-		{
-			OutAudio[Sample] = 0.0f;
-		}
+		FMemory::Memzero(OutAudio, NumSamples * sizeof(float));
 	}
 	return NumSamples;
 }

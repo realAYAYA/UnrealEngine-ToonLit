@@ -379,7 +379,7 @@ void FOnlineIdentityApple::RevokeAuthToken(const FUniqueNetId& UserId, const FOn
 	});
 }
 
-void FOnlineIdentityApple::GetUserPrivilege(const FUniqueNetId& UserId, EUserPrivileges::Type Privilege, const FOnGetUserPrivilegeCompleteDelegate& Delegate)
+void FOnlineIdentityApple::GetUserPrivilege(const FUniqueNetId& UserId, EUserPrivileges::Type Privilege, const FOnGetUserPrivilegeCompleteDelegate& Delegate, EShowPrivilegeResolveUI ShowResolveUI)
 {
 	FUniqueNetIdRef UserIdRef(UserId.AsShared());
 	Subsystem->ExecuteNextTick([UserIdRef, Privilege, Delegate]()

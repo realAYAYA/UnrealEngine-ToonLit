@@ -7,7 +7,7 @@
 #include "Evaluation/PreAnimatedState/IMovieScenePreAnimatedStorage.h"
 #include "Evaluation/PreAnimatedState/MovieScenePreAnimatedStateStorage.h"
 #include "Evaluation/PreAnimatedState/MovieScenePreAnimatedObjectGroupManager.h"
-#include "Evaluation/PreAnimatedState/MovieScenePreAnimatedEntityCaptureSource.h"
+#include "Evaluation/PreAnimatedState/MovieScenePreAnimatedCaptureSources.h"
 #include "EntitySystem/BuiltInComponentTypes.h"
 
 
@@ -34,6 +34,18 @@ struct FBoundObjectPreAnimatedStateTraits : FPreAnimatedStateTraits
 
 	/* Defined as a template rather than a variadic function to prevent error C4840 */
 	template<typename... T>
+	FPreAnimatedStorageGroupHandle FindGroup(UObject* BoundObject, T&&... Unused)
+	{
+		return FindGroupImpl(BoundObject);
+	}
+	template<typename... T>
+	FPreAnimatedStorageGroupHandle FindGroup(const FObjectComponent& BoundObject, T&&... Unused)
+	{
+		return FindGroupImpl(BoundObject);
+	}
+
+	/* Defined as a template rather than a variadic function to prevent error C4840 */
+	template<typename... T>
 	FPreAnimatedStorageGroupHandle MakeGroup(UObject* BoundObject, T&&... Unused)
 	{
 		return MakeGroupImpl(BoundObject);
@@ -43,6 +55,9 @@ struct FBoundObjectPreAnimatedStateTraits : FPreAnimatedStateTraits
 	{
 		return MakeGroupImpl(BoundObject);
 	}
+
+	MOVIESCENE_API FPreAnimatedStorageGroupHandle FindGroupImpl(UObject* BoundObject);
+	MOVIESCENE_API FPreAnimatedStorageGroupHandle FindGroupImpl(const FObjectComponent& BoundObject);
 
 	MOVIESCENE_API FPreAnimatedStorageGroupHandle MakeGroupImpl(UObject* BoundObject);
 	MOVIESCENE_API FPreAnimatedStorageGroupHandle MakeGroupImpl(const FObjectComponent& BoundObject);
@@ -151,10 +166,12 @@ public:
 
 	void CachePreAnimatedValue(const FCachePreAnimatedValueParams& Params, UObject* BoundObject, EPreAnimatedCaptureSourceTracking TrackingMode = EPreAnimatedCaptureSourceTracking::CacheIfTracked)
 	{
-		FPreAnimatedStateEntry Entry = MakeEntry(BoundObject);
-
-		if (this->TrackCaptureSource(Entry, TrackingMode))
+		if (this->ShouldTrackCaptureSource(TrackingMode, BoundObject))
 		{
+			FPreAnimatedStateEntry Entry = MakeEntry(BoundObject);
+
+			this->TrackCaptureSource(Entry, TrackingMode);
+
 			CachePreAnimatedValue(Params, Entry, BoundObject);
 		}
 	}
@@ -179,16 +196,17 @@ public:
 	template<typename OnCacheValue /* StorageType(const KeyType&) */>
 	void CachePreAnimatedValue(const FCachePreAnimatedValueParams& Params, UObject* BoundObject, OnCacheValue&& CacheCallback, EPreAnimatedCaptureSourceTracking TrackingMode = EPreAnimatedCaptureSourceTracking::CacheIfTracked)
 	{
-		FPreAnimatedStateEntry Entry = MakeEntry(BoundObject);
-
-		if (this->TrackCaptureSource(Entry, TrackingMode))
+		if (this->ShouldTrackCaptureSource(TrackingMode, BoundObject))
 		{
+			FPreAnimatedStateEntry Entry = MakeEntry(BoundObject);
+
+			this->TrackCaptureSource(Entry, TrackingMode);
 			const FPreAnimatedStorageIndex StorageIndex = Entry.ValueHandle.StorageIndex;
 
 			EPreAnimatedStorageRequirement StorageRequirement = this->ParentExtension->GetStorageRequirement(Entry);
 			if (!this->IsStorageRequirementSatisfied(StorageIndex, StorageRequirement))
 			{
-				KeyType Key { BoundObject };
+				KeyType Key{ BoundObject };
 				StorageType NewValue = CacheCallback(Key);
 				this->AssignPreAnimatedValue(StorageIndex, StorageRequirement, MoveTemp(NewValue));
 			}

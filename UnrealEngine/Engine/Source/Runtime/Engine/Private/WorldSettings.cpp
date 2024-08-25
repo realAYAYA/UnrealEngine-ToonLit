@@ -296,7 +296,7 @@ float AWorldSettings::SetTimeDilation(float NewTimeDilation)
 void AWorldSettings::NotifyBeginPlay()
 {
 	UWorld* World = GetWorld();
-	if (!World->bBegunPlay)
+	if (!World->GetBegunPlay())
 	{
 		for (FActorIterator It(World); It; ++It)
 		{
@@ -305,7 +305,7 @@ void AWorldSettings::NotifyBeginPlay()
 			It->DispatchBeginPlay(bFromLevelLoad);
 		}
 
-		World->bBegunPlay = true;
+		World->SetBegunPlay(true);
 	}
 }
 
@@ -761,6 +761,29 @@ void AWorldSettings::PostEditChangeProperty(FPropertyChangedEvent& PropertyChang
 		if (Datum != nullptr)
 		{
 			Datum->PostEditChangeOwner();
+		}
+	}
+
+	if (PropName == GET_MEMBER_NAME_CHECKED(AWorldSettings, bShowInstancedFoliageGrid))
+	{
+		if (bShowInstancedFoliageGrid)
+		{
+			check(!InstancedFoliageGridGridPreviewer);
+			InstancedFoliageGridGridPreviewer = MakeUnique<FWorldGridPreviewer>(GetTypedOuter<UWorld>(), true);
+		}
+		else
+		{
+			check(InstancedFoliageGridGridPreviewer);
+			InstancedFoliageGridGridPreviewer.Reset();
+		}
+
+		if (InstancedFoliageGridGridPreviewer)
+		{
+			InstancedFoliageGridGridPreviewer->CellSize = InstancedFoliageGridSize;
+			InstancedFoliageGridGridPreviewer->GridColor = FColor::White;
+			InstancedFoliageGridGridPreviewer->GridOffset = FVector::ZeroVector;
+			InstancedFoliageGridGridPreviewer->LoadingRange = MAX_int32;
+			InstancedFoliageGridGridPreviewer->Update();
 		}
 	}
 

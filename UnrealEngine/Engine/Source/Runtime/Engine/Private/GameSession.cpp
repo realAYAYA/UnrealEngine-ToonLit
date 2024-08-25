@@ -124,6 +124,24 @@ void AGameSession::OnEndSessionComplete(FName InSessionName, bool bWasSuccessful
 	UE_LOG(LogGameSession, Verbose, TEXT("OnEndSessionComplete %s bSuccess: %d"), *InSessionName.ToString(), bWasSuccessful);
 }
 
+void AGameSession::PostReloadConfig(FProperty* PropertyThatWasLoaded)
+{
+	Super::PostReloadConfig(PropertyThatWasLoaded);
+
+	if (!IsTemplate())
+	{
+		if (MaxPlayersOptionOverride.IsSet())
+		{
+			MaxPlayers = *MaxPlayersOptionOverride;
+		}
+
+		if (MaxSpectatorsOptionOverride.IsSet())
+		{
+			MaxSpectators = *MaxSpectatorsOptionOverride;
+		}
+	}
+}
+
 bool AGameSession::HandleStartMatchRequest()
 {
 	return false;
@@ -135,8 +153,17 @@ void AGameSession::InitOptions( const FString& Options )
 	check(World);
 	AGameModeBase* const GameMode = World ? World->GetAuthGameMode() : nullptr;
 
-	MaxPlayers = UGameplayStatics::GetIntOption( Options, TEXT("MaxPlayers"), MaxPlayers );
-	MaxSpectators = UGameplayStatics::GetIntOption( Options, TEXT("MaxSpectators"), MaxSpectators );
+	if (UGameplayStatics::HasOption(Options, TEXT("MaxPlayers")))
+	{
+		MaxPlayers = UGameplayStatics::GetIntOption(Options, TEXT("MaxPlayers"), MaxPlayers);
+		MaxPlayersOptionOverride = MaxPlayers;
+	}
+
+	if (UGameplayStatics::HasOption(Options, TEXT("MaxSpectators")))
+	{
+		MaxSpectators = UGameplayStatics::GetIntOption(Options, TEXT("MaxSpectators"), MaxSpectators);
+		MaxSpectatorsOptionOverride = MaxSpectators;
+	}
 	
 	if (GameMode)
 	{
@@ -225,7 +252,18 @@ void AGameSession::PostLogin(APlayerController* NewPlayer)
 int32 AGameSession::GetNextPlayerID()
 {
 	// Start at 256, because 255 is special (means all team for some UT Emote stuff)
-	static int32 NextPlayerID = 256;
+	static constexpr int32 MinPlayerId = 256;
+	static constexpr int32 MaxPlayerId = TNumericLimits<int32>::Max() - 1;
+	
+	static int32 NextPlayerID = MinPlayerId;
+	
+	// Prevent possible integer overflow by wrapping the value to the max player ID
+	if (NextPlayerID >= MaxPlayerId)
+	{
+		UE_LOG(LogGameSession, Warning, TEXT("AGameSession::GetNextPlayerID had to wrap the Player ID, this probably shouldn't have happened. PlayerID collisions may occur! Is this function being called incorrectly in a loop?"));
+		NextPlayerID = MinPlayerId;
+	}
+	
 	return NextPlayerID++;
 }
 

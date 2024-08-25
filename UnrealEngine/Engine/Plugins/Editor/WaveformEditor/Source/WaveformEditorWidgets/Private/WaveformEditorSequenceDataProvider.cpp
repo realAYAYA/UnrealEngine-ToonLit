@@ -62,7 +62,7 @@ void FWaveformEditorSequenceDataProvider::GenerateLayersChain()
 	{
 		FTransformationsToPropertiesArray TransformPropertiesMap;
 
-		for (const TObjectPtr<UWaveformTransformationBase> Transformation : SoundWaveToRender->Transformations)
+		for (const TObjectPtr<UWaveformTransformationBase>& Transformation : SoundWaveToRender->Transformations)
 		{
 			if (Transformation != nullptr)
 			{
@@ -212,7 +212,7 @@ TArray<Audio::FTransformationPtr> FWaveformEditorSequenceDataProvider::CreateTra
 {
 	TArray<Audio::FTransformationPtr> TransformationPtrs;
 
-	for (const TObjectPtr<UWaveformTransformationBase> TransformationBase : TransformationsToRender)
+	for (const TObjectPtr<UWaveformTransformationBase>& TransformationBase : TransformationsToRender)
 	{
 		TransformationPtrs.Add(TransformationBase->CreateTransformation());
 	}

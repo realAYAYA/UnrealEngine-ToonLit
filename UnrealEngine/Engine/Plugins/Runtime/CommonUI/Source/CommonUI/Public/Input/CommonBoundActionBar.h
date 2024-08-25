@@ -13,6 +13,8 @@ class IWidgetCompilerLog;
 
 struct FUIActionBindingHandle;
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FActionBarUpdated);
+
 /**
  * A box populated with current actions available per CommonUI's Input Handler.
  */
@@ -39,6 +41,13 @@ protected:
 
 	virtual void NativeOnActionButtonCreated(ICommonBoundActionButtonInterface* ActionButton, const FUIActionBindingHandle& RepresentedAction) { }
 
+	virtual void ActionBarUpdateBeginImpl() {}
+	virtual void ActionBarUpdateEndImpl() {}
+	
+	virtual UUserWidget* CreateActionButton(const FUIActionBindingHandle& BindingHandle);
+
+	TSubclassOf<UCommonButtonBase> GetActionButtonClass() { return ActionButtonClass; }
+
 #if WITH_EDITOR
 	void ValidateCompiledDefaults(IWidgetCompilerLog& CompileLog) const override;
 #endif
@@ -50,6 +59,9 @@ private:
 	
 	void MonitorPlayerActions(const ULocalPlayer* NewPlayer);
 
+	void ActionBarUpdateBegin();
+	void ActionBarUpdateEnd();
+
 	UPROPERTY(EditAnywhere, Category = EntryLayout, meta=(MustImplement = "/Script/CommonUI.CommonBoundActionButtonInterface"))
 	TSubclassOf<UCommonButtonBase> ActionButtonClass;
 
@@ -58,6 +70,9 @@ private:
 
 	UPROPERTY(EditAnywhere, AdvancedDisplay, Category = Display)
 	bool bIgnoreDuplicateActions = true;
+
+	UPROPERTY(BlueprintAssignable, Category = "Events", meta = (AllowPrivateAccess = true))
+	FActionBarUpdated OnActionBarUpdated;
 
 	bool bIsRefreshQueued = false;
 };

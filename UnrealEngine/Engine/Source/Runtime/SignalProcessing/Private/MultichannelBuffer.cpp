@@ -30,16 +30,16 @@ namespace Audio
 
 	void SetMultichannelBufferSize(int32 InNumChannels, int32 InNumFrames, FMultichannelBuffer& OutBuffer)
 	{
-		OutBuffer.SetNum(InNumChannels, false /* bAllowShrinking */);
+		OutBuffer.SetNum(InNumChannels, EAllowShrinking::No);
 		for (FAlignedFloatBuffer& Buffer : OutBuffer)
 		{
-			Buffer.SetNumUninitialized(InNumFrames, false /* bAllowShrinking */);
+			Buffer.SetNumUninitialized(InNumFrames, EAllowShrinking::No);
 		}
 	}
 
 	void SetMultichannelCircularBufferCapacity(int32 InNumChannels, int32 InNumFrames, FMultichannelCircularBuffer& OutBuffer)
 	{
-		OutBuffer.SetNum(InNumChannels, false /* bAllowShrinking */);
+		OutBuffer.SetNum(InNumChannels, EAllowShrinking::No);
 		for (TCircularAudioBuffer<float>& Buffer : OutBuffer)
 		{
 			Buffer.SetCapacity(InNumFrames);

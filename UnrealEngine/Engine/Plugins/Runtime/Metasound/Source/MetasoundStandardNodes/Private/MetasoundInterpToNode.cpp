@@ -43,9 +43,9 @@ namespace Metasound
 
 		static const FNodeClassMetadata& GetNodeInfo();
 		static const FVertexInterface& GetVertexInterface();
-		static TUniquePtr<IOperator> CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors);
+		static TUniquePtr<IOperator> CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults);
 
-		FInterpToOperator(const FCreateOperatorParams& InSettings, const FFloatReadRef& InTargetValue, const FTimeReadRef& InInterpTime);
+		FInterpToOperator(const FBuildOperatorParams& InParams, const FFloatReadRef& InTargetValue, const FTimeReadRef& InInterpTime);
 
 		virtual void BindInputs(FInputVertexInterfaceData& InOutVertexData) override;
 		virtual void BindOutputs(FOutputVertexInterfaceData& InOutVertexData) override;
@@ -74,7 +74,7 @@ namespace Metasound
 		float PreviousTargetValue = 0.0f;
 	};
 
-	FInterpToOperator::FInterpToOperator(const FCreateOperatorParams& InParams, const FFloatReadRef& InTargetValue, const FTimeReadRef& InInterpTime)
+	FInterpToOperator::FInterpToOperator(const FBuildOperatorParams& InParams, const FFloatReadRef& InTargetValue, const FTimeReadRef& InInterpTime)
 		: TargetValue(InTargetValue)
 		, InterpTime(InInterpTime)
 		, ValueOutput(FFloatWriteRef::CreateNew(*TargetValue))
@@ -195,16 +195,14 @@ namespace Metasound
 	{
 	}
 
-	TUniquePtr<IOperator> FInterpToOperator::CreateOperator(const FCreateOperatorParams& InParams, FBuildErrorArray& OutErrors)
+	TUniquePtr<IOperator> FInterpToOperator::CreateOperator(const FBuildOperatorParams& InParams, FBuildResults& OutResults)
 	{
 		using namespace InterpToVertexNames; 
 
-		const FInterpToNode& InterpToNode = static_cast<const FInterpToNode&>(InParams.Node);
-		const FDataReferenceCollection& InputCollection = InParams.InputDataReferences;
-		const FInputVertexInterface& InputInterface = GetVertexInterface().GetInputInterface();
+		const FInputVertexInterfaceData& InputData = InParams.InputData;
 
-		FFloatReadRef TargetValue = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<float>(InputInterface, METASOUND_GET_PARAM_NAME(InParamTarget), InParams.OperatorSettings);
-		FTimeReadRef InterpTime = InputCollection.GetDataReadReferenceOrConstructWithVertexDefault<FTime>(InputInterface, METASOUND_GET_PARAM_NAME(InParamInterpTime), InParams.OperatorSettings);
+		FFloatReadRef TargetValue = InputData.GetOrCreateDefaultDataReadReference<float>(METASOUND_GET_PARAM_NAME(InParamTarget), InParams.OperatorSettings);
+		FTimeReadRef InterpTime = InputData.GetOrCreateDefaultDataReadReference<FTime>(METASOUND_GET_PARAM_NAME(InParamInterpTime), InParams.OperatorSettings);
 
 		return MakeUnique<FInterpToOperator>(InParams, TargetValue, InterpTime);
 	}

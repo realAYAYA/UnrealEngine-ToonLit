@@ -76,7 +76,7 @@ namespace GeometryCollectionTest
 
 		FGeometryCollectionClusteringUtility::ClusterAllBonesUnderNewRoot(RestCollection.Get());
 		EXPECT_EQ(RestCollection->Transform.Num(), 3);
-		RestCollection->Transform[2] = FTransform(FQuat::MakeFromEuler(FVector(90.0, 0, 0.)), FVector(0, 0, 40));
+		RestCollection->Transform[2] = FTransform3f(FQuat4f::MakeFromEuler(FVector3f(90.0, 0, 0.)), FVector3f(0, 0, 40));
 
 		//GeometryCollectionAlgo::PrintParentHierarchy(RestCollection.Get());
 
@@ -92,8 +92,7 @@ namespace GeometryCollectionTest
 		UnitTest.AddSimulationObject(Collection);
 		UnitTest.Initialize();
 
-		TManagedArray<FTransform>& Transform = Collection->DynamicCollection->Transform;
-		FReal StartingRigidDistance = (Transform[1].GetTranslation() - Transform[0].GetTranslation()).Size(), CurrentRigidDistance = 0.f;
+		FReal StartingRigidDistance = (Collection->DynamicCollection->GetTransform(1).GetTranslation() - Collection->DynamicCollection->GetTransform(0).GetTranslation()).Size(), CurrentRigidDistance = 0.f;
 
 		TManagedArray<bool>& Active = Collection->DynamicCollection->Active;
 
@@ -107,8 +106,8 @@ namespace GeometryCollectionTest
 
 		auto& Clustering = UnitTest.Solver->GetEvolution()->GetRigidClustering();
 		const auto & ClusterMap = Clustering.GetChildrenMap();
-		EXPECT_TRUE(ClusterMapContains(ClusterMap, Collection->PhysObject->GetSolverClusterHandles()[0], 
-			{ Collection->PhysObject->GetSolverParticleHandles()[0],Collection->PhysObject->GetSolverParticleHandles()[1] }));
+		EXPECT_TRUE(ClusterMapContains(ClusterMap, Collection->PhysObject->GetSolverClusterHandle_Internal(0),
+			{ Collection->PhysObject->GetParticle_Internal(0),Collection->PhysObject->GetParticle_Internal(1) }));
 
 		FReal InitialZ = Collection->RestCollection->Transform[2].GetTranslation().Z;
 		for (int Frame = 1; Frame < 10; Frame++)
@@ -119,18 +118,73 @@ namespace GeometryCollectionTest
 			EXPECT_FALSE(Active[1]);
 			EXPECT_TRUE(Active[2]);
 
-			CurrentRigidDistance = (Transform[1].GetTranslation() - Transform[0].GetTranslation()).Size();
+			CurrentRigidDistance = (Collection->DynamicCollection->GetTransform(1).GetTranslation() - Collection->DynamicCollection->GetTransform(0).GetTranslation()).Size();
 			EXPECT_LT(FMath::Abs(CurrentRigidDistance - StartingRigidDistance), SMALL_NUMBER); // two bodies under cluster maintain distance
-			EXPECT_LT(Collection->DynamicCollection->Transform[2].GetTranslation().Z, InitialZ); // body should be falling and decreasing in Z			
+			EXPECT_LT(Collection->DynamicCollection->GetTransform(2).GetTranslation().Z, InitialZ); // body should be falling and decreasing in Z			
 		}
 
-		EXPECT_TRUE(ClusterMapContains(ClusterMap, Collection->PhysObject->GetSolverClusterHandles()[0],
-			{ Collection->PhysObject->GetSolverParticleHandles()[0],Collection->PhysObject->GetSolverParticleHandles()[1] }));
+		EXPECT_TRUE(ClusterMapContains(ClusterMap, Collection->PhysObject->GetSolverClusterHandle_Internal(0),
+			{ Collection->PhysObject->GetParticle_Internal(0),Collection->PhysObject->GetParticle_Internal(1) }));
 
 	}
 
+	GTEST_TEST(AllTraits, GeometryCollection_DynamicCollection_ChildrenAccess)
+	{
+		FFramework UnitTest;
 
-	
+		RigidBodyWrapper* Floor = TNewSimulationObject<GeometryType::RigidFloor>::Init()->template As<RigidBodyWrapper>();
+		UnitTest.AddSimulationObject(Floor);
+
+		TSharedPtr<FGeometryCollection> RestCollection = GeometryCollection::MakeCubeElement(FTransform(FQuat::MakeFromEuler(FVector(0, 0, 0.)), FVector(0, -10, 10)), FVector(1.0));
+		RestCollection->AppendGeometry(*GeometryCollection::MakeCubeElement(FTransform(FQuat::MakeFromEuler(FVector(0, 0, 0.)), FVector(0, 10, 10)), FVector(1.0)));
+		EXPECT_EQ(RestCollection->Transform.Num(), 2);
+
+		FGeometryCollectionClusteringUtility::ClusterAllBonesUnderNewRoot(RestCollection.Get());
+		EXPECT_EQ(RestCollection->Transform.Num(), 3);
+		RestCollection->Transform[2] = FTransform3f(FQuat4f::MakeFromEuler(FVector3f(90.0, 0, 0.)), FVector3f(0, 0, 40));
+
+		//GeometryCollectionAlgo::PrintParentHierarchy(RestCollection.Get());
+
+		CreationParameters Params;
+		Params.RestCollection = RestCollection;
+		Params.DynamicState = EObjectStateTypeEnum::Chaos_Object_Dynamic;
+		Params.CollisionType = ECollisionTypeEnum::Chaos_Surface_Volumetric;
+		Params.Simulating = true;
+		Params.EnableClustering = true;
+		Params.DamageThreshold = { 1000.f };
+		FGeometryCollectionWrapper* Collection = TNewSimulationObject<GeometryType::GeometryCollectionWithSuppliedRestCollection>::Init(Params)->template As<FGeometryCollectionWrapper>();
+
+		UnitTest.AddSimulationObject(Collection);
+		UnitTest.Initialize();
+
+		FReal StartingRigidDistance = (Collection->DynamicCollection->GetTransform(1).GetTranslation() - Collection->DynamicCollection->GetTransform(0).GetTranslation()).Size(), CurrentRigidDistance = 0.f;
+
+		TManagedArray<bool>& Active = Collection->DynamicCollection->Active;
+
+		EXPECT_FALSE(Active[0]);
+		EXPECT_FALSE(Active[1]);
+		EXPECT_TRUE(Active[2]); // only the root cluster should be active when using clustering 
+		UnitTest.Advance();
+		EXPECT_FALSE(Active[0]);
+		EXPECT_FALSE(Active[1]);
+		EXPECT_TRUE(Active[2]);
+
+
+		int32 ChildCount[3] = {0, 0, 0};
+		for (int32 Index = 0; Index < 3; ++Index)
+		{
+			Collection->DynamicCollection->IterateThroughChildren(Index, [&](int32 ChildIndex)
+			{
+				ChildCount[Index]++;
+				return true;
+			});
+		}
+		EXPECT_EQ(ChildCount[0], 0);
+		EXPECT_EQ(ChildCount[1], 0);
+		EXPECT_EQ(ChildCount[2], 2);
+	}
+
+
 	GTEST_TEST(AllTraits, GeometryCollection_RigidBodies_ClusterTest_DeactivateClusterParticle)
 	{
 		FFramework UnitTest;
@@ -167,12 +221,21 @@ namespace GeometryCollectionTest
 		UnitTest.AddSimulationObject(Collection);
 		UnitTest.Initialize();		
 
-		TManagedArray<FTransform>& Transform = Collection->DynamicCollection->Transform;
-		FReal StartingRigidDistance = (Transform[1].GetTranslation() - Transform[0].GetTranslation()).Size(), CurrentRigidDistance = 0.f;
+		FReal StartingRigidDistance = (Collection->DynamicCollection->GetTransform(1).GetTranslation() - Collection->DynamicCollection->GetTransform(0).GetTranslation()).Size(), CurrentRigidDistance = 0.f;
 
 		UnitTest.Advance();
 
-		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*> &ParticleHandles = Collection->PhysObject->GetSolverParticleHandles();
+			TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*> ParticleHandles = {
+			Collection->PhysObject->GetParticle_Internal(0),
+			Collection->PhysObject->GetParticle_Internal(1),
+			Collection->PhysObject->GetParticle_Internal(2),
+			Collection->PhysObject->GetParticle_Internal(3),
+			Collection->PhysObject->GetParticle_Internal(4),
+			Collection->PhysObject->GetParticle_Internal(5),
+			Collection->PhysObject->GetParticle_Internal(6),
+			Collection->PhysObject->GetParticle_Internal(7),
+			Collection->PhysObject->GetParticle_Internal(8),
+		};
 
 		auto& Clustering = UnitTest.Solver->GetEvolution()->GetRigidClustering();
 		const auto & ClusterMap = Clustering.GetChildrenMap();
@@ -282,12 +345,21 @@ namespace GeometryCollectionTest
 		UnitTest.AddSimulationObject(Collection);
 		UnitTest.Initialize();
 
-		TManagedArray<FTransform>& Transform = Collection->DynamicCollection->Transform;
-		FReal StartingRigidDistance = (Transform[1].GetTranslation() - Transform[0].GetTranslation()).Size(), CurrentRigidDistance = 0.f;
+		FReal StartingRigidDistance = (Collection->DynamicCollection->GetTransform(1).GetTranslation() - Collection->DynamicCollection->GetTransform(0).GetTranslation()).Size(), CurrentRigidDistance = 0.f;
 
 		UnitTest.Advance();
 
-		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*>& ParticleHandles = Collection->PhysObject->GetSolverParticleHandles();
+		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*> ParticleHandles = {
+			Collection->PhysObject->GetParticle_Internal(0),
+			Collection->PhysObject->GetParticle_Internal(1),
+			Collection->PhysObject->GetParticle_Internal(2),
+			Collection->PhysObject->GetParticle_Internal(3),
+			Collection->PhysObject->GetParticle_Internal(4),
+			Collection->PhysObject->GetParticle_Internal(5),
+			Collection->PhysObject->GetParticle_Internal(6),
+			Collection->PhysObject->GetParticle_Internal(7),
+			Collection->PhysObject->GetParticle_Internal(8),
+		};
 
 		auto& Clustering = UnitTest.Solver->GetEvolution()->GetRigidClustering();
 		const auto& ClusterMap = Clustering.GetChildrenMap();
@@ -388,7 +460,7 @@ namespace GeometryCollectionTest
 
 
 		TSharedPtr<FGeometryCollection> RestCollection = CreateClusteredBody(FVector::ZeroVector);
-		RestCollection->Transform[2] = FTransform(FQuat::MakeFromEuler(FVector(0., 90.f, 0.)), FVector(0, 0, 17));
+		RestCollection->Transform[2] = FTransform3f(FQuat4f::MakeFromEuler(FVector3f(0., 90.f, 0.)), FVector3f(0, 0, 17));
 		CreationParameters Params;
 		Params.RestCollection = RestCollection;
 		Params.DynamicState = EObjectStateTypeEnum::Chaos_Object_Dynamic;
@@ -406,18 +478,15 @@ namespace GeometryCollectionTest
 
 		Collection->PhysObject->SetCollisionParticlesPerObjectFraction(1.0);
 
-		TManagedArray<FTransform>& Transform = Collection->DynamicCollection->Transform;
-		FReal StartingRigidDistance = (Transform[1].GetTranslation() - Transform[0].GetTranslation()).Size(), CurrentRigidDistance = 0.f;
+		FReal StartingRigidDistance = (Collection->DynamicCollection->GetTransform(1).GetTranslation() - Collection->DynamicCollection->GetTransform(0).GetTranslation()).Size(), CurrentRigidDistance = 0.f;
 
 		UnitTest.Advance();
 
 		auto& Clustering = UnitTest.Solver->GetEvolution()->GetRigidClustering();
 		const auto& ClusterMap = Clustering.GetChildrenMap();
 
-		EXPECT_TRUE(ClusterMapContains(ClusterMap, Collection->PhysObject->GetSolverClusterHandles()[0],
-			{ Collection->PhysObject->GetSolverParticleHandles()[0],Collection->PhysObject->GetSolverParticleHandles()[1] }));
-
-		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*>& ParticleHandles = Collection->PhysObject->GetSolverParticleHandles();
+		EXPECT_TRUE(ClusterMapContains(ClusterMap, Collection->PhysObject->GetSolverClusterHandle_Internal(0),
+			{ Collection->PhysObject->GetParticle_Internal(0),Collection->PhysObject->GetParticle_Internal(1) }));
 
 		// Particles array contains the following:		
 		// 0: Box1 (top)
@@ -429,23 +498,23 @@ namespace GeometryCollectionTest
 		{
 			UnitTest.Advance();
 
-			CurrentRigidDistance = (Transform[1].GetTranslation() - Transform[0].GetTranslation()).Size();
+			CurrentRigidDistance = (Collection->DynamicCollection->GetTransform(1).GetTranslation() - Collection->DynamicCollection->GetTransform(0).GetTranslation()).Size();
 
-			if ((BrokenFrame == INDEX_NONE) && !ParticleHandles[2]->Disabled())
+			if ((BrokenFrame == INDEX_NONE) && !Collection->PhysObject->GetSolverClusterHandle_Internal(2)->Disabled())
 			{
 				// The two boxes are dropping to the ground as a cluster
-				EXPECT_TRUE(ParticleHandles[0]->Disabled());
-				EXPECT_TRUE(ParticleHandles[1]->Disabled());
+				EXPECT_TRUE(Collection->PhysObject->GetParticle_Internal(0)->Disabled());
+				EXPECT_TRUE(Collection->PhysObject->GetParticle_Internal(1)->Disabled());
 
 				// The boxes are still separated by StartingRigidDistance
 				EXPECT_LT(FMath::Abs(CurrentRigidDistance - StartingRigidDistance), 1e-4);
 			}
 
-			if ((BrokenFrame == INDEX_NONE) && ParticleHandles[2]->Disabled())
+			if ((BrokenFrame == INDEX_NONE) && Collection->PhysObject->GetParticle_Internal(2)->Disabled())
 			{
 				// The cluster has just hit the ground and should have broken.
-				EXPECT_FALSE(ParticleHandles[0]->Disabled());
-				EXPECT_FALSE(ParticleHandles[1]->Disabled());
+				EXPECT_FALSE(Collection->PhysObject->GetParticle_Internal(0)->Disabled());
+				EXPECT_FALSE(Collection->PhysObject->GetParticle_Internal(1)->Disabled());
 				EXPECT_EQ(ClusterMap.Num(), 0);
 				BrokenFrame = Frame;
 			}
@@ -459,9 +528,9 @@ namespace GeometryCollectionTest
 		}
 
 		// Make sure it actually broke
-		EXPECT_FALSE(ParticleHandles[0]->Disabled());
-		EXPECT_FALSE(ParticleHandles[1]->Disabled());
-		EXPECT_TRUE(ParticleHandles[2]->Disabled());
+		EXPECT_FALSE(Collection->PhysObject->GetParticle_Internal(0)->Disabled());
+		EXPECT_FALSE(Collection->PhysObject->GetParticle_Internal(1)->Disabled());
+		EXPECT_TRUE(Collection->PhysObject->GetParticle_Internal(2)->Disabled());
 		EXPECT_TRUE(BrokenFrame != INDEX_NONE);
 
 		EXPECT_GT(FMath::Abs(CurrentRigidDistance - StartingRigidDistance), 1e-4);
@@ -486,11 +555,11 @@ namespace GeometryCollectionTest
 
 		FGeometryCollectionClusteringUtility::ClusterAllBonesUnderNewRoot(RestCollection.Get());
 		EXPECT_EQ(RestCollection->Transform.Num(), 3);
-		RestCollection->Transform[2] = FTransform(FQuat::MakeFromEuler(FVector(90.f, 0, 0.)), FVector(0, 0, 40));
+		RestCollection->Transform[2] = FTransform3f(FQuat4f::MakeFromEuler(FVector3f(90.f, 0, 0.)), FVector3f(0, 0, 40));
 
 		FGeometryCollectionClusteringUtility::ClusterBonesUnderNewNode(RestCollection.Get(), 3, { 2 }, true);
 		EXPECT_EQ(RestCollection->Transform.Num(), 4);
-		RestCollection->Transform[3] = FTransform(FQuat::MakeFromEuler(FVector(0.f, 0, 0.)), FVector(0, 0, 10));
+		RestCollection->Transform[3] = FTransform3f(FQuat4f::MakeFromEuler(FVector3f(0.f, 0, 0.)), FVector4f(0, 0, 10));
 
 		//GeometryCollectionAlgo::PrintParentHierarchy(RestCollection.Get());
 
@@ -507,8 +576,7 @@ namespace GeometryCollectionTest
 		UnitTest.AddSimulationObject(Collection);
 		UnitTest.Initialize();
 		
-		TManagedArray<FTransform>& Transform = Collection->DynamicCollection->Transform;
-		FReal StartingRigidDistance = (Transform[1].GetTranslation() - Transform[0].GetTranslation()).Size(), CurrentRigidDistance = 0.f;
+		FReal StartingRigidDistance = (Collection->DynamicCollection->GetTransform(1).GetTranslation() - Collection->DynamicCollection->GetTransform(0).GetTranslation()).Size(), CurrentRigidDistance = 0.f;
 
 		UnitTest.Advance();
 
@@ -517,13 +585,12 @@ namespace GeometryCollectionTest
 		// [1]: GeometryCollection Sphere1 at 0,10,40
 		// [2]: GeometryCollection Cluster0 of Sphere0 and Sphere1 at 0,10,50 (root rotated 90deg about X)
 		// [3]: GeometryCollection Cluster1 of Cluster0 at 0,10,50
-		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*>& ParticleHandles = Collection->PhysObject->GetSolverParticleHandles();
 
 		auto& Clustering = UnitTest.Solver->GetEvolution()->GetRigidClustering();
 		const auto& ClusterMap = Clustering.GetChildrenMap();
 
-		EXPECT_TRUE(ClusterMapContains(ClusterMap, ParticleHandles[2], { ParticleHandles[0],ParticleHandles[1] }));
-		EXPECT_TRUE(ClusterMapContains(ClusterMap, ParticleHandles[3], { ParticleHandles[2] }));
+		EXPECT_TRUE(ClusterMapContains(ClusterMap, Collection->PhysObject->GetParticle_Internal(2), { Collection->PhysObject->GetParticle_Internal(0),Collection->PhysObject->GetParticle_Internal(1) }));
+		EXPECT_TRUE(ClusterMapContains(ClusterMap, Collection->PhysObject->GetParticle_Internal(3), { Collection->PhysObject->GetParticle_Internal(2) }));
 		
 		TArray<bool> Conditions = {false,false,false};
 
@@ -531,15 +598,15 @@ namespace GeometryCollectionTest
 		{
 			UnitTest.Advance();
 
-			CurrentRigidDistance = (Transform[1].GetTranslation() - Transform[0].GetTranslation()).Size();
+			CurrentRigidDistance = (Collection->DynamicCollection->GetTransform(1).GetTranslation() - Collection->DynamicCollection->GetTransform(0).GetTranslation()).Size();
 
 			if (Conditions[0]==false)
 			{
 				if (
-					ParticleHandles[0]->Disabled() == true &&
-					ParticleHandles[1]->Disabled() == true &&
-					ParticleHandles[2]->Disabled() == true &&
-					ParticleHandles[3]->Disabled() == false) 
+					Collection->PhysObject->GetParticle_Internal(0)->Disabled() == true &&
+					Collection->PhysObject->GetParticle_Internal(1)->Disabled() == true &&
+					Collection->PhysObject->GetParticle_Internal(2)->Disabled() == true &&
+					Collection->PhysObject->GetParticle_Internal(3)->Disabled() == false) 
 				{
 					// Only the outer Cluster1 is active. 
 					// This is the initial condition
@@ -549,26 +616,26 @@ namespace GeometryCollectionTest
 			else if (Conditions[0]==true && Conditions[1] == false)
 			{
 				if (
-					ParticleHandles[0]->Disabled() == true &&
-					ParticleHandles[1]->Disabled() == true &&
-					ParticleHandles[2]->Disabled() == false &&
-					ParticleHandles[3]->Disabled() == true)
+					Collection->PhysObject->GetParticle_Internal(0)->Disabled() == true &&
+					Collection->PhysObject->GetParticle_Internal(1)->Disabled() == true &&
+					Collection->PhysObject->GetParticle_Internal(2)->Disabled() == false &&
+					Collection->PhysObject->GetParticle_Internal(3)->Disabled() == true)
 				{
 					// Cluster1 is now disabled, and Cluster0 was activated.
 					// This happens when Cluster1 collides with the floor
 					Conditions[1] = true;
-					EXPECT_TRUE(ClusterMapContains(ClusterMap, ParticleHandles[2], { ParticleHandles[0],ParticleHandles[1] }));
+					EXPECT_TRUE(ClusterMapContains(ClusterMap, Collection->PhysObject->GetParticle_Internal(2), { Collection->PhysObject->GetParticle_Internal(0),Collection->PhysObject->GetParticle_Internal(1) }));
 					EXPECT_EQ(ClusterMap.Num(), 1);
-					EXPECT_TRUE(!ClusterMap.Contains(ParticleHandles[3]));
+					EXPECT_TRUE(!ClusterMap.Contains(Collection->PhysObject->GetParticle_Internal(3)));
 				}
 			}
 			else if (Conditions[1] == true && Conditions[2] == false)
 			{
 				if (
-					ParticleHandles[0]->Disabled() == false &&
-					ParticleHandles[1]->Disabled() == false &&
-					ParticleHandles[2]->Disabled() == true &&
-					ParticleHandles[3]->Disabled() == true)
+					Collection->PhysObject->GetParticle_Internal(0)->Disabled() == false &&
+					Collection->PhysObject->GetParticle_Internal(1)->Disabled() == false &&
+					Collection->PhysObject->GetParticle_Internal(2)->Disabled() == true &&
+					Collection->PhysObject->GetParticle_Internal(3)->Disabled() == true)
 				{
 					// Cluster0 is now disabled because it had a damage threshold of 0
 					// and the boxes should now be active.
@@ -607,8 +674,8 @@ namespace GeometryCollectionTest
 		Params.ClusterGroupIndex = 0;
 		FGeometryCollectionWrapper* Collection1 = TNewSimulationObject<GeometryType::GeometryCollectionWithSuppliedRestCollection>::Init(Params)->template As<FGeometryCollectionWrapper>();
 		TSharedPtr<FGeometryDynamicCollection> DynamicCollection1 = Collection1->DynamicCollection;
-		DynamicCollection1->ModifyAttribute<int32>("DynamicState", FGeometryCollection::TransformGroup)[1] = (uint8)EObjectStateTypeEnum::Chaos_Object_Kinematic;
-		DynamicCollection1->ModifyAttribute<int32>("DynamicState", FGeometryCollection::TransformGroup)[0] = (uint8)EObjectStateTypeEnum::Chaos_Object_Kinematic;
+		DynamicCollection1->ModifyAttribute<uint8>("DynamicState", FGeometryCollection::TransformGroup)[1] = (uint8)EObjectStateTypeEnum::Chaos_Object_Kinematic;
+		DynamicCollection1->ModifyAttribute<uint8>("DynamicState", FGeometryCollection::TransformGroup)[0] = (uint8)EObjectStateTypeEnum::Chaos_Object_Kinematic;
 
 		UnitTest.AddSimulationObject(Collection1);
 
@@ -617,15 +684,14 @@ namespace GeometryCollectionTest
 		auto& Clustering = UnitTest.Solver->GetEvolution()->GetRigidClustering();
 		const auto& ClusterMap = Clustering.GetChildrenMap();
 		TArray<FTransform> Collection1_InitialTM; GeometryCollectionAlgo::GlobalMatrices(Collection1->RestCollection->Transform, Collection1->RestCollection->Parent, Collection1_InitialTM);
-		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*>& Collection1Handles = Collection1->PhysObject->GetSolverParticleHandles();
 		const auto& SovlerParticleHandles = UnitTest.Solver->GetParticles().GetParticleHandles();
 
 		UnitTest.Solver->RegisterSimOneShotCallback([&]()
 		{
 			EXPECT_EQ(SovlerParticleHandles.Size(),4);
 			EXPECT_EQ(ClusterMap.Num(),2);
-			EXPECT_TRUE(ClusterMapContains(ClusterMap,Collection1Handles[2],{Collection1Handles[1],Collection1Handles[0]}));
-			EXPECT_TRUE(ClusterMapContains(ClusterMap,Collection1Handles[3],{Collection1Handles[2]}));
+			EXPECT_TRUE(ClusterMapContains(ClusterMap, Collection1->PhysObject->GetParticle_Internal(2), { Collection1->PhysObject->GetParticle_Internal(1),Collection1->PhysObject->GetParticle_Internal(0) }));
+			EXPECT_TRUE(ClusterMapContains(ClusterMap, Collection1->PhysObject->GetParticle_Internal(3), { Collection1->PhysObject->GetParticle_Internal(2) }));
 		});
 		
 
@@ -633,30 +699,32 @@ namespace GeometryCollectionTest
 
 		EXPECT_EQ(SovlerParticleHandles.Size(), 4);
 		EXPECT_EQ(ClusterMap.Num(), 2);
-		EXPECT_TRUE(ClusterMapContains(ClusterMap, Collection1Handles[2], { Collection1Handles[1],Collection1Handles[0] }));
-		EXPECT_TRUE(ClusterMapContains(ClusterMap, Collection1Handles[3], { Collection1Handles[2] }));
-		TArray<FTransform> Collection1_PreReleaseTM; GeometryCollectionAlgo::GlobalMatrices(DynamicCollection1->Transform, DynamicCollection1->Parent, Collection1_PreReleaseTM);
+		EXPECT_TRUE(ClusterMapContains(ClusterMap, Collection1->PhysObject->GetParticle_Internal(2), { Collection1->PhysObject->GetParticle_Internal(1),Collection1->PhysObject->GetParticle_Internal(0) }));
+		EXPECT_TRUE(ClusterMapContains(ClusterMap, Collection1->PhysObject->GetParticle_Internal(3), { Collection1->PhysObject->GetParticle_Internal(2) }));
+		TArray<FTransform> Collection1_PreReleaseTM; 
+		GeometryCollectionAlgo::Private::GlobalMatrices(*DynamicCollection1.Get(), Collection1_PreReleaseTM);
 		for (int Idx = 0; Idx < Collection1_PreReleaseTM.Num(); Idx++) {
 			EXPECT_TRUE( (Collection1_PreReleaseTM[Idx].GetTranslation()-Collection1_InitialTM[Idx].GetTranslation()).Size()<KINDA_SMALL_NUMBER);
 		}
 
-		UnitTest.Solver->GetEvolution()->GetRigidClustering().DeactivateClusterParticle({ Collection1Handles[3] });
+		UnitTest.Solver->GetEvolution()->GetRigidClustering().DeactivateClusterParticle({ Collection1->PhysObject->GetParticle_Internal(3) });
 		UnitTest.Advance();
 
 		EXPECT_EQ(SovlerParticleHandles.Size(), 4);
 		EXPECT_EQ(ClusterMap.Num(), 1);
-		EXPECT_TRUE(ClusterMapContains(ClusterMap, Collection1Handles[2], { Collection1Handles[1],Collection1Handles[0] }));
-		TArray<FTransform> Collection1_PostReleaseTM; GeometryCollectionAlgo::GlobalMatrices(DynamicCollection1->Transform, DynamicCollection1->Parent, Collection1_PostReleaseTM);
+		EXPECT_TRUE(ClusterMapContains(ClusterMap, Collection1->PhysObject->GetParticle_Internal(2), { Collection1->PhysObject->GetParticle_Internal(1),Collection1->PhysObject->GetParticle_Internal(0) }));
+		TArray<FTransform> Collection1_PostReleaseTM; 
+		GeometryCollectionAlgo::Private::GlobalMatrices(*DynamicCollection1.Get(), Collection1_PostReleaseTM);
 		for (int Idx = 0; Idx < Collection1_PostReleaseTM.Num(); Idx++) {
 			EXPECT_TRUE((Collection1_PostReleaseTM[Idx].GetTranslation() - Collection1_InitialTM[Idx].GetTranslation()).Size() < KINDA_SMALL_NUMBER);
 		}
 
-		UnitTest.Solver->GetEvolution()->GetRigidClustering().DeactivateClusterParticle({ Collection1Handles[2] });
+		UnitTest.Solver->GetEvolution()->GetRigidClustering().DeactivateClusterParticle({ Collection1->PhysObject->GetParticle_Internal(2) });
 		UnitTest.Advance();
 
 		EXPECT_EQ(SovlerParticleHandles.Size(), 4);
 		EXPECT_EQ(ClusterMap.Num(), 0);
-		TArray<FTransform> Collection1_PostRelease2TM; GeometryCollectionAlgo::GlobalMatrices(DynamicCollection1->Transform, DynamicCollection1->Parent, Collection1_PostRelease2TM);
+		TArray<FTransform> Collection1_PostRelease2TM; GeometryCollectionAlgo::Private::GlobalMatrices( *DynamicCollection1, Collection1_PostRelease2TM);
 		for (int Idx = 0; Idx < Collection1_PostRelease2TM.Num(); Idx++) {
 			EXPECT_TRUE((Collection1_PostRelease2TM[Idx].GetTranslation() - Collection1_InitialTM[Idx].GetTranslation()).Size() < KINDA_SMALL_NUMBER);
 		}
@@ -699,14 +767,23 @@ namespace GeometryCollectionTest
 		UnitTest.AddSimulationObject(Collection);
 		UnitTest.Initialize();
 
-		TManagedArray<FTransform>& Transform = Collection->DynamicCollection->Transform;
-		FReal StartingRigidDistance = (Transform[1].GetTranslation() - Transform[0].GetTranslation()).Size(), CurrentRigidDistance = 0.f;
+		FReal StartingRigidDistance = (Collection->DynamicCollection->GetTransform(1).GetTranslation() - Collection->DynamicCollection->GetTransform(0).GetTranslation()).Size(), CurrentRigidDistance = 0.f;
 
 		TArray<bool> Conditions = { false,false,false,false };
 
 		UnitTest.Advance();
 
-		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*>& ParticleHandles = Collection->PhysObject->GetSolverParticleHandles();
+		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*> ParticleHandles = { 
+			Collection->PhysObject->GetParticle_Internal(0),
+			Collection->PhysObject->GetParticle_Internal(1),
+			Collection->PhysObject->GetParticle_Internal(2),
+			Collection->PhysObject->GetParticle_Internal(3),
+			Collection->PhysObject->GetParticle_Internal(4),
+			Collection->PhysObject->GetParticle_Internal(5),
+			Collection->PhysObject->GetParticle_Internal(6),
+			Collection->PhysObject->GetParticle_Internal(7),
+			Collection->PhysObject->GetParticle_Internal(8),
+		};
 
 		auto& Clustering = UnitTest.Solver->GetEvolution()->GetRigidClustering();
 		const auto& ClusterMap = Clustering.GetChildrenMap();
@@ -721,7 +798,7 @@ namespace GeometryCollectionTest
 		{
 			UnitTest.Advance();			
 
-			CurrentRigidDistance = (Transform[1].GetTranslation() - Transform[0].GetTranslation()).Size();
+			CurrentRigidDistance = (Collection->DynamicCollection->GetTransform(1).GetTranslation() - Collection->DynamicCollection->GetTransform(0).GetTranslation()).Size();
 			
 			if (Conditions[0] == false)
 			{
@@ -855,17 +932,16 @@ namespace GeometryCollectionTest
 		Params.MaxClusterLevel = 1;
 		FGeometryCollectionWrapper* Collection = TNewSimulationObject<GeometryType::GeometryCollectionWithSuppliedRestCollection>::Init(Params)->template As<FGeometryCollectionWrapper>();
 
-		Collection->DynamicCollection->template ModifyAttribute<int32>("DynamicState", FGeometryCollection::TransformGroup)[1] = (uint8)EObjectStateTypeEnum::Chaos_Object_Kinematic;
+		Collection->DynamicCollection->template ModifyAttribute<uint8>("DynamicState", FGeometryCollection::TransformGroup)[1] = (uint8)EObjectStateTypeEnum::Chaos_Object_Kinematic;
 
 		UnitTest.AddSimulationObject(Collection);
 		UnitTest.Initialize();
 
-		TManagedArray<FTransform>& Transform = Collection->DynamicCollection->Transform;
-		FReal StartingRigidDistance = (Transform[1].GetTranslation() - Transform[0].GetTranslation()).Size();
+		FReal StartingRigidDistance = (Collection->DynamicCollection->GetTransform(1).GetTranslation() - Collection->DynamicCollection->GetTransform(0).GetTranslation()).Size();
 		FReal CurrentRigidDistance = 0;
 
 		// Staged conditions
-		// Initial state should set up the heirachy correctly, leaving correct disabled flags on frame 1
+		// Initial state should set up the hierarchy correctly, leaving correct disabled flags on frame 1
 		bool bValidInitialState = false;
 		// After releasing particle 8, the states should be updated on frame 2
 		bool bParticle8SucessfulRelease = false;
@@ -877,8 +953,28 @@ namespace GeometryCollectionTest
 		// Tick once to fush commands
 		UnitTest.Advance();
 
-		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*>& ParticleHandles = Collection->PhysObject->GetSolverParticleHandles();
-		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*>& ClusterHandles = Collection->PhysObject->GetSolverClusterHandles();
+		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*> ParticleHandles = {
+			Collection->PhysObject->GetParticle_Internal(0),
+			Collection->PhysObject->GetParticle_Internal(1),
+			Collection->PhysObject->GetParticle_Internal(2),
+			Collection->PhysObject->GetParticle_Internal(3),
+			Collection->PhysObject->GetParticle_Internal(4),
+			Collection->PhysObject->GetParticle_Internal(5),
+			Collection->PhysObject->GetParticle_Internal(6),
+			Collection->PhysObject->GetParticle_Internal(7),
+			Collection->PhysObject->GetParticle_Internal(8),
+		};
+		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*> ClusterHandles = {
+			Collection->PhysObject->GetSolverClusterHandle_Internal(0),
+			Collection->PhysObject->GetSolverClusterHandle_Internal(1),
+			Collection->PhysObject->GetSolverClusterHandle_Internal(2),
+			Collection->PhysObject->GetSolverClusterHandle_Internal(3),
+			Collection->PhysObject->GetSolverClusterHandle_Internal(4),
+			Collection->PhysObject->GetSolverClusterHandle_Internal(5),
+			Collection->PhysObject->GetSolverClusterHandle_Internal(6),
+			Collection->PhysObject->GetSolverClusterHandle_Internal(7),
+			Collection->PhysObject->GetSolverClusterHandle_Internal(8),
+		};
 
 		FRigidClustering& Clustering = UnitTest.Solver->GetEvolution()->GetRigidClustering();
 		const FRigidClustering::FClusterMap& ClusterMap = Clustering.GetChildrenMap();
@@ -947,9 +1043,9 @@ namespace GeometryCollectionTest
 					ParticleHandles[8]->Disabled() == false)
 				{
 					bValidInitialState = true;
-					Ref0 = ParticleHandles[0]->X();
-					Ref1 = ParticleHandles[1]->X();
-					Ref6 = ParticleHandles[6]->X();
+					Ref0 = ParticleHandles[0]->GetX();
+					Ref1 = ParticleHandles[1]->GetX();
+					Ref6 = ParticleHandles[6]->GetX();
 
 					// Test kinematic particles have valid (0.0) inverse mass and have the kinematic object state set
 					EXPECT_EQ(ParticleHandles[7]->InvM(), 0.f); // kinematic cluster
@@ -971,9 +1067,9 @@ namespace GeometryCollectionTest
 					ParticleHandles[8]->Disabled() == true)
 				{
 					bParticle8SucessfulRelease = true;
-					FVector X0 = ParticleHandles[0]->X();
-					FVector X1 = ParticleHandles[1]->X();
-					FVector X6 = ParticleHandles[6]->X();
+					FVector X0 = ParticleHandles[0]->GetX();
+					FVector X1 = ParticleHandles[1]->GetX();
+					FVector X6 = ParticleHandles[6]->GetX();
 
 					FVector X00 = Ref0;
 					FVector X11 = Ref1;
@@ -1030,9 +1126,9 @@ namespace GeometryCollectionTest
 					ParticleHandles[8]->Disabled() == true)
 				{
 					bParticle7SucessfulRelease = true;
-					FVector X0 = ParticleHandles[0]->X();
-					FVector X1 = ParticleHandles[1]->X();
-					FVector X6 = ParticleHandles[6]->X();
+					FVector X0 = ParticleHandles[0]->GetX();
+					FVector X1 = ParticleHandles[1]->GetX();
+					FVector X6 = ParticleHandles[6]->GetX();
 
 					// 0 is a dynamic unclustered body (was owned by cluster 8), check that it's moved since declustering
 					EXPECT_GT(FMath::Abs(X0.Size() - Ref0.Size()), KINDA_SMALL_NUMBER);
@@ -1076,9 +1172,9 @@ namespace GeometryCollectionTest
 					ParticleHandles[8]->Disabled() == true)
 				{
 					bValidFinalActiveState = true;
-					FVector X0 = ParticleHandles[0]->X();
-					FVector X1 = ParticleHandles[1]->X();
-					FVector X6 = ParticleHandles[6]->X();
+					FVector X0 = ParticleHandles[0]->GetX();
+					FVector X1 = ParticleHandles[1]->GetX();
+					FVector X6 = ParticleHandles[6]->GetX();
 
 					// 0 is a dynamic unclustered body (was owned by cluster 8), check that it's moved since declustering
 					EXPECT_GT(FMath::Abs(X0.Size() - Ref0.Size()), KINDA_SMALL_NUMBER);
@@ -1154,13 +1250,12 @@ namespace GeometryCollectionTest
 		Params.MaxClusterLevel = 1;
 		FGeometryCollectionWrapper* Collection = TNewSimulationObject<GeometryType::GeometryCollectionWithSuppliedRestCollection>::Init(Params)->template As<FGeometryCollectionWrapper>();
 
-		Collection->DynamicCollection->template ModifyAttribute<int32>("DynamicState", FGeometryCollection::TransformGroup)[1] = (uint8)EObjectStateTypeEnum::Chaos_Object_Static;
+		Collection->DynamicCollection->template ModifyAttribute<uint8>("DynamicState", FGeometryCollection::TransformGroup)[1] = (uint8)EObjectStateTypeEnum::Chaos_Object_Static;
 
 		UnitTest.AddSimulationObject(Collection);
 		UnitTest.Initialize();
 
-		TManagedArray<FTransform>& Transform = Collection->DynamicCollection->Transform;
-		FReal StartingRigidDistance = (Transform[1].GetTranslation() - Transform[0].GetTranslation()).Size();
+		FReal StartingRigidDistance = (Collection->DynamicCollection->GetTransform(1).GetTranslation() - Collection->DynamicCollection->GetTransform(0).GetTranslation()).Size();
 		FReal CurrentRigidDistance = 0.f;
 
 		// Staged conditions
@@ -1176,8 +1271,28 @@ namespace GeometryCollectionTest
 		// Tick once to fush commands
 		UnitTest.Advance();
 
-		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*>& ParticleHandles = Collection->PhysObject->GetSolverParticleHandles();
-		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*>& ClusterHandles = Collection->PhysObject->GetSolverClusterHandles();
+		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*> ParticleHandles = {
+			Collection->PhysObject->GetParticle_Internal(0),
+			Collection->PhysObject->GetParticle_Internal(1),
+			Collection->PhysObject->GetParticle_Internal(2),
+			Collection->PhysObject->GetParticle_Internal(3),
+			Collection->PhysObject->GetParticle_Internal(4),
+			Collection->PhysObject->GetParticle_Internal(5),
+			Collection->PhysObject->GetParticle_Internal(6),
+			Collection->PhysObject->GetParticle_Internal(7),
+			Collection->PhysObject->GetParticle_Internal(8),
+		};
+		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*> ClusterHandles = {
+			Collection->PhysObject->GetSolverClusterHandle_Internal(0),
+			Collection->PhysObject->GetSolverClusterHandle_Internal(1),
+			Collection->PhysObject->GetSolverClusterHandle_Internal(2),
+			Collection->PhysObject->GetSolverClusterHandle_Internal(3),
+			Collection->PhysObject->GetSolverClusterHandle_Internal(4),
+			Collection->PhysObject->GetSolverClusterHandle_Internal(5),
+			Collection->PhysObject->GetSolverClusterHandle_Internal(6),
+			Collection->PhysObject->GetSolverClusterHandle_Internal(7),
+			Collection->PhysObject->GetSolverClusterHandle_Internal(8),
+		};
 
 		FRigidClustering& Clustering = UnitTest.Solver->GetEvolution()->GetRigidClustering();
 		const FRigidClustering::FClusterMap& ClusterMap = Clustering.GetChildrenMap();
@@ -1244,9 +1359,9 @@ namespace GeometryCollectionTest
 					ParticleHandles[8]->Disabled() == false)
 				{
 					bValidInitialState = true;
-					Ref0 = ParticleHandles[0]->X();
-					Ref1 = ParticleHandles[1]->X();
-					Ref6 = ParticleHandles[6]->X();
+					Ref0 = ParticleHandles[0]->GetX();
+					Ref1 = ParticleHandles[1]->GetX();
+					Ref6 = ParticleHandles[6]->GetX();
 
 					// Test static particles have valid (0.0) inverse mass and have the static object state set
 					EXPECT_EQ(ParticleHandles[7]->InvM(), 0.f); // kinematic cluster
@@ -1268,9 +1383,9 @@ namespace GeometryCollectionTest
 					ParticleHandles[8]->Disabled() == true)
 				{
 					bParticle8SucessfulRelease = true;
-					FVector X0 = ParticleHandles[0]->X();
-					FVector X1 = ParticleHandles[1]->X();
-					FVector X6 = ParticleHandles[6]->X();
+					FVector X0 = ParticleHandles[0]->GetX();
+					FVector X1 = ParticleHandles[1]->GetX();
+					FVector X6 = ParticleHandles[6]->GetX();
 
 					EXPECT_NEAR(FMath::Abs(X0.Size() - Ref0.Size()), 0, KINDA_SMALL_NUMBER);
 					EXPECT_NEAR(FMath::Abs(X1.Size() - Ref1.Size()), 0, KINDA_SMALL_NUMBER);
@@ -1314,9 +1429,9 @@ namespace GeometryCollectionTest
 					ParticleHandles[8]->Disabled() == true)
 				{
 					bParticle7SucessfulRelease = true;
-					FVector X0 = ParticleHandles[0]->X();
-					FVector X1 = ParticleHandles[1]->X();
-					FVector X6 = ParticleHandles[6]->X();
+					FVector X0 = ParticleHandles[0]->GetX();
+					FVector X1 = ParticleHandles[1]->GetX();
+					FVector X6 = ParticleHandles[6]->GetX();
 
 					// 0 is a dynamic unclustered body (was owned by cluster 8), check that it's moved since declustering
 					EXPECT_GT(FMath::Abs(X0.Size() - Ref0.Size()), KINDA_SMALL_NUMBER);
@@ -1361,9 +1476,9 @@ namespace GeometryCollectionTest
 					ParticleHandles[8]->Disabled() == true)
 				{
 					bValidFinalActiveState = true;
-					FVector X0 = ParticleHandles[0]->X();
-					FVector X1 = ParticleHandles[1]->X();
-					FVector X6 = ParticleHandles[6]->X();
+					FVector X0 = ParticleHandles[0]->GetX();
+					FVector X1 = ParticleHandles[1]->GetX();
+					FVector X6 = ParticleHandles[6]->GetX();
 
 					// 0 is a dynamic unclustered body (was owned by cluster 8), check that it's moved since declustering
 					EXPECT_GT(FMath::Abs(X0.Size() - Ref0.Size()), KINDA_SMALL_NUMBER);
@@ -1446,9 +1561,6 @@ namespace GeometryCollectionTest
 
 
 		TArray<FReal> Distances;
-		TManagedArray<FTransform>& Transform = DynamicCollection->Transform;
-		TManagedArray<FTransform>& Transform2 = DynamicCollection2->Transform;
-
 		auto& Clustering = UnitTest.Solver->GetEvolution()->GetRigidClustering();
 		const auto& ClusterMap = Clustering.GetChildrenMap();
 		const auto& ParticleHandles = UnitTest.Solver->GetParticles().GetParticleHandles();
@@ -1468,10 +1580,10 @@ namespace GeometryCollectionTest
 			if (Frame == 0)
 			{
 				TArray<FTransform> GlobalTransform;
-				GeometryCollectionAlgo::GlobalMatrices(DynamicCollection->Transform, DynamicCollection->Parent, GlobalTransform);
+				GeometryCollectionAlgo::Private::GlobalMatrices(*DynamicCollection, GlobalTransform);
 
 				TArray<FTransform> GlobalTransform2;
-				GeometryCollectionAlgo::GlobalMatrices(DynamicCollection2->Transform, DynamicCollection2->Parent, GlobalTransform2);
+				GeometryCollectionAlgo::Private::GlobalMatrices(*DynamicCollection2, GlobalTransform2);
 
 				// build relative transforms distances
 				for (int32 i = 0; i < (int32)GlobalTransform.Num()-1; i++)
@@ -1490,10 +1602,10 @@ namespace GeometryCollectionTest
 
 		
 		TArray<FTransform> GlobalTransform;
-		GeometryCollectionAlgo::GlobalMatrices(DynamicCollection->Transform, DynamicCollection->Parent, GlobalTransform);
+		GeometryCollectionAlgo::Private::GlobalMatrices(*DynamicCollection, GlobalTransform);
 
 		TArray<FTransform> GlobalTransform2;
-		GeometryCollectionAlgo::GlobalMatrices(DynamicCollection2->Transform, DynamicCollection2->Parent, GlobalTransform2);
+		GeometryCollectionAlgo::Private::GlobalMatrices(*DynamicCollection2, GlobalTransform2);
 
 		// build relative transforms distances
 		TArray<FReal> Distances2;
@@ -1553,9 +1665,6 @@ namespace GeometryCollectionTest
 
 
 		TArray<FReal> Distances;
-		TManagedArray<FTransform>& Transform = DynamicCollection->Transform;
-		TManagedArray<FTransform>& Transform2 = DynamicCollection2->Transform;
-
 
 		auto& Clustering = UnitTest.Solver->GetEvolution()->GetRigidClustering();
 		const auto& ClusterMap = Clustering.GetChildrenMap();
@@ -1569,10 +1678,10 @@ namespace GeometryCollectionTest
 		});
 
 		TArray<FTransform> PrevGlobalTransform;
-		GeometryCollectionAlgo::GlobalMatrices(DynamicCollection->Transform, DynamicCollection->Parent, PrevGlobalTransform);
+		GeometryCollectionAlgo::Private::GlobalMatrices(*DynamicCollection, PrevGlobalTransform);
 
 		TArray<FTransform> PrevGlobalTransform2;
-		GeometryCollectionAlgo::GlobalMatrices(DynamicCollection2->Transform, DynamicCollection2->Parent, PrevGlobalTransform2);
+		GeometryCollectionAlgo::Private::GlobalMatrices(*DynamicCollection2, PrevGlobalTransform2);
 
 
 		for (int Frame = 0; Frame < 100; Frame++)
@@ -1580,21 +1689,21 @@ namespace GeometryCollectionTest
 			UnitTest.Advance();
 
 			TArray<FTransform> GlobalTransform;
-			GeometryCollectionAlgo::GlobalMatrices(DynamicCollection->Transform, DynamicCollection->Parent, GlobalTransform);
+			GeometryCollectionAlgo::Private::GlobalMatrices(*DynamicCollection, GlobalTransform);
 
 			TArray<FTransform> GlobalTransform2;
-			GeometryCollectionAlgo::GlobalMatrices(DynamicCollection2->Transform, DynamicCollection2->Parent, GlobalTransform2);
+			GeometryCollectionAlgo::Private::GlobalMatrices(*DynamicCollection2, GlobalTransform2);
 
 			EXPECT_EQ(ClusterMap.Num(), 1);
 			EXPECT_TRUE(ClusterMapContains(ClusterMap, ParticleHandles.Handle(6)->CastToRigidParticle(), { ParticleHandles.Handle(1)->CastToRigidParticle(),ParticleHandles.Handle(0)->CastToRigidParticle(),ParticleHandles.Handle(3)->CastToRigidParticle(),ParticleHandles.Handle(4)->CastToRigidParticle() }));
 
-			EXPECT_TRUE(DynamicCollection->Parent[0] == INDEX_NONE);
-			EXPECT_TRUE(DynamicCollection->Parent[1] == INDEX_NONE);
-			EXPECT_TRUE(DynamicCollection->Parent[2] == INDEX_NONE);
+			EXPECT_TRUE(DynamicCollection->GetParent(0) == INDEX_NONE);
+			EXPECT_TRUE(DynamicCollection->GetParent(1) == INDEX_NONE);
+			EXPECT_TRUE(DynamicCollection->GetParent(2) == INDEX_NONE);
 
-			EXPECT_TRUE(DynamicCollection2->Parent[0] == INDEX_NONE);
-			EXPECT_TRUE(DynamicCollection2->Parent[1] == INDEX_NONE);
-			EXPECT_TRUE(DynamicCollection2->Parent[2] == INDEX_NONE);
+			EXPECT_TRUE(DynamicCollection2->GetParent(0) == INDEX_NONE);
+			EXPECT_TRUE(DynamicCollection2->GetParent(1) == INDEX_NONE);
+			EXPECT_TRUE(DynamicCollection2->GetParent(2) == INDEX_NONE);
 
 			EXPECT_TRUE(GlobalTransform[0].GetTranslation().X == PrevGlobalTransform[0].GetTranslation().X);
 			EXPECT_TRUE(GlobalTransform[1].GetTranslation().X == PrevGlobalTransform[1].GetTranslation().X);
@@ -1656,10 +1765,6 @@ namespace GeometryCollectionTest
 		TSharedPtr<FGeometryDynamicCollection> DynamicCollection = Collection->DynamicCollection;
 		TSharedPtr<FGeometryDynamicCollection> DynamicCollection2 = Collection2->DynamicCollection;
 
-		TArray<FReal> Distances;
-		TManagedArray<FTransform>& Transform = DynamicCollection->Transform;
-		TManagedArray<FTransform>& Transform2 = DynamicCollection2->Transform;
-
 		auto& Clustering = UnitTest.Solver->GetEvolution()->GetRigidClustering();
 		const auto& ClusterMap = Clustering.GetChildrenMap();
 		const auto& ParticleHandles = UnitTest.Solver->GetParticles().GetParticleHandles();
@@ -1672,23 +1777,42 @@ namespace GeometryCollectionTest
 		UnitTest.Solver->RegisterSimOneShotCallback([&]()
 		{
 			EXPECT_EQ(ClusterMap.Num(),2);
-			const auto& CollectionParticles = Collection->PhysObject->GetSolverParticleHandles();
+			TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*> CollectionParticles = {
+			Collection->PhysObject->GetParticle_Internal(0),
+			Collection->PhysObject->GetParticle_Internal(1),
+			Collection->PhysObject->GetParticle_Internal(2)
+			};
 			EXPECT_EQ(CollectionParticles.Num(),3);
+			EXPECT_EQ(Collection->PhysObject->GetNumTransforms(), 3);
 			EXPECT_TRUE(ClusterMapContains(ClusterMap,CollectionParticles[2],{CollectionParticles[1],CollectionParticles[0]}));
 
-			const auto& CollectionParticles2 = Collection2->PhysObject->GetSolverParticleHandles();
+			TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*> CollectionParticles2 = {
+			Collection2->PhysObject->GetParticle_Internal(0),
+			Collection2->PhysObject->GetParticle_Internal(1),
+			Collection2->PhysObject->GetParticle_Internal(2)
+			};
 			EXPECT_EQ(CollectionParticles2.Num(),3);
+			EXPECT_EQ(Collection2->PhysObject->GetNumTransforms(), 3);
 			EXPECT_TRUE(ClusterMapContains(ClusterMap,CollectionParticles2[2],{CollectionParticles2[1],CollectionParticles2[0]}));
 		});
 
-		for (int Frame = 0; Frame < 100; Frame++)
+		for (int Frame = 0; Frame < 50; Frame++)
 		{
 			UnitTest.Advance();
 
-			const auto& CollectionParticles = Collection->PhysObject->GetSolverParticleHandles();
+			TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*> CollectionParticles = {
+			Collection->PhysObject->GetParticle_Internal(0),
+			Collection->PhysObject->GetParticle_Internal(1),
+			Collection->PhysObject->GetParticle_Internal(2),
+			};
 			EXPECT_EQ(CollectionParticles.Num(),3);
+			EXPECT_EQ(Collection->PhysObject->GetNumTransforms(), 3);
 
-			const auto& CollectionParticles2 = Collection2->PhysObject->GetSolverParticleHandles();
+			TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*> CollectionParticles2 = {
+			Collection2->PhysObject->GetParticle_Internal(0),
+			Collection2->PhysObject->GetParticle_Internal(1),
+			Collection2->PhysObject->GetParticle_Internal(2),
+			};
 
 			const auto* Root = CollectionParticles[0]->ClusterIds().Id;
 
@@ -1703,23 +1827,23 @@ namespace GeometryCollectionTest
 			//
 			if (Frame == 0)
 			{
-				InitialRootPosition = Root->X();
-				RelativeChildOffsets[0] = CollectionParticles[0]->X() - Root->X();
-				RelativeChildOffsets[1] = CollectionParticles[1]->X() - Root->X();
-				RelativeChildOffsets[2] = CollectionParticles2[0]->X() - Root->X();
-				RelativeChildOffsets[3] = CollectionParticles2[1]->X() - Root->X();
+				InitialRootPosition = Root->GetX();
+				RelativeChildOffsets[0] = CollectionParticles[0]->GetX() - Root->GetX();
+				RelativeChildOffsets[1] = CollectionParticles[1]->GetX() - Root->GetX();
+				RelativeChildOffsets[2] = CollectionParticles2[0]->GetX() - Root->GetX();
+				RelativeChildOffsets[3] = CollectionParticles2[1]->GetX() - Root->GetX();
 			}
 			else
 			{
-				FTransform RootTransform(Root->R(), Root->X());
+				FTransform RootTransform(Root->GetR(), Root->GetX());
 
 				TArray<FTransform> GlobalTransform1;
-				GeometryCollectionAlgo::GlobalMatrices(DynamicCollection->Transform, DynamicCollection->Parent, GlobalTransform1);
+				GeometryCollectionAlgo::Private::GlobalMatrices(*DynamicCollection, GlobalTransform1);
 
 				TArray<FTransform> GlobalTransform2;
-				GeometryCollectionAlgo::GlobalMatrices(DynamicCollection2->Transform, DynamicCollection2->Parent, GlobalTransform2);
+				GeometryCollectionAlgo::Private::GlobalMatrices(*DynamicCollection2, GlobalTransform2);
 
-				EXPECT_TRUE(!InitialRootPosition.Equals(Root->X())); // root moves
+				EXPECT_TRUE(!InitialRootPosition.Equals(Root->GetX())); // root moves
 
 				EXPECT_TRUE(RelativeChildOffsets[0].Equals(GlobalTransform1[0].GetRelativeTransform(RootTransform).GetTranslation()));
 				EXPECT_TRUE(RelativeChildOffsets[1].Equals(GlobalTransform1[1].GetRelativeTransform(RootTransform).GetTranslation()));
@@ -1732,13 +1856,13 @@ namespace GeometryCollectionTest
 			// Validate that the children have been removed from the 
 			// parenting hierarchy.
 			//
-			EXPECT_TRUE(DynamicCollection->Parent[0] == INDEX_NONE);
-			EXPECT_TRUE(DynamicCollection->Parent[1] == INDEX_NONE);
-			EXPECT_TRUE(DynamicCollection->Parent[2] == INDEX_NONE);
+			EXPECT_TRUE(DynamicCollection->GetParent(0) == INDEX_NONE);
+			EXPECT_TRUE(DynamicCollection->GetParent(1) == INDEX_NONE);
+			EXPECT_TRUE(DynamicCollection->GetParent(2) == INDEX_NONE);
 
-			EXPECT_TRUE(DynamicCollection2->Parent[0] == INDEX_NONE);
-			EXPECT_TRUE(DynamicCollection2->Parent[1] == INDEX_NONE);
-			EXPECT_TRUE(DynamicCollection2->Parent[2] == INDEX_NONE);
+			EXPECT_TRUE(DynamicCollection2->GetParent(0) == INDEX_NONE);
+			EXPECT_TRUE(DynamicCollection2->GetParent(1) == INDEX_NONE);
+			EXPECT_TRUE(DynamicCollection2->GetParent(2) == INDEX_NONE);
 		}
 	}
 	
@@ -1790,16 +1914,35 @@ namespace GeometryCollectionTest
 		TSharedPtr<FGeometryDynamicCollection> DynamicCollection1 = Collection1->DynamicCollection;
 		TSharedPtr<FGeometryDynamicCollection> DynamicCollection2 = Collection2->DynamicCollection;
 
-		TArray<FTransform> Collection1_InitialTM; GeometryCollectionAlgo::GlobalMatrices(DynamicCollection1->Transform, DynamicCollection1->Parent, Collection1_InitialTM);
-		TArray<FTransform> Collection2_InitialTM; GeometryCollectionAlgo::GlobalMatrices(DynamicCollection2->Transform, DynamicCollection2->Parent, Collection2_InitialTM);
+		TArray<FTransform> Collection1_InitialTM; GeometryCollectionAlgo::Private::GlobalMatrices(*DynamicCollection1, Collection1_InitialTM);
+		TArray<FTransform> Collection2_InitialTM; GeometryCollectionAlgo::Private::GlobalMatrices(*DynamicCollection2, Collection2_InitialTM);
 
-		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*>& Collection1Handles = Collection1->PhysObject->GetSolverParticleHandles();
-		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*>& Collection2Handles = Collection2->PhysObject->GetSolverParticleHandles();
+		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*> Collection1Handles = {
+			Collection1->PhysObject->GetParticle_Internal(0),
+			Collection1->PhysObject->GetParticle_Internal(1),
+			Collection1->PhysObject->GetParticle_Internal(2),
+		};
+		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*> Collection2Handles = {
+			Collection2->PhysObject->GetParticle_Internal(0),
+			Collection2->PhysObject->GetParticle_Internal(1),
+			Collection2->PhysObject->GetParticle_Internal(2),
+		};
+
 		const auto& SovlerParticleHandles = UnitTest.Solver->GetParticles().GetParticleHandles();
 		
 
 		UnitTest.Solver->RegisterSimOneShotCallback([&]()
 		{
+			Collection1Handles = {
+			Collection1->PhysObject->GetParticle_Internal(0),
+			Collection1->PhysObject->GetParticle_Internal(1),
+			Collection1->PhysObject->GetParticle_Internal(2),
+				};
+			Collection2Handles = {
+				Collection2->PhysObject->GetParticle_Internal(0),
+				Collection2->PhysObject->GetParticle_Internal(1),
+				Collection2->PhysObject->GetParticle_Internal(2),
+			};
 			EXPECT_EQ(SovlerParticleHandles.Size(), 6);
 			EXPECT_EQ(ClusterMap.Num(),2);
 			EXPECT_TRUE(ClusterMapContains(ClusterMap,Collection1Handles[2],{Collection1Handles[1],Collection1Handles[0]}));
@@ -1825,8 +1968,8 @@ namespace GeometryCollectionTest
 		EXPECT_TRUE(ClusterMapContains(ClusterMap, ClusterUnion.InternalCluster, { Collection1Handles[0], Collection1Handles[1], Collection2Handles[0], Collection2Handles[1] }));
 		EXPECT_EQ(ClusterMap[ClusterUnion.InternalCluster].Num(), 4);
 
-		TArray<FTransform> Collection1_PreReleaseTM; GeometryCollectionAlgo::GlobalMatrices(DynamicCollection1->Transform, DynamicCollection1->Parent, Collection1_PreReleaseTM);
-		TArray<FTransform> Collection2_PreReleaseTM; GeometryCollectionAlgo::GlobalMatrices(DynamicCollection2->Transform, DynamicCollection2->Parent, Collection2_PreReleaseTM);
+		TArray<FTransform> Collection1_PreReleaseTM; GeometryCollectionAlgo::Private::GlobalMatrices(*DynamicCollection1, Collection1_PreReleaseTM);
+		TArray<FTransform> Collection2_PreReleaseTM; GeometryCollectionAlgo::Private::GlobalMatrices(*DynamicCollection2, Collection2_PreReleaseTM);
 		for (int Idx = 0; Idx < Collection1_PreReleaseTM.Num() - 1; Idx++) {
 			EXPECT_LT(Collection1_PreReleaseTM[Idx].GetTranslation().Z, Collection1_InitialTM[Idx].GetTranslation().Z);
 			EXPECT_LT(Collection2_PreReleaseTM[Idx].GetTranslation().Z, Collection2_InitialTM[Idx].GetTranslation().Z);
@@ -1850,8 +1993,8 @@ namespace GeometryCollectionTest
 
 		EXPECT_EQ(SovlerParticleHandles.Size(), 7);
 
-		TArray<FTransform> Collection1_PostReleaseTM; GeometryCollectionAlgo::GlobalMatrices(DynamicCollection1->Transform, DynamicCollection1->Parent, Collection1_PostReleaseTM);
-		TArray<FTransform> Collection2_PostReleaseTM; GeometryCollectionAlgo::GlobalMatrices(DynamicCollection2->Transform, DynamicCollection2->Parent, Collection2_PostReleaseTM);
+		TArray<FTransform> Collection1_PostReleaseTM; GeometryCollectionAlgo::Private::GlobalMatrices(*DynamicCollection1, Collection1_PostReleaseTM);
+		TArray<FTransform> Collection2_PostReleaseTM; GeometryCollectionAlgo::Private::GlobalMatrices(*DynamicCollection2, Collection2_PostReleaseTM);
 		for (int Idx = 0; Idx < Collection1_PostReleaseTM.Num() - 1; Idx++) {
 			EXPECT_LT(Collection1_PostReleaseTM[Idx].GetTranslation().Z, Collection1_PreReleaseTM[Idx].GetTranslation().Z);
 			EXPECT_LT(Collection2_PostReleaseTM[Idx].GetTranslation().Z, Collection2_PreReleaseTM[Idx].GetTranslation().Z);
@@ -1898,7 +2041,7 @@ namespace GeometryCollectionTest
 
 		TSharedPtr<FGeometryDynamicCollection> DynamicCollection1 = Collection1->DynamicCollection;
 		TSharedPtr<FGeometryDynamicCollection> DynamicCollection2 = Collection2->DynamicCollection;
-		DynamicCollection1->ModifyAttribute<int32>("DynamicState", FGeometryCollection::TransformGroup)[1] = (uint8)EObjectStateTypeEnum::Chaos_Object_Kinematic;
+		DynamicCollection1->ModifyAttribute<uint8>("DynamicState", FGeometryCollection::TransformGroup)[1] = (uint8)EObjectStateTypeEnum::Chaos_Object_Kinematic;
 
 		UnitTest.Initialize();
 
@@ -1906,15 +2049,33 @@ namespace GeometryCollectionTest
 		Chaos::FClusterUnionManager& ClusterUnionManager = Clustering.GetClusterUnionManager();
 		const auto& ClusterMap = Clustering.GetChildrenMap();
 
-		TArray<FTransform> Collection1_InitialTM; GeometryCollectionAlgo::GlobalMatrices(DynamicCollection1->Transform, DynamicCollection1->Parent, Collection1_InitialTM);
-		TArray<FTransform> Collection2_InitialTM; GeometryCollectionAlgo::GlobalMatrices(DynamicCollection2->Transform, DynamicCollection2->Parent, Collection2_InitialTM);
+		TArray<FTransform> Collection1_InitialTM; GeometryCollectionAlgo::Private::GlobalMatrices(*DynamicCollection1, Collection1_InitialTM);
+		TArray<FTransform> Collection2_InitialTM; GeometryCollectionAlgo::Private::GlobalMatrices(*DynamicCollection2, Collection2_InitialTM);
 
-		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*>& Collection1Handles = Collection1->PhysObject->GetSolverParticleHandles();
-		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*>& Collection2Handles = Collection2->PhysObject->GetSolverParticleHandles();
+		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*> Collection1Handles = {
+			Collection1->PhysObject->GetParticle_Internal(0),
+			Collection1->PhysObject->GetParticle_Internal(1),
+			Collection1->PhysObject->GetParticle_Internal(2),
+		};
+		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*> Collection2Handles = {
+			Collection2->PhysObject->GetParticle_Internal(0),
+			Collection2->PhysObject->GetParticle_Internal(1),
+			Collection2->PhysObject->GetParticle_Internal(2),
+		};
 		const auto& SovlerParticleHandles = UnitTest.Solver->GetParticles().GetParticleHandles();
 
 		UnitTest.Solver->RegisterSimOneShotCallback([&]()
 		{
+			Collection1Handles = {
+			Collection1->PhysObject->GetParticle_Internal(0),
+			Collection1->PhysObject->GetParticle_Internal(1),
+			Collection1->PhysObject->GetParticle_Internal(2),
+				};
+			Collection2Handles = {
+				Collection2->PhysObject->GetParticle_Internal(0),
+				Collection2->PhysObject->GetParticle_Internal(1),
+				Collection2->PhysObject->GetParticle_Internal(2),
+			};
 			EXPECT_EQ(SovlerParticleHandles.Size(),6);
 			EXPECT_EQ(ClusterMap.Num(),2);
 			EXPECT_TRUE(ClusterMapContains(ClusterMap,Collection1Handles[2],{Collection1Handles[1],Collection1Handles[0]}));
@@ -1940,8 +2101,8 @@ namespace GeometryCollectionTest
 		EXPECT_TRUE(ClusterMapContains(ClusterMap, ClusterUnion.InternalCluster, { Collection1Handles[0], Collection1Handles[1], Collection2Handles[0], Collection2Handles[1] }));
 		EXPECT_EQ(ClusterMap[ClusterUnion.InternalCluster].Num(), 4);
 
-		TArray<FTransform> Collection1_PreReleaseTM; GeometryCollectionAlgo::GlobalMatrices(DynamicCollection1->Transform, DynamicCollection1->Parent, Collection1_PreReleaseTM);
-		TArray<FTransform> Collection2_PreReleaseTM; GeometryCollectionAlgo::GlobalMatrices(DynamicCollection2->Transform, DynamicCollection2->Parent, Collection2_PreReleaseTM);
+		TArray<FTransform> Collection1_PreReleaseTM; GeometryCollectionAlgo::Private::GlobalMatrices(*DynamicCollection1, Collection1_PreReleaseTM);
+		TArray<FTransform> Collection2_PreReleaseTM; GeometryCollectionAlgo::Private::GlobalMatrices(*DynamicCollection2, Collection2_PreReleaseTM);
 		for (int Idx = 0; Idx < Collection1_PreReleaseTM.Num() - 1; Idx++) 
 		{
 			EXPECT_EQ(Collection1_PreReleaseTM[Idx].GetTranslation().Z, Collection1_InitialTM[Idx].GetTranslation().Z);
@@ -1968,8 +2129,8 @@ namespace GeometryCollectionTest
 
 		// validate that DynamicCollection2 became dynamic and fell from the cluster. 
 
-		TArray<FTransform> Collection1_PostReleaseTM; GeometryCollectionAlgo::GlobalMatrices(DynamicCollection1->Transform, DynamicCollection1->Parent, Collection1_PostReleaseTM);
-		TArray<FTransform> Collection2_PostReleaseTM; GeometryCollectionAlgo::GlobalMatrices(DynamicCollection2->Transform, DynamicCollection2->Parent, Collection2_PostReleaseTM);
+		TArray<FTransform> Collection1_PostReleaseTM; GeometryCollectionAlgo::Private::GlobalMatrices(*DynamicCollection1, Collection1_PostReleaseTM);
+		TArray<FTransform> Collection2_PostReleaseTM; GeometryCollectionAlgo::Private::GlobalMatrices(*DynamicCollection2, Collection2_PostReleaseTM);
 		for (int Idx = 0; Idx < Collection1_PostReleaseTM.Num() - 1; Idx++) 
 		{
 			if(Idx == 1)
@@ -2009,7 +2170,7 @@ namespace GeometryCollectionTest
 		Params.ClusterGroupIndex = 0;		
 		FGeometryCollectionWrapper* Collection1 = TNewSimulationObject<GeometryType::GeometryCollectionWithSuppliedRestCollection>::Init(Params)->template As<FGeometryCollectionWrapper>();
 		TSharedPtr<FGeometryDynamicCollection> DynamicCollection1 = Collection1->DynamicCollection;
-		DynamicCollection1->ModifyAttribute<int32>("DynamicState", FGeometryCollection::TransformGroup)[1] = (uint8)EObjectStateTypeEnum::Chaos_Object_Kinematic;
+		DynamicCollection1->ModifyAttribute<uint8>("DynamicState", FGeometryCollection::TransformGroup)[1] = (uint8)EObjectStateTypeEnum::Chaos_Object_Kinematic;
 
 		UnitTest.AddSimulationObject(Collection1);
 
@@ -2017,12 +2178,21 @@ namespace GeometryCollectionTest
 
 		auto& Clustering = UnitTest.Solver->GetEvolution()->GetRigidClustering();
 		const auto& ClusterMap = Clustering.GetChildrenMap();
-		TArray<FTransform> Collection1_InitialTM; GeometryCollectionAlgo::GlobalMatrices(DynamicCollection1->Transform, DynamicCollection1->Parent, Collection1_InitialTM);
-		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*>& Collection1Handles = Collection1->PhysObject->GetSolverParticleHandles();
+		TArray<FTransform> Collection1_InitialTM; GeometryCollectionAlgo::Private::GlobalMatrices(*DynamicCollection1, Collection1_InitialTM);
+		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*> Collection1Handles = {
+			Collection1->PhysObject->GetParticle_Internal(0),
+			Collection1->PhysObject->GetParticle_Internal(1),
+			Collection1->PhysObject->GetParticle_Internal(2),
+		};
 		const auto& SovlerParticleHandles = UnitTest.Solver->GetParticles().GetParticleHandles();
 
 		UnitTest.Solver->RegisterSimOneShotCallback([&]()
 		{
+			Collection1Handles = {
+			Collection1->PhysObject->GetParticle_Internal(0),
+			Collection1->PhysObject->GetParticle_Internal(1),
+			Collection1->PhysObject->GetParticle_Internal(2),
+				};
 			EXPECT_EQ(SovlerParticleHandles.Size(),4);
 			EXPECT_EQ(ClusterMap.Num(),2);
 			EXPECT_TRUE(ClusterMapContains(ClusterMap,Collection1Handles[2],{Collection1Handles[1],Collection1Handles[0]}));
@@ -2036,7 +2206,7 @@ namespace GeometryCollectionTest
 		EXPECT_TRUE(ClusterMapContains(ClusterMap, Collection1Handles[2], { Collection1Handles[1],Collection1Handles[0] }));
 		EXPECT_TRUE(ClusterMapContains(ClusterMap, Collection1Handles[3], { Collection1Handles[2] }));
 
-		TArray<FTransform> Collection1_PreReleaseTM; GeometryCollectionAlgo::GlobalMatrices(DynamicCollection1->Transform, DynamicCollection1->Parent, Collection1_PreReleaseTM);
+		TArray<FTransform> Collection1_PreReleaseTM; GeometryCollectionAlgo::Private::GlobalMatrices(*DynamicCollection1, Collection1_PreReleaseTM);
 		for (int Idx = 0; Idx < Collection1_PreReleaseTM.Num() - 1; Idx++)
 		{
 			EXPECT_EQ(Collection1_PreReleaseTM[Idx].GetTranslation().Z, Collection1_InitialTM[Idx].GetTranslation().Z);
@@ -2053,7 +2223,7 @@ namespace GeometryCollectionTest
 		EXPECT_EQ(ClusterMap.Num(), 1);
 
 		// validate that DynamicCollection1 BODY 2 became dynamic and fell from the cluster. 
-		TArray<FTransform> Collection1_PostReleaseTM; GeometryCollectionAlgo::GlobalMatrices(DynamicCollection1->Transform, DynamicCollection1->Parent, Collection1_PostReleaseTM);
+		TArray<FTransform> Collection1_PostReleaseTM; GeometryCollectionAlgo::Private::GlobalMatrices(*DynamicCollection1, Collection1_PostReleaseTM);
 		EXPECT_NEAR(Collection1_PostReleaseTM[1].GetTranslation().Z, Collection1_PreReleaseTM[1].GetTranslation().Z, KINDA_SMALL_NUMBER); // the original kinematic should be frozen
 		EXPECT_LT(Collection1_PostReleaseTM[0].GetTranslation().Z, Collection1_PreReleaseTM[0].GetTranslation().Z);
 	}
@@ -2077,7 +2247,7 @@ namespace GeometryCollectionTest
 		FGeometryCollectionWrapper* Collection = TNewSimulationObject<GeometryType::GeometryCollectionWithSuppliedRestCollection>::Init(Params)->template As<FGeometryCollectionWrapper>();
 
 		TSharedPtr<FGeometryDynamicCollection> DynamicCollection = Collection->DynamicCollection;
-		DynamicCollection->ModifyAttribute<int32>("DynamicState", FGeometryCollection::TransformGroup)[1] = (uint8)EObjectStateTypeEnum::Chaos_Object_Kinematic;
+		DynamicCollection->ModifyAttribute<uint8>("DynamicState", FGeometryCollection::TransformGroup)[1] = (uint8)EObjectStateTypeEnum::Chaos_Object_Kinematic;
 
 		UnitTest.AddSimulationObject(Collection);
 		UnitTest.Initialize();
@@ -2183,7 +2353,7 @@ namespace GeometryCollectionTest
 		RestCollection->AppendGeometry(*GeometryCollection::MakeCubeElement(FTransform(FQuat::MakeFromEuler(FVector(0.f)), FVector(500, 0, 0)), FVector(1.0)));
 
 		RestCollection->AddElements(7, FGeometryCollection::TransformGroup);
-		RestCollection->Transform[10].SetTranslation(FVector(0,0,0));
+		RestCollection->Transform[10].SetTranslation(FVector3f(0,0,0));
 
 		RestCollection->SimulationType[0] = FGeometryCollection::ESimulationTypes::FST_Rigid;
 		RestCollection->SimulationType[1] = FGeometryCollection::ESimulationTypes::FST_Rigid;
@@ -2230,7 +2400,19 @@ namespace GeometryCollectionTest
 		FalloffField->Position = FVector(0.0, 0.0, 0.0);
 		FalloffField->Falloff = EFieldFalloffType::Field_FallOff_None;
 
-		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*>& ParticleHandles = Collection->PhysObject->GetSolverParticleHandles();
+		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*> ParticleHandles = {
+			Collection->PhysObject->GetParticle_Internal(0),
+			Collection->PhysObject->GetParticle_Internal(1),
+			Collection->PhysObject->GetParticle_Internal(2),
+			Collection->PhysObject->GetParticle_Internal(3),
+			Collection->PhysObject->GetParticle_Internal(4),
+			Collection->PhysObject->GetParticle_Internal(5),
+			Collection->PhysObject->GetParticle_Internal(6),
+			Collection->PhysObject->GetParticle_Internal(7),
+			Collection->PhysObject->GetParticle_Internal(8),
+			Collection->PhysObject->GetParticle_Internal(9),
+			Collection->PhysObject->GetParticle_Internal(10),
+		};
 		Chaos::FRigidClustering& Clustering = UnitTest.Solver->GetEvolution()->GetRigidClustering();
 		const auto& ClusterMap = Clustering.GetChildrenMap();
 		auto& x = UnitTest.Solver->GetEvolution()->GetRigidClustering().GetStrainArray();
@@ -2344,9 +2526,21 @@ namespace GeometryCollectionTest
 		UnitTest.Advance();		// this call triggers the array resize based on the fraction
 
 		// Test non-clustered bodies
-		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*>& ParticleHandles = Collection->PhysObject->GetSolverParticleHandles();
+		TArray<Chaos::TPBDRigidClusteredParticleHandle<FReal, 3>*> ParticleHandles = {
+			Collection->PhysObject->GetParticle_Internal(0),
+			Collection->PhysObject->GetParticle_Internal(1),
+			Collection->PhysObject->GetParticle_Internal(2),
+			Collection->PhysObject->GetParticle_Internal(3),
+			Collection->PhysObject->GetParticle_Internal(4),
+			Collection->PhysObject->GetParticle_Internal(5),
+			Collection->PhysObject->GetParticle_Internal(6),
+			Collection->PhysObject->GetParticle_Internal(7),
+			Collection->PhysObject->GetParticle_Internal(8),
+			Collection->PhysObject->GetParticle_Internal(9),
+			Collection->PhysObject->GetParticle_Internal(10),
+		};
 		int32 NumCollisionParticles, ExpectedNumCollisionParticles;
-		for (int i = 0; i < ParticleHandles.Num(); i++)
+		for (int i = 0; i < Collection->PhysObject->GetNumTransforms(); i++)
 		{
 			if (Collection->RestCollection->SimulationType[i] == FGeometryCollection::ESimulationTypes::FST_Rigid)
 			{

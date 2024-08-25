@@ -48,6 +48,7 @@ static bool RequiresBuild()
 
 bool FIOSCustomIconProjectBuildMutatorFeature ::RequiresProjectBuild(const FName& InPlatformInfoName, FText& OutReason) const
 {
+#if UE_WITH_TURNKEY_SUPPORT
 	const PlatformInfo::FTargetPlatformInfo* const PlatInfo = PlatformInfo::FindPlatformInfo(InPlatformInfoName);
 	check(PlatInfo);
 
@@ -67,5 +68,6 @@ bool FIOSCustomIconProjectBuildMutatorFeature ::RequiresProjectBuild(const FName
 			}
 		}
 	}
+#endif // UE_WITH_TURNKEY_SUPPORT
 	return false;
 }

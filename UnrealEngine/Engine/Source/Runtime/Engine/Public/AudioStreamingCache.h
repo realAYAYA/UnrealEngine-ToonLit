@@ -25,6 +25,8 @@ AudioStreaming.h: Definitions of classes used for audio streaming.
 
 ENGINE_API DECLARE_LOG_CATEGORY_EXTERN(LogAudioStreamCaching, Display, All);
 
+class FAudioStreamCacheMemoryHandle;
+
 // Basic fixed-size LRU cache for retaining chunks of compressed audio data.
 class FAudioChunkCache
 {
@@ -38,7 +40,7 @@ public:
 
 		FChunkKey(
 			  const FName& InSoundWaveName
-			, const FObjectKey& InSoundWaveObjectKey
+			, const FGuid& InSoundWaveGuid
 			, uint32 InChunkIndex
 #if WITH_EDITOR
 			, uint32 InChunkRevision = 0
@@ -58,7 +60,7 @@ public:
 
 	public:
 		FName SoundWaveName = FName();
-		FObjectKey ObjectKey = FObjectKey();
+		FGuid ObjectKey = FGuid();
 		uint32 ChunkIndex = INDEX_NONE;
 
 #if WITH_EDITOR
@@ -122,8 +124,16 @@ public:
 	void AddNewReferenceToChunk(const FChunkKey& InKey);
 	void RemoveReferenceToChunk(const FChunkKey& InKey);
 
-	// Evict all sounds from the cache.
+	// Evict all sounds from the cache. Does not account for force inline sounds
 	void ClearCache();
+
+	void AddForceInlineSoundWave(const FSoundWaveProxyPtr&);
+
+	void RemoveForceInlineSoundWave(const FSoundWaveProxyPtr&);
+
+	void AddMemoryCountedFeature(const FAudioStreamCacheMemoryHandle& Feature);
+
+	void RemoveMemoryCountedFeature(const FAudioStreamCacheMemoryHandle& Feature);
 
 	// This function will reclaim memory by freeing as many chunks as needed to free BytesToFree.
 	// returns the amount of bytes we were actually able to free.
@@ -231,6 +241,8 @@ private:
 
 		// if true, 
 		bool bWasCacheMiss;
+		bool bWasLoadedFromInlineChunk = false;
+		bool bWasInlinedButUnloaded = false;
 
 		FCacheElementDebugInfo()
 			: NumTotalChunks(0)
@@ -252,6 +264,8 @@ private:
 			LoadingBehavior = ESoundWaveLoadingBehavior::Uninitialized;
 			bWasCacheMiss = false;
 			AverageLocationInCacheWhenNeeded = 0.0f;
+			bWasLoadedFromInlineChunk = false;
+			bWasInlinedButUnloaded = false;
 		}
 
 	};
@@ -392,6 +406,10 @@ private:
 	TAtomic<uint64> MemoryCounterBytes;
 	uint64 MemoryLimitBytes;
 
+	TAtomic<uint64> ForceInlineMemoryCounterBytes;
+
+	TAtomic<uint64> FeatureMemoryCounterBytes;
+
 	// Number of async load operations we have currently in flight.
 	FThreadSafeCounter NumberOfLoadsInFlight;
 
@@ -402,6 +420,16 @@ private:
 	// Map that USoundWaves, FSoundWaveProxys, FChunkKeys, and FAudioChunkHandles can use to
 	// quickly lookup where their chunks are currently stored in the cache
 	TMap<FChunkKey, uint64> CacheLookupIdMap;
+
+	struct FSoundWaveMemoryTracker
+	{
+		int32 RefCount = 0;
+		int64 MemoryCount = 0;
+	};
+	// A map to look up the number of times a sound wave has been added for memory tracking
+	// as well as the memory added for the "latest" addition
+	TMap<FSoundWaveProxyPtr, FSoundWaveMemoryTracker> SoundWaveTracker;
+	FCriticalSection SoundWaveMemoryTrackerCritSec;
 	 
 	// This struct is used for logging cache misses.
 	struct FCacheMissInfo
@@ -417,6 +445,8 @@ private:
 
 	// This is set to true when BeginLoggingCacheMisses is called. 
 	bool bLogCacheMisses;
+
+	uint64 GetCurrentMemoryUsageBytes() const { return MemoryCounterBytes + ForceInlineMemoryCounterBytes + FeatureMemoryCounterBytes; }
 
 	// Returns cached element if it exists in our cache, nullptr otherwise.
 	// If the index of the element is already known, it can be used here to avoid searching the cache.
@@ -506,6 +536,8 @@ public:
 	// IAudioStreamingManager interface (unused functions)
 	virtual void AddStreamingSoundWave(const FSoundWaveProxyPtr& SoundWave) override;
 	virtual void RemoveStreamingSoundWave(const FSoundWaveProxyPtr& SoundWave) override;
+	virtual void AddForceInlineSoundWave(const FSoundWaveProxyPtr& SoundWave) override;
+	virtual void RemoveForceInlineSoundWave(const FSoundWaveProxyPtr& SoundWave) override;
 	virtual void AddDecoder(ICompressedAudioInfo* CompressedAudioInfo) override;
 	virtual void RemoveDecoder(ICompressedAudioInfo* CompressedAudioInfo) override;
 	virtual bool IsManagedStreamingSoundWave(const FSoundWaveProxyPtr&  SoundWave) const override;
@@ -531,6 +563,10 @@ protected:
 	// These are used to reference count consumers of audio chunks.
 	virtual void AddReferenceToChunk(const FAudioChunkHandle& InHandle) override;
 	virtual void RemoveReferenceToChunk(const FAudioChunkHandle& InHandle) override;
+
+	// These are used to update the memory count of Memory Counted Features
+	virtual void AddMemoryCountedFeature(const FAudioStreamCacheMemoryHandle& Feature) override;
+	virtual void RemoveMemoryCountedFeature(const FAudioStreamCacheMemoryHandle& Feature) override;
 
 	/**
 	 * Returns which cache this sound wave should be in,

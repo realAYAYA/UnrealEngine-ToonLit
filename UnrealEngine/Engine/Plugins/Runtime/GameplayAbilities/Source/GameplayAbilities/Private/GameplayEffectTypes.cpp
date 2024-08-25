@@ -9,6 +9,7 @@
 #include "Misc/ConfigCacheIni.h"
 #include "AbilitySystemGlobals.h"
 #include "AbilitySystemComponent.h"
+#include "Engine/NetConnection.h"
 #include "Engine/PackageMapClient.h"
 
 #if WITH_EDITOR
@@ -502,13 +503,17 @@ FOnGameplayEffectTagCountChanged& FGameplayTagCountContainer::RegisterGameplayTa
 	return Info.OnAnyChange;
 }
 
-void FGameplayTagCountContainer::Reset()
+void FGameplayTagCountContainer::Reset(bool bResetCallbacks)
 {
-	GameplayTagEventMap.Reset();
 	GameplayTagCountMap.Reset();
 	ExplicitTagCountMap.Reset();
 	ExplicitTags.Reset();
-	OnAnyTagChangeDelegate.Clear();
+
+	if (bResetCallbacks)
+	{
+		GameplayTagEventMap.Reset();
+		OnAnyTagChangeDelegate.Clear();
+	}
 }
 
 bool FGameplayTagCountContainer::UpdateExplicitTags(const FGameplayTag& Tag, const int32 CountDelta, const bool bDeferParentTagsOnRemove)
@@ -737,7 +742,7 @@ void FGameplayTagBlueprintPropertyMap::Initialize(UObject* Owner, UAbilitySystem
 		ABILITY_LOG(Error, TEXT("FGameplayTagBlueprintPropertyMap: Removing invalid GameplayTagBlueprintPropertyMapping [Index: %d, Tag:%s, Property:%s] for [%s]."),
 			MappingIndex, *Mapping.TagToMap.ToString(), *Mapping.PropertyName.ToString(), *GetNameSafe(Owner));
 
-		PropertyMappings.RemoveAtSwap(MappingIndex, 1, false);
+		PropertyMappings.RemoveAtSwap(MappingIndex, 1, EAllowShrinking::No);
 	}
 }
 
@@ -950,7 +955,7 @@ void FGameplayEffectSpec::PrintAll() const
 
 FString FGameplayEffectSpec::ToSimpleString() const
 {
-	return FString::Printf(TEXT("%s"), *GetNameSafe(Def));
+	return GetNameSafe(Def);
 }
 
 const FGameplayTagContainer* FTagContainerAggregator::GetAggregatedTags() const
@@ -1027,6 +1032,27 @@ FGameplayCueParameters::FGameplayCueParameters(const struct FGameplayEffectConte
 , AbilityLevel(1)
 {
 	UAbilitySystemGlobals::Get().InitGameplayCueParameters(*this, InEffectContext);
+}
+
+bool FGameplayCueParameters::operator==(const FGameplayCueParameters& Other) const
+{
+	return ((NormalizedMagnitude == Other.NormalizedMagnitude) &&
+		    (RawMagnitude == Other.RawMagnitude) &&
+		    (Location == Other.Location) &&
+		    (Normal == Other.Normal) &&
+		    (GameplayEffectLevel == Other.GameplayEffectLevel) &&
+		    (AbilityLevel == Other.AbilityLevel) &&
+		    (EffectContext == Other.EffectContext) &&
+			(MatchedTagName == Other.MatchedTagName) &&
+			(OriginalTag == Other.OriginalTag) &&
+			(AggregatedSourceTags == Other.AggregatedSourceTags) &&
+			(AggregatedTargetTags == Other.AggregatedTargetTags) &&
+			(Instigator == Other.Instigator) &&
+			(EffectCauser == Other.EffectCauser) &&
+			(SourceObject == Other.SourceObject) &&
+			(PhysicalMaterial == Other.PhysicalMaterial) &&
+			(TargetAttachComponent == Other.TargetAttachComponent) &&
+			(bReplicateLocationWhenUsingMinimalRepProxy == Other.bReplicateLocationWhenUsingMinimalRepProxy));
 }
 
 bool FGameplayCueParameters::NetSerialize(FArchive& Ar, class UPackageMap* Map, bool& bOutSuccess)
@@ -1291,6 +1317,7 @@ void FMinimalReplicationTagCountMap::RemoveTag(const FGameplayTag& Tag)
 	}
 }
 
+// WARNING: Changes to this implementation REQUIRES making sure FMinimalReplicationTagCountMapNetSerializer and FMinimalReplicationTagCountMapReplicationFragment remains compatible.
 bool FMinimalReplicationTagCountMap::NetSerialize(FArchive& Ar, class UPackageMap* Map, bool& bOutSuccess)
 {
 	const int32 CountBits = UAbilitySystemGlobals::Get().MinimalReplicationTagCountBits;
@@ -1363,28 +1390,12 @@ bool FMinimalReplicationTagCountMap::NetSerialize(FArchive& Ar, class UPackageMa
 			TagMap.FindOrAdd(Tag) = 1;
 		}
 
+		UPackageMapClient* PackageMap = CastChecked<UPackageMapClient>(Map);
+		LastConnection = PackageMap ? PackageMap->GetConnection() : nullptr;
+
 		if (Owner)
 		{
-			bool bUpdateOwnerTagMap = true;
-			if (bRequireNonOwningNetConnection)
-			{
-				if (AActor* OwningActor = Owner->GetOwner())
-				{
-					// Note we deliberately only want to do this if the NetConnection is not null
-					if (UNetConnection* OwnerNetConnection = OwningActor->GetNetConnection())
-					{
-						if (OwnerNetConnection == CastChecked<UPackageMapClient>(Map)->GetConnection())
-						{
-							bUpdateOwnerTagMap = false;
-						}
-					}
-				}
-			}
-
-			if (bUpdateOwnerTagMap)
-			{
-				UpdateOwnerTagMap();
-			}
+			UpdateOwnerTagMap();
 		}
 	}
 
@@ -1418,6 +1429,30 @@ void FMinimalReplicationTagCountMap::RemoveAllTags()
 
 void FMinimalReplicationTagCountMap::UpdateOwnerTagMap()
 {
+	bool bUpdateOwnerTagMap = true;
+	if (bRequireNonOwningNetConnection)
+	{
+		if (Owner)
+		{
+			if (AActor* OwningActor = Owner->GetOwner())
+			{
+				// Note we deliberately only want to do this if the NetConnection is not null
+				if (UNetConnection* OwnerNetConnection = OwningActor->GetNetConnection())
+				{
+					if (OwnerNetConnection == LastConnection.Get())
+					{
+						bUpdateOwnerTagMap = false;
+					}
+				}
+			}
+		}
+	}
+
+	if (!bUpdateOwnerTagMap)
+	{
+		return;
+	}
+
 	if (Owner)
 	{
 		for (auto It = TagMap.CreateIterator(); It; ++It)

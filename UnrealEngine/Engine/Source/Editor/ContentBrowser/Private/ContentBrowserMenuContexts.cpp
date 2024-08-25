@@ -33,14 +33,11 @@ bool UContentBrowserToolbarMenuContext::CanWriteToCurrentPath() const
 
 TArray<UObject*> UContentBrowserAssetContextMenuContext::LoadSelectedObjectsIfNeeded() const
 {
-	TArray<FString> SelectedAssetPaths;
-	for (const FAssetData& SelectedAsset : SelectedAssets)
-	{
-		SelectedAssetPaths.Add(SelectedAsset.GetObjectPathString());
-	}
-
 	TArray<UObject*> Objects;
-	AssetViewUtils::LoadAssetsIfNeeded(SelectedAssetPaths, Objects);
+	AssetViewUtils::FLoadAssetsSettings Settings{
+		// Default settings
+	};
+	AssetViewUtils::LoadAssetsIfNeeded(SelectedAssets, Objects, Settings);
 
 	return Objects;
 }

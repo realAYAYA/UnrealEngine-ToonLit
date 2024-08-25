@@ -14,12 +14,13 @@
 
 class UObject;
 
-UCLASS()
+UCLASS(MinimalAPI)
 class UBehaviorTreeGraphNode_Decorator : public UBehaviorTreeGraphNode
 {
 	GENERATED_UCLASS_BODY()
 
-	virtual FText GetNodeTitle(ENodeTitleType::Type TitleType) const override;
-	virtual void AllocateDefaultPins() override;
-	void CollectDecoratorData(TArray<class UBTDecorator*>& NodeInstances, TArray<struct FBTDecoratorLogic>& Operations) const;
+	BEHAVIORTREEEDITOR_API virtual FText GetNodeTitle(ENodeTitleType::Type TitleType) const override;
+	BEHAVIORTREEEDITOR_API virtual void AllocateDefaultPins() override;
+	BEHAVIORTREEEDITOR_API virtual FLinearColor GetBackgroundColor(bool bIsActiveForDebugger) const override;
+	BEHAVIORTREEEDITOR_API void CollectDecoratorData(TArray<class UBTDecorator*>& NodeInstances, TArray<struct FBTDecoratorLogic>& Operations) const;
 };

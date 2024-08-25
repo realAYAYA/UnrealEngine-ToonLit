@@ -9,6 +9,13 @@
 #include "RHI.h"
 #endif
 
+class FRHICommandListBase;
+
+namespace RayTracing
+{
+	using GeometryGroupHandle = int32;
+}
+
 enum class ERTAccelerationStructureBuildPriority
 {
 	Immediate,
@@ -42,6 +49,11 @@ public:
 	FRayTracingGeometryInitializer Initializer;
 	FRayTracingGeometryRHIRef RayTracingGeometryRHI;
 
+	RayTracing::GeometryGroupHandle GroupHandle = INDEX_NONE;
+
+	/** LOD of the mesh associated with this ray tracing geometry object (-1 if unknown) */
+	int8 LODIndex = -1;
+
 	// Flags for tracking the state of RayTracingGeometryRHI.
 	enum class EGeometryStateFlags : uint32
 	{
@@ -56,19 +68,20 @@ public:
 
 		// Special flag that is used when ray tracing is dynamic to mark the streamed geometry to be recreated when ray tracing is switched on.
 		// Only set when mesh streaming is used.
-		StreamedIn = 1 << 2
+		StreamedIn = 1 << 2,
+
+		// If the geometry is initialized but was evicted
+		Evicted = 1 << 3
 	};
 	FRIEND_ENUM_CLASS_FLAGS(EGeometryStateFlags);
 
-	/** LOD of the mesh associated with this ray tracing geometry object (-1 if unknown) */
-	int8 LODIndex = -1;
-
-	void SetInitializer(const FRayTracingGeometryInitializer& InInitializer)
+	void SetInitializer(FRayTracingGeometryInitializer InInitializer)
 	{
-		Initializer = InInitializer;
+		Initializer = MoveTemp(InInitializer);
 	}
 
 	RENDERCORE_API bool IsValid() const;
+	RENDERCORE_API bool IsEvicted() const;
 
 	void SetAsStreamedIn()
 	{
@@ -100,14 +113,22 @@ public:
 	RENDERCORE_API void InitRHIForStreaming(FRHIRayTracingGeometry* IntermediateGeometry, FRHIResourceUpdateBatcher& Batcher);
 	RENDERCORE_API void ReleaseRHIForStreaming(FRHIResourceUpdateBatcher& Batcher);
 
+	UE_DEPRECATED(5.4, "Use FStaticMeshStreamIn::FIntermediateRayTracingGeometry instead.")
 	RENDERCORE_API void CreateRayTracingGeometryFromCPUData(TResourceArray<uint8>& OfflineData);
+
 	RENDERCORE_API void RequestBuildIfNeeded(ERTAccelerationStructureBuildPriority InBuildPriority);
 
-	// That function is only supposed to be used when dynamic ray tracing is enabled
+	UE_DEPRECATED(5.4, "InitRHIForDynamicRayTracing now requires a command list and was renamed to MakeResident().")
 	RENDERCORE_API void InitRHIForDynamicRayTracing();
 
 	RENDERCORE_API void CreateRayTracingGeometry(FRHICommandListBase& RHICmdList, ERTAccelerationStructureBuildPriority InBuildPriority);
 
+	UE_DEPRECATED(5.4, "CreateRayTracingGeometry now requires a command list.")
+	RENDERCORE_API void CreateRayTracingGeometry(ERTAccelerationStructureBuildPriority InBuildPriority);
+
+	RENDERCORE_API void MakeResident(FRHICommandList& RHICmdList);
+	RENDERCORE_API void Evict();
+	
 	bool HasPendingBuildRequest() const
 	{
 		return RayTracingBuildRequestIndex != INDEX_NONE;
@@ -121,6 +142,7 @@ public:
 	RENDERCORE_API virtual void InitRHI(FRHICommandListBase& RHICmdList) override;
 	RENDERCORE_API virtual void ReleaseRHI() override;
 
+	RENDERCORE_API virtual void InitResource(FRHICommandListBase& RHICmdList) override;
 	RENDERCORE_API virtual void ReleaseResource() override;
 protected:
 	RENDERCORE_API void RemoveBuildRequest();

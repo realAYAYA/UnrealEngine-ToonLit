@@ -90,4 +90,32 @@ protected:
 	/** All movie scene sections. */
 	UPROPERTY()
 	TArray<TObjectPtr<UMovieSceneSection>> Sections;
+
+#if WITH_EDITORONLY_DATA
+
+public:
+
+	/**
+	 * Get the height of this track's rows
+	 */
+	int32 GetRowHeight() const
+	{
+		return RowHeight;
+	}
+
+	/**
+	 * Set the height of this track's rows
+	 */
+	void SetRowHeight(int32 NewRowHeight)
+	{
+		RowHeight = FMath::Max(16, NewRowHeight);
+	}
+
+private:
+
+	/** The height for each row of this track */
+	UPROPERTY()
+	int32 RowHeight;
+
+#endif
 };

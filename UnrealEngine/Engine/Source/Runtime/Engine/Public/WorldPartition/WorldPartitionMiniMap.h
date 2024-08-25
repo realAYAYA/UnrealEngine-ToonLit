@@ -11,15 +11,17 @@ class UTexture2D;
 /**
  * A mini map to preview the world in world partition window. (editor-only)
  */
-UCLASS(hidecategories = (Actor, Advanced, Display, Events, Object, Attachment, Info, Input, Blueprint, Layers, Tags, Replication, Physics, Cooking), notplaceable, MinimalAPI)
+UCLASS(hidecategories = (Actor, Advanced, Display, Events, Object, Attachment, Info, Input, Blueprint, Layers, Tags, Replication, Physics, Cooking, Networking, LevelInstance), notplaceable, MinimalAPI)
 class AWorldPartitionMiniMap : public AInfo
 {
 	GENERATED_BODY()
 
 private:
 #if WITH_EDITOR
-	virtual bool IsDataLayerTypeSupported(TSubclassOf<UDataLayerInstance> DataLayerType) const final { return false; }
+	virtual bool ActorTypeSupportsDataLayer() const final { return false; }
+	virtual bool ActorTypeSupportsExternalDataLayer() const final { return false; }
 	virtual bool ActorTypeIsMainWorldOnly() const override  { return true; }
+	virtual bool ShouldImport(FStringView ActorPropString, bool IsMovingLevel) override { return false; }
 #endif
 
 public:

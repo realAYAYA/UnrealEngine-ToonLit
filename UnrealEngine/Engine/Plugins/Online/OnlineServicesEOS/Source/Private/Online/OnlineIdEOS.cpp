@@ -112,7 +112,7 @@ FAccountId FOnlineAccountIdRegistryEOS::FromReplicationData(const TArray<uint8>&
 	if (EasHexBufferLength > 0)
 	{
 		char EasBuffer[EOS_EPICACCOUNTID_MAX_LENGTH + 1] = { 0 };
-		UE::String::BytesToHex(TConstArrayView<uint8>(ReplicationData.GetData() + 1, EasHexBufferLength), EasBuffer);
+		UE::String::BytesToHexLower(TConstArrayView<uint8>(ReplicationData.GetData() + 1, EasHexBufferLength), EasBuffer);
 		EpicAccountId = EOS_EpicAccountId_FromString(EasBuffer);
 	}
 
@@ -290,6 +290,11 @@ FAccountId FindAccountIdChecked(const EOS_EpicAccountId EpicAccountId)
 	FAccountId Result = FindAccountId(EpicAccountId);
 	check(Result.IsValid());
 	return Result;
+}
+
+FAccountId CreateAccountId(const EOS_EpicAccountId EpicAccountId, const EOS_ProductUserId ProductUserId)
+{
+	return FOnlineAccountIdRegistryEOS::Get().FindOrAddAccountId(EpicAccountId, ProductUserId);
 }
 
 /* UE::Online */ }

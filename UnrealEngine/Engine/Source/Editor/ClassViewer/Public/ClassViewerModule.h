@@ -63,6 +63,19 @@ enum class EClassViewerNameTypeToDisplay : uint8
 	ClassName,
 };
 
+struct FClassViewerSortElementInfo
+{
+	FClassViewerSortElementInfo(TWeakObjectPtr<UClass> InClass, TSharedPtr<FString> InName, TSharedPtr<FString> InDisplayName)
+		: Class(InClass), Name(InName), DisplayName(InDisplayName)
+	{}
+	
+	TWeakObjectPtr<UClass> Class;
+
+	TSharedPtr<FString> Name;
+
+	TSharedPtr<FString> DisplayName;
+};
+
 /**
  * Settings for the Class Viewer set by the programmer before spawning an instance of the widget.  This
  * is used to modify the class viewer's behavior in various ways, such as filtering in or out specific classes.
@@ -78,6 +91,9 @@ public:
 
 	/** The filter(s) to use on classes in this instance. */
 	TArray<TSharedRef<IClassViewerFilter>> ClassFilters;
+
+	/** Predicate used to sort the class list */
+	TFunction<bool(const FClassViewerSortElementInfo&, const FClassViewerSortElementInfo&)> ClassViewerSortPredicate;
 
 	/** Mode to operate in */
 	EClassViewerMode::Type Mode;

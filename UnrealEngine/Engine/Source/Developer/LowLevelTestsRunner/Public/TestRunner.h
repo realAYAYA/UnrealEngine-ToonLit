@@ -29,6 +29,7 @@
 const char* GetCacheDirectory();
 
 DECLARE_DELEGATE(FGlobalSetupHandler);
+DECLARE_DELEGATE(FGlobalPlatformSetupHandler);
 
 class FTestDelegates
 {
@@ -43,6 +44,12 @@ public:
 	{
 		static TUniquePtr<FGlobalSetupHandler> GlobalTeardown = MakeUnique<FGlobalSetupHandler>();
 		return *GlobalTeardown.Get();
+	}
+
+	static FGlobalPlatformSetupHandler& GetGlobalPlatformSetup()
+	{
+		static TUniquePtr<FGlobalPlatformSetupHandler> GlobalPlatformSetup = MakeUnique<FGlobalPlatformSetupHandler>();
+		return *GlobalPlatformSetup.Get();
 	}
 };
 

@@ -6,6 +6,8 @@
 #include "Cooker/DiffWriterArchive.h"
 #include "Serialization/PackageWriter.h"
 
+namespace UE::DiffWriter { struct FAccumulatorGlobals; }
+
 /** A CookedPackageWriter that diffs output from the current cook with the file that was saved in the previous cook. */
 class FDiffPackageWriter : public ICookedPackageWriter
 {
@@ -57,6 +59,7 @@ public:
 	{
 		FCookCapabilities Result = Inner->GetCookCapabilities();
 		Result.bDiffModeSupported = false; // DiffPackageWriter can not be an inner of another DiffPackageWriter
+		Result.bReadOnly = true;
 		return Result;
 	}
 	virtual FDateTime GetPreviousCookTime() const
@@ -91,9 +94,10 @@ public:
 	{
 		Inner->RemoveCookedPackages();
 	}
-	virtual void MarkPackagesUpToDate(TArrayView<const FName> UpToDatePackages) override
+	virtual void UpdatePackageModificationStatus(FName PackageName, bool bIterativelyUnmodified,
+		bool& bInOutShouldIterativelySkip) override
 	{
-		Inner->MarkPackagesUpToDate(UpToDatePackages);
+		Inner->UpdatePackageModificationStatus(PackageName, bIterativelyUnmodified, bInOutShouldIterativelySkip);
 	}
 	virtual EPackageWriterResult BeginCacheForCookedPlatformData(FBeginCacheForCookedPlatformDataInfo& Info) override
 	{
@@ -113,7 +117,8 @@ public:
 	{
 		return Inner->GetPackageHashes();
 	}
-private:
+
+protected:
 	void ParseCmds();
 	void ParseDumpObjList(FString InParams);
 	void ParseDumpObjects(FString InParams);
@@ -121,23 +126,25 @@ private:
 	bool FilterPackageName(const FString& InWildcard);
 	void ConditionallyDumpObjList();
 	void ConditionallyDumpObjects();
-	UE::DiffWriterArchive::FMessageCallback GetDiffWriterMessageCallback();
+	UE::DiffWriter::FMessageCallback GetDiffWriterMessageCallback();
 	virtual void OnDiffWriterMessage(ELogVerbosity::Type Verbosity, FStringView Message);
+	FString ResolveText(FStringView Message);
+	UE::DiffWriter::FAccumulator& ConstructAccumulator(FName PackageName, UObject* Asset, uint16 MultiOutputIndex);
 
-	FDiffWriterDiffMap DiffMap[2];
-	TUniquePtr<FDiffWriterCallstacks> ExportsCallstacks;
+	TRefCountPtr<UE::DiffWriter::FAccumulator> Accumulators[2];
 	FBeginPackageInfo BeginInfo;
 	TUniquePtr<ICookedPackageWriter> Inner;
+	TUniquePtr<UE::DiffWriter::FAccumulatorGlobals> AccumulatorGlobals;
 	const TCHAR* Indent = nullptr;
 	const TCHAR* NewLine = nullptr;
 	FString DumpObjListParams;
 	FString PackageFilter;
-	int64 ExportsDiffMapOffset[2] = {0, 0};
 	int32 MaxDiffsToLog = 5;
 	bool bSaveForDiff = false;
 	bool bDiffOptional = false;
 	bool bIgnoreHeaderDiffs = false;
 	bool bIsDifferent = false;
+	bool bNewPackage = false;
 	bool bDiffCallstack = false;
 	bool bHasStartedSecondSave = false;
 	bool bDumpObjList = false;
@@ -236,9 +243,10 @@ public:
 	{
 		Inner->RemoveCookedPackages();
 	}
-	virtual void MarkPackagesUpToDate(TArrayView<const FName> UpToDatePackages) override
+	virtual void UpdatePackageModificationStatus(FName PackageName, bool bIterativelyUnmodified,
+		bool& bInOutShouldIterativelySkip) override
 	{
-		Inner->MarkPackagesUpToDate(UpToDatePackages);
+		Inner->UpdatePackageModificationStatus(PackageName, bIterativelyUnmodified, bInOutShouldIterativelySkip);
 	}
 	virtual EPackageWriterResult BeginCacheForCookedPlatformData(FBeginCacheForCookedPlatformDataInfo& Info) override
 	{

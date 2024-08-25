@@ -364,6 +364,12 @@ protected:
 
 	void OnSnapSelectedToAxis(EAxis::Type InAxis);
 
+	void OnStraightenKey(int32 Direction);
+	void StraightenKey(int32 KeyToStraighten, int32 KeyToStraightenToward);
+
+	void OnToggleSnapTangentAdjustment();
+	bool IsSnapTangentAdjustment() const;
+
 	void OnLockAxis(EAxis::Type InAxis);
 	bool IsLockAxisSet(EAxis::Type InAxis) const; 
 
@@ -378,6 +384,9 @@ protected:
 
 	void OnSetDiscontinuousSpline();
 	bool IsDiscontinuousSpline() const;
+
+	void OnToggleClosedLoop();
+	bool IsClosedLoop() const;
 
 	void OnResetToDefault();
 	bool CanResetToDefault() const;

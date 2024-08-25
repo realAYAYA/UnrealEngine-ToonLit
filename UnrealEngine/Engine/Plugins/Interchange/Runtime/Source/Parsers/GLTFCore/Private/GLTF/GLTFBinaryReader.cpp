@@ -81,7 +81,7 @@ namespace GLTF
 			if (SignatureMatches(ChunkType, ExpectedChunkType))
 			{
 				// Read this chunk's data
-				OutData.SetNumUninitialized(ChunkDataSize, true);
+				OutData.SetNumUninitialized(ChunkDataSize, EAllowShrinking::Yes);
 				FileReader.Serialize(OutData.GetData(), ChunkDataSize);
 				return true;
 			}
@@ -123,7 +123,7 @@ namespace GLTF
 			if (SignatureMatches(ChunkType, ExpectedChunkType))
 			{
 				// Read this chunk's data
-				OutData.SetNumUninitialized(ChunkDataSize, true);
+				OutData.SetNumUninitialized(ChunkDataSize, EAllowShrinking::Yes);
 				FileReader.Serialize(OutData.GetData(), ChunkDataSize);
 				return true;
 			}

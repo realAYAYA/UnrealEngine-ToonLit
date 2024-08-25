@@ -1,8 +1,5 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
-using EpicGames.Perforce;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Data;
@@ -12,6 +9,9 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using EpicGames.Perforce;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 #nullable enable
 
@@ -28,11 +28,11 @@ namespace UnrealGameSync
 				List<ClientsRecord> clients = await perforce.GetClientsAsync(ClientsOptions.None, perforce.Settings.UserName, cancellationToken);
 
 				List<ClientsRecord> candidateClients = new List<ClientsRecord>();
-				foreach(ClientsRecord client in clients)
+				foreach (ClientsRecord client in clients)
 				{
-					if(client.Host == null || client.Host.Equals(info.ClientHost, StringComparison.OrdinalIgnoreCase))
+					if (client.Host == null || client.Host.Equals(info.ClientHost, StringComparison.OrdinalIgnoreCase))
 					{
-						if(client.Stream != null && client.Stream.Equals(streamName, StringComparison.OrdinalIgnoreCase))
+						if (client.Stream != null && client.Stream.Equals(streamName, StringComparison.OrdinalIgnoreCase))
 						{
 							candidateClients.Add(client);
 						}
@@ -40,7 +40,7 @@ namespace UnrealGameSync
 				}
 
 				string? workspaceName = null;
-				if(candidateClients.Count >= 1)
+				if (candidateClients.Count >= 1)
 				{
 					workspaceName = candidateClients.OrderByDescending(x => x.Access).First().Name;
 				}
@@ -66,7 +66,7 @@ namespace UnrealGameSync
 				ClientRecord spec = await perforce.GetClientAsync(WorkspaceName, cancellationToken);
 
 				string? currentStreamName = spec.Stream;
-				if(currentStreamName == null || currentStreamName != StreamName)
+				if (currentStreamName == null || currentStreamName != StreamName)
 				{
 					RequiresStreamSwitch = true;
 
@@ -116,7 +116,7 @@ namespace UnrealGameSync
 
 			ProjectTextBox.Text = streamName + projectPath;
 
-			if(workspaceName != null)
+			if (workspaceName != null)
 			{
 				WorkspaceNameTextBox.Text = workspaceName;
 				WorkspaceNameTextBox.Select(WorkspaceNameTextBox.Text.Length, 0);
@@ -140,7 +140,7 @@ namespace UnrealGameSync
 			string? workspaceName = FindDefaultWorkspace(owner, defaultPerforceSettings, streamName, serviceProvider);
 
 			using AutomatedSyncWindow window = new AutomatedSyncWindow(streamName, projectPath, workspaceName, defaultPerforceSettings, serviceProvider);
-			if(window.ShowDialog() == DialogResult.OK)
+			if (window.ShowDialog() == DialogResult.OK)
 			{
 				workspaceInfo = window._selectedWorkspaceInfo!;
 				return true;
@@ -154,7 +154,7 @@ namespace UnrealGameSync
 
 		private void ChangeLink_LinkClicked(object sender, LinkLabelLinkClickedEventArgs e)
 		{
-			if(ConnectWindow.ShowModal(this, _defaultPerforceSettings, ref _serverAndPortOverride, ref _userNameOverride, _serviceProvider))
+			if (ConnectWindow.ShowModal(this, _defaultPerforceSettings, ref _serverAndPortOverride, ref _userNameOverride, _serviceProvider))
 			{
 				UpdateServerLabel();
 			}
@@ -169,7 +169,7 @@ namespace UnrealGameSync
 		private void WorkspaceNameNewBtn_Click(object sender, EventArgs e)
 		{
 			string? workspaceName;
-			if(NewWorkspaceWindow.ShowModal(this, _defaultPerforceSettings, _streamName, WorkspaceNameTextBox.Text, _serviceProvider, out workspaceName))
+			if (NewWorkspaceWindow.ShowModal(this, _defaultPerforceSettings, _streamName, WorkspaceNameTextBox.Text, _serviceProvider, out workspaceName))
 			{
 				WorkspaceNameTextBox.Text = workspaceName;
 				UpdateOkButton();
@@ -179,7 +179,7 @@ namespace UnrealGameSync
 		private void WorkspaceNameBrowseBtn_Click(object sender, EventArgs e)
 		{
 			string? workspaceName = WorkspaceNameTextBox.Text;
-			if(SelectWorkspaceWindow.ShowModal(this, _defaultPerforceSettings, workspaceName, _serviceProvider, out workspaceName))
+			if (SelectWorkspaceWindow.ShowModal(this, _defaultPerforceSettings, workspaceName, _serviceProvider, out workspaceName))
 			{
 				WorkspaceNameTextBox.Text = workspaceName;
 				UpdateOkButton();
@@ -226,7 +226,7 @@ namespace UnrealGameSync
 
 		private void OkBtn_Click(object sender, EventArgs e)
 		{
-			if(ValidateWorkspace(this, Perforce, WorkspaceNameTextBox.Text, _streamName, _serviceProvider, out _selectedWorkspaceInfo))
+			if (ValidateWorkspace(this, Perforce, WorkspaceNameTextBox.Text, _streamName, _serviceProvider, out _selectedWorkspaceInfo))
 			{
 				DialogResult = DialogResult.OK;
 				Close();

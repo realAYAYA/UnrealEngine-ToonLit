@@ -39,6 +39,6 @@ namespace Horde.Server.Agents.Fleet.Providers
 		}
 
 		/// <inheritdoc/>
-		public Task<int> GetNumStoppedInstancesAsync(IPool pool, CancellationToken cancellationToken) => Task.FromResult(0);
+		public Task<int> GetNumStoppedInstancesAsync(IPoolConfig pool, CancellationToken cancellationToken) => Task.FromResult(0);
 	}
 }

@@ -69,6 +69,7 @@ void UInterchangePipelineBase::TransferAdjustSettings(UInterchangePipelineBase* 
 	CachePropertiesStates = SourcePipeline->CachePropertiesStates;
 	bAllowPropertyStatesEdition = SourcePipeline->bAllowPropertyStatesEdition;
 	bIsReimportContext = SourcePipeline->bIsReimportContext;
+	bIsBasicLayout = SourcePipeline->bIsBasicLayout;
 }
 
 const FInterchangePipelinePropertyStates* UInterchangePipelineBase::GetPropertyStates(const FName PropertyPath) const
@@ -146,8 +147,7 @@ void UInterchangePipelineBase::LoadSettingsInternal(const FName PipelineStackNam
 		if (Array)
 		{
 			const bool bForce = false;
-			const bool bConst = true;
-			FConfigSection* Section = GConfig->GetSectionPrivate(*SectionName, bForce, bConst, ConfigFilename);
+			const FConfigSection* Section = GConfig->GetSection(*SectionName, bForce, ConfigFilename);
 			if (Section != nullptr)
 			{
 				TArray<FConfigValue> List;
@@ -253,18 +253,14 @@ void UInterchangePipelineBase::SaveSettingsInternal(const FName PipelineStackNam
 		FArrayProperty* Array = CastField<FArrayProperty>(Property);
 		if (Array)
 		{
-			const bool bForce = true;
-			const bool bConst = false;
-			FConfigSection* Section = GConfig->GetSectionPrivate(*SectionName, bForce, bConst, ConfigFilename);
-			check(Section);
-			Section->Remove(*Key);
+			GConfig->RemoveKeyFromSection(*SectionName, *Key, ConfigFilename);
 
 			FScriptArrayHelper_InContainer ArrayHelper(Array, this);
 			for (int32 i = 0; i < ArrayHelper.Num(); i++)
 			{
 				FString	Buffer;
 				Array->Inner->ExportTextItem_Direct(Buffer, ArrayHelper.GetRawPtr(i), ArrayHelper.GetRawPtr(i), this, PortFlags);
-				Section->Add(*Key, *Buffer);
+				GConfig->AddToSection(*SectionName, *Key, Buffer, ConfigFilename);
 			}
 		}
 		else if (UInterchangePipelineBase* SubPipeline = SubObject ? Cast<UInterchangePipelineBase>(SubObject->GetObjectPropertyValue_InContainer(this)) : nullptr)
@@ -311,9 +307,39 @@ UInterchangePipelineBase* UInterchangePipelineBase::GetMostPipelineOuter() const
 	return Top;
 }
 
+FString UInterchangePipelineBase::GetPipelineDisplayName() const
+{
+	int32 PortFlags = 0;
+	UClass* Class = this->GetClass();
+	for (FProperty* Property = Class->PropertyLink; Property; Property = Property->PropertyLinkNext)
+	{
+		FStrProperty* StringProperty = CastField<FStrProperty>(Property);
+		if (!StringProperty)
+		{
+			continue;
+		}
+		const FName PropertyName = Property->GetFName();
+		if (PropertyName != FName("PipelineDisplayName"))
+		{
+			continue;
+		}
+		//We found the property
+		FString Value = StringProperty->GetPropertyValue_InContainer(this, 0);
+		if (!Value.IsEmpty())
+		{
+			return Value;
+		}
+		//Stop field iteration
+		break;
+	}
+	//Did not found a valid DisplayName property, return the name of the object
+	return GetName();
+}
+
+#if WITH_EDITOR
+
 void UInterchangePipelineBase::InternalToggleVisibilityPropertiesOfMetaDataValue(UInterchangePipelineBase* OuterMostPipeline, UInterchangePipelineBase* Pipeline, bool bDoTransientSubPipeline, const FString& MetaDataKey, const FString& MetaDataValue, const bool VisibilityState)
 {
-#if WITH_EDITOR
 	UClass* PipelineClass = Pipeline->GetClass();
 	for (FProperty* Property = PipelineClass->PropertyLink; Property; Property = Property->PropertyLinkNext)
 	{
@@ -339,10 +365,10 @@ void UInterchangePipelineBase::InternalToggleVisibilityPropertiesOfMetaDataValue
 			if (CategoryName.Equals(MetaDataValue))
 			{
 				OuterMostPipeline->FindOrAddPropertyStates(PropertyPath).ReimportStates.bVisible = VisibilityState;
+				OuterMostPipeline->FindOrAddPropertyStates(PropertyPath).ImportStates.bVisible = VisibilityState;
 			}
 		}
 	}
-#endif
 }
 
 void UInterchangePipelineBase::HidePropertiesOfCategory(UInterchangePipelineBase* OuterMostPipeline, UInterchangePipelineBase* Pipeline, const FString& HideCategoryName, bool bDoTransientSubPipeline /*= false*/)
@@ -356,6 +382,32 @@ void UInterchangePipelineBase::HidePropertiesOfSubCategory(UInterchangePipelineB
 	constexpr bool bVisibilityState = false;
 	InternalToggleVisibilityPropertiesOfMetaDataValue(OuterMostPipeline, Pipeline, bDoTransientSubPipeline, TEXT("SubCategory"), HideSubCategoryName, bVisibilityState);
 }
+
+void UInterchangePipelineBase::HideProperty(UInterchangePipelineBase* OuterMostPipeline, UInterchangePipelineBase* Pipeline, const FName& HidePropertyName)
+{
+	constexpr bool bVisibilityState = false;
+	UClass* PipelineClass = Pipeline->GetClass();
+	for (FProperty* Property = PipelineClass->PropertyLink; Property; Property = Property->PropertyLinkNext)
+	{
+		FObjectProperty* SubObject = CastField<FObjectProperty>(Property);
+		//Do not save a transient property
+		if (SubObject || Property->HasAnyPropertyFlags(CPF_Transient))
+		{
+			continue;
+		}
+
+		const FName PropertyName = Property->GetFName();
+		const FName PropertyPath = FName(Property->GetPathName());
+		if (HidePropertyName != PropertyName)
+		{
+			continue;
+		}
+		OuterMostPipeline->FindOrAddPropertyStates(PropertyPath).ImportStates.bVisible = bVisibilityState;
+		OuterMostPipeline->FindOrAddPropertyStates(PropertyPath).ReimportStates.bVisible = bVisibilityState;
+	}
+}
+
+#endif //WITH_EDITOR
 
 struct FWeakObjectPtrData
 {

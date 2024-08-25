@@ -11,6 +11,7 @@
 #include "Styling/AppStyle.h"
 #include "Engine/SkeletalMesh.h"
 #include "AnimAssetFindReplace.h"
+#include "PersonaTabs.h"
 
 #define LOCTEXT_NAMESPACE "SkeletalMeshEditorMode"
 
@@ -41,8 +42,9 @@ FSkeletalMeshEditorMode::FSkeletalMeshEditorMode(TSharedRef<FWorkflowCentricAppl
 	TabFactories.RegisterFactory(PersonaModule.CreateCurveMetadataEditorTabFactory(InHostingApp, SkeletalMeshEditor->HandleGetAsset(), SkeletalMeshEditor->GetPersonaToolkit()->GetPreviewScene(), OnObjectsSelected));
 	TabFactories.RegisterFactory(CreateMeshControllerMappingTabFactory(InHostingApp, Cast<USkeletalMesh> (SkeletalMeshEditor->HandleGetAsset()), SkeletalMeshEditor->OnPostUndo));
 	TabFactories.RegisterFactory(PersonaModule.CreateAnimAssetFindReplaceTabFactory(InHostingApp, FAnimAssetFindReplaceConfig()));
+	TabFactories.RegisterFactory(PersonaModule.CreatePersonaToolboxTabFactory(SkeletalMeshEditor));
 
-	TabLayout = FTabManager::NewLayout("Standalone_SkeletalMeshEditor_Layout_v4.5")
+	TabLayout = FTabManager::NewLayout("Standalone_SkeletalMeshEditor_Layout_v5")
 		->AddArea
 		(
 			FTabManager::NewPrimaryArea()
@@ -57,8 +59,8 @@ FSkeletalMeshEditorMode::FSkeletalMeshEditorMode(TSharedRef<FWorkflowCentricAppl
 					FTabManager::NewStack()
 					->SetSizeCoefficient(0.2f)
 					->SetHideTabWell(true)
-					->AddTab(SkeletalMeshEditorTabs::ToolboxDetailsTab, ETabState::OpenedTab)
-					->SetForegroundTab(SkeletalMeshEditorTabs::ToolboxDetailsTab)
+					->AddTab(FPersonaTabs::ToolboxID, ETabState::OpenedTab)
+					->SetForegroundTab(FPersonaTabs::ToolboxID)
 				)
 				->Split
 				(

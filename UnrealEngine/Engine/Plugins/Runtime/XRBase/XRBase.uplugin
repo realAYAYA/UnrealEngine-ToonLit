@@ -15,14 +15,17 @@
 	"IsExperimentalVersion": false,
 	"IsBetaVersion": false,
 	"Installed": false,
+	"SupportedPrograms": ["LiveLinkHub"],
 	"Modules": [
 		{
 			"Name": "XRBase",
-			"Type": "Runtime"
+			"Type": "Runtime",
+			"ProgramAllowList": ["LiveLinkHub"]
 		},
 		{
 			"Name": "XRBaseEditor",
-			"Type": "Editor"
+			"Type": "Editor",
+			"ProgramAllowList": ["LiveLinkHub"]
 		}
 	]
 }

@@ -13,10 +13,10 @@ import { JobHandler } from '../backend/JobHandler';
 import { filterJob, JobFilterSimple } from '../base/utilities/filter';
 import { displayTimeZone } from '../base/utilities/timeUtils';
 import { getJobStateColor, getLabelColor } from '../styles/colors';
-import { detailClasses, hordeClasses } from '../styles/Styles';
 import { ChangeContextMenu, ChangeContextMenuTarget } from './ChangeButton';
 import { CalloutController, JobLabelCallout } from './JobLabelCallout';
 import { JobOperationsContextMenu } from './JobOperationsContextMenu';
+import { getHordeStyling } from '../styles/Styles';
 
 
 const lineHeight = 25;
@@ -61,7 +61,7 @@ const buildColumns = (jobTab: JobsTabData, streamId: string): IColumn[] => {
 
       let total = 0;
       jobTab.columns.forEach(c => total += c.relativeWidth ?? 1);
-      const w = (980) / total;
+      const w = (940) / total;
 
       jobTab.columns.forEach(c => { minWidths[c.heading] = w * (c.relativeWidth ?? 1); cnames.push(c.heading); });
    } else {
@@ -195,6 +195,7 @@ const JobList: React.FC<{ tab: string; filter: JobFilterSimple, controller: Call
 
    }, []);
 
+   const { hordeClasses, detailClasses, modeColors } = getHordeStyling();
 
    // @todo: this pattern is becoming annoying, have to reference once in render for observable to see
    if (jobHandler.updated) { }
@@ -292,7 +293,7 @@ const JobList: React.FC<{ tab: string; filter: JobFilterSimple, controller: Call
 
          return <Stack className={detailClasses.headerAndFooter} style={{ cursor: "pointer", marginLeft: 24, marginRight: 24 }} tokens={{ childrenGap: 8 }} onClick={() => { jobHandler.addJobs(); setUpdate(update++) }} horizontal horizontalAlign="center">
             <Stack className={detailClasses.headerTitle} style={{ padding: 0 }}>{`Showing ${jobs.length} of ${jobHandler.jobs.length} Jobs.`}</Stack>
-            <Stack className={detailClasses.headerTitle} style={{ padding: 0, color: "rgb(0, 120, 212)" }} >Show more...</Stack>
+            <Stack className={detailClasses.headerTitle} style={{ padding: 0 }} >Show more...</Stack>
          </Stack>
       }
 
@@ -321,7 +322,7 @@ const JobList: React.FC<{ tab: string; filter: JobFilterSimple, controller: Call
          props.selectionMode = SelectionMode.none;
          props.collapseAllVisibility = CollapseAllVisibility.hidden;
          return <Sticky stickyClassName={classNames.sticky} stickyPosition={StickyPositionType.Header} isScrollSynced={true}>
-            <DetailsHeader className={detailClasses.detailsHeader}  {...props} styles={{ root: { paddingLeft: 12 } }} />
+            <DetailsHeader className={detailClasses.detailsHeader}  {...props} styles={{ root: { paddingLeft: 12, backgroundColor: dashboard.darktheme ? `${modeColors.content} !important` : undefined } }} />
          </Sticky>
 
       }
@@ -508,6 +509,11 @@ const JobList: React.FC<{ tab: string; filter: JobFilterSimple, controller: Call
 
       if (column!.key === "Author") {
 
+         let authorName = commit?.authorInfo?.name;
+         if (item.job.preflightChange) {
+            authorName = item.job.startedByUserInfo?.name;
+         }
+
          let change = item.job?.change?.toString() ?? "Latest";
          if (item.job?.preflightChange) {
             change = `PF ${item.job.preflightChange}`;
@@ -527,7 +533,7 @@ const JobList: React.FC<{ tab: string; filter: JobFilterSimple, controller: Call
                   if (index < jobs.length - 1) {
                      rangeCL = jobs[index + 1].change;
                      if (rangeCL) {
-                        rangeCL += 1;                        
+                        rangeCL += 1;
                      }
                   }
                }
@@ -537,9 +543,9 @@ const JobList: React.FC<{ tab: string; filter: JobFilterSimple, controller: Call
          }} >
             <Stack verticalAlign="center" verticalFill={true} horizontal horizontalAlign={"start"} tokens={{ childrenGap: 18 }}>
                <Stack verticalAlign="center" verticalFill={true} horizontalAlign="start"> <div style={{ paddingBottom: "1px" }}>
-                  <span style={{ padding: "2px 6px 2px 6px", height: "18px", cursor: "pointer" }} className={item.job.startedByUserInfo ? "cl-callout-button-user" : "cl-callout-button"} >{change}</span>
+                  <span style={{ padding: "2px 6px 2px 6px", height: "18px", cursor: "pointer", color: "#FFFFFF", backgroundColor: item.job.startedByUserInfo ? "#0288ee" : "#035ca1" }} className={item.job.startedByUserInfo ? "cl-callout-button-user" : "cl-callout-button"} >{change}</span>
                </div></Stack>
-               < Text variant="small">{commit?.authorInfo?.name}</Text>
+               < Text variant="small">{authorName}</Text>
             </Stack>
          </Stack>;
       }
@@ -577,7 +583,7 @@ const JobList: React.FC<{ tab: string; filter: JobFilterSimple, controller: Call
 
          const row = <JobOperationsContextMenu job={item.job}>
             <Stack style={{ marginLeft: 24, marginRight: 24 }}>
-               <DetailsRow styles={{ root: { minHeight: lineHeight, width: "100%" }, cell: { lineHeight: lineHeight, height: lineHeight, minHeight: lineHeight, selectors: { "a, a:visited, a:activem, a:hover": { color: "rgb(96, 94, 92)" } } } }} {...props} />
+               <DetailsRow styles={{ root: { minHeight: lineHeight, width: "100%" }, cell: { lineHeight: lineHeight, height: lineHeight, minHeight: lineHeight } }} {...props} />
             </Stack>
          </JobOperationsContextMenu>;
 
@@ -623,7 +629,7 @@ const JobList: React.FC<{ tab: string; filter: JobFilterSimple, controller: Call
 
                {<ScrollablePane scrollbarVisibility={ScrollbarVisibility.always} onScroll={() => { controller.setState(undefined, true) }} style={{ overflow: "visible" }}>
                   {renderItems.length > 0 &&
-                     <Stack style={{ width: width, marginLeft: 4, boxShadow: "0 1.6px 3.6px 0 rgba(0,0,0,0.132), 0 0.3px 0.9px 0 rgba(0,0,0,0.108)", backgroundColor: "#FFFFFF" }}>
+                     <Stack style={{ width: width, marginLeft: 4, background: modeColors.content, boxShadow: "0 1.6px 3.6px 0 rgba(0,0,0,0.132), 0 0.3px 0.9px 0 rgba(0,0,0,0.108)",  }}>
                         <DetailsList
                            styles={{
                               headerWrapper: { overflow: "hidden" }, root: {
@@ -636,7 +642,7 @@ const JobList: React.FC<{ tab: string; filter: JobFilterSimple, controller: Call
                               }
                            }}
                            indentWidth={0}
-                           compact={false}
+                           compact={true}
                            selectionMode={SelectionMode.none}
                            items={renderItems}
                            columns={buildColumns(jobTab, streamId)}

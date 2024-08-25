@@ -23,7 +23,7 @@ void UNetObjectConnectionFilter::SetReplicateToConnection(UE::Net::FNetRefHandle
 	{
 		const uint32 LocalIndex = FilteringInfo->GetLocalObjectIndex();
 		FPerConnectionInfo& PerConnectionInfo = PerConnectionInfos[ConnectionId];
-		PerConnectionInfo.ReplicationEnabledObjects.SetBit(LocalIndex);
+		PerConnectionInfo.ReplicationEnabledObjects.SetBitValue(LocalIndex, FilterStatus == UE::Net::ENetFilterStatus::Allow);
 	}
 }
 

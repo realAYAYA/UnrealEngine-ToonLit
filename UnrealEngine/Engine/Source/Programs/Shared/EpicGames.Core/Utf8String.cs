@@ -357,15 +357,6 @@ namespace EpicGames.Core
 		}
 
 		/// <summary>
-		/// Converts a string to a utf-8 string
-		/// </summary>
-		/// <param name="text">Text to convert</param>
-		public static implicit operator Utf8String(string text)
-		{
-			return new Utf8String(new ReadOnlyMemory<byte>(Encoding.UTF8.GetBytes(text)));
-		}
-
-		/// <summary>
 		/// Implict conversion to a span of bytes
 		/// </summary>
 		/// <param name="str"></param>

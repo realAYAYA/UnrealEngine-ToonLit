@@ -159,6 +159,10 @@ bool FMeshRegionGraph::MergeSmallRegionsPass(int32 SmallThreshold,
 		int32 SmallRegionIdx = SmallRegions[j];
 		if (IsRegion(SmallRegionIdx) == false) continue;
 		const FRegion& SmallRegion = Regions[SmallRegionIdx];
+		if (SmallRegion.Triangles.Num() > SmallThreshold)
+		{
+			continue;
+		}
 
 		TArray<FMatch> Matches;
 		for (const FNeighbour& Nbr : SmallRegion.Neighbours)
@@ -274,7 +278,7 @@ bool FMeshRegionGraph::OptimizeBorders(int32 MaxRounds)
 			int32 CheckNbrIndex = GetSwapNbrRegionIndex(tid);
 			if (CheckNbrIndex == SwapToNbrIndex)
 			{
-				Regions[Index].Triangles.RemoveSwap(tid, false);
+				Regions[Index].Triangles.RemoveSwap(tid, EAllowShrinking::No);
 				Regions[SwapToNbrIndex].Triangles.Add(tid);
 				TriangleToRegionMap[tid] = SwapToNbrIndex;
 				bModified = true;

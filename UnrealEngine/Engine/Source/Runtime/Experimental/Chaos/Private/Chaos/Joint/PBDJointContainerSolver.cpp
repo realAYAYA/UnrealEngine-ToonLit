@@ -150,7 +150,14 @@ namespace Chaos
 			// If this triggers, Reset was called with the wrong constraint count
 			check(ContainerConstraintIndices.Num() < ContainerConstraintIndices.Max());
 
-			ContainerConstraintIndices.Add(InContainerConstraintIndex);
+			// Only add a constraint if it is working on at least one dynamic body
+			const FGenericParticleHandle Particle0 = GetJointParticle(ConstraintContainer, InContainerConstraintIndex, 0);
+			const FGenericParticleHandle Particle1 = GetJointParticle(ConstraintContainer, InContainerConstraintIndex, 1);
+
+			if (Particle0->IsDynamic() || Particle1->IsDynamic())
+			{
+				ContainerConstraintIndices.Add(InContainerConstraintIndex);
+			}
 		}
 
 		void FPBDJointContainerSolver::AddBodies(FSolverBodyContainer& SolverBodyContainer)
@@ -299,7 +306,8 @@ namespace Chaos
 				Solver.ApplyConstraints(Dt, IterationStiffness, Settings, JointSettings);
 
 				// @todo(ccaulfield): We should be clamping the impulse at this point. Maybe move breaking to the solver
-				if (GetJointShouldBreak(JointSettings, Dt, Solver.GetNetLinearImpulse(), Solver.GetNetAngularImpulse()))
+				if ((JointSettings.LinearBreakForce != FLT_MAX || JointSettings.AngularBreakTorque != FLT_MAX) &&
+					GetJointShouldBreak(JointSettings, Dt, Solver.GetNetLinearImpulse(), Solver.GetNetAngularImpulse()))
 				{
 					Solver.SetIsBroken(true);
 				}

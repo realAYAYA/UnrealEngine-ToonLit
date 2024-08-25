@@ -194,7 +194,7 @@ void FTestNetRoleNetSerializer::TestValidate()
 	{
 		TArray<bool> ExpectedResults;
 		ExpectedResults.SetNumUninitialized(Values.Num());
-		for (SIZE_T ValueIt = 0, ValueEndIt = Values.Num(); ValueIt != ValueEndIt; ++ValueIt)
+		for (int32 ValueIt = 0, ValueEndIt = Values.Num(); ValueIt != ValueEndIt; ++ValueIt)
 		{
 			ExpectedResults[ValueIt] = true;
 		}
@@ -280,7 +280,7 @@ void FTestNetRoleNetSerializer::TestDequantizeSwapsRoles()
 		UE_NET_ASSERT_FALSE(Context.HasError());
 
 		constexpr bool bPushAll = true;
-		TargetReplicationState.PushPropertyReplicationState(Target.Get(), bPushAll);
+		TargetReplicationState.PushPropertyReplicationState(Target.Get(), Target.Get(), bPushAll);
 		
 		UE_NET_ASSERT_EQ_MSG(Target->RemoteRole, Source->Role, "Roles were not swapped");
 		UE_NET_ASSERT_EQ_MSG(Target->Role, Source->RemoteRole, "Roles were not swapped");
@@ -328,7 +328,7 @@ void FTestNetRoleNetSerializer::TestDowngradeRole()
 		FReplicationStateOperations::Dequantize(Context, TargetReplicationState.GetStateBuffer(), SourceBuffer[0], Descriptor);
 
 		constexpr bool bPushAll = true;
-		TargetReplicationState.PushPropertyReplicationState(Target.Get(), bPushAll);
+		TargetReplicationState.PushPropertyReplicationState(Target.Get(), Target.Get(), bPushAll);
 		
 		UE_NET_ASSERT_EQ_MSG(Target->RemoteRole, Source->Role, "Roles were not swapped");
 		UE_NET_ASSERT_EQ_MSG(Target->Role, TEnumAsByte<ENetRole>(ENetRole::ROLE_SimulatedProxy), "Role was not downgraded");

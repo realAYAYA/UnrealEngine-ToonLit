@@ -148,4 +148,5 @@ private:
 	float PreviousChaosImmPhysicsMinStepTime;
 	int32 PreviousSkipRedundantTransformUpdate;
 	int32 PreviousChaosClothUseTimeStepSmoothing;
+	int32 PreviousSkipWaterInfoTextureRenderWhenWorldRenderingDisabled;
 };

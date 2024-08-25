@@ -15,8 +15,8 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeBoolConstant::Private::s_type =
-			NODE_TYPE( "BoolConstant", NodeBool::GetStaticType() );
+	FNodeType NodeBoolConstant::Private::s_type =
+			FNodeType( "BoolConstant", NodeBool::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
@@ -24,30 +24,6 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 
 	MUTABLE_IMPLEMENT_NODE( NodeBoolConstant, EType::Constant, Node, Node::EType::Bool);
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	int NodeBoolConstant::GetInputCount() const
-	{
-		return 0;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    Node* NodeBoolConstant::GetInputNode( int ) const
-	{
-		check( false );
-		return 0;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-    void NodeBoolConstant::SetInputNode( int, NodePtr )
-	{
-		check( false );
-	}
 
 
 	//---------------------------------------------------------------------------------------------

@@ -156,6 +156,12 @@ extern RENDERCORE_API TGlobalResource<FTwoTrianglesIndexBuffer, FRenderResource:
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // FGlobalDynamicVertexBuffer
 
+template <typename BufferType>
+class TDynamicBuffer;
+
+using FDynamicVertexBuffer = TDynamicBuffer<FVertexBuffer>;
+using FDynamicIndexBuffer  = TDynamicBuffer<FIndexBuffer>;
+
 struct FGlobalDynamicVertexBufferAllocation
 {
 	/** The location of the buffer in main memory. */
@@ -182,12 +188,28 @@ class FGlobalDynamicVertexBuffer
 public:
 	using FAllocation = FGlobalDynamicVertexBufferAllocation;
 
+	FGlobalDynamicVertexBuffer() = default;
+
+	FGlobalDynamicVertexBuffer(FRHICommandListBase& InRHICmdList)
+		: RHICmdList(&InRHICmdList)
+	{}
+
+	~FGlobalDynamicVertexBuffer()
+	{
+		Commit();
+	}
+
+	void Init(FRHICommandListBase& InRHICmdList)
+	{
+		check(VertexBuffers.IsEmpty());
+		RHICmdList = &InRHICmdList;
+	}
+
 	/**
 	 * Allocates space in the global vertex buffer.
 	 * @param SizeInBytes - The amount of memory to allocate in bytes.
 	 * @returns An FAllocation with information regarding the allocated memory.
 	 */
-	RENDERCORE_API FAllocation Allocate(FRHICommandListBase& RHICmdList, uint32 SizeInBytes);
 	RENDERCORE_API FAllocation Allocate(uint32 SizeInBytes);
 
 	/**
@@ -195,16 +217,17 @@ public:
 	 *		WARNING: Once this buffer has been committed to the GPU, allocations
 	 *		remain valid only until the next call to Allocate!
 	 */
-	RENDERCORE_API void Commit(FRHICommandListBase& RHICmdList);
 	RENDERCORE_API void Commit();
 
-	static RENDERCORE_API void GarbageCollect();
+	UE_DEPRECATED(5.4, "Use GlobalDynamicBuffer::GarbageCollect instead.")
+	void GarbageCollect() {}
 
 	/** Returns true if log statements should be made because we exceeded GMaxVertexBytesAllocatedPerFrame */
 	RENDERCORE_API bool IsRenderAlarmLoggingEnabled() const;
 
 private:
-	TArray<class FDynamicVertexBuffer*> VertexBuffers;
+	FRHICommandListBase* RHICmdList = nullptr;
+	TArray<FDynamicVertexBuffer*> VertexBuffers;
 };
 
 struct FGlobalDynamicIndexBufferAllocation
@@ -250,11 +273,22 @@ public:
 	using FAllocation = FGlobalDynamicIndexBufferAllocation;
 	using FAllocationEx = FGlobalDynamicIndexBufferAllocationEx;
 
-	/** Default constructor. */
-	RENDERCORE_API FGlobalDynamicIndexBuffer();
+	FGlobalDynamicIndexBuffer() = default;
 
-	/** Destructor. */
-	RENDERCORE_API ~FGlobalDynamicIndexBuffer();
+	FGlobalDynamicIndexBuffer(FRHICommandListBase& InRHICmdList)
+		: RHICmdList(&InRHICmdList)
+	{}
+
+	~FGlobalDynamicIndexBuffer()
+	{
+		Commit();
+	}
+
+	void Init(FRHICommandListBase& InRHICmdList)
+	{
+		check(IndexBuffers16.IsEmpty() && IndexBuffers32.IsEmpty());
+		RHICmdList = &InRHICmdList;
+	}
 
 	/**
 	 * Allocates space in the global index buffer.
@@ -283,6 +317,12 @@ public:
 	RENDERCORE_API void Commit();
 
 private:
-	/** The pool of vertex buffers from which allocations are made. */
-	struct FDynamicIndexBufferPool* Pools[2];
+	FRHICommandListBase* RHICmdList = nullptr;
+	TArray<FDynamicIndexBuffer*> IndexBuffers16;
+	TArray<FDynamicIndexBuffer*> IndexBuffers32;
 };
+
+namespace GlobalDynamicBuffer
+{
+	RENDERCORE_API void GarbageCollect();
+}

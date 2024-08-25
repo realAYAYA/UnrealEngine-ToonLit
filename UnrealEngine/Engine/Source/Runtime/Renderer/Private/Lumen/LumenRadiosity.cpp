@@ -1,5 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
+#include "LumenRadiosity.h"
 #include "RendererPrivate.h"
 #include "ScenePrivate.h"
 #include "SceneUtils.h"
@@ -12,6 +13,7 @@
 #include "LumenSceneLighting.h"
 #include "LumenTracingUtils.h"
 #include "LumenHardwareRayTracingCommon.h"
+#include "BlueNoise.h"
 
 int32 GLumenRadiosity = 1;
 FAutoConsoleVariableRef CVarLumenRadiosity(
@@ -66,6 +68,14 @@ FAutoConsoleVariableRef CVarRadiosityFilteringProbeOcclusion(
 	TEXT("r.LumenScene.Radiosity.ProbeOcclusion"),
 	GRadiosityFilteringProbeOcclusion,
 	TEXT("Whether to depth test against the probe hit depths during interpolation and filtering to reduce leaking.  Not available with Software Ray Tracing due to imprecision."),
+	ECVF_Scalability | ECVF_RenderThreadSafe
+);
+
+float GRadiosityFilteringProbeOcclusionStrength = .5f;
+FAutoConsoleVariableRef CVarRadiosityFilteringProbeOcclusionStrength(
+	TEXT("r.LumenScene.Radiosity.ProbeOcclusionStrength"),
+	GRadiosityFilteringProbeOcclusionStrength,
+	TEXT("Strength of probe occlusion.  0 = No probe occlusion, 1 = Attempt to stop all leaking, but has self-occlusion artifacts, .5 (default) = tradeoff between the extremes."),
 	ECVF_Scalability | ECVF_RenderThreadSafe
 );
 
@@ -170,9 +180,8 @@ namespace LumenRadiosity
 		const TArray<FViewInfo>& Views,
 		bool bRenderSkylight,
 		FLumenSceneData& LumenSceneData,
-		FRDGTextureRef RadiosityAtlas,
-		FRDGTextureRef RadiosityNumFramesAccumulatedAtlas,
 		const FLumenSceneFrameTemporaries& FrameTemporaries,
+		const LumenRadiosity::FFrameTemporaries& RadiosityFrameTemporaries,
 		const FLumenCardUpdateContext& CardUpdateContext,
 		ERDGPassFlags ComputePassFlags);
 
@@ -202,6 +211,12 @@ namespace LumenRadiosity
 	}
 }
 
+bool LumenRadiosity::IsEnabled(const FSceneViewFamily& ViewFamily)
+{
+	return GLumenRadiosity != 0
+		&& ViewFamily.EngineShowFlags.LumenSecondaryBounces;
+}
+
 bool Lumen::UseHardwareRayTracedRadiosity(const FSceneViewFamily& ViewFamily)
 {
 #if RHI_RAYTRACING
@@ -215,16 +230,10 @@ bool Lumen::UseHardwareRayTracedRadiosity(const FSceneViewFamily& ViewFamily)
 
 bool Lumen::ShouldRenderRadiosityHardwareRayTracing(const FSceneViewFamily& ViewFamily)
 {
-	return UseHardwareRayTracedRadiosity(ViewFamily) && IsRadiosityEnabled(ViewFamily);
+	return UseHardwareRayTracedRadiosity(ViewFamily) && LumenRadiosity::IsEnabled(ViewFamily);
 }
 
-bool Lumen::IsRadiosityEnabled(const FSceneViewFamily& ViewFamily)
-{
-	return GLumenRadiosity != 0 
-		&& ViewFamily.EngineShowFlags.LumenSecondaryBounces;
-}
-
-uint32 Lumen::GetRadiosityAtlasDownsampleFactor()
+uint32 LumenRadiosity::GetAtlasDownsampleFactor()
 {
 	// Must match RADIOSITY_ATLAS_DOWNSAMPLE_FACTOR
 	return 1;
@@ -232,7 +241,7 @@ uint32 Lumen::GetRadiosityAtlasDownsampleFactor()
 
 FIntPoint FLumenSceneData::GetRadiosityAtlasSize() const
 {
-	return PhysicalAtlasSize / Lumen::GetRadiosityAtlasDownsampleFactor();
+	return PhysicalAtlasSize / LumenRadiosity::GetAtlasDownsampleFactor();
 }
 
 class FBuildRadiosityTilesCS : public FGlobalShader
@@ -249,8 +258,8 @@ class FBuildRadiosityTilesCS : public FGlobalShader
 		SHADER_PARAMETER_RDG_BUFFER_SRV(StructuredBuffer<uint>, CardPageIndexData)
 		SHADER_PARAMETER(uint32, NumViews)
 		SHADER_PARAMETER(uint32, MaxCardTiles)
-		SHADER_PARAMETER_ARRAY(FMatrix44f, WorldToClip, [Lumen::MaxViews])
-		SHADER_PARAMETER_ARRAY(FVector4f, PreViewTranslation, [Lumen::MaxViews])
+		SHADER_PARAMETER_ARRAY(FMatrix44f, WorldToClip, [LUMEN_MAX_VIEWS])
+		SHADER_PARAMETER_ARRAY(FVector4f, PreViewTranslation, [LUMEN_MAX_VIEWS])
 	END_SHADER_PARAMETER_STRUCT()
 
 	static bool ShouldCompilePermutation(const FGlobalShaderPermutationParameters& Parameters)
@@ -293,12 +302,13 @@ BEGIN_SHADER_PARAMETER_STRUCT(FLumenRadiosityTexelTraceParameters, )
 	SHADER_PARAMETER(uint32, RadiosityTileSize)
 	SHADER_PARAMETER(uint32, HemisphereProbeResolution)
 	SHADER_PARAMETER(uint32, NumTracesPerProbe)
-	SHADER_PARAMETER(uint32, UseProbeOcclusion)
+	SHADER_PARAMETER(float, ProbeOcclusionStrength)
 	SHADER_PARAMETER(int32, FixedJitterIndex)
 	SHADER_PARAMETER(uint32, MaxFramesAccumulated)
 	SHADER_PARAMETER(uint32, NumViews)
 	SHADER_PARAMETER(uint32, ViewIndex)
 	SHADER_PARAMETER(uint32, MaxCardTiles)
+	SHADER_PARAMETER_STRUCT_REF(FBlueNoise, BlueNoise)
 END_SHADER_PARAMETER_STRUCT()
 
 class FLumenRadiosityIndirectArgsCS : public FGlobalShader
@@ -520,6 +530,7 @@ class FLumenRadiosityIntegrateCS : public FGlobalShader
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, RadiosityProbeSHGreenAtlas)
 		SHADER_PARAMETER_RDG_TEXTURE(Texture2D, RadiosityProbeSHBlueAtlas)
 		SHADER_PARAMETER(float, ProbePlaneWeightingDepthScale)
+		SHADER_PARAMETER_RDG_UNIFORM_BUFFER(FSubstrateGlobalUniformParameters, Substrate)
 	END_SHADER_PARAMETER_STRUCT()
 
 	class FPlaneWeighting : SHADER_PERMUTATION_BOOL("INTERPOLATION_PLANE_WEIGHTING");
@@ -552,7 +563,8 @@ FRDGTextureRef RegisterOrCreateRadiosityAtlas(
 	const TRefCountPtr<IPooledRenderTarget>& AtlasRT,
 	const TCHAR* AtlasName,
 	FIntPoint AtlasSize,
-	EPixelFormat AtlasFormat)
+	EPixelFormat AtlasFormat,
+	bool& bIndirectLightingHistoryValid)
 {
 	FRDGTextureRef AtlasTexture = AtlasRT ? GraphBuilder.RegisterExternalTexture(AtlasRT) : nullptr;
 
@@ -561,9 +573,78 @@ FRDGTextureRef RegisterOrCreateRadiosityAtlas(
 		AtlasTexture = GraphBuilder.CreateTexture(
 			FRDGTextureDesc::Create2D(AtlasSize, AtlasFormat, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV),
 			AtlasName);
+
+		bIndirectLightingHistoryValid = false;
 	}
 
 	return AtlasTexture;
+}
+
+void LumenRadiosity::InitFrameTemporaries(FRDGBuilder& GraphBuilder, const FLumenSceneData& LumenSceneData, const FSceneViewFamily& ViewFamily, const TArray<FViewInfo>& Views, LumenRadiosity::FFrameTemporaries& RadiosityFrameTemporaries)
+{
+	if (LumenRadiosity::IsEnabled(ViewFamily) && LumenSceneData.bFinalLightingAtlasContentsValid)
+	{
+		const FViewInfo& FirstView = Views[0];
+
+		RadiosityFrameTemporaries.bIndirectLightingHistoryValid = true;
+		RadiosityFrameTemporaries.ProbeSpacing = LumenRadiosity::GetRadiosityProbeSpacing(FirstView);
+		RadiosityFrameTemporaries.HemisphereProbeResolution = LumenRadiosity::GetHemisphereProbeResolution(FirstView);
+		RadiosityFrameTemporaries.ProbeAtlasSize = FIntPoint::DivideAndRoundUp(LumenSceneData.GetPhysicalAtlasSize(), RadiosityFrameTemporaries.ProbeSpacing);
+		RadiosityFrameTemporaries.ProbeTracingAtlasSize = RadiosityFrameTemporaries.ProbeAtlasSize * FIntPoint(RadiosityFrameTemporaries.HemisphereProbeResolution, RadiosityFrameTemporaries.HemisphereProbeResolution);
+
+		RadiosityFrameTemporaries.TraceRadianceAtlas = RegisterOrCreateRadiosityAtlas(
+			GraphBuilder,
+			LumenSceneData.RadiosityTraceRadianceAtlas,
+			TEXT("Lumen.Radiosity.TraceRadianceAtlas"),
+			RadiosityFrameTemporaries.ProbeTracingAtlasSize,
+			PF_FloatRGB,
+			RadiosityFrameTemporaries.bIndirectLightingHistoryValid);
+
+		RadiosityFrameTemporaries.bUseProbeOcclusion = GRadiosityFilteringProbeOcclusion != 0
+			&& GRadiosityFilteringProbeOcclusionStrength > 0.0f
+			// Self intersection from grazing angle traces causes noise that breaks probe occlusion
+			&& Lumen::UseHardwareRayTracedRadiosity(*FirstView.Family);
+
+		if (RadiosityFrameTemporaries.bUseProbeOcclusion)
+		{
+			RadiosityFrameTemporaries.TraceHitDistanceAtlas = RegisterOrCreateRadiosityAtlas(
+				GraphBuilder,
+				LumenSceneData.RadiosityTraceHitDistanceAtlas,
+				TEXT("Lumen.Radiosity.TraceHitDistanceAtlas"),
+				RadiosityFrameTemporaries.ProbeTracingAtlasSize,
+				PF_R16F,
+				RadiosityFrameTemporaries.bIndirectLightingHistoryValid);
+		}
+		else
+		{
+			RadiosityFrameTemporaries.TraceHitDistanceAtlas = GraphBuilder.CreateTexture(
+				FRDGTextureDesc::Create2D(FIntPoint(1, 1), PF_R16F, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV), TEXT("Lumen.Radiosity.DummyTraceHitDistanceAtlas"));
+		}
+
+		RadiosityFrameTemporaries.ProbeSHRedAtlas = RegisterOrCreateRadiosityAtlas(
+			GraphBuilder,
+			LumenSceneData.RadiosityProbeSHRedAtlas,
+			TEXT("Lumen.Radiosity.ProbeSHRedAtlas"),
+			RadiosityFrameTemporaries.ProbeAtlasSize,
+			PF_FloatRGBA,
+			RadiosityFrameTemporaries.bIndirectLightingHistoryValid);
+
+		RadiosityFrameTemporaries.ProbeSHGreenAtlas = RegisterOrCreateRadiosityAtlas(
+			GraphBuilder,
+			LumenSceneData.RadiosityProbeSHGreenAtlas,
+			TEXT("Lumen.Radiosity.ProbeSHGreenAtlas"),
+			RadiosityFrameTemporaries.ProbeAtlasSize,
+			PF_FloatRGBA,
+			RadiosityFrameTemporaries.bIndirectLightingHistoryValid);
+
+		RadiosityFrameTemporaries.ProbeSHBlueAtlas = RegisterOrCreateRadiosityAtlas(
+			GraphBuilder,
+			LumenSceneData.RadiosityProbeSHBlueAtlas,
+			TEXT("Lumen.Radiosity.ProbeSHBlueAtlas"),
+			RadiosityFrameTemporaries.ProbeAtlasSize,
+			PF_FloatRGBA,
+			RadiosityFrameTemporaries.bIndirectLightingHistoryValid);
+	}
 }
 
 void LumenRadiosity::AddRadiosityPass(
@@ -572,78 +653,44 @@ void LumenRadiosity::AddRadiosityPass(
 	const TArray<FViewInfo>& Views,
 	bool bRenderSkylight,
 	FLumenSceneData& LumenSceneData,
-	FRDGTextureRef RadiosityAtlas,
-	FRDGTextureRef RadiosityNumFramesAccumulatedAtlas,
 	const FLumenSceneFrameTemporaries& FrameTemporaries,
+	const LumenRadiosity::FFrameTemporaries& RadiosityFrameTemporaries,
 	const FLumenCardUpdateContext& CardUpdateContext,
 	ERDGPassFlags ComputePassFlags)
 {
-	const FViewInfo& FirstView = Views[0];
-
-	const int32 ProbeSpacing = LumenRadiosity::GetRadiosityProbeSpacing(FirstView);
-	const int32 HemisphereProbeResolution = LumenRadiosity::GetHemisphereProbeResolution(FirstView);
-	const uint32 RadiosityTileSize = Lumen::CardTileSize / ProbeSpacing;
-
-	FIntPoint RadiosityProbeAtlasSize;
-	RadiosityProbeAtlasSize.X = FMath::DivideAndRoundUp<uint32>(LumenSceneData.GetPhysicalAtlasSize().X, ProbeSpacing);
-	RadiosityProbeAtlasSize.Y = FMath::DivideAndRoundUp<uint32>(LumenSceneData.GetPhysicalAtlasSize().Y, ProbeSpacing);
-
-	FIntPoint RadiosityProbeTracingAtlasSize = RadiosityProbeAtlasSize * FIntPoint(HemisphereProbeResolution, HemisphereProbeResolution);
-
-	FRDGTextureRef TraceRadianceAtlas = RegisterOrCreateRadiosityAtlas(
-		GraphBuilder, 
-		LumenSceneData.RadiosityTraceRadianceAtlas, 
-		TEXT("Lumen.Radiosity.TraceRadianceAtlas"), 
-		RadiosityProbeTracingAtlasSize, 
-		PF_FloatRGB);
-
-	const bool bUseProbeOcclusion = GRadiosityFilteringProbeOcclusion != 0 
-		// Self intersection from grazing angle traces causes noise that breaks probe occlusion
-		&& Lumen::UseHardwareRayTracedRadiosity(*FirstView.Family);
-
-	FRDGTextureRef TraceHitDistanceAtlas = nullptr;
-	
-	if (bUseProbeOcclusion)
-	{
-		TraceHitDistanceAtlas = RegisterOrCreateRadiosityAtlas(
-			GraphBuilder, 
-			LumenSceneData.RadiosityTraceHitDistanceAtlas, 
-			TEXT("Lumen.Radiosity.TraceHitDistanceAtlas"), 
-			RadiosityProbeTracingAtlasSize, 
-			PF_R16F);
-	}
-	else
-	{
-		TraceHitDistanceAtlas = GraphBuilder.CreateTexture(FRDGTextureDesc::Create2D(FIntPoint(1, 1), PF_R16F, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV), TEXT("Dummy"));
-	}
-
 	const uint32 MaxCardTiles = CardUpdateContext.MaxUpdateTiles;
 	FRDGBufferRef CardTileAllocator = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), Views.Num()), TEXT("Lumen.Radiosity.CardTileAllocator"));
 	FRDGBufferRef CardTiles = GraphBuilder.CreateBuffer(FRDGBufferDesc::CreateStructuredDesc(sizeof(uint32), MaxCardTiles * Views.Num()), TEXT("Lumen.Radiosity.CardTiles"));
 	AddClearUAVPass(GraphBuilder, GraphBuilder.CreateUAV(CardTileAllocator), 0, ComputePassFlags);
+
+	const uint32 RadiosityTileSize = Lumen::CardTileSize / RadiosityFrameTemporaries.ProbeSpacing;
 
 	// Setup common radiosity tracing parameters
 	FLumenRadiosityTexelTraceParameters RadiosityTexelTraceParameters;
 	{
 		RadiosityTexelTraceParameters.CardTileAllocator = GraphBuilder.CreateSRV(CardTileAllocator);
 		RadiosityTexelTraceParameters.CardTileData = GraphBuilder.CreateSRV(CardTiles);
-		RadiosityTexelTraceParameters.TraceRadianceAtlas = TraceRadianceAtlas;
-		RadiosityTexelTraceParameters.TraceHitDistanceAtlas = TraceHitDistanceAtlas;
+		RadiosityTexelTraceParameters.TraceRadianceAtlas = RadiosityFrameTemporaries.TraceRadianceAtlas;
+		RadiosityTexelTraceParameters.TraceHitDistanceAtlas = RadiosityFrameTemporaries.TraceHitDistanceAtlas;
 		RadiosityTexelTraceParameters.RadiosityAtlasSize = LumenSceneData.GetRadiosityAtlasSize();
-		RadiosityTexelTraceParameters.ProbeSpacingInRadiosityTexels = ProbeSpacing;
-		RadiosityTexelTraceParameters.ProbeSpacingInRadiosityTexelsDivideShift = FMath::FloorLog2(ProbeSpacing);
+		RadiosityTexelTraceParameters.ProbeSpacingInRadiosityTexels = RadiosityFrameTemporaries.ProbeSpacing;
+		RadiosityTexelTraceParameters.ProbeSpacingInRadiosityTexelsDivideShift = FMath::FloorLog2(RadiosityFrameTemporaries.ProbeSpacing);
 		RadiosityTexelTraceParameters.RadiosityTileSize = RadiosityTileSize;
-		RadiosityTexelTraceParameters.HemisphereProbeResolution = HemisphereProbeResolution;
-		RadiosityTexelTraceParameters.NumTracesPerProbe = HemisphereProbeResolution * HemisphereProbeResolution;
-		RadiosityTexelTraceParameters.UseProbeOcclusion = bUseProbeOcclusion ? 1 : 0;
+		RadiosityTexelTraceParameters.HemisphereProbeResolution = RadiosityFrameTemporaries.HemisphereProbeResolution;
+		RadiosityTexelTraceParameters.NumTracesPerProbe = RadiosityFrameTemporaries.HemisphereProbeResolution * RadiosityFrameTemporaries.HemisphereProbeResolution;
+		RadiosityTexelTraceParameters.ProbeOcclusionStrength = RadiosityFrameTemporaries.bUseProbeOcclusion ? FMath::Clamp<float>(GRadiosityFilteringProbeOcclusionStrength, 0.0f, 1.0f) : 0;
 		RadiosityTexelTraceParameters.FixedJitterIndex = GLumenRadiosityFixedJitterIndex;
 		RadiosityTexelTraceParameters.MaxFramesAccumulated = LumenRadiosity::UseTemporalAccumulation() ? GLumenRadiosityTemporalMaxFramesAccumulated : 1;
 		RadiosityTexelTraceParameters.NumViews = Views.Num();
 		// Needs to be set to valid value inside view loop
 		RadiosityTexelTraceParameters.ViewIndex = Views.Num();
 		RadiosityTexelTraceParameters.MaxCardTiles = MaxCardTiles;
+
+		FBlueNoise BlueNoise = GetBlueNoiseGlobalParameters();
+		RadiosityTexelTraceParameters.BlueNoise = CreateUniformBufferImmediate(BlueNoise, EUniformBufferUsage::UniformBuffer_SingleDraw);
 	}
 
+	const FViewInfo& FirstView = Views[0];
 	const FGlobalShaderMap* GlobalShaderMap = FirstView.ShaderMap;
 
 	// Build a list of radiosity tiles for future processing
@@ -686,7 +733,7 @@ void LumenRadiosity::AddRadiosityPass(
 		PassParameters->RadiosityTexelTraceParameters = RadiosityTexelTraceParameters;
 #if RHI_RAYTRACING
 		PassParameters->HardwareRayTracingThreadGroupSize = Lumen::UseHardwareInlineRayTracing(*FirstView.Family) ?
-			FLumenRadiosityHardwareRayTracingCS::GetThreadGroupSize().X :
+			FLumenRadiosityHardwareRayTracingCS::GetThreadGroupSize(FirstView.GetShaderPlatform()).X :
 			FLumenRadiosityHardwareRayTracingRGS::GetThreadGroupSize().X;
 #else
 		PassParameters->HardwareRayTracingThreadGroupSize = 1;
@@ -731,8 +778,8 @@ void LumenRadiosity::AddRadiosityPass(
 
 		PassParameters->RadiosityTexelTraceParameters = RadiosityTexelTraceParameters;
 		PassParameters->RadiosityTexelTraceParameters.ViewIndex = 0;
-		PassParameters->RWTraceRadianceAtlas = GraphBuilder.CreateUAV(TraceRadianceAtlas);
-		PassParameters->RWTraceHitDistanceAtlas = GraphBuilder.CreateUAV(TraceHitDistanceAtlas);
+		PassParameters->RWTraceRadianceAtlas = GraphBuilder.CreateUAV(RadiosityFrameTemporaries.TraceRadianceAtlas);
+		PassParameters->RWTraceHitDistanceAtlas = GraphBuilder.CreateUAV(RadiosityFrameTemporaries.TraceHitDistanceAtlas);
 
 		const uint32 NumThreadsToDispatch = GRHIPersistentThreadGroupCount * FLumenRadiosityHardwareRayTracingRGS::GetGroupSize();
 		PassParameters->NumThreadsToDispatch = NumThreadsToDispatch;
@@ -744,46 +791,48 @@ void LumenRadiosity::AddRadiosityPass(
 		PassParameters->MaxTraversalIterations = LumenHardwareRayTracing::GetMaxTraversalIterations();
 		PassParameters->MinTraceDistanceToSampleSurfaceCache = LumenHardwareRayTracing::GetMinTraceDistanceToSampleSurfaceCache();
 
-		FLumenRadiosityHardwareRayTracingRGS::FPermutationDomain PermutationVector;
+		FLumenRadiosityHardwareRayTracing::FPermutationDomain PermutationVector;
 
 		const FIntPoint DispatchResolution = FIntPoint(NumThreadsToDispatch, 1);
 		FString Resolution = FString::Printf(TEXT("%ux%u"), DispatchResolution.X, DispatchResolution.Y);
 
 		if (bInlineRayTracing)
 		{
-			TShaderRef<FLumenRadiosityHardwareRayTracingCS> ComputeShader = GlobalShaderMap->GetShader<FLumenRadiosityHardwareRayTracingCS>(PermutationVector);
-			
-			// Inline always runs as an indirect compute shader
-			FComputeShaderUtils::AddPass(
+			FLumenRadiosityHardwareRayTracingCS::AddLumenRayTracingDispatchIndirect(
 				GraphBuilder,
-				RDG_EVENT_NAME("HardwareRayTracingCS <indirect> %ux%u probes at %u spacing", HemisphereProbeResolution, HemisphereProbeResolution, ProbeSpacing),
-				ComputePassFlags,
-				ComputeShader,
-				PassParameters,
-				PassParameters->HardwareRayTracingIndirectArgs,
-				(uint32)ERadiosityIndirectArgs::HardwareRayTracingThreadPerTrace + ViewIndex * (uint32)ERadiosityIndirectArgs::MAX * sizeof(FRHIDispatchIndirectParameters));
-		
-		}
-		else
-		{
-			TShaderRef<FLumenRadiosityHardwareRayTracingRGS> RayGenerationShader = GlobalShaderMap->GetShader<FLumenRadiosityHardwareRayTracingRGS>(PermutationVector);
-
-			AddLumenRayTraceDispatchIndirectPass(
-				GraphBuilder,
-				RDG_EVENT_NAME("HardwareRayTracingRGS %s %ux%u probes at %u spacing", *Resolution, HemisphereProbeResolution, HemisphereProbeResolution, ProbeSpacing),
-				RayGenerationShader,
+				RDG_EVENT_NAME("HardwareRayTracingCS <indirect> %ux%u probes at %u spacing", 
+					RadiosityFrameTemporaries.HemisphereProbeResolution,
+					RadiosityFrameTemporaries.HemisphereProbeResolution,
+					RadiosityFrameTemporaries.ProbeSpacing),
+				View,
+				PermutationVector,
 				PassParameters,
 				PassParameters->HardwareRayTracingIndirectArgs,
 				(uint32)ERadiosityIndirectArgs::HardwareRayTracingThreadPerTrace + ViewIndex * (uint32)ERadiosityIndirectArgs::MAX * sizeof(FRHIDispatchIndirectParameters),
+				ComputePassFlags);
+		}
+		else
+		{
+			FLumenRadiosityHardwareRayTracingRGS::AddLumenRayTracingDispatchIndirect(
+				GraphBuilder,
+				RDG_EVENT_NAME("HardwareRayTracingRGS %s %ux%u probes at %u spacing",
+					*Resolution,
+					RadiosityFrameTemporaries.HemisphereProbeResolution,
+					RadiosityFrameTemporaries.HemisphereProbeResolution,
+					RadiosityFrameTemporaries.ProbeSpacing),
 				View,
+				PermutationVector,
+				PassParameters,
+				PassParameters->HardwareRayTracingIndirectArgs,
+				(uint32)ERadiosityIndirectArgs::HardwareRayTracingThreadPerTrace + ViewIndex * (uint32)ERadiosityIndirectArgs::MAX * sizeof(FRHIDispatchIndirectParameters),
 				bUseMinimalPayload);
 		}
 #endif
 	}
 	else
 	{
-		FRDGTextureUAVRef TraceRadianceAtlasUAV = GraphBuilder.CreateUAV(TraceRadianceAtlas, ERDGUnorderedAccessViewFlags::SkipBarrier);
-		FRDGTextureUAVRef TraceHitDistanceAtlasUAV = GraphBuilder.CreateUAV(TraceHitDistanceAtlas, ERDGUnorderedAccessViewFlags::SkipBarrier);
+		FRDGTextureUAVRef TraceRadianceAtlasUAV = GraphBuilder.CreateUAV(RadiosityFrameTemporaries.TraceRadianceAtlas, ERDGUnorderedAccessViewFlags::SkipBarrier);
+		FRDGTextureUAVRef TraceHitDistanceAtlasUAV = GraphBuilder.CreateUAV(RadiosityFrameTemporaries.TraceHitDistanceAtlas, ERDGUnorderedAccessViewFlags::SkipBarrier);
 
 		for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ViewIndex++)
 		{
@@ -809,7 +858,10 @@ void LumenRadiosity::AddRadiosityPass(
 
 			FComputeShaderUtils::AddPass(
 				GraphBuilder,
-				RDG_EVENT_NAME("DistanceFieldTracing %ux%u probes at %u spacing", HemisphereProbeResolution, HemisphereProbeResolution, ProbeSpacing),
+				RDG_EVENT_NAME("DistanceFieldTracing %ux%u probes at %u spacing",
+					RadiosityFrameTemporaries.HemisphereProbeResolution,
+					RadiosityFrameTemporaries.HemisphereProbeResolution,
+					RadiosityFrameTemporaries.ProbeSpacing),
 				ComputePassFlags,
 				ComputeShader,
 				PassParameters,
@@ -822,7 +874,7 @@ void LumenRadiosity::AddRadiosityPass(
 	{
 		//@todo - use temporary buffer based off of CardUpdateContext.UpdateAtlasSize which is smaller
 		FRDGTextureRef FilteredTraceRadianceAtlas = GraphBuilder.CreateTexture(
-			FRDGTextureDesc::Create2D(RadiosityProbeTracingAtlasSize, PF_FloatRGB, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV),
+			FRDGTextureDesc::Create2D(RadiosityFrameTemporaries.ProbeTracingAtlasSize, PF_FloatRGB, FClearValueBinding::Black, TexCreate_ShaderResource | TexCreate_UAV),
 			TEXT("Lumen.Radiosity.FilteredTraceRadianceAtlas"));
 
 		FRDGTextureUAVRef FilteredTraceRadianceAtlasUAV = GraphBuilder.CreateUAV(FilteredTraceRadianceAtlas, ERDGUnorderedAccessViewFlags::SkipBarrier);
@@ -842,7 +894,7 @@ void LumenRadiosity::AddRadiosityPass(
 
 			FLumenRadiositySpatialFilterProbeRadiance::FPermutationDomain PermutationVector;
 			PermutationVector.Set<FLumenRadiositySpatialFilterProbeRadiance::FPlaneWeighting>(GRadiosityFilteringProbePlaneWeighting != 0);
-			PermutationVector.Set<FLumenRadiositySpatialFilterProbeRadiance::FProbeOcclusion>(bUseProbeOcclusion);
+			PermutationVector.Set<FLumenRadiositySpatialFilterProbeRadiance::FProbeOcclusion>(RadiosityFrameTemporaries.bUseProbeOcclusion);
 			PermutationVector.Set<FLumenRadiositySpatialFilterProbeRadiance::FKernelSize>(FMath::Clamp<int32>(GLumenRadiositySpatialFilterProbesKernelSize, 0, 2));
 			auto ComputeShader = GlobalShaderMap->GetShader<FLumenRadiositySpatialFilterProbeRadiance>(PermutationVector);
 
@@ -859,30 +911,9 @@ void LumenRadiosity::AddRadiosityPass(
 		RadiosityTexelTraceParameters.TraceRadianceAtlas = FilteredTraceRadianceAtlas;
 	}
 
-	FRDGTextureRef RadiosityProbeSHRedAtlas = RegisterOrCreateRadiosityAtlas(
-		GraphBuilder, 
-		LumenSceneData.RadiosityProbeSHRedAtlas, 
-		TEXT("Lumen.Radiosity.ProbeSHRedAtlas"), 
-		RadiosityProbeAtlasSize, 
-		PF_FloatRGBA);
-
-	FRDGTextureRef RadiosityProbeSHGreenAtlas = RegisterOrCreateRadiosityAtlas(
-		GraphBuilder, 
-		LumenSceneData.RadiosityProbeSHGreenAtlas, 
-		TEXT("Lumen.Radiosity.ProbeSHGreenAtlas"), 
-		RadiosityProbeAtlasSize, 
-		PF_FloatRGBA);
-
-	FRDGTextureRef RadiosityProbeSHBlueAtlas = RegisterOrCreateRadiosityAtlas(
-		GraphBuilder, 
-		LumenSceneData.RadiosityProbeSHBlueAtlas, 
-		TEXT("Lumen.Radiosity.ProbeSHBlueAtlas"), 
-		RadiosityProbeAtlasSize, 
-		PF_FloatRGBA);
-
-	FRDGTextureUAVRef RadiosityProbeSHRedAtlasUAV = GraphBuilder.CreateUAV(RadiosityProbeSHRedAtlas, ERDGUnorderedAccessViewFlags::SkipBarrier);
-	FRDGTextureUAVRef RadiosityProbeSHGreenAtlasUAV = GraphBuilder.CreateUAV(RadiosityProbeSHGreenAtlas, ERDGUnorderedAccessViewFlags::SkipBarrier);
-	FRDGTextureUAVRef RadiosityProbeSHBlueAtlasUAV = GraphBuilder.CreateUAV(RadiosityProbeSHBlueAtlas, ERDGUnorderedAccessViewFlags::SkipBarrier);
+	FRDGTextureUAVRef RadiosityProbeSHRedAtlasUAV = GraphBuilder.CreateUAV(RadiosityFrameTemporaries.ProbeSHRedAtlas, ERDGUnorderedAccessViewFlags::SkipBarrier);
+	FRDGTextureUAVRef RadiosityProbeSHGreenAtlasUAV = GraphBuilder.CreateUAV(RadiosityFrameTemporaries.ProbeSHGreenAtlas, ERDGUnorderedAccessViewFlags::SkipBarrier);
+	FRDGTextureUAVRef RadiosityProbeSHBlueAtlasUAV = GraphBuilder.CreateUAV(RadiosityFrameTemporaries.ProbeSHBlueAtlas, ERDGUnorderedAccessViewFlags::SkipBarrier);
 
 	// Convert traces to SH and store in persistent SH atlas
 	for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ViewIndex++)
@@ -911,8 +942,8 @@ void LumenRadiosity::AddRadiosityPass(
 			(uint32)ERadiosityIndirectArgs::ThreadPerProbe + ViewIndex * (uint32)ERadiosityIndirectArgs::MAX * sizeof(FRHIDispatchIndirectParameters));
 	}
 
-	FRDGTextureUAVRef RadiosityAtlasUAV = GraphBuilder.CreateUAV(RadiosityAtlas, ERDGUnorderedAccessViewFlags::SkipBarrier);
-	FRDGTextureUAVRef RadiosityNumFramesAccumulatedAtlasUAV = GraphBuilder.CreateUAV(RadiosityNumFramesAccumulatedAtlas, ERDGUnorderedAccessViewFlags::SkipBarrier);
+	FRDGTextureUAVRef RadiosityAtlasUAV = GraphBuilder.CreateUAV(FrameTemporaries.IndirectLightingAtlas, ERDGUnorderedAccessViewFlags::SkipBarrier);
+	FRDGTextureUAVRef RadiosityNumFramesAccumulatedAtlasUAV = GraphBuilder.CreateUAV(FrameTemporaries.RadiosityNumFramesAccumulatedAtlas, ERDGUnorderedAccessViewFlags::SkipBarrier);
 
 	for (int32 ViewIndex = 0; ViewIndex < Views.Num(); ViewIndex++)
 	{
@@ -926,14 +957,15 @@ void LumenRadiosity::AddRadiosityPass(
 		PassParameters->RadiosityTexelTraceParameters.ViewIndex = ViewIndex;
 		PassParameters->RWRadiosityAtlas = RadiosityAtlasUAV;
 		PassParameters->RWRadiosityNumFramesAccumulatedAtlas = RadiosityNumFramesAccumulatedAtlasUAV;
-		PassParameters->RadiosityProbeSHRedAtlas = RadiosityProbeSHRedAtlas;
-		PassParameters->RadiosityProbeSHGreenAtlas = RadiosityProbeSHGreenAtlas;
-		PassParameters->RadiosityProbeSHBlueAtlas = RadiosityProbeSHBlueAtlas;
+		PassParameters->RadiosityProbeSHRedAtlas = RadiosityFrameTemporaries.ProbeSHRedAtlas;
+		PassParameters->RadiosityProbeSHGreenAtlas = RadiosityFrameTemporaries.ProbeSHGreenAtlas;
+		PassParameters->RadiosityProbeSHBlueAtlas = RadiosityFrameTemporaries.ProbeSHBlueAtlas;
 		PassParameters->ProbePlaneWeightingDepthScale = GRadiosityProbePlaneWeightingDepthScale;
+		PassParameters->Substrate = Substrate::BindSubstrateGlobalUniformParameters(View);
 
 		FLumenRadiosityIntegrateCS::FPermutationDomain PermutationVector;
 		PermutationVector.Set<FLumenRadiosityIntegrateCS::FPlaneWeighting>(GRadiosityFilteringProbePlaneWeighting != 0);
-		PermutationVector.Set<FLumenRadiosityIntegrateCS::FProbeOcclusion>(bUseProbeOcclusion);
+		PermutationVector.Set<FLumenRadiosityIntegrateCS::FProbeOcclusion>(RadiosityFrameTemporaries.bUseProbeOcclusion);
 		PermutationVector.Set<FLumenRadiosityIntegrateCS::FTemporalAccumulation>(LumenRadiosity::UseTemporalAccumulation());
 		auto ComputeShader = GlobalShaderMap->GetShader<FLumenRadiosityIntegrateCS>(PermutationVector);
 
@@ -948,18 +980,17 @@ void LumenRadiosity::AddRadiosityPass(
 	}
 
 	// Note: extracting source TraceRadianceAtlas and not the filtered one
-	LumenSceneData.RadiosityTraceRadianceAtlas = GraphBuilder.ConvertToExternalTexture(TraceRadianceAtlas);
-	LumenSceneData.RadiosityTraceHitDistanceAtlas = GraphBuilder.ConvertToExternalTexture(TraceHitDistanceAtlas);
-	LumenSceneData.RadiosityProbeSHRedAtlas = GraphBuilder.ConvertToExternalTexture(RadiosityProbeSHRedAtlas);
-	LumenSceneData.RadiosityProbeSHGreenAtlas = GraphBuilder.ConvertToExternalTexture(RadiosityProbeSHGreenAtlas);
-	LumenSceneData.RadiosityProbeSHBlueAtlas = GraphBuilder.ConvertToExternalTexture(RadiosityProbeSHBlueAtlas);
+	LumenSceneData.RadiosityTraceRadianceAtlas = GraphBuilder.ConvertToExternalTexture(RadiosityFrameTemporaries.TraceRadianceAtlas);
+	LumenSceneData.RadiosityTraceHitDistanceAtlas = GraphBuilder.ConvertToExternalTexture(RadiosityFrameTemporaries.TraceHitDistanceAtlas);
+	LumenSceneData.RadiosityProbeSHRedAtlas = GraphBuilder.ConvertToExternalTexture(RadiosityFrameTemporaries.ProbeSHRedAtlas);
+	LumenSceneData.RadiosityProbeSHGreenAtlas = GraphBuilder.ConvertToExternalTexture(RadiosityFrameTemporaries.ProbeSHGreenAtlas);
+	LumenSceneData.RadiosityProbeSHBlueAtlas = GraphBuilder.ConvertToExternalTexture(RadiosityFrameTemporaries.ProbeSHBlueAtlas);
 }
 
 void FDeferredShadingSceneRenderer::RenderRadiosityForLumenScene(
 	FRDGBuilder& GraphBuilder, 
 	const FLumenSceneFrameTemporaries& FrameTemporaries,
-	FRDGTextureRef RadiosityAtlas,
-	FRDGTextureRef RadiosityNumFramesAccumulatedAtlas,
+	const LumenRadiosity::FFrameTemporaries& RadiosityFrameTemporaries,
 	const FLumenCardUpdateContext& CardUpdateContext,
 	ERDGPassFlags ComputePassFlags)
 {
@@ -969,7 +1000,7 @@ void FDeferredShadingSceneRenderer::RenderRadiosityForLumenScene(
 
 	extern int32 GLumenSceneRecaptureLumenSceneEveryFrame;
 
-	if (Lumen::IsRadiosityEnabled(ViewFamily) 
+	if (LumenRadiosity::IsEnabled(ViewFamily)
 		&& LumenSceneData.bFinalLightingAtlasContentsValid
 		&& CardUpdateContext.MaxUpdateTiles > 0)
 	{
@@ -986,9 +1017,8 @@ void FDeferredShadingSceneRenderer::RenderRadiosityForLumenScene(
 			Views,
 			bRenderSkylight,
 			LumenSceneData,
-			RadiosityAtlas,
-			RadiosityNumFramesAccumulatedAtlas,
 			FrameTemporaries,
+			RadiosityFrameTemporaries,
 			CardUpdateContext,
 			ComputePassFlags);
 
@@ -1004,7 +1034,7 @@ void FDeferredShadingSceneRenderer::RenderRadiosityForLumenScene(
 	}
 	else
 	{
-		AddClearRenderTargetPass(GraphBuilder, RadiosityAtlas);
+		AddClearRenderTargetPass(GraphBuilder, FrameTemporaries.IndirectLightingAtlas);
 	}
 }
 
@@ -1104,7 +1134,7 @@ void FDeferredShadingSceneRenderer::RenderLumenRadiosityProbeVisualization(FRDGB
 	if (Views.Num() == 1
 		&& View.ViewState
 		&& bAnyLumenActive
-		&& Lumen::IsRadiosityEnabled(ViewFamily)
+		&& LumenRadiosity::IsEnabled(ViewFamily)
 		&& LumenSceneData.bFinalLightingAtlasContentsValid
 		&& LumenSceneData.RadiosityProbeSHRedAtlas
 		&& LumenSceneData.RadiosityProbeSHGreenAtlas

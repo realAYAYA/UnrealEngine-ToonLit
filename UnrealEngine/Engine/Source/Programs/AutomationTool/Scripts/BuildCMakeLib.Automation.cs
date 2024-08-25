@@ -10,6 +10,7 @@ using EpicGames.Core;
 using UnrealBuildTool;
 using UnrealBuildBase;
 using Microsoft.Extensions.Logging;
+using System.Runtime.InteropServices;
 
 // TODO Currently this only supports one lib and one platform at a time.
 // The reason for this is that the the library version and additional arguments (which are per platform) is passed on the command line.
@@ -155,7 +156,11 @@ public sealed class BuildCMakeLib : BuildCommand
 				}
 				if (!FileReference.Exists(FileReference.Combine(CMakeDirectory, "CMakeLists.txt")))
 				{
-					throw new AutomationException("No CMakeLists.txt found to build.");
+					throw new AutomationException("No CMakeLists.txt found to build (in {0}, {1}, {2}, or {3}).",
+						GetTargetLibBuildScriptDirectory(TargetLib),
+						GetTargetLibBaseBuildScriptDirectory(TargetLib),
+						TargetLib.GetLibSourceDirectory(),
+						DirectoryReference.Combine(TargetLib.GetLibSourceDirectory(), "cmake"));
 				}
 			}
 
@@ -852,6 +857,16 @@ class MakefileTargetPlatform_Linux : MakefileTargetPlatform_Unix
 	}
 }
 
+class MakefileTargetPlatform_LinuxArm64 : MakefileTargetPlatform_Unix
+{
+	public override string PlatformOrGroupName => nameof(UnrealTargetPlatform.LinuxArm64);
+
+	public MakefileTargetPlatform_LinuxArm64(string Architecture)
+		: base(Architecture)
+	{
+	}
+}
+
 class XcodeTargetPlatform_Mac : BuildCMakeLib.XcodeTargetPlatform
 {
 	public override string PlatformOrGroupName => nameof(UnrealTargetPlatform.Mac);
@@ -880,27 +895,31 @@ class MakefileTargetPlatform_Mac : BuildCMakeLib.MakefileTargetPlatform
 	}
 }
 
-class XcodeTargetPlatform_IOS : BuildCMakeLib.XcodeTargetPlatform
+public class XcodeTargetPlatform_IOS : BuildCMakeLib.XcodeTargetPlatform
 {
 	public override string PlatformOrGroupName => nameof(UnrealTargetPlatform.IOS);
 	public override string StaticLibraryExtension => "a";
 	public override bool IsPlatformExtension => false;
+	protected virtual string CMakeSystemName => "iOS";
 
 	public override string GetCMakeSetupArguments(BuildCMakeLib.TargetLib TargetLib, string TargetConfiguration)
 	{
 		return base.GetCMakeSetupArguments(TargetLib, TargetConfiguration)
-			+ " -DCMAKE_SYSTEM_NAME=iOS";
+			+ $" -DCMAKE_SYSTEM_NAME={CMakeSystemName}";
 	}
 }
 
-class MakefileTargetPlatform_IOS : BuildCMakeLib.MakefileTargetPlatform
+public class MakefileTargetPlatform_IOS : BuildCMakeLib.MakefileTargetPlatform
 {
 	public override string PlatformOrGroupName => nameof(UnrealTargetPlatform.IOS);
 	public override string StaticLibraryExtension => "a";
 	public override string VariantDirectory => Architecture;
 	public override bool IsPlatformExtension => false;
+	protected virtual string CMakeSystemName => "iOS";
+	protected virtual string SdkName => Architecture == "x86_64" || Architecture == "iossimulator" ? "iphonesimulator" : "iphoneos";
+	protected virtual string ClangArchitecture => Architecture.Contains("x86_64") ? "x86_64" : "arm64";
 
-	private readonly string Architecture;
+	protected readonly string Architecture;
 
 	public MakefileTargetPlatform_IOS(string Architecture)
 	{
@@ -910,72 +929,40 @@ class MakefileTargetPlatform_IOS : BuildCMakeLib.MakefileTargetPlatform
 	public override string GetCMakeSetupArguments(BuildCMakeLib.TargetLib TargetLib, string TargetConfiguration)
 	{
 		return base.GetCMakeSetupArguments(TargetLib, TargetConfiguration)
-			+ " -DCMAKE_SYSTEM_NAME=iOS"
-			+ string.Format(" -DCMAKE_OSX_ARCHITECTURES={0}", Architecture)
-			+ string.Format(" -DCMAKE_OSX_SYSROOT={0}", GetSysRoot());
+			+ $" -DCMAKE_SYSTEM_NAME={CMakeSystemName}"
+			+ $" -DCMAKE_OSX_ARCHITECTURES={ClangArchitecture}"
+			+ $" -DCMAKE_OSX_SYSROOT={GetSysRoot()}";
 	}
 
 	private string GetSysRoot()
 	{
-		IProcessResult Result = Run("xcrun", string.Format("-sdk {0} --show-sdk-path", GetSdkName()));
+		IProcessResult Result = Run("xcrun", string.Format("-sdk {0} --show-sdk-path", SdkName));
 		string SysRoot = (Result.Output ?? "").Trim();
 		if (Result.ExitCode != 0 || !DirectoryExists(SysRoot))
 		{
-			throw new AutomationException("Failed to locate iPhoneOS SDK \"{0}\":{1}{2}", GetSdkName(), Environment.NewLine, SysRoot);
+			throw new AutomationException("Failed to locate {3} SDK \"{0}\":{1}{2}", SdkName, Environment.NewLine, SysRoot, CMakeSystemName);
 		}
 		return SysRoot;
 	}
 
-	private string GetSdkName() => Architecture == "x86_64" || Architecture == "iossimulator" ? "iphonesimulator" : "iphoneos";
 }
 
-class XcodeTargetPlatform_TVOS : BuildCMakeLib.XcodeTargetPlatform
+class XcodeTargetPlatform_TVOS : XcodeTargetPlatform_IOS
 {
 	public override string PlatformOrGroupName => nameof(UnrealTargetPlatform.TVOS);
-	public override string StaticLibraryExtension => "a";
-	public override bool IsPlatformExtension => false;
-
-	public override string GetCMakeSetupArguments(BuildCMakeLib.TargetLib TargetLib, string TargetConfiguration)
-	{
-		return base.GetCMakeSetupArguments(TargetLib, TargetConfiguration)
-			+ " -DCMAKE_SYSTEM_NAME=tvOS";
-	}
+	protected override string CMakeSystemName => "tvOS";
 }
 
-class MakefileTargetPlatform_TVOS : BuildCMakeLib.MakefileTargetPlatform
+class MakefileTargetPlatform_TVOS : MakefileTargetPlatform_IOS
 {
 	public override string PlatformOrGroupName => nameof(UnrealTargetPlatform.TVOS);
-	public override string StaticLibraryExtension => "a";
-	public override string VariantDirectory => Architecture;
-	public override bool IsPlatformExtension => false;
+	protected override string CMakeSystemName => "tvOS";
+	protected override string SdkName => Architecture == "x86_64" || Architecture == "tvossimulator" || Architecture == "iossimulator" ? "appletvsimulator" : "appletvos";
 
-	private readonly string Architecture;
-
-	public MakefileTargetPlatform_TVOS(string Architecture)
+	public MakefileTargetPlatform_TVOS(string Architecture) : base(Architecture)
 	{
-		this.Architecture = Architecture;
 	}
 
-	public override string GetCMakeSetupArguments(BuildCMakeLib.TargetLib TargetLib, string TargetConfiguration)
-	{
-		return base.GetCMakeSetupArguments(TargetLib, TargetConfiguration)
-			+ " -DCMAKE_SYSTEM_NAME=tvOS"
-			+ string.Format(" -DCMAKE_OSX_ARCHITECTURES={0}", Architecture)
-			+ string.Format(" -DCMAKE_OSX_SYSROOT={0}", GetSysRoot());
-	}
-
-	private string GetSysRoot()
-	{
-		IProcessResult Result = Run("xcrun", string.Format("-sdk {0} --show-sdk-path", GetSdkName()));
-		string SysRoot = (Result.Output ?? "").Trim();
-		if (Result.ExitCode != 0 || !DirectoryExists(SysRoot))
-		{
-			throw new AutomationException("Failed to locate tvOS SDK \"{0}\":{1}{2}", GetSdkName(), Environment.NewLine, SysRoot);
-		}
-		return SysRoot;
-	}
-
-	private string GetSdkName() => Architecture == "x86_64" || Architecture == "i386" ? "appletvsimulator" : "appletvos";
 }
 
 class NMakeTargetPlatform_Android : BuildCMakeLib.NMakeTargetPlatform

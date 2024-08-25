@@ -10,5 +10,7 @@ public class PakFile : ModuleRules
 		PrivateDependencyModuleNames.Add("Core");
 		PrivateDependencyModuleNames.Add("CoreUObject");
 		PublicDependencyModuleNames.Add("RSA");
+
+		bAllowAutoRTFMInstrumentation = true;
 	}
 }

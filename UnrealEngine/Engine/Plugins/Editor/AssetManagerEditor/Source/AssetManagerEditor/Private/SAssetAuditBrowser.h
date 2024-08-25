@@ -118,6 +118,9 @@ protected:
 	/** Adds all managed assets by an id */
 	void AddManagedAssets(FPrimaryAssetId AssetId);
 
+	/** Adds all managed assets by by type. Useful to see how much size a primary asset type is using. */
+	void AddManagedAssetsOfType(FPrimaryAssetType AssetType);
+
 	/** Adds all assets of a class */
 	void AddAssetsOfClass(UClass* AssetClass);
 

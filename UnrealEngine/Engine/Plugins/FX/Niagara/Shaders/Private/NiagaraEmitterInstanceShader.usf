@@ -18,7 +18,7 @@ NiagaraSimulationShader.usf:
 #if GPU_SIMULATION
 	#include "/Engine/Private/Common.ush"
 	#include "/Engine/Private/DistanceField/GlobalDistanceFieldShared.ush"
-	#include "/Engine/Generated/UniformBuffers/StrataPublic.ush"
+	#include "/Engine/Generated/UniformBuffers/SubstratePublic.ush"
 #else
 	const static float PI = 3.1415926535897932f;
 #endif
@@ -114,7 +114,7 @@ bool NiagaraAny(bool4 b) { return b.x || b.y || b.z || b.w; }
 	// utility function used for scene depth calculations
 	FLWCVector3 WorldPositionFromSceneDepth(float2 ScreenPosition, float SceneDepth)
 	{
-		FLWCVector4 HomogeneousWorldPosition = LWCMultiply(float4(ScreenPosition * SceneDepth, SceneDepth, 1), PrimaryView.ScreenToWorld);
+		FLWCVector4 HomogeneousWorldPosition = LWCMultiply(float4(ScreenPosition * SceneDepth, SceneDepth, 1), DFFastToTileOffset(PrimaryView.ScreenToWorld)); //DF_TODO
 		FLWCVector3 WorldPosition = MakeLWCVector3(LWCGetTile(HomogeneousWorldPosition).xyz, HomogeneousWorldPosition.Offset.xyz);
 		FLWCScalar Scale = MakeLWCScalar(LWCGetTile(HomogeneousWorldPosition).w, HomogeneousWorldPosition.Offset.w);
 		return LWCDivide(WorldPosition, LWCToFloat(Scale));
@@ -460,6 +460,31 @@ int rand_int(int x, int Seed1, int Seed2, int Seed3)
 	return rand(x.x-1, Seed1, Seed2, Seed3);
 }
 
+// used to interpolate rotations in interpolated spawn scripts
+float4 NiagaraQuatSLerp(float4 Quat1, float4 Quat2, float Slerp)
+{
+	const float RawCosom = dot(Quat1, Quat2);
+	const float Cosom = abs(RawCosom);
+	
+	float Scale0, Scale1;
+	if (Cosom < 0.9999f)
+	{
+		const float Omega = acos(Cosom);
+		const float InvSin = 1.f / sin(Omega);
+		Scale0 = sin((1.f - Slerp) * Omega) * InvSin;
+		Scale1 = sin(Slerp * Omega) * InvSin;
+	}
+	else
+	{
+		Scale0 = 1.0f - Slerp;
+		Scale1 = Slerp;
+	}
+
+	Scale1 = RawCosom >= 0.0f ? Scale1 : -Scale1;
+
+	return (Scale0 * Quat1) + (Scale1 * Quat2);
+}
+
 /* -----------------------------------------------------------------
  * VM simulation function declarations
  * -----------------------------------------------------------------
@@ -535,20 +560,23 @@ int rand_int(int x, int Seed1, int Seed2, int Seed3)
 	
 	// X = Count Buffer Instance Count Offset (INDEX_NONE == Use Instance Count)
 	// Y = Instance Count
-	// Z = Iteration Index
-	// W = Num Iterations
-	int4 SimulationStageIterationInfo;
-	float SimulationStageNormalizedIterationIndex;
+	// Z = Iteration Num | Index
+	// W = Loop Num | Index
+	uint4 SimulationStageIterationInfo;
 
 	// Note: These are referenced from an asset that passes back the data to the user (see SimulationStageIterationInfo)
 	#if NIAGARA_DISPATCH_INDIRECT
 		int SimulationStage_GetInstanceCount() { return DispatchThreadIdBounds.x * DispatchThreadIdBounds.y * DispatchThreadIdBounds.z; }
 	#else
-		int SimulationStage_GetInstanceCount() { return SimulationStageIterationInfo.x == -1 ? SimulationStageIterationInfo.y : RWInstanceCounts[SimulationStageIterationInfo.x]; }
+		int SimulationStage_GetInstanceCount() { return SimulationStageIterationInfo.x == uint(-1) ? int(SimulationStageIterationInfo.y) : int(RWInstanceCounts[SimulationStageIterationInfo.x]); }
 	#endif
-	int SimulationStage_GetIterationIndex() { return SimulationStageIterationInfo.z; }
-	int SimulationStage_GetNumIterations() { return SimulationStageIterationInfo.w; }
-	float SimulationStage_GetNormalizedIterationIndex() { return SimulationStageNormalizedIterationIndex; }
+	int SimulationStage_GetNumIterations()  { return int((SimulationStageIterationInfo.z >> 16) & 0xffff); }
+	int SimulationStage_GetIterationIndex() { return int((SimulationStageIterationInfo.z >> 0 ) & 0xffff); }
+	int SimulationStage_GetNumLoops()  { return int((SimulationStageIterationInfo.w >> 16) & 0xffff); }
+	int SimulationStage_GetLoopIndex() { return int((SimulationStageIterationInfo.w >> 0 ) & 0xffff); }
+
+	float SimulationStage_GetNormalizedIterationIndex() { return float(SimulationStage_GetIterationIndex()) / float(max(SimulationStage_GetNumIterations(), 1) - 1); }
+	float SimulationStage_GetNormalizedLoopIndex() { return float(SimulationStage_GetLoopIndex()) / float(max(SimulationStage_GetNumLoops(), 1) - 1); }
 
 	// Where X = Parameter Binding, YZ = Inclusive Range
 	uint3 ParticleIterationStateInfo;

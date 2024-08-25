@@ -35,6 +35,10 @@
 #include "SlateFwd.h"
 #include "Widgets/Input/SNumericEntryBox.h"
 
+#include "PixelStreamingCoderUtils.h"
+#include "Video/Encoders/Configs/VideoEncoderConfigAV1.h"
+#include "Video/Encoders/Configs/VideoEncoderConfigH264.h"
+
 #define LOCTEXT_NAMESPACE "PixelStreamingEditor"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogPixelStreamingToolbar, Log, All);
@@ -160,7 +164,7 @@ namespace UE::EditorPixelStreaming
 				IPixelStreamingModule::Get().SetCodec(EPixelStreamingCodec::H264);
 			}),
 			FCanExecuteAction::CreateLambda([] {
-				bool bCanChangeCodec = true;
+				bool bCanChangeCodec = UE::PixelStreaming::IsEncoderSupported<FVideoEncoderConfigH264>();
 				IPixelStreamingModule::Get().ForEachStreamer([&bCanChangeCodec](TSharedPtr<IPixelStreamingStreamer> Streamer) {
 					bCanChangeCodec &= !Streamer->IsStreaming();
 				});
@@ -169,6 +173,23 @@ namespace UE::EditorPixelStreaming
 			}),
 			FIsActionChecked::CreateLambda([]() {
 				return IPixelStreamingModule::Get().GetCodec() == EPixelStreamingCodec::H264;
+			}));
+
+		PluginCommands->MapAction(
+			FPixelStreamingCommands::Get().AV1,
+			FExecuteAction::CreateLambda([]() {
+				IPixelStreamingModule::Get().SetCodec(EPixelStreamingCodec::AV1);
+			}),
+			FCanExecuteAction::CreateLambda([] {
+				bool bCanChangeCodec = UE::PixelStreaming::IsEncoderSupported<FVideoEncoderConfigAV1>();
+				IPixelStreamingModule::Get().ForEachStreamer([&bCanChangeCodec](TSharedPtr<IPixelStreamingStreamer> Streamer) {
+					bCanChangeCodec &= !Streamer->IsStreaming();
+				});
+
+				return bCanChangeCodec;
+			}),
+			FIsActionChecked::CreateLambda([]() {
+				return IPixelStreamingModule::Get().GetCodec() == EPixelStreamingCodec::AV1;
 			}));
 
 		UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FPixelStreamingToolbar::RegisterMenus));
@@ -438,6 +459,7 @@ namespace UE::EditorPixelStreaming
 		MenuBuilder.BeginSection("Codec", LOCTEXT("PixelStreamingCodecSettings", "Codec"));
 		{
 			MenuBuilder.AddMenuEntry(FPixelStreamingCommands::Get().H264);
+			MenuBuilder.AddMenuEntry(FPixelStreamingCommands::Get().AV1);
 			MenuBuilder.AddMenuEntry(FPixelStreamingCommands::Get().VP8);
 			MenuBuilder.AddMenuEntry(FPixelStreamingCommands::Get().VP9);
 		}

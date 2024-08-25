@@ -10,7 +10,7 @@ SYMS_GLOBAL SYMS_U8 syms_eval_opcode_ctrlbits[] = {
 };
 //~ generated from code at syms/metaprogram/syms_metaprogram_eval.c:414
 SYMS_GLOBAL SYMS_U8 syms_eval_type_group_from_type_kind_table[] = {
-0,2,2,2,2,2,0,0,1,1,1,1,1,0,0,1,0,3,0,0,4,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,1,0,1,0,0,0,0,0,0,0,0,
+0,0,2,2,2,2,2,0,0,1,1,1,1,1,0,0,1,0,3,0,0,4,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,1,0,1,0,0,0,0,0,0,0,0,
 };
 //~ generated from code at syms/metaprogram/syms_metaprogram_eval.c:442
 SYMS_GLOBAL SYMS_String8 syms_eval_conversion_string_table[] = {

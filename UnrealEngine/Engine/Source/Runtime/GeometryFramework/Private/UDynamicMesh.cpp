@@ -240,6 +240,21 @@ void UDynamicMesh::ApplyChange(const FMeshVertexChange* Change, bool bRevert)
 				}
 			}
 		}
+
+		if (Change->bHaveOverlayUVs && EditMesh.HasAttributes() && EditMesh.Attributes()->PrimaryUV())
+		{
+			FDynamicMeshUVOverlay* Overlay = EditMesh.Attributes()->PrimaryUV();
+			int32 NumUVs = Change->UVs.Num();
+			const TArray<FVector2f>& UseUVs = (bRevert) ? Change->OldUVs : Change->NewUVs;
+			for (int32 k = 0; k < NumUVs; ++k)
+			{
+				int32 elemid = Change->UVs[k];
+				if (Overlay->IsElement(elemid))
+				{
+					Overlay->SetElement(elemid, UseUVs[k]);
+				}
+			}
+		}
 	}, ChangeInfo);
 }
 
@@ -554,7 +569,7 @@ UDynamicMesh* UDynamicMeshPool::RequestMesh()
 {
 	if (CachedMeshes.Num() > 0)
 	{
-		return CachedMeshes.Pop(false);
+		return CachedMeshes.Pop(EAllowShrinking::No);
 	}
 	UDynamicMesh* NewMesh = NewObject<UDynamicMesh>();
 

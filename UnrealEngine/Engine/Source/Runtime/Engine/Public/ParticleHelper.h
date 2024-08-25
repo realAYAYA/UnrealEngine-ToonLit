@@ -1119,64 +1119,6 @@ struct FAsyncBufferFillData
 class FParticleVertexFactoryBase;
 
 /*-----------------------------------------------------------------------------
-	Particle order helper class
------------------------------------------------------------------------------*/
-class FParticleOrderPool
-{
-public:
-	FParticleOrderPool() :
-		  ParticleOrder(NULL)
-		, CurrentSize(0)
-		, MaxSize(0)
-	{
-	}
-
-	~FParticleOrderPool()
-	{
-		FreePool();
-	}
-
-	FParticleOrder* GetParticleOrderData(int32 InCount, bool bZeroMem = false)
-	{
-		if (InCount > MaxSize)
-		{
-			MaxSize = FMath::Max<int32>(InCount, 64);
-			ParticleOrder = (FParticleOrder*)FMemory::Realloc(ParticleOrder, MaxSize * sizeof(FParticleOrder));
-			check(ParticleOrder);
-			if (bZeroMem == true)
-			{
-				FMemory::Memzero(ParticleOrder, MaxSize * sizeof(FParticleOrder));
-			}
-		}
-		CurrentSize = InCount;
-		return ParticleOrder;
-	}
-
-	void FreePool()
-	{
-		FMemory::Free(ParticleOrder);
-		ParticleOrder = NULL;
-		CurrentSize = 0;
-		MaxSize = 0;
-	}
-
-#if STATS
-	void DumpInfo(FOutputDevice& Ar)
-	{
-		Ar.Logf(TEXT("Particle Order Pool Stats"));
-		Ar.Logf(TEXT("%5d entries for %5d bytes"), MaxSize, MaxSize * sizeof(FParticleOrder));
-	}
-#endif
-
-protected:
-	FParticleOrder* ParticleOrder;
-	int32 CurrentSize;
-	int32 MaxSize;
-};
-
-extern FParticleOrderPool GParticleOrderPool;
-
-/*-----------------------------------------------------------------------------
 	Particle Dynamic Data
 -----------------------------------------------------------------------------*/
 
@@ -1827,7 +1769,7 @@ struct FDynamicMeshEmitterData : public FDynamicSpriteEmitterDataBase
 	/**
 	 *	 Initialize this emitter's vertex factory with the vertex buffers from the mesh's rendering data.
 	 */
-	void SetupVertexFactory( FMeshParticleVertexFactory* InVertexFactory, const FStaticMeshLODResources& LODResources, uint32 LODIdx) const;
+	void SetupVertexFactory( FRHICommandListBase& RHICmdList, FMeshParticleVertexFactory* InVertexFactory, const FStaticMeshLODResources& LODResources, uint32 LODIdx) const;
 
 	/** Returns the source data for this particle system */
 	virtual const FDynamicEmitterReplayDataBase& GetSource() const override
@@ -2409,7 +2351,7 @@ public:
 
 	virtual void GetDynamicMeshElements(const TArray<const FSceneView*>& Views, const FSceneViewFamily& ViewFamily, uint32 VisibilityMap, FMeshElementCollector& Collector) const override;
 	virtual FPrimitiveViewRelevance GetViewRelevance(const FSceneView* View) const override;
-	virtual void OnTransformChanged() override;
+	virtual void OnTransformChanged(FRHICommandListBase& RHICmdList) override;
 
 	/** Gathers simple lights for this emitter. */
 	virtual void GatherSimpleLights(const FSceneViewFamily& ViewFamily, FSimpleLightArray& OutParticleLights) const override;
@@ -2418,7 +2360,7 @@ public:
 	 *	Called when the rendering thread adds the proxy to the scene.
 	 *	This function allows for generating renderer-side resources.
 	 */
-	virtual void CreateRenderThreadResources() override;
+	virtual void CreateRenderThreadResources(FRHICommandListBase& RHICmdList) override;
 
 	/**
 	 *	Called when the rendering thread removes the dynamic data from the scene.
@@ -2459,7 +2401,7 @@ public:
 	 * world space primitive uniform buffer is up-to-date.
 	 * Only called in the rendering thread.
 	 */
-	void UpdateWorldSpacePrimitiveUniformBuffer() const;
+	void UpdateWorldSpacePrimitiveUniformBuffer(FRHICommandListBase& RHICmdList) const;
 
 	/** Object position in post projection space. */
 	void GetObjectPositionAndScale(const FSceneView& View, FVector2D& ObjectNDCPosition, FVector2D& ObjectMacroUVScales) const;
@@ -2533,6 +2475,7 @@ protected:
 	/** The primitive's uniform buffer.  Mutable because it is cached state during GetDynamicMeshElements. */
 	mutable TUniformBuffer<FPrimitiveUniformShaderParameters> WorldSpacePrimitiveUniformBuffer;
 	mutable uint32 WorldSpaceUBHash = 0;
+	mutable UE::FMutex WorldSpacePrimitiveUniformBufferMutex;
 
 	/** Pool for holding FMeshBatches to reduce allocations. */
 	TIndirectArray<FMeshBatch, TInlineAllocator<4> > MeshBatchPool;

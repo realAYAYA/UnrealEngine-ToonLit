@@ -172,9 +172,9 @@ FText FCameraCutSection::GetSectionTitle() const
 	return HandleThumbnailTextBlockText();
 }
 
-float FCameraCutSection::GetSectionHeight() const
+float FCameraCutSection::GetSectionHeight(const UE::Sequencer::FViewDensityInfo& ViewDensity) const
 {
-	return FViewportThumbnailSection::GetSectionHeight() + 10.f;
+	return FViewportThumbnailSection::GetSectionHeight(ViewDensity) + 10.f;
 }
 
 FMargin FCameraCutSection::GetContentPadding() const

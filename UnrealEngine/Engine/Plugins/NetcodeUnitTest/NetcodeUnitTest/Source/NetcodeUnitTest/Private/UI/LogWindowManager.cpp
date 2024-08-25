@@ -51,8 +51,8 @@ void FLogWindowManager::Initialize(int InLogWidth, int InLogHeight)
 		FPlatformRect WorkAreaRect = DispMetrics.PrimaryDisplayWorkAreaRect;
 
 		// Calculate how many windows will fit horizontally, and then vertically
-		float HorizontalCount = FMath::FloorToFloat((WorkAreaRect.Right - WorkAreaRect.Left) / (float)LogWidth);
-		float VerticalCount = FMath::FloorToFloat((WorkAreaRect.Bottom - WorkAreaRect.Top) / (float)LogHeight);
+		int HorizontalCount = FMath::FloorToInt(static_cast<float>((WorkAreaRect.Right - WorkAreaRect.Left) / LogWidth));
+		int VerticalCount = FMath::FloorToInt(static_cast<float>((WorkAreaRect.Bottom - WorkAreaRect.Top) / LogHeight));
 
 		// Now setup the grid
 		for (int VIdx = 0; VIdx<VerticalCount; VIdx++)
@@ -62,13 +62,13 @@ void FLogWindowManager::Initialize(int InLogWidth, int InLogHeight)
 				FLogGridEntry CurEntry;
 
 				// Calculate the current offset of the log window, for this grid entry
-				float VerticalOffset = (float)LogHeight * (float)VIdx;
-				float HorizontalOffset = (float)LogWidth * (float)HIdx;
+				int VerticalOffset = LogHeight * VIdx;
+				int HorizontalOffset = LogWidth * HIdx;
 
-				CurEntry.Top = WorkAreaRect.Top + VerticalOffset;
-				CurEntry.Bottom = WorkAreaRect.Top + VerticalOffset + LogHeight;
-				CurEntry.Left = WorkAreaRect.Left + HorizontalOffset;
-				CurEntry.Right = WorkAreaRect.Left + HorizontalOffset + LogWidth;
+				CurEntry.Top = static_cast<float>(WorkAreaRect.Top + VerticalOffset);
+				CurEntry.Bottom = static_cast<float>(WorkAreaRect.Top + VerticalOffset + LogHeight);
+				CurEntry.Left = static_cast<float>(WorkAreaRect.Left + HorizontalOffset);
+				CurEntry.Right = static_cast<float>(WorkAreaRect.Left + HorizontalOffset + LogWidth);
 
 				GridSpaces.Add(CurEntry);
 			}
@@ -102,7 +102,7 @@ TSharedPtr<SLogWindow> FLogWindowManager::CreateLogWindow(FString Title, ELogTyp
 		FLogGridEntry& CurEntry = GridSpaces[FreeGridPos];
 
 		ReturnVal =
-				SNew(SLogWindow, Title, CurEntry.Left, CurEntry.Top, LogWidth, LogHeight)
+				SNew(SLogWindow, Title, CurEntry.Left, CurEntry.Top, static_cast<float>(LogWidth), static_cast<float>(LogHeight))
 				.bStatusWindow(bStatusWindow)
 				.ExpectedFilters(ExpectedFilters);
 
@@ -117,7 +117,7 @@ TSharedPtr<SLogWindow> FLogWindowManager::CreateLogWindow(FString Title, ELogTyp
 		FLogGridEntry& OverflowLoc = GridSpaces[0];
 
 		ReturnVal =
-				SNew(SLogWindow, Title, OverflowLoc.Left, OverflowLoc.Top, LogWidth, LogHeight)
+				SNew(SLogWindow, Title, OverflowLoc.Left, OverflowLoc.Top, static_cast<float>(LogWidth), static_cast<float>(LogHeight))
 				.bStatusWindow(bStatusWindow)
 				.ExpectedFilters(ExpectedFilters);
 

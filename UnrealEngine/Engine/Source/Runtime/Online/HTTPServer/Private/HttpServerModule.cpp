@@ -5,12 +5,33 @@
 #include "Modules/ModuleManager.h"
 #include "Stats/Stats.h"
 
+class FHttpServerModuleImpl
+{
+public:
+	/** The association of port bindings and respective HTTP listeners */
+	TMap<uint32, TUniquePtr<FHttpListener>> Listeners;
+
+	/** Whether listeners can be started */
+	bool bHttpListenersEnabled = false;
+};
+
 DEFINE_LOG_CATEGORY(LogHttpServerModule);
 
 // FHttpServerModule 
 IMPLEMENT_MODULE(FHttpServerModule, HTTPServer);
 
 FHttpServerModule* FHttpServerModule::Singleton = nullptr;
+
+FHttpServerModule::FHttpServerModule()
+	: Impl(new FHttpServerModuleImpl)
+{
+}
+
+FHttpServerModule::~FHttpServerModule()
+{
+	delete Impl;
+	Impl = nullptr;
+}
 
 void FHttpServerModule::StartupModule()
 {
@@ -23,19 +44,19 @@ void FHttpServerModule::ShutdownModule()
 	StopAllListeners();
 
 	// destroy all listeners
-	Listeners.Empty();
+	Impl->Listeners.Empty();
 
 	Singleton = nullptr;
 }
 
 void FHttpServerModule::StartAllListeners()
 {
-	bHttpListenersEnabled = true;
+	Impl->bHttpListenersEnabled = true;
 
 	UE_LOG(LogHttpServerModule, Log,
 		TEXT("Starting all listeners..."));
 
-	for (const auto& Listener : Listeners)
+	for (const auto& Listener : Impl->Listeners)
 	{
 		if (!Listener.Value->IsListening())
 		{
@@ -48,14 +69,12 @@ void FHttpServerModule::StartAllListeners()
 
 void FHttpServerModule::StopAllListeners()
 {
-	bHttpListenersEnabled = false;
-
 	UE_LOG(LogHttpServerModule, Log,
 		TEXT("Stopping all listeners..."));
 
-	bHttpListenersEnabled = false;
+	Impl->bHttpListenersEnabled = false;
 
-	for (const auto& Listener : Listeners)
+	for (const auto& Listener : Impl->Listeners)
 	{
 		if (Listener.Value->IsListening())
 		{
@@ -70,7 +89,7 @@ void FHttpServerModule::StopAllListeners()
 
 bool FHttpServerModule::HasPendingListeners() const
 {
-	for (const auto& Listener : Listeners)
+	for (const auto& Listener : Impl->Listeners)
 	{
 		if (Listener.Value->HasPendingConnections())
 		{
@@ -103,10 +122,10 @@ TSharedPtr<IHttpRouter> FHttpServerModule::GetHttpRouter(uint32 Port, bool bFail
 	bool bFailedToListen = false;
 
 	// We may already have a listener for this port
-	TUniquePtr<FHttpListener>* ExistingListener = Listeners.Find(Port);
+	TUniquePtr<FHttpListener>* ExistingListener = Impl->Listeners.Find(Port);
 	if (ExistingListener)
 	{
-		if (bHttpListenersEnabled)
+		if (Impl->bHttpListenersEnabled)
 		{
 			// if listeners are enabled, the existing listener for this port
 			// should always be listening (IsListening() will only be true
@@ -121,7 +140,7 @@ TSharedPtr<IHttpRouter> FHttpServerModule::GetHttpRouter(uint32 Port, bool bFail
 				// get rid of it and create a new one for now
 				UE_LOG(LogHttpServerModule, Error, TEXT("[%s] the existing listener for port %d is not listening/bound and listeners are still enabled"),
 					ANSI_TO_TCHAR(__FUNCTION__), Port);
-				Listeners.Remove(Port);
+				Impl->Listeners.Remove(Port);
 			}
 		}
 		else
@@ -136,7 +155,7 @@ TSharedPtr<IHttpRouter> FHttpServerModule::GetHttpRouter(uint32 Port, bool bFail
 	TUniquePtr<FHttpListener> NewListener = MakeUnique<FHttpListener>(Port);
 
 	// Try to start this listener now
-	if (bHttpListenersEnabled)
+	if (Impl->bHttpListenersEnabled)
 	{
 		if (!NewListener->StartListening())
 		{
@@ -155,7 +174,7 @@ TSharedPtr<IHttpRouter> FHttpServerModule::GetHttpRouter(uint32 Port, bool bFail
 	else
 	{
 		// the legacy behavior returns the router regardless of listener success
-		const auto& NewListenerRef = Listeners.Add(Port, MoveTemp(NewListener));
+		const auto& NewListenerRef = Impl->Listeners.Add(Port, MoveTemp(NewListener));
 		return NewListenerRef->GetRouter();
 	}
 }
@@ -165,9 +184,9 @@ bool FHttpServerModule::Tick(float DeltaTime)
 	QUICK_SCOPE_CYCLE_COUNTER(STAT_FHttpServerModule_Tick);
 	check(Singleton == this);
 
-	if (bHttpListenersEnabled)
+	if (Impl->bHttpListenersEnabled)
 	{
-		for (const auto& Listener : Listeners)
+		for (const auto& Listener : Impl->Listeners)
 		{
 			Listener.Value->Tick(DeltaTime);
 		}

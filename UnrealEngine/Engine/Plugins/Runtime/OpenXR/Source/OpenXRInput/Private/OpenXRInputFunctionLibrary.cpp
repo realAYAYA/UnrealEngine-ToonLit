@@ -1,7 +1,6 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "OpenXRInputFunctionLibrary.h"
-#include "OpenXRInputSettings.h"
 
 #include "Engine/Engine.h"
 #include "Features/IModularFeatures.h"
@@ -16,17 +15,12 @@ UOpenXRInputFunctionLibrary::UOpenXRInputFunctionLibrary(const FObjectInitialize
 }
 
 PRAGMA_DISABLE_DEPRECATION_WARNINGS
-bool UOpenXRInputFunctionLibrary::BeginXRSession(UPlayerMappableInputConfig* InputConfig)
+bool UOpenXRInputFunctionLibrary::BeginXRSession(const TSet<UInputMappingContext*>& InputMappingContexts)
 {
-	if (!InputConfig)
+	TSet<TObjectPtr<UInputMappingContext>> Contexts;
+	for (UInputMappingContext* Context : InputMappingContexts)
 	{
-		// If the input config is unset, then we fall back to either the input config from the project settings.
-		// If the project settings is also unset, the input config will be set to null and we'll fall back to legacy input.
-		UOpenXRInputSettings* InputSettings = GetMutableDefault<UOpenXRInputSettings>();
-		if (InputSettings && InputSettings->MappableInputConfig.IsValid())
-		{
-			InputConfig = (UPlayerMappableInputConfig*)InputSettings->MappableInputConfig.TryLoad();
-		}
+		Contexts.Add(Context);
 	}
 
 	TArray<IMotionController*> MotionControllers = IModularFeatures::Get().GetModularFeatureImplementations<IMotionController>(IMotionController::GetModularFeatureName());
@@ -37,7 +31,7 @@ bool UOpenXRInputFunctionLibrary::BeginXRSession(UPlayerMappableInputConfig* Inp
 			continue;
 		}
 
-		MotionController->SetPlayerMappableInputConfig(InputConfig);
+		MotionController->AttachInputMappingContexts(Contexts);
 	}
 
 	return UHeadMountedDisplayFunctionLibrary::EnableHMD(true);

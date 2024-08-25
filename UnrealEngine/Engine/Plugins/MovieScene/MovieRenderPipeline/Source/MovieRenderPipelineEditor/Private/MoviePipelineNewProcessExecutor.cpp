@@ -17,6 +17,7 @@
 #include "Misc/FileHelper.h"
 #include "MoviePipelineEditorBlueprintLibrary.h"
 #include "MoviePipelineGameMode.h"
+#include "MoviePipelineUtils.h"
 
 #include UE_INLINE_GENERATED_CPP_BY_NAME(MoviePipelineNewProcessExecutor)
 
@@ -85,18 +86,56 @@ void UMoviePipelineNewProcessExecutor::Execute_Implementation(UMoviePipelineQueu
 	// Boot into our custom Game Mode (to go with our custom map). Once booted the in-process Executor will load the correct map with correct gamemode.
 	UnrealURLParams += FString::Printf(TEXT("?game=%s"), *AMoviePipelineGameMode::StaticClass()->GetPathName());
 
-	// Loop through our settings in the job and let them modify the command line arguments/params. Because we could have multiple jobs,
-	// we go through all jobs and all settings and hope the user doesn't have conflicting settings.
 	TArray<FString> OutUrlParams;
 	TArray<FString> OutCommandLineArgs;
 	TArray<FString> OutDeviceProfileCVars;
 	TArray<FString> OutExecCmds;
-	for (const UMoviePipelineExecutorJob* Job : DuplicatedQueue->GetJobs())
+
+	// Loop through our settings in the job and let them modify the command line arguments/params. Because we could have multiple jobs,
+	// we go through all jobs and all settings and hope the user doesn't have conflicting settings.
+	for (UMoviePipelineExecutorJob* Job : DuplicatedQueue->GetJobs())
 	{
-		Job->GetConfiguration()->InitializeTransientSettings();
-		for (const UMoviePipelineSetting* Setting : Job->GetConfiguration()->GetAllSettings())
+		if (Job->IsUsingGraphConfiguration())
 		{
-			Setting->BuildNewProcessCommandLineArgs(OutUrlParams, OutCommandLineArgs, OutDeviceProfileCVars, OutExecCmds);
+			UMovieGraphConfig* GraphConfig = Job->GetGraphPreset();
+			if (!GraphConfig)
+			{
+				continue;
+			}
+			
+			FMovieGraphTraversalContext TraversalContext;
+			TraversalContext.Job = Job;
+
+			FString OutTraversalError;
+			UMovieGraphEvaluatedConfig* EvaluatedGraph = GraphConfig->CreateFlattenedGraph(TraversalContext, OutTraversalError);
+			if (!OutTraversalError.IsEmpty())
+			{
+				return;
+			}
+
+			// Only nodes on the Globals branch can apply command line args. Get CDOs here as well, so all nodes which define command line args
+			// will be found, even if they were not instantiated in the graph.
+			TArray<UClass*> AllSettingsNodeClasses = UE::MovieRenderPipeline::FindMoviePipelineSettingClasses(UMovieGraphSettingNode::StaticClass(), false);
+			for (UClass* NodeClass : AllSettingsNodeClasses)
+			{
+				constexpr bool bIncludeCDOs = true;
+				constexpr bool bExactMatch = true;
+				UMovieGraphSettingNode* GlobalsNode = EvaluatedGraph->GetSettingForBranch(NodeClass, UMovieGraphNode::GlobalsPinName, bIncludeCDOs, bExactMatch);
+				if (!GlobalsNode || (GlobalsNode->GetBranchRestriction() != EMovieGraphBranchRestriction::Globals))
+				{
+					continue;
+				}
+
+				GlobalsNode->BuildNewProcessCommandLineArgsImpl(OutUrlParams, OutCommandLineArgs, OutDeviceProfileCVars, OutExecCmds);
+			}
+		}
+		else
+		{
+			Job->GetConfiguration()->InitializeTransientSettings();
+			for (const UMoviePipelineSetting* Setting : Job->GetConfiguration()->GetAllSettings())
+			{
+				Setting->BuildNewProcessCommandLineArgs(OutUrlParams, OutCommandLineArgs, OutDeviceProfileCVars, OutExecCmds);
+			}
 		}
 	}
 

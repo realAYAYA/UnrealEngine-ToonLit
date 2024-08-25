@@ -17,7 +17,6 @@ class FNiagaraCopySVTToDenseBufferCS : public FGlobalShader
 		SHADER_PARAMETER_SAMPLER(SamplerState, TileDataTextureSampler)
 		SHADER_PARAMETER_TEXTURE(Texture3D<uint>, SparseVolumeTexturePageTable)
 		SHADER_PARAMETER_TEXTURE(Texture3D, SparseVolumeTextureA)	
-		SHADER_PARAMETER_SRV(ByteAddressBuffer, StreamingInfoBuffer)
 		SHADER_PARAMETER(FUintVector4, PackedSVTUniforms0)
 		SHADER_PARAMETER(FUintVector4, PackedSVTUniforms1)
 		SHADER_PARAMETER(FIntVector, TextureSize)

@@ -18,7 +18,7 @@ public:
 						const FMetalShaderLibraryHeader& InHeader,
 						const FSerializedShaderArchive& InSerializedShaders,
 						const TArray<uint8>& InShaderCode,
-						const TArray<mtlpp::Library>& InLibrary);
+						const TArray<MTLLibraryPtr>& InLibrary);
 
 	virtual ~FMetalShaderLibrary();
 
@@ -43,7 +43,7 @@ public:
 
 private:
 	FString ShaderLibraryFilename;
-	TArray<mtlpp::Library> Library;
+	TArray<MTLLibraryPtr> Library;
 	FMetalShaderLibraryHeader Header;
 	FSerializedShaderArchive SerializedShaders;
 	TArray<uint8> ShaderCode;

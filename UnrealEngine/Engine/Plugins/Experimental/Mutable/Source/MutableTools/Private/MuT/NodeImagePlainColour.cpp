@@ -15,50 +15,13 @@ namespace mu
 	//---------------------------------------------------------------------------------------------
 	// Static initialisation
 	//---------------------------------------------------------------------------------------------
-	NODE_TYPE NodeImagePlainColour::Private::s_type =
-			NODE_TYPE( "ImagePlainColour", NodeImage::GetStaticType() );
+	FNodeType NodeImagePlainColour::Private::s_type =
+			FNodeType( "ImagePlainColour", NodeImage::GetStaticType() );
 
 
 	//---------------------------------------------------------------------------------------------
 
 	MUTABLE_IMPLEMENT_NODE( NodeImagePlainColour, EType::PlainColour, Node, Node::EType::Image)
-
-
-	//---------------------------------------------------------------------------------------------
-	// Node Interface
-	//---------------------------------------------------------------------------------------------
-	void NodeImagePlainColour::SetInputNode( int i, NodePtr pNode )
-	{
-		check( i>=0 && i< GetInputCount());
-
-		switch (i)
-		{
-        case 0: m_pD->m_pColour = dynamic_cast<NodeColour*>(pNode.get()); break;
-		}
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	int NodeImagePlainColour::GetInputCount() const
-	{
-		return 1;
-	}
-
-
-	//---------------------------------------------------------------------------------------------
-	Node* NodeImagePlainColour::GetInputNode( int i ) const
-	{
-		check( i>=0 && i< GetInputCount());
-
-		Node* pResult = 0;
-
-		switch (i)
-		{
-        case 0: pResult = m_pD->m_pColour.get(); break;
-		}
-
-		return pResult;
-	}
 
 
 	//---------------------------------------------------------------------------------------------

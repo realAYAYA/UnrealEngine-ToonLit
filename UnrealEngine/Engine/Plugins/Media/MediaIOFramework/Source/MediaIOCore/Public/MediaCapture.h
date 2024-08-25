@@ -14,7 +14,7 @@
 #include "OpenColorIORendering.h"
 #include "OrderedAsyncGate.h"
 #include "PixelFormat.h"
-#include "RenderGraphResources.h"
+#include "RenderGraphUtils.h"
 #include "RHI.h"
 #include "RHIResources.h"
 #include "Tasks/Task.h"
@@ -190,14 +190,14 @@ public:
 	 * Crop the captured SceneViewport or TextureRenderTarget2D to the desired size.
 	 * @note Only valid when Crop is set to Custom.
 	 */
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category="MediaCapture")
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category="MediaCapture", meta=(editcondition = "Crop == EMediaCaptureCroppingType::Custom"))
 	FIntPoint CustomCapturePoint;
 	
 	/**
 	 * When the capture start, control if and how the source buffer should be resized to the desired size.
 	 * @note Only valid when a size is specified by the MediaOutput.
 	 */
-	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category="MediaCapture")
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category="MediaCapture", meta = (editcondition = "Crop == EMediaCaptureCroppingType::None"))
 	EMediaCaptureResizeMethod ResizeMethod = EMediaCaptureResizeMethod::None;
 
 	/**
@@ -575,6 +575,15 @@ protected:
 	{
 		return DesiredOutputBufferDescription;
 	}
+
+	/** Get the output texture's flags.
+     * This can overriden to specify custom texture flags for the output texture.
+     * This method can be overriden when doing a custom capture pass; however, this is advanced usage so proceed with caution when changing these.
+     */
+    virtual ETextureCreateFlags GetOutputTextureFlags() const
+    {
+        return TexCreate_Shared | TexCreate_RenderTargetable | TexCreate_UAV;
+    }
 
 protected:
 	UTextureRenderTarget2D* GetTextureRenderTarget() const;

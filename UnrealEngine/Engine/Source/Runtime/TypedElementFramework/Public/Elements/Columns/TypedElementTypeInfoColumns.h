@@ -14,7 +14,7 @@ class UScriptStruct;
 /**
  * Column that stores type information for classes.
  */
-USTRUCT(meta = (DisplayName = "Class type info"))
+USTRUCT(meta = (DisplayName = "Type"))
 struct FTypedElementClassTypeInfoColumn final : public FTypedElementDataStorageColumn
 {
 	GENERATED_BODY()
